@@ -93,7 +93,6 @@
   "PATCH /saved/:p": "0.1.167",
   "PATCH /secrets/:p": "0.3.95",
   "PATCH /teams/:p": "0.1.167",
-  "POST /accounts/:p/pats": "0.1.167",
   "POST /accounts/agents": "0.1.167",
   "POST /accounts/agents/:p/memory/:p/confirm": "0.3.81",
   "POST /accounts/agents/:p/restart": "0.3.14",

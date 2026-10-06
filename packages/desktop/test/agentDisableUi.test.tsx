@@ -32,7 +32,6 @@ const fakeController = (agents: AgentView[], pats: PatView[] = []) => {
     // 「할 수 있는 일」 절(스레드 3deac356)이 상세를 열며 부른다 — 빈 목록이면 절은 '없음'만 그린다.
     listGrants: vi.fn(async () => []),
     revokePat: vi.fn(async (): Promise<{ revoked: number }> => ({ revoked: 1 })),
-    mintPat: vi.fn(async (): Promise<string> => 'murp_new'),
     agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
       { harness: 'claude-code', model: null, effort: null }
     )),
@@ -143,23 +142,23 @@ describe('#251 끄기는 확인 단계를 거친다', () => {
   });
 });
 
-describe('#251 다시 켠 직후 PAT 가 0개임이 드러난다', () => {
-  // 회귀선 6. 비활성화는 PAT 를 전부 폐기하고 다시 켜도 되살리지 않는다(서버가 해시만
-  // 보관한다). 그래서 켠 직후 화면은 "지금 이 에이전트로는 러너가 뜰 수 없다"를 말해야
-  // 한다 — 안 말하면 운영자는 켰으니 돌아갈 것이라 믿고 기다린다.
-  it('켠 뒤 PAT 목록이 비어 있으면 재발급이 필요하다고 안내한다', async () => {
+describe('#251 다시 켠 직후 PAT 0개는 할 일이 아니다', () => {
+  // 회귀선 6 의 뒤집힘(결정 harkroom 스레드 c4f4dab4). 러너는 오퍼레이터 토큰으로 서므로 켠 직후
+  // PAT 0개는 정상이다. 옛 화면은 여기서 「새로 발급해야 한다」고 시켜 쓸모없는 토큰을 찍게 했다
+  // (security 조건 b) — 그 안내도, 칸 자체도 없어야 한다.
+  it('켠 뒤 PAT 목록이 비어 있어도 재발급을 권하지 않는다', async () => {
     const c = fakeController([agent('rusalka', { disabled: true })], []);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
-
-    // 꺼진 동안에는 0개가 정상이라 권하지 않는다.
-    await waitFor(() => expect(screen.getByText('PAT 가 없다')).toBeTruthy());
+    await waitFor(() => expect(c.listPats).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole('button', { name: '에이전트 활성화' }));
     await waitFor(() => expect(c.setAgentDisabled).toHaveBeenCalled());
+    await waitFor(() => expect(c.listPats.mock.calls.length).toBeGreaterThan(1));
 
-    const notice = await screen.findByText(/새로 발급해야 한다/);
-    expect(notice.textContent).toContain('PAT 가 없다');
+    expect(screen.queryByText(/새로 발급해야 한다/)).toBeNull();
+    expect(screen.queryByText('PAT 가 없다')).toBeNull();
+    expect(screen.queryByTestId('legacy-pats')).toBeNull();
   });
 
   // 실패를 0개로 그리면 살아 있는 PAT 를 없다고 하고, 그 위에서 필요 없는 재발급까지

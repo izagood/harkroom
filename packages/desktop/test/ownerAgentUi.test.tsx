@@ -38,7 +38,6 @@ const fakeController = (overrides: Record<string, unknown> = {}) => {
     deleteAgentMemory: vi.fn(async (): Promise<void> => undefined),
     updateAgent: vi.fn(async (_id: string, _patch: Partial<AgentConfig>) => MINE),
     revokePat: vi.fn(async () => ({ revoked: 1 })),
-    mintPat: vi.fn(async () => 'murp_new'),
     // admin 전용 라우트다 — 소유자에게는 403 이 나는 것이 정상이고, 화면은 그것을
     // 오류로 그리지 않아야 한다.
     agentDefaults: vi.fn(async () => { throw new Error('forbidden'); }),
@@ -76,12 +75,13 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
     // 절이 그려지는 것만으로는 모자란다 — 그리기만 하고 조회가 안 나가면 영영 비어 있다.
     // (실측 결함: 소유자 판정을 `useState` 에 담고 같은 `pick` 안에서 읽어, 첫 선택에서
     //  두 조회가 모두 갱신 전 값을 보고 그냥 돌아왔다.)
-    expect(screen.getByText('PAT (Personal Access Token)')).toBeTruthy();
     expect(screen.getByText('기억 (memory)')).toBeTruthy();
     await waitFor(() => expect(c.listPats).toHaveBeenCalledWith('id-mybot'));
     await waitFor(() => expect(c.agentMemory).toHaveBeenCalledWith('id-mybot'));
     await screen.findByText('기억 한 줄');
     await screen.findByText('runner');
+    // 옛 러너 토큰 칸은 살아 있는 토큰이 있을 때만 선다 — 이 픽스처에는 'runner' 가 살아 있다.
+    expect(screen.getByTestId('legacy-pats')).toBeTruthy();
   });
 
   it('5b. 배정도 소유자에게 열린다(스펙 2026-09-20 §3) — 자기 에이전트를 어디서 돌릴지는 소유자가 정한다', async () => {

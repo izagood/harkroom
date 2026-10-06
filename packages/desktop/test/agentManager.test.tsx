@@ -38,7 +38,6 @@ const fakeController = (agents: AgentView[] = []) => {
     // 「할 수 있는 일」 절(스레드 3deac356)이 상세를 열며 부른다 — 빈 목록이면 절은 '없음'만 그린다.
     listGrants: vi.fn(async () => []),
     revokePat: vi.fn(async (): Promise<{ revoked: number }> => ({ revoked: 1 })),
-    mintPat: vi.fn(async (): Promise<string> => 'murp_new'),
     // #171: 기본은 "읽었다". 실패가 필요한 테스트가 갈아끼운다.
     agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
       { harness: 'claude-code', model: null, effort: null }
@@ -210,50 +209,77 @@ describe('AgentsSettings', () => {
     expect((screen.getByLabelText('Mention permission') as HTMLSelectElement).value).toBe('readonly');
   });
 
-  describe('PAT management', () => {
+  describe('PAT management — 옛 러너 토큰 정리 자리(발급은 닫혔다)', () => {
     const pats: PatView[] = [
       { label: 'runner', createdAt: '2024-01-01T00:00:00Z', revokedAt: null },
+      { label: 'desktop:d43faaed', createdAt: '2024-01-04T00:00:00Z', revokedAt: null },
       { label: 'backup', createdAt: '2024-01-02T00:00:00Z', revokedAt: '2024-01-03T00:00:00Z' },
     ];
 
-    it('shows PAT section when editing an agent and user is admin', async () => {
+    const openPermissions = async () => {
+      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+      fireEvent.click(await screen.findByTestId('agent-tab-permissions'));
+    };
+
+    it('살아 있는 토큰이 있으면 칸이 서고, 살아 있는 것만 보인다', async () => {
       useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
       const c = fakeController([agent('rusalka')]);
       (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+      await openPermissions();
 
-      expect(await screen.findByText('PAT (Personal Access Token)')).toBeTruthy();
+      expect(await screen.findByTestId('legacy-pats')).toBeTruthy();
+      expect(await screen.findByText('runner')).toBeTruthy();
+      expect(await screen.findByText('desktop:d43faaed')).toBeTruthy();
+      // 폐기된 줄은 할 일이 없는 줄이다 — 그리지 않는다.
+      expect(screen.queryByText('backup')).toBeNull();
+    });
+
+    it('발급 손잡이가 없다(입력·[+ New PAT])', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
+      render(<AgentsSettings />);
+      await openPermissions();
+      await screen.findByTestId('legacy-pats');
+
+      expect(screen.queryByRole('button', { name: '+ New PAT' })).toBeNull();
+      expect(screen.queryByLabelText('New PAT label')).toBeNull();
+    });
+
+    it('살아 있는 토큰이 0개면 칸 자체가 없고 「발급하라」 안내도 없다', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue([pats[2]]);
+      render(<AgentsSettings />);
+      await openPermissions();
+      await waitFor(() => expect(c.listPats).toHaveBeenCalled());
+      await act(async () => {});
+
+      expect(screen.queryByTestId('legacy-pats')).toBeNull();
+      expect(screen.queryByText(/PAT 가 없다|No PAT/)).toBeNull();
+      expect(screen.queryByText(/새로 발급해야 한다|mint one/)).toBeNull();
+    });
+
+    it('목록을 못 읽으면 숨기지 않고 그 사실을 말한다', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'));
+      render(<AgentsSettings />);
+      await openPermissions();
+
+      const box = await screen.findByTestId('legacy-pats');
+      expect(box.querySelector('[role="alert"]')).toBeTruthy();
     });
 
     it('does not show PAT section when user is not admin', async () => {
       useAppStore.getState().set({ me: acc('u1', 'user', 'human', false) });
-      fakeController([agent('rusalka')]);
-      render(<AgentsSettings />);
-      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
-
-      expect(screen.queryByText('PAT (Personal Access Token)')).toBeNull();
-    });
-
-    it('lists PATs when editing an agent', async () => {
-      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
       const c = fakeController([agent('rusalka')]);
       (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
       render(<AgentsSettings />);
       fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-      expect(await screen.findByText('runner')).toBeTruthy();
-      expect(await screen.findByText('backup')).toBeTruthy();
-    });
-
-    it('shows revoked PATs with indicator', async () => {
-      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
-      const c = fakeController([agent('rusalka')]);
-      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
-      render(<AgentsSettings />);
-      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
-
-      expect(await screen.findByText('(폐기됨)')).toBeTruthy();
+      expect(screen.queryByTestId('legacy-pats')).toBeNull();
     });
 
     it('calls revokePat when confirming revoke', async () => {
@@ -262,30 +288,52 @@ describe('AgentsSettings', () => {
       (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
       (c.revokePat as ReturnType<typeof vi.fn>).mockResolvedValue({ revoked: 1 });
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+      await openPermissions();
 
-      const revokeBtn = await screen.findByText('Revoke');
-      fireEvent.click(revokeBtn);
-      const confirmBtn = await screen.findByText('Really revoke');
-      fireEvent.click(confirmBtn);
+      fireEvent.click((await screen.findAllByText('Revoke'))[0]!);
+      fireEvent.click(await screen.findByText('Really revoke'));
 
       await waitFor(() => expect(c.revokePat).toHaveBeenCalledWith('id-rusalka', 'runner'));
+      expect(c.revokePat).toHaveBeenCalledTimes(1);
     });
 
-    it('shows newly minted PAT once', async () => {
+    it('[모두 폐기]는 확인창을 거치고, 살아 있는 라벨마다 한 번씩 DELETE 한다', async () => {
       useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
       const c = fakeController([agent('rusalka')]);
-      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (c.mintPat as ReturnType<typeof vi.fn>).mockResolvedValue('murp_new_token');
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
+      (c.revokePat as ReturnType<typeof vi.fn>).mockResolvedValue({ revoked: 1 });
       render(<AgentsSettings />);
-      fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
-      fireEvent.click(await screen.findByTestId('agent-tab-permissions'));
+      await openPermissions();
 
-      const newPatBtn = await screen.findByRole('button', { name: '+ New PAT' });
-      fireEvent.click(newPatBtn);
+      fireEvent.click(await screen.findByTestId('pat-revoke-all'));
+      // 확인창 전에는 아무것도 지우지 않는다(security 조건 a).
+      expect(c.revokePat).not.toHaveBeenCalled();
+      const dialog = await screen.findByRole('dialog');
+      const confirm = Array.from(dialog.querySelectorAll('button')).find((b) => /모두 폐기|Revoke all/.test(b.textContent ?? ''));
+      fireEvent.click(confirm!);
 
-      expect((await screen.findAllByText(/murp_new_token/)).length).toBeGreaterThan(0);
-      expect(await screen.findByText(/이 토큰은 지금만 보인다/)).toBeTruthy();
+      await waitFor(() => expect(c.revokePat).toHaveBeenCalledTimes(2));
+      expect(c.revokePat).toHaveBeenCalledWith('id-rusalka', 'runner');
+      expect(c.revokePat).toHaveBeenCalledWith('id-rusalka', 'desktop:d43faaed');
+      expect(c.revokePat).not.toHaveBeenCalledWith('id-rusalka', 'backup');
+      // 다 지운 뒤 목록을 다시 읽는다 — 남은 것이 무엇인지는 서버가 말한다.
+      await waitFor(() => expect((c.listPats as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(1));
+    });
+
+    it('[모두 폐기] 확인창에서 취소하면 아무것도 지우지 않는다', async () => {
+      useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+      const c = fakeController([agent('rusalka')]);
+      (c.listPats as ReturnType<typeof vi.fn>).mockResolvedValue(pats);
+      render(<AgentsSettings />);
+      await openPermissions();
+
+      fireEvent.click(await screen.findByTestId('pat-revoke-all'));
+      const dialog = await screen.findByRole('dialog');
+      const cancel = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Cancel');
+      fireEvent.click(cancel!);
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(c.revokePat).not.toHaveBeenCalled();
     });
   });
 

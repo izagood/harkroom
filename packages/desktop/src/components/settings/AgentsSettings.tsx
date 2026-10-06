@@ -51,36 +51,10 @@ import { Identity } from '../Identity';
 import { Button } from './primitives';
 import { AvatarStatus, useAvatarEdit } from './avatarEdit';
 import { useAgentPool } from './useAgentPool';
-import { copyText } from '../../lib/clipboard';
 import { navKey } from './sections';
 import { AGENT_DETAIL_TABS, parseAgentTarget, type AgentDetailTab } from './agentDetailTabs';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { ImmediateBadge, PendingEditsContext, setLeaveGuard, type PendingHandlers, type RegisterPending } from './pendingEdits';
-
-/** #177: 클립보드가 없거나 거부되면 **조용히 실패하지 않는다** — 화면에 있는 그 명령
- *  텍스트를 선택 상태로 만들어 사람이 ⌘C 할 수 있게 하고, 오류를 눈에 보이게 남긴다.
- *  그 처리는 `lib/clipboard` 의 `copyText` 가 하고(코드 블록의 복사 버튼도 같은 것을
- *  쓴다), 여기서는 **결과를 이 화면의 문구로 바꾸는 일만** 한다 — 문구가 부르는 쪽에
- *  있는 이유는 `lib/clipboard` 머리말에 적어 두었다.
- *  `target` 은 복사 대상 명령이 그려진 노드다(선택해 줄 대상). */
-const copyToClipboard = async (
-  text: string,
-  target: HTMLElement | null,
-  onError: (msg: string) => void,
-  // **번역기를 인자로 받는다**(`chainSentences`·`memberErrorText` 와 같은 (b) 주입,
-  // 근거는 `i18n/index.ts::Translate` 머리말). 이 함수는 컴포넌트 밖이라 훅을 부를 수
-  // 없고, 모듈 전역 번역기를 부르면 언어가 전역 상태에 묶여 시험이 서로의 언어를 밟는다.
-  t: Translate,
-): Promise<boolean> => {
-  const outcome = await copyText(text, target);
-  if (outcome === 'copied') return true;
-  onError(
-    outcome === 'selected'
-      ? t('agents.runner.copyFailedSelected')
-      : t('agents.runner.copyFailedManual'),
-  );
-  return false;
-};
 
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 harkroom 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
@@ -345,16 +319,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const [defaults, setDefaults] = useState<AgentDefaults | 'error' | null>(null);
   // null 이면 'harness 기본값 사용'. 되돌릴 때 model·effort 를 명시적 null 로 비워야 한다.
   const [customized, setCustomized] = useState(false);
-  const [pat, setPat] = useState<string | null>(null);
   /**
    * #251: PAT 목록도 **세 상태**다 — null(아직 안 읽음) / 'error'(못 읽음) / 목록.
-   * 위 `defaults` 주석이 "PAT 로더가 실패를 `setPats([])` 로 삼켜 '없음'과 같은 화면을
-   * 만든다"고 적어 둔 그 결함을 여기서 없앤다. #251 이 "0개면 재발급이 필요하다"를
-   * 그 자리에서 말하기로 결정했으므로, '못 읽었다'가 0개로 보이면 화면이 있는 PAT 를
-   * 없다고 하고 운영자에게 필요 없는 재발급을 권한다.
+   * 러너는 v0.2.9 부터 PAT 를 쓰지 않고 발급도 닫혔다(서버 410) — 이 칸은 **살아 있는 옛 토큰을
+   * 지우는 자리**로만 남는다. '못 읽었다'를 0개로 그리면 지워야 할 토큰이 있는데 칸이 사라진다.
    */
   const [pats, setPats] = useState<PatView[] | 'error' | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
+  /** [모두 폐기] 확인창(security 조건 a). 토큰마다 DELETE 를 불러 감사 `pat.revoked` 가 하나씩 남는다. */
+  const [confirmingRevokeAll, setConfirmingRevokeAll] = useState(false);
+  /** 폐기되지 않은 토큰만. 이 칸은 이것이 하나라도 있을 때만 선다. */
+  const livePats = Array.isArray(pats) ? pats.filter((p) => !p.revokedAt) : [];
   // #139: 메모리는 **세 상태**다 — null(아직 안 읽음) / 'error'(못 읽음) / 목록.
   // 실패를 빈 배열로 삼키면 "기억이 없다" 와 "못 읽었다" 가 구분되지 않는다
   // (docs/design.md 4절). 러너 쪽 MemoryContext 가 같은 이유로 세 상태다.
@@ -404,19 +379,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 두 위험이 나란히 있는 화면에서 확인 모양까지 같으면, 끄려던 손이 지우는 쪽을 누른다.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
-  // 라벨을 하드코딩하면 재발급이 막힌다 — 라벨은 살아 있는 토큰 안에서 유일하고
-  // (마이그레이션 010) 서버가 중복을 409 로 거절한다. 토큰을 잃어 폐기한 뒤 같은 이름으로
-  // 다시 발급하는 것이 주 사용 흐름이라, 사용자가 이름을 정할 수 있어야 한다.
-  const [newPatLabel, setNewPatLabel] = useState('runner');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // 복사 성공 시 버튼 문구를 잠깐 "복사됨"으로 바꾼다(2초).
-  const [copySuccess, setCopySuccess] = useState<string | null>(null);
-  // 클립보드를 못 쓸 때 선택해 줄 명령 노드들. 화면 밖 복제가 아니라 사람이 보고 있는 그 텍스트다.
-  /** 토큰 원문이 그려진 노드. 클립보드가 막혔을 때 **이것을** 선택해 준다(아래 복사 버튼). */
-  const patRef = useRef<HTMLElement | null>(null);
-  // #177: "잃었으면 새로 발급한다" 를 글로만 두면 발급 자리를 찾아야 한다 — 진입점으로 보낸다.
-  const newPatLabelRef = useRef<HTMLInputElement | null>(null);
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
   const myId = useActiveStore((s) => s.me?.id);
   // #250: 이 앱이 띄운 러너의 상태. 실행기가 스토어에 밀어 넣고 화면은 읽기만 한다.
@@ -888,9 +852,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     setView('detail');
     setDraft(draftOf(a));
     setCustomized(a.model !== null || a.effort !== null);
-    setPat(null);
     setPats(null);
     setRevoking(null);
+    setConfirmingRevokeAll(false);
     setError(null);
     setConfirmingSlug(null);
     setConfirmingDisable(false);
@@ -919,9 +883,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     const known = defaults !== null && defaults !== 'error' ? defaults : null;
     setDraft(known ? emptyDraft(known) : null);
     setCustomized(known !== null && (known.model !== null || known.effort !== null));
-    setPat(null);
     setPats(null);
     setRevoking(null);
+    setConfirmingRevokeAll(false);
     setError(null);
     setConfirmingDisable(false);
   };
@@ -1165,19 +1129,25 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     setRevoking(null);
   };
 
-  const mintNewPat = async () => {
-    if (!selected) return;
-    setBusy(true);
+  /**
+   * 살아 있는 옛 토큰을 **라벨마다** 폐기한다. 일괄 라우트를 새로 두지 않는 이유: 라벨 DELETE 가
+   * 감사 `pat.revoked` 를 토큰마다 남기고(security 조건 a), 서버를 바꾸지 않으면 이 화면은 옛 서버에서도 된다.
+   * 하나라도 실패하면 거기서 멈추고 목록을 다시 읽는다 — 무엇이 남았는지는 다시 읽은 목록이 말한다.
+   */
+  const revokeAllPats = async () => {
+    if (!selected || !Array.isArray(pats)) return;
+    const labels = [...new Set(pats.filter((p) => !p.revokedAt).map((p) => p.label))];
     setError(null);
+    setBusy(true);
     try {
-      const token = await getController().mintPat(selected.id, newPatLabel.trim());
-      setPat(token);
+      for (const label of labels) await getController().revokePat(selected.id, label);
+    } catch {
+      setError(t('agents.pat.revokeFailed'));
+    } finally {
+      setBusy(false);
+      setConfirmingRevokeAll(false);
       loadPats(selected);
-    } catch (e) {
-      // 서버가 왜 거절했는지 그대로 보여야 한다 — 특히 '이 라벨은 이미 쓰인다'(409)는
-      // 사용자가 라벨만 바꾸면 해결되는 것이라, 뭉개면 막힌 것처럼 보인다.
-      setError(e instanceof Error ? e.message : t('agents.pat.mintFailed'));
-    } finally { setBusy(false); }
+    }
   };
 
   /*
@@ -2310,7 +2280,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       이 정보는 **나를 막지 않는다** — 사실 조회이고, 사람이 지금 무언가를
                       해야 한다는 신호가 아니다. 그래서 회색 단으로만 적는다. 이 절에서
                       강조·경고색을 갖는 것은 실패 사유(`RunnerStatusLine` 의 `danger`)와
-                      PAT 재발급 버튼뿐이고, 그 톤을 침범하지 않는다. */}
+                      옛 PAT 폐기 버튼뿐이고, 그 톤을 침범하지 않는다. */}
                   <DaemonFacts
                     runner={daemonRunners[selected.id]}
                     stopRequestedAt={selected.stopRequestedAt}
@@ -2426,38 +2396,29 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <AgentPickableSection agent={selected} disabled={busy} />
               )}
 
-              {selected && (isAdmin || isOwner) && (
-                <div className="rounded-row border border-border p-3">
-                  <div className="text-meta font-medium text-fg-muted">PAT (Personal Access Token)<ImmediateBadge label={t('agents.detail.immediate')} /></div>
-                  <div className="mt-2 space-y-2">
-                    {pats === null ? (
-                      <div className="text-meta text-fg-muted">{t('agents.pat.loading')}</div>
-                    ) : pats === 'error' ? (
-                      // 실패를 '없음'으로 그리면 살아 있는 PAT 를 없다고 하고, 그 위에서
-                      // "새로 발급해야 한다"까지 말하게 된다(docs/design.md 4절).
-                      <div className="text-meta text-danger" role="alert">{t('agents.pat.listFailed')}</div>
-                    ) : pats.length === 0 ? (
-                      /* #251: 켜진 에이전트에 PAT 가 0개면 러너가 뜰 수 없다 — 비활성화가
-                         PAT 를 전부 폐기하고 다시 켜도 되살리지 않으므로(서버가 해시만
-                         보관한다), 재발급이 필요하다는 것을 이 자리에서 말한다. 꺼진
-                         에이전트에서는 0개가 정상 상태라 권하지 않는다. */
-                      <div className={`text-meta ${selected.disabled ? 'text-fg-muted' : 'text-warning'}`}>
-                        {selected.disabled ? t('agents.pat.none') : t('agents.pat.noneNeedsMint')}
-                      </div>
-                    ) : (
-                      pats.map((p) => (
-                        <div key={`${p.label}:${p.createdAt}`} className="flex items-center justify-between rounded-row bg-surface px-2 py-1.5">
-                          <div className="text-meta">
-                            <span className="font-medium">{p.label}</span>
-                            {p.revokedAt && (
-                              <span className="ml-2 text-danger">{t('agents.pat.revoked')}</span>
-                            )}
-                            <span className="ml-2 text-fg-muted">
-                              {new Date(p.createdAt).toLocaleDateString()}
-                            </span>
-                          </div>
-                          {!p.revokedAt && (
-                            revoking === p.label ? (
+              {/* 옛 러너 토큰(결정 harkroom 스레드 c4f4dab4). 러너는 오퍼레이터 토큰으로 서고 발급은 닫혔다 —
+                  **살아 있는 것이 있을 때만** 그것을 지우는 자리로 선다. 0개면 칸 자체가 없다. 폐기된 줄은
+                  보이지 않는다(할 일이 없는 줄이다). 못 읽었으면 그 사실을 말한다 — 숨기면 지울 토큰이 있는데
+                  칸이 사라진다. 「없다 — 새로 발급하라」 안내는 지웠다(security 조건 b): 다 폐기한 사람에게
+                  쓸모없는 토큰을 다시 찍으라고 시켰다. */}
+              {selected && (isAdmin || isOwner) && (pats === 'error' || livePats.length > 0) && (
+                <div className="rounded-row border border-border p-3" data-testid="legacy-pats">
+                  <div className="text-meta font-medium text-fg-muted">{t('agents.pat.heading')}<ImmediateBadge label={t('agents.detail.immediate')} /></div>
+                  {pats === 'error' ? (
+                    <div className="mt-2 text-meta text-danger" role="alert">{t('agents.pat.listFailed')}</div>
+                  ) : (
+                    <>
+                      <p className="mt-1 text-meta text-fg-muted">{t('agents.pat.legacyNote')}</p>
+                      <div className="mt-2 space-y-2">
+                        {livePats.map((p) => (
+                          <div key={`${p.label}:${p.createdAt}`} className="flex items-center justify-between rounded-row bg-surface px-2 py-1.5">
+                            <div className="text-meta">
+                              <span className="font-medium">{p.label}</span>
+                              <span className="ml-2 text-fg-muted">
+                                {new Date(p.createdAt).toLocaleDateString()}
+                              </span>
+                            </div>
+                            {revoking === p.label ? (
                               <div className="flex items-center gap-1">
                                 <button
                                   className="rounded-row border border-danger-border bg-danger-surface px-1.5 py-0.5 text-meta text-danger"
@@ -2479,30 +2440,22 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                               >
                                 {t('agents.pat.revoke')}
                               </button>
-                            )
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  <div className="mt-2 flex items-center gap-2">
-                    <input
-                      ref={newPatLabelRef}
-                      className="w-40 rounded-row border border-border bg-field px-2 py-1"
-                      aria-label={t('agents.pat.label')}
-                      placeholder="runner"
-                      value={newPatLabel}
-                      onChange={(e) => setNewPatLabel(e.target.value)}
-                    />
-                    <button
-                      className="rounded-row bg-surface-sunken px-2 py-1 text-meta font-medium text-fg hover:bg-surface-hover disabled:opacity-50"
-                      disabled={busy || newPatLabel.trim() === ''}
-                      onClick={() => void mintNewPat()}
-                    >
-                      {t('agents.pat.mint')}
-                    </button>
-                  </div>
-                  <p className="mt-1 text-meta text-fg-muted">{t('agents.pat.labelNote')}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-2">
+                        <button
+                          data-testid="pat-revoke-all"
+                          className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger disabled:opacity-50"
+                          disabled={busy}
+                          onClick={() => setConfirmingRevokeAll(true)}
+                        >
+                          {t('agents.pat.revokeAll', { n: String(livePats.length) })}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -2673,50 +2626,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 는 스크린리더에 아무 말도 하지 않는다. */}
             {error && <p role="alert" className="text-meta text-danger">{error}</p>}
 
-            {pat && (
-              // 서버가 해시만 보관하므로 지금 놓치면 다시 볼 수 없다.
-              <div className="rounded-row border border-warning-border bg-warning-surface p-3">
-                <div className="text-meta font-semibold text-warning">{t('agents.pat.shownOnce')}</div>
-                {/* 토큰 **자체**를 복사하는 버튼. 아래 명령 복사와 둘 다 남는 이유:
-                    이 토큰이 가는 곳이 러너 명령만이 아니다 — 다른 기기의 `.env`,
-                    비밀 저장소, CI 변수처럼 명령 껍데기가 방해가 되는 자리가 있고,
-                    그때 사람은 명령을 복사해 앞뒤를 손으로 잘라내야 했다. 잘라내다
-                    한 글자를 흘리면 인증만 조용히 실패한다(#125 가 잘린 토큰에 대해
-                    지적한 것과 같은 결말).
-
-                    문구는 아래 명령 복사와 **같은 키를 쓴다**(`agents.runner.copy`) —
-                    글자가 `Copy`/`Copied` 하나뿐인데 사전에 두 벌을 두면 한쪽만
-                    번역되는 날이 온다. 무엇을 복사하는지는 `aria-label` 이 가른다. */}
-                <div className="mt-1 flex items-start gap-2">
-                  <code
-                    ref={patRef}
-                    className="min-w-0 flex-1 break-all rounded-row bg-surface-raised p-2 text-meta"
-                  >
-                    {pat}
-                  </code>
-                  <button
-                    className="shrink-0 rounded-row border border-warning-border bg-warning-surface-strong px-1.5 py-0.5 text-meta text-warning hover:bg-warning-border"
-                    aria-label={t('agents.pat.copyToken')}
-                    onClick={async () => {
-                      setError(null);
-                      // 자르지 않는다 — 화면에 있는 그 문자열 전체가 클립보드로 간다.
-                      const ok = await copyToClipboard(pat, patRef.current, setError, t);
-                      if (ok) {
-                        setCopySuccess('pat');
-                        setTimeout(() => setCopySuccess((c) => c === 'pat' ? null : c), 2000);
-                      }
-                    }}
-                  >
-                    {copySuccess === 'pat' ? t('agents.runner.copied') : t('agents.runner.copy')}
-                  </button>
-                </div>
-                {/* 스펙 2026-09-20 §2: 이 토큰을 러너 명령에 심어 복사시키던 자리였다. 이제
-                    배정된 오퍼레이터가 이 토큰을 서버에서 직접 받아 가므로(단계 2 한정;
-                    단계 4 가 PAT 자체를 없앤다) 사람이 옮겨 적을 일이 없다. 손으로 띄우는
-                    길만 이 토큰이 필요하고, 그 안내가 아래 한 줄이다. */}
-                <p className="mt-2 text-meta text-warning">{t('agents.runner.operatorTakesPat')}</p>
-              </div>
-            )}
 
           </div>
 
@@ -2784,6 +2693,19 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             ×
           </button>
         </div>
+      )}
+      {confirmingRevokeAll && selected && (
+        <ConfirmDialog
+          title={t('agents.pat.revokeAllTitle', { n: String(livePats.length) })}
+          detail={t('agents.pat.revokeAllDetail')}
+          detailKind="note"
+          confirmLabel={t('agents.pat.revokeAllConfirm')}
+          cancelLabel={t('agents.pat.revokeCancel')}
+          danger
+          busy={busy}
+          onConfirm={() => void revokeAllPats()}
+          onCancel={() => setConfirmingRevokeAll(false)}
+        />
       )}
       {leaving && (
         <ConfirmDialog

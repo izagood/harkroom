@@ -160,7 +160,7 @@ import type { Message } from './types';
  * **다음 PR 이 다시 잴 자리**를 적어 둔다: `Loading…` 이 지금 둘이고
  * (`sidebar.members.loading`·`agents.memory.loading`) 뜻도 하나다 — *"아직 못 읽었다"*.
  * 세 번째가 오면 그것이 `common` 의 첫 손님이다. 다만 `agents.run.defaultsLoading`
- * (`Loading the defaults…`)·`agents.pat.loading`(`Reading PATs…`)은 **그 후보가 아니다**:
+ * (`Loading the defaults…`)은 **그 후보가 아니다**:
  * 같은 화면에 여럿이 함께 뜰 수 있어 무엇을 읽는 중인지가 문구에 있어야 한다.
  *
  * 그리고 **설정 화면에 언어 고르는 자리가 아직 없다.** 값과 배선은 다 있다
@@ -1040,8 +1040,8 @@ export const en = {
    * 사람이 "고장 났나"라고 읽지 않게, 그것이 비활성화의 결과였음을 여기서 잇는다.
    */
   'agents.disable.noteDisabled':
-    'This agent is disabled. Enabling it again will report that it has no PAT and needs a '
-    + 'new one — disabling revoked every PAT it had.',
+    'This agent is disabled. Disabling revoked every PAT it had — enabling it again does not need one, '
+    + 'since agents sign in through their operator.',
   /**
    * 끄기 전 안내. **되돌릴 수 없는 것이 무엇인지**를 말한다 — 끄는 것 자체는 되돌릴 수
    * 있지만 PAT 는 돌아오지 않는다(서버가 해시만 보관한다). 그 비대칭이 이 문장의 전부다.
@@ -1152,29 +1152,25 @@ export const en = {
   /** 기본. 이 화면을 여는 대부분의 이유가 *"방금 무엇을 기억했나"* 다. */
   'agents.memory.sortRecent': 'Recent',
 
-  /** 토큰 **자체**를 복사하는 버튼. 버튼 글자는 `agents.runner.copy` 를 쓰고
-   *  (`Copy` 하나를 두 벌로 두지 않는다) 무엇을 복사하는지는 이 이름이 가른다. */
-  'agents.pat.copyToken': 'Copy the token',
-  'agents.pat.label': 'New PAT label',
-  /** 라벨 규칙. 서버가 409 로 거절하는 그 규칙이고, **되쓸 수 있다**까지 말해야 막히지 않는다. */
-  'agents.pat.labelNote':
-    'A label is unique among the live tokens. Revoking one frees its label to be used again.',
+  /** 옛 러너 토큰 칸의 제목. `PAT` 는 고유어라 번역하지 않는다(i18n 시험이 지킨다). */
+  'agents.pat.heading': 'Old runner tokens (PAT)',
+  /**
+   * 왜 지우라는지. 러너는 오퍼레이터로 서므로 **쓰는 곳이 없다**와 **그래도 유효하고 만료가 없다**를
+   * 함께 말한다 — 앞엣것만 말하면 남겨 둬도 되는 것으로 읽는다.
+   */
+  'agents.pat.legacyNote':
+    'Agents now sign in through their operator, so nothing uses these tokens — but they stay valid and never expire. Revoke them.',
   'agents.pat.listFailed': 'The PAT list could not be read',
-  'agents.pat.loading': 'Reading PATs…',
-  'agents.pat.mint': '+ New PAT',
-  'agents.pat.mintFailed': 'The PAT was not minted',
-  /** 꺼진 에이전트에 PAT 0개는 **정상이다** — 그래서 재발급을 권하지 않는다. */
-  'agents.pat.none': 'No PAT',
-  /** 켜진 에이전트에 PAT 0개면 러너가 못 뜬다 — 그 사실과 사유를 함께 말한다. */
-  'agents.pat.noneNeedsMint': 'No PAT — mint one (disabling revokes them all)',
   'agents.pat.revoke': 'Revoke',
+  'agents.pat.revokeAll': 'Revoke all ({n})',
+  'agents.pat.revokeAllConfirm': 'Revoke all',
+  /** 확인창 본문. 되돌릴 수 없다는 것과 감사에 하나씩 남는다는 것(security 조건 a)을 말한다. */
+  'agents.pat.revokeAllDetail':
+    'Each token is revoked by its label and recorded in the audit log. Anything still holding one of them stops working. This cannot be undone.',
+  'agents.pat.revokeAllTitle': 'Revoke {n} old tokens?',
   'agents.pat.revokeCancel': 'Cancel',
   'agents.pat.revokeConfirm': 'Really revoke',
-  'agents.pat.revoked': '(revoked)',
   'agents.pat.revokeFailed': 'The PAT was not revoked',
-  /** 발급 직후. **왜 다시 못 보는지**를 함께 적는다 — 그것이 지금 복사해야 하는 이유다. */
-  'agents.pat.shownOnce':
-    'This token is visible only now — the server keeps only a hash, so it cannot be shown again',
 
   'agents.permissions.mentionAuto': 'auto — allow every tool on a mention turn',
   /** 이 설정이 **안 걸리는 자리**를 말한다 — 없으면 사람은 터미널에서도 막힐 것으로 읽는다. */
@@ -1223,17 +1219,6 @@ export const en = {
   'agents.run.model': 'Model',
   'agents.run.effort': 'Effort',
 
-  'agents.runner.copied': 'Copied',
-  'agents.runner.copy': 'Copy',
-  /** 선택조차 못 했을 때. 남은 길이 손으로 옮겨 적는 것뿐이라 그것을 말한다. */
-  'agents.runner.copyFailedManual':
-    'The clipboard is not available and the command could not be selected — copy it by hand',
-  /**
-   * 클립보드가 없거나 거부됐을 때. **조용히 실패하지 않는다**(`#177`) — 화면의 그 명령을
-   * 선택해 두었으므로 **다음에 할 일**을 말한다. 오류만 적고 끝내면 사람은 막힌다.
-   */
-  'agents.runner.copyFailedSelected':
-    'The clipboard is not available — the command is selected, so press ⌘C to copy it',
   /**
    * daemon 이 자기가 띄운 러너만 아는 것은 **한계 고백**이다. 앞 문장에 뭉치면 사람은
    * 손으로 띄운 러너도 여기 나타날 것으로 읽고, 안 나타나면 앱이 고장 났다고 판단한다.
@@ -1252,13 +1237,6 @@ export const en = {
     + 'its mentions between them.',
   'agents.runner.ownedNoteDaemon': 'daemon already holds',
   'agents.runner.ownedNoteOwn': 'I own',
-  /**
-   * 발급 직후 상자의 안내. 앞 판본은 여기서 러너 명령을 통째로 복사시켰다 — 이제 배정된
-   * 오퍼레이터가 토큰을 서버에서 직접 받아 가므로 사람이 옮겨 적을 일이 없다(단계 2 한정).
-   */
-  'agents.runner.operatorTakesPat':
-    'You do not need to copy this anywhere for an assigned operator — it fetches the token from the server itself. '
-    + 'Keep it only if you start a runner by hand.',
 
   'agents.stale.allCurrent': 'Every running runner matches the version of its operator.',
   /**
