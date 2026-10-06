@@ -427,6 +427,20 @@ class StringsKo implements Strings {
   @override
   String get messageMarkedUnread => '안 읽음으로 표시했다';
   @override
+  String get threadStatusReceived => '받음';
+  @override
+  String get threadStatusRunning => '작업 중';
+  @override
+  String get threadStatusWaiting => '기다림';
+  @override
+  String get threadStatusMyTurn => '내 차례';
+  @override
+  String get threadStatusStuck => '막힘';
+  @override
+  String get threadStatusDone => '완료';
+  @override
+  String get threadStatusSomeone => '에이전트';
+  @override
   String get messagePostToChannel => '채널에도 올리기';
   @override
   String get messageRecallFromChannel => '채널에서 거두기';
