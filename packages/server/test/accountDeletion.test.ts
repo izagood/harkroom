@@ -25,7 +25,11 @@ const me = (token: string) => app.inject({ method: 'GET', url: '/auth/me', heade
 beforeAll(async () => {
   const db = await startTestDb(); stop = db.stop; pool = db.pool;
   storageRoot = await mkdtemp(join(tmpdir(), 'harkroom-acctdel-'));
-  app = await buildServer({ pool: db.pool, storage: { root: storageRoot, maxBytes: 4096 } });
+  // 이 파일은 사람을 열 명 넘게 만든다 — 주소 단위 가입 상한(signup 10)에 걸리지 않게 넓힌다.
+  app = await buildServer({
+    pool: db.pool, storage: { root: storageRoot, maxBytes: 4096 },
+    rateLimits: { login: { windowMs: 60_000, max: 1000 }, signup: { windowMs: 60_000, max: 1000 } },
+  });
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
 });
 afterAll(async () => { await app.close(); await stop(); await rm(storageRoot, { recursive: true, force: true }); });
