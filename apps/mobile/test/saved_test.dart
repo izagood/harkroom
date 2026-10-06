@@ -411,6 +411,11 @@ void main() {
       final semantics = tester.ensureSemantics();
       expect(tester.getSemantics(card).label, '저장 2');
       expect(tester.getSemantics(find.byKey(const Key('card-new'))).label, '새로 온 것 5');
+      // 묶으면서 탭 동작이 빠지면 안 된다 — 카드 셋 모두(designer #1236).
+      for (final key in ['card-my-turn', 'card-new', 'card-saved']) {
+        expect(tester.getSemantics(find.byKey(Key(key))).getSemanticsData().hasAction(SemanticsAction.tap), isTrue,
+            reason: '$key 에 tap 동작이 없다');
+      }
       semantics.dispose();
       await tester.tap(card);
       await tester.pump();

@@ -362,6 +362,9 @@ class _ShortcutCard extends StatelessWidget {
       button: true,
       selected: selected,
       label: '$label $count',
+      // 안쪽 InkWell 을 의미 트리에서 뺐으니 누르는 동작을 여기에 다시 단다 — 없으면 TalkBack·스위치 제어에서
+      // 「버튼인데 안 눌리는」 카드가 된다(designer #1236).
+      onTap: onTap,
       excludeSemantics: true,
       child: Material(
         color: selected ? k.surfaceHover : k.surface,
