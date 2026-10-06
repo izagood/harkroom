@@ -288,13 +288,18 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
      * `flex-1` 을 버린 이유: `flex-1` 은 `flex-basis: 0%` 라 `width` 를 덮는다. 대신
      * `flex-shrink` 기본값(1)을 그대로 둬서, 창이 좁아지면 고른 폭보다 줄어들되
      * `minWidth` 아래로는 안 간다 — 전에 `min-w-[480px] flex-1` 이 하던 일과 같다.
+     *
+     * **스레드 창(`fill`)의 `min-h-0`**: 창에서는 이 패널이 세로(`flex-col`) 칸의 자식이라 `flex-1` 이
+     * **높이**를 정한다. flex 칸의 기본 최소 높이는 내용 높이라서, 없으면 패널이 답글 전체 높이로 자라고
+     * 창 뿌리의 `overflow-hidden` 이 그것을 잘라 목록이 스크롤되지 않았다(2026-10-06 jaebin 실기,
+     * WebKit 실측 680px 창에 스크롤 상자 5326px). 메인에서는 가로 칸의 자식이라 늘이기로 높이를 받는다.
      */
     <GalleryScopeContext.Provider value={gallery}>
     <section
       /* `ChannelPane` 과 같은 이유로 붙은 손잡이다(그 파일의 주석) — 인박스가 자리가 되면서
          한 줄의 형제가 셋이 되었고, 그 순서를 재는 회귀선이 생겼다. */
       data-testid="thread-pane"
-      className={`relative flex flex-col bg-surface-raised ${fill ? 'min-w-0 flex-1' : 'border-l border-border'}`}
+      className={`relative flex flex-col bg-surface-raised ${fill ? 'min-h-0 min-w-0 flex-1' : 'border-l border-border'}`}
       /* 상한은 `paneMaxWidth` 가 적는다(그 함수의 주석) — 터미널과 **같은 결함**을 여기서도
          막는다: 넓은 창에서 고른 폭이 좁은 창에서 그대로 서면 대화가 폭 0 으로 밀린다. */
       style={fill ? undefined : { width: paneWidth, minWidth: paneMin, maxWidth: paneMaxWidth(paneMin, paneReserve) }}
