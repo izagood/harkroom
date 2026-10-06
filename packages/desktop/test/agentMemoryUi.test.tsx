@@ -427,4 +427,45 @@ describe('정리할 것 (#1186 audit)', () => {
     expect(await screen.findByTestId('memory-row-mem/a-one')).toBeTruthy();
     expect(screen.queryByTestId('memory-chips')).toBeNull();
   });
+
+  it('보관 뒤 다시 읽는 동안 목록·칩을 비우지 않는다 — 눌러 둔 칩 필터가 튀지 않는다(n1)', async () => {
+    audit = { ...emptyAudit(), neverRead: ['mem/b-x', 'mem/b-y'] };
+    const c = fakeController([mem('mem/a-one', '# 1'), mem('mem/b-x', '# 2'), mem('mem/b-y', '# 3')]);
+    await open();
+
+    fireEvent.click(await screen.findByTestId('memory-chip-neverRead'));
+    let release!: () => void;
+    c.agentMemory.mockImplementationOnce(() => new Promise((r) => { release = () => r([]); }) as never);
+    fireEvent.click(screen.getByRole('button', { name: 'mem/b-x 보관' }));
+    await screen.findByTestId('memory-notice');
+    // 새 목록이 아직 안 왔다 — 이전 목록과 칩이 그대로이고 필터도 그대로다.
+    expect(screen.getByTestId('memory-chip-neverRead').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('memory-row-mem/b-y')).toBeTruthy();
+    expect(screen.queryByTestId('memory-row-mem/a-one')).toBeNull();
+    expect(screen.queryByText('불러오는 중…')).toBeNull();
+    release();
+  });
+
+  it('한 줄 보관이 300 을 넘기면 이유를 버튼 옆 글로 말한다(n2)', async () => {
+    const lots = Array.from({ length: 300 }, (_, i) => archived(`mem/z${i}q`, `# ${i}`));
+    const c = fakeController([mem('mem/a-one', '# 1'), ...lots]);
+    await open();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 보관' }));
+    expect(c.archiveAgentMemories).not.toHaveBeenCalled();
+    expect(screen.getByTestId('memory-row-overflow').textContent).toBe('오래된 1개가 밀려납니다');
+    fireEvent.click(screen.getByText('그래도 보관'));
+    expect(c.archiveAgentMemories).toHaveBeenCalledWith('id-rusalka', ['mem/a-one']);
+  });
+
+  it('고른 것이 검색에 가려지면 막대가 그 수를 말한다(n4)', async () => {
+    fakeController([mem('mem/a-one', '# 첫째'), mem('mem/b-two', '# 둘째')]);
+    await open();
+
+    fireEvent.click(await screen.findByLabelText('mem/a-one 고르기'));
+    expect(screen.queryByTestId('memory-picked-hidden')).toBeNull();
+    fireEvent.change(screen.getByLabelText('slug·본문에서 찾기'), { target: { value: '둘째' } });
+    expect(screen.getByTestId('memory-picked-hidden').textContent).toBe('필터에 안 걸린 1개 포함');
+  });
 });
+

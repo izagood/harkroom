@@ -711,18 +711,26 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     void getController().listPats(a.id).then(setPats).catch(() => setPats('error'));
   };
 
-  const loadMemories = (a: AgentView) => {
+  /** 지금 화면이 보는 에이전트 — 늦게 온 응답이 다른 에이전트의 목록을 덮지 않게. */
+  const memAgentRef = useRef<string | null>(null);
+  /**
+   * `refresh` 는 같은 에이전트를 다시 읽을 때다(보관·지우기·고치기 뒤). 그때는 **이전 목록과 칩을
+   * 둔 채로** 새 값이 오면 바꾼다 — 비우고 읽으면 누를 때마다 목록·칩이 깜빡이고, 눌러 둔 칩
+   * 필터가 전체로 튀었다가 돌아온다(#1196 designer n1). 비우는 것은 에이전트를 바꿀 때뿐이다.
+   */
+  const loadMemories = (a: AgentView, refresh = false) => {
     if (!canReadSecrets(a)) return;
-    setMemories(null);
+    memAgentRef.current = a.id;
+    const current = () => memAgentRef.current === a.id;
+    if (!refresh) { setMemories(null); setMemAudit(null); }
     void getController().agentMemory(a.id)
-      .then(setMemories)
-      .catch(() => setMemories('error'));
+      .then((list) => { if (current()) setMemories(list); })
+      .catch(() => { if (current()) setMemories('error'); });
     // 표면이 없거나 던지는 것도 "후보 없음"으로 접힌다 — 칩은 덤이고 목록을 막지 않는다.
-    setMemAudit(null);
     void Promise.resolve()
       .then(() => getController().agentMemoryAudit(a.id))
-      .then(setMemAudit)
-      .catch(() => setMemAudit(null));
+      .then((audit) => { if (current()) setMemAudit(audit); })
+      .catch(() => { if (current() && !refresh) setMemAudit(null); });
   };
 
   /**
@@ -753,6 +761,16 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     ? memoryParts.active.filter((m) => memPicked.includes(m.slug)).map((m) => m.slug) : [];
   const memoryPickedArchived = memoryParts
     ? memoryParts.archived.filter((m) => memPicked.includes(m.slug)).map((m) => m.slug) : [];
+  /**
+   * 고른 것 중 지금 검색·칩에 안 걸려 **안 보이는** 수(#1196 designer n4). 필터가 바뀔 때 고르기를
+   * 풀지 않는 이유: 칩을 옮겨 가며 후보를 모으는 것이 주 흐름이다 — 풀면 모은 것이 사라진다.
+   * 대신 막대에 그 수를 말해 보이지 않는 것이 함께 보관되는 것을 모르고 누르지 않게 한다.
+   */
+  const memoryShown = new Set<string>([
+    ...memoryVisible.flatMap((r) => (r.kind === 'item' ? [r.item.slug] : r.group.items.map((m) => m.slug))),
+    ...memoryArchived.map((m) => m.slug),
+  ]);
+  const memoryPickedHidden = memPicked.filter((s) => !memoryShown.has(s)).length;
   /** 이만큼 보관하면 300 상한에서 조용히 밀려나는 수(security n2) — 누르기 전에 말한다. */
   const memoryOverflow = memoryParts ? archiveOverflow(memoryParts.archived.length, memoryPickedActive.length) : 0;
   /**
@@ -793,7 +811,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
         if (tooMany) parts.push(t('agents.memory.unarchiveTooMany', { n: tooMany, max: MAX_MEMORY_ITEMS_PER_ACCOUNT }));
         if (skipped) parts.push(t('agents.memory.batchSkipped', { n: skipped }));
         setMemNotice({ tone: tooMany || skipped ? 'warn' : 'ok', text: parts.join(' · ') });
-        loadMemories(agent);
+        loadMemories(agent, true);
       })
       .catch(() => setError(t('agents.memory.batchFailed')))
       .finally(() => setMemBusy(false));
@@ -811,7 +829,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           onClick={() => {
             setConfirmingSlug(null);
             void getController().deleteAgentMemory(agentId, slug)
-              .then(() => { if (selected) loadMemories(selected); })
+              .then(() => { if (selected) loadMemories(selected, true); })
               .catch(() => setError(t('agents.memory.deleteFailed')));
           }}
         >
@@ -937,7 +955,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             <span className="flex flex-none gap-1">
               <button
                 className="rounded-row border border-warning-border bg-warning-surface px-1.5 text-meta text-warning"
-                title={t('agents.memory.archiveOverflow', { n: 1, max: MAX_ARCHIVED_MEMORIES })}
                 onClick={() => { setConfirmingSlug(null); memoryBatch('archive', [m.slug]); }}
               >
                 {t('agents.memory.archiveOverflowConfirm')}
@@ -945,6 +962,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               <button className="rounded-row border border-border px-1.5 text-meta text-fg-muted" onClick={() => setConfirmingSlug(null)}>
                 {t('agents.memory.keep')}
               </button>
+              {/* 왜 한 번 더 묻는지를 툴팁에만 두지 않는다(#1196 designer n2). */}
+              <span data-testid="memory-row-overflow" className="text-meta text-warning">
+                {t('agents.memory.archiveOverflowShort', { n: 1 })}
+              </span>
             </span>
           ) : (
             <button
@@ -961,7 +982,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
         </div>
         {open && (
           <div className={inGroup ? 'pl-4' : ''}>
-            <MemoryDetail agentId={agentId} entry={m} onChanged={() => { if (selected) loadMemories(selected); }} />
+            <MemoryDetail agentId={agentId} entry={m} onChanged={() => { if (selected) loadMemories(selected, true); }} />
             <div className="flex justify-end px-2 pb-1">{memoryDelete(m.slug, agentId)}</div>
           </div>
         )}
@@ -2740,6 +2761,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     {memPicked.length > 0 && (
                       <div data-testid="memory-picked-bar" className="flex flex-wrap items-center gap-2 rounded-row border border-border bg-surface-sunken px-2 py-1">
                         <span className="text-meta font-medium">{t('agents.memory.picked', { n: memPicked.length })}</span>
+                        {memoryPickedHidden > 0 && (
+                          <span data-testid="memory-picked-hidden" className="text-meta text-warning">
+                            {t('agents.memory.pickedHidden', { n: memoryPickedHidden })}
+                          </span>
+                        )}
                         {memoryPickedActive.length > 0 && (
                           <button
                             data-testid="memory-archive-picked"
@@ -2802,6 +2828,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                             <span className="flex-none rounded-full border border-border-agent px-1.5 text-meta text-fg-agent">
                               {t('agents.memory.coreTag')}
                             </span>
+                            {/* core 는 칩에서 빠지므로(lib `cleanupChips`) 걸린 판이면 카드가 직접 말한다. */}
+                            {memorySplit.core.flaggedAt && (
+                              <span data-testid="memory-flag-badge" className="flex-none rounded-sm bg-warning-surface px-1 text-meta text-warning">
+                                {t('agents.memory.flaggedTag')}
+                              </span>
+                            )}
                             <span className="min-w-0 flex-1 truncate text-meta text-fg-subtle">
                               {memorySummary(memorySplit.core.value)}
                             </span>
@@ -2833,7 +2865,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         <div className="mt-1 text-meta text-fg-subtle">{t('agents.memory.coreNote')}</div>
                         {openSlugs.includes(memorySplit.core.slug) && (
                           <div className="mt-1">
-                            <MemoryDetail agentId={selected.id} entry={memorySplit.core} onChanged={() => loadMemories(selected)} />
+                            <MemoryDetail agentId={selected.id} entry={memorySplit.core} onChanged={() => loadMemories(selected, true)} />
                           </div>
                         )}
                       </div>

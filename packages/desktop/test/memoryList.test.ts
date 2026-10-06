@@ -230,4 +230,13 @@ describe('정리 칩 (#1186)', () => {
     });
     expect(usedWithin([e('a', 1, null), e('b', 30, 2), e('c', 30, null), e('d', null, null)], 7, now)).toBe(2);
   });
+
+  it('core 는 칩에서 뺀다 — 카드에 서므로 눌렀을 때 줄 수와 어긋난다(n6)', () => {
+    const chips = cleanupChips({
+      ...base(), flagged: [{ slug: 'core', reason: 'x' }, { slug: 'a', reason: null }],
+      brokenLinks: [{ slug: 'core', target: 'gone' }],
+    }, new Set());
+    expect(chips.map((c) => [c.key, [...c.slugs]])).toEqual([['flagged', ['a']]]);
+  });
 });
+

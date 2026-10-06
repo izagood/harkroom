@@ -287,6 +287,9 @@ export function cleanupChips(audit: MemoryAudit, archivedSlugs: ReadonlySet<stri
     expiringJournal: new Set(audit.expiringJournal),
     undescribed: new Set(audit.undescribed),
   };
+  // core 는 목록 줄이 아니라 위 카드에 선다 — 칩 숫자에 넣으면 눌렀을 때 보이는 줄 수와 하나 어긋난다.
+  // audit 은 `flagged`·`brokenLinks` 에 core 를 넣는다(서버 `auditMemory` 의 judged 밖).
+  for (const set of Object.values(sets)) set.delete(CORE_SLUG);
   return CLEANUP_CHIPS
     .map((key) => ({ key, slugs: sets[key], truncated: key === 'pairs' && audit.truncated }))
     .filter((c) => c.slugs.size > 0);
