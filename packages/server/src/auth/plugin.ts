@@ -108,7 +108,17 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
       // 사람 PAT 로 서버에 말하지 않는다(사람은 세션, 러너는 에이전트 PAT·오퍼레이터 토큰).
       `select ${ACCOUNT_COLS} from pat p join account a on a.id = p.account_id
        where p.token_hash = $1 and p.revoked_at is null and a.deleted_at is null and a.kind = 'agent'`, [hash]);
-    if (viaPat.rowCount) { req.account = viaPat.rows[0]; req.credentialHash = hash; req.authVia = 'pat'; }
+    if (viaPat.rowCount) {
+      req.account = viaPat.rows[0]; req.credentialHash = hash; req.authVia = 'pat';
+      // 마지막으로 쓴 때(103). PAT 인증을 걷어낼지 이 기록으로 정한다 — 그래서 성공한 인증만 적는다.
+      // 5분 안에 이미 적었으면 행을 건드리지 않는다(요청마다 쓰기가 되지 않게). 기록이 실패해도
+      // 인증은 막지 않는다: 관찰용 칸 하나 때문에 에이전트가 401 을 받으면 안 된다.
+      await pool.query(
+        `update pat set last_used_at = now()
+          where token_hash = $1 and (last_used_at is null or last_used_at < now() - interval '5 minutes')`,
+        [hash],
+      ).catch(() => {});
+    }
   });
 
   app.decorate('requireAccount', async (req: FastifyRequest, reply: FastifyReply) => {

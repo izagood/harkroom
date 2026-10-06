@@ -75,7 +75,8 @@ describe('감사 추적 — 기록', () => {
   });
 
   // PAT 행은 토큰을 받은 에이전트만 가리킨다 — 누가 그 권한을 줬는지는 어디에도 없었다.
-  it('records who issued and who revoked an agent PAT', async () => {
+  // 발급 라우트는 410 이라(103) 픽스처가 서비스로 찍는다 — 그 감사 줄은 actor 가 비어 있다.
+  it('records the issue and who revoked an agent PAT', async () => {
     const bot = await createAgent(app, adminToken, 'auditbot');
 
     await app.inject({
@@ -84,7 +85,6 @@ describe('감사 추적 — 기록', () => {
 
     const issued = await entries('pat.issued');
     expect(issued).toHaveLength(1);
-    expect(issued[0]!.actorId).toBe(adminId);      // 발급한 admin
     expect(issued[0]!.target).toBe(bot.accountId); // 권한을 받은 에이전트
     const revoked = await entries('pat.revoked');
     expect(revoked).toHaveLength(1);

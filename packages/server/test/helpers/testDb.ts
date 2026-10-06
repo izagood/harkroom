@@ -30,6 +30,19 @@ const withDatabase = (uri: string, name: string): string => {
  * (helpers/globalSetup.ts), 여기서는 마이그레이션이 끝난 템플릿을 복제할 뿐이다 —
  * 격리에 필요한 것은 빈 스키마이지 Postgres 프로세스 하나가 아니다.
  */
+/**
+ * 이 파일(=이 fork)에서 가장 최근에 띄운 DB 의 pool. 앱 라우트로 만들 수 없는 것(PAT — 발급 라우트가
+ * 410 이다)을 픽스처가 서비스 함수로 직접 넣을 때 쓴다. 한 파일이 DB 둘을 **동시에** 띄우면 어느 쪽인지
+ * 모호하므로 그때는 던진다 — 차례로 띄우는 것(stop 뒤 다시 start)은 괜찮다.
+ */
+const livePools = new Set<pg.Pool>();
+export function currentTestPool(): pg.Pool {
+  if (livePools.size !== 1) {
+    throw new Error(`currentTestPool: 살아 있는 테스트 DB 가 ${livePools.size}개다 — pool 을 직접 넘겨라`);
+  }
+  return [...livePools][0]!;
+}
+
 export async function startTestDb(): Promise<TestDb> {
   const base = inject('pgUri');
   // 식별자로 그대로 들어가므로 영숫자만 남긴다(인용부호 없이 안전한 형태).
@@ -50,11 +63,13 @@ export async function startTestDb(): Promise<TestDb> {
   // 프로덕션과 같은 가드를 쓴다. 컨테이너를 공유하게 된 뒤로 테스트 도중 Postgres 가 죽는 일은
   // 없어졌지만, 가드를 벗기면 프로덕션과 다른 Pool 을 테스트하는 셈이 된다.
   const pool = createPool(uri, () => { /* 종료 경합의 FATAL 은 정상이다 */ });
+  livePools.add(pool);
 
   return {
     pool,
     uri,
     stop: async () => {
+      livePools.delete(pool);
       await pool.end();
       // 스위트가 길면 복제본이 쌓인다. 컨테이너가 곧 사라지므로 실패해도 치명적이지 않다 —
       // 정리 실패가 테스트 실패를 덮지 않도록 삼킨다.

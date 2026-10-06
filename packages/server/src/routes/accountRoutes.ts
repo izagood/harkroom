@@ -12,7 +12,6 @@ import {
 import { isEligibleDelegate } from '../services/invokeGate.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { suspendSecretGrants } from '../services/secretAccess.js';
-import { mintPat } from '../services/pats.js';
 import { emitEvent } from '../events.js';
 import {
   deleteMemory, listMemoryEntries, listMemoryRevisions, MAX_CORE_MEMORY_LENGTH, MAX_MEMORY_DESCRIPTION_LENGTH,
@@ -890,7 +889,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
     const res = await pool.query(
-      `select label, created_at, revoked_at from pat where account_id = $1 order by created_at desc`,
+      `select label, created_at, revoked_at, last_used_at from pat where account_id = $1 order by created_at desc`,
       [id],
     );
     return {
@@ -898,22 +897,23 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
         label: r.label,
         createdAt: r.created_at,
         revokedAt: r.revoked_at,
+        lastUsedAt: r.last_used_at,
       })),
     };
   });
 
+  /**
+   * 발급은 닫혔다(410). 러너는 v0.2.9 부터 오퍼레이터 토큰으로 서고, PAT 를 쓰는 경로가 저장소 안에
+   * 없다 — 새로 찍은 토큰은 만료 없는 에이전트 자격증명 한 벌이 늘 뿐이다(결정 스레드 c4f4dab4, security
+   * 789b2375). 화면 버튼만 빼면 API 로는 여전히 찍히므로 라우트에서 닫는다. 목록·폐기는 남는다 — 살아
+   * 있는 옛 토큰을 지울 길이 있어야 한다.
+   */
   app.post('/accounts/:id/pats', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
-    const body = z.object({ label: z.string().min(1).max(64) }).parse(req.body);
-    // 발급 규칙은 services/pats.ts 한 곳이다 — 오퍼레이터 경로와 같은 규칙을 쓴다.
-    const minted = await mintPat(pool, id, body.label, { actorId: req.account!.id, actorHandle: req.account!.handle }, req);
-    if (!minted.ok) {
-      return reply.code(409).send({
-        error: { code: 'label_in_use', message: 'a live token already uses this label — revoke it first or pick another' },
-      });
-    }
-    return reply.code(201).send({ token: minted.token });
+    return reply.code(410).send({
+      error: { code: 'pat_issuance_closed', message: 'agents authenticate through their operator; PATs are no longer issued' },
+    });
   });
 
   // 라벨 단위 폐기다. pat.label 에 유일성이 없어 같은 라벨의 토큰이 여러 개면 전부 폐기된다 —
