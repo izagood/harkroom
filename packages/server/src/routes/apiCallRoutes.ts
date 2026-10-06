@@ -17,7 +17,9 @@ const base = {
   path: z.string().min(1).max(2000),
 };
 
-export async function registerApiCallRoutes(app: FastifyInstance, pool: Pool, opts: { keyring: SecretKeyring | null }): Promise<void> {
+export async function registerApiCallRoutes(
+  app: FastifyInstance, pool: Pool, opts: { keyring: SecretKeyring | null; keyMismatch?: boolean },
+): Promise<void> {
   const viaOperator = (req: FastifyRequest, reply: FastifyReply): { agentId: string; operatorId: string } | null => {
     if (req.account!.kind !== 'agent' || !req.operator) {
       void reply.code(403).send({ error: { code: 'forbidden', message: 'only an agent through its operator can do this' } });
@@ -41,6 +43,11 @@ export async function registerApiCallRoutes(app: FastifyInstance, pool: Pool, op
     if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId, token, connector, method and path are required' } });
     const r = await checkApiCall(pool, opts.keyring, { ...who, ...parsed.data });
     void reply.header('cache-control', 'no-store');
+    // 보관소가 키 어긋남으로 꺼졌으면(104) 비밀 보관소 라우트와 같은 말로 답한다 — `no_secret` 은 비밀이 없다는
+    // 뜻으로 읽힌다. kid 이름은 싣지 않는다.
+    if (!r.ok && r.code === 'no_secret' && !opts.keyring && opts.keyMismatch) {
+      return reply.code(409).send({ error: { code: 'secret_key_mismatch', message: 'the secret store is off: its key does not match the stored key check value' } });
+    }
     if (!r.ok) return reply.code(r.code === 'bad_path' ? 400 : r.code === 'no_connector' ? 404 : 403).send({ error: { code: r.code, message: `api call not allowed: ${r.code}` } });
     return {
       allowed: true, connector: r.connectorName, baseUrl: r.baseUrl, authKind: r.authKind, authHeader: r.authHeader,

@@ -3,6 +3,9 @@
 // 판정 없는 보고는 받지 않는다 · 시스템 줄 본문에 키가 없다.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
@@ -92,6 +95,30 @@ describe('api-checks · api-results', () => {
     expect((await check(l, 'GET', '/admin')).json().error.code).toBe('path_not_allowed');
     expect((await check(l, 'GET', '/api/..;/admin')).json().error.code).toBe('bad_path');
     expect((await check(l, 'GET', '/x', 'nope')).statusCode).toBe(404);
+  });
+
+  it('보관소가 키 어긋남(104)으로 꺼졌으면 no_secret 이 아니라 secret_key_mismatch 로 답한다', async () => {
+    // 위 시험이 준 grant 를 그대로 쓴다. 이 kid 의 확인값을 다른 값으로 박아 두고, 디렉터리의 키로 기동한다.
+    await pool.query(`insert into secret_key_check (kid, kcv) values ('mm1', $1)`, [randomBytes(16)]);
+    const dir = mkdtempSync(join(tmpdir(), 'hk-kcv-api-'));
+    writeFileSync(join(dir, 'mm1'), randomBytes(32).toString('base64'));
+    const prev = { dir: process.env.HARKROOM_SECRET_KEYS_DIR, kid: process.env.HARKROOM_SECRET_KEY_ID };
+    process.env.HARKROOM_SECRET_KEYS_DIR = dir;
+    delete process.env.HARKROOM_SECRET_KEY_ID;
+    let off: FastifyInstance | undefined;
+    try {
+      off = await buildServer({ pool });
+      const l = await lease();
+      const r = await off.inject({ method: 'POST', url: '/agent/api-checks', headers: asAgent(), payload: { leaseId: l.id, token: l.token, connector: 'lab', method: 'GET', path: '/api/capacity' } });
+      expect(r.statusCode).toBe(409);
+      expect(r.json().error.code).toBe('secret_key_mismatch');
+      expect(r.body).not.toContain('mm1');
+      expect(r.body).not.toContain(KEY);
+    } finally {
+      await off?.close();
+      if (prev.dir === undefined) delete process.env.HARKROOM_SECRET_KEYS_DIR; else process.env.HARKROOM_SECRET_KEYS_DIR = prev.dir;
+      if (prev.kid !== undefined) process.env.HARKROOM_SECRET_KEY_ID = prev.kid;
+    }
   });
 
   it('보고는 통과한 판정이 있어야 받고, 한 판정에 한 번이며, 시스템 줄에 키가 없다', async () => {

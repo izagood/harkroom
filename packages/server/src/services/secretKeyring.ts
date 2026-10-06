@@ -136,9 +136,3 @@ export function loadSecretKeys(dir: string | undefined, activeKid: string | unde
   if (!keys.has(kid)) throw new Error(`secret keyring: 활성 kid '${kid}' 의 키가 없다`);
   return { keys, activeKid: kid };
 }
-
-/** 키 확인 없이 키링을 만든다. 서버 기동은 `verifySecretKeys`(secretKeyCheck.ts)를 거친다. */
-export function loadSecretKeyring(dir: string | undefined, activeKid: string | undefined): SecretKeyring | null {
-  const loaded = loadSecretKeys(dir, activeKid);
-  return loaded ? createSecretKeyring(loaded.keys, loaded.activeKid) : null;
-}
