@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createMentionScheduler, DONE_UNREAD_MAX_MS, GATE_REQUEUE_MAX, GATE_WAIT_MAX_MS, type BatchContext } from '../src/mentionScheduler.js';
+import { createMentionScheduler, DONE_UNREAD_MAX_MS, GATE_REQUEUE_MAX, GATE_WAIT_MAX_MS, RECENTLY_DONE_MS, type BatchContext } from '../src/mentionScheduler.js';
 import { AccountGateRequeueError } from '../src/mentionTurn.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
 import { MentionQueue } from '../src/mentionQueue.js';
@@ -207,6 +207,70 @@ describe('mentionScheduler 승인 관문', () => {
 
     gate.resolve({ stopRequestedAt: null });
     await scheduler.drain();
+  });
+
+  /**
+   * wake 두 번 뜸(2026-10-06, task_manager wake 턴 70건 중 9건). 폴 루프는 묶음을 받은 뒤 `channels()`·
+   * `accounts()` 를 await 하고서야 admit 한다. 그 사이 턴이 끝나 읽음 처리되면, 묵은 묶음에 남은 같은
+   * entry 가 장부(`inFlightEntries`)에도 `doneUnread` 에도 없어 턴을 한 번 더 띄웠다.
+   *
+   * 되돌려 RED: admit 의 `recentlyDone` 검사(또는 finishMany 의 기록)를 지우면 `calls` 가 2 가 된다.
+   */
+  it('턴이 끝난 뒤에 도착한 묵은 묶음에 같은 entry 가 있으면 다시 띄우지 않는다 — 읽음 처리도 다시 안 한다', async () => {
+    let calls = 0;
+    const gate = deferred<MentionTurnResult>();
+    const { scheduler, markReadCalls } = harness({ runTurn: () => { calls += 1; return gate.promise; } });
+    const batch = () => batchOf([{ entryId: 5, messageId: 'm-wake', threadRootId: 'root-5' }]);
+
+    expect(await scheduler.admit(batch(), ctx)).toMatchObject({ started: 1 });
+    // 폴 루프가 턴이 도는 동안 받은 묶음 — entry 5 는 아직 미읽음이라 실려 있다.
+    const stale = batch();
+    // 그 묶음이 channels()·accounts() 를 기다리는 사이 턴이 끝나 읽음 처리된다.
+    gate.resolve({ stopRequestedAt: null });
+    await scheduler.drain();
+    expect(markReadCalls).toEqual([[5]]);
+
+    const out = await scheduler.admit(stale, ctx);
+    expect(out).toMatchObject({ started: 0, skipped: 1, blocked: 0 });
+    await scheduler.drain();
+    expect(calls).toBe(1);
+    expect(markReadCalls).toEqual([[5]]);
+  });
+
+  it('끝낸 entry 의 기억은 RECENTLY_DONE_MS 뒤에 지운다 — 표가 러너 수명 내내 자라지 않게', async () => {
+    let t = 1_000;
+    let calls = 0;
+    const { scheduler } = harness({ now: () => t, runTurn: async () => { calls += 1; return { stopRequestedAt: null }; } });
+    const batch = () => batchOf([{ entryId: 6, messageId: 'm-6' }]);
+
+    await scheduler.admit(batch(), ctx);
+    await scheduler.drain();
+    t += RECENTLY_DONE_MS - 1;
+    expect(await scheduler.admit(batch(), ctx)).toMatchObject({ started: 0, skipped: 1 });
+    // 상한 뒤엔 inbox 를 믿는다 — 서버가 같은 entry 를 다시 주면 그것은 진짜 미읽음이다.
+    t += 2;
+    expect(await scheduler.admit(batch(), ctx)).toMatchObject({ started: 1 });
+    await scheduler.drain();
+    expect(calls).toBe(2);
+  });
+
+  it('재시도로 미룬 entry 는 끝낸 것으로 기억하지 않는다 — 백오프 뒤 다시 뜬다', async () => {
+    let t = 1_000;
+    let calls = 0;
+    const { scheduler, markedRead } = harness({
+      now: () => t,
+      runTurn: async () => { calls += 1; if (calls === 1) throw new Error('boom'); return { stopRequestedAt: null }; },
+    });
+    const batch = () => batchOf([{ entryId: 8, messageId: 'm-8' }]);
+
+    await scheduler.admit(batch(), ctx);
+    await scheduler.drain();
+    expect(markedRead).toEqual([]);
+    t += 10 * 60 * 1000;
+    expect(await scheduler.admit(batch(), ctx)).toMatchObject({ started: 1 });
+    await scheduler.drain();
+    expect(calls).toBe(2);
+    expect(markedRead).toEqual([8]);
   });
 
   it('메시지가 없는 고아 entry 는 턴 없이 읽음 처리한다', async () => {
