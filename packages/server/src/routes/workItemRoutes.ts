@@ -29,7 +29,7 @@ export async function registerWorkItemRoutes(app: FastifyInstance, pool: Pool): 
     }).parse(req.query);
     const ownerId = await resolveWorkItemOwner(pool, req.account!);
     if (!ownerId) return reply.code(403).send({ error: { code: 'no_owner', message: WORK_ITEM_REFUSAL_MESSAGE.no_owner } });
-    return { items: await listWorkItems(pool, ownerId, q) };
+    return { items: await listWorkItems(pool, ownerId, req.account!, q) };
   });
 
   app.put('/work-items', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -55,7 +55,7 @@ export async function registerWorkItemRoutes(app: FastifyInstance, pool: Pool): 
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     const ownerId = await resolveWorkItemOwner(pool, req.account!);
     if (!ownerId) return reply.code(403).send({ error: { code: 'no_owner', message: WORK_ITEM_REFUSAL_MESSAGE.no_owner } });
-    if (!(await removeWorkItem(pool, ownerId, { id }))) {
+    if (!(await removeWorkItem(pool, ownerId, req.account!, { id }))) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such work item' } });
     }
     emitEvent({ type: 'inbox.updated', accountId: ownerId });

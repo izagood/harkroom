@@ -57,6 +57,20 @@ export async function resolveWorkItemOwner(
   return res.rows[0]?.id ?? null;
 }
 
+/**
+ * 보드를 만지는 쪽. 주인 본인이면 보드 전부를, **주인이 아닌 계정(그 사람의 에이전트)이면 자기도 지금 볼 수
+ * 있는 스레드에 붙은 항목만** 읽고 지우고 고쳐 쓴다. 에이전트는 주인 아닌 사람의 글로도 깨어나므로, 주인 보드
+ * 전체(비공개 채널·DM 에 붙은 항목, 스레드 없이 손으로 건 PR·티켓)를 그대로 돌려주면 시킨 사람의 채널로 샌다.
+ */
+export interface WorkItemActor { id: string; kind: string }
+
+/** 주인이 아닌 쪽이 이 항목을 다룰 수 있나 — 스레드에 붙어 있고, 그 루트가 그 계정에게 지금 보인다. */
+function actorSeesItemSql(w: string, actorParam: string): string {
+  return `(${w}.thread_root_id is not null and exists (
+    select 1 from message am join channel ac on ac.id = am.channel_id
+     where am.id = ${w}.thread_root_id and am.deleted_at is null and ${channelVisibleSql('ac', actorParam)}))`;
+}
+
 const COLUMNS = `w.id, w.source, w.external_key as "externalKey", w.url, w.title, w.state,
   w.thread_root_id as "threadRootId", w.updated_by as "updatedBy",
   w.created_at as "createdAt", w.updated_at as "updatedAt"`;
@@ -125,10 +139,16 @@ export async function upsertWorkItem(
     // 상한은 주인 단위로 센다. 같은 주인의 동시 쓰기가 상한을 같이 넘지 않게 주인마다 트랜잭션 잠금을 건다
     // (account 행을 잠그면 무관한 계정 갱신까지 기다린다).
     await client.query(`select pg_advisory_xact_lock(hashtextextended($1::text, 110))`, [ownerId]);
-    const existing = await client.query(
-      `select 1 from work_item where owner_account_id = $1 and source = $2 and external_key = $3`,
-      [ownerId, source, externalKey],
+    const existing = await client.query<{ actor_sees: boolean }>(
+      `select ${actorSeesItemSql('w', '$4')} as actor_sees
+         from work_item w where w.owner_account_id = $1 and w.source = $2 and w.external_key = $3`,
+      [ownerId, source, externalKey, actorId],
     );
+    // 주인이 아닌 쪽은 자기가 못 보는 기존 항목을 덮지 못한다 — 같은 키로 url·제목·스레드를 바꿔치는 길.
+    if (existing.rows[0] && actorId !== ownerId && !existing.rows[0].actor_sees) {
+      await client.query('rollback');
+      return { refused: 'thread_forbidden' };
+    }
     if (!existing.rowCount) {
       const n = await client.query<{ n: number }>(
         `select count(*)::int as n from work_item where owner_account_id = $1`, [ownerId],
@@ -159,13 +179,16 @@ export async function upsertWorkItem(
 
 /**
  * 주인의 항목. 붙은 스레드가 **지금** 주인에게 안 보이면(채널에서 빠짐·비공개 전환) 그 항목은 싣지 않는다 —
- * 붙일 때의 가시성으로 영원히 보여 주면 #1079 가 막은 길이 여기서 다시 열린다.
+ * 붙일 때의 가시성으로 영원히 보여 주면 #1079 가 막은 길이 여기서 다시 열린다. 주인이 아닌 쪽에게는
+ * `WorkItemActor` 의 범위만 싣는다.
  */
 export async function listWorkItems(
-  pool: Pool, ownerId: string, filter: { threadRootId?: string; source?: WorkItemSource } = {},
+  pool: Pool, ownerId: string, actor: WorkItemActor,
+  filter: { threadRootId?: string; source?: WorkItemSource } = {},
 ): Promise<WorkItem[]> {
   const params: unknown[] = [ownerId];
   const where = ['w.owner_account_id = $1'];
+  if (actor.id !== ownerId) { params.push(actor.id); where.push(actorSeesItemSql('w', `$${params.length}`)); }
   if (filter.threadRootId) { params.push(filter.threadRootId); where.push(`w.thread_root_id = $${params.length}`); }
   if (filter.source) { params.push(filter.source); where.push(`w.source = $${params.length}`); }
   const res = await pool.query(
@@ -182,16 +205,22 @@ export async function listWorkItems(
   return res.rows.map(toItem);
 }
 
-/** 주인의 항목 하나를 지운다 — id 또는 (source, 바깥 키). 남의 것은 아무 것도 지우지 않는다. */
+/**
+ * 주인의 항목 하나를 지운다 — id 또는 (source, 바깥 키). 남의 것은 아무 것도 지우지 않는다. 주인이 아닌 쪽은
+ * `WorkItemActor` 의 범위 안 것만 지우고, 범위 밖이면 없는 것과 같은 false 다(키가 있는지 새지 않게).
+ */
 export async function removeWorkItem(
-  pool: Pool, ownerId: string, key: { id: string } | { source: WorkItemSource; externalKey: string },
+  pool: Pool, ownerId: string, actor: WorkItemActor,
+  key: { id: string } | { source: WorkItemSource; externalKey: string },
 ): Promise<boolean> {
-  const res = 'id' in key
-    ? await pool.query(`delete from work_item where owner_account_id = $1 and id = $2`, [ownerId, key.id])
-    : await pool.query(
-      `delete from work_item where owner_account_id = $1 and source = $2 and external_key = $3`,
-      [ownerId, key.source, key.externalKey],
-    );
+  const params: unknown[] = [ownerId];
+  const where = ['w.owner_account_id = $1'];
+  if ('id' in key) { params.push(key.id); where.push(`w.id = $${params.length}`); } else {
+    params.push(key.source, key.externalKey);
+    where.push(`w.source = $${params.length - 1}`, `w.external_key = $${params.length}`);
+  }
+  if (actor.id !== ownerId) { params.push(actor.id); where.push(actorSeesItemSql('w', `$${params.length}`)); }
+  const res = await pool.query(`delete from work_item w where ${where.join(' and ')}`, params);
   return (res.rowCount ?? 0) > 0;
 }
 

@@ -180,6 +180,45 @@ describe('MCP workitem.*', () => {
     expect(out.error.code).toBe('thread_forbidden');
   });
 
+  it('에이전트는 자기가 못 보는 항목을 읽지도 지우지도 덮지도 못한다(주인은 다 본다)', async () => {
+    // 주인만 멤버인 비공개 채널에 붙은 항목과, 스레드 없이 손으로 건 항목.
+    const priv = await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'wi-owner-only', visibility: 'private' } });
+    const hidden = await root('주인만 보는 일', priv.json().id);
+    expect((await put(adminToken, { source: 'other', externalKey: 'owner-only', title: '비밀 일', state: 'active', threadRootId: hidden, url: 'https://example.com/a' })).statusCode).toBe(200);
+    expect((await put(adminToken, { source: 'github', externalKey: 'izagood/private#9', title: '비공개 PR', state: 'blocked', url: 'https://github.com/izagood/private/pull/9' })).statusCode).toBe(200);
+    const shared = await root('같이 보는 일');
+    expect((await put(adminToken, { source: 'other', externalKey: 'both-see', title: 'x', state: 'active', threadRootId: shared })).statusCode).toBe(200);
+
+    const keys = (items: { externalKey: string }[]) => items.map((i) => i.externalKey);
+    const viaMcp = keys((await tool(botPat, 'workitem.list', {})).items);
+    expect(viaMcp).toContain('both-see');
+    expect(viaMcp).not.toContain('owner-only');
+    expect(viaMcp).not.toContain('izagood/private#9');
+    const viaRest = keys(await list(botPat));
+    expect(viaRest).toContain('both-see');
+    expect(viaRest).not.toContain('owner-only');
+    expect(viaRest).not.toContain('izagood/private#9');
+    expect(keys(await list(adminToken))).toEqual(expect.arrayContaining(['owner-only', 'izagood/private#9', 'both-see']));
+
+    expect((await tool(botPat, 'workitem.remove', { source: 'other', externalKey: 'owner-only' })).removed).toBe(false);
+    expect((await tool(botPat, 'workitem.remove', { source: 'github', externalKey: 'izagood/private#9' })).removed).toBe(false);
+    const ownerOnly = (await list(adminToken)).find((i) => i.externalKey === 'owner-only')!;
+    const del = await app.inject({ method: 'DELETE', url: `/work-items/${ownerOnly.id}`, headers: auth(botPat) });
+    expect(del.statusCode).toBe(404);
+
+    // 같은 키로 덮어 url·스레드를 바꿔치지 못한다.
+    const over = await tool(botPat, 'workitem.upsert', { source: 'other', externalKey: 'owner-only', title: '바꿈', state: 'active', threadRootId: shared, url: 'https://evil.example' });
+    expect(over.error.code).toBe('thread_forbidden');
+    const overPr = await tool(botPat, 'workitem.upsert', { source: 'github', externalKey: 'izagood/private#9', title: '바꿈', state: 'done', url: 'https://evil.example' });
+    expect(overPr.error.code).toBe('thread_forbidden');
+    const after = (await list(adminToken)).filter((i) => i.externalKey === 'owner-only' || i.externalKey === 'izagood/private#9');
+    expect(after.map((i) => i.title).sort()).toEqual(['비공개 PR', '비밀 일']);
+
+    // 보이는 것은 지금처럼 고치고 뗀다.
+    expect((await tool(botPat, 'workitem.upsert', { source: 'other', externalKey: 'both-see', title: '고침', state: 'done', threadRootId: shared })).item.title).toBe('고침');
+    expect((await tool(botPat, 'workitem.remove', { source: 'other', externalKey: 'both-see' })).removed).toBe(true);
+  });
+
   it('주인 없는 에이전트는 쓸 보드가 없다', async () => {
     const out = await tool(orphanPat, 'workitem.upsert', { source: 'other', externalKey: 'nobody', title: 'x', state: 'active' });
     expect(out.error.code).toBe('no_owner');

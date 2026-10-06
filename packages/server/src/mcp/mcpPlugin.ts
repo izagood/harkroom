@@ -1767,7 +1767,7 @@ function buildMcpServer(
   });
 
   server.registerTool('workitem.list', {
-    description: '내 주인의 보드에 걸린 작업 항목(threadRootId·source 로 좁힘)',
+    description: '내 주인의 보드에 걸린 작업 항목 가운데 내가 볼 수 있는 스레드에 붙은 것(threadRootId·source 로 좁힘)',
     inputSchema: {
       threadRootId: z.string().uuid().optional(),
       source: z.enum(WORK_ITEM_SOURCES).optional(),
@@ -1775,7 +1775,7 @@ function buildMcpServer(
   }, async ({ threadRootId, source }) => {
     const ownerId = await resolveWorkItemOwner(pool, account);
     if (!ownerId) return jsonResult({ error: { code: 'no_owner', message: WORK_ITEM_REFUSAL_MESSAGE.no_owner } });
-    return jsonResult({ items: await listWorkItems(pool, ownerId, { threadRootId, source }) });
+    return jsonResult({ items: await listWorkItems(pool, ownerId, account, { threadRootId, source }) });
   });
 
   server.registerTool('workitem.remove', {
@@ -1787,7 +1787,7 @@ function buildMcpServer(
   }, async ({ source, externalKey }) => {
     const ownerId = await resolveWorkItemOwner(pool, account);
     if (!ownerId) return jsonResult({ error: { code: 'no_owner', message: WORK_ITEM_REFUSAL_MESSAGE.no_owner } });
-    const removed = await removeWorkItem(pool, ownerId, { source, externalKey });
+    const removed = await removeWorkItem(pool, ownerId, account, { source, externalKey });
     if (removed) emitEvent({ type: 'inbox.updated', accountId: ownerId });
     return jsonResult({ removed });
   });
