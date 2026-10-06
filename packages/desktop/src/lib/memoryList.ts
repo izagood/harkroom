@@ -424,3 +424,55 @@ export const MAX_ROW_REASONS = 2;
 function isArchivedTarget(target: string, archived: ReadonlySet<string>): boolean {
   return archived.has(target) || archived.has(`mem/${target}`);
 }
+
+/**
+ * 「정리 맡기기」의 범위(Memory 탭 PR 5, 결정 3: 그 에이전트와의 DM). 합치기·증류처럼 **판단이
+ * 필요한 일**은 사람 화면에 버튼으로 두지 않고 그 기억을 쓴 에이전트에게 맡긴다 — 그 에이전트는
+ * `memory.merge`·`memory.archive` 와 정리 임대를 이미 갖고 있다.
+ */
+export const CLEANUP_SCOPES = ['merge', 'distill', 'describe', 'links', 'archiveUnused', 'picked'] as const;
+export type CleanupScope = typeof CLEANUP_SCOPES[number];
+
+/** 범위마다 걸린 기억(지금 화면이 아는 audit·고른 것에서). 0 인 범위는 고를 수 없다. */
+export function cleanupScopeSlugs(
+  chips: CleanupChipView[], picked: string[],
+): Record<CleanupScope, string[]> {
+  const of = (k: CleanupChip) => [...(chips.find((c) => c.key === k)?.slugs ?? [])].sort();
+  return {
+    merge: of('pairs'),
+    distill: of('expiringJournal'),
+    describe: of('undescribed'),
+    links: of('brokenLinks'),
+    archiveUnused: [...new Set([...of('stale'), ...of('neverRead')])].sort(),
+    picked: [...picked].sort(),
+  };
+}
+
+/** 범위 하나에 싣는 이름 수의 상한 — 나머지는 수로만 말한다(에이전트가 audit 으로 다시 찾는다). */
+export const CLEANUP_SLUGS_PER_SCOPE = 30;
+
+/** slug 문법(서버 `isValidSlug` 와 같은 글자). 이 밖의 글자가 든 이름은 DM 에 싣지 않는다. */
+const SAFE_SLUG = /^(core|mem\/[a-z0-9_\-/]{1,250})$/;
+
+/**
+ * DM 초안. **기억의 본문·요약은 싣지 않는다** — 이름(slug)과 범위만. 두 가지 이유다:
+ * ① 본문은 에이전트가 쓴 글이라 DM 에 그대로 옮기면 사람이 보낸 지시처럼 읽힐 수 있다(지시문 섞임).
+ * ② 에이전트는 본문을 `memory.get` 으로 직접 읽는다 — 싣는 것은 노출만 늘린다.
+ * slug 는 문법이 좁은 글자만 받고(`SAFE_SLUG`) 백틱 안에 둔다 — 멘션·채널 토큰으로 읽히지 않게.
+ * 범위 이름과 절차 문구는 화면 사전에서 온다(`t`).
+ */
+export function cleanupRequestBody(
+  scopes: { scope: CleanupScope; label: string; slugs: string[] }[],
+  text: { intro: string; more: (n: number) => string; outro: string },
+): string {
+  const lines = [text.intro, ''];
+  for (const { label, slugs } of scopes) {
+    const safe = slugs.filter((s) => SAFE_SLUG.test(s));
+    const shown = safe.slice(0, CLEANUP_SLUGS_PER_SCOPE);
+    lines.push(`- ${label} (${safe.length})`);
+    if (shown.length) lines.push(`  ${shown.map((s) => `\`${s}\``).join(' ')}`);
+    if (safe.length > shown.length) lines.push(`  ${text.more(safe.length - shown.length)}`);
+  }
+  lines.push('', text.outro);
+  return lines.join('\n');
+}
