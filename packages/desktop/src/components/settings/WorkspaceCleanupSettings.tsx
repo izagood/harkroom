@@ -158,6 +158,10 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
           </button>
         </div>
         {/* 꺼져 있으면 「미룸」의 이유("다음 정리 때 다시 본다"·"러너가 다시 붙으면 지운다")도 사실이 아니다 — ⚠ 만 남긴다. */}
+        {/* 오른쪽 칸은 짧게 두고(제목이 잘리지 않게, designer n1) 긴 설명은 이유 줄 자리로. */}
+        {row.tone === 'deleting' && !off && (
+          <p className="mt-2 text-meta text-fg-muted" data-testid="cleanup-deleting-note">{t('cleanup.deletingNote')}</p>
+        )}
         {row.deferReason && !off && (
           <p className="mt-2 text-meta text-fg-muted" data-testid="cleanup-reason">{t(DEFER_KEY[row.deferReason])}</p>
         )}
