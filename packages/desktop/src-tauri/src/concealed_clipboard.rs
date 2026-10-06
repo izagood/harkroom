@@ -13,6 +13,7 @@
 //! Alfred 같은 기록 앱은 이 표지가 있으면 저장하지 않는다. Universal Clipboard(기기 간 동기화)는 막지
 //! 못한다 — 화면 경고 문구가 그것을 말한다.
 
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::time::Duration;
 
 /// 비우기까지 기다리는 시간. 화면 문구(`RECOVERY_CLIPBOARD_CLEAR_MS`)와 같다.
@@ -23,16 +24,43 @@ pub fn should_clear(written: isize, now: isize) -> bool {
     written == now
 }
 
+/// 아직 비우지 않은 마지막 쓰기의 changeCount. 없으면 `NONE`.
+///
+/// 60초가 지나기 전에 앱이 끝나면 비우기 스레드도 함께 죽는다 — 그러면 키가 클립보드에 남는다.
+/// 종료 훅(`clear_on_exit`)이 이 값을 보고 한 번 더 비운다.
+static PENDING: AtomicIsize = AtomicIsize::new(NONE);
+const NONE: isize = isize::MIN;
+
 /// 클립보드에 감춘 표지와 함께 쓰고, `CLEAR_AFTER` 뒤 그대로면 비운다. 비우기 예약까지 하면 `Ok`.
 #[tauri::command]
 pub fn clipboard_write_concealed(text: String) -> Result<(), String> {
     let written = imp::write_concealed(&text)?;
     drop(text);
+    PENDING.store(written, Ordering::SeqCst);
     std::thread::spawn(move || {
         std::thread::sleep(CLEAR_AFTER);
-        imp::clear_if_unchanged(written);
+        // 그 사이 더 새로 쓴 것이 있으면 그쪽 스레드·종료 훅에 맡긴다.
+        if take_pending_if(written) {
+            imp::clear_if_unchanged(written);
+        }
     });
     Ok(())
+}
+
+/// 앱이 끝날 때 부른다(main.rs `RunEvent::Exit`). 아직 비우지 않은 쓰기가 있고 그 뒤 클립보드가
+/// 바뀌지 않았으면 비운다. 사람이 그 사이 다른 것을 복사했으면 건드리지 않는다.
+pub fn clear_on_exit() {
+    let written = PENDING.swap(NONE, Ordering::SeqCst);
+    if written != NONE {
+        imp::clear_if_unchanged(written);
+    }
+}
+
+/// `PENDING` 이 아직 `written` 이면 비우고 참. 다른 값(더 새 쓰기·이미 비움)이면 거짓.
+fn take_pending_if(written: isize) -> bool {
+    PENDING
+        .compare_exchange(written, NONE, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
 }
 
 #[cfg(target_os = "macos")]
@@ -106,6 +134,17 @@ mod tests {
     fn clears_only_when_nothing_changed_since_the_write() {
         assert!(should_clear(7, 7));
         assert!(!should_clear(7, 8));
+    }
+
+    #[test]
+    fn the_exit_hook_and_the_timer_clear_a_write_at_most_once() {
+        PENDING.store(41, Ordering::SeqCst);
+        // 더 새 쓰기(42)가 오면 옛 타이머(41)는 손대지 않는다.
+        PENDING.store(42, Ordering::SeqCst);
+        assert!(!take_pending_if(41));
+        // 새 쓰기의 타이머가 가져가면 종료 훅에는 남은 것이 없다.
+        assert!(take_pending_if(42));
+        assert_eq!(PENDING.swap(NONE, Ordering::SeqCst), NONE);
     }
 
     #[test]

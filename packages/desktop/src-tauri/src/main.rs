@@ -915,8 +915,14 @@ fn main() {
             operator_mcp_auth,
             operator_agent_remove,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Harkroom");
+        .build(tauri::generate_context!())
+        .expect("error while building Harkroom")
+        .run(|_app, event| {
+            // 복구 키를 복사하고 60초가 지나기 전에 앱을 끄면 비우기 스레드가 함께 죽는다 — 끝나기 전에 한 번 비운다.
+            if let tauri::RunEvent::Exit = event {
+                concealed_clipboard::clear_on_exit();
+            }
+        });
 }
 
 #[cfg(all(test, unix))]
