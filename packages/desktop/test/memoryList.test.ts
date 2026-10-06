@@ -5,6 +5,7 @@
 // 잰다. 화면이 이 결과를 그리는지는 `agentMemoryUi.test.tsx` 가 따로 본다.
 import { describe, it, expect } from 'vitest';
 import {
+  archiveOverflow, archivedLinks, chipCount, cleanupChips, usedWithin, type MemoryAudit,
   filterMemories, memorySummary, memoryGroupKey, memoryRows, splitArchived, splitCore, MIN_GROUP_SIZE,
   type MemoryEntry,
 } from '../src/lib/memoryList';
@@ -186,3 +187,56 @@ describe('filterMemories — 검색어로만 거른다', () => {
     expect(filterMemories(list, '알파').map((e) => e.slug)).toEqual(['mem/beta']);
   });
 });
+
+describe('정리 칩 (#1186)', () => {
+  const base = (): MemoryAudit => ({
+    core: null, neverRead: [], stale: [], brokenLinks: [], similar: [], similarBody: [], undescribed: [],
+    flagged: [], expiringJournal: [], truncated: false, items: { active: 0, limit: 200, archived: 0 },
+  });
+
+  it('짝 칩은 similar·similarBody 를 합쳐 기억 수로 센다', () => {
+    const chips = cleanupChips({
+      ...base(),
+      similar: [['a', 'b'], ['a', 'c']],
+      similarBody: [{ pair: ['b', 'a'], similarity: 0.7 }],
+    }, new Set());
+    expect(chips.map((c) => [c.key, c.slugs.size])).toEqual([['pairs', 3]]);
+  });
+
+  it('잘렸으면 짝 칩에만 + 가 붙는다', () => {
+    const chips = cleanupChips({ ...base(), similar: [['a', 'b']], neverRead: ['x'], truncated: true }, new Set());
+    expect(chips.map(chipCount)).toEqual(['1', '2+']);
+  });
+
+  it('보관된 것을 가리키는 링크는 깨짐에서 빼고 따로 준다', () => {
+    const audit = { ...base(), brokenLinks: [{ slug: 'a', target: 'old' }, { slug: 'b', target: 'gone' }] };
+    const archived = new Set(['old']);
+    expect(cleanupChips(audit, archived).find((c) => c.key === 'brokenLinks')!.slugs).toEqual(new Set(['b']));
+    expect(archivedLinks(audit, archived)).toEqual(new Map([['a', ['old']]]));
+  });
+
+  it('보관 300 을 넘는 만큼만 경고한다', () => {
+    expect(archiveOverflow(298, 2)).toBe(0);
+    expect(archiveOverflow(298, 5)).toBe(3);
+  });
+
+  it('최근 쓰임은 읽힘·recall 중 하나라도 기간 안이면 센다', () => {
+    const now = Date.UTC(2026, 9, 6);
+    const day = 86_400_000;
+    const e = (slug: string, r: number | null, c: number | null) => ({
+      slug, value: '', updatedAt: '',
+      lastReadAt: r === null ? null : new Date(now - r * day).toISOString(),
+      lastRecalledAt: c === null ? null : new Date(now - c * day).toISOString(),
+    });
+    expect(usedWithin([e('a', 1, null), e('b', 30, 2), e('c', 30, null), e('d', null, null)], 7, now)).toBe(2);
+  });
+
+  it('core 는 칩에서 뺀다 — 카드에 서므로 눌렀을 때 줄 수와 어긋난다(n6)', () => {
+    const chips = cleanupChips({
+      ...base(), flagged: [{ slug: 'core', reason: 'x' }, { slug: 'a', reason: null }],
+      brokenLinks: [{ slug: 'core', target: 'gone' }],
+    }, new Set());
+    expect(chips.map((c) => [c.key, [...c.slugs]])).toEqual([['flagged', ['a']]]);
+  });
+});
+

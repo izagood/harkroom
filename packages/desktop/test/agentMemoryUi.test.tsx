@@ -19,6 +19,7 @@ import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
+import type { MemoryAudit } from '../src/lib/memoryList';
 
 const agent = (handle: string): AgentView => ({
   id: `id-${handle}`, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [],
@@ -38,6 +39,15 @@ const archived = (slug: string, value: string, day = 4) => ({
   ...mem(slug, value), archivedAt: new Date(Date.UTC(2026, 8, day)).toISOString(),
 });
 
+/** 정리 후보(#1186). 기본은 후보 없음 — 옛 시험들은 칩 없이 그린다. */
+const emptyAudit = (): MemoryAudit => ({
+  core: null, neverRead: [], stale: [], brokenLinks: [], similar: [], similarBody: [], undescribed: [],
+  flagged: [], expiringJournal: [], truncated: false, items: { active: 0, limit: 200, archived: 0 },
+});
+let audit: MemoryAudit | null = null;
+/** 되살리기에서 자리가 있는 수 — 그 뒤의 것은 `too_many`. */
+let unarchiveRoom = Infinity;
+
 const fakeController = (memories: (ReturnType<typeof mem> & { archivedAt?: string })[]) => {
   const c = {
     listAgents: vi.fn(async (): Promise<AgentView[]> => [agent('rusalka')]),
@@ -45,7 +55,12 @@ const fakeController = (memories: (ReturnType<typeof mem> & { archivedAt?: strin
     agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
       { harness: 'claude-code', model: null, effort: null }
     )),
-    agentMemory: vi.fn(async () => memories),
+    agentMemory: vi.fn(async (_id: string) => memories),
+    agentMemoryAudit: vi.fn(async () => audit),
+    agentMemoryRevisions: vi.fn(async () => []),
+    archiveAgentMemories: vi.fn(async (_id: string, slugs: string[]) => slugs.map((slug) => ({ slug, result: 'ok' }))),
+    unarchiveAgentMemories: vi.fn(async (_id: string, slugs: string[]) => slugs.map((slug, i) => (
+      { slug, result: i < unarchiveRoom ? 'ok' : 'too_many' }))),
     deleteAgentMemory: vi.fn(async (): Promise<void> => undefined),
     fetchAvatar: vi.fn(async (): Promise<Blob> => new Blob(['png'])),
   };
@@ -55,6 +70,8 @@ const fakeController = (memories: (ReturnType<typeof mem> & { archivedAt?: strin
 
 /** 이 파일의 축은 한국어 문구로 쓰여 있다 — 두 언어로 뜨는지는 `i18n.test.tsx` 가 잰다. */
 beforeEach(() => {
+  audit = null;
+  unarchiveRoom = Infinity;
   usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
@@ -98,13 +115,18 @@ describe('접힌 줄이 기본이다', () => {
   });
 
   /**
-   * 한도에 닿았을 때 사람이 하는 일은 훑으며 지우는 것이다. 지우기를 펼친 뒤에만 보이게
-   * 두면 그때마다 펼치게 되어 접은 값이 도로 사라진다.
+   * 줄의 기본 버튼은 **보관**이다(Memory 탭 결정 2 — 되살릴 수 있다). 되돌릴 수 없는 지우기는
+   * 펼친 안쪽에만 있다.
    */
-  it('접힌 줄에서도 바로 지울 수 있다', async () => {
+  it('접힌 줄에서는 보관하고, 지우기는 펼친 안쪽에만 있다', async () => {
     const c = fakeController([mem('mem/a-one', '# 첫째')]);
     await open();
 
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 보관' }));
+    expect(c.archiveAgentMemories).toHaveBeenCalledWith('id-rusalka', ['mem/a-one']);
+
+    expect(screen.queryByRole('button', { name: 'mem/a-one 기억 지우기' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'mem/a-one 펼치기' }));
     fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 기억 지우기' }));
     expect(c.deleteAgentMemory).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('정말 지운다'));
@@ -263,7 +285,25 @@ describe('보관된 기억', () => {
     expect(within(box).getByText('보관함')).toBeTruthy();
     fireEvent.click(within(box).getByRole('button', { name: '보관한 기억 펼치기' }));
     const row = within(box).getByTestId('memory-row-mem/old-one');
-    expect(within(row).getByTestId('memory-archived-badge').textContent).toBe('보관됨');
+    // 칸 이름이 이미 「보관함」이다 — 줄마다 「보관됨」을 되풀이하지 않는다(PR 1 nit 2).
+    expect(within(row).queryByTestId('memory-archived-badge')).toBeNull();
+    expect(within(row).getByRole('button', { name: 'mem/old-one 되살리기' })).toBeTruthy();
+  });
+
+  it('검색어가 보관함에만 걸리면 위 목록은 "결과 없음" 이 아니라 보관함에 있다고 말한다', async () => {
+    fakeController([mem('mem/a-one', '# 첫째'), archived('mem/old-one', '# 옛것 하나')]);
+    await open();
+
+    fireEvent.change(await screen.findByLabelText('slug·본문에서 찾기'), { target: { value: '옛것' } });
+    expect(screen.getByTestId('memory-no-match').textContent).toBe('쓰는 중에는 없음 · 보관함에 1');
+  });
+
+  it('core 밖이 모두 보관돼도 보관함을 찾을 수 있다', async () => {
+    fakeController([mem('core', '# 코어'), archived('mem/old-one', '# 옛것 하나')]);
+    await open();
+
+    fireEvent.change(await screen.findByLabelText('slug·본문에서 찾기'), { target: { value: '옛것' } });
+    expect(within(screen.getByTestId('memory-archived')).getByTestId('memory-row-mem/old-one')).toBeTruthy();
   });
 
   it('검색하면 보관함도 걸린 것만 연 채로 보인다', async () => {
@@ -288,3 +328,170 @@ describe('보관된 기억', () => {
     expect(screen.queryByTestId('memory-archived-count')).toBeNull();
   });
 });
+
+describe('정리할 것 (#1186 audit)', () => {
+  it('칩 숫자는 기억 수다 — 짝 둘이 한 기억을 나눠도 한 번만 센다', async () => {
+    audit = {
+      ...emptyAudit(),
+      similar: [['mem/a-one', 'mem/a-two']],
+      similarBody: [{ pair: ['mem/a-one', 'mem/a-two'], similarity: 0.8 }, { pair: ['mem/a-one', 'mem/b-x'], similarity: 0.6 }],
+      neverRead: ['mem/b-x'],
+    };
+    fakeController([mem('mem/a-one', '# 1'), mem('mem/a-two', '# 2'), mem('mem/b-x', '# 3'), mem('mem/c-y', '# 4')]);
+    await open();
+
+    expect((await screen.findByTestId('memory-chip-pairs')).textContent).toBe('비슷한 짝 3');
+    expect(screen.getByTestId('memory-chip-neverRead').textContent).toBe('한 번도 안 쓰임 1');
+    // 0 인 칩은 없다.
+    expect(screen.queryByTestId('memory-chip-stale')).toBeNull();
+
+    // 칩을 누르면 그 후보만 보인다.
+    fireEvent.click(screen.getByTestId('memory-chip-neverRead'));
+    expect(screen.getByTestId('memory-row-mem/b-x')).toBeTruthy();
+    expect(screen.queryByTestId('memory-row-mem/c-y')).toBeNull();
+    // 줄에도 이유가 붙는다.
+    expect(within(screen.getByTestId('memory-row-mem/b-x')).getByTestId('memory-reason-neverRead')).toBeTruthy();
+  });
+
+  it('짝 목록이 잘렸으면 짝 칩은 "+" 를 붙인다', async () => {
+    audit = { ...emptyAudit(), similar: [['mem/a-one', 'mem/a-two']], truncated: true };
+    fakeController([mem('mem/a-one', '# 1'), mem('mem/a-two', '# 2')]);
+    await open();
+
+    expect((await screen.findByTestId('memory-chip-pairs')).textContent).toBe('비슷한 짝 2+');
+  });
+
+  it('보관된 기억을 가리키는 링크는 깨짐이 아니라 [되살리기] 다', async () => {
+    audit = {
+      ...emptyAudit(),
+      brokenLinks: [{ slug: 'mem/a-one', target: 'mem/old-one' }, { slug: 'mem/a-two', target: 'mem/nowhere' }],
+    };
+    const c = fakeController([mem('mem/a-one', '# 1'), mem('mem/a-two', '# 2'), archived('mem/old-one', '# 옛')]);
+    await open();
+
+    // 진짜 없는 것만 깨진 링크로 센다.
+    expect((await screen.findByTestId('memory-chip-brokenLinks')).textContent).toBe('깨진 링크 1');
+    expect(within(screen.getByTestId('memory-row-mem/a-two')).getByTestId('memory-reason-brokenLinks')).toBeTruthy();
+    expect(within(screen.getByTestId('memory-row-mem/a-one')).queryByTestId('memory-reason-brokenLinks')).toBeNull();
+
+    fireEvent.click(within(screen.getByTestId('memory-row-mem/a-one')).getByTestId('memory-points-archived'));
+    expect(c.unarchiveAgentMemories).toHaveBeenCalledWith('id-rusalka', ['mem/old-one']);
+  });
+
+  it('여러 개를 골라 한 번에 보관한다', async () => {
+    const c = fakeController([mem('mem/a-one', '# 1'), mem('mem/b-two', '# 2'), mem('mem/c-three', '# 3')]);
+    await open();
+
+    fireEvent.click(await screen.findByLabelText('mem/a-one 고르기'));
+    fireEvent.click(screen.getByLabelText('mem/c-three 고르기'));
+    expect(screen.getByTestId('memory-picked-bar').textContent).toContain('2개 고름');
+    fireEvent.click(screen.getByTestId('memory-archive-picked'));
+    expect(c.archiveAgentMemories).toHaveBeenCalledWith('id-rusalka', ['mem/a-one', 'mem/c-three']);
+    expect((await screen.findByTestId('memory-notice')).textContent).toBe('2개를 보관했습니다');
+  });
+
+  it('되살리기가 자리에 막히면 몇 개인지 말하고 그것은 고른 채로 둔다', async () => {
+    unarchiveRoom = 1;
+    const c = fakeController([
+      mem('mem/a-one', '# 1'), archived('mem/old-one', '# 옛1'), archived('mem/old-two', '# 옛2'),
+    ]);
+    await open();
+
+    fireEvent.click(within(await screen.findByTestId('memory-archived')).getByRole('button', { name: '보관한 기억 펼치기' }));
+    fireEvent.click(screen.getByLabelText('mem/old-one 고르기'));
+    fireEvent.click(screen.getByLabelText('mem/old-two 고르기'));
+    fireEvent.click(screen.getByTestId('memory-unarchive-picked'));
+    expect(c.unarchiveAgentMemories).toHaveBeenCalled();
+    const notice = await screen.findByTestId('memory-notice');
+    expect(notice.textContent).toContain('1개를 되살렸습니다');
+    expect(notice.textContent).toContain(`1개는 자리가 없어 되살리지 못했습니다(쓰는 중 ${MAX_MEMORY_ITEMS_PER_ACCOUNT}/${MAX_MEMORY_ITEMS_PER_ACCOUNT})`);
+    expect(screen.getByTestId('memory-picked-bar').textContent).toContain('1개 고름');
+  });
+
+  it('보관함이 300 을 넘게 되면 누르기 전에 밀려날 수를 말한다', async () => {
+    const lots = Array.from({ length: 299 }, (_, i) => archived(`mem/z${i}q`, `# ${i}`));
+    fakeController([mem('mem/a-one', '# 1'), mem('mem/b-two', '# 2'), ...lots]);
+    await open();
+
+    fireEvent.click(await screen.findByLabelText('mem/a-one 고르기'));
+    expect(screen.queryByTestId('memory-archive-overflow')).toBeNull();
+    fireEvent.click(screen.getByLabelText('mem/b-two 고르기'));
+    expect(screen.getByTestId('memory-archive-overflow').textContent).toContain('가장 오래 보관한 1개');
+  });
+
+  it('audit 를 못 받아도 목록은 뜬다(옛 서버)', async () => {
+    const c = fakeController([mem('mem/a-one', '# 1')]);
+    c.agentMemoryAudit.mockRejectedValue(new Error('404'));
+    await open();
+
+    expect(await screen.findByTestId('memory-row-mem/a-one')).toBeTruthy();
+    expect(screen.queryByTestId('memory-chips')).toBeNull();
+  });
+
+  it('보관 뒤 다시 읽는 동안 목록·칩을 비우지 않는다 — 눌러 둔 칩 필터가 튀지 않는다(n1)', async () => {
+    audit = { ...emptyAudit(), neverRead: ['mem/b-x', 'mem/b-y'] };
+    const c = fakeController([mem('mem/a-one', '# 1'), mem('mem/b-x', '# 2'), mem('mem/b-y', '# 3')]);
+    await open();
+
+    fireEvent.click(await screen.findByTestId('memory-chip-neverRead'));
+    let release!: () => void;
+    c.agentMemory.mockImplementationOnce(() => new Promise((r) => { release = () => r([]); }) as never);
+    fireEvent.click(screen.getByRole('button', { name: 'mem/b-x 보관' }));
+    await screen.findByTestId('memory-notice');
+    // 새 목록이 아직 안 왔다 — 이전 목록과 칩이 그대로이고 필터도 그대로다.
+    expect(screen.getByTestId('memory-chip-neverRead').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('memory-row-mem/b-y')).toBeTruthy();
+    expect(screen.queryByTestId('memory-row-mem/a-one')).toBeNull();
+    expect(screen.queryByText('불러오는 중…')).toBeNull();
+    release();
+  });
+
+  it('한 줄 보관이 300 을 넘기면 이유를 버튼 옆 글로 말한다(n2)', async () => {
+    const lots = Array.from({ length: 300 }, (_, i) => archived(`mem/z${i}q`, `# ${i}`));
+    const c = fakeController([mem('mem/a-one', '# 1'), ...lots]);
+    await open();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 보관' }));
+    expect(c.archiveAgentMemories).not.toHaveBeenCalled();
+    expect(screen.getByTestId('memory-row-overflow').textContent).toBe('오래된 1개가 밀려납니다');
+    fireEvent.click(screen.getByText('그래도 보관'));
+    expect(c.archiveAgentMemories).toHaveBeenCalledWith('id-rusalka', ['mem/a-one']);
+  });
+
+  it('고른 것이 검색에 가려지면 막대가 그 수를 말한다(n4)', async () => {
+    fakeController([mem('mem/a-one', '# 첫째'), mem('mem/b-two', '# 둘째')]);
+    await open();
+
+    fireEvent.click(await screen.findByLabelText('mem/a-one 고르기'));
+    expect(screen.queryByTestId('memory-picked-hidden')).toBeNull();
+    fireEvent.change(screen.getByLabelText('slug·본문에서 찾기'), { target: { value: '둘째' } });
+    expect(screen.getByTestId('memory-picked-hidden').textContent).toBe('필터에 안 걸린 1개 포함');
+  });
+
+  it('보관이 도는 중에 다른 에이전트로 바꾸면 늦은 결과가 그 칸을 덮지 않는다(security n1)', async () => {
+    const c = fakeController([]);
+    c.listAgents.mockResolvedValue([agent('rusalka'), agent('vodnik')]);
+    c.agentMemory.mockImplementation(async (id: string) => (
+      id === 'id-rusalka' ? [mem('mem/a-one', '# 루살카')] : [mem('mem/v-one', '# 보드닉')]) as never);
+    let release!: () => void;
+    c.archiveAgentMemories.mockImplementationOnce(() => new Promise((r) => {
+      release = () => r([{ slug: 'mem/a-one', result: 'ok' }]);
+    }) as never);
+    await open();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'mem/a-one 보관' }));
+    fireEvent.click(screen.getByTestId('agent-back'));
+    fireEvent.click(await screen.findByTestId('agent-card-vodnik'));
+    fireEvent.click(await screen.findByTestId('agent-tab-memory'));
+    expect(await screen.findByTestId('memory-row-mem/v-one')).toBeTruthy();
+
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    // 루살카를 다시 읽지 않고, 보드닉 칸에 루살카의 줄·알림이 서지 않는다.
+    expect(c.agentMemory.mock.calls.filter(([id]) => id === 'id-rusalka')).toHaveLength(1);
+    expect(screen.getByTestId('memory-row-mem/v-one')).toBeTruthy();
+    expect(screen.queryByTestId('memory-row-mem/a-one')).toBeNull();
+    expect(screen.queryByTestId('memory-notice')).toBeNull();
+  });
+});
+

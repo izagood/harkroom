@@ -1,5 +1,5 @@
 import type { AccountStatus, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
-import type { MemoryEdit, MemoryEntry, MemoryRevision } from '../lib/memoryList';
+import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchResult } from '../lib/memoryList';
 import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
 import { buildBoard, mineCount } from '../lib/inboxBoard';
 
@@ -2091,6 +2091,18 @@ export class Controller {
 
   confirmAgentMemory(agentId: string, slug: string): Promise<{ ok: true }> {
     return this.api.confirmAgentMemory(agentId, slug);
+  }
+
+  agentMemoryAudit(agentId: string): Promise<MemoryAudit> {
+    return this.api.agentMemoryAudit(agentId);
+  }
+
+  archiveAgentMemories(agentId: string, slugs: string[]): Promise<{ slug: string; result: MemoryBatchResult }[]> {
+    return this.api.archiveAgentMemories(agentId, slugs);
+  }
+
+  unarchiveAgentMemories(agentId: string, slugs: string[]): Promise<{ slug: string; result: MemoryBatchResult }[]> {
+    return this.api.unarchiveAgentMemories(agentId, slugs);
   }
 
   agentMemoryRevisions(agentId: string, slug: string): Promise<MemoryRevision[]> {
