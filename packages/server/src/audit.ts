@@ -62,7 +62,7 @@ export type AuditAction =
   // 본문 거절(D5) — 에이전트의 글에 grant 받은 비밀 값이 있어서 막았다. detail 은 표면·비밀 이름·id 만.
   | 'secret.leak.blocked'
   // 오퍼레이터·배정(스펙 2026-09-20 §3).
-  | 'operator.registered' | 'operator.revoked' | 'agent.assigned' | 'agent.unassigned'
+  | 'operator.registered' | 'operator.revoked' | 'operator.renamed' | 'agent.assigned' | 'agent.unassigned'
   // 호출 명단(스펙 2026-09-20 §6).
   | 'agent.invoker.added' | 'agent.invoker.removed'
   | 'agent.delegate.added' | 'agent.delegate.removed'

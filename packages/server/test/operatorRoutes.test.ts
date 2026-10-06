@@ -137,3 +137,66 @@ describe('다시 등록 — 옛 등록 자동 폐기', () => {
     expect(res.statusCode).toBe(400);
   });
 });
+
+// 이름 바꾸기(스레드 e12e6780). `name`(등록 때의 호스트명)은 그대로 두고 `label` 만 바꾼다 —
+// 비우면 호스트명으로 돌아가고, 권한은 폐기와 같고, 끊긴 오퍼레이터도 된다(이름은 서버가 든 값이다).
+describe('이름 바꾸기 — label', () => {
+  const rename = (token: string, id: string, label: unknown) =>
+    app.inject({ method: 'PATCH', url: `/operators/${id}`, headers: auth(token), payload: { label } });
+
+  it('소유자가 바꾸면 label 이 서고 name 은 그대로, 감사에 from·to 가 남는다 — 붙어 있지 않아도 된다', async () => {
+    const op = await registerOperator(app, memberToken, 'NO-202509-002.local');
+    const res = await rename(memberToken, op.operatorId, '  회사 맥북  ');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: op.operatorId, name: 'NO-202509-002.local', label: '회사 맥북', online: false });
+    const list = await app.inject({ method: 'GET', url: '/operators', headers: auth(memberToken) });
+    expect(list.json().operators.find((o: { id: string }) => o.id === op.operatorId).label).toBe('회사 맥북');
+    const audit = await pool.query(`select detail from audit_log where action = 'operator.renamed' and target = $1`, [op.operatorId]);
+    expect(audit.rows.map((r) => r.detail)).toEqual([{ from: null, to: '회사 맥북' }]);
+
+    // 같은 값은 감사를 더 남기지 않는다.
+    await rename(memberToken, op.operatorId, '회사 맥북');
+    const again = await pool.query(`select 1 from audit_log where action = 'operator.renamed' and target = $1`, [op.operatorId]);
+    expect(again.rowCount).toBe(1);
+
+    // 비우면(공백만이어도) 호스트명으로 돌아간다 — null 도 같다.
+    const cleared = await rename(memberToken, op.operatorId, '   ');
+    expect(cleared.json().label).toBeNull();
+    expect(cleared.json().name).toBe('NO-202509-002.local');
+    await rename(memberToken, op.operatorId, 'x');
+    expect((await rename(memberToken, op.operatorId, null)).json().label).toBeNull();
+    await app.inject({ method: 'DELETE', url: `/operators/${op.operatorId}`, headers: auth(memberToken) });
+  });
+
+  it('64자까지 받고 65자는 400, label 이 없으면 400', async () => {
+    const op = await registerOperator(app, memberToken, 'len-mac');
+    expect((await rename(memberToken, op.operatorId, 'a'.repeat(64))).statusCode).toBe(200);
+    expect((await rename(memberToken, op.operatorId, 'a'.repeat(65))).statusCode).toBe(400);
+    const noBody = await app.inject({ method: 'PATCH', url: `/operators/${op.operatorId}`, headers: auth(memberToken), payload: {} });
+    expect(noBody.statusCode).toBe(400);
+    await app.inject({ method: 'DELETE', url: `/operators/${op.operatorId}`, headers: auth(memberToken) });
+  });
+
+  it('남은 못 바꾸고 admin 은 바꾼다, 폐기된 것은 404, 같은 이름은 막지 않는다', async () => {
+    const a = await registerOperator(app, memberToken, 'dup-a');
+    const b = await registerOperator(app, memberToken, 'dup-b');
+    expect((await rename(otherToken, a.operatorId, 'mine now')).statusCode).toBe(403);
+    expect((await rename(adminToken, a.operatorId, '같은 이름')).statusCode).toBe(200);
+    expect((await rename(memberToken, b.operatorId, '같은 이름')).statusCode).toBe(200);
+    await app.inject({ method: 'DELETE', url: `/operators/${b.operatorId}`, headers: auth(memberToken) });
+    expect((await rename(memberToken, b.operatorId, 'gone')).statusCode).toBe(404);
+    await app.inject({ method: 'DELETE', url: `/operators/${a.operatorId}`, headers: auth(memberToken) });
+  });
+
+  it('다시 등록(replaces)하면 label 이 새 행으로 옮겨 간다', async () => {
+    const old = await registerOperator(app, memberToken, 'vm.local');
+    await rename(memberToken, old.operatorId, 'work VM');
+    const code = (await app.inject({ method: 'POST', url: '/operators/register-codes', headers: auth(memberToken) })).json().code as string;
+    const res = await app.inject({ method: 'POST', url: '/operators/claim', payload: { code, name: 'vm.local', replaces: old.operatorId } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().operator).toMatchObject({ name: 'vm.local', label: 'work VM' });
+    const list = await app.inject({ method: 'GET', url: '/operators', headers: auth(memberToken) });
+    expect(list.json().operators.find((o: { id: string }) => o.id === res.json().operator.id).label).toBe('work VM');
+    await app.inject({ method: 'DELETE', url: `/operators/${res.json().operator.id}`, headers: auth(memberToken) });
+  });
+});

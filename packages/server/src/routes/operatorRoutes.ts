@@ -31,9 +31,18 @@ const claimBody = z.object({
   replaces: z.string().uuid().optional(),
 });
 const idParam = z.object({ id: z.string().uuid() });
+/**
+ * 이름 바꾸기. `label` 은 앞뒤 공백을 자른 뒤 1~64자(등록 이름 상한과 같다). **비우거나 null 이면
+ * 호스트명으로 되돌린다** — 화면의 「Use hostname」 과 빈 칸 저장이 같은 요청이다. 같은 이름이 있어도
+ * 막지 않는다: 배정은 id 로 고르므로 겹쳐도 틀린 기계를 고르게 되지 않고, 화면이 경고만 띄운다.
+ */
+const renameBody = z.object({
+  label: z.string().max(200).nullable().transform((v) => (v?.trim() ? v.trim() : null))
+    .refine((v) => v === null || v.length <= 64, { message: 'label 은 64자까지다' }),
+});
 
 const OP_COLS = `id, owner_account_id as "ownerAccountId", name, created_at as "createdAt",
-  last_seen_at as "lastSeenAt", revoked_at as "revokedAt", version`;
+  last_seen_at as "lastSeenAt", revoked_at as "revokedAt", version, label`;
 
 /** 허브가 아는 **지금의 사실** — 연결돼 있는가, 무엇을 돌릴 수 있다고 했는가. */
 export type OperatorPresence = Pick<OperatorHub, 'isOnline' | 'capabilities'>;
@@ -141,11 +150,17 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
       if (parsed.data.replaces) {
         // **코드를 발급한 사람의 것일 때만** 폐기한다. 아니면(남의 id·이미 폐기·없는 id) 조용히
         // 넘어간다 — 무엇이 걸렸는지 말하면 남의 operatorId 가 있는지 떠보는 길이 된다.
-        const old = await client.query(
+        const old = await client.query<{ label: string | null }>(
           `update operator set revoked_at = now()
-            where id = $1 and owner_account_id = $2 and revoked_at is null returning id`,
+            where id = $1 and owner_account_id = $2 and revoked_at is null returning label`,
           [parsed.data.replaces, claim.ownerAccountId]);
         if (old.rowCount) {
+          // 사람이 붙인 이름도 새 행으로 옮긴다 — 안 옮기면 다시 등록한 순간 이름이 말없이 호스트명으로 돌아간다.
+          const label = old.rows[0]!.label;
+          if (label !== null) {
+            await client.query(`update operator set label = $2 where id = $1`, [row.id, label]);
+            row = { ...row, label };
+          }
           // 배정은 새 등록으로 옮긴다. 옛 행이 이 사람의 것임을 위에서 확인했으므로 같은 소유 조건 안이다.
           const moved = await client.query<{ agent_id: string }>(
             `update agent_assignment set operator_id = $2 where operator_id = $1 returning agent_id`,
@@ -220,6 +235,33 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
       const caps = presence.capabilities(id);
       // 오프라인이면 능력도 없다 — 저장하지 않으므로 "모른다"가 정확한 답이다.
       return caps ?? reply.code(404).send({ error: { code: 'offline', message: '오퍼레이터가 붙어 있지 않다' } });
+    });
+
+  /**
+   * 이름 바꾸기 — 권한은 폐기와 같다(소유자 또는 `operator.manage`). 이름은 서버가 든 값이라 끊긴
+   * 오퍼레이터도 바꿀 수 있다. 같은 값이면 쓰지도, 감사·이벤트를 내지도 않는다.
+   */
+  app.patch<{ Params: { id: string } }>(
+    '/operators/:id',
+    { preHandler: app.requireCap('operator.manage', { kind: 'operator', param: 'id' }) },
+    async (req, reply) => {
+      const { id } = idParam.parse(req.params);
+      const parsed = renameBody.safeParse(req.body ?? {});
+      if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: parsed.error.message } });
+      const { label } = parsed.data;
+      const res = await pool.query<Omit<OperatorView, 'online'> & { before: string | null }>(
+        // 옛 값은 같은 문장에서 읽는다(잠근 뒤) — 감사의 from 과 "바뀌었나" 판정이 한 시점의 값이다.
+        `with prev as (select id as prev_id, label as before from operator where id = $1 and revoked_at is null for update)
+         update operator set label = $2 from prev where operator.id = prev.prev_id
+         returning ${OP_COLS}, prev.before`,
+        [id, label]);
+      if (!res.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: '그런 오퍼레이터가 없다' } });
+      const { before, ...row } = res.rows[0]!;
+      if (before !== label) {
+        await recordAudit(pool, { action: 'operator.renamed', ...actorOf(req), target: id, detail: { from: before, to: label } }, req);
+        emitEvent({ type: 'operator.changed', operatorId: id, audience: 'all' });
+      }
+      return view(row);
     });
 
   app.delete<{ Params: { id: string } }>(

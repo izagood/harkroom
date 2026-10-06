@@ -3633,6 +3633,12 @@ export interface OperatorView {
    * 화면의 러너 뒤처짐 판정 기준이다(`desktop/src/lib/runnerVersions.ts`).
    */
   version: string | null;
+  /**
+   * 사람이 붙인 이름(`operator.label`, 마이그레이션 104). `null` 은 바꾼 적 없음 — 화면은
+   * `label ?? name` 을 보이고, 바꿨을 때만 `name`(등록 때의 호스트명)을 곁에 둔다.
+   * **선택 필드**다: 이 열을 모르는 옛 서버는 키를 싣지 않는다(없음 = null 과 같다).
+   */
+  label?: string | null;
 }
 
 /** 오퍼레이터가 `hello` 에 싣는 능력 — 연결이 살아 있는 동안만 서버가 든다. */
