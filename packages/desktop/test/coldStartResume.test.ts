@@ -11,7 +11,8 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { Controller, INITIAL_HISTORY_LIMIT } from '../src/state/controller';
+import { Controller, INITIAL_HISTORY_LIMIT, removeCommunity } from '../src/state/controller';
+import { useCommunityRegistry } from '../src/state/communities';
 import { lastChannelScope, lastChannelStorage } from '../src/lib/prefs';
 import { chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
@@ -116,6 +117,50 @@ describe('콜드 스타트: 마지막 채널 복원', () => {
     expect(lastChannelStorage.load(SCOPE)).toBe('c1');
     c.logout();
     expect(lastChannelStorage.load(SCOPE)).toBeNull();
+  });
+
+  it('S2: 미리 받기 응답보다 소켓이 먼저 열려도 메시지 요청은 하나다', async () => {
+    lastChannelStorage.save(SCOPE, 'c1');
+    const page = deferred<{ messages: ReturnType<typeof msg>[]; hasMore: boolean }>();
+    const messages = vi.fn(() => page.promise);
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(fakeApi({ messages: messages as never }), makeWs);
+    c.lastChannelScope = SCOPE;
+    await c.start();
+    // 소켓이 먼저 열린다 → reconcile 이 돈다.
+    callbacks.current!.onOpen?.();
+    await new Promise((r) => setTimeout(r, 0));
+    page.resolve({ messages: [msg('m1', 'c1', 1, '안녕', 'u2')], hasMore: false });
+    await vi.waitFor(() => expect(useAppStore.getState().messages.c1?.length).toBe(1));
+    expect(messages).toHaveBeenCalledTimes(1);
+
+    // 첫 페이지가 들어온 뒤의 재접속은 예전처럼 증분을 받는다.
+    callbacks.current!.onOpen?.();
+    await vi.waitFor(() => expect(messages).toHaveBeenCalledWith('c1', { since: 1, limit: 200 }));
+  });
+
+  it('S1: 전체 로그아웃은 모든 scope 를 지운다', async () => {
+    const other = lastChannelScope('https://b.example.com', 'acct-2')!;
+    lastChannelStorage.save(SCOPE, 'c1');
+    lastChannelStorage.save(other, 'c9');
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(fakeApi(), makeWs);
+    c.lastChannelScope = SCOPE;
+    await c.start();
+    c.logout();
+    expect(lastChannelStorage.load(SCOPE)).toBeNull();
+    expect(lastChannelStorage.load(other)).toBeNull();
+  });
+
+  it('S1: 커뮤니티를 빼면 그 서버+계정의 기억을 지운다', async () => {
+    const other = lastChannelScope('https://b.example.com', 'acct-2')!;
+    lastChannelStorage.save(SCOPE, 'c1');
+    lastChannelStorage.save(other, 'c9');
+    const reg = useCommunityRegistry.getState();
+    const entry = reg.register({ baseUrl: 'https://a.example.com', accountId: 'acct-1', label: null });
+    await removeCommunity(entry.id);
+    expect(lastChannelStorage.load(SCOPE)).toBeNull();
+    expect(lastChannelStorage.load(other)).toBe('c9');
   });
 
   it('기다리는 사이 다른 채널로 갔으면 복원한 채널을 읽음 처리하지 않는다', async () => {

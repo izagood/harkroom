@@ -405,6 +405,10 @@ export const lastChannelStorage = {
       localStorage.setItem(LAST_CHANNEL_KEY, JSON.stringify(map));
     } catch { /* 저장 불가 환경 허용 */ }
   },
+  /** 모든 scope 를 지운다 — 전체 로그아웃(`sessionStore.clear()`)과 같은 수명. */
+  clear(): void {
+    try { localStorage.removeItem(LAST_CHANNEL_KEY); } catch { /* noop */ }
+  },
   remove(scope: string): void {
     try {
       const raw = localStorage.getItem(LAST_CHANNEL_KEY);

@@ -530,8 +530,10 @@ export class Controller {
     // 고정은 문장이 아니지만 *누구와 이야기하던 자리인가*는 남는다. 초안과 같은 매체에
     // 같은 수명으로 두기로 했으므로 지우는 자리도 여기다(#706).
     this.store.getState().clearStickyMentions();
-    // 마지막 채널도 같은 수명이다 — 계정이 떠난 뒤 *어디를 보고 있었나*만 남을 이유가 없다.
-    if (this.lastChannelScope) lastChannelStorage.remove(this.lastChannelScope);
+    // 마지막 채널도 키체인과 같은 수명이다 — 계정이 떠난 뒤 *어디를 보고 있었나*만 남을 이유가 없다.
+    // 한 계정만 떠나면 그 scope 만, 전체 로그아웃(`sessionStore.clear()`)이면 통째로 지운다.
+    if (accountId) { if (this.lastChannelScope) lastChannelStorage.remove(this.lastChannelScope); }
+    else lastChannelStorage.clear();
     this.store.getState().reset();
   }
 
@@ -767,7 +769,10 @@ export class Controller {
 
   private async reconcile(): Promise<void> {
     const { activeChannelId, messages } = this.store.getState();
-    if (activeChannelId) {
+    // 첫 페이지가 아직 오지 않은 채널은 건너뛴다 — 그 응답이 최신 창을 덮는다. 여기서 since=0 으로
+    // 따로 받으면 기동 직후(복원 채널의 미리 받기보다 소켓이 먼저 열릴 때) 같은 채널에 200행 요청이
+    // 하나 더 나가 느린 경로에서 대역을 나눠 쓴다(#1223 S2).
+    if (activeChannelId && this.loadedChannels.has(activeChannelId) && !this.prefetchedPages.has(activeChannelId)) {
       const maxSeq = Math.max(0, ...(messages[activeChannelId] ?? []).map((m) => m.seq));
       // 끊긴 사이의 글을 **끝까지** 받는다 — 한 페이지로 자르면 받은 구간이 틈을 품는다(`pullSince`).
       await this.pullSince(activeChannelId, maxSeq);
@@ -3136,6 +3141,9 @@ export async function removeCommunity(id: string): Promise<{ empty: boolean }> {
   if (!entry) throw new Error(`모르는 커뮤니티다: ${id}`);
   entry.controller?.stop();
   if (entry.accountId) await sessionStore.remove(entry.accountId);
+  // 키체인에서 뺀 커뮤니티의 마지막 채널 기억도 지운다 — 같은 수명이다(`clearLocal`).
+  const scope = lastChannelScope(entry.baseUrl, entry.accountId);
+  if (scope) lastChannelStorage.remove(scope);
   if (registry.entries.length > 1) {
     useCommunityRegistry.getState().remove(id);
     return { empty: false };
