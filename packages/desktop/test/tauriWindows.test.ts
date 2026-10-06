@@ -46,7 +46,7 @@ describe('tauriWindows', () => {
       // label 을 빼면 Tauri 기본값이 "main" 이다.
       const main = windows.filter((w) => (w.label ?? 'main') === 'main');
       expect(main).toHaveLength(1);
-      expect(main[0].create).toBe(false);
+      expect(main[0]?.create).toBe(false);
     }
   );
 });
