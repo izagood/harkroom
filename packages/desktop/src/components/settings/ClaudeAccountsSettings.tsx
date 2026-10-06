@@ -420,7 +420,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   화면 순서를 그대로 쓴다). 그래서 이 표는 여전히 점수로 정렬하지 않는다 —
                   점수는 몇 분마다 바뀌고, 사람이 정한 순서가 화면에서 사라지면 안 된다.
                 */}
-                {pool.accounts.length > 1 && ' · new threads go to the account with the most weekly room per hour left; order breaks ties'}
+                {pool.accounts.length > 1 && ' · new threads go to one of the two accounts with the most weekly room per hour left, picked in proportion to that room; order breaks ties'}
               </span>
             </div>
             <div className="flex items-center gap-3">

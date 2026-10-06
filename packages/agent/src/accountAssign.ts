@@ -80,7 +80,7 @@ export interface PickInput {
   recentAssignments: ReadonlyMap<string, number>;
   /** 에이전트 모델(`claude-opus-…`). 맞는 모델별 주간 창이 있으면 `weekly` 와 둘 중 빡빡한 쪽을 쓴다. */
   model?: string | null;
-  /** [0,1) 난수. 러너끼리의 몰림을 상위 둘 무작위로 흩는다. */
+  /** [0,1) 난수. 러너끼리의 몰림을 상위 둘 가운데 점수 비례 무작위로 흩는다(작을수록 1등). */
   random: () => number;
   /**
    * **사람이 관문을 지나야 하는 계정**(2026-10-01, `@harkroom/shared/claudeGates` 표식). 새 배정에서
@@ -267,13 +267,19 @@ function pickAccountInner(input: PickInput): PickResult {
   }
 
   // 러너끼리는 배정 수를 나누지 않는다 → 상위 둘 가운데 무작위로 흩는다(power-of-two).
-  // "둘"은 계정이 아니라 **로그인 묶음** 둘이다(위 `reps`).
-  const pickIdx = eligibleReps.length >= 2 && input.random() >= 0.5 ? 1 : 0;
+  // "둘"은 계정이 아니라 **로그인 묶음** 둘이다(위 `reps`). 반반이 아니라 **점수에 비례해**
+  // 뽑는다(2026-10-06) — 반반이면 1.8/h 와 0.34/h 가 같은 수를 받아 여유 없는 쪽이 먼저 찬다.
+  // 둘 다 0점이면 1등이다.
+  const [first, second] = eligibleReps;
+  const total = first && second ? first.score + second.score : 0;
+  const pSecond = total > 0 ? second!.score / total : 0;
+  const pickIdx = pSecond > 0 && input.random() >= 1 - pSecond ? 1 : 0;
   const chosen = eligibleReps[pickIdx]!;
+  const p = total > 0 ? ` · p=${(pickIdx ? pSecond : 1 - pSecond).toFixed(2)}` : '';
   return {
     order: [chosen.name, ...tail(chosen.name)],
     reason: pin ? 'moved' : 'new',
-    detail: pin ? `${describe(pin)} → ${describe(chosen)}` : describe(chosen),
+    detail: (pin ? `${describe(pin)} → ${describe(chosen)}` : describe(chosen)) + p,
   };
 }
 
