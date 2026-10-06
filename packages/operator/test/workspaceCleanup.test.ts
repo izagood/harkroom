@@ -162,7 +162,7 @@ describe('주인 장부(러너 보고)', () => {
   });
 });
 
-import { createCleanupPorts } from '../src/workspaceCleanupService.js';
+import { createCleanupPorts, createWorkspaceCleanup, readCleanupSettings } from '../src/workspaceCleanupService.js';
 
 describe('지우기 직전 검사', () => {
   const base = {
@@ -351,5 +351,50 @@ describe('live — 화면이 그리는 그 순간 상태(「지우는 중」·�
     o.releaseRunner('run1');
     await o.maybeHandle('run2', 'agentB', req({ threads: [] }), 'relay');
     expect((await o.live()).threads[K]!.runnerConnected).toBe(false);
+  });
+});
+
+describe('F1 — 끄면 지우지 않는다(이미 나간 요청까지)', () => {
+  const C = '11111111-1111-1111-1111-111111111111';
+  const R = '66666666-6666-6666-6666-666666666666';
+  const K = `${C}/${R}`;
+  const req = (body: unknown) => ({ type: 'http.forward' as const, id: 'q', method: 'POST', path: CLEANUP_REPORT_PATH, body: JSON.stringify(body) });
+  const reply = (r: unknown) => JSON.parse((r as { body: string }).body) as { deleteThreads: unknown[] };
+  const T0 = { channelId: C, threadRootId: R, worktrees: [], lastTurnAt: '2026-09-01T00:00:00Z', running: false, workspaceDir: '/state/workspaces/w' };
+  it('요청 → 설정 파일에서 끔(손으로) → 보고: 답에 싣지 않고 요청도 거둔다', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'owners-'));
+    let on = true;
+    const o = createCleanupOwners({ path: join(d, 'owners.json'), enabled: async () => on });
+    await o.maybeHandle('run1', 'agentA', req({ threads: [T0] }), 'relay');
+    o.requestDelete({ channelId: C, threadRootId: R });
+    on = false;
+    expect(reply(await o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([]);
+    expect((await o.live()).threads[K]!.deleteRequestedAt).toBeNull();
+    // 다시 켜도 거둔 요청은 되살아나지 않는다 — 다음 회차가 기한을 다시 보고 고른다.
+    on = true;
+    expect(reply(await o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([]);
+  });
+  it('켜짐 여부를 못 읽으면 꺼짐으로 본다', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'owners-'));
+    const o = createCleanupOwners({ path: join(d, 'owners.json'), enabled: async () => { throw new Error('boom'); } });
+    await o.maybeHandle('run1', 'agentA', req({ threads: [T0] }), 'relay');
+    o.requestDelete({ channelId: C, threadRootId: R });
+    expect(reply(await o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([]);
+  });
+  it('화면의 「끔」(setSettings enabled=false)은 대기 중인 요청을 거두고, live 는 원장에 있는 스레드 폴더만 싣는다', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'svc-'));
+    const configPath = join(d, 'operator.json');
+    const ledgerPath = join(d, 'ledger.json');
+    const o = createCleanupOwners({ path: join(d, 'owners.json'), enabled: async () => (await readCleanupSettings(configPath)).enabled });
+    const svc = createWorkspaceCleanup({ ledgerPath, configPath, owners: o, agents: async () => [], log: () => {} } as never, {} as never);
+    await svc.setSettings({ enabled: true });
+    const other = { ...T0, threadRootId: '77777777-7777-7777-7777-777777777777' };
+    await o.maybeHandle('run1', 'agentA', req({ threads: [T0, other] }), 'relay');
+    o.requestDelete({ channelId: C, threadRootId: R });
+    // 원장이 비어 있으니 화면 live 에는 아무 스레드도 없다(owners.json 전부를 내지 않는다).
+    expect((await svc.get()).live.threads).toEqual({});
+    await svc.setSettings({ enabled: false });
+    expect((await o.live()).threads[K]!.deleteRequestedAt).toBeNull();
+    expect(reply(await o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([]);
   });
 });
