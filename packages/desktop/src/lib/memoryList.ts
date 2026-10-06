@@ -25,6 +25,11 @@ export interface MemoryEntry {
   /** 서버 080: 쓰기 검사에 걸린 판이면 시각과 이유. 사람이 확인할 때까지 에이전트 프롬프트에 안 실린다. */
   flaggedAt?: string | null;
   flagReason?: string | null;
+  /**
+   * 서버 097: 보관된 기억이면 그 시각. 사람 목록 API 는 보관된 것도 **함께** 준다 — 그것을
+   * 살아 있는 것과 한 목록·한 숫자로 세면 상한(보관 제외)과 어긋난 `213 / 200` 이 뜬다.
+   */
+  archivedAt?: string | null;
 }
 
 /** 이전 판(서버 069). 최근 것부터 온다. */
@@ -137,6 +142,27 @@ export function memoryGroupKey(slug: string): string | null {
 export function splitCore(entries: MemoryEntry[]): { core: MemoryEntry | null; rest: MemoryEntry[] } {
   const core = entries.find((e) => e.slug === CORE_SLUG) ?? null;
   return { core, rest: entries.filter((e) => e.slug !== CORE_SLUG) };
+}
+
+/**
+ * 보관된 것을 뗀다(서버 097).
+ *
+ * **상한 200 은 보관을 빼고 센다**(`services/memory.ts` 의 `too_many` 판정) — 화면의 숫자도
+ * `active` 로 세야 서버가 거절하는 시점과 맞는다. 보관된 것은 에이전트 목록·recall 에
+ * 실리지 않으므로 살아 있는 것과 한 목록에 섞지 않는다. 최근 보관한 것부터 준다.
+ */
+export function splitArchived(entries: MemoryEntry[]): { active: MemoryEntry[]; archived: MemoryEntry[] } {
+  const active: MemoryEntry[] = [];
+  const archived: MemoryEntry[] = [];
+  for (const e of entries) (e.archivedAt ? archived : active).push(e);
+  archived.sort((a, b) => b.archivedAt!.localeCompare(a.archivedAt!) || a.slug.localeCompare(b.slug));
+  return { active, archived };
+}
+
+/** 검색어로만 거른다(순서는 그대로). 보관 칸처럼 묶지 않는 목록이 쓴다. */
+export function filterMemories(entries: MemoryEntry[], query: string): MemoryEntry[] {
+  const q = query.trim().toLowerCase();
+  return q ? entries.filter((e) => matches(e, q)) : entries;
 }
 
 /** 검색은 slug 와 **본문 둘 다** 본다 — 값이 이미 손에 있으므로 서버 왕복이 없다. */

@@ -20,7 +20,7 @@ import { agoLabel } from '../../lib/time';
 // 기억 목록의 판정(접기·검색·묶기)은 `lib/` 한 벌이다 — 그 파일 머리말에 화면에서 떼어
 // 낸 이유가 있다. 회귀선은 `test/memoryList.test.ts`.
 import {
-  memoryRows, memorySummary, splitCore, type MemoryEntry, type MemorySort,
+  filterMemories, memoryRows, memorySummary, splitArchived, splitCore, type MemoryEntry, type MemorySort,
 } from '../../lib/memoryList';
 // 화면은 `useT`, 화면 밖에서 쓰이는 순수 함수(`lastTurnLabel`)는 `Translate` 를 인자로
 // 받는다 — 그 갈림의 근거는 `i18n/index.ts::Translate` 머리말에 있다.
@@ -243,6 +243,9 @@ const firstTab = (tabs: Iterable<AgentDetailTab>): AgentDetailTab | null => {
   const set = new Set(tabs);
   return AGENT_DETAIL_TABS.find((x) => set.has(x)) ?? null;
 };
+
+/** 보관 칸의 열림 상태 열쇠. 접두어 묶음 열쇠(`mem/pr-`)와 겹치지 않는다. */
+const ARCHIVED_GROUP = 'archived';
 
 export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 시간 표기는 언어를 따른다(`lib/time.ts`). 접두는 사전을 지난다.
@@ -709,7 +712,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 생긴다(그 파일 머리말).
    */
   const memoryAll = Array.isArray(memories) ? memories : null;
-  const memorySplit = memoryAll ? splitCore(memoryAll) : null;
+  /**
+   * 사람 목록 API 는 보관된 것도 함께 준다. **숫자와 목록은 살아 있는 것만** — 서버 상한이
+   * 보관을 빼고 세므로, 섞어 세면 `213 / 200` 처럼 있을 수 없는 숫자가 뜬다.
+   */
+  const memoryParts = memoryAll ? splitArchived(memoryAll) : null;
+  const memorySplit = memoryParts ? splitCore(memoryParts.active) : null;
+  const memoryArchived = memoryParts ? filterMemories(memoryParts.archived, memQuery) : [];
   const memoryVisible = memorySplit
     ? memoryRows(memorySplit.rest, { query: memQuery, sort: memSort })
     : [];
@@ -718,8 +727,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 사람이 할 수 있는 일은 지우는 것뿐인데 앞판 화면에는 몇 개인지조차 없었다. 9할에서
    * 색을 바꾼다 — 차고 나서 알면 늦다.
    */
-  const memoryNearLimit = memoryAll !== null
-    && memoryAll.length >= Math.floor(MAX_MEMORY_ITEMS_PER_ACCOUNT * 0.9);
+  const memoryNearLimit = memoryParts !== null
+    && memoryParts.active.length >= Math.floor(MAX_MEMORY_ITEMS_PER_ACCOUNT * 0.9);
   /** 검색 중에는 묶음을 연 채로 둔다 — 걸린 것을 접어 두면 찾은 보람이 없다. */
   const memorySearching = memQuery.trim() !== '';
 
@@ -790,6 +799,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             {m.kind && m.kind !== 'topic' && (
               <span data-testid="memory-kind" className="flex-none rounded-sm bg-surface-hover px-1 text-meta text-fg-subtle">
                 {kindLabel(t, m.kind)}
+              </span>
+            )}
+            {m.archivedAt && (
+              <span data-testid="memory-archived-badge" className="flex-none rounded-sm bg-surface-hover px-1 text-meta text-fg-subtle">
+                {t('agents.memory.archivedTag')}
               </span>
             )}
             {/* 쓰기 검사(서버 080)에 걸린 판 — 사람이 확인할 때까지 에이전트 프롬프트에 안 실린다. */}
@@ -2519,8 +2533,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         className={`text-meta ${memoryNearLimit ? 'text-warning' : 'text-fg-subtle'}`}
                       >
                         {t('agents.memory.count', {
-                          n: memoryAll.length, max: MAX_MEMORY_ITEMS_PER_ACCOUNT,
+                          n: memoryParts!.active.length, max: MAX_MEMORY_ITEMS_PER_ACCOUNT,
                         })}
+                        {memoryParts!.archived.length > 0 && (
+                          <span data-testid="memory-archived-count">
+                            {` · ${t('agents.memory.archivedCount', { n: memoryParts!.archived.length })}`}
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2661,6 +2680,40 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                           })}
                         </div>
                       </>
+                    )}
+
+                    {/*
+                      보관된 것(서버 097)은 에이전트 목록·recall·상한에서 빠진다 — 그래서 위 목록과
+                      숫자에 섞지 않고 맨 아래 접힌 칸에 둔다. 검색 중에는 걸린 것만 연 채로 보인다.
+                    */}
+                    {memoryArchived.length > 0 && (
+                      <div data-testid="memory-archived" className="overflow-hidden rounded-row border border-border">
+                        <button
+                          className="flex w-full items-baseline gap-2 px-2 py-1 text-left text-fg-muted"
+                          aria-expanded={memorySearching || openGroups.includes(ARCHIVED_GROUP)}
+                          aria-label={t(
+                            memorySearching || openGroups.includes(ARCHIVED_GROUP)
+                              ? 'agents.memory.archivedCollapse' : 'agents.memory.archivedExpand',
+                          )}
+                          onClick={() => setOpenGroups((prev) => toggleIn(prev, ARCHIVED_GROUP))}
+                        >
+                          <span aria-hidden="true" className="flex-none text-meta">
+                            {memorySearching || openGroups.includes(ARCHIVED_GROUP) ? '▾' : '▸'}
+                          </span>
+                          <span className="text-meta font-medium">{t('agents.memory.archivedHeading')}</span>
+                          <span className="ml-auto flex-none text-meta">
+                            {t('agents.memory.groupCount', { n: memoryArchived.length })}
+                          </span>
+                        </button>
+                        {(memorySearching || openGroups.includes(ARCHIVED_GROUP)) && (
+                          <>
+                            <div className="border-t border-border px-2 py-1 text-meta text-fg-subtle">
+                              {t('agents.memory.archivedNote')}
+                            </div>
+                            {memoryArchived.map((m) => memoryRow(m, selected.id, true))}
+                          </>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>

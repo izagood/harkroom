@@ -1126,6 +1126,12 @@ export const en = {
   'agents.memory.coreNote': 'These characters ride in the prompt every turn. The rest open only when the agent needs them.',
   'agents.memory.coreTag': 'Every turn',
   /** 남은 자리. 차면 새 기억이 조용히 거절되므로 늘 띄워 둔다. */
+  'agents.memory.archivedCollapse': 'Collapse archived memories',
+  'agents.memory.archivedCount': '{n} archived',
+  'agents.memory.archivedExpand': 'Expand archived memories',
+  'agents.memory.archivedHeading': 'Archived',
+  'agents.memory.archivedNote': "Archived memories are left out of the agent's index and recall, and don't count toward the limit.",
+  'agents.memory.archivedTag': 'Archived',
   'agents.memory.count': '{n} / {max}',
   'agents.memory.deleteAction': 'Forget {slug}',
   'agents.memory.deleteConfirm': 'Forget it',

@@ -5,7 +5,7 @@
 // 잰다. 화면이 이 결과를 그리는지는 `agentMemoryUi.test.tsx` 가 따로 본다.
 import { describe, it, expect } from 'vitest';
 import {
-  memorySummary, memoryGroupKey, memoryRows, splitCore, MIN_GROUP_SIZE,
+  filterMemories, memorySummary, memoryGroupKey, memoryRows, splitArchived, splitCore, MIN_GROUP_SIZE,
   type MemoryEntry,
 } from '../src/lib/memoryList';
 
@@ -157,5 +157,32 @@ describe('memoryRows — 묶고, 고르고, 줄로 편다', () => {
     const entries = [mem('mem/b-1', '#b', 1), mem('mem/a-1', '#a', 5)];
     memoryRows(entries);
     expect(entries.map((e) => e.slug)).toEqual(['mem/b-1', 'mem/a-1']);
+  });
+});
+
+describe('splitArchived — 보관된 것을 뗀다(서버 097)', () => {
+  it('archivedAt 이 있는 것만 보관 쪽으로, 최근 보관한 것부터', () => {
+    const live = mem('mem/live');
+    const a1 = { ...mem('mem/a1'), archivedAt: at(2) };
+    const a2 = { ...mem('mem/a2'), archivedAt: at(5) };
+    const nul = { ...mem('mem/nul'), archivedAt: null };
+    const { active, archived } = splitArchived([a1, live, a2, nul]);
+    expect(active.map((e) => e.slug)).toEqual(['mem/live', 'mem/nul']);
+    expect(archived.map((e) => e.slug)).toEqual(['mem/a2', 'mem/a1']);
+  });
+
+  it('옛 서버(필드 없음)면 전부 살아 있는 것이다', () => {
+    const { active, archived } = splitArchived([mem('core'), mem('mem/x')]);
+    expect(active).toHaveLength(2);
+    expect(archived).toEqual([]);
+  });
+});
+
+describe('filterMemories — 검색어로만 거른다', () => {
+  it('slug·본문 둘 다 보고, 빈 검색어면 그대로', () => {
+    const list = [mem('mem/alpha', '# 하나'), mem('mem/beta', '# 알파 이야기')];
+    expect(filterMemories(list, '  ')).toBe(list);
+    expect(filterMemories(list, 'ALPHA').map((e) => e.slug)).toEqual(['mem/alpha']);
+    expect(filterMemories(list, '알파').map((e) => e.slug)).toEqual(['mem/beta']);
   });
 });
