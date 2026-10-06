@@ -2426,7 +2426,9 @@ export class Controller {
     // 채널이 아예 안 열리면 안 된다 — 채널 선호(`start`)와 같은 이유다.
     this.swallow(this.loadPins(channelId));
     this.swallow(this.loadChannelAutoMentions(channelId));
-    if (since > 0) { await this.pullSince(channelId, since); return; }
+    // 읽음 처리(`settleReadPosition`)는 **두 갈래 모두** 거친다 — 증분 갈래에서 빠뜨리면 뒤로·앞으로
+    // 간 채널의 배지가 남는다(security F1, 2026-10-06).
+    if (since > 0) { await this.pullSince(channelId, since); this.settleReadPosition(channelId); return; }
     const page = await this.api.messages(channelId, { since, limit: INITIAL_HISTORY_LIMIT });
     this.loadedChannels.add(channelId);
     if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
