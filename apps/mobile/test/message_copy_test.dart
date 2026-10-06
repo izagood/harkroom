@@ -217,7 +217,8 @@ void main() {
           find.ancestor(of: find.byKey(const Key('message-press-t5')), matching: find.byType(Material)).first);
       expect(row.type, MaterialType.transparency);
       // 강조는 아바타·리액션 줄 밖이다 — 말 부분만.
-      final glow = tester.getRect(find.byKey(const Key('message-glow-t5')));
+      // 실제로 칠하는 면(넘침 포함)으로 잰다 — 자식 영역만 재면 넘친 면이 아바타를 덮어도 못 잡는다.
+      final glow = PressGlow.bleed.inflateRect(tester.getRect(find.byKey(const Key('message-glow-t5'))));
       final avatar = tester.getRect(find.byType(HarkroomAvatar).first);
       final react = tester.getRect(find.byKey(const Key('reaction-add-t5')));
       expect(glow.left, greaterThan(avatar.right));

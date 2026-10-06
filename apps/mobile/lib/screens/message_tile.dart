@@ -305,7 +305,8 @@ class PressGlow extends StatelessWidget {
   final bool lit;
   final Widget child;
 
-  static const bleed = EdgeInsets.symmetric(horizontal: 8, vertical: 4);
+  // 가로 6: 아바타와 면 사이 4pt 를 남긴다(10 - 6, designer nit 1).
+  static const bleed = EdgeInsets.symmetric(horizontal: 6, vertical: 4);
 
   @override
   Widget build(BuildContext context) {
