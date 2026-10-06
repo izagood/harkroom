@@ -4,7 +4,7 @@ import type { MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { MessageItem } from '../src/components/MessageItem';
-import { clipBounds } from '../src/components/Menu';
+import { clipBounds, Menu } from '../src/components/Menu';
 import { HostDocumentContext } from '../src/lib/hostDocument';
 import { acc, fakeApi, fakeWsFactory, msg, tm } from './helpers/fakeApi';
 
@@ -56,7 +56,7 @@ beforeEach(() => {
     teams: [tm('t1', 'udc-team', 0)],
   });
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); setController(null as unknown as Controller); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); setController(null as unknown as Controller); });
 
 describe('새 창 안의 떠 있는 것', () => {
   it('반응 말풍선은 그 창에 뜨고 그 창 크기로 자른다', async () => {
@@ -106,5 +106,60 @@ describe('새 창 안의 떠 있는 것', () => {
     const doc = popupDoc();
     const el = doc.body.appendChild(doc.createElement('div'));
     expect(clipBounds(el)).toEqual({ top: 0, bottom: WIN.height });
+  });
+
+  /**
+   * designer #1224 수정 1: 520×480 채널 창은 메시지 목록이 230px 남짓이라 맨 아래 글의 ⋯ 메뉴(약 218px)가
+   * 위로도 아래로도 목록 안에 다 안 들어가 목록 테두리에서 잘렸다(Pin·Delete 를 못 누름, WebKit 실측).
+   * 그때만 목록 밖(`position: fixed`)으로 꺼내 그 창 안으로 자른다.
+   */
+  function openMenuIn(list: { top: number; bottom: number }, trigger: { top: number; bottom: number }, menuHeight: number) {
+    const doc = popupDoc();
+    const rects = new Map<string, { top: number; bottom: number; left: number; width: number }>([
+      ['list', { ...list, left: 0, width: WIN.width }],
+      ['trigger', { ...trigger, left: 300, width: 24 }],
+      ['menu', { top: trigger.bottom + 4, bottom: trigger.bottom + 4 + menuHeight, left: 260, width: 160 }],
+    ]);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const key = this.getAttribute('role') === 'menu' ? 'menu' : (this.dataset.probe ?? '');
+      const r = rects.get(key) ?? { top: 0, bottom: 0, left: 0, width: 0 };
+      const full = { ...r, right: r.left + r.width, height: r.bottom - r.top, x: r.left, y: r.top };
+      return { ...full, toJSON: () => full } as DOMRect;
+    });
+    const container = doc.body.appendChild(doc.createElement('div'));
+    render(
+      <HostDocumentContext.Provider value={doc}>
+        <div data-probe="list" style={{ overflowY: 'auto' }}>
+          <Menu
+            placement="bottom"
+            items={['Copy text', 'Mark unread', 'Pin', 'Edit', 'Delete'].map((label) => ({ label, onSelect: () => undefined }))}
+            renderTrigger={(props) => <button {...props} data-probe="trigger">⋯</button>}
+          />
+        </div>
+      </HostDocumentContext.Provider>,
+      { container },
+    );
+    fireEvent.click(doc.querySelector('[data-probe="trigger"]')!);
+    return doc.querySelector<HTMLElement>('[role="menu"]')!;
+  }
+
+  it('⋯ 메뉴가 목록 위·아래 어느 쪽에도 다 안 들어가면 목록 밖으로 꺼내 창 안에 둔다', () => {
+    // 목록 40~270(230px), 맨 아래 글의 ⋯ 는 240~264, 메뉴 218px. 창은 360×420.
+    const menu = openMenuIn({ top: 40, bottom: 270 }, { top: 240, bottom: 264 }, 218);
+    expect(menu.style.position).toBe('fixed');
+    const top = parseFloat(menu.style.top);
+    expect(top).toBeGreaterThanOrEqual(8);
+    expect(top + 218).toBeLessThanOrEqual(WIN.height - 8);
+    // 가로도 창 안: 메뉴 오른쪽 끝(left + 160) ≤ 360 − 8.
+    expect(parseFloat(menu.style.left) + 160).toBeLessThanOrEqual(WIN.width - 8);
+    // 목록 안의 `absolute` 배치 클래스는 떼어야 한다 — 남으면 top·bottom 이 둘 다 서서 메뉴가 늘어난다.
+    expect(menu.className).not.toMatch(/\babsolute\b|top-full|bottom-full/);
+  });
+
+  it('목록 안에 들어가면 예전 그대로 목록 안의 absolute 다(메인 창 동작 그대로)', () => {
+    const menu = openMenuIn({ top: 0, bottom: 400 }, { top: 40, bottom: 64 }, 218);
+    expect(menu.style.position).toBe('');
+    expect(menu.className).toMatch(/\babsolute\b/);
+    expect(menu.className).toMatch(/top-full/);
   });
 });
