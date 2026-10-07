@@ -2151,6 +2151,7 @@ export const ko = {
   'agents.mcp.custom': '기타 (URL 입력)',
   'agents.mcp.url': 'URL',
   'agents.mcp.clientId': 'OAuth Client ID (선택)',
+  'agents.mcp.errSecretNeedsClientId': 'Client secret 은 Client ID 와 함께 넣어야 한다.',
   'agents.mcp.clientSecret': 'Client secret (선택)',
   'agents.mcp.clientNote': '등록한 OAuth 앱으로 인증할 때만 적는다. Client ID 를 바꾸면 한 번 다시 인증해야 한다. secret 은 오퍼레이터만 들고 다시 보이지 않는다 — 비워 두면 그대로 둔다(PKCE 앱은 없어도 된다).',
   'agents.mcp.addNote': '이름을 등록하고, 이 머신에 정의를 저장하고, 이 에이전트에 켠다. 여기서는 http·sse 서버만 넣는다.',

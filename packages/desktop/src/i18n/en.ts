@@ -4284,6 +4284,7 @@ export const en = {
   'agents.mcp.custom': 'Other (enter a URL)',
   'agents.mcp.url': 'URL',
   'agents.mcp.clientId': 'OAuth Client ID (optional)',
+  'agents.mcp.errSecretNeedsClientId': 'A client secret needs a Client ID.',
   'agents.mcp.clientSecret': 'Client secret (optional)',
   'agents.mcp.clientNote': 'Only for a registered OAuth app. Changing the Client ID requires signing in once more. The secret is kept by the operator only and never shown again — leave it blank to keep the current one (PKCE apps need none).',
   'agents.mcp.addNote': 'Registers the name, saves the definition on this machine, and turns it on for this agent. Only http/sse servers can be added here.',

@@ -147,6 +147,8 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
     if (!NAME.test(n)) { setError(t('mcpServers.badName')); return; }
     if (!/^https?:\/\//.test(url.trim())) { setError(t('agents.mcp.errUrl')); return; }
     if (!hasOperatorLocalSurface()) { setError(t('agents.mcp.errNoLocal')); return; }
+    // secret 은 clientId 에 묶여 저장된다 — 오퍼레이터도 거절하지만 여기서 먼저 말한다(#1243 F1).
+    if (clientSecret.trim() && !clientId.trim()) { setError(t('agents.mcp.errSecretNeedsClientId')); return; }
     const preset = MCP_PRESETS.find((x) => x.id === presetId);
     const base: OperatorMcpRemoteDefinition = preset && preset.name === n && preset.definition.url === url.trim()
       ? preset.definition
