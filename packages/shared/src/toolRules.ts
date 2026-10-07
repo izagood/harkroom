@@ -13,9 +13,13 @@
 
 export type ToolRuleRefusal =
   | 'empty' | 'too_long' | 'unsupported_tool' | 'wildcard' | 'too_broad' | 'shell_syntax'
-  | 'dangerous_flag' | 'interpreter' | 'operator_wrapper' | 'merge_bypass' | 'bad_chars' | 'gh_api_write';
+  | 'dangerous_flag' | 'interpreter' | 'operator_wrapper' | 'merge_bypass' | 'bad_chars' | 'gh_api_write'
+  /** 정확한 명령만(H②, security n1): 첫 낱말이 `NAME=값` — `LD_PRELOAD=`·`PATH=` 로 명령의 뜻을 바꾼다. */
+  | 'env_prefix';
 
-export type ToolRuleWarning = 'executes_in_workload' | 'mutates_remote' | 'runs_arbitrary' | 'short_prefix';
+export type ToolRuleWarning = 'executes_in_workload' | 'mutates_remote' | 'runs_arbitrary' | 'short_prefix'
+  /** 정확한 명령만(H②, security F1): 파일을 읽어 그 내용대로 움직인다 — 승인은 글자에 묶이고 파일 내용은 범위 밖이다. */
+  | 'reads_file';
 
 export type ToolRuleVerdict =
   | { ok: true; rule: string; kind: 'bash_prefix' | 'bash_exact' | 'mcp_tool'; warnings: ToolRuleWarning[] }
@@ -231,5 +235,17 @@ export function validateExactCommand(input: string): ExactCommandVerdict {
   const v = validateToolRule(`Bash(${command})`);
   if (!v.ok) return v;
   if (v.kind !== 'bash_exact') return { ok: false, code: 'unsupported_tool' };
-  return { ok: true, command: v.rule.slice('Bash('.length, -1), warnings: v.warnings };
+  const normalized = v.rule.slice('Bash('.length, -1);
+  const words = normalized.split(' ');
+  if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!)) return { ok: false, code: 'env_prefix' };
+  const warnings = [...v.warnings];
+  if (readsFile(words)) warnings.push('reads_file');
+  return { ok: true, command: normalized, warnings };
+}
+
+/** 파일 내용대로 움직이는 꼴(security F1 최소안): `-f x`·`--filename`·`--patch-file`·`--values`·`--from-file`·`-k`·`@파일`, 또는 경로로 부르는 머리. */
+const FILE_FLAGS = new Set(['-f', '--filename', '--patch-file', '--values', '--from-file', '--from-env-file', '--kustomize', '-k', '--env-file', '--config', '--kubeconfig-file']);
+function readsFile(words: readonly string[]): boolean {
+  if (words[0]!.includes('/')) return true;
+  return words.slice(1).some((w) => FILE_FLAGS.has(w) || [...FILE_FLAGS].some((f) => f.startsWith('--') && w.startsWith(`${f}=`)) || w.startsWith('@'));
 }

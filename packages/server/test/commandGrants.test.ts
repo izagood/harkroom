@@ -77,7 +77,7 @@ describe('permission.request kind=command → once/hour → command-grants', () 
     for (const [command, code] of [
       [`${PATCH}; rm -rf /`, 'shell_syntax'], [`${PATCH} && echo x`, 'shell_syntax'], [`${PATCH} | tee x`, 'shell_syntax'],
       [`kubectl patch x -p '{"a":1}'`, 'bad_chars'], ['KUBECONFIG=$HOME/x kubectl get pods', 'bad_chars'],
-      ['kubectl get pods:*', 'wildcard'], ['bash -c ls', 'interpreter'],
+      ['kubectl get pods:*', 'wildcard'], ['bash -c ls', 'interpreter'], ['LD_PRELOAD=/tmp/x.so kubectl get pods', 'env_prefix'],
     ] as const) {
       expect((await request({ kind: 'command', command, threadRootId: thread })).error?.code, command).toBe(code);
     }
@@ -91,7 +91,7 @@ describe('permission.request kind=command → once/hour → command-grants', () 
     expect(r.error).toBeUndefined();
     const card = (await pool.query(`select body, meta from message where id = $1`, [r.cardMessageId])).rows[0];
     expect(card.meta.ask.options.map((o: { id: string }) => o.id)).toEqual(['approve_once', 'approve_hour', 'deny']);
-    expect(card.meta.permissionRequest).toMatchObject({ kind: 'command', target: PATCH, channelId: ch, threadRootId: thread, warnings: ['mutates_remote'] });
+    expect(card.meta.permissionRequest).toMatchObject({ kind: 'command', target: PATCH, channelId: ch, threadRootId: thread, warnings: ['mutates_remote', 'reads_file'] });
     expect(card.body).toContain('이 스레드에서만');
 
     // 소유자가 아닌 사람·admin·에이전트는 못 연다.

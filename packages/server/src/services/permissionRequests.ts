@@ -95,6 +95,7 @@ const RULE_REFUSAL_MESSAGE: Record<ToolRuleRefusal, string> = {
   merge_bypass: 'merging goes through the merge wrapper — request kind "merge" with the repository instead',
   bad_chars: 'rule may only use letters, digits, spaces and _ . / @ = : + % - — no quotes, backslashes, brackets or commas',
   gh_api_write: '`gh api` is granted only as one exact read call — no prefix rule, -X/--method, -f/-F/--input or graphql',
+  env_prefix: 'no NAME=value prefix — pass it as a flag (e.g. kubectl --kubeconfig <path>)',
 };
 
 export async function openPermissionRequest(
