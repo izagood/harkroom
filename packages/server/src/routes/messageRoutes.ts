@@ -4,11 +4,12 @@ import { z } from 'zod';
 import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE } from '../services/messages.js';
+import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isPermissionCardMessage, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { normalizeSearchQuery } from '../services/mentions.js';
+import { decideFromCard } from '../services/permissionRequests.js';
 import { extractUrls, queueLinkPreviewFetch } from '../services/linkPreview.js';
 import { axisValid, cleanAxis, clearThreadAgentModel, isChannelRoot, setThreadAgentModel } from '../services/threadAgentModels.js';
 import { agentModelInput, announceChange, checkOffered, emitChanged } from './threadAgentModelRoutes.js';
@@ -343,6 +344,18 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
 
+    // 권한 요청 카드(111)는 답이 곧 결정이다 — 소유자 **사람 세션**이 누를 때만 grant 를 넣고 답을 적는다. 모바일·웹도 이 길이다.
+    if (await isPermissionCardMessage(pool, messageId)) {
+      if (req.account!.kind !== 'human' || req.authVia !== 'session') {
+        return reply.code(403).send({ error: { code: 'forbidden', message: 'only the owner signed in to the app can decide a permission request' } });
+      }
+      const decided = await decideFromCard(pool, { messageId, actorId: req.account!.id, optionId });
+      if (!decided.ok) {
+        const code = decided.code === 'already_decided' || decided.code === 'request_expired' ? 'already_answered' : decided.code;
+        return reply.code(decided.status).send({ error: { code, message: decided.message } });
+      }
+      return decided.card;
+    }
     const result = await recordAskAnswer(pool, { messageId, actorId: req.account!.id, optionId });
     if (result === 'not_found') {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });

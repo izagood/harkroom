@@ -70,7 +70,7 @@ import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../service
 import type { AgentPresence } from './presence.js';
 import { enqueueAskPush } from '../services/push/pushJobs.js';
 import { bumpDenialCard, DENIAL_CARD_REFUSAL_MESSAGE, linkDenialCard, prepareDenialCard, type MergeDenialMeta } from '../services/mergeDenials.js';
-import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions } from '../services/permissionRequests.js';
+import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant } from '../services/permissionRequests.js';
 
 /**
  * 발화 도구가 공통으로 받는 `model` — 에이전트가 신고하는 **자기 모델 ID**(#600).
@@ -923,6 +923,28 @@ function buildMcpServer(
       }
     }
     return jsonResult({ requestId, cardMessageId: message.id, pending: true, expiresAt: permissionRequest.expiresAt });
+  });
+
+  /**
+   * 내 grant 하나를 내려놓는다(권한 요청 스레드 f61af808). 좁히기만 하므로 어느 턴에서나 된다 — 설정 화면이 없는 동안 소유자가
+   * 채팅(모바일 포함)으로 "그 권한 거둬"라고 하면 에이전트가 이것으로 거둔다. 넓히는 길은 `permission.request` 하나뿐이다.
+   */
+  server.registerTool('permission.revoke', {
+    description: '내가 받은 명령 허용(kind=tool, 그 채널의 규칙)이나 머지 권한(kind=merge, owner/name) 하나를 내려놓는다. 다음 턴부터 빠진다',
+    inputSchema: {
+      kind: z.enum(['tool', 'merge']),
+      rule: z.string().min(1).max(300).optional(),
+      repo: z.string().min(3).max(201).optional(),
+      channelId: z.string().uuid(),
+    },
+  }, async ({ kind, rule, repo, channelId }) => {
+    if (account.kind !== 'agent') return jsonResult({ error: { code: 'not_agent', message: 'only an agent can release its own permission' } });
+    if ((kind === 'tool') !== (rule !== undefined) || (kind === 'merge') !== (repo !== undefined)) {
+      return jsonResult({ error: { code: 'bad_request', message: 'kind "tool" takes `rule`, kind "merge" takes `repo` — exactly one' } });
+    }
+    const r = await releaseGrant(pool, { agentId: account.id, kind, rule, repo, channelId });
+    if (!r.ok) return jsonResult({ error: { code: r.code, message: r.message } });
+    return jsonResult({ revoked: true, capability: r.capability, scope: r.scope });
   });
 
   server.registerTool('message.fail', {

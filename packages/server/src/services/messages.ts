@@ -1792,7 +1792,7 @@ export async function recordAskAnswer(
    */
   if (ask.mirrorOf) {
     const root = await readAskRow(pool, ask.mirrorOf);
-    if (root && await isPermissionCard(pool, ask.mirrorOf)) return 'forbidden';
+    if (root && await isPermissionCardMessage(pool, ask.mirrorOf)) return 'forbidden';
     if (root) {
       // 원본은 거울을 만들 때 검사했다(`checkAskMirror`). 여기서 다시 보는 것은 원본에 적는
       // 것이 **이 사람의 이름으로** 적는 일이기 때문이다 — 원본 채널을 못 보는 사람이
@@ -1820,7 +1820,7 @@ export async function recordAskAnswer(
 }
 
 /** 권한 요청 카드인가(111) — 거울을 거쳐 원본에 답을 적는 길을 막을 때. */
-async function isPermissionCard(pool: Pool, messageId: string): Promise<boolean> {
+export async function isPermissionCardMessage(pool: Pool, messageId: string): Promise<boolean> {
   const res = await pool.query(`select 1 from message where id = $1 and meta ? 'permissionRequest'`, [messageId]);
   return (res.rowCount ?? 0) > 0;
 }

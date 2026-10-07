@@ -90,10 +90,13 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect((await pool.query(`select count(*)::int as n from permission_request where agent_id = $1`, [agentId])).rows[0].n).toBe(1);
     });
 
-    it('카드 선택지를 ask-answer 로 누르면 소유자라도 403 이고 grant 가 없다', async () => {
-      const res = await app.inject({ method: 'POST', url: `/channels/${ch}/messages/${cardId}/ask-answer`, headers: auth(alice.token), payload: { optionId: 'approve' } });
-      expect(res.statusCode).toBe(403);
+    it('카드 선택지를 ask-answer 로 눌러도 소유자 세션이 아니면 403 이고 grant 가 없다', async () => {
+      const answer = (token: string) => app.inject({ method: 'POST', url: `/channels/${ch}/messages/${cardId}/ask-answer`, headers: auth(token), payload: { optionId: 'approve' } });
+      expect((await answer(bob.token)).statusCode).toBe(403);
+      expect((await answer(admin.token)).statusCode).toBe(403);
+      expect((await answer(agentPat)).statusCode).toBe(403);
       expect(await toolAllowsFor(pool, agentId, ch)).toEqual([]);
+      expect((await pool.query(`select meta->'ask'->>'answeredWith' as a from message where id = $1`, [cardId])).rows[0].a).toBeNull();
     });
 
     it('소유자가 아닌 사람·admin·에이전트·오퍼레이터는 승인할 수 없다', async () => {
@@ -161,6 +164,39 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect(res.statusCode).toBeLessThan(300);
       expect(await toolAllowsFor(pool, agentId, ch)).toEqual([]);
     });
+  });
+
+  it('모바일·웹: 소유자가 일반 ask-answer 로 [승인]을 누르면 그대로 승인된다', async () => {
+    const rule = 'Bash(gh pr view -R rebellions-sw/udc-k8s:*)';
+    const r = await request({ kind: 'tool', rule, threadRootId: await root() });
+    const answer = (optionId: string) => app.inject({ method: 'POST', url: `/channels/${ch}/messages/${r.cardMessageId}/ask-answer`, headers: auth(alice.token), payload: { optionId } });
+    expect((await answer('bogus')).statusCode).toBe(400);
+    const res = await answer('approve');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().meta.ask).toMatchObject({ answeredWith: 'approve', answeredBy: alice.accountId });
+    expect(res.json().meta.permissionRequest).toMatchObject({ status: 'granted' });
+    expect(await toolAllowsFor(pool, agentId, ch)).toContain(rule);
+    const again = await answer('deny');
+    expect(again.statusCode).toBe(409);
+    expect(again.json().error.code).toBe('already_answered');
+    // 7일이 지나면 저절로 빠진다 — 러너 조회도 만료를 본다.
+    await pool.query(`update account_grant set expires_at = now() - interval '1 second' where account_id = $1 and scope = $2`, [agentId, `tool:${ch}:${rule}`]);
+    expect(await toolAllowsFor(pool, agentId, ch)).not.toContain(rule);
+    expect((await app.inject({ method: 'GET', url: `/agent/tool-allows?channelId=${ch}`, headers: asAgent() })).json().rules).not.toContain(rule);
+    await pool.query(`delete from account_grant where account_id = $1 and scope = $2`, [agentId, `tool:${ch}:${rule}`]);
+  });
+
+  it('permission.revoke: 에이전트가 자기 grant 를 내려놓는다(모바일에서 채팅으로 거두는 길)', async () => {
+    const rule = 'Bash(kubectl --context udc -n rebelro logs:*)';
+    await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'tool.allow', $2, $3)`, [agentId, `tool:${ch}:${rule}`, alice.accountId]);
+    await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'repo.merge', 'repo:rebellions-sw/udck8s', $2)`, [agentId, alice.accountId]);
+    const revoke = (args: Record<string, unknown>) => client.callTool({ name: 'permission.revoke', arguments: { channelId: ch, ...args } }).then(text);
+    expect(await revoke({ kind: 'tool', rule: `Bash( kubectl --context udc -n rebelro logs:*)` })).toMatchObject({ revoked: true, capability: 'tool.allow' });
+    expect(await toolAllowsFor(pool, agentId, ch)).not.toContain(rule);
+    expect(await revoke({ kind: 'merge', repo: 'rebellions-sw/udck8s' })).toMatchObject({ revoked: true, scope: 'repo:rebellions-sw/udck8s' });
+    expect(await mergeGrantFor(pool, agentId, 'rebellions-sw/udck8s')).toBeNull();
+    expect((await revoke({ kind: 'merge', repo: 'rebellions-sw/udck8s' })).error.code).toBe('not_found');
+    expect((await revoke({ kind: 'tool', repo: 'a/b' })).error.code).toBe('bad_request');
   });
 
   it('거절하면 grant 없이 카드가 닫히고 에이전트가 깨어난다', async () => {

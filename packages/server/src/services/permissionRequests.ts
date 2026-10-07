@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { repoScope, toolScope, validateToolRule, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
+import { repoScope, toolScope, validateToolRule, type MessageRow, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
@@ -284,4 +284,55 @@ export async function toolAllowsFor(pool: Pool, agentId: string, channelId: stri
     const v = validateToolRule(rule);
     return v.ok && v.rule === rule;
   });
+}
+
+/**
+ * 카드의 선택지를 **어느 클라이언트에서든**(모바일·웹·데스크톱) 누르는 길(10-07 jaebin: 데스크톱을 못 쓰는 동안에도 승인돼야 한다).
+ * 일반 `ask-answer` 라우트가 권한 카드를 만나면 여기로 온다. 사람 세션 판정은 라우트가, 소유자 판정은 여기서 요청 줄의
+ * 에이전트로 한다(카드 meta 가 아니라 서버 줄). 선택지 id 가 곧 결정이다 — approve/deny 말고는 없다.
+ */
+export async function decideFromCard(
+  pool: Pool, args: { messageId: string; actorId: string; optionId: string },
+): Promise<{ ok: true; card: MessageRow | null } | ({ ok: false } & DecideRefusal) | { ok: false; status: 400; code: 'unknown_option'; message: string }> {
+  const r = (await pool.query<{ id: string; agentId: string; ownerAccountId: string | null }>(
+    `select p.id, p.agent_id as "agentId", c.owner_account_id as "ownerAccountId"
+       from permission_request p join agent_config c on c.account_id = p.agent_id
+      where p.card_message_id = $1`, [args.messageId])).rows[0];
+  if (!r) return { ok: false, status: 404, code: 'not_found', message: 'no permission request behind this card' };
+  if (r.ownerAccountId !== args.actorId) return { ok: false, status: 403, code: 'forbidden', message: 'only the owner of this agent can decide its permission requests' };
+  const decision = args.optionId === PERMISSION_OPTION_APPROVE ? 'approve' : args.optionId === PERMISSION_OPTION_DENY ? 'deny' : null;
+  if (!decision) return { ok: false, status: 400, code: 'unknown_option', message: 'a permission card takes approve or deny' };
+  const d = await decidePermissionRequest(pool, { agentId: r.agentId, requestId: r.id, actorId: args.actorId, decision });
+  if (!d.ok) return d;
+  return { ok: true, card: await getMessageById(pool, args.messageId) };
+}
+
+/**
+ * 에이전트가 **자기** grant 를 내려놓는다(`permission.revoke`). 좁히기만 하므로 어느 턴에서나 된다 — 설정 화면이 없는 동안
+ * 소유자가 채팅으로 "그 권한 거둬"라고 하면 에이전트가 이것으로 거둔다(모바일 거두기). 옛 넓은 규칙도 원문 그대로 지울 수 있다.
+ */
+export async function releaseGrant(
+  pool: Pool, args: { agentId: string; kind: PermissionKind; rule?: string; repo?: string; channelId: string },
+): Promise<{ ok: true; capability: string; scope: string } | { ok: false; code: 'bad_repo' | 'not_found'; message: string }> {
+  let capability: 'tool.allow' | 'repo.merge';
+  let scopes: string[];
+  if (args.kind === 'tool') {
+    const raw = (args.rule ?? '').trim();
+    const v = validateToolRule(raw);
+    capability = 'tool.allow';
+    scopes = [...new Set([toolScope(args.channelId, raw), ...(v.ok ? [toolScope(args.channelId, v.rule)] : [])])];
+  } else {
+    const scope = repoScope(args.repo ?? '');
+    if (!scope) return { ok: false, code: 'bad_repo', message: 'repo must be one <owner>/<name>' };
+    capability = 'repo.merge';
+    scopes = [scope];
+  }
+  const del = await pool.query<{ scope: string }>(
+    `delete from account_grant where account_id = $1 and capability = $2 and scope = any($3::text[]) returning scope`,
+    [args.agentId, capability, scopes]);
+  const scope = del.rows[0]?.scope;
+  if (!scope) return { ok: false, code: 'not_found', message: 'no such grant on this agent' };
+  await recordAudit(pool, { action: 'grant.revoked', actorId: args.agentId, target: args.agentId, detail: { capability, scope, via: 'permission.revoke' } });
+  emitEvent({ type: 'grant.changed', accountId: args.agentId, audience: 'all' });
+  return { ok: true, capability, scope };
 }
