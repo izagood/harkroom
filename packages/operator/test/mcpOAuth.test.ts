@@ -24,6 +24,8 @@ interface Fake {
   calls: { register: number; refresh: number };
   /** 콜백에 쓰일 코드와 그 코드의 challenge. */
   challenges: Map<string, string>;
+  /** 토큰 엔드포인트가 받은 `grant_type:client_id:client_secret|-`. */
+  secretsSeen: string[];
   refreshToken: string;
   /** refresh 를 거절하게 한다(invalid_grant). */
   revoke(): void;
@@ -33,6 +35,7 @@ interface Fake {
 async function fakeServer(opts: { dcr?: boolean } = {}): Promise<Fake> {
   const calls = { register: 0, refresh: 0 };
   const challenges = new Map<string, string>();
+  const secretsSeen: string[] = [];
   let gen = 1;
   let revoked = false;
   const state = { refresh: 'R1' };
@@ -66,6 +69,7 @@ async function fakeServer(opts: { dcr?: boolean } = {}): Promise<Fake> {
     }
     if (u.pathname === '/token' && req.method === 'POST') {
       const f = new URLSearchParams(await body(req));
+      secretsSeen.push(`${f.get('grant_type')}:${f.get('client_id')}:${f.get('client_secret') ?? '-'}`);
       if (f.get('grant_type') === 'authorization_code') {
         const want = challenges.get(f.get('code') ?? '');
         const got = createHash('sha256').update(f.get('code_verifier') ?? '').digest('base64url');
@@ -87,7 +91,7 @@ async function fakeServer(opts: { dcr?: boolean } = {}): Promise<Fake> {
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
   origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   return {
-    origin, mcpUrl: `${origin}/mcp`, calls, challenges,
+    origin, mcpUrl: `${origin}/mcp`, calls, challenges, secretsSeen,
     get refreshToken() { return state.refresh; },
     revoke: () => { revoked = true; },
     close: () => new Promise((r) => server.close(() => r())),
@@ -351,6 +355,57 @@ describe('MCP 서버 거절 보고(reportRejected, 2026-10-01)', () => {
     expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' })).toEqual({ action: 'expired' });
     expect(await oauth.reportRejected('slack', { turnStartedAtMs: after() + 6 * 60_000, agentId: 'agent-a' })).toEqual({ action: 'ignored', reason: 'not_ok' });
     expect(fake.calls.refresh).toBe(1);
+  });
+});
+
+describe('전용 클라이언트로 갈아타기(2026-10-07, 전용 Slack 앱)', () => {
+  const def = (clientId: string) => ({ type: 'http' as const, url: fake.mcpUrl, oauth: { clientId } });
+  async function authedWith(clientId: string): Promise<void> {
+    const { authUrl } = await oauth.start('slack', def(clientId));
+    await approve(fake, authUrl);
+    await until(async () => (await oauth.status('slack', fake.mcpUrl, clientId)).state === 'ok');
+  }
+
+  it('정의의 clientId 가 바뀌면 들고 있던 토큰은 굽지 않고 "인증 필요" — 다시 인증하면 새 클라이언트로 돈다', async () => {
+    await authedWith('OLD');
+    expect((await oauth.tokensFor({ slack: { url: fake.mcpUrl, clientId: 'OLD' } })).tokens).toEqual({ slack: 'A1' });
+    expect(await oauth.status('slack', fake.mcpUrl, 'NEW')).toEqual({ state: 'none' });
+    expect(await oauth.tokensFor({ slack: { url: fake.mcpUrl, clientId: 'NEW' } })).toEqual({ tokens: {}, expired: ['slack'] });
+    await authedWith('NEW');
+    expect(fake.secretsSeen.at(-1)).toBe('authorization_code:NEW:-');
+    expect((await oauth.tokensFor({ slack: { url: fake.mcpUrl, clientId: 'NEW' } })).tokens).toEqual({ slack: 'A1' });
+  });
+
+  it('secret 이 없으면 PKCE 만으로 교환·refresh 한다 — client_secret 을 싣지 않는다', async () => {
+    await authedWith('PUB');
+    clock += 3600_000;
+    await oauth.refreshDue();
+    expect(fake.secretsSeen).toEqual(['authorization_code:PUB:-', 'refresh_token:PUB:-']);
+  });
+
+  it('secret 이 있으면 교환·refresh 에 싣는다 — 인증 뒤에 넣어도 다음 refresh 부터. 비밀 파일은 0600, 로그에 값이 없다', async () => {
+    await oauth.setClientSecret('slack', 'S-one');
+    expect(await oauth.hasClientSecret('slack')).toBe(true);
+    await authedWith('CONF');
+    await oauth.setClientSecret('slack', 'S-two');
+    clock += 3600_000;
+    await oauth.refreshDue();
+    expect(fake.secretsSeen).toEqual(['authorization_code:CONF:S-one', 'refresh_token:CONF:S-two']);
+    const path = join(dir, 'secrets', 'mcp-oauth-clients.json');
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    expect(logs.join('\n')).not.toMatch(/S-one|S-two/);
+    await oauth.setClientSecret('slack', null);
+    expect(await oauth.hasClientSecret('slack')).toBe(false);
+    expect(await oauth.hasClientSecret('constructor')).toBe(false);
+  });
+
+  it('refresh 토큰이 끝나면(Slack PKCE 앱은 30일) expired — 다시 인증 필요가 보이고 로그에 이유가 남는다', async () => {
+    await authedWith('PUB');
+    fake.revoke();
+    clock += 3600_000;
+    expect(await oauth.tokensFor({ slack: { url: fake.mcpUrl, clientId: 'PUB' } })).toEqual({ tokens: {}, expired: ['slack'] });
+    expect(await oauth.status('slack', fake.mcpUrl, 'PUB')).toEqual({ state: 'expired' });
+    expect(logs.join('\n')).toMatch(/30일/);
   });
 });
 

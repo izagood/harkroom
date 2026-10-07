@@ -36,7 +36,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { OperatorMcpAuthState, OperatorMcpRemoteDefinition } from '@harkroom/shared/daemonProtocol';
 
 export interface McpOAuthRecord {
@@ -76,12 +76,22 @@ export type McpRejectOutcome =
 export interface McpOAuth {
   /** 흐름을 연다. 돌려준 url 을 사람이 브라우저에서 연다(앱이 연다). */
   start(name: string, definition: OperatorMcpRemoteDefinition): Promise<{ authUrl: string }>;
-  status(name: string, url: string): Promise<OperatorMcpAuthState>;
+  /**
+   * `clientId` 는 지금 정의의 `oauth.clientId`. 들고 있는 토큰이 **다른 클라이언트로** 받은 것이면
+   * (전용 Slack 앱으로 갈아탄 직후 등) 그 토큰은 이 정의의 것이 아니다 — `none` 으로 내어 다시 인증하게 한다.
+   */
+  status(name: string, url: string, clientId?: string): Promise<OperatorMcpAuthState>;
   /**
    * 스폰·재작성 직전에 부른다. 만료가 가까우면 refresh 하고, **쓸 수 있는** 토큰만 돌려준다.
    * `expired` 는 쓸 수 없는 이름(사람이 다시 인증해야 한다).
    */
-  tokensFor(defs: Record<string, { url?: string }>): Promise<{ tokens: Record<string, string>; expired: string[] }>;
+  tokensFor(defs: Record<string, { url?: string; clientId?: string }>): Promise<{ tokens: Record<string, string>; expired: string[] }>;
+  /**
+   * 등록된 클라이언트의 secret(2026-10-07, 전용 Slack 앱). 정의 파일이 아니라 `<secrets>/mcp-oauth-clients.json`
+   * (0600)에 둔다. `null` 은 지운다. 값은 소켓·로그로 나가지 않는다 — 있는지만 `hasClientSecret` 으로 본다.
+   */
+  setClientSecret(name: string, secret: string | null): Promise<void>;
+  hasClientSecret(name: string): Promise<boolean>;
   /** 만료가 가까운 것을 전부 refresh 한다. 새 토큰이 생긴 이름을 돌려준다(설정 재작성용). */
   refreshDue(): Promise<Record<string, { url: string; accessToken: string }>>;
   /**
@@ -115,6 +125,7 @@ export interface McpOAuthDeps {
 }
 
 type Store = Record<string, McpOAuthRecord>;
+type ClientStore = Record<string, { clientSecret: string }>;
 
 interface Flow {
   url: string;
@@ -143,6 +154,23 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
   /** refresh 는 이름마다 한 번에 하나 — refresh 토큰이 회전하면 둘째 요청이 첫째가 받은 것을 무효로 만든다. */
   const refreshing = new Map<string, Promise<McpOAuthRecord | null>>();
   let chain: Promise<unknown> = Promise.resolve();
+  const clientsPath = join(dirname(deps.storePath), 'mcp-oauth-clients.json');
+  let clientsChain: Promise<unknown> = Promise.resolve();
+
+  async function loadClients(): Promise<ClientStore> {
+    let raw: string;
+    try { raw = await readFile(clientsPath, 'utf8'); } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
+      throw err;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    return isRecord(parsed) ? (parsed as ClientStore) : {};
+  }
+  const clientSecretOf = async (name: string): Promise<string | undefined> => {
+    const c = await loadClients();
+    const v = Object.hasOwn(c, name) ? c[name]?.clientSecret : undefined;
+    return typeof v === 'string' && v ? v : undefined;
+  };
 
   async function load(): Promise<Store> {
     let raw: string;
@@ -279,9 +307,12 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       }
       let r;
       try {
+        // secret 은 지금 비밀 파일의 것을 먼저 — 인증 뒤에 넣거나 바꿔도 다음 refresh 부터 실린다.
+        // 둘 다 없으면 PKCE 공개 클라이언트로 refresh 한다(Slack PKCE 앱).
+        const secret = (await clientSecretOf(name).catch(() => undefined)) ?? rec.clientSecret;
         r = await tokenRequest(rec.tokenEndpoint, {
           grant_type: 'refresh_token', refresh_token: rec.refreshToken, client_id: rec.clientId, resource: rec.resource,
-          ...(rec.clientSecret ? { client_secret: rec.clientSecret } : {}),
+          ...(secret ? { client_secret: secret } : {}),
         });
       } catch (err) {
         // 네트워크 실패는 거절이 아니다 — 들고 있는 토큰을 그대로 두고 다음에 다시 한다.
@@ -290,7 +321,8 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       }
       if (!r.ok) {
         // 인가 서버가 거절했다(invalid_grant·회수·만료). 다시 인증하는 수밖에 없다.
-        deps.log(`MCP OAuth: ${name} refresh 거절(${r.error}) — 데스크톱에서 다시 인증해야 한다`);
+        // Slack PKCE 앱의 refresh 토큰은 30일이면 끝난다 — 그때도 여기로 온다(expired = "다시 인증 필요").
+        deps.log(`MCP OAuth: ${name} refresh 거절(${r.error}) — refresh 토큰이 만료(Slack PKCE 앱은 30일)됐거나 회수됐다. 데스크톱에서 다시 인증해야 한다`);
         await update((s) => { if (s[name]) s[name]!.status = 'expired'; });
         return null;
       }
@@ -326,7 +358,10 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       const challenge = b64url(createHash('sha256').update(verifier).digest());
       const state = b64url(randomBytes(16));
       let redirectUri = '';
-      let client: { clientId: string; clientSecret?: string } | null = definition.oauth?.clientId ? { clientId: definition.oauth.clientId } : null;
+      const secret = definition.oauth?.clientId ? await clientSecretOf(name) : undefined;
+      let client: { clientId: string; clientSecret?: string } | null = definition.oauth?.clientId
+        ? { clientId: definition.oauth.clientId, ...(secret ? { clientSecret: secret } : {}) }
+        : null;
 
       const flow: Flow = { url: definition.url, servers: [], timer: setTimeout(() => {}, 0), state: 'pending' };
       const fail = (error: string) => {
@@ -395,11 +430,12 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       return { authUrl: auth.toString() };
     },
 
-    async status(name, url) {
+    async status(name, url, clientId) {
       const f = flows.get(name);
       if (f && f.url === url) return f.state === 'pending' ? { state: 'pending' } : { state: 'error', reason: f.error ?? '' };
       const rec = own(await load(), name);
       if (!rec || rec.url !== url) return { state: 'none' };
+      if (clientId && rec.clientId !== clientId) return { state: 'none' };
       if (rec.status === 'expired') return { state: 'expired' };
       if (rec.status === 'rejected') {
         return { state: 'rejected', at: rec.rejectedAt ?? rec.updatedAt, ...(rec.rejectedBy ? { agentId: rec.rejectedBy } : {}) };
@@ -415,6 +451,8 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       for (const [name, def] of Object.entries(defs)) {
         const rec = own(store, name);
         if (!rec || !def.url || rec.url !== def.url) continue;
+        // 다른 클라이언트로 받은 토큰 — 굽지 않고 "인증 필요"로 낸다(클라이언트를 갈아탄 뒤 재인증 1회).
+        if (def.clientId && rec.clientId !== def.clientId) { expired.push(name); continue; }
         // 거절된 토큰은 구워 봐야 또 401 이다 — 만료와 같이 "인증 필요"로 낸다.
         if (rec.status !== 'ok') { expired.push(name); continue; }
         const live = due(rec) ? await refreshOne(name, rec) : rec;
@@ -461,6 +499,23 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       deps.log(`MCP OAuth: ${name} MCP 서버 거절 보고로 토큰을 새로 받았다 (agent=${report.agentId})`);
       return { action: 'refreshed', url: next.url, accessToken: next.accessToken };
     },
+
+    async setClientSecret(name, secret) {
+      const next = clientsChain.then(async () => {
+        const c = await loadClients();
+        if (secret === null) { if (!Object.hasOwn(c, name)) return; delete c[name]; }
+        else c[name] = { clientSecret: secret };
+        await mkdir(dirname(clientsPath), { recursive: true, mode: 0o700 });
+        const tmp = `${clientsPath}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
+        await writeFile(tmp, `${JSON.stringify(c, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+        await rename(tmp, clientsPath);
+      });
+      clientsChain = next.catch(() => undefined);
+      await next;
+      deps.log(`MCP OAuth: ${name} client secret ${secret === null ? '지움' : '넣음'}`);
+    },
+
+    async hasClientSecret(name) { return (await clientSecretOf(name)) !== undefined; },
 
     async forget(name) {
       closeFlow(name);
