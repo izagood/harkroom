@@ -46,3 +46,20 @@ describe('#337 TurnRegistry', () => {
     expect([...reg.keysOf('interactive')].sort()).toEqual(['c1/m2', 'c2/m3']);
   });
 });
+
+describe('멘션 턴 예약 (2026-10-07)', () => {
+  it('예약은 턴이 아니다 — get·controlOf·register 는 보지 않는다', () => {
+    const r = new TurnRegistry();
+    r.reserveMention('c/t');
+    expect(r.mentionStarting('c/t')).toBe(true);
+    expect(r.get('c/t')).toBeUndefined();
+    expect(r.controlOf('c/t')).toBeNull();
+    r.register('c/t', { kind: 'mention', sessionId: 's' });
+    expect(r.mentionStarting('c/t')).toBe(false);
+    r.release('c/t');
+    // 예약이 아직 남아 있으면(스케줄러 finally 전) 다시 "시작되는 중" 이다 — 풀리는 자리는 스케줄러다.
+    expect(r.mentionStarting('c/t')).toBe(true);
+    r.unreserveMention('c/t');
+    expect(r.mentionStarting('c/t')).toBe(false);
+  });
+});

@@ -21,6 +21,7 @@ const NO_REPLY_NOTICE = '답을 남기지 못하고 끝났습니다 — 다시 �
 import { HarkroomAgentClient } from '../src/harkroom.js';
 import { fakeLink } from './helpers/fakeLink.js';
 import { SessionStore } from '../src/sessions.js';
+import { TurnRegistry } from '../src/turnRegistry.js';
 import { isQuotaExhausted } from '../src/policy.js';
 import { workspaceName, type Exec } from '../src/workspace.js';
 import type { TurnPlan } from '../src/turn.js';
@@ -4186,5 +4187,99 @@ describe('펜싱 — 스레드 임대를 잃으면 턴을 접는다', () => {
       channelId: CHANNEL, threadRootId: null, mentionId: MENTION, fence: new AbortController().signal,
     })).rejects.toThrow(/harness 종료 7/);
     expect(killed).toBeNull();
+  });
+});
+
+/**
+ * **유령 세션(2026-10-07, rebelro 「running 1h」).** 세션을 연 뒤 `try` 에 닿기 전에 던지면 정리가 없었다.
+ * 사람이 [Terminal] 을 연 틈에 멘션 턴이 시작돼 `register` 가 던졌고, 그 세션은 PTY 도 없이 화면에
+ * 「running」 으로 남아 [중단] 도 안 들었다(`reclaim()` 이 손잡이가 없어 그냥 돌아갔다).
+ */
+describe('유령 세션 — 등록 경합과 PTY 없는 [중단] (2026-10-07)', () => {
+  function closeRelay() {
+    const events: string[] = [];
+    let cancel: ((byHandle: string) => void) | undefined;
+    return {
+      events,
+      cancelBy: (h: string) => cancel?.(h),
+      relay: {
+        openSession(input: { onCancel?: (byHandle: string) => void }) {
+          cancel = input.onCancel;
+          events.push('open');
+          return {
+            sessionId: 'ghost-1', push: () => {}, bindInput: () => {}, needsAttention: () => {},
+            close: () => { events.push('close'); },
+          };
+        },
+      },
+    };
+  }
+
+  it('A: 같은 스레드에 인터랙티브 턴이 먼저 등록돼 register 가 던지면 연 세션을 닫는다 — 남의 등록은 그대로', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = closeRelay();
+    const registry = new TurnRegistry();
+    const key = SessionStore.threadKey(CHANNEL, null);
+    registry.register(key, { kind: 'interactive', sessionId: 'human-term', openedByHandle: 'jaebin' });
+    const { deps, runTurn } = await makeDeps(fake, { relay: h.relay, registry });
+    let spawned = false;
+    runTurn.script = async () => { spawned = true; return { exitCode: 0, timedOut: false, tail: '' }; };
+
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/이미 interactive 턴/);
+
+    expect(h.events).toEqual(['open', 'close']);
+    expect(spawned).toBe(false);
+    // 등록이 던졌다면 그 자리는 먼저 온 인터랙티브 턴의 것이다 — 지우면 그 터미널이 "없는 턴"이 된다.
+    expect(registry.get(key)).toEqual({ kind: 'interactive', sessionId: 'human-term', openedByHandle: 'jaebin' });
+    // 💬 도 거둔다 — 턴이 접혔는데 "작업 중" 이 남지 않게.
+    expect(fake.reactions.filter((r) => r.emoji === '💬').map((r) => r.action)).toEqual(['add', 'remove']);
+  });
+
+  it('B: PTY 가 없을 때 온 [중단] 은 세션을 그 자리에서 닫는다 — 턴이 끝나길 기다리지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = closeRelay();
+    let closedAtCancel: string[] = [];
+    const { deps, runTurn } = await makeDeps(fake, {
+      relay: h.relay,
+      // 세션은 열렸고 PTY 는 아직 없는 창 — 화면엔 [중단] 이 달린 「running」 줄이 서 있다.
+      syncCodexAuth: async () => {
+        h.cancelBy('jaebin');
+        closedAtCancel = [...h.events];
+        return { account: null };
+      },
+    });
+    let spawned = false;
+    runTurn.script = async () => { spawned = true; return { exitCode: 0, timedOut: false, tail: '' }; };
+
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/@jaebin 가 이 턴을 중단했다/);
+    expect(closedAtCancel).toEqual(['open', 'close']);
+    expect(spawned).toBe(false);
+  });
+
+  it('B: PTY 가 있으면 [중단] 은 세션을 먼저 닫지 않는다 — 죽은 뒤 finally 가 닫는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = closeRelay();
+    const { deps, runTurn } = await makeDeps(fake, { relay: h.relay });
+    let atCancel: string[] = [];
+    runTurn.script = async (_plan: TurnPlan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: () => {} });
+      h.cancelBy('jaebin');
+      atCancel = [...h.events];
+      return { exitCode: 143, timedOut: false, tail: '' };
+    };
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/중단/);
+    expect(atCancel).toEqual(['open']);
+    expect(h.events).toEqual(['open', 'close']);
   });
 });

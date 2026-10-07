@@ -1280,6 +1280,8 @@ export async function runMentionTurn(
     reconsiderEnd();
   };
 
+  /** `onCancel` 이 닫을 손잡이. `session` 을 직접 보면 `openSession` 안에서 온 중단이 TDZ 에 걸린다. */
+  let cancelableSession: { close(): void } | undefined;
   const session = deps.relay?.openSession({
     agentAccountId: deps.me.id,
     channelId,
@@ -1307,18 +1309,71 @@ export async function runMentionTurn(
     */
     onCancel: (byHandle: string) => {
       end.canceledBy = byHandle;
+      // **PTY 가 없으면 세션을 지금 닫는다**(2026-10-07). `reclaim()` 은 죽일 것이 없어 그냥 돌아가고,
+      // 그 세션이 이 턴의 `finally` 밖에서 샌 것이면(등록 경합으로 턴이 먼저 던졌다) 아무도 닫지
+      // 않아 화면의 「running」 줄이 [중단] 을 눌러도 영원히 남았다(rebelro 1h). 아직 스폰 전인 살아
+      // 있는 턴이어도 손해가 없다 — `canceledBeforeSpawn` 이 스폰을 막고, 스폰 중이면 `onSpawn`
+      // 가드가 죽이며, `finally` 의 두 번째 `close()` 는 무해하다(relay 가 한 번만 보낸다).
+      if (!end.controls) cancelableSession?.close();
       reclaim();
     },
   });
 
-  // #337: 이 스레드에 멘션 턴이 돈다는 사실을 등록한다 — 인터랙티브 open 의 3분기 ①
-  // ("멘션 턴 진행 중 → 그 PTY 에 attach")과 main 루프의 유예 판정이 이 등록을 본다.
-  // 세션을 연 **뒤**여야 한다: 등록의 sessionId 가 곧 attach 대상이다(릴레이가 없으면 null).
-  deps.registry?.register(key, { kind: 'mention', sessionId: session?.sessionId ?? null });
+  cancelableSession = session;
 
   // 임대를 잃으면 사람의 [중단] 과 같은 길로 접는다 — 스폰 전이면 안 띄우고(`canceledBeforeSpawn`), 스폰
   // 중이면 손잡이를 잡는 순간(`onSpawn`), 그 뒤면 지금 SIGTERM 이다. 표지는 스케줄러가 남긴다.
   const onFenceLost = (): void => { end.fencedOut = true; reclaim(); };
+
+  /** 이 턴이 레지스트리에 **스스로** 등록했는가. 남의 등록(인터랙티브)을 지우지 않으려고 센다. */
+  let registered = false;
+  /**
+   * 턴의 뒷정리 — 아래 `try` 의 `finally` 와, **그 `try` 에 닿기 전에 던진 경로**가 함께 부른다.
+   *
+   * 세션을 연 순간부터 화면에는 「running」 줄이 선다. 예전에는 정리가 `try` 의 `finally` 에만
+   * 있어서, 그 사이(등록·워크스페이스 신뢰 장부)에서 던지면 세션도 발화 폴링도 💬 도 그대로
+   * 남았다 — 10-07 rebelro 「running 1h」 유령 줄이 등록 경합의 throw 로 정확히 그렇게 생겼다.
+   */
+  const settle = async (): Promise<void> => {
+    // 끝 상태의 타이머를 먼저 끈다 — 남기면 끝난 턴의 타이머가 다음 턴의 PTY 를 죽인다.
+    end.exited = true;
+    target.fence?.removeEventListener('abort', onFenceLost);
+    end.cancelProbe?.();
+    end.cancelReclaim?.();
+    end.cancelSilence?.();
+    end.cancelGateWatch?.();
+    // 원장은 턴과 같은 수명이다 — 놓지 않으면 그 계정의 다음 관문은 영영 사람을 부르지 못한다.
+    if (end.gateHeld !== null) deps.attentionLedger?.release(end.gateHeld);
+    // 등록도 세션과 같은 수명이다 — 남겨 두면 끝난 턴이 "진행 중"으로 남아 인터랙티브
+    // open 이 죽은 PTY 에 사람을 붙인다. **내 등록만** 푼다: 등록이 던졌다면 그 자리는
+    // 먼저 온 인터랙티브 턴의 것이다.
+    if (registered) deps.registry?.release(key);
+    // 턴이 어떻게 끝나든(정상·타임아웃·예외) 세션은 닫는다. 안 닫으면 서버의 세션
+    // 목록에 끝난 턴이 영구히 남아, 사람이 attach 해도 아무 바이트도 오지 않는다.
+    session?.close();
+    // 💬 는 반드시 제거한다 — 타임아웃·예외로 끝나도 남으면 "영원히 작업 중"이라는
+    // 거짓 신호가 되고, 그것이 docs/design.md 4절 "없는 것을 있다고 표시하지 않는다" 다.
+    // 추가가 끝난 뒤에 제거한다(순서가 뒤집히면 💬 가 남는다).
+    await workingInFlight;
+    await deps.harkroom.removeReaction(channelId, mentionId, '💬').catch((err: unknown) => {
+      console.error(
+        `[mentionTurn] ${key}: 리액션(진행 중) 제거 실패 — ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  };
+
+  // #337: 이 스레드에 멘션 턴이 돈다는 사실을 등록한다 — 인터랙티브 open 의 3분기 ①
+  // ("멘션 턴 진행 중 → 그 PTY 에 attach")과 main 루프의 유예 판정이 이 등록을 본다.
+  // 세션을 연 **뒤**여야 한다: 등록의 sessionId 가 곧 attach 대상이다(릴레이가 없으면 null).
+  // 던지면(같은 스레드에 이미 턴이 있다) 연 세션을 닫고 나간다 — 위 `settle` 주석.
+  try {
+    deps.registry?.register(key, { kind: 'mention', sessionId: session?.sessionId ?? null });
+    registered = true;
+  } catch (err) {
+    await settle();
+    throw err;
+  }
+
   if (target.fence?.aborted) end.fencedOut = true;
   else target.fence?.addEventListener('abort', onFenceLost, { once: true });
 
@@ -1550,26 +1605,32 @@ export async function runMentionTurn(
   // 않는다** — 기동 때 건 링크가 그대로 남아 있으므로 직전 계정으로라도 돈다.
   // 하네스를 가리지 않고 부른다: 링크 하나를 재는 싼 일이고, 여기에 하네스 이름 비교를
   // 심으면 어댑터 뒤로 옮길 목록이 늘어난다(`adapterParity.test.ts` 의 예산).
-  if (deps.syncCodexAuth) {
-    await deps.syncCodexAuth().catch((err: unknown) => {
-      console.warn(`[mentionTurn] ${key}: codex 계정 링크 갱신 실패 — 직전 계정으로 돈다: ${err instanceof Error ? err.message : String(err)}`);
+  // 이 구간이 던지면(신뢰 장부 쓰기 실패 등) 아래 `try` 에 닿지 못한다 — 여기서 정리한다(`settle`).
+  try {
+    if (deps.syncCodexAuth) {
+      await deps.syncCodexAuth().catch((err: unknown) => {
+        console.warn(`[mentionTurn] ${key}: codex 계정 링크 갱신 실패 — 직전 계정으로 돈다: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+    await ensureWorkspaceTrusted({
+      harness: def.harness,
+      workspaceDir: rec.workspaceDir,
+      claudeConfigDir: deps.claudeConfigDir,
+      codexHome: deps.codexHome,
     });
+    // 계정 단위 관문(2026-09-08). 위와 갈라 부르는 이유는 저장 위치와 범위가 다르기
+    // 때문이다 — 이쪽은 `settings.json` 이고, 한 번 적으면 그 계정의 모든 워크스페이스가
+    // 풀린다. **기본 경로는 이제 이 관문을 만나지 않는다**(2026-09-09: auto → claude 의
+    // `auto`). 남겨 두는 이유는 사람이 터미널에서 bypass 로 올려 쓸 수 있기 때문이다 —
+    // 그때 이 기록이 없으면 그 세션이 경고 화면에서 멈춘다. 이미 있으면 아무것도 안 쓴다.
+    await ensureDangerousModeAccepted({
+      harness: def.harness,
+      claudeConfigDir: deps.claudeConfigDir,
+    });
+  } catch (err) {
+    await settle();
+    throw err;
   }
-  await ensureWorkspaceTrusted({
-    harness: def.harness,
-    workspaceDir: rec.workspaceDir,
-    claudeConfigDir: deps.claudeConfigDir,
-    codexHome: deps.codexHome,
-  });
-  // 계정 단위 관문(2026-09-08). 위와 갈라 부르는 이유는 저장 위치와 범위가 다르기
-  // 때문이다 — 이쪽은 `settings.json` 이고, 한 번 적으면 그 계정의 모든 워크스페이스가
-  // 풀린다. **기본 경로는 이제 이 관문을 만나지 않는다**(2026-09-09: auto → claude 의
-  // `auto`). 남겨 두는 이유는 사람이 터미널에서 bypass 로 올려 쓸 수 있기 때문이다 —
-  // 그때 이 기록이 없으면 그 세션이 경고 화면에서 멈춘다. 이미 있으면 아무것도 안 쓴다.
-  await ensureDangerousModeAccepted({
-    harness: def.harness,
-    claudeConfigDir: deps.claudeConfigDir,
-  });
 
   // 아래 콜백들이 쓰는 값을 여기서 잡아 둔다 — 콜백 안에서는 `rec` 의 좁힌 타입이
   // 유지되지 않고(비동기 경계), 세션 id 는 첫 턴에도 이미 발급돼 있다.
@@ -1796,30 +1857,7 @@ export async function runMentionTurn(
       },
     });
   } finally {
-    // 끝 상태의 타이머를 먼저 끈다 — 남기면 끝난 턴의 타이머가 다음 턴의 PTY 를 죽인다.
-    end.exited = true;
-    target.fence?.removeEventListener('abort', onFenceLost);
-    end.cancelProbe?.();
-    end.cancelReclaim?.();
-    end.cancelSilence?.();
-    end.cancelGateWatch?.();
-    // 원장은 턴과 같은 수명이다 — 놓지 않으면 그 계정의 다음 관문은 영영 사람을 부르지 못한다.
-    if (end.gateHeld !== null) deps.attentionLedger?.release(end.gateHeld);
-    // 등록도 세션과 같은 수명이다 — 남겨 두면 끝난 턴이 "진행 중"으로 남아 인터랙티브
-    // open 이 죽은 PTY 에 사람을 붙인다.
-    deps.registry?.release(key);
-    // 턴이 어떻게 끝나든(정상·타임아웃·예외) 세션은 닫는다. 안 닫으면 서버의 세션
-    // 목록에 끝난 턴이 영구히 남아, 사람이 attach 해도 아무 바이트도 오지 않는다.
-    session?.close();
-    // 💬 는 반드시 제거한다 — 타임아웃·예외로 끝나도 남으면 "영원히 작업 중"이라는
-    // 거짓 신호가 되고, 그것이 docs/design.md 4절 "없는 것을 있다고 표시하지 않는다" 다.
-    // 추가가 끝난 뒤에 제거한다(순서가 뒤집히면 💬 가 남는다).
-    await workingInFlight;
-    await deps.harkroom.removeReaction(channelId, mentionId, '💬').catch((err: unknown) => {
-      console.error(
-        `[mentionTurn] ${key}: 리액션(진행 중) 제거 실패 — ${err instanceof Error ? err.message : String(err)}`,
-      );
-    });
+    await settle();
   }
 
   // #144: 에이전트가 직접 message.progress 로 진행 설명을 올리므로, 더 이상 ack seq 를 추적할 필요가 없다.

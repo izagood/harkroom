@@ -222,6 +222,21 @@ describe('#141-6 러너 재접속 (백오프 경로)', () => {
 });
 
 describe('#141 세션의 끝', () => {
+  it('두 번 닫아도 session.ended 는 한 번이고, 닫힌 뒤의 바이트는 나가지 않는다 (2026-10-07)', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ link: LINK, unixDial: d.dial });
+    client.start();
+    d.open();
+    const session = client.openSession({ ...SESSION });
+    // 멘션 턴은 PTY 가 없을 때 [중단] 으로 먼저 닫고, 턴의 finally 가 한 번 더 닫는다.
+    session.close();
+    session.close();
+    session.push(Buffer.from('late'));
+    session.needsAttention('screen', 'acct');
+    expect(d.sent.filter((f) => f.type === 'session.ended')).toHaveLength(1);
+    expect(d.sent.filter((f) => f.type === 'output' || f.type === 'attention.required')).toHaveLength(0);
+  });
+
   it('세션을 닫으면 서버에 알리고, 그 뒤 재생 요청에는 답하지 않는다', () => {
     const d = fakeDialer();
     const client = createRelayClient({ link: LINK, unixDial: d.dial });

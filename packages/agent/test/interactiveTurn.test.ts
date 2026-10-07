@@ -477,3 +477,58 @@ describe('인터랙티브 턴은 세션을 만든 계정을 따른다', () => {
     expect(h.plans[0]!.env.CLAUDE_CONFIG_DIR).toBe('/accounts/lime');
   });
 });
+
+/**
+ * **시작되는 중인 멘션 턴과의 경합**(2026-10-07, 유령 세션 C). 스케줄러가 띄우기로 정한 멘션 턴은
+ * `register` 까지 수 초의 await 을 지난다. 그 틈에 PTY 를 열면 멘션 턴의 `register` 가 던졌다.
+ */
+describe('멘션 턴 예약 — 등록을 기다렸다 붙는다 (2026-10-07)', () => {
+  it('예약된 멘션 턴이 등록하면 새 PTY 없이 그 세션에 붙는다', async () => {
+    const h = await makeHarness({ mentionStartPollMs: 5 });
+    const manager = createInteractiveManager(h.deps);
+    h.registry.reserveMention(KEY);
+    const opening = manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await new Promise((r) => setTimeout(r, 20));
+    // 멘션 턴이 세션을 열고 등록했다.
+    h.registry.register(KEY, { kind: 'mention', sessionId: 'mention-sess' });
+    await expect(opening).resolves.toEqual({ sessionId: 'mention-sess', created: false });
+    expect(h.plans).toHaveLength(0);
+    expect(h.registry.get(KEY)).toEqual({ kind: 'mention', sessionId: 'mention-sess' });
+  });
+
+  it('예약이 등록 없이 풀리면(턴이 먼저 접혔다) 지금 연다', async () => {
+    const h = await makeHarness({ mentionStartPollMs: 5 });
+    const manager = createInteractiveManager(h.deps);
+    h.registry.reserveMention(KEY);
+    const opening = manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await new Promise((r) => setTimeout(r, 20));
+    h.registry.unreserveMention(KEY);
+    await expect(opening).resolves.toEqual({ sessionId: 'relay-1', created: true });
+    expect(h.registry.get(KEY)).toMatchObject({ kind: 'interactive' });
+  });
+
+  it('상한까지 등록되지 않으면 사람이 읽을 문구로 거절한다 — 등록하지 않는다', async () => {
+    const h = await makeHarness({ mentionStartPollMs: 5, mentionStartWaitMs: 30 });
+    const manager = createInteractiveManager(h.deps);
+    h.registry.reserveMention(KEY);
+    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' }))
+      .rejects.toThrow(/멘션 턴이 막 시작되는 중/);
+    expect(h.registry.get(KEY)).toBeUndefined();
+    expect(h.plans).toHaveLength(0);
+  });
+
+  it('정의를 읽는 사이에 예약된 멘션 턴도 기다린다 — 분기 판정 뒤의 틈', async () => {
+    const h = await makeHarness({ mentionStartPollMs: 5 });
+    const definition = h.harkroom.definition;
+    h.harkroom.definition = async () => {
+      // 분기 ① 판정은 지났고 아직 register 전 — 여기서 스케줄러가 멘션 턴을 띄웠다.
+      h.registry.reserveMention(KEY);
+      setTimeout(() => { h.registry.register(KEY, { kind: 'mention', sessionId: 'late-mention' }); }, 15);
+      return definition();
+    };
+    const manager = createInteractiveManager(h.deps);
+    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' }))
+      .resolves.toEqual({ sessionId: 'late-mention', created: false });
+    expect(h.plans).toHaveLength(0);
+  });
+});

@@ -727,6 +727,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       // 장부만 남아 스레드가 죽는다(turnRegistry.ts 머리 주석의 인메모리판).
       inFlightEntries.delete(entryId);
       inFlightThreads.delete(threadKey);
+      deps.registry.unreserveMention(threadKey);
     }
   }
 
@@ -869,6 +870,9 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         // 장부 등록은 **동기적으로, 띄우기 전에**. 위 inFlightThreads 주석이 이유다.
         inFlightEntries.add(entry.id);
         inFlightThreads.add(threadKey);
+        // 인터랙티브 open 도 이 결정을 보게 한다(`TurnRegistry.reserveMention` 주석) — 장부는 이 파일
+        // 안에만 있어서, 그 틈에 사람이 연 터미널이 먼저 등록하면 이 턴의 `register` 가 던진다.
+        deps.registry.reserveMention(threadKey);
         out.started += 1;
 
         // **관문을 전부 통과한 지금이 유일한 증가 지점이다.** blocked·deferred·skipped 는 이

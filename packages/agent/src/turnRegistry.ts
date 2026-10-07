@@ -33,6 +33,7 @@ export interface ThreadControl {
 
 export class TurnRegistry {
   private turns = new Map<string, TurnRecord>();
+  private reserved = new Set<string>();
   /**
    * 이어받기 예약(#384). 인터랙티브 턴이 실제로 등록되는 순간 사라진다.
    *
@@ -78,6 +79,32 @@ export class TurnRegistry {
 
   get(threadKey: string): TurnRecord | undefined {
     return this.turns.get(threadKey);
+  }
+
+  /**
+   * **멘션 턴을 띄우기로 결정했지만 아직 `register` 전인 스레드**(2026-10-07).
+   *
+   * 스케줄러는 띄우기로 정한 순간 자기 장부(`inFlightThreads`)에 적고 `runMentionTurn` 을
+   * 비동기로 띄운다. 그 안의 `register` 까지는 기억·계획·스킬 동기화 같은 await 이 수 초
+   * 이어진다. 인터랙티브 open 은 이 레지스트리만 보므로, 그 틈에 사람이 [Terminal] 을 열면
+   * 둘 다 "아무 턴도 없다"로 통과하고 늦게 온 멘션 턴의 `register` 가 던졌다 — 그 턴이 연
+   * 릴레이 세션은 닫히지 않아 「running 1h」 유령 줄로 남았다(rebelro, 10-07).
+   *
+   * 예약은 **턴이 아니다** — `get`·`controlOf`·`register` 는 예약을 보지 않는다. 보는 쪽은
+   * 인터랙티브 open 하나이고, 예약이 있으면 멘션 턴이 등록될 때까지 기다렸다 그 PTY 에 붙는다.
+   */
+  reserveMention(threadKey: string): void {
+    this.reserved.add(threadKey);
+  }
+
+  /** 스케줄러의 `finally` 가 부른다 — 턴이 등록됐든 등록 전에 던졌든 예약은 여기서 끝난다. */
+  unreserveMention(threadKey: string): void {
+    this.reserved.delete(threadKey);
+  }
+
+  /** 멘션 턴이 시작되는 중인가(예약은 있고 아직 등록은 안 됐다). */
+  mentionStarting(threadKey: string): boolean {
+    return this.reserved.has(threadKey) && !this.turns.has(threadKey);
   }
 
   /** 이 종류의 턴이 도는 스레드들. 러너 SIGTERM 시 인터랙티브 PTY 회수 경로가 순회한다. */
