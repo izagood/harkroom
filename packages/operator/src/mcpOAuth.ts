@@ -110,11 +110,39 @@ export interface McpOAuthDeps {
   refreshSkewMs?: number;
   /** 거절 보고로 당기는 refresh 의 이름별 최소 간격. 기본 5분. */
   rejectCooldownMs?: number;
+  /**
+   * 새 토큰을 받은 직후 MCP 서버에 한 번 물어 본다(2026-10-07, slack). 기본은 MCP url 에
+   * `initialize` 를 Bearer 로 보내는 것 — 테스트가 갈아 끼운다.
+   */
+  verifyToken?: (url: string, accessToken: string) => Promise<TokenCheck>;
   /** 흐름이 끝나 토큰이 생겼다 — 도는 러너의 설정 파일을 다시 쓴다. */
   onToken?: (name: string, record: { url: string; accessToken: string }) => void | Promise<void>;
 }
 
 type Store = Record<string, McpOAuthRecord>;
+
+/**
+ * 받은 직후 검사의 결과. `unauthorized` 만 판정에 쓴다 — 네트워크·5xx·명세 밖 응답(`unknown`)은
+ * 토큰 탓이 아니므로 들고 있던 규칙(만료 시각으로 refresh)대로 둔다.
+ */
+export type TokenCheck = 'ok' | 'unauthorized' | 'unknown';
+
+/**
+ * 토큰 응답의 **키 구조만** 한 줄로(2026-10-07). 값은 싣지 않는다 — 문자열은 `str`, 객체는 한 단계만
+ * 그 키를 펼친다. Slack 의 `oauth.v2.user.access` 처럼 명세 밖 모양을 돌려주는 서버를 운영 로그로
+ * 가르려고 남긴다(맨 위 `access_token` 이 없고 `authed_user.access_token` 에 두는 등).
+ */
+export function tokenResponseShape(body: unknown): string {
+  if (!isRecord(body)) return body === null ? 'null' : typeof body;
+  const kind = (v: unknown): string => (Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v === 'string' ? 'str' : typeof v);
+  return Object.keys(body).sort().map((k) => {
+    const v = body[k];
+    if (isRecord(v)) return `${k}{${Object.keys(v).sort().map((kk) => `${kk}:${kind(v[kk])}`).join(',')}}`;
+    // ok·token_type 처럼 비밀이 아닌 신호만 값까지 — 나머지는 종류만.
+    if (k === 'ok' && typeof v === 'boolean') return `ok=${v}`;
+    return `${k}:${kind(v)}`;
+  }).join(' ');
+}
 
 interface Flow {
   url: string;
@@ -132,7 +160,7 @@ interface Flow {
 const own = (store: Record<string, McpOAuthRecord>, name: string): McpOAuthRecord | undefined =>
   (Object.hasOwn(store, name) ? store[name] : undefined);
 
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+function isRecord(v: unknown): v is Record<string, unknown> { return typeof v === 'object' && v !== null && !Array.isArray(v); }
 const b64url = (buf: Buffer) => buf.toString('base64url');
 
 export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
@@ -226,19 +254,48 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
     return { clientId: body.client_id, ...(typeof body.client_secret === 'string' ? { clientSecret: body.client_secret } : {}) };
   }
 
-  async function tokenRequest(endpoint: string, form: Record<string, string>): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; status: number; error: string }> {
+  /**
+   * 토큰 엔드포인트를 부른다. 돌려주는 `body` 는 **명세 모양으로 고른 것**이다(2026-10-07):
+   * - Slack 은 실패를 HTTP 200 + `ok: false` 로 돌려준다 — 거절로 읽는다.
+   * - 맨 위에 `access_token` 이 없고 `authed_user` 에 사용자 토큰을 두는 모양(Slack `oauth.v2.access`)이면
+   *   그쪽의 `access_token`·`refresh_token`·`expires_in` 을 쓴다.
+   * `shape` 는 응답의 키 구조(값 없음) — 운영 로그로 남긴다.
+   */
+  async function tokenRequest(endpoint: string, form: Record<string, string>): Promise<{ ok: true; body: Record<string, unknown>; shape: string } | { ok: false; status: number; error: string; shape: string }> {
     const res = await doFetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
       body: new URLSearchParams(form).toString(),
     });
-    const body: unknown = await res.json().catch(() => null);
-    if (!res.ok || !isRecord(body) || typeof body.access_token !== 'string') {
-      const error = isRecord(body) && typeof body.error === 'string' ? body.error : `http_${res.status}`;
-      return { ok: false, status: res.status, error };
+    const raw: unknown = await res.json().catch(() => null);
+    const shape = tokenResponseShape(raw);
+    const fail = (status: number) => ({
+      ok: false as const, status, shape,
+      error: isRecord(raw) && typeof raw.error === 'string' ? raw.error : `http_${res.status}`,
+    });
+    if (!res.ok || !isRecord(raw) || raw.ok === false) return fail(res.status);
+    if (typeof raw.access_token === 'string') return { ok: true, body: raw, shape };
+    const user = raw.authed_user;
+    if (isRecord(user) && typeof user.access_token === 'string') {
+      return { ok: true, body: { ...user }, shape };
     }
-    return { ok: true, body };
+    return fail(res.status);
   }
+
+  /** 받은 직후 검사의 기본 — MCP url 에 Bearer 로 `initialize` 를 한 번. 401 만 `unauthorized` 다. */
+  async function probe(url: string, accessToken: string): Promise<TokenCheck> {
+    try {
+      const res = await doFetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'harkroom-operator', version: '1' } } }),
+      });
+      await res.body?.cancel().catch(() => undefined);
+      if (res.status === 401) return 'unauthorized';
+      return res.ok ? 'ok' : 'unknown';
+    } catch { return 'unknown'; }
+  }
+  const verify = deps.verifyToken ?? probe;
 
   const expiresAtOf = (body: Record<string, unknown>): number | undefined =>
     typeof body.expires_in === 'number' && body.expires_in > 0 ? now() + body.expires_in * 1000 : undefined;
@@ -290,8 +347,28 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       }
       if (!r.ok) {
         // 인가 서버가 거절했다(invalid_grant·회수·만료). 다시 인증하는 수밖에 없다.
-        deps.log(`MCP OAuth: ${name} refresh 거절(${r.error}) — 데스크톱에서 다시 인증해야 한다`);
+        deps.log(`MCP OAuth: ${name} refresh 거절(${r.error}) — 데스크톱에서 다시 인증해야 한다 [응답 키: ${r.shape}]`);
         await update((s) => { if (s[name]) s[name]!.status = 'expired'; });
+        return null;
+      }
+      deps.log(`MCP OAuth: ${name} refresh 응답 키: ${r.shape}`);
+      const accessToken = r.body.access_token as string;
+      const issuedAt = now();
+      // 받은 직후 검사(2026-10-07): slack 은 갓 받은 토큰도 몇 분 안에 401 이었다. 구워 봐야 모든 턴이
+      // 401 이니, 거절되면 굽지 않고 사람이 다시 인증하게 둔다.
+      if (await verify(rec.url, accessToken) === 'unauthorized') {
+        const at = now();
+        deps.log(`MCP OAuth: ${name} refresh 로 받은 새 토큰을 MCP 서버가 곧바로 거절했다(받은 지 ${Math.round((at - issuedAt) / 1000)}초) — 데스크톱에서 다시 인증해야 한다`);
+        await update((s) => {
+          const cur = s[name];
+          if (cur && cur.accessToken === rec.accessToken) {
+            s[name] = {
+              ...cur, accessToken,
+              refreshToken: typeof r.body.refresh_token === 'string' ? r.body.refresh_token : cur.refreshToken,
+              expiresAt: expiresAtOf(r.body), status: 'rejected', updatedAt: issuedAt, rejectedAt: at,
+            };
+          }
+        });
         return null;
       }
       // 거절 표시는 새 토큰과 함께 지운다 — 그것은 옛 토큰의 사실이다.
@@ -299,12 +376,12 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       const next: McpOAuthRecord = {
         ...kept,
         ...(onReject ? { refreshedOnReject: true } : {}),
-        accessToken: r.body.access_token as string,
+        accessToken,
         // 회전하지 않는 서버는 새 refresh 토큰을 안 준다 — 있던 것을 그대로 쓴다.
         refreshToken: typeof r.body.refresh_token === 'string' ? r.body.refresh_token : rec.refreshToken,
         expiresAt: expiresAtOf(r.body),
         status: 'ok',
-        updatedAt: now(),
+        updatedAt: issuedAt,
       };
       await update((s) => { s[name] = next; });
       return next;
@@ -352,7 +429,13 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
               code_verifier: verifier, resource: definition.url,
               ...(client!.clientSecret ? { client_secret: client!.clientSecret } : {}),
             });
+            deps.log(`MCP OAuth: ${name} 토큰 교환 응답 키: ${r.shape}`);
             if (!r.ok) { page(400, `토큰 교환에 실패했습니다(${r.error}).`); fail(`토큰 교환 실패: ${r.error}`); return; }
+            if (await verify(definition.url, r.body.access_token as string) === 'unauthorized') {
+              page(400, '인증은 됐지만 MCP 서버가 받은 토큰을 거절했습니다. 앱에서 다시 시도하세요.');
+              fail('MCP 서버가 갓 받은 토큰을 거절했다(401)');
+              return;
+            }
             const rec: McpOAuthRecord = {
               url: definition.url, clientId: client!.clientId, ...(client!.clientSecret ? { clientSecret: client!.clientSecret } : {}),
               tokenEndpoint: as.token_endpoint as string, resource: definition.url,
@@ -455,7 +538,8 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       if (last !== undefined && now() - last < rejectCooldown) return { action: 'ignored', reason: 'cooldown' };
       lastRejectRefresh.set(name, now());
       const next = await refreshOne(name, rec, true);
-      if (!next) return { action: 'expired' };
+      // 새 토큰이 받은 직후 검사에서 거절됐으면 rejected, 인가 서버가 refresh 를 거절했으면 expired.
+      if (!next) return own(await load(), name)?.status === 'rejected' ? { action: 'rejected' } : { action: 'expired' };
       // 네트워크 실패는 들고 있던 것을 그대로 돌려준다 — 바뀐 것이 없다.
       if (next.accessToken === rec.accessToken) return { action: 'ignored', reason: 'network' };
       deps.log(`MCP OAuth: ${name} MCP 서버 거절 보고로 토큰을 새로 받았다 (agent=${report.agentId})`);
