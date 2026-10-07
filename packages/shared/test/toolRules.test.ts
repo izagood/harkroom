@@ -153,24 +153,48 @@ describe('toolScope', () => {
 // 「정확한 명령」(H②·H③a, 스레드 8769dbf7): 서버 승인·오퍼레이터 해시·hook 이 같은 판정·정규형·파일 목록을 쓴다.
 describe('validateExactCommand', () => {
   const KC = '--kubeconfig /tmp/rc.kubeconfig --context rc';
+  const HK = '--kubeconfig /k --kube-context c';
   it('공백만 정규화하고 셸 문법·따옴표·접두·env 앞붙임은 받지 않는다', () => {
     expect(validateExactCommand(`  kubectl   ${KC}   get pods `)).toEqual({
       ok: true, command: `kubectl ${KC} get pods`, warnings: ['reads_file'],
       files: [{ path: '/tmp/rc.kubeconfig', flag: '--kubeconfig', secret: true }],
     });
-    expect(validateExactCommand('ls -la /tmp')).toEqual({ ok: true, command: 'ls -la /tmp', warnings: [], files: [] });
-    expect(validateExactCommand('kubectl get pods; rm -rf /')).toEqual({ ok: false, code: 'shell_syntax' });
-    expect(validateExactCommand('kubectl get pods && x')).toEqual({ ok: false, code: 'shell_syntax' });
+    expect(validateExactCommand(`kubectl ${KC} get pods; rm -rf /`)).toEqual({ ok: false, code: 'shell_syntax' });
+    expect(validateExactCommand(`kubectl ${KC} get pods && x`)).toEqual({ ok: false, code: 'shell_syntax' });
     expect(validateExactCommand("kubectl patch x -p '{}'")).toMatchObject({ ok: false });
-    expect(validateExactCommand('kubectl get pods:*')).toEqual({ ok: false, code: 'wildcard' });
+    expect(validateExactCommand(`kubectl ${KC} get pods:*`)).toEqual({ ok: false, code: 'wildcard' });
     expect(validateExactCommand('sh -c ls')).toEqual({ ok: false, code: 'interpreter' });
     expect(validateExactCommand('')).toEqual({ ok: false, code: 'empty' });
-    expect(validateExactCommand('LD_PRELOAD=/tmp/x.so ls')).toEqual({ ok: false, code: 'env_prefix' });
-    expect(validateExactCommand('PATH=/tmp/x ls')).toEqual({ ok: false, code: 'env_prefix' });
+    expect(validateExactCommand('LD_PRELOAD=/tmp/x.so kubectl get pods')).toEqual({ ok: false, code: 'env_prefix' });
   });
 
-  it('C3: 경로로 부르는 머리는 거절한다', () => {
+  it('C3·F2: 머리는 kubectl·helm 만 — 경로 머리·cwd 파일을 실행하는 도구는 거절', () => {
     for (const c of ['./deploy.sh', '/tmp/run prod', 'bin/x']) expect(validateExactCommand(c), c).toEqual({ ok: false, code: 'path_head' });
+    for (const c of ['make deploy', 'npm run deploy', 'go run .', 'terraform apply', 'docker compose up', 'ls -la /tmp', 'tail -f /var/log/x', 'curl -d @/tmp/b.json https://x', 'rkscli cluster scale']) {
+      expect(validateExactCommand(c), c).toEqual({ ok: false, code: 'unsupported_head' });
+    }
+  });
+
+  it('F2: kubectl 은 내장 하위 명령만 — 플러그인·cp·edit·proxy·config 거절, 자격 파일은 비밀 자리로 해시', () => {
+    for (const c of [`kubectl ${KC} cp /local pod:/x`, `kubectl ${KC} myplugin do`, `kubectl ${KC} edit cm x`, `kubectl ${KC} proxy`, `kubectl ${KC} config view`, `kubectl ${KC} kustomize /d`]) {
+      expect(validateExactCommand(c), c).toEqual({ ok: false, code: 'unsupported_subcommand' });
+    }
+    const cred = validateExactCommand(`kubectl ${KC} --client-key /k.pem --client-certificate=/c.pem --certificate-authority /ca.pem get pods`);
+    expect(cred.ok && cred.files.map((f) => [f.path, f.secret])).toEqual([['/tmp/rc.kubeconfig', true], ['/k.pem', true], ['/c.pem', true], ['/ca.pem', true]]);
+    expect(validateExactCommand(`kubectl ${KC} --client-key k.pem get pods`)).toEqual({ ok: false, code: 'relative_path' });
+  });
+
+  it('F2: helm 차트는 `<릴리스> oci://…` + --version 만 — 로컬·repo 차트·post-renderer·플러그인 거절', () => {
+    expect(validateExactCommand(`helm ${HK} upgrade r oci://harbor.x/c/chart --version 0.6.0 -f /v.yaml`)).toMatchObject({ ok: true });
+    expect(validateExactCommand(`helm ${HK} status r`)).toMatchObject({ ok: true });
+    for (const c of [`helm ${HK} upgrade r /abs/chart --version 1`, `helm ${HK} upgrade r charts/foo --version 1`, `helm ${HK} upgrade r chart --version 1`,
+      `helm ${HK} upgrade r repo/chart --version 1`, `helm ${HK} upgrade r oci://h/c`, `helm ${HK} upgrade --atomic r oci://h/c --version 1`,
+      `helm ${HK} upgrade r oci://h/c --version 1 oci://h/d`, `helm ${HK} install r oci://h/../c --version 1`]) {
+      expect(validateExactCommand(c), c).toEqual({ ok: false, code: 'chart_not_pinned' });
+    }
+    expect(validateExactCommand(`helm ${HK} upgrade r oci://h/c --version 1 --post-renderer /tmp/pr`)).toEqual({ ok: false, code: 'unsupported_flag' });
+    expect(validateExactCommand(`helm ${HK} upgrade r oci://h/c --version 1 --repo https://x`)).toEqual({ ok: false, code: 'unsupported_flag' });
+    for (const c of [`helm ${HK} myplugin x`, `helm ${HK} repo add a https://x`, `helm ${HK} push x oci://h`]) expect(validateExactCommand(c), c).toEqual({ ok: false, code: 'unsupported_subcommand' });
   });
 
   it('C4: kubectl·helm 은 --kubeconfig 절대 경로와 context 가 둘 다 있어야 한다', () => {
@@ -179,31 +203,24 @@ describe('validateExactCommand', () => {
     expect(validateExactCommand('kubectl --kubeconfig /tmp/k get pods')).toEqual({ ok: false, code: 'needs_kubeconfig' });
     expect(validateExactCommand('kubectl --kubeconfig rc.kubeconfig --context rc get pods')).toEqual({ ok: false, code: 'relative_path' });
     expect(validateExactCommand('kubectl --kubeconfig=/tmp/k --context=rc get pods')).toMatchObject({ ok: true });
-    expect(validateExactCommand('helm --kubeconfig /tmp/k --kube-context rc list')).toMatchObject({ ok: true });
-    expect(validateExactCommand('helm --kubeconfig /tmp/k --context rc list')).toEqual({ ok: false, code: 'needs_kubeconfig' });
+    expect(validateExactCommand(`helm ${HK} list`)).toMatchObject({ ok: true });
+    expect(validateExactCommand('helm --kubeconfig /k --context c list')).toEqual({ ok: false, code: 'needs_kubeconfig' });
   });
 
-  it('C1: 파일 자리를 뽑는다 — 절대·깨끗한 경로만, 붙여 쓴 짧은 플래그는 거절, secret 자리는 표시', () => {
+  it('C1: 파일 자리를 뽑는다 — 절대·깨끗한 경로만, 붙여 쓴 짧은 플래그는 거절, 같은 경로는 하나로', () => {
     const r = validateExactCommand(`kubectl ${KC} patch deviceclass dranet --type merge --patch-file /tmp/p.json`);
     expect(r).toMatchObject({ ok: true, warnings: expect.arrayContaining(['mutates_remote', 'reads_file']) });
     expect(r.ok && r.files).toEqual([
       { path: '/tmp/rc.kubeconfig', flag: '--kubeconfig', secret: true },
       { path: '/tmp/p.json', flag: '--patch-file', secret: false },
     ]);
-    const h = validateExactCommand('helm --kubeconfig /k --kube-context c upgrade a b -f /v.yaml --values=/w.yaml --set-file cfg=/c.txt');
+    const h = validateExactCommand(`helm ${HK} upgrade a oci://h/c --version 1 -f /v.yaml --values=/w.yaml --set-file cfg=/c.txt`);
     expect(h.ok && h.files.map((x) => x.path)).toEqual(['/k', '/v.yaml', '/w.yaml', '/c.txt']);
-    expect(validateExactCommand('curl -d @/tmp/body.json https://x').ok && validateExactCommand('curl -d @/tmp/body.json https://x')).toMatchObject({ files: [{ path: '/tmp/body.json', flag: '@' }] });
-    for (const c of [`kubectl ${KC} apply -f x.yaml`, `kubectl ${KC} apply -f /tmp/../etc/x`, `kubectl ${KC} apply -f /tmp//x`, `kubectl ${KC} apply -f`, 'curl -d @body.json https://x', 'foo --env-file .env']) {
+    for (const c of [`kubectl ${KC} apply -f x.yaml`, `kubectl ${KC} apply -f /tmp/../etc/x`, `kubectl ${KC} apply -f /tmp//x`, `kubectl ${KC} apply -f`, `kubectl ${KC} apply -f -`, `kubectl ${KC} apply -f https://x/y.yaml`]) {
       expect(validateExactCommand(c), c).toEqual({ ok: false, code: 'relative_path' });
     }
-    for (const c of [`kubectl ${KC} apply -f/tmp/x.yaml`, `kubectl ${KC} apply -f=/tmp/x.yaml`]) {
-      expect(validateExactCommand(c), c).toEqual({ ok: false, code: 'glued_flag' });
-    }
-    // 같은 경로가 두 자리에 나오면 하나로, 비밀 자리가 이긴다.
-    expect(validateExactCommand('kubectl --kubeconfig /x --context rc apply -f /x')).toMatchObject({ ok: true, files: [{ path: '/x', flag: '--kubeconfig', secret: true }] });
-    expect(validateExactCommand('kubectl --kubeconfig /k --context rc apply -f /x --patch-file /x')).toMatchObject({ ok: true, files: [{ path: '/k' }, { path: '/x', secret: false }] });
-    // `-f` 는 kubectl·helm 의 파일 자리일 뿐 — `tail -f`·`kubectl logs -f` 는 아니다.
-    expect(validateExactCommand('tail -f /var/log/x')).toMatchObject({ ok: true, files: [] });
+    for (const c of [`kubectl ${KC} apply -f/tmp/x.yaml`, `kubectl ${KC} apply -f=/tmp/x.yaml`]) expect(validateExactCommand(c), c).toEqual({ ok: false, code: 'glued_flag' });
     expect(validateExactCommand(`kubectl ${KC} logs -f pod-0`)).toMatchObject({ ok: true });
+    expect(validateExactCommand('kubectl --kubeconfig /x --context rc apply -f /x')).toMatchObject({ ok: true, files: [{ path: '/x', flag: '--kubeconfig', secret: true }] });
   });
 });

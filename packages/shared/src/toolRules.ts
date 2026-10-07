@@ -17,7 +17,9 @@ export type ToolRuleRefusal =
   /** 정확한 명령만(H②, security n1): 첫 낱말이 `NAME=값` — `LD_PRELOAD=`·`PATH=` 로 명령의 뜻을 바꾼다. */
   | 'env_prefix'
   /** 정확한 명령만(H③a, security C1~C4). */
-  | 'path_head' | 'relative_path' | 'glued_flag' | 'needs_kubeconfig';
+  | 'path_head' | 'relative_path' | 'glued_flag' | 'needs_kubeconfig'
+  /** 정확한 명령만(H③a, security F2): 머리·하위 명령 허용 목록, helm 차트는 oci + --version 만. */
+  | 'unsupported_head' | 'unsupported_subcommand' | 'unsupported_flag' | 'chart_not_pinned';
 
 export type ToolRuleWarning = 'executes_in_workload' | 'mutates_remote' | 'runs_arbitrary' | 'short_prefix'
   /** 정확한 명령만(H②, security F1): 파일을 읽어 그 내용대로 움직인다 — 승인은 글자에 묶이고 파일 내용은 범위 밖이다. */
@@ -252,6 +254,10 @@ export function validateExactCommand(input: string): ExactCommandVerdict {
   if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!)) return { ok: false, code: 'env_prefix' };
   if (words[0]!.includes('/')) return { ok: false, code: 'path_head' };
   const head = words[0]!.toLowerCase();
+  // security F2: 파일 자리를 플래그 목록으로만 찾으면 목록 밖에서 읽는 명령(make·npm run·terraform·helm 로컬 차트·kubectl 플러그인)이
+  // 해시 없이 지나간다. 그래서 머리·하위 명령을 **허용 목록**으로 둔다 — 처음엔 막혔던 실제 사례인 kubectl·helm 만.
+  const shape = checkCommandShape(head, words);
+  if (shape) return { ok: false, code: shape };
   const f = commandFileArgs(head, words);
   if ('code' in f) return { ok: false, code: f.code };
   if (head === 'kubectl' || head === 'helm') {
@@ -266,18 +272,61 @@ export function validateExactCommand(input: string): ExactCommandVerdict {
 
 /** 어느 명령에서든 파일을 읽는 플래그. */
 const COMMON_FILE_FLAGS = ['--patch-file', '--env-file', '--from-env-file', '--config', '--kubeconfig'];
+/** 자격 파일 — 해시하고(바뀌면 닫힘) 미리 보기는 싣지 않는다(F2). */
+const CREDENTIAL_FILE_FLAGS: Record<string, readonly string[]> = {
+  kubectl: ['--client-key', '--client-certificate', '--certificate-authority'],
+  helm: ['--key-file', '--cert-file', '--ca-file', '--kube-ca-file'],
+};
+
+/** kind command 가 받는 머리(F2). 늘릴 때는 그 도구가 cwd·PATH·다른 파일에서 무엇을 읽는지 하나씩 검토한다. */
+const EXACT_COMMAND_HEADS = new Set(['kubectl', 'helm']);
+/** kubectl 내장 하위 명령 중 받는 것. 플러그인(`kubectl-<이름>` 실행)·`cp`(로컬 파일)·`edit`(편집기)·`proxy`·`config`·`kustomize`·`plugin` 은 없다. */
+const KUBECTL_SUBCOMMANDS = new Set([
+  'get', 'describe', 'logs', 'events', 'top', 'explain', 'api-resources', 'api-versions', 'version', 'cluster-info', 'auth', 'wait', 'diff',
+  'apply', 'create', 'replace', 'patch', 'delete', 'scale', 'rollout', 'label', 'annotate', 'set', 'autoscale', 'expose',
+  'cordon', 'uncordon', 'drain', 'taint', 'exec', 'attach', 'port-forward', 'debug', 'run',
+]);
+/** helm 하위 명령 중 받는 것. 차트를 받는 것(install·upgrade·template)은 `oci://…` + `--version` 만. 플러그인·`repo`·`package`·`push` 는 없다. */
+const HELM_SUBCOMMANDS = new Set(['status', 'list', 'ls', 'get', 'history', 'rollback', 'uninstall', 'install', 'upgrade', 'template', 'test']);
+const HELM_CHART_SUBCOMMANDS = new Set(['install', 'upgrade', 'template']);
+/** helm 에서 실행 파일·다른 출처를 끌어들이는 플래그 — 해시로 고정할 수 없다. */
+const HELM_FORBIDDEN_FLAGS = ['--post-renderer', '--post-renderer-args', '--repo', '--plugins'];
+
+function checkCommandShape(head: string, words: readonly string[]): ToolRuleRefusal | null {
+  if (!EXACT_COMMAND_HEADS.has(head)) return 'unsupported_head';
+  const sub = subcommandOf(words);
+  if (head === 'kubectl') {
+    if (!sub || !KUBECTL_SUBCOMMANDS.has(sub)) return 'unsupported_subcommand';
+    return null;
+  }
+  // helm
+  if (!sub || !HELM_SUBCOMMANDS.has(sub)) return 'unsupported_subcommand';
+  if (words.some((w) => HELM_FORBIDDEN_FLAGS.some((f) => w === f || w.startsWith(`${f}=`)))) return 'unsupported_flag';
+  if (HELM_CHART_SUBCOMMANDS.has(sub)) {
+    // 꼴을 고정한다: `helm … <install|upgrade|template> <릴리스> oci://<차트> … --version <판>`. 로컬 디렉터리·`repo/chart` 는 구분이
+    // 안 되니 받지 않는다(F2). 하위 명령 바로 뒤 두 낱말이 릴리스와 oci 차트여야 한다.
+    const i = words.indexOf(sub);
+    const release = words[i + 1];
+    const chart = words[i + 2];
+    if (!release || release.startsWith('-') || release.includes('/') || !chart || !/^oci:\/\/[^/]+\/./.test(chart)) return 'chart_not_pinned';
+    if (chart.includes('..') || words.filter((w) => w.startsWith('oci://')).length !== 1) return 'chart_not_pinned';
+    const hasVersion = words.some((w, j) => (w === '--version' && j + 1 < words.length && !words[j + 1]!.startsWith('-')) || w.startsWith('--version='));
+    if (!hasVersion) return 'chart_not_pinned';
+  }
+  return null;
+}
 /** 머리별로 더하는 것 — `-f` 는 kubectl·helm 에서만 파일이다(`tail -f`·`rm -f` 는 아니다). */
 const HEAD_FILE_FLAGS: Record<string, readonly string[]> = {
   kubectl: ['-f', '--filename', '--kustomize', '-k', '--from-file'],
   helm: ['-f', '--values', '--set-file'],
 };
 /** 내용에 비밀이 있을 수 있어 미리 보기를 보내지 않는 자리. */
-const SECRET_FILE_FLAGS = new Set(['--kubeconfig', '--env-file', '--from-env-file', '--config']);
+const SECRET_FILE_FLAGS = new Set(['--kubeconfig', '--env-file', '--from-env-file', '--config', ...Object.values(CREDENTIAL_FILE_FLAGS).flat()]);
 /** kubectl 에서 `-f` 가 파일이 아닌 하위 명령(`logs -f` 는 따라가기). */
 const KUBECTL_F_NOT_FILE = new Set(['logs']);
 
 function commandFileArgs(head: string, words: readonly string[]): { files: CommandFileArg[] } | { code: ToolRuleRefusal } {
-  let flags = [...COMMON_FILE_FLAGS, ...(HEAD_FILE_FLAGS[head] ?? [])];
+  let flags = [...COMMON_FILE_FLAGS, ...(HEAD_FILE_FLAGS[head] ?? []), ...(CREDENTIAL_FILE_FLAGS[head] ?? [])];
   if (head === 'kubectl' && words.slice(1).some((w) => KUBECTL_F_NOT_FILE.has(w))) flags = flags.filter((x) => x !== '-f');
   const shortFlags = flags.filter((x) => /^-[A-Za-z]$/.test(x));
   const files: CommandFileArg[] = [];

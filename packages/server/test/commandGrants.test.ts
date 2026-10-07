@@ -11,8 +11,11 @@ import { commandGrantsFor, matchCommandGrant } from '../src/services/permissionR
 
 // 「정확한 명령」 승인(H②, 112, 스레드 8769dbf7) — 소유자 사람 세션만 grant 를 만들고, hook 은 정확히 같은 명령에만 하나를 쓴다.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
-// 파일 인자 없는 명령 — 파일 묶기(H③a)는 아래 describe 에서 오퍼레이터 헤더로 따로 잰다.
-const PATCH = 'rkscli cluster scale --cluster prod-shared-main --pool npu --replicas 0';
+// kind command 는 kubectl·helm 만(security F2) — 모든 명령이 --kubeconfig 파일 하나를 읽는다. 기본 클라이언트는 그 해시를 오퍼레이터 헤더로 싣는다.
+const KCP = '/tmp/rc.kubeconfig';
+const KUBE = `kubectl --kubeconfig ${KCP} --context rc`;
+const KC_SHA = 'a'.repeat(64);
+const PATCH = `${KUBE} scale deploy minimax --replicas 0`;
 
 describe('permission.request kind=command → once/hour → command-grants', () => {
   let db: Awaited<ReturnType<typeof startTestDb>>;
@@ -50,9 +53,10 @@ describe('permission.request kind=command → once/hour → command-grants', () 
   const match = async (thread: string, command: string, id = agentId, opts: { cwd?: string | null; files?: { path: string; sha256: string }[] } = {}) => {
     const l = await leaseFor(thread, id);
     const cwd = opts.cwd === undefined ? '/srv/ws' : opts.cwd;
+    const files = opts.files ?? [{ path: KCP, sha256: KC_SHA }];
     return app.inject({
       method: 'POST', url: '/agent/command-grants/match', headers: asAgent(id),
-      payload: { leaseId: l.id, token: l.token, command, toolUseId: 'toolu_1', ...(cwd === null ? {} : { cwd }), ...(opts.files ? { files: opts.files } : {}) },
+      payload: { leaseId: l.id, token: l.token, command, toolUseId: 'toolu_1', ...(cwd === null ? {} : { cwd }), files },
     });
   };
 
@@ -74,7 +78,10 @@ describe('permission.request kind=command → once/hour → command-grants', () 
     const addr = app.server.address();
     const url = typeof addr === 'object' && addr ? `http://127.0.0.1:${addr.port}/mcp` : '';
     client = new Client({ name: 'test', version: '0.0.0' });
-    await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: auth(agentPat) } }));
+    // 오퍼레이터를 거친 연결(에이전트가 실제로 쓰는 길) + 오퍼레이터가 잰 kubeconfig 해시.
+    await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: {
+      ...asAgent(), [COMMAND_FILES_HEADER]: Buffer.from(JSON.stringify([{ path: KCP, sha256: KC_SHA, size: 3 }])).toString('base64'),
+    } } }));
   });
   afterAll(async () => { await client.close(); await app.close(); await db.stop(); });
 
@@ -84,6 +91,8 @@ describe('permission.request kind=command → once/hour → command-grants', () 
       [`${PATCH}; rm -rf /`, 'shell_syntax'], [`${PATCH} && echo x`, 'shell_syntax'], [`${PATCH} | tee x`, 'shell_syntax'],
       [`kubectl patch x -p '{"a":1}'`, 'bad_chars'], ['KUBECONFIG=$HOME/x kubectl get pods', 'bad_chars'],
       ['kubectl get pods:*', 'wildcard'], ['bash -c ls', 'interpreter'], ['LD_PRELOAD=/tmp/x.so kubectl get pods', 'env_prefix'],
+      ['make deploy', 'unsupported_head'], [`${KUBE} cp /local pod:/x`, 'unsupported_subcommand'],
+      ['helm --kubeconfig /tmp/rc.kubeconfig --kube-context rc upgrade r /abs/chart --version 1', 'chart_not_pinned'],
     ] as const) {
       expect((await request({ kind: 'command', command, threadRootId: thread })).error?.code, command).toBe(code);
     }
@@ -97,7 +106,7 @@ describe('permission.request kind=command → once/hour → command-grants', () 
     expect(r.error).toBeUndefined();
     const card = (await pool.query(`select body, meta from message where id = $1`, [r.cardMessageId])).rows[0];
     expect(card.meta.ask.options.map((o: { id: string }) => o.id)).toEqual(['approve_once', 'approve_hour', 'deny']);
-    expect(card.meta.permissionRequest).toMatchObject({ kind: 'command', target: PATCH, channelId: ch, threadRootId: thread, warnings: [] });
+    expect(card.meta.permissionRequest).toMatchObject({ kind: 'command', target: PATCH, channelId: ch, threadRootId: thread, warnings: ['mutates_remote', 'reads_file'] });
     expect(card.body).toContain('이 스레드에서만');
 
     // 소유자가 아닌 사람·admin·에이전트는 못 연다.
@@ -132,16 +141,16 @@ describe('permission.request kind=command → once/hour → command-grants', () 
 
   it('1회짜리는 동시에 와도 한 번만 열린다', async () => {
     const thread = await root();
-    const r = await request({ kind: 'command', command: 'rkscli cluster rollback --cluster rc --to 12', threadRootId: thread });
+    const r = await request({ kind: 'command', command: `${KUBE} rollout undo deploy minimax`, threadRootId: thread });
     expect((await answer(alice.token, r.cardMessageId, 'approve_once')).statusCode).toBe(200);
     const results = await Promise.all(Array.from({ length: 8 }, () =>
-      matchCommandGrant(pool, { agentId, channelId: ch, threadRootId: thread, command: 'rkscli cluster rollback --cluster rc --to 12' })));
+      matchCommandGrant(pool, { agentId, channelId: ch, threadRootId: thread, command: `${KUBE} rollout undo deploy minimax`, files: [{ path: KCP, sha256: KC_SHA }] })));
     expect(results.filter((x) => x.allow)).toHaveLength(1);
   });
 
   it('「이 스레드 1시간」: 여러 번 열리고, 만료되면 닫힌다. 같은 명령을 다시 청하면 alreadyGranted', async () => {
     const thread = await root();
-    const cmd = 'rkscli cluster get --cluster rc --pod udc-ls';
+    const cmd = `${KUBE} -n storage-test get pod udc-ls`;
     const r = await request({ kind: 'command', command: cmd, threadRootId: thread });
     expect((await answer(alice.token, r.cardMessageId, 'approve_hour')).statusCode).toBe(200);
     // security 1: cwd 없이 오면 1시간 grant 는 열리지 않고, 묶이지도 않는다.
@@ -159,7 +168,7 @@ describe('permission.request kind=command → once/hour → command-grants', () 
 
   it('REST 결정도 once·hour 를 받고, tool 카드에 once·hour 를 보내면 409, 거절이면 grant 가 없다', async () => {
     const thread = await root();
-    const cmd = 'rkscli pod delete --cluster rc minimax-pd-prefill-0';
+    const cmd = `${KUBE} -n rebelro delete pod minimax-pd-prefill-0`;
     const r = await request({ kind: 'command', command: cmd, threadRootId: thread });
     const decide = (rid: string, d: string) => app.inject({ method: 'POST', url: `/agents/${agentId}/permission-requests/${rid}/${d}`, headers: auth(alice.token) });
     expect((await decide(r.requestId, 'deny')).json()).toMatchObject({ status: 'denied' });
@@ -200,10 +209,12 @@ describe('permission.request kind=command → once/hour → command-grants', () 
     const ask = async (c: Client, thread: string, command = CMD) =>
       text(await c.callTool({ name: 'permission.request', arguments: { channelId: ch, threadRootId: thread, reason: 'dhcp', kind: 'command', command } }));
     const both = [{ path: KC, sha256: H('a'), size: 300, preview: 'apiVersion: v1 SECRET' }, { path: PF, sha256: H('b'), size: 80, preview: '{"spec":{}}' }];
+    const pingy = [{ path: KC, sha256: H('a'), size: 300 }, { path: PF, sha256: H('b'), size: 80, preview: '{"x":"@alice <@00000000-0000-4000-8000-000000000000> harkroom://message/x"}\n```\n@bob' }];
 
     it('C1: 헤더가 없거나(PAT·옛 오퍼레이터) 경로 집합이 다르면 거절, 본문 칸은 무시된다', async () => {
       const t = await root();
-      expect((await request({ kind: 'command', command: CMD, threadRootId: t })).error.code).toBe('files_unmeasured');
+      // 기본 클라이언트는 kubeconfig 하나만 잰 헤더를 싣는다 — 이 명령은 파일 둘이라 집합이 다르다.
+      expect((await request({ kind: 'command', command: CMD, threadRootId: t })).error.code).toBe('files_mismatch');
       const noHeader = await viaOperator(undefined);
       expect((await ask(noHeader, t)).error.code).toBe('files_unmeasured');
       const missing = await viaOperator([both[1]]);
@@ -239,6 +250,17 @@ describe('permission.request kind=command → once/hour → command-grants', () 
       expect(card.body).toContain('내용은 요청 시점에 고정됨');
       expect(card.body).not.toContain('SECRET');
       expect((await answer(alice.token, r.cardMessageId, 'approve_hour')).statusCode).toBe(200);
+      // n1: 미리 보기로 사람을 부르지 못한다 — 카드 본문에 멘션 토큰·맨몸 @이름이 남지 않고, 알림도 가지 않는다.
+      const t2 = await root();
+      const c2 = await viaOperator(pingy);
+      const r2 = await ask(c2, t2);
+      await c2.close();
+      const body2 = (await pool.query(`select body from message where id = $1`, [r2.cardMessageId])).rows[0].body as string;
+      expect(body2).not.toMatch(/(^|[^＠])@(alice|bob)/);
+      expect(body2.split(`<@${agentId}>`).join('')).not.toContain('<@'); // 머리줄의 에이전트 자신 말고는 없다
+      expect(body2).not.toContain('harkroom://');
+      expect((await pool.query(`select count(*)::int as n from inbox where message_id = $1 and account_id = any($2)`, [r2.cardMessageId, [alice.accountId, bob.accountId]])).rows[0].n)
+        .toBe((await pool.query(`select count(*)::int as n from inbox where message_id = $1 and account_id = $2`, [r2.cardMessageId, alice.accountId])).rows[0].n);
       const digests = [{ path: PF, sha256: H('b') }, { path: KC, sha256: H('a') }];
       expect((await match(t, CMD, agentId, { files: [{ path: PF, sha256: H('9') }, { path: KC, sha256: H('a') }] })).json()).toEqual({ allow: false });
       expect((await match(t, CMD, agentId, { files: [{ path: KC, sha256: H('a') }] })).json()).toEqual({ allow: false });
