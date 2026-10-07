@@ -89,13 +89,19 @@ describe('turnCommand', () => {
       },
       lookupLease: (_r, cause) => (cause === 'cause-1' ? lease : null), log: () => {},
     });
-    const res = (await tc.maybeHandle('r', 'agent-1', call(COMMAND_CHECK_TOOL, { command: `kubectl --kubeconfig ${k} --context rc get pods`, cwd: '/srv/ws', toolUseId: 'tu', leaseId: 'FORGED', token: 'FORGED' })))!;
+    const res = (await tc.maybeHandle('r', 'agent-1', call(COMMAND_CHECK_TOOL, { command: `kubectl --kubeconfig ${k} --context rc get pods`, cwd: '/srv/ws', toolUseId: 'tu', leaseId: 'FORGED', token: 'FORGED' }), 'hook'))!;
     expect(JSON.stringify(res)).toContain('\\"allow\\":true');
     expect(bodies[0]).toMatchObject({ leaseId: 'L1', token: 'T1', cwd: '/srv/ws', toolUseId: 'tu', files: [{ path: k }] });
     // 임대 없음·남의 에이전트·셸 문법이면 서버에 묻지도 않는다.
-    const no = await tc.maybeHandle('r', 'agent-1', call(COMMAND_CHECK_TOOL, { command: 'ls /tmp' }, { cause: 'other' }));
+    const no = await tc.maybeHandle('r', 'agent-1', call(COMMAND_CHECK_TOOL, { command: `kubectl --kubeconfig ${k} --context rc get pods` }, { cause: 'other' }), 'hook');
     expect(JSON.stringify(no)).toContain('\\"allow\\":false');
-    const shell = await tc.maybeHandle('r', 'agent-1', call(COMMAND_CHECK_TOOL, { command: 'ls /tmp; rm -rf /' }));
+    const shell = await tc.maybeHandle('r', 'agent-1', call(COMMAND_CHECK_TOOL, { command: 'ls /tmp; rm -rf /' }), 'hook');
+    // 브릿지(에이전트 MCP)에서 온 command.check 는 서버에 묻지 않고 거절한다 — 1회 grant 를 미리 쓰지 못하게.
+    const viaBridge = await tc.maybeHandle('r', 'agent-1', call(COMMAND_CHECK_TOOL, { command: `kubectl --kubeconfig ${k} --context rc get pods` }), 'bridge');
+    expect(JSON.stringify(viaBridge)).toContain('hook_only');
+    // hook 소켓은 command.check 말고는 아무것도 못 한다.
+    expect(await tc.maybeHandle('r', 'agent-1', call('message.post', { body: 'x' }), 'hook')).toMatchObject({ type: 'mcp.error', status: 403 });
+    expect(await tc.maybeHandle('r', 'agent-1', { type: 'http.forward', id: 'h', method: 'GET', path: '/agent/config' }, 'hook')).toMatchObject({ type: 'http.response', status: 403 });
     expect(JSON.stringify(shell)).toContain('\\"allow\\":false');
     expect(bodies).toHaveLength(1);
   });

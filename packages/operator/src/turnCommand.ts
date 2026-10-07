@@ -16,7 +16,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { validateExactCommand, type CommandFileArg } from '@harkroom/shared';
-import type { CommandFileDigest, RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
+import type { CommandFileDigest, RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import type { MergeLease } from './turnMerge.js';
 
 export const COMMAND_CHECK_TOOL = 'command.check';
@@ -100,7 +100,16 @@ export function createTurnCommand(deps: TurnCommandDeps) {
 
   return {
     /** 처리했으면 응답, 아니면 null(다음 처리기로). `req` 는 이미 `stripLinkOnlyFields` 를 지난 것이어야 한다. */
-    async maybeHandle(runnerId: string, agentId: string, req: RunnerLinkRequest): Promise<RunnerLinkResponse | null> {
+    async maybeHandle(runnerId: string, agentId: string, req: RunnerLinkRequest, kind: RunnerLinkKind = 'bridge'): Promise<RunnerLinkResponse | null> {
+      // hook 소켓은 `command.check` 하나만 한다 — 그 밖의 요청(MCP·REST)은 서버로 나가지 않는다.
+      if (kind === 'hook') {
+        const c = req.type === 'mcp.request' ? toolCall(req.payload) : null;
+        if (!c || c.params?.name !== COMMAND_CHECK_TOOL) {
+          return req.type === 'mcp.request'
+            ? { type: 'mcp.error', id: req.id, status: 403, message: 'the hook link only answers command.check' }
+            : { type: 'http.response', id: req.id, status: 403, body: 'the hook link only answers command.check' };
+        }
+      }
       if (req.type !== 'mcp.request') return null;
       const call = toolCall(req.payload);
       if (!call) return null;
@@ -108,6 +117,8 @@ export function createTurnCommand(deps: TurnCommandDeps) {
       const reply = (value: unknown, isError: boolean): RunnerLinkResponse => ({ type: 'mcp.response', id: req.id, messages: [toolResult(call.id, value, isError)] });
 
       if (call.params?.name === COMMAND_CHECK_TOOL) {
+        // hook 소켓에서만 받는다(security) — 에이전트가 MCP 로 불러 1회 grant 를 미리 써 버리지 못하게. 서버로도 넘기지 않는다.
+        if (kind !== 'hook') return reply({ allow: false, error: { code: 'hook_only', message: 'command.check is answered only on the hook link' } }, true);
         try {
           return reply(await check(runnerId, agentId, req, args), false);
         } catch (e) {

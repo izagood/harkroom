@@ -279,7 +279,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     onRequest: async (runnerId, agentId, rawReq, kind) => {
       // 오퍼레이터만 쓰는 칸(commandFiles)은 링크에서 들어온 것을 믿지 않는다 — 무엇보다 먼저 지운다(H③b, security 사전 2).
       const req = stripLinkOnlyFields(rawReq);
-      const commanded = await turnCommand.maybeHandle(runnerId, agentId, req);
+      const commanded = await turnCommand.maybeHandle(runnerId, agentId, req, kind);
       if (commanded) return commanded;
       const slot = turnSlots.maybeHandle(runnerId, req, kind);
       if (slot) return slot;
