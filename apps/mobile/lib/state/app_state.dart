@@ -881,6 +881,8 @@ class AppState extends ChangeNotifier {
         final messageId = event['messageId'];
         if (channelId is! String || messageId is! String) return;
         _removeMessage(channelId, messageId);
+      case 'saved.changed':
+        _applySavedChanged(event);
       case 'inbox.updated':
         // 서버는 "바뀌었다"만 알린다 — 무엇이 바뀌었는지는 싣지 않는다. 한 건을
         // 끼워 넣으면 그 사이 다른 기기에서 읽은 것이 화면에서 되살아나므로,
@@ -939,6 +941,34 @@ class AppState extends ChangeNotifier {
     if (root != null && root.channelId == channelId) {
       threadRoots[rootId] = root.withStatus(status);
       notifyListeners();
+    }
+  }
+
+  /// 담기·빼기·상태 바뀜(#219) — 서버는 **내 소켓에만** 보낸다. 다른 기기(데스크톱)에서 담은 것이 폰의
+  /// 표식·카드 숫자·열어 둔 목록에 바로 서게 한다.
+  ///
+  /// 표식(`savedIds`)은 이벤트대로 바로 고치고, 숫자와 목록은 **서버에서 다시 읽는다** — 이벤트에는 줄을
+  /// 그릴 본문이 없다. 내가 이 기기에서 한 일도 메아리로 돌아오지만, 다시 읽어도 결과가 같다(목록은 다시
+  /// 읽는 동안 그대로 서 있어 깜빡이지 않는다).
+  void _applySavedChanged(Map<String, Object?> event) {
+    final messageId = event['messageId'];
+    final accountId = event['accountId'];
+    if (messageId is! String) return;
+    // 남의 이벤트는 오지 않지만, 온다면 내 표식을 건드리지 않는다.
+    if (accountId is String && me != null && accountId != me!.id) return;
+    final state = event['state'];
+    if (state == null) {
+      savedIds.remove(messageId);
+      for (final list in saved.values) {
+        list.removeWhere((e) => e.messageId == messageId);
+      }
+    } else {
+      savedIds.add(messageId);
+    }
+    notifyListeners();
+    unawaited(loadSavedSummary());
+    for (final s in SavedState.values) {
+      if (savedLoad[s] == LoadState.loaded) unawaited(loadSaved(s));
     }
   }
 
@@ -1186,9 +1216,28 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 지금 읽어 둔 칸 중 그 메시지가 있는 칸. 모르면 `null`(칸을 아직 안 읽었거나 담기지 않았다).
+  SavedState? savedStateOf(String messageId) {
+    for (final state in SavedState.values) {
+      if (saved[state]!.any((e) => e.messageId == messageId)) return state;
+    }
+    return null;
+  }
+
   /// 담는다. 서버가 받은 **뒤에** 표식을 세운다 — 낙관적으로 세웠다 지우면 표식이 깜빡인다.
-  Future<void> saveMessage(String messageId) async {
-    await _api!.saveMessage(messageId);
+  ///
+  /// [restore] 가 done 이면 담은 뒤 완료로 되돌린다 — 완료 칸에서 뺀 것을 「되돌리기」하면 원래 칸으로
+  /// 가야 한다(서버는 새로 담은 행을 할 것으로 만든다, designer #1231 n1). PATCH 까지 끝낸 **뒤에** 목록을
+  /// 다시 읽는다 — 그 사이에 읽으면 할 것 칸에 잠깐 섰다가 사라진다.
+  ///
+  /// 기다리는 사이 계정이 바뀌었으면 화면에 붓지 않는다(security #1231 n1) — 새 계정 화면에 옛 계정의
+  /// 표식이 서면 안 된다.
+  Future<void> saveMessage(String messageId, {SavedState restore = SavedState.open}) async {
+    final gen = _generation;
+    final api = _api!;
+    await api.saveMessage(messageId);
+    if (restore == SavedState.done) await api.setSavedState(messageId, SavedState.done);
+    if (gen != _generation) return;
     savedIds.add(messageId);
     notifyListeners();
     // 숫자와 열어 둔 목록은 서버의 사실로 맞춘다 — 완료에 있던 것을 다시 담으면 할 것으로 돌아간다.
@@ -1200,7 +1249,9 @@ class AppState extends ChangeNotifier {
 
   /// 뺀다. 두 칸 어디에 있든 줄을 지운다.
   Future<void> unsaveMessage(String messageId) async {
+    final gen = _generation;
     await _api!.unsaveMessage(messageId);
+    if (gen != _generation) return;
     savedIds.remove(messageId);
     for (final list in saved.values) {
       list.removeWhere((e) => e.messageId == messageId);
@@ -1211,7 +1262,9 @@ class AppState extends ChangeNotifier {
 
   /// 할 것 ↔ 완료. 줄을 다른 칸으로 옮긴다(그 칸을 읽어 둔 때만 — 안 읽었으면 열 때 서버에서 읽는다).
   Future<void> setSavedState(String messageId, SavedState next) async {
+    final gen = _generation;
     await _api!.setSavedState(messageId, next);
+    if (gen != _generation) return;
     final from = saved[next == SavedState.open ? SavedState.done : SavedState.open]!;
     final at = from.indexWhere((e) => e.messageId == messageId);
     if (at >= 0) {
