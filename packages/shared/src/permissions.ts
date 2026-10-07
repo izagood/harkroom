@@ -25,6 +25,9 @@ export const CAPABILITIES = [
   // 에이전트가 비밀을 만든다·들여온다·회전한다(102, 스레드 1a08d0cf). scope 는 '' 하나. **그 에이전트의 소유자**만 준다
   // (repo.merge 와 같은 틀). 판정은 서버 `secretCreate.ts` 다.
   'secret.create',
+  // 에이전트의 Claude Code allow 규칙 하나(권한 요청 스레드 f61af808). scope 는 `tool:<channelId>:<규칙>` 만 — 그 채널의 턴에만
+  // 붙는다(D2). 전역('')은 아무것도 열지 않는다. 판정은 `can()` 이 아니라 서버 `toolAllows.ts` 의 정확 일치다.
+  'tool.allow',
 ] as const;
 export type Capability = typeof CAPABILITIES[number];
 

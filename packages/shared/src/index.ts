@@ -3659,6 +3659,7 @@ export const MEMORY_ITEMS_WARN_COUNT = 180;
 export const JOURNAL_EXPIRING_WINDOW = 5;
 
 export * from './permissions.js';
+export * from './toolRules.js';
 export * from './threadStatus.js';
 import type { Capability, Role } from './permissions.js';
 

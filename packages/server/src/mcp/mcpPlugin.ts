@@ -70,6 +70,7 @@ import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../service
 import type { AgentPresence } from './presence.js';
 import { enqueueAskPush } from '../services/push/pushJobs.js';
 import { bumpDenialCard, DENIAL_CARD_REFUSAL_MESSAGE, linkDenialCard, prepareDenialCard, type MergeDenialMeta } from '../services/mergeDenials.js';
+import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions } from '../services/permissionRequests.js';
 
 /**
  * 발화 도구가 공통으로 받는 `model` — 에이전트가 신고하는 **자기 모델 ID**(#600).
@@ -867,6 +868,63 @@ function buildMcpServer(
    * 실패"에 버튼이 생기거나 "고칠 수 있는 실패"의 경로가 사라진다. 둘 다 거짓 신호이므로
    * 보내는 쪽이 반드시 정하게 한다.
    */
+  /**
+   * 권한 요청(111, 스레드 f61af808) — 분류기·래퍼에 막힌 권한 하나를 소유자에게 청한다. **이 도구는 아무것도 열지 않는다** —
+   * 소유자가 카드에서 승인해야(사람 세션 REST) grant 가 생기고, 그 카드 답이 새 턴을 띄운다. 넓은 규칙은 여기서 거절한다
+   * (`validateToolRule`). 카드의 권한 칸은 서버 값뿐이고 에이전트가 쓴 것은 이유 한 줄이다.
+   */
+  server.registerTool('permission.request', {
+    description: '막힌 권한 하나를 소유자에게 청한다(승인돼야 다음 턴부터 적용 — 이 도구로는 열리지 않는다). kind=tool 이면 rule 에 Claude Code allow 규칙 하나(Bash(<고정 낱말 둘 이상> …:*)·Bash(<명령 전체>)·mcp__<서버>__<도구>, 이 채널에서만 적용), kind=merge 면 repo 에 owner/name. 승인하면 7일',
+    inputSchema: {
+      kind: z.enum(['tool', 'merge']),
+      rule: z.string().min(1).max(300).optional(),
+      repo: z.string().min(3).max(201).optional(),
+      reason: z.string().min(1).max(500),
+      channelId: z.string().uuid(),
+      threadRootId: z.string().uuid(),
+      model: MODEL_ARG,
+    },
+  }, async ({ kind, rule, repo, reason, channelId, threadRootId, model }) => {
+    if (account.kind !== 'agent') return jsonResult({ error: { code: 'not_agent', message: 'only an agent can request a permission' } });
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if ((kind === 'tool') !== (rule !== undefined) || (kind === 'merge') !== (repo !== undefined)) {
+      return jsonResult({ error: { code: 'bad_request', message: 'kind "tool" takes `rule`, kind "merge" takes `repo` — exactly one' } });
+    }
+    const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, reason, channelId, threadRootId });
+    if (!opened.ok) return jsonResult({ error: opened.refusal });
+    if ('alreadyGranted' in opened) {
+      return jsonResult({ alreadyGranted: true, expiresAt: opened.alreadyGranted.expiresAt, message: 'already granted — it applies from the next turn in this channel' });
+    }
+    if ('existing' in opened) {
+      return jsonResult({ requestId: opened.existing.requestId, cardMessageId: opened.existing.cardMessageId, pending: true, message: 'the same request is already waiting for the owner in this thread' });
+    }
+    const { requestId, meta: permissionRequest } = opened.created;
+    const meta: AskMeta & Partial<ModelMeta> & { permissionRequest: typeof permissionRequest } = {
+      kind: 'ask', ask: { options: permissionCardOptions(), to: { kind: 'human' }, prompt: '권한을 줄까?' },
+      permissionRequest,
+      ...(await reportedModelMeta(pool, account.id, model, threadRootId)),
+    };
+    const posted = await postMessage(pool, {
+      causeMessageId: cause,
+      channelId, authorId: account.id, body: permissionCardBody(permissionRequest, `@${account.handle}`), threadRootId,
+      meta: meta as unknown as Record<string, unknown>,
+    });
+    if (posted.failure) return postFailureResult(posted.failure);
+    const { message, notified, replayed } = posted;
+    if (!replayed) {
+      await linkPermissionCard(pool, requestId, message.id);
+      emitPosted(posted, await audienceFor(pool, channelId));
+      for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+      // 받는 사람은 소유자 하나다 — 그 사람만 승인할 수 있다.
+      if (permissionRequest.ownerAccountId && !notified.includes(permissionRequest.ownerAccountId)) {
+        await enqueueAskPush(pool, permissionRequest.ownerAccountId, message.id);
+      }
+    }
+    return jsonResult({ requestId, cardMessageId: message.id, pending: true, expiresAt: permissionRequest.expiresAt });
+  });
+
   server.registerTool('message.fail', {
     description: '스스로 못 끝냈음을 알린다(수신자는 언제나 사람). retryable 로 다시 부를 수 있는지 밝힌다',
     inputSchema: {

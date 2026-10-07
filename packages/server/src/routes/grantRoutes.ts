@@ -10,7 +10,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { CAPABILITIES, ROLES, repoScope, type ApiGrantLimits, type GrantRow } from '@harkroom/shared';
+import { CAPABILITIES, ROLES, parseToolScope, repoScope, validateToolRule, type ApiGrantLimits, type GrantRow } from '@harkroom/shared';
 import { hasWriteMethod, isConnectorScope, parseLimits } from '../auth/apiGrants.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
@@ -152,6 +152,18 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
       const check = await checkMergeGrant(pool, req, id, scope);
       if (!check.ok) return reply.code(check.status).send({ error: { code: check.code, message: check.message } });
       scope = check.scope;
+    } else if (capability === 'tool.allow') {
+      // 설정 화면에서 직접 주는 길(스레드 f61af808 D3 — 30일·무기한은 여기서만). 카드와 같은 판정: 소유자인 사람만,
+      // scope 는 `tool:<channelId>:<규칙>` 이고 규칙은 `validateToolRule` 을 통과한 정규형 그대로여야 한다.
+      const parsedScope = parseToolScope(scope);
+      const verdict = parsedScope ? validateToolRule(parsedScope.rule) : null;
+      if (!parsedScope || !verdict?.ok || verdict.rule !== parsedScope.rule || allowAgentCause !== undefined) {
+        return reply.code(400).send({ error: { code: 'bad_scope', message: 'tool.allow 의 scope 는 tool:<channelId>:<정규화한 규칙> 이고 넓은 규칙은 받지 않는다' } });
+      }
+      // 사람 **세션**만 — 카드 승인과 같은 문턱이다. PAT 로 열리면 같은 기기의 에이전트가 사람 PAT 로 스스로 넣는 길이 된다.
+      if (req.authVia !== 'session') return reply.code(403).send({ error: { code: 'forbidden', message: 'tool.allow 는 앱에 로그인한 소유자만 준다' } });
+      const owner = await secretCreateOwner(pool, req, id);
+      if (!owner.ok) return reply.code(owner.status).send({ error: { code: owner.code, message: owner.message.replace('secret.create', 'tool.allow') } });
     } else if (capability === 'secret.create') {
       // 소유자만(repo.merge 와 같은 틀). 전역 하나 — 대상 한정 scope 는 뜻이 없다.
       if (scope !== '' || allowAgentCause !== undefined) {
@@ -161,7 +173,7 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
       if (!owner.ok) return reply.code(owner.status).send({ error: { code: owner.code, message: owner.message } });
     } else {
       if (!req.account!.isAdmin) return reply.code(403).send({ error: { code: 'forbidden', message: 'grant 는 admin 만 준다' } });
-      if (scope.startsWith('repo:') || scope.startsWith('connector:') || allowAgentCause !== undefined) {
+      if (scope.startsWith('repo:') || scope.startsWith('connector:') || scope.startsWith('tool:') || allowAgentCause !== undefined) {
         return reply.code(400).send({ error: { code: 'bad_request', message: 'repo: scope 와 allowAgentCause 는 repo.merge 전용이다' } });
       }
     }
@@ -196,8 +208,8 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
     '/accounts/:id/grants/:capability', { preHandler: app.requireAccount }, async (req, reply) => {
       const { id } = idParam.parse(req.params);
       let scope = req.query.scope ?? '';
-      // 거두기: admin, 그리고 `repo.merge` 는 그 에이전트의 소유자도(F2 — 준 사람이 거둘 수 있어야 한다).
-      if (req.params.capability === 'repo.merge' || req.params.capability === 'api.call') {
+      // 거두기: admin, 그리고 `repo.merge`·`api.call`·`tool.allow` 는 그 에이전트의 소유자도(F2 — 준 사람이 거둘 수 있어야 한다).
+      if (req.params.capability === 'repo.merge' || req.params.capability === 'api.call' || req.params.capability === 'tool.allow') {
         if (req.params.capability === 'repo.merge') scope = repoScope(scope.replace(/^repo:/i, '')) ?? scope;
         const owner = await pool.query(`select 1 from agent_config where account_id = $1 and owner_account_id = $2`, [id, req.account!.id]);
         if (!owner.rowCount && !req.account!.isAdmin) return reply.code(403).send({ error: { code: 'forbidden', message: '소유자나 admin 만 거둔다' } });
