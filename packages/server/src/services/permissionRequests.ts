@@ -96,6 +96,10 @@ const RULE_REFUSAL_MESSAGE: Record<ToolRuleRefusal, string> = {
   bad_chars: 'rule may only use letters, digits, spaces and _ . / @ = : + % - — no quotes, backslashes, brackets or commas',
   gh_api_write: '`gh api` is granted only as one exact read call — no prefix rule, -X/--method, -f/-F/--input or graphql',
   env_prefix: 'no NAME=value prefix — pass it as a flag (e.g. kubectl --kubeconfig <path>)',
+  path_head: 'a script called by path is not granted as an exact command — run it yourself or ask for a tool rule',
+  relative_path: 'file arguments (-f, --patch-file, --values, --kubeconfig, @file …) must be absolute, clean paths',
+  glued_flag: 'write file flags apart from their value (-f /abs/path), not glued (-f/abs or -f=/abs)',
+  needs_kubeconfig: 'kubectl/helm need both --kubeconfig <absolute path> and --context (helm: --kube-context)',
 };
 
 export async function openPermissionRequest(
