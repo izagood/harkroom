@@ -681,16 +681,34 @@ function warnOnDuplicatePosts(key: string, postCount: number): void {
  */
 export async function scrubWorkspaceSettings(workspaceDir: string): Promise<string[]> {
   const removed: string[] = [];
+  const dir = join(workspaceDir, '.claude');
+  // security n1: `.claude` 가 링크면(`.claude → ~/.claude`) 그 너머 사람의 설정을 지우게 된다 — 링크 자체만 지운다.
+  try {
+    const st = await lstat(dir);
+    if (st.isSymbolicLink()) {
+      await rm(dir, { force: true });
+      console.warn(`[mentionTurn] 작업 폴더의 .claude 가 링크였다 — 링크만 지웠다: ${dir}`);
+      return [dir];
+    }
+    if (!st.isDirectory()) return removed;
+  } catch {
+    return removed;
+  }
   for (const name of ['settings.json', 'settings.local.json']) {
-    const path = join(workspaceDir, '.claude', name);
+    const path = join(dir, name);
     try {
       await lstat(path);
     } catch {
       continue;
     }
-    await rm(path, { force: true });
-    removed.push(path);
-    console.warn(`[mentionTurn] 작업 폴더의 ${name} 을 지웠다 — 권한은 서버 승인으로만 들어온다: ${path}`);
+    // security n2: 디렉터리·링크여도 턴을 죽이지 않는다 — 링크는 링크만, 디렉터리는 통째로 지운다.
+    try {
+      await rm(path, { force: true, recursive: true });
+      removed.push(path);
+      console.warn(`[mentionTurn] 작업 폴더의 ${name} 을 지웠다 — 권한은 서버 승인으로만 들어온다: ${path}`);
+    } catch (err) {
+      console.warn(`[mentionTurn] ${path} 를 지우지 못했다(턴은 계속한다): ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
   return removed;
 }

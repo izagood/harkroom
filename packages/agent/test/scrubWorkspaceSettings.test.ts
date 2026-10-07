@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -21,6 +21,26 @@ describe('scrubWorkspaceSettings', () => {
     expect(existsSync(join(dir, '.claude', 'settings.json'))).toBe(false);
     expect(existsSync(join(dir, '.claude', 'settings.local.json'))).toBe(false);
     expect(existsSync(join(dir, '.claude', 'skills', 'x', 'SKILL.md'))).toBe(true);
+  });
+
+  it('.claude 가 링크면 링크만 지우고 너머의 settings 는 남긴다(n1)', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'scrub-'));
+    const target = join(dir, 'human-claude');
+    await mkdir(target);
+    await writeFile(join(target, 'settings.json'), '{}');
+    const ws = join(dir, 'ws');
+    await mkdir(ws);
+    await symlink(target, join(ws, '.claude'));
+    expect(await scrubWorkspaceSettings(ws)).toEqual([join(ws, '.claude')]);
+    expect(existsSync(join(target, 'settings.json'))).toBe(true);
+    expect(existsSync(join(ws, '.claude'))).toBe(false);
+  });
+
+  it('settings.json 이 디렉터리여도 던지지 않는다(n2)', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'scrub-'));
+    await mkdir(join(dir, '.claude', 'settings.json'), { recursive: true });
+    expect(await scrubWorkspaceSettings(dir)).toHaveLength(1);
+    expect(existsSync(join(dir, '.claude', 'settings.json'))).toBe(false);
   });
 
   it('없으면 아무것도 안 한다', async () => {
