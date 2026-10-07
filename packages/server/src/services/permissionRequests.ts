@@ -175,7 +175,8 @@ export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: str
  * (「명령 허용 `…`」)을 흉내 내지 못하게. 서버 줄보다 아래, 맨 끝에 둔다.
  */
 export function oneLineReason(reason: string): string {
-  return reason.replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/[`*_#>|[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  // bidi·서식 문자(U+202E 등, \p{Cf})도 지운다 — 옛 앱에서 이유 줄을 거꾸로 보이게 해 서버 줄처럼 꾸미지 못하게(security 후속).
+  return reason.replace(/\p{Cf}/gu, '').replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/[`*_#>|[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
 export function permissionCardOptions(): { id: string; label: string }[] {

@@ -74,9 +74,28 @@ function checkGh(words: readonly string[], prefix: boolean): ToolRuleRefusal | n
   return null;
 }
 
+/**
+ * `git push` 로 main 에 바로 넣는 길(security F4) — 에이전트 토큰은 repo 스코프라 main 에 push 하면 머지와 같다. 그래서:
+ * - `git push` **접두 규칙은 거절**(뒤에 무엇이든 붙는다).
+ * - 정확 규칙은 원격과 refspec 을 **명시**해야 받는다(`git push origin` 만이면 현재 브랜치 — main 일 수 있다).
+ * - refspec 에 `main`·`master`·`HEAD`(콜론 꼴 포함)·`refs/heads/`·지우기(`:x`)·`--all`·`--mirror` 가 있으면 거절.
+ */
+function checkGitPush(words: readonly string[], prefix: boolean): ToolRuleRefusal | null {
+  if (!positionals(words).includes('push')) return null;
+  if (prefix) return 'merge_bypass';
+  if (words.some((w) => /^--(all|mirror)$/.test(w))) return 'merge_bypass';
+  // push 뒤의 옵션은 값을 받지 않는 것으로 본다(`-u`·`-f`·`--force-with-lease`) — 남는 첫 낱말이 원격, 그 뒤가 refspec.
+  const after = words.slice(words.indexOf('push') + 1).filter((w) => !w.startsWith('-'));
+  const refs = after.slice(1);
+  if (refs.length === 0) return 'merge_bypass';
+  const protectedRef = /(^|[:+])(main|master|head)$|refs\/heads\/|^:/i;
+  return refs.some((r) => protectedRef.test(r) || r.split(':').some((part) => /^(main|master|head)$/i.test(part))) ? 'merge_bypass' : null;
+}
+
 /** 경고(n5): 인자로 임의 명령을 돌릴 수 있는 도구 — 받되 카드에 띠를 단다. */
 function runsArbitrary(head: string, sub: string | null, words: readonly string[]): boolean {
-  if (['awk', 'gawk', 'sed', 'make', 'just', 'ssh', 'tmux', 'screen', 'rsync', 'parallel'].includes(head)) return true;
+  if (['awk', 'gawk', 'sed', 'make', 'just', 'ssh', 'tmux', 'screen', 'rsync', 'parallel', 'vim', 'vi', 'nvim', 'emacs', 'java', 'sqlite3', 'tar'].includes(head)) return true;
+  if (head === 'git' && sub === 'config') return true;
   if (head === 'find' && words.some((w) => /^-(exec|execdir|ok|okdir)$/.test(w))) return true;
   if (head === 'find') return true; // 접두 규칙이면 뒤에 -exec 를 붙일 수 있다
   if (head === 'git' && words.includes('-c')) return true;
@@ -159,6 +178,10 @@ export function validateToolRule(input: string): ToolRuleVerdict {
   if (head === 'gh') {
     const gh = checkGh(words, prefix);
     if (gh) return { ok: false, code: gh };
+  }
+  if (head === 'git') {
+    const push = checkGitPush(words, prefix);
+    if (push) return { ok: false, code: push };
   }
 
   const warnings: ToolRuleWarning[] = [];

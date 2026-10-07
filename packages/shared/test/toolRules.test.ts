@@ -33,6 +33,11 @@ describe('validateToolRule — 받는 것', () => {
     expect(validateToolRule('Bash(gh api repos/rebellions-sw/udc-k8s/pulls/11170)')).toMatchObject({ ok: true, kind: 'bash_exact' });
   });
 
+  it('git push 는 기능 브랜치를 명시한 정확 규칙만 받는다(F4)', () => {
+    expect(validateToolRule('Bash(git push origin feature/rebelro-driver)')).toMatchObject({ ok: true, kind: 'bash_exact', warnings: ['mutates_remote'] });
+    expect(validateToolRule('Bash(git push -u origin rebel-jaebin/x:rebel-jaebin/x)')).toMatchObject({ ok: true });
+  });
+
   it('첫 실사용 규칙(rebelro)은 통과한다', () => {
     expect(validateToolRule('Bash(kubectl --context udc-main-admin@udc-main -n rebelro-cluster exec:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
     expect(validateToolRule('Bash(gh pr view -R rebellions-sw/udc-k8s:*)')).toMatchObject({ ok: true, warnings: [] });
@@ -97,6 +102,19 @@ describe('validateToolRule — 거절', () => {
     ['Bash(gh -R o/r pr merge 1)', 'merge_bypass'],
     ['Bash(gh pr:*)', 'too_broad'],
     ['Bash(gh alias set pv pr:*)', 'merge_bypass'],
+    // security F4 — git push 로 main 에 바로 넣기
+    ['Bash(git push:*)', 'merge_bypass'],
+    ['Bash(git push origin:*)', 'merge_bypass'],
+    ['Bash(git push origin HEAD:refs/heads/main)', 'merge_bypass'],
+    ['Bash(git push origin HEAD:main)', 'merge_bypass'],
+    ['Bash(git push -f origin main)', 'merge_bypass'],
+    ['Bash(git push --force-with-lease origin master)', 'merge_bypass'],
+    ['Bash(git push origin HEAD)', 'merge_bypass'],
+    ['Bash(git push origin feat:Main)', 'merge_bypass'],
+    ['Bash(git push origin :feature)', 'merge_bypass'],
+    ['Bash(git push --all origin)', 'merge_bypass'],
+    ['Bash(git push origin)', 'merge_bypass'],
+    ['Bash(git -C repo push origin main)', 'merge_bypass'],
   ])('%s → %s', (rule, code) => {
     expect(validateToolRule(rule)).toEqual({ ok: false, code });
   });
