@@ -19,8 +19,8 @@ import { decideDelegation } from '../services/apiDelegation.js';
 const grantBody = z.object({
   capability: z.enum(CAPABILITIES),
   // '' = 전역. 대상 한정은 첫 판에 channel·team·agent 만(스펙 §6 (2)). `repo:` 는 `repo.merge` 전용 — 아래서
-  // capability 와 짝을 맞춘다.
-  scope: z.string().regex(/^(|channel:[0-9a-f-]{36}|team:[0-9a-f-]{36}|agent:[0-9a-f-]{36}|repo:[^\s]{3,201}|connector:[0-9a-f-]{36})$/).default(''),
+  // capability 와 짝을 맞춘다. `tool:` 은 `tool.allow` 전용(스레드 f61af808).
+  scope: z.string().regex(/^(|channel:[0-9a-f-]{36}|team:[0-9a-f-]{36}|agent:[0-9a-f-]{36}|repo:[^\s]{3,201}|connector:[0-9a-f-]{36}|tool:[0-9a-f-]{36}:[^\n]{1,300})$/).default(''),
   expiresAt: z.string().datetime().nullable().optional(),
   /** `repo.merge` 전용(090, security F4). 다른 capability 에 주면 400. */
   allowAgentCause: z.boolean().optional(),
