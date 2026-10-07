@@ -15,7 +15,9 @@ export type ToolRuleRefusal =
   | 'empty' | 'too_long' | 'unsupported_tool' | 'wildcard' | 'too_broad' | 'shell_syntax'
   | 'dangerous_flag' | 'interpreter' | 'operator_wrapper' | 'merge_bypass' | 'bad_chars' | 'gh_api_write'
   /** 정확한 명령만(H②, security n1): 첫 낱말이 `NAME=값` — `LD_PRELOAD=`·`PATH=` 로 명령의 뜻을 바꾼다. */
-  | 'env_prefix';
+  | 'env_prefix'
+  /** 정확한 명령만(H③a, security C1~C4). */
+  | 'path_head' | 'relative_path' | 'glued_flag' | 'needs_kubeconfig';
 
 export type ToolRuleWarning = 'executes_in_workload' | 'mutates_remote' | 'runs_arbitrary' | 'short_prefix'
   /** 정확한 명령만(H②, security F1): 파일을 읽어 그 내용대로 움직인다 — 승인은 글자에 묶이고 파일 내용은 범위 밖이다. */
@@ -216,17 +218,27 @@ export function parseToolScope(scope: string): { channelId: string; rule: string
   return m ? { channelId: m[1]!, rule: m[2]! } : null;
 }
 
+/** 「정확한 명령」이 읽는 파일 하나(H③a, security C1). `secret` 이면 내용(미리 보기)을 서버로 보내지 않는다. */
+export interface CommandFileArg { path: string; flag: string; secret: boolean }
+
 export type ExactCommandVerdict =
-  | { ok: true; command: string; warnings: ToolRuleWarning[] }
+  | { ok: true; command: string; warnings: ToolRuleWarning[]; files: CommandFileArg[] }
   | { ok: false; code: ToolRuleRefusal };
 
 /**
- * 「정확한 명령」 승인(kind `command`, 권한 요청 H②, 스레드 8769dbf7)의 판정과 정규형. **승인할 때(서버)와 hook 이 맞춰 볼 때(오퍼레이터)
- * 같은 이 함수를 쓴다** — 둘이 다르면 승인한 것과 열리는 것이 어긋난다.
+ * 「정확한 명령」 승인(kind `command`, 권한 요청 H②·H③, 스레드 8769dbf7)의 판정과 정규형. **승인할 때(서버)·파일 해시를 잴 때(오퍼레이터)·
+ * hook 이 맞춰 볼 때 모두 이 함수 하나를 쓴다** — 둘이 다르면 승인한 것과 열리는 것이 어긋난다.
  *
  * - PreToolUse hook 의 allow 는 Bash 호출 문자열 **전체**에 걸린다(실측 T2: `a; b` 의 b 도 돈다). 그래서 셸 문법·따옴표·`$`·괄호가
  *   있는 명령은 아예 받지 않는다 — `validateToolRule` 의 `Bash(<명령 전체>)` 판정과 같은 글자 허용 목록이다.
  * - 정규형은 낱말 사이 공백 하나(따옴표가 없으니 셸에서 공백은 구분자일 뿐이다). `:*` 접두는 받지 않는다 — 접두는 `kind: tool` 이다.
+ * - 승인은 글자에 묶이므로 **글자 밖에서 뜻을 바꾸는 것**을 막는다(security F1·C1~C4):
+ *   - 첫 낱말 `NAME=값`(env 앞붙임) → `env_prefix`.
+ *   - 경로로 부르는 머리(`./deploy.sh`) → `path_head`. 스크립트는 다른 파일·env 를 읽어 해시 하나로 고정되지 않는다(C3).
+ *   - 파일 자리(`files`)는 **절대 경로**만(`relative_path`) — cwd 와 상관없게. 붙여 쓴 짧은 플래그(`-fX`·`-f=X`)는 판정이 모호해
+ *     `glued_flag`. 파일 내용은 오퍼레이터가 sha256 으로 묶는다(요청·match 양쪽, 서버는 경로 집합이 `files` 와 같은지 본다 — C1).
+ *   - kubectl·helm 은 `--kubeconfig <절대경로>` 와 `--context`/`--kube-context` 가 둘 다 있어야 한다(C4) — 없으면 `~/.kube/config`·
+ *     `KUBECONFIG` 를 몰래 읽어 해시 묶기를 피한다 → `needs_kubeconfig`.
  */
 export function validateExactCommand(input: string): ExactCommandVerdict {
   const command = input.trim();
@@ -238,14 +250,59 @@ export function validateExactCommand(input: string): ExactCommandVerdict {
   const normalized = v.rule.slice('Bash('.length, -1);
   const words = normalized.split(' ');
   if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!)) return { ok: false, code: 'env_prefix' };
+  if (words[0]!.includes('/')) return { ok: false, code: 'path_head' };
+  const head = words[0]!.toLowerCase();
+  const f = commandFileArgs(head, words);
+  if ('code' in f) return { ok: false, code: f.code };
+  if (head === 'kubectl' || head === 'helm') {
+    const ctxFlag = head === 'kubectl' ? '--context' : '--kube-context';
+    const has = (flag: string) => words.some((w, i) => (w === flag && i + 1 < words.length && !words[i + 1]!.startsWith('-')) || w.startsWith(`${flag}=`));
+    if (!f.files.some((x) => x.flag === '--kubeconfig') || !has(ctxFlag)) return { ok: false, code: 'needs_kubeconfig' };
+  }
   const warnings = [...v.warnings];
-  if (readsFile(words)) warnings.push('reads_file');
-  return { ok: true, command: normalized, warnings };
+  if (f.files.length) warnings.push('reads_file');
+  return { ok: true, command: normalized, warnings, files: f.files };
 }
 
-/** 파일 내용대로 움직이는 꼴(security F1 최소안): `-f x`·`--filename`·`--patch-file`·`--values`·`--from-file`·`-k`·`@파일`, 또는 경로로 부르는 머리. */
-const FILE_FLAGS = new Set(['-f', '--filename', '--patch-file', '--values', '--from-file', '--from-env-file', '--kustomize', '-k', '--env-file', '--config', '--kubeconfig-file']);
-function readsFile(words: readonly string[]): boolean {
-  if (words[0]!.includes('/')) return true;
-  return words.slice(1).some((w) => FILE_FLAGS.has(w) || [...FILE_FLAGS].some((f) => f.startsWith('--') && w.startsWith(`${f}=`)) || w.startsWith('@'));
+/** 어느 명령에서든 파일을 읽는 플래그. */
+const COMMON_FILE_FLAGS = ['--patch-file', '--env-file', '--from-env-file', '--config', '--kubeconfig'];
+/** 머리별로 더하는 것 — `-f` 는 kubectl·helm 에서만 파일이다(`tail -f`·`rm -f` 는 아니다). */
+const HEAD_FILE_FLAGS: Record<string, readonly string[]> = {
+  kubectl: ['-f', '--filename', '--kustomize', '-k', '--from-file'],
+  helm: ['-f', '--values', '--set-file'],
+};
+/** 내용에 비밀이 있을 수 있어 미리 보기를 보내지 않는 자리. */
+const SECRET_FILE_FLAGS = new Set(['--kubeconfig', '--env-file', '--from-env-file', '--config']);
+/** kubectl 에서 `-f` 가 파일이 아닌 하위 명령(`logs -f` 는 따라가기). */
+const KUBECTL_F_NOT_FILE = new Set(['logs']);
+
+function commandFileArgs(head: string, words: readonly string[]): { files: CommandFileArg[] } | { code: ToolRuleRefusal } {
+  let flags = [...COMMON_FILE_FLAGS, ...(HEAD_FILE_FLAGS[head] ?? [])];
+  if (head === 'kubectl' && words.slice(1).some((w) => KUBECTL_F_NOT_FILE.has(w))) flags = flags.filter((x) => x !== '-f');
+  const shortFlags = flags.filter((x) => /^-[A-Za-z]$/.test(x));
+  const files: CommandFileArg[] = [];
+  const add = (flag: string, raw: string | undefined): ToolRuleRefusal | null => {
+    if (raw === undefined) return 'relative_path';
+    // `--set-file name=path`·`--from-file key=path` 는 `=` 뒤가 경로다.
+    const path = (flag === '--set-file' || flag === '--from-file') && raw.includes('=') ? raw.slice(raw.indexOf('=') + 1) : raw;
+    if (!isCleanAbsolutePath(path)) return 'relative_path';
+    files.push({ path, flag, secret: SECRET_FILE_FLAGS.has(flag) });
+    return null;
+  };
+  for (let i = 1; i < words.length; i++) {
+    const w = words[i]!;
+    let bad: ToolRuleRefusal | null = null;
+    if (flags.includes(w)) { bad = add(w, words[i + 1]); i++; }
+    else if (w.startsWith('--') && w.includes('=') && flags.includes(w.slice(0, w.indexOf('=')))) bad = add(w.slice(0, w.indexOf('=')), w.slice(w.indexOf('=') + 1));
+    else if (shortFlags.some((x) => w.startsWith(x) && w.length > x.length)) bad = 'glued_flag';
+    else if (w.startsWith('@')) bad = add('@', w.slice(1));
+    if (bad) return { code: bad };
+  }
+  return { files };
+}
+
+/** `/` 로 시작하고 `.`·`..`·빈 마디·끝 `/` 가 없는 경로 — 오퍼레이터의 `realpath(p) === p` 와 맞물린다(C2). */
+function isCleanAbsolutePath(p: string): boolean {
+  if (!p.startsWith('/') || p.length < 2 || p.endsWith('/')) return false;
+  return p.slice(1).split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
 }
