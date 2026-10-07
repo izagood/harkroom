@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseToolScope, toolScope, validateToolRule } from '../src/toolRules.js';
+import { parseToolScope, toolScope, validateExactCommand, validateToolRule } from '../src/toolRules.js';
 
 describe('validateToolRule — 받는 것', () => {
   it('읽기 접두는 경고 없이 받는다', () => {
@@ -147,5 +147,19 @@ describe('toolScope', () => {
   it('모양이 틀리면 null', () => {
     expect(parseToolScope('tool::Bash(x)')).toBeNull();
     expect(parseToolScope('repo:a/b')).toBeNull();
+  });
+});
+
+// 「정확한 명령」(H②, 스레드 8769dbf7): 서버 승인과 오퍼레이터 hook 이 같은 판정·정규형을 쓴다.
+describe('validateExactCommand', () => {
+  it('공백만 정규화하고 셸 문법·따옴표·접두는 받지 않는다', () => {
+    expect(validateExactCommand('  kubectl   --kubeconfig /tmp/rc get pods ')).toEqual({ ok: true, command: 'kubectl --kubeconfig /tmp/rc get pods', warnings: [] });
+    expect(validateExactCommand('kubectl get pods; rm -rf /')).toEqual({ ok: false, code: 'shell_syntax' });
+    expect(validateExactCommand('kubectl get pods && x')).toEqual({ ok: false, code: 'shell_syntax' });
+    expect(validateExactCommand("kubectl patch x -p '{}'")).toMatchObject({ ok: false });
+    expect(validateExactCommand('kubectl get pods:*')).toEqual({ ok: false, code: 'wildcard' });
+    expect(validateExactCommand('sh -c ls')).toEqual({ ok: false, code: 'interpreter' });
+    expect(validateExactCommand('')).toEqual({ ok: false, code: 'empty' });
+    expect(validateExactCommand('helm --kubeconfig /tmp/rc upgrade a b')).toMatchObject({ ok: true, warnings: ['mutates_remote'] });
   });
 });
