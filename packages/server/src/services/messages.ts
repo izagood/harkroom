@@ -543,10 +543,20 @@ async function insertInbox(
    */
   teamId?: string,
 ): Promise<void> {
+  /**
+   * 차단(109) — 받는 사람이 작성자를 차단했으면 부름을 만들지 않는다. 이 관문이 부름을 만드는 유일한
+   * 자리라 멘션·DM·스레드 답글·팀·집합이 한꺼번에 막히고, 푸시·숨김 되돌리기도 따라 빠진다.
+   */
   const inserted = await client.query<{ id: string }>(
-    `insert into inbox (account_id, message_id, reason, team_id) values ($1, $2, $3, $4) returning id`,
+    `insert into inbox (account_id, message_id, reason, team_id)
+     select $1, $2, $3, $4
+      where not exists (
+        select 1 from account_block b join message m on m.id = $2
+         where b.blocker_id = $1 and b.blocked_id = m.author_id)
+     returning id`,
     [accountId, messageId, reason, teamId ?? null],
   );
+  if (!inserted.rowCount) return;
   // 푸시(093): 같은 트랜잭션에 job 을 넣는다. 사람이고 기기가 있을 때만 행이 생긴다.
   // 이 관문이 부름을 만드는 유일한 자리라 "알림을 받은 사람"과 "폰이 울리는 사람"이 갈리지 않는다.
   await enqueueInboxPush(client, inserted.rows[0]!.id, accountId, messageId, reason);

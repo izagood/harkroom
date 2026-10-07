@@ -27,6 +27,7 @@ import { recordAudit } from '../audit.js';
 import { emitEvent, emitPosted } from '../events.js';
 import { BAD_THREAD_MESSAGE, isThreadRootOf, postMessage } from '../services/messages.js';
 import { invokeFactsFor, mayInvoke } from '../services/invokeGate.js';
+import { anyBlockBetween } from './moderationRoutes.js';
 
 /**
  * 섹션 이름의 길이 규칙(#157) — 만드는 경로(`PATCH /channels/:id/pref`)와 이름을 바꾸는
@@ -436,6 +437,10 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // 새 DM 은 부를 수 있는 에이전트와만 연다 — 메시지마다 게이트가 걸러도(messages.ts DM 갈래)
     // 열어 두면 "보냈는데 답이 없는" 방이 된다. 이미 있는 DM 은 그대로 돌려준다(지난 대화를 잃지 않게).
     if (!(await findDm(pool, members))) {
+      // 차단(109) — 둘 중 누가 막았든 새 DM 은 열지 않는다. 누가 막았는지는 말하지 않는다.
+      if (await anyBlockBetween(pool, req.account!.id, body.accountIds.filter((id) => id !== req.account!.id))) {
+        return reply.code(403).send({ error: { code: 'dm_unavailable', message: 'you cannot start a conversation with this account' } });
+      }
       const client = await pool.connect();
       try {
         const facts = await invokeFactsFor(client, body.accountIds.filter((id) => id !== req.account!.id));
