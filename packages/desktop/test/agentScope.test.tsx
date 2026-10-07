@@ -218,6 +218,19 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     });
   });
 
+  it('Client ID 없이 secret 만 적으면 막는다 — 정의를 보내지 않는다', async () => {
+    const calls = fakeLocal([]);
+    setup({ mcpServers: vi.fn(async () => [{ name: 'slack', credentialKind: 'personal', createdBy: null, createdAt: '' }]) });
+    render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
+    fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'slack' } });
+    fireEvent.change(screen.getByTestId('agent-mcp-client-id'), { target: { value: ' ' } });
+    fireEvent.change(screen.getByTestId('agent-mcp-client-secret'), { target: { value: 'S-x' } });
+    fireEvent.click(screen.getByTestId('agent-mcp-add-submit'));
+    expect((await screen.findByTestId('agent-mcp-error')).textContent).toContain('Client secret 은 Client ID 와 함께');
+    expect(calls.some((x) => x.cmd === 'operator_mcp_set')).toBe(false);
+  });
+
   it('secret 칸이 비어 있으면 clientSecret 을 싣지 않는다 — 들고 있던 것을 지우지 않는다', async () => {
     const calls = fakeLocal([]);
     setup({ mcpServers: vi.fn(async () => [{ name: 'slack', credentialKind: 'personal', createdBy: null, createdAt: '' }]) });
