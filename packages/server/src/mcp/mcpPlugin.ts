@@ -10,7 +10,7 @@ import {
   ACCOUNT_GATE_LABEL_PATTERN, FAILURE_CODES, type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
   type MessageRow, type ModelMeta, type ReportMeta,
 } from '@harkroom/shared';
-import { CAUSE_HEADER } from '@harkroom/shared/runnerLink';
+import { CAUSE_HEADER, COMMAND_FILES_HEADER, type CommandFileDigest } from '@harkroom/shared/runnerLink';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
@@ -357,6 +357,8 @@ function buildMcpServer(
   operatorId: string | null = null,
   /** 오퍼레이터 능력(하네스가 밝힌 모델·effort) — 에이전트의 모델 고르기가 `checkOffered` 로 본다. */
   operatorHub?: OperatorHub,
+  /** 오퍼레이터가 잰 「정확한 명령」 파일 해시(`COMMAND_FILES_HEADER`). 없으면 null — 파일 있는 명령은 청할 수 없다. */
+  commandFiles: CommandFileDigest[] | null = null,
 ): McpServer {
   const server = new McpServer({ name: 'harkroom', version: '0.1.0' });
 
@@ -747,11 +749,11 @@ function buildMcpServer(
    * 함께 쓴다. 카드는 일반 ask 꼴이라 데스크톱·모바일·웹 어디서든 [7일 허락하고 다시 시도]가 눌린다(ask-answer → decideFromCard).
    */
   const raisePermission = async (
-    { kind, rule, repo, command, reason, channelId, threadRootId, model, denial }:
+    { kind, rule, repo, command, reason, channelId, threadRootId, model, denial, commandFiles: files }:
       { kind: 'tool' | 'merge' | 'command'; rule?: string; repo?: string; command?: string; reason: string; channelId: string; threadRootId: string; model?: string;
-        denial?: { id: string; number: number; headSha: string; reason: 'not_granted' | 'cause_not_human' } },
+        denial?: { id: string; number: number; headSha: string; reason: 'not_granted' | 'cause_not_human' }; commandFiles?: CommandFileDigest[] | null },
   ) => {
-    const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, command, reason, channelId, threadRootId, denial });
+    const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, command, reason, channelId, threadRootId, denial, commandFiles: files ?? null });
     if (!opened.ok) return jsonResult({ error: opened.refusal });
     if ('alreadyGranted' in opened) {
       return jsonResult({
@@ -1034,7 +1036,7 @@ function buildMcpServer(
     if ((kind === 'tool') !== (rule !== undefined) || (kind === 'merge') !== (repo !== undefined) || (kind === 'command') !== (command !== undefined)) {
       return jsonResult({ error: { code: 'bad_request', message: 'kind "tool" takes `rule`, kind "merge" takes `repo`, kind "command" takes `command` — exactly one' } });
     }
-    return raisePermission({ kind, rule, repo, command, reason, channelId, threadRootId, model });
+    return raisePermission({ kind, rule, repo, command, reason, channelId, threadRootId, model, commandFiles });
   });
 
   /**
@@ -2390,7 +2392,9 @@ export async function registerMcp(
     */
     const rawCause = req.headers[CAUSE_HEADER];
     const cause = typeof rawCause === 'string' && UUID_RE.test(rawCause) ? rawCause : null;
-    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null, operatorHub);
+    // 오퍼레이터를 거친 요청의 헤더만 믿는다(사람 PAT 로 붙은 클라이언트는 이 헤더를 쓸 이유가 없다).
+    const commandFiles = req.operator ? parseCommandFilesHeader(req.headers[COMMAND_FILES_HEADER]) : null;
+    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null, operatorHub, commandFiles);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {
@@ -2407,4 +2411,22 @@ export async function registerMcp(
       }
     }
   });
+}
+
+/** `COMMAND_FILES_HEADER` 를 읽는다. 모양이 틀리면 null(= 오퍼레이터가 재지 않은 것과 같다 — 파일 있는 명령은 거절된다). */
+export function parseCommandFilesHeader(raw: unknown): CommandFileDigest[] | null {
+  if (typeof raw !== 'string' || raw.length > 64 * 1024) return null;
+  let v: unknown;
+  try { v = JSON.parse(Buffer.from(raw, 'base64').toString('utf8')); } catch { return null; }
+  if (!Array.isArray(v) || v.length > 16) return null;
+  const out: CommandFileDigest[] = [];
+  for (const d of v as Record<string, unknown>[]) {
+    if (!d || typeof d !== 'object') return null;
+    const { path, sha256, size, preview } = d;
+    if (typeof path !== 'string' || path.length > 1024 || typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) return null;
+    if (typeof size !== 'number' || !Number.isInteger(size) || size < 0 || size > 1024 * 1024) return null;
+    if (preview !== undefined && (typeof preview !== 'string' || preview.length > 4096)) return null;
+    out.push({ path, sha256, size, ...(typeof preview === 'string' ? { preview } : {}) });
+  }
+  return out;
 }

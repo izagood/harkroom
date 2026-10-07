@@ -67,6 +67,9 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
   const matchBody = z.object({
     leaseId: z.string().uuid(), token: z.string().min(1).max(200),
     command: z.string().min(1).max(2000), toolUseId: z.string().max(200).optional(),
+    // 오퍼레이터가 지금 잰 파일 해시와 hook 입력의 cwd(H③a). 없으면 파일 있는 명령은 열리지 않는다.
+    files: z.array(z.object({ path: z.string().min(1).max(1024), sha256: z.string().regex(/^[0-9a-f]{64}$/) })).max(16).optional(),
+    cwd: z.string().max(4096).optional(),
   });
   app.post<{ Body: unknown }>('/agent/command-grants/match', { preHandler: app.requireAccount }, async (req, reply) => {
     if (req.account!.kind !== 'agent' || !req.operator) {
@@ -81,7 +84,7 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
     }
     return matchCommandGrant(pool, {
       agentId: req.account!.id, channelId: lease.channelId, threadRootId: lease.threadRootId,
-      command: b.data.command, toolUseId: b.data.toolUseId ?? null,
+      command: b.data.command, toolUseId: b.data.toolUseId ?? null, files: b.data.files ?? [], cwd: b.data.cwd ?? null,
     });
   });
 }

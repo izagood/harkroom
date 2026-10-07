@@ -66,6 +66,13 @@ export const RUNNER_TURN_CAUSE_ENV = 'HARKROOM_TURN_CAUSE';
 export const RUNNER_MCP_READY_FILE_ENV = 'HARKROOM_MCP_READY_FILE';
 /** 오퍼레이터 → 서버 `/mcp` 요청에서 `RUNNER_TURN_CAUSE_ENV` 값을 싣는 헤더. */
 export const CAUSE_HEADER = 'x-harkroom-cause';
+/**
+ * 「정확한 명령」 권한 요청(H③a)의 파일 해시 — **오퍼레이터가** 그 명령의 파일 자리(shared `validateExactCommand.files`)를 재서
+ * `/mcp` 요청에 싣는 헤더(base64 JSON `CommandFileDigest[]`). MCP 본문이 아니라 헤더인 이유: 본문은 에이전트가 쓰고, 헤더는
+ * 오퍼레이터만 쓴다(브릿지 프레임의 어떤 칸도 이 헤더로 옮기지 않는다). 이 헤더가 없는 요청(옛 오퍼레이터)은 파일이 있는 명령을 못 청한다.
+ */
+export const COMMAND_FILES_HEADER = 'x-harkroom-command-files';
+export interface CommandFileDigest { path: string; sha256: string; size: number; preview?: string }
 
 /** `RUNNER_LINK_ENV` 의 이름들 — 순서는 사람에게 보이는 오류 문구의 순서다. */
 export const RUNNER_LINK_ENV_KEYS = [
