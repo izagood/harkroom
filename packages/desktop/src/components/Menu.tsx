@@ -276,6 +276,24 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
     return () => hostDoc.removeEventListener('mousedown', onMouseDown);
   }, [open, close]);
 
+  /**
+   * **띄운 메뉴(`floatAt`)는 그 창이 굴리면 닫는다**(designer f1·security nit, #1224 후속). 띄운 메뉴는 창 좌표에
+   * 고정돼 목록을 굴려도 제자리에 남는다 — 그러면 ⋯ 를 누른 글과 떨어져 **옆에 보이는 글**의 메뉴처럼
+   * 읽히고, 그 상태에서 Delete 를 누르면 사람이 생각한 글이 아닌 원래 글에 걸린다. macOS 메뉴도 굴리면 닫힌다.
+   * `scroll` 은 거품이 일지 않으므로 그 창 문서에 **캡처 단계**로 건다. 메뉴 자신의 스크롤은 빼고,
+   * 평소(`absolute`) 메뉴는 목록과 함께 움직이므로 손대지 않는다.
+   */
+  useEffect(() => {
+    if (!open || !floatAt) return;
+    const onScroll = (e: Event): void => {
+      const target = e.target as Node | null;
+      if (target && menuRef.current?.contains(target)) return;
+      close();
+    };
+    hostDoc.addEventListener('scroll', onScroll, true);
+    return () => hostDoc.removeEventListener('scroll', onScroll, true);
+  }, [open, floatAt, close, hostDoc]);
+
   /** 메뉴 안에서의 키보드 이동. 항목 버튼에 직접 걸어 리스너 재부착을 피한다. */
   const onMenuKeyDown = (e: React.KeyboardEvent<HTMLElement>, index: number): void => {
     if (e.key === 'Escape') {

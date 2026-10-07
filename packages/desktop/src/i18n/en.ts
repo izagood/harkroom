@@ -4714,7 +4714,7 @@ export const en = {
    */
   'reactions.tooltip.reacted': '{names} reacted with {emoji}',
   /** 내가 누른 칩에만 앞에 붙는다 — 누르면 **취소**된다는 것이 칩 모양으로는 안 보인다. */
-  'reactions.tooltip.clickToRemove': '(click to remove)',
+  'reactions.tooltip.clickToRemove': 'Click to remove',
 
   // ---------------------------------------------------------------------------
   // boot — **화면 이름이다.** `components/BootNotice.tsx`(`#460`).
