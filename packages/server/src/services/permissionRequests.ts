@@ -103,6 +103,10 @@ const RULE_REFUSAL_MESSAGE: Record<ToolRuleRefusal, string> = {
   relative_path: 'file arguments (-f, --patch-file, --values, --kubeconfig, @file …) must be absolute, clean paths',
   glued_flag: 'write file flags apart from their value (-f /abs/path), not glued (-f/abs or -f=/abs)',
   needs_kubeconfig: 'kubectl/helm need both --kubeconfig <absolute path> and --context (helm: --kube-context)',
+  unsupported_head: 'an exact command can only be kubectl or helm for now — run other tools yourself or ask for a tool rule',
+  unsupported_subcommand: 'that kubectl/helm subcommand (or plugin) is not granted as an exact command',
+  unsupported_flag: 'helm --post-renderer/--repo/--plugins are not granted as an exact command',
+  chart_not_pinned: 'helm install/upgrade/template need `<release> oci://<chart>` right after the subcommand and --version',
 };
 
 export async function openPermissionRequest(
@@ -633,7 +637,14 @@ function filesBlock(files: readonly NonNullable<PermissionRequestMeta['files']>[
   const lines = [`\n파일 ${files.length}개 — 내용은 요청 시점에 고정됨(바뀌면 열리지 않는다):`];
   for (const f of files) {
     lines.push(`· ${f.path} (${f.size}B, sha256 ${f.sha256.slice(0, 12)}…)${f.secret ? ' — 내용 비공개' : ''}`);
-    if (f.preview !== undefined) lines.push('~~~', f.preview.replace(/\p{Cf}/gu, '').replace(/~~~|```/g, '‾‾‾'), '~~~');
+    // n1: 미리 보기는 에이전트가 고른 파일 내용이다 — 멘션(`@이름`·`<@id>`)·채널 토큰·링크로 사람을 부르지 못하게 `@` 를 전각으로 바꾼다.
+    // 펜스(```)도 서버 멘션 파서가 건너뛰는 꼴이지만(splitCode) 그것에만 기대지 않는다. 펜스를 닫는 글자·Cf 는 지운다.
+    if (f.preview !== undefined) lines.push('```', neutralizePreview(f.preview), '```');
   }
   return lines.join('\n');
+}
+
+/** 카드 미리 보기 글자 — 멘션·펜스 탈출·서식 문자를 무력화한다(security n1). */
+export function neutralizePreview(text: string): string {
+  return text.replace(/\p{Cf}/gu, '').replace(/`{3,}|~{3,}/g, (m) => '‵'.repeat(m.length)).replace(/@/g, '＠').replace(/harkroom:\/\//gi, 'harkroom∶//');
 }
