@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { notReservedHandle } from '../services/reservedHandles.js';
 import type { ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import { newToken } from '../auth/tokens.js';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
@@ -90,7 +91,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
    * 바꾸는 문은 `PATCH /accounts/agents/:id`(소유자 또는 admin) 하나다.
    */
   app.patch('/accounts/me/handle', { preHandler: app.requireAccount }, async (req, reply) => {
-    const body = z.object({ handle: z.string().regex(/^[a-z0-9_-]{2,32}$/) }).parse(req.body);
+    const body = z.object({ handle: z.string().regex(/^[a-z0-9_-]{2,32}$/).refine(...notReservedHandle) }).parse(req.body);
     const account = req.account!;
 
     if (account.kind !== 'human') {
@@ -141,7 +142,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
    */
   app.patch('/accounts/:id/handle', { preHandler: app.requireAdmin }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    const body = z.object({ handle: z.string().regex(/^[a-z0-9_-]{2,32}$/) }).parse(req.body);
+    const body = z.object({ handle: z.string().regex(/^[a-z0-9_-]{2,32}$/).refine(...notReservedHandle) }).parse(req.body);
 
     // 대상 계정 조회
     const target = await pool.query(`select handle, kind from account where id = $1`, [id]);
@@ -268,7 +269,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
 
   app.post('/accounts/agents', { preHandler: app.requireCap('agent.create') }, async (req, reply) => {
     const body = z.object({
-      handle: z.string().regex(/^[a-z0-9_-]{2,32}$/),
+      handle: z.string().regex(/^[a-z0-9_-]{2,32}$/).refine(...notReservedHandle),
       displayName: z.string().min(1).max(64),
       ...configFields,
     }).parse(req.body);
@@ -376,7 +377,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
        * `agent/stateDir.ts` 에서 없앴다 — 디렉터리를 **id 로 찾아 쓰기** 때문에 이름이
        * 바뀌어도 같은 자리로 돌아온다. handle 은 거기서도 사람이 알아보라고 붙인 꼬리표다.
        */
-      handle: z.string().regex(/^[a-z0-9_-]{2,32}$/).optional(),
+      handle: z.string().regex(/^[a-z0-9_-]{2,32}$/).refine(...notReservedHandle).optional(),
       displayName: z.string().min(1).max(64).optional(),
       disabled: z.boolean().optional(),
       ...configFields,

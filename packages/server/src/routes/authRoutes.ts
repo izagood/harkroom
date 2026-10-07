@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import argon2 from 'argon2';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import { notReservedHandle } from '../services/reservedHandles.js';
 import { newToken, hashToken } from '../auth/tokens.js';
 import { effectiveCapabilities } from '../auth/permissions.js';
 import { recordAudit } from '../audit.js';
@@ -21,7 +22,7 @@ export const DEFAULT_CHANNEL_NAME = 'general';
 
 const credentials = z.object({
   loginId: z.string().regex(/^[a-zA-Z0-9_-]{2,32}$/),
-  handle: z.string().regex(/^[a-z0-9_-]{2,32}$/),
+  handle: z.string().regex(/^[a-z0-9_-]{2,32}$/).refine(...notReservedHandle),
   displayName: z.string().min(1).max(64),
   password: z.string().min(8).max(128),
 });
@@ -238,7 +239,9 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts:
         .send({ error: { code: 'rate_limited', message: 'too many attempts, try again later' } });
     }
     const res = await pool.query(
-      `select id, password_hash, handle from account where lower(login_id) = lower($1) and kind = 'human'`, [body.loginId]);
+      // 지운·꺼 둔 계정은 로그인하지 못한다 — 세션 인증은 `deleted_at` 만 보므로 여기서 둘 다 거른다.
+      `select id, password_hash, handle from account
+        where lower(login_id) = lower($1) and kind = 'human' and deleted_at is null and disabled_at is null`, [body.loginId]);
     const row = res.rows[0];
     const ok = row?.password_hash
       ? await argon2.verify(row.password_hash, body.password)

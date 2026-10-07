@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { notReservedHandle } from '../services/reservedHandles.js';
 import { HANDLE_PATTERN } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
@@ -18,7 +19,7 @@ import {
  * 봐야 한다 — `HANDLE_PATTERN` 을 쓰는 이유다. 여기 리터럴로 다시 적으면 계정 쪽 문법이
  * 바뀔 때 한쪽만 따라가고, `@foo` 가 어느 쪽으로 갈리는지 알 수 없게 된다.
  */
-const handleSchema = z.string().regex(new RegExp(`^${HANDLE_PATTERN}$`));
+const handleSchema = z.string().regex(new RegExp(`^${HANDLE_PATTERN}$`)).refine(...notReservedHandle);
 
 export async function registerHandleGroupRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.get('/handle-groups', { preHandler: app.requireCap('channel.manage') }, async () => ({
