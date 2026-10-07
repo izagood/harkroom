@@ -82,6 +82,8 @@ export interface BuildTurnCommandOptions {
   operatorBin: string;
   /** 서버가 이 에이전트에 머지를 허락한 저장소(`GET /agent/merge-grants`). 비면 allow 규칙을 안 준다. */
   mergeRepos?: readonly string[];
+  /** 소유자가 이 채널에 승인한 Claude Code allow 규칙(권한 요청 스레드 f61af808). auto 멘션 턴의 `--allowedTools` 에 붙는다. */
+  toolAllows?: readonly string[];
   /** 서버가 이 에이전트에 api.call 을 허락한 연결(`GET /agent/api-grants`). 비면 allow 규칙을 안 준다. */
   apiConnectors?: readonly string[];
   /** 그중 다시 줄 수 있는 연결(`GET /agent/api-grants` 의 `delegatable`). 있으면 `grant.delegate` MCP 도구를 allow 한다. */
@@ -172,7 +174,7 @@ interface HarnessPreset {
    * 같은 계정 풀을 쓰는 **모든** 에이전트에 퍼진다(09-30 결정). argv 는 이 턴, 이 에이전트뿐이다.
    * deny/allow 문법이 없는 하네스는 생략한다 — 그쪽은 프롬프트의 "머지는 래퍼로만" 한 줄뿐이다(한계, docs/agent-merge.md).
    */
-  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[]; apiConnectors?: readonly string[]; apiDelegatable?: readonly string[] }): string[];
+  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[]; apiConnectors?: readonly string[]; apiDelegatable?: readonly string[]; toolAllows?: readonly string[] }): string[];
 }
 
 const CLAUDE_PRESET: HarnessPreset = {
@@ -257,7 +259,7 @@ const CLAUDE_PRESET: HarnessPreset = {
    * - allow 는 서버가 이 에이전트에 `repo.merge` grant 를 준 저장소가 하나라도 있을 때만, 래퍼의 **절대 경로 +
    *   서브커맨드** 접두로(T1c). 저장소 범위는 규칙이 아니라 서버·래퍼가 가른다.
    */
-  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [], apiDelegatable = [] }) => {
+  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [], apiDelegatable = [], toolAllows = [] }) => {
     if (mode !== 'mention' || mentionPermission !== 'auto') return [];
     // api 래퍼(C안 P3)도 머지와 같은 모양이다: 절대 경로 + 서브커맨드 접두. 연결·메서드·경로 범위는 규칙이 아니라 서버가 가른다.
     // `;`·`&&` 로 묶은 명령은 claude 가 조각마다 따로 판정하므로 이 규칙 하나로는 통과하지 않는다(프롬프트가 금지한다).
@@ -268,9 +270,12 @@ const CLAUDE_PRESET: HarnessPreset = {
       // 막는다 — 서버가 거절할 호출(권한 없음)이어도 호출 자체가 막힌다. 판정(범위 ⊆·depth·루트 사람 확인·하루 상한)은 서버
       // `apiDelegation.ts` 가 하므로, 다시 줄 수 있는 연결이 **있을 때만** 이 한 도구를 연다. `grant.revoke` 는 좁히는 쪽이라 두지 않는다.
       ...(apiDelegatable.length ? [GRANT_DELEGATE_TOOL] : []),
+      // 권한 요청(스레드 f61af808): 소유자가 카드에서 승인한 규칙. 분류기를 끄지 않고 이 규칙만 정확히 더한다. deny(머지·설정
+      // 파일)가 allow 보다 앞서므로 승인된 규칙이 그 둘을 덮지 못한다.
+      ...safeToolAllows(toolAllows),
     ];
     return [
-      '--disallowedTools', ...MERGE_DENY_RULES,
+      '--disallowedTools', ...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES,
       ...(allow.length ? ['--allowedTools', ...allow] : []),
     ];
   },
@@ -602,6 +607,32 @@ export const MERGE_DENY_RULES: readonly string[] = [
   'Bash(git push --force origin main)',
 ];
 
+/**
+ * 에이전트가 작업 폴더의 Claude Code 설정을 고쳐 **스스로 allow 를 넣는 길**을 막는다(권한 요청 스레드 f61af808). 권한은 서버
+ * grant → argv 로만 들어온다. 프로젝트(`.claude/settings.json`)·로컬(`.claude/settings.local.json`) 둘 다, 어느 깊이든.
+ * Bash 로 파일을 쓰는 길은 이 규칙이 닫지 못한다 — 그쪽은 분류기와 security 검토 항목이다.
+ */
+export const SETTINGS_SELF_EDIT_DENY_RULES: readonly string[] = [
+  'Edit(**/.claude/settings.json)',
+  'Edit(**/.claude/settings.local.json)',
+];
+
+/**
+ * 서버가 준 allow 규칙을 argv 에 넣기 전에 모양을 한 번 더 본다(서버 판정이 정본이고 이것은 마지막 울타리다). 넓은 것·셸 문법·
+ * `--dangerously` 는 버린다. 정확한 판정(인터프리터 머리 등)은 서버 `validateToolRule` 이 한다.
+ */
+export function safeToolAllows(rules: readonly string[]): string[] {
+  return rules.filter((r) => {
+    if (r.length > 300 || /--dangerously/i.test(r)) return false;
+    if (/^mcp__[a-z0-9_-]+__[a-z0-9_-]+$/i.test(r)) return !/^mcp__harkroom__/i.test(r);
+    const m = /^Bash\((.+)\)$/.exec(r);
+    if (!m) return false;
+    const body = m[1]!.endsWith(':*') ? m[1]!.slice(0, -2) : m[1]!;
+    if (!body.trim() || body.includes('*') || /[;&|`<>\n\r]|\$\(|\$\{/.test(body)) return false;
+    return !(m[1]!.endsWith(':*') && body.trim().split(/\s+/).length < 2);
+  });
+}
+
 export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   const preset = PRESETS[opts.harness];
   if (preset === 'unsupported') {
@@ -638,7 +669,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
     ...preset.alwaysArgs(opts.mode),
     ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
-    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [], apiDelegatable: opts.apiDelegatable ?? [] }) ?? []),
+    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [], apiDelegatable: opts.apiDelegatable ?? [], toolAllows: opts.toolAllows ?? [] }) ?? []),
     ...(readonlyByList ? ['--tools', opts.readonlyToolList as string] : []),
     // pi 의 세션 자리는 **저장소가 정할 수 있다**(`.pi/settings.json` 의 `sessionDir`, 신뢰 판정 전) —
     // CLI 인자로 러너 루트에 못박는다(`piHome.ts::piSessionsDir`, security U1).

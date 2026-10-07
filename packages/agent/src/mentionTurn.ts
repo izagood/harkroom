@@ -15,7 +15,7 @@ import type { FailOpts, Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore } from './sessions.js';
-import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
+import { buildTurnCommand, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
@@ -43,6 +43,8 @@ export interface MentionTurnHarkroom {
   definition(): Promise<AgentView>;
   /** 머지를 허락한 저장소(스레드 3deac356). 옵셔널 — 없는 표면(시험 더블)은 빈 목록과 같다. */
   mergeGrants?(): Promise<string[]>;
+  /** 이 채널의 allow 규칙(권한 요청 스레드 f61af808). 옵셔널 — 없는 표면은 빈 목록과 같다. */
+  toolAllows?(channelId: string): Promise<string[]>;
   secretCreateGranted?(): Promise<boolean>;
   apiGrants?(): Promise<string[]>;
   apiGrantInfo?(): Promise<{ connectors: string[]; delegatable: string[] }>;
@@ -981,10 +983,13 @@ export async function runMentionTurn(
   const apiConnectors = apiInfo.connectors;
   // 비밀 만들기(스레드 1a08d0cf): 소유자가 켠 에이전트에게만 절을 쓴다. 판정은 서버가 매 호출 한다 — 이것은 안내다.
   const secretCreate = (await deps.harkroom.secretCreateGranted?.().catch(() => false)) ?? false;
+  // 권한 요청(스레드 f61af808): 소유자가 이 채널에 승인한 allow 규칙. 서버가 판정해 주지만 러너도 모양을 한 번 더 거른다.
+  const toolAllows = safeToolAllows((await deps.harkroom.toolAllows?.(channelId).catch(() => [] as string[])) ?? []);
   const systemPrompt = buildSystemPrompt({
     handle: deps.me.handle,
     secretCreate,
     merge: { operatorBin: deps.operatorBin, repos: mergeRepos },
+    permissions: { toolAllows },
     api: { operatorBin: deps.operatorBin, connectors: apiConnectors, delegatable: apiInfo.delegatable },
     channelName: deps.channelName,
     instructions: def.instructions,
@@ -1081,6 +1086,7 @@ export async function runMentionTurn(
     extraMcpServers,
     operatorBin: deps.operatorBin,
     mergeRepos,
+    toolAllows,
     apiConnectors,
     apiDelegatable: apiInfo.delegatable,
     codexHome: deps.codexHome,
