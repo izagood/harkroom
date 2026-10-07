@@ -211,3 +211,25 @@ export function parseToolScope(scope: string): { channelId: string; rule: string
   const m = TOOL_SCOPE_RE.exec(scope);
   return m ? { channelId: m[1]!, rule: m[2]! } : null;
 }
+
+export type ExactCommandVerdict =
+  | { ok: true; command: string; warnings: ToolRuleWarning[] }
+  | { ok: false; code: ToolRuleRefusal };
+
+/**
+ * 「정확한 명령」 승인(kind `command`, 권한 요청 H②, 스레드 8769dbf7)의 판정과 정규형. **승인할 때(서버)와 hook 이 맞춰 볼 때(오퍼레이터)
+ * 같은 이 함수를 쓴다** — 둘이 다르면 승인한 것과 열리는 것이 어긋난다.
+ *
+ * - PreToolUse hook 의 allow 는 Bash 호출 문자열 **전체**에 걸린다(실측 T2: `a; b` 의 b 도 돈다). 그래서 셸 문법·따옴표·`$`·괄호가
+ *   있는 명령은 아예 받지 않는다 — `validateToolRule` 의 `Bash(<명령 전체>)` 판정과 같은 글자 허용 목록이다.
+ * - 정규형은 낱말 사이 공백 하나(따옴표가 없으니 셸에서 공백은 구분자일 뿐이다). `:*` 접두는 받지 않는다 — 접두는 `kind: tool` 이다.
+ */
+export function validateExactCommand(input: string): ExactCommandVerdict {
+  const command = input.trim();
+  if (!command) return { ok: false, code: 'empty' };
+  if (command.endsWith(':*')) return { ok: false, code: 'wildcard' };
+  const v = validateToolRule(`Bash(${command})`);
+  if (!v.ok) return v;
+  if (v.kind !== 'bash_exact') return { ok: false, code: 'unsupported_tool' };
+  return { ok: true, command: v.rule.slice('Bash('.length, -1), warnings: v.warnings };
+}

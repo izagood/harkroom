@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
-import { repoGrantScope, repoScope, toolScope, validateToolRule, type MessageRow, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
+import { createHash } from 'node:crypto';
+import { repoGrantScope, repoScope, toolScope, validateExactCommand, validateToolRule, type MessageRow, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
@@ -30,18 +31,27 @@ export const PERMISSION_REQUESTS_PER_DAY = 20;
 
 export const PERMISSION_OPTION_APPROVE = 'approve';
 export const PERMISSION_OPTION_DENY = 'deny';
+/** kind=command 카드의 선택지(H②): 「이번 한 번」·「이 스레드 1시간」. 둘 다 이 스레드에만, 쓰지 않으면 1시간 뒤 사라진다. */
+export const PERMISSION_OPTION_APPROVE_ONCE = 'approve_once';
+export const PERMISSION_OPTION_APPROVE_HOUR = 'approve_hour';
+/** 정확한 명령 grant 의 기한 — 1회짜리도 이 안에 써야 한다. */
+export const COMMAND_GRANT_TTL_MS = 3_600_000;
 
-export type PermissionKind = 'tool' | 'merge';
+export type PermissionDecision = 'approve' | 'approve_once' | 'approve_hour' | 'deny';
+
+export type PermissionKind = 'tool' | 'merge' | 'command';
 
 export interface PermissionRequestMeta {
   requestId: string;
   agentId: string;
   ownerAccountId: string | null;
   kind: PermissionKind;
-  /** tool: 정규화한 규칙 / merge: `owner/name` */
+  /** tool: 정규화한 규칙 / merge: `owner/name` / command: 정규화한 명령 그대로 */
   target: string;
   /** 규칙이 미치는 채널(D2). merge 는 저장소 단위라 null. */
   channelId: string | null;
+  /** command 만: 그 스레드에서만 열린다. */
+  threadRootId?: string;
   warnings: ToolRuleWarning[];
   /**
    * 머지 거절에서 온 요청(스레드 1b75d7a0)이면 그 PR·head·사유 — 카드가 [이번 한 번 머지](이 PR·이 head 만)를 함께 보인다.
@@ -55,6 +65,8 @@ export interface PermissionRequestMeta {
   status?: 'granted' | 'denied' | 'approved_once';
   /** 1회 승인으로 정해졌으면 그 계정·CI 완화·승인 기한. */
   approvedOnce?: { ghUser: string; relaxChecks: boolean; expiresAt: string };
+  /** command 승인 갈래(once·hour). */
+  grantMode?: 'once' | 'hour';
   decidedAt?: string;
   decidedBy?: string;
   grantExpiresAt?: string;
@@ -88,7 +100,7 @@ const RULE_REFUSAL_MESSAGE: Record<ToolRuleRefusal, string> = {
 export async function openPermissionRequest(
   pool: Pool,
   args: {
-    agentId: string; kind: PermissionKind; rule?: string; repo?: string; reason: string;
+    agentId: string; kind: PermissionKind; rule?: string; repo?: string; command?: string; reason: string;
     channelId: string; threadRootId: string; now?: Date;
     /** 머지 거절 기록에서 온 요청(`message.ask` 의 `mergeDenialId`). 거절 기록 검증(`prepareDenialCard`)은 부르는 쪽이 먼저 한다. */
     denial?: { id: string; number: number; headSha: string; reason: 'not_granted' | 'cause_not_human' };
@@ -99,6 +111,8 @@ export async function openPermissionRequest(
     `select c.owner_account_id as "ownerAccountId" from account a join agent_config c on c.account_id = a.id
       where a.id = $1 and a.kind = 'agent'`, [args.agentId])).rows[0];
   if (!agent) return { ok: false, refusal: { code: 'not_agent', message: 'only an agent can request a permission' } };
+
+  if (args.kind === 'command') return openCommandRequest(pool, { ...args, now, ownerAccountId: agent.ownerAccountId });
 
   let target: string;
   let grantCapability: 'tool.allow' | 'repo.merge';
@@ -184,13 +198,70 @@ export async function openPermissionRequest(
   };
 }
 
+/**
+ * kind=command(H②): 명령 하나 그대로. 범위는 이 스레드, 승인 갈래(once·hour)는 소유자가 카드에서 고른다.
+ * 이미 같은 명령이 살아 있으면(쓰지 않은 1회짜리·기한 안의 1시간짜리) 새 카드를 세우지 않는다.
+ */
+async function openCommandRequest(
+  pool: Pool,
+  args: { agentId: string; command?: string; reason: string; channelId: string; threadRootId: string; now: Date; ownerAccountId: string | null },
+): Promise<OpenResult> {
+  const v = validateExactCommand(args.command ?? '');
+  if (!v.ok) return { ok: false, refusal: { code: v.code, message: RULE_REFUSAL_MESSAGE[v.code] } };
+  const live = (await pool.query<{ expiresAt: string }>(
+    `select expires_at as "expiresAt" from command_grant
+      where agent_id = $1 and channel_id = $2 and thread_root_id = $3 and command = $4 and expires_at > $5
+        and (not single_use or used_at is null)
+      order by expires_at desc limit 1`,
+    [args.agentId, args.channelId, args.threadRootId, v.command, args.now])).rows[0];
+  if (live) return { ok: true, alreadyGranted: { expiresAt: live.expiresAt } };
+
+  const pending = (await pool.query<{ id: string; cardMessageId: string | null }>(
+    `select id, card_message_id as "cardMessageId" from permission_request
+      where agent_id = $1 and kind = 'command' and target = $2 and thread_root_id = $3 and channel_id = $4
+        and status = 'pending' and expires_at > $5
+      order by created_at desc limit 1`,
+    [args.agentId, v.command, args.threadRootId, args.channelId, args.now])).rows[0];
+  if (pending) return { ok: true, existing: { requestId: pending.id, cardMessageId: pending.cardMessageId } };
+
+  const count = (await pool.query<{ n: number }>(
+    `select count(*)::int as n from permission_request where agent_id = $1 and created_at > $2`,
+    [args.agentId, new Date(args.now.getTime() - 86_400_000)])).rows[0]!.n;
+  if (count >= PERMISSION_REQUESTS_PER_DAY) {
+    return { ok: false, refusal: { code: 'too_many', message: `at most ${PERMISSION_REQUESTS_PER_DAY} permission requests a day` } };
+  }
+  const expiresAt = new Date(args.now.getTime() + PERMISSION_REQUEST_TTL_MS);
+  const id = (await pool.query<{ id: string }>(
+    `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at)
+     values ($1, 'command', $2, $3, $4, $5, $6, $7, $8) returning id`,
+    [args.agentId, v.command, args.reason, v.warnings, args.channelId, args.threadRootId, args.now, expiresAt])).rows[0]!.id;
+  await recordAudit(pool, {
+    action: 'permission.requested', actorId: args.agentId, target: args.agentId,
+    detail: { requestId: id, kind: 'command', target: v.command, warnings: v.warnings, channelId: args.channelId, threadRootId: args.threadRootId },
+  });
+  return {
+    ok: true,
+    created: {
+      requestId: id,
+      meta: {
+        requestId: id, agentId: args.agentId, ownerAccountId: args.ownerAccountId, kind: 'command', target: v.command,
+        channelId: args.channelId, threadRootId: args.threadRootId, warnings: v.warnings,
+        reason: oneLineReason(args.reason), requestedAt: args.now.toISOString(), expiresAt: expiresAt.toISOString(),
+      },
+    },
+  };
+}
+
 /** 카드 본문(옛 앱이 meta 를 모를 때 읽는 글). 권한 칸은 서버 값뿐이고, 에이전트가 쓴 것은 이유 한 줄이다. */
 export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: string): string {
   // n1(jaebin 10-07): 규칙은 그 채널의 **모든** 턴(위임·예약 깨우기로 뜬 턴 포함)에 붙는다 — 카드가 그렇게 말해야 한다.
+  const warn = meta.warnings.length ? `\n⚠ ${meta.warnings.join(', ')}` : '';
+  if (meta.kind === 'command') {
+    return `권한 요청 · ${agentHandle}\n정확히 이 명령 하나 \`${meta.target}\` — 이 스레드에서만 · 「이번 한 번」 또는 「1시간」${warn}\n이유: ${oneLineReason(meta.reason)}`;
+  }
   const what = meta.kind === 'tool'
     ? `명령 허용 \`${meta.target}\` — 이 채널의 모든 대화에서`
     : `머지 권한 \`${meta.target}\``;
-  const warn = meta.warnings.length ? `\n⚠ ${meta.warnings.join(', ')}` : '';
   return `권한 요청 · ${agentHandle}\n${what} · 승인하면 7일${warn}\n이유: ${oneLineReason(meta.reason)}`;
 }
 
@@ -203,7 +274,14 @@ export function oneLineReason(reason: string): string {
   return reason.replace(/\p{Cf}/gu, '').replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/[`*_#>|[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
-export function permissionCardOptions(): { id: string; label: string }[] {
+export function permissionCardOptions(kind: PermissionKind = 'tool'): { id: string; label: string }[] {
+  if (kind === 'command') {
+    return [
+      { id: PERMISSION_OPTION_APPROVE_ONCE, label: '이번 한 번 승인' },
+      { id: PERMISSION_OPTION_APPROVE_HOUR, label: '이 스레드에서 1시간 승인' },
+      { id: PERMISSION_OPTION_DENY, label: '거절' },
+    ];
+  }
   return [
     // 「7일」을 이름에 넣는다(designer s1) — 머지 거절 카드에서는 그 위의 [이번 한 번 머지]와 갈려 읽혀야 한다. tool·merge 둘 다 7일이다.
     { id: PERMISSION_OPTION_APPROVE, label: '7일 허락하고 다시 시도' },
@@ -224,30 +302,34 @@ export type DecideRefusal = { status: 403 | 404 | 409; code: string; message: st
 export async function decidePermissionRequest(
   pool: Pool,
   args: {
-    agentId: string; requestId: string; actorId: string; decision: 'approve' | 'deny' | 'approve_once'; now?: Date;
-    /** `approve_once` 일 때만 — 머지에 쓸 gh 계정과 CI 완화 여부. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
+    agentId: string; requestId: string; actorId: string; decision: PermissionDecision; now?: Date;
+    /** 머지 거절 카드의 `approve_once` 일 때만 — 머지에 쓸 gh 계정과 CI 완화 여부. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
     once?: { ghUser: string; relaxChecks: boolean; number: number; headSha: string };
   },
-): Promise<({ ok: true; status: 'granted' | 'denied' | 'approved_once'; grantExpiresAt: string | null; approvalExpiresAt?: string; cardMessageId: string | null }) | ({ ok: false } & DecideRefusal)> {
+): Promise<({ ok: true; status: 'granted' | 'denied' | 'approved_once'; grantExpiresAt: string | null; approvalExpiresAt?: string; cardMessageId: string | null; grantMode?: 'once' | 'hour' }) | ({ ok: false } & DecideRefusal)> {
   const now = args.now ?? new Date();
   const client = await pool.connect();
-  let row: { id: string; kind: PermissionKind; target: string; channelId: string; cardMessageId: string | null; denialId: string | null } | undefined;
+  let row: { id: string; kind: PermissionKind; target: string; channelId: string; threadRootId: string; cardMessageId: string | null; denialId: string | null } | undefined;
   let grantExpiresAt: Date | null = null;
+  let grantMode: 'once' | 'hour' | undefined;
+  let commandGrantId: string | undefined;
+  const approving = args.decision !== 'deny';
   let approval: { approvalId: string; scope: string; number: number; headSha: string; reason: string; expiresAt: Date } | null = null;
   try {
     await client.query('begin');
     const r = (await client.query<{
-      id: string; agentId: string; kind: PermissionKind; target: string; channelId: string; status: string; expired: boolean; cardMessageId: string | null;
+      id: string; agentId: string; kind: PermissionKind; target: string; channelId: string; threadRootId: string; status: string; expired: boolean; cardMessageId: string | null;
       denialId: string | null;
     }>(
-      `select id, agent_id as "agentId", kind, target, channel_id as "channelId", status, expires_at <= $2 as expired,
+      `select id, agent_id as "agentId", kind, target, channel_id as "channelId", thread_root_id as "threadRootId", status, expires_at <= $2 as expired,
               card_message_id as "cardMessageId", denial_id as "denialId"
          from permission_request where id = $1 for update`, [args.requestId, now])).rows[0];
     // `:id` 가 요청의 에이전트와 다르면 없는 것과 같다 — 남의 요청 id 를 내 에이전트 경로에 꽂는 길을 닫는다.
     if (!r || r.agentId !== args.agentId) { await client.query('rollback'); return { ok: false, status: 404, code: 'not_found', message: 'no such permission request for this agent' }; }
     if (r.status !== 'pending') { await client.query('rollback'); return { ok: false, status: 409, code: 'already_decided', message: `this request is already ${r.status}` }; }
     if (r.expired) { await client.query('rollback'); return { ok: false, status: 409, code: 'request_expired', message: 'this request expired — the agent has to ask again' }; }
-    if (args.decision === 'approve_once') {
+    // 「한 번」은 종류마다 뜻이 다르다: command 는 그 명령 1회 grant(아래), merge 는 거절 카드의 이 PR·이 head 1회 머지(스레드 1b75d7a0).
+    if (args.decision === 'approve_once' && r.kind !== 'command') {
       if (r.kind !== 'merge' || !r.denialId || !args.once) {
         await client.query('rollback');
         return { ok: false, status: 409, code: 'not_once', message: 'only a card raised from a merge refusal can approve one merge' };
@@ -256,7 +338,28 @@ export async function decidePermissionRequest(
       if (!made.ok) { await client.query('rollback'); return made; }
       approval = made;
     }
-    if (args.decision === 'approve') {
+    if (r.kind === 'command' && args.once) {
+      await client.query('rollback');
+      return { ok: false, status: 409, code: 'not_once', message: 'only a card raised from a merge refusal can approve one merge' };
+    }
+    if (r.kind !== 'command' && args.decision === 'approve_hour') {
+      await client.query('rollback');
+      return { ok: false, status: 409, code: 'bad_decision', message: 'once/hour is only for an exact-command request' };
+    }
+    if (approving && r.kind === 'command') {
+      // 승인 시점에 다시 판정한다 — 저장 뒤 판정이 좁아졌으면 열지 않는다(목록 조회·hook 도 같은 판정을 다시 한다).
+      const v = validateExactCommand(r.target);
+      if (!v.ok || v.command !== r.target) {
+        await client.query('rollback');
+        return { ok: false, status: 409, code: 'not_grantable', message: 'this command is no longer grantable — the agent has to ask again' };
+      }
+      grantMode = args.decision === 'approve_hour' ? 'hour' : 'once';
+      grantExpiresAt = new Date(now.getTime() + COMMAND_GRANT_TTL_MS);
+      commandGrantId = (await client.query<{ id: string }>(
+        `insert into command_grant (agent_id, channel_id, thread_root_id, command, single_use, expires_at, granted_by, request_id, created_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
+        [args.agentId, r.channelId, r.threadRootId, r.target, grantMode === 'once', grantExpiresAt, args.actorId, r.id, now])).rows[0]!.id;
+    } else if (args.decision === 'approve') {
       grantExpiresAt = new Date(now.getTime() + PERMISSION_GRANT_TTL_MS);
       const capability = r.kind === 'tool' ? 'tool.allow' : 'repo.merge';
       const scope = r.kind === 'tool' ? toolScope(r.channelId, r.target) : r.target;
@@ -268,10 +371,10 @@ export async function decidePermissionRequest(
            set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, allow_agent_cause = false`,
         [args.agentId, capability, scope, args.actorId, grantExpiresAt]);
     }
-    const status = args.decision === 'approve' ? 'granted' : args.decision === 'approve_once' ? 'approved_once' : 'denied';
+    const status = args.decision === 'deny' ? 'denied' : r.kind === 'command' || args.decision === 'approve' ? 'granted' : 'approved_once';
     await client.query(
-      `update permission_request set status = $2, decided_at = $3, decided_by = $4, grant_expires_at = $5 where id = $1`,
-      [r.id, status, now, args.actorId, grantExpiresAt]);
+      `update permission_request set status = $2, decided_at = $3, decided_by = $4, grant_expires_at = $5, grant_mode = $6 where id = $1`,
+      [r.id, status, now, args.actorId, grantExpiresAt, grantMode ?? null]);
     if (r.cardMessageId) {
       await client.query(
         `update message set meta = jsonb_set(meta, '{permissionRequest}', (meta->'permissionRequest') || $2::jsonb)
@@ -280,6 +383,7 @@ export async function decidePermissionRequest(
           status, decidedAt: now.toISOString(), decidedBy: args.actorId,
           ...(grantExpiresAt ? { grantExpiresAt: grantExpiresAt.toISOString() } : {}),
           ...(approval && args.once ? { approvedOnce: { ghUser: args.once.ghUser, relaxChecks: args.once.relaxChecks, expiresAt: approval.expiresAt.toISOString() } } : {}),
+          ...(grantMode ? { grantMode } : {}),
         })]);
     }
     await client.query('commit');
@@ -291,7 +395,7 @@ export async function decidePermissionRequest(
     client.release();
   }
 
-  const status = args.decision === 'approve' ? 'granted' : args.decision === 'approve_once' ? 'approved_once' : 'denied';
+  const status = args.decision === 'deny' ? 'denied' : row.kind === 'command' || args.decision === 'approve' ? 'granted' : 'approved_once';
   if (approval && args.once) {
     await recordAudit(pool, {
       action: 'repo.merge.approved_once', actorId: args.actorId, target: approval.scope,
@@ -300,9 +404,16 @@ export async function decidePermissionRequest(
   }
   await recordAudit(pool, {
     action: args.decision === 'deny' ? 'permission.denied' : 'permission.approved', actorId: args.actorId, target: args.agentId,
-    detail: { requestId: row.id, kind: row.kind, target: row.target, channelId: row.channelId, ...(grantExpiresAt ? { grantExpiresAt: grantExpiresAt.toISOString() } : {}) },
+    detail: {
+      requestId: row.id, kind: row.kind, target: row.target, channelId: row.channelId,
+      ...(row.kind === 'command' ? { threadRootId: row.threadRootId } : {}),
+      ...(grantExpiresAt ? { grantExpiresAt: grantExpiresAt.toISOString() } : {}),
+      ...(grantMode ? { grantMode, commandGrantId } : {}),
+    },
   });
-  if (grantExpiresAt) {
+  if (grantExpiresAt && row.kind === 'command') {
+    emitEvent({ type: 'grant.changed', accountId: args.agentId, audience: 'all' });
+  } else if (grantExpiresAt) {
     await recordAudit(pool, {
       action: 'grant.given', actorId: args.actorId, target: args.agentId,
       detail: {
@@ -317,14 +428,16 @@ export async function decidePermissionRequest(
     // 카드에 소유자 이름으로 답을 적는다 — 이것이 에이전트를 깨운다. 이미 누가 닫았으면(ask-close) 깨우지 못할 뿐 결정은 남는다.
     const answered = await recordAskAnswer(pool, {
       messageId: row.cardMessageId, actorId: args.actorId,
-      // 1회 승인도 「승인」으로 답한다 — 에이전트가 깨어나 같은 명령을 한 번 더 부른다(그 턴에서 래퍼가 승인을 쓴다).
-      optionId: args.decision === 'deny' ? PERMISSION_OPTION_DENY : PERMISSION_OPTION_APPROVE,
+      // 1회 머지 승인도 「승인」으로 답한다 — 에이전트가 깨어나 같은 명령을 한 번 더 부른다(그 턴에서 래퍼가 승인을 쓴다).
+      optionId: args.decision === 'deny' ? PERMISSION_OPTION_DENY
+        : row.kind !== 'command' ? PERMISSION_OPTION_APPROVE
+        : grantMode === 'hour' ? PERMISSION_OPTION_APPROVE_HOUR : PERMISSION_OPTION_APPROVE_ONCE,
       viaPermissionDecision: true,
     });
     const card = typeof answered === 'object' ? answered : await getMessageById(pool, row.cardMessageId);
     if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
   }
-  return { ok: true, status, grantExpiresAt: grantExpiresAt?.toISOString() ?? null, ...(approval ? { approvalExpiresAt: approval.expiresAt.toISOString() } : {}), cardMessageId: row.cardMessageId };
+  return { ok: true, status, grantExpiresAt: grantExpiresAt?.toISOString() ?? null, ...(approval ? { approvalExpiresAt: approval.expiresAt.toISOString() } : {}), cardMessageId: row.cardMessageId, ...(grantMode ? { grantMode } : {}) };
 }
 
 /** 러너가 턴을 띄울 때 — 이 에이전트가 이 채널에서 받은 살아 있는 allow 규칙(D2). */
@@ -356,8 +469,11 @@ export async function decideFromCard(
       where p.card_message_id = $1`, [args.messageId])).rows[0];
   if (!r) return { ok: false, status: 404, code: 'not_found', message: 'no permission request behind this card' };
   if (r.ownerAccountId !== args.actorId) return { ok: false, status: 403, code: 'forbidden', message: 'only the owner of this agent can decide its permission requests' };
-  const decision = args.optionId === PERMISSION_OPTION_APPROVE ? 'approve' : args.optionId === PERMISSION_OPTION_DENY ? 'deny' : null;
-  if (!decision) return { ok: false, status: 400, code: 'unknown_option', message: 'a permission card takes approve or deny' };
+  const decision: PermissionDecision | null = args.optionId === PERMISSION_OPTION_APPROVE ? 'approve'
+    : args.optionId === PERMISSION_OPTION_APPROVE_ONCE ? 'approve_once'
+    : args.optionId === PERMISSION_OPTION_APPROVE_HOUR ? 'approve_hour'
+    : args.optionId === PERMISSION_OPTION_DENY ? 'deny' : null;
+  if (!decision) return { ok: false, status: 400, code: 'unknown_option', message: 'a permission card takes approve, approve_once, approve_hour or deny' };
   const d = await decidePermissionRequest(pool, { agentId: r.agentId, requestId: r.id, actorId: args.actorId, decision });
   if (!d.ok) return d;
   return { ok: true, card: await getMessageById(pool, args.messageId) };
@@ -392,4 +508,59 @@ export async function releaseGrant(
   await recordAudit(pool, { action: 'grant.revoked', actorId: args.agentId, target: args.agentId, detail: { capability, scope, via: 'permission.revoke' } });
   emitEvent({ type: 'grant.changed', accountId: args.agentId, audience: 'all' });
   return { ok: true, capability, scope };
+}
+
+export interface CommandGrantView { id: string; command: string; singleUse: boolean; expiresAt: string }
+
+/**
+ * 오퍼레이터 hook 이 캐시할 목록(H②) — 이 에이전트가 이 스레드에서 받은 살아 있는 정확한 명령 grant. **읽기만** 한다.
+ * 지금 판정으로 다시 거른다(저장 뒤 판정이 좁아졌으면 내보내지 않는다).
+ */
+export async function commandGrantsFor(
+  pool: Pool, agentId: string, channelId: string, threadRootId: string, now = new Date(),
+): Promise<CommandGrantView[]> {
+  const rows = (await pool.query<{ id: string; command: string; singleUse: boolean; expiresAt: Date }>(
+    `select id, command, single_use as "singleUse", expires_at as "expiresAt" from command_grant
+      where agent_id = $1 and channel_id = $2 and thread_root_id = $3 and expires_at > $4
+        and (not single_use or used_at is null)
+      order by created_at`, [agentId, channelId, threadRootId, now])).rows;
+  return rows.filter((r) => {
+    const v = validateExactCommand(r.command);
+    return v.ok && v.command === r.command;
+  }).map((r) => ({ id: r.id, command: r.command, singleUse: r.singleUse, expiresAt: new Date(r.expiresAt).toISOString() }));
+}
+
+/**
+ * hook 이 도구 호출 하나를 열지 정한다(H②). 명령을 정규형으로 판정하고(셸 문법이면 열지 않는다) **정확히 같은** 살아 있는
+ * grant 하나를 원자적으로 쓴다 — 1회짜리는 `used_at is null` 조건의 update 가 한 번만 성공한다. 여러 번짜리를 먼저 쓴다
+ * (1회짜리를 아껴 둔다). 연 것마다 감사 기록을 남긴다(명령은 sha256 으로만).
+ */
+export async function matchCommandGrant(
+  pool: Pool,
+  args: { agentId: string; channelId: string; threadRootId: string; command: string; toolUseId?: string | null; now?: Date },
+): Promise<{ allow: true; grantId: string; singleUse: boolean } | { allow: false }> {
+  const now = args.now ?? new Date();
+  const v = validateExactCommand(args.command);
+  if (!v.ok) return { allow: false };
+  const hit = (await pool.query<{ id: string; singleUse: boolean }>(
+    `update command_grant c set use_count = c.use_count + 1, used_at = coalesce(c.used_at, $5)
+      where c.id = (
+        select id from command_grant
+         where agent_id = $1 and channel_id = $2 and thread_root_id = $3 and command = $4 and expires_at > $5
+           and (not single_use or used_at is null)
+         order by single_use asc, created_at
+         limit 1
+         for update skip locked)
+        and (not c.single_use or c.used_at is null)
+      returning c.id, c.single_use as "singleUse"`,
+    [args.agentId, args.channelId, args.threadRootId, v.command, now])).rows[0];
+  if (!hit) return { allow: false };
+  await recordAudit(pool, {
+    action: 'permission.command_used', actorId: args.agentId, target: args.agentId,
+    detail: {
+      grantId: hit.id, singleUse: hit.singleUse, channelId: args.channelId, threadRootId: args.threadRootId,
+      commandSha256: createHash('sha256').update(v.command).digest('hex'), toolUseId: args.toolUseId ?? null,
+    },
+  });
+  return { allow: true, grantId: hit.id, singleUse: hit.singleUse };
 }
