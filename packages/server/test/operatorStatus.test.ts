@@ -51,14 +51,14 @@ describe('박동 상태(H1·H5)', () => {
     const ws = await connect(op.token);
     beat(ws, {
       turns: { running: 2, max: 16 }, memory: { totalBytes: 64e9, freeBytes: 40e9, turnRssBytes: 1e9 },
-      credentials: [{ kind: 'mcp', name: 'jira', state: 'expired', agentIds: ['x'], token: 'secret-value', expiresAt: '2026-10-07' }],
+      credentials: [{ kind: 'mcp', name: 'jira', state: 'expired', agentIds: ['x'], token: 'secret-value', expiresAt: '2099-12-31' }],
       token: 'secret-value',
     });
     await waitFor(async () => (await mine(aliceToken, op.operatorId)).status != null);
     const view = await mine(aliceToken, op.operatorId);
     expect(view.status).toMatchObject({ turns: { running: 2, max: 16 }, credentials: [{ kind: 'mcp', name: 'jira', state: 'expired', agentIds: ['x'] }] });
     expect(JSON.stringify(view)).not.toContain('secret-value');
-    expect(JSON.stringify(view)).not.toContain('2026-10-07');
+    expect(JSON.stringify(view)).not.toContain('2099-12-31');
     ws.close();
     await waitFor(async () => (await mine(aliceToken, op.operatorId)).status === null);
   });
