@@ -567,10 +567,12 @@ export async function matchCommandGrant(
   const now = args.now ?? new Date();
   const v = validateExactCommand(args.command);
   if (!v.ok) return { allow: false };
+  // 정규화는 한 곳(canonicalDigests)에서만 — 요청 때 저장한 것과 같은 함수·같은 꼴로 비교한다(security 3).
   const measured = args.files ?? [];
   const want = new Set(v.files.map((f) => f.path));
-  if (measured.length !== want.size || measured.some((f) => !want.has(f.path))) return { allow: false };
+  if (measured.length !== want.size || new Set(measured.map((f) => f.path)).size !== want.size || measured.some((f) => !want.has(f.path))) return { allow: false };
   const digests = JSON.stringify(canonicalDigests(measured));
+  // cwd 가 없으면 1시간 grant 는 열지 않는다(security 1) — null 로 첫 사용을 지나면 묶이지 않은 채 남는다. 1회 grant 는 cwd 를 보지 않는다.
   const cwd = typeof args.cwd === 'string' && args.cwd.startsWith('/') ? args.cwd : null;
   const hit = (await pool.query<{ id: string; singleUse: boolean }>(
     `update command_grant c set use_count = c.use_count + 1, used_at = coalesce(c.used_at, $5),
@@ -580,12 +582,12 @@ export async function matchCommandGrant(
          where agent_id = $1 and channel_id = $2 and thread_root_id = $3 and command = $4 and expires_at > $5
            and (not single_use or used_at is null)
            and file_digests = $6::jsonb
-           and (single_use or bound_cwd is null or bound_cwd = $7)
+           and (single_use or ($7::text is not null and (bound_cwd is null or bound_cwd = $7)))
          order by single_use asc, created_at
          limit 1
          for update skip locked)
         and (not c.single_use or c.used_at is null)
-        and (c.single_use or c.bound_cwd is null or c.bound_cwd = $7)
+        and (c.single_use or ($7::text is not null and (c.bound_cwd is null or c.bound_cwd = $7)))
       returning c.id, c.single_use as "singleUse"`,
     [args.agentId, args.channelId, args.threadRootId, v.command, now, digests, cwd])).rows[0];
   if (!hit) return { allow: false };
