@@ -113,7 +113,7 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
         for (const e of out.values()) {
           if (e.transport === 'stdio') continue;
           e.auth = await deps.oauth.status(e.name, e.target, e.oauthClientId).catch(() => ({ state: 'error' as const, reason: '상태를 읽지 못했다' }));
-          if (e.source === 'operator') e.oauthClientSecret = await deps.oauth.hasClientSecret(e.name).catch(() => false);
+          if (e.source === 'operator') e.oauthClientSecret = await deps.oauth.hasClientSecret(e.name, e.oauthClientId ?? '').catch(() => false);
         }
       }
       return { servers: [...out.values()].sort((a, b) => a.name.localeCompare(b.name)) };
@@ -121,11 +121,22 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
     async set(name, definition, opts = {}) {
       if (opts.clientSecret !== undefined && !deps.oauth) throw new Error('이 오퍼레이터에는 MCP OAuth 가 배선되지 않았다 — client secret 을 둘 곳이 없다');
       const table = await readTable(deps.registryPath);
+      const prev = table[name];
+      const prevClientId = isRecord(prev) && isRecord(prev.oauth) && typeof prev.oauth.clientId === 'string' ? prev.oauth.clientId : undefined;
+      const nextClientId = definition.oauth?.clientId;
+      if (typeof opts.clientSecret === 'string' && !nextClientId) throw new Error('client secret 은 oauth.clientId 와 함께만 넣는다');
       // 정의에 secret 이 섞여 들어오지 않게 한 번 더 걸러 낸다(소켓 읽기가 이미 뺐다).
       const { oauth: o, ...rest } = definition;
       table[name] = o ? { ...rest, oauth: { ...(o.clientId ? { clientId: o.clientId } : {}), ...(o.callbackPort ? { callbackPort: o.callbackPort } : {}) } } : rest;
       await writeTable(deps.registryPath, table);
-      if (opts.clientSecret !== undefined) await deps.oauth!.setClientSecret(name, opts.clientSecret);
+      // 클라이언트를 갈아탔으면 옛 토큰을 버린다 — 남겨 두면 1분 refresh 가 옛 클라이언트로 계속 돌린다
+      // (security F2). 새 secret 이 함께 오지 않았으면 옛 secret 도 지운다(F1).
+      const clientSwitched = prev !== undefined && prevClientId !== nextClientId;
+      if (clientSwitched) {
+        await deps.oauth?.forget(name);
+        if (opts.clientSecret === undefined) await deps.oauth?.setClientSecret(name, null, null);
+      }
+      if (opts.clientSecret !== undefined) await deps.oauth!.setClientSecret(name, nextClientId ?? null, opts.clientSecret);
     },
     async remove(name) {
       const table = await readTable(deps.registryPath);
@@ -134,7 +145,7 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
       await writeTable(deps.registryPath, table);
       // 정의를 뺐으면 그 토큰·client secret 도 들고 있을 이유가 없다.
       await deps.oauth?.forget(name);
-      await deps.oauth?.setClientSecret(name, null);
+      await deps.oauth?.setClientSecret(name, null, null);
     },
   };
 }

@@ -58,13 +58,16 @@ describe('localMcp 포트', () => {
 describe('localMcp 포트 — 원격 MCP 인증 (2026-09-30)', () => {
   function fakeOAuth() {
     const calls: string[] = [];
-    const secrets = new Map<string, string>();
+    const secrets = new Map<string, { clientId: string | null; secret: string }>();
     return {
       calls,
       secrets,
       oauth: {
-        setClientSecret: async (name: string, v: string | null) => { if (v === null) secrets.delete(name); else secrets.set(name, v); },
-        hasClientSecret: async (name: string) => secrets.has(name),
+        setClientSecret: async (name: string, clientId: string | null, v: string | null) => {
+          calls.push(`secret:${name}:${clientId}:${v === null ? 'null' : 'set'}`);
+          if (v === null) secrets.delete(name); else secrets.set(name, { clientId, secret: v });
+        },
+        hasClientSecret: async (name: string, clientId?: string) => secrets.has(name) && (clientId === undefined || secrets.get(name)!.clientId === clientId),
         start: async (name: string, def: { url: string }) => { calls.push(`start:${name}:${def.url}`); return { authUrl: 'https://auth.example.com/a' }; },
         status: async (name: string, url: string) => { calls.push(`status:${name}:${url}`); return { state: 'ok' as const }; },
         tokensFor: async () => ({ tokens: {}, expired: [] }),
@@ -118,7 +121,7 @@ describe('localMcp 포트 — 원격 MCP 인증 (2026-09-30)', () => {
     const raw = await readFile(registryPath, 'utf8');
     expect(raw).not.toContain('S-sekret');
     expect(JSON.parse(raw).slack).toEqual({ type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'C-1', callbackPort: 3118 } });
-    expect(f.secrets.get('slack')).toBe('S-sekret');
+    expect(f.secrets.get('slack')).toEqual({ clientId: 'C-1', secret: 'S-sekret' });
     const row = (await port.list()).servers.find((s) => s.name === 'slack');
     expect(row).toMatchObject({ oauthClientId: 'C-1', oauthClientSecret: true });
     expect(JSON.stringify(row)).not.toContain('S-sekret');
@@ -127,9 +130,36 @@ describe('localMcp 포트 — 원격 MCP 인증 (2026-09-30)', () => {
     expect(f.secrets.has('slack')).toBe(true);
     await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'C-1' } }, { clientSecret: null });
     expect(f.secrets.has('slack')).toBe(false);
-    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp' }, { clientSecret: 'S2' });
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'C-1' } }, { clientSecret: 'S2' });
     await port.remove('slack');
     expect(f.secrets.has('slack')).toBe(false);
+  });
+
+  it('clientId 없이 secret 만 넣으면 거절한다 — secret 은 clientId 에 묶인다(security F1)', async () => {
+    const { registryPath } = await fresh();
+    const f = fakeOAuth();
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null, oauth: f.oauth });
+    await expect(port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp' }, { clientSecret: 'S' })).rejects.toThrow(/clientId 와 함께만/);
+    expect(f.secrets.size).toBe(0);
+  });
+
+  it('clientId 를 바꾸면 옛 토큰을 버리고, 새 secret 이 없으면 옛 secret 도 지운다(security F1·F2)', async () => {
+    const { registryPath } = await fresh();
+    const f = fakeOAuth();
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null, oauth: f.oauth });
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'OLD' } }, { clientSecret: 'S-old' });
+    f.calls.length = 0;
+    // 같은 clientId 로 다시 넣으면 토큰·secret 을 건드리지 않는다.
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'OLD' } });
+    expect(f.calls).toEqual([]);
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'NEW' } });
+    expect(f.calls).toEqual(['forget:slack', 'secret:slack:null:null']);
+    expect(f.secrets.has('slack')).toBe(false);
+    // 새 secret 과 함께 갈아타면 새 clientId 에 묶어 둔다.
+    f.calls.length = 0;
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'NEWER' } }, { clientSecret: 'S-new' });
+    expect(f.calls).toEqual(['forget:slack', 'secret:slack:NEWER:set']);
+    expect(f.secrets.get('slack')).toEqual({ clientId: 'NEWER', secret: 'S-new' });
   });
 
   it('정의를 빼면 그 토큰도 지운다', async () => {
@@ -169,8 +199,11 @@ describe('operatorMcpSet 의 client secret(2026-10-07, 전용 Slack 앱)', () =>
     const r = readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientId: ' C-1 ', callbackPort: 3118, clientSecret: 'S1' } } });
     expect(r).toEqual({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientId: 'C-1', callbackPort: 3118 } }, clientSecret: 'S1' });
     expect(readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientSecret: '' } } })).toMatchObject({ clientSecret: null });
+    // clientId 없는 secret 은 받지 않는다(security F1).
+    expect(readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientSecret: 'S1' } } })).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientId: '  ', clientSecret: 'S1' } } })).toMatchObject({ code: 'bad-payload' });
     expect(readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientId: 'C' } } })).not.toHaveProperty('clientSecret');
-    expect(readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientSecret: 'a b' } } })).toMatchObject({ code: 'bad-payload' });
-    expect(readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientSecret: 7 } } })).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientId: 'C', clientSecret: 'a b' } } })).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientId: 'C', clientSecret: 7 } } })).toMatchObject({ code: 'bad-payload' });
   });
 });
