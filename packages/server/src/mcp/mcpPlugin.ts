@@ -913,8 +913,9 @@ function buildMcpServer(
     });
     if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
+    // replayed 여도 잇는다(security) — 앞 시도가 글만 세우고 잇기 전에 끊겼으면 카드가 요청 없이 남아 누르면 404 가 된다.
+    await linkPermissionCard(pool, requestId, message.id);
     if (!replayed) {
-      await linkPermissionCard(pool, requestId, message.id);
       emitPosted(posted, await audienceFor(pool, channelId));
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
       // 받는 사람은 소유자 하나다 — 그 사람만 승인할 수 있다.
