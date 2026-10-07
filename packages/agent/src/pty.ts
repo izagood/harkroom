@@ -193,10 +193,72 @@ const DEFAULT_READY_PATTERN = /[❯›]\u00a0|Ask\s+\S+\s+to\s+do\s+anything/;
  * (`U+0080`–`U+009F` — 8비트 CSI `U+009B` 도 표식을 열 수 있다).
  */
 export function sanitizePasteText(text: string): string {
-  return text
+  return stripInvisibleChars(text
     .replace(/\r\n?/g, '\n')
     // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ''));
+}
+
+/** 그 자체로 지운다(태그·ZWJ·FE0F 는 이모지 시퀀스 안이면 남긴다 — 아래 함수). */
+/**
+ * 그 자체로 지운다. 두 묶음이다 — claude 가 Enter 를 삼킨 실측 집합과, 보이지 않게 글을 숨기는 데
+ * 쓰이는 글자(security #1246 n1): bidi 덮어쓰기 202A–202E·061C(Trojan Source), 몽골 모음 구분
+ * 180E, 한글 채움 3164·115F·1160·FFA0, 행간 주석 FFF9–FFFB, 변이 선택자 FE00–FE0D·E0100–E01EF.
+ * FE0E·FE0F 는 그림 글자 뒤에서만 남긴다(아래).
+ */
+const INVISIBLE_DROP = /^[\u00ad\u061c\u115f\u1160\u180e\u200b\u200c\u200e\u200f\u202a-\u202e\u2060-\u2069\u3164\ufe00-\ufe0d\ufeff\uffa0\ufff9-\ufffb\u{e0100}-\u{e01ef}]$/u;
+const TAG_CHAR = /^[\u{e0000}-\u{e007f}]$/u;
+/** 🏴 뒤의 지역 부호(ISO 3166-2, 예: gbeng) + 끝 태그. 앞에서부터만 맞춘다. */
+const FLAG_TAGS = /^[\u{e0061}-\u{e007a}]{2}[\u{e0030}-\u{e0039}\u{e0061}-\u{e007a}]{1,4}\u{e007f}/u;
+const PICTO = /^\p{Extended_Pictographic}$/u;
+const SKIN_TONE = /^[\u{1f3fb}-\u{1f3ff}]$/u;
+
+/**
+ * **보이지 않는 글자를 걷는다**(2026-10-07, 스레드 f453bc59).
+ *
+ * claude(2.1.29x)는 칩으로 접히는 긴 붙여넣기에서 보이지 않는 글자를 보면 그것을 지우고
+ * `Removed N invisible character · review and press Enter to send` 를 **5초 동안만** 띄운 뒤
+ * Enter 를 한 번 더 기다린다. 러너의 Enter 는 그 한 번에 먹히고 턴은 칩만 남긴 채 10분을
+ * 서 있다가 정지로 접혔다(task_manager 러너 37건). 실측으로 걸린 글자: U+200B·200D·00AD·
+ * 2028·2066·FEFF·단독 FE0F. 정상 이모지 시퀀스(⚠ U+FE0F·👨 ZWJ 💻 같은 것)는 안 걸린다.
+ *
+ * 그래서 **이모지 시퀀스의 접착제는 남긴다**: FE0F 는 그림 글자·키캡 바탕(`#*0-9`) 뒤에서,
+ * ZWJ 는 그림 글자 둘 사이에서, 태그 글자는 🏴 깃발 시퀀스 안에서만. U+2028/2029 는 줄바꿈
+ * 뜻이 있으므로 `\n` 으로 바꾼다. 프롬프트 주입 면에서도 이득이다 — 보이지 않는 글자는 사람이
+ * 검토할 때 안 보이는 지시를 숨기는 수단이다.
+ */
+export function stripInvisibleChars(text: string): string {
+  // 빠른 길: 대상 글자가 하나도 없으면 그대로 돌려준다(대부분의 프롬프트).
+  if (!/[\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u202a-\u202e\u2028\u2029\u2060-\u2069\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff9-\ufffb\u{e0000}-\u{e007f}\u{e0100}-\u{e01ef}]/u.test(text)) return text;
+  const cps = Array.from(text);
+  const out: string[] = [];
+  const prevKept = (): string => out[out.length - 1] ?? '';
+  for (let i = 0; i < cps.length; i += 1) {
+    const c = cps[i]!;
+    if (c === '\u{1f3f4}') {
+      // 🏴 + 지역 부호(태그 소문자 2 + 태그 소문자·숫자 1–4) + 끝 태그(E007F) — 지역 깃발만 남긴다.
+      // 길이·글자를 묶는 이유: 태그 글자는 ASCII 를 안 보이게 나르는 수단이라, 🏴 뒤에 아무 태그나
+      // 길게 허용하면 깃발 모양으로 숨긴 지시가 그대로 지나간다(security #1246 F1).
+      const m = FLAG_TAGS.exec(cps.slice(i + 1, i + 8).join(''));
+      if (m) { const n = Array.from(m[0]).length; out.push(c, ...cps.slice(i + 1, i + 1 + n)); i += n; continue; }
+      out.push(c); continue;
+    }
+    if (c === '\u2028' || c === '\u2029') { out.push('\n'); continue; }
+    if (INVISIBLE_DROP.test(c) || TAG_CHAR.test(c)) continue;
+    if (c === '\ufe0f' || c === '\ufe0e') {
+      const p = prevKept();
+      if (PICTO.test(p) || /^[#*0-9]$/.test(p)) out.push(c);
+      continue;
+    }
+    if (c === '\u200d') {
+      const p = prevKept();
+      const before = p === '\ufe0f' || SKIN_TONE.test(p) ? out[out.length - 2] ?? '' : p;
+      if (PICTO.test(before) && PICTO.test(cps[i + 1] ?? '')) out.push(c);
+      continue;
+    }
+    out.push(c);
+  }
+  return out.join('');
 }
 
 function stripAnsi(text: string): string {
@@ -667,7 +729,8 @@ export interface RunPtyTurnOptions {
      * 증거가 없으면 **개행 하나를 더 보낸 뒤** 한 창(`resendGraceMs`) 더 기다리고, 그래도
      * 없으면 부른다 — "붙여넣기는 들어갔고 전송만 삼켜졌다"가 그 한 바이트로 낫는다.
      *
-     * `onAttention` 이 없으면 부를 곳이 없으므로 이 창도 돌지 않는다.
+     * `onAttention` 이 없으면 개행 재전송까지만 하고 부르지 않는다(2026-10-07 — 그 전에는
+     * 창 전체가 꺼져, 앞 계정의 삼켜진 Enter 를 아무도 다시 치지 않았다).
      * 생략하면 확인 창 자체가 없다(기존 호출자 그대로).
      */
     confirmDelivery?: {
@@ -1135,7 +1198,10 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         // 주입이 **먹혔는지** 확인한다(스펙 §2-5). 여기서도 아무것도 정착시키지 않는다 —
         // 사람을 부를 뿐이고, `readyProbe` 는 이미 소임을 다해 dispose 됐다.
         const confirm = opts.injectPrompt?.confirmDelivery;
-        if (confirm && onAttention) {
+        // **재전송은 부를 곳이 없어도 돈다**(2026-10-07). 예전에는 `onAttention` 이 없으면(풀의
+        // 마지막이 아닌 계정) 창 전체가 꺼져, 개행 하나면 살아날 턴이 10분 정지로 접혔다
+        // (스레드 f453bc59 — task_manager 37건). 사람을 부르는 마지막 한 걸음만 콜백에 묶는다.
+        if (confirm) {
           /** 증거가 있는가. 던지면 **없음**으로 읽는다 — 부르는 쪽이 조용히 태우는 것보다 낫다. */
           const 증거 = async (): Promise<boolean> => {
             try { return await confirm.probe(); } catch { return false; }
@@ -1163,7 +1229,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
                 if (settled) return;
                 void (async () => {
                   if (await 증거() || settled) return;
-                  onAttention(decodeTailText(tail.snapshot()), 'startup');
+                  onAttention?.(decodeTailText(tail.snapshot()), 'startup');
                 })();
               }, graceMs);
               graceTimer.unref?.();
