@@ -23,7 +23,7 @@ describe('localMcp 포트', () => {
     const listed = await port.list();
     expect(JSON.stringify(listed)).not.toContain('SECRET');
     expect(listed.servers).toEqual([
-      { name: 'slack', source: 'operator', transport: 'http', target: 'https://mcp.example.com/mcp', args: [], envKeys: [], headerKeys: ['Authorization'], oauth: true },
+      { name: 'slack', source: 'operator', transport: 'http', target: 'https://mcp.example.com/mcp', args: [], envKeys: [], headerKeys: ['Authorization'], oauth: true, oauthClientId: 'c' },
       { name: 'timing', source: 'operator', transport: 'stdio', target: 'timing-mcp', args: ['--x'], envKeys: ['TOKEN'], headerKeys: [], oauth: false },
     ]);
     const onDisk = JSON.parse(await readFile(registryPath, 'utf8'));
@@ -58,9 +58,13 @@ describe('localMcp 포트', () => {
 describe('localMcp 포트 — 원격 MCP 인증 (2026-09-30)', () => {
   function fakeOAuth() {
     const calls: string[] = [];
+    const secrets = new Map<string, string>();
     return {
       calls,
+      secrets,
       oauth: {
+        setClientSecret: async (name: string, v: string | null) => { if (v === null) secrets.delete(name); else secrets.set(name, v); },
+        hasClientSecret: async (name: string) => secrets.has(name),
         start: async (name: string, def: { url: string }) => { calls.push(`start:${name}:${def.url}`); return { authUrl: 'https://auth.example.com/a' }; },
         status: async (name: string, url: string) => { calls.push(`status:${name}:${url}`); return { state: 'ok' as const }; },
         tokensFor: async () => ({ tokens: {}, expired: [] }),
@@ -105,6 +109,29 @@ describe('localMcp 포트 — 원격 MCP 인증 (2026-09-30)', () => {
     expect(f.calls).toEqual([]);
   });
 
+  it('client secret 은 정의 파일에 넣지 않고 오퍼레이터 비밀로 간다 — 목록엔 있는지만, 정의를 빼면 함께 지운다(2026-10-07)', async () => {
+    const { registryPath } = await fresh();
+    const f = fakeOAuth();
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null, oauth: f.oauth });
+    const leaky = { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'C-1', callbackPort: 3118, clientSecret: 'S-sekret' } };
+    await port.set('slack', leaky as never, { clientSecret: 'S-sekret' });
+    const raw = await readFile(registryPath, 'utf8');
+    expect(raw).not.toContain('S-sekret');
+    expect(JSON.parse(raw).slack).toEqual({ type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'C-1', callbackPort: 3118 } });
+    expect(f.secrets.get('slack')).toBe('S-sekret');
+    const row = (await port.list()).servers.find((s) => s.name === 'slack');
+    expect(row).toMatchObject({ oauthClientId: 'C-1', oauthClientSecret: true });
+    expect(JSON.stringify(row)).not.toContain('S-sekret');
+    // 안 보내면 그대로, null 이면 지운다.
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'C-1' } });
+    expect(f.secrets.has('slack')).toBe(true);
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'C-1' } }, { clientSecret: null });
+    expect(f.secrets.has('slack')).toBe(false);
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp' }, { clientSecret: 'S2' });
+    await port.remove('slack');
+    expect(f.secrets.has('slack')).toBe(false);
+  });
+
   it('정의를 빼면 그 토큰도 지운다', async () => {
     const { registryPath } = await fresh();
     const f = fakeOAuth();
@@ -134,5 +161,16 @@ describe('operatorMcpSet/Remove 페이로드', () => {
     expect(readOperatorMcpSetPayload({ name: 'x', definition: { type: 'http', url: 'ftp://x' } })).toMatchObject({ code: 'bad-payload' });
     expect(readOperatorMcpSetPayload({ name: 'x', definition: { type: 'http', url: 'https://x', oauth: { callbackPort: 70000 } } })).toMatchObject({ code: 'bad-payload' });
     expect(readOperatorMcpSetPayload({ name: 'x', definition: { type: 'http', url: 'https://x', headers: { A: 1 } } })).toMatchObject({ code: 'bad-payload' });
+  });
+});
+
+describe('operatorMcpSet 의 client secret(2026-10-07, 전용 Slack 앱)', () => {
+  it('secret 은 정의에서 빼서 따로 돌려준다 — 빈 문자열은 지우기, 안 보내면 그대로', () => {
+    const r = readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientId: ' C-1 ', callbackPort: 3118, clientSecret: 'S1' } } });
+    expect(r).toEqual({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientId: 'C-1', callbackPort: 3118 } }, clientSecret: 'S1' });
+    expect(readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientSecret: '' } } })).toMatchObject({ clientSecret: null });
+    expect(readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientId: 'C' } } })).not.toHaveProperty('clientSecret');
+    expect(readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientSecret: 'a b' } } })).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMcpSetPayload({ name: 'slack', definition: { type: 'http', url: 'https://x', oauth: { clientSecret: 7 } } })).toMatchObject({ code: 'bad-payload' });
   });
 });
