@@ -199,6 +199,9 @@ describe('validateExactCommand', () => {
     for (const c of [`kubectl ${KC} apply -f/tmp/x.yaml`, `kubectl ${KC} apply -f=/tmp/x.yaml`]) {
       expect(validateExactCommand(c), c).toEqual({ ok: false, code: 'glued_flag' });
     }
+    // 같은 경로가 두 자리에 나오면 하나로, 비밀 자리가 이긴다.
+    expect(validateExactCommand('kubectl --kubeconfig /x --context rc apply -f /x')).toMatchObject({ ok: true, files: [{ path: '/x', flag: '--kubeconfig', secret: true }] });
+    expect(validateExactCommand('kubectl --kubeconfig /k --context rc apply -f /x --patch-file /x')).toMatchObject({ ok: true, files: [{ path: '/k' }, { path: '/x', secret: false }] });
     // `-f` 는 kubectl·helm 의 파일 자리일 뿐 — `tail -f`·`kubectl logs -f` 는 아니다.
     expect(validateExactCommand('tail -f /var/log/x')).toMatchObject({ ok: true, files: [] });
     expect(validateExactCommand(`kubectl ${KC} logs -f pod-0`)).toMatchObject({ ok: true });

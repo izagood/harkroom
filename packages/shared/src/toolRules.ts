@@ -298,7 +298,13 @@ function commandFileArgs(head: string, words: readonly string[]): { files: Comma
     else if (w.startsWith('@')) bad = add('@', w.slice(1));
     if (bad) return { code: bad };
   }
-  return { files };
+  // 같은 경로가 두 자리에 나오면(`--kubeconfig /x … -f /x`) 하나로 — 어느 쪽이든 비밀 자리면 비밀(미리 보기 없음).
+  const byPath = new Map<string, CommandFileArg>();
+  for (const f of files) {
+    const prev = byPath.get(f.path);
+    byPath.set(f.path, prev ? { ...prev, secret: prev.secret || f.secret } : f);
+  }
+  return { files: [...byPath.values()] };
 }
 
 /** `/` 로 시작하고 `.`·`..`·빈 마디·끝 `/` 가 없는 경로 — 오퍼레이터의 `realpath(p) === p` 와 맞물린다(C2). */
