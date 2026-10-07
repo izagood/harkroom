@@ -1015,7 +1015,7 @@ function permissionSection(p: { toolAllows: readonly string[] }): string[] {
     '  `--dangerously-*` 는 서버가 거절한다. 거절 코드가 오면 그 코드대로 좁혀 다시 청하거나 사람에게 넘긴다.',
     '- 청한 뒤에는 **이 턴에서 다시 시도하지 마라** — 적용은 다음 턴부터다. 카드를 세웠다고 스레드에 한 줄 남기고 끝낸다.',
     '  소유자가 카드에서 승인하면 그 답이 너를 다시 깨우고, 그 턴에는 규칙이 붙어 있으니 그때 다시 시도한다. 거절이면 멈춘다.',
-    '- 승인은 이 채널에만 7일 간다. 소유자가 "그 권한 거둬"라고 하면 `permission.revoke`(같은 kind·rule/repo·channelId)로 내려놓는다.',
+    '- 승인은 이 채널의 모든 대화(위임·예약으로 뜬 턴 포함)에 7일 간다. 소유자가 "그 권한 거둬"라고 하면 `permission.revoke`(같은 kind·rule/repo·channelId)로 내려놓는다.',
     ...(p.toolAllows.length
       ? ['- 이 채널에서 지금 허락된 규칙: ' + p.toolAllows.map((r) => `\`${r}\``).join(', ')]
       : []),

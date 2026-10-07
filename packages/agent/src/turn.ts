@@ -627,9 +627,18 @@ export function safeToolAllows(rules: readonly string[]): string[] {
     if (/^mcp__[a-z0-9_-]+__[a-z0-9_-]+$/i.test(r)) return !/^mcp__harkroom__/i.test(r);
     const m = /^Bash\((.+)\)$/.exec(r);
     if (!m) return false;
-    const body = m[1]!.endsWith(':*') ? m[1]!.slice(0, -2) : m[1]!;
-    if (!body.trim() || body.includes('*') || /[;&|`<>\n\r]|\$\(|\$\{/.test(body)) return false;
-    return !(m[1]!.endsWith(':*') && body.trim().split(/\s+/).length < 2);
+    const prefix = m[1]!.endsWith(':*');
+    const body = (prefix ? m[1]!.slice(0, -2) : m[1]!).trim();
+    // 서버 `validateToolRule` 의 글자 허용 목록과 같다(security F1·F2) — 괄호·쉼표·따옴표·역슬래시·$ 는 argv 에 넣지 않는다.
+    if (!body || !/^[A-Za-z0-9 _./@=:+%-]+$/.test(body)) return false;
+    const words = body.split(/\s+/);
+    if (prefix && words.length < 2) return false;
+    // gh 로 머지 deny 를 옆으로 도는 길(F3): merge 낱말·gh api 접두/쓰기는 러너도 버린다.
+    if (words[0]!.split('/').pop() === 'gh') {
+      if (words.some((w) => /merge/i.test(w))) return false;
+      if (words.includes('api') && (prefix || words.some((w) => /^(-X|--method|-[fF]|--field|--raw-field|--input)/.test(w) || /^graphql$/i.test(w)))) return false;
+    }
+    return true;
   });
 }
 
