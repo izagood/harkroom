@@ -1,0 +1,479 @@
+{
+ "_about": "recall 합성 세트(S-syn). 가상의 에이전트 기억 목록과 손으로 쓴 질의다 — 실제 기억·대화 문장은 없다. 작성자가 정답을 정해 두고 쓴 것이라 낱말 방식에 유리하다: CI 하한 검사에만 쓰고 R1(LLM)과의 비교에는 쓰지 않는다(측정 프로토콜 §4). 실기억 세트(S-real)는 비공개 저장소에 있다.",
+ "humans": [
+  "alice"
+ ],
+ "procedural": [
+  "mem/pr-checklist",
+  "mem/git-worktree-notes"
+ ],
+ "index": [
+  {
+   "slug": "mem/deploy-recipe",
+   "description": "스테이징·운영 배포 절차: 태그 → 이미지 빌드 → 롤아웃 확인",
+   "kind": "procedure"
+  },
+  {
+   "slug": "mem/deploy-rollback",
+   "description": "배포 되돌림: 이전 이미지 태그로 롤백, DB 마이그레이션은 되돌리지 않는다",
+   "kind": "procedure"
+  },
+  {
+   "slug": "mem/db-migration-rules",
+   "description": "DB 마이그레이션 규칙: 열 추가만 허용, 삭제는 두 릴리스 뒤",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/ci-cache-flaky",
+   "description": "CI 캐시가 깨질 때 lockfile 해시 키를 바꾸면 복구된다",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/ci-runner-macos",
+   "description": "macOS 빌드 러너는 큐가 길다 — 전체 빌드는 야간에만",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/pr-checklist",
+   "description": "PR 올리는 절차: 브랜치·커밋 메시지·본문 서명",
+   "kind": "procedure"
+  },
+  {
+   "slug": "mem/git-worktree-notes",
+   "description": "git worktree 함정: 같은 브랜치를 두 번 체크아웃할 수 없다",
+   "kind": "procedure"
+  },
+  {
+   "slug": "mem/search-index-v1",
+   "description": "검색 색인 v1 설계: 전문 검색 없이 부분 일치 점수 (2026-08)",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/search-index-v2",
+   "description": "검색 색인 v2: 형태소 분석과 가중치, v1 을 대체 (2026-09)",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/login-session-cookie",
+   "description": "로그인 세션은 쿠키 30일, 갱신은 슬라이딩",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/login-token-rotation",
+   "description": "액세스 토큰 회전 주기 15분, 리프레시 토큰 재사용 감지",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/mobile-push-setup",
+   "description": "모바일 푸시 알림: 기기 토큰 등록과 만료 처리",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/mobile-release-train",
+   "description": "모바일 앱 릴리스 열차: 격주 화요일 스토어 제출",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/team-onboarding",
+   "description": "새 팀원 온보딩 체크리스트: 저장소 권한·개발 환경",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/oncall-rotation-old",
+   "description": "당번 순서(옛): 주간 교대, 금요일 인계",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/oncall-rotation",
+   "description": "당번 순서: 2주 교대, 월요일 인계로 바뀜",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/cache-redis-eviction",
+   "description": "레디스 캐시 축출 정책 allkeys-lru, 메모리 상한 2GB",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/rate-limit-api",
+   "description": "API 호출 제한: 계정당 분당 120회, 넘으면 429",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/log-retention",
+   "description": "로그 보존 30일, 감사 로그는 1년",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/ui-dark-mode",
+   "description": "다크 모드 색 토큰 규칙: 배경·글자 대비 4.5 이상",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/ui-table-virtual",
+   "description": "긴 표는 가상 스크롤, 행 높이 고정",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/i18n-strings",
+   "description": "번역 문자열은 키로만 쓴다 — 문장 조립 금지",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/payment-webhook",
+   "description": "결제 웹훅 재시도: 멱등 키로 중복 처리를 막는다",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/payment-provider-old",
+   "description": "결제 대행사 A 연동(옛, 2026-07 해지)",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/payment-provider",
+   "description": "결제 대행사 B 로 이전 완료: 수수료와 정산 주기",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/backup-restore-drill",
+   "description": "백업 복구 훈련: 분기마다, 복구 시간 목표 1시간",
+   "kind": "procedure"
+  },
+  {
+   "slug": "mem/feature-flag-rules",
+   "description": "기능 플래그: 기본 꺼짐, 두 릴리스 뒤 정리",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/perf-budget-web",
+   "description": "웹 성능 예산: 첫 화면 2초, 번들 300KB",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/error-alert-routing",
+   "description": "오류 알림 경로: 심각도별 채널, 새벽엔 호출만",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/docs-style",
+   "description": "문서 문체: 짧은 문장, 능동태",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/journal/search-v2-rollout",
+   "description": "검색 색인 v2 출시 경위",
+   "kind": "journal"
+  },
+  {
+   "slug": "mem/dependency-upgrade",
+   "description": "의존성 올리기: 주 1회 묶어서, 메이저는 따로 PR",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/image-upload-limit",
+   "description": "이미지 업로드 상한 10MB — 프록시 본문 크기도 같이 올린다",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/timezone-display",
+   "description": "시각 표시는 사용자 시간대, 저장은 UTC",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/ws-reconnect",
+   "description": "웹소켓 재연결: 지수 백오프, 최대 30초",
+   "kind": "topic"
+  },
+  {
+   "slug": "mem/release-notes",
+   "description": "릴리스 노트 쓰는 법: 사용자에게 보이는 변화만",
+   "kind": "topic"
+  }
+ ],
+ "items": [
+  {
+   "id": "t-1",
+   "query": "@helper 운영 배포를 해야 하는데 절차 알려 줘",
+   "gold": [
+    "mem/deploy-recipe"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-2",
+   "query": "방금 배포가 망가졌어, 롤백은 어떻게 해?",
+   "gold": [
+    "mem/deploy-rollback"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-3",
+   "query": "users 테이블에서 열을 지워도 되나? 마이그레이션 규칙 확인해 줘",
+   "gold": [
+    "mem/db-migration-rules"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-4",
+   "query": "CI 캐시가 또 깨졌다",
+   "gold": [
+    "mem/ci-cache-flaky"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-5",
+   "query": "macOS 빌드가 큐에서 너무 오래 기다린다",
+   "gold": [
+    "mem/ci-runner-macos"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-6",
+   "query": "리프레시 토큰 재사용이 감지됐다는 경고가 떴어",
+   "gold": [
+    "mem/login-token-rotation"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-7",
+   "query": "모바일 푸시 알림이 안 온다는 제보가 있어",
+   "gold": [
+    "mem/mobile-push-setup"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-8",
+   "query": "레디스 메모리가 꽉 찼어. 축출 정책이 뭐였지?",
+   "gold": [
+    "mem/cache-redis-eviction"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-9",
+   "query": "429 에러가 쏟아진다. 호출 제한이 얼마였지?",
+   "gold": [
+    "mem/rate-limit-api"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-10",
+   "query": "감사 로그 보존 기간 알려 줘",
+   "gold": [
+    "mem/log-retention"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-11",
+   "query": "다크 모드에서 글자가 잘 안 보여",
+   "gold": [
+    "mem/ui-dark-mode"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-12",
+   "query": "결제 웹훅이 두 번 들어와서 주문이 중복됐어",
+   "gold": [
+    "mem/payment-webhook"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-13",
+   "query": "이미지 업로드가 413 으로 실패한다",
+   "gold": [
+    "mem/image-upload-limit"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-14",
+   "query": "웹소켓이 끊기면 재연결 간격이 얼마야?",
+   "gold": [
+    "mem/ws-reconnect"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-15",
+   "query": "서버가 날아갔을 때 데이터 되살리는 연습은 언제 해?",
+   "gold": [
+    "mem/backup-restore-drill"
+   ],
+   "tags": [
+    "paraphrase"
+   ],
+   "note": "낱말이 겹치지 않는 바꿔 말하기 — 낱말 방식은 놓치는 것이 정상"
+  },
+  {
+   "id": "t-16",
+   "query": "번역 문구를 코드에서 이어 붙여도 돼?",
+   "gold": [
+    "mem/i18n-strings"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-17",
+   "query": "@helper alice 가 새 팀원 온보딩 준비를 부탁했어",
+   "gold": [
+    "mem/team-onboarding"
+   ],
+   "tags": [],
+   "note": "사람 이름(alice)은 낱말에서 빠진다"
+  },
+  {
+   "id": "t-18",
+   "query": "PR 올리기 전에 확인할 것 알려 줘",
+   "gold": [
+    "mem/pr-checklist"
+   ],
+   "tags": [
+    "procedural"
+   ],
+   "note": "절차 기억뿐이라 정답에서 빠져 집계되지 않는다"
+  },
+  {
+   "id": "t-19",
+   "query": "긴 표 스크롤이 버벅인다, 가상 스크롤 규칙 있었지?",
+   "gold": [
+    "mem/ui-table-virtual"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-20",
+   "query": "의존성 메이저 버전 올려도 돼?",
+   "gold": [
+    "mem/dependency-upgrade"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-21",
+   "query": "새벽에 오류 알림이 채널로 와서 다들 깼어",
+   "gold": [
+    "mem/error-alert-routing"
+   ],
+   "tags": []
+  },
+  {
+   "id": "t-22",
+   "query": "시각이 UTC 로 보인다는 버그",
+   "gold": [
+    "mem/timezone-display"
+   ],
+   "tags": []
+  },
+  {
+   "id": "ku-1",
+   "query": "당번 교대는 언제 해?",
+   "gold": [
+    "mem/oncall-rotation"
+   ],
+   "tags": [
+    "knowledge-update"
+   ],
+   "stale": [
+    "mem/oncall-rotation-old"
+   ]
+  },
+  {
+   "id": "ku-2",
+   "query": "검색 색인 구조 설명해 줘",
+   "gold": [
+    "mem/search-index-v2"
+   ],
+   "tags": [
+    "knowledge-update"
+   ],
+   "stale": [
+    "mem/search-index-v1"
+   ],
+   "note": "journal 은 이름이 걸려도 싣지 않는다"
+  },
+  {
+   "id": "ku-3",
+   "query": "결제 대행사 정산 주기 알려 줘",
+   "gold": [
+    "mem/payment-provider"
+   ],
+   "tags": [
+    "knowledge-update"
+   ],
+   "stale": [
+    "mem/payment-provider-old"
+   ]
+  },
+  {
+   "id": "ku-4",
+   "query": "당번 인계는 무슨 요일이야?",
+   "gold": [
+    "mem/oncall-rotation"
+   ],
+   "tags": [
+    "knowledge-update"
+   ],
+   "stale": [
+    "mem/oncall-rotation-old"
+   ]
+  },
+  {
+   "id": "na-1",
+   "query": "이 영어 문장 자연스럽게 고쳐 줘: we was going",
+   "gold": [],
+   "tags": [
+    "no-answer"
+   ]
+  },
+  {
+   "id": "na-2",
+   "query": "점심 메뉴 추천해 줘",
+   "gold": [],
+   "tags": [
+    "no-answer"
+   ]
+  },
+  {
+   "id": "na-3",
+   "query": "정규식으로 이메일 주소 검사하는 법",
+   "gold": [],
+   "tags": [
+    "no-answer"
+   ]
+  },
+  {
+   "id": "na-4",
+   "query": "@helper 고마워 잘 됐어",
+   "gold": [],
+   "tags": [
+    "no-answer"
+   ]
+  },
+  {
+   "id": "na-5",
+   "query": "이 회의록 요약해 줘 https://example.com/notes/123",
+   "gold": [],
+   "tags": [
+    "no-answer"
+   ]
+  },
+  {
+   "id": "na-6",
+   "query": "새 기능 아이디어 같이 브레인스토밍하자",
+   "gold": [],
+   "tags": [
+    "no-answer"
+   ],
+   "note": "'기능' 이 기능 플래그 요약에 걸린다 — 낱말 방식의 알려진 오탐"
+  }
+ ]
+}

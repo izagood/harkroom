@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { excludedNamesFrom, focusTermsOf, rankRecall, searchTerms, type RecallCandidate } from '../src/services/memory.js';
 
@@ -144,5 +145,64 @@ describe('rankRecall', () => {
     expect(rankRecall(['캐시', '러너'], rows, 5).map((h) => [h.slug, h.score, h.nameHits])).toEqual([
       ['mem/d-러너', 6, 2], ['mem/b', 4, 1], ['mem/a', 4, 1],
     ]);
+  });
+});
+
+/**
+ * 합성 세트(S-syn) 회귀(qa_manager, 측정 프로토콜 docs/plans/2026-10-02-memory-recall-measurement.md §2).
+ * 가상의 기억 목록과 손으로 쓴 질의뿐이다 — 실제 기억·대화로 만든 세트(S-real)는 저장소 밖 비공개 자리에서 잰다.
+ * 작성자가 정답을 정해 두고 쓴 것이라 낱말 방식에 유리하다. 그래서 하한 검사에만 쓰고 R1(LLM) 비교에는 쓰지 않는다.
+ * - 절차 기억(procedural)은 매 턴 쓰는 것이라 정답에서 빼고 센다("정책 일치" 기준).
+ * - 하한은 측정값에서 5%p 를 뺐다 — 개선은 막지 않고, 정밀도를 깎는 변경만 잡는다. 개선되면 올린다.
+ */
+interface FixtureItem { id: string; query: string; gold: string[]; tags: string[]; stale?: string[] }
+const fixture = JSON.parse(readFileSync(new URL('./fixtures/recall-syn.json', import.meta.url), 'utf8')) as {
+  humans: string[]; procedural: string[]; index: { slug: string; description: string; kind: RecallCandidate['kind'] }[];
+  items: FixtureItem[];
+};
+
+describe('recall 합성 세트 (S-syn)', () => {
+  const exclude = excludedNamesFrom(fixture.humans.map((h) => ({ handle: h, display_name: h, kind: 'human' })));
+  const procedural = new Set(fixture.procedural);
+  const rows = fixture.index.map((r) => row(r.slug, r.description, '', r.kind));
+  const recall = (it: FixtureItem): string[] =>
+    rankRecall(searchTerms(it.query, { exclude }), rows, 5).filter((h) => h.nameHits >= 1).map((h) => h.slug);
+  const answerable = fixture.items.filter((it) => !it.tags.includes('no-answer'));
+  let picked = 0; let hit2 = 0; let gold = 0; let hit5 = 0;
+  for (const it of answerable) {
+    const g = new Set(it.gold.filter((s) => !procedural.has(s)));
+    if (!g.size) continue;
+    const r = recall(it);
+    picked += Math.min(2, r.length); hit2 += r.slice(0, 2).filter((s) => g.has(s)).length;
+    gold += g.size; hit5 += r.filter((s) => g.has(s)).length;
+  }
+
+  it('정답·낡은 것·절차 기억은 모두 목록에 있다', () => {
+    expect(fixture.items.length).toBeGreaterThanOrEqual(30);
+    const slugs = new Set(fixture.index.map((r) => r.slug));
+    for (const s of fixture.procedural) expect(slugs.has(s), s).toBe(true);
+    for (const it of fixture.items) for (const s of [...it.gold, ...(it.stale ?? [])]) expect(slugs.has(s), `${it.id}: ${s}`).toBe(true);
+  });
+
+  it('정밀도 P@2·재현율 R@5 가 하한 아래로 떨어지지 않는다', () => {
+    console.log(`[recall syn] P@2 ${hit2}/${picked} R@5 ${hit5}/${gold}`);
+    expect(hit2 / picked).toBeGreaterThanOrEqual(0.53); // 측정 24/41 = 59%
+    expect(hit5 / gold).toBeGreaterThanOrEqual(0.91); // 측정 24/25 = 96%
+  });
+
+  it('정답 없음 문항은 대부분 아무것도 싣지 않는다', () => {
+    const na = fixture.items.filter((it) => it.tags.includes('no-answer'));
+    const rejected = na.filter((it) => recall(it).length === 0).length;
+    console.log(`[recall syn] no-answer ${rejected}/${na.length}`);
+    expect(rejected / na.length).toBeGreaterThanOrEqual(0.61); // 측정 4/6 = 67%
+  });
+
+  it('knowledge-update: 낡은 것만 싣지 않는다, journal 은 이름이 걸려도 싣지 않는다', () => {
+    const ku = fixture.items.filter((it) => it.tags.includes('knowledge-update'));
+    for (const it of ku) {
+      const top = recall(it).slice(0, 2);
+      expect(top.some((s) => it.gold.includes(s)), `${it.id}: ${top.join(',')}`).toBe(true);
+    }
+    for (const it of fixture.items) expect(recall(it).filter((s) => s.startsWith('mem/journal/')), it.id).toEqual([]);
   });
 });
