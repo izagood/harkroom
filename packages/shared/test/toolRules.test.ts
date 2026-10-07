@@ -38,6 +38,13 @@ describe('validateToolRule — 받는 것', () => {
     expect(validateToolRule('Bash(git push -u origin rebel-jaebin/x:rebel-jaebin/x)')).toMatchObject({ ok: true });
   });
 
+  it('gh 의 원격을 바꾸는 하위 명령은 mutates_remote 경고(security 낮은 후속)', () => {
+    for (const r of ['Bash(gh workflow run deploy.yml)', 'Bash(gh release create v1)', 'Bash(gh repo edit o/r --visibility public)']) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings.includes('mutates_remote'), r).toBe(true);
+    }
+  });
+
   it('첫 실사용 규칙(rebelro)은 통과한다', () => {
     expect(validateToolRule('Bash(kubectl --context udc-main-admin@udc-main -n rebelro-cluster exec:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
     expect(validateToolRule('Bash(gh pr view -R rebellions-sw/udc-k8s:*)')).toMatchObject({ ok: true, warnings: [] });
@@ -115,6 +122,12 @@ describe('validateToolRule — 거절', () => {
     ['Bash(git push --all origin)', 'merge_bypass'],
     ['Bash(git push origin)', 'merge_bypass'],
     ['Bash(git -C repo push origin main)', 'merge_bypass'],
+    // security F4a·F5
+    ['Bash(git push origin @)', 'merge_bypass'],
+    ['Bash(git push origin @:feat)', 'merge_bypass'],
+    ['Bash(gh repo sync:*)', 'merge_bypass'],
+    ['Bash(gh repo sync izagood/harkroom --force)', 'merge_bypass'],
+    ['Bash(gh -R o/r repo sync)', 'merge_bypass'],
   ])('%s → %s', (rule, code) => {
     expect(validateToolRule(rule)).toEqual({ ok: false, code });
   });

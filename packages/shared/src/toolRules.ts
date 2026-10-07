@@ -64,6 +64,8 @@ function checkGh(words: readonly string[], prefix: boolean): ToolRuleRefusal | n
   if (words.some((w) => /merge/i.test(w))) return 'merge_bypass';
   const pos = positionals(words);
   if (pos[0] === 'alias' || pos[0] === 'extension' || pos[0] === 'ext') return 'merge_bypass';
+  // `gh repo sync` 는 대상의 기본 브랜치를 source 로 덮는다(`--force` 면 hard reset) — main 에 넣는 것과 같다(security F5).
+  if (pos[0] === 'repo' && pos[1] === 'sync') return 'merge_bypass';
   if (pos[0] === 'api') {
     if (prefix) return 'gh_api_write';
     const writes = words.some((w) => /^(-X|--method)/.test(w) || /^-[fF]/.test(w) || /^--(field|raw-field|input)/.test(w))
@@ -89,7 +91,8 @@ function checkGitPush(words: readonly string[], prefix: boolean): ToolRuleRefusa
   const refs = after.slice(1);
   if (refs.length === 0) return 'merge_bypass';
   const protectedRef = /(^|[:+])(main|master|head)$|refs\/heads\/|^:/i;
-  return refs.some((r) => protectedRef.test(r) || r.split(':').some((part) => /^(main|master|head)$/i.test(part))) ? 'merge_bypass' : null;
+  // `@` 는 HEAD 의 다른 이름이다(security F4a) — `@`·`@:x` 모두 현재 브랜치(main 일 수 있다)를 민다.
+  return refs.some((r) => r.includes('@') || protectedRef.test(r) || r.split(':').some((part) => /^(main|master|head)$/i.test(part))) ? 'merge_bypass' : null;
 }
 
 /** 경고(n5): 인자로 임의 명령을 돌릴 수 있는 도구 — 받되 카드에 띠를 단다. */
@@ -120,7 +123,7 @@ const MUTATE_SUBCOMMANDS: Record<string, readonly string[]> = {
   kubectl: ['delete', 'apply', 'patch', 'edit', 'replace', 'scale', 'drain', 'cordon', 'uncordon', 'rollout', 'annotate', 'label', 'create', 'set', 'taint'],
   helm: ['install', 'upgrade', 'uninstall', 'rollback', 'delete'],
   git: ['push'],
-  gh: ['api'],
+  gh: ['api', 'workflow', 'release', 'repo', 'secret', 'variable', 'label', 'issue'],
   terraform: ['apply', 'destroy', 'import'],
   rm: ['*'],
 };
