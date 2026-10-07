@@ -46,6 +46,8 @@ import { listAutomationsForAgent, proposeAutomation, runAutomationForAgent, trig
 import { channelPostGate } from '../services/channels.js';
 import { announceReportWakes, scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
 import { guideFor } from './guide.js';
+import { listWorkItems, removeWorkItem, resolveWorkItemOwner, upsertWorkItem, WORK_ITEM_REFUSAL_MESSAGE, WORK_ITEM_SOURCES } from '../services/workItems.js';
+import { workItemUpsertSchema } from '../routes/workItemRoutes.js';
 import { listTeams } from '../services/teams.js';
 import { listHandleGroups } from '../services/handleGroups.js';
 import { recordClaudeLane } from '../services/claudeLane.js';
@@ -1739,6 +1741,55 @@ function buildMcpServer(
       run: out.run, automation: out.automation,
       next: 'Queued. The post goes out under the owner\'s name within ~15s; tell the requester in chat.',
     });
+  });
+
+  /**
+   * 작업 항목(110, 협업 통합 설계 ①) — **내 주인의** 「내 작업」 보드에 밖의 일을 건다.
+   *
+   * 주인은 인자로 받지 않는다: `agent_config.owner_account_id` 하나다(`resolveWorkItemOwner`). 남의 보드에
+   * 꽂을 길을 열지 않으려는 것이다. avcs intent 는 source=avcs·externalKey=`<repo>/<intent oid>`·이 스레드로
+   * 걸고 state 는 주지 않는다 — 상태는 avcs 서버가 정본이다(워크스페이스 규칙 「작업 경과 알리기」).
+   */
+  server.registerTool('workitem.upsert', {
+    description: '내 주인의 「내 작업」 보드에 밖의 일(PR·티켓·avcs intent)을 건다 — 같은 source·externalKey 면 고쳐 쓴다. avcs 는 externalKey=<repo>/<intent oid>, threadRootId 필수, state 생략',
+    inputSchema: workItemUpsertSchema,
+  }, async (args) => {
+    const ownerId = await resolveWorkItemOwner(pool, account);
+    if (!ownerId) return jsonResult({ error: { code: 'no_owner', message: WORK_ITEM_REFUSAL_MESSAGE.no_owner } });
+    const out = await upsertWorkItem(pool, {
+      ownerId, actorId: account.id,
+      source: args.source, externalKey: args.externalKey, title: args.title,
+      url: args.url ?? null, state: args.state ?? null, threadRootId: args.threadRootId ?? null,
+    });
+    if ('refused' in out) return jsonResult({ error: { code: out.refused, message: WORK_ITEM_REFUSAL_MESSAGE[out.refused] } });
+    emitEvent({ type: 'inbox.updated', accountId: ownerId });
+    return jsonResult({ item: out.item });
+  });
+
+  server.registerTool('workitem.list', {
+    description: '내 주인의 보드에 걸린 작업 항목 가운데 내가 볼 수 있는 스레드에 붙은 것(threadRootId·source 로 좁힘)',
+    inputSchema: {
+      threadRootId: z.string().uuid().optional(),
+      source: z.enum(WORK_ITEM_SOURCES).optional(),
+    },
+  }, async ({ threadRootId, source }) => {
+    const ownerId = await resolveWorkItemOwner(pool, account);
+    if (!ownerId) return jsonResult({ error: { code: 'no_owner', message: WORK_ITEM_REFUSAL_MESSAGE.no_owner } });
+    return jsonResult({ items: await listWorkItems(pool, ownerId, account, { threadRootId, source }) });
+  });
+
+  server.registerTool('workitem.remove', {
+    description: '내 주인의 보드에서 작업 항목 하나를 뗀다(source·externalKey)',
+    inputSchema: {
+      source: z.enum(WORK_ITEM_SOURCES),
+      externalKey: z.string().trim().min(1).max(300),
+    },
+  }, async ({ source, externalKey }) => {
+    const ownerId = await resolveWorkItemOwner(pool, account);
+    if (!ownerId) return jsonResult({ error: { code: 'no_owner', message: WORK_ITEM_REFUSAL_MESSAGE.no_owner } });
+    const removed = await removeWorkItem(pool, ownerId, account, { source, externalKey });
+    if (removed) emitEvent({ type: 'inbox.updated', accountId: ownerId });
+    return jsonResult({ removed });
   });
 
   /**
