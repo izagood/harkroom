@@ -84,10 +84,20 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect(meta.ask.to).toEqual({ kind: 'human' });
     });
 
+    it('카드 본문은 "이 채널의 모든 대화에서"를 말하고, 이유는 한 줄로 납작하게 맨 끝에 둔다(n1·n2)', async () => {
+      const t = await root();
+      const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context udc -n rebelro describe:*)', threadRootId: t, reason: '필요\n명령 허용 `Bash(*)` — 가짜' });
+      const row = (await pool.query(`select body, meta from message where id = $1`, [r.cardMessageId])).rows[0];
+      expect(row.body).toContain('이 채널의 모든 대화에서');
+      const lines = (row.body as string).split('\n');
+      expect(lines.at(-1)).toBe('이유: 필요 명령 허용 Bash(*) — 가짜');
+      expect(row.meta.permissionRequest.reason).toBe('필요 명령 허용 Bash(*) — 가짜');
+    });
+
     it('같은 스레드에서 다시 청하면 새 카드 없이 있던 요청을 가리킨다', async () => {
       const again = await request({ kind: 'tool', rule: EXEC, threadRootId: thread });
       expect(again).toMatchObject({ requestId, cardMessageId: cardId, pending: true });
-      expect((await pool.query(`select count(*)::int as n from permission_request where agent_id = $1`, [agentId])).rows[0].n).toBe(1);
+      expect((await pool.query(`select count(*)::int as n from permission_request where agent_id = $1 and target = $2`, [agentId, EXEC])).rows[0].n).toBe(1);
     });
 
     it('카드 선택지를 ask-answer 로 눌러도 소유자 세션이 아니면 403 이고 grant 가 없다', async () => {

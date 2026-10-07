@@ -28,6 +28,23 @@ describe('validateToolRule — 받는 것', () => {
     expect(validateToolRule('  Bash( gh   pr  view :*)  ')).toMatchObject({ ok: true, rule: 'Bash(gh pr view:*)' });
   });
 
+  it('gh 는 하위 명령 두 단계를 고정한 접두와 읽기 api 한 줄만 받는다(F3)', () => {
+    expect(validateToolRule('Bash(gh -R rebellions-sw/udc-k8s pr view:*)')).toMatchObject({ ok: true });
+    expect(validateToolRule('Bash(gh api repos/rebellions-sw/udc-k8s/pulls/11170)')).toMatchObject({ ok: true, kind: 'bash_exact' });
+  });
+
+  it('첫 실사용 규칙(rebelro)은 통과한다', () => {
+    expect(validateToolRule('Bash(kubectl --context udc-main-admin@udc-main -n rebelro-cluster exec:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
+    expect(validateToolRule('Bash(gh pr view -R rebellions-sw/udc-k8s:*)')).toMatchObject({ ok: true, warnings: [] });
+  });
+
+  it('임의 명령을 돌릴 수 있는 도구는 runs_arbitrary 경고(n5)', () => {
+    for (const r of ['Bash(find . -name x -exec rm:*)', 'Bash(awk -f prog.awk:*)', 'Bash(uv run pytest:*)', 'Bash(make -C build all:*)', 'Bash(git -c core.sshCommand=x fetch)']) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings.includes('runs_arbitrary'), r).toBe(true);
+    }
+  });
+
   it('MCP 도구 하나는 받는다 — harkroom MCP 는 아니다', () => {
     expect(validateToolRule('mcp__slack__read_thread')).toMatchObject({ ok: true, kind: 'mcp_tool' });
     expect(validateToolRule('mcp__harkroom__grant_delegate')).toEqual({ ok: false, code: 'unsupported_tool' });
@@ -55,6 +72,31 @@ describe('validateToolRule — 거절', () => {
     ['Bash(gh pr merge 12)', 'merge_bypass'],
     ['Bash(gh -R a/b pr merge:*)', 'merge_bypass'],
     ['Bash(gh api -X PUT repos/a/b/pulls/1/merge)', 'merge_bypass'],
+    // security F1 — 규칙 하나에 여러 개 끼워 넣기
+    ['Bash(git status), Bash, Bash(x:*)', 'bad_chars'],
+    ['Bash(git status,Bash)', 'bad_chars'],
+    // security F2 — 따옴표·역슬래시로 감춘 머리, 버전 붙은 인터프리터, 감싸 돌리는 것
+    ['Bash("sh" -c x:*)', 'bad_chars'],
+    ["Bash('sh' -c x:*)", 'bad_chars'],
+    ['Bash(\\sh -c x:*)', 'bad_chars'],
+    ['Bash(python3.12 -c x:*)', 'interpreter'],
+    ['Bash(node22 -e x:*)', 'interpreter'],
+    ['Bash(caffeinate -i sh:*)', 'interpreter'],
+    ['Bash(kubectl get pods {a,b})', 'bad_chars'],
+    ['Bash(cat ~/.ssh/id_ed25519)', 'bad_chars'],
+    // security F3 — gh 로 머지 deny 를 옆으로 돌기
+    ['Bash(gh api:*)', 'gh_api_write'],
+    ['Bash(gh api repos/o/r/pulls/1/merge:*)', 'merge_bypass'],
+    ['Bash(gh api -XPUT repos/o/r:*)', 'gh_api_write'],
+    ['Bash(gh api -XPUT repos/o/r/pulls/1)', 'gh_api_write'],
+    ['Bash(gh api --method=PUT repos/o/r/pulls/1)', 'gh_api_write'],
+    ['Bash(gh api repos/o/r/issues -f title=x)', 'gh_api_write'],
+    ['Bash(gh api graphql:*)', 'gh_api_write'],
+    ['Bash(gh api graphql)', 'gh_api_write'],
+    ['Bash(gh -R o/r pr:*)', 'too_broad'],
+    ['Bash(gh -R o/r pr merge 1)', 'merge_bypass'],
+    ['Bash(gh pr:*)', 'too_broad'],
+    ['Bash(gh alias set pv pr:*)', 'merge_bypass'],
   ])('%s → %s', (rule, code) => {
     expect(validateToolRule(rule)).toEqual({ ok: false, code });
   });

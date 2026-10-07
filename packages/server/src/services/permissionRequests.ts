@@ -75,6 +75,8 @@ const RULE_REFUSAL_MESSAGE: Record<ToolRuleRefusal, string> = {
   interpreter: 'a shell, interpreter or command runner as the first word would allow anything',
   operator_wrapper: 'the harkroom-operator wrapper is opened by the runner itself',
   merge_bypass: 'merging goes through the merge wrapper — request kind "merge" with the repository instead',
+  bad_chars: 'rule may only use letters, digits, spaces and _ . / @ = : + % - — no quotes, backslashes, brackets or commas',
+  gh_api_write: '`gh api` is granted only as one exact read call — no prefix rule, -X/--method, -f/-F/--input or graphql',
 };
 
 export async function openPermissionRequest(
@@ -152,7 +154,7 @@ export async function openPermissionRequest(
         requestId: id, agentId: args.agentId, ownerAccountId: agent.ownerAccountId, kind: args.kind,
         target: args.kind === 'merge' ? target.slice('repo:'.length) : target,
         channelId: args.kind === 'tool' ? args.channelId : null,
-        warnings, deployRepo, reason: args.reason, requestedAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
+        warnings, deployRepo, reason: oneLineReason(args.reason), requestedAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
       },
     },
   };
@@ -160,11 +162,20 @@ export async function openPermissionRequest(
 
 /** 카드 본문(옛 앱이 meta 를 모를 때 읽는 글). 권한 칸은 서버 값뿐이고, 에이전트가 쓴 것은 이유 한 줄이다. */
 export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: string): string {
+  // n1(jaebin 10-07): 규칙은 그 채널의 **모든** 턴(위임·예약 깨우기로 뜬 턴 포함)에 붙는다 — 카드가 그렇게 말해야 한다.
   const what = meta.kind === 'tool'
-    ? `명령 허용 \`${meta.target}\` — 이 채널에서만`
+    ? `명령 허용 \`${meta.target}\` — 이 채널의 모든 대화에서`
     : `머지 권한 \`${meta.target}\``;
   const warn = meta.warnings.length ? `\n⚠ ${meta.warnings.join(', ')}` : '';
-  return `권한 요청 · ${agentHandle}\n${what} · 승인하면 7일\n이유: ${meta.reason}${warn}`;
+  return `권한 요청 · ${agentHandle}\n${what} · 승인하면 7일${warn}\n이유: ${oneLineReason(meta.reason)}`;
+}
+
+/**
+ * 에이전트가 쓴 이유는 한 줄로 납작하게 하고 백틱·마크다운 머리를 지운다(security n2) — 줄바꿈과 백틱으로 위의 서버 줄
+ * (「명령 허용 `…`」)을 흉내 내지 못하게. 서버 줄보다 아래, 맨 끝에 둔다.
+ */
+export function oneLineReason(reason: string): string {
+  return reason.replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/[`*_#>|[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
 export function permissionCardOptions(): { id: string; label: string }[] {

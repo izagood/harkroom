@@ -13,9 +13,9 @@
 
 export type ToolRuleRefusal =
   | 'empty' | 'too_long' | 'unsupported_tool' | 'wildcard' | 'too_broad' | 'shell_syntax'
-  | 'dangerous_flag' | 'interpreter' | 'operator_wrapper' | 'merge_bypass';
+  | 'dangerous_flag' | 'interpreter' | 'operator_wrapper' | 'merge_bypass' | 'bad_chars' | 'gh_api_write';
 
-export type ToolRuleWarning = 'executes_in_workload' | 'mutates_remote' | 'short_prefix';
+export type ToolRuleWarning = 'executes_in_workload' | 'mutates_remote' | 'runs_arbitrary' | 'short_prefix';
 
 export type ToolRuleVerdict =
   | { ok: true; rule: string; kind: 'bash_prefix' | 'bash_exact' | 'mcp_tool'; warnings: ToolRuleWarning[] }
@@ -28,7 +28,62 @@ const INTERPRETERS = new Set([
   'sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'csh', 'tcsh', 'env', 'sudo', 'su', 'doas', 'xargs', 'eval', 'exec',
   'command', 'builtin', 'nohup', 'time', 'timeout', 'nice', 'watch', 'script', 'osascript', 'open',
   'python', 'python3', 'node', 'deno', 'bun', 'ruby', 'perl', 'php', 'lua', 'npx', 'pnpx', 'bunx', 'uvx',
+  // security F2: 남의 명령을 감싸 돌리는 것들.
+  'caffeinate', 'stdbuf', 'unbuffer', 'chroot', 'setsid', 'flock', 'busybox', 'strace', 'ltrace', 'gdb', 'lldb', 'expect',
+  'ionice', 'taskset', 'pkexec', 'runuser', 'systemd-run', 'launchctl', 'arch', 'chronic', 'doppler', 'op',
 ]);
+
+/** 규칙 본문에 허락하는 글자. 쉼표는 없다 — `--allowedTools` 가 쉼표로 규칙을 가를 수 있다(F1). */
+const BODY_CHARS = /^[A-Za-z0-9 _./@=:+%-]+$/;
+
+/** 버전이 붙은 인터프리터(`python3.12`·`node22`·`pwsh7`)와 셸(F2). */
+const INTERPRETER_VERSIONED = /^(python|node|ruby|perl|php|lua|luajit|pwsh|powershell|bash|zsh|ksh|tclsh|wish|irb|jshell|R|Rscript)[\d.]*$/i;
+
+/** gh 하위 명령의 고정 낱말(옵션과 그 값을 건너뛴 것). */
+function positionals(words: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 1; i < words.length; i++) {
+    const w = words[i]!;
+    if (w.startsWith('-')) {
+      if (!w.includes('=') && /^-[A-Za-z]$|^--[a-z-]+$/.test(w) && i + 1 < words.length && !words[i + 1]!.startsWith('-')) i++;
+      continue;
+    }
+    out.push(w);
+  }
+  return out;
+}
+
+/**
+ * gh 는 머지 deny(`gh pr merge:*` 접두)를 옆으로 도는 길이 많다(security F3) — `gh -R o/r pr merge`, `gh api …/merge -X PUT`,
+ * `gh api graphql`(mergePullRequest), `-XPUT` 붙여 쓰기. 그래서 gh 는 따로 좁게 본다:
+ * - `merge` 낱말은 어디에 있든 거절. `alias`·`extension` 도(머지를 다른 이름으로 감쌀 수 있다).
+ * - `gh api` 는 접두 규칙을 받지 않고, 정확 규칙도 메서드·필드·입력·graphql 이 있으면 거절(읽기 GET 한 줄만).
+ * - 그 밖의 gh 접두 규칙은 하위 명령 **두 단계**(`gh pr view`)를 고정해야 받는다.
+ */
+function checkGh(words: readonly string[], prefix: boolean): ToolRuleRefusal | null {
+  if (words.some((w) => /merge/i.test(w))) return 'merge_bypass';
+  const pos = positionals(words);
+  if (pos[0] === 'alias' || pos[0] === 'extension' || pos[0] === 'ext') return 'merge_bypass';
+  if (pos[0] === 'api') {
+    if (prefix) return 'gh_api_write';
+    const writes = words.some((w) => /^(-X|--method)/.test(w) || /^-[fF]/.test(w) || /^--(field|raw-field|input)/.test(w))
+      || pos.some((w) => w.toLowerCase() === 'graphql');
+    return writes ? 'gh_api_write' : null;
+  }
+  if (prefix && pos.length < 2) return 'too_broad';
+  return null;
+}
+
+/** 경고(n5): 인자로 임의 명령을 돌릴 수 있는 도구 — 받되 카드에 띠를 단다. */
+function runsArbitrary(head: string, sub: string | null, words: readonly string[]): boolean {
+  if (['awk', 'gawk', 'sed', 'make', 'just', 'ssh', 'tmux', 'screen', 'rsync', 'parallel'].includes(head)) return true;
+  if (head === 'find' && words.some((w) => /^-(exec|execdir|ok|okdir)$/.test(w))) return true;
+  if (head === 'find') return true; // 접두 규칙이면 뒤에 -exec 를 붙일 수 있다
+  if (head === 'git' && words.includes('-c')) return true;
+  if (['uv', 'npm', 'pnpm', 'yarn', 'cargo', 'go', 'poetry', 'pipenv', 'bundle', 'mvn', 'gradle'].includes(head)
+    && (sub === 'run' || sub === 'exec' || sub === 'x' || sub === 'dlx' || sub === 'test' || sub === 'install')) return true;
+  return false;
+}
 
 /** 셸 문법 — 이 글자가 있으면 규칙 하나가 명령 둘을 덮거나 claude 의 조각 판정과 어긋난다. */
 const SHELL_SYNTAX = /[;&|`<>\n\r]|\$\(|\$\{/;
@@ -91,20 +146,25 @@ export function validateToolRule(input: string): ToolRuleVerdict {
   if (!body || body === '*') return { ok: false, code: 'too_broad' };
   if (body.includes('*')) return { ok: false, code: 'wildcard' };
   if (SHELL_SYNTAX.test(body)) return { ok: false, code: 'shell_syntax' };
+  // 글자 허용 목록(security F1·F2) — 괄호·쉼표(규칙 여럿 끼워 넣기), 따옴표·역슬래시(`"sh"`·`\sh` 로 머리 숨기기),
+  // `{}`·`!`·`~`·`$`·`?`·`[]` 은 정상 규칙에 쓸 일이 없다. 막는 쪽이 판정보다 단단하다.
+  if (!BODY_CHARS.test(body)) return { ok: false, code: 'bad_chars' };
 
   const words = body.split(/\s+/);
   const head = words[0]!.split('/').pop()!.toLowerCase();
-  if (INTERPRETERS.has(head)) return { ok: false, code: 'interpreter' };
+  if (INTERPRETERS.has(head) || INTERPRETER_VERSIONED.test(head)) return { ok: false, code: 'interpreter' };
   if (/harkroom-operator/i.test(body)) return { ok: false, code: 'operator_wrapper' };
   const sub = subcommandOf(words);
-  // 머지는 래퍼로만 간다(turn.ts MERGE_DENY_RULES) — allow 로 그 deny 를 흐리는 요청은 받지 않는다.
-  if (head === 'gh' && sub === 'pr' && words.includes('merge')) return { ok: false, code: 'merge_bypass' };
-  if (head === 'gh' && sub === 'api' && /(^|\s)(-X|--method)(\s+|=)PUT\b/i.test(body)) return { ok: false, code: 'merge_bypass' };
   if (prefix && words.length < 2) return { ok: false, code: 'too_broad' };
+  if (head === 'gh') {
+    const gh = checkGh(words, prefix);
+    if (gh) return { ok: false, code: gh };
+  }
 
   const warnings: ToolRuleWarning[] = [];
   if (hits(EXEC_SUBCOMMANDS, head, sub)) warnings.push('executes_in_workload');
   if (hits(MUTATE_SUBCOMMANDS, head, sub)) warnings.push('mutates_remote');
+  if (runsArbitrary(head, sub, words)) warnings.push('runs_arbitrary');
   if (prefix && words.length < 3) warnings.push('short_prefix');
   const normalized = `Bash(${words.join(' ')}${prefix ? ':*' : ''})`;
   return { ok: true, rule: normalized, kind: prefix ? 'bash_prefix' : 'bash_exact', warnings };
