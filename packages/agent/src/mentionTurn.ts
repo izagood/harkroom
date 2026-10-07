@@ -672,6 +672,29 @@ function warnOnDuplicatePosts(key: string, postCount: number): void {
  * @param stateDir 워크스페이스 **밖**의 러너 상태 디렉터리
  * @param workspaceDir 에이전트 워크스페이스 — 여기에는 링크만 들어간다
  */
+/**
+ * 턴을 띄우기 전에 작업 폴더의 Claude Code 설정 파일을 지운다(권한 요청 스레드 f61af808, security R2). 권한은 서버 grant → argv
+ * 로만 들어와야 한다 — 에이전트가 지난 턴에 Bash 로 `.claude/settings*.json` 을 써 두면 그 allow 가 다음 턴부터 산다(러너가
+ * 작업 폴더를 신뢰로 표시하므로 claude 가 읽는다). Edit deny 는 Edit/Write 만 막으므로 남는 길을 여기서 끊는다.
+ * `--setting-sources user` 로 아예 안 읽게 하는 길은 쓰지 않는다 — 실측 2026-10-07(claude 2.1.292): 그러면 작업 폴더
+ * `.claude/skills`(승인된 워크스페이스 스킬, `syncSkills`)도 안 보인다. 러너가 이 자리에 settings 를 쓰는 곳은 없다.
+ */
+export async function scrubWorkspaceSettings(workspaceDir: string): Promise<string[]> {
+  const removed: string[] = [];
+  for (const name of ['settings.json', 'settings.local.json']) {
+    const path = join(workspaceDir, '.claude', name);
+    try {
+      await lstat(path);
+    } catch {
+      continue;
+    }
+    await rm(path, { force: true });
+    removed.push(path);
+    console.warn(`[mentionTurn] 작업 폴더의 ${name} 을 지웠다 — 권한은 서버 승인으로만 들어온다: ${path}`);
+  }
+  return removed;
+}
+
 export async function syncSkills(
   stateDir: string,
   workspaceDir: string,
@@ -1010,6 +1033,7 @@ export async function runMentionTurn(
   // 하네스는 아직 없는 스킬 디렉터리를 읽고, 스킬은 항상 한 턴 늦게 붙는다.
   // 실패는 syncSkills 안에서 삼키고 stderr 로 남긴다 — 그래서 턴은 그대로 진행한다.
   await syncSkills(deps.stateDir, rec.workspaceDir, () => deps.harkroom.listApprovedSkills());
+  if (def.harness === 'claude-code') await scrubWorkspaceSettings(rec.workspaceDir);
 
   // **프롬프트가 하네스에 닿는 길은 하네스마다 다르다(2026-09-08 실행 모델 교체).**
   //

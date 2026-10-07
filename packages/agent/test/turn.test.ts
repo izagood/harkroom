@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { GRANT_DELEGATE_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, buildTurnCommand, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { GRANT_DELEGATE_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -921,8 +921,15 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
 
   it('auto 멘션 턴에는 deny 4개가 항상 붙는다 — grant 가 없어도', () => {
     const args = buildTurnCommand({ ...common, mode: 'mention' }).args;
-    expect(after(args, '--disallowedTools')).toEqual([...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES]);
+    expect(after(args, '--disallowedTools')).toEqual([...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(common.claudeConfigDir ?? null)]);
     expect(args).not.toContain('--allowedTools');
+  });
+
+  it('계정 config 의 settings.json 도 절대 경로로 막는다 — 풀의 모든 에이전트가 쓰는 파일(security R2)', () => {
+    const deny = after(buildTurnCommand({ ...common, mode: 'mention', claudeConfigDir: '/Users/x/.harkroom-agent/claude-accounts/work/acct-1' }).args, '--disallowedTools');
+    expect(deny).toEqual(expect.arrayContaining(['Edit(//Users/x/.harkroom-agent/claude-accounts/work/acct-1/settings.json)']));
+    const sys = after(buildTurnCommand({ ...common, mode: 'mention', claudeConfigDir: null }).args, '--disallowedTools');
+    expect(sys).toEqual(expect.arrayContaining(['Edit(~/.claude/settings.json)']));
   });
 
   it('작업 폴더의 Claude Code 설정을 스스로 고치는 Edit 는 auto 턴마다 막힌다(권한 요청 f61af808)', () => {
@@ -939,7 +946,7 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     const args = buildTurnCommand({ ...common, mode: 'mention', toolAllows: [...ok, ...bad] }).args;
     expect(after(args, '--allowedTools')).toEqual(ok);
     // deny 는 그대로 앞서 있다 — 승인 규칙이 머지·설정 deny 를 지우지 않는다.
-    expect(after(args, '--disallowedTools')).toEqual([...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES]);
+    expect(after(args, '--disallowedTools')).toEqual([...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(common.claudeConfigDir ?? null)]);
     // 읽기 전용 턴에는 붙지 않는다.
     expect(buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', toolAllows: ok }).args).not.toContain('--allowedTools');
   });
