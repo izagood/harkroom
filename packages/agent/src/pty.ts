@@ -200,8 +200,16 @@ export function sanitizePasteText(text: string): string {
 }
 
 /** 그 자체로 지운다(태그·ZWJ·FE0F 는 이모지 시퀀스 안이면 남긴다 — 아래 함수). */
-const INVISIBLE_DROP = /^[\u00ad\u200b\u200c\u200e\u200f\u2060-\u2069\ufeff]$/u;
+/**
+ * 그 자체로 지운다. 두 묶음이다 — claude 가 Enter 를 삼킨 실측 집합과, 보이지 않게 글을 숨기는 데
+ * 쓰이는 글자(security #1246 n1): bidi 덮어쓰기 202A–202E·061C(Trojan Source), 몽골 모음 구분
+ * 180E, 한글 채움 3164·115F·1160·FFA0, 행간 주석 FFF9–FFFB, 변이 선택자 FE00–FE0D·E0100–E01EF.
+ * FE0E·FE0F 는 그림 글자 뒤에서만 남긴다(아래).
+ */
+const INVISIBLE_DROP = /^[\u00ad\u061c\u115f\u1160\u180e\u200b\u200c\u200e\u200f\u202a-\u202e\u2060-\u2069\u3164\ufe00-\ufe0d\ufeff\uffa0\ufff9-\ufffb\u{e0100}-\u{e01ef}]$/u;
 const TAG_CHAR = /^[\u{e0000}-\u{e007f}]$/u;
+/** 🏴 뒤의 지역 부호(ISO 3166-2, 예: gbeng) + 끝 태그. 앞에서부터만 맞춘다. */
+const FLAG_TAGS = /^[\u{e0061}-\u{e007a}]{2}[\u{e0030}-\u{e0039}\u{e0061}-\u{e007a}]{1,4}\u{e007f}/u;
 const PICTO = /^\p{Extended_Pictographic}$/u;
 const SKIN_TONE = /^[\u{1f3fb}-\u{1f3ff}]$/u;
 
@@ -221,22 +229,23 @@ const SKIN_TONE = /^[\u{1f3fb}-\u{1f3ff}]$/u;
  */
 export function stripInvisibleChars(text: string): string {
   // 빠른 길: 대상 글자가 하나도 없으면 그대로 돌려준다(대부분의 프롬프트).
-  if (!/[\u00ad\u200b-\u200f\u2028\u2029\u2060-\u2069\ufe0f\ufeff\u{e0000}-\u{e007f}]/u.test(text)) return text;
+  if (!/[\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u202a-\u202e\u2028\u2029\u2060-\u2069\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff9-\ufffb\u{e0000}-\u{e007f}\u{e0100}-\u{e01ef}]/u.test(text)) return text;
   const cps = Array.from(text);
   const out: string[] = [];
   const prevKept = (): string => out[out.length - 1] ?? '';
   for (let i = 0; i < cps.length; i += 1) {
     const c = cps[i]!;
     if (c === '\u{1f3f4}') {
-      // 🏴 + 태그(E0020–E007E)들 + 끝 태그(E007F) — 지역 깃발. 통째로 남긴다.
-      let j = i + 1;
-      while (j < cps.length && /^[\u{e0020}-\u{e007e}]$/u.test(cps[j]!)) j += 1;
-      if (j > i + 1 && cps[j] === '\u{e007f}') { out.push(...cps.slice(i, j + 1)); i = j; continue; }
+      // 🏴 + 지역 부호(태그 소문자 2 + 태그 소문자·숫자 1–4) + 끝 태그(E007F) — 지역 깃발만 남긴다.
+      // 길이·글자를 묶는 이유: 태그 글자는 ASCII 를 안 보이게 나르는 수단이라, 🏴 뒤에 아무 태그나
+      // 길게 허용하면 깃발 모양으로 숨긴 지시가 그대로 지나간다(security #1246 F1).
+      const m = FLAG_TAGS.exec(cps.slice(i + 1, i + 8).join(''));
+      if (m) { const n = Array.from(m[0]).length; out.push(c, ...cps.slice(i + 1, i + 1 + n)); i += n; continue; }
       out.push(c); continue;
     }
     if (c === '\u2028' || c === '\u2029') { out.push('\n'); continue; }
     if (INVISIBLE_DROP.test(c) || TAG_CHAR.test(c)) continue;
-    if (c === '\ufe0f') {
+    if (c === '\ufe0f' || c === '\ufe0e') {
       const p = prevKept();
       if (PICTO.test(p) || /^[#*0-9]$/.test(p)) out.push(c);
       continue;
