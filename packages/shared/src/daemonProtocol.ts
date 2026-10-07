@@ -763,6 +763,8 @@ export function readOperatorMcpSetPayload(payload: unknown): { name: string; def
         clientSecret = o.clientSecret === '' ? null : o.clientSecret;
       }
       const clientId = typeof o.clientId === 'string' ? o.clientId.trim() : '';
+      // secret 은 clientId 에 묶어 저장한다(security F1, #1243) — clientId 없는 secret 은 받지 않는다.
+      if (typeof clientSecret === 'string' && !clientId) return daemonError('bad-payload', 'oauth.clientSecret 은 oauth.clientId 와 함께만 넣는다');
       def.oauth = { ...(clientId ? { clientId } : {}), ...(o.callbackPort ? { callbackPort: o.callbackPort as number } : {}) };
     }
     return { name, definition: def, ...(clientSecret !== undefined ? { clientSecret } : {}) };

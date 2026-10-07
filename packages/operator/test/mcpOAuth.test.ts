@@ -384,19 +384,59 @@ describe('전용 클라이언트로 갈아타기(2026-10-07, 전용 Slack 앱)',
   });
 
   it('secret 이 있으면 교환·refresh 에 싣는다 — 인증 뒤에 넣어도 다음 refresh 부터. 비밀 파일은 0600, 로그에 값이 없다', async () => {
-    await oauth.setClientSecret('slack', 'S-one');
-    expect(await oauth.hasClientSecret('slack')).toBe(true);
+    await oauth.setClientSecret('slack', 'CONF', 'S-one');
+    expect(await oauth.hasClientSecret('slack', 'CONF')).toBe(true);
+    expect(await oauth.hasClientSecret('slack', 'OTHER')).toBe(false);
     await authedWith('CONF');
-    await oauth.setClientSecret('slack', 'S-two');
+    await oauth.setClientSecret('slack', 'CONF', 'S-two');
     clock += 3600_000;
     await oauth.refreshDue();
     expect(fake.secretsSeen).toEqual(['authorization_code:CONF:S-one', 'refresh_token:CONF:S-two']);
     const path = join(dir, 'secrets', 'mcp-oauth-clients.json');
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     expect(logs.join('\n')).not.toMatch(/S-one|S-two/);
-    await oauth.setClientSecret('slack', null);
+    await oauth.setClientSecret('slack', null, null);
     expect(await oauth.hasClientSecret('slack')).toBe(false);
     expect(await oauth.hasClientSecret('constructor')).toBe(false);
+  });
+
+  it('secret 은 clientId 에 묶인다 — 다른 clientId 로는 교환에도 refresh 에도 싣지 않는다(security F1)', async () => {
+    await oauth.setClientSecret('slack', 'NEW', 'S-new');
+    // 아직 옛 클라이언트로 든 토큰의 refresh 에 새 앱 secret 이 실리지 않는다.
+    await authedWith('OLD');
+    clock += 3600_000;
+    await oauth.refreshDue();
+    // 다른 clientId 로 시작해도 싣지 않는다.
+    await authedWith('THIRD');
+    expect(fake.secretsSeen).toEqual(['authorization_code:OLD:-', 'refresh_token:OLD:-', 'authorization_code:THIRD:-']);
+    await expect(oauth.setClientSecret('slack', null, 'S')).rejects.toThrow(/clientId 와 함께만/);
+  });
+
+  it('정의의 clientId 가 바뀌면 1분 refresh·거절 보고가 옛 토큰을 돌리지 않는다(security F2)', async () => {
+    let current: string | undefined = 'OLD';
+    oauth.close();
+    oauth = createMcpOAuth({
+      storePath: join(dir, 'secrets', 'mcp-oauth.json'), now: () => clock, log: (l) => logs.push(l),
+      currentClientId: async () => current,
+    });
+    await authedWith('OLD');
+    current = 'NEW';
+    clock += 3600_000;
+    const before = fake.calls.refresh;
+    expect(await oauth.refreshDue()).toEqual({});
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: clock + 1, agentId: 'a' })).toEqual({ action: 'ignored', reason: 'client_changed' });
+    expect(fake.calls.refresh).toBe(before);
+    // 정의가 다시 같아지면 평소대로 돈다.
+    current = 'OLD';
+    expect(await oauth.refreshDue()).toEqual({ slack: { url: fake.mcpUrl, accessToken: 'A2' } });
+  });
+
+  it('client secret 파일이 깨져도 오류 문구에 내용이 섞이지 않는다(security n1)', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(join(dir, 'secrets'), { recursive: true });
+    await writeFile(join(dir, 'secrets', 'mcp-oauth-clients.json'), 'S-leaky-prefix{');
+    await expect(oauth.hasClientSecret('slack')).rejects.toThrow('client secret 파일을 읽지 못했다(형식이 깨졌다)');
+    await expect(oauth.hasClientSecret('slack')).rejects.not.toThrow(/S-leaky/);
   });
 
   it('refresh 토큰이 끝나면(Slack PKCE 앱은 30일) expired — 다시 인증 필요가 보이고 로그에 이유가 남는다', async () => {
