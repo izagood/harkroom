@@ -24,7 +24,7 @@
  *   못한다 — 그 사이는 상한을 잠깐 넘을 수 있다. 막기보다 덜 위험한 쪽(일이 멈추지 않는 쪽)을 골랐다.
  * - 값이 없거나 0 이면 상한이 없다(지금까지와 같다).
  */
-import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
+import type { RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 
 export const TURN_SLOTS_PATH = '/agent/turn-slots';
 export const TURN_SLOTS_RELEASE_PATH = '/agent/turn-slots/release';
@@ -50,7 +50,7 @@ export function parseMaxTurns(raw: string | undefined, log: (line: string) => vo
 
 export interface TurnSlots {
   /** 이 요청이 자리 요청이면 답을 만든다. 아니면 null(다음 처리자로 넘긴다). */
-  maybeHandle(runnerId: string, req: RunnerLinkRequest, from: 'relay' | 'bridge'): RunnerLinkResponse | null;
+  maybeHandle(runnerId: string, req: RunnerLinkRequest, from: RunnerLinkKind): RunnerLinkResponse | null;
   /** 러너가 죽었다 — 그 러너의 자리를 돌려받는다. */
   releaseRunner(runnerId: string): void;
   /** 지금 쥔 자리 수(상태 표시·시험용). */

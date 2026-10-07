@@ -62,7 +62,7 @@ describe('turnCommand', () => {
     expect(digests[0]).not.toHaveProperty('preview'); // --kubeconfig 자리(secret)가 먼저 나와 같은 파일 하나 — 비밀 자리는 미리 보기 없음
   });
 
-  it('파일을 못 재면 서버로 넘기지 않고 거절을 돌려준다 · 파일 없는 명령은 헤더 없이 넘긴다', async () => {
+  it('파일을 못 재면 서버로 넘기지 않고 거절을 돌려준다 · 판정에 걸리는 명령은 재지 않고 헤더 없이 넘긴다(서버가 거절 코드로 답한다)', async () => {
     const forwarded: RunnerLinkRequest[] = [];
     const tc = createTurnCommand({ forward: async (_a, req) => { forwarded.push(req); return { type: 'mcp.response', id: req.id, messages: [] }; }, lookupLease: () => lease, log: () => {} });
     const bad = await tc.maybeHandle('r', 'agent-1', call('permission.request', { kind: 'command', command: 'kubectl --kubeconfig /nope/k --context rc get pods' }));
