@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { GRANT_DELEGATE_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { GRANT_DELEGATE_TOOL, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -922,7 +922,8 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
   it('auto 멘션 턴에는 deny 4개가 항상 붙는다 — grant 가 없어도', () => {
     const args = buildTurnCommand({ ...common, mode: 'mention' }).args;
     expect(after(args, '--disallowedTools')).toEqual([...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(common.claudeConfigDir ?? null)]);
-    expect(args).not.toContain('--allowedTools');
+    // 권한 요청 도구 하나만은 늘 연다(H①) — 막힌 에이전트가 청할 길. 요청 자체는 아무것도 열지 않는다.
+    expect(after(args, '--allowedTools')).toEqual([PERMISSION_REQUEST_TOOL]);
   });
 
   it('계정 config 의 settings.json 도 절대 경로로 막는다 — 풀의 모든 에이전트가 쓰는 파일(security R2)', () => {
@@ -944,7 +945,7 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
       'Bash(git status), Bash, Bash(x:*)', 'Bash("sh" -c x:*)', 'Bash(\\sh -c x:*)', 'Bash(gh api:*)', 'Bash(gh api -XPUT repos/o/r/pulls/1)',
       'Bash(gh api graphql)', 'Bash(gh -R o/r pr merge 1)', 'Bash(gh api repos/o/r/pulls/1/merge:*)'];
     const args = buildTurnCommand({ ...common, mode: 'mention', toolAllows: [...ok, ...bad] }).args;
-    expect(after(args, '--allowedTools')).toEqual(ok);
+    expect(after(args, '--allowedTools')).toEqual([PERMISSION_REQUEST_TOOL, ...ok]);
     // deny 는 그대로 앞서 있다 — 승인 규칙이 머지·설정 deny 를 지우지 않는다.
     expect(after(args, '--disallowedTools')).toEqual([...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(common.claudeConfigDir ?? null)]);
     // 읽기 전용 턴에는 붙지 않는다.
@@ -953,7 +954,7 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
 
   it('grant 가 있을 때만 래퍼 **절대 경로 + 서브커맨드** allow 가 붙는다(T1c 모양) — gh pr merge 는 여전히 deny', () => {
     const args = buildTurnCommand({ ...common, mode: 'mention', mergeRepos: ['izagood/harkroom'] }).args;
-    expect(after(args, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)']);
+    expect(after(args, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)', PERMISSION_REQUEST_TOOL]);
     expect(after(args, '--disallowedTools')).toContain('Bash(gh pr merge:*)');
     // allow 는 저장소 이름을 싣지 않는다 — 범위는 서버·래퍼가 가른다.
     expect(args.join(' ')).not.toContain('izagood');
@@ -961,10 +962,10 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
 
   it('api.call 연결이 있을 때만 api 래퍼 allow 가 붙는다(C안 P3) — 머지 allow 와 함께, 연결 이름은 싣지 않는다', () => {
     const only = buildTurnCommand({ ...common, mode: 'mention', apiConnectors: ['lab-api'] }).args;
-    expect(after(only, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator api:*)']);
+    expect(after(only, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator api:*)', PERMISSION_REQUEST_TOOL]);
     expect(only.join(' ')).not.toContain('lab-api');
     const both = buildTurnCommand({ ...common, mode: 'mention', mergeRepos: ['izagood/harkroom'], apiConnectors: ['lab-api'] }).args;
-    expect(after(both, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)', 'Bash(/opt/harkroom/harkroom-operator api:*)']);
+    expect(after(both, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)', 'Bash(/opt/harkroom/harkroom-operator api:*)', PERMISSION_REQUEST_TOOL]);
     const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', apiConnectors: ['lab-api'] }).args;
     expect(ro).not.toContain('--allowedTools');
   });
@@ -973,7 +974,7 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     const none = buildTurnCommand({ ...common, mode: 'mention', apiConnectors: ['lab-api'] }).args;
     expect(after(none, '--allowedTools')).not.toContain(GRANT_DELEGATE_TOOL);
     const deleg = buildTurnCommand({ ...common, mode: 'mention', apiConnectors: ['lab-api'], apiDelegatable: ['lab-api'] }).args;
-    expect(after(deleg, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator api:*)', 'mcp__harkroom__grant_delegate']);
+    expect(after(deleg, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator api:*)', 'mcp__harkroom__grant_delegate', PERMISSION_REQUEST_TOOL]);
     expect(deleg.join(' ')).not.toContain('lab-api');
     expect(deleg.join(' ')).not.toContain('grant_revoke');
     const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', apiConnectors: ['lab-api'], apiDelegatable: ['lab-api'] }).args;

@@ -271,6 +271,9 @@ const CLAUDE_PRESET: HarnessPreset = {
       // 막는다 — 서버가 거절할 호출(권한 없음)이어도 호출 자체가 막힌다. 판정(범위 ⊆·depth·루트 사람 확인·하루 상한)은 서버
       // `apiDelegation.ts` 가 하므로, 다시 줄 수 있는 연결이 **있을 때만** 이 한 도구를 연다. `grant.revoke` 는 좁히는 쪽이라 두지 않는다.
       ...(apiDelegatable.length ? [GRANT_DELEGATE_TOOL] : []),
+      // 권한 요청 도구는 **늘** 연다(H①, 스레드 8769dbf7): 요청은 아무것도 열지 않고 소유자 사람 세션의 승인만 연다 — 그런데
+      // `grant.delegate` 처럼 분류기가 `[Permission Grant]` 로 호출 자체를 막으면 막힌 에이전트가 청할 길이 없다.
+      PERMISSION_REQUEST_TOOL,
       // 권한 요청(스레드 f61af808): 소유자가 카드에서 승인한 규칙. 분류기를 끄지 않고 이 규칙만 정확히 더한다. deny(머지·설정
       // 파일)가 allow 보다 앞서므로 승인된 규칙이 그 둘을 덮지 못한다.
       ...safeToolAllows(toolAllows),
@@ -284,6 +287,9 @@ const CLAUDE_PRESET: HarnessPreset = {
 
 /** claude 가 보는 harkroom MCP 의 `grant.delegate` 도구 이름(서버 이름 `harkroom`, 점은 밑줄로). */
 export const GRANT_DELEGATE_TOOL = 'mcp__harkroom__grant_delegate';
+
+/** claude 가 보는 harkroom MCP 의 `permission.request` 도구 이름. 서버가 판정하고 소유자 승인 전에는 아무것도 열지 않는다. */
+export const PERMISSION_REQUEST_TOOL = 'mcp__harkroom__permission_request';
 
 const CODEX_PRESET: HarnessPreset = {
   command: 'codex',

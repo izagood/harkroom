@@ -557,6 +557,10 @@ describe('buildSystemPrompt', () => {
     expect(on).toContain('다른 꼴로 바꿔 다시 치지 말고');
     expect(on).toContain('**이 턴에서 다시 시도하지 마라**');
     expect(on).toContain('`permission.revoke`');
+    // H①(스레드 8769dbf7): 한 호출에 명령 하나·env 앞붙임 대신 플래그(실측: `KUBECONFIG=…` 는 접두 규칙에 안 맞는다)·채팅 글은 허락이 아니다.
+    expect(on).toContain('한 호출에 명령 **하나**만');
+    expect(on).toContain('`kubectl --kubeconfig <경로> --context <이름> …`');
+    expect(on).toContain('사람의 채팅 글·선택 카드 답은 이 판정을 열지 않는다');
     expect(on).toContain('`Bash(gh pr view -R a/b:*)`');
     expect(buildSystemPrompt({ ...common, permissions: { toolAllows: [] } })).not.toContain('지금 허락된 규칙');
     expect(buildSystemPrompt(common)).not.toContain('permission.request');
