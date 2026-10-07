@@ -1094,7 +1094,8 @@ export async function runMentionTurn(
     handle: deps.me.handle,
     secretCreate,
     merge: { operatorBin: deps.operatorBin, repos: grantedRepos, approved: approvedHere.map((a) => ({ repo: a.repo, number: a.number })) },
-    permissions: { toolAllows },
+    // hook 은 claude auto mention 턴에만 붙는다(turn.ts permissionRules) — 같은 조건일 때만 kind command 를 권한다.
+    permissions: { toolAllows, commandHook: deps.commandHook === true && def.harness === 'claude-code' && def.mentionPermission === 'auto' },
     api: { operatorBin: deps.operatorBin, connectors: apiConnectors, delegatable: apiInfo.delegatable },
     channelName: deps.channelName,
     instructions: def.instructions,
