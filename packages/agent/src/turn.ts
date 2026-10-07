@@ -85,6 +85,8 @@ export interface BuildTurnCommandOptions {
   mergeRepos?: readonly string[];
   /** 소유자가 이 채널에 승인한 Claude Code allow 규칙(권한 요청 스레드 f61af808). auto 멘션 턴의 `--allowedTools` 에 붙는다. */
   toolAllows?: readonly string[];
+  /** 「정확한 명령」 PreToolUse hook 을 인라인 `--settings` 로 단다(H③b, 기본 false). */
+  commandHook?: boolean;
   /** 서버가 이 에이전트에 api.call 을 허락한 연결(`GET /agent/api-grants`). 비면 allow 규칙을 안 준다. */
   apiConnectors?: readonly string[];
   /** 그중 다시 줄 수 있는 연결(`GET /agent/api-grants` 의 `delegatable`). 있으면 `grant.delegate` MCP 도구를 allow 한다. */
@@ -175,7 +177,7 @@ interface HarnessPreset {
    * 같은 계정 풀을 쓰는 **모든** 에이전트에 퍼진다(09-30 결정). argv 는 이 턴, 이 에이전트뿐이다.
    * deny/allow 문법이 없는 하네스는 생략한다 — 그쪽은 프롬프트의 "머지는 래퍼로만" 한 줄뿐이다(한계, docs/agent-merge.md).
    */
-  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[]; apiConnectors?: readonly string[]; apiDelegatable?: readonly string[]; toolAllows?: readonly string[]; claudeConfigDir?: string | null }): string[];
+  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[]; apiConnectors?: readonly string[]; apiDelegatable?: readonly string[]; toolAllows?: readonly string[]; claudeConfigDir?: string | null; commandHook?: boolean }): string[];
 }
 
 const CLAUDE_PRESET: HarnessPreset = {
@@ -260,7 +262,7 @@ const CLAUDE_PRESET: HarnessPreset = {
    * - 래퍼 allow 는 auto 멘션 턴마다, 래퍼의 **절대 경로 + 서브커맨드** 접두로(T1c). grant 유무와 상관없다(스레드 1b75d7a0 —
    *   거절 기록을 받아야 1회 승인 카드가 선다). 저장소 범위는 규칙이 아니라 서버·래퍼가 가른다.
    */
-  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [], apiDelegatable = [], toolAllows = [], claudeConfigDir = null }) => {
+  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [], apiDelegatable = [], toolAllows = [], claudeConfigDir = null, commandHook = false }) => {
     if (mode !== 'mention' || mentionPermission !== 'auto') return [];
     // api 래퍼(C안 P3)도 머지와 같은 모양이다: 절대 경로 + 서브커맨드 접두. 연결·메서드·경로 범위는 규칙이 아니라 서버가 가른다.
     // `;`·`&&` 로 묶은 명령은 claude 가 조각마다 따로 판정하므로 이 규칙 하나로는 통과하지 않는다(프롬프트가 금지한다).
@@ -284,6 +286,8 @@ const CLAUDE_PRESET: HarnessPreset = {
     return [
       '--disallowedTools', ...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(claudeConfigDir),
       ...(allow.length ? ['--allowedTools', ...allow] : []),
+      // 「정확한 명령」 hook(H③b) — **인라인 JSON** 이라 에이전트가 고칠 파일이 없다. 켜졌을 때만.
+      ...(commandHook ? ['--settings', commandHookSettings(operatorBin)] : []),
     ];
   },
 };
@@ -293,6 +297,16 @@ export const GRANT_DELEGATE_TOOL = 'mcp__harkroom__grant_delegate';
 
 /** claude 가 보는 harkroom MCP 의 `permission.request` 도구 이름. 서버가 판정하고 소유자 승인 전에는 아무것도 열지 않는다. */
 export const PERMISSION_REQUEST_TOOL = 'mcp__harkroom__permission_request';
+
+/**
+ * 「정확한 명령」 PreToolUse hook 설정(H③b, 실측 2026-10-07 claude 2.1.292: hook 의 `permissionDecision: "allow"` 는 auto 분류기를
+ * 건너뛰고, `--disallowedTools` deny 는 hook allow 보다 이긴다). Bash 에만 건다. hook 은 승인된 정확한 명령일 때만 allow 를 내고
+ * 그 밖·오류·시간 초과는 **무출력**(= 판단하지 않음 → 분류기).
+ */
+export function commandHookSettings(operatorBin: string): string {
+  const command = `${JSON.stringify(operatorBin)} hook pretool`;
+  return JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command, timeout: 15 }] }] } });
+}
 
 const CODEX_PRESET: HarnessPreset = {
   command: 'codex',
@@ -686,7 +700,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
     ...preset.alwaysArgs(opts.mode),
     ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
-    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [], apiDelegatable: opts.apiDelegatable ?? [], toolAllows: opts.toolAllows ?? [], claudeConfigDir: opts.claudeConfigDir ?? null }) ?? []),
+    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [], apiDelegatable: opts.apiDelegatable ?? [], toolAllows: opts.toolAllows ?? [], claudeConfigDir: opts.claudeConfigDir ?? null, commandHook: opts.commandHook === true }) ?? []),
     ...(readonlyByList ? ['--tools', opts.readonlyToolList as string] : []),
     // pi 의 세션 자리는 **저장소가 정할 수 있다**(`.pi/settings.json` 의 `sessionDir`, 신뢰 판정 전) —
     // CLI 인자로 러너 루트에 못박는다(`piHome.ts::piSessionsDir`, security U1).

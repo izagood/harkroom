@@ -123,6 +123,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     socketPath: deps.socketPath,
     ...(deps.turnSecretsDir ? { turnSecretsDir: deps.turnSecretsDir } : {}),
     operatorBin: deps.operatorBin,
+    commandHook: async () => (await readConfig(configPath)).commandHook === true,
     operatorOwnerId: () => community.current?.ownerAccountId() ?? Promise.resolve(null),
     async mcpConfig(definition) {
       const definitions = await readLocalMcpDefinitions({

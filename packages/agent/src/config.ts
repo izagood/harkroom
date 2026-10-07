@@ -48,6 +48,8 @@ export interface RunnerConfig {
   operatorLink: { socketPath: string; runnerId: string; secret: string };
   /** `harkroom-operator` 실행 파일 — codex 의 `-c mcp_servers.harkroom.*` 에 `mcp-bridge` 명령으로 굽는다. */
   operatorBin: string;
+  /** 「정확한 명령」 PreToolUse hook 을 claude 멘션 턴에 다는가(H③b, 기본 false). */
+  commandHook: boolean;
   /**
    * 오퍼레이터가 spawn 전에 써 둔 하네스 MCP 설정 파일(스펙 2026-09-20 §6). harkroom 브릿지·avcs·
    * 에이전트의 mcpServers 가 합쳐져 있다. 러너는 만들지 않고 이 경로를 그대로 쓴다.
@@ -101,6 +103,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
   return {
     operatorLink: operatorLink(env),
     operatorBin: required(env, 'HARKROOM_OPERATOR_BIN'),
+    // 「정확한 명령」 hook(H③b) — 오퍼레이터가 `operator.json` 의 commandHook 로 켤 때만 '1'. 기본 꺼짐.
+    commandHook: env.HARKROOM_COMMAND_HOOK === '1',
     mcpConfigPath: required(env, 'HARKROOM_MCP_CONFIG'),
     // 서버의 inbox.poll 상한은 25초다.
     pollTimeoutMs: Number(env.AGENT_POLL_TIMEOUT_MS ?? 25_000),

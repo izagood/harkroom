@@ -258,6 +258,8 @@ export interface MentionTurnDeps {
   claudePool?: string | null;
   /** `harkroom-operator` 실행 파일 — 하네스의 harkroom MCP(`mcp-bridge`) 명령(스펙 2026-09-20 §5). */
   operatorBin: string;
+  /** 「정확한 명령」 hook(H③b). 오퍼레이터 설정이 켰을 때만 true. */
+  commandHook?: boolean;
   /**
    * 러너의 링크 secret. 하네스가 env 를 화면에 찍으면 이 값이 tail 에 들어온다 — 옛 PAT 이
    * 그랬듯 대화로 새면 안 된다(`harnessTailNotice` 가 가린다). 이 값으로 할 수 있는 것은 이
@@ -1192,6 +1194,7 @@ export async function runMentionTurn(
     operatorBin: deps.operatorBin,
     mergeRepos,
     toolAllows,
+    commandHook: deps.commandHook === true,
     apiConnectors,
     apiDelegatable: apiInfo.delegatable,
     codexHome: deps.codexHome,

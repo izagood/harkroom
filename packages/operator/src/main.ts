@@ -24,6 +24,7 @@ import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge } from './mcpBridge.js';
 import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
+import { decideHook, HOOK_STDIN_MAX, HOOK_TIMEOUT_MS, readStdinCapped } from './hookCli.js';
 import { API_TOOL, parseApiArgs } from './turnApi.js';
 import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
@@ -105,7 +106,7 @@ async function mergeMain(argv: string[]): Promise<void> {
 /**
  * 브릿지와 같은 소켓·같은 자격으로 `tools/call` 한 줄을 보내고 답 한 줄을 받는다(머지·api 래퍼 공용 꼴).
  */
-async function callOperatorTool(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; text: string } | { ok: false; notInTurn: true }> {
+async function callOperatorTool(name: string, args: Record<string, unknown>, kind: 'bridge' | 'hook' = 'bridge'): Promise<{ ok: boolean; text: string } | { ok: false; notInTurn: true }> {
   const socketPath = process.env[RUNNER_LINK_ENV.socketPath];
   const runnerId = process.env[RUNNER_LINK_ENV.runnerId];
   const secret = process.env[RUNNER_LINK_ENV.secret];
@@ -130,7 +131,7 @@ async function callOperatorTool(name: string, args: Record<string, unknown>): Pr
       stdin.end();
     });
   });
-  const bridge = runMcpBridge({ socketPath, runnerId, secret, cause, cwd: process.cwd() }, { stdin, stdout, stderr: process.stderr });
+  const bridge = runMcpBridge({ socketPath, runnerId, secret, cause, cwd: process.cwd(), kind }, { stdin, stdout, stderr: process.stderr });
   stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })}\n`);
   const r = await done;
   await bridge;
@@ -162,6 +163,26 @@ async function apiMain(argv: string[]): Promise<void> {
 }
 
 /**
+ * `harkroom-operator hook pretool` — claude 의 PreToolUse hook(H③b, 스레드 8769dbf7). 러너가 `operator.json` 의 commandHook 이 켜졌을 때만
+ * 인라인 `--settings` 로 단다. **fail-closed 는 무출력이다**: 출력이 없으면 claude 는 판단하지 않은 것으로 보고 평소대로 auto 분류기가
+ * 판정한다. 그래서 allow 를 낼 때만 stdout 에 쓰고, 그 밖(Bash 아님·판정에 걸림·턴 밖·오퍼레이터 무응답·시간 초과·오류)은 아무것도
+ * 쓰지 않고 0 으로 끝낸다. deny 는 내지 않는다. 판정은 오퍼레이터(`turnCommand.ts` command.check)가 hook 소켓에서만 한다.
+ */
+async function hookMain(event: string): Promise<void> {
+  const quiet = () => process.exit(0);
+  if (event !== 'pretool') return quiet();
+  const timer = setTimeout(quiet, HOOK_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    const raw = await readStdinCapped(process.stdin, HOOK_STDIN_MAX);
+    const decision = await decideHook(raw, (name, args) => callOperatorTool(name, args, 'hook'));
+    if (decision) process.stdout.write(`${JSON.stringify(decision)}\n`);
+  } catch { /* 무출력 */ }
+  clearTimeout(timer);
+  process.exit(0);
+}
+
+/**
  * 서브커맨드 분기(`cli.ts`). 앱이 띄우면 `--socket …` 인자가 그대로 오고(`daemon`), 사람이나
  * launchd/systemd 가 띄우면 `run` 이다 — 둘 다 같은 `daemonMain` 으로 들어간다. 차이는 인자를
  * 누가 조립했는가뿐이다.
@@ -177,6 +198,9 @@ async function main(): Promise<void> {
       return;
     case 'api':
       await apiMain(cmd.argv);
+      return;
+    case 'hook':
+      await hookMain(cmd.event);
       return;
     case 'register': {
       const dataDir = resolveDataDir(process.env.HARKROOM_DATA_DIR);
