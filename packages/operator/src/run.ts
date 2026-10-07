@@ -46,6 +46,7 @@ import type { CommunityInstance } from './community.js';
 import { createTurnSecrets } from './turnSecrets.js';
 import { readConfig } from './config.js';
 import { createTurnMerge, defaultExec, ghEnv, GH_PATH } from './turnMerge.js';
+import { createTurnCommand, stripLinkOnlyFields } from './turnCommand.js';
 import { createTurnApi } from './turnApi.js';
 import { createTurnSlots, MAX_TURNS_ENV, parseMaxTurns } from './turnSlots.js';
 import { collectStatus, readMachineDigest } from './heartbeat.js';
@@ -240,6 +241,17 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     lookupLease: (runnerId, cause) => turnSecrets.lookup(runnerId, cause),
     log,
   });
+  // 「정확한 명령」 승인(H③b) — 권한 요청의 파일 해시 재기와 PreToolUse hook 의 대조(`turnCommand.ts`). 임대는 머지와 같이 `turnSecrets` 것.
+  const turnCommand = createTurnCommand({
+    forward: async (agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      return c ? c.forward(agentId, req) : (req.type === 'mcp.request'
+        ? { type: 'mcp.error', id: req.id, status: 0, message: '이 에이전트를 아는 커뮤니티가 없다' }
+        : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' });
+    },
+    lookupLease: (runnerId, cause) => turnSecrets.lookup(runnerId, cause),
+    log,
+  });
   // 턴 파일 올리기(미리보기 PR ③). 브릿지의 `attachment.upload{path}` 를 여기서 받아 워크스페이스 안의 파일을
   // 서버 `/uploads` 로 올린다 — 모델이 바이너리를 base64 로 쓰지 않게(`turnUploads.ts`).
   const turnUploads = createTurnUploads({
@@ -264,7 +276,11 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     },
     // 러너의 MCP·REST 요청 — 그 에이전트를 아는 커뮤니티의 서버로 나른다(스펙 §5). 인증은
     // 그 커뮤니티의 오퍼레이터 토큰 + 에이전트 id 로 바뀐다.
-    onRequest: async (runnerId, agentId, req, kind) => {
+    onRequest: async (runnerId, agentId, rawReq, kind) => {
+      // 오퍼레이터만 쓰는 칸(commandFiles)은 링크에서 들어온 것을 믿지 않는다 — 무엇보다 먼저 지운다(H③b, security 사전 2).
+      const req = stripLinkOnlyFields(rawReq);
+      const commanded = await turnCommand.maybeHandle(runnerId, agentId, req);
+      if (commanded) return commanded;
       const slot = turnSlots.maybeHandle(runnerId, req, kind);
       if (slot) return slot;
       const mounted = await turnSecrets.maybeHandle(runnerId, agentId, req);

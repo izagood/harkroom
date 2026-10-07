@@ -119,7 +119,14 @@ export type RunnerLinkRequest =
    * `cwd` — 브릿지 프로세스의 작업 디렉터리(= 하네스가 띄운 턴 워크스페이스, claude 실측 2026-10-02).
    * 오퍼레이터의 `attachment.upload` 가 경로를 이 아래로만 받는 데 쓴다. 옛 브릿지·러너 코어는 싣지 않는다.
    */
-  | { type: 'mcp.request'; id: string; payload: unknown; cause?: string; cwd?: string }
+  | {
+    type: 'mcp.request'; id: string; payload: unknown; cause?: string; cwd?: string;
+    /**
+     * **오퍼레이터 안에서만 쓰는 칸**(H③b): 오퍼레이터가 잰 「정확한 명령」 파일 해시(base64 JSON `CommandFileDigest[]`). forwarder 가
+     * `COMMAND_FILES_HEADER` 로 옮긴다. 링크(러너·브릿지)에서 들어온 값은 오퍼레이터가 받자마자 지운다(`turnCommand.stripLinkOnlyFields`).
+     */
+    commandFiles?: string;
+  }
   /** `bodyBase64` — 이진 본문(multipart 업로드). 있으면 `body` 대신 이것을 바이트로 풀어 보낸다. */
   | { type: 'http.forward'; id: string; method: string; path: string; body?: string; bodyBase64?: string; contentType?: string };
 
