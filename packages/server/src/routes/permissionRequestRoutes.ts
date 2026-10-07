@@ -6,6 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { readLease } from '../services/mergeGrants.js';
 import { commandGrantsFor, decidePermissionRequest, matchCommandGrant, toolAllowsFor } from '../services/permissionRequests.js';
 
 const params = z.object({ id: z.string().uuid(), requestId: z.string().uuid(), decision: z.enum(['approve', 'deny', 'approve-once', 'approve_once', 'approve_hour']) });
@@ -60,15 +61,28 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
     return { grants: await commandGrantsFor(pool, req.account!.id, q.data.channelId, q.data.threadRootId) };
   });
 
-  const matchBody = threadQuery.extend({ command: z.string().min(1).max(2000), toolUseId: z.string().max(200).optional() });
+  // match 는 채널·스레드를 **받지 않는다** — 턴 임대(leaseId·token, 러너가 relay 로 오퍼레이터에 맡긴 것)에서 서버가 읽는다.
+  // 그래서 이 턴의 스레드에 승인된 것만 열리고, 다른 스레드의 grant 를 이름으로 끌어다 쓸 수 없다. 임대가 이 에이전트·이
+  // 오퍼레이터의 것이 아니거나 끝났·만료면 열지 않는다(allow:false — hook 은 무출력으로 분류기에 넘긴다).
+  const matchBody = z.object({
+    leaseId: z.string().uuid(), token: z.string().min(1).max(200),
+    command: z.string().min(1).max(2000), toolUseId: z.string().max(200).optional(),
+  });
   app.post<{ Body: unknown }>('/agent/command-grants/match', { preHandler: app.requireAccount }, async (req, reply) => {
     if (req.account!.kind !== 'agent' || !req.operator) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'only an agent through its operator can do this' } });
     }
     const b = matchBody.safeParse(req.body ?? {});
-    if (!b.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'channelId, threadRootId (uuids) and command are required' } });
+    if (!b.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId, token and command are required' } });
     void reply.header('cache-control', 'no-store');
-    return matchCommandGrant(pool, { agentId: req.account!.id, ...b.data });
+    const lease = await readLease(pool, { leaseId: b.data.leaseId, token: b.data.token, now: new Date() });
+    if (!lease || lease.agentId !== req.account!.id || lease.operatorId !== req.operator.id || lease.expired || lease.ended) {
+      return { allow: false, reason: 'lease_invalid' };
+    }
+    return matchCommandGrant(pool, {
+      agentId: req.account!.id, channelId: lease.channelId, threadRootId: lease.threadRootId,
+      command: b.data.command, toolUseId: b.data.toolUseId ?? null,
+    });
   });
 }
 

@@ -35,8 +35,20 @@ describe('permission.request kind=command → once/hour → command-grants', () 
   const answer = (token: string, cardId: string, optionId: string) =>
     app.inject({ method: 'POST', url: `/channels/${ch}/messages/${cardId}/ask-answer`, headers: auth(token), payload: { optionId } });
   const asAgent = (id = agentId) => ({ ...auth(op.token), 'x-harkroom-agent': id });
-  const match = (thread: string, command: string, id = agentId) =>
-    app.inject({ method: 'POST', url: '/agent/command-grants/match', headers: asAgent(id), payload: { channelId: ch, threadRootId: thread, command, toolUseId: 'toolu_1' } });
+  // hook 이 쓰는 길: 그 스레드의 턴 임대로만 묻는다(채널·스레드는 서버가 임대에서 읽는다).
+  const leases = new Map<string, { id: string; token: string }>();
+  const leaseFor = async (thread: string, id = agentId) => {
+    const key = `${id}:${thread}`;
+    if (!leases.has(key)) {
+      await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [id, thread]);
+      leases.set(key, (await app.inject({ method: 'POST', url: '/agent/turn-leases', headers: asAgent(id), payload: { causeMessageId: thread } })).json().lease);
+    }
+    return leases.get(key)!;
+  };
+  const match = async (thread: string, command: string, id = agentId) => {
+    const l = await leaseFor(thread, id);
+    return app.inject({ method: 'POST', url: '/agent/command-grants/match', headers: asAgent(id), payload: { leaseId: l.id, token: l.token, command, toolUseId: 'toolu_1' } });
+  };
 
   beforeAll(async () => {
     db = await startTestDb(); pool = db.pool;
@@ -85,6 +97,9 @@ describe('permission.request kind=command → once/hour → command-grants', () 
     // 소유자가 아닌 사람·admin·에이전트는 못 연다.
     for (const t of [bob.token, admin.token, agentPat]) expect((await answer(t, r.cardMessageId, 'approve_once')).statusCode).toBe(403);
     expect((await match(thread, PATCH)).json()).toEqual({ allow: false });
+    // 남의 임대(다른 에이전트의 것)를 꽂으면 열지 않는다.
+    const otherLease = await leaseFor(thread, otherAgentId);
+    expect((await app.inject({ method: 'POST', url: '/agent/command-grants/match', headers: asAgent(), payload: { leaseId: otherLease.id, token: otherLease.token, command: PATCH } })).json()).toEqual({ allow: false, reason: 'lease_invalid' });
 
     expect((await answer(alice.token, r.cardMessageId, 'approve_once')).statusCode).toBe(200);
     const meta = (await pool.query(`select meta from message where id = $1`, [r.cardMessageId])).rows[0].meta;
@@ -151,7 +166,7 @@ describe('permission.request kind=command → once/hour → command-grants', () 
     const thread = await root();
     for (const headers of [auth(agentPat), auth(alice.token)]) {
       expect((await app.inject({ method: 'GET', url: `/agent/command-grants?channelId=${ch}&threadRootId=${thread}`, headers })).statusCode).toBe(403);
-      expect((await app.inject({ method: 'POST', url: '/agent/command-grants/match', headers, payload: { channelId: ch, threadRootId: thread, command: PATCH } })).statusCode).toBe(403);
+      expect((await app.inject({ method: 'POST', url: '/agent/command-grants/match', headers, payload: { leaseId: '00000000-0000-4000-8000-000000000000', token: 'x', command: PATCH } })).statusCode).toBe(403);
     }
   });
 });
