@@ -733,6 +733,48 @@ function buildMcpServer(
   });
 
   /**
+   * 권한 요청 줄을 열고 소유자 앞 권한 카드를 세운다 — `permission.request` 와 머지 거절 카드(P4, `message.ask` 의 `mergeDenialId`)가
+   * 함께 쓴다. 카드는 일반 ask 꼴이라 데스크톱·모바일·웹 어디서든 [승인하고 다시 시도]가 눌린다(ask-answer → decideFromCard).
+   */
+  const raisePermission = async (
+    { kind, rule, repo, reason, channelId, threadRootId, model }:
+      { kind: 'tool' | 'merge'; rule?: string; repo?: string; reason: string; channelId: string; threadRootId: string; model?: string },
+  ) => {
+    const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, reason, channelId, threadRootId });
+    if (!opened.ok) return jsonResult({ error: opened.refusal });
+    if ('alreadyGranted' in opened) {
+      return jsonResult({ alreadyGranted: true, expiresAt: opened.alreadyGranted.expiresAt, message: 'already granted — it applies from the next turn in this channel' });
+    }
+    if ('existing' in opened) {
+      return jsonResult({ requestId: opened.existing.requestId, cardMessageId: opened.existing.cardMessageId, pending: true, message: 'the same request is already waiting for the owner in this thread' });
+    }
+    const { requestId, meta: permissionRequest } = opened.created;
+    const meta: AskMeta & Partial<ModelMeta> & { permissionRequest: typeof permissionRequest } = {
+      kind: 'ask', ask: { options: permissionCardOptions(), to: { kind: 'human' }, prompt: '권한을 줄까?' },
+      permissionRequest,
+      ...(await reportedModelMeta(pool, account.id, model, threadRootId)),
+    };
+    const posted = await postMessage(pool, {
+      causeMessageId: cause,
+      channelId, authorId: account.id, body: permissionCardBody(permissionRequest, `@${account.handle}`), threadRootId,
+      meta: meta as unknown as Record<string, unknown>,
+    });
+    if (posted.failure) return postFailureResult(posted.failure);
+    const { message, notified, replayed } = posted;
+    // replayed 여도 잇는다(security) — 앞 시도가 글만 세우고 잇기 전에 끊겼으면 카드가 요청 없이 남아 누르면 404 가 된다.
+    await linkPermissionCard(pool, requestId, message.id);
+    if (!replayed) {
+      emitPosted(posted, await audienceFor(pool, channelId));
+      for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+      // 받는 사람은 소유자 하나다 — 그 사람만 승인할 수 있다.
+      if (permissionRequest.ownerAccountId && !notified.includes(permissionRequest.ownerAccountId)) {
+        await enqueueAskPush(pool, permissionRequest.ownerAccountId, message.id);
+      }
+    }
+    return jsonResult({ requestId, cardMessageId: message.id, pending: true, expiresAt: permissionRequest.expiresAt });
+  };
+
+  /**
    * 선택 요청 — 갈림길에서 선택지를 내놓는다. 고르면 그 즉시 진행되므로 사람이 다시
    * 타이핑하지 않는다(디자인 문서 규칙 05: 답할 자리가 말 옆에 있다).
    *
@@ -815,6 +857,18 @@ function buildMcpServer(
       }
       const prepared = await prepareDenialCard(pool, { agentId: account.id, denialId: mergeDenialId, channelId, threadRootId: threadRootId ?? null });
       if (!prepared.ok) return jsonResult({ error: { code: prepared.code, message: DENIAL_CARD_REFUSAL_MESSAGE[prepared.code] } });
+      /*
+        P4(스레드 f61af808, 10-07): 머지 거절 카드를 **권한 카드로 세운다**. 옛 카드의 [7일 주기]는 데스크톱만 그려서(모바일은
+        meta.mergeDenial 을 모른다) jaebin 이 폰에서 「다시 머지」만 누르고 권한은 못 줬다. 권한 카드는 일반 ask 꼴이라 어느
+        클라이언트에서든 소유자가 [승인하고 다시 시도]를 누르면 grant(7일)와 새 턴이 함께 된다. 저장소는 거절 기록의 값이다(C3).
+        배포 저장소는 카드로 주지 않으므로(C6) 옛 카드(설정에서만 준다는 안내)로 남긴다.
+      */
+      if (!prepared.meta.deployRepo && threadRootId) {
+        return raisePermission({
+          kind: 'merge', repo: prepared.meta.repo, channelId, threadRootId, model,
+          reason: `PR #${prepared.meta.number} 머지가 권한 없음(not_granted)으로 막혔다 — ${body}`,
+        });
+      }
       if (prepared.existingCardId) {
         await bumpDenialCard(pool, prepared.existingCardId, prepared.meta);
         const existing = await getMessageById(pool, prepared.existingCardId);
@@ -892,38 +946,7 @@ function buildMcpServer(
     if ((kind === 'tool') !== (rule !== undefined) || (kind === 'merge') !== (repo !== undefined)) {
       return jsonResult({ error: { code: 'bad_request', message: 'kind "tool" takes `rule`, kind "merge" takes `repo` — exactly one' } });
     }
-    const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, reason, channelId, threadRootId });
-    if (!opened.ok) return jsonResult({ error: opened.refusal });
-    if ('alreadyGranted' in opened) {
-      return jsonResult({ alreadyGranted: true, expiresAt: opened.alreadyGranted.expiresAt, message: 'already granted — it applies from the next turn in this channel' });
-    }
-    if ('existing' in opened) {
-      return jsonResult({ requestId: opened.existing.requestId, cardMessageId: opened.existing.cardMessageId, pending: true, message: 'the same request is already waiting for the owner in this thread' });
-    }
-    const { requestId, meta: permissionRequest } = opened.created;
-    const meta: AskMeta & Partial<ModelMeta> & { permissionRequest: typeof permissionRequest } = {
-      kind: 'ask', ask: { options: permissionCardOptions(), to: { kind: 'human' }, prompt: '권한을 줄까?' },
-      permissionRequest,
-      ...(await reportedModelMeta(pool, account.id, model, threadRootId)),
-    };
-    const posted = await postMessage(pool, {
-      causeMessageId: cause,
-      channelId, authorId: account.id, body: permissionCardBody(permissionRequest, `@${account.handle}`), threadRootId,
-      meta: meta as unknown as Record<string, unknown>,
-    });
-    if (posted.failure) return postFailureResult(posted.failure);
-    const { message, notified, replayed } = posted;
-    // replayed 여도 잇는다(security) — 앞 시도가 글만 세우고 잇기 전에 끊겼으면 카드가 요청 없이 남아 누르면 404 가 된다.
-    await linkPermissionCard(pool, requestId, message.id);
-    if (!replayed) {
-      emitPosted(posted, await audienceFor(pool, channelId));
-      for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
-      // 받는 사람은 소유자 하나다 — 그 사람만 승인할 수 있다.
-      if (permissionRequest.ownerAccountId && !notified.includes(permissionRequest.ownerAccountId)) {
-        await enqueueAskPush(pool, permissionRequest.ownerAccountId, message.id);
-      }
-    }
-    return jsonResult({ requestId, cardMessageId: message.id, pending: true, expiresAt: permissionRequest.expiresAt });
+    return raisePermission({ kind, rule, repo, reason, channelId, threadRootId, model });
   });
 
   /**
