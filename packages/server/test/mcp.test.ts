@@ -142,7 +142,7 @@ describe('mcp surface', () => {
     expect(names).toEqual([
       'account.list', 'account.me', 'agent.modelOptions', 'artifact.publish', 'attachment.fetch', 'attachment.upload', 'automation.list', 'automation.propose', 'automation.run', 'channel.doc', 'channel.list', 'grant.delegate', 'grant.list', 'grant.revoke', 'inbox.poll', 'inbox.read',
       'memory.archive', 'memory.audit', 'memory.get', 'memory.lease', 'memory.list', 'memory.merge', 'memory.restore', 'memory.revisions', 'memory.search', 'memory.set', 'memory.unarchive',
-      'message.ask', 'message.delegate', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact',
+      'message.ask', 'message.delegate', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact', 'permission.request', 'permission.revoke',
       'secret.generate', 'secret.import', 'secret.list', 'secret.mount', 'secret.rotate', 'skill.propose', 'turn.wake', 'workitem.list', 'workitem.remove', 'workitem.upsert', 'workspace.guide',
     ]);
 

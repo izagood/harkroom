@@ -70,6 +70,7 @@ import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../service
 import type { AgentPresence } from './presence.js';
 import { enqueueAskPush } from '../services/push/pushJobs.js';
 import { bumpDenialCard, DENIAL_CARD_REFUSAL_MESSAGE, linkDenialCard, prepareDenialCard, type MergeDenialMeta } from '../services/mergeDenials.js';
+import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant } from '../services/permissionRequests.js';
 
 /**
  * 발화 도구가 공통으로 받는 `model` — 에이전트가 신고하는 **자기 모델 ID**(#600).
@@ -732,6 +733,48 @@ function buildMcpServer(
   });
 
   /**
+   * 권한 요청 줄을 열고 소유자 앞 권한 카드를 세운다 — `permission.request` 와 머지 거절 카드(P4, `message.ask` 의 `mergeDenialId`)가
+   * 함께 쓴다. 카드는 일반 ask 꼴이라 데스크톱·모바일·웹 어디서든 [승인하고 다시 시도]가 눌린다(ask-answer → decideFromCard).
+   */
+  const raisePermission = async (
+    { kind, rule, repo, reason, channelId, threadRootId, model }:
+      { kind: 'tool' | 'merge'; rule?: string; repo?: string; reason: string; channelId: string; threadRootId: string; model?: string },
+  ) => {
+    const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, reason, channelId, threadRootId });
+    if (!opened.ok) return jsonResult({ error: opened.refusal });
+    if ('alreadyGranted' in opened) {
+      return jsonResult({ alreadyGranted: true, expiresAt: opened.alreadyGranted.expiresAt, message: 'already granted — it applies from the next turn in this channel' });
+    }
+    if ('existing' in opened) {
+      return jsonResult({ requestId: opened.existing.requestId, cardMessageId: opened.existing.cardMessageId, pending: true, message: 'the same request is already waiting for the owner in this thread' });
+    }
+    const { requestId, meta: permissionRequest } = opened.created;
+    const meta: AskMeta & Partial<ModelMeta> & { permissionRequest: typeof permissionRequest } = {
+      kind: 'ask', ask: { options: permissionCardOptions(), to: { kind: 'human' }, prompt: '권한을 줄까?' },
+      permissionRequest,
+      ...(await reportedModelMeta(pool, account.id, model, threadRootId)),
+    };
+    const posted = await postMessage(pool, {
+      causeMessageId: cause,
+      channelId, authorId: account.id, body: permissionCardBody(permissionRequest, `@${account.handle}`), threadRootId,
+      meta: meta as unknown as Record<string, unknown>,
+    });
+    if (posted.failure) return postFailureResult(posted.failure);
+    const { message, notified, replayed } = posted;
+    // replayed 여도 잇는다(security) — 앞 시도가 글만 세우고 잇기 전에 끊겼으면 카드가 요청 없이 남아 누르면 404 가 된다.
+    await linkPermissionCard(pool, requestId, message.id);
+    if (!replayed) {
+      emitPosted(posted, await audienceFor(pool, channelId));
+      for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+      // 받는 사람은 소유자 하나다 — 그 사람만 승인할 수 있다.
+      if (permissionRequest.ownerAccountId && !notified.includes(permissionRequest.ownerAccountId)) {
+        await enqueueAskPush(pool, permissionRequest.ownerAccountId, message.id);
+      }
+    }
+    return jsonResult({ requestId, cardMessageId: message.id, pending: true, expiresAt: permissionRequest.expiresAt });
+  };
+
+  /**
    * 선택 요청 — 갈림길에서 선택지를 내놓는다. 고르면 그 즉시 진행되므로 사람이 다시
    * 타이핑하지 않는다(디자인 문서 규칙 05: 답할 자리가 말 옆에 있다).
    *
@@ -814,6 +857,18 @@ function buildMcpServer(
       }
       const prepared = await prepareDenialCard(pool, { agentId: account.id, denialId: mergeDenialId, channelId, threadRootId: threadRootId ?? null });
       if (!prepared.ok) return jsonResult({ error: { code: prepared.code, message: DENIAL_CARD_REFUSAL_MESSAGE[prepared.code] } });
+      /*
+        P4(스레드 f61af808, 10-07): 머지 거절 카드를 **권한 카드로 세운다**. 옛 카드의 [7일 주기]는 데스크톱만 그려서(모바일은
+        meta.mergeDenial 을 모른다) jaebin 이 폰에서 「다시 머지」만 누르고 권한은 못 줬다. 권한 카드는 일반 ask 꼴이라 어느
+        클라이언트에서든 소유자가 [승인하고 다시 시도]를 누르면 grant(7일)와 새 턴이 함께 된다. 저장소는 거절 기록의 값이다(C3).
+        배포 저장소는 카드로 주지 않으므로(C6) 옛 카드(설정에서만 준다는 안내)로 남긴다.
+      */
+      if (!prepared.meta.deployRepo && threadRootId) {
+        return raisePermission({
+          kind: 'merge', repo: prepared.meta.repo, channelId, threadRootId, model,
+          reason: `PR #${prepared.meta.number} 머지가 권한 없음(not_granted)으로 막혔다 — ${body}`,
+        });
+      }
       if (prepared.existingCardId) {
         await bumpDenialCard(pool, prepared.existingCardId, prepared.meta);
         const existing = await getMessageById(pool, prepared.existingCardId);
@@ -867,6 +922,55 @@ function buildMcpServer(
    * 실패"에 버튼이 생기거나 "고칠 수 있는 실패"의 경로가 사라진다. 둘 다 거짓 신호이므로
    * 보내는 쪽이 반드시 정하게 한다.
    */
+  /**
+   * 권한 요청(111, 스레드 f61af808) — 분류기·래퍼에 막힌 권한 하나를 소유자에게 청한다. **이 도구는 아무것도 열지 않는다** —
+   * 소유자가 카드에서 승인해야(사람 세션 REST) grant 가 생기고, 그 카드 답이 새 턴을 띄운다. 넓은 규칙은 여기서 거절한다
+   * (`validateToolRule`). 카드의 권한 칸은 서버 값뿐이고 에이전트가 쓴 것은 이유 한 줄이다.
+   */
+  server.registerTool('permission.request', {
+    description: '막힌 권한 하나를 소유자에게 청한다(승인돼야 다음 턴부터 적용 — 이 도구로는 열리지 않는다). kind=tool 이면 rule 에 Claude Code allow 규칙 하나(Bash(<고정 낱말 둘 이상> …:*)·Bash(<명령 전체>)·mcp__<서버>__<도구>, 이 채널에서만 적용), kind=merge 면 repo 에 owner/name. 승인하면 7일',
+    inputSchema: {
+      kind: z.enum(['tool', 'merge']),
+      rule: z.string().min(1).max(300).optional(),
+      repo: z.string().min(3).max(201).optional(),
+      reason: z.string().min(1).max(500),
+      channelId: z.string().uuid(),
+      threadRootId: z.string().uuid(),
+      model: MODEL_ARG,
+    },
+  }, async ({ kind, rule, repo, reason, channelId, threadRootId, model }) => {
+    if (account.kind !== 'agent') return jsonResult({ error: { code: 'not_agent', message: 'only an agent can request a permission' } });
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if ((kind === 'tool') !== (rule !== undefined) || (kind === 'merge') !== (repo !== undefined)) {
+      return jsonResult({ error: { code: 'bad_request', message: 'kind "tool" takes `rule`, kind "merge" takes `repo` — exactly one' } });
+    }
+    return raisePermission({ kind, rule, repo, reason, channelId, threadRootId, model });
+  });
+
+  /**
+   * 내 grant 하나를 내려놓는다(권한 요청 스레드 f61af808). 좁히기만 하므로 어느 턴에서나 된다 — 설정 화면이 없는 동안 소유자가
+   * 채팅(모바일 포함)으로 "그 권한 거둬"라고 하면 에이전트가 이것으로 거둔다. 넓히는 길은 `permission.request` 하나뿐이다.
+   */
+  server.registerTool('permission.revoke', {
+    description: '내가 받은 명령 허용(kind=tool, 그 채널의 규칙)이나 머지 권한(kind=merge, owner/name) 하나를 내려놓는다. 다음 턴부터 빠진다',
+    inputSchema: {
+      kind: z.enum(['tool', 'merge']),
+      rule: z.string().min(1).max(300).optional(),
+      repo: z.string().min(3).max(201).optional(),
+      channelId: z.string().uuid(),
+    },
+  }, async ({ kind, rule, repo, channelId }) => {
+    if (account.kind !== 'agent') return jsonResult({ error: { code: 'not_agent', message: 'only an agent can release its own permission' } });
+    if ((kind === 'tool') !== (rule !== undefined) || (kind === 'merge') !== (repo !== undefined)) {
+      return jsonResult({ error: { code: 'bad_request', message: 'kind "tool" takes `rule`, kind "merge" takes `repo` — exactly one' } });
+    }
+    const r = await releaseGrant(pool, { agentId: account.id, kind, rule, repo, channelId });
+    if (!r.ok) return jsonResult({ error: { code: r.code, message: r.message } });
+    return jsonResult({ revoked: true, capability: r.capability, scope: r.scope });
+  });
+
   server.registerTool('message.fail', {
     description: '스스로 못 끝냈음을 알린다(수신자는 언제나 사람). retryable 로 다시 부를 수 있는지 밝힌다',
     inputSchema: {

@@ -1761,7 +1761,7 @@ export async function editMessage(
  */
 export async function recordAskAnswer(
   pool: Pool,
-  args: { messageId: string; actorId: string; optionId: string },
+  args: { messageId: string; actorId: string; optionId: string; viaPermissionDecision?: boolean },
 ): Promise<MessageRow | MutationRefusal | 'already_answered' | 'unknown_option'> {
   const found = await pool.query(
     `select meta from message where id = $1 and deleted_at is null`, [args.messageId],
@@ -1772,6 +1772,12 @@ export async function recordAskAnswer(
   // `readAskMeta` 가 그 판정의 유일한 자리다(shared 에 두어 화면과 같은 판정을 쓴다).
   if (!ask) return 'not_found';
   if (!ask.options.some((o) => o.id === args.optionId)) return 'unknown_option';
+  /*
+    **권한 요청 카드는 ask-answer 로 정하지 않는다**(111, 스레드 f61af808). 그 카드의 선택지는 소유자 사람 세션의
+    `permission-requests/:rid/approve|deny` 가 grant 를 넣은 **뒤에** 적는 결과다 — 여기로 들어오면 소유자가 아닌 사람이
+    grant 없이 "승인"을 적어 에이전트를 깨울 수 있다. 거울로 원본에 적는 길도 같은 이유로 막는다.
+  */
+  if (!args.viaPermissionDecision && (found.rows[0].meta as Record<string, unknown>).permissionRequest) return 'forbidden';
 
   /**
    * 수신자가 정해져 있으면 그 계정만 답할 수 있다. 이것이 없으면 남에게 간 물음을
@@ -1796,6 +1802,7 @@ export async function recordAskAnswer(
    */
   if (ask.mirrorOf) {
     const root = await readAskRow(pool, ask.mirrorOf);
+    if (root && await isPermissionCardMessage(pool, ask.mirrorOf)) return 'forbidden';
     if (root) {
       // 원본은 거울을 만들 때 검사했다(`checkAskMirror`). 여기서 다시 보는 것은 원본에 적는
       // 것이 **이 사람의 이름으로** 적는 일이기 때문이다 — 원본 채널을 못 보는 사람이
@@ -1820,6 +1827,12 @@ export async function recordAskAnswer(
   // 원본이면 거울들도 같은 답으로 닫는다. 거울이 없으면 갱신되는 행이 없을 뿐이다.
   if (!ask.mirrorOf) await syncAskMirrors(pool, args.messageId);
   return row;
+}
+
+/** 권한 요청 카드인가(111) — 거울을 거쳐 원본에 답을 적는 길을 막을 때. */
+export async function isPermissionCardMessage(pool: Pool, messageId: string): Promise<boolean> {
+  const res = await pool.query(`select 1 from message where id = $1 and meta ? 'permissionRequest'`, [messageId]);
+  return (res.rowCount ?? 0) > 0;
 }
 
 /** 계정이 사람인가. 없는 계정은 사람이 아니다(답할 자격을 줄 근거가 없다). */

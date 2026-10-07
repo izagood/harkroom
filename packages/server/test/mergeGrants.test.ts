@@ -480,17 +480,22 @@ describe('repo.merge grant', () => {
         expect((await pool.query(`select count(*)::int as n from message where meta ? 'mergeDenial' and coalesce(thread_root_id, id) = $1`, [thread])).rows[0].n).toBe(0);
       });
 
-      it('카드는 서버 기록으로 칸을 채우고, 같은 날 두 번째 ask 는 merged 로 있던 카드의 횟수만 올린다', async () => {
+      it('P4: 머지 거절 카드는 권한 카드로 선다 — 저장소는 거절 기록 값, 같은 스레드 두 번째 ask 는 있던 요청을 가리킨다', async () => {
         const { cause, body } = await refused('izagood/p4-mcp-b');
         const thread = await threadOf(cause);
         const first = await ask({ threadRootId: thread, mergeDenialId: body.error.denialId! });
         expect(first.error).toBeUndefined();
-        expect(first.message.meta.mergeDenial).toMatchObject({ repo: 'izagood/p4-mcp-b', number: 42, agentId, ownerAccountId: alice.accountId, count: 1 });
+        expect(first).toMatchObject({ pending: true, requestId: expect.any(String), cardMessageId: expect.any(String) });
+        const card = (await pool.query(`select meta from message where id = $1`, [first.cardMessageId])).rows[0].meta;
+        expect(card.permissionRequest).toMatchObject({ kind: 'merge', target: 'izagood/p4-mcp-b', agentId, ownerAccountId: alice.accountId });
+        expect(card.mergeDenial).toBeUndefined();
+        expect(card.ask.options.map((o: { id: string }) => o.id)).toEqual(['approve', 'deny']);
         const second = await ask({ threadRootId: thread, mergeDenialId: body.error.denialId!, body: 'again' });
-        expect(second.merged).toEqual(expect.any(String));
-        expect(second.message.id).toBe(first.message.id);
-        const meta = (await pool.query(`select meta from message where id = $1`, [first.message.id])).rows[0].meta.mergeDenial;
-        expect(meta.count).toBe(2);
+        expect(second).toMatchObject({ pending: true, requestId: first.requestId, cardMessageId: first.cardMessageId });
+        // 소유자가 일반 ask-answer(모바일 경로)로 승인하면 그 저장소 grant 가 생긴다.
+        const res = await app.inject({ method: 'POST', url: `/channels/${ch}/messages/${first.cardMessageId}/ask-answer`, headers: auth(alice.token), payload: { optionId: 'approve' } });
+        expect(res.statusCode).toBe(200);
+        expect(await mergeGrantFor(pool, agentId, 'izagood/p4-mcp-b')).toMatchObject({ grantedBy: alice.accountId });
       });
 
       it('다른 스레드에서 세우면 denial_other_thread', async () => {
