@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import { createForwarder } from '../src/forward.js';
-import { COMMAND_CHECK_TOOL, createTurnCommand, measureCommandFiles, stripLinkOnlyFields } from '../src/turnCommand.js';
+import { COMMAND_CHECK_TOOL, createTurnCommand, looksSecret, measureCommandFiles, stripLinkOnlyFields } from '../src/turnCommand.js';
 
 // H③b(스레드 8769dbf7, security C2·사전 2): 오퍼레이터만 파일을 재고, 링크에서 온 해시 칸은 믿지 않는다.
 const tmp = async () => realpath(await mkdtemp(join(tmpdir(), 'cmdf-')));
@@ -33,6 +33,43 @@ describe('measureCommandFiles (C2)', () => {
     expect(await measureCommandFiles([f(join(d, 'real'))], true)).toMatchObject({ ok: false, code: 'file_not_regular' });
     expect(await measureCommandFiles([f(join(d, 'nope'))], true)).toMatchObject({ ok: false, code: 'file_missing' });
     expect(await measureCommandFiles([f(join(d, 'big'))], true)).toMatchObject({ ok: false, code: 'file_too_large' });
+  });
+});
+
+describe('미리 보기 비밀 거르기 (security F1·n2)', () => {
+  it('비밀 꼴이 있으면 미리 보기를 싣지 않는다 — 경로·크기·해시는 그대로', async () => {
+    const d = await tmp();
+    const cases: Record<string, string> = {
+      'secret.yaml': 'apiVersion: v1\nkind: Secret\nmetadata: {name: x}\ndata:\n  pw: cGFzcw==\n',
+      'sd.yaml': 'apiVersion: v1\nkind: ConfigMap\nstringData:\n  a: b\n',
+      'key.pem': '-----BEGIN RSA PRIVATE KEY-----\nabc\n',
+      'values.yaml': 'db:\n  host: x\n  password: hunter2\n',
+      'p.json': '{"spec":{"token": "abc"}}',
+      'late.yaml': `${'a: 1\n'.repeat(400)}apiKey: zzz\n`,
+    };
+    for (const [n, body] of Object.entries(cases)) await writeFile(join(d, n), body);
+    for (const n of Object.keys(cases)) {
+      const r = await measureCommandFiles([{ path: join(d, n), flag: '-f', secret: false }], true);
+      expect(r.ok, n).toBe(true);
+      expect(r.ok && r.digests[0], n).not.toHaveProperty('preview');
+      expect(r.ok && r.digests[0]!.sha256, n).toMatch(/^[0-9a-f]{64}$/);
+    }
+    expect(looksSecret('apiVersion: apps/v1\nkind: Deployment\nspec: {replicas: 0}\n')).toBe(false);
+  });
+
+  it('미리 보기는 파일당 1KB·합계 3KB(헤더 상한 n2)', async () => {
+    const d = await tmp();
+    const files = [];
+    for (let i = 0; i < 5; i++) {
+      await writeFile(join(d, `m${i}.yaml`), 'x: 1\n'.repeat(600));
+      files.push({ path: join(d, `m${i}.yaml`), flag: '-f', secret: false });
+    }
+    const r = await measureCommandFiles(files, true);
+    expect(r.ok).toBe(true);
+    const lens = r.ok ? r.digests.map((x) => x.preview?.length ?? 0) : [];
+    expect(Math.max(...lens)).toBeLessThanOrEqual(1024);
+    expect(lens.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(3072);
+    expect(lens.filter((n) => n === 0).length).toBeGreaterThan(0);
   });
 });
 

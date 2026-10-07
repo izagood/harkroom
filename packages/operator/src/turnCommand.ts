@@ -21,13 +21,34 @@ import type { MergeLease } from './turnMerge.js';
 
 export const COMMAND_CHECK_TOOL = 'command.check';
 export const COMMAND_FILE_MAX_BYTES = 1024 * 1024;
-const PREVIEW_CHARS = 4096;
+/** 파일당 미리 보기 상한 — 헤더(Node 기본 16KB)에 여러 파일이 실려도 넘지 않게(security n2). */
+const PREVIEW_CHARS = 1024;
+/** 미리 보기 전체 합 상한. 넘치면 뒤 파일은 미리 보기 없이(경로·크기·해시만). */
+const PREVIEW_TOTAL_CHARS = 3072;
+
+/**
+ * 내용에 비밀이 있어 보이면 미리 보기를 싣지 않는다(security F1) — 플래그로 비밀 자리를 가르는 것만으로는 `kubectl apply -f /x/secret.yaml`
+ * 같은 흔한 꼴이 빠진다. 카드 본문·meta 는 채널 멤버 모두에게 영구히 남는다. 오탐은 괜찮다(소유자가 내용을 못 볼 뿐, 해시 고정은 그대로).
+ */
+const SECRET_CONTENT_PATTERNS: readonly RegExp[] = [
+  /kind:\s*["']?Secret\b/i,
+  /\bstringData\s*:/,
+  /-----BEGIN [A-Z ]*PRIVATE KEY/,
+  /(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|credentials?)["']?\s*[:=]/i,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\b(ghp|gho|ghs|github_pat|xox[abpr]|sk-[a-z]*)[-_A-Za-z0-9]{10,}/,
+];
+
+export function looksSecret(text: string): boolean {
+  return SECRET_CONTENT_PATTERNS.some((re) => re.test(text));
+}
 
 export type MeasureResult = { ok: true; digests: CommandFileDigest[] } | { ok: false; code: string; message: string; path?: string };
 
 /** C2 + 해시. `withPreview` 면 비밀 아닌 자리에 앞 4KB(UTF-8 로 읽힌 만큼)를 싣는다 — 요청 카드용. match 에는 싣지 않는다. */
 export async function measureCommandFiles(files: readonly CommandFileArg[], withPreview: boolean): Promise<MeasureResult> {
   const out: CommandFileDigest[] = [];
+  let previewBudget = PREVIEW_TOTAL_CHARS;
   for (const f of files) {
     let real: string;
     try { real = await realpath(f.path); } catch { return { ok: false, code: 'file_missing', message: 'a file this command reads does not exist', path: f.path }; }
@@ -38,7 +59,14 @@ export async function measureCommandFiles(files: readonly CommandFileArg[], with
     const buf = await readFile(f.path);
     if (buf.length > COMMAND_FILE_MAX_BYTES) return { ok: false, code: 'file_too_large', message: `files over ${COMMAND_FILE_MAX_BYTES} bytes cannot be pinned`, path: f.path };
     const d: CommandFileDigest = { path: f.path, sha256: createHash('sha256').update(buf).digest('hex'), size: buf.length };
-    if (withPreview && !f.secret) d.preview = buf.toString('utf8').slice(0, PREVIEW_CHARS);
+    if (withPreview && !f.secret && previewBudget > 0) {
+      const text = buf.toString('utf8');
+      // 파일 **전체**에서 비밀 꼴을 찾는다 — 앞 1KB 만 보면 뒤에 있는 키를 놓치지만, 싣는 것은 앞부분뿐이라 전체가 깨끗할 때만 싣는다.
+      if (!looksSecret(text)) {
+        d.preview = text.slice(0, Math.min(PREVIEW_CHARS, previewBudget));
+        previewBudget -= d.preview.length;
+      }
+    }
     out.push(d);
   }
   return { ok: true, digests: out };
