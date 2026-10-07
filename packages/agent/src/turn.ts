@@ -18,6 +18,7 @@ import {
   type MentionPermission,
 } from '@harkroom/shared';
 import { RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV } from '@harkroom/shared/runnerLink';
+import { validateToolRule } from '@harkroom/shared';
 
 import { executionModelFor, readonlyToolsFor, usesPiHome, usesXdgHome } from './adapters/index.js';
 import { piSessionsDir } from './piHome.js';
@@ -174,7 +175,7 @@ interface HarnessPreset {
    * 같은 계정 풀을 쓰는 **모든** 에이전트에 퍼진다(09-30 결정). argv 는 이 턴, 이 에이전트뿐이다.
    * deny/allow 문법이 없는 하네스는 생략한다 — 그쪽은 프롬프트의 "머지는 래퍼로만" 한 줄뿐이다(한계, docs/agent-merge.md).
    */
-  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[]; apiConnectors?: readonly string[]; apiDelegatable?: readonly string[]; toolAllows?: readonly string[] }): string[];
+  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[]; apiConnectors?: readonly string[]; apiDelegatable?: readonly string[]; toolAllows?: readonly string[]; claudeConfigDir?: string | null }): string[];
 }
 
 const CLAUDE_PRESET: HarnessPreset = {
@@ -259,7 +260,7 @@ const CLAUDE_PRESET: HarnessPreset = {
    * - allow 는 서버가 이 에이전트에 `repo.merge` grant 를 준 저장소가 하나라도 있을 때만, 래퍼의 **절대 경로 +
    *   서브커맨드** 접두로(T1c). 저장소 범위는 규칙이 아니라 서버·래퍼가 가른다.
    */
-  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [], apiDelegatable = [], toolAllows = [] }) => {
+  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [], apiDelegatable = [], toolAllows = [], claudeConfigDir = null }) => {
     if (mode !== 'mention' || mentionPermission !== 'auto') return [];
     // api 래퍼(C안 P3)도 머지와 같은 모양이다: 절대 경로 + 서브커맨드 접두. 연결·메서드·경로 범위는 규칙이 아니라 서버가 가른다.
     // `;`·`&&` 로 묶은 명령은 claude 가 조각마다 따로 판정하므로 이 규칙 하나로는 통과하지 않는다(프롬프트가 금지한다).
@@ -275,7 +276,7 @@ const CLAUDE_PRESET: HarnessPreset = {
       ...safeToolAllows(toolAllows),
     ];
     return [
-      '--disallowedTools', ...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES,
+      '--disallowedTools', ...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(claudeConfigDir),
       ...(allow.length ? ['--allowedTools', ...allow] : []),
     ];
   },
@@ -618,27 +619,25 @@ export const SETTINGS_SELF_EDIT_DENY_RULES: readonly string[] = [
 ];
 
 /**
- * 서버가 준 allow 규칙을 argv 에 넣기 전에 모양을 한 번 더 본다(서버 판정이 정본이고 이것은 마지막 울타리다). 넓은 것·셸 문법·
- * `--dangerously` 는 버린다. 정확한 판정(인터프리터 머리 등)은 서버 `validateToolRule` 이 한다.
+ * 계정 config 의 settings.json(security R2) — `CLAUDE_CONFIG_DIR` 는 그 **풀의 모든 에이전트**가 함께 쓰므로 cwd 기준 규칙으로는
+ * 안 덮인다. 절대 경로는 `//` 로 시작한다(claude 문법). config dir 을 주입하지 않는 턴(시스템 기본)은 `~/.claude`.
+ * Edit 규칙은 Write(새로 만들기)도 막는다 — 실측 2026-10-07(claude 2.1.292, 스레드 f61af808): 같은 프롬프트로 deny 없이는
+ * 「permissions to write … haven't granted」, deny 를 주면 「denied by your permission settings」.
+ */
+export function configSettingsDenyRules(claudeConfigDir: string | null): string[] {
+  if (claudeConfigDir === null) return ['Edit(~/.claude/settings.json)', 'Edit(~/.claude/settings.local.json)'];
+  const abs = claudeConfigDir.replace(/\/+$/, '');
+  return [`Edit(/${abs}/settings.json)`, `Edit(/${abs}/settings.local.json)`];
+}
+
+/**
+ * 서버가 준 allow 규칙을 argv 에 넣기 전에 한 번 더 판정한다(서버 판정이 정본이고 이것은 마지막 울타리다).
  */
 export function safeToolAllows(rules: readonly string[]): string[] {
+  // security R1: 서버와 **같은** 판정(shared `validateToolRule`)을 쓴다 — 정규형 그대로인 것만. 서버 판정을 고치면 러너도 따라온다.
   return rules.filter((r) => {
-    if (r.length > 300 || /--dangerously/i.test(r)) return false;
-    if (/^mcp__[a-z0-9_-]+__[a-z0-9_-]+$/i.test(r)) return !/^mcp__harkroom__/i.test(r);
-    const m = /^Bash\((.+)\)$/.exec(r);
-    if (!m) return false;
-    const prefix = m[1]!.endsWith(':*');
-    const body = (prefix ? m[1]!.slice(0, -2) : m[1]!).trim();
-    // 서버 `validateToolRule` 의 글자 허용 목록과 같다(security F1·F2) — 괄호·쉼표·따옴표·역슬래시·$ 는 argv 에 넣지 않는다.
-    if (!body || !/^[A-Za-z0-9 _./@=:+%-]+$/.test(body)) return false;
-    const words = body.split(/\s+/);
-    if (prefix && words.length < 2) return false;
-    // gh 로 머지 deny 를 옆으로 도는 길(F3): merge 낱말·gh api 접두/쓰기는 러너도 버린다.
-    if (words[0]!.split('/').pop() === 'gh') {
-      if (words.some((w) => /merge/i.test(w))) return false;
-      if (words.includes('api') && (prefix || words.some((w) => /^(-X|--method|-[fF]|--field|--raw-field|--input)/.test(w) || /^graphql$/i.test(w)))) return false;
-    }
-    return true;
+    const v = validateToolRule(r);
+    return v.ok && v.rule === r;
   });
 }
 
@@ -678,7 +677,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
     ...preset.alwaysArgs(opts.mode),
     ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
-    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [], apiDelegatable: opts.apiDelegatable ?? [], toolAllows: opts.toolAllows ?? [] }) ?? []),
+    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [], apiDelegatable: opts.apiDelegatable ?? [], toolAllows: opts.toolAllows ?? [], claudeConfigDir: opts.claudeConfigDir ?? null }) ?? []),
     ...(readonlyByList ? ['--tools', opts.readonlyToolList as string] : []),
     // pi 의 세션 자리는 **저장소가 정할 수 있다**(`.pi/settings.json` 의 `sessionDir`, 신뢰 판정 전) —
     // CLI 인자로 러너 루트에 못박는다(`piHome.ts::piSessionsDir`, security U1).
