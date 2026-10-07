@@ -1033,7 +1033,8 @@ export async function runMentionTurn(
   // 하네스는 아직 없는 스킬 디렉터리를 읽고, 스킬은 항상 한 턴 늦게 붙는다.
   // 실패는 syncSkills 안에서 삼키고 stderr 로 남긴다 — 그래서 턴은 그대로 진행한다.
   await syncSkills(deps.stateDir, rec.workspaceDir, () => deps.harkroom.listApprovedSkills());
-  if (def.harness === 'claude-code') await scrubWorkspaceSettings(rec.workspaceDir);
+  // 하네스를 가리지 않는다 — 다른 하네스는 이 파일을 읽지 않으니 지워도 잃을 것이 없고, 이름 비교 예산(adapterParity)도 지킨다.
+  await scrubWorkspaceSettings(rec.workspaceDir);
 
   // **프롬프트가 하네스에 닿는 길은 하네스마다 다르다(2026-09-08 실행 모델 교체).**
   //
