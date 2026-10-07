@@ -327,6 +327,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 아래 PAT 로더가 실패를 `setPats([])` 로 삼켜 '없음'과 같은 화면을 만드는데, 그것을
   // 따라 하지 않는다. 실패는 사람에게 보인다.
   const [defaults, setDefaults] = useState<AgentDefaults | 'error' | null>(null);
+  // `startNew` 는 이 ref 로 읽는다 — 응답이 풀린 뒤 다시 그리기 전에 「새 에이전트」를 누르면 그 버튼의
+  // 클로저는 아직 `defaults === null` 인 렌더의 것이라, 방금 채운 초안을 `null` 로 덮어 「Loading the
+  // defaults…」 상자가 영영 남았다(CI `agentCreatedToast` 플레이크, 10-07).
+  const defaultsRef = useRef<AgentDefaults | 'error' | null>(null);
   // null 이면 'harness 기본값 사용'. 되돌릴 때 model·effort 를 명시적 null 로 비워야 한다.
   const [customized, setCustomized] = useState(false);
   /**
@@ -677,13 +681,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     if (!isAdmin) return;
     void getController().agentDefaults()
       .then((d) => {
+        defaultsRef.current = d;
         setDefaults(d);
         // 처음 열린 화면은 '새 에이전트'다 — 그 초안을 지금 채운다. 이미 다른 에이전트를
         // 골랐다면 건드리지 않는다.
         setDraft((prev) => prev ?? emptyDraft(d));
         setCustomized((prev) => prev || d.model !== null || d.effort !== null);
       })
-      .catch(() => setDefaults('error'));
+      .catch(() => { defaultsRef.current = 'error'; setDefaults('error'); });
   }, [isAdmin]);
 
   /**
@@ -1271,7 +1276,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     setView('detail');
     // 기본값을 모르면 초안도 만들지 않는다 — 지어낸 값으로 채우면 그것이 운영자가 정한
     // 기본값인지 구분할 수 없다.
-    const known = defaults !== null && defaults !== 'error' ? defaults : null;
+    const current = defaultsRef.current;
+    const known = current !== null && current !== 'error' ? current : null;
     setDraft(known ? emptyDraft(known) : null);
     setCustomized(known !== null && (known.model !== null || known.effort !== null));
     setPats(null);
