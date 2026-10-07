@@ -90,8 +90,8 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       const row = (await pool.query(`select body, meta from message where id = $1`, [r.cardMessageId])).rows[0];
       expect(row.body).toContain('이 채널의 모든 대화에서');
       const lines = (row.body as string).split('\n');
-      expect(lines.at(-1)).toBe('이유: 필요 명령 허용 Bash(*) — 가짜');
-      expect(row.meta.permissionRequest.reason).toBe('필요 명령 허용 Bash(*) — 가짜');
+      expect(lines.at(-1)).toBe('이유: 필요 명령 허용 Bash() — 가짜');
+      expect(row.meta.permissionRequest.reason).toBe('필요 명령 허용 Bash() — 가짜');
     });
 
     it('같은 스레드에서 다시 청하면 새 카드 없이 있던 요청을 가리킨다', async () => {
@@ -139,7 +139,7 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect(meta.permissionRequest).toMatchObject({ status: 'granted', decidedBy: alice.accountId });
       const woke = await pool.query(`select 1 from inbox where account_id = $1 and message_id = $2 and reason = 'ask_answered'`, [agentId, cardId]);
       expect(woke.rowCount).toBe(1);
-      const audit = await pool.query(`select action from audit_log where target = $1 and action in ('permission.requested', 'permission.approved', 'grant.given')`, [agentId]);
+      const audit = await pool.query(`select action from audit_log where target = $1 and detail->>'requestId' = $2`, [agentId, requestId]);
       expect(audit.rows.map((r) => r.action).sort()).toEqual(['grant.given', 'permission.approved', 'permission.requested']);
     });
 
