@@ -17,13 +17,17 @@ import {
   actWorkspaceCleanup, getWorkspaceCleanup, hasOperatorLocalSurface, setWorkspaceCleanupSettings,
   type WorkspaceCleanupView,
 } from '../../lib/operatorLocal';
-import { buildCleanupModel, dueTodayIf, formatBytes, isWarn, nextSweepAt, type ThreadRow } from '../../lib/workspaceCleanupView';
+import { buildCleanupModel, dueTodayIf, formatBytes, isWarn, nextSweepAt, type DeferReason, type ThreadRow } from '../../lib/workspaceCleanupView';
 import { SettingsGroup, SettingsPage, Toggle } from './primitives';
 
 const REASON_KEY: Record<CleanupBlockReason, MessageKey> = {
   uncommitted: 'cleanup.reason.uncommitted',
   unpushed: 'cleanup.reason.unpushed',
   'turn-running': 'cleanup.reason.turnRunning',
+};
+const DEFER_KEY: Record<DeferReason, MessageKey> = {
+  'turn-running': 'cleanup.reason.turnRunning',
+  'runner-off': 'cleanup.reason.runnerOff',
 };
 
 const DAY = 86_400_000;
@@ -63,7 +67,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
     void run(() => actWorkspaceCleanup(path, action, me.id));
   };
 
-  const model = useMemo(() => (typeof view === 'object' ? buildCleanupModel(view.ledger, now) : null), [view, now]);
+  const model = useMemo(() => (typeof view === 'object' ? buildCleanupModel(view.ledger, now, view.live ?? null) : null), [view, now]);
 
   // 스레드 첫 줄 — 줄의 제목. 목록에 보이는 스레드만, 한 번씩 읽는다.
   const [titles, setTitles] = useState<Record<string, string>>({});
@@ -144,7 +148,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
           </button>
           {!kept && (
             <span className={`shrink-0 text-meta ${row.tone === 'warn' ? 'text-warning' : off ? 'text-fg-subtle' : due.today ? 'font-medium text-accent' : 'text-fg-muted'}`} data-testid="cleanup-due">
-              {row.tone === 'warn' ? t('cleanup.stopped') : off ? t('cleanup.offNoDelete') : row.tone === 'deferred' ? t('cleanup.deferred') : due.text}
+              {row.tone === 'warn' ? t('cleanup.stopped') : off ? t('cleanup.offNoDelete') : row.tone === 'deferred' ? t('cleanup.deferred') : row.tone === 'deleting' ? t('cleanup.deleting') : due.text}
             </span>
           )}
           <button className="shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50"
@@ -153,7 +157,15 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
             {t(kept ? 'cleanup.unkeep' : 'cleanup.keep')}
           </button>
         </div>
-        {row.blockReason && (
+        {/* 꺼져 있으면 「미룸」의 이유("다음 정리 때 다시 본다"·"러너가 다시 붙으면 지운다")도 사실이 아니다 — ⚠ 만 남긴다. */}
+        {/* 오른쪽 칸은 짧게 두고(제목이 잘리지 않게, designer n1) 긴 설명은 이유 줄 자리로. */}
+        {row.tone === 'deleting' && !off && (
+          <p className="mt-2 text-meta text-fg-muted" data-testid="cleanup-deleting-note">{t('cleanup.deletingNote')}</p>
+        )}
+        {row.deferReason && !off && (
+          <p className="mt-2 text-meta text-fg-muted" data-testid="cleanup-reason">{t(DEFER_KEY[row.deferReason])}</p>
+        )}
+        {row.blockReason && !(off && !isWarn(row.blockReason)) && (
           <p className={`mt-2 text-meta ${isWarn(row.blockReason) ? 'text-warning' : 'text-fg-muted'}`} data-testid="cleanup-reason">
             {isWarn(row.blockReason) ? '⚠ ' : ''}{t(REASON_KEY[row.blockReason])}
             {isWarn(row.blockReason) && (
@@ -252,6 +264,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
 
       {model.unowned.length > 0 && (
         <SettingsGroup title={t('cleanup.unownedTitle', { n: model.unowned.length })}>
+          {model.ownersPending && <p className="px-4 pt-2 text-meta text-fg-muted" data-testid="cleanup-owners-pending">{t('cleanup.ownersPending')}</p>}
           <p className="px-4 py-2 text-meta text-fg-subtle">{t('cleanup.unownedHint')}</p>
           {model.unowned.map((u) => (
             <div key={u.path} className="px-4 py-3" data-testid="cleanup-unowned">

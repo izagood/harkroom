@@ -74,6 +74,27 @@ export interface CleanupEvent {
   reason: CleanupBlockReason | null;
 }
 
+/**
+ * 원장에 없는 **그 순간의** 사실 — 오퍼레이터 메모리에만 있다(지우기 요청·러너 연결). 화면이 「지우는 중」·「러너 꺼짐 미룸」·
+ * 「아직 주인 보고 없음」을 그리는 데 쓴다(스레드 9e909150, designer 보충). 원장 파일에 쓰지 않는 이유: 오퍼레이터가 다시 뜨면
+ * 요청은 다음 회차가 다시 고르고, 연결은 러너가 다시 붙어야 참이 된다 — 파일에 남기면 죽은 값이 산 값처럼 보인다.
+ */
+export interface CleanupLiveThread {
+  /** 그 러너에게 지워 달라고 한 시각(ISO). 요청이 없으면 null. */
+  deleteRequestedAt: string | null;
+  /** 그 스레드 폴더를 알린 에이전트의 러너가 지금 오퍼레이터에 붙어 보고하고 있는가. */
+  runnerConnected: boolean;
+}
+
+export interface CleanupLive {
+  /** `channelId/threadRootId` → 스레드 폴더의 그 순간 상태. */
+  threads: Record<string, CleanupLiveThread>;
+  /** 러너가 주인을 한 번이라도 알렸는가 — false 면 「주인 모름」이 아직 판정 전이다. */
+  ownersReported: boolean;
+}
+
+export const cleanupThreadKey = (t: CleanupThreadRef): string => `${t.channelId}/${t.threadRootId}`;
+
 export interface CleanupSettings {
   enabled: boolean;
   /** 유예 일수(1~30). */

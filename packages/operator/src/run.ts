@@ -53,7 +53,7 @@ import { announceOf } from './communities.js';
 import { createTurnUploads } from './turnUploads.js';
 import { cleanupLedgerPath } from './workspaceCleanup.js';
 import { cleanupOwnersPath, createCleanupOwners } from './workspaceCleanupOwners.js';
-import { createWorkspaceCleanup, GIT_PATH } from './workspaceCleanupService.js';
+import { createWorkspaceCleanup, GIT_PATH, readCleanupSettings } from './workspaceCleanupService.js';
 
 /**
  * 채택한 러너의 생사를 확인하는 주기(`#431` 2-c).
@@ -250,7 +250,10 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     log,
   });
   // 작업 폴더 정리의 주인 장부 — 러너가 relay 로 "이 스레드가 만든 worktree·마지막 턴·도는 턴"을 알린다(스레드 9e909150).
-  const cleanupOwners = createCleanupOwners({ path: cleanupOwnersPath(appDataDir), log });
+  const cleanupOwners = createCleanupOwners({
+    path: cleanupOwnersPath(appDataDir), log,
+    enabled: async () => (await readCleanupSettings(join(appDataDir, 'operator', 'operator.json'))).enabled,
+  });
   // 앞 오퍼레이터가 남긴 턴 디렉터리는 이 프로세스가 모르는 임대의 것이다 — 기동 때 지운다.
   void turnSecrets.sweepAll().then((n) => { if (n) log(`turn-secrets: 앞 오퍼레이터가 남긴 턴 디렉터리 ${n}개를 지웠다`); });
   const turnSecretsTimer = setInterval(() => { void turnSecrets.sweepExpired(); }, 60_000);

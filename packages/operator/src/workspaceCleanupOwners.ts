@@ -15,6 +15,7 @@ import {
   CLEANUP_REPORT_PATH,
   normalizeCleanupPath,
   readCleanupReport,
+  type CleanupLive,
   type CleanupThreadRef,
 } from '@harkroom/shared/workspaceCleanup';
 
@@ -44,6 +45,9 @@ export interface CleanupOwners {
   retainDeletes(keys: ReadonlySet<string>): void;
   /** 러너가 지웠다고 알린 스레드들(작업 폴더 경로와 함께) — 한 번 읽으면 비운다. */
   drainDeleted(): { thread: CleanupThreadRef; path: string }[];
+  /** 화면용 그 순간 상태 — 스레드 폴더마다 지우기 요청 시각·그 에이전트 러너 연결, 그리고 주인 보고가 있었는지.
+   *  `keys` 를 주면 그 스레드만 싣는다(원장에 있는 스레드 폴더 — owners.json 전부를 화면에 내지 않는다). */
+  live(keys?: ReadonlySet<string>): Promise<CleanupLive>;
 }
 
 export function cleanupOwnersPath(appDataDir: string): string {
@@ -52,8 +56,16 @@ export function cleanupOwnersPath(appDataDir: string): string {
 
 const key = (t: CleanupThreadRef) => `${t.channelId}/${t.threadRootId}`;
 
-export function createCleanupOwners(opts: { path: string; log?: (line: string) => void; now?: () => Date }): CleanupOwners {
+export function createCleanupOwners(opts: {
+  path: string;
+  log?: (line: string) => void;
+  now?: () => Date;
+  /** 자동 정리가 지금 켜져 있나 — 답을 짓는 순간 다시 본다(설정 파일을 손으로 끈 경우까지, security F1). 없으면 켜짐. */
+  enabled?: () => Promise<boolean>;
+}): CleanupOwners {
   const runningBy = new Map<string, Set<string>>();
+  /** runnerId → agentId. 보고한 러너만 오르고 `releaseRunner` 로 빠진다 — 「러너가 붙어 있다」의 근거. */
+  const agentOf = new Map<string, string>();
   /** threadKey → 지워 달라고 한 스레드. 메모리에만 — 오퍼레이터가 다시 뜨면 다음 회차가 다시 고른다. */
   const pendingDelete = new Map<string, CleanupThreadRef & { requestedAt: string }>();
   /** 지금 시각 — 시험이 갈아 끼운다. */
@@ -90,6 +102,7 @@ export function createCleanupOwners(opts: { path: string; log?: (line: string) =
       const run = new Set<string>();
       for (const t of report.threads) if (t.running) run.add(key(t));
       runningBy.set(runnerId, run);
+      agentOf.set(runnerId, agentId);
       // 되살리기(규칙 4): 요청한 뒤 그 스레드에 턴이 돌거나 새 턴이 왔으면 요청을 거둔다. 기다리던 답이 나중에 나가
       // 방금 쓴 폴더를 지우면 안 된다(security F1).
       for (const t of report.threads) {
@@ -127,12 +140,15 @@ export function createCleanupOwners(opts: { path: string; log?: (line: string) =
       // 답을 짓는 **그 순간에** 다시 본다: 그 에이전트 것이고, 어느 러너에서도 돌지 않고, 요청한 뒤 턴이 없었을 때만.
       const busy = new Set<string>();
       for (const r of runningBy.values()) for (const k of r) busy.add(k);
+      // 꺼져 있으면 하나도 내보내지 않고 기다리던 요청도 거둔다 — 「끄면 지우지 않는다」(security F1). 못 읽으면 꺼짐으로 본다.
+      const on = opts.enabled ? await opts.enabled().catch(() => false) : true;
+      if (!on) pendingDelete.clear();
       const deleteThreads = [...pendingDelete.entries()]
         .filter(([k, p]) => all[k]?.agentId === agentId && !busy.has(k) && (all[k]?.lastTurnAt ?? '') <= p.requestedAt)
         .map(([, p]) => ({ channelId: p.channelId, threadRootId: p.threadRootId }));
       return answer(req, 200, { deleteThreads });
     },
-    releaseRunner(runnerId) { runningBy.delete(runnerId); },
+    releaseRunner(runnerId) { runningBy.delete(runnerId); agentOf.delete(runnerId); },
     async threads() { return Object.values(await load()); },
     requestDelete(ref) {
       const k = key(ref);
@@ -140,6 +156,16 @@ export function createCleanupOwners(opts: { path: string; log?: (line: string) =
     },
     cancelDelete(ref) { pendingDelete.delete(key(ref)); },
     retainDeletes(keys) { for (const k of [...pendingDelete.keys()]) if (!keys.has(k)) pendingDelete.delete(k); },
+    async live(keys) {
+      const all = await load();
+      const connected = new Set(agentOf.values());
+      const threads: CleanupLive['threads'] = {};
+      for (const [k, rec] of Object.entries(all)) {
+        if (!rec.workspaceDir || (keys && !keys.has(k))) continue;
+        threads[k] = { deleteRequestedAt: pendingDelete.get(k)?.requestedAt ?? null, runnerConnected: connected.has(rec.agentId) };
+      }
+      return { threads, ownersReported: Object.keys(all).length > 0 };
+    },
     drainDeleted() { const out = deletedConfirmed; deletedConfirmed = []; return out; },
     async ownerOf() {
       const out = new Map<string, OwnerRecord>();

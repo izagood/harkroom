@@ -70,3 +70,44 @@ describe('dueTodayIf · nextSweepAt · formatBytes', () => {
     expect(formatBytes(1.5 * 1024 ** 3)).toBe('1.5 GB');
   });
 });
+
+describe('live — 스레드 폴더의 「지우는 중」·「러너 꺼짐 미룸」·주인 보고 전', () => {
+  const dir = (r: string, o: Partial<CleanupItem> = {}) => item({ path: `/s/${r}`, kind: 'threadDir', thread: T(r), repo: null, branch: null, headSha: null, deleteAfter: '2026-10-06T06:00:00Z', ...o });
+  const live = (threads: Record<string, { deleteRequestedAt: string | null; runnerConnected: boolean }>, ownersReported = true) => ({ threads, ownersReported });
+  it('요청을 보냈고 러너가 붙어 있으면 「지우는 중」 — ⚠ 도 미룸도 아니다', () => {
+    const m = buildCleanupModel(ledger([dir('r1')]), NOW, live({ 'c/r1': { deleteRequestedAt: '2026-10-06T06:30:00Z', runnerConnected: true } }));
+    expect(m.listed[0]).toMatchObject({ tone: 'deleting', deferReason: null, blockReason: null });
+    expect(m.warnCount).toBe(0);
+    expect(m.deferredCount).toBe(0);
+  });
+  it('기한이 지났는데 러너가 꺼져 있으면 「미룸 · runner-off」 — ⚠ 숫자에 세지 않는다', () => {
+    const m = buildCleanupModel(ledger([dir('r1')]), NOW, live({ 'c/r1': { deleteRequestedAt: null, runnerConnected: false } }));
+    expect(m.listed[0]).toMatchObject({ tone: 'deferred', deferReason: 'runner-off' });
+    expect(m.warnCount).toBe(0);
+    expect(m.deferredCount).toBe(1);
+  });
+  it('기한 전이면 러너가 꺼져 있어도 그냥 기한을 보인다(할 일이 없다)', () => {
+    const m = buildCleanupModel(ledger([dir('r1', { deleteAfter: '2026-10-09T00:00:00Z' })]), NOW, live({ 'c/r1': { deleteRequestedAt: null, runnerConnected: false } }));
+    expect(m.listed[0]!.tone).toBe('listed');
+  });
+  it('worktree 만 있는 줄은 live 를 보지 않는다 · live 가 없으면(옛 오퍼레이터) 원장대로', () => {
+    const wt = buildCleanupModel(ledger([item({ path: '/w', thread: T('r1'), deleteAfter: '2026-10-06T06:00:00Z' })]), NOW, live({ 'c/r1': { deleteRequestedAt: '2026-10-06T06:30:00Z', runnerConnected: false } }));
+    expect(wt.listed[0]!.tone).toBe('due');
+    const old = buildCleanupModel(ledger([dir('r1')]), NOW);
+    expect(old.listed[0]!.tone).toBe('due');
+    expect(old.ownersPending).toBe(false);
+  });
+  it('정렬: ⚠ → 미룸 → 지우는 중 → 기한', () => {
+    const m = buildCleanupModel(ledger([
+      item({ path: '/d', thread: T('r4'), deleteAfter: '2026-10-06T08:00:00Z' }),
+      dir('r1'),
+      dir('r2'),
+      item({ path: '/c', thread: T('r3'), state: 'blocked', blockReason: 'uncommitted' }),
+    ]), NOW, live({ 'c/r1': { deleteRequestedAt: '2026-10-06T06:30:00Z', runnerConnected: true }, 'c/r2': { deleteRequestedAt: null, runnerConnected: false } }));
+    expect(m.listed.map((r) => r.tone)).toEqual(['warn', 'deferred', 'deleting', 'due']);
+  });
+  it('주인 보고가 아직 없으면 ownersPending', () => {
+    expect(buildCleanupModel(ledger([]), NOW, live({}, false)).ownersPending).toBe(true);
+    expect(buildCleanupModel(ledger([]), NOW, live({}, true)).ownersPending).toBe(false);
+  });
+});
