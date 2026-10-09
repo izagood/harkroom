@@ -1824,7 +1824,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       'aria-labelledby': `agent-tab-${id}`,
       'data-testid': `agent-tabpanel-${id}`,
       hidden: detailTab !== id,
-      className: id === 'overview' || id === 'memory' ? 'space-y-4' : FORM_PANEL,
+      // 한 단 폼은 프로필 하나만 남았다 — 실행·권한은 2b 에서 두 칸이 됐다(입력 칸 상한은 칸 폭이 맡는다).
+      className: id === 'profile' ? FORM_PANEL : 'space-y-4',
     }
     : { className: FORM_PANEL });
 
@@ -2216,6 +2217,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
               {/* #251: 에이전트 비활성화/활성화. 관리 행위이므로 admin 만 보인다. */}
                 </>}
+                secondary={selected && isAdmin ? (
+                  <AgentAtAGlance agent={selected} operatorName={Array.isArray(operators) ? operatorNameOf(operators.find((o) => o.id === selected.assignment?.operatorId)) ?? null : null} mergeCount={mergeCounts[selected.id]} onOpen={setDetailTab} />
+                ) : undefined}
                 side={selected && isAdmin ? (<>
                   {/* 비활성 상태의 「활성화」는 되돌릴 수 있는 조작이라 위험 구역 밖 중립 카드에 선다(designer #1256 수정 2 —
                       전에도 disabled 면 중립 면이었다). 「비활성화」(PAT 폐기)는 위험 구역 안, 확인 단계 그대로. */}
@@ -2399,6 +2403,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             </div>
 
             <div {...detailPanel('run')}>
+              {/* 실행은 「무엇으로 도나」(주 칸) | 「어디서 도나」(배정·러너, 둘째 칸) 두 칸이다(설정 폭 시안 v1, designer #1256 nit 1 —
+                  2490 에서 880 폼과 머리 단추 사이가 비던 것). 좁으면 지금처럼 위아래로 쌓인다. 칸은 옮기기만 했다. */}
+              <SettingsColumns
+                testId="agent-run-columns"
+                main={<>
               {draft !== null && (
                 <FieldGroup title={t('agents.run.title')} note={t('agents.run.note')}>
                 <div>
@@ -2552,6 +2561,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 </FieldGroup>
               )}
 
+                </>}
+                secondary={selected && (isAdmin || isOwner) ? (<>
               {/* 스펙 2026-09-20 §3: **어디서 돌리나.** 앱은 러너를 띄우지 않는다 — 이 고르개가
                   서버에 배정을 쓰면 그 오퍼레이터가 러너를 띄운다. 러너 실행·중지 절 바로 뒤에
                   두는 이유: 그 절의 '실행'이 실제로 무엇을 켜는지가 이 배정으로 정해진다. */}
@@ -2729,6 +2740,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   />
                 </div>
               )}
+                </>) : undefined}
+              />
             </div>
 
             <div {...detailPanel('permissions')}>
@@ -2746,6 +2759,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 />
               )}
 
+              {/* 권한은 머지·API 권한(꽉 찬 폭) 아래에 설정 두 칸이다 — 권한 | 누가 부를 수 있나 + 고를 수 있는 모델
+                  (설정 폭 시안 v1). 머지·API 권한은 맨 위 그대로 둔다(스레드 febe9ff8 designer f1·f2 — 아래에서는 못 찾았다). */}
+              <SettingsColumns
+                testId="agent-permissions-columns"
+                main={<>
               {draft !== null && (
                 <FieldGroup title={t('agents.permissions.title')} note={t('agents.permissions.note')}>
                 {/* #253 의 표에서 `mentionPermission` 은 **admin 전용**이다. 소유자에게는 비활성
@@ -2817,6 +2835,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 </FieldGroup>
               )}
 
+                </>}
+                secondary={selected && (isAdmin || isOwner) ? (<>
               {/* 스펙 2026-09-20 §6: 누가 깨울 수 있고 무슨 자격증명을 쥐나. 배정 뒤에 두는 이유는
                   personal 자격증명이 배정을 제한하기 때문이다(소유자 자신의 오퍼레이터에만). */}
               {selected && (isAdmin || isOwner) && (
@@ -2836,6 +2856,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               {selected && myId !== undefined && selected.ownerAccountId === myId && (
                 <AgentPickableSection agent={selected} disabled={busy} />
               )}
+
+                </>) : undefined}
+              />
 
               {/* 옛 러너 토큰(결정 harkroom 스레드 c4f4dab4). 러너는 오퍼레이터 토큰으로 서고 발급은 닫혔다 —
                   **살아 있는 것이 있을 때만** 그것을 지우는 자리로 선다. 0개면 칸 자체가 없다. 폐기된 줄은
@@ -3435,6 +3458,57 @@ function FieldGroup({ title, note, children }: {
         <p className="text-meta text-fg-subtle">{note}</p>
       </div>
       {children}
+    </section>
+  );
+}
+
+/**
+ * 개요의 「한눈에」 — 다른 탭이 이미 가진 값만 한 줄씩 적고, 누르면 그 탭으로 간다(설정 폭 시안 v1,
+ * designer #1256 nit 2: 러너 카드 오른쪽이 비던 자리). **새로 불러오는 값은 없다** — 기억 개수처럼 탭을
+ * 열어야 오는 값은 적지 않는다(처음엔 비어 보이면 「없다」로 읽힌다).
+ */
+function AgentAtAGlance({ agent, operatorName, mergeCount, onOpen }: {
+  agent: AgentView;
+  operatorName: string | null;
+  mergeCount: MergeCount | undefined;
+  onOpen: (tab: AgentDetailTab) => void;
+}) {
+  const t = useT();
+  const dflt = t('agents.run.harnessDefault');
+  const rows: Array<{ tab: AgentDetailTab; value: string }> = [
+    { tab: 'profile', value: agent.displayName || agent.handle },
+    {
+      tab: 'run',
+      value: [agent.model ?? dflt, agent.effort ?? dflt, agent.assignment ? (operatorName ?? '?') : t('agents.glance.unassigned')].join(' · '),
+    },
+    {
+      tab: 'permissions',
+      value: mergeCount
+        ? `${agent.mentionPermission} · ${t('agents.glance.merge', { n: String(mergeCount.repos + mergeCount.orgs) })}`
+        : agent.mentionPermission,
+    },
+    { tab: 'memory', value: t('agents.glance.memory') },
+  ];
+  return (
+    <section data-testid="agent-glance" className="rounded-row border border-border p-3">
+      <h3 className="text-meta font-medium text-fg-muted">{t('agents.glance.heading')}</h3>
+      <div className="mt-2 grid grid-cols-1 gap-2 @min-[480px]/settings:grid-cols-2">
+        {rows.map(({ tab, value }) => (
+          <button
+            key={tab}
+            type="button"
+            data-testid={`agent-glance-${tab}`}
+            className="min-w-0 rounded-row border border-border bg-surface px-3 py-2 text-left hover:bg-surface-hover"
+            onClick={() => onOpen(tab)}
+          >
+            <span className="flex items-baseline justify-between gap-2">
+              <span className="text-meta text-fg-subtle">{t(DETAIL_TAB_LABEL[tab])}</span>
+              <span aria-hidden className="text-meta text-accent">→</span>
+            </span>
+            <span className="block truncate text-meta text-fg-muted">{value}</span>
+          </button>
+        ))}
+      </div>
     </section>
   );
 }
