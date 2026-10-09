@@ -16,7 +16,7 @@ import type { FailOpts, Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore } from './sessions.js';
-import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
+import { buildTurnCommand, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome } from './adapters/index.js';
 import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
@@ -47,6 +47,8 @@ export interface MentionTurnHarkroom {
   definition(): Promise<AgentView>;
   /** 머지를 허락한 저장소(스레드 3deac356). 옵셔널 — 없는 표면(시험 더블)은 빈 목록과 같다. */
   mergeGrants?(): Promise<string[]>;
+  /** 이 채널의 allow 규칙(권한 요청 스레드 f61af808). 옵셔널 — 없는 표면은 빈 목록과 같다. */
+  toolAllows?(channelId: string): Promise<string[]>;
   secretCreateGranted?(): Promise<boolean>;
   apiGrants?(): Promise<string[]>;
   apiGrantInfo?(): Promise<{ connectors: string[]; delegatable: string[] }>;
@@ -674,6 +676,47 @@ function warnOnDuplicatePosts(key: string, postCount: number): void {
  * @param stateDir 워크스페이스 **밖**의 러너 상태 디렉터리
  * @param workspaceDir 에이전트 워크스페이스 — 여기에는 링크만 들어간다
  */
+/**
+ * 턴을 띄우기 전에 작업 폴더의 Claude Code 설정 파일을 지운다(권한 요청 스레드 f61af808, security R2). 권한은 서버 grant → argv
+ * 로만 들어와야 한다 — 에이전트가 지난 턴에 Bash 로 `.claude/settings*.json` 을 써 두면 그 allow 가 다음 턴부터 산다(러너가
+ * 작업 폴더를 신뢰로 표시하므로 claude 가 읽는다). Edit deny 는 Edit/Write 만 막으므로 남는 길을 여기서 끊는다.
+ * `--setting-sources user` 로 아예 안 읽게 하는 길은 쓰지 않는다 — 실측 2026-10-07(claude 2.1.292): 그러면 작업 폴더
+ * `.claude/skills`(승인된 워크스페이스 스킬, `syncSkills`)도 안 보인다. 러너가 이 자리에 settings 를 쓰는 곳은 없다.
+ */
+export async function scrubWorkspaceSettings(workspaceDir: string): Promise<string[]> {
+  const removed: string[] = [];
+  const dir = join(workspaceDir, '.claude');
+  // security n1: `.claude` 가 링크면(`.claude → ~/.claude`) 그 너머 사람의 설정을 지우게 된다 — 링크 자체만 지운다.
+  try {
+    const st = await lstat(dir);
+    if (st.isSymbolicLink()) {
+      await rm(dir, { force: true });
+      console.warn(`[mentionTurn] 작업 폴더의 .claude 가 링크였다 — 링크만 지웠다: ${dir}`);
+      return [dir];
+    }
+    if (!st.isDirectory()) return removed;
+  } catch {
+    return removed;
+  }
+  for (const name of ['settings.json', 'settings.local.json']) {
+    const path = join(dir, name);
+    try {
+      await lstat(path);
+    } catch {
+      continue;
+    }
+    // security n2: 디렉터리·링크여도 턴을 죽이지 않는다 — 링크는 링크만, 디렉터리는 통째로 지운다.
+    try {
+      await rm(path, { force: true, recursive: true });
+      removed.push(path);
+      console.warn(`[mentionTurn] 작업 폴더의 ${name} 을 지웠다 — 권한은 서버 승인으로만 들어온다: ${path}`);
+    } catch (err) {
+      console.warn(`[mentionTurn] ${path} 를 지우지 못했다(턴은 계속한다): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return removed;
+}
+
 export async function syncSkills(
   stateDir: string,
   workspaceDir: string,
@@ -985,10 +1028,13 @@ export async function runMentionTurn(
   const apiConnectors = apiInfo.connectors;
   // 비밀 만들기(스레드 1a08d0cf): 소유자가 켠 에이전트에게만 절을 쓴다. 판정은 서버가 매 호출 한다 — 이것은 안내다.
   const secretCreate = (await deps.harkroom.secretCreateGranted?.().catch(() => false)) ?? false;
+  // 권한 요청(스레드 f61af808): 소유자가 이 채널에 승인한 allow 규칙. 서버가 판정해 주지만 러너도 모양을 한 번 더 거른다.
+  const toolAllows = safeToolAllows((await deps.harkroom.toolAllows?.(channelId).catch(() => [] as string[])) ?? []);
   const systemPrompt = buildSystemPrompt({
     handle: deps.me.handle,
     secretCreate,
     merge: { operatorBin: deps.operatorBin, repos: mergeRepos },
+    permissions: { toolAllows },
     api: { operatorBin: deps.operatorBin, connectors: apiConnectors, delegatable: apiInfo.delegatable },
     channelName: deps.channelName,
     instructions: def.instructions,
@@ -1009,6 +1055,8 @@ export async function runMentionTurn(
   // 하네스는 아직 없는 스킬 디렉터리를 읽고, 스킬은 항상 한 턴 늦게 붙는다.
   // 실패는 syncSkills 안에서 삼키고 stderr 로 남긴다 — 그래서 턴은 그대로 진행한다.
   await syncSkills(deps.stateDir, rec.workspaceDir, () => deps.harkroom.listApprovedSkills());
+  // 하네스를 가리지 않는다 — 다른 하네스는 이 파일을 읽지 않으니 지워도 잃을 것이 없고, 이름 비교 예산(adapterParity)도 지킨다.
+  await scrubWorkspaceSettings(rec.workspaceDir);
 
   // **프롬프트가 하네스에 닿는 길은 하네스마다 다르다(2026-09-08 실행 모델 교체).**
   //
@@ -1085,6 +1133,7 @@ export async function runMentionTurn(
     extraMcpServers,
     operatorBin: deps.operatorBin,
     mergeRepos,
+    toolAllows,
     apiConnectors,
     apiDelegatable: apiInfo.delegatable,
     codexHome: deps.codexHome,

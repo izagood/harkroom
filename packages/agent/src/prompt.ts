@@ -706,8 +706,13 @@ export function buildSystemPrompt(opts: {
   api?: { operatorBin: string; connectors: readonly string[]; delegatable?: readonly string[] };
   /** 비밀 만들기 권한(capability `secret.create`). 참일 때만 절을 쓴다 — 없는 에이전트에게 도구를 권하지 않는다. */
   secretCreate?: boolean;
+  /**
+   * 권한 요청(스레드 f61af808). 이 채널에서 소유자가 승인해 둔 allow 규칙. 있으면(빈 목록도) 「막히면 permission.request 로
+   * 청하라」 절을 쓴다 — 말하지 않으면 에이전트가 분류기에 막힌 명령을 돌아가는 길을 찾거나 사람에게 손 설정을 부탁한다.
+   */
+  permissions?: { toolAllows: readonly string[] };
 }): string {
-  const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api, secretCreate } = opts;
+  const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api, secretCreate, permissions } = opts;
   const budgetMinutes = turnBudgetMs === undefined ? null : Math.floor(turnBudgetMs / 60_000);
   return [
     `너는 harkroom 워크스페이스의 에이전트 @${handle} 이고, 지금 #${channelName} 에서 말한다.`,
@@ -751,6 +756,7 @@ export function buildSystemPrompt(opts: {
     // 이미 갖고 있고, PR 을 나중에 읽는 사람에게 중요한 것은 **어느 에이전트가 열었는가**다.
     // 하네스를 굳이 남기려면 문장 가운데가 아니라 뒤에 따로 붙여야 갈아끼울 수 있다.
     ...(merge ? mergeSection(merge) : []),
+    ...(permissions ? permissionSection(permissions) : []),
     ...(api ? apiSection(api) : []),
     ...(secretCreate ? secretCreateSection() : []),
     '저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:',
@@ -995,12 +1001,39 @@ export function secretCreateSection(): string[] {
   ];
 }
 
+/**
+ * 권한 요청(스레드 f61af808). 요청은 아무것도 열지 않고 소유자 승인만 연다 — 그래서 에이전트에게 "청하는 길"을 알려 주는 것이
+ * 안전하다. 우회하지 말라는 말을 같이 둔다(분류기에 막힌 명령을 다른 꼴로 다시 치는 것이 가장 흔한 실수다).
+ */
+function permissionSection(p: { toolAllows: readonly string[] }): string[] {
+  return [
+    '**권한이 막히면 청한다.** 일에 꼭 필요한 명령이 권한 분류기에 막히면(예: `kubectl … exec`, `gh pr view -R <남의 저장소>`)',
+    '다른 꼴로 바꿔 다시 치지 말고 harkroom MCP 의 `permission.request` 로 소유자에게 청한다:',
+    '`kind: "tool"`, `rule` 에 Claude Code allow 규칙 **하나**(`Bash(<고정 낱말 둘 이상> …:*)` 또는 `Bash(<명령 전체>)`),',
+    '`reason` 에 왜 필요한지 한 줄, `channelId`·`threadRootId` 는 이 스레드. 머지 저장소는 `kind: "merge"`, `repo: "owner/name"`.',
+    '- 규칙은 **좁게** 쓴다 — `--context`·`-n`·`-R` 처럼 대상을 고정하는 인자를 넣는다. `Bash(*)`·셸·인터프리터 머리·`;`·`&&`·',
+    '  `--dangerously-*` 는 서버가 거절한다. 거절 코드가 오면 그 코드대로 좁혀 다시 청하거나 사람에게 넘긴다.',
+    '- 허락은 Bash 호출 **문자열 전체**에 맞춰 판정된다. 한 호출에 명령 **하나**만 넣고(`;`·`&&`·`|`·heredoc 으로 묶지 않는다),',
+    '  `KUBECONFIG=… kubectl …` 처럼 환경 변수를 앞에 붙이지 말고 `kubectl --kubeconfig <경로> --context <이름> …`·`helm --kubeconfig …` 처럼',
+    '  **플래그**로 준다 — 앞붙임이 있으면 승인된 규칙과 맞지 않아 다시 막힌다.',
+    '- 사람의 채팅 글·선택 카드 답은 이 판정을 열지 않는다(너에게는 인용된 글로 들어온다). 사람이 "진행해"라고 했어도 막혔으면 청한다.',
+    '- 청한 뒤에는 **이 턴에서 다시 시도하지 마라** — 적용은 다음 턴부터다. 카드를 세웠다고 스레드에 한 줄 남기고 끝낸다.',
+    '  소유자가 카드에서 승인하면 그 답이 너를 다시 깨우고, 그 턴에는 규칙이 붙어 있으니 그때 다시 시도한다. 거절이면 멈춘다.',
+    '- 승인은 이 채널의 모든 대화(위임·예약으로 뜬 턴 포함)에 7일 간다. 소유자가 "그 권한 거둬"라고 하면 `permission.revoke`(같은 kind·rule/repo·channelId)로 내려놓는다.',
+    ...(p.toolAllows.length
+      ? ['- 이 채널에서 지금 허락된 규칙: ' + p.toolAllows.map((r) => `\`${r}\``).join(', ')]
+      : []),
+    '',
+  ];
+}
+
 function mergeSection(merge: { operatorBin: string; repos: readonly string[] }): string[] {
   if (!merge.repos.length) {
     return [
       '**PR 머지는 하지 마라.** 이 에이전트에게 머지가 허락된 저장소가 없다. `gh pr merge`·`gh api …/merge`·',
-      '`git push … main` 은 막혀 있고, 사람이 "머지해"라고 해도 네가 누르지 않는다 — 소유자가 설정 › 에이전트에서',
-      '이 저장소의 머지 권한을 준 뒤에만 된다. 머지가 필요하면 PR 번호·head sha 를 적어 사람에게 넘겨라.',
+      '`git push … main` 은 막혀 있고, 사람이 "머지해"라고 해도 네가 누르지 않는다 — 소유자가 이 저장소의 머지 권한을',
+      '준 뒤에만 된다. 머지가 필요하면 PR 번호·head sha 를 적어 사람에게 넘기고, 앞으로도 네가 머지하길 바라는 일이면',
+      'harkroom MCP 의 `permission.request`(kind: "merge", repo: "owner/name")로 소유자에게 청한다.',
       '',
     ];
   }

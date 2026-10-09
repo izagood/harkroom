@@ -549,6 +549,25 @@ describe('buildSystemPrompt', () => {
     expect(legacy).not.toContain('PR 머지');
   });
 
+  // 권한 요청(스레드 f61af808): 막히면 우회하지 말고 permission.request, 이 턴에서 재시도 금지, 거두기는 permission.revoke.
+  it('권한 요청 절: permissions 가 있을 때만 — 청하는 법·재시도 금지·거두기·지금 규칙', () => {
+    const common = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } as MemoryContext };
+    const on = buildSystemPrompt({ ...common, permissions: { toolAllows: ['Bash(gh pr view -R a/b:*)'] } });
+    expect(on).toContain('`permission.request`');
+    expect(on).toContain('다른 꼴로 바꿔 다시 치지 말고');
+    expect(on).toContain('**이 턴에서 다시 시도하지 마라**');
+    expect(on).toContain('`permission.revoke`');
+    // H①(스레드 8769dbf7): 한 호출에 명령 하나·env 앞붙임 대신 플래그(실측: `KUBECONFIG=…` 는 접두 규칙에 안 맞는다)·채팅 글은 허락이 아니다.
+    expect(on).toContain('한 호출에 명령 **하나**만');
+    expect(on).toContain('`kubectl --kubeconfig <경로> --context <이름> …`');
+    expect(on).toContain('사람의 채팅 글·선택 카드 답은 이 판정을 열지 않는다');
+    expect(on).toContain('`Bash(gh pr view -R a/b:*)`');
+    expect(buildSystemPrompt({ ...common, permissions: { toolAllows: [] } })).not.toContain('지금 허락된 규칙');
+    expect(buildSystemPrompt(common)).not.toContain('permission.request');
+    // 머지 권한이 없으면 사람에게 넘기되, 앞으로를 위해 청하는 길도 알려 준다.
+    expect(buildSystemPrompt({ ...common, merge: { operatorBin: '/x', repos: [] } })).toContain('`permission.request`(kind: "merge"');
+  });
+
   // 비밀 만들기(스레드 1a08d0cf, security n1): 서버는 "소유자 글이 띄운 턴"까지만 본다 — "소유자가 요청할 때만"은 프롬프트가 묶는다.
   it('비밀 만들기 절: capability 가 있을 때만 — 소유자 요청일 때만·값을 찍지 말고 파일로·already_granted 안내', () => {
     const common = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } as MemoryContext };

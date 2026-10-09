@@ -246,6 +246,16 @@ export class HarkroomAgentClient {
     }
   }
 
+  /** 이 채널에서 소유자가 승인한 Claude Code allow 규칙(권한 요청 스레드 f61af808). 옛 서버(404)·끊김은 빈 목록. */
+  async toolAllows(channelId: string): Promise<string[]> {
+    try {
+      const r = await this.rest<{ rules?: unknown }>('GET', `/agent/tool-allows?channelId=${encodeURIComponent(channelId)}`, 'tool-allows');
+      return Array.isArray(r?.rules) ? r.rules.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
   async mergeGrants(): Promise<string[]> {
     try {
       const r = await this.rest<{ repos?: unknown }>('GET', '/agent/merge-grants', 'merge-grants');

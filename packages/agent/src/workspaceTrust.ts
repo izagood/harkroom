@@ -14,7 +14,7 @@
 // `mentionPermission: 'auto'` 에이전트는 이미 그 안에서 무엇이든 실행할 수 있다(스펙 §6 이
 // 그렇게 정했다). 즉 훅을 심어 실행하는 길은 이미 있는 길보다 넓지 않다. 신뢰가 정하는
 // 것은 "이 디렉터리를 작업 대상으로 인정하는가"이고, 러너가 그것을 만들었다는 사실이 곧 답이다.
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -128,6 +128,55 @@ async function acceptDangerousModeForClaude(configDir: string | null): Promise<v
 }
 
 /**
+ * 풀 계정 config 의 settings 를 **허용 목록**으로 걷는다(권한 요청 H①, 스레드 8769dbf7, security F1·F2).
+ *
+ * 권한은 서버 grant → argv(`--allowedTools`)·오퍼레이터 hook 으로만 들어와야 한다. 그런데 에이전트가 지난 턴에 Bash 로
+ * `$CLAUDE_CONFIG_DIR/settings.json` 을 고쳐 두면 그 풀의 **모든 에이전트·모든 턴**에 산다(Edit deny 는 Edit/Write 도구만 막고
+ * Bash 는 못 막는다). 분류기 밖에서 명령을 돌리는 키는 `hooks`·`permissions` 만이 아니다 — `statusLine`(TUI 가 그릴 때마다 실행)·
+ * `apiKeyHelper`·`awsAuthRefresh`·`awsCredentialExport`·`otelHeadersHelper`·`fileSuggestion`·`env`(`NODE_OPTIONS` 등) 가 있고
+ * claude 판이 오르면 더 생긴다. 그래서 막을 키를 고르지 않고 **남길 키를 고른다**: 풀에서 실제로 쓰는 표시·관문 키뿐(2026-10-08 실측:
+ * `theme`·`tui`·`skipDangerousModePermissionPrompt`·`enabledPlugins`). 나머지는 지운다.
+ *
+ * - `enabledPlugins` 는 지금 쓰고 있어 남긴다. 플러그인도 hook 을 실을 수 있어 같은 종류의 길이다 — 후속(security n1).
+ * - **링크는 따라가지 않는다**(F2): 풀의 settings 가 사람의 `~/.claude/settings.json` 을 가리키는 링크면 그 너머를 고치게 된다.
+ *   일반 파일이 아니면 건너뛰고 경고한다(`scrubWorkspaceSettings` 와 같은 선).
+ * - **풀 계정만**: `null`(시스템 기본 `~/.claude`)은 사람이 평소 쓰는 설정이라 부르지 않는다(`markClaudeAccountGates` 와 같은 선).
+ */
+export const ACCOUNT_SETTINGS_KEEP_KEYS: readonly string[] = ['theme', 'tui', 'skipDangerousModePermissionPrompt', 'enabledPlugins'];
+
+export async function scrubAccountPermissionSettings(configDir: string): Promise<string[]> {
+  const removed: string[] = [];
+  for (const name of ['settings.json', 'settings.local.json']) {
+    const path = join(configDir, name);
+    try {
+      const st = await lstat(path);
+      if (!st.isFile()) {
+        console.warn(`[workspaceTrust] 계정 설정이 일반 파일이 아니다(링크·디렉터리) — 따라가지 않고 건너뛴다: ${path}`);
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    let doc: unknown;
+    try {
+      doc = JSON.parse(await readFile(path, 'utf8'));
+    } catch {
+      // 깨진 파일은 claude 도 못 읽는다 — 고치지 않고 둔다(하네스가 덮는다).
+      continue;
+    }
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) continue;
+    const rec = doc as Record<string, unknown>;
+    const drop = Object.keys(rec).filter((k) => !ACCOUNT_SETTINGS_KEEP_KEYS.includes(k));
+    if (!drop.length) continue;
+    for (const k of drop) delete rec[k];
+    await writeFile(path, JSON.stringify(rec, null, 2), { mode: 0o600 });
+    removed.push(...drop.map((k) => `${path}#${k}`));
+    console.warn(`[workspaceTrust] 계정 설정에서 허용 목록 밖 키를 지웠다(${drop.join(', ')}) — 권한은 서버 승인으로만 들어온다: ${path}`);
+  }
+  return removed;
+}
+
+/**
  * 이 계정이 하네스의 **계정 단위 관문**을 지나게 한다. `ensureWorkspaceTrusted` 와 나란히,
  * **PTY 를 띄우기 전에** 부른다.
  *
@@ -152,6 +201,14 @@ export async function ensureDangerousModeAccepted(opts: {
   // **풀 계정에만 적는다** — 풀이 없으면(`null`) 사람이 평소 쓰는 시스템 기본 로그인이고, 그 설정은
   // 사람이 직접 지나온 것이라 러너가 손댈 이유가 없다.
   if (opts.claudeConfigDir === null) return;
+  try {
+    await scrubAccountPermissionSettings(opts.claudeConfigDir);
+  } catch (err) {
+    console.error(
+      '[workspaceTrust] 계정 설정 권한 키 걷기 실패(턴은 계속한다 — argv 의 Edit deny 와 분류기가 남는다): '
+        + (err instanceof Error ? err.message : String(err)),
+    );
+  }
   try {
     await markClaudeAccountGates(opts.claudeConfigDir);
   } catch (err) {
