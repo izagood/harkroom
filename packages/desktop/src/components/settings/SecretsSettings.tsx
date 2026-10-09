@@ -215,7 +215,7 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
                   className={`text-meta transition-colors first:rounded-t-card last:rounded-b-card ${flash === s.id ? 'bg-accent-surface' : tab ? 'bg-surface-sunken' : ''}`}
                   data-testid={`secret-${s.name}`} data-flash={flash === s.id || undefined}>
                   {/* 한 줄 격자: ▸ · 이름(굵게)+설명 · 받는 에이전트 · 만료 · [값 보기] ⋯ (#3). 줄을 누르면 펼친다. */}
-                  <div className={`grid cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 sm:grid-cols-[16px_minmax(0,1fr)_7rem_6.5rem_7.5rem] ${tab ? '' : 'hover:bg-surface-hover'} ${expired ? 'text-fg-subtle' : 'text-fg'}`}
+                  <div className={`grid cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 sm:grid-cols-[16px_minmax(0,1fr)_7.5rem_7.5rem] ${tab ? '' : 'hover:bg-surface-hover'} ${expired ? 'text-fg-subtle' : 'text-fg'}`}
                     onClick={() => setTab(tab ? null : 'grants')}>
                     <button type="button" aria-expanded={tab !== null} aria-label={t('secrets.expandAria', { name: s.name })}
                       data-testid={`secret-expand-${s.name}`}
@@ -229,14 +229,18 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
                       </span>
                       {sub && <span className="block truncate text-fg-subtle">{sub}</span>}
                     </span>
-                    <span className="hidden truncate text-left text-fg-muted sm:block" data-testid={`secret-used-${s.name}`}>
-                      {s.grantCount > 0 ? t('secrets.usedBy', { n: String(s.grantCount) }) : <span className="text-fg-subtle">{t('secrets.unused')}</span>}
-                    </span>
-                    <span className={`hidden truncate text-right sm:block ${expired || expiringSoon ? 'text-warning' : 'text-fg-subtle'}`} data-testid={`secret-expiry-${s.name}`}
-                      data-soon={expiringSoon || undefined}>
-                      {expired
-                        ? t('secrets.expired', { when: date(s.expiresAt as string) })
-                        : s.expiresAt ? t('secrets.until', { when: date(s.expiresAt) }) : t('secrets.noExpiry')}
+                    {/* 쓰는 곳·만료를 오른쪽 정렬 한 칸에 두 줄로(designer m2) — 열은 맞추면서 이름 칸을 넓게 둔다. */}
+                    <span className="hidden min-w-0 text-right leading-tight sm:block">
+                      <span className="block truncate text-fg-muted" data-testid={`secret-used-${s.name}`}
+                        title={s.grantCount > 0 ? t('secrets.usedBy', { n: String(s.grantCount) }) : undefined}>
+                        {s.grantCount > 0 ? t('secrets.usedByShort', { n: String(s.grantCount) }) : <span className="text-fg-subtle">{t('secrets.unused')}</span>}
+                      </span>
+                      <span className={`block truncate ${expired || expiringSoon ? 'text-warning' : 'text-fg-subtle'}`} data-testid={`secret-expiry-${s.name}`}
+                        data-soon={expiringSoon || undefined}>
+                        {expired
+                          ? t('secrets.expired', { when: date(s.expiresAt as string) })
+                          : s.expiresAt ? t('secrets.until', { when: date(s.expiresAt) }) : t('secrets.noExpiry')}
+                      </span>
                     </span>
                     <span className="flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
                       {mine && state.enabled && revealSupported && (

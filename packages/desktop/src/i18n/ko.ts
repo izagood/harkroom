@@ -2322,6 +2322,7 @@ export const ko = {
   'secrets.help2': '값은 나만, 비밀번호로 잠금을 푼 뒤에만 본다. 보기·복사·내려받기·마운트는 모두 접근 기록에 남는다.',
   'secrets.help3': '지우기는 여기서만 지운다. 발급처의 키는 거기서 따로 폐기한다.',
   'secrets.unlockedTitle': '마지막으로 쓴 뒤 15분, 최대 1시간 열려 있다.',
+  'secrets.usedByShort': '에이전트 {n}',
   'secrets.agentsMine': '내 에이전트',
   'secrets.anyOperatorWarn': '앞으로 배정되는 머신에도 내려간다.',
   'secrets.grantExpiredMine': '만료됐다. 값을 바꾸면 다시 줄 수 있다.',

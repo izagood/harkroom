@@ -4459,6 +4459,7 @@ export const en = {
   'secrets.help2': 'Only you see values, and only after unlocking with your password. Viewing, copying, downloading and mounting are all logged.',
   'secrets.help3': 'Deleting removes it here only. Revoke the key at its issuer separately.',
   'secrets.unlockedTitle': 'Stays open 15 minutes after last use, at most 1 hour.',
+  'secrets.usedByShort': '{n} agents',
   'secrets.agentsMine': 'My agents',
   'secrets.anyOperatorWarn': 'It will also go to any machine the agent is assigned to later.',
   'secrets.grantExpiredMine': 'Expired. Replace the value and you can give it again.',
