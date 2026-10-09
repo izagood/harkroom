@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AccountView } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { ApiError, type SecretAccessView, type SecretGrantView, type SecretView } from '../../lib/api';
@@ -6,6 +7,8 @@ import { useLocale, useT } from '../../i18n/useT';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { Button, Field, Segmented, SettingsPage, TextInput } from './primitives';
 import { ConnectorsSection } from './ConnectorsSection';
+import { SecretAgentPicker } from './SecretAgentPicker';
+import { Identity } from '../Identity';
 import { downloadSecretFile, RevealPanel, RevealToast, UnlockDialog, UnlockHeader, useRevealSupported, type Ticket, type UnlockState } from './SecretReveal';
 
 /**
@@ -491,6 +494,7 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
   // 비밀은 **내 에이전트**에게만 준다 — 서버도 남의 에이전트는 not_own_agent 로 거절한다(#1135 security M1).
   const agents = Object.values(accounts).filter((a) => a.kind === 'agent').sort((a, b) => a.handle.localeCompare(b.handle));
   const mineAgents = agents.filter((a) => a.ownerAccountId === me?.id);
+  const grantedIds = new Set(Array.isArray(rows) ? rows.map((g) => g.agentId) : []);
 
   return (
     <div className="mt-2 rounded border border-border bg-surface-sunken p-2" data-testid="secret-grants">
@@ -519,37 +523,25 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
         </ul>
       )}
       {canGrant ? (
-        <>
-        {/* 에이전트가 값을 정한 비밀(security L2): 그 에이전트는 값을 안다 — 다른 에이전트에게 넓히기 전에 말한다. */}
-        {/* 안내는 에이전트를 고른 뒤에만(designer n2) — 폼 위에 세 줄이 겹치지 않게. */}
-        {secret.valueSetByAgentId && agentId && (
-          <p className="mt-2 text-meta text-fg-subtle" data-testid="secret-adopt-note">{t('secrets.adoptNote', { handle: handle(secret.valueSetByAgentId) })}</p>
-        )}
-        {secret.valueSetByAgentId && agentId && agentId !== secret.valueSetByAgentId && (
-          <p role="alert" className="mt-1 text-meta text-warning" data-testid="secret-widen-warn">{t('secrets.widenWarn', { handle: handle(secret.valueSetByAgentId) })}</p>
-        )}
-        {/* 경고는 읽는 순서대로 주기 폼 바로 위(designer n4). */}
-        <p className="mt-2 text-meta text-warning" data-testid="secret-grants-all-channels">{t('secrets.allChannelsWarn')}</p>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <select aria-label={t('secrets.grantAgent')} className="rounded border border-border bg-field px-2 py-1 text-meta text-fg" value={agentId} disabled={busy} onChange={(e) => setAgentId(e.target.value)}>
-            <option value="">{t('secrets.grantAgentPick')}</option>
-            {mineAgents.length > 0 && (
-              <optgroup label={t('secrets.agentsMine')}>
-                {mineAgents.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
-              </optgroup>
-            )}
-          </select>
-          <select aria-label={t('secrets.grantOperator')} className="rounded border border-border bg-field px-2 py-1 text-meta text-fg" value={operator} disabled={busy} onChange={(e) => setOperator(e.target.value as 'current' | 'any')}>
-            <option value="current">{t('secrets.operatorCurrent')}</option>
-            <option value="any">{t('secrets.operatorAny')}</option>
-          </select>
-          <SmallButton disabled={busy || !agentId} onClick={() => void run(async () => {
-            await getController().putSecretGrant(secret.id, { agentId, channelId: null, operator });
-            setAgentId('');
-          })}>{t('secrets.grant')}</SmallButton>
-          {operator === 'any' && <p className="w-full text-meta text-warning" data-testid="secret-grant-any-warn">{t('secrets.anyOperatorWarn')}</p>}
+        <div className="mt-2">
+          <SecretAgentPicker candidates={mineAgents} granted={grantedIds} disabled={busy}
+            onPick={(id) => { setAgentId(id); setOperator('current'); setError(null); }} />
+          {agentId && (
+            <GrantConfirm
+              secret={secret}
+              agent={accounts[agentId]}
+              handle={handle}
+              operator={operator}
+              onOperator={setOperator}
+              busy={busy}
+              onCancel={() => setAgentId('')}
+              onGive={() => void run(async () => {
+                await getController().putSecretGrant(secret.id, { agentId, channelId: null, operator });
+                setAgentId('');
+              })}
+            />
+          )}
         </div>
-        </>
       ) : (
         // 내 비밀이 만료돼서 못 주는 것과 남의 비밀이라 못 주는 것은 고칠 길이 다르다(designer n3).
         <p className="mt-2 text-meta text-fg-subtle">{expiredMine ? t('secrets.grantExpiredMine') : t('secrets.grantOwnerOnly')}</p>
@@ -567,6 +559,65 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
           onCancel={() => setRevoking(null)}
           onConfirm={() => { const g = revoking; setRevoking(null); void run(() => getController().deleteSecretGrant(secret.id, g.id)); }}
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * 에이전트를 고른 뒤의 **확인 줄**(designer 시안 v1 #1·#4). 고르기 전에는 경고가 없다 — 주황 큰 글이 늘 떠 있으면
+ * 아무도 읽지 않는다. 고른 뒤 [주기] 바로 위에서 한 줄 회색으로 말하고 「모든 스레드」만 강조한다.
+ * 어느 오퍼레이터든을 고르면 한 줄 덧붙인다. 에이전트가 값을 정한 비밀의 안내(`adoptNote`)·경고(`widenWarn`,
+ * security L2)는 그대로 — 그 경고만 주황으로 남는다.
+ */
+function GrantConfirm({ secret, agent, handle, operator, onOperator, busy, onCancel, onGive }: {
+  secret: SecretView; agent: AccountView | undefined; handle(id: string): string;
+  operator: 'current' | 'any'; onOperator(v: 'current' | 'any'): void;
+  busy: boolean; onCancel(): void; onGive(): void;
+}) {
+  const t = useT();
+  const agentId = agent?.id ?? '';
+  const h = agent?.handle ?? agentId.slice(0, 8);
+  // 「모든 스레드」 강조: 문장을 자리표시로 쪼개 그 낱말만 굵게 — 번역마다 낱말 자리가 달라도 된다.
+  const [before, after] = t('secrets.allChannelsNote', { handle: h, all: '\u0001' }).split('\u0001');
+  const valueBy = secret.valueSetByAgentId;
+  return (
+    <div className="mt-2 rounded-card border border-border bg-surface-sunken px-3 py-2" data-testid="secret-grant-confirm">
+      <div className="flex flex-wrap items-center gap-2 text-meta">
+        <Identity account={agent} className="h-5 w-5 text-[10px]" variant="avatar" />
+        <span className="font-medium text-fg">{t('secrets.grantTo', { handle: h })}</span>
+        <div role="radiogroup" aria-label={t('secrets.grantOperator')} className="inline-flex gap-0.5 rounded-row bg-surface p-0.5">
+          {(['current', 'any'] as const).map((v) => (
+            <button key={v} type="button" role="radio" aria-checked={operator === v} disabled={busy}
+              className={`rounded-row px-2.5 py-0.5 text-meta ${operator === v ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:text-fg'}`}
+              onClick={() => onOperator(v)}>
+              {v === 'current' ? t('secrets.operatorCurrent') : t('secrets.operatorAny')}
+            </button>
+          ))}
+        </div>
+        <span className="ml-auto flex gap-2">
+          <SmallButton onClick={onCancel} disabled={busy}>{t('secrets.cancel')}</SmallButton>
+          <button type="button" disabled={busy} onClick={onGive}
+            className="rounded-row bg-accent px-2.5 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50">
+            {t('secrets.grant')}
+          </button>
+        </span>
+      </div>
+      <p className="mt-2 flex gap-1.5 text-meta text-fg-muted" data-testid="secret-grants-all-channels">
+        <span aria-hidden="true">⚠</span>
+        <span>{before}<strong className="font-medium text-warning">{t('secrets.allChannelsEmph')}</strong>{after}</span>
+      </p>
+      {operator === 'any' && (
+        <p className="mt-1 flex gap-1.5 text-meta text-fg-muted" data-testid="secret-grant-any-warn">
+          <span aria-hidden="true">⚠</span><span>{t('secrets.anyOperatorWarn')}</span>
+        </p>
+      )}
+      {/* 에이전트가 값을 정한 비밀(security L2): 그 에이전트는 값을 안다 — 다른 에이전트에게 넓히기 전에 말한다. */}
+      {valueBy && (
+        <p className="mt-1 text-meta text-fg-subtle" data-testid="secret-adopt-note">{t('secrets.adoptNote', { handle: handle(valueBy) })}</p>
+      )}
+      {valueBy && agentId !== valueBy && (
+        <p role="alert" className="mt-1 text-meta text-warning" data-testid="secret-widen-warn">{t('secrets.widenWarn', { handle: handle(valueBy) })}</p>
       )}
     </div>
   );
