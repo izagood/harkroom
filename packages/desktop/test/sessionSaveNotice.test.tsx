@@ -96,7 +96,7 @@ describe('키체인 쓰기 실패 (#212)', () => {
     await sessionStore.save(sessions);
 
     expect([...vault.values()].join()).toContain('murs_secret');
-    expect(useAppStore.getState().notice).toBeNull();
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toBeNull();
     render(<Notice />);
     expect(screen.queryByRole('alert')).toBeNull();
   });

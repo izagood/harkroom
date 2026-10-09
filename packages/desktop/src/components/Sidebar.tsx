@@ -255,6 +255,8 @@ export function Sidebar({
   const t = useT();
   // 새 창으로 띄운 채널·DM(사이드바 ⧉ 표시). 장부가 바뀔 때만 다시 센다.
   const appWindowEntries = useAppWindows((st) => st.entries);
+  /** 터미널에서 사람을 기다리는 에이전트(2026-10-09 A안) — 카드를 접어도 그 줄에 ⌨ 가 남는다. */
+  const gates = useActiveStore((s) => s.gates);
   const poppedChannels = useMemo(
     () => new Set(appWindowEntries.flatMap((e) => (e.target.kind === 'channel' ? [e.target.channelId] : []))),
     [appWindowEntries],
@@ -773,6 +775,26 @@ export function Sidebar({
           {/* 채널 행과 **같은 묶음**이다(위 주석) — DM 에는 미읽음 점이 없어 안이 하나뿐이지만,
               미는 마진의 자리를 두 곳이 다르게 두면 다음에 무언가를 더할 때 또 갈린다. */}
           <span className="ml-auto flex shrink-0 items-center gap-1">
+            {(() => {
+              const gate = dm.agentId ? gates.filter((g) => g.agentAccountId === dm.agentId).at(-1) : undefined;
+              if (!gate) return null;
+              const { threadRootId } = gate;
+              // 줄 전체가 DM 을 여는 버튼이라 여기는 버튼 안의 글자다. 누르면 DM 대신 그 터미널을
+              // 연다 — 카드를 [나중에]로 접은 뒤 돌아갈 문이 이것이다.
+              return (
+                <span data-testid={`gate-waiting-${dm.agentId}`}
+                  className="rounded-sm bg-accent-surface px-1 text-meta text-accent"
+                  title={t('agentTurns.waitingTitle')}
+                  onClick={threadRootId ? (e) => {
+                    e.stopPropagation();
+                    useActiveStore.getState().set({
+                      terminalTarget: { agentAccountId: gate.agentAccountId, channelId: gate.channelId, threadRootId },
+                    });
+                  } : undefined}>
+                  {t('agentTurns.waiting')}
+                </span>
+              );
+            })()}
             {poppedChannels.has(dm.id) && (
               <span data-testid={`channel-popped-${dm.id}`} className="text-meta text-fg-subtle" title={t('window.inWindow')} aria-label={t('window.inWindow')}>⧉</span>
             )}

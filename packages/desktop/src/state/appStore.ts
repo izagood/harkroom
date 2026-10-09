@@ -25,6 +25,32 @@ export interface PendingUpload {
   row: AttachmentRow | null;
 }
 
+/** 아래 가운데 토스트 하나(2026-10-09 A안). `id` 는 닫기·시한의 손잡이다. */
+export interface NoticeItem {
+  id: number;
+  text: string;
+}
+
+/**
+ * 사람 손을 기다리는 에이전트 세션 하나(2026-10-09 A안). `agent.attention` 이 세우고
+ * `agent.attention.cleared` 나 그 터미널을 연 것이 내린다.
+ */
+export interface GateItem {
+  sessionId: string;
+  agentAccountId: string;
+  agentHandle: string;
+  accountLabel: string;
+  channelId: string;
+  threadRootId: string | null;
+  /** [나중에]로 카드만 접었다. 턴 줄의 ⌨ 대기 표시는 남는다. */
+  dismissed: boolean;
+}
+
+/** 토스트는 이만큼까지 쌓는다 — 넘치면 가장 오래된 것부터 밀려난다. */
+export const MAX_NOTICES = 3;
+
+let nextNoticeId = 1;
+
 export interface HistoryEntry {
   channelId: string;
   threadRootId: string | null;
@@ -266,9 +292,17 @@ export interface AppState {
   /**
    * 사람에게 보여야 하는 짧은 알림·오류(#178). 조용히 삼키면 안 되는 실패가 여기로 온다 —
    * 링크가 가리키는 메시지를 못 열었다, 클립보드 쓰기가 막혔다 같은 것들.
-   * 없으면 null 이다. 화면 상태이므로 영속하지 않는다.
+   *
+   * **배열이다**(2026-10-09 A안). 전에는 `notice: string` 한 칸이라 실패 둘이 연달아 오면
+   * 앞의 것이 소리 없이 덮였다. 넣기는 `pushNotice`, 빼기는 `dismissNotice` 로만 한다.
+   * 화면 상태이므로 영속하지 않는다.
    */
-  notice: string | null;
+  notices: NoticeItem[];
+  /**
+   * 터미널에서 사람을 기다리는 세션들(2026-10-09 A안). 실패와 **다른 칸**이다 — 실패는
+   * 방금 한 동작의 결과이고, 이것은 사람이 할 일이다. 섞어 두면 한쪽이 다른 쪽을 덮는다.
+   */
+  gates: GateItem[];
   /**
    * **조용한 실패로 끝난 집합 호출**(정본 문서: 집합 호출의 결과). messageId → 말할 한 줄.
    *
@@ -401,7 +435,19 @@ export interface AppState {
    * 목록을 여기 담지 않는 이유는 `skillsRevision` 과 같다.
    */
   operatorsRevision: number;
+  /**
+   * `terminalTarget` 이 바뀌면 그 자리의 관문 카드를 함께 내린다 — 그 터미널을 연 것이
+   * 곧 관문에 응한 것이다. 터미널을 여는 문이 여럿(카드·턴 줄·참여자·타워)이라 각 문이
+   * 내리게 하면 하나를 빠뜨린다. 그래서 여기 한 곳에서 한다.
+   */
   set(partial: Partial<AppState>): void;
+  /** 실패 한 줄을 토스트로 세운다. 같은 글이 이미 떠 있으면 새로 쌓지 않는다. */
+  pushNotice(text: string): void;
+  dismissNotice(id: number): void;
+  /** 같은 세션이 다시 부르면 갈아 끼운다(접어 둔 카드도 다시 편다). */
+  raiseGate(gate: Omit<GateItem, 'dismissed'>): void;
+  clearGate(sessionId: string): void;
+  dismissGate(sessionId: string): void;
   upsertMessages(channelId: string, rows: MessageRow[]): void;
   /**
    * 스레드 루트의 두 집계를 함께 움직인다(2026-09-09). 예전 이름은 `incrementReplyCount`
@@ -464,7 +510,7 @@ const initial = {
   online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
-  history: [], historyIndex: -1, notice: null, notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
+  history: [], historyIndex: -1, notices: [], gates: [], notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
   ownSendIds: {}, sendsInFlight: {},
   highlightedMessageId: null, channelRevealSeq: 0,
   runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0,
@@ -513,7 +559,28 @@ export function keepThreadFacts(prev: MessageRow | undefined, next: MessageRow):
 export function createAppStore() {
   return create<AppState>((set, get) => ({
     ...initial,
-    set: (partial) => set(partial),
+    set: (partial) => {
+      const target = partial.terminalTarget;
+      if (target) {
+        const gates = get().gates.filter((g) => !(g.agentAccountId === target.agentAccountId
+          && g.channelId === target.channelId && g.threadRootId === target.threadRootId));
+        if (gates.length !== get().gates.length) { set({ ...partial, gates }); return; }
+      }
+      set(partial);
+    },
+    pushNotice: (text) => {
+      const cur = get().notices;
+      if (cur.some((n) => n.text === text)) return;
+      set({ notices: [...cur, { id: nextNoticeId++, text }].slice(-MAX_NOTICES) });
+    },
+    dismissNotice: (id) => set({ notices: get().notices.filter((n) => n.id !== id) }),
+    raiseGate: (gate) => set({
+      gates: [...get().gates.filter((g) => g.sessionId !== gate.sessionId), { ...gate, dismissed: false }],
+    }),
+    clearGate: (sessionId) => set({ gates: get().gates.filter((g) => g.sessionId !== sessionId) }),
+    dismissGate: (sessionId) => set({
+      gates: get().gates.map((g) => (g.sessionId === sessionId ? { ...g, dismissed: true } : g)),
+    }),
     upsertMessages: (channelId, rows) => {
       const byId = new Map((get().messages[channelId] ?? []).map((m) => [m.id, m]));
       for (const r of rows) byId.set(r.id, keepThreadFacts(byId.get(r.id), r));

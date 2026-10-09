@@ -200,7 +200,7 @@ describe('Controller', () => {
 
     await c.editMessage('m1', '@forge 뒤늦게');
 
-    expect(useAppStore.getState().notice).toMatch(/more than 24 hours old/);
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/more than 24 hours old/);
   });
 
   // 수정으로 멘션을 불렀다는 것은 상단 띠로 알리지 않는다(jaebin, 10-06) — 부르지 못한 때만 말한다.
@@ -215,7 +215,7 @@ describe('Controller', () => {
 
     await c.editMessage('m1', '@forge 봐 달라');
 
-    expect(useAppStore.getState().notice).toBeNull();
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toBeNull();
   });
 
   // #231 되돌리기는 **지우기가 아니다**. 스토어에서 빼면 스레드에서도 사라져

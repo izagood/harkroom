@@ -88,7 +88,7 @@ describe('코드 블록 복사 버튼', () => {
 
     screen.getByTestId('code-copy').click();
 
-    await waitFor(() => expect(useAppStore.getState().notice ?? '').not.toBe(''));
+    await waitFor(() => expect(useAppStore.getState().notices.at(-1)?.text ?? '').not.toBe(''));
   });
 
   /** 눌린 것이 보여야 한다. 아무 변화가 없으면 사람은 한 번 더 누른다. */

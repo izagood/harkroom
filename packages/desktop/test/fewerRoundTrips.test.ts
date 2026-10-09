@@ -62,7 +62,7 @@ describe('다른 채널의 스레드 열기', () => {
     await c.openThread('root-x', { channelId: 'c2' });
 
     expect(useAppStore.getState().threadRootId).toBeNull();
-    expect(useAppStore.getState().notice).toMatch(/Could not open that thread/);
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/Could not open that thread/);
   });
 });
 

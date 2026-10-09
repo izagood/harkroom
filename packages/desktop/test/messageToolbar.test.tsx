@@ -146,7 +146,7 @@ describe('overflow menu permissions', () => {
     fireEvent.click(screen.getByTestId('toolbar-copy-link'));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-    expect(useAppStore.getState().notice).toBeNull();
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toBeNull();
   });
 
   it('링크 복사가 실패하면 링크를 실어 알린다', async () => {
@@ -156,8 +156,8 @@ describe('overflow menu permissions', () => {
 
     fireEvent.click(screen.getByTestId('toolbar-copy-link'));
 
-    await waitFor(() => expect(useAppStore.getState().notice).toMatch(/Could not copy the link/));
-    expect(useAppStore.getState().notice).toContain('m1');
+    await waitFor(() => expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/Could not copy the link/));
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toContain('m1');
   });
 
   it('shows no Edit/Delete for system message', () => {
