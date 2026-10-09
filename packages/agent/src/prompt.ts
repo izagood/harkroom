@@ -1437,6 +1437,7 @@ export function freshWakeLines(): string[] {
   return [
     '(이 턴은 예약 확인을 위해 **새 세션**으로 떴다 — 이 스레드의 앞 대화를 이어받지 않았다. 사유만으로 확인할 수 없고',
     '앞 맥락이 정말 필요하면 harkroom MCP 의 `message.read` 로 위 channelId·threadRootId 를 읽어라.',
+    '머지·push·다른 스레드 발화처럼 되돌리기 어려운 일을 하기 전에는 `message.read` 로 앞 대화의 조건(검토·승인 등)을 먼저 확인하라.',
     '이 세션은 이 턴 뒤 버려진다 — 다음에 알아야 할 것은 스레드에 쓰거나 기억에 남겨라.)',
   ];
 }

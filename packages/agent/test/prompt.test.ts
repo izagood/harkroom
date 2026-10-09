@@ -253,6 +253,8 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
     expect(r.prompt).toContain('(예약된 후속 턴 — 사유: CI 결과 확인)');
     expect(r.prompt).toContain('**새 세션**');
     expect(r.prompt).toContain('message.read');
+    // 새 세션은 앞 대화의 조건(머지 전 검토 등)을 모른다 — 되돌리기 어려운 일 전에는 읽고 하라는 줄.
+    expect(r.prompt).toContain('되돌리기 어려운 일을 하기 전에는 `message.read`');
     expect(r.prompt).toContain('jaebin: 아 그거 취소해');
     expect(r.prompt).not.toContain('옛 세션의 내 답');
   });
