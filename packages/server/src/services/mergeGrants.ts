@@ -127,7 +127,7 @@ export async function checkMerge(
     // 쓴 순간 스레드에 남긴다(무엇을·누구 승인으로·어느 계정으로). 본문은 고정 문구와 서버 값뿐 — 멘션이 풀리지 않게 handle 은 meta 에만.
     await postMessage(pool, {
       channelId: lease!.channelId, threadRootId: lease!.threadRootId, authorId: args.agentId, kind: 'system',
-      body: `🔓 ${scope.slice('repo:'.length)}#${args.number} 1회 머지 승인 사용 · head ${args.headSha.slice(0, 9)} · gh ${approval.ghUser}${approval.relaxChecks ? ' · CI 판정은 GitHub 에 맡김' : ''}`,
+      body: `🔓 ${scope.slice('repo:'.length)}#${args.number} 1회 승인으로 머지 시도 · head ${args.headSha.slice(0, 9)} · gh ${approval.ghUser}${approval.relaxChecks ? ' · CI 판정은 GitHub 에 맡김' : ''}`,
       meta: { mergeApproval: { id: approval.id, repo: scope.slice('repo:'.length), number: args.number, headSha: args.headSha, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks, approvedBy: approval.approvedBy } },
     });
     return {
@@ -256,9 +256,22 @@ export async function mergeableRepos(pool: Pool, agentId: string): Promise<strin
  * 이 에이전트에게 아직 안 쓴 1회 승인이 있는 (저장소, 스레드) — 러너가 그 스레드의 턴에만 래퍼 allow 를 넣는 근거(②).
  * grant 가 하나도 없는 에이전트도 승인이 있으면 래퍼를 부를 수 있어야 한다.
  */
-export async function openMergeApprovals(pool: Pool, agentId: string, now = new Date()): Promise<{ repo: string; number: number; channelId: string; threadRootId: string; expiresAt: string }[]> {
-  const res = await pool.query<{ scope: string; number: number; channelId: string; threadRootId: string; expiresAt: Date }>(
-    `select scope, pr_number as number, channel_id as "channelId", thread_root_id as "threadRootId", expires_at as "expiresAt"
+export interface OpenMergeApproval {
+  repo: string; number: number; headSha: string; ghUser: string; relaxChecks: boolean;
+  channelId: string; threadRootId: string; expiresAt: string;
+}
+
+/**
+ * 래퍼가 소모하기 **전에** 읽는다(security, 스레드 1b75d7a0): 기록의 head·계정으로 GitHub 읽기 전용 사전 확인을 하고, 실패하면
+ * `merge-checks` 를 부르지 않아 승인을 남긴다. 이 목록은 판정이 아니다 — 통과 판정은 언제나 `checkMerge` 의 소모다.
+ */
+export async function openMergeApprovals(pool: Pool, agentId: string, now = new Date()): Promise<OpenMergeApproval[]> {
+  const res = await pool.query<{ scope: string; number: number; headSha: string; ghUser: string; relaxChecks: boolean; channelId: string; threadRootId: string; expiresAt: Date }>(
+    `select scope, pr_number as number, head_sha as "headSha", gh_user as "ghUser", relax_checks as "relaxChecks",
+            channel_id as "channelId", thread_root_id as "threadRootId", expires_at as "expiresAt"
        from merge_approval where agent_id = $1 and used_at is null and expires_at > $2 order by approved_at`, [agentId, now]);
-  return res.rows.map((r) => ({ repo: r.scope.slice('repo:'.length), number: r.number, channelId: r.channelId, threadRootId: r.threadRootId, expiresAt: r.expiresAt.toISOString() }));
+  return res.rows.map((r) => ({
+    repo: r.scope.slice('repo:'.length), number: r.number, headSha: r.headSha, ghUser: r.ghUser, relaxChecks: r.relaxChecks,
+    channelId: r.channelId, threadRootId: r.threadRootId, expiresAt: r.expiresAt.toISOString(),
+  }));
 }

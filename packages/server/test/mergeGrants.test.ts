@@ -536,7 +536,7 @@ describe('repo.merge grant', () => {
       expect(ok.json()).toMatchObject({ repo: 'izagood/once-a', number: 5, headSha: SHA2 });
       // 러너가 읽는 목록에 그 스레드가 실린다(②).
       const listed = (await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asAgent() })).json();
-      expect(listed.approvals).toEqual([expect.objectContaining({ repo: 'izagood/once-a', number: 5, channelId: ch, threadRootId: thread })]);
+      expect(listed.approvals).toEqual([expect.objectContaining({ repo: 'izagood/once-a', number: 5, headSha: SHA2, ghUser: 'rebel-jaebin', relaxChecks: true, channelId: ch, threadRootId: thread })]);
 
       const res = await check(await leaseInThread(thread, otherAgentId), 'izagood/once-a', { number: 5, headSha: SHA2 });
       expect(res.statusCode).toBe(200);
