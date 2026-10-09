@@ -144,7 +144,7 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
   const date = (iso: string) => new Date(iso).toLocaleDateString(locale);
 
   return (
-    <SettingsPage section="secrets" description={<>{t('secrets.description')}{' '}<HelpToggle on={helpOn} onToggle={() => setHelpOn(!helpOn)} /></>}>
+    <SettingsPage section="secrets" description={<>{t('secrets.description')}{' '}<HelpToggle on={helpOn} onToggle={() => setHelpOn(!helpOn)} /></>} layout="list">
       {helpOn && <SecretsHelp />}
       {state === 'loading' && <p className="text-meta text-fg-muted">{t('secrets.loading')}</p>}
       {state === 'error' && <p role="alert" className="text-meta text-danger">{t('secrets.listFailed')}</p>}
@@ -177,7 +177,8 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
           {secrets.length === 0 && !adding && <p className="mt-2 text-meta text-fg-subtle" data-testid="secrets-none">{t('secrets.none')}</p>}
 
           {secrets.length > 0 && (
-          <ul className="divide-y divide-border rounded-card border border-border">
+          // 비밀은 한 줄 격자 목록(비밀과 API 개선 B #1269) — 넓은 창에서는 칸으로 나누지 않고 list 폭을 꽉 채운다.
+          <ul className="divide-y divide-border rounded-card border border-border" data-testid="secrets-list">
             {secrets.map((s) => {
               const expiresMs = s.expiresAt === null ? null : Date.parse(s.expiresAt);
               const expired = expiresMs !== null && expiresMs <= Date.now();

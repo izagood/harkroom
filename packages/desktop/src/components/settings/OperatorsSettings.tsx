@@ -6,7 +6,7 @@ import { useAgo, useT } from '../../i18n/useT';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { hasCapability } from '../../lib/capabilities';
 import { hasOperatorLocalSurface } from '../../lib/operatorLocal';
-import { SettingsGroup, SettingsPage } from './primitives';
+import { SettingsColumns, SettingsGrid, SettingsGroup, SettingsPage } from './primitives';
 import { OPERATOR_LABEL_MAX, operatorDisplayName, operatorFullName } from '../../lib/operatorName';
 import { normalizeOperatorLabel } from '@harkroom/shared';
 
@@ -119,15 +119,19 @@ export function OperatorsSettings({ onOpenSection }: {
   };
 
   return (
-    <SettingsPage section="operators" description={t('operators.description')}>
-      <SettingsGroup>
-        {operators === null && <p className="px-4 py-3 text-meta text-fg-muted">{t('operators.loading')}</p>}
-        {operators === 'error' && <p role="alert" className="px-4 py-3 text-meta text-danger">{t('operators.listFailed')}</p>}
+    <SettingsPage section="operators" description={t('operators.description')} layout="list">
+      {/* 오퍼레이터 하나가 카드 하나 — 넓은 창에서 2·3단 격자로 선다(시안 v1 list). 등록은 곁 칸. */}
+      <SettingsColumns
+        testId="operators-columns"
+        main={(
+      <SettingsGrid testId="operators-grid">
+        {operators === null && <p className="rounded-compose border border-border bg-surface-raised px-4 py-3 text-meta text-fg-muted">{t('operators.loading')}</p>}
+        {operators === 'error' && <p role="alert" className="rounded-compose border border-border bg-surface-raised px-4 py-3 text-meta text-danger">{t('operators.listFailed')}</p>}
         {Array.isArray(operators) && operators.length === 0 && (
-          <p className="px-4 py-3 text-meta text-fg-subtle">{t('operators.none')}</p>
+          <p className="rounded-compose border border-border bg-surface-raised px-4 py-3 text-meta text-fg-subtle">{t('operators.none')}</p>
         )}
         {Array.isArray(operators) && operators.map((op) => (
-          <div key={op.id} className="flex items-center justify-between gap-4 px-4 py-3">
+          <div key={op.id} className="flex items-center justify-between gap-4 rounded-compose border border-border bg-surface-raised px-4 py-3">
             <span className="min-w-0 flex-1">
               {editing?.id === op.id ? (
                 <span className="block">
@@ -258,7 +262,10 @@ export function OperatorsSettings({ onOpenSection }: {
             </span>
           </div>
         ))}
-      </SettingsGroup>
+      </SettingsGrid>
+        )}
+        side={(
+          <>
       {confirming && (
         <ConfirmDialog
           title={t('operators.confirmTitle', { name: operatorFullName(confirming) })}
@@ -318,6 +325,9 @@ export function OperatorsSettings({ onOpenSection }: {
           </div>
         </SettingsGroup>
       )}
+          </>
+        )}
+      />
     </SettingsPage>
   );
 }

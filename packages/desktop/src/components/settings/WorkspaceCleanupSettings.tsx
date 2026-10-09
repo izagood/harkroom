@@ -18,7 +18,7 @@ import {
   type WorkspaceCleanupView,
 } from '../../lib/operatorLocal';
 import { buildCleanupModel, dueTodayIf, formatBytes, isWarn, nextSweepAt, type ThreadRow } from '../../lib/workspaceCleanupView';
-import { SettingsGroup, SettingsPage, Toggle } from './primitives';
+import { SettingsColumns, SettingsGroup, SettingsPage, Toggle } from './primitives';
 
 const REASON_KEY: Record<CleanupBlockReason, MessageKey> = {
   uncommitted: 'cleanup.reason.uncommitted',
@@ -202,7 +202,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
   const graceWarnN = off ? 0 : dueIfLower(settings.graceDays - 1);
 
   return (
-    <SettingsPage section="workspace-cleanup" description={t('settings.desc.workspace-cleanup')}>
+    <SettingsPage section="workspace-cleanup" description={t('settings.desc.workspace-cleanup')} layout="list">
       {/* 한국어 설명이 낱말 중간에서 끊기지 않게(designer n3). 경로·제목은 truncate 라 영향 없다. */}
       <div className="break-keep">
       <div className="mb-6 text-meta text-fg-muted" data-testid="cleanup-summary">
@@ -212,32 +212,13 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
         </p>
       </div>
 
-      <SettingsGroup title={t('cleanup.rules')}>
-        <Toggle label={t('cleanup.enabled')} description={t(settings.enabled ? 'cleanup.enabledOn' : 'cleanup.enabledOff')}
-          checked={settings.enabled} disabled={busy} onChange={(v) => void run(() => setWorkspaceCleanupSettings({ enabled: v }))} />
-        <div className="px-4 py-3">
-          <div className="flex items-center gap-4">
-            <span className="min-w-0 flex-1">
-              <span className="block font-medium text-fg">{t('cleanup.graceDays')}</span>
-              <span className="mt-0.5 block text-fg-subtle">{t('cleanup.graceDaysHint')}</span>
-            </span>
-            <div className="flex items-center gap-1" data-testid="cleanup-grace">
-              <button className="h-6 w-6 rounded-row border border-border disabled:opacity-50" aria-label={t('cleanup.graceLess')}
-                disabled={busy || settings.graceDays <= 1} onClick={() => setDays(settings.graceDays - 1)}>−</button>
-              <span className="w-12 text-center tabular-nums" data-testid="cleanup-grace-value">{t('cleanup.days', { n: settings.graceDays })}</span>
-              <button className="h-6 w-6 rounded-row border border-border disabled:opacity-50" aria-label={t('cleanup.graceMore')}
-                disabled={busy || settings.graceDays >= 30} onClick={() => setDays(settings.graceDays + 1)}>+</button>
-            </div>
-          </div>
-          {graceWarnN > 0 && (
-            <p className="mt-2 text-meta text-fg-subtle" data-testid="cleanup-grace-warn">{t('cleanup.graceWarn', { n: graceWarnN })}</p>
-          )}
-        </div>
-      </SettingsGroup>
-      {firstRun && <p className="-mt-6 mb-8 text-meta text-fg-subtle" data-testid="cleanup-first-run">{t('cleanup.firstRun', { n: model.totals.unownedCount })}</p>}
-
       {error && <p role="alert" className="mb-4 text-meta text-danger" data-testid="cleanup-error">{error}</p>}
 
+      {/* 정리할 목록이 주 칸, 규칙·최근 기록이 곁 칸(시안 v1 list). 900 미만에서는 목록 → 규칙 → 기록 순으로 쌓인다. */}
+      <SettingsColumns
+        testId="cleanup-columns"
+        main={(
+          <>
       <SettingsGroup title={t('cleanup.listedTitle', { n: model.totals.listedCount, warn: model.warnCount })}>
         {model.listed.length === 0
           ? <p className="px-4 py-6 text-center text-fg-subtle" data-testid="cleanup-empty">{t('cleanup.empty')}</p>
@@ -278,6 +259,34 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
         </SettingsGroup>
       )}
 
+          </>
+        )}
+        side={(
+          <>
+      <SettingsGroup title={t('cleanup.rules')}>
+        <Toggle label={t('cleanup.enabled')} description={t(settings.enabled ? 'cleanup.enabledOn' : 'cleanup.enabledOff')}
+          checked={settings.enabled} disabled={busy} onChange={(v) => void run(() => setWorkspaceCleanupSettings({ enabled: v }))} />
+        <div className="px-4 py-3">
+          <div className="flex items-center gap-4">
+            <span className="min-w-0 flex-1">
+              <span className="block font-medium text-fg">{t('cleanup.graceDays')}</span>
+              <span className="mt-0.5 block text-fg-subtle">{t('cleanup.graceDaysHint')}</span>
+            </span>
+            <div className="flex items-center gap-1" data-testid="cleanup-grace">
+              <button className="h-6 w-6 rounded-row border border-border disabled:opacity-50" aria-label={t('cleanup.graceLess')}
+                disabled={busy || settings.graceDays <= 1} onClick={() => setDays(settings.graceDays - 1)}>−</button>
+              <span className="w-12 text-center tabular-nums" data-testid="cleanup-grace-value">{t('cleanup.days', { n: settings.graceDays })}</span>
+              <button className="h-6 w-6 rounded-row border border-border disabled:opacity-50" aria-label={t('cleanup.graceMore')}
+                disabled={busy || settings.graceDays >= 30} onClick={() => setDays(settings.graceDays + 1)}>+</button>
+            </div>
+          </div>
+          {graceWarnN > 0 && (
+            <p className="mt-2 text-meta text-fg-subtle" data-testid="cleanup-grace-warn">{t('cleanup.graceWarn', { n: graceWarnN })}</p>
+          )}
+        </div>
+      </SettingsGroup>
+      {firstRun && <p className="-mt-6 mb-8 text-meta text-fg-subtle" data-testid="cleanup-first-run">{t('cleanup.firstRun', { n: model.totals.unownedCount })}</p>}
+
       {model.events.length > 0 && (
         <SettingsGroup title={t('cleanup.recent')}>
           {model.events.slice(0, 10).map((e, i) => (
@@ -288,6 +297,9 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
           ))}
         </SettingsGroup>
       )}
+          </>
+        )}
+      />
       </div>
     </SettingsPage>
   );

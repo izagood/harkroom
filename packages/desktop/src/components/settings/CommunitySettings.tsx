@@ -11,7 +11,7 @@ import {
   removeCommunity, setCommunityLabel, startCommunitySession, switchCommunity,
 } from '../../state/controller';
 import { ConnectScreen } from '../../screens/ConnectScreen';
-import { SettingsGroup, SettingsPage } from './primitives';
+import { SettingsColumns, SettingsGroup, SettingsPage } from './primitives';
 
 /**
  * 커뮤니티 목록·추가·제거·이름(#165 결정 6).
@@ -129,7 +129,12 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
     <SettingsPage
       section="communities"
       description={t('settings.desc.communities')}
+      layout="cards"
     >
+      {/* 커뮤니티 목록이 주 칸, 「커뮤니티 추가」가 곁 칸(시안 v1). 900 미만에서는 목록 → 추가 순으로 쌓인다. */}
+      <SettingsColumns
+        testId="communities-columns"
+        main={(
       <SettingsGroup>
         {entries.map((entry) => (
           <CommunityRow
@@ -153,7 +158,8 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
           />
         ))}
       </SettingsGroup>
-
+        )}
+        side={(
       <SettingsGroup>
         <div className="flex items-center gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
@@ -175,6 +181,8 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
           <p role="alert" className="px-4 py-2 text-danger">{addError}</p>
         )}
       </SettingsGroup>
+        )}
+      />
 
       {/* 접속 화면을 **겹창 안에서** 재사용한다(#165 결정 3). `phase` 를 `connect` 로
           되돌려 같은 화면을 띄우면 다른 커뮤니티들의 라이브 연결이 화면과 함께 사라진다 —

@@ -5,7 +5,7 @@ import { skillGroupOf, type SkillGroupId, type SkillUsageView, type WorkspaceSki
 type SkillRow = WorkspaceSkillView & Partial<SkillUsageView>;
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
-import { SettingsPage } from './primitives';
+import { SettingsGrid, SettingsPage } from './primitives';
 import { useAgo, useT } from '../../i18n/useT';
 import type { Translate } from '../../i18n';
 
@@ -110,6 +110,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
     <SettingsPage
       section="skills"
       description={t('skills.group.subtitle')}
+      layout="list"
     >
       <div className="mb-6 flex items-center gap-2">
         <button
@@ -142,11 +143,12 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
             <h3 className="mb-2 text-body font-semibold text-fg-subtle">
               {group.title} ({items.length})
             </h3>
-            <div className="divide-y divide-border rounded-compose border border-border bg-surface-raised">
-              {items.length === 0 && <p className="px-4 py-3 text-fg-subtle">{group.empty}</p>}
+            {/* 스킬 하나가 카드 하나 — 넓은 창에서 2·3단 격자(시안 v1 list). */}
+            <SettingsGrid testId={`skills-grid-${group.id}`}>
+              {items.length === 0 && <p className="rounded-compose border border-border bg-surface-raised px-4 py-3 text-fg-subtle">{group.empty}</p>}
 
               {items.map((skill) => (
-                <div key={skill.slug} className="px-4 py-3">
+                <div key={skill.slug} className="rounded-compose border border-border bg-surface-raised px-4 py-3">
                   <div className="flex items-start gap-4">
                     <div className="min-w-0 flex-1">
                       <span className="font-mono font-medium text-fg">{skill.slug}</span>
@@ -310,7 +312,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                   )}
                 </div>
               ))}
-            </div>
+            </SettingsGrid>
           </section>
         );
       })}

@@ -21,7 +21,7 @@ export function SettingsPage({ section, description, width = 'default', layout, 
   if (layout) {
     return (
       <SettingsWrap layout={layout} className="py-10">
-        <SettingsHeader section={section} description={description} />
+        <SettingsHeader section={section} description={description} measure />
         {children}
       </SettingsWrap>
     );
@@ -145,6 +145,28 @@ export function SettingsColumns({ main, secondary, side, testId }: {
   );
 }
 
+const LIST_GRID = 'grid grid-cols-1 items-start gap-3 @min-[1100px]/settings:grid-cols-2 @min-[1700px]/settings:grid-cols-3';
+
+/**
+ * 목록형 화면의 **격자**(규칙 ④ list) — 줄 하나가 칸 하나다. `SettingsWrap` 안에서 그 폭을 잰다.
+ *
+ * | 본문 폭 | 칸 |
+ * |---|---|
+ * | 1100 미만 | 1단(지금과 같다) |
+ * | 1100 – 1700 | 2단 |
+ * | 1700 이상 | 3단 |
+ *
+ * 줄을 길게 늘이지 않고 칸 수를 늘린다 — 줄마다 값이 3~6개라 2200px 한 줄이면 이름과 단추가
+ * 1500px 넘게 떨어진다. 칸 하나가 360~700px 사이에 머문다. `items-start` 라 펼친 줄이 이웃 줄을
+ * 같이 늘이지 않는다.
+ */
+export function SettingsGrid({ as = 'div', testId, className = '', children }: {
+  as?: 'div' | 'ul'; testId?: string; className?: string; children: ReactNode;
+}) {
+  const Tag = as;
+  return <Tag data-testid={testId} data-settings-grid="" className={`${LIST_GRID} ${className}`}>{children}</Tag>;
+}
+
 /**
  * 라벨-값 두 열 행(규칙 ⑥) — 라벨 120px 오른쪽 맞춤 + 값 상한 440px. 칸이 넓어져도 라벨과 값
  * 사이가 벌어지지 않는다. 640px 결정이 지키던 것을 폭 대신 이 행이 지킨다.
@@ -207,14 +229,16 @@ export function DangerZone({ title, testId, children }: {
  * `SettingsPage` 를 못 쓰는 두 칸 화면(목록 + 상세: 핸들 그룹)도 이것을 위에 얹는다. 머리가
  * 화면마다 달랐다(M2) — 어떤 화면은 17px 제목, 어떤 화면은 15px 칸 제목만 있었다.
  */
-export function SettingsHeader({ section, description, className = '' }: {
+export function SettingsHeader({ section, description, className = '', measure = false }: {
   section: SectionId; description?: ReactNode; className?: string;
+  /** 부제를 68ch 에서 끊는다(규칙 ⑤). `layout` 으로 넓힌 화면만 켠다 — 640px 화면은 이미 그 안이다. */
+  measure?: boolean;
 }) {
   const t = useT();
   return (
     <div className={className}>
       <h2 className="text-title font-semibold text-fg">{t(navKey(section))}</h2>
-      <p className="mt-1 mb-8 text-fg-subtle">{description ?? ''}</p>
+      <p className={measure ? 'mt-1 mb-8 max-w-[68ch] text-fg-subtle' : 'mt-1 mb-8 text-fg-subtle'}>{description ?? ''}</p>
     </div>
   );
 }

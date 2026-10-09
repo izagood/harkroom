@@ -2218,7 +2218,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               {/* #251: 에이전트 비활성화/활성화. 관리 행위이므로 admin 만 보인다. */}
                 </>}
                 secondary={selected && isAdmin ? (
-                  <AgentAtAGlance agent={selected} operatorName={Array.isArray(operators) ? operatorNameOf(operators.find((o) => o.id === selected.assignment?.operatorId)) ?? null : null} mergeCount={mergeCounts[selected.id]} onOpen={setDetailTab} />
+                  <AgentAtAGlance agent={selected} operatorName={Array.isArray(operators) ? operatorNameOf(operators.find((o) => o.id === selected.assignment?.operatorId)) ?? null : null} mergeCount={mergeCounts[selected.id]} memoryCount={Array.isArray(memories) && memAgentRef.current === selected.id ? memories.length : null} onOpen={setDetailTab} />
                 ) : undefined}
                 side={selected && isAdmin ? (<>
                   {/* 비활성 상태의 「활성화」는 되돌릴 수 있는 조작이라 위험 구역 밖 중립 카드에 선다(designer #1256 수정 2 —
@@ -2571,7 +2571,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               {selected && (isAdmin || isOwner) && (
                 <div className="rounded-row border border-border p-3">
                   <div className="text-meta font-medium text-fg-muted">{t('agents.assignment.heading')}</div>
-                  <p className="mt-1 text-meta text-fg-subtle" data-testid="agent-assignment-current">
+                  <p className="mt-1 max-w-[68ch] text-meta text-fg-subtle" data-testid="agent-assignment-current">
                     {(() => {
                       const asg = selected.assignment;
                       if (!asg) return t('agents.assignment.none');
@@ -2595,7 +2595,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     <p className="mt-2 text-meta text-danger">{t('operators.listFailed')}</p>
                   )}
                   {Array.isArray(operators) && operators.length === 0 && (
-                    <p className="mt-2 text-meta text-fg-subtle">{t('agents.assignment.noOperators')}</p>
+                    <p className="mt-2 max-w-[68ch] text-meta text-fg-subtle">{t('agents.assignment.noOperators')}</p>
                   )}
                   {Array.isArray(operators) && operators.length > 0 && (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -2657,7 +2657,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       )}
                     </div>
                   )}
-                  <p className="mt-2 text-meta text-fg-subtle">{t('agents.assignment.note')}</p>
+                  <p className="mt-2 max-w-[68ch] text-meta text-fg-subtle">{t('agents.assignment.note')}</p>
                   {/* 양쪽 동의의 둘째 절반 — 이 머신의 오퍼레이터 로컬 설정(스펙 §3 능력). */}
                   <LocalOperatorRow agentId={selected.id} disabled={busy} />
                 </div>
@@ -2689,7 +2689,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       `adopted` 로 바꾸며 `RunnerStatus.tsx` 의 문구를 고쳤는데, 같은 말을 제 손으로
                       적어 둔 이 문장은 따라오지 않아 화면 두 자리가 서로 다른 말을 했다.
                       같은 출처에서 내면 다음 개명도 저절로 따라온다. */}
-                  <p className="mt-1 text-meta text-fg-subtle">
+                  <p className="mt-1 max-w-[68ch] text-meta text-fg-subtle">
                     {/* `{label}` 은 `runnerStatusLabel` 이 낸다 — 상태 이름을 이 문장이 제 손으로
                         적으면 `RunnerStatus.tsx` 가 바뀔 때 여기만 낡는다(위 import 주석). */}
                     {emphasize(
@@ -2705,7 +2705,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   {/* 남이 띄운 러너를 이 화면이 못 본다는 것은 **한계 고백**이라 따로 적는다.
                       앞 문장에 "누가 띄웠든"으로 뭉쳐 두면 사람은 손으로 띄운 러너도 여기
                       나타날 것으로 읽고, 안 나타나면 앱이 고장 났다고 판단한다. */}
-                  <p className="mt-1 text-meta text-fg-subtle">
+                  <p className="mt-1 max-w-[68ch] text-meta text-fg-subtle">
                     {emphasize(t('agents.runner.daemonScope'), {
                       strongOnlyOwn: t('agents.runner.daemonScopeOnlyOwn'),
                     })}
@@ -3466,13 +3466,15 @@ function FieldGroup({ title, note, children }: {
 
 /**
  * 개요의 「한눈에」 — 다른 탭이 이미 가진 값만 한 줄씩 적고, 누르면 그 탭으로 간다(설정 폭 시안 v1,
- * designer #1256 nit 2: 러너 카드 오른쪽이 비던 자리). **새로 불러오는 값은 없다** — 기억 개수처럼 탭을
- * 열어야 오는 값은 적지 않는다(처음엔 비어 보이면 「없다」로 읽힌다).
+ * designer #1256 nit 2: 러너 카드 오른쪽이 비던 자리). **새로 불러오는 값은 없다** — 기억 개수는 기억 탭을
+ * 이미 열었을 때만 「항목 N개」이고, 아니면 「—」다(0 으로 적으면 「없다」로 읽힌다).
  */
-function AgentAtAGlance({ agent, operatorName, mergeCount, onOpen }: {
+function AgentAtAGlance({ agent, operatorName, mergeCount, memoryCount, onOpen }: {
   agent: AgentView;
   operatorName: string | null;
   mergeCount: MergeCount | undefined;
+  /** 기억 탭이 **이미** 불러 둔 이 에이전트의 항목 수. 아직 안 열었으면 null → 「—」(designer #1263 nit 2). */
+  memoryCount: number | null;
   onOpen: (tab: AgentDetailTab) => void;
 }) {
   const t = useT();
@@ -3489,7 +3491,7 @@ function AgentAtAGlance({ agent, operatorName, mergeCount, onOpen }: {
         ? `${agent.mentionPermission} · ${t('agents.glance.merge', { n: String(mergeCount.repos + mergeCount.orgs) })}`
         : agent.mentionPermission,
     },
-    { tab: 'memory', value: t('agents.glance.memory') },
+    { tab: 'memory', value: memoryCount === null ? '—' : t('agents.glance.memory', { n: String(memoryCount) }) },
   ];
   return (
     <section data-testid="agent-glance" className="rounded-row border border-border p-3">
