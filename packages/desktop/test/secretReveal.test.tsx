@@ -115,9 +115,82 @@ describe('비밀 소유자 보기', () => {
     await waitFor(() => expect(screen.getByTestId('secrets-toast').textContent).toContain('60초 뒤'));
     expect(c.revealSecret).toHaveBeenCalledWith('id-api-token', expect.objectContaining({ action: 'copy' }));
     expect(invoke).toHaveBeenCalledWith('clipboard_write_concealed', { text: VALUE });
+    // macOS 밖: 일반 복사로 물러나고, 실제로 들어갔을 때만 「복사함 · 비워 주세요」(security n3).
     setConcealedClipboardInvoke(async () => { throw new Error('not macOS'); });
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
     fireEvent.click(screen.getByRole('button', { name: '복사' }));
     await waitFor(() => expect(screen.getByTestId('secrets-toast').textContent).toContain('비워 주세요'));
+    expect(writeText).toHaveBeenCalledWith(VALUE);
+    // 클립보드가 막혔으면 「복사함」이라고 말하지 않는다.
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn(async () => { throw new Error('denied'); }) } });
+    fireEvent.click(screen.getByRole('button', { name: '복사' }));
+    await waitFor(() => expect(screen.getByTestId('secrets-toast').textContent).not.toContain('복사함'));
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+  });
+
+  it('잠근 뒤에 늦게 온 복사 응답은 버린다 — 머리줄이 다시 풀리지 않고 클립보드에도 안 넣는다(n1)', async () => {
+    let release: (v: unknown) => void = () => {};
+    const c = setup(); setServer('0.4.20');
+    const invoke = vi.fn(async () => undefined);
+    setConcealedClipboardInvoke(invoke);
+    render(<SecretsSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    fireEvent.change(screen.getByTestId('secrets-unlock-password'), { target: { value: 'pw' } });
+    fireEvent.click(screen.getByTestId('secrets-unlock-submit'));
+    await screen.findByTestId('secrets-unlocked');
+    fireEvent.click(screen.getByRole('button', { name: 'api-token 값 보기' }));
+    await screen.findByTestId('secret-reveal-value');
+    c.revealSecret.mockImplementationOnce(() => new Promise((r) => { release = r; }) as never);
+    fireEvent.click(screen.getByRole('button', { name: '복사' }));
+    fireEvent.click(screen.getByRole('button', { name: '잠그기' }));
+    await act(async () => { release({ steppedUpUntil: until(15), name: 'api-token', kind: 'text', filename: null, version: 1, value: VALUE }); });
+    expect(screen.queryByTestId('secrets-unlocked')).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('저절로 잠길 때도 DELETE 를 보낸다(n2)', async () => {
+    const c = setup({ unlockSecrets: vi.fn(async () => ({ steppedUpUntil: new Date(Date.now() + 1500).toISOString() })) });
+    setServer('0.4.20');
+    render(<SecretsSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    fireEvent.change(screen.getByTestId('secrets-unlock-password'), { target: { value: 'pw' } });
+    fireEvent.click(screen.getByTestId('secrets-unlock-submit'));
+    await screen.findByTestId('secrets-unlocked');
+    await waitFor(() => expect(screen.queryByTestId('secrets-unlocked')).toBeNull(), { timeout: 3000 });
+    expect(screen.getByTestId('secrets-autolocked').textContent).toContain('잠갔다');
+    expect(c.lockSecrets).toHaveBeenCalledTimes(1);
+  });
+
+  it('60초 미만이면 「잠시 뒤」 — 「0분 뒤」를 만들지 않는다', async () => {
+    setup({ unlockSecrets: vi.fn(async () => { throw new ApiError(429, 'rate_limited', 'slow', { error: { retryAfterSec: 30 } }); }) });
+    setServer('0.4.20');
+    render(<SecretsSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    fireEvent.change(screen.getByTestId('secrets-unlock-password'), { target: { value: 'pw' } });
+    fireEvent.click(screen.getByTestId('secrets-unlock-submit'));
+    expect((await screen.findByTestId('secrets-unlock-error')).textContent).toContain('잠시 뒤');
+  });
+
+  it('접근 기록: 연달아 막힌 줄은 한 줄로 접고, IP 는 있을 때만 title 로', async () => {
+    const row = (id: string, at: string, over: Record<string, unknown> = {}) => ({
+      id, version: null, agentId: null, operatorId: null, turnId: null, channelId: null, threadRootId: null,
+      result: 'denied', reason: 'step_up_required', at, actorAccountId: ME, action: 'view', client: 'Harkroom 0.4.20 · macOS', ip: null, ...over,
+    });
+    setup({ listSecretAccess: vi.fn(async () => [
+      row('5', '2026-10-09T05:10:00Z', { result: 'granted', reason: null, version: 1, ip: '203.0.113.7' }),
+      row('4', '2026-10-09T05:05:00Z'), row('3', '2026-10-09T05:04:00Z'), row('2', '2026-10-09T05:02:00Z'),
+    ]) });
+    setServer('0.4.20');
+    render(<SecretsSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: '접근 기록' }));
+    const folded = await screen.findByTestId('secret-access-folded');
+    expect(folded.textContent).toContain('×3');
+    expect(folded.textContent).toContain('막힘 (잠금 해제 안 됨)');
+    expect(screen.getAllByRole('row')).toHaveLength(3);
+    const viewed = screen.getAllByRole('row').find((tr) => tr.textContent?.includes('봤음'));
+    expect(viewed?.querySelector('[title]')?.getAttribute('title')).toBe('203.0.113.7');
+    expect(folded.querySelector('[title]')).toBeNull();
   });
 
   it('[잠그기]는 화면부터 잠그고 DELETE 를 부른다 — 열린 값 패널도 닫힌다', async () => {

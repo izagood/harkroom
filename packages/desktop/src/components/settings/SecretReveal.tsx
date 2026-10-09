@@ -46,6 +46,18 @@ export function retryAfterSec(e: unknown): number | null {
 
 export type UnlockState = { until: number | null; autoLocked: boolean };
 
+/**
+ * 요청 하나의 표(security #1261 n1). 잠글 때마다 세대가 오르고, 그보다 앞서 시작한 요청의 결과는 버린다 —
+ * 늦게 온 응답이 머리줄을 다시 「풀림」으로 그리거나 클립보드에 값을 넣지 않게.
+ */
+export type Ticket = { live: () => boolean; until: (iso: string) => void };
+
+/** 429 의 남은 시간을 사람 말로 — 분은 올림, 60초 미만이면 「잠시 뒤」(「0분 뒤」를 만들지 않는다, designer). */
+export function waitText(t: ReturnType<typeof useT>, sec: number, minutesKey: 'secrets.unlockLimited' | 'secrets.revealLimited'): string {
+  if (sec < 60) return t(minutesKey === 'secrets.unlockLimited' ? 'secrets.unlockLimitedSoon' : 'secrets.revealLimitedSoon');
+  return t(minutesKey, { n: String(Math.ceil(sec / 60)) });
+}
+
 /** 머리줄: 잠김 → [잠금 해제…], 풀림 → 「잠금 해제됨 · HH:MM까지」[잠그기], 저절로 잠김 → 한 줄(aria-live 한 번). */
 export function UnlockHeader({ unlock, onUnlock, onLock }: { unlock: UnlockState; onUnlock: () => void; onLock: () => void }) {
   const t = useT();
@@ -73,7 +85,7 @@ export function UnlockDialog({ thenName, onDone, onCancel }: {
 }) {
   const t = useT();
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<{ kind: 'wrong' } | { kind: 'limited'; minutes: number } | { kind: 'other' } | null>(null);
+  const [error, setError] = useState<{ kind: 'wrong' } | { kind: 'limited'; sec: number } | { kind: 'other' } | null>(null);
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => { input.current?.focus(); }, []);
@@ -86,7 +98,7 @@ export function UnlockDialog({ thenName, onDone, onCancel }: {
       onDone(r.steppedUpUntil);
     } catch (e) {
       const wait = retryAfterSec(e);
-      if (wait !== null) setError({ kind: 'limited', minutes: Math.max(1, Math.ceil(wait / 60)) });
+      if (wait !== null) setError({ kind: 'limited', sec: wait });
       else if (e instanceof ApiError && e.status === 401) { setError({ kind: 'wrong' }); input.current?.select(); }
       else setError({ kind: 'other' });
     } finally { setBusy(false); }
@@ -106,7 +118,7 @@ export function UnlockDialog({ thenName, onDone, onCancel }: {
             className={`w-full rounded border bg-surface px-2 py-1 text-body ${error?.kind === 'wrong' ? 'border-danger' : 'border-border'}`} />
           {error && (
             <p role="alert" className="mt-1 text-meta text-danger" data-testid="secrets-unlock-error">
-              {error.kind === 'wrong' ? t('secrets.unlockWrong') : error.kind === 'limited' ? t('secrets.unlockLimited', { n: String(error.minutes) }) : t('secrets.unlockFailed')}
+              {error.kind === 'wrong' ? t('secrets.unlockWrong') : error.kind === 'limited' ? waitText(t, error.sec, 'secrets.unlockLimited') : t('secrets.unlockFailed')}
             </p>
           )}
           <div className="mt-3 flex justify-end gap-2">
@@ -124,8 +136,8 @@ export function UnlockDialog({ thenName, onDone, onCancel }: {
  * 행 아래 값 패널(text). 열리면 서버에서 받아 30초 보이고 가린다. 가린 뒤에는 한 줄로 줄이고 [다시 보기]·[닫기].
  * 카운트다운 숫자에는 aria-live 를 걸지 않는다(매초 읽힌다) — 가려질 때 한 번만 알린다.
  */
-export function RevealPanel({ secret, onUntil, onLocked, onClose, onToast }: {
-  secret: SecretView; onUntil: (iso: string) => void; onLocked: () => void; onClose: () => void; onToast: (text: string) => void;
+export function RevealPanel({ secret, ticket, onLocked, onClose, onToast }: {
+  secret: SecretView; ticket: () => Ticket; onLocked: () => void; onClose: () => void; onToast: (text: string) => void;
 }) {
   const t = useT();
   const [value, setValue] = useState<string | null>(null);
@@ -133,19 +145,21 @@ export function RevealPanel({ secret, onUntil, onLocked, onClose, onToast }: {
   const [hidden, setHidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [round, setRound] = useState(0);
+  const pre = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
     let live = true;
+    const tk = ticket();
     setValue(null); setHidden(false); setLeft(HIDE_AFTER_S); setError(null);
     getController().revealSecret(secret.id, { action: 'view', client: clientLabel() }).then((r) => {
-      if (!live) return;
-      onUntil(r.steppedUpUntil);
+      if (!live || !tk.live()) return;
+      tk.until(r.steppedUpUntil);
       setValue(r.value ?? '');
     }, (e) => {
-      if (!live) return;
+      if (!live || !tk.live()) return;
       if (e instanceof ApiError && e.status === 403) { onLocked(); return; }
       const wait = retryAfterSec(e);
-      setError(wait !== null ? t('secrets.revealLimited', { n: String(Math.max(1, Math.ceil(wait / 60))) }) : t('secrets.revealFailed'));
+      setError(wait !== null ? waitText(t, wait, 'secrets.revealLimited') : t('secrets.revealFailed'));
     });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 다시 보기(round)마다 새로 받는다.
@@ -159,14 +173,20 @@ export function RevealPanel({ secret, onUntil, onLocked, onClose, onToast }: {
   }, [value, left, hidden]);
 
   const copy = async () => {
+    const tk = ticket();
     try {
       const r = await getController().revealSecret(secret.id, { action: 'copy', client: clientLabel() });
-      onUntil(r.steppedUpUntil);
+      // 그 사이 잠갔으면 클립보드에 넣지 않는다(n1). 서버는 이미 내줬고 그 기록은 남는다.
+      if (!tk.live()) return;
+      tk.until(r.steppedUpUntil);
       const text = r.value ?? '';
-      const concealed = await writeConcealed(text);
-      if (!concealed) await copyText(text);
-      onToast(concealed ? t('secrets.copiedCleared', { name: secret.name }) : t('secrets.copiedManual', { name: secret.name }));
+      if (await writeConcealed(text)) { onToast(t('secrets.copiedCleared', { name: secret.name })); return; }
+      // 일반 복사로 물러난다 — 실제로 들어갔을 때만 「복사함」이라고 말한다(n3).
+      const outcome = await copyText(text, pre.current);
+      onToast(outcome === 'copied' ? t('secrets.copiedManual', { name: secret.name })
+        : outcome === 'selected' ? t('secrets.copySelected') : t('secrets.copyFailed'));
     } catch (e) {
+      if (!tk.live()) return;
       if (e instanceof ApiError && e.status === 403) { onLocked(); return; }
       setError(t('secrets.revealFailed'));
     }
@@ -200,7 +220,7 @@ export function RevealPanel({ secret, onUntil, onLocked, onClose, onToast }: {
           <div className="mt-1 h-0.5 w-full bg-border" aria-hidden="true">
             <div className="h-0.5 bg-fg-subtle" style={{ width: `${(left / HIDE_AFTER_S) * 100}%` }} />
           </div>
-          <pre className="mt-2 max-h-[10.5em] overflow-auto whitespace-pre-wrap break-all font-mono text-meta text-fg" data-testid="secret-reveal-value">{value}</pre>
+          <pre ref={pre} className="mt-2 max-h-[10.5em] overflow-auto whitespace-pre-wrap break-all font-mono text-meta text-fg" data-testid="secret-reveal-value">{value}</pre>
         </div>
       )}
       {!hidden && value === null && !error && <p className="text-meta text-fg-muted">{t('secrets.loading')}</p>}
@@ -209,9 +229,11 @@ export function RevealPanel({ secret, onUntil, onLocked, onClose, onToast }: {
 }
 
 /** file 종류는 미리보기 없이 내려받기만 한다 — 바이너리를 글자로 보이면 깨지고 화면에 오래 남는다. */
-export async function downloadSecretFile(secret: SecretView, onUntil: (iso: string) => void): Promise<void> {
+export async function downloadSecretFile(secret: SecretView, tk: Ticket): Promise<boolean> {
   const r = await getController().revealSecret(secret.id, { action: 'download', client: clientLabel() });
-  onUntil(r.steppedUpUntil);
+  // 그 사이 잠갔으면 파일을 만들지 않는다(n1).
+  if (!tk.live()) return false;
+  tk.until(r.steppedUpUntil);
   const bin = atob(r.valueBase64 ?? '');
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -220,6 +242,7 @@ export async function downloadSecretFile(secret: SecretView, onUntil: (iso: stri
   a.href = url; a.download = r.filename ?? secret.filename ?? secret.name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
 }
 
 /** 아래쪽 짧은 알림(#1212 저장 토스트와 같은 모양: accent 없음, 가리키는 동안 멈춤). */

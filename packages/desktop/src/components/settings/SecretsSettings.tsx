@@ -6,7 +6,7 @@ import { useLocale, useT } from '../../i18n/useT';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { Button, Field, Segmented, SettingsPage, TextInput } from './primitives';
 import { ConnectorsSection } from './ConnectorsSection';
-import { downloadSecretFile, RevealPanel, RevealToast, UnlockDialog, UnlockHeader, useRevealSupported, type UnlockState } from './SecretReveal';
+import { downloadSecretFile, RevealPanel, RevealToast, UnlockDialog, UnlockHeader, useRevealSupported, type Ticket, type UnlockState } from './SecretReveal';
 
 /**
  * 설정 › 나 › **비밀과 API** — 비밀 절(외부 API 권한 C안 P1, 스레드 07519d86 · designer v3 ①).
@@ -64,17 +64,28 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
   const untilRef = useRef<number | null>(null);
   untilRef.current = unlock.until;
   const onUntil = useCallback((iso: string) => setUnlock({ until: Date.parse(iso), autoLocked: false }), []);
-  /** 잠그기 — 화면부터 잠그고 서버 창은 기다리지 않고 끝낸다(멱등). */
-  const lock = useCallback((auto = false) => {
+  /** 잠금 세대(security n1) — 잠글 때마다 오르고, 그 앞에서 시작한 요청의 결과는 버린다. */
+  const gen = useRef(0);
+  const ticket = useCallback((): Ticket => {
+    const g = gen.current;
+    return { live: () => g === gen.current, until: (iso) => { if (g === gen.current) onUntil(iso); } };
+  }, [onUntil]);
+  /**
+   * 잠그기 — 화면부터 잠그고 서버 창은 기다리지 않고 끝낸다(멱등).
+   * `user`·`auto` 는 DELETE 를 보낸다(n2: 시계가 서버보다 빠르면 서버 창이 더 열려 있을 수 있다).
+   * `server` 는 서버가 이미 403 으로 잠겼다고 말한 경우라 보내지 않는다.
+   */
+  const lock = useCallback((why: 'user' | 'auto' | 'server' = 'user') => {
+    gen.current += 1;
     const wasOpen = untilRef.current !== null;
-    setUnlock({ until: null, autoLocked: auto });
+    setUnlock({ until: null, autoLocked: why !== 'user' });
     setPanel((p) => (p?.kind === 'reveal' ? null : p));
-    if (wasOpen && !auto) void getController().lockSecrets().catch(() => {});
+    if (wasOpen && why !== 'server') void getController().lockSecrets().catch(() => {});
   }, []);
   // 서버가 준 끝 시각이 지나면 잠긴 것으로 그리고 열린 값 패널을 닫는다(머리줄은 aria-live 로 한 번 알린다).
   useEffect(() => {
     if (unlock.until === null) return;
-    const timer = setTimeout(() => lock(true), Math.max(0, unlock.until - Date.now()));
+    const timer = setTimeout(() => lock('auto'), Math.max(0, unlock.until - Date.now()));
     return () => clearTimeout(timer);
   }, [unlock.until, lock]);
   // 앱을 숨기면 잠근다. 설정을 닫으면(언마운트) 서버 창도 끝낸다.
@@ -165,9 +176,13 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
                 setError(null);
                 if (locked) { setUnlockAsk({ thenId: s.id }); return; }
                 if (s.kind === 'file') {
-                  void downloadSecretFile(s, onUntil).then(
-                    () => setToast(t('secrets.downloaded', { name: s.filename ?? s.name })),
-                    (e) => { if (e instanceof ApiError && e.status === 403) { lock(true); setUnlockAsk({ thenId: s.id }); } else setError(explain(e)); },
+                  const tk = ticket();
+                  void downloadSecretFile(s, tk).then(
+                    (ok) => { if (ok) setToast(t('secrets.downloaded', { name: s.filename ?? s.name })); },
+                    (e) => {
+                      if (!tk.live()) return;
+                      if (e instanceof ApiError && e.status === 403) { lock('server'); setUnlockAsk({ thenId: s.id }); } else setError(explain(e));
+                    },
                   );
                   return;
                 }
@@ -202,8 +217,8 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
                     </span>
                   </div>
                   {open === 'reveal' && (
-                    <RevealPanel secret={s} onUntil={onUntil} onClose={() => setPanel(null)} onToast={setToast}
-                      onLocked={() => { lock(true); setUnlockAsk({ thenId: s.id }); }} />
+                    <RevealPanel secret={s} ticket={ticket} onClose={() => setPanel(null)} onToast={setToast}
+                      onLocked={() => { lock('server'); setUnlockAsk({ thenId: s.id }); }} />
                   )}
                   {open === 'replace' && (
                     <ReplaceForm secret={s} busy={busy} onCancel={() => setPanel(null)}
@@ -230,7 +245,11 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
             const target = thenId ? secrets.find((x) => x.id === thenId) : undefined;
             if (target?.kind === 'text') setPanel({ id: target.id, kind: 'reveal' });
             else if (target?.kind === 'file') {
-              void downloadSecretFile(target, onUntil).then(() => setToast(t('secrets.downloaded', { name: target.filename ?? target.name })), (e) => setError(explain(e)));
+              const tk = ticket();
+              void downloadSecretFile(target, tk).then(
+                (ok) => { if (ok) setToast(t('secrets.downloaded', { name: target.filename ?? target.name })); },
+                (e) => { if (tk.live()) setError(explain(e)); },
+              );
             }
           }}
         />
@@ -574,6 +593,26 @@ function accessText(t: ReturnType<typeof useT>, r: SecretAccessView): string {
   return t('secrets.accessDenied', { why: (r.reason && known[r.reason]) ?? r.reason ?? '?' });
 }
 
+/**
+ * 같은 사람·같은 기기의 **연달아 나온** 「막힘(잠금 해제 안 됨)」 줄을 한 줄로 접는다(designer, #1253 n1 뒤에도
+ * 잠긴 채 두드리면 403 마다 한 줄이 남는다). 기록은 그대로이고 화면만 접는다. 목록은 최신이 위다.
+ */
+export type AccessRowView = SecretAccessView & { count: number; firstAt: string };
+export function foldAccessRows(rows: SecretAccessView[]): AccessRowView[] {
+  const out: AccessRowView[] = [];
+  for (const r of rows) {
+    const prev = out[out.length - 1];
+    const foldable = r.result === 'denied' && r.reason === 'step_up_required' && !!r.actorAccountId;
+    if (foldable && prev && prev.result === 'denied' && prev.reason === 'step_up_required'
+      && prev.actorAccountId === r.actorAccountId && (prev.client ?? null) === (r.client ?? null)) {
+      prev.count += 1; prev.firstAt = r.at;
+      continue;
+    }
+    out.push({ ...r, count: 1, firstAt: r.at });
+  }
+  return out;
+}
+
 function AccessPanel({ secret }: { secret: SecretView }) {
   const t = useT();
   const locale = useLocale();
@@ -606,14 +645,18 @@ function AccessPanel({ secret }: { secret: SecretView }) {
             <tr><th className="pr-3 font-medium">{t('secrets.accessAt')}</th><th className="pr-3 font-medium">{t('secrets.accessWho')}</th><th className="pr-3 font-medium">{t('secrets.accessWhere')}</th><th className="font-medium">{t('secrets.accessResult')}</th></tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} className="border-t border-border text-fg">
-                <td className="pr-3">{new Date(r.at).toLocaleString(locale)}</td>
+            {foldAccessRows(rows).map((r) => (
+              <tr key={r.id} className="border-t border-border text-fg" data-testid={r.count > 1 ? 'secret-access-folded' : undefined}>
+                <td className="pr-3">
+                  {r.count > 1
+                    ? `${new Date(r.firstAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}–${new Date(r.at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`
+                    : new Date(r.at).toLocaleString(locale)}
+                </td>
                 <td className="pr-3">{who(r)}</td>
                 <td className="pr-3" title={r.ip ?? undefined}>{r.channelId ? `#${channels.find((c) => c.id === r.channelId)?.name ?? r.channelId.slice(0, 8)}` : (r.client ?? '—')}</td>
                 <td>
                   {r.result === 'denied' && r.actorAccountId
-                    ? <span className="rounded bg-warning-surface px-1 text-warning">{accessText(t, r)}</span>
+                    ? <span className="rounded bg-warning-surface px-1 text-warning">{accessText(t, r)}{r.count > 1 ? ` ×${r.count}` : ''}</span>
                     : accessText(t, r)}
                   {r.version !== null ? ` · v${r.version}` : ''}
                 </td>
