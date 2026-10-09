@@ -2798,7 +2798,7 @@ export class Controller {
     return this.api.deleteGrant(accountId, capability, scope);
   }
   approveDelegation(grantId: string): Promise<void> { return this.api.approveDelegation(grantId); }
-  approvePermissionOnce(agentId: string, requestId: string, body: { ghUser: string; relaxChecks: boolean }) {
+  approvePermissionOnce(agentId: string, requestId: string, body: { ghUser: string; relaxChecks: boolean; number: number; headSha: string }) {
     return this.api.approvePermissionOnce(agentId, requestId, body);
   }
   declineDelegation(grantId: string): Promise<void> { return this.api.declineDelegation(grantId); }

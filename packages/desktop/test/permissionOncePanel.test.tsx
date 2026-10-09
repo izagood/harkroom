@@ -93,7 +93,7 @@ describe('PermissionOncePanel', () => {
     fireEvent.change(select, { target: { value: 'izagood' } });
     fireEvent.click(screen.getByTestId('merge-once-relax'));
     fireEvent.click(screen.getByTestId('merge-once-submit'));
-    await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { ghUser: 'izagood', relaxChecks: true }));
+    await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { ghUser: 'izagood', relaxChecks: true, number: 42, headSha: HEAD }));
     expect((await screen.findByTestId('merge-once-approved')).textContent).toContain('izagood');
     // 저장하지 않는다 — byScope 를 쓰는 명령을 부르지 않는다.
     expect(invoke.mock.calls.map((x) => x[0])).not.toContain('operator_merge_set');
@@ -138,6 +138,19 @@ describe('PermissionOncePanel', () => {
     cleanup();
     render(<PermissionOncePanel message={card({ status: 'approved_once', approvedOnce: { ghUser: 'izagood', relaxChecks: false, expiresAt: '2000-01-01T00:00:00Z' } })} />);
     expect(screen.getByTestId('merge-once-approved').dataset.expired).toBe('true');
+  });
+
+  it('카드가 바뀌었으면(card_stale) 다시 확인하라고 보인다(security F1)', async () => {
+    tauri(); setup({ approvePermissionOnce: vi.fn(async () => { throw new ApiError(409, 'card_stale', 'the card changed'); }) });
+    render(<PermissionOncePanel message={card()} />);
+    fireEvent.click(screen.getByTestId('merge-once-open'));
+    const select = await screen.findByTestId('merge-once-account') as HTMLSelectElement;
+    await waitFor(() => expect([...select.options].some((o) => o.value === 'izagood')).toBe(true));
+    fireEvent.change(select, { target: { value: 'izagood' } });
+    fireEvent.click(screen.getByTestId('merge-once-submit'));
+    const err = await screen.findByTestId('merge-once-error');
+    expect(err.dataset.code).toBe('card_stale');
+    expect(err.textContent).toContain('카드가 바뀌었다');
   });
 
   it('서버 거절은 사람에게 하는 말로 — 원문은 title 로만', async () => {

@@ -108,7 +108,8 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
     if (!ghUser) return;
     setBusy(true); setError(null);
     try {
-      const r = await getController().approvePermissionOnce(d.agentId, d.requestId, { ghUser, relaxChecks: relax });
+      // number·headSha 는 이 카드가 보여 준 값 — 서버가 거절 기록과 대조해 다르면 card_stale 로 거절한다(security F1).
+      const r = await getController().approvePermissionOnce(d.agentId, d.requestId, { ghUser, relaxChecks: relax, number: d.number, headSha: d.headSha });
       setDone({ ghUser, relaxChecks: relax, expiresAt: r.approvalExpiresAt ?? new Date(Date.now() + 86_400_000).toISOString() });
     } catch (e) {
       setError({ code: e instanceof ApiError ? e.code : 'failed', raw: e instanceof Error ? e.message : String(e) });
@@ -206,6 +207,7 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
         <p role="alert" className="mt-1 text-danger" data-testid="merge-once-error" data-code={error.code} title={error.raw}>
           {error.code === 'denial_used' || error.code === 'already_decided' ? t('mergeOnce.errUsed')
             : error.code === 'denial_expired' || error.code === 'request_expired' ? t('mergeOnce.errExpired')
+            : error.code === 'card_stale' ? t('mergeOnce.errStale')
             : error.code === 'forbidden' ? t('mergeOnce.errForbidden')
             : t('mergeOnce.errFailed')}
         </p>

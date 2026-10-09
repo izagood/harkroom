@@ -769,7 +769,7 @@ export class ApiClient {
    * 권한 요청 카드의 [이번 한 번 머지](스레드 1b75d7a0). 소유자 사람 세션만. 저장소·PR·head 는 서버가 요청에 묶인 거절 기록에서
    * 가져온다 — 보내는 것은 gh 계정과 CI 완화 여부뿐이다.
    */
-  approvePermissionOnce(agentId: string, requestId: string, body: { ghUser: string; relaxChecks: boolean }): Promise<{ status: string; approvalExpiresAt?: string; cardMessageId: string | null }> {
+  approvePermissionOnce(agentId: string, requestId: string, body: { ghUser: string; relaxChecks: boolean; number: number; headSha: string }): Promise<{ status: string; approvalExpiresAt?: string; cardMessageId: string | null }> {
     return this.req('POST', `/agents/${agentId}/permission-requests/${requestId}/approve-once`, body);
   }
   deleteGrant(accountId: string, capability: Capability, scope: string): Promise<void> {
