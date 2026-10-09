@@ -49,7 +49,8 @@ export async function readLease(pool: Pool, args: { leaseId: string; token: stri
     `select l.id, l.agent_id as "agentId", l.operator_id as "operatorId", l.channel_id as "channelId",
             l.thread_root_id as "threadRootId", l.expires_at <= $3 as expired, l.ended_at is not null as ended,
             a.kind as "causeKind",
-            case when m.meta ? 'ask' and m.meta->'ask'->>'mirrorOf' is null then m.author_id end as "causeAskAuthorId",
+            case when m.meta ? 'ask' and m.meta->'ask'->>'mirrorOf' is null and m.meta->'ask'->>'answeredVia' is null
+                 then m.author_id end as "causeAskAuthorId",
             m.meta->'ask'->>'answeredBy' as "askAnsweredBy",
             ans.kind as "askAnswererKind",
             exists (select 1 from agent_config c where c.account_id = l.agent_id and c.owner_account_id = ans.id) as "askAnswererOwnsAgent"
@@ -76,6 +77,9 @@ export async function readLease(pool: Pool, args: { leaseId: string; token: stri
  * 열린 거울마다 `answeredBy` 를 그대로 옮겨 적고 거울을 낸 쪽을 거울 id 로 깨운다 — 그래서 에이전트 B 가 남(A)의
  * 사람 카드에 거울을 걸어 두면, 소유자가 A 의 원본에 답한 순간 B 의 턴이 "소유자가 내 카드에 답했다"처럼 보인다.
  * 소유자는 B 의 카드를 본 적도 없다. 자기 카드에 거울을 거는 일은 없으므로 거울은 통째로 뺀다.
+ *
+ * **일괄로 매긴 답(`answeredVia`)도 cause 로 인정하지 않는다**(security F1, #1280). 묶음 카드의 「추천대로」를 한 번 누르면 최대
+ * 20개 원본에 소유자 이름으로 답이 적힌다 — 소유자는 그 줄들을 읽지 않았을 수 있다. 줄 하나를 골라 누른 답은 지금처럼 센다.
  */
 export function causeByHuman(lease: Pick<LeaseRow, 'agentId' | 'causeKind' | 'causeAskAuthorId' | 'askAnsweredBy' | 'askAnswererKind' | 'askAnswererOwnsAgent'>): boolean {
   if (lease.causeKind === 'human') return true;

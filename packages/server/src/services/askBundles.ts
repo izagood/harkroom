@@ -4,7 +4,7 @@ import { assertChannelVisible, audienceFor } from './channels.js';
 import { emitEvent } from '../events.js';
 import {
   askBundleItemFor, checkAskMirror, COLS, getMessageById, postMessage, readAskRow, recordAskAnswer, syncAskMirrors, wakeAsker,
-  type AskMirrorRefusal, type PostMessageResult,
+  type AskAnsweredVia, type AskMirrorRefusal, type PostMessageResult,
 } from './messages.js';
 
 /**
@@ -43,7 +43,7 @@ export const ASK_BUNDLE_REFUSAL_MESSAGE: Record<AskBundleRefusal, string> = {
   bundle_full: `a bundle holds at most ${ASK_BUNDLE_MAX_ITEMS} rows — open a new bundle`,
   bundle_empty: 'give at least one card to bundle',
   bundle_item_not_found: 'that card is not a row of this bundle',
-  bundle_item_link: 'a permission request is decided in its own thread by the owner',
+  bundle_item_link: 'a permission request or merge-denial card is decided in its own thread',
   bundle_item_resolved: 'that row is already answered or closed',
   bundle_reply_invalid: 'replyMessageId must be a human message in this bundle thread, from someone who may answer the card',
 };
@@ -156,7 +156,7 @@ export type BundleAnswerResult =
  * 정하는 자리**라는 점이다: 누른 사람이 원본 채널을 못 보면 거절한다.
  */
 export async function answerBundleItem(pool: Pool, args: {
-  bundleId: string; channelId: string; rootId: string; optionId: string; actorId: string;
+  bundleId: string; channelId: string; rootId: string; optionId: string; actorId: string; answeredVia?: AskAnsweredVia;
 }): Promise<BundleAnswerResult> {
   const bundle = await readBundle(pool, args.bundleId);
   if (!bundle || bundle.channelId !== args.channelId) return { ok: false, status: 404, code: 'not_found', message: ASK_BUNDLE_REFUSAL_MESSAGE.bundle_not_found };
@@ -170,7 +170,7 @@ export async function answerBundleItem(pool: Pool, args: {
   }
   // 줄을 모을 때는 원본이 사람 앞 원본이었다. 그 뒤로 바뀌었을 수는 없지만, 거울이면 정본이 둘이 되니 다시 막는다.
   if (root.ask.mirrorOf) return { ok: false, status: 403, code: 'forbidden', message: ASK_BUNDLE_REFUSAL_MESSAGE.mirror_of_mirror };
-  const result = await recordAskAnswer(pool, { messageId: args.rootId, actorId: args.actorId, optionId: args.optionId });
+  const result = await recordAskAnswer(pool, { messageId: args.rootId, actorId: args.actorId, optionId: args.optionId, answeredVia: args.answeredVia });
   if (result === 'not_found') return { ok: false, status: 404, code: 'not_found', message: 'no such choice request' };
   if (result === 'forbidden') return { ok: false, status: 403, code: 'forbidden', message: 'this choice is addressed to someone else' };
   if (result === 'unknown_option') return { ok: false, status: 400, code: 'unknown_option', message: 'no such option in this request' };
@@ -206,6 +206,8 @@ export async function acceptRecommended(pool: Pool, args: {
     if (recommended.length !== 1) { results.push({ rootId: item.rootId, outcome: 'skipped_no_recommendation' }); continue; }
     const answered = await answerBundleItem(pool, {
       bundleId: args.bundleId, channelId: args.channelId, rootId: item.rootId, optionId: recommended[0]!.id, actorId: args.actorId,
+      // 사람이 이 줄을 골라 누른 것이 아니다 — 머지·비밀 래퍼가 이 답을 "사람이 띄운 턴"으로 세지 않게 표지를 남긴다(security F1).
+      answeredVia: 'bundle_bulk',
     });
     results.push(answered.ok ? { rootId: item.rootId, outcome: 'answered' } : { rootId: item.rootId, outcome: 'failed', code: answered.code });
   }
@@ -252,6 +254,7 @@ export async function resolveBundleItem(pool: Pool, args: {
   const closed = (await pool.query(
     `update message
         set meta = jsonb_set(
+            jsonb_set(
               jsonb_set(
                 jsonb_set(
                   jsonb_set(
@@ -259,7 +262,8 @@ export async function resolveBundleItem(pool: Pool, args: {
                     '{ask,closedBy}', to_jsonb($2::text)),
                   '{ask,closedReason}', to_jsonb('replied'::text)),
                 '{ask,replyMessageId}', to_jsonb($3::text)),
-              '{ask,replyNote}', to_jsonb($4::text))
+              '{ask,replyNote}', to_jsonb($4::text)),
+            '{ask,replyNoteBy}', to_jsonb($5::text))
       where id = $1
         and deleted_at is null
         and meta->'ask'->>'answeredWith' is null
@@ -267,7 +271,7 @@ export async function resolveBundleItem(pool: Pool, args: {
         and not (meta ? 'permissionRequest')
         and not (meta ? 'mergeDenial')
       returning ${COLS}`,
-    [args.rootId, reply.authorId, reply.id, note],
+    [args.rootId, reply.authorId, reply.id, note, args.callerId],
   )).rows[0] as MessageRow | undefined;
   if (!closed) return { ok: false, code: 'bundle_item_resolved' };
   emitEvent({ type: 'message.updated', message: closed, audience: await audienceFor(pool, closed.channelId) });

@@ -1381,6 +1381,16 @@ export interface AskMeta {
     irreversible?: boolean;
     /** `closedReason: 'replied'` 인데 그 글이 **다른 스레드**(묶음 카드의 PM 스레드)에 있을 때 관리 에이전트가 옮긴 요지. */
     replyNote?: string;
+    /**
+     * `replyNote` 를 **쓴** 계정 — 묶음 카드를 세운 관리 에이전트다(security n1, #1280). 닫은 이름(`closedBy`)은 근거 글을 쓴
+     * 사람이지만 요지는 에이전트가 옮긴 말이다. 화면은 이것으로 「○○ 요약」이라고 밝힌다.
+     */
+    replyNoteBy?: string;
+    /**
+     * 사람이 이 줄을 **골라 누르지 않은** 답의 표지(security F1, #1280). `bundle_bulk` = 묶음 카드의 「추천대로 일괄」.
+     * 표지가 있는 답은 머지·비밀 래퍼의 "사람이 띄운 턴"에서 빠진다.
+     */
+    answeredVia?: 'bundle_bulk' | null;
   };
 }
 

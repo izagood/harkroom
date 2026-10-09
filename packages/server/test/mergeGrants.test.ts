@@ -170,6 +170,16 @@ describe('repo.merge grant', () => {
       expect(res.statusCode).toBe(403);
       expect(res.json().error.code).toBe('cause_not_human');
     });
+    it('묶음 카드 「추천대로 일괄」로 매긴 답(answeredVia)은 소유자 이름이어도 사람이 띄운 턴이 아니다(security F1, #1280)', async () => {
+      const card = await askCard(alice.accountId);
+      await pool.query(`update message set meta = jsonb_set(meta, '{ask,answeredVia}', '"bundle_bulk"') where id = $1`, [card]);
+      const res = await check(await lease(card));
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('cause_not_human');
+      // 같은 카드라도 표지가 없으면(줄을 골라 누른 답) 지금처럼 사람의 답이다 — cause 판정은 통과한다.
+      const picked = await askCard(alice.accountId);
+      expect((await check(await lease(picked))).json().error?.code).not.toBe('cause_not_human');
+    });
     it('임대가 틀리거나 끝났으면 lease_invalid, 저장소 모양이 틀리면 400, 권한 없는 저장소는 not_granted', async () => {
       const l = await lease(await mention(alice.accountId));
       expect((await check({ id: l.id, token: 'nope' })).json().error.code).toBe('lease_invalid');

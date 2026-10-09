@@ -73,6 +73,17 @@ describe('묶음 카드 세우기 — 줄마다 거울 검사', () => {
     expect(items[1]).toMatchObject({ rootId: perm.askId, link: true });
   });
 
+  it('머지 거절 카드도 링크 줄이다 — 묶음에서 답하지 못한다(security n3)', async () => {
+    const denial = await seedAsk({}, { mergeDenial: { denialId: 'x' } });
+    const bundleId = ((await bundleOf([denial.askId])) as { message: { id: string } }).message.id;
+    expect((await itemsOf(bundleId))[0]).toMatchObject({ rootId: denial.askId, link: true });
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${pmChannel}/messages/${bundleId}/ask-bundle/answer`,
+      headers: auth(memberToken), payload: { rootId: denial.askId, optionId: 'a' },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
   it('거울·에이전트 앞·정해진 카드는 거절한다', async () => {
     const original = await seedAsk();
     const mirror = await seedAsk({ mirrorOf: original.askId });
@@ -147,8 +158,21 @@ describe('「추천대로」 — 되돌릴 수 없는 줄은 서버가 뺀다', 
       [plain.askId]: 'answered', [merge.askId]: 'skipped_irreversible', [flagged.askId]: 'skipped_irreversible',
       [noRec.askId]: 'skipped_no_recommendation', [perm.askId]: 'skipped_link',
     });
-    expect(await askOf(plain.askId)).toMatchObject({ answeredWith: 'a', answeredBy: memberId });
+    // 일괄 답에는 표지가 남는다 — 머지·비밀 래퍼가 이것을 사람이 띄운 턴으로 세지 않는다(security F1).
+    expect(await askOf(plain.askId)).toMatchObject({ answeredWith: 'a', answeredBy: memberId, answeredVia: 'bundle_bulk' });
     expect((await askOf(merge.askId)).answeredWith).toBeUndefined();
+  });
+
+  it('줄 하나를 골라 누른 답에는 표지가 없다', async () => {
+    const one = await seedAsk();
+    const bundleId = ((await bundleOf([one.askId])) as { message: { id: string } }).message.id;
+    await app.inject({
+      method: 'POST', url: `/channels/${pmChannel}/messages/${bundleId}/ask-bundle/answer`,
+      headers: auth(memberToken), payload: { rootId: one.askId, optionId: 'a' },
+    });
+    const ask = await askOf(one.askId);
+    expect(ask.answeredWith).toBe('a');
+    expect(ask).not.toHaveProperty('answeredVia');
   });
 
   it('isIrreversible 은 권한·머지 거절 카드·표시·낱말을 모두 잡는다', () => {
@@ -174,7 +198,9 @@ describe('askBundleResolve — 묶음 스레드의 사람 글로 한 줄을 닫�
     expect((await askOf(one.askId)).closedAt).toBeUndefined();
     const res = await resolveBundleItem(pool, { callerId: pmId, bundleId, rootId: one.askId, replyMessageId: replyId, note: 'PAT 는 다르게' });
     expect(res.ok).toBe(true);
-    expect(await askOf(one.askId)).toMatchObject({ closedReason: 'replied', closedBy: memberId, replyMessageId: replyId, replyNote: 'PAT 는 다르게' });
+    expect(await askOf(one.askId)).toMatchObject({
+      closedReason: 'replied', closedBy: memberId, replyMessageId: replyId, replyNote: 'PAT 는 다르게', replyNoteBy: pmId,
+    });
     const woke = await pool.query(`select 1 from inbox where account_id = $1 and message_id = $2 and reason = 'ask_closed'`, [workerId, one.askId]);
     expect(woke.rowCount).toBe(1);
   });

@@ -1761,7 +1761,7 @@ export async function editMessage(
  */
 export async function recordAskAnswer(
   pool: Pool,
-  args: { messageId: string; actorId: string; optionId: string; viaPermissionDecision?: boolean },
+  args: { messageId: string; actorId: string; optionId: string; viaPermissionDecision?: boolean; answeredVia?: AskAnsweredVia },
 ): Promise<MessageRow | MutationRefusal | 'already_answered' | 'unknown_option'> {
   const found = await pool.query(
     `select meta from message where id = $1 and deleted_at is null`, [args.messageId],
@@ -1822,7 +1822,7 @@ export async function recordAskAnswer(
     }
   }
 
-  const row = await answerAskRow(pool, args.messageId, args.optionId, args.actorId);
+  const row = await answerAskRow(pool, args.messageId, args.optionId, args.actorId, args.answeredVia);
   if (!row) return 'already_answered';
   // 원본이면 거울들도 같은 답으로 닫는다. 거울이 없으면 갱신되는 행이 없을 뿐이다.
   if (!ask.mirrorOf) await syncAskMirrors(pool, args.messageId);
@@ -1898,22 +1898,32 @@ export async function wakeAsker(
  * **`superseded` 로 닫힌 카드는 답을 받지 않는다**(security n1, 2026-10-09). 새 질문이 떠 있는데 옛 질문의
  * 답으로 물어본 쪽을 깨우면 두 질문이 엇갈린다. 다른 닫힘(`replied`·`declined`)은 지금처럼 늦은 답을 받는다.
  */
+export type AskAnsweredVia = 'bundle_bulk';
+
 async function answerAskRow(
-  pool: Pool, messageId: string, optionId: string, actorId: string,
+  pool: Pool, messageId: string, optionId: string, actorId: string, answeredVia?: AskAnsweredVia,
 ): Promise<MessageRow | null> {
-  const updated = await pool.query(
-    `update message
-        set meta = jsonb_set(
+  /*
+    `answeredVia` — 사람이 그 줄을 **골라 누르지 않은** 답의 표지(security F1, #1280). 묶음 카드의 「추천대로 일괄」은 한 번
+    눌러 여러 원본에 답을 적는다 — 사람은 그 줄들을 읽지 않았을 수 있다. 표지가 있는 답은 머지·비밀 래퍼의 "사람이 띄운
+    턴"(`readLease`·`readCreateLease`·위임의 `byRootAnswer`)에서 빠진다.
+  */
+  const answered = `jsonb_set(
               jsonb_set(
                 jsonb_set(meta::jsonb, '{ask,answeredWith}', to_jsonb($2::text)),
                 '{ask,answeredBy}', to_jsonb($3::text)),
-              '{ask,answeredAt}', to_jsonb(now()))
+              '{ask,answeredAt}', to_jsonb(now()))`;
+  // 표지는 있을 때만 싣는다 — 보통 답의 meta 모양은 그대로다.
+  const setMeta = answeredVia ? `jsonb_set(${answered}, '{ask,answeredVia}', to_jsonb($4::text))` : answered;
+  const updated = await pool.query(
+    `update message
+        set meta = ${setMeta}
       where id = $1
         and deleted_at is null
         and meta->'ask'->>'answeredWith' is null
         and meta->'ask'->>'closedReason' is distinct from 'superseded'
       returning ${COLS}`,
-    [messageId, optionId, actorId],
+    answeredVia ? [messageId, optionId, actorId, answeredVia] : [messageId, optionId, actorId],
   );
   const row = updated.rows[0] as MessageRow | undefined;
   if (!row) return null;
@@ -2299,7 +2309,9 @@ export async function askBundleItemFor(pool: Pool, rootId: string): Promise<AskB
   return {
     rootId, askerId: row.authorId, channelId: row.channelId, threadRootId: row.threadRootId, prompt,
     options: ask.options.map((o) => ({ id: o.id, label: o.label, ...(o.hint ? { hint: o.hint } : {}), ...(o.recommended ? { recommended: true } : {}) })),
-    ...(row.meta.permissionRequest ? { link: true } : {}),
+    // 권한 요청·머지 거절 카드는 링크 줄이다 — 권한 카드는 소유자가 원 스레드에서만 정하고, 머지 거절 카드는 저장소·PR·sha
+    // 맥락이 본문 첫 줄에 다 실리지 않는다(security n3, #1280).
+    ...(row.meta.permissionRequest || row.meta.mergeDenial ? { link: true } : {}),
   };
 }
 
