@@ -257,15 +257,18 @@ const CLAUDE_PRESET: HarnessPreset = {
    *
    * - deny 는 **모든** auto 멘션 턴에: 권한 있는 에이전트도 `gh pr merge` 를 직접 못 부르고 래퍼로만 간다(D4).
    *   `gh api` 는 PUT 접두만 막는다 — `.mergeable` 같은 읽기 조회는 그대로 된다(T3). 가운데 와일드카드는 안 맞는다(P2).
-   * - allow 는 서버가 이 에이전트에 `repo.merge` grant 를 준 저장소가 하나라도 있을 때만, 래퍼의 **절대 경로 +
-   *   서브커맨드** 접두로(T1c). 저장소 범위는 규칙이 아니라 서버·래퍼가 가른다.
+   * - 래퍼 allow 는 auto 멘션 턴마다, 래퍼의 **절대 경로 + 서브커맨드** 접두로(T1c). grant 유무와 상관없다(스레드 1b75d7a0 —
+   *   거절 기록을 받아야 1회 승인 카드가 선다). 저장소 범위는 규칙이 아니라 서버·래퍼가 가른다.
    */
   permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [], apiDelegatable = [], toolAllows = [], claudeConfigDir = null }) => {
     if (mode !== 'mention' || mentionPermission !== 'auto') return [];
     // api 래퍼(C안 P3)도 머지와 같은 모양이다: 절대 경로 + 서브커맨드 접두. 연결·메서드·경로 범위는 규칙이 아니라 서버가 가른다.
     // `;`·`&&` 로 묶은 명령은 claude 가 조각마다 따로 판정하므로 이 규칙 하나로는 통과하지 않는다(프롬프트가 금지한다).
     const allow = [
-      ...(mergeRepos.length ? [`Bash(${operatorBin} merge:*)`] : []),
+      // 머지 래퍼는 auto 멘션 턴마다 연다(security, 스레드 1b75d7a0) — grant 가 없어도 래퍼가 서버에 물어 거절 기록(denialId)을 받아야
+      // 소유자 앞 [이번 한 번 머지] 카드가 선다. 판정은 서버가 하고, 승인이 없으면 래퍼는 GitHub 에 닿지 않는다(turnMerge.ts).
+      // 여기서 여는 것은 `merge:*` 하나뿐이다 — `api:*` 는 아래처럼 연결이 있을 때만.
+      `Bash(${operatorBin} merge:*)`,
       ...(apiConnectors.length ? [`Bash(${operatorBin} api:*)`] : []),
       // 실측 2026-10-05(claude 2.1.28x, 스레드 b56c02a1): auto 분류기는 `grant.delegate` MCP 호출을 `[Permission Grant]` 로
       // 막는다 — 서버가 거절할 호출(권한 없음)이어도 호출 자체가 막힌다. 판정(범위 ⊆·depth·루트 사람 확인·하루 상한)은 서버

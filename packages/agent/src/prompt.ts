@@ -1029,20 +1029,15 @@ function permissionSection(p: { toolAllows: readonly string[] }): string[] {
 
 function mergeSection(merge: { operatorBin: string; repos: readonly string[]; approved?: readonly { repo: string; number: number }[] }): string[] {
   const approved = merge.approved ?? [];
-  if (!merge.repos.length && !approved.length) {
-    return [
-      '**PR 머지는 하지 마라.** 이 에이전트에게 머지가 허락된 저장소가 없다. `gh pr merge`·`gh api …/merge`·',
-      '`git push … main` 은 막혀 있고, 사람이 "머지해"라고 해도 네가 누르지 않는다 — 소유자가 이 저장소의 머지 권한을',
-      '준 뒤에만 된다. 머지가 필요하면 PR 번호·head sha 를 적어 사람에게 넘기고, 앞으로도 네가 머지하길 바라는 일이면',
-      'harkroom MCP 의 `permission.request`(kind: "merge", repo: "owner/name")로 소유자에게 청한다.',
-      '',
-    ];
-  }
   return [
     merge.repos.length
       ? `**PR 머지는 이 명령으로만 한다**(허락된 저장소: ${merge.repos.join(', ')}):`
-      : '**PR 머지는 이 명령으로만 한다:**',
+      : '**PR 머지는 이 명령으로만 한다**(이 에이전트에게 저장소 권한은 없다 — 부르면 서버가 거절하고, `denialId` 가 오면 아래처럼 소유자 카드를 세운다):',
     '',
+    ...(merge.repos.length ? [] : [
+      '앞으로도 그 저장소를 네가 머지하길 바라는 일이면 harkroom MCP 의 `permission.request`(kind: "merge", repo: "owner/name")로 청한다.',
+      '',
+    ]),
     `    ${merge.operatorBin} merge <owner/name> <PR 번호> --head <40자 head sha>`,
     '',
     // 조직 grant(jaebin 10-09): 목록의 `owner/*` 는 그 조직 저장소 전부다. 명령에는 언제나 실제 저장소 이름을 쓴다 — `*` 는 래퍼가 거절한다.
