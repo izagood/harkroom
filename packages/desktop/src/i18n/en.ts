@@ -345,6 +345,12 @@ export const en = {
   'providerUsage.error.other': 'Could not read usage ({reason}).',
   'providerUsage.error.cliUnavailable': 'Could not run the CLI to read usage. Check that it is installed.',
   'providerUsage.error.cliUnparsed': 'The CLI did not report usage — sign in again, or update the CLI.',
+  // 사용량 새로고침(2026-10-09) — 설정 › Provider accounts 칸 머리의 [Refresh usage] 와 계정 ⋯ 메뉴.
+  'providerUsage.refresh': 'Refresh usage',
+  'providerUsage.refreshing': 'Refreshing…',
+  'providerUsage.refreshAccount': 'Refresh usage for {account}',
+  'providerUsage.updatedAt': 'Updated {time}',
+  'providerUsage.refreshFailed': 'Could not refresh usage: {reason}',
   // providerAccounts — 설정 > 제공업체 계정(하네스별 카드). 2026-09-28.
   'providerAccounts.page.subtitle': 'Optional. Agents work with your existing provider logins. Add accounts only if you want Harkroom to switch between them.',
   'providerAccounts.badge.thisDevice': 'This device',

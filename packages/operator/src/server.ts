@@ -48,6 +48,7 @@ import {
   type KillRunnerParams,
   type ListRunnersResult,
   type PingResult,
+  type ProviderUsageRequest,
   type RunnerExitEvent,
   type SpawnRunnerParams,
   type SpawnRunnerResult,
@@ -611,12 +612,16 @@ export class DaemonServer {
       case 'claudeAccountsProviderUsage': {
         const port = this.requireAccounts();
         if (isDaemonError(port)) return port;
-        return await port.providerUsage();
+        const usageReq = readUsageRequest(req.payload);
+        if (isDaemonError(usageReq)) return usageReq;
+        return await port.providerUsage(usageReq);
       }
       case 'codexAccountsProviderUsage': {
         const port = this.requireCodexAccounts();
         if (isDaemonError(port)) return port;
-        return await port.providerUsage();
+        const usageReq = readUsageRequest(req.payload);
+        if (isDaemonError(usageReq)) return usageReq;
+        return await port.providerUsage(usageReq);
       }
       case 'claudeAccountMove': {
         const port = this.requireAccounts();
@@ -772,6 +777,23 @@ function readCodexActivate(payload: unknown): { account: string | null } | Daemo
   if (account === null) return { account: null };
   if (typeof account !== 'string' || account.length === 0) return daemonError('bad-payload', 'account 가 문자열도 null 도 아니다');
   return { account };
+}
+
+/**
+ * 사용량 요청의 payload. 비었거나 객체가 아니면(옛 앱은 `{}` 를 보낸다) 캐시 값을 달라는 뜻이다.
+ * 계정 이름은 디렉터리를 고르는 데 쓰지 않는다 — 디스크에서 읽은 목록과 **같은지만** 본다.
+ */
+function readUsageRequest(payload: unknown): ProviderUsageRequest | DaemonError {
+  if (typeof payload !== 'object' || payload === null) return {};
+  const { force, pool, account } = payload as { force?: unknown; pool?: unknown; account?: unknown };
+  if (force !== undefined && typeof force !== 'boolean') return daemonError('bad-payload', 'force 가 boolean 이 아니다');
+  if (pool !== undefined && typeof pool !== 'string') return daemonError('bad-payload', 'pool 이 문자열이 아니다');
+  if (account !== undefined && typeof account !== 'string') return daemonError('bad-payload', 'account 가 문자열이 아니다');
+  return {
+    ...(force !== undefined ? { force } : {}),
+    ...(pool !== undefined ? { pool } : {}),
+    ...(account !== undefined ? { account } : {}),
+  };
 }
 
 function readPoolRef(payload: unknown): { pool: string } | DaemonError {

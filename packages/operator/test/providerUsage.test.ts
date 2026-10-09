@@ -268,3 +268,75 @@ describe('계정을 지우거나 다시 로그인하면 사용량 캐시를 버�
     expect(await pctOf()).toBe(64);
   });
 });
+
+/**
+ * [Refresh usage](2026-10-09): `force` 는 캐시(TTL·SWR)를 건너뛰고 새로 잰 값을 기다린다. 계정을 주면
+ * **그 계정만** — 나머지 계정까지 CLI 를 띄우면 계정 수만큼 프로세스가 뜬다.
+ */
+describe('사용량 새로고침(force)', () => {
+  const cliSays = (pct: number) => `Current session: ${pct}% used · resets 7pm (UTC)\nCurrent week (all models): ${pct}% used\n`;
+
+  it('claude: force 면 TTL 안이어도 새로 재고, account 를 주면 그 계정만 잰다', async () => {
+    const root = await temp();
+    await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work', order: {}, agents: {} }));
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
+    await mkdir(join(root, 'work', 'birch'), { recursive: true });
+    const pct: Record<string, number> = { aria: 11, birch: 22 };
+    const runs: string[] = [];
+    const port = createClaudeAccountsPort({
+      root, now: () => NOW, fetchImpl: fakeFetch({}), usageCacheMs: 60 * 60 * 1000,
+      readToken: async () => null,
+      runCli: async (_c, _a, o) => {
+        const name = (o.env.CLAUDE_CONFIG_DIR ?? '').split('/').pop()!;
+        runs.push(name);
+        return { code: 0, stdout: cliSays(pct[name]!) };
+      },
+    });
+    const pctOf = (s: Awaited<ReturnType<typeof port.providerUsage>>, a: string) =>
+      s.accounts.find((x) => x.account === a)!.weekly?.usedPercent;
+
+    await port.providerUsage();
+    expect(runs.sort()).toEqual(['aria', 'birch']);
+    pct.aria = 50; pct.birch = 60;
+    runs.length = 0;
+    // 캐시 안 — 옛 값 그대로, CLI 안 뜸.
+    expect(pctOf(await port.providerUsage(), 'aria')).toBe(11);
+    expect(runs).toEqual([]);
+    // 계정 하나만 새로.
+    const one = await port.providerUsage({ force: true, pool: 'work', account: 'aria' });
+    expect(pctOf(one, 'aria')).toBe(50);
+    expect(pctOf(one, 'birch')).toBe(22);
+    expect(runs).toEqual(['aria']);
+    // 다음 폴도 새 값을 받는다(캐시에 들어갔다).
+    expect(pctOf(await port.providerUsage(), 'aria')).toBe(50);
+    // 전부 새로.
+    runs.length = 0;
+    const all = await port.providerUsage({ force: true });
+    expect(pctOf(all, 'birch')).toBe(60);
+    expect(runs.sort()).toEqual(['aria', 'birch']);
+  });
+
+  it('codex: force 면 새로 잰다 · account "" 는 시스템 기본 로그인만', async () => {
+    const root = await temp();
+    const systemHome = await temp();
+    await mkdir(join(root, 'work'));
+    let pct = 9;
+    let calls = 0;
+    const port = createCodexAccountsPort({
+      root, systemHome, now: () => NOW, usageCacheMs: 60 * 60 * 1000,
+      fetchImpl: (async () => { calls += 1; return { ok: true, status: 200, json: async () => ({
+        plan_type: 'plus',
+        rate_limit: { primary_window: { used_percent: pct, reset_at: null }, secondary_window: { used_percent: pct, reset_at: null } },
+      }) }; }) as unknown as FetchLike,
+      readToken: async () => ({ accessToken: 'T', accountId: null }),
+      spawnRpc: () => { throw new Error('codex 없음'); },
+    });
+    await port.providerUsage();
+    expect(calls).toBe(2);
+    pct = 40;
+    const sys = await port.providerUsage({ force: true, account: '' });
+    expect(calls).toBe(3);
+    expect(sys.accounts.find((a) => a.account === '')!.session?.usedPercent).toBe(40);
+    expect(sys.accounts.find((a) => a.account === 'work')!.session?.usedPercent).toBe(9);
+  });
+});

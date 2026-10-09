@@ -185,3 +185,24 @@ describe('로그', () => {
     expect(joined).not.toContain('SECRET-CODE');
   });
 });
+
+describe('사용량 요청 payload (2026-10-09 새로고침)', () => {
+  it('옛 앱의 `{}`·없는 payload 는 캐시 요청 · force·pool·account 는 그대로 넘긴다', async () => {
+    const port = fakePort();
+    const { send } = server(port);
+    await send('claudeAccountsProviderUsage', {});
+    await send('claudeAccountsProviderUsage');
+    await send('claudeAccountsProviderUsage', { force: true, pool: 'work', account: 'aria' });
+    expect(vi.mocked(port.providerUsage).mock.calls).toEqual([[{}], [{}], [{ force: true, pool: 'work', account: 'aria' }]]);
+  });
+
+  it('모양이 틀리면 bad-payload 로 거절하고 재지 않는다', async () => {
+    const port = fakePort();
+    const { send } = server(port);
+    for (const bad of [{ force: 'yes' }, { account: 3 }, { pool: ['x'] }]) {
+      expect(await send('claudeAccountsProviderUsage', bad)).toMatchObject({ code: 'bad-payload' });
+    }
+    expect(port.providerUsage).not.toHaveBeenCalled();
+  });
+});
+
