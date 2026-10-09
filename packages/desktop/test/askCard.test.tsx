@@ -201,7 +201,7 @@ describe('AskCard — 글로 답함 · 새 질문으로 바뀜', () => {
 
   it('글로 답한 카드는 강조 없이 접히고 그 글을 인용한다', () => {
     useAppStore.getState().set({
-      messages: { c1: [msg(REPLY, 'c1', 2, `<@${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}> 셋 다 말고, 폭은 720으로 고정해 줘\n둘째 줄`, ME)] },
+      messages: { c1: [msg(REPLY, 'c1', 2, `<@${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}> 셋 다 말고, 폭은 720으로 고정해 줘\n둘째 줄`, ME, { threadRootId: 'm-ask' })] },
     });
     render(<MessageItem message={askMessage(replied())} />);
     const card = screen.getByTestId('ask-card');
@@ -211,6 +211,21 @@ describe('AskCard — 글로 답함 · 새 질문으로 바뀜', () => {
     expect(screen.getByTestId('ask-reply-quote').textContent).toBe('셋 다 말고, 폭은 720으로 고정해 줘');
     expect(screen.queryByTestId('ask-option-new')).toBeNull();
     expect(screen.queryByTestId('ask-decline')).toBeNull();
+  });
+
+  it('인용은 같은 스레드의 지워지지 않은 글만 — 아니면 인용 줄이 빠진다', () => {
+    useAppStore.getState().set({
+      messages: { c1: [msg(REPLY, 'c1', 2, '다른 스레드의 글', ME, { threadRootId: 'm-other' })] },
+    });
+    render(<MessageItem message={askMessage(replied())} />);
+    expect(screen.getByText('글로 답했다')).toBeTruthy();
+    expect(screen.queryByTestId('ask-reply-quote')).toBeNull();
+    cleanup();
+    useAppStore.getState().set({
+      messages: { c1: [msg(REPLY, 'c1', 2, '지운 글', ME, { threadRootId: 'm-ask', deletedAt: new Date().toISOString() })] },
+    });
+    render(<MessageItem message={askMessage(replied())} />);
+    expect(screen.queryByTestId('ask-reply-quote')).toBeNull();
   });
 
   it('「그래도 고르기」를 펼치면 늦게 고를 수 있다', () => {

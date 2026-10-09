@@ -32,10 +32,16 @@ export function AskCard({ message }: { message: MessageRow }) {
   const accounts = useActiveStore(selectAccountNames);
   const ask = readAskMeta(message.meta);
   // 카드를 닫은 사람 글(A′). 같은 채널 목록에서 찾는다 — 못 찾으면 인용 줄만 빠진다.
+  // **같은 스레드의 지워지지 않은 글만** 인용한다: id 가 다른 스레드를 가리키거나 그 글이
+  // 지워졌으면 인용 줄을 그리지 않는다(#1259 security 2b 확인 항목).
   const replyId = ask?.closedReason === 'replied' ? ask.replyMessageId ?? null : null;
-  const replyBody = useActiveStore((s) => (replyId
-    ? s.messages[message.channelId]?.find((m) => m.id === replyId)?.body ?? null
-    : null));
+  const replyBody = useActiveStore((s) => {
+    if (!replyId) return null;
+    const hit = s.messages[message.channelId]?.find((m) => m.id === replyId);
+    if (!hit || hit.deletedAt) return null;
+    const root = message.threadRootId ?? message.id;
+    return (hit.threadRootId ?? hit.id) === root ? hit.body : null;
+  });
   const [pickAnyway, setPickAnyway] = useState(false);
   if (!ask) return null;
 

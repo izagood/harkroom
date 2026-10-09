@@ -172,14 +172,15 @@ class _AskCardState extends State<AskCard> {
   }
 
   /// 카드를 닫은 사람 글의 첫 줄(80자까지, 데스크톱 `quoteLine` 과 같다). 읽어 둔 목록에
-  /// 없으면 `null` — 인용 줄만 빠진다.
+  /// 없거나 **다른 스레드의 글**이면 `null` — 인용 줄만 빠진다. 지운 글은 목록에서 빠지므로
+  /// 따로 거를 것이 없다(`message.deleted`).
   static String? _replyQuote(AppState app, MessageRow message, String? replyId) {
     if (replyId == null) return null;
     final root = message.threadRootId ?? message.id;
     final pool = [...?app.threads[root], ...?app.messages[message.channelId]];
     MessageRow? hit;
     for (final m in pool) {
-      if (m.id == replyId) {
+      if (m.id == replyId && (m.threadRootId ?? m.id) == root) {
         hit = m;
         break;
       }
