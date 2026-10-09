@@ -47,6 +47,7 @@ export interface MentionTurnHarkroom {
   definition(): Promise<AgentView>;
   /** 머지를 허락한 저장소(스레드 3deac356). 옵셔널 — 없는 표면(시험 더블)은 빈 목록과 같다. */
   mergeGrants?(): Promise<string[]>;
+  mergeApprovals?(): Promise<{ repo: string; number: number; channelId: string; threadRootId: string }[]>;
   /** 이 채널의 allow 규칙(권한 요청 스레드 f61af808). 옵셔널 — 없는 표면은 빈 목록과 같다. */
   toolAllows?(channelId: string): Promise<string[]>;
   secretCreateGranted?(): Promise<boolean>;
@@ -1072,7 +1073,12 @@ export async function runMentionTurn(
     : prompt;
 
   // 머지 권한(스레드 3deac356): 서버가 허락한 저장소만 프롬프트에 적고 allow 규칙을 준다. 표면이 없는(옛) 클라이언트는 빈 목록.
-  const mergeRepos = (await deps.harkroom.mergeGrants?.().catch(() => [] as string[])) ?? [];
+  const grantedRepos = (await deps.harkroom.mergeGrants?.().catch(() => [] as string[])) ?? [];
+  // 1회 승인(스레드 1b75d7a0, security 6): 이 (채널, 스레드)에 안 쓴 승인이 있을 때만 그 저장소를 더한다 — 래퍼 allow 와 프롬프트 줄.
+  // 판정은 서버가 소모로 한다. 여기서 더하는 것은 「래퍼를 부를 수 있음」뿐이다.
+  const approvedHere = ((await deps.harkroom.mergeApprovals?.().catch(() => [])) ?? [])
+    .filter((a) => a.channelId === channelId && a.threadRootId === (anchor ?? mentionId));
+  const mergeRepos = [...new Set([...grantedRepos, ...approvedHere.map((a) => a.repo)])];
   // 외부 API 권한(C안 P3, 스레드 07519d86): 같은 틀 — 서버가 허락한 연결이 있을 때만 절을 쓰고 allow 규칙을 준다.
   const apiInfo = (await (deps.harkroom.apiGrantInfo
     ? deps.harkroom.apiGrantInfo().catch(() => ({ connectors: [] as string[], delegatable: [] as string[] }))
@@ -1085,7 +1091,7 @@ export async function runMentionTurn(
   const systemPrompt = buildSystemPrompt({
     handle: deps.me.handle,
     secretCreate,
-    merge: { operatorBin: deps.operatorBin, repos: mergeRepos },
+    merge: { operatorBin: deps.operatorBin, repos: grantedRepos, approved: approvedHere.map((a) => ({ repo: a.repo, number: a.number })) },
     permissions: { toolAllows },
     api: { operatorBin: deps.operatorBin, connectors: apiConnectors, delegatable: apiInfo.delegatable },
     channelName: deps.channelName,

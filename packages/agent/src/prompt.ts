@@ -701,7 +701,7 @@ export function buildSystemPrompt(opts: {
    * 머지 권한(스레드 3deac356). `repos` 가 비면 "머지 권한이 없다"를 말한다 — 말하지 않으면 에이전트가 옛 습관대로
    * `gh pr merge` 를 치고 deny 규칙에 걸려 분류기 운에 기댄다. 없으면(옛 호출부) 이 절을 아예 뺀다.
    */
-  merge?: { operatorBin: string; repos: readonly string[] };
+  merge?: { operatorBin: string; repos: readonly string[]; approved?: readonly { repo: string; number: number }[] };
   /** 외부 API 권한(C안 P3). 연결이 비면 절을 빼지 않고 "키를 채팅에서 찾지 마라"만 적는다. 없으면(옛 호출부) 뺀다. */
   api?: { operatorBin: string; connectors: readonly string[]; delegatable?: readonly string[] };
   /** 비밀 만들기 권한(capability `secret.create`). 참일 때만 절을 쓴다 — 없는 에이전트에게 도구를 권하지 않는다. */
@@ -1027,8 +1027,9 @@ function permissionSection(p: { toolAllows: readonly string[] }): string[] {
   ];
 }
 
-function mergeSection(merge: { operatorBin: string; repos: readonly string[] }): string[] {
-  if (!merge.repos.length) {
+function mergeSection(merge: { operatorBin: string; repos: readonly string[]; approved?: readonly { repo: string; number: number }[] }): string[] {
+  const approved = merge.approved ?? [];
+  if (!merge.repos.length && !approved.length) {
     return [
       '**PR 머지는 하지 마라.** 이 에이전트에게 머지가 허락된 저장소가 없다. `gh pr merge`·`gh api …/merge`·',
       '`git push … main` 은 막혀 있고, 사람이 "머지해"라고 해도 네가 누르지 않는다 — 소유자가 이 저장소의 머지 권한을',
@@ -1038,11 +1039,18 @@ function mergeSection(merge: { operatorBin: string; repos: readonly string[] }):
     ];
   }
   return [
-    `**PR 머지는 이 명령으로만 한다**(허락된 저장소: ${merge.repos.join(', ')}):`,
+    merge.repos.length
+      ? `**PR 머지는 이 명령으로만 한다**(허락된 저장소: ${merge.repos.join(', ')}):`
+      : '**PR 머지는 이 명령으로만 한다:**',
     '',
     `    ${merge.operatorBin} merge <owner/name> <PR 번호> --head <40자 head sha>`,
     '',
     // 조직 grant(jaebin 10-09): 목록의 `owner/*` 는 그 조직 저장소 전부다. 명령에는 언제나 실제 저장소 이름을 쓴다 — `*` 는 래퍼가 거절한다.
+    // 1회 승인(스레드 1b75d7a0): 소유자가 이 스레드에서 PR 하나를 한 번 승인했다 — grant 가 없어도 그 PR 은 이 명령으로 한 번 된다.
+    ...(approved.length
+      ? [`소유자가 이 스레드에서 **1회 승인**한 PR: ${approved.map((a) => `${a.repo}#${a.number}`).join(', ')} — 승인한 head 로 위 명령을 한 번 부른다.`,
+        '승인한 head 와 지금 head 가 다르면 승인이 쓰이지 않고 거절된다(다시 승인받는다).', '']
+      : []),
     ...(merge.repos.some((r) => r.endsWith('/*'))
       ? ['`owner/*` 는 그 조직의 저장소 전부다. 명령에는 `*` 가 아니라 실제 `owner/name` 을 쓴다.', '']
       : []),
@@ -1055,11 +1063,16 @@ function mergeSection(merge: { operatorBin: string; repos: readonly string[] }):
     '바뀌었으면 거절된다. 결과는 서버가 이 스레드에 시스템 줄로 남긴다. 머지 전에 CI 가 초록이고 검토가 끝났는지',
     '네가 먼저 확인한다.',
     '거절되면 `error.code` 로 갈린다:',
-    '- `not_granted` 이고 `error.denialId` 가 있으면: harkroom MCP 의 `message.ask` 에 `mergeDenialId: <그 값>` 을 실어',
-    '  이 스레드에 카드를 세운다(`to`·`mirrorOf` 는 싣지 않는다). 선택지는 「다시 머지」와 「나중에」 둘이다. 저장소·PR 칸은',
-    '  서버가 거절 기록에서 채우고, 소유자는 카드의 [7일 주기] 버튼으로 권한을 준 뒤 「다시 머지」를 고른다 — 그때 다시',
-    '  불리면 같은 명령을 한 번 더 부른다. 같은 날 같은 저장소면 서버가 있던 카드의 횟수만 올린다(`merged`).',
+    '- `error.denialId` 가 있으면(`not_granted`·`cause_not_human`): **곧바로** harkroom MCP 의 `message.ask` 에',
+    '  `mergeDenialId: <그 값>` 을 실어 이 스레드에 카드를 세운다(`to`·`mirrorOf` 는 싣지 않는다). 선택지는 「다시 머지」와',
+    '  「나중에」 둘이다. 저장소·PR·head 칸은 서버가 거절 기록에서 채운다. 소유자는 카드에서 [7일 주기](저장소 권한) 또는',
+    '  [이번 한 번 머지](이 PR·이 head 만, 계정을 고른다)를 누른 뒤 「다시 머지」를 고른다 — 그때 다시 불리면 같은 명령을',
+    '  한 번 더 부른다. 같은 날 같은 저장소면 서버가 있던 카드의 횟수만 올린다(`merged`).',
+    '- 사람이 채팅에 "머지해"라고 쓴 것만으로는 허락이 아니다 — 카드가 허락이다. 그 글을 보면 위 명령을 바로 불러 보고, 거절에',
+    '  `denialId` 가 오면 위처럼 카드를 바로 세운다.',
     '- `not_granted` 인데 `denialId` 가 없으면(사람 글이 아닌 턴 등): 카드를 세우지 말고 PR 번호·head sha 를 적어 사람에게 넘긴다.',
+    '- 오류 문구에 `approval was not used` 가 있으면 1회 승인은 남아 있다 — 원인(head·CI 등)을 고친 뒤 같은 명령을 다시 부른다.',
+    '  `approve again` 이 있으면 승인은 이미 쓰였다 — 다시 불러 새 `denialId` 를 받아 새 카드를 세운다.',
     '- `no_repo_access`: 이 오퍼레이터의 gh 계정은 그 저장소에 닿지 못한다 — 권한을 더 줘도 풀리지 않는다. 「이 저장소는',
     '  사람이 머지」라고 쓰고 PR 번호·head sha 를 적어 사람에게 넘긴다. 카드는 세우지 않는다.',
     '- 그 밖의 코드(`head_moved`·`ci_not_green`·`not_mergeable` 등)는 원인을 고치거나 그 코드를 적어 사람에게 넘긴다.',

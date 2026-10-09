@@ -265,6 +265,19 @@ export class HarkroomAgentClient {
     }
   }
 
+  /** 아직 안 쓴 1회 머지 승인(스레드 1b75d7a0) — 그 (채널, 스레드)의 턴에만 래퍼 allow 를 넣는다. 옛 서버는 빈 목록. */
+  async mergeApprovals(): Promise<{ repo: string; number: number; channelId: string; threadRootId: string }[]> {
+    try {
+      const r = await this.rest<{ approvals?: unknown }>('GET', '/agent/merge-grants', 'merge-grants');
+      if (!Array.isArray(r?.approvals)) return [];
+      return (r.approvals as Record<string, unknown>[]).flatMap((a) =>
+        typeof a.repo === 'string' && typeof a.number === 'number' && typeof a.channelId === 'string' && typeof a.threadRootId === 'string'
+          ? [{ repo: a.repo, number: a.number, channelId: a.channelId, threadRootId: a.threadRootId }] : []);
+    } catch {
+      return [];
+    }
+  }
+
   /**
    * 스레드 임대(서버 095, `threadClaims.ts`). 200 잡음(또는 밀음) · 409 남이 쥠 · 404 옛 서버(임대 없음).
    * 그 밖(링크 끊김·5xx)은 던진다 — 확인하지 못한 것이고, 띄울지는 호출자가 정한다(fail-closed).
