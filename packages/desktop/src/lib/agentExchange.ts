@@ -1,5 +1,5 @@
 import {
-  mentionedIds, mentionScanText, readAskMeta, readDelegationMeta, readFailureMeta, readReportMeta,
+  isAskOpen, mentionedIds, mentionScanText, readAskMeta, readDelegationMeta, readFailureMeta, readReportMeta,
   type MessageRow,
 } from '@harkroom/shared';
 import type { Slot } from './progressGroup';
@@ -248,8 +248,8 @@ function addressesHuman(m: MessageRow, isAgent: IsAgent): boolean {
   // 실패는 언제나 사람에게 오는 말이다 — 접으면 사람이 그것을 못 본다.
   if (readFailureMeta(m.meta) != null) return true;
   const ask = readAskMeta(m.meta);
-  // 이미 답한 선택은 더 이상 아무도 막지 않는다 — 기록일 뿐이므로 접혀도 된다.
-  if (ask != null && ask.answeredWith == null && ask.to.kind === 'human') return true;
+  // 답했거나 닫힌 선택은 더 이상 아무도 막지 않는다 — 기록일 뿐이므로 접혀도 된다.
+  if (ask != null && isAskOpen(ask) && ask.to.kind === 'human') return true;
   // 자기 자신을 부른 것은 사람을 부른 것이 아니다(에이전트가 제 handle 을 인용할 수 있다).
   return mentionedIds(mentionScanText(m.body)).some((id) => id !== m.authorId && !isAgent(id));
 }

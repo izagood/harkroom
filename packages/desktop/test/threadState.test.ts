@@ -65,6 +65,13 @@ describe('threadState — 5단 판정표', () => {
     expect(state([ask('a1', { kind: 'human' }, true)])).toBe('done');
   });
 
+  /** 「답하지 않기」로 닫힌 카드(`closedAt`)도 끝난 물음이다 — 답만 보면 🙋 이 다시 켜졌다. */
+  it('답 없이 닫힌 선택도 아무도 막지 않는다 → 끝남', () => {
+    const m = ask('a1', { kind: 'human' });
+    (m.meta as { ask: AskMeta['ask'] }).ask.closedAt = '2026-10-09T00:00:00.000Z';
+    expect(state([m])).toBe('done');
+  });
+
   it('실패가 있으면 막힘', () => {
     expect(state([fail('f1')])).toBe('stuck');
   });

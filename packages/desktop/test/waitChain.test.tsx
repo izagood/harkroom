@@ -61,6 +61,12 @@ describe('waitChain — 사슬을 잇는다', () => {
     expect(chain([ask('a1', 1, FORGE, ME, true)]).end).toBe('none');
   });
 
+  it('답 없이 닫힌 물음도 사슬에 들지 않는다', () => {
+    const m = ask('a1', 1, FORGE, ME);
+    (m.meta as { ask: { closedAt?: string } }).ask.closedAt = '2026-10-09T00:00:00.000Z';
+    expect(chain([m]).end).toBe('none');
+  });
+
   it('나에게 온 물음 하나 → 내 차례, 하나가 풀린다', () => {
     const c = chain([ask('a1', 1, FORGE, ME)]);
     expect(c.end).toBe('me');

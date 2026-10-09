@@ -1,4 +1,4 @@
-import { readAskMeta, readFailureMeta, readReportMeta, type InboxEntry } from '@harkroom/shared';
+import { isAskOpen, readAskMeta, readFailureMeta, readReportMeta, type InboxEntry } from '@harkroom/shared';
 import type { Translate } from '../i18n';
 
 /**
@@ -48,7 +48,7 @@ export interface InboxRow {
  */
 export function inboxRow(entry: InboxEntry, myAccountId: string | null, t: Translate): InboxRow {
   const ask = readAskMeta(entry.meta);
-  if (ask && ask.answeredWith == null) {
+  if (ask && isAskOpen(ask)) {
     // **나에게 온 물음만 막는 말이다**(규칙 04). 남에게 간 물음은 읽을 것이다 —
     // 강조가 여러 줄에 뿌려지면 "내 차례"라는 신호가 죽는다.
     const forMe = ask.to.kind === 'human'

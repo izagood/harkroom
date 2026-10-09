@@ -177,6 +177,17 @@ describe('groupAgentExchanges — 사람을 막는 말은 접지 않는다', () 
     ]);
     expect(out.map((s) => s.kind)).toEqual(['exchange']);
   });
+
+  it('답 없이 닫힌 선택도 접힌다', () => {
+    const closed = askTo('ask1', FORGE, { kind: 'human' });
+    (closed.meta as { ask: AskMeta['ask'] }).ask.closedAt = '2026-10-09T00:00:00.000Z';
+    const out = slots([
+      msg('m1', 'c1', 1, 'a', FORGE),
+      closed,
+      msg('m2', 'c1', 3, 'b', CODEX),
+    ]);
+    expect(out.map((s) => s.kind)).toEqual(['exchange']);
+  });
 });
 
 /**

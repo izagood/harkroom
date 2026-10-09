@@ -69,6 +69,12 @@ describe('줄이 갈린다 — reason 만으로는 못 하던 것', () => {
     expect(r.kind).not.toBe('ask');
   });
 
+  it('답 없이 닫힌 물음도 아무도 막지 않는다', () => {
+    const meta = ask({ kind: 'account', accountId: ME });
+    (meta as { ask: AskMeta['ask'] }).ask.closedAt = '2026-10-09T00:00:00.000Z';
+    expect(inboxRow(entry({ meta }), ME, ko).kind).not.toBe('ask');
+  });
+
   /** 실패는 **항상 사람에게 온다**(`FailureMeta` 에 `to` 가 없는 이유). */
   it('실패는 나를 막는다', () => {
     const r = inboxRow(entry({ meta: failure }), ME, ko);
