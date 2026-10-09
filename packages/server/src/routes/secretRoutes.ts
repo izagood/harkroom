@@ -17,7 +17,7 @@ import { actorOf, recordAudit } from '../audit.js';
 import { scanWrite } from '../services/contentScan.js';
 import type { SecretKeyring } from '../services/secretKeyring.js';
 import { needlesFor } from '../services/secretLeakGuard.js';
-import { endTurnLease, issueTurnLease, revealSecret, RevealLimiter } from '../services/secretAccess.js';
+import { endTurnLease, issueTurnLease, OncePerWindow, revealSecret, RevealLimiter } from '../services/secretAccess.js';
 import { currentStepUp, extendStepUp } from '../services/stepUp.js';
 import { createAgentSecret, createLimiter, GENERATE_TYPES, hasCreateGrant, rotateAgentSecret, type CreateDenial, type CreateSource } from '../services/secretCreate.js';
 
@@ -60,9 +60,15 @@ const revealBody = z.object({
 });
 /** 소유자 보기 속도 제한 — 계정마다 10분에 20회. 화면 하나가 보기·복사를 섞어 써도 넉넉하고, 긁어 가기엔 좁다. */
 export const ownerRevealLimiter = (): RevealLimiter => new RevealLimiter(20, 10 * 60_000);
-/** 기록할 client 문자열 — 제어문자를 지우고 120자로 자른다(감사 화면에 그대로 찍힌다). */
-const clientLabel = (raw: string | undefined): string | null => {
-  const s = (raw ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 120);
+/**
+ * 기록할 client 문자열 — 제어문자는 칸으로 바꾸고, 보이는 순서를 속이는 bidi·zero-width 글자
+ * (U+200B–200F, 202A–202E, 2066–2069)는 지운 뒤 120자로 자른다(감사 화면 「어디서」에 그대로 찍힌다).
+ */
+export const clientLabel = (raw: string | undefined): string | null => {
+  const s = (raw ?? '')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+    .trim().slice(0, 120);
   return s || null;
 };
 const patchBody = z.object({
@@ -133,6 +139,8 @@ export async function registerSecretRoutes(
   const limiter = opts.limiter ?? new RevealLimiter();
   const makeLimiter = opts.createLimiter ?? createLimiter();
   const ownerLimiter = opts.ownerRevealLimiter ?? ownerRevealLimiter();
+  /** 소유자 보기가 막힌 동안의 access log 는 창마다 한 줄(security #1253 n1). */
+  const ownerLimitedLog = new OncePerWindow();
 
   /** 사람만. 아니면 답을 보내고 false. */
   const human = (req: FastifyRequest, reply: FastifyReply): boolean => {
@@ -394,7 +402,9 @@ export async function registerSecretRoutes(
               channel_id as "channelId", thread_root_id as "threadRootId", result, reason, at,
               actor_account_id as "actorAccountId", action, client, ip
          from secret_access_log where secret_id = $1 order by at desc, id desc limit $2`, [s.id, limit]);
-    return { access: r.rows };
+    // 소유자가 연 곳의 IP 는 소유자에게만 보인다 — admin 이 목록을 볼 때는 뺀다(security #1253 n2).
+    const owner = s.ownerAccountId === req.account!.id;
+    return { access: owner ? r.rows : r.rows.map((row: { ip?: string | null }) => ({ ...row, ip: null })) };
   });
 
   /**
@@ -429,13 +439,18 @@ export async function registerSecretRoutes(
       return reply.code(status).send({ error: { code, message } });
     };
 
-    if (!(await currentStepUp(pool, req.credentialHash))) {
-      return deny(403, 'step_up_required', 'unlock with your password to view secret values');
-    }
+    // 속도 제한을 잠금 판정보다 **먼저** 본다(n1) — 잠긴 채 두드리는 요청도 상한 안에서만 기록된다.
+    // 막힌 동안의 기록은 창마다 한 줄이다. 남은 시간은 헤더와 본문 둘 다(F1).
     const nowMs = Date.now();
     if (!ownerLimiter.take(me.id, nowMs)) {
-      void reply.header('retry-after', String(Math.max(1, Math.ceil(ownerLimiter.retryAfterMs(me.id, nowMs) / 1000))));
-      return deny(429, 'rate_limited', 'too many secret views, try again later');
+      const waitMs = ownerLimiter.retryAfterMs(me.id, nowMs);
+      const retryAfterSec = Math.max(1, Math.ceil(waitMs / 1000));
+      if (ownerLimitedLog.first(me.id, nowMs, waitMs)) await log('denied', 'rate_limited', null);
+      return reply.code(429).header('retry-after', String(retryAfterSec))
+        .send({ error: { code: 'rate_limited', message: 'too many secret views, try again later', retryAfterSec } });
+    }
+    if (!(await currentStepUp(pool, req.credentialHash))) {
+      return deny(403, 'step_up_required', 'unlock with your password to view secret values');
     }
     const v = (await pool.query(
       `select version, sealed from secret_version

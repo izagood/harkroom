@@ -11,6 +11,7 @@ import type { RateLimiter, RateLimitRule } from '../rateLimit.js';
 import { createChannel } from '../services/channels.js';
 import { getHandleGroupByHandle } from '../services/handleGroups.js';
 import { endStepUp, openStepUp } from '../services/stepUp.js';
+import { OncePerWindow } from '../services/secretAccess.js';
 
 const SESSION_TTL_DAYS = 14;
 
@@ -62,6 +63,8 @@ function verifyAgainstDummy(password: string): Promise<boolean> {
 
 export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts: AuthRouteOpts): Promise<void> {
   const { limiter, loginAccountRule, loginAccountIpRule } = opts;
+  /** 잠금 해제가 막힌 동안의 감사는 창마다 한 줄(security #1253 n1). */
+  const stepUpLimitedAudit = new OncePerWindow();
   app.post('/bootstrap', async (req, reply) => {
     const existing = await pool.query(`select 1 from account where kind = 'human' limit 1`);
     if (existing.rowCount) {
@@ -360,13 +363,17 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts:
     const key = `stepUp:${account.id}`;
     const verdict = limiter.hit(key, STEP_UP_RULE);
     if (!verdict.allowed) {
-      await recordAudit(pool, {
-        action: 'step_up.failed', actorId: account.id, actorHandle: account.handle, detail: { reason: 'rate_limited' },
-      }, req);
+      const retryAfterSec = Math.max(1, Math.ceil(verdict.retryAfterMs / 1000));
+      if (stepUpLimitedAudit.first(account.id, Date.now(), verdict.retryAfterMs)) {
+        await recordAudit(pool, {
+          action: 'step_up.failed', actorId: account.id, actorHandle: account.handle, detail: { reason: 'rate_limited' },
+        }, req);
+      }
+      // 남은 시간은 헤더와 **본문 둘 다**에 싣는다 — 웹뷰의 교차 출처 fetch 는 노출 목록 밖 헤더를 못 읽는다(F1).
       return reply
         .code(429)
-        .header('retry-after', String(Math.ceil(verdict.retryAfterMs / 1000)))
-        .send({ error: { code: 'rate_limited', message: 'too many attempts, try again later' } });
+        .header('retry-after', String(retryAfterSec))
+        .send({ error: { code: 'rate_limited', message: 'too many attempts, try again later', retryAfterSec } });
     }
     const row = (await pool.query(`select password_hash from account where id = $1`, [account.id])).rows[0] as
       | { password_hash: string | null } | undefined;

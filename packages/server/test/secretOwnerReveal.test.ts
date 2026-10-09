@@ -45,7 +45,7 @@ describe('비밀 소유자 보기 (114)', () => {
   beforeAll(async () => {
     db = await startTestDb();
     pool = db.pool;
-    app = await buildServer({ pool, secretKeyring: ring, secretOwnerRevealLimiter: new RevealLimiter(6, 60_000) });
+    app = await buildServer({ pool, secretKeyring: ring, secretOwnerRevealLimiter: new RevealLimiter(30, 60_000) });
     off = await buildServer({ pool, secretKeyring: null });
     admin = await bootstrapAdmin(app);
     alice = await createMember(app, admin.token, 'alice');
@@ -202,13 +202,51 @@ describe('비밀 소유자 보기 (114)', () => {
     expect((await reveal(alice.token, textId, { action: 'view' }, off)).statusCode).toBe(409);
   });
 
-  it('계정당 속도 제한 — 넘치면 429 이고 denied 로 남는다', async () => {
-    let last = 0;
-    for (let i = 0; i < 8; i++) last = (await reveal(alice.token, textId)).statusCode;
-    expect(last).toBe(429);
-    const limited = await reveal(alice.token, textId);
-    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
+  it('만료된 비밀도 소유자는 본다(에이전트 쪽 판정은 그대로)', async () => {
+    await pool.query(`update secret set expires_at = now() - interval '1 day' where id = $1`, [textId]);
+    const res = await reveal(alice.token, textId);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().value).toBe(TEXT_VALUE);
+    await pool.query(`update secret set expires_at = null where id = $1`, [textId]);
+  });
+
+  it('client 의 bidi·zero-width 글자는 지운다', async () => {
+    const res = await reveal(alice.token, textId, { action: 'view', client: 'Harkroom\u202e 0.4.15\u200b\u2066 macOS\u200f' });
+    expect(res.statusCode).toBe(200);
+    expect((await accessRows(textId)).at(-1)?.client).toBe('Harkroom 0.4.15 macOS');
+  });
+
+  it('IP 는 소유자에게만 보인다 — admin 이 접근 기록을 볼 때는 빠진다', async () => {
+    const mine = (await app.inject({ method: 'GET', url: `/secrets/${textId}/access`, headers: auth(alice.token) })).json().access as { ip: string | null; actorAccountId: string | null }[];
+    expect(mine.some((r) => r.actorAccountId === alice.accountId && r.ip)).toBe(true);
+    const asAdmin = (await app.inject({ method: 'GET', url: `/secrets/${textId}/access`, headers: auth(admin.token) })).json().access as { ip: string | null }[];
+    expect(asAdmin.length).toBeGreaterThan(0);
+    expect(asAdmin.every((r) => r.ip === null)).toBe(true);
+  });
+
+  it('429 는 남은 초를 본문(retryAfterSec)과 헤더로 준다 — 웹뷰가 헤더를 읽도록 CORS 에도 노출한다', async () => {
+    let last = await reveal(alice.token, textId);
+    for (let i = 0; i < 40 && last.statusCode !== 429; i++) last = await reveal(alice.token, textId);
+    expect(last.statusCode).toBe(429);
+    expect(last.json().error.retryAfterSec).toBeGreaterThan(0);
+    expect(Number(last.headers['retry-after'])).toBe(last.json().error.retryAfterSec);
     expect((await accessRows(textId)).at(-1)).toMatchObject({ result: 'denied', reason: 'rate_limited' });
+    const cors = await app.inject({ method: 'GET', url: '/healthz', headers: { origin: 'https://app.example.com' } });
+    expect(String(cors.headers['access-control-expose-headers']).toLowerCase()).toContain('retry-after');
+  });
+
+  it('막힌 요청이 행을 끝없이 쌓지 않는다 — 잠긴 채 두드려도 상한 + 한 줄', async () => {
+    const dave = await createMember(app, admin.token, 'dave');
+    const id = (await app.inject({
+      method: 'POST', url: '/secrets', headers: auth(dave.token), payload: { name: 'dave-key', kind: 'text', value: 'dave-value-0001' },
+    })).json().secret.id as string;
+    const codes: number[] = [];
+    for (let i = 0; i < 40; i++) codes.push((await reveal(dave.token, id)).statusCode);
+    expect(codes.slice(0, 30).every((c) => c === 403)).toBe(true);
+    expect(codes.slice(30).every((c) => c === 429)).toBe(true);
+    const rows = await accessRows(id);
+    expect(rows.filter((r) => r.reason === 'step_up_required')).toHaveLength(30);
+    expect(rows.filter((r) => r.reason === 'rate_limited')).toHaveLength(1);
   });
 
   it('다시 확인 시도는 계정마다 센다 — 막힌 동안엔 맞는 비밀번호도 429', async () => {
@@ -216,7 +254,14 @@ describe('비밀 소유자 보기 (114)', () => {
     for (let i = 0; i < STEP_UP_RULE.max; i++) expect((await stepUp(carol.token, 'nope-nope')).statusCode).toBe(401);
     const limited = await stepUp(carol.token);
     expect(limited.statusCode).toBe(429);
-    // 화면이 「{n}분 뒤에 다시」를 그릴 근거.
-    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
+    // 화면이 「{n}분 뒤에 다시」를 그릴 근거 — 본문 값으로 읽는다(F1).
+    expect(limited.json().error.retryAfterSec).toBeGreaterThan(0);
+    expect(Number(limited.headers['retry-after'])).toBe(limited.json().error.retryAfterSec);
+    // 막힌 동안의 감사는 창마다 한 줄(n1).
+    expect((await stepUp(carol.token)).statusCode).toBe(429);
+    const audit = await pool.query(
+      `select count(*)::int as n from audit_log where action = 'step_up.failed' and actor_id = $1 and detail->>'reason' = 'rate_limited'`,
+      [carol.accountId]);
+    expect(audit.rows[0].n).toBe(1);
   });
 });

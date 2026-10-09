@@ -228,3 +228,19 @@ export class RevealLimiter {
     return Math.max(0, (recent[0] ?? nowMs) + this.windowMs - nowMs);
   }
 }
+
+/**
+ * 같은 일을 창마다 **한 번만** 기록하게 한다(security #1253 n1). 막힌 요청마다 감사·access log 를 쓰면, 세션 토큰만
+ * 가진 쪽이 상한 없이 행을 쌓을 수 있다. 막힌 첫 요청만 적고 그 창이 끝날 때까지는 건너뛴다. 인메모리다.
+ */
+export class OncePerWindow {
+  private readonly until = new Map<string, number>();
+  /** 이 창에서 처음이면 true 를 돌려주고 `forMs` 동안 막는다. */
+  first(key: string, nowMs: number, forMs: number): boolean {
+    if (this.until.size > 10_000) for (const [k, t] of this.until) if (t <= nowMs) this.until.delete(k);
+    const t = this.until.get(key);
+    if (t !== undefined && t > nowMs) return false;
+    this.until.set(key, nowMs + Math.max(forMs, 1_000));
+    return true;
+  }
+}
