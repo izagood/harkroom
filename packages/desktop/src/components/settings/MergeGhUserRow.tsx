@@ -101,6 +101,8 @@ export function MergeDeviceNote({ state }: { state: LocalMerge }) {
   return (
     <div className="mt-2 text-meta text-fg-subtle" data-testid="merge-gh-user">
       <span>{t('agents.grants.ghUser.deviceNote', { host: state.host })}</span>
+      {/* 계정은 기기 전체 값이다(#1265 security n1) — 같은 범위 줄은 이 기기의 다른 에이전트와 함께 바뀐다(#1279 designer n2). */}
+      <p className="text-fg-subtle" data-testid="merge-gh-user-shared">{t('agents.grants.ghUser.deviceShared')}</p>
       {state.accounts === null && (
         <p role="alert" className="mt-1 text-danger">{t('agents.grants.ghUser.ghFailed', { reason: mergeReasonText(t, state.accountsError ?? '') })}</p>
       )}

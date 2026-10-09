@@ -198,7 +198,8 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   );
   const ghRow = assigned ? (
     onThisDevice
-      ? <MergeDeviceNote state={localMerge} />
+      // 같은 기기 다른 에이전트 줄을 모으는 동안에도 자리를 먼저 잡는다(#1279 designer n1) — 머리 줄이 늦게 튀어나오지 않게.
+      ? <MergeDeviceNote state={rows.length > 0 && deviceScopes === null ? 'loading' : localMerge} />
       : <p className="mt-2 text-meta text-fg-subtle" data-testid="merge-gh-user-other">{otherDevice}</p>
   ) : null;
 

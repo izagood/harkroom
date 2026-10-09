@@ -110,7 +110,21 @@ describe('머지 gh 계정 — 줄마다', () => {
     expect(invoke).toHaveBeenCalledWith('operator_merge_set', { migrate: ['izagood/harkroom', 'rebellions-sw/udc'] });
     expect(invoke.mock.calls.filter(([c]) => c === 'operator_merge_set')).toHaveLength(1);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_merge_check', { scopes: ['izagood/harkroom'] }));
-    expect(screen.getByTestId('merge-gh-user').textContent).toContain('이 기기의 모든 에이전트에 적용');
+    expect(screen.getByTestId('merge-gh-user-shared').textContent).toBe('같은 범위의 줄은 이 기기의 모든 에이전트가 같은 계정을 쓴다');
+  });
+
+  it('같은 기기 다른 에이전트 줄을 모으는 동안에도 「읽는 중」으로 자리를 먼저 잡는다(#1279 designer n1)', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    setController({ listGrants: vi.fn(async (id: string) => { if (id === 'agent-2') { await gate; return []; } return [GRANT]; }), putGrant: vi.fn(), deleteGrant: vi.fn() } as unknown as Controller);
+    useActiveStore.getState().set({ accounts: { [ME_ID]: acc(ME_ID, 'owner'), 'agent-2': acc('agent-2', 'agent-2', 'agent', false, { ownerAccountId: ME_ID }) } });
+    const invoke = tauri({ ghUser: 'izagood', byScope: null, accounts: ACCOUNTS, host: 'mac-1' });
+    render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} deviceAgentIds={['agent-1', 'agent-2']} />);
+    expect(await screen.findByTestId('merge-gh-user-loading')).toBeTruthy();
+    expect(invoke).not.toHaveBeenCalled();
+    release();
+    expect((await sel('izagood_harkroom')).value).toBe('izagood');
+    expect(screen.queryByTestId('merge-gh-user-loading')).toBeNull();
   });
 
   it('이미 첫 에이전트로만 옮겨진 기기 — 같은 기기 다른 에이전트의 계정 없는 줄도 같은 owner 줄을 이어받는다', async () => {
