@@ -243,11 +243,14 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
                           {locked ? '🔒 ' : ''}{s.kind === 'file' ? t('secrets.download') : t('secrets.reveal')}
                         </SmallButton>
                       )}
-                      <Menu placement="bottom" items={menu} renderTrigger={(p) => (
+                      {/* Menu 는 가장 가까운 positioned 조상에 붙는다 — 여기 relative 가 없으면 페이지 끝으로 날아간다. */}
+                      <span className="relative">
+                      <Menu placement="bottom" className="right-0" items={menu} renderTrigger={(p) => (
                         <button type="button" {...p} aria-label={t('secrets.moreAria', { name: s.name })} data-testid={`secret-more-${s.name}`}
                           disabled={busy}
                           className="h-7 w-7 rounded-row text-body leading-none text-fg-muted hover:bg-surface-hover hover:text-fg disabled:opacity-50">⋯</button>
                       )} />
+                      </span>
                     </span>
                   </div>
                   {(shown || tab) && (
