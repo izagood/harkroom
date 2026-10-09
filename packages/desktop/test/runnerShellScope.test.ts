@@ -674,7 +674,8 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       // `gh auth status` 로 다시 잰다(`readOperatorMergeSetPayload`·localMerge.test.ts, security C7) — 웹뷰가 gh 의
       // 인자·경로를 고를 자리가 없다.
       const mergeSet = commands.find((c) => c.fn === 'operator_merge_set')!;
-      expect(mergeSet.webviewParams).toEqual(['gh_user: Option<String>']);
+      // 줄별 계정(e085b6a7): 범위(`owner/name`·`owner/*`)와 옮길 범위 목록도 문자열뿐이다 — 모양은 오퍼레이터가 MERGE_SCOPE_RE 로 다시 잰다.
+      expect(mergeSet.webviewParams.sort()).toEqual(['gh_user: Option<String>', 'migrate: Option<Vec<String>>', 'scope: Option<String>']);
       // `daemon_kill_runner` 가 받는 것은 **누구를·어느 세대를** 뿐이다 — 프로그램·인자·경로를
       // 다시 고를 수 있는 자리가 아니다.
       const kill = commands.find((c) => c.fn === 'daemon_kill_runner')!;

@@ -1,15 +1,18 @@
 /**
- * 「머지에 쓸 GitHub 계정」 줄 — PR 머지 절 머리(스레드 febe9ff8 P2).
+ * 머지 권한 줄마다 고르는 gh 계정(스레드 e085b6a7, designer 시안 v1 · 앞선 P2 스레드 febe9ff8).
  *
- * 값은 이 기기 오퍼레이터의 `operator.json` 의 `merge.ghUser` 에 있다. 비어 있으면 래퍼는 머지를 전부 거절한다
- * (`no_gh_user`) — 권한을 줘도 머지가 안 되는 까닭을 여기서 미리 보인다. 고르는 것은 사람이다: 처음 값은 비어 있고
- * 목록에서 미리 골라 두지 않는다(활성 계정이 회사 계정이라 fail-closed 로 둔 칸, security P1). 고를 수 있는 이름이
- * 맞는지는 오퍼레이터가 그 순간의 `gh auth status` 로 다시 잰다(C7) — 이 화면은 목록을 보여 주고 고른 이름을 넘길
- * 뿐이다. 어느 기기의 값인지(호스트 이름)를 함께 보인다(C8).
+ * 값은 이 기기 오퍼레이터의 `operator.json` 의 `merge.byScope`(`owner/name`·`owner/*` → 로그인 이름)에 있다. 래퍼는 머지할
+ * 저장소에 맞는 줄의 계정만 쓴다 — 정확한 저장소 줄이 조직 줄보다 이기고, 맞는 줄이 없으면 거절한다(`no_gh_user`). 기기 하나에
+ * 기본값 하나를 두던 줄은 없앴다: 맞지 않는 계정이 말없이 쓰인 것이 이번 일의 원인이다.
+ *
+ * 고르는 것은 사람이다(security P1): 목록에서 미리 골라 두지 않는다. 예외 둘만 화면이 대신 적는다 —
+ * ① 처음 열 때 옛 기기 값(`merge.ghUser`)을 지금 줄들에 한 번 복사한다(`migrate`, 오퍼레이터가 한 번만 한다).
+ * ② 같은 owner 의 다른 줄이 계정을 갖고 있으면 계정 없는 줄이 그것을 이어받는다(같은 조직이면 같은 계정, 시안 §4).
+ * 고를 수 있는 이름이 맞는지는 오퍼레이터가 그 순간의 `gh auth status` 로 다시 잰다(C7). 어느 기기의 값인지 절 머리에 보인다(C8).
  */
 import { useCallback, useEffect, useState } from 'react';
 import type { OperatorMergeState } from '@harkroom/shared/daemonProtocol';
-import { getLocalMerge, setLocalMergeGhUser } from '../../lib/operatorLocal';
+import { getLocalMerge, migrateLocalMerge, setLocalMergeScopeUser } from '../../lib/operatorLocal';
 import { useT } from '../../i18n/useT';
 
 const rawReason = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -27,130 +30,127 @@ export function mergeReasonText(t: T, raw: string): string {
   return raw.slice(0, 200);
 }
 
-export function MergeGhUserRow({ disabled, hasGrants }: {
+const ownerOf = (scope: string): string => scope.split('/')[0]!;
+
+export type LocalMerge = OperatorMergeState | 'loading' | 'error' | null;
+
+/**
+ * 이 기기 오퍼레이터의 머지 계정 상태. `scopes` 는 이 에이전트의 머지 권한 줄(`owner/name`·`owner/*`, 소문자)이고, null 이면
+ * 묻지 않는다(다른 기기·소유자 아님·권한 없음). 읽은 뒤 옮기기(①)·이어받기(②)를 한 번씩 한다.
+ */
+export function useLocalMerge(scopes: string[] | null): {
+  state: LocalMerge;
+  setScope(scope: string, ghUser: string): Promise<void>;
+} {
+  const [state, setState] = useState<LocalMerge>(scopes ? 'loading' : null);
+  const key = scopes ? scopes.join('\n') : null;
+
+  useEffect(() => {
+    if (key === null) { setState(null); return; }
+    const list = key ? key.split('\n') : [];
+    let alive = true;
+    // 줄 목록은 늦게 온다(grant 를 읽은 뒤) — 그때 자리를 먼저 잡는다(#1140 designer n5).
+    setState((prev) => (prev === null || prev === 'error' ? 'loading' : prev));
+    void (async () => {
+      try {
+        let s = await getLocalMerge();
+        if (s.byScope === null && list.length) s = await migrateLocalMerge(list);
+        for (const scope of list) {
+          const byScope = s.byScope ?? {};
+          if (byScope[scope]) continue;
+          const sibling = Object.entries(byScope).find(([k]) => ownerOf(k) === ownerOf(scope))?.[1];
+          // 이어받는 것도 오퍼레이터가 그 순간의 gh 목록으로 다시 잰다 — 로그아웃된 계정이면 건너뛰고 「계정 고르기」로 둔다.
+          if (sibling && s.accounts?.some((a) => a.login === sibling)) {
+            try { s = await setLocalMergeScopeUser(scope, sibling); } catch { /* 고르기 상태로 둔다 */ }
+          }
+        }
+        if (alive) setState(s);
+      } catch { if (alive) setState('error'); }
+    })();
+    return () => { alive = false; };
+  }, [key]);
+
+  const setScope = useCallback(async (scope: string, ghUser: string) => {
+    setState(await setLocalMergeScopeUser(scope, ghUser));
+  }, []);
+
+  return { state, setScope };
+}
+
+/** 절 머리 한 줄 — 어느 기기의 gh 계정으로 머지하는지(C8). 읽는 동안·실패도 같은 자리다(#1140 designer n5). */
+export function MergeDeviceNote({ state }: { state: LocalMerge }) {
+  const t = useT();
+  if (state === null) return null;
+  if (state === 'loading') return <p className="mt-2 text-meta text-fg-subtle" data-testid="merge-gh-user-loading">{t('agents.grants.ghUser.loading')}</p>;
+  if (state === 'error') return <p role="alert" className="mt-2 text-meta text-danger" data-testid="merge-gh-user-error">{t('agents.grants.ghUser.loadFailed')}</p>;
+  return (
+    <div className="mt-2 text-meta text-fg-subtle" data-testid="merge-gh-user">
+      <span>{t('agents.grants.ghUser.deviceNote', { host: state.host })}</span>
+      {state.accounts === null && (
+        <p role="alert" className="mt-1 text-danger">{t('agents.grants.ghUser.ghFailed', { reason: mergeReasonText(t, state.accountsError ?? '') })}</p>
+      )}
+      {state.accounts !== null && state.accounts.length === 0 && <p className="mt-1">{t('agents.grants.ghUser.noAccounts')}</p>}
+    </div>
+  );
+}
+
+/**
+ * 권한 줄 안의 「계정 [▾]」 칸과 그 줄의 상태 줄(시안 §1·§3). 고르면 바로 저장한다(저장 버튼 없음) — 실패하면 앞 값을 두고
+ * 이유를 줄 아래에. 상태: 계정 없음(C) · 로그아웃됨(D). 닿음 확인(A·B·E)은 후속 커밋이다.
+ */
+export function MergeAccountCell({ scope, repoLabel, state, setScope, disabled }: {
+  scope: string;
+  repoLabel: string;
+  state: OperatorMergeState;
+  setScope(scope: string, ghUser: string): Promise<void>;
   disabled?: boolean;
-  /**
-   * 이 에이전트에 머지 권한이 하나라도 있나(#1140 designer n2). 없으면 비어 있어도 경고 상자 대신 조용한 한 줄이다 —
-   * 이 기기의 내 에이전트를 열 때마다 노란 상자를 보면 신호가 닳는다. 막는 힘은 그대로다: 래퍼가 `no_gh_user` 로 막는다.
-   */
-  hasGrants: boolean;
 }) {
   const t = useT();
-  const [state, setState] = useState<OperatorMergeState | 'loading' | 'error'>('loading');
-  const [editing, setEditing] = useState(false);
-  const [choice, setChoice] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const current = state.byScope?.[scope] ?? null;
+  const accounts = state.accounts ?? [];
+  const loggedOut = current !== null && state.accounts !== null && !accounts.some((a) => a.login === current);
+  const id = scope.replace(/[^a-z0-9._-]/gi, '_');
 
-  const load = useCallback(async () => {
-    try { setState(await getLocalMerge()); } catch { setState('error'); }
-  }, []);
-  useEffect(() => { void load(); }, [load]);
-
-  const save = async (ghUser: string | null) => {
+  const pick = async (login: string) => {
+    if (!login || login === current) return;
     setBusy(true); setError(null);
-    try {
-      setState(await setLocalMergeGhUser(ghUser));
-      setEditing(false); setChoice('');
-    } catch (e) {
+    try { await setScope(scope, login); } catch (e) {
       setError(t('agents.grants.ghUser.saveFailed', { reason: mergeReasonText(t, rawReason(e)) }));
     } finally { setBusy(false); }
   };
 
-  // 자리를 먼저 잡아 둔다(#1140 designer n5) — 줄이 늦게 끼어들며 아래 목록을 밀지 않게.
-  if (state === 'loading') return <p className="mt-2 text-meta text-fg-subtle" data-testid="merge-gh-user-loading">{t('agents.grants.ghUser.loading')}</p>;
-  if (state === 'error') {
-    return <p role="alert" className="mt-2 text-meta text-danger" data-testid="merge-gh-user-error">{t('agents.grants.ghUser.loadFailed')}</p>;
-  }
-
-  const off = busy || disabled;
-  const { ghUser, accounts, host } = state;
-  const missing = ghUser !== null && accounts !== null && !accounts.some((a) => a.login === ghUser);
-  const openEditor = () => { setEditing(true); setChoice(''); setError(null); };
-  const chosenActive = accounts?.find((a) => a.login === choice)?.active === true;
-
   return (
-    <div className="mt-2" data-testid="merge-gh-user">
-      {ghUser === null && !hasGrants ? (
-        <div className="flex flex-wrap items-center gap-2 text-meta text-fg-subtle" data-testid="merge-gh-user-unset-quiet">
-          <span>{t('agents.grants.ghUser.unsetQuiet')}</span>
-          {!editing && (
-            <button className="ml-auto rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50" disabled={off} onClick={openEditor}>
-              {t('agents.grants.ghUser.choose')}
-            </button>
-          )}
-        </div>
-      ) : ghUser === null ? (
-        <div role="status" className="flex flex-wrap items-center gap-2 rounded-row border border-warning-border bg-warning-surface px-2 py-1 text-meta text-warning" data-testid="merge-gh-user-unset">
-          <span>{t('agents.grants.ghUser.unset', { host })}</span>
-          {!editing && (
-            <button className="ml-auto rounded-row border border-border bg-surface px-2 py-0.5 text-meta font-medium text-fg disabled:opacity-50" disabled={off} onClick={openEditor}>
-              {t('agents.grants.ghUser.choose')}
-            </button>
-          )}
-        </div>
-      ) : (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-fg">
-          <span className="text-fg-muted">{t('agents.grants.ghUser.label')}</span>
-          <span className="font-mono font-medium" data-testid="merge-gh-user-value">{ghUser}</span>
-          <span className="text-fg-subtle">· {t('agents.grants.ghUser.device', { host })}</span>
-          {!editing && (
-            <button className="ml-auto rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50" disabled={off} onClick={openEditor}>
-              {t('agents.grants.ghUser.change')}
-            </button>
-          )}
-        </div>
+    <>
+      <span className="text-fg-muted">{t('agents.grants.ghUser.as')}</span>
+      <select
+        aria-label={t('agents.grants.ghUser.rowAria', { repo: repoLabel })}
+        data-testid={`merge-account-${id}`}
+        className={`rounded-row border px-1.5 py-0.5 font-mono text-meta ${current === null
+          ? 'border-dashed border-warning-border bg-transparent text-warning'
+          : `border-border bg-surface-sunken text-fg${loggedOut ? ' line-through' : ''}`}`}
+        disabled={busy || disabled || state.accounts === null}
+        value={current ?? ''}
+        onChange={(e) => void pick(e.target.value)}
+      >
+        {current === null && <option value="" disabled>{t('agents.grants.ghUser.pick')}</option>}
+        {loggedOut && <option value={current!} disabled>{current}</option>}
+        {accounts.map((a) => (
+          <option key={a.login} value={a.login}>{a.active ? t('agents.grants.ghUser.activeTag', { login: a.login }) : a.login}</option>
+        ))}
+      </select>
+      {current === null && (
+        <p role="status" className="order-last basis-full rounded-row border border-warning-border bg-warning-surface px-2 py-0.5 text-warning" data-testid={`merge-account-unset-${id}`}>
+          {t('agents.grants.ghUser.rowUnset')}
+        </p>
       )}
-      {missing && <p role="alert" className="mt-1 text-meta text-danger">{t('agents.grants.ghUser.notLoggedIn', { login: ghUser })}</p>}
-
-      {editing && (
-        <div className="mt-2 rounded-row border border-border bg-surface-sunken p-2" data-testid="merge-gh-user-editor">
-          {accounts === null ? (
-            <p role="alert" className="text-meta text-danger">{t('agents.grants.ghUser.ghFailed', { reason: mergeReasonText(t, state.accountsError ?? '') })}</p>
-          ) : accounts.length === 0 ? (
-            <p className="text-meta text-fg-subtle">{t('agents.grants.ghUser.noAccounts')}</p>
-          ) : (
-            <label className="flex items-center gap-2 text-meta text-fg">
-              {t('agents.grants.ghUser.select')}
-              <select
-                aria-label={t('agents.grants.ghUser.select')}
-                className="rounded-row border border-border bg-surface px-2 py-1 font-mono text-meta text-fg"
-                disabled={off}
-                value={choice}
-                onChange={(e) => setChoice(e.target.value)}
-              >
-                <option value="" disabled>{t('agents.grants.ghUser.placeholder')}</option>
-                {accounts.map((a) => (
-                  <option key={a.login} value={a.login}>{a.active ? t('agents.grants.ghUser.activeTag', { login: a.login }) : a.login}</option>
-                ))}
-              </select>
-            </label>
-          )}
-          {/* 회사(활성) 계정을 고를 때 한 번 더 묻는다(security n2) — 자동으로 고르지 않은 이유(P1)를 화면에도 남긴다. */}
-          {chosenActive && <p role="status" className="mt-1 text-meta text-warning" data-testid="merge-gh-user-active-warn">{t('agents.grants.ghUser.activeWarn', { login: choice })}</p>}
-          <p className="mt-1 text-meta text-fg-subtle">{t('agents.grants.ghUser.hint')}</p>
-          {/* 이 값은 에이전트가 아니라 기기의 것이다(security n2) — 바꾸면 이 기기의 다른 에이전트도 같이 바뀐다. */}
-          <p className="mt-1 text-meta text-fg-subtle" data-testid="merge-gh-user-device-wide">{t('agents.grants.ghUser.deviceWide')}</p>
-          <div className="mt-2 flex gap-2">
-            <button
-              className="rounded-row border border-border bg-accent px-2 py-1 text-meta font-medium text-accent-fg disabled:opacity-50"
-              disabled={off || !choice || choice === ghUser}
-              onClick={() => void save(choice)}
-            >
-              {t('agents.grants.ghUser.save')}
-            </button>
-            {ghUser !== null && (
-              <button className="rounded-row border border-border px-2 py-1 text-meta text-fg hover:text-danger disabled:opacity-50" disabled={off} onClick={() => void save(null)}>
-                {t('agents.grants.ghUser.clear')}
-              </button>
-            )}
-            <button className="rounded-row border border-border px-2 py-1 text-meta text-fg hover:bg-surface disabled:opacity-50" disabled={off} onClick={() => { setEditing(false); setError(null); }}>
-              {t('agents.grants.cancel')}
-            </button>
-          </div>
-        </div>
+      {loggedOut && (
+        <p role="alert" className="order-last basis-full rounded-row border border-danger-border bg-danger-surface px-2 py-0.5 text-danger" data-testid={`merge-account-logged-out-${id}`}>
+          {t('agents.grants.ghUser.rowLoggedOut', { login: current! })}
+        </p>
       )}
-      {error && <p role="alert" className="mt-1 text-meta text-danger" data-testid="merge-gh-user-save-error">{error}</p>}
-    </div>
+      {error && <p role="alert" className="order-last basis-full text-danger" data-testid={`merge-account-error-${id}`}>{error}</p>}
+    </>
   );
 }

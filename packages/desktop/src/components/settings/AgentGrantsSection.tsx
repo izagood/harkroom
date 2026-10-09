@@ -22,7 +22,7 @@ import { useLocale } from '../../i18n/useT';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { hasOperatorLocalSurface } from '../../lib/operatorLocal';
 import { ImmediateBadge } from './pendingEdits';
-import { MergeGhUserRow } from './MergeGhUserRow';
+import { MergeAccountCell, MergeDeviceNote, useLocalMerge } from './MergeGhUserRow';
 import { Segmented } from '../Segmented';
 import { buildForest, decidableBy, descendantCount, pendingForRoot, type ForestNode } from '../../lib/delegationForest';
 import { DelegationChildren, PendingDelegations, type DelegationActions } from './DelegationTree';
@@ -176,9 +176,14 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   const otherDevice = assignedOperatorName
     ? t('agents.grants.ghUser.otherDevice', { host: assignedOperatorName })
     : t('agents.grants.ghUser.otherDeviceNoName');
-  const ghRow = canGrant && hasOperatorLocalSurface() && agent.assignment?.operatorId ? (
-    localOperatorId && agent.assignment.operatorId === localOperatorId
-      ? <MergeGhUserRow disabled={disabled} hasGrants={liveMergeGrantCount(rows) > 0} />
+  // 머지 gh 계정은 줄마다다(스레드 e085b6a7). 이 기기에 배정된 내 에이전트이고 머지 권한 줄이 있을 때만 오퍼레이터를 묻는다 —
+  // 다른 기기면 그 기기의 gh 목록을 여기서 볼 수 없으므로 안내만 둔다(시안 §3 F).
+  const assigned = canGrant && hasOperatorLocalSurface() && !!agent.assignment?.operatorId;
+  const onThisDevice = assigned && !!localOperatorId && agent.assignment!.operatorId === localOperatorId;
+  const { state: localMerge, setScope } = useLocalMerge(onThisDevice && rows.length > 0 ? rows.map((g) => repoOf(g.scope).toLowerCase()) : null);
+  const ghRow = assigned ? (
+    onThisDevice
+      ? <MergeDeviceNote state={localMerge} />
       : <p className="mt-2 text-meta text-fg-subtle" data-testid="merge-gh-user-other">{otherDevice}</p>
   ) : null;
 
@@ -325,7 +330,11 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                     {t('agents.grants.orgWideBadge')}
                   </span>
                 )}
-                <span className="text-fg-subtle">
+                {localMerge !== null && typeof localMerge === 'object' && (
+                  <MergeAccountCell scope={repo.toLowerCase()} repoLabel={repoLabel(g.scope)} state={localMerge} setScope={setScope} disabled={off} />
+                )}
+                {/* 메타(by·날짜·만료)는 둘째 줄로 내린다(시안 §1) — 계정 칸이 들어갈 자리를 만든다. */}
+                <span className="order-last basis-full text-fg-subtle">
                   {t('agents.grants.by', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
                   {' · '}
                   {g.expiresAt === null
