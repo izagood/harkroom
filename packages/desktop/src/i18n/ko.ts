@@ -1475,6 +1475,10 @@ export const ko = {
   /** 위와 **갈린다**: 저쪽은 서버의 목록을, 이쪽은 러너가 띄우는 PTY 를 기다린다. */
   'terminal.session.opening': '터미널을 여는 중…',
 
+  'terminal.end.pending': '끝내는 중…',
+  'terminal.end.cancelTitle': '@{handle} 의 이 턴을 멈출까?',
+  'terminal.end.cancelDetail': '하네스가 멈추고, 멈춘 턴은 이 스레드에 실패 카드로 남는다. 러너는 살아 있어 다음 멘션을 정상으로 받는다.',
+
   /** `runnerState.running` 과 **다른 것을 센다** — 저쪽은 러너, 이쪽은 PTY 세션의 턴이다. */
   'terminal.state.running': '진행 중',
   'terminal.state.ended': '턴 종료',

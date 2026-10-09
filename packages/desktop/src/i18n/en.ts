@@ -2945,6 +2945,12 @@ export const en = {
   /** 위와 **갈린다**: 저쪽은 서버의 목록을 기다리고 이쪽은 러너가 띄우는 PTY 를 기다린다. */
   'terminal.session.opening': 'Opening the terminal…',
 
+  /** 끝내기를 보낸 뒤 `ended` 프레임이 올 때까지. `202` 는 끝났다는 뜻이 아니다. */
+  'terminal.end.pending': 'Ending…',
+  /** 멘션 턴을 터미널 창에서 멈출 때의 확인. 조종 중인 턴은 `agentTurns.endControl*` 을 그대로 쓴다. */
+  'terminal.end.cancelTitle': 'Stop this turn of @{handle}?',
+  'terminal.end.cancelDetail': 'The harness stops and the turn is left in this thread as a failure card. The runner stays up and takes the next mention as usual.',
+
   /** `runnerState.running` 과 **다른 것을 센다** — 저쪽은 러너, 이쪽은 그 PTY 세션의 턴이다. */
   'terminal.state.running': 'Running',
   /** **`Ended` 만 두면 무엇이 끝났는지가 빠진다** — 세션이 아니라 턴이 끝났다. */

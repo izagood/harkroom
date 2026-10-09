@@ -1404,7 +1404,8 @@ export class Controller {
    * 성공은 통지하지 않는다: 중단됐다는 증거는 이 왕복이 아니라 **목록에서 그 줄이 사라지고
    * 스레드에 실패 카드가 뜨는 것**이다. 서버의 202 는 "러너에게 넘겼다"까지다.
    */
-  async cancelAgentTurns(sessionIds: readonly string[]): Promise<void> {
+  /** 다 보냈으면 `true` — 하나라도 실패했으면 통지를 올리고 `false`(터미널 창이 버튼을 다시 푼다). */
+  async cancelAgentTurns(sessionIds: readonly string[]): Promise<boolean> {
     let firstFailure: string | null = null;
     for (const sessionId of sessionIds) {
       try {
@@ -1419,6 +1420,7 @@ export class Controller {
     if (firstFailure) {
       this.store.getState().set({ notice: `Could not stop that turn — ${firstFailure}` });
     }
+    return firstFailure === null;
   }
 
   /**
