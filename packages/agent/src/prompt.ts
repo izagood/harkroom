@@ -1350,11 +1350,27 @@ export function buildTurnPrompt(opts: {
    * 가드에 걸려 부름이 흔적 없이 사라진다.
    */
   editedMention?: MessageRow;
+  /**
+   * **예약 깨움을 새 세션으로 돌린다**(2026-10-09). 참이면 머리(채널·스레드 id)와 깨움 사유에
+   * "새 세션이다" 안내(`freshWakeLines`)를 붙인다. 스레드의 큰 세션을 이어받던 짧은 확인 턴이 비용의
+   * 큰 몫이었다 — 이 턴이 앞 대화를 정말 봐야 하면 `message.read` 로 스스로 읽는다.
+   *
+   * 델타 중 **남의 새 말**은 그대로 싣는다(자기 발화는 거른다 — 첫 턴처럼 전부 싣지 않는다). 기다리는
+   * 동안 사람이 "아 그거 취소해" 라고 했으면 그것은 앞 대화가 아니라 이 확인의 재료다. 대개 몇 줄이다.
+   * `wake` 가 있을 때만 뜻이 있다.
+   */
+  freshWake?: boolean;
+  /**
+   * 이 seq 뒤의 **내 발화**는 이 세션이 쓴 것이 아니다(`SessionRecord.unseenOwnAfterSeq`) — 자기 발화
+   * 필터에서 빼고 보여 준다. 진행 설명·대기 줄(`NON_UTTERANCE_KINDS`)은 여전히 거른다.
+   */
+  unseenOwnAfterSeq?: number;
 }): { prompt: string; fedSeq: number } {
   const {
     messages, lastFedSeq, meId, handles, channelId, threadRootId, wake, team, delegation,
-    delegatedBy, editedMention, canceledWakes,
+    delegatedBy, editedMention, canceledWakes, unseenOwnAfterSeq,
   } = opts;
+  const freshWake = opts.freshWake === true && wake !== undefined;
   const isFirstTurn = lastFedSeq === 0;
 
   const newMessages = messages.filter((m) => m.seq > lastFedSeq);
@@ -1363,7 +1379,9 @@ export function buildTurnPrompt(opts: {
   // 맞는 동작이다.
   const fedSeq = newMessages.reduce((max, m) => Math.max(max, m.seq), lastFedSeq);
 
-  const toShow = newMessages.filter((m) => isFirstTurn || m.authorId !== meId);
+  const unseenOwn = (m: MessageRow): boolean => unseenOwnAfterSeq !== undefined
+    && m.seq > unseenOwnAfterSeq && !NON_UTTERANCE_KINDS.has(m.kind);
+  const toShow = newMessages.filter((m) => (isFirstTurn && !freshWake) || m.authorId !== meId || unseenOwn(m));
   if (!toShow.length && wake === undefined && delegation === undefined && editedMention === undefined) {
     // 새 메시지가 있었지만 전부 자기 발화라 걸러진 경우도 여기로 온다. 그래도 prompt 를
     // 비우고 fedSeq 는 이미 위에서 전진시킨 값을 그대로 쓴다 — 걸러냈다고 다음 턴에 같은
@@ -1384,6 +1402,7 @@ export function buildTurnPrompt(opts: {
   const wakeLines = wake === undefined ? [] : [
     `(예약된 후속 턴 — 사유: ${wake.reason})`,
     ...(wake.reportTo ? reportToLines(wake.reportTo) : []),
+    ...(freshWake ? freshWakeLines() : []),
     '',
   ];
   const canceledLines = canceledWakes?.length ? canceledWakeLines(canceledWakes) : [];
@@ -1406,6 +1425,20 @@ export function buildTurnPrompt(opts: {
   const prompt = [head, '', ...wakeLines, ...canceledLines, ...teamLines, ...delegationLines, ...handedLines, ...editLines, ...lines, ...howTo].join('\n');
 
   return { prompt, fedSeq };
+}
+
+/**
+ * 예약 깨움을 **새 세션으로** 돌릴 때 붙는 안내(2026-10-09). 이 턴은 스레드의 앞 대화를 들고 있지
+ * 않다 — 그 사실을 모르면 에이전트가 "기억이 없다"고 지어내거나 앞 약속을 놓친다. 그래서 무엇이
+ * 없는지와 어디서 읽는지를 함께 말한다. 이 세션은 이 턴 뒤 버려진다는 것도 — 남길 것은 스레드나
+ * 기억에 남겨야 다음 턴이 안다.
+ */
+export function freshWakeLines(): string[] {
+  return [
+    '(이 턴은 예약 확인을 위해 **새 세션**으로 떴다 — 이 스레드의 앞 대화를 이어받지 않았다. 사유만으로 확인할 수 없고',
+    '앞 맥락이 정말 필요하면 harkroom MCP 의 `message.read` 로 위 channelId·threadRootId 를 읽어라.',
+    '이 세션은 이 턴 뒤 버려진다 — 다음에 알아야 할 것은 스레드에 쓰거나 기억에 남겨라.)',
+  ];
 }
 
 /**

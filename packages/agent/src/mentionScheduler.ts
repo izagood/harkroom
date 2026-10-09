@@ -411,7 +411,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       // 돌리지 않고 커서만 전진시킨다 — 기다림이 흔적 없이 사라진다.
       //
       // 보고처(2026-10-06)도 그 메시지의 meta 에서 꺼낸다 — 서버가 사유와 함께 거기 실었다.
-      ...(reason === 'wake' ? { wake: wakeTarget(mention) } : {}),
+      //
+      // `scheduledWake` 는 이 사유일 때만 선다 — 이 턴은 스레드의 큰 세션을 이어받지 않고 새 세션으로
+      // 돈다(`mentionTurn.ts::runMentionTurn` 의 `freshWake`). 아래 선택 답은 같은 `wake` 자리를 쓰지만
+      // 사람이 방금 답한 것이라 앞 대화가 필요하다.
+      ...(reason === 'wake' ? { wake: wakeTarget(mention), scheduledWake: true } : {}),
       ...(canceledWakes?.length ? { canceledWakes } : {}),
       /**
        * **선택에 답이 왔다**(2026-09-09). 깨움과 같은 자리를 쓰는 이유는 같은 문제이기

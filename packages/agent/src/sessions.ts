@@ -49,6 +49,18 @@ export interface SessionRecord {
    * 옵셔널로 둔 이유는 위 `isSessionRecord` 주석에 있다.
    */
   claudeAccount?: string | null;
+  /**
+   * **이 세션이 쓰지 않은 내 발화가 이 seq 뒤에 있다**(2026-10-09, 예약 깨움을 새 세션으로).
+   *
+   * 예약으로 깨어난 턴(`turn.wake`)은 이 레코드의 큰 세션을 이어받지 않고 버리는 작은 세션으로
+   * 돈다(`mentionTurn.ts::runMentionTurn` 의 `freshWake`). 그 턴이 스레드에 남긴 말은 **이 세션이
+   * 쓴 것이 아니다** — 그런데 이어받는 턴의 델타는 자기 발화를 거른다(`buildTurnPrompt`). 그대로
+   * 두면 다음 멘션 턴이 깨움 턴이 무엇을 했는지 모른다. 그래서 그 경계를 적어 두고, 다음 이어받는
+   * 턴이 이 seq 뒤의 내 발화를 보여 준 뒤(커서가 전진하면) 지운다.
+   *
+   * 옵셔널인 이유는 `claudeAccount` 와 같다 — 옛 레코드에는 없고, 없으면 "다 이 세션이 썼다"이다.
+   */
+  unseenOwnAfterSeq?: number;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -60,7 +72,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 // 단서가 하나도 안 남는다. 저장 전에 모양을 확인해서 여기서 걸러낸다.
 function isSessionRecord(value: unknown): value is SessionRecord {
   if (!isPlainObject(value)) return false;
-  const { workspaceDir, sessionId, harness, lastFedSeq, turnsRun, claudeAccount } = value;
+  const { workspaceDir, sessionId, harness, lastFedSeq, turnsRun, claudeAccount, unseenOwnAfterSeq } = value;
   return (
     typeof workspaceDir === 'string' &&
     (sessionId === null || typeof sessionId === 'string') &&
@@ -71,7 +83,8 @@ function isSessionRecord(value: unknown): value is SessionRecord {
     // **옵셔널이다** — 이 필드 이전에 쓰인 sessions.json 이 이미 디스크에 있다. 필수로 하면
     // 러너가 기동하면서 모든 스레드의 세션을 조용히 잃는다(위 함수 주석의 "레코드만 버린다"
     // 경로를 전부 태운다).
-    (claudeAccount === undefined || claudeAccount === null || typeof claudeAccount === 'string')
+    (claudeAccount === undefined || claudeAccount === null || typeof claudeAccount === 'string') &&
+    (unseenOwnAfterSeq === undefined || typeof unseenOwnAfterSeq === 'number')
   );
 }
 

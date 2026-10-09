@@ -657,6 +657,9 @@ describe('깨움 보고처·접힌 예약을 턴에 넘긴다 (2026-10-06)', () 
 
     expect(seen.find((t) => t.mentionId === 'w1')?.wake).toEqual({ reason: '#1174 CI 확인', reportTo: { channelId: 'ch-9', threadRootId: 'task-root' } });
     expect(seen.find((t) => t.mentionId === 'm2')?.canceledWakes).toEqual([{ reason: '회수', wakeAt: '2026-10-06T02:00:00.000Z' }]);
+    // 예약 깨움만 새 세션으로 돈다(2026-10-09) — 사람의 부름은 이어받는다.
+    expect(seen.find((t) => t.mentionId === 'w1')?.scheduledWake).toBe(true);
+    expect(seen.find((t) => t.mentionId === 'm2')?.scheduledWake).toBeUndefined();
   });
 
   it('옛 서버의 깨움(meta 에 reportTo 없음)은 지금처럼 사유만 싣는다', async () => {
