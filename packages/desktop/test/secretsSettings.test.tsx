@@ -70,6 +70,10 @@ describe('SecretsSettings', () => {
     expect(row.textContent).toContain('api-token');
     expect(row.textContent).toContain('쓰는 곳: 에이전트 1');
     expect(row.textContent).toContain('만료 없음');
+    // designer m1: 줄마다 따로 격자라 열 폭을 고정해야 쓰는 곳·만료 열이 줄끼리 맞는다(auto 금지).
+    const line = screen.getByTestId('secret-expand-api-token').parentElement as HTMLElement;
+    expect(line.className).toContain('sm:grid-cols-[16px_minmax(0,1fr)_7rem_6.5rem_7.5rem]');
+    expect(line.className).not.toMatch(/sm:grid-cols-\[[^\]]*_auto/);
   });
 
   it('만료된 비밀은 표시되고 [주기] 가 없다', async () => {

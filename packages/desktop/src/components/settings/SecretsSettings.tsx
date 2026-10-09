@@ -61,6 +61,7 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
   const [adding, setAdding] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
   const [open, setOpen] = useState<{ id: string; tab: Tab } | null>(null);
+  const [helpOn, setHelpOn] = useState(false);
   const [deleting, setDeleting] = useState<SecretView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -143,8 +144,8 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
   const date = (iso: string) => new Date(iso).toLocaleDateString(locale);
 
   return (
-    <SettingsPage section="secrets" description={t('secrets.description')}>
-      <SecretsHelp />
+    <SettingsPage section="secrets" description={<>{t('secrets.description')}{' '}<HelpToggle on={helpOn} onToggle={() => setHelpOn(!helpOn)} /></>}>
+      {helpOn && <SecretsHelp />}
       {state === 'loading' && <p className="text-meta text-fg-muted">{t('secrets.loading')}</p>}
       {state === 'error' && <p role="alert" className="text-meta text-danger">{t('secrets.listFailed')}</p>}
       {typeof state === 'object' && !state.enabled && (
@@ -214,33 +215,36 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
                   className={`text-meta transition-colors first:rounded-t-card last:rounded-b-card ${flash === s.id ? 'bg-accent-surface' : tab ? 'bg-surface-sunken' : ''}`}
                   data-testid={`secret-${s.name}`} data-flash={flash === s.id || undefined}>
                   {/* 한 줄 격자: ▸ · 이름(굵게)+설명 · 받는 에이전트 · 만료 · [값 보기] ⋯ (#3). 줄을 누르면 펼친다. */}
-                  <div className={`grid cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 sm:grid-cols-[16px_minmax(0,1fr)_auto_auto_auto] ${tab ? '' : 'hover:bg-surface-hover'} ${expired ? 'text-fg-subtle' : 'text-fg'}`}
+                  <div className={`grid cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 sm:grid-cols-[16px_minmax(0,1fr)_7rem_6.5rem_7.5rem] ${tab ? '' : 'hover:bg-surface-hover'} ${expired ? 'text-fg-subtle' : 'text-fg'}`}
                     onClick={() => setTab(tab ? null : 'grants')}>
                     <button type="button" aria-expanded={tab !== null} aria-label={t('secrets.expandAria', { name: s.name })}
                       data-testid={`secret-expand-${s.name}`}
                       className={`text-fg-subtle transition-transform ${tab ? 'rotate-90' : ''}`}
                       onClick={(e) => { e.stopPropagation(); setTab(tab ? null : 'grants'); }}>▸</button>
                     <span className="min-w-0">
-                      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <span className="font-mono text-body font-semibold">{s.name}</span>
-                        {s.kind === 'file' && <span className="rounded bg-surface-raised px-1 text-fg-muted">{t('secrets.kindFile')}</span>}
-                        <AgentMadeBadge secret={s} />
+                      <span className="flex min-w-0 items-center gap-x-2">
+                        <span className="min-w-0 truncate font-mono text-body font-semibold" title={s.name}>{s.name}</span>
+                        {s.kind === 'file' && <span className="shrink-0 whitespace-nowrap rounded bg-surface-raised px-1 text-fg-muted">{t('secrets.kindFile')}</span>}
+                        <span className="shrink-0 whitespace-nowrap"><AgentMadeBadge secret={s} /></span>
                       </span>
                       {sub && <span className="block truncate text-fg-subtle">{sub}</span>}
                     </span>
-                    <span className="hidden text-fg-muted sm:inline" data-testid={`secret-used-${s.name}`}>
+                    <span className="hidden truncate text-left text-fg-muted sm:block" data-testid={`secret-used-${s.name}`}>
                       {s.grantCount > 0 ? t('secrets.usedBy', { n: String(s.grantCount) }) : <span className="text-fg-subtle">{t('secrets.unused')}</span>}
                     </span>
-                    <span className={`hidden min-w-16 text-right sm:inline ${expired || expiringSoon ? 'text-warning' : 'text-fg-subtle'}`} data-testid={`secret-expiry-${s.name}`}
+                    <span className={`hidden truncate text-right sm:block ${expired || expiringSoon ? 'text-warning' : 'text-fg-subtle'}`} data-testid={`secret-expiry-${s.name}`}
                       data-soon={expiringSoon || undefined}>
                       {expired
                         ? t('secrets.expired', { when: date(s.expiresAt as string) })
                         : s.expiresAt ? t('secrets.until', { when: date(s.expiresAt) }) : t('secrets.noExpiry')}
                     </span>
-                    <span className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                    <span className="flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
                       {mine && state.enabled && revealSupported && (
-                        <SmallButton onClick={reveal} disabled={busy} pressed={shown === 'reveal'} ariaLabel={t(s.kind === 'file' ? 'secrets.downloadAria' : 'secrets.revealAria', { name: s.name })}>
-                          {locked ? '🔒 ' : ''}{s.kind === 'file' ? t('secrets.download') : t('secrets.reveal')}
+                        <SmallButton onClick={reveal} disabled={busy} pressed={shown === 'reveal'} className="inline-flex min-w-[5.25rem] items-center justify-center gap-1"
+                          ariaLabel={t(s.kind === 'file' ? 'secrets.downloadAria' : 'secrets.revealAria', { name: s.name })}>
+                          {/* 잠겨 있을 때만 단색 자물쇠(designer n7) — 컬러 이모지는 버튼 사이에서 혼자 튀었다. */}
+                          {locked && <LockGlyph />}
+                          {s.kind === 'file' ? t('secrets.download') : t('secrets.reveal')}
                         </SmallButton>
                       )}
                       {/* Menu 는 가장 가까운 positioned 조상에 붙는다 — 여기 relative 가 없으면 페이지 끝으로 날아간다. */}
@@ -344,22 +348,24 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
  * 머리 설명은 한 줄(SettingsPage description), 나머지는 「어떻게 지켜지나」를 눌러야 펼친다(designer 시안 v1 #5).
  * 패널마다 붙어 있던 설명 문단(grantsNote)도 여기로 모였다.
  */
+function HelpToggle({ on, onToggle }: { on: boolean; onToggle(): void }) {
+  const t = useT();
+  // 설명 문장 끝에 붙는다(designer n8) — 따로 줄을 차지하면 위아래 여백만 커진다.
+  return (
+    <button type="button" aria-expanded={on} data-testid="secrets-help-toggle"
+      className="text-fg-muted underline decoration-dotted underline-offset-2 hover:text-fg"
+      onClick={onToggle}>{t('secrets.helpToggle')}</button>
+  );
+}
+
 function SecretsHelp() {
   const t = useT();
-  const [on, setOn] = useState(false);
   return (
-    <div className="-mt-4">
-      <button type="button" aria-expanded={on} data-testid="secrets-help-toggle"
-        className="text-meta text-fg-muted underline decoration-dotted underline-offset-2 hover:text-fg"
-        onClick={() => setOn(!on)}>{t('secrets.helpToggle')}</button>
-      {on && (
-        <ul className="mt-2 list-disc space-y-0.5 rounded-card bg-surface-sunken py-2 pl-7 pr-3 text-meta text-fg-muted" data-testid="secrets-help">
-          <li>{t('secrets.help1')}</li>
-          <li>{t('secrets.help2')}</li>
-          <li>{t('secrets.help3')}</li>
-        </ul>
-      )}
-    </div>
+    <ul className="-mt-6 mb-6 list-disc space-y-0.5 rounded-card bg-surface-sunken py-2 pl-7 pr-3 text-meta text-fg-muted" data-testid="secrets-help">
+      <li>{t('secrets.help1')}</li>
+      <li>{t('secrets.help2')}</li>
+      <li>{t('secrets.help3')}</li>
+    </ul>
   );
 }
 
@@ -385,13 +391,22 @@ function useExplain() {
   };
 }
 
-function SmallButton({ children, onClick, disabled, danger, pressed, ariaLabel }: {
-  children: React.ReactNode; onClick(): void; disabled?: boolean; danger?: boolean; pressed?: boolean; ariaLabel?: string;
+function LockGlyph() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3 w-3 text-fg-muted" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <rect x="3" y="7" width="10" height="7" rx="1.5" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+    </svg>
+  );
+}
+
+function SmallButton({ children, onClick, disabled, danger, pressed, ariaLabel, className = '' }: {
+  children: React.ReactNode; onClick(): void; disabled?: boolean; danger?: boolean; pressed?: boolean; ariaLabel?: string; className?: string;
 }) {
   return (
     <button
       type="button"
-      className={`rounded border border-border px-2 py-0.5 text-meta disabled:opacity-50 ${danger ? 'text-fg hover:text-danger' : 'text-fg hover:bg-surface-sunken'} ${pressed ? 'bg-surface-sunken' : ''}`}
+      className={`rounded border border-border px-2 py-0.5 text-meta disabled:opacity-50 ${danger ? 'text-fg hover:text-danger' : 'text-fg hover:bg-surface-sunken'} ${pressed ? 'bg-surface-sunken' : ''} ${className}`}
       disabled={disabled}
       aria-pressed={pressed}
       aria-label={ariaLabel}
