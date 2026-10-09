@@ -1,4 +1,4 @@
-import { readAskMeta, readDelegationMeta, type MessageRow, type OpenAskLink } from '@harkroom/shared';
+import { isAskOpen, readAskMeta, readDelegationMeta, type MessageRow, type OpenAskLink } from '@harkroom/shared';
 import type { Liveness } from './threadState';
 import type { Translate } from '../i18n';
 
@@ -89,7 +89,7 @@ export function waitChain(input: WaitChainInput): WaitChain {
 
   for (const m of messages) {
     const ask = readAskMeta(m.meta);
-    if (ask && ask.answeredWith == null) {
+    if (ask && isAskOpen(ask)) {
       links.push({
         waiter: m.authorId,
         blockedBy: ask.to.kind === 'human' ? null : ask.to.accountId,

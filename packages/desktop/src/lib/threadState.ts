@@ -1,4 +1,4 @@
-import { readAskMeta, readFailureMeta, readReportMeta, type MessageRow } from '@harkroom/shared';
+import { isAskOpen, readAskMeta, readFailureMeta, readReportMeta, type MessageRow } from '@harkroom/shared';
 import type { MessageKey, Translate } from '../i18n';
 
 /**
@@ -89,7 +89,7 @@ export function threadState(input: ThreadStateInput): ThreadState | null {
       gateMine = false;
     }
     const ask = readAskMeta(m.meta);
-    if (!ask || ask.answeredWith != null) continue;
+    if (!ask || !isAskOpen(ask)) continue;
     // `human` 은 '사람 아무나'이므로 내가 사람이면 내 차례다(`AskCard::isForMe` 와 같은 판정).
     if (ask.to.kind === 'human' ? myAccountId != null : ask.to.accountId === myAccountId) {
       myTurn = true;

@@ -2,7 +2,7 @@ import { BlockedCard } from './BlockedCard';
 import { SecretNoticeAction } from './SecretNoticeAction';
 import { MergeDenialPanel } from './MergeDenialPanel';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
+import { isAskOpen, messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
 import { readAutomationMeta } from '../lib/automation';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -1119,7 +1119,7 @@ function DeletedMessageRow({ message, inThread }: { message: MessageRow; inThrea
  * `→ 나` / `→ forge`. **강조는 나에게 온 것에만 간다**(규칙 04) — 이 배지 하나로 팀
  * 스레드의 "무엇이 내 일인가"가 풀린다.
  *
- * 이미 답이 있으면 그리지 않는다: 끝난 물음의 수신자는 더 이상 아무도 기다리게 하지 않고,
+ * 이미 답이 있거나 닫혔으면 그리지 않는다: 끝난 물음의 수신자는 더 이상 아무도 기다리게 하지 않고,
  * 남겨 두면 끝난 스레드가 계속 나를 부른다.
  */
 function AudienceBadge({ message }: { message: MessageRow }) {
@@ -1127,7 +1127,7 @@ function AudienceBadge({ message }: { message: MessageRow }) {
   const myId = useActiveStore((s) => s.me?.id ?? null);
   const ask = readAskMeta(message.meta);
   const toHandle = useActiveStore((s) => (ask?.to.kind === 'account' ? s.accounts[ask.to.accountId]?.handle ?? null : null));
-  if (!ask || ask.answeredWith != null) return null;
+  if (!ask || !isAskOpen(ask)) return null;
 
   const forMe = ask.to.kind === 'human' ? myId != null : ask.to.accountId === myId;
   // 화살표는 문구가 진다 — **방향을 말하는 기호**라 이름과 떨어지면 뜻을 잃는다.
