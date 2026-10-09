@@ -107,6 +107,41 @@ if (mode === 'ready-early-submit-late') {
   setTimeout(() => process.exit(23), 12_000); // 안전망: 끝내 제출이 없으면 이 코드로 죽는다
 }
 
+// **보이지 않는 글자가 든 붙여넣기는 Enter 를 한 번 삼킨다** — claude 2.1.292 의 실측 성질
+// (2026-10-07, 스레드 f453bc59). 붙여넣기는 입력줄에 칩(`❯ [Pasted text #1 +N lines]`)으로
+// 접히고, 본문에 보이지 않는 글자가 있으면 첫 Enter 에 그 글자를 지우고 `press Enter to send`
+// 를 띄운다. 그 문구는 5초 뒤(여기선 `FAKE_HINT_CLEAR_MS`) 바닥줄 다시 그리기로 지워지고
+// 칩만 남는다. 두 번째 Enter 에 제출된다. `FAKE_HOLD_ALWAYS=1` 이면 글자와 상관없이 삼킨다 —
+// 아직 모르는 다음 판의 같은 성질(우리 정리가 놓친 글자)을 흉내 낸다.
+if (mode === 'invisible-hold') {
+  const INVISIBLE = /[\u00ad\u200b-\u200f\u2028\u2029\u2060-\u2069\ufeff\u{e0000}-\u{e007f}]|(?<!\p{Extended_Pictographic})\ufe0f/u;
+  const clearMs = Number(process.env.FAKE_HINT_CLEAR_MS ?? 300);
+  // 실물처럼 raw 모드로 읽는다 — 그래야 본문의 줄바꿈(`\n`)과 제출 키(`\r`)가 갈린다.
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+  process.stdout.write('READY\n❯\u00a0');
+  process.stdin.setEncoding('utf8');
+  let raw = '';
+  let held = false;
+  process.stdin.on('data', (d) => {
+    for (const ch of d) {
+      if (ch !== '\r') { raw += ch; continue; }
+      const body = raw.split('\u001b[200~')[1]?.split('\u001b[201~')[0] ?? '';
+      if (!body) continue;   // 빈 입력줄의 Enter 는 아무 일도 아니다
+      if (!held && (process.env.FAKE_HOLD_ALWAYS === '1' || INVISIBLE.test(body))) {
+        held = true;
+        process.stdout.write('\n  Removed 1 invisible character · review and press Enter to send\n❯\u00a0[Pasted text #1 +3 lines]');
+        setTimeout(() => process.stdout.write('\n◐ medium · /effort\n'), clearMs);
+        continue;
+      }
+      process.stdout.write(`\nSUBMITTED:${body.length} PASTES:${raw.split('\u001b[200~').length - 1}\n❯\u00a0\n`);
+      setTimeout(() => process.exit(0), 50);
+      return;
+    }
+    if (raw.includes('\u001b[201~') && !held) process.stdout.write('\r❯\u00a0[Pasted text #1 +3 lines]');
+  });
+  setTimeout(() => process.exit(23), Number(process.env.FAKE_GIVE_UP_MS ?? 8_000)); // 끝내 제출이 없으면 이 코드
+}
+
 // 아무 신호도 안 찍고 버틴다 — 미로그인 화면·디렉터리 신뢰 대화상자가 이 모양이다.
 if (mode === 'hang-silent') { setInterval(() => {}, 1_000); }
 

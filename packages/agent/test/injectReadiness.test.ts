@@ -36,11 +36,12 @@ describe('표가 말하는 주입 하한', () => {
     expect(facts.unsentHint?.test('  tab to queue message')).toBe(true);
   });
 
-  it('claude 는 하한도 미제출 신호도 없다 — 그물을 치지 않는다는 뜻이다', () => {
-    // 준비 표시가 실제 준비와 같고, 제출 확인은 세션 기록으로 이미 된다.
+  it('claude 는 하한이 없고, 미제출 신호는 입력줄의 붙여넣기 칩이다', () => {
+    // 준비 표시가 실제 준비와 같다. 미제출 신호는 2026-10-07 실측(보이지 않는 글자로 Enter 를
+    // 삼킨 판) — 판정 시험은 `invisibleHold.test.ts` 에 있다.
     const facts = injectionFactsFor('claude-code');
     expect(facts.readyMinMs).toBeUndefined();
-    expect(facts.unsentHint).toBeUndefined();
+    expect(facts.unsentHint?.source).toContain('Pasted');
   });
 
   // 표에 준비 표시가 있어도 **넘기지 않으면** 주입은 `pty.ts` 의 기본 패턴으로 기다린다.

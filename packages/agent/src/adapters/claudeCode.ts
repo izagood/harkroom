@@ -21,6 +21,16 @@ export const CLAUDE_CODE_ADAPTER: HarnessAdapter = {
     gate: GATE_PATTERN,
     // `--permission-mode auto` 의 classifier 확인 화면을 실물로 봤다(2026-09-09).
     gateMeasured: true,
+    /**
+     * **입력줄에 붙여넣기 칩이 그대로 남아 있다** = 제출되지 않았다(2026-10-07 실측, 2.1.292).
+     *
+     * 보이지 않는 글자가 든 긴 붙여넣기에 claude 는 Enter 를 한 번 삼키고 `press Enter to
+     * send` 를 띄우는데, 그 문구는 **5초 뒤 지워진다** — 문구로 재면 그 창을 놓친다. 칩은
+     * 남는다: 막힌 화면의 마지막 입력줄은 `❯ [Pasted text #1 +60 lines]` 이고, 제출되면
+     * 그 뒤에 빈 입력줄(`❯`)이 새로 그려진다. 그래서 **마지막 `❯` 바로 뒤가 칩인가**로 잰다.
+     * 화면 바이트에서 커서 이동이 공백을 대신하므로 낱말 사이 공백은 있을 수도 없을 수도 있다.
+     */
+    unsentHint: /❯\s*\[Pasted\s*text\s*#\d+[^❯]*$/,
   },
 
   // `<CLAUDE_CONFIG_DIR>/.claude.json` 의 `projects[dir].hasTrustDialogAccepted`.

@@ -8,6 +8,7 @@
 // codexSessions) 을 순서대로 부르고, 그 결과로 무엇을 저장·발화·실패 처리할지 판단한다.
 // 하네스 출력은 파싱하지 않는다 — 에이전트가 스스로 harkroom MCP 로 답을 올린다(spec §4).
 import { randomUUID } from 'node:crypto';
+import { StringDecoder } from 'node:string_decoder';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
@@ -17,7 +18,7 @@ import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel
 import { SessionStore } from './sessions.js';
 import { buildTurnCommand, harnessPath, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome } from './adapters/index.js';
-import { acceptsPtyInput } from './pty.js';
+import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { codexRolloutFileFor, findCodexSessionId } from './codexSessions.js';
 import { claudeSessionFilePath, claudeSessionMaterialized } from './claudeSessions.js';
@@ -36,6 +37,9 @@ import type { TurnRegistry } from './turnRegistry.js';
 import type { MemoryCache } from './memoryCache.js';
 import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
+
+/** 정지 직전 "제출 대기" 판정에 쓰는 화면 꼬리 길이(글자). 입력줄과 바닥줄 몇 개면 된다. */
+const SCREEN_TAIL_CHARS = 4_000;
 
 /** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
@@ -1176,6 +1180,13 @@ export async function runMentionTurn(
      */
     lastDataAtMs: number;
     /**
+     * 화면 꼬리(사람이 읽는 글자, 끝 `SCREEN_TAIL_CHARS` 자). 정지로 접기 직전에 "제출 대기"
+     * 화면인지 읽는 데만 쓴다(2026-10-07) — 기록·로그로 내보내지 않는다.
+     */
+    screenTail: string;
+    /** 정지 직전 Enter 를 이미 한 번 쳤다 — 한 턴에 한 번만 친다(되풀이하면 정지가 영영 안 선다). */
+    unsentNudged: boolean;
+    /**
      * 정지로 접을 때 **실제로 잰** 유휴시간(ms). 0 은 "정지가 아니다"다.
      *
      * 한도(`harnessStallMs`)와 갈라 두는 이유: 스레드에 남는 문장이 한도를 찍으면 사람은
@@ -1223,11 +1234,13 @@ export async function runMentionTurn(
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     apiError: null, canceledBy: null, fencedOut: false, stalled: false, awaitingHuman: false, gateNoticed: false,
-    lastLifeMs: 0, lastDataAtMs: 0, stalledIdleMs: 0, finished: false, pending: null, reclaimGraceMs: 0, tail: null,
+    lastLifeMs: 0, lastDataAtMs: 0, screenTail: '', unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, reclaimGraceMs: 0, tail: null,
     threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, mcpRejectedSeen: new Set(),
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
     gateHeld: null, gateRequeue: null, cancelGateWatch: null,
   };
+  // 화면 꼬리를 글자로 잇는다 — 청크 경계에서 UTF-8 이 잘려도 다음 청크와 붙여 읽는다.
+  const screenDecoder = new StringDecoder('utf8');
 
   const reclaim = (): void => {
     if (end.exited || !end.controls) return;
@@ -1414,6 +1427,24 @@ export async function runMentionTurn(
     if (life === 0) return false;
     const idleMs = (deps.now?.() ?? Date.now()) - life;
     if (idleMs < limit) return false;
+
+    /**
+     * **접기 전에 화면이 "제출 대기"인지 본다**(2026-10-07, 스레드 f453bc59).
+     *
+     * 이 시계는 "기록도 화면도 그대로"만 재고 화면이 무엇을 기다리는지는 모른다. 프롬프트가
+     * 입력줄에 붙여넣기 칩으로 남은 채(제출 안 됨) 10분이 지나면 고장으로 접혔다 — 그 화면은
+     * Enter 한 번이면 풀린다(사람이 손으로 풀어 본 그대로). 주입 직후의 그물(`unsentHint`·
+     * `confirmDelivery`)이 놓쳤을 때의 마지막 그물이다. **한 턴에 한 번만** 친다: 두 번째로
+     * 같은 자리에 오면 Enter 로 안 풀리는 것이므로 그대로 접는다.
+     */
+    const unsentHint = injectionFactsFor(def.harness).unsentHint;
+    if (unsentHint && !end.unsentNudged && end.controls && looksReadyForPrompt(end.screenTail, unsentHint)) {
+      end.unsentNudged = true;
+      console.error(`[mentionTurn] ${key}: 정지 직전 화면이 제출 대기다(입력줄에 붙여넣기가 남았다) — 접지 않고 Enter 를 한 번 친다`);
+      try { end.controls.write(Buffer.from('\r')); } catch { /* 죽었으면 exit 가 정한다 */ }
+      end.lastLifeMs = deps.now?.() ?? Date.now();
+      return false;
+    }
 
     end.stalled = true;
     end.stalledIdleMs = idleMs;
@@ -1619,29 +1650,31 @@ export async function runMentionTurn(
           // 언제 넣을지·갔는지 어떻게 볼지는 **하네스의 성질**이다(어댑터 표).
           // codex 는 입력창이 보여도 한동안 Enter 를 삼킨다 — 근거는 그 표의 주석에 있다.
           ...injectionFactsFor(def.harness),
-          // 아래 두 필드는 **함께 켜지고 함께 꺼진다**: `confirmDelivery` 는 `onAttention`
-          // 이 있어야 할 일이 있고(부를 곳이 없으면 확인해도 소용없다), `onAttention` 은
-          // 축의 마지막에서만 열린다. 앞 계정에서는 준비 실패가 그대로 던져져
+          /**
+           * 주입이 **먹혔는지**도 잰다(2026-09-08). 증거는 세션 기록 파일이고, 화면
+           * 문자열로 재지 않는 이유는 그것이 하네스 버전에 묶이기 때문이다.
+           *
+           * **재는 것은 존재가 아니라 성장이다**(2026-09-09). 파일의 존재로 재면 이 창은
+           * **첫 턴에서만** 산다 — 되살린 턴(`claude -r`)의 기록 파일은 앞 턴에 이미
+           * 생겨 있어 무조건 통과한다. 그 구멍으로 프로덕션에서 턴 둘이 연달아 프롬프트를
+           * 못 받고 각각 10분씩 정지 시계에 접혔다(`sessionTranscriptGrewSince` 머리).
+           *
+           * 기준점은 **턴 시작 시각**이다. 주입 시각이 아닌 이유: 주입은 이 콜백 바깥
+           * (`pty.ts`)에서 일어나 그 시각을 여기서 모르고, 턴 시작 이후에 자란 기록은
+           * 어차피 이 턴의 것이다 — 앞 턴은 이미 끝나 있다.
+           *
+           * **이 창은 모든 계정에서 돈다**(2026-10-07). 예전에는 `onAttention` 과 함께 꺼져
+           * 앞 계정의 턴은 삼켜진 Enter 를 아무도 다시 치지 않았다 — 칩만 남긴 채 10분 정지로
+           * 접혔다(스레드 f453bc59). 사람을 부르는 것만 아래 조건 안에 남는다.
+           */
+          confirmDelivery: {
+            probe: () => sessionTranscriptGrewSince(def.harness, sessionIdForProbe, turnStartedAtMs, {
+              configDir: deps.claudeConfigDir,
+            }),
+          },
+          // `onAttention` 은 축의 마지막에서만 열린다. 앞 계정에서는 준비 실패가 그대로 던져져
           // 계정 전환을 태운다 — 그것이 이 턴이 아직 쓸 수 있는 더 싼 수단이다.
           ...(deps.callsForHuman === false ? {} : {
-            /**
-             * 주입이 **먹혔는지**도 잰다(2026-09-08). 증거는 세션 기록 파일이고, 화면
-             * 문자열로 재지 않는 이유는 그것이 하네스 버전에 묶이기 때문이다.
-             *
-             * **재는 것은 존재가 아니라 성장이다**(2026-09-09). 파일의 존재로 재면 이 창은
-             * **첫 턴에서만** 산다 — 되살린 턴(`claude -r`)의 기록 파일은 앞 턴에 이미
-             * 생겨 있어 무조건 통과한다. 그 구멍으로 프로덕션에서 턴 둘이 연달아 프롬프트를
-             * 못 받고 각각 10분씩 정지 시계에 접혔다(`sessionTranscriptGrewSince` 머리).
-             *
-             * 기준점은 **턴 시작 시각**이다. 주입 시각이 아닌 이유: 주입은 이 콜백 바깥
-             * (`pty.ts`)에서 일어나 그 시각을 여기서 모르고, 턴 시작 이후에 자란 기록은
-             * 어차피 이 턴의 것이다 — 앞 턴은 이미 끝나 있다.
-             */
-            confirmDelivery: {
-              probe: () => sessionTranscriptGrewSince(def.harness, sessionIdForProbe, turnStartedAtMs, {
-                configDir: deps.claudeConfigDir,
-              }),
-            },
             /**
              * **사람 부르기는 마지막 수단이다.** 여기까지 왔다는 것은 `withAccountFailover`
              * 가 풀을 다 태웠다는 뜻이다 — 준비 실패는 계정 전환 방아쇠이므로
@@ -1747,6 +1780,7 @@ export async function runMentionTurn(
         // **화면이 흐른다 = 하네스가 살아 있다.** 기록을 못 읽는 하네스는 이것 말고
         // 생존을 말해 주는 것이 없다(`probeStall` 의 갈림길).
         end.lastDataAtMs = deps.now?.() ?? Date.now();
+        end.screenTail = (end.screenTail + screenDecoder.write(chunk)).slice(-SCREEN_TAIL_CHARS);
         session?.push(chunk);
       },
       // 반대 방향(#315): 사람이 attach 해서 친 바이트가 이 PTY 로 들어온다. 릴레이가

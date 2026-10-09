@@ -3442,6 +3442,58 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
   });
 });
 
+/**
+ * D — 정지로 접기 직전에 화면이 "제출 대기"면 Enter 를 한 번 친다(2026-10-07, 스레드 f453bc59).
+ * 프롬프트가 입력줄에 붙여넣기 칩으로 남은 채 10분이 지나 접히던 턴의 마지막 그물이다.
+ * 되돌려 RED: `probeStall` 의 그 갈래를 지우면 첫 시험의 `\r` 가 0번이 된다.
+ */
+describe('정지 직전 제출 대기 화면이면 Enter 를 한 번 친다 (2026-10-07)', () => {
+  function stuckScript(screen: string, holdMs: number) {
+    const writes: string[] = [];
+    let killed: string | null = null;
+    return {
+      writes, killed: () => killed,
+      script: async (_plan: TurnPlan, opts: {
+        onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+        onData?: (chunk: Buffer) => void;
+      }) => {
+        opts.onSpawn?.({ write: (b) => { writes.push(b.toString('utf8')); }, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+        opts.onData?.(Buffer.from(screen, 'utf8'));
+        for (let i = 0; i < holdMs / 5 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 5));
+        return { exitCode: killed ? 143 : 0, timedOut: false, tail: '' };
+      },
+    };
+  }
+
+  it('입력줄에 칩이 남아 있으면 접기 전에 Enter 를 한 번 치고, 그래도 안 풀리면 그때 접는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const t = stuckScript('READY\n❯NB[Pasted text #1 +50 lines]\n◐ medium · /effort'.replace('NB', '\u00a0'), 2_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, harnessStallMs: 40, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch(() => null);
+    expect(t.writes.filter((w) => w === '\r')).toHaveLength(1);
+    expect(t.killed()).toBe('SIGTERM');
+  });
+
+  it('대조군: 칩이 없는 정지 화면에는 치지 않고 그대로 접는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const t = stuckScript('Ran 1 shell command\n❯NB'.replace('NB', '\u00a0'), 2_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, harnessStallMs: 40, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch(() => null);
+    expect(t.writes).toHaveLength(0);
+    expect(t.killed()).toBe('SIGTERM');
+  });
+});
+
 describe('타임아웃이 무발화 경과를 잰다 (2026-09-08)', () => {
   it('답 없이 한도를 넘기면 회수하고 실패로 끝난다', async () => {
     const fake = new FakeHarkroom(defOf());
