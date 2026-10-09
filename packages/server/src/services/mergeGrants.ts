@@ -139,7 +139,8 @@ export async function checkMerge(
 
   await recordAudit(pool, {
     action: 'repo.merge.checked', actorId: args.agentId, target: scope,
-    detail: { number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: lease!.id, grantedBy: grant.grantedBy, causeByHuman: byHuman, viaAskAnswer: byHuman && lease!.causeKind !== 'human' },
+    // grantScope: 어느 grant 로 통과했나 — 정확한 이름(`repo:owner/name`)인지 조직 전체(`repo:owner/*`)인지(#1255 security n3).
+    detail: { number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: lease!.id, grantedBy: grant.grantedBy, grantScope: grant.scope, causeByHuman: byHuman, viaAskAnswer: byHuman && lease!.causeKind !== 'human' },
   });
   return {
     ok: true, leaseId: lease!.id, channelId: lease!.channelId, threadRootId: lease!.threadRootId,

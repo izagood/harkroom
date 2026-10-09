@@ -37,7 +37,7 @@ import { LocalOperatorRow } from './LocalOperatorRow';
 import { ModelPicker } from './ModelPicker';
 import { hasOperatorLocalSurface, listLocalAgents } from '../../lib/operatorLocal';
 import { AgentScopeSection } from './AgentScopeSection';
-import { AgentGrantsSection, liveMergeGrantCount } from './AgentGrantsSection';
+import { AgentGrantsSection, liveMergeCount, type MergeCount } from './AgentGrantsSection';
 import { AgentPickableSection } from './AgentPickableSection';
 import { kindLabel, MemoryDetail } from './MemoryDetail';
 import { MemoryBody } from './MemoryBody';
@@ -468,14 +468,14 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 엮지 않으려고 **소유한 에이전트 id 의 집합이 바뀔 때만** 다시 읽는다. 상세에서 주고 거두면 그 절이
    * `onCountChange` 로 바로 고친다. 못 읽은 에이전트는 숫자를 그리지 않는다(없는 것을 0 이라고 하지 않는다).
    */
-  const [mergeCounts, setMergeCounts] = useState<Record<string, number>>({});
+  const [mergeCounts, setMergeCounts] = useState<Record<string, MergeCount>>({});
   const ownedKey = myId === undefined ? '' : agents.filter((a) => a.ownerAccountId === myId).map((a) => a.id).sort().join(',');
   useEffect(() => {
     if (!ownedKey) return;
     let live = true;
     for (const id of ownedKey.split(',')) {
       void Promise.resolve().then(() => getController().listGrants(id))
-        .then((rows) => { if (live) setMergeCounts((prev) => ({ ...prev, [id]: liveMergeGrantCount(rows) })); })
+        .then((rows) => { if (live) setMergeCounts((prev) => ({ ...prev, [id]: liveMergeCount(rows) })); })
         .catch(() => { /* 숫자를 안 그린다 */ });
     }
     return () => { live = false; };
@@ -2701,7 +2701,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   disabled={busy}
                   localOperatorId={typeof localOperator === 'object' && localOperator !== null ? localOperator.operatorId : null}
                   assignedOperatorName={Array.isArray(operators) ? operatorNameOf(operators.find((o) => o.id === selected.assignment?.operatorId)) ?? null : null}
-                  onCountChange={(n) => setMergeCounts((prev) => (prev[selected.id] === n ? prev : { ...prev, [selected.id]: n }))}
+                  onCountChange={(n) => setMergeCounts((prev) => (prev[selected.id]?.repos === n.repos && prev[selected.id]?.orgs === n.orgs ? prev : { ...prev, [selected.id]: n }))}
                 />
               )}
 
