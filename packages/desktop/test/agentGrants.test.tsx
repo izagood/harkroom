@@ -102,7 +102,7 @@ describe('AgentGrantsSection', () => {
     for (const bad of ['*', '*/*', 'izagood/hark*', '*/harkroom']) {
       fireEvent.change(screen.getByLabelText('저장소 (정확한 이름 또는 조직 전체 owner/*, 한 줄에 하나)'), { target: { value: bad } });
       expect((screen.getByText('주기') as HTMLButtonElement).disabled, bad).toBe(true);
-      expect(screen.getByText(/부분 패턴/).textContent, bad).toContain(bad);
+      expect(screen.getByText(/owner\/ab\* 는 안 됨/).textContent, bad).toContain(bad);
     }
     expect(c.putGrant).not.toHaveBeenCalled();
   });
@@ -126,6 +126,8 @@ describe('AgentGrantsSection', () => {
     expect(within(screen.getByTestId('agent-grant-izagood/harkroom')).queryByTestId(/agent-grant-org-/)).toBeNull();
     fireEvent.click(screen.getByLabelText('rebellions-sw 조직 전체 머지 권한 거두기'));
     expect(screen.getByText('rebellions-sw 조직 전체 머지 권한을 거둘까?')).toBeTruthy();
+    // designer n1: 조직 grant 를 거둬도 따로 준 저장소 권한은 남는다 — 「조직 전체 머지가 막힌다」고 세게 말하지 않는다.
+    expect(screen.getByText('다음 턴부터 @alpha 의 rebellions-sw 조직 전체 권한이 빠진다. 따로 준 저장소 권한은 남는다.')).toBeTruthy();
     fireEvent.click(screen.getAllByText('거두기').at(-1)!);
     await waitFor(() => expect(c.deleteGrant).toHaveBeenCalledWith('agent-1', 'repo.merge', 'repo:rebellions-sw/*'));
   });
@@ -269,11 +271,31 @@ describe('AgentGrantsSection', () => {
     expect(onCount).not.toHaveBeenCalled();
   });
 
+  it('#1255 designer n3: 조직 grant 는 따로 센다 — 만료된 것은 안 센다', async () => {
+    const onCount = vi.fn();
+    setup({ listGrants: vi.fn(async () => [grant('repo:a/b'), grant('repo:a/*'), grant('repo:c/*', { expiresAt: '2026-01-01T00:00:00Z' })]) });
+    render(<AgentGrantsSection agent={agent()} canGrant canRevoke onCountChange={onCount} />);
+    await waitFor(() => expect(onCount).toHaveBeenCalledWith({ repos: 1, orgs: 1 }));
+  });
+
+  it('#1255 security n2: 정확한 이름 줄이 꺼져 있어도 같은 조직 grant 가 에이전트 턴을 허락하면 그 사실을 그 줄에 적는다', async () => {
+    setup({ listGrants: vi.fn(async () => [
+      grant('repo:rebellions-sw/npu'), grant('repo:rebellions-sw/*', { allowAgentCause: true }),
+      grant('repo:rebellions-sw-evil/x'), grant('repo:izagood/harkroom'),
+    ]) });
+    render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
+    const note = await screen.findByTestId('agent-grant-cause-via-org-rebellions-sw/npu');
+    expect(note.textContent).toContain('rebellions-sw 조직 전체 권한으로 에이전트가 띄운 턴에서도(겹치면 넓은 쪽)');
+    // 앞부분만 같은 다른 owner·다른 owner 에는 붙지 않는다.
+    expect(screen.queryByTestId('agent-grant-cause-via-org-rebellions-sw-evil/x')).toBeNull();
+    expect(screen.queryByTestId('agent-grant-cause-via-org-izagood/harkroom')).toBeNull();
+  });
+
   it('P1: 읽을 때마다 살아 있는 권한 수를 알린다(목록 카드 「머지 N」)', async () => {
     const onCount = vi.fn();
     setup({ listGrants: vi.fn(async () => [grant('repo:a/b'), grant('repo:a/c', { expiresAt: '2026-01-01T00:00:00Z' }), { ...grant(''), capability: 'channel.create' }]) });
     render(<AgentGrantsSection agent={agent()} canGrant canRevoke onCountChange={onCount} />);
-    await waitFor(() => expect(onCount).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(onCount).toHaveBeenCalledWith({ repos: 1, orgs: 0 }));
   });
 
   it('목록을 못 읽으면 "없음"이 아니라 실패를 말한다', async () => {

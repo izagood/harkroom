@@ -1109,14 +1109,20 @@ describe('물러나는 중 — 다섯 번째 얼굴 (2026-09-08 실측)', () => 
 
 describe('AgentGrid — 「머지 N」(스레드 febe9ff8 P1)', () => {
   it('살아 있는 머지 권한이 있는 카드에만 줄을 올린다 — 0·모름은 안 올린다', () => {
-    grid({ agents: [agent('alpha'), agent('beta'), agent('gamma')], mergeCounts: { 'id-alpha': 2, 'id-beta': 0 } });
+    grid({ agents: [agent('alpha'), agent('beta'), agent('gamma')], mergeCounts: { 'id-alpha': { repos: 2, orgs: 0 }, 'id-beta': { repos: 0, orgs: 0 } } });
     expect(screen.getByTestId('agent-merge-count-alpha').textContent).toBe('저장소 2개');
     expect(screen.queryByTestId('agent-merge-count-beta')).toBeNull();
     expect(screen.queryByTestId('agent-merge-count-gamma')).toBeNull();
   });
 
+  it('#1255 designer n3: 조직 전체 grant 는 「저장소 N개」에 섞지 않고 먼저 따로 쓴다', () => {
+    grid({ agents: [agent('alpha'), agent('beta')], mergeCounts: { 'id-alpha': { repos: 0, orgs: 1 }, 'id-beta': { repos: 2, orgs: 1 } } });
+    expect(screen.getByTestId('agent-merge-count-alpha').textContent).toBe('조직 전체 1개');
+    expect(screen.getByTestId('agent-merge-count-beta').textContent).toBe('조직 전체 1개 · 저장소 2개');
+  });
+
   it('사이드바 자리에는 정보 줄이 없으니 숫자도 없다', () => {
-    grid({ agents: [agent('alpha')], mergeCounts: { 'id-alpha': 2 }, place: 'sidebar' });
+    grid({ agents: [agent('alpha')], mergeCounts: { 'id-alpha': { repos: 2, orgs: 0 } }, place: 'sidebar' });
     expect(screen.queryByTestId('agent-merge-count-alpha')).toBeNull();
   });
 });

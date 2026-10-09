@@ -549,6 +549,9 @@ describe('repo.merge grant', () => {
       const ok = await orgCheck(l, 'rebellions-sw/npu');
       expect(ok.statusCode).toBe(200);
       expect(ok.json()).toMatchObject({ allowed: true, repo: 'rebellions-sw/npu', grantedBy: alice.accountId });
+      // #1255 security n3: 감사에 어느 grant 로 통과했는지 남는다.
+      const audit = await pool.query(`select detail from audit_log where action = 'repo.merge.checked' and target = 'repo:rebellions-sw/npu' order by id desc limit 1`);
+      expect(audit.rows[0].detail.grantScope).toBe('repo:rebellions-sw/*');
       expect((await orgCheck(l, 'izagood/harkroom')).json().error.code).toBe('not_granted');
       // 래퍼가 `*` 를 저장소로 물어도 grant 문자열과 맞지 않는다 — 실제 저장소 자리는 owner/name 하나다.
       expect((await orgCheck(l, 'rebellions-sw/*')).statusCode).toBe(400);

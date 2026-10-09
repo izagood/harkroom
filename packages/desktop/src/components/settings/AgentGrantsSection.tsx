@@ -38,7 +38,16 @@ const orgOf = (scope: string): string | null => isOrgRepoScope(scope) ? scope.sl
 
 /** 살아 있는 `repo.merge` grant 수 — 목록 카드의 「머지 N」(P1)과 이 절이 같은 셈을 쓴다. */
 export function liveMergeGrantCount(rows: readonly GrantRow[], now = Date.now()): number {
-  return rows.filter((g) => g.capability === CAP && (g.expiresAt === null || Date.parse(g.expiresAt) > now)).length;
+  const c = liveMergeCount(rows, now);
+  return c.repos + c.orgs;
+}
+
+/** 목록 카드 「머지」 칸의 셈 — 정확한 저장소 grant 와 조직 전체 grant(`owner/*`)를 따로 센다(#1255 designer n3: 「저장소 1개」로 읽히지 않게). */
+export interface MergeCount { repos: number; orgs: number }
+export function liveMergeCount(rows: readonly GrantRow[], now = Date.now()): MergeCount {
+  const live = rows.filter((g) => g.capability === CAP && (g.expiresAt === null || Date.parse(g.expiresAt) > now));
+  const orgs = live.filter((g) => isOrgRepoScope(g.scope)).length;
+  return { repos: live.length - orgs, orgs };
 }
 
 export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, localOperatorId, assignedOperatorName, onCountChange }: {
@@ -46,7 +55,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   /** 배정된 오퍼레이터(기기)의 이름 — 「다른 기기에서 돈다」 안내에 넣는다(#1140 designer n4). 모르면 null. */
   assignedOperatorName?: string | null;
   /** 목록을 다시 읽을 때마다 살아 있는 grant 수를 알린다 — 목록 카드 「머지 N」 이 따라오게. */
-  onCountChange?: (count: number) => void;
+  onCountChange?: (count: MergeCount) => void;
   /**
    * 이 기기 오퍼레이터의 id(`operator.json` 이 적어 둔 값). 에이전트가 **이 기기에 배정돼 있을 때만** 머지 gh 계정 줄을
    * 그린다 — 머지는 그 에이전트를 돌리는 오퍼레이터의 gh 로 되므로 남의 기기 값을 여기서 고칠 수는 없다.
@@ -100,7 +109,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
         setForest(buildForest(all));
       }
       // 소유자가 볼 때만 알린다(#1146 security n2) — admin 이 남의 에이전트를 열어도 목록 카드에 그 숫자가 끼지 않게.
-      if (canGrant) onCountChange?.(liveMergeGrantCount(rows));
+      if (canGrant) onCountChange?.(liveMergeCount(rows));
     } catch { setGrants('error'); }
     try { setConnectors(await getController().listConnectors()); } catch { setConnectors([]); }
     // `onCountChange` 는 부모가 매 렌더 새로 만든다 — 의존에 넣으면 렌더마다 다시 읽는다.
@@ -299,6 +308,12 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
           {rows.map((g) => {
             const repo = repoOf(g.scope);
             const expired = g.expiresAt !== null && Date.parse(g.expiresAt) <= Date.now();
+            // #1255 security n2: 서버는 정확한 이름과 조직 grant 가 겹치면 **넓게 허락하는 쪽**(allow_agent_cause)을 쓴다. 이 줄은 꺼져
+            // 있어도 살아 있는 조직 grant 가 켜져 있으면 실제로는 에이전트가 띄운 턴에서도 머지된다 — 그 사실을 이 줄에 적는다.
+            const coveringOrg = !g.allowAgentCause && !orgOf(g.scope)
+              ? rows.find((o) => orgOf(o.scope) !== null && o.allowAgentCause && repo.startsWith(`${orgOf(o.scope)}/`)
+                && (o.expiresAt === null || Date.parse(o.expiresAt) > Date.now()))
+              : undefined;
             return (
               // 만료된 줄은 통째로 한 단 낮춘다(지난 nit n4) — 살아 있는 줄과 같은 무게로 보이지 않게. [거두기]는 정리용으로 둔다.
               <li key={g.scope} className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-row border border-border px-2 py-1 text-meta ${expired ? 'text-fg-subtle' : 'text-fg'}`} data-testid={`agent-grant-${repo}`} data-expired={expired || undefined}>
@@ -317,6 +332,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                     ? t('agents.grants.noExpiry')
                     : expired ? t('agents.grants.expired') : t('agents.grants.expiresOn', { when: new Date(g.expiresAt).toLocaleDateString(locale) })}
                   {g.allowAgentCause ? ` · ${t('agents.grants.agentCause')}` : ''}
+                  {coveringOrg && <span data-testid={`agent-grant-cause-via-org-${repo}`}>{` · ${t('agents.grants.agentCauseViaOrg', { owner: orgOf(coveringOrg.scope)! })}`}</span>}
                 </span>
                 {expired && canGrant && (
                   <button
@@ -481,6 +497,9 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             ? t('agents.grants.secretCreateRevokeDetail')
             : revoking.capability === 'api.call'
             ? t('apiGrant.revokeDetail', { handle: agent.handle })
+            : orgOf(revoking.scope)
+            // #1255 designer n1: 조직 grant 를 거둬도 같은 조직에 정확한 이름으로 따로 준 권한은 남는다 — 「조직 전체 머지가 막힌다」고 하지 않는다.
+            ? t('agents.grants.revokeDetailOrg', { handle: agent.handle, owner: orgOf(revoking.scope)! })
             : t('agents.grants.revokeDetail', { handle: agent.handle, repo: repoLabel(revoking.scope) })}
           confirmLabel={t('agents.grants.revoke')}
           cancelLabel={t('agents.grants.cancel')}

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { AccountView } from '@harkroom/shared';
 import { Identity } from '../Identity';
 import type { RunnerState } from '../../lib/runnerLauncher';
+import type { MergeCount } from './AgentGrantsSection';
 // B1 의 세 얼굴 규칙은 `lib/faceState.ts` 하나가 낸다 — DM 목록도 같은 판정을 쓴다
 // (`docs/desktop-rail.html` 2단계). 여기 사본을 두면 두 화면이 같은 러너를 다르게 그린다.
 // `isStopping` 은 **격자만** 부른다 — 사이드바가 그 값을 받을 수 없는 이유가 그 함수 주석에 있다.
@@ -761,7 +762,7 @@ export function AgentGrid<T extends AgentCardSubject>({
    * 카드 타입(`AgentCardSubject`)에 얹지 않은 이유: 이 값은 서버 목록이 아니라 따로 읽은 것이고, 타입에 얹으면
    * `AgentView` 가 그 타입의 하위 타입이 아니게 되어 호출부 추론이 흔들린다.
    */
-  mergeCounts?: Record<string, number>;
+  mergeCounts?: Record<string, MergeCount>;
 }) {
   const [query, setQuery] = useState('');
   // 이 격자의 말은 전부 `grid.*` 를 지난다. 활동 경과만 `lib/time.ts` 가 낸다 —
@@ -1158,9 +1159,15 @@ export function AgentGrid<T extends AgentCardSubject>({
                       />
                     </InfoRow>
                   )}
-                  {(mergeCounts?.[a.id] ?? 0) > 0 && (
+                  {((mergeCounts?.[a.id]?.repos ?? 0) + (mergeCounts?.[a.id]?.orgs ?? 0)) > 0 && (
                     <InfoRow label={t('grid.card.merge')}>
-                      <span className="block truncate" data-testid={`agent-merge-count-${a.handle}`}>{t('grid.card.mergeRepos', { count: mergeCounts![a.id]! })}</span>
+                      {/* 조직 grant 를 먼저 쓴다(#1255 designer n3) — 「저장소 1개」로 읽히면 조직 전체가 열린 것을 놓친다. */}
+                      <span className="block truncate" data-testid={`agent-merge-count-${a.handle}`}>
+                        {[
+                          mergeCounts![a.id]!.orgs > 0 ? t('grid.card.mergeOrgs', { count: mergeCounts![a.id]!.orgs }) : null,
+                          mergeCounts![a.id]!.repos > 0 ? t('grid.card.mergeRepos', { count: mergeCounts![a.id]!.repos }) : null,
+                        ].filter(Boolean).join(' · ')}
+                      </span>
                     </InfoRow>
                   )}
                   {a.lastTurnAt !== undefined && (
