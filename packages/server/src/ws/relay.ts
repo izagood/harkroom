@@ -220,7 +220,18 @@ export interface RelayHubHooks {
   }) => void;
 }
 
-export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
+/**
+ * 러너가 끊긴 뒤 관문 표시를 들고 기다리는 시간(2026-10-09, security n1). 짧은 끊김 뒤 다시
+ * announce 하면 그 목록이 판정하고, 이 안에 아무 러너도 안 돌아오면 그 에이전트의 관문을
+ * 전부 풀린 것으로 낸다 — 앱 카드가 × 말고는 안 닫히는 일을 막는다.
+ */
+export const ATTENTION_ORPHAN_GRACE_MS = 60_000;
+
+export function createRelayHub(
+  hooks: RelayHubHooks = {},
+  opts: { attentionGraceMs?: number } = {},
+): RelayHub {
+  const attentionGraceMs = opts.attentionGraceMs ?? ATTENTION_ORPHAN_GRACE_MS;
   const runners = new Map<string, Runner>();
   /**
    * interactive.open 의 미결 요청(#337). agentAccountId 를 함께 든다 — 응답 프레임이
@@ -236,8 +247,29 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
   const ownerOf = new Map<string, string>();
   /** 배열이다 — 삽입 순서가 곧 attach 순서이고, writer 승계가 그 순서의 끝을 읽는다. */
   const viewers = new Map<string, Viewer[]>();
-  /** 사람을 부른 적 있는 세션(2026-10-09). 끝날 때 `onAttentionCleared` 를 낼지 가른다. */
-  const attentionRaised = new Set<string>();
+  /**
+   * 사람을 부른 적 있는 세션(2026-10-09). 끝날 때 `onAttentionCleared` 를 낼지 가른다.
+   * 좌표를 같이 든다 — 러너가 사라지면 `runner.sessions` 가 비어 채널·스레드를 거기서 못 읽는다.
+   */
+  const attentionRaised = new Map<string, {
+    agentAccountId: string; channelId: string; threadRootId: string | null;
+  }>();
+  /** 러너가 끊긴 에이전트의 관문 정리 타이머(security n1). 다시 붙으면 거둔다. */
+  const orphanTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** 관문 표시를 내리고 소유자에게 알린다. 이미 내려갔으면 아무것도 안 한다. */
+  const clearAttention = (sessionId: string): void => {
+    const raised = attentionRaised.get(sessionId);
+    if (!raised) return;
+    attentionRaised.delete(sessionId);
+    hooks.onAttentionCleared?.({ sessionId, ...raised });
+  };
+  /** 이 에이전트의 관문 가운데 `keep` 에 없는 것을 전부 내린다. */
+  const clearAttentionOf = (agentAccountId: string, keep: ReadonlySet<string> = new Set()): void => {
+    for (const [sessionId, raised] of [...attentionRaised]) {
+      if (raised.agentAccountId === agentAccountId && !keep.has(sessionId)) clearAttention(sessionId);
+    }
+  };
   /**
    * 세션별 현재 writer(스펙 §5-2 결정 2). 소유자·admin 이 동시에 붙어도 이 맵이 한 명만
    * 가리키므로 바이트가 섞이는 상태 자체가 없다 — 잠금 장치를 따로 만들지 않는 이유다.
@@ -373,16 +405,10 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
   };
 
   const dropSession = (agentAccountId: string, sessionId: string): void => {
-    const ended = runners.get(agentAccountId)?.sessions.get(sessionId);
     runners.get(agentAccountId)?.sessions.delete(sessionId);
-    if (attentionRaised.delete(sessionId) && ended) {
-      hooks.onAttentionCleared?.({
-        sessionId,
-        channelId: ended.channelId,
-        threadRootId: ended.threadRootId,
-        agentAccountId,
-      });
-    }
+    // **소유를 먼저 본다**(security n2). 남의 러너가 이 세션 id 로 `session.ended` 를 보내도
+    // 표시를 지우지 않는다 — 지우면 진짜 끝에서 `cleared` 가 안 나가 카드가 안 닫힌다.
+    if (attentionRaised.get(sessionId)?.agentAccountId === agentAccountId) clearAttention(sessionId);
     // 세션이 끝나도 뷰어 소켓은 열려 있다 — 사람이 마지막 화면을 계속 보고 있을 수 있다.
     // '끝났다'만 알리고 소켓은 그대로 둔다(닫는 것은 사람의 몫이다).
     broadcastStatus(sessionId, 'ended');
@@ -403,6 +429,9 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
       }
       const runner: Runner = { socket, sessions: new Map(), caps: new Set() };
       runners.set(agentAccountId, runner);
+      // 다시 붙었다 — 관문 판정은 곧 올 announce 목록에 맡긴다.
+      clearTimeout(orphanTimers.get(agentAccountId));
+      orphanTimers.delete(agentAccountId);
 
       return () => {
         // 이미 다른 러너로 교체됐다면 그쪽 등록을 지우지 않는다 — 재접속이 앞 소켓의
@@ -417,6 +446,15 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
         }
         // 미결 open 은 타임아웃까지 끌지 않는다 — 답할 러너가 이미 없다.
         failPendingOpens(agentAccountId, { ok: false, reason: 'no_runner' });
+        // 관문은 **바로 내리지 않는다** — 짧은 끊김 뒤 같은 세션으로 돌아오면 관문은 아직
+        // 걸려 있다. 유예 안에 아무 러너도 안 돌아오면 그때 전부 내린다(security n1).
+        clearTimeout(orphanTimers.get(agentAccountId));
+        const timer = setTimeout(() => {
+          orphanTimers.delete(agentAccountId);
+          if (!runners.has(agentAccountId)) clearAttentionOf(agentAccountId);
+        }, attentionGraceMs);
+        timer.unref?.();
+        orphanTimers.set(agentAccountId, timer);
       };
     },
 
@@ -439,6 +477,9 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
           for (const sessionId of runner.sessions.keys()) ownerOf.delete(sessionId);
           runner.sessions.clear();
           for (const session of frame.sessions) registerSession(agentAccountId, session);
+          // 새 목록에 없는 세션의 관문은 풀린 것이다 — 러너가 재시작해 그 세션이 사라졌다
+          // (security n1). 목록에 있으면 아직 걸려 있으니 그대로 둔다.
+          clearAttentionOf(agentAccountId, new Set(runner.sessions.keys()));
           // 능력도 announce 가 진실의 원천이다 — 선언이 없으면(구 러너) 빈 집합으로
           // **교체**한다. 남겨 두면 다운그레이드된 러너가 옛 능력을 계속 주장한다.
           runner.caps = new Set(Array.isArray(frame.caps) ? frame.caps : []);
@@ -494,7 +535,9 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
           // 세션을 모르면 채널·스레드를 알 수 없고, 그러면 앱이 열 패널이 없다.
           // 조용히 버린다 — 없는 것을 있다고 표시하지 않는다.
           if (!session) return;
-          attentionRaised.add(session.sessionId);
+          attentionRaised.set(session.sessionId, {
+            agentAccountId, channelId: session.channelId, threadRootId: session.threadRootId,
+          });
           hooks.onAttention?.({
             sessionId: session.sessionId,
             channelId: session.channelId,
