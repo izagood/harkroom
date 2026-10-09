@@ -1894,6 +1894,9 @@ async function wakeAsker(
  * `message_id` 는 **물음 자신**이다. 러너는 그 메시지의 meta 에서 `answeredWith` 를
  * 읽어 무엇이 골라졌는지 안다 — 별도 메시지를 만들지 않는 이유가 이것이다(스레드에
  * "답했다"는 줄이 하나 더 생기면 그 대화를 읽는 사람에게 소음이다).
+ *
+ * **`superseded` 로 닫힌 카드는 답을 받지 않는다**(security n1, 2026-10-09). 새 질문이 떠 있는데 옛 질문의
+ * 답으로 물어본 쪽을 깨우면 두 질문이 엇갈린다. 다른 닫힘(`replied`·`declined`)은 지금처럼 늦은 답을 받는다.
  */
 async function answerAskRow(
   pool: Pool, messageId: string, optionId: string, actorId: string,
@@ -1908,6 +1911,7 @@ async function answerAskRow(
       where id = $1
         and deleted_at is null
         and meta->'ask'->>'answeredWith' is null
+        and meta->'ask'->>'closedReason' is distinct from 'superseded'
       returning ${COLS}`,
     [messageId, optionId, actorId],
   );
@@ -2190,7 +2194,7 @@ export async function closeAsksByReply(pool: Pool, reply: MessageRow): Promise<v
   }
 }
 
-export type AskSupersedeRefusal = 'supersedes_not_found' | 'supersedes_not_yours' | 'supersedes_other_thread' | 'supersedes_resolved';
+export type AskSupersedeRefusal = 'supersedes_not_found' | 'supersedes_not_yours' | 'supersedes_other_thread' | 'supersedes_resolved' | 'supersedes_permission_card';
 
 /**
  * `message.ask` 의 `supersedes` — **물어본 쪽이 새 카드로 옛 카드를 대신한다**(2026-10-09, 선택 카드 B 의 일부).
@@ -2212,6 +2216,9 @@ export async function checkAskSupersede(
   const ask = row ? readAskMeta(row.meta) : null;
   if (!row || !ask) return 'supersedes_not_found';
   if (row.authorId !== args.callerId) return 'supersedes_not_yours';
+  // 권한 요청 카드는 에이전트가 작성자라 "내 카드" 검사를 통과한다 — 접히면 pending 요청이 소유자 눈에서 사라진다
+  // (security F1). 그 카드는 소유자의 approve|deny 로만 끝난다.
+  if (row.meta.permissionRequest) return 'supersedes_permission_card';
   const oldRoot = row.threadRootId ?? args.oldId;
   if (row.channelId !== args.channelId || !args.threadRootId || oldRoot !== args.threadRootId) return 'supersedes_other_thread';
   // 「답하지 않기」로 닫힌 것·이미 대신된 것은 사람이나 앞선 새 카드가 정한 끝이다 — 덮지 않는다.
@@ -2234,6 +2241,7 @@ export async function supersedeAsk(pool: Pool, args: { oldId: string; newId: str
         and deleted_at is null
         and meta->'ask'->>'answeredWith' is null
         and (meta->'ask'->>'closedAt' is null or meta->'ask'->>'closedReason' = 'replied')
+        and not (meta ? 'permissionRequest')
       returning ${COLS}`,
     [args.oldId, args.newId, args.actorId],
   );

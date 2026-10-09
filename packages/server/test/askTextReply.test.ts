@@ -150,4 +150,27 @@ describe('supersedes — 새 카드가 옛 카드를 대신한다', () => {
     await app.inject({ method: 'POST', url: `/channels/${channelId}/messages/${declined.askId}/ask-close`, headers: auth(memberToken) });
     expect(await checkAskSupersede(pool, { oldId: declined.askId, callerId: agentId, channelId, threadRootId: declined.rootId })).toBe('supersedes_resolved');
   });
+
+  it('권한 요청 카드는 내 카드여도 대신하지 못한다(security F1)', async () => {
+    const perm = await seedThreadWithAsk({}, { permissionRequest: { id: 'x' } });
+    expect(await checkAskSupersede(pool, { oldId: perm.askId, callerId: agentId, channelId, threadRootId: perm.rootId })).toBe('supersedes_permission_card');
+    // 검사를 건너뛰어도 update 가 권한 카드를 건드리지 않는다.
+    await supersedeAsk(pool, { oldId: perm.askId, newId: perm.rootId, actorId: agentId });
+    expect((await askOf(perm.askId)).closedAt).toBeUndefined();
+  });
+
+  it('superseded 로 닫힌 옛 카드는 늦은 답을 받지 않는다(security n1)', async () => {
+    const { rootId, askId } = await seedThreadWithAsk();
+    const next = await postMessage(pool, {
+      channelId, authorId: agentId, body: '다시 묻는다', threadRootId: rootId,
+      meta: { kind: 'ask', ask: { options: OPTIONS, to: { kind: 'human' } } },
+    });
+    await supersedeAsk(pool, { oldId: askId, newId: (next as { message: { id: string } }).message.id, actorId: agentId });
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages/${askId}/ask-answer`,
+      headers: auth(memberToken), payload: { optionId: 'a' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect((await askOf(askId)).answeredWith).toBeUndefined();
+  });
 });

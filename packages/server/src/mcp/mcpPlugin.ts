@@ -32,6 +32,7 @@ const SUPERSEDE_REFUSAL_MESSAGE: Record<AskSupersedeRefusal, string> = {
   supersedes_not_yours: 'you can only replace a card you posted',
   supersedes_other_thread: 'the new card must go in the same thread as the card it replaces',
   supersedes_resolved: 'that card is already answered, declined, or replaced',
+  supersedes_permission_card: 'a permission-request card ends only by the owner approving or denying it',
 };
 import {
   createDelegation, leadTeamFor, roundsUsed,
