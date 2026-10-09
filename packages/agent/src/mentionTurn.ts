@@ -15,7 +15,7 @@ import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, Inbo
 import type { FailOpts, Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
-import { SessionStore } from './sessions.js';
+import { SessionStore, type SessionRecord } from './sessions.js';
 import { buildTurnCommand, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome } from './adapters/index.js';
 import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
@@ -500,6 +500,13 @@ export interface MentionTarget {
    * 달라진다 — 깨움에는 부른 사람이 없어서 델타가 비고, 비면 하네스가 돌지 않는다.
    */
   wake?: { reason: string; reportTo?: WakeReportTo };
+  /**
+   * 이 턴이 **예약(`turn.wake`)이 시각이 되어** 깨어난 턴이다(inbox 사유 `wake`). `wake` 만으로는
+   * 못 가른다 — 선택 답(`ask_answered`·`ask_closed`)도 같은 자리를 쓰는데, 그것은 사람이 방금 답한
+   * 것이라 앞 대화가 필요하다. 참이면 스레드의 세션을 이어받지 않고 새 세션으로 돈다(`runMentionTurn`
+   * 의 `freshWake`).
+   */
+  scheduledWake?: boolean;
   /** 이 부름이 접은 내 예약(서버 107). 서버가 inbox 항목에 실어 준다(`InboxEntry.canceledWakes`). */
   canceledWakes?: InboxCanceledWake[];
   /**
@@ -918,7 +925,45 @@ export async function runMentionTurn(
   // turnsRun 은 그 실패로 줄지 않으니 이 스레드가 재시도 한도까지 영원히 실패한다(리뷰가
   // 실물로 재현) — sessionId 가 없으면 이어받을 게 없으므로 무조건 첫 턴(exec, resume
   // 아님)으로 다시 시작해야 그 후퇴가 실제로 "다음 턴에 새 세션"으로 이어진다.
-  const isFirstTurn = rec.turnsRun === 0 || rec.sessionId === null;
+  const resumable = !(rec.turnsRun === 0 || rec.sessionId === null);
+
+  // **예약으로 깨어난 턴은 큰 세션을 이어받지 않는다**(2026-10-09). 깨움 턴은 대개 "CI 끝났나" 같은
+  // 짧은 확인인데, 스레드 세션을 `-r` 로 이어받으면 그 세션 전체(실측 ~268k 토큰)를 다시 읽고
+  // 캐시를 다시 쓴다(턴당 ~275k) — 깨움 턴이 비용의 약 38% 였다. 그래서 새 세션 id 로 작게 띄우고
+  // 프롬프트에는 기억(평소대로)·사유·채널/스레드 id·"새 세션이다" 안내와, 기다리는 사이 온 남의 새 말만
+  // 싣는다(`buildTurnPrompt` 의 `freshWake`).
+  //
+  // **스레드의 레코드는 옛 큰 세션을 그대로 가리키게 둔다**(`stored`). 깨움 세션은 이 턴 뒤 버린다 —
+  // 레코드를 그것으로 덮으면 다음 멘션 턴(사람이 부른 것, 앞 대화가 정말 필요한 턴)이 사유 한 줄만
+  // 아는 작은 세션을 이어받아 맥락을 잃는다. 커서(`lastFedSeq`)도 전진시키지 않는다: 깨움 세션은
+  // 델타를 먹지 않았으므로 그 사이 남의 말은 다음 이어받는 턴이 그대로 받아야 한다. 대신 깨움 턴이
+  // 스레드에 남긴 **내 발화**는 옛 세션이 쓴 것이 아니라서 자기 발화 필터에 걸려 사라지므로,
+  // 그 경계를 `unseenOwnAfterSeq` 로 적어 다음 이어받는 턴이 보게 한다.
+  //
+  // 이어받을 세션이 없으면(첫 턴·하네스/계정이 바뀌어 새로 시작) 평소 경로다 — 버릴 큰 세션이 없다.
+  const stored = rec;
+  const freshWake = target.scheduledWake === true && target.wake !== undefined && resumable;
+  if (freshWake) {
+    rec = { ...rec, sessionId: preassignsSessionId(def.harness) ? randomUUID() : null, turnsRun: 0 };
+  }
+  const isFirstTurn = !resumable || freshWake;
+  /**
+   * 이 턴의 레코드를 저장한다. 깨움 세션(`freshWake`)이면 옛 레코드를 지키고 경계만 적는다(위 주석).
+   * 평범한 턴은 커서가 전진했으면(`advanced`) 경계를 지운다 — 그 턴의 델타가 이미 보여 줬다.
+   */
+  const persist = async (next: SessionRecord, advanced: boolean, baseline: number): Promise<void> => {
+    if (freshWake) {
+      const unseen = Math.min(stored.unseenOwnAfterSeq ?? baseline, baseline);
+      await deps.store.put(key, { ...stored, unseenOwnAfterSeq: unseen });
+      return;
+    }
+    if (advanced && next.unseenOwnAfterSeq !== undefined) {
+      const { unseenOwnAfterSeq: _cleared, ...rest } = next;
+      await deps.store.put(key, rest);
+      return;
+    }
+    await deps.store.put(key, next);
+  };
 
   const { prompt, fedSeq } = buildTurnPrompt({
     messages: thread,
@@ -933,6 +978,8 @@ export async function runMentionTurn(
     ...(target.delegation ? { delegation: target.delegation } : {}),
     ...(target.delegatedBy ? { delegatedBy: target.delegatedBy } : {}),
     ...(target.editedMention ? { editedMention: target.editedMention } : {}),
+    ...(freshWake ? { freshWake: true } : {}),
+    ...(rec.unseenOwnAfterSeq !== undefined ? { unseenOwnAfterSeq: rec.unseenOwnAfterSeq } : {}),
   });
 
   if (!prompt) {
@@ -940,7 +987,8 @@ export async function runMentionTurn(
     // 그래도 fedSeq 는 이미 전진한 값을 반드시 저장해야, 다음 턴이 이 구간을 다시 "새
     // 것"으로 들이밀어 세션이 자기 말을 또 보는 일이 없다. turnsRun 은 건드리지 않는다 —
     // 하네스가 안 돌았으니 "돌았다"고 기록할 것도 없다.
-    await deps.store.put(key, { ...rec, lastFedSeq: fedSeq });
+    // 경계(`unseenOwnAfterSeq`)는 지우지 않는다 — 이 턴은 아무것도 보여 주지 않았다.
+    await persist({ ...rec, lastFedSeq: fedSeq }, false, fedSeq);
     return { stopRequestedAt: def.stopRequestedAt };
   }
 
@@ -995,7 +1043,7 @@ export async function runMentionTurn(
     .slice(-3).map((m) => m.body).join('\n').slice(0, 1000);
   const root = anchor ? thread.find((m) => m.id === anchor) : undefined;
   const search = deps.harkroom.searchMemory?.bind(deps.harkroom);
-  const memoryPlan = await planMemory({
+  const plannedMemory = await planMemory({
     stateDir: deps.stateDir, key, sessionId: rec.sessionId, isFirstTurn, memory,
     ...(search && recallQuery ? {
       recall: {
@@ -1005,6 +1053,10 @@ export async function runMentionTurn(
       },
     } : {}),
   });
+  // 깨움 세션은 기억 고정(`memoryPin.ts`)을 저장하지 않는다 — 고정은 스레드 키 하나에 세션 id 를 적는데,
+  // 버릴 세션 id 로 덮으면 다음 이어받는 턴이 고정을 못 써서 core·목록을 다시 싣는다(옛 세션의 캐시가 깨진다).
+  // 읽지도 않는다: `isFirstTurn` 이 참이라 지금 값으로 새로 싣는다.
+  const memoryPlan = freshWake ? { ...plannedMemory, commit: async () => {} } : plannedMemory;
   // 하네스 파일 메모리 수확 알림(U5, `harnessMemory.ts`). 어댑터가 그 자리를 아는 하네스만
   // (지금은 claude). 읽기 실패는 빈 목록이라 턴을 막지 않는다.
   const fileMemoryRoot = fileMemoryDirUnderConfig(def.harness);
@@ -2113,11 +2165,11 @@ export async function runMentionTurn(
     }
     // lastFedSeq 와 turnsRun 은 서로 다른 사실이다: 세션은 실재하게 됐지만(turnsRun) 답은
     // 못 했으므로(lastFedSeq) 다음 턴이 같은 델타를 다시 먹여야 한다.
-    await deps.store.put(key, {
+    await persist({
       ...rec,
       ...(answered ? { lastFedSeq: fedSeq } : {}),
       turnsRun: materializedTurnsRun,
-    });
+    }, answered, turnStartSeq);
     // tail 을 반드시 포함한다 — PTY 안에서는 stdout/stderr 가 한 스트림으로 섞여 나오므로
     // policy.ts::isCredentialFailure 가 자격증명 실패를 판단할 근거가 이것뿐이다.
     // tail 을 반드시 포함한다 — PTY 안에서는 stdout 과 stderr 가 한 스트림으로 섞여 나오므로
@@ -2212,11 +2264,12 @@ export async function runMentionTurn(
   // — 저장이 그 뒤에 있었다면 실제로 돌아간 턴이 디스크에 기록되지 않고, 다음 재시도가
   // turnsRun===0 을 보고 새 uuid 를 발급하거나(claude 세션이 고아가 된다) 이미 먹인 메시지를
   // 다시 먹인다(리뷰 지적).
-  await deps.store.put(key, { ...rec, lastFedSeq: fedSeq, turnsRun: rec.turnsRun + 1 });
+  await persist({ ...rec, lastFedSeq: fedSeq, turnsRun: rec.turnsRun + 1 }, true, turnStartSeq);
   // 이 턴에 알린 기억을 저장한다 — 성공한 턴만(`memoryPin.ts` 머리). 세션 id 는 **지금** 값을
   // 넘긴다: codex 는 첫 턴이 끝나야 id 가 생긴다.
   await memoryPlan.commit(rec.sessionId);
-  await harnessNotice?.commit();
+  // 깨움 세션은 버리므로 하네스 메모리 알림도 "알렸다"로 적지 않는다 — 다음 이어받는 턴이 알아야 한다.
+  if (!freshWake) await harnessNotice?.commit();
 
   // 이 턴에 부른 스킬을 서버에 남긴다(D3) — 안 쓰는 스킬을 "후보"로 띄우는 재료다. 성공한 턴만
   // 센다: 실패한 턴은 재시도가 같은 기록을 다시 읽어 두 번 세게 된다. 셀 수 없는 하네스는

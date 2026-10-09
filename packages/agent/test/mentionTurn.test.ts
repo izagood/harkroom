@@ -526,6 +526,111 @@ describe('runMentionTurn', () => {
   });
 
   /**
+   * 예약 깨움은 **새 세션으로** 돈다(2026-10-09). 짧은 확인 턴이 스레드의 큰 세션을 `-r` 로 이어받아
+   * 매번 그 전체를 다시 읽고 캐시를 다시 썼다 — 깨움 턴이 비용의 약 38% 였다. 레코드는 옛 세션을
+   * 그대로 가리켜야 다음 멘션 턴이 앞 대화를 잃지 않는다.
+   */
+  describe('예약 깨움(scheduledWake)은 새 세션으로', () => {
+    async function afterFirstTurn() {
+      const fake = new FakeHarkroom(defOf());
+      fake.seedFrom('human-1', '첫질문고유문구 PR 올리고 CI 통과하면 머지해');
+      const made = await makeDeps(fake);
+      const key = SessionStore.threadKey(CHANNEL, null);
+      made.runTurn.script = async () => {
+        await fake.post(CHANNEL, '첫답고유문구', null);
+        fake.seedFrom(made.deps.me.id, 'CI 결과 확인', null).kind = 'wake';
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+      await runMentionTurn(made.deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+      const first = made.deps.store.get(key)!;
+      return { fake, key, first, ...made };
+    }
+
+    it('이어받지 않고 새 session-id 로 뜨며, 프롬프트는 사유·id·새 세션 안내뿐이다 — 레코드는 옛 세션 그대로', async () => {
+      const { fake, key, first, deps, runTurn, plans, turnOpts } = await afterFirstTurn();
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '깨움턴답고유문구', null);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+      await runMentionTurn(deps, {
+        channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+        wake: { reason: 'CI 결과 확인' }, scheduledWake: true,
+      });
+
+      const args = plans[1]!.args;
+      expect(args).not.toContain('-r');
+      expect(args).toContain('--session-id');
+      expect(args).not.toContain(first.sessionId);
+      const prompt = (await getPlanContent(plans, turnOpts))[1]!;
+      expect(prompt).toContain('(예약된 후속 턴 — 사유: CI 결과 확인)');
+      expect(prompt).toContain('**새 세션**');
+      expect(prompt).toContain(`channelId: ${CHANNEL}`);
+      expect(prompt).not.toContain('첫질문고유문구');
+      expect(prompt).not.toContain('첫답고유문구');
+
+      // 레코드는 옛 큰 세션을 가리킨다 — 세션 id·turnsRun·커서 모두 그대로, 경계만 적힌다.
+      const rec = deps.store.get(key)!;
+      expect(rec.sessionId).toBe(first.sessionId);
+      expect(rec.turnsRun).toBe(first.turnsRun);
+      expect(rec.lastFedSeq).toBe(first.lastFedSeq);
+      expect(rec.unseenOwnAfterSeq).toBeGreaterThan(first.lastFedSeq);
+    });
+
+    it('다음 멘션 턴은 옛 세션을 이어받고, 깨움 턴이 남긴 내 말을 본다 — 그 뒤 경계는 지워진다', async () => {
+      const { fake, key, first, deps, runTurn, plans, turnOpts } = await afterFirstTurn();
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '깨움턴답고유문구', null);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+      await runMentionTurn(deps, {
+        channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+        wake: { reason: 'CI 결과 확인' }, scheduledWake: true,
+      });
+
+      fake.seedFrom('human-1', '두번째질문고유문구');
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '두번째답', null);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+      expect(plans[2]!.args).toContain('-r');
+      expect(plans[2]!.args).toContain(first.sessionId);
+      const prompt = (await getPlanContent(plans, turnOpts))[2]!;
+      expect(prompt).toContain('두번째질문고유문구');
+      expect(prompt).toContain('깨움턴답고유문구');
+      expect(prompt).not.toContain('첫답고유문구'); // 옛 세션이 쓴 말은 여전히 거른다
+      const rec = deps.store.get(key)!;
+      expect(rec.sessionId).toBe(first.sessionId);
+      expect(rec.turnsRun).toBe(first.turnsRun + 1);
+      expect(rec.unseenOwnAfterSeq).toBeUndefined();
+    });
+
+    it('선택 답(scheduledWake 없는 wake)은 그대로 이어받는다', async () => {
+      const { first, deps, plans } = await afterFirstTurn();
+      await runMentionTurn(deps, {
+        channelId: CHANNEL, threadRootId: null, mentionId: MENTION, wake: { reason: '사람이 고른 답: A' },
+      });
+      expect(plans[1]!.args).toContain('-r');
+      expect(plans[1]!.args).toContain(first.sessionId);
+    });
+
+    it('이어받을 세션이 없으면 평소 첫 턴이고 그 세션을 레코드에 남긴다', async () => {
+      const fake = new FakeHarkroom(defOf());
+      fake.seedFrom(ME.id, 'CI 결과 확인', null).kind = 'wake';
+      const { deps, plans } = await makeDeps(fake);
+      await runMentionTurn(deps, {
+        channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+        wake: { reason: 'CI 결과 확인' }, scheduledWake: true,
+      });
+      const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+      expect(plans[0]!.args).toContain(rec.sessionId);
+      expect(rec.turnsRun).toBe(1);
+      expect(rec.unseenOwnAfterSeq).toBeUndefined();
+    });
+  });
+
+  /**
    * 보고처(`turn.wake` reportTo, 2026-10-06). 스레드마다 세션이 따로라 깨어난 턴은 자기 앵커만 안다 — 다른
    * 스레드(#task)에서 한 "13:21 에 확인한다" 약속이 사유에 없으면 결과는 앵커에만 남았다(task_manager 실측).
    *

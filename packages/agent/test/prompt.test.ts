@@ -240,6 +240,48 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
     expect(r.prompt).toContain('예약');
     expect(r.prompt).toContain('jaebin: 아 그거 취소해');
   });
+
+  // 예약 깨움을 새 세션으로(2026-10-09). 이 세션은 앞 대화를 모른다 — 그 사실과 읽는 길을 말해야 한다.
+  it('새 세션 깨움은 사유·id·새 세션 안내를 싣고, 자기 발화는 첫 턴처럼 다 싣지 않는다', () => {
+    const r = buildTurnPrompt({
+      messages: [msg(10, 'a1', '옛 세션의 내 답'), msg(11, 'u1', '아 그거 취소해'), msg(12, 'a1', 'CI 결과 확인', { kind: 'wake' })],
+      lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      wake: { reason: 'CI 결과 확인' }, freshWake: true,
+    });
+    expect(r.prompt).toContain('channelId: c');
+    expect(r.prompt).toContain('threadRootId: t');
+    expect(r.prompt).toContain('(예약된 후속 턴 — 사유: CI 결과 확인)');
+    expect(r.prompt).toContain('**새 세션**');
+    expect(r.prompt).toContain('message.read');
+    // 새 세션은 앞 대화의 조건(머지 전 검토 등)을 모른다 — 되돌리기 어려운 일 전에는 읽고 하라는 줄.
+    expect(r.prompt).toContain('되돌리기 어려운 일을 하기 전에는 `message.read`');
+    expect(r.prompt).toContain('jaebin: 아 그거 취소해');
+    expect(r.prompt).not.toContain('옛 세션의 내 답');
+  });
+
+  it('freshWake 는 깨움이 없으면 아무것도 바꾸지 않는다', () => {
+    const base = { messages: [msg(10, 'u1', '질문')], lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't' };
+    expect(buildTurnPrompt({ ...base, freshWake: true }).prompt).toBe(buildTurnPrompt(base).prompt);
+  });
+
+  // 깨움 세션이 남긴 말은 이어받는 세션이 쓴 것이 아니다 — 자기 발화 필터에서 빼고 보여 준다.
+  it('unseenOwnAfterSeq 뒤의 내 발화는 보여 주고, 그 앞과 진행·대기 줄은 거른다', () => {
+    const r = buildTurnPrompt({
+      messages: [
+        msg(10, 'a1', '옛 세션이 쓴 말'),
+        msg(12, 'a1', '깨움 진행', { kind: 'progress' }),
+        msg(13, 'a1', 'CI 초록 — 머지했다'),
+        msg(14, 'a1', '다음 확인', { kind: 'wake' }),
+        msg(15, 'u1', '@forge 다음 거'),
+      ],
+      lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't', unseenOwnAfterSeq: 11,
+    });
+    expect(r.prompt).toContain('forge: CI 초록 — 머지했다');
+    expect(r.prompt).toContain('jaebin: @forge 다음 거');
+    expect(r.prompt).not.toContain('옛 세션이 쓴 말');
+    expect(r.prompt).not.toContain('깨움 진행');
+    expect(r.prompt).not.toContain('다음 확인');
+  });
 });
 
 /**
