@@ -1060,7 +1060,7 @@ function mergeSection(merge: { operatorBin: string; repos: readonly string[]; ap
     '거절되면 `error.code` 로 갈린다:',
     '- `error.denialId` 가 있으면(`not_granted`·`cause_not_human`): **곧바로** harkroom MCP 의 `message.ask` 에',
     '  `mergeDenialId: <그 값>` 을 실어 이 스레드에 카드를 세운다(`to`·`mirrorOf` 는 싣지 않는다). 서버가 그것을 권한 카드로',
-    '  세우고 저장소·PR·head 칸을 거절 기록에서 채운다. 소유자가 [승인하고 다시 시도](저장소 7일) 또는 [이번 한 번 머지](이 PR·',
+    '  세우고 저장소·PR·head 칸을 거절 기록에서 채운다. 소유자가 [7일 허락하고 다시 시도](저장소 7일) 또는 [이번 한 번 머지](이 PR·',
     '  이 head 만, 계정을 고른다)를 누르면 네가 다시 불린다 — 그때 같은 명령을 한 번 더 부른다. 같은 스레드에 기다리는 카드가',
     '  있으면 서버가 새 카드 대신 그 카드를 가리킨다(`pending`).',
     '- 사람이 채팅에 "머지해"라고 쓴 것만으로는 허락이 아니다 — 카드가 허락이다. 그 글을 보면 위 명령을 바로 불러 보고, 거절에',
