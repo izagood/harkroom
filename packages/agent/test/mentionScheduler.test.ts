@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createMentionScheduler, DONE_UNREAD_MAX_MS, GATE_REQUEUE_MAX, GATE_WAIT_MAX_MS, RECENTLY_DONE_MS, type BatchContext } from '../src/mentionScheduler.js';
 import { AccountGateRequeueError } from '../src/mentionTurn.js';
+import { SessionStore } from '../src/sessions.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
 import { MentionQueue } from '../src/mentionQueue.js';
 import type { InboxBatch } from '../src/harkroom.js';
@@ -1106,5 +1107,36 @@ describe('끝난 턴의 읽음 처리 실패 — 다시 띄우지 않는다 (202
     linkDown = false;
     await h.scheduler.admit(batchOf([{ entryId: 9, messageId: 'm-9' }]), ctx);
     expect(h.markedRead).toEqual([9]);
+  });
+});
+
+/**
+ * **띄우기로 정한 순간 레지스트리에도 예약한다**(2026-10-07, 유령 세션 C). 장부(`inFlightThreads`)는 이
+ * 파일 안에만 있어서, `register` 전의 틈에 사람이 연 터미널이 먼저 등록하면 멘션 턴이 던졌다.
+ */
+describe('멘션 턴 예약 — 인터랙티브 open 이 보는 「시작되는 중」', () => {
+  it('띄운 순간부터 끝날 때까지 mentionStarting 이 참이고, 턴이 등록하면 거짓이 된다', async () => {
+    const turn = deferred<MentionTurnResult>();
+    const key = SessionStore.threadKey(CH, 'root-r');
+    const h = harness({ runTurn: () => turn.promise });
+    const out = await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1', threadRootId: 'root-r' }]), ctx);
+    expect(out.started).toBe(1);
+    // admit 이 돌아온 지금 — runMentionTurn 은 아직 등록 전이다. 이 틈이 경합의 자리다.
+    expect(h.registry.mentionStarting(key)).toBe(true);
+    // 턴이 스스로 등록하면 "시작되는 중" 이 아니라 "도는 중" 이다(인터랙티브는 그 PTY 에 붙는다).
+    h.registry.register(key, { kind: 'mention', sessionId: 's-m' });
+    expect(h.registry.mentionStarting(key)).toBe(false);
+    h.registry.release(key);
+    turn.resolve({ stopRequestedAt: null });
+    await h.scheduler.drain();
+    expect(h.registry.mentionStarting(key)).toBe(false);
+  });
+
+  it('턴이 등록 전에 던져도 예약은 풀린다 — 인터랙티브 open 이 영영 기다리지 않는다', async () => {
+    const key = SessionStore.threadKey(CH, 'root-t');
+    const h = harness({ runTurn: async () => { throw new Error('TurnRegistry: 이미 interactive 턴'); } });
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1', threadRootId: 'root-t' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.registry.mentionStarting(key)).toBe(false);
   });
 });

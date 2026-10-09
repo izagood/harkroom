@@ -590,10 +590,17 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
       };
       sessions.set(info.sessionId, live);
       send({ type: 'session.started', session: info });
+      /**
+       * 닫힌 뒤의 호출은 무시한다(2026-10-07). 멘션 턴은 PTY 가 없을 때 [중단] 으로 세션을 먼저 닫고
+       * (`mentionTurn` onCancel) 턴의 `finally` 가 한 번 더 닫는다 — 두 번째가 `session.ended` 를
+       * 다시 보내거나, 스폰 중이던 PTY 의 바이트가 끝난 세션 이름으로 나가면 안 된다.
+       */
+      let closed = false;
 
       return {
         sessionId: info.sessionId,
         push(chunk) {
+          if (closed) return;
           // ring 은 릴레이가 끊겨 있어도 계속 채운다 — 재접속 뒤 attach 하면 그동안의
           // 화면이 재생돼야 한다. 여기서 멈추면 끊긴 구간이 영구히 사라진다.
           live.ring.push(chunk);
@@ -603,6 +610,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
           live.writer = writer;
         },
         needsAttention(screen, accountLabel) {
+          if (closed) return;
           send({
             type: 'attention.required',
             sessionId: info.sessionId,
@@ -612,6 +620,8 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
           });
         },
         close() {
+          if (closed) return;
+          closed = true;
           sessions.delete(info.sessionId);
           // 세션을 맵에서 뺐으므로 뒤늦게 온 입력은 위 `sessions.get` 에서 걸린다.
           // 통로도 함께 끊는다 — 이미 끝난 PTY 를 붙잡고 있을 이유가 없다.

@@ -47,6 +47,11 @@ const KILL_GRACE_MS = 5_000;
 const NO_RELAY_REJECTION = '이 스레드에 멘션 턴이 진행 중이지만 관찰 릴레이가 없다 — 턴이 끝난 뒤 다시 열어라';
 
 /**
+ * 멘션 턴이 시작되는 중인데(스케줄러 예약) 기다려도 등록되지 않았다. 사람 화면에 그대로 뜬다.
+ */
+const MENTION_STARTING_REJECTION = '이 스레드에 멘션 턴이 막 시작되는 중이다 — 잠시 뒤 다시 열어라';
+
+/**
  * codex 이어받기 거절(#384 운영자 결정). 이 문구는 relay 의 `interactive.error` 를 지나
  * **사람 화면에 그대로** 뜬다 — 조용히 거절하면 눌렀는데 아무 일이 없는 것이 된다.
  *
@@ -189,6 +194,12 @@ export interface InteractiveTurnDeps {
    * 파싱·조회 오류로 죽는다("already in use" / "No conversation found").
    */
   sessionMaterialized?: (harness: AgentHarness, sessionId: string, claudeConfigDir: string | null) => Promise<boolean>;
+  /**
+   * 멘션 턴이 시작되는 중(`TurnRegistry.mentionStarting`)일 때 그 등록을 기다리는 상한과 간격.
+   * 기본 30초·100ms. 테스트가 줄인다.
+   */
+  mentionStartWaitMs?: number;
+  mentionStartPollMs?: number;
 }
 
 export interface InteractiveOpenRequest {
@@ -225,6 +236,25 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
   const orphanMs = deps.orphanMs ?? 60_000;
   const killGraceMs = deps.killGraceMs ?? KILL_GRACE_MS;
   const sessionMaterialized = deps.sessionMaterialized ?? claudeSessionMaterialized;
+  const mentionStartWaitMs = deps.mentionStartWaitMs ?? 30_000;
+  const mentionStartPollMs = deps.mentionStartPollMs ?? 100;
+
+  /**
+   * **멘션 턴이 시작되는 중이면 그 등록을 기다린다**(2026-10-07, 유령 세션 C).
+   *
+   * 스케줄러가 띄우기로 정한 멘션 턴은 `register` 까지 수 초의 await 을 지난다. 그 틈에 여기가
+   * "아무 턴도 없다"로 PTY 를 열면 멘션 턴의 `register` 가 던졌다(`TurnRegistry.reserveMention`
+   * 주석). 기다리면 셋 중 하나로 끝난다 — 등록됐다(분기 ① 로 붙는다) · 등록 전에 접혔다(예약이
+   * 풀려 지금 연다) · 상한을 넘겼다(던진다 — 사람 화면에 뜬다). 시계는 진짜 타이머다: 주입
+   * `schedule` 은 회수 유예용이라 테스트가 손으로 돌리고, 여기까지 멈추면 open 이 안 끝난다.
+   */
+  const awaitMentionStart = async (key: string): Promise<void> => {
+    const deadline = Date.now() + mentionStartWaitMs;
+    while (deps.registry.mentionStarting(key)) {
+      if (Date.now() >= deadline) throw new Error(MENTION_STARTING_REJECTION);
+      await new Promise<void>((resolve) => { setTimeout(resolve, mentionStartPollMs).unref?.(); });
+    }
+  };
 
   /** 러너가 물러나는 중인가(#384). shutdown 이 켠다 — 그 뒤로는 이어받기를 띄우지 않는다. */
   let retreating = false;
@@ -320,7 +350,9 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
 
     // definition() 을 기다리는 사이 멘션 턴이 시작됐을 수 있다 — 등록 직전에 다시 본다.
     // 그냥 register 하면 TurnRegistry 가 크게 던지는데, 이 경합은 결함이 아니라 합류
-    // 대상이다(분기 ①과 같은 답).
+    // 대상이다(분기 ①과 같은 답). **띄우기로 정했지만 아직 등록 전인 멘션 턴**도 같은 경합이다 —
+    // 등록될 때까지 기다린 뒤 본다. 이 아래 register 까지는 await 이 없어야 한다(그 사이가 새 틈이다).
+    await awaitMentionStart(key);
     const raced = deps.registry.get(key);
     if (raced) {
       if (raced.sessionId === null) {
@@ -544,7 +576,8 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
   const open = async (req: InteractiveOpenRequest): Promise<InteractiveOpenResult> => {
     const key = SessionStore.threadKey(req.channelId, req.threadRootId);
 
-    // ── 분기 ①·② — 이미 도는 턴이 있으면 새 PTY 를 띄우지 않는다.
+    // ── 분기 ①·② — 이미 도는 턴이 있으면 새 PTY 를 띄우지 않는다. 시작되는 중인 멘션 턴은
+    // 분기 ③(`spawn`)이 등록 직전에 기다렸다 붙는다(`awaitMentionStart`).
     const running = deps.registry.get(key);
     if (running) {
       if (running.sessionId === null) {
