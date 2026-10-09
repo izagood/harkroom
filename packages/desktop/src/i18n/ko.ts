@@ -595,7 +595,8 @@ export const ko = {
   'agentTurns.terminal': '터미널',
   'agentTurns.waiting': '⌨ 대기',
   'agentTurns.waitingTitle': '이 턴이 터미널에서 사람을 기다린다 — 눌러서 터미널을 연다',
-  'gate.title': '{handle}이 터미널에서 기다립니다',
+  // 조사 없는 꼴 — handle 이 모음으로 끝나면 「designer이」가 된다(designer n2).
+  'gate.title': '{handle} · 터미널에서 기다리는 중',
   'gate.account': '계정 {account}',
   'gate.open': '터미널 열기',
   'gate.openFor': '터미널 열기: {handle}',

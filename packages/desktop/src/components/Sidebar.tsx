@@ -806,7 +806,7 @@ export function Sidebar({
           data-testid={`gate-waiting-${dm.agentId}`}
           aria-label={t('gate.openFor', { handle: gate.agentHandle })}
           title={t('agentTurns.waitingTitle')}
-          className="mr-1 shrink-0 rounded-sm bg-accent-surface px-1 text-meta text-accent hover:bg-surface-hover"
+          className="mr-1 shrink-0 rounded-sm bg-accent-surface px-1 text-meta text-accent hover:brightness-95"
           onClick={() => useActiveStore.getState().set({
             terminalTarget: { agentAccountId: gate.agentAccountId, channelId: gate.channelId, threadRootId: gateRoot },
           })}

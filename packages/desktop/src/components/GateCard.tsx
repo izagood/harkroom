@@ -1,5 +1,9 @@
 import { useActiveStore } from '../state/communities';
 import { useT } from '../i18n/useT';
+import { displayBody } from '../lib/mention';
+import type { AgentTeamRow } from '@harkroom/shared';
+
+const NO_TEAMS: readonly AgentTeamRow[] = [];
 
 /** 스레드 첫 줄을 이만큼까지만 싣는다 — 카드 한 줄을 넘기지 않는다. */
 const SNIPPET_CHARS = 40;
@@ -16,6 +20,10 @@ const SNIPPET_CHARS = 40;
  * 그래서 대개는 서지도 않는다), 세션이 끝났을 때(`agent.attention.cleared`), [나중에].
  * [나중에]는 카드만 접는다 — 턴 줄의 ⌨ 대기 표시는 풀릴 때까지 남는다(`AgentTurns`).
  *
+ * 자리는 본문 칸 오른쪽 위에서 **머리 높이만큼 내린 곳**(`top-14`)이다 — `top-3` 이면 스레드·
+ * 터미널 패널 머리의 ⧉·× 를 덮어, 관문을 기다리는 동안 패널을 닫으려면 [나중에]부터 눌러야
+ * 했다(designer).
+ *
  * 여럿이면 가장 최근 하나를 그리고 나머지는 "외 n" 으로 센다. `role="status"` — 실패가
  * 아니라 할 일이라 끼어들어 읽지 않는다.
  */
@@ -25,11 +33,16 @@ export function GateCard() {
   const open = gates.filter((g) => !g.dismissed);
   const gate = open.at(-1);
   const channel = useActiveStore((s) => (gate ? s.channels.find((c) => c.id === gate.channelId) : undefined));
-  const rootBody = useActiveStore((s) => (gate?.threadRootId
-    ? s.messages[gate.channelId]?.find((m) => m.id === gate.threadRootId)?.body
+  const root = useActiveStore((s) => (gate?.threadRootId
+    ? s.messages[gate.channelId]?.find((m) => m.id === gate.threadRootId)
     : undefined));
+  const accounts = useActiveStore((s) => s.accounts);
+  const groups = useActiveStore((s) => s.groups);
+  const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS;
   if (!gate) return null;
-  const firstLine = rootBody?.split('\n')[0]?.trim();
+  // 원문 `body` 를 자르면 멘션이 `<@uuid>` 로 남는다 — 한 줄 미리보기도 본문을 사람에게 보여
+  // 주는 자리라 `displayBody` 를 지난다(그 함수 머리 주석의 규약, security n2).
+  const firstLine = root ? displayBody(root, accounts, groups, teams).split('\n')[0]?.trim() : undefined;
   const snippet = firstLine && firstLine.length > SNIPPET_CHARS ? `${firstLine.slice(0, SNIPPET_CHARS)}…` : firstLine;
   const where = [
     t('gate.account', { account: gate.accountLabel }),
@@ -40,7 +53,7 @@ export function GateCard() {
     <div
       role="status"
       data-testid="gate-card"
-      className="absolute right-3 top-3 z-40 w-80 max-w-[calc(100%-1.5rem)] rounded-card border border-border border-l-4 border-l-accent-brand bg-surface-raised px-3 py-2.5 shadow-float"
+      className="absolute right-3 top-14 z-40 w-80 max-w-[calc(100%-1.5rem)] rounded-card border border-border border-l-4 border-l-accent-brand bg-surface-raised px-3 py-2.5 shadow-float"
     >
       <p className="text-body font-semibold text-fg">
         ⌨ {t('gate.title', { handle: gate.agentHandle })}

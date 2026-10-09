@@ -27,6 +27,19 @@ describe('관문 카드', () => {
     expect(screen.queryByTestId('gate-card')).toBeNull();
   });
 
+  it('스레드 첫 줄의 멘션은 uuid 가 아니라 지금 이름으로 보인다', () => {
+    useAppStore.getState().set({
+      accounts: { '2c8c1910-da9c-4b0e-9a7e-0d1f2a3b4c5d': { id: '2c8c1910-da9c-4b0e-9a7e-0d1f2a3b4c5d', handle: 'jaebin' } },
+      channels: [{ id: 'c1', name: 'harkroom' }],
+      messages: { c1: [{ id: 't1', channelId: 'c1', body: '<@2c8c1910-da9c-4b0e-9a7e-0d1f2a3b4c5d> 배너 고쳐 줘', kind: 'user', meta: {} }] },
+    } as never);
+    useAppStore.getState().raiseGate(관문);
+    render(<GateCard />);
+    const text = screen.getByTestId('gate-card').textContent!;
+    expect(text).toContain('@jaebin 배너 고쳐 줘');
+    expect(text).not.toContain('<@');
+  });
+
   it('[나중에]는 카드를 접는다', () => {
     useAppStore.getState().raiseGate(관문);
     render(<GateCard />);
