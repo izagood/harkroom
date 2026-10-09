@@ -757,6 +757,19 @@ async fn operator_merge_set(
     .await
 }
 
+/// 머지 권한 줄마다 그 계정이 닿는지 — 웹뷰가 주는 것은 범위 문자열뿐이고 모양은 오퍼레이터가 다시 잰다.
+#[tauri::command]
+async fn operator_merge_check(
+    app: tauri::AppHandle,
+    scopes: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_merge_check(&scopes)
+    })
+    .await
+}
+
 /// 원격 MCP 의 OAuth — `action` 은 start·status·forget. 웹뷰가 넘기는 것은 이름 하나다.
 #[tauri::command]
 async fn operator_mcp_auth(
@@ -974,6 +987,7 @@ fn main() {
             operator_mcp_remove,
             operator_merge_get,
             operator_merge_set,
+            operator_merge_check,
             workspace_cleanup_get,
             workspace_cleanup_settings_set,
             workspace_cleanup_act,

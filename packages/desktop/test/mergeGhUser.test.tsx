@@ -2,7 +2,8 @@
  * 머지 권한 줄마다 gh 계정(스레드 e085b6a7 · 앞선 P2 febe9ff8, security C7·C8). 판정(목록에 있는 이름인지)은 오퍼레이터가 한다 —
  * 여기서 재는 것은 ① 이 기기에 배정된 에이전트의 소유자에게만 묻는가 ② 처음 열 때 옛 값을 줄들에 한 번 옮기는가 ③ 계정 없는
  * 줄은 미리 골라 두지 않고 경고하는가(같은 owner 줄만 이어받는다) ④ 고른 이름이 그 줄 범위와 함께 `operator_merge_set` 에
- * 닿는가 ⑤ 로그아웃된 계정·오퍼레이터 거절이 사람 말로 보이는가 ⑥ 어느 기기의 값인지 보이는가다.
+ * 닿는가 ⑤ 로그아웃된 계정·오퍼레이터 거절이 사람 말로 보이는가 ⑥ 어느 기기의 값인지 보이는가 ⑦ 닿음 ✓/✕(A·B·E)가 줄과 목록에
+ * 보이고, 닿는 계정을 위로 올리되 미리 고르지 않는가다.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
@@ -28,10 +29,17 @@ const ACCOUNTS = [{ login: 'work-account', active: true }, { login: 'izagood', a
 
 type SetArgs = { ghUser?: string | null; scope?: string; migrate?: string[] };
 /** 오퍼레이터 흉내 — migrate·scope 를 실제 규칙(한 번만 옮김, 목록에 있는 이름만)대로 처리한다. */
-function tauri(initial: OperatorMergeState, opts: { failSet?: string } = {}) {
+function tauri(initial: OperatorMergeState, opts: { failSet?: string; failCheck?: boolean; reach?: Record<string, Record<string, 'ok' | 'no' | 'unknown'>> } = {}) {
   let state = initial;
   const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     if (cmd === 'operator_merge_get') return state;
+    if (cmd === 'operator_merge_check') {
+      if (opts.failCheck) throw 'gh api: network down';
+      const scopes = (args as { scopes: string[] }).scopes;
+      const reach: Record<string, Record<string, { status: string; checkedAt: string }>> = {};
+      for (const sc of scopes) for (const [login, status] of Object.entries(opts.reach?.[sc] ?? {})) (reach[sc] ??= {})[login] = { status, checkedAt: '2026-10-09T14:30:00Z' };
+      return { reach };
+    }
     if (cmd === 'operator_merge_set') {
       const a = args as SetArgs;
       if (a.migrate) {
@@ -81,6 +89,36 @@ describe('머지 gh 계정 — 줄마다', () => {
     expect(invoke).toHaveBeenCalledWith('operator_merge_set', { migrate: ['izagood/harkroom', 'rebellions-sw/*'] });
     expect(screen.getByTestId('merge-gh-user').textContent).toContain('이 기기(mac-1)');
     expect(screen.queryByText('머지에 쓸 GitHub 계정')).toBeNull();
+  });
+
+  it('닿음(A)·닿지 않음(B)·확인 못 함(E) — 줄의 계정 옆에, 목록은 닿는 계정이 위로·✓/✕ 표시, 고른 값은 그대로', async () => {
+    grants([GRANT, ORG('rebellions-sw'), ORG('rbln-sw')]);
+    const invoke = tauri({ ghUser: 'izagood', byScope: null, accounts: ACCOUNTS, host: 'mac-1' }, { reach: {
+      'izagood/harkroom': { izagood: 'ok', 'work-account': 'no' },
+      'rebellions-sw/*': { izagood: 'no', 'work-account': 'ok' },
+      'rbln-sw/*': { izagood: 'unknown', 'work-account': 'unknown' },
+    } });
+    render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} />);
+    expect((await screen.findByTestId('merge-account-reach-izagood_harkroom')).dataset.reach).toBe('ok');
+    const org = await screen.findByTestId('merge-account-reach-rebellions-sw__');
+    expect(org.dataset.reach).toBe('no');
+    expect(screen.getByTestId('merge-account-no-reach-rebellions-sw__').textContent).toMatch(/izagood 계정은 rebellions-sw/);
+    expect((await screen.findByTestId('merge-account-reach-rbln-sw__')).dataset.reach).toBe('unknown');
+    expect(screen.queryByTestId('merge-account-no-reach-rbln-sw__')).toBeNull();
+    // 목록: 닿는 work-account 가 위, 표시가 붙되 값은 옮긴 izagood 그대로(미리 바꾸지 않는다)
+    const s = await sel('rebellions-sw__');
+    expect(s.value).toBe('izagood');
+    expect([...s.options].map((o) => o.textContent)).toEqual(['work-account (gh 활성 계정) ✓', 'izagood ✕']);
+    expect(invoke).toHaveBeenCalledWith('operator_merge_check', { scopes: ['izagood/harkroom', 'rebellions-sw/*', 'rbln-sw/*'] });
+  });
+
+  it('닿음 확인이 실패해도 칸은 그대로 쓸 수 있다', async () => {
+    const invoke = tauri({ ghUser: 'izagood', byScope: null, accounts: ACCOUNTS, host: 'mac-1' }, { failCheck: true });
+    render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} />);
+    expect((await sel('izagood_harkroom')).value).toBe('izagood');
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_merge_check', expect.anything()));
+    expect(screen.queryByTestId('merge-account-reach-izagood_harkroom')).toBeNull();
+    expect((await sel('izagood_harkroom')).disabled).toBe(false);
   });
 
   it('줄의 계정을 고르면 그 줄 범위와 함께 바로 저장한다(저장 버튼 없음)', async () => {

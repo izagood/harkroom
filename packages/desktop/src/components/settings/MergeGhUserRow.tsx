@@ -11,8 +11,8 @@
  * 고를 수 있는 이름이 맞는지는 오퍼레이터가 그 순간의 `gh auth status` 로 다시 잰다(C7). 어느 기기의 값인지 절 머리에 보인다(C8).
  */
 import { useCallback, useEffect, useState } from 'react';
-import type { OperatorMergeState } from '@harkroom/shared/daemonProtocol';
-import { getLocalMerge, migrateLocalMerge, setLocalMergeScopeUser } from '../../lib/operatorLocal';
+import type { OperatorMergeCheckResult, OperatorMergeState } from '@harkroom/shared/daemonProtocol';
+import { checkLocalMerge, getLocalMerge, migrateLocalMerge, setLocalMergeScopeUser } from '../../lib/operatorLocal';
 import { useT } from '../../i18n/useT';
 
 const rawReason = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -38,11 +38,16 @@ export type LocalMerge = OperatorMergeState | 'loading' | 'error' | null;
  * 이 기기 오퍼레이터의 머지 계정 상태. `scopes` 는 이 에이전트의 머지 권한 줄(`owner/name`·`owner/*`, 소문자)이고, null 이면
  * 묻지 않는다(다른 기기·소유자 아님·권한 없음). 읽은 뒤 옮기기(①)·이어받기(②)를 한 번씩 한다.
  */
+export type MergeReach = OperatorMergeCheckResult['reach'];
+
 export function useLocalMerge(scopes: string[] | null): {
   state: LocalMerge;
+  /** 범위 × 계정 → 닿음(시안 A·B·E). 재는 동안·실패면 비어 있다 — 그때 칸은 상태 없이 보인다(막지 않는다). */
+  reach: MergeReach;
   setScope(scope: string, ghUser: string): Promise<void>;
 } {
   const [state, setState] = useState<LocalMerge>(scopes ? 'loading' : null);
+  const [reach, setReach] = useState<MergeReach>({});
   const key = scopes ? scopes.join('\n') : null;
 
   useEffect(() => {
@@ -65,6 +70,10 @@ export function useLocalMerge(scopes: string[] | null): {
           }
         }
         if (alive) setState(s);
+        // 닿음은 그 뒤에 — 느린 GitHub 이 계정 칸을 붙잡지 않게(오퍼레이터가 10분 캐시한다).
+        if (list.length && s.accounts?.length) {
+          try { const r = await checkLocalMerge(list); if (alive) setReach(r.reach); } catch { /* 확인 없이 둔다 */ }
+        }
       } catch { if (alive) setState('error'); }
     })();
     return () => { alive = false; };
@@ -74,7 +83,7 @@ export function useLocalMerge(scopes: string[] | null): {
     setState(await setLocalMergeScopeUser(scope, ghUser));
   }, []);
 
-  return { state, setScope };
+  return { state, reach, setScope };
 }
 
 /** 절 머리 한 줄 — 어느 기기의 gh 계정으로 머지하는지(C8). 읽는 동안·실패도 같은 자리다(#1140 designer n5). */
@@ -96,12 +105,15 @@ export function MergeDeviceNote({ state }: { state: LocalMerge }) {
 
 /**
  * 권한 줄 안의 「계정 [▾]」 칸과 그 줄의 상태 줄(시안 §1·§3). 고르면 바로 저장한다(저장 버튼 없음) — 실패하면 앞 값을 두고
- * 이유를 줄 아래에. 상태: 계정 없음(C) · 로그아웃됨(D). 닿음 확인(A·B·E)은 후속 커밋이다.
+ * 이유를 줄 아래에. 상태: 닿음(A) · 닿지 않음(B) · 계정 없음(C) · 로그아웃됨(D) · 확인 못 함(E, 경고색 없음).
+ * 목록에서는 닿는 계정을 위로 올리고 ✓/✕ 를 붙이되 **미리 골라 두지 않는다**(시안 결정 1, fail-closed).
  */
-export function MergeAccountCell({ scope, repoLabel, state, setScope, disabled }: {
+export function MergeAccountCell({ scope, repoLabel, state, reach, setScope, disabled }: {
   scope: string;
   repoLabel: string;
   state: OperatorMergeState;
+  /** 이 범위의 계정별 닿음(`useLocalMerge().reach[scope]`). 없으면 상태 없이. */
+  reach?: Record<string, { status: 'ok' | 'no' | 'unknown'; checkedAt: string }>;
   setScope(scope: string, ghUser: string): Promise<void>;
   disabled?: boolean;
 }) {
@@ -109,8 +121,11 @@ export function MergeAccountCell({ scope, repoLabel, state, setScope, disabled }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const current = state.byScope?.[scope] ?? null;
-  const accounts = state.accounts ?? [];
+  const rank = (login: string): number => ({ ok: 0, unknown: 1, no: 2 } as const)[reach?.[login]?.status ?? 'unknown'];
+  const accounts = [...(state.accounts ?? [])].sort((a, b) => rank(a.login) - rank(b.login));
+  const mark = (login: string): string => (reach?.[login]?.status === 'ok' ? ' ✓' : reach?.[login]?.status === 'no' ? ' ✕' : '');
   const loggedOut = current !== null && state.accounts !== null && !accounts.some((a) => a.login === current);
+  const mine = current !== null && !loggedOut ? reach?.[current] : undefined;
   const id = scope.replace(/[^a-z0-9._-]/gi, '_');
 
   const pick = async (login: string) => {
@@ -137,9 +152,19 @@ export function MergeAccountCell({ scope, repoLabel, state, setScope, disabled }
         {current === null && <option value="" disabled>{t('agents.grants.ghUser.pick')}</option>}
         {loggedOut && <option value={current!} disabled>{current}</option>}
         {accounts.map((a) => (
-          <option key={a.login} value={a.login}>{a.active ? t('agents.grants.ghUser.activeTag', { login: a.login }) : a.login}</option>
+          <option key={a.login} value={a.login}>{(a.active ? t('agents.grants.ghUser.activeTag', { login: a.login }) : a.login) + mark(a.login)}</option>
         ))}
       </select>
+      {mine?.status === 'ok' && <span className="text-success" data-testid={`merge-account-reach-${id}`} data-reach="ok">✓ {t('agents.grants.ghUser.reachOk')}</span>}
+      {mine?.status === 'no' && <span className="font-medium text-danger" data-testid={`merge-account-reach-${id}`} data-reach="no">✕ {t('agents.grants.ghUser.reachNo')}</span>}
+      {mine?.status === 'unknown' && (
+        <span className="text-fg-subtle" title={t('agents.grants.ghUser.reachUnknownHint')} data-testid={`merge-account-reach-${id}`} data-reach="unknown">{t('agents.grants.ghUser.reachUnknown')}</span>
+      )}
+      {mine?.status === 'no' && (
+        <p role="alert" className="order-last basis-full rounded-row border border-danger-border bg-danger-surface px-2 py-0.5 text-danger" data-testid={`merge-account-no-reach-${id}`}>
+          {t('agents.grants.ghUser.rowNoReach', { login: current!, repo: repoLabel, when: new Date(mine.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })}
+        </p>
+      )}
       {current === null && (
         <p role="status" className="order-last basis-full rounded-row border border-warning-border bg-warning-surface px-2 py-0.5 text-warning" data-testid={`merge-account-unset-${id}`}>
           {t('agents.grants.ghUser.rowUnset')}

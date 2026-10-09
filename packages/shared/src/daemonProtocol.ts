@@ -130,6 +130,9 @@ export const REQUEST_TYPES = [
   // 의 로그인 이름뿐이고 **토큰은 오가지 않는다**. set 은 그 순간 목록에 있는 이름만 받는다(security C7).
   'operatorMergeGet',
   'operatorMergeSet',
+  // 그 계정이 그 권한 줄의 저장소·조직에 닿는가(스레드 e085b6a7 시안 상태 A·B·E). 앱이 주는 것은 범위 문자열뿐이고, 토큰은
+  // 오퍼레이터 안에서만 꺼내 쓴다 — 답은 범위 × 로그인 이름 → ok|no|unknown 이다.
+  'operatorMergeCheck',
   // 작업 폴더 정리(스레드 9e909150). 원장은 이 기기의 것이다(`operator/src/workspaceCleanup.ts`). 사람의 손은 보존·되돌리기·
   // 삭제 예정에 넣기 셋뿐이고, **바로 지우는 메서드는 없다**(D3·D5 결정) — 지우기는 청소기 회차만 한다.
   'workspaceCleanupGet',
@@ -796,6 +799,29 @@ export type OperatorMergeSetPayload =
   | { scope: string; ghUser: string | null }
   /** 옛 `merge.ghUser` 를 이 줄들에 한 번 복사하고 지운다(이미 고른 줄은 그대로). 이미 옮겼으면 아무것도 안 한다. */
   | { migrate: string[] };
+
+/** 닿음 확인 결과 — `ok` 쓸 수 있음 · `no` 닿지 않음(404·쓰기 권한 없음) · `unknown` 확인 못 함(read:org 부족·네트워크 등). */
+export type OperatorMergeReach = 'ok' | 'no' | 'unknown';
+
+/** `operatorMergeCheck` 의 답 — 범위마다, 이 기기 gh 에 로그인된 계정마다. `checkedAt` 은 그 값을 잰 시각(10분 캐시). */
+export interface OperatorMergeCheckResult {
+  reach: Record<string, Record<string, { status: OperatorMergeReach; checkedAt: string }>>;
+}
+
+/** 범위 목록만 받는다(200개까지). 어느 계정으로 잴지는 오퍼레이터가 그 순간의 `gh auth status` 로 정한다. */
+export function readOperatorMergeCheckPayload(payload: unknown): { scopes: string[] } | DaemonError {
+  const p = payload as { scopes?: unknown } | null;
+  if (!p || typeof p !== 'object' || !Array.isArray(p.scopes) || p.scopes.length > 200) {
+    return daemonError('bad-payload', 'operatorMergeCheck 에는 scopes 배열이 필요하다(200개까지)');
+  }
+  const scopes: string[] = [];
+  for (const v of p.scopes) {
+    const s = readMergeScope(v);
+    if (!s) return daemonError('bad-payload', 'scopes 의 항목은 owner/name 이나 owner/* 여야 한다');
+    if (!scopes.includes(s)) scopes.push(s);
+  }
+  return { scopes };
+}
 
 function readMergeScope(v: unknown): string | null {
   if (typeof v !== 'string') return null;

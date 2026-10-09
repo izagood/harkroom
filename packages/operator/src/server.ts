@@ -36,6 +36,7 @@ import {
   readOperatorAgentSetPayload,
   readOperatorRegisterPayload,
   readOperatorMcpRemovePayload,
+  readOperatorMergeCheckPayload,
   readOperatorMergeSetPayload,
   readWorkspaceCleanupActPayload,
   readWorkspaceCleanupSettingsPayload,
@@ -483,6 +484,15 @@ export class DaemonServer {
         } catch (err) {
           // 목록에 없는 이름·gh 실패는 사람이 고칠 사유다 — 원문 그대로 올린다.
           return daemonError('bad-payload', err instanceof Error ? err.message : String(err));
+        }
+      }
+      case 'operatorMergeCheck': {
+        const port = this.deps.localMerge;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 머지 설정이 배선되지 않았다');
+        const p = readOperatorMergeCheckPayload(req.payload);
+        if (isDaemonError(p)) return p;
+        try { return await port.check(p.scopes); } catch (err) {
+          return daemonError('internal', err instanceof Error ? err.message : String(err));
         }
       }
       case 'workspaceCleanupGet':

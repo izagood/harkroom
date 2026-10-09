@@ -564,8 +564,13 @@ describe('repo.merge grant', () => {
       try {
         expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/deploy')).toBeNull();
         expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/npu')).not.toBeNull();
-        expect((await grant(alice.token, { scope: 'repo:rebellions-sw/deploy' }, orgAgent)).statusCode).toBe(200);
+        const put = await grant(alice.token, { scope: 'repo:rebellions-sw/deploy' }, orgAgent);
+        expect(put.statusCode).toBe(200);
         expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/deploy')).toMatchObject({ scope: 'repo:rebellions-sw/deploy' });
+        // #1258 d1: 목록이 배포 저장소 줄에만 표시를 싣는다 — 화면이 「조직 전체 권한으로」를 붙이지 않게.
+        const rows = put.json().grants as { scope: string; deployRepo?: boolean }[];
+        expect(rows.find((r) => r.scope === 'repo:rebellions-sw/deploy')?.deployRepo).toBe(true);
+        expect(rows.filter((r) => r.scope !== 'repo:rebellions-sw/deploy').every((r) => r.deployRepo === undefined)).toBe(true);
       } finally {
         if (prev === undefined) delete process.env.HARKROOM_MERGE_DEPLOY_REPOS; else process.env.HARKROOM_MERGE_DEPLOY_REPOS = prev;
         await revoke(alice.token, 'repo:rebellions-sw/deploy', orgAgent);

@@ -5,7 +5,7 @@
  * 데몬에 전달한다.
  */
 import type { CleanupLedger, CleanupSettings } from '@harkroom/shared/workspaceCleanup';
-import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorMcpAuthStartResult, OperatorMcpAuthState, OperatorMcpListResult, OperatorMcpRemoteDefinition, OperatorMergeState, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
+import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorMcpAuthStartResult, OperatorMcpAuthState, OperatorMcpListResult, OperatorMcpRemoteDefinition, OperatorMergeCheckResult, OperatorMergeState, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 
 interface TauriInternals { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
 
@@ -97,6 +97,11 @@ export function setLocalMergeScopeUser(scope: string, ghUser: string | null): Pr
 /** 옛 기기 기본값을 지금 줄들에 한 번 복사한다 — 이미 옮겼으면 오퍼레이터가 아무것도 안 한다. */
 export function migrateLocalMerge(scopes: string[]): Promise<OperatorMergeState> {
   return call('operator_merge_set', { migrate: scopes }) as Promise<OperatorMergeState>;
+}
+
+/** 머지 권한 줄마다 로그인된 계정이 닿는지(오퍼레이터 10분 캐시). */
+export function checkLocalMerge(scopes: string[]): Promise<OperatorMergeCheckResult> {
+  return call('operator_merge_check', { scopes }) as Promise<OperatorMergeCheckResult>;
 }
 
 // ── 작업 폴더 정리(스레드 9e909150) ──────────────────────────────────────────────

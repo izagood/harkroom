@@ -2,8 +2,8 @@ import { mkdtemp, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readOperatorMergeSetPayload } from '@harkroom/shared/daemonProtocol';
-import { createLocalMergePort, parseGhAccounts, pickMergeGhUser } from '../src/localMerge.js';
+import { readOperatorMergeCheckPayload, readOperatorMergeSetPayload } from '@harkroom/shared/daemonProtocol';
+import { createLocalMergePort, parseGhAccounts, pickMergeGhUser, reachFromGh, REACH_TTL_MS } from '../src/localMerge.js';
 import type { Exec } from '../src/turnMerge.js';
 
 const STATUS = JSON.stringify({ hosts: {
@@ -140,5 +140,72 @@ describe('localMerge 포트 (P2 · security C7·C8)', () => {
     expect(readOperatorMergeSetPayload({ migrate: ['acme/*', 'ACME/*', 'acme/api'] })).toEqual({ migrate: ['acme/*', 'acme/api'] });
     expect(readOperatorMergeSetPayload({ migrate: ['../x'] })).toMatchObject({ code: 'bad-payload' });
     expect(readOperatorMergeSetPayload({ migrate: 'acme/*' })).toMatchObject({ code: 'bad-payload' });
+  });
+});
+
+describe('닿음 확인 (시안 상태 A·B·E)', () => {
+  const ok = (stdout: unknown) => ({ code: 0, stdout: JSON.stringify(stdout), stderr: '' });
+  const fail = (stderr: string) => ({ code: 1, stdout: '', stderr });
+
+  it('reachFromGh: 저장소는 쓰기 권한, 조직은 active 회원, 404 는 no, 403·깨진 답은 unknown', () => {
+    expect(reachFromGh('acme/api', 'x', ok({ permissions: { pull: true, push: true } }))).toBe('ok');
+    expect(reachFromGh('acme/api', 'x', ok({ permissions: { pull: true, maintain: true } }))).toBe('ok');
+    expect(reachFromGh('acme/api', 'x', ok({ permissions: { pull: true, push: false } }))).toBe('no');
+    expect(reachFromGh('acme/api', 'x', fail('gh: Not Found (HTTP 404)'))).toBe('no');
+    expect(reachFromGh('acme/*', 'x', ok({ state: 'active' }))).toBe('ok');
+    expect(reachFromGh('acme/*', 'x', ok({ state: 'pending' }))).toBe('no');
+    expect(reachFromGh('acme/*', 'x', fail('gh: Not Found (HTTP 404)'))).toBe('no');
+    expect(reachFromGh('acme/*', 'x', fail('gh: Resource not accessible by integration (HTTP 403)'))).toBe('unknown');
+    expect(reachFromGh('acme/api', 'x', ok('nope'))).toBe('unknown');
+    // 자기 계정의 owner/* 는 묻지 않아도 닿는다
+    expect(reachFromGh('izagood/*', 'izagood', fail('anything'))).toBe('ok');
+  });
+
+  it('범위 × 로그인 계정마다 그 계정 토큰으로만 잰다 — 토큰은 답에 없고, 10분 안에는 다시 묻지 않는다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'local-merge-'));
+    const calls: { args: string[]; env: Record<string, string> }[] = [];
+    let t = 1_000_000;
+    const exec: Exec = async (_file, args, env) => {
+      calls.push({ args, env });
+      if (args[0] === 'auth' && args[1] === 'status') return { code: 0, stdout: STATUS, stderr: '' };
+      if (args[0] === 'auth' && args[1] === 'token') return { code: 0, stdout: `tok-${args[3]}\n`, stderr: '' };
+      // work-account 는 acme 회원, izagood 는 아니다
+      if (env.GH_TOKEN === 'tok-work-account' && args[1] === 'user/memberships/orgs/acme') return { code: 0, stdout: JSON.stringify({ state: 'active' }), stderr: '' };
+      return { code: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' };
+    };
+    const port = createLocalMergePort({ configPath: join(dir, 'operator.json'), ghPath: '/opt/gh', home: '/home/me', exec, host: 'mac-1', now: () => t });
+    const r = await port.check(['acme/*', 'izagood/*']);
+    expect(r.reach['acme/*']!['work-account']!.status).toBe('ok');
+    expect(r.reach['acme/*']!.izagood!.status).toBe('no');
+    expect(r.reach['izagood/*']!.izagood!.status).toBe('ok');
+    expect(r.reach['izagood/*']!['work-account']!.status).toBe('no');
+    expect(JSON.stringify(r)).not.toContain('tok-');
+    const api = calls.filter((c) => c.args[0] === 'api');
+    expect(api.map((c) => c.args)).toContainEqual(['api', 'user/memberships/orgs/acme']);
+    // izagood/* 를 izagood 로는 묻지 않는다(자기 계정)
+    expect(api).toHaveLength(3);
+    for (const c of api) expect(c.env.GH_TOKEN).toMatch(/^tok-/);
+
+    const n = calls.length;
+    t += REACH_TTL_MS - 1;
+    await port.check(['acme/*']);
+    expect(calls.filter((c) => c.args[0] === 'api').length).toBe(3);
+    t += 2;
+    await port.check(['acme/*']);
+    expect(calls.length).toBeGreaterThan(n + 1);
+    expect(calls.filter((c) => c.args[0] === 'api').length).toBe(5);
+  });
+
+  it('토큰을 못 꺼내면 unknown, gh 목록이 없으면 빈 답', async () => {
+    const { port, setReply } = await fresh();
+    setReply({ code: 1, stdout: 'not json', stderr: 'boom' });
+    expect(await port.check(['acme/api'])).toEqual({ reach: {} });
+  });
+
+  it('readOperatorMergeCheckPayload: 범위 문자열 배열만', () => {
+    expect(readOperatorMergeCheckPayload({ scopes: ['Acme/*', 'acme/*', 'acme/api'] })).toEqual({ scopes: ['acme/*', 'acme/api'] });
+    expect(readOperatorMergeCheckPayload({ scopes: ['../etc'] })).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMergeCheckPayload({ scopes: 'acme/*' })).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMergeCheckPayload({})).toMatchObject({ code: 'bad-payload' });
   });
 });

@@ -2151,6 +2151,11 @@ impl DaemonConnection {
         self.request("operatorMergeSet", payload)
     }
 
+    // 닿음 확인(e085b6a7) — 오가는 것은 범위 문자열과 ok|no|unknown 뿐이다. 어느 계정·토큰으로 잴지는 오퍼레이터가 정한다.
+    pub fn operator_merge_check(&self, scopes: &[String]) -> Result<Value, String> {
+        self.request("operatorMergeCheck", json!({ "scopes": scopes }))
+    }
+
     // 작업 폴더 정리(스레드 9e909150). 원장은 오퍼레이터의 것이고 앱은 읽기·설정·보존/넣기만 한다 — 바로 지우는 메서드는 없다.
     pub fn workspace_cleanup_get(&self) -> Result<Value, String> {
         self.request("workspaceCleanupGet", json!({}))

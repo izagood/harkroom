@@ -12,7 +12,7 @@
  * `--show-token` 은 쓰지 않는다: 이 경로는 토큰을 읽을 일이 없다.
  */
 import { hostname } from 'node:os';
-import { GH_LOGIN_RE, MERGE_SCOPE_RE, type OperatorGhAccount, type OperatorMergeSetPayload, type OperatorMergeState } from '@harkroom/shared/daemonProtocol';
+import { GH_LOGIN_RE, MERGE_SCOPE_RE, type OperatorGhAccount, type OperatorMergeCheckResult, type OperatorMergeReach, type OperatorMergeSetPayload, type OperatorMergeState } from '@harkroom/shared/daemonProtocol';
 import { readConfig, writeConfig, type OperatorConfig } from './config.js';
 import { defaultExec, ghEnv, type Exec } from './turnMerge.js';
 
@@ -23,6 +23,31 @@ export interface LocalMergePort {
    * (`scope` 가 null 이면 옛 기기 기본값) — 소켓 쪽이 로그에 남긴다(security C8).
    */
   set(p: OperatorMergeSetPayload): Promise<{ state: OperatorMergeState; changes: { scope: string | null; from: string | null; to: string | null }[] }>;
+  /** 범위마다 지금 로그인된 계정이 닿는지(시안 상태 A·B·E). 10분 캐시 — 토큰은 이 안에서만 쓰고 답에 싣지 않는다. */
+  check(scopes: string[]): Promise<OperatorMergeCheckResult>;
+}
+
+/** 닿음 확인 캐시 수명(시안 §6) — 화면을 열 때마다 GitHub 을 두드리지 않게. */
+export const REACH_TTL_MS = 10 * 60_000;
+
+/**
+ * 한 계정이 한 범위에 닿는가. 머지에는 쓰기 권한이 필요하다.
+ * - `owner/name`: `GET repos/owner/name` 의 `permissions` 에 push·maintain·admin 중 하나가 있으면 ok. 404 는 no(비공개 저장소를
+ *   못 보는 것도 404 다). 200 인데 쓰기 권한이 없으면 no.
+ * - `owner/*`: owner 가 그 계정 자신이면 ok. 아니면 `GET user/memberships/orgs/owner` 가 active 면 ok, 404 면 no. 조직 회원이라고
+ *   모든 저장소에 쓰기가 있는 것은 아니다 — 조직 줄의 ✓ 는 「그 조직에 들어가 있다」까지만 말한다.
+ * - 403(토큰에 read:org 없음 등)·그 밖의 실패는 unknown — 경고색을 쓰지 않는 「확인 못 함」이다.
+ */
+export function reachFromGh(scope: string, login: string, r: { code: number; stdout: string; stderr: string }): OperatorMergeReach {
+  const [owner, name] = scope.split('/');
+  if (name === '*' && owner === login.toLowerCase()) return 'ok';
+  if (r.code !== 0) return /HTTP 404|Not Found/i.test(r.stderr) ? 'no' : 'unknown';
+  let body: unknown;
+  try { body = JSON.parse(r.stdout); } catch { return 'unknown'; }
+  if (name === '*') return (body as { state?: unknown } | null)?.state === 'active' ? 'ok' : 'no';
+  const perms = (body as { permissions?: Record<string, unknown> } | null)?.permissions;
+  if (!perms || typeof perms !== 'object') return 'unknown';
+  return perms.push === true || perms.maintain === true || perms.admin === true ? 'ok' : 'no';
 }
 
 type Accounts = { ok: true; accounts: OperatorGhAccount[] } | { ok: false; error: string };
@@ -52,9 +77,13 @@ export function createLocalMergePort(deps: {
   home: string;
   exec?: Exec;
   host?: string;
+  now?: () => number;
 }): LocalMergePort {
   const exec = deps.exec ?? defaultExec;
   const host = deps.host ?? hostname();
+  const now = deps.now ?? Date.now;
+  // 키는 `scope\nlogin`. 토큰은 담지 않는다 — 잴 때마다 `gh auth token -u` 로 다시 꺼낸다.
+  const reachCache = new Map<string, { status: OperatorMergeReach; at: number }>();
 
   const accounts = async (): Promise<Accounts> => {
     // 토큰 없는 env(`ghEnv(home, null)`) — 상속한 GH_TOKEN 이 목록에 끼어들면 고를 수 없는 가짜 항목이 생긴다.
@@ -71,7 +100,40 @@ export function createLocalMergePort(deps: {
     ...(a.ok ? { accounts: a.accounts } : { accounts: null, accountsError: a.error }),
   });
 
+  const reachOf = async (scope: string, login: string): Promise<{ status: OperatorMergeReach; at: number }> => {
+    const key = `${scope}\n${login}`;
+    const hit = reachCache.get(key);
+    if (hit && now() - hit.at < REACH_TTL_MS) return hit;
+    const [owner, name] = scope.split('/');
+    let status: OperatorMergeReach;
+    if (name === '*' && owner === login.toLowerCase()) status = 'ok';
+    else {
+      const tok = await exec(deps.ghPath, ['auth', 'token', '-u', login], ghEnv(deps.home, null));
+      const token = tok.stdout.trim();
+      if (tok.code !== 0 || !token) status = 'unknown';
+      else {
+        // 경로는 MERGE_SCOPE_RE 를 지난 범위로만 짓는다 — 웹뷰가 다른 API 를 고를 자리가 없다.
+        const path = name === '*' ? `user/memberships/orgs/${owner}` : `repos/${owner}/${name}`;
+        status = reachFromGh(scope, login, await exec(deps.ghPath, ['api', path], ghEnv(deps.home, token)));
+      }
+    }
+    const v = { status, at: now() };
+    reachCache.set(key, v);
+    return v;
+  };
+
   return {
+    async check(scopes) {
+      const a = await accounts();
+      const reach: OperatorMergeCheckResult['reach'] = {};
+      if (!a.ok) return { reach };
+      // 범위 × 계정이 몇 개 안 된다(줄 몇 개 × 로그인 두셋). 한꺼번에 돌리되 같은 계정의 토큰은 캐시가 받친다.
+      await Promise.all(scopes.flatMap((scope) => a.accounts.map(async ({ login }) => {
+        const r = await reachOf(scope, login);
+        (reach[scope] ??= {})[login] = { status: r.status, checkedAt: new Date(r.at).toISOString() };
+      })));
+      return { reach };
+    },
     async get() {
       const [config, a] = await Promise.all([readConfig(deps.configPath), accounts()]);
       return state(config.merge, a);
