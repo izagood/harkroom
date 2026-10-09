@@ -187,3 +187,60 @@ describe('AskCard — 답하지 않기', () => {
     expect(screen.getByText('정해졌다')).toBeTruthy();
   });
 });
+
+/**
+ * 글로 답한 카드(A′, 2026-10-09). 사람이 카드를 누르지 않고 같은 스레드에 글을 쓰면 서버가
+ * `closedReason: 'replied'` 로 닫는다. 카드는 강조를 거두고 그 글을 한 줄 인용하며, 「그래도
+ * 고르기」로 늦게 고를 수 있다.
+ */
+describe('AskCard — 글로 답함 · 새 질문으로 바뀜', () => {
+  const REPLY = 'm-reply';
+  const replied = () => askMeta({
+    closedAt: new Date().toISOString(), closedBy: ME, closedReason: 'replied', replyMessageId: REPLY,
+  });
+
+  it('글로 답한 카드는 강조 없이 접히고 그 글을 인용한다', () => {
+    useAppStore.getState().set({
+      messages: { c1: [msg(REPLY, 'c1', 2, `<@${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}> 셋 다 말고, 폭은 720으로 고정해 줘\n둘째 줄`, ME)] },
+    });
+    render(<MessageItem message={askMessage(replied())} />);
+    const card = screen.getByTestId('ask-card');
+    expect(card.dataset.closedReason).toBe('replied');
+    expect(screen.getByText('글로 답했다')).toBeTruthy();
+    expect(screen.queryByText('답 없이 닫혔다')).toBeNull();
+    expect(screen.getByTestId('ask-reply-quote').textContent).toBe('셋 다 말고, 폭은 720으로 고정해 줘');
+    expect(screen.queryByTestId('ask-option-new')).toBeNull();
+    expect(screen.queryByTestId('ask-decline')).toBeNull();
+  });
+
+  it('「그래도 고르기」를 펼치면 늦게 고를 수 있다', () => {
+    render(<MessageItem message={askMessage(replied())} />);
+    fireEvent.click(screen.getByTestId('ask-pick-anyway'));
+    const option = screen.getByTestId('ask-option-edit') as HTMLButtonElement;
+    expect(option.disabled).toBe(false);
+    fireEvent.click(option);
+    expect(answerAsk).toHaveBeenCalledWith('m-ask', 'edit', 'c1');
+    // 차례는 이미 넘어갔다 — 펼쳐도 내 차례 강조는 돌아오지 않는다.
+    expect(screen.queryByTestId('ask-decline')).toBeNull();
+  });
+
+  it('남에게 간 카드는 글로 닫혀도 「그래도 고르기」가 없다', () => {
+    render(<MessageItem message={askMessage(askMeta({
+      to: { kind: 'account', accountId: FORGE },
+      closedAt: new Date().toISOString(), closedBy: FORGE, closedReason: 'replied',
+    }))} />);
+    expect(screen.queryByTestId('ask-pick-anyway')).toBeNull();
+  });
+
+  it('새 카드로 대신된 카드는 「새 질문으로 바뀜」 한 줄이다', () => {
+    render(<MessageItem message={askMessage(askMeta({
+      prompt: '설정 화면 폭', closedAt: new Date().toISOString(), closedBy: FORGE,
+      closedReason: 'superseded', supersededBy: 'm-new',
+    }))} />);
+    expect(screen.getByTestId('ask-card').dataset.closedReason).toBe('superseded');
+    expect(screen.getByText('새 질문으로 바뀜')).toBeTruthy();
+    expect(screen.queryByText('설정 화면 폭')).toBeNull();
+    expect(screen.queryByTestId('ask-option-new')).toBeNull();
+    expect(screen.queryByTestId('ask-pick-anyway')).toBeNull();
+  });
+});

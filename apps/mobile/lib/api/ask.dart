@@ -57,6 +57,9 @@ class AskMeta {
     this.answeredWith,
     this.answeredBy,
     this.closedAt,
+    this.closedBy,
+    this.closedReason,
+    this.replyMessageId,
   });
 
   /// 무엇을 묻는지. 본문에 이미 적혀 있으면 없다 — **같은 말을 두 번 그리지 않는다.**
@@ -71,6 +74,20 @@ class AskMeta {
   /// **답하지 않기로 한** 시각. 고른 것과 안 고른 것은 다른 사실이라 필드를 나눈다 —
   /// 하나로 뭉치면 "무엇으로 정해졌나"에 답할 수 없는 값이 그 자리에 앉는다.
   final String? closedAt;
+  final String? closedBy;
+
+  /// 왜 닫혔나 — `declined`(답하지 않기)·`replied`(글로 답함, A′)·`superseded`(새 카드로 바뀜).
+  /// 옛 서버는 싣지 않는다 — 그때는 `declined` 로 읽는다(전에는 닫힘이 그것 하나였다).
+  final String? closedReason;
+
+  /// `replied` 일 때 카드를 닫은 사람 글의 id. 인용 한 줄을 그릴 때 쓴다.
+  final String? replyMessageId;
+
+  /// 글로 답해 닫혔다 — 차례는 넘어갔지만 늦게 고를 수는 있다(서버가 받는다).
+  bool get isReplied => answeredWith == null && closedAt != null && closedReason == 'replied';
+
+  /// 새 카드로 대신됐다 — 고를 것은 새 카드에 있다. 서버도 늦은 답을 받지 않는다.
+  bool get isSuperseded => answeredWith == null && closedAt != null && closedReason == 'superseded';
 
   /// 아직 누군가를 **막고 있는가.** 답도 없고 닫히지도 않았을 때만 참이다.
   bool get isOpen => answeredWith == null && closedAt == null;
@@ -113,6 +130,9 @@ class AskMeta {
       answeredWith: ask['answeredWith'] as String?,
       answeredBy: ask['answeredBy'] as String?,
       closedAt: ask['closedAt'] as String?,
+      closedBy: ask['closedBy'] as String?,
+      closedReason: ask['closedReason'] as String?,
+      replyMessageId: ask['replyMessageId'] as String?,
     );
   }
 }

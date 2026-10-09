@@ -643,6 +643,15 @@ abstract class Strings {
   /// 답하지 않기로 한 물음.
   String get askClosed;
 
+  /// 사람이 카드를 누르지 않고 같은 스레드에 글로 답해 닫힌 물음(A′, 2026-10-09).
+  String get askReplied;
+
+  /// 물어본 쪽이 새 카드로 대신한 물음(`supersedes`).
+  String get askSuperseded;
+
+  /// 글로 답한 뒤에도 고를 수 있게 선택지를 다시 펼치는 단추. [n] 은 선택지 수.
+  String askPickAnyway(int n);
+
   /// 답하지 않기 버튼. **고르기만 있으면** 그만두려는 사람에게 남는 수단이 메시지를 지우는 것뿐이다.
   String get askDecline;
 
@@ -1152,6 +1161,9 @@ Map<String, String> stringsToMap(Strings s) => {
       'artifactLeaveCancel': s.artifactLeaveCancel,
       'askAnswered': s.askAnswered,
       'askClosed': s.askClosed,
+      'askReplied': s.askReplied,
+      'askSuperseded': s.askSuperseded,
+      'askPickAnyway': s.askPickAnyway(0),
       'askDecline': s.askDecline,
       'askToYou': s.askToYou,
       'askToAnyone': s.askToAnyone,

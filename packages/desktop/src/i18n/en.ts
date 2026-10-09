@@ -3474,6 +3474,11 @@ export const en = {
   'speech.ask.decline': 'Don\u2019t answer this',
   'speech.ask.declined': 'Closed without an answer',
   'speech.ask.declinedBy': '{name} chose not to answer',
+  /** 사람이 카드를 누르지 않고 같은 스레드에 글로 답했다(A′, 2026-10-09). 카드는 접히고 늦게 고를 수 있다. */
+  'speech.ask.replied': 'Answered in text',
+  'speech.ask.pickAnyway': 'Pick anyway ({n})',
+  /** 물어본 쪽이 새 카드로 이 카드를 대신했다(`supersedes`). */
+  'speech.ask.superseded': 'Replaced by a new question',
   /**
    * 답한 사람. 이름을 모르면 `common.someone` 이 들어온다 — **그 자리가 이름 자리**라
    * 보통명사가 와도 문장이 서야 하고, 그것이 `common` 에 그 낱말이 있는 이유다.
