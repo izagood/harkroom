@@ -13,8 +13,8 @@ describe('buildMcpConfig', () => {
   it('harkroom(stdio, mcp-bridge) + avcs 는 항상, 이름은 정의에서 찾아 합친다', () => {
     const out = buildMcpConfig({ operatorBin: BIN, names: ['github'], definitions: { github: { command: 'gh-mcp', args: ['serve'], env: { GH_TOKEN: 'x' } } } });
     expect(out.missing).toEqual([]);
-    // alwaysLoad: harkroom 도구는 claude 의 지연 로딩(tool search) 뒤로 미루지 않는다 — 매 턴 ToolSearch 왕복 1회를 없앤다(2026-10-02).
-    expect(out.mcpServers.harkroom).toEqual({ type: 'stdio', command: BIN, args: ['mcp-bridge'], alwaysLoad: true });
+    // alwaysLoad 는 켜지 않는다 — 늦게 붙으면 이어받은 세션의 프롬프트 캐시가 깨진다(2026-10-09, mcpConfig.ts 주석).
+    expect(out.mcpServers.harkroom).toEqual({ type: 'stdio', command: BIN, args: ['mcp-bridge'] });
     expect(out.mcpServers.avcs).toEqual({ type: 'stdio', command: 'avcs', args: ['mcp'] });
     expect(out.mcpServers.github).toEqual({ type: 'stdio', command: 'gh-mcp', args: ['serve'], env: { GH_TOKEN: 'x' } });
   });

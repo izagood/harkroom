@@ -46,12 +46,13 @@ export function buildMcpConfig(input: {
   const mcpServers: Record<string, McpServerDefinition> = {
     // stdio 브릿지(스펙 §5). 인증 재료는 하네스 env 에서 브릿지가 읽는다 — 이 항목엔 명령만 있다.
     //
-    // `alwaysLoad`(2026-10-02): claude 는 MCP 도구 설명이 컨텍스트의 일정 비율을 넘으면 도구를 **지연 로딩**해
-    // 모델이 먼저 `ToolSearch` 를 불러야 쓸 수 있게 한다. 에이전트 하나에 harkroom 35 + avcs 40 + jira·slack
-    // 54 개가 붙어 그 문턱을 넘었고, task_manager 실측에서 거의 **매 턴 ToolSearch 왕복 1회(~5초)** 가
-    // 발화 앞에 끼었다 — 말하려면 `message.post` 부터 찾아야 하니까. harkroom 도구는 모든 턴이 쓰는
-    // 유일한 표면이라 항상 실어 둔다. 나머지(avcs·원격)는 지금처럼 지연 로딩이다.
-    harkroom: { type: 'stdio', command: input.operatorBin, args: [...MCP_BRIDGE_ARGS], alwaysLoad: true },
+    // `alwaysLoad` 를 **켜지 않는다**(2026-10-09, 2026-10-02 에 켰던 것을 되돌림). 켜면 harkroom 도구가 지연
+    // 목록이 아니라 도구 배열에 바로 실린다. 그런데 claude 는 `-r` 로 뜬 턴의 첫 API 호출을 이 서버가 붙기
+    // 전에 보낼 수 있다(연결을 시한까지만 기다린다) — 그러면 붙는 순간 도구 배열이 바뀌어 **이어받은 문맥의
+    // 프롬프트 캐시가 통째로 깨진다**(고정 접두부만 읽고 나머지를 다시 쓴다). 실험(-r 10턴씩): 켬+늦게 붙음
+    // 2/2 깨짐, 끔+늦게 붙음 0/4 깨짐 — 지연 목록으로 늦게 붙는 것은 캐시를 건드리지 않는다. 대가는 턴마다
+    // `ToolSearch` 1회지만, 늦게 붙는 턴은 켜 둬도 어차피 ToolSearch 를 불렀다.
+    harkroom: { type: 'stdio', command: input.operatorBin, args: [...MCP_BRIDGE_ARGS] },
     avcs: { type: 'stdio', command: 'avcs', args: ['mcp'] },
   };
   const missing: string[] = [];
