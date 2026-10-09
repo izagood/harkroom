@@ -590,6 +590,17 @@ export function preassignsSessionId(harness: AgentHarness): boolean {
 }
 
 /**
+ * 이 턴에 「정확한 명령」 hook(H③b)이 실제로 붙는가 — 프롬프트가 kind command 를 권할지 정한다(security n3).
+ * 하네스 이름을 비교하지 않고 그 하네스의 `permissionRules` 가 `--settings` 를 내는지를 그대로 묻는다 — 판정이 한 곳에 산다.
+ */
+export function attachesCommandHook(harness: AgentHarness, mentionPermission: MentionPermission, commandHook: boolean): boolean {
+  if (!commandHook) return false;
+  const preset = PRESETS[harness];
+  if (preset === 'unsupported') return false;
+  return (preset.permissionRules?.({ mode: 'mention', mentionPermission, operatorBin: '/x', mergeRepos: [], commandHook: true }) ?? []).includes('--settings');
+}
+
+/**
  * RUNNABLE_HARNESSES 계약 검사. main.ts 가 기동할 때 이 함수를 불러서,
  * 설정된 실행 가능 목록의 모든 harness 가 실제로 구현돼 있는지 확인한다.
  * 반대 방향(PRESETS 에 있지만 RUNNABLE 에 없는) 은 검사하지 않는다 —

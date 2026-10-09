@@ -1027,3 +1027,14 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     expect(args.join(' ')).not.toMatch(/allowedTools|disallowedTools/);
   });
 });
+
+// security n3(#1252): 프롬프트의 kind command 안내는 hook 이 실제로 붙는 턴에만 — 판정은 permissionRules 하나에 산다.
+describe('attachesCommandHook', () => {
+  it('claude-code auto 멘션 + commandHook 일 때만 참', async () => {
+    const { attachesCommandHook } = await import('../src/turn.js');
+    expect(attachesCommandHook('claude-code', 'auto', true)).toBe(true);
+    expect(attachesCommandHook('claude-code', 'auto', false)).toBe(false);
+    expect(attachesCommandHook('claude-code', 'readonly', true)).toBe(false);
+    expect(attachesCommandHook('codex', 'auto', true)).toBe(false);
+  });
+});

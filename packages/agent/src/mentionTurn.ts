@@ -16,7 +16,7 @@ import type { FailOpts, Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
-import { buildTurnCommand, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
+import { attachesCommandHook, buildTurnCommand, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome } from './adapters/index.js';
 import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
@@ -1094,8 +1094,8 @@ export async function runMentionTurn(
     handle: deps.me.handle,
     secretCreate,
     merge: { operatorBin: deps.operatorBin, repos: grantedRepos, approved: approvedHere.map((a) => ({ repo: a.repo, number: a.number })) },
-    // hook 은 claude auto mention 턴에만 붙는다(turn.ts permissionRules) — 같은 조건일 때만 kind command 를 권한다.
-    permissions: { toolAllows, commandHook: deps.commandHook === true && def.harness === 'claude-code' && def.mentionPermission === 'auto' },
+    // hook 이 실제로 붙는 턴(turn.ts permissionRules 가 --settings 를 낼 때)에만 kind command 를 권한다.
+    permissions: { toolAllows, commandHook: attachesCommandHook(def.harness, def.mentionPermission, deps.commandHook === true) },
     api: { operatorBin: deps.operatorBin, connectors: apiConnectors, delegatable: apiInfo.delegatable },
     channelName: deps.channelName,
     instructions: def.instructions,
