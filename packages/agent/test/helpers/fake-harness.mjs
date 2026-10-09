@@ -142,6 +142,38 @@ if (mode === 'invisible-hold') {
   setTimeout(() => process.exit(23), Number(process.env.FAKE_GIVE_UP_MS ?? 8_000)); // 끝내 제출이 없으면 이 코드
 }
 
+// claude 2.1.295 의 `Pasting…`(2026-10-09 실측, 스레드 0c1b72cb): 칩으로 접히는 붙여넣기를 받아
+// 들이는 동안(여기선 끝 표식 뒤 `FAKE_PASTING_MS`) 들어온 Enter 를 **버린다**. 그 뒤 칩과 바닥줄을
+// 그리고 멈춘다. 그때 온 Enter 는 제출된다. 같은 틱에 `\r` 을 치던 러너는 여기서 칩만 남겼다.
+if (mode === 'pasting-drop') {
+  const pastingMs = Number(process.env.FAKE_PASTING_MS ?? 200);
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+  process.stdout.write('READY\n❯\u00a0');
+  process.stdin.setEncoding('utf8');
+  let raw = '';
+  let pastedAt = 0;
+  let dropped = 0;
+  process.stdin.on('data', (d) => {
+    for (const ch of d) {
+      if (ch !== '\r') {
+        raw += ch;
+        if (!pastedAt && raw.includes('\u001b[201~')) {
+          pastedAt = Date.now();
+          process.stdout.write('\nPasting…');
+          setTimeout(() => process.stdout.write('\r[Pasted text #1 +3 lines]\nPaste again to expand'), pastingMs);
+        }
+        continue;
+      }
+      if (!pastedAt) continue;
+      if (Date.now() - pastedAt < pastingMs) { dropped += 1; continue; }   // 받아 들이는 중 — 버린다
+      process.stdout.write(`\nSUBMITTED DROPPED:${dropped}\n❯\u00a0\n`);
+      setTimeout(() => process.exit(0), 50);
+      return;
+    }
+  });
+  setTimeout(() => process.exit(23), Number(process.env.FAKE_GIVE_UP_MS ?? 8_000));
+}
+
 // 아무 신호도 안 찍고 버틴다 — 미로그인 화면·디렉터리 신뢰 대화상자가 이 모양이다.
 if (mode === 'hang-silent') { setInterval(() => {}, 1_000); }
 
