@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
-import { closeAsk, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isPermissionCardMessage, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE } from '../services/messages.js';
+import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isPermissionCardMessage, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -112,6 +112,8 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       const audience = await audienceFor(pool, id);
       emitPosted(posted, audience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+      // 사람이 카드 대신 글로 답했으면 그 스레드의 열린 카드를 접는다(선택 카드 A′, `closeAsksByReply`).
+      if (req.account!.kind === 'human') await closeAsksByReply(pool, message);
       const urls = extractUrls(body.body);
       for (const url of urls) {
         queueLinkPreviewFetch(pool, url).catch(() => {});
