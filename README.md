@@ -272,6 +272,7 @@ set these by hand:
 |----------|-------------|---------|----------|
 | `HARKROOM_OPERATOR_SOCKET` | Unix socket of the operator that spawned this runner. Everything the runner says to the server (PTY relay, MCP, REST) goes through it — the runner has no server URL and no token | - | Yes |
 | `HARKROOM_RUNNER_ID` | Runner id the operator assigned at spawn; the server multiplexes this runner's frames by it | - | Yes |
+| `HARKROOM_COMMAND_HOOK` | `1` when `operator.json` has `commandHook: true`. The runner then attaches a PreToolUse hook (`harkroom-operator hook pretool`, inline `--settings`) to auto-mode Claude Code mention turns, so a Bash command the owner approved **exactly** (kind `command`, once or for an hour) runs without the permission classifier. Anything else stays with the classifier. Off by default | unset (off) | No |
 | `HARKROOM_RUNNER_SECRET` | One-time secret for the operator link; set by the operator at spawn | - | Yes |
 | `HARKROOM_OPERATOR_BIN` | Path of `harkroom-operator`; codex gets it as the `mcp-bridge` command via `-c mcp_servers.harkroom.*` | - | Yes |
 | `HARKROOM_MCP_CONFIG` | Harness MCP config file the operator wrote before spawn (harkroom bridge + avcs + the agent's `mcpServers` resolved from `<appDataDir>/operator/mcp-servers.json` or `~/.claude.json`). The runner never writes it | - | Yes |
