@@ -166,6 +166,11 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
   },
   {
     file: 'components/settings/SecretsSettings.tsx',
+    contains: '<Identity account={accounts[g.agentId]} className="h-5 w-5 text-[10px]"',
+    why: '같은 쌍 — 비밀 받는 에이전트 줄의 h-5 얼굴',
+  },
+  {
+    file: 'components/settings/SecretsSettings.tsx',
     contains: '<Identity account={agent} className="h-5 w-5 text-[10px]"',
     why: '같은 쌍 — 비밀 주기 확인 줄의 h-5 얼굴',
   },

@@ -186,6 +186,7 @@ describe('비밀 소유자 보기', () => {
     setup({ listSecretAccess: vi.fn(async () => [
       row('5', '2026-10-09T05:10:00Z', { result: 'granted', reason: null, version: 1, ip: '203.0.113.7' }),
       row('4', '2026-10-09T05:05:00Z'), row('3', '2026-10-09T05:04:00Z'), row('2', '2026-10-09T05:02:00Z'),
+      row('1', '2026-10-09T05:01:00Z', { actorAccountId: null, agentId: 'agent-x', action: null, reason: 'not_granted', client: null }),
     ]) });
     setServer('0.4.20');
     render(<SecretsSettings />);
@@ -194,7 +195,10 @@ describe('비밀 소유자 보기', () => {
     const folded = await screen.findByTestId('secret-access-folded');
     expect(folded.textContent).toContain('×3');
     expect(folded.textContent).toContain('막힘 (잠금 해제 안 됨)');
-    expect(screen.getAllByRole('row')).toHaveLength(3);
+    expect(screen.getAllByRole('row')).toHaveLength(4);
+    // C: 에이전트 막힘 줄도 경고색으로 — 값·해시는 어디에도 없다.
+    expect(screen.getByTestId('secret-access-denied').textContent).toContain('막힘');
+    expect(document.body.textContent).not.toContain(VALUE);
     const viewed = screen.getAllByRole('row').find((tr) => tr.textContent?.includes('봤음'));
     expect(viewed?.querySelector('[title]')?.getAttribute('title')).toBe('203.0.113.7');
     expect(folded.querySelector('[title]')).toBeNull();

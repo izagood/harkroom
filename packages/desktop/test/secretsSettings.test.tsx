@@ -143,8 +143,21 @@ describe('SecretsSettings', () => {
     pickAgent('gamma');
     fireEvent.click(screen.getByRole('button', { name: '주기' }));
     await waitFor(() => expect(c.putSecretGrant).toHaveBeenCalledWith('id-api-token', { agentId: 'agent-3', channelId: null, operator: 'current' }));
-    fireEvent.click(screen.getByRole('button', { name: '@alpha 에게서 거두기' }));
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '거두기' }));
+    // C: 받는 에이전트 줄 — 범위는 칩 둘(「모든 채널」「이 머신만」), [거두기]는 hover·포커스·터치에서만 드러난다.
+    const grantRow = screen.getByTestId('secret-grant-alpha');
+    expect(within(grantRow).getByTestId('secret-grant-scope').textContent).toBe('모든 채널');
+    expect(within(grantRow).getByTestId('secret-grant-machine').textContent).toBe('이 머신만');
+    const revoke = screen.getByRole('button', { name: '@alpha 에게서 거두기' });
+    expect(revoke.className).toContain('opacity-0');
+    expect(revoke.className).toContain('group-hover:opacity-100');
+    expect(revoke.className).toContain('focus-visible:opacity-100');
+    expect(revoke.className).toContain('[@media(hover:none)]:opacity-100');
+    fireEvent.click(revoke);
+    // 확인창 문구는 그대로다(security C 확인 항목).
+    const dlg = screen.getByRole('dialog');
+    expect(dlg.textContent).toContain('@alpha 에게 api-token 주기를 멈출까?');
+    expect(dlg.textContent).toContain('다음 마운트부터 받지 못한다.');
+    fireEvent.click(within(dlg).getByRole('button', { name: '거두기' }));
     await waitFor(() => expect(c.deleteSecretGrant).toHaveBeenCalledWith('id-api-token', 'g1'));
   });
 
@@ -177,12 +190,12 @@ describe('SecretsSettings', () => {
     expect(within(note).getByText('모든 스레드').tagName).toBe('STRONG');
     expect(screen.queryByTestId('secret-grant-any-warn')).toBeNull();
     // designer n1: 고른 뒤 초점은 세그먼트의 골라진 칸 — 여는 단추도 [주기]도 아니다.
-    const cur = within(confirm).getByRole('radio', { name: '지금 오퍼레이터에서만' });
+    const cur = within(confirm).getByRole('radio', { name: '이 머신만' });
     expect(document.activeElement).toBe(cur);
     expect(cur.tabIndex).toBe(0);
     // designer n3: ←→ 로 옮긴다.
     fireEvent.keyDown(cur, { key: 'ArrowRight' });
-    const any = within(confirm).getByRole('radio', { name: '어느 오퍼레이터든' });
+    const any = within(confirm).getByRole('radio', { name: '어느 머신이든' });
     expect(any.getAttribute('aria-checked')).toBe('true');
     expect(document.activeElement).toBe(any);
     expect(cur.tabIndex).toBe(-1);
@@ -256,7 +269,7 @@ describe('SecretsSettings', () => {
     setup({ listSecretGrants: vi.fn(async () => []) }, [secret('made', { createdByAgentId: 'agent-1', valueSetByAgentId: 'agent-1' })]);
     render(<SecretsSettings />);
     await expand('made');
-    await screen.findByText('받을 수 있는 에이전트가 없다.');
+    await screen.findByText('아직 받는 에이전트가 없다.');
     // 고르기 전에는 안내가 없다(designer n2 — 폼 위에 세 줄이 겹치지 않게).
     expect(screen.queryByTestId('secret-adopt-note')).toBeNull();
     expect(screen.queryByTestId('secret-widen-warn')).toBeNull();
@@ -309,6 +322,14 @@ describe('SecretsSettings', () => {
     await expand('theirs');
     await screen.findByTestId('secret-grants');
     expect(screen.queryByTestId('secret-agent-add')).toBeNull();
+  });
+
+  it('API 연결 빈 상태는 한 문단으로 무엇이 좋은지 말한다 — 설명 줄은 목록이 있을 때만', async () => {
+    setup({ listConnectors: vi.fn(async () => []) });
+    render(<SecretsSettings />);
+    const none = await screen.findByTestId('connectors-none');
+    expect(none.textContent).toContain('키를 보지 않고도');
+    expect(screen.getByTestId('connectors').textContent).not.toContain('연결 이름과 경로만 쓴다');
   });
 
   it('보관소가 꺼진 서버면 그렇게 말하고 넣기가 없다', async () => {

@@ -101,30 +101,35 @@ export function ConnectorsSection({ secrets, enabled, onChanged }: {
 
   const list = Array.isArray(rows) ? rows : [];
   return (
-    <section className="mt-4 rounded border border-border p-3" data-testid="connectors">
-      <div className="flex items-center gap-2">
-        <span className="text-meta font-medium text-fg-muted">{t('connectors.heading')}</span>
+    // 비밀 절과 같은 꼴: 테두리 없는 제목줄 + 목록 하나만 테두리(designer 시안 v1 #7·#10). 주 버튼은 비밀 쪽 하나라 여기는 보조.
+    <section className="mt-8" data-testid="connectors">
+      <div className="mb-2 flex items-center gap-2.5">
+        <h3 className="text-meta font-semibold text-fg">{t('connectors.heading')}</h3>
+        {Array.isArray(rows) && <span className="text-meta text-fg-subtle">{list.length}</span>}
         {enabled && !editing && (
           <span className="ml-auto"><Button onClick={() => { setEditing({ id: null, draft: emptyDraft() }); setError(null); }} disabled={busy}>{t('connectors.add')}</Button></span>
         )}
       </div>
-      <p className="mt-1 text-meta text-fg-subtle">{t('connectors.note')}</p>
       {rows === 'loading' && <p className="mt-2 text-meta text-fg-muted">{t('secrets.loading')}</p>}
       {rows === 'error' && <p role="alert" className="mt-2 text-meta text-danger">{t('connectors.listFailed')}</p>}
-      {Array.isArray(rows) && list.length === 0 && !editing && <p className="mt-2 text-meta text-fg-subtle" data-testid="connectors-none">{t('connectors.none')}</p>}
+      {/* 빈 상태 한 문단이 무엇이 좋은지 말한다 — 설명 줄과 「아직 없다」 두 줄을 하나로. 목록이 있으면 설명은 한 줄로 남긴다. */}
+      {Array.isArray(rows) && list.length === 0 && !editing && (
+        <p className="rounded-card border border-border px-3.5 py-3 text-meta text-fg-muted" data-testid="connectors-none">{t('connectors.none')}</p>
+      )}
+      {Array.isArray(rows) && list.length > 0 && <p className="mb-2 text-meta text-fg-subtle">{t('connectors.note')}</p>}
 
       {editing?.id === null && (
         <ConnectorForm draft={editing.draft} creating busy={busy} keyOptions={keyOptions}
           onChange={(draft) => setEditing({ id: null, draft })} onCancel={() => setEditing(null)} onSubmit={(d) => submit(null, d)} />
       )}
 
-      <ul className="mt-2 space-y-1">
+      <ul className={list.length > 0 ? 'divide-y divide-border rounded-card border border-border' : ''}>
         {list.map((c) => {
           const mine = c.ownerAccountId === me?.id;
           const keyName = secretName(c.secretId);
           const noKey = c.authKind !== 'none' && !c.secretId;
           return (
-            <li key={c.id} className="rounded border border-border px-2 py-1 text-meta" data-testid={`connector-${c.name}`}>
+            <li key={c.id} className="px-3 py-2 text-meta" data-testid={`connector-${c.name}`}>
               <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 ${noKey ? 'text-fg-subtle' : 'text-fg'}`}>
                 <span className="font-mono font-medium">{c.name}</span>
                 <span className="font-mono text-fg-subtle">{c.baseUrl}</span>
