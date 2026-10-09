@@ -145,7 +145,9 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
         </ul>
       )}
 
-      <div className="mt-2 flex flex-wrap items-center gap-2">
+      {/* ModelPicker 가 고르개 뒤에 내놓는 안내문(목록 실패 등)은 줄 아래로 내린다 — 넓은 칸에서 고르개 · 긴 안내문 · 「추가」
+          순으로 한 줄에 서서 「추가」가 고르개와 떨어졌다(designer #1256 nit 3). */}
+      <div className="mt-2 flex flex-wrap items-center gap-2 [&>span]:order-last [&>span]:basis-full">
         <ModelPicker value={adding} models={models} onChange={setAdding} className={FIELD} />
         <button
           type="button"
