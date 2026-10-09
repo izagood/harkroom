@@ -472,6 +472,26 @@ export async function sessionTranscriptGrewSince(
   // "파일이 없다"를 다 `null` 로 뭉치므로, 여기서 먼저 가른다.
   if (!readsSessionTranscript(harness)) return true;
   if (!sessionId) return true;
-  const mtime = await sessionTranscriptMtimeMs(harness, sessionId, opts);
-  return mtime !== null && mtime > sinceMs;
+  /**
+   * **자란 것은 파일이 아니라 사람 입력 줄이어야 한다**(2026-10-09, 스레드 0c1b72cb).
+   *
+   * mtime 으로 재면 되살린 턴에서 다시 늘 참이 된다 — `claude -r` 은 입력을 받기 **전에**
+   * 기록 파일을 건드린다(실측 2.1.295: 크기는 그대로인데 mtime 이 턴 시작 뒤로 움직였다,
+   * 메타 줄 `ai-title`·`mode`·`permission-mode` 따위). 그래서 Enter 가 삼켜진 턴도 15초 창이
+   * "전달됨"으로 읽고 개행을 다시 안 쳤다(task_manager 10-09, 그물 셋이 다 빗나간 이유 하나).
+   *
+   * 그래서 **`sinceMs` 이후 시각이 찍힌 `type:"user"` 줄**(메타·사이드체인 제외)이 있어야
+   * 참이다. 프롬프트가 제출되면 claude 는 그 자리에서 이 줄을 쓴다. 시각 없는 메타 줄은 세지 않는다.
+   */
+  const text = await readTranscriptTail(sessionId, opts);
+  if (text === null) return false;
+  for (const line of text.split('\n')) {
+    if (!line.includes('"user"')) continue;
+    let record: { type?: unknown; isMeta?: unknown; isSidechain?: unknown; timestamp?: unknown };
+    try { record = JSON.parse(line); } catch { continue; }
+    if (record.type !== 'user' || record.isMeta === true || record.isSidechain === true) continue;
+    const at = typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : NaN;
+    if (Number.isFinite(at) && at >= sinceMs) return true;
+  }
+  return false;
 }

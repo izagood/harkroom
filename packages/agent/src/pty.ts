@@ -667,6 +667,17 @@ export interface RunPtyTurnOptions {
      * 보이면 개행을 다시 친다(본문은 다시 보내지 않는다 — 두 번 서면 같은 일을 두 번 한다).
      */
     unsentHint?: RegExp;
+    /**
+     * 붙여넣기 뒤 Enter 를 치기까지(ms, 2026-10-09). 최소 `submitMinMs`(기본 300)를 두고, 그 뒤 마지막으로 그린 것이 `Pasting…` 이 아니고
+     * 화면이 `submitQuietMs`(기본 150) 잠잠해지면 친다. `submitMaxMs`(기본 1200)에 닿으면 정적을
+     * 못 봤어도 친다 — `unsentProbeMs` 첫 확인(1.5초)보다 앞서야 그물이 먼저 Enter 를 치지 않는다.
+     * 근거는 주입부의 주석(같은 틱 `\r` 은 `Pasting…` 중에 버려진다).
+     */
+    submitMinMs?: number;
+    submitQuietMs?: number;
+    submitMaxMs?: number;
+    /** 화면에 그린 마지막 것이 `Pasting…` 인 동안의 상한(ms, 기본 5000). 받는 동안은 조용할 수 있다. */
+    submitPastingMaxMs?: number;
     /** `unsentHint` 를 확인할 간격(ms, 기본 1500)과 최대 재시도 횟수(기본 3). */
     unsentProbeMs?: number;
     unsentRetries?: number;
@@ -985,8 +996,11 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       const { text, readyPattern = DEFAULT_READY_PATTERN, readyTimeoutMs = 60_000,
               readyQuietMs = 300, readyQuietMaxMs = 2_000, gatePattern = DEFAULT_GATE_PATTERN,
               readyMinMs = 0, unsentHint, unsentProbeMs = 1_500, unsentRetries = 3,
+              submitMinMs = 300, submitQuietMs = 150, submitMaxMs = 1_200, submitPastingMaxMs = 5_000,
               waitingQuietMs = 3_000, onAttention } = opts.injectPrompt;
       let injected = false;
+      /** 붙여넣기 뒤 Enter 를 쳤나. 그 전에는 미제출 그물(`unsentHint`)이 Enter 를 치지 않는다. */
+      let submitted = false;
       /**
        * **관문 때문에 주입을 미루고 있는가**(2026-09-11).
        *
@@ -1119,8 +1133,48 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         // 읽어 전송을 건너뛴다.
         try {
           proc.write(`\u001b[200~${sanitizePasteText(text)}\u001b[201~`);
-          proc.write('\r');
         } catch { /* 그 사이에 죽었으면 exit 리스너가 결과를 정한다 */ }
+        /**
+         * **Enter 는 붙여넣기가 가라앉은 뒤에 친다**(2026-10-09, 스레드 0c1b72cb).
+         *
+         * claude(2.1.295)는 칩으로 접히는 긴 붙여넣기를 `Pasting…` 으로 받아 들이는 동안 들어온
+         * Enter 를 **버린다**. 실측(실제 정지 턴의 프롬프트 4,546자·62줄): 같은 틱에 `\r` 이면
+         * 제출 0/6, 100ms 뒤 2/3, 300ms 뒤 3/3, 1초 뒤 3/3. 프로덕션에서는 기동 부하에 따라
+         * 갈려 가끔만 걸렸고, 걸리면 칩만 남긴 채 10분 정지로 접혔다(task_manager 10-09).
+         *
+         * 그래서 **최소 `submitMinMs` 를 두고, 그 뒤 화면이 `submitQuietMs` 잠잠해지면** 친다.
+         * 붙여넣기를 다 받으면 TUI 는 칩과 바닥줄을 한 번 그리고 멈춘다 — 그 정적이 신호다.
+         * 쉬지 않고 그리는 화면을 위해 `submitMaxMs` 상한이 있고, 그 뒤 그물(`unsentHint`·
+         * `confirmDelivery`)은 그대로다. 문구(`Pasting…`)로 재지 않는 이유: 화면 바이트는
+         * 지운 줄을 지우지 않으므로 끝난 뒤에도 꼬리에 남는다(실제 정지 화면에 그대로 있었다).
+         */
+        const pastedAt = Date.now();
+        let lastPasteData = pastedAt;
+        /** 붙여넣기 뒤에 그린 글자(꼬리 2KB). `Pasting…` 이 **마지막으로 그린 것**인지만 본다. */
+        let afterPaste = '';
+        const pasteData = proc.onData((chunk) => {
+          lastPasteData = Date.now();
+          afterPaste = (afterPaste + chunk).slice(-2_048);
+        });
+        const submit = (): void => {
+          pasteData.dispose();
+          if (settled) return;
+          submitted = true;
+          try { proc.write('\r'); } catch { /* 그 사이에 죽었으면 exit 리스너가 결과를 정한다 */ }
+        };
+        const settleProbe = setInterval(() => {
+          const t = Date.now();
+          if (settled) { clearInterval(settleProbe); pasteData.dispose(); return; }
+          const since = t - pastedAt;
+          if (since < submitMinMs) return;
+          // 받아 들이는 중 표시가 화면에 그린 마지막 것이면 아직이다 — 받는 동안 화면이 조용할 수
+          // 있다. 그 뒤에 칩·바닥줄이 그려지면 이 조건은 풀린다. 이 기다림에도 상한이 있다.
+          const pasting = /Pasting…?\s*$/.test(stripAnsi(afterPaste));
+          if (since < (pasting ? submitPastingMaxMs : submitMaxMs) && (pasting || t - lastPasteData < submitQuietMs)) return;
+          clearInterval(settleProbe);
+          submit();
+        }, 25);
+        settleProbe.unref?.();
 
         /**
          * **삼켜진 Enter 를 화면으로 보고 다시 친다**(2026-09-14).
@@ -1137,6 +1191,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
           let left = unsentRetries;
           const nudge = setInterval(() => {
             if (settled || left <= 0) { clearInterval(nudge); return; }
+            if (!submitted) return;   // 첫 Enter 가 아직이다 — 받아 들이는 중에 치면 버려진다
             if (!unsentHint.test(stripAnsi(decodeTailText(tail.snapshot())))) {
               // 갔다. 더 칠 이유가 없다 — 남은 시도를 태우지 않는다.
               clearInterval(nudge);
@@ -1215,6 +1270,8 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
                 프롬프트가 두 번 서고, 그러면 하네스가 같은 일을 두 번 한다 — 사람을
                 한 창 늦게 부르는 것보다 그쪽이 비싸다.
               */
+              // 쐈는지 로그로 남긴다(2026-10-09) — 이 줄이 없어 정지 턴에서 이 그물이 돌았는지 알 수 없었다.
+              console.error(`[pty] 주입 ${withinMs}ms 뒤에도 세션 기록에 사람 입력 줄이 없다 — 개행을 한 번 더 친다`);
               try { proc.write('\r'); } catch { /* 그 사이에 죽었으면 exit 리스너가 정한다 */ }
               const graceTimer = setTimeout(() => {
                 if (settled) return;

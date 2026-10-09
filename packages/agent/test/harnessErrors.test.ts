@@ -159,24 +159,36 @@ describe('readLastApiError — sinceMs', () => {
 // 무조건 참이 되고, 그 구멍으로 프로덕션에서 턴 둘이 연달아 프롬프트를 못 받은 채 각각
 // 10분씩 정지 시계에 접혔다(forge `5e08f534`, 31분 동안 기록 0줄).
 describe('sessionTranscriptGrewSince', () => {
-  const 자란시각 = async (projects: string): Promise<number> => {
-    const { stat } = await import('node:fs/promises');
-    return (await stat(join(projects, '-private-tmp-whatever-cwd', `${SID}.jsonl`))).mtimeMs;
-  };
+  const T0 = Date.parse('2026-10-09T14:21:00.000Z');
+  const at = (ms: number): string => new Date(T0 + ms).toISOString();
 
-  it('턴 시작 뒤에 자랐으면 참 — 대화가 실제로 시작됐다', async () => {
-    const projects = await seed([{ type: 'user' }]);
-    const mtime = await 자란시각(projects);
-    expect(await sessionTranscriptGrewSince('claude-code', SID, mtime - 1_000, { projectsDir: projects }))
-      .toBe(true);
+  it('턴 시작 뒤 시각이 찍힌 user 줄이 있으면 참 — 프롬프트가 실제로 제출됐다', async () => {
+    const projects = await seed([{ type: 'user', timestamp: at(-60_000) }, { type: 'user', timestamp: at(5_000) }]);
+    expect(await sessionTranscriptGrewSince('claude-code', SID, T0, { projectsDir: projects })).toBe(true);
   });
 
-  it('턴 시작 전이 마지막이면 거짓 — 되살린 턴이 프롬프트를 못 받은 그 상태다', async () => {
-    const projects = await seed([{ type: 'user' }]);
-    const mtime = await 자란시각(projects);
+  it('턴 시작 전 user 줄뿐이면 거짓 — 되살린 턴이 프롬프트를 못 받은 그 상태다', async () => {
+    const projects = await seed([{ type: 'user', timestamp: at(-60_000) }, { type: 'assistant', timestamp: at(-55_000) }]);
     // 파일은 **있다**. 존재로 재던 옛 판정은 여기서 참을 돌려주고 사람을 부르지 않았다.
-    expect(await sessionTranscriptGrewSince('claude-code', SID, mtime + 1_000, { projectsDir: projects }))
-      .toBe(false);
+    expect(await sessionTranscriptGrewSince('claude-code', SID, T0, { projectsDir: projects })).toBe(false);
+  });
+
+  // 2026-10-09 실측(claude 2.1.295): `claude -r` 은 입력 전에 기록을 건드린다 — 크기는 그대로인데
+  // mtime 이 턴 시작 뒤로 움직였다. mtime 으로 재던 판정은 그래서 Enter 가 삼켜진 턴을 "전달됨"으로 읽었다.
+  it('턴 시작 뒤 파일이 건드려졌어도 시각 없는 메타 줄뿐이면 거짓 — mtime 으로 재지 않는다', async () => {
+    const projects = await seed([
+      { type: 'user', timestamp: at(-60_000) },
+      { type: 'cost-state' }, { type: 'last-prompt' }, { type: 'ai-title' }, { type: 'mode' }, { type: 'permission-mode' },
+    ]);
+    expect(await sessionTranscriptGrewSince('claude-code', SID, T0, { projectsDir: projects })).toBe(false);
+  });
+
+  it('메타·사이드체인 user 줄은 세지 않는다 — 사람 입력이 아니다', async () => {
+    const projects = await seed([
+      { type: 'user', isMeta: true, timestamp: at(1_000) },
+      { type: 'user', isSidechain: true, timestamp: at(2_000) },
+    ]);
+    expect(await sessionTranscriptGrewSince('claude-code', SID, T0, { projectsDir: projects })).toBe(false);
   });
 
   it('파일이 아예 없으면 거짓 — 첫 턴의 판정은 그대로 산다', async () => {
