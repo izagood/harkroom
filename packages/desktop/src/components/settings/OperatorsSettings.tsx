@@ -264,22 +264,9 @@ export function OperatorsSettings({ onOpenSection }: {
         ))}
       </SettingsGrid>
         )}
-        side={(
+        /* 곁 칸은 할 것이 있을 때만 세운다 — 등록 권한이 없으면 빈 380px 칸이 오른쪽에 남는다(격자가 그 폭을 쓴다). */
+        side={canRegister || error ? (
           <>
-      {confirming && (
-        <ConfirmDialog
-          title={t('operators.confirmTitle', { name: operatorFullName(confirming) })}
-          detail={t('operators.confirmDetail')}
-          confirmLabel={t('operators.revoke')}
-          cancelLabel={t('operators.cancel')}
-          detailKind="note"
-          danger
-          busy={revoking}
-          error={revokeError}
-          onConfirm={() => void revoke(confirming)}
-          onCancel={() => { setConfirming(null); setRevokeError(null); }}
-        />
-      )}
 
       {error && (
         <div className="mb-4 rounded-row border border-danger-border bg-danger-surface p-3">
@@ -326,8 +313,22 @@ export function OperatorsSettings({ onOpenSection }: {
         </SettingsGroup>
       )}
           </>
-        )}
+        ) : undefined}
       />
+      {confirming && (
+        <ConfirmDialog
+          title={t('operators.confirmTitle', { name: operatorFullName(confirming) })}
+          detail={t('operators.confirmDetail')}
+          confirmLabel={t('operators.revoke')}
+          cancelLabel={t('operators.cancel')}
+          detailKind="note"
+          danger
+          busy={revoking}
+          error={revokeError}
+          onConfirm={() => void revoke(confirming)}
+          onCancel={() => { setConfirming(null); setRevokeError(null); }}
+        />
+      )}
     </SettingsPage>
   );
 }
