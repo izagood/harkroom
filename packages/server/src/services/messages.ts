@@ -1894,6 +1894,9 @@ async function wakeAsker(
  * `message_id` 는 **물음 자신**이다. 러너는 그 메시지의 meta 에서 `answeredWith` 를
  * 읽어 무엇이 골라졌는지 안다 — 별도 메시지를 만들지 않는 이유가 이것이다(스레드에
  * "답했다"는 줄이 하나 더 생기면 그 대화를 읽는 사람에게 소음이다).
+ *
+ * **`superseded` 로 닫힌 카드는 답을 받지 않는다**(security n1, 2026-10-09). 새 질문이 떠 있는데 옛 질문의
+ * 답으로 물어본 쪽을 깨우면 두 질문이 엇갈린다. 다른 닫힘(`replied`·`declined`)은 지금처럼 늦은 답을 받는다.
  */
 async function answerAskRow(
   pool: Pool, messageId: string, optionId: string, actorId: string,
@@ -1908,6 +1911,7 @@ async function answerAskRow(
       where id = $1
         and deleted_at is null
         and meta->'ask'->>'answeredWith' is null
+        and meta->'ask'->>'closedReason' is distinct from 'superseded'
       returning ${COLS}`,
     [messageId, optionId, actorId],
   );
@@ -1990,13 +1994,15 @@ export async function syncAskMirrors(pool: Pool, rootId: string): Promise<void> 
                 jsonb_set(
                   jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb($2::text)),
                   '{ask,closedBy}', to_jsonb($3::text)),
-                '{ask,closedReason}', to_jsonb('declined'::text))
+                '{ask,closedReason}', to_jsonb($4::text))
         where meta->'ask'->>'mirrorOf' = $1
           and deleted_at is null
           and meta->'ask'->>'answeredWith' is null
           and meta->'ask'->>'closedAt' is null
         returning ${COLS}`,
-      [rootId, root.ask.closedAt, root.ask.closedBy ?? null],
+      // 사유는 원본 그대로 옮긴다(2026-10-09) — 원본이 글 답·새 카드로 닫혔는데 거울이 「답하지 않기로
+      // 했다」로 말하면 그 거울을 보는 사람은 없던 결정을 읽는다.
+      [rootId, root.ask.closedAt, root.ask.closedBy ?? null, root.ask.closedReason ?? 'declined'],
     )).rows as MessageRow[];
   } else {
     return;
@@ -2126,6 +2132,123 @@ export async function closeAsk(
   // 원본이면 열린 거울도 닫는다.
   if (!ask.mirrorOf) await syncAskMirrors(pool, args.messageId);
   return row;
+}
+
+/**
+ * **사람이 카드를 누르지 않고 글로 답했다**(2026-10-09, 선택 카드 A′ — jaebin 「셋 다」, 스레드 596146cc).
+ *
+ * 카드가 닫히는 길이 고르기·「답하지 않기」 둘뿐이라, 사람이 "이건 다르게 해 줘"·"그게 뭐야?"를
+ * 입력창에 치면 카드는 열린 채 🙋 내 차례·Inbox 「골라 줘」를 계속 세웠다. 그러나 사람이 말한
+ * 순간 차례는 물어본 쪽으로 넘어간다 — 묻는 글이든 지시든 🙋 는 틀린 표시다. 그래서 규칙을
+ * 단순하게 둔다: **답할 수 있는 사람이 카드 뒤에 같은 스레드에 글을 쓰면 그 카드는
+ * `closedReason: 'replied'` 로 닫힌다.** 고를 길은 남는다(늦은 답은 `answerAskRow` 가 받는다).
+ *
+ * 닫지 않는 것:
+ * - 권한 요청 카드(`permissionRequest`)·머지 거절 카드(`mergeDenial`) — 글로 정할 수 없는 결정이다.
+ * - 거울 카드(`mirrorOf`) — 거울을 세운 관리 에이전트의 스레드에 쓴 글은 어느 카드에 대한
+ *   말인지 갈린다. 그 판단은 거울을 낸 쪽이 한다(원 스레드에 쓴 글은 원본을 닫고, 거울은
+ *   `syncAskMirrors` 로 따라 닫힌다).
+ * - 남에게 간 카드 — 답할 수 없는 사람의 글은 그 카드의 답이 아니다(`recordAskAnswer` 와 같은 규칙).
+ *
+ * 물어본 쪽을 따로 깨우지 않는다 — 같은 스레드의 사람 글이 이미 `thread_reply` 로 그 에이전트를
+ * 깨운다. 여기서 `ask_closed` 까지 넣으면 한 글에 턴이 둘 뜬다.
+ *
+ * 부르는 쪽은 **사람이 올린 글**에서만 부른다(REST 글 올리기). 실패해도 던지지 않는다 — 글은
+ * 이미 올라갔고, 카드가 남는 것은 지금까지의 동작이다.
+ */
+export async function closeAsksByReply(pool: Pool, reply: MessageRow): Promise<void> {
+  if (!reply.threadRootId || !reply.authorId) return;
+  try {
+    const rows = (await pool.query(
+      `update message
+          set meta = jsonb_set(
+                jsonb_set(
+                  jsonb_set(
+                    jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(now())),
+                    '{ask,closedBy}', to_jsonb($4::text)),
+                  '{ask,closedReason}', to_jsonb('replied'::text)),
+                '{ask,replyMessageId}', to_jsonb($5::text))
+        where (id = $1 or thread_root_id = $1)
+          and channel_id = $2
+          and seq < $3
+          and deleted_at is null
+          and meta->>'kind' = 'ask'
+          and meta->'ask'->>'answeredWith' is null
+          and meta->'ask'->>'closedAt' is null
+          and meta->'ask'->>'mirrorOf' is null
+          and not (meta ? 'permissionRequest')
+          and not (meta ? 'mergeDenial')
+          and (meta->'ask'->'to'->>'kind' = 'human'
+            or (meta->'ask'->'to'->>'kind' = 'account' and meta->'ask'->'to'->>'accountId' = $4))
+        returning ${COLS}`,
+      [reply.threadRootId, reply.channelId, reply.seq, reply.authorId, reply.id],
+    )).rows as MessageRow[];
+    if (rows.length === 0) return;
+    const audience = await audienceFor(pool, reply.channelId);
+    for (const row of rows) {
+      emitEvent({ type: 'message.updated', message: row, audience });
+      await syncAskMirrors(pool, row.id);
+    }
+  } catch (err) {
+    console.error('[ask_replied] 글 답으로 카드 닫기 실패(글은 올라갔다):', err);
+  }
+}
+
+export type AskSupersedeRefusal = 'supersedes_not_found' | 'supersedes_not_yours' | 'supersedes_other_thread' | 'supersedes_resolved' | 'supersedes_permission_card';
+
+/**
+ * `message.ask` 의 `supersedes` — **물어본 쪽이 새 카드로 옛 카드를 대신한다**(2026-10-09, 선택 카드 B 의 일부).
+ *
+ * 사람이 글로 되물어 옛 카드가 `replied` 로 닫힌 뒤 에이전트가 다시 물으면 카드가 쌓인다. 대신한다고
+ * 밝히면 옛 카드는 「새 질문으로 바뀜」 한 줄로 접힌다. 거절하는 경우는 모두 "남의 결정을 덮는" 경우다:
+ * 내 카드가 아니다 · 다른 스레드다 · 이미 답이 있다(정해진 것을 덮으면 그 결정이 사라진다).
+ * 이미 닫혔지만 답이 없는 카드(예: `replied`)는 대신할 수 있다 — 그것이 이 필드의 주된 쓰임이다.
+ */
+export async function checkAskSupersede(
+  pool: Pool, args: { oldId: string; callerId: string; channelId: string; threadRootId: string | null },
+): Promise<AskSupersedeRefusal | null> {
+  const old = await pool.query(
+    `select meta, channel_id as "channelId", thread_root_id as "threadRootId", author_id as "authorId"
+       from message where id = $1 and deleted_at is null`,
+    [args.oldId],
+  );
+  const row = old.rows[0] as { meta: Record<string, unknown>; channelId: string; threadRootId: string | null; authorId: string | null } | undefined;
+  const ask = row ? readAskMeta(row.meta) : null;
+  if (!row || !ask) return 'supersedes_not_found';
+  if (row.authorId !== args.callerId) return 'supersedes_not_yours';
+  // 권한 요청 카드는 에이전트가 작성자라 "내 카드" 검사를 통과한다 — 접히면 pending 요청이 소유자 눈에서 사라진다
+  // (security F1). 그 카드는 소유자의 approve|deny 로만 끝난다.
+  if (row.meta.permissionRequest) return 'supersedes_permission_card';
+  const oldRoot = row.threadRootId ?? args.oldId;
+  if (row.channelId !== args.channelId || !args.threadRootId || oldRoot !== args.threadRootId) return 'supersedes_other_thread';
+  // 「답하지 않기」로 닫힌 것·이미 대신된 것은 사람이나 앞선 새 카드가 정한 끝이다 — 덮지 않는다.
+  if (ask.answeredWith != null || (ask.closedAt != null && ask.closedReason !== 'replied')) return 'supersedes_resolved';
+  return null;
+}
+
+/** 옛 카드를 `superseded` 로 닫는다. 열렸거나 글 답으로 닫힌 것만 — 답·「답하지 않기」는 건드리지 않는다. 거울은 따라 닫힌다. */
+export async function supersedeAsk(pool: Pool, args: { oldId: string; newId: string; actorId: string }): Promise<void> {
+  const res = await pool.query(
+    `update message
+        set meta = jsonb_set(
+              jsonb_set(
+                jsonb_set(
+                  jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(coalesce(meta->'ask'->>'closedAt', now()::text))),
+                  '{ask,closedBy}', to_jsonb($3::text)),
+                '{ask,closedReason}', to_jsonb('superseded'::text)),
+              '{ask,supersededBy}', to_jsonb($2::text))
+      where id = $1
+        and deleted_at is null
+        and meta->'ask'->>'answeredWith' is null
+        and (meta->'ask'->>'closedAt' is null or meta->'ask'->>'closedReason' = 'replied')
+        and not (meta ? 'permissionRequest')
+      returning ${COLS}`,
+    [args.oldId, args.newId, args.actorId],
+  );
+  const row = res.rows[0] as MessageRow | undefined;
+  if (!row) return;
+  emitEvent({ type: 'message.updated', message: row, audience: await audienceFor(pool, row.channelId) });
+  await syncAskMirrors(pool, args.oldId);
 }
 
 /** 삭제는 작성자 또는 admin. 수정과 달리 원문을 왜곡하지 않고 가리는 일이라 운영자에게 열어둔다. */
