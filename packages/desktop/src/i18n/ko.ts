@@ -2528,7 +2528,7 @@ export const ko = {
   'agents.grants.ghUser.reachOk': '닿음',
   'agents.grants.ghUser.reachNo': '닿지 않음',
   'agents.grants.ghUser.reachUnknown': '확인 못 함',
-  'agents.grants.ghUser.rowNoReach': '{login} 계정은 {repo} 에 닿지 않는다(GitHub 확인 {when}). 이대로면 머지는 거절된다(no_repo_access) — 닿는 계정을 고른다.',
+  'agents.grants.ghUser.rowNoReach': '{login} 계정은 {repo}에 닿지 않는다(GitHub 확인 {when}). 이대로면 머지는 거절된다(no_repo_access) — 닿는 계정을 고른다.',
   'agents.grants.ghUser.reachUnknownHint': '토큰 권한(read:org 등)이 모자라 확인하지 못했다. 머지는 시도한다.',
   'agents.grants.ghUser.errNotLoggedIn': '그 계정은 이제 이 기기의 gh 에 로그인돼 있지 않다. 목록을 다시 열어 고른다.',
   'agents.grants.ghUser.errNoGh': '이 기기에서 gh 를 찾지 못했다. GitHub CLI 를 설치하고 gh auth login 을 한다.',
