@@ -96,7 +96,7 @@ export function ThisOperatorSettings({ onOpenSection }: {
   };
 
   return (
-    <SettingsPage section="this-operator" description={t('settings.desc.this-operator')}>
+    <SettingsPage section="this-operator" description={t('settings.desc.this-operator')} layout="form">
       <SettingsGroup>
         <div className="px-4 py-3">
           {/* 쓸 수 없는 사정을 **말한다** — 버튼을 그냥 숨기면 왜 없는지 모른다. */}

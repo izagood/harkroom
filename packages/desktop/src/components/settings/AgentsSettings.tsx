@@ -2411,16 +2411,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               {draft !== null && (
                 <FieldGroup title={t('agents.run.title')} note={t('agents.run.note')}>
                 <div>
+                  {/* 두 단추는 아래 모델·Effort 칸과 같은 12px 이다 — 글자 크기를 안 적으면 단추는 브라우저 기본 16px 로 서서
+                      한 단계 커 보였다(designer #1263 nit 3). */}
                   <div className={label}>AI configuration</div>
                   <div className="mt-1 flex gap-1">
                     <button
-                      className={`flex-1 rounded-row px-3 py-2 ${customized ? 'bg-surface-sunken text-fg-muted' : 'bg-surface-raised ring-1 ring-border'}`}
+                      className={`flex-1 rounded-row px-3 py-2 text-meta ${customized ? 'bg-surface-sunken text-fg-muted' : 'bg-surface-raised ring-1 ring-border'}`}
                       onClick={() => setCustomized(false)}
                     >
                       Use harness defaults
                     </button>
                     <button
-                      className={`flex-1 rounded-row px-3 py-2 ${customized ? 'bg-surface-raised ring-1 ring-border' : 'bg-surface-sunken text-fg-muted'}`}
+                      className={`flex-1 rounded-row px-3 py-2 text-meta ${customized ? 'bg-surface-raised ring-1 ring-border' : 'bg-surface-sunken text-fg-muted'}`}
                       onClick={() => setCustomized(true)}
                     >
                       Customize for this agent

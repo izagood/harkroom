@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { MENTION_CHAIN_LIMIT_MAX, MENTION_CHAIN_LIMIT_MIN, RUNNABLE_HARNESSES, type AgentDefaults, type MentionPolicy } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
-import { Field, SaveStatus, Segmented, Select, SettingsGroup, SettingsPage, TextInput, type SaveState } from './primitives';
+import { Field, SaveStatus, Segmented, Select, SettingsColumns, SettingsGroup, SettingsPage, TextInput, type SaveState } from './primitives';
 import { useT } from '../../i18n/useT';
 
 // 러너가 실제로 띄울 수 있는 하네스는 `@harkroom/shared` 의 `RUNNABLE_HARNESSES` 하나다. 여기에
@@ -70,7 +70,12 @@ export function AgentDefaultsSettings() {
     <SettingsPage
       section="agent-defaults"
       description={t('defaults.field.subtitle')}
+      layout="cards"
     >
+      {/* 새 에이전트 기본값이 주 칸, 멘션 연쇄 한도가 곁 칸(설정 폭 시안 v1 cards). 900 미만에서는 위아래로 쌓인다. */}
+      <SettingsColumns
+        testId="agent-defaults-columns"
+        main={(
       <SettingsGroup>
         {!isAdmin && (
           <p className="px-4 py-3 text-fg-muted">{t('defaults.field.notAdmin')}</p>
@@ -120,7 +125,9 @@ export function AgentDefaultsSettings() {
           </div>
         )}
       </SettingsGroup>
-      <MentionChainLimit isAdmin={isAdmin} />
+        )}
+        side={<MentionChainLimit isAdmin={isAdmin} />}
+      />
     </SettingsPage>
   );
 }

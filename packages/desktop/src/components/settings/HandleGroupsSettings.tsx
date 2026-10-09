@@ -235,7 +235,10 @@ export function HandleGroupsSettings() {
           </div>
         ) : (
           <>
-            <header className="flex items-center justify-between border-b border-border px-5 py-3">
+            {/* 머리 줄의 선은 창 끝까지 긋고, 글자·[그룹 삭제] 는 아래 두 칸과 같은 상한 안에 세운다 — 그래야 단추가
+                구성원 칸 오른쪽 끝에 맞는다(designer #1274 nit 1: 2490 에서 1000px 넘게 떨어졌다). */}
+            <header className="border-b border-border px-5 py-3">
+              <div className="flex w-full max-w-[1680px] items-center justify-between">
               <h2 className="text-name font-semibold">@{selected.group.handle}</h2>
               {isAdmin && (confirmingDelete ? (
                 <span className="flex items-center gap-2">
@@ -261,9 +264,12 @@ export function HandleGroupsSettings() {
                   {t('groups.remove.start')}
                 </button>
               ))}
+              </div>
             </header>
 
-            <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
+            {/* 상세는 이름 카드 | 구성원 카드 두 칸이다(설정 폭 시안 v1 cards) — 672px 에 세로로만 쌓이던 것. 칸은 이 겹의 폭으로 나눈다. */}
+            <div className="@container/settings flex-1 overflow-y-auto p-5">
+            <div data-testid="group-detail-columns" className="grid w-full max-w-[1680px] grid-cols-1 items-start gap-4 @min-[900px]/settings:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
               <div className="rounded-row border border-border p-3">
                 <div className="text-meta font-medium text-fg-muted">{t('groups.rename.name')}</div>
                 {editingName === selected.group.id ? (
@@ -356,6 +362,7 @@ export function HandleGroupsSettings() {
                   </div>
                 )}
               </div>
+            </div>
             </div>
           </>
         )}

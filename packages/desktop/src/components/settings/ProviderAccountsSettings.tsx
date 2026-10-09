@@ -11,14 +11,25 @@ import { CodexAccountsSettings } from './CodexAccountsSettings';
 import { CursorAccountsCard, OpenCodeAccountsCard } from './ProviderInfoCards';
 import { SettingsPage } from './primitives';
 
+// 통째 문자열로 적는다 — 조각으로 이으면 Tailwind 가 CSS 를 만들지 않는다.
+// `ProviderSection` 의 `border-b py-8 first:pt-0 last:border-b-0` 은 칸이 세로로 쌓이는 것을 전제한 규칙이다. 격자 안에서는
+// 칸 사이를 격자가 맡는다 — 칸의 세로 여백·밑줄을 끄고(`[&>section]:py-0 border-b-0`), 줄 사이는 `gap-y-8`,
+// Claude 칸과의 사이는 그 칸의 밑줄 + 격자 `pt-8` 로 한 번만 선다(designer #1274 수정 1: 2·3단에서 Codex 제목만 솟고,
+// 1단에서 Codex 가 Claude 밑줄에 붙고, Cursor 에만 밑줄이 없었다).
+const PROVIDER_GRID = 'grid grid-cols-1 items-start gap-x-6 gap-y-8 pt-8 [&>section]:border-b-0 [&>section]:py-0 @min-[1100px]/settings:grid-cols-2 @min-[1700px]/settings:grid-cols-3';
+
 export function ProviderAccountsSettings() {
   const t = useT();
   return (
-    <SettingsPage section="claude-accounts" description={t('providerAccounts.page.subtitle')} width="wide">
+    <SettingsPage section="claude-accounts" description={t('providerAccounts.page.subtitle')} layout="list">
+      {/* Claude 는 계정끼리 숫자를 견주는 표라 꽉 찬 폭을 쓴다. 나머지 하네스 칸은 넓은 창에서 2·3단으로 선다
+          (설정 폭 시안 v1 list) — 한 칸에 계정 몇 줄뿐이라 2200px 로 늘이면 이름과 단추가 멀어진다. */}
       <ClaudeAccountsSettings embedded />
-      <CodexAccountsSettings />
-      <OpenCodeAccountsCard />
-      <CursorAccountsCard />
+      <div data-testid="provider-accounts-grid" className={PROVIDER_GRID}>
+        <CodexAccountsSettings />
+        <OpenCodeAccountsCard />
+        <CursorAccountsCard />
+      </div>
     </SettingsPage>
   );
 }
