@@ -1,6 +1,6 @@
 /**
  * 머지 거절 카드의 권한 칸(머지 UX P5, 스레드 febe9ff8). 판정은 전부 서버다. 여기서 재는 것:
- * [7일 주기]는 소유자 사람에게만 서고 몸체 없이 거절 기록 id 로만 부르는가 · 배포 저장소면 버튼 대신 설정 길만 두는가 ·
+ * [7일 주기]는 소유자 사람에게만 서고 몸체 없이 거절 기록 id 로만 부르는가 ·
  * 저장소 이름을 전부 보이고 PR 링크는 서버 기록으로만 만드는가(security L1) · 준 뒤에는 기한을 보이는가.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -20,7 +20,7 @@ const card = (over: Record<string, unknown> = {}): MessageRow => ({
   kind: 'user', createdAt: '', editedAt: null, reactions: [], attachments: [],
   meta: {
     kind: 'ask', ask: { options: [{ id: 'retry', label: '다시 머지' }, { id: 'later', label: '나중에' }], to: { kind: 'human' } },
-    mergeDenial: { key: 'k', denialId: DENIAL, agentId: 'agent-1', ownerAccountId: ME, repo: 'example-org/service-api', number: 42, deployRepo: false, count: 2, firstAt: '', lastAt: '2026-10-05T10:00:00Z', ...over },
+    mergeDenial: { key: 'k', denialId: DENIAL, agentId: 'agent-1', ownerAccountId: ME, repo: 'example-org/service-api', number: 42, count: 2, firstAt: '', lastAt: '2026-10-05T10:00:00Z', ...over },
   },
 } as unknown as MessageRow);
 
@@ -73,15 +73,6 @@ describe('MergeDenialPanel', () => {
     render(<MergeDenialPanel message={card()} />);
     expect(screen.queryByTestId('merge-denial-give')).toBeNull();
     expect(screen.getByTestId('merge-denial-owner-only').textContent).toContain('@owner');
-  });
-
-  it('배포 저장소면 버튼 대신 설정 길만 둔다(C6)', () => {
-    setup();
-    const open = vi.fn();
-    render(<MergeDenialPanel message={card({ deployRepo: true })} onOpenSettings={open} />);
-    expect(screen.queryByTestId('merge-denial-give')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '설정에서 보기' }));
-    expect(open).toHaveBeenCalledWith('agents', 'agent-1');
   });
 
   it('이미 준 카드(meta.granted)는 버튼 없이 기한을 보인다', () => {

@@ -78,7 +78,7 @@ import { listGrantedSecrets } from '../services/secretAccess.js';
 import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../services/secretLeakGuard.js';
 import type { AgentPresence } from './presence.js';
 import { enqueueAskPush } from '../services/push/pushJobs.js';
-import { bumpDenialCard, DENIAL_CARD_REFUSAL_MESSAGE, linkDenialCard, prepareDenialCard, type MergeDenialMeta } from '../services/mergeDenials.js';
+import { DENIAL_CARD_REFUSAL_MESSAGE, prepareDenialCard } from '../services/mergeDenials.js';
 import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant } from '../services/permissionRequests.js';
 
 /**
@@ -746,10 +746,11 @@ function buildMcpServer(
    * 함께 쓴다. 카드는 일반 ask 꼴이라 데스크톱·모바일·웹 어디서든 [승인하고 다시 시도]가 눌린다(ask-answer → decideFromCard).
    */
   const raisePermission = async (
-    { kind, rule, repo, reason, channelId, threadRootId, model }:
-      { kind: 'tool' | 'merge'; rule?: string; repo?: string; reason: string; channelId: string; threadRootId: string; model?: string },
+    { kind, rule, repo, reason, channelId, threadRootId, model, denial }:
+      { kind: 'tool' | 'merge'; rule?: string; repo?: string; reason: string; channelId: string; threadRootId: string; model?: string;
+        denial?: { id: string; number: number; headSha: string; reason: 'not_granted' | 'cause_not_human' } },
   ) => {
-    const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, reason, channelId, threadRootId });
+    const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, reason, channelId, threadRootId, denial });
     if (!opened.ok) return jsonResult({ error: opened.refusal });
     if ('alreadyGranted' in opened) {
       return jsonResult({ alreadyGranted: true, expiresAt: opened.alreadyGranted.expiresAt, message: 'already granted — it applies from the next turn in this channel' });
@@ -871,7 +872,6 @@ function buildMcpServer(
       }
     }
     // 머지 거절 카드(P3, security C1·C3). 권한 칸은 거절 기록에서만 채운다 — 에이전트가 쓴 본문·선택지와 섞지 않는다.
-    let mergeDenial: MergeDenialMeta | null = null;
     if (mergeDenialId) {
       if (audience.kind !== 'human' || mirrorOf) {
         return jsonResult({ error: { code: 'merge_denial_audience', message: 'a merge-denial card is addressed to humans; omit `to` and `mirrorOf`' } });
@@ -879,27 +879,20 @@ function buildMcpServer(
       const prepared = await prepareDenialCard(pool, { agentId: account.id, denialId: mergeDenialId, channelId, threadRootId: threadRootId ?? null });
       if (!prepared.ok) return jsonResult({ error: { code: prepared.code, message: DENIAL_CARD_REFUSAL_MESSAGE[prepared.code] } });
       /*
-        P4(스레드 f61af808, 10-07): 머지 거절 카드를 **권한 카드로 세운다**. 옛 카드의 [7일 주기]는 데스크톱만 그려서(모바일은
-        meta.mergeDenial 을 모른다) jaebin 이 폰에서 「다시 머지」만 누르고 권한은 못 줬다. 권한 카드는 일반 ask 꼴이라 어느
-        클라이언트에서든 소유자가 [승인하고 다시 시도]를 누르면 grant(7일)와 새 턴이 함께 된다. 저장소는 거절 기록의 값이다(C3).
-        배포 저장소는 카드로 주지 않으므로(C6) 옛 카드(설정에서만 준다는 안내)로 남긴다.
+        P4(스레드 f61af808, 10-07): 머지 거절 카드는 **권한 요청 카드로 세운다**. 권한 카드는 일반 ask 꼴이라 어느 클라이언트에서든
+        소유자가 [승인하고 다시 시도](7일 grant) 또는 [이번 한 번 머지](이 PR·이 head 만, 스레드 1b75d7a0)를 누르면 새 턴이 뜬다.
+        저장소·PR·head 는 거절 기록의 값이다(C3). 배포 저장소도 같은 길이다(jaebin 10-10). `prepareDenialCard` 가 스레드 일치를
+        보므로 여기 오면 threadRootId 가 있다.
       */
-      if (!prepared.meta.deployRepo && threadRootId) {
-        return raisePermission({
-          kind: 'merge', repo: prepared.meta.repo, channelId, threadRootId, model,
-          reason: `PR #${prepared.meta.number} 머지가 권한 없음(not_granted)으로 막혔다 — ${body}`,
-        });
-      }
-      if (prepared.existingCardId) {
-        await bumpDenialCard(pool, prepared.existingCardId, prepared.meta);
-        const existing = await getMessageById(pool, prepared.existingCardId);
-        if (existing) return jsonResult({ message: existing, notified: [], merged: 'same repository was already refused today — counted on the existing card' });
-      }
-      mergeDenial = prepared.meta;
+      const d = prepared.meta;
+      return raisePermission({
+        kind: 'merge', repo: d.repo, channelId, threadRootId: threadRootId!, model,
+        reason: `PR #${d.number} 머지가 ${d.reason === 'cause_not_human' ? '사람이 띄운 턴이 아니라서(cause_not_human)' : '권한 없음(not_granted)으로'} 막혔다 — ${body}`,
+        denial: { id: d.denialId, number: d.number, headSha: d.headSha ?? '', reason: d.reason ?? 'not_granted' },
+      });
     }
-    const meta: AskMeta & Partial<ModelMeta> & { mergeDenial?: MergeDenialMeta } = {
+    const meta: AskMeta & Partial<ModelMeta> = {
       kind: 'ask', ask: { options, to: audience, ...(prompt ? { prompt } : {}), ...(mirrorOf ? { mirrorOf } : {}) },
-      ...(mergeDenial ? { mergeDenial } : {}),
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
@@ -909,7 +902,6 @@ function buildMcpServer(
     });
     if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
-    if (mergeDenial && !replayed) await linkDenialCard(pool, mergeDenial.denialId, message.id);
     if (!replayed) {
       const channelAudience = await audienceFor(pool, channelId);
       emitPosted(posted, channelAudience);

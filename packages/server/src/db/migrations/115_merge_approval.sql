@@ -30,3 +30,10 @@ create table merge_approval (
 );
 
 create index merge_approval_open on merge_approval (agent_id, thread_root_id) where used_at is null;
+
+-- 1회 승인은 권한 요청 카드(`permission_request`, kind=merge)의 결정 하나로 받는다 — 머지 거절 카드(`message.ask` 의
+-- `mergeDenialId`)는 이미 권한 요청 카드로 선다. 그 요청이 어느 거절 기록에서 왔는지 묶어 두어야 PR·head 를 기록에서 가져온다.
+alter table permission_request add column denial_id uuid references merge_denial(id) on delete set null;
+alter table permission_request drop constraint permission_request_status_check;
+alter table permission_request add constraint permission_request_status_check
+  check (status in ('pending', 'granted', 'denied', 'approved_once'));

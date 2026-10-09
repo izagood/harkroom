@@ -22,16 +22,6 @@ import { getMessageById } from './messages.js';
 /** grant 의 기한 — 카드에서는 7일 고정(security 판정 2). 30일·기한 없음은 설정 화면에서만. */
 export const DENIAL_GRANT_TTL_MS = 7 * 86_400_000;
 
-/**
- * 배포 저장소(머지가 곧 배포) — 카드에 주기 버튼을 띄우지 않고 서버 REST 도 거절한다(C6). 설정 화면에서는 사람이 정확한
- * 이름으로 줄 수 있다 — 클릭 한 번으로 "배포 저장소는 상시 권한 없음" 규칙을 깨지 않게 하는 것이 목적이다.
- * `HARKROOM_MERGE_DEPLOY_REPOS` = 쉼표로 나눈 `owner/name` 목록(대소문자 무시). 비우면 없음.
- */
-export function deployRepoScopes(env: NodeJS.ProcessEnv = process.env): Set<string> {
-  const raw = env.HARKROOM_MERGE_DEPLOY_REPOS ?? '';
-  return new Set(raw.split(',').map((x) => x.trim().toLowerCase()).filter((x) => /^[a-z0-9][a-z0-9._-]*\/[a-z0-9._-]+$/.test(x)).map((x) => `repo:${x}`));
-}
-
 export interface MergeDenialMeta {
   /** 카드 묶음 키 — (에이전트, 저장소, 스레드, UTC 날짜)마다 한 장(C3). */
   key: string;
@@ -41,7 +31,6 @@ export interface MergeDenialMeta {
   ownerAccountId: string | null;
   repo: string;
   number: number;
-  deployRepo: boolean;
   count: number;
   firstAt: string;
   lastAt: string;
@@ -50,8 +39,6 @@ export interface MergeDenialMeta {
   reason?: 'not_granted' | 'cause_not_human';
   /** 이 거절 기록의 head — 1회 승인은 이 head 하나에 묶인다. */
   headSha?: string;
-  /** 1회 승인됨(스레드 1b75d7a0). */
-  approvedOnce?: { by: string; at: string; expiresAt: string; ghUser: string; relaxChecks: boolean };
 }
 
 interface DenialRow {
@@ -83,7 +70,7 @@ export const DENIAL_CARD_REFUSAL_MESSAGE: Record<DenialCardRefusal, string> = {
 export async function prepareDenialCard(
   pool: Pool,
   args: { agentId: string; denialId: string; channelId: string; threadRootId: string | null; now?: Date },
-): Promise<{ ok: false; code: DenialCardRefusal } | { ok: true; meta: MergeDenialMeta; existingCardId: string | null }> {
+): Promise<{ ok: false; code: DenialCardRefusal } | { ok: true; meta: MergeDenialMeta }> {
   const now = args.now ?? new Date();
   const d = await readDenial(pool, args.denialId, now);
   if (!d) return { ok: false, code: 'denial_not_found' };
@@ -96,39 +83,12 @@ export async function prepareDenialCard(
   const key = `merge:${d.agentId}:${d.scope}:${d.threadRootId}:${day}`;
   const owner = (await pool.query<{ ownerAccountId: string | null }>(
     `select owner_account_id as "ownerAccountId" from agent_config where account_id = $1`, [d.agentId])).rows[0];
-  const existing = (await pool.query<{ id: string }>(
-    `select id from message
-      where meta->'mergeDenial'->>'key' = $1 and channel_id = $2 and coalesce(thread_root_id, id) = $3 and author_id = $4
-        and deleted_at is null
-      order by created_at limit 1`, [key, d.channelId, d.threadRootId, d.agentId])).rows[0];
   const meta: MergeDenialMeta = {
     key, denialId: d.id, agentId: d.agentId, ownerAccountId: owner?.ownerAccountId ?? null,
-    repo: d.scope.slice('repo:'.length), number: d.number, deployRepo: deployRepoScopes().has(d.scope),
+    repo: d.scope.slice('repo:'.length), number: d.number,
     count: 1, firstAt: now.toISOString(), lastAt: now.toISOString(), reason: d.reason, headSha: d.headSha,
   };
-  return { ok: true, meta, existingCardId: existing?.id ?? null };
-}
-
-/** 새 카드를 세운 뒤 — 거절 기록에 카드 id 를 적는다(버튼이 그 카드를 고친다). */
-export async function linkDenialCard(pool: Pool, denialId: string, cardMessageId: string): Promise<void> {
-  await pool.query(`update merge_denial set card_message_id = $2 where id = $1 and card_message_id is null`, [denialId, cardMessageId]);
-}
-
-/**
- * 같은 날 같은 저장소로 다시 막혔다(C3) — 새 카드를 세우지 않고 있던 카드의 횟수·시각·버튼이 쓸 거절 기록만 바꾼다.
- * 이미 준(granted) 카드면 그 표시는 지운다 — 다시 막혔다는 것은 그 권한이 지금 없다는 뜻이다(거둬졌거나 만료).
- */
-export async function bumpDenialCard(pool: Pool, cardId: string, meta: MergeDenialMeta, now = new Date()): Promise<void> {
-  // 지난 승인(granted·approvedOnce) 표시는 지운다 — 다시 막혔다는 것은 그 권한·승인이 지금 없다는 뜻이다. 사유·head 는 새 기록 것으로.
-  const r = await pool.query(
-    `update message set meta = jsonb_set(meta, '{mergeDenial}',
-         ((meta->'mergeDenial') - 'granted' - 'approvedOnce') || jsonb_build_object(
-           'count', coalesce((meta->'mergeDenial'->>'count')::int, 1) + 1, 'lastAt', $2::text, 'denialId', $3::text,
-           'number', $4::int, 'reason', $5::text, 'headSha', $6::text))
-      where id = $1 and meta ? 'mergeDenial' returning id`,
-    [cardId, now.toISOString(), meta.denialId, meta.number, meta.reason ?? 'not_granted', meta.headSha ?? null]);
-  await linkDenialCard(pool, meta.denialId, cardId);
-  if (r.rowCount) await emitCard(pool, cardId);
+  return { ok: true, meta };
 }
 
 async function emitCard(pool: Pool, id: string): Promise<void> {
@@ -140,7 +100,7 @@ export type DenialGrantRefusal = { status: 403 | 404 | 409; code: string; messag
 
 /**
  * [7일 주기] — 거절 기록을 **한 번** 써서 그 저장소 grant 를 7일 준다(C4). 사람 세션·소유자 판정은 라우트가 먼저 한다(C5).
- * scope 와 기한은 요청에서 받지 않는다 — 이 기록과 상수다. 배포 저장소는 거절한다(C6, 기록을 쓰지 않는다).
+ * scope 와 기한은 요청에서 받지 않는다 — 이 기록과 상수다.
  */
 export async function grantFromDenial(
   pool: Pool,
@@ -153,10 +113,6 @@ export async function grantFromDenial(
     const d = await readDenial(client, args.denialId, now, true);
     // `:id` 가 거절의 에이전트와 다르면 없는 것과 같다 — 남의 거절 id 를 내 에이전트 경로에 꽂는 길을 닫는다(C4).
     if (!d || d.agentId !== args.agentId) { await client.query('rollback'); return { ok: false, status: 404, code: 'not_found', message: 'no such merge denial for this agent' }; }
-    if (deployRepoScopes().has(d.scope)) {
-      await client.query('rollback');
-      return { ok: false, status: 403, code: 'deploy_repo', message: 'a deploy repository is not granted from a card — grant it in settings' };
-    }
     if (d.used) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_used', message: 'this denial was already used' }; }
     if (d.expired) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_expired', message: 'this denial expired' }; }
     const used = await client.query(
@@ -198,56 +154,26 @@ export const APPROVAL_TTL_MS = 24 * 3_600_000;
 export const GH_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 
 /**
- * [이번 한 번 머지] — 거절 기록을 **한 번** 써서 (그 PR, 그 head, 그 스레드)에 묶인 1회 승인을 만든다(스레드 1b75d7a0).
- * grant 를 주지 않는다. 사람 세션·소유자 판정은 라우트가 먼저 한다.
- *
- * - 저장소·PR·head·스레드는 요청에서 받지 않는다 — 이 거절 기록이다. 요청에서 받는 것은 gh 계정과 CI 완화 여부뿐이다.
- * - 배포 저장소는 `confirmRepo` 에 저장소 이름을 정확히 쳐야 한다(jaebin 결정 — 경고만으로는 잘못 누른 탭을 못 막는다).
- * - gh 계정이 오퍼레이터에서 그 저장소에 닿는지는 서버가 모른다 — 화면(③)이 #1265 닿음 확인을 통과한 계정만 보이고,
- *   래퍼(②)가 그 계정으로 못 닿으면 머지하지 않는다(다른 계정으로 내려가지 않는다).
+ * 1회 승인(스레드 1b75d7a0) — 권한 요청 카드의 [이번 한 번 머지] 결정이 부른다(`decidePermissionRequest`, 같은 트랜잭션).
+ * 거절 기록을 **한 번** 써서 (그 PR, 그 head, 그 스레드)에 묶인 승인을 만든다. grant 는 주지 않는다.
+ * 저장소·PR·head·스레드는 거절 기록이다 — 요청에서 받는 것은 gh 계정과 CI 완화 여부뿐이다. gh 계정이 오퍼레이터에서 그 저장소에
+ * 닿는지는 서버가 모른다 — 화면이 #1265 닿음 확인을 통과한 계정만 보이고, 래퍼가 그 계정으로 못 닿으면 머지하지 않는다.
  */
-export async function approveOnceFromDenial(
-  pool: Pool,
-  args: { agentId: string; denialId: string; actorId: string; ghUser: string; relaxChecks: boolean; confirmRepo?: string | null; now?: Date },
-): Promise<{ ok: true; approvalId: string; repo: string; number: number; headSha: string; expiresAt: string; cardMessageId: string | null } | ({ ok: false } & DenialGrantRefusal)> {
-  const now = args.now ?? new Date();
+export async function insertApprovalFromDenial(
+  client: PoolClient,
+  args: { agentId: string; denialId: string; actorId: string; ghUser: string; relaxChecks: boolean; now: Date },
+): Promise<{ ok: true; approvalId: string; scope: string; number: number; headSha: string; reason: string; expiresAt: Date } | ({ ok: false } & DenialGrantRefusal)> {
   if (!GH_LOGIN_RE.test(args.ghUser)) return { ok: false, status: 403, code: 'bad_gh_user', message: 'ghUser must be a GitHub login' };
-  const client = await pool.connect();
-  try {
-    await client.query('begin');
-    const d = await readDenial(client, args.denialId, now, true);
-    if (!d || d.agentId !== args.agentId) { await client.query('rollback'); return { ok: false, status: 404, code: 'not_found', message: 'no such merge denial for this agent' }; }
-    const repo = d.scope.slice('repo:'.length);
-    if (deployRepoScopes().has(d.scope) && (args.confirmRepo ?? '').trim().toLowerCase() !== repo.toLowerCase()) {
-      await client.query('rollback');
-      return { ok: false, status: 403, code: 'deploy_repo_confirm', message: 'this is a deploy repository — type its full name to approve this merge' };
-    }
-    if (d.used) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_used', message: 'this denial was already used' }; }
-    if (d.expired) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_expired', message: 'this denial expired' }; }
-    const used = await client.query(
-      `update merge_denial set used_at = $2, used_by = $3 where id = $1 and used_at is null returning id`, [d.id, now, args.actorId]);
-    if (!used.rowCount) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_used', message: 'this denial was already used' }; }
-    const expiresAt = new Date(now.getTime() + APPROVAL_TTL_MS);
-    const row = (await client.query<{ id: string }>(
-      `insert into merge_approval (denial_id, agent_id, scope, pr_number, head_sha, gh_user, relax_checks, channel_id, thread_root_id, approved_by, approved_at, expires_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id`,
-      [d.id, d.agentId, d.scope, d.number, d.headSha, args.ghUser, args.relaxChecks, d.channelId, d.threadRootId, args.actorId, now, expiresAt])).rows[0]!;
-    if (d.cardMessageId) {
-      await client.query(
-        `update message set meta = jsonb_set(meta, '{mergeDenial,approvedOnce}', $2::jsonb) where id = $1 and meta ? 'mergeDenial'`,
-        [d.cardMessageId, JSON.stringify({ by: args.actorId, at: now.toISOString(), expiresAt: expiresAt.toISOString(), ghUser: args.ghUser, relaxChecks: args.relaxChecks })]);
-    }
-    await client.query('commit');
-    await recordAudit(pool, {
-      action: 'repo.merge.approved_once', actorId: args.actorId, target: d.scope,
-      detail: { agentId: d.agentId, approvalId: row.id, denialId: d.id, reason: d.reason, number: d.number, headSha: d.headSha, ghUser: args.ghUser, relaxChecks: args.relaxChecks, deployRepo: deployRepoScopes().has(d.scope), expiresAt: expiresAt.toISOString() },
-    });
-    if (d.cardMessageId) await emitCard(pool, d.cardMessageId);
-    return { ok: true, approvalId: row.id, repo, number: d.number, headSha: d.headSha, expiresAt: expiresAt.toISOString(), cardMessageId: d.cardMessageId };
-  } catch (err) {
-    await client.query('rollback').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
+  const d = await readDenial(client, args.denialId, args.now, true);
+  if (!d || d.agentId !== args.agentId) return { ok: false, status: 404, code: 'not_found', message: 'no such merge denial for this agent' };
+  if (d.expired) return { ok: false, status: 409, code: 'denial_expired', message: 'the merge refusal behind this card expired — the agent has to try again' };
+  const used = await client.query(
+    `update merge_denial set used_at = $2, used_by = $3 where id = $1 and used_at is null returning id`, [d.id, args.now, args.actorId]);
+  if (!used.rowCount) return { ok: false, status: 409, code: 'denial_used', message: 'the merge refusal behind this card was already used' };
+  const expiresAt = new Date(args.now.getTime() + APPROVAL_TTL_MS);
+  const row = (await client.query<{ id: string }>(
+    `insert into merge_approval (denial_id, agent_id, scope, pr_number, head_sha, gh_user, relax_checks, channel_id, thread_root_id, approved_by, approved_at, expires_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id`,
+    [d.id, d.agentId, d.scope, d.number, d.headSha, args.ghUser, args.relaxChecks, d.channelId, d.threadRootId, args.actorId, args.now, expiresAt])).rows[0]!;
+  return { ok: true, approvalId: row.id, scope: d.scope, number: d.number, headSha: d.headSha, reason: d.reason, expiresAt };
 }

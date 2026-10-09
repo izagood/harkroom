@@ -1,6 +1,6 @@
 // 에이전트 권한 요청(111, 스레드 f61af808). 판정과 쓰기는 `services/permissionRequests.ts` 하나다.
 //
-// - 승인·거절: **사람 세션만**(에이전트 토큰은 물론 사람 PAT 도 403), 그리고 **그 에이전트의 소유자**만. admin 역할은 여기서
+// - 승인·거절·1회 승인(approve-once, 머지 거절에서 온 카드만): **사람 세션만**(에이전트 토큰은 물론 사람 PAT 도 403), 그리고 **그 에이전트의 소유자**만. admin 역할은 여기서
 //   힘이 없다(merge-denial 의 C5 와 같다). 요청 본문은 읽지 않는다 — 범위·기한은 요청 줄과 서버 상수다.
 // - `GET /agent/tool-allows`: 러너가 턴을 띄울 때 이 채널의 allow 규칙을 읽는다. 오퍼레이터를 거친 에이전트만, 자기 것만.
 import type { FastifyInstance } from 'fastify';
@@ -8,7 +8,9 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { decidePermissionRequest, toolAllowsFor } from '../services/permissionRequests.js';
 
-const params = z.object({ id: z.string().uuid(), requestId: z.string().uuid(), decision: z.enum(['approve', 'deny']) });
+const params = z.object({ id: z.string().uuid(), requestId: z.string().uuid(), decision: z.enum(['approve', 'deny', 'approve-once']) });
+/** [이번 한 번 머지](스레드 1b75d7a0) — 받는 것은 gh 계정·CI 완화 둘뿐. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
+const onceBody = z.object({ ghUser: z.string().min(1).max(39), relaxChecks: z.boolean().optional() }).strict();
 
 export async function registerPermissionRequestRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post<{ Params: { id: string; requestId: string; decision: string } }>(
@@ -20,9 +22,16 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
       }
       const owner = await pool.query(`select 1 from agent_config where account_id = $1 and owner_account_id = $2`, [p.data.id, req.account!.id]);
       if (!owner.rowCount) return reply.code(403).send({ error: { code: 'forbidden', message: 'only the owner of this agent can decide its permission requests' } });
-      const r = await decidePermissionRequest(pool, { agentId: p.data.id, requestId: p.data.requestId, actorId: req.account!.id, decision: p.data.decision });
+      let once: { ghUser: string; relaxChecks: boolean } | undefined;
+      if (p.data.decision === 'approve-once') {
+        const b = onceBody.safeParse(req.body ?? {});
+        if (!b.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'ghUser is required; relaxChecks is a boolean; nothing else' } });
+        once = { ghUser: b.data.ghUser, relaxChecks: b.data.relaxChecks ?? false };
+      }
+      const decision = p.data.decision === 'approve-once' ? 'approve_once' : p.data.decision;
+      const r = await decidePermissionRequest(pool, { agentId: p.data.id, requestId: p.data.requestId, actorId: req.account!.id, decision, ...(once ? { once } : {}) });
       if (!r.ok) return reply.code(r.status).send({ error: { code: r.code, message: r.message } });
-      return { status: r.status, grantExpiresAt: r.grantExpiresAt, cardMessageId: r.cardMessageId };
+      return { status: r.status, grantExpiresAt: r.grantExpiresAt, ...(r.approvalExpiresAt ? { approvalExpiresAt: r.approvalExpiresAt } : {}), cardMessageId: r.cardMessageId };
     });
 
   app.get<{ Querystring: { channelId?: string } }>('/agent/tool-allows', { preHandler: app.requireAccount }, async (req, reply) => {
