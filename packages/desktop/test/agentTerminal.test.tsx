@@ -746,11 +746,38 @@ describe('터미널 창의 턴 끝내기', () => {
 
   it('턴이 끝나면 버튼이 사라지고 xterm 의 마우스 추적을 내린다', async () => {
     const { written } = await mount(session({ mode: 'interactive' }));
+    // 차례를 먼저 받는다 — 그래야 「입력 가능」 줄이 서 있다가 내려가는지를 잰다.
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true, resize: true, reason: null }); });
+    expect(screen.getByTestId('writer-note').textContent).toBe('입력 가능 — 마지막으로 연 창이 입력을 가진다.');
     await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'running' }); });
     await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'ended' }); });
     expect(screen.queryByTestId('terminal-end-turn')).toBeNull();
     // TUI 가 끄지 못하고 죽으면 xterm 이 마우스 보고(`ESC[<35;…M`)를 계속 입력으로 낸다(실측).
     const off = written.join('');
     for (const mode of ['1000', '1002', '1003', '1006']) expect(off).toContain(`\x1b[?${mode}l`);
+     // 입력을 닫았으니 「입력 가능」 줄이 남으면 거짓말이다(designer #1260 d1).
+    const note = screen.getByTestId('writer-note');
+    expect(note.getAttribute('data-writer-reason')).toBe('ended');
+    expect(note.textContent).toBe('턴이 끝나 입력이 닫혔다.');
+    expect(screen.queryByText('입력 가능 — 마지막으로 연 창이 입력을 가진다.')).toBeNull();
+  });
+
+  it('조종 확인창은 이 창의 말을 쓴다 — 관제탑의 "터미널이 닫히고"가 아니다', async () => {
+    await mount(session({ mode: 'interactive' }));
+    await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'running' }); });
+    await act(async () => { screen.getByTestId('terminal-end-turn').click(); });
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.textContent).toContain('이 창은 「턴 종료」로 남는다');
+    expect(dialog.textContent).not.toContain('터미널이 닫히고');
+  });
+
+  it('확인창이 열린 채 턴이 끝나면 겹창이 내려간다 — 남은 확인이 다음 턴을 멈추지 않는다', async () => {
+    const { cancelAgentTurns } = await mount(session({ mode: 'interactive' }));
+    await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'running' }); });
+    await act(async () => { screen.getByTestId('terminal-end-turn').click(); });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'ended' }); });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(cancelAgentTurns).not.toHaveBeenCalled();
   });
 });

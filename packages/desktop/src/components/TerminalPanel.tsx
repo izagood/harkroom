@@ -126,8 +126,13 @@ export function TerminalPanel() {
    * (`cancelAgentTurns` → 러너 SIGTERM)을 여기서도 열려면 세션 id 가 있어야 한다.
    */
   const [session, setSession] = useState<AgentSessionView | null>(null);
-  /** 끝내기 확인 겹창. 열려 있는 동안만 참이다. */
-  const [confirmEnd, setConfirmEnd] = useState(false);
+  /**
+   * 끝내기 확인 겹창이 **어느 세션을 끝내려고** 열렸는가(열려 있지 않으면 `null`).
+   * 불리언이 아니라 id 를 쥔다(security #1260 n1): 겹창이 열린 사이 그 턴이 끝나고 패널이
+   * 다음 세션으로 갈아타면, 렌더 시점의 `session` 을 읽는 확인 버튼이 **사람이 보지 않은
+   * 새 턴**을 멈춘다. 연 순간의 id 로만 보낸다 — 그리고 `ended` 가 오면 겹창을 내린다.
+   */
+  const [confirmEnd, setConfirmEnd] = useState<string | null>(null);
   /**
    * 끝내기를 **보냈다**. `202` 는 끝났다는 뜻이 아니다(`api.cancelAgentSession` 주석) — 끝의
    * 증거는 서버의 `ended` 프레임이고, 그 사이 버튼을 다시 누를 수 있게 두면 같은 SIGTERM 이
@@ -209,7 +214,11 @@ export function TerminalPanel() {
             // 끝난 턴에 친 것은 갈 곳이 없다 — 입력도 접는다(커서가 "칠 수 있다"고 말하지 않게).
             writerRef.current = false;
             sink?.setReadOnly?.(true);
+            // 차례 줄도 내린다(designer #1260 d1) — 입력을 실제로 닫았는데 「입력 가능」이 남으면
+            // 그 줄이 거짓말이 된다. 끝났다는 사실은 아래 `state === 'ended'` 줄이 적는다.
+            setWriter(null);
             setEnding(false);
+            setConfirmEnd(null);
           }
           // 갈아탄다. 러너는 이미 예약대로 그 턴을 띄웠거나 띄우는 중이고, 이 요청이
           // 그 세션의 티켓을 받아 온다. **끝났다는 사실은 이미 오는 프레임이 알려 준다** —
@@ -375,7 +384,7 @@ export function TerminalPanel() {
             type="button"
             data-testid="terminal-end-turn"
             disabled={ending}
-            onClick={() => setConfirmEnd(true)}
+            onClick={() => setConfirmEnd(session?.sessionId ?? null)}
             className="shrink-0 rounded-row px-2 py-0.5 text-danger hover:bg-danger-surface disabled:opacity-60"
           >
             {ending ? t('terminal.end.pending') : endLabel}
@@ -392,25 +401,28 @@ export function TerminalPanel() {
           {t('terminal.header.close')}
         </button>
       </div>
-      {confirmEnd && session && (
+      {confirmEnd && (
         <ConfirmDialog
           title={interactive
             ? t('agentTurns.endControlTitle', { handle })
             : t('terminal.end.cancelTitle', { handle })}
-          detail={t(interactive ? 'agentTurns.endControlDetail' : 'terminal.end.cancelDetail')}
+          /* 관제탑 문구(`agentTurns.endControlDetail`)는 "터미널이 닫히고"로 시작한다 — 이 창은 닫히지
+             않고 「턴 종료」를 단 채 남으므로 이 자리의 말을 따로 둔다(designer #1260 d2). */
+          detail={t(interactive ? 'terminal.end.controlDetail' : 'terminal.end.cancelDetail')}
           detailKind="note"
           confirmLabel={t(interactive ? 'agentTurns.endControlConfirm' : 'agentTurns.cancelConfirm')}
           cancelLabel={t('agentTurns.cancelKeep')}
           danger
           onConfirm={() => {
-            setConfirmEnd(false);
+            const sessionId = confirmEnd;
+            setConfirmEnd(null);
             setEnding(true);
             // 실패는 컨트롤러가 통지로 올린다(관제탑과 같은 길) — 그때는 버튼을 다시 푼다.
-            void getController().cancelAgentTurns([session.sessionId]).then((sent) => {
+            void getController().cancelAgentTurns([sessionId]).then((sent) => {
               if (!sent) setEnding(false);
             });
           }}
-          onCancel={() => setConfirmEnd(false)}
+          onCancel={() => setConfirmEnd(null)}
         />
       )}
       {phase === 'loading' && <p className="px-3 py-2 text-fg-subtle">{t('terminal.session.checking')}</p>}
@@ -436,6 +448,11 @@ export function TerminalPanel() {
           구 서버다 — 그때 "다른 창이 입력 중"이라 적으면 없는 사람을 만들어 낸다).
           강등(false)만 적고 승격을 침묵하면, 두 창을 쓰는 사람이 어느 쪽이 살아 있는지
           화면에서 알 수 없다. */}
+      {phase === 'attached' && state === 'ended' && (
+        <p className="px-3 py-2 text-fg-subtle" role="note" data-testid="writer-note" data-writer-reason="ended">
+          {t('terminal.writer.ended')}
+        </p>
+      )}
       {phase === 'attached' && writer === true && (
         <p className="px-3 py-2 text-fg-subtle" role="note" data-testid="writer-note">
           {t('terminal.writer.can')}

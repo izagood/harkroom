@@ -1476,6 +1476,7 @@ export const ko = {
   'terminal.session.opening': '터미널을 여는 중…',
 
   'terminal.end.pending': '끝내는 중…',
+  'terminal.end.controlDetail': '하네스가 멈추고 이 창은 「턴 종료」로 남는다. 친 것은 세션에 남아 다시 열면 이어진다. 러너는 살아 있어 이 스레드에 걸린 멘션을 곧 처리한다.',
   'terminal.end.cancelTitle': '@{handle} 의 이 턴을 멈출까?',
   'terminal.end.cancelDetail': '하네스가 멈추고, 멈춘 턴은 이 스레드에 실패 카드로 남는다. 러너는 살아 있어 다음 멘션을 정상으로 받는다.',
 
@@ -1485,6 +1486,7 @@ export const ko = {
   /** *"'끝났다'로 쓰지 않는다 — 다른 사실이다"* — 턴은 안 끝났고 소켓만 끊겼다. */
   'terminal.state.runnerOffline': '러너 연결 끊김',
 
+  'terminal.writer.ended': '턴이 끝나 입력이 닫혔다.',
   'terminal.writer.can': '입력 가능 — 마지막으로 연 창이 입력을 가진다.',
   /** **원인을 그대로 말한다** — "관찰 전용"만 적으면 임의의 제약으로 읽힌다. */
   'terminal.writer.observeOnly':
