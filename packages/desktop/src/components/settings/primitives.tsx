@@ -151,18 +151,33 @@ export function SettingsColumns({ main, secondary, side, testId }: {
  *
  * 값이 입력 칸이면 `htmlFor` 로 이어 라벨을 눌러 포커스가 가게 한다.
  */
-export function KvRow({ label, htmlFor, testId, children }: {
-  label: ReactNode; htmlFor?: string; testId?: string; children: ReactNode;
+export function KvRow({ label, htmlFor, testId, stacked = false, children }: {
+  label: ReactNode; htmlFor?: string; testId?: string;
+  /**
+   * 라벨을 값 **위에** 쌓는다. 곁 칸(380) 안에서 쓴다 — 두 열이면 값 칸이 210px 남짓으로 줄어
+   * 입력이 잘린다(designer #1254 n2).
+   */
+  stacked?: boolean; children: ReactNode;
 }) {
-  const labelClass = 'text-right text-meta font-medium text-fg-muted';
+  const labelClass = stacked
+    ? 'text-meta font-medium text-fg-muted'
+    : 'text-right text-meta font-medium text-fg-muted';
+  const rowClass = stacked
+    ? 'flex flex-col gap-1'
+    : 'grid grid-cols-[120px_minmax(0,440px)] items-center gap-x-3.5';
   return (
-    <div data-testid={testId} className="grid grid-cols-[120px_minmax(0,440px)] items-center gap-x-3.5">
+    <div data-testid={testId} className={rowClass}>
       {htmlFor
         ? <label htmlFor={htmlFor} className={labelClass}>{label}</label>
         : <span className={labelClass}>{label}</span>}
       <div className="min-w-0">{children}</div>
     </div>
   );
+}
+
+/** `KvRow` 여럿의 묶음 — 행 사이 10px(시안 값). 쓰는 곳마다 간격을 적지 않게 한 자리에 둔다(designer #1254 n1). */
+export function KvRows({ testId, children }: { testId?: string; children: ReactNode }) {
+  return <div data-testid={testId} className="flex flex-col gap-[10px]">{children}</div>;
 }
 
 /**

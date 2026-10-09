@@ -52,7 +52,7 @@ import { TeamDetail } from './TeamDetail';
 // (`docs/desktop-rail.html` 3단계). 사본을 두면 두 화면이 같은 사람에게 다르게 답한다.
 import { AVATAR_ACCEPT, AVATAR_FORMATS } from '../../lib/avatar';
 import { Identity } from '../Identity';
-import { Button } from './primitives';
+import { Button, DangerZone, SettingsColumns, SettingsWrap } from './primitives';
 import { AvatarStatus, useAvatarEdit } from './avatarEdit';
 import { useAgentPool } from './useAgentPool';
 import { navKey } from './sections';
@@ -227,6 +227,13 @@ const firstTab = (tabs: Iterable<AgentDetailTab>): AgentDetailTab | null => {
 const ARCHIVED_GROUP = 'archived';
 /** 목록/상세를 나란히 두는 최소 폭(48rem). 한 칸 24rem 이 줄 하나(체크·slug·꼬리표 둘·버튼)를 담는 폭이다. */
 export const MEMORY_TWO_PANE_MIN_PX = 768;
+
+/**
+ * 한 단 스택인 탭(프로필·실행·권한)과 새 에이전트 폼의 상한 — form 꼴 880px(설정 폭 시안 v1). 본문 겹은 cards 1680
+ * 이라 이것이 없으면 입력 칸이 1600px 까지 늘어난다(designer #1256 수정 1). 두 칸으로 바꾸는 PR 2b 에서 탭별로 푼다.
+ * 겹 안에서 왼쪽에 붙어 머리·탭과 왼쪽 끝이 맞는다.
+ */
+const FORM_PANEL = 'space-y-4 max-w-[880px]';
 
 export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 시간 표기는 언어를 따른다(`lib/time.ts`). 접두는 사전을 지난다.
@@ -1817,9 +1824,75 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       'aria-labelledby': `agent-tab-${id}`,
       'data-testid': `agent-tabpanel-${id}`,
       hidden: detailTab !== id,
-      className: 'space-y-4',
+      className: id === 'overview' || id === 'memory' ? 'space-y-4' : FORM_PANEL,
     }
-    : { className: 'space-y-4' });
+    : { className: FORM_PANEL });
+
+  /**
+   * 비활성화/활성화 칸 한 벌. 개요 곁 칸이 상태에 따라 **두 자리 중 하나**에 세운다 — enabled 면 위험 구역 안,
+   * disabled 면 그 위 중립 카드(designer #1256 수정 2). 마크업·확인 단계(`confirmingDisable`)는 옮기기 전과 같다.
+   */
+  const disableSection = (agent: AgentView) => (
+                <div data-testid="agent-disable-section">
+                  <div className="text-meta font-medium text-fg-muted">
+                    {agent.disabled ? t('agents.disable.headingDisabled') : t('agents.disable.headingEnabled')}
+                    <ImmediateBadge label={t('agents.detail.immediate')} />
+                  </div>
+                  {agent.disabled ? (
+                    <div className="mt-2">
+                      <p className="text-meta text-fg-subtle mb-2">{t('agents.disable.noteDisabled')}</p>
+                      <button
+                        className="rounded-row border border-accent bg-accent-surface px-2 py-1 text-meta font-medium text-accent hover:bg-surface-hover disabled:opacity-50"
+                        aria-label={t('agents.disable.enableAction')}
+                        disabled={busy}
+                        onClick={() => void toggleDisabled()}
+                      >
+                        {t('agents.disable.enable')}
+                      </button>
+                    </div>
+                  ) : confirmingDisable ? (
+                    <div className="mt-2">
+                      <p className="text-meta text-danger mb-2">
+                        {emphasize(t('agents.disable.warning'), {
+                          strongRevoked: t('agents.disable.warningRevoked'),
+                        })}
+                      </p>
+                      <div className="flex gap-1">
+                        <button
+                          className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                          aria-label={t('agents.disable.confirm')}
+                          disabled={busy}
+                          onClick={() => void toggleDisabled()}
+                        >
+                          {t('agents.disable.confirm')}
+                        </button>
+                        <button
+                          className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
+                          onClick={() => setConfirmingDisable(false)}
+                        >
+                          {t('agents.disable.cancel')}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-2">
+                      <p className="text-meta text-fg-subtle mb-2">
+                        {emphasize(t('agents.disable.noteEnabled'), {
+                          strongRevoked: t('agents.disable.noteEnabledRevoked'),
+                        })}
+                      </p>
+                      <button
+                        className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                        aria-label={t('agents.disable.disableAction')}
+                        disabled={busy}
+                        onClick={() => void toggleDisabled()}
+                      >
+                        {t('agents.disable.disable')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+  );
 
   return (
     <PendingEditsContext.Provider value={registerPending}>
@@ -1827,7 +1900,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex items-center gap-3 border-b border-border px-5 py-3">
+          {/* 머리·탭·본문·저장 바는 **같은 꼴(cards)의 겹에 각각** 선다(설정 폭 시안 v1 규칙 ②). 선은 바깥이
+              창 끝까지 긋고, 글자·단추는 겹이 상한 안에 세운다 — 중지/재시작이 본문 오른쪽 끝에 맞는다
+              (전에는 머리만 창 끝까지 가서 넓은 창에서 단추와 본문이 2000px 가까이 떨어졌다). */}
+          <header className="border-b border-border">
+          <SettingsWrap layout="cards" className="flex items-center gap-3 py-3">
             {/*
               **돌아가는 길**(문서의 목업이 `← 에이전트` 로 그린 것). 한 번에 한 화면이므로
               이것이 없으면 상세에 들어간 사람이 목록으로 나올 방법이 없다.
@@ -1948,12 +2025,15 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 {restartSent && <span className="self-center text-meta text-fg-muted" role="status">{t('agents.restart.sent')}</span>}
               </div>
             </>)}
+          </SettingsWrap>
           </header>
 
           {/* 상세의 탭(designer A2). 머리 바로 아래 고정이다 — 스크롤 안에 두면 긴 기억 목록을
               내려간 사람이 다른 탭으로 가는 길을 잃는다. 밑줄 탭은 격자의 에이전트·팀 탭과 같은 어휘다. */}
           {selected && (
-            <div role="tablist" aria-label={t('agents.detail.tablist')} className="flex border-b border-border px-5">
+            <div className="border-b border-border">
+            <SettingsWrap layout="cards">
+            <div role="tablist" aria-label={t('agents.detail.tablist')} className="flex">
               {AGENT_DETAIL_TABS.map((id) => (
                 <button
                   key={id}
@@ -1982,13 +2062,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 </button>
               ))}
             </div>
+            </SettingsWrap>
+            </div>
           )}
 
           {/*
-            Memory 탭만 넓힌다(#1209 designer B1). max-w-2xl(42rem) − p-5 면 안쪽이 ~39.5rem 이라 두 칸(48rem =
-            MEMORY_TWO_PANE_MIN_PX)에 영영 닿지 않았다. max-w-5xl(64rem) − 2.5rem = 61.5rem 이면 닿는다.
+            본문 폭은 **탭과 무관하게 cards 상한 하나**다(규칙 ⑧). 전에는 Memory 탭만 max-w-5xl 로 넓혔다(#1209 —
+            max-w-2xl 안쪽으로는 두 칸 MEMORY_TWO_PANE_MIN_PX 에 닿지 않았다) — 그래서 탭을 옮길 때마다 폭이 튀었다.
+            1680 상한이면 두 칸 문턱에 넉넉히 닿는다. 스크롤은 바깥이 맡아 스크롤바가 창 끝에 선다.
           */}
-          <div className={`w-full flex-1 space-y-4 overflow-y-auto p-5 ${detailTab === 'memory' ? 'max-w-5xl' : 'max-w-2xl'}`}>
+          <div className="w-full flex-1 overflow-y-auto">
+          <SettingsWrap layout="cards" className="space-y-4 py-5">
             {/* #171 의 '새 에이전트 기본값' 편집 절은 **설정 › Agent defaults 로 옮겼다**
                 (identity 문서 원칙 04). 개별 에이전트를 고치는 이 화면에 워크스페이스 전체에
                 걸리는 값이 앉아 있으면 지금 무엇을 고치고 있는지가 사라진다.
@@ -2018,6 +2102,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             <div {...detailPanel('overview')}>
               {/* 개요 — 지금 돌고 있나, 그리고 맨 끝에 되돌릴 수 없는 조작(designer A2). 사용 중지·삭제는
                   전에 기억 바로 아래, 화면 한가운데 있었다 — 위아래가 곧 세기라 끝으로 보낸다. */}
+              {/* 개요는 주 칸(러너) + 곁 칸(위험 구역)이다(설정 폭 시안 v1). 좁으면 지금처럼 러너 → 위험 구역 순으로
+                  쌓인다. 비활성·삭제의 확인 단계와 admin 조건은 **옮기기만 했다** — 칸 안의 마크업은 그대로다. */}
+              <SettingsColumns
+                testId="agent-overview-columns"
+                main={<>
               {selected && isAdmin && (
                 <div className="rounded-row border border-border p-3">
                   {/* #129 → #427 → #493: "재시작"을 금지한 원칙은 그대로 살아 있고, **사실관계만
@@ -2070,7 +2159,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       이 사실은 반드시 글로 남아 있어야 한다.
 
                       **여기서 daemon 의 생사를 말하지는 않는다** — `#443` 의 자리다. */}
-                  <p className="mt-1 text-meta text-fg-subtle">
+                  <p className="mt-1 text-meta text-fg-subtle max-w-[68ch]">
                     {emphasize(t('agents.stop.note'), {
                       strongStop: t('agents.stop.noteStop'),
                       strongFinish: t('agents.stop.noteFinish'),
@@ -2126,73 +2215,22 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               )}
 
               {/* #251: 에이전트 비활성화/활성화. 관리 행위이므로 admin 만 보인다. */}
-              {selected && isAdmin && (
-                <div className={`rounded-row border p-3 ${selected.disabled ? 'border-border bg-surface' : 'border-danger-border bg-danger-surface'}`}>
-                  <div className="text-meta font-medium text-fg-muted">
-                    {selected.disabled ? t('agents.disable.headingDisabled') : t('agents.disable.headingEnabled')}
-                    <ImmediateBadge label={t('agents.detail.immediate')} />
-                  </div>
-                  {selected.disabled ? (
-                    <div className="mt-2">
-                      <p className="text-meta text-fg-subtle mb-2">{t('agents.disable.noteDisabled')}</p>
-                      <button
-                        className="rounded-row border border-accent bg-accent-surface px-2 py-1 text-meta font-medium text-accent hover:bg-surface-hover disabled:opacity-50"
-                        aria-label={t('agents.disable.enableAction')}
-                        disabled={busy}
-                        onClick={() => void toggleDisabled()}
-                      >
-                        {t('agents.disable.enable')}
-                      </button>
-                    </div>
-                  ) : confirmingDisable ? (
-                    <div className="mt-2">
-                      <p className="text-meta text-danger mb-2">
-                        {emphasize(t('agents.disable.warning'), {
-                          strongRevoked: t('agents.disable.warningRevoked'),
-                        })}
-                      </p>
-                      <div className="flex gap-1">
-                        <button
-                          className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
-                          aria-label={t('agents.disable.confirm')}
-                          disabled={busy}
-                          onClick={() => void toggleDisabled()}
-                        >
-                          {t('agents.disable.confirm')}
-                        </button>
-                        <button
-                          className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
-                          onClick={() => setConfirmingDisable(false)}
-                        >
-                          {t('agents.disable.cancel')}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-2">
-                      <p className="text-meta text-fg-subtle mb-2">
-                        {emphasize(t('agents.disable.noteEnabled'), {
-                          strongRevoked: t('agents.disable.noteEnabledRevoked'),
-                        })}
-                      </p>
-                      <button
-                        className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
-                        aria-label={t('agents.disable.disableAction')}
-                        disabled={busy}
-                        onClick={() => void toggleDisabled()}
-                      >
-                        {t('agents.disable.disable')}
-                      </button>
+                </>}
+                side={selected && isAdmin ? (<>
+                  {/* 비활성 상태의 「활성화」는 되돌릴 수 있는 조작이라 위험 구역 밖 중립 카드에 선다(designer #1256 수정 2 —
+                      전에도 disabled 면 중립 면이었다). 「비활성화」(PAT 폐기)는 위험 구역 안, 확인 단계 그대로. */}
+                  {selected.disabled && (
+                    <div data-testid="agent-reenable-card" className="rounded-compose border border-border bg-surface-raised px-4 py-3">
+                      {disableSection(selected)}
                     </div>
                   )}
-                </div>
-              )}
-
+                  <DangerZone testId="agent-danger-zone">
+                  {!selected.disabled && disableSection(selected)}
               {/* #836: 에이전트 삭제. 비활성화 **아래**에 둔다 — 위아래가 곧 세기라, 되돌릴 수
                   있는 것을 먼저 보여 주고 되돌릴 수 없는 것을 그 다음에 둔다. 관리 행위이므로
                   admin 만 보인다(비활성화와 같은 문). */}
               {selected && isAdmin && (
-                <div className="rounded-row border border-danger-border bg-danger-surface p-3">
+                <div data-testid="agent-delete-section">
                   <div className="text-meta font-medium text-fg-muted">{t('agents.delete.heading')}</div>
                   {confirmingDelete ? (
                     <div className="mt-2">
@@ -2254,6 +2292,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   )}
                 </div>
               )}
+                  </DangerZone>
+                </>) : undefined}
+              />
             </div>
 
             <div {...detailPanel('profile')}>
@@ -3269,6 +3310,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             {error && <p role="alert" className="text-meta text-danger">{error}</p>}
 
 
+          </SettingsWrap>
           </div>
 
           {/*
@@ -3280,8 +3322,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           {(!selected || pendingTotal > 0) && (
             <footer
               data-testid={selected ? 'agent-save-bar' : undefined}
-              className="flex w-full max-w-2xl items-center gap-2 border-t border-border px-5 py-3"
+              className="border-t border-border"
             >
+            <SettingsWrap layout="cards" className="flex items-center gap-2 py-3">
               {selected && (
                 <span data-testid="agent-save-count" className="text-meta text-fg-muted">
                   {t('agents.detail.pendingCount', { n: String(pendingTotal) })}
@@ -3315,6 +3358,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               >
                 {selected ? t('agents.detail.save') : t('agents.detail.submitNew')}
               </Button>
+            </SettingsWrap>
             </footer>
           )}
         </div>
