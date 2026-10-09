@@ -263,7 +263,9 @@ export function HandleGroupsSettings() {
               ))}
             </header>
 
-            <div className="w-full max-w-2xl flex-1 space-y-4 overflow-y-auto p-5">
+            {/* 상세는 이름 카드 | 구성원 카드 두 칸이다(설정 폭 시안 v1 cards) — 672px 에 세로로만 쌓이던 것. 칸은 이 겹의 폭으로 나눈다. */}
+            <div className="@container/settings flex-1 overflow-y-auto p-5">
+            <div data-testid="group-detail-columns" className="grid w-full max-w-[1680px] grid-cols-1 items-start gap-4 @min-[900px]/settings:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
               <div className="rounded-row border border-border p-3">
                 <div className="text-meta font-medium text-fg-muted">{t('groups.rename.name')}</div>
                 {editingName === selected.group.id ? (
@@ -356,6 +358,7 @@ export function HandleGroupsSettings() {
                   </div>
                 )}
               </div>
+            </div>
             </div>
           </>
         )}

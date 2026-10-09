@@ -1,6 +1,6 @@
 import { useUpdateCheck } from '../../lib/useUpdateCheck';
 import { useT } from '../../i18n/useT';
-import { Button, ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
+import { Button, ReadonlyRow, SettingsColumns, SettingsGroup, SettingsPage } from './primitives';
 
 /**
  * 앱 내부 업데이트 화면.
@@ -54,7 +54,11 @@ export function UpdatesSettings() {
   else newVersion = checking ? 'Checking…' : 'Not checked yet';
 
   return (
-    <SettingsPage section="updates" description={t('settings.desc.updates')}>
+    <SettingsPage section="updates" description={t('settings.desc.updates')} layout="cards">
+      {/* 버전·설치가 주 칸, 「재시작이 무엇을 건드리나」 설명이 곁 칸(설정 폭 시안 v1 cards). */}
+      <SettingsColumns
+        testId="updates-columns"
+        main={(
       <SettingsGroup>
         {/* 순서가 사양이다(UX ③): 지금 버전 → 새 버전(확인 시각) → 설치. 사이드바 칸의
             "0.3.59 → 0.3.63" 을 세로로 편 모양이다. */}
@@ -90,7 +94,8 @@ export function UpdatesSettings() {
           )}
         </div>
       </SettingsGroup>
-
+        )}
+        side={(<>
       {/*
         재시작이 무엇을 건드리고 무엇을 안 건드리는지.
 
@@ -110,11 +115,13 @@ export function UpdatesSettings() {
         열린 스레드는 여전히 복원되지 않는다 — 화면 위치는 세션 한정 인메모리라
         `localStorage` 에 넣지 않는다(`state/appStore.ts`).
       */}
-      <p className="text-fg-subtle">
+      <p className="max-w-[68ch] text-fg-subtle">
         Installing an update restarts harkroom. That does not disturb your agents: they are owned
         by a background daemon that outlives the app, and harkroom re-attaches to it on launch.
         Unsent drafts are kept across a restart; which thread you had open is not.
       </p>
+        </>)}
+      />
     </SettingsPage>
   );
 }
