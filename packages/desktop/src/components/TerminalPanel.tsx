@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AgentSessionState, WriterDeniedReason } from '@harkroom/shared';
+import type { AgentSessionState, AgentSessionView, WriterDeniedReason } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { connectAgentAttach, type AttachHandle } from '../lib/agentTerminal';
 import { getTerminalSinkFactory, type TerminalSink, type TerminalDiagnostics } from '../lib/terminalSink';
 import { PaneResizer } from './PaneResizer';
+import { ConfirmDialog } from './ConfirmDialog';
 import { paneStorage, paneMaxWidth, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH } from '../lib/prefs';
 import { useT } from '../i18n/useT';
 import type { MessageKey, Translate } from '../i18n';
@@ -118,6 +119,26 @@ export function TerminalPanel() {
    * 따로 만들면 소켓·sink 정리가 두 벌이 된다.
    */
   const openRef = useRef<(() => void) | null>(null);
+  /**
+   * **지금 붙은 세션**(2026-10-09). attach 와 인터랙티브 열기가 둘 다 세션 뷰를 돌려주는데
+   * 지금까지는 티켓만 쓰고 버렸다 — 그래서 이 창에는 턴을 끝낼 손잡이가 없었고, 사람은 그
+   * TUI 에 Ctrl-C 를 두 번 쳐야 했다. 관제탑의 `조종 끝내기`·`멈추기` 와 **같은 문**
+   * (`cancelAgentTurns` → 러너 SIGTERM)을 여기서도 열려면 세션 id 가 있어야 한다.
+   */
+  const [session, setSession] = useState<AgentSessionView | null>(null);
+  /**
+   * 끝내기 확인 겹창이 **어느 세션을 끝내려고** 열렸는가(열려 있지 않으면 `null`).
+   * 불리언이 아니라 id 를 쥔다(security #1260 n1): 겹창이 열린 사이 그 턴이 끝나고 패널이
+   * 다음 세션으로 갈아타면, 렌더 시점의 `session` 을 읽는 확인 버튼이 **사람이 보지 않은
+   * 새 턴**을 멈춘다. 연 순간의 id 로만 보낸다 — 그리고 `ended` 가 오면 겹창을 내린다.
+   */
+  const [confirmEnd, setConfirmEnd] = useState<string | null>(null);
+  /**
+   * 끝내기를 **보냈다**. `202` 는 끝났다는 뜻이 아니다(`api.cancelAgentSession` 주석) — 끝의
+   * 증거는 서버의 `ended` 프레임이고, 그 사이 버튼을 다시 누를 수 있게 두면 같은 SIGTERM 이
+   * 두 번 간다. 그래서 프레임이 올 때까지 버튼을 「끝내는 중」으로 묶는다.
+   */
+  const [ending, setEnding] = useState(false);
 
   /** 패널 폭. 스레드 패널과 같은 규약이다 — 바꿀 때마다 기기 로컬에 적는다. */
   const [terminalWidth, setWidth] = useState(() => paneStorage.loadTerminalWidth());
@@ -139,7 +160,7 @@ export function TerminalPanel() {
      * xterm 배선 → attach 소켓. attach 와 [터미널 열기]가 이 하나로 수렴한다 —
      * 갈라 두면 소켓·sink 정리가 여러 벌이 되고, 한 벌만 고치는 사고가 난다.
      */
-    const attachTo = (ticket: string): void => {
+    const attachTo = (ticket: string, attached: AgentSessionView): void => {
       // **다시** 붙을 수 있다([터미널 열기]가 같은 자리에서 새 세션을 연다) — 앞의 소켓과
       // 화면을 먼저 놓는다. 남겨 두면 끝난 세션의 바이트가 계속 흘러들고, sink 가 둘이면
       // 같은 host 에 xterm 이 두 번 붙어 화면이 겹친다.
@@ -175,11 +196,30 @@ export function TerminalPanel() {
       // 그 사이 커서가 깜빡여 "칠 수 있다"고 말한다. 이 결함이 정확히 그 거짓말이다.
       // 프레임이 영영 안 와도(구 서버) 읽기 전용으로 남는 규칙과도 같은 방향이다.
       sink.setReadOnly?.(true);
+      setSession(attached);
+      setEnding(false);
       setPhase('attached');
       attach = connectAgentAttach(api.baseUrl, ticket, {
         onOutput: (bytes) => sink?.write(bytes),
         onStatus: (next) => {
           setState(next);
+          if (next === 'ended') {
+            // **턴이 끝나면 마우스 추적을 푼다**(2026-10-09). TUI 가 켠 추적 모드(`?1000`·
+            // `?1002`·`?1003` + SGR `?1006`)는 그 TUI 가 끄고 나가야 풀리는데, SIGTERM·
+            // Ctrl-C 로 끝나면 끄지 못한 채 죽는다 — xterm 은 그 뒤에도 마우스를 움직일
+            // 때마다 `ESC[<35;x;yM` 보고를 입력으로 내보냈고, 남은 tty 가 그것을
+            // `^[[<35;23;67M` 글자로 되찍었다(실측 그림). 끄는 바이트를 **이 화면에만**
+            // 쓴다: PTY 로 보내는 것이 아니라 xterm 이 자기 모드를 내려놓게 하는 것이다.
+            sink?.write(MOUSE_MODES_OFF);
+            // 끝난 턴에 친 것은 갈 곳이 없다 — 입력도 접는다(커서가 "칠 수 있다"고 말하지 않게).
+            writerRef.current = false;
+            sink?.setReadOnly?.(true);
+            // 차례 줄도 내린다(designer #1260 d1) — 입력을 실제로 닫았는데 「입력 가능」이 남으면
+            // 그 줄이 거짓말이 된다. 끝났다는 사실은 아래 `state === 'ended'` 줄이 적는다.
+            setWriter(null);
+            setEnding(false);
+            setConfirmEnd(null);
+          }
           // 갈아탄다. 러너는 이미 예약대로 그 턴을 띄웠거나 띄우는 중이고, 이 요청이
           // 그 세션의 티켓을 받아 온다. **끝났다는 사실은 이미 오는 프레임이 알려 준다** —
           // 폴링을 새로 만들지 않는다.
@@ -205,13 +245,15 @@ export function TerminalPanel() {
     };
 
     /** 티켓 획득 → 배선. 실패는 서버가 쓴 문구를 그대로 올린다. */
-    const begin = async (issueTicket: () => Promise<{ ticket: string }>): Promise<void> => {
+    const begin = async (
+      issueTicket: () => Promise<{ ticket: string; session: AgentSessionView }>,
+    ): Promise<void> => {
       try {
-        const { ticket } = await issueTicket();
+        const { ticket, session: attached } = await issueTicket();
         // 티켓을 받은 사이에 패널이 닫혔을 수 있다. 여기서 안 막으면 닫은 뒤에 소켓이
         // 열리고, 그 소켓은 아무도 닫지 않는다(`ws.ts` 의 같은 가드와 같은 이유다).
         if (disposed) return;
-        attachTo(ticket);
+        attachTo(ticket, attached);
       } catch (err) {
         if (disposed) return;
         // 러너 오프라인(404)·구버전(409)·codex 거절(409)·타임아웃(504)의 서버 문구가
@@ -282,6 +324,21 @@ export function TerminalPanel() {
 
   if (!target) return null;
 
+  /*
+    **끝낼 손잡이는 턴이 돌 때만 선다.** 끝난 턴·러너가 끊긴 턴에 서면 눌러도 아무 일이 없는
+    버튼이 된다(design.md §4). 이름은 관제탑과 **같은 말**을 쓴다: 사람이 조종하는 턴은
+    `조종 끝내기`, 멘션 턴은 `멈추기` — 두 화면에서 같은 일을 다른 이름으로 부르면 사람은
+    둘이 다른 일인 줄 안다. `mode` 가 없는(구 러너) 턴은 관제탑처럼 멘션 턴 쪽으로 읽는다.
+
+    **확인을 받는다** — 관제탑은 줄 단위 `멈추기` 에 확인이 없지만 여기는 사정이 다르다:
+    바로 옆이 `닫기`(창만 닫는다, 되돌릴 수 있다)이고, 둘을 헷갈려 누른 한 번이 하네스를
+    죽인다.
+  */
+  const interactive = session?.mode === 'interactive';
+  const canEnd = phase === 'attached' && state === 'running' && session !== null;
+  const endLabel = t(interactive ? 'agentTurns.endControl' : 'agentTurns.cancel');
+  const handle = agent?.handle ?? target.agentAccountId;
+
   return (
     <aside
       /* `shrink-0` 은 남긴다: 터미널은 줄어들면 줄이 접히거나 잘려서 읽던 출력이 망가진다
@@ -322,6 +379,17 @@ export function TerminalPanel() {
           {threadRoot ? threadExcerpt(threadRoot.body) : t('terminal.header.thread')}
         </span>
         {state && <span className="shrink-0 rounded-row bg-surface-raised px-1.5 py-0.5">{t(STATE_LABEL[state])}</span>}
+        {canEnd && (
+          <button
+            type="button"
+            data-testid="terminal-end-turn"
+            disabled={ending}
+            onClick={() => setConfirmEnd(session?.sessionId ?? null)}
+            className="shrink-0 rounded-row px-2 py-0.5 text-danger hover:bg-danger-surface disabled:opacity-60"
+          >
+            {ending ? t('terminal.end.pending') : endLabel}
+          </button>
+        )}
         {/* **닫기는 줄지 않는다**(`shrink-0`). 이 줄에서 마지막까지 남아야 하는 것은 이
             버튼 하나다 — 꼬리표(핸들·스코프)는 줄어들거나 말줄임표가 되면 그만이지만,
             이것이 사라지면 패널을 닫을 길이 없어진다. */}
@@ -333,6 +401,30 @@ export function TerminalPanel() {
           {t('terminal.header.close')}
         </button>
       </div>
+      {confirmEnd && (
+        <ConfirmDialog
+          title={interactive
+            ? t('agentTurns.endControlTitle', { handle })
+            : t('terminal.end.cancelTitle', { handle })}
+          /* 관제탑 문구(`agentTurns.endControlDetail`)는 "터미널이 닫히고"로 시작한다 — 이 창은 닫히지
+             않고 「턴 종료」를 단 채 남으므로 이 자리의 말을 따로 둔다(designer #1260 d2). */
+          detail={t(interactive ? 'terminal.end.controlDetail' : 'terminal.end.cancelDetail')}
+          detailKind="note"
+          confirmLabel={t(interactive ? 'agentTurns.endControlConfirm' : 'agentTurns.cancelConfirm')}
+          cancelLabel={t('agentTurns.cancelKeep')}
+          danger
+          onConfirm={() => {
+            const sessionId = confirmEnd;
+            setConfirmEnd(null);
+            setEnding(true);
+            // 실패는 컨트롤러가 통지로 올린다(관제탑과 같은 길) — 그때는 버튼을 다시 푼다.
+            void getController().cancelAgentTurns([sessionId]).then((sent) => {
+              if (!sent) setEnding(false);
+            });
+          }}
+          onCancel={() => setConfirmEnd(null)}
+        />
+      )}
       {phase === 'loading' && <p className="px-3 py-2 text-fg-subtle">{t('terminal.session.checking')}</p>}
       {/* 조회와 열기를 **갈라 적는다.** 둘 다 "기다려라"이지만 기다리는 대상이 다르다 —
           앞은 서버의 세션 목록이고 뒤는 러너가 띄우는 PTY 다(뒤가 몇 초 더 걸린다).
@@ -356,6 +448,11 @@ export function TerminalPanel() {
           구 서버다 — 그때 "다른 창이 입력 중"이라 적으면 없는 사람을 만들어 낸다).
           강등(false)만 적고 승격을 침묵하면, 두 창을 쓰는 사람이 어느 쪽이 살아 있는지
           화면에서 알 수 없다. */}
+      {phase === 'attached' && state === 'ended' && (
+        <p className="px-3 py-2 text-fg-subtle" role="note" data-testid="writer-note" data-writer-reason="ended">
+          {t('terminal.writer.ended')}
+        </p>
+      )}
       {phase === 'attached' && writer === true && (
         <p className="px-3 py-2 text-fg-subtle" role="note" data-testid="writer-note">
           {t('terminal.writer.can')}
@@ -446,6 +543,14 @@ function threadExcerpt(body: string): string {
  * 안전하다. `AgentSessionState` 로 색인된 채로 두는 이유는 **네 번째 상태가 생기면
  * 여기서 컴파일이 막히기** 때문이다.
  */
+/**
+ * xterm 의 마우스 보고 모드를 전부 끄는 바이트. 1000(누름)·1002(끌기)·1003(모든 움직임)과
+ * 인코딩 1005·1006(SGR)·1015 를 함께 내린다 — 하나만 내리면 남은 것이 보고를 계속 낸다.
+ */
+const MOUSE_MODES_OFF = new TextEncoder().encode(
+  '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l',
+);
+
 const STATE_LABEL: Record<AgentSessionState, MessageKey> = {
   running: 'terminal.state.running',
   ended: 'terminal.state.ended',

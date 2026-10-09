@@ -2945,6 +2945,14 @@ export const en = {
   /** 위와 **갈린다**: 저쪽은 서버의 목록을 기다리고 이쪽은 러너가 띄우는 PTY 를 기다린다. */
   'terminal.session.opening': 'Opening the terminal…',
 
+  /** 끝내기를 보낸 뒤 `ended` 프레임이 올 때까지. `202` 는 끝났다는 뜻이 아니다. */
+  'terminal.end.pending': 'Ending…',
+  /** 멘션 턴을 터미널 창에서 멈출 때의 확인. 조종 중인 턴은 `agentTurns.endControl*` 을 그대로 쓴다. */
+  /** 조종 중인 턴을 이 창에서 끝낼 때. 관제탑 문구와 달리 **창은 닫히지 않는다**(designer #1260 d2). */
+  'terminal.end.controlDetail': 'The harness stops and this window stays, marked “Turn ended”. What you typed is kept in the session and picks up when you reopen it. The runner stays up and handles the mentions waiting on this thread shortly.',
+  'terminal.end.cancelTitle': 'Stop this turn of @{handle}?',
+  'terminal.end.cancelDetail': 'The harness stops and the turn is left in this thread as a failure card. The runner stays up and takes the next mention as usual.',
+
   /** `runnerState.running` 과 **다른 것을 센다** — 저쪽은 러너, 이쪽은 그 PTY 세션의 턴이다. */
   'terminal.state.running': 'Running',
   /** **`Ended` 만 두면 무엇이 끝났는지가 빠진다** — 세션이 아니라 턴이 끝났다. */
@@ -2956,6 +2964,8 @@ export const en = {
    * 칠 수 있을 때. **승격도 적는다** — 강등만 적으면 두 창을 쓰는 사람이 어느 쪽이
    * 살아 있는지 화면에서 알 수 없다. 뒤 절반이 **규칙**이라 다음을 예측할 수 있다.
    */
+  /** 턴이 끝난 뒤의 차례 줄. 입력이 실제로 닫혔으므로 「입력 가능」을 남기지 않는다. */
+  'terminal.writer.ended': 'The turn ended, so input is closed.',
   'terminal.writer.can': 'You can type — the window opened last holds input.',
   /**
    * 진행 중인 멘션 턴. **원인을 그대로 말한다**(그 함수 주석) — "관찰 전용"만 적으면

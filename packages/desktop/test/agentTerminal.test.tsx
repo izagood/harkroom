@@ -2,7 +2,7 @@
 //   4. 소유자·admin 이 아니면 진입점이 **렌더되지 않는다**(비활성 아님 — 부재).
 //   8. 패널을 닫으면 구독이 끊긴다(WS 메시지가 더 오지 않는다).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, act } from '@testing-library/react';
+import { render, screen, cleanup, act, within } from '@testing-library/react';
 import type { AgentSessionView } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
@@ -681,5 +681,103 @@ describe('#339 칩·패널은 스레드에 스코프된다 — 같은 에이전�
     // 채널 이름과 스레드 루트 본문이 함께 보인다 — 같은 에이전트의 터미널이 여럿일 수
     // 있으니, 지금 보는 화면이 어느 스레드의 것인지 헤더가 말해야 한다.
     expect(screen.getByTestId('terminal-scope').textContent).toBe('#general · 배포 준비');
+  });
+});
+
+/**
+ * 2026-10-09 — **터미널 창에서 턴을 끝낸다.** 예전에는 이 창에 손잡이가 없어 사람이 TUI 에
+ * Ctrl-C 를 두 번 쳐야 했다. 관제탑의 `조종 끝내기`·`멈추기` 와 같은 문(`cancelAgentTurns`)을
+ * 연다 — 다른 길을 새로 내면 같은 일에 손잡이가 둘이 된다.
+ */
+describe('터미널 창의 턴 끝내기', () => {
+  const mount = async (attached: AgentSessionView, cancelAgentTurns = vi.fn(async () => true)) => {
+    const written: string[] = [];
+    setTerminalSinkFactory(() => ({
+      write: (bytes) => written.push(Buffer.from(bytes).toString('utf8')),
+      dispose: () => {},
+    }));
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => [attached]),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: attached })),
+      openInteractiveSession: vi.fn(),
+    };
+    setController({ api, cancelAgentTurns } as unknown as Controller);
+    useAppStore.getState().set({
+      me: acc('u1', 'owner'),
+      accounts: { a1: agent('a1', 'forge', 'u1') },
+      terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
+    });
+    render(<TerminalPanel />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    return { written, cancelAgentTurns };
+  };
+
+  it('조종 중인 턴은 「조종 끝내기」 → 확인 → 그 세션 id 로 cancelAgentTurns', async () => {
+    const { cancelAgentTurns } = await mount(session({ mode: 'interactive' }));
+    // 돌고 있다는 프레임이 오기 전에는 버튼이 없다 — 끝난 턴에 선 버튼은 눌러도 아무 일이 없다.
+    expect(screen.queryByTestId('terminal-end-turn')).toBeNull();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'running' }); });
+    const button = screen.getByTestId('terminal-end-turn');
+    expect(button.textContent).toBe('조종 끝내기');
+    // 확인 없이는 보내지 않는다 — 바로 옆이 `닫기` 라 헷갈려 누른 한 번이 하네스를 죽인다.
+    await act(async () => { button.click(); });
+    expect(cancelAgentTurns).not.toHaveBeenCalled();
+    await act(async () => { within(screen.getByRole('dialog')).getByRole('button', { name: '조종 끝내기' }).click(); });
+    expect(cancelAgentTurns).toHaveBeenCalledWith(['sess-1']);
+    expect(screen.getByTestId('terminal-end-turn').textContent).toBe('끝내는 중…');
+    expect((screen.getByTestId('terminal-end-turn') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('멘션 턴(모드 모름 포함)은 관제탑처럼 「멈추기」', async () => {
+    await mount(session());
+    await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'running' }); });
+    expect(screen.getByTestId('terminal-end-turn').textContent).toBe('멈추기');
+  });
+
+  it('보내기가 실패하면 버튼이 다시 풀린다', async () => {
+    await mount(session({ mode: 'interactive' }), vi.fn(async () => false));
+    await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'running' }); });
+    await act(async () => { screen.getByTestId('terminal-end-turn').click(); });
+    await act(async () => { within(screen.getByRole('dialog')).getByRole('button', { name: '조종 끝내기' }).click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect((screen.getByTestId('terminal-end-turn') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('턴이 끝나면 버튼이 사라지고 xterm 의 마우스 추적을 내린다', async () => {
+    const { written } = await mount(session({ mode: 'interactive' }));
+    // 차례를 먼저 받는다 — 그래야 「입력 가능」 줄이 서 있다가 내려가는지를 잰다.
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true, resize: true, reason: null }); });
+    expect(screen.getByTestId('writer-note').textContent).toBe('입력 가능 — 마지막으로 연 창이 입력을 가진다.');
+    await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'running' }); });
+    await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'ended' }); });
+    expect(screen.queryByTestId('terminal-end-turn')).toBeNull();
+    // TUI 가 끄지 못하고 죽으면 xterm 이 마우스 보고(`ESC[<35;…M`)를 계속 입력으로 낸다(실측).
+    const off = written.join('');
+    for (const mode of ['1000', '1002', '1003', '1006']) expect(off).toContain(`\x1b[?${mode}l`);
+     // 입력을 닫았으니 「입력 가능」 줄이 남으면 거짓말이다(designer #1260 d1).
+    const note = screen.getByTestId('writer-note');
+    expect(note.getAttribute('data-writer-reason')).toBe('ended');
+    expect(note.textContent).toBe('턴이 끝나 입력이 닫혔다.');
+    expect(screen.queryByText('입력 가능 — 마지막으로 연 창이 입력을 가진다.')).toBeNull();
+  });
+
+  it('조종 확인창은 이 창의 말을 쓴다 — 관제탑의 "터미널이 닫히고"가 아니다', async () => {
+    await mount(session({ mode: 'interactive' }));
+    await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'running' }); });
+    await act(async () => { screen.getByTestId('terminal-end-turn').click(); });
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.textContent).toContain('이 창은 「턴 종료」로 남는다');
+    expect(dialog.textContent).not.toContain('터미널이 닫히고');
+  });
+
+  it('확인창이 열린 채 턴이 끝나면 겹창이 내려간다 — 남은 확인이 다음 턴을 멈추지 않는다', async () => {
+    const { cancelAgentTurns } = await mount(session({ mode: 'interactive' }));
+    await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'running' }); });
+    await act(async () => { screen.getByTestId('terminal-end-turn').click(); });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'status', state: 'ended' }); });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(cancelAgentTurns).not.toHaveBeenCalled();
   });
 });
