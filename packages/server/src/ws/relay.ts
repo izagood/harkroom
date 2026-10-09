@@ -205,6 +205,19 @@ export interface RelayHubHooks {
     agentAccountId: string;
     accountLabel: string;
   }) => void;
+  /**
+   * 사람을 불렀던 세션이 끝났다(2026-10-09). 앱은 관문 카드를 이것으로 닫는다 —
+   * `onAttention` 은 걸릴 때 한 번만 오므로, 이것이 없으면 카드가 × 말고는 안 닫힌다.
+   *
+   * **부른 적 있는 세션만** 알린다. 끝나는 세션마다 보내면 관문과 무관한 턴 끝이 전부
+   * 소유자의 소켓으로 흘러간다.
+   */
+  onAttentionCleared?: (ev: {
+    sessionId: string;
+    channelId: string;
+    threadRootId: string | null;
+    agentAccountId: string;
+  }) => void;
 }
 
 export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
@@ -223,6 +236,8 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
   const ownerOf = new Map<string, string>();
   /** 배열이다 — 삽입 순서가 곧 attach 순서이고, writer 승계가 그 순서의 끝을 읽는다. */
   const viewers = new Map<string, Viewer[]>();
+  /** 사람을 부른 적 있는 세션(2026-10-09). 끝날 때 `onAttentionCleared` 를 낼지 가른다. */
+  const attentionRaised = new Set<string>();
   /**
    * 세션별 현재 writer(스펙 §5-2 결정 2). 소유자·admin 이 동시에 붙어도 이 맵이 한 명만
    * 가리키므로 바이트가 섞이는 상태 자체가 없다 — 잠금 장치를 따로 만들지 않는 이유다.
@@ -358,7 +373,16 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
   };
 
   const dropSession = (agentAccountId: string, sessionId: string): void => {
+    const ended = runners.get(agentAccountId)?.sessions.get(sessionId);
     runners.get(agentAccountId)?.sessions.delete(sessionId);
+    if (attentionRaised.delete(sessionId) && ended) {
+      hooks.onAttentionCleared?.({
+        sessionId,
+        channelId: ended.channelId,
+        threadRootId: ended.threadRootId,
+        agentAccountId,
+      });
+    }
     // 세션이 끝나도 뷰어 소켓은 열려 있다 — 사람이 마지막 화면을 계속 보고 있을 수 있다.
     // '끝났다'만 알리고 소켓은 그대로 둔다(닫는 것은 사람의 몫이다).
     broadcastStatus(sessionId, 'ended');
@@ -470,6 +494,7 @@ export function createRelayHub(hooks: RelayHubHooks = {}): RelayHub {
           // 세션을 모르면 채널·스레드를 알 수 없고, 그러면 앱이 열 패널이 없다.
           // 조용히 버린다 — 없는 것을 있다고 표시하지 않는다.
           if (!session) return;
+          attentionRaised.add(session.sessionId);
           hooks.onAttention?.({
             sessionId: session.sessionId,
             channelId: session.channelId,

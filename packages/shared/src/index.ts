@@ -2624,6 +2624,13 @@ export type WsServerEvent =
       threadRootId: string | null; agentAccountId: string; agentHandle: string;
       accountLabel: string }
   /**
+   * 사람을 불렀던 세션이 끝났다(2026-10-09). `agent.attention` 은 걸릴 때 한 번만 오므로,
+   * 앱의 관문 카드는 이것(또는 사람이 그 터미널을 연 것)으로 닫힌다. 부른 적 없는 세션의
+   * 끝은 오지 않는다. 낡은 서버는 보내지 않는다 — 그때 카드는 × 로 닫힌다.
+   */
+  | { type: 'agent.attention.cleared'; sessionId: string; channelId: string;
+      threadRootId: string | null; agentAccountId: string }
+  /**
    * 사람이 자기 상태를 바꿨다(#186). presence 와 **별개의 이벤트**다 — 상태 변경은
    * `presence.changed` 를 만들지 않고, 연결이 끊겨도 상태는 남는다.
    */

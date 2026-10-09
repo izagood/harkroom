@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRelayHub, type RelaySocket } from '../src/ws/relay.js';
+import { visibleTo } from '../src/ws/wsPlugin.js';
 
 /**
  * "사람 손이 필요하다"를 러너에서 받아 앱으로 넘기는 자리(2026-09-08).
@@ -76,5 +77,52 @@ describe('attention.required 중계', () => {
     expect(() => hub.onRunnerMessage('agent-1', JSON.stringify({
       type: 'attention.required', sessionId: 's1', accountLabel: 'aria', screen: '',
     }))).not.toThrow();
+  });
+});
+
+describe('관문 풀림 — 부른 세션이 끝나면 알린다 (2026-10-09)', () => {
+  function 세운다2() {
+    const 풀림: unknown[] = [];
+    const hub = createRelayHub({ onAttentionCleared: (ev) => { 풀림.push(ev); } });
+    hub.addRunner('agent-1', { send: () => {}, close: () => {} });
+    hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
+    return { hub, 풀림 };
+  }
+
+  it('부른 적 있는 세션이 끝나면 좌표를 넘긴다 — 앱이 그 카드를 닫는다', () => {
+    const { hub, 풀림 } = 세운다2();
+    hub.onRunnerMessage('agent-1', JSON.stringify({
+      type: 'attention.required', sessionId: 's1', accountLabel: 'aria', screen: '',
+    }));
+    hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.ended', sessionId: 's1' }));
+    expect(풀림).toEqual([{ sessionId: 's1', channelId: 'c1', threadRootId: 't1', agentAccountId: 'agent-1' }]);
+    // 두 번 끝나도 한 번만 — 러너가 session.ended 를 겹쳐 보내는 경로가 있다.
+    hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.ended', sessionId: 's1' }));
+    expect(풀림).toHaveLength(1);
+  });
+
+  it('부르지 않은 세션의 끝은 넘기지 않는다 — 턴 끝마다 소유자 소켓을 울리지 않는다', () => {
+    const { hub, 풀림 } = 세운다2();
+    hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.ended', sessionId: 's1' }));
+    expect(풀림).toHaveLength(0);
+  });
+});
+
+describe('관문 이벤트의 수신자 (2026-10-09)', () => {
+  const 부름 = {
+    type: 'agent.attention' as const, sessionId: 's1', channelId: 'c1', threadRootId: 't1',
+    agentAccountId: 'agent-1', agentHandle: 'aria', accountLabel: 'max', audience: ['owner-1'],
+  };
+  it('소유자에게만 간다 — 남의 앱에 배너가 뜨고 터미널이 열리면 안 된다', () => {
+    expect(visibleTo(부름, 'owner-1')).toBe(true);
+    expect(visibleTo(부름, 'someone-else')).toBe(false);
+  });
+  it('풀림도 같은 소유자에게만 간다', () => {
+    const 풀림 = {
+      type: 'agent.attention.cleared' as const, sessionId: 's1', channelId: 'c1', threadRootId: 't1',
+      agentAccountId: 'agent-1', audience: ['owner-1'],
+    };
+    expect(visibleTo(풀림, 'owner-1')).toBe(true);
+    expect(visibleTo(풀림, 'someone-else')).toBe(false);
   });
 });

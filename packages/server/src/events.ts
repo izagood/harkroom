@@ -14,6 +14,9 @@ export type WorkspaceEvent =
   | { type: 'agent.attention'; sessionId: string; channelId: string;
       threadRootId: string | null; agentAccountId: string; agentHandle: string;
       accountLabel: string; audience: string[] }
+  // 그 세션이 끝났다(2026-10-09) — 부른 적 있는 세션만, 같은 소유자에게. 앱이 관문 카드를 닫는다.
+  | { type: 'agent.attention.cleared'; sessionId: string; channelId: string;
+      threadRootId: string | null; agentAccountId: string; audience: string[] }
   // 사람이 직접 고른 상태(#186). presence 와 나란히 산다 — 이 이벤트는
   // presence.changed 를 만들지 않고, 소켓이 끊겨도 상태는 그대로 남는다.
   | { type: 'status.changed'; accountId: string; status: AccountStatus; statusText: string | null }
