@@ -7,6 +7,7 @@ import { useLocale, useT } from '../../i18n/useT';
 import { writeConcealed } from '../../lib/concealedClipboard';
 import { copyText } from '../../lib/clipboard';
 import { Button } from './primitives';
+import { Overlay } from '../Overlay';
 
 /**
  * 비밀 보관소 **소유자 보기**(114, 스레드 464aff1c · designer 시안 v3). 서버 판정은 `secretRoutes.ts` 의
@@ -105,10 +106,11 @@ export function UnlockDialog({ thenName, onDone, onCancel }: {
   };
   const limited = error?.kind === 'limited';
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" data-testid="secrets-unlock-dialog">
-      <div role="dialog" aria-modal="true" aria-labelledby="secrets-unlock-title"
-        className="w-[min(420px,calc(100vw-32px))] rounded border border-border bg-surface-raised p-4 text-fg shadow-float">
-        <h2 id="secrets-unlock-title" className="text-body font-medium">{t('secrets.unlockTitle')}</h2>
+    // 다른 확인 창과 같은 겹창(`Overlay`) — Esc·바깥 클릭은 취소, 포커스는 창 안에 갇힌다(designer #1261 수2).
+    // 도는 동안은 닫지 않는다(`ConfirmDialog` 의 busy 와 같은 규칙).
+    <Overlay label={t('secrets.unlockTitle')} onClose={busy ? noop : onCancel} align="center" className="w-[min(420px,calc(100vw-32px))]">
+      <div className="p-4" data-testid="secrets-unlock-dialog">
+        <h2 className="text-body font-medium">{t('secrets.unlockTitle')}</h2>
         <p className="mt-1 text-meta text-fg-muted">{t('secrets.unlockBody')}</p>
         {thenName && <p className="mt-1 text-meta text-fg-muted">{t('secrets.unlockThen', { name: thenName })}</p>}
         <form onSubmit={(e) => { e.preventDefault(); void submit(); }} className="mt-3">
@@ -124,13 +126,15 @@ export function UnlockDialog({ thenName, onDone, onCancel }: {
           <div className="mt-3 flex justify-end gap-2">
             <Button onClick={onCancel}>{t('secrets.cancel')}</Button>
             <button type="submit" disabled={limited || busy || !password} data-testid="secrets-unlock-submit"
-              className="rounded border border-border bg-surface px-2 py-1 text-meta text-fg disabled:opacity-50">{t('secrets.unlockSubmit')}</button>
+              className="rounded-row bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50">{t('secrets.unlockSubmit')}</button>
           </div>
         </form>
       </div>
-    </div>
+    </Overlay>
   );
 }
+
+function noop(): void {}
 
 /**
  * 행 아래 값 패널(text). 열리면 서버에서 받아 30초 보이고 가린다. 가린 뒤에는 한 줄로 줄이고 [다시 보기]·[닫기].

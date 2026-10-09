@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
-import { SecretsSettings } from '../src/components/settings/SecretsSettings';
+import { SecretsSettings, foldAccessRows } from '../src/components/settings/SecretsSettings';
 import { setController, type Controller } from '../src/state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -158,7 +158,7 @@ describe('비밀 소유자 보기', () => {
     fireEvent.click(screen.getByTestId('secrets-unlock-submit'));
     await screen.findByTestId('secrets-unlocked');
     await waitFor(() => expect(screen.queryByTestId('secrets-unlocked')).toBeNull(), { timeout: 3000 });
-    expect(screen.getByTestId('secrets-autolocked').textContent).toContain('잠갔다');
+    expect(screen.getByTestId('secrets-autolocked').textContent).toBe('잠금 시간이 끝나 잠갔다');
     expect(c.lockSecrets).toHaveBeenCalledTimes(1);
   });
 
@@ -191,6 +191,26 @@ describe('비밀 소유자 보기', () => {
     const viewed = screen.getAllByRole('row').find((tr) => tr.textContent?.includes('봤음'));
     expect(viewed?.querySelector('[title]')?.getAttribute('title')).toBe('203.0.113.7');
     expect(folded.querySelector('[title]')).toBeNull();
+  });
+
+  it('확인 창은 겹창이다 — 이름 있는 dialog, Esc 는 취소(잠금 해제를 부르지 않는다)', async () => {
+    const c = setup(); setServer('0.4.20');
+    render(<SecretsSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    expect(screen.getByRole('dialog', { name: '값 보기 잠금 해제' }).getAttribute('aria-modal')).toBe('true');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByTestId('secrets-unlock-dialog')).toBeNull();
+    expect(c.unlockSecrets).not.toHaveBeenCalled();
+  });
+
+  it('막힌 줄은 ip 가 다르면 접지 않는다(n5) — client 는 자기 신고라서', () => {
+    const row = (id: string, ip: string | null) => ({
+      id, version: null, agentId: null, operatorId: null, turnId: null, channelId: null, threadRootId: null,
+      result: 'denied', reason: 'step_up_required', at: `2026-10-09T05:0${id}:00Z`, actorAccountId: ME, action: 'view',
+      client: 'Harkroom 0.4.20 · macOS', ip,
+    }) as never;
+    expect(foldAccessRows([row('3', '203.0.113.7'), row('2', '198.51.100.9'), row('1', '198.51.100.9')]).map((r) => r.count)).toEqual([1, 2]);
+    expect(foldAccessRows([row('2', null), row('1', null)]).map((r) => r.count)).toEqual([2]);
   });
 
   it('[잠그기]는 화면부터 잠그고 DELETE 를 부른다 — 열린 값 패널도 닫힌다', async () => {

@@ -594,7 +594,7 @@ function accessText(t: ReturnType<typeof useT>, r: SecretAccessView): string {
 }
 
 /**
- * 같은 사람·같은 기기의 **연달아 나온** 「막힘(잠금 해제 안 됨)」 줄을 한 줄로 접는다(designer, #1253 n1 뒤에도
+ * 같은 사람·같은 기기·같은 IP 의 **연달아 나온** 「막힘(잠금 해제 안 됨)」 줄을 한 줄로 접는다(designer, #1253 n1 뒤에도
  * 잠긴 채 두드리면 403 마다 한 줄이 남는다). 기록은 그대로이고 화면만 접는다. 목록은 최신이 위다.
  */
 export type AccessRowView = SecretAccessView & { count: number; firstAt: string };
@@ -604,7 +604,9 @@ export function foldAccessRows(rows: SecretAccessView[]): AccessRowView[] {
     const prev = out[out.length - 1];
     const foldable = r.result === 'denied' && r.reason === 'step_up_required' && !!r.actorAccountId;
     if (foldable && prev && prev.result === 'denied' && prev.reason === 'step_up_required'
-      && prev.actorAccountId === r.actorAccountId && (prev.client ?? null) === (r.client ?? null)) {
+      && prev.actorAccountId === r.actorAccountId && (prev.client ?? null) === (r.client ?? null)
+      // client 는 앱의 자기 신고라, 검증된 단서인 ip 까지 같아야 접는다(security #1261 n5). 소유자 아니면 ip 는 둘 다 null.
+      && (prev.ip ?? null) === (r.ip ?? null)) {
       prev.count += 1; prev.firstAt = r.at;
       continue;
     }
