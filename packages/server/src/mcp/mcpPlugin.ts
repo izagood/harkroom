@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import {
-  ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, MAX_MESSAGE_BODY_CHARS,
+  ASK_BUNDLE_MAX_ITEMS, ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, MAX_MESSAGE_BODY_CHARS,
   MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT, TEAM_ROUND_LIMIT,
   ACCOUNT_GATE_LABEL_PATTERN, FAILURE_CODES, type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
   type MessageRow, type ModelMeta, type ReportMeta,
@@ -64,6 +64,7 @@ import { recordRunnerVersion } from '../services/runnerVersion.js';
 import { recordUpload, resolveAttachmentFor } from '../services/attachments.js';
 import { ARTIFACT_PUBLISH_ARG_MAX_BYTES, ARTIFACT_REJECTION_MESSAGES, attachArtifactVersion } from '../services/artifacts.js';
 import { reportedModelMeta } from '../services/reportedModel.js';
+import { ASK_BUNDLE_REFUSAL_MESSAGE, resolveBundleItem, upsertAskBundle, type AskBundleRefusal } from '../services/askBundles.js';
 import { axisValid, getThreadAgentModel } from '../services/threadAgentModels.js';
 import { applyAgentPicks, cleanPicks, type PickChange } from '../services/agentModelPicks.js';
 import { agentModelOptions, announceChange, checkOffered, emitChanged } from '../routes/threadAgentModelRoutes.js';
@@ -807,7 +808,11 @@ function buildMcpServer(
         id: z.string().min(1).max(64),
         label: z.string().min(1).max(200),
         hint: z.string().min(1).max(200).optional(),
+        /** 추천하는 선택지(하나만). 묶음 카드의 「남은 n개 추천대로」가 이것을 고른다. */
+        recommended: z.boolean().optional(),
       })).min(ASK_MIN_OPTIONS).max(ASK_MAX_OPTIONS),
+      /** 머지·배포·비밀·권한처럼 **되돌릴 수 없는 결정**이면 true — 묶음 카드의 일괄 처리에서 빠진다(서버도 따로 판정한다). */
+      irreversible: z.boolean().optional(),
       /** 답할 대상의 handle. 비우면 '사람 아무나'다. */
       to: z.string().min(1).max(64).optional(),
       prompt: z.string().min(1).max(500).optional(),
@@ -831,7 +836,7 @@ function buildMcpServer(
       mergeDenialId: z.string().uuid().optional(),
       model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, options, to, prompt, mirrorOf, supersedes, mergeDenialId, model }) => {
+  }, async ({ channelId, body, threadRootId, options, to, prompt, mirrorOf, supersedes, mergeDenialId, irreversible, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -839,6 +844,10 @@ function buildMcpServer(
     const ids = new Set(options.map((o) => o.id));
     if (ids.size !== options.length) {
       return jsonResult({ error: { code: 'duplicate_option', message: 'option ids must be unique' } });
+    }
+    // 추천이 둘이면 「추천대로」가 어느 것을 고를지 정할 수 없다.
+    if (options.filter((o) => o.recommended).length > 1) {
+      return jsonResult({ error: { code: 'multiple_recommended', message: 'mark at most one option as recommended' } });
     }
     // 머지 거절 카드는 사람 앞 원본만이다(C1) — 거울 검사보다 먼저 막아야 어느 쪽을 실어도 같은 코드로 거절된다(security n2).
     if (mergeDenialId && (to || mirrorOf)) {
@@ -892,7 +901,10 @@ function buildMcpServer(
       });
     }
     const meta: AskMeta & Partial<ModelMeta> = {
-      kind: 'ask', ask: { options, to: audience, ...(prompt ? { prompt } : {}), ...(mirrorOf ? { mirrorOf } : {}) },
+      kind: 'ask', ask: {
+        options: options.map((o) => ({ id: o.id, label: o.label, ...(o.hint ? { hint: o.hint } : {}), ...(o.recommended ? { recommended: true } : {}) })),
+        to: audience, ...(prompt ? { prompt } : {}), ...(mirrorOf ? { mirrorOf } : {}), ...(irreversible ? { irreversible: true } : {}),
+      },
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
@@ -924,6 +936,64 @@ function buildMcpServer(
       }
     }
     return postedResult(message, notified);
+  });
+
+  /**
+   * 묶음 카드(선택 카드 P1, 2026-10-10) — 여러 에이전트의 **사람 앞 카드**를 내 스레드의 카드 한 장에 줄로 모은다.
+   * 줄마다 거울 검사를 거치고(`checkAskMirror`), 상태는 원본에서 읽는다. 사람이 줄을 고르면 원본에 그 사람 이름으로
+   * 적힌다. 같은 bundleId 를 주면 그 묶음에 줄을 더하거나 사본을 새로 고친다. 규칙은 `services/askBundles.ts`.
+   */
+  server.registerTool('message.askBundle', {
+    description: '여러 에이전트의 사람 앞 카드를 내 스레드의 묶음 카드 한 장에 줄로 모은다(items 는 원본 카드 id). bundleId 를 주면 그 묶음에 줄을 더한다. 사람이 줄을 고르면 원본에 그 사람 이름으로 적힌다. 권한 요청 카드는 링크 줄로만 선다',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      threadRootId: z.string().uuid(),
+      body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
+      items: z.array(z.object({ mirrorOf: z.string().uuid() })).min(1).max(ASK_BUNDLE_MAX_ITEMS),
+      bundleId: z.string().uuid().optional(),
+      model: MODEL_ARG,
+    },
+  }, async ({ channelId, threadRootId, body, items, bundleId, model }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    const result = await upsertAskBundle(pool, {
+      callerId: account.id, channelId, threadRootId, body, rootIds: items.map((i) => i.mirrorOf), bundleId,
+      meta: { ...(await reportedModelMeta(pool, account.id, model, threadRootId)) }, causeMessageId: cause,
+    });
+    if (!result.ok) {
+      if (result.code === 'post_failed' && result.posted?.failure) return postFailureResult(result.posted.failure);
+      const code = result.code as AskBundleRefusal;
+      return jsonResult({ error: { code, message: ASK_BUNDLE_REFUSAL_MESSAGE[code] ?? code, ...(result.rootId ? { rootId: result.rootId } : {}) } });
+    }
+    if (result.posted && !result.posted.failure) {
+      const { message, notified, replayed } = result.posted;
+      if (!replayed) {
+        emitPosted(result.posted, await audienceFor(pool, channelId));
+        for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+      }
+      return postedResult(message, notified);
+    }
+    return jsonResult({ message: result.message, updated: true });
+  });
+
+  /**
+   * 사람이 묶음 스레드에 **글로** 한 줄에 답했을 때 그 줄을 닫는다(시안 10절). 묶음 스레드의 글은 줄을 자동으로
+   * 닫지 않는다 — 어느 줄에 대한 글인지는 내가 읽고 정한다. replyMessageId 는 그 사람 글의 id 이고, 원본은 그 사람
+   * 이름으로 「글로 답함」으로 닫힌다. note 는 원 에이전트에게 옮길 요지다(원 스레드에는 그 글이 없다).
+   */
+  server.registerTool('message.askBundleResolve', {
+    description: '사람이 묶음 스레드에 글로 답한 줄을 닫는다. replyMessageId 는 그 사람 글 id(이 묶음 스레드의 사람 글이어야 한다), note 는 원 에이전트에게 옮길 요지. 원본은 그 사람 이름으로 「글로 답함」이 되고 원 에이전트가 깨어난다',
+    inputSchema: {
+      bundleId: z.string().uuid(),
+      rootId: z.string().uuid(),
+      replyMessageId: z.string().uuid(),
+      note: z.string().min(1).max(1000).optional(),
+    },
+  }, async ({ bundleId, rootId, replyMessageId, note }) => {
+    const result = await resolveBundleItem(pool, { callerId: account.id, bundleId, rootId, replyMessageId, note });
+    if (!result.ok) return jsonResult({ error: { code: result.code, message: ASK_BUNDLE_REFUSAL_MESSAGE[result.code] } });
+    return jsonResult({ message: result.bundle });
   });
 
   /**
