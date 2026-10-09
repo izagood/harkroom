@@ -683,13 +683,6 @@ function GrantConfirm({ secret, agent, handle, operator, onOperator, busy, onCan
             </button>
           ))}
         </div>
-        <span className="ml-auto flex gap-2">
-          <SmallButton onClick={onCancel} disabled={busy}>{t('secrets.cancel')}</SmallButton>
-          <button type="button" disabled={busy} onClick={onGive}
-            className="rounded-row bg-accent px-2.5 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50">
-            {t('secrets.grant')}
-          </button>
-        </span>
       </div>
       <p className="mt-2 flex gap-1.5 text-meta text-fg-muted" data-testid="secret-grants-all-channels">
         <span aria-hidden="true">⚠</span>
@@ -707,6 +700,14 @@ function GrantConfirm({ secret, agent, handle, operator, onOperator, busy, onCan
       {valueBy && agentId !== valueBy && (
         <p role="alert" className="mt-1 text-meta text-warning" data-testid="secret-widen-warn">{t('secrets.widenWarn', { handle: handle(valueBy) })}</p>
       )}
+      {/* 경고를 다 읽은 뒤에 [주기] — 읽는 순서대로 버튼은 맨 끝(security #1266 n3). */}
+      <div className="mt-2 flex justify-end gap-2" data-testid="secret-grant-actions">
+        <SmallButton onClick={onCancel} disabled={busy}>{t('secrets.cancel')}</SmallButton>
+        <button type="button" disabled={busy} onClick={onGive}
+          className="rounded-row bg-accent px-2.5 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50">
+          {t('secrets.grant')}
+        </button>
+      </div>
     </div>
   );
 }

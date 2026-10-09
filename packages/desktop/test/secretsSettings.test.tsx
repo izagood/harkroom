@@ -166,6 +166,8 @@ describe('SecretsSettings', () => {
     const confirm = screen.getByTestId('secret-grant-confirm');
     expect(within(confirm).getByText('@gamma 에게')).toBeTruthy();
     const note = screen.getByTestId('secret-grants-all-channels');
+    // security #1266 n3: 경고가 [주기] 보다 먼저 읽힌다(문서 순서).
+    expect(note.compareDocumentPosition(within(confirm).getByRole('button', { name: '주기' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(note.textContent).toContain('모든 스레드에서');
     expect(within(note).getByText('모든 스레드').tagName).toBe('STRONG');
     expect(screen.queryByTestId('secret-grant-any-warn')).toBeNull();
