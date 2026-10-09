@@ -128,6 +128,8 @@ export interface ServerDeps {
   secretRevealLimiter?: RevealLimiter;
   /** 에이전트의 비밀 만들기·회전 속도(102). 시험이 넉넉한 것을 넣는다. */
   secretCreateLimiter?: RevealLimiter;
+  /** 소유자 보기(`POST /secrets/:id/reveal`) 속도 제한 — 시험이 작은 상한을 넣는다. */
+  secretOwnerRevealLimiter?: RevealLimiter;
   /** avcs 연결 상태 — /healthz 에서 쓴다. */
   getAvcsStatus?: () => { connected: boolean };
   /**
@@ -365,7 +367,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // (content-type 등) 밖의 헤더는 여기에 적어야 `fetch` 가 읽을 수 있다. 부름의 결과를
     // 헤더로 싣기로 한 이상(`NOTIFIED_HEADER`) 이 줄이 없으면 데스크탑에서는 그 헤더가
     // 존재하지 않는 것과 같다 — 서버는 보냈다고 믿고 화면은 못 받는 조용한 실패다.
-    exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER, MENTION_EDIT_SKIPPED_HEADER],
+    // retry-after: 429 의 남은 시간(비밀 보관소 잠금 해제·보기). 본문 `retryAfterSec` 와 같은 값이다.
+    exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER, MENTION_EDIT_SKIPPED_HEADER, 'retry-after'],
   });
 
   // 푸시 worker 는 아래(비밀 가림을 만든 뒤)에서 만든다. healthz 는 그보다 먼저 등록되므로 늦게 묶는다.
@@ -644,6 +647,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     keyMismatch: secretKeyMismatch,
     limiter: deps.secretRevealLimiter,
     createLimiter: deps.secretCreateLimiter,
+    ownerRevealLimiter: deps.secretOwnerRevealLimiter,
   });
   await registerMergeRoutes(app, deps.pool);
   await registerMergeDenialRoutes(app, deps.pool);
