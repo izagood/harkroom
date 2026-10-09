@@ -2780,6 +2780,9 @@ export class Controller {
   putSecretGrant(id: string, body: Parameters<ApiClient['putSecretGrant']>[1]) { return this.api.putSecretGrant(id, body); }
   deleteSecretGrant(id: string, grantId: string) { return this.api.deleteSecretGrant(id, grantId); }
   listSecretAccess(id: string) { return this.api.listSecretAccess(id); }
+  unlockSecrets(password: string) { return this.api.unlockSecrets(password); }
+  lockSecrets() { return this.api.lockSecrets(); }
+  revealSecret(id: string, body: Parameters<ApiClient['revealSecret']>[1]) { return this.api.revealSecret(id, body); }
 
   // capability grant(055) — 에이전트 머지 권한 절(스레드 3deac356). 판정은 서버.
   listGrants(accountId: string): Promise<import('@harkroom/shared').GrantRow[]> {

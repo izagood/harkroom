@@ -32,6 +32,7 @@
  *
  * | 값 | 왜 | 무엇이 깨지나 |
  * |---|---|---|
+ * | `0.4.20` | 비밀 보관소 소유자 보기(114): `POST/DELETE /auth/step-up`·`POST /secrets/:id/reveal` 이 그 릴리스에 들어갔고(#1253), 설정 › 비밀과 API 의 잠금 해제·[값 보기]·[내려받기]가 그것을 부른다. 화면은 서버가 이보다 낮으면 그 버튼을 아예 숨긴다 | 옛 서버에서는 값 보기가 안 보인다(나머지 비밀 화면은 그대로) |
  * | `0.3.190` | `GET /accounts/agents/:id/memory/audit`·`POST …/memory/archive`·`…/unarchive` 가 그 릴리스에 들어갔고(#1186), 설정 › 에이전트 › 메모리의 정리 칩·보관·되살리기가 그것을 부른다. 목록의 `recallCount`·`createdAt` 도 그때부터 | 정리 칩이 안 뜨고 보관·되살리기가 404 |
  * | `0.3.190` | 오퍼레이터 이름 바꾸기: `PATCH /operators/:id`(`label`, 104)와 오퍼레이터 목록의 `label` 이 그 릴리스에 들어갔고(#1180, v0.3.190), 설정 › Operators 의 이름 편집(#1183)이 그것을 부른다. 옛 서버는 `label` 을 싣지 않으므로 이름을 그리는 자리가 모두 호스트명(`name`)으로 돌아간다 | 이름 저장이 404, 바꾼 이름이 어디에도 안 보인다 |
  * | `0.3.182` | `POST /agents/:id/merge-denials/:denialId/grant`(#1158, 101)·`POST /grants/:id/approve`·`/decline`(#1157, 위임 E2)가 그 릴리스에 들어갔다. 머지 거절 카드의 [7일 동안 주기](P5)와 「머지·API 권한」 절의 「허락 기다림 N」·[허락]·[거절]이 그것을 부른다 | [7일 동안 주기]·위임 허락·거절이 404 |
@@ -64,7 +65,7 @@
  *
  * 근거 없이 높이지는 않는다 — 멀쩡한 서버가 고장으로 그려지면 그 순간 이 값은 소음이 된다.
  */
-export const MIN_SERVER_VERSION = '0.3.190';
+export const MIN_SERVER_VERSION = '0.4.20';
 
 /** `X.Y.Z` 만 견준다. 그 밖의 모양은 견주지 않는다(아래 `compareRelease` 주석). */
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;

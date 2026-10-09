@@ -6,6 +6,7 @@ import { useLocale, useT } from '../../i18n/useT';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { Button, Field, Segmented, SettingsPage, TextInput } from './primitives';
 import { ConnectorsSection } from './ConnectorsSection';
+import { downloadSecretFile, RevealPanel, RevealToast, UnlockDialog, UnlockHeader, useRevealSupported, type Ticket, type UnlockState } from './SecretReveal';
 
 /**
  * 설정 › 나 › **비밀과 API** — 비밀 절(외부 API 권한 C안 P1, 스레드 07519d86 · designer v3 ①).
@@ -14,8 +15,8 @@ import { ConnectorsSection } from './ConnectorsSection';
  * 돌고, 에이전트는 옛 글을 검색해 꺼낸다. 이 화면이 그 자리를 채운다.
  *
  * 지키는 것:
- * - **값은 보내기만 한다.** 넣은 뒤 다시 보여 주지 않고 「보기」도 없다(서버도 값·해시를 어떤 응답에도
- *   싣지 않는다). 넣기·바꾸기가 끝나면 입력 상태를 바로 비운다.
+ * - **값은 소유자만, 잠금을 푼 뒤에만 다시 본다**(114, `SecretReveal.tsx`). 그 밖의 응답에는 값·해시가 없다.
+ *   넣기·바꾸기가 끝나면 입력 상태를 바로 비운다.
  * - **판정은 전부 서버다.** 부여는 소유자만, 지우기·거두기는 소유자나 admin — 화면은 버튼을 숨기는
  *   편의만 하고 거절은 서버 말을 사람 말로 옮긴다(`AgentGrantsSection` 머리 주석과 같은 이유).
  * - 지우기는 **발급처의 키 폐기가 아니다** — 확인창이 그렇게 말한다.
@@ -24,7 +25,7 @@ import { ConnectorsSection } from './ConnectorsSection';
  */
 
 type Expiry = 'none' | '30d' | '90d' | 'date';
-type Panel = { id: string; kind: 'replace' | 'grants' | 'access' } | null;
+type Panel = { id: string; kind: 'reveal' | 'replace' | 'grants' | 'access' } | null;
 
 const DAY = 86_400_000;
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -54,6 +55,48 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
   const [deleting, setDeleting] = useState<SecretView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // ─── 소유자 보기(114): 보관소 단위 잠금 해제 ───
+  const revealSupported = useRevealSupported();
+  const [unlock, setUnlock] = useState<UnlockState>({ until: null, autoLocked: false });
+  const [unlockAsk, setUnlockAsk] = useState<{ thenId: string | null } | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const untilRef = useRef<number | null>(null);
+  untilRef.current = unlock.until;
+  const onUntil = useCallback((iso: string) => setUnlock({ until: Date.parse(iso), autoLocked: false }), []);
+  /** 잠금 세대(security n1) — 잠글 때마다 오르고, 그 앞에서 시작한 요청의 결과는 버린다. */
+  const gen = useRef(0);
+  const ticket = useCallback((): Ticket => {
+    const g = gen.current;
+    return { live: () => g === gen.current, until: (iso) => { if (g === gen.current) onUntil(iso); } };
+  }, [onUntil]);
+  /**
+   * 잠그기 — 화면부터 잠그고 서버 창은 기다리지 않고 끝낸다(멱등).
+   * `user`·`auto` 는 DELETE 를 보낸다(n2: 시계가 서버보다 빠르면 서버 창이 더 열려 있을 수 있다).
+   * `server` 는 서버가 이미 403 으로 잠겼다고 말한 경우라 보내지 않는다.
+   */
+  const lock = useCallback((why: 'user' | 'auto' | 'server' = 'user') => {
+    gen.current += 1;
+    const wasOpen = untilRef.current !== null;
+    setUnlock({ until: null, autoLocked: why !== 'user' });
+    setPanel((p) => (p?.kind === 'reveal' ? null : p));
+    if (wasOpen && why !== 'server') void getController().lockSecrets().catch(() => {});
+  }, []);
+  // 서버가 준 끝 시각이 지나면 잠긴 것으로 그리고 열린 값 패널을 닫는다(머리줄은 aria-live 로 한 번 알린다).
+  useEffect(() => {
+    if (unlock.until === null) return;
+    const timer = setTimeout(() => lock('auto'), Math.max(0, unlock.until - Date.now()));
+    return () => clearTimeout(timer);
+  }, [unlock.until, lock]);
+  // 앱을 숨기면 잠근다. 설정을 닫으면(언마운트) 서버 창도 끝낸다.
+  useEffect(() => {
+    const onVis = () => { if (document.hidden && untilRef.current !== null) lock(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      if (untilRef.current !== null) void getController().lockSecrets().catch(() => {});
+    };
+  }, [lock]);
 
   const load = useCallback(async () => {
     try { setState(await getController().listSecrets()); } catch { setState('error'); }
@@ -103,9 +146,12 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
           <div className="flex items-center gap-2">
             <span className="text-meta font-medium text-fg-muted">{t('secrets.heading')}</span>
             <span className="text-meta text-fg-subtle">{t('secrets.count', { n: String(secrets.length) })}</span>
-            {state.enabled && !adding && (
-              <span className="ml-auto"><Button onClick={() => { setAdding(true); setError(null); }} disabled={busy}>{t('secrets.add')}</Button></span>
-            )}
+            <span className="ml-auto flex flex-wrap items-center gap-2">
+              {revealSupported && state.enabled && secrets.some((x) => x.ownerAccountId === me?.id) && (
+                <UnlockHeader unlock={unlock} onUnlock={() => setUnlockAsk({ thenId: null })} onLock={() => lock()} />
+              )}
+              {state.enabled && !adding && <Button onClick={() => { setAdding(true); setError(null); }} disabled={busy}>{t('secrets.add')}</Button>}
+            </span>
           </div>
 
           {adding && (
@@ -124,6 +170,24 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
               const mine = s.ownerAccountId === me?.id;
               const open = panel?.id === s.id ? panel.kind : null;
               const toggle = (kind: NonNullable<Panel>['kind']) => { setError(null); setPanel(open === kind ? null : { id: s.id, kind }); };
+              const locked = unlock.until === null;
+              /** [값 보기]·[내려받기] — 잠겨 있으면 확인 창 하나(풀리면 이 행을 바로 연다), 풀려 있으면 바로. */
+              const reveal = () => {
+                setError(null);
+                if (locked) { setUnlockAsk({ thenId: s.id }); return; }
+                if (s.kind === 'file') {
+                  const tk = ticket();
+                  void downloadSecretFile(s, tk).then(
+                    (ok) => { if (ok) setToast(t('secrets.downloaded', { name: s.filename ?? s.name })); },
+                    (e) => {
+                      if (!tk.live()) return;
+                      if (e instanceof ApiError && e.status === 403) { lock('server'); setUnlockAsk({ thenId: s.id }); } else setError(explain(e));
+                    },
+                  );
+                  return;
+                }
+                toggle('reveal');
+              };
               return (
                 <li key={s.id} ref={(el) => { if (el) rowRefs.current.set(s.id, el); else rowRefs.current.delete(s.id); }}
                   className={`rounded border px-2 py-1 text-meta transition-colors ${flash === s.id ? 'border-accent bg-accent-surface' : 'border-border'}`}
@@ -141,12 +205,21 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
                       ? <span className="rounded bg-warning-surface px-1 text-warning">{t('secrets.expired', { when: date(s.expiresAt as string) })}</span>
                       : <span className="text-fg-subtle">{s.expiresAt ? t('secrets.until', { when: date(s.expiresAt) }) : t('secrets.noExpiry')}</span>}
                     <span className="ml-auto flex flex-wrap gap-1">
+                      {mine && state.enabled && revealSupported && (
+                        <SmallButton onClick={reveal} disabled={busy} pressed={open === 'reveal'} ariaLabel={t(s.kind === 'file' ? 'secrets.downloadAria' : 'secrets.revealAria', { name: s.name })}>
+                          {locked ? '🔒 ' : ''}{s.kind === 'file' ? t('secrets.download') : t('secrets.reveal')}
+                        </SmallButton>
+                      )}
                       {mine && state.enabled && <SmallButton onClick={() => toggle('replace')} disabled={busy} pressed={open === 'replace'}>{t('secrets.replace')}</SmallButton>}
                       <SmallButton onClick={() => toggle('grants')} disabled={busy} pressed={open === 'grants'}>{t('secrets.grants')}</SmallButton>
                       <SmallButton onClick={() => toggle('access')} disabled={busy} pressed={open === 'access'}>{t('secrets.access')}</SmallButton>
                       <SmallButton onClick={() => setDeleting(s)} disabled={busy} danger ariaLabel={t('secrets.deleteAria', { name: s.name })}>{t('secrets.delete')}</SmallButton>
                     </span>
                   </div>
+                  {open === 'reveal' && (
+                    <RevealPanel secret={s} ticket={ticket} onClose={() => setPanel(null)} onToast={setToast}
+                      onLocked={() => { lock('server'); setUnlockAsk({ thenId: s.id }); }} />
+                  )}
                   {open === 'replace' && (
                     <ReplaceForm secret={s} busy={busy} onCancel={() => setPanel(null)}
                       onSubmit={async (body) => { if (await run(async () => { await getController().replaceSecretValue(s.id, body); })) setPanel(null); }} />
@@ -160,6 +233,28 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
           {error && <p role="alert" className="mt-2 text-meta text-danger" data-testid="secrets-error">{error}</p>}
         </section>
       )}
+
+      {unlockAsk && (
+        <UnlockDialog
+          thenName={unlockAsk.thenId ? (secrets.find((x) => x.id === unlockAsk.thenId)?.name ?? null) : null}
+          onCancel={() => setUnlockAsk(null)}
+          onDone={(until) => {
+            const thenId = unlockAsk.thenId;
+            setUnlockAsk(null);
+            onUntil(until);
+            const target = thenId ? secrets.find((x) => x.id === thenId) : undefined;
+            if (target?.kind === 'text') setPanel({ id: target.id, kind: 'reveal' });
+            else if (target?.kind === 'file') {
+              const tk = ticket();
+              void downloadSecretFile(target, tk).then(
+                (ok) => { if (ok) setToast(t('secrets.downloaded', { name: target.filename ?? target.name })); },
+                (e) => { if (tk.live()) setError(explain(e)); },
+              );
+            }
+          }}
+        />
+      )}
+      {toast && <RevealToast text={toast} onDone={() => setToast(null)} />}
 
       {/* API 연결(P4b, designer v3 ②) — 비밀을 가리키므로 같은 페이지, 비밀 절 아래(D1). */}
       {typeof state === 'object' && <ConnectorsSection secrets={secrets} enabled={state.enabled} onChanged={load} />}
@@ -482,6 +577,9 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
  * 키를 건넨 줄(P3)이고, 나머지 거절 이유는 아는 것만 옮기고 모르는 것은 코드 그대로 둔다.
  */
 function accessText(t: ReturnType<typeof useT>, r: SecretAccessView): string {
+  if (r.result === 'granted' && r.action) {
+    return r.action === 'copy' ? t('secrets.accessCopied') : r.action === 'download' ? t('secrets.accessDownloaded') : t('secrets.accessViewed');
+  }
   if (r.result === 'granted') {
     if (r.reason?.startsWith('api:')) return t('secrets.accessApi', { what: r.reason.slice(4) });
     return t('secrets.accessMounted');
@@ -490,8 +588,31 @@ function accessText(t: ReturnType<typeof useT>, r: SecretAccessView): string {
     not_granted: t('secrets.why.notGranted'), wrong_channel: t('secrets.why.wrongChannel'), wrong_operator: t('secrets.why.wrongOperator'),
     grant_suspended: t('secrets.why.suspended'), secret_expired: t('secrets.why.expired'), rate_limited: t('secrets.why.rateLimited'),
     lease_invalid: t('secrets.why.lease'), not_own_agent: t('secrets.why.notOwnAgent'), owner_inactive: t('secrets.why.ownerInactive'),
+    step_up_required: t('secrets.why.stepUp'),
   };
   return t('secrets.accessDenied', { why: (r.reason && known[r.reason]) ?? r.reason ?? '?' });
+}
+
+/**
+ * 같은 사람·같은 기기·같은 IP 의 **연달아 나온** 「막힘(잠금 해제 안 됨)」 줄을 한 줄로 접는다(designer, #1253 n1 뒤에도
+ * 잠긴 채 두드리면 403 마다 한 줄이 남는다). 기록은 그대로이고 화면만 접는다. 목록은 최신이 위다.
+ */
+export type AccessRowView = SecretAccessView & { count: number; firstAt: string };
+export function foldAccessRows(rows: SecretAccessView[]): AccessRowView[] {
+  const out: AccessRowView[] = [];
+  for (const r of rows) {
+    const prev = out[out.length - 1];
+    const foldable = r.result === 'denied' && r.reason === 'step_up_required' && !!r.actorAccountId;
+    if (foldable && prev && prev.result === 'denied' && prev.reason === 'step_up_required'
+      && prev.actorAccountId === r.actorAccountId && (prev.client ?? null) === (r.client ?? null)
+      // client 는 앱의 자기 신고라, 검증된 단서인 ip 까지 같아야 접는다(security #1261 n5). 소유자 아니면 ip 는 둘 다 null.
+      && (prev.ip ?? null) === (r.ip ?? null)) {
+      prev.count += 1; prev.firstAt = r.at;
+      continue;
+    }
+    out.push({ ...r, count: 1, firstAt: r.at });
+  }
+  return out;
 }
 
 function AccessPanel({ secret }: { secret: SecretView }) {
@@ -499,7 +620,17 @@ function AccessPanel({ secret }: { secret: SecretView }) {
   const locale = useLocale();
   const accounts = useActiveStore((s) => s.accounts);
   const channels = useActiveStore((s) => s.channels);
+  const meId = useActiveStore((s) => s.me?.id ?? null);
   const [rows, setRows] = useState<SecretAccessView[] | 'loading' | 'error'>('loading');
+  /** 누가: 에이전트면 @handle, 사람(소유자 보기)이면 @handle (나). */
+  const who = (r: SecretAccessView): string => {
+    if (r.agentId) return `@${accounts[r.agentId]?.handle ?? r.agentId.slice(0, 8)}`;
+    if (r.actorAccountId) {
+      const h = `@${accounts[r.actorAccountId]?.handle ?? r.actorAccountId.slice(0, 8)}`;
+      return r.actorAccountId === meId ? t('secrets.accessMe', { who: h }) : h;
+    }
+    return '—';
+  };
   useEffect(() => {
     let live = true;
     getController().listSecretAccess(secret.id).then((r) => { if (live) setRows(r); }, () => { if (live) setRows('error'); });
@@ -516,12 +647,21 @@ function AccessPanel({ secret }: { secret: SecretView }) {
             <tr><th className="pr-3 font-medium">{t('secrets.accessAt')}</th><th className="pr-3 font-medium">{t('secrets.accessWho')}</th><th className="pr-3 font-medium">{t('secrets.accessWhere')}</th><th className="font-medium">{t('secrets.accessResult')}</th></tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} className="border-t border-border text-fg">
-                <td className="pr-3">{new Date(r.at).toLocaleString(locale)}</td>
-                <td className="pr-3">{r.agentId ? `@${accounts[r.agentId]?.handle ?? r.agentId.slice(0, 8)}` : '—'}</td>
-                <td className="pr-3">{r.channelId ? `#${channels.find((c) => c.id === r.channelId)?.name ?? r.channelId.slice(0, 8)}` : '—'}</td>
-                <td>{accessText(t, r)}{r.version !== null ? ` · v${r.version}` : ''}</td>
+            {foldAccessRows(rows).map((r) => (
+              <tr key={r.id} className="border-t border-border text-fg" data-testid={r.count > 1 ? 'secret-access-folded' : undefined}>
+                <td className="pr-3">
+                  {r.count > 1
+                    ? `${new Date(r.firstAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}–${new Date(r.at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`
+                    : new Date(r.at).toLocaleString(locale)}
+                </td>
+                <td className="pr-3">{who(r)}</td>
+                <td className="pr-3" title={r.ip ?? undefined}>{r.channelId ? `#${channels.find((c) => c.id === r.channelId)?.name ?? r.channelId.slice(0, 8)}` : (r.client ?? '—')}</td>
+                <td>
+                  {r.result === 'denied' && r.actorAccountId
+                    ? <span className="rounded bg-warning-surface px-1 text-warning">{accessText(t, r)}{r.count > 1 ? ` ×${r.count}` : ''}</span>
+                    : accessText(t, r)}
+                  {r.version !== null ? ` · v${r.version}` : ''}
+                </td>
               </tr>
             ))}
           </tbody>

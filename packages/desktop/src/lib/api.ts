@@ -38,6 +38,16 @@ export interface SecretGrantView {
 export interface SecretAccessView {
   id: string; version: number | null; agentId: string | null; operatorId: string | null; turnId: string | null;
   channelId: string | null; threadRootId: string | null; result: string; reason: string | null; at: string;
+  /** 소유자 보기(114, 서버 v0.4.20~). 사람이 보기·복사·내려받기를 했으면 그 계정과 action. 옛 서버는 싣지 않는다. */
+  actorAccountId?: string | null; action?: 'view' | 'copy' | 'download' | null;
+  /** 앱이 스스로 밝힌 판·OS(검증된 기기 신원이 아니다). ip 는 소유자에게만 실린다. */
+  client?: string | null; ip?: string | null;
+}
+
+/** 소유자 보기 응답(`POST /secrets/:id/reveal`). text 는 `value`, file 은 `valueBase64`. `steppedUpUntil` 은 연장된 뒤의 잠금 해제 끝. */
+export interface SecretRevealView {
+  steppedUpUntil: string; name: string; kind: 'text' | 'file'; filename: string | null; version: number;
+  value?: string; valueBase64?: string;
 }
 
 export class ApiError extends Error {
@@ -810,6 +820,21 @@ export class ApiClient {
   }
   listSecretAccess(id: string): Promise<SecretAccessView[]> {
     return this.req<{ access: SecretAccessView[] }>('GET', `/secrets/${id}/access?limit=100`).then((r) => r.access);
+  }
+  /**
+   * 보관소 잠금 해제(114) — 비밀번호를 다시 확인하면 **이 세션만** 15분 열린다(볼 때마다 연장, 최대 1시간).
+   * 429 의 남은 시간은 `ApiError.payload.error.retryAfterSec` 로 읽는다(헤더는 웹뷰가 못 읽을 수 있다).
+   */
+  unlockSecrets(password: string): Promise<{ steppedUpUntil: string }> {
+    return this.req('POST', '/auth/step-up', { password });
+  }
+  /** 잠그기 — 멱등. 화면은 이 응답을 기다리지 않고 먼저 잠근다. */
+  lockSecrets(): Promise<void> {
+    return this.req('DELETE', '/auth/step-up');
+  }
+  /** 소유자 보기 — 보기·복사·내려받기마다 서버에서 따로 받는다(그 한 번이 접근 기록 한 줄). */
+  revealSecret(id: string, body: { action: 'view' | 'copy' | 'download'; client?: string }): Promise<SecretRevealView> {
+    return this.req('POST', `/secrets/${id}/reveal`, body);
   }
 
   /** `invokeScope: 'list'` 의 명단에 사람을 넣는다. 멱등. 답은 갱신된 AgentView. */
