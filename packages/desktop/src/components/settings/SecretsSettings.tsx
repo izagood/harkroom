@@ -598,7 +598,7 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
       {rows === 'error' && <p role="alert" className="mt-1 text-meta text-danger">{t('secrets.listFailed')}</p>}
       {Array.isArray(rows) && rows.length === 0 && <p className="mt-1 text-meta text-fg-subtle">{t('secrets.grantsNone')}</p>}
       {Array.isArray(rows) && rows.length > 0 && (
-        <ul className="mt-1 divide-y divide-dashed divide-border">
+        <ul className="mt-1 divide-y divide-border">
           {rows.map((g) => (
             <li key={g.id} className="group flex flex-wrap items-center gap-x-2.5 gap-y-1 py-1.5 text-meta text-fg" data-testid={`secret-grant-${handle(g.agentId)}`}>
               {/* 얼굴 + handle, 범위는 칩 둘, 날짜는 오른쪽 작게, [거두기]는 hover·포커스에서(터치는 늘) — designer 시안 v1 #8. */}
@@ -607,7 +607,8 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
               <span className="rounded-full border border-border px-2 text-fg-muted" data-testid="secret-grant-scope">
                 {g.channelId ? `#${channels.find((c) => c.id === g.channelId)?.name ?? g.channelId.slice(0, 8)}` : t('secrets.allChannels')}
               </span>
-              <span className="rounded-full border border-border px-2 text-fg-muted" data-testid="secret-grant-machine">
+              <span className="rounded-full border border-border px-2 text-fg-muted" data-testid="secret-grant-machine"
+                title={g.operatorId ? t('secrets.boundOperatorTitle', { handle: handle(g.agentId) }) : t('secrets.anyOperatorWarn')}>
                 {g.operatorId ? t('secrets.boundOperator') : t('secrets.anyOperator')}
               </span>
               {g.suspendedAt && <span className="rounded bg-warning-surface px-1 text-warning">{t('secrets.suspended', { reason: g.suspendReason ?? '' })}</span>}
@@ -617,7 +618,7 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
               )}
               <span className="ml-auto text-fg-subtle">{t('secrets.grantedOn', { when: new Date(g.grantedAt).toLocaleDateString(locale) })}</span>
               <button type="button" disabled={busy} aria-label={t('secrets.revokeAria', { handle: handle(g.agentId) })}
-                className="rounded-row px-1.5 py-0.5 text-fg-subtle opacity-0 transition-opacity hover:bg-danger-surface hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-50 [@media(hover:none)]:opacity-100"
+                className="rounded-row px-1.5 py-0.5 text-fg-subtle opacity-0 transition-opacity hover:bg-danger-surface hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 disabled:group-hover:opacity-50 [@media(hover:none)]:opacity-100"
                 onClick={() => setRevoking(g)}>{t('secrets.revoke')}</button>
             </li>
           ))}
@@ -703,6 +704,7 @@ function GrantConfirm({ secret, agent, handle, operator, onOperator, busy, onCan
             <button key={v} ref={(el) => { radios.current[v] = el; }} type="button" role="radio" aria-checked={operator === v} disabled={busy}
               tabIndex={operator === v ? 0 : -1}
               className={`rounded-row px-2.5 py-0.5 text-meta ${operator === v ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:text-fg'}`}
+              title={v === 'current' ? t('secrets.boundOperatorTitle', { handle: h }) : t('secrets.anyOperatorWarn')}
               onClick={() => onOperator(v)}>
               {v === 'current' ? t('secrets.operatorCurrent') : t('secrets.operatorAny')}
             </button>

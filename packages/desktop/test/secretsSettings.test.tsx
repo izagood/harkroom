@@ -146,12 +146,16 @@ describe('SecretsSettings', () => {
     // C: 받는 에이전트 줄 — 범위는 칩 둘(「모든 채널」「이 머신만」), [거두기]는 hover·포커스·터치에서만 드러난다.
     const grantRow = screen.getByTestId('secret-grant-alpha');
     expect(within(grantRow).getByTestId('secret-grant-scope').textContent).toBe('모든 채널');
-    expect(within(grantRow).getByTestId('secret-grant-machine').textContent).toBe('이 머신만');
+    expect(within(grantRow).getByTestId('secret-grant-machine').textContent).toBe('지금 머신만');
+    // security C F1: 「지금 머신만」은 읽는 사람의 컴퓨터가 아니라 그 에이전트의 오퍼레이터 — title 로 말한다.
+    expect(within(grantRow).getByTestId('secret-grant-machine').getAttribute('title')).toContain('@alpha 가 줄 때 배정돼 있던 머신');
     const revoke = screen.getByRole('button', { name: '@alpha 에게서 거두기' });
     expect(revoke.className).toContain('opacity-0');
     expect(revoke.className).toContain('group-hover:opacity-100');
     expect(revoke.className).toContain('focus-visible:opacity-100');
     expect(revoke.className).toContain('[@media(hover:none)]:opacity-100');
+    // designer n11: busy 여도 hover 없이 반쯤 보이지 않는다.
+    expect(revoke.className).not.toMatch(/(^| )disabled:opacity-50/);
     fireEvent.click(revoke);
     // 확인창 문구는 그대로다(security C 확인 항목).
     const dlg = screen.getByRole('dialog');
@@ -190,7 +194,7 @@ describe('SecretsSettings', () => {
     expect(within(note).getByText('모든 스레드').tagName).toBe('STRONG');
     expect(screen.queryByTestId('secret-grant-any-warn')).toBeNull();
     // designer n1: 고른 뒤 초점은 세그먼트의 골라진 칸 — 여는 단추도 [주기]도 아니다.
-    const cur = within(confirm).getByRole('radio', { name: '이 머신만' });
+    const cur = within(confirm).getByRole('radio', { name: '지금 머신만' });
     expect(document.activeElement).toBe(cur);
     expect(cur.tabIndex).toBe(0);
     // designer n3: ←→ 로 옮긴다.
