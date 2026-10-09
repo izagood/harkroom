@@ -320,3 +320,30 @@ describe('상태는 아바타가 말한다 — B1 의 세 얼굴 (「나머지 �
       .not.toContain('멈추는 중');
   });
 });
+
+describe('터미널 대기 칩 (2026-10-09 배너 A안)', () => {
+  it('줄 버튼 안이 아니라 옆의 형제 버튼이다 — 누르면 DM 이 아니라 그 터미널을 연다', () => {
+    const c = fakeController();
+    useAppStore.getState().set({ ...사람과에이전트, dms: [dm('d-forge', 'forge', '2026-09-05T00:00:00.000Z')] });
+    useAppStore.getState().raiseGate({
+      sessionId: 's1', agentAccountId: 'forge', agentHandle: 'forge', accountLabel: 'max', channelId: 'c1', threadRootId: 't1',
+    });
+    renderDmPanel();
+
+    const chip = screen.getByRole('button', { name: '터미널 열기: forge' });
+    // 버튼 안에 버튼을 넣으면 키보드·스크린리더가 따로 집지 못한다.
+    expect(chip.closest('[data-channel-row]')).toBeNull();
+    act(() => { chip.click(); });
+    expect(useAppStore.getState().terminalTarget).toEqual({ agentAccountId: 'forge', channelId: 'c1', threadRootId: 't1' });
+    expect(c.openChannel).not.toHaveBeenCalled();
+    // 그 터미널을 열었으니 관문 표시도 내려간다.
+    expect(screen.queryByTestId('gate-waiting-forge')).toBeNull();
+  });
+
+  it('관문이 없으면 칩도 없다', () => {
+    fakeController();
+    useAppStore.getState().set({ ...사람과에이전트, dms: [dm('d-forge', 'forge', '2026-09-05T00:00:00.000Z')] });
+    renderDmPanel();
+    expect(screen.queryByTestId('gate-waiting-forge')).toBeNull();
+  });
+});

@@ -598,6 +598,7 @@ export const ko = {
   'gate.title': '{handle}이 터미널에서 기다립니다',
   'gate.account': '계정 {account}',
   'gate.open': '터미널 열기',
+  'gate.openFor': '터미널 열기: {handle}',
   'gate.later': '나중에',
   'gate.more': '외 {count}',
   'notice.dismiss': '알림 닫기',

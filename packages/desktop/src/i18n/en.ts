@@ -1015,6 +1015,7 @@ export const en = {
   'gate.title': '{handle} is waiting in the terminal',
   'gate.account': 'account {account}',
   'gate.open': 'Open terminal',
+  'gate.openFor': 'Open terminal: {handle}',
   'gate.later': 'Later',
   'gate.more': '+{count} more',
   'notice.dismiss': 'Dismiss notice',
