@@ -10,7 +10,11 @@ import { decidePermissionRequest, toolAllowsFor } from '../services/permissionRe
 
 const params = z.object({ id: z.string().uuid(), requestId: z.string().uuid(), decision: z.enum(['approve', 'deny', 'approve-once']) });
 /** [이번 한 번 머지](스레드 1b75d7a0) — 받는 것은 gh 계정·CI 완화 둘뿐. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
-const onceBody = z.object({ ghUser: z.string().min(1).max(39), relaxChecks: z.boolean().optional() }).strict();
+// number·headSha 는 카드가 보여 준 값 — 대조에만 쓴다(security F1). 저장소·PR·head 의 출처는 여전히 거절 기록이다.
+const onceBody = z.object({
+  ghUser: z.string().min(1).max(39), relaxChecks: z.boolean().optional(),
+  number: z.number().int().positive(), headSha: z.string().regex(/^[0-9a-f]{40}$/),
+}).strict();
 
 export async function registerPermissionRequestRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
   app.post<{ Params: { id: string; requestId: string; decision: string } }>(
@@ -22,11 +26,11 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
       }
       const owner = await pool.query(`select 1 from agent_config where account_id = $1 and owner_account_id = $2`, [p.data.id, req.account!.id]);
       if (!owner.rowCount) return reply.code(403).send({ error: { code: 'forbidden', message: 'only the owner of this agent can decide its permission requests' } });
-      let once: { ghUser: string; relaxChecks: boolean } | undefined;
+      let once: { ghUser: string; relaxChecks: boolean; number: number; headSha: string } | undefined;
       if (p.data.decision === 'approve-once') {
         const b = onceBody.safeParse(req.body ?? {});
-        if (!b.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'ghUser is required; relaxChecks is a boolean; nothing else' } });
-        once = { ghUser: b.data.ghUser, relaxChecks: b.data.relaxChecks ?? false };
+        if (!b.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'ghUser, number and a 40-hex headSha are required; relaxChecks is a boolean; nothing else' } });
+        once = { ghUser: b.data.ghUser, relaxChecks: b.data.relaxChecks ?? false, number: b.data.number, headSha: b.data.headSha };
       }
       const decision = p.data.decision === 'approve-once' ? 'approve_once' : p.data.decision;
       const r = await decidePermissionRequest(pool, { agentId: p.data.id, requestId: p.data.requestId, actorId: req.account!.id, decision, ...(once ? { once } : {}) });

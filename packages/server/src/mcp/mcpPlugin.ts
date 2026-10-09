@@ -743,7 +743,7 @@ function buildMcpServer(
 
   /**
    * 권한 요청 줄을 열고 소유자 앞 권한 카드를 세운다 — `permission.request` 와 머지 거절 카드(P4, `message.ask` 의 `mergeDenialId`)가
-   * 함께 쓴다. 카드는 일반 ask 꼴이라 데스크톱·모바일·웹 어디서든 [승인하고 다시 시도]가 눌린다(ask-answer → decideFromCard).
+   * 함께 쓴다. 카드는 일반 ask 꼴이라 데스크톱·모바일·웹 어디서든 [7일 허락하고 다시 시도]가 눌린다(ask-answer → decideFromCard).
    */
   const raisePermission = async (
     { kind, rule, repo, reason, channelId, threadRootId, model, denial }:
@@ -880,7 +880,7 @@ function buildMcpServer(
       if (!prepared.ok) return jsonResult({ error: { code: prepared.code, message: DENIAL_CARD_REFUSAL_MESSAGE[prepared.code] } });
       /*
         P4(스레드 f61af808, 10-07): 머지 거절 카드는 **권한 요청 카드로 세운다**. 권한 카드는 일반 ask 꼴이라 어느 클라이언트에서든
-        소유자가 [승인하고 다시 시도](7일 grant) 또는 [이번 한 번 머지](이 PR·이 head 만, 스레드 1b75d7a0)를 누르면 새 턴이 뜬다.
+        소유자가 [7일 허락하고 다시 시도](7일 grant) 또는 [이번 한 번 머지](이 PR·이 head 만, 스레드 1b75d7a0)를 누르면 새 턴이 뜬다.
         저장소·PR·head 는 거절 기록의 값이다(C3). 배포 저장소도 같은 길이다(jaebin 10-10). `prepareDenialCard` 가 스레드 일치를
         보므로 여기 오면 threadRootId 가 있다.
       */

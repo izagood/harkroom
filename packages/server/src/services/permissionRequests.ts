@@ -10,12 +10,12 @@ import { getMessageById, recordAskAnswer } from './messages.js';
  * 에이전트 권한 요청 → 소유자 승인 → 적용(스레드 f61af808, jaebin D1~D4 10-07).
  *
  * 흐름: 에이전트가 `permission.request` MCP 로 권한 하나와 이유를 올린다(`openPermissionRequest`) → MCP 가 소유자 앞 ask 카드를
- * 세운다(선택지는 서버가 정한 [승인하고 다시 시도]·[거절] 둘, meta.permissionRequest 는 이 줄의 값만) → 소유자 **사람 세션**이
+ * 세운다(선택지는 서버가 정한 [7일 허락하고 다시 시도]·[거절] 둘, meta.permissionRequest 는 이 줄의 값만) → 소유자 **사람 세션**이
  * `POST /agents/:id/permission-requests/:rid/approve|deny` 를 누른다(`decidePermissionRequest`) → 승인이면 7일 grant 를 넣고,
  * 어느 쪽이든 소유자 이름으로 카드에 답을 적어 에이전트를 깨운다(소유자가 자기 에이전트 카드에 답함 = 사람이 띄운 턴, #1134 F4).
  *
  * **카드의 선택지를 일반 ask-answer 로는 못 누른다**(`recordAskAnswer` 의 permissionRequest 가드). 그렇지 않으면 소유자가 아닌
- * 사람이 [승인하고 다시 시도]를 눌러 grant 없이 "승인됐다"는 답만 에이전트에게 갈 수 있다.
+ * 사람이 [7일 허락하고 다시 시도]를 눌러 grant 없이 "승인됐다"는 답만 에이전트에게 갈 수 있다.
  *
  * 적용은 다음 턴의 argv 다 — 러너가 턴마다 `GET /agent/tool-allows`·`/agent/merge-grants` 로 받아 `--allowedTools` 에 붙인다.
  * 떠 있는 claude 에 규칙을 넣는 길은 없고, 그래서 승인이 새 턴을 띄운다.
@@ -145,6 +145,9 @@ export async function openPermissionRequest(
         await pool.query(
           `update message set meta = jsonb_set(meta, '{permissionRequest,once}', $2::jsonb) where id = $1 and meta ? 'permissionRequest'`,
           [pending.cardMessageId, JSON.stringify({ number: args.denial.number, headSha: args.denial.headSha, reason: args.denial.reason })]);
+        // 열린 화면이 옛 PR·head 를 계속 보이지 않게 알린다(security F1). 승인 쪽은 그래도 대조값으로 한 번 더 막는다.
+        const card = await getMessageById(pool, pending.cardMessageId);
+        if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
       }
     }
     return { ok: true, existing: { requestId: pending.id, cardMessageId: pending.cardMessageId } };
@@ -202,7 +205,8 @@ export function oneLineReason(reason: string): string {
 
 export function permissionCardOptions(): { id: string; label: string }[] {
   return [
-    { id: PERMISSION_OPTION_APPROVE, label: '승인하고 다시 시도' },
+    // 「7일」을 이름에 넣는다(designer s1) — 머지 거절 카드에서는 그 위의 [이번 한 번 머지]와 갈려 읽혀야 한다. tool·merge 둘 다 7일이다.
+    { id: PERMISSION_OPTION_APPROVE, label: '7일 허락하고 다시 시도' },
     { id: PERMISSION_OPTION_DENY, label: '거절' },
   ];
 }
@@ -222,7 +226,7 @@ export async function decidePermissionRequest(
   args: {
     agentId: string; requestId: string; actorId: string; decision: 'approve' | 'deny' | 'approve_once'; now?: Date;
     /** `approve_once` 일 때만 — 머지에 쓸 gh 계정과 CI 완화 여부. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
-    once?: { ghUser: string; relaxChecks: boolean };
+    once?: { ghUser: string; relaxChecks: boolean; number: number; headSha: string };
   },
 ): Promise<({ ok: true; status: 'granted' | 'denied' | 'approved_once'; grantExpiresAt: string | null; approvalExpiresAt?: string; cardMessageId: string | null }) | ({ ok: false } & DecideRefusal)> {
   const now = args.now ?? new Date();
@@ -248,7 +252,7 @@ export async function decidePermissionRequest(
         await client.query('rollback');
         return { ok: false, status: 409, code: 'not_once', message: 'only a card raised from a merge refusal can approve one merge' };
       }
-      const made = await insertApprovalFromDenial(client, { agentId: args.agentId, denialId: r.denialId, actorId: args.actorId, ghUser: args.once.ghUser, relaxChecks: args.once.relaxChecks, now });
+      const made = await insertApprovalFromDenial(client, { agentId: args.agentId, denialId: r.denialId, actorId: args.actorId, ghUser: args.once.ghUser, relaxChecks: args.once.relaxChecks, expect: { number: args.once.number, headSha: args.once.headSha }, now });
       if (!made.ok) { await client.query('rollback'); return made; }
       approval = made;
     }

@@ -5,7 +5,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { checkMerge, mergeableRepos, openMergeApprovals, reportMerge } from '../services/mergeGrants.js';
+import { checkMerge, mergeableRepos, openMergeApprovals, peekMergeApproval, reportMerge } from '../services/mergeGrants.js';
 
 const REPO = z.string().min(3).max(201);
 const SHA = z.string().regex(/^[0-9a-f]{40}$/);
@@ -44,6 +44,16 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
       return reply.code(r.code === 'bad_repo' ? 400 : 403).send({ error: { code: r.code, message: `merge not allowed: ${r.code}`, ...(r.denialId ? { denialId: r.denialId } : {}) } });
     }
     return { allowed: true, repo: r.scope.slice('repo:'.length), grantedBy: r.grantedBy, grantedAt: r.grantedAt, causeByHuman: r.causeByHuman, channelId: r.channelId, threadRootId: r.threadRootId, ...(r.approval ? { approval: r.approval } : {}) };
+  });
+
+  /** 래퍼의 사전 확인(security F2) — 이 임대로 판정하면 소모될 승인을 소모 없이 본다. 없으면 `{ approval: null }`. */
+  app.post('/agent/merge-approvals/peek', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    const parsed = z.object(base).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId, token, repo, number and a 40-hex headSha are required' } });
+    void reply.header('cache-control', 'no-store');
+    return { approval: await peekMergeApproval(pool, { ...who, ...parsed.data }) };
   });
 
   app.post('/agent/merge-results', { preHandler: app.requireAccount }, async (req, reply) => {

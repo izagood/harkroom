@@ -471,8 +471,10 @@ describe('repo.merge grant', () => {
     const SHA2 = 'b'.repeat(40);
     // 앞 시험들이 이 에이전트로 거절 기록을 많이 남겼다 — 하루 상한(L2, 20개)에 걸리지 않게 그 기록을 어제로 민다.
     beforeEach(async () => { await pool.query(`update merge_denial set created_at = created_at - interval '2 days' where agent_id = $1`, [agentId]); });
+    /** 카드가 보여 준 PR·head(security F1 대조값) — requestFor 가 채운다. 보내는 쪽 payload 가 덮을 수 있다. */
+    const cardOf = new Map<string, { number: number; headSha: string }>();
     const decide = (token: string, requestId: string, payload: Record<string, unknown>, decision = 'approve-once', target = agentId) =>
-      app.inject({ method: 'POST', url: `/agents/${target}/permission-requests/${requestId}/${decision}`, headers: auth(token), payload });
+      app.inject({ method: 'POST', url: `/agents/${target}/permission-requests/${requestId}/${decision}`, headers: auth(token), payload: { ...(cardOf.get(requestId) ?? {}), ...payload } });
     const threadOf = async (cause: string) => (await pool.query(`select coalesce(thread_root_id, id) as t from message where id = $1`, [cause])).rows[0].t as string;
     const leaseInThread = async (thread: string, authorId: string) => {
       const id = (await pool.query(
@@ -491,6 +493,7 @@ describe('repo.merge grant', () => {
       });
       if (!r.ok || !('created' in r)) throw new Error('request not created');
       expect(r.created.meta.once).toEqual({ number: p.meta.number, headSha: p.meta.headSha, reason: p.meta.reason });
+      cardOf.set(r.created.requestId, { number: p.meta.number, headSha: p.meta.headSha! });
       return r.created.requestId;
     };
 
@@ -548,7 +551,42 @@ describe('repo.merge grant', () => {
       // 거절 기록 없이 열린 권한 요청(`permission.request`)에는 1회 승인이 없다.
       const plain = await openPermissionRequest(pool, { agentId, kind: 'merge', repo: 'izagood/once-plain', reason: 'x', channelId: ch, threadRootId: thread });
       if (!plain.ok || !('created' in plain)) throw new Error('not created');
-      expect((await decide(alice.token, plain.created.requestId, { ghUser: 'izagood' })).json().error.code).toBe('not_once');
+      expect((await decide(alice.token, plain.created.requestId, { ghUser: 'izagood', number: 1, headSha: SHA })).json().error.code).toBe('not_once');
+    });
+
+    it('F1: 카드가 선 뒤 다른 PR·head 로 다시 거절되면 옛 카드 값으로는 승인되지 않는다(card_stale) — 새 값이면 된다', async () => {
+      const cause = await mention(alice.accountId);
+      const thread = await threadOf(cause);
+      const first = (await check(await lease(cause), 'izagood/once-stale', { number: 11, headSha: SHA2 })).json();
+      const rid = await requestFor(first.error.denialId, thread);
+      // 같은 스레드에서 다른 PR 로 다시 막힘 — 거절 행이 재사용되어 PR·head 가 덮인다.
+      const again = (await check(await leaseInThread(thread, alice.accountId), 'izagood/once-stale', { number: 12, headSha: SHA })).json();
+      expect(again.error.denialId).toBe(first.error.denialId);
+      const stale = await decide(alice.token, rid, { ghUser: 'izagood' });
+      expect(stale.statusCode).toBe(409);
+      expect(stale.json().error.code).toBe('card_stale');
+      expect((await pool.query(`select count(*)::int as n from merge_approval where denial_id = $1`, [first.error.denialId])).rows[0].n).toBe(0);
+      expect((await pool.query(`select status from permission_request where id = $1`, [rid])).rows[0].status).toBe('pending');
+      // 다시 본 카드의 값(12·SHA)이면 승인된다.
+      const ok = await decide(alice.token, rid, { ghUser: 'izagood', number: 12, headSha: SHA });
+      expect(ok.statusCode).toBe(200);
+      expect((await pool.query(`select pr_number, head_sha from merge_approval where denial_id = $1`, [first.error.denialId])).rows[0]).toEqual({ pr_number: 12, head_sha: SHA });
+    });
+
+    it('F2: peek 은 이 임대의 스레드에서 판정이 소모할 바로 그 승인을 소모 없이 보여 준다', async () => {
+      const cause = await mention(alice.accountId);
+      const thread = await threadOf(cause);
+      const denied = (await check(await lease(cause), 'izagood/once-peek', { number: 21, headSha: SHA2 })).json();
+      expect((await decide(alice.token, await requestFor(denied.error.denialId, thread), { ghUser: 'izagood', relaxChecks: true })).statusCode).toBe(200);
+      const peek = (l: { id: string; token: string }) => app.inject({ method: 'POST', url: '/agent/merge-approvals/peek', headers: asAgent(), payload: { leaseId: l.id, token: l.token, repo: 'izagood/once-peek', number: 21, headSha: SHA2 } });
+      // 다른 스레드의 임대로는 보이지 않는다.
+      expect((await peek(await lease(await mention(alice.accountId)))).json()).toEqual({ approval: null });
+      const l = await leaseInThread(thread, alice.accountId);
+      const seen = (await peek(l)).json().approval;
+      expect(seen).toMatchObject({ ghUser: 'izagood', relaxChecks: true, id: expect.any(String) });
+      expect((await pool.query(`select used_at from merge_approval where id = $1`, [seen.id])).rows[0].used_at).toBeNull();
+      const res = (await check(l, 'izagood/once-peek', { number: 21, headSha: SHA2 })).json();
+      expect(res.approval.id).toBe(seen.id);
     });
 
     it('배포 저장소도 같은 규칙이다 — 이름 확인 단계가 없다(jaebin 10-10)', async () => {

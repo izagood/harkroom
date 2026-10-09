@@ -257,7 +257,7 @@ export async function mergeableRepos(pool: Pool, agentId: string): Promise<strin
  * grant 가 하나도 없는 에이전트도 승인이 있으면 래퍼를 부를 수 있어야 한다.
  */
 export interface OpenMergeApproval {
-  repo: string; number: number; headSha: string; ghUser: string; relaxChecks: boolean;
+  id: string; repo: string; number: number; headSha: string; ghUser: string; relaxChecks: boolean;
   channelId: string; threadRootId: string; expiresAt: string;
 }
 
@@ -266,12 +266,34 @@ export interface OpenMergeApproval {
  * `merge-checks` 를 부르지 않아 승인을 남긴다. 이 목록은 판정이 아니다 — 통과 판정은 언제나 `checkMerge` 의 소모다.
  */
 export async function openMergeApprovals(pool: Pool, agentId: string, now = new Date()): Promise<OpenMergeApproval[]> {
-  const res = await pool.query<{ scope: string; number: number; headSha: string; ghUser: string; relaxChecks: boolean; channelId: string; threadRootId: string; expiresAt: Date }>(
-    `select scope, pr_number as number, head_sha as "headSha", gh_user as "ghUser", relax_checks as "relaxChecks",
+  const res = await pool.query<{ id: string; scope: string; number: number; headSha: string; ghUser: string; relaxChecks: boolean; channelId: string; threadRootId: string; expiresAt: Date }>(
+    `select id, scope, pr_number as number, head_sha as "headSha", gh_user as "ghUser", relax_checks as "relaxChecks",
             channel_id as "channelId", thread_root_id as "threadRootId", expires_at as "expiresAt"
        from merge_approval where agent_id = $1 and used_at is null and expires_at > $2 order by approved_at`, [agentId, now]);
   return res.rows.map((r) => ({
-    repo: r.scope.slice('repo:'.length), number: r.number, headSha: r.headSha, ghUser: r.ghUser, relaxChecks: r.relaxChecks,
+    id: r.id, repo: r.scope.slice('repo:'.length), number: r.number, headSha: r.headSha, ghUser: r.ghUser, relaxChecks: r.relaxChecks,
     channelId: r.channelId, threadRootId: r.threadRootId, expiresAt: r.expiresAt.toISOString(),
   }));
+}
+
+/**
+ * 래퍼의 사전 확인용(security F2) — 이 임대로 `checkMerge` 를 부르면 **소모될 바로 그 승인**을 소모하지 않고 알려 준다.
+ * 같은 조건(에이전트·저장소·PR·head·임대의 채널·스레드·안 씀·안 만료)·같은 순서(최근 것)다. 래퍼는 이 계정·CI 칸으로 GitHub 을 읽고,
+ * 판정 뒤 응답의 `approval.id` 가 이것과 같은지 대조한다. 임대가 맞지 않으면 null(승인 없음과 같이 본다 — 판정에서 다시 거절된다).
+ */
+export async function peekMergeApproval(
+  pool: Pool,
+  args: { agentId: string; operatorId: string; leaseId: string; token: string; repo: string; number: number; headSha: string; now?: Date },
+): Promise<{ id: string; ghUser: string; relaxChecks: boolean } | null> {
+  const now = args.now ?? new Date();
+  const lease = await readLease(pool, { leaseId: args.leaseId, token: args.token, now });
+  if (!lease || lease.agentId !== args.agentId || lease.operatorId !== args.operatorId || lease.expired || lease.ended) return null;
+  const scope = repoScope(args.repo);
+  if (!scope) return null;
+  return (await pool.query<{ id: string; ghUser: string; relaxChecks: boolean }>(
+    `select id, gh_user as "ghUser", relax_checks as "relaxChecks" from merge_approval
+      where agent_id = $1 and scope = $2 and pr_number = $3 and head_sha = $4
+        and channel_id = $5 and thread_root_id = $6 and used_at is null and expires_at > $7
+      order by approved_at desc limit 1`,
+    [args.agentId, scope, args.number, args.headSha, lease.channelId, lease.threadRootId, now])).rows[0] ?? null;
 }
