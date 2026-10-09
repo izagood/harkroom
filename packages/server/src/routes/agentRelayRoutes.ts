@@ -178,7 +178,36 @@ export async function registerAgentRelayRoutes(
     })();
   };
 
-  const hub = createRelayHub({ onAttention });
+  /**
+   * 사람을 불렀던 세션이 끝났다(2026-10-09). 부를 때와 **같은 소유자**에게만 보낸다 —
+   * 앱은 이것으로 관문 카드를 닫는다. 소유자 조회가 실패하면 카드는 × 로 닫힌다.
+   */
+  const onAttentionCleared = (ev: {
+    sessionId: string; channelId: string; threadRootId: string | null; agentAccountId: string;
+  }): void => {
+    void (async () => {
+      try {
+        const res = await pool.query<{ owner_account_id: string }>(
+          `select owner_account_id from agent_config where account_id = $1`,
+          [ev.agentAccountId],
+        );
+        const row = res.rows[0];
+        if (!row) return;
+        emitEvent({
+          type: 'agent.attention.cleared',
+          sessionId: ev.sessionId,
+          channelId: ev.channelId,
+          threadRootId: ev.threadRootId,
+          agentAccountId: ev.agentAccountId,
+          audience: [row.owner_account_id],
+        });
+      } catch (err) {
+        app.log.warn({ err }, 'agent.attention.cleared 발행 실패');
+      }
+    })();
+  };
+
+  const hub = createRelayHub({ onAttention, onAttentionCleared });
   const attachTickets = createAttachTicketStore({ ttlMs: deps.attachTicketTtlMs });
   /**
    * 뷰어 소켓의 수명. `/ws` 와 **같은 정책**(`ws/socketLifetime.ts`)을 쓴다.
