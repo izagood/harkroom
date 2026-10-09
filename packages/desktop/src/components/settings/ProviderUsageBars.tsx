@@ -132,7 +132,7 @@ export function UsageRefreshControl({ refreshing, updatedAtMs, error, onRefresh,
           aria-busy={refreshing}
           className="flex items-center gap-1.5 rounded-row border border-border bg-surface-raised px-2.5 py-1 text-meta font-medium text-fg hover:bg-surface-hover disabled:opacity-60"
         >
-          <span aria-hidden className={`inline-block leading-none ${refreshing ? 'animate-spin' : ''}`}>↻</span>
+          <RefreshIcon spinning={refreshing} />
           {refreshing ? t('providerUsage.refreshing') : t('providerUsage.refresh')}
         </button>
       </div>
@@ -142,5 +142,17 @@ export function UsageRefreshControl({ refreshing, updatedAtMs, error, onRefresh,
         </span>
       )}
     </div>
+  );
+}
+
+/** 새로고침 화살표. ↻ 글자는 돌리면 글꼴 여백 때문에 일그러져 보여 SVG 로 그린다(designer n4). */
+function RefreshIcon({ spinning }: { spinning: boolean }) {
+  return (
+    <svg aria-hidden width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
+      strokeLinecap="round" strokeLinejoin="round" className={spinning ? 'motion-safe:animate-spin' : undefined}
+      data-testid="usage-refresh-icon">
+      <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+      <path d="M13.5 2.5v3.6H9.9" />
+    </svg>
   );
 }

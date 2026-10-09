@@ -541,13 +541,16 @@ describe('사용량 새로고침', () => {
     fireEvent.click(within(ctl).getByRole('button', { name: /refresh usage/i }));
     const busy = await within(ctl).findByRole('button', { name: /refreshing/i });
     expect((busy as HTMLButtonElement).disabled).toBe(true);
+    // 동작 줄이기 설정을 따른다 — 그냥 animate-spin 이면 설정을 무시하고 돈다.
+    expect(within(busy).getByTestId('usage-refresh-icon').getAttribute('class')).toBe('motion-safe:animate-spin');
     expect(screen.getByTestId('claude-provider-usage-work-aria').getAttribute('aria-busy')).toBe('true');
     const forced = calls.filter((c) => c.cmd === 'claude_accounts_provider_usage' && c.args?.force);
     expect(forced.map((c) => c.args)).toEqual([{ force: true }]);
 
     done(usage(55, NOW + 60_000));
     await waitFor(() => expect(screen.getByTestId('claude-provider-usage-work-aria').textContent).toContain('55%'));
-    expect(within(ctl).getByRole('button', { name: /refresh usage/i })).toBeTruthy();
+    const idle = within(ctl).getByRole('button', { name: /refresh usage/i });
+    expect(within(idle).getByTestId('usage-refresh-icon').getAttribute('class')).toBeNull();
     expect(screen.getByTestId('claude-provider-usage-work-aria').getAttribute('aria-busy')).toBe('false');
   });
 

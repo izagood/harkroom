@@ -20,7 +20,8 @@ export function ProviderSection({ icon, title, description, testId, actions, chi
 }) {
   return (
     <section className="border-b border-border py-8 first:pt-0 last:border-b-0" data-testid={testId}>
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      {/* items-start: 오른쪽 칸에 실패 줄이 붙어 두 줄이 돼도 제목이 끌려 내려가지 않는다(designer n1). */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <h3 className="flex items-center gap-2 text-body font-semibold text-fg">
           <span aria-hidden className="text-fg-muted">{GLYPH[icon]}</span>
           {title}
