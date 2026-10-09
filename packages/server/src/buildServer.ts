@@ -128,6 +128,8 @@ export interface ServerDeps {
   secretRevealLimiter?: RevealLimiter;
   /** 에이전트의 비밀 만들기·회전 속도(102). 시험이 넉넉한 것을 넣는다. */
   secretCreateLimiter?: RevealLimiter;
+  /** 소유자 보기(`POST /secrets/:id/reveal`) 속도 제한 — 시험이 작은 상한을 넣는다. */
+  secretOwnerRevealLimiter?: RevealLimiter;
   /** avcs 연결 상태 — /healthz 에서 쓴다. */
   getAvcsStatus?: () => { connected: boolean };
   /**
@@ -644,6 +646,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     keyMismatch: secretKeyMismatch,
     limiter: deps.secretRevealLimiter,
     createLimiter: deps.secretCreateLimiter,
+    ownerRevealLimiter: deps.secretOwnerRevealLimiter,
   });
   await registerMergeRoutes(app, deps.pool);
   await registerMergeDenialRoutes(app, deps.pool);

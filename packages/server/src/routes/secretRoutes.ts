@@ -6,7 +6,9 @@
 // - **부여는 소유자만**(D4·M2). admin 이 부여할 수 있으면 admin 은 자기가 움직이는 에이전트에게
 //   주고 받아 가서 모든 값을 읽는다. admin 은 회수·삭제만 한다.
 // - 예외 하나: 에이전트가 **자기 소유자의 이름으로** 비밀을 만드는 길(`/agent/secrets`, 102) — 판정은 `secretCreate.ts`.
-// - **값은 한 번 들어오면 다시 나가지 않는다.** 응답·감사·오류 어디에도 값이나 그 해시를 싣지 않는다.
+// - **값은 소유자 본인에게만 다시 나간다**(`POST /secrets/:id/reveal`, 114). 비밀번호를 다시 확인한 세션만,
+//   admin·에이전트·PAT·오퍼레이터는 못 받는다 — 운영자가 값을 꺼내는 길은 없다. 그 밖의 응답·감사·오류
+//   어디에도 값이나 그 해시를 싣지 않는다.
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
@@ -16,6 +18,7 @@ import { scanWrite } from '../services/contentScan.js';
 import type { SecretKeyring } from '../services/secretKeyring.js';
 import { needlesFor } from '../services/secretLeakGuard.js';
 import { endTurnLease, issueTurnLease, revealSecret, RevealLimiter } from '../services/secretAccess.js';
+import { isSteppedUp } from '../services/stepUp.js';
 import { createAgentSecret, createLimiter, GENERATE_TYPES, hasCreateGrant, rotateAgentSecret, type CreateDenial, type CreateSource } from '../services/secretCreate.js';
 
 /** 계획 D6. 파일·텍스트 공통 상한(바이트). */
@@ -50,6 +53,18 @@ const createBody = z.object({
   ...valueFields,
 });
 const replaceBody = z.object(valueFields);
+const revealBody = z.object({
+  action: z.enum(['view', 'copy', 'download']),
+  // 기기가 스스로 밝힌 이름(앱 판·OS). 기록에만 쓰고 판정에는 안 쓴다 — 검증된 기기 신원이 아니다.
+  client: z.string().max(500).optional(),
+});
+/** 소유자 보기 속도 제한 — 계정마다 10분에 20회. 화면 하나가 보기·복사를 섞어 써도 넉넉하고, 긁어 가기엔 좁다. */
+export const ownerRevealLimiter = (): RevealLimiter => new RevealLimiter(20, 10 * 60_000);
+/** 기록할 client 문자열 — 제어문자를 지우고 120자로 자른다(감사 화면에 그대로 찍힌다). */
+const clientLabel = (raw: string | undefined): string | null => {
+  const s = (raw ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 120);
+  return s || null;
+};
 const patchBody = z.object({
   description: z.string().max(500).optional(),
   expiresAt: z.string().datetime().nullable().optional(),
@@ -108,12 +123,16 @@ function valueBytes(kind: 'text' | 'file', v: { value?: string; valueBase64?: st
 
 export async function registerSecretRoutes(
   app: FastifyInstance, pool: Pool,
-  opts: { keyring: SecretKeyring | null; keyMismatch?: boolean; limiter?: RevealLimiter; createLimiter?: RevealLimiter },
+  opts: {
+    keyring: SecretKeyring | null; keyMismatch?: boolean; limiter?: RevealLimiter; createLimiter?: RevealLimiter;
+    ownerRevealLimiter?: RevealLimiter;
+  },
 ): Promise<void> {
   const { keyring } = opts;
   const disabled = opts.keyMismatch ? keyMismatch : storeOff;
   const limiter = opts.limiter ?? new RevealLimiter();
   const makeLimiter = opts.createLimiter ?? createLimiter();
+  const ownerLimiter = opts.ownerRevealLimiter ?? ownerRevealLimiter();
 
   /** 사람만. 아니면 답을 보내고 false. */
   const human = (req: FastifyRequest, reply: FastifyReply): boolean => {
@@ -372,9 +391,65 @@ export async function registerSecretRoutes(
     const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
     const r = await pool.query(
       `select id::text, version, agent_id as "agentId", operator_id as "operatorId", turn_id as "turnId",
-              channel_id as "channelId", thread_root_id as "threadRootId", result, reason, at
+              channel_id as "channelId", thread_root_id as "threadRootId", result, reason, at,
+              actor_account_id as "actorAccountId", action, client, ip
          from secret_access_log where secret_id = $1 order by at desc, id desc limit $2`, [s.id, limit]);
     return { access: r.rows };
+  });
+
+  /**
+   * 소유자 보기(114, 스레드 464aff1c). 판정은 전부 서버가 가진 사실로 한다:
+   * 사람 · **세션**(PAT·오퍼레이터 403) · **소유자 본인**(admin 도 남의 것은 404) · 다시 확인한 창 안(`stepUp.ts`)
+   * · 계정당 속도 제한. 통과하면 지금 판을 열어 본문으로만 돌려준다(`no-store`).
+   *
+   * 보기·복사·내려받기를 **각각 서버에서** 받는다 — 화면이 이미 받은 값을 복사하면 "복사함"은 클라이언트의
+   * 자기 신고가 된다. 그래서 복사도 `action: 'copy'` 로 다시 받고, 그 한 번이 access log 한 줄이다.
+   * 만료된 비밀도 소유자는 본다 — 만료는 에이전트에게 주지 않는다는 뜻이지 값이 사라졌다는 뜻이 아니다.
+   */
+  app.post('/secrets/:id/reveal', { preHandler: app.requireAccount }, async (req, reply) => {
+    if (!human(req, reply)) return reply;
+    if (req.authVia !== 'session') {
+      return reply.code(403).send({ error: { code: 'session_required', message: 'only a signed-in session can view a secret value' } });
+    }
+    if (!keyring) return reply.code(409).send(disabled);
+    const s = await load(req, reply, false);
+    if (!s) return reply;
+    const parsed = revealBody.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'action must be view, copy or download' } });
+    const me = req.account!;
+    const { action } = parsed.data;
+    const client = clientLabel(parsed.data.client);
+    const log = (result: 'granted' | 'denied', reason: string | null, version: number | null) => pool.query(
+      `insert into secret_access_log (secret_id, secret_name, version, actor_account_id, action, client, ip, result, reason)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [s.id, s.name, version, me.id, action, client, req.ip ?? null, result, reason]);
+    const deny = async (status: number, code: string, message: string) => {
+      await log('denied', code, null);
+      return reply.code(status).send({ error: { code, message } });
+    };
+
+    if (!(await isSteppedUp(pool, req.credentialHash))) {
+      return deny(403, 'step_up_required', 'confirm your password again to view secret values');
+    }
+    if (!ownerLimiter.take(me.id, Date.now())) return deny(429, 'rate_limited', 'too many secret views, try again later');
+    const v = (await pool.query(
+      `select version, sealed from secret_version
+        where secret_id = $1 and revoked_at is null and sealed is not null order by version desc limit 1`,
+      [s.id])).rows[0] as { version: number; sealed: string } | undefined;
+    if (!v) return deny(409, 'no_value', 'this secret has no value');
+    const value = keyring.open(v.sealed, { secretId: s.id, version: v.version, kind: s.kind });
+    // 열리지 않는다 = 이 서버 키링에 그 판의 키가 없다(keyLost). 값을 다시 넣어야 한다.
+    if (!value) return deny(409, 'unreadable', 'this value cannot be opened with the key on this server');
+
+    await log('granted', null, v.version);
+    await recordAudit(pool, {
+      action: 'secret.revealed', ...actorOf(req), target: s.id, detail: { name: s.name, version: v.version, action },
+    }, req);
+    void reply.header('cache-control', 'no-store');
+    return {
+      name: s.name, kind: s.kind, filename: s.filename, version: v.version,
+      ...(s.kind === 'text' ? { value: value.toString('utf8') } : { valueBase64: value.toString('base64') }),
+    };
   });
 
   // ─── 에이전트 쪽(PR 2) ────────────────────────────────────────────────────────────────

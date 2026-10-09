@@ -10,8 +10,12 @@ import { recordAudit } from '../audit.js';
 import type { RateLimiter, RateLimitRule } from '../rateLimit.js';
 import { createChannel } from '../services/channels.js';
 import { getHandleGroupByHandle } from '../services/handleGroups.js';
+import { STEP_UP_WINDOW_MS } from '../services/stepUp.js';
 
 const SESSION_TTL_DAYS = 14;
+
+/** 다시 확인(step-up) 시도 상한 — 계정마다. 계정 삭제의 비밀번호 재확인(`ACCOUNT_DELETE_RULE`)과 같은 값이다. */
+export const STEP_UP_RULE: RateLimitRule = { windowMs: 15 * 60_000, max: 10 };
 
 /**
  * 부트스트랩이 시딩하는 기본 채널 이름. `POST /channels` 의 이름 규칙
@@ -334,6 +338,53 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts:
     } finally {
       client.release();
     }
+  });
+
+  /**
+   * 다시 확인(step-up). 로그인한 **세션**이 비밀번호를 한 번 더 대면 그 세션 행에만 `stepped_up_until` 을 적는다
+   * (`services/stepUp.ts`). 비밀 보관소 소유자 보기가 이 창을 요구한다 — 세션 토큰만 훔쳐서는 값이 안 나온다.
+   *
+   * - 사람·세션만. PAT·오퍼레이터는 세션 행이 없으니 창을 열 곳도 없다(403).
+   * - 시도는 검증 **앞**에서 계정마다 센다(로그인과 같은 이유 — 동시에 보낸 요청이 모두 통과하지 않게).
+   *   막힌 동안은 맞는 비밀번호도 거절한다. 성공하면 비운다.
+   * - 실패·성공 모두 감사 기록에 남긴다. 비밀번호는 어디에도 싣지 않는다.
+   */
+  app.post('/auth/step-up', { preHandler: app.requireAccount }, async (req, reply) => {
+    const body = z.object({ password: z.string().max(256) }).safeParse(req.body ?? {});
+    if (!body.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'password is required' } });
+    const account = req.account!;
+    if (account.kind !== 'human' || req.authVia !== 'session') {
+      return reply.code(403).send({ error: { code: 'session_required', message: 'step-up is only for a signed-in person' } });
+    }
+    const key = `stepUp:${account.id}`;
+    const verdict = limiter.hit(key, STEP_UP_RULE);
+    if (!verdict.allowed) {
+      await recordAudit(pool, {
+        action: 'step_up.failed', actorId: account.id, actorHandle: account.handle, detail: { reason: 'rate_limited' },
+      }, req);
+      return reply
+        .code(429)
+        .header('retry-after', String(Math.ceil(verdict.retryAfterMs / 1000)))
+        .send({ error: { code: 'rate_limited', message: 'too many attempts, try again later' } });
+    }
+    const row = (await pool.query(`select password_hash from account where id = $1`, [account.id])).rows[0] as
+      | { password_hash: string | null } | undefined;
+    const ok = row?.password_hash
+      ? await argon2.verify(row.password_hash, body.data.password)
+      : await verifyAgainstDummy(body.data.password);
+    if (!ok) {
+      await recordAudit(pool, {
+        action: 'step_up.failed', actorId: account.id, actorHandle: account.handle, detail: { reason: 'wrong_password' },
+      }, req);
+      return reply.code(401).send({ error: { code: 'invalid_credentials', message: 'wrong password' } });
+    }
+    limiter.reset(key);
+    const until = new Date(Date.now() + STEP_UP_WINDOW_MS);
+    await pool.query(`update session set stepped_up_until = $1 where token_hash = $2`, [until, req.credentialHash]);
+    await recordAudit(pool, {
+      action: 'step_up.succeeded', actorId: account.id, actorHandle: account.handle,
+    }, req);
+    return { until: until.toISOString() };
   });
 
   /**

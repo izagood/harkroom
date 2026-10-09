@@ -56,6 +56,8 @@ export type AuditAction =
   | 'secret.created' | 'secret.updated' | 'secret.value.replaced' | 'secret.deleted'
   | 'secret.rotated' | 'secret.create.denied' | 'secret.rotate.denied'
   | 'secret.grant.given' | 'secret.grant.revoked'
+  // 소유자 보기(114). detail 은 이름·판·action(view|copy|download)만.
+  | 'secret.revealed'
   // 턴 임대 충돌(086) — 같은 멘션에 살아 있는 임대가 이미 있다. 러너가 아닌 누군가가 먼저 받아 갔을 수 있다.
   | 'secret.lease.conflict'
   // 에이전트 머지 권한(090, 스레드 3deac356): 래퍼의 판정 요청·거절·보고. detail 에 저장소·PR·sha·임대만, 본문 없음.
@@ -73,6 +75,8 @@ export type AuditAction =
   // MCP 레지스트리(스펙 §6).
   | 'mcp_server.set' | 'mcp_server.deleted'
   | 'password.changed'
+  // 다시 확인(114) — 비밀 보관소 소유자 보기 앞에서 비밀번호를 한 번 더 댄다.
+  | 'step_up.succeeded' | 'step_up.failed'
   | 'channel.created' | 'channel.updated' | 'channel.archived' | 'channel.unarchived' | 'channel.deleted' | 'message.deleted'
   // #218: 메시지 고정·해제. 채널 전역 상태를 바꾸는 조작이라 남는 기록이 있어야 한다.
   // detail 에는 messageId 만 남긴다 — 본문을 복사하면 그 메시지를 지워도 감사에 남는다
