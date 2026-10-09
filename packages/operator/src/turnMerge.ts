@@ -24,8 +24,9 @@
  * 서버가 둘 다 알므로 `checkMerge` 에 넣는 것이 맞고, 그 한 줄은 서버 후속 PR 로 둔다. 지금 영향은 없다
  * (사람이 jaebin 하나라 "grant 를 준 사람"과 "오퍼레이터 주인"이 같다). 문서 `docs/agent-merge.md`.
  *
- * gh 계정: 머지는 `operator.json` 의 `merge.ghUser` 로 지정한 gh 계정 토큰으로만 한다(`gh auth token -u`).
- * **없으면 거절한다**(`no_gh_user`, security P1) — 활성 계정으로 넘어가지 않는다. 그 거절도 서버에 보고된다.
+ * gh 계정: 머지는 `operator.json` 의 `merge.byScope` 에서 **그 저장소의 권한 줄**에 고른 gh 계정 토큰으로만 한다
+ * (`gh auth token -u`, 정확한 `owner/name` → `owner/*`, 스레드 e085b6a7). **없으면 거절한다**(`no_gh_user`, security P1) —
+ * 활성 계정·다른 줄의 계정으로 넘어가지 않는다. 고른 계정이 기기 gh 에 없으면 `gh_user_not_logged_in`. 그 거절도 서버에 보고된다.
  */
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -34,7 +35,8 @@ import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/run
 
 export const MERGE_TOOL = 'repo.merge';
 
-const NO_REPO_ACCESS = "this operator's gh account cannot access or merge this repository — granting more permission will not help; a person merges it";
+const noRepoAccess = (login: string): string =>
+  `the gh account ${login} cannot access or merge this repository — granting more permission will not help; pick another account for this permission row, or a person merges it`;
 
 /** `gh` 의 절대 경로 — 셸 PATH 를 믿지 않는다(F3). 기동 때 한 번 고른다. 없으면 머지는 `pr_not_found` 로 실패한다. */
 export const GH_PATH = ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh'].find((p) => existsSync(p)) ?? '/usr/local/bin/gh';
@@ -106,8 +108,11 @@ export interface TurnMergeDeps {
   /** `gh` 실행 파일의 절대 경로. 셸 PATH 를 믿지 않는다. */
   ghPath: string;
   home: string;
-  /** `operator.json` 의 `merge.ghUser`. 턴마다 다시 읽는다(설정이 바뀌면 다음 머지부터). */
-  ghUser(): Promise<string | undefined>;
+  /**
+   * 이 저장소를 머지할 gh 계정(`operator.json` 의 `merge.byScope`, `localMerge.ts::pickMergeGhUser`). 머지마다 다시
+   * 읽는다(설정이 바뀌면 다음 머지부터). null 이면 머지하지 않는다.
+   */
+  ghUserFor(repo: string): Promise<{ login: string; scope: string } | null>;
   exec?: Exec;
 }
 
@@ -165,15 +170,23 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
    * 저장소 이름을 가리지 않으므로, "회사 저장소는 래퍼로 머지할 수 없다"를 기계로 지키는 자리가 바로 여기다:
    * ghUser 를 izagood 로 고정하면 그 계정이 쓸 수 없는 저장소는 머지가 실패한다.
    */
-  const tokenFor = async (): Promise<{ ok: true; token: string } | { ok: false; code: 'no_gh_user' | 'gh_token_failed'; message: string }> => {
-    const user = await deps.ghUser();
-    if (!user || !/^[A-Za-z0-9-]{1,39}$/.test(user)) {
-      return { ok: false, code: 'no_gh_user', message: 'operator.json merge.ghUser is not set — the wrapper never merges with the active gh account' };
+  type TokenFail = { ok: false; code: 'no_gh_user' | 'gh_user_not_logged_in' | 'gh_token_failed'; message: string };
+  const tokenFor = async (repo: string): Promise<{ ok: true; token: string; login: string } | TokenFail> => {
+    const pick = await deps.ghUserFor(repo);
+    if (!pick || !/^[A-Za-z0-9-]{1,39}$/.test(pick.login)) {
+      return { ok: false, code: 'no_gh_user', message: `no GitHub account is set for ${repo} on this device — a person picks one in Settings › Agents › Permissions › PR merge (the wrapper never merges with the active gh account)` };
     }
+    const user = pick.login;
+    // 고른 계정이 이 기기 gh 에 없으면 다른 계정으로 넘어가지 않는다(fail-closed) — 사람이 다시 로그인하거나 줄을 바꾼다.
     const r = await exec(deps.ghPath, ['auth', 'token', '-u', user], ghEnv(deps.home, null));
     const token = r.stdout.trim();
-    if (r.code !== 0 || !token) return { ok: false, code: 'gh_token_failed', message: `gh auth token -u ${user} failed: ${r.stderr.trim().slice(0, 200)}` };
-    return { ok: true, token };
+    if (r.code !== 0 || !token) {
+      if (/no (?:oauth )?token found|not logged in|no account|unknown user/i.test(r.stderr)) {
+        return { ok: false, code: 'gh_user_not_logged_in', message: `${user} (set for ${pick.scope}) is not logged in to gh on this device — log in again or pick another account` };
+      }
+      return { ok: false, code: 'gh_token_failed', message: `gh auth token -u ${user} failed: ${r.stderr.trim().slice(0, 200)}` };
+    }
+    return { ok: true, token, login: user };
   };
 
   const gh = async (args: string[], env: Record<string, string>): Promise<ExecResult> => exec(deps.ghPath, args, env);
@@ -222,13 +235,13 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     };
 
     // ④ 머지 전 확인. gh 는 절대 경로·빈 env 로만 부른다. 토큰이 없으면 여기서 끝 — 활성 계정으로 넘어가지 않는다(P1).
-    const tok = await tokenFor();
+    const tok = await tokenFor(repo);
     if (!tok.ok) { await report('failed', null, `${tok.code}: ${tok.message}`); return fail(tok.code, tok.message); }
     const env = ghEnv(deps.home, tok.token);
     const view = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'state,isDraft,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup'], env);
     if (view.code !== 0) {
-      await report('failed', null, `gh pr view: ${view.stderr.trim().slice(0, 300)}`);
-      if (isRepoAccessError(view.stderr)) return fail('no_repo_access', NO_REPO_ACCESS);
+      await report('failed', null, `gh pr view (as ${tok.login}): ${view.stderr.trim().slice(0, 300)}`);
+      if (isRepoAccessError(view.stderr)) return fail('no_repo_access', noRepoAccess(tok.login));
       return fail('pr_not_found', `gh pr view failed: ${view.stderr.trim().slice(0, 300)}`);
     }
     let pr: PrView = {};
@@ -256,7 +269,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     if (merge.code !== 0) {
       const err = merge.stderr.trim().slice(0, 300);
       await report('failed', null, err);
-      if (isRepoAccessError(merge.stderr)) return fail('no_repo_access', NO_REPO_ACCESS);
+      if (isRepoAccessError(merge.stderr)) return fail('no_repo_access', noRepoAccess(tok.login));
       return fail('merge_failed', `gh pr merge failed: ${err}`);
     }
     let mergeSha: string | null = null;

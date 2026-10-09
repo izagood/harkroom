@@ -476,9 +476,9 @@ export class DaemonServer {
         const p = readOperatorMergeSetPayload(req.payload);
         if (isDaemonError(p)) return p;
         try {
-          const { state, previous } = await port.set(p.ghUser);
+          const { state, changes } = await port.set(p);
           // 바꾼 사실을 남긴다(security C8) — 이름뿐이다, 토큰은 이 경로에 없다.
-          if (previous !== p.ghUser) this.log(`머지 gh 계정: ${previous ?? '(없음)'} → ${p.ghUser ?? '(없음)'} @ ${state.host}`);
+          for (const c of changes) this.log(`머지 gh 계정${c.scope ? ` [${c.scope}]` : ''}: ${c.from ?? '(없음)'} → ${c.to ?? '(없음)'} @ ${state.host}`);
           return state;
         } catch (err) {
           // 목록에 없는 이름·gh 실패는 사람이 고칠 사유다 — 원문 그대로 올린다.

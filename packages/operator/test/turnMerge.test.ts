@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import { createTurnMerge, ghEnv, parseMergeArgs, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
+import { pickMergeGhUser } from '../src/localMerge.js';
 
 // 에이전트 머지 래퍼(PR 2/3) — 오퍼레이터 쪽 판정·gh 호출. 설계·security F3 는 스레드 3deac356.
 const SHA = 'a'.repeat(40);
@@ -58,16 +59,19 @@ describe('turnMerge', () => {
   let viewStderr: string | null;
   let denialBody: Record<string, unknown>;
   let ghUser: string | undefined;
+  let pickByScope: Record<string, string> | null;
   let lease: { leaseId: string; token: string; agentId: string } | null;
   let tm: TurnMerge;
 
   beforeEach(() => {
-    forwards = []; execs = []; checkStatus = 200; mergeCode = 0; mergeStderr = 'GraphQL: Base branch was modified'; viewStderr = null; denialBody = { error: { code: 'not_granted' } }; ghUser = 'izagood';
+    forwards = []; execs = []; checkStatus = 200; mergeCode = 0; mergeStderr = 'GraphQL: Base branch was modified'; viewStderr = null; denialBody = { error: { code: 'not_granted' } }; ghUser = 'izagood'; pickByScope = null;
     lease = { leaseId: 'lease-1', token: 'tok-1', agentId: 'a1' };
     pr = { state: 'OPEN', isDraft: false, headRefOid: SHA, baseRefName: 'main', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }] };
     tm = createTurnMerge({
       ghPath: GH, home: '/Users/x', log: () => {},
-      ghUser: async () => ghUser,
+      ghUserFor: async (repo) => (pickByScope
+        ? pickMergeGhUser({ byScope: pickByScope }, repo)
+        : ghUser ? { login: ghUser, scope: '(device default)' } : null),
       lookupLease: (runnerId, cause) => (runnerId === 'r1' && cause === 'cause-1' ? lease : null),
       forward: async (_agentId, req) => {
         forwards.push(req);
@@ -82,6 +86,8 @@ describe('turnMerge', () => {
       },
       exec: async (file, args, env): Promise<ExecResult> => {
         execs.push({ file, args, env });
+        if (args[0] === 'auth' && args[3] === 'gone') return { code: 1, stdout: '', stderr: 'no oauth token found for github.com account gone' };
+        if (args[0] === 'auth' && pickByScope) return { code: 0, stdout: `tok-${args[3]}\n`, stderr: '' };
         if (args[0] === 'auth') return ghUser === 'broken' ? { code: 1, stdout: '', stderr: 'no oauth token' } : { code: 0, stdout: 'tok-from-gh\n', stderr: '' };
         if (args[0] === 'pr' && args[1] === 'view' && args.includes('mergeCommit')) return { code: 0, stdout: JSON.stringify({ mergeCommit: { oid: MERGE_SHA } }), stderr: '' };
         if (args[0] === 'pr' && args[1] === 'view') return viewStderr ? { code: 1, stdout: '', stderr: viewStderr } : { code: 0, stdout: JSON.stringify(pr), stderr: '' };
@@ -213,6 +219,43 @@ describe('turnMerge', () => {
     ghUser = 'broken';
     expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('gh_token_failed');
     expect(ghCalls()).toEqual([]);
+  });
+
+  it('줄별 계정(e085b6a7): 정확한 owner/name 줄이 owner/* 줄보다 이기고, 그 계정의 토큰으로 머지한다', async () => {
+    pickByScope = { 'izagood/*': 'org-acct', 'izagood/harkroom': 'repo-acct' };
+    expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).isError).toBeFalsy();
+    expect(execs.find((e) => e.args[0] === 'auth')!.args).toEqual(['auth', 'token', '-u', 'repo-acct']);
+    expect(execs.find((e) => e.args[1] === 'merge')!.env.GH_TOKEN).toBe('tok-repo-acct');
+  });
+
+  it('줄별 계정: 저장소 줄이 없으면 조직 줄의 계정', async () => {
+    pickByScope = { 'izagood/*': 'org-acct', 'other/*': 'nope' };
+    await tm.maybeHandle('r1', 'a1', ok());
+    expect(execs.find((e) => e.args[1] === 'merge')!.env.GH_TOKEN).toBe('tok-org-acct');
+  });
+
+  it('줄별 계정: 맞는 줄이 없으면 no_gh_user — 다른 조직 줄이나 활성 계정으로 넘어가지 않는다', async () => {
+    pickByScope = { 'rebellions-sw/*': 'rebel-x' };
+    expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('no_gh_user');
+    expect(execs).toHaveLength(0);
+  });
+
+  it('줄별 계정: 고른 계정이 gh 에서 로그아웃됐으면 gh_user_not_logged_in — gh pr 명령 0건, 실패를 보고한다', async () => {
+    pickByScope = { 'izagood/*': 'gone' };
+    const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+    expect(r.body.error.code).toBe('gh_user_not_logged_in');
+    expect(r.body.error.message).toContain('izagood/*');
+    expect(ghCalls()).toEqual([]);
+    expect(results()).toEqual([expect.objectContaining({ result: 'failed', error: expect.stringContaining('gh_user_not_logged_in') })]);
+  });
+
+  it('no_repo_access 답에는 어떤 계정으로 시도했는지 싣는다(토큰은 없다)', async () => {
+    pickByScope = { 'izagood/*': 'org-acct' };
+    viewStderr = 'GraphQL: Could not resolve to a Repository with the name';
+    const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+    expect(r.body.error.code).toBe('no_repo_access');
+    expect(r.body.error.message).toContain('org-acct');
+    expect(JSON.stringify(r.body)).not.toContain('tok-');
   });
 
   it('arguments 에 받지 않는 키(approval 등)가 있으면 bad_request', async () => {

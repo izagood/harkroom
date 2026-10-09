@@ -38,8 +38,12 @@ export interface OperatorConfig {
    * 에이전트 머지 래퍼(`turnMerge.ts`)가 쓰는 gh 계정. `ghUser` 가 있으면 `gh auth token -u <ghUser>` 의
    * 토큰으로 머지한다 — **없으면 머지하지 않는다**(`no_gh_user`, 활성 계정으로 넘어가지 않는다). 앱의 에이전트
    * 상세 「머지에 쓸 GitHub 계정」에서 고른다(`localMerge.ts`) — 손으로 적어도 된다.
+   *
+   * `byScope`(스레드 e085b6a7): 머지 권한 줄마다 계정 — 키는 `owner/name` 또는 `owner/*`(소문자), 값은 gh 로그인 이름.
+   * 이 칸이 **있으면** `ghUser` 는 읽지 않는다(기본값으로 떨어지지 않는다). `ghUser` 는 옮기기 전 옛 값이고, 앱이 처음
+   * 열 때 그 값을 지금 있는 줄들에 한 번 복사하고 지운다(`localMerge.ts` 의 migrate).
    */
-  merge?: { ghUser?: string };
+  merge?: { ghUser?: string; byScope?: Record<string, string> };
 }
 
 const EMPTY: OperatorConfig = { communities: {} };

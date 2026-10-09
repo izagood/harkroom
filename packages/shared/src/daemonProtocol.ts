@@ -773,6 +773,11 @@ export interface OperatorGhAccount { login: string; active: boolean }
  */
 export interface OperatorMergeState {
   ghUser: string | null;
+  /**
+   * 머지 권한 줄마다 고른 계정 — 키는 `owner/name`·`owner/*`(소문자). null 이면 아직 옮기기 전이다(그때만 `ghUser` 가
+   * 쓰인다). 옮긴 뒤로는 줄에 계정이 없으면 그 줄로는 머지하지 않는다(`no_gh_user`).
+   */
+  byScope: Record<string, string> | null;
   accounts: OperatorGhAccount[] | null;
   accountsError?: string;
   host: string;
@@ -781,13 +786,47 @@ export interface OperatorMergeState {
 /** GitHub 로그인 이름 모양 — `turnMerge.ts` 의 `tokenFor` 가 받는 것과 같다. */
 export const GH_LOGIN_RE = /^[A-Za-z0-9-]{1,39}$/;
 
+/** 머지 권한 줄의 범위 — `owner/name` 또는 조직 전체 `owner/*`. 서버 grant scope 에서 `repo:` 를 뗀 모양이다. */
+export const MERGE_SCOPE_RE = /^[a-z0-9][a-z0-9._-]{0,99}\/(?:\*|[a-z0-9._-]{1,100})$/;
+
+export type OperatorMergeSetPayload =
+  /** 옛 기기 기본값(`merge.ghUser`). 옮긴 뒤에는 쓰이지 않는다. */
+  | { ghUser: string | null }
+  /** 줄 하나의 계정. `ghUser: null` 은 그 줄의 지정을 지운다. */
+  | { scope: string; ghUser: string | null }
+  /** 옛 `merge.ghUser` 를 이 줄들에 한 번 복사하고 지운다(이미 고른 줄은 그대로). 이미 옮겼으면 아무것도 안 한다. */
+  | { migrate: string[] };
+
+function readMergeScope(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.toLowerCase();
+  return MERGE_SCOPE_RE.test(s) ? s : null;
+}
+
 /** `ghUser: null` 은 지우기다. 목록에 있는지는 오퍼레이터가 그 순간의 gh 로 다시 잰다. */
-export function readOperatorMergeSetPayload(payload: unknown): { ghUser: string | null } | DaemonError {
-  const p = payload as { ghUser?: unknown } | null;
-  if (!p || typeof p !== 'object' || !('ghUser' in p)) return daemonError('bad-payload', 'operatorMergeSet 에는 ghUser 가 필요하다(지우려면 null)');
-  if (p.ghUser === null) return { ghUser: null };
-  if (typeof p.ghUser !== 'string' || !GH_LOGIN_RE.test(p.ghUser)) return daemonError('bad-payload', 'ghUser 는 GitHub 로그인 이름이어야 한다');
-  return { ghUser: p.ghUser };
+export function readOperatorMergeSetPayload(payload: unknown): OperatorMergeSetPayload | DaemonError {
+  const p = payload as { ghUser?: unknown; scope?: unknown; migrate?: unknown } | null;
+  if (!p || typeof p !== 'object') return daemonError('bad-payload', 'operatorMergeSet 에는 ghUser 나 migrate 가 필요하다');
+  if ('migrate' in p) {
+    if (!Array.isArray(p.migrate) || p.migrate.length > 200) return daemonError('bad-payload', 'migrate 는 범위 배열이어야 한다(200개까지)');
+    const scopes: string[] = [];
+    for (const v of p.migrate) {
+      const s = readMergeScope(v);
+      if (!s) return daemonError('bad-payload', 'migrate 의 항목은 owner/name 이나 owner/* 여야 한다');
+      if (!scopes.includes(s)) scopes.push(s);
+    }
+    return { migrate: scopes };
+  }
+  if (!('ghUser' in p)) return daemonError('bad-payload', 'operatorMergeSet 에는 ghUser 가 필요하다(지우려면 null)');
+  let ghUser: string | null = null;
+  if (p.ghUser !== null) {
+    if (typeof p.ghUser !== 'string' || !GH_LOGIN_RE.test(p.ghUser)) return daemonError('bad-payload', 'ghUser 는 GitHub 로그인 이름이어야 한다');
+    ghUser = p.ghUser;
+  }
+  if (p.scope === undefined) return { ghUser };
+  const scope = readMergeScope(p.scope);
+  if (!scope) return daemonError('bad-payload', 'scope 는 owner/name 이나 owner/* 여야 한다');
+  return { scope, ghUser };
 }
 
 /** `workspaceCleanupSettingsSet` — 둘 다 선택이다. graceDays 는 1~30 으로 자른다. */

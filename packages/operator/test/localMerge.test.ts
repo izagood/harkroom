@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readOperatorMergeSetPayload } from '@harkroom/shared/daemonProtocol';
-import { createLocalMergePort, parseGhAccounts } from '../src/localMerge.js';
+import { createLocalMergePort, parseGhAccounts, pickMergeGhUser } from '../src/localMerge.js';
 import type { Exec } from '../src/turnMerge.js';
 
 const STATUS = JSON.stringify({ hosts: {
@@ -29,7 +29,7 @@ describe('localMerge 포트 (P2 · security C7·C8)', () => {
   it('처음에는 비어 있다 — 활성 계정을 고르지 않는다. 목록은 github.com 의 이름·활성 여부뿐이고 기기 이름을 함께 준다', async () => {
     const { port, calls } = await fresh();
     expect(await port.get()).toEqual({
-      ghUser: null, host: 'mac-1',
+      ghUser: null, byScope: null, host: 'mac-1',
       accounts: [{ login: 'work-account', active: true }, { login: 'izagood', active: false }],
     });
     // C7: 인자 배열로, 토큰을 보이는 플래그 없이, 상속 env(GH_TOKEN) 없이
@@ -42,8 +42,8 @@ describe('localMerge 포트 (P2 · security C7·C8)', () => {
 
   it('목록에 있는 이름을 고르면 operator.json merge.ghUser 에 쓰고 다른 칸은 그대로 둔다', async () => {
     const { port, configPath } = await fresh({ communities: { 'https://a.example.com': { agents: { x: {} } } } });
-    const out = await port.set('izagood');
-    expect(out.previous).toBeNull();
+    const out = await port.set({ ghUser: 'izagood' });
+    expect(out.changes).toEqual([{ scope: null, from: null, to: 'izagood' }]);
     expect(out.state.ghUser).toBe('izagood');
     const disk = JSON.parse(await readFile(configPath, 'utf8'));
     expect(disk.merge).toEqual({ ghUser: 'izagood' });
@@ -53,9 +53,9 @@ describe('localMerge 포트 (P2 · security C7·C8)', () => {
 
   it('C7: 그 순간 gh 에 로그인되지 않은 이름은 받지 않는다 — 파일도 그대로다', async () => {
     const { port, configPath } = await fresh({ communities: {}, merge: { ghUser: 'izagood' } });
-    await expect(port.set('someone-else')).rejects.toThrow(/not logged in/);
+    await expect(port.set({ ghUser: 'someone-else' })).rejects.toThrow(/not logged in/);
     // 다른 호스트의 계정도 못 고른다 — 래퍼의 `gh auth token -u` 는 github.com 을 본다
-    await expect(port.set('other')).rejects.toThrow(/not logged in/);
+    await expect(port.set({ ghUser: 'other' })).rejects.toThrow(/not logged in/);
     expect(JSON.parse(await readFile(configPath, 'utf8')).merge).toEqual({ ghUser: 'izagood' });
   });
 
@@ -65,11 +65,53 @@ describe('localMerge 포트 (P2 · security C7·C8)', () => {
     const s = await port.get();
     expect(s.accounts).toBeNull();
     expect(s.accountsError).toContain('no such file');
-    await expect(port.set('izagood')).rejects.toThrow(/gh auth status failed/);
-    const out = await port.set(null);
-    expect(out.previous).toBe('izagood');
+    await expect(port.set({ ghUser: 'izagood' })).rejects.toThrow(/gh auth status failed/);
+    const out = await port.set({ ghUser: null });
+    expect(out.changes).toEqual([{ scope: null, from: 'izagood', to: null }]);
     expect(out.state.ghUser).toBeNull();
     expect(JSON.parse(await readFile(configPath, 'utf8')).merge).toBeUndefined();
+  });
+
+  it('줄별 계정(e085b6a7): 줄 하나를 고르면 byScope 에 쓰고, 그 뒤로 옛 기본값은 쓰이지 않는다 — 로그인되지 않은 이름은 거절', async () => {
+    const { port, configPath } = await fresh({ communities: {}, merge: { ghUser: 'izagood' } });
+    await expect(port.set({ scope: 'rebellions-sw/*', ghUser: 'nobody' })).rejects.toThrow(/not logged in/);
+    const out = await port.set({ scope: 'rebellions-sw/*', ghUser: 'work-account' });
+    expect(out.changes).toEqual([{ scope: 'rebellions-sw/*', from: null, to: 'work-account' }]);
+    expect(out.state.byScope).toEqual({ 'rebellions-sw/*': 'work-account' });
+    expect(JSON.parse(await readFile(configPath, 'utf8')).merge).toEqual({ ghUser: 'izagood', byScope: { 'rebellions-sw/*': 'work-account' } });
+    // byScope 가 생긴 뒤로는 옛 기본값으로 떨어지지 않는다
+    const merge = JSON.parse(await readFile(configPath, 'utf8')).merge;
+    expect(pickMergeGhUser(merge, 'izagood/harkroom')).toBeNull();
+    // 줄 지우기는 gh 없이도 된다
+    await port.set({ scope: 'rebellions-sw/*', ghUser: null });
+    expect((await port.get()).byScope).toEqual({});
+  });
+
+  it('migrate: 옛 기본값을 지금 줄들에 한 번만 복사하고 지운다 — 두 번째는 아무것도 안 한다', async () => {
+    const { port, configPath } = await fresh({ communities: {}, merge: { ghUser: 'izagood' } });
+    const out = await port.set({ migrate: ['izagood/*', 'rebellions-sw/*'] });
+    expect(out.state.byScope).toEqual({ 'izagood/*': 'izagood', 'rebellions-sw/*': 'izagood' });
+    expect(out.state.ghUser).toBeNull();
+    expect(JSON.parse(await readFile(configPath, 'utf8')).merge).toEqual({ byScope: { 'izagood/*': 'izagood', 'rebellions-sw/*': 'izagood' } });
+    await port.set({ scope: 'rebellions-sw/*', ghUser: 'work-account' });
+    const again = await port.set({ migrate: ['izagood/*', 'rebellions-sw/*', 'new/*'] });
+    expect(again.changes).toEqual([]);
+    expect(again.state.byScope).toEqual({ 'izagood/*': 'izagood', 'rebellions-sw/*': 'work-account' });
+  });
+
+  it('migrate: 옛 값이 없어도 옮긴 것으로 적는다(빈 byScope) — 그 뒤 줄 없는 머지는 no_gh_user', async () => {
+    const { port } = await fresh({ communities: {} });
+    expect((await port.set({ migrate: ['izagood/*'] })).state.byScope).toEqual({});
+  });
+
+  it('pickMergeGhUser: 정확한 줄 > 조직 줄, 대소문자 무시, 모양이 아닌 항목은 버린다, 옮기기 전에만 옛 기본값', () => {
+    const byScope = { 'acme/*': 'org', 'acme/api': 'repo', 'bad key': 'x', 'other/*': 'a b' };
+    expect(pickMergeGhUser({ byScope }, 'Acme/API')).toEqual({ login: 'repo', scope: 'acme/api' });
+    expect(pickMergeGhUser({ byScope }, 'acme/web')).toEqual({ login: 'org', scope: 'acme/*' });
+    expect(pickMergeGhUser({ byScope }, 'other/x')).toBeNull();
+    expect(pickMergeGhUser({ ghUser: 'legacy', byScope }, 'zzz/x')).toBeNull();
+    expect(pickMergeGhUser({ ghUser: 'legacy' }, 'zzz/x')).toEqual({ login: 'legacy', scope: '(device default)' });
+    expect(pickMergeGhUser(undefined, 'zzz/x')).toBeNull();
   });
 
   it('로그인 하나가 만료돼 gh 가 0 이 아닌 코드로 끝나도 JSON 이 있으면 목록을 쓴다', async () => {
@@ -91,5 +133,12 @@ describe('localMerge 포트 (P2 · security C7·C8)', () => {
     expect(readOperatorMergeSetPayload({})).toMatchObject({ code: 'bad-payload' });
     expect(readOperatorMergeSetPayload({ ghUser: 'a; rm -rf /' })).toMatchObject({ code: 'bad-payload' });
     expect(readOperatorMergeSetPayload({ ghUser: '' })).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMergeSetPayload({ scope: 'Acme/*', ghUser: 'x' })).toEqual({ scope: 'acme/*', ghUser: 'x' });
+    expect(readOperatorMergeSetPayload({ scope: 'acme/api', ghUser: null })).toEqual({ scope: 'acme/api', ghUser: null });
+    expect(readOperatorMergeSetPayload({ scope: '*', ghUser: 'x' })).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMergeSetPayload({ scope: 'a/b/c', ghUser: 'x' })).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMergeSetPayload({ migrate: ['acme/*', 'ACME/*', 'acme/api'] })).toEqual({ migrate: ['acme/*', 'acme/api'] });
+    expect(readOperatorMergeSetPayload({ migrate: ['../x'] })).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMergeSetPayload({ migrate: 'acme/*' })).toMatchObject({ code: 'bad-payload' });
   });
 });
