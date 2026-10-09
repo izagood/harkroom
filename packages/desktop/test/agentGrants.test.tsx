@@ -79,7 +79,7 @@ describe('AgentGrantsSection', () => {
     await screen.findByTestId('agent-grant-izagood/harkroom');
     fireEvent.click(screen.getByText('+ 권한 주기'));
     fireEvent.click(screen.getByRole('radio', { name: 'PR 머지' }));
-    fireEvent.change(screen.getByLabelText('저장소 (정확한 이름, 한 줄에 하나)'), { target: { value: 'Izagood/Harkroom-Gate\nizagood/homelab, izagood/homelab' } });
+    fireEvent.change(screen.getByLabelText('저장소 (정확한 이름 또는 조직 전체 owner/*, 한 줄에 하나)'), { target: { value: 'Izagood/Harkroom-Gate\nizagood/homelab, izagood/homelab' } });
     fireEvent.change(screen.getByLabelText('만료'), { target: { value: '7d' } });
     fireEvent.click(screen.getByText('주기'));
     await waitFor(() => expect(c.putGrant).toHaveBeenCalledTimes(2));
@@ -93,16 +93,41 @@ describe('AgentGrantsSection', () => {
     expect(screen.queryByTestId('agent-grants-add')).toBeNull();
   });
 
-  it('와일드카드·빈 이름은 보내기 전에 막는다 — 서버 F1 과 같은 문법', async () => {
+  it('* 하나·*/*·부분 패턴은 보내기 전에 막는다 — 서버 F1 과 같은 문법(repoGrantScope)', async () => {
     const c = setup();
     render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
     await screen.findByTestId('agent-grant-izagood/harkroom');
     fireEvent.click(screen.getByText('+ 권한 주기'));
     fireEvent.click(screen.getByRole('radio', { name: 'PR 머지' }));
-    fireEvent.change(screen.getByLabelText('저장소 (정확한 이름, 한 줄에 하나)'), { target: { value: 'izagood/*' } });
-    expect((screen.getByText('주기') as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/와일드카드/).textContent).toContain('izagood/*');
+    for (const bad of ['*', '*/*', 'izagood/hark*', '*/harkroom']) {
+      fireEvent.change(screen.getByLabelText('저장소 (정확한 이름 또는 조직 전체 owner/*, 한 줄에 하나)'), { target: { value: bad } });
+      expect((screen.getByText('주기') as HTMLButtonElement).disabled, bad).toBe(true);
+      expect(screen.getByText(/부분 패턴/).textContent, bad).toContain(bad);
+    }
     expect(c.putGrant).not.toHaveBeenCalled();
+  });
+
+  it('조직 전체 owner/* 는 경고를 보이고 repo:<owner>/* 로 준다 — 목록·거두기 확인창은 「조직 전체」라고 말한다', async () => {
+    const c = setup();
+    render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
+    await screen.findByTestId('agent-grant-izagood/harkroom');
+    fireEvent.click(screen.getByText('+ 권한 주기'));
+    fireEvent.click(screen.getByRole('radio', { name: 'PR 머지' }));
+    expect(screen.queryByTestId('agent-grants-org-warning')).toBeNull();
+    fireEvent.change(screen.getByLabelText('저장소 (정확한 이름 또는 조직 전체 owner/*, 한 줄에 하나)'), { target: { value: 'Rebellions-SW/*' } });
+    expect(screen.getByTestId('agent-grants-org-warning').textContent).toContain('rebellions-sw 조직의 모든 저장소');
+    expect((screen.getByText('주기') as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByText('주기'));
+    await waitFor(() => expect(c.putGrant).toHaveBeenCalledWith('agent-1', { capability: 'repo.merge', scope: 'repo:rebellions-sw/*', expiresAt: null }));
+    const row = await screen.findByTestId('agent-grant-rebellions-sw/*');
+    expect(row.textContent).toContain('rebellions-sw/*');
+    expect(within(row).getByTestId('agent-grant-org-rebellions-sw').textContent).toBe('조직 전체');
+    // 정확한 이름 줄에는 배지가 없다.
+    expect(within(screen.getByTestId('agent-grant-izagood/harkroom')).queryByTestId(/agent-grant-org-/)).toBeNull();
+    fireEvent.click(screen.getByLabelText('rebellions-sw 조직 전체 머지 권한 거두기'));
+    expect(screen.getByText('rebellions-sw 조직 전체 머지 권한을 거둘까?')).toBeTruthy();
+    fireEvent.click(screen.getAllByText('거두기').at(-1)!);
+    await waitFor(() => expect(c.deleteGrant).toHaveBeenCalledWith('agent-1', 'repo.merge', 'repo:rebellions-sw/*'));
   });
 
   it('소유자가 아니면(admin) [권한 주기] 가 없고 거두기만 보인다', async () => {
@@ -136,7 +161,7 @@ describe('AgentGrantsSection', () => {
     await screen.findByTestId('agent-grant-izagood/harkroom');
     fireEvent.click(screen.getByText('+ 권한 주기'));
     fireEvent.click(screen.getByRole('radio', { name: 'PR 머지' }));
-    fireEvent.change(screen.getByLabelText('저장소 (정확한 이름, 한 줄에 하나)'), { target: { value: 'izagood/x' } });
+    fireEvent.change(screen.getByLabelText('저장소 (정확한 이름 또는 조직 전체 owner/*, 한 줄에 하나)'), { target: { value: 'izagood/x' } });
     fireEvent.click(screen.getByText('주기'));
     await waitFor(() => expect(screen.getByTestId('agent-grants-error').textContent).toContain('소유자(사람)만'));
   });

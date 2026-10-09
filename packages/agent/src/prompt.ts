@@ -1009,6 +1009,10 @@ function mergeSection(merge: { operatorBin: string; repos: readonly string[] }):
     '',
     `    ${merge.operatorBin} merge <owner/name> <PR 번호> --head <40자 head sha>`,
     '',
+    // 조직 grant(jaebin 10-09): 목록의 `owner/*` 는 그 조직 저장소 전부다. 명령에는 언제나 실제 저장소 이름을 쓴다 — `*` 는 래퍼가 거절한다.
+    ...(merge.repos.some((r) => r.endsWith('/*'))
+      ? ['`owner/*` 는 그 조직의 저장소 전부다(배포 저장소는 빠진다). 명령에는 `*` 가 아니라 실제 `owner/name` 을 쓴다.', '']
+      : []),
     // 2026-10-03 사고: `…merge … ; echo "exit=$?"` 처럼 꼬리를 붙이면 allow 규칙(`Bash(<경로> merge:*)`)이 안 맞아
     // 분류기로 가고, 실제 머지는 "막힌 머지를 돌아가는 길"로 거부된다. 종료 코드·결과는 JSON 에 있다(exit·merged).
     '**명령 하나로만 부른다.** 뒤에 `;`·`&&`·`||`·`$?`·파이프·리다이렉션을 붙이지 않는다 — 붙이면 허용 규칙에 맞지 않아',

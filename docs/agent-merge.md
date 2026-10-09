@@ -23,7 +23,7 @@
 3. 에이전트가 `<operatorBin> merge <owner/name> <n> --head <sha>` 를 부른다. 래퍼는 브릿지와 같은 소켓으로
    오퍼레이터에 묻는다. 토큰도 임대도 래퍼 프로세스에는 없다. `--approval` 같은 승인 id 는 받지 않는다 — 승인 근거는
    서버가 그 턴을 띄운 메시지로 판정한다.
-4. 오퍼레이터가 ① 인자 모양 ② 턴 임대 ③ 서버 `POST /agent/merge-checks`(grant 정확 일치, 그 턴을 띄운 메시지가
+4. 오퍼레이터가 ① 인자 모양 ② 턴 임대 ③ 서버 `POST /agent/merge-checks`(grant 정확 일치 또는 조직 grant `owner/*`, 그 턴을 띄운 메시지가
    사람 글인지) ④ `gh pr view`(OPEN·draft 아님·head 일치·CLEAN·체크 초록) ⑤ `gh pr merge --squash
    --match-head-commit` ⑥ `POST /agent/merge-results` 순으로 한다. 서버에 닿지 않으면 머지하지 않는다.
 5. 서버가 그 턴의 스레드에 시스템 줄을 남긴다(`🔀 owner/repo#N 머지됨 · sha · 권한: handle (래퍼 보고)`). "래퍼
@@ -54,6 +54,10 @@
 - 버튼은 ask 선택지가 아니다. `POST /agents/:id/merge-denials/:denialId/grant` — 사람 **세션**만(PAT·에이전트 토큰 403), 그
   에이전트의 소유자만, `:id` 가 기록의 에이전트와 같아야 하고, 기록은 한 번만 쓴다. scope·기한은 본문에서 받지 않는다(기록과 7일).
 - 배포 저장소(`HARKROOM_MERGE_DEPLOY_REPOS`)는 카드에서 주지 않는다 — 설정 화면에서 정확한 이름으로 준다.
+- **조직 grant `owner/*`**(10-09): 설정 화면에서 소유자가 `owner/*` 로 주면 그 owner 의 저장소 전부(앞으로 생길 것 포함)에 맞는다.
+  `*` 는 저장소 자리 전체에만 온다 — `*`·`*/*`·owner 자리의 `*`·`owner/ab*` 는 400. 배포 저장소는 조직 grant 가 덮지 않는다
+  (정확한 이름 grant 만). `permission.request` 로는 청하지 못한다(`org_wide`) — 승인 한 번에 조직이 통째로 열리지 않게.
+  래퍼·판정의 **실제 저장소** 자리는 여전히 `owner/name` 하나다(`repoScope`), grant 를 주고 거두는 자리만 `repoGrantScope`.
 - 주고 나서 소유자가 같은 카드에서 「다시 머지」를 고르면 F4(소유자가 에이전트 자신의 카드에 답함)로 새 턴이 뜬다.
 - 범위 밖: 같은 uid 로 도는 에이전트가 사람의 세션 토큰을 읽어 이 REST 를 부르는 경우(G2 위협 모델과 같다).
 - 거절 기록은 늘지 않게 묶는다: 같은 (에이전트, 저장소, 스레드)에 안 쓴 기록이 있으면 그것을 다시 쓰고(PR·head 만 바꾼다),

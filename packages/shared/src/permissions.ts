@@ -86,9 +86,31 @@ export interface ApiConnectorView {
  * 구분하지 않으므로 `Izagood/Harkroom` 으로 준 grant 가 `izagood/harkroom` 머지에 안 맞는 일을 막는다.
  */
 export const REPO_SCOPE_RE = /^repo:[a-z0-9][a-z0-9._-]{0,99}\/[a-z0-9._-]{1,100}$/;
+/**
+ * **실제 저장소 하나**의 scope — 머지 판정·거절 기록·카드처럼 "지금 머지하려는 저장소"를 가리키는 자리다. `*` 는 받지 않는다:
+ * 여기서 `owner/*` 가 통과하면 래퍼가 `owner/*` 를 저장소로 물을 때 같은 문자열의 grant 와 정확 일치해 버린다.
+ */
 export function repoScope(repo: string): string | null {
   const s = `repo:${repo.trim().toLowerCase()}`;
   return REPO_SCOPE_RE.test(s) ? s : null;
+}
+
+/**
+ * 조직 와일드카드 grant 의 scope — `repo:<owner>/*`, 그 owner 의 저장소 전부(jaebin 10-09). `*` 는 **저장소 자리 전체에만** 온다:
+ * `*` 하나·owner 자리의 `*`·`owner/ab*` 같은 부분 패턴은 없다(전역·부분 패턴은 이름 하나 잘못 쳐서 넓게 열리는 길이다).
+ */
+export const REPO_ORG_SCOPE_RE = /^repo:[a-z0-9][a-z0-9._-]{0,99}\/\*$/;
+/** grant 를 **주고·거두는** 자리의 scope — 정확한 `owner/name` 또는 조직 전체 `owner/*`. 판정 자리에서는 `repoScope` 를 쓴다. */
+export function repoGrantScope(repo: string): string | null {
+  const s = `repo:${repo.trim().toLowerCase()}`;
+  return REPO_SCOPE_RE.test(s) || REPO_ORG_SCOPE_RE.test(s) ? s : null;
+}
+/** `repo:<owner>/*` 인가 — 화면이 「조직 전체」라고 보여 줄 때 쓴다. */
+export const isOrgRepoScope = (scope: string): boolean => REPO_ORG_SCOPE_RE.test(scope);
+/** 실제 저장소 scope(`repo:owner/name`)를 덮는 조직 scope(`repo:owner/*`). 모양이 아니면 null. */
+export function orgScopeOf(scope: string): string | null {
+  if (!REPO_SCOPE_RE.test(scope)) return null;
+  return `${scope.slice(0, scope.indexOf('/'))}/*`;
 }
 
 /** `can()` 의 대상. `kind` 가 소유 판정의 테이블을 고른다. */

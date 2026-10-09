@@ -31,6 +31,9 @@ describe('parseMergeArgs (F3)', () => {
       ['o/r', '1.5', '--head', SHA],
       ['o r', '1', '--head', SHA],
       ['o/r;rm', '1', '--head', SHA],
+      // 조직 grant(owner/*)는 grant 쪽 문법이다 — 래퍼가 머지할 저장소 자리에는 못 온다(서버 판정에서 grant 문자열과 정확 일치하지 않게).
+      ['rebellions-sw/*', '1', '--head', SHA],
+      ['*/*', '1', '--head', SHA],
       // P3: --approval 은 받지 않는다 — 서버가 cause 메시지로 판정하지 에이전트가 고른 id 가 아니다.
       ['o/r', '1', '--head', SHA, '--approval', '11111111-2222-4333-8444-555555555555'],
     ]) expect(parseMergeArgs(bad), bad.join(' ')).toHaveProperty('error');

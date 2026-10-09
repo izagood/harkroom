@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { repoScope, toolScope, validateToolRule, type MessageRow, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
+import { repoGrantScope, repoScope, toolScope, validateToolRule, type MessageRow, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
@@ -56,7 +56,7 @@ export interface PermissionRequestMeta {
 
 export type OpenRefusal =
   | { code: ToolRuleRefusal; message: string }
-  | { code: 'bad_repo' | 'deploy_repo' | 'not_agent' | 'too_many'; message: string };
+  | { code: 'bad_repo' | 'org_wide' | 'deploy_repo' | 'not_agent' | 'too_many'; message: string };
 
 export type OpenResult =
   | { ok: false; refusal: OpenRefusal }
@@ -105,6 +105,10 @@ export async function openPermissionRequest(
     grantCapability = 'tool.allow';
     grantScope = toolScope(args.channelId, v.rule);
   } else {
+    // 조직 전체(`owner/*`)는 카드로 청하지 못한다 — 승인 한 번에 그 조직이 통째로 열린다. 소유자가 설정 화면에서만 준다(jaebin 10-09).
+    if (repoGrantScope(args.repo ?? '') && !repoScope(args.repo ?? '')) {
+      return { ok: false, refusal: { code: 'org_wide', message: 'an organization-wide grant (owner/*) is not requested from a card — ask for the one repository, or ask the owner to grant owner/* in settings' } };
+    }
     const scope = repoScope(args.repo ?? '');
     if (!scope) return { ok: false, refusal: { code: 'bad_repo', message: 'repo must be one <owner>/<name>' } };
     // 배포 저장소(머지가 곧 배포)는 카드로 주지 않는다 — 설정 화면에서 정확한 이름으로만(merge_denial C6 와 같다).
@@ -334,8 +338,9 @@ export async function releaseGrant(
     capability = 'tool.allow';
     scopes = [...new Set([toolScope(args.channelId, raw), ...(v.ok ? [toolScope(args.channelId, v.rule)] : [])])];
   } else {
-    const scope = repoScope(args.repo ?? '');
-    if (!scope) return { ok: false, code: 'bad_repo', message: 'repo must be one <owner>/<name>' };
+    // 내려놓기는 조직 전체(`owner/*`)도 받는다 — 좁히는 쪽이다.
+    const scope = repoGrantScope(args.repo ?? '');
+    if (!scope) return { ok: false, code: 'bad_repo', message: 'repo must be one <owner>/<name> or <owner>/*' };
     capability = 'repo.merge';
     scopes = [scope];
   }

@@ -954,7 +954,7 @@ function buildMcpServer(
    * 채팅(모바일 포함)으로 "그 권한 거둬"라고 하면 에이전트가 이것으로 거둔다. 넓히는 길은 `permission.request` 하나뿐이다.
    */
   server.registerTool('permission.revoke', {
-    description: '내가 받은 명령 허용(kind=tool, 그 채널의 규칙)이나 머지 권한(kind=merge, owner/name) 하나를 내려놓는다. 다음 턴부터 빠진다',
+    description: '내가 받은 명령 허용(kind=tool, 그 채널의 규칙)이나 머지 권한(kind=merge, owner/name 또는 조직 전체 owner/*) 하나를 내려놓는다. 다음 턴부터 빠진다',
     inputSchema: {
       kind: z.enum(['tool', 'merge']),
       rule: z.string().min(1).max(300).optional(),

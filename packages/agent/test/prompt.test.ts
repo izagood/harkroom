@@ -542,6 +542,11 @@ describe('buildSystemPrompt', () => {
     expect(granted).toContain('`to`·`mirrorOf` 는 싣지 않는다');
     expect(granted).toContain('`no_repo_access`');
     expect(granted).toContain('사람이 머지');
+    // 조직 grant(owner/*)가 있을 때만 그 뜻과 「명령엔 실제 이름」을 한 줄 더 적는다.
+    expect(granted).not.toContain('그 조직의 저장소 전부');
+    const org = buildSystemPrompt({ ...common, merge: { operatorBin: '/opt/harkroom/harkroom-operator', repos: ['rebellions-sw/*'] } });
+    expect(org).toContain('허락된 저장소: rebellions-sw/*');
+    expect(org).toContain('`owner/*` 는 그 조직의 저장소 전부다(배포 저장소는 빠진다). 명령에는 `*` 가 아니라 실제 `owner/name` 을 쓴다.');
     const none = buildSystemPrompt({ ...common, merge: { operatorBin: '/opt/harkroom/harkroom-operator', repos: [] } });
     expect(none).toContain('**PR 머지는 하지 마라.**');
     expect(none).not.toContain('harkroom-operator merge');
