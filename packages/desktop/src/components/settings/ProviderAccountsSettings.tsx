@@ -11,8 +11,9 @@ import { CodexAccountsSettings } from './CodexAccountsSettings';
 import { CursorAccountsCard, OpenCodeAccountsCard } from './ProviderInfoCards';
 import { SettingsPage } from './primitives';
 
-// 통째 문자열로 적는다 — 조각으로 이으면 Tailwind 가 CSS 를 만들지 않는다.
-const PROVIDER_GRID = 'grid grid-cols-1 items-start gap-x-4 @min-[1100px]/settings:grid-cols-2 @min-[1700px]/settings:grid-cols-3';
+// 통째 문자열로 적는다 — 조각으로 이으면 Tailwind 가 CSS 를 만들지 않는다. `ProviderSection` 은 첫 칸의 위 여백을
+// 지운다(`first:pt-0`) — 세로로 쌓일 때 맞는 규칙이라, 옆으로 서면 Codex 칸만 위로 솟는다. 격자 안에서는 첫 칸도 같은 여백이다.
+const PROVIDER_GRID = 'grid grid-cols-1 items-start gap-x-4 [&>section:first-child]:pt-8 @min-[1100px]/settings:grid-cols-2 @min-[1700px]/settings:grid-cols-3';
 
 export function ProviderAccountsSettings() {
   const t = useT();
