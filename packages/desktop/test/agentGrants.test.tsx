@@ -55,7 +55,10 @@ describe('AgentGrantsSection', () => {
     await waitFor(() => expect(screen.getByTestId('agent-grant-izagood/harkroom')).toBeTruthy());
     const row = screen.getByTestId('agent-grant-izagood/harkroom');
     expect(row.textContent).toContain('izagood/harkroom');
-    expect(row.textContent).toContain('준 사람: owner');
+    // 표 칸에는 앞말이 없다 — 열 머리가 「준 사람」이다(designer #1268 nit 1).
+    expect(row.textContent).toContain('owner · ');
+    expect(row.textContent).not.toContain('준 사람:');
+    expect(row.textContent).not.toContain('PR 머지');
     expect(row.textContent).toContain('만료 없음');
     expect(screen.queryByText(/channel\.create/)).toBeNull();
   });
@@ -219,6 +222,8 @@ describe('AgentGrantsSection', () => {
     const row = await screen.findByTestId('agent-grant-izagood/harkroom-gate');
     expect(row.getAttribute('data-expired')).toBe('true');
     expect(row.className).toContain('text-fg-subtle');
+    // 「만료됨」은 경고색 꼬리표다(designer #1268 nit 2).
+    expect(within(row).getByTestId('agent-grant-expired-izagood/harkroom-gate').className).toContain('text-warning');
     expect(screen.getByTestId('agent-grant-izagood/harkroom').getAttribute('data-expired')).toBeNull();
     // 살아 있는 줄에는 [다시 7일]이 없다
     expect(screen.queryByLabelText('izagood/harkroom 머지 권한을 7일 다시 주기')).toBeNull();

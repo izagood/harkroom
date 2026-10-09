@@ -4204,6 +4204,9 @@ export const en = {
    * 사람이 앱에서 하는 일은 등록·보기·폐기뿐이다. 코드는 한 번만 보이므로 초대 토큰과
    * 같은 어조로 말한다.
    */
+  'operators.list.heading': 'Operators',
+  'operators.list.title': 'Operators ({count})',
+  'operators.register.title': 'Register',
   'operators.description': 'Machines that run your agents. Register one here, then assign agents to it.',
   'operators.loading': 'Loading…',
   'operators.listFailed': 'The operators could not be read',
@@ -4638,6 +4641,7 @@ export const en = {
   'agents.grants.col.actions': 'Actions',
   'agents.grants.merge': 'Merge PRs',
   'agents.grants.by': 'by {handle} · {when}',
+  'agents.grants.byCell': '{handle} · {when}',
   'agents.grants.noExpiry': 'no expiry',
   'agents.grants.expired': 'expired',
   'agents.grants.expiresOn': 'until {when}',

@@ -124,6 +124,12 @@ export function OperatorsSettings({ onOpenSection }: {
       <SettingsColumns
         testId="operators-columns"
         main={(
+      <section className="mb-8">
+      {/* 절 라벨은 멤버 화면(「멤버 (N)」 | 「초대」)과 같은 결로 단다(designer #1268 nit 3). 숫자는 목록을 받은 뒤에만 —
+          받기 전의 「(0)」은 「하나도 없다」로 읽힌다. */}
+      <h3 data-testid="operators-list-title" className="mb-2 text-body font-semibold text-fg-subtle">
+        {Array.isArray(operators) ? t('operators.list.title', { count: String(operators.length) }) : t('operators.list.heading')}
+      </h3>
       <SettingsGrid testId="operators-grid">
         {operators === null && <p className="rounded-compose border border-border bg-surface-raised px-4 py-3 text-meta text-fg-muted">{t('operators.loading')}</p>}
         {operators === 'error' && <p role="alert" className="rounded-compose border border-border bg-surface-raised px-4 py-3 text-meta text-danger">{t('operators.listFailed')}</p>}
@@ -263,6 +269,7 @@ export function OperatorsSettings({ onOpenSection }: {
           </div>
         ))}
       </SettingsGrid>
+      </section>
         )}
         /* 곁 칸은 할 것이 있을 때만 세운다 — 등록 권한이 없으면 빈 380px 칸이 오른쪽에 남는다(격자가 그 폭을 쓴다). */
         side={canRegister || error ? (
@@ -275,9 +282,10 @@ export function OperatorsSettings({ onOpenSection }: {
       )}
 
       {canRegister && (
-        <SettingsGroup>
+        <SettingsGroup title={t('operators.register.title')}>
           <div className="px-4 py-3">
-            <p className="mb-3 text-meta text-fg-muted">{t(localAvailable ? 'operators.registerElsewhereNote' : 'operators.registerNote')}</p>
+            {/* 안내문 글자는 「초대」 곁 칸 안내문과 같은 본문 크기·색이다(designer #1268 nit 3). */}
+            <p className="mb-3 text-fg-subtle">{t(localAvailable ? 'operators.registerElsewhereNote' : 'operators.registerNote')}</p>
             {localAvailable && onOpenSection && (
               <button
                 data-testid="operators-open-this-operator"

@@ -2068,6 +2068,9 @@ export const ko = {
   // 그대로 있고, 어미만 `~습니다`·`~세요` 에서 `~다` 로 왔다.
   // ---------------------------------------------------------------------------
 
+  'operators.list.heading': '오퍼레이터',
+  'operators.list.title': '오퍼레이터 ({count})',
+  'operators.register.title': '등록',
   'operators.description': '에이전트를 돌리는 머신들. 여기서 등록하고, 에이전트를 거기에 배정한다.',
   'operators.loading': '읽는 중…',
   'operators.listFailed': '오퍼레이터 목록을 읽지 못했다',
@@ -2500,6 +2503,7 @@ export const ko = {
   'agents.grants.col.actions': '동작',
   'agents.grants.merge': 'PR 머지',
   'agents.grants.by': '준 사람: {handle} · {when}',
+  'agents.grants.byCell': '{handle} · {when}',
   'agents.grants.noExpiry': '만료 없음',
   'agents.grants.expired': '만료됨',
   'agents.grants.expiresOn': '{when} 까지',

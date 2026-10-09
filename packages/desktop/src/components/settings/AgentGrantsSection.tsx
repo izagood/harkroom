@@ -336,8 +336,8 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
               // 만료된 줄은 통째로 한 단 낮춘다(지난 nit n4) — 살아 있는 줄과 같은 무게로 보이지 않게. [거두기]는 정리용으로 둔다.
               <tr key={g.scope} className={`align-top ${expired ? 'text-fg-subtle' : 'text-fg'}`} data-testid={`agent-grant-${repo}`} data-expired={expired || undefined}>
                 <td className="px-2 py-1">
-                  {/* 부여 종류 이름은 두되 한 단 낮춘다(지난 nit n3) — 지금 주인공은 저장소다. */}
-                  <span className="mr-2 text-fg-muted">{t('agents.grants.merge')}</span>
+                  {/* 종류(「PR 머지」)는 적지 않는다 — 이 표에는 머지 grant 만 서고 열 머리가 「저장소」다(designer #1268 nit 1).
+                      API grant 와 한 표로 합칠 때 종류 열을 둔다. */}
                   <span className="font-mono">{repo}</span>
                   {orgOf(g.scope) && (
                     <span className="ml-2 rounded-row border border-warning-border bg-warning-surface px-1 text-warning" data-testid={`agent-grant-org-${orgOf(g.scope)}`}>
@@ -351,12 +351,16 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   )}
                 </td>
                 <td className="px-2 py-1 text-fg-subtle">
-                  {t('agents.grants.by', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
+                  {/* 열 머리가 「준 사람」이라 칸에는 앞말 없이 값만 적는다(designer #1268 nit 1). */}
+                  {t('agents.grants.byCell', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
                 </td>
                 <td className="px-2 py-1 text-fg-subtle">
+                  {/* 만료는 작은 경고색 꼬리표로 — 회색 날짜들 사이에서 훑어볼 때 눈에 걸리게(designer #1268 nit 2). */}
                   {g.expiresAt === null
                     ? t('agents.grants.noExpiry')
-                    : expired ? t('agents.grants.expired') : t('agents.grants.expiresOn', { when: new Date(g.expiresAt).toLocaleDateString(locale) })}
+                    : expired
+                      ? <span data-testid={`agent-grant-expired-${repo}`} className="rounded-row border border-warning-border bg-warning-surface px-1 text-warning">{t('agents.grants.expired')}</span>
+                      : t('agents.grants.expiresOn', { when: new Date(g.expiresAt).toLocaleDateString(locale) })}
                   {g.allowAgentCause ? ` · ${t('agents.grants.agentCause')}` : ''}
                   {coveringOrg && <span data-testid={`agent-grant-cause-via-org-${repo}`}>{` · ${t('agents.grants.agentCauseViaOrg', { owner: orgOf(coveringOrg.scope)! })}`}</span>}
                 </td>

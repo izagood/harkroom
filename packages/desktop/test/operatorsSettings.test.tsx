@@ -58,6 +58,14 @@ describe('OperatorsSettings', () => {
     expect(screen.getByTestId('operator-online-op-2').textContent).toContain('끊김');
   });
 
+  it('목록·등록 칸에 멤버 화면과 같은 절 라벨을 단다 — 숫자는 목록을 받은 뒤에만(designer #1268 nit 3)', async () => {
+    fakeController([op('op-1', 'box-a'), op('op-2', 'box-b')]);
+    render(<OperatorsSettings />);
+    await screen.findByText('box-a');
+    expect(screen.getByTestId('operators-list-title').textContent).toBe('오퍼레이터 (2)');
+    expect(screen.getByRole('heading', { name: '등록' })).toBeTruthy();
+  });
+
   it('등록 코드를 발급하면 코드와 넣을 명령이 보이고, 한 번만 보인다고 말한다', async () => {
     const c = fakeController();
     render(<OperatorsSettings />);
