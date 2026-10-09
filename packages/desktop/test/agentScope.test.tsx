@@ -53,10 +53,10 @@ beforeEach(() => {
 afterEach(() => { usePrefsStore.getState().setLocale('system'); cleanup(); });
 
 describe('AgentScopeSection', () => {
-  it('접힌 채로 한 줄 요약이 지금 값을 말한다 — 부르는 사람 · 자격증명 · 명단 수 · 대리 호출자 수 (UX ⑨b)', () => {
+  it('펼친 채 시작한다(jaebin, 설정 폭 승인) — 요약 줄은 그대로 지금 값을 말한다 (UX ⑨b)', () => {
     setup();
     render(<AgentScopeSection agent={agent({ invokeScope: 'list', credentialScope: 'community', invokers: ['u-2'], delegates: ['a-9'] })} onUpdated={vi.fn()} />);
-    expect(screen.getByTestId('agent-scope-details').hasAttribute('open')).toBe(false);
+    expect(screen.getByTestId('agent-scope-details').hasAttribute('open')).toBe(true);
     expect(screen.getByTestId('agent-scope-summary').textContent)
       .toBe('아래 명단의 사람만 · 커뮤니티 공용 자격증명 · 명단 1명 · 대리 호출자 1');
   });

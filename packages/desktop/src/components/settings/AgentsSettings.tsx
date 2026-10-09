@@ -52,7 +52,7 @@ import { TeamDetail } from './TeamDetail';
 // (`docs/desktop-rail.html` 3단계). 사본을 두면 두 화면이 같은 사람에게 다르게 답한다.
 import { AVATAR_ACCEPT, AVATAR_FORMATS } from '../../lib/avatar';
 import { Identity } from '../Identity';
-import { Button } from './primitives';
+import { Button, DangerZone, SettingsColumns, SettingsWrap } from './primitives';
 import { AvatarStatus, useAvatarEdit } from './avatarEdit';
 import { useAgentPool } from './useAgentPool';
 import { navKey } from './sections';
@@ -1827,7 +1827,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex items-center gap-3 border-b border-border px-5 py-3">
+          {/* 머리·탭·본문·저장 바는 **같은 꼴(cards)의 겹에 각각** 선다(설정 폭 시안 v1 규칙 ②). 선은 바깥이
+              창 끝까지 긋고, 글자·단추는 겹이 상한 안에 세운다 — 중지/재시작이 본문 오른쪽 끝에 맞는다
+              (전에는 머리만 창 끝까지 가서 넓은 창에서 단추와 본문이 2000px 가까이 떨어졌다). */}
+          <header className="border-b border-border">
+          <SettingsWrap layout="cards" className="flex items-center gap-3 py-3">
             {/*
               **돌아가는 길**(문서의 목업이 `← 에이전트` 로 그린 것). 한 번에 한 화면이므로
               이것이 없으면 상세에 들어간 사람이 목록으로 나올 방법이 없다.
@@ -1948,12 +1952,15 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 {restartSent && <span className="self-center text-meta text-fg-muted" role="status">{t('agents.restart.sent')}</span>}
               </div>
             </>)}
+          </SettingsWrap>
           </header>
 
           {/* 상세의 탭(designer A2). 머리 바로 아래 고정이다 — 스크롤 안에 두면 긴 기억 목록을
               내려간 사람이 다른 탭으로 가는 길을 잃는다. 밑줄 탭은 격자의 에이전트·팀 탭과 같은 어휘다. */}
           {selected && (
-            <div role="tablist" aria-label={t('agents.detail.tablist')} className="flex border-b border-border px-5">
+            <div className="border-b border-border">
+            <SettingsWrap layout="cards">
+            <div role="tablist" aria-label={t('agents.detail.tablist')} className="flex">
               {AGENT_DETAIL_TABS.map((id) => (
                 <button
                   key={id}
@@ -1982,13 +1989,17 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 </button>
               ))}
             </div>
+            </SettingsWrap>
+            </div>
           )}
 
           {/*
-            Memory 탭만 넓힌다(#1209 designer B1). max-w-2xl(42rem) − p-5 면 안쪽이 ~39.5rem 이라 두 칸(48rem =
-            MEMORY_TWO_PANE_MIN_PX)에 영영 닿지 않았다. max-w-5xl(64rem) − 2.5rem = 61.5rem 이면 닿는다.
+            본문 폭은 **탭과 무관하게 cards 상한 하나**다(규칙 ⑧). 전에는 Memory 탭만 max-w-5xl 로 넓혔다(#1209 —
+            max-w-2xl 안쪽으로는 두 칸 MEMORY_TWO_PANE_MIN_PX 에 닿지 않았다) — 그래서 탭을 옮길 때마다 폭이 튀었다.
+            1680 상한이면 두 칸 문턱에 넉넉히 닿는다. 스크롤은 바깥이 맡아 스크롤바가 창 끝에 선다.
           */}
-          <div className={`w-full flex-1 space-y-4 overflow-y-auto p-5 ${detailTab === 'memory' ? 'max-w-5xl' : 'max-w-2xl'}`}>
+          <div className="w-full flex-1 overflow-y-auto">
+          <SettingsWrap layout="cards" className="space-y-4 py-5">
             {/* #171 의 '새 에이전트 기본값' 편집 절은 **설정 › Agent defaults 로 옮겼다**
                 (identity 문서 원칙 04). 개별 에이전트를 고치는 이 화면에 워크스페이스 전체에
                 걸리는 값이 앉아 있으면 지금 무엇을 고치고 있는지가 사라진다.
@@ -2018,6 +2029,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             <div {...detailPanel('overview')}>
               {/* 개요 — 지금 돌고 있나, 그리고 맨 끝에 되돌릴 수 없는 조작(designer A2). 사용 중지·삭제는
                   전에 기억 바로 아래, 화면 한가운데 있었다 — 위아래가 곧 세기라 끝으로 보낸다. */}
+              {/* 개요는 주 칸(러너) + 곁 칸(위험 구역)이다(설정 폭 시안 v1). 좁으면 지금처럼 러너 → 위험 구역 순으로
+                  쌓인다. 비활성·삭제의 확인 단계와 admin 조건은 **옮기기만 했다** — 칸 안의 마크업은 그대로다. */}
+              <SettingsColumns
+                testId="agent-overview-columns"
+                main={<>
               {selected && isAdmin && (
                 <div className="rounded-row border border-border p-3">
                   {/* #129 → #427 → #493: "재시작"을 금지한 원칙은 그대로 살아 있고, **사실관계만
@@ -2126,8 +2142,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               )}
 
               {/* #251: 에이전트 비활성화/활성화. 관리 행위이므로 admin 만 보인다. */}
+                </>}
+                side={selected && isAdmin ? (
+                  <DangerZone testId="agent-danger-zone">
               {selected && isAdmin && (
-                <div className={`rounded-row border p-3 ${selected.disabled ? 'border-border bg-surface' : 'border-danger-border bg-danger-surface'}`}>
+                <div data-testid="agent-disable-section">
                   <div className="text-meta font-medium text-fg-muted">
                     {selected.disabled ? t('agents.disable.headingDisabled') : t('agents.disable.headingEnabled')}
                     <ImmediateBadge label={t('agents.detail.immediate')} />
@@ -2192,7 +2211,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   있는 것을 먼저 보여 주고 되돌릴 수 없는 것을 그 다음에 둔다. 관리 행위이므로
                   admin 만 보인다(비활성화와 같은 문). */}
               {selected && isAdmin && (
-                <div className="rounded-row border border-danger-border bg-danger-surface p-3">
+                <div data-testid="agent-delete-section">
                   <div className="text-meta font-medium text-fg-muted">{t('agents.delete.heading')}</div>
                   {confirmingDelete ? (
                     <div className="mt-2">
@@ -2254,6 +2273,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   )}
                 </div>
               )}
+                  </DangerZone>
+                ) : undefined}
+              />
             </div>
 
             <div {...detailPanel('profile')}>
@@ -3269,6 +3291,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             {error && <p role="alert" className="text-meta text-danger">{error}</p>}
 
 
+          </SettingsWrap>
           </div>
 
           {/*
@@ -3280,8 +3303,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
           {(!selected || pendingTotal > 0) && (
             <footer
               data-testid={selected ? 'agent-save-bar' : undefined}
-              className="flex w-full max-w-2xl items-center gap-2 border-t border-border px-5 py-3"
+              className="border-t border-border"
             >
+            <SettingsWrap layout="cards" className="flex items-center gap-2 py-3">
               {selected && (
                 <span data-testid="agent-save-count" className="text-meta text-fg-muted">
                   {t('agents.detail.pendingCount', { n: String(pendingTotal) })}
@@ -3315,6 +3339,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               >
                 {selected ? t('agents.detail.save') : t('agents.detail.submitNew')}
               </Button>
+            </SettingsWrap>
             </footer>
           )}
         </div>

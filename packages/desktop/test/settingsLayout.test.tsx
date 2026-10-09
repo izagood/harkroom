@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { render, screen, cleanup } from '@testing-library/react';
 import {
-  DangerZone, KvRow, SettingsColumns, SettingsPage, SettingsWrap,
+  DangerZone, KvRow, KvRows, SettingsColumns, SettingsPage, SettingsWrap,
 } from '../src/components/settings/primitives';
 
 afterEach(() => cleanup());
@@ -110,6 +110,19 @@ describe('KvRow — 라벨-값 두 열', () => {
   it('htmlFor 를 주면 라벨을 눌러 입력으로 간다', () => {
     render(<KvRow label="작업 폴더" htmlFor="wd"><input id="wd" /></KvRow>);
     expect(screen.getByLabelText('작업 폴더').id).toBe('wd');
+  });
+});
+
+describe('KvRows · KvRow stacked', () => {
+  it('묶음은 행 사이 10px', () => {
+    render(<KvRows testId="rows"><KvRow label="a">1</KvRow><KvRow label="b">2</KvRow></KvRows>);
+    expect(screen.getByTestId('rows').className).toContain('gap-[10px]');
+  });
+  it('곁 칸에서는 라벨을 위로 쌓는다 — 두 열 격자를 쓰지 않는다', () => {
+    render(<KvRow testId="kv" label="모델" stacked><span>opus</span></KvRow>);
+    const cls = screen.getByTestId('kv').className;
+    expect(cls).toContain('flex-col');
+    expect(cls).not.toContain('grid-cols-[120px');
   });
 });
 
