@@ -77,7 +77,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
       */}
       {/* **펼친 채 시작한다**(jaebin, 설정 폭 승인 때). 접혀 있으면 누가 부를 수 있는지가 화면에서 사라진다 —
           권한 탭에서 가장 먼저 읽혀야 할 것이다. 접는 손잡이는 그대로 둔다. 안의 값은 전부터 DOM 에 있었다. */}
-      <details open data-testid="agent-scope-details" className="group">
+      <details key={agent.id} open data-testid="agent-scope-details" className="group">
       <summary className="cursor-pointer list-none">
         <div className="text-meta font-medium text-fg-muted">{t('agents.scope.heading')}<ImmediateBadge label={t('agents.detail.immediate')} /> <span aria-hidden="true" className="inline-block transition-transform group-open:rotate-180">▾</span></div>
         <p data-testid="agent-scope-summary" className="mt-1 text-meta text-fg">

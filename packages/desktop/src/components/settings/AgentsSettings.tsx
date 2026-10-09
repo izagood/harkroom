@@ -228,6 +228,13 @@ const ARCHIVED_GROUP = 'archived';
 /** 목록/상세를 나란히 두는 최소 폭(48rem). 한 칸 24rem 이 줄 하나(체크·slug·꼬리표 둘·버튼)를 담는 폭이다. */
 export const MEMORY_TWO_PANE_MIN_PX = 768;
 
+/**
+ * 한 단 스택인 탭(프로필·실행·권한)과 새 에이전트 폼의 상한 — form 꼴 880px(설정 폭 시안 v1). 본문 겹은 cards 1680
+ * 이라 이것이 없으면 입력 칸이 1600px 까지 늘어난다(designer #1256 수정 1). 두 칸으로 바꾸는 PR 2b 에서 탭별로 푼다.
+ * 겹 안에서 왼쪽에 붙어 머리·탭과 왼쪽 끝이 맞는다.
+ */
+const FORM_PANEL = 'space-y-4 max-w-[880px]';
+
 export function AgentsSettings({ targetId }: { targetId?: string }) {
   // 시간 표기는 언어를 따른다(`lib/time.ts`). 접두는 사전을 지난다.
   const t = useT();
@@ -1817,9 +1824,75 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       'aria-labelledby': `agent-tab-${id}`,
       'data-testid': `agent-tabpanel-${id}`,
       hidden: detailTab !== id,
-      className: 'space-y-4',
+      className: id === 'overview' || id === 'memory' ? 'space-y-4' : FORM_PANEL,
     }
-    : { className: 'space-y-4' });
+    : { className: FORM_PANEL });
+
+  /**
+   * 비활성화/활성화 칸 한 벌. 개요 곁 칸이 상태에 따라 **두 자리 중 하나**에 세운다 — enabled 면 위험 구역 안,
+   * disabled 면 그 위 중립 카드(designer #1256 수정 2). 마크업·확인 단계(`confirmingDisable`)는 옮기기 전과 같다.
+   */
+  const disableSection = (agent: AgentView) => (
+                <div data-testid="agent-disable-section">
+                  <div className="text-meta font-medium text-fg-muted">
+                    {agent.disabled ? t('agents.disable.headingDisabled') : t('agents.disable.headingEnabled')}
+                    <ImmediateBadge label={t('agents.detail.immediate')} />
+                  </div>
+                  {agent.disabled ? (
+                    <div className="mt-2">
+                      <p className="text-meta text-fg-subtle mb-2">{t('agents.disable.noteDisabled')}</p>
+                      <button
+                        className="rounded-row border border-accent bg-accent-surface px-2 py-1 text-meta font-medium text-accent hover:bg-surface-hover disabled:opacity-50"
+                        aria-label={t('agents.disable.enableAction')}
+                        disabled={busy}
+                        onClick={() => void toggleDisabled()}
+                      >
+                        {t('agents.disable.enable')}
+                      </button>
+                    </div>
+                  ) : confirmingDisable ? (
+                    <div className="mt-2">
+                      <p className="text-meta text-danger mb-2">
+                        {emphasize(t('agents.disable.warning'), {
+                          strongRevoked: t('agents.disable.warningRevoked'),
+                        })}
+                      </p>
+                      <div className="flex gap-1">
+                        <button
+                          className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                          aria-label={t('agents.disable.confirm')}
+                          disabled={busy}
+                          onClick={() => void toggleDisabled()}
+                        >
+                          {t('agents.disable.confirm')}
+                        </button>
+                        <button
+                          className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
+                          onClick={() => setConfirmingDisable(false)}
+                        >
+                          {t('agents.disable.cancel')}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-2">
+                      <p className="text-meta text-fg-subtle mb-2">
+                        {emphasize(t('agents.disable.noteEnabled'), {
+                          strongRevoked: t('agents.disable.noteEnabledRevoked'),
+                        })}
+                      </p>
+                      <button
+                        className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
+                        aria-label={t('agents.disable.disableAction')}
+                        disabled={busy}
+                        onClick={() => void toggleDisabled()}
+                      >
+                        {t('agents.disable.disable')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+  );
 
   return (
     <PendingEditsContext.Provider value={registerPending}>
@@ -2086,7 +2159,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       이 사실은 반드시 글로 남아 있어야 한다.
 
                       **여기서 daemon 의 생사를 말하지는 않는다** — `#443` 의 자리다. */}
-                  <p className="mt-1 text-meta text-fg-subtle">
+                  <p className="mt-1 text-meta text-fg-subtle max-w-[68ch]">
                     {emphasize(t('agents.stop.note'), {
                       strongStop: t('agents.stop.noteStop'),
                       strongFinish: t('agents.stop.noteFinish'),
@@ -2143,70 +2216,16 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
               {/* #251: 에이전트 비활성화/활성화. 관리 행위이므로 admin 만 보인다. */}
                 </>}
-                side={selected && isAdmin ? (
-                  <DangerZone testId="agent-danger-zone">
-              {selected && isAdmin && (
-                <div data-testid="agent-disable-section">
-                  <div className="text-meta font-medium text-fg-muted">
-                    {selected.disabled ? t('agents.disable.headingDisabled') : t('agents.disable.headingEnabled')}
-                    <ImmediateBadge label={t('agents.detail.immediate')} />
-                  </div>
-                  {selected.disabled ? (
-                    <div className="mt-2">
-                      <p className="text-meta text-fg-subtle mb-2">{t('agents.disable.noteDisabled')}</p>
-                      <button
-                        className="rounded-row border border-accent bg-accent-surface px-2 py-1 text-meta font-medium text-accent hover:bg-surface-hover disabled:opacity-50"
-                        aria-label={t('agents.disable.enableAction')}
-                        disabled={busy}
-                        onClick={() => void toggleDisabled()}
-                      >
-                        {t('agents.disable.enable')}
-                      </button>
-                    </div>
-                  ) : confirmingDisable ? (
-                    <div className="mt-2">
-                      <p className="text-meta text-danger mb-2">
-                        {emphasize(t('agents.disable.warning'), {
-                          strongRevoked: t('agents.disable.warningRevoked'),
-                        })}
-                      </p>
-                      <div className="flex gap-1">
-                        <button
-                          className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
-                          aria-label={t('agents.disable.confirm')}
-                          disabled={busy}
-                          onClick={() => void toggleDisabled()}
-                        >
-                          {t('agents.disable.confirm')}
-                        </button>
-                        <button
-                          className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken"
-                          onClick={() => setConfirmingDisable(false)}
-                        >
-                          {t('agents.disable.cancel')}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-2">
-                      <p className="text-meta text-fg-subtle mb-2">
-                        {emphasize(t('agents.disable.noteEnabled'), {
-                          strongRevoked: t('agents.disable.noteEnabledRevoked'),
-                        })}
-                      </p>
-                      <button
-                        className="rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta font-medium text-danger hover:bg-danger-surface-strong disabled:opacity-50"
-                        aria-label={t('agents.disable.disableAction')}
-                        disabled={busy}
-                        onClick={() => void toggleDisabled()}
-                      >
-                        {t('agents.disable.disable')}
-                      </button>
+                side={selected && isAdmin ? (<>
+                  {/* 비활성 상태의 「활성화」는 되돌릴 수 있는 조작이라 위험 구역 밖 중립 카드에 선다(designer #1256 수정 2 —
+                      전에도 disabled 면 중립 면이었다). 「비활성화」(PAT 폐기)는 위험 구역 안, 확인 단계 그대로. */}
+                  {selected.disabled && (
+                    <div data-testid="agent-reenable-card" className="rounded-compose border border-border bg-surface-raised px-4 py-3">
+                      {disableSection(selected)}
                     </div>
                   )}
-                </div>
-              )}
-
+                  <DangerZone testId="agent-danger-zone">
+                  {!selected.disabled && disableSection(selected)}
               {/* #836: 에이전트 삭제. 비활성화 **아래**에 둔다 — 위아래가 곧 세기라, 되돌릴 수
                   있는 것을 먼저 보여 주고 되돌릴 수 없는 것을 그 다음에 둔다. 관리 행위이므로
                   admin 만 보인다(비활성화와 같은 문). */}
@@ -2274,7 +2293,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 </div>
               )}
                   </DangerZone>
-                ) : undefined}
+                </>) : undefined}
               />
             </div>
 
