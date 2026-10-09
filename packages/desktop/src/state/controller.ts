@@ -2798,6 +2798,9 @@ export class Controller {
     return this.api.deleteGrant(accountId, capability, scope);
   }
   approveDelegation(grantId: string): Promise<void> { return this.api.approveDelegation(grantId); }
+  approvePermissionOnce(agentId: string, requestId: string, body: { ghUser: string; relaxChecks: boolean }) {
+    return this.api.approvePermissionOnce(agentId, requestId, body);
+  }
   declineDelegation(grantId: string): Promise<void> { return this.api.declineDelegation(grantId); }
 
   // 호출 범위(스펙 2026-09-20 §6) — 전부 서버가 판정한다. 화면은 응답을 그대로 앉힌다.

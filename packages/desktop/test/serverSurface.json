@@ -108,6 +108,7 @@
   "POST /agent-sessions/:p/cancel": "0.1.167",
   "POST /agent-sessions/interactive": "0.1.167",
   "POST /agents/:p/merge-denials/:p/grant": "0.3.182",
+  "POST /agents/:p/permission-requests/:p/approve-once": "0.4.27",
   "POST /attachments/:p/preview": "0.3.131",
   "POST /auth/login": "0.1.167",
   "POST /auth/logout": "0.1.167",
