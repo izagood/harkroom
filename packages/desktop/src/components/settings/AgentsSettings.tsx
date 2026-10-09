@@ -2756,6 +2756,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   canRevoke={isAdmin || isOwner}
                   disabled={busy}
                   localOperatorId={typeof localOperator === 'object' && localOperator !== null ? localOperator.operatorId : null}
+                  deviceAgentIds={typeof localOperator === 'object' && localOperator !== null
+                    ? agents.filter((a) => a.ownerAccountId === myId && a.assignment?.operatorId === localOperator.operatorId).map((a) => a.id)
+                    : undefined}
                   assignedOperatorName={Array.isArray(operators) ? operatorNameOf(operators.find((o) => o.id === selected.assignment?.operatorId)) ?? null : null}
                   onCountChange={(n) => setMergeCounts((prev) => (prev[selected.id]?.repos === n.repos && prev[selected.id]?.orgs === n.orgs ? prev : { ...prev, [selected.id]: n }))}
                 />

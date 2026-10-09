@@ -6,14 +6,17 @@
  * 기본값 하나를 두던 줄은 없앴다: 맞지 않는 계정이 말없이 쓰인 것이 이번 일의 원인이다.
  *
  * 고르는 것은 사람이다(security P1): 목록에서 미리 골라 두지 않는다. 예외 둘만 화면이 대신 적는다 —
- * ① 처음 열 때 옛 기기 값(`merge.ghUser`)을 지금 줄들에 한 번 복사한다(`migrate`, 오퍼레이터가 한 번만 한다).
- * ② 같은 owner 의 다른 줄이 계정을 갖고 있으면 계정 없는 줄이 그것을 이어받는다(같은 조직이면 같은 계정, 시안 §4).
+ * ① 처음 열 때 옛 기기 값(`merge.ghUser`)을 한 번 복사한다(`migrate`, 오퍼레이터가 한 번만 한다). `byScope` 는 **기기 전체**
+ *    값이므로 지금 연 에이전트 줄만이 아니라 이 기기에 배정된 내 에이전트 전부의 머지 줄로 옮긴다 — 첫 에이전트만 옮기고
+ *    옛 값을 지우면 나머지 에이전트가 화면을 열 때까지 `no_gh_user` 로 막혔다(#1265 security n1).
+ * ② 같은 owner 의 다른 줄이 계정을 갖고 있으면 계정 없는 줄이 그것을 이어받는다(같은 조직이면 같은 계정, 시안 §4). 이것도
+ *    기기의 모든 에이전트 줄에 한다 — 이미 첫 에이전트로만 옮겨진 기기가 여기서 메워진다.
  * 고를 수 있는 이름이 맞는지는 오퍼레이터가 그 순간의 `gh auth status` 로 다시 잰다(C7). 어느 기기의 값인지 절 머리에 보인다(C8).
  */
 import { useCallback, useEffect, useState } from 'react';
 import type { OperatorMergeCheckResult, OperatorMergeState } from '@harkroom/shared/daemonProtocol';
 import { checkLocalMerge, getLocalMerge, migrateLocalMerge, setLocalMergeScopeUser } from '../../lib/operatorLocal';
-import { useT } from '../../i18n/useT';
+import { useLocale, useT } from '../../i18n/useT';
 
 const rawReason = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -36,11 +39,12 @@ export type LocalMerge = OperatorMergeState | 'loading' | 'error' | null;
 
 /**
  * 이 기기 오퍼레이터의 머지 계정 상태. `scopes` 는 이 에이전트의 머지 권한 줄(`owner/name`·`owner/*`, 소문자)이고, null 이면
- * 묻지 않는다(다른 기기·소유자 아님·권한 없음). 읽은 뒤 옮기기(①)·이어받기(②)를 한 번씩 한다.
+ * 묻지 않는다(다른 기기·소유자 아님·권한 없음). `deviceScopes` 는 같은 기기에 배정된 내 다른 에이전트들의 머지 줄이다 —
+ * 옮기기(①)·이어받기(②)는 둘을 합친 줄에 하고, 닿음 확인은 이 에이전트 줄만 한다.
  */
 export type MergeReach = OperatorMergeCheckResult['reach'];
 
-export function useLocalMerge(scopes: string[] | null): {
+export function useLocalMerge(scopes: string[] | null, deviceScopes: readonly string[] = []): {
   state: LocalMerge;
   /** 범위 × 계정 → 닿음(시안 A·B·E). 재는 동안·실패면 비어 있다 — 그때 칸은 상태 없이 보인다(막지 않는다). */
   reach: MergeReach;
@@ -49,18 +53,20 @@ export function useLocalMerge(scopes: string[] | null): {
   const [state, setState] = useState<LocalMerge>(scopes ? 'loading' : null);
   const [reach, setReach] = useState<MergeReach>({});
   const key = scopes ? scopes.join('\n') : null;
+  const deviceKey = deviceScopes.join('\n');
 
   useEffect(() => {
     if (key === null) { setState(null); return; }
     const list = key ? key.split('\n') : [];
+    const all = [...new Set([...list, ...(deviceKey ? deviceKey.split('\n') : [])])];
     let alive = true;
     // 줄 목록은 늦게 온다(grant 를 읽은 뒤) — 그때 자리를 먼저 잡는다(#1140 designer n5).
     setState((prev) => (prev === null || prev === 'error' ? 'loading' : prev));
     void (async () => {
       try {
         let s = await getLocalMerge();
-        if (s.byScope === null && list.length) s = await migrateLocalMerge(list);
-        for (const scope of list) {
+        if (s.byScope === null && all.length) s = await migrateLocalMerge(all);
+        for (const scope of all) {
           const byScope = s.byScope ?? {};
           if (byScope[scope]) continue;
           const sibling = Object.entries(byScope).find(([k]) => ownerOf(k) === ownerOf(scope))?.[1];
@@ -77,7 +83,7 @@ export function useLocalMerge(scopes: string[] | null): {
       } catch { if (alive) setState('error'); }
     })();
     return () => { alive = false; };
-  }, [key]);
+  }, [key, deviceKey]);
 
   const setScope = useCallback(async (scope: string, ghUser: string) => {
     setState(await setLocalMergeScopeUser(scope, ghUser));
@@ -118,6 +124,7 @@ export function MergeAccountCell({ scope, repoLabel, state, reach, setScope, dis
   disabled?: boolean;
 }) {
   const t = useT();
+  const locale = useLocale();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const current = state.byScope?.[scope] ?? null;
@@ -162,7 +169,7 @@ export function MergeAccountCell({ scope, repoLabel, state, reach, setScope, dis
       )}
       {mine?.status === 'no' && (
         <p role="alert" className="order-last basis-full rounded-row border border-danger-border bg-danger-surface px-2 py-0.5 text-danger" data-testid={`merge-account-no-reach-${id}`}>
-          {t('agents.grants.ghUser.rowNoReach', { login: current!, repo: repoLabel, when: new Date(mine.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })}
+          {t('agents.grants.ghUser.rowNoReach', { login: current!, repo: repoLabel, when: new Date(mine.checkedAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) })}
         </p>
       )}
       {current === null && (

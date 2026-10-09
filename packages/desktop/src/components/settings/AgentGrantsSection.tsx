@@ -50,7 +50,7 @@ export function liveMergeCount(rows: readonly GrantRow[], now = Date.now()): Mer
   return { repos: live.length - orgs, orgs };
 }
 
-export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, localOperatorId, assignedOperatorName, onCountChange }: {
+export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, localOperatorId, assignedOperatorName, deviceAgentIds, onCountChange }: {
   agent: AgentView;
   /** 배정된 오퍼레이터(기기)의 이름 — 「다른 기기에서 돈다」 안내에 넣는다(#1140 designer n4). 모르면 null. */
   assignedOperatorName?: string | null;
@@ -61,6 +61,11 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
    * 그린다 — 머지는 그 에이전트를 돌리는 오퍼레이터의 gh 로 되므로 남의 기기 값을 여기서 고칠 수는 없다.
    */
   localOperatorId?: string | null;
+  /**
+   * 이 기기에 배정된 내 에이전트 id 들(이 에이전트 포함해도 된다). 머지 gh 계정은 기기 전체 값이라(#1265 security n1) 옛 값
+   * 옮기기·같은 owner 이어받기를 이 에이전트들의 머지 줄 전부에 한다. 모르면 이 에이전트 줄만.
+   */
+  deviceAgentIds?: readonly string[];
   /** 그 에이전트의 소유자인 사람만 — 서버 F2 와 같다. */
   canGrant: boolean;
   /** 소유자 또는 admin. */
@@ -89,6 +94,9 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   // API 행 [바꾸기](#1144 designer b): 같은 폼을 지금 grant 로 연다 — 거두고 다시 주지 않아도 된다.
   const [changing, setChanging] = useState<string | null>(null);
   const [revokingNode, setRevokingNode] = useState<{ node: ForestNode; below: boolean } | null>(null);
+  // 같은 기기의 내 다른 에이전트들의 머지 줄(소문자 owner/name·owner/*). 읽기 전엔 null — 그동안 옮기기를 미룬다(첫 에이전트로만 옮기지 않게).
+  const [deviceScopes, setDeviceScopes] = useState<string[] | null>(null);
+  const deviceKey = (deviceAgentIds ?? []).filter((id) => id !== agent.id).join(',');
 
   const load = useCallback(async () => {
     try {
@@ -105,8 +113,12 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
           .map((a) => a.id);
         const others = await Promise.all(mine.map((id) => getController().listGrants(id).catch(() => [] as GrantRow[])));
         setForest(buildForest([...all, ...others.flat()]));
+        const onDevice = new Set(deviceKey ? deviceKey.split(',') : []);
+        setDeviceScopes([...new Set(mine.flatMap((id, i) => (onDevice.has(id) ? others[i]! : [])
+          .filter((g) => g.capability === CAP).map((g) => repoOf(g.scope).toLowerCase())))]);
       } else {
         setForest(buildForest(all));
+        setDeviceScopes([]);
       }
       // 소유자가 볼 때만 알린다(#1146 security n2) — admin 이 남의 에이전트를 열어도 목록 카드에 그 숫자가 끼지 않게.
       if (canGrant) onCountChange?.(liveMergeCount(rows));
@@ -114,7 +126,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
     try { setConnectors(await getController().listConnectors()); } catch { setConnectors([]); }
     // `onCountChange` 는 부모가 매 렌더 새로 만든다 — 의존에 넣으면 렌더마다 다시 읽는다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent.id, canGrant]);
+  }, [agent.id, canGrant, deviceKey]);
   useEffect(() => { setGrants('loading'); void load(); }, [load]);
 
   const explain = (err: unknown): string => {
@@ -180,7 +192,10 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   // 다른 기기면 그 기기의 gh 목록을 여기서 볼 수 없으므로 안내만 둔다(시안 §3 F).
   const assigned = canGrant && hasOperatorLocalSurface() && !!agent.assignment?.operatorId;
   const onThisDevice = assigned && !!localOperatorId && agent.assignment!.operatorId === localOperatorId;
-  const { state: localMerge, reach: mergeReach, setScope } = useLocalMerge(onThisDevice && rows.length > 0 ? rows.map((g) => repoOf(g.scope).toLowerCase()) : null);
+  const { state: localMerge, reach: mergeReach, setScope } = useLocalMerge(
+    onThisDevice && rows.length > 0 && deviceScopes !== null ? rows.map((g) => repoOf(g.scope).toLowerCase()) : null,
+    deviceScopes ?? [],
+  );
   const ghRow = assigned ? (
     onThisDevice
       ? <MergeDeviceNote state={localMerge} />
