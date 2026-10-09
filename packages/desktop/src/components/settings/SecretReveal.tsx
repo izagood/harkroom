@@ -60,24 +60,22 @@ export function waitText(t: ReturnType<typeof useT>, sec: number, minutesKey: 's
 }
 
 /** 머리줄: 잠김 → [잠금 해제…], 풀림 → 「잠금 해제됨 · HH:MM까지」[잠그기], 저절로 잠김 → 한 줄(aria-live 한 번). */
-export function UnlockHeader({ unlock, onUnlock, onLock }: { unlock: UnlockState; onUnlock: () => void; onLock: () => void }) {
+export function UnlockHeader({ unlock, onLock }: { unlock: UnlockState; onLock: () => void }) {
   const t = useT();
   const locale = useLocale();
+  // 열린 것은 정상 상태다 — 노란 경고 배지 대신 초록 점 칩(designer 시안 v1 #6). 잠긴 상태엔 칩이 없고 [값 보기]가 잠금 창을 연다.
   if (unlock.until !== null) {
     const hhmm = new Date(unlock.until).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
     return (
-      <span className="flex items-center gap-2" data-testid="secrets-unlocked">
-        <span className="rounded bg-warning-surface px-2 py-0.5 text-meta text-warning">🔓 {t('secrets.unlockedUntil', { time: hhmm })}</span>
-        <Button onClick={onLock}>{t('secrets.lock')}</Button>
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-border py-0.5 pl-2.5 pr-1 text-meta text-fg-muted"
+        data-testid="secrets-unlocked" title={t('secrets.unlockedTitle')}>
+        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-success" />
+        {t('secrets.unlockedUntil', { time: hhmm })}
+        <button type="button" onClick={onLock} className="rounded-full px-2 py-px text-fg hover:bg-surface-hover">{t('secrets.lock')}</button>
       </span>
     );
   }
-  return (
-    <span className="flex items-center gap-2">
-      <span aria-live="polite" className="text-meta text-fg-subtle" data-testid="secrets-autolocked">{unlock.autoLocked ? t('secrets.autoLocked') : ''}</span>
-      <Button onClick={onUnlock}>🔒 {t('secrets.unlock')}</Button>
-    </span>
-  );
+  return <span aria-live="polite" className="text-meta text-fg-subtle" data-testid="secrets-autolocked">{unlock.autoLocked ? t('secrets.autoLocked') : ''}</span>;
 }
 
 /** 비밀번호 확인 창 하나. 성공하면 `onDone(until)` — 누른 행이 있으면 부르는 쪽이 바로 연다. */
