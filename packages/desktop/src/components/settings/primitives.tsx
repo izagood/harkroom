@@ -1,16 +1,31 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { useT } from '../../i18n/useT';
 import { navKey, type SectionId } from './sections';
 
 /** 섹션 한 장의 껍데기 — 제목·설명·본문. 섹션마다 다시 만들면 여백이 어긋난다. */
-export function SettingsPage({ section, description, width = 'default', children }: {
+export function SettingsPage({ section, description, width = 'default', layout, children }: {
   /**
    * 이 페이지가 **목차의 어느 줄인가**. 제목은 그 줄과 같은 사전 키에서 나온다(`navKey`) —
    * 제목을 따로 받으면 목차 이름과 페이지 제목이 다시 갈라진다(UX ④ H5: "Appearance" 를
    * 눌렀는데 "모양" 이 열렸다). 목차에 없는 페이지는 없다.
    */
-  section: SectionId; description?: string; width?: 'default' | 'wide'; children: ReactNode;
+  section: SectionId; description?: string; width?: 'default' | 'wide';
+  /**
+   * 화면의 **꼴**(설정 폭 시안 v1 규칙 ①). 주면 `width` 는 무시되고 `SettingsWrap` 이 상한·가운데
+   * 정렬·컨테이너를 맡는다. 아직 옵트인이다 — 화면을 하나씩 옮기는 PR 에서 붙이고, 다 옮기면
+   * `width` 갈래를 지운다. 기본값을 바로 바꾸지 않은 것은 이 PR 의 보이는 변화를 0 으로 두려고다.
+   */
+  layout?: SettingsLayout; children: ReactNode;
 }) {
+
+  if (layout) {
+    return (
+      <SettingsWrap layout={layout} className="py-10">
+        <SettingsHeader section={section} description={description} />
+        {children}
+      </SettingsWrap>
+    );
+  }
 
   return (
     /*
@@ -43,6 +58,132 @@ export function SettingsPage({ section, description, width = 'default', children
       <SettingsHeader section={section} description={description} />
       {children}
     </div>
+  );
+}
+
+/**
+ * 설정 화면의 꼴 셋(설정 폭 시안 v1, designer · jaebin 승인).
+ *
+ * - `form` — 한 줄에 한 필드를 쌓는 짧은 폼. 상한 880px.
+ * - `cards` — 카드 여러 장. 상한 1680px, 칸은 `SettingsColumns` 가 본문 폭으로 나눈다.
+ * - `list` — 줄마다 값이 여럿인 목록·표. 상한 2200px, 표·격자로 채운다.
+ *
+ * 640px 을 고른 근거(라벨과 값이 멀어진다)는 그대로 맞다. 그래서 폭을 늘려 한 줄을 길게 하지 않고
+ * **칸 수**를 늘린다 — 라벨과 값 사이는 `KvRow` 가 지킨다. 상한을 넘는 창에서는 **가운데**에
+ * 선다(남는 폭이 오른쪽에 몰리면 덜 그려진 화면으로 읽힌다 — jaebin 이 첨부한 개요 탭이 그랬다).
+ */
+export type SettingsLayout = 'form' | 'cards' | 'list';
+
+/** 꼴별 상한. px 로 적는다 — 규칙이 px 로 정해졌고, `--spacing` 척도를 따라 커지면 안 되는 값이다. */
+export const SETTINGS_LAYOUT_MAX: Record<SettingsLayout, string> = {
+  form: 'max-w-[880px]',
+  cards: 'max-w-[1680px]',
+  list: 'max-w-[2200px]',
+};
+
+/**
+ * 설정 본문의 **컨테이너 한 겹** — 상한·가운데 정렬·좌우 여백, 그리고 칸 나누기가 재는 자(`@container`).
+ *
+ * **머리·탭·본문·저장 바는 같은 꼴의 `SettingsWrap` 에 각각 선다**(규칙 ②). 에이전트 편집처럼
+ * 머리 줄과 탭 줄이 창 끝까지 선을 긋는 화면은 선은 바깥 요소가 긋고, 안의 글자·단추는 이 겹이
+ * 상한 안에 세운다 — 그래야 중지/재시작 단추가 본문 오른쪽 끝에 맞는다(지금은 2000px 가까이 떨어진다).
+ *
+ * 칸은 **창이 아니라 이 겹의 폭**으로 나눈다(규칙 ④) — 목차 256px·앱 배율이 들어가도 같은 결과다.
+ */
+export function SettingsWrap({ layout, className = '', testId, children }: {
+  layout: SettingsLayout; className?: string; testId?: string; children: ReactNode;
+}) {
+  return (
+    <div
+      data-testid={testId}
+      data-settings-layout={layout}
+      className={`@container/settings mx-auto w-full ${SETTINGS_LAYOUT_MAX[layout]} px-6 @min-[1100px]/settings:px-10 ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+const COLS_PAIR = '@min-[1000px]/settings:grid-cols-2';
+const COLS_SIDE = '@min-[900px]/settings:grid-cols-[minmax(0,1fr)_380px]';
+const COLS_THREE = '@min-[1560px]/settings:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_400px]';
+const SIDE_AT_TWO = '@min-[900px]/settings:col-start-2 @min-[900px]/settings:row-start-1';
+const SIDE_AT_THREE = '@min-[900px]/settings:col-start-2 @min-[900px]/settings:row-start-1 @min-[900px]/settings:row-span-2 '
+  + '@min-[1560px]/settings:col-start-3 @min-[1560px]/settings:row-span-1';
+const SECONDARY_AT_THREE = '@min-[1560px]/settings:col-start-2 @min-[1560px]/settings:row-start-1';
+
+/**
+ * 카드형 화면의 칸 나누기(규칙 ④). `SettingsWrap` 안에서 쓴다 — 그 폭을 잰다.
+ *
+ * | 본문 폭 | 칸 |
+ * |---|---|
+ * | 900 미만 | 1단. `main` → `secondary` → `side` 순으로 쌓인다(지금과 같다) |
+ * | 900 – 1560 | 주 칸 + 곁 칸 380. `secondary` 는 주 칸 아래로 |
+ * | 1560 이상 | `secondary` 가 있으면 3단(1.2fr · 1fr · 400), 없으면 2단 그대로 |
+ *
+ * 3단을 `secondary` 가 있을 때만 여는 것은 카드가 셋 미만인 화면에서 빈 칸이 서지 않게 하려고다.
+ * 곁 칸은 요약·위험 조작 자리다 — 위험 구역(`DangerZone`)은 곁 칸 **맨 아래**에 둔다(규칙 ⑦).
+ */
+export function SettingsColumns({ main, secondary, side, testId }: {
+  main: ReactNode; secondary?: ReactNode; side?: ReactNode; testId?: string;
+}) {
+  const three = secondary != null;
+  // 클래스는 **통째 문자열로만** 적는다 — Tailwind 는 소스 글자를 훑어 클래스를 찾으므로
+  // 템플릿으로 이어 붙인 조각(닫는 `]` 바로 뒤에 `${…}` 를 붙인 꼴)은 CSS 가 생기지
+  // 않는다(이 PR 첫 판에서 실측 — 900 칸이 안 섰다).
+  const grid = side == null
+    ? (three ? COLS_PAIR : '')
+    : (three ? `${COLS_SIDE} ${COLS_THREE}` : COLS_SIDE);
+  const sideAt = side == null ? '' : (three ? SIDE_AT_THREE : SIDE_AT_TWO);
+  const secondaryAt = three && side != null ? SECONDARY_AT_THREE : '';
+  return (
+    <div data-testid={testId} className={`grid grid-cols-1 items-start gap-4 ${grid}`}>
+      <div data-settings-col="main" className="flex min-w-0 flex-col gap-4">{main}</div>
+      {three && <div data-settings-col="secondary" className={`flex min-w-0 flex-col gap-4 ${secondaryAt}`}>{secondary}</div>}
+      {side != null && <div data-settings-col="side" className={`flex min-w-0 flex-col gap-4 ${sideAt}`}>{side}</div>}
+    </div>
+  );
+}
+
+/**
+ * 라벨-값 두 열 행(규칙 ⑥) — 라벨 120px 오른쪽 맞춤 + 값 상한 440px. 칸이 넓어져도 라벨과 값
+ * 사이가 벌어지지 않는다. 640px 결정이 지키던 것을 폭 대신 이 행이 지킨다.
+ *
+ * 값이 입력 칸이면 `htmlFor` 로 이어 라벨을 눌러 포커스가 가게 한다.
+ */
+export function KvRow({ label, htmlFor, testId, children }: {
+  label: ReactNode; htmlFor?: string; testId?: string; children: ReactNode;
+}) {
+  const labelClass = 'text-right text-meta font-medium text-fg-muted';
+  return (
+    <div data-testid={testId} className="grid grid-cols-[120px_minmax(0,440px)] items-center gap-x-3.5">
+      {htmlFor
+        ? <label htmlFor={htmlFor} className={labelClass}>{label}</label>
+        : <span className={labelClass}>{label}</span>}
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * 되돌릴 수 없는 조작(비활성·삭제·폐기)을 묶는 카드 한 장(규칙 ⑦). 자식 하나가 조작 하나이고,
+ * 그 사이 선은 여기서 긋는다. 곁 칸 맨 아래에 두고, 1단으로 접히면 화면 맨 끝이 된다. 단추는
+ * 넓어지지 않는다 — 넓은 빨간 단추는 누르라는 뜻으로 읽힌다.
+ */
+export function DangerZone({ title, testId, children }: {
+  title?: string; testId?: string; children: ReactNode;
+}) {
+  const t = useT();
+  const headingId = useId();
+  return (
+    <section
+      data-testid={testId}
+      aria-labelledby={headingId}
+      className="rounded-compose border border-danger-border bg-danger-surface"
+    >
+      <h3 id={headingId} className="px-4 pt-3 text-meta font-semibold text-danger">{title ?? t('settings.dangerZone')}</h3>
+      <div className="divide-y divide-danger-border [&>*]:px-4 [&>*]:py-3">{children}</div>
+    </section>
   );
 }
 

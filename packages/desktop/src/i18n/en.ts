@@ -217,6 +217,7 @@ export const en = {
   'operators.cancel': 'Cancel',
   'settings.saved': '✓ Saved',
   'settings.saving': 'Saving…',
+  'settings.dangerZone': 'Danger zone',
   'settings.nav.this-operator': "This machine's operator",
   'settings.nav.secrets': 'Secrets & APIs',
   'settings.nav.workspace-cleanup': "Workspace cleanup",

@@ -70,6 +70,7 @@ export const ko = {
   'operators.cancel': '취소',
   'settings.saved': '✓ 저장됨',
   'settings.saving': '저장하는 중…',
+  'settings.dangerZone': '위험 구역',
   'settings.nav.this-operator': "이 머신의 오퍼레이터",
   'settings.nav.secrets': '비밀과 API',
   'settings.nav.workspace-cleanup': "작업 폴더 정리",
