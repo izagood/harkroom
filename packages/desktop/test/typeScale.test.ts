@@ -165,6 +165,16 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
     why: '아바타 상자(h-5)와 글리프를 한 쌍으로 넘기는 호출부',
   },
   {
+    file: 'components/settings/SecretsSettings.tsx',
+    contains: '<Identity account={agent} className="h-5 w-5 text-[10px]"',
+    why: '같은 쌍 — 비밀 주기 확인 줄의 h-5 얼굴',
+  },
+  {
+    file: 'components/settings/SecretAgentPicker.tsx',
+    contains: '<Identity account={a} className="h-5 w-5 text-[10px]"',
+    why: '같은 쌍 — 비밀 받을 에이전트 고르기의 h-5 얼굴',
+  },
+  {
     file: 'components/ThreadParticipants.tsx',
     contains: '<Identity account={a} className="h-5 w-5 text-[10px]"',
     why: '같은 쌍 — h-5 상자에는 10px 글리프',
