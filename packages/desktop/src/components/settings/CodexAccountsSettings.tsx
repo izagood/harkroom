@@ -29,8 +29,8 @@ import {
 import { getExternalOpener } from '../../lib/openExternal';
 import { Button, TextInput } from './primitives';
 import { ProviderSection } from './ProviderSection';
-import { AccountRowsSkeleton, ProviderUsageBars, ProviderUsageSkeleton } from './ProviderUsageBars';
-import { usageFor, useProviderUsage } from '../../lib/providerUsage';
+import { AccountRowsSkeleton, ProviderUsageBars, ProviderUsageSkeleton, UsageRefreshControl } from './ProviderUsageBars';
+import { usageFor, usageUpdatedAt, useProviderUsage } from '../../lib/providerUsage';
 
 interface LoginState {
   account: string;
@@ -60,10 +60,19 @@ export function CodexAccountsSettings() {
   const [name, setName] = useState('');
   const [login, setLogin] = useState<LoginState | null>(null);
   const [pendingRemove, setPendingRemove] = useState<string | null>(null);
-  const { snap: providerSnap, loading: usageLoading } = useProviderUsage('codex', available);
+  const {
+    snap: providerSnap, loading: usageLoading, refreshing: usageRefreshing, refreshError: usageRefreshError,
+    refresh: refreshUsage,
+  } = useProviderUsage('codex', available);
   const bars = (account: string) => {
     const u = providerSnap ? usageFor(providerSnap, account) : null;
-    if (u) return <div className="mt-2"><ProviderUsageBars usage={u} nowMs={providerSnap!.measuredAtMs} /></div>;
+    if (u) {
+      return (
+        <div className={`mt-2 transition-opacity ${usageRefreshing.size > 0 ? 'opacity-50' : ''}`} aria-busy={usageRefreshing.size > 0}>
+          <ProviderUsageBars usage={u} nowMs={providerSnap!.measuredAtMs} />
+        </div>
+      );
+    }
     // 첫 답 전에는 자리표시 — 비워 두면 "한도 정보가 없는 계정"으로 읽힌다.
     return usageLoading ? <div className="mt-2"><ProviderUsageSkeleton /></div> : null;
   };
@@ -135,6 +144,15 @@ export function CodexAccountsSettings() {
       title="Codex"
       description={t('providerAccounts.codex.description')}
       testId="provider-codex"
+      actions={available ? (
+        <UsageRefreshControl
+          testId="codex-usage-refresh"
+          refreshing={usageRefreshing.size > 0}
+          updatedAtMs={usageUpdatedAt(providerSnap)}
+          error={usageRefreshError}
+          onRefresh={() => { void refreshUsage(); }}
+        />
+      ) : undefined}
     >
       {!available ? (
         <p className="text-fg-subtle">{t('providerAccounts.unavailable')}</p>

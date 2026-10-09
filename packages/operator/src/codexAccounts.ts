@@ -30,6 +30,7 @@ import type {
   CodexAccountsSnapshot,
   CodexAuthStatus,
   CodexLoginEvent,
+  ProviderUsageRequest,
   ProviderUsageSnapshot,
 } from '@harkroom/shared/daemonProtocol';
 
@@ -57,8 +58,9 @@ export interface CodexAccountsPort {
   /**
    * 한도 사용률. CLI(`codex app-server` → `account/rateLimits/read`) 먼저, 실패하면 API(`wham/usage`) —
    * 출처는 같다(`usageChain.ts`). 시스템 기본 로그인은 `account: ''` 로 싣는다.
+   * `force` 면 캐시를 건너뛰고 새로 잰다(`account` 를 주면 그 계정만) — `ProviderUsageRequest`.
    */
-  providerUsage(): Promise<ProviderUsageSnapshot>;
+  providerUsage(req?: ProviderUsageRequest): Promise<ProviderUsageSnapshot>;
 }
 
 /** 러너의 `codexAccountsRoot()`(`agent/src/codexHome.ts`)와 **같은 값**이어야 한다. */
@@ -319,7 +321,7 @@ export function createCodexAccountsPort(opts: {
       listeners.push(cb);
     },
 
-    async providerUsage(): Promise<ProviderUsageSnapshot> {
+    async providerUsage(req: ProviderUsageRequest = {}): Promise<ProviderUsageSnapshot> {
       const at = (opts.now ?? Date.now)();
       const homes = [{ account: '', home: systemHome }, ...(await subdirs(root)).map((n) => ({ account: n, home: join(root, n) }))];
       const accounts = await Promise.all(homes.map(async (h) => ({
@@ -332,7 +334,9 @@ export function createCodexAccountsPort(opts: {
             ...(opts.readToken ? { readToken: opts.readToken } : {}),
           }),
           // 화면 경로 — 지난 값을 곧바로 돌려주고 뒤에서 다시 잰다(`createUsageCache` 의 `stale`).
-        ), { stale: true })),
+          // 사람이 [Refresh usage] 를 눌렀으면(`force`) 그 계정(안 주면 전부)은 새로 잰 값을 기다린다.
+        ), req.force === true && (req.account === undefined || req.account === h.account)
+          ? { force: true } : { stale: true })),
       })));
       return { measuredAtMs: at, accounts };
     },

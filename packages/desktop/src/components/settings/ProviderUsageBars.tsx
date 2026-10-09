@@ -99,3 +99,48 @@ export function AccountRowsSkeleton({ rows = 2 }: { rows?: number }) {
     </div>
   );
 }
+
+/**
+ * 칸 머리의 **[Refresh usage]**(2026-10-09). 사용량은 1분 폴 + 데몬 2분 캐시라 사람이 "지금 값"을 보려면
+ * 기다려야 했다 — 이 버튼은 캐시를 건너뛰고 새로 잰다(`useProviderUsage.refresh`). 누르는 동안 버튼이
+ * 돌고 잠기며(연달아 눌러도 CLI 는 하나다), 옆에 값이 **언제 잰 것인지**를 적는다. 실패는 아래 한 줄로.
+ */
+export function UsageRefreshControl({ refreshing, updatedAtMs, error, onRefresh, testId }: {
+  refreshing: boolean;
+  updatedAtMs: number | null;
+  error: string | null;
+  onRefresh(): void;
+  testId: string;
+}) {
+  const t = useT();
+  const locale = useLocale();
+  const time = updatedAtMs === null
+    ? null
+    : new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(updatedAtMs));
+  return (
+    <div className="flex flex-col items-end gap-1" data-testid={testId}>
+      <div className="flex items-center gap-3">
+        {time && (
+          <span className="text-meta text-fg-subtle" data-testid={`${testId}-updated`}>
+            {t('providerUsage.updatedAt', { time })}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          aria-busy={refreshing}
+          className="flex items-center gap-1.5 rounded-row border border-border bg-surface-raised px-2.5 py-1 text-meta font-medium text-fg hover:bg-surface-hover disabled:opacity-60"
+        >
+          <span aria-hidden className={`inline-block leading-none ${refreshing ? 'animate-spin' : ''}`}>↻</span>
+          {refreshing ? t('providerUsage.refreshing') : t('providerUsage.refresh')}
+        </button>
+      </div>
+      {error && (
+        <span role="alert" className="max-w-[28rem] text-right text-meta text-danger" data-testid={`${testId}-error`}>
+          {t('providerUsage.refreshFailed', { reason: error })}
+        </span>
+      )}
+    </div>
+  );
+}

@@ -203,4 +203,37 @@ describe('usageChain', () => {
     expect(await cache('k', async () => { calls += 1; return ok; }, { stale: true })).toBe(old);
     expect(calls).toBe(2);
   });
+  it('캐시 `force`: TTL 안이어도 새로 재고 그 값을 기다린다 · 재는 중이면 거기에 붙는다 · 다음 물음도 새 값', async () => {
+    let t = 0;
+    let calls = 0;
+    const cache = createUsageCache(1000, () => t);
+    const a = { ...ok, fetchedAtMs: 1 };
+    await cache('k', async () => { calls += 1; return a; });
+    let release: ((v: typeof ok) => void) | null = null;
+    const slow = () => { calls += 1; return new Promise<typeof ok>((r) => { release = r; }); };
+    const p1 = cache('k', slow, { force: true });
+    const p2 = cache('k', slow, { force: true });
+    expect(calls).toBe(2); // 연달아 눌러도 하나
+    // 그 사이 화면 폴은 지난 값을 곧바로 받는다.
+    expect(await cache('k', slow, { stale: true })).toBe(a);
+    const b = { ...ok, fetchedAtMs: 2 };
+    release!(b);
+    expect(await p1).toBe(b);
+    expect(await p2).toBe(b);
+    expect(await cache('k', slow, { stale: true })).toBe(b);
+    expect(calls).toBe(2);
+  });
+
+  it('캐시 `force`: 첫 요청이 아직 재는 중이면 새로 띄우지 않고 붙는다 · 실패하면 지난 값을 지킨다', async () => {
+    let calls = 0;
+    const cache = createUsageCache(1000, () => 0);
+    let release: ((v: typeof ok) => void) | null = null;
+    const first = cache('k', () => { calls += 1; return new Promise<typeof ok>((r) => { release = r; }); });
+    const forced = cache('k', async () => { calls += 1; return ok; }, { force: true });
+    expect(calls).toBe(1);
+    release!(ok);
+    expect(await forced).toBe(await first);
+    await expect(cache('k', async () => { throw new Error('끊김'); }, { force: true })).rejects.toThrow('끊김');
+    expect(await cache('k', async () => { calls += 1; return { ...ok, fetchedAtMs: 9 }; })).toBe(ok);
+  });
 });

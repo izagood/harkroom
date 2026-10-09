@@ -62,17 +62,17 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { Menu } from '../Menu';
 import { Button, Field, SettingsGroup, SettingsPage, TextInput } from './primitives';
 import { ProviderSection } from './ProviderSection';
-import { AccountRowsSkeleton, ProviderUsageBars, ProviderUsageSkeleton } from './ProviderUsageBars';
+import { AccountRowsSkeleton, ProviderUsageBars, ProviderUsageSkeleton, UsageRefreshControl } from './ProviderUsageBars';
 import { ClaudeAssignThresholdsRow } from './ClaudeAssignThresholds';
-import { usageFor, useProviderUsage } from '../../lib/providerUsage';
+import { refreshKey, usageFor, usageUpdatedAt, useProviderUsage } from '../../lib/providerUsage';
 import { useT } from '../../i18n/useT';
 
 /** 제공업체 계정 화면 안의 Claude 칸. `SettingsPage` 와 같은 인자를 받아 `Shell` 로 갈아 끼운다. */
-function ClaudeSection({ description, children }: {
-  title: string; description?: string; width?: 'default' | 'wide'; children: ReactNode;
+function ClaudeSection({ description, actions, children }: {
+  title: string; description?: string; width?: 'default' | 'wide'; actions?: ReactNode; children: ReactNode;
 }) {
   return (
-    <ProviderSection icon="claude" title="Claude" description={description ?? ''} testId="provider-claude">
+    <ProviderSection icon="claude" title="Claude" description={description ?? ''} testId="provider-claude" actions={actions}>
       {children}
     </ProviderSection>
   );
@@ -137,10 +137,15 @@ function accountLabel(a: ClaudeAccountView): string {
  * `SettingsPage section`) — 이 화면은 `Provider accounts` 줄의 한 부분이라 그 줄 이름을 쓴다.
  * 모듈 수준에 두는 이유: 렌더 안에서 만들면 매번 새 컴포넌트라 본문이 통째로 다시 선다.
  */
-function StandalonePage({ description, width, children }: {
-  title: string; description?: string; width?: 'default' | 'wide'; children: ReactNode;
+function StandalonePage({ description, width, actions, children }: {
+  title: string; description?: string; width?: 'default' | 'wide'; actions?: ReactNode; children: ReactNode;
 }) {
-  return <SettingsPage section="claude-accounts" description={description} width={width}>{children}</SettingsPage>;
+  return (
+    <SettingsPage section="claude-accounts" description={description} width={width}>
+      {actions && <div className="mb-4 flex justify-end">{actions}</div>}
+      {children}
+    </SettingsPage>
+  );
 }
 
 /**
@@ -152,7 +157,10 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
   const Shell = embedded ? ClaudeSection : StandalonePage;
   // 한도 사용률: CLI(`/usage`) 먼저, 실패하면 같은 API(`usageChain.ts`). 사용량은 이것 하나다.
   const available = hasClaudeAccountsSurface();
-  const { snap: providerSnap, loading: usageLoading } = useProviderUsage('claude', available);
+  const {
+    snap: providerSnap, loading: usageLoading, refreshing: usageRefreshing, refreshError: usageRefreshError,
+    refresh: refreshUsage,
+  } = useProviderUsage('claude', available);
   const [snap, setSnap] = useState<ClaudeAccountsSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending>(null);
@@ -345,6 +353,17 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
       title="Claude accounts"
       description="Group accounts into pools. A runner uses one pool and spreads new threads across its accounts by usage; a thread stays on its account unless that account nears its limit."
       width="wide"
+      actions={(
+        <UsageRefreshControl
+          testId="claude-usage-refresh"
+          // 전체 새로고침이 돌거나 계정 하나라도 도는 중이면 잠근다 — 둘이 겹쳐도 데몬은 CLI 하나에 붙지만,
+          // 버튼이 "돌고 있다"를 말하지 않으면 사람은 또 누른다.
+          refreshing={usageRefreshing.size > 0}
+          updatedAtMs={usageUpdatedAt(providerSnap)}
+          error={usageRefreshError}
+          onRefresh={() => { void refreshUsage(); }}
+        />
+      )}
     >
       {error && (
         <SettingsGroup>
@@ -541,6 +560,9 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   <Menu
                     placement="bottom"
                     items={[{
+                      label: t('providerUsage.refreshAccount', { account: a.name }),
+                      onSelect: () => { void refreshUsage({ pool: pool.name, account: a.name }); },
+                    }, {
                       label: `Sign in again to ${a.name}`,
                       onSelect: () => setReauthAsk({ pool: pool.name, account: a.name, label: accountLabel(a) }),
                     }, {
@@ -592,7 +614,15 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                 </div>
               )}
               {pu ? (
-                <div className="px-4 pb-2.5" data-testid={`claude-provider-usage-${pool.name}-${a.name}`}>
+                <div
+                  // 이 계정(또는 전부)을 새로 재는 중이면 막대를 흐리게 — 지금 보이는 % 가 곧 바뀐다는 뜻이다.
+                  className={`px-4 pb-2.5 transition-opacity ${
+                    usageRefreshing.has('*') || usageRefreshing.has(refreshKey({ pool: pool.name, account: a.name }))
+                      ? 'opacity-50' : ''
+                  }`}
+                  aria-busy={usageRefreshing.has('*') || usageRefreshing.has(refreshKey({ pool: pool.name, account: a.name }))}
+                  data-testid={`claude-provider-usage-${pool.name}-${a.name}`}
+                >
                   <ProviderUsageBars usage={pu} nowMs={providerSnap!.measuredAtMs} />
                   <AssignScore
                     usage={pu}

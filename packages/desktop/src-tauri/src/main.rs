@@ -502,15 +502,22 @@ async fn claude_pool_remove(
 //
 // 계정 풀 명령과 같다: 웹뷰는 **계정 이름·로그인 id** 만 넘기고, `codex login` 을 띄우는 것도
 // 파일을 쓰는 것도 데몬이다(`runnerShellScope.test.ts` 가 파라미터를 고정한다).
-// 한도 사용률(2026-09-28). 웹뷰는 아무것도 넘기지 않는다 — CLI 를 띄우고 (실패하면) 토큰을 읽어
-// API 를 부르는 것은 데몬이다.
+// 한도 사용률(2026-09-28). 웹뷰는 이름과 [Refresh usage] 여부(`force`, 2026-10-09)만 넘긴다 — CLI 를
+// 띄우고 (실패하면) 토큰을 읽어 API 를 부르는 것은 데몬이다. 셋 다 빠지면 지금처럼 캐시 값이다.
 #[tauri::command]
 async fn claude_accounts_provider_usage(
     app: tauri::AppHandle,
+    force: Option<bool>,
+    pool: Option<String>,
+    account: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
         let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
-        conn.claude_accounts_provider_usage()
+        conn.claude_accounts_provider_usage(
+            force.unwrap_or(false),
+            pool.as_deref(),
+            account.as_deref(),
+        )
     })
     .await
 }
@@ -518,10 +525,12 @@ async fn claude_accounts_provider_usage(
 #[tauri::command]
 async fn codex_accounts_provider_usage(
     app: tauri::AppHandle,
+    force: Option<bool>,
+    account: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
         let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
-        conn.codex_accounts_provider_usage()
+        conn.codex_accounts_provider_usage(force.unwrap_or(false), account.as_deref())
     })
     .await
 }

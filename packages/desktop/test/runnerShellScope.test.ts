@@ -195,9 +195,9 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     claude_account_move: ['account: String', 'to_pool: String'],
     // codex 계정(2026-09-28): 이름·로그인 id 뿐이다.
     codex_accounts_list: [],
-    // 한도 사용률(2026-09-28): 아무것도 안 받는다. CLI·토큰은 데몬이 다룬다.
-    claude_accounts_provider_usage: [],
-    codex_accounts_provider_usage: [],
+    // 한도 사용률(2026-09-28): 이름과 새로고침 여부(2026-10-09)뿐이다. CLI·토큰은 데몬이 다룬다.
+    claude_accounts_provider_usage: ['account: Option<String>', 'force: Option<bool>', 'pool: Option<String>'],
+    codex_accounts_provider_usage: ['account: Option<String>', 'force: Option<bool>'],
     codex_account_login_start: ['account: String'],
     codex_account_login_cancel: ['login_id: String'],
     codex_account_remove: ['account: String'],
@@ -630,14 +630,16 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'allow_preview_once',
           'claude_account_login_cancel', 'claude_account_login_start',
           'claude_account_login_submit', 'claude_account_move', 'claude_account_open_terminal',
-          'claude_account_remove', 'claude_accounts_configure', 'claude_pool_remove',
+          'claude_account_remove', 'claude_accounts_configure', 'claude_accounts_provider_usage', 'claude_pool_remove',
           'codex_account_activate', 'codex_account_login_cancel', 'codex_account_login_start',
-          'codex_account_remove',
+          'codex_account_remove', 'codex_accounts_provider_usage',
           'daemon_kill_runner', 'daemon_spawn_runner',
           'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_merge_set', 'operator_register',
           'secret_delete', 'secret_get', 'secret_set',
           'workspace_cleanup_act', 'workspace_cleanup_settings_set',
         ]);
+      // 사용량 새로고침(2026-10-09): [Refresh usage] 여부와 계정 **이름**뿐이다 — 이름은 디렉터리를 고르지 않고
+      // 오퍼레이터가 디스크에서 읽은 목록과 같은지만 본다(`readUsageRequest`). 정확한 목록은 위 스위트가 고정한다.
       // 작업 폴더 정리(스레드 9e909150): 켜기·N일 값, 그리고 원장 경로·동작 이름·누른 사람 id 문자열뿐이다. 경로가 원장에
       // 있는지·동작이 keep|unkeep|list 인지는 오퍼레이터가 본다(`readWorkspaceCleanupActPayload`) — 지우는 동작은 없다.
       expect(commands.find((c) => c.fn === 'workspace_cleanup_settings_set')!.webviewParams.sort())

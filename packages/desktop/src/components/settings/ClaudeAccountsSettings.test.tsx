@@ -501,6 +501,85 @@ describe('풀 만들기', () => {
   });
 });
 
+/**
+ * [Refresh usage](2026-10-09). 폴은 데몬 캐시 값을 받으므로 사람이 "지금 값"을 보려면 기다려야 했다 —
+ * 이 버튼은 `force` 를 실어 캐시를 건너뛴다. 재는 것: 무엇을 보내는가 · 도는 동안 무엇을 보이는가 ·
+ * 실패하면 무엇을 말하는가.
+ */
+describe('사용량 새로고침', () => {
+  const NOW = Date.UTC(2026, 9, 9, 13, 15);
+  const usage = (pct: number, at = NOW) => ({
+    measuredAtMs: at,
+    accounts: [{
+      account: 'aria', pool: 'work', source: 'cli', fetchedAtMs: at,
+      session: { usedPercent: pct, resetsAtMs: null }, weekly: { usedPercent: 1, resetsAtMs: null },
+    }],
+  });
+
+  function stubUsage(onForce: (args: Record<string, unknown>) => Promise<unknown>): void {
+    calls = [];
+    vi.stubGlobal('__TAURI_INTERNALS__', {
+      transformCallback: () => 1,
+      invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+        calls.push({ cmd, args });
+        if (cmd === 'claude_accounts_list') return POOLS_SNAPSHOT;
+        if (cmd === 'claude_accounts_provider_usage') return args?.force ? onForce(args) : usage(10);
+        return {};
+      }),
+    });
+  }
+
+  it('전체 새로고침은 `force` 만 싣고, 도는 동안 잠기고 막대가 흐려지며, 끝나면 새 값과 잰 시각을 보인다', async () => {
+    let done: (v: unknown) => void = () => {};
+    stubUsage(() => new Promise((r) => { done = r; }));
+    render(<ClaudeAccountsSettings />);
+    const box = await screen.findByTestId('claude-provider-usage-work-aria');
+    await waitFor(() => expect(box.textContent).toContain('10%'));
+    const ctl = screen.getByTestId('claude-usage-refresh');
+    expect(within(ctl).getByTestId('claude-usage-refresh-updated').textContent).toMatch(/^Updated /);
+
+    fireEvent.click(within(ctl).getByRole('button', { name: /refresh usage/i }));
+    const busy = await within(ctl).findByRole('button', { name: /refreshing/i });
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('claude-provider-usage-work-aria').getAttribute('aria-busy')).toBe('true');
+    const forced = calls.filter((c) => c.cmd === 'claude_accounts_provider_usage' && c.args?.force);
+    expect(forced.map((c) => c.args)).toEqual([{ force: true }]);
+
+    done(usage(55, NOW + 60_000));
+    await waitFor(() => expect(screen.getByTestId('claude-provider-usage-work-aria').textContent).toContain('55%'));
+    expect(within(ctl).getByRole('button', { name: /refresh usage/i })).toBeTruthy();
+    expect(screen.getByTestId('claude-provider-usage-work-aria').getAttribute('aria-busy')).toBe('false');
+  });
+
+  it('실패하면 까닭을 한 줄로 말하고 지난 막대는 지킨다 · 다음 성공이 그 줄을 내린다', async () => {
+    let fail = true;
+    stubUsage(async () => { if (fail) throw new Error('daemon 이 답하지 않는다'); return usage(70); });
+    render(<ClaudeAccountsSettings />);
+    const box = await screen.findByTestId('claude-provider-usage-work-aria');
+    await waitFor(() => expect(box.textContent).toContain('10%'));
+    fireEvent.click(screen.getByRole('button', { name: /refresh usage/i }));
+    const alert = await screen.findByTestId('claude-usage-refresh-error');
+    expect(alert.textContent).toContain('daemon 이 답하지 않는다');
+    expect(screen.getByTestId('claude-provider-usage-work-aria').textContent).toContain('10%');
+
+    fail = false;
+    fireEvent.click(screen.getByRole('button', { name: /refresh usage/i }));
+    await waitFor(() => expect(screen.getByTestId('claude-provider-usage-work-aria').textContent).toContain('70%'));
+    expect(screen.queryByTestId('claude-usage-refresh-error')).toBeNull();
+  });
+
+  it('계정 `⋯` 의 새로고침은 그 계정(풀·이름)만 싣는다', async () => {
+    stubUsage(async () => usage(33));
+    render(<ClaudeAccountsSettings />);
+    await screen.findByTestId('claude-provider-usage-work-aria');
+    fireEvent.click(screen.getByRole('button', { name: /actions for account aria/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /refresh usage for aria/i }));
+    await waitFor(() => expect(screen.getByTestId('claude-provider-usage-work-aria').textContent).toContain('33%'));
+    const forced = calls.filter((c) => c.cmd === 'claude_accounts_provider_usage' && c.args?.force);
+    expect(forced.map((c) => c.args)).toEqual([{ force: true, account: 'aria', pool: 'work' }]);
+  });
+});
+
 describe('Tauri 표면이 없을 때', () => {
   it('쓸 수 없다는 사실을 말하고 아무것도 부르지 않는다', () => {
     // 웹·테스트 환경이다. 버튼만 그려 두면 눌리는데 아무 일도 안 나고, 사람은 자기

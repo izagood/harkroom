@@ -9,19 +9,24 @@ import type { ReactNode } from 'react';
  */
 const GLYPH = { claude: '✳', codex: '◎', opencode: '▣', cursor: '◇' } as const;
 
-export function ProviderSection({ icon, title, description, testId, children }: {
+export function ProviderSection({ icon, title, description, testId, actions, children }: {
   icon: keyof typeof GLYPH;
   title: string;
   description: string;
   testId?: string;
+  /** 제목 줄 오른쪽 — 칸 전체에 걸리는 동작(사용량 새로고침, 2026-10-09). */
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="border-b border-border py-8 first:pt-0 last:border-b-0" data-testid={testId}>
-      <h3 className="flex items-center gap-2 text-body font-semibold text-fg">
-        <span aria-hidden className="text-fg-muted">{GLYPH[icon]}</span>
-        {title}
-      </h3>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <h3 className="flex items-center gap-2 text-body font-semibold text-fg">
+          <span aria-hidden className="text-fg-muted">{GLYPH[icon]}</span>
+          {title}
+        </h3>
+        {actions}
+      </div>
       <p className="mt-1 mb-5 text-fg-subtle">{description}</p>
       {children}
     </section>

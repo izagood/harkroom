@@ -1051,6 +1051,17 @@ export interface ProviderAccountUsage {
   error?: string;
 }
 
+/**
+ * 사용량 요청(`claudeAccountsProviderUsage`·`codexAccountsProviderUsage`)의 payload(2026-10-09).
+ * 비우면 지금처럼 캐시(SWR) 값을 곧바로 준다. `force` = 사람이 [Refresh usage] 를 눌렀다 — 캐시를 건너뛰고
+ * 새로 잰 값을 기다린다. `account`(+claude 는 `pool`)를 주면 **그 계정만** 새로 재고 나머지는 캐시 값이다.
+ */
+export interface ProviderUsageRequest {
+  force?: boolean;
+  pool?: string;
+  account?: string;
+}
+
 export interface ProviderUsageSnapshot {
   measuredAtMs: number;
   accounts: ProviderAccountUsage[];

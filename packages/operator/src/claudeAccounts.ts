@@ -45,7 +45,7 @@ import {
   markClaudeWorkspaceTrusted,
   readAccountAttention,
 } from '@harkroom/shared/claudeGates';
-import type { ProviderAccountUsage, ProviderUsageSnapshot } from '@harkroom/shared/daemonProtocol';
+import type { ProviderAccountUsage, ProviderUsageRequest, ProviderUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
 import { claudeCliUsage, type RunCommand } from './cliUsage.js';
 import { fetchClaudeProviderUsage, type ClaudeOAuthToken, type FetchLike } from './providerUsage.js';
@@ -154,8 +154,9 @@ export interface ClaudeAccountsPort {
   /**
    * 계정별 한도 사용률. CLI(`claude -p /usage`) 먼저, 실패하면 API(`/api/oauth/usage`) — 출처는 같다
    * (`usageChain.ts`). 계정끼리 **병렬로** 묻는다 — 하나가 느려도 나머지를 기다리게 하지 않는다.
+   * `force` 면 캐시를 건너뛰고 새로 잰다(`pool`·`account` 를 주면 그 계정만) — `ProviderUsageRequest`.
    */
-  providerUsage(): Promise<ProviderUsageSnapshot>;
+  providerUsage(req?: ProviderUsageRequest): Promise<ProviderUsageSnapshot>;
   /**
    * 계정 **하나**의 사용률(`CLAUDE_CONFIG_DIR` 로 가리킨다). 사용량 폴러(`claudeUsagePoller.ts`)가
    * 쓴다. `providerUsage()` 와 **같은 캐시**를 지난다 — 화면과 폴러가 같은 계정을 따로 재면
@@ -613,7 +614,9 @@ export function createClaudeAccountsPort(opts: {
     for (const cb of loginListeners) { try { cb(e); } catch { /* 관찰은 부작용이 아니다 */ } }
   };
 
-  const measureUsage = (dir: string, at: number, stale = false): Promise<Omit<ProviderAccountUsage, 'account' | 'pool'>> =>
+  const measureUsage = (
+    dir: string, at: number, mode: { stale?: boolean; force?: boolean } = {},
+  ): Promise<Omit<ProviderAccountUsage, 'account' | 'pool'>> =>
     usageCache(dir, () => cliThenApi(
       () => claudeCliUsage({ configDir: dir, now: at, ...(opts.runCli ? { run: opts.runCli } : {}) }),
       () => fetchClaudeProviderUsage({
@@ -621,7 +624,7 @@ export function createClaudeAccountsPort(opts: {
         fetchImpl: opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike),
         ...(opts.readToken ? { readToken: opts.readToken } : {}),
       }),
-    ), { stale });
+    ), mode);
 
   return {
     async list(): Promise<ClaudeAccountsSnapshot> {
@@ -650,15 +653,18 @@ export function createClaudeAccountsPort(opts: {
       };
     },
 
-    async providerUsage(): Promise<ProviderUsageSnapshot> {
+    async providerUsage(req: ProviderUsageRequest = {}): Promise<ProviderUsageSnapshot> {
       const layout = await readClaudeAccountsLayout(root);
       const at = now();
       const targets = layout.pools.flatMap((p) => p.accounts.map((a) => ({ pool: p.name, ...a })));
+      // 사람이 [Refresh usage] 를 눌렀다 — 계정을 주면 그 계정만, 안 주면 전부 새로 잰다.
+      const forced = (t: { pool: string; name: string }): boolean =>
+        req.force === true && (req.account === undefined || (t.name === req.account && t.pool === (req.pool ?? '')));
       const accounts = await Promise.all(targets.map(async (t) => ({
         account: t.name,
         pool: t.pool,
         // 화면 경로 — 지난 값을 곧바로 돌려주고 뒤에서 다시 잰다(`createUsageCache` 의 `stale`).
-        ...(await measureUsage(t.dir, at, true)),
+        ...(await measureUsage(t.dir, at, forced(t) ? { force: true } : { stale: true })),
       })));
       return { measuredAtMs: at, accounts };
     },

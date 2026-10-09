@@ -2039,14 +2039,30 @@ impl DaemonConnection {
     }
 
     // codex 계정(2026-09-28). 계정 풀과 같은 규율 — 이름만 넘기고 실행은 데몬이 한다.
-    /// 한도 사용률. CLI 먼저, 실패하면 같은 공급자 API. **인자가 없다** — 어느 계정을 물을지는
-    /// 데몬이 디스크를 보고 정한다.
-    pub fn claude_accounts_provider_usage(&self) -> Result<Value, String> {
-        self.request("claudeAccountsProviderUsage", json!({}))
+    /// 한도 사용률. CLI 먼저, 실패하면 같은 공급자 API. 어느 계정을 물을지는 데몬이 디스크를 보고
+    /// 정한다 — 넘기는 것은 **이름뿐**이다. `force` = 사람이 [Refresh usage] 를 눌렀다(캐시를 건너뛴다),
+    /// `pool`·`account` 를 주면 그 계정만(2026-10-09).
+    pub fn claude_accounts_provider_usage(
+        &self,
+        force: bool,
+        pool: Option<&str>,
+        account: Option<&str>,
+    ) -> Result<Value, String> {
+        self.request(
+            "claudeAccountsProviderUsage",
+            usage_payload(force, pool, account),
+        )
     }
 
-    pub fn codex_accounts_provider_usage(&self) -> Result<Value, String> {
-        self.request("codexAccountsProviderUsage", json!({}))
+    pub fn codex_accounts_provider_usage(
+        &self,
+        force: bool,
+        account: Option<&str>,
+    ) -> Result<Value, String> {
+        self.request(
+            "codexAccountsProviderUsage",
+            usage_payload(force, None, account),
+        )
     }
 
     pub fn codex_accounts_list(&self) -> Result<Value, String> {
@@ -2187,6 +2203,21 @@ impl DaemonConnection {
     pub fn list_runners(&self) -> Result<Value, String> {
         self.request("listRunners", json!({}))
     }
+}
+
+/// 사용량 요청 payload(`ProviderUsageRequest`). 빈 칸은 싣지 않는다 — 옛 데몬은 `{}` 만 알았다.
+fn usage_payload(force: bool, pool: Option<&str>, account: Option<&str>) -> Value {
+    let mut m = serde_json::Map::new();
+    if force {
+        m.insert("force".into(), Value::Bool(true));
+    }
+    if let Some(p) = pool {
+        m.insert("pool".into(), Value::String(p.to_string()));
+    }
+    if let Some(a) = account {
+        m.insert("account".into(), Value::String(a.to_string()));
+    }
+    Value::Object(m)
 }
 
 // `libc::getpgid` 를 쓰는 회귀선이 있어 unix 로 좁힌다 — `main.rs` 의 테스트 모듈과 같다.
@@ -3848,3 +3879,4 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         drop(guard);
     }
 }
+

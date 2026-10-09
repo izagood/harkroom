@@ -198,6 +198,12 @@ export const ko = {
   'providerUsage.error.other': '사용량을 읽지 못했습니다 ({reason}).',
   'providerUsage.error.cliUnavailable': '사용량을 읽을 CLI를 실행하지 못했습니다. 설치돼 있는지 확인하세요.',
   'providerUsage.error.cliUnparsed': 'CLI가 사용량을 알려 주지 않았습니다 — 다시 로그인하거나 CLI를 업데이트하세요.',
+  // 사용량 새로고침(2026-10-09) — 설정 › Provider accounts 칸 머리의 [Refresh usage] 와 계정 ⋯ 메뉴.
+  'providerUsage.refresh': '사용량 새로고침',
+  'providerUsage.refreshing': '새로고침 중…',
+  'providerUsage.refreshAccount': '{account} 사용량 새로고침',
+  'providerUsage.updatedAt': '{time} 갱신',
+  'providerUsage.refreshFailed': '사용량을 새로 읽지 못했습니다: {reason}',
   // providerAccounts — 설정 > 제공업체 계정(하네스별 카드). 2026-09-28.
   'providerAccounts.page.subtitle': '고르지 않아도 된다. 에이전트는 이미 로그인한 제공업체 계정으로 돈다. harkroom 이 계정 사이를 바꿔 가며 쓰게 하고 싶을 때만 계정을 더한다.',
   'providerAccounts.badge.thisDevice': '이 기기',
