@@ -8,7 +8,7 @@
 // - 예외 하나: 에이전트가 **자기 소유자의 이름으로** 비밀을 만드는 길(`/agent/secrets`, 102) — 판정은 `secretCreate.ts`.
 // - **값은 소유자 본인에게만 다시 나간다**(`POST /secrets/:id/reveal`, 114). 비밀번호를 다시 확인한 세션만,
 //   admin·에이전트·PAT·오퍼레이터는 못 받는다 — 운영자가 값을 꺼내는 길은 없다. 그 밖의 응답·감사·오류
-//   어디에도 값이나 그 해시를 싣지 않는다.
+//   어디에도 값이나 그 해시를 싣지 않는다. 한 번 풀면(15분 연장·최대 1시간) 여러 값을 본다.
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
@@ -18,7 +18,7 @@ import { scanWrite } from '../services/contentScan.js';
 import type { SecretKeyring } from '../services/secretKeyring.js';
 import { needlesFor } from '../services/secretLeakGuard.js';
 import { endTurnLease, issueTurnLease, revealSecret, RevealLimiter } from '../services/secretAccess.js';
-import { isSteppedUp } from '../services/stepUp.js';
+import { currentStepUp, extendStepUp } from '../services/stepUp.js';
 import { createAgentSecret, createLimiter, GENERATE_TYPES, hasCreateGrant, rotateAgentSecret, type CreateDenial, type CreateSource } from '../services/secretCreate.js';
 
 /** 계획 D6. 파일·텍스트 공통 상한(바이트). */
@@ -399,8 +399,9 @@ export async function registerSecretRoutes(
 
   /**
    * 소유자 보기(114, 스레드 464aff1c). 판정은 전부 서버가 가진 사실로 한다:
-   * 사람 · **세션**(PAT·오퍼레이터 403) · **소유자 본인**(admin 도 남의 것은 404) · 다시 확인한 창 안(`stepUp.ts`)
-   * · 계정당 속도 제한. 통과하면 지금 판을 열어 본문으로만 돌려준다(`no-store`).
+   * 사람 · **세션**(PAT·오퍼레이터 403) · **소유자 본인**(admin 도 남의 것은 404) · 보관소 잠금이 풀린 창 안
+   * (`stepUp.ts`) · 계정당 속도 제한. 통과하면 지금 판을 열어 본문으로만 돌려주고(`no-store`), 창을 15분 민다
+   * (처음 푼 때 + 1시간까지). 응답의 `steppedUpUntil` 이 밀린 뒤의 끝 시각이다.
    *
    * 보기·복사·내려받기를 **각각 서버에서** 받는다 — 화면이 이미 받은 값을 복사하면 "복사함"은 클라이언트의
    * 자기 신고가 된다. 그래서 복사도 `action: 'copy'` 로 다시 받고, 그 한 번이 access log 한 줄이다.
@@ -428,10 +429,14 @@ export async function registerSecretRoutes(
       return reply.code(status).send({ error: { code, message } });
     };
 
-    if (!(await isSteppedUp(pool, req.credentialHash))) {
-      return deny(403, 'step_up_required', 'confirm your password again to view secret values');
+    if (!(await currentStepUp(pool, req.credentialHash))) {
+      return deny(403, 'step_up_required', 'unlock with your password to view secret values');
     }
-    if (!ownerLimiter.take(me.id, Date.now())) return deny(429, 'rate_limited', 'too many secret views, try again later');
+    const nowMs = Date.now();
+    if (!ownerLimiter.take(me.id, nowMs)) {
+      void reply.header('retry-after', String(Math.max(1, Math.ceil(ownerLimiter.retryAfterMs(me.id, nowMs) / 1000))));
+      return deny(429, 'rate_limited', 'too many secret views, try again later');
+    }
     const v = (await pool.query(
       `select version, sealed from secret_version
         where secret_id = $1 and revoked_at is null and sealed is not null order by version desc limit 1`,
@@ -441,12 +446,16 @@ export async function registerSecretRoutes(
     // 열리지 않는다 = 이 서버 키링에 그 판의 키가 없다(keyLost). 값을 다시 넣어야 한다.
     if (!value) return deny(409, 'unreadable', 'this value cannot be opened with the key on this server');
 
+    // 그 사이 [잠그기]가 먼저 닿았으면 연장이 실패한다 — 잠근 뒤에 값이 나가지 않게 여기서도 막는다.
+    const until = await extendStepUp(pool, req.credentialHash!);
+    if (!until) return deny(403, 'step_up_required', 'unlock with your password to view secret values');
     await log('granted', null, v.version);
     await recordAudit(pool, {
       action: 'secret.revealed', ...actorOf(req), target: s.id, detail: { name: s.name, version: v.version, action },
     }, req);
     void reply.header('cache-control', 'no-store');
     return {
+      steppedUpUntil: until.toISOString(),
       name: s.name, kind: s.kind, filename: s.filename, version: v.version,
       ...(s.kind === 'text' ? { value: value.toString('utf8') } : { valueBase64: value.toString('base64') }),
     };

@@ -75,8 +75,8 @@ export type AuditAction =
   // MCP 레지스트리(스펙 §6).
   | 'mcp_server.set' | 'mcp_server.deleted'
   | 'password.changed'
-  // 다시 확인(114) — 비밀 보관소 소유자 보기 앞에서 비밀번호를 한 번 더 댄다.
-  | 'step_up.succeeded' | 'step_up.failed'
+  // 보관소 잠금 해제(114) — 비밀 보관소 소유자 보기 앞에서 비밀번호를 한 번 더 댄다. ended = 잠그기.
+  | 'step_up.succeeded' | 'step_up.failed' | 'step_up.ended'
   | 'channel.created' | 'channel.updated' | 'channel.archived' | 'channel.unarchived' | 'channel.deleted' | 'message.deleted'
   // #218: 메시지 고정·해제. 채널 전역 상태를 바꾸는 조작이라 남는 기록이 있어야 한다.
   // detail 에는 messageId 만 남긴다 — 본문을 복사하면 그 메시지를 지워도 감사에 남는다

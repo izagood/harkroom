@@ -10,7 +10,7 @@ import { recordAudit } from '../audit.js';
 import type { RateLimiter, RateLimitRule } from '../rateLimit.js';
 import { createChannel } from '../services/channels.js';
 import { getHandleGroupByHandle } from '../services/handleGroups.js';
-import { STEP_UP_WINDOW_MS } from '../services/stepUp.js';
+import { endStepUp, openStepUp } from '../services/stepUp.js';
 
 const SESSION_TTL_DAYS = 14;
 
@@ -341,8 +341,9 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts:
   });
 
   /**
-   * 다시 확인(step-up). 로그인한 **세션**이 비밀번호를 한 번 더 대면 그 세션 행에만 `stepped_up_until` 을 적는다
-   * (`services/stepUp.ts`). 비밀 보관소 소유자 보기가 이 창을 요구한다 — 세션 토큰만 훔쳐서는 값이 안 나온다.
+   * 보관소 잠금 해제(step-up). 로그인한 **세션**이 비밀번호를 한 번 더 대면 그 세션 행에만 창을 연다
+   * (`services/stepUp.ts` — 15분, 볼 때마다 연장, 최대 1시간). 비밀 보관소 소유자 보기가 이 창을 요구한다 —
+   * 세션 토큰만 훔쳐서는 값이 안 나온다. 응답의 `steppedUpUntil` 이 화면 머리줄의 「HH:MM까지」다.
    *
    * - 사람·세션만. PAT·오퍼레이터는 세션 행이 없으니 창을 열 곳도 없다(403).
    * - 시도는 검증 **앞**에서 계정마다 센다(로그인과 같은 이유 — 동시에 보낸 요청이 모두 통과하지 않게).
@@ -379,12 +380,26 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts:
       return reply.code(401).send({ error: { code: 'invalid_credentials', message: 'wrong password' } });
     }
     limiter.reset(key);
-    const until = new Date(Date.now() + STEP_UP_WINDOW_MS);
-    await pool.query(`update session set stepped_up_until = $1 where token_hash = $2`, [until, req.credentialHash]);
+    const until = await openStepUp(pool, req.credentialHash!);
     await recordAudit(pool, {
       action: 'step_up.succeeded', actorId: account.id, actorHandle: account.handle,
     }, req);
-    return { until: until.toISOString() };
+    return { steppedUpUntil: until.toISOString() };
+  });
+
+  /**
+   * 잠그기 — [잠그기]·설정 닫기·앱 숨김 때 화면이 부른다. **멱등**이다: 이미 잠겼어도 204.
+   * 화면은 응답을 기다리지 않고 먼저 잠근다. 실제로 열려 있던 창을 닫았을 때만 감사 기록을 남긴다.
+   */
+  app.delete('/auth/step-up', { preHandler: app.requireAccount }, async (req, reply) => {
+    const account = req.account!;
+    if (account.kind !== 'human' || req.authVia !== 'session') {
+      return reply.code(403).send({ error: { code: 'session_required', message: 'step-up is only for a signed-in person' } });
+    }
+    if (await endStepUp(pool, req.credentialHash!)) {
+      await recordAudit(pool, { action: 'step_up.ended', actorId: account.id, actorHandle: account.handle }, req);
+    }
+    return reply.code(204).send();
   });
 
   /**

@@ -221,4 +221,10 @@ export class RevealLimiter {
     this.hits.set(key, recent);
     return true;
   }
+  /** 막혔을 때 다음 한 번이 풀리기까지 남은 시간(ms). 막히지 않았으면 0. Retry-After 용. */
+  retryAfterMs(key: string, nowMs: number): number {
+    const recent = (this.hits.get(key) ?? []).filter((t) => nowMs - t < this.windowMs);
+    if (recent.length < this.max) return 0;
+    return Math.max(0, (recent[0] ?? nowMs) + this.windowMs - nowMs);
+  }
 }
