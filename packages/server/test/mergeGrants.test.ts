@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
@@ -198,7 +198,7 @@ describe('repo.merge grant', () => {
     });
     it('merge-grants 는 자기 저장소 목록만 준다', async () => {
       const res = await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asAgent() });
-      expect(res.json()).toEqual({ repos: ['izagood/harkroom'] });
+      expect(res.json()).toEqual({ repos: ['izagood/harkroom'], approvals: [] });
     });
     it('merge-results 는 그 턴의 스레드에 시스템 줄을 쓰고(래퍼 보고라고 밝힘) 감사에 남긴다', async () => {
       const cause = await mention(alice.accountId);
@@ -469,6 +469,8 @@ describe('repo.merge grant', () => {
   // 조직 와일드카드(jaebin 10-09): `owner/*` 는 그 owner 의 저장소 전부 — 다른 owner·`*/*`·부분 패턴·배포 저장소는 아니다.
   describe('1회 승인 merge_approval (스레드 1b75d7a0) — 권한 요청 카드의 [이번 한 번 머지]', () => {
     const SHA2 = 'b'.repeat(40);
+    // 앞 시험들이 이 에이전트로 거절 기록을 많이 남겼다 — 하루 상한(L2, 20개)에 걸리지 않게 그 기록을 어제로 민다.
+    beforeEach(async () => { await pool.query(`update merge_denial set created_at = created_at - interval '2 days' where agent_id = $1`, [agentId]); });
     const decide = (token: string, requestId: string, payload: Record<string, unknown>, decision = 'approve-once', target = agentId) =>
       app.inject({ method: 'POST', url: `/agents/${target}/permission-requests/${requestId}/${decision}`, headers: auth(token), payload });
     const threadOf = async (cause: string) => (await pool.query(`select coalesce(thread_root_id, id) as t from message where id = $1`, [cause])).rows[0].t as string;
@@ -609,7 +611,7 @@ describe('repo.merge grant', () => {
       expect((await orgCheck(l, 'izagood/harkroom')).json().error.code).toBe('not_granted');
       // 래퍼가 `*` 를 저장소로 물어도 grant 문자열과 맞지 않는다 — 실제 저장소 자리는 owner/name 하나다.
       expect((await orgCheck(l, 'rebellions-sw/*')).statusCode).toBe(400);
-      expect((await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asOrg() })).json()).toEqual({ repos: ['rebellions-sw/*'] });
+      expect((await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asOrg() })).json()).toEqual({ repos: ['rebellions-sw/*'], approvals: [] });
     });
 
     it('배포 저장소도 따로 빼지 않는다 — 조직 grant 가 덮고, 목록에 배포 표시가 없다(jaebin 10-10)', async () => {
