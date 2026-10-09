@@ -84,6 +84,34 @@ describe('#251 비활성화 컨트롤은 admin 에게만 보인다', () => {
   });
 });
 
+describe('#1256 수정 2 — 「활성화」는 위험 구역 밖, 「비활성화」는 안', () => {
+  // 다시 켜는 것은 되돌릴 수 있는 조작이라 빨간 위험 구역에 세우지 않는다(designer).
+  // 끄는 것(PAT 폐기)은 위험 구역 안이고, 삭제는 상태와 무관하게 늘 위험 구역 안이다.
+  it('활성 상태면 비활성화 칸이 위험 구역 안에 있고 중립 카드는 없다', async () => {
+    fakeController([agent('rusalka')]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    const zone = screen.getByTestId('agent-danger-zone');
+    expect(within(zone).getByTestId('agent-disable-section')).toBeTruthy();
+    expect(within(zone).getByTestId('agent-delete-section')).toBeTruthy();
+    expect(screen.queryByTestId('agent-reenable-card')).toBeNull();
+  });
+
+  it('비활성 상태면 활성화 칸은 중립 카드에 서고 위험 구역에는 삭제만 남는다', async () => {
+    fakeController([agent('rusalka', { disabled: true })]);
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+
+    const card = screen.getByTestId('agent-reenable-card');
+    expect(within(card).getByRole('button', { name: '에이전트 활성화' })).toBeTruthy();
+    const zone = screen.getByTestId('agent-danger-zone');
+    expect(within(zone).queryByTestId('agent-disable-section')).toBeNull();
+    expect(within(zone).getByTestId('agent-delete-section')).toBeTruthy();
+    expect(screen.getAllByTestId('agent-disable-section')).toHaveLength(1);
+  });
+});
+
 describe('#251 끄기는 확인 단계를 거친다', () => {
   // 회귀선 4. 확인 문구는 **두 사실**을 다 말해야 한다: PAT 가 전부 폐기된다, 다시 켤 때
   // PAT 는 필요 없다(옛 문구의 「새로 발급해야 한다」는 발급이 닫혀 틀린 지시다 — c4f4dab4).
