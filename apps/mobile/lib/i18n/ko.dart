@@ -618,6 +618,12 @@ class StringsKo implements Strings {
 
   @override
   String get askFailed => '고르지 못했다';
+  @override
+  String get mergeOnceButton => '이번 한 번 머지';
+  @override
+  String get mergeOnceSheetTitle => '데스크톱에서 승인하세요';
+  @override
+  String get mergeOnceSheetBody => '이번 한 번 머지는 머지할 GitHub 계정을 고르는 승인이다. 계정은 그 에이전트가 도는 기기의 것이라 데스크톱 앱의 이 카드에서 고른다. 7일 허락과 거절은 여기서도 된다.';
 
   @override
   String get reactionFailed => '리액션을 바꾸지 못했다';
