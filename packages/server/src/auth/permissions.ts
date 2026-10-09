@@ -14,7 +14,8 @@
  */
 import type { Pool } from 'pg';
 import type { AccountView, Capability, PermissionTarget } from '@harkroom/shared';
-import { CAPABILITIES, MEMBER_DEFAULT_CAPABILITIES, repoScope } from '@harkroom/shared';
+import { CAPABILITIES, MEMBER_DEFAULT_CAPABILITIES, orgScopeOf, repoScope } from '@harkroom/shared';
+import { deployRepoScopes } from '../services/mergeDenials.js';
 
 export async function hasGrant(pool: Pool, accountId: string, cap: Capability, scope: string): Promise<boolean> {
   // scope 가 주어져도 전역('') grant 는 언제나 그 대상을 덮는다 — 전역이 대상 한정보다 넓다.
@@ -55,7 +56,11 @@ export async function isOwnerOf(pool: Pool, accountId: string, target: Permissio
 /**
  * `repo.merge` 는 `can()` 을 타지 않는다(security F1·F2). 세 층 중 어느 것도 이 capability 를 열지 못한다:
  * 소유(에이전트가 저장소를 "소유"하지 않는다) · 전역 grant('' — 전 저장소가 열리는 구멍) · admin 역할.
- * 오직 (에이전트, 'repo.merge', 'repo:<owner>/<name>') 정확 일치 grant 하나다.
+ * 오직 (에이전트, 'repo.merge', 'repo:<owner>/<name>') 정확 일치 grant, 또는 그 owner 의 조직 grant `repo:<owner>/*`
+ * (jaebin 10-09) 둘뿐이다. 조직 grant 는 **배포 저장소**(`HARKROOM_MERGE_DEPLOY_REPOS`)를 덮지 않는다 — 머지가 곧 배포인
+ * 저장소는 언제나 정확한 이름으로만 연다(카드 C6 와 같은 규칙).
+ *
+ * 둘 다 있으면 `allow_agent_cause` 가 켜진 쪽, 그다음 정확 일치를 고른다 — 어느 grant 든 허락하면 허락이다.
  *
  * 돌려주는 것은 판정에 쓴 grant 의 사실(누가·언제·에이전트 지시 허용 여부)이다 — 호출부가 감사·시스템 줄에
  * 그대로 적는다. 없으면 null.
@@ -65,13 +70,16 @@ export async function mergeGrantFor(
 ): Promise<{ scope: string; grantedBy: string; grantedAt: string; expiresAt: string | null; allowAgentCause: boolean } | null> {
   const scope = repoScope(repo);
   if (!scope) return null;
+  const org = orgScopeOf(scope);
+  const scopes = org && !deployRepoScopes().has(scope) ? [scope, org] : [scope];
   const res = await pool.query(
     `select scope, granted_by as "grantedBy", granted_at as "grantedAt", expires_at as "expiresAt",
             allow_agent_cause as "allowAgentCause"
        from account_grant
-      where account_id = $1 and capability = 'repo.merge' and scope = $2
-        and (expires_at is null or expires_at > now()) limit 1`,
-    [agentId, scope],
+      where account_id = $1 and capability = 'repo.merge' and scope = any($2::text[])
+        and (expires_at is null or expires_at > now())
+      order by allow_agent_cause desc, (scope = $3) desc limit 1`,
+    [agentId, scopes, scope],
   );
   return (res.rows[0] as { scope: string; grantedBy: string; grantedAt: string; expiresAt: string | null; allowAgentCause: boolean } | undefined) ?? null;
 }

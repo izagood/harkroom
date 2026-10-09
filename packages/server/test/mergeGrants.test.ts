@@ -8,6 +8,7 @@ import { can, mergeGrantFor } from '../src/auth/permissions.js';
 import { mintPat } from '../src/services/pats.js';
 import { bumpDenialCard, linkDenialCard, prepareDenialCard } from '../src/services/mergeDenials.js';
 import { MERGE_DENIAL_DAILY_CAP } from '../src/services/mergeGrants.js';
+import { openPermissionRequest, releaseGrant } from '../src/services/permissionRequests.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
@@ -503,6 +504,89 @@ describe('repo.merge grant', () => {
         const elsewhere = await mention(alice.accountId);
         expect((await ask({ threadRootId: elsewhere, mergeDenialId: body.error.denialId! })).error.code).toBe('denial_other_thread');
       });
+    });
+  });
+
+  // 조직 와일드카드(jaebin 10-09): `owner/*` 는 그 owner 의 저장소 전부 — 다른 owner·`*/*`·부분 패턴·배포 저장소는 아니다.
+  describe('조직 grant owner/*', () => {
+    let orgAgent: string;
+    const asOrg = () => ({ ...auth(op.token), 'x-harkroom-agent': orgAgent });
+    const orgLease = async (): Promise<{ id: string; token: string }> => {
+      const m = await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'merge it', 'user') returning id`, [ch, alice.accountId]);
+      await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [orgAgent, m.rows[0].id]);
+      return (await app.inject({ method: 'POST', url: '/agent/turn-leases', headers: asOrg(), payload: { causeMessageId: m.rows[0].id } })).json().lease;
+    };
+    const orgCheck = (l: { id: string; token: string }, repo: string) =>
+      app.inject({ method: 'POST', url: '/agent/merge-checks', headers: asOrg(), payload: { leaseId: l.id, token: l.token, repo, number: 9, headSha: SHA } });
+
+    beforeAll(async () => {
+      orgAgent = (await createAgent(app, admin.token, 'orgtm')).accountId;
+      await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [orgAgent, alice.accountId]);
+      await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [orgAgent, op.operatorId, admin.accountId]);
+    });
+
+    it('* 하나·*/*·owner 자리의 *·부분 패턴은 400, owner/* 는 소문자로 저장된다', async () => {
+      for (const scope of ['repo:*', 'repo:*/*', 'repo:*/harkroom', 'repo:rebellions-sw/ab*', 'repo:rebellions-sw/**']) {
+        const res = await grant(alice.token, { scope }, orgAgent);
+        // `repo:*` 는 본문 검사(zod)에서 먼저 bad_request 로 걸린다 — 어느 쪽이든 400 이고 grant 는 안 생긴다.
+        expect(res.statusCode, scope).toBe(400);
+        expect(['bad_scope', 'bad_request'], scope).toContain(res.json().error.code);
+      }
+      const res = await grant(alice.token, { scope: 'repo:Rebellions-SW/*' }, orgAgent);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().grants).toEqual([expect.objectContaining({ capability: 'repo.merge', scope: 'repo:rebellions-sw/*' })]);
+      // F2 는 그대로다 — 소유자가 아니면 조직 grant 도 못 준다.
+      expect((await grant(bob.token, { scope: 'repo:rebellions-sw/*' }, orgAgent)).statusCode).toBe(403);
+    });
+
+    it('같은 owner 의 저장소에는 맞고, 다른 owner·저장소 자리의 * 에는 안 맞는다', async () => {
+      expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/npu')).toMatchObject({ scope: 'repo:rebellions-sw/*', grantedBy: alice.accountId });
+      expect(await mergeGrantFor(pool, orgAgent, 'Rebellions-SW/Other')).toMatchObject({ scope: 'repo:rebellions-sw/*' });
+      expect(await mergeGrantFor(pool, orgAgent, 'izagood/harkroom')).toBeNull();
+      expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw-evil/npu')).toBeNull();
+      expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/*')).toBeNull();
+      const l = await orgLease();
+      const ok = await orgCheck(l, 'rebellions-sw/npu');
+      expect(ok.statusCode).toBe(200);
+      expect(ok.json()).toMatchObject({ allowed: true, repo: 'rebellions-sw/npu', grantedBy: alice.accountId });
+      expect((await orgCheck(l, 'izagood/harkroom')).json().error.code).toBe('not_granted');
+      // 래퍼가 `*` 를 저장소로 물어도 grant 문자열과 맞지 않는다 — 실제 저장소 자리는 owner/name 하나다.
+      expect((await orgCheck(l, 'rebellions-sw/*')).statusCode).toBe(400);
+      expect((await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asOrg() })).json()).toEqual({ repos: ['rebellions-sw/*'] });
+    });
+
+    it('배포 저장소는 조직 grant 가 덮지 않는다 — 정확한 이름 grant 로만 열린다', async () => {
+      const prev = process.env.HARKROOM_MERGE_DEPLOY_REPOS;
+      process.env.HARKROOM_MERGE_DEPLOY_REPOS = 'rebellions-sw/deploy';
+      try {
+        expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/deploy')).toBeNull();
+        expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/npu')).not.toBeNull();
+        expect((await grant(alice.token, { scope: 'repo:rebellions-sw/deploy' }, orgAgent)).statusCode).toBe(200);
+        expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/deploy')).toMatchObject({ scope: 'repo:rebellions-sw/deploy' });
+      } finally {
+        if (prev === undefined) delete process.env.HARKROOM_MERGE_DEPLOY_REPOS; else process.env.HARKROOM_MERGE_DEPLOY_REPOS = prev;
+        await revoke(alice.token, 'repo:rebellions-sw/deploy', orgAgent);
+      }
+    });
+
+    it('정확 grant 와 조직 grant 가 둘 다 있으면 allow_agent_cause 가 켜진 쪽을 쓴다', async () => {
+      expect((await grant(alice.token, { scope: 'repo:rebellions-sw/npu', allowAgentCause: false }, orgAgent)).statusCode).toBe(200);
+      expect((await grant(alice.token, { scope: 'repo:rebellions-sw/*', allowAgentCause: true }, orgAgent)).statusCode).toBe(200);
+      expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/npu')).toMatchObject({ scope: 'repo:rebellions-sw/*', allowAgentCause: true });
+      expect((await grant(alice.token, { scope: 'repo:rebellions-sw/*', allowAgentCause: false }, orgAgent)).statusCode).toBe(200);
+      expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/npu')).toMatchObject({ scope: 'repo:rebellions-sw/npu' });
+      expect((await revoke(alice.token, 'repo:rebellions-sw/npu', orgAgent)).statusCode).toBe(204);
+    });
+
+    it('permission.request 로는 조직 전체를 청하지 못한다(org_wide) — 내려놓기는 된다', async () => {
+      const thread = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'x', 'user') returning id`, [ch, alice.accountId])).rows[0].id as string;
+      const r = await openPermissionRequest(pool, { agentId: orgAgent, kind: 'merge', repo: 'rebellions-sw/*', reason: 'all', channelId: ch, threadRootId: thread });
+      expect(r).toMatchObject({ ok: false, refusal: { code: 'org_wide' } });
+      expect(await openPermissionRequest(pool, { agentId: orgAgent, kind: 'merge', repo: '*/*', reason: 'all', channelId: ch, threadRootId: thread }))
+        .toMatchObject({ ok: false, refusal: { code: 'bad_repo' } });
+      expect(await releaseGrant(pool, { agentId: orgAgent, kind: 'merge', repo: 'Rebellions-SW/*', channelId: ch }))
+        .toMatchObject({ ok: true, scope: 'repo:rebellions-sw/*' });
+      expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/npu')).toBeNull();
     });
   });
 });

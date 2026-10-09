@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AgentView, ApiConnectorView, GrantRow } from '@harkroom/shared';
 import { ApiGrantForm } from './ApiGrantForm';
-import { repoScope } from '@harkroom/shared';
+import { isOrgRepoScope, repoGrantScope } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { ApiError } from '../../lib/api';
@@ -33,6 +33,8 @@ type Expiry = 'none' | '7d' | '30d';
 
 /** `repo:<owner>/<name>` → `owner/name`. 서버가 소문자로 정규화해 돌려준다. */
 const repoOf = (scope: string): string => scope.replace(/^repo:/, '');
+/** `repo:<owner>/*` 의 owner — 조직 전체 grant 가 아니면 null(jaebin 10-09). */
+const orgOf = (scope: string): string | null => isOrgRepoScope(scope) ? scope.slice('repo:'.length, -2) : null;
 
 /** 살아 있는 `repo.merge` grant 수 — 목록 카드의 「머지 N」(P1)과 이 절이 같은 셈을 쓴다. */
 export function liveMergeGrantCount(rows: readonly GrantRow[], now = Date.now()): number {
@@ -119,9 +121,16 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
     try { await fn(); await load(); } catch (e) { setError(explain(e)); } finally { setBusy(false); }
   };
 
-  // 저장소 이름은 **정확한 이름 여러 개**(designer 안) — 쉼표·공백·줄바꿈으로 나눈다. 와일드카드는 없다(서버 F1).
+  // 저장소 이름은 **정확한 이름 여러 개**(designer 안) — 쉼표·공백·줄바꿈으로 나눈다. 와일드카드는 조직 전체 `owner/*` 하나뿐이다
+  // (jaebin 10-09) — `*`·owner 자리의 `*`·`owner/ab*` 는 서버가 거절한다(F1). 모양 판정은 서버와 같은 `repoGrantScope` 다.
   const repos = [...new Set(reposText.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean))];
-  const badRepos = repos.filter((r) => repoScope(r) === null);
+  const badRepos = repos.filter((r) => repoGrantScope(r) === null);
+  const orgRepos = repos.map((r) => repoGrantScope(r)).filter((s): s is string => !!s && isOrgRepoScope(s)).map((s) => orgOf(s)!);
+  /** 사람에게 보일 저장소 이름 — 조직 전체면 「owner 조직 전체」. */
+  const repoLabel = (scope: string): string => {
+    const org = orgOf(scope);
+    return org ? t('agents.grants.orgWide', { owner: org }) : repoOf(scope);
+  };
   const expiresAt = (): string | null => {
     if (expiry === 'none') return null;
     const days = expiry === '7d' ? 7 : 30;
@@ -129,7 +138,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   };
   const submit = () => run(async () => {
     const at = expiresAt();
-    for (const r of repos) await getController().putGrant(agent.id, { capability: CAP, scope: repoScope(r) as string, expiresAt: at });
+    for (const r of repos) await getController().putGrant(agent.id, { capability: CAP, scope: repoGrantScope(r) as string, expiresAt: at });
     setReposText(''); setExpiry('none'); setAdding(false);
   });
 
@@ -296,6 +305,11 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                 {/* 부여 종류 이름은 두되 한 단 낮춘다(지난 nit n3) — 지금 주인공은 저장소다. */}
                 <span className="text-fg-muted">{t('agents.grants.merge')}</span>
                 <span className="font-mono">{repo}</span>
+                {orgOf(g.scope) && (
+                  <span className="rounded-row border border-warning-border bg-warning-surface px-1 text-warning" data-testid={`agent-grant-org-${orgOf(g.scope)}`}>
+                    {t('agents.grants.orgWideBadge')}
+                  </span>
+                )}
                 <span className="text-fg-subtle">
                   {t('agents.grants.by', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
                   {' · '}
@@ -308,7 +322,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   <button
                     className="ml-auto rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50"
                     disabled={off}
-                    aria-label={t('agents.grants.renewAria', { repo })}
+                    aria-label={t('agents.grants.renewAria', { repo: repoLabel(g.scope) })}
                     onClick={() => void renew(g)}
                   >
                     {t('agents.grants.renew7d')}
@@ -318,7 +332,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   <button
                     className={`${expired && canGrant ? '' : 'ml-auto '}rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50`}
                     disabled={off}
-                    aria-label={t('agents.grants.revokeAria', { repo })}
+                    aria-label={t('agents.grants.revokeAria', { repo: repoLabel(g.scope) })}
                     onClick={() => setRevoking(g)}
                   >
                     {t('agents.grants.revoke')}
@@ -394,6 +408,11 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             />
           </label>
           {badRepos.length > 0 && <p className="mt-1 text-meta text-danger">{t('agents.grants.errScope')}: {badRepos.join(', ')}</p>}
+          {orgRepos.length > 0 && (
+            <p className="mt-1 text-meta text-warning" data-testid="agent-grants-org-warning">
+              {t('agents.grants.orgWideWarning', { owners: orgRepos.join(', ') })}
+            </p>
+          )}
           <label className="mt-2 flex items-center gap-2 text-meta text-fg">
             {t('agents.grants.expiry')}
             <select
@@ -457,12 +476,12 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             ? t('agents.grants.secretCreateRevokeTitle', { handle: agent.handle })
             : revoking.capability === 'api.call'
             ? t('apiGrant.revokeTitle', { name: connectors.find((c) => `connector:${c.id}` === revoking.scope)?.name ?? '' })
-            : t('agents.grants.revokeTitle', { repo: repoOf(revoking.scope) })}
+            : t('agents.grants.revokeTitle', { repo: repoLabel(revoking.scope) })}
           detail={revoking.capability === SECRET_CAP
             ? t('agents.grants.secretCreateRevokeDetail')
             : revoking.capability === 'api.call'
             ? t('apiGrant.revokeDetail', { handle: agent.handle })
-            : t('agents.grants.revokeDetail', { handle: agent.handle, repo: repoOf(revoking.scope) })}
+            : t('agents.grants.revokeDetail', { handle: agent.handle, repo: repoLabel(revoking.scope) })}
           confirmLabel={t('agents.grants.revoke')}
           cancelLabel={t('agents.grants.cancel')}
           danger

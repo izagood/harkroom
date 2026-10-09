@@ -10,7 +10,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { CAPABILITIES, ROLES, parseToolScope, repoScope, validateToolRule, type ApiGrantLimits, type GrantRow } from '@harkroom/shared';
+import { CAPABILITIES, ROLES, parseToolScope, repoGrantScope, validateToolRule, type ApiGrantLimits, type GrantRow } from '@harkroom/shared';
 import { hasWriteMethod, isConnectorScope, parseLimits } from '../auth/apiGrants.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
@@ -67,16 +67,17 @@ async function checkApiGrant(
 
 /**
  * `repo.merge` grant 의 모양·권한(security F1·F2). 일반 grant 와 다른 점 둘:
- * - scope 는 `repo:<owner>/<name>` 하나뿐이고 소문자로 정규화한다. 빈 scope 는 400 — 전역 머지 권한은 없다.
+ * - scope 는 `repo:<owner>/<name>` 또는 조직 전체 `repo:<owner>/*`(jaebin 10-09) 하나이고 소문자로 정규화한다. 빈 scope·
+ *   `*` 하나·부분 패턴은 400 — 전역 머지 권한은 없다.
  * - **주는 사람은 그 에이전트의 소유자인 사람**이다. admin 역할은 여기서 아무 힘이 없다(거두기만 한다).
  *   에이전트 PAT·오퍼레이터 토큰은 사람이 아니므로 403.
  */
 async function checkMergeGrant(
   pool: Pool, req: { account?: { id: string; kind: string } | null }, targetId: string, scope: string,
 ): Promise<{ ok: true; scope: string } | { ok: false; status: 400 | 403 | 404; code: string; message: string }> {
-  const normalized = repoScope(scope.replace(/^repo:/i, ''));
+  const normalized = repoGrantScope(scope.replace(/^repo:/i, ''));
   if (!scope || !normalized) {
-    return { ok: false, status: 400, code: 'bad_scope', message: 'repo.merge 의 scope 는 repo:<owner>/<name> 하나다 — 전역(빈 scope)은 없다' };
+    return { ok: false, status: 400, code: 'bad_scope', message: 'repo.merge 의 scope 는 repo:<owner>/<name> 또는 조직 전체 repo:<owner>/* 하나다 — 전역(빈 scope)·부분 패턴은 없다' };
   }
   if (!req.account || req.account.kind !== 'human') {
     return { ok: false, status: 403, code: 'forbidden', message: 'repo.merge 는 사람만 줄 수 있다' };
@@ -210,7 +211,7 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
       let scope = req.query.scope ?? '';
       // 거두기: admin, 그리고 `repo.merge`·`api.call`·`tool.allow` 는 그 에이전트의 소유자도(F2 — 준 사람이 거둘 수 있어야 한다).
       if (req.params.capability === 'repo.merge' || req.params.capability === 'api.call' || req.params.capability === 'tool.allow') {
-        if (req.params.capability === 'repo.merge') scope = repoScope(scope.replace(/^repo:/i, '')) ?? scope;
+        if (req.params.capability === 'repo.merge') scope = repoGrantScope(scope.replace(/^repo:/i, '')) ?? scope;
         const owner = await pool.query(`select 1 from agent_config where account_id = $1 and owner_account_id = $2`, [id, req.account!.id]);
         if (!owner.rowCount && !req.account!.isAdmin) return reply.code(403).send({ error: { code: 'forbidden', message: '소유자나 admin 만 거둔다' } });
       } else if (!req.account!.isAdmin) {
