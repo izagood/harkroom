@@ -46,17 +46,23 @@ export interface MergeDenialMeta {
   firstAt: string;
   lastAt: string;
   granted?: { by: string; at: string; expiresAt: string };
+  /** 왜 막혔나 — `not_granted`(권한 없음) · `cause_not_human`(권한은 있는데 사람이 띄운 턴이 아님). 카드 문구가 가른다. */
+  reason?: 'not_granted' | 'cause_not_human';
+  /** 이 거절 기록의 head — 1회 승인은 이 head 하나에 묶인다. */
+  headSha?: string;
+  /** 1회 승인됨(스레드 1b75d7a0). */
+  approvedOnce?: { by: string; at: string; expiresAt: string; ghUser: string; relaxChecks: boolean };
 }
 
 interface DenialRow {
-  id: string; agentId: string; scope: string; number: number; channelId: string; threadRootId: string;
-  expired: boolean; used: boolean; cardMessageId: string | null;
+  id: string; agentId: string; scope: string; number: number; headSha: string; channelId: string; threadRootId: string;
+  expired: boolean; used: boolean; cardMessageId: string | null; reason: 'not_granted' | 'cause_not_human';
 }
 
 async function readDenial(db: Pool | PoolClient, id: string, now: Date, lock = false): Promise<DenialRow | undefined> {
   return (await db.query<DenialRow>(
-    `select id, agent_id as "agentId", scope, pr_number as number, channel_id as "channelId", thread_root_id as "threadRootId",
-            expires_at <= $2 as expired, used_at is not null as used, card_message_id as "cardMessageId"
+    `select id, agent_id as "agentId", scope, pr_number as number, head_sha as "headSha", channel_id as "channelId", thread_root_id as "threadRootId",
+            expires_at <= $2 as expired, used_at is not null as used, card_message_id as "cardMessageId", reason
        from merge_denial where id = $1${lock ? ' for update' : ''}`, [id, now])).rows[0];
 }
 
@@ -98,7 +104,7 @@ export async function prepareDenialCard(
   const meta: MergeDenialMeta = {
     key, denialId: d.id, agentId: d.agentId, ownerAccountId: owner?.ownerAccountId ?? null,
     repo: d.scope.slice('repo:'.length), number: d.number, deployRepo: deployRepoScopes().has(d.scope),
-    count: 1, firstAt: now.toISOString(), lastAt: now.toISOString(),
+    count: 1, firstAt: now.toISOString(), lastAt: now.toISOString(), reason: d.reason, headSha: d.headSha,
   };
   return { ok: true, meta, existingCardId: existing?.id ?? null };
 }
@@ -113,13 +119,14 @@ export async function linkDenialCard(pool: Pool, denialId: string, cardMessageId
  * 이미 준(granted) 카드면 그 표시는 지운다 — 다시 막혔다는 것은 그 권한이 지금 없다는 뜻이다(거둬졌거나 만료).
  */
 export async function bumpDenialCard(pool: Pool, cardId: string, meta: MergeDenialMeta, now = new Date()): Promise<void> {
+  // 지난 승인(granted·approvedOnce) 표시는 지운다 — 다시 막혔다는 것은 그 권한·승인이 지금 없다는 뜻이다. 사유·head 는 새 기록 것으로.
   const r = await pool.query(
-    `update message set meta = jsonb_set(jsonb_set(jsonb_set(jsonb_set(meta #- '{mergeDenial,granted}',
-         '{mergeDenial,count}', to_jsonb(coalesce((meta->'mergeDenial'->>'count')::int, 1) + 1)),
-         '{mergeDenial,lastAt}', to_jsonb($2::text)),
-         '{mergeDenial,denialId}', to_jsonb($3::text)),
-         '{mergeDenial,number}', to_jsonb($4::int))
-      where id = $1 returning id`, [cardId, now.toISOString(), meta.denialId, meta.number]);
+    `update message set meta = jsonb_set(meta, '{mergeDenial}',
+         ((meta->'mergeDenial') - 'granted' - 'approvedOnce') || jsonb_build_object(
+           'count', coalesce((meta->'mergeDenial'->>'count')::int, 1) + 1, 'lastAt', $2::text, 'denialId', $3::text,
+           'number', $4::int, 'reason', $5::text, 'headSha', $6::text))
+      where id = $1 and meta ? 'mergeDenial' returning id`,
+    [cardId, now.toISOString(), meta.denialId, meta.number, meta.reason ?? 'not_granted', meta.headSha ?? null]);
   await linkDenialCard(pool, meta.denialId, cardId);
   if (r.rowCount) await emitCard(pool, cardId);
 }
@@ -176,6 +183,67 @@ export async function grantFromDenial(
     emitEvent({ type: 'grant.changed', accountId: d.agentId, audience: 'all' });
     if (d.cardMessageId) await emitCard(pool, d.cardMessageId);
     return { ok: true, scope: d.scope, expiresAt: expiresAt.toISOString(), cardMessageId: d.cardMessageId };
+  } catch (err) {
+    await client.query('rollback').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** 1회 승인 기록을 쓸 수 있는 시한 — 승인한 뒤 하루 안에 래퍼가 써야 한다. */
+export const APPROVAL_TTL_MS = 24 * 3_600_000;
+
+/** GitHub 로그인 이름(영숫자·하이픈 1~39자, 하이픈으로 시작하지 않음). */
+export const GH_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+
+/**
+ * [이번 한 번 머지] — 거절 기록을 **한 번** 써서 (그 PR, 그 head, 그 스레드)에 묶인 1회 승인을 만든다(스레드 1b75d7a0).
+ * grant 를 주지 않는다. 사람 세션·소유자 판정은 라우트가 먼저 한다.
+ *
+ * - 저장소·PR·head·스레드는 요청에서 받지 않는다 — 이 거절 기록이다. 요청에서 받는 것은 gh 계정과 CI 완화 여부뿐이다.
+ * - 배포 저장소는 `confirmRepo` 에 저장소 이름을 정확히 쳐야 한다(jaebin 결정 — 경고만으로는 잘못 누른 탭을 못 막는다).
+ * - gh 계정이 오퍼레이터에서 그 저장소에 닿는지는 서버가 모른다 — 화면(③)이 #1265 닿음 확인을 통과한 계정만 보이고,
+ *   래퍼(②)가 그 계정으로 못 닿으면 머지하지 않는다(다른 계정으로 내려가지 않는다).
+ */
+export async function approveOnceFromDenial(
+  pool: Pool,
+  args: { agentId: string; denialId: string; actorId: string; ghUser: string; relaxChecks: boolean; confirmRepo?: string | null; now?: Date },
+): Promise<{ ok: true; approvalId: string; repo: string; number: number; headSha: string; expiresAt: string; cardMessageId: string | null } | ({ ok: false } & DenialGrantRefusal)> {
+  const now = args.now ?? new Date();
+  if (!GH_LOGIN_RE.test(args.ghUser)) return { ok: false, status: 403, code: 'bad_gh_user', message: 'ghUser must be a GitHub login' };
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const d = await readDenial(client, args.denialId, now, true);
+    if (!d || d.agentId !== args.agentId) { await client.query('rollback'); return { ok: false, status: 404, code: 'not_found', message: 'no such merge denial for this agent' }; }
+    const repo = d.scope.slice('repo:'.length);
+    if (deployRepoScopes().has(d.scope) && (args.confirmRepo ?? '').trim().toLowerCase() !== repo.toLowerCase()) {
+      await client.query('rollback');
+      return { ok: false, status: 403, code: 'deploy_repo_confirm', message: 'this is a deploy repository — type its full name to approve this merge' };
+    }
+    if (d.used) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_used', message: 'this denial was already used' }; }
+    if (d.expired) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_expired', message: 'this denial expired' }; }
+    const used = await client.query(
+      `update merge_denial set used_at = $2, used_by = $3 where id = $1 and used_at is null returning id`, [d.id, now, args.actorId]);
+    if (!used.rowCount) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_used', message: 'this denial was already used' }; }
+    const expiresAt = new Date(now.getTime() + APPROVAL_TTL_MS);
+    const row = (await client.query<{ id: string }>(
+      `insert into merge_approval (denial_id, agent_id, scope, pr_number, head_sha, gh_user, relax_checks, channel_id, thread_root_id, approved_by, approved_at, expires_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id`,
+      [d.id, d.agentId, d.scope, d.number, d.headSha, args.ghUser, args.relaxChecks, d.channelId, d.threadRootId, args.actorId, now, expiresAt])).rows[0]!;
+    if (d.cardMessageId) {
+      await client.query(
+        `update message set meta = jsonb_set(meta, '{mergeDenial,approvedOnce}', $2::jsonb) where id = $1 and meta ? 'mergeDenial'`,
+        [d.cardMessageId, JSON.stringify({ by: args.actorId, at: now.toISOString(), expiresAt: expiresAt.toISOString(), ghUser: args.ghUser, relaxChecks: args.relaxChecks })]);
+    }
+    await client.query('commit');
+    await recordAudit(pool, {
+      action: 'repo.merge.approved_once', actorId: args.actorId, target: d.scope,
+      detail: { agentId: d.agentId, approvalId: row.id, denialId: d.id, reason: d.reason, number: d.number, headSha: d.headSha, ghUser: args.ghUser, relaxChecks: args.relaxChecks, deployRepo: deployRepoScopes().has(d.scope), expiresAt: expiresAt.toISOString() },
+    });
+    if (d.cardMessageId) await emitCard(pool, d.cardMessageId);
+    return { ok: true, approvalId: row.id, repo, number: d.number, headSha: d.headSha, expiresAt: expiresAt.toISOString(), cardMessageId: d.cardMessageId };
   } catch (err) {
     await client.query('rollback').catch(() => {});
     throw err;

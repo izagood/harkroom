@@ -25,8 +25,10 @@ export type MergeDenial =
   | 'lease_invalid' | 'bad_repo' | 'not_granted' | 'cause_not_human';
 
 export type MergeCheck =
-  | { ok: true; leaseId: string; channelId: string; threadRootId: string; scope: string; grantedBy: string; grantedAt: string; causeByHuman: boolean }
-  /** `denialId` 는 거절 카드를 세울 수 있는 거절에만 있다(`not_granted` 이고 나머지 판정은 통과 — C2). */
+  | { ok: true; leaseId: string; channelId: string; threadRootId: string; scope: string; grantedBy: string; grantedAt: string; causeByHuman: boolean;
+      /** 1회 승인(`merge_approval`)으로 통과했으면 그 기록 — 래퍼는 이 계정만 쓰고, `relaxChecks` 일 때만 CI·CLEAN 판정을 GitHub 에 맡긴다. */
+      approval?: { id: string; ghUser: string; relaxChecks: boolean } }
+  /** `denialId` 는 거절 카드를 세울 수 있는 거절에만 있다(사람이 띄운 턴의 `not_granted`, 그리고 `cause_not_human` — C2·1회 승인). */
   | { ok: false; code: MergeDenial; denialId?: string };
 
 /** 거절 기록(`merge_denial`)을 쓸 수 있는 시한 — 카드가 하루 한 장이라 하루. grant 의 기한(7일)과 다르다. */
@@ -105,37 +107,76 @@ export async function checkMerge(
 
   if (!leaseOk) return deny('lease_invalid');
   if (!scope) return deny('bad_repo');
+
+  // 1회 승인(스레드 1b75d7a0): 소유자가 이 (PR, head, 스레드)를 한 번 승인했으면 grant·사람 턴 판정 대신 그것을 인정한다.
+  // F1 임대·F2 저장소 모양은 위에서 이미 봤다. 소모는 `used_at is null` 을 단 한 문장 update — 두 래퍼가 동시에 와도 하나만 쓴다.
+  const approval = (await pool.query<{ id: string; ghUser: string; relaxChecks: boolean; approvedBy: string; approvedAt: Date }>(
+    `update merge_approval set used_at = $8, used_lease_id = $9
+      where id = (select id from merge_approval
+                   where agent_id = $1 and scope = $2 and pr_number = $3 and head_sha = $4
+                     and channel_id = $5 and thread_root_id = $6 and used_at is null and expires_at > $7
+                   order by approved_at desc limit 1)
+        and used_at is null
+      returning id, gh_user as "ghUser", relax_checks as "relaxChecks", approved_by as "approvedBy", approved_at as "approvedAt"`,
+    [args.agentId, scope, args.number, args.headSha, lease!.channelId, lease!.threadRootId, now, now, lease!.id])).rows[0];
+  if (approval) {
+    await recordAudit(pool, {
+      action: 'repo.merge.checked', actorId: args.agentId, target: scope,
+      detail: { number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: lease!.id, grantedBy: approval.approvedBy, approvalId: approval.id, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks, causeByHuman: causeByHuman(lease!) },
+    });
+    // 쓴 순간 스레드에 남긴다(무엇을·누구 승인으로·어느 계정으로). 본문은 고정 문구와 서버 값뿐 — 멘션이 풀리지 않게 handle 은 meta 에만.
+    await postMessage(pool, {
+      channelId: lease!.channelId, threadRootId: lease!.threadRootId, authorId: args.agentId, kind: 'system',
+      body: `🔓 ${scope.slice('repo:'.length)}#${args.number} 1회 머지 승인 사용 · head ${args.headSha.slice(0, 9)} · gh ${approval.ghUser}${approval.relaxChecks ? ' · CI 판정은 GitHub 에 맡김' : ''}`,
+      meta: { mergeApproval: { id: approval.id, repo: scope.slice('repo:'.length), number: args.number, headSha: args.headSha, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks, approvedBy: approval.approvedBy } },
+    });
+    return {
+      ok: true, leaseId: lease!.id, channelId: lease!.channelId, threadRootId: lease!.threadRootId, scope,
+      grantedBy: approval.approvedBy, grantedAt: approval.approvedAt.toISOString(), causeByHuman: causeByHuman(lease!),
+      approval: { id: approval.id, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks },
+    };
+  }
+
   const grant = await mergeGrantFor(pool, args.agentId, args.repo);
   const byHuman = causeByHuman(lease!);
-  if (!grant) {
-    const denied = await deny('not_granted');
-    // C2: 카드는 **나머지 판정을 다 통과한** 거절에만 — 사람이 띄우지 않은 턴(에이전트 위임)이 권한 카드를 만들지 못하게.
-    // 임대·저장소 모양은 위에서 이미 걸렀다. `allow_agent_cause` 는 grant 의 칸이라 grant 가 없으면 사람 턴만 남는다.
-    if (!byHuman) return denied;
-    // L2(security, #1158): 거절 기록은 무한히 늘지 않는다. ① (에이전트, 저장소, 채널, 스레드)에 안 쓰고 안 만료된 기록이 있으면
-    // 그것을 다시 쓴다 — PR·head·임대만 지금 것으로 바꾼다(카드는 어차피 그 묶음에 한 장이다). ② 새로 만드는 것은 에이전트마다
-    // 24시간에 `MERGE_DENIAL_DAILY_CAP` 개까지 — 넘으면 거절은 그대로 하되 카드용 id 는 주지 않는다(저장소 이름을 바꿔 가며 부르는 경우).
+
+  /**
+   * 거절 기록(`merge_denial`)을 남기고 카드용 id 를 준다. L2(security, #1158): ① (에이전트, 저장소, 채널, 스레드)에 안 쓰고 안 만료된
+   * 기록이 있으면 그것을 다시 쓴다 — PR·head·임대·사유만 지금 것으로 바꾼다(카드는 어차피 그 묶음에 한 장이다). ② 새로 만드는 것은
+   * 에이전트마다 24시간에 `MERGE_DENIAL_DAILY_CAP` 개까지 — 넘으면 거절은 그대로 하되 카드용 id 는 주지 않는다.
+   */
+  const denyWithCard = async (code: 'not_granted' | 'cause_not_human'): Promise<MergeCheck> => {
+    const denied = await deny(code);
     const reused = (await pool.query<{ id: string }>(
-      `update merge_denial set pr_number = $5, head_sha = $6, lease_id = $7
+      `update merge_denial set pr_number = $5, head_sha = $6, lease_id = $7, reason = $9
         where id = (select id from merge_denial
                      where agent_id = $1 and scope = $2 and channel_id = $3 and thread_root_id = $4
                        and used_at is null and expires_at > $8
                      order by created_at desc limit 1)
         returning id`,
-      [args.agentId, scope, lease!.channelId, lease!.threadRootId, args.number, args.headSha, lease!.id, now])).rows[0];
-    if (reused) return { ok: false, code: 'not_granted', denialId: reused.id };
+      [args.agentId, scope, lease!.channelId, lease!.threadRootId, args.number, args.headSha, lease!.id, now, code])).rows[0];
+    if (reused) return { ok: false, code, denialId: reused.id };
     const recent = (await pool.query<{ n: number }>(
       `select count(*)::int as n from merge_denial where agent_id = $1 and created_at > $2`,
       [args.agentId, new Date(now.getTime() - 24 * 3_600_000)])).rows[0]!.n;
     if (recent >= MERGE_DENIAL_DAILY_CAP) return denied;
     const row = (await pool.query<{ id: string }>(
-      `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+      `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at, reason)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
       [args.agentId, scope, args.number, args.headSha, lease!.channelId, lease!.threadRootId, lease!.id,
-        new Date(now.getTime() + MERGE_DENIAL_TTL_MS)])).rows[0]!;
-    return { ok: false, code: 'not_granted', denialId: row.id };
+        new Date(now.getTime() + MERGE_DENIAL_TTL_MS), code])).rows[0]!;
+    return { ok: false, code, denialId: row.id };
+  };
+
+  if (!grant) {
+    // C2: `not_granted` 카드는 **나머지 판정을 다 통과한** 거절에만 — 사람이 띄우지 않은 턴(에이전트 위임)이 권한 카드를 만들지 못하게.
+    // `allow_agent_cause` 는 grant 의 칸이라 grant 가 없으면 사람 턴만 남는다.
+    if (!byHuman) return deny('not_granted');
+    return denyWithCard('not_granted');
   }
-  if (!byHuman && !grant.allowAgentCause) return deny('cause_not_human');
+  // grant 는 있는데 사람이 띄운 턴이 아니다(wake·에이전트 위임) — 소유자가 카드에서 이 PR 을 1회 승인할 수 있게 카드 id 를 준다.
+  // 카드는 승인만 청할 뿐 아무것도 열지 않고, 하루 상한(L2) 안에서만 선다.
+  if (!byHuman && !grant.allowAgentCause) return denyWithCard('cause_not_human');
 
   await recordAudit(pool, {
     action: 'repo.merge.checked', actorId: args.agentId, target: scope,
@@ -177,8 +218,13 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   if (trail.rows.some((x) => x.action !== 'repo.merge.checked')) return { ok: false, code: 'already_reported' };
   if (!trail.rowCount) return { ok: false, code: 'not_checked' };
   const grant = await mergeGrantFor(pool, r.agentId, repo);
-  const granter = grant
-    ? (await pool.query<{ handle: string }>(`select handle from account where id = $1`, [grant.grantedBy])).rows[0]?.handle ?? null
+  // 1회 승인으로 통과한 판정이면 승인한 사람이 「권한」이다(grant 가 없을 수 있다).
+  const approvedBy = (await pool.query<{ approvedBy: string }>(
+    `select approved_by as "approvedBy" from merge_approval where used_lease_id = $1 and scope = $2 and pr_number = $3 and head_sha = $4`,
+    [lease.id, scope, r.number, r.headSha])).rows[0]?.approvedBy ?? null;
+  const granterId = approvedBy ?? grant?.grantedBy ?? null;
+  const granter = granterId
+    ? (await pool.query<{ handle: string }>(`select handle from account where id = $1`, [granterId])).rows[0]?.handle ?? null
     : null;
   // N2: 본문은 고정 문구뿐이다. 래퍼가 준 `error` 는 meta 에만 둔다 — `postMessage` 는 kind 와 상관없이
   // 본문의 멘션을 풀기 때문에 gh 의 오류 문구 속 `@…` 가 실제 부름이 된다.
@@ -187,7 +233,7 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
     : `⛔ ${repo}#${r.number} 머지 실패 · head ${r.headSha.slice(0, 9)} (래퍼 보고)`;
   const posted = await postMessage(pool, {
     channelId: lease.channelId, threadRootId: lease.threadRootId, authorId: r.agentId, body, kind: 'system',
-    meta: { merge: { repo, number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, result: r.result, grantedBy: grant?.grantedBy ?? null, error: r.error?.slice(0, 1000) ?? null } },
+    meta: { merge: { repo, number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, result: r.result, grantedBy: granterId, viaApproval: approvedBy !== null, error: r.error?.slice(0, 1000) ?? null } },
   });
   if (posted.failure) return { ok: false, code: 'post_failed' };
   const msg = posted.message;
@@ -204,4 +250,15 @@ export async function mergeableRepos(pool: Pool, agentId: string): Promise<strin
     `select scope from account_grant where account_id = $1 and capability = 'repo.merge'
         and (expires_at is null or expires_at > now()) order by scope`, [agentId]);
   return res.rows.map((r) => r.scope.slice('repo:'.length));
+}
+
+/**
+ * 이 에이전트에게 아직 안 쓴 1회 승인이 있는 (저장소, 스레드) — 러너가 그 스레드의 턴에만 래퍼 allow 를 넣는 근거(②).
+ * grant 가 하나도 없는 에이전트도 승인이 있으면 래퍼를 부를 수 있어야 한다.
+ */
+export async function openMergeApprovals(pool: Pool, agentId: string, now = new Date()): Promise<{ repo: string; number: number; channelId: string; threadRootId: string; expiresAt: string }[]> {
+  const res = await pool.query<{ scope: string; number: number; channelId: string; threadRootId: string; expiresAt: Date }>(
+    `select scope, pr_number as number, channel_id as "channelId", thread_root_id as "threadRootId", expires_at as "expiresAt"
+       from merge_approval where agent_id = $1 and used_at is null and expires_at > $2 order by approved_at`, [agentId, now]);
+  return res.rows.map((r) => ({ repo: r.scope.slice('repo:'.length), number: r.number, channelId: r.channelId, threadRootId: r.threadRootId, expiresAt: r.expiresAt.toISOString() }));
 }

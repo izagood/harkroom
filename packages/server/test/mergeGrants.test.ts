@@ -508,6 +508,91 @@ describe('repo.merge grant', () => {
   });
 
   // 조직 와일드카드(jaebin 10-09): `owner/*` 는 그 owner 의 저장소 전부 — 다른 owner·`*/*`·부분 패턴·배포 저장소는 아니다.
+  describe('1회 승인 merge_approval (스레드 1b75d7a0)', () => {
+    const SHA2 = 'b'.repeat(40);
+    const approve = (token: string, denialId: string, payload: Record<string, unknown>, target = agentId) =>
+      app.inject({ method: 'POST', url: `/agents/${target}/merge-denials/${denialId}/approve-once`, headers: auth(token), payload });
+    const threadOf = async (cause: string) => (await pool.query(`select coalesce(thread_root_id, id) as t from message where id = $1`, [cause])).rows[0].t as string;
+    /** 같은 스레드에 새 글을 하나 더 달아 그 글로 뜬 턴의 임대 — 승인은 스레드에 묶이므로 다음 턴도 같은 스레드여야 한다. */
+    const leaseInThread = async (thread: string, authorId: string) => {
+      const id = (await pool.query(
+        `insert into message (channel_id, thread_root_id, author_id, body, kind) values ($1, $2, $3, 'again', 'user') returning id`,
+        [ch, thread, authorId])).rows[0].id as string;
+      await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agentId, id]);
+      return lease(id);
+    };
+
+    it('cause_not_human 에도 denialId 를 주고, 소유자가 1회 승인하면 다음 판정이 grant·사람 턴 없이 한 번 통과한다', async () => {
+      expect((await grant(alice.token, { scope: 'repo:izagood/once-a' })).statusCode).toBe(200);
+      const cause = await mention(otherAgentId);
+      const thread = await threadOf(cause);
+      const denied = (await check(await lease(cause), 'izagood/once-a', { number: 5, headSha: SHA2 })).json();
+      expect(denied.error.code).toBe('cause_not_human');
+      expect(denied.error.denialId).toMatch(/^[0-9a-f-]{36}$/);
+      expect((await pool.query(`select reason from merge_denial where id = $1`, [denied.error.denialId])).rows[0].reason).toBe('cause_not_human');
+
+      const ok = await approve(alice.token, denied.error.denialId, { ghUser: 'rebel-jaebin', relaxChecks: true });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.json()).toMatchObject({ repo: 'izagood/once-a', number: 5, headSha: SHA2 });
+      // 러너가 읽는 목록에 그 스레드가 실린다(②).
+      const listed = (await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asAgent() })).json();
+      expect(listed.approvals).toEqual([expect.objectContaining({ repo: 'izagood/once-a', number: 5, channelId: ch, threadRootId: thread })]);
+
+      const res = await check(await leaseInThread(thread, otherAgentId), 'izagood/once-a', { number: 5, headSha: SHA2 });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ allowed: true, grantedBy: alice.accountId, causeByHuman: false, approval: { ghUser: 'rebel-jaebin', relaxChecks: true } });
+      const sys = (await pool.query(`select body, meta from message where thread_root_id = $1 and kind = 'system' and meta ? 'mergeApproval'`, [thread])).rows;
+      expect(sys).toHaveLength(1);
+      expect(sys[0].body).toContain('izagood/once-a#5');
+      // 한 번뿐 — 같은 판정을 다시 하면 원래 판정(cause_not_human)으로 돌아간다.
+      expect((await check(await leaseInThread(thread, otherAgentId), 'izagood/once-a', { number: 5, headSha: SHA2 })).json().error.code).toBe('cause_not_human');
+      expect((await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asAgent() })).json().approvals).toEqual([]);
+    });
+
+    it('승인은 그 PR·head·스레드에만 — head 가 다르거나 다른 스레드면 쓰이지 않는다', async () => {
+      const cause = await mention(alice.accountId);
+      const thread = await threadOf(cause);
+      const denied = (await check(await lease(cause), 'izagood/once-b', { number: 9, headSha: SHA2 })).json();
+      expect(denied.error.code).toBe('not_granted');
+      expect((await approve(alice.token, denied.error.denialId, { ghUser: 'izagood' })).statusCode).toBe(200);
+      expect((await check(await leaseInThread(thread, alice.accountId), 'izagood/once-b', { number: 9, headSha: SHA })).json().error.code).toBe('not_granted');
+      expect((await check(await lease(await mention(alice.accountId)), 'izagood/once-b', { number: 9, headSha: SHA2 })).json().error.code).toBe('not_granted');
+      expect((await pool.query(`select used_at from merge_approval where denial_id = $1`, [denied.error.denialId])).rows[0].used_at).toBeNull();
+      const res = await check(await leaseInThread(thread, alice.accountId), 'izagood/once-b', { number: 9, headSha: SHA2 });
+      expect(res.json()).toMatchObject({ allowed: true, approval: { ghUser: 'izagood', relaxChecks: false } });
+    });
+
+    it('승인은 소유자 사람 세션만 — 다른 사람·에이전트 토큰은 403, 같은 거절로 두 번은 409, gh 계정 모양이 아니면 거절', async () => {
+      const denied = (await check(await lease(await mention(alice.accountId)), 'izagood/once-c', { number: 3 })).json();
+      const id = denied.error.denialId as string;
+      expect((await approve(bob.token, id, { ghUser: 'izagood' })).statusCode).toBe(403);
+      expect((await app.inject({ method: 'POST', url: `/agents/${agentId}/merge-denials/${id}/approve-once`, headers: asAgent(), payload: { ghUser: 'izagood' } })).statusCode).toBe(403);
+      expect((await approve(alice.token, id, { ghUser: '-bad' })).json().error.code).toBe('bad_gh_user');
+      expect((await approve(alice.token, id, { ghUser: 'izagood', headSha: SHA })).statusCode).toBe(400);
+      expect((await approve(alice.token, id, { ghUser: 'izagood' })).statusCode).toBe(200);
+      expect((await approve(alice.token, id, { ghUser: 'izagood' })).json().error.code).toBe('denial_used');
+      const audit = (await pool.query(`select actor_id, detail from audit_log where action = 'repo.merge.approved_once' and target = 'repo:izagood/once-c'`)).rows;
+      expect(audit).toHaveLength(1);
+      expect(audit[0].actor_id).toBe(alice.accountId);
+    });
+
+    it('배포 저장소는 저장소 이름을 정확히 쳐야 승인된다', async () => {
+      const before = process.env.HARKROOM_MERGE_DEPLOY_REPOS;
+      process.env.HARKROOM_MERGE_DEPLOY_REPOS = 'izagood/once-deploy';
+      try {
+        const denied = (await check(await lease(await mention(alice.accountId)), 'izagood/once-deploy', { number: 4 })).json();
+        const id = denied.error.denialId as string;
+        expect((await approve(alice.token, id, { ghUser: 'izagood' })).json().error.code).toBe('deploy_repo_confirm');
+        expect((await approve(alice.token, id, { ghUser: 'izagood', confirmRepo: 'izagood/once' })).json().error.code).toBe('deploy_repo_confirm');
+        // 거절된 확인은 기록을 쓰지 않는다.
+        expect((await pool.query(`select used_at from merge_denial where id = $1`, [id])).rows[0].used_at).toBeNull();
+        expect((await approve(alice.token, id, { ghUser: 'izagood', confirmRepo: 'IZAGOOD/once-deploy' })).statusCode).toBe(200);
+      } finally {
+        if (before === undefined) delete process.env.HARKROOM_MERGE_DEPLOY_REPOS; else process.env.HARKROOM_MERGE_DEPLOY_REPOS = before;
+      }
+    });
+  });
+
   describe('조직 grant owner/*', () => {
     let orgAgent: string;
     const asOrg = () => ({ ...auth(op.token), 'x-harkroom-agent': orgAgent });
