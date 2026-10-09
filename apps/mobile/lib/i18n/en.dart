@@ -182,6 +182,15 @@ class StringsEn implements Strings {
   String get askClosed => 'Closed without an answer';
 
   @override
+  String get askReplied => 'Answered in text';
+
+  @override
+  String get askSuperseded => 'Replaced by a new question';
+
+  @override
+  String askPickAnyway(int n) => 'Pick anyway ($n)';
+
+  @override
   String get askDecline => 'Don\u2019t answer this';
 
   @override

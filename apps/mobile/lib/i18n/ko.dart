@@ -181,6 +181,15 @@ class StringsKo implements Strings {
   String get askClosed => '답 없이 닫혔다';
 
   @override
+  String get askReplied => '글로 답했다';
+
+  @override
+  String get askSuperseded => '새 질문으로 바뀜';
+
+  @override
+  String askPickAnyway(int n) => '그래도 고르기 ($n)';
+
+  @override
   String get askDecline => '답하지 않기';
 
   @override

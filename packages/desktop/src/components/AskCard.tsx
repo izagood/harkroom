@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { readAskMeta, type AskAudience, type MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { selectAccountNames } from '../lib/accountNames';
@@ -30,6 +31,18 @@ export function AskCard({ message }: { message: MessageRow }) {
   // 이름 쪽만 구독한다 — 상태·아바타 이벤트에 행마다 다시 그려지지 않도록(`lib/accountNames`).
   const accounts = useActiveStore(selectAccountNames);
   const ask = readAskMeta(message.meta);
+  // 카드를 닫은 사람 글(A′). 같은 채널 목록에서 찾는다 — 못 찾으면 인용 줄만 빠진다.
+  // **같은 스레드의 지워지지 않은 글만** 인용한다: id 가 다른 스레드를 가리키거나 그 글이
+  // 지워졌으면 인용 줄을 그리지 않는다(#1259 security 2b 확인 항목).
+  const replyId = ask?.closedReason === 'replied' ? ask.replyMessageId ?? null : null;
+  const replyBody = useActiveStore((s) => {
+    if (!replyId) return null;
+    const hit = s.messages[message.channelId]?.find((m) => m.id === replyId);
+    if (!hit || hit.deletedAt) return null;
+    const root = message.threadRootId ?? message.id;
+    return (hit.threadRootId ?? hit.id) === root ? hit.body : null;
+  });
+  const [pickAnyway, setPickAnyway] = useState(false);
   if (!ask) return null;
 
   const answered = ask.answeredWith != null;
@@ -39,6 +52,14 @@ export function AskCard({ message }: { message: MessageRow }) {
    * 답 없이 닫혔다". 카드는 **지워지지 않는다** — 무엇을 물었는지는 기록이다.
    */
   const closed = ask.closedAt != null;
+  /**
+   * **글로 답했다**(A′, 2026-10-09). 사람이 카드를 누르지 않고 같은 스레드에 글을 써서 서버가
+   * 닫은 카드다. 차례는 이미 물어본 쪽으로 넘어갔으므로 강조는 거두되, 고를 길은 남긴다
+   * (「그래도 고르기」 — 서버는 이 사유로 닫힌 카드의 늦은 답을 받는다).
+   */
+  const replied = !answered && closed && ask.closedReason === 'replied';
+  /** 물어본 쪽이 새 카드로 대신했다(`supersedes`). 한 줄로 접힌다 — 고를 것은 새 카드에 있다. */
+  const superseded = !answered && closed && ask.closedReason === 'superseded';
   const forMe = isForMe(ask.to, myId);
   /**
    * 누를 수 있는가. **답이 이미 있으면 아무도 못 누른다** — 기록은 남되 다시 고를 수는
@@ -46,6 +67,8 @@ export function AskCard({ message }: { message: MessageRow }) {
    * 닫힌 물음도 같다 — 그만두기로 한 것을 되돌리는 것은 새 물음이다.
    */
   const canChoose = !answered && !closed && forMe;
+  // 늦게 고르기 — 펼친 뒤에만 누를 수 있다. 강조(내 차례)는 주지 않는다: 차례는 이미 넘어갔다.
+  const canPickLate = replied && forMe && pickAnyway;
 
   const chosen = answered ? ask.options.find((o) => o.id === ask.answeredWith) : undefined;
   // 이름을 모르면 **이름 자리에 보통명사가 온다** — 그 낱말이 `common.someone` 에 있는
@@ -66,6 +89,7 @@ export function AskCard({ message }: { message: MessageRow }) {
       data-for-me={forMe}
       data-answered={answered}
       data-closed={closed}
+      data-closed-reason={closed && !answered ? (ask.closedReason ?? 'declined') : undefined}
       className={`mt-1.5 rounded-card border ${
         // 강조는 **답을 기다리는 내 차례**에만 간다. 답이 끝난 카드는 기록이므로 강조를
         // 거둔다 — 안 그러면 끝난 스레드가 계속 나를 부른다.
@@ -76,18 +100,40 @@ export function AskCard({ message }: { message: MessageRow }) {
         <span
           className={`text-meta font-semibold ${canChoose ? 'text-state-turn' : 'text-fg-agent'}`}
         >
-          {headline(ask.to, myId, accounts, answered, closed, t)}
+          {headline(ask.to, myId, accounts, answered, closed, t, ask.closedReason)}
         </span>
         {answered && answeredByName && (
           <span className="text-meta text-fg-subtle">{t('speech.ask.answeredBy', { name: answeredByName })}</span>
         )}
-        {!answered && closed && closedByName && (
+        {!answered && closed && !replied && !superseded && closedByName && (
           <span className="text-meta text-fg-subtle">{t('speech.ask.declinedBy', { name: closedByName })}</span>
         )}
+        {replied && closedByName && <span className="text-meta text-fg-subtle">{closedByName}</span>}
       </div>
-      {ask.prompt && <p className="px-3 pt-1 text-body text-fg-muted">{ask.prompt}</p>}
+      {ask.prompt && !superseded && <p className="px-3 pt-1 text-body text-fg-muted">{ask.prompt}</p>}
+      {replied && replyBody && (
+        <p
+          data-testid="ask-reply-quote"
+          className="mx-3 mt-1.5 truncate border-l-2 border-border pl-2 text-meta text-fg-muted"
+        >
+          {quoteLine(replyBody)}
+        </p>
+      )}
 
-      <div className="flex flex-col gap-1 p-2">
+      {replied && !pickAnyway && forMe && (
+        <div className="px-2 pb-2 pt-1">
+          <button
+            type="button"
+            data-testid="ask-pick-anyway"
+            className="rounded-sm px-1 py-0.5 text-meta text-fg-subtle underline decoration-dotted
+                       underline-offset-2 hover:bg-surface-hover hover:text-fg-muted"
+            onClick={() => setPickAnyway(true)}
+          >
+            {t('speech.ask.pickAnyway', { n: ask.options.length })}
+          </button>
+        </div>
+      )}
+      <div className={`flex flex-col gap-1 ${closed && !canPickLate ? 'px-2 pb-1' : 'p-2'}`}>
         {ask.options.map((o) => {
           const isChosen = chosen?.id === o.id;
           // 답이 끝나면 고른 것만 남긴다 — 안 고른 선택지를 계속 보여 주면 무엇으로
@@ -95,22 +141,23 @@ export function AskCard({ message }: { message: MessageRow }) {
           if (answered && !isChosen) return null;
           // 닫힌 물음은 **선택지를 접는다** — 고른 것이 없으므로 남길 것이 없고, 남겨 두면
           // 아직 고를 수 있는 것처럼 보인다(누를 수는 없으니 더 나쁘다: 눌러 보고 안다).
-          if (closed) return null;
+          // 글로 답한 카드는 「그래도 고르기」를 펼쳤을 때만 다시 보인다.
+          if (closed && !canPickLate) return null;
           return (
             <button
               key={o.id}
               type="button"
-              disabled={!canChoose}
+              disabled={!canChoose && !canPickLate}
               data-testid={`ask-option-${o.id}`}
               // 옵션은 **본문 크기**로 그린다 — 읽고 골라야 하는 글이지 라벨이 아니다.
               className={`rounded-row border px-2.5 py-1.5 text-left text-body ${
-                canChoose
+                canChoose || canPickLate
                   ? 'border-border bg-surface-raised hover:border-state-turn hover:bg-surface-hover'
                   : 'border-border-agent bg-transparent'
               }`}
               onClick={() => { void getController().answerAsk(message.id, o.id, message.channelId); }}
             >
-              <span className={`font-medium ${canChoose ? 'text-fg' : 'text-fg-agent'}`}>{o.label}</span>
+              <span className={`font-medium ${canChoose || canPickLate ? 'text-fg' : 'text-fg-agent'}`}>{o.label}</span>
               {o.hint && <span className="ml-2 text-meta text-fg-subtle">{o.hint}</span>}
             </button>
           );
@@ -158,8 +205,11 @@ function headline(
   answered: boolean,
   closed: boolean,
   t: Translate,
+  closedReason?: 'declined' | 'replied' | 'superseded',
 ): string {
   if (answered) return t('speech.ask.decided');
+  if (closed && closedReason === 'replied') return t('speech.ask.replied');
+  if (closed && closedReason === 'superseded') return t('speech.ask.superseded');
   // 답 없이 닫힌 물음. `decided` 를 쓸 수 없다 — 정해진 것이 없다.
   if (closed) return t('speech.ask.declined');
   if (isForMe(to, myId)) return t('speech.ask.pickOne');
@@ -169,4 +219,14 @@ function headline(
     });
   }
   return t('speech.ask.personPicks');
+}
+
+/**
+ * 인용 한 줄 — 카드를 닫은 글의 첫 줄을 80자까지(designer 시안 6절). 멘션 토큰(`<@id>`)은
+ * 화면이 이름으로 바꾸지 못하는 자리라 지운다 — 날 id 가 보이는 것보다 빠지는 편이 덜 틀리다.
+ */
+function quoteLine(body: string): string {
+  const first = body.replace(/<@[0-9a-f-]{36}>\s*/g, '').split('\n').find((l) => l.trim() !== '') ?? '';
+  const line = first.trim();
+  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
 }

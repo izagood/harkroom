@@ -4,6 +4,7 @@ import '../api/ask.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import '../state/app_state.dart';
 import '../ui/states.dart';
 import '../ui/tokens.dart';
 
@@ -28,6 +29,9 @@ class AskCard extends StatefulWidget {
 
 class _AskCardState extends State<AskCard> {
   bool _busy = false;
+
+  /// 글로 답한 카드의 「그래도 고르기」를 펼쳤나.
+  bool _pickAnyway = false;
 
   Future<void> _run(Future<void> Function() action) async {
     if (_busy) return;
@@ -55,6 +59,14 @@ class _AskCardState extends State<AskCard> {
       AskAccount(accountId: final id) => id == app.me?.id,
     };
     final highlight = ask.isOpen && mine;
+    // 글로 답한 카드(A′)는 펼친 뒤에만 다시 고른다. 강조는 주지 않는다 — 차례는 이미 넘어갔다.
+    final canPickLate = ask.isReplied && mine && _pickAnyway;
+    final showOptions = ask.isOpen || canPickLate;
+    final closedBy = ask.closedBy == null ? null : app.accounts[ask.closedBy!];
+    final closedByName = closedBy == null
+        ? null
+        : (closedBy.displayName.isNotEmpty ? closedBy.displayName : closedBy.handle);
+    final quote = ask.isReplied ? _replyQuote(app, widget.message, ask.replyMessageId) : null;
 
     return Card(
       key: Key('ask-${widget.message.id}'),
@@ -68,20 +80,43 @@ class _AskCardState extends State<AskCard> {
           children: [
             Text(
               switch ((ask.isOpen, ask.to)) {
-                (false, _) => ask.answeredWith != null ? t.askAnswered : t.askClosed,
+                (false, _) when ask.answeredWith != null => t.askAnswered,
+                (false, _) when ask.isReplied =>
+                  closedByName == null ? t.askReplied : '${t.askReplied} · $closedByName',
+                (false, _) when ask.isSuperseded => t.askSuperseded,
+                (false, _) => t.askClosed,
                 (true, AskAccount()) => t.askToYou,
                 (true, AskAnyHuman()) => t.askToAnyone,
               },
+              key: Key('ask-head-${widget.message.id}'),
               style: theme.textTheme.labelSmall,
             ),
             // 본문에 이미 물음이 적혀 있으면 `prompt` 가 없다 — **같은 말을 두 번 그리지
-            // 않는다.**
-            if (ask.prompt != null) ...[
+            // 않는다.** 대신된 카드는 한 줄로 접힌다 — 물음은 새 카드에 있다.
+            if (ask.prompt != null && !ask.isSuperseded) ...[
               const SizedBox(height: 6),
               Text(ask.prompt!, style: theme.textTheme.bodyMedium),
             ],
-            const SizedBox(height: 10),
-            if (ask.isOpen)
+            if (quote != null && quote.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Container(
+                key: Key('ask-reply-quote-${widget.message.id}'),
+                padding: const EdgeInsets.only(left: 8),
+                decoration: BoxDecoration(
+                  border: Border(left: BorderSide(color: theme.dividerColor, width: 2)),
+                ),
+                child: Text(quote, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
+              ),
+            ],
+            if (!ask.isSuperseded) const SizedBox(height: 10),
+            if (ask.isReplied && mine && !_pickAnyway)
+              TextButton(
+                key: Key('ask-pick-anyway-${widget.message.id}'),
+                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 32)),
+                onPressed: () => setState(() => _pickAnyway = true),
+                child: Text(t.askPickAnyway(ask.options.length)),
+              ),
+            if (showOptions)
               ...ask.options.map(
                 (o) => Padding(
                   padding: const EdgeInsets.only(bottom: 6),
@@ -110,7 +145,7 @@ class _AskCardState extends State<AskCard> {
                   ),
                 ),
               )
-            else
+            else if (ask.answeredWith != null || !(ask.isReplied || ask.isSuperseded))
               // **고른 것을 남긴다.** 버튼이 사라지고 결과가 그 자리에 선다 — 누른 뒤에도
               // 버튼이 있으면 사람은 자기가 누른 것을 의심한다.
               Text(
@@ -134,6 +169,31 @@ class _AskCardState extends State<AskCard> {
         ),
       ),
     );
+  }
+
+  /// 카드를 닫은 사람 글의 첫 줄(80자까지, 데스크톱 `quoteLine` 과 같다). 읽어 둔 목록에
+  /// 없거나 **다른 스레드의 글**이면 `null` — 인용 줄만 빠진다. 지운 글은 목록에서 빠지므로
+  /// 따로 거를 것이 없다(`message.deleted`).
+  static String? _replyQuote(AppState app, MessageRow message, String? replyId) {
+    if (replyId == null) return null;
+    final root = message.threadRootId ?? message.id;
+    final pool = [...?app.threads[root], ...?app.messages[message.channelId]];
+    MessageRow? hit;
+    for (final m in pool) {
+      if (m.id == replyId && (m.threadRootId ?? m.id) == root) {
+        hit = m;
+        break;
+      }
+    }
+    if (hit == null) return null;
+    final lines = hit.body
+        .replaceAll(RegExp(r'<@[0-9a-f-]{36}>\s*'), '')
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty);
+    if (lines.isEmpty) return null;
+    final line = lines.first;
+    return line.length > 80 ? '${line.substring(0, 79)}…' : line;
   }
 
   /// 고른 선택지의 이름. 서버가 모르는 id 를 주면 `null` — 지어내지 않는다.

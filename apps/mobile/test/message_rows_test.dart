@@ -14,11 +14,12 @@ import 'package:harkroom/theme.dart';
 final _t0 = DateTime.utc(2026, 9, 28, 3);
 
 MessageRow _m(String id, int seq, {String author = 'a1', Duration at = Duration.zero,
-        String body = '말', Map<String, Object?> meta = const {}, String kind = 'user'}) =>
+        String body = '말', Map<String, Object?> meta = const {}, String kind = 'user', String? threadRoot}) =>
     MessageRow.fromJson({
       'id': id,
       'seq': seq,
       'channelId': 'c1',
+      'threadRootId': threadRoot,
       'authorId': author,
       'body': body,
       'kind': kind,
@@ -220,6 +221,84 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('reaction-pick-👍')), findsOneWidget);
       expect(find.byKey(const Key('reaction-pick-✅')), findsOneWidget);
+    });
+
+    // A′(2026-10-09): 글로 답한 카드는 「글로 답했다 · 이름」 + 인용 한 줄 + 「그래도 고르기」로 접힌다.
+    testWidgets('글로 답해 닫힌 카드는 인용 한 줄과 그래도 고르기를 그린다', (tester) async {
+      app.accounts['h1'] = const AccountView(
+        id: 'h1', handle: 'jaebin', displayName: 'jaebin', isAgent: false, isDisabled: false, avatarAttachmentId: null,
+      );
+      // 다른 스레드의 같은 id 글은 인용하지 않는다 — 같은 스레드 글만(#1259 security).
+      app.messages['c1'] = [_m('r1', 2, author: 'h1', body: '이건 다르게 해 줘\n둘째 줄', threadRoot: '1')];
+      await pump(
+          tester,
+          _m('1', 1, body: '골라 달라.', meta: {
+            'kind': 'ask',
+            'ask': {
+              'options': [
+                {'id': 'a', 'label': '이걸로'},
+                {'id': 'b', 'label': '저걸로'},
+              ],
+              'to': {'kind': 'human'},
+              'closedAt': '2026-10-09T11:00:00Z',
+              'closedBy': 'h1',
+              'closedReason': 'replied',
+              'replyMessageId': 'r1',
+            },
+          }));
+      expect(find.text('글로 답했다 · jaebin'), findsOneWidget);
+      expect(find.text('이건 다르게 해 줘'), findsOneWidget);
+      expect(find.text('—'), findsNothing);
+      expect(find.byKey(const Key('ask-option-1-a')), findsNothing);
+      await tester.tap(find.byKey(const Key('ask-pick-anyway-1')));
+      await tester.pump();
+      expect(find.byKey(const Key('ask-option-1-a')), findsOneWidget);
+    });
+
+    testWidgets('다른 스레드의 글은 인용하지 않는다', (tester) async {
+      app.messages['c1'] = [_m('r1', 2, author: 'h1', body: '남의 스레드 글', threadRoot: 'other')];
+      await pump(
+          tester,
+          _m('1', 1, body: '골라 달라.', meta: {
+            'kind': 'ask',
+            'ask': {
+              'options': [
+                {'id': 'a', 'label': '이걸로'},
+                {'id': 'b', 'label': '저걸로'},
+              ],
+              'to': {'kind': 'human'},
+              'closedAt': '2026-10-09T11:00:00Z',
+              'closedBy': 'h1',
+              'closedReason': 'replied',
+              'replyMessageId': 'r1',
+            },
+          }));
+      expect(find.text('남의 스레드 글'), findsNothing);
+      expect(find.byKey(const Key('ask-reply-quote-1')), findsNothing);
+    });
+
+    testWidgets('새 카드로 대신된 카드는 한 줄로 접힌다', (tester) async {
+      await pump(
+          tester,
+          _m('1', 1, body: '골라 달라.', meta: {
+            'kind': 'ask',
+            'ask': {
+              'prompt': '어느 쪽?',
+              'options': [
+                {'id': 'a', 'label': '이걸로'},
+                {'id': 'b', 'label': '저걸로'},
+              ],
+              'to': {'kind': 'human'},
+              'closedAt': '2026-10-09T11:00:00Z',
+              'closedReason': 'superseded',
+              'supersededBy': 'm9',
+            },
+          }));
+      expect(find.text('새 질문으로 바뀜'), findsOneWidget);
+      expect(find.text('어느 쪽?'), findsNothing);
+      expect(find.text('—'), findsNothing);
+      expect(find.byKey(const Key('ask-pick-anyway-1')), findsNothing);
+      expect(find.byKey(const Key('ask-option-1-a')), findsNothing);
     });
   });
 }

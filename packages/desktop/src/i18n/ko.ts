@@ -1708,6 +1708,10 @@ export const ko = {
   'speech.ask.decline': '답하지 않기',
   'speech.ask.declined': '답 없이 닫혔다',
   'speech.ask.declinedBy': '{name:이가} 답하지 않기로 했다',
+  // 글 답 닫힘(A′, 2026-10-09) — 카드를 누르지 않고 같은 스레드에 글을 썼다. 이름 뒤 조사는 쓰지 않는다(designer 시안 6절).
+  'speech.ask.replied': '글로 답했다',
+  'speech.ask.pickAnyway': '그래도 고르기 ({n})',
+  'speech.ask.superseded': '새 질문으로 바뀜',
   'speech.ask.answeredBy': '{name:이가} 골랐다',
   'speech.ask.unknownAgent': '다른 에이전트',
 
