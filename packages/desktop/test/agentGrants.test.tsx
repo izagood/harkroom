@@ -298,6 +298,15 @@ describe('AgentGrantsSection', () => {
     await waitFor(() => expect(onCount).toHaveBeenCalledWith({ repos: 1, orgs: 0 }));
   });
 
+  it('#1258 designer d1: 배포 저장소 줄(서버가 deployRepo 를 실음)에는 조직 grant 안내를 붙이지 않는다 — 실제로 조직 grant 로 열리지 않는다', async () => {
+    setup({ listGrants: vi.fn(async () => [
+      grant('repo:izagood/homelab', { deployRepo: true }), grant('repo:izagood/harkroom'), grant('repo:izagood/*', { allowAgentCause: true }),
+    ]) });
+    render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
+    expect(await screen.findByTestId('agent-grant-cause-via-org-izagood/harkroom')).toBeTruthy();
+    expect(screen.queryByTestId('agent-grant-cause-via-org-izagood/homelab')).toBeNull();
+  });
+
   it('목록을 못 읽으면 "없음"이 아니라 실패를 말한다', async () => {
     setup({ listGrants: vi.fn(async () => { throw new Error('boom'); }) });
     render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);

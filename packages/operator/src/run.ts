@@ -36,7 +36,7 @@ import { createCodexAccountsPort } from './codexAccounts.js';
 import { startCommunities } from './communities.js';
 import { createLocalAgentsPort } from './localAgents.js';
 import { createLocalMcpPort } from './localMcp.js';
-import { createLocalMergePort } from './localMerge.js';
+import { createLocalMergePort, pickMergeGhUser } from './localMerge.js';
 import { createMcpOAuth } from './mcpOAuth.js';
 import { rewriteMcpConfigTokens } from './mcpConfig.js';
 import { claudeConfigPath } from './mcpConfig.js';
@@ -228,7 +228,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     log,
     ghPath: GH_PATH,
     home: homedir(),
-    ghUser: async () => (await readConfig(join(appDataDir, 'operator', 'operator.json'))).merge?.ghUser,
+    ghUserFor: async (repo) => pickMergeGhUser((await readConfig(join(appDataDir, 'operator', 'operator.json'))).merge, repo),
   });
   // 외부 API 래퍼(C안 P3, 스레드 07519d86). 브릿지 소켓으로 온 `api.call` 을 여기서 받아 서버 판정 → 키를 붙여 호출 → 결과
   // 보고를 한다. 키는 이 프로세스 밖으로 나가지 않는다. 임대는 머지와 같이 `turnSecrets` 의 것을 쓴다.

@@ -603,7 +603,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(callers).toEqual([{ fn: 'daemon_command', file: 'daemon_client.rs' }]);
     });
 
-    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 6종·작업 폴더 정리 2종뿐이다', () => {
+    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 8종(operator_*)·작업 폴더 정리 2종뿐이다', () => {
       const commands = [...mainRs.matchAll(
         /#\[tauri::command\]\s*\n\s*(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g,
       )].map((m) => {
@@ -634,7 +634,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'codex_account_activate', 'codex_account_login_cancel', 'codex_account_login_start',
           'codex_account_remove', 'codex_accounts_provider_usage',
           'daemon_kill_runner', 'daemon_spawn_runner',
-          'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_merge_set', 'operator_register',
+          'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_merge_check', 'operator_merge_set', 'operator_register',
           'secret_delete', 'secret_get', 'secret_set',
           'workspace_cleanup_act', 'workspace_cleanup_settings_set',
         ]);
@@ -674,7 +674,10 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       // `gh auth status` 로 다시 잰다(`readOperatorMergeSetPayload`·localMerge.test.ts, security C7) — 웹뷰가 gh 의
       // 인자·경로를 고를 자리가 없다.
       const mergeSet = commands.find((c) => c.fn === 'operator_merge_set')!;
-      expect(mergeSet.webviewParams).toEqual(['gh_user: Option<String>']);
+      // 줄별 계정(e085b6a7): 범위(`owner/name`·`owner/*`)와 옮길 범위 목록도 문자열뿐이다 — 모양은 오퍼레이터가 MERGE_SCOPE_RE 로 다시 잰다.
+      expect(mergeSet.webviewParams.sort()).toEqual(['gh_user: Option<String>', 'migrate: Option<Vec<String>>', 'scope: Option<String>']);
+      // 닿음 확인: 범위 문자열 목록뿐이다. 토큰·계정은 웹뷰가 고르지 않는다(오퍼레이터가 그 순간의 gh 목록으로 잰다).
+      expect(commands.find((c) => c.fn === 'operator_merge_check')!.webviewParams).toEqual(['scopes: Vec<String>']);
       // `daemon_kill_runner` 가 받는 것은 **누구를·어느 세대를** 뿐이다 — 프로그램·인자·경로를
       // 다시 고를 수 있는 자리가 아니다.
       const kill = commands.find((c) => c.fn === 'daemon_kill_runner')!;

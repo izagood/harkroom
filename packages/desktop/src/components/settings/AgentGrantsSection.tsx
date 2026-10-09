@@ -22,7 +22,7 @@ import { useLocale } from '../../i18n/useT';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { hasOperatorLocalSurface } from '../../lib/operatorLocal';
 import { ImmediateBadge } from './pendingEdits';
-import { MergeGhUserRow } from './MergeGhUserRow';
+import { MergeAccountCell, MergeDeviceNote, useLocalMerge } from './MergeGhUserRow';
 import { Segmented } from '../Segmented';
 import { buildForest, decidableBy, descendantCount, pendingForRoot, type ForestNode } from '../../lib/delegationForest';
 import { DelegationChildren, PendingDelegations, type DelegationActions } from './DelegationTree';
@@ -176,9 +176,14 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   const otherDevice = assignedOperatorName
     ? t('agents.grants.ghUser.otherDevice', { host: assignedOperatorName })
     : t('agents.grants.ghUser.otherDeviceNoName');
-  const ghRow = canGrant && hasOperatorLocalSurface() && agent.assignment?.operatorId ? (
-    localOperatorId && agent.assignment.operatorId === localOperatorId
-      ? <MergeGhUserRow disabled={disabled} hasGrants={liveMergeGrantCount(rows) > 0} />
+  // 머지 gh 계정은 줄마다다(스레드 e085b6a7). 이 기기에 배정된 내 에이전트이고 머지 권한 줄이 있을 때만 오퍼레이터를 묻는다 —
+  // 다른 기기면 그 기기의 gh 목록을 여기서 볼 수 없으므로 안내만 둔다(시안 §3 F).
+  const assigned = canGrant && hasOperatorLocalSurface() && !!agent.assignment?.operatorId;
+  const onThisDevice = assigned && !!localOperatorId && agent.assignment!.operatorId === localOperatorId;
+  const { state: localMerge, reach: mergeReach, setScope } = useLocalMerge(onThisDevice && rows.length > 0 ? rows.map((g) => repoOf(g.scope).toLowerCase()) : null);
+  const ghRow = assigned ? (
+    onThisDevice
+      ? <MergeDeviceNote state={localMerge} />
       : <p className="mt-2 text-meta text-fg-subtle" data-testid="merge-gh-user-other">{otherDevice}</p>
   ) : null;
 
@@ -310,7 +315,8 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             const expired = g.expiresAt !== null && Date.parse(g.expiresAt) <= Date.now();
             // #1255 security n2: 서버는 정확한 이름과 조직 grant 가 겹치면 **넓게 허락하는 쪽**(allow_agent_cause)을 쓴다. 이 줄은 꺼져
             // 있어도 살아 있는 조직 grant 가 켜져 있으면 실제로는 에이전트가 띄운 턴에서도 머지된다 — 그 사실을 이 줄에 적는다.
-            const coveringOrg = !g.allowAgentCause && !orgOf(g.scope)
+            // 배포 저장소는 조직 grant 로 열리지 않는다(#1255) — 서버가 그 줄에 deployRepo 를 실으면 붙이지 않는다(#1258 designer d1).
+            const coveringOrg = !g.allowAgentCause && !orgOf(g.scope) && !g.deployRepo
               ? rows.find((o) => orgOf(o.scope) !== null && o.allowAgentCause && repo.startsWith(`${orgOf(o.scope)}/`)
                 && (o.expiresAt === null || Date.parse(o.expiresAt) > Date.now()))
               : undefined;
@@ -325,7 +331,11 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                     {t('agents.grants.orgWideBadge')}
                   </span>
                 )}
-                <span className="text-fg-subtle">
+                {localMerge !== null && typeof localMerge === 'object' && (
+                  <MergeAccountCell scope={repo.toLowerCase()} repoLabel={repoLabel(g.scope)} state={localMerge} reach={mergeReach[repo.toLowerCase()]} setScope={setScope} disabled={off} />
+                )}
+                {/* 메타(by·날짜·만료)는 둘째 줄로 내린다(시안 §1) — 계정 칸이 들어갈 자리를 만든다. */}
+                <span className="order-last basis-full text-fg-subtle">
                   {t('agents.grants.by', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
                   {' · '}
                   {g.expiresAt === null
