@@ -2137,8 +2137,18 @@ impl DaemonConnection {
         self.request("operatorMergeGet", json!({}))
     }
 
-    pub fn operator_merge_set(&self, gh_user: Option<&str>) -> Result<Value, String> {
-        self.request("operatorMergeSet", json!({ "ghUser": gh_user }))
+    pub fn operator_merge_set(
+        &self,
+        gh_user: Option<&str>,
+        scope: Option<&str>,
+        migrate: Option<&[String]>,
+    ) -> Result<Value, String> {
+        let payload = match (migrate, scope) {
+            (Some(scopes), _) => json!({ "migrate": scopes }),
+            (None, Some(scope)) => json!({ "scope": scope, "ghUser": gh_user }),
+            (None, None) => json!({ "ghUser": gh_user }),
+        };
+        self.request("operatorMergeSet", payload)
     }
 
     // 작업 폴더 정리(스레드 9e909150). 원장은 오퍼레이터의 것이고 앱은 읽기·설정·보존/넣기만 한다 — 바로 지우는 메서드는 없다.

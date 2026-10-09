@@ -741,15 +741,18 @@ async fn workspace_cleanup_sweep(app: tauri::AppHandle) -> Result<serde_json::Va
     .await
 }
 
-/// 머지 래퍼의 gh 계정을 고른다 — `gh_user` 가 None 이면 지운다. 검사는 오퍼레이터가 한다(security C7).
+/// 머지 래퍼의 gh 계정을 고른다 — `gh_user` 가 None 이면 지운다. `scope` 가 있으면 그 권한 줄의 계정이고(스레드
+/// e085b6a7), `migrate` 가 있으면 옛 기기 기본값을 그 줄들에 한 번 복사한다. 검사는 오퍼레이터가 한다(security C7).
 #[tauri::command]
 async fn operator_merge_set(
     app: tauri::AppHandle,
     gh_user: Option<String>,
+    scope: Option<String>,
+    migrate: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
         let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
-        conn.operator_merge_set(gh_user.as_deref())
+        conn.operator_merge_set(gh_user.as_deref(), scope.as_deref(), migrate.as_deref())
     })
     .await
 }

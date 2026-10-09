@@ -89,6 +89,16 @@ export function setLocalMergeGhUser(ghUser: string | null): Promise<OperatorMerg
   return call('operator_merge_set', { ghUser }) as Promise<OperatorMergeState>;
 }
 
+/** 머지 권한 줄 하나(`owner/name`·`owner/*`)의 gh 계정 — null 은 그 줄의 지정을 지운다(스레드 e085b6a7). */
+export function setLocalMergeScopeUser(scope: string, ghUser: string | null): Promise<OperatorMergeState> {
+  return call('operator_merge_set', { ghUser, scope }) as Promise<OperatorMergeState>;
+}
+
+/** 옛 기기 기본값을 지금 줄들에 한 번 복사한다 — 이미 옮겼으면 오퍼레이터가 아무것도 안 한다. */
+export function migrateLocalMerge(scopes: string[]): Promise<OperatorMergeState> {
+  return call('operator_merge_set', { migrate: scopes }) as Promise<OperatorMergeState>;
+}
+
 // ── 작업 폴더 정리(스레드 9e909150) ──────────────────────────────────────────────
 // 원장은 오퍼레이터의 것이다(`operator/src/workspaceCleanup.ts`). 앱은 읽고, 설정을 바꾸고, 보존·되돌리기·삭제 예정에 넣기만
 // 한다 — **바로 지우는 길은 없다**(D3·D5).
