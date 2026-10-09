@@ -62,7 +62,7 @@ describe('비밀 소유자 보기', () => {
     await waitFor(() => expect(screen.getByTestId('secret-reveal-value').textContent).toBe(VALUE));
     expect(c.unlockSecrets).toHaveBeenCalledWith('pw123456');
     expect(c.revealSecret).toHaveBeenCalledWith('id-api-token', expect.objectContaining({ action: 'view' }));
-    expect(screen.getByTestId('secrets-unlocked').textContent).toContain('잠금 해제됨');
+    expect(screen.getByTestId('secrets-unlocked').textContent).toContain('값 보기 열림');
     expect(screen.queryByTestId('secrets-unlock-dialog')).toBeNull();
   });
 
@@ -75,7 +75,7 @@ describe('비밀 소유자 보기', () => {
     }) });
     setServer('0.4.20');
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'api-token 값 보기' }));
     fireEvent.change(screen.getByTestId('secrets-unlock-password'), { target: { value: 'nope' } });
     fireEvent.click(screen.getByTestId('secrets-unlock-submit'));
     expect((await screen.findByTestId('secrets-unlock-error')).textContent).toContain('맞지 않는다');
@@ -87,10 +87,13 @@ describe('비밀 소유자 보기', () => {
   it('30초가 지나면 값이 화면에서 사라지고 [다시 보기] 한 줄이 남는다', async () => {
     setup(); setServer('0.4.20');
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'api-token 값 보기' }));
     fireEvent.change(screen.getByTestId('secrets-unlock-password'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByTestId('secrets-unlock-submit'));
     await screen.findByTestId('secrets-unlocked');
+    // 풀리면 누른 줄이 바로 열린다 — 가짜 시계로 다시 열려고 한 번 닫는다.
+    fireEvent.click(await screen.findByRole('button', { name: 'api-token 값 보기' }));
+    expect(screen.queryByTestId('secret-reveal')).toBeNull();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     fireEvent.click(screen.getByRole('button', { name: 'api-token 값 보기' }));
     await waitFor(() => expect(screen.getByTestId('secret-reveal-value').textContent).toBe(VALUE));
@@ -105,11 +108,10 @@ describe('비밀 소유자 보기', () => {
     const invoke = vi.fn(async () => undefined);
     setConcealedClipboardInvoke(invoke);
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'api-token 값 보기' }));
     fireEvent.change(screen.getByTestId('secrets-unlock-password'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByTestId('secrets-unlock-submit'));
     await screen.findByTestId('secrets-unlocked');
-    fireEvent.click(screen.getByRole('button', { name: 'api-token 값 보기' }));
     await screen.findByTestId('secret-reveal-value');
     fireEvent.click(screen.getByRole('button', { name: '복사' }));
     await waitFor(() => expect(screen.getByTestId('secrets-toast').textContent).toContain('60초 뒤'));
@@ -135,11 +137,10 @@ describe('비밀 소유자 보기', () => {
     const invoke = vi.fn(async () => undefined);
     setConcealedClipboardInvoke(invoke);
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'api-token 값 보기' }));
     fireEvent.change(screen.getByTestId('secrets-unlock-password'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByTestId('secrets-unlock-submit'));
     await screen.findByTestId('secrets-unlocked');
-    fireEvent.click(screen.getByRole('button', { name: 'api-token 값 보기' }));
     await screen.findByTestId('secret-reveal-value');
     c.revealSecret.mockImplementationOnce(() => new Promise((r) => { release = r; }) as never);
     fireEvent.click(screen.getByRole('button', { name: '복사' }));
@@ -150,10 +151,15 @@ describe('비밀 소유자 보기', () => {
   });
 
   it('저절로 잠길 때도 DELETE 를 보낸다(n2)', async () => {
-    const c = setup({ unlockSecrets: vi.fn(async () => ({ steppedUpUntil: new Date(Date.now() + 1500).toISOString() })) });
+    const short = new Date(Date.now() + 1500).toISOString();
+    // 풀리면 누른 줄의 값이 바로 열리고, 그 응답도 서버의 끝 시각을 준다 — 같은 짧은 창으로 맞춘다.
+    const c = setup({
+      unlockSecrets: vi.fn(async () => ({ steppedUpUntil: short })),
+      revealSecret: vi.fn(async () => ({ steppedUpUntil: short, name: 'api-token', kind: 'text', filename: null, version: 1, value: VALUE })),
+    });
     setServer('0.4.20');
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'api-token 값 보기' }));
     fireEvent.change(screen.getByTestId('secrets-unlock-password'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByTestId('secrets-unlock-submit'));
     await screen.findByTestId('secrets-unlocked');
@@ -166,7 +172,7 @@ describe('비밀 소유자 보기', () => {
     setup({ unlockSecrets: vi.fn(async () => { throw new ApiError(429, 'rate_limited', 'slow', { error: { retryAfterSec: 30 } }); }) });
     setServer('0.4.20');
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'api-token 값 보기' }));
     fireEvent.change(screen.getByTestId('secrets-unlock-password'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByTestId('secrets-unlock-submit'));
     expect((await screen.findByTestId('secrets-unlock-error')).textContent).toContain('잠시 뒤');
@@ -183,7 +189,8 @@ describe('비밀 소유자 보기', () => {
     ]) });
     setServer('0.4.20');
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: '접근 기록' }));
+    fireEvent.click(await screen.findByTestId('secret-more-api-token'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: '접근 기록' }));
     const folded = await screen.findByTestId('secret-access-folded');
     expect(folded.textContent).toContain('×3');
     expect(folded.textContent).toContain('막힘 (잠금 해제 안 됨)');
@@ -196,7 +203,7 @@ describe('비밀 소유자 보기', () => {
   it('확인 창은 겹창이다 — 이름 있는 dialog, Esc 는 취소(잠금 해제를 부르지 않는다)', async () => {
     const c = setup(); setServer('0.4.20');
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'api-token 값 보기' }));
     expect(screen.getByRole('dialog', { name: '값 보기 잠금 해제' }).getAttribute('aria-modal')).toBe('true');
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByTestId('secrets-unlock-dialog')).toBeNull();
@@ -216,11 +223,10 @@ describe('비밀 소유자 보기', () => {
   it('[잠그기]는 화면부터 잠그고 DELETE 를 부른다 — 열린 값 패널도 닫힌다', async () => {
     const c = setup(); setServer('0.4.20');
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'api-token 값 보기' }));
     fireEvent.change(screen.getByTestId('secrets-unlock-password'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByTestId('secrets-unlock-submit'));
     await screen.findByTestId('secrets-unlocked');
-    fireEvent.click(screen.getByRole('button', { name: 'api-token 값 보기' }));
     await screen.findByTestId('secret-reveal-value');
     fireEvent.click(screen.getByRole('button', { name: '잠그기' }));
     expect(screen.queryByTestId('secrets-unlocked')).toBeNull();
@@ -231,7 +237,7 @@ describe('비밀 소유자 보기', () => {
   it('설정을 닫으면(언마운트) 열린 창을 서버에서도 끝낸다', async () => {
     const c = setup(); setServer('0.4.20');
     const view = render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: /값 보기 잠금 해제/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'api-token 값 보기' }));
     fireEvent.change(screen.getByTestId('secrets-unlock-password'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByTestId('secrets-unlock-submit'));
     await screen.findByTestId('secrets-unlocked');

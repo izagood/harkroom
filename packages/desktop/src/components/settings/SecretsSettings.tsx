@@ -5,6 +5,7 @@ import { useActiveStore } from '../../state/communities';
 import { ApiError, type SecretAccessView, type SecretGrantView, type SecretView } from '../../lib/api';
 import { useLocale, useT } from '../../i18n/useT';
 import { ConfirmDialog } from '../ConfirmDialog';
+import { Menu, type MenuItem } from '../Menu';
 import { Button, Field, Segmented, SettingsPage, TextInput } from './primitives';
 import { ConnectorsSection } from './ConnectorsSection';
 import { SecretAgentPicker } from './SecretAgentPicker';
@@ -28,7 +29,11 @@ import { downloadSecretFile, RevealPanel, RevealToast, UnlockDialog, UnlockHeade
  */
 
 type Expiry = 'none' | '30d' | '90d' | 'date';
-type Panel = { id: string; kind: 'reveal' | 'replace' | 'grants' | 'access' } | null;
+/** 줄 위에 여는 것(값 보기·값 바꾸기). 펼침 탭(받는 에이전트·접근 기록)과는 따로 연다. */
+type Panel = { id: string; kind: 'reveal' | 'replace' } | null;
+type Tab = 'grants' | 'access';
+/** 만료가 이만큼 안으로 들어오면 경고색(designer 시안 v1 #3). */
+const SOON_MS = 14 * 86_400_000;
 
 const DAY = 86_400_000;
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -55,6 +60,8 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
   const [state, setState] = useState<{ enabled: boolean; secrets: SecretView[] } | 'loading' | 'error'>('loading');
   const [adding, setAdding] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
+  const [open, setOpen] = useState<{ id: string; tab: Tab } | null>(null);
+  const [helpOn, setHelpOn] = useState(false);
   const [deleting, setDeleting] = useState<SecretView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +144,8 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
   const date = (iso: string) => new Date(iso).toLocaleDateString(locale);
 
   return (
-    <SettingsPage section="secrets" description={t('secrets.description')}>
+    <SettingsPage section="secrets" description={<>{t('secrets.description')}{' '}<HelpToggle on={helpOn} onToggle={() => setHelpOn(!helpOn)} /></>}>
+      {helpOn && <SecretsHelp />}
       {state === 'loading' && <p className="text-meta text-fg-muted">{t('secrets.loading')}</p>}
       {state === 'error' && <p role="alert" className="text-meta text-danger">{t('secrets.listFailed')}</p>}
       {typeof state === 'object' && !state.enabled && (
@@ -145,15 +153,16 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
       )}
 
       {typeof state === 'object' && (
-        <section className="rounded border border-border p-3" data-testid="secrets">
-          <div className="flex items-center gap-2">
-            <span className="text-meta font-medium text-fg-muted">{t('secrets.heading')}</span>
-            <span className="text-meta text-fg-subtle">{t('secrets.count', { n: String(secrets.length) })}</span>
-            <span className="ml-auto flex flex-wrap items-center gap-2">
-              {revealSupported && state.enabled && secrets.some((x) => x.ownerAccountId === me?.id) && (
-                <UnlockHeader unlock={unlock} onUnlock={() => setUnlockAsk({ thenId: null })} onLock={() => lock()} />
-              )}
-              {state.enabled && !adding && <Button onClick={() => { setAdding(true); setError(null); }} disabled={busy}>{t('secrets.add')}</Button>}
+        <section className="mt-6" data-testid="secrets">
+          {/* 절 머리는 테두리 없는 제목줄, 테두리는 목록 하나에만(designer 시안 v1 #7). 주 버튼은 「+ 비밀 넣기」 하나(#6). */}
+          <div className="mb-2 flex flex-wrap items-center gap-2.5">
+            <h3 className="text-meta font-semibold text-fg">{t('secrets.heading')}</h3>
+            <span className="text-meta text-fg-subtle">{secrets.length}</span>
+            {revealSupported && state.enabled && secrets.some((x) => x.ownerAccountId === me?.id) && (
+              <UnlockHeader unlock={unlock} onLock={() => lock()} />
+            )}
+            <span className="ml-auto">
+              {state.enabled && !adding && <Button variant="primary" onClick={() => { setAdding(true); setError(null); }} disabled={busy}>{t('secrets.add')}</Button>}
             </span>
           </div>
 
@@ -167,12 +176,16 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
 
           {secrets.length === 0 && !adding && <p className="mt-2 text-meta text-fg-subtle" data-testid="secrets-none">{t('secrets.none')}</p>}
 
-          <ul className="mt-2 space-y-1">
+          {secrets.length > 0 && (
+          <ul className="divide-y divide-border rounded-card border border-border">
             {secrets.map((s) => {
-              const expired = s.expiresAt !== null && Date.parse(s.expiresAt) <= Date.now();
+              const expiresMs = s.expiresAt === null ? null : Date.parse(s.expiresAt);
+              const expired = expiresMs !== null && expiresMs <= Date.now();
+              const expiringSoon = expiresMs !== null && !expired && expiresMs - Date.now() <= SOON_MS;
               const mine = s.ownerAccountId === me?.id;
-              const open = panel?.id === s.id ? panel.kind : null;
-              const toggle = (kind: NonNullable<Panel>['kind']) => { setError(null); setPanel(open === kind ? null : { id: s.id, kind }); };
+              const shown = panel?.id === s.id ? panel.kind : null;
+              const tab = open?.id === s.id ? open.tab : null;
+              const setTab = (next: Tab | null) => { setError(null); setOpen(next ? { id: s.id, tab: next } : null); };
               const locked = unlock.until === null;
               /** [값 보기]·[내려받기] — 잠겨 있으면 확인 창 하나(풀리면 이 행을 바로 연다), 풀려 있으면 바로. */
               const reveal = () => {
@@ -189,50 +202,98 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
                   );
                   return;
                 }
-                toggle('reveal');
+                setPanel(shown === 'reveal' ? null : { id: s.id, kind: 'reveal' });
               };
+              const menu: MenuItem[] = [
+                ...(mine && state.enabled ? [{ label: t('secrets.replace'), onSelect: () => { setError(null); setPanel({ id: s.id, kind: 'replace' }); } }] : []),
+                { label: t('secrets.access'), onSelect: () => setTab('access') },
+                { label: t('secrets.deleteMenu'), onSelect: () => setDeleting(s), tone: 'danger', separatorBefore: true },
+              ];
+              const sub = [s.filename, s.description].filter(Boolean).join(' · ');
               return (
                 <li key={s.id} ref={(el) => { if (el) rowRefs.current.set(s.id, el); else rowRefs.current.delete(s.id); }}
-                  className={`rounded border px-2 py-1 text-meta transition-colors ${flash === s.id ? 'border-accent bg-accent-surface' : 'border-border'}`}
+                  className={`text-meta transition-colors first:rounded-t-card last:rounded-b-card ${flash === s.id ? 'bg-accent-surface' : tab ? 'bg-surface-sunken' : ''}`}
                   data-testid={`secret-${s.name}`} data-flash={flash === s.id || undefined}>
-                  <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 ${expired ? 'text-fg-subtle' : 'text-fg'}`}>
-                    <span className="font-mono font-medium">{s.name}</span>
-                    <span className="rounded border border-border px-1 text-fg-muted">{s.kind === 'file' ? t('secrets.kindFile') : t('secrets.kindText')}</span>
-                    {s.filename && <span className="font-mono">{s.filename}</span>}
-                    {s.description && <span className="text-fg-subtle">{s.description}</span>}
-                    <AgentMadeBadge secret={s} />
-                    <span className="text-fg-subtle">
-                      {s.grantCount > 0 ? t('secrets.usedBy', { n: String(s.grantCount) }) : t('secrets.unused')}
+                  {/* 한 줄 격자: ▸ · 이름(굵게)+설명 · 받는 에이전트 · 만료 · [값 보기] ⋯ (#3). 줄을 누르면 펼친다. */}
+                  <div className={`grid cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 sm:grid-cols-[16px_minmax(0,1fr)_7.5rem_7.5rem] ${tab ? '' : 'hover:bg-surface-hover'} ${expired ? 'text-fg-subtle' : 'text-fg'}`}
+                    onClick={() => setTab(tab ? null : 'grants')}>
+                    <button type="button" aria-expanded={tab !== null} aria-label={t('secrets.expandAria', { name: s.name })}
+                      data-testid={`secret-expand-${s.name}`}
+                      className={`text-fg-subtle transition-transform ${tab ? 'rotate-90' : ''}`}
+                      onClick={(e) => { e.stopPropagation(); setTab(tab ? null : 'grants'); }}>▸</button>
+                    <span className="min-w-0">
+                      <span className="flex min-w-0 items-center gap-x-2">
+                        <span className="min-w-0 truncate font-mono text-body font-semibold" title={s.name}>{s.name}</span>
+                        {s.kind === 'file' && <span className="shrink-0 whitespace-nowrap rounded bg-surface-raised px-1 text-fg-muted">{t('secrets.kindFile')}</span>}
+                        <span className="shrink-0 whitespace-nowrap"><AgentMadeBadge secret={s} /></span>
+                      </span>
+                      {sub && <span className="block truncate text-fg-subtle">{sub}</span>}
                     </span>
-                    {expired
-                      ? <span className="rounded bg-warning-surface px-1 text-warning">{t('secrets.expired', { when: date(s.expiresAt as string) })}</span>
-                      : <span className="text-fg-subtle">{s.expiresAt ? t('secrets.until', { when: date(s.expiresAt) }) : t('secrets.noExpiry')}</span>}
-                    <span className="ml-auto flex flex-wrap gap-1">
+                    {/* 쓰는 곳·만료를 오른쪽 정렬 한 칸에 두 줄로(designer m2) — 열은 맞추면서 이름 칸을 넓게 둔다. */}
+                    <span className="hidden min-w-0 text-right leading-tight sm:block">
+                      <span className="block truncate text-fg-muted" data-testid={`secret-used-${s.name}`}
+                        title={s.grantCount > 0 ? t('secrets.usedBy', { n: String(s.grantCount) }) : undefined}>
+                        {s.grantCount > 0 ? t('secrets.usedByShort', { n: String(s.grantCount) }) : <span className="text-fg-subtle">{t('secrets.unused')}</span>}
+                      </span>
+                      <span className={`block truncate ${expired || expiringSoon ? 'text-warning' : 'text-fg-subtle'}`} data-testid={`secret-expiry-${s.name}`}
+                        data-soon={expiringSoon || undefined}>
+                        {expired
+                          ? t('secrets.expired', { when: date(s.expiresAt as string) })
+                          : s.expiresAt ? t('secrets.until', { when: date(s.expiresAt) }) : t('secrets.noExpiry')}
+                      </span>
+                    </span>
+                    <span className="flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
                       {mine && state.enabled && revealSupported && (
-                        <SmallButton onClick={reveal} disabled={busy} pressed={open === 'reveal'} ariaLabel={t(s.kind === 'file' ? 'secrets.downloadAria' : 'secrets.revealAria', { name: s.name })}>
-                          {locked ? '🔒 ' : ''}{s.kind === 'file' ? t('secrets.download') : t('secrets.reveal')}
+                        <SmallButton onClick={reveal} disabled={busy} pressed={shown === 'reveal'} className="inline-flex min-w-[5.25rem] items-center justify-center gap-1"
+                          ariaLabel={t(s.kind === 'file' ? 'secrets.downloadAria' : 'secrets.revealAria', { name: s.name })}>
+                          {/* 잠겨 있을 때만 단색 자물쇠(designer n7) — 컬러 이모지는 버튼 사이에서 혼자 튀었다. */}
+                          {locked && <LockGlyph />}
+                          {s.kind === 'file' ? t('secrets.download') : t('secrets.reveal')}
                         </SmallButton>
                       )}
-                      {mine && state.enabled && <SmallButton onClick={() => toggle('replace')} disabled={busy} pressed={open === 'replace'}>{t('secrets.replace')}</SmallButton>}
-                      <SmallButton onClick={() => toggle('grants')} disabled={busy} pressed={open === 'grants'}>{t('secrets.grants')}</SmallButton>
-                      <SmallButton onClick={() => toggle('access')} disabled={busy} pressed={open === 'access'}>{t('secrets.access')}</SmallButton>
-                      <SmallButton onClick={() => setDeleting(s)} disabled={busy} danger ariaLabel={t('secrets.deleteAria', { name: s.name })}>{t('secrets.delete')}</SmallButton>
+                      {/* Menu 는 가장 가까운 positioned 조상에 붙는다 — 여기 relative 가 없으면 페이지 끝으로 날아간다. */}
+                      <span className="relative">
+                      <Menu placement="bottom" className="right-0" items={menu} renderTrigger={(p) => (
+                        <button type="button" {...p} aria-label={t('secrets.moreAria', { name: s.name })} data-testid={`secret-more-${s.name}`}
+                          disabled={busy}
+                          className="h-7 w-7 rounded-row text-body leading-none text-fg-muted hover:bg-surface-hover hover:text-fg disabled:opacity-50">⋯</button>
+                      )} />
+                      </span>
                     </span>
                   </div>
-                  {open === 'reveal' && (
-                    <RevealPanel secret={s} ticket={ticket} onClose={() => setPanel(null)} onToast={setToast}
-                      onLocked={() => { lock('server'); setUnlockAsk({ thenId: s.id }); }} />
+                  {(shown || tab) && (
+                    <div className="px-3 pb-3 sm:pl-10">
+                      {shown === 'reveal' && (
+                        <RevealPanel secret={s} ticket={ticket} onClose={() => setPanel(null)} onToast={setToast}
+                          onLocked={() => { lock('server'); setUnlockAsk({ thenId: s.id }); }} />
+                      )}
+                      {shown === 'replace' && (
+                        <ReplaceForm secret={s} busy={busy} onCancel={() => setPanel(null)}
+                          onSubmit={async (body) => { if (await run(async () => { await getController().replaceSecretValue(s.id, body); })) setPanel(null); }} />
+                      )}
+                      {tab && (
+                        <>
+                          {/* 펼침 탭(D2): 받는 에이전트 / 접근 기록. 버튼 다섯 개가 있던 자리다(#2). */}
+                          <div role="tablist" aria-label={s.name} className={`inline-flex gap-0.5 rounded-row bg-surface p-0.5 ${shown ? 'mt-2' : ''}`}>
+                            {(['grants', 'access'] as const).map((k) => (
+                              <button key={k} type="button" role="tab" aria-selected={tab === k} data-testid={`secret-tab-${k}`}
+                                className={`rounded-row px-2.5 py-0.5 text-meta ${tab === k ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:text-fg'}`}
+                                onClick={() => setTab(k)}>
+                                {k === 'grants' ? t('secrets.tabGrants', { n: String(s.grantCount) }) : t('secrets.access')}
+                              </button>
+                            ))}
+                          </div>
+                          {tab === 'grants' && <GrantsPanel secret={s} canGrant={mine && !expired} expiredMine={mine && expired} onChanged={load} />}
+                          {tab === 'access' && <AccessPanel secret={s} />}
+                        </>
+                      )}
+                    </div>
                   )}
-                  {open === 'replace' && (
-                    <ReplaceForm secret={s} busy={busy} onCancel={() => setPanel(null)}
-                      onSubmit={async (body) => { if (await run(async () => { await getController().replaceSecretValue(s.id, body); })) setPanel(null); }} />
-                  )}
-                  {open === 'grants' && <GrantsPanel secret={s} canGrant={mine && !expired} expiredMine={mine && expired} onChanged={load} />}
-                  {open === 'access' && <AccessPanel secret={s} />}
                 </li>
               );
             })}
           </ul>
+          )}
           {error && <p role="alert" className="mt-2 text-meta text-danger" data-testid="secrets-error">{error}</p>}
         </section>
       )}
@@ -278,11 +339,37 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
             const s = deleting;
             setDeleting(null);
             if (panel?.id === s.id) setPanel(null);
+            if (open?.id === s.id) setOpen(null);
             void run(() => getController().deleteSecret(s.id));
           }}
         />
       )}
     </SettingsPage>
+  );
+}
+
+/**
+ * 머리 설명은 한 줄(SettingsPage description), 나머지는 「어떻게 지켜지나」를 눌러야 펼친다(designer 시안 v1 #5).
+ * 패널마다 붙어 있던 설명 문단(grantsNote)도 여기로 모였다.
+ */
+function HelpToggle({ on, onToggle }: { on: boolean; onToggle(): void }) {
+  const t = useT();
+  // 설명 문장 끝에 붙는다(designer n8) — 따로 줄을 차지하면 위아래 여백만 커진다.
+  return (
+    <button type="button" aria-expanded={on} data-testid="secrets-help-toggle"
+      className="text-fg-muted underline decoration-dotted underline-offset-2 hover:text-fg"
+      onClick={onToggle}>{t('secrets.helpToggle')}</button>
+  );
+}
+
+function SecretsHelp() {
+  const t = useT();
+  return (
+    <ul className="-mt-6 mb-6 list-disc space-y-0.5 rounded-card bg-surface-sunken py-2 pl-7 pr-3 text-meta text-fg-muted" data-testid="secrets-help">
+      <li>{t('secrets.help1')}</li>
+      <li>{t('secrets.help2')}</li>
+      <li>{t('secrets.help3')}</li>
+    </ul>
   );
 }
 
@@ -308,13 +395,22 @@ function useExplain() {
   };
 }
 
-function SmallButton({ children, onClick, disabled, danger, pressed, ariaLabel }: {
-  children: React.ReactNode; onClick(): void; disabled?: boolean; danger?: boolean; pressed?: boolean; ariaLabel?: string;
+function LockGlyph() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3 w-3 text-fg-muted" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <rect x="3" y="7" width="10" height="7" rx="1.5" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+    </svg>
+  );
+}
+
+function SmallButton({ children, onClick, disabled, danger, pressed, ariaLabel, className = '' }: {
+  children: React.ReactNode; onClick(): void; disabled?: boolean; danger?: boolean; pressed?: boolean; ariaLabel?: string; className?: string;
 }) {
   return (
     <button
       type="button"
-      className={`rounded border border-border px-2 py-0.5 text-meta disabled:opacity-50 ${danger ? 'text-fg hover:text-danger' : 'text-fg hover:bg-surface-sunken'} ${pressed ? 'bg-surface-sunken' : ''}`}
+      className={`rounded border border-border px-2 py-0.5 text-meta disabled:opacity-50 ${danger ? 'text-fg hover:text-danger' : 'text-fg hover:bg-surface-sunken'} ${pressed ? 'bg-surface-sunken' : ''} ${className}`}
       disabled={disabled}
       aria-pressed={pressed}
       aria-label={ariaLabel}
@@ -497,8 +593,7 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
   const grantedIds = new Set(Array.isArray(rows) ? rows.map((g) => g.agentId) : []);
 
   return (
-    <div className="mt-2 rounded border border-border bg-surface-sunken p-2" data-testid="secret-grants">
-      <p className="text-meta text-fg-subtle">{t('secrets.grantsNote')}</p>
+    <div className="mt-2" data-testid="secret-grants">
       {rows === 'loading' && <p className="mt-1 text-meta text-fg-muted">{t('secrets.loading')}</p>}
       {rows === 'error' && <p role="alert" className="mt-1 text-meta text-danger">{t('secrets.listFailed')}</p>}
       {Array.isArray(rows) && rows.length === 0 && <p className="mt-1 text-meta text-fg-subtle">{t('secrets.grantsNone')}</p>}
@@ -581,27 +676,32 @@ function GrantConfirm({ secret, agent, handle, operator, onOperator, busy, onCan
   // 「모든 스레드」 강조: 문장을 자리표시로 쪼개 그 낱말만 굵게 — 번역마다 낱말 자리가 달라도 된다.
   const [before, after] = t('secrets.allChannelsNote', { handle: h, all: '\u0001' }).split('\u0001');
   const valueBy = secret.valueSetByAgentId;
+  const radios = useRef<Partial<Record<'current' | 'any', HTMLButtonElement | null>>>({});
+  // 고른 뒤 초점은 세그먼트의 골라진 칸으로(designer n1) — [주기] 로 보내면 Enter 한 번에 줘 버린다.
+  useEffect(() => { radios.current[operator]?.focus(); }, [agentId]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="mt-2 rounded-card border border-border bg-surface-sunken px-3 py-2" data-testid="secret-grant-confirm">
       <div className="flex flex-wrap items-center gap-2 text-meta">
         <Identity account={agent} className="h-5 w-5 text-[10px]" variant="avatar" />
         <span className="font-medium text-fg">{t('secrets.grantTo', { handle: h })}</span>
-        <div role="radiogroup" aria-label={t('secrets.grantOperator')} className="inline-flex gap-0.5 rounded-row bg-surface p-0.5">
+        <div role="radiogroup" aria-label={t('secrets.grantOperator')} className="inline-flex gap-0.5 rounded-row bg-surface p-0.5"
+          onKeyDown={(e) => {
+            // 라디오 묶음은 ←→ 로 옮기고 Tab 한 번에 빠진다(designer n3) — 고른 칸만 tabIndex 0.
+            if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+            e.preventDefault();
+            const next = operator === 'current' ? 'any' : 'current';
+            onOperator(next);
+            radios.current[next]?.focus();
+          }}>
           {(['current', 'any'] as const).map((v) => (
-            <button key={v} type="button" role="radio" aria-checked={operator === v} disabled={busy}
+            <button key={v} ref={(el) => { radios.current[v] = el; }} type="button" role="radio" aria-checked={operator === v} disabled={busy}
+              tabIndex={operator === v ? 0 : -1}
               className={`rounded-row px-2.5 py-0.5 text-meta ${operator === v ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:text-fg'}`}
               onClick={() => onOperator(v)}>
               {v === 'current' ? t('secrets.operatorCurrent') : t('secrets.operatorAny')}
             </button>
           ))}
         </div>
-        <span className="ml-auto flex gap-2">
-          <SmallButton onClick={onCancel} disabled={busy}>{t('secrets.cancel')}</SmallButton>
-          <button type="button" disabled={busy} onClick={onGive}
-            className="rounded-row bg-accent px-2.5 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50">
-            {t('secrets.grant')}
-          </button>
-        </span>
       </div>
       <p className="mt-2 flex gap-1.5 text-meta text-fg-muted" data-testid="secret-grants-all-channels">
         <span aria-hidden="true">⚠</span>
@@ -619,6 +719,14 @@ function GrantConfirm({ secret, agent, handle, operator, onOperator, busy, onCan
       {valueBy && agentId !== valueBy && (
         <p role="alert" className="mt-1 text-meta text-warning" data-testid="secret-widen-warn">{t('secrets.widenWarn', { handle: handle(valueBy) })}</p>
       )}
+      {/* 경고를 다 읽은 뒤에 [주기] — 읽는 순서대로 버튼은 맨 끝(security #1266 n3). */}
+      <div className="mt-2 flex justify-end gap-2" data-testid="secret-grant-actions">
+        <SmallButton onClick={onCancel} disabled={busy}>{t('secrets.cancel')}</SmallButton>
+        <button type="button" disabled={busy} onClick={onGive}
+          className="rounded-row bg-accent px-2.5 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50">
+          {t('secrets.grant')}
+        </button>
+      </div>
     </div>
   );
 }
@@ -688,7 +796,7 @@ function AccessPanel({ secret }: { secret: SecretView }) {
     return () => { live = false; };
   }, [secret.id]);
   return (
-    <div className="mt-2 overflow-x-auto rounded border border-border bg-surface-sunken p-2" data-testid="secret-access">
+    <div className="mt-2 overflow-x-auto" data-testid="secret-access">
       {rows === 'loading' && <p className="text-meta text-fg-muted">{t('secrets.loading')}</p>}
       {rows === 'error' && <p role="alert" className="text-meta text-danger">{t('secrets.listFailed')}</p>}
       {Array.isArray(rows) && rows.length === 0 && <p className="text-meta text-fg-subtle">{t('secrets.accessNone')}</p>}

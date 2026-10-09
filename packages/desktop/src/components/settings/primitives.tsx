@@ -9,7 +9,7 @@ export function SettingsPage({ section, description, width = 'default', layout, 
    * 제목을 따로 받으면 목차 이름과 페이지 제목이 다시 갈라진다(UX ④ H5: "Appearance" 를
    * 눌렀는데 "모양" 이 열렸다). 목차에 없는 페이지는 없다.
    */
-  section: SectionId; description?: string; width?: 'default' | 'wide';
+  section: SectionId; description?: ReactNode; width?: 'default' | 'wide';
   /**
    * 화면의 **꼴**(설정 폭 시안 v1 규칙 ①). 주면 `width` 는 무시되고 `SettingsWrap` 이 상한·가운데
    * 정렬·컨테이너를 맡는다. 아직 옵트인이다 — 화면을 하나씩 옮기는 PR 에서 붙이고, 다 옮기면
@@ -208,7 +208,7 @@ export function DangerZone({ title, testId, children }: {
  * 화면마다 달랐다(M2) — 어떤 화면은 17px 제목, 어떤 화면은 15px 칸 제목만 있었다.
  */
 export function SettingsHeader({ section, description, className = '' }: {
-  section: SectionId; description?: string; className?: string;
+  section: SectionId; description?: ReactNode; className?: string;
 }) {
   const t = useT();
   return (

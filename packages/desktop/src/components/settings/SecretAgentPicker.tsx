@@ -64,7 +64,8 @@ export function SecretAgentPicker({ candidates, granted, disabled, onPick }: {
   const pick = (i: number) => {
     if (!pickable(i)) return;
     onPick(shown[i]!.id);
-    close(true);
+    // 다음 할 일은 확인 줄에 있다 — 초점은 호출부가 거기로 옮긴다(designer n1). 여는 단추로 돌리는 것은 Esc 뿐.
+    close(false);
   };
   const move = (dir: 1 | -1) => {
     for (let i = active + dir; i >= 0 && i < shown.length; i += dir) {
@@ -100,7 +101,7 @@ export function SecretAgentPicker({ candidates, granted, disabled, onPick }: {
             aria-activedescendant={pickable(active) ? `${listId}-${active}` : undefined}
             aria-autocomplete="list"
             placeholder={t('secrets.agentSearch')}
-            className="w-full border-b border-border bg-transparent px-3 py-2 text-meta text-fg placeholder-fg-subtle outline-none"
+            className="w-full rounded-t-card border-b border-border bg-transparent px-3 py-2 text-meta text-fg placeholder-fg-subtle outline-none"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {

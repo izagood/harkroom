@@ -46,6 +46,16 @@ beforeEach(() => {
 });
 afterEach(() => { usePrefsStore.getState().setLocale('system'); cleanup(); });
 
+/** 줄을 펼친다(받는 에이전트 탭이 먼저 열린다 — designer 시안 v1 D2). */
+async function expand(name: string) {
+  fireEvent.click(await screen.findByTestId(`secret-expand-${name}`));
+}
+/** ⋯ 메뉴에서 항목을 고른다(값 바꾸기·접근 기록·지우기… — D1). */
+async function menu(name: string, item: string) {
+  fireEvent.click(await screen.findByTestId(`secret-more-${name}`));
+  fireEvent.click(await screen.findByRole('menuitem', { name: item }));
+}
+
 /** 「+ 에이전트 추가」 팝오버에서 handle 로 고른다(OS select 대신 — designer 시안 v1 #1). */
 function pickAgent(handle: string) {
   if (!screen.queryByTestId('secret-agent-picker')) fireEvent.click(screen.getByTestId('secret-agent-add'));
@@ -58,8 +68,13 @@ describe('SecretsSettings', () => {
     render(<SecretsSettings />);
     const row = await screen.findByTestId('secret-api-token');
     expect(row.textContent).toContain('api-token');
-    expect(row.textContent).toContain('쓰는 곳: 에이전트 1');
+    expect(row.textContent).toContain('에이전트 1');
+    expect(screen.getByTestId('secret-used-api-token').getAttribute('title')).toBe('쓰는 곳: 에이전트 1');
     expect(row.textContent).toContain('만료 없음');
+    // designer m1: 줄마다 따로 격자라 열 폭을 고정해야 쓰는 곳·만료 열이 줄끼리 맞는다(auto 금지).
+    const line = screen.getByTestId('secret-expand-api-token').parentElement as HTMLElement;
+    expect(line.className).toContain('sm:grid-cols-[16px_minmax(0,1fr)_7.5rem_7.5rem]');
+    expect(line.className).not.toMatch(/sm:grid-cols-\[[^\]]*_auto/);
   });
 
   it('만료된 비밀은 표시되고 [주기] 가 없다', async () => {
@@ -67,9 +82,9 @@ describe('SecretsSettings', () => {
     render(<SecretsSettings />);
     const row = await screen.findByTestId('secret-old');
     expect(row.textContent).toContain('만료됨');
-    fireEvent.click(within(row).getByRole('button', { name: '받을 에이전트' }));
+    await expand('old');
     await screen.findByTestId('secret-grants');
-    expect(screen.queryByRole('button', { name: '주기' })).toBeNull();
+    expect(screen.queryByTestId('secret-agent-add')).toBeNull();
   });
 
   it('넣기: 서버 몸체 그대로 보내고, 보낸 뒤 값 칸을 비운다', async () => {
@@ -112,7 +127,7 @@ describe('SecretsSettings', () => {
   it('지우기는 확인창을 거치고, 쓰는 곳이 있으면 멈춘다고 말한다', async () => {
     const c = setup();
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: '비밀 api-token 지우기' }));
+    await menu('api-token', '지우기…');
     const dlg = screen.getByRole('dialog');
     expect(dlg.textContent).toContain('다음 턴부터 멈춘다');
     expect(c.deleteSecret).not.toHaveBeenCalled();
@@ -123,7 +138,7 @@ describe('SecretsSettings', () => {
   it('받을 에이전트: 소유자는 주고, 거두기는 확인창을 거친다', async () => {
     const c = setup();
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: '받을 에이전트' }));
+    await expand('api-token');
     await screen.findByTestId('secret-grant-alpha');
     pickAgent('gamma');
     fireEvent.click(screen.getByRole('button', { name: '주기' }));
@@ -139,7 +154,7 @@ describe('SecretsSettings', () => {
       { id: 'g2', agentId: 'agent-2', channelId: null, operatorId: null, grantedBy: ME, grantedAt: '2026-10-02T00:00:00Z', suspendedAt: null, suspendReason: null },
     ]) });
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: '받을 에이전트' }));
+    await expand('api-token');
     await screen.findByTestId('secret-grant-beta');
     expect(screen.getByTestId('secret-grant-not-own-beta').textContent).toContain('소유자가 달라 막힘');
     expect(screen.queryByTestId('secret-grant-not-own-alpha')).toBeNull();
@@ -148,7 +163,7 @@ describe('SecretsSettings', () => {
   it('부여: 고르기 전엔 경고가 없고, 고른 뒤 확인 줄에 「모든 스레드」 한 줄 — 어느 오퍼레이터든이면 한 줄 더', async () => {
     const c = setup();
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: '받을 에이전트' }));
+    await expand('api-token');
     await screen.findByTestId('secret-grant-alpha');
     expect(screen.queryByTestId('secret-grants-all-channels')).toBeNull();
     expect(screen.queryByRole('button', { name: '주기' })).toBeNull();
@@ -156,10 +171,21 @@ describe('SecretsSettings', () => {
     const confirm = screen.getByTestId('secret-grant-confirm');
     expect(within(confirm).getByText('@gamma 에게')).toBeTruthy();
     const note = screen.getByTestId('secret-grants-all-channels');
+    // security #1266 n3: 경고가 [주기] 보다 먼저 읽힌다(문서 순서).
+    expect(note.compareDocumentPosition(within(confirm).getByRole('button', { name: '주기' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(note.textContent).toContain('모든 스레드에서');
     expect(within(note).getByText('모든 스레드').tagName).toBe('STRONG');
     expect(screen.queryByTestId('secret-grant-any-warn')).toBeNull();
-    fireEvent.click(within(confirm).getByRole('radio', { name: '어느 오퍼레이터든' }));
+    // designer n1: 고른 뒤 초점은 세그먼트의 골라진 칸 — 여는 단추도 [주기]도 아니다.
+    const cur = within(confirm).getByRole('radio', { name: '지금 오퍼레이터에서만' });
+    expect(document.activeElement).toBe(cur);
+    expect(cur.tabIndex).toBe(0);
+    // designer n3: ←→ 로 옮긴다.
+    fireEvent.keyDown(cur, { key: 'ArrowRight' });
+    const any = within(confirm).getByRole('radio', { name: '어느 오퍼레이터든' });
+    expect(any.getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(any);
+    expect(cur.tabIndex).toBe(-1);
     expect(screen.getByTestId('secret-grant-any-warn').textContent).toContain('앞으로 배정되는 머신');
     fireEvent.click(within(confirm).getByRole('button', { name: '주기' }));
     await waitFor(() => expect(c.putSecretGrant).toHaveBeenCalledWith('id-api-token', { agentId: 'agent-3', channelId: null, operator: 'any' }));
@@ -172,7 +198,7 @@ describe('SecretsSettings', () => {
   it('고르기 팝오버: 내 에이전트만, 이미 받는 에이전트는 「받는 중」으로 못 고르고, 검색·↑↓·Enter·Esc', async () => {
     setup();
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: '받을 에이전트' }));
+    await expand('api-token');
     await screen.findByTestId('secret-grant-alpha');
     const trigger = screen.getByTestId('secret-agent-add');
     expect(trigger.textContent).toBe('+ 에이전트 추가');
@@ -229,7 +255,7 @@ describe('SecretsSettings', () => {
     // @alpha 가 아직 받지 않은 비밀 — 받는 중이면 고르기에서 흐리게 막힌다.
     setup({ listSecretGrants: vi.fn(async () => []) }, [secret('made', { createdByAgentId: 'agent-1', valueSetByAgentId: 'agent-1' })]);
     render(<SecretsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: '받을 에이전트' }));
+    await expand('made');
     await screen.findByText('받을 수 있는 에이전트가 없다.');
     // 고르기 전에는 안내가 없다(designer n2 — 폼 위에 세 줄이 겹치지 않게).
     expect(screen.queryByTestId('secret-adopt-note')).toBeNull();
@@ -276,10 +302,13 @@ describe('SecretsSettings', () => {
     setup({}, [secret('theirs', { ownerAccountId: 'someone' })]);
     render(<SecretsSettings />);
     const row = await screen.findByTestId('secret-theirs');
-    expect(within(row).queryByRole('button', { name: '값 바꾸기' })).toBeNull();
-    fireEvent.click(within(row).getByRole('button', { name: '받을 에이전트' }));
+    fireEvent.click(within(row).getByTestId('secret-more-theirs'));
+    expect(screen.queryByRole('menuitem', { name: '값 바꾸기' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: '접근 기록' })).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await expand('theirs');
     await screen.findByTestId('secret-grants');
-    expect(screen.queryByRole('button', { name: '주기' })).toBeNull();
+    expect(screen.queryByTestId('secret-agent-add')).toBeNull();
   });
 
   it('보관소가 꺼진 서버면 그렇게 말하고 넣기가 없다', async () => {
