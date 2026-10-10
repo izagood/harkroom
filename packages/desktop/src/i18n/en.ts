@@ -1905,6 +1905,8 @@ export const en = {
    * 새로 만드는지는 그 자리가 말한다.
    */
   'sidebar.dm.new': 'New',
+  /** 상대가 없는 DM(나에게 보내는 메모 칸)의 이름. 사이드바·Inbox·Saved 가 같은 말을 쓴다. */
+  'sidebar.dm.justMe': 'just me',
 
   'sidebar.edit.cancel': 'Cancel',
   'sidebar.edit.failed': 'The channel was not saved',
@@ -3924,7 +3926,7 @@ export const en = {
   //
   // ## 사전에 **안** 넣은 것
   //
-  // - **`Saved` · `just me`** — 이미 영어다
+  // - **`Saved`** — 이미 영어다(`just me` 는 `sidebar.dm.justMe` 로 옮겼다, P3-i)
   // - **`#{channel}` · `@{handle}` · 본문 미리보기 · 시각** — 데이터다
   // - **`✓` · `↺` · `✕`** — 기호다. 접근 이름은 아래 둘이 진다
   // ---------------------------------------------------------------------------
@@ -4124,6 +4126,20 @@ export const en = {
   'rail.cell.blocking': '{count} waiting for you',
   /** 배지로 안 그리고 이름에만 싣는 수치다. 위와 같은 이유로 복수형이 아니다. */
   'rail.cell.saved': '{count} saved',
+  /**
+   * 레일 다섯 칸. `…Name` 은 접근 이름·툴팁이고 나머지는 그림 아래 11px 한 줄이다.
+   * 라벨 폭은 54px 안에 들어야 한다 — 새 언어를 더하면 가장 긴 라벨을 다시 잰다(`Rail.tsx`).
+   */
+  'rail.cell.home': 'Home',
+  'rail.cell.homeName': 'Home',
+  'rail.cell.dm': 'DM',
+  'rail.cell.dmName': 'Direct messages',
+  'rail.cell.agents': 'Agents',
+  'rail.cell.agentsName': 'Agents',
+  'rail.cell.savedLabel': 'Saved',
+  'rail.cell.savedName': 'Saved messages',
+  'rail.cell.collab': 'Collab',
+  'rail.cell.collabName': 'Collaboration',
 
   // ---------------------------------------------------------------------------
   // workspace — **화면 이름이다.** `components/Workspace.tsx` 의 맨 위 띠.

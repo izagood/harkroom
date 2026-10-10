@@ -9,7 +9,7 @@ import { TOP_BAR_BG, TOP_BAR_H, macTopBarMinHeight } from '../lib/platform';
 import { AgentsIcon, CollabIcon, DmIcon, HomeIcon, SavedIcon } from './RailIcons';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
-import type { Translate } from '../i18n';
+import type { MessageKey, Translate } from '../i18n';
 
 /**
  * 레일이 고른 칸. **북마크가 없다** — 북마크는 패널이 아니라 오버레이(`SavedMessages`)를
@@ -50,10 +50,10 @@ export const RAIL_W_PX = 70;
 interface RailCell {
   /** `panel` 이 없는 칸은 오버레이를 여는 칸이다(북마크). */
   panel: RailPanel | null;
-  /** 화면에 서는 이름. 9px 한 줄 — 문서: "아이콘에 글자를 붙인다". */
-  label: string;
-  /** 접근성 이름. 그림은 `aria-hidden` 이라 이름을 여기서 준다. */
-  ariaLabel: string;
+  /** 화면에 서는 이름의 사전 키. 11px 한 줄 — 문서: "아이콘에 글자를 붙인다". */
+  label: MessageKey;
+  /** 접근성 이름의 사전 키. 그림은 `aria-hidden` 이라 이름을 여기서 준다. */
+  ariaLabel: MessageKey;
   /** 칸의 그림. 선 아이콘이고 색은 칸에서 물려받는다(`RailIcons.tsx`). */
   Icon: () => ReactElement;
   testId: string;
@@ -73,10 +73,10 @@ interface RailCell {
  * 이모지를 버린 이유가 있다).
  */
 const RAIL_CELLS: RailCell[] = [
-  { panel: 'home', label: 'Home', ariaLabel: 'Home', Icon: HomeIcon, testId: 'rail-home' },
-  { panel: 'dm', label: 'DM', ariaLabel: 'Direct messages', Icon: DmIcon, testId: 'rail-dm' },
-  { panel: 'agents', label: 'Agents', ariaLabel: 'Agents', Icon: AgentsIcon, testId: 'rail-agents' },
-  { panel: null, label: 'Saved', ariaLabel: 'Saved messages', Icon: SavedIcon, testId: 'rail-saved' },
+  { panel: 'home', label: 'rail.cell.home', ariaLabel: 'rail.cell.homeName', Icon: HomeIcon, testId: 'rail-home' },
+  { panel: 'dm', label: 'rail.cell.dm', ariaLabel: 'rail.cell.dmName', Icon: DmIcon, testId: 'rail-dm' },
+  { panel: 'agents', label: 'rail.cell.agents', ariaLabel: 'rail.cell.agentsName', Icon: AgentsIcon, testId: 'rail-agents' },
+  { panel: null, label: 'rail.cell.savedLabel', ariaLabel: 'rail.cell.savedName', Icon: SavedIcon, testId: 'rail-saved' },
   /*
     다섯째 칸(`docs/desktop-collab.html` 「협업 탭 — 레일의 다섯째 칸」). 이 칸이 avcshub 웹의
     `/[org]/[repo]/proposals` 를 대신한다.
@@ -84,9 +84,9 @@ const RAIL_CELLS: RailCell[] = [
     **끝에 붙인다.** 앞 넷의 자리를 밀면 숫자 단축키가 바뀌어, 손이 기억한 `⌘3` 이 다른 칸을
     연다 — 새 칸 하나를 위해 쓰던 셋을 흔드는 값이 더 크다.
 
-    라벨은 영어 그대로다(위 넷과 같은 이유: 폭 54px 에 맞춰 재어 고른 값이다).
+    라벨은 사전이 진다(위 넷과 같다). 폭 54px 은 언어마다 다시 잰다 — `RailButton` 의 라벨 주석.
   */
-  { panel: 'collab', label: 'Collab', ariaLabel: 'Collaboration', Icon: CollabIcon, testId: 'rail-collab' },
+  { panel: 'collab', label: 'rail.cell.collab', ariaLabel: 'rail.cell.collabName', Icon: CollabIcon, testId: 'rail-collab' },
 ];
 
 /**
@@ -395,16 +395,17 @@ function RailButton({ cell, active, badge, countInName, onClick, t }: {
   t: Translate;
 }) {
   /* 칸 이름과 수치를 잇는 방식이 언어의 것이라 **사전이 그 문장을 진다** — 코드가
-     ` — ` 를 붙이면 그 자리가 한 언어의 어순으로 굳는다. `cell.ariaLabel` 자체는
-     안 옮긴다: 그 넷은 이미 영어이고 폭을 재어 고른 값이다(`RAIL_CELLS` 주석). */
+     ` — ` 를 붙이면 그 자리가 한 언어의 어순으로 굳는다. 칸 이름도 사전이 진다(P3-i) —
+     옮기기 전에는 한국어 화면에도 `Home`·`Saved` 가 영어로 섰다. */
+  const ariaName = t(cell.ariaLabel);
   const name = badge > 0
     ? t('rail.cell.withCount', {
-      name: cell.ariaLabel,
+      name: ariaName,
       count: t('rail.cell.blocking', { count: badge }),
     })
     : countInName
-      ? t('rail.cell.withCount', { name: cell.ariaLabel, count: countInName })
-      : cell.ariaLabel;
+      ? t('rail.cell.withCount', { name: ariaName, count: countInName })
+      : ariaName;
   return (
     <button
       type="button"
@@ -433,10 +434,11 @@ function RailButton({ cell, active, badge, countInName, onClick, t }: {
         패딩이 없다. SF(시스템 폰트)의 실제 전진폭으로 가장 긴 라벨 `Agents` 가 11px 에서
         32.89px 이라 21px 이 남는다(`Home` 28.00 · `Saved` 29.08 · `DM` 16.61).
         라벨은 이 배열이 정하는 닫힌 집합이라, 여기에 긴 이름을 새로 더할 때만 다시 재면
-        된다. `truncate` 를 달지 않는 이유도 그것이다 — 잘릴 수 없는 폭이면 말줄임은
+        된다. 한국어는 가장 긴 `에이전트` 가 한글 네 자(11px 에서 약 44px)라 54px 안에 든다.
+        `truncate` 를 달지 않는 이유도 그것이다 — 잘릴 수 없는 폭이면 말줄임은
         일어나지 않을 코드이고, 있으면 "잘려도 된다"로 읽힌다.
       */}
-      <span aria-hidden="true" className="text-meta leading-none">{cell.label}</span>
+      <span aria-hidden="true" className="text-meta leading-none">{t(cell.label)}</span>
       {badge > 0 && (
         /*
           배지도 11px 로 올린다. 이것이 커지면 글리프를 덮을까가 걱정이지만 — `right-1` 로

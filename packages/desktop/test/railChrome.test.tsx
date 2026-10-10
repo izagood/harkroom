@@ -163,7 +163,7 @@ describe('요청 2 — 네 칸의 그림이 선 아이콘이다', () => {
 
   it('그림 옆의 글자는 그대로다 — 아이콘만 두지 않는다(레일 문서)', () => {
     mountRail();
-    expect(within(screen.getByTestId('rail-agents')).getByText('Agents')).toBeTruthy();
+    expect(within(screen.getByTestId('rail-agents')).getByText('에이전트')).toBeTruthy();
   });
 });
 
