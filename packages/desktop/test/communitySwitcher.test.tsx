@@ -485,9 +485,9 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
     } as unknown as ConnectScreenProps)} />);
 
     // 이미 서버가 있는 사람이 새 서버를 부트스트랩하는 것은 다른 일이다 — 감춘다.
-    expect(screen.queryByText('처음인가? 관리자 계정 만들기')).toBeNull();
+    expect(screen.queryByText('처음 쓰는 서버 — 관리자 계정 만들기')).toBeNull();
     // 초대 가입은 남는다 — 초대받은 커뮤니티를 하나 더 붙이는 것은 같은 일이다.
-    expect(screen.getByText('초대 토큰이 있나? 이 커뮤니티에 들어가기')).toBeTruthy();
+    expect(screen.getByText('초대 토큰으로 이 커뮤니티에 들어가기')).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('서버 주소'), { target: { value: 'https://b.example' } });
     fireEvent.change(screen.getByLabelText('로그인 ID'), { target: { value: 'me-b' } });
