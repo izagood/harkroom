@@ -455,7 +455,7 @@ export function Sidebar({
       const liveAt = loaded?.length ? loaded[loaded.length - 1]!.createdAt : null;
       return {
         id: dm.id,
-        label: peers.map((id) => accounts[id]?.handle ?? '…').join(', ') || 'just me',
+        label: peers.map((id) => accounts[id]?.handle ?? '…').join(', ') || t('sidebar.dm.justMe'),
         // 둘 중 **늦은 것**. 문자열 비교로 충분하다 — 둘 다 서버가 낸 ISO 8601 UTC 라
         // 사전순이 곧 시간순이다(`Date` 로 감싸면 파싱 비용만 늘고 결과는 같다).
         lastAt: dm.lastMessageAt && liveAt
@@ -482,7 +482,7 @@ export function Sidebar({
         return a.lastAt < b.lastAt ? 1 : -1;
       }
       return a.id.localeCompare(b.id);
-    }), [dms, accounts, me, online, connected, channelPrefs, messages]);
+    }), [dms, accounts, me, online, connected, channelPrefs, messages, t]);
 
   const others = Object.values(accounts).filter((a) => a.id !== me?.id);
 

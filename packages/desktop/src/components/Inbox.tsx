@@ -232,10 +232,10 @@ export function Inbox({ open, onClose }: Props) {
     const dm = dms.find((d) => d.id === id);
     if (dm) {
       const peers = dm.memberIds.filter((p) => p !== me?.id);
-      return peers.map((p) => accounts[p]?.handle ?? '…').join(', ') || 'just me';
+      return peers.map((p) => accounts[p]?.handle ?? '…').join(', ') || t('sidebar.dm.justMe');
     }
     return ch?.name ? `#${ch.name}` : id;
-  }, [channels, dms, accounts, me]);
+  }, [channels, dms, accounts, me, t]);
 
   const cards = useMemo(
     () => buildBoard({

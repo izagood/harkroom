@@ -2804,7 +2804,7 @@ describe('초대 화면 — 되돌릴 수 없는 것을 두 언어가 다 말한
   });
 });
 
-describe('레일 — 두 언어로 뜨고 칸 이름은 안 옮긴다', () => {
+describe('레일 — 두 언어로 뜨고 칸 이름도 언어를 따른다', () => {
   const railProps = {
     panel: 'home' as const,
     onPanelChange: () => {},
@@ -2815,19 +2815,27 @@ describe('레일 — 두 언어로 뜨고 칸 이름은 안 옮긴다', () => {
   };
 
   /**
-   * **칸 이름 넷은 두 언어 모두 그대로다.** `RAIL_CELLS` 의 그 값들은 62px 레일에서
-   * 폭을 재어 고른 것이라(그 주석의 실측: `Agents` 가 11px 에서 32.89px), 언어마다
-   * 길이가 갈리면 그 계산이 무너진다 — 옮기려면 **먼저 다시 재야 한다.**
+   * **칸 이름 다섯이 고른 언어로 선다**(P3-i). 전에는 폭을 잰 값이라며 영어로 묶어 두어
+   * 한국어 화면에도 `Home`·`Saved` 가 섰다. 폭은 언어마다 다시 쟀다 — 한국어에서 가장 긴
+   * `에이전트` 가 한글 네 자(11px 에서 약 44px)라 54px 버튼 안에 든다(`Rail.tsx` 주석).
    */
-  it('칸 이름 넷이 두 언어에서 같은 글자다', () => {
+  it('칸 이름 다섯이 고른 언어로 선다', () => {
+    const names = {
+      en: ['Home', 'DM', 'Agents', 'Saved', 'Collab'],
+      ko: ['홈', 'DM', '에이전트', '저장', '협업'],
+    } as const;
     for (const locale of ['en', 'ko'] as const) {
       cleanup();
       speak(locale);
       useActiveStore.getState().set({ me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') } });
       render(<Rail {...railProps} />);
       const rail = screen.getByTestId('rail').textContent ?? '';
-      for (const name of ['Home', 'DM', 'Agents', 'Saved']) {
+      for (const name of names[locale]) {
         expect(rail, `${locale}.${name}`).toContain(name);
+      }
+      if (locale === 'ko') {
+        expect(rail).not.toContain('Home');
+        expect(screen.getByTestId('rail-saved').getAttribute('aria-label')).toBe('저장된 메시지');
       }
     }
   });
@@ -2857,7 +2865,7 @@ describe('레일 — 두 언어로 뜨고 칸 이름은 안 옮긴다', () => {
     seedBlocking();
     render(<Rail {...railProps} />);
     expect(screen.getByTestId('rail-home').getAttribute('aria-label'))
-      .toBe('Home — 나를 기다리는 것 2개');
+      .toBe('홈 — 나를 기다리는 것 2개');
   });
 });
 

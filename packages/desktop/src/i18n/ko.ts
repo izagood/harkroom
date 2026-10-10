@@ -1089,6 +1089,7 @@ export const ko = {
   'sidebar.delete.title': '{name} 삭제',
 
   'sidebar.dm.new': 'New',
+  'sidebar.dm.justMe': '나만',
 
   'sidebar.edit.cancel': '취소',
   'sidebar.edit.failed': '채널 편집에 실패했다',
@@ -2049,6 +2050,16 @@ export const ko = {
   'rail.cell.withCount': '{name} — {count}',
   'rail.cell.blocking': '나를 기다리는 것 {count}개',
   'rail.cell.saved': '담아 둔 메시지 {count}개',
+  'rail.cell.home': '홈',
+  'rail.cell.homeName': '홈',
+  'rail.cell.dm': 'DM',
+  'rail.cell.dmName': 'DM',
+  'rail.cell.agents': '에이전트',
+  'rail.cell.agentsName': '에이전트',
+  'rail.cell.savedLabel': '저장',
+  'rail.cell.savedName': '저장된 메시지',
+  'rail.cell.collab': '협업',
+  'rail.cell.collabName': '협업',
 
   // ---------------------------------------------------------------------------
   // workspace — **`앞로 (Cmd+])` 의 오타를 고쳤다**(`앞으로` 여야 한다). 옮기면서
