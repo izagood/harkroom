@@ -18,12 +18,17 @@ let adminAccountId: string;
 let botPat: string;
 let channelId: string;
 let mcpUrl: string;
+/** 투영이 지금 보는 avcs URL — `workspace.guide` 의 avcs 절이 이것을 따른다(guide.ts). */
+let avcsUrl: string | null = null;
 
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
   pool = db.pool;
-  app = await buildServer({ pool: db.pool });
+  app = await buildServer({
+    pool: db.pool,
+    projection: { envBaseUrl: null, reconfigure: async () => {}, currentUrl: () => avcsUrl },
+  });
   ({ token: adminToken, accountId: adminAccountId } = await bootstrapAdmin(app));
   ({ pat: botPat } = await createAgent(app, adminToken, 'mcpbot'));
   const ch = await app.inject({
@@ -199,8 +204,27 @@ describe('mcp surface', () => {
     })) as { guide: string };
     expect(guide).not.toMatch(/## poll 루프 계약/);
     expect(guide).toMatch(/threadRootId/);
-    expect(guide).toMatch(/## avcs 사용 경계/);
     await client.close();
+  });
+
+  it('workspace.guide carries the avcs sections only while the server watches an avcs URL', async () => {
+    const client = await mcpClient(botPat);
+    const guide = async () => (text(await client.callTool({
+      name: 'workspace.guide', arguments: { mode: 'turn' },
+    })) as { guide: string }).guide;
+    try {
+      avcsUrl = null;
+      const without = await guide();
+      expect(without).not.toMatch(/avcs/);
+      expect(without).toMatch(/## 이름이 아니라 id 로 가리킨다/);
+      avcsUrl = 'http://avcs.example:4000';
+      const withAvcs = await guide();
+      expect(withAvcs).toMatch(/## avcs 사용 경계/);
+      expect(withAvcs).toMatch(/## 작업 경과 알리기/);
+    } finally {
+      avcsUrl = null;
+      await client.close();
+    }
   });
 
   it('inbox.poll returns mention created after the call (long-poll)', async () => {

@@ -356,6 +356,8 @@ function buildMcpServer(
   operatorId: string | null = null,
   /** 오퍼레이터 능력(하네스가 밝힌 모델·effort) — 에이전트의 모델 고르기가 `checkOffered` 로 본다. */
   operatorHub?: OperatorHub,
+  /** 이 서버가 avcs 를 보고 있는가 — `workspace.guide` 가 avcs 절을 실을지 정한다(`guide.ts`). */
+  avcsConnected: () => boolean = () => true,
 ): McpServer {
   const server = new McpServer({ name: 'harkroom', version: '0.1.0' });
 
@@ -409,7 +411,7 @@ function buildMcpServer(
   server.registerTool('workspace.guide', {
     description: '워크스페이스 규칙(avcs 사용 경계 포함). mode=turn 이면 러너 턴용 판본',
     inputSchema: { mode: z.enum(['resident', 'turn']).optional() },
-  }, async ({ mode }) => jsonResult({ guide: guideFor(mode ?? 'resident') }));
+  }, async ({ mode }) => jsonResult({ guide: guideFor(mode ?? 'resident', { avcs: avcsConnected() }) }));
 
   server.registerTool('account.me', { description: '내 계정 정보' },
     async () => jsonResult(account));
@@ -2278,6 +2280,8 @@ export async function registerMcp(
   storage: StorageBackend,
   leakGuard: SecretLeakGuard | null = null,
   operatorHub?: OperatorHub,
+  /** 이 서버가 avcs 를 보고 있는가(투영 URL 이 있는가). 생략하면 있다고 본다 — 옛 호출자의 가이드가 그대로다. */
+  avcsConnected: () => boolean = () => true,
 ): Promise<void> {
   app.post('/mcp', {
     /**
@@ -2316,7 +2320,7 @@ export async function registerMcp(
     */
     const rawCause = req.headers[CAUSE_HEADER];
     const cause = typeof rawCause === 'string' && UUID_RE.test(rawCause) ? rawCause : null;
-    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null, operatorHub);
+    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null, operatorHub, avcsConnected);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {

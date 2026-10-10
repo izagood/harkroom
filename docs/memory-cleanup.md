@@ -7,7 +7,7 @@
 ## 모양
 
 - 에이전트마다 자동화 하나. 본문·이름·트리거는 `@harkroom/shared` 의 `memoryCleanupBody(handle)`·`MEMORY_CLEANUP_NAME`·
-  `MEMORY_CLEANUP_TRIGGER`(월요일 09:00 서울, 주간)다.
+  `memoryCleanupTrigger(tz)`(월요일 09:00, 주간 — 시간대는 소유자의 것을 준다)다.
 - 에이전트가 `automation.propose` 로 제안하고 **그 에이전트의 소유자가 설정 › Automations 에서 승인**한다. 글은 승인한
   사람 이름으로 나가고, 본문 맨 앞 멘션이 그 에이전트의 턴을 띄운다.
 - 본문은 지시문의 「정리하는 법」(lease → audit → 후보마다 get → merge/archive → release → 보고)을 부르고, 이 턴에서만

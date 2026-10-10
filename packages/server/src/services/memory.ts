@@ -696,7 +696,7 @@ const MEMORY_SLUG_REGEX = /^core$|^mem\/[a-z0-9][a-z0-9_-]{0,63}((\/[a-z0-9][a-z
  * `skill.propose` 가 이미 `slug must be [a-z0-9-]{2,40}` 로 그렇게 한다. 같은 판례다.
  */
 export const MEMORY_SLUG_HINT = 'slug must be "core" or "mem/<name>" '
-  + '(segments of [a-z0-9][a-z0-9_-]* joined by "/", e.g. "mem/deploy" or "mem/people/jaebin"; '
+  + '(segments of [a-z0-9][a-z0-9_-]* joined by "/", e.g. "mem/deploy" or "mem/people/alex"; '
   + 'no dots, no uppercase, and the "mem/" prefix is required)';
 
 export function isValidSlug(slug: string): boolean {

@@ -283,7 +283,7 @@ export function AutomationsSettings() {
               <TextInput value={draft.time} onChange={(time) => setDraft({ ...draft, time })} placeholder="09:00" />
             </Field>
             <Field label={t('automations.form.tz')}>
-              <TextInput value={draft.tz} onChange={(tz) => setDraft({ ...draft, tz })} placeholder="Asia/Seoul" />
+              <TextInput value={draft.tz} onChange={(tz) => setDraft({ ...draft, tz })} placeholder="Europe/Berlin" />
             </Field>
           </div>}
           <div className="flex gap-2">

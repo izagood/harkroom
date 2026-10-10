@@ -23,15 +23,22 @@
 // #843~#851(v0.3.0)이 채널·에이전트·팀·사람을 id 로 가리키게 바꿨지만 그 원칙은 **코드에만**
 // 들어갔다 — 본문 멘션은 서버가 `<@id>` 로 바꿔 주니 에이전트가 몰라도 채팅은 안 깨졌고,
 // 그래서 누구도 에이전트에게 말할 필요를 못 느꼈다. 깨진 곳은 서버가 손대지 못하는 **바깥**이다:
-// 작업 대장 저장소(izagood/task_manager)를 처음 만든 에이전트가 `channel: rcms`·`agent: murmur`
-// 를 키로 적었고, 지적받은 뒤에도 다른 스레드의 같은 에이전트 턴이 옛 형식으로 또 적었다.
+// 작업 대장 저장소를 처음 만든 에이전트가 `channel: <채널 이름>`·`agent: <에이전트 이름>`
+// 을 키로 적었고, 지적받은 뒤에도 다른 스레드의 같은 에이전트 턴이 옛 형식으로 또 적었다.
 // 규칙을 받을 경로가 이 가이드·러너 프롬프트·스킬 어디에도 없었다. 두 독자 모두 기록을 남기므로
 // COMMON 에 둔다.
 
-/** 두 독자 모두에게 나가는 부분. */
-const COMMON = `# harkroom workspace 가이드 (에이전트용)
+//
+// ## avcs 절은 avcs 가 연결된 설치에만 (2026-10-10)
+//
+// avcs 는 harkroom 의 선택 부품이다(`AVCS_BASE_URL` 또는 설정 화면의 투영). 연결이 없는 설치의
+// 에이전트에게 "저장소 변경은 avcs 로"라고 말하면 지킬 수 없는 규칙이 되고, 에이전트는 없는 도구를
+// 찾느라 헤맨다. 그래서 avcs 두 절(경계·경과)을 떼어 두고, 서버가 avcs 를 보고 있을 때만 싣는다.
 
-## avcs 사용 경계
+const HEADER = `# harkroom workspace 가이드 (에이전트용)`;
+
+/** avcs 가 연결된 설치에만 나가는 부분. */
+const AVCS = `## avcs 사용 경계
 - 읽기 전용 요청(요약·질문 답변·설명·리뷰 의견): 채팅으로만 응답한다. avcs 오브젝트를 만들지 않는다.
 - 저장소 상태 변경(코드 수정·파일 추가/삭제·통합·릴리스): avcs로 진행한다(intent → session → operations).
 - 회색지대(조사·분석): 산출물이 repo에 들어가면 avcs, 채팅 답변으로 끝나면 채팅만.
@@ -43,9 +50,10 @@ avcs 오브젝트는 채팅으로 자동 투영되지 않는다. intent·operati
 직접 읽어 보여 준다.
 intent 를 만들었으면 곧바로 \`workitem.upsert\`(source: \`avcs\`, externalKey: \`<repo>/<intent oid>\`,
 threadRootId: 요청받은 스레드, title: 한 줄)로 그 스레드에 잇는다 — 사람의 「내 작업」 보드에 코드 칩으로
-선다. state 는 주지 않는다(avcs 서버가 정본이다).
+선다. state 는 주지 않는다(avcs 서버가 정본이다).`;
 
-## 이름이 아니라 id 로 가리킨다
+/** 두 독자 모두에게 나가는 부분. */
+const COMMON = `## 이름이 아니라 id 로 가리킨다
 채널·에이전트·팀·사람의 이름(handle·채널명·팀 이름)은 **언제든 바뀌는 표시용 이름표**다.
 무엇을 저장하거나 기록할 때(저장소 파일·frontmatter·설정·메모리·다른 시스템에 남기는 참조)는
 대상을 **id 로** 가리키고, 이름은 사람이 읽으라고 곁들이기만 한다. 이름을 키로 쓰면 이름이
@@ -72,7 +80,7 @@ CI·빌드처럼 결과를 기다려야 하는 일은 **백그라운드 프로�
 turn.wake(channelId, threadRootId, notBeforeSec, reason) 로 다시 볼 시각을 예약하라.
 예약은 스레드에 대기 줄로 **보이고**(사람이 "기다리는 중"임을 안다), 시각이 되면 inbox 로
 돌아온다. 하한 60초, 연속 20회(사람의 새 발화 없이)까지다 — 소진되면 message.fail 로 넘겨라.
-결과를 **다른 스레드에** 보고하기로 약속했으면(예: #task 에 "13:21 에 확인한다") reportTo 에 그 채널·스레드 id 를
+결과를 **다른 스레드에** 보고하기로 약속했으면(예: #ops 에 "13:20 에 확인한다") reportTo 에 그 채널·스레드 id 를
 준다 — 깨어난 턴은 자기 스레드만 알아서, 주지 않으면 그 약속을 모른다. 남이 건 예약을 근거로 약속하지 마라.
 사람이 그 스레드에서 너를 부르면 걸어 둔 예약은 접힌다 — 그 턴 프롬프트에 접힌 사유가 실리니 필요하면 다시 걸어라.`;
 
@@ -123,10 +131,19 @@ const TURN_ONLY = `## 이 턴의 일은 앵커 하나다
 /** `workspace.guide` 의 독자. 기본값은 'resident' 다 — 모드를 모르는 옛 호출자는 전문을 받는다. */
 export type GuideMode = 'resident' | 'turn';
 
-export function guideFor(mode: GuideMode): string {
+export interface GuideOptions {
+  /**
+   * 이 서버가 avcs 를 보고 있는가(투영 URL 이 있는가). 없으면 avcs 절을 빼고 보낸다(파일 머리).
+   * 기본값이 true 인 이유: 옵션을 모르는 옛 호출자(`GUIDE`)는 지금까지와 글자 그대로 같은 전문을 받는다.
+   */
+  avcs?: boolean;
+}
+
+export function guideFor(mode: GuideMode, { avcs = true }: GuideOptions = {}): string {
+  const head = avcs ? [HEADER, AVCS, COMMON] : [HEADER, COMMON];
   const sections = mode === 'turn'
-    ? [COMMON, TURN_ONLY, WAKE, MCP_AUTH]
-    : [COMMON, RESIDENT_ONLY, WAKE, MCP_AUTH, POLL_CONTRACT];
+    ? [...head, TURN_ONLY, WAKE, MCP_AUTH]
+    : [...head, RESIDENT_ONLY, WAKE, MCP_AUTH, POLL_CONTRACT];
   return `${sections.join('\n\n')}\n`;
 }
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { MEMORY_CLEANUP_NAME, MEMORY_CLEANUP_TOOLS, MEMORY_CLEANUP_TRIGGER, memoryCleanupBody } from '../src/memoryCleanup.js';
+import { MEMORY_CLEANUP_NAME, MEMORY_CLEANUP_TOOLS, memoryCleanupBody, memoryCleanupTrigger } from '../src/memoryCleanup.js';
 
 // 메모리 C3 — 주간 정리 자동화 본문. 서버·러너를 읽어 본문이 실제로 있는 도구·절차를 부르는지 고정한다.
 const root = path.resolve(__dirname, '../..');
@@ -47,7 +47,9 @@ describe('memoryCleanupBody', () => {
   });
 
   it('트리거는 automation.propose 의 주간 schedule 모양이다', () => {
-    expect(MEMORY_CLEANUP_TRIGGER).toEqual({ kind: 'schedule', freq: 'weekly', weekdays: [1], time: '09:00', tz: 'Asia/Seoul' });
+    // 시간대는 부르는 쪽이 준다 — 한 설치의 시간대를 기본값으로 박지 않는다.
+    expect(memoryCleanupTrigger('Europe/Berlin')).toEqual({ kind: 'schedule', freq: 'weekly', weekdays: [1], time: '09:00', tz: 'Europe/Berlin' });
+    expect(memoryCleanupTrigger('UTC').tz).toBe('UTC');
     expect(mcp).toContain("registerTool('automation.propose'");
   });
 });

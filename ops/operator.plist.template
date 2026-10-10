@@ -8,7 +8,7 @@
   쓰는 법:
     harkroom-operator register https://<host> <코드>      # 먼저 등록한다 — 토큰이 데이터 디렉터리에 남는다
     sed -e 's|@BIN@|/Applications/Harkroom.app/Contents/MacOS/harkroom-operator|g' \
-        -e 's|@USER@|jaebin|g' \
+        -e "s|@USER@|$(whoami)|g" \
         ops/operator.plist.template > ~/Library/LaunchAgents/dev.harkroom.operator.plist
     launchctl load ~/Library/LaunchAgents/dev.harkroom.operator.plist
 

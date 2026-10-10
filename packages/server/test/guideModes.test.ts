@@ -72,6 +72,24 @@ describe('워크스페이스 가이드의 두 판본 (2026-09-08 앵커 이탈 �
     }
   });
 
+  it('avcs 가 없는 설치에는 avcs 절을 싣지 않는다 — 지킬 수 없는 규칙이 된다 (2026-10-10)', () => {
+    for (const mode of ['resident', 'turn'] as const) {
+      const g = guideFor(mode, { avcs: false });
+      expect(g, mode).not.toMatch(/avcs/);
+      expect(g, mode).not.toMatch(/workitem\.upsert/);
+      expect(g, mode).toMatch(/^# harkroom workspace 가이드/);
+      // 나머지 절은 그대로다 — 뺀 것은 avcs 두 절뿐이다.
+      expect(g, mode).toMatch(/## 이름이 아니라 id 로 가리킨다/);
+      expect(g, mode).toMatch(/## 기다림은 예약한다/);
+      expect(g, mode).toMatch(/## MCP 인증은 턴 안에서 하지 않는다/);
+      expect(guideFor(mode, { avcs: true }), mode).toBe(guideFor(mode));
+    }
+  });
+
+  it('가이드 예시의 채널은 중립 이름이다 — 모든 워크스페이스의 에이전트가 읽는다', () => {
+    expect(guideFor('turn')).toContain('(예: #ops 에 "13:20 에 확인한다")');
+  });
+
   it('옛 이름 GUIDE 는 상주 판본과 글자 그대로 같다 — 모드를 모르는 호출자의 계약이 바뀌면 안 된다', () => {
     expect(GUIDE).toBe(guideFor('resident'));
   });
