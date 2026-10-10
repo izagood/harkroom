@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AutomationGithubTrigger, AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
-import { Button, Field, Segmented, Select, SettingsPage, Switch, TextInput } from './primitives';
+import { Button, Field, Segmented, Select, SettingsGrid, SettingsPage, Switch, TextInput } from './primitives';
 import { useLocale, useT } from '../../i18n/useT';
 import { describeTrigger, localTimeZone, weekdayName } from '../../lib/automation';
 
@@ -162,7 +162,7 @@ export function AutomationsSettings() {
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString(locale || undefined) : '—');
 
   return (
-    <SettingsPage section="automations" description={t('automations.subtitle')}>
+    <SettingsPage section="automations" description={t('automations.subtitle')} layout="list">
       <div className="mb-6 flex items-center gap-2">
         <Button variant="primary" disabled={draft !== null}
           onClick={() => { setEditingId(null); setDraft({ ...emptyDraft(), channelId: targets[0]?.value ?? '' }); }}>
@@ -181,7 +181,7 @@ export function AutomationsSettings() {
       )}
 
       {draft && (
-        <section data-testid="automation-form" className="mb-8 space-y-4 rounded-compose border border-border bg-surface-raised p-4">
+        <section data-testid="automation-form" className="mb-8 max-w-[880px] space-y-4 rounded-compose border border-border bg-surface-raised p-4">
           <Field label={t('automations.form.name')}>
             <TextInput value={draft.name} onChange={(name) => setDraft({ ...draft, name })}
               placeholder={t('automations.form.namePlaceholder')} />
@@ -299,7 +299,8 @@ export function AutomationsSettings() {
         <p className="text-fg-subtle">{t('automations.list.empty')}</p>
       )}
 
-      <ul className="space-y-3">
+      {/* 자동화 하나가 카드 하나 — 넓은 창에서 2·3단 격자(시안 v1 list). 만들기 폼은 form 상한 880 을 지킨다. */}
+      <SettingsGrid as="ul" testId="automations-grid">
         {rows.map((a) => (
           <li key={a.id} data-testid="automation-row" className="rounded-compose border border-border bg-surface-raised p-4">
             <div className="flex items-start gap-3">
@@ -417,7 +418,7 @@ export function AutomationsSettings() {
             </div>}
           </li>
         ))}
-      </ul>
+      </SettingsGrid>
     </SettingsPage>
   );
 }

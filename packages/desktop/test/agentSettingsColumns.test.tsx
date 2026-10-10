@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { AgentDefaults, AgentView } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -45,6 +45,8 @@ describe('설정 폭 2b — 에이전트 편집 칸', () => {
     const glance = await screen.findByTestId('agent-glance');
     expect(col(glance)).toBe('secondary');
     expect(screen.getByTestId('agent-glance-run').textContent).toContain('claude-opus-5-5 · high · 배정 없음');
+    // 기억 칸은 이미 불러 둔 목록의 개수다(designer #1263 nit 2) — 불러오기 전이면 「—」. 「한눈에」가 따로 부르지 않는다.
+    await waitFor(() => expect(screen.getByTestId('agent-glance-memory').textContent).toContain('항목 0개'));
     fireEvent.click(screen.getByTestId('agent-glance-run'));
     expect(screen.getByTestId('agent-tab-run').getAttribute('aria-selected')).toBe('true');
   });

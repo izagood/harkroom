@@ -325,7 +325,19 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
       {Array.isArray(grants) && rows.length === 0 && <p className="mt-2 text-meta text-fg-subtle" data-testid="agent-grants-none">{t('agents.grants.none')}</p>}
 
       {rows.length > 0 && (
-        <ul className="mt-2 space-y-1" data-testid="agent-grants-list">
+        // 머지 grant 는 **표**다(설정 폭 시안 v1, designer #1263) — 저장소·준 사람·만료가 줄마다 같은 자리에 서야
+        // 여러 줄을 훑어 비교할 수 있다. 칸이 좁으면 표가 가로로 넘치지 않게 겉을 스크롤 상자로 싼다.
+        <div className="mt-2 overflow-x-auto rounded-row border border-border">
+        <table className="w-full text-left text-meta" data-testid="agent-grants-list">
+          <thead className="bg-surface-sunken text-fg-muted">
+            <tr>
+              <th scope="col" className="px-2 py-1 font-medium">{t('agents.grants.col.repo')}</th>
+              <th scope="col" className="px-2 py-1 font-medium">{t('agents.grants.col.by')}</th>
+              <th scope="col" className="px-2 py-1 font-medium">{t('agents.grants.col.expiry')}</th>
+              <th scope="col" className="px-2 py-1"><span className="sr-only">{t('agents.grants.col.actions')}</span></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
           {rows.map((g) => {
             const repo = repoOf(g.scope);
             const expired = g.expiresAt !== null && Date.parse(g.expiresAt) <= Date.now();
@@ -337,31 +349,37 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
               : undefined;
             return (
               // 만료된 줄은 통째로 한 단 낮춘다(지난 nit n4) — 살아 있는 줄과 같은 무게로 보이지 않게. [거두기]는 정리용으로 둔다.
-              <li key={g.scope} className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-row border border-border px-2 py-1 text-meta ${expired ? 'text-fg-subtle' : 'text-fg'}`} data-testid={`agent-grant-${repo}`} data-expired={expired || undefined}>
-                {/* 부여 종류 이름은 두되 한 단 낮춘다(지난 nit n3) — 지금 주인공은 저장소다. */}
-                <span className="text-fg-muted">{t('agents.grants.merge')}</span>
-                <span className="font-mono">{repo}</span>
-                {orgOf(g.scope) && (
-                  <span className="rounded-row border border-warning-border bg-warning-surface px-1 text-warning" data-testid={`agent-grant-org-${orgOf(g.scope)}`}>
-                    {t('agents.grants.orgWideBadge')}
-                  </span>
-                )}
-                {localMerge !== null && typeof localMerge === 'object' && (
-                  <MergeAccountCell scope={repo.toLowerCase()} repoLabel={repoLabel(g.scope)} state={localMerge} reach={mergeReach[repo.toLowerCase()]} setScope={setScope} disabled={off} />
-                )}
-                {/* 메타(by·날짜·만료)는 둘째 줄로 내린다(시안 §1) — 계정 칸이 들어갈 자리를 만든다. */}
-                <span className="order-last basis-full text-fg-subtle">
+              <tr key={g.scope} className={`align-top ${expired ? 'text-fg-subtle' : 'text-fg'}`} data-testid={`agent-grant-${repo}`} data-expired={expired || undefined}>
+                <td className="px-2 py-1">
+                  {/* 부여 종류 이름은 두되 한 단 낮춘다(지난 nit n3) — 지금 주인공은 저장소다. */}
+                  <span className="mr-2 text-fg-muted">{t('agents.grants.merge')}</span>
+                  <span className="font-mono">{repo}</span>
+                  {orgOf(g.scope) && (
+                    <span className="ml-2 rounded-row border border-warning-border bg-warning-surface px-1 text-warning" data-testid={`agent-grant-org-${orgOf(g.scope)}`}>
+                      {t('agents.grants.orgWideBadge')}
+                    </span>
+                  )}
+                  {localMerge !== null && typeof localMerge === 'object' && (
+                    <span className="ml-2 inline-flex flex-wrap items-center gap-x-2">
+                      <MergeAccountCell scope={repo.toLowerCase()} repoLabel={repoLabel(g.scope)} state={localMerge} reach={mergeReach[repo.toLowerCase()]} setScope={setScope} disabled={off} />
+                    </span>
+                  )}
+                </td>
+                <td className="px-2 py-1 text-fg-subtle">
                   {t('agents.grants.by', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
-                  {' · '}
+                </td>
+                <td className="px-2 py-1 text-fg-subtle">
                   {g.expiresAt === null
                     ? t('agents.grants.noExpiry')
                     : expired ? t('agents.grants.expired') : t('agents.grants.expiresOn', { when: new Date(g.expiresAt).toLocaleDateString(locale) })}
                   {g.allowAgentCause ? ` · ${t('agents.grants.agentCause')}` : ''}
                   {coveringOrg && <span data-testid={`agent-grant-cause-via-org-${repo}`}>{` · ${t('agents.grants.agentCauseViaOrg', { owner: orgOf(coveringOrg.scope)! })}`}</span>}
-                </span>
+                </td>
+                <td className="px-2 py-1">
+                  <span className="flex justify-end gap-2">
                 {expired && canGrant && (
                   <button
-                    className="ml-auto rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50"
+                    className="rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50"
                     disabled={off}
                     aria-label={t('agents.grants.renewAria', { repo: repoLabel(g.scope) })}
                     onClick={() => void renew(g)}
@@ -371,7 +389,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                 )}
                 {canRevoke && (
                   <button
-                    className={`${expired && canGrant ? '' : 'ml-auto '}rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50`}
+                    className="rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50"
                     disabled={off}
                     aria-label={t('agents.grants.revokeAria', { repo: repoLabel(g.scope) })}
                     onClick={() => setRevoking(g)}
@@ -379,10 +397,14 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                     {t('agents.grants.revoke')}
                   </button>
                 )}
-              </li>
+                  </span>
+                </td>
+              </tr>
             );
           })}
-        </ul>
+          </tbody>
+        </table>
+        </div>
       )}
 
       {canGrant && !adding && (
