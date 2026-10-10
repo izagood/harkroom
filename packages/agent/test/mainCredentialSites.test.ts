@@ -45,7 +45,7 @@ const guardedNear = (anchor: string, within = 12): boolean => {
 
 describe('종료 판정이 세 자리에 다 걸려 있다', () => {
   it('기동의 첫 호출(me/guide)', () => {
-    expect(guardedNear('return [await harkroom.me(), await harkroom.guide()] as const;')).toBe(true);
+    expect(guardedNear('return [await harkroom.me(), await harkroom.guide({ avcs: avcsGuideFlag(process.env.PATH) })] as const;')).toBe(true);
   });
 
   it('멘션 턴의 catch (mentionScheduler 로 이동)', () => {
