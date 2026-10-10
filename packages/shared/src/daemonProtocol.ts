@@ -139,6 +139,14 @@ export const REQUEST_TYPES = [
   'workspaceCleanupSettingsSet',
   'workspaceCleanupAct',
   'workspaceCleanupSweep',
+  // 같은 머신의 터미널 직결(R1 PR-3, 스레드 8d233406). 러너 PTY 바이트를 서버를 거치지 않고 이 소켓으로 받고 보낸다
+  // (`operator/src/localTerminal.ts`). **입력·크기는 서버가 내려 준 writer 세대로만 받는다** — 판정은 서버에 남는다.
+  // 같은 토큰을 가진 CLI 도 이 말을 그대로 쓴다.
+  'terminalSessions',
+  'terminalSubscribe',
+  'terminalUnsubscribe',
+  'terminalInput',
+  'terminalResize',
 ] as const;
 export type DaemonRequestType = (typeof REQUEST_TYPES)[number];
 
@@ -199,7 +207,7 @@ export interface DaemonEventMessage {
  * 로그인 출력이 **응답이 아니라 이벤트**인 이유: `claude auth login` 은 URL 을 찍고 사람이
  * 브라우저를 다녀오는 동안 기다린다 — 요청 하나에 대한 답으로 담을 수 없는 길이의 시간이다.
  */
-export const EVENT_NAMES = ['runnerExit', 'claudeLoginOutput', 'codexLoginOutput'] as const;
+export const EVENT_NAMES = ['runnerExit', 'claudeLoginOutput', 'codexLoginOutput', 'terminalOutput', 'terminalEnded'] as const;
 export type DaemonEventName = (typeof EVENT_NAMES)[number];
 
 /**

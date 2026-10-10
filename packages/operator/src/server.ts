@@ -63,6 +63,7 @@ import type { LocalAgentsPort } from './localAgents.js';
 import type { LocalMcpPort } from './localMcp.js';
 import type { LocalMergePort } from './localMerge.js';
 import type { WorkspaceCleanup } from './workspaceCleanupService.js';
+import type { LocalTerminalHub, LocalTerminalSubscriber } from './localTerminal.js';
 import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
 
 export interface DaemonServerDeps {
@@ -104,6 +105,11 @@ export interface DaemonServerDeps {
   localMerge?: LocalMergePort;
   /** 작업 폴더 청소기(스레드 9e909150). 없으면 그 메서드들은 배선 안 됨으로 답한다. */
   workspaceCleanup?: WorkspaceCleanup;
+  /**
+   * 같은 머신의 터미널 직결(R1 PR-3). 없으면 `terminal*` 요청은 배선 안 됨으로 답한다. 구독은 **접속에 묶인다** —
+   * 그래서 이 요청들만 `dispatch` 가 아니라 접속을 아는 `handleTerminal` 이 받는다.
+   */
+  localTerminal?: LocalTerminalHub;
   /** 로그 한 줄. 기본은 stdout — 앱이 사이드카 파이프로 그대로 본다. */
   log?: (line: string) => void;
   /**
@@ -119,6 +125,8 @@ interface Connection {
   socket: Socket;
   decoder: NdjsonDecoder;
   authenticated: boolean;
+  /** 이 접속의 터미널 구독자(처음 구독할 때 만든다). 끊기면 허브에서 뗀다. */
+  terminal?: LocalTerminalSubscriber;
 }
 
 export class DaemonServer {
@@ -227,6 +235,7 @@ export class DaemonServer {
     socket.on('error', () => this.drop(conn));
     socket.on('close', () => {
       this.connections.delete(conn);
+      if (conn.terminal) this.deps.localTerminal?.drop(conn.terminal);
     });
   }
 
@@ -289,7 +298,7 @@ export class DaemonServer {
       return;
     }
     try {
-      const payload = await this.dispatch(parsed);
+      const payload = parsed.type.startsWith('terminal') ? this.handleTerminal(conn, parsed) : await this.dispatch(parsed);
       if (isDaemonError(payload)) {
         conn.socket.write(encodeLine(makeErrorResponse(parsed.id, payload)));
         return;
@@ -721,6 +730,46 @@ export class DaemonServer {
 
   private sendError(conn: Connection, id: string | null, error: DaemonError): void {
     conn.socket.write(encodeLine(makeErrorResponse(id ?? '', error)));
+  }
+
+  /**
+   * 터미널 직결 요청(R1 PR-3). 구독이 접속에 묶이므로 접속을 받는다. 거절 사유는 그대로 돌려준다 — 앱은
+   * `not-writer` 를 받으면 서버 경유로 치고, `no-such-session` 이면 이 세션이 이 머신 것이 아니라고 읽는다.
+   */
+  private handleTerminal(conn: Connection, req: DaemonRequest): unknown | DaemonError {
+    const hub = this.deps.localTerminal;
+    if (!hub) return daemonError('internal', '이 오퍼레이터에는 터미널 직결이 배선되지 않았다');
+    if (req.type === 'terminalSessions') return { sessions: hub.sessions() };
+    const p = (req.payload ?? {}) as Record<string, unknown>;
+    const sessionId = p.sessionId;
+    if (typeof sessionId !== 'string' || sessionId.length === 0) return daemonError('bad-payload', 'sessionId 가 필요하다');
+    const answer = (refusal: string | null): unknown => (refusal ? { ok: false, reason: refusal } : { ok: true });
+    switch (req.type) {
+      case 'terminalSubscribe': {
+        if (!conn.terminal) {
+          const socket = conn.socket;
+          conn.terminal = {
+            send: (event, payload) => {
+              try { socket.write(encodeLine(makeEvent(event, payload))); } catch { /* 끊긴 접속은 close 가 정리한다 */ }
+            },
+          };
+        }
+        return answer(hub.subscribe(conn.terminal, sessionId));
+      }
+      case 'terminalUnsubscribe':
+        if (conn.terminal) hub.unsubscribe(conn.terminal, sessionId);
+        return { ok: true };
+      case 'terminalInput': {
+        if (typeof p.gen !== 'number' || typeof p.data !== 'string') return daemonError('bad-payload', 'gen·data 가 필요하다');
+        return answer(hub.input(sessionId, p.gen, p.data));
+      }
+      case 'terminalResize': {
+        if (typeof p.gen !== 'number' || typeof p.cols !== 'number' || typeof p.rows !== 'number') return daemonError('bad-payload', 'gen·cols·rows 가 필요하다');
+        return answer(hub.resize(sessionId, p.gen, p.cols, p.rows));
+      }
+      default:
+        return daemonError('unknown-request', req.type);
+    }
   }
 
   private drop(conn: Connection): void {
