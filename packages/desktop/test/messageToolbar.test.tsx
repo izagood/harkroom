@@ -122,7 +122,7 @@ describe('overflow menu permissions', () => {
     fireEvent.click(within(toolbar).getByRole('button', { name: '더 보기' }));
     // 링크 복사는 2026-09-09 에 **툴바**로 올라갔다 — 메뉴에 남은 것은 본문 복사다.
     expect(screen.queryByRole('menuitem', { name: 'Copy link' })).toBeNull();
-    expect(screen.getByRole('menuitem', { name: 'Copy text' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '텍스트 복사' })).toBeTruthy();
     expect(within(toolbar).getByTestId('toolbar-copy-link')).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: '고치기' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: '지우기' })).toBeNull();
