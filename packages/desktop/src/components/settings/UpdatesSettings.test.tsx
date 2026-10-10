@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { UpdatesSettings } from './UpdatesSettings';
 import { setAppUpdater, type AppUpdater } from '../../lib/appUpdater';
+import { usePrefsStore } from '../../state/prefsStore';
 
 /**
  * 업데이트 화면의 회귀선.
@@ -235,11 +236,11 @@ describe('UpdatesSettings — 새 버전을 안 뒤에도 다시 확인한다', 
       setAppUpdater(stub({ check: vi.fn(async () => ({ version: '9.9.9' })) }));
       render(<UpdatesSettings />);
       fireEvent.click(screen.getByRole('button', { name: /check now/i }));
-      await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toContain(new Date(first).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
+      await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toContain(new Date(first).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })));
 
       now.mockReturnValue(later);
       fireEvent.click(screen.getByRole('button', { name: /check now/i }));
-      const label = new Date(later).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const label = new Date(later).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' });
       await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toContain(`checked ${label}`));
     } finally {
       now.mockRestore();
@@ -296,6 +297,48 @@ describe('useUpdateCheck — 창이 돌아오면 밀린 주기를 따라잡는�
     } finally {
       now.mockRestore();
       delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+});
+
+/**
+ * 화면 글이 **한 언어로** 선다 — 제목·부제는 한국어인데 칸 이름·버튼·곁 문단은 영어로 박혀 있던
+ * 섞임(jaebin 보고, 2026-10-10)의 회귀선. 시각도 OS 가 아니라 **앱 언어**를 따른다.
+ */
+describe('UpdatesSettings — 앱 언어를 따른다', () => {
+  afterEach(() => usePrefsStore.getState().setLocale('system'));
+
+  it('한국어로 고르면 칸 이름·버튼·곁 문단·시각이 모두 한국어다', async () => {
+    usePrefsStore.getState().setLocale('ko');
+    const at = new Date(2026, 9, 6, 21, 7).getTime();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(at);
+    try {
+      setAppUpdater(stub({ check: vi.fn(async () => null) }));
+      render(<UpdatesSettings />);
+      expect(screen.getByText('지금 버전')).toBeTruthy();
+      expect(screen.getByText('새 버전')).toBeTruthy();
+      expect(document.body.textContent).toContain('업데이트를 설치하면 harkroom 이 다시 시작한다');
+      fireEvent.click(screen.getByRole('button', { name: '지금 확인' }));
+      const label = new Date(at).toLocaleTimeString('ko', { hour: '2-digit', minute: '2-digit' });
+      await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toBe(`없음 — 최신 버전 · ${label} 확인`));
+      expect(document.body.textContent).not.toMatch(/Current version|Check now|up to date|Installing an update/);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('영어로 고르면 OS 언어와 상관없이 시각이 영어다 — 「오후」 가 섞이지 않는다', async () => {
+    usePrefsStore.getState().setLocale('en');
+    const at = new Date(2026, 9, 6, 21, 7).getTime();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(at);
+    try {
+      setAppUpdater(stub({ check: vi.fn(async () => null) }));
+      render(<UpdatesSettings />);
+      fireEvent.click(screen.getByRole('button', { name: 'Check now' }));
+      await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toMatch(/up to date · checked/));
+      expect(screen.getByTestId('updates-new-version').textContent).not.toMatch(/[오전후]/);
+    } finally {
+      now.mockRestore();
     }
   });
 });

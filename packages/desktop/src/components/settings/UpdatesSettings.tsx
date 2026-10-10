@@ -1,5 +1,6 @@
 import { useUpdateCheck } from '../../lib/useUpdateCheck';
-import { useT } from '../../i18n/useT';
+import { useLocale, useT } from '../../i18n/useT';
+import type { Locale } from '../../i18n';
 import { Button, ReadonlyRow, SettingsColumns, SettingsGroup, SettingsPage } from './primitives';
 
 /**
@@ -27,12 +28,14 @@ import { Button, ReadonlyRow, SettingsColumns, SettingsGroup, SettingsPage } fro
  * 이제 `useUpdateCheck` 의 공용 답을 읽고, "아직 확인 안 함" 은 **정말 한 번도 답을 못 받았을
  * 때만** 쓴다. [지금 확인] 은 같은 물음에 합류한다(두 자리가 동시에 물어도 한 번만 묻는다).
  */
-function checkedLabel(at: number): string {
-  return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function checkedLabel(at: number, locale: Locale): string {
+  // 앱 언어로 적는다 — `[]` 로 두면 OS 언어를 따라가 영어 화면에 「오후 09:07」 이 섞인다.
+  return new Date(at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 }
 
 export function UpdatesSettings() {
   const t = useT();
+  const locale = useLocale();
   const { status, checkedAt, checking, recheckFailure, check, install } = useUpdateCheck();
   const busy = checking || status.kind === 'installing';
 
@@ -43,15 +46,15 @@ export function UpdatesSettings() {
    */
   let failureLine: string | null = null;
   if (status.kind === 'available') {
-    newVersion = `${status.version} · checked ${checkedLabel(checkedAt ?? Date.now())}`;
+    newVersion = t('settings.updates.availableChecked', { version: status.version, time: checkedLabel(checkedAt ?? Date.now(), locale) });
     // 새 버전을 안 뒤의 확인이 실패했으면 그것도 적는다 — "checked" 시각이 왜 멈췄는지 사람이 안다.
-    if (recheckFailure) failureLine = `Re-check failed ${checkedLabel(recheckFailure.at)}: ${recheckFailure.message}`;
+    if (recheckFailure) failureLine = t('settings.updates.recheckFailed', { time: checkedLabel(recheckFailure.at, locale), message: recheckFailure.message });
   }
-  else if (status.kind === 'installing') newVersion = `${status.version} · downloading and installing…`;
-  else if (status.kind === 'uptodate') newVersion = `None — up to date · checked ${checkedLabel(checkedAt ?? Date.now())}`;
+  else if (status.kind === 'installing') newVersion = t('settings.updates.installingVersion', { version: status.version });
+  else if (status.kind === 'uptodate') newVersion = t('settings.updates.upToDate', { time: checkedLabel(checkedAt ?? Date.now(), locale) });
   // 실패는 실패라고 적는다. 원문을 붙여 사람이 원인을 직접 볼 수 있게 한다.
-  else if (status.kind === 'failed') { newVersion = 'Could not complete'; failureLine = status.message; }
-  else newVersion = checking ? 'Checking…' : 'Not checked yet';
+  else if (status.kind === 'failed') { newVersion = t('settings.updates.failed'); failureLine = status.message; }
+  else newVersion = checking ? t('settings.updates.checking') : t('settings.updates.notChecked');
 
   return (
     <SettingsPage section="updates" description={t('settings.desc.updates')} layout="cards">
@@ -62,9 +65,9 @@ export function UpdatesSettings() {
       <SettingsGroup>
         {/* 순서가 사양이다(UX ③): 지금 버전 → 새 버전(확인 시각) → 설치. 사이드바 칸의
             "0.3.59 → 0.3.63" 을 세로로 편 모양이다. */}
-        <ReadonlyRow label="Current version" value={__APP_VERSION__} />
+        <ReadonlyRow label={t('settings.updates.current')} value={__APP_VERSION__} />
         <ReadonlyRow
-          label="New version"
+          label={t('settings.updates.new')}
           value={
             <span role="status" data-testid="updates-new-version" className="block text-right">
               <span className="block truncate">{newVersion}</span>
@@ -85,11 +88,11 @@ export function UpdatesSettings() {
               있다. 다시 물어 더 새 판이 있으면 표시와 [Restart to install] 이 그 판을 가리킨다
               (`appUpdater` 가 설치할 핸들을 마지막 확인의 것으로 바꾼다). */}
           <Button disabled={busy} onClick={() => void check()}>
-            {checking ? 'Checking…' : 'Check now'}
+            {checking ? t('settings.updates.checking') : t('settings.updates.checkNow')}
           </Button>
           {(status.kind === 'available' || status.kind === 'installing') && (
             <Button variant="primary" disabled={busy} onClick={() => void install(status.version)}>
-              {status.kind === 'installing' ? 'Installing…' : 'Restart to install'}
+              {status.kind === 'installing' ? t('update.installing') : t('update.install')}
             </Button>
           )}
         </div>
@@ -115,11 +118,7 @@ export function UpdatesSettings() {
         열린 스레드는 여전히 복원되지 않는다 — 화면 위치는 세션 한정 인메모리라
         `localStorage` 에 넣지 않는다(`state/appStore.ts`).
       */}
-      <p className="max-w-[68ch] text-fg-subtle">
-        Installing an update restarts harkroom. That does not disturb your agents: they are owned
-        by a background daemon that outlives the app, and harkroom re-attaches to it on launch.
-        Unsent drafts are kept across a restart; which thread you had open is not.
-      </p>
+      <p className="max-w-[68ch] text-fg-subtle">{t('settings.updates.restartNote')}</p>
         </>)}
       />
     </SettingsPage>
