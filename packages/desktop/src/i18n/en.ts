@@ -4069,7 +4069,7 @@ export const en = {
   'apiError.rate_limited': 'Too many attempts — try again later.',
   'apiError.unauthorized': 'You need to sign in again.',
   'apiError.too_large': 'This is over the size limit.',
-  'apiError.invalid_credentials': 'The password or login ID is wrong.',
+  'apiError.invalid_credentials': 'The login ID or password is wrong.',
   'apiError.session_required': 'Only a person signed in on this app can do this.',
   'apiError.last_admin': 'Make someone else an admin first.',
   'apiError.owns_agents': 'Transfer or delete the agents you own first.',
