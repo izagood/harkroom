@@ -2026,7 +2026,7 @@ export const ko = {
   'apiError.rate_limited': '시도가 너무 잦다 — 나중에 다시 해 봐라.',
   'apiError.unauthorized': '다시 로그인해야 한다.',
   'apiError.too_large': '크기 한도를 넘었다.',
-  'apiError.invalid_credentials': '로그인 ID 나 비밀번호가 틀렸다.',
+  'apiError.invalid_credentials': '비밀번호가 틀렸다.',
   'apiError.session_required': '이 앱에 로그인한 사람만 할 수 있다.',
   'apiError.last_admin': '먼저 다른 사람을 관리자로 만들어라.',
   'apiError.owns_agents': '먼저 내가 가진 에이전트를 넘기거나 지워라.',
