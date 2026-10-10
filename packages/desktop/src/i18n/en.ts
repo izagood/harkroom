@@ -1387,6 +1387,23 @@ export const en = {
   'agents.run.title': 'Run',
   /** 영어 값 그대로 — 사전으로 옮긴 것은 한국어 화면에서 "모델" 로 읽히게 하려는 것이다(designer #1059). */
   'agents.run.model': 'Model',
+  // 에이전트 설정 폼 칸(i18n P3-b, 2026-10-10). aria-label 은 보이는 라벨과 같은 키다.
+  'agents.profile.name': 'Agent name',
+  'agents.profile.instructions': 'Agent instructions',
+  'agents.run.aiConfig': 'AI configuration',
+  'agents.run.useDefaults': 'Use harness defaults',
+  'agents.run.customize': 'Customize for this agent',
+  'agents.run.harness': 'Agent harness',
+  'agents.run.harnessOptionDefault': '{harness} (default)',
+  'agents.run.pool': 'Account pool',
+  'agents.run.poolDefault': 'Use the default pool',
+  'agents.run.poolDefaultNamed': 'Use the default pool ({pool})',
+  'agents.run.poolLocalNote': 'This machine only — pools are local directories, so this is not shared with other devices.',
+  'agents.run.poolRestartNote': 'Restart the runner for a change to take effect.',
+  'agents.run.poolOnCreateNote': 'Applied when the agent is created, before its runner starts.',
+  'agents.permissions.mention': 'Mention permission',
+  'agents.permissions.workingDir': 'Working directory',
+  'agents.model.nameAria': 'Model name',
   'agents.run.effort': 'Effort',
 
   /**

@@ -69,7 +69,7 @@ describe('만들기 — 이 기기가 기본 배정처', () => {
     await openCreate();
     const box = await screen.findByLabelText('이 기기에서 돌린다');
     expect((box as HTMLInputElement).checked).toBe(true);
-    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'newbie' } });
+    fireEvent.change(await screen.findByLabelText('에이전트 이름'), { target: { value: 'newbie' } });
     screen.getByRole('button', { name: '에이전트 만들기' }).click();
     await waitFor(() => expect(createAgent).toHaveBeenCalled());
     expect(createAgent.mock.calls[0]![1]).toMatchObject({ localOperator: { baseUrl: 'http://x', operatorId: 'op-1' } });
@@ -79,7 +79,7 @@ describe('만들기 — 이 기기가 기본 배정처', () => {
     const createAgent = setupUi();
     await openCreate();
     fireEvent.click(await screen.findByLabelText('이 기기에서 돌린다'));
-    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'newbie' } });
+    fireEvent.change(await screen.findByLabelText('에이전트 이름'), { target: { value: 'newbie' } });
     screen.getByRole('button', { name: '에이전트 만들기' }).click();
     await waitFor(() => expect(createAgent).toHaveBeenCalled());
     expect(createAgent.mock.calls[0]![1]).toBeUndefined();

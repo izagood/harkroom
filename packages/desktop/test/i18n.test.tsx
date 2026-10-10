@@ -845,7 +845,7 @@ describe('에이전트 설정 — 언어를 한국어로 바꾸면 한국어로 
     seedAgents([]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-create'));
-    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'Bad Name' } });
+    fireEvent.change(await screen.findByLabelText('에이전트 이름'), { target: { value: 'Bad Name' } });
     fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
     expect((await screen.findByRole('alert')).textContent).toContain('2~32자');
   });
