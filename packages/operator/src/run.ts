@@ -263,6 +263,12 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // `runnerLink` 는 아래에서 만들어지지만 허브가 러너에 내리는 것은 앱 요청 뒤에만 일어난다.
   const localTerminal = createLocalTerminalHub({
     sendToRunner: (runnerId, frame) => runnerLink.send(runnerId, frame),
+    // 입력 바이트 수를 그 러너의 에이전트를 아는 커뮤니티로 올린다 — 서버 detach 감사가 경로와 상관없이 같은 값을 남긴다.
+    reportInput: (runnerId, sessionId, gen, bytes) => {
+      const agentId = runnerLink.agentOf(runnerId);
+      if (!agentId) return;
+      for (const c of communities) if (c.knowsAgent(agentId)) c.onRunnerFrame(runnerId, { type: 'local.input', sessionId, gen, bytes });
+    },
     log,
   });
   const runnerLink = createRunnerLinkServer({
@@ -665,6 +671,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
         appDataDir, registry, host: options.host ?? nodeRunnerHost,
         appVersion: args.appVersion ?? null, log,
         runnerLink, socketPath: outcome.paths.socketPath, operatorBin: entryPath, mcpOAuth,
+        localTerminal: { hub: localTerminal, agentOf: (runnerId) => runnerLink.agentOf(runnerId) },
         turnSecretsDir: join(appDataDir, 'turn-secrets'),
         // 박동(P3a) — 서버가 「호스트」 화면에 보일 이 머신의 지금 상태. 머신 값은 한 번 읽어 둔다.
         heartbeat: {

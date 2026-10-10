@@ -48,8 +48,21 @@ export type LocalTerminalRefusal = 'no-such-session' | 'not-viewer' | 'not-write
 export interface LocalTerminalHubDeps {
   /** 러너에 프레임을 내린다. 링크가 없으면 false. */
   sendToRunner(runnerId: string, frame: RelayServerFrame): boolean;
+  /**
+   * 이 경로로 들어간 입력의 **바이트 수**를 서버 감사에 올린다(PR-3b). `gen` 은 그 바이트를 받아 준 writer 키의
+   * 번호다 — 서버는 그 번호의 키를 받은 뷰어에게만 더한다. 없으면 보고하지 않는다(`takeInputBytes` 로 꺼낸다).
+   */
+  reportInput?(runnerId: string, sessionId: string, gen: number, bytes: number): void;
+  /** 보고를 잠깐 모았다가 보낸다(키 한 번에 프레임 하나를 피한다). 기본 `setTimeout`. */
+  schedule?(fn: () => void, ms: number): void;
   log(line: string): void;
 }
+
+/**
+ * 입력 바이트 보고를 모으는 창(ms). 서버의 detach 감사는 창이 떠나는 순간의 합을 쓰므로 길게 잡으면 마지막
+ * 몇 키가 감사에서 빠질 수 있다 — 짧게 잡고, 키를 거두거나 세션이 끝날 때는 창을 기다리지 않고 바로 턴다.
+ */
+export const INPUT_REPORT_MS = 200;
 
 export interface LocalTerminalHub {
   /** 러너가 올린 프레임을 본다(서버로 가는 것과 별개로). */
@@ -66,8 +79,13 @@ export interface LocalTerminalHub {
   grantView(sessionId: string, viewKey: string): void;
   /** 서버가 열람 키를 거둔다 — 그 키로 붙은 구독은 끝난다. */
   revokeView(sessionId: string, viewKey: string): void;
-  /** 서버가 writer 키를 갈아 끼운다(null 이면 거둔다). */
-  grantWriter(sessionId: string, writerKey: string | null): void;
+  /**
+   * 서버가 writer 키를 갈아 끼운다(null 이면 거둔다). `gen` 은 그 키의 번호(비밀 아님, 감사 짝맞춤용).
+   * 갈아 끼우기 **전에** 옛 번호로 센 바이트를 털어 보고한다 — 새 writer 의 감사에 섞이지 않게.
+   */
+  grantWriter(sessionId: string, writerKey: string | null, gen?: number): void;
+  /** 이 세션을 가진 러너(서버 프레임이 맞는 러너에서 왔는지 대조하는 데 쓴다). */
+  ownerOf(sessionId: string): string | null;
   input(sessionId: string, writerKey: string, data: string): LocalTerminalRefusal | null;
   resize(sessionId: string, writerKey: string, cols: number, rows: number): LocalTerminalRefusal | null;
   /** 지난 호출 뒤로 이 경로에 들어간 입력 바이트 수(감사 보고용). 읽으면 0 으로 돌아간다. */
@@ -107,9 +125,27 @@ export function createLocalTerminalHub(deps: LocalTerminalHubDeps): LocalTermina
   const awaiting = new Map<string, Map<LocalTerminalSubscriber, string[]>>();
   const viewKeys = new Map<string, Set<string>>();
   const writerKey = new Map<string, string>();
+  /** 지금 writer 키의 번호. 보고가 이 번호로 나간다. */
+  const writerGen = new Map<string, number>();
   const inputBytes = new Map<string, number>();
+  /** 아직 보고하지 않은 바이트 — 세션별로 번호 하나에 묶인다(번호가 바뀌면 그 전에 턴다). */
+  const unreported = new Map<string, { runnerId: string; gen: number; bytes: number }>();
+  const pendingFlush = new Set<string>();
+  const schedule = deps.schedule ?? ((fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); });
+
+  /** 모아 둔 바이트를 지금 보고한다. */
+  const flush = (sessionId: string): void => {
+    pendingFlush.delete(sessionId);
+    const u = unreported.get(sessionId);
+    if (!u) return;
+    unreported.delete(sessionId);
+    if (u.bytes > 0) deps.reportInput?.(u.runnerId, sessionId, u.gen, u.bytes);
+  };
 
   const endSession = (sessionId: string): void => {
+    // 잊기 전에 턴다(n4) — 세션이 끝난 뒤의 보고는 이 허브가 번호를 잊어 갈 곳이 없다.
+    flush(sessionId);
+    writerGen.delete(sessionId);
     for (const sub of subs.get(sessionId)?.keys() ?? []) sub.send('terminalEnded', { sessionId });
     subs.delete(sessionId);
     awaiting.delete(sessionId);
@@ -232,7 +268,14 @@ export function createLocalTerminalHub(deps: LocalTerminalHubDeps): LocalTermina
         sub.send('terminalEnded', { sessionId, reason: 'revoked' });
       }
     },
-    grantWriter(sessionId, key) {
+    ownerOf(sessionId) {
+      return owner.get(sessionId)?.runnerId ?? null;
+    },
+    grantWriter(sessionId, key, gen) {
+      // 키가 바뀌면 옛 번호로 센 바이트를 먼저 턴다 — 새 번호로 섞이면 감사가 다른 사람에게 간다.
+      flush(sessionId);
+      writerGen.delete(sessionId);
+      if (key !== null && typeof gen === 'number' && Number.isSafeInteger(gen)) writerGen.set(sessionId, gen);
       if (key === null) { writerKey.delete(sessionId); return; }
       if (!usableKey(key)) {
         deps.log(`localTerminal: ${sessionId} writer 키가 너무 짧아 받지 않는다`);
@@ -245,7 +288,15 @@ export function createLocalTerminalHub(deps: LocalTerminalHubDeps): LocalTermina
       const g = writerGate(sessionId, key);
       if (typeof g === 'string') return g;
       if (!deps.sendToRunner(g.runnerId, { type: 'input', sessionId, data })) return 'runner-gone';
-      inputBytes.set(sessionId, (inputBytes.get(sessionId) ?? 0) + base64ByteLength(data));
+      const bytes = base64ByteLength(data);
+      inputBytes.set(sessionId, (inputBytes.get(sessionId) ?? 0) + bytes);
+      const gen = writerGen.get(sessionId);
+      if (deps.reportInput && gen !== undefined) {
+        const u = unreported.get(sessionId);
+        if (u && u.gen === gen) u.bytes += bytes;
+        else { if (u) flush(sessionId); unreported.set(sessionId, { runnerId: g.runnerId, gen, bytes }); }
+        if (!pendingFlush.has(sessionId)) { pendingFlush.add(sessionId); schedule(() => flush(sessionId), INPUT_REPORT_MS); }
+      }
       return null;
     },
     resize(sessionId, key, cols, rows) {
