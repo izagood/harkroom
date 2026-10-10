@@ -1,0 +1,3 @@
+{
+  "POST /agents/:p/permission-requests/:p/approve-once": "0.4.29"
+}

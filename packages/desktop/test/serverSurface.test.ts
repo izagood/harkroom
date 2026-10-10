@@ -11,6 +11,11 @@
 //   2. 하한은 `since` 의 최댓값보다 낮을 수 없다 — 적어 놓고 안 올리면 빨개진다.
 //   3. 더는 안 부르는 표면은 json 에서도 지운다 — 남으면 하한을 근거 없이 붙잡는다.
 //
+// **서버 데이터로만 드러나는 표면**(`serverSurfaceGated.json`): 앱이 그 라우트를 부르는 자리가 **새 서버만 싣는 값**이 있을 때만
+// 그려지면(예: 권한 카드의 `meta.permissionRequest.once` → [이번 한 번 머지] → `approve-once`), 옛 서버 앞에서는 부를 길 자체가
+// 없다 — 하한을 올릴 근거가 아니다. 그런 표면은 여기 적고 `since` 를 남기되 하한 판정(2)에서는 뺀다. 목록·모양 판정(1·3)은 같다.
+// 부르는 자리가 서버 값 없이도 그려지면 이 파일에 넣지 마라 — 그건 그냥 새 표면이다.
+//
 // **못 잡는 것:** 있던 라우트에 필드를 더하는 것(#797 `PATCH /channels/:id` 의 `name` —
 // 낡은 서버는 zod strip 으로 조용한 200 을 준다). 그건 여전히 PR 작성자 몫이다.
 import { describe, expect, it } from 'vitest';
@@ -23,6 +28,10 @@ const API_TS = path.resolve(__dirname, '../src/lib/api.ts');
 const surface = JSON.parse(
   readFileSync(path.resolve(__dirname, 'serverSurface.json'), 'utf8'),
 ) as Record<string, string>;
+const gated = JSON.parse(
+  readFileSync(path.resolve(__dirname, 'serverSurfaceGated.json'), 'utf8'),
+) as Record<string, string>;
+const listed: Record<string, string> = { ...surface, ...gated };
 const called = extractServerSurface(readFileSync(API_TS, 'utf8'));
 
 describe('서버 표면 ↔ 호환 하한', () => {
@@ -33,7 +42,7 @@ describe('서버 표면 ↔ 호환 하한', () => {
   });
 
   it('api.ts 가 부르는 표면은 전부 serverSurface.json 에 있다', () => {
-    const missing = called.filter((e) => !(e in surface));
+    const missing = called.filter((e) => !(e in listed));
     expect(
       missing,
       '새 서버 표면이다. test/serverSurface.json 에 "그 라우트가 서버에 들어간 릴리스"를 since 로 적고,\n'
@@ -42,16 +51,20 @@ describe('서버 표면 ↔ 호환 하한', () => {
   });
 
   it('json 에만 남은 표면은 없다', () => {
-    const stale = Object.keys(surface).filter((e) => !called.includes(e));
+    const stale = Object.keys(listed).filter((e) => !called.includes(e));
     expect(stale, '더는 부르지 않는 표면이다 — serverSurface.json 에서 지워라').toEqual([]);
   });
 
   it('since 는 전부 X.Y.Z 다', () => {
-    const bad = Object.entries(surface).filter(([, v]) => compareRelease(v, v) === null);
+    const bad = Object.entries(listed).filter(([, v]) => compareRelease(v, v) === null);
     expect(bad).toEqual([]);
   });
 
-  it('MIN_SERVER_VERSION 은 since 의 최댓값보다 낮지 않다', () => {
+  it('서버 데이터로만 드러나는 표면은 일반 표에 겹치지 않는다', () => {
+    expect(Object.keys(gated).filter((e) => e in surface)).toEqual([]);
+  });
+
+  it('MIN_SERVER_VERSION 은 since 의 최댓값보다 낮지 않다(서버 데이터로만 드러나는 표면은 뺀다)', () => {
     const [top, needs] = Object.entries(surface)
       .map(([e, v]) => [v, e] as const)
       .reduce((a, b) => (compareRelease(b[0], a[0])! > 0 ? b : a));
