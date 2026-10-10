@@ -1089,7 +1089,7 @@ export const ko = {
   'sidebar.delete.title': '{name} 삭제',
 
   'sidebar.dm.new': 'New',
-  'sidebar.dm.justMe': '나만',
+  'sidebar.dm.justMe': '나',
 
   'sidebar.edit.cancel': '취소',
   'sidebar.edit.failed': '채널 편집에 실패했다',
