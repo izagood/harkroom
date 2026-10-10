@@ -267,7 +267,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     reportInput: (runnerId, sessionId, gen, bytes) => {
       const agentId = runnerLink.agentOf(runnerId);
       if (!agentId) return;
-      for (const c of communities) if (c.knowsAgent(agentId)) c.onRunnerFrame(runnerId, { type: 'local.input', sessionId, gen, bytes });
+      for (const c of communities) if (c.knowsAgent(agentId)) c.reportLocalInput(runnerId, sessionId, gen, bytes);
     },
     log,
   });
