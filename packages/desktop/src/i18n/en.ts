@@ -3498,6 +3498,22 @@ export const en = {
   'speech.ask.pickAnyway': 'Pick anyway ({n})',
   /** 물어본 쪽이 새 카드로 이 카드를 대신했다(`supersedes`). */
   'speech.ask.superseded': 'Replaced by a new question',
+  'speech.bundle.remaining': '{n} of {m} left to decide',
+  'speech.bundle.allDone': 'All {m} decided',
+  'speech.bundle.acceptRecommended': 'Accept {n} recommended',
+  'speech.bundle.acceptNote': 'Irreversible decisions (merge, deploy, secrets, permissions) are left out',
+  'speech.bundle.recommended': 'recommended',
+  'speech.bundle.replyInThread': 'Reply in the original thread →',
+  'speech.bundle.decideInThread': 'Decide in the original thread →',
+  'speech.bundle.loading': 'Loading the original…',
+  'speech.bundle.unavailable': 'You can\'t see the original card',
+  'speech.bundle.answered': '{label} · chosen by {name}',
+  'speech.bundle.replied': '{name} replied in writing',
+  'speech.bundle.noteBy': 'Summary by {name}:',
+  'speech.bundle.skip.skipped_irreversible': 'Left out — irreversible decision. Pick it yourself',
+  'speech.bundle.skip.skipped_no_recommendation': 'Left out — no recommendation',
+  'speech.bundle.skip.skipped_link': 'Left out — decided in its own thread',
+  'speech.bundle.skip.failed': 'Couldn\'t choose — try again',
   /**
    * 답한 사람. 이름을 모르면 `common.someone` 이 들어온다 — **그 자리가 이름 자리**라
    * 보통명사가 와도 문장이 서야 하고, 그것이 `common` 에 그 낱말이 있는 이유다.
