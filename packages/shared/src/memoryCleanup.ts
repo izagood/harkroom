@@ -10,8 +10,14 @@
  * C1(#1131)에 이미 있다. 2단계 recall(R1)에 기대지 않는다.
  */
 
-/** 기본 시각 — 월요일 09:00 서울. 사람이 승인할 때 바꿀 수 있다. */
-export const MEMORY_CLEANUP_TRIGGER = { kind: 'schedule', freq: 'weekly', weekdays: [1], time: '09:00', tz: 'Asia/Seoul' } as const;
+/**
+ * 기본 시각 — 월요일 09:00, **그 설치·소유자의 시간대**로. 시간대를 여기 박지 않는다: 설치마다 다르고, 한 곳의
+ * 시간대를 기본값으로 두면 다른 곳에서는 엉뚱한 시각에 돈다. 부르는 쪽이 보는 사람의 IANA 시간대를 준다
+ * (desktop 은 `Intl.DateTimeFormat().resolvedOptions().timeZone`). 사람이 승인할 때 바꿀 수 있다.
+ */
+export function memoryCleanupTrigger(tz: string) {
+  return { kind: 'schedule', freq: 'weekly', weekdays: [1], time: '09:00', tz } as const;
+}
 
 export const MEMORY_CLEANUP_NAME = (handle: string): string => `주간 기억 정리 — @${handle}`;
 

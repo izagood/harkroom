@@ -533,7 +533,7 @@ export function escapeForPrompt(text: string): string {
 const MEMORY_USAGE_LINES = [
   'slug 는 둘 중 하나다: **`core`** — 매 턴 본문이 통째로 실리는 층이다(길어지면 그만큼 매 턴',
   '비싸다. **3,000자까지만 받는다** — 넘기면 `core_too_long` 으로 거절되니 나머지는 아래로 내린다) — 그리고 **`mem/<이름>`**,',
-  '예를 들어 `mem/deploy` · `mem/people/jaebin` 처럼 **반드시 `mem/` 으로 시작한다**(소문자·숫자·',
+  '예를 들어 `mem/deploy` · `mem/people/alex` 처럼 **반드시 `mem/` 으로 시작한다**(소문자·숫자·',
   '`-`·`_` 와 구분자 `/` 만 쓴다. **점(`.`)은 못 쓴다**). `deploy` 나 `agent.config` 같은 slug 는',
   '`invalid_slug` 로 거절되는데, 이건 **`core` 하나만 쓸 수 있다는 뜻이 아니다** — 이름만 고치면',
   '된다. 길거나 한 가지 주제인 것은 `mem/*` 로 나눠 담고 `core` 에는 포인터 한 줄만 남긴다.',
