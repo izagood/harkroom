@@ -17,7 +17,7 @@
 // 세션 바이트를 흘리면 워크스페이스의 모든 소켓이 PTY 출력을 받는다. 릴레이는 여기의
 // 전용 맵으로 러너 소켓과 뷰어 소켓을 직결한다.
 
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type {
   AgentSessionState,
   AgentSessionView,
@@ -58,6 +58,24 @@ interface Viewer {
    * "서버는 `data` 를 열지 않는다"(파일 머리)가 그 자리에서 깨진다.
    */
   inputBytes: number;
+  /**
+   * 제어 전용 attach 인가(R1). 바이트는 오퍼레이터 소켓으로 직접 받으므로 서버는 이 뷰어에
+   * 재생·출력을 보내지 않는다. writer 차례·감사는 보통 뷰어와 똑같이 탄다.
+   */
+  control: boolean;
+  /**
+   * 이 뷰어의 로컬 직결 열람 키(R1, #1298 F2). 제어 뷰어가 받아들여졌을 때 만들고, 떠날 때 거둔다.
+   * 이 뷰어의 WS 와 오퍼레이터 말고는 아무도 받지 않는다.
+   */
+  viewKey: string | null;
+  /** 이 뷰어가 지금 들고 있는 로컬 writer 키(R1, #1298 F1)와 그 번호. 없으면 null. */
+  writerKey: string | null;
+  gen: number | null;
+  /**
+   * 이 뷰어가 **받은 적 있는** writer 키 번호 전부. 감사는 이것으로 찾는다 — 강등 직전에 친 바이트의
+   * 보고가 강등 뒤에 도착하는 순서가 정상으로 생기고, 그 바이트도 이 사람이 친 것이다.
+   */
+  gens: Set<number>;
 }
 
 interface Runner {
@@ -112,7 +130,7 @@ export interface RelayHub {
    * writer). 입력 포워딩·바이트 누계도 반환 핸들이 갖는다 — writer 판정과 포워딩을 한
    * 곳(허브)에 두지 않으면 "누가 지금 쓰는가"의 진실이 라우트와 허브로 갈라진다.
    */
-  addViewer(sessionId: string, socket: RelaySocket): ViewerHandle;
+  addViewer(sessionId: string, socket: RelaySocket, opts?: { control?: boolean }): ViewerHandle;
 
   /**
    * 러너에게 "이 스레드를 인터랙티브로 열어라"를 요청하고 응답을 기다린다(#337,
@@ -275,6 +293,13 @@ export function createRelayHub(
    * 가리키므로 바이트가 섞이는 상태 자체가 없다 — 잠금 장치를 따로 만들지 않는 이유다.
    */
   const writerOf = new Map<string, Viewer>();
+  /** 로컬 writer 키 번호(R1). 감사 짝맞춤용이고 비밀이 아니다 — 허가 자체는 `newLocalKey` 의 난수다. */
+  let nextGen = 0;
+  /**
+   * 로컬 직결 키(R1, #1298 security F1·F2). 오퍼레이터 소켓 토큰은 같은 uid 의 에이전트도 읽으므로 **맞힐 수
+   * 없는 값**만 허가가 된다 — 192bit 난수(base64url 32자). 오퍼레이터는 22자 미만을 받지 않는다.
+   */
+  const newLocalKey = (): string => randomBytes(24).toString('base64url');
 
   const sendTo = (viewer: Viewer, frame: AttachServerFrame): void => {
     // 이미 닫힌 소켓에 쓰면 ws 가 던진다 — 한 뷰어의 죽은 소켓이 나머지 중계를 멈추면
@@ -324,6 +349,64 @@ export function createRelayHub(
     return null;
   };
 
+  /** 이 세션의 러너를 띄운 오퍼레이터가 로컬 직결을 알아듣는가(R1, caps 의 `'local-terminal'`). */
+  const localCapable = (sessionId: string): Runner | null => {
+    const owner = ownerOf.get(sessionId);
+    const runner = owner ? runners.get(owner) : undefined;
+    return runner?.caps.has('local-terminal') ? runner : null;
+  };
+
+  /**
+   * 제어 뷰어에 새 세대를 준다(R1). 보통 뷰어·로컬을 모르는 오퍼레이터면 null — 그 창은
+   * 서버 경유로 친다. **못 보냈으면 세대를 주지 않는다**: 오퍼레이터가 모르는 세대를 창에
+   * 주면 사람은 쳤다고 믿는데 오퍼레이터가 전부 거절한다.
+   */
+  const grantLocal = (sessionId: string, viewer: Viewer): string | null => {
+    if (!viewer.control) return null;
+    const runner = localCapable(sessionId);
+    if (!runner) return null;
+    const gen = ++nextGen;
+    const writerKey = newLocalKey();
+    if (!sendToRunner(runner, { type: 'local.writer', sessionId, writerKey, gen })) return null;
+    viewer.writerKey = writerKey;
+    viewer.gen = gen;
+    viewer.gens.add(gen);
+    return writerKey;
+  };
+
+  /** 이 뷰어의 로컬 허가를 거둔다. 들고 있지 않으면 아무것도 안 한다. */
+  const revokeLocal = (sessionId: string, viewer: Viewer): void => {
+    if (viewer.writerKey === null || viewer.gen === null) return;
+    const gen = viewer.gen;
+    viewer.writerKey = null;
+    viewer.gen = null;
+    const runner = localCapable(sessionId);
+    if (runner) sendToRunner(runner, { type: 'local.writer', sessionId, writerKey: null, gen });
+  };
+
+  /**
+   * 서 있는 writer 키를 지금 세션 판정에 다시 맞춘다(R1, #1302 security F1). 서버 경로는 입력마다
+   * `inputDenial` 을 다시 보지만 로컬 키는 `setWriter` 때 한 번만 본다 — 그 뒤 러너가 입력을 닫았으면
+   * (acceptsInput:false·caps 에서 input 이 빠짐) 키를 거둬야 로컬 경로가 서버 판정보다 넓어지지 않는다.
+   * 열려 있으면 true(키를 그대로 둔다).
+   */
+  const reconcileLocalWriter = (sessionId: string): boolean => {
+    const w = writerOf.get(sessionId);
+    if (!w?.writerKey) return false;
+    if (inputDenial(sessionId) === null) return true;
+    revokeLocal(sessionId, w);
+    return false;
+  };
+
+  /** 이 뷰어의 열람 키를 거둔다(떠날 때). 그 키로 오퍼레이터 소켓에 붙은 구독이 끝난다. */
+  const revokeView = (sessionId: string, viewer: Viewer): void => {
+    if (viewer.viewKey === null) return;
+    const viewKey = viewer.viewKey;
+    viewer.viewKey = null;
+    const runner = localCapable(sessionId);
+    if (runner) sendToRunner(runner, { type: 'local.view', sessionId, viewKey, granted: false });
+  };
+
   /**
    * 차례를 넘긴다. 이전 차례에 `false`, 새 차례에 그 세션이 허용하는 능력을 **이 순서로**
    * 알린다 — 두 창이 동시에 "내 차례"라고 믿는 순간을 만들지 않는다.
@@ -337,11 +420,20 @@ export function createRelayHub(
     // 강등의 이유는 언제나 하나다 — 더 최근에 붙은 창이 차례를 가져갔다(#369: 이유를
     // 함께 실어야 화면이 그것을 지어내지 않는다). 능력이 없어 차례 자체를 못 주는 경우는
     // 애초에 여기 오지 않는다(`addViewer` 가 걸러 낸다).
-    if (prev) sendTo(prev, { type: 'writer', writer: false, resize: false, reason: 'other-writer' });
+    if (prev) {
+      // 로컬 허가를 **먼저** 거둔다(R1) — 강등 통지보다 회수가 늦으면 그 사이 옛 창의
+      // 바이트가 오퍼레이터에서 받아들여진다.
+      revokeLocal(sessionId, prev);
+      sendTo(prev, { type: 'writer', writer: false, resize: false, reason: 'other-writer' });
+    }
     if (next) {
       writerOf.set(sessionId, next);
       const denial = inputDenial(sessionId);
-      sendTo(next, { type: 'writer', writer: denial === null, resize: true, reason: denial });
+      const writerKey = denial === null ? grantLocal(sessionId, next) : null;
+      sendTo(next, {
+        type: 'writer', writer: denial === null, resize: true, reason: denial,
+        ...(writerKey === null ? {} : { writerKey }),
+      });
     } else {
       writerOf.delete(sessionId);
     }
@@ -488,6 +580,21 @@ export function createRelayHub(
           // 말해야 양쪽이 같은 사실을 든다. 이 줄이 없으면 재접속 러너는 끊기기 전에
           // 받은 마지막 프레임을 영구히 믿는다(`resyncViewerCounts` 주석).
           resyncViewerCounts(runner);
+          // 로컬 허가도 다시 알린다(R1). 오퍼레이터의 허브는 러너 링크가 끊기면 허가를 잊으므로,
+          // 다시 announce 한 러너의 세션에 서 있는 허가는 여기서 되살려야 창이 계속 칠 수 있다.
+          if (runner.caps.has('local-terminal')) {
+            for (const sessionId of runner.sessions.keys()) {
+              // 열람 키 먼저, 그다음 writer 키 — 오퍼레이터는 둘 다 링크가 끊길 때 잊는다.
+              for (const v of viewers.get(sessionId) ?? []) {
+                if (v.viewKey !== null) sendToRunner(runner, { type: 'local.view', sessionId, viewKey: v.viewKey, granted: true });
+              }
+              // 입력이 닫혔으면 다시 내리지 않고 거둔다(security F1).
+              const w = writerOf.get(sessionId);
+              if (reconcileLocalWriter(sessionId) && w?.writerKey && w.gen !== null) {
+                sendToRunner(runner, { type: 'local.writer', sessionId, writerKey: w.writerKey, gen: w.gen });
+              }
+            }
+          }
           return;
         }
         case 'session.started': {
@@ -498,6 +605,8 @@ export function createRelayHub(
           // 있을 수 있고(티켓은 열기 응답 뒤에 나가지만 재접속·재열기 경로가 있다),
           // 그때 `count > 0` 을 못 받으면 보고 있는 화면 앞에서 유예가 흐른다.
           notifyViewerCount(frame.session.sessionId);
+          // 같은 세션이 새 뷰로 다시 서면서 입력을 닫았을 수 있다(security F1).
+          reconcileLocalWriter(frame.session.sessionId);
           return;
         }
         case 'session.ended':
@@ -553,6 +662,8 @@ export function createRelayHub(
           // id 로 프레임을 보내 그 세션의 뷰어에게 바이트를 밀어 넣을 수 있다.
           if (ownerOf.get(frame.sessionId) !== agentAccountId) return;
           for (const viewer of viewers.get(frame.sessionId) ?? []) {
+            // 제어 뷰어는 바이트를 오퍼레이터 소켓에서 직접 받는다(R1) — 여기서도 보내면 두 번 그린다.
+            if (viewer.control) continue;
             // ★ `frame.data` 를 **그대로** 옮긴다. Buffer 로 되돌렸다가 다시 싣거나
             //   문자열로 디코드하면 잘린 UTF-8·ANSI 가 깨진다(파일 머리 주석).
             if (viewer.awaitingReplay) viewer.queued.push(frame.data);
@@ -571,6 +682,17 @@ export function createRelayHub(
             viewer.awaitingReplay = false;
             for (const queued of viewer.queued) sendTo(viewer, { type: 'output', data: queued });
             viewer.queued = [];
+          }
+          return;
+        }
+        case 'local.input': {
+          // 로컬 직결 입력의 바이트 수(R1). 내용은 없다 — 감사 합산에만 더한다.
+          if (typeof frame.sessionId !== 'string') return;
+          if (ownerOf.get(frame.sessionId) !== agentAccountId) return;
+          if (!Number.isSafeInteger(frame.gen) || !Number.isSafeInteger(frame.bytes) || frame.bytes < 0) return;
+          // **그 번호의 writer 키를 받은 뷰어에게만** 더한다(`Viewer.gens`). 지금 writer 가 아니어도 된다.
+          for (const viewer of viewers.get(frame.sessionId) ?? []) {
+            if (viewer.gens.has(frame.gen)) { viewer.inputBytes += frame.bytes; return; }
           }
           return;
         }
@@ -594,10 +716,23 @@ export function createRelayHub(
       return runners.get(agentAccountId)?.sessions.get(sessionId) ?? null;
     },
 
-    addViewer(sessionId, socket) {
+    addViewer(sessionId, socket, opts) {
       const agentAccountId = ownerOf.get(sessionId);
       const runner = agentAccountId ? runners.get(agentAccountId) : undefined;
-      const viewer: Viewer = { socket, awaitingReplay: Boolean(runner), queued: [], inputBytes: 0 };
+      // 제어 전용은 **오퍼레이터가 알아들을 때만** 받는다(R1). 아니면 보통 attach 로 되돌린다 —
+      // 창은 `writer` 프레임에 세대가 없는 것을 보고 서버 경유로 그린다.
+      let control = Boolean(opts?.control && runner?.caps.has('local-terminal'));
+      // 열람 키는 오퍼레이터에 **먼저** 보내고, 갔을 때만 이 창에 준다. 못 보냈으면 보통 attach 로 되돌린다 —
+      // 오퍼레이터가 모르는 키를 창에 주면 창은 아무것도 못 본다.
+      let viewKey: string | null = null;
+      if (control && runner) {
+        viewKey = newLocalKey();
+        if (!sendToRunner(runner, { type: 'local.view', sessionId, viewKey, granted: true })) { viewKey = null; control = false; }
+      }
+      const viewer: Viewer = {
+        socket, awaitingReplay: Boolean(runner) && !control, queued: [], inputBytes: 0,
+        control, viewKey, writerKey: null, gen: null, gens: new Set(),
+      };
       let list = viewers.get(sessionId);
       if (!list) { list = []; viewers.set(sessionId, list); }
       list.push(viewer);
@@ -608,7 +743,9 @@ export function createRelayHub(
         sendTo(viewer, { type: 'status', state: 'runner-offline' });
       } else {
         sendTo(viewer, { type: 'status', state: 'running' });
-        sendToRunner(runner, { type: 'replay.request', sessionId });
+        if (viewKey !== null) sendTo(viewer, { type: 'local', viewKey });
+        // 제어 뷰어는 재생을 오퍼레이터 소켓에서 받는다 — 요청하면 러너가 링 버퍼를 괜히 한 번 더 올린다.
+        if (!control) sendToRunner(runner, { type: 'replay.request', sessionId });
       }
 
       // 마지막 attach 가 차례를 갖는다(스펙 §5-2 결정 2). 러너가 아예 능력이 없으면
@@ -632,6 +769,9 @@ export function createRelayHub(
           if (idx === -1) return;
           current.splice(idx, 1);
           if (!current.length) viewers.delete(sessionId);
+          // 떠나는 창의 로컬 키를 거둔다(R1) — writer 키를 먼저, 그다음 열람 키. 승계는 그 뒤다.
+          revokeLocal(sessionId, viewer);
+          revokeView(sessionId, viewer);
           if (writerOf.get(sessionId) === viewer) {
             // 가장 최근에 붙은 남은 뷰어가 승계한다 — 배열 끝이 곧 그 사람이다.
             setWriter(sessionId, current.at(-1) ?? null);
