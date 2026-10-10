@@ -595,6 +595,9 @@ abstract class Strings {
   /// 그림 넘겨 보기의 메뉴 — 닫고 그 그림이 달린 글을 연다.
   String get attachmentGoToMessage;
 
+  /// HTML 첨부 카드의 아랫줄 — 종류와 크기. [size] 는 `formatBytes` 가 낸 값이다(i18n P3, 2026-10-10).
+  String attachmentHtmlMeta(String size);
+
   /// 미리보기 버전 표기. {v} 를 번호로 바꾼다.
   String get artifactVersion;
 
@@ -946,6 +949,8 @@ const Set<String> i18nAllowSameAsEnglish = {
   'appName',
   // 주소 예시다. 번역할 말이 없다 — `https://example.com` 은 어느 언어에서도 같다.
   'connectServerUrlHint',
+  // 파일 형식 이름 `HTML` 과 크기뿐이다. 번역하지 않는 이름이다(데스크톱 `artifact.card.html` 도 두 언어 `HTML`).
+  'attachmentHtmlMeta',
 };
 
 /// 키 → 값 표로 펼친다. **시험이 문구를 훑는 유일한 통로**다.
@@ -1154,6 +1159,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'attachmentOpen': s.attachmentOpen,
       'attachmentFailed': s.attachmentFailed,
       'attachmentGoToMessage': s.attachmentGoToMessage,
+      'attachmentHtmlMeta': s.attachmentHtmlMeta('{size}'),
       'artifactVersion': s.artifactVersion,
       'artifactVersionWithPrev': s.artifactVersionWithPrev,
       'artifactLatest': s.artifactLatest,

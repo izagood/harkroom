@@ -198,7 +198,7 @@ class ArtifactCard extends StatelessWidget {
                         ),
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
-                        child: Text('HTML · ${formatBytes(attachment.byteSize)}', style: theme.textTheme.labelSmall),
+                        child: Text(t.attachmentHtmlMeta(formatBytes(attachment.byteSize)), style: theme.textTheme.labelSmall),
                       ),
                     ],
                   ),

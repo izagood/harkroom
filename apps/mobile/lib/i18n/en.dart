@@ -350,6 +350,8 @@ class StringsEn implements Strings {
   String get attachmentFailed => 'Could not load this file.';
   @override
   String get attachmentGoToMessage => 'Go to message';
+  @override
+  String attachmentHtmlMeta(String size) => 'HTML · $size';
 
   @override
   String get artifactVersion => 'v{v}';
