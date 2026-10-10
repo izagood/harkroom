@@ -34,6 +34,7 @@ import { accountOpen } from '../lib/accountOpen';
 import { stampLabel } from '../lib/day';
 import type { SectionId } from './settings/sections';
 import { useT, useLocale } from '../i18n/useT';
+import { systemText } from '../lib/systemText';
 
 /**
  * 얼굴 슬롯의 칸 수. **폭이 고정되는 것이 이 숫자의 일**이다 — 참여자가 늘어도 요약 줄이
@@ -184,6 +185,11 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
    * 보이고, 한 줄 안에서 이름과 아바타가 서로 다른 사람을 가리킨다.
    */
   const shownBody = displayBody(message, accounts, groups, teams);
+  /**
+   * 번역 표지가 있는 시스템 줄(i18n P5 ②)은 **글로만** 그린다 — 마크다운·링크·멘션 렌더(`MessageBody`)를
+   * 지나지 않는다(security C4). 인자에는 경로·저장소 이름처럼 바깥에서 온 글자가 들어간다.
+   */
+  const systemLine = systemText(message, accounts, t);
 
   /**
    * 이 답이 딸린 스레드의 **뿌리 메시지**(#624 요구 2). 뿌리는 같은 채널의 최상위
@@ -813,7 +819,9 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 )}
               </button>
             )}
-            {shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} refIds={mentionRefs} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
+            {systemLine !== null
+              ? <p className="whitespace-pre-wrap break-words" data-testid="system-i18n-line">{systemLine}</p>
+              : shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} refIds={mentionRefs} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             {/* 선택지는 본문 **바로 아래**에 붙는다 — 답할 자리가 말 옆에 있어야 한다(규칙 05).
                 형식을 못 알아보면 `AskCard` 가 스스로 아무것도 그리지 않는다. */}
             {/* 머지 거절 카드(P5) — 권한 칸은 서버 기록(meta.mergeDenial), 선택지는 그 아래 AskCard. */}

@@ -58,6 +58,12 @@ export const SYSTEM_I18N_ARGS = Object.freeze({
 
 export type SystemI18nKey = keyof typeof SYSTEM_I18N_ARGS;
 export type SystemI18nArgs = Record<string, string | number>;
+/**
+ * 키마다 받는 인자를 **타입으로** 매긴다(security n1-a). 서버 빌더가 이것을 받으므로 인자 이름을 틀리거나
+ * 빠뜨리면 tsc 가 막는다 — 실행 중에 던지는 자리가 머지·호출 기록을 남기는 곳이라, 거기서 터지면
+ * 기록이 통째로 빠진다.
+ */
+export type SystemI18nArgsOf<K extends SystemI18nKey> = Record<(typeof SYSTEM_I18N_ARGS)[K][number], string | number>;
 export interface SystemI18n { key: SystemI18nKey; args: SystemI18nArgs }
 
 /** 인자 개수 상한. 가장 많이 받는 키가 5개다 — 여유를 두되 끝없이 받지 않는다. */
