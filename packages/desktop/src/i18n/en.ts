@@ -2945,6 +2945,10 @@ export const en = {
   'terminal.renderer.webgl': 'WebGL (GPU)',
   'terminal.renderer.dom': 'DOM (fallback — WebGL did not start)',
   'terminal.renderer.pending': 'starting…',
+  'terminal.latency': 'Path: {path} · input→screen p50 {p50}ms · p95 {p95}ms ({count} samples)',
+  'terminal.latency.none': 'Path: {path} · input→screen not measured yet',
+  'terminal.path.server': 'via server',
+  'terminal.path.local': 'direct (local)',
   'terminal.header.close': 'Close',
   /** 그 버튼의 접근 이름. **무엇을 닫는지**를 진다 — 화면에는 이 창만 있는 것이 아니다. */
   'terminal.header.closeAction': 'Close the terminal',
