@@ -458,7 +458,7 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
     await openCommunitySettingsInApp('me-a');
     expect(wsSpy.count).toBe(1);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add community' }));
+    fireEvent.click(screen.getByRole('button', { name: '커뮤니티 추가' }));
     expect(await screen.findByText('Sign in to another community')).toBeTruthy();
 
     // **설정 화면이 그대로 서 있다.** `phase` 를 `connect` 로 되돌렸다면 이 화면 자체가
@@ -506,7 +506,7 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
     vi.stubGlobal('fetch', serverFetch());
 
     render(<CommunitySettings onCommunitiesEmpty={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Add community' }));
+    fireEvent.click(screen.getByRole('button', { name: '커뮤니티 추가' }));
     fireEvent.change(screen.getByLabelText('Server URL'), { target: { value: 'https://b.example' } });
     fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'me-b' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
@@ -536,7 +536,7 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
     vi.stubGlobal('fetch', serverFetch());
 
     render(<CommunitySettings onCommunitiesEmpty={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Add community' }));
+    fireEvent.click(screen.getByRole('button', { name: '커뮤니티 추가' }));
     // 같은 서버 = 같은 계정(acct-a) 이다.
     fireEvent.change(screen.getByLabelText('Server URL'), { target: { value: 'https://a.example' } });
     fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'me-a' } });
@@ -546,7 +546,7 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
     // 문구가 **겹창 안**에 있어야 한다. 목록 쪽에만 있으면 겹창이 덮어 보이지 않는다.
     const dialog = await screen.findByRole('dialog', { name: '커뮤니티 추가' });
     await waitFor(() => expect(
-      within(dialog).getByText('This community is already on this device.'),
+      within(dialog).getByText('이 커뮤니티는 이미 이 기기에 있다.'),
     ).toBeTruthy());
 
     // 목록도 늘지 않고, 겹창도 닫히지 않는다 — 사람이 서버 주소를 고쳐 다시 시도할 자리다.
@@ -582,15 +582,15 @@ describe('커뮤니티 제거 (#165 결정 4)', () => {
 
     render(<CommunitySettings onCommunitiesEmpty={vi.fn()} />);
     const row = screen.getByTestId(`community-row-${b.id}`);
-    fireEvent.click(within(row).getByRole('button', { name: 'Remove' }));
+    fireEvent.click(within(row).getByRole('button', { name: '빼기' }));
 
     // 확인 단계다 — 문구가 "이 기기에서만 빠진다" 를 말하고, 아직 아무것도 안 했다.
-    expect(screen.getByText(/It stays on the server/)).toBeTruthy();
+    expect(screen.getByText(/서버에는 그대로 남는다/)).toBeTruthy();
     expect(useCommunityRegistry.getState().entries).toHaveLength(2);
     expect(cb.stop).not.toHaveBeenCalled();
     expect(cb.logout).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove from this device' }));
+    fireEvent.click(screen.getByRole('button', { name: '이 기기에서 빼기' }));
 
     await waitFor(() => expect(useCommunityRegistry.getState().entries).toHaveLength(1));
     // **서버 세션을 폐기하지 않는다.** logout() 을 부르면 같은 서버에 붙은 다른 기기의
@@ -614,8 +614,8 @@ describe('커뮤니티 제거 (#165 결정 4)', () => {
 
     render(<CommunitySettings onCommunitiesEmpty={vi.fn()} />);
     const row = screen.getByTestId(`community-row-${a.id}`);
-    fireEvent.click(within(row).getByRole('button', { name: 'Remove' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove from this device' }));
+    fireEvent.click(within(row).getByRole('button', { name: '빼기' }));
+    fireEvent.click(screen.getByRole('button', { name: '이 기기에서 빼기' }));
 
     await waitFor(() => expect(useCommunityRegistry.getState().entries).toHaveLength(1));
     expect(useCommunityRegistry.getState().activeId).toBe(b.id);
@@ -629,8 +629,8 @@ describe('커뮤니티 제거 (#165 결정 4)', () => {
     await openCommunitySettingsInApp('me-a');
 
     const row = screen.getByTestId(`community-row-${useCommunityRegistry.getState().activeId}`);
-    fireEvent.click(within(row).getByRole('button', { name: 'Remove' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove from this device' }));
+    fireEvent.click(within(row).getByRole('button', { name: '빼기' }));
+    fireEvent.click(screen.getByRole('button', { name: '이 기기에서 빼기' }));
 
     // 그때는 정말 세션이 없다 — 여기서만 `phase` 가 `connect` 로 돌아간다.
     expect(await screen.findByText('Server URL')).toBeTruthy();
@@ -650,11 +650,11 @@ describe('커뮤니티 표시 이름 (#165 결정 2)', () => {
 
     render(<CommunitySettings onCommunitiesEmpty={vi.fn()} />);
     const row = screen.getByTestId(`community-row-${b.id}`);
-    fireEvent.click(within(row).getByRole('button', { name: 'Rename' }));
-    fireEvent.change(screen.getByLabelText(/Display name on this device/), {
+    fireEvent.click(within(row).getByRole('button', { name: '이름 바꾸기' }));
+    fireEvent.change(screen.getByLabelText(/이 기기에서 보일 이름/), {
       target: { value: 'Work' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => {
       const stored = JSON.parse(localStorage.getItem('harkroom.sessions')!) as {
