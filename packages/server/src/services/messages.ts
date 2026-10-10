@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
@@ -1761,7 +1761,7 @@ export async function editMessage(
  */
 export async function recordAskAnswer(
   pool: Pool,
-  args: { messageId: string; actorId: string; optionId: string; viaPermissionDecision?: boolean },
+  args: { messageId: string; actorId: string; optionId: string; viaPermissionDecision?: boolean; answeredVia?: AskAnsweredVia },
 ): Promise<MessageRow | MutationRefusal | 'already_answered' | 'unknown_option'> {
   const found = await pool.query(
     `select meta from message where id = $1 and deleted_at is null`, [args.messageId],
@@ -1822,7 +1822,7 @@ export async function recordAskAnswer(
     }
   }
 
-  const row = await answerAskRow(pool, args.messageId, args.optionId, args.actorId);
+  const row = await answerAskRow(pool, args.messageId, args.optionId, args.actorId, args.answeredVia);
   if (!row) return 'already_answered';
   // 원본이면 거울들도 같은 답으로 닫는다. 거울이 없으면 갱신되는 행이 없을 뿐이다.
   if (!ask.mirrorOf) await syncAskMirrors(pool, args.messageId);
@@ -1842,7 +1842,7 @@ async function isHumanAccount(pool: Pool, accountId: string): Promise<boolean> {
 }
 
 /** 물음 하나를 읽는다. 없거나 지워졌거나 물음이 아니면 null. */
-async function readAskRow(
+export async function readAskRow(
   pool: Pool, messageId: string,
 ): Promise<{ ask: NonNullable<ReturnType<typeof readAskMeta>>; channelId: string; authorId: string | null } | null> {
   const res = await pool.query(
@@ -1864,7 +1864,7 @@ async function readAskRow(
  * 실패해도 던지지 않는다 — 답(닫힘)은 이미 기록됐고, 그것이 부른 쪽이 약속한 것이다.
  * 깨우지 못하면 사람이 다시 멘션하는 길이 남는다(더 나쁜 쪽은 답이 사라지는 것이다).
  */
-async function wakeAsker(
+export async function wakeAsker(
   pool: Pool, askerId: string | null, actorId: string, messageId: string, reason: 'ask_answered' | 'ask_closed',
 ): Promise<void> {
   if (!askerId || askerId === actorId) return;
@@ -1898,22 +1898,32 @@ async function wakeAsker(
  * **`superseded` 로 닫힌 카드는 답을 받지 않는다**(security n1, 2026-10-09). 새 질문이 떠 있는데 옛 질문의
  * 답으로 물어본 쪽을 깨우면 두 질문이 엇갈린다. 다른 닫힘(`replied`·`declined`)은 지금처럼 늦은 답을 받는다.
  */
+export type AskAnsweredVia = 'bundle_bulk';
+
 async function answerAskRow(
-  pool: Pool, messageId: string, optionId: string, actorId: string,
+  pool: Pool, messageId: string, optionId: string, actorId: string, answeredVia?: AskAnsweredVia,
 ): Promise<MessageRow | null> {
-  const updated = await pool.query(
-    `update message
-        set meta = jsonb_set(
+  /*
+    `answeredVia` — 사람이 그 줄을 **골라 누르지 않은** 답의 표지(security F1, #1280). 묶음 카드의 「추천대로 일괄」은 한 번
+    눌러 여러 원본에 답을 적는다 — 사람은 그 줄들을 읽지 않았을 수 있다. 표지가 있는 답은 머지·비밀 래퍼의 "사람이 띄운
+    턴"(`readLease`·`readCreateLease`·위임의 `byRootAnswer`)에서 빠진다.
+  */
+  const answered = `jsonb_set(
               jsonb_set(
                 jsonb_set(meta::jsonb, '{ask,answeredWith}', to_jsonb($2::text)),
                 '{ask,answeredBy}', to_jsonb($3::text)),
-              '{ask,answeredAt}', to_jsonb(now()))
+              '{ask,answeredAt}', to_jsonb(now()))`;
+  // 표지는 있을 때만 싣는다 — 보통 답의 meta 모양은 그대로다.
+  const setMeta = answeredVia ? `jsonb_set(${answered}, '{ask,answeredVia}', to_jsonb($4::text))` : answered;
+  const updated = await pool.query(
+    `update message
+        set meta = ${setMeta}
       where id = $1
         and deleted_at is null
         and meta->'ask'->>'answeredWith' is null
         and meta->'ask'->>'closedReason' is distinct from 'superseded'
       returning ${COLS}`,
-    [messageId, optionId, actorId],
+    answeredVia ? [messageId, optionId, actorId, answeredVia] : [messageId, optionId, actorId],
   );
   const row = updated.rows[0] as MessageRow | undefined;
   if (!row) return null;
@@ -1964,6 +1974,8 @@ async function closeAskRow(pool: Pool, messageId: string, actorId: string): Prom
  * 규칙(`closedAt` 을 보지 않는다)과 같다. 닫힘은 열린 거울에만 옮긴다.
  */
 export async function syncAskMirrors(pool: Pool, rootId: string): Promise<void> {
+  // 묶음 카드의 줄은 원본에서 상태를 읽는다 — 원본이 바뀌는 모든 길이 여기를 지나므로 여기서 알린다.
+  await syncAskBundles(pool, rootId);
   const root = await readAskRow(pool, rootId);
   if (!root) return;
   let rows: MessageRow[] = [];
@@ -2248,7 +2260,83 @@ export async function supersedeAsk(pool: Pool, args: { oldId: string; newId: str
   const row = res.rows[0] as MessageRow | undefined;
   if (!row) return;
   emitEvent({ type: 'message.updated', message: row, audience: await audienceFor(pool, row.channelId) });
+  // 옛 카드를 담은 묶음에는 새 카드가 같은 자리에 들어간다(시안 10절) — 옛 줄은 「새 질문으로 바뀜」으로 접힌다.
+  await carryBundleItem(pool, args.oldId, args.newId);
   await syncAskMirrors(pool, args.oldId);
+}
+
+/** 이 원본을 줄로 담은 열린 묶음 카드들. 지운 묶음은 뺀다. */
+async function bundlesHolding(pool: Pool, rootId: string): Promise<MessageRow[]> {
+  return (await pool.query(
+    `select ${COLS} from message
+      where meta->>'kind' = 'askBundle'
+        and deleted_at is null
+        and meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $1::text))`,
+    [rootId],
+  )).rows as MessageRow[];
+}
+
+/**
+ * **묶음 카드를 원본에 맞춘다**(2026-10-10, 선택 카드 P1). 줄은 상태를 싣지 않으므로(`AskBundleItem`) 고칠 행이
+ * 없다 — 그 묶음을 보는 화면에 "다시 읽어라"만 보낸다. 화면은 줄마다 원본을 읽어 「답함」·「글로 답함」·
+ * 「새 질문으로 바뀜」을 그린다. 멱등이고 실패해도 던지지 않는다(원본의 답·닫힘은 이미 기록됐다).
+ */
+export async function syncAskBundles(pool: Pool, rootId: string): Promise<void> {
+  try {
+    for (const bundle of await bundlesHolding(pool, rootId)) {
+      emitEvent({ type: 'message.updated', message: bundle, audience: await audienceFor(pool, bundle.channelId) });
+    }
+  } catch (err) {
+    console.error('[ask_bundle] 묶음 알림 실패(원본은 기록됐다):', err);
+  }
+}
+
+/**
+ * 묶음 카드에 담을 줄 하나를 원본에서 만든다. 사본은 물음 한 줄과 선택지뿐이다 — 상태는 원본에서 읽는다.
+ * 원본이 없거나 물음이 아니면 null.
+ */
+export async function askBundleItemFor(pool: Pool, rootId: string): Promise<AskBundleItem | null> {
+  const res = await pool.query(
+    `select meta, body, channel_id as "channelId", thread_root_id as "threadRootId", author_id as "authorId"
+       from message where id = $1 and deleted_at is null`,
+    [rootId],
+  );
+  const row = res.rows[0] as { meta: Record<string, unknown>; body: string; channelId: string; threadRootId: string | null; authorId: string | null } | undefined;
+  const ask = row ? readAskMeta(row.meta) : null;
+  if (!row || !ask) return null;
+  const firstLine = row.body.replace(/<@[0-9a-f-]{36}>\s*/g, '').split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';
+  const prompt = (ask.prompt ?? firstLine).slice(0, 200);
+  return {
+    rootId, askerId: row.authorId, channelId: row.channelId, threadRootId: row.threadRootId, prompt,
+    options: ask.options.map((o) => ({ id: o.id, label: o.label, ...(o.hint ? { hint: o.hint } : {}), ...(o.recommended ? { recommended: true } : {}) })),
+    // 권한 요청·머지 거절 카드는 링크 줄이다 — 권한 카드는 소유자가 원 스레드에서만 정하고, 머지 거절 카드는 저장소·PR·sha
+    // 맥락이 본문 첫 줄에 다 실리지 않는다(security n3, #1280).
+    ...(row.meta.permissionRequest || row.meta.mergeDenial ? { link: true } : {}),
+  };
+}
+
+/** 대신된 옛 카드를 담은 묶음마다 새 카드를 줄로 더한다(이미 있으면 그대로). 상한을 넘으면 더하지 않는다. */
+async function carryBundleItem(pool: Pool, oldId: string, newId: string): Promise<void> {
+  try {
+    const bundles = await bundlesHolding(pool, oldId);
+    if (bundles.length === 0) return;
+    const item = await askBundleItemFor(pool, newId);
+    if (!item || item.link) return;
+    for (const bundle of bundles) {
+      const updated = (await pool.query(
+        `update message
+            set meta = jsonb_set(meta::jsonb, '{askBundle,items}', (meta->'askBundle'->'items') || jsonb_build_array($2::jsonb))
+          where id = $1
+            and not (meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $3::text)))
+            and jsonb_array_length(meta->'askBundle'->'items') < $4
+          returning ${COLS}`,
+        [bundle.id, JSON.stringify(item), newId, ASK_BUNDLE_MAX_ITEMS],
+      )).rows[0] as MessageRow | undefined;
+      if (updated) emitEvent({ type: 'message.updated', message: updated, audience: await audienceFor(pool, updated.channelId) });
+    }
+  } catch (err) {
+    console.error('[ask_bundle] 대신한 카드를 묶음에 옮기지 못했다:', err);
+  }
 }
 
 /** 삭제는 작성자 또는 admin. 수정과 달리 원문을 왜곡하지 않고 가리는 일이라 운영자에게 열어둔다. */

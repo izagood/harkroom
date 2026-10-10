@@ -122,7 +122,9 @@ async function readCreateLease(pool: Pool, leaseId: string, token: string, now: 
             c.owner_account_id as "ownerId",
             coalesce(o.deleted_at is not null or o.disabled_at is not null, true) as "ownerInactive",
             m.author_id as "causeAuthorId", a.kind as "causeKind",
-            case when m.meta ? 'ask' and m.meta->'ask'->>'mirrorOf' is null then m.author_id end as "causeAskAuthorId",
+            -- 거울·일괄로 매긴 답(answeredVia)은 사람이 띄운 턴이 아니다(security F1, #1280 — mergeGrants.readLease 와 같다).
+            case when m.meta ? 'ask' and m.meta->'ask'->>'mirrorOf' is null and m.meta->'ask'->>'answeredVia' is null
+                 then m.author_id end as "causeAskAuthorId",
             m.meta->'ask'->>'answeredBy' as "askAnsweredBy", ans.kind as "askAnswererKind"
        from secret_turn_lease l
        left join agent_config c on c.account_id = l.agent_id

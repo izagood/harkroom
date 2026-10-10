@@ -64,7 +64,8 @@ export const REVIEW_ALLOWED_TOOLS = [
 export const REVIEW_DISALLOWED_TOOLS = [
   'Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task', 'Agent',
   'mcp__harkroom__message_post', 'mcp__harkroom__message_progress', 'mcp__harkroom__message_report',
-  'mcp__harkroom__message_fail', 'mcp__harkroom__message_ask', 'mcp__harkroom__message_delegate',
+  'mcp__harkroom__message_fail', 'mcp__harkroom__message_ask', 'mcp__harkroom__message_askBundle',
+  'mcp__harkroom__message_askBundleResolve', 'mcp__harkroom__message_delegate',
   'mcp__harkroom__message_react', 'mcp__harkroom__message_unreact',
   'mcp__harkroom__inbox_poll', 'mcp__harkroom__inbox_read', 'mcp__harkroom__turn_wake',
   'mcp__harkroom__automation_propose', 'mcp__harkroom__automation_run',

@@ -1305,6 +1305,11 @@ export interface AskOption {
   label: string;
   /** 고르기 전에 읽는 한 줄 — "되돌리기 쉽다" 같은 판단 근거. 없어도 된다. */
   hint?: string;
+  /**
+   * 물어본 쪽이 **추천하는** 선택지(2026-10-10, 묶음 카드 P1). 한 물음에 하나만 쓴다. 묶음 카드의
+   * 「남은 n개 추천대로」가 이것을 고른다 — 추천이 없거나 둘 이상이면 그 줄은 일괄 처리에서 빠진다.
+   */
+  recommended?: boolean;
 }
 
 /**
@@ -1369,7 +1374,59 @@ export interface AskMeta {
      * 없으면 보통 물음이다.
      */
     mirrorOf?: string;
+    /**
+     * **되돌릴 수 없는 결정**이라고 물어본 쪽이 밝혔다(2026-10-10, 묶음 카드 P1) — 머지·배포·비밀·권한 같은 것.
+     * 묶음 카드의 「추천대로 일괄」은 이 줄을 서버가 뺀다. 표시가 없어도 서버가 따로 판정한다(`askBundles.ts`).
+     */
+    irreversible?: boolean;
+    /** `closedReason: 'replied'` 인데 그 글이 **다른 스레드**(묶음 카드의 PM 스레드)에 있을 때 관리 에이전트가 옮긴 요지. */
+    replyNote?: string;
+    /**
+     * `replyNote` 를 **쓴** 계정 — 묶음 카드를 세운 관리 에이전트다(security n1, #1280). 닫은 이름(`closedBy`)은 근거 글을 쓴
+     * 사람이지만 요지는 에이전트가 옮긴 말이다. 화면은 이것으로 「○○ 요약」이라고 밝힌다.
+     */
+    replyNoteBy?: string;
+    /**
+     * 사람이 이 줄을 **골라 누르지 않은** 답의 표지(security F1, #1280). `bundle_bulk` = 묶음 카드의 「추천대로 일괄」.
+     * 표지가 있는 답은 머지·비밀 래퍼의 "사람이 띄운 턴"에서 빠진다.
+     */
+    answeredVia?: 'bundle_bulk' | null;
   };
+}
+
+/**
+ * **묶음 카드**의 줄 하나(2026-10-10, 선택 카드 P1). 관리 에이전트가 여러 에이전트의 사람 앞 카드를
+ * 자기 스레드의 카드 하나에 줄로 모은다. 줄은 원본 카드(`rootId`)를 가리킬 뿐이고 **상태는 싣지 않는다** —
+ * 답·닫힘은 원본에서 읽는다(정본은 하나다, 거울과 같은 규칙). `prompt`·`options` 는 모을 때의 사본이다.
+ *
+ * `link` 는 권한 요청 카드다 — 그 카드는 소유자가 원 스레드에서만 정하므로 묶음에서는 「원 스레드에서
+ * 승인 →」 링크로만 선다(고를 수 없다).
+ */
+export interface AskBundleItem {
+  rootId: string;
+  askerId: string | null;
+  channelId: string;
+  threadRootId: string | null;
+  prompt: string;
+  options: AskOption[];
+  link?: boolean;
+}
+
+export interface AskBundleMeta {
+  kind: 'askBundle';
+  askBundle: { items: AskBundleItem[] };
+}
+
+/** 묶음 카드 한 장에 담는 줄의 상한. 넘치면 새 묶음을 연다 — 스무 줄이 넘으면 한 카드로 읽히지 않는다. */
+export const ASK_BUNDLE_MAX_ITEMS = 20;
+
+/** `meta` 가 묶음 카드인지 판정한다. `readAskMeta` 의 판례 그대로 — 못 알아보면 null(화면은 본문만 그린다). */
+export function readAskBundleMeta(meta: Record<string, unknown> | null | undefined): AskBundleMeta['askBundle'] | null {
+  if (!meta || meta.kind !== 'askBundle') return null;
+  const bundle = meta.askBundle as AskBundleMeta['askBundle'] | undefined;
+  if (!bundle || typeof bundle !== 'object' || !Array.isArray(bundle.items)) return null;
+  if (!bundle.items.every((i) => i && typeof i.rootId === 'string' && Array.isArray(i.options))) return null;
+  return bundle;
 }
 
 /**

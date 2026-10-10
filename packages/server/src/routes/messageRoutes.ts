@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
+import { acceptRecommended, answerBundleItem } from '../services/askBundles.js';
 import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isPermissionCardMessage, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
@@ -375,6 +376,35 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     }
     emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(pool, id) });
     return result;
+  });
+
+  /**
+   * 묶음 카드의 한 줄에 답한다(선택 카드 P1, 2026-10-10). 답은 **원본에 누른 사람 이름으로** 적는다 — 묶음은 원본을
+   * 가리킬 뿐이다. 묶음 채널을 볼 수 있어야 하고, 원본 채널도 볼 수 있어야 한다(`answerBundleItem`).
+   */
+  app.post('/channels/:id/messages/:messageId/ask-bundle/answer', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id, messageId } = z.object({ id: z.string().uuid(), messageId: z.string().uuid() }).parse(req.params);
+    const { rootId, optionId } = z.object({ rootId: z.string().uuid(), optionId: z.string().min(1).max(64) }).parse(req.body);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    const result = await answerBundleItem(pool, { bundleId: messageId, channelId: id, rootId, optionId, actorId: req.account!.id });
+    if (!result.ok) return reply.code(result.status).send({ error: { code: result.code, message: result.message } });
+    return result.bundle;
+  });
+
+  /**
+   * 「남은 n개 추천대로」(선택 카드 P1). 줄마다 결과를 따로 돌려준다 — 되돌릴 수 없는 줄(머지·배포·비밀·권한)과
+   * 추천이 없는 줄은 **서버가** 뺀다(`acceptRecommended`). 화면이 빼는 것을 믿지 않는다.
+   */
+  app.post('/channels/:id/messages/:messageId/ask-bundle/accept-recommended', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id, messageId } = z.object({ id: z.string().uuid(), messageId: z.string().uuid() }).parse(req.params);
+    if (!(await assertChannelVisible(pool, id, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    const result = await acceptRecommended(pool, { bundleId: messageId, channelId: id, actorId: req.account!.id });
+    if (!result.ok) return reply.code(result.status).send({ error: { code: result.code, message: result.message } });
+    return { message: result.bundle, results: result.results };
   });
 
   /**
