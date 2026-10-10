@@ -681,8 +681,11 @@ describe('첨부 이미지를 눌러 크게 보기', () => {
 
     const preview = screen.getByTestId('attachment-preview');
     expect(preview.className).toContain('max-h-56');
-    // 가로가 열려 있으면(`max-w-full` 뿐이면) 본문 폭을 그대로 먹는다.
-    expect(preview.className).toContain('max-w-[min(28rem,100%)]');
+    // 가로 상한은 바깥 칸이 쥔다 — 칸이 열려 있으면(`max-w-full` 뿐이면) 본문 폭을 그대로 먹는다.
+    const frame = screen.getByTestId('attachment-frame');
+    expect(frame.className).toContain('w-[min(28rem,100%)]');
+    expect(frame.contains(preview)).toBe(true);
+    expect(preview.className).toContain('max-w-full');
   });
 
   /**

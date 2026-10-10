@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { previewUrlFor } from '../lib/attachmentUploads';
+import { acquireAttachmentUrl, peekAttachmentUrl } from '../lib/attachmentUrlCache';
 import type { AttachmentRow, MessageRow } from '@harkroom/shared';
 import type { PendingUpload } from '../state/appStore';
 import { getController } from '../state/controller';
@@ -41,32 +42,35 @@ export function formatSize(bytes: number): string {
 /**
  * 첨부 바이트를 받아 objectURL 로 바꾼다. 토큰을 URL 에 넣지 않으려면(서버 로거가 URL 을
  * 기록한다) 헤더를 붙일 수 있는 fetch 를 거쳐야 하고, 그 결과를 화면에 쓰려면 blob 이어야 한다.
- * 언마운트에서 revoke 한다 — 안 하면 채널을 오래 열어 둘수록 메모리가 는다.
+ * URL 은 `attachmentUrlCache` 가 쥔다 — 가상 목록에서 줄이 다시 마운트돼도 다시 받지 않고,
+ * 받아 둔 것은 **첫 렌더부터** 그린다(빈 자리 → 그림으로 줄 높이가 바뀌지 않게). revoke 도 캐시가 한다(LRU).
  * 실패 시 오류 상태를 돌려준다 — 조용히 강등하면 "불러오지 못했다"는 신호를 못 받는다.
  */
 function useAttachmentUrl(id: string, enabled: boolean): { url: string | null; failed: boolean } {
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [state, setState] = useState<{ id: string; url: string | null; failed: boolean }>(
+    () => ({ id, url: enabled ? peekAttachmentUrl(id) : null, failed: false }),
+  );
   useEffect(() => {
     if (!enabled) return;
+    let alive = true;
     // id 가 바뀌면 실패 표시도 초기화한다 — 안 하면 한 번 실패한 자리가 다른 첨부를
     // 그리면서 "불러오기 실패" 를 계속 달고 있다.
-    setFailed(false);
-    let objectUrl: string | null = null;
-    let alive = true;
-    void getController().fetchAttachment(id).then((blob) => {
-      if (!alive) return;
-      objectUrl = URL.createObjectURL(blob);
-      setUrl(objectUrl);
+    const cachedUrl = peekAttachmentUrl(id);
+    setState((s) => (s.id === id && s.url === cachedUrl && !s.failed ? s : { id, url: cachedUrl, failed: false }));
+    const lease = acquireAttachmentUrl(id);
+    lease.promise.then((url) => {
+      if (alive) setState((s) => (s.id === id && s.url === url ? s : { id, url, failed: false }));
     }).catch(() => {
-      if (alive) setFailed(true);
+      if (alive) setState({ id, url: null, failed: true });
     });
     return () => {
       alive = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      lease.release();
     };
   }, [id, enabled]);
-  return { url, failed };
+  // id 가 막 바뀐 렌더에서는 옛 그림을 내보내지 않는다.
+  if (state.id !== id) return { url: enabled ? peekAttachmentUrl(id) : null, failed: false };
+  return { url: state.url, failed: state.failed };
 }
 
 /**
@@ -235,9 +239,18 @@ function Attachment({ attachment, message }: { attachment: AttachmentRow; messag
     setZoomed(true);
   };
 
-  if (previewable && url) {
+  if (previewable && !failed) {
     return (
       <>
+        {/*
+          **그림 칸은 받기 전부터 같은 높이다**(스레드 bf24d7bd ①). 채널 본문은 가상 목록이라, 받는 동안
+          작은 자리였다가 그림이 붙으며 줄이 커지면 스크롤 위치를 다시 맞추는 보정이 돌고 화면이 튄다.
+          첨부 메타에 가로·세로가 없으므로 칸은 그림의 최대 높이(`h-56`)로 고정하고, 그림은 그 안에서
+          위·왼쪽에 붙는다 — 작은 그림 아래는 비지만 줄 높이는 받기 전후로 같다.
+        */}
+        <div data-testid="attachment-frame" className="flex h-56 w-[min(28rem,100%)] items-start">
+        {url ? (
+        <>
         {/*
           **그림 자체가 누르는 자리다.** 옆에 "크게 보기" 링크를 따로 두면, 사람이 이미
           손을 올려 둔 곳(그림) 밖에서 누를 곳을 다시 찾아야 한다.
@@ -250,7 +263,7 @@ function Attachment({ attachment, message }: { attachment: AttachmentRow; messag
           type="button"
           onClick={openZoom}
           aria-label={t('message.attachment.zoom', { filename: attachment.filename })}
-          className="block cursor-zoom-in rounded-row border border-border"
+          className="block max-w-full cursor-zoom-in rounded-row"
         >
           {/*
             **세로만이 아니라 가로도 묶는다.** 높이만 묶어 두면(`max-h-64` + `max-w-full`)
@@ -258,19 +271,31 @@ function Attachment({ attachment, message }: { attachment: AttachmentRow; messag
             화면의 절반을 먹고, 위아래 대화가 스크롤 밖으로 밀린다.
             본문의 그림은 **무엇이 붙었는지 알아보는 자리**이고, 읽는 자리는 확대 보기다
             (눌러서 크게 볼 길이 이미 있으므로 목록에서는 작아도 된다).
-            `min(…,100%)` 로 적는 이유는 좁은 칸이다 — 스레드 패널에서는 `28rem` 보다 칸이
-            먼저다. `max-w-full` 을 따로 얹으면 같은 `max-width` 를 두 클래스가 다투고,
-            어느 쪽이 이길지는 생성된 CSS 순서에 달린다.
+            가로 상한(`min(28rem,100%)`)은 바깥 칸이 쥔다 — 스레드 패널에서는 `28rem` 보다 칸이
+            먼저다. 그림은 그 칸 안에서 `max-w-full` 로만 묶는다. 테두리는 그림에 단다 —
+            버튼에 달면 그 2px 만큼 고정 칸(`h-56`)을 넘친다.
           */}
           <img
             src={url}
             alt={attachment.filename}
             data-testid="attachment-preview"
-            className="max-h-56 max-w-[min(28rem,100%)] rounded-row"
+            className="max-h-56 max-w-full rounded-row border border-border"
           />
         </button>
-        {zoomed && <ImageLightbox attachment={attachment} url={url} onClose={() => setZoomed(false)} />}
-        {gallery && (
+        </>
+        ) : (
+          // 받는 중 — 칸 크기 그대로 비워 둔다. 글자는 넣지 않는다(잠깐 뜨고 사라질 글은 읽히지 않는다).
+          <span
+            data-testid="attachment-placeholder"
+            role="img"
+            aria-label={attachment.filename}
+            aria-busy="true"
+            className="block h-full w-full rounded-row border border-border bg-surface-sunken"
+          />
+        )}
+        </div>
+        {zoomed && url && <ImageLightbox attachment={attachment} url={url} onClose={() => setZoomed(false)} />}
+        {gallery && url && (
           <ImageGallery items={gallery.items} start={gallery.start} startUrl={url} onClose={() => setGallery(null)} />
         )}
       </>
@@ -325,9 +350,10 @@ function ArtifactCard({ attachment, cover, from }: {
       // `artifact-card` 는 포커스 링을 카드 바깥에 띄운다(index.css) — 선택 표시(카드 테두리)와 모양이 갈린다.
       className={`artifact-card group block w-[min(28rem,100%)] overflow-hidden rounded-card border bg-surface text-left hover:bg-surface-sunken ${selected ? 'border-accent ring-1 ring-accent' : 'border-border'}`}
     >
-      {coverUrl && (
-        <img src={coverUrl} alt="" data-testid="artifact-card-cover" className="aspect-video w-full border-b border-border object-cover" />
-      )}
+      {/* 표지 칸은 받기 전부터 잡아 둔다 — 늦게 붙으면 카드 높이가 바뀌어 목록이 튄다(bf24d7bd ①). */}
+      {coverOk && (coverUrl
+        ? <img src={coverUrl} alt="" data-testid="artifact-card-cover" className="aspect-video w-full border-b border-border object-cover" />
+        : <span aria-hidden data-testid="artifact-card-cover-placeholder" className="block aspect-video w-full border-b border-border bg-surface-sunken" />)}
       <span className="flex flex-col gap-0.5 px-3 py-2">
         <span className="flex items-center gap-2">
           {/* 눌러서 보는 시안이라는 표지(designer A안) — 표지 그림이 있어도 같은 모양이다. */}
