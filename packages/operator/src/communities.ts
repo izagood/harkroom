@@ -130,8 +130,11 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
         claudeConfigPath: claudeConfigPath(process.env, homedir()),
       });
       // 이 에이전트가 고른 원격 정의의 토큰만 묻는다 — 만료가 가까우면 여기서 refresh 한다.
-      const remote: Record<string, { url?: string }> = {};
-      for (const n of definition.mcpServers) { const d = definitions[n]; if (d && 'url' in d) remote[n] = { url: d.url }; }
+      const remote: Record<string, { url?: string; clientId?: string }> = {};
+      for (const n of definition.mcpServers) {
+        const d = definitions[n];
+        if (d && 'url' in d) remote[n] = { url: d.url, ...(d.oauth?.clientId ? { clientId: d.oauth.clientId } : {}) };
+      }
       const auth = deps.mcpOAuth
         ? await deps.mcpOAuth.tokensFor(remote).catch((err: unknown) => {
           deps.log(`MCP OAuth 토큰을 읽지 못했다(토큰 없이 띄운다): ${err instanceof Error ? err.message : String(err)}`);

@@ -39,7 +39,7 @@ import { createLocalMcpPort } from './localMcp.js';
 import { createLocalMergePort, pickMergeGhUser } from './localMerge.js';
 import { createMcpOAuth } from './mcpOAuth.js';
 import { rewriteMcpConfigTokens } from './mcpConfig.js';
-import { claudeConfigPath } from './mcpConfig.js';
+import { claudeConfigPath, readLocalMcpDefinitions } from './mcpConfig.js';
 import { fileSecrets } from './secrets.js';
 import { createRunnerLinkServer } from './runnerLink.js';
 import type { CommunityInstance } from './community.js';
@@ -504,6 +504,15 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   const mcpOAuth = createMcpOAuth({
     storePath: join(appDataDir, 'operator', 'secrets', 'mcp-oauth.json'),
     log,
+    // 지금 정의의 clientId — 클라이언트를 갈아탄 뒤 옛 토큰을 1분 refresh·거절 보고로 돌리지 않는다(security F2).
+    currentClientId: async (name) => {
+      const defs = await readLocalMcpDefinitions({
+        registryPath: join(appDataDir, 'operator', 'mcp-servers.json'),
+        claudeConfigPath: claudeConfigPath(process.env, homedir()),
+      });
+      const d = Object.hasOwn(defs, name) ? defs[name] : undefined;
+      return d && 'url' in d ? d.oauth?.clientId : undefined;
+    },
     onToken: (name, rec) => pushTokens({ [name]: rec }),
   });
   const handleMcpAuthRejected = async (agentId: string, runnerId: string, servers: string[], turnStartedAtMs: number) => {
