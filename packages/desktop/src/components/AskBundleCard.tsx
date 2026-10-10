@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { isAskOpen, readAskBundleMeta, readAskMeta, type AskBundleItem, type MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { selectAccountNames, type AccountNames } from '../lib/accountNames';
@@ -28,6 +28,12 @@ export function AskBundleCard({ message }: { message: MessageRow }) {
   return <BundleCardBody message={message} items={bundle.items} />;
 }
 
+/** 「추천대로」를 누른 뒤 실제로 보내기까지 기다리는 초(시안 9절) — 답은 되돌릴 수 없어서 한 박자 둔다. */
+export const BUNDLE_ACCEPT_DELAY_S = 5;
+
+/** 서버가 일괄에서 **언제나** 빼는 결과 — 다시 눌러도 같으므로 n 에서 뺀다(#1288 designer s1). */
+const ALWAYS_SKIPPED = new Set<BundleAcceptResult['outcome']>(['skipped_irreversible', 'skipped_link']);
+
 function BundleCardBody({ message, items }: { message: MessageRow; items: AskBundleItem[] }) {
   const t = useT();
   const accounts = useActiveStore(selectAccountNames);
@@ -35,15 +41,44 @@ function BundleCardBody({ message, items }: { message: MessageRow; items: AskBun
   const roots = useBundleRoots(message, items);
   const [results, setResults] = useState<BundleAcceptResult[] | null>(null);
   const [busy, setBusy] = useState(false);
-  const bundle = { items };
+  const [picking, setPicking] = useState<string | null>(null);
+  /** 남은 초. null 이면 기다리는 중이 아니다. */
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
 
-  const rows = bundle.items.map((item) => ({ item, state: rowState(item, roots[item.rootId]) }));
+  const notify = (key: 'speech.bundle.pickFailed' | 'speech.bundle.acceptFailed') => useActiveStore.getState().pushNotice(t(key));
+
+  const rows = items.map((item) => ({ item, state: rowState(item, roots[item.rootId]) }));
   const open = rows.filter((r) => r.state.kind === 'open' || r.state.kind === 'link').length;
-  const recommendable = rows.filter((r) => r.state.kind === 'open' && recommendedOf(r.item, roots[r.item.rootId]) != null).length;
+  const skipped = new Set((results ?? []).filter((r) => ALWAYS_SKIPPED.has(r.outcome)).map((r) => r.rootId));
+  const recommendable = rows.filter((r) => r.state.kind === 'open' && !skipped.has(r.item.rootId)
+    && recommendedOf(r.item, roots[r.item.rootId]) != null).length;
 
   const accept = async () => {
     setBusy(true);
-    try { setResults(await getController().acceptRecommendedBundle(message.id, message.channelId)); } finally { setBusy(false); }
+    const got = await getController().acceptRecommendedBundle(message.id, message.channelId);
+    if (!alive.current) return;
+    setBusy(false);
+    if (got == null) notify('speech.bundle.acceptFailed');
+    else setResults(got);
+  };
+
+  // 5초를 센다. 0 이 되면 그때 보낸다 — 취소하면 아무것도 보내지 않는다(서버에는 답을 지우는 길이 없다).
+  useEffect(() => {
+    if (countdown == null) return;
+    if (countdown <= 0) { setCountdown(null); void accept(); return; }
+    const id = setTimeout(() => setCountdown((c) => (c == null ? null : c - 1)), 1000);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdown]);
+
+  const pick = async (rootId: string, optionId: string) => {
+    setPicking(rootId);
+    const ok = await getController().answerBundleItem(message.id, message.channelId, rootId, optionId);
+    if (!alive.current) return;
+    setPicking(null);
+    if (!ok) notify('speech.bundle.pickFailed');
   };
 
   return (
@@ -57,18 +92,30 @@ function BundleCardBody({ message, items }: { message: MessageRow; items: AskBun
         {rows.map(({ item, state }) => (
           <BundleRow
             key={item.rootId} item={item} state={state} accounts={accounts} t={t}
-            canPick={meIsHuman && !busy}
-            onPick={(optionId) => { void getController().answerBundleItem(message.id, message.channelId, item.rootId, optionId); }}
+            canPick={meIsHuman && !busy && countdown == null && picking !== item.rootId}
+            onPick={(optionId) => { void pick(item.rootId, optionId); }}
             result={results?.find((r) => r.rootId === item.rootId)}
           />
         ))}
       </ul>
-      {meIsHuman && recommendable > 0 && (
+      {meIsHuman && countdown != null && (
+        <div data-testid="ask-bundle-pending" className="flex items-center gap-2 border-t border-border px-3 py-2 text-meta text-fg">
+          <span>{t('speech.bundle.acceptPending', { n: recommendable, s: countdown })}</span>
+          <button
+            type="button" data-testid="ask-bundle-cancel"
+            className="rounded-sm px-1 text-fg-muted underline underline-offset-2 hover:text-fg"
+            onClick={() => setCountdown(null)}
+          >
+            {t('speech.bundle.acceptCancel')}
+          </button>
+        </div>
+      )}
+      {meIsHuman && countdown == null && recommendable > 0 && (
         <div className="border-t border-border px-3 py-2">
           <button
             type="button" data-testid="ask-bundle-accept" disabled={busy}
             className="rounded-row border border-border bg-surface-raised px-2.5 py-1 text-meta font-medium text-fg hover:border-state-turn hover:bg-surface-hover"
-            onClick={() => { void accept(); }}
+            onClick={() => setCountdown(BUNDLE_ACCEPT_DELAY_S)}
           >
             {t('speech.bundle.acceptRecommended', { n: recommendable })}
           </button>

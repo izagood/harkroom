@@ -211,6 +211,12 @@ class StringsKo implements Strings {
   String get bundleAcceptNote => '되돌릴 수 없는 결정(머지·배포·비밀·권한)은 빠진다';
 
   @override
+  String bundleAcceptPending(int n, int s) => '$n개를 추천대로 고른다 · $s';
+
+  @override
+  String get bundleAcceptCancel => '취소';
+
+  @override
   String get bundleRecommended => '추천';
 
   @override
@@ -226,10 +232,10 @@ class StringsKo implements Strings {
   String get bundleUnavailable => '원본 카드를 볼 수 없다';
 
   @override
-  String bundleAnswered(String label, String name) => '$label · $name 고름';
+  String bundleAnswered(String label, String name) => '$label · $name';
 
   @override
-  String bundleReplied(String name) => '$name · 글로 답함';
+  String bundleReplied(String name) => '글로 답했다 · $name';
 
   @override
   String bundleNoteBy(String name) => '$name 요약:';

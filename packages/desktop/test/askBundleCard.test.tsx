@@ -1,7 +1,7 @@
 // 묶음 카드(선택 카드 P1, 2026-10-10) — 줄의 상태는 원본 카드에서 읽고, 칩을 누르면 원본에 답이 적힌다.
 // 「추천대로」의 결과는 줄마다 보이고, 되돌릴 수 없는 줄이 빠진 까닭을 사람이 읽는다(security 3b ②).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import type { AskBundleItem, MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -31,7 +31,7 @@ beforeEach(() => {
   usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   roots = {};
-  answerBundleItem = vi.fn().mockResolvedValue(undefined);
+  answerBundleItem = vi.fn().mockResolvedValue(true);
   acceptRecommendedBundle = vi.fn().mockResolvedValue([]);
   openMessage = vi.fn().mockResolvedValue(undefined);
   setController({
@@ -52,7 +52,9 @@ describe('AskBundleCard', () => {
     await waitFor(() => expect(screen.getByTestId('ask-bundle-row-r1').dataset.state).toBe('open'));
     expect(screen.getByTestId('ask-bundle-head').textContent).toBe('정할 것 1/2 남음');
     expect(screen.getByTestId('ask-bundle-row-r2').dataset.state).toBe('answered');
+    // 조사 없이 「그대로 · jaebin」 — 2b 카드 머리와 같은 꼴(#1288 designer n1).
     expect(screen.getByTestId('ask-bundle-row-r2').textContent).toContain('그대로 · jaebin');
+    expect(screen.getByTestId('ask-bundle-row-r2').textContent).not.toContain('골랐다');
     fireEvent.click(screen.getByTestId('ask-bundle-option-r1-b'));
     expect(answerBundleItem).toHaveBeenCalledWith('m-bundle', 'c-task', 'r1', 'b');
   });
@@ -81,18 +83,81 @@ describe('AskBundleCard', () => {
     expect(screen.getByText('원본 카드를 볼 수 없다')).toBeTruthy();
   });
 
-  it('「추천대로」 뒤 빠진 줄은 까닭과 함께 남는다(security 3b ②)', async () => {
+  /**
+   * 5초 기다림을 건너뛴다. `waitFor` 는 가짜 타이머 아래에서 돌지 않으므로 **이 구간만** 가짜로 두고 끝나면 되돌린다.
+   * 효과가 한 번에 한 틱씩 세므로 1초씩 다섯 번, 끝에 보내기(약속)를 비운다.
+   */
+  const pressAcceptAndWait = async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      fireEvent.click(screen.getByTestId('ask-bundle-accept'));
+      for (let i = 0; i < 5; i += 1) await act(async () => { vi.advanceTimersByTime(1000); });
+    } finally {
+      vi.useRealTimers();
+    }
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  };
+
+  it('「추천대로」는 5초 뒤에 보내고, 그 안에 취소하면 아무것도 보내지 않는다(designer s2)', async () => {
     roots = { r1: root('r1'), r2: root('r2') };
-    acceptRecommendedBundle.mockResolvedValue([
-      { rootId: 'r1', outcome: 'answered' }, { rootId: 'r2', outcome: 'skipped_irreversible' },
-    ]);
     render(<MessageItem message={bundleMessage([item('r1'), item('r2')])} />);
     await waitFor(() => expect(screen.getByTestId('ask-bundle-accept').textContent).toBe('남은 2개 추천대로'));
-    fireEvent.click(screen.getByTestId('ask-bundle-accept'));
-    await waitFor(() => expect(screen.getByTestId('ask-bundle-skip-r2').dataset.outcome).toBe('skipped_irreversible'));
-    expect(screen.getByTestId('ask-bundle-skip-r2').textContent).toContain('되돌릴 수 없는 결정');
-    expect(screen.queryByTestId('ask-bundle-skip-r1')).toBeNull();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      fireEvent.click(screen.getByTestId('ask-bundle-accept'));
+      expect(screen.getByTestId('ask-bundle-pending').textContent).toContain('2개를 추천대로 고른다 · 5');
+      // 기다리는 동안은 칩도 잠근다 — 일괄과 낱개가 엇갈리지 않게.
+      expect((screen.getByTestId('ask-bundle-option-r1-a') as HTMLButtonElement).disabled).toBe(true);
+      for (let i = 0; i < 2; i += 1) await act(async () => { vi.advanceTimersByTime(1000); });
+      expect(screen.getByTestId('ask-bundle-pending').textContent).toContain('· 3');
+      fireEvent.click(screen.getByTestId('ask-bundle-cancel'));
+      expect(screen.queryByTestId('ask-bundle-pending')).toBeNull();
+      for (let i = 0; i < 6; i += 1) await act(async () => { vi.advanceTimersByTime(1000); });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(acceptRecommendedBundle).not.toHaveBeenCalled();
+
+    await pressAcceptAndWait();
+    expect(acceptRecommendedBundle).toHaveBeenCalledTimes(1);
     expect(acceptRecommendedBundle).toHaveBeenCalledWith('m-bundle', 'c-task');
+  });
+
+  it('「추천대로」 뒤 빠진 줄은 까닭이 남고, n 에서 빠진다(security 3b ②·designer s1)', async () => {
+    roots = { r1: root('r1'), r2: root('r2'), r3: root('r3') };
+    acceptRecommendedBundle.mockResolvedValue([
+      { rootId: 'r1', outcome: 'skipped_irreversible' }, { rootId: 'r2', outcome: 'skipped_link' },
+      { rootId: 'r3', outcome: 'skipped_no_recommendation' },
+    ]);
+    render(<MessageItem message={bundleMessage([item('r1'), item('r2'), item('r3')])} />);
+    await waitFor(() => expect(screen.getByTestId('ask-bundle-accept').textContent).toBe('남은 3개 추천대로'));
+    await pressAcceptAndWait();
+    await waitFor(() => expect(screen.getByTestId('ask-bundle-skip-r1').dataset.outcome).toBe('skipped_irreversible'));
+    expect(screen.getByTestId('ask-bundle-skip-r1').textContent).toContain('되돌릴 수 없는 결정');
+    // 언제나 빠지는 둘(되돌릴 수 없음·링크)은 n 에서 뺀다. 추천이 없던 줄은 원본에 추천이 생기면 다시 셀 수 있어 남긴다.
+    expect(screen.getByTestId('ask-bundle-accept').textContent).toBe('남은 1개 추천대로');
+  });
+
+  it('다시 눌러도 같은 줄만 남으면 버튼이 숨는다(designer s1)', async () => {
+    roots = { r1: root('r1') };
+    acceptRecommendedBundle.mockResolvedValue([{ rootId: 'r1', outcome: 'skipped_irreversible' }]);
+    render(<MessageItem message={bundleMessage([item('r1')])} />);
+    await waitFor(() => expect(screen.getByTestId('ask-bundle-accept')).toBeTruthy());
+    await pressAcceptAndWait();
+    await waitFor(() => expect(screen.getByTestId('ask-bundle-skip-r1')).toBeTruthy());
+    expect(screen.queryByTestId('ask-bundle-accept')).toBeNull();
+  });
+
+  it('줄 답·일괄이 실패하면 알린다(designer n2·security n2)', async () => {
+    roots = { r1: root('r1') };
+    answerBundleItem.mockResolvedValue(false);
+    acceptRecommendedBundle.mockResolvedValue(null);
+    render(<MessageItem message={bundleMessage([item('r1')])} />);
+    await waitFor(() => expect(screen.getByTestId('ask-bundle-row-r1').dataset.state).toBe('open'));
+    await act(async () => { fireEvent.click(screen.getByTestId('ask-bundle-option-r1-b')); });
+    await waitFor(() => expect(useAppStore.getState().notices.map((n) => n.text)).toContain('고르지 못했다 — 다시 시도해 줘'));
+    await pressAcceptAndWait();
+    await waitFor(() => expect(useAppStore.getState().notices.map((n) => n.text)).toContain('추천대로 고르지 못했다 — 다시 시도해 줘'));
   });
 
   it('에이전트 화면에서는 고를 수 없다 — 사람만 고른다', async () => {

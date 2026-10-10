@@ -682,6 +682,11 @@ abstract class Strings {
   /// 「추천대로」 옆 설명 — 무엇이 빠지는지.
   String get bundleAcceptNote;
 
+  /// 「추천대로」를 누른 뒤 보내기까지 남은 초(#1288 designer s2).
+  String bundleAcceptPending(int n, int s);
+
+  String get bundleAcceptCancel;
+
   /// 추천 선택지 표시.
   String get bundleRecommended;
 
@@ -995,6 +1000,8 @@ const Set<String> i18nAllowSameAsEnglish = {
   'artifactVersion',
   // 고유명사.
   'appName',
+  // 「라벨 · 이름」 — 조사를 빼려고 기호로만 잇는다(#1288 designer n1). 두 언어 모두 같은 꼴이다.
+  'bundleAnswered',
   // 주소 예시다. 번역할 말이 없다 — `https://example.com` 은 어느 언어에서도 같다.
   'connectServerUrlHint',
 };
@@ -1234,6 +1241,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'bundleAllDone': s.bundleAllDone(0),
       'bundleAcceptRecommended': s.bundleAcceptRecommended(0),
       'bundleAcceptNote': s.bundleAcceptNote,
+      'bundleAcceptPending': s.bundleAcceptPending(0, 0),
+      'bundleAcceptCancel': s.bundleAcceptCancel,
       'bundleRecommended': s.bundleRecommended,
       'bundleReplyInThread': s.bundleReplyInThread,
       'bundleDecideInThread': s.bundleDecideInThread,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/api_error.dart';
@@ -22,6 +24,9 @@ import 'message_link.dart';
 /// ## 「추천대로」는 서버가 다시 거른다
 ///
 /// 되돌릴 수 없는 줄·추천 없는 줄·링크 줄은 빠지고, 빠진 까닭을 줄마다 남긴다(security 3b ②).
+/// 「추천대로」를 누른 뒤 실제로 보내기까지 기다리는 초(시안 9절).
+const bundleAcceptDelaySeconds = 5;
+
 class AskBundleCard extends StatefulWidget {
   const AskBundleCard({super.key, required this.message, required this.bundle});
 
@@ -38,6 +43,11 @@ class _AskBundleCardState extends State<AskBundleCard> {
   final Set<String> _unavailable = {};
   List<BundleAcceptResult>? _results;
   bool _busy = false;
+
+  /// 「추천대로」를 누른 뒤 보내기까지 남은 초. null 이면 기다리지 않는다(#1288 designer s2) — 답은 되돌릴 수 없어서
+  /// 한 박자 둔다. 취소하면 아무것도 보내지 않는다(서버에는 답을 지우는 길이 없다).
+  int? _countdown;
+  Timer? _tick;
   int _loadGen = 0;
   bool _started = false;
 
@@ -55,6 +65,37 @@ class _AskBundleCardState extends State<AskBundleCard> {
     super.didUpdateWidget(old);
     // 묶음 행이 새로 왔다 = 원본 어딘가가 바뀌었다는 알림. 다시 읽는다.
     if (!identical(old.message, widget.message)) _load();
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  /// 5초를 세고 0 이 되면 그때 보낸다.
+  void _startAccept(AppState app) {
+    _tick?.cancel();
+    setState(() => _countdown = bundleAcceptDelaySeconds);
+    _tick = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return timer.cancel();
+      final next = (_countdown ?? 0) - 1;
+      if (next > 0) {
+        setState(() => _countdown = next);
+        return;
+      }
+      timer.cancel();
+      setState(() => _countdown = null);
+      _run(() async {
+        final results = await app.acceptRecommendedBundle(widget.message.channelId, widget.message.id);
+        if (mounted) setState(() => _results = results);
+      });
+    });
+  }
+
+  void _cancelAccept() {
+    _tick?.cancel();
+    setState(() => _countdown = null);
   }
 
   Future<void> _load() async {
@@ -107,8 +148,17 @@ class _AskBundleCardState extends State<AskBundleCard> {
         (item, bundleRowState(item, _roots[item.rootId], unavailable: _unavailable.contains(item.rootId))),
     ];
     final open = rows.where((r) => r.$2 is BundleRowOpen || r.$2 is BundleRowLink).length;
-    final recommendable =
-        rows.where((r) => r.$2 is BundleRowOpen && bundleRecommended((r.$2 as BundleRowOpen).ask.options) != null).length;
+    // 서버가 언제나 빼는 줄(되돌릴 수 없음·링크)은 n 에서 뺀다 — 다시 눌러도 같다(#1288 designer s1).
+    final skipped = {
+      for (final r in _results ?? const <BundleAcceptResult>[])
+        if (r.outcome == 'skipped_irreversible' || r.outcome == 'skipped_link') r.rootId,
+    };
+    final recommendable = rows
+        .where((r) =>
+            r.$2 is BundleRowOpen &&
+            !skipped.contains(r.$1.rootId) &&
+            bundleRecommended((r.$2 as BundleRowOpen).ask.options) != null)
+        .length;
 
     return Card(
       key: Key('ask-bundle-${widget.message.id}'),
@@ -133,23 +183,30 @@ class _AskBundleCardState extends State<AskBundleCard> {
                 state: state,
                 app: app,
                 t: t,
-                busy: _busy,
+                busy: _busy || _countdown != null,
                 result: _results?.where((r) => r.rootId == item.rootId).firstOrNull,
                 onPick: (optionId) => _run(() => app.answerBundleItem(
                     widget.message.channelId, widget.message.id, item.rootId, optionId)),
               ),
             ],
-            if (recommendable > 0) ...[
+            if (_countdown != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                key: Key('ask-bundle-pending-${widget.message.id}'),
+                children: [
+                  Expanded(child: Text(t.bundleAcceptPending(recommendable, _countdown!), style: theme.textTheme.bodyMedium)),
+                  TextButton(
+                    key: Key('ask-bundle-cancel-${widget.message.id}'),
+                    onPressed: _cancelAccept,
+                    child: Text(t.bundleAcceptCancel),
+                  ),
+                ],
+              ),
+            ] else if (recommendable > 0) ...[
               const SizedBox(height: 8),
               OutlinedButton(
                 key: Key('ask-bundle-accept-${widget.message.id}'),
-                onPressed: _busy
-                    ? null
-                    : () => _run(() async {
-                          final results =
-                              await app.acceptRecommendedBundle(widget.message.channelId, widget.message.id);
-                          if (mounted) setState(() => _results = results);
-                        }),
+                onPressed: _busy ? null : () => _startAccept(app),
                 child: Text(t.bundleAcceptRecommended(recommendable)),
               ),
               Text(t.bundleAcceptNote, style: theme.textTheme.bodySmall),

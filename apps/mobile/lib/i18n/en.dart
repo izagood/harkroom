@@ -212,6 +212,12 @@ class StringsEn implements Strings {
   String get bundleAcceptNote => 'Irreversible decisions (merge, deploy, secrets, permissions) are left out';
 
   @override
+  String bundleAcceptPending(int n, int s) => 'Choosing $n recommended · $s';
+
+  @override
+  String get bundleAcceptCancel => 'Cancel';
+
+  @override
   String get bundleRecommended => 'recommended';
 
   @override
@@ -227,10 +233,10 @@ class StringsEn implements Strings {
   String get bundleUnavailable => 'Can’t see the original card';
 
   @override
-  String bundleAnswered(String label, String name) => '$label · picked by $name';
+  String bundleAnswered(String label, String name) => '$label · $name';
 
   @override
-  String bundleReplied(String name) => '$name replied in text';
+  String bundleReplied(String name) => 'Replied in writing · $name';
 
   @override
   String bundleNoteBy(String name) => 'Summary by $name:';
