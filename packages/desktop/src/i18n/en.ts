@@ -710,6 +710,7 @@ export const en = {
     'A way to call several people by one name. To group agents, use the team section under Settings › Agents — '
     + 'the two share one namespace for names.',
   'groups.member.empty': 'No members',
+  'groups.member.count': 'Members ({count})',
   'groups.member.pick': 'Pick an account…',
   'groups.member.remove': 'Remove',
   'groups.new.badHandle': 'A group handle must follow the same grammar as an account handle',
@@ -794,6 +795,7 @@ export const en = {
   'skills.confirm.reject':
     'Rejecting drops this skill to disabled — to undo it an agent has to propose it again',
   'skills.confirm.approveStart': 'Confirm approve',
+  'skills.proposedBy': 'proposed by @{handle}',
   'skills.confirm.cancel': 'Cancel',
   'skills.group.approved': 'Approved',
   'skills.group.approvedEmpty': 'No approved skills',
