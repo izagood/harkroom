@@ -30,7 +30,17 @@ import { en } from '../src/i18n/en';
  */
 const SRC = resolve(process.cwd(), 'src');
 
-const ATTRS = new Set(['label', 'title', 'placeholder', 'aria-label', 'alt', 'description', 'hint']);
+const ATTRS = new Set([
+  'label', 'title', 'placeholder', 'aria-label', 'alt', 'description', 'hint',
+  // 컴포넌트 prop 으로 화면 글을 넘기는 자리(P4b) — `<ConfirmDialog confirmLabel="Delete">` 가 이 틈으로 빠졌다.
+  'ariaLabel', 'confirmLabel', 'cancelLabel', 'detail',
+]);
+/**
+ * **객체 literal 의 속성**으로 화면 글을 넘기는 자리(P4b, designer·security 권장). 메뉴 항목
+ * `{ label: 'Copy text', onSelect }` 은 JSX 속성이 아니라 객체 속성이라 P4 가드가 못 봤고, 캡처에서야
+ * 영어로 남은 것이 드러났다(#1303). 메뉴·선택지·탭·확인창 설정이 다 이 꼴이다.
+ */
+const PROPS = new Set([...ATTRS, 'text', 'emptyText', 'confirm', 'cancel']);
 /** 번역하지 않는 이름. 사람이 화면·문서·터미널에서 같은 글자로 본다. */
 const BRANDS = new Set(['Harkroom', 'harkroom', 'Claude', 'Codex', 'OpenCode', 'Cursor', 'API', 'MCP', 'GitHub', 'Esc', 'DM', 'PAT', 'ID']);
 
@@ -77,6 +87,9 @@ function hardcodedTexts(file: string, source: string): string[] {
       else if (ts.isJsxExpression(init) && init.expression) literalsIn(init.expression).forEach((l) => push(l.text));
     } else if (ts.isJsxExpression(node) && node.expression && !ts.isJsxAttribute(node.parent)) {
       literalsIn(node.expression).forEach((l) => push(l.text));
+    } else if (ts.isPropertyAssignment(node) && (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name))
+      && PROPS.has(node.name.text)) {
+      literalsIn(node.initializer).forEach((l) => push(l.text));
     }
     ts.forEachChild(node, visit);
   };
@@ -130,6 +143,12 @@ describe('화면 글자는 사전을 지난다', () => {
       Check now {t('y')} <input placeholder="izagood/harkroom" /> <b>Harkroom</b> <i>터미널</i> {'·'}
       <span className="text-fg">{label}</span></div>);`;
     expect(hardcodedTexts('x.tsx', src)).toEqual(['Close', 'Saving…', 'Check now', '터미널']);
+  });
+
+  it('객체 속성·컴포넌트 prop 으로 넘긴 화면 글도 잡는다(P4b)', () => {
+    const src = `const items = [{ label: 'Copy text', onSelect }, { label: t('x') }, { id: 'Not text' }];
+      const C = () => <ConfirmDialog confirmLabel="Delete" cancelLabel={busy ? 'Wait' : t('y')} title={t('z')} />;`;
+    expect(hardcodedTexts('x.tsx', src)).toEqual(['Copy text', 'Delete', 'Wait']);
   });
 });
 

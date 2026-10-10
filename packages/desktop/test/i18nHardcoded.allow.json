@@ -40,7 +40,16 @@
     "Cancel"
   ],
   "components/MessageItem.tsx": [
-    "Delete message?"
+    "Copy text",
+    "Mark unread from here",
+    "Pin",
+    "Unpin",
+    "Edit",
+    "Delete",
+    "Remove from channel",
+    "Post to channel",
+    "Delete message?",
+    "Delete"
   ],
   "components/MessageRows.tsx": [
     "New messages"
@@ -49,6 +58,17 @@
     "message toolbar",
     "Add reaction",
     "More actions"
+  ],
+  "components/Rail.tsx": [
+    "Home",
+    "Home",
+    "Direct messages",
+    "Agents",
+    "Agents",
+    "Saved",
+    "Saved messages",
+    "Collab",
+    "Collaboration"
   ],
   "components/Reactions.tsx": [
     "Close reaction picker"
@@ -68,6 +88,7 @@
     "Saved"
   ],
   "components/Sidebar.tsx": [
+    "just me",
     "Directory",
     "New channel name"
   ],
@@ -141,6 +162,11 @@
     "Name, pool and order stay; only the sign-in changes.",
     "Use a private browser window, or you get the same login again.",
     "Turns already running on this account are not stopped.",
+    "Sign in again",
+    "Every account in it and their saved sign-ins are deleted.",
+    "Remove",
+    "Remove pool",
+    "Keep",
     "Score",
     "· skipped for new threads",
     "Code from the browser",
@@ -148,6 +174,10 @@
     "Submit"
   ],
   "components/settings/ClaudeAssignThresholds.tsx": [
+    "Skip for new threads at 5-hour %",
+    "Skip for new threads at weekly %",
+    "Move a thread at 5-hour %",
+    "Move a thread at weekly %",
     "New threads skip an account at",
     "% (5-hour) or",
     "% (weekly).",
@@ -176,6 +206,13 @@
     "Removing…",
     "Remove from this device",
     "Keep it"
+  ],
+  "components/settings/GallerySettings.tsx": [
+    "새 마이그레이션 009",
+    "되돌리기 쉽다",
+    "008 을 고친다",
+    "파일 하나로 끝난다",
+    "lint 를 다시 불러 줘"
   ],
   "components/settings/HandleGroupsSettings.tsx": [
     "구성원 ("
