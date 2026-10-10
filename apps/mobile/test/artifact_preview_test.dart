@@ -189,7 +189,7 @@ void main() {
       expect(find.text('Inbox 보드 시안 A'), findsOneWidget);
       expect(find.text('v1'), findsOneWidget);
       expect(find.text('열 이름 정정'), findsOneWidget);
-      expect(find.text('HTML 문서 · 2.0 KB'), findsOneWidget);
+      expect(find.text('HTML · 2.0 KB'), findsOneWidget);
       expect(find.byKey(const Key('artifact-card-cover')), findsNothing);
     });
 
