@@ -164,7 +164,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
         <div className="flex items-center gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
             <span className="block font-medium text-fg">{t('community.manage.addTitle')}</span>
-            <span className="mt-0.5 block text-fg-subtle">{t('community.manage.addNote')}</span>
+            <span className="mt-0.5 block break-keep text-fg-subtle">{t('community.manage.addNote')}</span>
           </span>
           <button
             className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium hover:bg-surface"
@@ -368,7 +368,7 @@ function CommunityRow(props: {
           빼는 일이지만, 다시 넣으려면 서버 주소와 자격증명이 다시 필요하다. */}
       {props.removing && (
         <div className="mt-2 rounded-card border border-border bg-surface p-3">
-          <p className="text-fg">{t('community.manage.removeConfirm', { label })}</p>
+          <p className="break-keep text-fg">{t('community.manage.removeConfirm', { label })}</p>
           {props.removeError && (
             <p role="alert" className="mt-1 text-danger">{props.removeError}</p>
           )}
