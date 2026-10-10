@@ -459,14 +459,14 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
     expect(wsSpy.count).toBe(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Add community' }));
-    expect(await screen.findByText('Sign in to another community')).toBeTruthy();
+    expect(await screen.findByText('다른 커뮤니티에 로그인')).toBeTruthy();
 
     // **설정 화면이 그대로 서 있다.** `phase` 를 `connect` 로 되돌렸다면 이 화면 자체가
     // 사라지고 접속 화면 하나만 남는다 — 그것이 이 이슈가 막는 결함이다.
     expect(screen.getByRole('heading', { name: '커뮤니티 목록' })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByText('Sign in to another community')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    await waitFor(() => expect(screen.queryByText('다른 커뮤니티에 로그인')).toBeNull());
 
     // 워크스페이스로 돌아갈 수 있고(= 세션이 살아 있다), 연결을 다시 맺지도 끊지도 않았다.
     fireEvent.click(screen.getByText(/앱으로 돌아가기/));
@@ -485,14 +485,14 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
     } as unknown as ConnectScreenProps)} />);
 
     // 이미 서버가 있는 사람이 새 서버를 부트스트랩하는 것은 다른 일이다 — 감춘다.
-    expect(screen.queryByText('First run? Create the admin account')).toBeNull();
+    expect(screen.queryByText('처음인가? 관리자 계정 만들기')).toBeNull();
     // 초대 가입은 남는다 — 초대받은 커뮤니티를 하나 더 붙이는 것은 같은 일이다.
-    expect(screen.getByText('Have an invite token? Join this community')).toBeTruthy();
+    expect(screen.getByText('초대 토큰이 있나? 이 커뮤니티에 들어가기')).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText('Server URL'), { target: { value: 'https://b.example' } });
-    fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'me-b' } });
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    fireEvent.change(screen.getByLabelText('서버 주소'), { target: { value: 'https://b.example' } });
+    fireEvent.change(screen.getByLabelText('로그인 ID'), { target: { value: 'me-b' } });
+    fireEvent.change(screen.getByLabelText('비밀번호'), { target: { value: 'pw123456' } });
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
 
     await waitFor(() => expect(onAdded).toHaveBeenCalledTimes(1));
     expect(onAdded.mock.calls[0]![2]).toBe('acct-b');
@@ -507,10 +507,10 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
 
     render(<CommunitySettings onCommunitiesEmpty={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Add community' }));
-    fireEvent.change(screen.getByLabelText('Server URL'), { target: { value: 'https://b.example' } });
-    fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'me-b' } });
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    fireEvent.change(screen.getByLabelText('서버 주소'), { target: { value: 'https://b.example' } });
+    fireEvent.change(screen.getByLabelText('로그인 ID'), { target: { value: 'me-b' } });
+    fireEvent.change(screen.getByLabelText('비밀번호'), { target: { value: 'pw123456' } });
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
 
     await waitFor(() => expect(useCommunityRegistry.getState().entries).toHaveLength(2));
     const entries = useCommunityRegistry.getState().entries;
@@ -538,10 +538,10 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
     render(<CommunitySettings onCommunitiesEmpty={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Add community' }));
     // 같은 서버 = 같은 계정(acct-a) 이다.
-    fireEvent.change(screen.getByLabelText('Server URL'), { target: { value: 'https://a.example' } });
-    fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'me-a' } });
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    fireEvent.change(screen.getByLabelText('서버 주소'), { target: { value: 'https://a.example' } });
+    fireEvent.change(screen.getByLabelText('로그인 ID'), { target: { value: 'me-a' } });
+    fireEvent.change(screen.getByLabelText('비밀번호'), { target: { value: 'pw123456' } });
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
 
     // 문구가 **겹창 안**에 있어야 한다. 목록 쪽에만 있으면 겹창이 덮어 보이지 않는다.
     const dialog = await screen.findByRole('dialog', { name: '커뮤니티 추가' });
@@ -551,7 +551,7 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
 
     // 목록도 늘지 않고, 겹창도 닫히지 않는다 — 사람이 서버 주소를 고쳐 다시 시도할 자리다.
     expect(useCommunityRegistry.getState().entries).toHaveLength(1);
-    expect(screen.getByText('Sign in to another community')).toBeTruthy();
+    expect(screen.getByText('다른 커뮤니티에 로그인')).toBeTruthy();
   });
 
   it('5d. 세션 시작이 실패한 커뮤니티는 목록에 남지 않는다', async () => {
@@ -633,7 +633,7 @@ describe('커뮤니티 제거 (#165 결정 4)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove from this device' }));
 
     // 그때는 정말 세션이 없다 — 여기서만 `phase` 가 `connect` 로 돌아간다.
-    expect(await screen.findByText('Server URL')).toBeTruthy();
+    expect(await screen.findByText('서버 주소')).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '커뮤니티 목록' })).toBeNull();
   });
 });

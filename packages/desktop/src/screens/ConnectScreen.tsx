@@ -6,6 +6,7 @@ import { Logo } from '../components/Logo';
 import { RecoveryKeyStep } from '../components/RecoveryKeyStep';
 import { ConnectUpdateBanner } from '../components/ConnectUpdateBanner';
 import { lastWorkspaceUrlStorage } from '../lib/prefs';
+import { useT } from '../i18n/useT';
 
 /** 로그인이 성공했을 때 위로 올려 보내는 것. 두 모드가 같은 값을 다른 곳으로 보낸다. */
 type Credentials = (baseUrl: string, token: string, accountId: string, handle: string) => void | Promise<void>;
@@ -27,6 +28,7 @@ export type ConnectScreenProps =
   | { mode: 'add'; onAdded: Credentials; onCancel(): void; initialError?: string | null };
 
 export function ConnectScreen(props: ConnectScreenProps) {
+  const t = useT();
   const { initialError = null } = props;
   const adding = props.mode === 'add';
   // 직전에 로그인에 성공한 주소로 채운다. 한 번도 없으면 self-host 기본값(localhost)이다.
@@ -99,20 +101,20 @@ export function ConnectScreen(props: ConnectScreenProps) {
   const poll = async (p: PendingWorkspace) => {
     try {
       const job = await new GateClient(p.gateUrl).job(p.jobId);
-      setProgress(gateProgressText(job));
+      setProgress(gateProgressText(job, t));
       if (job.status === 'ready') { setClaimable(true); return; }
       if (job.status === 'failed') {
         // **진행 줄은 비운다.** 같은 문장을 진행과 오류 두 자리에 두면 화면에 두 번 뜨고,
         // 읽는 사람은 서로 다른 두 사실이라고 읽는다.
         setProgress(null);
-        setError(gateProgressText(job));
+        setError(gateProgressText(job, t));
         return;
       }
       pollTimer.current = setTimeout(() => { void poll(p); }, 5000);
     } catch (err) {
       // 폴링 실패로 **보관본을 지우지 않는다.** 네트워크가 잠깐 끊긴 것과 작업이 죽은 것을
       // 여기서 구분할 수 없고, 지우면 클레임 토큰이 함께 사라진다.
-      setProgress(err instanceof ApiError ? err.message : 'Could not reach the provisioning service');
+      setProgress(err instanceof ApiError ? err.message : t('connect.gate.unreachableShort'));
       pollTimer.current = setTimeout(() => { void poll(p); }, 15000);
     }
   };
@@ -139,9 +141,9 @@ export function ConnectScreen(props: ConnectScreenProps) {
       pendingWorkspace.write(p);
       if (res.recoveryKey) setRecoveryKey(res.recoveryKey);
       setPending(p);
-      setProgress('Submitted — waiting for approval…');
+      setProgress(t('connect.gate.committed'));
     } catch (err) {
-      setError(gateErrorText(err));
+      setError(gateErrorText(err, t));
     } finally {
       setBusy(false);
     }
@@ -167,7 +169,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
       if (props.mode === 'add') await props.onAdded(api.baseUrl, token, me.id, me.handle);
       else await props.onConnected(api.baseUrl, token, me.id, me.handle);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not reach the server');
+      setError(err instanceof ApiError ? err.message : t('connect.serverUnreachable'));
     } finally {
       setBusy(false);
     }
@@ -202,7 +204,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
       if (props.mode === 'add') await props.onAdded(api.baseUrl, token, me.id, me.handle);
       else await props.onConnected(api.baseUrl, token, me.id, me.handle);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not reach the server');
+      setError(err instanceof ApiError ? err.message : t('connect.serverUnreachable'));
     } finally {
       setBusy(false);
     }
@@ -242,7 +244,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
               화면 하나가 무엇을 하는 중인지 말하는 유일한 줄이라 맨 윗단이 맞다 —
               `SettingsPage` 의 제목과 같은 단이다(그 파일에 근거를 적어 뒀다). */}
           <h1 className="text-title font-semibold">
-            {authMode === 'create' ? 'Create a community' : adding ? 'Sign in to another community' : 'Harkroom'}
+            {authMode === 'create' ? t('connect.title.create') : adding ? t('connect.title.add') : 'Harkroom'}
           </h1>
         </div>
         {/* 로그인 **전**에도 업데이트할 수 있어야 한다(실측 2026-09-07): 서버에 못 붙는
@@ -266,39 +268,35 @@ export function ConnectScreen(props: ConnectScreenProps) {
             <>
               {/* 만들어지는 중이거나, 준비돼 클레임을 기다리는 자리. */}
               <div className="rounded-row border border-border bg-field px-3 py-2">
-                <p className="text-meta text-fg-subtle">Community</p>
+                <p className="text-meta text-fg-subtle">{t('connect.create.community')}</p>
                 <p className="text-fg">{pending.url}</p>
               </div>
               {progress && <p className="text-meta text-fg-subtle">{progress}</p>}
               {claimable ? (
                 <>
                   {/* 준비됐다. 이제 첫 관리자를 만든다 — **토큰은 화면이 들고 있다.** */}
-                  <p className="text-meta text-fg-subtle">
-                    Ready. Create the first admin account for this community.
-                  </p>
+                  <p className="text-meta text-fg-subtle">{t('connect.create.readyNote')}</p>
                   <label className="block text-meta font-medium">
-                    Login ID
+                    {t('connect.field.loginId')}
                     <input className={field} value={loginId} onChange={(e) => setLoginId(e.target.value)} />
                   </label>
                   <label className="block text-meta font-medium">
-                    Handle (@)
+                    {t('connect.field.handle')}
                     <input className={field} value={handle} onChange={(e) => setHandle(e.target.value)} />
                   </label>
                   <label className="block text-meta font-medium">
-                    Display name
+                    {t('connect.field.displayName')}
                     <input className={field} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
                   </label>
                   <label className="block text-meta font-medium">
-                    Password
+                    {t('connect.field.password')}
                     <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
                   </label>
                 </>
               ) : (
                 /* **기다림이 길 수 있다**(승인이 필요하다). 그래서 "닫아도 된다"를 말해 준다 —
                    말하지 않으면 사람은 창을 붙잡고 있거나, 닫고 나서 잃었다고 생각한다. */
-                <p className="text-meta text-fg-subtle">
-                  This can take a while. You can close the app — we saved this, and it will be here when you return.
-                </p>
+                <p className="text-meta text-fg-subtle">{t('connect.create.waitNote')}</p>
               )}
             </>
           ) : (
@@ -310,7 +308,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
                   설명까지 삼킨다. */}
               <div>
                 <label className="block text-meta font-medium">
-                  Provisioning service URL
+                  {t('connect.field.gateUrl')}
                   <input
                     className={field}
                     value={gateUrl}
@@ -321,22 +319,22 @@ export function ConnectScreen(props: ConnectScreenProps) {
                 </label>
                 <p id="gate-url-hint" className="mt-1 text-meta text-fg-subtle">
                   {looksLikeWorkspaceAddress(gateUrl, wsName)
-                    ? 'This looks like the new community\'s own address — it does not exist yet. Enter the service that creates communities.'
-                    : 'The service that creates communities — not your new community\'s address. It comes with your invite code.'}
+                    ? t('connect.field.gateUrlLooksLikeCommunity')
+                    : t('connect.field.gateUrlHint')}
                 </p>
               </div>
               <label className="block text-meta font-medium">
-                Community name
+                {t('connect.field.communityName')}
                 <input className={field} value={wsName} onChange={(e) => setWsName(e.target.value)} placeholder="my-team" />
               </label>
               <label className="block text-meta font-medium">
-                Invite code
+                {t('connect.field.inviteCode')}
                 <input className={field} value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} />
               </label>
               {/* 이메일은 **복구 경로**다. 계정에는 이메일이 없으므로(설계상) 비밀번호를
                   잃었을 때 본인 확인에 쓸 것이 이것뿐이다. */}
               <label className="block text-meta font-medium">
-                Email
+                {t('connect.field.email')}
                 <input className={field} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
               </label>
             </>
@@ -344,33 +342,33 @@ export function ConnectScreen(props: ConnectScreenProps) {
         ) : (
         <>
         <label className="block text-meta font-medium">
-          Server URL
+          {t('connect.field.serverUrl')}
           <input className={field} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
         </label>
         {authMode === 'signin' ? (
           <label className="block text-meta font-medium">
-            Login ID
+            {t('connect.field.loginId')}
             <input className={field} value={loginId} onChange={(e) => setLoginId(e.target.value)} />
           </label>
         ) : (
           <>
             <label className="block text-meta font-medium">
-              Login ID
+              {t('connect.field.loginId')}
               <input className={field} value={loginId} onChange={(e) => setLoginId(e.target.value)} />
             </label>
             <label className="block text-meta font-medium">
-              Handle (@)
+              {t('connect.field.handle')}
               <input className={field} value={handle} onChange={(e) => setHandle(e.target.value)} />
             </label>
             <label className="block text-meta font-medium">
-              Display name
+              {t('connect.field.displayName')}
               <input className={field} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
             </label>
           </>
         )}
         {authMode === 'register' && (
           <label className="block text-meta font-medium">
-            Invite token
+            {t('connect.field.inviteToken')}
             <input
               className={field}
               value={inviteToken}
@@ -380,7 +378,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
           </label>
         )}
         <label className="block text-meta font-medium">
-          Password
+          {t('connect.field.password')}
           <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </label>
         </>
@@ -403,8 +401,8 @@ export function ConnectScreen(props: ConnectScreenProps) {
           className="w-full rounded-row bg-accent py-2 font-medium text-fg-on-strong disabled:opacity-50"
         >
           {authMode === 'create'
-            ? (pending ? (claimable ? 'Create admin account' : 'Waiting…') : 'Create community')
-            : authMode === 'signin' ? 'Sign in' : authMode === 'bootstrap' ? 'Create account' : 'Join with invite'}
+            ? (pending ? (claimable ? t('connect.submit.createAdmin') : t('connect.submit.waiting')) : t('connect.submit.createCommunity'))
+            : authMode === 'signin' ? t('connect.submit.signIn') : authMode === 'bootstrap' ? t('connect.submit.createAccount') : t('connect.submit.join')}
         </button>
         )}
         {authMode === 'signin' ? (
@@ -414,7 +412,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
               className="w-full text-meta text-fg-subtle underline"
               onClick={() => setAuthMode('register')}
             >
-              Have an invite token? Join this community
+              {t('connect.alt.join')}
             </button>
             {/* 부트스트랩은 `add` 에서 **감춘다**(#165 결정 3). 이미 서버가 있는 사람이 새
                 서버의 첫 관리자 계정을 만드는 것은 "커뮤니티를 하나 더 붙인다" 와 다른 일이고,
@@ -425,7 +423,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
                 className="w-full text-meta text-fg-subtle underline"
                 onClick={() => setAuthMode('bootstrap')}
               >
-                First run? Create the admin account
+                {t('connect.alt.bootstrap')}
               </button>
             )}
             {/* 부트스트랩과 **다른 일**이다: 저쪽은 이미 있는 서버의 첫 계정이고, 이쪽은
@@ -437,7 +435,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
                 className="w-full text-meta text-fg-subtle underline"
                 onClick={() => setAuthMode('create')}
               >
-                Have an invite code? Create a hosted community
+                {t('connect.alt.create')}
               </button>
             )}
           </div>
@@ -455,7 +453,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
               setAuthMode('signin'); setError(null);
             }}
           >
-            {pending ? 'Discard and go back to sign in' : 'Back to sign in'}
+            {pending ? t('connect.alt.discard') : t('connect.alt.back')}
           </button>
           )
         ) : (
@@ -464,7 +462,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
             className="w-full text-meta text-fg-subtle underline"
             onClick={() => { setAuthMode('signin'); setError(null); }}
           >
-            Back to sign in
+            {t('connect.alt.back')}
           </button>
         )}
         {props.mode === 'add' && !recoveryKey && (
@@ -473,7 +471,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
             className="w-full rounded-row border border-border py-1.5 text-meta font-medium hover:bg-surface"
             onClick={props.onCancel}
           >
-            Cancel
+            {t('connect.cancel')}
           </button>
         )}
       </form>
