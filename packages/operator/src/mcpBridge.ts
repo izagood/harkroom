@@ -70,6 +70,7 @@
  * 속였다. 감지를 정교하게 만드는 것보다 **호출이 매달리지 않게 하는 것**이 싸고 확실하다.
  */
 import { randomUUID } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import type { Readable, Writable } from 'node:stream';
 import { NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
@@ -135,6 +136,15 @@ const defaultSchedule = (fn: () => void, ms: number): BridgeTimer => {
 
 /** 링크 위의 요청 하나. `rpcId` 는 오류 응답을 만들 때 쓴다(알림은 `null`). */
 interface PendingRequest { rpcId: unknown; timer: BridgeTimer; toolsList?: boolean }
+
+/**
+ * 러너가 기다리는 표식 파일을 만든다(`RUNNER_MCP_READY_FILE_ENV`). **이미 있으면 아무것도 안 한다** —
+ * `wx`(O_EXCL)라 그 자리에 심링크가 있어도 따라가 대상을 비우지 않는다(security #1285 n1). 같은 턴에
+ * 브릿지가 둘 떠도(서브에이전트) 둘째는 조용히 물러난다. 실패는 삼킨다 — 러너의 시한이 덮는다.
+ */
+export function writeReadyMarker(path: string): void {
+  try { writeFileSync(path, '', { flag: 'wx' }); } catch { /* 이미 있거나 못 쓴다 — 러너가 시한까지 기다린다 */ }
+}
 
 export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTuning = {}): Promise<void> {
   const requestTimeoutMs = tuning.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;

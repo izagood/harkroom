@@ -4,12 +4,12 @@
 // 소켓으로 잰다 — 이 프로세스가 지키는 것은 정확히 "소켓 위의 말"이다.
 import { describe, it, expect, afterEach } from 'vitest';
 import { createServer, type Server, type Socket } from 'node:net';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { NdjsonDecoder, encodeLine } from '@harkroom/shared/daemonProtocol';
-import { runMcpBridge } from '../src/mcpBridge.js';
+import { runMcpBridge, writeReadyMarker } from '../src/mcpBridge.js';
 import { createRunnerLinkServer } from '../src/runnerLink.js';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 
@@ -348,5 +348,29 @@ describe('mcp-bridge ↔ runnerLink 줄 상한', () => {
     stdin.end();
     await done;
     link.close();
+  });
+});
+
+describe('writeReadyMarker', () => {
+  it('없으면 빈 파일을 만든다', () => {
+    const p = join(mkdtempSync(join(tmpdir(), 'hk-ready-')), 'm');
+    writeReadyMarker(p);
+    expect(existsSync(p)).toBe(true);
+    expect(readFileSync(p, 'utf8')).toBe('');
+  });
+
+  it('그 자리에 심링크가 있으면 따라가지 않는다 — 대상 파일을 비우지 않는다(O_EXCL)', () => {
+    const d = mkdtempSync(join(tmpdir(), 'hk-ready-'));
+    const target = join(d, 'precious');
+    writeFileSync(target, 'keep');
+    symlinkSync(target, join(d, 'm'));
+    expect(() => writeReadyMarker(join(d, 'm'))).not.toThrow();
+    expect(readFileSync(target, 'utf8')).toBe('keep');
+  });
+
+  it('이미 있으면 조용히 물러난다(같은 턴의 둘째 브릿지)', () => {
+    const p = join(mkdtempSync(join(tmpdir(), 'hk-ready-')), 'm');
+    writeReadyMarker(p);
+    expect(() => writeReadyMarker(p)).not.toThrow();
   });
 });
