@@ -3,7 +3,7 @@ import { displayBody } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { selectAccountNames } from '../lib/accountNames';
 import { stampLabel } from '../lib/day';
-import { useLocale } from '../i18n/useT';
+import { useLocale, useT } from '../i18n/useT';
 
 /**
  * 기다림을 **상태 한 줄**로 그린다(마이그레이션 040 · 규칙 02).
@@ -22,6 +22,7 @@ import { useLocale } from '../i18n/useT';
 const NO_TEAMS_FALLBACK: never[] = [];
 
 export function WakeRow({ message }: { message: MessageRow }) {
+  const t = useT();
   const author = useActiveStore((s) => s.accounts[message.authorId]);
   const locale = useLocale();
   // 사유도 본문이다 — 본문 렌더러를 지나지 않으므로 `<@id>` 를 여기서 푼다(`lib/mention` 주석).
@@ -42,7 +43,7 @@ export function WakeRow({ message }: { message: MessageRow }) {
         {/* 시계는 강조가 아니다 — 기다리는 것은 나를 막지 않는다(규칙 03). */}
         <span aria-hidden="true" className="shrink-0">🕐</span>
         <span className="font-medium text-fg-agent">{author?.handle ?? '…'}</span>
-        {label === null ? <span>다시 봅니다</span> : <span>{label} 에 다시 봅니다</span>}
+        {label === null ? <span>{t('chat.wake.again')}</span> : <span>{t('chat.wake.againAt', { when: label })}</span>}
         <span className="text-fg-subtle">· {displayBody(message, accounts, groups, teams)}</span>
       </div>
     </div>

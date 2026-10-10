@@ -212,7 +212,7 @@ describe('Directory (#226)', () => {
         onToggleCollapse={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByText('Directory'));
+    fireEvent.click(screen.getByText('디렉터리'));
     expect(onOpenDirectory).toHaveBeenCalled();
   });
 });

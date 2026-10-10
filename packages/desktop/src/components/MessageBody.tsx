@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useT } from '../i18n/useT';
+import type { Translate } from '../i18n';
 import { useActiveStore } from '../state/communities';
 import { selectAccountNames } from '../lib/accountNames';
 import { NO_TEAMS } from '../state/appStore';
@@ -129,7 +130,7 @@ function CodeBlock({ code, lang }: { code: string; lang: string | null }) {
  * 여는 데 실패하면 반드시 사람에게 보인다. 조용히 삼키면 사람은 앱이 멈춘 것으로 본다.
  * (`openMessage` 는 자기 실패를 스스로 알린다 — 사유마다 다음에 할 일이 다르기 때문이다.)
  */
-async function followLink(target: LinkTarget): Promise<void> {
+async function followLink(target: LinkTarget, t: Translate): Promise<void> {
   if (target.kind === 'message') {
     await getController().openMessage(target.messageId);
     return;
@@ -138,7 +139,7 @@ async function followLink(target: LinkTarget): Promise<void> {
     await getExternalOpener().open(target.href);
   } catch {
     useActiveStore.getState().pushNotice(
-      `Could not open ${target.href} — no browser answered. Copy the link and open it yourself.`,
+      t('chat.openLinkFailed', { href: target.href }),
     );
   }
 }
@@ -263,7 +264,7 @@ export function MessageBody({
       data-testid="body-link"
       data-link-kind={target.kind}
       className="text-link underline underline-offset-2 hover:decoration-2"
-      onClick={(e) => { e.preventDefault(); void followLink(target); }}
+      onClick={(e) => { e.preventDefault(); void followLink(target, t); }}
     >
       {label}
     </a>

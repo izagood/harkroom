@@ -141,7 +141,7 @@ describe('팀 자동완성 (#172)', () => {
    */
   it('7. @ 버튼 목록에도 팀이 선다', () => {
     render(<Composer onSend={vi.fn()} scopeKey="c1" />);
-    fireEvent.click(screen.getByLabelText('Add mention'));
+    fireEvent.click(screen.getByLabelText('멘션 더하기'));
 
     expect(optionFor('release')!.getAttribute('data-kind')).toBe('team');
   });

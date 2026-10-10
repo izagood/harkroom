@@ -48,7 +48,7 @@ describe('LeasePanel', () => {
   it('shows empty state when the projection is known to be ok', () => {
     useAppStore.getState().set({ projectionStatus: status() });
     render(<LeasePanel />);
-    expect(screen.getByText('No active work')).toBeTruthy();
+    expect(screen.getByText('진행 중인 작업 없음')).toBeTruthy();
   });
 
   it('groups leases by repo', () => {
@@ -102,7 +102,7 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
     // 띠가 말하는 문구를 여기서 되풀이하지 않는다.
     expect(screen.queryByText(PROJECTION_UNCONFIGURED_HEADLINE)).toBeNull();
     // 꺼져 있는 것을 "없다"로 말하지 않는다.
-    expect(screen.queryByText('No active work')).toBeNull();
+    expect(screen.queryByText('진행 중인 작업 없음')).toBeNull();
   });
 
   it('stalled 는 언제부터 멈췄는지와 에러를 말한다', () => {
@@ -117,7 +117,7 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
     expect(screen.getByTestId('projection-stalled').textContent).toContain('6분 전부터');
     // 에러 원문은 띠가 말한다(`detail`). 여기서 되풀이하면 좁은 칸이 다시 길어진다.
     expect(screen.queryByText('connection refused')).toBeNull();
-    expect(screen.queryByText('No active work')).toBeNull();
+    expect(screen.queryByText('진행 중인 작업 없음')).toBeNull();
   });
 
   it('stalled 인데 에러가 없으면 에러 줄이 없다', () => {
@@ -173,23 +173,23 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
 
   /**
    * 이 이슈의 핵심 기준: **"못 읽었다"를 "없다"로 그리지 않는다**(docs/design.md §4).
-   * `/projection/status` 조회가 실패했는데 "No active work" 가 보이면, 도그푸딩 중에
+   * `/projection/status` 조회가 실패했는데 "진행 중인 작업 없음" 가 보이면, 도그푸딩 중에
    * 투영이 끊긴 것을 화면이 평소와 똑같이 그려 아무도 모른다.
    */
-  it('상태를 못 읽었으면 그렇게 말한다 — "No active work" 가 아니다', () => {
+  it('상태를 못 읽었으면 그렇게 말한다 — "진행 중인 작업 없음" 가 아니다', () => {
     useAppStore.getState().set({ projectionStatusError: 'Failed to fetch', leases: LEASE });
     render(<LeasePanel />);
     expect(screen.getByTestId('projection-unreadable')).toBeTruthy();
     expect(screen.getByTestId('projection-unreadable').textContent).toContain('못 읽어');
     // 에러 원문(`Failed to fetch`)은 **띠**가 말한다 — 이 좁은 칸에서 되풀이하지 않는다.
-    expect(screen.queryByText('No active work')).toBeNull();
+    expect(screen.queryByText('진행 중인 작업 없음')).toBeNull();
   });
 
   // 아직 첫 응답이 오지 않은 창. "없다"가 아니라 "아직 모른다"다.
   it('첫 응답 전에는 확인 중이라고 말한다', () => {
     render(<LeasePanel />);
     expect(screen.getByTestId('projection-unknown')).toBeTruthy();
-    expect(screen.queryByText('No active work')).toBeNull();
+    expect(screen.queryByText('진행 중인 작업 없음')).toBeNull();
   });
 
   // 실패는 마지막으로 성공한 상태보다 **먼저** 말한다 — 오래된 성공은 지금의 사실이 아니다.
@@ -201,7 +201,7 @@ describe('#267 ACTIVE WORK 가 투영 상태를 말한다', () => {
     });
     render(<LeasePanel />);
     expect(screen.getByTestId('projection-unreadable')).toBeTruthy();
-    expect(screen.queryByText('No active work')).toBeNull();
+    expect(screen.queryByText('진행 중인 작업 없음')).toBeNull();
   });
 
   /**
@@ -286,7 +286,7 @@ describe('빈 목록에서는 고장을 되풀이하지 않는다', () => {
  * 하는 창 넷**을 같이 재고, 뒤쪽이 "제목을 늘 지운다"는 답을 막는다.
  */
 describe('내용이 없으면 ACTIVE WORK 제목도 없다', () => {
-  const LABEL = 'Active work';
+  const LABEL = '진행 중인 작업';
 
   /**
    * 사용자가 본 그 상태다: 띠가 이미 말하는 고장(`strip: true`)이고 남은 리스가 없다.
@@ -323,7 +323,7 @@ describe('내용이 없으면 ACTIVE WORK 제목도 없다', () => {
     useAppStore.getState().set({ projectionStatus: status({ state: 'ok' }), leases: [] });
     render(<LeasePanel />);
     expect(screen.getByText(LABEL)).toBeTruthy();
-    expect(screen.getByText('No active work')).toBeTruthy();
+    expect(screen.getByText('진행 중인 작업 없음')).toBeTruthy();
   });
 
   it('리스가 있으면 제목이 남는다', () => {

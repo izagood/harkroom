@@ -176,7 +176,7 @@ describe('#231 스레드 답을 채널에도 함께 올린다', () => {
 // 이 블록이 지키는 것은 항목이 뜨는 조건이다. 이미 거둔 메시지·채널 메시지·남의 메시지에
 // 항목이 남아 있으면, 눌러도 아무 일이 없거나 서버가 403 으로 돌려보낸다 — 둘 다
 // 화면이 없는 것을 있다고 말한 것이다.
-describe('#231 채널에서 거두기', () => {
+describe('#231 채널에서 내리기', () => {
   const openMenu = (): void => { fireEvent.click(screen.getByLabelText('More actions')); };
   const recallItem = () => screen.queryByRole('menuitem', { name: 'Remove from channel' });
 

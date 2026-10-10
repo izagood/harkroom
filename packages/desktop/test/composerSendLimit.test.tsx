@@ -33,7 +33,7 @@ const typeInto = (value: string) => {
   return box;
 };
 
-const sendButton = () => screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement;
+const sendButton = () => screen.getByRole('button', { name: '메시지 보내기' }) as HTMLButtonElement;
 
 beforeEach(() => {
   usePrefsStore.getState().setLocale('ko');

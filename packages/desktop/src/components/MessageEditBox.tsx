@@ -4,6 +4,7 @@ import { NO_TEAMS } from '../state/appStore';
 import { getController } from '../state/controller';
 import { mentionQueryAt, applyMention, type MentionQuery } from '../lib/mention';
 import { MentionSuggestList, mentionMatches } from './MentionSuggest';
+import { useT } from '../i18n/useT';
 
 interface Props {
   /** 고치는 중인 본문. 비우거나 바꾸는 것은 부르는 쪽(`MessageItem`)의 `draft` 다. */
@@ -31,6 +32,7 @@ interface Props {
  * 것이고, 이미 보낸 글을 고칠 때 칩이 서면 본문에 없는 상대가 가는 것처럼 읽힌다.
  */
 export function MessageEditBox({ value, onChange, onSave, onCancel, channelId }: Props) {
+  const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
   const groups = useActiveStore((s) => s.groups);
   // `null` 은 못 받은 것이다 — 후보 자리에서는 빈 목록이 사실이다(`Composer` 의 같은 줄 주석).
@@ -151,7 +153,7 @@ export function MessageEditBox({ value, onChange, onSave, onCancel, channelId }:
         {open && (
           <MentionSuggestList
             id={listId}
-            label="Mention suggestions"
+            label={t('chat.mentionSuggestions')}
             options={options}
             active={active}
             onActive={setActive}
@@ -161,8 +163,8 @@ export function MessageEditBox({ value, onChange, onSave, onCancel, channelId }:
         )}
       </div>
       <div className="flex gap-1">
-        <button className="rounded-row border border-border px-1.5 text-meta text-fg-muted" onClick={onSave}>Save</button>
-        <button className="rounded-row border border-border px-1.5 text-meta text-fg-muted" onClick={onCancel}>Cancel</button>
+        <button className="rounded-row border border-border px-1.5 text-meta text-fg-muted" onClick={onSave}>{t('chat.edit.save')}</button>
+        <button className="rounded-row border border-border px-1.5 text-meta text-fg-muted" onClick={onCancel}>{t('chat.edit.cancel')}</button>
       </div>
     </div>
   );

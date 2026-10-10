@@ -427,7 +427,7 @@ describe('사이드바 — 언어를 한국어로 바꾸면 한국어로 뜬다'
   it('채널 이름 규칙 오류가 한국어로 바뀐다', () => {
     render(<Sidebar panel="home" {...sidebarProps} />);
     fireEvent.click(screen.getByTestId('add-channel'));
-    fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'Bad Name' } });
+    fireEvent.change(screen.getByLabelText('새 채널 이름'), { target: { value: 'Bad Name' } });
     fireEvent.click(screen.getByText('만들기'));
     expect(screen.getByRole('alert').textContent).toContain('1~48자');
   });

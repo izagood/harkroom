@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { AccountView, MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { Identity } from './Identity';
+import { useT } from '../i18n/useT';
 import type { Liveness } from './../lib/threadState';
 
 /**
@@ -24,6 +25,7 @@ import type { Liveness } from './../lib/threadState';
  * 메시지의 `TerminalChip` 은 남겨 둔다 — 작은 화면에서 헤더가 먼저 접힌다.
  */
 export function ThreadParticipants({ messages, live }: { messages: MessageRow[]; live: Liveness }) {
+  const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
   const me = useActiveStore((s) => s.me);
   const set = useActiveStore((s) => s.set);
@@ -80,7 +82,7 @@ export function ThreadParticipants({ messages, live }: { messages: MessageRow[];
             className="rounded-row px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
             onClick={() => setOpen((v) => !v)}
           >
-            터미널 ▾
+            {t('chat.terminalMenu')}
           </button>
           {open && (
             <ul

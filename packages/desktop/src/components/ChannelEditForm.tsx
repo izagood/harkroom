@@ -90,7 +90,7 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
           */}
           <input
             type="text"
-            aria-label="Channel name"
+            aria-label={t('chat.channelEdit.name')}
             data-testid="channel-edit-name"
             className="mb-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             placeholder={t('sidebar.edit.namePlaceholder')}
@@ -99,7 +99,7 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
           />
           <input
             type="text"
-            aria-label="Topic"
+            aria-label={t('chat.channelEdit.topic')}
             className="mb-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             placeholder={t('sidebar.edit.topicPlaceholder')}
             value={editTopic}
@@ -108,7 +108,7 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
           <div className="mb-1 flex items-center gap-1">
             <input
               type="text"
-              aria-label="Repository"
+              aria-label={t('chat.channelEdit.repo')}
               className="flex-1 rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
               placeholder={t('sidebar.edit.repoPlaceholder')}
               value={editRepo}
