@@ -745,6 +745,9 @@ export const en = {
    * 사진 지우기의 확인·취소. **이름 바꾸기의 것과 한 키로 못 묶는다** — 되돌리는 대상이
    * 다르고(`en.ts` 의 `Cancel` 판단), 실제로 문구가 갈릴 수 있는 자리다.
    */
+  'profileAvatar.photo': 'Profile photo',
+  'profileAvatar.upload': 'Upload',
+  'profileAvatar.remove': 'Remove',
   'profileAvatar.removeCancel': 'Cancel',
   'profileAvatar.removeConfirm': 'Delete for good',
 
@@ -761,7 +764,7 @@ export const en = {
   'profileName.effectPast': 'Mentions in past messages will show the new name too.',
   'profileName.effectPermanent': 'This change cannot be undone.',
   'profileName.failed': 'The name was not changed',
-  'profileName.heading': 'Display name',
+  'profileName.heading': 'Handle',
   'profileName.input': 'New name',
   /** 규칙을 나열한다 — `Invalid name` 은 무엇을 고쳐야 하는지 말하지 않는다. */
   'profileName.start': 'Change',
