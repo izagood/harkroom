@@ -57,8 +57,8 @@ describe('systemText', () => {
   });
 
   it('인자의 제어 문자·방향 바꿈 문자를 지운다(C4)', () => {
-    const out = systemText(sys({ key: 'system.skill.proposed', args: { slug: 'evil‮gnp.exe\nnext' } }), accounts, tEn)!;
-    expect(out).not.toMatch(/[‮\n]/);
+    const out = systemText(sys({ key: 'system.skill.proposed', args: { slug: 'evil\u202Egnp.exe\nnext' } }), accounts, tEn)!;
+    expect(out).not.toMatch(/[\u202E\n]/);
   });
 
   it('C1 제어·아랍 글자 표지·줄/문단 구분·BOM 도 지운다(C4, security n3)', () => {
