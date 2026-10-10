@@ -138,6 +138,17 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect(screen.getByTestId('inbox-card-answer-q2-a')).toBeTruthy();
   });
 
+  it('머리만 나를 지목한 결정 카드도 같은 실패로 묶지 않는다 (security n3)', async () => {
+    fakeController(async () => ({
+      entries: [entry(1, { threadRootId: 'd1', meta: failMeta('관문') }), entry(2, { threadRootId: 'd2', meta: failMeta('관문') })],
+      threads: ['d1', 'd2'].map((r) => head(r, { openAskAccountIds: [ME], unresolvedFailureCount: 1 })),
+    }));
+    open();
+    await screen.findByTestId('inbox-card-d1');
+    expect(screen.getByTestId('inbox-card-d2')).toBeTruthy();
+    expect(screen.queryByTestId('inbox-card-similar-d1')).toBeNull();
+  });
+
   it('같은 실패라도 채널이 다르면 묶지 않는다 (security n1)', async () => {
     fakeController(async () => ({
       entries: [

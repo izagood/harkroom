@@ -339,6 +339,9 @@ export function buildBoard(input: BoardInput): BoardCard[] {
     else if (column === 'active' && stale && !running) fold = 'quiet';
     else if (column === 'done' && stale) fold = 'old';
 
+    // 결정 카드는 묶지 않는다(security F1·n3) — 물음 항목이 내 인박스에 없고 머리만 나를 지목해도
+    // 결정이다. 묶으면 결정 하나가 줄 뒤에 숨는다.
+    const kind = kindOf(head, input, ask != null, failure != null);
     cards.push({
       rootId,
       channelId: head?.channelId ?? latest!.channelId,
@@ -352,8 +355,8 @@ export function buildBoard(input: BoardInput): BoardCard[] {
       unread: list.some((e) => e.readAt === null),
       ask: openAsk && ask ? { messageId: openAsk.messageId, options: ask.options } : null,
       laterUntil: fold === 'later' ? state?.until ?? null : null,
-      kind: kindOf(head, input, ask != null, failure != null),
-      similarKey: ask == null && failure && failureTitle
+      kind,
+      similarKey: kind !== 'decision' && failure && failureTitle
         ? JSON.stringify([failure.channelId, failure.authorId, failureMeta?.code ?? null, failureTitle])
         : null,
       replyCount: head?.replyCount ?? null,
