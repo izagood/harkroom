@@ -73,8 +73,8 @@ void main() {
   });
 
   test('제어·방향 바꿈 문자를 지운다(C4)', () {
-    final out = systemText(row({'key': 'system.skill.proposed', 'args': {'slug': 'a‮b c\u0085d﻿e'}}), accounts, en)!;
-    expect(out, isNot(matches(RegExp('[‮ \u0085﻿]'))));
+    final out = systemText(row({'key': 'system.skill.proposed', 'args': {'slug': 'a\u202Eb\u2028c\u0085d\uFEFFe'}}), accounts, en)!;
+    expect(out, isNot(matches(RegExp('[\u202E\u2028\u0085\uFEFF]'))));
   });
 
   test('값 안의 {자리표시자} 는 다시 풀리지 않는다 — 한 번에 바꾼다(security F1)', () {
