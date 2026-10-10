@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { getController } from '../state/controller';
 import { useActiveStore } from '../state/communities';
 import type { LinkPreviewView } from '@harkroom/shared';
+import { peekLinkPreview, storeLinkPreview } from '../lib/linkPreviewCache';
 
 /**
  * 본문 아래 붙는 링크 카드(#215).
@@ -16,16 +17,22 @@ import type { LinkPreviewView } from '@harkroom/shared';
  * 빈 카드는 "무언가 있는데 못 읽었다"는 거짓을 말한다.
  */
 export function LinkPreview({ url }: { url: string }) {
-  const [preview, setPreview] = useState<LinkPreviewView | null>(null);
+  // 받아 둔 응답이 있으면 **첫 렌더부터** 그린다 — 가상 목록에서 줄이 다시 마운트될 때 카드가
+  // 늦게 붙으면 줄 높이가 바뀌어 스크롤이 튄다(스레드 bf24d7bd ①, `linkPreviewCache`).
+  const [preview, setPreview] = useState<LinkPreviewView | null>(() => peekLinkPreview(url)?.view ?? null);
   // 가져오기는 비동기라 메시지가 먼저 뜬다 — 서버가 "준비됐다"고 하면 다시 읽는다(#215).
   // 이 신호가 없으면 카드는 이 메시지를 다시 그릴 때까지(사실상 앱을 다시 켤 때까지) 안 보인다.
   const readyAt = useActiveStore((s) => s.linkPreviewReadyAt[url]);
 
   useEffect(() => {
     let cancelled = false;
+    const cached = peekLinkPreview(url);
+    if (cached) setPreview(cached.view);
+    if (cached?.fresh(readyAt)) return;
     void (async () => {
       try {
         const data = await getController().api.getLinkPreview(url);
+        storeLinkPreview(url, readyAt, data);
         if (!cancelled) setPreview(data);
       } catch {
         // 실패(404·오프라인·5xx·컨트롤러 없음)는 조용히 넘어간다 — 카드는 장식이고, 없으면
@@ -49,13 +56,15 @@ export function LinkPreview({ url }: { url: string }) {
           어디서 왔는지 알려 주는 꼬리표다. 제목은 크기를 안 적어 본문단 13px 을 물려받고,
           `font-semibold` 로만 도드라진다(같은 단 안에서 굵기로 위계를 낸다). */}
       {preview.siteName && (
-        <div className="text-meta text-fg-subtle">{preview.siteName}</div>
+        <div className="truncate text-meta text-fg-subtle">{preview.siteName}</div>
       )}
+      {/* 제목 한 줄·설명 두 줄로 자른다 — 긴 og 설명이 카드를 몇 배로 키우지 않게, 카드 높이의
+          상한을 정해 둔다(스레드 bf24d7bd ①). 잘린 전문은 `title` 로 본다. */}
       {preview.title && (
-        <div className="font-semibold text-fg">{preview.title}</div>
+        <div className="truncate font-semibold text-fg" title={preview.title}>{preview.title}</div>
       )}
       {preview.description && (
-        <div className="mt-1 text-fg-muted">{preview.description}</div>
+        <div className="mt-1 line-clamp-2 text-fg-muted" title={preview.description}>{preview.description}</div>
       )}
       <a
         href={preview.url}

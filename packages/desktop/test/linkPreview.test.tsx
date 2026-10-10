@@ -159,3 +159,34 @@ describe('link_preview.ready 이벤트', () => {
     expect(screen.getByText('Example Title')).toBeTruthy();
   });
 });
+
+// 채널 스크롤 버벅임 ①(스레드 bf24d7bd). 가상 목록에서 줄이 다시 마운트될 때 카드가 늦게 붙으면
+// 줄 높이가 바뀌어 스크롤이 튄다 — 받아 둔 응답은 **첫 렌더부터** 그리고 다시 묻지 않는다.
+describe('다시 마운트될 때', () => {
+  it('받아 둔 카드를 첫 렌더부터 그리고 다시 묻지 않는다', async () => {
+    const fn = stubApi(async () => card());
+    const first = show();
+    await screen.findByTestId('link-preview');
+    first.unmount();
+
+    show();
+    expect(screen.getByTestId('link-preview')).toBeTruthy();
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('서버가 "다시 가져왔다"고 알리면(readyAt) 다시 묻는다', async () => {
+    const fn = stubApi(async () => card());
+    show();
+    await screen.findByTestId('link-preview');
+    useAppStore.getState().set({ linkPreviewReadyAt: { 'https://example.com/a': Date.now() } });
+    await waitFor(() => expect(fn).toHaveBeenCalledTimes(2));
+  });
+
+  it('긴 제목·설명은 한 줄·두 줄로 잘라 카드 높이에 상한을 둔다', async () => {
+    stubApi(async () => card());
+    show();
+    await screen.findByTestId('link-preview');
+    expect(screen.getByText('Example Title').className).toContain('truncate');
+    expect(screen.getByText('Example description').className).toContain('line-clamp-2');
+  });
+});
