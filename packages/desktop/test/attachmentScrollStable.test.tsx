@@ -3,12 +3,14 @@ import { render, screen, cleanup, act } from '@testing-library/react';
 import type { AttachmentRow, MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
-import { setController, type Controller } from '../src/state/controller';
+import { setController, Controller } from '../src/state/controller';
+import { endSession } from '../src/lib/sessionEnd';
+import { peekLinkPreview, storeLinkPreview } from '../src/lib/linkPreviewCache';
 import { MessageItem } from '../src/components/MessageItem';
 import {
   acquireAttachmentUrl, peekAttachmentUrl, resetAttachmentUrlCacheForTest, ATTACHMENT_URL_CACHE_LIMITS,
 } from '../src/lib/attachmentUrlCache';
-import { acc, msg } from './helpers/fakeApi';
+import { acc, msg, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 
 // 채널 스크롤 버벅임 ①(스레드 bf24d7bd). 채널 본문은 가상 목록이라 화면 밖 줄은 언마운트되고
 // 돌아오면 다시 마운트된다. 그때 그림을 **다시 받지 않고**, 받는 동안에도 **줄 높이가 같아야** 한다.
@@ -119,6 +121,72 @@ describe('그림 URL 캐시', () => {
     await acquireAttachmentUrl('a1').promise;
     expect(peekAttachmentUrl('a1')).not.toBeNull();
     controller(async () => new Blob(['y']));
+    expect(peekAttachmentUrl('a1')).toBeNull();
+  });
+});
+
+// security n1: 세션이 끝나면(로그아웃·세션 잃음·커뮤니티 빼기 — 모두 `Controller.stop()`) 그 세션이 받은
+// 그림을 LRU 에 밀려날 때까지 두지 않고 비운다. 화면에 붙어 있는 것은 놓일 때 revoke 한다.
+describe('세션이 끝나면', () => {
+  it('참조 없는 그림은 곧바로 revoke 하고 비운다', async () => {
+    const c = controller(async () => new Blob(['x']));
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    const lease = acquireAttachmentUrl('a1');
+    const url = await lease.promise;
+    lease.release();
+    expect(revoke).not.toHaveBeenCalledWith(url);
+    endSession(c);
+    expect(revoke).toHaveBeenCalledWith(url);
+    expect(peekAttachmentUrl('a1')).toBeNull();
+    revoke.mockRestore();
+  });
+
+  it('화면에 붙어 있는 그림은 놓일 때 revoke 한다', async () => {
+    const c = controller(async () => new Blob(['x']));
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    const lease = acquireAttachmentUrl('a1');
+    const url = await lease.promise;
+    endSession(c);
+    expect(revoke).not.toHaveBeenCalledWith(url);
+    expect(peekAttachmentUrl('a1')).toBeNull();
+    lease.release();
+    expect(revoke).toHaveBeenCalledWith(url);
+    revoke.mockRestore();
+  });
+
+  it('받는 사이 세션이 끝나면 담지 않고, 기다리던 자리가 놓일 때 revoke 한다', async () => {
+    let resolve!: (b: Blob) => void;
+    const c = controller(() => new Promise<Blob>((r) => { resolve = r; }));
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    const lease = acquireAttachmentUrl('a1');
+    endSession(c);
+    resolve(new Blob(['x']));
+    const url = await lease.promise;
+    expect(peekAttachmentUrl('a1')).toBeNull();
+    expect(revoke).not.toHaveBeenCalledWith(url);
+    lease.release();
+    expect(revoke).toHaveBeenCalledWith(url);
+    revoke.mockRestore();
+  });
+
+  it('링크 카드도 비운다', () => {
+    const c = controller(async () => new Blob(['x']));
+    const view = { url: 'https://example.com/a', title: 't', description: null, imageUrl: null, siteName: null, status: 'ok' as const, fetchedAt: '' };
+    storeLinkPreview('https://example.com/a', undefined, view);
+    expect(peekLinkPreview('https://example.com/a')).not.toBeNull();
+    endSession(c);
+    expect(peekLinkPreview('https://example.com/a')).toBeNull();
+  });
+
+  it('Controller.stop() 이 그 세션을 끝낸다', async () => {
+    const api = { ...fakeApi(), fetchAttachment: vi.fn(async () => new Blob(['x'])) };
+    const c = new Controller(api as unknown as ConstructorParameters<typeof Controller>[0], fakeWsFactory().makeWs);
+    setController(c);
+    const lease = acquireAttachmentUrl('a1');
+    await lease.promise;
+    lease.release();
+    expect(peekAttachmentUrl('a1')).not.toBeNull();
+    c.stop();
     expect(peekAttachmentUrl('a1')).toBeNull();
   });
 });

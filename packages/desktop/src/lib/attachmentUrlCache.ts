@@ -1,5 +1,6 @@
 import { getController } from '../state/controller';
-import { sessionScopedKey } from './sessionKey';
+import { sessionPrefix, sessionScopedKey } from './sessionKey';
+import { onSessionEnd } from './sessionEnd';
 
 /**
  * 첨부 그림의 objectURL 캐시 — **줄이 다시 마운트돼도 다시 받지 않는다.**
@@ -25,17 +26,42 @@ interface Entry {
   url: string;
   bytes: number;
   refs: number;
+  /** 세션이 끝났는데 아직 화면에 붙어 있던 것 — 마지막 참조가 놓일 때 revoke 한다. */
+  dead?: boolean;
 }
 
 /** 삽입 순서 = 최근 사용 순서(Map 은 순서를 지킨다). 쓸 때마다 지우고 다시 넣는다. */
 const entries = new Map<string, Entry>();
-interface Inflight { waiters: number; promise: Promise<string> }
+interface Inflight { waiters: number; promise: Promise<string>; entry?: Entry }
 const inflight = new Map<string, Inflight>();
 let totalBytes = 0;
 
 function touch(key: string, e: Entry): void {
   entries.delete(key);
   entries.set(key, e);
+}
+
+/** 세션이 끝난 항목: 키에서 떼고 바이트 합에서 뺀다. 참조가 없으면 지금, 있으면 놓일 때 revoke 한다. */
+function retire(key: string, e: Entry): void {
+  if (entries.get(key) === e) { entries.delete(key); totalBytes -= e.bytes; }
+  e.dead = true;
+  if (e.refs <= 0) URL.revokeObjectURL(e.url);
+}
+
+/** 끝난 세션 번호 — 그 세션의 받는 중 요청이 끝난 뒤 들어오면 담지 않는다. */
+const endedPrefixes = new Set<string>();
+const endedOf = (key: string) => endedPrefixes.has(key.slice(0, key.indexOf('\n') + 1));
+
+onSessionEnd((n) => {
+  const prefix = sessionPrefix(n);
+  endedPrefixes.add(prefix);
+  for (const [key, e] of [...entries]) if (key.startsWith(prefix)) retire(key, e);
+});
+
+/** 참조 하나를 내려놓는다. 끝난 세션의 것이면 마지막 참조에서 revoke 한다. */
+function unref(e: Entry): void {
+  e.refs -= 1;
+  if (e.dead && e.refs <= 0) URL.revokeObjectURL(e.url);
 }
 
 function evict(): void {
@@ -87,7 +113,7 @@ export function acquireAttachmentUrl(id: string): { promise: Promise<string>; re
       release: () => {
         if (!held) return;
         held = false;
-        cached.refs -= 1;
+        unref(cached);
         evict();
       },
     };
@@ -99,8 +125,11 @@ export function acquireAttachmentUrl(id: string): { promise: Promise<string>; re
     const j: Inflight = { waiters: 0, promise: Promise.resolve('') };
     j.promise = getController().fetchAttachment(id).then((blob) => {
       const e: Entry = { url: URL.createObjectURL(blob), bytes: blob.size, refs: j.waiters };
+      j.entry = e;
       entries.set(key, e);
       totalBytes += e.bytes;
+      // 받는 사이 세션이 끝났으면 담지 않는다 — 기다리던 자리가 놓일 때 revoke 된다.
+      if (endedOf(key)) retire(key, e);
       evict();
       return e.url;
     }).finally(() => { inflight.delete(key); });
@@ -118,12 +147,12 @@ export function acquireAttachmentUrl(id: string): { promise: Promise<string>; re
     promise,
     release: () => {
       if (state === 'released') return;
-      const e = entries.get(key);
-      if (inflight.get(key) === j && state === 'waiting') {
+      if (!j.entry) {
         // 아직 도착 전 — 도착할 때 쥘 참조를 하나 덜 쥐게 한다.
         j.waiters -= 1;
-      } else if (e) {
-        e.refs -= 1;
+      } else {
+        // 도착했으면 그 항목을 직접 놓는다 — 세션이 끝나 키에서 떨어졌어도 revoke 할 수 있게.
+        unref(j.entry);
       }
       state = 'released';
       evict();
@@ -136,6 +165,7 @@ export function resetAttachmentUrlCacheForTest(): void {
   for (const e of entries.values()) URL.revokeObjectURL(e.url);
   entries.clear();
   inflight.clear();
+  endedPrefixes.clear();
   totalBytes = 0;
 }
 
