@@ -663,6 +663,24 @@ export interface RunPtyTurnOptions {
      */
     readyMinMs?: number;
     /**
+     * **준비 표시를 본 뒤에도 이 조건이 설 때까지 넣지 않는다**(2026-10-10, 스레드 20914e42).
+     * `ready()` 가 참이 되거나 스폰 뒤 `maxMs` 가 지나면 넣는다 — 시한을 넘겨도 **턴을 막지 않고
+     * 그냥 넣는다**. 어느 쪽으로 끝났는지는 `onSettled` 가 한 번 받는다(러너 로그).
+     *
+     * 쓰는 곳은 하나다: claude 는 MCP 서버가 붙기 전에도 입력을 받고 첫 호출을 낸다. 이어 받은
+     * 턴(`-r`)에서 harkroom 이 그 뒤에 붙으면 도구 목록이 앞 턴과 달라져 캐시가 두 번 깨진다
+     * (운영 실측: 이어 받은 턴 13개 중 12개). 그래서 브릿지가 `tools/list` 에 답했다는 표식을
+     * 기다린다(`mentionTurn.ts` 의 `mcpReadyFile`). `readyMinMs` 와 같은 자리에서 물러나므로
+     * 상한은 여전히 `readyTimeoutMs` 가 쥔다.
+     */
+    waitFor?: {
+      ready: () => boolean;
+      maxMs: number;
+      /** 다시 볼 간격(ms). 기본 100. */
+      pollMs?: number;
+      onSettled?: (r: { ready: boolean; waitedMs: number }) => void;
+    };
+    /**
      * **넣었는데 제출되지 않았다**를 화면에서 읽는 정규식. 주면 주입 뒤에 확인하고,
      * 보이면 개행을 다시 친다(본문은 다시 보내지 않는다 — 두 번 서면 같은 일을 두 번 한다).
      */
@@ -997,8 +1015,10 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
               readyQuietMs = 300, readyQuietMaxMs = 2_000, gatePattern = DEFAULT_GATE_PATTERN,
               readyMinMs = 0, unsentHint, unsentProbeMs = 1_500, unsentRetries = 3,
               submitMinMs = 300, submitQuietMs = 150, submitMaxMs = 1_200, submitPastingMaxMs = 5_000,
-              waitingQuietMs = 3_000, onAttention } = opts.injectPrompt;
+              waitingQuietMs = 3_000, onAttention, waitFor } = opts.injectPrompt;
       let injected = false;
+      /** `waitFor` 가 끝났나(섰거나 시한). 한 번 끝나면 다시 보지 않는다. */
+      let waitForDone = waitFor === undefined;
       /** 붙여넣기 뒤 Enter 를 쳤나. 그 전에는 미제출 그물(`unsentHint`)이 Enter 를 치지 않는다. */
       let submitted = false;
       /**
@@ -1109,6 +1129,20 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
           quietTimer = setTimeout(inject, readyMinMs - sinceSpawn);
           quietTimer.unref?.();
           return;
+        }
+
+        // 하한 다음, 관문 검사 앞이다 — 기다리는 동안 관문이 덮일 수 있으니 넣기 직전에 다시 본다.
+        if (!waitForDone && waitFor) {
+          let ready = false;
+          try { ready = waitFor.ready(); } catch { /* 못 읽으면 아직 안 선 것으로 본다 */ }
+          if (!ready && sinceSpawn < waitFor.maxMs) {
+            if (quietTimer) clearTimeout(quietTimer);
+            quietTimer = setTimeout(inject, Math.min(waitFor.pollMs ?? 100, waitFor.maxMs - sinceSpawn));
+            quietTimer.unref?.();
+            return;
+          }
+          waitForDone = true;
+          try { waitFor.onSettled?.({ ready, waitedMs: sinceSpawn }); } catch { /* 알림이 주입을 막지 않는다 */ }
         }
 
         const beforeWrite = decodeTailText(tail.snapshot());

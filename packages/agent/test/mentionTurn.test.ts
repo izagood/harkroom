@@ -4440,3 +4440,58 @@ describe('유령 세션 — 등록 경합과 PTY 없는 [중단] (2026-10-07)', 
     expect(h.events).toEqual(['open', 'close']);
   });
 });
+
+/**
+ * **브릿지의 `tools/list` 표식을 기다린 뒤 넣는다**(2026-10-10, 스레드 20914e42). claude 턴에만 표식 경로를
+ * env 로 심고 `waitFor` 를 건다 — env 가 브릿지까지 안 가는 하네스에 걸면 매 턴 시한만큼 늦어진다.
+ * 기다림 자체(시한 안에 옴·넘김)는 `mcpReadyWait.test.ts` 가 잰다.
+ */
+describe('MCP 준비 표식', () => {
+  type WaitFor = { ready: () => boolean; maxMs: number };
+  it('claude 턴: 표식 경로를 env 에 심고, 그 파일이 생기면 ready 가 참이 된다 — 턴이 끝나면 파일을 지운다', async () => {
+    const fakeHarkroom = new FakeHarkroom(defOf());
+    fakeHarkroom.seedFrom('human-1', '@forge 안녕');
+    const readyDir = await mkdtemp(join(tmpdir(), 'mcp-ready-'));
+    const { deps, plans, turnOpts, runTurn } = await makeDeps(fakeHarkroom, { mcpReadyDir: readyDir });
+    const seen: { before: boolean; after: boolean }[] = [];
+    runTurn.script = async (plan, opts) => {
+      const waitFor = (opts as { injectPrompt?: { waitFor?: WaitFor } }).injectPrompt?.waitFor;
+      const file = plan.env.HARKROOM_MCP_READY_FILE!;
+      const before = waitFor!.ready();
+      await writeFile(file, ''); // 브릿지가 하는 일
+      seen.push({ before, after: waitFor!.ready() });
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    const file = plans[0]!.env.HARKROOM_MCP_READY_FILE!;
+    expect(dirname(file)).toBe(readyDir);
+    expect((turnOpts[0] as { injectPrompt?: { waitFor?: WaitFor } }).injectPrompt?.waitFor?.maxMs).toBe(8_000);
+    expect(seen).toEqual([{ before: false, after: true }]);
+    await expect(stat(file)).rejects.toThrow();
+  });
+
+  it('브릿지가 아예 안 뜨면 표식이 없다 — ready 는 끝까지 거짓이고(pty 가 시한에서 넣는다) 턴은 그대로 끝난다', async () => {
+    const fakeHarkroom = new FakeHarkroom(defOf());
+    fakeHarkroom.seedFrom('human-1', '@forge 안녕');
+    const { deps, turnOpts, runTurn } = await makeDeps(fakeHarkroom, { mcpReadyDir: await mkdtemp(join(tmpdir(), 'mcp-ready-')) });
+    let ready: boolean | null = null;
+    runTurn.script = async (_plan, opts) => {
+      ready = (opts as { injectPrompt?: { waitFor?: WaitFor } }).injectPrompt!.waitFor!.ready();
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(ready).toBe(false);
+    expect(turnOpts).toHaveLength(1);
+  });
+
+  it('codex 턴에는 표식도 기다림도 없다', async () => {
+    const fakeHarkroom = new FakeHarkroom(defOf({ harness: 'codex' }));
+    fakeHarkroom.seedFrom('human-1', '@forge 안녕');
+    const { deps, plans, turnOpts } = await makeDeps(fakeHarkroom);
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(plans[0]!.env.HARKROOM_MCP_READY_FILE).toBeUndefined();
+    expect((turnOpts[0] as { injectPrompt?: { waitFor?: WaitFor } }).injectPrompt?.waitFor).toBeUndefined();
+  });
+});

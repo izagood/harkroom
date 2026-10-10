@@ -229,6 +229,15 @@ export interface HarnessAdapter {
    */
   readonly mcpRegistration: 'config-file' | 'cli-overrides' | 'account-config';
   /**
+   * **harkroom 브릿지가 `tools/list` 에 답한 뒤에 프롬프트를 넣는가**(2026-10-10, 스레드 20914e42). 참이면
+   * 러너가 턴마다 표식 경로(`RUNNER_MCP_READY_FILE_ENV`)를 심고 그 파일을 시한까지 기다린다.
+   *
+   * claude 만 참이다: MCP 서버가 붙기 전에 입력을 받고 첫 호출을 내며(2.1.296 실측 — `MCP_CONNECTION_NONBLOCKING=false`
+   * 도 TUI 의 첫 입력을 막지 않는다), 이어 받은 세션의 캐시가 그 때문에 깨진다. 브릿지까지 env 가 가는지도
+   * 하네스마다 다르다(codex 는 `env_vars` 로 이름을 대야 간다) — 안 가는 하네스에 켜면 매 턴 시한만큼 늦어진다.
+   */
+  readonly waitsForMcpBeforePrompt?: boolean;
+  /**
    * 지시문 전달 수단. `'flag-file'` 은 전용 플래그로 파일을 준다(claude 의
    * `--append-system-prompt-file`), `'prompt-prefix'` 는 그런 플래그가 없어 프롬프트 앞에
    * 접두하는 것뿐이다(codex, 실측).
