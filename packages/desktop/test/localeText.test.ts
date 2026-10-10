@@ -26,9 +26,9 @@ const NO_LOCALE = /\.toLocale(?:Date|Time)?String\(\s*(?:\)|\[\]|undefined\b)/;
 
 /**
  * 아직 남은 자리. **줄이기만 한다** — 고치면 여기서 지운다.
- * - `UpdatesSettings.tsx` 는 #1289(i18n P1)가 고친다. 둘 중 나중에 머지되는 쪽이 이 줄을 지운다.
+ * 지금은 비어 있다 — 새 자리를 여기 넣지 말고 고쳐라.
  */
-const PENDING = new Set(['components/settings/UpdatesSettings.tsx']);
+const PENDING = new Set<string>();
 
 describe('날짜·시각·수는 앱 언어를 따른다', () => {
   it('소스에 언어 없이 부른 toLocale*String 이 없다', () => {

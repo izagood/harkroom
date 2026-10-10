@@ -2697,6 +2697,24 @@ export const en = {
   'update.install': 'Restart to install',
   'update.installing': 'Installing…',
   'update.later': 'Later',
+  /** 설치는 끝났는데 앱이 다시 뜨지 않았다 — 우리가 아는 실패라 원문 대신 이 말을 쓴다. */
+  'update.notRestarted': 'The app did not restart after installing',
+  /**
+   * 설정 › 업데이트 화면. 설치 버튼은 사이드바 칸과 같은 말이라 `update.install`·`update.installing` 을 같이 쓴다.
+   * `{time}` 은 화면이 앱 언어로 낸 시각이다 — 이 사전은 시각을 제 손으로 적지 않는다.
+   */
+  'settings.updates.current': 'Current version',
+  'settings.updates.new': 'New version',
+  'settings.updates.availableChecked': '{version} · checked {time}',
+  'settings.updates.installingVersion': '{version} · downloading and installing…',
+  'settings.updates.upToDate': 'None — up to date · checked {time}',
+  /** 「최신」 과 절대 합치지 않는다 — 원문은 아랫줄에 따로 선다(`UpdatesSettings.tsx` 머리말). */
+  'settings.updates.failed': 'Could not complete',
+  'settings.updates.recheckFailed': 'Re-check failed {time}: {message}',
+  'settings.updates.checking': 'Checking…',
+  'settings.updates.notChecked': 'Not checked yet',
+  'settings.updates.checkNow': 'Check now',
+  'settings.updates.restartNote': 'Installing an update restarts harkroom. That does not disturb your agents: they are owned by a background daemon that outlives the app, and harkroom re-attaches to it on launch. Unsent drafts are kept across a restart; which thread you had open is not.',
 
   'projection.banner.stalled': 'Projection has been stalled for {ago}',
   /**

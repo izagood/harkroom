@@ -31,8 +31,12 @@ export type UpdateStatus =
   | { kind: 'uptodate' }
   | { kind: 'available'; version: string }
   | { kind: 'installing'; version: string }
-  /** `message` 는 플러그인이 준 원문이다 — 우리가 해석하지 않는다. */
-  | { kind: 'failed'; message: string };
+  /**
+   * `message` 는 플러그인이 준 원문이다 — 우리가 해석하지 않는다. `reason` 은 **우리가 아는**
+   * 실패에만 붙는다 — 그때 화면은 원문 대신 사전의 말을 쓴다(`message` 는 영어 원문으로 남아 로그·
+   * 사전이 없는 자리를 위해 둔다).
+   */
+  | { kind: 'failed'; message: string; reason?: 'notRestarted' };
 
 /**
  * 업데이트 표면이 있는 빌드인가. `NotificationSettings.tsx` 의 판정과 같은 형태다.
@@ -154,7 +158,7 @@ async function installUpdate(version: string): Promise<void> {
     // 성공하면 앱이 다시 뜨므로 여기로 돌아오지 않는다. 돌아왔다면 재시작이 일어나지
     // 않은 것이고, 그것은 사람이 알아야 할 이상 상태다 — 조용히 넘기지 않는다.
     installing = false;
-    publish({ status: { kind: 'failed', message: 'the app did not restart after installing' } });
+    publish({ status: { kind: 'failed', message: 'the app did not restart after installing', reason: 'notRestarted' } });
   } catch (err) {
     installing = false;
     publish({ status: { kind: 'failed', message: describeError(err) } });

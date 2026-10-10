@@ -1407,6 +1407,18 @@ export const ko = {
   'update.install': '다시 시작해 설치',
   'update.installing': '설치하는 중…',
   'update.later': '나중에',
+  'update.notRestarted': '설치한 뒤 앱이 다시 시작되지 않았다',
+  'settings.updates.current': '지금 버전',
+  'settings.updates.new': '새 버전',
+  'settings.updates.availableChecked': '{version} · {time} 확인',
+  'settings.updates.installingVersion': '{version} · 내려받아 설치하는 중…',
+  'settings.updates.upToDate': '없음 — 최신 버전 · {time} 확인',
+  'settings.updates.failed': '끝내지 못했다',
+  'settings.updates.recheckFailed': '{time} 다시 확인 실패: {message}',
+  'settings.updates.checking': '확인하는 중…',
+  'settings.updates.notChecked': '아직 확인 안 함',
+  'settings.updates.checkNow': '지금 확인',
+  'settings.updates.restartNote': '업데이트를 설치하면 harkroom 이 다시 시작한다. 에이전트는 영향을 받지 않는다 — 앱보다 오래 사는 백그라운드 daemon 이 들고 있고, harkroom 은 다시 뜰 때 그 daemon 에 다시 붙는다. 보내지 않은 초안은 다시 시작해도 남지만, 열어 둔 스레드는 남지 않는다.',
 
   'projection.banner.stalled': '투영이 {ago}부터 멈춰 있다',
   /** 한 번도 못 폴링했다 — **모르는 것을 숫자로 꾸미지 않는다**. */
