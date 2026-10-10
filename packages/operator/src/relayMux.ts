@@ -37,6 +37,9 @@ export interface RelayMux {
   sessions(): AgentSessionView[];
 }
 
+/** 러너가 아니라 오퍼레이터만 가질 수 있는 능력 — 러너 announce 에 있으면 지운다(security n2). */
+const OPERATOR_CAPS: ReadonlySet<RunnerCap> = new Set<RunnerCap>(['local-terminal']);
+
 export function createRelayMux(deps: RelayMuxDeps): RelayMux {
   const known = new Map<string, { sessions: Map<string, AgentSessionView>; caps: RunnerCap[] | undefined }>();
 
@@ -51,11 +54,22 @@ export function createRelayMux(deps: RelayMuxDeps): RelayMux {
     else if (frame.type === 'session.ended') entry.sessions.delete(frame.sessionId);
   };
 
+  const ownCaps = (announce: Extract<RelayRunnerFrame, { type: 'announce' }>): RelayRunnerFrame => {
+    const claimed = announce.caps?.filter((c) => !OPERATOR_CAPS.has(c));
+    const extra = deps.extraCaps ?? [];
+    if (!announce.caps && extra.length === 0) return announce;
+    const caps = [...new Set([...(claimed ?? []), ...extra])];
+    if (!announce.caps && caps.length === 0) return announce;
+    return { ...announce, caps };
+  };
+
   return {
     onRunnerFrame(runnerId, incoming) {
-      // 옛 러너(caps 없음)에도 덧붙인다 — 그때 caps 는 이 능력 하나뿐이고, 'input' 이 없으니 서버는 입력을 열지 않는다.
-      const frame: RelayRunnerFrame = incoming.type === 'announce' && deps.extraCaps?.length
-        ? { ...incoming, caps: [...new Set([...(incoming.caps ?? []), ...deps.extraCaps])] }
+      // **러너는 오퍼레이터의 능력을 주장하지 못한다**(security n2) — 러너가 스스로 올린 'local-terminal' 은 지우고,
+      // 허브가 있을 때만 오퍼레이터가 붙인다. 옛 러너(caps 없음)에도 덧붙인다 — 그때 caps 는 이 능력 하나뿐이고,
+      // 'input' 이 없으니 서버는 입력을 열지 않는다.
+      const frame: RelayRunnerFrame = incoming.type === 'announce'
+        ? ownCaps(incoming)
         : incoming;
       track(runnerId, frame);
       const wrapped = wrapRunnerFrame(runnerId, frame);

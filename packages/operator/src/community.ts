@@ -80,8 +80,13 @@ export interface CommunityInstance {
   onRunnerExit(agentId: string, code: number | null): void;
   /** 이 커뮤니티의 로컬 설정에 있는 에이전트인가 — 러너 프레임을 어느 커뮤니티로 보낼지의 근거. */
   knowsAgent(agentId: string): boolean;
-  /** 러너 링크에서 온 프레임 — runnerId 를 달아 서버로. */
+  /**
+   * 러너 링크에서 온 프레임 — runnerId 를 달아 서버로. **`local.input` 은 버린다**(security n1) — 감사 바이트는
+   * 오퍼레이터의 허브만 올릴 수 있다(`reportLocalInput`). 러너가 직접 올리면 남의 감사를 부풀리거나 지울 수 있다.
+   */
   onRunnerFrame(runnerId: string, frame: RelayRunnerFrame): void;
+  /** 로컬 직결 허브가 센 입력 바이트 수를 서버 감사에 올린다(R1 PR-3b). 허브만 부른다. */
+  reportLocalInput(runnerId: string, sessionId: string, gen: number, bytes: number): void;
   notifyRunnerStarted(agentId: string, runnerId: string): void;
   notifyRunnerExited(runnerId: string, code: number | null): void;
   /** 러너 대신 서버에 말한다 — 인증만 이 커뮤니티의 오퍼레이터 토큰 + 그 에이전트로 바꿔서. */
@@ -250,7 +255,16 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       if (assignments.has(agentId)) deps.reconciler.onRunnerExit(agentId, code);
     },
     knowsAgent: (agentId) => agentId in agents,
-    onRunnerFrame: (runnerId, frame) => mux.onRunnerFrame(runnerId, frame),
+    onRunnerFrame: (runnerId, frame) => {
+      if (frame.type === 'local.input') {
+        deps.log(`러너가 올린 local.input 을 버린다: runner=${runnerId} — 감사 바이트는 오퍼레이터 허브만 올린다`);
+        return;
+      }
+      mux.onRunnerFrame(runnerId, frame);
+    },
+    reportLocalInput: (runnerId, sessionId, gen, bytes) => {
+      mux.onRunnerFrame(runnerId, { type: 'local.input', sessionId, gen, bytes });
+    },
     notifyRunnerStarted: (agentId, runnerId) => { link.send({ type: 'runner.started', agentId, runnerId }); },
     notifyRunnerExited: (runnerId, code) => {
       mux.forget(runnerId);
