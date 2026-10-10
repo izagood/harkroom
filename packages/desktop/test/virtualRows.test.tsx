@@ -183,8 +183,8 @@ describe('창으로 좁힌 채널 줄', () => {
     open(rows(1500), { dividerSeq: { c1: 1000 + 1494 } });
     await flush();
     const row = document.querySelector<HTMLElement>('[data-anchor-id="m1495"]')!;
-    expect(row.textContent).toContain('New messages');
-    expect(screen.getAllByText('New messages')).toHaveLength(1);
+    expect(row.textContent).toContain('새 메시지');
+    expect(screen.getAllByText('새 메시지')).toHaveLength(1);
   });
 
   it('loadOlder 앵커: 과거가 앞에 붙어도 보던 줄이 같은 자리에 있다', async () => {
@@ -217,8 +217,8 @@ describe('창으로 좁힌 채널 줄', () => {
     open(rows(300));
     await flush();
     const row = screen.getByText('줄 m299').closest('.group') as HTMLElement;
-    expect(within(row).queryByRole('toolbar', { name: 'message toolbar' })).toBeNull();
+    expect(within(row).queryByRole('toolbar', { name: '메시지 도구' })).toBeNull();
     fireEvent.mouseEnter(row);
-    expect(within(row).getByRole('toolbar', { name: 'message toolbar' })).toBeTruthy();
+    expect(within(row).getByRole('toolbar', { name: '메시지 도구' })).toBeTruthy();
   });
 });

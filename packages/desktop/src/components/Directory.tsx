@@ -115,7 +115,7 @@ export function Directory({ open, onClose, accountId }: Props) {
   return (
     <Overlay label={t('directory.label')} onClose={onClose}>
         <div className="flex items-center gap-2 border-b border-border p-3">
-          <span className="font-semibold">Directory</span>
+          <span className="font-semibold">{t('chat.directory')}</span>
           <button
             onClick={onClose}
             className="ml-auto rounded-row px-2 py-1 text-fg-muted hover:bg-surface-hover"
@@ -223,7 +223,7 @@ export function DirectoryRow({ account: a, selected: isSelected = false, showKin
       </span>
     )}
     {a.isAdmin && (
-      <span className="rounded-sm bg-warning-surface px-1 text-meta text-warning">admin</span>
+      <span className="rounded-sm bg-warning-surface px-1 text-meta text-warning">{t('chat.adminBadge')}</span>
     )}
     <StatusMark account={a} />
     {a.statusText && <span className="truncate text-meta text-fg-subtle">{a.statusText}</span>}

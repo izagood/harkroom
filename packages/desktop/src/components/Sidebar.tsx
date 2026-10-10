@@ -1261,7 +1261,7 @@ export function Sidebar({
             <InboxRowBadge />
           </button>
           <button className={`${row(false)} text-fg-muted`} onClick={onOpenDirectory}>
-            Directory
+            {t('chat.directory')}
           </button>
           {/*
             `Saved` 한 줄이 여기 있었다. **레일의 북마크 칸으로 갔다** — 문서: "북마크는
@@ -1312,7 +1312,7 @@ export function Sidebar({
               <div className="mb-1 rounded-row border border-border bg-surface-raised p-1">
                 <input
                   type="text"
-                  aria-label="New channel name"
+                  aria-label={t('chat.newChannelName')}
                   className="mb-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
                   placeholder="channel-name"
                   value={newChannelName}

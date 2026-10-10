@@ -102,11 +102,11 @@ describe('날짜 구분선', () => {
 
     const rendered = document.body.textContent ?? '';
     expect(screen.getByText('오늘')).toBeTruthy();
-    expect(screen.getByText(/new messages/i)).toBeTruthy();
+    expect(screen.getByText(/새 메시지/)).toBeTruthy();
     // 둘 다 m2 앞에, 날짜가 먼저 온다.
     expect(rendered.indexOf('yesterday talk')).toBeLessThan(rendered.indexOf('오늘'));
-    expect(rendered.indexOf('오늘')).toBeLessThan(rendered.indexOf('New messages'));
-    expect(rendered.indexOf('New messages')).toBeLessThan(rendered.indexOf('unread today'));
+    expect(rendered.indexOf('오늘')).toBeLessThan(rendered.indexOf('새 메시지'));
+    expect(rendered.indexOf('새 메시지')).toBeLessThan(rendered.indexOf('unread today'));
   });
 
   it('draws a divider before the very first message too', () => {

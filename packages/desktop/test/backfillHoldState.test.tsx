@@ -65,7 +65,7 @@ describe('첫 창 뒤채움 동안의 짧은 첫 화면', () => {
     render(<ChannelPane />);
     expect(screen.queryByText('최상위 951')).toBeNull();
     expect(screen.queryByTestId('channel-empty-state')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Load older messages' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '이전 메시지 불러오기' })).toBeNull();
     await act(async () => { vi.advanceTimersByTime(450); });
     expect(screen.getByTestId('channel-loading').textContent).toContain('메시지를 불러오는 중');
     vi.useRealTimers();
@@ -73,7 +73,7 @@ describe('첫 창 뒤채움 동안의 짧은 첫 화면', () => {
     await act(async () => { back.resolve({ messages: Array.from({ length: 30 }, (_, i) => root(921 + i)), hasMore: true }); });
     await vi.waitFor(() => expect(screen.getByText('최상위 951')).toBeTruthy());
     expect(screen.queryByTestId('channel-loading')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Load older messages' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '이전 메시지 불러오기' })).toBeTruthy();
   });
 
   it('최상위가 넉넉하면 뒤채움을 기다리지 않고 바로 그린다(「Load older」는 뒤채움 동안 숨긴다)', async () => {
@@ -83,9 +83,9 @@ describe('첫 창 뒤채움 동안의 짧은 첫 화면', () => {
     render(<ChannelPane />);
     expect(screen.getByText('최상위 1000')).toBeTruthy();
     expect(screen.queryByTestId('channel-loading')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Load older messages' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '이전 메시지 불러오기' })).toBeNull();
 
     await act(async () => { back.resolve({ messages: [root(950)], hasMore: true }); });
-    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Load older messages' })).toBeTruthy());
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: '이전 메시지 불러오기' })).toBeTruthy());
   });
 });

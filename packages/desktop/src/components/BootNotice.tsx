@@ -117,7 +117,7 @@ export function BootNotice({
   return (
     <div className="p-4 text-fg-muted" role="status" data-testid="boot-notice" data-boot-wait={speaking ? 'keychain' : 'unknown'}>
       {/* 이 줄은 그대로 둔다 — 유예 안에서는 이것이 아는 것의 전부다. */}
-      <div>Connecting…</div>
+      <div>{t('chat.connecting')}</div>
       {/* 크기를 내리지 않는다 — 아래 두 줄에 적히는 것은 **사람이 다음에 무엇을 할 수
           있는지**이고, 그것을 아랫단 11px 로 두면 유일한 안내가 화면에서 가장 작은
           글자가 된다. 본문단 13px 은 앱 기본값이라 안 적는다. */}

@@ -716,7 +716,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
 
 
   if (!activeChannelId) {
-    return <main className="flex flex-1 items-center justify-center text-fg-muted">Pick a channel to start</main>;
+    return <main className="flex flex-1 items-center justify-center text-fg-muted">{t('chat.pickChannel')}</main>;
   }
 
   const isArchived = channel?.archivedAt != null;
@@ -816,7 +816,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             onClick={() => setPinsOpen((v) => !v)}
           >
             <span aria-hidden="true">{pinsOpen ? '▾' : '▸'}</span>
-            <span>{channelPins.length} pinned</span>
+            <span>{t('chat.pinnedCount', { count: channelPins.length })}</span>
           </button>
           {pinsOpen && (
             <ul className="pb-1">
@@ -869,7 +869,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
               className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted"
               onClick={() => void getController().loadOlder(activeChannelId ?? undefined)}
             >
-              Load older messages
+              {t('chat.loadOlder')}
             </button>
           </div>
         )}

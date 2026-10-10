@@ -83,7 +83,7 @@ describe('채널 이름 바꾸기 UI', () => {
     const c = fakeController();
     sidebar();
     openEdit();
-    fireEvent.change(screen.getByLabelText('Topic'), { target: { value: '새 topic' } });
+    fireEvent.change(screen.getByLabelText('주제'), { target: { value: '새 topic' } });
     save();
     expect(c.updateChannel).toHaveBeenCalledWith('c1', { topic: '새 topic' });
   });

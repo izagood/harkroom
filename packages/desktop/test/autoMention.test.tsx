@@ -258,7 +258,7 @@ describe('자동 멘션 배선 — Workspace 를 통째로 (#173)', () => {
     const { reply } = mount({ threadRootId: 'm1' });
 
     // 스레드 패널의 작성창이다 — 채널 작성창의 칩과 구분해 그 안에서 찾는다.
-    const box = await screen.findByPlaceholderText('Reply…') as HTMLTextAreaElement;
+    const box = await screen.findByPlaceholderText('답글…') as HTMLTextAreaElement;
     const panel = box.closest('section')!;
     await waitFor(() => expect(panel.querySelector('[data-testid="auto-mention"]')).toBeTruthy());
     /**

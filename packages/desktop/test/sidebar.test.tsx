@@ -70,14 +70,14 @@ describe('Sidebar', () => {
       render(<SidebarWithSheet panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       fireEvent.click(screen.getByTestId('add-channel'));
-      fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'design' } });
+      fireEvent.change(screen.getByLabelText('새 채널 이름'), { target: { value: 'design' } });
       fireEvent.click(screen.getByText('만들기'));
 
       // #182 이후 공개 범위가 인자로 함께 간다. 체크박스를 건드리지 않았으므로 'public' 이다 —
       // 기본값이 조용히 private 이 되면 만든 사람 말고는 아무도 못 보는 채널이 생긴다.
       await waitFor(() => expect(c.createChannel).toHaveBeenCalledWith('design', 'public'));
       // 성공하면 입력 자리는 닫힌다.
-      await waitFor(() => expect(screen.queryByLabelText('New channel name')).toBeNull());
+      await waitFor(() => expect(screen.queryByLabelText('새 채널 이름')).toBeNull());
     });
 
     it('서버가 거절하면 사용자에게 보인다 — 조용히 사라지지 않는다', async () => {
@@ -87,12 +87,12 @@ describe('Sidebar', () => {
       render(<SidebarWithSheet panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       fireEvent.click(screen.getByTestId('add-channel'));
-      fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'general' } });
+      fireEvent.change(screen.getByLabelText('새 채널 이름'), { target: { value: 'general' } });
       fireEvent.click(screen.getByText('만들기'));
 
       expect((await screen.findByRole('alert')).textContent).toContain('이미 있는 이름이다');
       // 실패했으니 입력 자리는 열린 채로 남아 고쳐 쓸 수 있어야 한다.
-      expect(screen.getByLabelText('New channel name')).toBeTruthy();
+      expect(screen.getByLabelText('새 채널 이름')).toBeTruthy();
     });
 
     it('이름 규칙에 맞지 않으면 서버에 보내지 않고 안내한다', async () => {
@@ -101,7 +101,7 @@ describe('Sidebar', () => {
       render(<SidebarWithSheet panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
 
       fireEvent.click(screen.getByTestId('add-channel'));
-      fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'Design Team' } });
+      fireEvent.change(screen.getByLabelText('새 채널 이름'), { target: { value: 'Design Team' } });
       fireEvent.click(screen.getByText('만들기'));
 
       expect((await screen.findByRole('alert')).textContent).toContain('1~48자');
@@ -162,8 +162,8 @@ describe('Sidebar', () => {
       fireEvent.click(screen.getByTestId('channel-sheet-edit'));
 
       expect(screen.getByText('#general 편집')).toBeTruthy();
-      expect((screen.getByLabelText('Topic') as HTMLInputElement).value).toBe('');
-      expect((screen.getByLabelText('Repository') as HTMLInputElement).value).toBe('');
+      expect((screen.getByLabelText('주제') as HTMLInputElement).value).toBe('');
+      expect((screen.getByLabelText('저장소') as HTMLInputElement).value).toBe('');
     });
 
     it('topic 만 고치면 repo 키가 요청에 없다 — 바인딩이 조용히 끊기지 않는다', async () => {
@@ -176,7 +176,7 @@ describe('Sidebar', () => {
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 설정…' }));
       fireEvent.click(screen.getByTestId('channel-sheet-edit'));
 
-      fireEvent.change(screen.getByLabelText('Topic'), { target: { value: '일반 Talk' } });
+      fireEvent.change(screen.getByLabelText('주제'), { target: { value: '일반 Talk' } });
       fireEvent.click(screen.getByText('저장'));
 
       await waitFor(() => expect(c.updateChannel).toHaveBeenCalledWith('c1', { topic: '일반 Talk' }));
@@ -193,8 +193,8 @@ describe('Sidebar', () => {
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 설정…' }));
       fireEvent.click(screen.getByTestId('channel-sheet-edit'));
 
-      expect((screen.getByLabelText('Repository') as HTMLInputElement).value).toBe('old-repo');
-      fireEvent.change(screen.getByLabelText('Repository'), { target: { value: '' } });
+      expect((screen.getByLabelText('저장소') as HTMLInputElement).value).toBe('old-repo');
+      fireEvent.change(screen.getByLabelText('저장소'), { target: { value: '' } });
       fireEvent.click(screen.getByText('저장'));
 
       // 필드를 비운 것은 해제 의사다. undefined 가 아니라 null 이어야 한다 —
@@ -213,7 +213,7 @@ describe('Sidebar', () => {
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 설정…' }));
       fireEvent.click(screen.getByTestId('channel-sheet-edit'));
 
-      fireEvent.change(screen.getByLabelText('Repository'), { target: { value: 'new-repo' } });
+      fireEvent.change(screen.getByLabelText('저장소'), { target: { value: 'new-repo' } });
       fireEvent.click(screen.getByText('저장'));
 
       await waitFor(() => expect(c.updateChannel).toHaveBeenCalledWith('c1', { repo: 'new-repo' }));
@@ -242,7 +242,7 @@ describe('Sidebar', () => {
       openMenuFor('general');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 설정…' }));
       fireEvent.click(screen.getByTestId('channel-sheet-edit'));
-      fireEvent.change(screen.getByLabelText('Repository'), { target: { value: 'new-repo' } });
+      fireEvent.change(screen.getByLabelText('저장소'), { target: { value: 'new-repo' } });
       fireEvent.click(screen.getByText('저장'));
 
       await waitFor(() => expect(screen.queryByText('#general 편집')).toBeNull());
@@ -277,7 +277,7 @@ describe('Sidebar', () => {
       openMenuFor('general');
       fireEvent.click(screen.getByRole('menuitem', { name: '채널 설정…' }));
       fireEvent.click(screen.getByTestId('channel-sheet-edit'));
-      fireEvent.change(screen.getByLabelText('Repository'), { target: { value: 'new-repo' } });
+      fireEvent.change(screen.getByLabelText('저장소'), { target: { value: 'new-repo' } });
     };
 
     it('투영이 설정되지 않았으면 repo 입력에 경고를 보인다', () => {
@@ -585,7 +585,7 @@ describe('채널 컨텍스트 메뉴 (#111)', () => {
     const items = screen.getAllByRole('menuitem').map((el) => el.textContent);
 
     expect(items).not.toContain('Archive');
-    expect(items).not.toContain('Delete');
+    expect(items).not.toContain('지우기');
     expect(items).not.toContain('Leave');
     expect(items).not.toContain('Mark unread');
     expect(items).not.toContain('Move to section');

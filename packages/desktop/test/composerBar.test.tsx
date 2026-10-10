@@ -38,7 +38,7 @@ describe('컴포저 하단 바 (#146)', () => {
     render(<Composer onSend={onSend} scopeKey="c1" />);
 
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '보낼 말' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    fireEvent.click(screen.getByRole('button', { name: '메시지 보내기' }));
 
     expect(onSend).toHaveBeenCalled();
   });
@@ -47,7 +47,7 @@ describe('컴포저 하단 바 (#146)', () => {
   // 없어서 "내가 뭘 잘못했나"가 된다.
   it('본문이 비어 있으면 전송 버튼이 비활성이다', () => {
     render(<Composer onSend={vi.fn()} scopeKey="c1" />);
-    const btn = () => screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement;
+    const btn = () => screen.getByRole('button', { name: '메시지 보내기' }) as HTMLButtonElement;
     expect(btn().disabled).toBe(true);
 
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'x' } });
@@ -58,14 +58,14 @@ describe('컴포저 하단 바 (#146)', () => {
   // input 과 연결되지 않아 입력이 접근 불가가 된다 — 초판이 그랬다.
   it('첨부 입력이 접근성 이름으로 도달 가능하다', () => {
     render(<Composer onSend={vi.fn()} scopeKey="c1" />);
-    const input = screen.getByLabelText('Attach a file');
+    const input = screen.getByLabelText('파일 첨부');
     expect(input.tagName).toBe('INPUT');
     expect(input.getAttribute('type')).toBe('file');
   });
 
   it('@ 버튼이 목록을 열고 다시 눌러 닫는다', () => {
     render(<Composer onSend={vi.fn()} scopeKey="c1" />);
-    const at = screen.getByRole('button', { name: 'Add mention' });
+    const at = screen.getByRole('button', { name: '멘션 더하기' });
 
     fireEvent.click(at);
     expect(screen.getAllByRole('option').length).toBeGreaterThan(0);
@@ -82,7 +82,7 @@ describe('컴포저 하단 바 (#146)', () => {
     expect(screen.getAllByRole('option').length).toBeGreaterThan(0);
 
     const container = screen.getByTestId('composer');
-    const attach = screen.getByLabelText('Attach a file');
+    const attach = screen.getByLabelText('파일 첨부');
     fireEvent.blur(container, { relatedTarget: attach });
 
     expect(screen.getAllByRole('option').length).toBeGreaterThan(0);

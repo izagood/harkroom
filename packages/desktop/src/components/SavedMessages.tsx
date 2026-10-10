@@ -153,7 +153,7 @@ export function SavedMessages({ open, onClose }: Props) {
   return (
     <Overlay label={t('saved.label')} onClose={onClose}>
         <div className="flex items-center gap-2 border-b border-border p-3">
-          <span className="font-semibold">Saved</span>
+          <span className="font-semibold">{t('chat.saved')}</span>
           <button
             onClick={onClose}
             className="ml-auto rounded-row px-2 py-1 text-fg-muted hover:bg-surface-hover"
