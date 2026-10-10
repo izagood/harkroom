@@ -44,10 +44,10 @@ export function systemText(
   return t(parsed.key as MessageKey, args);
 }
 
-/** 제어 문자·방향 바꿈 문자를 지운다 — 인자로 줄을 꾸미거나 순서를 뒤집지 못하게(C4). 줄바꿈은 공백으로. */
+/** 제어 문자(C0·C1)·방향 바꿈 문자·줄/문단 구분·BOM 을 지운다 — 인자로 줄을 꾸미거나 순서를 뒤집지 못하게(C4). 줄바꿈은 공백으로. */
 function clean(s: string): string {
   // eslint-disable-next-line no-control-regex
-  return s.replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, ' ');
+  return s.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g, ' ');
 }
 
 /**

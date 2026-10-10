@@ -61,6 +61,13 @@ describe('systemText', () => {
     expect(out).not.toMatch(/[‮\n]/);
   });
 
+  it('C1 제어·아랍 글자 표지·줄/문단 구분·BOM 도 지운다(C4, security n3)', () => {
+    const slug = 'a\u0085b\u009bc\u061cd\u2028e\u2029f\ufeffg';
+    const out = systemText(sys({ key: 'system.skill.proposed', args: { slug } }), accounts, tEn)!;
+    expect(out).not.toMatch(/[\u0080-\u009f\u061c\u2028\u2029\ufeff]/);
+    expect(out).toContain('a b c d e f g');
+  });
+
   it('막힘 사유 code 는 사전에 있는 것만 옮기고 모르는 것은 글자 그대로(security n2)', () => {
     const base = { agentId: 'a1', connector: 'lab', request: 'GET /x' };
     expect(systemText(sys({ key: 'system.apiBlocked', args: { ...base, code: 'not_granted' } }), accounts, tKo)).toContain('권한 없음');
