@@ -42,6 +42,7 @@ import { rewriteMcpConfigTokens } from './mcpConfig.js';
 import { claudeConfigPath } from './mcpConfig.js';
 import { fileSecrets } from './secrets.js';
 import { createRunnerLinkServer } from './runnerLink.js';
+import { createLocalTerminalHub } from './localTerminal.js';
 import type { CommunityInstance } from './community.js';
 import { createTurnSecrets } from './turnSecrets.js';
 import { readConfig } from './config.js';
@@ -258,8 +259,15 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
 
   // 러너 링크(스펙 2026-09-20 §5). 러너 프레임은 그 에이전트를 아는 커뮤니티로 간다 — 에이전트
   // id 는 서버별 UUID 라 두 커뮤니티가 같은 id 를 알 일은 없다.
+  // 같은 머신의 터미널 직결(R1 PR-3). 러너 프레임을 서버로 올리는 것과 **따로** 본다 — 서버 경로는 그대로다.
+  // `runnerLink` 는 아래에서 만들어지지만 허브가 러너에 내리는 것은 앱 요청 뒤에만 일어난다.
+  const localTerminal = createLocalTerminalHub({
+    sendToRunner: (runnerId, frame) => runnerLink.send(runnerId, frame),
+    log,
+  });
   const runnerLink = createRunnerLinkServer({
     onFrame: (runnerId, agentId, frame) => {
+      localTerminal.onRunnerFrame(runnerId, frame);
       for (const c of communities) if (c.knowsAgent(agentId)) c.onRunnerFrame(runnerId, frame);
     },
     // 러너의 MCP·REST 요청 — 그 에이전트를 아는 커뮤니티의 서버로 나른다(스펙 §5). 인증은
@@ -289,7 +297,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // 같은 멘션을 둘이 집지 않는다 — 프로세스가 죽기를 기다리던 공백이 여기서 사라진다.
     // `registry` 는 아래에서 만들어지지만 이 콜백은 그 뒤에만 불린다(러너가 붙어야 온다).
     // relay 링크가 끊겼다 = 러너가 죽었거나 오퍼레이터를 놓았다 — 그 러너가 쥔 턴 자리를 돌려받는다.
-    onClose: (runnerId) => { turnSlots.releaseRunner(runnerId); cleanupOwners.releaseRunner(runnerId); },
+    onClose: (runnerId) => { turnSlots.releaseRunner(runnerId); cleanupOwners.releaseRunner(runnerId); localTerminal.forgetRunner(runnerId); },
     // relay 가 다시 붙었다 — 끊긴 사이 잃은 놓기 요청이 자리를 묶어 두지 않게 그 러너의 자리를 털어 낸다(L1).
     onRelayAttach: (runnerId) => { turnSlots.releaseRunner(runnerId); cleanupOwners.releaseRunner(runnerId); },
     onNotice: (runnerId, agentId, notice) => {
@@ -575,6 +583,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     workspaceCleanup,
     log,
     runnerLink,
+    localTerminal,
   });
 
   // 로그인 진행을 소켓 이벤트로 흘린다. **러너 종료 통지와 같은 길**이다 — 앱은 이미 그
