@@ -13,7 +13,7 @@ describe('errorText', () => {
   it('뜻이 code 하나로 정해지는 오류는 고른 언어의 사전 문장이다', () => {
     const e = new ApiError(409, 'handle_taken', 'an account with this handle already exists');
     expect(errorText(e, tEn)).toBe('That handle is already taken.');
-    expect(errorText(e, tKo)).toBe('이미 쓰는 이름이다.');
+    expect(errorText(e, tKo)).toBe('이미 누가 쓰는 이름이다.');
   });
 
   it('모르는 code·자리마다 뜻이 다른 code 는 서버 원문을 그대로 보인다 — 「무엇이」 를 잃지 않는다', () => {
