@@ -698,7 +698,6 @@ export const ko = {
   'agents.grid.tablist': '에이전트와 팀',
   'agents.grid.tabTeams': '팀',
 
-  'agents.memory.chars': '{n}자',
   'agents.memory.charsOfMax': '{n} / {max}자',
   /** 메모리 고도화 M5 — 사람이 기억을 고치고 이전 판으로 되돌린다. */
   'agents.memory.cancelEdit': '취소',
@@ -1050,7 +1049,6 @@ export const ko = {
   // `waitChain.link` 가 세운 규율이다. 한국어 쪽 결과 글자는 그대로다.
   // ---------------------------------------------------------------------------
 
-  'runner.exit.notFound': '{what} 를 찾을 수 없다 — 설치하고 PATH 에 있는지 확인하라. {hint}',
 
   // ---------------------------------------------------------------------------
   // sidebar — **키 순서는 `en.ts` 와 같다**(덩어리 알파벳 → 그 안 키 알파벳).
@@ -1125,7 +1123,6 @@ export const ko = {
     '부를 수 있게: 이 채널의 작성창과 멘션 후보 맨 위에 서고, 눌렀을 때만 불린다. '
     + '매 줄에: 사람이 쓰는 글 앞에 자동으로 붙는다 — 작성창의 칩 × 로 한 메시지에서만 뺄 수 있다.',
   'sidebar.members.autoMentionNoteReadOnly': ' 바꾸는 것은 admin 만 할 수 있다.',
-  'sidebar.members.close': '닫기',
   'sidebar.members.empty': '멤버가 없다',
   'sidebar.members.invite': '초대',
   'sidebar.members.inviteFailed': '초대에 실패했다',
@@ -1133,10 +1130,6 @@ export const ko = {
   'sidebar.members.inviteSelect': '초대할 계정',
   'sidebar.members.kindAgent': '에이전트',
   'sidebar.members.kindHuman': '사람',
-  'sidebar.members.lastMemberWarning':
-    '나가면 아무도 이 채널을 볼 수 없다 — 마지막 멤버다. 채널은 지워지지 않는다.',
-  'sidebar.members.leave': '나가기',
-  'sidebar.members.leaveConfirm': '정말 나가기',
   'sidebar.members.leaveFailed': '나가기에 실패했다',
   'sidebar.members.listFailed': '멤버 목록을 받지 못했다',
   'sidebar.members.loading': '불러오는 중…',
@@ -1157,7 +1150,6 @@ export const ko = {
   'sidebar.members.teamPick': '팀 선택…',
   'sidebar.members.teamSelect': '추가할 팀',
   'sidebar.members.teamSkipped': '건너뜀: {names}',
-  'sidebar.members.title': '{name} 멤버',
 
   'sidebar.menu.archive': '보관',
   'sidebar.menu.copyId': '채널 ID 복사',
@@ -1259,8 +1251,6 @@ export const ko = {
   'threadModel.threadSet': "스레드 지정",
   'threadModel.agentSet': "@{handle} 지정",
   'threadModel.agentSetUnknown': "에이전트 지정",
-  'threadModel.stale': "쓰지 않음 — 지정한 뒤 에이전트의 하네스가 바뀌었다",
-  'threadModel.oldRunner': "이 에이전트의 러너가 스레드 모델을 아직 모를 수 있다 — 갱신 전까지는 기본값으로 돈다",
   'threadModel.chipLabel': "@{handle} 모델: {value}",
   'threadModel.picker.title': "이 스레드의 @{handle} 모델",
   'threadModel.picker.composerTitle': "이 글로 부를 @{handle} 모델",
@@ -1811,7 +1801,6 @@ export const ko = {
   // ---------------------------------------------------------------------------
 
   'channel.doc.cancel': '취소',
-  'channel.doc.close': '닫기',
   'channel.doc.conflict':
     '다른 사람이 먼저 고쳤다. 아래 현재 내용을 확인하고 다시 저장하면 내 편집으로 덮어쓴다.',
   'channel.doc.edit': '편집',
@@ -1851,7 +1840,6 @@ export const ko = {
   'channelSheet.cancel': '취소',
   'channelSheet.close': '채널 설정 닫기',
   'channelSheet.edit': '편집',
-  'channelSheet.info.name': '이름',
   'channelSheet.info.none': '없음',
   'channelSheet.info.private': '비공개',
   'channelSheet.info.public': '공개',
@@ -1866,7 +1854,6 @@ export const ko = {
   'channelSheet.notify.failed': '알림 수준을 바꾸지 못했다',
   'channelSheet.notify.legend': '이 채널에서 무엇을 알릴까',
   'channelSheet.open': '#{name} 채널 설정 열기',
-  'channelSheet.save': '저장',
   'channelSheet.tab.info': '정보',
   'channelSheet.tab.notify': '알림',
   'channelSheet.tab.members': '멤버',
@@ -2201,7 +2188,6 @@ export const ko = {
   'agents.scope.mcp': 'MCP 서버',
   'agents.scope.mcpLoading': '레지스트리를 읽는 중…',
   'agents.scope.mcpListFailed': 'MCP 레지스트리를 읽지 못했다',
-  'agents.scope.mcpNone': '레지스트리가 비었다 — 설정 › 연동 › MCP 서버에서 admin 이 이름을 넣는다.',
   'agents.scope.errInvariant': '개인 자격증명은 소유자 전용 호출과 짝이다: 둘을 함께 정하고, personal MCP 서버는 개인 자격증명이 필요하다.',
   'agents.scope.errWidening': '한 번 좁힌 범위는 넓힐 수 없다 — 이 에이전트에 이미 개인 데이터가 있을 수 있다.',
   'agents.scope.errUnknownMcp': '레지스트리에 없는 MCP 서버다.',
@@ -2310,7 +2296,6 @@ export const ko = {
   'secrets.widenWarn': '@{handle} 가 정한 값이라 @{handle} 도 알고 있다. 다른 에이전트에게 주기 전에 [값 바꾸기]를 권한다.',
   'secrets.adoptNote': '내가 다시 주거나 넓히면 @{handle} 는 이 비밀을 더 이상 회전할 수 없다(소유자가 맡은 비밀).',
   'secrets.notice.open': '비밀 보기',
-  'agents.grants.secretCreate': '비밀 만들기',
   'agents.grants.secretCreateOn': '허용됨',
   'agents.grants.secretCreateHeading': '비밀 만들기',
   'agents.grants.secretCreateNote': '이 에이전트가 내가 요청한 턴에서 비밀을 만들거나(서버가 값 생성) 받은 값을 등록할 수 있다. 만든 비밀의 주인은 나이고, 이 채널로 그 에이전트에게만 부여된다. 만들 때마다 그 스레드에 알림 줄이 남고, 설정 › 비밀과 API 의 배지로도 볼 수 있다.',
@@ -2562,8 +2547,6 @@ export const ko = {
   'agents.grants.orgWideWarning': '{owners} 조직의 모든 저장소(앞으로 생길 것 포함)에 머지 권한을 준다.',
   'agents.grants.errForbidden': '머지 권한은 이 에이전트의 소유자(사람)만 줄 수 있다',
   'agents.grants.errFailed': '저장하지 못했다: {reason}',
-  'agents.grants.ghUser.select': 'GitHub 계정',
-  'agents.grants.ghUser.placeholder': '계정을 고른다…',
   'agents.grants.ghUser.activeTag': '{login} (gh 활성 계정)',
   'agents.grants.ghUser.noAccounts': '이 기기의 gh 에 로그인된 GitHub 계정이 없다. 먼저 터미널에서 gh auth login 을 한다.',
   'agents.grants.ghUser.ghFailed': 'gh 계정 목록을 읽지 못했다: {reason}',

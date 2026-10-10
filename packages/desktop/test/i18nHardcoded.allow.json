@@ -1,0 +1,246 @@
+{
+  "components/BootNotice.tsx": [
+    "Connecting…"
+  ],
+  "components/ChannelEditForm.tsx": [
+    "Channel name",
+    "Topic",
+    "Repository"
+  ],
+  "components/ChannelPane.tsx": [
+    "Pick a channel to start",
+    "Load older messages"
+  ],
+  "components/Composer.tsx": [
+    "Mentions to keep",
+    "Mention suggestions",
+    "Kept mentions",
+    "Dismiss long paste",
+    "Dismiss pasted link",
+    "Undo send",
+    "Undo send",
+    "Add mention",
+    "Attach a file",
+    "Send message"
+  ],
+  "components/ConnectUpdateBanner.tsx": [
+    "Could not check for updates",
+    "Update"
+  ],
+  "components/Directory.tsx": [
+    "Directory"
+  ],
+  "components/LeasePanel.tsx": [
+    "Active work",
+    "No active work"
+  ],
+  "components/MessageEditBox.tsx": [
+    "Mention suggestions",
+    "Save",
+    "Cancel"
+  ],
+  "components/MessageItem.tsx": [
+    "Delete message?"
+  ],
+  "components/MessageRows.tsx": [
+    "New messages"
+  ],
+  "components/MessageToolbar.tsx": [
+    "message toolbar",
+    "Add reaction",
+    "More actions"
+  ],
+  "components/Reactions.tsx": [
+    "Close reaction picker"
+  ],
+  "components/RecoveryKeyStep.tsx": [
+    "Save your recovery key",
+    "This key restores the community&apos;s secret vault if the hosting service ever has to be rebuilt. It is shown",
+    "only once",
+    "— nobody, including the operator, keeps a copy. If you leave this screen before saving it, it can&apos;t be shown again.",
+    "Copy",
+    "Save to file",
+    "Copied keys can stay in clipboard history or sync to your other devices. A password manager is the safest place to keep it.",
+    "I saved the recovery key somewhere safe.",
+    "Continue"
+  ],
+  "components/SavedMessages.tsx": [
+    "Saved"
+  ],
+  "components/Sidebar.tsx": [
+    "Directory",
+    "New channel name"
+  ],
+  "components/ThreadPanel.tsx": [
+    "Reply…"
+  ],
+  "components/ThreadParticipants.tsx": [
+    "터미널 ▾"
+  ],
+  "components/WakeRow.tsx": [
+    "다시 봅니다",
+    "에 다시 봅니다"
+  ],
+  "components/settings/AgentsSettings.tsx": [
+    "Agent name",
+    "Agent name",
+    "Agent instructions",
+    "Agent instructions",
+    "AI configuration",
+    "Use harness defaults",
+    "Customize for this agent",
+    "Effort",
+    "Agent harness",
+    "Agent harness",
+    "Account pool",
+    "Account pool",
+    "Use the default pool",
+    "This machine only — pools are local directories, so this is not shared with other devices.",
+    "Restart the runner for a change to take effect.",
+    "Applied when the agent is created, before its runner starts.",
+    "Mention permission",
+    "Mention permission",
+    "Working directory",
+    "Working directory",
+    "Owner"
+  ],
+  "components/settings/ClaudeAccountsSettings.tsx": [
+    "Claude accounts",
+    "Manage the Claude account pools your agent runners use.",
+    "Account management is not available in this build. It needs the desktop app, which runs the local daemon that owns these directories.",
+    "Claude accounts",
+    "Group accounts into pools. A runner uses one pool and spreads new threads across its accounts by usage; a thread stays on its account unless that account nears its limit.",
+    "Runners pick up account changes here on their next turn — no restart needed. Threads already on an account stay on it; new threads follow the change.",
+    "Accounts outside any pool",
+    "These were created before pools existed. Move them into a pool so runners can use them. Signing in again may be required afterwards.",
+    "Move into a pool",
+    "Ungrouped",
+    "Default pool",
+    "used by agents with no pool of their own",
+    "· new threads go to one of the two accounts with the most weekly room per hour left, picked in proportion to that room; order breaks ties",
+    "Make default",
+    "Add account",
+    "Team",
+    "Signed in as",
+    "same sign-in as",
+    "Sign in again",
+    "Opened Terminal for",
+    ". Make your choice there, then type /exit — new threads use this account again after that.",
+    "is back — new threads can use it again.",
+    "New pool",
+    "New pool",
+    "Pool name",
+    "Create",
+    "Cancel",
+    "Starting sign-in…",
+    "Open this link and sign in, then paste the code below.",
+    "Use a private (incognito) browser window. Otherwise the existing session signs this account into the same login again.",
+    "Use a private (incognito) browser window when adding a second account. Otherwise the existing session signs you into the same account again.",
+    "Starting sign-in…",
+    "Cancel",
+    "Name, pool and order stay; only the sign-in changes.",
+    "Use a private browser window, or you get the same login again.",
+    "Turns already running on this account are not stopped.",
+    "Score",
+    "· skipped for new threads",
+    "Code from the browser",
+    "paste here",
+    "Submit"
+  ],
+  "components/settings/ClaudeAssignThresholds.tsx": [
+    "New threads skip an account at",
+    "% (5-hour) or",
+    "% (weekly).",
+    "A thread moves at",
+    "% or",
+    "Edit limits",
+    "Use whole percentages from 1 to 100.",
+    "Save",
+    "Cancel"
+  ],
+  "components/settings/CommunitySettings.tsx": [
+    "Add a community",
+    "Sign in to another harkroom server. The communities you are already in stay connected.",
+    "Add community",
+    "커뮤니티 추가",
+    "Viewing",
+    "Switch to",
+    "Rename",
+    "Remove",
+    "Display name on this device. Leave it empty to use the server host name.",
+    "Saving…",
+    "Save",
+    "Cancel",
+    "Remove",
+    "from this device? It stays on the server — your session there is not signed out, and other devices keep working. You will need to sign in again to add it back.",
+    "Removing…",
+    "Remove from this device",
+    "Keep it"
+  ],
+  "components/settings/HandleGroupsSettings.tsx": [
+    "구성원 ("
+  ],
+  "components/settings/ModelPicker.tsx": [
+    "Model",
+    "Model name",
+    "Model"
+  ],
+  "components/settings/ProfileSettings.tsx": [
+    "Profile photo",
+    "Upload",
+    "Remove"
+  ],
+  "components/settings/SkillsSettings.tsx": [
+    "제안자 @"
+  ],
+  "components/settings/UpdatesSettings.tsx": [
+    "Current version",
+    "New version",
+    "Checking…",
+    "Check now",
+    "Installing…",
+    "Restart to install",
+    "Installing an update restarts harkroom. That does not disturb your agents: they are owned by a background daemon that outlives the app, and harkroom re-attaches to it on launch. Unsent drafts are kept across a restart; which thread you had open is not."
+  ],
+  "components/settings/WorkspaceSettings.tsx": [
+    "Upload",
+    "Remove"
+  ],
+  "screens/ConnectScreen.tsx": [
+    "Create a community",
+    "Sign in to another community",
+    "Community",
+    "Ready. Create the first admin account for this community.",
+    "Login ID",
+    "Handle (@)",
+    "Display name",
+    "Password",
+    "This can take a while. You can close the app — we saved this, and it will be here when you return.",
+    "Provisioning service URL",
+    "This looks like the new community's own address — it does not exist yet. Enter the service that creates communities.",
+    "The service that creates communities — not your new community's address. It comes with your invite code.",
+    "Community name",
+    "Invite code",
+    "Email",
+    "Server URL",
+    "Login ID",
+    "Login ID",
+    "Handle (@)",
+    "Display name",
+    "Invite token",
+    "Password",
+    "Create admin account",
+    "Waiting…",
+    "Create community",
+    "Sign in",
+    "Create account",
+    "Join with invite",
+    "Have an invite token? Join this community",
+    "First run? Create the admin account",
+    "Have an invite code? Create a hosted community",
+    "Discard and go back to sign in",
+    "Back to sign in",
+    "Back to sign in",
+    "Cancel"
+  ]
+}
