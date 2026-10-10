@@ -6,6 +6,7 @@ import { getController } from '../state/controller';
 import { StatusMark } from './Identity';
 import { presenceView, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from '../lib/presenceView';
 import { useT } from '../i18n/useT';
+import { errorText } from '../lib/errorText';
 
 interface Props {
   open: boolean;
@@ -62,7 +63,7 @@ export function Directory({ open, onClose, accountId }: Props) {
       () => { if (alive) setLoad({ kind: 'ready' }); },
       (err: unknown) => {
         if (!alive) return;
-        setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        setLoad({ kind: 'error', message: errorText(err, t) });
       },
     );
     return () => { alive = false; };

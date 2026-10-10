@@ -20,6 +20,7 @@ import { hasCapability } from '../../lib/capabilities';
 import { SettingsGroup } from './primitives';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { useT } from '../../i18n/useT';
+import { errorText } from '../../lib/errorText';
 
 const NAME_RE = /^[a-z0-9-]{1,32}$/;
 
@@ -51,7 +52,7 @@ export function McpServersSection() {
     if (!NAME_RE.test(name)) { setError(t('mcpServers.badName')); return; }
     setBusy(true);
     try { await getController().putMcpServer(name, kind); setName(''); reload(); }
-    catch (e) { setError(t('mcpServers.saveFailed', { reason: e instanceof Error ? e.message : String(e) })); }
+    catch (e) { setError(t('mcpServers.saveFailed', { reason: errorText(e, t) })); }
     finally { setBusy(false); }
   };
   /**
@@ -65,7 +66,7 @@ export function McpServersSection() {
     setError(null);
     setRemoving(true);
     try { await getController().deleteMcpServer(row.name); setConfirming(null); reload(); }
-    catch (e) { setError(t('mcpServers.deleteFailed', { reason: e instanceof Error ? e.message : String(e) })); }
+    catch (e) { setError(t('mcpServers.deleteFailed', { reason: errorText(e, t) })); }
     finally { setRemoving(false); }
   };
 

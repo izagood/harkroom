@@ -47,6 +47,7 @@ import { SidebarToggleIcon } from './SidebarToggleIcon';
 // 그 갈림의 근거는 `i18n/index.ts::Translate` 머리말에 있다.
 import { useT } from '../i18n/useT';
 import type { MessageKey, Translate } from '../i18n';
+import { errorText } from '../lib/errorText';
 
 /**
  * 메뉴에 그리는 이름. 값(`all`/`mentions`/`none`)은 저장·전송용이라 번역하지 않는다.
@@ -371,7 +372,7 @@ export function Sidebar({
       (info) => setDeleteCount(info.messageCount),
       (err: unknown) => {
         setDeleteCount('error');
-        setDeleteError(err instanceof Error ? err.message : t('sidebar.delete.countFailed'));
+        setDeleteError(errorText(err, t, t('sidebar.delete.countFailed')));
       },
     );
   };
@@ -387,7 +388,7 @@ export function Sidebar({
       await getController().deleteChannel(channelId);
       closeDelete();
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : t('sidebar.delete.failed'));
+      setDeleteError(errorText(err, t, t('sidebar.delete.failed')));
     }
   };
 
@@ -408,7 +409,7 @@ export function Sidebar({
       closeCreate();
     } catch (err) {
       // 실패를 조용히 삼키면 사용자는 눌렀는데 아무 일도 안 난 것으로 본다.
-      setCreateError(err instanceof Error ? err.message : t('sidebar.channel.createFailed'));
+      setCreateError(errorText(err, t, t('sidebar.channel.createFailed')));
     }
   };
 

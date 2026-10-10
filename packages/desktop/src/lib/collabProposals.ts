@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CollabProposal, CollabProposalsView, CollabRepoView } from '@harkroom/shared';
 import { getController } from '../state/controller';
+import { errorTextNow } from './errorText';
 
 /**
  * 협업 탭이 볼 것을 서버에 물어 오는 자리(`GET /collab/proposals`, `docs/hub-seat.md` 0단계).
@@ -40,7 +41,7 @@ async function askOnce(): Promise<void> {
     shared = { kind: 'known', view: await getController().api.collabProposals() };
   } catch (err) {
     // 사유를 지어내지 않는다. 화면이 원인을 만들면 사람은 서버 로그를 볼 이유를 잃는다.
-    shared = { kind: 'unknown', reason: err instanceof Error ? err.message : String(err) };
+    shared = { kind: 'unknown', reason: errorTextNow(err) };
   }
   for (const listener of listeners) listener(shared);
 }

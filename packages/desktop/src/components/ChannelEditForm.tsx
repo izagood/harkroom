@@ -4,6 +4,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
 import { useT } from '../i18n/useT';
+import { errorText } from '../lib/errorText';
 
 /**
  * 채널 이름·주제·저장소 편집 폼(UX ⑦b-2). `Sidebar` 의 인라인 폼을 **그대로** 꺼냈다 — 규칙과 그 근거
@@ -65,7 +66,7 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
         setEditError(t('sidebar.edit.nameTaken'));
         return;
       }
-      setEditError(err instanceof Error ? err.message : t('sidebar.edit.failed'));
+      setEditError(errorText(err, t, t('sidebar.edit.failed')));
     }
   };
 

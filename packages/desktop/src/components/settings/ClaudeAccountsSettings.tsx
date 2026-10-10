@@ -67,6 +67,7 @@ import { ClaudeAssignThresholdsRow } from './ClaudeAssignThresholds';
 import { refreshKey, usageFor, usageUpdatedAt, useProviderUsage } from '../../lib/providerUsage';
 import { useT } from '../../i18n/useT';
 import type { Translate } from '../../i18n';
+import { errorText } from '../../lib/errorText';
 
 /** 제공업체 계정 화면 안의 Claude 칸. `SettingsPage` 와 같은 인자를 받아 `Shell` 로 갈아 끼운다. */
 function ClaudeSection({ description, actions, children }: {
@@ -189,7 +190,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
     } catch (err) {
       // **조회 실패와 빈 풀을 구분한다.** 실패를 빈 목록으로 그리면 사용자는 자기 계정이
       // 사라진 줄 안다.
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err, t));
     }
   }, [available]);
 
@@ -221,7 +222,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
       setTerminalBack(null);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err, t));
     }
   }, []);
 
@@ -284,7 +285,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
       });
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err, t));
     }
   };
 
@@ -301,7 +302,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
       setLogin((cur) => (cur && cur.account === account ? { ...cur, loginId } : cur));
     } catch (err) {
       setLogin(null);
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err, t));
     }
   };
 
@@ -316,7 +317,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
       setLogin((cur) => (cur && cur.account === account ? { ...cur, loginId } : cur));
     } catch (err) {
       setLogin(null);
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err, t));
     }
   };
 
@@ -337,7 +338,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
       if (pending.kind === 'account') await removeClaudeAccount(pending.pool, pending.account);
       else await removeClaudePool(pending.pool);
     } catch (err) {
-      setPendingError(err instanceof Error ? err.message : String(err));
+      setPendingError(errorText(err, t));
       setPendingBusy(false);
       return;
     }
@@ -389,7 +390,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                     : t('claudeAccounts.strays.movedSignedOut', { name, pool: target }));
                   await refresh();
                 } catch (err) {
-                  setError(err instanceof Error ? err.message : String(err));
+                  setError(errorText(err, t));
                 }
               }}>
                 {t('claudeAccounts.strays.move')}
@@ -710,7 +711,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                         try {
                           await submitClaudeLoginCode(login.loginId!, code);
                         } catch (err) {
-                          setError(err instanceof Error ? err.message : String(err));
+                          setError(errorText(err, t));
                         }
                       }}
                     />

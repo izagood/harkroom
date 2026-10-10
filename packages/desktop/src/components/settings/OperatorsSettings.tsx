@@ -10,6 +10,7 @@ import { hasOperatorLocalSurface } from '../../lib/operatorLocal';
 import { SettingsColumns, SettingsGrid, SettingsGroup, SettingsPage } from './primitives';
 import { OPERATOR_LABEL_MAX, operatorDisplayName, operatorFullName } from '../../lib/operatorName';
 import { normalizeOperatorLabel } from '@harkroom/shared';
+import { errorText } from '../../lib/errorText';
 
 /**
  * 설정 › Operators — 스펙 2026-09-20 §3.
@@ -60,7 +61,7 @@ export function OperatorsSettings({ onOpenSection }: {
     try {
       setCode(await getController().operatorRegisterCode());
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('operators.registerFailed'));
+      setError(errorText(e, t, t('operators.registerFailed')));
     } finally {
       setBusy(false);
     }
@@ -78,7 +79,7 @@ export function OperatorsSettings({ onOpenSection }: {
       setConfirming(null);
       reload();
     } catch (e) {
-      setRevokeError(e instanceof Error ? e.message : t('operators.revokeFailed'));
+      setRevokeError(errorText(e, t, t('operators.revokeFailed')));
     } finally {
       setRevoking(false);
     }
@@ -114,7 +115,7 @@ export function OperatorsSettings({ onOpenSection }: {
       setEditing(null);
     } catch (e) {
       // 입력은 그대로 둔다 — 실패했다고 사람이 친 글자를 버리지 않는다.
-      setRenameError(t('operators.renameFailed', { reason: e instanceof Error ? e.message : String(e) }));
+      setRenameError(t('operators.renameFailed', { reason: errorText(e, t) }));
     } finally {
       setSavingName(false);
     }

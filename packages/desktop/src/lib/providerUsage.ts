@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ProviderAccountUsage, ProviderUsageSnapshot, ProviderUsageWindow } from '@harkroom/shared/daemonProtocol';
+import { errorTextNow } from './errorText';
 
 export type { ProviderAccountUsage, ProviderUsageSnapshot, ProviderUsageWindow };
 
@@ -96,7 +97,7 @@ export function useProviderUsage(kind: ProviderKind, enabled: boolean): {
       setSnap(next);
       setRefreshError(null);
     } catch (err) {
-      setRefreshError(err instanceof Error ? err.message : String(err));
+      setRefreshError(errorTextNow(err));
     } finally {
       setSettled(true);
       setRefreshing((cur) => { const s = new Set(cur); s.delete(key); return s; });

@@ -11,6 +11,7 @@ import { ConnectorsSection } from './ConnectorsSection';
 import { SecretAgentPicker } from './SecretAgentPicker';
 import { Identity } from '../Identity';
 import { downloadSecretFile, RevealPanel, RevealToast, UnlockDialog, UnlockHeader, useRevealSupported, type Ticket, type UnlockState } from './SecretReveal';
+import { errorText } from '../../lib/errorText';
 
 /**
  * 설정 › 나 › **비밀과 API** — 비밀 절(외부 API 권한 C안 P1, 스레드 07519d86 · designer v3 ①).
@@ -392,7 +393,7 @@ function useExplain() {
       }
       if (err.status === 403) return t('secrets.errForbidden');
     }
-    return t('secrets.errFailed', { reason: err instanceof Error ? err.message : String(err) });
+    return t('secrets.errFailed', { reason: errorText(err, t) });
   };
 }
 

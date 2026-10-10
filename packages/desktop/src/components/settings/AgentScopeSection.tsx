@@ -19,6 +19,7 @@ import { useT } from '../../i18n/useT';
 import { AgentMcpSection } from './AgentMcpSection';
 import { ImmediateBadge } from './pendingEdits';
 import { Toggle } from './primitives';
+import { errorText } from '../../lib/errorText';
 
 export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
   agent: AgentView;
@@ -41,7 +42,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
       if (err.code === 'unknown_mcp_server') return t('agents.scope.errUnknownMcp');
       if (err.code === 'delegate_not_eligible') return t('agents.scope.errDelegate');
     }
-    return t('agents.scope.errFailed', { reason: err instanceof Error ? err.message : String(err) });
+    return t('agents.scope.errFailed', { reason: errorText(err, t) });
   };
   const run = async (fn: () => Promise<AgentView>) => {
     setBusy(true); setError(null);

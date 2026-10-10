@@ -4,6 +4,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 import type { MessageKey } from '../i18n';
+import { errorText } from '../lib/errorText';
 
 /**
  * 화면에 쓰는 이름. 값 집합은 shared 의 `ACCOUNT_STATUSES` 하나에서 나온다.
@@ -69,7 +70,7 @@ export function StatusPicker({ onDone }: {
       onDone();
     } catch (err) {
       // 실패를 조용히 삼키면 사용자는 정했다고 믿는데 남들에게는 예전 상태로 보인다.
-      setError(err instanceof Error ? err.message : t('status.picker.failed'));
+      setError(errorText(err, t, t('status.picker.failed')));
     }
   };
 

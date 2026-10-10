@@ -37,6 +37,7 @@ import {
   listClaudeAccounts,
   type ClaudeAccountsSnapshot,
 } from '../../lib/claudeAccounts';
+import { errorTextNow } from '../../lib/errorText';
 
 export interface AgentPoolState {
   /**
@@ -96,7 +97,7 @@ export function useAgentPool(agentId: string | null): AgentPoolState {
     void listClaudeAccounts().then(
       (s) => { if (!dead) setSnap(s); },
       // **조회 실패를 빈 목록으로 그리지 않는다** — 그러면 사용자는 풀이 없는 줄 안다.
-      (err) => { if (!dead) setError(err instanceof Error ? err.message : String(err)); },
+      (err) => { if (!dead) setError(errorTextNow(err)); },
     );
     return () => { dead = true; };
   }, [available]);
@@ -132,7 +133,7 @@ export function useAgentPool(agentId: string | null): AgentPoolState {
       setSnap({ ...snap, agents });
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorTextNow(err));
     }
   }, [snap, agentId]);
 

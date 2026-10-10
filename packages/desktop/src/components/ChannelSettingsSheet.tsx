@@ -9,6 +9,7 @@ import type { MessageKey } from '../i18n';
 import { hasCapability } from '../lib/capabilities';
 import { ChannelEditForm } from './ChannelEditForm';
 import { ChannelMembersPanel } from './ChannelMembersPanel';
+import { errorText } from '../lib/errorText';
 
 const NOTIFY_KEY: Record<NotifyLevel, MessageKey> = {
   all: 'sidebar.notify.all',
@@ -87,7 +88,7 @@ export function ChannelSettingsSheet({ onlyFor }: { onlyFor?: string } = {}) {
   const archive = async () => {
     setError(null); setBusy(true);
     try { await getController().archiveChannel(channel.id, !isArchived); }
-    catch (err) { setError(err instanceof Error ? err.message : t('channelSheet.archiveFailed')); }
+    catch (err) { setError(errorText(err, t, t('channelSheet.archiveFailed'))); }
     finally { setBusy(false); }
   };
 
@@ -98,12 +99,12 @@ export function ChannelSettingsSheet({ onlyFor }: { onlyFor?: string } = {}) {
       if (!confirmed) {
         let members;
         try { members = await getController().loadChannelMembers(channel.id); }
-        catch (err) { setError(err instanceof Error ? err.message : t('sidebar.members.listFailed')); return; }
+        catch (err) { setError(errorText(err, t, t('sidebar.members.listFailed'))); return; }
         if (!members.some((m) => m.accountId === me.id)) { setError(t('sidebar.members.notAMember')); return; }
         if (members.length === 1) { setLeaveConfirm(true); return; }
       }
       try { await getController().leaveChannel(channel.id, me.id); close(); }
-      catch (err) { setError(err instanceof Error ? err.message : t('sidebar.members.leaveFailed')); }
+      catch (err) { setError(errorText(err, t, t('sidebar.members.leaveFailed'))); }
     } finally { setBusy(false); }
   };
 
@@ -225,7 +226,7 @@ export function ChannelSettingsSheet({ onlyFor }: { onlyFor?: string } = {}) {
                     type="radio"
                     name="channel-notify"
                     checked={level === l}
-                    onChange={() => { setError(null); void getController().setChannelNotifyLevel(channel.id, l).catch((err: unknown) => setError(err instanceof Error ? err.message : t('channelSheet.notify.failed'))); }}
+                    onChange={() => { setError(null); void getController().setChannelNotifyLevel(channel.id, l).catch((err: unknown) => setError(errorText(err, t, t('channelSheet.notify.failed')))); }}
                   />
                   {t(NOTIFY_KEY[l])}
                 </label>

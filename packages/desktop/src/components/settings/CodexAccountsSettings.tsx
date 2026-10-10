@@ -31,6 +31,7 @@ import { Button, TextInput } from './primitives';
 import { ProviderSection } from './ProviderSection';
 import { AccountRowsSkeleton, ProviderUsageBars, ProviderUsageSkeleton, UsageRefreshControl } from './ProviderUsageBars';
 import { usageFor, usageUpdatedAt, useProviderUsage } from '../../lib/providerUsage';
+import { errorText } from '../../lib/errorText';
 
 interface LoginState {
   account: string;
@@ -82,7 +83,7 @@ export function CodexAccountsSettings() {
       setSnap(await listCodexAccounts());
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err, t));
     }
   }, []);
 
@@ -123,7 +124,7 @@ export function CodexAccountsSettings() {
       setAdding(false);
       setName('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err, t));
     }
   };
 
@@ -132,7 +133,7 @@ export function CodexAccountsSettings() {
       await fn();
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err, t));
     }
   };
 
