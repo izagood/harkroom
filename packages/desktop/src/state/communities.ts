@@ -1,6 +1,7 @@
 import { create, useStore } from 'zustand';
 import { createAppStore, type AppState, type AppStore } from './appStore';
 import type { Controller } from './controller';
+import { nowT } from '../i18n/useT';
 
 /**
  * 커뮤니티마다 스토어·컨트롤러 인스턴스를 두는 레지스트리(#166, #163 결정 A).
@@ -157,7 +158,7 @@ export const useCommunityRegistry = create<CommunityRegistryState>((set, get) =>
   },
   remove: (id) => {
     const { entries, activeId } = get();
-    if (entries.length <= 1) throw new Error('마지막 커뮤니티는 뺄 수 없다');
+    if (entries.length <= 1) throw new Error(nowT()('notice.lastCommunity'));
     const next = entries.filter((e) => e.id !== id);
     if (next.length === entries.length) throw new Error(`모르는 커뮤니티다: ${id}`);
     set({
