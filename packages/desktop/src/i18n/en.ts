@@ -4060,6 +4060,26 @@ export const en = {
   // | 서버가 버전을 말하지 않는다 | `This server does not report its version` | **그 자체가 답이다** — 버전을 싣는 판보다 낡았다는 뜻 |
   // | {version} 기동 | `Started {ago}` | 버전이 안 바뀌는 재배포에서는 이것만 달라진다 |
   // | 이 앱이 요구하는 버전보다 낮다 | `older than this app requires` | **고장이다.** '뒤처졌다'와 같은 말로 적으면 둘이 뭉개진다 — 앞은 지금 재배포해야 하는 것이고 뒤는 안 해도 되는 것이다 |
+  // 설정 › 커뮤니티 목록·추가·이름·빼기(i18n P3-c, 2026-10-10).
+  'community.manage.addTitle': 'Add a community',
+  'community.manage.addNote': 'Sign in to another harkroom server. The communities you are already in stay connected.',
+  'community.manage.add': 'Add community',
+  'community.manage.alreadyAdded': 'This community is already on this device.',
+  'community.manage.sessionFailed': 'Signed in, but starting the session failed.',
+  'community.manage.viewing': 'Viewing',
+  'community.manage.switch': 'Switch to',
+  'community.manage.rename': 'Rename',
+  'community.manage.remove': 'Remove',
+  'community.manage.renameNote': 'Display name on this device. Leave it empty to use the server host name.',
+  'community.manage.renameFailed': 'Could not save the name.',
+  'community.manage.saving': 'Saving…',
+  'community.manage.save': 'Save',
+  'community.manage.cancel': 'Cancel',
+  'community.manage.removeConfirm': 'Remove {label} from this device? It stays on the server — your session there is not signed out, and other devices keep working. You will need to sign in again to add it back.',
+  'community.manage.removing': 'Removing…',
+  'community.manage.removeFromDevice': 'Remove from this device',
+  'community.manage.keep': 'Keep it',
+  'community.manage.removeFailed': 'Could not remove this community.',
   'community.version.value': 'Server v{version}',
   'community.version.unknown': 'Checking server version',
   'community.version.legacy': 'This server does not report its version',

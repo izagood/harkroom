@@ -66,7 +66,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
       await setCommunityLabel(entry.id, labelDraft);
       setRenamingId(null);
     } catch (err) {
-      setRenameError(message(err, 'Could not save the name.'));
+      setRenameError(message(err, t('community.manage.renameFailed')));
     } finally {
       setBusyId(null);
     }
@@ -80,7 +80,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
       setRemovingId(null);
       if (empty) onCommunitiesEmpty();
     } catch (err) {
-      setRemoveError(message(err, 'Could not remove this community.'));
+      setRemoveError(message(err, t('community.manage.removeFailed')));
     } finally {
       setBusyId(null);
     }
@@ -100,7 +100,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
     // 같은 계정을 두 번 등록하면 목록에 같은 커뮤니티가 둘이 서고 WS 도 둘이 붙는다.
     // 조용히 지나가지 않고 말한다 — 사용자는 자기가 무엇을 눌렀는지 알아야 한다.
     if (entries.some((e) => e.accountId === accountId)) {
-      setAddError('This community is already on this device.');
+      setAddError(t('community.manage.alreadyAdded'));
       return;
     }
     try {
@@ -108,7 +108,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
         baseUrl, token, accountId, label: null, active: false, notifier: createNotifier(),
       });
     } catch (err) {
-      setAddError(message(err, 'Signed in, but starting the session failed.'));
+      setAddError(message(err, t('community.manage.sessionFailed')));
       return;
     }
     const stored = (await sessionStore.load()) ?? { active: null, communities: [] };
@@ -163,16 +163,14 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
       <SettingsGroup>
         <div className="flex items-center gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
-            <span className="block font-medium text-fg">Add a community</span>
-            <span className="mt-0.5 block text-fg-subtle">
-              Sign in to another harkroom server. The communities you are already in stay connected.
-            </span>
+            <span className="block font-medium text-fg">{t('community.manage.addTitle')}</span>
+            <span className="mt-0.5 block text-fg-subtle">{t('community.manage.addNote')}</span>
           </span>
           <button
             className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium hover:bg-surface"
             onClick={() => { setAddOpen(true); setAddError(null); }}
           >
-            Add community
+            {t('community.manage.add')}
           </button>
         </div>
         {/* 겹창이 열려 있는 동안은 여기 적지 않는다 — 겹창이 이 자리를 덮으므로, 로그인에
@@ -194,7 +192,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
         >
           <div
             role="dialog"
-            aria-label="커뮤니티 추가"
+            aria-label={t('community.manage.add')}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => { if (e.key === 'Escape') setAddOpen(false); }}
           >
@@ -266,7 +264,7 @@ function CommunityRow(props: {
           <span className="flex items-center gap-2 font-medium text-fg">
             {label}
             {active && (
-              <span className="rounded-sm bg-accent-surface px-1 text-meta text-accent">Viewing</span>
+              <span className="rounded-sm bg-accent-surface px-1 text-meta text-accent">{t('community.manage.viewing')}</span>
             )}
           </span>
           <span className="mt-0.5 flex items-center gap-2 text-fg-subtle">
@@ -316,27 +314,27 @@ function CommunityRow(props: {
             className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium hover:bg-surface"
             onClick={props.onSwitch}
           >
-            Switch to
+            {t('community.manage.switch')}
           </button>
         )}
         <button
           className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium hover:bg-surface"
           onClick={props.onStartRename}
         >
-          Rename
+          {t('community.manage.rename')}
         </button>
         <button
           className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium text-danger hover:bg-surface"
           onClick={props.onStartRemove}
         >
-          Remove
+          {t('community.manage.remove')}
         </button>
       </div>
 
       {props.renaming && (
         <div className="mt-2">
           <label className="block text-fg-subtle" htmlFor={`community-name-${entry.id}`}>
-            Display name on this device. Leave it empty to use the server host name.
+            {t('community.manage.renameNote')}
           </label>
           <div className="mt-1 flex items-center gap-2">
             <input
@@ -351,13 +349,13 @@ function CommunityRow(props: {
               disabled={busy}
               onClick={props.onSaveRename}
             >
-              {busy ? 'Saving…' : 'Save'}
+              {busy ? t('community.manage.saving') : t('community.manage.save')}
             </button>
             <button
               className="shrink-0 rounded-card px-3 py-1.5 text-fg-muted hover:bg-surface"
               onClick={props.onCancelRename}
             >
-              Cancel
+              {t('community.manage.cancel')}
             </button>
           </div>
           {props.renameError && (
@@ -370,10 +368,7 @@ function CommunityRow(props: {
           빼는 일이지만, 다시 넣으려면 서버 주소와 자격증명이 다시 필요하다. */}
       {props.removing && (
         <div className="mt-2 rounded-card border border-border bg-surface p-3">
-          <p className="text-fg">
-            Remove {label} from this device? It stays on the server — your session there is not
-            signed out, and other devices keep working. You will need to sign in again to add it back.
-          </p>
+          <p className="text-fg">{t('community.manage.removeConfirm', { label })}</p>
           {props.removeError && (
             <p role="alert" className="mt-1 text-danger">{props.removeError}</p>
           )}
@@ -383,13 +378,13 @@ function CommunityRow(props: {
               disabled={busy}
               onClick={props.onConfirmRemove}
             >
-              {busy ? 'Removing…' : 'Remove from this device'}
+              {busy ? t('community.manage.removing') : t('community.manage.removeFromDevice')}
             </button>
             <button
               className="rounded-card px-3 py-1.5 text-fg-muted hover:bg-surface-hover"
               onClick={props.onCancelRemove}
             >
-              Keep it
+              {t('community.manage.keep')}
             </button>
           </div>
         </div>
