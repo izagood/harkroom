@@ -61,11 +61,15 @@ describe('turnMerge', () => {
   let ghUser: string | undefined;
   let pickByScope: Record<string, string> | null;
   let lease: { leaseId: string; token: string; agentId: string } | null;
+  let approvals: Record<string, unknown>[];
+  let checkApproval: Record<string, unknown> | null;
+  let peekStatus: number;
   let tm: TurnMerge;
 
   beforeEach(() => {
     forwards = []; execs = []; checkStatus = 200; mergeCode = 0; mergeStderr = 'GraphQL: Base branch was modified'; viewStderr = null; denialBody = { error: { code: 'not_granted' } }; ghUser = 'izagood'; pickByScope = null;
     lease = { leaseId: 'lease-1', token: 'tok-1', agentId: 'a1' };
+    approvals = []; checkApproval = null; peekStatus = 200;
     pr = { state: 'OPEN', isDraft: false, headRefOid: SHA, baseRefName: 'main', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }] };
     tm = createTurnMerge({
       ghPath: GH, home: '/Users/x', log: () => {},
@@ -77,15 +81,20 @@ describe('turnMerge', () => {
         forwards.push(req);
         if (req.type !== 'http.forward') throw new Error('unexpected');
         if (checkStatus === null) return { type: 'http.response', id: req.id, status: 0, body: 'down' };
+        if (req.path === '/agent/merge-approvals/peek') {
+          if (peekStatus !== 200) return { type: 'http.response', id: req.id, status: peekStatus, body: '{}' };
+          return { type: 'http.response', id: req.id, status: 200, body: JSON.stringify({ approval: approvals[0] ?? null }) };
+        }
         if (req.path === '/agent/merge-checks') {
           return checkStatus === 200
-            ? { type: 'http.response', id: req.id, status: 200, body: JSON.stringify({ allowed: true, grantedBy: 'owner-1', causeByHuman: true }) }
+            ? { type: 'http.response', id: req.id, status: 200, body: JSON.stringify({ allowed: true, grantedBy: 'owner-1', causeByHuman: true, ...(checkApproval ? { approval: checkApproval } : {}) }) }
             : { type: 'http.response', id: req.id, status: checkStatus, body: JSON.stringify(denialBody) };
         }
         return { type: 'http.response', id: req.id, status: 201, body: '{"messageId":"m1"}' };
       },
       exec: async (file, args, env): Promise<ExecResult> => {
         execs.push({ file, args, env });
+        if (args[0] === 'auth' && args[3] === 'rebel-jaebin') return { code: 0, stdout: 'tok-approved\n', stderr: '' };
         if (args[0] === 'auth' && args[3] === 'gone') return { code: 1, stdout: '', stderr: 'no oauth token found for github.com account gone' };
         if (args[0] === 'auth' && pickByScope) return { code: 0, stdout: `tok-${args[3]}\n`, stderr: '' };
         if (args[0] === 'auth') return ghUser === 'broken' ? { code: 1, stdout: '', stderr: 'no oauth token' } : { code: 0, stdout: 'tok-from-gh\n', stderr: '' };
@@ -163,10 +172,84 @@ describe('turnMerge', () => {
     expect(execs).toHaveLength(0);
   });
 
+  describe('1회 승인 (스레드 1b75d7a0, security 순서: 사전 확인 → 소모 → 즉시 머지)', () => {
+    const checksCalled = () => forwards.filter((f) => f.type === 'http.forward' && f.path === '/agent/merge-checks').length;
+    beforeEach(() => {
+      approvals = [{ id: 'ap-1', ghUser: 'rebel-jaebin', relaxChecks: false }];
+      checkApproval = { id: 'ap-1', ghUser: 'rebel-jaebin', relaxChecks: false };
+    });
+
+    it('사전 확인에서 막히면 서버 판정(소모)을 부르지 않는다 — 승인이 남는다', async () => {
+      pr = { ...pr, statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'FAILURE', name: 'check' }] };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error.code).toBe('ci_not_green');
+      expect(r.body.error.message).toContain('approval was not used');
+      expect(checksCalled()).toBe(0);
+      expect(ghCalls()).not.toContain('pr merge');
+      pr = { ...pr, headRefOid: 'c'.repeat(40) };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('head_moved');
+      expect(checksCalled()).toBe(0);
+    });
+
+    it('승인 계정으로만 머지한다 — 기기 줄의 계정(ghUserFor)으로 내려가지 않고 --match-head-commit 을 지킨다', async () => {
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r).toMatchObject({ isError: false, body: { merged: true, viaApproval: true, ghUser: 'rebel-jaebin' } });
+      const auths = execs.filter((e) => e.args[0] === 'auth').map((e) => e.args[3]);
+      expect(auths).toEqual(['rebel-jaebin']);
+      const merge = execs.find((e) => e.args[0] === 'pr' && e.args[1] === 'merge')!;
+      expect(merge.args).toEqual(['pr', 'merge', '7', '-R', 'izagood/harkroom', '--squash', '--match-head-commit', SHA]);
+      expect(merge.env.GH_TOKEN).toBe('tok-approved');
+      // 사전 확인 → 판정 → 머지 순서
+      expect(forwards.filter((f) => f.type === 'http.forward').map((f) => (f as { path: string }).path).slice(0, 2)).toEqual(['/agent/merge-approvals/peek', '/agent/merge-checks']);
+      // 사전 확인은 임대로 묻는다 — 서버가 그 임대의 채널·스레드로 거른다(security F2).
+      expect(JSON.parse((forwards[0] as { body?: string }).body ?? '{}')).toMatchObject({ leaseId: 'lease-1', token: 'tok-1', repo: 'izagood/harkroom', number: 7, headSha: SHA });
+    });
+
+    it('relaxChecks 는 승인 기록의 칸으로만 — 켜져 있으면 CI·CLEAN 은 GitHub 에 맡긴다(OPEN·head 는 그대로 본다)', async () => {
+      approvals = [{ ...approvals[0]!, relaxChecks: true }];
+      checkApproval = { ...checkApproval!, relaxChecks: true };
+      pr = { ...pr, mergeStateStatus: 'BLOCKED', statusCheckRollup: [] };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body).toMatchObject({ merged: true });
+      // 꺼진 승인이면 같은 PR 이 막힌다
+      approvals = [{ ...approvals[0]!, relaxChecks: false }];
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('not_mergeable');
+    });
+
+    it('서버가 쓴 승인이 사전 확인한 것(id)과 다르면 머지하지 않는다 — 계정이 같아도(security F2)', async () => {
+      checkApproval = { id: 'ap-2', ghUser: 'rebel-jaebin', relaxChecks: false };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('approval_mismatch');
+      expect(ghCalls()).not.toContain('pr merge');
+      forwards = []; execs = [];
+      checkApproval = { id: 'ap-1', ghUser: 'izagood', relaxChecks: false };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error.code).toBe('approval_mismatch');
+      expect(ghCalls()).not.toContain('pr merge');
+      expect(results()).toEqual([expect.objectContaining({ result: 'failed' })]);
+    });
+
+    it('소모 뒤 머지가 실패하면 보고하고, 다시 승인(새 카드)이 필요하다고 답한다', async () => {
+      mergeCode = 1; mergeStderr = 'GraphQL: Head branch was modified';
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error.code).toBe('merge_failed');
+      expect(r.body.error.message).toContain('approve again');
+      expect(results()).toEqual([expect.objectContaining({ result: 'failed' })]);
+    });
+
+    it('승인 목록을 못 읽으면 unavailable — 머지하지 않는다(5xx 도 판정으로 넘어가지 않는다, security F2)', async () => {
+      checkStatus = null;
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('unavailable');
+      expect(execs).toHaveLength(0);
+      checkStatus = 200; peekStatus = 503; forwards = [];
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('unavailable');
+      expect(forwards.filter((f) => f.type === 'http.forward' && f.path === '/agent/merge-checks')).toHaveLength(0);
+      expect(execs).toHaveLength(0);
+    });
+  });
+
   it('임대 토큰은 서버로만 간다 — gh 인자·env 어디에도 없다', async () => {
     const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
     expect(r.isError).toBe(false);
-    const check = forwards[0] as { body?: string };
+    const check = forwards.find((f) => f.type === 'http.forward' && f.path === '/agent/merge-checks') as { body?: string };
     expect(JSON.parse(check.body ?? '{}')).toMatchObject({ leaseId: 'lease-1', token: 'tok-1', repo: 'izagood/harkroom', number: 7, headSha: SHA });
     for (const e of execs) {
       expect(JSON.stringify(e.args)).not.toContain('tok-1');

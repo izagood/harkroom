@@ -142,7 +142,7 @@ function argsOf(call: JsonRpcCall): MergeArgs | { error: string } {
   return parseMergeArgs([String(repo ?? ''), String(number ?? ''), '--head', String(headSha ?? '')]);
 }
 
-interface PrView {
+export interface PrView {
   state?: string; isDraft?: boolean; headRefOid?: string; baseRefName?: string; mergeStateStatus?: string;
   statusCheckRollup?: { status?: string; conclusion?: string; state?: string; name?: string; context?: string }[];
   mergeCommit?: { oid?: string } | null;
@@ -161,6 +161,32 @@ function checkRed(c: NonNullable<PrView['statusCheckRollup']>[number]): boolean 
   return c.conclusion === 'FAILURE' || c.conclusion === 'TIMED_OUT' || c.conclusion === 'ACTION_REQUIRED';
 }
 
+/**
+ * 머지 전 PR 상태 판정. OPEN·draft 아님·head 일치는 늘 본다. `relaxChecks`(1회 승인의 칸 — 래퍼 인자가 아니다)면 CLEAN·체크
+ * 초록은 harkroom 이 따로 보지 않고 GitHub 의 판정(브랜치 보호·required checks)에 맡긴다. `--match-head-commit` 은 그대로다.
+ *
+ * 체크는 **이름별**로 본다(security C1). 같은 이름의 취소된 중복 실행(CANCELLED, #1078·#1083 에서 실제로 남았다)만 무시한다 —
+ * 그 이름에 **빨강(FAILURE·TIMED_OUT·ACTION_REQUIRED)이 하나라도 있으면 빨강**이고, 초록이 하나는 있어야 한다. "초록 하나면
+ * 초록"으로 두면 재실행이 빨간데 옛 실행이 초록인 경우가 통과한다. 이름이 없는 항목은 그 항목 하나.
+ */
+export function refusalOf(pr: PrView, headSha: string, relaxChecks: boolean): { code: string; message: string } | null {
+  if (pr.state !== 'OPEN') return { code: 'not_open', message: `PR is ${pr.state ?? 'unknown'}` };
+  if (pr.isDraft) return { code: 'draft', message: 'PR is a draft' };
+  if (pr.headRefOid !== headSha) return { code: 'head_moved', message: `PR head is ${pr.headRefOid ?? '?'}, not ${headSha}` };
+  if (relaxChecks) return null;
+  if (pr.mergeStateStatus !== 'CLEAN') return { code: 'not_mergeable', message: `mergeStateStatus is ${pr.mergeStateStatus ?? 'unknown'} (need CLEAN)` };
+  const checks = pr.statusCheckRollup ?? [];
+  const byName = new Map<string, { green: boolean; red: boolean }>();
+  checks.forEach((c, i) => {
+    const k = c.name ?? c.context ?? `#${i}`;
+    const cur = byName.get(k) ?? { green: false, red: false };
+    byName.set(k, { green: cur.green || checkGreen(c), red: cur.red || checkRed(c) });
+  });
+  const red = [...byName.entries()].filter(([, v]) => v.red || !v.green).map(([k]) => k);
+  if (!byName.size || red.length) return { code: 'ci_not_green', message: byName.size ? `not green: ${red.join(', ').slice(0, 200)}` : 'no checks reported' };
+  return null;
+}
+
 export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
   const exec = deps.exec ?? defaultExec;
 
@@ -176,13 +202,16 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     if (!pick || !/^[A-Za-z0-9-]{1,39}$/.test(pick.login)) {
       return { ok: false, code: 'no_gh_user', message: `no GitHub account is set for ${repo} on this device — a person picks one in Settings › Agents › Permissions › PR merge (the wrapper never merges with the active gh account)` };
     }
-    const user = pick.login;
-    // 고른 계정이 이 기기 gh 에 없으면 다른 계정으로 넘어가지 않는다(fail-closed) — 사람이 다시 로그인하거나 줄을 바꾼다.
+    return tokenForLogin(pick.login, `set for ${pick.scope}`);
+  };
+  /** 정해진 계정 하나의 토큰. 이 기기 gh 에 없으면 다른 계정으로 넘어가지 않는다(fail-closed) — 사람이 다시 로그인하거나 줄·승인을 바꾼다. */
+  const tokenForLogin = async (user: string, why: string): Promise<{ ok: true; token: string; login: string } | TokenFail> => {
+    if (!/^[A-Za-z0-9-]{1,39}$/.test(user)) return { ok: false, code: 'no_gh_user', message: `not a GitHub login: ${user.slice(0, 40)}` };
     const r = await exec(deps.ghPath, ['auth', 'token', '-u', user], ghEnv(deps.home, null));
     const token = r.stdout.trim();
     if (r.code !== 0 || !token) {
       if (/no (?:oauth )?token found|not logged in|no account|unknown user/i.test(r.stderr)) {
-        return { ok: false, code: 'gh_user_not_logged_in', message: `${user} (set for ${pick.scope}) is not logged in to gh on this device — log in again or pick another account` };
+        return { ok: false, code: 'gh_user_not_logged_in', message: `${user} (${why}) is not logged in to gh on this device — log in again or pick another account` };
       }
       return { ok: false, code: 'gh_token_failed', message: `gh auth token -u ${user} failed: ${r.stderr.trim().slice(0, 200)}` };
     }
@@ -201,6 +230,25 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
 
     const lease = req.cause ? deps.lookupLease(runnerId, req.cause) : null;
     if (!lease || lease.agentId !== agentId) return fail('no_lease', 'merge is not available in this turn (no turn lease)');
+
+    // ②′ 1회 승인(스레드 1b75d7a0, security 순서): 서버의 판정(③)이 승인을 **소모**하므로, 승인이 있으면 그 전에 기록의 계정·head 로
+    // GitHub **읽기 전용** 사전 확인을 한다. 여기서 막히면 ③ 을 부르지 않는다 — 승인이 남는다. 사전 확인은 승인을 아끼려는 것일 뿐,
+    // 통과 판정은 언제나 ③ 이다. 잠금·해제 API 는 두지 않는다(같은 uid 의 거짓 「실패」 보고로 승인을 되살리는 길이 된다).
+    const pending = await openApprovalFor(agentId, lease, repo, number, headSha);
+    if (pending === 'unavailable') return fail('unavailable', 'the server could not be reached — merge refused (fail-closed)');
+    let approvedTok: { token: string; login: string; approvalId: string } | null = null;
+    if (pending) {
+      const tok = await tokenForLogin(pending.ghUser, 'chosen in the one-time approval');
+      if (!tok.ok) return fail(tok.code, `${tok.message} — the one-time approval was not used`);
+      const pre = await viewPr(repo, number, ghEnv(deps.home, tok.token));
+      if ('error' in pre) {
+        if (isRepoAccessError(pre.error)) return fail('no_repo_access', `${noRepoAccess(tok.login)} — the one-time approval was not used`);
+        return fail('pr_not_found', `gh pr view failed: ${pre.error} — the one-time approval was not used`);
+      }
+      const why = refusalOf(pre.pr, headSha, pending.relaxChecks);
+      if (why) return fail(why.code, `${why.message} — the one-time approval was not used`, { pr: { state: pre.pr.state, headRefOid: pre.pr.headRefOid, mergeStateStatus: pre.pr.mergeStateStatus } });
+      approvedTok = { ...tok, approvalId: pending.id };
+    }
 
     // ③ 서버 판정. 닿지 않으면 머지하지 않는다(fail-closed).
     const check = await deps.forward(agentId, {
@@ -223,7 +271,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       }
       return fail(code, `merge not allowed: ${code}`);
     }
-    let granted: { grantedBy?: string; causeByHuman?: boolean } = {};
+    let granted: { grantedBy?: string; causeByHuman?: boolean; approval?: { id?: string; ghUser?: string; relaxChecks?: boolean } } = {};
     try { granted = JSON.parse(check.body) as typeof granted; } catch { /* 선택 정보 */ }
 
     const report = async (result: 'merged' | 'failed', mergeSha: string | null, error: string | null): Promise<void> => {
@@ -233,6 +281,17 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       }).catch(() => null);
       if (!res || res.type !== 'http.response' || res.status !== 201) deps.log(`merge: ${repo}#${number} ${result} 보고가 서버에 닿지 않았다(${res && res.type === 'http.response' ? res.status : 'no response'})`);
     };
+
+    // ③′ 승인이 소모됐다 — 곧바로 머지한다. 사전 확인과 지금 사이에 head 가 바뀌면 `--match-head-commit` 으로 **GitHub 이** 거절한다.
+    // 서버가 돌려준 계정이 사전 확인한 계정과 다르면(그 사이 다른 승인이 쓰였다) 머지하지 않는다 — 다른 계정으로 내려가지 않는다.
+    if (granted.approval) {
+      // 사전 확인한 바로 그 승인(id)이어야 한다(security F2) — 계정만 맞으면 relaxChecks 가 다른 승인이 쓰여도 지나간다.
+      if (!approvedTok || granted.approval.id !== approvedTok.approvalId || granted.approval.ghUser !== approvedTok.login) {
+        await report('failed', null, 'approval_mismatch: the approval used by the server is not the one pre-checked');
+        return fail('approval_mismatch', 'the server used a one-time approval this wrapper did not pre-check — nothing was merged; ask the owner to approve again');
+      }
+      return mergeNow(approvedTok, true);
+    }
 
     // ④ 머지 전 확인. gh 는 절대 경로·빈 env 로만 부른다. 토큰이 없으면 여기서 끝 — 활성 계정으로 넘어가지 않는다(P1).
     const tok = await tokenFor(repo);
@@ -247,37 +306,53 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     let pr: PrView = {};
     try { pr = JSON.parse(view.stdout) as PrView; } catch { await report('failed', null, 'gh pr view: unparseable'); return fail('pr_not_found', 'gh pr view returned no JSON'); }
     const refuse = async (code: string, message: string) => { await report('failed', null, `${code}: ${message}`); return fail(code, message, { pr: { state: pr.state, headRefOid: pr.headRefOid, mergeStateStatus: pr.mergeStateStatus } }); };
-    if (pr.state !== 'OPEN') return refuse('not_open', `PR is ${pr.state ?? 'unknown'}`);
-    if (pr.isDraft) return refuse('draft', 'PR is a draft');
-    if (pr.headRefOid !== headSha) return refuse('head_moved', `PR head is ${pr.headRefOid ?? '?'}, not ${headSha}`);
-    if (pr.mergeStateStatus !== 'CLEAN') return refuse('not_mergeable', `mergeStateStatus is ${pr.mergeStateStatus ?? 'unknown'} (need CLEAN)`);
-    // 체크는 **이름별**로 본다(security C1). 같은 이름의 취소된 중복 실행(CANCELLED, #1078·#1083 에서 실제로 남았다)만
-    // 무시한다 — 그 이름에 **빨강(FAILURE·TIMED_OUT·ACTION_REQUIRED)이 하나라도 있으면 빨강**이고, 초록이 하나는 있어야
-    // 한다. "초록 하나면 초록"으로 두면 재실행이 빨간데 옛 실행이 초록인 경우가 통과한다. 이름이 없는 항목은 그 항목 하나.
-    const checks = pr.statusCheckRollup ?? [];
-    const byName = new Map<string, { green: boolean; red: boolean }>();
-    checks.forEach((c, i) => {
-      const k = c.name ?? c.context ?? `#${i}`;
-      const cur = byName.get(k) ?? { green: false, red: false };
-      byName.set(k, { green: cur.green || checkGreen(c), red: cur.red || checkRed(c) });
-    });
-    const red = [...byName.entries()].filter(([, v]) => v.red || !v.green).map(([k]) => k);
-    if (!byName.size || red.length) return refuse('ci_not_green', byName.size ? `not green: ${red.join(', ').slice(0, 200)}` : 'no checks reported');
+    const why = refusalOf(pr, headSha, false);
+    if (why) return refuse(why.code, why.message);
+    return mergeNow(tok, false);
 
-    // ⑤ squash 로만, head 를 못박고. `--admin` 은 문법에 없다.
-    const merge = await gh(['pr', 'merge', String(number), '-R', repo, '--squash', '--match-head-commit', headSha], env);
-    if (merge.code !== 0) {
-      const err = merge.stderr.trim().slice(0, 300);
-      await report('failed', null, err);
-      if (isRepoAccessError(merge.stderr)) return fail('no_repo_access', noRepoAccess(tok.login));
-      return fail('merge_failed', `gh pr merge failed: ${err}`);
+    /** ⑤ squash 로만, head 를 못박고. `--admin` 은 문법에 없다. */
+    async function mergeNow(t: { token: string; login: string }, viaApproval: boolean): Promise<{ ok: boolean; value: unknown }> {
+      const menv = ghEnv(deps.home, t.token);
+      const merge = await gh(['pr', 'merge', String(number), '-R', repo, '--squash', '--match-head-commit', headSha], menv);
+      if (merge.code !== 0) {
+        const err = merge.stderr.trim().slice(0, 300);
+        await report('failed', null, err);
+        const used = viaApproval ? ' — the one-time approval was used; ask the owner to approve again (a new card)' : '';
+        if (isRepoAccessError(merge.stderr)) return fail('no_repo_access', noRepoAccess(t.login) + used);
+        return fail('merge_failed', `gh pr merge failed: ${err}${used}`);
+      }
+      let mergeSha: string | null = null;
+      const after = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'mergeCommit'], menv);
+      try { const oid = (JSON.parse(after.stdout) as PrView).mergeCommit?.oid; if (oid && SHA_RE.test(oid)) mergeSha = oid; } catch { /* 없어도 된다 */ }
+      await report('merged', mergeSha, null);
+      deps.log(`merge: ${repo}#${number} 머지됨 ${mergeSha ?? '(sha 모름)'} agent=${agentId}${viaApproval ? ' (1회 승인)' : ''}`);
+      return { ok: true, value: { merged: true, repo, number, headSha, mergeSha, grantedBy: granted.grantedBy ?? null, viaApproval, ghUser: t.login, note: 'reported to the thread as a system line' } };
     }
-    let mergeSha: string | null = null;
-    const after = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'mergeCommit'], env);
-    try { const oid = (JSON.parse(after.stdout) as PrView).mergeCommit?.oid; if (oid && SHA_RE.test(oid)) mergeSha = oid; } catch { /* 없어도 된다 */ }
-    await report('merged', mergeSha, null);
-    deps.log(`merge: ${repo}#${number} 머지됨 ${mergeSha ?? '(sha 모름)'} agent=${agentId}`);
-    return { ok: true, value: { merged: true, repo, number, headSha, mergeSha, grantedBy: granted.grantedBy ?? null, note: 'reported to the thread as a system line' } };
+  };
+
+  /**
+   * 이 임대로 판정하면 서버가 소모할 바로 그 승인(security F2) — 같은 조건·같은 순서를 서버가 고른다(`/agent/merge-approvals/peek`).
+   * 판정이 아니다 — 사전 확인의 계정·CI 완화 여부를 알려고 읽는다. 200 이 아니거나 닿지 않으면 unavailable(머지하지 않는다).
+   */
+  const openApprovalFor = async (agentId: string, lease: MergeLease, repo: string, number: number, headSha: string)
+    : Promise<{ id: string; ghUser: string; relaxChecks: boolean } | null | 'unavailable'> => {
+    const res = await deps.forward(agentId, {
+      type: 'http.forward', id: randomUUID(), method: 'POST', path: '/agent/merge-approvals/peek',
+      body: JSON.stringify({ leaseId: lease.leaseId, token: lease.token, repo, number, headSha }), contentType: 'application/json',
+    }).catch(() => null);
+    if (!res || res.type !== 'http.response' || res.status !== 200) return 'unavailable';
+    try {
+      const a = (JSON.parse(res.body) as { approval?: Record<string, unknown> | null }).approval;
+      if (!a) return null;
+      if (typeof a.id === 'string' && typeof a.ghUser === 'string') return { id: a.id, ghUser: a.ghUser, relaxChecks: a.relaxChecks === true };
+    } catch { /* 모양이 틀리면 아래 */ }
+    return 'unavailable';
+  };
+
+  const viewPr = async (repo: string, number: number, env: Record<string, string>): Promise<{ pr: PrView } | { error: string }> => {
+    const view = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'state,isDraft,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup'], env);
+    if (view.code !== 0) return { error: view.stderr.trim().slice(0, 300) };
+    try { return { pr: JSON.parse(view.stdout) as PrView }; } catch { return { error: 'gh pr view returned no JSON' }; }
   };
 
   return {
