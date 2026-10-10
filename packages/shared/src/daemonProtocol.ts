@@ -140,9 +140,10 @@ export const REQUEST_TYPES = [
   'workspaceCleanupAct',
   'workspaceCleanupSweep',
   // 같은 머신의 터미널 직결(R1 PR-3, 스레드 8d233406). 러너 PTY 바이트를 서버를 거치지 않고 이 소켓으로 받고 보낸다
-  // (`operator/src/localTerminal.ts`). **입력·크기는 서버가 내려 준 writer 세대로만 받는다** — 판정은 서버에 남는다.
-  // 같은 토큰을 가진 CLI 도 이 말을 그대로 쓴다.
-  'terminalSessions',
+  // (`operator/src/localTerminal.ts`). **소켓 토큰은 허가가 아니다**(같은 uid 의 에이전트도 읽는다) — 구독은 서버가 내린
+  // 열람 키, 입력·크기는 서버가 내린 writer 키로만 연다. 판정은 서버에 남는다. 같은 토큰을 가진 CLI 도 이 말을 그대로 쓴다.
+  // `terminalIsLocal` 은 한 sessionId 가 이 머신 것인지만 답한다 — 세션 목록은 내주지 않는다.
+  'terminalIsLocal',
   'terminalSubscribe',
   'terminalUnsubscribe',
   'terminalInput',

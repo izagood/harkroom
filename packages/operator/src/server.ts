@@ -734,15 +734,15 @@ export class DaemonServer {
 
   /**
    * 터미널 직결 요청(R1 PR-3). 구독이 접속에 묶이므로 접속을 받는다. 거절 사유는 그대로 돌려준다 — 앱은
-   * `not-writer` 를 받으면 서버 경유로 치고, `no-such-session` 이면 이 세션이 이 머신 것이 아니라고 읽는다.
+   * `not-viewer`·`not-writer` 를 받으면 서버 경유로 보고 치고, `no-such-session` 이면 이 세션이 이 머신 것이 아니라고 읽는다.
    */
   private handleTerminal(conn: Connection, req: DaemonRequest): unknown | DaemonError {
     const hub = this.deps.localTerminal;
     if (!hub) return daemonError('internal', '이 오퍼레이터에는 터미널 직결이 배선되지 않았다');
-    if (req.type === 'terminalSessions') return { sessions: hub.sessions() };
     const p = (req.payload ?? {}) as Record<string, unknown>;
     const sessionId = p.sessionId;
     if (typeof sessionId !== 'string' || sessionId.length === 0) return daemonError('bad-payload', 'sessionId 가 필요하다');
+    if (req.type === 'terminalIsLocal') return { local: hub.isLocal(sessionId) };
     const answer = (refusal: string | null): unknown => (refusal ? { ok: false, reason: refusal } : { ok: true });
     switch (req.type) {
       case 'terminalSubscribe': {
@@ -754,18 +754,19 @@ export class DaemonServer {
             },
           };
         }
-        return answer(hub.subscribe(conn.terminal, sessionId));
+        if (typeof p.viewKey !== 'string') return daemonError('bad-payload', 'viewKey 가 필요하다');
+        return answer(hub.subscribe(conn.terminal, sessionId, p.viewKey));
       }
       case 'terminalUnsubscribe':
         if (conn.terminal) hub.unsubscribe(conn.terminal, sessionId);
         return { ok: true };
       case 'terminalInput': {
-        if (typeof p.gen !== 'number' || typeof p.data !== 'string') return daemonError('bad-payload', 'gen·data 가 필요하다');
-        return answer(hub.input(sessionId, p.gen, p.data));
+        if (typeof p.writerKey !== 'string' || typeof p.data !== 'string') return daemonError('bad-payload', 'writerKey·data 가 필요하다');
+        return answer(hub.input(sessionId, p.writerKey, p.data));
       }
       case 'terminalResize': {
-        if (typeof p.gen !== 'number' || typeof p.cols !== 'number' || typeof p.rows !== 'number') return daemonError('bad-payload', 'gen·cols·rows 가 필요하다');
-        return answer(hub.resize(sessionId, p.gen, p.cols, p.rows));
+        if (typeof p.writerKey !== 'string' || typeof p.cols !== 'number' || typeof p.rows !== 'number') return daemonError('bad-payload', 'writerKey·cols·rows 가 필요하다');
+        return answer(hub.resize(sessionId, p.writerKey, p.cols, p.rows));
       }
       default:
         return daemonError('unknown-request', req.type);
