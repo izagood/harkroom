@@ -1,5 +1,5 @@
 import {
-  SYSTEM_I18N_MAX_ARG_LENGTH, parseSystemI18n, type SystemI18n, type SystemI18nArgs, type SystemI18nKey,
+  SYSTEM_I18N_MAX_ARG_LENGTH, parseSystemI18n, type SystemI18n, type SystemI18nArgs, type SystemI18nArgsOf, type SystemI18nKey,
 } from '@harkroom/shared';
 
 /**
@@ -10,9 +10,9 @@ import {
  * 대신 잘린 값이 선다. 그 밖에 모양이 틀리면(목록 밖 키·빠진 인자) **던진다**: 서버 코드의 실수이고,
  * 조용히 넘기면 그 줄만 옛 본문으로 그려져 아무도 모른다. 시험이 이것으로 키 표와 빌더를 맞춘다.
  */
-export function systemI18n(key: SystemI18nKey, args: SystemI18nArgs): SystemI18n {
+export function systemI18n<K extends SystemI18nKey>(key: K, args: SystemI18nArgsOf<K>): SystemI18n {
   const clipped: SystemI18nArgs = {};
-  for (const [name, v] of Object.entries(args)) {
+  for (const [name, v] of Object.entries(args as SystemI18nArgs)) {
     clipped[name] = typeof v === 'string' ? v.slice(0, SYSTEM_I18N_MAX_ARG_LENGTH) : v;
   }
   const parsed = parseSystemI18n({ key, args: clipped });

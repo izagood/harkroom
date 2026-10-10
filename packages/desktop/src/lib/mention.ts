@@ -1,5 +1,6 @@
 import { CHANNEL_MENTION_HANDLE, denormalizeMentions, fillSystemAccount, MENTION_PATTERN, MENTION_TOKEN_PATTERN, mentionedHandles, mentionScanText, mentionTargetKey, type MessageRow, renderMentions, splitCode } from '@harkroom/shared';
 import type { Translate } from '../i18n';
+import { systemTextNow } from './systemText';
 
 // 멘션 문법은 @harkroom/shared 에 있다 — 서버의 알림 발송과 같은 규칙을 봐야 한다. 갈라지면
 // 두 방향으로 거짓말을 한다: 강조되지 않은 것이 몰래 알림을 보내거나(me@x.com), 강조된
@@ -303,6 +304,9 @@ export function displayBody(
   groups?: readonly { id: string; handle: string }[],
   teams?: readonly { id: string; name: string }[],
 ): string {
+  // 서버가 번역 표지(meta.i18n)를 실은 시스템 줄은 앱 언어의 사전 문장으로 낸다(i18n P5 ②). 못 하면 본문.
+  const translated = systemTextNow(message, accounts);
+  if (translated !== null) return translated;
   const filled = message.kind === 'system' && typeof message.meta.accountId === 'string'
     ? fillSystemAccount(message.body, accounts[message.meta.accountId]?.handle ?? null)
     : message.body;
