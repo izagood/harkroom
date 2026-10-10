@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { ClaudeAccountsSettings } from './ClaudeAccountsSettings';
+import { usePrefsStore } from '../../state/prefsStore';
 
 const POOLS_SNAPSHOT = {
   root: '/home/u/.harkroom-agent/claude-accounts',
@@ -665,3 +666,34 @@ describe('사람이 지나야 하는 관문 (2026-10-01)', () => {
   });
 });
 
+
+/** 한국어로 고르면 이 화면이 한 언어로 선다(i18n P3, 2026-10-10 — 영어로 박혀 있던 41곳). */
+describe('앱 언어를 따른다', () => {
+  afterEach(() => usePrefsStore.getState().setLocale('system'));
+
+  it('한국어로 고르면 머리·풀·열 이름·버튼·미로그인 표시가 한국어다', async () => {
+    usePrefsStore.getState().setLocale('ko');
+    stubTauri();
+    render(<ClaudeAccountsSettings />);
+    await screen.findByText('work');
+    expect(screen.getByText('기본 풀')).toBeTruthy();
+    expect(screen.getByText('계정 1개')).toBeTruthy();
+    expect(screen.getAllByText('팀').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('계정 추가').length).toBe(2);
+    expect(screen.getByRole('button', { name: 'work 에 계정 추가' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '기본 풀로' })).toBeTruthy();
+    expect(screen.getAllByText('로그인 안 됨').length).toBeGreaterThan(0);
+    // 배정 기준 줄(ClaudeAssignThresholds)도 같은 화면이다.
+    expect(screen.getByRole('button', { name: 'work 배정 기준 고치기' })).toBeTruthy();
+    const text = document.body.textContent ?? '';
+    expect(text).not.toMatch(/Default pool|Add account|Not signed in|Signed in as|Runners pick up|New pool|Edit limits|New threads skip/);
+  });
+
+  it('영어 복수형은 1 과 2 가 다르다', async () => {
+    usePrefsStore.getState().setLocale('en');
+    stubTauri();
+    render(<ClaudeAccountsSettings />);
+    await screen.findByText('work');
+    expect(screen.getByText('1 account')).toBeTruthy();
+  });
+});

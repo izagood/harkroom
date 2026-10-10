@@ -66,6 +66,7 @@ import { AccountRowsSkeleton, ProviderUsageBars, ProviderUsageSkeleton, UsageRef
 import { ClaudeAssignThresholdsRow } from './ClaudeAssignThresholds';
 import { refreshKey, usageFor, usageUpdatedAt, useProviderUsage } from '../../lib/providerUsage';
 import { useT } from '../../i18n/useT';
+import type { Translate } from '../../i18n';
 
 /** 제공업체 계정 화면 안의 Claude 칸. `SettingsPage` 와 같은 인자를 받아 `Shell` 로 갈아 끼운다. */
 function ClaudeSection({ description, actions, children }: {
@@ -111,14 +112,14 @@ interface LoginState {
   done: boolean;
 }
 
-function statusLine(status: ClaudeAuthStatus): string {
-  if (!status.loggedIn) return 'Not signed in';
+function statusLine(status: ClaudeAuthStatus, t: Translate): string {
+  if (!status.loggedIn) return t('claudeAccounts.notSignedIn');
   return [status.email, status.orgName, status.subscriptionType].filter(Boolean).join(' · ');
 }
 
 /** 줄 첫 칸. 계정을 가리키는 것은 **로그인한 팀**이다 — 디렉터리 이름은 id 일 뿐이다. */
-function teamLabel(a: ClaudeAccountView): string {
-  if (!a.status.loggedIn) return 'Not signed in';
+function teamLabel(a: ClaudeAccountView, t: Translate): string {
+  if (!a.status.loggedIn) return t('claudeAccounts.notSignedIn');
   return a.status.orgName ?? a.status.email ?? a.name;
 }
 
@@ -128,8 +129,8 @@ function signedInAs(status: ClaudeAuthStatus): string {
 }
 
 /** 확인 문구·메뉴에 쓰는 한 줄 이름. */
-function accountLabel(a: ClaudeAccountView): string {
-  return a.status.loggedIn ? statusLine(a.status) : `${a.name} (not signed in)`;
+function accountLabel(a: ClaudeAccountView, t: Translate): string {
+  return a.status.loggedIn ? statusLine(a.status, t) : t('claudeAccounts.accountNotSignedIn', { name: a.name });
 }
 
 /**
@@ -251,21 +252,18 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
   if (!available) {
     return (
       <Shell
-        title="Claude accounts"
-        description="Manage the Claude account pools your agent runners use."
+        title={t('claudeAccounts.title')}
+        description={t('claudeAccounts.descUnavailable')}
       >
         <SettingsGroup>
-          <div className="px-4 py-4 text-fg-subtle">
-            Account management is not available in this build. It needs the desktop app,
-            which runs the local daemon that owns these directories.
-          </div>
+          <div className="px-4 py-4 text-fg-subtle">{t('claudeAccounts.unavailable')}</div>
         </SettingsGroup>
       </Shell>
     );
   }
 
   const nameOk = (v: string): boolean => CLAUDE_POOL_NAME_PATTERN.test(v);
-  const NAME_HINT = 'Lowercase letters, digits and hyphens (a-z 0-9 -), up to 32 characters.';
+  const NAME_HINT = t('claudeAccounts.nameHint');
 
   const writeConfig = async (over: Partial<{
     defaultPool: string | null;
@@ -350,8 +348,8 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
 
   return (
     <Shell
-      title="Claude accounts"
-      description="Group accounts into pools. A runner uses one pool and spreads new threads across its accounts by usage; a thread stays on its account unless that account nears its limit."
+      title={t('claudeAccounts.title')}
+      description={t('claudeAccounts.desc')}
       width="wide"
       actions={(
         <UsageRefreshControl
@@ -372,35 +370,29 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
       )}
 
       {/* 언제부터 반영되는가 — 이 파일 머리말 2. */}
-      <div className="mb-6 text-meta text-fg-muted">
-        Runners pick up account changes here on their next turn — no restart needed. Threads
-        already on an account stay on it; new threads follow the change.
-      </div>
+      <div className="mb-6 text-meta text-fg-muted">{t('claudeAccounts.applyNote')}</div>
 
       {/* 평평한 계정 이전 안내 — 풀 모드에서 목록에서 사라진 계정들이다. */}
       {snap && snap.strays.length > 0 && (
-        <SettingsGroup title="Accounts outside any pool">
-          <div className="px-4 py-3 text-meta text-fg-subtle">
-            These were created before pools existed. Move them into a pool so runners can
-            use them. Signing in again may be required afterwards.
-          </div>
+        <SettingsGroup title={t('claudeAccounts.strays.title')}>
+          <div className="px-4 py-3 text-meta text-fg-subtle">{t('claudeAccounts.strays.note')}</div>
           {snap.strays.map((name) => (
             <div key={name} className="flex items-center justify-between px-4 py-3">
               <span className="font-mono text-fg">{name}</span>
               <Button onClick={async () => {
                 const target = snap.defaultPool ?? snap.pools[0]?.name;
-                if (!target) { setError('Create a pool first.'); return; }
+                if (!target) { setError(t('claudeAccounts.strays.createPoolFirst')); return; }
                 try {
                   const res = await moveClaudeAccount(name, target);
                   setMoveNote(res.loggedIn
-                    ? `Moved ${name} into ${target}.`
-                    : `Moved ${name} into ${target}, but it is no longer signed in — sign in again.`);
+                    ? t('claudeAccounts.strays.moved', { name, pool: target })
+                    : t('claudeAccounts.strays.movedSignedOut', { name, pool: target }));
                   await refresh();
                 } catch (err) {
                   setError(err instanceof Error ? err.message : String(err));
                 }
               }}>
-                Move into a pool
+                {t('claudeAccounts.strays.move')}
               </Button>
             </div>
           ))}
@@ -423,37 +415,37 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
         <SettingsGroup key={pool.name || '(default)'}>
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="font-medium text-fg">{pool.name || 'Ungrouped'}</span>
+              <span className="font-medium text-fg">{pool.name || t('claudeAccounts.pool.ungrouped')}</span>
               {snap.defaultPool === pool.name && (
                 <span className="rounded-row border border-border px-1.5 text-meta uppercase tracking-wide text-fg-muted">
-                  Default pool
+                  {t('claudeAccounts.pool.defaultBadge')}
                 </span>
               )}
               <span className="text-meta text-fg-subtle">
                 {snap.defaultPool === pool.name
-                  ? 'used by agents with no pool of their own'
-                  : `${pool.accounts.length} account${pool.accounts.length === 1 ? '' : 's'}`}
+                  ? t('claudeAccounts.pool.defaultNote')
+                  : t('claudeAccounts.pool.accountCount', { count: pool.accounts.length })}
                 {/*
                   **순서의 뜻이 바뀌었다(C ③).** 러너는 새 스레드를 점수(주간 여유 ÷ 초기화까지
                   남은 시간) 순으로 나누고, 설정의 `order` 는 동점일 때의 순서다(`writeConfig` 가
                   화면 순서를 그대로 쓴다). 그래서 이 표는 여전히 점수로 정렬하지 않는다 —
                   점수는 몇 분마다 바뀌고, 사람이 정한 순서가 화면에서 사라지면 안 된다.
                 */}
-                {pool.accounts.length > 1 && ' · new threads go to one of the two accounts with the most weekly room per hour left, picked in proportion to that room; order breaks ties'}
+                {pool.accounts.length > 1 && ` · ${t('claudeAccounts.pool.orderNote')}`}
               </span>
             </div>
             <div className="flex items-center gap-3">
               {pool.name && snap.defaultPool !== pool.name && (
                 <Button onClick={() => void writeConfig({ defaultPool: pool.name })}>
-                  Make default
+                  {t('claudeAccounts.pool.makeDefault')}
                 </Button>
               )}
               {pool.name && (
                 <Button
-                  ariaLabel={`Add account to ${pool.name}`}
+                  ariaLabel={t('claudeAccounts.pool.addAccountTo', { pool: pool.name })}
                   onClick={() => void beginLogin(pool.name, pool.accounts.map((a) => a.name))}
                 >
-                  Add account
+                  {t('claudeAccounts.pool.addAccount')}
                 </Button>
               )}
               {/*
@@ -468,14 +460,14 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   <Menu
                     placement="bottom"
                     items={[{
-                      label: `Remove pool ${pool.name}`,
+                      label: t('claudeAccounts.pool.remove', { pool: pool.name }),
                       onSelect: () => askPending({ kind: 'pool', pool: pool.name }),
                     }]}
                     renderTrigger={(triggerProps) => (
                       <button
                         {...triggerProps}
                         type="button"
-                        aria-label={`Actions for pool ${pool.name}`}
+                        aria-label={t('claudeAccounts.pool.actionsAria', { pool: pool.name })}
                         className="rounded-row px-2 py-1 text-fg-subtle hover:bg-surface-hover hover:text-fg"
                       >
                         ⋯
@@ -503,8 +495,8 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
 
           {pool.accounts.length > 0 && (
             <div className={`${ACCOUNT_GRID} px-4 py-2 text-meta uppercase tracking-wide text-fg-subtle`}>
-              <span>Team</span>
-              <span>Signed in as</span>
+              <span>{t('claudeAccounts.col.team')}</span>
+              <span>{t('claudeAccounts.col.signedInAs')}</span>
               <span />
             </div>
           )}
@@ -523,9 +515,9 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
               >
                 <span
                   className={`truncate ${a.status.loggedIn ? 'text-fg' : 'text-warning'}`}
-                  title={teamLabel(a)}
+                  title={teamLabel(a, t)}
                 >
-                  {teamLabel(a)}
+                  {teamLabel(a, t)}
                 </span>
                 {/*
                   정체는 이 화면이 반드시 말해야 하는 것 중 하나다(파일 머리말). 열로
@@ -533,13 +525,13 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   후자가 팔레트에서 "시각·타임스탬프·설명" 용으로 정의된 값이다.
                   좁아질 수 있는 열이라 잘리는 대신 `title` 로 전문을 남긴다.
                 */}
-                <span className="flex min-w-0 items-baseline gap-2 text-meta" title={statusLine(a.status)}>
+                <span className="flex min-w-0 items-baseline gap-2 text-meta" title={statusLine(a.status, t)}>
                   {a.status.loggedIn && <span className="truncate text-fg-muted">{signedInAs(a.status)}</span>}
                   {/* 디렉터리 이름은 id 로만 선다 — `HARKROOM_CLAUDE_ACCOUNTS`·로그가 이것을 쓴다. */}
                   <span className="shrink-0 font-mono text-fg-subtle">{a.name}</span>
                   {dup && (
                     <span className="shrink-0 text-warning" data-testid="claude-account-duplicate">
-                      same sign-in as {dup.name}
+                      {t('claudeAccounts.account.duplicate', { name: dup.name })}
                     </span>
                   )}
                   {/* 경고를 본 자리에서 고친다 — 프로필을 지우지 않고 로그인만 바꾸는 길이 이것이다. */}
@@ -547,11 +539,11 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                     <button
                       type="button"
                       className="shrink-0 text-accent underline hover:text-fg"
-                      aria-label={`Sign in again to ${a.name}`}
+                      aria-label={t('claudeAccounts.account.signInAgainTo', { account: a.name })}
                       data-testid="claude-account-duplicate-reauth"
-                      onClick={() => setReauthAsk({ pool: pool.name, account: a.name, label: accountLabel(a) })}
+                      onClick={() => setReauthAsk({ pool: pool.name, account: a.name, label: accountLabel(a, t) })}
                     >
-                      Sign in again
+                      {t('claudeAccounts.account.signInAgain')}
                     </button>
                   )}
                 </span>
@@ -563,22 +555,22 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                       label: t('providerUsage.refreshAccount', { account: a.name }),
                       onSelect: () => { void refreshUsage({ pool: pool.name, account: a.name }); },
                     }, {
-                      label: `Sign in again to ${a.name}`,
-                      onSelect: () => setReauthAsk({ pool: pool.name, account: a.name, label: accountLabel(a) }),
+                      label: t('claudeAccounts.account.signInAgainTo', { account: a.name }),
+                      onSelect: () => setReauthAsk({ pool: pool.name, account: a.name, label: accountLabel(a, t) }),
                     }, {
-                      label: `Open a terminal for ${a.name}`,
+                      label: t('claudeAccounts.attention.openAria', { account: a.name }),
                       onSelect: () => { void openTerminal(pool.name, a.name); },
                     }, {
-                      label: `Remove account ${a.name}`,
+                      label: t('claudeAccounts.account.remove', { account: a.name }),
                       onSelect: () => askPending({
-                        kind: 'account', pool: pool.name, account: a.name, label: accountLabel(a),
+                        kind: 'account', pool: pool.name, account: a.name, label: accountLabel(a, t),
                       }),
                     }]}
                     renderTrigger={(triggerProps) => (
                       <button
                         {...triggerProps}
                         type="button"
-                        aria-label={`Actions for account ${a.name}`}
+                        aria-label={t('claudeAccounts.account.actionsAria', { account: a.name })}
                         className="rounded-row px-1.5 py-1 text-fg-subtle hover:bg-surface-hover hover:text-fg"
                       >
                         ⋯
@@ -641,12 +633,12 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
           })}
           {terminalOpened && pool.accounts.some((a) => `${pool.name}/${a.name}` === terminalOpened) && (
             <div className="px-4 py-3 text-meta text-fg" data-testid="claude-account-terminal-note">
-              Opened Terminal for {terminalOpened}. Make your choice there, then type /exit — new threads use this account again after that.
+              {t('claudeAccounts.terminal.opened', { account: terminalOpened })}
             </div>
           )}
           {terminalBack && pool.accounts.some((a) => `${pool.name}/${a.name}` === terminalBack) && (
             <div className="px-4 py-3 text-meta text-fg" data-testid="claude-account-terminal-back">
-              {terminalBack} is back — new threads can use it again.
+              {t('claudeAccounts.terminal.back', { account: terminalBack })}
             </div>
           )}
         </SettingsGroup>
@@ -654,14 +646,14 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
       })}
 
       {/* 새 풀 — 설정에 이름이 나타나면 데몬이 디렉터리를 만든다. 그것이 생성 경로다. */}
-      <SettingsGroup title="New pool">
+      <SettingsGroup title={t('claudeAccounts.newPool')}>
         {newPool === null ? (
           <div className="px-4 py-3">
-            <Button onClick={() => setNewPool('')}>New pool</Button>
+            <Button onClick={() => setNewPool('')}>{t('claudeAccounts.newPool')}</Button>
           </div>
         ) : (
           <div className="px-4 py-3">
-            <Field label="Pool name" hint={nameOk(newPool) ? undefined : NAME_HINT} tone="warning">
+            <Field label={t('claudeAccounts.poolName')} hint={nameOk(newPool) ? undefined : NAME_HINT} tone="warning">
               <TextInput value={newPool} onChange={setNewPool} placeholder="work" />
             </Field>
             <div className="mt-3 flex gap-2">
@@ -676,9 +668,9 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   setNewPool(null);
                 }}
               >
-                Create
+                {t('claudeAccounts.create')}
               </Button>
-              <Button onClick={() => setNewPool(null)}>Cancel</Button>
+              <Button onClick={() => setNewPool(null)}>{t('claudeAccounts.cancel')}</Button>
             </div>
           </div>
         )}
@@ -686,22 +678,20 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
 
       {/* 계정 추가 — URL 을 링크로 보여 주고 코드를 받는다. */}
       {login && (
-        <SettingsGroup title={login.reauth ? `Sign in again — ${login.reauth.label}` : `Add account to ${login.pool}`}>
+        <SettingsGroup title={login.reauth ? t('claudeAccounts.login.reauthTitle', { label: login.reauth.label }) : t('claudeAccounts.pool.addAccountTo', { pool: login.pool })}>
           {login.loginId === null ? (
             <div className="px-4 py-3">
               {/*
                 취소를 여기 두지 않는다: 아직 `loginId` 가 없어 데몬의 로그인 프로세스를 거둘 수
                 없다. 이 틈은 데몬이 자식을 띄우는 동안뿐이고, URL 이 오면 아래에 취소가 선다.
               */}
-              <div className="text-meta text-fg-subtle">Starting sign-in…</div>
+              <div className="text-meta text-fg-subtle">{t('claudeAccounts.login.starting')}</div>
             </div>
           ) : (
             <div className="px-4 py-3">
               {login.url ? (
                 <>
-                  <div className="text-meta text-fg-subtle">
-                    Open this link and sign in, then paste the code below.
-                  </div>
+                  <div className="text-meta text-fg-subtle">{t('claudeAccounts.login.openLink')}</div>
                   <a
                     className="mt-2 block break-all text-accent underline"
                     href={login.url}
@@ -711,8 +701,8 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   </a>
                   <div className="mt-2 text-meta text-warning">
                     {login.reauth
-                      ? 'Use a private (incognito) browser window. Otherwise the existing session signs this account into the same login again.'
-                      : 'Use a private (incognito) browser window when adding a second account. Otherwise the existing session signs you into the same account again.'}
+                      ? t('claudeAccounts.login.privateReauth')
+                      : t('claudeAccounts.login.privateAdd')}
                   </div>
                   <div className="mt-3">
                     <LoginCodeForm
@@ -727,7 +717,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   </div>
                 </>
               ) : (
-                <div className="text-fg-subtle">Starting sign-in…</div>
+                <div className="text-fg-subtle">{t('claudeAccounts.login.starting')}</div>
               )}
               {login.error && <div className="mt-3 text-danger">{login.error}</div>}
               <div className="mt-3">
@@ -735,7 +725,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   if (login.loginId) await cancelClaudeLogin(login.loginId).catch(() => undefined);
                   setLogin(null);
                 }}>
-                  Cancel
+                  {t('claudeAccounts.cancel')}
                 </Button>
               </div>
             </div>
@@ -758,16 +748,16 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
       */}
       {reauthAsk && (
         <ConfirmDialog
-          title={`Sign in again to ${reauthAsk.account}?`}
+          title={t('claudeAccounts.reauth.title', { account: reauthAsk.account })}
           detail={
             // 겹창의 미리보기 칸은 높이가 정해져 있다(`max-h-24`) — 세 줄을 짧게 둔다.
             <div className="flex flex-col gap-1">
-              <span>Name, pool and order stay; only the sign-in changes.</span>
-              <span>Use a private browser window, or you get the same login again.</span>
-              <span>Turns already running on this account are not stopped.</span>
+              <span>{t('claudeAccounts.reauth.keeps')}</span>
+              <span>{t('claudeAccounts.reauth.private')}</span>
+              <span>{t('claudeAccounts.reauth.running')}</span>
             </div>
           }
-          confirmLabel="Sign in again"
+          confirmLabel={t('claudeAccounts.account.signInAgain')}
           onConfirm={() => { const ask = reauthAsk; setReauthAsk(null); void beginReauth(ask); }}
           onCancel={() => setReauthAsk(null)}
         />
@@ -776,12 +766,16 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
       {pending && (
         <ConfirmDialog
           danger
-          title={pending.kind === 'account' ? `Remove account ${pending.account}?` : `Remove pool ${pending.pool}?`}
+          title={pending.kind === 'account'
+            ? t('claudeAccounts.removeDialog.accountTitle', { account: pending.account })
+            : t('claudeAccounts.removeDialog.poolTitle', { pool: pending.pool })}
           detail={pending.kind === 'account'
-            ? `${pending.label}${pending.pool ? ` in pool ${pending.pool}` : ''}. Its saved sign-in is deleted and you would have to sign in again.`
-            : 'Every account in it and their saved sign-ins are deleted.'}
-          confirmLabel={pending.kind === 'account' ? 'Remove' : 'Remove pool'}
-          cancelLabel="Keep"
+            ? (pending.pool
+              ? t('claudeAccounts.removeDialog.accountDetailInPool', { label: pending.label, pool: pending.pool })
+              : t('claudeAccounts.removeDialog.accountDetail', { label: pending.label }))
+            : t('claudeAccounts.removeDialog.poolDetail')}
+          confirmLabel={pending.kind === 'account' ? t('claudeAccounts.removeDialog.remove') : t('claudeAccounts.removeDialog.removePool')}
+          cancelLabel={t('claudeAccounts.removeDialog.keep')}
           busy={pendingBusy}
           error={pendingError}
           onConfirm={() => void confirmPending()}
@@ -808,28 +802,30 @@ function AssignScore({ usage, nowMs, limits, show }: {
   limits: { newSessionPct: number; newWeeklyPct: number };
   show: boolean;
 }) {
+  const t = useT();
   if (!show || !usage.weekly || usage.error) return null;
   const score = headroomPerHour(usage.weekly, nowMs);
   const skip = (usage.session && usage.session.usedPercent >= limits.newSessionPct)
     || usage.weekly.usedPercent >= limits.newWeeklyPct;
   return (
     <div className="mt-1 text-meta text-fg-subtle" data-testid="claude-assign-score">
-      Score {score.toFixed(2)}%/h
-      {skip && <span className="text-warning"> · skipped for new threads</span>}
+      {t('claudeAccounts.score', { score: score.toFixed(2) })}
+      {skip && <span className="text-warning"> · {t('claudeAccounts.scoreSkipped')}</span>}
     </div>
   );
 }
 
 function LoginCodeForm({ onSubmit }: { onSubmit(code: string): Promise<void> }) {
+  const t = useT();
   const [code, setCode] = useState('');
   return (
     <>
-      <Field label="Code from the browser">
-        <TextInput value={code} onChange={setCode} placeholder="paste here" />
+      <Field label={t('claudeAccounts.login.codeLabel')}>
+        <TextInput value={code} onChange={setCode} placeholder={t('claudeAccounts.login.codePlaceholder')} />
       </Field>
       <div className="mt-3">
         <Button variant="primary" disabled={code.trim() === ''} onClick={() => void onSubmit(code.trim())}>
-          Submit
+          {t('claudeAccounts.login.submit')}
         </Button>
       </div>
     </>
