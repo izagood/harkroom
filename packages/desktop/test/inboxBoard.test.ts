@@ -4,7 +4,7 @@
 // 순수 함수다. 화면이 그 결과를 그리는지는 `inbox.test.tsx` 가 잰다.
 import { describe, it, expect } from 'vitest';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
-import { buildBoard, filterBoard, oneSentence, daysWaiting, laterUntilLabel, RECENT_MS, type BoardInput } from '../src/lib/inboxBoard';
+import { buildBoard, filterBoard, mineCount, oneSentence, daysWaiting, laterUntilLabel, RECENT_MS, type BoardInput } from '../src/lib/inboxBoard';
 import { msg } from './helpers/fakeApi';
 
 const ME = 'me';
@@ -75,12 +75,20 @@ describe('내 차례 — 범위는 내 스레드다 (정정 1)', () => {
     expect(cards[0]!.column).not.toBe('mine');
   });
 
-  it('오래 기다린 것이 위다 (정정 2)', () => {
+  it('최근 것이 위다 (R1 — 옛 정정 2 의 오래된 순을 뒤집었다)', () => {
     const cards = board(
       [entry(1, { threadRootId: 'new', createdAt: ago(DAY) }), entry(2, { threadRootId: 'old', createdAt: ago(3 * DAY) })],
       [head('new', { openAskAccountIds: [ME] }), head('old', { openAskAccountIds: [ME] })],
     );
-    expect(cards.map((c) => c.rootId)).toEqual(['old', 'new']);
+    expect(cards.map((c) => c.rootId)).toEqual(['new', 'old']);
+  });
+
+  it('막힘도 최근 것이 위다 (R1)', () => {
+    const cards = board(
+      [entry(1, { threadRootId: 'old', createdAt: ago(3 * DAY) }), entry(2, { threadRootId: 'new', createdAt: ago(DAY) })],
+      [head('old', { authorId: ME, openAskAccountIds: [OTHER] }), head('new', { authorId: ME, openAskAccountIds: [OTHER] })],
+    );
+    expect(cards.map((c) => [c.rootId, c.column])).toEqual([['new', 'blocked'], ['old', 'blocked']]);
   });
 });
 
@@ -134,9 +142,16 @@ describe('끝남 = 결과가 나온 것, 완료 = 치움 (정정 3 · 2/2)', () 
     expect(cards[0]!.fold).toBeNull();
   });
 
-  it('치운 뒤 다시 나에게 물음이 오면 내 차례가 이긴다', () => {
+  it('내 차례도 치울 수 있다 — 끝남 맨 아래로 접히고 수에서 빠진다 (R3)', () => {
     const cards = board([entry(1, { threadRootId: 'r1' })], [head('r1', { openAskAccountIds: [ME] })],
       { threadStates: [st('r1', 'done')] });
+    expect(cards[0]).toMatchObject({ column: 'done', fold: 'cleared' });
+    expect(mineCount(cards)).toBe(0);
+  });
+
+  it('치운 뒤 다시 나에게 물음이 오면 내 차례로 돌아온다', () => {
+    const cards = board([entry(1, { threadRootId: 'r1', createdAt: ago(DAY / 4) })], [head('r1', { openAskAccountIds: [ME] })],
+      { threadStates: [st('r1', 'done', ago(DAY / 2))] });
     expect(cards[0]!.column).toBe('mine');
     expect(cards[0]!.fold).toBeNull();
   });
@@ -187,6 +202,39 @@ describe('7일 접힘 (정정 4)', () => {
     );
     expect(cards.find((c) => c.rootId === 'r1')!.fold).toBe('old');
     expect(cards.find((c) => c.rootId === 'r2')!.fold).toBeNull();
+  });
+});
+
+describe('7일 넘게 기다린 내 차례·막힘은 접는다 (R2)', () => {
+  it('내 차례가 7일 넘게 기다렸으면 접히고 수에서 빠진다', () => {
+    const cards = board(
+      [entry(1, { threadRootId: 'fresh', createdAt: ago(DAY) }), entry(2, { threadRootId: 'stale', createdAt: ago(RECENT_MS + DAY) })],
+      [head('fresh', { openAskAccountIds: [ME] }), head('stale', { openAskAccountIds: [ME] })],
+    );
+    expect(cards.map((c) => [c.rootId, c.column, c.fold])).toEqual([['fresh', 'mine', null], ['stale', 'mine', 'stale']]);
+    expect(mineCount(cards)).toBe(1);
+  });
+
+  it('기간은 마지막 움직임이 아니라 그 열에 들어오게 한 말부터 잰다', () => {
+    // 물음은 열흘 전, 그 뒤 답글이 어제 왔다 — 물음은 여전히 열흘을 기다렸다.
+    const cards = board(
+      [entry(1, { threadRootId: 'r1', createdAt: ago(10 * DAY), meta: { kind: 'ask', ask: { prompt: '어느 쪽?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], to: { kind: 'account', accountId: ME } } } }),
+        entry(2, { threadRootId: 'r1', reason: 'thread_reply', createdAt: ago(DAY) })],
+      [head('r1', { openAskAccountIds: [ME], lastReplyAt: ago(DAY) })],
+    );
+    expect(cards[0]).toMatchObject({ column: 'mine', fold: 'stale' });
+  });
+
+  it('막힘도 7일 넘으면 접힌다', () => {
+    const cards = board([entry(1, { threadRootId: 'r1', createdAt: ago(RECENT_MS + DAY) })],
+      [head('r1', { authorId: ME, openAskAccountIds: [OTHER], createdAt: ago(RECENT_MS + DAY) })]);
+    expect(cards[0]).toMatchObject({ column: 'blocked', fold: 'stale' });
+  });
+
+  it('7일 안이면 접지 않는다', () => {
+    const cards = board([entry(1, { threadRootId: 'r1', createdAt: ago(RECENT_MS - DAY) })], [head('r1', { openAskAccountIds: [ME] })]);
+    expect(cards[0]!.fold).toBeNull();
+    expect(mineCount(cards)).toBe(1);
   });
 });
 
