@@ -18,6 +18,11 @@ export interface RelayMuxDeps {
   /** 서버 채널로. 안 붙어 있으면 false — 그때의 손실은 `resync` 가 메운다(세션 목록에 한해). */
   send(frame: OperatorToServerFrame): boolean;
   log(line: string): void;
+  /**
+   * 러너가 아니라 **이 오퍼레이터**가 가진 능력(R1 PR-3b) — 러너의 announce 에 덧붙인다. 지금은 로컬 터미널
+   * 허브가 서버의 `local.view`·`local.writer` 를 알아듣는다는 `'local-terminal'` 하나다. 없으면 그대로 올린다.
+   */
+  extraCaps?: readonly RunnerCap[];
 }
 
 export interface RelayMux {
@@ -47,7 +52,11 @@ export function createRelayMux(deps: RelayMuxDeps): RelayMux {
   };
 
   return {
-    onRunnerFrame(runnerId, frame) {
+    onRunnerFrame(runnerId, incoming) {
+      // 옛 러너(caps 없음)에도 덧붙인다 — 그때 caps 는 이 능력 하나뿐이고, 'input' 이 없으니 서버는 입력을 열지 않는다.
+      const frame: RelayRunnerFrame = incoming.type === 'announce' && deps.extraCaps?.length
+        ? { ...incoming, caps: [...new Set([...(incoming.caps ?? []), ...deps.extraCaps])] }
+        : incoming;
       track(runnerId, frame);
       const wrapped = wrapRunnerFrame(runnerId, frame);
       if (!wrapped) return;

@@ -20,6 +20,7 @@ import type { LocalAgentConfig } from './config.js';
 import { createRelayMux } from './relayMux.js';
 import { createServerLink, type LinkDialer, type ServerLink } from './serverLink.js';
 import { HEARTBEAT_INTERVAL_MS } from './heartbeat.js';
+import type { LocalTerminalHub } from './localTerminal.js';
 
 export interface CommunityDeps {
   baseUrl: string;
@@ -33,6 +34,15 @@ export interface CommunityDeps {
    * (단계 3 전환기 — 러너가 아직 서버 WS 로 직접 붙는 배선).
    */
   runnerLink?: { send(runnerId: string, frame: RelayServerFrame): boolean; isLinked(runnerId: string): boolean };
+  /**
+   * 같은 머신의 터미널 직결 허브(R1 PR-3b). 있으면 서버의 `local.view`·`local.writer` 를 가로채 허브에 넣고,
+   * 러너 announce 에 `'local-terminal'` 을 덧붙인다. 없으면 그 프레임은 버린다(옛 동작과 같다).
+   */
+  localTerminal?: {
+    hub: Pick<LocalTerminalHub, 'ownerOf' | 'grantView' | 'revokeView' | 'grantWriter'>;
+    /** 러너가 어느 에이전트의 것인가 — 이 커뮤니티가 아는 에이전트의 세션에만 키를 받는다. */
+    agentOf(runnerId: string): string | null;
+  };
   /** 배정도 러너 프레임도 아닌 것(`runner.kill`)을 받는 자리. */
   onFrame?: (frame: ServerToOperatorFrame) => void;
   /** 러너의 MCP·REST 요청을 이 커뮤니티의 서버로 나른다(스펙 §5). 없으면 요청은 거절된다. */
@@ -98,7 +108,29 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     link: deps.runnerLink ?? noLink,
     send: (frame) => linkRef.current?.send(frame) ?? false,
     log: deps.log,
+    ...(deps.localTerminal ? { extraCaps: ['local-terminal'] as const } : {}),
   });
+
+  /**
+   * 서버가 내린 로컬 직결 키를 허브에 넣는다(R1 PR-3b). **이 커뮤니티의 세션일 때만** 받는다 — 오퍼레이터는
+   * 여러 서버에 붙을 수 있고, 한 서버가 다른 서버의 세션 id 로 키를 내려 남의 화면을 여는 길을 막는다:
+   * 그 세션을 가진 러너가 프레임의 `runnerId` 와 같고, 그 러너의 에이전트를 이 커뮤니티가 알아야 한다.
+   */
+  const applyLocal = (frame: Extract<ServerToOperatorFrame, { type: 'local.view' | 'local.writer' }>): void => {
+    const lt = deps.localTerminal;
+    if (!lt) return;
+    const agentId = lt.agentOf(frame.runnerId);
+    if (lt.hub.ownerOf(frame.sessionId) !== frame.runnerId || !agentId || !(agentId in agents)) {
+      deps.log(`로컬 직결 키를 버린다: ${frame.type} session=${frame.sessionId} — 이 커뮤니티의 이 러너 세션이 아니다`);
+      return;
+    }
+    if (frame.type === 'local.view') {
+      if (frame.granted) lt.hub.grantView(frame.sessionId, frame.viewKey);
+      else lt.hub.revokeView(frame.sessionId, frame.viewKey);
+      return;
+    }
+    lt.hub.grantWriter(frame.sessionId, frame.writerKey, frame.gen);
+  };
 
   const fetchImpl = deps.fetchImpl ?? fetch;
   const readSelf = async (): Promise<string | null> => {
@@ -169,6 +201,8 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
         if (!deps.reconciler.restart(frame.agentId)) deps.log(`재시작 무시: agent=${frame.agentId} — 배정·러너가 없다`);
         return;
       }
+      // 로컬 직결 키는 러너까지 가지 않는다 — 이 오퍼레이터의 허브가 받는다(R1 PR-3b).
+      if (frame.type === 'local.view' || frame.type === 'local.writer') { applyLocal(frame); return; }
       // 러너 프레임이면 다중화기가 runnerId 로 러너를 골라 내린다. 아니면(runner.kill) 밖으로.
       if (!mux.onServerFrame(frame)) deps.onFrame?.(frame);
     },
