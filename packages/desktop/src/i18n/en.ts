@@ -3094,8 +3094,6 @@ export const en = {
   'inbox.list.tab.news': 'Updates',
   'inbox.list.tab.later': 'Later',
   'inbox.list.tab.cleared': 'Cleared',
-  /** 머리 한 줄 — 오늘 남은 일. */
-  'inbox.list.summary': '{decision} to decide · {blocker} blocked',
   'inbox.list.section.decision': 'Needs your decision',
   'inbox.list.section.blocker': 'Blocked, waiting on you',
   'inbox.list.section.news': 'Also waiting on you',

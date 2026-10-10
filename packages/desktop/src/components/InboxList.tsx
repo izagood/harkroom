@@ -144,6 +144,17 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
   }, [rows, selected]);
   const currentIndex = current ? rows.indexOf(current) : -1;
   useEffect(() => { if (currentIndex >= 0) lastIndex.current = currentIndex; }, [currentIndex]);
+  /**
+   * 고른 줄이 바뀌면 그 줄을 보이게 한다(designer s1) — J/K·치운 뒤 다음 줄로 넘어갈 때. 100건이 쌓이는
+   * 목록이라 따라가지 않으면 키가 쓸모를 잃는다. `nearest` 라 이미 보이면 움직이지 않고, 바깥 상자를 끌지
+   * 않는다(`shellScroll.test.tsx`).
+   */
+  const currentRoot = current?.card.rootId ?? null;
+  useEffect(() => {
+    if (!currentRoot) return;
+    const el = rootRef.current?.querySelector(`[data-testid="inbox-card-${currentRoot}"]`);
+    if (el instanceof HTMLElement) el.scrollIntoView?.({ block: 'nearest' });
+  }, [currentRoot]);
 
   const select = useCallback((g: BoardGroup | undefined) => {
     if (!g) return;
@@ -201,8 +212,6 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
     return () => document.removeEventListener('keydown', onKey);
   }, [rows, current, currentIndex, select, dismiss, snooze, onOpen, busy]);
 
-  const decisionCount = workCount(sections.find((s) => s.kind === 'decision')?.groups ?? []);
-  const blockerCount = workCount(sections.find((s) => s.kind === 'blocker')?.groups ?? []);
   const staleDecisions = stale.filter((c) => c.kind === 'decision').length;
 
   const rowView = (g: BoardGroup) => {
@@ -221,7 +230,8 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
           onClick={() => { select(g); setDetailOnly(true); }}
           onDoubleClick={() => onOpen(card)}
           className={`flex w-full items-start gap-2 rounded-row border-l-2 px-2 py-1.5 text-left ${
-            on ? 'border-accent bg-accent-surface' : card.unread ? 'border-accent/50 hover:bg-surface-hover' : 'border-transparent hover:bg-surface-hover'}`}
+            // 띠와 배경은 **고른 줄 하나**에만 쓴다(designer s2). 안 읽음은 굵은 제목과 「새 말」이 말한다.
+            on ? 'border-accent bg-accent-surface' : 'border-transparent hover:bg-surface-hover'}`}
         >
           {who
             ? <Identity account={who} className="mt-0.5 h-6 w-6 shrink-0 text-meta" variant="avatar" />
@@ -254,7 +264,8 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
             </span>
             <span className="flex items-center gap-1">
               {card.unread && <span data-testid={`inbox-card-unread-${card.rootId}`} className="text-accent">{t('inbox.board.unread')}</span>}
-              <span className="text-fg-subtle">{t(KIND_KEY[card.kind])}</span>
+              {/* 할 일 탭은 묶음 머리가 이미 종류를 말한다(designer n6) — 다른 갈래에서만 단다. */}
+              {tab !== 'todo' && <span className="text-fg-subtle">{t(KIND_KEY[card.kind])}</span>}
             </span>
           </span>
         </button>
@@ -323,12 +334,16 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
             ))}
           </div>
         )}
-        <div className="mt-auto flex flex-wrap items-center gap-1.5 border-t border-border pt-3 text-meta">
+        {/* 행동 줄은 선택지 바로 아래(designer s3). 본문이 길어 넘칠 때만 아래에 붙는다(sticky). */}
+        <div data-testid="inbox-detail-actions" className="sticky bottom-0 flex flex-wrap items-center gap-1.5 border-t border-border bg-surface-sunken pb-1 pt-3 text-meta">
           <button
             type="button"
             data-testid={`inbox-card-open-${card.rootId}`}
             onClick={() => onOpen(card)}
-            className="rounded-row bg-accent px-2.5 py-1 text-fg-on-strong hover:bg-accent-hover"
+            // 물음 카드는 선택지가 먼저다(designer n7) — 그때 [스레드 열기]는 테두리 버튼으로 내린다.
+            className={card.ask
+              ? 'rounded-row border border-border px-2.5 py-1 text-fg hover:bg-surface-hover'
+              : 'rounded-row bg-accent px-2.5 py-1 text-fg-on-strong hover:bg-accent-hover'}
           >
             {t('inbox.list.openThread')} <kbd className="ml-1 opacity-70">↵</kbd>
           </button>
@@ -374,7 +389,7 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
 
   return (
     <div ref={rootRef} data-testid="inbox-list-view" className="@container flex min-h-0 flex-1 flex-col">
-      {/* 머리 한 줄 — 「답할 것 N · 막힘 M」이 오늘 남은 일을 말한다(B안의 요약을 여기로). */}
+      {/* 갈래 칩. 남은 일의 수는 칩과 묶음 머리가 말한다 — 따로 요약 줄을 두지 않는다(designer n5). */}
       <div className="flex flex-wrap items-center gap-1 border-b border-border px-3 py-2">
         <div role="tablist" aria-label={t('inbox.list.tabs')} className="flex flex-wrap gap-1">
           {TABS.map((k) => (
@@ -392,15 +407,10 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
             </button>
           ))}
         </div>
-        {tab === 'todo' && (decisionCount > 0 || blockerCount > 0) && (
-          <span data-testid="inbox-list-summary" className="ml-auto text-meta text-state-turn">
-            {t('inbox.list.summary', { decision: decisionCount, blocker: blockerCount })}
-          </span>
-        )}
       </div>
       <div className="flex min-h-0 flex-1">
         {/* 목록 — 넓은 자리에서는 왼쪽 고정 폭, 좁은 자리에서는 전폭(상세가 대신하면 숨는다). */}
-        <div className={`${detailOnly ? 'hidden' : 'flex'} min-h-0 w-full flex-col overflow-y-auto @3xl:flex @3xl:w-[26rem] @3xl:shrink-0 @3xl:border-r @3xl:border-border`}>
+        <div className={`${detailOnly ? 'hidden' : 'flex'} min-h-0 w-full flex-col overflow-y-auto @3xl:flex @3xl:w-[26rem] @5xl:w-[32rem] @3xl:shrink-0 @3xl:border-r @3xl:border-border`}>
           {rows.length === 0 && !(tab === 'todo' && stale.length > 0) && (
             <p data-testid="inbox-list-empty" className="p-3 text-meta text-fg-subtle">
               {t(tab === 'todo' ? 'inbox.board.empty.mine' : 'inbox.board.empty.other')}

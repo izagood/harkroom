@@ -93,14 +93,17 @@ const mixed = () => ({
 });
 
 describe('받은 일 — 기본 보기 (A안)', () => {
-  it('할 일을 결정 → 막힘으로 묶고, 머리 한 줄이 남은 일을 말하고, 맨 위 줄이 골라져 있다', async () => {
+  it('할 일을 결정 → 막힘으로 묶고, 묶음 머리가 일 수를 말하고, 맨 위 줄이 골라져 있다', async () => {
     fakeController(async () => mixed());
     open();
     await screen.findByTestId('inbox-list-view');
     expect(screen.queryByTestId('inbox-board')).toBeNull();
     const sections = screen.getAllByTestId(/^inbox-section-(decision|blocker|news)$/).map((el) => el.getAttribute('data-testid'));
     expect(sections).toEqual(['inbox-section-decision', 'inbox-section-blocker']);
-    expect(screen.getByTestId('inbox-list-summary').textContent).toBe('답할 것 2 · 막힘 1');
+    expect(screen.getByTestId('inbox-section-count-decision').textContent).toBe('· 2');
+    expect(screen.getByTestId('inbox-section-count-blocker').textContent).toBe('· 1');
+    // 따로 요약 줄은 없다 — 수가 네 번 나오던 것을 줄였다(designer n5).
+    expect(screen.queryByTestId('inbox-list-summary')).toBeNull();
     // 내 차례가 아닌 n1 은 할 일에 없다 — 소식 갈래에 있다.
     expect(screen.queryByTestId('inbox-card-n1')).toBeNull();
     expect(selectedRoot()).toBe('d1');
@@ -120,6 +123,34 @@ describe('받은 일 — 기본 보기 (A안)', () => {
     expect(c.openThread).toHaveBeenCalledWith('b1', { channelId: 'c1' });
     // 인박스는 남는다 — 스레드와 나란히 본다.
     expect(screen.getByTestId('inbox-list-view')).toBeTruthy();
+  });
+
+  it('띠는 고른 줄에만 — 안 읽은 줄은 띠가 없다 (designer s2)', async () => {
+    fakeController(async () => mixed());
+    open();
+    const picked = await screen.findByTestId('inbox-card-d1');
+    const unread = screen.getByTestId('inbox-card-d2');
+    expect(unread.getAttribute('data-unread')).toBe('true');
+    expect(picked.className).toContain('border-accent');
+    expect(unread.className).not.toContain('border-accent');
+  });
+
+  it('할 일 탭에서는 줄마다 종류 글자를 달지 않는다 — 소식 탭에서는 단다 (designer n6)', async () => {
+    fakeController(async () => mixed());
+    open();
+    const row = await screen.findByTestId('inbox-card-d1');
+    expect(row.textContent).not.toContain('Decide');
+    expect(row.textContent).not.toMatch(/결정$/);
+    fireEvent.click(screen.getByTestId('inbox-tab-news'));
+    expect(screen.getByTestId('inbox-card-n1').textContent).toMatch(/소식$/);
+  });
+
+  it('물음 카드에서는 [스레드 열기]가 테두리 버튼이고, 물음이 없으면 주황이다 (designer n7)', async () => {
+    fakeController(async () => mixed());
+    open();
+    expect((await screen.findByTestId('inbox-card-open-d1')).className).not.toContain('bg-accent');
+    fireEvent.click(screen.getByTestId('inbox-card-b1'));
+    expect(screen.getByTestId('inbox-card-open-b1').className).toContain('bg-accent');
   });
 
   it('선택지 줄과 행동 줄은 따로다 (designer d1·n3)', async () => {
@@ -150,6 +181,23 @@ describe('키보드 — J/K · E · L · ↵', () => {
     expect(screen.getByTestId('inbox-toast').textContent).toContain('1건 치웠다');
     fireEvent.click(screen.getByTestId('inbox-toast-undo'));
     await waitFor(() => expect(states(c).at(-1)).toEqual(['d1', { state: null }]));
+  });
+
+  it('고른 줄이 바뀌면 그 줄을 보이게 한다 (designer s1)', async () => {
+    const scroll = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      fakeController(async () => mixed());
+      open();
+      await screen.findByTestId('inbox-list-view');
+      scroll.mockClear();
+      fireEvent.keyDown(screen.getByTestId('inbox-list-view'), { key: 'j' });
+      expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
+      expect(scroll.mock.contexts.at(-1)).toBe(screen.getByTestId('inbox-card-d2'));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
   });
 
   it('L 은 내일 아침으로 미룬다', async () => {

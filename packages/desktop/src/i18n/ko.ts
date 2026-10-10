@@ -1561,7 +1561,6 @@ export const ko = {
   'inbox.list.tab.news': '소식',
   'inbox.list.tab.later': '미룬 것',
   'inbox.list.tab.cleared': '치운 것',
-  'inbox.list.summary': '답할 것 {decision} · 막힘 {blocker}',
   'inbox.list.section.decision': '결정이 필요한 것',
   'inbox.list.section.blocker': '막혀서 나를 기다림',
   'inbox.list.section.news': '그 밖에 나를 기다림',
