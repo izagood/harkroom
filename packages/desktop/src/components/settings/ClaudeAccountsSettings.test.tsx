@@ -681,7 +681,7 @@ describe('앱 언어를 따른다', () => {
     expect(screen.getAllByText('팀').length).toBeGreaterThan(0);
     expect(screen.getAllByText('계정 추가').length).toBe(2);
     expect(screen.getByRole('button', { name: 'work 에 계정 추가' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '기본으로' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '기본 풀로' })).toBeTruthy();
     expect(screen.getAllByText('로그인 안 됨').length).toBeGreaterThan(0);
     // 배정 기준 줄(ClaudeAssignThresholds)도 같은 화면이다.
     expect(screen.getByRole('button', { name: 'work 배정 기준 고치기' })).toBeTruthy();
