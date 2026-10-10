@@ -405,11 +405,17 @@ function buildMcpServer(
    *
    * 기본값이 'resident' 인 이유: 모드를 모르는 옛 호출자(러너가 서버보다 늦게 배포되는
    * 창)는 지금까지와 글자 그대로 같은 전문을 받아야 한다. 새 값은 옵트인이다.
+   *
+   * `avcs` 는 러너가 밝히는 "이 에이전트가 avcs MCP 를 띄울 수 있는가"다. **정확히 `false` 일 때만** avcs 절을
+   * 뺀다 — 없거나 모르는 값(옛 러너, 잘못된 꼴)은 전문이다. 러너 자신이 밝히는 값을 그대로 믿지만, 바뀌는 것은
+   * 그 에이전트 자신에게 가는 안내 글뿐이라 권한 판정과 무관하다. 모르는 값을 오류로 막지 않으려고 스키마는
+   * `unknown` 으로 받는다(가이드를 못 받으면 러너가 기동하지 못한다).
+   * 러너는 가이드를 **기동 때 한 번** 받는다(`agent/src/main.ts`) — avcs 를 깔거나 지우면 러너를 다시 띄워야 반영된다.
    */
   server.registerTool('workspace.guide', {
-    description: '워크스페이스 규칙(avcs 사용 경계 포함). mode=turn 이면 러너 턴용 판본',
-    inputSchema: { mode: z.enum(['resident', 'turn']).optional() },
-  }, async ({ mode }) => jsonResult({ guide: guideFor(mode ?? 'resident') }));
+    description: '워크스페이스 규칙(avcs 를 쓸 수 있으면 그 사용 경계 포함). mode=turn 이면 러너 턴용 판본. avcs=false 면 avcs 절을 뺀다',
+    inputSchema: { mode: z.enum(['resident', 'turn']).optional(), avcs: z.unknown().optional() },
+  }, async ({ mode, avcs }) => jsonResult({ guide: guideFor(mode ?? 'resident', { avcs: avcs !== false }) }));
 
   server.registerTool('account.me', { description: '내 계정 정보' },
     async () => jsonResult(account));

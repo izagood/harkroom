@@ -203,6 +203,27 @@ describe('mcp surface', () => {
     await client.close();
   });
 
+  it('workspace.guide drops the avcs sections only when the runner says avcs:false', async () => {
+    const client = await mcpClient(botPat);
+    const guide = async (args: Record<string, unknown>) => (text(await client.callTool({
+      name: 'workspace.guide', arguments: { mode: 'turn', ...args },
+    })) as { guide: string }).guide;
+    try {
+      const full = await guide({});
+      expect(full).toMatch(/## avcs 사용 경계/);
+      expect(full).toMatch(/## 작업 경과 알리기/);
+      const without = await guide({ avcs: false });
+      expect(without).not.toMatch(/avcs/);
+      expect(without).toMatch(/## 이름이 아니라 id 로 가리킨다/);
+      // 밝히지 않았거나 모르는 값이면 지금까지와 같은 전문이다 — 오류로 막지도 않는다.
+      for (const avcs of [true, 'false', 0, null, 'no']) {
+        expect(await guide({ avcs }), String(avcs)).toBe(full);
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
   it('inbox.poll returns mention created after the call (long-poll)', async () => {
     const client = await mcpClient(botPat);
     const pending = client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 10_000 } });

@@ -62,6 +62,22 @@ describe('워크스페이스 가이드의 두 판본 (2026-09-08 앵커 이탈 �
     }
   });
 
+  it('avcs 를 쓸 수 없는 에이전트(avcs:false)에게는 avcs 절을 싣지 않는다 — 지킬 수 없는 규칙이 된다 (2026-10-10)', () => {
+    for (const mode of ['resident', 'turn'] as const) {
+      const g = guideFor(mode, { avcs: false });
+      expect(g, mode).not.toMatch(/avcs/);
+      expect(g, mode).not.toMatch(/workitem\.upsert/);
+      expect(g, mode).toMatch(/^# harkroom workspace 가이드/);
+      // 뺀 것은 avcs 두 절뿐이다.
+      expect(g, mode).toMatch(/## 이름이 아니라 id 로 가리킨다/);
+      expect(g, mode).toMatch(/## 기다림은 예약한다/);
+      expect(g, mode).toMatch(/## MCP 인증은 턴 안에서 하지 않는다/);
+      // 생략·true 는 지금까지와 글자 그대로 같은 전문이다.
+      expect(guideFor(mode, { avcs: true }), mode).toBe(guideFor(mode));
+      expect(guideFor(mode, {}), mode).toBe(guideFor(mode));
+    }
+  });
+
   it('두 판본 다 「이름이 아니라 id 로」를 말한다 — 에이전트가 이 원칙을 받는 유일한 경로다 (2026-09-28)', () => {
     for (const mode of ['resident', 'turn'] as const) {
       const g = guideFor(mode);
