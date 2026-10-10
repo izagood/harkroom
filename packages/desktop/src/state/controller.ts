@@ -24,7 +24,7 @@ import { setLocalAgent } from '../lib/operatorLocal';
 import type { AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { usePrefsStore } from './prefsStore';
-import { detectLocale, isLocale, translator, type Translate } from '../i18n';
+import { detectLocale, isLocale, translator, type MessageKey, type Translate } from '../i18n';
 
 /**
  * 채널을 **처음** 열 때 받아 오는 히스토리 창(행 수).
@@ -550,10 +550,10 @@ export class Controller {
     }
   }
 
-  /** 문구는 UI 문자열이라 영어다(저장소 관례). 사유별로 다른 이유: 사용자가 할 일이 다르다. */
-  private static readonly LOST_MESSAGE: Record<Exclude<WsDownReason, 'network'>, string> = {
-    credential: 'Your session is no longer valid — it expired, or it was signed out elsewhere. Please sign in again.',
-    origin: "The server rejected this app's origin. Ask the server administrator to allow it (CORS_ORIGINS).",
+  /** 사유별 문구 키. 사유마다 다른 이유: 사용자가 할 일이 다르다. 글은 사전에 있다(i18n P3-h). */
+  private static readonly LOST_MESSAGE: Record<Exclude<WsDownReason, 'network'>, MessageKey> = {
+    credential: 'notice.sessionLost.credential',
+    origin: 'notice.sessionLost.origin',
   };
 
   private handleDown(reason: WsDownReason): void {
@@ -566,7 +566,7 @@ export class Controller {
     // 항상 null 이고, accountId 가 빈 문자열이 되어 App 이 활성 커뮤니티를 못 알아본다.
     const accountId = this.store.getState().me?.id ?? '';
     this.clearLocal(accountId);
-    this.onSessionLost(Controller.LOST_MESSAGE[reason], accountId);
+    this.onSessionLost(this.t()(Controller.LOST_MESSAGE[reason]), accountId);
   }
 
   /** 서버 호출 없이 로컬만 비운다. 이미 죽은 자격증명으로 로그아웃을 보내는 것은 무의미하다. */
@@ -771,7 +771,7 @@ export class Controller {
             channels: store.channels.filter((c) => c.id !== e.channelId),
             ...(wasActive ? { activeChannelId: null, threadRootId: null } : {}),
           });
-          if (wasActive) store.pushNotice('This channel was deleted.');
+          if (wasActive) store.pushNotice(this.t()('notice.channelDeleted'));
         }
         break;
       case 'saved.changed':
@@ -1369,7 +1369,7 @@ export class Controller {
       // 열다 만 패널을 남기지 않는다. 남기면 그 자리가 "답이 하나도 없는 끝난 스레드"로
       // 읽힌다 — 연결이 끊긴 것과 정반대의 사실이다.
       this.store.getState().set({ threadRootId: null });
-      this.store.getState().pushNotice('Could not open that thread. Check your connection and try again.');
+      this.store.getState().pushNotice(this.t()('notice.openThreadFailed'));
       return;
     }
     this.store.getState().upsertMessages(channelId, page.messages);
@@ -1387,7 +1387,7 @@ export class Controller {
      */
     if (page.messages.length === 0) {
       this.store.getState().set({ threadRootId: null });
-      this.store.getState().pushNotice('That thread is gone — it was deleted, or it does not live in this conversation.');
+      this.store.getState().pushNotice(this.t()('notice.threadGone'));
       return;
     }
     if (opts.focusMessageId) this.store.getState().set({ highlightedMessageId: opts.focusMessageId });
@@ -1461,10 +1461,10 @@ export class Controller {
       const status = e instanceof ApiError ? e.status : 0;
       this.store.getState().pushNotice(
         status === 404
-          ? 'That message is gone — it was deleted, or the link points at nothing.'
+          ? this.t()('notice.messageGone')
           : status === 403
-            ? "You can't open that message — it's in a conversation you're not part of."
-            : 'Could not open that message. Check your connection and try again.',
+            ? this.t()('notice.messageForbidden')
+            : this.t()('notice.openMessageFailed'),
       );
       return;
     }
@@ -1914,8 +1914,8 @@ export class Controller {
     if (mentionSkipped) {
       this.store.getState().pushNotice(
         mentionSkipped === 'too_old'
-          ? 'Your edit added a mention, but it did not call anyone — the message is more than 24 hours old. Mention them in a new message.'
-          : 'Your edit added a mention, but edits to an agent message do not call anyone. Mention them in a new message.',
+          ? this.t()('notice.editMentionTooOld')
+          : this.t()('notice.editMentionAgent'),
       );
     }
   }
@@ -1978,8 +1978,8 @@ export class Controller {
     } catch (e) {
       this.store.getState().pushNotice(
         e instanceof ApiError && e.code === 'channel_archived'
-          ? "This channel is archived — it's read-only, so nothing new can be pinned."
-          : 'Could not pin that message. Check your connection and try again.',
+          ? this.t()('notice.pinArchived')
+          : this.t()('notice.pinFailed'),
       );
       return;
     }
@@ -1993,8 +1993,8 @@ export class Controller {
     } catch (e) {
       this.store.getState().pushNotice(
         e instanceof ApiError && e.status === 403
-          ? 'Only the person who pinned that message, or an admin, can unpin it.'
-          : 'Could not unpin that message. Check your connection and try again.',
+          ? this.t()('notice.unpinForbidden')
+          : this.t()('notice.unpinFailed'),
       );
       return;
     }

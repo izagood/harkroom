@@ -17,6 +17,8 @@
  * - accountId는 서버 DB의 UUID라 어느 URL로 접근해도 동일하고, 다른 서버와는 다르다.
  */
 import { useActiveStore } from '../state/communities';
+import { nowT } from '../i18n/useT';
+import type { MessageKey } from '../i18n';
 
 export interface StoredCommunity {
   accountId: string;
@@ -52,8 +54,7 @@ const LEGACY_KEY = 'murmur.session';
  *
  * 문구는 영어다(저장소 관례 — UI 문자열은 영어, 주석은 한국어).
  */
-const SAVE_FAILED_NOTICE =
-  'Could not save your session to the OS keychain. You can keep using the app now, but you will need to sign in again the next time you open it.';
+const SAVE_FAILED_NOTICE: MessageKey = 'notice.sessionSaveFailed';
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -208,7 +209,7 @@ export const sessionStore = {
       //
       // 재시도는 넣지 않는다 — 키체인 잠김은 사람이 풀어야 하는 것이고, 조용한 재시도는
       // 실패를 다시 숨긴다. 이번 실행은 메모리의 세션으로 계속된다(로그인을 막지 않는다).
-      useActiveStore.getState().pushNotice(SAVE_FAILED_NOTICE);
+      useActiveStore.getState().pushNotice(nowT()(SAVE_FAILED_NOTICE));
     }
   },
 

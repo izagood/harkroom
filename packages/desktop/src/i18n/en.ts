@@ -4060,6 +4060,25 @@ export const en = {
   // | 서버가 버전을 말하지 않는다 | `This server does not report its version` | **그 자체가 답이다** — 버전을 싣는 판보다 낡았다는 뜻 |
   // | {version} 기동 | `Started {ago}` | 버전이 안 바뀌는 재배포에서는 이것만 달라진다 |
   // | 이 앱이 요구하는 버전보다 낮다 | `older than this app requires` | **고장이다.** '뒤처졌다'와 같은 말로 적으면 둘이 뭉개진다 — 앞은 지금 재배포해야 하는 것이고 뒤는 안 해도 되는 것이다 |
+  // 상태층·lib 이 띄우는 알림(세션 끊김·스레드/메시지 열기·고정·키체인, i18n P3-h, 2026-10-10). nowT()/this.t() 로 읽는다.
+  'notice.sessionLost.credential': 'Your session is no longer valid — it expired, or it was signed out elsewhere. Please sign in again.',
+  'notice.sessionLost.origin': 'The server rejected this app\'s origin. Ask the server administrator to allow it (CORS_ORIGINS).',
+  'notice.channelDeleted': 'This channel was deleted.',
+  'notice.openThreadFailed': 'Could not open that thread. Check your connection and try again.',
+  'notice.threadGone': 'That thread is gone — it was deleted, or it does not live in this conversation.',
+  'notice.openMessageFailed': 'Could not open that message. Check your connection and try again.',
+  'notice.messageGone': 'That message is gone — it was deleted, or the link points at nothing.',
+  'notice.messageForbidden': 'You can\'t open that message — it\'s in a conversation you\'re not part of.',
+  'notice.editMentionTooOld': 'Your edit added a mention, but it did not call anyone — the message is more than 24 hours old. Mention them in a new message.',
+  'notice.editMentionAgent': 'Your edit added a mention, but edits to an agent message do not call anyone. Mention them in a new message.',
+  'notice.pinArchived': 'This channel is archived — it\'s read-only, so nothing new can be pinned.',
+  'notice.pinFailed': 'Could not pin that message. Check your connection and try again.',
+  'notice.unpinForbidden': 'Only the person who pinned that message, or an admin, can unpin it.',
+  'notice.unpinFailed': 'Could not unpin that message. Check your connection and try again.',
+  'notice.savedSessionExpired': 'Your saved session has expired, or it was signed out elsewhere. Please sign in again.',
+  'notice.savedSessionUnreachable': 'Could not reach {host}. Your saved communities are kept — sign in again, or restart the app to retry.',
+  'notice.sessionSaveFailed': 'Could not save your session to the OS keychain. You can keep using the app now, but you will need to sign in again the next time you open it.',
+  'notice.lastCommunity': 'The last community can\'t be removed.',
   'community.version.value': 'Server v{version}',
   'community.version.unknown': 'Checking server version',
   'community.version.legacy': 'This server does not report its version',
