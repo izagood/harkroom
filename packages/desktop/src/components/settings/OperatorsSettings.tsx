@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import type { OperatorCapabilities, OperatorView } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
-import { useAgo, useT } from '../../i18n/useT';
+import { useAgo, useLocale, useT } from '../../i18n/useT';
+import { dateTimeText } from '../../lib/localeText';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { hasCapability } from '../../lib/capabilities';
 import { hasOperatorLocalSurface } from '../../lib/operatorLocal';
@@ -28,6 +29,7 @@ export function OperatorsSettings({ onOpenSection }: {
   onOpenSection?: (id: import('./sections').SectionId) => void;
 } = {}) {
   const t = useT();
+  const locale = useLocale();
   const me = useActiveStore((s) => s.me);
   const canRegister = hasCapability(me, 'operator.register');
   const [operators, setOperators] = useState<OperatorView[] | 'error' | null>(null);
@@ -208,7 +210,7 @@ export function OperatorsSettings({ onOpenSection }: {
                 {op.online ? t('operators.online') : t('operators.offline')}
                 {/* 상대 시각으로(UX ④c) — 초까지 찍은 절대 시각은 읽기 느리다. 전체 시각은 `title` 에. */}
                 {op.lastSeenAt && !op.online && (
-                  <span title={new Date(op.lastSeenAt).toLocaleString()}>
+                  <span title={dateTimeText(op.lastSeenAt, locale)}>
                     {` · ${t('operators.lastSeen', { at: ago(new Date(op.lastSeenAt).getTime()) })}`}
                   </span>
                 )}

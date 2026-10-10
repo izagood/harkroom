@@ -27,6 +27,7 @@ import {
 // 화면은 `useT`, 화면 밖에서 쓰이는 순수 함수(`lastTurnLabel`)는 `Translate` 를 인자로
 // 받는다 — 그 갈림의 근거는 `i18n/index.ts::Translate` 머리말에 있다.
 import { useT, useLocale } from '../../i18n/useT';
+import { dateText, dateTimeText } from '../../lib/localeText';
 import type { Translate } from '../../i18n';
 // `runnerStatusLabel` 을 **설명 문구에도** 쓴다 — 상태 이름을 이 파일이 제 손으로 적으면
 // `RunnerStatus.tsx` 가 바뀔 때 여기만 낡는다. `external` → `adopted`(`#482`) 가 정확히
@@ -1949,7 +1950,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 </span>
                 <span
                   data-testid={`agent-last-turn-${selected.id}`}
-                  title={selected.lastTurnAt ? new Date(selected.lastTurnAt).toLocaleString() : undefined}
+                  title={selected.lastTurnAt ? dateTimeText(selected.lastTurnAt, locale) : undefined}
                   className="text-fg-subtle"
                 >
                   {lastTurnLabel(selected.lastTurnAt, Date.now(), locale, t)}
@@ -2189,18 +2190,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     )}
                     {selected.stopRequestedAt && !selected.stopAckedAt && (
                       <span className="text-warning">
-                        {/* 시각은 `toLocaleString()` 이 낸다 — **사전에 넣지 않는다**(`Intl` 이
-                            이미 로케일을 따른다). 문장은 그 값을 자리표시자로 받는다. */}
+                        {/* 시각은 `dateTimeText` 가 앱 언어로 낸다 — **사전에 넣지 않는다**(`Intl` 이
+                            로케일을 안다). 문장은 그 값을 자리표시자로 받는다. */}
                         {t('agents.stop.requested', {
-                          requestedAt: new Date(selected.stopRequestedAt).toLocaleString(),
+                          requestedAt: dateTimeText(selected.stopRequestedAt, locale),
                         })}
                       </span>
                     )}
                     {selected.stopRequestedAt && selected.stopAckedAt && (
                       <span className="text-fg-muted">
                         {t('agents.stop.acked', {
-                          requestedAt: new Date(selected.stopRequestedAt).toLocaleString(),
-                          ackedAt: new Date(selected.stopAckedAt).toLocaleString(),
+                          requestedAt: dateTimeText(selected.stopRequestedAt, locale),
+                          ackedAt: dateTimeText(selected.stopAckedAt, locale),
                         })}
                         {/* #427 → #493: 러너가 이미 읽어 간 뒤가 오히려 다시 켤 필요가 생기는
                             자리다 — 그 뒤로는 자동 기동이 이 에이전트를 영영 건너뛴다. 실행을
@@ -2884,7 +2885,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                             <div className="text-meta">
                               <span className="font-medium">{p.label}</span>
                               <span className="ml-2 text-fg-muted">
-                                {new Date(p.createdAt).toLocaleDateString()}
+                                {dateText(p.createdAt, locale)}
                               </span>
                             </div>
                             {revoking === p.label ? (

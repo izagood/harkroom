@@ -6,6 +6,7 @@ import { bodyWithHandles } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useAgo, useLocale, useT } from '../i18n/useT';
+import { dateTimeText } from '../lib/localeText';
 
 /** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
 const INBOX_NO_TEAMS: never[] = [];
@@ -367,7 +368,7 @@ export function Inbox({ open, onClose }: Props) {
             <span
               className={`shrink-0 ${days != null && card.column === 'mine' ? 'text-state-turn' : ''}`}
               data-testid={`inbox-card-age-${card.rootId}`}
-              title={new Date(card.sinceAt).toLocaleString()}
+              title={dateTimeText(card.sinceAt, locale)}
             >
               · {days != null ? t('inbox.board.days', { count: days }) : ago(new Date(card.sinceAt).getTime())}
             </span>
@@ -375,7 +376,7 @@ export function Inbox({ open, onClose }: Props) {
             {card.unread && <span className="shrink-0 text-accent">· {t('inbox.board.unread')}</span>}
             {/* 미룬 카드는 **언제 다시 서는지** 말한다(designer) — 되돌릴지 그냥 둘지 정하는 근거다. */}
             {card.laterUntil && (
-              <span className="shrink-0" data-testid={`inbox-card-later-until-${card.rootId}`} title={new Date(card.laterUntil).toLocaleString()}>
+              <span className="shrink-0" data-testid={`inbox-card-later-until-${card.rootId}`} title={dateTimeText(card.laterUntil, locale)}>
                 · {t('inbox.board.laterUntil', { when: laterUntilLabel(card.laterUntil, Date.now(), locale, t) })}
               </span>
             )}
