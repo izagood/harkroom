@@ -17,14 +17,15 @@
 // 애드온을 **못 켜도 터미널은 뜬다**(WebGL2 가 없는 환경·컨텍스트 상실). 그때는 xterm 이
 // 기본 DOM 렌더러로 그대로 그리므로, 실패는 삼키고 화면은 살린다 — `enableWebglRenderer`.
 //
-// **애드온 버전은 xterm 과 짝이다 — `@xterm/addon-webgl` 은 `0.18.x` 로 묶어 둔다.**
-// 이 애드온은 xterm 의 **private 내부**(`_core._renderService`·`_core._createRenderer`)에
-// 손을 넣는다. 0.19.0 은 그 위에 `_core._store._isDisposed` 가드를 더 넣었는데, 그 `_store` 는
-// xterm **6 계열**의 lifecycle 이고 우리가 쓰는 5.5.0 에는 없다(`common/Lifecycle.ts` 는
-// `_disposables`·`_isDisposed` 뿐이다) → 애드온 dispose 가 `undefined._isDisposed` 로 던진다.
-// 실측 사고: 터미널 패널의 [Close] 를 누르면 그 예외가 React effect cleanup 밖으로 나가
-// **앱 화면 전체가 꺼졌다**(웹뷰 크래시가 아니다 — 크래시 리포트가 없었다). `^0.19` 처럼
-// 마이너를 열어 두면 이 짝이 조용히 깨진다.
+// **애드온 버전은 xterm 과 짝이다 — `@xterm/xterm` 은 `6.0.x`, `@xterm/addon-webgl` 은 `0.19.x`
+// 로 함께 묶어 둔다.** 이 애드온은 xterm 의 **private 내부**(`_core._renderService`·
+// `_core._createRenderer`·`_core._store`)에 손을 넣는다. 0.19.0 의 정리 훅은 xterm **6 계열**
+// lifecycle 의 `_core._store._isDisposed` 를 읽는데, 5.5.0 에는 그 `_store` 가 없어 애드온
+// dispose 가 `undefined._isDisposed` 로 던졌다. 실측 사고: 터미널 패널의 [Close] 를 누르면
+// 그 예외가 React effect cleanup 밖으로 나가 **앱 화면 전체가 꺼졌다**(웹뷰 크래시가 아니다 —
+// 크래시 리포트가 없었다). 그래서 5.5 시절엔 0.18 에 묶었고, xterm 을 6.0 으로 올리면서 짝을
+// 0.19 로 옮겼다. 0.19 는 peerDependencies 를 선언하지 않아 짝이 깨져도 설치가 조용하다 —
+// 둘 중 하나만 올리지 말고, `^` 로 마이너를 열지 마라.
 
 export interface TerminalSink {
   /** PTY raw 바이트. 디코드는 xterm 의 상태 기계가 한다. */
