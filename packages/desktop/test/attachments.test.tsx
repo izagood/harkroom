@@ -187,7 +187,7 @@ describe('첨부 저장 실패를 사람 앞에 세운다', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /note\.txt/ }));
 
-    await waitFor(() => expect(useAppStore.getState().notice).toBeNull());
+    await waitFor(() => expect(useAppStore.getState().notices.at(-1)?.text ?? null).toBeNull());
     expect(screen.queryByRole('alert')).toBeNull();
   });
 });

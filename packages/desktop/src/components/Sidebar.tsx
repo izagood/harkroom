@@ -255,6 +255,8 @@ export function Sidebar({
   const t = useT();
   // 새 창으로 띄운 채널·DM(사이드바 ⧉ 표시). 장부가 바뀔 때만 다시 센다.
   const appWindowEntries = useAppWindows((st) => st.entries);
+  /** 터미널에서 사람을 기다리는 에이전트(2026-10-09 A안) — 카드를 접어도 그 줄에 ⌨ 가 남는다. */
+  const gates = useActiveStore((s) => s.gates);
   const poppedChannels = useMemo(
     () => new Set(appWindowEntries.flatMap((e) => (e.target.kind === 'channel' ? [e.target.channelId] : []))),
     [appWindowEntries],
@@ -720,8 +722,10 @@ export function Sidebar({
     const stateLabel = runner
       ? t('sidebar.runner.state', { label: runnerStatusLabel(runner, t) })
       : t(PRESENCE_LABEL[dm.presence]);
-    return (
-      <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason ? 'flex-col items-start' : ''}`} data-channel-row={dm.id}
+    const gate = dm.agentId ? gates.filter((g) => g.agentAccountId === dm.agentId).at(-1) : undefined;
+    const gateRoot = gate?.threadRootId;
+    const rowButton = (
+      <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason ? 'flex-col items-start' : ''} ${gate ? 'min-w-0 flex-1' : ''}`} data-channel-row={dm.id}
         onClick={(e) => openChannelFrom(e, dm.id, () => void getController().openChannel(dm.id))}>
         <span className="flex min-w-0 items-center gap-1.5">
           {/*
@@ -789,6 +793,27 @@ export function Sidebar({
           </span>
         )}
       </button>
+    );
+    if (!gate || !gateRoot) return rowButton;
+    // 터미널에서 사람을 기다린다(2026-10-09 A안) — 카드를 [나중에]로 접은 뒤 돌아갈 문이다.
+    // 줄 버튼 **옆의 형제 버튼**이다: 버튼 안에 클릭 요소를 넣으면 키보드·스크린리더가 그것을
+    // 따로 집지 못한다. 관문이 풀리면(`gates` 에서 빠지면) 줄은 원래 모양으로 돌아간다.
+    return (
+      <div key={dm.id} className="flex min-w-0 items-center gap-1">
+        {rowButton}
+        <button
+          type="button"
+          data-testid={`gate-waiting-${dm.agentId}`}
+          aria-label={t('gate.openFor', { handle: gate.agentHandle })}
+          title={t('agentTurns.waitingTitle')}
+          className="mr-1 shrink-0 rounded-sm bg-accent-surface px-1 text-meta text-accent hover:brightness-95"
+          onClick={() => useActiveStore.getState().set({
+            terminalTarget: { agentAccountId: gate.agentAccountId, channelId: gate.channelId, threadRootId: gateRoot },
+          })}
+        >
+          {t('agentTurns.waiting')}
+        </button>
+      </div>
     );
   };
 

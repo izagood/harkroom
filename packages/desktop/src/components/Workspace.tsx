@@ -12,6 +12,7 @@ import { SidebarToggleIcon } from './SidebarToggleIcon';
 import { ChannelPane } from './ChannelPane';
 import { AgentTower } from './AgentTower';
 import { Notice } from './Notice';
+import { GateCard } from './GateCard';
 import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
 import { ServerCompatBanner } from './ServerCompatBanner';
 import { UpdateToast } from './UpdateToast';
@@ -362,9 +363,6 @@ export function Workspace({ onLogout, onOpenSettings }: {
             →
           </button>
         </div>
-        {/* 알림은 헤더 바로 아래, 대화 위에 둔다 — 채널 안에 그리면 채널을 못 연 실패를
-            보여 줄 자리 자체가 없다. */}
-        <Notice />
         {/*
           투영 고장은 **여기**서 말한다(#488 A3-a). 전에는 사이드바 `ACTIVE WORK` 안에
           있었는데, 그 칸은 "지금 무슨 일이 벌어지는가"를 말하는 자리라 **고장이 일처럼**
@@ -375,7 +373,12 @@ export function Workspace({ onLogout, onOpenSettings }: {
             투영 띠와 나란히 두는 이유: 둘 다 "지금 무언가 돌지 않는다"는 말이고, 자리를
             갈라 두면 사람이 화면의 두 곳을 봐야 한다. */}
         <ServerCompatBanner onOpenSettings={onOpenSettings} />
-        <div className="flex flex-1 overflow-hidden">
+        <div className="relative flex flex-1 overflow-hidden">
+          {/* 관문 카드·실패 토스트는 본문 위에 **겹쳐** 그린다(2026-10-09 A안). 전에는 헤더 아래
+              흐름 안의 띠라 뜰 때마다 화면 전체가 한 줄 내려갔다. 채널 안이 아니라 여기인 이유는
+              그대로다 — 채널을 못 연 실패를 보여 줄 자리가 채널 안에는 없다. */}
+          <GateCard />
+          <Notice />
           {/* 멘션 이동(#279)의 배선은 **여기**다. 초판이 이 두 줄을 빼먹어 앱에서 모든
               멘션이 눌러도 아무 일이 없는 버튼이었다 — 단위 테스트는 props 를 손으로
               넘겨 그 사실을 볼 수 없었다. `test/mentionClick.test.tsx` 가 이 화면을

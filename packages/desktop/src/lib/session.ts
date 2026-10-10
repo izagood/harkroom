@@ -208,7 +208,7 @@ export const sessionStore = {
       //
       // 재시도는 넣지 않는다 — 키체인 잠김은 사람이 풀어야 하는 것이고, 조용한 재시도는
       // 실패를 다시 숨긴다. 이번 실행은 메모리의 세션으로 계속된다(로그인을 막지 않는다).
-      useActiveStore.getState().set({ notice: SAVE_FAILED_NOTICE });
+      useActiveStore.getState().pushNotice(SAVE_FAILED_NOTICE);
     }
   },
 

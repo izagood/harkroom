@@ -468,7 +468,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
       if (!navigator.clipboard) throw new Error('no clipboard');
       await navigator.clipboard.writeText(text);
     } catch {
-      useActiveStore.getState().set({ notice: fail });
+      useActiveStore.getState().pushNotice(fail);
     }
   };
 

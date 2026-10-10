@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createRelayHub, type RelaySocket } from '../src/ws/relay.js';
 import { visibleTo } from '../src/ws/wsPlugin.js';
 
@@ -124,5 +124,79 @@ describe('관문 이벤트의 수신자 (2026-10-09)', () => {
     };
     expect(visibleTo(풀림, 'owner-1')).toBe(true);
     expect(visibleTo(풀림, 'someone-else')).toBe(false);
+  });
+});
+
+describe('관문 표시가 남지 않는다 — 러너가 사라질 때 (security n1·n2, 2026-10-09)', () => {
+  const 부른다 = (hub: ReturnType<typeof createRelayHub>, agent = 'agent-1', sid = 's1') =>
+    hub.onRunnerMessage(agent, JSON.stringify({ type: 'attention.required', sessionId: sid, accountLabel: 'aria', screen: '' }));
+
+  it('재접속 announce 목록에 없는 세션은 풀린 것으로 낸다', () => {
+    const 풀림: unknown[] = [];
+    const hub = createRelayHub({ onAttentionCleared: (ev) => { 풀림.push(ev); } });
+    hub.addRunner('agent-1', { send: () => {}, close: () => {} });
+    hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
+    부른다(hub);
+
+    hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'announce', sessions: [] }));
+    expect(풀림).toEqual([{ sessionId: 's1', channelId: 'c1', threadRootId: 't1', agentAccountId: 'agent-1' }]);
+  });
+
+  it('announce 목록에 그대로 있으면 아직 걸린 것이라 내지 않는다', () => {
+    const 풀림: unknown[] = [];
+    const hub = createRelayHub({ onAttentionCleared: (ev) => { 풀림.push(ev); } });
+    hub.addRunner('agent-1', { send: () => {}, close: () => {} });
+    hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
+    부른다(hub);
+    hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'announce', sessions: [세션] }));
+    expect(풀림).toHaveLength(0);
+  });
+
+  it('러너가 끊기고 유예 안에 안 돌아오면 그 에이전트의 관문을 전부 낸다', () => {
+    vi.useFakeTimers();
+    try {
+      const 풀림: unknown[] = [];
+      const hub = createRelayHub({ onAttentionCleared: (ev) => { 풀림.push(ev); } }, { attentionGraceMs: 1_000 });
+      const 끊기 = hub.addRunner('agent-1', { send: () => {}, close: () => {} });
+      hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
+      부른다(hub);
+
+      끊기();
+      expect(풀림).toHaveLength(0);
+      vi.advanceTimersByTime(1_001);
+      expect(풀림).toEqual([{ sessionId: 's1', channelId: 'c1', threadRootId: 't1', agentAccountId: 'agent-1' }]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('유예 안에 다시 붙어 같은 세션을 announce 하면 내지 않는다 — 짧은 끊김에 카드를 닫지 않는다', () => {
+    vi.useFakeTimers();
+    try {
+      const 풀림: unknown[] = [];
+      const hub = createRelayHub({ onAttentionCleared: (ev) => { 풀림.push(ev); } }, { attentionGraceMs: 1_000 });
+      const 끊기 = hub.addRunner('agent-1', { send: () => {}, close: () => {} });
+      hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
+      부른다(hub);
+
+      끊기();
+      hub.addRunner('agent-1', { send: () => {}, close: () => {} });
+      hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'announce', sessions: [세션] }));
+      vi.advanceTimersByTime(5_000);
+      expect(풀림).toHaveLength(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('남의 러너가 보낸 session.ended 는 표시를 지우지 않는다 (n2)', () => {
+    const 풀림: unknown[] = [];
+    const hub = createRelayHub({ onAttentionCleared: (ev) => { 풀림.push(ev); } });
+    hub.addRunner('agent-1', { send: () => {}, close: () => {} });
+    hub.addRunner('agent-2', { send: () => {}, close: () => {} });
+    hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
+    부른다(hub);
+
+    hub.onRunnerMessage('agent-2', JSON.stringify({ type: 'session.ended', sessionId: 's1' }));
+    expect(풀림).toHaveLength(0);
+    // 진짜 끝에서는 여전히 나간다.
+    hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.ended', sessionId: 's1' }));
+    expect(풀림).toHaveLength(1);
   });
 });

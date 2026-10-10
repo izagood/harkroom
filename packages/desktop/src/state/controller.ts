@@ -689,11 +689,19 @@ export class Controller {
         // 이미 보고 있으면 아무것도 안 한다. 같은 자리를 다시 세우면 xterm 이 다시 붙어
         // 화면이 깜빡이고, 사람이 치고 있던 입력이 끊긴다.
         if (같은자리) break;
-        store.set({
-          notice: `${e.agentHandle} needs you in the terminal (account ${e.accountLabel}).`,
+        // 실패 토스트가 아니라 **관문 카드**로 세운다(2026-10-09 A안). 아래에서 터미널을
+        // 자동으로 열면 `set({ terminalTarget })` 이 이 카드를 곧바로 내린다 — 이미 열린
+        // 터미널 위에 "터미널에서 기다립니다"를 겹쳐 말하지 않는다.
+        store.raiseGate({
+          sessionId: e.sessionId,
+          agentAccountId: e.agentAccountId,
+          agentHandle: e.agentHandle,
+          accountLabel: e.accountLabel,
+          channelId: e.channelId,
+          threadRootId: e.threadRootId,
         });
         // **사람이 보던 화면을 빼앗지 않는다.** 다른 스레드의 터미널을 보고 있다면 그
-        // 사람은 지금 다른 것을 하는 중이고, 안내가 그것을 알린다.
+        // 사람은 지금 다른 것을 하는 중이고, 카드가 그것을 알린다.
         // 스레드 루트가 없으면 열 자리 자체가 없다(`terminalTarget` 은 스레드를 가리킨다).
         if (지금 || !e.threadRootId) break;
         store.set({
@@ -705,6 +713,11 @@ export class Controller {
         });
         break;
       }
+      case 'agent.attention.cleared':
+        // 부른 세션이 끝났다 — 카드와 턴 줄의 ⌨ 표시를 내린다. 낡은 서버는 이것을 안
+        // 보내므로 그때 카드는 [나중에]나 터미널 열기로만 내려간다.
+        store.clearGate(e.sessionId);
+        break;
       case 'presence.changed': {
         const cur = new Set(this.store.getState().online);
         if (e.online) cur.add(e.accountId); else cur.delete(e.accountId);
@@ -749,12 +762,14 @@ export class Controller {
         break;
       case 'channel.deleted':
         // 채널을 목록에서 제거한다. 보고 있던 채널이면 선택을 비우고 안내를 보인다.
-        store.set({
-          channels: store.channels.filter((c) => c.id !== e.channelId),
-          ...(store.activeChannelId === e.channelId
-            ? { activeChannelId: null, threadRootId: null, notice: 'This channel was deleted.' }
-            : {}),
-        });
+        {
+          const wasActive = store.activeChannelId === e.channelId;
+          store.set({
+            channels: store.channels.filter((c) => c.id !== e.channelId),
+            ...(wasActive ? { activeChannelId: null, threadRootId: null } : {}),
+          });
+          if (wasActive) store.pushNotice('This channel was deleted.');
+        }
         break;
       case 'saved.changed':
         // 담기 상태가 바뀌면 사이드바의 "Saved N" 을 갱신한다(#219).
@@ -1350,10 +1365,8 @@ export class Controller {
     } catch {
       // 열다 만 패널을 남기지 않는다. 남기면 그 자리가 "답이 하나도 없는 끝난 스레드"로
       // 읽힌다 — 연결이 끊긴 것과 정반대의 사실이다.
-      this.store.getState().set({
-        threadRootId: null,
-        notice: 'Could not open that thread. Check your connection and try again.',
-      });
+      this.store.getState().set({ threadRootId: null });
+      this.store.getState().pushNotice('Could not open that thread. Check your connection and try again.');
       return;
     }
     this.store.getState().upsertMessages(channelId, page.messages);
@@ -1370,10 +1383,8 @@ export class Controller {
      * 종류의 거짓말(있는 것을 없다고 하기)을 반대 방향으로 하게 된다.
      */
     if (page.messages.length === 0) {
-      this.store.getState().set({
-        threadRootId: null,
-        notice: 'That thread is gone — it was deleted, or it does not live in this conversation.',
-      });
+      this.store.getState().set({ threadRootId: null });
+      this.store.getState().pushNotice('That thread is gone — it was deleted, or it does not live in this conversation.');
       return;
     }
     if (opts.focusMessageId) this.store.getState().set({ highlightedMessageId: opts.focusMessageId });
@@ -1418,7 +1429,7 @@ export class Controller {
       }
     }
     if (firstFailure) {
-      this.store.getState().set({ notice: `Could not stop that turn — ${firstFailure}` });
+      this.store.getState().pushNotice(`Could not stop that turn — ${firstFailure}`);
     }
     return firstFailure === null;
   }
@@ -1445,13 +1456,13 @@ export class Controller {
       target = cached ?? await this.api.message(messageId);
     } catch (e) {
       const status = e instanceof ApiError ? e.status : 0;
-      this.store.getState().set({
-        notice: status === 404
+      this.store.getState().pushNotice(
+        status === 404
           ? 'That message is gone — it was deleted, or the link points at nothing.'
           : status === 403
             ? "You can't open that message — it's in a conversation you're not part of."
             : 'Could not open that message. Check your connection and try again.',
-      });
+      );
       return;
     }
     // **자리를 요구하는가는 목적지가 정한다.** 답글이면 아래에서 스레드 패널이 서므로
@@ -1521,7 +1532,7 @@ export class Controller {
       });
     }
     // 강조는 openChannel 이 지운 **뒤에** 건다. 순서가 뒤바뀌면 방금 건 강조를 스스로 지운다.
-    this.store.getState().set({ highlightedMessageId: target.id, notice: null });
+    this.store.getState().set({ highlightedMessageId: target.id });
   }
 
   /** 스토어 어느 채널에든 실려 있는 그 메시지. 없으면 `null` — 서버에 물어야 한다. */
@@ -1858,11 +1869,11 @@ export class Controller {
       blob = await this.fetchAttachment(attachment.id);
     } catch (e) {
       const t = this.t();
-      this.store.getState().set({
-        notice: t(e instanceof ApiError && e.code === 'attachment_missing'
+      this.store.getState().pushNotice(
+        t(e instanceof ApiError && e.code === 'attachment_missing'
           ? 'attachment.missing'
           : 'attachment.fetchFailed'),
-      });
+      );
       return;
     }
     const url = URL.createObjectURL(blob);
@@ -1898,11 +1909,11 @@ export class Controller {
     // 수정으로 넣은 멘션이 **부르지 않았을 때만** 말한다(076) — 조용히 사라지면 사람은 "왜 안
     // 오나"를 묻고, 그 답이 화면에 없다. 불렀을 때는 상단 띠로 알리지 않는다(jaebin, 10-06).
     if (mentionSkipped) {
-      this.store.getState().set({
-        notice: mentionSkipped === 'too_old'
+      this.store.getState().pushNotice(
+        mentionSkipped === 'too_old'
           ? 'Your edit added a mention, but it did not call anyone — the message is more than 24 hours old. Mention them in a new message.'
           : 'Your edit added a mention, but edits to an agent message do not call anyone. Mention them in a new message.',
-      });
+      );
     }
   }
 
@@ -1962,11 +1973,11 @@ export class Controller {
     try {
       await this.api.pinMessage(channelId, messageId);
     } catch (e) {
-      this.store.getState().set({
-        notice: e instanceof ApiError && e.code === 'channel_archived'
+      this.store.getState().pushNotice(
+        e instanceof ApiError && e.code === 'channel_archived'
           ? "This channel is archived — it's read-only, so nothing new can be pinned."
           : 'Could not pin that message. Check your connection and try again.',
-      });
+      );
       return;
     }
     await this.loadPins(channelId);
@@ -1977,11 +1988,11 @@ export class Controller {
     try {
       await this.api.unpinMessage(channelId, messageId);
     } catch (e) {
-      this.store.getState().set({
-        notice: e instanceof ApiError && e.status === 403
+      this.store.getState().pushNotice(
+        e instanceof ApiError && e.status === 403
           ? 'Only the person who pinned that message, or an admin, can unpin it.'
           : 'Could not unpin that message. Check your connection and try again.',
-      });
+      );
       return;
     }
     await this.loadPins(channelId);

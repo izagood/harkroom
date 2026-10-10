@@ -148,7 +148,7 @@ describe('스레드 창', () => {
     render(<ThreadPanel />);
     fireEvent.click(screen.getByTestId('thread-pop-out'));
     expect(wins).toHaveLength(MAX_APP_WINDOWS);
-    expect(useAppStore.getState().notice).toContain('8개');
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toContain('8개');
     expect(useAppStore.getState().threadRootId).toBe('m1');
   });
 });

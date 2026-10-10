@@ -17,9 +17,9 @@ export function openWindow(target: AppWindowTarget): OpenResult {
   if (result.kind === 'limit' || result.kind === 'blocked') {
     const pref = usePrefsStore.getState().locale;
     const t = translator(isLocale(pref) ? pref : detectLocale());
-    getActiveStore().getState().set({
-      notice: result.kind === 'limit' ? t('window.limit', { count: MAX_APP_WINDOWS }) : t('window.blocked'),
-    });
+    getActiveStore().getState().pushNotice(
+      result.kind === 'limit' ? t('window.limit', { count: MAX_APP_WINDOWS }) : t('window.blocked'),
+    );
   }
   return result;
 }

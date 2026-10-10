@@ -82,9 +82,9 @@ function CodeBlock({ code, lang }: { code: string; lang: string | null }) {
     }
     // 실패는 눈에 보이게 남긴다(`lib/clipboard` 머리말). 코드는 이미 화면에 그려져 있고
     // `copyText` 가 선택까지 해 두었으므로, 실패 문구가 할 말은 **다음에 할 일**이다.
-    useActiveStore.getState().set({
-      notice: outcome === 'selected' ? t('message.code.copyFailedSelected') : t('message.code.copyFailedManual'),
-    });
+    useActiveStore.getState().pushNotice(
+      outcome === 'selected' ? t('message.code.copyFailedSelected') : t('message.code.copyFailedManual'),
+    );
   };
 
   return (
@@ -137,9 +137,9 @@ async function followLink(target: LinkTarget): Promise<void> {
   try {
     await getExternalOpener().open(target.href);
   } catch {
-    useActiveStore.getState().set({
-      notice: `Could not open ${target.href} — no browser answered. Copy the link and open it yourself.`,
-    });
+    useActiveStore.getState().pushNotice(
+      `Could not open ${target.href} — no browser answered. Copy the link and open it yourself.`,
+    );
   }
 }
 

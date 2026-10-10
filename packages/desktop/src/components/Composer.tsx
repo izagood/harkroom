@@ -1177,9 +1177,9 @@ export function Composer({
     // 스스로 사람 앞에 세운다. 여기서 남는 것은 그보다 뒤에서 터진 경우(채널·스레드를
     // 여는 중 연결이 끊김)뿐이고, 그것도 조용히 삼키면 링크를 누른 사람은 앱이 멈춘 줄 안다.
     void controller.openMessage(messageId).catch(() => {
-      useActiveStore.getState().set({
-        notice: 'Could not open that message. Check your connection and try again.',
-      });
+      useActiveStore.getState().pushNotice(
+        'Could not open that message. Check your connection and try again.',
+      );
     });
   };
 
@@ -1362,7 +1362,7 @@ export function Composer({
       const el = e.currentTarget;
       const next = toggleLink(el.value, el.selectionStart, el.selectionEnd);
       if (!next) {
-        useActiveStore.getState().set({ notice: t('composer.link.oneLine') });
+        useActiveStore.getState().pushNotice(t('composer.link.oneLine'));
         return;
       }
       setDraftLocal(next.text);

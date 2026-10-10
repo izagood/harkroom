@@ -131,7 +131,7 @@ describe('⌘K — 고른 글을 링크로 감싼다', () => {
 
     expect(box.value).toBe('첫 줄\n둘째 줄');
     expect(toggleLink('첫 줄\n둘째 줄', 0, 8)).toBeNull();
-    expect(useAppStore.getState().notice).toContain('한 줄');
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toContain('한 줄');
   });
 });
 

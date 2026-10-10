@@ -71,13 +71,13 @@ describe('다른 채널의 스레드', () => {
     const { c } = mount();
     await c.openThread('n1');
     expect(useAppStore.getState().threadRootId).toBeNull();
-    expect(useAppStore.getState().notice).toMatch(/gone/);
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/gone/);
   });
 
   it('조회가 터지면 빈 패널을 남기지 않는다', async () => {
     const { c } = mount({ messages: vi.fn(async () => { throw new Error('offline'); }) as never });
     await c.openThread('m1');
     expect(useAppStore.getState().threadRootId).toBeNull();
-    expect(useAppStore.getState().notice).toMatch(/connection/);
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/connection/);
   });
 });

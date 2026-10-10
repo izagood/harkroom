@@ -37,7 +37,7 @@ describe('채널 목록 변경 이벤트를 받는 데스크탑 (#284)', () => {
     expect(s.channels.map((c) => c.id)).toEqual(['c1']);
     expect(s.activeChannelId).toBeNull();
     // 조용히 비우면 사람은 자기가 뭘 잘못 눌렀다고 생각한다 — 사라진 이유를 한 줄로 말한다.
-    expect(s.notice).toMatch(/deleted/i);
+    expect((s.notices.at(-1)?.text ?? null)).toMatch(/deleted/i);
     // 스레드 패널도 함께 닫혀야 한다. 남겨 두면 없는 채널의 스레드가 열린 채로 남는다.
     expect(s.threadRootId).toBeNull();
   });
@@ -52,7 +52,7 @@ describe('채널 목록 변경 이벤트를 받는 데스크탑 (#284)', () => {
     expect(s.channels.map((c) => c.id)).toEqual(['c1']);
     expect(s.activeChannelId).toBe('c1');
     // 내가 보고 있지 않던 채널이 지워진 것은 알릴 사건이 아니다 — 안내가 뜨면 소음이 된다.
-    expect(s.notice).toBeNull();
+    expect((s.notices.at(-1)?.text ?? null)).toBeNull();
   });
 
   it('channel.created 는 목록에 채널을 넣고, 같은 채널이 두 번 와도 늘지 않는다', async () => {
