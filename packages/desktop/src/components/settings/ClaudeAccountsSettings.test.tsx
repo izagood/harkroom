@@ -683,8 +683,10 @@ describe('앱 언어를 따른다', () => {
     expect(screen.getByRole('button', { name: 'work 에 계정 추가' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '기본으로' })).toBeTruthy();
     expect(screen.getAllByText('로그인 안 됨').length).toBeGreaterThan(0);
+    // 배정 기준 줄(ClaudeAssignThresholds)도 같은 화면이다.
+    expect(screen.getByRole('button', { name: 'work 배정 기준 고치기' })).toBeTruthy();
     const text = document.body.textContent ?? '';
-    expect(text).not.toMatch(/Default pool|Add account|Not signed in|Signed in as|Runners pick up|New pool/);
+    expect(text).not.toMatch(/Default pool|Add account|Not signed in|Signed in as|Runners pick up|New pool|Edit limits|New threads skip/);
   });
 
   it('영어 복수형은 1 과 2 가 다르다', async () => {
