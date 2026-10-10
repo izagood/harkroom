@@ -424,7 +424,7 @@ export class DaemonServer {
         if (!port) return daemonError('no-such-runner', '이 daemon 에는 MCP 정의가 배선되지 않았다');
         const p = readOperatorMcpSetPayload(req.payload);
         if (isDaemonError(p)) return p;
-        try { await port.set(p.name, p.definition); } catch (err) {
+        try { await port.set(p.name, p.definition, p.clientSecret !== undefined ? { clientSecret: p.clientSecret } : {}); } catch (err) {
           return daemonError('internal', err instanceof Error ? err.message : String(err));
         }
         // 정의 본문은 적지 않는다 — env·headers 에 토큰이 실린다.
