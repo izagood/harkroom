@@ -89,6 +89,8 @@ export interface BridgeLink {
    * 요청의 `method` 를 보고 그 답이 나간 순간을 짚을 뿐, 내용은 건드리지 않는다.
    */
   onToolsListed?: () => void;
+  /** hello 의 kind — 하네스의 MCP 브릿지는 `bridge`, PreToolUse hook 은 `hook`(H③b). */
+  kind?: 'bridge' | 'hook';
 }
 
 export interface BridgeStdio { stdin: Readable; stdout: Writable; stderr: Writable }
@@ -240,7 +242,7 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
         // hello 가 **첫 줄**이어야 한다. 그 뒤에 큐에 쌓인 줄을 순서대로 흘린다.
         const hello: RunnerHello = {
           type: 'hello', version: RUNNER_LINK_PROTOCOL_VERSION, role: 'runner',
-          runnerId: link.runnerId, secret: link.secret, kind: 'bridge',
+          runnerId: link.runnerId, secret: link.secret, kind: link.kind ?? 'bridge',
         };
         s.write(`${JSON.stringify(hello)}\n`);
         for (const entry of queued.splice(0)) s.write(entry.line);

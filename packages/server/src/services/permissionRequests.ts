@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { createHash } from 'node:crypto';
-import { repoGrantScope, repoScope, toolScope, validateExactCommand, validateToolRule, type MessageRow, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
+import type { CommandFileDigest } from '@harkroom/shared/runnerLink';
+import { repoGrantScope, repoScope, toolScope, validateExactCommand, validateToolRule, type CommandFileArg, type MessageRow, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
@@ -52,6 +53,8 @@ export interface PermissionRequestMeta {
   channelId: string | null;
   /** command 만: 그 스레드에서만 열린다. */
   threadRootId?: string;
+  /** command 만: 내용이 요청 시점에 고정된 파일들. secret 자리는 preview 가 없다. */
+  files?: { path: string; size: number; sha256: string; secret: boolean; preview?: string }[];
   warnings: ToolRuleWarning[];
   /**
    * 머지 거절에서 온 요청(스레드 1b75d7a0)이면 그 PR·head·사유 — 카드가 [이번 한 번 머지](이 PR·이 head 만)를 함께 보인다.
@@ -74,7 +77,7 @@ export interface PermissionRequestMeta {
 
 export type OpenRefusal =
   | { code: ToolRuleRefusal; message: string }
-  | { code: 'bad_repo' | 'org_wide' | 'not_agent' | 'too_many'; message: string };
+  | { code: 'bad_repo' | 'org_wide' | 'not_agent' | 'too_many' | 'files_unmeasured' | 'files_mismatch'; message: string };
 
 export type OpenResult =
   | { ok: false; refusal: OpenRefusal }
@@ -96,12 +99,22 @@ const RULE_REFUSAL_MESSAGE: Record<ToolRuleRefusal, string> = {
   bad_chars: 'rule may only use letters, digits, spaces and _ . / @ = : + % - — no quotes, backslashes, brackets or commas',
   gh_api_write: '`gh api` is granted only as one exact read call — no prefix rule, -X/--method, -f/-F/--input or graphql',
   env_prefix: 'no NAME=value prefix — pass it as a flag (e.g. kubectl --kubeconfig <path>)',
+  path_head: 'a script called by path is not granted as an exact command — run it yourself or ask for a tool rule',
+  relative_path: 'file arguments (-f, --patch-file, --values, --kubeconfig, @file …) must be absolute, clean paths',
+  glued_flag: 'write file flags apart from their value (-f /abs/path), not glued (-f/abs or -f=/abs)',
+  needs_kubeconfig: 'kubectl/helm need both --kubeconfig <absolute path> and --context (helm: --kube-context)',
+  unsupported_head: 'an exact command can only be kubectl or helm for now — run other tools yourself or ask for a tool rule',
+  unsupported_subcommand: 'that kubectl/helm subcommand (or plugin) is not granted as an exact command',
+  unsupported_flag: 'helm --post-renderer/--repo/--plugins are not granted as an exact command',
+  chart_not_pinned: 'helm install/upgrade/template need `<release> oci://<chart>` right after the subcommand and --version',
 };
 
 export async function openPermissionRequest(
   pool: Pool,
   args: {
     agentId: string; kind: PermissionKind; rule?: string; repo?: string; command?: string; reason: string;
+    /** kind=command: 오퍼레이터가 잰 파일 해시(헤더). null 이면 재지 않았다. */
+    commandFiles?: CommandFileDigest[] | null;
     channelId: string; threadRootId: string; now?: Date;
     /** 머지 거절 기록에서 온 요청(`message.ask` 의 `mergeDenialId`). 거절 기록 검증(`prepareDenialCard`)은 부르는 쪽이 먼저 한다. */
     denial?: { id: string; number: number; headSha: string; reason: 'not_granted' | 'cause_not_human' };
@@ -205,10 +218,17 @@ export async function openPermissionRequest(
  */
 async function openCommandRequest(
   pool: Pool,
-  args: { agentId: string; command?: string; reason: string; channelId: string; threadRootId: string; now: Date; ownerAccountId: string | null },
+  args: {
+    agentId: string; command?: string; reason: string; channelId: string; threadRootId: string; now: Date; ownerAccountId: string | null;
+    commandFiles?: CommandFileDigest[] | null;
+  },
 ): Promise<OpenResult> {
   const v = validateExactCommand(args.command ?? '');
   if (!v.ok) return { ok: false, refusal: { code: v.code, message: RULE_REFUSAL_MESSAGE[v.code] } };
+  // C1: 어느 파일을 묶을지는 서버가 명령에서 뽑는다. 오퍼레이터가 잰 경로 집합이 그것과 **정확히** 같아야 한다 — 하나라도 빠지거나
+  // 더 있으면(옛 오퍼레이터·위장) 거절. 파일 없는 명령은 헤더가 없어도 된다.
+  const files = matchFileDigests(v.files, args.commandFiles ?? null);
+  if (!files.ok) return { ok: false, refusal: { code: files.code, message: files.message } };
   const live = (await pool.query<{ expiresAt: string }>(
     `select expires_at as "expiresAt" from command_grant
       where agent_id = $1 and channel_id = $2 and thread_root_id = $3 and command = $4 and expires_at > $5
@@ -236,6 +256,7 @@ async function openCommandRequest(
     `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at)
      values ($1, 'command', $2, $3, $4, $5, $6, $7, $8) returning id`,
     [args.agentId, v.command, args.reason, v.warnings, args.channelId, args.threadRootId, args.now, expiresAt])).rows[0]!.id;
+  await pool.query(`update permission_request set file_digests = $2::jsonb where id = $1`, [id, JSON.stringify(canonicalDigests(files.files))]);
   await recordAudit(pool, {
     action: 'permission.requested', actorId: args.agentId, target: args.agentId,
     detail: { requestId: id, kind: 'command', target: v.command, warnings: v.warnings, channelId: args.channelId, threadRootId: args.threadRootId },
@@ -247,6 +268,7 @@ async function openCommandRequest(
       meta: {
         requestId: id, agentId: args.agentId, ownerAccountId: args.ownerAccountId, kind: 'command', target: v.command,
         channelId: args.channelId, threadRootId: args.threadRootId, warnings: v.warnings,
+        ...(files.files.length ? { files: files.files } : {}),
         reason: oneLineReason(args.reason), requestedAt: args.now.toISOString(), expiresAt: expiresAt.toISOString(),
       },
     },
@@ -258,7 +280,7 @@ export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: str
   // n1(jaebin 10-07): 규칙은 그 채널의 **모든** 턴(위임·예약 깨우기로 뜬 턴 포함)에 붙는다 — 카드가 그렇게 말해야 한다.
   const warn = meta.warnings.length ? `\n⚠ ${meta.warnings.join(', ')}` : '';
   if (meta.kind === 'command') {
-    return `권한 요청 · ${agentHandle}\n정확히 이 명령 하나 \`${meta.target}\` — 이 스레드에서만 · 「이번 한 번」 또는 「1시간」${warn}\n이유: ${oneLineReason(meta.reason)}`;
+    return `권한 요청 · ${agentHandle}\n정확히 이 명령 하나 \`${meta.target}\` — 이 스레드에서만 · 「이번 한 번」 또는 「1시간」${warn}${filesBlock(meta.files ?? [])}\n이유: ${oneLineReason(meta.reason)}`;
   }
   const what = meta.kind === 'tool'
     ? `명령 허용 \`${meta.target}\` — 이 채널의 모든 대화에서`
@@ -357,8 +379,8 @@ export async function decidePermissionRequest(
       grantMode = args.decision === 'approve_hour' ? 'hour' : 'once';
       grantExpiresAt = new Date(now.getTime() + COMMAND_GRANT_TTL_MS);
       commandGrantId = (await client.query<{ id: string }>(
-        `insert into command_grant (agent_id, channel_id, thread_root_id, command, single_use, expires_at, granted_by, request_id, created_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
+        `insert into command_grant (agent_id, channel_id, thread_root_id, command, single_use, expires_at, granted_by, request_id, created_at, file_digests)
+         select $1, $2, $3, $4, $5, $6, $7, $8, $9, r.file_digests from permission_request r where r.id = $8 returning id`,
         [args.agentId, r.channelId, r.threadRootId, r.target, grantMode === 'once', grantExpiresAt, args.actorId, r.id, now])).rows[0]!.id;
     } else if (args.decision === 'approve') {
       grantExpiresAt = new Date(now.getTime() + PERMISSION_GRANT_TTL_MS);
@@ -538,23 +560,40 @@ export async function commandGrantsFor(
  */
 export async function matchCommandGrant(
   pool: Pool,
-  args: { agentId: string; channelId: string; threadRootId: string; command: string; toolUseId?: string | null; now?: Date },
+  args: {
+    agentId: string; channelId: string; threadRootId: string; command: string; toolUseId?: string | null; now?: Date;
+    /** 오퍼레이터가 지금 잰 파일 해시 — 명령의 파일 자리와 경로 집합이 같아야 하고, grant 와 모두 같아야 연다. */
+    files?: { path: string; sha256: string }[];
+    /** hook 입력의 cwd. 1시간 grant 는 첫 사용 cwd 에 묶인다. */
+    cwd?: string | null;
+  },
 ): Promise<{ allow: true; grantId: string; singleUse: boolean } | { allow: false }> {
   const now = args.now ?? new Date();
   const v = validateExactCommand(args.command);
   if (!v.ok) return { allow: false };
+  // 정규화는 한 곳(canonicalDigests)에서만 — 요청 때 저장한 것과 같은 함수·같은 꼴로 비교한다(security 3).
+  const measured = args.files ?? [];
+  const want = new Set(v.files.map((f) => f.path));
+  if (measured.length !== want.size || new Set(measured.map((f) => f.path)).size !== want.size || measured.some((f) => !want.has(f.path))) return { allow: false };
+  const digests = JSON.stringify(canonicalDigests(measured));
+  // cwd 가 없으면 1시간 grant 는 열지 않는다(security 1) — null 로 첫 사용을 지나면 묶이지 않은 채 남는다. 1회 grant 는 cwd 를 보지 않는다.
+  const cwd = typeof args.cwd === 'string' && args.cwd.startsWith('/') ? args.cwd : null;
   const hit = (await pool.query<{ id: string; singleUse: boolean }>(
-    `update command_grant c set use_count = c.use_count + 1, used_at = coalesce(c.used_at, $5)
+    `update command_grant c set use_count = c.use_count + 1, used_at = coalesce(c.used_at, $5),
+            bound_cwd = case when c.single_use then c.bound_cwd else coalesce(c.bound_cwd, $7) end
       where c.id = (
         select id from command_grant
          where agent_id = $1 and channel_id = $2 and thread_root_id = $3 and command = $4 and expires_at > $5
            and (not single_use or used_at is null)
+           and file_digests = $6::jsonb
+           and (single_use or ($7::text is not null and (bound_cwd is null or bound_cwd = $7)))
          order by single_use asc, created_at
          limit 1
          for update skip locked)
         and (not c.single_use or c.used_at is null)
+        and (c.single_use or ($7::text is not null and (c.bound_cwd is null or c.bound_cwd = $7)))
       returning c.id, c.single_use as "singleUse"`,
-    [args.agentId, args.channelId, args.threadRootId, v.command, now])).rows[0];
+    [args.agentId, args.channelId, args.threadRootId, v.command, now, digests, cwd])).rows[0];
   if (!hit) return { allow: false };
   await recordAudit(pool, {
     action: 'permission.command_used', actorId: args.agentId, target: args.agentId,
@@ -564,4 +603,48 @@ export async function matchCommandGrant(
     },
   });
   return { allow: true, grantId: hit.id, singleUse: hit.singleUse };
+}
+
+/** grant·요청 줄에 두는 꼴 — 경로 순으로 정렬한 `{path, sha256}` 뿐(jsonb 같음 비교가 순서·크기·미리 보기에 흔들리지 않게). */
+export function canonicalDigests(files: readonly { path: string; sha256: string }[]): { path: string; sha256: string }[] {
+  return [...files].map((f) => ({ path: f.path, sha256: f.sha256 })).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+type FileMatch =
+  | { ok: true; files: { path: string; size: number; sha256: string; secret: boolean; preview?: string }[] }
+  | { ok: false; code: 'files_unmeasured' | 'files_mismatch'; message: string };
+
+/** C1: 명령이 읽는 파일(서버가 뽑은 것)과 오퍼레이터가 잰 것의 경로 집합이 같아야 한다. secret 자리의 미리 보기는 버린다. */
+function matchFileDigests(want: readonly CommandFileArg[], got: CommandFileDigest[] | null): FileMatch {
+  if (!want.length) return { ok: true, files: [] };
+  if (!got) return { ok: false, code: 'files_unmeasured', message: 'this command reads files — it can only be requested through an up-to-date operator that measures them' };
+  const byPath = new Map(got.map((d) => [d.path, d]));
+  if (got.length !== want.length || byPath.size !== want.length || want.some((w) => !byPath.has(w.path))) {
+    return { ok: false, code: 'files_mismatch', message: 'the measured files do not match the files this command reads' };
+  }
+  return {
+    ok: true,
+    files: want.map((w) => {
+      const d = byPath.get(w.path)!;
+      return { path: w.path, size: d.size, sha256: d.sha256, secret: w.secret, ...(!w.secret && d.preview !== undefined ? { preview: d.preview } : {}) };
+    }),
+  };
+}
+
+/** 카드 본문의 파일 줄 — 경로·크기·해시 앞 12자, 비밀 아닌 자리는 앞 4KB 내용(펜스를 깨는 글자는 바꾼다). */
+function filesBlock(files: readonly NonNullable<PermissionRequestMeta['files']>[number][]): string {
+  if (!files.length) return '';
+  const lines = [`\n파일 ${files.length}개 — 내용은 요청 시점에 고정됨(바뀌면 열리지 않는다):`];
+  for (const f of files) {
+    lines.push(`· ${f.path} (${f.size}B, sha256 ${f.sha256.slice(0, 12)}…)${f.secret ? ' — 내용 비공개' : ''}`);
+    // n1: 미리 보기는 에이전트가 고른 파일 내용이다 — 멘션(`@이름`·`<@id>`)·채널 토큰·링크로 사람을 부르지 못하게 `@` 를 전각으로 바꾼다.
+    // 펜스(```)도 서버 멘션 파서가 건너뛰는 꼴이지만(splitCode) 그것에만 기대지 않는다. 펜스를 닫는 글자·Cf 는 지운다.
+    if (f.preview !== undefined) lines.push('```', neutralizePreview(f.preview), '```');
+  }
+  return lines.join('\n');
+}
+
+/** 카드 미리 보기 글자 — 멘션·펜스 탈출·서식 문자를 무력화한다(security n1). */
+export function neutralizePreview(text: string): string {
+  return text.replace(/\p{Cf}/gu, '').replace(/`{3,}|~{3,}/g, (m) => '‵'.repeat(m.length)).replace(/@/g, '＠').replace(/harkroom:\/\//gi, 'harkroom∶//');
 }

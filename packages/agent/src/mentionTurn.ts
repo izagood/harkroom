@@ -17,7 +17,7 @@ import type { FailOpts, Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
-import { buildTurnCommand, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
+import { attachesCommandHook, buildTurnCommand, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome, waitsForMcpBeforePrompt } from './adapters/index.js';
 import { RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
 import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
@@ -263,6 +263,8 @@ export interface MentionTurnDeps {
   claudePool?: string | null;
   /** `harkroom-operator` 실행 파일 — 하네스의 harkroom MCP(`mcp-bridge`) 명령(스펙 2026-09-20 §5). */
   operatorBin: string;
+  /** 「정확한 명령」 hook(H③b). 오퍼레이터 설정이 켰을 때만 true. */
+  commandHook?: boolean;
   /**
    * 러너의 링크 secret. 하네스가 env 를 화면에 찍으면 이 값이 tail 에 들어온다 — 옛 PAT 이
    * 그랬듯 대화로 새면 안 된다(`harnessTailNotice` 가 가린다). 이 값으로 할 수 있는 것은 이
@@ -1097,7 +1099,8 @@ export async function runMentionTurn(
     handle: deps.me.handle,
     secretCreate,
     merge: { operatorBin: deps.operatorBin, repos: grantedRepos, approved: approvedHere.map((a) => ({ repo: a.repo, number: a.number })) },
-    permissions: { toolAllows },
+    // hook 이 실제로 붙는 턴(turn.ts permissionRules 가 --settings 를 낼 때)에만 kind command 를 권한다.
+    permissions: { toolAllows, commandHook: attachesCommandHook(def.harness, def.mentionPermission, deps.commandHook === true) },
     api: { operatorBin: deps.operatorBin, connectors: apiConnectors, delegatable: apiInfo.delegatable },
     channelName: deps.channelName,
     instructions: def.instructions,
@@ -1197,6 +1200,7 @@ export async function runMentionTurn(
     operatorBin: deps.operatorBin,
     mergeRepos,
     toolAllows,
+    commandHook: deps.commandHook === true,
     apiConnectors,
     apiDelegatable: apiInfo.delegatable,
     codexHome: deps.codexHome,

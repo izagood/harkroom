@@ -10,7 +10,7 @@
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
+import type { RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import {
   CLEANUP_REPORT_PATH,
   normalizeCleanupPath,
@@ -28,7 +28,7 @@ export interface OwnerRecord extends CleanupThreadRef {
 
 export interface CleanupOwners {
   /** relay 로 온 보고면 받아 답한다. 아니면 null. */
-  maybeHandle(runnerId: string, agentId: string, req: RunnerLinkRequest, from: 'relay' | 'bridge'): Promise<RunnerLinkResponse | null>;
+  maybeHandle(runnerId: string, agentId: string, req: RunnerLinkRequest, from: RunnerLinkKind): Promise<RunnerLinkResponse | null>;
   releaseRunner(runnerId: string): void;
   /** worktree 경로(정규화) → 주인. 같은 경로를 여러 스레드가 알리면 마지막 턴이 늦은 쪽. */
   ownerOf(): Promise<Map<string, OwnerRecord>>;

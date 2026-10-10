@@ -35,6 +35,8 @@ export interface AssignmentDeps {
   turnSecretsDir?: string;
   /** `harkroom-operator` 실행 파일 — 러너가 하네스의 MCP 설정에 `mcp-bridge` 명령으로 굽는다. */
   operatorBin: string;
+  /** `operator.json` 의 `commandHook === true` 인가(H③b). spawn 마다 다시 읽는다 — 없으면 꺼짐. */
+  commandHook?: () => Promise<boolean>;
   /**
    * 이 커뮤니티에서 이 오퍼레이터의 소유자 id(`/operators/self`). 교차 불변식(스펙 §7)의 재료다 —
    * 모르면(null) personal 배정은 거절한다. 모르는 채로 여는 쪽이 더 나쁘다.
@@ -150,6 +152,8 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         // 머신 값은 로컬 설정이 준다(스펙 §3 능력). 없으면 러너가 서버 정의의 기본값을 쓴다.
         ...(local?.workingDir ? { HARKROOM_WORKING_DIR: local.workingDir } : {}),
         ...(local?.claudePool ? { HARKROOM_CLAUDE_POOL: local.claudePool } : {}),
+        // 「정확한 명령」 hook(H③b) — 켜졌을 때만. 못 읽으면 꺼짐.
+        ...((await deps.commandHook?.().catch(() => false)) ? { HARKROOM_COMMAND_HOOK: '1' } : {}),
       };
       let result: Awaited<ReturnType<AssignmentDeps['spawn']>>;
       try {

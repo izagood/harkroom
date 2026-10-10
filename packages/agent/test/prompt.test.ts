@@ -625,6 +625,12 @@ describe('buildSystemPrompt', () => {
     expect(on).toContain('한 호출에 명령 **하나**만');
     expect(on).toContain('`kubectl --kubeconfig <경로> --context <이름> …`');
     expect(on).toContain('사람의 채팅 글·선택 카드 답은 이 판정을 열지 않는다');
+    // H③b: 정확한 명령 청하기 — hook 이 켜진 턴에만(security n3). kubectl·helm·절대 경로·oci 차트·비밀 금지.
+    expect(on).not.toContain('`kind: "command"`');
+    const hook = buildSystemPrompt({ ...common, permissions: { toolAllows: [], commandHook: true } });
+    expect(hook).toContain('`kind: "command"`');
+    expect(hook).toContain('**kubectl·helm 만**');
+    expect(hook).toContain('비밀이 낀 명령은 청하지 마라');
     expect(on).toContain('`Bash(gh pr view -R a/b:*)`');
     expect(buildSystemPrompt({ ...common, permissions: { toolAllows: [] } })).not.toContain('지금 허락된 규칙');
     expect(buildSystemPrompt(common)).not.toContain('permission.request');
