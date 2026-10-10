@@ -130,8 +130,8 @@ describe('레일 네 칸', () => {
     mountRail();
 
     const home = screen.getByTestId('rail-home');
-    expect(home.textContent).toContain('Home');
-    expect(home.textContent).not.toContain('Channel');
+    expect(home.textContent).toContain('홈');
+    expect(home.textContent).not.toContain('채널');
   });
 
   it('아이콘에 글자를 붙인다 — 그림만 두지 않는다', () => {
@@ -143,7 +143,7 @@ describe('레일 네 칸', () => {
     mountRail();
 
     for (const [testId, label] of [
-      ['rail-home', 'Home'], ['rail-dm', 'DM'], ['rail-agents', 'Agents'], ['rail-saved', 'Saved'],
+      ['rail-home', '홈'], ['rail-dm', 'DM'], ['rail-agents', '에이전트'], ['rail-saved', '저장'], ['rail-collab', '협업'],
     ] as const) {
       expect(screen.getByTestId(testId).textContent).toContain(label);
     }
