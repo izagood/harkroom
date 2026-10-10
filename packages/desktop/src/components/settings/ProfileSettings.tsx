@@ -248,7 +248,7 @@ export function ProfileSettings({ onSignOut }: { onSignOut(): void }) {
       {/* #271 로 handle 은 바꿀 수 있게 됐다 — main 의 문구("handle 과 display name 은
           만들 때 정해지고 앱에서 바꿀 수 없다")는 이제 사실이 아니다. 무엇이 바뀌고
           무엇이 안 바뀌는지를 그대로 적는다: 로그인 ID 는 v1 불변이다. */}
-      <p data-testid="profile-readonly-note" className="-mt-6 mb-8 text-fg-subtle">
+      <p data-testid="profile-readonly-note" className="-mt-6 mb-8 break-keep text-fg-subtle">
         {t('profile.readonlyNote')}
       </p>
 
@@ -256,7 +256,7 @@ export function ProfileSettings({ onSignOut }: { onSignOut(): void }) {
         <div className="flex items-center gap-4 px-4 py-3">
           <span className="min-w-0 flex-1">
             <span className="block font-medium text-fg">{t('profile.signOut')}</span>
-            <span className="mt-0.5 block text-fg-subtle">
+            <span className="mt-0.5 block break-keep text-fg-subtle">
               {t('profile.signOutNote')}
             </span>
           </span>
