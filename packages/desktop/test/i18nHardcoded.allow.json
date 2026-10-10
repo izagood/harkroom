@@ -193,15 +193,6 @@
   "components/settings/SkillsSettings.tsx": [
     "제안자 @"
   ],
-  "components/settings/UpdatesSettings.tsx": [
-    "Current version",
-    "New version",
-    "Checking…",
-    "Check now",
-    "Installing…",
-    "Restart to install",
-    "Installing an update restarts harkroom. That does not disturb your agents: they are owned by a background daemon that outlives the app, and harkroom re-attaches to it on launch. Unsent drafts are kept across a restart; which thread you had open is not."
-  ],
   "components/settings/WorkspaceSettings.tsx": [
     "Upload",
     "Remove"
