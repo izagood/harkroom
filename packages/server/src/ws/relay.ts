@@ -384,6 +384,20 @@ export function createRelayHub(
     if (runner) sendToRunner(runner, { type: 'local.writer', sessionId, writerKey: null, gen });
   };
 
+  /**
+   * 서 있는 writer 키를 지금 세션 판정에 다시 맞춘다(R1, #1302 security F1). 서버 경로는 입력마다
+   * `inputDenial` 을 다시 보지만 로컬 키는 `setWriter` 때 한 번만 본다 — 그 뒤 러너가 입력을 닫았으면
+   * (acceptsInput:false·caps 에서 input 이 빠짐) 키를 거둬야 로컬 경로가 서버 판정보다 넓어지지 않는다.
+   * 열려 있으면 true(키를 그대로 둔다).
+   */
+  const reconcileLocalWriter = (sessionId: string): boolean => {
+    const w = writerOf.get(sessionId);
+    if (!w?.writerKey) return false;
+    if (inputDenial(sessionId) === null) return true;
+    revokeLocal(sessionId, w);
+    return false;
+  };
+
   /** 이 뷰어의 열람 키를 거둔다(떠날 때). 그 키로 오퍼레이터 소켓에 붙은 구독이 끝난다. */
   const revokeView = (sessionId: string, viewer: Viewer): void => {
     if (viewer.viewKey === null) return;
@@ -574,8 +588,11 @@ export function createRelayHub(
               for (const v of viewers.get(sessionId) ?? []) {
                 if (v.viewKey !== null) sendToRunner(runner, { type: 'local.view', sessionId, viewKey: v.viewKey, granted: true });
               }
+              // 입력이 닫혔으면 다시 내리지 않고 거둔다(security F1).
               const w = writerOf.get(sessionId);
-              if (w?.writerKey && w.gen !== null) sendToRunner(runner, { type: 'local.writer', sessionId, writerKey: w.writerKey, gen: w.gen });
+              if (reconcileLocalWriter(sessionId) && w?.writerKey && w.gen !== null) {
+                sendToRunner(runner, { type: 'local.writer', sessionId, writerKey: w.writerKey, gen: w.gen });
+              }
             }
           }
           return;
@@ -588,6 +605,8 @@ export function createRelayHub(
           // 있을 수 있고(티켓은 열기 응답 뒤에 나가지만 재접속·재열기 경로가 있다),
           // 그때 `count > 0` 을 못 받으면 보고 있는 화면 앞에서 유예가 흐른다.
           notifyViewerCount(frame.session.sessionId);
+          // 같은 세션이 새 뷰로 다시 서면서 입력을 닫았을 수 있다(security F1).
+          reconcileLocalWriter(frame.session.sessionId);
           return;
         }
         case 'session.ended':

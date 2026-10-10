@@ -132,6 +132,35 @@ describe('R1 PR-5 — 로컬 직결 키', () => {
     expect(frames('local.writer').filter((f) => f.writerKey === v.lastWriter()!.writerKey)).toHaveLength(2);
   });
 
+  it('다시 announce 할 때 세션이 입력을 닫았으면 writer 키를 다시 내리지 않고 거둔다(security F1)', () => {
+    const { hub, viewer, frames } = setup();
+    const v = viewer(true);
+    const key = v.lastWriter()!.writerKey;
+    hub.onRunnerMessage('agent-1', JSON.stringify({
+      type: 'announce', caps: ['input', 'interactive', 'local-terminal'],
+      sessions: [{ sessionId: S, agentAccountId: 'agent-1', channelId: 'c1', threadRootId: null, harness: 'claude-code', startedAt: '2026-10-10T00:00:00.000Z', acceptsInput: false }],
+    }));
+    const writer = frames('local.writer');
+    expect(writer.filter((f) => f.writerKey === key)).toHaveLength(1);
+    expect(writer.at(-1)).toMatchObject({ sessionId: S, writerKey: null });
+    // 열람 키는 남는다 — 그 창은 계속 보는 뷰어다.
+    expect(frames('local.view').filter((f) => f.granted && f.viewKey === v.viewKey())).toHaveLength(2);
+  });
+
+  it('caps 에서 input 이 빠져도, session.started 로 입력이 닫혀도 writer 키를 거둔다(security F1)', () => {
+    for (const via of ['caps', 'started'] as const) {
+      const { hub, viewer, frames } = setup();
+      const v = viewer(true);
+      const key = v.lastWriter()!.writerKey;
+      const session = { sessionId: S, agentAccountId: 'agent-1', channelId: 'c1', threadRootId: null, harness: 'claude-code', startedAt: '2026-10-10T00:00:00.000Z', acceptsInput: via === 'caps' };
+      if (via === 'caps') hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'announce', caps: ['interactive', 'local-terminal'], sessions: [session] }));
+      else hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session }));
+      const writer = frames('local.writer');
+      expect(writer.filter((f) => f.writerKey === key), via).toHaveLength(1);
+      expect(writer.at(-1), via).toMatchObject({ sessionId: S, writerKey: null });
+    }
+  });
+
   it('local.input 은 그 번호의 키를 받은 뷰어에게만 더하고, 남의 러너가 보낸 것은 버린다', () => {
     const { hub, viewer, frames } = setup();
     const a = viewer(true);
