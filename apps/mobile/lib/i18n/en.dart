@@ -889,4 +889,17 @@ class StringsEn implements Strings {
         'system.skill.proposed': 'Skill proposed: {slug} — waiting for approval.',
         'system.skill.proposedFlagged': 'Skill proposed: {slug} — waiting for approval.\n⚠️ It was flagged by the write check ({reason}). Check the body before approving.',
       };
+
+  @override
+  Map<String, String> get blockedWhy => const {
+        'not_granted': 'no permission',
+        'no_connector': 'no such connection',
+        'no_secret': 'no key',
+        'secret_expired': 'key expired',
+        'expired': 'permission expired',
+        'suspended': 'permission stopped',
+        'method_not_allowed': 'method outside the permission',
+        'path_not_allowed': 'path outside the permission',
+        'cause_not_human': 'This permission can only be used in turns a person started',
+      };
 }

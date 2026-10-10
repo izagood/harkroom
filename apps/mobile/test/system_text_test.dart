@@ -85,4 +85,16 @@ void main() {
     expect(out, contains('/x/{granterId}'));
     expect(out, endsWith('permission: mira (wrapper report)'));
   });
+
+  test('막힘 사유 code 는 사전에 있는 것만 옮기고 모르면 글자 그대로(designer n5)', () {
+    Map<String, Object?> tag(String code) =>
+        {'key': 'system.apiBlocked', 'args': {'agentId': id, 'connector': 'lab', 'request': 'GET /x', 'code': code}};
+    expect(systemText(row(tag('not_granted')), accounts, ko), endsWith('권한 없음'));
+    expect(systemText(row(tag('not_granted')), accounts, en), endsWith('no permission'));
+    expect(systemText(row(tag('weird_code')), accounts, ko), endsWith('weird_code'));
+  });
+
+  test('막힘 사유 사전이 en·ko 에 같은 code 로 있다', () {
+    expect(ko.blockedWhy.keys.toSet(), en.blockedWhy.keys.toSet());
+  });
 }

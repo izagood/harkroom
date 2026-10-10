@@ -61,6 +61,11 @@ String? systemText(MessageRow message, Map<String, AccountView> accounts, String
     final v = args[name];
     if (v is String) {
       if (v.length > _maxArgLength) return null;
+      // 막힘 사유는 사전에 있는 것만 옮기고, 모르는 code 는 글자 그대로(designer n5, security n2).
+      if (name == 'code' && t.blockedWhy.containsKey(v)) {
+        out[name] = t.blockedWhy[v]!;
+        continue;
+      }
       out[name] = name.endsWith('Id')
           ? (accounts[v]?.handle ?? t.systemAccountUnknown).replaceAll(_unsafe, ' ')
           : v.replaceAll(_unsafe, ' ');

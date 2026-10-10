@@ -888,4 +888,17 @@ class StringsKo implements Strings {
         'system.skill.proposed': '스킬이 제안됐다: {slug} — 승인을 기다린다.',
         'system.skill.proposedFlagged': '스킬이 제안됐다: {slug} — 승인을 기다린다.\n⚠️ 쓰기 검사에 걸렸다({reason}). 승인 전에 본문을 확인해라.',
       };
+
+  @override
+  Map<String, String> get blockedWhy => const {
+        'not_granted': '권한 없음',
+        'no_connector': '연결 없음',
+        'no_secret': '키 없음',
+        'secret_expired': '키 만료',
+        'expired': '권한 만료',
+        'suspended': '권한 멈춤',
+        'method_not_allowed': '메서드가 범위 밖',
+        'path_not_allowed': '경로가 범위 밖',
+        'cause_not_human': '이 권한은 사람이 시킨 턴에서만 쓸 수 있다',
+      };
 }

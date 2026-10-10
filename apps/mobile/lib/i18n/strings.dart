@@ -697,6 +697,10 @@ abstract class Strings {
   /// (모바일에는 받침 판정이 없다 — 영문 이름 뒤 「 가」 꼴, 서버 본문과 같다).
   Map<String, String> get systemTemplates;
 
+  /// API 막힘 사유 code → 말(데스크톱 `blocked.why.*` 와 같은 9개, designer n5). 모르는 code 는 표에 없고,
+  /// 그때 화면은 code 글자를 그대로 보인다(security n2).
+  Map<String, String> get blockedWhy;
+
   /// 시스템 줄은 부르는 말이 아니다(`fillSystemAccount`).
   String get systemAccountUnknown;
 
