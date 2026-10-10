@@ -350,7 +350,7 @@ class StringsKo implements Strings {
   @override
   String get attachmentGoToMessage => '글로 가기';
   @override
-  String attachmentHtmlMeta(String size) => 'HTML 문서 · $size';
+  String attachmentHtmlMeta(String size) => 'HTML · $size';
 
   @override
   String get artifactVersion => 'v{v}';

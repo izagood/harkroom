@@ -949,6 +949,8 @@ const Set<String> i18nAllowSameAsEnglish = {
   'appName',
   // 주소 예시다. 번역할 말이 없다 — `https://example.com` 은 어느 언어에서도 같다.
   'connectServerUrlHint',
+  // 파일 형식 이름 `HTML` 과 크기뿐이다. 번역하지 않는 이름이다(데스크톱 `artifact.card.html` 도 두 언어 `HTML`).
+  'attachmentHtmlMeta',
 };
 
 /// 키 → 값 표로 펼친다. **시험이 문구를 훑는 유일한 통로**다.
