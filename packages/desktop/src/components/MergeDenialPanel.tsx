@@ -12,7 +12,6 @@ import type { SectionId } from './settings/sections';
  *
  * [7일 주기]는 ask 선택지가 아니다(security C5). **에이전트 소유자인 사람**에게만 서고, 그 사람 세션의 REST
  * (`POST /agents/:id/merge-denials/:denialId/grant`)로 간다. scope·기한은 서버가 거절 기록과 상수로 정한다.
- * 배포 저장소(`deployRepo`)면 버튼 대신 「설정에서」만 둔다(C6).
  *
  * 저장소 이름은 **전부 크게** 보인다(security L1) — 그 값은 에이전트가 래퍼에 보낸 이름이라, 주는 사람이 정확히 무엇에
  * 주는지 읽을 수 있어야 한다. PR 링크는 서버 기록의 저장소·번호로만 만든다(`https://github.com/{repo}/pull/{n}`) — 에이전트
@@ -20,7 +19,7 @@ import type { SectionId } from './settings/sections';
  */
 export interface MergeDenialMeta {
   denialId: string; agentId: string; ownerAccountId: string | null; repo: string; number: number;
-  deployRepo: boolean; count: number; lastAt: string;
+  count: number; lastAt: string;
   granted?: { by: string; at: string; expiresAt: string };
 }
 
@@ -32,7 +31,7 @@ export function readMergeDenial(meta: Record<string, unknown>): MergeDenialMeta 
   const g = d.granted;
   return {
     denialId: d.denialId, agentId: d.agentId, ownerAccountId: typeof d.ownerAccountId === 'string' ? d.ownerAccountId : null,
-    repo: d.repo, number: typeof d.number === 'number' ? d.number : 0, deployRepo: d.deployRepo === true,
+    repo: d.repo, number: typeof d.number === 'number' ? d.number : 0,
     count: typeof d.count === 'number' ? d.count : 1, lastAt: typeof d.lastAt === 'string' ? d.lastAt : '',
     ...(g && typeof g.expiresAt === 'string' && typeof g.by === 'string' ? { granted: { by: g.by, at: String(g.at ?? ''), expiresAt: g.expiresAt } } : {}),
   };
@@ -90,23 +89,13 @@ export function MergeDenialPanel({ message, onOpenSettings }: { message: Message
         <dd>{t('blocked.count', { n: String(d.count), when: d.lastAt ? new Date(d.lastAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : '' })}</dd>
       </dl>
       {until && <p className="mt-1 text-fg" data-testid="merge-denial-granted">{t('mergeDenial.granted', { date: fmt(until) })}</p>}
-      {!until && isOwner && !d.deployRepo && error?.code !== 'denial_expired' && error?.code !== 'denial_used' && (
+      {!until && isOwner && error?.code !== 'denial_expired' && error?.code !== 'denial_used' && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <button type="button" disabled={busy} data-testid="merge-denial-give"
             className="rounded bg-accent px-2 py-1 font-medium text-fg-on-strong disabled:opacity-60" onClick={() => void give()}>
             {t('mergeDenial.give')}
           </button>
           <span className="text-fg-subtle">{t('mergeDenial.giveNote')}</span>
-        </div>
-      )}
-      {!until && isOwner && d.deployRepo && (
-        <div className="mt-2" data-testid="merge-denial-deploy">
-          <p className="text-fg-muted">{t('mergeDenial.deployRepo')}</p>
-          {onOpenSettings && (
-            <button type="button" className="mt-1 rounded border border-border px-2 py-1 text-fg-muted" onClick={() => onOpenSettings('agents', d.agentId)}>
-              {t('blocked.openSettings')}
-            </button>
-          )}
         </div>
       )}
       {!until && !isOwner && <p className="mt-1 text-fg-subtle" data-testid="merge-denial-owner-only">{t('blocked.ownerOnly', { owner })}</p>}

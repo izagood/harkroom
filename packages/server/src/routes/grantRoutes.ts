@@ -15,7 +15,6 @@ import { hasWriteMethod, isConnectorScope, parseLimits } from '../auth/apiGrants
 import { actorOf, recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { decideDelegation } from '../services/apiDelegation.js';
-import { deployRepoScopes } from '../services/mergeDenials.js';
 
 const grantBody = z.object({
   capability: z.enum(CAPABILITIES),
@@ -118,9 +117,7 @@ async function listGrants(pool: Pool, accountId: string): Promise<GrantRow[]> {
             suspended_at as "suspendedAt", suspend_reason as "suspendReason",
             write_needs_human_cause as "writeNeedsHumanCause"
        from account_grant where account_id = $1 order by capability, scope`, [accountId]);
-  // 배포 저장소 표시(#1258 d1) — 머지 줄에만. 판정은 checkMerge 와 같은 목록이다.
-  const deploy = deployRepoScopes();
-  return res.rows.map((r: GrantRow) => (r.capability === 'repo.merge' && deploy.has(r.scope.toLowerCase()) ? { ...r, deployRepo: true } : r));
+  return res.rows as GrantRow[];
 }
 
 export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Promise<void> {

@@ -315,8 +315,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             const expired = g.expiresAt !== null && Date.parse(g.expiresAt) <= Date.now();
             // #1255 security n2: 서버는 정확한 이름과 조직 grant 가 겹치면 **넓게 허락하는 쪽**(allow_agent_cause)을 쓴다. 이 줄은 꺼져
             // 있어도 살아 있는 조직 grant 가 켜져 있으면 실제로는 에이전트가 띄운 턴에서도 머지된다 — 그 사실을 이 줄에 적는다.
-            // 배포 저장소는 조직 grant 로 열리지 않는다(#1255) — 서버가 그 줄에 deployRepo 를 실으면 붙이지 않는다(#1258 designer d1).
-            const coveringOrg = !g.allowAgentCause && !orgOf(g.scope) && !g.deployRepo
+            const coveringOrg = !g.allowAgentCause && !orgOf(g.scope)
               ? rows.find((o) => orgOf(o.scope) !== null && o.allowAgentCause && repo.startsWith(`${orgOf(o.scope)}/`)
                 && (o.expiresAt === null || Date.parse(o.expiresAt) > Date.now()))
               : undefined;

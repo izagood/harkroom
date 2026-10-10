@@ -15,7 +15,6 @@
 import type { Pool } from 'pg';
 import type { AccountView, Capability, PermissionTarget } from '@harkroom/shared';
 import { CAPABILITIES, MEMBER_DEFAULT_CAPABILITIES, orgScopeOf, repoScope } from '@harkroom/shared';
-import { deployRepoScopes } from '../services/mergeDenials.js';
 
 export async function hasGrant(pool: Pool, accountId: string, cap: Capability, scope: string): Promise<boolean> {
   // scope 가 주어져도 전역('') grant 는 언제나 그 대상을 덮는다 — 전역이 대상 한정보다 넓다.
@@ -57,8 +56,8 @@ export async function isOwnerOf(pool: Pool, accountId: string, target: Permissio
  * `repo.merge` 는 `can()` 을 타지 않는다(security F1·F2). 세 층 중 어느 것도 이 capability 를 열지 못한다:
  * 소유(에이전트가 저장소를 "소유"하지 않는다) · 전역 grant('' — 전 저장소가 열리는 구멍) · admin 역할.
  * 오직 (에이전트, 'repo.merge', 'repo:<owner>/<name>') 정확 일치 grant, 또는 그 owner 의 조직 grant `repo:<owner>/*`
- * (jaebin 10-09) 둘뿐이다. 조직 grant 는 **배포 저장소**(`HARKROOM_MERGE_DEPLOY_REPOS`)를 덮지 않는다 — 머지가 곧 배포인
- * 저장소는 언제나 정확한 이름으로만 연다(카드 C6 와 같은 규칙).
+ * (jaebin 10-09) 둘뿐이다. 조직 grant 는 그 owner 의 저장소를 **전부** 덮는다 — 배포 저장소라고 따로 빼지 않는다(jaebin 10-10,
+ * 「하네스가 안 막는 것을 harkroom 만 막지 않는다」. 배포 저장소의 안전장치는 GitHub 쪽 branch protection 에 둔다).
  *
  * 둘 다 있으면 `allow_agent_cause` 가 켜진 쪽, 그다음 정확 일치를 고른다 — 어느 grant 든 허락하면 허락이다.
  *
@@ -71,7 +70,7 @@ export async function mergeGrantFor(
   const scope = repoScope(repo);
   if (!scope) return null;
   const org = orgScopeOf(scope);
-  const scopes = org && !deployRepoScopes().has(scope) ? [scope, org] : [scope];
+  const scopes = org ? [scope, org] : [scope];
   const res = await pool.query(
     `select scope, granted_by as "grantedBy", granted_at as "grantedAt", expires_at as "expiresAt",
             allow_agent_cause as "allowAgentCause"

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
@@ -6,7 +6,7 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { can, mergeGrantFor } from '../src/auth/permissions.js';
 import { mintPat } from '../src/services/pats.js';
-import { bumpDenialCard, linkDenialCard, prepareDenialCard } from '../src/services/mergeDenials.js';
+import { prepareDenialCard } from '../src/services/mergeDenials.js';
 import { MERGE_DENIAL_DAILY_CAP } from '../src/services/mergeGrants.js';
 import { openPermissionRequest, releaseGrant } from '../src/services/permissionRequests.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -198,7 +198,7 @@ describe('repo.merge grant', () => {
     });
     it('merge-grants 는 자기 저장소 목록만 준다', async () => {
       const res = await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asAgent() });
-      expect(res.json()).toEqual({ repos: ['izagood/harkroom'] });
+      expect(res.json()).toEqual({ repos: ['izagood/harkroom'], approvals: [] });
     });
     it('merge-results 는 그 턴의 스레드에 시스템 줄을 쓰고(래퍼 보고라고 밝힘) 감사에 남긴다', async () => {
       const cause = await mention(alice.accountId);
@@ -309,31 +309,7 @@ describe('repo.merge grant', () => {
       const later = new Date(Date.now() + 25 * 3_600_000);
       expect(await prepareDenialCard(pool, { agentId, denialId: id, channelId: ch, threadRootId: thread, now: later })).toEqual({ ok: false, code: 'denial_expired' });
       const ok = await prepareDenialCard(pool, { agentId, denialId: id, channelId: ch, threadRootId: thread });
-      expect(ok).toMatchObject({ ok: true, existingCardId: null, meta: { denialId: id, agentId, ownerAccountId: alice.accountId, repo: 'izagood/p3-b', number: 42, deployRepo: false, count: 1 } });
-    });
-
-    it('C3: 같은 날 같은 저장소·스레드는 카드 한 장 — 다시 막히면 횟수와 버튼의 거절 기록만 바뀐다', async () => {
-      const first = await refused('izagood/p3-c');
-      const thread = await threadOf(first.cause);
-      const p1 = await prepareDenialCard(pool, { agentId, denialId: first.body.error.denialId!, channelId: ch, threadRootId: thread });
-      if (!p1.ok) throw new Error('prepare failed');
-      const card = (await pool.query(
-        `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, 'card', 'user', $4) returning id`,
-        [ch, thread, agentId, JSON.stringify({ kind: 'ask', ask: { options: [{ id: 'retry', label: 'retry' }, { id: 'later', label: 'later' }] }, mergeDenial: p1.meta })])).rows[0].id as string;
-      await linkDenialCard(pool, p1.meta.denialId, card);
-      // 같은 스레드에서 다시 막힘 — 그 스레드의 새 사람 글로 뜬 턴(임대는 cause 마다 하나다)
-      const reply = (await pool.query(
-        `insert into message (channel_id, thread_root_id, author_id, body, kind) values ($1, $2, $3, 'again', 'user') returning id`,
-        [ch, thread, alice.accountId])).rows[0].id as string;
-      await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agentId, reply]);
-      const l = await lease(reply);
-      const again = (await check(l, 'izagood/p3-c', { number: 43 })).json().error.denialId as string;
-      const p2 = await prepareDenialCard(pool, { agentId, denialId: again, channelId: ch, threadRootId: thread });
-      expect(p2).toMatchObject({ ok: true, existingCardId: card });
-      if (!p2.ok) throw new Error('prepare failed');
-      await bumpDenialCard(pool, card, p2.meta);
-      const meta = (await pool.query(`select meta from message where id = $1`, [card])).rows[0].meta.mergeDenial;
-      expect(meta).toMatchObject({ count: 2, denialId: again, number: 43, repo: 'izagood/p3-c' });
+      expect(ok).toMatchObject({ ok: true, meta: { denialId: id, agentId, ownerAccountId: alice.accountId, repo: 'izagood/p3-b', number: 42, count: 1, reason: 'not_granted', headSha: SHA } });
     });
 
     it('C4·C5: 소유자 사람 세션만, :id 가 기록의 에이전트와 같을 때, 한 번만 — scope·기한은 본문에서 받지 않는다', async () => {
@@ -374,24 +350,6 @@ describe('repo.merge grant', () => {
       await revoke(alice.token, 'repo:izagood/p3-d');
     });
 
-    it('C6: 배포 저장소는 카드에 deployRepo 로 표시되고, REST 는 거절하며 기록을 쓰지 않는다', async () => {
-      const prev = process.env.HARKROOM_MERGE_DEPLOY_REPOS;
-      process.env.HARKROOM_MERGE_DEPLOY_REPOS = 'Izagood/Homelab, bad name';
-      try {
-        const { cause, body } = await refused('izagood/homelab');
-        const id = body.error.denialId!;
-        const p = await prepareDenialCard(pool, { agentId, denialId: id, channelId: ch, threadRootId: await threadOf(cause) });
-        expect(p).toMatchObject({ ok: true, meta: { deployRepo: true } });
-        const res = await grantFrom(alice.token, id);
-        expect(res.statusCode).toBe(403);
-        expect(res.json().error.code).toBe('deploy_repo');
-        expect((await pool.query(`select used_at from merge_denial where id = $1`, [id])).rows[0].used_at).toBeNull();
-        expect(await mergeGrantFor(pool, agentId, 'izagood/homelab')).toBeNull();
-      } finally {
-        if (prev === undefined) delete process.env.HARKROOM_MERGE_DEPLOY_REPOS; else process.env.HARKROOM_MERGE_DEPLOY_REPOS = prev;
-      }
-    });
-
     it('준 뒤 카드 meta 에 준 사람·기한이 적힌다', async () => {
       const { cause, body } = await refused('izagood/p3-e');
       const id = body.error.denialId!;
@@ -401,7 +359,8 @@ describe('repo.merge grant', () => {
       const card = (await pool.query(
         `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, 'card', 'user', $4) returning id`,
         [ch, thread, agentId, JSON.stringify({ kind: 'ask', ask: { options: [{ id: 'retry', label: 'retry' }, { id: 'later', label: 'later' }] }, mergeDenial: p.meta })])).rows[0].id as string;
-      await linkDenialCard(pool, id, card);
+      // 옛 카드(이미 세워진 것) — 새 카드는 권한 요청 카드로 서므로 연결은 손으로 한다.
+      await pool.query(`update merge_denial set card_message_id = $2 where id = $1`, [id, card]);
       expect((await grantFrom(alice.token, id)).json().cardMessageId).toBe(card);
       const meta = (await pool.query(`select meta from message where id = $1`, [card])).rows[0].meta.mergeDenial;
       expect(meta.granted).toMatchObject({ by: alice.accountId });
@@ -453,7 +412,7 @@ describe('repo.merge grant', () => {
         `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, 'fake', 'user', $4)`,
         [ch, thread, otherAgentId, JSON.stringify({ mergeDenial: p.meta })]);
       const again = await prepareDenialCard(pool, { agentId, denialId: body.error.denialId!, channelId: ch, threadRootId: thread });
-      expect(again).toMatchObject({ ok: true, existingCardId: null });
+      expect(again).toMatchObject({ ok: true });
     });
 
     describe('n2: MCP 경로 message.ask + mergeDenialId', () => {
@@ -508,6 +467,141 @@ describe('repo.merge grant', () => {
   });
 
   // 조직 와일드카드(jaebin 10-09): `owner/*` 는 그 owner 의 저장소 전부 — 다른 owner·`*/*`·부분 패턴·배포 저장소는 아니다.
+  describe('1회 승인 merge_approval (스레드 1b75d7a0) — 권한 요청 카드의 [이번 한 번 머지]', () => {
+    const SHA2 = 'b'.repeat(40);
+    // 앞 시험들이 이 에이전트로 거절 기록을 많이 남겼다 — 하루 상한(L2, 20개)에 걸리지 않게 그 기록을 어제로 민다.
+    beforeEach(async () => { await pool.query(`update merge_denial set created_at = created_at - interval '2 days' where agent_id = $1`, [agentId]); });
+    /** 카드가 보여 준 PR·head(security F1 대조값) — requestFor 가 채운다. 보내는 쪽 payload 가 덮을 수 있다. */
+    const cardOf = new Map<string, { number: number; headSha: string }>();
+    const decide = (token: string, requestId: string, payload: Record<string, unknown>, decision = 'approve-once', target = agentId) =>
+      app.inject({ method: 'POST', url: `/agents/${target}/permission-requests/${requestId}/${decision}`, headers: auth(token), payload: { ...(cardOf.get(requestId) ?? {}), ...payload } });
+    const threadOf = async (cause: string) => (await pool.query(`select coalesce(thread_root_id, id) as t from message where id = $1`, [cause])).rows[0].t as string;
+    const leaseInThread = async (thread: string, authorId: string) => {
+      const id = (await pool.query(
+        `insert into message (channel_id, thread_root_id, author_id, body, kind) values ($1, $2, $3, 'again', 'user') returning id`,
+        [ch, thread, authorId])).rows[0].id as string;
+      await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agentId, id]);
+      return lease(id);
+    };
+    /** 거절 → 거절 기록에 묶인 권한 요청(MCP 의 `message.ask`+`mergeDenialId` 가 하는 것과 같다). */
+    const requestFor = async (denialId: string, thread: string) => {
+      const p = await prepareDenialCard(pool, { agentId, denialId, channelId: ch, threadRootId: thread });
+      if (!p.ok) throw new Error(`prepare: ${p.code}`);
+      const r = await openPermissionRequest(pool, {
+        agentId, kind: 'merge', repo: p.meta.repo, reason: 'refused', channelId: ch, threadRootId: thread,
+        denial: { id: p.meta.denialId, number: p.meta.number, headSha: p.meta.headSha!, reason: p.meta.reason! },
+      });
+      if (!r.ok || !('created' in r)) throw new Error('request not created');
+      expect(r.created.meta.once).toEqual({ number: p.meta.number, headSha: p.meta.headSha, reason: p.meta.reason });
+      cardOf.set(r.created.requestId, { number: p.meta.number, headSha: p.meta.headSha! });
+      return r.created.requestId;
+    };
+
+    it('cause_not_human 도 카드가 서고(grant 가 있어도), 1회 승인하면 다음 판정이 한 번만 통과한다', async () => {
+      expect((await grant(alice.token, { scope: 'repo:izagood/once-a' })).statusCode).toBe(200);
+      const cause = await mention(otherAgentId);
+      const thread = await threadOf(cause);
+      const denied = (await check(await lease(cause), 'izagood/once-a', { number: 5, headSha: SHA2 })).json();
+      expect(denied.error.code).toBe('cause_not_human');
+      expect(denied.error.denialId).toMatch(/^[0-9a-f-]{36}$/);
+      const rid = await requestFor(denied.error.denialId, thread);
+
+      const ok = await decide(alice.token, rid, { ghUser: 'rebel-jaebin', relaxChecks: true });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.json()).toMatchObject({ status: 'approved_once', grantExpiresAt: null, approvalExpiresAt: expect.any(String) });
+      const listed = (await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asAgent() })).json();
+      expect(listed.approvals).toEqual([expect.objectContaining({ repo: 'izagood/once-a', number: 5, headSha: SHA2, ghUser: 'rebel-jaebin', relaxChecks: true, channelId: ch, threadRootId: thread })]);
+
+      const res = await check(await leaseInThread(thread, otherAgentId), 'izagood/once-a', { number: 5, headSha: SHA2 });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ allowed: true, grantedBy: alice.accountId, causeByHuman: false, approval: { ghUser: 'rebel-jaebin', relaxChecks: true } });
+      const sys = (await pool.query(`select body from message where thread_root_id = $1 and kind = 'system' and meta ? 'mergeApproval'`, [thread])).rows;
+      expect(sys).toHaveLength(1);
+      expect(sys[0].body).toContain('머지 시도');
+      expect((await check(await leaseInThread(thread, otherAgentId), 'izagood/once-a', { number: 5, headSha: SHA2 })).json().error.code).toBe('cause_not_human');
+      expect((await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asAgent() })).json().approvals).toEqual([]);
+    });
+
+    it('승인은 그 PR·head·스레드에만 — head 가 다르거나 다른 스레드면 쓰이지 않는다', async () => {
+      const cause = await mention(alice.accountId);
+      const thread = await threadOf(cause);
+      const denied = (await check(await lease(cause), 'izagood/once-b', { number: 9, headSha: SHA2 })).json();
+      expect(denied.error.code).toBe('not_granted');
+      expect((await decide(alice.token, await requestFor(denied.error.denialId, thread), { ghUser: 'izagood' })).statusCode).toBe(200);
+      expect((await check(await leaseInThread(thread, alice.accountId), 'izagood/once-b', { number: 9, headSha: SHA })).json().error.code).toBe('not_granted');
+      expect((await check(await lease(await mention(alice.accountId)), 'izagood/once-b', { number: 9, headSha: SHA2 })).json().error.code).toBe('not_granted');
+      const res = await check(await leaseInThread(thread, alice.accountId), 'izagood/once-b', { number: 9, headSha: SHA2 });
+      expect(res.json()).toMatchObject({ allowed: true, approval: { ghUser: 'izagood', relaxChecks: false } });
+    });
+
+    it('소유자 사람 세션만 · 본문은 ghUser·relaxChecks 둘뿐 · 거절에서 온 카드만 · 한 번만', async () => {
+      const cause = await mention(alice.accountId);
+      const thread = await threadOf(cause);
+      const denied = (await check(await lease(cause), 'izagood/once-c', { number: 3 })).json();
+      const rid = await requestFor(denied.error.denialId, thread);
+      expect((await decide(bob.token, rid, { ghUser: 'izagood' })).statusCode).toBe(403);
+      expect((await app.inject({ method: 'POST', url: `/agents/${agentId}/permission-requests/${rid}/approve-once`, headers: asAgent(), payload: { ghUser: 'izagood' } })).statusCode).toBe(403);
+      expect((await decide(alice.token, rid, { ghUser: 'izagood', confirmRepo: 'izagood/once-c' })).statusCode).toBe(400);
+      expect((await decide(alice.token, rid, {})).statusCode).toBe(400);
+      expect((await decide(alice.token, rid, { ghUser: '-bad' })).json().error.code).toBe('bad_gh_user');
+      expect((await decide(alice.token, rid, { ghUser: 'izagood' })).statusCode).toBe(200);
+      expect((await decide(alice.token, rid, { ghUser: 'izagood' })).json().error.code).toBe('already_decided');
+      const audit = (await pool.query(`select actor_id from audit_log where action = 'repo.merge.approved_once' and target = 'repo:izagood/once-c'`)).rows;
+      expect(audit).toEqual([{ actor_id: alice.accountId }]);
+      // 거절 기록 없이 열린 권한 요청(`permission.request`)에는 1회 승인이 없다.
+      const plain = await openPermissionRequest(pool, { agentId, kind: 'merge', repo: 'izagood/once-plain', reason: 'x', channelId: ch, threadRootId: thread });
+      if (!plain.ok || !('created' in plain)) throw new Error('not created');
+      expect((await decide(alice.token, plain.created.requestId, { ghUser: 'izagood', number: 1, headSha: SHA })).json().error.code).toBe('not_once');
+    });
+
+    it('F1: 카드가 선 뒤 다른 PR·head 로 다시 거절되면 옛 카드 값으로는 승인되지 않는다(card_stale) — 새 값이면 된다', async () => {
+      const cause = await mention(alice.accountId);
+      const thread = await threadOf(cause);
+      const first = (await check(await lease(cause), 'izagood/once-stale', { number: 11, headSha: SHA2 })).json();
+      const rid = await requestFor(first.error.denialId, thread);
+      // 같은 스레드에서 다른 PR 로 다시 막힘 — 거절 행이 재사용되어 PR·head 가 덮인다.
+      const again = (await check(await leaseInThread(thread, alice.accountId), 'izagood/once-stale', { number: 12, headSha: SHA })).json();
+      expect(again.error.denialId).toBe(first.error.denialId);
+      const stale = await decide(alice.token, rid, { ghUser: 'izagood' });
+      expect(stale.statusCode).toBe(409);
+      expect(stale.json().error.code).toBe('card_stale');
+      expect((await pool.query(`select count(*)::int as n from merge_approval where denial_id = $1`, [first.error.denialId])).rows[0].n).toBe(0);
+      expect((await pool.query(`select status from permission_request where id = $1`, [rid])).rows[0].status).toBe('pending');
+      // 다시 본 카드의 값(12·SHA)이면 승인된다.
+      const ok = await decide(alice.token, rid, { ghUser: 'izagood', number: 12, headSha: SHA });
+      expect(ok.statusCode).toBe(200);
+      expect((await pool.query(`select pr_number, head_sha from merge_approval where denial_id = $1`, [first.error.denialId])).rows[0]).toEqual({ pr_number: 12, head_sha: SHA });
+    });
+
+    it('F2: peek 은 이 임대의 스레드에서 판정이 소모할 바로 그 승인을 소모 없이 보여 준다', async () => {
+      const cause = await mention(alice.accountId);
+      const thread = await threadOf(cause);
+      const denied = (await check(await lease(cause), 'izagood/once-peek', { number: 21, headSha: SHA2 })).json();
+      expect((await decide(alice.token, await requestFor(denied.error.denialId, thread), { ghUser: 'izagood', relaxChecks: true })).statusCode).toBe(200);
+      const peek = (l: { id: string; token: string }) => app.inject({ method: 'POST', url: '/agent/merge-approvals/peek', headers: asAgent(), payload: { leaseId: l.id, token: l.token, repo: 'izagood/once-peek', number: 21, headSha: SHA2 } });
+      // 다른 스레드의 임대로는 보이지 않는다.
+      expect((await peek(await lease(await mention(alice.accountId)))).json()).toEqual({ approval: null });
+      const l = await leaseInThread(thread, alice.accountId);
+      const seen = (await peek(l)).json().approval;
+      expect(seen).toMatchObject({ ghUser: 'izagood', relaxChecks: true, id: expect.any(String) });
+      expect((await pool.query(`select used_at from merge_approval where id = $1`, [seen.id])).rows[0].used_at).toBeNull();
+      const res = (await check(l, 'izagood/once-peek', { number: 21, headSha: SHA2 })).json();
+      expect(res.approval.id).toBe(seen.id);
+    });
+
+    it('배포 저장소도 같은 규칙이다 — 이름 확인 단계가 없다(jaebin 10-10)', async () => {
+      const before = process.env.HARKROOM_MERGE_DEPLOY_REPOS;
+      process.env.HARKROOM_MERGE_DEPLOY_REPOS = 'izagood/once-deploy';
+      try {
+        const cause = await mention(alice.accountId);
+        const denied = (await check(await lease(cause), 'izagood/once-deploy', { number: 4 })).json();
+        expect((await decide(alice.token, await requestFor(denied.error.denialId, await threadOf(cause)), { ghUser: 'izagood' })).statusCode).toBe(200);
+      } finally {
+        if (before === undefined) delete process.env.HARKROOM_MERGE_DEPLOY_REPOS; else process.env.HARKROOM_MERGE_DEPLOY_REPOS = before;
+      }
+    });
+  });
+
   describe('조직 grant owner/*', () => {
     let orgAgent: string;
     const asOrg = () => ({ ...auth(op.token), 'x-harkroom-agent': orgAgent });
@@ -555,28 +649,23 @@ describe('repo.merge grant', () => {
       expect((await orgCheck(l, 'izagood/harkroom')).json().error.code).toBe('not_granted');
       // 래퍼가 `*` 를 저장소로 물어도 grant 문자열과 맞지 않는다 — 실제 저장소 자리는 owner/name 하나다.
       expect((await orgCheck(l, 'rebellions-sw/*')).statusCode).toBe(400);
-      expect((await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asOrg() })).json()).toEqual({ repos: ['rebellions-sw/*'] });
+      expect((await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asOrg() })).json()).toEqual({ repos: ['rebellions-sw/*'], approvals: [] });
     });
 
-    it('배포 저장소는 조직 grant 가 덮지 않는다 — 정확한 이름 grant 로만 열린다', async () => {
+    it('배포 저장소도 따로 빼지 않는다 — 조직 grant 가 덮고, 목록에 배포 표시가 없다(jaebin 10-10)', async () => {
       const prev = process.env.HARKROOM_MERGE_DEPLOY_REPOS;
       process.env.HARKROOM_MERGE_DEPLOY_REPOS = 'rebellions-sw/deploy';
       try {
-        expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/deploy')).toBeNull();
-        expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/npu')).not.toBeNull();
+        expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/deploy')).toMatchObject({ scope: 'repo:rebellions-sw/*' });
         const put = await grant(alice.token, { scope: 'repo:rebellions-sw/deploy' }, orgAgent);
         expect(put.statusCode).toBe(200);
-        expect(await mergeGrantFor(pool, orgAgent, 'rebellions-sw/deploy')).toMatchObject({ scope: 'repo:rebellions-sw/deploy' });
-        // #1258 d1: 목록이 배포 저장소 줄에만 표시를 싣는다 — 화면이 「조직 전체 권한으로」를 붙이지 않게.
-        const rows = put.json().grants as { scope: string; deployRepo?: boolean }[];
-        expect(rows.find((r) => r.scope === 'repo:rebellions-sw/deploy')?.deployRepo).toBe(true);
-        expect(rows.filter((r) => r.scope !== 'repo:rebellions-sw/deploy').every((r) => r.deployRepo === undefined)).toBe(true);
+        const rows = put.json().grants as Record<string, unknown>[];
+        expect(rows.every((r) => !('deployRepo' in r))).toBe(true);
       } finally {
         if (prev === undefined) delete process.env.HARKROOM_MERGE_DEPLOY_REPOS; else process.env.HARKROOM_MERGE_DEPLOY_REPOS = prev;
         await revoke(alice.token, 'repo:rebellions-sw/deploy', orgAgent);
       }
     });
-
     it('정확 grant 와 조직 grant 가 둘 다 있으면 allow_agent_cause 가 켜진 쪽을 쓴다', async () => {
       expect((await grant(alice.token, { scope: 'repo:rebellions-sw/npu', allowAgentCause: false }, orgAgent)).statusCode).toBe(200);
       expect((await grant(alice.token, { scope: 'repo:rebellions-sw/*', allowAgentCause: true }, orgAgent)).statusCode).toBe(200);

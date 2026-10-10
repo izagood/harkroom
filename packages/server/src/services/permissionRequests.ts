@@ -3,19 +3,19 @@ import { repoGrantScope, repoScope, toolScope, validateToolRule, type MessageRow
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
-import { deployRepoScopes } from './mergeDenials.js';
+import { insertApprovalFromDenial } from './mergeDenials.js';
 import { getMessageById, recordAskAnswer } from './messages.js';
 
 /**
  * 에이전트 권한 요청 → 소유자 승인 → 적용(스레드 f61af808, jaebin D1~D4 10-07).
  *
  * 흐름: 에이전트가 `permission.request` MCP 로 권한 하나와 이유를 올린다(`openPermissionRequest`) → MCP 가 소유자 앞 ask 카드를
- * 세운다(선택지는 서버가 정한 [승인하고 다시 시도]·[거절] 둘, meta.permissionRequest 는 이 줄의 값만) → 소유자 **사람 세션**이
+ * 세운다(선택지는 서버가 정한 [7일 허락하고 다시 시도]·[거절] 둘, meta.permissionRequest 는 이 줄의 값만) → 소유자 **사람 세션**이
  * `POST /agents/:id/permission-requests/:rid/approve|deny` 를 누른다(`decidePermissionRequest`) → 승인이면 7일 grant 를 넣고,
  * 어느 쪽이든 소유자 이름으로 카드에 답을 적어 에이전트를 깨운다(소유자가 자기 에이전트 카드에 답함 = 사람이 띄운 턴, #1134 F4).
  *
  * **카드의 선택지를 일반 ask-answer 로는 못 누른다**(`recordAskAnswer` 의 permissionRequest 가드). 그렇지 않으면 소유자가 아닌
- * 사람이 [승인하고 다시 시도]를 눌러 grant 없이 "승인됐다"는 답만 에이전트에게 갈 수 있다.
+ * 사람이 [7일 허락하고 다시 시도]를 눌러 grant 없이 "승인됐다"는 답만 에이전트에게 갈 수 있다.
  *
  * 적용은 다음 턴의 argv 다 — 러너가 턴마다 `GET /agent/tool-allows`·`/agent/merge-grants` 로 받아 `--allowedTools` 에 붙인다.
  * 떠 있는 claude 에 규칙을 넣는 길은 없고, 그래서 승인이 새 턴을 띄운다.
@@ -43,12 +43,18 @@ export interface PermissionRequestMeta {
   /** 규칙이 미치는 채널(D2). merge 는 저장소 단위라 null. */
   channelId: string | null;
   warnings: ToolRuleWarning[];
-  deployRepo: boolean;
+  /**
+   * 머지 거절에서 온 요청(스레드 1b75d7a0)이면 그 PR·head·사유 — 카드가 [이번 한 번 머지](이 PR·이 head 만)를 함께 보인다.
+   * 값은 거절 기록에서 온다(에이전트가 쓴 글이 아니다).
+   */
+  once?: { number: number; headSha: string; reason: 'not_granted' | 'cause_not_human' };
   reason: string;
   requestedAt: string;
   expiresAt: string;
   /** 정해진 뒤에만. */
-  status?: 'granted' | 'denied';
+  status?: 'granted' | 'denied' | 'approved_once';
+  /** 1회 승인으로 정해졌으면 그 계정·CI 완화·승인 기한. */
+  approvedOnce?: { ghUser: string; relaxChecks: boolean; expiresAt: string };
   decidedAt?: string;
   decidedBy?: string;
   grantExpiresAt?: string;
@@ -56,7 +62,7 @@ export interface PermissionRequestMeta {
 
 export type OpenRefusal =
   | { code: ToolRuleRefusal; message: string }
-  | { code: 'bad_repo' | 'org_wide' | 'deploy_repo' | 'not_agent' | 'too_many'; message: string };
+  | { code: 'bad_repo' | 'org_wide' | 'not_agent' | 'too_many'; message: string };
 
 export type OpenResult =
   | { ok: false; refusal: OpenRefusal }
@@ -84,6 +90,8 @@ export async function openPermissionRequest(
   args: {
     agentId: string; kind: PermissionKind; rule?: string; repo?: string; reason: string;
     channelId: string; threadRootId: string; now?: Date;
+    /** 머지 거절 기록에서 온 요청(`message.ask` 의 `mergeDenialId`). 거절 기록 검증(`prepareDenialCard`)은 부르는 쪽이 먼저 한다. */
+    denial?: { id: string; number: number; headSha: string; reason: 'not_granted' | 'cause_not_human' };
   },
 ): Promise<OpenResult> {
   const now = args.now ?? new Date();
@@ -96,7 +104,6 @@ export async function openPermissionRequest(
   let grantCapability: 'tool.allow' | 'repo.merge';
   let grantScope: string;
   let warnings: ToolRuleWarning[] = [];
-  let deployRepo = false;
   if (args.kind === 'tool') {
     const v = validateToolRule(args.rule ?? '');
     if (!v.ok) return { ok: false, refusal: { code: v.code, message: RULE_REFUSAL_MESSAGE[v.code] } };
@@ -111,10 +118,6 @@ export async function openPermissionRequest(
     }
     const scope = repoScope(args.repo ?? '');
     if (!scope) return { ok: false, refusal: { code: 'bad_repo', message: 'repo must be one <owner>/<name>' } };
-    // 배포 저장소(머지가 곧 배포)는 카드로 주지 않는다 — 설정 화면에서 정확한 이름으로만(merge_denial C6 와 같다).
-    if (deployRepoScopes().has(scope)) {
-      return { ok: false, refusal: { code: 'deploy_repo', message: 'a deploy repository is not granted from a card — ask the owner to grant it in settings' } };
-    }
     target = scope;
     grantCapability = 'repo.merge';
     grantScope = scope;
@@ -124,7 +127,9 @@ export async function openPermissionRequest(
     `select expires_at as "expiresAt" from account_grant
       where account_id = $1 and capability = $2 and scope = $3 and (expires_at is null or expires_at > $4)`,
     [args.agentId, grantCapability, grantScope, now])).rows[0];
-  if (live) return { ok: true, alreadyGranted: { expiresAt: live.expiresAt } };
+  // 거절에서 온 머지 요청은 grant 가 있어도 카드를 세운다 — `cause_not_human`(grant 는 있는데 사람이 띄운 턴이 아님)이 그 경우고,
+  // 그때 소유자가 할 수 있는 것은 [이번 한 번 머지]다.
+  if (live && !args.denial) return { ok: true, alreadyGranted: { expiresAt: live.expiresAt } };
 
   const pending = (await pool.query<{ id: string; cardMessageId: string | null }>(
     `select id, card_message_id as "cardMessageId" from permission_request
@@ -132,7 +137,21 @@ export async function openPermissionRequest(
         and status = 'pending' and expires_at > $6
       order by created_at desc limit 1`,
     [args.agentId, args.kind, target, args.threadRootId, args.channelId, now])).rows[0];
-  if (pending) return { ok: true, existing: { requestId: pending.id, cardMessageId: pending.cardMessageId } };
+  if (pending) {
+    // 같은 스레드에서 다시 막혔다 — 카드는 그대로 두고 1회 승인이 쓸 거절 기록만 새 것으로 바꾼다(PR·head 가 바뀌었을 수 있다).
+    if (args.denial) {
+      await pool.query(`update permission_request set denial_id = $2 where id = $1`, [pending.id, args.denial.id]);
+      if (pending.cardMessageId) {
+        await pool.query(
+          `update message set meta = jsonb_set(meta, '{permissionRequest,once}', $2::jsonb) where id = $1 and meta ? 'permissionRequest'`,
+          [pending.cardMessageId, JSON.stringify({ number: args.denial.number, headSha: args.denial.headSha, reason: args.denial.reason })]);
+        // 열린 화면이 옛 PR·head 를 계속 보이지 않게 알린다(security F1). 승인 쪽은 그래도 대조값으로 한 번 더 막는다.
+        const card = await getMessageById(pool, pending.cardMessageId);
+        if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
+      }
+    }
+    return { ok: true, existing: { requestId: pending.id, cardMessageId: pending.cardMessageId } };
+  }
 
   const count = (await pool.query<{ n: number }>(
     `select count(*)::int as n from permission_request where agent_id = $1 and created_at > $2`,
@@ -143,9 +162,9 @@ export async function openPermissionRequest(
 
   const expiresAt = new Date(now.getTime() + PERMISSION_REQUEST_TTL_MS);
   const id = (await pool.query<{ id: string }>(
-    `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
-    [args.agentId, args.kind, target, args.reason, warnings, args.channelId, args.threadRootId, now, expiresAt])).rows[0]!.id;
+    `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, denial_id)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
+    [args.agentId, args.kind, target, args.reason, warnings, args.channelId, args.threadRootId, now, expiresAt, args.denial?.id ?? null])).rows[0]!.id;
   await recordAudit(pool, {
     action: 'permission.requested', actorId: args.agentId, target: args.agentId,
     detail: { requestId: id, kind: args.kind, target, warnings, channelId: args.channelId, threadRootId: args.threadRootId },
@@ -158,7 +177,8 @@ export async function openPermissionRequest(
         requestId: id, agentId: args.agentId, ownerAccountId: agent.ownerAccountId, kind: args.kind,
         target: args.kind === 'merge' ? target.slice('repo:'.length) : target,
         channelId: args.kind === 'tool' ? args.channelId : null,
-        warnings, deployRepo, reason: oneLineReason(args.reason), requestedAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
+        warnings, reason: oneLineReason(args.reason),
+        ...(args.denial ? { once: { number: args.denial.number, headSha: args.denial.headSha, reason: args.denial.reason } } : {}), requestedAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
       },
     },
   };
@@ -185,7 +205,8 @@ export function oneLineReason(reason: string): string {
 
 export function permissionCardOptions(): { id: string; label: string }[] {
   return [
-    { id: PERMISSION_OPTION_APPROVE, label: '승인하고 다시 시도' },
+    // 「7일」을 이름에 넣는다(designer s1) — 머지 거절 카드에서는 그 위의 [이번 한 번 머지]와 갈려 읽혀야 한다. tool·merge 둘 다 7일이다.
+    { id: PERMISSION_OPTION_APPROVE, label: '7일 허락하고 다시 시도' },
     { id: PERMISSION_OPTION_DENY, label: '거절' },
   ];
 }
@@ -202,27 +223,38 @@ export type DecideRefusal = { status: 403 | 404 | 409; code: string; message: st
  */
 export async function decidePermissionRequest(
   pool: Pool,
-  args: { agentId: string; requestId: string; actorId: string; decision: 'approve' | 'deny'; now?: Date },
-): Promise<({ ok: true; status: 'granted' | 'denied'; grantExpiresAt: string | null; cardMessageId: string | null }) | ({ ok: false } & DecideRefusal)> {
+  args: {
+    agentId: string; requestId: string; actorId: string; decision: 'approve' | 'deny' | 'approve_once'; now?: Date;
+    /** `approve_once` 일 때만 — 머지에 쓸 gh 계정과 CI 완화 여부. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
+    once?: { ghUser: string; relaxChecks: boolean; number: number; headSha: string };
+  },
+): Promise<({ ok: true; status: 'granted' | 'denied' | 'approved_once'; grantExpiresAt: string | null; approvalExpiresAt?: string; cardMessageId: string | null }) | ({ ok: false } & DecideRefusal)> {
   const now = args.now ?? new Date();
   const client = await pool.connect();
-  let row: { id: string; kind: PermissionKind; target: string; channelId: string; cardMessageId: string | null } | undefined;
+  let row: { id: string; kind: PermissionKind; target: string; channelId: string; cardMessageId: string | null; denialId: string | null } | undefined;
   let grantExpiresAt: Date | null = null;
+  let approval: { approvalId: string; scope: string; number: number; headSha: string; reason: string; expiresAt: Date } | null = null;
   try {
     await client.query('begin');
     const r = (await client.query<{
       id: string; agentId: string; kind: PermissionKind; target: string; channelId: string; status: string; expired: boolean; cardMessageId: string | null;
+      denialId: string | null;
     }>(
       `select id, agent_id as "agentId", kind, target, channel_id as "channelId", status, expires_at <= $2 as expired,
-              card_message_id as "cardMessageId"
+              card_message_id as "cardMessageId", denial_id as "denialId"
          from permission_request where id = $1 for update`, [args.requestId, now])).rows[0];
     // `:id` 가 요청의 에이전트와 다르면 없는 것과 같다 — 남의 요청 id 를 내 에이전트 경로에 꽂는 길을 닫는다.
     if (!r || r.agentId !== args.agentId) { await client.query('rollback'); return { ok: false, status: 404, code: 'not_found', message: 'no such permission request for this agent' }; }
     if (r.status !== 'pending') { await client.query('rollback'); return { ok: false, status: 409, code: 'already_decided', message: `this request is already ${r.status}` }; }
     if (r.expired) { await client.query('rollback'); return { ok: false, status: 409, code: 'request_expired', message: 'this request expired — the agent has to ask again' }; }
-    if (args.decision === 'approve' && r.kind === 'merge' && deployRepoScopes().has(r.target)) {
-      await client.query('rollback');
-      return { ok: false, status: 403, code: 'deploy_repo', message: 'a deploy repository is not granted from a card — grant it in settings' };
+    if (args.decision === 'approve_once') {
+      if (r.kind !== 'merge' || !r.denialId || !args.once) {
+        await client.query('rollback');
+        return { ok: false, status: 409, code: 'not_once', message: 'only a card raised from a merge refusal can approve one merge' };
+      }
+      const made = await insertApprovalFromDenial(client, { agentId: args.agentId, denialId: r.denialId, actorId: args.actorId, ghUser: args.once.ghUser, relaxChecks: args.once.relaxChecks, expect: { number: args.once.number, headSha: args.once.headSha }, now });
+      if (!made.ok) { await client.query('rollback'); return made; }
+      approval = made;
     }
     if (args.decision === 'approve') {
       grantExpiresAt = new Date(now.getTime() + PERMISSION_GRANT_TTL_MS);
@@ -236,7 +268,7 @@ export async function decidePermissionRequest(
            set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, allow_agent_cause = false`,
         [args.agentId, capability, scope, args.actorId, grantExpiresAt]);
     }
-    const status = args.decision === 'approve' ? 'granted' : 'denied';
+    const status = args.decision === 'approve' ? 'granted' : args.decision === 'approve_once' ? 'approved_once' : 'denied';
     await client.query(
       `update permission_request set status = $2, decided_at = $3, decided_by = $4, grant_expires_at = $5 where id = $1`,
       [r.id, status, now, args.actorId, grantExpiresAt]);
@@ -247,6 +279,7 @@ export async function decidePermissionRequest(
         [r.cardMessageId, JSON.stringify({
           status, decidedAt: now.toISOString(), decidedBy: args.actorId,
           ...(grantExpiresAt ? { grantExpiresAt: grantExpiresAt.toISOString() } : {}),
+          ...(approval && args.once ? { approvedOnce: { ghUser: args.once.ghUser, relaxChecks: args.once.relaxChecks, expiresAt: approval.expiresAt.toISOString() } } : {}),
         })]);
     }
     await client.query('commit');
@@ -258,9 +291,15 @@ export async function decidePermissionRequest(
     client.release();
   }
 
-  const status = args.decision === 'approve' ? 'granted' : 'denied';
+  const status = args.decision === 'approve' ? 'granted' : args.decision === 'approve_once' ? 'approved_once' : 'denied';
+  if (approval && args.once) {
+    await recordAudit(pool, {
+      action: 'repo.merge.approved_once', actorId: args.actorId, target: approval.scope,
+      detail: { agentId: args.agentId, requestId: row.id, approvalId: approval.approvalId, denialId: row.denialId, reason: approval.reason, number: approval.number, headSha: approval.headSha, ghUser: args.once.ghUser, relaxChecks: args.once.relaxChecks, expiresAt: approval.expiresAt.toISOString() },
+    });
+  }
   await recordAudit(pool, {
-    action: args.decision === 'approve' ? 'permission.approved' : 'permission.denied', actorId: args.actorId, target: args.agentId,
+    action: args.decision === 'deny' ? 'permission.denied' : 'permission.approved', actorId: args.actorId, target: args.agentId,
     detail: { requestId: row.id, kind: row.kind, target: row.target, channelId: row.channelId, ...(grantExpiresAt ? { grantExpiresAt: grantExpiresAt.toISOString() } : {}) },
   });
   if (grantExpiresAt) {
@@ -278,13 +317,14 @@ export async function decidePermissionRequest(
     // 카드에 소유자 이름으로 답을 적는다 — 이것이 에이전트를 깨운다. 이미 누가 닫았으면(ask-close) 깨우지 못할 뿐 결정은 남는다.
     const answered = await recordAskAnswer(pool, {
       messageId: row.cardMessageId, actorId: args.actorId,
-      optionId: args.decision === 'approve' ? PERMISSION_OPTION_APPROVE : PERMISSION_OPTION_DENY,
+      // 1회 승인도 「승인」으로 답한다 — 에이전트가 깨어나 같은 명령을 한 번 더 부른다(그 턴에서 래퍼가 승인을 쓴다).
+      optionId: args.decision === 'deny' ? PERMISSION_OPTION_DENY : PERMISSION_OPTION_APPROVE,
       viaPermissionDecision: true,
     });
     const card = typeof answered === 'object' ? answered : await getMessageById(pool, row.cardMessageId);
     if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
   }
-  return { ok: true, status, grantExpiresAt: grantExpiresAt?.toISOString() ?? null, cardMessageId: row.cardMessageId };
+  return { ok: true, status, grantExpiresAt: grantExpiresAt?.toISOString() ?? null, ...(approval ? { approvalExpiresAt: approval.expiresAt.toISOString() } : {}), cardMessageId: row.cardMessageId };
 }
 
 /** 러너가 턴을 띄울 때 — 이 에이전트가 이 채널에서 받은 살아 있는 allow 규칙(D2). */

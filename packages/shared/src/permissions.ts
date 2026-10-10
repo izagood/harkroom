@@ -50,11 +50,6 @@ export interface GrantRow {
   allowAgentCause?: boolean;
   /** 줄 id(098). 옛 서버는 싣지 않는다. */
   id?: string;
-  /**
-   * `repo.merge` 정확한 이름 줄 전용: 배포 저장소(`HARKROOM_MERGE_DEPLOY_REPOS`)인가. 배포 저장소는 조직 grant 로 열리지 않으므로
-   * (#1255) 화면이 「조직 전체 권한으로 에이전트가 띄운 턴에서도」를 붙이지 않는다(#1258 designer d1). 옛 서버는 싣지 않는다.
-   */
-  deployRepo?: boolean;
   /** 위임(098, P5): 이 줄을 준 grant. null = 사람이 준 루트. */
   parentGrantId?: string | null;
   /** 받은 쪽이 다시 줄 수 있는 단계(0~2). */
