@@ -7,6 +7,7 @@ import { hasOperatorLocalSurface, listLocalAgents, registerLocalOperator } from 
 import type { SectionId } from './sections';
 import { SettingsGroup, SettingsPage } from './primitives';
 import { operatorNameOf } from '../../lib/operatorName';
+import { errorText } from '../../lib/errorText';
 
 /**
  * 설정 › 이 기기 › **이 머신의 오퍼레이터**(UX ⑥b-2).
@@ -89,7 +90,7 @@ export function ThisOperatorSettings({ onOpenSection }: {
       else if (wasRegistered) setAgain({ kind: 'kept' });
       void loadStatus();
     } catch (e) {
-      setError(t('operators.registerHereFailed', { reason: e instanceof Error ? e.message : String(e) }));
+      setError(t('operators.registerHereFailed', { reason: errorText(e, t) }));
     } finally {
       setBusy(false);
     }

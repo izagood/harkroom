@@ -6,6 +6,7 @@ import { ApiError, type SecretView } from '../../lib/api';
 import { useT } from '../../i18n/useT';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { Button, Field, Segmented, TextInput } from './primitives';
+import { errorText } from '../../lib/errorText';
 
 /**
  * 설정 › 나 › 비밀과 API — **API 연결** 절(외부 API 권한 C안 P4b, designer v3 ②).
@@ -62,7 +63,7 @@ export function ConnectorsSection({ secrets, enabled, onChanged }: {
       }
       if (err.status === 403) return t('connectors.errForbidden');
     }
-    return t('connectors.errFailed', { reason: err instanceof Error ? err.message : String(err) });
+    return t('connectors.errFailed', { reason: errorText(err, t) });
   };
   const run = async (fn: () => Promise<void>): Promise<boolean> => {
     setBusy(true); setError(null); setNotice(null);

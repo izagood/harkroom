@@ -32,6 +32,7 @@ import { useEffect, useState } from 'react';
 import type { AgentSessionView, AgentWakeView, MessageRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { bodyWithHandles } from './mention';
+import { errorTextNow } from './errorText';
 
 export type AgentTurnsSnapshot =
   /** 첫 답이 아직 안 왔다. 빈 목록과 **다르다.** */
@@ -65,7 +66,7 @@ async function askOnce(): Promise<void> {
   } catch (err) {
     // **여기서 사유를 지어내지 않는다.** 화면이 원인을 만들면 사람은 러너 로그를 볼
     // 이유를 잃는다(`RunnerStatus` 가 종료 코드를 그대로 보이는 것과 같은 규칙).
-    shared = { kind: 'unknown', reason: err instanceof Error ? err.message : String(err) };
+    shared = { kind: 'unknown', reason: errorTextNow(err) };
   }
   for (const listener of listeners) listener(shared);
 }
@@ -116,7 +117,7 @@ async function askWakes(): Promise<void> {
   try {
     sharedWakes = { kind: 'known', wakes: await getController().api.agentWakes() };
   } catch (err) {
-    sharedWakes = { kind: 'unknown', reason: err instanceof Error ? err.message : String(err) };
+    sharedWakes = { kind: 'unknown', reason: errorTextNow(err) };
   }
   for (const listener of wakeListeners) listener(sharedWakes);
 }

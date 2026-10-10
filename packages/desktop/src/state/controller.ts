@@ -25,6 +25,7 @@ import type { AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { usePrefsStore } from './prefsStore';
 import { detectLocale, isLocale, translator, type Translate } from '../i18n';
+import { errorText } from '../lib/errorText';
 
 /**
  * 채널을 **처음** 열 때 받아 오는 히스토리 창(행 수).
@@ -545,7 +546,7 @@ export class Controller {
       this.store.getState().set({ projectionStatus: status, projectionStatusError: null });
     } catch (err) {
       this.store.getState().set({
-        projectionStatusError: err instanceof Error ? err.message : String(err),
+        projectionStatusError: errorText(err, this.t()),
       });
     }
   }
@@ -1428,7 +1429,7 @@ export class Controller {
         if (e instanceof ApiError && e.status === 404) continue;
         // 서버가 쓴 문구를 그대로 올린다 — `no_runner`(러너를 띄워라)와
         // `runner_outdated`(러너를 올려라)는 사람이 할 일이 다르고, 그 구분은 서버가 썼다.
-        if (!firstFailure) firstFailure = e instanceof Error ? e.message : String(e);
+        if (!firstFailure) firstFailure = errorText(e, this.t());
       }
     }
     if (firstFailure) {
@@ -2113,7 +2114,7 @@ export class Controller {
       try {
         await assignAgentPool(agent.id, opts.claudePool);
       } catch (err) {
-        poolError = err instanceof Error ? err.message : String(err);
+        poolError = errorText(err, this.t());
       }
     }
     /**
@@ -2128,7 +2129,7 @@ export class Controller {
       try {
         await this.attachToLocalOperator(agent.id, opts.localOperator);
       } catch (err) {
-        attachError = err instanceof Error ? err.message : String(err);
+        attachError = errorText(err, this.t());
       }
     }
     return { agent, poolError, attachError };

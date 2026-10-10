@@ -9,6 +9,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { paneStorage, paneMaxWidth, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH } from '../lib/prefs';
 import { useT } from '../i18n/useT';
 import type { MessageKey, Translate } from '../i18n';
+import { errorText } from '../lib/errorText';
 
 /**
  * 진행 중인 에이전트 터미널 패널(#141 Phase 2, 스펙 §5).
@@ -259,7 +260,7 @@ export function TerminalPanel() {
         // 러너 오프라인(404)·구버전(409)·codex 거절(409)·타임아웃(504)의 서버 문구가
         // 그대로 온다(api.ts) — 화면이 다시 쓰지 않는다: 서버가 원인을 정확히 안다.
         setPhase('error');
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorText(err, t));
       }
     };
 
@@ -299,7 +300,7 @@ export function TerminalPanel() {
       } catch (err) {
         if (disposed) return;
         setPhase('error');
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorText(err, t));
       }
     })();
 

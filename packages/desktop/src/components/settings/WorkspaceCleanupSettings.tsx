@@ -19,6 +19,7 @@ import {
 } from '../../lib/operatorLocal';
 import { buildCleanupModel, dueTodayIf, formatBytes, isWarn, nextSweepAt, type ThreadRow } from '../../lib/workspaceCleanupView';
 import { SettingsColumns, SettingsGroup, SettingsPage, Toggle } from './primitives';
+import { errorText } from '../../lib/errorText';
 
 const REASON_KEY: Record<CleanupBlockReason, MessageKey> = {
   uncommitted: 'cleanup.reason.uncommitted',
@@ -56,7 +57,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
 
   const run = async (fn: () => Promise<WorkspaceCleanupView>) => {
     setBusy(true); setError(null);
-    try { setView(await fn()); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+    try { setView(await fn()); } catch (e) { setError(errorText(e, t)); } finally { setBusy(false); }
   };
   const act = (path: string, action: 'keep' | 'unkeep' | 'list') => {
     if (!me) return;

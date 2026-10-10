@@ -26,6 +26,7 @@ import { MergeAccountCell, MergeDeviceNote, useLocalMerge } from './MergeGhUserR
 import { Segmented } from '../Segmented';
 import { buildForest, decidableBy, descendantCount, pendingForRoot, type ForestNode } from '../../lib/delegationForest';
 import { DelegationChildren, PendingDelegations, type DelegationActions } from './DelegationTree';
+import { errorText } from '../../lib/errorText';
 
 const CAP = 'repo.merge' as const;
 const SECRET_CAP = 'secret.create' as const;
@@ -135,7 +136,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
       if (err.status === 403) return t('agents.grants.errForbidden');
       if (err.status === 400) return t('agents.grants.errScope');
     }
-    return t('agents.grants.errFailed', { reason: err instanceof Error ? err.message : String(err) });
+    return t('agents.grants.errFailed', { reason: errorText(err, t) });
   };
   const run = async (fn: () => Promise<void>) => {
     setBusy(true); setError(null);

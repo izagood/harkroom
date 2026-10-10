@@ -24,6 +24,7 @@ import { hasOperatorLocalSurface, listLocalMcpServers, setLocalMcpServer } from 
 import { McpLocalAuth } from './McpLocalAuth';
 import { MCP_PRESETS } from '../../lib/mcpPresets';
 import { useT } from '../../i18n/useT';
+import { errorText } from '../../lib/errorText';
 
 const NAME = /^[a-z0-9-]{1,32}$/;
 
@@ -98,7 +99,7 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
       if (err.code === 'unknown_mcp_server') return t('agents.scope.errUnknownMcp');
       if (err.status === 403) return t('agents.mcp.errNotPrivileged');
     }
-    return t('agents.scope.errFailed', { reason: err instanceof Error ? err.message : String(err) });
+    return t('agents.scope.errFailed', { reason: errorText(err, t) });
   };
 
   /** personal 이 섞였는데 에이전트가 아직 personal 이 아니면 확인부터 받는다. */

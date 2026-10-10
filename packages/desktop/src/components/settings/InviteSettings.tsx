@@ -5,6 +5,7 @@ import { useT } from '../../i18n/useT';
 import { DirectoryRow } from '../Directory';
 import { hasCapability } from '../../lib/capabilities';
 import { SettingsColumns, SettingsGrid, SettingsGroup, SettingsPage } from './primitives';
+import { errorText } from '../../lib/errorText';
 
 /**
  * 설정 › 워크스페이스 › **멤버와 초대**(UX ⑥b-5, designer 사양 ⑥: "Invite + Directory 의 사람 목록").
@@ -39,7 +40,7 @@ export function InviteSettings() {
     // force: 5초 스로틀에 걸린 호출은 묻지도 않고 resolve 된다(Directory 의 같은 자리).
     getController().refreshAccounts({ force: true }).then(
       () => { if (alive) setLoad({ kind: 'ready' }); },
-      (err: unknown) => { if (alive) setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err) }); },
+      (err: unknown) => { if (alive) setLoad({ kind: 'error', message: errorText(err, t) }); },
     );
     return () => { alive = false; };
   }, [attempt]);
@@ -57,7 +58,7 @@ export function InviteSettings() {
       const newToken = await getController().createInvite();
       setToken(newToken);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('invite.failed'));
+      setError(errorText(e, t, t('invite.failed')));
     } finally {
       setBusy(false);
     }

@@ -4,6 +4,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { formatSize } from './Attachments';
 import { useT } from '../i18n/useT';
+import { errorText } from '../lib/errorText';
 
 /**
  * 채널 파일 색인(#232) — 이 채널에 오간 첨부를 최신순으로 모아 보여 준다.
@@ -111,7 +112,7 @@ export function ChannelFiles({ channelId, onClose }: { channelId: string; onClos
       // 실패했으면 이전 목록도 버린다 — 남겨 두면 오류 문구 옆에 낡은 목록이 함께 보인다.
       setFiles([]);
       setHasMore(false);
-      setError(e instanceof Error ? e.message : t('channel.files.unknownError'));
+      setError(errorText(e, t, t('channel.files.unknownError')));
     } finally {
       setLoading(false);
     }

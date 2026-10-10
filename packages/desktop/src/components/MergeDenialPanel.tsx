@@ -5,6 +5,7 @@ import { ApiError } from '../lib/api';
 import { useActiveStore } from '../state/communities';
 import { useLocale, useT } from '../i18n/useT';
 import type { SectionId } from './settings/sections';
+import { errorText } from '../lib/errorText';
 
 /**
  * 머지 거절 카드의 권한 칸(머지 UX P5, 스레드 febe9ff8). 에이전트가 `message.ask` 에 `mergeDenialId` 를 실어 세운 카드에
@@ -68,7 +69,7 @@ export function MergeDenialPanel({ message, onOpenSettings }: { message: Message
       const r = await getController().grantFromMergeDenial(d.agentId, d.denialId);
       setGivenUntil(r.expiresAt);
     } catch (e) {
-      setError({ code: e instanceof ApiError ? e.code : 'failed', raw: e instanceof Error ? e.message : String(e) });
+      setError({ code: e instanceof ApiError ? e.code : 'failed', raw: errorText(e, t) });
     } finally {
       setBusy(false);
     }

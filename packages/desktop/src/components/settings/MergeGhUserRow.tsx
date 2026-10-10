@@ -17,8 +17,9 @@ import { useCallback, useEffect, useState } from 'react';
 import type { OperatorMergeCheckResult, OperatorMergeState } from '@harkroom/shared/daemonProtocol';
 import { checkLocalMerge, getLocalMerge, migrateLocalMerge, setLocalMergeScopeUser } from '../../lib/operatorLocal';
 import { useLocale, useT } from '../../i18n/useT';
+import { errorTextNow } from '../../lib/errorText';
 
-const rawReason = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+const rawReason = (err: unknown): string => (errorTextNow(err));
 
 /**
  * 오퍼레이터 거절·gh 실패를 사람 말로(#1140 designer n3). 흔한 둘만 키로 옮기고 나머지 원문은 200자로 자른다

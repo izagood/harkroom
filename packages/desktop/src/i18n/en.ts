@@ -4060,6 +4060,19 @@ export const en = {
   // | 서버가 버전을 말하지 않는다 | `This server does not report its version` | **그 자체가 답이다** — 버전을 싣는 판보다 낡았다는 뜻 |
   // | {version} 기동 | `Started {ago}` | 버전이 안 바뀌는 재배포에서는 이것만 달라진다 |
   // | 이 앱이 요구하는 버전보다 낮다 | `older than this app requires` | **고장이다.** '뒤처졌다'와 같은 말로 적으면 둘이 뭉개진다 — 앞은 지금 재배포해야 하는 것이고 뒤는 안 해도 되는 것이다 |
+  // 서버 오류 code → 사전(i18n P5 ②b, lib/errorText.ts). 뜻이 code 하나로 정해지는 것만 — not_found·forbidden·bad_request
+  // 처럼 자리마다 뜻이 다른 code 는 넣지 않는다(서버 원문이 「무엇이」 를 말한다).
+  'apiError.generic': 'The request did not go through.',
+  'apiError.handle_taken': 'That handle is already taken.',
+  'apiError.name_taken': 'That name is already taken.',
+  'apiError.channel_archived': 'This channel is archived — it\'s read-only.',
+  'apiError.rate_limited': 'Too many attempts — try again later.',
+  'apiError.unauthorized': 'You need to sign in again.',
+  'apiError.too_large': 'This is over the size limit.',
+  'apiError.invalid_credentials': 'The password is wrong.',
+  'apiError.session_required': 'Only a person signed in on this app can do this.',
+  'apiError.last_admin': 'Make someone else an admin first.',
+  'apiError.owns_agents': 'Transfer or delete the agents you own first.',
   'community.version.value': 'Server v{version}',
   'community.version.unknown': 'Checking server version',
   'community.version.legacy': 'This server does not report its version',
