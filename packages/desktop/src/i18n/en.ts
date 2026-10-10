@@ -764,7 +764,7 @@ export const en = {
   'profileName.effectPast': 'Mentions in past messages will show the new name too.',
   'profileName.effectPermanent': 'This change cannot be undone.',
   'profileName.failed': 'The name was not changed',
-  'profileName.heading': 'Display name',
+  'profileName.heading': 'Handle',
   'profileName.input': 'New name',
   /** 규칙을 나열한다 — `Invalid name` 은 무엇을 고쳐야 하는지 말하지 않는다. */
   'profileName.start': 'Change',
