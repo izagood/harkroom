@@ -519,7 +519,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
     // 열 항목이라 "덜 쓰는 것들"이라는 뜻을 잃은 것이 실제 문제였다. 남은 일곱이 그 뜻이다.
     // 복사는 **권한 게이트가 없다**(#179) — 읽을 수 있으면 이미 본문을 눈으로 옮길 수 있다.
     // Edit·Delete 와 성격이 다르니 그 둘의 조건을 따라가지 않는다.
-    { label: 'Copy text', onSelect: () => { void copyBody(); } },
+    { label: t('chat.message.copyText'), onSelect: () => { void copyBody(); } },
     // 스레드를 새 창으로(판 3 여는 곳 ②, 우클릭도 같은 메뉴다). 스레드 창 안에서는 뜻이 없어 뺀다.
     ...(windowView.kind !== 'thread' ? [{
       label: t('window.openThread'),

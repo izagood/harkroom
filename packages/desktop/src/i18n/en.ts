@@ -4089,6 +4089,7 @@ export const en = {
   'chat.attachFile': 'Attach a file',
   'chat.send': 'Send message',
   'chat.message.copyFailed': 'Could not copy the message. Select it in the message and copy by hand.',
+  'chat.message.copyText': 'Copy text',
   'chat.message.markUnread': 'Mark unread from here',
   'chat.message.pin': 'Pin',
   'chat.message.unpin': 'Unpin',

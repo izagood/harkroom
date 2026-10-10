@@ -159,7 +159,7 @@ describe('ChannelPane', () => {
     // mousedown 으로 첫 메뉴를 닫는다 — click 만으로는 안 닫힌다(Menu 는 mousedown 을 본다).
     fireEvent.mouseDown(document.body);
     fireEvent.click(screen.getAllByRole('button', { name: '더 보기' })[1]!);
-    expect(screen.getByRole('menuitem', { name: 'Copy text' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '텍스트 복사' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: '고치기' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: '지우기' })).toBeNull();
   });
