@@ -1,1 +1,9 @@
-{}
+{
+  "components/settings/GallerySettings.tsx": [
+    "새 마이그레이션 009",
+    "되돌리기 쉽다",
+    "008 을 고친다",
+    "파일 하나로 끝난다",
+    "lint 를 다시 불러 줘"
+  ]
+}
