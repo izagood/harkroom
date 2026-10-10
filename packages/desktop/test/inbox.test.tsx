@@ -89,7 +89,7 @@ describe('Inbox 상태 보드 (C안)', () => {
     open();
     await screen.findByTestId('inbox-card-ask');
     const band = col('mine');
-    const kinds = within(band).getAllByTestId(/^inbox-band-kind-/).map((el) => el.getAttribute('data-testid'));
+    const kinds = within(band).getAllByTestId(/^inbox-band-kind-(decision|blocker|news)$/).map((el) => el.getAttribute('data-testid'));
     expect(kinds).toEqual(['inbox-band-kind-decision', 'inbox-band-kind-blocker']);
     expect(within(screen.getByTestId('inbox-band-kind-decision')).getByTestId('inbox-card-ask')).toBeTruthy();
     expect(within(screen.getByTestId('inbox-band-kind-blocker')).getByTestId('inbox-card-fail')).toBeTruthy();
@@ -115,6 +115,8 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect(screen.queryByTestId('inbox-card-similar-f4')).toBeNull();
     // 숫자는 일(스레드) 수 그대로다.
     expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 4');
+    // 묶음 머리도 일 수다(designer) — 줄은 둘이지만 막힘은 4.
+    expect(screen.getByTestId('inbox-band-kind-count-blocker').textContent).toBe('4');
     fireEvent.click(screen.getByTestId('inbox-card-done-f1'));
     await waitFor(() => expect(c.api.setInboxThreadState).toHaveBeenCalledTimes(3));
     expect(c.api.setInboxThreadState.mock.calls.map((x) => (x as unknown as [string])[0])).toEqual(['f1', 'f2', 'f3']);
@@ -150,6 +152,21 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect(screen.queryByTestId('inbox-card-similar-f1')).toBeNull();
   });
 
+  it('답글 수는 첫 줄이 아니라 행동 줄에 서고, 선택지 줄과 행동 줄은 따로다 (designer d1)', async () => {
+    fakeController(async () => ({
+      entries: [entry(1, { threadRootId: 'r1', meta: askMeta({ kind: 'account', accountId: ME }, '어느 쪽?') })],
+      threads: [head('r1', { openAskAccountIds: [ME], replyCount: 57 })],
+    }));
+    open();
+    const card = await screen.findByTestId('inbox-card-r1');
+    const replies = screen.getByTestId('inbox-card-replies-r1');
+    expect(replies.textContent).toBe('답글 57');
+    expect(card.contains(replies)).toBe(false);
+    const actions = screen.getByTestId('inbox-card-done-r1').closest('div')!;
+    expect(actions.contains(replies)).toBe(true);
+    expect(actions.contains(screen.getByTestId('inbox-card-answer-r1-a'))).toBe(false);
+  });
+
   it('보낸 사람 이름은 자르지 않고 채널부터 줄인다 (R6)', async () => {
     fakeController(async () => ({
       entries: [entry(1, { threadRootId: 'r1' })],
@@ -171,8 +188,8 @@ describe('Inbox 상태 보드 (C안)', () => {
     const card = await screen.findByTestId('inbox-card-r1');
     expect(screen.getAllByTestId(/^inbox-card-r\d$/)).toHaveLength(1);
     // R6: 「+N개 더」(무엇의 수인지 모른다)가 아니라 스레드의 답글 수다.
-    expect(card.textContent).toContain('답글 57');
-    expect(card.textContent).not.toContain('개 더');
+    expect(screen.getByTestId('inbox-card-replies-r1').textContent).toBe('답글 57');
+    expect(card.closest('li')!.textContent).not.toContain('개 더');
     expect(within(col('mine')).getByTestId('inbox-card-r1')).toBeTruthy();
   });
 

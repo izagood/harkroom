@@ -383,11 +383,11 @@ export function Inbox({ open, onClose }: Props) {
             )}
           </span>
           {/* 누가 · 채널 · 얼마나. 넘치면 **채널 이름부터** 줄인다(R6) — 「f…」로는 누가 물었는지 모른다.
-              시각은 잘리면 뜻을 잃는다. */}
+              시각은 잘리면 뜻을 잃는다. 채널은 「#」 한 글자로 남지 않게 세 글자 폭은 지킨다(designer d1). */}
           <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-meta text-fg-subtle">
             {who && <Identity account={who} className="h-5 w-5 shrink-0 text-[10px]" variant="avatar" />}
             {who && <span aria-hidden="true" data-testid={`inbox-card-who-${card.rootId}`} className="shrink-0 font-medium text-fg-muted">{who.handle}</span>}
-            <span data-testid={`inbox-card-channel-${card.rootId}`} className="min-w-0 truncate">{channelLabel(card.channelId)}</span>
+            <span data-testid={`inbox-card-channel-${card.rootId}`} className="min-w-[3ch] truncate">{channelLabel(card.channelId)}</span>
             <span
               className={`shrink-0 ${days != null && card.column === 'mine' ? 'text-state-turn' : ''}`}
               data-testid={`inbox-card-age-${card.rootId}`}
@@ -395,9 +395,6 @@ export function Inbox({ open, onClose }: Props) {
             >
               · {days != null ? t('inbox.board.days', { count: days }) : ago(new Date(card.sinceAt).getTime())}
             </span>
-            {/* 「+N개 더」는 무엇의 수인지 말하지 않았다(R6) — 스레드의 답글 수로 말한다. */}
-            {replies > 0 && <span className="shrink-0" data-testid={`inbox-card-replies-${card.rootId}`}>· {t('inbox.board.replies', { count: replies })}</span>}
-            {card.unread && <span className="shrink-0 text-accent">· {t('inbox.board.unread')}</span>}
             {/* 미룬 카드는 **언제 다시 서는지** 말한다(designer) — 되돌릴지 그냥 둘지 정하는 근거다. */}
             {card.laterUntil && (
               <span className="shrink-0" data-testid={`inbox-card-later-until-${card.rootId}`} title={dateTimeText(card.laterUntil, locale)}>
@@ -410,18 +407,30 @@ export function Inbox({ open, onClose }: Props) {
           그 자리 처리. 버튼은 카드 **바깥**에 둔다 — `<button>` 안의 `<button>` 은 HTML 이
           허용하지 않고, 고르려다 스레드가 열린다.
         */}
-        <div className="flex flex-wrap gap-1 px-2 pb-1.5">
-          {card.ask?.options.map((o) => (
-            <button
-              key={o.id}
-              data-testid={`inbox-card-answer-${card.rootId}-${o.id}`}
-              disabled={busy === card.rootId}
-              onClick={() => void answer(card, o.id)}
-              className="rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-hover disabled:opacity-50"
-            >
-              {o.label}
-            </button>
-          ))}
+        {/* 선택지 줄과 행동 줄은 **어떤 폭에서도 한 줄로 합치지 않는다**(designer d1) — 붙으면
+            [치우기]까지 선택지(「거절」)처럼 읽힌다. */}
+        {card.ask && (
+          <div className="flex flex-wrap gap-1 px-2 pb-1">
+            {card.ask.options.map((o) => (
+              <button
+                key={o.id}
+                data-testid={`inbox-card-answer-${card.rootId}-${o.id}`}
+                disabled={busy === card.rootId}
+                onClick={() => void answer(card, o.id)}
+                className="rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-hover disabled:opacity-50"
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center gap-1 px-2 pb-1.5">
+          {/* 「답글 N · 새 말」은 행동 줄 왼쪽(designer d1 b′) — 첫 줄에 이름 · 채널 · 시각만 남아 좁은
+              창에서도 채널이 산다. 「+N개 더」는 무엇의 수인지 말하지 않았다(R6) — 답글 수로 말한다. */}
+          <span className="flex min-w-0 items-center gap-1.5 truncate whitespace-nowrap text-meta text-fg-subtle">
+            {replies > 0 && <span data-testid={`inbox-card-replies-${card.rootId}`}>{t('inbox.board.replies', { count: replies })}</span>}
+            {card.unread && <span className="text-accent">{replies > 0 ? '· ' : ''}{t('inbox.board.unread')}</span>}
+          </span>
           {/*
             접힌 카드(치움·나중에)는 **되돌리기** 하나. 나머지는 **모든 카드**에 나중에 + 치우기(R3) —
             내 차례도 치울 수 있어야 수가 준다(옛 화면은 내 차례에 치우기가 없어 「129」가 줄지 않았다).
@@ -433,13 +442,13 @@ export function Inbox({ open, onClose }: Props) {
                 data-testid={`inbox-card-undo-${card.rootId}`}
                 disabled={busy === card.rootId}
                 onClick={() => void setState(group, { state: null })}
-                className="ml-auto rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
+                className="ml-auto shrink-0 rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
               >
                 {t('inbox.board.undo')}
               </button>
             )
             : (
-              <span className="ml-auto flex gap-1">
+              <span className="ml-auto flex shrink-0 gap-1">
                 <button
                   data-testid={`inbox-card-later-${card.rootId}`}
                   disabled={busy === card.rootId}
@@ -572,8 +581,10 @@ export function Inbox({ open, onClose }: Props) {
                   const rest = groups.slice(BAND_LIMIT);
                   return (
                     <div key={kind} data-testid={`inbox-band-kind-${kind}`} className="mt-1 first-of-type:mt-0">
+                      {/* 묶음 머리도 **일 수**로 센다(designer) — 머리글 「나를 기다리는 일 N」과 더해서 맞아야
+                          한다. 줄 수는 ×N 칩이 이미 말한다. */}
                       <h4 className="px-1 pb-1 text-meta text-fg-muted">
-                        {t(KIND_KEY[kind])} <span className="text-fg-subtle">{groups.length}</span>
+                        {t(KIND_KEY[kind])} <span data-testid={`inbox-band-kind-count-${kind}`} className="text-fg-subtle">{groups.reduce((n, g) => n + 1 + g.similar.length, 0)}</span>
                       </h4>
                       <ul className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{head.map(cardView)}</ul>
                       {rest.length > 0 && (
