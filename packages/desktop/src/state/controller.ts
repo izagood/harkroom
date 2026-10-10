@@ -6,7 +6,8 @@ import { buildBoard, mineCount } from '../lib/inboxBoard';
 
 /** 보드 한 판의 재료 — `GET /inbox/board` 의 응답(`ApiClient.inboxBoard`). `truncated` 는 옛 시험 목이 안 줄 수 있다. */
 export interface InboxBoardData { entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[]; truncated?: boolean }
-import { ApiClient, ApiError, type PreviewTicket } from '../lib/api';
+import { ApiClient, ApiError, type BundleAcceptResult, type PreviewTicket } from '../lib/api';
+export type { BundleAcceptResult } from '../lib/api';
 import { addRange, coversSeq, type SeqRange } from '../lib/seqCoverage';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
@@ -1766,6 +1767,32 @@ export class Controller {
       this.store.getState().upsertMessages(target, [m]);
     } catch {
       // 진 경합·권한 없음 — 서버가 참이고, 화면은 이벤트로 따라온다.
+    }
+  }
+
+  /**
+   * 묶음 카드의 한 줄을 고른다(선택 카드 P1). `answerAsk` 와 같이 낙관적 갱신을 하지 않는다 — 묶음 행은 응답과
+   * `message.updated` 로만 바뀌고, 줄의 상태는 카드가 원본을 다시 읽어 그린다. 진 경합·권한 없음은 삼킨다.
+   */
+  async answerBundleItem(bundleId: string, channelId: string, rootId: string, optionId: string): Promise<boolean> {
+    try {
+      const m = await this.api.answerBundleItem(channelId, bundleId, rootId, optionId);
+      this.store.getState().upsertMessages(channelId, [m]);
+      return true;
+    } catch {
+      // 서버가 참이다 — 화면은 이벤트로 따라온다. 실패했다는 사실만 돌려줘 카드가 사람에게 알린다(#1288 designer n2).
+      return false;
+    }
+  }
+
+  /** 「남은 n개 추천대로」. 줄마다 결과를 돌려준다 — 카드가 뺀 줄과 그 까닭을 보여 준다. 실패하면 null. */
+  async acceptRecommendedBundle(bundleId: string, channelId: string): Promise<BundleAcceptResult[] | null> {
+    try {
+      const res = await this.api.acceptRecommendedBundle(channelId, bundleId);
+      this.store.getState().upsertMessages(channelId, [res.message]);
+      return res.results;
+    } catch {
+      return null;
     }
   }
 

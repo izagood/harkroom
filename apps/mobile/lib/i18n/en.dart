@@ -200,6 +200,63 @@ class StringsEn implements Strings {
   String get askToAnyone => 'A person picks';
 
   @override
+  String bundleRemaining(int n, int m) => '$n of $m left to decide';
+
+  @override
+  String bundleAllDone(int m) => 'All $m decided';
+
+  @override
+  String bundleAcceptRecommended(int n) => 'Accept $n recommended';
+
+  @override
+  String get bundleAcceptNote => 'Irreversible decisions (merge, deploy, secrets, permissions) are left out';
+
+  @override
+  String bundleAcceptPending(int n, int s) => 'Choosing $n recommended · $s';
+
+  @override
+  String get bundleAcceptCancel => 'Cancel';
+
+  @override
+  String get bundleRecommended => 'recommended';
+
+  @override
+  String get bundleReplyInThread => 'Reply in the original thread →';
+
+  @override
+  String get bundleDecideInThread => 'Decide in the original thread →';
+
+  @override
+  String get bundleLoading => 'Loading the original…';
+
+  @override
+  String get bundleUnavailable => 'Can’t see the original card';
+
+  @override
+  String bundleAnswered(String label, String name) => '$label · $name';
+
+  @override
+  String bundleReplied(String name) => 'Replied in writing · $name';
+
+  @override
+  String bundleNoteBy(String name) => 'Summary by $name:';
+
+  @override
+  String get bundleSkipIrreversible => 'Irreversible, so left out — pick it yourself';
+
+  @override
+  String get bundleSkipNoRecommendation => 'No recommendation, so left out';
+
+  @override
+  String get bundleSkipLink => 'Decided in its own thread, so left out';
+
+  @override
+  String get bundleSkipFailed => 'Couldn’t pick — try again';
+
+  @override
+  String get bundleSomeone => 'Someone';
+
+  @override
   String get threadTitle => 'Thread';
 
   @override

@@ -122,6 +122,8 @@
   "POST /channels/:p/members": "0.1.167",
   "POST /channels/:p/messages": "0.1.167",
   "POST /channels/:p/messages/:p/ask-answer": "0.1.167",
+  "POST /channels/:p/messages/:p/ask-bundle/accept-recommended": "0.4.35",
+  "POST /channels/:p/messages/:p/ask-bundle/answer": "0.4.35",
   "POST /channels/:p/messages/:p/ask-close": "0.1.167",
   "POST /channels/:p/pins": "0.1.167",
   "POST /channels/:p/scheduled": "0.1.167",

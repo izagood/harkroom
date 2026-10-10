@@ -10,6 +10,7 @@ import { getController } from '../state/controller';
 import { useWindowView } from '../state/windowView';
 import { openThreadFrom, openWindow } from '../lib/windowActions';
 import { AskCard } from './AskCard';
+import { AskBundleCard } from './AskBundleCard';
 import { ThreadStateBadge } from './ThreadStateBadge';
 import { threadStateFromFacts, isBlocking, threadStateLabel } from '../lib/threadState';
 import { waitChainFromLinks, chainEnds } from '../lib/waitChain';
@@ -821,6 +822,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
             {/* 머지 거절에서 온 권한 카드의 [이번 한 번 머지](스레드 1b75d7a0) — [승인](7일)·[거절]은 그 아래 AskCard. */}
             {message.meta.permissionRequest !== undefined && <PermissionOncePanel message={message} />}
             <AskCard message={message} />
+            {/* 묶음 카드(선택 카드 P1) — 여러 에이전트의 사람 앞 카드를 줄로 모은 것. 형식을 못 알아보면 그리지 않는다. */}
+            <AskBundleCard message={message} />
             {/* 실패도 본문 바로 아래다 — 고치는 경로가 말 옆에 있어야 한다(규칙 05). */}
             <FailureCard message={message} inThread={inThread} />
             {/* 완료 보고 — 읽히는 말이므로 강조를 받지 않는다(규칙 03). */}

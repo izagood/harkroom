@@ -670,6 +670,62 @@ abstract class Strings {
   /// 사람 아무나에게 온 물음.
   String get askToAnyone;
 
+  /// 묶음 카드 머리 — 아직 정할 줄 [n] / 전체 [m].
+  String bundleRemaining(int n, int m);
+
+  /// 묶음 카드 머리 — 전부 정해짐.
+  String bundleAllDone(int m);
+
+  /// 「추천대로」 단추. [n] 은 추천이 하나뿐인 열린 줄 수.
+  String bundleAcceptRecommended(int n);
+
+  /// 「추천대로」 옆 설명 — 무엇이 빠지는지.
+  String get bundleAcceptNote;
+
+  /// 「추천대로」를 누른 뒤 보내기까지 남은 초(#1288 designer s2).
+  String bundleAcceptPending(int n, int s);
+
+  String get bundleAcceptCancel;
+
+  /// 추천 선택지 표시.
+  String get bundleRecommended;
+
+  /// 원 스레드로 가서 글로 답한다.
+  String get bundleReplyInThread;
+
+  /// 권한 요청 줄 — 원 스레드에서만 정한다.
+  String get bundleDecideInThread;
+
+  /// 원본을 읽는 중.
+  String get bundleLoading;
+
+  /// 원본 카드를 볼 수 없다(403 등).
+  String get bundleUnavailable;
+
+  /// 고른 줄.
+  String bundleAnswered(String label, String name);
+
+  /// 글로 답한 줄.
+  String bundleReplied(String name);
+
+  /// 요지 앞머리 — 관리 에이전트가 옮긴 말임을 밝힌다(security n1).
+  String bundleNoteBy(String name);
+
+  /// 일괄에서 빠진 까닭 — 되돌릴 수 없음.
+  String get bundleSkipIrreversible;
+
+  /// 일괄에서 빠진 까닭 — 추천 없음.
+  String get bundleSkipNoRecommendation;
+
+  /// 일괄에서 빠진 까닭 — 원 스레드 카드.
+  String get bundleSkipLink;
+
+  /// 일괄에서 빠진 까닭 — 실패.
+  String get bundleSkipFailed;
+
+  /// 이름을 모르는 계정.
+  String get bundleSomeone;
+
   /// 스레드 화면 제목.
   String get threadTitle;
 
@@ -944,6 +1000,8 @@ const Set<String> i18nAllowSameAsEnglish = {
   'artifactVersion',
   // 고유명사.
   'appName',
+  // 「라벨 · 이름」 — 조사를 빼려고 기호로만 잇는다(#1288 designer n1). 두 언어 모두 같은 꼴이다.
+  'bundleAnswered',
   // 주소 예시다. 번역할 말이 없다 — `https://example.com` 은 어느 언어에서도 같다.
   'connectServerUrlHint',
 };
@@ -1179,6 +1237,25 @@ Map<String, String> stringsToMap(Strings s) => {
       'askDecline': s.askDecline,
       'askToYou': s.askToYou,
       'askToAnyone': s.askToAnyone,
+      'bundleRemaining': s.bundleRemaining(0, 0),
+      'bundleAllDone': s.bundleAllDone(0),
+      'bundleAcceptRecommended': s.bundleAcceptRecommended(0),
+      'bundleAcceptNote': s.bundleAcceptNote,
+      'bundleAcceptPending': s.bundleAcceptPending(0, 0),
+      'bundleAcceptCancel': s.bundleAcceptCancel,
+      'bundleRecommended': s.bundleRecommended,
+      'bundleReplyInThread': s.bundleReplyInThread,
+      'bundleDecideInThread': s.bundleDecideInThread,
+      'bundleLoading': s.bundleLoading,
+      'bundleUnavailable': s.bundleUnavailable,
+      'bundleAnswered': s.bundleAnswered('', ''),
+      'bundleReplied': s.bundleReplied(''),
+      'bundleNoteBy': s.bundleNoteBy(''),
+      'bundleSkipIrreversible': s.bundleSkipIrreversible,
+      'bundleSkipNoRecommendation': s.bundleSkipNoRecommendation,
+      'bundleSkipLink': s.bundleSkipLink,
+      'bundleSkipFailed': s.bundleSkipFailed,
+      'bundleSomeone': s.bundleSomeone,
       'threadTitle': s.threadTitle,
       'threadReplyHint': s.threadReplyHint,
       'threadRepliesZero': s.threadRepliesZero,
