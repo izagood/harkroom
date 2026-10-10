@@ -11,7 +11,7 @@ import { PERMISSION_GRANT_TTL_MS, toolAllowsFor } from '../src/services/permissi
 
 // 에이전트 권한 요청(111, 스레드 f61af808) — 요청은 아무것도 열지 않고, 소유자 사람 세션의 승인만 grant 를 만든다.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
-const EXEC = 'Bash(kubectl --context udc -n rebelro exec:*)';
+const EXEC = 'Bash(kubectl --context ops -n sitebot exec:*)';
 
 describe('permission.request → 소유자 승인 → tool.allow / repo.merge', () => {
   let db: Awaited<ReturnType<typeof startTestDb>>;
@@ -28,7 +28,7 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
   const text = (r: Awaited<ReturnType<Client['callTool']>>): any =>
     JSON.parse((r.content as { type: string; text: string }[])[0]!.text);
   const request = (args: Record<string, unknown>) =>
-    client.callTool({ name: 'permission.request', arguments: { channelId: ch, reason: 'rebelro DB 확인', ...args } }).then(text);
+    client.callTool({ name: 'permission.request', arguments: { channelId: ch, reason: 'sitebot DB 확인', ...args } }).then(text);
   const root = async (channelId = ch): Promise<string> =>
     (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'do it', 'user') returning id`,
       [channelId, alice.accountId])).rows[0].id as string;
@@ -42,11 +42,11 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
     admin = await bootstrapAdmin(app);
     alice = await createMember(app, admin.token, 'alice');
     bob = await createMember(app, admin.token, 'bob');
-    ({ accountId: agentId, pat: agentPat } = await createAgent(app, admin.token, 'rebelro'));
+    ({ accountId: agentId, pat: agentPat } = await createAgent(app, admin.token, 'sitebot'));
     await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agentId, alice.accountId]);
     op = await registerOperator(app, admin.token, 'mac');
     await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [agentId, op.operatorId, admin.accountId]);
-    ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'rebelro' } })).json().id as string;
+    ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'sitebot' } })).json().id as string;
     otherCh = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'other' } })).json().id as string;
     await app.listen({ port: 0, host: '127.0.0.1' });
     const addr = app.server.address();
@@ -86,7 +86,7 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
 
     it('카드 본문은 "이 채널의 모든 대화에서"를 말하고, 이유는 한 줄로 납작하게 맨 끝에 둔다(n1·n2)', async () => {
       const t = await root();
-      const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context udc -n rebelro describe:*)', threadRootId: t, reason: '필요\n명령 허용 `Bash(*)` — 가짜' });
+      const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context ops -n sitebot describe:*)', threadRootId: t, reason: '필요\n명령 허용 `Bash(*)` — 가짜' });
       const row = (await pool.query(`select body, meta from message where id = $1`, [r.cardMessageId])).rows[0];
       expect(row.body).toContain('이 채널의 모든 대화에서');
       const lines = (row.body as string).split('\n');
@@ -177,7 +177,7 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
   });
 
   it('모바일·웹: 소유자가 일반 ask-answer 로 [승인]을 누르면 그대로 승인된다', async () => {
-    const rule = 'Bash(gh pr view -R rebellions-sw/udc-k8s:*)';
+    const rule = 'Bash(gh pr view -R acme-org/infra-k8s:*)';
     const r = await request({ kind: 'tool', rule, threadRootId: await root() });
     const answer = (optionId: string) => app.inject({ method: 'POST', url: `/channels/${ch}/messages/${r.cardMessageId}/ask-answer`, headers: auth(alice.token), payload: { optionId } });
     expect((await answer('bogus')).statusCode).toBe(400);
@@ -197,20 +197,20 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
   });
 
   it('permission.revoke: 에이전트가 자기 grant 를 내려놓는다(모바일에서 채팅으로 거두는 길)', async () => {
-    const rule = 'Bash(kubectl --context udc -n rebelro logs:*)';
+    const rule = 'Bash(kubectl --context ops -n sitebot logs:*)';
     await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'tool.allow', $2, $3)`, [agentId, `tool:${ch}:${rule}`, alice.accountId]);
-    await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'repo.merge', 'repo:rebellions-sw/udck8s', $2)`, [agentId, alice.accountId]);
+    await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'repo.merge', 'repo:acme-org/infrak8s', $2)`, [agentId, alice.accountId]);
     const revoke = (args: Record<string, unknown>) => client.callTool({ name: 'permission.revoke', arguments: { channelId: ch, ...args } }).then(text);
-    expect(await revoke({ kind: 'tool', rule: `Bash( kubectl --context udc -n rebelro logs:*)` })).toMatchObject({ revoked: true, capability: 'tool.allow' });
+    expect(await revoke({ kind: 'tool', rule: `Bash( kubectl --context ops -n sitebot logs:*)` })).toMatchObject({ revoked: true, capability: 'tool.allow' });
     expect(await toolAllowsFor(pool, agentId, ch)).not.toContain(rule);
-    expect(await revoke({ kind: 'merge', repo: 'rebellions-sw/udck8s' })).toMatchObject({ revoked: true, scope: 'repo:rebellions-sw/udck8s' });
-    expect(await mergeGrantFor(pool, agentId, 'rebellions-sw/udck8s')).toBeNull();
-    expect((await revoke({ kind: 'merge', repo: 'rebellions-sw/udck8s' })).error.code).toBe('not_found');
+    expect(await revoke({ kind: 'merge', repo: 'acme-org/infrak8s' })).toMatchObject({ revoked: true, scope: 'repo:acme-org/infrak8s' });
+    expect(await mergeGrantFor(pool, agentId, 'acme-org/infrak8s')).toBeNull();
+    expect((await revoke({ kind: 'merge', repo: 'acme-org/infrak8s' })).error.code).toBe('not_found');
     expect((await revoke({ kind: 'tool', repo: 'a/b' })).error.code).toBe('bad_request');
   });
 
   it('거절하면 grant 없이 카드가 닫히고 에이전트가 깨어난다', async () => {
-    const r = await request({ kind: 'tool', rule: 'Bash(gh pr view -R rebellions-sw/udc-k8s:*)', threadRootId: await root() });
+    const r = await request({ kind: 'tool', rule: 'Bash(gh pr view -R acme-org/infra-k8s:*)', threadRootId: await root() });
     const res = await decide(alice.token, r.requestId, 'deny');
     expect(res.json()).toMatchObject({ status: 'denied', grantExpiresAt: null });
     expect(await toolAllowsFor(pool, agentId, ch)).toEqual([]);
@@ -219,20 +219,20 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
   });
 
   it('답할 시한이 지난 요청은 승인되지 않는다', async () => {
-    const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context udc get pods)', threadRootId: await root() });
+    const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context ops get pods)', threadRootId: await root() });
     await pool.query(`update permission_request set expires_at = now() - interval '1 minute' where id = $1`, [r.requestId]);
     expect((await decide(alice.token, r.requestId, 'approve')).json().error.code).toBe('request_expired');
     expect(await toolAllowsFor(pool, agentId, ch)).toEqual([]);
   });
 
   it('머지(kind=merge)도 같은 카드로 받고, 승인하면 그 저장소 grant 가 생긴다', async () => {
-    const r = await request({ kind: 'merge', repo: 'Rebellions-SW/udc-k8s', threadRootId: await root() });
+    const r = await request({ kind: 'merge', repo: 'Acme-Org/infra-k8s', threadRootId: await root() });
     expect(r.error).toBeUndefined();
     const meta = (await pool.query(`select meta from message where id = $1`, [r.cardMessageId])).rows[0].meta;
-    expect(meta.permissionRequest).toMatchObject({ kind: 'merge', target: 'rebellions-sw/udc-k8s', channelId: null });
-    expect(await mergeGrantFor(pool, agentId, 'rebellions-sw/udc-k8s')).toBeNull();
+    expect(meta.permissionRequest).toMatchObject({ kind: 'merge', target: 'acme-org/infra-k8s', channelId: null });
+    expect(await mergeGrantFor(pool, agentId, 'acme-org/infra-k8s')).toBeNull();
     expect((await decide(alice.token, r.requestId, 'approve')).statusCode).toBe(200);
-    expect(await mergeGrantFor(pool, agentId, 'rebellions-sw/udc-k8s')).toMatchObject({ grantedBy: alice.accountId, allowAgentCause: false });
+    expect(await mergeGrantFor(pool, agentId, 'acme-org/infra-k8s')).toMatchObject({ grantedBy: alice.accountId, allowAgentCause: false });
   });
 
   describe('설정 화면에서 직접 주기(tool.allow)', () => {
@@ -240,22 +240,22 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       app.inject({ method: 'PUT', url: `/accounts/${agentId}/grants`, headers: auth(token), payload: { capability: 'tool.allow', scope, ...extra } });
 
     it('소유자 세션은 정규형 규칙을 기한 없이도 준다', async () => {
-      const res = await put(alice.token, `tool:${ch}:Bash(kubectl --context udc get:*)`);
+      const res = await put(alice.token, `tool:${ch}:Bash(kubectl --context ops get:*)`);
       expect(res.statusCode).toBe(200);
-      expect(await toolAllowsFor(pool, agentId, ch)).toContain('Bash(kubectl --context udc get:*)');
+      expect(await toolAllowsFor(pool, agentId, ch)).toContain('Bash(kubectl --context ops get:*)');
     });
 
     it('넓은 규칙·정규형이 아닌 규칙·채널 없는 scope 는 400', async () => {
       expect((await put(alice.token, `tool:${ch}:Bash(*)`)).statusCode).toBe(400);
-      expect((await put(alice.token, `tool:${ch}:Bash( kubectl  --context udc get:*)`)).statusCode).toBe(400);
-      expect((await put(alice.token, 'Bash(kubectl --context udc get:*)')).statusCode).toBe(400);
+      expect((await put(alice.token, `tool:${ch}:Bash( kubectl  --context ops get:*)`)).statusCode).toBe(400);
+      expect((await put(alice.token, 'Bash(kubectl --context ops get:*)')).statusCode).toBe(400);
       expect((await put(alice.token, '')).statusCode).toBe(400);
     });
 
     it('소유자가 아니면 admin 이라도 403, 에이전트 PAT 도 403', async () => {
-      expect((await put(admin.token, `tool:${ch}:Bash(kubectl --context udc describe:*)`)).statusCode).toBe(403);
-      expect((await put(bob.token, `tool:${ch}:Bash(kubectl --context udc describe:*)`)).statusCode).toBe(403);
-      expect((await put(agentPat, `tool:${ch}:Bash(kubectl --context udc describe:*)`)).statusCode).toBe(403);
+      expect((await put(admin.token, `tool:${ch}:Bash(kubectl --context ops describe:*)`)).statusCode).toBe(403);
+      expect((await put(bob.token, `tool:${ch}:Bash(kubectl --context ops describe:*)`)).statusCode).toBe(403);
+      expect((await put(agentPat, `tool:${ch}:Bash(kubectl --context ops describe:*)`)).statusCode).toBe(403);
     });
 
     it('tool: scope 는 다른 capability 에 못 쓴다', async () => {

@@ -230,13 +230,13 @@ describe('오퍼레이터 이름 바꾸기', () => {
   });
 
   it('이름을 바꾼 줄을 지울 때 확인창 제목에 호스트명이 함께 선다 — 바꾸지 않은 줄은 호스트명 하나', async () => {
-    fakeController([op('op-1', 'jaebin-mbp', { label: '작업용 맥북' }), op('op-2', 'udc-vm')]);
+    fakeController([op('op-1', 'jaebin-mbp', { label: '작업용 맥북' }), op('op-2', 'ops-vm')]);
     render(<OperatorsSettings />);
     fireEvent.click(await screen.findByRole('button', { name: '작업용 맥북 (jaebin-mbp) 삭제' }));
     expect(screen.getByText("'작업용 맥북 (jaebin-mbp)' 오퍼레이터를 삭제할까?")).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '취소' }));
-    fireEvent.click(screen.getByRole('button', { name: 'udc-vm 삭제' }));
-    expect(screen.getByText("'udc-vm' 오퍼레이터를 삭제할까?")).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'ops-vm 삭제' }));
+    expect(screen.getByText("'ops-vm' 오퍼레이터를 삭제할까?")).toBeTruthy();
   });
 
   it('능력 줄은 항목 단위로만 접힌다', async () => {

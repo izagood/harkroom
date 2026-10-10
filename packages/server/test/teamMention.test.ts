@@ -431,7 +431,7 @@ describe('047 팀장이 있으면 팀장 하나만 깬다', () => {
     expect(await inboxFor(a2Pat, messageId)).toEqual([]);
   });
 
-  it('1-1. 팀과 팀장을 한 발화에서 함께 불러도 팀장 항목에 명단이 실린다(#udc `@udc-team @forge`)', async () => {
+  it('1-1. 팀과 팀장을 한 발화에서 함께 불러도 팀장 항목에 명단이 실린다(#ops `@ops-team @forge`)', async () => {
     const id = await makeTeam('leadnamed', [a1Id, a2Id]);
     await setLead(id, a1Id);
 

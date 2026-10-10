@@ -86,9 +86,9 @@ describe('박동 상태(H1·H5)', () => {
 
 describe('머신 묶음표(H8)', () => {
   it('같은 소유자의 같은 머신이면 machineId 가 같고, 소유자가 다르면 같은 digest 여도 다르다. 원래 digest 는 싣지 않는다', async () => {
-    const a1 = await registerOperator(app, aliceToken, 'udc-work');
-    const a2 = await registerOperator(app, aliceToken, 'udc-personal');
-    const b1 = await registerOperator(app, bobToken, 'udc-bob');
+    const a1 = await registerOperator(app, aliceToken, 'ops-work');
+    const a2 = await registerOperator(app, aliceToken, 'ops-personal');
+    const b1 = await registerOperator(app, bobToken, 'ops-bob');
     const sockets = await Promise.all([a1, a2, b1].map((o) => connect(o.token)));
     for (const ws of sockets) beat(ws, { turns: { running: 0, max: null } }, DIGEST);
     await waitFor(async () => (await mine(bobToken, b1.operatorId)).machineId != null

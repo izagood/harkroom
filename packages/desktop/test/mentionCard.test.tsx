@@ -33,7 +33,7 @@ beforeEach(() => {
       a2: acc('a2', 'buzz', 'agent'),
     },
     groups: [grp('g1', 'oncall', 'On-call')],
-    teams: [tm('t1', 'udc-team', 2, 'a2')],
+    teams: [tm('t1', 'ops-team', 2, 'a2')],
   });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); setController(null as unknown as Controller); });
@@ -41,17 +41,17 @@ afterEach(() => { cleanup(); vi.useRealTimers(); setController(null as unknown a
 describe('멘션 호버 카드', () => {
   it('팀 멘션에 올리면 팀원과 팀장을 보여 준다 — 팀장이 맨 위', async () => {
     const team = vi.fn(async () => ({
-      team: tm('t1', 'udc-team', 2, 'a2'),
+      team: tm('t1', 'ops-team', 2, 'a2'),
       members: [
         { accountId: 'a1', handle: 'fizz', disabled: true },
         { accountId: 'a2', handle: 'buzz', disabled: false },
       ],
     }));
     setController(new Controller(fakeApi({ team }), fakeWsFactory().makeWs));
-    show('@udc-team 계속 진행해');
+    show('@ops-team 계속 진행해');
 
     expect(screen.queryByTestId('hovercard')).toBeNull();
-    await hover('udc-team');
+    await hover('ops-team');
 
     expect(team).toHaveBeenCalledWith('t1');
     const card = await screen.findByTestId('hovercard');
@@ -64,14 +64,14 @@ describe('멘션 호버 카드', () => {
 
   it('마우스를 떼면 닫힌다', async () => {
     setController(new Controller(fakeApi({
-      team: vi.fn(async () => ({ team: tm('t1', 'udc-team', 0), members: [] })),
+      team: vi.fn(async () => ({ team: tm('t1', 'ops-team', 0), members: [] })),
     }), fakeWsFactory().makeWs));
-    show('@udc-team 봐');
-    await hover('udc-team');
+    show('@ops-team 봐');
+    await hover('ops-team');
     await screen.findByTestId('hovercard');
 
     vi.useFakeTimers();
-    fireEvent.mouseLeave(screen.getByTestId('mention-udc-team').parentElement!);
+    fireEvent.mouseLeave(screen.getByTestId('mention-ops-team').parentElement!);
     await act(async () => { vi.advanceTimersByTime(300); });
     vi.useRealTimers();
     expect(screen.queryByTestId('hovercard')).toBeNull();

@@ -409,7 +409,7 @@ Map<String, Object?> _m(String id, int seq, String author, String body,
     };
 
 /// [states] 가 참이면 **실패를 일부러 섞는다**(S2 상태 화면을 찍으려고): `#testbed` 는 못 읽고,
-/// `#homelab` 은 비어 있고, 보내기는 실패한다.
+/// `#infra` 은 비어 있고, 보내기는 실패한다.
 MockClient _server({bool states = false}) => MockClient((req) async {
       final path = req.url.path;
       if (states) {
@@ -435,7 +435,7 @@ MockClient _server({bool states = false}) => MockClient((req) async {
             {'id': 'c1', 'name': 'task', 'kind': 'standard', 'visibility': 'public'},
             {'id': 'c2', 'name': 'harkroom', 'kind': 'standard', 'visibility': 'public'},
             {'id': 'c3', 'name': 'testbed', 'kind': 'standard', 'visibility': 'private'},
-            {'id': 'c4', 'name': 'homelab', 'kind': 'standard', 'visibility': 'public'},
+            {'id': 'c4', 'name': 'infra', 'kind': 'standard', 'visibility': 'public'},
           ],
         });
       }

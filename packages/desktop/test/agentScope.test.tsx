@@ -167,7 +167,7 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
   it('확인창이 이 에이전트가 든 팀을 말한다 — owner 로 좁히면 남의 팀 부름에서 빠진다(068)', async () => {
     fakeLocal([{ name: 'slack' }, { name: 'github' }]);
     setup({
-      listTeams: vi.fn(async () => [{ id: 't1', name: 'udc-team' }, { id: 't2', name: 'other' }]),
+      listTeams: vi.fn(async () => [{ id: 't1', name: 'ops-team' }, { id: 't2', name: 'other' }]),
       getTeam: vi.fn(async (id: string) => ({
         team: { id },
         members: id === 't1' ? [{ accountId: 'agent-1', handle: 'alpha', disabled: false }] : [],
@@ -176,7 +176,7 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
     fireEvent.click(await screen.findByLabelText('slack'));
     const line = await screen.findByTestId('agent-mcp-confirm-teams');
-    expect(line.textContent).toContain('@udc-team');
+    expect(line.textContent).toContain('@ops-team');
     expect(line.textContent).not.toContain('@other');
   });
 

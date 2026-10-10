@@ -88,7 +88,7 @@ export class TurnRegistry {
    * 비동기로 띄운다. 그 안의 `register` 까지는 기억·계획·스킬 동기화 같은 await 이 수 초
    * 이어진다. 인터랙티브 open 은 이 레지스트리만 보므로, 그 틈에 사람이 [Terminal] 을 열면
    * 둘 다 "아무 턴도 없다"로 통과하고 늦게 온 멘션 턴의 `register` 가 던졌다 — 그 턴이 연
-   * 릴레이 세션은 닫히지 않아 「running 1h」 유령 줄로 남았다(rebelro, 10-07).
+   * 릴레이 세션은 닫히지 않아 「running 1h」 유령 줄로 남았다(sitebot, 10-07).
    *
    * 예약은 **턴이 아니다** — `get`·`controlOf`·`register` 는 예약을 보지 않는다. 보는 쪽은
    * 인터랙티브 open 하나이고, 예약이 있으면 멘션 턴이 등록될 때까지 기다렸다 그 PTY 에 붙는다.

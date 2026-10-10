@@ -365,7 +365,7 @@ const CODEX_PRESET: HarnessPreset = {
     '-c', 'mcp_servers.harkroom.transport="stdio"',
     '-c', `mcp_servers.harkroom.command=${JSON.stringify(operatorBin)}`,
     '-c', `mcp_servers.harkroom.args=${JSON.stringify([...MCP_BRIDGE_ARGS])}`,
-    // **링크 env 셋을 이름으로 달라고 해야 한다**(2026-09-29 실측, jinbin 커뮤니티). codex 는
+    // **링크 env 셋을 이름으로 달라고 해야 한다**(2026-09-29 실측, beta-team 커뮤니티). codex 는
     // stdio MCP 자식에게 자기 env 를 통째로 넘기지 않는다 — 기본 목록(PATH·HOME 등)과 항목의
     // `env`·`env_vars` 에 적힌 것만 넘긴다. 이 줄이 없던 동안(09-20 브릿지 전환 이후) 브릿지는
     // `… 이 필요하다` 를 찍고 exit 2, codex 는 `handshaking with MCP server failed` 를 로그에만

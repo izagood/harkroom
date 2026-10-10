@@ -33,7 +33,7 @@ describe('parseMergeArgs (F3)', () => {
       ['o r', '1', '--head', SHA],
       ['o/r;rm', '1', '--head', SHA],
       // 조직 grant(owner/*)는 grant 쪽 문법이다 — 래퍼가 머지할 저장소 자리에는 못 온다(서버 판정에서 grant 문자열과 정확 일치하지 않게).
-      ['rebellions-sw/*', '1', '--head', SHA],
+      ['acme-org/*', '1', '--head', SHA],
       ['*/*', '1', '--head', SHA],
       // P3: --approval 은 받지 않는다 — 서버가 cause 메시지로 판정하지 에이전트가 고른 id 가 아니다.
       ['o/r', '1', '--head', SHA, '--approval', '11111111-2222-4333-8444-555555555555'],
@@ -94,7 +94,7 @@ describe('turnMerge', () => {
       },
       exec: async (file, args, env): Promise<ExecResult> => {
         execs.push({ file, args, env });
-        if (args[0] === 'auth' && args[3] === 'rebel-jaebin') return { code: 0, stdout: 'tok-approved\n', stderr: '' };
+        if (args[0] === 'auth' && args[3] === 'corp-account') return { code: 0, stdout: 'tok-approved\n', stderr: '' };
         if (args[0] === 'auth' && args[3] === 'gone') return { code: 1, stdout: '', stderr: 'no oauth token found for github.com account gone' };
         if (args[0] === 'auth' && pickByScope) return { code: 0, stdout: `tok-${args[3]}\n`, stderr: '' };
         if (args[0] === 'auth') return ghUser === 'broken' ? { code: 1, stdout: '', stderr: 'no oauth token' } : { code: 0, stdout: 'tok-from-gh\n', stderr: '' };
@@ -175,8 +175,8 @@ describe('turnMerge', () => {
   describe('1회 승인 (스레드 1b75d7a0, security 순서: 사전 확인 → 소모 → 즉시 머지)', () => {
     const checksCalled = () => forwards.filter((f) => f.type === 'http.forward' && f.path === '/agent/merge-checks').length;
     beforeEach(() => {
-      approvals = [{ id: 'ap-1', ghUser: 'rebel-jaebin', relaxChecks: false }];
-      checkApproval = { id: 'ap-1', ghUser: 'rebel-jaebin', relaxChecks: false };
+      approvals = [{ id: 'ap-1', ghUser: 'corp-account', relaxChecks: false }];
+      checkApproval = { id: 'ap-1', ghUser: 'corp-account', relaxChecks: false };
     });
 
     it('사전 확인에서 막히면 서버 판정(소모)을 부르지 않는다 — 승인이 남는다', async () => {
@@ -193,9 +193,9 @@ describe('turnMerge', () => {
 
     it('승인 계정으로만 머지한다 — 기기 줄의 계정(ghUserFor)으로 내려가지 않고 --match-head-commit 을 지킨다', async () => {
       const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
-      expect(r).toMatchObject({ isError: false, body: { merged: true, viaApproval: true, ghUser: 'rebel-jaebin' } });
+      expect(r).toMatchObject({ isError: false, body: { merged: true, viaApproval: true, ghUser: 'corp-account' } });
       const auths = execs.filter((e) => e.args[0] === 'auth').map((e) => e.args[3]);
-      expect(auths).toEqual(['rebel-jaebin']);
+      expect(auths).toEqual(['corp-account']);
       const merge = execs.find((e) => e.args[0] === 'pr' && e.args[1] === 'merge')!;
       expect(merge.args).toEqual(['pr', 'merge', '7', '-R', 'izagood/harkroom', '--squash', '--match-head-commit', SHA]);
       expect(merge.env.GH_TOKEN).toBe('tok-approved');
@@ -216,7 +216,7 @@ describe('turnMerge', () => {
     });
 
     it('서버가 쓴 승인이 사전 확인한 것(id)과 다르면 머지하지 않는다 — 계정이 같아도(security F2)', async () => {
-      checkApproval = { id: 'ap-2', ghUser: 'rebel-jaebin', relaxChecks: false };
+      checkApproval = { id: 'ap-2', ghUser: 'corp-account', relaxChecks: false };
       expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('approval_mismatch');
       expect(ghCalls()).not.toContain('pr merge');
       forwards = []; execs = [];
@@ -318,7 +318,7 @@ describe('turnMerge', () => {
   });
 
   it('줄별 계정: 맞는 줄이 없으면 no_gh_user — 다른 조직 줄이나 활성 계정으로 넘어가지 않는다', async () => {
-    pickByScope = { 'rebellions-sw/*': 'rebel-x' };
+    pickByScope = { 'acme-org/*': 'rebel-x' };
     expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('no_gh_user');
     expect(execs).toHaveLength(0);
   });

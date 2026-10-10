@@ -931,7 +931,7 @@ async function resolveMentionCalls(
 
   /*
     **팀 부름도 insert 앞에서 판정한다**(068). 예전에는 팀 게이트가 insert 뒤의 `fanOutMention`
-    안에만 있어서 막힌 팀원이 `mentionDenied` 에 남지 않았다 — #udc 의 `@udc-team` 네 번이
+    안에만 있어서 막힌 팀원이 `mentionDenied` 에 남지 않았다 — #ops 의 `@ops-team` 네 번이
     👀·실패·표시 없이 사라진 자리다. 여기서 누구를 깨울지(`teamPlans`)까지 정해 두고, 아래
     팬아웃은 그 결과만 넣는다.
 
@@ -1076,8 +1076,8 @@ async function fanOutCalls(
       /*
         **팀과 그 팀장을 한 발화에서 함께 불렀으면 팀장 항목에 팀을 싣는다**(`@ops @lead`).
         이 루프가 팀 팬아웃보다 먼저 돌아 팀장을 평범한 `mention` 으로 넣으면, 팀 부름은
-        `notified` 중복 제거로 그를 건너뛰고 팀장 턴은 명단(팀 블록)을 못 받는다 — #udc 에서
-        `@udc-team @forge` 로 부른 forge 가 "udc-team 답이 없어 이어받는다"며 자기가 그 팀의
+        `notified` 중복 제거로 그를 건너뛰고 팀장 턴은 명단(팀 블록)을 못 받는다 — #ops 에서
+        `@ops-team @forge` 로 부른 forge 가 "ops-team 답이 없어 이어받는다"며 자기가 그 팀의
         팀장인 줄 몰랐던 자리다. 누가 팀장 하나로 가는지는 insert 앞에서 이미 정했다(`teamPlans`).
       */
       const ledTeam = teamPlans.find((p) => p.viaLead && p.recipients[0] === accountId);

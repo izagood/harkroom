@@ -7,7 +7,7 @@ import type { ApiClient } from '../src/lib/api';
 import { createAppStore } from '../src/state/appStore';
 
 /**
- * 워크스페이스 아이콘 — 커뮤니티 레일의 사진(2026-09-29). `jaebin.`·`jinbin.` 이 둘 다 "J" 로
+ * 워크스페이스 아이콘 — 커뮤니티 레일의 사진(2026-09-29). `jaebin.`·`beta-team.` 이 둘 다 "J" 로
  * 서던 문제다. 사진이 있으면 그것을, 없으면 **이니셜을 폴백**으로 그린다.
  */
 afterEach(() => { cleanup(); resetCommunityRegistry(); });
@@ -15,14 +15,14 @@ afterEach(() => { cleanup(); resetCommunityRegistry(); });
 function twoCommunities() {
   const reg = useCommunityRegistry.getState();
   const a = reg.claimActive({ baseUrl: 'https://jaebin.example.com', accountId: 'a1' });
-  const b = reg.register({ baseUrl: 'https://jinbin.example.com', accountId: 'b1' });
+  const b = reg.register({ baseUrl: 'https://beta-team.example.com', accountId: 'b1' });
   return { a, b };
 }
 
 describe('커뮤니티 전환기 아이콘', () => {
   it('사진이 없으면 이니셜, 있으면 그 커뮤니티의 사진만 그린다 — 레일 타일과 팝오버 행 모두', () => {
     const { a, b } = twoCommunities();
-    b.store.getState().set({ workspaceIconUrl: 'blob:jinbin' });
+    b.store.getState().set({ workspaceIconUrl: 'blob:beta-team' });
     render(<CommunitySwitcher onManage={() => {}} />);
 
     // 레일 타일은 지금 커뮤니티(a)다 — 사진이 없으니 이니셜.
@@ -33,10 +33,10 @@ describe('커뮤니티 전환기 아이콘', () => {
     expect(screen.getByTestId(`community-tile-${a.id}`).textContent).toContain('J');
     expect(screen.queryByTestId(`community-row-icon-${a.id}`)).toBeNull();
     const img = screen.getByTestId(`community-row-icon-${b.id}`) as HTMLImageElement;
-    expect(img.getAttribute('src')).toBe('blob:jinbin');
+    expect(img.getAttribute('src')).toBe('blob:beta-team');
     // 이름은 버튼이 말한다 — img 가 같은 이름을 한 번 더 읽히지 않게 alt 는 비운다.
     expect(img.getAttribute('alt')).toBe('');
-    expect(screen.getByTestId(`community-tile-${b.id}`).getAttribute('aria-label')).toContain('jinbin');
+    expect(screen.getByTestId(`community-tile-${b.id}`).getAttribute('aria-label')).toContain('beta-team');
   });
 
   it('지금 커뮤니티에 사진이 있으면 레일 타일이 그 사진이다', () => {
