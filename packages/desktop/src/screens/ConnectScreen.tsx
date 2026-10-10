@@ -271,11 +271,11 @@ export function ConnectScreen(props: ConnectScreenProps) {
                 <p className="text-meta text-fg-subtle">{t('connect.create.community')}</p>
                 <p className="text-fg">{pending.url}</p>
               </div>
-              {progress && <p className="text-meta text-fg-subtle">{progress}</p>}
+              {progress && <p className="break-keep text-meta text-fg-subtle">{progress}</p>}
               {claimable ? (
                 <>
                   {/* 준비됐다. 이제 첫 관리자를 만든다 — **토큰은 화면이 들고 있다.** */}
-                  <p className="text-meta text-fg-subtle">{t('connect.create.readyNote')}</p>
+                  <p className="break-keep text-meta text-fg-subtle">{t('connect.create.readyNote')}</p>
                   <label className="block text-meta font-medium">
                     {t('connect.field.loginId')}
                     <input className={field} value={loginId} onChange={(e) => setLoginId(e.target.value)} />
@@ -296,7 +296,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
               ) : (
                 /* **기다림이 길 수 있다**(승인이 필요하다). 그래서 "닫아도 된다"를 말해 준다 —
                    말하지 않으면 사람은 창을 붙잡고 있거나, 닫고 나서 잃었다고 생각한다. */
-                <p className="text-meta text-fg-subtle">{t('connect.create.waitNote')}</p>
+                <p className="break-keep text-meta text-fg-subtle">{t('connect.create.waitNote')}</p>
               )}
             </>
           ) : (
@@ -317,7 +317,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
                     aria-describedby="gate-url-hint"
                   />
                 </label>
-                <p id="gate-url-hint" className="mt-1 text-meta text-fg-subtle">
+                <p id="gate-url-hint" className="mt-1 break-keep text-meta text-fg-subtle">
                   {looksLikeWorkspaceAddress(gateUrl, wsName)
                     ? t('connect.field.gateUrlLooksLikeCommunity')
                     : t('connect.field.gateUrlHint')}
@@ -384,7 +384,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
         </>
         )}
         {/* 오류는 본문단이다 — 로그인이 막힌 사람에게 이 한 줄이 유일한 단서다. */}
-        {error && <p className="text-danger">{error}</p>}
+        {error && <p className="break-keep text-danger">{error}</p>}
         {!recoveryKey && (
         <button
           type="submit"
