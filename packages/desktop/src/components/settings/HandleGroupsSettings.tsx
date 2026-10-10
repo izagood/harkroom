@@ -311,7 +311,7 @@ export function HandleGroupsSettings() {
               </div>
 
               <div className="rounded-row border border-border p-3">
-                <div className="text-meta font-medium text-fg-muted">구성원 ({selected.members.length})</div>
+                <div className="text-meta font-medium text-fg-muted">{t('groups.member.count', { count: selected.members.length })}</div>
                 <div className="mt-2 space-y-1">
                   {selected.members.length === 0 ? (
                     <div className="text-meta text-fg-muted">{t('groups.member.empty')}</div>
