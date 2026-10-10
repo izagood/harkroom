@@ -30,15 +30,33 @@ export const BOARD_COLUMNS: readonly BoardColumn[] = ['mine', 'blocked', 'active
  * 다시 볼 일이다. 나중에는 `until` 이 지나도 풀린다.
  */
 
-/** 진행·끝남에 펼쳐 두는 기간. 그보다 오래 조용한 것은 열 맨 아래 한 줄로 접는다(정정 4). */
+/**
+ * 펼쳐 두는 기간. 그보다 오래된 것은 열 맨 아래 한 줄로 접는다 — 진행·끝남은 조용한 기간으로(정정 4),
+ * 내 차례·막힘은 **기다린 기간**으로 잰다(R2, 2026-10-11 designer 재설계): 한 달 기다린 물음이 수에
+ * 남아 있으면 숫자가 줄지 않고(옛 화면의 「129」), 그 숫자는 뜻을 잃는다.
+ */
 export const RECENT_MS = 7 * 86_400_000;
 
 /**
  * 열 안에서 접힌 자리. `quiet` = 진행인데 7일 넘게 조용하다 · `old` = 7일 넘은 끝남 ·
+ * `stale` = 내 차례·막힘인데 7일 넘게 기다렸다(R2, **내 차례 수에서 빠진다**) ·
  * `cleared` = 내가 완료로 치웠다(끝남 맨 아래) · `later` = 내가 나중으로 미뤘다(그 열 맨 아래,
  * **내 차례 수에서 빠진다**). 접힌 카드는 **사라지지 않는다** — 수와 함께 한 줄로 남는다.
  */
-export type BoardFold = 'quiet' | 'old' | 'cleared' | 'later';
+export type BoardFold = 'quiet' | 'old' | 'stale' | 'cleared' | 'later';
+
+/**
+ * **내가 할 일의 종류**(R4, 2026-10-11 designer 재설계). 열(진행·기다림·끝)은 스레드의 상태라서 내
+ * 행동을 말하지 않는다 — 내 차례 띠는 이것으로 묶는다.
+ *
+ * - `decision` 결정: 나에게 온 열린 물음(선택 카드·권한·머지 카드도 물음이다)
+ * - `blocker` 막힘: 안 풀린 실패·계정 관문 — 사람 손이 있어야 풀린다
+ * - `news` 소식: 위 둘이 아닌 것 — 읽기만 하면 된다
+ *
+ * 한 카드에 둘이 겹치면 결정이 이긴다: 고르면 풀리는 일을 막힘 아래에 묻으면 안 된다.
+ */
+export type BoardKind = 'decision' | 'blocker' | 'news';
+export const BOARD_KINDS: readonly BoardKind[] = ['decision', 'blocker', 'news'];
 
 export interface BoardCard {
   /** 스레드 머리 id — 카드의 열쇠이자 여는 곳. */
@@ -68,6 +86,20 @@ export interface BoardCard {
    * 줄 끝에 적는다(designer) — 언제 돌아오는지 보여야 되돌릴지 그냥 둘지 정할 수 있다.
    */
   laterUntil: string | null;
+  /** 내가 할 일의 종류(R4). */
+  kind: BoardKind;
+  /**
+   * 같은 실패를 한 줄로 묶는 열쇠(R5) — **같은 채널에서 같은 에이전트의 같은 실패**(채널·작성자·
+   * 갈래 표지·원인 문장). 실패 카드가 아니면 null(묶지 않는다).
+   *
+   * **나에게 온 열린 물음이 있으면 묶지 않는다**(security F1, #1314). 묶인 줄은 맨 앞 카드의 물음만
+   * 보이므로 나머지 물음은 답할 길이 없고, [치우기]가 본 적 없는 결정까지 치운다. 채널을 열쇠에 넣는
+   * 것도 같은 이유다(security n1) — 줄에는 맨 앞 카드의 채널만 보이니, 다른 채널 것을 같이 치우면
+   * 사람은 무엇을 치웠는지 모른다.
+   */
+  similarKey: string | null;
+  /** 스레드의 답글 수(R6, 머리의 `replyCount`). 머리가 없으면 null. */
+  replyCount: number | null;
 }
 
 export interface BoardInput {
@@ -235,7 +267,8 @@ function effectiveState(s: InboxThreadState | undefined, latestEntryAt: string, 
 
 /**
  * **내 차례 수** — 보드 머리글의 "나를 기다리는 일 N" 이자 사이드바·레일·독 배지의 숫자다(배지 A,
- * 2026-10-02 jaebin). 접힌 것(나중에)은 세지 않는다 — 미룬 일은 지금 나를 기다리는 일이 아니다.
+ * 2026-10-02 jaebin). 접힌 것(나중에·7일 넘은 것)은 세지 않는다 — 미룬 일·한 주 넘게 묵은 일은 지금
+ * 나를 기다리는 일이 아니다(R2). 치운 것은 끝남으로 옮겨 가므로 여기 오지 않는다.
  *
  * 한 함수로 두는 이유: 보드와 배지가 각자 세면 "배지 3, 보드 2" 가 되고, 그때 사람이 믿을 숫자가 없다
  * (옛 배지가 그랬다 — 안 읽은 멘션·DM 을 세어 "219" 가 줄지 않았다).
@@ -278,24 +311,37 @@ export function buildBoard(input: BoardInput): BoardCard[] {
     const running = head?.lastKind === 'progress';
     // 나에게 온 항목이 없으면 내 상태를 풀 새 부름도 없다 — 견줄 시각이 없으니 상태가 그대로 산다.
     const state = effectiveState(states.get(rootId), latest?.createdAt ?? new Date(0).toISOString(), nowMs);
-    let fold: BoardFold | null = null;
-    // 나중에는 어느 열이든 그 열 맨 아래로 접는다 — 내 차례도 미룰 수 있어야 수가 0 이 된다.
-    // 치운 것은 끝남 맨 아래로 간다 — 내 차례만은 치움을 이긴다(물음이 열려 있으면 치울 수 없다).
-    if (state?.state === 'later') fold = 'later';
-    else if (state?.state === 'done' && column !== 'mine') { column = 'done'; fold = 'cleared'; }
-    else if (column === 'active' && stale && !running) fold = 'quiet';
-    else if (column === 'done' && stale) fold = 'old';
-
     const openAsk = list.find((e) => askForMe(e.meta, me, scope));
     const failure = column === 'mine' ? list.find((e) => readFailureMeta(e.meta)) : undefined;
     // 문장을 고르는 말: 나에게 온 물음 → 실패 → 머리(일의 제목) → 가장 최근 것.
     const lead = openAsk ?? failure ?? null;
     const ask = openAsk ? askForMe(openAsk.meta, me, scope) : null;
     const failureMeta = failure ? readFailureMeta(failure.meta) : null;
+    // 실패는 **원인**을 제목으로 쓴다(R5): 「하네스가 사람의 확인을 기다린다」 같은 무엇(what)은 실패마다
+    // 같아서 수십 장이 구별되지 않았다. 원인(reason)이 없으면 무엇으로 떨어진다.
+    const failureTitle = (failureMeta?.reason && oneSentence(failureMeta.reason))
+      || (failureMeta?.what && oneSentence(failureMeta.what)) || '';
     const summary = (ask?.prompt && oneSentence(ask.prompt))
-      || (failureMeta?.what && oneSentence(failureMeta.what))
+      || failureTitle
       || oneSentence(lead?.body ?? head?.body ?? latest?.body ?? '')
       || oneSentence(latest?.body ?? '');
+    // 항목이 없으면 머리가 마지막으로 움직인 때부터 센다.
+    const sinceAt = (lead ?? latest)?.createdAt ?? lastActivityAt;
+
+    let fold: BoardFold | null = null;
+    // 나중에는 어느 열이든 그 열 맨 아래로 접는다 — 내 차례도 미룰 수 있어야 수가 0 이 된다.
+    // 치움은 **내 차례도 이긴다**(R3, 2026-10-11): 「내 목록에서 치운다」는 사람의 결정이고, 내 차례에만
+    // 치우기가 없으면 미루기 말고는 수를 줄일 길이 없었다(옛 화면의 「129」). 물음은 스레드에 그대로
+    // 열려 있다 — 치움은 내 보드만 정리한다. 그 뒤로 나에게 새 말이 오면 다시 선다(`effectiveState`).
+    if (state?.state === 'later') fold = 'later';
+    else if (state?.state === 'done') { column = 'done'; fold = 'cleared'; }
+    else if ((column === 'mine' || column === 'blocked') && nowMs - Date.parse(sinceAt) > RECENT_MS) fold = 'stale';
+    else if (column === 'active' && stale && !running) fold = 'quiet';
+    else if (column === 'done' && stale) fold = 'old';
+
+    // 결정 카드는 묶지 않는다(security F1·n3) — 물음 항목이 내 인박스에 없고 머리만 나를 지목해도
+    // 결정이다. 묶으면 결정 하나가 줄 뒤에 숨는다.
+    const kind = kindOf(head, input, ask != null, failure != null);
     cards.push({
       rootId,
       channelId: head?.channelId ?? latest!.channelId,
@@ -304,22 +350,63 @@ export function buildBoard(input: BoardInput): BoardCard[] {
       entries: list,
       summary,
       whoId: lead?.authorId ?? head?.authorId ?? latest?.authorId ?? null,
-      // 항목이 없으면 머리가 마지막으로 움직인 때부터 센다.
-      sinceAt: (lead ?? latest)?.createdAt ?? lastActivityAt,
+      sinceAt,
       lastActivityAt,
       unread: list.some((e) => e.readAt === null),
       ask: openAsk && ask ? { messageId: openAsk.messageId, options: ask.options } : null,
       laterUntil: fold === 'later' ? state?.until ?? null : null,
+      kind,
+      similarKey: kind !== 'decision' && failure && failureTitle
+        ? JSON.stringify([failure.channelId, failure.authorId, failureMeta?.code ?? null, failureTitle])
+        : null,
+      replyCount: head?.replyCount ?? null,
     });
   }
-  // 내 차례·막힘은 **오래 기다린 것이 위**다(정정 2) — 어제부터 기다린 물음이 방금 온 답글
-  // 아래로 밀리면 그 열의 뜻이 없다. 진행·끝남은 최근에 움직인 것이 위(다시 찾는 목록이다).
+  // **최근 것이 위**다(R1, 2026-10-11 designer 재설계). 옛 규칙(정정 2)은 내 차례·막힘을 오래 기다린
+  // 순으로 세웠는데, 쌓인 보드에서는 맨 위가 「31일째」였고 오늘 온 결정은 몇 화면 아래였다. 오래된 것은
+  // 이제 `stale` 로 접히므로 펼친 것 안에서는 새 것이 먼저다. 내 차례·막힘은 그 열에 들어오게 한 말의
+  // 시각(sinceAt), 진행·끝남은 마지막으로 움직인 시각으로 잰다.
   cards.sort((a, b) => {
     if (a.column !== b.column) return BOARD_COLUMNS.indexOf(a.column) - BOARD_COLUMNS.indexOf(b.column);
-    if (a.column === 'mine' || a.column === 'blocked') return Date.parse(a.sinceAt) - Date.parse(b.sinceAt);
+    if (a.column === 'mine' || a.column === 'blocked') return Date.parse(b.sinceAt) - Date.parse(a.sinceAt);
     return Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt);
   });
   return cards;
+}
+
+/**
+ * 할 일의 종류(R4). 머리가 있으면 머리의 지금 사실(열린 물음 수신자·관문·안 풀린 실패)도 본다 —
+ * 나에게 온 물음 항목이 없어도 머리가 나를 지목한 물음을 들고 있으면 결정이다.
+ */
+function kindOf(head: MessageRow | null, input: BoardInput, askForMe: boolean, failure: boolean): BoardKind {
+  const myId = input.me?.id ?? null;
+  if (askForMe || (myId != null && (head?.openAskAccountIds ?? []).includes(myId))) return 'decision';
+  if (failure || (myId != null && (head?.openGateAccountIds ?? []).includes(myId))
+    || (head?.unresolvedFailureCount ?? 0) > 0 || head?.statusReaction?.status === 'stuck') return 'blocker';
+  return 'news';
+}
+
+/** 묶인 한 줄 — 맨 앞 카드(가장 최근)와 같이 묶인 나머지(R5). */
+export interface BoardGroup { card: BoardCard; similar: BoardCard[] }
+
+/**
+ * **같은 실패는 한 줄로**(R5). `similarKey` 가 같은 카드를 맨 앞 것(이미 최근 것부터 정렬돼 있다) 한
+ * 줄에 모은다. 순서는 각 묶음의 맨 앞 카드 자리 그대로다. 묶음은 같은 목록 안에서만 — 열·접힘이 다른
+ * 카드를 섞으면 접힌 것이 펼친 줄로 새어 나온다(그래서 부르는 쪽이 이미 가른 목록을 준다).
+ *
+ * 숫자(`mineCount`)는 그대로 **일(스레드) 수**다 — 묶음은 보이는 모양일 뿐이고, 치우면 묶인 일이 다 치워진다.
+ */
+export function groupSimilar(cards: BoardCard[]): BoardGroup[] {
+  const groups: BoardGroup[] = [];
+  const byKey = new Map<string, BoardGroup>();
+  for (const card of cards) {
+    const g = card.similarKey != null ? byKey.get(card.similarKey) : undefined;
+    if (g) { g.similar.push(card); continue; }
+    const fresh: BoardGroup = { card, similar: [] };
+    groups.push(fresh);
+    if (card.similarKey != null) byKey.set(card.similarKey, fresh);
+  }
+  return groups;
 }
 
 /** "N일째" — 하루 안이면 null(화면이 상대 시각으로 쓴다). */

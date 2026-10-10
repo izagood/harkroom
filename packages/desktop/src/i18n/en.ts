@@ -3066,7 +3066,7 @@ export const en = {
   'inbox.board.col.active': 'In progress',
   'inbox.board.col.done': 'Done',
   /** 내 차례 띠의 덧말 — 띠 안의 순서(designer W2). */
-  'inbox.board.band.order': 'oldest first',
+  'inbox.board.band.order': 'newest first',
   /** 열 머리의 수. **내 차례만 센다** — 다른 열은 줄지 않는 숫자라 아무 말도 하지 않는다. */
   'inbox.board.mineCount': '{count} waiting on you',
   /** 열이 비었을 때. 내 차례가 0 이 되는 것이 이 화면의 목적이다. */
@@ -3084,9 +3084,14 @@ export const en = {
   /** 카드에 쌓인 말의 수 — 같은 일에서 온 것이 여럿이면 한 장에 모인다는 표시. */
   'inbox.board.more': '+{count} more',
   'inbox.board.unread': 'New',
-  /** 치움 — 머리에 ✅ 를 달아 보드에서 내린다(끝남 맨 아래 접힘). 2/2 의 서버 완료가 대신한다. */
-  /** 완료 — 서버의 내 상태(2/2). 보드에서 내려 끝남 맨 아래 "치운 것" 으로 접는다. */
-  'inbox.board.done': 'Done',
+  'inbox.board.replies': '{count} replies',
+  'inbox.board.similar': '×{count}',
+  'inbox.board.justMe': 'just me',
+  'inbox.board.kind.decision': 'Decide',
+  'inbox.board.kind.blocker': 'Blocked',
+  'inbox.board.kind.news': 'Updates',
+  /** 치우기 — 서버의 내 상태(2/2). 보드에서 내려 끝남 맨 아래 "치운 것" 으로 접는다. 내 차례에도 있다(R3). */
+  'inbox.board.done': 'Dismiss',
   /** 나중에 — 내일 아침까지 그 열 맨 아래로 접고, 내 차례 수에서 뺀다. */
   'inbox.board.later': 'Later',
   /** 치운 것·미룬 것을 되돌린다. */
@@ -3097,6 +3102,33 @@ export const en = {
   /** 열 맨 아래 접힘 줄. 접힌 카드도 수로 남는다. */
   'inbox.board.fold.quiet': 'Quiet for a week ({count})',
   'inbox.board.fold.old': 'Older ({count})',
+  'inbox.board.fold.stale': 'Waiting over a week ({count})',
+  /** A안 받은 일(목록+상세). 보기 둘: 받은 일 / 진행 보드. */
+  'inbox.view.label': 'View',
+  'inbox.view.list': 'Inbox',
+  'inbox.view.board': 'Board',
+  'inbox.list.tabs': 'Inbox sections',
+  'inbox.list.tab.todo': 'To do',
+  'inbox.list.tab.news': 'Updates',
+  'inbox.list.tab.later': 'Later',
+  'inbox.list.tab.cleared': 'Cleared',
+  'inbox.list.section.decision': 'Needs your decision',
+  'inbox.list.section.blocker': 'Blocked, waiting on you',
+  'inbox.list.section.news': 'Also waiting on you',
+  /** 7일 넘은 접힘 줄에 섞인 결정 수(designer n2). */
+  'inbox.list.staleDecisions': '{count} decisions',
+  'inbox.list.expand': 'Show',
+  'inbox.list.collapse': 'Hide',
+  'inbox.list.clearAll': 'Dismiss all',
+  'inbox.list.openThread': 'Open thread',
+  'inbox.list.back': 'List',
+  'inbox.list.latest': 'Latest',
+  'inbox.list.pick': 'Pick an item on the left',
+  'inbox.list.keys': 'J/K move',
+  /** 치운 뒤·미룬 뒤 되돌리기 알림(designer n4). */
+  'inbox.list.toast.dismissed': 'Dismissed {count}',
+  'inbox.list.toast.later': 'Snoozed {count} until tomorrow',
+  'inbox.list.toast.undo': 'Undo',
   'inbox.board.fold.cleared': 'Cleared ({count})',
   'inbox.board.fold.later': 'Later ({count})',
   /** 쓰다 만 초안 — 보드 밖 한 줄. */

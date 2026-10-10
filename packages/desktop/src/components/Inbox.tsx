@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
+import { InboxList, type InboxStateNext } from './InboxList';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
-import { buildBoard, daysWaiting, laterUntilLabel, mineCount, filterBoard, BOARD_SCOPES, type BoardCard, type BoardColumn, type BoardFold, type BoardScope } from '../lib/inboxBoard';
+import { buildBoard, daysWaiting, laterUntilLabel, mineCount, filterBoard, groupSimilar, BOARD_KINDS, BOARD_SCOPES, type BoardCard, type BoardColumn, type BoardFold, type BoardGroup, type BoardKind, type BoardScope } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -28,12 +29,16 @@ const THREAD_PREFIX = 'thread:';
 const FOLD_KEY = {
   quiet: 'inbox.board.fold.quiet',
   old: 'inbox.board.fold.old',
+  stale: 'inbox.board.fold.stale',
   cleared: 'inbox.board.fold.cleared',
   later: 'inbox.board.fold.later',
 } as const satisfies Record<BoardFold, string>;
-/** 열마다 접힘 줄의 순서. 나중에는 어느 열에나 서고, 진행은 조용한 것, 끝남은 지난 것 → 치운 것. */
+/**
+ * 열마다 접힘 줄의 순서. 나중에는 어느 열에나 서고, 내 차례·막힘은 7일 넘게 기다린 것(R2), 진행은
+ * 조용한 것, 끝남은 지난 것 → 치운 것.
+ */
 const COLUMN_FOLDS: Record<BoardColumn, readonly BoardFold[]> = {
-  mine: ['later'], blocked: ['later'], active: ['quiet', 'later'], done: ['old', 'later', 'cleared'],
+  mine: ['stale', 'later'], blocked: ['stale', 'later'], active: ['quiet', 'later'], done: ['old', 'later', 'cleared'],
 };
 
 /** 나중에의 깨어날 시각 — **다음 날 아침 9시**(내 시계). 하루 미룸이 가장 흔한 뜻이다. */
@@ -62,6 +67,13 @@ const SCOPE_KEY = {
  * (`aria-hidden`); 구획 이름은 글자 키가 진다.
  */
 const COLUMN_EMOJI = { mine: '🙋', active: '💬', blocked: '⏳', done: '✅' } as const satisfies Record<BoardColumn, string>;
+
+/** 내 차례 띠 안의 묶음 이름(R4) — 내가 할 일의 종류. */
+const KIND_KEY = {
+  decision: 'inbox.board.kind.decision',
+  blocker: 'inbox.board.kind.blocker',
+  news: 'inbox.board.kind.news',
+} as const satisfies Record<BoardKind, string>;
 
 /** 열 이름 키. 화면이 제 손으로 글자를 적지 않는다. */
 const COLUMN_KEY = {
@@ -232,10 +244,10 @@ export function Inbox({ open, onClose }: Props) {
     const dm = dms.find((d) => d.id === id);
     if (dm) {
       const peers = dm.memberIds.filter((p) => p !== me?.id);
-      return peers.map((p) => accounts[p]?.handle ?? '…').join(', ') || 'just me';
+      return peers.map((p) => accounts[p]?.handle ?? '…').join(', ') || t('inbox.board.justMe');
     }
     return ch?.name ? `#${ch.name}` : id;
-  }, [channels, dms, accounts, me]);
+  }, [channels, dms, accounts, me, t]);
 
   const cards = useMemo(
     () => buildBoard({
@@ -252,6 +264,8 @@ export function Inbox({ open, onClose }: Props) {
    * 그래야 머리글의 「나를 기다리는 일 N」 = 띠 = 배지(`mineCount` 주석)가 늘 같다.
    */
   const [scope, setScope] = useState<BoardScope>('all');
+  /** 받은 일(A안) / 진행 보드. 기본은 받은 일이다. */
+  const [view, setView] = useState<'list' | 'board'>('list');
   const laneCards = useMemo(
     () => filterBoard(cards.filter((c) => c.column !== 'mine'), threads, scope, me?.id ?? null),
     [cards, threads, scope, me],
@@ -330,20 +344,28 @@ export function Inbox({ open, onClose }: Props) {
    * **완료·나중에·되돌리기** — 서버의 내 상태다(2/2). 남에게 보이는 표시를 남기지 않는다(1/2 의
    * ✅ 를 대신한다). 바꾼 뒤 조용히 다시 읽는다 — 서버가 내 다른 기기에도 `inbox.updated` 를 보낸다.
    */
-  const setState = async (
-    card: BoardCard, next: { state: 'done' } | { state: 'later'; until: string } | { state: null },
-  ): Promise<void> => {
-    setBusy(card.rootId);
+  /**
+   * 묶인 줄(R5)은 **묶인 일 전부**에 같은 상태를 준다 — 한 줄로 보이는데 하나만 치우면 남은 것이 그
+   * 자리에 다시 선다. 서버 호출은 기존 그대로 일 하나에 하나다.
+   */
+  const setState = async (groupsToSet: BoardGroup[], next: InboxStateNext): Promise<void> => {
+    if (groupsToSet.length === 0) return;
+    setBusy(groupsToSet[0]!.card.rootId);
     try {
-      await getController().api.setInboxThreadState(card.rootId, next);
+      for (const group of groupsToSet) {
+        for (const c of [group.card, ...group.similar]) await getController().api.setInboxThreadState(c.rootId, next);
+      }
+    } finally {
       reload({ quiet: true });
-    } finally { setBusy(null); }
+      setBusy(null);
+    }
   };
 
-  const cardView = (card: BoardCard) => {
+  const cardView = (group: BoardGroup) => {
+    const { card } = group;
     const who = card.whoId ? accounts[card.whoId] : undefined;
     const days = daysWaiting(card.sinceAt, Date.now());
-    const more = card.entries.length - 1;
+    const replies = card.replyCount ?? 0;
     return (
       <li key={card.rootId} className="rounded-row border border-border bg-surface-raised">
         <button
@@ -357,14 +379,19 @@ export function Inbox({ open, onClose }: Props) {
           {/* **해야 할 일 한 문장.** 잘라 낸 본문 두 줄이 아니라 고른 한 문장이다(`oneSentence`). */}
           <span data-testid={`inbox-card-summary-${card.rootId}`} className="line-clamp-2 break-words text-fg">
             {bodyWithHandles(card.summary, accounts, groups, teams)}
+            {/* 같은 실패가 몇 번 났나(R5) — 묶인 일 수. */}
+            {group.similar.length > 0 && (
+              <span data-testid={`inbox-card-similar-${card.rootId}`} className="ml-1.5 rounded-full bg-surface-sunken px-1.5 text-meta text-fg-muted">
+                {t('inbox.board.similar', { count: group.similar.length + 1 })}
+              </span>
+            )}
           </span>
-          {/* 채널 · 누가 · 얼마나. 넘치면 채널 이름부터 줄인다 — 시각은 잘리면 뜻을 잃는다. */}
+          {/* 누가 · 채널 · 얼마나. 넘치면 **채널 이름부터** 줄인다(R6) — 「f…」로는 누가 물었는지 모른다.
+              시각은 잘리면 뜻을 잃는다. 채널은 「#」 한 글자로 남지 않게 세 글자 폭은 지킨다(designer d1). */}
           <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-meta text-fg-subtle">
             {who && <Identity account={who} className="h-5 w-5 shrink-0 text-[10px]" variant="avatar" />}
-            {/* 좁으면 **작성자부터** 줄인다(designer) — 얼굴이 이미 누군지 말하고, 채널은 대신할 것이 없다. */}
-            {who && <span aria-hidden="true" className="min-w-0 shrink-[10] truncate font-medium text-fg-muted">{who.handle}</span>}
-            {/* 채널은 줄지 않는다 — 다만 아주 긴 이름이 줄을 다 먹지 않게 폭의 절반 가까이에서 자른다. */}
-            <span className="max-w-[45%] shrink-0 truncate">{channelLabel(card.channelId)}</span>
+            {who && <span aria-hidden="true" data-testid={`inbox-card-who-${card.rootId}`} className="shrink-0 font-medium text-fg-muted">{who.handle}</span>}
+            <span data-testid={`inbox-card-channel-${card.rootId}`} className="min-w-[3ch] truncate">{channelLabel(card.channelId)}</span>
             <span
               className={`shrink-0 ${days != null && card.column === 'mine' ? 'text-state-turn' : ''}`}
               data-testid={`inbox-card-age-${card.rootId}`}
@@ -372,8 +399,6 @@ export function Inbox({ open, onClose }: Props) {
             >
               · {days != null ? t('inbox.board.days', { count: days }) : ago(new Date(card.sinceAt).getTime())}
             </span>
-            {more > 0 && <span className="shrink-0">· {t('inbox.board.more', { count: more })}</span>}
-            {card.unread && <span className="shrink-0 text-accent">· {t('inbox.board.unread')}</span>}
             {/* 미룬 카드는 **언제 다시 서는지** 말한다(designer) — 되돌릴지 그냥 둘지 정하는 근거다. */}
             {card.laterUntil && (
               <span className="shrink-0" data-testid={`inbox-card-later-until-${card.rootId}`} title={dateTimeText(card.laterUntil, locale)}>
@@ -386,54 +411,64 @@ export function Inbox({ open, onClose }: Props) {
           그 자리 처리. 버튼은 카드 **바깥**에 둔다 — `<button>` 안의 `<button>` 은 HTML 이
           허용하지 않고, 고르려다 스레드가 열린다.
         */}
-        <div className="flex flex-wrap gap-1 px-2 pb-1.5">
-          {card.ask?.options.map((o) => (
-            <button
-              key={o.id}
-              data-testid={`inbox-card-answer-${card.rootId}-${o.id}`}
-              disabled={busy === card.rootId}
-              onClick={() => void answer(card, o.id)}
-              className="rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-hover disabled:opacity-50"
-            >
-              {o.label}
-            </button>
-          ))}
+        {/* 선택지 줄과 행동 줄은 **어떤 폭에서도 한 줄로 합치지 않는다**(designer d1) — 붙으면
+            [치우기]까지 선택지(「거절」)처럼 읽힌다. */}
+        {card.ask && (
+          <div className="flex flex-wrap gap-1 px-2 pb-1">
+            {card.ask.options.map((o) => (
+              <button
+                key={o.id}
+                data-testid={`inbox-card-answer-${card.rootId}-${o.id}`}
+                disabled={busy === card.rootId}
+                onClick={() => void answer(card, o.id)}
+                className="rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-hover disabled:opacity-50"
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center gap-1 px-2 pb-1.5">
+          {/* 「답글 N · 새 말」은 행동 줄 왼쪽(designer d1 b′) — 첫 줄에 이름 · 채널 · 시각만 남아 좁은
+              창에서도 채널이 산다. 「+N개 더」는 무엇의 수인지 말하지 않았다(R6) — 답글 수로 말한다. */}
+          <span className="flex min-w-0 items-center gap-1.5 truncate whitespace-nowrap text-meta text-fg-subtle">
+            {replies > 0 && <span data-testid={`inbox-card-replies-${card.rootId}`}>{t('inbox.board.replies', { count: replies })}</span>}
+            {card.unread && <span className="text-accent">{replies > 0 ? '· ' : ''}{t('inbox.board.unread')}</span>}
+          </span>
           {/*
-            접힌 카드(치움·나중에)는 **되돌리기** 하나. 펼친 카드는 나중에 + 완료 — 단, 내 차례에는
-            완료가 없다(내 차례가 치움을 이겨 눌러도 그 자리에 남는다). 나중에는 내 차례에도 있다:
-            그래야 지금 못 할 일을 수에서 뺄 수 있다.
+            접힌 카드(치움·나중에)는 **되돌리기** 하나. 나머지는 **모든 카드**에 나중에 + 치우기(R3) —
+            내 차례도 치울 수 있어야 수가 준다(옛 화면은 내 차례에 치우기가 없어 「129」가 줄지 않았다).
+            7일 넘어 접힌 카드도 여기서 치운다.
           */}
           {card.fold === 'cleared' || card.fold === 'later'
             ? (
               <button
                 data-testid={`inbox-card-undo-${card.rootId}`}
                 disabled={busy === card.rootId}
-                onClick={() => void setState(card, { state: null })}
-                className="ml-auto rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
+                onClick={() => void setState([group], { state: null })}
+                className="ml-auto shrink-0 rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
               >
                 {t('inbox.board.undo')}
               </button>
             )
             : (
-              <span className="ml-auto flex gap-1">
+              <span className="ml-auto flex shrink-0 gap-1">
                 <button
                   data-testid={`inbox-card-later-${card.rootId}`}
                   disabled={busy === card.rootId}
-                  onClick={() => void setState(card, { state: 'later', until: tomorrowMorning(Date.now()) })}
+                  onClick={() => void setState([group], { state: 'later', until: tomorrowMorning(Date.now()) })}
                   className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
                 >
                   {t('inbox.board.later')}
                 </button>
-                {card.column !== 'mine' && (
-                  <button
-                    data-testid={`inbox-card-done-${card.rootId}`}
-                    disabled={busy === card.rootId}
-                    onClick={() => void setState(card, { state: 'done' })}
-                    className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
-                  >
-                    {t('inbox.board.done')}
-                  </button>
-                )}
+                <button
+                  data-testid={`inbox-card-done-${card.rootId}`}
+                  disabled={busy === card.rootId}
+                  onClick={() => void setState([group], { state: 'done' })}
+                  className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
+                >
+                  {t('inbox.board.done')}
+                </button>
               </span>
             )}
         </div>
@@ -441,9 +476,11 @@ export function Inbox({ open, onClose }: Props) {
     );
   };
 
-  // 접힌 것(나중에)은 세지 않는다 — 미룬 일은 지금 나를 기다리는 일이 아니다.
+  // 접힌 것(나중에·7일 넘은 것)은 세지 않는다 — 지금 나를 기다리는 일이 아니다.
   // 배지와 같은 함수다(`lib/inboxBoard::mineCount`) — 두 숫자가 갈릴 자리가 없게.
   const mine = mineCount(cards);
+  /** 카드 목록 → 같은 실패를 묶은 줄들(R5). 묶음은 이미 가른 목록 안에서만 한다. */
+  const rows = (list: BoardCard[]) => groupSimilar(list).map(cardView);
 
   return (
     <aside
@@ -478,8 +515,27 @@ export function Inbox({ open, onClose }: Props) {
             ✕
           </button>
         </div>
-        {/* 필터 — 머리글 둘째 줄. */}
+        {/* 보기 둘 — **받은 일**(A안 목록+상세, 기본)과 **진행 보드**(옛 상태 보드). 보드는 「진행 중인 일
+            전체」를 보는 다른 일이라 받은 일에서 뺐다(designer A안) — 첫 화면은 「내가 할 일」만 말한다. */}
         {load.kind === 'ready' && cards.length > 0 && (
+          <div role="tablist" aria-label={t('inbox.view.label')} className="flex items-center gap-3 text-meta">
+            {(['list', 'board'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="tab"
+                aria-selected={view === v}
+                data-testid={`inbox-view-${v}`}
+                onClick={() => setView(v)}
+                className={`border-b-2 pb-0.5 ${view === v ? 'border-accent font-medium text-fg' : 'border-transparent text-fg-muted hover:text-fg'}`}
+              >
+                {t(v === 'list' ? 'inbox.view.list' : 'inbox.view.board')}
+              </button>
+            ))}
+          </div>
+        )}
+        {/* 필터 — 보드 보기의 머리글 셋째 줄. 받은 일에는 걸지 않는다(내 할 일은 범위로 숨기지 않는다). */}
+        {load.kind === 'ready' && cards.length > 0 && view === 'board' && (
           <div role="group" aria-label={t('inbox.board.scope.label')} data-testid="inbox-scope" className="flex flex-wrap items-center gap-1">
             {BOARD_SCOPES.map((s) => (
               <button
@@ -518,14 +574,23 @@ export function Inbox({ open, onClose }: Props) {
         넓은 창에서는 나란히, 좁은 창에서는 세로로 쌓인다. 끌어 옮기기는 없다: 카드는 판정을 따라
         저절로 옮긴다. 스크롤은 이 자리 하나가 진다 — 띠와 열이 따로 굴러가면 띠가 열을 가린다.
       */}
-      {load.kind === 'ready' && cards.length > 0 && (
+      {load.kind === 'ready' && cards.length > 0 && view === 'list' && (
+        <InboxList
+          cards={cards}
+          busy={busy}
+          channelLabel={channelLabel}
+          onOpen={openCard}
+          onAnswer={answer}
+          onSetState={setState}
+        />
+      )}
+      {load.kind === 'ready' && cards.length > 0 && view === 'board' && (
         <div data-testid="inbox-board" className="@container flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
           {(() => {
-            // 띠 — 오래 기다린 것부터(`buildBoard` 가 내 차례를 sinceAt 오름차순으로 준다).
+            // 띠 — 최근 것부터(R1, `buildBoard` 가 내 차례를 sinceAt 내림차순으로 준다).
             const shown = byColumn.mine.filter((c) => c.fold === null);
-            const head = shown.slice(0, BAND_LIMIT);
-            const rest = shown.slice(BAND_LIMIT);
             const later = byColumn.mine.filter((c) => c.fold === 'later');
+            const staleMine = byColumn.mine.filter((c) => c.fold === 'stale');
             return (
               <section
                 data-testid="inbox-col-mine"
@@ -539,15 +604,40 @@ export function Inbox({ open, onClose }: Props) {
                   {shown.length > 1 && <span className="font-normal text-fg-subtle">· {t('inbox.board.band.order')}</span>}
                 </h3>
                 {/* 0 이면 한 줄로 줄어든다 — 이 띠가 비는 것이 이 화면의 목적이다. */}
-                {shown.length === 0
-                  ? <p data-testid="inbox-band-empty" className="px-1 text-meta text-fg-subtle">{t('inbox.board.empty.mine')}</p>
-                  : <ul className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{head.map(cardView)}</ul>}
-                {rest.length > 0 && (
-                  <details data-testid="inbox-band-more" className="mt-1.5 px-1">
+                {shown.length === 0 && <p data-testid="inbox-band-empty" className="px-1 text-meta text-fg-subtle">{t('inbox.board.empty.mine')}</p>}
+                {/* 내가 할 일의 종류로 묶는다(R4): 결정 → 막힘 → 소식. 빈 묶음은 세우지 않는다. 묶음마다
+                    최근 것부터이고, BAND_LIMIT 넘는 것은 그 묶음 아래 한 줄로 접힌다. */}
+                {BOARD_KINDS.map((kind) => {
+                  const groups = groupSimilar(shown.filter((c) => c.kind === kind));
+                  if (groups.length === 0) return null;
+                  const head = groups.slice(0, BAND_LIMIT);
+                  const rest = groups.slice(BAND_LIMIT);
+                  return (
+                    <div key={kind} data-testid={`inbox-band-kind-${kind}`} className="mt-1 first-of-type:mt-0">
+                      {/* 묶음 머리도 **일 수**로 센다(designer) — 머리글 「나를 기다리는 일 N」과 더해서 맞아야
+                          한다. 줄 수는 ×N 칩이 이미 말한다. */}
+                      <h4 className="px-1 pb-1 text-meta text-fg-muted">
+                        {t(KIND_KEY[kind])} <span data-testid={`inbox-band-kind-count-${kind}`} className="text-fg-subtle">{groups.reduce((n, g) => n + 1 + g.similar.length, 0)}</span>
+                      </h4>
+                      <ul className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{head.map(cardView)}</ul>
+                      {rest.length > 0 && (
+                        <details data-testid={`inbox-band-more-${kind}`} className="mt-1.5 px-1">
+                          <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
+                            {t('inbox.board.more', { count: rest.length })}
+                          </summary>
+                          <ul className="mt-1.5 grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{rest.map(cardView)}</ul>
+                        </details>
+                      )}
+                    </div>
+                  );
+                })}
+                {/* 7일 넘게 기다린 것 — 수에서 빠지고 띠 맨 아래 한 줄로 접힌다(R2). 사라지지는 않는다. */}
+                {staleMine.length > 0 && (
+                  <details data-testid="inbox-fold-mine-stale" className="mt-1.5 px-1">
                     <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
-                      {t('inbox.board.more', { count: rest.length })}
+                      {t(FOLD_KEY.stale, { count: staleMine.length })}
                     </summary>
-                    <ul className="mt-1.5 grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{rest.map(cardView)}</ul>
+                    <ul className="mt-1.5 grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{rows(staleMine)}</ul>
                   </details>
                 )}
                 {later.length > 0 && (
@@ -555,7 +645,7 @@ export function Inbox({ open, onClose }: Props) {
                     <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
                       {t(FOLD_KEY.later, { count: later.length })}
                     </summary>
-                    <ul className="mt-1.5 grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{later.map(cardView)}</ul>
+                    <ul className="mt-1.5 grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{rows(later)}</ul>
                   </details>
                 )}
               </section>
@@ -587,7 +677,7 @@ export function Inbox({ open, onClose }: Props) {
                     <div className="flex flex-col gap-1.5">
                       {shown.length === 0
                         ? <p className="px-1 text-meta text-fg-subtle">{t('inbox.board.empty.other')}</p>
-                        : <ul className="flex flex-col gap-1.5">{shown.map(cardView)}</ul>}
+                        : <ul className="flex flex-col gap-1.5">{rows(shown)}</ul>}
                       {/* 접힘 줄 — 열 맨 아래. 펼치면 같은 카드 모양으로 선다. testid 에 열을 넣는다 — 나중에는
                           어느 열(과 띠)에서나 접히므로 열 없이 두면 한 화면에 같은 id 가 여럿 선다(security #1219). */}
                       {COLUMN_FOLDS[col].map((fold) => {
@@ -598,7 +688,7 @@ export function Inbox({ open, onClose }: Props) {
                             <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
                               {t(FOLD_KEY[fold], { count: folded.length })}
                             </summary>
-                            <ul className="mt-1.5 flex flex-col gap-1.5">{folded.map(cardView)}</ul>
+                            <ul className="mt-1.5 flex flex-col gap-1.5">{rows(folded)}</ul>
                           </details>
                         );
                       })}
