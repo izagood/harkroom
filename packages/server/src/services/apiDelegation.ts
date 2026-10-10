@@ -5,6 +5,7 @@ import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
 import { getMessageById, postMessage } from './messages.js';
+import { systemI18n } from './systemI18n.js';
 
 /**
  * 위임(외부 API 권한 C안 P5, 설계 스레드 07519d86 · jaebin E1·E2). 권한(`api.call`)을 받은 에이전트가 **사람이 정해 둔 단계 안에서**
@@ -151,7 +152,13 @@ export async function delegateApiGrant(pool: Pool, a: {
       : `🔑 ${h(a.fromAgentId)} 가 ${h(target.id)} 에게 ${scopeText} 권한을 다시 줬다 · 받은 곳: @${h(root)}`;
     await postMessage(pool, {
       channelId: cause.channelId, threadRootId: cause.threadRootId, authorId: a.fromAgentId, body, kind: 'system',
-      meta: { delegation: { grantId, pending, rootAccountId: root, fromAgentId: a.fromAgentId, toAgentId: target.id, connectorId: conn.id, connectorName: conn.name, limits, expiresAt: new Date(exp).toISOString(), delegateDepth: a.delegateDepth, writeNeedsHumanCause: w } },
+      meta: {
+        delegation: { grantId, pending, rootAccountId: root, fromAgentId: a.fromAgentId, toAgentId: target.id, connectorId: conn.id, connectorName: conn.name, limits, expiresAt: new Date(exp).toISOString(), delegateDepth: a.delegateDepth, writeNeedsHumanCause: w },
+        // 번역 표지(i18n P5). 이름은 id 로 싣는다 — 본문의 `@루트` 부름(알림)은 본문이 그대로 진다.
+        i18n: systemI18n(pending ? 'system.delegation.pending' : 'system.delegation.done', {
+          fromId: a.fromAgentId, toId: target.id, scope: scopeText, rootId: root,
+        }),
+      },
     }).catch(() => null);
   }
   return { ok: true, grantId, pending };

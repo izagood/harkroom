@@ -26,6 +26,8 @@ import {
 import { recordAudit } from '../audit.js';
 import { emitEvent, emitPosted } from '../events.js';
 import { BAD_THREAD_MESSAGE, isThreadRootOf, postMessage } from '../services/messages.js';
+import { systemI18n } from '../services/systemI18n.js';
+import type { SystemI18n } from '@harkroom/shared';
 import { invokeFactsFor, mayInvoke } from '../services/invokeGate.js';
 import { anyBlockBetween } from './moderationRoutes.js';
 
@@ -53,13 +55,15 @@ const sectionName = z.string().max(40).nullable();
  */
 function memberSystemMessage(
   event: 'added' | 'left' | 'removed', accountId: string,
-): { body: string; kind: 'system'; meta: { accountId: string } } {
+): { body: string; kind: 'system'; meta: { accountId: string; i18n: SystemI18n } } {
   const body = {
     added: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`,
     left: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 나갔습니다.`,
     removed: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 제거되었습니다.`,
   }[event];
-  return { body, kind: 'system', meta: { accountId } };
+  // 본문과 번역 표지를 한 자리에서 만든다(i18n P5, security C8). 표지의 키는 위 세 꼴과 일대일이다 —
+  // 옛 줄 백필(116 마이그레이션)도 이 세 본문을 그대로 대조한다(C6).
+  return { body, kind: 'system', meta: { accountId, i18n: systemI18n(`system.member.${event}`, { accountId }) } };
 }
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, storage?: StorageBackend): Promise<void> {

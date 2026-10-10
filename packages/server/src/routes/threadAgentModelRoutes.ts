@@ -15,6 +15,7 @@ import { emitEvent, emitPosted } from '../events.js';
 import { assignmentOf } from '../services/agents.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { postMessage } from '../services/messages.js';
+import { systemI18n } from '../services/systemI18n.js';
 import { pickAllowed, readPickable } from '../services/agentModelPicks.js';
 import {
   axisValid, clearThreadAgentModel, cleanAxis, effectiveAgentModel, isChannelRoot, listThreadAgentModels, setThreadAgentModel, threadRootOf,
@@ -78,9 +79,14 @@ export async function announceChange(
   const body = value
     ? `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 이 스레드에서 ${handle} 의 모델을 ${value} 로 정했습니다${tag}. 다음 턴부터 적용됩니다.`
     : `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 이 스레드에서 ${handle} 의 모델 지정을 풀었습니다${tag}. 다음 턴부터 기본값으로 돕니다.`;
+  // 번역 표지(i18n P5): 본문과 같은 갈래·같은 값. 에이전트 이름은 id 로 싣고 앱이 지금 이름으로 그린다.
+  const byAgent = byKind === 'agent';
+  const i18n = value
+    ? systemI18n(byAgent ? 'system.threadModel.setByAgent' : 'system.threadModel.set', { accountId: actorId, agentId, value })
+    : systemI18n(byAgent ? 'system.threadModel.clearedByAgent' : 'system.threadModel.cleared', { accountId: actorId, agentId });
   const posted = await postMessage(pool, {
     channelId, authorId: actorId, body, threadRootId, kind: 'system',
-    meta: { accountId: actorId, threadAgentModel: { agentId, model: row?.model ?? null, effort: row?.effort ?? null, byKind } },
+    meta: { accountId: actorId, threadAgentModel: { agentId, model: row?.model ?? null, effort: row?.effort ?? null, byKind }, i18n },
   });
   if (!posted.failure && !posted.replayed) emitPosted(posted, await audienceFor(pool, channelId));
 }
