@@ -9,11 +9,23 @@
  * 조건이 그 색인을 탄다.
  */
 
-/** 이 물음(`alias`)이 지워지지 않은 묶음 카드에 줄로 담겼는가. */
-export const bundledRootSql = (alias: string) => `EXISTS (
-        SELECT 1 FROM message bnd
-         WHERE bnd.meta->>'kind' = 'askBundle' AND bnd.deleted_at IS NULL
-           AND bnd.meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', ${alias}.id::text)))`;
+/**
+ * 이 물음(`alias`)의 차례가 **묶음 카드로 옮겨 갔는가** — 그러면 원 스레드에서는 세지 않는다.
+ *
+ * 옮겨 가는 것은 두 조건을 다 채울 때뿐이다(#1313 security F1). 아니면 원 스레드에서도 계속 센다 — 두 번 서는
+ * 쪽으로 실패한다. 차례 표시가 숨는 것(답할 사람이 어디에서도 🙋 를 못 받는 것)이 더 나쁘다.
+ * - **묶음이 공개 standard 채널에 있다**(보관되지 않은). 공개 채널은 같은 커뮤니티 사람 모두가 보므로(`channelVisibleSql`)
+ *   차례가 옮겨 가도 잃는 사람이 없다. 비공개 채널·DM 에 묶으면 답할 사람이 그 묶음을 못 볼 수 있다.
+ * - **권한 요청·머지 거절 카드가 아니다.** 그 결정은 원 스레드에서만 나므로(묶음에서는 링크 줄) 🙋 도 거기 남는다.
+ */
+export const bundledRootSql = (alias: string) => `(
+        NOT (${alias}.meta ? 'permissionRequest' OR ${alias}.meta ? 'mergeDenial')
+        AND EXISTS (
+          SELECT 1 FROM message bnd
+            JOIN channel bc ON bc.id = bnd.channel_id
+           WHERE bnd.meta->>'kind' = 'askBundle' AND bnd.deleted_at IS NULL
+             AND bc.kind = 'standard' AND bc.visibility = 'public' AND bc.archived_at IS NULL
+             AND bnd.meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', ${alias}.id::text))))`;
 
 /** 이 글(`alias`)이 **열린 줄을 하나라도 가진** 묶음 카드인가. 줄의 상태는 원본에서 읽는다(정본은 원본). */
 export const openBundleSql = (alias: string) => `(${alias}.meta->>'kind' = 'askBundle' AND EXISTS (

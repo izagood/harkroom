@@ -268,6 +268,38 @@ describe('🙋·Inbox 는 묶음 하나에 한 줄(3c)', () => {
   });
 });
 
+describe('차례가 옮겨 가는 것은 공개 채널 묶음뿐, 권한 카드는 남는다(3c, #1313 security F1)', () => {
+  const headCount2 = async (channel: string, rootId: string) => {
+    const res = await app.inject({ method: 'GET', url: `/channels/${channel}/messages?limit=200`, headers: auth(adminToken) });
+    const rows = (res.json().messages ?? res.json()) as { id: string; openAskHumanCount: number | null }[];
+    return rows.find((r) => r.id === rootId)?.openAskHumanCount;
+  };
+
+  it('비공개 채널에 묶으면 원본이 원 스레드에서 계속 센다', async () => {
+    const priv = await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'bundle-private', visibility: 'private' } });
+    expect(priv.statusCode).toBeLessThan(300);
+    const privId = priv.json().id as string;
+    expect(priv.json().visibility).toBe('private');
+    await app.inject({ method: 'POST', url: `/channels/${privId}/members`, headers: auth(adminToken), payload: { accountId: pmId } });
+    const head = await app.inject({ method: 'POST', url: `/channels/${privId}/messages`, headers: auth(adminToken), payload: { body: '몰래 모음' } });
+    const headId = head.json().message?.id ?? head.json().id;
+    const one = await seedAsk();
+    const res = await upsertAskBundle(pool, { callerId: pmId, channelId: privId, threadRootId: headId, body: '정할 것', rootIds: [one.askId] });
+    expect(res.ok).toBe(true);
+    expect(await headCount2(workChannel, one.threadId)).toBe(1);
+    expect((await readThreadStatusFacts(pool, one.threadId))!.facts.humanAsk).not.toBeNull();
+  });
+
+  it('권한 요청 카드는 공개 채널에 묶여도 원 스레드에서 센다', async () => {
+    const head = await app.inject({ method: 'POST', url: `/channels/${pmChannel}/messages`, headers: auth(memberToken), payload: { body: '권한 모음' } });
+    const headId = head.json().message?.id ?? head.json().id;
+    const perm = await seedAsk({}, { permissionRequest: { id: 'x' } });
+    await upsertAskBundle(pool, { callerId: pmId, channelId: pmChannel, threadRootId: headId, body: '정할 것', rootIds: [perm.askId] });
+    expect(await headCount2(workChannel, perm.threadId)).toBe(1);
+    expect((await readThreadStatusFacts(pool, perm.threadId))!.facts.humanAsk).not.toBeNull();
+  });
+});
+
 describe('묶음 푸시는 1분 안의 것을 하나로(3c)', () => {
   it('같은 사람·같은 묶음에 나가지 않은 푸시가 있으면 더 넣지 않는다', async () => {
     const session = memberToken;
