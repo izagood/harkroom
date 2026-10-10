@@ -250,6 +250,8 @@ export function wrapRunnerFrame(runnerId: string, frame: RelayRunnerFrame): Oper
       return { type: 'interactive.error', runnerId, requestId: frame.requestId, message: frame.message };
     case 'attention.required':
       return { type: 'attention.required', runnerId, sessionId: frame.sessionId, accountLabel: frame.accountLabel, screen: frame.screen };
+    case 'local.input':
+      return { type: 'local.input', runnerId, sessionId: frame.sessionId, gen: frame.gen, bytes: frame.bytes };
     default:
       return null;
   }
@@ -274,6 +276,8 @@ export function unwrapOperatorFrame(frame: OperatorToServerFrame): { runnerId: s
       return { runnerId: frame.runnerId, frame: { type: 'interactive.error', requestId: frame.requestId, message: frame.message } };
     case 'attention.required':
       return { runnerId: frame.runnerId, frame: { type: 'attention.required', sessionId: frame.sessionId, accountLabel: frame.accountLabel, screen: frame.screen } };
+    case 'local.input':
+      return { runnerId: frame.runnerId, frame: { type: 'local.input', sessionId: frame.sessionId, gen: frame.gen, bytes: frame.bytes } };
     default:
       return null;
   }
@@ -299,6 +303,10 @@ export function wrapServerFrame(runnerId: string, frame: RelayServerFrame): Serv
         ...(frame.cols !== undefined ? { cols: frame.cols } : {}),
         ...(frame.rows !== undefined ? { rows: frame.rows } : {}),
       };
+    case 'local.writer':
+      return { type: 'local.writer', runnerId, sessionId: frame.sessionId, writerKey: frame.writerKey, gen: frame.gen };
+    case 'local.view':
+      return { type: 'local.view', runnerId, sessionId: frame.sessionId, viewKey: frame.viewKey, granted: frame.granted };
   }
 }
 
