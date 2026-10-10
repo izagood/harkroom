@@ -2697,6 +2697,8 @@ export const en = {
   'update.install': 'Restart to install',
   'update.installing': 'Installing…',
   'update.later': 'Later',
+  /** 설치는 끝났는데 앱이 다시 뜨지 않았다 — 우리가 아는 실패라 원문 대신 이 말을 쓴다. */
+  'update.notRestarted': 'The app did not restart after installing',
   /**
    * 설정 › 업데이트 화면. 설치 버튼은 사이드바 칸과 같은 말이라 `update.install`·`update.installing` 을 같이 쓴다.
    * `{time}` 은 화면이 앱 언어로 낸 시각이다 — 이 사전은 시각을 제 손으로 적지 않는다.

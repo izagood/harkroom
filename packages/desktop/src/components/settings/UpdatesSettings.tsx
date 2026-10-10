@@ -53,7 +53,7 @@ export function UpdatesSettings() {
   else if (status.kind === 'installing') newVersion = t('settings.updates.installingVersion', { version: status.version });
   else if (status.kind === 'uptodate') newVersion = t('settings.updates.upToDate', { time: checkedLabel(checkedAt ?? Date.now(), locale) });
   // 실패는 실패라고 적는다. 원문을 붙여 사람이 원인을 직접 볼 수 있게 한다.
-  else if (status.kind === 'failed') { newVersion = t('settings.updates.failed'); failureLine = status.message; }
+  else if (status.kind === 'failed') { newVersion = t('settings.updates.failed'); failureLine = status.reason === 'notRestarted' ? t('update.notRestarted') : status.message; }
   else newVersion = checking ? t('settings.updates.checking') : t('settings.updates.notChecked');
 
   return (
@@ -118,7 +118,7 @@ export function UpdatesSettings() {
         열린 스레드는 여전히 복원되지 않는다 — 화면 위치는 세션 한정 인메모리라
         `localStorage` 에 넣지 않는다(`state/appStore.ts`).
       */}
-      <p className="max-w-[68ch] text-fg-subtle">{t('settings.updates.restartNote')}</p>
+      <p className="max-w-[68ch] break-keep text-fg-subtle">{t('settings.updates.restartNote')}</p>
         </>)}
       />
     </SettingsPage>

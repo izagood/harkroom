@@ -327,6 +327,17 @@ describe('UpdatesSettings — 앱 언어를 따른다', () => {
     }
   });
 
+  it('설치 뒤 다시 뜨지 않은 실패도 고른 언어로 적는다 — 박힌 영어 원문이 섞이지 않는다', async () => {
+    usePrefsStore.getState().setLocale('ko');
+    setAppUpdater(stub({ check: vi.fn(async () => ({ version: '9.9.9' })), downloadAndInstall: vi.fn(async () => {}) }));
+    render(<UpdatesSettings />);
+    fireEvent.click(screen.getByRole('button', { name: '지금 확인' }));
+    fireEvent.click(await screen.findByRole('button', { name: '다시 시작해 설치' }));
+    await waitFor(() => expect(screen.getByTestId('updates-failure').textContent).toBe('설치한 뒤 앱이 다시 시작되지 않았다'));
+    expect(screen.getByRole('status').textContent).toContain('끝내지 못했다');
+    expect(document.body.textContent).not.toMatch(/did not restart/i);
+  });
+
   it('영어로 고르면 OS 언어와 상관없이 시각이 영어다 — 「오후」 가 섞이지 않는다', async () => {
     usePrefsStore.getState().setLocale('en');
     const at = new Date(2026, 9, 6, 21, 7).getTime();
