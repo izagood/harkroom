@@ -44,6 +44,16 @@ export function useLocale(): Locale {
  * 시각을 정해야 하는 회귀선은 `lib/time.ts::agoLabel` 을 직접 부른다(그 함수가 `now` 를
  * 인자로 받는 이유).
  */
+/**
+ * **React 밖에서** 지금 언어의 번역기를 얻는다 — 상태층·lib 이 사람에게 띄울 알림을 만들 때(`pushNotice`·
+ * 던지는 오류의 화면 문구). `useLocale` 과 같은 규약(저장값이 모르는 언어면 브라우저에게 묻는다)이라
+ * 화면과 알림의 언어가 갈리지 않는다. 부를 때마다 지금 값을 읽는다 — 언어를 바꾼 뒤의 알림은 새 언어다.
+ */
+export function nowT(): Translate {
+  const pref = usePrefsStore.getState().locale;
+  return translator(isLocale(pref) ? pref : detectLocale());
+}
+
 export function useAgo(): (timestamp: number) => string {
   const t = useT();
   const locale = useLocale();
