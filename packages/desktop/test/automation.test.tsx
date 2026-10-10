@@ -26,7 +26,7 @@ afterEach(() => {
 
 describe('자동화 메시지 칩', () => {
   it('meta.automation 이 있으면 작성자 이름 옆에 ⚡ 칩과 자동화 이름 hover 가 선다', () => {
-    render(<MessageItem message={msg('m1', 'c1', 1, '@schedule_manager 정리', 'u1', {
+    render(<MessageItem message={msg('m1', 'c1', 1, '@assistant 정리', 'u1', {
       meta: { automation: { id: 'a1', name: '회사일 정리', trigger: 'schedule', runId: 'r1' } },
     })} />);
     expect(screen.getByTestId('author-name').textContent).toBe('jaebin');

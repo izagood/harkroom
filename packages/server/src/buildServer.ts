@@ -741,11 +741,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // 원자료를 그대로 싣고 파생만 더한다 — 필드를 하나씩 베끼면 새 필드가 조용히 빠진다.
     return { ...runtime, state: projectionState(runtime) } satisfies ProjectionStatus;
   });
-  // avcs 가 없는 설치의 에이전트에게는 avcs 절을 주지 않는다(`guide.ts`). 판정은 투영이 **지금** 보는 URL —
-  // 설정 화면에서 켜고 끄면 서버는 다음 `workspace.guide` 부터 따라가지만, 러너는 가이드를 기동 때 한 번만
-  // 받으므로(`agent/src/main.ts`) 러너를 다시 띄워야 에이전트에게 반영된다.
-  await registerMcp(app, deps.pool, lifecycle, agentPresence, storage, leakGuard, operatorHub,
-    () => (deps.projection?.currentUrl() ?? null) !== null);
+  await registerMcp(app, deps.pool, lifecycle, agentPresence, storage, leakGuard, operatorHub);
 
   return app;
 }

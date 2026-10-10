@@ -28,17 +28,10 @@
 // 규칙을 받을 경로가 이 가이드·러너 프롬프트·스킬 어디에도 없었다. 두 독자 모두 기록을 남기므로
 // COMMON 에 둔다.
 
-//
-// ## avcs 절은 avcs 가 연결된 설치에만 (2026-10-10)
-//
-// avcs 는 harkroom 의 선택 부품이다(`AVCS_BASE_URL` 또는 설정 화면의 투영). 연결이 없는 설치의
-// 에이전트에게 "저장소 변경은 avcs 로"라고 말하면 지킬 수 없는 규칙이 되고, 에이전트는 없는 도구를
-// 찾느라 헤맨다. 그래서 avcs 두 절(경계·경과)을 떼어 두고, 서버가 avcs 를 보고 있을 때만 싣는다.
+/** 두 독자 모두에게 나가는 부분. */
+const COMMON = `# harkroom workspace 가이드 (에이전트용)
 
-const HEADER = `# harkroom workspace 가이드 (에이전트용)`;
-
-/** avcs 가 연결된 설치에만 나가는 부분. */
-const AVCS = `## avcs 사용 경계
+## avcs 사용 경계
 - 읽기 전용 요청(요약·질문 답변·설명·리뷰 의견): 채팅으로만 응답한다. avcs 오브젝트를 만들지 않는다.
 - 저장소 상태 변경(코드 수정·파일 추가/삭제·통합·릴리스): avcs로 진행한다(intent → session → operations).
 - 회색지대(조사·분석): 산출물이 repo에 들어가면 avcs, 채팅 답변으로 끝나면 채팅만.
@@ -50,10 +43,9 @@ avcs 오브젝트는 채팅으로 자동 투영되지 않는다. intent·operati
 직접 읽어 보여 준다.
 intent 를 만들었으면 곧바로 \`workitem.upsert\`(source: \`avcs\`, externalKey: \`<repo>/<intent oid>\`,
 threadRootId: 요청받은 스레드, title: 한 줄)로 그 스레드에 잇는다 — 사람의 「내 작업」 보드에 코드 칩으로
-선다. state 는 주지 않는다(avcs 서버가 정본이다).`;
+선다. state 는 주지 않는다(avcs 서버가 정본이다).
 
-/** 두 독자 모두에게 나가는 부분. */
-const COMMON = `## 이름이 아니라 id 로 가리킨다
+## 이름이 아니라 id 로 가리킨다
 채널·에이전트·팀·사람의 이름(handle·채널명·팀 이름)은 **언제든 바뀌는 표시용 이름표**다.
 무엇을 저장하거나 기록할 때(저장소 파일·frontmatter·설정·메모리·다른 시스템에 남기는 참조)는
 대상을 **id 로** 가리키고, 이름은 사람이 읽으라고 곁들이기만 한다. 이름을 키로 쓰면 이름이
@@ -131,19 +123,10 @@ const TURN_ONLY = `## 이 턴의 일은 앵커 하나다
 /** `workspace.guide` 의 독자. 기본값은 'resident' 다 — 모드를 모르는 옛 호출자는 전문을 받는다. */
 export type GuideMode = 'resident' | 'turn';
 
-export interface GuideOptions {
-  /**
-   * 이 서버가 avcs 를 보고 있는가(투영 URL 이 있는가). 없으면 avcs 절을 빼고 보낸다(파일 머리).
-   * 기본값이 true 인 이유: 옵션을 모르는 옛 호출자(`GUIDE`)는 지금까지와 글자 그대로 같은 전문을 받는다.
-   */
-  avcs?: boolean;
-}
-
-export function guideFor(mode: GuideMode, { avcs = true }: GuideOptions = {}): string {
-  const head = avcs ? [HEADER, AVCS, COMMON] : [HEADER, COMMON];
+export function guideFor(mode: GuideMode): string {
   const sections = mode === 'turn'
-    ? [...head, TURN_ONLY, WAKE, MCP_AUTH]
-    : [...head, RESIDENT_ONLY, WAKE, MCP_AUTH, POLL_CONTRACT];
+    ? [COMMON, TURN_ONLY, WAKE, MCP_AUTH]
+    : [COMMON, RESIDENT_ONLY, WAKE, MCP_AUTH, POLL_CONTRACT];
   return `${sections.join('\n\n')}\n`;
 }
 
