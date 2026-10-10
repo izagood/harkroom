@@ -598,21 +598,28 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
       {rows === 'error' && <p role="alert" className="mt-1 text-meta text-danger">{t('secrets.listFailed')}</p>}
       {Array.isArray(rows) && rows.length === 0 && <p className="mt-1 text-meta text-fg-subtle">{t('secrets.grantsNone')}</p>}
       {Array.isArray(rows) && rows.length > 0 && (
-        <ul className="mt-1 space-y-1">
+        <ul className="mt-1 divide-y divide-border">
           {rows.map((g) => (
-            <li key={g.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-fg" data-testid={`secret-grant-${handle(g.agentId)}`}>
+            <li key={g.id} className="group flex flex-wrap items-center gap-x-2.5 gap-y-1 py-1.5 text-meta text-fg" data-testid={`secret-grant-${handle(g.agentId)}`}>
+              {/* 얼굴 + handle, 범위는 칩 둘, 날짜는 오른쪽 작게, [거두기]는 hover·포커스에서(터치는 늘) — designer 시안 v1 #8. */}
+              <Identity account={accounts[g.agentId]} className="h-5 w-5 text-[10px]" variant="avatar" />
               <span className="font-medium">@{handle(g.agentId)}</span>
-              <span className="text-fg-subtle">
+              <span className="rounded-full border border-border px-2 text-fg-muted" data-testid="secret-grant-scope">
                 {g.channelId ? `#${channels.find((c) => c.id === g.channelId)?.name ?? g.channelId.slice(0, 8)}` : t('secrets.allChannels')}
-                {' · '}{g.operatorId ? t('secrets.boundOperator') : t('secrets.anyOperator')}
-                {' · '}{t('secrets.grantedOn', { when: new Date(g.grantedAt).toLocaleDateString(locale) })}
+              </span>
+              <span className="rounded-full border border-border px-2 text-fg-muted" data-testid="secret-grant-machine"
+                title={g.operatorId ? t('secrets.boundOperatorTitle', { handle: handle(g.agentId) }) : t('secrets.anyOperatorWarn')}>
+                {g.operatorId ? t('secrets.boundOperator') : t('secrets.anyOperator')}
               </span>
               {g.suspendedAt && <span className="rounded bg-warning-surface px-1 text-warning">{t('secrets.suspended', { reason: g.suspendReason ?? '' })}</span>}
               {/* #1156 앞에 생긴 옛 줄: 받는 에이전트의 소유자가 비밀 주인과 다르면 서버가 reveal 을 not_own_agent 로 막는다. */}
               {accounts[g.agentId] && accounts[g.agentId]!.ownerAccountId !== secret.ownerAccountId && (
                 <span className="rounded bg-danger-surface px-1 text-danger" data-testid={`secret-grant-not-own-${handle(g.agentId)}`}>{t('secrets.notOwnBlocked')}</span>
               )}
-              <span className="ml-auto"><SmallButton onClick={() => setRevoking(g)} disabled={busy} danger ariaLabel={t('secrets.revokeAria', { handle: handle(g.agentId) })}>{t('secrets.revoke')}</SmallButton></span>
+              <span className="ml-auto text-fg-subtle">{t('secrets.grantedOn', { when: new Date(g.grantedAt).toLocaleDateString(locale) })}</span>
+              <button type="button" disabled={busy} aria-label={t('secrets.revokeAria', { handle: handle(g.agentId) })}
+                className="rounded-row px-1.5 py-0.5 text-fg-subtle opacity-0 transition-opacity hover:bg-danger-surface hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 disabled:group-hover:opacity-50 [@media(hover:none)]:opacity-100"
+                onClick={() => setRevoking(g)}>{t('secrets.revoke')}</button>
             </li>
           ))}
         </ul>
@@ -697,6 +704,7 @@ function GrantConfirm({ secret, agent, handle, operator, onOperator, busy, onCan
             <button key={v} ref={(el) => { radios.current[v] = el; }} type="button" role="radio" aria-checked={operator === v} disabled={busy}
               tabIndex={operator === v ? 0 : -1}
               className={`rounded-row px-2.5 py-0.5 text-meta ${operator === v ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:text-fg'}`}
+              title={v === 'current' ? t('secrets.boundOperatorTitle', { handle: h }) : t('secrets.anyOperatorWarn')}
               onClick={() => onOperator(v)}>
               {v === 'current' ? t('secrets.operatorCurrent') : t('secrets.operatorAny')}
             </button>
@@ -801,7 +809,7 @@ function AccessPanel({ secret }: { secret: SecretView }) {
       {rows === 'error' && <p role="alert" className="text-meta text-danger">{t('secrets.listFailed')}</p>}
       {Array.isArray(rows) && rows.length === 0 && <p className="text-meta text-fg-subtle">{t('secrets.accessNone')}</p>}
       {Array.isArray(rows) && rows.length > 0 && (
-        <table className="w-full text-left text-meta">
+        <table className="w-full text-left text-meta [&_td]:py-1 [&_th]:pb-1">
           <thead className="text-fg-subtle">
             <tr><th className="pr-3 font-medium">{t('secrets.accessAt')}</th><th className="pr-3 font-medium">{t('secrets.accessWho')}</th><th className="pr-3 font-medium">{t('secrets.accessWhere')}</th><th className="font-medium">{t('secrets.accessResult')}</th></tr>
           </thead>
@@ -818,7 +826,7 @@ function AccessPanel({ secret }: { secret: SecretView }) {
                 <td>
                   {r.result === 'denied' && r.actorAccountId
                     ? <span className="rounded bg-warning-surface px-1 text-warning">{accessText(t, r)}{r.count > 1 ? ` ×${r.count}` : ''}</span>
-                    : accessText(t, r)}
+                    : r.result === 'denied' ? <span className="text-warning" data-testid="secret-access-denied">{accessText(t, r)}</span> : accessText(t, r)}
                   {r.version !== null ? ` · v${r.version}` : ''}
                 </td>
               </tr>
@@ -826,7 +834,7 @@ function AccessPanel({ secret }: { secret: SecretView }) {
           </tbody>
         </table>
       )}
-      <p className="mt-1 text-meta text-fg-subtle">{t('secrets.accessNote')}</p>
+      <p className="mt-1.5 text-meta text-fg-subtle">{t('secrets.accessNote')}</p>
     </div>
   );
 }
