@@ -45,6 +45,19 @@ export const RECENT_MS = 7 * 86_400_000;
  */
 export type BoardFold = 'quiet' | 'old' | 'stale' | 'cleared' | 'later';
 
+/**
+ * **내가 할 일의 종류**(R4, 2026-10-11 designer 재설계). 열(진행·기다림·끝)은 스레드의 상태라서 내
+ * 행동을 말하지 않는다 — 내 차례 띠는 이것으로 묶는다.
+ *
+ * - `decision` 결정: 나에게 온 열린 물음(선택 카드·권한·머지 카드도 물음이다)
+ * - `blocker` 막힘: 안 풀린 실패·계정 관문 — 사람 손이 있어야 풀린다
+ * - `news` 소식: 위 둘이 아닌 것 — 읽기만 하면 된다
+ *
+ * 한 카드에 둘이 겹치면 결정이 이긴다: 고르면 풀리는 일을 막힘 아래에 묻으면 안 된다.
+ */
+export type BoardKind = 'decision' | 'blocker' | 'news';
+export const BOARD_KINDS: readonly BoardKind[] = ['decision', 'blocker', 'news'];
+
 export interface BoardCard {
   /** 스레드 머리 id — 카드의 열쇠이자 여는 곳. */
   rootId: string;
@@ -73,6 +86,15 @@ export interface BoardCard {
    * 줄 끝에 적는다(designer) — 언제 돌아오는지 보여야 되돌릴지 그냥 둘지 정할 수 있다.
    */
   laterUntil: string | null;
+  /** 내가 할 일의 종류(R4). */
+  kind: BoardKind;
+  /**
+   * 같은 실패를 한 줄로 묶는 열쇠(R5) — **같은 에이전트의 같은 실패**(작성자·갈래 표지·원인 문장).
+   * 실패 카드가 아니면 null(묶지 않는다).
+   */
+  similarKey: string | null;
+  /** 스레드의 답글 수(R6, 머리의 `replyCount`). 머리가 없으면 null. */
+  replyCount: number | null;
 }
 
 export interface BoardInput {
@@ -290,8 +312,12 @@ export function buildBoard(input: BoardInput): BoardCard[] {
     const lead = openAsk ?? failure ?? null;
     const ask = openAsk ? askForMe(openAsk.meta, me, scope) : null;
     const failureMeta = failure ? readFailureMeta(failure.meta) : null;
+    // 실패는 **원인**을 제목으로 쓴다(R5): 「하네스가 사람의 확인을 기다린다」 같은 무엇(what)은 실패마다
+    // 같아서 수십 장이 구별되지 않았다. 원인(reason)이 없으면 무엇으로 떨어진다.
+    const failureTitle = (failureMeta?.reason && oneSentence(failureMeta.reason))
+      || (failureMeta?.what && oneSentence(failureMeta.what)) || '';
     const summary = (ask?.prompt && oneSentence(ask.prompt))
-      || (failureMeta?.what && oneSentence(failureMeta.what))
+      || failureTitle
       || oneSentence(lead?.body ?? head?.body ?? latest?.body ?? '')
       || oneSentence(latest?.body ?? '');
     // 항목이 없으면 머리가 마지막으로 움직인 때부터 센다.
@@ -321,6 +347,11 @@ export function buildBoard(input: BoardInput): BoardCard[] {
       unread: list.some((e) => e.readAt === null),
       ask: openAsk && ask ? { messageId: openAsk.messageId, options: ask.options } : null,
       laterUntil: fold === 'later' ? state?.until ?? null : null,
+      kind: kindOf(head, input, ask != null, failure != null),
+      similarKey: failure && failureTitle
+        ? JSON.stringify([failure.authorId, failureMeta?.code ?? null, failureTitle])
+        : null,
+      replyCount: head?.replyCount ?? null,
     });
   }
   // **최근 것이 위**다(R1, 2026-10-11 designer 재설계). 옛 규칙(정정 2)은 내 차례·막힘을 오래 기다린
@@ -333,6 +364,41 @@ export function buildBoard(input: BoardInput): BoardCard[] {
     return Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt);
   });
   return cards;
+}
+
+/**
+ * 할 일의 종류(R4). 머리가 있으면 머리의 지금 사실(열린 물음 수신자·관문·안 풀린 실패)도 본다 —
+ * 나에게 온 물음 항목이 없어도 머리가 나를 지목한 물음을 들고 있으면 결정이다.
+ */
+function kindOf(head: MessageRow | null, input: BoardInput, askForMe: boolean, failure: boolean): BoardKind {
+  const myId = input.me?.id ?? null;
+  if (askForMe || (myId != null && (head?.openAskAccountIds ?? []).includes(myId))) return 'decision';
+  if (failure || (myId != null && (head?.openGateAccountIds ?? []).includes(myId))
+    || (head?.unresolvedFailureCount ?? 0) > 0 || head?.statusReaction?.status === 'stuck') return 'blocker';
+  return 'news';
+}
+
+/** 묶인 한 줄 — 맨 앞 카드(가장 최근)와 같이 묶인 나머지(R5). */
+export interface BoardGroup { card: BoardCard; similar: BoardCard[] }
+
+/**
+ * **같은 실패는 한 줄로**(R5). `similarKey` 가 같은 카드를 맨 앞 것(이미 최근 것부터 정렬돼 있다) 한
+ * 줄에 모은다. 순서는 각 묶음의 맨 앞 카드 자리 그대로다. 묶음은 같은 목록 안에서만 — 열·접힘이 다른
+ * 카드를 섞으면 접힌 것이 펼친 줄로 새어 나온다(그래서 부르는 쪽이 이미 가른 목록을 준다).
+ *
+ * 숫자(`mineCount`)는 그대로 **일(스레드) 수**다 — 묶음은 보이는 모양일 뿐이고, 치우면 묶인 일이 다 치워진다.
+ */
+export function groupSimilar(cards: BoardCard[]): BoardGroup[] {
+  const groups: BoardGroup[] = [];
+  const byKey = new Map<string, BoardGroup>();
+  for (const card of cards) {
+    const g = card.similarKey != null ? byKey.get(card.similarKey) : undefined;
+    if (g) { g.similar.push(card); continue; }
+    const fresh: BoardGroup = { card, similar: [] };
+    groups.push(fresh);
+    if (card.similarKey != null) byKey.set(card.similarKey, fresh);
+  }
+  return groups;
 }
 
 /** "N일째" — 하루 안이면 null(화면이 상대 시각으로 쓴다). */
