@@ -7,6 +7,7 @@ import 'package:http_parser/http_parser.dart' show MediaType;
 
 import 'api_error.dart';
 import 'content_type.dart';
+import 'ask.dart';
 import 'models.dart';
 
 /// 서버 REST 클라이언트. 데스크탑 `api.ts` 의 **같은 규약**을 따른다:
@@ -504,6 +505,29 @@ class ApiClient {
       body: const <String, Object?>{},
     );
     return MessageRow.fromJson(_obj(res));
+  }
+
+  /// 묶음 카드의 한 줄에 답한다(선택 카드 P1) — 서버가 원본에 누른 사람 이름으로 적는다. 돌아오는 것은 묶음 행이다.
+  Future<MessageRow> answerBundleItem(String channelId, String bundleId, String rootId, String optionId) async {
+    final res = await _send(
+      'POST',
+      '/channels/$channelId/messages/$bundleId/ask-bundle/answer',
+      body: {'rootId': rootId, 'optionId': optionId},
+    );
+    return MessageRow.fromJson(_obj(res));
+  }
+
+  /// 「남은 n개 추천대로」 — 묶음 행과 줄마다의 결과(답함·뺌과 그 까닭). 되돌릴 수 없는 줄은 서버가 뺀다.
+  Future<(MessageRow, List<BundleAcceptResult>)> acceptRecommendedBundle(String channelId, String bundleId) async {
+    final res = _obj(await _send(
+      'POST',
+      '/channels/$channelId/messages/$bundleId/ask-bundle/accept-recommended',
+      body: const <String, Object?>{},
+    ));
+    final results = <BundleAcceptResult>[
+      for (final r in (res['results'] as List? ?? const [])) ?BundleAcceptResult.fromJson(r),
+    ];
+    return (MessageRow.fromJson(_obj(res['message'])), results);
   }
 
   // ── 나중에 볼 메시지(#219) ─────────────────────────────────────────────

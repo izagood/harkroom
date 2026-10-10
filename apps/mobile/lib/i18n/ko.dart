@@ -199,6 +199,57 @@ class StringsKo implements Strings {
   String get askToAnyone => '사람이 고른다';
 
   @override
+  String bundleRemaining(int n, int m) => '정할 것 $n/$m 남음';
+
+  @override
+  String bundleAllDone(int m) => '$m개 모두 정해졌다';
+
+  @override
+  String bundleAcceptRecommended(int n) => '남은 $n개 추천대로';
+
+  @override
+  String get bundleAcceptNote => '되돌릴 수 없는 결정(머지·배포·비밀·권한)은 빠진다';
+
+  @override
+  String get bundleRecommended => '추천';
+
+  @override
+  String get bundleReplyInThread => '원 스레드에서 글로 답하기 →';
+
+  @override
+  String get bundleDecideInThread => '원 스레드에서 정하기 →';
+
+  @override
+  String get bundleLoading => '원본을 읽는 중…';
+
+  @override
+  String get bundleUnavailable => '원본 카드를 볼 수 없다';
+
+  @override
+  String bundleAnswered(String label, String name) => '$label · $name 고름';
+
+  @override
+  String bundleReplied(String name) => '$name · 글로 답함';
+
+  @override
+  String bundleNoteBy(String name) => '$name 요약:';
+
+  @override
+  String get bundleSkipIrreversible => '되돌릴 수 없는 결정이라 일괄에서 뺐다 — 직접 골라 줘';
+
+  @override
+  String get bundleSkipNoRecommendation => '추천이 없어 일괄에서 뺐다';
+
+  @override
+  String get bundleSkipLink => '원 스레드에서 정하는 카드라 뺐다';
+
+  @override
+  String get bundleSkipFailed => '고르지 못했다 — 다시 시도해 줘';
+
+  @override
+  String get bundleSomeone => '누군가';
+
+  @override
   String get threadTitle => '스레드';
 
   @override

@@ -12,6 +12,7 @@ import '../ui/states.dart';
 import '../ui/tokens.dart';
 import 'agent_model.dart';
 import 'agent_rows.dart';
+import 'ask_bundle_card.dart';
 import 'ask_card.dart';
 import 'composer_attachments.dart';
 import 'mention_button.dart';
@@ -302,8 +303,9 @@ Widget buildFeedItem(
     // 판정 순서가 있다: `meta` 가 아는 모양이면 카드를 **덧붙이고**, 아니면 본문만.
     // 카드는 줄을 대신하지 않는다 — 대신하면 무엇을 묻는지와 누가 묻는지가 사라졌다.
     final ask = AskMeta.read(m.meta);
-    final report = ask == null ? ReportMeta.read(m.meta) : null;
-    final failure = ask == null && report == null ? FailureMeta.read(m.meta) : null;
+    final bundle = ask == null ? AskBundleMeta.read(m.meta) : null;
+    final report = ask == null && bundle == null ? ReportMeta.read(m.meta) : null;
+    final failure = ask == null && bundle == null && report == null ? FailureMeta.read(m.meta) : null;
     final onceNumber = ask != null ? MergeOnceNote.pendingNumber(m.meta, context.app.me?.id) : null;
     final Widget? card = ask != null
         ? (onceNumber == null
@@ -312,7 +314,9 @@ Widget buildFeedItem(
                 MergeOnceNote(message: m, number: onceNumber),
                 AskCard(message: m, ask: ask),
               ]))
-        : report != null
+        : bundle != null
+            ? AskBundleCard(message: m, bundle: bundle)
+            : report != null
             ? ReportCard(message: m, report: report)
             : failure != null
                 ? FailureCard(message: m, failure: failure)

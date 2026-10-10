@@ -18,6 +18,7 @@ import 'package:flutter/foundation.dart';
 
 import '../api/api_client.dart';
 import '../api/api_error.dart';
+import '../api/ask.dart';
 import '../api/models.dart';
 import '../api/ws.dart';
 import '../api/ws_socket.dart';
@@ -2028,6 +2029,21 @@ class AppState extends ChangeNotifier {
   /// 답하지 않기로 한다.
   Future<void> closeAsk(String channelId, String messageId) async {
     _upsertMessage(await _api!.closeAsk(channelId, messageId));
+  }
+
+  /// 묶음 카드의 줄 하나를 원본에서 새로 읽는다 — 캐시를 쓰지 않는다(원본이 다른 채널이면 이 기기에 새 판이 안 온다).
+  Future<MessageRow> fetchMessage(String messageId) => _api!.message(messageId);
+
+  /// 묶음 카드의 한 줄에 답한다. 돌아온 묶음 행으로 덮으면 카드가 원본을 다시 읽는다.
+  Future<void> answerBundleItem(String channelId, String bundleId, String rootId, String optionId) async {
+    _upsertMessage(await _api!.answerBundleItem(channelId, bundleId, rootId, optionId));
+  }
+
+  /// 「남은 n개 추천대로」. 줄마다 결과를 돌려준다 — 빠진 줄의 까닭은 화면이 줄마다 보인다(security 3b ②).
+  Future<List<BundleAcceptResult>> acceptRecommendedBundle(String channelId, String bundleId) async {
+    final (row, results) = await _api!.acceptRecommendedBundle(channelId, bundleId);
+    _upsertMessage(row);
+    return results;
   }
 
   void clearNotice() {
