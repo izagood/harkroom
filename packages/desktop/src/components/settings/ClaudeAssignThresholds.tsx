@@ -16,12 +16,14 @@ import {
 } from '@harkroom/shared/claudePools';
 
 import { Button, TextInput } from './primitives';
+import { useT } from '../../i18n/useT';
+import type { MessageKey } from '../../i18n';
 
-const FIELDS: { key: keyof ClaudeAssignThresholds; label: string }[] = [
-  { key: 'newSessionPct', label: 'Skip for new threads at 5-hour %' },
-  { key: 'newWeeklyPct', label: 'Skip for new threads at weekly %' },
-  { key: 'moveSessionPct', label: 'Move a thread at 5-hour %' },
-  { key: 'moveWeeklyPct', label: 'Move a thread at weekly %' },
+const FIELDS: { key: keyof ClaudeAssignThresholds; labelKey: MessageKey }[] = [
+  { key: 'newSessionPct', labelKey: 'claudeAccounts.assign.newSession' },
+  { key: 'newWeeklyPct', labelKey: 'claudeAccounts.assign.newWeekly' },
+  { key: 'moveSessionPct', labelKey: 'claudeAccounts.assign.moveSession' },
+  { key: 'moveWeeklyPct', labelKey: 'claudeAccounts.assign.moveWeekly' },
 ];
 
 export function ClaudeAssignThresholdsRow({ pool, assign, onSave }: {
@@ -29,13 +31,14 @@ export function ClaudeAssignThresholdsRow({ pool, assign, onSave }: {
   assign: NonNullable<ClaudePoolsConfig['assign']>;
   onSave(next: Partial<ClaudeAssignThresholds>): Promise<void>;
 }) {
+  const t = useT();
   const current = resolveAssignThresholds({ defaultPool: null, order: {}, agents: {}, assign }, pool);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
 
   const parsed = FIELDS.map((f) => {
     const n = Number(draft[f.key]);
-    return { ...f, n, ok: Number.isFinite(n) && n >= 1 && n <= 100 };
+    return { ...f, label: t(f.labelKey), n, ok: Number.isFinite(n) && n >= 1 && n <= 100 };
   });
   const allOk = parsed.every((p) => p.ok);
 
@@ -43,13 +46,15 @@ export function ClaudeAssignThresholdsRow({ pool, assign, onSave }: {
     return (
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-meta text-fg-muted" data-testid={`claude-assign-${pool}`}>
         <span>
-          New threads skip an account at {current.newSessionPct}% (5-hour) or {current.newWeeklyPct}% (weekly).
-          {' '}A thread moves at {current.moveSessionPct}% or {current.moveWeeklyPct}%.
+          {t('claudeAccounts.assign.summary', {
+            newSession: current.newSessionPct, newWeekly: current.newWeeklyPct,
+            moveSession: current.moveSessionPct, moveWeekly: current.moveWeeklyPct,
+          })}
         </span>
-        <Button ariaLabel={`Edit assignment limits for ${pool}`} onClick={() => {
+        <Button ariaLabel={t('claudeAccounts.assign.editAria', { pool })} onClick={() => {
           setDraft(Object.fromEntries(FIELDS.map((f) => [f.key, String(current[f.key])])));
           setEditing(true);
-        }}>Edit limits</Button>
+        }}>{t('claudeAccounts.assign.edit')}</Button>
       </div>
     );
   }
@@ -69,7 +74,7 @@ export function ClaudeAssignThresholdsRow({ pool, assign, onSave }: {
           </label>
         ))}
       </div>
-      {!allOk && <div className="mt-2 text-meta text-warning">Use whole percentages from 1 to 100.</div>}
+      {!allOk && <div className="mt-2 text-meta text-warning">{t('claudeAccounts.assign.invalid')}</div>}
       <div className="mt-3 flex gap-2">
         <Button
           variant="primary"
@@ -82,9 +87,9 @@ export function ClaudeAssignThresholdsRow({ pool, assign, onSave }: {
             setEditing(false);
           }}
         >
-          Save
+          {t('claudeAccounts.assign.save')}
         </Button>
-        <Button onClick={() => setEditing(false)}>Cancel</Button>
+        <Button onClick={() => setEditing(false)}>{t('claudeAccounts.cancel')}</Button>
       </div>
     </div>
   );
