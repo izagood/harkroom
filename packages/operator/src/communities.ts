@@ -44,6 +44,8 @@ export interface StartCommunitiesDeps {
   mcpOAuth?: McpOAuth;
   /** 박동 재료(P3a, `heartbeat.ts`). 없으면 박동을 내지 않는다. */
   heartbeat?: CommunityDeps['heartbeat'];
+  /** 같은 머신의 터미널 직결 허브(R1 PR-3b). 커뮤니티마다 그대로 넘긴다. */
+  localTerminal?: CommunityDeps['localTerminal'];
 }
 
 export interface CommunityRuntime {
@@ -173,6 +175,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
       version: operatorVersion(deps.appVersion),
       heartbeat: deps.heartbeat,
       runnerLink: deps.runnerLink, forwarder, fetchImpl: deps.fetchImpl,
+      ...(deps.localTerminal ? { localTerminal: deps.localTerminal } : {}),
       harnesses: () => { refreshHarnesses(); return withModels(); },
       // 실패는 삼킨다 — 못 적어도 이 오퍼레이터는 그대로 돈다. 앱의 '이 기기' 기본값만 늦어진다.
       onSelf: (operatorId) => {
