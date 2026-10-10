@@ -7,6 +7,7 @@ import { openWindow, popOutChannel } from '../lib/windowActions';
 import { useLocale, useT } from '../i18n/useT';
 import { stampLabel } from '../lib/day';
 import { highlightParts, searchExcerpt } from '../lib/highlight';
+import { errorText } from '../lib/errorText';
 
 /**
  * ⌘K 와 ⌘F 는 **다른 물음**이다.
@@ -109,7 +110,7 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
       setHasSearched(true);
       if (offset === 0) setActiveIndex(page.messages.length > 0 ? 0 : -1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('search.palette.failed'));
+      setError(errorText(e, t, t('search.palette.failed')));
       if (offset === 0) setResults([]);
     } finally {
       setLoading(false);

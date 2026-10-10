@@ -4,6 +4,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
+import { errorText } from '../lib/errorText';
 
 /**
  * 멤버 패널의 실패 문구(#344). 서버의 사유는 영문이고 이 패널은 그것을 그대로 띄우고 있었다 —
@@ -93,7 +94,7 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
     setAutoMentionError(null);
     // 자동 멘션 목록(#173)은 멤버 목록과 **별개로** 받는다 — 한쪽 실패가 다른 쪽을 가리면 안 된다.
     void getController().loadChannelAutoMentions(channelId)
-      .catch((err: unknown) => setAutoMentionError(err instanceof Error ? err.message : t('sidebar.members.autoMentionListFailed')));
+      .catch((err: unknown) => setAutoMentionError(errorText(err, t, t('sidebar.members.autoMentionListFailed'))));
     setMemberError(null);
     setInviteAccountId('');
     setTeams([]);
@@ -103,7 +104,7 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
     try {
       await getController().loadChannelMembers(channelId);
     } catch (err) {
-      setMemberError(err instanceof Error ? err.message : t('sidebar.members.listFailed'));
+      setMemberError(errorText(err, t, t('sidebar.members.listFailed')));
       return;
     }
     /**
@@ -136,7 +137,7 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
       // 방금 들어온 에이전트를 빼고 그린다.
       await getController().loadChannelMembers(channelId);
     } catch (err) {
-      setTeamError(err instanceof Error ? err.message : t('sidebar.members.teamAddFailed'));
+      setTeamError(errorText(err, t, t('sidebar.members.teamAddFailed')));
     }
   };
 
@@ -171,7 +172,7 @@ export function ChannelMembersPanel({ channel, part = 'all' }: {
       if (value === 'off') await getController().unsetChannelAutoMention(channelId, agentAccountId);
       else await getController().setChannelAutoMention(channelId, agentAccountId, value);
     } catch (err) {
-      setAutoMentionError(err instanceof Error ? err.message : t('sidebar.members.autoMentionFailed'));
+      setAutoMentionError(errorText(err, t, t('sidebar.members.autoMentionFailed')));
     }
   };
 

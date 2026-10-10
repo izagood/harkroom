@@ -19,6 +19,7 @@ import { getController } from '../../state/controller';
 import { useT } from '../../i18n/useT';
 import { ModelPicker } from './ModelPicker';
 import { usePendingEdit } from './pendingEdits';
+import { errorText } from '../../lib/errorText';
 
 /** 하네스가 effort 목록을 안 밝혔을 때 고를 값 — 상세의 Effort 칸과 같은 목록이다. */
 const FALLBACK_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
@@ -64,7 +65,7 @@ export function AgentPickableSection({ agent, disabled }: { agent: AgentView; di
       setCleared(clearOutside ? (res.cleared ?? 0) : null);
       return true;
     } catch (err) {
-      setError(t('agents.pickable.saveFailed', { reason: err instanceof Error ? err.message : String(err) }));
+      setError(t('agents.pickable.saveFailed', { reason: errorText(err, t) }));
       return false;
     } finally {
       setBusy(false);

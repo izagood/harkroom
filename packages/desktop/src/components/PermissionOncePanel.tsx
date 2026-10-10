@@ -7,6 +7,7 @@ import { useActiveStore } from '../state/communities';
 import { useLocale, useT } from '../i18n/useT';
 import { checkLocalMerge, getLocalMerge, hasOperatorLocalSurface, listLocalAgents } from '../lib/operatorLocal';
 import { prUrlOf } from './MergeDenialPanel';
+import { errorText } from '../lib/errorText';
 
 /**
  * 머지 거절에서 온 권한 카드의 [이번 한 번 머지](스레드 1b75d7a0 ③, designer 시안 merge-once-card).
@@ -112,7 +113,7 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
       const r = await getController().approvePermissionOnce(d.agentId, d.requestId, { ghUser, relaxChecks: relax, number: d.number, headSha: d.headSha });
       setDone({ ghUser, relaxChecks: relax, expiresAt: r.approvalExpiresAt ?? new Date(Date.now() + 86_400_000).toISOString() });
     } catch (e) {
-      setError({ code: e instanceof ApiError ? e.code : 'failed', raw: e instanceof Error ? e.message : String(e) });
+      setError({ code: e instanceof ApiError ? e.code : 'failed', raw: errorText(e, t) });
     } finally {
       setBusy(false);
     }

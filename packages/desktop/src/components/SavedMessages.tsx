@@ -6,6 +6,7 @@ import { getController } from '../state/controller';
 import { displayBody } from '../lib/mention';
 import { useT, useLocale } from '../i18n/useT';
 import { stampLabel } from '../lib/day';
+import { errorText } from '../lib/errorText';
 
 interface Props {
   open: boolean;
@@ -48,7 +49,7 @@ export function SavedMessages({ open, onClose }: Props) {
       (err: unknown) => {
         if (!alive) return;
         setEntries([]);
-        setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        setLoad({ kind: 'error', message: errorText(err, t) });
       },
     );
     return () => { alive = false; };

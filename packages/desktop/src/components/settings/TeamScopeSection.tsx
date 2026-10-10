@@ -15,6 +15,7 @@ import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { ApiError } from '../../lib/api';
 import { useT } from '../../i18n/useT';
+import { errorText } from '../../lib/errorText';
 
 export function TeamScopeSection({ teamId, scope, ownerAccountId, invokers, editable, onChanged }: {
   teamId: string;
@@ -38,7 +39,7 @@ export function TeamScopeSection({ teamId, scope, ownerAccountId, invokers, edit
     try { await fn(); } catch (e) {
       setError(e instanceof ApiError && e.code === 'owner_required'
         ? t('agents.teams.scope.errOwnerRequired')
-        : t('agents.scope.errFailed', { reason: e instanceof Error ? e.message : String(e) }));
+        : t('agents.scope.errFailed', { reason: errorText(e, t) }));
     } finally { setBusy(false); }
   };
 

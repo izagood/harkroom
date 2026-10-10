@@ -61,6 +61,7 @@ import { AGENT_DETAIL_TABS, parseAgentTarget, type AgentDetailTab } from './agen
 import { ConfirmDialog } from '../ConfirmDialog';
 import { operatorNameOf, operatorPickerLabels } from '../../lib/operatorName';
 import { ImmediateBadge, PendingEditsContext, setLeaveGuard, type PendingHandlers, type RegisterPending } from './pendingEdits';
+import { errorText } from '../../lib/errorText';
 
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 harkroom 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
@@ -1593,7 +1594,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       // 되돌리면 방금 만든 카드를 다시 찾아 눌러야 한다.
       setSelectedTeam(created);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('agents.teams.createFailed'));
+      setError(errorText(e, t, t('agents.teams.createFailed')));
     } finally { setBusy(false); }
   };
 
@@ -2621,7 +2622,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                             .catch((err: unknown) => setError(
                               err instanceof ApiError && err.code === 'not_capable'
                                 ? t('agents.assignment.notCapable')
-                                : t('agents.assignment.failed', { reason: err instanceof Error ? err.message : String(err) }),
+                                : t('agents.assignment.failed', { reason: errorText(err, t) }),
                             ))
                             .finally(() => setAssigning(false));
                         }}
@@ -2648,7 +2649,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                                 setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
                               })
                               .catch((err: unknown) => setError(
-                                t('agents.assignment.failed', { reason: err instanceof Error ? err.message : String(err) }),
+                                t('agents.assignment.failed', { reason: errorText(err, t) }),
                               ))
                               .finally(() => setAssigning(false));
                           }}
