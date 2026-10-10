@@ -130,6 +130,10 @@ on:
       # 릴리스다. 모바일의 배포 경로는 따로 생긴다(TestFlight, 계획서 §9).
       - 'apps/mobile/**'
       - '.github/workflows/mobile.yml'
+      # 소개 페이지(harkroom.com)도 앱·서버 어디에도 실리지 않는다. 제 이미지는
+      # `site-image.yml` 이 따로 굽는다.
+      - 'apps/site/**'
+      - '.github/workflows/site-image.yml'
       - 'LICENSE'
       - '.github/workflows/ci.yml'
       - '.github/ISSUE_TEMPLATE/**'
