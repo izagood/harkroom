@@ -52,11 +52,12 @@ export function LeasePanel() {
    * '활성 작업'으로 보여 주면 화면이 오래된 사실을 지금 사실로 주장한다. 띠는 고장을
    * 말하고, 이 줄은 **이 목록을 믿을 수 없다**를 말한다 — 다른 두 사실이다.
    */
+  const t = useT();
   const banner = projectionBanner({
     status: projectionStatus,
     error: projectionStatusError,
     ago: useAgo(),
-    t: useT(),
+    t,
   });
 
   /**
@@ -89,7 +90,7 @@ export function LeasePanel() {
 
   return (
     <div>
-      <div className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">Active work</div>
+      <div className="px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">{t('chat.lease.title')}</div>
       {/*
         **고장은 여기서 말하지 않는다**(문서 4 · 실측 2026-09-07).
 
@@ -128,7 +129,7 @@ export function LeasePanel() {
           배너가 왜 비어 있는지 이미 말했고, 거기에 "없다"를 덧붙이면 읽지도 못한
           것을 없다고 단정하는 셈이다. */}
       {byRepo.length === 0 && banner === null && (
-        <div className="px-2 text-meta text-fg-muted">No active work</div>
+        <div className="px-2 text-meta text-fg-muted">{t('chat.lease.empty')}</div>
       )}
       {byRepo.map(([repo, rows]) => (
         <div key={repo} className="px-2 pb-1">

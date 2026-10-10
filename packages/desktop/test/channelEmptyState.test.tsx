@@ -55,7 +55,7 @@ describe('빈 채널의 다음 걸음', () => {
 
     expect(screen.queryByTestId('channel-empty-state')).toBeNull();
     // 대신 나와야 하는 것은 과거로 가는 길이다.
-    expect(screen.getByText('Load older messages')).toBeTruthy();
+    expect(screen.getByText('이전 메시지 불러오기')).toBeTruthy();
   });
 
   it('names a real agent to mention when one exists', () => {

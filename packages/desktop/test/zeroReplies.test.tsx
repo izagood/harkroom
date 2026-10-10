@@ -88,7 +88,7 @@ describe('#489 답글 0개 루트: 0 은 그리지 않고, 스레드로 가는 �
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 0 })} />);
 
-    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: '메시지 도구' });
     const threadBtn = within(toolbar).getByRole('button', { name: '스레드에 답글 달기' });
 
     fireEvent.click(threadBtn);
@@ -106,7 +106,7 @@ describe('#489 답글 0개 루트: 0 은 그리지 않고, 스레드로 가는 �
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 0 })} />);
 
-    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: '메시지 도구' });
     expect(toolbar.className).toMatch(/\bopacity-0\b/);
     expect(toolbar.className).toMatch(/group-hover:opacity-100/);
     expect(toolbar.className).not.toMatch(/\binvisible\b/);
@@ -145,7 +145,7 @@ describe('#489 답글 0개 루트: 0 은 그리지 않고, 스레드로 가는 �
         <MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount })} />,
       );
 
-      const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
+      const toolbar = screen.getByRole('toolbar', { name: '메시지 도구' });
       const inToolbar = within(toolbar).queryByRole('button', { name: '스레드에 답글 달기' });
       // 이 파일은 한국어로 고정돼 있다(위 `beforeEach`) — 요약 줄의 이름은 `답글 N개` 다.
       const summary = screen.queryByRole('button', { name: /답글 \d+개/ });

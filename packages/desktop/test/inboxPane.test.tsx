@@ -277,7 +277,7 @@ describe('인박스 자리 — 닫는 길과 키보드 (#488 C2)', () => {
     await screen.findByTestId('inbox-pane');
 
     // 디렉터리를 위에 띄운다 — `Overlay` 를 계속 쓰는 화면이다(건드리지 않았다).
-    fireEvent.click(screen.getByText('Directory'));
+    fireEvent.click(screen.getByText('디렉터리'));
     expect(await screen.findByRole('dialog', { name: '디렉터리' })).toBeTruthy();
 
     fireEvent.keyDown(document.body, { key: 'Escape' });
@@ -354,12 +354,12 @@ describe('인박스 자리 — 좁은 창 (#488 C2)', () => {
 
     openInbox();
     await screen.findByTestId('inbox-pane');
-    expect(screen.getByText('Directory')).toBeTruthy();
+    expect(screen.getByText('디렉터리')).toBeTruthy();
 
     fireEvent.keyDown(document, { key: '\\', metaKey: true });
 
     // 사이드바가 접혔다: 홈 목록이 사라지고 헤더에 펼치기 버튼이 선다.
-    await waitFor(() => expect(screen.queryByText('Directory')).toBeNull());
+    await waitFor(() => expect(screen.queryByText('디렉터리')).toBeNull());
     expect(screen.getByRole('button', { name: '사이드바 펼치기' })).toBeTruthy();
     // 접은 것은 사이드바뿐이다 — 인박스와 스레드는 그 자리에 있다.
     expect(screen.getByTestId('inbox-pane')).toBeTruthy();

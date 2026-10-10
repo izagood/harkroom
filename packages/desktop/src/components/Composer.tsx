@@ -1180,7 +1180,7 @@ export function Composer({
     // 여는 중 연결이 끊김)뿐이고, 그것도 조용히 삼키면 링크를 누른 사람은 앱이 멈춘 줄 안다.
     void controller.openMessage(messageId).catch(() => {
       useActiveStore.getState().pushNotice(
-        'Could not open that message. Check your connection and try again.',
+        t('chat.openMessageFailed'),
       );
     });
   };
@@ -1489,7 +1489,7 @@ export function Composer({
       {open && (
         <MentionSuggestList
           id={listId}
-          label={picking ? 'Mentions to keep' : 'Mention suggestions'}
+          label={picking ? t('chat.mentionsToKeep') : t('chat.mentionSuggestions')}
           options={options}
           active={active}
           onActive={setActive}
@@ -1542,7 +1542,7 @@ export function Composer({
         </ul>
       )}
       {(autoActive.length > 0 || sticky.length > 0) && (
-        <ul className="mb-1 flex flex-wrap items-center gap-1" aria-label="Kept mentions">
+        <ul className="mb-1 flex flex-wrap items-center gap-1" aria-label={t('chat.keptMentions')}>
           {/* 자동 멘션 칩(#173). 고정 칩과 같은 줄을 쓰되 '자동' 배지와 색으로 구분한다 —
               사람이 부른 것과 채널이 부르는 것이 같아 보이면 × 가 무엇을 지우는지 알 수 없다.
               × 는 이번 메시지에서만 뺀다. 설정을 지우는 자리는 채널의 멤버 패널이다. */}
@@ -1829,7 +1829,7 @@ export function Composer({
           {pastedText !== null && !tooLong && (
             <button
               type="button"
-              aria-label="Dismiss long paste"
+              aria-label={t('chat.dismissLongPaste')}
               className="rounded-sm px-1 text-fg-muted hover:bg-surface-hover"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => setPastedText(null)}
@@ -1861,7 +1861,7 @@ export function Composer({
           </button>
           <button
             type="button"
-            aria-label="Dismiss pasted link"
+            aria-label={t('chat.dismissPastedLink')}
             className="rounded-sm px-1 text-fg-muted hover:bg-surface-hover"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => setPastedLink(null)}
@@ -1895,7 +1895,7 @@ export function Composer({
           <button
             type="button"
             // 보냄 취소 줄과 **같은 이름**이다 — 하는 일(원문·첨부가 작성창으로 돌아온다)이 같다.
-            aria-label="Undo send"
+            aria-label={t('chat.undoSend')}
             className="rounded-row px-1.5 py-0.5 font-medium text-accent hover:bg-surface-hover"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => cancelWaiting(key)}
@@ -1922,7 +1922,7 @@ export function Composer({
           </span>
           <button
             type="button"
-            aria-label="Undo send"
+            aria-label={t('chat.undoSend')}
             className="rounded-row px-1.5 py-0.5 font-medium text-accent hover:bg-surface-hover"
             // 누른 뒤 원문이 입력창으로 돌아오므로 커서를 지켜야 한다 — @·첨부 버튼과 같은 이유다.
             onMouseDown={(e) => e.preventDefault()}
@@ -2047,7 +2047,7 @@ export function Composer({
         <div className="flex items-center gap-1">
           <button
             type="button"
-            aria-label="Add mention"
+            aria-label={t('chat.addMention')}
             aria-pressed={picking}
             className={`rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-sunken ${
               picking ? 'bg-surface-hover' : ''
@@ -2072,7 +2072,7 @@ export function Composer({
               ref={fileRef}
               type="file"
               multiple
-              aria-label="Attach a file"
+              aria-label={t('chat.attachFile')}
               className="hidden"
               onChange={(e) => void pickFiles(e.target.files)}
             />
@@ -2110,7 +2110,7 @@ export function Composer({
           )}
           <button
             type="button"
-            aria-label="Send message"
+            aria-label={t('chat.send')}
             className="rounded-full bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border disabled:text-fg-subtle"
             // 여기는 blur 를 막지 않는다 — 전송에 성공하면 초안이 비므로 커서를 보존할
             // 이유가 없고, 실패하면 사용자가 다시 textarea 를 눌러 이어 쓴다. 반면 위

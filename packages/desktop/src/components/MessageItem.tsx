@@ -494,7 +494,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
    * 긴 메시지를 알림에 통째로 밀어 넣으면 알림이 화면을 덮는다.
    */
   const copyBody = () =>
-    copyToClipboard(bodyAsHandles(message.body, accounts, groups, teams), 'Could not copy the message. Select it in the message and copy by hand.');
+    copyToClipboard(bodyAsHandles(message.body, accounts, groups, teams), t('chat.message.copyFailed'));
 
   /**
    * 대기 줄(마이그레이션 040)은 말풍선이 아니다 — 발화가 아니므로 리액션·툴바·스레드
@@ -535,20 +535,20 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
      * (`readPositions.ts` 의 `author_id <> $1`) 눌러도 숫자가 그대로다. 아무 일도
      * 일어나지 않는 항목은 거짓 신호다(design.md §4).
      */
-    ...(!isMine ? [{ label: 'Mark unread from here', onSelect: () => { void getController().markChannelUnread(message.channelId, message.seq); } }] : []),
+    ...(!isMine ? [{ label: t('chat.message.markUnread'), onSelect: () => { void getController().markChannelUnread(message.channelId, message.seq); } }] : []),
     // 고정은 **글을 쓸 수 있는 사람 누구나** 한다(#218) — 그래서 작성자·admin 조건이 없다.
     // 보관된 채널에서만 뺀다: 서버가 거절하는 것을 메뉴에 남겨 두면 없는 것을 있다고
     // 표시하는 셈이다(design.md §4). 해제는 보관된 채널에서도 남는다 — 잘못 올라간 핀을
     // 치울 길이 있어야 한다(서버의 DELETE 도 보관을 보지 않는다).
-    ...(!pin && !isArchived ? [{ label: 'Pin', onSelect: () => { void getController().pinMessage(message.channelId, message.id); } }] : []),
-    ...(canUnpin ? [{ label: 'Unpin', onSelect: () => { void getController().unpinMessage(message.channelId, message.id); } }] : []),
+    ...(!pin && !isArchived ? [{ label: t('chat.message.pin'), onSelect: () => { void getController().pinMessage(message.channelId, message.id); } }] : []),
+    ...(canUnpin ? [{ label: t('chat.message.unpin'), onSelect: () => { void getController().unpinMessage(message.channelId, message.id); } }] : []),
     // #271: 수정창에는 `@handle` 을 채운다 — 저장된 정본은 `<@id>` 라, 그대로 넣으면
     // 사람이 `<@0f3c…>` 를 고치게 된다. 저장할 때 서버가 다시 정규화한다.
-    ...(canEdit ? [{ label: 'Edit', onSelect: () => setDraft(bodyAsHandles(message.body, accounts, groups, teams)) }] : []),
+    ...(canEdit ? [{ label: t('chat.message.edit'), onSelect: () => setDraft(bodyAsHandles(message.body, accounts, groups, teams)) }] : []),
     // 확인은 **겹창**으로 묻는다(#ConfirmDialog). 예전에는 툴바 안에 확인 버튼을 끼워 넣느라
     // `!confirmingDelete` 로 이 항목을 숨겨야 했다 — 같은 자리를 두 UI 가 나눠 썼기 때문이다.
     // 겹창은 툴바 밖이라 자리를 다투지 않으므로 조건은 권한 하나로 돌아온다.
-    ...(canDelete ? [{ label: 'Delete', onSelect: () => setConfirmingDelete(true) }] : []),
+    ...(canDelete ? [{ label: t('chat.message.delete'), onSelect: () => setConfirmingDelete(true) }] : []),
     /**
      * #231 되돌리기. 문구가 'Delete' 가 아닌 이유를 문구 자체가 말해야 한다 — 이것은
      * 지우기가 아니라 **채널에서만** 거두는 일이고, 메시지는 스레드에 그대로 남는다.
@@ -557,14 +557,14 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
      * 확인 단계를 두지 않는다: 지우기와 달리 본문이 사라지지 않는다. 다만 되돌린 것을
      * 다시 채널로 올리는 길은 없으므로(다시 쓰면 된다) 'Undo' 라고 부르지도 않는다.
      */
-    ...(canRecall ? [{ label: 'Remove from channel', onSelect: () => { void getController().recallFromChannel(message.id); } }] : []),
+    ...(canRecall ? [{ label: t('chat.message.removeFromChannel'), onSelect: () => { void getController().recallFromChannel(message.id); } }] : []),
     /**
      * 거두기와 **같은 자리, 반대 방향**이다. 둘은 조건이 배타적이라(`alsoInChannel`)
      * 한 메뉴에 함께 뜨는 일이 없다 — 지금 상태가 어느 쪽인지 항목 하나가 말한다.
      *
      * 확인 단계를 두지 않는다: 되돌리는 길(`Remove from channel`)이 바로 옆에 있다.
      */
-    ...(canPostToChannel ? [{ label: 'Post to channel', onSelect: () => { void getController().postToChannel(message.id); } }] : []),
+    ...(canPostToChannel ? [{ label: t('chat.message.postToChannel'), onSelect: () => { void getController().postToChannel(message.id); } }] : []),
   ];
 
   /**
@@ -784,7 +784,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           )}
           {avcsType && <span className="rounded-sm bg-warning-surface-strong px-1 text-meta text-warning">{avcsType}</span>}
           <span className="text-meta text-fg-muted">{time}</span>
-          {message.editedAt && <span className="text-meta text-fg-muted">(edited)</span>}
+          {message.editedAt && <span className="text-meta text-fg-muted">{t('chat.message.edited')}</span>}
         </div>
 
         {draft === null ? (
@@ -1060,13 +1060,13 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           겹창은 무엇을 지우는지 본문째 보여 주기까지 한다(`ConfirmDialog` 주석). */}
       {confirmingDelete && (
         <ConfirmDialog
-          title="Delete message?"
+          title={t('chat.message.deleteTitle')}
           // 본문이 빈 메시지(첨부만 올린 것)에서는 미리보기를 아예 그리지 않는다 —
           // 빈 상자는 "본문이 이렇다"가 아니라 "못 읽었다"로 보인다.
           detail={deletePreview === '' ? undefined : (
             <span className="line-clamp-3 whitespace-pre-wrap break-words">{deletePreview}</span>
           )}
-          confirmLabel="Delete"
+          confirmLabel={t('chat.message.delete')}
           danger
           onConfirm={() => { setConfirmingDelete(false); void getController().deleteMessage(message.id); }}
           onCancel={() => setConfirmingDelete(false)}

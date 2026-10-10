@@ -145,7 +145,7 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
     <div
       ref={rootRef}
       role="toolbar"
-      aria-label="message toolbar"
+      aria-label={t('chat.toolbar')}
       aria-orientation="horizontal"
       data-open={picking ? 'true' : 'false'}
       onKeyDown={onArrow}
@@ -172,7 +172,7 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
         className={picking ? slotOn : slot}
         /* 이름을 **바꾸지 않는다** — 이 버튼의 접근 이름은 `Reactions.tsx` 가 쓰던 그대로다.
            그림만 얼굴＋로 바뀌었고, 하는 일은 같다. */
-        aria-label="Add reaction"
+        aria-label={t('chat.addReaction')}
         aria-expanded={picking}
         aria-haspopup="true"
         onClick={() => setPicking((v) => !v)}
@@ -236,7 +236,7 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
         menuItems.length > 0 && (
           <Menu
             renderTrigger={(props) => (
-              <button {...props} data-slot className={slot} aria-label="More actions">
+              <button {...props} data-slot className={slot} aria-label={t('chat.moreActions')}>
                 <DotsIcon />
               </button>
             )}
