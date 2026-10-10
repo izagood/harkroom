@@ -409,7 +409,7 @@ function buildMcpServer(
    * 창)는 지금까지와 글자 그대로 같은 전문을 받아야 한다. 새 값은 옵트인이다.
    */
   server.registerTool('workspace.guide', {
-    description: '워크스페이스 규칙(avcs 사용 경계 포함). mode=turn 이면 러너 턴용 판본',
+    description: '워크스페이스 규칙(avcs 가 연결돼 있으면 그 사용 경계 포함). mode=turn 이면 러너 턴용 판본',
     inputSchema: { mode: z.enum(['resident', 'turn']).optional() },
   }, async ({ mode }) => jsonResult({ guide: guideFor(mode ?? 'resident', { avcs: avcsConnected() }) }));
 
