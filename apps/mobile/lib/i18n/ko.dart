@@ -858,4 +858,34 @@ class StringsKo implements Strings {
 
   @override
   String get inboxOtherView => '보기';
+
+  @override
+  Map<String, String> get systemTemplates => const {
+        'system.member.added': '{accountId}님이 채널에 추가됐다.',
+        'system.member.left': '{accountId}님이 채널에서 나갔다.',
+        'system.member.removed': '{accountId}님이 채널에서 제거됐다.',
+        'system.threadModel.set': '{accountId}님이 이 스레드에서 {agentId} 의 모델을 {value} 로 정했다. 다음 턴부터 적용된다.',
+        'system.threadModel.setByAgent': '{accountId}님이 이 스레드에서 {agentId} 의 모델을 {value} 로 정했다(에이전트 지정). 다음 턴부터 적용된다.',
+        'system.threadModel.cleared': '{accountId}님이 이 스레드에서 {agentId} 의 모델 지정을 풀었다. 다음 턴부터 기본값으로 돈다.',
+        'system.threadModel.clearedByAgent': '{accountId}님이 이 스레드에서 {agentId} 의 모델 지정을 풀었다(에이전트 지정). 다음 턴부터 기본값으로 돈다.',
+        'system.merge.approvalUsed': '🔓 {repo}#{number} 1회 승인으로 머지 시도 · head {head} · gh {ghUser}',
+        'system.merge.approvalUsedRelaxed': '🔓 {repo}#{number} 1회 승인으로 머지 시도 · head {head} · gh {ghUser} · CI 판정은 GitHub 에 맡김',
+        'system.merge.merged': '🔀 {repo}#{number} 머지됨 · {sha} (래퍼 보고)',
+        'system.merge.mergedGranted': '🔀 {repo}#{number} 머지됨 · {sha} · 권한: {granterId} (래퍼 보고)',
+        'system.merge.failed': '⛔ {repo}#{number} 머지 실패 · head {head} (래퍼 보고)',
+        'system.apiCall.done': '🔌 {connector} {method} {path} · {status} (래퍼 보고)',
+        'system.apiCall.doneGranted': '🔌 {connector} {method} {path} · {status} · 권한: {granterId} (래퍼 보고)',
+        'system.apiCall.unreachable': '🔌 {connector} {method} {path} · 닿지 않음 (래퍼 보고)',
+        'system.apiCall.unreachableGranted': '🔌 {connector} {method} {path} · 닿지 않음 · 권한: {granterId} (래퍼 보고)',
+        'system.apiBlocked': '🔒 {agentId} 의 API 호출이 막혔다 · {connector} {request} · {code}',
+        'system.apiBlocked.noConnector': '🔒 {agentId} 의 API 호출이 막혔다 · (연결 없음) {request} · {code}',
+        'system.delegation.pending': '🔑 {fromId} 가 {toId} 에게 {scope} 권한을 다시 주려 한다 · {rootId} 의 허락을 기다린다',
+        'system.delegation.done': '🔑 {fromId} 가 {toId} 에게 {scope} 권한을 다시 줬다 · 받은 곳: {rootId}',
+        'system.secret.createdGenerated': '🔑 {agentId} 가 비밀을 만들었다: {name} · 서버가 만든 값({type}) · 이 채널로 자기에게만 부여 · 설정 › 나 › 비밀과 API · {ownerId}',
+        'system.secret.createdImported': '🔑 {agentId} 가 비밀을 만들었다: {name} · 값을 에이전트가 정함(import) · 이 채널로 자기에게만 부여 · 설정 › 나 › 비밀과 API · {ownerId}',
+        'system.secret.rotatedGenerated': '🔑 {agentId} 가 비밀을 회전했다(판 {version}): {name} · 서버가 만든 값({type}) · 이 채널로 자기에게만 부여 · 설정 › 나 › 비밀과 API · {ownerId}',
+        'system.secret.rotatedImported': '🔑 {agentId} 가 비밀을 회전했다(판 {version}): {name} · 값을 에이전트가 정함(import) · 이 채널로 자기에게만 부여 · 설정 › 나 › 비밀과 API · {ownerId}',
+        'system.skill.proposed': '스킬이 제안됐다: {slug} — 승인을 기다린다.',
+        'system.skill.proposedFlagged': '스킬이 제안됐다: {slug} — 승인을 기다린다.\n⚠️ 쓰기 검사에 걸렸다({reason}). 승인 전에 본문을 확인해라.',
+      };
 }

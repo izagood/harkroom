@@ -692,6 +692,11 @@ abstract class Strings {
   String get mentionUnknown;
 
   /// 시스템 메시지(입·퇴장·모델 지정)가 가리키는 계정을 모른다. `@` 를 붙이지 않는다 —
+  /// 서버 시스템 줄의 문장 틀(i18n P5 ③) — 키는 `system_text.dart` 의 [systemI18nArgs] 와 같고, `{인자}` 를
+  /// 채운다. 키를 모르면(이 앱이 서버보다 옛것) 본문으로 물러난다. 한국어 틀은 조사 자리표시자를 쓰지 않는다
+  /// (모바일에는 받침 판정이 없다 — 영문 이름 뒤 「 가」 꼴, 서버 본문과 같다).
+  Map<String, String> get systemTemplates;
+
   /// 시스템 줄은 부르는 말이 아니다(`fillSystemAccount`).
   String get systemAccountUnknown;
 

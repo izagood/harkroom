@@ -859,4 +859,34 @@ class StringsEn implements Strings {
 
   @override
   String get inboxOtherView => 'View';
+
+  @override
+  Map<String, String> get systemTemplates => const {
+        'system.member.added': '{accountId} was added to the channel.',
+        'system.member.left': '{accountId} left the channel.',
+        'system.member.removed': '{accountId} was removed from the channel.',
+        'system.threadModel.set': '{accountId} set {agentId}\'s model in this thread to {value}. It applies from the next turn.',
+        'system.threadModel.setByAgent': '{accountId} set {agentId}\'s model in this thread to {value} (set by an agent). It applies from the next turn.',
+        'system.threadModel.cleared': '{accountId} cleared {agentId}\'s model in this thread. It runs on its default from the next turn.',
+        'system.threadModel.clearedByAgent': '{accountId} cleared {agentId}\'s model in this thread (set by an agent). It runs on its default from the next turn.',
+        'system.merge.approvalUsed': '🔓 {repo}#{number} merge attempted with a one-time approval · head {head} · gh {ghUser}',
+        'system.merge.approvalUsedRelaxed': '🔓 {repo}#{number} merge attempted with a one-time approval · head {head} · gh {ghUser} · CI check left to GitHub',
+        'system.merge.merged': '🔀 {repo}#{number} merged · {sha} (wrapper report)',
+        'system.merge.mergedGranted': '🔀 {repo}#{number} merged · {sha} · permission: {granterId} (wrapper report)',
+        'system.merge.failed': '⛔ {repo}#{number} merge failed · head {head} (wrapper report)',
+        'system.apiCall.done': '🔌 {connector} {method} {path} · {status} (wrapper report)',
+        'system.apiCall.doneGranted': '🔌 {connector} {method} {path} · {status} · permission: {granterId} (wrapper report)',
+        'system.apiCall.unreachable': '🔌 {connector} {method} {path} · unreachable (wrapper report)',
+        'system.apiCall.unreachableGranted': '🔌 {connector} {method} {path} · unreachable · permission: {granterId} (wrapper report)',
+        'system.apiBlocked': '🔒 {agentId}\'s API call was blocked · {connector} {request} · {code}',
+        'system.apiBlocked.noConnector': '🔒 {agentId}\'s API call was blocked · (no connection) {request} · {code}',
+        'system.delegation.pending': '🔑 {fromId} is trying to re-grant {toId} the permission {scope} · waiting for {rootId} to allow it',
+        'system.delegation.done': '🔑 {fromId} re-granted {toId} the permission {scope} · from: {rootId}',
+        'system.secret.createdGenerated': '🔑 {agentId} created the secret {name} · value made by the server ({type}) · granted only to itself in this channel · Settings › Me › Secrets and APIs · {ownerId}',
+        'system.secret.createdImported': '🔑 {agentId} created the secret {name} · value set by the agent (import) · granted only to itself in this channel · Settings › Me › Secrets and APIs · {ownerId}',
+        'system.secret.rotatedGenerated': '🔑 {agentId} rotated the secret {name} (version {version}) · value made by the server ({type}) · granted only to itself in this channel · Settings › Me › Secrets and APIs · {ownerId}',
+        'system.secret.rotatedImported': '🔑 {agentId} rotated the secret {name} (version {version}) · value set by the agent (import) · granted only to itself in this channel · Settings › Me › Secrets and APIs · {ownerId}',
+        'system.skill.proposed': 'Skill proposed: {slug} — waiting for approval.',
+        'system.skill.proposedFlagged': 'Skill proposed: {slug} — waiting for approval.\n⚠️ It was flagged by the write check ({reason}). Check the body before approving.',
+      };
 }

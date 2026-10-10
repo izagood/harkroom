@@ -127,7 +127,7 @@ class SavedRow extends StatelessWidget {
 
     final preview = m == null
         ? (entry.deleted ? t.savedDeleted : t.savedUnavailable)
-        : displayBody(m, app.accounts, unknownMention: t.mentionUnknown, unknownAccount: t.systemAccountUnknown).trim();
+        : displayBody(m, app.accounts, unknownMention: t.mentionUnknown, unknownAccount: t.systemAccountUnknown, t: t).trim();
     final when = agoLabel(m?.createdAt ?? entry.createdAt, DateTime.now().toUtc(), t);
     final who = m == null ? null : '@${app.accounts[m.authorId]?.handle ?? app.displayNameOf(m.authorId)}';
 
