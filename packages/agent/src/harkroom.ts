@@ -362,9 +362,12 @@ export class HarkroomAgentClient {
    *
    * 서버가 이 인자를 모르는 판본이면(러너가 먼저 배포되는 창) MCP 는 알 수 없는 인자를
    * 무시하고 전문을 준다 — 옛 동작으로 후퇴할 뿐 실패하지 않는다.
+   *
+   * `avcs` 는 이 러너의 하네스가 avcs MCP 를 띄울 수 있는가(`avcsGuideFlag.ts`). `false` 면 서버가 avcs 절을 뺀다.
+   * **모르면(`undefined`) 인자 자체를 싣지 않는다** — 서버는 그때 전문을 준다. 옛 서버는 모르는 인자를 버린다.
    */
-  async guide(): Promise<string> {
-    const res = await this.call<{ guide?: string } | string>('workspace.guide', { mode: 'turn' });
+  async guide(opts: { avcs?: boolean } = {}): Promise<string> {
+    const res = await this.call<{ guide?: string } | string>('workspace.guide', { mode: 'turn', ...(typeof opts.avcs === 'boolean' ? { avcs: opts.avcs } : {}) });
     return typeof res === 'string' ? res : (res.guide ?? JSON.stringify(res));
   }
 
