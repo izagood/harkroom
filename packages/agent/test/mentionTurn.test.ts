@@ -4451,8 +4451,7 @@ describe('MCP 준비 표식', () => {
   it('claude 턴: 표식 경로를 env 에 심고, 그 파일이 생기면 ready 가 참이 된다 — 턴이 끝나면 파일을 지운다', async () => {
     const fakeHarkroom = new FakeHarkroom(defOf());
     fakeHarkroom.seedFrom('human-1', '@forge 안녕');
-    const readyDir = await mkdtemp(join(tmpdir(), 'mcp-ready-'));
-    const { deps, plans, turnOpts, runTurn } = await makeDeps(fakeHarkroom, { mcpReadyDir: readyDir });
+    const { deps, plans, turnOpts, runTurn } = await makeDeps(fakeHarkroom);
     const seen: { before: boolean; after: boolean }[] = [];
     runTurn.script = async (plan, opts) => {
       const waitFor = (opts as { injectPrompt?: { waitFor?: WaitFor } }).injectPrompt?.waitFor;
@@ -4466,7 +4465,9 @@ describe('MCP 준비 표식', () => {
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     const file = plans[0]!.env.HARKROOM_MCP_READY_FILE!;
-    expect(dirname(file)).toBe(readyDir);
+    // 러너 상태 디렉터리 아래, 남이 못 들어오는 자리다(security #1285 n2 — tmpdir 은 공용 /tmp 로 떨어질 수 있다).
+    expect(dirname(file)).toBe(join(deps.stateDir, 'mcp-ready'));
+    expect((await stat(dirname(file))).mode & 0o777).toBe(0o700);
     expect((turnOpts[0] as { injectPrompt?: { waitFor?: WaitFor } }).injectPrompt?.waitFor?.maxMs).toBe(8_000);
     expect(seen).toEqual([{ before: false, after: true }]);
     await expect(stat(file)).rejects.toThrow();
@@ -4475,7 +4476,7 @@ describe('MCP 준비 표식', () => {
   it('브릿지가 아예 안 뜨면 표식이 없다 — ready 는 끝까지 거짓이고(pty 가 시한에서 넣는다) 턴은 그대로 끝난다', async () => {
     const fakeHarkroom = new FakeHarkroom(defOf());
     fakeHarkroom.seedFrom('human-1', '@forge 안녕');
-    const { deps, turnOpts, runTurn } = await makeDeps(fakeHarkroom, { mcpReadyDir: await mkdtemp(join(tmpdir(), 'mcp-ready-')) });
+    const { deps, turnOpts, runTurn } = await makeDeps(fakeHarkroom);
     let ready: boolean | null = null;
     runTurn.script = async (_plan, opts) => {
       ready = (opts as { injectPrompt?: { waitFor?: WaitFor } }).injectPrompt!.waitFor!.ready();

@@ -11,7 +11,6 @@ import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
 import type { FailOpts, Me } from './harkroom.js';
@@ -192,8 +191,6 @@ export interface TurnRelay {
 export const MCP_READY_MAX_MS = 8_000;
 
 export interface MentionTurnDeps {
-  /** 표식 파일(`mcpReadyFile`)을 둘 디렉터리. 생략하면 `os.tmpdir()`. 시험이 자리를 고정할 때 쓴다. */
-  mcpReadyDir?: string;
   harkroom: MentionTurnHarkroom;
   /**
    * 러너 메모리 사본(`memoryCache.ts`). 러너 수명 동안 하나다 — main.ts 가 조립한다. 없으면
@@ -1222,9 +1219,18 @@ export async function runMentionTurn(
    * 그래서 턴마다 새 표식 경로를 심고, 브릿지가 첫 `tools/list` 답을 쓴 뒤 그 파일을 만든다
    * (`operator/src/main.ts`). 시한(`MCP_READY_MAX_MS`)을 넘기면 **지금처럼 그냥 넣는다** — 턴을 막지 않는다.
    * 어느 쪽이었는지는 로그 한 줄로 남긴다(효과를 셀 때 "시한까지 감" 횟수를 센다).
+   *
+   * 자리는 러너 상태 디렉터리 아래(`mcp-ready/`, 0700)다 — `os.tmpdir()` 는 `TMPDIR` 이 비면 공용 `/tmp`
+   * 로 떨어진다(security #1285 n2). 그 디렉터리를 못 만들면 기다리지 않는다(지금까지의 동작).
    */
   const mcpReadyFile = usesTui && waitsForMcpBeforePrompt(def.harness)
-    ? join(deps.mcpReadyDir ?? tmpdir(), `harkroom-mcp-ready-${randomUUID()}`)
+    ? await mkdir(join(deps.stateDir, 'mcp-ready'), { recursive: true, mode: 0o700 }).then(
+      () => join(deps.stateDir, 'mcp-ready', randomUUID()),
+      (e: unknown) => {
+        console.error(`[mentionTurn] ${key}: MCP 준비 표식 자리를 못 만들어 기다리지 않는다:`, e instanceof Error ? e.message : e);
+        return null;
+      },
+    )
     : null;
   if (mcpReadyFile !== null) plan.env[RUNNER_MCP_READY_FILE_ENV] = mcpReadyFile;
 

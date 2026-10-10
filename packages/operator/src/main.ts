@@ -22,10 +22,10 @@ import { resolve } from 'node:path';
 import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_MCP_READY_FILE_ENV, RUNNER_TURN_CAUSE_ENV } from '@harkroom/shared/runnerLink';
 import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
-import { runMcpBridge } from './mcpBridge.js';
+import { runMcpBridge, writeReadyMarker } from './mcpBridge.js';
 import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
 import { API_TOOL, parseApiArgs } from './turnApi.js';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
 
@@ -46,7 +46,7 @@ async function mcpBridgeMain(): Promise<void> {
   const cause = process.env[RUNNER_TURN_CAUSE_ENV] || null;
   // 러너가 기다리는 표식(`RUNNER_MCP_READY_FILE_ENV`). 못 쓰면 러너가 시한까지 기다린 뒤 그냥 넣는다.
   const readyFile = process.env[RUNNER_MCP_READY_FILE_ENV] || null;
-  const onToolsListed = readyFile ? () => { try { writeFileSync(readyFile, ''); } catch { /* 러너의 시한이 덮는다 */ } } : undefined;
+  const onToolsListed = readyFile ? () => writeReadyMarker(readyFile) : undefined;
   await runMcpBridge(
     { socketPath, runnerId, secret, cause, cwd: process.cwd(), ...(onToolsListed ? { onToolsListed } : {}) },
     { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr },
