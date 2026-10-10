@@ -52,7 +52,7 @@ export const ko = {
   'profile.kindPerson': '사람',
   'profile.role': '역할',
   'profile.roleAdmin': '관리자',
-  'profile.readonlyNote': '프로필 사진과 handle 은 여기서 바꾼다. 표시 이름과 로그인 ID 는 계정을 만들 때 정해지고, 아직 앱에서 바꿀 수 없다.',
+  'profile.readonlyNote': '프로필 사진과 불리는 이름은 여기서 바꾼다. 표시 이름과 로그인 ID 는 계정을 만들 때 정해지고, 아직 앱에서 바꿀 수 없다.',
   'profile.signOut': '로그아웃',
   'profile.signOutNote': '이 기기에서 로그아웃한다. 이 기기에 더해 둔 커뮤니티가 모두 빠지고, 다른 기기는 로그인된 채로 남는다.',
   'connection.projectionRunning': '{repo} · 투영이 돌고 있다',
