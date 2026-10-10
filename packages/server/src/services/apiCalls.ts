@@ -5,6 +5,7 @@ import { recordAudit } from '../audit.js';
 import type { SecretKeyring } from './secretKeyring.js';
 import { causeByHuman, readLease } from './mergeGrants.js';
 import { postMessage } from './messages.js';
+import { systemI18n } from './systemI18n.js';
 import { API_CARD_CODES, recordBlocked } from './blockedCards.js';
 
 /**
@@ -135,20 +136,29 @@ export async function reportApiCall(pool: Pool, r: ApiReport): Promise<{ ok: tru
     [scope, lease.id, r.method, path]);
   const t = trail.rows[0] ?? { checked: 0, reported: 0 };
   if (t.checked <= t.reported) return { ok: false, code: 'not_checked' };
-  const root = (await pool.query<{ handle: string }>(
+  const root = (await pool.query<{ id: string; handle: string }>(
     `with recursive up as (
        select id, parent_grant_id, granted_by from account_grant where account_id = $1 and capability = 'api.call' and scope = $2
        union all
        select p.id, p.parent_grant_id, p.granted_by from account_grant p join up on p.id = up.parent_grant_id)
-     select a.handle from up join account a on a.id = up.granted_by where up.parent_grant_id is null limit 1`,
-    [r.agentId, scope])).rows[0]?.handle ?? null;
+     select a.id, a.handle from up join account a on a.id = up.granted_by where up.parent_grant_id is null limit 1`,
+    [r.agentId, scope])).rows[0] ?? null;
   // 본문은 고정 문구와 서버가 아는 값뿐이다. 래퍼가 준 `error` 는 meta 에만 — 본문의 `@…` 는 실제 부름이 된다(머지 N2).
   const name = (await pool.query<{ name: string }>(`select name from api_connector where id = $1`, [connectorId])).rows[0]?.name ?? r.connector;
   const status = r.status > 0 ? String(r.status) : '닿지 않음';
-  const body = `🔌 ${name} ${r.method} ${path.replace(/@/g, '＠')} · ${status}` + (root ? ` · 권한: ${root}` : '') + ' (래퍼 보고)';
+  const body = `🔌 ${name} ${r.method} ${path.replace(/@/g, '＠')} · ${status}` + (root ? ` · 권한: ${root.handle}` : '') + ' (래퍼 보고)';
+  // 번역 표지(i18n P5) — 본문과 같은 갈래(닿았나·권한 준 사람이 있나), 같은 값.
+  const shown = path.replace(/@/g, '＠');
+  const i18n = r.status > 0
+    ? (root
+      ? systemI18n('system.apiCall.doneGranted', { connector: name, method: r.method, path: shown, status: r.status, granterId: root.id })
+      : systemI18n('system.apiCall.done', { connector: name, method: r.method, path: shown, status: r.status }))
+    : (root
+      ? systemI18n('system.apiCall.unreachableGranted', { connector: name, method: r.method, path: shown, granterId: root.id })
+      : systemI18n('system.apiCall.unreachable', { connector: name, method: r.method, path: shown }));
   const posted = await postMessage(pool, {
     channelId: lease.channelId, threadRootId: lease.threadRootId, authorId: r.agentId, body, kind: 'system',
-    meta: { apiCall: { connectorId, method: r.method, path, status: r.status, durationMs: r.durationMs, bytes: r.bytes, error: r.error?.slice(0, 1000) ?? null } },
+    meta: { apiCall: { connectorId, method: r.method, path, status: r.status, durationMs: r.durationMs, bytes: r.bytes, error: r.error?.slice(0, 1000) ?? null }, i18n },
   });
   if (posted.failure) return { ok: false, code: 'post_failed' };
   await recordAudit(pool, {

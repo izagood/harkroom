@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import { audienceFor } from './channels.js';
 import { emitEvent } from '../events.js';
 import { postMessage, getMessageById } from './messages.js';
+import { systemI18n } from './systemI18n.js';
 import { safePath } from '../auth/apiGrants.js';
 
 /**
@@ -101,7 +102,14 @@ export async function recordBlocked(pool: Pool, b: BlockedInput): Promise<string
   const body = `🔒 ${handle} 의 API 호출이 막혔다 · ${name} \`${request}\` · ${reasonText[b.code] ?? b.code}`.replace(/@/g, '＠');
   const posted = await postMessage(pool, {
     channelId: b.channelId, threadRootId: b.threadRootId, authorId: b.agentId, body, kind: 'system', serverNotice: true,
-    meta: { blocked: meta },
+    meta: {
+      blocked: meta,
+      // 번역 표지(i18n P5). 사유는 code 로 싣고 앱이 사전(`blocked.why.*`)으로 옮긴다. 이 카드는 같은 막힘이
+      // 되풀이되면 meta.blocked 만 고쳐 쓰는데(위 갱신), 본문·표지는 첫 막힘 그대로라 둘이 어긋나지 않는다.
+      i18n: meta.connectorName
+        ? systemI18n('system.apiBlocked', { agentId: b.agentId, connector: meta.connectorName, request, code: b.code })
+        : systemI18n('system.apiBlocked.noConnector', { agentId: b.agentId, request, code: b.code }),
+    },
   });
   return posted.failure ? null : posted.message.id;
 }

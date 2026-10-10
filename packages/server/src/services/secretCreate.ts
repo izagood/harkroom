@@ -2,6 +2,7 @@ import { createHash, generateKeyPairSync, randomBytes, randomInt, timingSafeEqua
 import type { Pool } from 'pg';
 import { recordAudit } from '../audit.js';
 import { postMessage } from './messages.js';
+import { systemI18n } from './systemI18n.js';
 import { scanWrite } from './contentScan.js';
 import type { SecretKeyring } from './secretKeyring.js';
 import { needlesFor } from './secretLeakGuard.js';
@@ -264,7 +265,17 @@ export async function notifyOwner(
     const posted = await postMessage(pool, {
       channelId: n.lease.channelId, threadRootId: n.lease.threadRootId, authorId: n.agentId, body, kind: 'system', serverNotice: true,
       causeMessageId: n.lease.causeMessageId,
-      meta: { secretNotice: { action: n.action, secretId: n.secretId, name: n.name, version: n.version, via: n.via, agentId: n.agentId, ownerAccountId: n.lease.ownerId } },
+      meta: {
+        secretNotice: { action: n.action, secretId: n.secretId, name: n.name, version: n.version, via: n.via, agentId: n.agentId, ownerAccountId: n.lease.ownerId },
+        // 번역 표지(i18n P5) — 본문과 같은 갈래(만듦/회전 × 서버가 만든 값/에이전트가 정한 값). 값·설명은 싣지 않는다.
+        i18n: n.action === 'created'
+          ? (n.via === 'generate'
+            ? systemI18n('system.secret.createdGenerated', { agentId: n.agentId, name: n.name, type: n.type ?? '', ownerId: n.lease.ownerId })
+            : systemI18n('system.secret.createdImported', { agentId: n.agentId, name: n.name, ownerId: n.lease.ownerId }))
+          : (n.via === 'generate'
+            ? systemI18n('system.secret.rotatedGenerated', { agentId: n.agentId, name: n.name, version: n.version, type: n.type ?? '', ownerId: n.lease.ownerId })
+            : systemI18n('system.secret.rotatedImported', { agentId: n.agentId, name: n.name, version: n.version, ownerId: n.lease.ownerId })),
+      },
     });
     // 실패를 찾을 수 있게 secretId·agentId 를 싣는다(security L2'). 이름·설명·값은 싣지 않는다.
     if (posted.failure) { console.error(`[secretCreate] 소유자 알림 실패: ${posted.failure} secretId=${n.secretId} agentId=${n.agentId}`); return null; }

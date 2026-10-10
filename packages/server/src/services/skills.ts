@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { emitEvent } from '../events.js';
 import { postMessage } from './messages.js';
+import { systemI18n } from './systemI18n.js';
 
 export const SKILL_SLUG_REGEX = /^[a-z0-9-]{2,40}$/;
 
@@ -70,7 +71,13 @@ export async function proposeSkill(
     body: `스킬이 제안되었습니다: **${skill.slug}** — 승인을 기다리고 있습니다.`
       + (skill.flagReason ? `\n⚠️ 쓰기 검사에 걸렸습니다(${skill.flagReason}). 승인 전에 본문을 확인하세요.` : ''),
     kind: 'system',
-    meta: { skillSlug: skill.slug },
+    meta: {
+      skillSlug: skill.slug,
+      // 번역 표지(i18n P5) — 본문과 같은 갈래(쓰기 검사에 걸렸나).
+      i18n: skill.flagReason
+        ? systemI18n('system.skill.proposedFlagged', { slug: skill.slug, reason: skill.flagReason })
+        : systemI18n('system.skill.proposed', { slug: skill.slug }),
+    },
   });
 
   emitEvent({ type: 'skill.proposed', skill, channelId: input.channelId });

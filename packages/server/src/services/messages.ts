@@ -13,6 +13,7 @@ import { invokeFactsFor, mayInvoke, mayInvokeTeam, type InvokeVia } from './invo
 import { closeReplyGrants, openReplyGrants } from './replyGrants.js';
 import { enqueueInboxPush } from './push/pushJobs.js';
 import { displayBodySql } from './systemBody.js';
+import { guardMetaI18n } from './systemI18n.js';
 
 /**
  * 채널 안에서 `seq` 발급을 직렬화하는 advisory lock 의 classid(#523).
@@ -1365,7 +1366,8 @@ export async function postMessage(
        // 막힌 호출은 **그 메시지에 남는다** — 조용히 사라지면 사람은 "왜 아무도 안 왔나"를
        // 묻고, 그 답이 화면에 없다(design.md §4).
        JSON.stringify({
-         ...(input.meta ?? {}),
+         // `meta.i18n`(시스템 줄 번역 표지)은 서버가 만든 시스템 줄에만 남는다 — security C1.
+         ...(guardMetaI18n(input.kind, input.meta) ?? {}),
          ...calls.callMeta,
        }),
        alsoInChannel, mentionDepth],
