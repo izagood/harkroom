@@ -148,10 +148,10 @@ describe('팀 — 팀도 에이전트와 같은 범위 규칙을 탄다(068)', (
     await team('join-team', [a.accountId]);
   });
 
-  it('회귀(#udc): owner 스코프 팀장을 소유자가 팀으로 부르면 깬다 — team_mention 으로', async () => {
-    const lead = await agentWith('udclead', owner.accountId, 'owner');
-    await team('udc-like', [lead.accountId], lead.accountId);
-    const ok = await post(owner.token, '@udc-like 계속해');
+  it('회귀(#ops): owner 스코프 팀장을 소유자가 팀으로 부르면 깬다 — team_mention 으로', async () => {
+    const lead = await agentWith('opslead', owner.accountId, 'owner');
+    await team('ops-like', [lead.accountId], lead.accountId);
+    const ok = await post(owner.token, '@ops-like 계속해');
     const inbox = (await app.inject({ method: 'GET', url: '/inbox', headers: auth(lead.pat) })).json().entries as { messageId: string; reason: string }[];
     expect(inbox.find((e) => e.messageId === ok.id)?.reason).toBe('team_mention');
     expect(ok.meta.mentionDenied).toBeUndefined();

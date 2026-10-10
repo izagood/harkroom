@@ -3,20 +3,20 @@ import { parseToolScope, toolScope, validateToolRule } from '../src/toolRules.js
 
 describe('validateToolRule — 받는 것', () => {
   it('읽기 접두는 경고 없이 받는다', () => {
-    expect(validateToolRule('Bash(gh pr view -R rebellions-sw/udc-k8s:*)')).toEqual({
-      ok: true, rule: 'Bash(gh pr view -R rebellions-sw/udc-k8s:*)', kind: 'bash_prefix', warnings: [],
+    expect(validateToolRule('Bash(gh pr view -R acme-org/infra-k8s:*)')).toEqual({
+      ok: true, rule: 'Bash(gh pr view -R acme-org/infra-k8s:*)', kind: 'bash_prefix', warnings: [],
     });
-    expect(validateToolRule('Bash(kubectl --context udc -n rebelro get:*)')).toMatchObject({ ok: true, warnings: [] });
+    expect(validateToolRule('Bash(kubectl --context ops -n sitebot get:*)')).toMatchObject({ ok: true, warnings: [] });
   });
 
   it('kubectl exec 는 받되 실행형 경고를 단다(D4)', () => {
-    expect(validateToolRule('Bash(kubectl --context udc -n rebelro exec:*)')).toMatchObject({
+    expect(validateToolRule('Bash(kubectl --context ops -n sitebot exec:*)')).toMatchObject({
       ok: true, warnings: ['executes_in_workload'],
     });
   });
 
   it('원격을 바꾸는 하위 명령은 경고한다', () => {
-    expect(validateToolRule('Bash(kubectl --context udc delete pod x)')).toMatchObject({ ok: true, kind: 'bash_exact', warnings: ['mutates_remote'] });
+    expect(validateToolRule('Bash(kubectl --context ops delete pod x)')).toMatchObject({ ok: true, kind: 'bash_exact', warnings: ['mutates_remote'] });
     expect(validateToolRule('Bash(git push origin feature)')).toMatchObject({ ok: true, warnings: ['mutates_remote'] });
   });
 
@@ -29,13 +29,13 @@ describe('validateToolRule — 받는 것', () => {
   });
 
   it('gh 는 하위 명령 두 단계를 고정한 접두와 읽기 api 한 줄만 받는다(F3)', () => {
-    expect(validateToolRule('Bash(gh -R rebellions-sw/udc-k8s pr view:*)')).toMatchObject({ ok: true });
-    expect(validateToolRule('Bash(gh api repos/rebellions-sw/udc-k8s/pulls/11170)')).toMatchObject({ ok: true, kind: 'bash_exact' });
+    expect(validateToolRule('Bash(gh -R acme-org/infra-k8s pr view:*)')).toMatchObject({ ok: true });
+    expect(validateToolRule('Bash(gh api repos/acme-org/infra-k8s/pulls/11170)')).toMatchObject({ ok: true, kind: 'bash_exact' });
   });
 
   it('git push 는 기능 브랜치를 명시한 정확 규칙만 받는다(F4)', () => {
-    expect(validateToolRule('Bash(git push origin feature/rebelro-driver)')).toMatchObject({ ok: true, kind: 'bash_exact', warnings: ['mutates_remote'] });
-    expect(validateToolRule('Bash(git push -u origin rebel-jaebin/x:rebel-jaebin/x)')).toMatchObject({ ok: true });
+    expect(validateToolRule('Bash(git push origin feature/example-driver)')).toMatchObject({ ok: true, kind: 'bash_exact', warnings: ['mutates_remote'] });
+    expect(validateToolRule('Bash(git push -u origin corp-account/x:corp-account/x)')).toMatchObject({ ok: true });
   });
 
   it('gh 의 원격을 바꾸는 하위 명령은 mutates_remote 경고(security 낮은 후속)', () => {
@@ -45,9 +45,9 @@ describe('validateToolRule — 받는 것', () => {
     }
   });
 
-  it('첫 실사용 규칙(rebelro)은 통과한다', () => {
-    expect(validateToolRule('Bash(kubectl --context udc-main-admin@udc-main -n rebelro-cluster exec:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
-    expect(validateToolRule('Bash(gh pr view -R rebellions-sw/udc-k8s:*)')).toMatchObject({ ok: true, warnings: [] });
+  it('첫 실사용 규칙(sitebot)은 통과한다', () => {
+    expect(validateToolRule('Bash(kubectl --context prod-main-admin@prod-main -n app-cluster exec:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
+    expect(validateToolRule('Bash(gh pr view -R acme-org/infra-k8s:*)')).toMatchObject({ ok: true, warnings: [] });
   });
 
   it('임의 명령을 돌릴 수 있는 도구는 runs_arbitrary 경고(n5)', () => {

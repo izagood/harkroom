@@ -586,8 +586,8 @@ describe('buildSystemPrompt', () => {
     expect(granted).toContain('사람이 머지');
     // 조직 grant(owner/*)가 있을 때만 그 뜻과 「명령엔 실제 이름」을 한 줄 더 적는다.
     expect(granted).not.toContain('그 조직의 저장소 전부');
-    const org = buildSystemPrompt({ ...common, merge: { operatorBin: '/opt/harkroom/harkroom-operator', repos: ['rebellions-sw/*'] } });
-    expect(org).toContain('허락된 저장소: rebellions-sw/*');
+    const org = buildSystemPrompt({ ...common, merge: { operatorBin: '/opt/harkroom/harkroom-operator', repos: ['acme-org/*'] } });
+    expect(org).toContain('허락된 저장소: acme-org/*');
     expect(org).toContain('`owner/*` 는 그 조직의 저장소 전부다. 명령에는 `*` 가 아니라 실제 `owner/name` 을 쓴다.');
     // 권한이 없어도 래퍼를 부른다(스레드 1b75d7a0) — 서버가 거절하고 denialId 로 소유자 카드가 선다. 옛 「하지 마라」는 없다.
     const none = buildSystemPrompt({ ...common, merge: { operatorBin: '/opt/harkroom/harkroom-operator', repos: [] } });
@@ -601,9 +601,9 @@ describe('buildSystemPrompt', () => {
   // 1회 승인(스레드 1b75d7a0): grant 가 없어도 이 스레드에 승인된 PR 이 있으면 래퍼 명령과 그 PR 을 적는다. 채팅 「머지해」는 카드로 잇는다.
   it('머지 절: 1회 승인 — 승인된 PR 만 있어도 명령을 적고, cause_not_human 카드·채팅 「머지해」·승인 남음/쓰임 길을 말한다', () => {
     const common = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } as MemoryContext };
-    const once = buildSystemPrompt({ ...common, merge: { operatorBin: '/opt/harkroom/harkroom-operator', repos: [], approved: [{ repo: 'rebellions-sw/udc', number: 42 }] } });
+    const once = buildSystemPrompt({ ...common, merge: { operatorBin: '/opt/harkroom/harkroom-operator', repos: [], approved: [{ repo: 'acme-org/ops', number: 42 }] } });
     expect(once).toContain('/opt/harkroom/harkroom-operator merge <owner/name> <PR 번호> --head <40자 head sha>');
-    expect(once).toContain('**1회 승인**한 PR: rebellions-sw/udc#42');
+    expect(once).toContain('**1회 승인**한 PR: acme-org/ops#42');
     expect(once).toContain('`not_granted`·`cause_not_human`');
     expect(once).toContain('[이번 한 번 머지]');
     expect(once).toContain('"머지해"라고 쓴 것만으로는 허락이 아니다');

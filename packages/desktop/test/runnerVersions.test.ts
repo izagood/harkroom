@@ -3,7 +3,7 @@
  *
  * ## 기준은 오퍼레이터다 (2026-09-29)
  *
- * 앞 판본은 보는 데스크탑의 버전(`appVersion`)과 `!==` 로 견줬다. 그래서 homelab·rowlol 처럼
+ * 앞 판본은 보는 데스크탑의 버전(`appVersion`)과 `!==` 로 견줬다. 그래서 infra·rowlol 처럼
  * 보는 앱보다 **새** 러너가 `0.3.45 · 뒤처짐` 으로 떴고, 어느 앱에서 보느냐에 따라 판정이 갈렸다.
  * 이제 기준은 그 에이전트가 배정된 오퍼레이터의 버전이다 — 러너에 `AGENT_VERSION` 을 심는 쪽이다.
  *
@@ -50,12 +50,12 @@ describe('staleRunners — 뒤처진 러너를 고른다', () => {
   it('러너가 보는 앱보다 새것이어도 오퍼레이터와 같으면 최신이다', () => {
     const result = staleRunners({
       agents: [
-        { id: 'homelab', runnerVersion: '0.3.45', ...on('op-homelab') },
+        { id: 'infra', runnerVersion: '0.3.45', ...on('op-infra') },
         { id: 'rowlol', runnerVersion: '0.3.45', ...on('op-mac') },
       ],
-      live: live('homelab', 'rowlol'),
+      live: live('infra', 'rowlol'),
       operators: operatorVersionMap([
-        { id: 'op-homelab', version: '0.3.45' },
+        { id: 'op-infra', version: '0.3.45' },
         { id: 'op-mac', version: '0.3.45' },
       ]),
     });

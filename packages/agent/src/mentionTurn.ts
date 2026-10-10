@@ -1431,7 +1431,7 @@ export async function runMentionTurn(
       end.canceledBy = byHandle;
       // **PTY 가 없으면 세션을 지금 닫는다**(2026-10-07). `reclaim()` 은 죽일 것이 없어 그냥 돌아가고,
       // 그 세션이 이 턴의 `finally` 밖에서 샌 것이면(등록 경합으로 턴이 먼저 던졌다) 아무도 닫지
-      // 않아 화면의 「running」 줄이 [중단] 을 눌러도 영원히 남았다(rebelro 1h). 아직 스폰 전인 살아
+      // 않아 화면의 「running」 줄이 [중단] 을 눌러도 영원히 남았다(sitebot 1h). 아직 스폰 전인 살아
       // 있는 턴이어도 손해가 없다 — `canceledBeforeSpawn` 이 스폰을 막고, 스폰 중이면 `onSpawn`
       // 가드가 죽이며, `finally` 의 두 번째 `close()` 는 무해하다(relay 가 한 번만 보낸다).
       if (!end.controls) cancelableSession?.close();
@@ -1452,7 +1452,7 @@ export async function runMentionTurn(
    *
    * 세션을 연 순간부터 화면에는 「running」 줄이 선다. 예전에는 정리가 `try` 의 `finally` 에만
    * 있어서, 그 사이(등록·워크스페이스 신뢰 장부)에서 던지면 세션도 발화 폴링도 💬 도 그대로
-   * 남았다 — 10-07 rebelro 「running 1h」 유령 줄이 등록 경합의 throw 로 정확히 그렇게 생겼다.
+   * 남았다 — 10-07 sitebot 「running 1h」 유령 줄이 등록 경합의 throw 로 정확히 그렇게 생겼다.
    */
   const settle = async (): Promise<void> => {
     // 끝 상태의 타이머를 먼저 끈다 — 남기면 끝난 턴의 타이머가 다음 턴의 PTY 를 죽인다.

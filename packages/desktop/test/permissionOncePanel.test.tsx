@@ -31,10 +31,10 @@ const card = (over: Record<string, unknown> = {}, once: Record<string, unknown> 
 
 let invoke: ReturnType<typeof vi.fn>;
 function tauri(opts: { here?: boolean; byScope?: Record<string, string>; reach?: Record<string, 'ok' | 'no' | 'unknown'> } = {}) {
-  const { here = true, byScope = {}, reach = { izagood: 'ok', 'rebel-jaebin': 'no', other: 'unknown' } } = opts;
+  const { here = true, byScope = {}, reach = { izagood: 'ok', 'corp-account': 'no', other: 'unknown' } } = opts;
   invoke = vi.fn(async (cmd: string) => {
     if (cmd === 'operator_agents_list') return { communities: [{ baseUrl: 'x', registered: true, operatorId: 'op', agents: here ? { 'agent-1': {} } : {} }] };
-    if (cmd === 'operator_merge_get') return { ghUser: null, byScope, accounts: [{ login: 'izagood', active: false }, { login: 'rebel-jaebin', active: true }, { login: 'other', active: false }], host: 'mac' };
+    if (cmd === 'operator_merge_get') return { ghUser: null, byScope, accounts: [{ login: 'izagood', active: false }, { login: 'corp-account', active: true }, { login: 'other', active: false }], host: 'mac' };
     if (cmd === 'operator_merge_check') {
       return { reach: { 'example-org/service-api': Object.fromEntries(Object.entries(reach).map(([k, v]) => [k, { status: v, checkedAt: '2026-10-10T00:00:00Z' }])) } };
     }
@@ -88,7 +88,7 @@ describe('PermissionOncePanel', () => {
     render(<PermissionOncePanel message={card()} />);
     fireEvent.click(screen.getByTestId('merge-once-open'));
     const select = await screen.findByTestId('merge-once-account') as HTMLSelectElement;
-    await waitFor(() => expect([...select.options].find((o) => o.value === 'rebel-jaebin')?.disabled).toBe(true));
+    await waitFor(() => expect([...select.options].find((o) => o.value === 'corp-account')?.disabled).toBe(true));
     expect((screen.getByTestId('merge-once-submit') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(select, { target: { value: 'izagood' } });
     fireEvent.click(screen.getByTestId('merge-once-relax'));

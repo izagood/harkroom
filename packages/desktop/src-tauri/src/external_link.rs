@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn outside_links_go_to_the_browser() {
         assert_eq!(
-            v("https://github.com/acme-org/udc-k8s/pull/9420"),
+            v("https://github.com/acme-org/infra-k8s/pull/9420"),
             Verdict::OpenExternally
         );
         // 호스트가 앱 호스트로 **끝나기만** 하는 주소에 속으면 안 된다.

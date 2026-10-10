@@ -88,12 +88,12 @@ const sel = (id: string) => screen.findByTestId(`merge-account-${id}`) as Promis
 
 describe('머지 gh 계정 — 줄마다', () => {
   it('처음 열면 옛 기기 값을 지금 줄들에 한 번 옮긴다 — 맨 위 기기 줄은 없고, 절 머리에 기기 이름', async () => {
-    grants([GRANT, ORG('rebellions-sw')]);
+    grants([GRANT, ORG('acme-org')]);
     const invoke = tauri({ ghUser: 'izagood', byScope: null, accounts: ACCOUNTS, host: 'mac-1' });
     render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} />);
     expect((await sel('izagood_harkroom')).value).toBe('izagood');
-    expect((await sel('rebellions-sw__')).value).toBe('izagood');
-    expect(invoke).toHaveBeenCalledWith('operator_merge_set', { migrate: ['izagood/harkroom', 'rebellions-sw/*'] });
+    expect((await sel('acme-org__')).value).toBe('izagood');
+    expect(invoke).toHaveBeenCalledWith('operator_merge_set', { migrate: ['izagood/harkroom', 'acme-org/*'] });
     expect(screen.getByTestId('merge-gh-user').textContent).toContain('이 기기(mac-1)');
     expect(screen.queryByText('머지에 쓸 GitHub 계정')).toBeNull();
   });
@@ -101,13 +101,13 @@ describe('머지 gh 계정 — 줄마다', () => {
   it('옛 값은 이 기기에 배정된 내 에이전트 전부의 줄로 옮긴다 — 다른 기기 에이전트 줄은 빼고, 닿음 확인은 이 에이전트 줄만(#1265 security n1)', async () => {
     grantsBy({
       'agent-1': [GRANT],
-      'agent-2': [{ ...GRANT, accountId: 'agent-2', scope: 'repo:rebellions-sw/udc' }, { ...GRANT, accountId: 'agent-2' }],
+      'agent-2': [{ ...GRANT, accountId: 'agent-2', scope: 'repo:acme-org/ops' }, { ...GRANT, accountId: 'agent-2' }],
       'agent-3': [{ ...GRANT, accountId: 'agent-3', scope: 'repo:acme/api' }],
     });
     const invoke = tauri({ ghUser: 'izagood', byScope: null, accounts: ACCOUNTS, host: 'mac-1' });
     render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} deviceAgentIds={['agent-1', 'agent-2']} />);
     expect((await sel('izagood_harkroom')).value).toBe('izagood');
-    expect(invoke).toHaveBeenCalledWith('operator_merge_set', { migrate: ['izagood/harkroom', 'rebellions-sw/udc'] });
+    expect(invoke).toHaveBeenCalledWith('operator_merge_set', { migrate: ['izagood/harkroom', 'acme-org/ops'] });
     expect(invoke.mock.calls.filter(([c]) => c === 'operator_merge_set')).toHaveLength(1);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_merge_check', { scopes: ['izagood/harkroom'] }));
     expect(screen.getByTestId('merge-gh-user-shared').textContent).toBe('같은 범위의 줄은 이 기기의 모든 에이전트가 같은 계정을 쓴다');
@@ -128,10 +128,10 @@ describe('머지 gh 계정 — 줄마다', () => {
   });
 
   it('이미 첫 에이전트로만 옮겨진 기기 — 같은 기기 다른 에이전트의 계정 없는 줄도 같은 owner 줄을 이어받는다', async () => {
-    grantsBy({ 'agent-1': [GRANT], 'agent-2': [{ ...GRANT, accountId: 'agent-2', scope: 'repo:izagood/homelab' }, { ...GRANT, accountId: 'agent-2', scope: 'repo:acme/api' }] });
+    grantsBy({ 'agent-1': [GRANT], 'agent-2': [{ ...GRANT, accountId: 'agent-2', scope: 'repo:izagood/infra' }, { ...GRANT, accountId: 'agent-2', scope: 'repo:acme/api' }] });
     const invoke = tauri({ ghUser: null, byScope: { 'izagood/harkroom': 'izagood' }, accounts: ACCOUNTS, host: 'mac-1' });
     render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} deviceAgentIds={['agent-1', 'agent-2']} />);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_merge_set', { ghUser: 'izagood', scope: 'izagood/homelab' }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_merge_set', { ghUser: 'izagood', scope: 'izagood/infra' }));
     expect(invoke).not.toHaveBeenCalledWith('operator_merge_set', expect.objectContaining({ scope: 'acme/api' }));
     expect(invoke).not.toHaveBeenCalledWith('operator_merge_set', expect.objectContaining({ migrate: expect.anything() }));
   });
@@ -149,24 +149,24 @@ describe('머지 gh 계정 — 줄마다', () => {
   });
 
   it('닿음(A)·닿지 않음(B)·확인 못 함(E) — 줄의 계정 옆에, 목록은 닿는 계정이 위로·✓/✕ 표시, 고른 값은 그대로', async () => {
-    grants([GRANT, ORG('rebellions-sw'), ORG('rbln-sw')]);
+    grants([GRANT, ORG('acme-org'), ORG('acme-labs')]);
     const invoke = tauri({ ghUser: 'izagood', byScope: null, accounts: ACCOUNTS, host: 'mac-1' }, { reach: {
       'izagood/harkroom': { izagood: 'ok', 'work-account': 'no' },
-      'rebellions-sw/*': { izagood: 'no', 'work-account': 'ok' },
-      'rbln-sw/*': { izagood: 'unknown', 'work-account': 'unknown' },
+      'acme-org/*': { izagood: 'no', 'work-account': 'ok' },
+      'acme-labs/*': { izagood: 'unknown', 'work-account': 'unknown' },
     } });
     render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} />);
     expect((await screen.findByTestId('merge-account-reach-izagood_harkroom')).dataset.reach).toBe('ok');
-    const org = await screen.findByTestId('merge-account-reach-rebellions-sw__');
+    const org = await screen.findByTestId('merge-account-reach-acme-org__');
     expect(org.dataset.reach).toBe('no');
-    expect(screen.getByTestId('merge-account-no-reach-rebellions-sw__').textContent).toMatch(/izagood 계정은 rebellions-sw/);
-    expect((await screen.findByTestId('merge-account-reach-rbln-sw__')).dataset.reach).toBe('unknown');
-    expect(screen.queryByTestId('merge-account-no-reach-rbln-sw__')).toBeNull();
+    expect(screen.getByTestId('merge-account-no-reach-acme-org__').textContent).toMatch(/izagood 계정은 acme-org/);
+    expect((await screen.findByTestId('merge-account-reach-acme-labs__')).dataset.reach).toBe('unknown');
+    expect(screen.queryByTestId('merge-account-no-reach-acme-labs__')).toBeNull();
     // 목록: 닿는 work-account 가 위, 표시가 붙되 값은 옮긴 izagood 그대로(미리 바꾸지 않는다)
-    const s = await sel('rebellions-sw__');
+    const s = await sel('acme-org__');
     expect(s.value).toBe('izagood');
     expect([...s.options].map((o) => o.textContent)).toEqual(['work-account (gh 활성 계정) ✓', 'izagood ✕']);
-    expect(invoke).toHaveBeenCalledWith('operator_merge_check', { scopes: ['izagood/harkroom', 'rebellions-sw/*', 'rbln-sw/*'] });
+    expect(invoke).toHaveBeenCalledWith('operator_merge_check', { scopes: ['izagood/harkroom', 'acme-org/*', 'acme-labs/*'] });
   });
 
   it('닿음 확인이 실패해도 칸은 그대로 쓸 수 있다', async () => {
@@ -179,12 +179,12 @@ describe('머지 gh 계정 — 줄마다', () => {
   });
 
   it('줄의 계정을 고르면 그 줄 범위와 함께 바로 저장한다(저장 버튼 없음)', async () => {
-    grants([GRANT, ORG('rebellions-sw')]);
-    const invoke = tauri({ ghUser: null, byScope: { 'izagood/harkroom': 'izagood', 'rebellions-sw/*': 'izagood' }, accounts: ACCOUNTS, host: 'mac-1' });
+    grants([GRANT, ORG('acme-org')]);
+    const invoke = tauri({ ghUser: null, byScope: { 'izagood/harkroom': 'izagood', 'acme-org/*': 'izagood' }, accounts: ACCOUNTS, host: 'mac-1' });
     render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} />);
-    fireEvent.change(await sel('rebellions-sw__'), { target: { value: 'work-account' } });
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_merge_set', { ghUser: 'work-account', scope: 'rebellions-sw/*' }));
-    await waitFor(async () => expect((await sel('rebellions-sw__')).value).toBe('work-account'));
+    fireEvent.change(await sel('acme-org__'), { target: { value: 'work-account' } });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_merge_set', { ghUser: 'work-account', scope: 'acme-org/*' }));
+    await waitFor(async () => expect((await sel('acme-org__')).value).toBe('work-account'));
     expect((await sel('izagood_harkroom')).value).toBe('izagood');
   });
 
@@ -197,12 +197,12 @@ describe('머지 gh 계정 — 줄마다', () => {
   });
 
   it('새 줄은 같은 owner 줄의 계정을 이어받는다 — 다른 owner 줄은 이어받지 않는다', async () => {
-    grants([ORG('rebellions-sw'), { ...GRANT, scope: 'repo:rebellions-sw/rcms' }, { ...GRANT, scope: 'repo:acme/api' }]);
-    const invoke = tauri({ ghUser: null, byScope: { 'rebellions-sw/*': 'work-account' }, accounts: ACCOUNTS, host: 'mac-1' });
+    grants([ORG('acme-org'), { ...GRANT, scope: 'repo:acme-org/rcms' }, { ...GRANT, scope: 'repo:acme/api' }]);
+    const invoke = tauri({ ghUser: null, byScope: { 'acme-org/*': 'work-account' }, accounts: ACCOUNTS, host: 'mac-1' });
     render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} />);
-    expect((await sel('rebellions-sw_rcms')).value).toBe('work-account');
+    expect((await sel('acme-org_rcms')).value).toBe('work-account');
     expect((await sel('acme_api')).value).toBe('');
-    expect(invoke).toHaveBeenCalledWith('operator_merge_set', { ghUser: 'work-account', scope: 'rebellions-sw/rcms' });
+    expect(invoke).toHaveBeenCalledWith('operator_merge_set', { ghUser: 'work-account', scope: 'acme-org/rcms' });
     expect(invoke).not.toHaveBeenCalledWith('operator_merge_set', expect.objectContaining({ scope: 'acme/api' }));
   });
 

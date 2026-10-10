@@ -9,7 +9,7 @@ import { restoreCommunitySession, startCommunitySession } from '../src/state/con
 import { acc, fakeApi } from './helpers/fakeApi';
 
 /**
- * 기동 때 비활성 커뮤니티를 되살린다(2026-09-29 jinbin 사고).
+ * 기동 때 비활성 커뮤니티를 되살린다(2026-09-29 beta-team 사고).
  *
  * 사고: 앱이 기동할 때 보관본의 **활성 커뮤니티 하나만** 띄웠다. 나머지는 키체인에 그대로
  * 있었는데 레지스트리에 없어서, 앱을 다시 켤 때마다 레일에서 사라졌다. 곁가지로 활성 하나가
@@ -29,7 +29,7 @@ const two: StoredSessions = {
   active: 'acct-a',
   communities: [
     { accountId: 'acct-a', baseUrl: 'https://a.example', token: 't-a', handle: 'ja', label: null },
-    { accountId: 'acct-b', baseUrl: 'https://b.example', token: 't-b', handle: 'jb', label: 'jinbin' },
+    { accountId: 'acct-b', baseUrl: 'https://b.example', token: 't-b', handle: 'jb', label: 'beta-team' },
   ],
 };
 const stored = (): StoredSessions => JSON.parse(localStorage.getItem(KEY) ?? 'null') as StoredSessions;
@@ -68,7 +68,7 @@ describe('기동 복원 — App', () => {
 
     await waitFor(() => expect(accountIds()).toEqual(['acct-a', 'acct-b']));
     // 사람이 붙인 이름이 복원에서도 살아 있다.
-    expect(useCommunityRegistry.getState().entries[1]!.label).toBe('jinbin');
+    expect(useCommunityRegistry.getState().entries[1]!.label).toBe('beta-team');
   });
 
   it('keeps an unreachable inactive community on the rail instead of dropping it', async () => {
@@ -192,7 +192,7 @@ describe('보관본 중복 접기', () => {
       active: 'acct-a',
       communities: [
         { accountId: 'acct-a', baseUrl: 'https://a.example', token: 't-a', handle: 'ja', label: null },
-        { accountId: 'acct-b', baseUrl: 'https://b.example', token: 'old', handle: 'jb', label: 'jinbin' },
+        { accountId: 'acct-b', baseUrl: 'https://b.example', token: 'old', handle: 'jb', label: 'beta-team' },
         { accountId: 'acct-b', baseUrl: 'https://b.example', token: 'new', handle: 'jb', label: null },
       ],
     }));
@@ -201,7 +201,7 @@ describe('보관본 중복 접기', () => {
 
     expect(loaded!.communities).toEqual([
       { accountId: 'acct-a', baseUrl: 'https://a.example', token: 't-a', handle: 'ja', label: null },
-      { accountId: 'acct-b', baseUrl: 'https://b.example', token: 'new', handle: 'jb', label: 'jinbin' },
+      { accountId: 'acct-b', baseUrl: 'https://b.example', token: 'new', handle: 'jb', label: 'beta-team' },
     ]);
   });
 });

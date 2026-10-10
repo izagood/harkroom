@@ -79,16 +79,16 @@ describe('AgentGrantsSection', () => {
     await screen.findByTestId('agent-grant-izagood/harkroom');
     fireEvent.click(screen.getByText('+ 권한 주기'));
     fireEvent.click(screen.getByRole('radio', { name: 'PR 머지' }));
-    fireEvent.change(screen.getByLabelText('저장소 (정확한 이름 또는 조직 전체 owner/*, 한 줄에 하나)'), { target: { value: 'Izagood/Harkroom-Gate\nizagood/homelab, izagood/homelab' } });
+    fireEvent.change(screen.getByLabelText('저장소 (정확한 이름 또는 조직 전체 owner/*, 한 줄에 하나)'), { target: { value: 'Izagood/Harkroom-Gate\nizagood/infra, izagood/infra' } });
     fireEvent.change(screen.getByLabelText('만료'), { target: { value: '7d' } });
     fireEvent.click(screen.getByText('주기'));
     await waitFor(() => expect(c.putGrant).toHaveBeenCalledTimes(2));
     const scopes = c.putGrant.mock.calls.map((call) => (call[1] as { scope: string }).scope);
-    expect(scopes).toEqual(['repo:izagood/harkroom-gate', 'repo:izagood/homelab']);
+    expect(scopes).toEqual(['repo:izagood/harkroom-gate', 'repo:izagood/infra']);
     const at = (c.putGrant.mock.calls[0]![1] as unknown as { expiresAt: string | null }).expiresAt;
     expect(at).not.toBeNull();
     expect(Date.parse(at as string) - Date.now()).toBeGreaterThan(6 * 86_400_000);
-    await waitFor(() => expect(screen.getByTestId('agent-grant-izagood/homelab')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('agent-grant-izagood/infra')).toBeTruthy());
     // 폼은 닫히고 비워진다.
     expect(screen.queryByTestId('agent-grants-add')).toBeNull();
   });
@@ -114,22 +114,22 @@ describe('AgentGrantsSection', () => {
     fireEvent.click(screen.getByText('+ 권한 주기'));
     fireEvent.click(screen.getByRole('radio', { name: 'PR 머지' }));
     expect(screen.queryByTestId('agent-grants-org-warning')).toBeNull();
-    fireEvent.change(screen.getByLabelText('저장소 (정확한 이름 또는 조직 전체 owner/*, 한 줄에 하나)'), { target: { value: 'Rebellions-SW/*' } });
-    expect(screen.getByTestId('agent-grants-org-warning').textContent).toContain('rebellions-sw 조직의 모든 저장소');
+    fireEvent.change(screen.getByLabelText('저장소 (정확한 이름 또는 조직 전체 owner/*, 한 줄에 하나)'), { target: { value: 'Acme-Org/*' } });
+    expect(screen.getByTestId('agent-grants-org-warning').textContent).toContain('acme-org 조직의 모든 저장소');
     expect((screen.getByText('주기') as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(screen.getByText('주기'));
-    await waitFor(() => expect(c.putGrant).toHaveBeenCalledWith('agent-1', { capability: 'repo.merge', scope: 'repo:rebellions-sw/*', expiresAt: null }));
-    const row = await screen.findByTestId('agent-grant-rebellions-sw/*');
-    expect(row.textContent).toContain('rebellions-sw/*');
-    expect(within(row).getByTestId('agent-grant-org-rebellions-sw').textContent).toBe('조직 전체');
+    await waitFor(() => expect(c.putGrant).toHaveBeenCalledWith('agent-1', { capability: 'repo.merge', scope: 'repo:acme-org/*', expiresAt: null }));
+    const row = await screen.findByTestId('agent-grant-acme-org/*');
+    expect(row.textContent).toContain('acme-org/*');
+    expect(within(row).getByTestId('agent-grant-org-acme-org').textContent).toBe('조직 전체');
     // 정확한 이름 줄에는 배지가 없다.
     expect(within(screen.getByTestId('agent-grant-izagood/harkroom')).queryByTestId(/agent-grant-org-/)).toBeNull();
-    fireEvent.click(screen.getByLabelText('rebellions-sw 조직 전체 머지 권한 거두기'));
-    expect(screen.getByText('rebellions-sw 조직 전체 머지 권한을 거둘까?')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('acme-org 조직 전체 머지 권한 거두기'));
+    expect(screen.getByText('acme-org 조직 전체 머지 권한을 거둘까?')).toBeTruthy();
     // designer n1: 조직 grant 를 거둬도 따로 준 저장소 권한은 남는다 — 「조직 전체 머지가 막힌다」고 세게 말하지 않는다.
-    expect(screen.getByText('다음 턴부터 @alpha 의 rebellions-sw 조직 전체 권한이 빠진다. 따로 준 저장소 권한은 남는다.')).toBeTruthy();
+    expect(screen.getByText('다음 턴부터 @alpha 의 acme-org 조직 전체 권한이 빠진다. 따로 준 저장소 권한은 남는다.')).toBeTruthy();
     fireEvent.click(screen.getAllByText('거두기').at(-1)!);
-    await waitFor(() => expect(c.deleteGrant).toHaveBeenCalledWith('agent-1', 'repo.merge', 'repo:rebellions-sw/*'));
+    await waitFor(() => expect(c.deleteGrant).toHaveBeenCalledWith('agent-1', 'repo.merge', 'repo:acme-org/*'));
   });
 
   it('소유자가 아니면(admin) [권한 주기] 가 없고 거두기만 보인다', async () => {
@@ -280,14 +280,14 @@ describe('AgentGrantsSection', () => {
 
   it('#1255 security n2: 정확한 이름 줄이 꺼져 있어도 같은 조직 grant 가 에이전트 턴을 허락하면 그 사실을 그 줄에 적는다', async () => {
     setup({ listGrants: vi.fn(async () => [
-      grant('repo:rebellions-sw/npu'), grant('repo:rebellions-sw/*', { allowAgentCause: true }),
-      grant('repo:rebellions-sw-evil/x'), grant('repo:izagood/harkroom'),
+      grant('repo:acme-org/npu'), grant('repo:acme-org/*', { allowAgentCause: true }),
+      grant('repo:acme-org-evil/x'), grant('repo:izagood/harkroom'),
     ]) });
     render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
-    const note = await screen.findByTestId('agent-grant-cause-via-org-rebellions-sw/npu');
-    expect(note.textContent).toContain('rebellions-sw 조직 전체 권한으로 에이전트가 띄운 턴에서도(허락은 넓은 쪽을 따른다)');
+    const note = await screen.findByTestId('agent-grant-cause-via-org-acme-org/npu');
+    expect(note.textContent).toContain('acme-org 조직 전체 권한으로 에이전트가 띄운 턴에서도(허락은 넓은 쪽을 따른다)');
     // 앞부분만 같은 다른 owner·다른 owner 에는 붙지 않는다.
-    expect(screen.queryByTestId('agent-grant-cause-via-org-rebellions-sw-evil/x')).toBeNull();
+    expect(screen.queryByTestId('agent-grant-cause-via-org-acme-org-evil/x')).toBeNull();
     expect(screen.queryByTestId('agent-grant-cause-via-org-izagood/harkroom')).toBeNull();
   });
 

@@ -250,7 +250,7 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
         <div role="alertdialog" className="mt-2 rounded-row border border-warning-border bg-warning-surface p-2 text-meta text-warning" data-testid="agent-mcp-confirm-personal">
           <p>{t('agents.mcp.confirmPersonal')}</p>
           {/* 팀 소속을 함께 말한다(068) — owner 로 좁히면 팀 부름에서도 이 팀원 자리는 소유자만
-              깨운다. 안 적으면 팀을 부른 남은 "왜 이 에이전트만 안 왔나"를 묻는다(#udc). */}
+              깨운다. 안 적으면 팀을 부른 남은 "왜 이 에이전트만 안 왔나"를 묻는다(#ops). */}
           {teamsOf && teamsOf.length > 0 && (
             <p className="mt-1" data-testid="agent-mcp-confirm-teams">
               {t('agents.mcp.confirmPersonalTeams', { teams: teamsOf.map((n) => `@${n}`).join(', ') })}

@@ -939,7 +939,7 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
   });
 
   it('소유자가 승인한 allow 규칙은 그대로 붙고, 모양이 넓은 것은 러너가 한 번 더 버린다', () => {
-    const ok = ['Bash(kubectl --context udc-main-admin@udc-main -n rebelro-cluster exec:*)', 'Bash(gh pr view -R rebellions-sw/udc-k8s:*)', 'mcp__slack__read_thread'];
+    const ok = ['Bash(kubectl --context prod-main-admin@prod-main -n app-cluster exec:*)', 'Bash(gh pr view -R acme-org/infra-k8s:*)', 'mcp__slack__read_thread'];
     const bad = ['Bash(*)', 'Bash(kubectl:*)', 'Bash(a * b)', 'Bash(gh pr view; rm -rf x)', 'Bash(claude --dangerously-skip-permissions)', 'mcp__harkroom__grant_delegate', 'Edit(**)', 'Bash(echo $(id))',
       // security F1~F3(#1240 검토)와 같은 사례 — 서버가 놓쳐도 argv 에 들어가지 않는다.
       'Bash(git status), Bash, Bash(x:*)', 'Bash("sh" -c x:*)', 'Bash(\\sh -c x:*)', 'Bash(gh api:*)', 'Bash(gh api -XPUT repos/o/r/pulls/1)',

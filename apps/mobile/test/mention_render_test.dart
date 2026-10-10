@@ -46,8 +46,8 @@ void main() {
 
   // TestFlight 실측: 스레드 모델 지정 줄이 `{account}님이 …` 로 그대로 나왔다.
   test('시스템 메시지의 {account} 는 meta.accountId 의 지금 handle 로 채운다(@ 없이)', () {
-    expect(shown(row('{account}님이 이 스레드에서 homelab 의 모델을 fable 로 정했습니다.', meta: {'accountId': id})),
-        'forge님이 이 스레드에서 homelab 의 모델을 fable 로 정했습니다.');
+    expect(shown(row('{account}님이 이 스레드에서 infra 의 모델을 fable 로 정했습니다.', meta: {'accountId': id})),
+        'forge님이 이 스레드에서 infra 의 모델을 fable 로 정했습니다.');
   });
 
   test('모르는 계정이면 표시 문구로, meta.accountId 가 없거나 시스템이 아니면 그대로', () {

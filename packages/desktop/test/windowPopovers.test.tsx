@@ -53,7 +53,7 @@ beforeEach(() => {
   useAppStore.getState().set({
     me: acc('u1', 'me'),
     accounts: { u1: acc('u1', 'me'), u2: acc('u2', 'someone') },
-    teams: [tm('t1', 'udc-team', 0)],
+    teams: [tm('t1', 'ops-team', 0)],
   });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); setController(null as unknown as Controller); });
@@ -81,11 +81,11 @@ describe('새 창 안의 떠 있는 것', () => {
 
   it('멘션 카드는 그 창에 뜨고 그 창 크기로 자른다', async () => {
     setController(new Controller(fakeApi({
-      team: vi.fn(async () => ({ team: tm('t1', 'udc-team', 0), members: [] })),
+      team: vi.fn(async () => ({ team: tm('t1', 'ops-team', 0), members: [] })),
     }), fakeWsFactory().makeWs));
     const doc = popupDoc();
-    renderInPopup(doc, msg('m1', 'c1', 1, '@udc-team 봐', 'u1'));
-    const wrap = doc.querySelector('[data-testid="mention-udc-team"]')!.parentElement!;
+    renderInPopup(doc, msg('m1', 'c1', 1, '@ops-team 봐', 'u1'));
+    const wrap = doc.querySelector('[data-testid="mention-ops-team"]')!.parentElement!;
     placeAt(wrap, { left: 300, top: 390, width: 60, height: 20 });
 
     vi.useFakeTimers();

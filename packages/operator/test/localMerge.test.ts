@@ -74,29 +74,29 @@ describe('localMerge 포트 (P2 · security C7·C8)', () => {
 
   it('줄별 계정(e085b6a7): 줄 하나를 고르면 byScope 에 쓰고, 그 뒤로 옛 기본값은 쓰이지 않는다 — 로그인되지 않은 이름은 거절', async () => {
     const { port, configPath } = await fresh({ communities: {}, merge: { ghUser: 'izagood' } });
-    await expect(port.set({ scope: 'rebellions-sw/*', ghUser: 'nobody' })).rejects.toThrow(/not logged in/);
-    const out = await port.set({ scope: 'rebellions-sw/*', ghUser: 'work-account' });
-    expect(out.changes).toEqual([{ scope: 'rebellions-sw/*', from: null, to: 'work-account' }]);
-    expect(out.state.byScope).toEqual({ 'rebellions-sw/*': 'work-account' });
-    expect(JSON.parse(await readFile(configPath, 'utf8')).merge).toEqual({ ghUser: 'izagood', byScope: { 'rebellions-sw/*': 'work-account' } });
+    await expect(port.set({ scope: 'acme-org/*', ghUser: 'nobody' })).rejects.toThrow(/not logged in/);
+    const out = await port.set({ scope: 'acme-org/*', ghUser: 'work-account' });
+    expect(out.changes).toEqual([{ scope: 'acme-org/*', from: null, to: 'work-account' }]);
+    expect(out.state.byScope).toEqual({ 'acme-org/*': 'work-account' });
+    expect(JSON.parse(await readFile(configPath, 'utf8')).merge).toEqual({ ghUser: 'izagood', byScope: { 'acme-org/*': 'work-account' } });
     // byScope 가 생긴 뒤로는 옛 기본값으로 떨어지지 않는다
     const merge = JSON.parse(await readFile(configPath, 'utf8')).merge;
     expect(pickMergeGhUser(merge, 'izagood/harkroom')).toBeNull();
     // 줄 지우기는 gh 없이도 된다
-    await port.set({ scope: 'rebellions-sw/*', ghUser: null });
+    await port.set({ scope: 'acme-org/*', ghUser: null });
     expect((await port.get()).byScope).toEqual({});
   });
 
   it('migrate: 옛 기본값을 지금 줄들에 한 번만 복사하고 지운다 — 두 번째는 아무것도 안 한다', async () => {
     const { port, configPath } = await fresh({ communities: {}, merge: { ghUser: 'izagood' } });
-    const out = await port.set({ migrate: ['izagood/*', 'rebellions-sw/*'] });
-    expect(out.state.byScope).toEqual({ 'izagood/*': 'izagood', 'rebellions-sw/*': 'izagood' });
+    const out = await port.set({ migrate: ['izagood/*', 'acme-org/*'] });
+    expect(out.state.byScope).toEqual({ 'izagood/*': 'izagood', 'acme-org/*': 'izagood' });
     expect(out.state.ghUser).toBeNull();
-    expect(JSON.parse(await readFile(configPath, 'utf8')).merge).toEqual({ byScope: { 'izagood/*': 'izagood', 'rebellions-sw/*': 'izagood' } });
-    await port.set({ scope: 'rebellions-sw/*', ghUser: 'work-account' });
-    const again = await port.set({ migrate: ['izagood/*', 'rebellions-sw/*', 'new/*'] });
+    expect(JSON.parse(await readFile(configPath, 'utf8')).merge).toEqual({ byScope: { 'izagood/*': 'izagood', 'acme-org/*': 'izagood' } });
+    await port.set({ scope: 'acme-org/*', ghUser: 'work-account' });
+    const again = await port.set({ migrate: ['izagood/*', 'acme-org/*', 'new/*'] });
     expect(again.changes).toEqual([]);
-    expect(again.state.byScope).toEqual({ 'izagood/*': 'izagood', 'rebellions-sw/*': 'work-account' });
+    expect(again.state.byScope).toEqual({ 'izagood/*': 'izagood', 'acme-org/*': 'work-account' });
   });
 
   it('migrate: 옛 값이 없어도 옮긴 것으로 적는다(빈 byScope) — 그 뒤 줄 없는 머지는 no_gh_user', async () => {

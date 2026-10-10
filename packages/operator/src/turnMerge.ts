@@ -192,9 +192,9 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
 
   /**
    * 머지에 쓸 gh 토큰. **`merge.ghUser` 가 없으면 머지하지 않는다**(security P1, fail-closed). 활성 계정으로 넘어가면
-   * 그 계정이 무엇이든 — 이 머신은 회사 계정이고 회사 저장소에 쓰기 권한이 있다 — 그 신원으로 머지된다. 서버는
-   * 저장소 이름을 가리지 않으므로, "회사 저장소는 래퍼로 머지할 수 없다"를 기계로 지키는 자리가 바로 여기다:
-   * ghUser 를 izagood 로 고정하면 그 계정이 쓸 수 없는 저장소는 머지가 실패한다.
+   * 그 계정이 무엇이든 — 한 머신에 업무 계정과 개인 계정이 같이 로그인돼 있을 수 있다 — 그 신원으로 머지된다.
+   * 서버는 저장소 이름을 가리지 않으므로, "이 계정이 쓸 수 없는 저장소는 래퍼로 머지할 수 없다"를 기계로 지키는
+   * 자리가 바로 여기다: ghUser 를 한 계정으로 고정하면 그 계정이 쓸 수 없는 저장소는 머지가 실패한다.
    */
   type TokenFail = { ok: false; code: 'no_gh_user' | 'gh_user_not_logged_in' | 'gh_token_failed'; message: string };
   const tokenFor = async (repo: string): Promise<{ ok: true; token: string; login: string } | TokenFail> => {
