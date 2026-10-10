@@ -103,21 +103,36 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect(screen.queryByTestId('inbox-filter-blocking')).toBeNull();
   });
 
-  it('내 차례 띠는 오래 기다린 것부터 다섯 장을 펼치고 나머지는 "+N개 더" 로 접는다', async () => {
+  it('내 차례 띠는 최근 것부터(R1) 다섯 장을 펼치고 나머지는 "+N개 더" 로 접는다', async () => {
     const roots = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7'];
     fakeController(async () => ({
-      // 번호가 클수록 오래된 말이다 — 띠는 r7 부터 선다.
+      // 번호가 클수록 오래된 말이다 — 띠는 r1 부터 선다(R1).
       entries: roots.map((r, i) => entry(i + 1, { threadRootId: r, createdAt: new Date(Date.now() - (i + 1) * 3_600_000).toISOString() })),
       threads: roots.map((r) => head(r, { openAskAccountIds: [ME] })),
     }));
     open();
-    await screen.findByTestId('inbox-card-r7');
+    await screen.findByTestId('inbox-card-r1');
     const band = col('mine');
     const more = within(band).getByTestId('inbox-band-more');
     const open5 = within(band).getAllByTestId(/^inbox-card-r\d$/).filter((el) => !more.contains(el)).map((el) => el.getAttribute('data-testid'));
-    expect(open5).toEqual(['inbox-card-r7', 'inbox-card-r6', 'inbox-card-r5', 'inbox-card-r4', 'inbox-card-r3']);
+    expect(open5).toEqual(['inbox-card-r1', 'inbox-card-r2', 'inbox-card-r3', 'inbox-card-r4', 'inbox-card-r5']);
     expect(more.textContent).toContain('+2개 더');
     expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 7');
+  });
+
+  it('7일 넘게 기다린 내 차례는 띠 맨 아래로 접히고 수에서 빠진다 (R2)', async () => {
+    fakeController(async () => ({
+      entries: [
+        entry(1, { threadRootId: 'fresh', createdAt: new Date(Date.now() - 3_600_000).toISOString() }),
+        entry(2, { threadRootId: 'stale', createdAt: new Date(Date.now() - 10 * 86_400_000).toISOString() }),
+      ],
+      threads: [head('fresh', { openAskAccountIds: [ME] }), head('stale', { openAskAccountIds: [ME] })],
+    }));
+    open();
+    const fold = await screen.findByTestId('inbox-fold-mine-stale');
+    expect(fold.textContent).toContain('일주일 넘은 것 1');
+    expect(within(fold).getByTestId('inbox-card-stale')).toBeTruthy();
+    expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 1');
   });
 
   it('내 차례가 없으면 띠는 한 줄로 줄어든다', async () => {
@@ -154,8 +169,8 @@ describe('Inbox 상태 보드 (C안)', () => {
     fireEvent.click(await screen.findByTestId('inbox-card-answer-r1-a'));
     await waitFor(() => expect(c.answerAsk).toHaveBeenCalledWith('m1', 'a', 'c1'));
     expect(c.openThread).not.toHaveBeenCalled();
-    // 내 차례에는 완료가 없다(눌러도 그 자리에 남는다) — 나중에는 있다(수에서 뺄 수 있게).
-    expect(screen.queryByTestId('inbox-card-done-r1')).toBeNull();
+    // 내 차례에도 치우기와 나중에가 다 있다(R3) — 둘 다 수를 줄이는 길이다.
+    expect(screen.getByTestId('inbox-card-done-r1').textContent).toBe('치우기');
     expect(screen.getByTestId('inbox-card-later-r1')).toBeTruthy();
   });
 
