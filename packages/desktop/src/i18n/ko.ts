@@ -405,6 +405,9 @@ export const ko = {
   // profileName — **어투를 `~다` 로 맞췄다**(근거는 `en.ts` 머리말). 뜻은 그대로다.
   // ---------------------------------------------------------------------------
 
+  'profileAvatar.photo': '프로필 사진',
+  'profileAvatar.upload': '올리기',
+  'profileAvatar.remove': '지우기',
   'profileAvatar.removeCancel': '취소',
   'profileAvatar.removeConfirm': '정말 지우기',
 

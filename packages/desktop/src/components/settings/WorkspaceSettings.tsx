@@ -54,7 +54,7 @@ export function WorkspaceSettings() {
                     disabled={edit.busy}
                     onClick={edit.openPicker}
                   >
-                    Upload
+                    {t('profileAvatar.upload')}
                   </button>
                   {iconUrl && (edit.confirmingRemove ? (
                     <>
@@ -78,7 +78,7 @@ export function WorkspaceSettings() {
                       disabled={edit.busy}
                       onClick={edit.askRemove}
                     >
-                      Remove
+                      {t('profileAvatar.remove')}
                     </button>
                   ))}
                 </>
