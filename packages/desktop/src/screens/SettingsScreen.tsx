@@ -21,7 +21,7 @@ import { ThisOperatorSettings } from '../components/settings/ThisOperatorSetting
 import { WorkspaceCleanupSettings, useCleanupWarnCount } from '../components/settings/WorkspaceCleanupSettings';
 import { getController } from '../state/controller';
 import { DEFAULT_SECTION, SETTINGS_GROUPS, isSectionId, navKey, workspaceEditable, type SectionId } from '../components/settings/sections';
-import { useActiveStore, useCommunityRegistry } from '../state/communities';
+import { communityLabel, useActiveStore, useCommunityRegistry } from '../state/communities';
 import { WindowDragStrip } from '../components/WindowDragStrip';
 import { guardedLeave } from '../components/settings/pendingEdits';
 import { useT } from '../i18n/useT';
@@ -57,6 +57,14 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
    * 보낸다. 에이전트 사진이 그렇게 남의 서버로 가서 "사진을 바꿨습니다"만 남았다(2026-10-02).
    */
   const communityId = useCommunityRegistry((r) => r.activeId);
+  /**
+   * 아래 줄에 **지금 어느 커뮤니티인지** 적는다. 설정은 커뮤니티마다 다른 서버의 값인데 화면 어디에도
+   * 그것이 없어서, 커뮤니티가 바뀐 줄 모르고 남의 서버에 저장하는 일이 생겼다(2026-10-02, designer 후속).
+   */
+  const communityName = useCommunityRegistry((r) => {
+    const entry = r.entries.find((e) => e.id === r.activeId);
+    return entry ? communityLabel(entry) : null;
+  });
 
   return (
     /* #342: 설정도 `Workspace` 를 **대체해서** 그려진다(겹창이 아니다) — 그래서 여기 있는
@@ -111,8 +119,8 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
             ))}
           </nav>
 
-          <div className="border-t border-border px-4 py-3 text-meta text-fg-subtle">
-            {me ? `@${me.handle} · ` : ''}v{__APP_VERSION__}
+          <div className="border-t border-border px-4 py-3 text-meta text-fg-subtle" data-testid="settings-footer">
+            {communityName ? `${communityName} · ` : ''}{me ? `@${me.handle} · ` : ''}v{__APP_VERSION__}
           </div>
         </aside>
 

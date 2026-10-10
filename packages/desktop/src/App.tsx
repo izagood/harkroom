@@ -79,14 +79,6 @@ export default function App() {
   useColorMode();
   useZoom();
   /**
-   * OS 알림을 누르면 그 대화로 간다(#542). `phase` 분기보다 **위**에 있는 것이 요점이다 —
-   * 알림은 부팅 중에도 오고, 리스너를 `ready` 안쪽에 두면 그때 누른 것이 사라진다.
-   *
-   * 무엇을 여는지는 `openNotificationTarget` 이 정한다(커뮤니티 전환 → 메시지 열기).
-   * 여기서 그 순서를 다시 쓰지 않는다 — 링크 클릭(#178)과 갈릴 자리를 만들지 않는다.
-   */
-  useNotificationOpen((target) => { void openNotificationTarget(target); });
-  /**
    * 독 아이콘의 미읽음 표시. `useNotificationOpen` 과 같은 이유로 **여기**다 — 미읽음은
    * 부팅·접속·설정 화면에서도 늘고 줄어들고, `ready` 안쪽에 두면 그동안 배지가 굳는다.
    */
@@ -104,6 +96,21 @@ export default function App() {
   // 두지 않는다 — `Workspace` 가 자기 안에서 열고 닫는 겹창이고, 여기에 상태를 또 두면
   // 같은 사실이 두 곳에 생긴다(초판이 그렇게 두고 한쪽을 읽지 않았다).
   const [settings, setSettings] = useState<{ section?: SectionId; targetId?: string } | null>(null);
+  /**
+   * OS 알림을 누르면 그 대화로 간다(#542). `phase` 분기보다 **위**에 있는 것이 요점이다 —
+   * 알림은 부팅 중에도 오고, 리스너를 `ready` 안쪽에 두면 그때 누른 것이 사라진다.
+   *
+   * 무엇을 여는지는 `openNotificationTarget` 이 정한다(커뮤니티 전환 → 메시지 열기).
+   * 여기서 그 순서를 다시 쓰지 않는다 — 링크 클릭(#178)과 갈릴 자리를 만들지 않는다.
+   *
+   * **설정은 닫는다.** 사람은 그 메시지를 보려고 누른 것이다. 설정이 열린 채 커뮤니티만 바뀌면
+   * 메시지는 안 보이고, 설정은 말없이 다른 커뮤니티의 값이 된다 — 그 상태에서 에이전트 사진을
+   * 저장해 남의 서버로 간 일이 있었다(2026-10-02).
+   */
+  useNotificationOpen((target) => {
+    setSettings(null);
+    void openNotificationTarget(target);
+  });
   /**
    * 부팅이 **무엇을 기다리는가**(`#460`). `unknown` 이 기본이고, 그 자리에서 사유를
    * 지어내지 않는다 — `keychain` 은 `sessionStore.load` 가 실제로 키체인을 두드렸을 때만
