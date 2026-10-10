@@ -72,6 +72,13 @@ const ORG = (owner: string): GrantRow => ({ ...GRANT, scope: `repo:${owner}/*` }
 function grants(rows: GrantRow[]) {
   setController({ listGrants: vi.fn(async () => rows), putGrant: vi.fn(async () => rows), deleteGrant: vi.fn() } as unknown as Controller);
 }
+/** 에이전트마다 다른 grant — 같은 기기의 다른 에이전트 줄(#1265 security n1)을 재려고. 그 에이전트들은 내 것으로 store 에 넣는다. */
+function grantsBy(byAgent: Record<string, GrantRow[]>) {
+  setController({ listGrants: vi.fn(async (id: string) => byAgent[id] ?? []), putGrant: vi.fn(async () => []), deleteGrant: vi.fn() } as unknown as Controller);
+  const accounts = { [ME_ID]: acc(ME_ID, 'owner') } as Record<string, ReturnType<typeof acc>>;
+  for (const id of Object.keys(byAgent)) if (id !== 'agent-1') accounts[id] = acc(id, id, 'agent', false, { ownerAccountId: ME_ID });
+  useActiveStore.getState().set({ accounts });
+}
 afterEach(() => {
   delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
   usePrefsStore.getState().setLocale('system');
@@ -89,6 +96,56 @@ describe('머지 gh 계정 — 줄마다', () => {
     expect(invoke).toHaveBeenCalledWith('operator_merge_set', { migrate: ['izagood/harkroom', 'rebellions-sw/*'] });
     expect(screen.getByTestId('merge-gh-user').textContent).toContain('이 기기(mac-1)');
     expect(screen.queryByText('머지에 쓸 GitHub 계정')).toBeNull();
+  });
+
+  it('옛 값은 이 기기에 배정된 내 에이전트 전부의 줄로 옮긴다 — 다른 기기 에이전트 줄은 빼고, 닿음 확인은 이 에이전트 줄만(#1265 security n1)', async () => {
+    grantsBy({
+      'agent-1': [GRANT],
+      'agent-2': [{ ...GRANT, accountId: 'agent-2', scope: 'repo:rebellions-sw/udc' }, { ...GRANT, accountId: 'agent-2' }],
+      'agent-3': [{ ...GRANT, accountId: 'agent-3', scope: 'repo:acme/api' }],
+    });
+    const invoke = tauri({ ghUser: 'izagood', byScope: null, accounts: ACCOUNTS, host: 'mac-1' });
+    render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} deviceAgentIds={['agent-1', 'agent-2']} />);
+    expect((await sel('izagood_harkroom')).value).toBe('izagood');
+    expect(invoke).toHaveBeenCalledWith('operator_merge_set', { migrate: ['izagood/harkroom', 'rebellions-sw/udc'] });
+    expect(invoke.mock.calls.filter(([c]) => c === 'operator_merge_set')).toHaveLength(1);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_merge_check', { scopes: ['izagood/harkroom'] }));
+    expect(screen.getByTestId('merge-gh-user-shared').textContent).toBe('같은 범위의 줄은 이 기기의 모든 에이전트가 같은 계정을 쓴다');
+  });
+
+  it('같은 기기 다른 에이전트 줄을 모으는 동안에도 「읽는 중」으로 자리를 먼저 잡는다(#1279 designer n1)', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    setController({ listGrants: vi.fn(async (id: string) => { if (id === 'agent-2') { await gate; return []; } return [GRANT]; }), putGrant: vi.fn(), deleteGrant: vi.fn() } as unknown as Controller);
+    useActiveStore.getState().set({ accounts: { [ME_ID]: acc(ME_ID, 'owner'), 'agent-2': acc('agent-2', 'agent-2', 'agent', false, { ownerAccountId: ME_ID }) } });
+    const invoke = tauri({ ghUser: 'izagood', byScope: null, accounts: ACCOUNTS, host: 'mac-1' });
+    render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} deviceAgentIds={['agent-1', 'agent-2']} />);
+    expect(await screen.findByTestId('merge-gh-user-loading')).toBeTruthy();
+    expect(invoke).not.toHaveBeenCalled();
+    release();
+    expect((await sel('izagood_harkroom')).value).toBe('izagood');
+    expect(screen.queryByTestId('merge-gh-user-loading')).toBeNull();
+  });
+
+  it('이미 첫 에이전트로만 옮겨진 기기 — 같은 기기 다른 에이전트의 계정 없는 줄도 같은 owner 줄을 이어받는다', async () => {
+    grantsBy({ 'agent-1': [GRANT], 'agent-2': [{ ...GRANT, accountId: 'agent-2', scope: 'repo:izagood/homelab' }, { ...GRANT, accountId: 'agent-2', scope: 'repo:acme/api' }] });
+    const invoke = tauri({ ghUser: null, byScope: { 'izagood/harkroom': 'izagood' }, accounts: ACCOUNTS, host: 'mac-1' });
+    render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} deviceAgentIds={['agent-1', 'agent-2']} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_merge_set', { ghUser: 'izagood', scope: 'izagood/homelab' }));
+    expect(invoke).not.toHaveBeenCalledWith('operator_merge_set', expect.objectContaining({ scope: 'acme/api' }));
+    expect(invoke).not.toHaveBeenCalledWith('operator_merge_set', expect.objectContaining({ migrate: expect.anything() }));
+  });
+
+  it('닿지 않음 줄의 확인 시각은 앱 언어로 적는다(#1265 designer n1)', async () => {
+    const when = (loc: string) => new Date('2026-10-09T14:30:00Z').toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' });
+    for (const loc of ['ko', 'en'] as const) {
+      usePrefsStore.getState().setLocale(loc);
+      tauri({ ghUser: null, byScope: { 'izagood/harkroom': 'izagood' }, accounts: ACCOUNTS, host: 'mac-1' }, { reach: { 'izagood/harkroom': { izagood: 'no' } } });
+      render(<AgentGrantsSection agent={agent(HERE)} canGrant canRevoke localOperatorId={HERE} />);
+      expect((await screen.findByTestId('merge-account-no-reach-izagood_harkroom')).textContent).toContain(when(loc));
+      cleanup();
+    }
+    expect(when('ko')).not.toBe(when('en'));
   });
 
   it('닿음(A)·닿지 않음(B)·확인 못 함(E) — 줄의 계정 옆에, 목록은 닿는 계정이 위로·✓/✕ 표시, 고른 값은 그대로', async () => {

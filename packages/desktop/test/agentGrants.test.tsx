@@ -285,7 +285,7 @@ describe('AgentGrantsSection', () => {
     ]) });
     render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
     const note = await screen.findByTestId('agent-grant-cause-via-org-rebellions-sw/npu');
-    expect(note.textContent).toContain('rebellions-sw 조직 전체 권한으로 에이전트가 띄운 턴에서도(겹치면 넓은 쪽)');
+    expect(note.textContent).toContain('rebellions-sw 조직 전체 권한으로 에이전트가 띄운 턴에서도(허락은 넓은 쪽을 따른다)');
     // 앞부분만 같은 다른 owner·다른 owner 에는 붙지 않는다.
     expect(screen.queryByTestId('agent-grant-cause-via-org-rebellions-sw-evil/x')).toBeNull();
     expect(screen.queryByTestId('agent-grant-cause-via-org-izagood/harkroom')).toBeNull();
