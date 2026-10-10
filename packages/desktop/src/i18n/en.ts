@@ -3066,6 +3066,12 @@ export const en = {
   /** 카드에 쌓인 말의 수 — 같은 일에서 온 것이 여럿이면 한 장에 모인다는 표시. */
   'inbox.board.more': '+{count} more',
   'inbox.board.unread': 'New',
+  'inbox.board.replies': '{count} replies',
+  'inbox.board.similar': '×{count}',
+  'inbox.board.justMe': 'just me',
+  'inbox.board.kind.decision': 'Decide',
+  'inbox.board.kind.blocker': 'Blocked',
+  'inbox.board.kind.news': 'Updates',
   /** 치우기 — 서버의 내 상태(2/2). 보드에서 내려 끝남 맨 아래 "치운 것" 으로 접는다. 내 차례에도 있다(R3). */
   'inbox.board.done': 'Dismiss',
   /** 나중에 — 내일 아침까지 그 열 맨 아래로 접고, 내 차례 수에서 뺀다. */

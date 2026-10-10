@@ -69,15 +69,80 @@ const open = (onClose = vi.fn()) => render(<Inbox open onClose={onClose} />);
 const col = (name: string) => screen.getByTestId(`inbox-col-${name}`);
 
 describe('Inbox 상태 보드 (C안)', () => {
+  const failMeta = (reason: string) => ({
+    kind: 'failure', failure: { retryable: true, what: '하네스가 사람의 확인을 기다린다', reason },
+  } as unknown as Record<string, unknown>);
+
+  it('내 차례 띠는 할 일의 종류로 묶는다 — 결정 → 막힘 → 소식 (R4)', async () => {
+    fakeController(async () => ({
+      entries: [
+        entry(1, { threadRootId: 'stuck' }),
+        entry(2, { threadRootId: 'fail', meta: failMeta('관문 화면에 섰다') }),
+        entry(3, { threadRootId: 'ask', meta: askMeta({ kind: 'account', accountId: ME } as AskMeta['ask']['to'], '이대로 갈까?') }),
+      ],
+      threads: [
+        head('stuck', { statusReaction: { status: 'stuck', emoji: '🚨', accountId: BOT, reason: null, updatedAt: new Date().toISOString() } as MessageRow['statusReaction'], unresolvedFailureCount: 0 }),
+        head('fail', { unresolvedFailureCount: 1 }),
+        head('ask', { openAskAccountIds: [ME] }),
+      ],
+    }));
+    open();
+    await screen.findByTestId('inbox-card-ask');
+    const band = col('mine');
+    const kinds = within(band).getAllByTestId(/^inbox-band-kind-/).map((el) => el.getAttribute('data-testid'));
+    expect(kinds).toEqual(['inbox-band-kind-decision', 'inbox-band-kind-blocker']);
+    expect(within(screen.getByTestId('inbox-band-kind-decision')).getByTestId('inbox-card-ask')).toBeTruthy();
+    expect(within(screen.getByTestId('inbox-band-kind-blocker')).getByTestId('inbox-card-fail')).toBeTruthy();
+    // 실패 카드의 제목은 원인이다(R5) — 실패마다 같은 「무엇」이 아니라.
+    expect(screen.getByTestId('inbox-card-summary-fail').textContent).toContain('관문 화면에 섰다');
+  });
+
+  it('같은 에이전트의 같은 실패는 한 줄 ×N 으로 묶이고, 치우면 묶인 일이 다 치워진다 (R5)', async () => {
+    const c = fakeController(async () => ({
+      entries: [
+        entry(1, { threadRootId: 'f1', meta: failMeta('관문'), createdAt: new Date(Date.now() - 60_000).toISOString() }),
+        entry(2, { threadRootId: 'f2', meta: failMeta('관문'), createdAt: new Date(Date.now() - 120_000).toISOString() }),
+        entry(3, { threadRootId: 'f3', meta: failMeta('관문'), createdAt: new Date(Date.now() - 180_000).toISOString() }),
+        entry(4, { threadRootId: 'f4', meta: failMeta('다른 원인') }),
+      ],
+      threads: ['f1', 'f2', 'f3', 'f4'].map((r) => head(r, { unresolvedFailureCount: 1 })),
+    }));
+    open();
+    await screen.findByTestId('inbox-card-f1');
+    expect(screen.queryByTestId('inbox-card-f2')).toBeNull();
+    expect(screen.getByTestId('inbox-card-similar-f1').textContent).toBe('×3');
+    expect(screen.getByTestId('inbox-card-f4')).toBeTruthy();
+    expect(screen.queryByTestId('inbox-card-similar-f4')).toBeNull();
+    // 숫자는 일(스레드) 수 그대로다.
+    expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 4');
+    fireEvent.click(screen.getByTestId('inbox-card-done-f1'));
+    await waitFor(() => expect(c.api.setInboxThreadState).toHaveBeenCalledTimes(3));
+    expect(c.api.setInboxThreadState.mock.calls.map((x) => (x as unknown as [string])[0])).toEqual(['f1', 'f2', 'f3']);
+  });
+
+  it('보낸 사람 이름은 자르지 않고 채널부터 줄인다 (R6)', async () => {
+    fakeController(async () => ({
+      entries: [entry(1, { threadRootId: 'r1' })],
+      threads: [head('r1', { openAskAccountIds: [ME] })],
+    }));
+    open();
+    await screen.findByTestId('inbox-card-r1');
+    const who = screen.queryByTestId('inbox-card-who-r1');
+    if (who) expect(who.className).not.toContain('truncate');
+    expect(screen.getByTestId('inbox-card-channel-r1').className).toContain('truncate');
+  });
+
   it('같은 일에서 온 다섯 줄이 카드 한 장으로 선다', async () => {
     fakeController(async () => ({
       entries: [1, 2, 3, 4, 5].map((i) => entry(i, { threadRootId: 'r1', reason: 'thread_reply' })),
-      threads: [head('r1', { openAskAccountIds: [ME] })],
+      threads: [head('r1', { openAskAccountIds: [ME], replyCount: 57 })],
     }));
     open();
     const card = await screen.findByTestId('inbox-card-r1');
     expect(screen.getAllByTestId(/^inbox-card-r\d$/)).toHaveLength(1);
-    expect(card.textContent).toContain('+4개 더');
+    // R6: 「+N개 더」(무엇의 수인지 모른다)가 아니라 스레드의 답글 수다.
+    expect(card.textContent).toContain('답글 57');
+    expect(card.textContent).not.toContain('개 더');
     expect(within(col('mine')).getByTestId('inbox-card-r1')).toBeTruthy();
   });
 
@@ -113,7 +178,7 @@ describe('Inbox 상태 보드 (C안)', () => {
     open();
     await screen.findByTestId('inbox-card-r1');
     const band = col('mine');
-    const more = within(band).getByTestId('inbox-band-more');
+    const more = within(band).getByTestId('inbox-band-more-decision');
     const open5 = within(band).getAllByTestId(/^inbox-card-r\d$/).filter((el) => !more.contains(el)).map((el) => el.getAttribute('data-testid'));
     expect(open5).toEqual(['inbox-card-r1', 'inbox-card-r2', 'inbox-card-r3', 'inbox-card-r4', 'inbox-card-r5']);
     expect(more.textContent).toContain('+2개 더');
@@ -130,7 +195,7 @@ describe('Inbox 상태 보드 (C안)', () => {
     }));
     open();
     const fold = await screen.findByTestId('inbox-fold-mine-stale');
-    expect(fold.textContent).toContain('일주일 넘은 것 1');
+    expect(fold.textContent).toContain('일주일 넘게 기다린 것 1');
     expect(within(fold).getByTestId('inbox-card-stale')).toBeTruthy();
     expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 1');
   });
@@ -143,7 +208,7 @@ describe('Inbox 상태 보드 (C안)', () => {
     open();
     await screen.findByTestId('inbox-card-r1');
     expect(within(col('mine')).getByTestId('inbox-band-empty').textContent).toBe('나를 기다리는 일이 없다');
-    expect(screen.queryByTestId('inbox-band-more')).toBeNull();
+    expect(screen.queryByTestId('inbox-band-more-decision')).toBeNull();
   });
 
   it('카드 문장은 본문 앞 두 줄이 아니라 물음 문장이고, <@id> 는 handle 로 보인다', async () => {
