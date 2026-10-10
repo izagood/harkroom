@@ -89,23 +89,29 @@ export const RUNNER_LINK_ENV_KEYS = [
  * **bridge**(요청/응답만, 러너당 여럿일 수 있다 — 하네스가 MCP 서버를 여러 번 띄운다).
  * 생략은 relay 다.
  */
+/**
+ * 링크 소켓의 종류. `hook` 은 PreToolUse hook(`harkroom-operator hook pretool`)이 여는 소켓이다(H③b) — 요청/응답만 하고, 받는 것은
+ * `command.check` 하나뿐이다. 거꾸로 `command.check` 는 hook 소켓에서만 받는다(에이전트가 MCP 로 불러 1회 grant 를 미리 써 버리지 않게).
+ */
+export type RunnerLinkKind = 'relay' | 'bridge' | 'hook';
+
 export interface RunnerHello {
   type: 'hello';
   version: typeof RUNNER_LINK_PROTOCOL_VERSION;
   role: 'runner';
   runnerId: string;
   secret: string;
-  kind?: 'relay' | 'bridge';
+  kind?: RunnerLinkKind;
 }
 
 /** 모양만 본다 — secret 이 맞는지는 오퍼레이터가 자기 장부로 판정한다. */
-export function checkRunnerHello(value: unknown): { runnerId: string; secret: string; kind: 'relay' | 'bridge' } | null {
+export function checkRunnerHello(value: unknown): { runnerId: string; secret: string; kind: RunnerLinkKind } | null {
   if (typeof value !== 'object' || value === null) return null;
   const m = value as Record<string, unknown>;
   if (m.type !== 'hello' || m.role !== 'runner' || m.version !== RUNNER_LINK_PROTOCOL_VERSION) return null;
   if (typeof m.runnerId !== 'string' || typeof m.secret !== 'string') return null;
-  if (m.kind !== undefined && m.kind !== 'relay' && m.kind !== 'bridge') return null;
-  return { runnerId: m.runnerId, secret: m.secret, kind: m.kind === 'bridge' ? 'bridge' : 'relay' };
+  if (m.kind !== undefined && m.kind !== 'relay' && m.kind !== 'bridge' && m.kind !== 'hook') return null;
+  return { runnerId: m.runnerId, secret: m.secret, kind: m.kind === 'bridge' || m.kind === 'hook' ? m.kind : 'relay' };
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +132,14 @@ export type RunnerLinkRequest =
    * `cwd` — 브릿지 프로세스의 작업 디렉터리(= 하네스가 띄운 턴 워크스페이스, claude 실측 2026-10-02).
    * 오퍼레이터의 `attachment.upload` 가 경로를 이 아래로만 받는 데 쓴다. 옛 브릿지·러너 코어는 싣지 않는다.
    */
-  | { type: 'mcp.request'; id: string; payload: unknown; cause?: string; cwd?: string }
+  | {
+    type: 'mcp.request'; id: string; payload: unknown; cause?: string; cwd?: string;
+    /**
+     * **오퍼레이터 안에서만 쓰는 칸**(H③b): 오퍼레이터가 잰 「정확한 명령」 파일 해시(base64 JSON `CommandFileDigest[]`). forwarder 가
+     * `COMMAND_FILES_HEADER` 로 옮긴다. 링크(러너·브릿지)에서 들어온 값은 오퍼레이터가 받자마자 지운다(`turnCommand.stripLinkOnlyFields`).
+     */
+    commandFiles?: string;
+  }
   /** `bodyBase64` — 이진 본문(multipart 업로드). 있으면 `body` 대신 이것을 바이트로 풀어 보낸다. */
   | { type: 'http.forward'; id: string; method: string; path: string; body?: string; bodyBase64?: string; contentType?: string };
 

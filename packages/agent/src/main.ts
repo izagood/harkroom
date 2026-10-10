@@ -602,7 +602,7 @@ const scheduler = createMentionScheduler({
       markAccountGate: () => { void markAccountNeedsAttention(account.configDir, Date.now()).catch(() => undefined); },
       accountGateCleared: async () => !isAttentionActive(await readAccountAttention(account.configDir), Date.now()),
     } : {}),
-    operatorBin: config.operatorBin, runnerSecret: config.operatorLink.secret,
+    operatorBin: config.operatorBin, runnerSecret: config.operatorLink.secret, commandHook: config.commandHook,
     turnTimeoutMs: config.turnTimeoutMs,
     harnessStallMs: config.harnessStallMs,
     relay,

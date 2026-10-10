@@ -7,6 +7,7 @@
  * | `harkroom-operator run [--data-dir d]` | 앱이 넘기던 daemon 인자를 데이터 디렉터리에서 **같은 규칙**(`daemonEndpointPaths`)으로 조립해 상주한다 — 앱이 나중에 같은 머신에 떠도 같은 소켓을 보고 "이미 서비스 중"으로 물러난다 |
  * | `harkroom-operator mcp-bridge` | 하네스가 띄우는 stdio MCP 브릿지(`mcpBridge.ts`) |
  * | `harkroom-operator merge <owner/name> <n> --head <sha>` | 에이전트 머지 래퍼 — 브릿지와 같은 소켓으로 오퍼레이터에 묻는다(`turnMerge.ts`) |
+ * | `harkroom-operator hook pretool` | claude PreToolUse hook — 승인된 「정확한 명령」이면 allow, 아니면 무출력(`turnCommand.ts`, H③b) |
  * | 그 밖 | 앱이 넘기는 `--socket …` 인자 그대로(`args.ts`) |
  *
  * 등록이 CLI 인 이유: 코드는 화면에서 사람이 읽어 그 머신의 터미널에 붙여 넣는다 — 서버가
@@ -32,6 +33,8 @@ export type CliCommand =
   | { command: 'merge'; argv: string[] }
   /** `api <연결> <METHOD> <경로> [--data …]` — 인자 검증은 `turnApi.parseApiArgs`. */
   | { command: 'api'; argv: string[] }
+  /** `hook pretool` — claude 가 띄운다. stdin 의 hook 입력을 읽는다. */
+  | { command: 'hook'; event: string }
   | { command: 'daemon'; argv: string[] };
 
 function flagValue(argv: readonly string[], flag: string): string | undefined {
@@ -60,6 +63,8 @@ export function parseCliArgs(argv: readonly string[]): CliCommand {
       return { command: 'merge', argv: argv.slice(1) };
     case 'api':
       return { command: 'api', argv: argv.slice(1) };
+    case 'hook':
+      return { command: 'hook', event: argv[1] ?? '' };
     default:
       return { command: 'daemon', argv: [...argv] };
   }

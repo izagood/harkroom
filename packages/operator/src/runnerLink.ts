@@ -23,7 +23,7 @@ import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import { encodeLine, LineTooLongError, NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
   RUNNER_LINK_MAX_LINE_BYTES, checkRunnerHello, isRunnerLinkNotice, isRunnerLinkRequest,
-  type OperatorToRunnerNotice, type RunnerLinkNotice, type RunnerLinkRequest, type RunnerLinkResponse,
+  type OperatorToRunnerNotice, type RunnerLinkKind, type RunnerLinkNotice, type RunnerLinkRequest, type RunnerLinkResponse,
 } from '@harkroom/shared/runnerLink';
 
 /** `net.Socket` 의 최소 표면. 테스트가 가짜를 준다. */
@@ -43,7 +43,7 @@ export interface RunnerLinkDeps {
    * relay 소켓이든 브릿지 소켓이든. 없으면 요청은 status 0 으로 거절된다(삼키지 않는다).
    * `kind` 는 요청이 온 소켓이다 — 러너 자신(relay)만 쓸 수 있는 경로를 가르는 데 쓴다(턴 자리, security #1127 L2).
    */
-  onRequest?(runnerId: string, agentId: string, req: RunnerLinkRequest, kind: 'relay' | 'bridge'): Promise<RunnerLinkResponse>;
+  onRequest?(runnerId: string, agentId: string, req: RunnerLinkRequest, kind: RunnerLinkKind): Promise<RunnerLinkResponse>;
   /**
    * 단방향 통지(`runner.pollStopped`·`mcp.authRejected`). **서버로 안 나간다** — 오퍼레이터 안에서 끝나는 말이다
    * (`shared/runnerLink.ts` 의 `RunnerLinkNotice`). 없으면 그냥 버린다.
@@ -129,7 +129,7 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
     try { socket.write(line); } catch { /* 끊긴 소켓 — 답할 곳이 없다 */ }
   };
 
-  const handleLine = (runnerId: string, agentId: string, socket: LinkSocket, kind: 'relay' | 'bridge', value: unknown): void => {
+  const handleLine = (runnerId: string, agentId: string, socket: LinkSocket, kind: RunnerLinkKind, value: unknown): void => {
     if (isRunnerLinkRequest(value)) {
       const answer = deps.onRequest
         ? deps.onRequest(runnerId, agentId, value, kind).catch((err: unknown) => refuse(value, err instanceof Error ? err.message : String(err)))
@@ -138,7 +138,7 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
       return;
     }
     // 브릿지는 PTY 를 모른다 — 요청이 아닌 것은 버린다.
-    if (kind === 'bridge') return;
+    if (kind !== 'relay') return;
     // 통지는 **릴레이 프레임보다 먼저** 가른다. 아래로 흘려보내면 `wrapRunnerFrame` 이
     // 모르는 타입으로 null 을 돌려 조용히 사라진다 — 그러면 회수 게이트가 영영 안 열린다.
     if (isRunnerLinkNotice(value)) { deps.onNotice?.(runnerId, agentId, value); return; }

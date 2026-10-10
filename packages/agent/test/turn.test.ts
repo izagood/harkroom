@@ -952,6 +952,16 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     expect(buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', toolAllows: ok }).args).not.toContain('--allowedTools');
   });
 
+  it('「정확한 명령」 hook(H③b): 기본 꺼짐 — 켜면 auto 멘션 턴에만 인라인 --settings PreToolUse(Bash) 하나', () => {
+    expect(buildTurnCommand({ ...common, mode: 'mention' }).args).not.toContain('--settings');
+    const on = buildTurnCommand({ ...common, mode: 'mention', commandHook: true }).args;
+    const json = JSON.parse(on[on.indexOf('--settings') + 1]!);
+    expect(json).toEqual({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '"/opt/harkroom/harkroom-operator" hook pretool', timeout: 15 }] }] } });
+    expect(on.filter((a) => a === '--settings')).toHaveLength(1);
+    expect(buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', commandHook: true }).args).not.toContain('--settings');
+    expect(buildTurnCommand({ ...common, mode: 'interactive', commandHook: true }).args).not.toContain('--settings');
+  });
+
   it('auto 멘션 턴엔 grant 가 없어도 래퍼 **절대 경로 + 서브커맨드** allow 가 붙는다(T1c 모양, 스레드 1b75d7a0) — gh pr merge 는 여전히 deny', () => {
     const none = buildTurnCommand({ ...common, mode: 'mention' }).args;
     expect(after(none, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)', PERMISSION_REQUEST_TOOL]);
@@ -1015,5 +1025,16 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
   it('codex 에는 규칙을 주지 않는다 — deny/allow 문법이 없다(한계는 docs/agent-merge.md)', () => {
     const args = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true, mergeRepos: ['izagood/harkroom'] }).args;
     expect(args.join(' ')).not.toMatch(/allowedTools|disallowedTools/);
+  });
+});
+
+// security n3(#1252): 프롬프트의 kind command 안내는 hook 이 실제로 붙는 턴에만 — 판정은 permissionRules 하나에 산다.
+describe('attachesCommandHook', () => {
+  it('claude-code auto 멘션 + commandHook 일 때만 참', async () => {
+    const { attachesCommandHook } = await import('../src/turn.js');
+    expect(attachesCommandHook('claude-code', 'auto', true)).toBe(true);
+    expect(attachesCommandHook('claude-code', 'auto', false)).toBe(false);
+    expect(attachesCommandHook('claude-code', 'readonly', true)).toBe(false);
+    expect(attachesCommandHook('codex', 'auto', true)).toBe(false);
   });
 });

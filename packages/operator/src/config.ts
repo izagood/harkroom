@@ -44,6 +44,11 @@ export interface OperatorConfig {
    * 열 때 그 값을 지금 있는 줄들에 한 번 복사하고 지운다(`localMerge.ts` 의 migrate).
    */
   merge?: { ghUser?: string; byScope?: Record<string, string> };
+  /**
+   * 「정확한 명령」 PreToolUse hook 을 켠다(권한 요청 H③b, 스레드 8769dbf7). **기본 꺼짐** — `true` 일 때만 러너가 claude 의 auto 멘션
+   * 턴에 인라인 `--settings` 로 `harkroom-operator hook pretool` 을 단다. 켜도 소유자가 승인한 정확한 명령만 열린다.
+   */
+  commandHook?: boolean;
 }
 
 const EMPTY: OperatorConfig = { communities: {} };

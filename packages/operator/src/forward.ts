@@ -13,7 +13,7 @@
  *
  * REST 는 경로를 베이스 아래로만 허용한다. 오퍼레이터는 열린 프록시가 아니다.
  */
-import { CAUSE_HEADER, type RunnerLinkRequest, type RunnerLinkResponse } from '@harkroom/shared/runnerLink';
+import { CAUSE_HEADER, COMMAND_FILES_HEADER, type RunnerLinkRequest, type RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 
 export interface ForwardTarget {
   baseUrl: string;
@@ -55,6 +55,8 @@ export function createForwarder(deps: { fetchImpl?: typeof fetch } = {}): Forwar
               ...headersFor(target),
               // 턴의 원인(`mcp.request.cause`). 본문은 열지 않는다는 규칙 그대로 — 헤더 하나를 옮길 뿐이다.
               ...(req.cause ? { [CAUSE_HEADER]: req.cause } : {}),
+              // 「정확한 명령」 파일 해시(H③b) — 오퍼레이터가 잰 값만 이 칸에 있다(링크에서 온 값은 run.ts 가 먼저 지운다).
+              ...(req.commandFiles ? { [COMMAND_FILES_HEADER]: req.commandFiles } : {}),
               'content-type': 'application/json',
               accept: 'application/json, text/event-stream',
             },
