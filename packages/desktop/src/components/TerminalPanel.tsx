@@ -48,6 +48,12 @@ import type { MessageKey, Translate } from '../i18n';
  * 두 경로가 같은 attach 흐름으로 수렴하므로 사람에게는 턴이 돌고 있었는지가 화면 차이로
  * 보이지 않는다. [터미널 열기] 는 **실패 화면에만** 남는다(러너를 올린 뒤 다시 누를 자리).
  */
+/**
+ * 터미널 바이트가 지나는 길. 지금은 언제나 서버를 거친다(앱 → 서버 → 러너). 같은 맥의
+ * 러너에 직결하는 길(R1)이 들어오면 붙은 경로에 따라 이 값이 갈린다.
+ */
+const TERMINAL_PATH: 'server' | 'local' = 'server';
+
 export function TerminalPanel() {
   const target = useActiveStore((s) => s.terminalTarget);
   const agent = useActiveStore((s) => (s.terminalTarget ? s.accounts[s.terminalTarget.agentAccountId] : undefined));
@@ -481,6 +487,25 @@ export function TerminalPanel() {
             imeKeys: String(diagnostics.imeKeys),
             hangulKeys: String(diagnostics.hangulKeys),
           })}
+          {/* 입력 → 첫 출력 지연과 **그 바이트가 지나는 길**(2026-10-10). 경로는 아직 한 가지
+              (서버 경유)뿐이다 — 로컬 직결이 들어오면 그 자리가 이 값을 바꾼다. 둘을 한 줄에
+              두는 이유: 숫자만 보이면 "어느 길에서 잰 숫자인가"를 사람이 따로 알아야 한다. */}
+          <span
+            data-testid="terminal-latency"
+            data-path={TERMINAL_PATH}
+            data-echo-p50={diagnostics.echo?.p50 ?? ''}
+            data-echo-p95={diagnostics.echo?.p95 ?? ''}
+          >
+            {' · '}
+            {diagnostics.echo
+              ? t('terminal.latency', {
+                path: t(`terminal.path.${TERMINAL_PATH}`),
+                p50: String(Math.round(diagnostics.echo.p50)),
+                p95: String(Math.round(diagnostics.echo.p95)),
+                count: String(diagnostics.echo.count),
+              })
+              : t('terminal.latency.none', { path: t(`terminal.path.${TERMINAL_PATH}`) })}
+          </span>
         </p>
       )}
       {/* 이 자리는 항상 렌더한다 — 조건부로 만들면 세션을 찾은 순간 ref 가 아직 null 이라
