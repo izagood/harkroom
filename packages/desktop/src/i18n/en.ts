@@ -745,6 +745,9 @@ export const en = {
    * 사진 지우기의 확인·취소. **이름 바꾸기의 것과 한 키로 못 묶는다** — 되돌리는 대상이
    * 다르고(`en.ts` 의 `Cancel` 판단), 실제로 문구가 갈릴 수 있는 자리다.
    */
+  'profileAvatar.photo': 'Profile photo',
+  'profileAvatar.upload': 'Upload',
+  'profileAvatar.remove': 'Remove',
   'profileAvatar.removeCancel': 'Cancel',
   'profileAvatar.removeConfirm': 'Delete for good',
 

@@ -161,7 +161,7 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     useAppStore.getState().set({ me: withPhoto('u1', 'me') });
     render(<ProfileSettings onSignOut={() => {}} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    fireEvent.click(screen.getByRole('button', { name: '지우기' }));
     fireEvent.click(await screen.findByRole('button', { name: '정말 지우기' }));
     await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(null, undefined));
   });
@@ -176,7 +176,7 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     useAppStore.getState().set({ me: withPhoto('u1', 'me') });
     render(<ProfileSettings onSignOut={() => {}} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    fireEvent.click(screen.getByRole('button', { name: '지우기' }));
 
     expect(await screen.findByRole('button', { name: '정말 지우기' })).toBeTruthy();
     expect(c.setAvatar).not.toHaveBeenCalled();
@@ -192,7 +192,7 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     useAppStore.getState().set({ me: withPhoto('u1', 'me') });
     render(<ProfileSettings onSignOut={() => {}} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    fireEvent.click(screen.getByRole('button', { name: '지우기' }));
     fireEvent.click(await screen.findByRole('button', { name: '정말 지우기' }));
 
     await waitFor(() => expect(c.setAvatar).toHaveBeenCalled());
@@ -241,7 +241,7 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     fakeController();
     useAppStore.getState().set({ me: acc('u1', 'me') });
     render(<ProfileSettings onSignOut={() => {}} />);
-    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '지우기' })).toBeNull();
   });
 
   /**

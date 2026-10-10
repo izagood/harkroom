@@ -28,7 +28,7 @@ function AvatarRow() {
   return (
     <div className="px-4 py-3">
       <div className="flex items-center gap-4">
-        <span className="font-medium text-fg">Profile photo</span>
+        <span className="font-medium text-fg">{t('profileAvatar.photo')}</span>
         <span className="ml-auto flex items-center gap-3">
           <Identity account={me ?? undefined} className="h-10 w-10 text-base" variant="avatar" />
           <input
@@ -44,7 +44,7 @@ function AvatarRow() {
             disabled={edit.busy}
             onClick={edit.openPicker}
           >
-            Upload
+            {t('profileAvatar.upload')}
           </button>
           {/*
             지우기는 **두 걸음**이다. 한 걸음이던 동안은 실수로 스친 클릭 하나가 사진을
@@ -73,7 +73,7 @@ function AvatarRow() {
               disabled={edit.busy}
               onClick={edit.askRemove}
             >
-              Remove
+              {t('profileAvatar.remove')}
             </button>
           ))}
         </span>
