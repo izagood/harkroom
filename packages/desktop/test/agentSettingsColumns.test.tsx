@@ -56,14 +56,14 @@ describe('설정 폭 2b — 에이전트 편집 칸', () => {
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     const run = await screen.findByTestId('agent-run-columns');
     expect(col(screen.getByTestId('agent-assignment-current'))).toBe('secondary');
-    expect(run.querySelector('[data-settings-col="main"]')!.textContent).toContain('AI configuration');
+    expect(run.querySelector('[data-settings-col="main"]')!.textContent).toContain('AI 설정');
   });
 
   it('권한: 권한 폼(주 칸) | 누가 부를 수 있나(둘째 칸)', async () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     const perm = await screen.findByTestId('agent-permissions-columns');
-    expect(perm.querySelector('[data-settings-col="main"]')!.textContent).toContain('Mention permission');
+    expect(perm.querySelector('[data-settings-col="main"]')!.textContent).toContain('멘션 권한');
     expect(perm.querySelector('[data-settings-col="secondary"]')!.textContent).toContain('누가 부를 수 있고');
   });
 });
