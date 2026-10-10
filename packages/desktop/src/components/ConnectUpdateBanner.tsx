@@ -1,4 +1,5 @@
 import { useUpdateCheck } from '../lib/useUpdateCheck';
+import { useT } from '../i18n/useT';
 
 /**
  * 로그인 **전** 화면의 업데이트 배너.
@@ -33,6 +34,7 @@ import { useUpdateCheck } from '../lib/useUpdateCheck';
  */
 export function ConnectUpdateBanner() {
   // 주기 확인을 걸지 않는다 — 로그인 화면은 오래 머무는 자리가 아니다.
+  const t = useT();
   const { status, install } = useUpdateCheck();
 
   // 최신과 확인 전에는 자리 자체가 없다 — 로그인 화면이 평소와 똑같이 보인다.
@@ -45,7 +47,7 @@ export function ConnectUpdateBanner() {
             같은 색이면 '서버 문제'와 '업데이트 확인 문제'가 한 화면에서 구분되지 않는다. */}
         {/* 사유 한 줄은 읽는 글자이므로 본문단(앱 기본값 13px)이고, 그 아래 등폭 원문은
             이미 아랫단 11px 이다 — 사람이 먼저 읽는 것과 필요할 때만 보는 것이 갈린다. */}
-        <p className="font-medium text-warning">Could not check for updates</p>
+        <p className="font-medium text-warning">{t('connect.update.checkFailed')}</p>
         <p className="truncate font-mono text-meta text-fg-muted" title={status.message}>
           {status.message}
         </p>
@@ -57,7 +59,7 @@ export function ConnectUpdateBanner() {
   return (
     <div className="flex items-center gap-2 rounded-row border border-accent-brand bg-accent-surface px-3 py-2">
       <p className="min-w-0 flex-1 truncate text-fg">
-        {installing ? `Installing v${status.version}…` : `v${status.version} available`}
+        {installing ? t('connect.update.installing', { version: status.version }) : t('connect.update.available', { version: status.version })}
       </p>
       <button
         type="button"
@@ -65,7 +67,7 @@ export function ConnectUpdateBanner() {
         onClick={() => void install(status.version)}
         className="rounded-row bg-accent px-2 py-1 font-semibold text-fg-on-strong disabled:bg-transparent disabled:text-fg-subtle"
       >
-        Update
+        {t('connect.update.button')}
       </button>
     </div>
   );
