@@ -2032,7 +2032,7 @@ export const ko = {
   'community.manage.saving': '저장하는 중…',
   'community.manage.save': '저장',
   'community.manage.cancel': '취소',
-  'community.manage.removeConfirm': '{label:을를} 이 기기에서 뺄까? 서버에는 그대로 남는다 — 거기서의 세션은 로그아웃되지 않고 다른 기기도 그대로 쓴다. 다시 넣으려면 다시 로그인해야 한다.',
+  'community.manage.removeConfirm': '{label:을를} 이 기기에서 뺄까? 서버에는 그대로 남는다 — 거기서의 세션은 로그아웃되지 않고 다른 기기도 그대로 쓴다. 다시 넣으려면 로그인해야 한다.',
   'community.manage.removing': '빼는 중…',
   'community.manage.removeFromDevice': '이 기기에서 빼기',
   'community.manage.keep': '그대로 두기',
