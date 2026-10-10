@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
+import { InboxList, type InboxStateNext } from './InboxList';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
 import { buildBoard, daysWaiting, laterUntilLabel, mineCount, filterBoard, groupSimilar, BOARD_KINDS, BOARD_SCOPES, type BoardCard, type BoardColumn, type BoardFold, type BoardGroup, type BoardKind, type BoardScope } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
@@ -263,6 +264,8 @@ export function Inbox({ open, onClose }: Props) {
    * 그래야 머리글의 「나를 기다리는 일 N」 = 띠 = 배지(`mineCount` 주석)가 늘 같다.
    */
   const [scope, setScope] = useState<BoardScope>('all');
+  /** 받은 일(A안) / 진행 보드. 기본은 받은 일이다. */
+  const [view, setView] = useState<'list' | 'board'>('list');
   const laneCards = useMemo(
     () => filterBoard(cards.filter((c) => c.column !== 'mine'), threads, scope, me?.id ?? null),
     [cards, threads, scope, me],
@@ -345,12 +348,13 @@ export function Inbox({ open, onClose }: Props) {
    * 묶인 줄(R5)은 **묶인 일 전부**에 같은 상태를 준다 — 한 줄로 보이는데 하나만 치우면 남은 것이 그
    * 자리에 다시 선다. 서버 호출은 기존 그대로 일 하나에 하나다.
    */
-  const setState = async (
-    group: BoardGroup, next: { state: 'done' } | { state: 'later'; until: string } | { state: null },
-  ): Promise<void> => {
-    setBusy(group.card.rootId);
+  const setState = async (groupsToSet: BoardGroup[], next: InboxStateNext): Promise<void> => {
+    if (groupsToSet.length === 0) return;
+    setBusy(groupsToSet[0]!.card.rootId);
     try {
-      for (const c of [group.card, ...group.similar]) await getController().api.setInboxThreadState(c.rootId, next);
+      for (const group of groupsToSet) {
+        for (const c of [group.card, ...group.similar]) await getController().api.setInboxThreadState(c.rootId, next);
+      }
     } finally {
       reload({ quiet: true });
       setBusy(null);
@@ -441,7 +445,7 @@ export function Inbox({ open, onClose }: Props) {
               <button
                 data-testid={`inbox-card-undo-${card.rootId}`}
                 disabled={busy === card.rootId}
-                onClick={() => void setState(group, { state: null })}
+                onClick={() => void setState([group], { state: null })}
                 className="ml-auto shrink-0 rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
               >
                 {t('inbox.board.undo')}
@@ -452,7 +456,7 @@ export function Inbox({ open, onClose }: Props) {
                 <button
                   data-testid={`inbox-card-later-${card.rootId}`}
                   disabled={busy === card.rootId}
-                  onClick={() => void setState(group, { state: 'later', until: tomorrowMorning(Date.now()) })}
+                  onClick={() => void setState([group], { state: 'later', until: tomorrowMorning(Date.now()) })}
                   className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
                 >
                   {t('inbox.board.later')}
@@ -460,7 +464,7 @@ export function Inbox({ open, onClose }: Props) {
                 <button
                   data-testid={`inbox-card-done-${card.rootId}`}
                   disabled={busy === card.rootId}
-                  onClick={() => void setState(group, { state: 'done' })}
+                  onClick={() => void setState([group], { state: 'done' })}
                   className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
                 >
                   {t('inbox.board.done')}
@@ -511,8 +515,27 @@ export function Inbox({ open, onClose }: Props) {
             ✕
           </button>
         </div>
-        {/* 필터 — 머리글 둘째 줄. */}
+        {/* 보기 둘 — **받은 일**(A안 목록+상세, 기본)과 **진행 보드**(옛 상태 보드). 보드는 「진행 중인 일
+            전체」를 보는 다른 일이라 받은 일에서 뺐다(designer A안) — 첫 화면은 「내가 할 일」만 말한다. */}
         {load.kind === 'ready' && cards.length > 0 && (
+          <div role="tablist" aria-label={t('inbox.view.label')} className="flex items-center gap-3 text-meta">
+            {(['list', 'board'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="tab"
+                aria-selected={view === v}
+                data-testid={`inbox-view-${v}`}
+                onClick={() => setView(v)}
+                className={`border-b-2 pb-0.5 ${view === v ? 'border-accent font-medium text-fg' : 'border-transparent text-fg-muted hover:text-fg'}`}
+              >
+                {t(v === 'list' ? 'inbox.view.list' : 'inbox.view.board')}
+              </button>
+            ))}
+          </div>
+        )}
+        {/* 필터 — 보드 보기의 머리글 셋째 줄. 받은 일에는 걸지 않는다(내 할 일은 범위로 숨기지 않는다). */}
+        {load.kind === 'ready' && cards.length > 0 && view === 'board' && (
           <div role="group" aria-label={t('inbox.board.scope.label')} data-testid="inbox-scope" className="flex flex-wrap items-center gap-1">
             {BOARD_SCOPES.map((s) => (
               <button
@@ -551,7 +574,17 @@ export function Inbox({ open, onClose }: Props) {
         넓은 창에서는 나란히, 좁은 창에서는 세로로 쌓인다. 끌어 옮기기는 없다: 카드는 판정을 따라
         저절로 옮긴다. 스크롤은 이 자리 하나가 진다 — 띠와 열이 따로 굴러가면 띠가 열을 가린다.
       */}
-      {load.kind === 'ready' && cards.length > 0 && (
+      {load.kind === 'ready' && cards.length > 0 && view === 'list' && (
+        <InboxList
+          cards={cards}
+          busy={busy}
+          channelLabel={channelLabel}
+          onOpen={openCard}
+          onAnswer={answer}
+          onSetState={setState}
+        />
+      )}
+      {load.kind === 'ready' && cards.length > 0 && view === 'board' && (
         <div data-testid="inbox-board" className="@container flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
           {(() => {
             // 띠 — 최근 것부터(R1, `buildBoard` 가 내 차례를 sinceAt 내림차순으로 준다).

@@ -115,9 +115,13 @@ describe('sr-only 는 자기 상자를 벗어나지 않는다', () => {
    * 자기 마크업으로 아바타를 그리기 시작해도 초록이 남는다.
    */
   it('인박스 줄의 모든 sr-only 가 positioned 부모를 갖는다', async () => {
-    mount([entry(1, 'c1'), entry(2, 'c1')]);
+    // 오늘 온 말이어야 받은 일 목록에 선다(7일 넘게 조용한 것은 목록 밖이다).
+    const now = new Date().toISOString();
+    mount([{ ...entry(1, 'c1'), createdAt: now }, { ...entry(2, 'c1'), createdAt: now }]);
     openInbox();
     const pane = await screen.findByTestId('inbox-pane');
+    // 멘션 둘은 내 차례가 아니라 받은 일의 「소식」 갈래에 선다.
+    fireEvent.click(await screen.findByTestId('inbox-tab-news'));
     await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
 
     const srOnly = pane.querySelectorAll('.sr-only');

@@ -1913,6 +1913,7 @@ describe('인박스 — 두 언어로 뜬다', () => {
       threadStates: [],
     };
     render(<Inbox open onClose={() => {}} />);
+    fireEvent.click(await screen.findByTestId('inbox-view-board'));
     for (const name of ['Your turn', 'Waiting', 'In progress', 'Done']) {
       expect(await screen.findByRole('region', { name })).toBeTruthy();
     }
@@ -1920,6 +1921,7 @@ describe('인박스 — 두 언어로 뜬다', () => {
     cleanup();
     speak('ko');
     render(<Inbox open onClose={() => {}} />);
+    fireEvent.click(await screen.findByTestId('inbox-view-board'));
     for (const name of ['내 차례', '기다림', '진행', '끝']) {
       expect(await screen.findByRole('region', { name })).toBeTruthy();
     }

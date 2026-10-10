@@ -67,6 +67,16 @@ afterEach(() => {
 
 const open = (onClose = vi.fn()) => render(<Inbox open onClose={onClose} />);
 const col = (name: string) => screen.getByTestId(`inbox-col-${name}`);
+/**
+ * 보드 보기로 연다. 기본 보기는 A안 받은 일(목록+상세)이고, 옛 상태 보드는 「진행 보드」 탭이다 —
+ * 이 파일의 C안 시험은 그 보드를 잰다. 카드가 없으면 탭이 서지 않으므로 그때는 그냥 연다.
+ */
+const openBoard = async (onClose = vi.fn()) => {
+  const r = open(onClose);
+  const tab = await screen.findByTestId('inbox-view-board').catch(() => null);
+  if (tab) fireEvent.click(tab);
+  return r;
+};
 
 describe('Inbox 상태 보드 (C안)', () => {
   const failMeta = (reason: string) => ({
@@ -86,7 +96,7 @@ describe('Inbox 상태 보드 (C안)', () => {
         head('ask', { openAskAccountIds: [ME] }),
       ],
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-ask');
     const band = col('mine');
     const kinds = within(band).getAllByTestId(/^inbox-band-kind-(decision|blocker|news)$/).map((el) => el.getAttribute('data-testid'));
@@ -107,7 +117,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       ],
       threads: ['f1', 'f2', 'f3', 'f4'].map((r) => head(r, { unresolvedFailureCount: 1 })),
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-f1');
     expect(screen.queryByTestId('inbox-card-f2')).toBeNull();
     expect(screen.getByTestId('inbox-card-similar-f1').textContent).toBe('×3');
@@ -130,7 +140,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       ]),
       threads: ['q1', 'q2'].map((r) => head(r, { openAskAccountIds: [ME], unresolvedFailureCount: 1 })),
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-q1');
     expect(screen.getByTestId('inbox-card-q2')).toBeTruthy();
     expect(screen.queryByTestId('inbox-card-similar-q1')).toBeNull();
@@ -143,7 +153,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [entry(1, { threadRootId: 'd1', meta: failMeta('관문') }), entry(2, { threadRootId: 'd2', meta: failMeta('관문') })],
       threads: ['d1', 'd2'].map((r) => head(r, { openAskAccountIds: [ME], unresolvedFailureCount: 1 })),
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-d1');
     expect(screen.getByTestId('inbox-card-d2')).toBeTruthy();
     expect(screen.queryByTestId('inbox-card-similar-d1')).toBeNull();
@@ -157,7 +167,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       ],
       threads: [head('f1', { unresolvedFailureCount: 1 }), head('f2', { channelId: 'c2', unresolvedFailureCount: 1 })],
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-f1');
     expect(screen.getByTestId('inbox-card-f2')).toBeTruthy();
     expect(screen.queryByTestId('inbox-card-similar-f1')).toBeNull();
@@ -168,7 +178,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [entry(1, { threadRootId: 'r1', meta: askMeta({ kind: 'account', accountId: ME }, '어느 쪽?') })],
       threads: [head('r1', { openAskAccountIds: [ME], replyCount: 57 })],
     }));
-    open();
+    await openBoard();
     const card = await screen.findByTestId('inbox-card-r1');
     const replies = screen.getByTestId('inbox-card-replies-r1');
     expect(replies.textContent).toBe('답글 57');
@@ -183,7 +193,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [entry(1, { threadRootId: 'r1' })],
       threads: [head('r1', { openAskAccountIds: [ME] })],
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-r1');
     const who = screen.queryByTestId('inbox-card-who-r1');
     if (who) expect(who.className).not.toContain('truncate');
@@ -195,7 +205,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [1, 2, 3, 4, 5].map((i) => entry(i, { threadRootId: 'r1', reason: 'thread_reply' })),
       threads: [head('r1', { openAskAccountIds: [ME], replyCount: 57 })],
     }));
-    open();
+    await openBoard();
     const card = await screen.findByTestId('inbox-card-r1');
     expect(screen.getAllByTestId(/^inbox-card-r\d$/)).toHaveLength(1);
     // R6: 「+N개 더」(무엇의 수인지 모른다)가 아니라 스레드의 답글 수다.
@@ -214,7 +224,7 @@ describe('Inbox 상태 보드 (C안)', () => {
         head('r4', { lastAuthorId: BOT }),
       ],
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-r1');
     const order = screen.getAllByTestId(/^inbox-col-/).map((el) => el.getAttribute('data-testid'));
     expect(order).toEqual(['inbox-col-mine', 'inbox-col-active', 'inbox-col-blocked', 'inbox-col-done']);
@@ -233,7 +243,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: roots.map((r, i) => entry(i + 1, { threadRootId: r, createdAt: new Date(Date.now() - (i + 1) * 3_600_000).toISOString() })),
       threads: roots.map((r) => head(r, { openAskAccountIds: [ME] })),
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-r1');
     const band = col('mine');
     const more = within(band).getByTestId('inbox-band-more-decision');
@@ -251,7 +261,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       ],
       threads: [head('fresh', { openAskAccountIds: [ME] }), head('stale', { openAskAccountIds: [ME] })],
     }));
-    open();
+    await openBoard();
     const fold = await screen.findByTestId('inbox-fold-mine-stale');
     expect(fold.textContent).toContain('일주일 넘게 기다린 것 1');
     expect(within(fold).getByTestId('inbox-card-stale')).toBeTruthy();
@@ -263,7 +273,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [entry(1, { threadRootId: 'r1' })],
       threads: [head('r1', { lastKind: 'progress', lastAuthorId: BOT })],
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-r1');
     expect(within(col('mine')).getByTestId('inbox-band-empty').textContent).toBe('나를 기다리는 일이 없다');
     expect(screen.queryByTestId('inbox-band-more-decision')).toBeNull();
@@ -278,7 +288,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [entry(1, { body })],
       threads: [head('m1', { replyCount: 0, body })],
     }));
-    open();
+    await openBoard();
     const summary = await screen.findByTestId('inbox-card-summary-m1');
     expect(summary.textContent).toBe('이건 @bob 에게 넘겨도 될까?');
   });
@@ -288,7 +298,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [entry(1, { threadRootId: 'r1', meta: askMeta({ kind: 'account', accountId: ME }, '어느 쪽?') })],
       threads: [head('r1', { openAskAccountIds: [ME] })],
     }));
-    open();
+    await openBoard();
     fireEvent.click(await screen.findByTestId('inbox-card-answer-r1-a'));
     await waitFor(() => expect(c.answerAsk).toHaveBeenCalledWith('m1', 'a', 'c1'));
     expect(c.openThread).not.toHaveBeenCalled();
@@ -302,7 +312,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [entry(1, { threadRootId: 'r1', meta: askMeta({ kind: 'account', accountId: BOT }) })],
       threads: [head('r1', { openAskAccountIds: [BOT] })],
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-r1');
     expect(screen.queryByTestId('inbox-card-answer-r1-a')).toBeNull();
   });
@@ -314,14 +324,14 @@ describe('Inbox 상태 보드 (C안)', () => {
       threads: [head('r1', { lastAuthorId: BOT })],
       threadStates: states,
     }));
-    open();
+    await openBoard();
     fireEvent.click(await screen.findByTestId('inbox-card-done-r1'));
     await waitFor(() => expect(c.api.setInboxThreadState).toHaveBeenCalledWith('r1', { state: 'done' }));
     // 리액션은 건드리지 않는다 — 남에게 보이는 흔적이 남지 않는다.
     expect(c.toggleReaction).not.toHaveBeenCalled();
     states = [{ rootId: 'r1', state: 'done', until: null, updatedAt: new Date().toISOString() }];
     cleanup();
-    open();
+    await openBoard();
     const fold = await screen.findByTestId('inbox-fold-done-cleared');
     expect(fold.textContent).toContain('치운 것 1');
     fireEvent.click(within(fold).getByTestId('inbox-card-undo-r1'));
@@ -335,7 +345,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       threads: [head('r1', { openAskAccountIds: [ME] })],
       threadStates: states,
     }));
-    open();
+    await openBoard();
     expect((await screen.findByTestId('inbox-mine-count')).textContent).toBe('나를 기다리는 일 1');
     fireEvent.click(screen.getByTestId('inbox-card-later-r1'));
     await waitFor(() => expect(c.api.setInboxThreadState).toHaveBeenCalled());
@@ -346,7 +356,7 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect(until.getTime()).toBeGreaterThan(Date.now());
     states = [{ rootId: 'r1', state: 'later', until: body.until, updatedAt: new Date().toISOString() }];
     cleanup();
-    open();
+    await openBoard();
     const fold = await screen.findByTestId('inbox-fold-mine-later');
     expect(within(fold).getByTestId('inbox-card-r1')).toBeTruthy();
     // 언제 다시 서는지 말한다(designer) — 내일 아침 9시.
@@ -360,7 +370,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [entry(1, { threadRootId: 'r1', reason: 'thread_reply' })],
       threads: [head('r1')],
     }));
-    open(onClose);
+    await openBoard(onClose);
     fireEvent.click(await screen.findByTestId('inbox-card-r1'));
     expect(c.openThread).toHaveBeenCalledWith('r1', { channelId: 'c1' });
     expect(onClose).not.toHaveBeenCalled();
@@ -369,7 +379,7 @@ describe('Inbox 상태 보드 (C안)', () => {
   it('채널 바로 밑의 말 하나면 그 말로 가고 보드는 자리를 내준다', async () => {
     const onClose = vi.fn();
     const c = fakeController(async () => ({ entries: [entry(9)], threads: [head('m9', { replyCount: 0 })] }));
-    open(onClose);
+    await openBoard(onClose);
     fireEvent.click(await screen.findByTestId('inbox-card-m9'));
     expect(c.openMessage).toHaveBeenCalledWith('m9');
     expect(onClose).toHaveBeenCalled();
@@ -377,7 +387,7 @@ describe('Inbox 상태 보드 (C안)', () => {
 
   it('카드를 누르면 새 말 표시가 곧바로 걷힌다', async () => {
     fakeController(async () => ({ entries: [entry(1, { threadRootId: 'r1' })], threads: [head('r1')] }));
-    open();
+    await openBoard();
     const card = await screen.findByTestId('inbox-card-r1');
     expect(card.getAttribute('data-unread')).toBe('true');
     fireEvent.click(card);
@@ -389,20 +399,20 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [entry(1, { threadRootId: 'r1', createdAt: new Date(Date.now() - 3 * 86_400_000 - 1000).toISOString() })],
       threads: [head('r1', { openAskAccountIds: [ME] })],
     }));
-    open();
+    await openBoard();
     expect((await screen.findByTestId('inbox-card-age-r1')).textContent).toContain('3일째');
   });
 
   it('조회 실패가 "없다" 가 아니라 오류로 보인다', async () => {
     fakeController(async () => { throw new Error('boom'); });
-    open();
+    await openBoard();
     expect((await screen.findByRole('alert')).textContent).toContain('boom');
     expect(screen.queryByTestId('inbox-empty')).toBeNull();
   });
 
   it('부른 것이 없으면 "없다" 를 보여 준다', async () => {
     fakeController(async () => ({ entries: [], threads: [] }));
-    open();
+    await openBoard();
     expect((await screen.findByTestId('inbox-empty')).textContent).toBe('아직 올라온 일이 없다');
   });
 
@@ -413,7 +423,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       threads: [head('r1', { openAskAccountIds: [ME] }), head('r2', { authorId: ME })],
       threadStates: ['r1', 'r2'].map((rootId) => ({ rootId, state: 'later' as const, until: later, updatedAt: new Date().toISOString() })),
     }));
-    open();
+    await openBoard();
     expect(within(await screen.findByTestId('inbox-fold-mine-later')).getByTestId('inbox-card-r1')).toBeTruthy();
     expect(within(screen.getByTestId('inbox-fold-active-later')).getByTestId('inbox-card-r2')).toBeTruthy();
     expect(screen.queryAllByTestId(/^inbox-fold-/).map((e) => e.dataset.testid)).toEqual(
@@ -437,7 +447,7 @@ describe('Inbox 상태 보드 (C안)', () => {
         head('called', { authorId: BOT, participantIds: [BOT], openAskAccountIds: [ME] }),
       ],
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-called');
     const ids = () => screen.queryAllByTestId(/^inbox-card-(mine|said|called)$/).map((e) => e.dataset.testid).sort();
     expect(ids()).toEqual(['inbox-card-called', 'inbox-card-mine', 'inbox-card-said']);
@@ -463,7 +473,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [entry(1, { threadRootId: 'r1', reason: 'mention' })],
       threads: [head('r1', { authorId: BOT, participantIds: [BOT] })],
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-r1');
     expect(screen.queryByTestId('inbox-scope-empty')).toBeNull();
     fireEvent.click(screen.getByTestId('inbox-scope-opened'));
@@ -480,7 +490,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [entry(1, { threadRootId: 'r1', reason: 'thread_reply' })],
       threads: [head('r1', { authorId: ME })],
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-lanes');
     expect(screen.getByTestId('inbox-board').className.split(/\s+/)).toContain('@container');
     const lanes = screen.getByTestId('inbox-lanes').className;
@@ -493,7 +503,7 @@ describe('Inbox 상태 보드 (C안)', () => {
       entries: [entry(1, { meta: askMeta({ kind: 'account', accountId: ME }) })],
       threads: null,
     }));
-    open();
+    await openBoard();
     await screen.findByTestId('inbox-card-m1');
     expect(within(col('mine')).getByTestId('inbox-card-m1')).toBeTruthy();
   });
@@ -502,7 +512,7 @@ describe('Inbox 상태 보드 (C안)', () => {
     const onClose = vi.fn();
     useAppStore.getState().set({ drafts: { c2: '쓰다 만 말', c1: '   ' } });
     const c = fakeController(async () => ({ entries: [], threads: [] }));
-    open(onClose);
+    await openBoard(onClose);
     const line = await screen.findByTestId('inbox-drafts');
     expect(line.textContent).toBe('쓰다 만 초안 (1)');
     fireEvent.click(line);
