@@ -57,7 +57,7 @@ const openAsOwner = async (overrides: Record<string, unknown> = {}) => {
   render(<AgentsSettings />);
   await screen.findByTestId('agent-card-mybot');
   fireEvent.click(screen.getByTestId('agent-card-mybot'));
-  await screen.findByLabelText('Working directory');
+  await screen.findByLabelText('작업 디렉터리');
   return c;
 };
 
@@ -93,8 +93,8 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
     await openAsOwner();
 
     // 소유자 지정 select, 비활성화 버튼, 멘션 권한 select — 셋 다 부재여야 한다.
-    expect(screen.queryByLabelText('Owner')).toBeNull();
-    expect(screen.queryByLabelText('Mention permission')).toBeNull();
+    expect(screen.queryByLabelText('소유자')).toBeNull();
+    expect(screen.queryByLabelText('멘션 권한')).toBeNull();
     expect(screen.queryByLabelText('에이전트 비활성화')).toBeNull();
     expect(screen.queryByLabelText('에이전트 활성화')).toBeNull();
 
@@ -105,8 +105,8 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
 
   it('6b. 소유자에게 열린 필드는 그대로 있다 — 지시문·harness·model·workingDir', async () => {
     await openAsOwner();
-    expect(screen.getByLabelText('Working directory')).toBeTruthy();
-    expect(screen.getByLabelText('Agent harness')).toBeTruthy();
+    expect(screen.getByLabelText('작업 디렉터리')).toBeTruthy();
+    expect(screen.getByLabelText('에이전트 하네스')).toBeTruthy();
   });
 
   /**
@@ -118,7 +118,7 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
   it('소유자의 저장 본문에 admin 전용 키가 실리지 않는다', async () => {
     const c = await openAsOwner();
 
-    fireEvent.change(screen.getByLabelText('Working directory'), { target: { value: '/tmp/x' } });
+    fireEvent.change(screen.getByLabelText('작업 디렉터리'), { target: { value: '/tmp/x' } });
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
@@ -147,7 +147,7 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
     render(<AgentsSettings />);
     await screen.findByTestId('agent-card-mybot');
     fireEvent.click(screen.getByTestId('agent-card-mybot'));
-    await screen.findByLabelText('Mention permission');
+    await screen.findByLabelText('멘션 권한');
     expect(screen.queryByTestId('agent-pickable')).toBeNull();
   });
 
@@ -174,10 +174,10 @@ describe('소유자의 에이전트 설정 화면 (#299)', () => {
     render(<AgentsSettings />);
     await screen.findByTestId('agent-card-mybot');
     fireEvent.click(screen.getByTestId('agent-card-mybot'));
-    await screen.findByLabelText('Mention permission');
+    await screen.findByLabelText('멘션 권한');
 
     // 저장 바는 바뀐 것이 있을 때만 선다(A3) — 무엇이든 하나 고친다.
-    fireEvent.change(screen.getByLabelText('Working directory'), { target: { value: '/tmp/y' } });
+    fireEvent.change(screen.getByLabelText('작업 디렉터리'), { target: { value: '/tmp/y' } });
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
     const patch = (c.updateAgent as ReturnType<typeof vi.fn>).mock.calls[0]![1] as Record<string, unknown>;

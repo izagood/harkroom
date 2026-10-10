@@ -81,8 +81,8 @@ describe('AgentsSettings', () => {
     // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
     fireEvent.click(await screen.findByTestId('agent-create'));
 
-    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
-    fireEvent.change(screen.getByLabelText('Agent instructions'), {
+    fireEvent.change(await screen.findByLabelText('에이전트 이름'), { target: { value: 'fizz' } });
+    fireEvent.change(screen.getByLabelText('에이전트 지시문'), {
       target: { value: '느린 쿼리를 찾아 원인을 설명한다.' },
     });
     fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
@@ -112,12 +112,12 @@ describe('AgentsSettings', () => {
     // Task 15: 그리드가 먼저 뜬다 — 폼은 `+` 를 눌러야 열린다.
     fireEvent.click(await screen.findByTestId('agent-create'));
 
-    const options = (await screen.findByLabelText('Agent harness')).querySelectorAll('option');
+    const options = (await screen.findByLabelText('에이전트 하네스')).querySelectorAll('option');
     const enabled = [...options].filter((o) => !(o as HTMLOptionElement).disabled);
 
     // 켜진 선택지는 정확히 RUNNABLE_HARNESSES 이고, 각자 자기 이름표를 단다.
     expect(enabled.map((o) => (o as HTMLOptionElement).value)).toEqual(['claude-code', 'codex', 'opencode', 'kilo', 'pi']);
-    expect(enabled.find((o) => (o as HTMLOptionElement).value === 'kilo')?.textContent).toBe('kilo (default)');
+    expect(enabled.find((o) => (o as HTMLOptionElement).value === 'kilo')?.textContent).toBe('kilo (기본)');
     expect([...options].some((o) => o.textContent?.includes('지원 예정'))).toBe(true);
   });
 
@@ -130,7 +130,7 @@ describe('AgentsSettings', () => {
     // Task 15: 그리드가 먼저 뜬다 — 폼은 `+` 를 눌러야 열린다.
     fireEvent.click(await screen.findByTestId('agent-create'));
 
-    const options = [...(await screen.findByLabelText('Agent harness')).querySelectorAll('option')];
+    const options = [...(await screen.findByLabelText('에이전트 하네스')).querySelectorAll('option')];
     const gemini = options.find((o) => o.textContent?.includes('gemini'));
 
     expect(gemini).toBeTruthy();
@@ -150,7 +150,7 @@ describe('AgentsSettings', () => {
 
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-    expect((screen.getByLabelText('Agent instructions') as HTMLTextAreaElement).value).toBe('기존 지시문');
+    expect((screen.getByLabelText('에이전트 지시문') as HTMLTextAreaElement).value).toBe('기존 지시문');
   });
 
   // 저장은 폼 전체를 보낸다 — 바뀐 필드만 보내면 'harness 기본값으로 되돌리기'를 표현할 수 없다.
@@ -159,7 +159,7 @@ describe('AgentsSettings', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-    fireEvent.change(screen.getByLabelText('Agent instructions'), { target: { value: '고친 지시문' } });
+    fireEvent.change(screen.getByLabelText('에이전트 지시문'), { target: { value: '고친 지시문' } });
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
@@ -168,7 +168,7 @@ describe('AgentsSettings', () => {
     expect(patch).toMatchObject({ instructions: '고친 지시문', harness: 'claude-code' });
   });
 
-  // 'Use harness defaults' 로 되돌리는 조작은 model/effort 를 null 로 비우는 것이다 —
+  // '하네스 기본값 쓰기' 로 되돌리는 조작은 model/effort 를 null 로 비우는 것이다 —
   // 필드를 그냥 안 보내면 서버가 기존 값을 유지해 되돌리기가 되지 않는다.
   it('clears model and effort when the operator returns to harness defaults', async () => {
     const c = fakeController([agent('rusalka', { model: 'claude-opus-5', effort: 'high' })]);
@@ -176,7 +176,7 @@ describe('AgentsSettings', () => {
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     fireEvent.click(await screen.findByTestId('agent-tab-run'));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Use harness defaults' }));
+    fireEvent.click(screen.getByRole('button', { name: '하네스 기본값 쓰기' }));
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
@@ -190,9 +190,9 @@ describe('AgentsSettings', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-    expect((screen.getByLabelText('Mention permission') as HTMLSelectElement).value).toBe('auto');
+    expect((screen.getByLabelText('멘션 권한') as HTMLSelectElement).value).toBe('auto');
 
-    fireEvent.change(screen.getByLabelText('Mention permission'), { target: { value: 'readonly' } });
+    fireEvent.change(screen.getByLabelText('멘션 권한'), { target: { value: 'readonly' } });
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
@@ -206,7 +206,7 @@ describe('AgentsSettings', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-    expect((screen.getByLabelText('Mention permission') as HTMLSelectElement).value).toBe('readonly');
+    expect((screen.getByLabelText('멘션 권한') as HTMLSelectElement).value).toBe('readonly');
   });
 
   describe('PAT management — 옛 러너 토큰 정리 자리(발급은 닫혔다)', () => {
@@ -386,7 +386,7 @@ describe('AgentsSettings', () => {
       render(<AgentsSettings />);
       fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-      expect(screen.queryByLabelText('Owner')).toBeNull();
+      expect(screen.queryByLabelText('소유자')).toBeNull();
       expect(await screen.findByText(/소유자: @alice/)).toBeTruthy();
     });
 
@@ -396,7 +396,7 @@ describe('AgentsSettings', () => {
       render(<AgentsSettings />);
       fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-      expect(await screen.findByLabelText('Owner')).toBeTruthy();
+      expect(await screen.findByLabelText('소유자')).toBeTruthy();
     });
 
     it('sends ownerAccountId when admin selects an owner', async () => {
@@ -405,7 +405,7 @@ describe('AgentsSettings', () => {
       render(<AgentsSettings />);
       fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-      fireEvent.change(screen.getByLabelText('Owner'), { target: { value: 'u2' } });
+      fireEvent.change(screen.getByLabelText('소유자'), { target: { value: 'u2' } });
       fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
       await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
@@ -418,7 +418,7 @@ describe('AgentsSettings', () => {
       render(<AgentsSettings />);
       fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-      fireEvent.change(screen.getByLabelText('Owner'), { target: { value: '' } });
+      fireEvent.change(screen.getByLabelText('소유자'), { target: { value: '' } });
       fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
       await waitFor(() => expect(c.updateAgent).toHaveBeenCalled());
@@ -431,7 +431,7 @@ describe('AgentsSettings', () => {
       render(<AgentsSettings />);
       fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-      const ownerSelect = await screen.findByLabelText('Owner');
+      const ownerSelect = await screen.findByLabelText('소유자');
       const options = ownerSelect.querySelectorAll('option');
       const optionTexts = [...options].map((o) => o.textContent);
 
@@ -526,7 +526,7 @@ describe('새 에이전트 기본값', () => {
     // Task 15: 그리드가 먼저 뜬다 — 새 에이전트 폼은 `+` 를 눌러야 열린다.
     fireEvent.click(await screen.findByTestId('agent-create'));
 
-    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'fizz' } });
+    fireEvent.change(await screen.findByLabelText('에이전트 이름'), { target: { value: 'fizz' } });
     fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
 
     await waitFor(() => expect(c.createAgent).toHaveBeenCalled());
@@ -549,7 +549,7 @@ describe('새 에이전트 기본값', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('기본값을 불러오지 못했다');
     // 조용한 기본값이 아니다 — 초안 자체가 없으므로 harness 를 고르는 자리도 없다.
-    expect(screen.queryByLabelText('Agent harness')).toBeNull();
+    expect(screen.queryByLabelText('에이전트 하네스')).toBeNull();
     expect((screen.getByRole('button', { name: '에이전트 만들기' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -569,7 +569,7 @@ describe('새 에이전트 기본값', () => {
     expect(card.textContent).not.toMatch(/기본값|inherit/i);
 
     fireEvent.click(card);
-    const harness = await screen.findByLabelText('Agent harness');
+    const harness = await screen.findByLabelText('에이전트 하네스');
     expect((harness as HTMLSelectElement).value).toBe('claude-code');
     expect(harness.closest('label')?.textContent).not.toMatch(/기본값|inherit/i);
   });
@@ -759,11 +759,11 @@ describe('상세는 세 묶음, 저장은 한 쌍 (Task 15-3)', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     fireEvent.click(screen.getByTestId('agent-tab-run'));
-    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+    fireEvent.change(await screen.findByLabelText('작업 디렉터리'), { target: { value: '/other' } });
 
     fireEvent.click(screen.getByTestId('agent-tab-memory'));
     fireEvent.click(screen.getByTestId('agent-tab-run'));
-    expect((screen.getByLabelText('Working directory') as HTMLInputElement).value).toBe('/other');
+    expect((screen.getByLabelText('작업 디렉터리') as HTMLInputElement).value).toBe('/other');
   });
 
   it('새 에이전트 만들기에는 탭이 없다 (A2)', async () => {
@@ -791,12 +791,12 @@ describe('상세는 세 묶음, 저장은 한 쌍 (Task 15-3)', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-    const dir = await screen.findByLabelText('Working directory');
+    const dir = await screen.findByLabelText('작업 디렉터리');
     fireEvent.change(dir, { target: { value: '/other' } });
     expect((dir as HTMLInputElement).value).toBe('/other');
 
     fireEvent.click(await screen.findByRole('button', { name: '되돌리기' }));
-    expect((screen.getByLabelText('Working directory') as HTMLInputElement).value).toBe('/repo');
+    expect((screen.getByLabelText('작업 디렉터리') as HTMLInputElement).value).toBe('/repo');
     // 되돌린 뒤에는 다시 사라진다 — 고친 것이 없으므로.
     expect(screen.queryByRole('button', { name: '되돌리기' })).toBeNull();
   });
@@ -940,7 +940,7 @@ describe('그리드와 상세는 한 번에 하나만 (Task 15)', () => {
 
     expect(await screen.findByTestId('agent-grid')).toBeTruthy();
     // 아무도 안 골랐으므로 상세가 없다.
-    expect(screen.queryByLabelText('Agent instructions')).toBeNull();
+    expect(screen.queryByLabelText('에이전트 지시문')).toBeNull();
     expect(screen.queryByTestId('agent-back')).toBeNull();
   });
 
@@ -949,7 +949,7 @@ describe('그리드와 상세는 한 번에 하나만 (Task 15)', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
-    expect(await screen.findByLabelText('Agent instructions')).toBeTruthy();
+    expect(await screen.findByLabelText('에이전트 지시문')).toBeTruthy();
     expect(screen.queryByTestId('agent-grid')).toBeNull();
   });
 
@@ -960,7 +960,7 @@ describe('그리드와 상세는 한 번에 하나만 (Task 15)', () => {
 
     fireEvent.click(await screen.findByTestId('agent-back'));
     expect(await screen.findByTestId('agent-grid')).toBeTruthy();
-    expect(screen.queryByLabelText('Agent instructions')).toBeNull();
+    expect(screen.queryByLabelText('에이전트 지시문')).toBeNull();
   });
 
   it('+ 도 상세(새 에이전트)로 간다', async () => {
@@ -980,9 +980,9 @@ describe('저장 바 (A3)', () => {
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     expect(screen.queryByTestId('agent-save-bar')).toBeNull();
 
-    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+    fireEvent.change(await screen.findByLabelText('작업 디렉터리'), { target: { value: '/other' } });
     expect(screen.getByTestId('agent-save-count').textContent).toBe('1개 바뀜');
-    fireEvent.change(screen.getByLabelText('Agent instructions'), { target: { value: '고친 지시문' } });
+    fireEvent.change(screen.getByLabelText('에이전트 지시문'), { target: { value: '고친 지시문' } });
     expect(screen.getByTestId('agent-save-count').textContent).toBe('2개 바뀜');
 
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
@@ -994,10 +994,10 @@ describe('저장 바 (A3)', () => {
     fakeController([agent('rusalka', { workingDir: '/repo' })]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
-    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+    fireEvent.change(await screen.findByLabelText('작업 디렉터리'), { target: { value: '/other' } });
 
     fireEvent.click(screen.getByRole('button', { name: '되돌리기' }));
-    expect((screen.getByLabelText('Working directory') as HTMLInputElement).value).toBe('/repo');
+    expect((screen.getByLabelText('작업 디렉터리') as HTMLInputElement).value).toBe('/repo');
     expect(screen.queryByTestId('agent-save-bar')).toBeNull();
   });
 
@@ -1005,12 +1005,12 @@ describe('저장 바 (A3)', () => {
     fakeController([agent('rusalka', { workingDir: '/repo' })]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
-    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+    fireEvent.change(await screen.findByLabelText('작업 디렉터리'), { target: { value: '/other' } });
 
     fireEvent.click(screen.getByTestId('agent-back'));
     fireEvent.click(await screen.findByRole('button', { name: '계속 고치기' }));
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect((screen.getByLabelText('Working directory') as HTMLInputElement).value).toBe('/other');
+    expect((screen.getByLabelText('작업 디렉터리') as HTMLInputElement).value).toBe('/other');
 
     fireEvent.click(screen.getByTestId('agent-back'));
     fireEvent.click(await screen.findByRole('button', { name: '버리고 나가기' }));
@@ -1034,7 +1034,7 @@ describe('저장 바 (A3)', () => {
     guardedLeave(go);
     expect(go).toHaveBeenCalledTimes(1);
 
-    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+    fireEvent.change(await screen.findByLabelText('작업 디렉터리'), { target: { value: '/other' } });
     const go2 = vi.fn();
     act(() => guardedLeave(go2));
     expect(go2).not.toHaveBeenCalled();
@@ -1048,7 +1048,7 @@ describe('저장 바 (A3)', () => {
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     fireEvent.click(screen.getByTestId('agent-tab-permissions'));
-    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+    fireEvent.change(await screen.findByLabelText('작업 디렉터리'), { target: { value: '/other' } });
 
     fireEvent.click(screen.getByTestId('agent-tab-profile'));
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
@@ -1069,7 +1069,7 @@ describe('저장 바 (A3)', () => {
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
     expect(screen.queryByTestId('agent-tab-dot-profile')).toBeNull();
 
-    fireEvent.change(await screen.findByLabelText('Agent instructions'), { target: { value: '고친 지시문' } });
+    fireEvent.change(await screen.findByLabelText('에이전트 지시문'), { target: { value: '고친 지시문' } });
     expect(screen.getByTestId('agent-tab-dot-profile')).toBeTruthy();
     for (const id of ['overview', 'run', 'permissions', 'memory']) {
       expect(screen.queryByTestId(`agent-tab-dot-${id}`), id).toBeNull();
@@ -1080,7 +1080,7 @@ describe('저장 바 (A3)', () => {
     const c = fakeController([agent('rusalka', { workingDir: '/repo' })]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
-    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+    fireEvent.change(await screen.findByLabelText('작업 디렉터리'), { target: { value: '/other' } });
 
     c.updateAgent.mockImplementationOnce(async () => { throw new Error('끊겼다'); });
     fireEvent.click(screen.getByTestId('agent-back'));
@@ -1099,12 +1099,12 @@ describe('저장 바 (A3)', () => {
   it('다른 화면이 targetId 로 다른 에이전트를 열어도 저장 안 한 초안을 묻는다 (security n2)', async () => {
     fakeController([agent('rusalka', { workingDir: '/repo' }), agent('fizz')]);
     const { rerender } = render(<AgentsSettings targetId="id-rusalka" />);
-    fireEvent.change(await screen.findByLabelText('Working directory'), { target: { value: '/other' } });
+    fireEvent.change(await screen.findByLabelText('작업 디렉터리'), { target: { value: '/other' } });
 
     rerender(<AgentsSettings targetId="id-fizz" />);
     fireEvent.click(await screen.findByRole('button', { name: '계속 고치기' }));
     expect(screen.getByRole('heading', { name: 'rusalka 편집' })).toBeTruthy();
-    expect((screen.getByLabelText('Working directory') as HTMLInputElement).value).toBe('/other');
+    expect((screen.getByLabelText('작업 디렉터리') as HTMLInputElement).value).toBe('/other');
   });
 
   it('바로 걸리는 칸에는 「바로 적용」 표지가 선다', async () => {

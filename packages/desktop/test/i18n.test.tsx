@@ -845,7 +845,7 @@ describe('에이전트 설정 — 언어를 한국어로 바꾸면 한국어로 
     seedAgents([]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-create'));
-    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'Bad Name' } });
+    fireEvent.change(await screen.findByLabelText('에이전트 이름'), { target: { value: 'Bad Name' } });
     fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
     expect((await screen.findByRole('alert')).textContent).toContain('2~32자');
   });
@@ -961,15 +961,18 @@ describe('에이전트 설정 — 옮기면서 사실을 잃지 않는다', () =
   });
 
   /**
-   * **번역하지 않은 것이 번역되지 않았다.** `admin`·`PAT`·`harness`·`daemon`·`attach` 는
+   * **번역하지 않은 것이 번역되지 않았다.** `admin`·`PAT`·`daemon`·`attach` 는
    * 이 제품의 고유어이고, 옮기면 사람이 문서·터미널·서버 오류에서 보는 말과 화면의 말이
    * 갈라진다(`en.ts` 의 agents 머리말).
+   *
+   * `harness` 는 이 목록에서 뺐다(2026-10-10, designer i18n P3-b s1): 사전은 이미 23곳에서
+   * 「하네스」 로 옮겨 쓰고 있었고, 같은 폼 안에서 토글 「하네스 기본값 쓰기」 와 칸 「harness 기본값」 이
+   * 두 꼴로 섞였다. 하네스 **이름**(`claude-code`·`codex`)은 값이라 여전히 그대로 선다.
    */
   it('제품 고유어는 두 언어에서 같은 글자다', () => {
     const pairs: [keyof typeof en, string][] = [
       ['agents.run.defaultsNotAdmin', 'admin'],
       ['agents.pat.heading', 'PAT'],
-      ['agents.run.harnessDefault', 'harness'],
       ['agents.runner.daemonScope', 'daemon'],
       ['agents.permissions.ownerNone', 'attach'],
     ];

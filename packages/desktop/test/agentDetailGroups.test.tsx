@@ -16,7 +16,7 @@ describe('에이전트 상세 묶음 (UX ⑨b)', () => {
     const run = src.indexOf("title={t('agents.run.title')}");
     const perm = src.indexOf("title={t('agents.permissions.title')}");
     const model = src.indexOf('<ModelPicker');
-    const effort = src.indexOf('aria-label="Effort"');
+    const effort = src.indexOf("aria-label={t('agents.run.effort')}");
     expect(run).toBeGreaterThan(0);
     expect(perm).toBeGreaterThan(run);
     for (const at of [model, effort]) {
