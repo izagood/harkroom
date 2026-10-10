@@ -1214,7 +1214,6 @@ export const en = {
   'agents.memory.flagConfirm': 'Content is fine — use it again',
   'agents.memory.flagConfirmFailed': 'Could not confirm the memory',
   'agents.memory.collapse': 'Collapse {slug}',
-  'agents.memory.chars': '{n} chars',
   'agents.memory.charsOfMax': '{n} / {max} chars',
   /**
    * `core` 는 **매 턴 통째로 프롬프트에 실린다** — 길이가 곧 비용이다. 나머지는 필요할
@@ -1811,12 +1810,6 @@ export const en = {
   // - **`errText(err)` 의 내용** — 러너·daemon·OS 가 한 말이다. 앱이 다시 쓰지 않는다(`#368`)
   // ---------------------------------------------------------------------------
 
-  /**
-   * 실행 파일이 없다. **무엇이 없는지와 어떻게 채우는지를 둘 다** 말한다(`#473`+`#476`).
-   * `{hint}` 는 `installHint()` 가 준 한 줄이고, 없으면 아래 `notFoundNoHint` 를 쓴다 —
-   * 지어내지 않는다.
-   */
-  'runner.exit.notFound': '{what} was not found — install it and make sure it is on PATH. {hint}',
 
   // ---------------------------------------------------------------------------
   // sidebar — **화면 이름이다.** 이 말들을 내는 판정이 `lib/` 에 없다: 사이드바가
@@ -1988,7 +1981,6 @@ export const en = {
     'Callable: the agent stands in the composer of this channel and in the mention list, and is called when someone clicks it. '
     + 'Every message: it is added to the front of every message a person writes here — use the × on the chip to leave it out of a single message.',
   'sidebar.members.autoMentionNoteReadOnly': ' Only an admin can change this.',
-  'sidebar.members.close': 'Close',
   'sidebar.members.empty': 'No members',
   'sidebar.members.invite': 'Invite',
   'sidebar.members.inviteFailed': 'The invite did not go through',
@@ -1996,14 +1988,6 @@ export const en = {
   'sidebar.members.inviteSelect': 'Account to invite',
   'sidebar.members.kindAgent': 'Agent',
   'sidebar.members.kindHuman': 'Person',
-  /**
-   * 마지막 멤버가 나갈 때. **두 사실을 붙여 둔다** — 아무도 못 보게 된다는 것과,
-   * 그래도 채널은 남는다는 것. 뒤엣것이 없으면 사람은 이것을 삭제로 읽는다.
-   */
-  'sidebar.members.lastMemberWarning':
-    'Leaving means nobody can see this channel — you are the last member. The channel itself stays.',
-  'sidebar.members.leave': 'Leave',
-  'sidebar.members.leaveConfirm': 'Leave for good',
   'sidebar.members.leaveFailed': 'You are still in the channel',
   'sidebar.members.listFailed': 'The member list did not arrive',
   'sidebar.members.loading': 'Loading…',
@@ -2031,7 +2015,6 @@ export const en = {
   'sidebar.members.teamPick': 'Pick a team…',
   'sidebar.members.teamSelect': 'Team to add',
   'sidebar.members.teamSkipped': 'Skipped: {names}',
-  'sidebar.members.title': 'Members of {name}',
 
   'sidebar.menu.archive': 'Archive',
   'sidebar.menu.copyId': 'Copy channel ID',
@@ -2324,8 +2307,6 @@ export const en = {
   'threadModel.threadSet': "this thread",
   'threadModel.agentSet': "set by @{handle}",
   'threadModel.agentSetUnknown': "set by an agent",
-  'threadModel.stale': "Not used — the agent's harness changed since this was set",
-  'threadModel.oldRunner': "This agent's runner may not know thread models yet — it runs on its default until updated",
   'threadModel.chipLabel': "Model for @{handle}: {value}",
   'threadModel.picker.title': "Model for @{handle} in this thread",
   'threadModel.picker.composerTitle': "Model for @{handle} in this message",
@@ -3709,7 +3690,6 @@ export const en = {
   // ---------------------------------------------------------------------------
 
   'channel.doc.cancel': 'Cancel',
-  'channel.doc.close': 'Close',
   /**
    * 409. **세 사실을 다 진다** — 무엇이 일어났나 · 어디를 보나 · 다시 누르면 무엇이 되나.
    * 그 셋이 이 기능의 전부다(내 편집은 편집칸에 그대로 있고 사람이 정한다).
@@ -3767,7 +3747,6 @@ export const en = {
   'channelSheet.cancel': 'Cancel',
   'channelSheet.close': 'Close channel settings',
   'channelSheet.edit': 'Edit',
-  'channelSheet.info.name': 'Name',
   'channelSheet.info.none': 'None',
   'channelSheet.info.private': 'Private',
   'channelSheet.info.public': 'Public',
@@ -3783,7 +3762,6 @@ export const en = {
   'channelSheet.notify.failed': 'The notification level did not change',
   'channelSheet.notify.legend': 'What should this channel notify you about',
   'channelSheet.open': 'Open #{name} channel settings',
-  'channelSheet.save': 'Save',
   'channelSheet.tab.info': 'Info',
   'channelSheet.tab.notify': 'Notifications',
   'channelSheet.tab.members': 'Members',
@@ -4356,7 +4334,6 @@ export const en = {
   'agents.scope.mcp': 'MCP servers',
   'agents.scope.mcpLoading': 'Reading the registry…',
   'agents.scope.mcpListFailed': 'The MCP registry could not be read',
-  'agents.scope.mcpNone': 'The registry is empty — an admin adds names under Settings › Integrations › MCP servers.',
   'agents.scope.errInvariant': 'Personal credentials go together with owner-only calls: set both, and a personal MCP server needs personal credentials.',
   'agents.scope.errWidening': 'A scope cannot be widened once narrowed — this agent may already hold personal data.',
   'agents.scope.errUnknownMcp': 'That MCP server is not in the registry.',
@@ -4465,7 +4442,6 @@ export const en = {
   'secrets.widenWarn': '@{handle} set this value, so @{handle} knows it. Consider [Replace value] before giving it to another agent.',
   'secrets.adoptNote': 'Once you grant or widen it yourself, @{handle} can no longer rotate this secret (it becomes owner-managed).',
   'secrets.notice.open': 'Open secrets',
-  'agents.grants.secretCreate': 'Create secrets',
   'agents.grants.secretCreateOn': 'Allowed',
   'agents.grants.secretCreateHeading': 'Create secrets',
   'agents.grants.secretCreateNote': 'In turns you start, this agent may create secrets (the server generates the value) or register a value it received. You own them, and each is granted only to this agent in that channel. Each creation leaves a notice line in that thread, and the secret is badged in Settings › Secrets & APIs.',
@@ -4717,8 +4693,6 @@ export const en = {
   'agents.grants.orgWideWarning': 'Grants merge on every repository in {owners} (including future ones).',
   'agents.grants.errForbidden': 'Only the owner (a person) of this agent can grant merge permission',
   'agents.grants.errFailed': 'Not saved: {reason}',
-  'agents.grants.ghUser.select': 'GitHub account',
-  'agents.grants.ghUser.placeholder': 'Pick an account…',
   'agents.grants.ghUser.activeTag': '{login} (active in gh)',
   'agents.grants.ghUser.noAccounts': 'No GitHub account is logged in to gh on this device. Run gh auth login in a terminal first.',
   'agents.grants.ghUser.ghFailed': 'Could not read the gh accounts: {reason}',
