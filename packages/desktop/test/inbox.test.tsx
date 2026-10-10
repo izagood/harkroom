@@ -120,6 +120,36 @@ describe('Inbox 상태 보드 (C안)', () => {
     expect(c.api.setInboxThreadState.mock.calls.map((x) => (x as unknown as [string])[0])).toEqual(['f1', 'f2', 'f3']);
   });
 
+  it('물음이 열린 카드는 같은 실패를 가져도 묶지 않는다 — 물음마다 따로 답한다 (security F1)', async () => {
+    fakeController(async () => ({
+      entries: ['q1', 'q2'].flatMap((r, i) => [
+        entry(10 + i * 2, { threadRootId: r, meta: askMeta({ kind: 'account', accountId: ME }, `물음 ${r}?`) }),
+        entry(11 + i * 2, { threadRootId: r, meta: failMeta('관문') }),
+      ]),
+      threads: ['q1', 'q2'].map((r) => head(r, { openAskAccountIds: [ME], unresolvedFailureCount: 1 })),
+    }));
+    open();
+    await screen.findByTestId('inbox-card-q1');
+    expect(screen.getByTestId('inbox-card-q2')).toBeTruthy();
+    expect(screen.queryByTestId('inbox-card-similar-q1')).toBeNull();
+    expect(screen.queryByTestId('inbox-card-similar-q2')).toBeNull();
+    expect(screen.getByTestId('inbox-card-answer-q2-a')).toBeTruthy();
+  });
+
+  it('같은 실패라도 채널이 다르면 묶지 않는다 (security n1)', async () => {
+    fakeController(async () => ({
+      entries: [
+        entry(1, { threadRootId: 'f1', meta: failMeta('관문') }),
+        entry(2, { threadRootId: 'f2', channelId: 'c2', meta: failMeta('관문') }),
+      ],
+      threads: [head('f1', { unresolvedFailureCount: 1 }), head('f2', { channelId: 'c2', unresolvedFailureCount: 1 })],
+    }));
+    open();
+    await screen.findByTestId('inbox-card-f1');
+    expect(screen.getByTestId('inbox-card-f2')).toBeTruthy();
+    expect(screen.queryByTestId('inbox-card-similar-f1')).toBeNull();
+  });
+
   it('보낸 사람 이름은 자르지 않고 채널부터 줄인다 (R6)', async () => {
     fakeController(async () => ({
       entries: [entry(1, { threadRootId: 'r1' })],

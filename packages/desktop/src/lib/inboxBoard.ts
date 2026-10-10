@@ -89,8 +89,13 @@ export interface BoardCard {
   /** 내가 할 일의 종류(R4). */
   kind: BoardKind;
   /**
-   * 같은 실패를 한 줄로 묶는 열쇠(R5) — **같은 에이전트의 같은 실패**(작성자·갈래 표지·원인 문장).
-   * 실패 카드가 아니면 null(묶지 않는다).
+   * 같은 실패를 한 줄로 묶는 열쇠(R5) — **같은 채널에서 같은 에이전트의 같은 실패**(채널·작성자·
+   * 갈래 표지·원인 문장). 실패 카드가 아니면 null(묶지 않는다).
+   *
+   * **나에게 온 열린 물음이 있으면 묶지 않는다**(security F1, #1314). 묶인 줄은 맨 앞 카드의 물음만
+   * 보이므로 나머지 물음은 답할 길이 없고, [치우기]가 본 적 없는 결정까지 치운다. 채널을 열쇠에 넣는
+   * 것도 같은 이유다(security n1) — 줄에는 맨 앞 카드의 채널만 보이니, 다른 채널 것을 같이 치우면
+   * 사람은 무엇을 치웠는지 모른다.
    */
   similarKey: string | null;
   /** 스레드의 답글 수(R6, 머리의 `replyCount`). 머리가 없으면 null. */
@@ -348,8 +353,8 @@ export function buildBoard(input: BoardInput): BoardCard[] {
       ask: openAsk && ask ? { messageId: openAsk.messageId, options: ask.options } : null,
       laterUntil: fold === 'later' ? state?.until ?? null : null,
       kind: kindOf(head, input, ask != null, failure != null),
-      similarKey: failure && failureTitle
-        ? JSON.stringify([failure.authorId, failureMeta?.code ?? null, failureTitle])
+      similarKey: ask == null && failure && failureTitle
+        ? JSON.stringify([failure.channelId, failure.authorId, failureMeta?.code ?? null, failureTitle])
         : null,
       replyCount: head?.replyCount ?? null,
     });
