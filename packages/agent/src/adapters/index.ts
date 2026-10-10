@@ -210,6 +210,11 @@ export function injectionFactsFor(
   };
 }
 
+/** 프롬프트를 넣기 전에 harkroom 브릿지의 `tools/list` 답을 기다리는가(계약 `waitsForMcpBeforePrompt`). */
+export function waitsForMcpBeforePrompt(harness: AgentHarness): boolean {
+  return adapterFor(harness).waitsForMcpBeforePrompt === true;
+}
+
 /** 이 하네스의 실행 파일 이름. 표가 진실이고, 조회에도 같은 값을 쓴다(세션 목록 등). */
 export function harnessCommand(harness: AgentHarness): string {
   return adapterFor(harness).command;

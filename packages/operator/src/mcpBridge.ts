@@ -82,6 +82,12 @@ export interface BridgeLink {
   socketPath: string; runnerId: string; secret: string; cause?: string | null;
   /** 하네스가 이 브릿지를 띄운 작업 디렉터리 — `attachment.upload` 의 경로 기준(`turnUploads.ts`). */
   cwd?: string | null;
+  /**
+   * 하네스의 `tools/list` 에 **처음** 답을 써 준 직후 한 번 부른다(2026-10-10). 러너가 이 신호를 기다렸다가
+   * 프롬프트를 넣는다(`RUNNER_MCP_READY_FILE_ENV`). 해석하지 않는다는 원칙의 예외는 이 한 가지 —
+   * 요청의 `method` 를 보고 그 답이 나간 순간을 짚을 뿐, 내용은 건드리지 않는다.
+   */
+  onToolsListed?: () => void;
 }
 
 export interface BridgeStdio { stdin: Readable; stdout: Writable; stderr: Writable }
@@ -128,7 +134,7 @@ const defaultSchedule = (fn: () => void, ms: number): BridgeTimer => {
 };
 
 /** 링크 위의 요청 하나. `rpcId` 는 오류 응답을 만들 때 쓴다(알림은 `null`). */
-interface PendingRequest { rpcId: unknown; timer: BridgeTimer }
+interface PendingRequest { rpcId: unknown; timer: BridgeTimer; toolsList?: boolean }
 
 export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTuning = {}): Promise<void> {
   const requestTimeoutMs = tuning.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
@@ -148,6 +154,8 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
     let finished = false;
     let reconnectDelayMs = reconnectInitialMs;
     let reconnectTimer: BridgeTimer | null = null;
+    /** `onToolsListed` 를 이미 불렀나 — 한 번만 부른다. */
+    let toolsListed = false;
     /** 유예를 넘겨 링크가 없다 — 이 동안 들어오는 요청은 큐에 안 담고 바로 거절한다. */
     let linkDownHard = false;
     let graceTimer: BridgeTimer | null = null;
@@ -237,6 +245,10 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
           if (entry === undefined) continue;
           if (res.type === 'mcp.response') {
             for (const m of res.messages) writeOut(m);
+            if (entry.toolsList && !toolsListed) {
+              toolsListed = true;
+              try { link.onToolsListed?.(); } catch { /* 신호가 답을 막지 않는다 */ }
+            }
           } else if (res.type === 'mcp.error') {
             answerError(entry.rpcId, `harkroom 서버가 거절했다 (${res.status}): ${res.message}`);
           }
@@ -305,7 +317,8 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
             + '이 요청이 처리됐는지는 알 수 없다. 결과를 확인한 뒤에 다시 불러라',
           );
         }, requestTimeoutMs);
-        pending.set(id, { rpcId, timer });
+        const toolsList = rpcId !== null && (payload as { method?: unknown }).method === 'tools/list';
+        pending.set(id, { rpcId, timer, ...(toolsList ? { toolsList } : {}) });
         // cwd 는 하네스가 이 브릿지를 띄운 자리다 — 오퍼레이터의 `attachment.upload` 가 경로를 그 아래로만 받는다.
         const req: RunnerLinkRequest = {
           type: 'mcp.request', id, payload,

@@ -57,6 +57,13 @@ export const RUNNER_LINK_ENV = {
  * 링크 셋과 달리 **없어도 된다**(옛 러너·대화형 턴). 없으면 서버는 스레드를 훑던 옛 셈으로 간다.
  */
 export const RUNNER_TURN_CAUSE_ENV = 'HARKROOM_TURN_CAUSE';
+/**
+ * **브릿지가 `tools/list` 에 답한 뒤 만들 표식 파일**(2026-10-10, 스레드 20914e42). 러너가 턴마다 새 경로를
+ * 심고, 그 파일이 생길 때까지(시한 있음) 프롬프트를 넣지 않는다 — 하네스가 harkroom 도구를 받기 전에 첫
+ * 호출을 내면 이어 받은 세션의 캐시가 깨진다(`agent/src/mentionTurn.ts` 의 `mcpReadyFile`).
+ * 없으면 브릿지는 아무것도 안 쓴다. 파일은 비어 있다 — 있는가만 뜻이 있다.
+ */
+export const RUNNER_MCP_READY_FILE_ENV = 'HARKROOM_MCP_READY_FILE';
 /** 오퍼레이터 → 서버 `/mcp` 요청에서 `RUNNER_TURN_CAUSE_ENV` 값을 싣는 헤더. */
 export const CAUSE_HEADER = 'x-harkroom-cause';
 

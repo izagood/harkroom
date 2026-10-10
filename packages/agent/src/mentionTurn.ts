@@ -9,7 +9,9 @@
 // 하네스 출력은 파싱하지 않는다 — 에이전트가 스스로 harkroom MCP 로 답을 올린다(spec §4).
 import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
+import { existsSync } from 'node:fs';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
 import type { FailOpts, Me } from './harkroom.js';
@@ -17,7 +19,8 @@ import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_T
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { buildTurnCommand, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
-import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome } from './adapters/index.js';
+import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome, waitsForMcpBeforePrompt } from './adapters/index.js';
+import { RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
 import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { codexRolloutFileFor, findCodexSessionId } from './codexSessions.js';
@@ -185,7 +188,12 @@ export interface TurnRelay {
   };
 }
 
+/** 브릿지의 `tools/list` 표식을 기다리는 상한(ms, 스폰 기준). 넘기면 그냥 넣는다(`mcpReadyFile` 주석). */
+export const MCP_READY_MAX_MS = 8_000;
+
 export interface MentionTurnDeps {
+  /** 표식 파일(`mcpReadyFile`)을 둘 디렉터리. 생략하면 `os.tmpdir()`. 시험이 자리를 고정할 때 쓴다. */
+  mcpReadyDir?: string;
   harkroom: MentionTurnHarkroom;
   /**
    * 러너 메모리 사본(`memoryCache.ts`). 러너 수명 동안 하나다 — main.ts 가 조립한다. 없으면
@@ -1203,6 +1211,23 @@ export async function runMentionTurn(
     causeMessageId: mentionId,
   });
 
+  /**
+   * **브릿지가 harkroom 도구 목록을 넘긴 뒤에 프롬프트를 넣는다**(2026-10-10, 스레드 20914e42).
+   *
+   * claude 는 MCP 서버가 붙기 전에도 입력을 받아 첫 호출을 낸다. 브릿지의 `tools/list` 는 원격 서버까지
+   * 왕복이라 0.7~2.1초가 걸렸고(실측 5회), 첫 호출은 그보다 빨랐다. 이어 받은 턴(`-r`)에서는 그때 도구
+   * 목록이 앞 턴과 달라 캐시가 깨지고, 붙은 뒤 한 번 더 깨진다(운영: 이어 받은 턴 13개 중 12개).
+   * `MCP_CONNECTION_NONBLOCKING=false` 는 TUI 의 첫 입력을 막지 않아 이 일을 못 한다(2.1.296 실측).
+   *
+   * 그래서 턴마다 새 표식 경로를 심고, 브릿지가 첫 `tools/list` 답을 쓴 뒤 그 파일을 만든다
+   * (`operator/src/main.ts`). 시한(`MCP_READY_MAX_MS`)을 넘기면 **지금처럼 그냥 넣는다** — 턴을 막지 않는다.
+   * 어느 쪽이었는지는 로그 한 줄로 남긴다(효과를 셀 때 "시한까지 감" 횟수를 센다).
+   */
+  const mcpReadyFile = usesTui && waitsForMcpBeforePrompt(def.harness)
+    ? join(deps.mcpReadyDir ?? tmpdir(), `harkroom-mcp-ready-${randomUUID()}`)
+    : null;
+  if (mcpReadyFile !== null) plan.env[RUNNER_MCP_READY_FILE_ENV] = mcpReadyFile;
+
   // #126: 턴 시작 로그 (어느 채널·스레드·하네스·워크스페이스에서 PTY 를 띄우는가)
   const turnStartMs = (deps.now ?? Date.now)();
   console.log(
@@ -1818,6 +1843,16 @@ export async function runMentionTurn(
           // 언제 넣을지·갔는지 어떻게 볼지는 **하네스의 성질**이다(어댑터 표).
           // codex 는 입력창이 보여도 한동안 Enter 를 삼킨다 — 근거는 그 표의 주석에 있다.
           ...injectionFactsFor(def.harness),
+          ...(mcpReadyFile !== null ? {
+            waitFor: {
+              ready: () => existsSync(mcpReadyFile),
+              maxMs: MCP_READY_MAX_MS,
+              onSettled: ({ ready, waitedMs }: { ready: boolean; waitedMs: number }) => {
+                if (ready) console.log(`[mentionTurn] ${key}: MCP 준비 신호를 보고 넣는다(스폰 뒤 ${waitedMs}ms)`);
+                else console.error(`[mentionTurn] ${key}: MCP 준비 신호 없이 시한(${MCP_READY_MAX_MS}ms)을 넘겨 그냥 넣는다`);
+              },
+            },
+          } : {}),
           /**
            * 주입이 **먹혔는지**도 잰다(2026-09-08). 증거는 세션 기록 파일이고, 화면
            * 문자열로 재지 않는 이유는 그것이 하네스 버전에 묶이기 때문이다.
@@ -1999,6 +2034,7 @@ export async function runMentionTurn(
     });
   } finally {
     await settle();
+    if (mcpReadyFile !== null) await rm(mcpReadyFile, { force: true }).catch(() => undefined);
   }
 
   // #144: 에이전트가 직접 message.progress 로 진행 설명을 올리므로, 더 이상 ack seq 를 추적할 필요가 없다.

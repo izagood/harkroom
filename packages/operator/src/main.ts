@@ -19,13 +19,13 @@
 // 닿지 않는다. 즉 이 핸들러가 아예 안 불려도(SIGKILL) 러너는 산다 — 이 핸들러가 하는
 // 일은 러너를 살리는 것이 아니라 **잔해를 남기지 않는 것**이다.
 import { resolve } from 'node:path';
-import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV } from '@harkroom/shared/runnerLink';
+import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_MCP_READY_FILE_ENV, RUNNER_TURN_CAUSE_ENV } from '@harkroom/shared/runnerLink';
 import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge } from './mcpBridge.js';
 import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
 import { API_TOOL, parseApiArgs } from './turnApi.js';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
 
@@ -44,7 +44,13 @@ async function mcpBridgeMain(): Promise<void> {
   }
   // 턴의 원인은 없어도 된다 — 옛 러너·대화형 턴은 심지 않는다(서버는 옛 셈으로 간다).
   const cause = process.env[RUNNER_TURN_CAUSE_ENV] || null;
-  await runMcpBridge({ socketPath, runnerId, secret, cause, cwd: process.cwd() }, { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr });
+  // 러너가 기다리는 표식(`RUNNER_MCP_READY_FILE_ENV`). 못 쓰면 러너가 시한까지 기다린 뒤 그냥 넣는다.
+  const readyFile = process.env[RUNNER_MCP_READY_FILE_ENV] || null;
+  const onToolsListed = readyFile ? () => { try { writeFileSync(readyFile, ''); } catch { /* 러너의 시한이 덮는다 */ } } : undefined;
+  await runMcpBridge(
+    { socketPath, runnerId, secret, cause, cwd: process.cwd(), ...(onToolsListed ? { onToolsListed } : {}) },
+    { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr },
+  );
 }
 
 /**

@@ -39,6 +39,8 @@ export const CLAUDE_CODE_ADAPTER: HarnessAdapter = {
 
   // `--mcp-config <path> --strict-mcp-config`. 파일 하나로 끝난다.
   mcpRegistration: 'config-file',
+  // 이어 받은 턴의 첫 호출 전에 harkroom 도구가 붙어 있어야 캐시가 안 깨진다(계약 주석).
+  waitsForMcpBeforePrompt: true,
   // `--append-system-prompt-file`. argv 로 넘기지 않는 이유는 `ps` 노출이다(#92).
   systemPromptDelivery: 'flag-file',
   // 러너가 첫 턴도 `--session-id <uuid>` 로 미리 발급한다.

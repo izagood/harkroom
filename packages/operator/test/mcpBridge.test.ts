@@ -72,6 +72,49 @@ describe('mcp-bridge', () => {
     await done;
   });
 
+  it('tools/list 의 답을 stdout 에 쓴 **뒤** onToolsListed 를 한 번만 부른다 — 러너가 이 신호를 기다려 프롬프트를 넣는다', async () => {
+    await fakeOperator((socket, value) => {
+      if (value.type !== 'mcp.request') return;
+      const rpcId = (value.payload as { id: unknown }).id;
+      socket.write(encodeLine({ type: 'mcp.response', id: value.id, messages: [{ jsonrpc: '2.0', id: rpcId, result: {} }] }));
+    });
+    const stdin = new PassThrough(); const stdout = new PassThrough();
+    const written: unknown[] = [];
+    const calls: number[] = [];
+    stdout.on('data', (c: Buffer) => { for (const l of c.toString('utf8').split('\n')) if (l) written.push(JSON.parse(l)); });
+    const done = runMcpBridge({ ...link, onToolsListed: () => calls.push(written.length) }, { stdin, stdout, stderr: new PassThrough() });
+    // initialize 의 답으로는 부르지 않는다 — 하네스는 그 뒤에야 도구 목록을 묻는다.
+    stdin.write('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n');
+    await waitFor(() => written.length === 1);
+    expect(calls).toEqual([]);
+    stdin.write('{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n');
+    await waitFor(() => calls.length === 1);
+    // 부른 순간 tools/list 답(둘째 줄)은 이미 나가 있었다.
+    expect(calls).toEqual([2]);
+    // 다시 물어도 한 번뿐이다.
+    stdin.write('{"jsonrpc":"2.0","id":3,"method":"tools/list"}\n');
+    await waitFor(() => written.length === 3);
+    expect(calls).toEqual([2]);
+    stdin.end();
+    await done;
+  });
+
+  it('tools/list 가 거절(mcp.error)되면 onToolsListed 를 부르지 않는다 — 러너는 시한까지 기다린 뒤 넣는다', async () => {
+    await fakeOperator((socket, value) => {
+      if (value.type !== 'mcp.request') return;
+      socket.write(encodeLine({ type: 'mcp.error', id: value.id, status: 503, message: 'down' }));
+    });
+    const stdin = new PassThrough(); const stdout = new PassThrough();
+    let called = 0;
+    const done = runMcpBridge({ ...link, onToolsListed: () => { called += 1; } }, { stdin, stdout, stderr: new PassThrough() });
+    stdin.write('{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n');
+    const out = await collect(stdout, 1);
+    expect(out[0]).toMatchObject({ id: 1, error: { code: -32000 } });
+    expect(called).toBe(0);
+    stdin.end();
+    await done;
+  });
+
   it('요청 둘이 교차해도 답이 각자 제 자리로 간다 — 롱폴이 다른 요청을 막지 않는다', async () => {
     const pending: { socket: Socket; id: unknown; rpcId: unknown }[] = [];
     await fakeOperator((socket, value) => {
