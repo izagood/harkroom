@@ -34,7 +34,8 @@ import { toggleLink, linkFromPaste, applyPastedLink, type PastedLink } from '../
 // 파일 드래그의 판정은 창 전체 안전망(`useFileDropGuard`)과 **같은 함수**를 쓴다.
 import { isFileDrag } from '../lib/fileDrag';
 import { ConfirmDialog } from './ConfirmDialog';
-import { useT } from '../i18n/useT';
+import { useLocale, useT } from '../i18n/useT';
+import { dateTimeText, numberText } from '../lib/localeText';
 import { AgentModelChip } from './AgentModelChip';
 import { formatModelValue, isModelShortcut, picksToSend, setByAgentHandle, threadRowFor, type ModelValue } from '../lib/threadModels';
 
@@ -210,6 +211,7 @@ export function Composer({
   // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
   const hostDoc = useHostDocument();
   const t = useT();
+  const locale = useLocale();
   const accounts = useActiveStore((s) => s.accounts);
   const groups = useActiveStore((s) => s.groups);
   /**
@@ -1001,7 +1003,7 @@ export function Composer({
       setSendErrorByScope((prev) => ({
         ...prev,
         [scopeKey]: t('composer.send.tooLong', {
-          over: overBy.toLocaleString(), max: MAX_MESSAGE_BODY_CHARS.toLocaleString(),
+          over: numberText(overBy, locale), max: numberText(MAX_MESSAGE_BODY_CHARS, locale),
         }),
       }));
       return;
@@ -1809,7 +1811,7 @@ export function Composer({
           className="mb-1 flex items-center gap-2 rounded-row bg-surface-sunken px-2 py-1 text-meta text-fg-muted"
         >
           <span className="min-w-0 flex-1 truncate">
-            {t('composer.paste.long', { chars: fileOffer.length.toLocaleString() })}
+            {t('composer.paste.long', { chars: numberText(fileOffer.length, locale) })}
           </span>
           <button
             type="button"
@@ -1957,7 +1959,7 @@ export function Composer({
               {pendingScheduled.map((m) => (
                 <div key={m.id} className="flex items-center justify-between rounded-row bg-surface-raised px-2 py-1 text-fg">
                   <span className="min-w-0 flex-1 truncate">{m.body}</span>
-                  <span className="ml-2 shrink-0 text-fg-subtle">{new Date(m.sendAt).toLocaleString()}</span>
+                  <span className="ml-2 shrink-0 text-fg-subtle">{dateTimeText(m.sendAt, locale)}</span>
                   <button
                     type="button"
                     aria-label={t('composer.schedule.cancelOne')}
@@ -2102,8 +2104,8 @@ export function Composer({
               className={`text-meta ${tooLong ? 'text-danger' : 'text-fg-subtle'}`}
             >
               {tooLong
-                ? t('composer.send.over', { over: overBy.toLocaleString() })
-                : t('composer.send.remaining', { remaining: (-overBy).toLocaleString() })}
+                ? t('composer.send.over', { over: numberText(overBy, locale) })
+                : t('composer.send.remaining', { remaining: numberText(-overBy, locale) })}
             </span>
           )}
           <button

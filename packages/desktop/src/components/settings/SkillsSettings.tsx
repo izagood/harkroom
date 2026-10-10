@@ -6,7 +6,8 @@ type SkillRow = WorkspaceSkillView & Partial<SkillUsageView>;
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { SettingsGrid, SettingsPage } from './primitives';
-import { useAgo, useT } from '../../i18n/useT';
+import { useAgo, useLocale, useT } from '../../i18n/useT';
+import { dateTimeText } from '../../lib/localeText';
 import type { Translate } from '../../i18n';
 
 /**
@@ -59,6 +60,7 @@ export const disableConfirmText = (t: Translate) => t('skills.confirm.disable');
 
 export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
   const t = useT();
+  const locale = useLocale();
   const ago = useAgo();
   const [skills, setSkills] = useState<SkillRow[] | 'error' | null>(null);
   // 제안 알림에서 왔으면 그 스킬의 본문을 처음부터 펼쳐 둔다 — 승인하러 온 사람이
@@ -154,7 +156,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                       <span className="font-mono font-medium text-fg">{skill.slug}</span>
                       <span className="ml-2 text-fg-muted">제안자 @{handleOf(skill.proposedBy)}</span>
                       {/* 상대 시각으로(UX ④c). 전체 시각은 올려 두면 보인다. */}
-                      <span className="ml-2 text-fg-subtle" title={new Date(skill.proposedAt).toLocaleString()}>
+                      <span className="ml-2 text-fg-subtle" title={dateTimeText(skill.proposedAt, locale)}>
                         {ago(new Date(skill.proposedAt).getTime())}
                       </span>
                       {/* 사용 기록(서버 081, D3). 승인된 것만 — 깔려야 쓰인다. 옛 서버는 필드가 없다. */}

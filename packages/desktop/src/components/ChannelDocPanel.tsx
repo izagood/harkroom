@@ -5,7 +5,8 @@ import { MessageBody } from './MessageBody';
 import { ApiError } from '../lib/api';
 import type { ChannelDoc } from '@harkroom/shared';
 import type { SectionId } from './settings/sections';
-import { useT } from '../i18n/useT';
+import { useLocale, useT } from '../i18n/useT';
+import { dateTimeText } from '../lib/localeText';
 
 interface ChannelDocPanelProps {
   channelId: string;
@@ -38,6 +39,7 @@ function expectationOf(doc: ChannelDoc | undefined | null): number | null {
  */
 export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: ChannelDocPanelProps) {
   const t = useT();
+  const locale = useLocale();
   const accounts = useActiveStore((s) => s.accounts);
   const doc = useActiveStore((s) => s.channelDocs[channelId]);
 
@@ -112,7 +114,7 @@ export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: 
   };
 
   const updatedByHandle = doc?.updatedBy ? accounts[doc.updatedBy]?.handle ?? null : null;
-  const updatedAtLabel = doc?.updatedAt ? new Date(doc.updatedAt).toLocaleString() : null;
+  const updatedAtLabel = doc?.updatedAt ? dateTimeText(doc.updatedAt, locale) : null;
 
   return (
     <aside className="flex h-full w-full min-w-0 flex-col bg-surface">
