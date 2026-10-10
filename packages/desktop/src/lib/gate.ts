@@ -1,4 +1,5 @@
 import { ApiError } from './api';
+import type { Translate } from '../i18n';
 
 /**
  * **호스팅 워크스페이스를 만들어 주는 서비스**와 이야기하는 클라이언트.
@@ -121,15 +122,15 @@ export const pendingWorkspace = {
  * 이고, 그 사정은 서버만 안다 — 화면이 자기 말로 "준비 중" 이라고만 하면 몇 시간이 지나도
  * 무엇을 기다리는지 알 수 없고, 고장난 것처럼 읽힌다.
  */
-export function gateProgressText(job: JobResult): string {
+export function gateProgressText(job: JobResult, t: Translate): string {
   if (job.message) return job.message;
   switch (job.status) {
-    case 'queued': return 'Queued…';
-    case 'committed': return 'Submitted — waiting for approval…';
-    case 'waiting_ready': return 'Waiting for the community to come up…';
-    case 'ready': return 'Ready.';
-    case 'failed': return 'Provisioning failed.';
-    default: return `Working… (${job.status})`;
+    case 'queued': return t('connect.gate.queued');
+    case 'committed': return t('connect.gate.committed');
+    case 'waiting_ready': return t('connect.gate.waitingReady');
+    case 'ready': return t('connect.gate.ready');
+    case 'failed': return t('connect.gate.failed');
+    default: return t('connect.gate.working', { status: job.status });
   }
 }
 
@@ -141,21 +142,21 @@ export function gateProgressText(job: JobResult): string {
  * 화면에서 그것을 되살리면 서버가 감춘 것을 클라이언트가 흘리는 셈이 되므로, 여기서도
  * 나누지 않는다.
  */
-export function gateErrorText(err: unknown): string {
+export function gateErrorText(err: unknown, t: Translate): string {
   // 응답 자체를 못 받았다. 실측(2026-09-29)에서 가장 흔한 원인은 **주소를 잘못 넣은 것**이었다 —
   // 만들 워크스페이스의 주소(`<이름>.<zone>`)를 넣으면 그 주소는 아직 없어서 CORS 헤더 없는 빈
   // 404 가 오고, `fetch` 가 응답 대신 예외를 던진다. "닿지 않는다"만 말하면 네트워크 탓으로
   // 읽히므로 무엇을 넣는 칸인지를 같이 말한다.
   if (!(err instanceof ApiError)) {
-    return 'Could not reach the provisioning service. Check the service URL — it is the service that creates communities, not the new community\'s address.';
+    return t('connect.gate.unreachable');
   }
   switch (err.code) {
     case 'invalid_invite':
-      return 'That invite code cannot be used. Ask for a new one.';
+      return t('connect.gate.invalidInvite');
     case 'name_taken':
-      return 'That name is already taken. Try another.';
+      return t('connect.gate.nameTaken');
     case 'at_capacity':
-      return 'The service is at capacity right now. Try again later.';
+      return t('connect.gate.atCapacity');
     default:
       // 이름 규칙 위반(`invalid_name` 등)은 서버 문구가 무엇이 틀렸는지 말해 준다.
       return err.message;
