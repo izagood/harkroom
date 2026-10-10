@@ -85,6 +85,24 @@ describe('그림 URL 캐시', () => {
     revoke.mockRestore();
   });
 
+  // security n2: 꺼내 그린(peek) 것은 최근으로 올라가야 한다 — 같은 커밋에서 다른 줄의 release→evict 가
+  // 방금 그린 것을 가장 오래된 것으로 보고 revoke 하지 않게.
+  it('peek 한 것은 최근으로 올라가 다음 축출에서 살아남는다', async () => {
+    controller(async () => new Blob(['x']));
+    for (let i = 0; i < ATTACHMENT_URL_CACHE_LIMITS.MAX_ENTRIES; i += 1) {
+      const lease = acquireAttachmentUrl(`x${i}`);
+      await lease.promise;
+      lease.release();
+    }
+    const drawn = peekAttachmentUrl('x0');
+    expect(drawn).not.toBeNull();
+    const extra = acquireAttachmentUrl('extra');
+    await extra.promise;
+    extra.release();
+    expect(peekAttachmentUrl('x0')).toBe(drawn);
+    expect(peekAttachmentUrl('x1')).toBeNull();
+  });
+
   it('받는 도중 놓은 자리는 참조를 남기지 않는다', async () => {
     let resolve!: (b: Blob) => void;
     controller(() => new Promise<Blob>((r) => { resolve = r; }));

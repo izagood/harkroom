@@ -329,7 +329,7 @@ function ArtifactCard({ attachment, cover, from }: {
   const ref = attachment.artifact!;
   const latest = useLatestKnownVersion(ref.artifactId, ref.latestVersion);
   const coverOk = cover !== null && canPreview(cover);
-  const { url: coverUrl } = useAttachmentUrl(cover?.id ?? '', coverOk);
+  const { url: coverUrl, failed: coverFailed } = useAttachmentUrl(cover?.id ?? '', coverOk);
   const newer = latest > ref.version;
   // 지금 패널에 떠 있는 카드 — 같은 안의 v1·v2 가 나란히 있을 때 무엇을 보고 있는지 보인다(designer c).
   const selected = useActiveStore((st) => st.artifactPreview?.id === attachment.id);
@@ -350,8 +350,9 @@ function ArtifactCard({ attachment, cover, from }: {
       // `artifact-card` 는 포커스 링을 카드 바깥에 띄운다(index.css) — 선택 표시(카드 테두리)와 모양이 갈린다.
       className={`artifact-card group block w-[min(28rem,100%)] overflow-hidden rounded-card border bg-surface text-left hover:bg-surface-sunken ${selected ? 'border-accent ring-1 ring-accent' : 'border-border'}`}
     >
-      {/* 표지 칸은 받기 전부터 잡아 둔다 — 늦게 붙으면 카드 높이가 바뀌어 목록이 튄다(bf24d7bd ①). */}
-      {coverOk && (coverUrl
+      {/* 표지 칸은 받기 전부터 잡아 둔다 — 늦게 붙으면 카드 높이가 바뀌어 목록이 튄다(bf24d7bd ①).
+          받지 못했으면 칸을 거둔다 — 회색 판이 남으면 받는 중인지 깨졌는지 모른다(그림 첨부가 칩으로 내려가는 것과 같은 규칙). */}
+      {coverOk && !coverFailed && (coverUrl
         ? <img src={coverUrl} alt="" data-testid="artifact-card-cover" className="aspect-video w-full border-b border-border object-cover" />
         : <span aria-hidden data-testid="artifact-card-cover-placeholder" className="block aspect-video w-full border-b border-border bg-surface-sunken" />)}
       <span className="flex flex-col gap-0.5 px-3 py-2">

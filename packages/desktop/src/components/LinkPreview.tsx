@@ -56,7 +56,7 @@ export function LinkPreview({ url }: { url: string }) {
           어디서 왔는지 알려 주는 꼬리표다. 제목은 크기를 안 적어 본문단 13px 을 물려받고,
           `font-semibold` 로만 도드라진다(같은 단 안에서 굵기로 위계를 낸다). */}
       {preview.siteName && (
-        <div className="text-meta text-fg-subtle">{preview.siteName}</div>
+        <div className="truncate text-meta text-fg-subtle">{preview.siteName}</div>
       )}
       {/* 제목 한 줄·설명 두 줄로 자른다 — 긴 og 설명이 카드를 몇 배로 키우지 않게, 카드 높이의
           상한을 정해 둔다(스레드 bf24d7bd ①). 잘린 전문은 `title` 로 본다. */}

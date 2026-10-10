@@ -76,6 +76,20 @@ describe('the preview card in a message', () => {
     expect(screen.queryByTestId('attachment-preview')).toBeNull();
   });
 
+  // 표지 자리는 받기 전부터 잡지만(bf24d7bd ①), 받지 못했으면 거둔다 — 회색 판이 남으면 받는 중인지
+  // 깨졌는지 모른다(designer s1).
+  it('keeps the cover slot while loading and drops it when the cover fails', async () => {
+    let reject!: (e: Error) => void;
+    fakeController({ fetchAttachment: vi.fn(() => new Promise<Blob>((_, r) => { reject = r; })) });
+    const cover: AttachmentRow = { id: 'c1', filename: 'cover.png', contentType: 'image/png', sizeBytes: 10 };
+    render(<Attachments attachments={[page({}, { coverAttachmentId: 'c1' }), cover]} />);
+    expect(screen.getByTestId('artifact-card-cover-placeholder')).toBeTruthy();
+    await act(async () => { reject(new Error('503')); });
+    await waitFor(() => expect(screen.queryByTestId('artifact-card-cover-placeholder')).toBeNull());
+    expect(screen.queryByTestId('artifact-card-cover')).toBeNull();
+    expect(screen.getByTestId('artifact-card')).toBeTruthy();
+  });
+
   // security ④: svg 는 <img>(blob) 화이트리스트 밖이다 — 표지로 와도 그리지 않는다.
   it('does not draw an svg cover', () => {
     const c = fakeController();

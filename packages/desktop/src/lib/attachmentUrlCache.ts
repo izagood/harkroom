@@ -52,7 +52,12 @@ function evict(): void {
 /** 이미 받아 둔 URL 을 **동기로** 돌려준다 — 첫 렌더부터 그림을 그려 빈 자리가 한 번도 안 서게. */
 export function peekAttachmentUrl(id: string): string | null {
   const key = sessionScopedKey(id);
-  return key ? entries.get(key)?.url ?? null : null;
+  const e = key ? entries.get(key) : undefined;
+  if (!key || !e) return null;
+  // 막 꺼내 그린 것을 최근으로 올린다 — 안 그러면 같은 커밋에서 다른 줄의 release→evict 가
+  // 이것을 가장 오래된 것으로 보고 revoke 해, 방금 그린 그림이 한 번 깨진다(security n2).
+  touch(key, e);
+  return e.url;
 }
 
 /**
