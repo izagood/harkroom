@@ -747,21 +747,24 @@ function buildMcpServer(
    * 함께 쓴다. 카드는 일반 ask 꼴이라 데스크톱·모바일·웹 어디서든 [7일 허락하고 다시 시도]가 눌린다(ask-answer → decideFromCard).
    */
   const raisePermission = async (
-    { kind, rule, repo, reason, channelId, threadRootId, model, denial }:
-      { kind: 'tool' | 'merge'; rule?: string; repo?: string; reason: string; channelId: string; threadRootId: string; model?: string;
+    { kind, rule, repo, command, reason, channelId, threadRootId, model, denial }:
+      { kind: 'tool' | 'merge' | 'command'; rule?: string; repo?: string; command?: string; reason: string; channelId: string; threadRootId: string; model?: string;
         denial?: { id: string; number: number; headSha: string; reason: 'not_granted' | 'cause_not_human' } },
   ) => {
-    const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, reason, channelId, threadRootId, denial });
+    const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, command, reason, channelId, threadRootId, denial });
     if (!opened.ok) return jsonResult({ error: opened.refusal });
     if ('alreadyGranted' in opened) {
-      return jsonResult({ alreadyGranted: true, expiresAt: opened.alreadyGranted.expiresAt, message: 'already granted — it applies from the next turn in this channel' });
+      return jsonResult({
+        alreadyGranted: true, expiresAt: opened.alreadyGranted.expiresAt,
+        message: kind === 'command' ? 'already granted in this thread — run exactly that command now' : 'already granted — it applies from the next turn in this channel',
+      });
     }
     if ('existing' in opened) {
       return jsonResult({ requestId: opened.existing.requestId, cardMessageId: opened.existing.cardMessageId, pending: true, message: 'the same request is already waiting for the owner in this thread' });
     }
     const { requestId, meta: permissionRequest } = opened.created;
     const meta: AskMeta & Partial<ModelMeta> & { permissionRequest: typeof permissionRequest } = {
-      kind: 'ask', ask: { options: permissionCardOptions(), to: { kind: 'human' }, prompt: '권한을 줄까?' },
+      kind: 'ask', ask: { options: permissionCardOptions(kind), to: { kind: 'human' }, prompt: '권한을 줄까?' },
       permissionRequest,
       ...(await reportedModelMeta(pool, account.id, model, threadRootId)),
     };
@@ -1012,25 +1015,26 @@ function buildMcpServer(
    * (`validateToolRule`). 카드의 권한 칸은 서버 값뿐이고 에이전트가 쓴 것은 이유 한 줄이다.
    */
   server.registerTool('permission.request', {
-    description: '막힌 권한 하나를 소유자에게 청한다(승인돼야 다음 턴부터 적용 — 이 도구로는 열리지 않는다). kind=tool 이면 rule 에 Claude Code allow 규칙 하나(Bash(<고정 낱말 둘 이상> …:*)·Bash(<명령 전체>)·mcp__<서버>__<도구>, 이 채널에서만 적용), kind=merge 면 repo 에 owner/name. 승인하면 7일',
+    description: '막힌 권한 하나를 소유자에게 청한다(이 도구로는 열리지 않는다 — 소유자가 승인해야 열린다). kind=command 면 command 에 막힌 명령 하나 그대로(셸 이어 붙이기·따옴표 없이, 이 스레드에서만, 소유자가 「이번 한 번」/「1시간」 중 고름, 승인되면 같은 턴에서 다시 시도해도 된다). kind=tool 이면 rule 에 Claude Code allow 규칙 하나(Bash(<고정 낱말 둘 이상> …:*)·Bash(<명령 전체>)·mcp__<서버>__<도구>, 이 채널에서 7일, 다음 턴부터), kind=merge 면 repo 에 owner/name',
     inputSchema: {
-      kind: z.enum(['tool', 'merge']),
+      kind: z.enum(['tool', 'merge', 'command']),
       rule: z.string().min(1).max(300).optional(),
+      command: z.string().min(1).max(300).optional(),
       repo: z.string().min(3).max(201).optional(),
       reason: z.string().min(1).max(500),
       channelId: z.string().uuid(),
       threadRootId: z.string().uuid(),
       model: MODEL_ARG,
     },
-  }, async ({ kind, rule, repo, reason, channelId, threadRootId, model }) => {
+  }, async ({ kind, rule, repo, command, reason, channelId, threadRootId, model }) => {
     if (account.kind !== 'agent') return jsonResult({ error: { code: 'not_agent', message: 'only an agent can request a permission' } });
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
-    if ((kind === 'tool') !== (rule !== undefined) || (kind === 'merge') !== (repo !== undefined)) {
-      return jsonResult({ error: { code: 'bad_request', message: 'kind "tool" takes `rule`, kind "merge" takes `repo` — exactly one' } });
+    if ((kind === 'tool') !== (rule !== undefined) || (kind === 'merge') !== (repo !== undefined) || (kind === 'command') !== (command !== undefined)) {
+      return jsonResult({ error: { code: 'bad_request', message: 'kind "tool" takes `rule`, kind "merge" takes `repo`, kind "command" takes `command` — exactly one' } });
     }
-    return raisePermission({ kind, rule, repo, reason, channelId, threadRootId, model });
+    return raisePermission({ kind, rule, repo, command, reason, channelId, threadRootId, model });
   });
 
   /**

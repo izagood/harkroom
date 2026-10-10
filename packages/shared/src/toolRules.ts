@@ -13,9 +13,13 @@
 
 export type ToolRuleRefusal =
   | 'empty' | 'too_long' | 'unsupported_tool' | 'wildcard' | 'too_broad' | 'shell_syntax'
-  | 'dangerous_flag' | 'interpreter' | 'operator_wrapper' | 'merge_bypass' | 'bad_chars' | 'gh_api_write';
+  | 'dangerous_flag' | 'interpreter' | 'operator_wrapper' | 'merge_bypass' | 'bad_chars' | 'gh_api_write'
+  /** 정확한 명령만(H②, security n1): 첫 낱말이 `NAME=값` — `LD_PRELOAD=`·`PATH=` 로 명령의 뜻을 바꾼다. */
+  | 'env_prefix';
 
-export type ToolRuleWarning = 'executes_in_workload' | 'mutates_remote' | 'runs_arbitrary' | 'short_prefix';
+export type ToolRuleWarning = 'executes_in_workload' | 'mutates_remote' | 'runs_arbitrary' | 'short_prefix'
+  /** 정확한 명령만(H②, security F1): 파일을 읽어 그 내용대로 움직인다 — 승인은 글자에 묶이고 파일 내용은 범위 밖이다. */
+  | 'reads_file';
 
 export type ToolRuleVerdict =
   | { ok: true; rule: string; kind: 'bash_prefix' | 'bash_exact' | 'mcp_tool'; warnings: ToolRuleWarning[] }
@@ -210,4 +214,38 @@ export function toolScope(channelId: string, rule: string): string {
 export function parseToolScope(scope: string): { channelId: string; rule: string } | null {
   const m = TOOL_SCOPE_RE.exec(scope);
   return m ? { channelId: m[1]!, rule: m[2]! } : null;
+}
+
+export type ExactCommandVerdict =
+  | { ok: true; command: string; warnings: ToolRuleWarning[] }
+  | { ok: false; code: ToolRuleRefusal };
+
+/**
+ * 「정확한 명령」 승인(kind `command`, 권한 요청 H②, 스레드 8769dbf7)의 판정과 정규형. **승인할 때(서버)와 hook 이 맞춰 볼 때(오퍼레이터)
+ * 같은 이 함수를 쓴다** — 둘이 다르면 승인한 것과 열리는 것이 어긋난다.
+ *
+ * - PreToolUse hook 의 allow 는 Bash 호출 문자열 **전체**에 걸린다(실측 T2: `a; b` 의 b 도 돈다). 그래서 셸 문법·따옴표·`$`·괄호가
+ *   있는 명령은 아예 받지 않는다 — `validateToolRule` 의 `Bash(<명령 전체>)` 판정과 같은 글자 허용 목록이다.
+ * - 정규형은 낱말 사이 공백 하나(따옴표가 없으니 셸에서 공백은 구분자일 뿐이다). `:*` 접두는 받지 않는다 — 접두는 `kind: tool` 이다.
+ */
+export function validateExactCommand(input: string): ExactCommandVerdict {
+  const command = input.trim();
+  if (!command) return { ok: false, code: 'empty' };
+  if (command.endsWith(':*')) return { ok: false, code: 'wildcard' };
+  const v = validateToolRule(`Bash(${command})`);
+  if (!v.ok) return v;
+  if (v.kind !== 'bash_exact') return { ok: false, code: 'unsupported_tool' };
+  const normalized = v.rule.slice('Bash('.length, -1);
+  const words = normalized.split(' ');
+  if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!)) return { ok: false, code: 'env_prefix' };
+  const warnings = [...v.warnings];
+  if (readsFile(words)) warnings.push('reads_file');
+  return { ok: true, command: normalized, warnings };
+}
+
+/** 파일 내용대로 움직이는 꼴(security F1 최소안): `-f x`·`--filename`·`--patch-file`·`--values`·`--from-file`·`-k`·`@파일`, 또는 경로로 부르는 머리. */
+const FILE_FLAGS = new Set(['-f', '--filename', '--patch-file', '--values', '--from-file', '--from-env-file', '--kustomize', '-k', '--env-file', '--config', '--kubeconfig-file']);
+function readsFile(words: readonly string[]): boolean {
+  if (words[0]!.includes('/')) return true;
+  return words.slice(1).some((w) => FILE_FLAGS.has(w) || [...FILE_FLAGS].some((f) => f.startsWith('--') && w.startsWith(`${f}=`)) || w.startsWith('@'));
 }
