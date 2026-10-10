@@ -76,4 +76,13 @@ void main() {
     final out = systemText(row({'key': 'system.skill.proposed', 'args': {'slug': 'a‮b c\u0085d﻿e'}}), accounts, en)!;
     expect(out, isNot(matches(RegExp('[‮ \u0085﻿]'))));
   });
+
+  test('값 안의 {자리표시자} 는 다시 풀리지 않는다 — 한 번에 바꾼다(security F1)', () {
+    final m = row({'key': 'system.apiCall.doneGranted', 'args': {
+      'connector': 'lab', 'method': 'GET', 'path': '/x/{granterId}', 'status': 200, 'granterId': id,
+    }});
+    final out = systemText(m, accounts, en)!;
+    expect(out, contains('/x/{granterId}'));
+    expect(out, endsWith('permission: mira (wrapper report)'));
+  });
 }

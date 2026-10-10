@@ -41,6 +41,7 @@ const Map<String, List<String>> systemI18nArgs = {
 };
 
 const int _maxArgLength = 200;
+final RegExp _placeholder = RegExp(r'\{(\w+)\}');
 final RegExp _unsafe = RegExp('[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]');
 
 String? systemText(MessageRow message, Map<String, AccountView> accounts, Strings t) {
@@ -69,7 +70,7 @@ String? systemText(MessageRow message, Map<String, AccountView> accounts, String
       return null;
     }
   }
-  var s = template;
-  out.forEach((name, value) => s = s.replaceAll('{$name}', value));
-  return s;
+  // **한 번에** 바꾼다(security F1). 인자를 하나씩 차례로 바꾸면 앞에서 끼운 값 안의 `{뒤 인자}` 가
+  // 뒤 차례에서 또 풀린다 — 에이전트가 보고한 path 에 `{granterId}` 를 넣어 남의 이름을 줄 중간에 지어낼 수 있다.
+  return template.replaceAllMapped(_placeholder, (m) => out[m[1]] ?? m[0]!);
 }
