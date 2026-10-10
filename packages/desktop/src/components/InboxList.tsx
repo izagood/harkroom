@@ -9,8 +9,9 @@ import { dateTimeText } from '../lib/localeText';
 /** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
 const NO_TEAMS: never[] = [];
 
-/** 치움·미룸 뒤 「되돌리기」를 띄워 두는 시간. */
+/** 치움·미룸 뒤 「되돌리기」를 띄워 두는 시간. 결정이 섞이면 더 길게(security #1315 n1) — 놓치면 결정이 조용히 사라진다. */
 const TOAST_MS = 6_000;
+const TOAST_DECISION_MS = 12_000;
 
 export type InboxStateNext = { state: 'done' } | { state: 'later'; until: string } | { state: null };
 
@@ -99,7 +100,13 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
   const [selected, setSelected] = useState<string | null>(null);
   /** 고른 줄이 사라졌을 때(치움·미룸) 그 자리의 다음 줄을 고르려고 마지막 위치를 기억한다. */
   const lastIndex = useRef(0);
-  const [toast, setToast] = useState<{ text: string; groups: BoardGroup[] } | null>(null);
+  /**
+   * 되돌리기 알림. `pending` 인 동안은 [되돌리기]를 잠근다(security n2) — 묶음 치우기가 아직 도는 중에
+   * 되돌리면 두 루프가 겹쳐 뒤쪽 일이 치운 채로 남는다. 알림 시간은 호출이 끝난 뒤부터 잰다.
+   */
+  const [toast, setToast] = useState<{ text: string; groups: BoardGroup[]; pending: boolean; ms: number } | null>(null);
+  /** 이 화면의 뿌리. 단축키는 Inbox 자리 안에 포커스가 있을 때만 받는다(security F1). */
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   const todo = useMemo(() => cards.filter((c) => c.column === 'mine' && c.fold === null), [cards]);
   const stale = useMemo(() => cards.filter((c) => c.column === 'mine' && c.fold === 'stale'), [cards]);
@@ -143,28 +150,39 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
     setSelected(g.card.rootId);
   }, []);
 
-  const showToast = useCallback((text: string, gs: BoardGroup[]) => setToast({ text, groups: gs }), []);
+  /** 상태를 바꾸고 되돌리기 알림을 띄운다. 호출이 끝날 때까지 알림의 [되돌리기]는 잠겨 있다. */
+  const act = useCallback((gs: BoardGroup[], next: InboxStateNext, text: string) => {
+    if (gs.length === 0) return;
+    const hasDecision = gs.some((g) => [g.card, ...g.similar].some((c) => c.kind === 'decision'));
+    const mine = { text, groups: gs, pending: true, ms: hasDecision ? TOAST_DECISION_MS : TOAST_MS };
+    setToast(mine);
+    const settle = (): void => setToast((cur) => (cur && cur.groups === gs ? { ...cur, pending: false } : cur));
+    onSetState(gs, next).then(settle, settle);
+  }, [onSetState]);
   useEffect(() => {
-    if (!toast) return;
-    const id = setTimeout(() => setToast(null), TOAST_MS);
+    if (!toast || toast.pending) return;
+    const id = setTimeout(() => setToast(null), toast.ms);
     return () => clearTimeout(id);
   }, [toast]);
 
   const dismiss = useCallback((gs: BoardGroup[]) => {
-    if (gs.length === 0) return;
-    void onSetState(gs, { state: 'done' });
-    showToast(t('inbox.list.toast.dismissed', { count: workCount(gs) }), gs);
-  }, [onSetState, showToast, t]);
+    act(gs, { state: 'done' }, t('inbox.list.toast.dismissed', { count: workCount(gs) }));
+  }, [act, t]);
   const snooze = useCallback((gs: BoardGroup[]) => {
-    if (gs.length === 0) return;
-    void onSetState(gs, { state: 'later', until: tomorrowMorning(Date.now()) });
-    showToast(t('inbox.list.toast.later', { count: workCount(gs) }), gs);
-  }, [onSetState, showToast, t]);
+    act(gs, { state: 'later', until: tomorrowMorning(Date.now()) }, t('inbox.list.toast.later', { count: workCount(gs) }));
+  }, [act, t]);
   const restore = useCallback((gs: BoardGroup[]) => { void onSetState(gs, { state: null }); }, [onSetState]);
 
-  /** 단축키. 이 자리가 떠 있는 동안 document 에서 받는다(Esc 와 같은 이유 — 포커스는 늘 옆에 있다). */
+  /**
+   * 단축키. **Inbox 자리(`<aside>`) 안에 포커스가 있을 때만** 받는다(security #1315 F1). Inbox 는 모달이
+   * 아니라 옆에 스레드·채널을 같이 연다 — document 전체에서 받으면 옆 스레드를 읽던 사람의 E 가 보지도
+   * 않은 결정을 치우고, ↑/↓·↵ 가 옆의 스크롤·메뉴 이동을 먹는다. Inbox 를 열면 포커스가 이 자리로
+   * 들어오고(`Inbox.tsx`) 줄을 누르면 그 줄에 있으므로, 이 화면을 보는 동안은 그대로 듣는다.
+   */
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      const pane = rootRef.current?.closest('aside') ?? rootRef.current;
+      if (!pane || !(e.target instanceof Node) || !pane.contains(e.target)) return;
       if (e.metaKey || e.ctrlKey || e.altKey || typingTarget(e.target)) return;
       if (document.querySelector('[role="dialog"]')) return;
       const key = e.key.toLowerCase();
@@ -172,6 +190,8 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
       if (key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); select(rows[Math.max(currentIndex - 1, 0)]); return; }
       if (!current) return;
       const folded = current.card.fold === 'later' || current.card.fold === 'cleared';
+      // 손대는 중인 줄에 또 보내지 않는다(security n3).
+      if ((key === 'e' || key === 'l') && busy === current.card.rootId) { e.preventDefault(); return; }
       if (key === 'e' && !folded) { e.preventDefault(); dismiss([current]); return; }
       if (key === 'l' && !folded) { e.preventDefault(); snooze([current]); return; }
       // 버튼에 포커스가 있으면 ↵ 는 그 버튼의 것이다 — 두 번 일하지 않게 넘긴다.
@@ -179,7 +199,7 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [rows, current, currentIndex, select, dismiss, snooze, onOpen]);
+  }, [rows, current, currentIndex, select, dismiss, snooze, onOpen, busy]);
 
   const decisionCount = workCount(sections.find((s) => s.kind === 'decision')?.groups ?? []);
   const blockerCount = workCount(sections.find((s) => s.kind === 'blocker')?.groups ?? []);
@@ -353,7 +373,7 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
   const tabCount = (k: InboxListTab): number => ({ todo: todo.length, news: news.length, later: later.length, cleared: cleared.length })[k];
 
   return (
-    <div data-testid="inbox-list-view" className="@container flex min-h-0 flex-1 flex-col">
+    <div ref={rootRef} data-testid="inbox-list-view" className="@container flex min-h-0 flex-1 flex-col">
       {/* 머리 한 줄 — 「답할 것 N · 막힘 M」이 오늘 남은 일을 말한다(B안의 요약을 여기로). */}
       <div className="flex flex-wrap items-center gap-1 border-b border-border px-3 py-2">
         <div role="tablist" aria-label={t('inbox.list.tabs')} className="flex flex-wrap gap-1">
@@ -441,8 +461,9 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
           <button
             type="button"
             data-testid="inbox-toast-undo"
+            disabled={toast.pending}
             onClick={() => { restore(toast.groups); setToast(null); }}
-            className="ml-auto rounded-row px-2 py-0.5 font-medium text-accent hover:bg-surface-hover"
+            className="ml-auto rounded-row px-2 py-0.5 font-medium text-accent hover:bg-surface-hover disabled:opacity-50"
           >
             {t('inbox.list.toast.undo')}
           </button>
