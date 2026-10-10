@@ -138,12 +138,12 @@ describe('키보드 — J/K · E · L · ↵', () => {
     const c = fakeController(async () => ({ ...mixed(), threadStates }));
     open();
     await screen.findByTestId('inbox-list-view');
-    fireEvent.keyDown(document.body, { key: 'j' });
+    fireEvent.keyDown(screen.getByTestId('inbox-list-view'), { key: 'j' });
     expect(selectedRoot()).toBe('d2');
-    fireEvent.keyDown(document.body, { key: 'k' });
+    fireEvent.keyDown(screen.getByTestId('inbox-list-view'), { key: 'k' });
     expect(selectedRoot()).toBe('d1');
     threadStates = [{ rootId: 'd1', state: 'done', until: null, updatedAt: new Date().toISOString() }];
-    fireEvent.keyDown(document.body, { key: 'e' });
+    fireEvent.keyDown(screen.getByTestId('inbox-list-view'), { key: 'e' });
     await waitFor(() => expect(states(c)).toEqual([['d1', { state: 'done' }]]));
     await waitFor(() => expect(screen.queryByTestId('inbox-card-d1')).toBeNull());
     expect(selectedRoot()).toBe('d2');
@@ -156,7 +156,7 @@ describe('키보드 — J/K · E · L · ↵', () => {
     const c = fakeController(async () => mixed());
     open();
     await screen.findByTestId('inbox-list-view');
-    fireEvent.keyDown(document.body, { key: 'l' });
+    fireEvent.keyDown(screen.getByTestId('inbox-list-view'), { key: 'l' });
     await waitFor(() => expect(states(c)[0]?.[0]).toBe('d1'));
     expect(states(c)[0]![1].state).toBe('later');
     expect(screen.getByTestId('inbox-toast').textContent).toContain('내일 아침');
@@ -166,8 +166,38 @@ describe('키보드 — J/K · E · L · ↵', () => {
     const c = fakeController(async () => mixed());
     open();
     await screen.findByTestId('inbox-list-view');
-    fireEvent.keyDown(document.body, { key: 'Enter' });
+    fireEvent.keyDown(screen.getByTestId('inbox-list-view'), { key: 'Enter' });
     expect(c.openThread).toHaveBeenCalledWith('d1', { channelId: 'c1' });
+  });
+
+  it('Inbox 밖에 포커스가 있으면 단축키를 받지 않는다 — 옆 스레드의 E·↓ 를 먹지 않는다 (security F1)', async () => {
+    const c = fakeController(async () => mixed());
+    open();
+    await screen.findByTestId('inbox-list-view');
+    // 옆 칸(스레드 패널 등)의 버튼 — Inbox 자리 밖이다.
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    outside.focus();
+    fireEvent.keyDown(outside, { key: 'e' });
+    fireEvent.keyDown(outside, { key: 'l' });
+    const down = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
+    outside.dispatchEvent(down);
+    outside.remove();
+    expect(down.defaultPrevented).toBe(false);
+    expect(c.api.setInboxThreadState).not.toHaveBeenCalled();
+    expect(selectedRoot()).toBe('d1');
+  });
+
+  it('치우는 호출이 도는 동안 [되돌리기]는 잠겨 있다 (security n2)', async () => {
+    const c = fakeController(async () => mixed());
+    let finish: () => void = () => {};
+    c.api.setInboxThreadState.mockImplementationOnce(() => new Promise((r) => { finish = () => r({ state: null }); }));
+    open();
+    fireEvent.click(await screen.findByTestId('inbox-card-done-d1'));
+    const undo = screen.getByTestId('inbox-toast-undo') as HTMLButtonElement;
+    expect(undo.disabled).toBe(true);
+    finish();
+    await waitFor(() => expect(undo.disabled).toBe(false));
   });
 
   it('글을 쓰는 중이면 단축키를 삼키지 않는다', async () => {
