@@ -81,25 +81,6 @@
     "다시 봅니다",
     "에 다시 봅니다"
   ],
-  "components/settings/CommunitySettings.tsx": [
-    "Add a community",
-    "Sign in to another harkroom server. The communities you are already in stay connected.",
-    "Add community",
-    "커뮤니티 추가",
-    "Viewing",
-    "Switch to",
-    "Rename",
-    "Remove",
-    "Display name on this device. Leave it empty to use the server host name.",
-    "Saving…",
-    "Save",
-    "Cancel",
-    "Remove",
-    "from this device? It stays on the server — your session there is not signed out, and other devices keep working. You will need to sign in again to add it back.",
-    "Removing…",
-    "Remove from this device",
-    "Keep it"
-  ],
   "components/settings/HandleGroupsSettings.tsx": [
     "구성원 ("
   ],
