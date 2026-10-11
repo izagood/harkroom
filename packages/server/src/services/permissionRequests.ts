@@ -349,6 +349,8 @@ export async function decidePermissionRequest(
          from permission_request where id = $1 for update`, [args.requestId, now])).rows[0];
     // `:id` 가 요청의 에이전트와 다르면 없는 것과 같다 — 남의 요청 id 를 내 에이전트 경로에 꽂는 길을 닫는다.
     if (!r || r.agentId !== args.agentId) { await client.query('rollback'); return { ok: false, status: 404, code: 'not_found', message: 'no such permission request for this agent' }; }
+    // PR 이 머지되거나 닫혀 카드가 닫혔다(Q3-c) — 승인·7일 허락·거절 어느 결정도 받지 않는다.
+    if (r.status === 'obsolete') { await client.query('rollback'); return { ok: false, status: 409, code: 'pr_closed', message: 'that pull request was already merged or closed — this card is closed' }; }
     if (r.status !== 'pending') { await client.query('rollback'); return { ok: false, status: 409, code: 'already_decided', message: `this request is already ${r.status}` }; }
     if (r.expired) { await client.query('rollback'); return { ok: false, status: 409, code: 'request_expired', message: 'this request expired — the agent has to ask again' }; }
     // 「한 번」은 종류마다 뜻이 다르다: command 는 그 명령 1회 grant(아래), merge 는 거절 카드의 이 PR·이 head 1회 머지(스레드 1b75d7a0).

@@ -83,6 +83,8 @@ export interface ScheduleWakeInput {
    * 앵커와 같은 스레드면 뜻이 없어 싣지 않는다(호출자가 거른다).
    */
   reportTo?: { channelId: string; threadRootId: string };
+  /** 이 예약을 건 턴의 원인(오퍼레이터를 거친 요청만) — 대기 줄의 `cause_message_id`(118)로 남아 머지 사슬을 잇는다. */
+  chainCause?: string | null;
 }
 
 export type ScheduleWakeResult =
@@ -117,6 +119,7 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
     body: input.reason,
     threadRootId: input.threadRootId,
     kind: 'wake',
+    chainCause: input.chainCause ?? null,
     // 시각은 **사실로** 싣는다. 서버가 "15:20 에 다시 봅니다" 로 구워 버리면 그 문자열은
     // 서버의 시간대에 고정되고, 다른 시간대에서 읽는 사람에게 거짓이 된다.
     meta: {

@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import { repoScope } from '@harkroom/shared';
 import { mergeGrantFor } from '../auth/permissions.js';
 import { recordAudit } from '../audit.js';
+import { obsoleteMergeCards } from './mergeDenials.js';
 import { postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
 
@@ -27,6 +28,8 @@ export type MergeDenial =
 
 export type MergeCheck =
   | { ok: true; leaseId: string; channelId: string; threadRootId: string; scope: string; grantedBy: string; grantedAt: string; causeByHuman: boolean;
+      /** 위임 사슬로 통과했으면 그 뿌리(소유자 글) — A안. */
+      viaChain?: { rootId: string };
       /** 1회 승인(`merge_approval`)으로 통과했으면 그 기록 — 래퍼는 이 계정만 쓰고, `relaxChecks` 일 때만 CI·CLEAN 판정을 GitHub 에 맡긴다. */
       approval?: { id: string; ghUser: string; relaxChecks: boolean } }
   /** `denialId` 는 거절 카드를 세울 수 있는 거절에만 있다(사람이 띄운 턴의 `not_granted`, 그리고 `cause_not_human` — C2·1회 승인). */
@@ -41,6 +44,8 @@ export const MERGE_DENIAL_DAILY_CAP = 20;
 export interface LeaseRow {
   id: string; agentId: string; operatorId: string; channelId: string; threadRootId: string;
   expired: boolean; ended: boolean; causeKind: string | null;
+  /** 이 턴을 띄운 메시지 — 위임 사슬(`causeChainRoot`)의 출발점. */
+  causeMessageId: string;
   /** cause 메시지가 **이 에이전트 자신의 선택 카드**(ask)이고 사람이 답한 경우 — 답한 사람의 id·kind. 아니면 null. */
   causeAskAuthorId: string | null; askAnsweredBy: string | null; askAnswererKind: string | null; askAnswererOwnsAgent: boolean;
 }
@@ -49,6 +54,7 @@ export async function readLease(pool: Pool, args: { leaseId: string; token: stri
   return (await pool.query(
     `select l.id, l.agent_id as "agentId", l.operator_id as "operatorId", l.channel_id as "channelId",
             l.thread_root_id as "threadRootId", l.expires_at <= $3 as expired, l.ended_at is not null as ended,
+            l.cause_message_id as "causeMessageId",
             a.kind as "causeKind",
             case when m.meta ? 'ask' and m.meta->'ask'->>'mirrorOf' is null and m.meta->'ask'->>'answeredVia' is null
                  then m.author_id end as "causeAskAuthorId",
@@ -86,6 +92,72 @@ export function causeByHuman(lease: Pick<LeaseRow, 'agentId' | 'causeKind' | 'ca
   if (lease.causeKind === 'human') return true;
   return lease.causeAskAuthorId === lease.agentId && !!lease.askAnsweredBy
     && lease.askAnswererKind === 'human' && lease.askAnswererOwnsAgent === true;
+}
+
+/** 사슬을 거슬러 오르는 칸 수 상한 — wake 를 되풀이하면 한 칸씩 는다. 넘으면 끊긴 것으로 보고 카드가 선다(안전한 쪽). */
+export const CAUSE_CHAIN_MAX_HOPS = 8;
+/** 사슬 뿌리(소유자 글)의 신선도 — 카드로 주는 grant 기한(7일)과 같다. */
+export const CAUSE_CHAIN_ROOT_MAX_AGE_MS = 7 * 86_400_000;
+
+export interface CauseChain { rootId: string; path: string[] }
+
+/**
+ * 위임 사슬의 뿌리(A안, 스레드 0e30c565, security C2~C4). 턴을 띄운 메시지에서 `message.cause_message_id`(118)를 거슬러 올라
+ * **머지하는 에이전트의 소유자가 시작한 흐름**인지 본다. 읽기 전용 재귀 쿼리 하나다 — 칸 수·순환·삭제·7일을 SQL 안에서 거른다.
+ *
+ * - 소유자는 **지금** `agent_config` 에서 읽는다(C2) — 글을 쓸 때의 소유자를 믿지 않는다. 소유자가 바뀌면 옛 사슬은 끊긴다.
+ *   소유자 계정이 사람이 아니거나 지워졌거나 막혔으면 사슬은 없다.
+ * - **올라가는 고리**는 지워지지 않은 에이전트 글이고, 그 에이전트의 소유자가 머지 에이전트의 소유자와 같아야 한다. 사람 글에서는
+ *   올라가지 않는다(그 글이 뿌리이거나 사슬이 끝난다).
+ * - **답이 달린 ask 에서는 올라가지 않는다**(C3) — 그 턴을 띄운 것은 답한 사람이다. 소유자가 줄 하나를 골라 답했으면(거울·일괄 답
+ *   아님) 그 ask 가 뿌리이고, 다른 사람이 답했으면 사슬은 거기서 끝난다.
+ * - **뿌리**: (a) 소유자 본인이 쓴 `kind='user'` 글(소유자 이름으로 나간 자동화 글 `meta.automation` 은 아니다) 또는 (b) 같은
+ *   소유자의 에이전트가 세운 ask 에 소유자가 직접 답한 것. 7일 안이고 지워지지 않았어야 한다.
+ *
+ * 증명하는 것은 「소유자가 시작한 흐름」뿐이다 — 글의 내용(이 PR 을 머지하라는 뜻)은 증명하지 않는다.
+ */
+export async function causeChainRoot(
+  pool: Pool, args: { agentId: string; causeMessageId: string; now: Date },
+): Promise<CauseChain | null> {
+  const row = (await pool.query<{ rootId: string; path: string[] }>(
+    `with recursive
+       own as (
+         select c.owner_account_id as id
+           from agent_config c join account o on o.id = c.owner_account_id
+          where c.account_id = $1 and o.kind = 'human' and o.deleted_at is null and o.disabled_at is null
+       ),
+       walk (id, hop, path) as (
+         select m.id, 0, array[m.id] from message m where m.id = $2
+         union all
+         select m.cause_message_id, w.hop + 1, w.path || m.cause_message_id
+           from walk w
+           join message m on m.id = w.id
+           join account a on a.id = m.author_id
+           join agent_config c on c.account_id = a.id
+          where w.hop < $4
+            and m.cause_message_id is not null
+            and not (m.cause_message_id = any (w.path))
+            and m.deleted_at is null
+            and a.kind = 'agent'
+            and c.owner_account_id = (select id from own)
+            and not (m.meta ? 'ask' and coalesce(m.meta->'ask'->>'answeredBy', '') <> '')
+       )
+     select w.id as "rootId", w.path as "path"
+       from walk w
+       join message m on m.id = w.id
+       join account a on a.id = m.author_id
+      where m.deleted_at is null and m.created_at > $3
+        and (
+          (a.id = (select id from own) and a.kind = 'human' and m.kind = 'user' and not (m.meta ? 'automation'))
+          or (m.meta ? 'ask' and a.kind = 'agent'
+              and exists (select 1 from agent_config c2 where c2.account_id = a.id and c2.owner_account_id = (select id from own))
+              and m.meta->'ask'->>'mirrorOf' is null and m.meta->'ask'->>'answeredVia' is null
+              and m.meta->'ask'->>'answeredBy' = (select id from own)::text)
+        )
+      order by w.hop asc
+      limit 1`,
+    [args.agentId, args.causeMessageId, new Date(args.now.getTime() - CAUSE_CHAIN_ROOT_MAX_AGE_MS), CAUSE_CHAIN_MAX_HOPS])).rows[0];
+  return row ? { rootId: row.rootId, path: row.path } : null;
 }
 
 /**
@@ -162,7 +234,7 @@ export async function checkMerge(
       `update merge_denial set pr_number = $5, head_sha = $6, lease_id = $7, reason = $9
         where id = (select id from merge_denial
                      where agent_id = $1 and scope = $2 and channel_id = $3 and thread_root_id = $4
-                       and used_at is null and expires_at > $8
+                       and used_at is null and obsoleted_at is null and expires_at > $8
                      order by created_at desc limit 1)
         returning id`,
       [args.agentId, scope, lease!.channelId, lease!.threadRootId, args.number, args.headSha, lease!.id, now, code])).rows[0];
@@ -185,18 +257,25 @@ export async function checkMerge(
     if (!byHuman) return deny('not_granted');
     return denyWithCard('not_granted');
   }
-  // grant 는 있는데 사람이 띄운 턴이 아니다(wake·에이전트 위임) — 소유자가 카드에서 이 PR 을 1회 승인할 수 있게 카드 id 를 준다.
-  // 카드는 승인만 청할 뿐 아무것도 열지 않고, 하루 상한(L2) 안에서만 선다.
-  if (!byHuman && !grant.allowAgentCause) return denyWithCard('cause_not_human');
+  // grant 는 있는데 사람이 띄운 턴이 아니다(wake·에이전트 위임). A안(스레드 0e30c565): 그 턴의 위임 사슬이 이 에이전트 소유자의 글에서
+  // 시작했으면 사람 턴으로 친다 — **유효한 grant 가 있고 직접 판정이 실패했을 때만**(C4). 1회 승인·grant 없음·`allow_agent_cause`
+  // 갈래는 사슬을 보지 않는다. 사슬이 끊기면 지금처럼 카드 id 를 준다 — 카드는 승인만 청할 뿐 아무것도 열지 않고, 하루 상한(L2) 안에서만 선다.
+  let chain: CauseChain | null = null;
+  if (!byHuman && !grant.allowAgentCause) {
+    chain = await causeChainRoot(pool, { agentId: args.agentId, causeMessageId: lease!.causeMessageId, now });
+    if (!chain) return denyWithCard('cause_not_human');
+  }
 
   await recordAudit(pool, {
     action: 'repo.merge.checked', actorId: args.agentId, target: scope,
     // grantScope: 어느 grant 로 통과했나 — 정확한 이름(`repo:owner/name`)인지 조직 전체(`repo:owner/*`)인지(#1255 security n3).
-    detail: { number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: lease!.id, grantedBy: grant.grantedBy, grantScope: grant.scope, causeByHuman: byHuman, viaAskAnswer: byHuman && lease!.causeKind !== 'human' },
+    // viaChain(C5): 사슬로 통과했으면 뿌리 id 와 고리 id 목록(턴의 원인 → 뿌리 순서).
+    detail: { number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: lease!.id, grantedBy: grant.grantedBy, grantScope: grant.scope, causeByHuman: byHuman, viaAskAnswer: byHuman && lease!.causeKind !== 'human', ...(chain ? { viaChain: { rootId: chain.rootId, path: chain.path } } : {}) },
   });
   return {
     ok: true, leaseId: lease!.id, channelId: lease!.channelId, threadRootId: lease!.threadRootId,
-    scope, grantedBy: grant.grantedBy, grantedAt: grant.grantedAt, causeByHuman: byHuman,
+    scope, grantedBy: grant.grantedBy, grantedAt: grant.grantedAt, causeByHuman: byHuman || !!chain,
+    ...(chain ? { viaChain: { rootId: chain.rootId } } : {}),
   };
 }
 
@@ -221,13 +300,14 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   const repo = scope.slice('repo:'.length);
   // N1: 같은 (임대, 저장소, PR, head) 로 **통과한 판정**이 있어야 받고, 보고는 한 번뿐이다 — 판정 없이
   // 보고를 받으면 grant 없는 에이전트도 자기 스레드에 "머지됨" 줄을 쓸 수 있어 감사가 거짓이 된다.
-  const trail = await pool.query<{ action: string }>(
-    `select action from audit_log
+  const trail = await pool.query<{ action: string; viaChain: { rootId?: unknown } | null }>(
+    `select action, detail->'viaChain' as "viaChain" from audit_log
       where action in ('repo.merge.checked', 'repo.merge.merged', 'repo.merge.failed')
         and target = $1 and detail->>'leaseId' = $2 and (detail->>'number')::int = $3 and detail->>'headSha' = $4`,
     [scope, lease.id, r.number, r.headSha]);
   if (trail.rows.some((x) => x.action !== 'repo.merge.checked')) return { ok: false, code: 'already_reported' };
   if (!trail.rowCount) return { ok: false, code: 'not_checked' };
+  const chainRootId = trail.rows.find((x) => x.action === 'repo.merge.checked' && x.viaChain)?.viaChain?.rootId;
   const grant = await mergeGrantFor(pool, r.agentId, repo);
   // 1회 승인으로 통과한 판정이면 승인한 사람이 「권한」이다(grant 가 없을 수 있다).
   const approvedBy = (await pool.query<{ approvedBy: string }>(
@@ -245,7 +325,11 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   const posted = await postMessage(pool, {
     channelId: lease.channelId, threadRootId: lease.threadRootId, authorId: r.agentId, body, kind: 'system',
     meta: {
-      merge: { repo, number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, result: r.result, grantedBy: granterId, viaApproval: approvedBy !== null, error: r.error?.slice(0, 1000) ?? null },
+      merge: {
+        repo, number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, result: r.result, grantedBy: granterId, viaApproval: approvedBy !== null, error: r.error?.slice(0, 1000) ?? null,
+        // 위임 사슬로 통과했으면 그 뿌리(소유자 글) — **meta 에만** 둔다(C5). 본문은 위의 고정 문구 그대로다(N2).
+        ...(typeof chainRootId === 'string' ? { chainRootId } : {}),
+      },
       // 번역 표지(i18n P5). 본문의 「권한: handle」 은 granter 의 handle 이 있을 때만 서므로 표지도 같은 조건이다.
       i18n: r.result === 'merged'
         ? (granter && granterId
@@ -260,6 +344,10 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
     action: r.result === 'merged' ? 'repo.merge.merged' : 'repo.merge.failed', actorId: r.agentId, target: scope,
     detail: { number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, operatorId: r.operatorId, leaseId: lease.id, messageId: msg.id },
   });
+  // Q3-a: 통과한 판정(N1 관문)을 지난 `merged` 보고면 그 PR 의 기다리는 머지 카드를 **모든 에이전트에 걸쳐** 닫는다. 실패해도 보고는 남는다.
+  if (r.result === 'merged') {
+    await obsoleteMergeCards(pool, { scope, number: r.number, reason: 'merged', actorId: r.agentId, now }).catch(() => null);
+  }
   return { ok: true, messageId: msg.id };
 }
 
@@ -315,4 +403,26 @@ export async function peekMergeApproval(
         and channel_id = $5 and thread_root_id = $6 and used_at is null and expires_at > $7
       order by approved_at desc limit 1`,
     [args.agentId, scope, args.number, args.headSha, lease.channelId, lease.threadRootId, now])).rows[0] ?? null;
+}
+
+/**
+ * Q3-b: 래퍼가 `gh pr view` 에서 그 PR 이 이미 MERGED·CLOSED 인 것을 봤다는 보고. 통과한 판정이 없어도 받는 새 길이라 좁다 —
+ * 유효한 임대와 **그 에이전트 자신의** 기다리는 카드(그 저장소·PR)가 있어야 받고, 그 에이전트의 카드만 닫는다. 「머지됨」 줄이나
+ * `repo.merge.merged` 감사는 만들지 않는다(서버가 GitHub 에서 확인한 것이 아니다) — `repo.merge.obsoleted` 로만 남긴다.
+ */
+export async function reportMergeClosed(
+  pool: Pool,
+  r: { agentId: string; operatorId: string; leaseId: string; token: string; repo: string; number: number; state: 'MERGED' | 'CLOSED'; now?: Date },
+): Promise<{ ok: true; closed: number } | { ok: false; code: 'lease_invalid' | 'bad_repo' | 'no_card' }> {
+  const now = r.now ?? new Date();
+  const lease = await readLease(pool, { leaseId: r.leaseId, token: r.token, now });
+  if (!lease || lease.agentId !== r.agentId || lease.operatorId !== r.operatorId || lease.expired || lease.ended) return { ok: false, code: 'lease_invalid' };
+  const scope = repoScope(r.repo);
+  if (!scope) return { ok: false, code: 'bad_repo' };
+  const closed = await obsoleteMergeCards(pool, {
+    scope, number: r.number, reason: r.state === 'MERGED' ? 'merged' : 'closed', onlyAgentId: r.agentId, actorId: r.agentId, now,
+    audit: { operatorId: r.operatorId, leaseId: lease.id, reportedState: r.state },
+  });
+  if (!closed) return { ok: false, code: 'no_card' };
+  return { ok: true, closed };
 }

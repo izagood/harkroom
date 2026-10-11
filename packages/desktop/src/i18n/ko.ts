@@ -2510,6 +2510,8 @@ export const ko = {
   'mergeOnce.cancel': "취소",
   'mergeOnce.approved': "이번 한 번 승인 · {by} · 계정 {login} · {until} 까지",
   'mergeOnce.approvedRelaxed': "이번 한 번 승인 · {by} · 계정 {login} · CI 판정 건너뜀 · {until} 까지",
+  'mergeCard.obsoleteMerged': '이 PR 은 이미 머지됐다 — 카드를 닫았다.',
+  'mergeCard.obsoleteClosed': '이 PR 은 닫혔다 — 카드를 닫았다.',
   'mergeOnce.approvedExpired': "이번 한 번 승인(계정 {login}) · 기한 지남",
   'mergeOnce.ownerOnly': "소유자 {owner} 의 결정을 기다리고 있다",
   'mergeOnce.errUsed': "이 카드는 이미 정해졌다.",

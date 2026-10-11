@@ -21,6 +21,8 @@ export interface MergeDenialMeta {
   denialId: string; agentId: string; ownerAccountId: string | null; repo: string; number: number;
   count: number; lastAt: string;
   granted?: { by: string; at: string; expiresAt: string };
+  /** 그 PR 이 머지되거나 닫혀 서버가 카드를 닫았다(스레드 0e30c565 Q3) — 버튼 없이 한 줄만. */
+  obsolete?: { reason: 'merged' | 'closed' };
 }
 
 const REPO_RE = /^[a-z0-9][a-z0-9._-]{0,99}\/[a-z0-9._-]{1,100}$/i;
@@ -34,6 +36,7 @@ export function readMergeDenial(meta: Record<string, unknown>): MergeDenialMeta 
     repo: d.repo, number: typeof d.number === 'number' ? d.number : 0,
     count: typeof d.count === 'number' ? d.count : 1, lastAt: typeof d.lastAt === 'string' ? d.lastAt : '',
     ...(g && typeof g.expiresAt === 'string' && typeof g.by === 'string' ? { granted: { by: g.by, at: String(g.at ?? ''), expiresAt: g.expiresAt } } : {}),
+    ...(d.obsolete ? { obsolete: { reason: d.obsolete.reason === 'closed' ? 'closed' as const : 'merged' as const } } : {}),
   };
 }
 
@@ -88,8 +91,9 @@ export function MergeDenialPanel({ message, onOpenSettings }: { message: Message
         <dt className="text-fg-subtle">{t('blocked.today')}</dt>
         <dd>{t('blocked.count', { n: String(d.count), when: d.lastAt ? new Date(d.lastAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : '' })}</dd>
       </dl>
-      {until && <p className="mt-1 text-fg" data-testid="merge-denial-granted">{t('mergeDenial.granted', { date: fmt(until) })}</p>}
-      {!until && isOwner && error?.code !== 'denial_expired' && error?.code !== 'denial_used' && (
+      {d.obsolete && <p className="mt-1 text-fg-subtle" data-testid="merge-denial-obsolete" data-reason={d.obsolete.reason}>{t(d.obsolete.reason === 'closed' ? 'mergeCard.obsoleteClosed' : 'mergeCard.obsoleteMerged')}</p>}
+      {until && !d.obsolete && <p className="mt-1 text-fg" data-testid="merge-denial-granted">{t('mergeDenial.granted', { date: fmt(until) })}</p>}
+      {!until && !d.obsolete && isOwner && error?.code !== 'denial_expired' && error?.code !== 'denial_used' && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <button type="button" disabled={busy} data-testid="merge-denial-give"
             className="rounded bg-accent px-2 py-1 font-medium text-fg-on-strong disabled:opacity-60" onClick={() => void give()}>
@@ -98,7 +102,7 @@ export function MergeDenialPanel({ message, onOpenSettings }: { message: Message
           <span className="text-fg-subtle">{t('mergeDenial.giveNote')}</span>
         </div>
       )}
-      {!until && !isOwner && <p className="mt-1 text-fg-subtle" data-testid="merge-denial-owner-only">{t('blocked.ownerOnly', { owner })}</p>}
+      {!until && !d.obsolete && !isOwner && <p className="mt-1 text-fg-subtle" data-testid="merge-denial-owner-only">{t('blocked.ownerOnly', { owner })}</p>}
       {error && !until && (
         <div className="mt-1" role="alert" data-testid="merge-denial-error" data-code={error.code} title={error.raw}>
           {error.code === 'denial_expired' ? (

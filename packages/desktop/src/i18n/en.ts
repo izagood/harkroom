@@ -4643,6 +4643,8 @@ export const en = {
   'mergeOnce.cancel': "Cancel",
   'mergeOnce.approved': "Approved once · {by} · as {login} · until {until}",
   'mergeOnce.approvedRelaxed': "Approved once · {by} · as {login} · checks left to GitHub · until {until}",
+  'mergeCard.obsoleteMerged': 'This PR was already merged — the card is closed.',
+  'mergeCard.obsoleteClosed': 'This PR was closed — the card is closed.',
   'mergeOnce.approvedExpired': "One-time approval (as {login}) expired",
   'mergeOnce.ownerOnly': "Waiting for the owner, {owner}, to decide",
   'mergeOnce.errUsed': "This card was already decided.",
