@@ -23,10 +23,6 @@
     "Attach a file",
     "Send message"
   ],
-  "components/ConnectUpdateBanner.tsx": [
-    "Could not check for updates",
-    "Update"
-  ],
   "components/Directory.tsx": [
     "Directory"
   ],
@@ -53,17 +49,6 @@
   "components/Reactions.tsx": [
     "Close reaction picker"
   ],
-  "components/RecoveryKeyStep.tsx": [
-    "Save your recovery key",
-    "This key restores the community&apos;s secret vault if the hosting service ever has to be rebuilt. It is shown",
-    "only once",
-    "— nobody, including the operator, keeps a copy. If you leave this screen before saving it, it can&apos;t be shown again.",
-    "Copy",
-    "Save to file",
-    "Copied keys can stay in clipboard history or sync to your other devices. A password manager is the safest place to keep it.",
-    "I saved the recovery key somewhere safe.",
-    "Continue"
-  ],
   "components/SavedMessages.tsx": [
     "Saved"
   ],
@@ -80,42 +65,5 @@
   "components/WakeRow.tsx": [
     "다시 봅니다",
     "에 다시 봅니다"
-  ],
-  "screens/ConnectScreen.tsx": [
-    "Create a community",
-    "Sign in to another community",
-    "Community",
-    "Ready. Create the first admin account for this community.",
-    "Login ID",
-    "Handle (@)",
-    "Display name",
-    "Password",
-    "This can take a while. You can close the app — we saved this, and it will be here when you return.",
-    "Provisioning service URL",
-    "This looks like the new community's own address — it does not exist yet. Enter the service that creates communities.",
-    "The service that creates communities — not your new community's address. It comes with your invite code.",
-    "Community name",
-    "Invite code",
-    "Email",
-    "Server URL",
-    "Login ID",
-    "Login ID",
-    "Handle (@)",
-    "Display name",
-    "Invite token",
-    "Password",
-    "Create admin account",
-    "Waiting…",
-    "Create community",
-    "Sign in",
-    "Create account",
-    "Join with invite",
-    "Have an invite token? Join this community",
-    "First run? Create the admin account",
-    "Have an invite code? Create a hosted community",
-    "Discard and go back to sign in",
-    "Back to sign in",
-    "Back to sign in",
-    "Cancel"
   ]
 }
