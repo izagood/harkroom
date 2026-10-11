@@ -28,12 +28,16 @@ const THREAD_PREFIX = 'thread:';
 const FOLD_KEY = {
   quiet: 'inbox.board.fold.quiet',
   old: 'inbox.board.fold.old',
+  stale: 'inbox.board.fold.stale',
   cleared: 'inbox.board.fold.cleared',
   later: 'inbox.board.fold.later',
 } as const satisfies Record<BoardFold, string>;
-/** 열마다 접힘 줄의 순서. 나중에는 어느 열에나 서고, 진행은 조용한 것, 끝남은 지난 것 → 치운 것. */
+/**
+ * 열마다 접힘 줄의 순서. 나중에는 어느 열에나 서고, 내 차례·막힘은 7일 넘게 기다린 것(R2), 진행은
+ * 조용한 것, 끝남은 지난 것 → 치운 것.
+ */
 const COLUMN_FOLDS: Record<BoardColumn, readonly BoardFold[]> = {
-  mine: ['later'], blocked: ['later'], active: ['quiet', 'later'], done: ['old', 'later', 'cleared'],
+  mine: ['stale', 'later'], blocked: ['stale', 'later'], active: ['quiet', 'later'], done: ['old', 'later', 'cleared'],
 };
 
 /** 나중에의 깨어날 시각 — **다음 날 아침 9시**(내 시계). 하루 미룸이 가장 흔한 뜻이다. */
@@ -399,9 +403,9 @@ export function Inbox({ open, onClose }: Props) {
             </button>
           ))}
           {/*
-            접힌 카드(치움·나중에)는 **되돌리기** 하나. 펼친 카드는 나중에 + 완료 — 단, 내 차례에는
-            완료가 없다(내 차례가 치움을 이겨 눌러도 그 자리에 남는다). 나중에는 내 차례에도 있다:
-            그래야 지금 못 할 일을 수에서 뺄 수 있다.
+            접힌 카드(치움·나중에)는 **되돌리기** 하나. 나머지는 **모든 카드**에 나중에 + 치우기(R3) —
+            내 차례도 치울 수 있어야 수가 준다(옛 화면은 내 차례에 치우기가 없어 「129」가 줄지 않았다).
+            7일 넘어 접힌 카드도 여기서 치운다.
           */}
           {card.fold === 'cleared' || card.fold === 'later'
             ? (
@@ -424,16 +428,14 @@ export function Inbox({ open, onClose }: Props) {
                 >
                   {t('inbox.board.later')}
                 </button>
-                {card.column !== 'mine' && (
-                  <button
-                    data-testid={`inbox-card-done-${card.rootId}`}
-                    disabled={busy === card.rootId}
-                    onClick={() => void setState(card, { state: 'done' })}
-                    className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
-                  >
-                    {t('inbox.board.done')}
-                  </button>
-                )}
+                <button
+                  data-testid={`inbox-card-done-${card.rootId}`}
+                  disabled={busy === card.rootId}
+                  onClick={() => void setState(card, { state: 'done' })}
+                  className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-hover disabled:opacity-50"
+                >
+                  {t('inbox.board.done')}
+                </button>
               </span>
             )}
         </div>
@@ -441,7 +443,7 @@ export function Inbox({ open, onClose }: Props) {
     );
   };
 
-  // 접힌 것(나중에)은 세지 않는다 — 미룬 일은 지금 나를 기다리는 일이 아니다.
+  // 접힌 것(나중에·7일 넘은 것)은 세지 않는다 — 지금 나를 기다리는 일이 아니다.
   // 배지와 같은 함수다(`lib/inboxBoard::mineCount`) — 두 숫자가 갈릴 자리가 없게.
   const mine = mineCount(cards);
 
@@ -521,11 +523,12 @@ export function Inbox({ open, onClose }: Props) {
       {load.kind === 'ready' && cards.length > 0 && (
         <div data-testid="inbox-board" className="@container flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
           {(() => {
-            // 띠 — 오래 기다린 것부터(`buildBoard` 가 내 차례를 sinceAt 오름차순으로 준다).
+            // 띠 — 최근 것부터(R1, `buildBoard` 가 내 차례를 sinceAt 내림차순으로 준다).
             const shown = byColumn.mine.filter((c) => c.fold === null);
             const head = shown.slice(0, BAND_LIMIT);
             const rest = shown.slice(BAND_LIMIT);
             const later = byColumn.mine.filter((c) => c.fold === 'later');
+            const staleMine = byColumn.mine.filter((c) => c.fold === 'stale');
             return (
               <section
                 data-testid="inbox-col-mine"
@@ -548,6 +551,15 @@ export function Inbox({ open, onClose }: Props) {
                       {t('inbox.board.more', { count: rest.length })}
                     </summary>
                     <ul className="mt-1.5 grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{rest.map(cardView)}</ul>
+                  </details>
+                )}
+                {/* 7일 넘게 기다린 것 — 수에서 빠지고 띠 맨 아래 한 줄로 접힌다(R2). 사라지지는 않는다. */}
+                {staleMine.length > 0 && (
+                  <details data-testid="inbox-fold-mine-stale" className="mt-1.5 px-1">
+                    <summary className="cursor-pointer text-meta text-fg-subtle hover:text-fg-muted">
+                      {t(FOLD_KEY.stale, { count: staleMine.length })}
+                    </summary>
+                    <ul className="mt-1.5 grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">{staleMine.map(cardView)}</ul>
                   </details>
                 )}
                 {later.length > 0 && (
