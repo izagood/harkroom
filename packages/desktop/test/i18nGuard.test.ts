@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import ts from 'typescript';
+import { SYSTEM_I18N_ARGS } from '@harkroom/shared';
 import { en } from '../src/i18n/en';
 
 /**
@@ -143,6 +144,8 @@ describe('사전에 안 쓰는 키가 없다', () => {
   const KEEP = new Set([
     // 채널 빈 화면 팁이 이 메뉴 이름을 그대로 인용하는지 `i18n.test.tsx` 가 잰다(메뉴 이름의 정본).
     'sidebar.menu.edit',
+    // 서버가 시스템 줄의 `meta.i18n.key` 로 보내는 키 — `lib/systemText.ts` 가 받은 키 그대로 찾는다.
+    ...Object.keys(SYSTEM_I18N_ARGS),
   ]);
 
   it('모든 키가 src 어딘가에서 쓰인다', () => {
