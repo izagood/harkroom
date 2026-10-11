@@ -28,6 +28,7 @@ import { runMentionTurn, type MentionTurnDeps } from './mentionTurn.js';
 import { ReviewFork } from './reviewFork.js';
 import { createMemoryCache } from './memoryCache.js';
 import { runPtyTurn } from './pty.js';
+import { avcsGuideFlag } from './avcsGuideFlag.js';
 import { SessionStore } from './sessions.js';
 import { ensureNameLink, resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, readExtraMcpServers, readMcpServers, type McpServerEntry } from './turn.js';
@@ -247,7 +248,9 @@ async function noticeIfHarnessLogin(
  */
 const [me, guide] = await (async () => {
   try {
-    return [await harkroom.me(), await harkroom.guide()] as const;
+    // avcs 를 띄울 수 있는지는 하네스가 물려받을 이 러너의 PATH 로 잰다. 가이드는 기동 때 한 번만 받는다 —
+    // avcs 를 깔거나 지우면 러너를 다시 띄워야 반영된다.
+    return [await harkroom.me(), await harkroom.guide({ avcs: avcsGuideFlag(process.env.PATH) })] as const;
   } catch (err) {
     exitIfUnrecoverable(err);
     throw err;
