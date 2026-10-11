@@ -3007,8 +3007,11 @@ export const MENTION_CHAIN_LIMIT_MAX = 50;
  *   `runner_outdated` 로 거절된다.
  * - `'attention'` 이 없으면 그 러너는 사람을 부르지 못한다(2026-09-08) — 첫 실행 관문에
  *   걸린 턴이 조용히 상한에서 실패한다. 앱은 없는 기능을 있다고 그리지 않는다.
+ * - `'local-terminal'` 은 러너가 아니라 **그 러너를 띄운 오퍼레이터**가 announce 에 덧붙인다
+ *   (R1). 오퍼레이터 소켓 위의 로컬 터미널 허브가 `local.writer` 를 알아듣는다는 뜻이다.
+ *   없으면 서버는 제어 전용 attach 를 보통 attach 로 되돌리고 세대를 내리지 않는다.
  */
-export type RunnerCap = 'input' | 'interactive' | 'attention' | 'cancel';
+export type RunnerCap = 'input' | 'interactive' | 'attention' | 'cancel' | 'local-terminal';
 
 /**
  * 러너 → 서버 프레임. 러너는 이것을 오퍼레이터 unix 링크에 싣고(`runnerLink.ts`), 오퍼레이터가
@@ -3048,7 +3051,14 @@ export type RelayRunnerFrame =
    * 계정 이메일 같은 것이 실린다. `accountLabel` 은 "어느 계정이 막혔는지"를 사람에게
    * 보여줄 재료다(계정 풀을 안 만든 러너는 `'(기본)'`).
    */
-  | { type: 'attention.required'; sessionId: string; accountLabel: string; screen: string };
+  | { type: 'attention.required'; sessionId: string; accountLabel: string; screen: string }
+  /**
+   * 로컬 직결로 들어온 입력의 **바이트 수**(R1). 오퍼레이터의 로컬 터미널 허브가 보낸다 —
+   * 서버를 거치지 않은 입력도 detach 감사의 `inputBytes` 에 합쳐야 감사가 길에 따라 갈리지
+   * 않는다. 내용은 없다. `gen` 은 그 바이트를 받아 준 writer 키의 **번호**(비밀 아님, `local.writer`
+   * 가 키와 함께 내린다)이고, 서버는 그 번호의 키를 받은 뷰어에게만 더한다(안 맞으면 버린다).
+   */
+  | { type: 'local.input'; sessionId: string; gen: number; bytes: number };
 
 /**
  * 서버 → 러너 프레임.
@@ -3107,6 +3117,20 @@ export type RelayServerFrame =
    */
   | { type: 'viewer.count'; sessionId: string; count: number }
   /**
+   * 로컬 직결 writer 허가(R1, #1298 security F1). **서버가 writer 판정을 그대로 갖는다** — 오퍼레이터의
+   * 로컬 터미널 허브는 이 `writerKey` 를 든 입력·크기만 받는다. 키는 허가마다 새로 만드는 ≥128bit 난수이고
+   * 그 writer 뷰어의 WS 와 오퍼레이터에만 간다 — 오퍼레이터 소켓 토큰은 같은 uid 의 에이전트도 읽으므로
+   * 토큰이나 맞힐 수 있는 번호는 허가가 될 수 없다. `writerKey: null` 은 회수다. `gen` 은 감사 짝맞춤용
+   * **번호**(비밀 아님)다. 이 프레임은 러너까지 가지 않고 오퍼레이터가 가로챈다(caps 의 `'local-terminal'`).
+   */
+  | { type: 'local.writer'; sessionId: string; writerKey: string | null; gen: number }
+  /**
+   * 로컬 직결 열람 허가(R1, #1298 security F2). 서버가 제어 전용 attach 를 인가하면 그 뷰어와 오퍼레이터에
+   * 같은 `viewKey` 를 준다 — 이 키가 있어야 오퍼레이터 소켓에서 출력을 구독한다. `granted:false` 는 회수이고
+   * 그 키로 붙은 구독은 끝난다. 뷰어가 떠나면 서버가 거둔다.
+   */
+  | { type: 'local.view'; sessionId: string; viewKey: string; granted: boolean }
+  /**
    * 사람이 스스로 터미널을 연다(#337, 스펙 §5-2 결정 4). 세션이 아니라 **스레드**를
    * 가리킨다 — 세션이 아직 없을 수 있고, 없으면 러너가 만든다. `requestId` 로
    * `interactive.opened`/`interactive.error` 와 상관된다. `openedByHandle` 은 조종 중
@@ -3156,7 +3180,18 @@ export type AttachServerFrame =
        */
       resize: boolean;
       reason: WriterDeniedReason | null;
-    };
+      /**
+       * 로컬 직결 writer 키(R1). **제어 전용 attach(`mode=control`)** 이고 이 창이 칠 수 있을 때만
+       * 실린다 — 이 창은 바이트를 오퍼레이터 소켓으로 보내며 이 키를 싣는다. 없으면(구 서버·구
+       * 오퍼레이터·보통 attach) 서버 경유로 친다. 이 창 말고는 아무도 이 키를 받지 않는다.
+       */
+      writerKey?: string;
+    }
+  /**
+   * 로컬 직결 열람 키(R1). 제어 전용 attach 가 받아들여졌을 때 **한 번** 온다 — 이 창은 이 키로 오퍼레이터
+   * 소켓에서 출력을 구독한다. 이 프레임이 안 오면(보통 attach 로 되돌려졌다) 서버가 보내는 `output` 으로 그린다.
+   */
+  | { type: 'local'; viewKey: string };
 
 /**
  * 이 창이 **왜** 읽기 전용인가(#369). `writer:false` 만 보내면 화면이 이유를 지어내야 하고,

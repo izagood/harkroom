@@ -673,7 +673,10 @@ export async function registerAgentRelayRoutes(
     const claim = ticket ? attachTickets.consume(ticket) : null;
     if (!claim) { socket.close(4401, 'unauthorized'); return; }
 
-    const viewer = hub.addViewer(claim.sessionId, socket);
+    // `mode=control` 은 제어 전용 attach 다(R1) — 바이트는 같은 맥의 오퍼레이터 소켓으로 받고, 이 소켓은
+    // writer 차례·세대·상태만 나른다. 인가는 같은 티켓이다(볼 수 있는 사람만 붙는다). 오퍼레이터가 모르면
+    // 허브가 보통 attach 로 되돌린다.
+    const viewer = hub.addViewer(claim.sessionId, socket, { control: query.mode === 'control' });
     // 자격증명이 죽으면 이 소켓도 닫힌다(위 `sweep` 주석).
     const untrack = sweep.track(socket, claim.credentialHash);
     // 유휴 뷰어를 프록시가 걷어가지 않게, 그리고 케이블 뽑힌 뷰어가 영원히 붙어 있지 않게(`heartbeatMs` 주석).

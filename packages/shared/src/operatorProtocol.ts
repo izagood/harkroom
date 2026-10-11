@@ -89,7 +89,9 @@ export type OperatorToServerFrame =
   | { type: 'pty.replay'; runnerId: string; sessionId: string; bytes: string }
   | { type: 'interactive.opened'; runnerId: string; requestId: string; sessionId: string; created: boolean }
   | { type: 'interactive.error'; runnerId: string; requestId: string; message: string }
-  | { type: 'attention.required'; runnerId: string; sessionId: string; accountLabel: string; screen: string };
+  | { type: 'attention.required'; runnerId: string; sessionId: string; accountLabel: string; screen: string }
+  /** 로컬 직결 입력의 바이트 수(R1) — 러너가 아니라 오퍼레이터의 로컬 터미널 허브가 낸다. 내용은 없다. */
+  | { type: 'local.input'; runnerId: string; sessionId: string; gen: number; bytes: number };
 
 export type ServerToOperatorFrame =
   | { type: 'assign'; agentId: string; definition: AgentDefinition }
@@ -107,14 +109,20 @@ export type ServerToOperatorFrame =
   | { type: 'viewer.count'; runnerId: string; sessionId: string; count: number }
   | { type: 'session.cancel'; runnerId: string; sessionId: string; byHandle: string }
   | { type: 'interactive.open'; runnerId: string; requestId: string; channelId: string;
-      threadRootId: string; openedByHandle: string; cols?: number; rows?: number };
+      threadRootId: string; openedByHandle: string; cols?: number; rows?: number }
+  /** 로컬 직결 writer 허가(R1). 오퍼레이터가 가로채 로컬 터미널 허브에 준다 — 러너까지 가지 않는다. 모르는 옛 오퍼레이터는 버린다. */
+  | { type: 'local.writer'; runnerId: string; sessionId: string; writerKey: string | null; gen: number }
+  /** 로컬 직결 열람 허가(R1). writer 와 같이 오퍼레이터가 가로챈다. */
+  | { type: 'local.view'; runnerId: string; sessionId: string; viewKey: string; granted: boolean };
 
 const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
   'hello', 'capabilities', 'runner.started', 'runner.exited', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
   'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required', 'status', 'upgrade.progress',
+  'local.input',
 ]);
 const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
   'assign', 'unassign', 'agent.restart', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
+  'local.writer', 'local.view',
 ]);
 
 /** `hello` 와 배정 셋(`assign`·`unassign`·`agent.restart`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
