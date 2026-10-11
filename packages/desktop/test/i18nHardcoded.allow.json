@@ -81,29 +81,6 @@
     "다시 봅니다",
     "에 다시 봅니다"
   ],
-  "components/settings/AgentsSettings.tsx": [
-    "Agent name",
-    "Agent name",
-    "Agent instructions",
-    "Agent instructions",
-    "AI configuration",
-    "Use harness defaults",
-    "Customize for this agent",
-    "Effort",
-    "Agent harness",
-    "Agent harness",
-    "Account pool",
-    "Account pool",
-    "Use the default pool",
-    "This machine only — pools are local directories, so this is not shared with other devices.",
-    "Restart the runner for a change to take effect.",
-    "Applied when the agent is created, before its runner starts.",
-    "Mention permission",
-    "Mention permission",
-    "Working directory",
-    "Working directory",
-    "Owner"
-  ],
   "components/settings/CommunitySettings.tsx": [
     "Add a community",
     "Sign in to another harkroom server. The communities you are already in stay connected.",
@@ -125,11 +102,6 @@
   ],
   "components/settings/HandleGroupsSettings.tsx": [
     "구성원 ("
-  ],
-  "components/settings/ModelPicker.tsx": [
-    "Model",
-    "Model name",
-    "Model"
   ],
   "components/settings/ProfileSettings.tsx": [
     "Profile photo",
