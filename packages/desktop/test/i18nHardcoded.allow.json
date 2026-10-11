@@ -103,17 +103,8 @@
   "components/settings/HandleGroupsSettings.tsx": [
     "구성원 ("
   ],
-  "components/settings/ProfileSettings.tsx": [
-    "Profile photo",
-    "Upload",
-    "Remove"
-  ],
   "components/settings/SkillsSettings.tsx": [
     "제안자 @"
-  ],
-  "components/settings/WorkspaceSettings.tsx": [
-    "Upload",
-    "Remove"
   ],
   "screens/ConnectScreen.tsx": [
     "Create a community",
