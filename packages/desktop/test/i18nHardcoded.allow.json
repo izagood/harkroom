@@ -81,12 +81,6 @@
     "다시 봅니다",
     "에 다시 봅니다"
   ],
-  "components/settings/HandleGroupsSettings.tsx": [
-    "구성원 ("
-  ],
-  "components/settings/SkillsSettings.tsx": [
-    "제안자 @"
-  ],
   "screens/ConnectScreen.tsx": [
     "Create a community",
     "Sign in to another community",
