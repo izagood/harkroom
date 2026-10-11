@@ -48,9 +48,14 @@ export function ConnectUpdateBanner() {
         {/* 사유 한 줄은 읽는 글자이므로 본문단(앱 기본값 13px)이고, 그 아래 등폭 원문은
             이미 아랫단 11px 이다 — 사람이 먼저 읽는 것과 필요할 때만 보는 것이 갈린다. */}
         <p className="font-medium text-warning">{t('connect.update.checkFailed')}</p>
-        <p className="truncate font-mono text-meta text-fg-muted" title={status.message}>
-          {status.message}
-        </p>
+        {/* 우리가 아는 사유(설치 뒤 재시작 안 됨)만 사전 문장으로, 나머지는 플러그인 원문 그대로. */}
+        {status.reason === 'notRestarted' ? (
+          <p className="text-meta text-fg-muted">{t('update.notRestarted')}</p>
+        ) : (
+          <p className="truncate font-mono text-meta text-fg-muted" title={status.message}>
+            {status.message}
+          </p>
+        )}
       </div>
     );
   }
