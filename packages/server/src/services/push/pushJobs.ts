@@ -86,6 +86,29 @@ export async function enqueueAskPush(pool: Pool | PoolClient, accountId: string,
   );
 }
 
+/**
+ * 묶음 카드(선택 카드 P1, 3c)의 푸시 — **1분 안에 들어온 줄은 하나로 묶는다.** 묶음에 줄이 더해질 때마다 부르지만, 같은 사람·
+ * 같은 묶음에 아직 나가지 않은 job 이 있으면 새로 넣지 않는다(그 job 이 1분 뒤 한 번 나간다). 보내는 순간의 본문·
+ * 상태는 sweeper 의 다시 확인(liveCheck)이 읽는다. 기기 쪽에서도 `ask:<묶음 id>` 접기 키로 앞 알림이 바뀐다(payload).
+ * 받는 사람은 `enqueueAskPush` 와 같이 부르는 쪽이 정한다(그 턴의 차례 주인).
+ */
+export const BUNDLE_PUSH_WINDOW_SEC = 60;
+
+export async function enqueueBundlePush(pool: Pool | PoolClient, accountId: string, bundleId: string): Promise<void> {
+  await pool.query(
+    `insert into push_job (account_id, message_id, reason, not_before)
+     select $1, $2, 'ask', now() + make_interval(secs => $3)
+      where exists (select 1 from account where id = $1 and kind = 'human')
+        and exists (select 1 from push_device where account_id = $1)
+        -- 사유를 가리지 않는다 — 그 묶음 글이 이미 답글·멘션 푸시로 나갈 참이면 둘째 알림을 얹지 않는다.
+        and not exists (select 1 from push_job j where j.account_id = $1 and j.message_id = $2)
+        and not exists (
+          select 1 from account_block b join message m on m.id = $2
+           where b.blocker_id = $1 and b.blocked_id = m.author_id)`,
+    [accountId, bundleId, BUNDLE_PUSH_WINDOW_SEC],
+  );
+}
+
 interface JobRow {
   id: string; accountId: string; messageId: string; inboxId: string | null; reason: PushReason;
   deviceId: string | null; attempts: number;

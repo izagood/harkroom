@@ -8,6 +8,9 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { postMessage, supersedeAsk } from '../src/services/messages.js';
 import { isIrreversible, resolveBundleItem, upsertAskBundle } from '../src/services/askBundles.js';
+import { readThreadStatusFacts } from '../src/services/threadStatus.js';
+import { enqueueBundlePush } from '../src/services/push/pushJobs.js';
+import { hashToken } from '../src/auth/tokens.js';
 import type { AskMeta } from '@harkroom/shared';
 
 let app: FastifyInstance;
@@ -230,5 +233,101 @@ describe('supersedes — 새 카드가 같은 묶음에 들어간다', () => {
     });
     await supersedeAsk(pool, { oldId: one.askId, newId: idOf(next), actorId: workerId });
     expect((await itemsOf(bundleId)).map((i: { rootId: string }) => i.rootId)).toEqual([one.askId, idOf(next)]);
+  });
+});
+
+describe('🙋·Inbox 는 묶음 하나에 한 줄(3c)', () => {
+  /** 채널 목록에서 그 스레드 머리의 열린 사람 물음 수. */
+  const headCount = async (channel: string, rootId: string) => {
+    const res = await app.inject({ method: 'GET', url: `/channels/${channel}/messages?limit=200`, headers: auth(memberToken) });
+    const rows = (res.json().messages ?? res.json()) as { id: string; openAskHumanCount: number | null }[];
+    return rows.find((r) => r.id === rootId)?.openAskHumanCount;
+  };
+
+  it('묶음에 담긴 원본은 원 스레드에서 세지 않고, 묶음 스레드가 하나로 센다', async () => {
+    const pmHead = await app.inject({ method: 'POST', url: `/channels/${pmChannel}/messages`, headers: auth(memberToken), payload: { body: '3c 모음' } });
+    const pmThread = pmHead.json().message?.id ?? pmHead.json().id;
+    const one = await seedAsk();
+    const two = await seedAsk();
+    expect(await headCount(workChannel, one.threadId)).toBe(1);
+
+    await upsertAskBundle(pool, { callerId: pmId, channelId: pmChannel, threadRootId: pmThread, body: '정할 것', rootIds: [one.askId, two.askId] });
+    expect(await headCount(workChannel, one.threadId)).toBe(0);
+    expect(await headCount(workChannel, two.threadId)).toBe(0);
+    // 줄이 둘이어도 묶음 하나에 한 번이다.
+    expect(await headCount(pmChannel, pmThread)).toBe(1);
+    expect((await readThreadStatusFacts(pool, one.threadId))!.facts.humanAsk).toBeNull();
+    expect((await readThreadStatusFacts(pool, pmThread))!.facts.humanAsk).toMatchObject({ askerId: pmId });
+
+    // 한 줄이 정해져도 열린 줄이 남으면 그대로, 다 정해지면 0.
+    await app.inject({ method: 'POST', url: `/channels/${workChannel}/messages/${one.askId}/ask-answer`, headers: auth(memberToken), payload: { optionId: 'a' } });
+    expect(await headCount(pmChannel, pmThread)).toBe(1);
+    await app.inject({ method: 'POST', url: `/channels/${workChannel}/messages/${two.askId}/ask-close`, headers: auth(memberToken) });
+    expect(await headCount(pmChannel, pmThread)).toBe(0);
+    expect((await readThreadStatusFacts(pool, pmThread))!.facts.humanAsk).toBeNull();
+  });
+});
+
+describe('차례가 옮겨 가는 것은 공개 채널 묶음뿐, 권한 카드는 남는다(3c, #1313 security F1)', () => {
+  const headCount2 = async (channel: string, rootId: string) => {
+    const res = await app.inject({ method: 'GET', url: `/channels/${channel}/messages?limit=200`, headers: auth(adminToken) });
+    const rows = (res.json().messages ?? res.json()) as { id: string; openAskHumanCount: number | null }[];
+    return rows.find((r) => r.id === rootId)?.openAskHumanCount;
+  };
+
+  it('비공개 채널에 묶으면 원본이 원 스레드에서 계속 센다', async () => {
+    const priv = await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'bundle-private', visibility: 'private' } });
+    expect(priv.statusCode).toBeLessThan(300);
+    const privId = priv.json().id as string;
+    expect(priv.json().visibility).toBe('private');
+    await app.inject({ method: 'POST', url: `/channels/${privId}/members`, headers: auth(adminToken), payload: { accountId: pmId } });
+    const head = await app.inject({ method: 'POST', url: `/channels/${privId}/messages`, headers: auth(adminToken), payload: { body: '몰래 모음' } });
+    const headId = head.json().message?.id ?? head.json().id;
+    const one = await seedAsk();
+    const res = await upsertAskBundle(pool, { callerId: pmId, channelId: privId, threadRootId: headId, body: '정할 것', rootIds: [one.askId] });
+    expect(res.ok).toBe(true);
+    expect(await headCount2(workChannel, one.threadId)).toBe(1);
+    expect((await readThreadStatusFacts(pool, one.threadId))!.facts.humanAsk).not.toBeNull();
+  });
+
+  it('권한 요청 카드는 공개 채널에 묶여도 원 스레드에서 센다', async () => {
+    const head = await app.inject({ method: 'POST', url: `/channels/${pmChannel}/messages`, headers: auth(memberToken), payload: { body: '권한 모음' } });
+    const headId = head.json().message?.id ?? head.json().id;
+    const perm = await seedAsk({}, { permissionRequest: { id: 'x' } });
+    await upsertAskBundle(pool, { callerId: pmId, channelId: pmChannel, threadRootId: headId, body: '정할 것', rootIds: [perm.askId] });
+    expect(await headCount2(workChannel, perm.threadId)).toBe(1);
+    expect((await readThreadStatusFacts(pool, perm.threadId))!.facts.humanAsk).not.toBeNull();
+  });
+});
+
+describe('묶음 푸시는 1분 안의 것을 하나로(3c)', () => {
+  it('같은 사람·같은 묶음에 나가지 않은 푸시가 있으면 더 넣지 않는다', async () => {
+    const session = memberToken;
+    await pool.query(
+      `insert into push_device (account_id, session_token_hash, platform, apns_env, token, prefs)
+       values ($1, $2, 'ios', 'production', $3, '{}')`, [memberId, hashToken(session), 'b'.repeat(64)]);
+    // 이 사람이 끼지 않은 스레드에 세운다 — 답글 푸시가 따로 생기지 않게.
+    const head = await app.inject({ method: 'POST', url: `/channels/${pmChannel}/messages`, headers: auth(adminToken), payload: { body: '푸시 모음' } });
+    const headId = head.json().message?.id ?? head.json().id;
+    const one = await seedAsk();
+    const bundle = await upsertAskBundle(pool, { callerId: pmId, channelId: pmChannel, threadRootId: headId, body: '정할 것', rootIds: [one.askId] });
+    const bundleId = (bundle as { message: { id: string } }).message.id;
+    await enqueueBundlePush(pool, memberId, bundleId);
+    await enqueueBundlePush(pool, memberId, bundleId);
+    await enqueueBundlePush(pool, memberId, bundleId);
+    const jobs = await pool.query(
+      `select not_before > now() + interval '50 seconds' as delayed from push_job where account_id = $1 and message_id = $2`, [memberId, bundleId]);
+    expect(jobs.rowCount).toBe(1);
+    expect(jobs.rows[0].delayed).toBe(true);
+    // 이미 다른 사유(답글·멘션)로 나갈 푸시가 있는 묶음 글에는 둘째 알림을 얹지 않는다.
+    const replied = await bundleOf([(await seedAsk()).askId]);
+    const repliedId = (replied as { message: { id: string } }).message.id;
+    const before = (await pool.query(`select count(*)::int as n from push_job where account_id = $1 and message_id = $2`, [memberId, repliedId])).rows[0].n;
+    await enqueueBundlePush(pool, memberId, repliedId);
+    const after = (await pool.query(`select count(*)::int as n from push_job where account_id = $1 and message_id = $2`, [memberId, repliedId])).rows[0].n;
+    expect(after).toBe(Math.max(before, 1));
+    // 에이전트에게는 넣지 않는다.
+    await enqueueBundlePush(pool, pmId, bundleId);
+    expect((await pool.query(`select 1 from push_job where account_id = $1`, [pmId])).rowCount).toBe(0);
   });
 });

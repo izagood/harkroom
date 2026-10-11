@@ -6,6 +6,7 @@ import {
 
 import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
 import { audienceFor } from './channels.js';
+import { bundledRootSql, openBundleSql } from './askBundleSql.js';
 import type { AgentPresence } from '../mcp/presence.js';
 
 /**
@@ -26,13 +27,17 @@ with t as (
   where (m.id = $1 or m.thread_root_id = $1) and m.deleted_at is null
 )
 select
+  -- 묶음에 담긴 원본은 원 스레드의 🙋 가 되지 않고, 열린 줄을 가진 묶음 카드가 그 묶음 스레드의 🙋 가 된다
+  -- (선택 카드 P1 3c — Inbox 집계 THREAD_STATE_FACTS 와 같은 조각, askBundleSql.ts).
   (select json_build_object('askerId', t.author_id, 'prompt', t.meta->'ask'->>'prompt')
      from t
-     where t.meta->>'kind' = 'ask'
+     where (t.meta->>'kind' = 'ask'
        and t.meta->'ask'->>'answeredWith' is null and t.meta->'ask'->>'closedAt' is null
        and (t.meta->'ask'->'to'->>'kind' = 'human'
          or (t.meta->'ask'->'to'->>'kind' = 'account'
            and exists (select 1 from account x where x.id::text = t.meta->'ask'->'to'->>'accountId' and x.kind = 'human')))
+       and not ${bundledRootSql('t')})
+       or ${openBundleSql('t')}
      order by t.seq limit 1) as human_ask,
   (select json_build_object('accountId', t.author_id, 'what', coalesce(t.meta->'failure'->>'what', t.meta->'failure'->>'reason'),
                             'gate', coalesce(t.meta->'failure'->>'code' = 'account_gate', false))

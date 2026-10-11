@@ -87,7 +87,7 @@ async function prepareItems(
 export async function upsertAskBundle(pool: Pool, args: {
   callerId: string; channelId: string; threadRootId: string; body: string; rootIds: string[]; bundleId?: string;
   meta?: Record<string, unknown>; causeMessageId?: string | null;
-}): Promise<{ ok: true; message: MessageRow; posted?: PostMessageResult } | { ok: false; code: AskBundleRefusal | 'post_failed'; rootId?: string; posted?: PostMessageResult }> {
+}): Promise<{ ok: true; message: MessageRow; added: number; posted?: PostMessageResult } | { ok: false; code: AskBundleRefusal | 'post_failed'; rootId?: string; posted?: PostMessageResult }> {
   const rootIds = [...new Set(args.rootIds)];
   if (rootIds.length === 0) return { ok: false, code: 'bundle_empty' };
   let existing: BundleRow | null = null;
@@ -110,7 +110,8 @@ export async function upsertAskBundle(pool: Pool, args: {
       meta: { ...(args.meta ?? {}), kind: 'askBundle', askBundle: { items: prepared.items } },
     });
     if (posted.failure) return { ok: false, code: 'post_failed', posted };
-    return { ok: true, message: posted.message, posted };
+    await announceBundledRoots(pool, rootIds);
+    return { ok: true, message: posted.message, added: prepared.items.length, posted };
   }
 
   const byRoot = new Map(existing.items.map((i) => [i.rootId, i] as const));
@@ -124,7 +125,21 @@ export async function upsertAskBundle(pool: Pool, args: {
   )).rows[0] as MessageRow | undefined;
   if (!updated) return { ok: false, code: 'bundle_not_found' };
   emitEvent({ type: 'message.updated', message: updated, audience: await audienceFor(pool, updated.channelId) });
-  return { ok: true, message: updated };
+  const addedIds = prepared.items.map((i) => i.rootId).filter((id) => !existing!.items.some((e) => e.rootId === id));
+  await announceBundledRoots(pool, addedIds);
+  return { ok: true, message: updated, added: addedIds.length };
+}
+
+/**
+ * 묶음에 새로 담긴 원본마다 그 스레드에 "다시 읽어라"를 보낸다(3c). 묶음에 담기는 순간 원본은 원 스레드의 🙋 가
+ * 아니게 되는데(`askBundleSql.ts`), 원본 행 자체는 바뀌지 않아 스레드 상태가 다시 판정되지 않는다 —
+ * `message.updated` 가 스레드 상태 리액션(`threadStatus` 의 `rootOf`)과 화면의 집계를 다시 돌린다.
+ */
+async function announceBundledRoots(pool: Pool, rootIds: string[]): Promise<void> {
+  for (const id of rootIds) {
+    const row = await getMessageById(pool, id);
+    if (row) emitEvent({ type: 'message.updated', message: row, audience: await audienceFor(pool, row.channelId) });
+  }
 }
 
 /**

@@ -6,6 +6,7 @@ import { getMentionPolicy } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
+import { bundledRootSql, openBundleSql } from './askBundleSql.js';
 import { emitEvent } from '../events.js';
 import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.js';
 import { getTeam, getTeamByName, listTeamMembers } from './teams.js';
@@ -232,12 +233,16 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
     -- 조건이 없으면 사람이 그만두기로 한 뒤에도 대기 줄과 '내 차례' 배지가 남는다. 같은
     -- 판정이 shared::isAskOpen 에 있다(SQL 은 그 함수를 부를 수 없어 다시 적는다) —
     -- **필드가 늘면 두 자리를 함께 고친다.**
-    COUNT(*) FILTER (
+    -- **묶음 카드는 묶음 하나에 한 번 센다**(선택 카드 P1 3c, 2026-10-11). 묶음에 담긴 원본은 원 스레드에서 세지
+    -- 않고, 열린 줄을 가진 묶음 카드가 그 묶음 스레드에서 하나로 선다 — 같은 결정이 🙋·Inbox 에 두 번 서지 않게.
+    -- 판정은 askBundleSql.ts 하나(threadStatus 의 FACTS_SQL 과 같은 조각).
+    (COUNT(*) FILTER (
       WHERE t.meta->>'kind' = 'ask'
         AND t.meta->'ask'->>'answeredWith' IS NULL
         AND t.meta->'ask'->>'closedAt' IS NULL
         AND t.meta->'ask'->'to'->>'kind' = 'human'
-    )::int as open_ask_human_count,
+        AND NOT ${bundledRootSql('t')}
+    ) + COUNT(*) FILTER (WHERE ${openBundleSql('t')}))::int as open_ask_human_count,
     -- 특정 계정에게 간 미답 물음의 수신자들. 화면이 "이것이 내 차례인가"를 여기서 가른다.
     COALESCE(ARRAY_AGG(DISTINCT t.meta->'ask'->'to'->>'accountId') FILTER (
       WHERE t.meta->>'kind' = 'ask'

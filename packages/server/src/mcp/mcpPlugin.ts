@@ -78,7 +78,7 @@ import { isValidSlug, MEMORY_SLUG_HINT } from '../services/memory.js';
 import { listGrantedSecrets } from '../services/secretAccess.js';
 import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../services/secretLeakGuard.js';
 import type { AgentPresence } from './presence.js';
-import { enqueueAskPush } from '../services/push/pushJobs.js';
+import { enqueueAskPush, enqueueBundlePush } from '../services/push/pushJobs.js';
 import { DENIAL_CARD_REFUSAL_MESSAGE, prepareDenialCard } from '../services/mergeDenials.js';
 import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant } from '../services/permissionRequests.js';
 
@@ -977,14 +977,24 @@ function buildMcpServer(
       const code = result.code as AskBundleRefusal;
       return jsonResult({ error: { code, message: ASK_BUNDLE_REFUSAL_MESSAGE[code] ?? code, ...(result.rootId ? { rootId: result.rootId } : {}) } });
     }
+    // 묶음 푸시(3c): 그 턴의 차례 주인에게, 1분 안의 줄 추가는 하나로 묶는다(`enqueueBundlePush`). 원인 헤더가 없거나
+    // 차례 주인이 사람이 아니면 보내지 않는다 — `message.ask` 의 푸시(security G4)와 같은 규칙.
+    const pushBundle = async (bundleId: string, already: string[]) => {
+      if (!cause) return;
+      const awaiting = await gateAwaitingAccount(pool, account.id, channelId, cause);
+      if (awaiting && !already.includes(awaiting)) await enqueueBundlePush(pool, awaiting, bundleId);
+    };
     if (result.posted && !result.posted.failure) {
       const { message, notified, replayed } = result.posted;
       if (!replayed) {
         emitPosted(result.posted, await audienceFor(pool, channelId));
         for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+        await pushBundle(message.id, notified);
       }
       return postedResult(message, notified);
     }
+    // 사본만 새로 고친 호출은 알리지 않는다 — 새 줄이 생겼을 때만.
+    if (result.added > 0) await pushBundle(result.message.id, []);
     return jsonResult({ message: result.message, updated: true });
   });
 
