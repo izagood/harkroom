@@ -26,6 +26,8 @@
 // **앱 화면 전체가 꺼졌다**(웹뷰 크래시가 아니다 — 크래시 리포트가 없었다). `^0.19` 처럼
 // 마이너를 열어 두면 이 짝이 조용히 깨진다.
 
+import { createEchoLatencyTracker, type EchoLatencyStats } from './terminalLatency';
+
 export interface TerminalSink {
   /** PTY raw 바이트. 디코드는 xterm 의 상태 기계가 한다. */
   write(bytes: Uint8Array): void;
@@ -90,6 +92,11 @@ export interface TerminalDiagnostics {
    * 키로 준다는 사실이고, "한글을 쳤는데 ㅎㄱ 만 들어간다"가 정확히 그 모양이다.
    */
   hangulKeys: number;
+  /**
+   * 입력 → 첫 출력 지연(ms)의 최근 통계(2026-10-10). 표본이 없으면 `null`.
+   * 경로를 바꾼(서버 경유 → 로컬 직결) 전후를 **실물 앱에서** 비교하는 계기다 — `terminalLatency.ts`.
+   */
+  echo: EchoLatencyStats | null;
 }
 
 /**
@@ -345,7 +352,16 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
   let detachHelper: (() => void) | null = null;
   /** 밖으로 알리는 사실(위 `onDiagnostics`). 바뀔 때마다 통째로 보낸다 — 값이 둘뿐이다. */
   const diagnostics: TerminalDiagnostics = {
-    renderer: 'pending', compositions: 0, imeKeys: 0, hangulKeys: 0,
+    renderer: 'pending', compositions: 0, imeKeys: 0, hangulKeys: 0, echo: null,
+  };
+  /**
+   * 입력 → 첫 출력 지연(`TerminalDiagnostics.echo`). **못 치는 창의 키는 세지 않는다** — 그 키는
+   * 어디에도 안 닿으므로 다음 출력은 그 키의 반응이 아니다.
+   */
+  const echo = createEchoLatencyTracker();
+  const sendInput = (data: string): void => {
+    if (!readOnly) echo.noteInput(performance.now());
+    opts?.onInput?.(data);
   };
   const reportDiagnostics = (): void => { opts?.onDiagnostics?.({ ...diagnostics }); };
   /** 마지막으로 보낸 크기. 같은 값을 다시 보내지 않는다 — 드래그 한 번이 수십 프레임이다. */
@@ -387,12 +403,12 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       disableStdin: !opts?.onInput,
     });
     t.open(el);
-    if (opts?.onInput) t.onData(opts.onInput);
+    if (opts?.onInput) t.onData(sendInput);
     // 조합이 **시작될 수 있게** 숨은 입력칸을 화면 안으로 끌어온다(위 주석).
     detachHelper = trackHelperTextarea(el, t);
     // 조합은 xterm 에 맡기지 않는다(위 `attachCompositionBridge` 주석).
     detachComposition = attachCompositionBridge(el, {
-      send: (text) => opts?.onInput?.(text),
+      send: sendInput,
       blocked: () => readOnly || !opts?.onInput,
       onCompositionStart: () => { diagnostics.compositions += 1; reportDiagnostics(); },
       onKeyObserved: (kind) => {
@@ -439,6 +455,10 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
 
   return {
     write(bytes) {
+      if (echo.noteOutput(performance.now())) {
+        diagnostics.echo = echo.stats();
+        reportDiagnostics();
+      }
       if (term) term.write(bytes);
       else pending.push(bytes);
     },

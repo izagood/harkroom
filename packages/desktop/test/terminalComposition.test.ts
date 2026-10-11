@@ -16,6 +16,8 @@ let helperTextarea: HTMLTextAreaElement | null = null;
 /** 마지막으로 뜬 가짜 터미널 — 커서를 옮겨 보는 데 쓴다. */
 let lastTerm: { moveCursor(x: number, y: number): void } | null = null;
 let focused = 0;
+/** 마지막 가짜 xterm 이 받은 onData 손잡이(지연 계기 시험용). */
+let lastOnData: ((d: string) => void) | null = null;
 
 vi.mock('@xterm/addon-webgl', () => ({
   WebglAddon: class {
@@ -59,7 +61,8 @@ vi.mock('@xterm/xterm', () => ({
     }
     focus(): void { focused += 1; }
     write(): void {}
-    onData(): void { /* 이 파일은 xterm 의 onData 를 쓰지 않는다 — 조합은 그 앞에서 갈린다 */ }
+    /** 조합이 아닌 키는 xterm 의 onData 로 온다 — 지연 계기 시험이 이 손잡이로 쏜다. */
+    onData(handler: (d: string) => void): void { lastOnData = handler; }
     resize(): void {}
     loadAddon(): void {}
     dispose(): void {}
@@ -228,6 +231,43 @@ describe('진단 — 렌더러와 조합 이벤트를 밖으로 알린다', () =
     compose(helperTextarea!, '글');
     expect(last).toBe(2);
     sink.dispose();
+  });
+  it('입력 → 첫 출력 지연을 진단으로 낸다 — 조합으로 보낸 글자도 같은 계기를 지난다', async () => {
+    let echo: { p50: number; count: number } | null = null;
+    const now = vi.spyOn(performance, 'now');
+    const sink = getTerminalSinkFactory()(host(), {
+      onInput: () => {},
+      onDiagnostics: (d) => { echo = d.echo; },
+    });
+    await settle();
+    sink.setReadOnly!(false);
+
+    now.mockReturnValue(1000);
+    compose(helperTextarea!, '한');
+    now.mockReturnValue(1750);
+    sink.write(new Uint8Array([0xed, 0x95, 0x9c]));
+    expect(echo).toMatchObject({ p50: 750, count: 1 });
+    sink.dispose();
+    now.mockRestore();
+  });
+
+  it('못 치는 창의 키는 세지 않는다 — 그 키는 어디에도 안 닿아서 다음 출력은 그 반응이 아니다', async () => {
+    let echo: unknown = 'unset';
+    const now = vi.spyOn(performance, 'now');
+    const sink = getTerminalSinkFactory()(host(), {
+      onInput: () => {},
+      onDiagnostics: (d) => { echo = d.echo; },
+    });
+    await settle();
+    sink.setReadOnly!(true);
+
+    now.mockReturnValue(1000);
+    lastOnData!('a');
+    now.mockReturnValue(1200);
+    sink.write(new Uint8Array([0x41]));
+    expect(echo === 'unset' || echo === null).toBe(true);
+    sink.dispose();
+    now.mockRestore();
   });
 });
 
