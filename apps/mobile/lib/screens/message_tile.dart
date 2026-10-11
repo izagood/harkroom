@@ -15,6 +15,7 @@ import '../markdown/markdown_view.dart';
 import 'attachments.dart';
 import 'message_link.dart';
 import 'saved_screen.dart';
+import '../i18n/system_text.dart';
 
 /// 말풍선 한 줄. **채널 화면과 스레드 화면이 같은 것을 쓴다.**
 ///
@@ -68,7 +69,7 @@ class MessageTile extends StatelessWidget {
     final t = context.t;
     final k = context.tokens;
     final author = app.accounts[message.authorId];
-    final body = displayBody(message, app.accounts, unknownMention: t.mentionUnknown, unknownAccount: t.systemAccountUnknown).trim();
+    final body = displayBody(message, app.accounts, unknownMention: t.mentionUnknown, unknownAccount: t.systemAccountUnknown, t: t).trim();
     final denied = _deniedHandles(message.meta);
     // 본문 없는 글은 첨부가 곧 말이라 강조 안에 넣는다. 카드가 있으면 넣지 않는다 — 넣으면
     // 카드 → 첨부 순서가 뒤집힌다(security n2).
@@ -102,7 +103,11 @@ class MessageTile extends StatelessWidget {
                       if (app.isSaved(message.id)) _SavedMark(key: Key('saved-mark-${message.id}')),
                       if (!continued) _Header(message: message, isAgent: author?.isAgent == true),
                       // 작은 마크다운(코드·목록·인용·굵게·링크). 모르는 것은 글자 그대로 둔다.
-                      if (body.isNotEmpty)
+                      // 번역된 시스템 줄은 **글로만** 그린다 — 인자에 바깥 글자(경로·저장소 이름)가 들어가므로
+                      // 마크다운·링크를 지나지 않는다(security C4, i18n P5 ③).
+                      if (body.isNotEmpty && systemText(message, app.accounts, t) != null)
+                        Text(body, key: Key('system-i18n-${message.id}'))
+                      else if (body.isNotEmpty)
                         MarkdownBody(body, openMessage: (id) => openMessageLink(context, id)),
                       if (denied.isNotEmpty) _MentionDenied(handles: denied),
                       if (attachmentsInGlow) AttachmentStrip(attachments: message.attachments, message: message),

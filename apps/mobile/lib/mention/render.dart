@@ -1,4 +1,6 @@
 import '../api/models.dart';
+import '../i18n/strings.dart';
+import '../i18n/system_text.dart';
 
 /// 저장된 멘션 토큰을 **화면에 그릴** `@handle` 로 바꾼다.
 ///
@@ -58,7 +60,13 @@ String displayBody(
   Map<String, AccountView> accounts, {
   required String unknownMention,
   required String unknownAccount,
+  Strings? t,
 }) {
+  // 서버가 번역 표지(meta.i18n)를 실은 시스템 줄은 앱 언어의 문장으로(i18n P5 ③). 못 하면 본문.
+  if (t != null) {
+    final translated = systemText(message, accounts, t);
+    if (translated != null) return translated;
+  }
   final accountId = message.meta['accountId'];
   final filled = message.kind == MessageKind.system && accountId is String
       ? message.body.split(systemAccountPlaceholder).join(accounts[accountId]?.handle ?? unknownAccount)
