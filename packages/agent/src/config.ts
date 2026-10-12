@@ -56,6 +56,11 @@ export interface RunnerConfig {
    */
   mcpConfigPath: string;
   pollTimeoutMs: number;
+  /**
+   * 폴마다 쥔 항목을 서버에 알려 다시 받지 않는다(inbox 임대, 2026-10-12 설계 B). 기본 켜짐 — `AGENT_INBOX_LEASE=0`
+   * 이면 옛 경로(쥔 항목도 폴마다 다시 받고 5초 쉰다)로 돈다. 옛 서버는 이 인자를 무시하므로 켜 둬도 전과 같다.
+   */
+  inboxLease: boolean;
   /** 한 턴(PTY 실행)의 최대 대기 시간. 코딩 에이전트는 도구 호출을 여러 번 거치므로 넉넉히 잡는다. */
   turnTimeoutMs: number;
   /**
@@ -108,6 +113,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
     mcpConfigPath: required(env, 'HARKROOM_MCP_CONFIG'),
     // 서버의 inbox.poll 상한은 25초다.
     pollTimeoutMs: Number(env.AGENT_POLL_TIMEOUT_MS ?? 25_000),
+    inboxLease: env.AGENT_INBOX_LEASE !== '0',
     // 코딩 에이전트 한 턴은 도구 호출을 여러 번 거칠 수 있다 — 30분을 기본값으로 둔다.
     turnTimeoutMs: Number(env.AGENT_TURN_TIMEOUT_MS ?? 30 * 60_000),
     // 10분 — 멀쩡히 도는 세션들의 기록 간격 최대치(390초)보다 넉넉히 위이고, 실측된

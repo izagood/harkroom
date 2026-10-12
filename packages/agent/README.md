@@ -44,6 +44,7 @@ env 넷을 오퍼레이터가 심어 주듯 직접 줘야 하고, 그 값들은 
 | `HARKROOM_MCP_CONFIG` | (필수) | 오퍼레이터가 spawn 전에 써 둔 하네스 MCP 설정 파일. harkroom 브릿지·avcs·에이전트의 `mcpServers`(이 머신의 `<appDataDir>/operator/mcp-servers.json` → `~/.claude.json` 순으로 정의를 찾는다)가 합쳐져 있다. 러너는 만들지 않는다 |
 | `HARKROOM_AGENT_INSTANCE` | (없음) | 에이전트 인스턴스 ID. 같은 에이전트를 여러 개 돌릴 때 구분한다 ([a-z0-9-]{1,32}) |
 | `AGENT_POLL_TIMEOUT_MS` | `25000` | 서버의 `inbox.poll` 상한 |
+| `AGENT_INBOX_LEASE` | 켜짐 | `0` 이면 inbox 임대를 끈다 — 처리 중인 항목도 폴마다 다시 받는 옛 경로 |
 | `AGENT_TURN_TIMEOUT_MS` | `1800000`(30분) | 한 턴(PTY 실행)의 최대 대기 시간. 넘기면 SIGTERM → 5초 → SIGKILL |
 | `AGENT_STATE_DIR` | `~/.harkroom-agent` | 세션 파일·MCP 설정·avcs 워크스페이스가 사는 곳 (아래 "상태 디렉터리") |
 

@@ -117,7 +117,10 @@ describe('migrations', () => {
       await holder.query('select pg_advisory_unlock($1)', [0x6d726d72]);
       await run;
     } finally {
-      holder.release();
+      // 시험이 중간에 실패해도 잠금을 쥔 연결이 풀로 돌아가지 않게 한다(#1331 security 낮은 지적) — 돌아가면 뒤
+      // 시험의 마이그레이션이 그 잠금을 기다리다 시한에 걸린다.
+      await holder.query('select pg_advisory_unlock_all()').catch(() => {});
+      holder.release(true);
     }
   });
 
