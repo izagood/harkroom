@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { BADGE_REFRESH_MS, Controller } from '../src/state/controller';
+import { BADGE_REFRESH_MS, Controller, OWN_ACTION_WINDOW_MS } from '../src/state/controller';
 import { buildBoard, mineCount } from '../src/lib/inboxBoard';
 import { fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
@@ -213,6 +213,34 @@ describe('보드가 닫혀 있으면 배지 조회를 미룬다', () => {
     await changed();
     await vi.advanceTimersByTimeAsync(100);
     expect(api.inboxBoard).toHaveBeenCalledTimes(2);
+  });
+
+  // #1333 designer d1 — 내가 처리했는데 배지가 30초 남으면 사람은 처리가 안 된 줄 안다.
+  it('보드를 닫은 채 내가 답하면 기다리지 않고 배지가 준다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const t0 = new Date(Date.now() - HOUR).toISOString();
+    let data: Board = { entries: [entry(1, 'r1', t0)], threads: [head('r1')], threadStates: [] };
+    const { c, api, changed } = await boot(() => data, { boardOpen: false });
+    await vi.waitFor(() => expect(useAppStore.getState().inboxMine).toBe(1));
+
+    // 남의 신호가 먼저 와서 미룬 조회가 걸려 있다.
+    await changed();
+    expect(api.inboxBoard).toHaveBeenCalledTimes(1);
+
+    // 내가 답한다 → 서버가 내 차례를 치우고 inbox.updated 를 보낸다.
+    await c.reply('봤어요', [], 'c1', 'r1');
+    data = { ...data, threads: [msg('r1', 'c1', 1, '머리', 'u2', { replyCount: 2, openAskHumanCount: 0, openAskAccountIds: [], openAskLinks: [], unresolvedFailureCount: 0, failureCount: 0, lastKind: 'user', lastAuthorId: ME })] };
+    await changed();
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.waitFor(() => expect(useAppStore.getState().inboxMine).toBe(0));
+    expect(vi.mocked(api.inboxBoard).mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    // 창이 지나면 남의 신호는 다시 미룬다.
+    const before = vi.mocked(api.inboxBoard).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(OWN_ACTION_WINDOW_MS + 1_000);
+    await changed();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(api.inboxBoard).toHaveBeenCalledTimes(before);
   });
 
   it('멈추면 미룬 조회가 나가지 않는다', async () => {

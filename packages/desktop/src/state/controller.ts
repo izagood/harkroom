@@ -80,6 +80,11 @@ export const GATE_NOTIFY_PER_AGENT = 3;
 
 /** 보드가 닫혀 있을 때 배지용 보드 조회를 미루는 시간(`refreshInboxMine`). */
 export const BADGE_REFRESH_MS = 30_000;
+/**
+ * 이 기기에서 내가 한 동작(글·답글·읽음·리액션) 뒤 이 시간 안에 오는 `inbox.updated` 는 미루지 않는다 — 그 신호는
+ * 내 동작의 결과일 가능성이 크고, 처리했는데 배지가 안 줄면 사람은 처리가 안 된 줄 안다(#1333 designer d1).
+ */
+export const OWN_ACTION_WINDOW_MS = 10_000;
 
 export class Controller {
 
@@ -108,6 +113,8 @@ export class Controller {
   /** 보드가 열려 있나(`setInboxBoardOpen`) · 닫혀 있을 때 배지용으로 미뤄 둔 보드 조회(`refreshInboxMine`). */
   private boardOpenCount = 0;
   private badgeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 이 시각까지 온 `inbox.updated` 는 내 동작의 결과로 보고 바로 받는다(`noteOwnInboxAction`). */
+  private ownActionUntil = 0;
   /** 히스토리를 이미 통째로 받은 채널. 이 집합에 없으면 openChannel이 증분이 아니라 전체를 받는다. */
   private loadedChannels = new Set<string>();
   /**
@@ -1218,7 +1225,11 @@ export class Controller {
    * (`loadInboxBoard` 를 바로 부른다).
    */
   private async refreshInboxMine(): Promise<void> {
-    if (this.boardOpenCount > 0) { await this.loadInboxBoard(); return; }
+    if (this.boardOpenCount > 0 || Date.now() < this.ownActionUntil) {
+      if (this.badgeRefreshTimer) { clearTimeout(this.badgeRefreshTimer); this.badgeRefreshTimer = null; }
+      await this.loadInboxBoard();
+      return;
+    }
     if (this.badgeRefreshTimer || this.stopped) return;
     this.badgeRefreshTimer = setTimeout(() => {
       this.badgeRefreshTimer = null;
@@ -1230,6 +1241,20 @@ export class Controller {
    * 보드 화면이 열리고 닫힐 때 부른다(`Inbox` 의 `open`). 열리면 미뤄 둔 조회를 걷는다 — 여는 화면이 곧바로
    * `loadInboxBoard` 를 부르므로 배지도 그때 맞춰진다.
    */
+  /**
+   * 이 기기에서 내가 inbox 를 바꿀 수 있는 동작을 했다(#1333 designer d1). 미뤄 둔 조회가 있으면 걷고 바로 받으며,
+   * `OWN_ACTION_WINDOW_MS` 안에 오는 `inbox.updated` 도 미루지 않는다 — 서버 신호가 동작 응답보다 먼저 올 수도,
+   * 나중에 올 수도 있어서 둘 다 받는다. 미룸은 남이 보낸 신호에만 남는다.
+   */
+  private noteOwnInboxAction(): void {
+    this.ownActionUntil = Date.now() + OWN_ACTION_WINDOW_MS;
+    if (this.badgeRefreshTimer && !this.stopped) {
+      clearTimeout(this.badgeRefreshTimer);
+      this.badgeRefreshTimer = null;
+      this.swallow(this.loadInboxBoard());
+    }
+  }
+
   setInboxBoardOpen(open: boolean): void {
     this.boardOpenCount = Math.max(0, this.boardOpenCount + (open ? 1 : -1));
     if (open && this.badgeRefreshTimer) { clearTimeout(this.badgeRefreshTimer); this.badgeRefreshTimer = null; }
@@ -1408,6 +1433,7 @@ export class Controller {
       // 배지를 맞춘 뒤, 채널 읽음 위치를 올린다.
       if (ids.length) {
         await this.api.markRead(ids);
+        this.noteOwnInboxAction();
         await this.refreshUnread();
       }
       if (newest <= frozen) return;
@@ -1780,6 +1806,7 @@ export class Controller {
     this.swallow((async () => {
       if (ids.length) {
         await this.api.markRead(ids);
+        this.noteOwnInboxAction();
         await this.refreshUnread();
       }
       if (newest <= frozen) return;
@@ -1814,6 +1841,7 @@ export class Controller {
       // 스토어에 넣기 **전에** id 를 적어야 같은 커밋에서 패널이 "이 기기 것"으로 읽는다.
       this.setOwnSendMarks(markOwnSend(this.ownSendMarks(), message.id));
       this.store.getState().upsertMessages(target, [message]);
+      this.noteOwnInboxAction();
       this.recordNotifiedGap(message.id, body, notified);
     } finally {
       this.setOwnSendMarks(endSend(this.ownSendMarks(), target));
@@ -1891,6 +1919,7 @@ export class Controller {
         : this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel)));
       this.setOwnSendMarks(markOwnSend(this.ownSendMarks(), message.id));
       this.store.getState().upsertMessages(target, [message]);
+      this.noteOwnInboxAction();
     } finally {
       this.setOwnSendMarks(endSend(this.ownSendMarks(), root));
     }
@@ -2083,6 +2112,7 @@ export class Controller {
     if (on) await this.api.addReaction(channelId, messageId, emoji);
     else await this.api.removeReaction(channelId, messageId, emoji);
     this.store.getState().applyReaction(channelId, messageId, emoji, me.id, on);
+    this.noteOwnInboxAction();
   }
 
   async editMessage(messageId: string, body: string): Promise<void> {
