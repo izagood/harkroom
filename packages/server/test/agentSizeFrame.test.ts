@@ -98,4 +98,21 @@ describe('PTY 크기를 붙은 모든 창에 알린다', () => {
     }));
     expect(open().sizes()).toEqual([]);
   });
+
+  it('러너가 끊겨 세션 소유가 사라지고 볼 창도 없으면 크기를 잊는다(security n1)', () => {
+    const { hub, open } = setup();
+    const owner = open();
+    owner.handle.handleMessage(resize(150, 40));
+    owner.handle.close();
+    // 같은 에이전트의 새 러너 연결이 앞 연결을 밀어낸다 — `ended` 없이 세션이 사라지는 길이다.
+    hub.addRunner('agent-1', { send: () => {}, close: () => {} });
+    hub.onRunnerMessage('agent-1', JSON.stringify({
+      type: 'announce', caps: ['input', 'interactive'],
+      sessions: [{
+        sessionId: 's1', agentAccountId: 'agent-1', channelId: 'c1', threadRootId: null,
+        harness: 'claude-code', startedAt: '2026-10-12T00:02:00.000Z', acceptsInput: true,
+      }],
+    }));
+    expect(open().sizes()).toEqual([]);
+  });
 });

@@ -298,6 +298,10 @@ export function createRelayHub(
    * (폭을 못 정하는 창이 다른 폭으로 접어 줄이 꺾이지 않게). 아직 아무도 안 보냈으면 없다.
    */
   const ptySizeOf = new Map<string, { cols: number; rows: number }>();
+  /** 세션 소유를 잃은 자리에서 부른다 — 그 크기를 볼 창이 없으면 잊는다(security n1, 항목이 쌓이지 않게). */
+  const forgetSizeIfUnseen = (sessionId: string): void => {
+    if (!viewers.has(sessionId)) ptySizeOf.delete(sessionId);
+  };
   /** 로컬 writer 키 번호(R1). 감사 짝맞춤용이고 비밀이 아니다 — 허가 자체는 `newLocalKey` 의 난수다. */
   let nextGen = 0;
   /**
@@ -511,7 +515,7 @@ export function createRelayHub(
     broadcastStatus(sessionId, 'ended');
     ownerOf.delete(sessionId);
     // 끝난 세션의 크기는 남은 창이 마지막 화면을 볼 때만 쓴다 — 아무도 안 보면 버린다.
-    if (!viewers.has(sessionId)) ptySizeOf.delete(sessionId);
+    forgetSizeIfUnseen(sessionId);
     // 끝난 세션의 미결은 흘릴 곳이 없다 — 남겨 두면 집합이 자라기만 한다.
     pendingViewerCounts.delete(sessionId);
   };
@@ -523,6 +527,7 @@ export function createRelayHub(
         for (const sessionId of previous.sessions.keys()) {
           broadcastStatus(sessionId, 'runner-offline');
           ownerOf.delete(sessionId);
+          forgetSizeIfUnseen(sessionId);
         }
         previous.socket.close(4409, 'replaced by a newer runner connection');
       }
@@ -542,6 +547,7 @@ export function createRelayHub(
           // "기다리면 돌아온다"와 "이 턴은 끝났다"를 화면에 다르게 말할 수 있다.
           broadcastStatus(sessionId, 'runner-offline');
           ownerOf.delete(sessionId);
+          forgetSizeIfUnseen(sessionId);
         }
         // 미결 open 은 타임아웃까지 끌지 않는다 — 답할 러너가 이미 없다.
         failPendingOpens(agentAccountId, { ok: false, reason: 'no_runner' });
@@ -573,7 +579,7 @@ export function createRelayHub(
           // 합집합으로 두면 러너가 재시작해 사라진 세션이 서버에 영구히 남는다.
           const runner = runners.get(agentAccountId);
           if (!runner) return;
-          for (const sessionId of runner.sessions.keys()) ownerOf.delete(sessionId);
+          for (const sessionId of runner.sessions.keys()) { ownerOf.delete(sessionId); forgetSizeIfUnseen(sessionId); }
           runner.sessions.clear();
           for (const session of frame.sessions) registerSession(agentAccountId, session);
           // 새 목록에 없는 세션의 관문은 풀린 것이다 — 러너가 재시작해 그 세션이 사라졌다
