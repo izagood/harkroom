@@ -300,9 +300,9 @@ describe('숨은 입력칸을 화면 안으로 끌어온다', () => {
   });
 
   it('커서를 따라간다 — 후보창이 치는 자리에 뜬다', async () => {
-    // 셀 하나가 8x16 인 세상을 만든다(`fitDimensions` 와 같은 자).
+    // 셀 하나가 8x16 인 세상을 만든다(`fitDimensions` 와 같은 자). 글자 높이 14 × lineHeight 1.15 → 칸 16.
     const rectSpy = vi.spyOn(HTMLSpanElement.prototype, 'getBoundingClientRect')
-      .mockReturnValue({ width: 800, height: 16 } as DOMRect);
+      .mockReturnValue({ width: 800, height: 14 } as DOMRect);
     const sink = getTerminalSinkFactory()(host(), { onInput: () => {} });
     await settle();
 

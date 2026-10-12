@@ -151,6 +151,12 @@ export function followFontSize(cols: number, panelWidth: number, cellWidthAtBase
  * 앱에 번들한다(`@fontsource/nanum-gothic-coding`, SIL OFL 1.1) — 사람 맥에 깔려 있기를 바라지 않는다.
  */
 const TERMINAL_FONT = 'Nanum Gothic Coding';
+/**
+ * 줄 높이 배율(designer s1, 2026-10-12 캡처). 나눔고딕코딩 한글은 글자 높이가 칸 높이(배율 1)를 넘어 굵은 한글의
+ * 아래가 다음 줄에 닿고 회색 배경 밖으로 삐져나왔다. xterm 의 `lineHeight` 와 `measureCell` 이 **같은 값**을
+ * 써야 fit 의 줄 수가 맞는다.
+ */
+const LINE_HEIGHT = 1.15;
 const FONT_FAMILY = `"${TERMINAL_FONT}", courier-new, courier, monospace`;
 
 /**
@@ -172,7 +178,10 @@ function measureCell(el: HTMLElement): { width: number; height: number } | null 
   const rect = probe.getBoundingClientRect();
   el.removeChild(probe);
   const width = rect.width / 100;
-  const height = rect.height;
+  // xterm 은 칸 높이를 `글자 높이 × lineHeight` 로 잡는다 — 같은 비율로 잰다(아니면 fit 이 줄을 더 센다).
+  // xterm 처럼 기기 px 로 내린다(`floor(글자 높이 × dpr × lineHeight) / dpr`).
+  const dpr = typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+  const height = Math.floor(rect.height * dpr * LINE_HEIGHT) / dpr;
   if (!(width > 0) || !(height > 0)) return null;
   return { width, height };
 }
@@ -514,6 +523,7 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       convertEol: false,
       fontSize: FONT_SIZE,
       fontFamily: FONT_FAMILY,
+      lineHeight: LINE_HEIGHT,
       // 한글 글꼴은 KS X 1001 기호(`— … · →` 등)를 전각으로 그리는데 xterm 은 1칸으로 잡는다 — 다음 칸을
       // 덮지 않게 칸 안으로 줄인다(designer, 캡처에서 `—PR`·`…→` 겹침 확인).
       rescaleOverlappingGlyphs: true,

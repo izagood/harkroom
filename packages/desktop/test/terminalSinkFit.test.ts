@@ -128,7 +128,8 @@ beforeEach(() => {
   rectSpy = vi.spyOn(HTMLSpanElement.prototype, 'getBoundingClientRect')
     .mockImplementation(function (this: HTMLSpanElement) {
       const chars = this.textContent?.length ?? 0;
-      return { width: CELL_W * chars, height: CELL_H } as DOMRect;
+      // 글자 높이 14 × lineHeight 1.15 → 내림 16 = CELL_H(sink 는 xterm 처럼 줄 높이 배율로 칸을 잡는다).
+      return { width: CELL_W * chars, height: 14 } as DOMRect;
     });
 });
 
