@@ -101,6 +101,26 @@ describe('migrations', () => {
     ]);
   });
 
+  // 잠금 대기 로그(#1331 security n1): 다른 인스턴스가 잠금을 쥐고 있으면 기다리는 동안 간격마다 한 줄 남긴다.
+  it('logs while waiting for a migration lock held by another instance', async () => {
+    const { runMigrations } = await import('../src/db/migrate.js');
+    const holder = await pool.connect();
+    const lines: string[] = [];
+    try {
+      await holder.query('select pg_advisory_lock($1)', [0x6d726d72]);
+      const run = runMigrations(pool, { log: (m) => lines.push(m), lockWaitLogMs: 100 });
+      // 두드리는 간격(250ms)이 로그 간격보다 길어 시각으로 재지 않고 줄이 둘 쌓일 때까지 기다린다.
+      const until = Date.now() + 5_000;
+      while (lines.length < 2 && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+      expect(lines.length).toBeGreaterThanOrEqual(2);
+      expect(lines[0]).toMatch(/waiting for the migration lock/);
+      await holder.query('select pg_advisory_unlock($1)', [0x6d726d72]);
+      await run;
+    } finally {
+      holder.release();
+    }
+  });
+
   // 잠금 상한(2026-10-12): 트랜잭션 파일은 남이 쥔 테이블 잠금을 5초 넘게 기다리지 않는다 — 기다리는 동안
   // 그 뒤에 줄 선 쓰기가 전부 서기 때문이다. 상한을 넘기면 마이그레이션이 실패해야 한다.
   it('gives up on a transactional file when a table lock is held past lock_timeout', async () => {

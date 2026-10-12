@@ -35,6 +35,12 @@ export const MIGRATION_LOCK_TIMEOUT = '5s';
 /** 다른 인스턴스가 마이그레이션 잠금을 쥐고 있을 때 다시 두드리는 간격. */
 const LOCK_RETRY_MS = 250;
 
+/**
+ * 잠금을 기다리는 동안 이 간격마다 한 줄 남긴다(#1331 security n1). 다른 파드가 잠금을 쥔 채 멈추면 이 파드는
+ * ready 가 되지 않는데, 말없이 기다리면 운영에서 원인을 찾을 단서가 없다.
+ */
+export const LOCK_WAIT_LOG_MS = 30_000;
+
 /** 트랜잭션 밖 파일을 문장으로 가른다 — 주석 줄은 버리고, 줄 끝 `;` 에서 끊는다. */
 export function splitStatements(sql: string): string[] {
   const out: string[] = [];
@@ -53,7 +59,11 @@ export function splitStatements(sql: string): string[] {
   return out;
 }
 
-export async function runMigrations(pool: Pool): Promise<void> {
+export async function runMigrations(
+  pool: Pool, opts: { log?: (msg: string) => void; lockWaitLogMs?: number } = {},
+): Promise<void> {
+  const log = opts.log ?? ((m: string) => console.error(m));
+  const lockWaitLogMs = opts.lockWaitLogMs ?? LOCK_WAIT_LOG_MS;
   // 롤링 업데이트에서 구·신 인스턴스가 같은 DB에 동시 부팅해도 한쪽만 실제로 적용하고,
   // 다른 쪽은 잠금을 기다렸다가 "이미 적용됨"을 보고 그냥 통과한다. 잠금은 세션 수준이라
   // 마이그레이션마다 커밋해도 유지된다.
@@ -68,8 +78,14 @@ export async function runMigrations(pool: Pool): Promise<void> {
      * 기다린다 — 서로를 기다리는 꼴이 된다(롤링 업데이트에서 두 파드가 같이 기동할 때). 짧은 `try` 를 되풀이하면
      * 두드리는 사이에는 스냅숏이 없다.
      */
+    const waitStarted = Date.now();
+    let nextLog = waitStarted + lockWaitLogMs;
     while (!(await client.query<{ ok: boolean }>(
       'select pg_try_advisory_lock($1) as ok', [MIGRATION_LOCK_KEY])).rows[0]!.ok) {
+      if (Date.now() >= nextLog) {
+        log(`migrations: waiting for the migration lock held by another instance (${Math.round((Date.now() - waitStarted) / 1000)}s)`);
+        nextLog += lockWaitLogMs;
+      }
       await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
     }
     await client.query(`create table if not exists schema_migrations (name text primary key)`);
@@ -116,7 +132,7 @@ export async function runMigrations(pool: Pool): Promise<void> {
 export async function runMigrationsWhenReachable(
   pool: Pool, opts: { deadlineMs?: number; log?: (msg: string) => void } = {},
 ): Promise<void> {
-  await retryWhileDbUnreachable(() => runMigrations(pool), {
+  await retryWhileDbUnreachable(() => runMigrations(pool, { log: opts.log }), {
     label: 'migrations', deadlineMs: opts.deadlineMs ?? 5 * 60_000, log: opts.log,
   });
 }

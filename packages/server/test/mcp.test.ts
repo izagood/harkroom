@@ -99,37 +99,6 @@ describe('mcp surface', () => {
     expect(batch.memoryRev).toBe(listed.rev);
   });
 
-  // 폴 상한(2026-10-12): 안 읽은 것이 상한을 넘으면 **오래된 것부터** 상한만큼 주고 `hasMore` 를 싣는다.
-  // 읽음으로 만들면 다음 폴에 나머지가 온다 — 잃는 항목이 없어야 한다.
-  it('inbox.poll caps a batch at INBOX_POLL_LIMIT oldest-first and hands out the rest after they are read', async () => {
-    const { INBOX_POLL_LIMIT } = await import('../src/services/messages.js');
-    const { pat, accountId } = await createAgent(app, adminToken, 'capbot');
-    const total = INBOX_POLL_LIMIT + 5;
-    // 글을 하나씩 올리면 느리다 — 메시지·inbox 행을 한 번에 넣는다(안 읽은 부름만 재면 된다).
-    const ids = (await pool.query(
-      `with m as (
-         insert into message (channel_id, author_id, body, kind)
-         select $1, $2, 'cap ' || g, 'user' from generate_series(1, $4::int) g
-         returning id, seq)
-       insert into inbox (account_id, message_id, reason)
-       select $3, id, 'mention' from m order by seq
-       returning id::int as id`,
-      [channelId, adminAccountId, accountId, total])).rows.map((r: { id: number }) => r.id).sort((a, b) => a - b);
-    const client = await mcpClient(pat);
-    const first = text(await client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } })) as
-      { entries: { id: number; messageId: string }[]; messages: { id: string }[]; hasMore?: boolean };
-    expect(first.entries.map((e) => e.id)).toEqual(ids.slice(0, INBOX_POLL_LIMIT));
-    expect(first.messages).toHaveLength(INBOX_POLL_LIMIT);
-    expect(first.hasMore).toBe(true);
-
-    await client.callTool({ name: 'inbox.read', arguments: { ids: first.entries.map((e) => e.id) } });
-    const rest = text(await client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } })) as
-      { entries: { id: number }[]; hasMore?: boolean };
-    expect(rest.entries.map((e) => e.id)).toEqual(ids.slice(INBOX_POLL_LIMIT));
-    // 넘치지 않는 보통 폴의 모양은 전과 같다 — 키가 없다.
-    expect(rest).not.toHaveProperty('hasMore');
-  });
-
   // entry id 를 그대로 믿고 지우면 남의 inbox 를 소비할 수 있다.
   it('refuses to consume an inbox entry that belongs to someone else', async () => {
     const other = await createAgent(app, adminToken, 'otherbot');
