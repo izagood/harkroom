@@ -48,7 +48,28 @@ export interface TerminalSink {
    * 리셋된다. 옵셔널: 가짜 sink(테스트)는 구현하지 않아도 된다.
    */
   setReadOnly?(readOnly: boolean): void;
+  /**
+   * **남이 정한 PTY 크기로 그린다**(2026-10-12, 터미널 T2). 폭을 못 정하는 창이 자기 패널로
+   * 접으면 PTY(폭의 주인 폭)와 줄 폭이 달라 줄이 꺾이고 상태 줄이 섞인다. `null` 이면 지금처럼
+   * 자기 패널로 맞춘다(폭의 주인이 됐거나 서버가 크기를 안 알려 줬다).
+   *
+   * 패널이 좁으면 글자를 정수 px 로 줄이고(하한 `FOLLOW_MIN_FONT_SIZE`), 그래도 넘치면 가로 스크롤이다.
+   * 줄 수가 패널보다 많으면 아래(상태 줄·입력 상자 자리)에 붙인다. 옵셔널: 가짜 sink 는 안 해도 된다.
+   */
+  follow?(size: { cols: number; rows: number } | null): void;
   dispose(): void;
+}
+
+/** `follow` 중의 화면 사실 — 배지가 읽는다. */
+export interface TerminalFollowView {
+  cols: number;
+  rows: number;
+  /** 지금 그리는 글자 크기(px). 줄였으면 `FONT_SIZE` 보다 작다. */
+  fontSize: number;
+  /** 하한까지 줄여도 넘쳐 가로 스크롤이 생겼는가. */
+  scroll: boolean;
+  /** 받은 크기가 이 패널의 자기 크기와 다른가 — 같으면 배지가 덧붙일 말이 없다. */
+  differs: boolean;
 }
 
 export interface TerminalSinkOptions {
@@ -67,6 +88,8 @@ export interface TerminalSinkOptions {
    * 서버 쪽 절반은 허브의 writer 판정이다(#346 — 진짜 게이트는 그쪽이다).
    */
   onResize?: (cols: number, rows: number) => void;
+  /** `follow` 로 그리는 모양이 바뀌었다(`null` = 자기 크기로 돌아왔다). */
+  onFollow?: (view: TerminalFollowView | null) => void;
   /**
    * **지금 화면에서 무엇이 실제로 벌어지는지**를 밖으로 알린다(2026-09-12).
    *
@@ -107,6 +130,18 @@ export interface TerminalDiagnostics {
  * 작게 남는다. 정수로 올리는 이유: 글리프가 device px 격자에 맞아야 흐리지 않다.
  */
 const FONT_SIZE = 13;
+/**
+ * 남의 크기로 그릴 때(`follow`) 줄여도 되는 하한(designer, 2026-10-12). 이보다 작으면 못 읽으므로
+ * 여기서 멈추고 나머지는 가로 스크롤로 넘긴다. CSS transform 으로 줄이지 않는 이유: webgl 그림이 흐려진다.
+ */
+export const FOLLOW_MIN_FONT_SIZE = 10;
+
+/** 받은 열 수를 이 폭에 넣으려면 몇 px 글자여야 하나 — 정수, `[하한, FONT_SIZE]`. 셀 폭은 글자 크기에 비례한다. */
+export function followFontSize(cols: number, panelWidth: number, cellWidthAtBase: number): number {
+  if (!(cellWidthAtBase > 0) || !(panelWidth > 0)) return FONT_SIZE;
+  const fit = Math.floor((FONT_SIZE * panelWidth) / (cols * cellWidthAtBase));
+  return Math.max(FOLLOW_MIN_FONT_SIZE, Math.min(FONT_SIZE, fit));
+}
 const FONT_FAMILY = 'courier-new, courier, monospace';
 
 /**
@@ -332,7 +367,7 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
   let term: {
     write(data: Uint8Array): void;
     resize(cols: number, rows: number): void;
-    options: { disableStdin?: boolean };
+    options: { disableStdin?: boolean; fontSize?: number };
     dispose(): void;
   } | null = null;
   /**
@@ -374,8 +409,59 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
    * xterm 을 먼저 맞추고 그다음에 알리는 순서다: PTY 가 새 폭으로 그린 바이트가 도착할
    * 때 화면이 아직 옛 폭이면 그 프레임 하나가 접혀 보인다.
    */
+  /** 남이 정한 크기(`follow`). 있으면 자기 패널로 맞추지 않는다. */
+  let followSize: { cols: number; rows: number } | null = null;
+  let fontSize = FONT_SIZE;
+  /** 가로로 이어지는 쪽 끝을 흐리게 — 옆에 내용이 더 있다는 표시(designer). */
+  const updateEdges = (): void => {
+    const left = el.scrollLeft > 0;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    const mask = !left && !right ? ''
+      : `linear-gradient(to right, ${left ? 'transparent, #000 24px' : '#000'}, ${right ? '#000 calc(100% - 24px), transparent' : '#000'})`;
+    el.style.maskImage = mask;
+    el.style.setProperty('-webkit-mask-image', mask);
+  };
+  const clearFollowStyles = (): void => {
+    el.style.overflowX = '';
+    el.style.overflowY = '';
+    el.style.maskImage = '';
+    el.style.removeProperty('-webkit-mask-image');
+    el.removeEventListener('scroll', updateEdges);
+  };
+  const applyFollow = (): void => {
+    if (!term || !followSize) return;
+    const cell = measureCell(el);
+    if (!cell || !(el.clientWidth > 0)) return;
+    const own = fitDimensions(el);
+    const next = followFontSize(followSize.cols, el.clientWidth, cell.width);
+    if (next !== fontSize) { fontSize = next; term.options.fontSize = next; }
+    term.resize(followSize.cols, followSize.rows);
+    // 넘침은 **그려진 화면 폭**으로 정한다(designer n1). xterm 은 칸을 기기 픽셀로 반올림하므로 10~12px 에서는
+    // `열 × 셀폭 × 비율` 추정이 칸당 몇 분의 1 px 씩 어긋나고, 200열이면 수십 px 가 된다. 화면 요소를 못 찾으면
+    // (가짜 xterm) 추정으로 둔다.
+    const screen = el.querySelector<HTMLElement>('.xterm-screen');
+    const drawnWidth = screen && screen.offsetWidth > 0
+      ? screen.offsetWidth
+      : followSize.cols * cell.width * (next / FONT_SIZE);
+    const scroll = drawnWidth > el.clientWidth + 0.5;
+    el.style.overflowX = scroll ? 'auto' : 'hidden';
+    // 줄이 넘치면 아래에 붙인다 — 상태 줄·입력 상자가 맨 아래다. 바깥 스크롤은 막고(스크롤백은 xterm 몫)
+    // 위치만 바닥으로 옮긴다.
+    el.style.overflowY = 'hidden';
+    el.scrollTop = el.scrollHeight;
+    el.removeEventListener('scroll', updateEdges);
+    if (scroll) el.addEventListener('scroll', updateEdges, { passive: true });
+    updateEdges();
+    opts?.onFollow?.({
+      cols: followSize.cols, rows: followSize.rows, fontSize: next, scroll,
+      differs: !own || own.cols !== followSize.cols || own.rows !== followSize.rows,
+    });
+  };
+
   const applyFit = (): void => {
     if (!term) return;
+    // 남의 크기로 그리는 중이면 패널이 바뀌어도 크기는 그대로 — 글자 크기·스크롤만 다시 정한다.
+    if (followSize) { applyFollow(); return; }
     const size = fitDimensions(el);
     if (!size) return;
     if (sent && sent.cols === size.cols && sent.rows === size.rows) return;
@@ -471,6 +557,19 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       // (`onInput` 이 없으면 처음부터 꺼진다) — 뜬 뒤의 차례 변동만 여기서 반영한다.
       if (term) term.options.disableStdin = next;
     },
+    follow(size) {
+      const same = size && followSize && size.cols === followSize.cols && size.rows === followSize.rows;
+      if (same) return;
+      followSize = size ? { cols: size.cols, rows: size.rows } : null;
+      if (followSize) { applyFollow(); return; }
+      // 자기 크기로 돌아온다 — 글자·스타일을 되돌리고, 중복 억제를 비워 지금 패널 크기를 다시 잰다.
+      clearFollowStyles();
+      if (term && fontSize !== FONT_SIZE) term.options.fontSize = FONT_SIZE;
+      fontSize = FONT_SIZE;
+      opts?.onFollow?.(null);
+      sent = null;
+      applyFit();
+    },
     refit() {
       // "마지막으로 보낸 크기"를 지워 applyFit 의 중복 억제를 한 번 우회한다 — writer
       // 승격 직후에는 크기가 안 바뀌었어도 알려야 한다(승격 전의 보고는 버려졌다, #346).
@@ -484,6 +583,7 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       // 크기를 계속 보낸다.
       observer?.disconnect();
       observer = null;
+      el.removeEventListener('scroll', updateEdges);
       // **애드온을 터미널보다 먼저 버린다.** 애드온의 정리 훅은 xterm 의 private 내부를
       // 만져 렌더러를 DOM 으로 되돌리는데(그것이 컨텍스트 상실 때의 정상 경로다), 터미널이
       // 먼저 죽은 뒤에 그 훅이 돌면 이미 해체된 것 위에서 돈다.

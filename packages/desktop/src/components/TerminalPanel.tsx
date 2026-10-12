@@ -3,7 +3,7 @@ import type { AgentSessionState, AgentSessionView, WriterDeniedReason } from '@h
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { connectAgentAttach, type AttachHandle } from '../lib/agentTerminal';
-import { getTerminalSinkFactory, type TerminalSink, type TerminalDiagnostics } from '../lib/terminalSink';
+import { getTerminalSinkFactory, type TerminalSink, type TerminalDiagnostics, type TerminalFollowView } from '../lib/terminalSink';
 import { PaneResizer } from './PaneResizer';
 import { ConfirmDialog } from './ConfirmDialog';
 import { paneStorage, paneMaxWidth, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH } from '../lib/prefs';
@@ -101,6 +101,8 @@ export function TerminalPanel() {
    * "다른 창이 입력 중"과 같은 문장으로 뭉치면 없는 사람을 만들어 낸다.
    */
   const [writerReason, setWriterReason] = useState<WriterDeniedReason | null>(null);
+  /** 남(폭의 주인)의 크기로 그리는 중이면 그 모양(터미널 T2). 배지가 크기를 덧붙인다. */
+  const [followView, setFollowView] = useState<TerminalFollowView | null>(null);
   /**
    * **화면에서 실제로 벌어지는 일**(2026-09-12). 두 사실이 지금까지 아무 데도 안 보였다:
    * 렌더러가 WebGL 로 켜졌는지(못 켜면 조용히 DOM 으로 남는다)와, IME 조합 이벤트가 오기는
@@ -119,6 +121,11 @@ export function TerminalPanel() {
    * spawn 기본값(120x40)에 영원히 갇혀 화면이 접힌 채로 남는다(#335 회귀).
    */
   const resizeRef = useRef(false);
+  /**
+   * 서버가 마지막으로 알려 준 PTY 크기(`size` 프레임, 터미널 T2). 폭의 주인이 아닌 창은 이 크기로
+   * 그린다 — 자기 패널로 접으면 PTY 와 줄 폭이 달라 줄이 꺾인다. 구 서버면 끝까지 `null` 이다.
+   */
+  const ptySizeRef = useRef<{ cols: number; rows: number } | null>(null);
   /**
    * 인터랙티브 열기(#337)의 손잡이. effect 안의 attach 경로를 **조회 경로와 실패 뒤의
    * 다시 열기가 함께** 재사용해야 해서(인터랙티브 open 도 결국 티켓 하나로 수렴한다 —
@@ -175,6 +182,10 @@ export function TerminalPanel() {
       attach = null;
       sink?.dispose();
       sink = null;
+      // 앞 세션의 PTY 크기를 버린다(security n1) — 새 세션의 `writer` 는 `size` 보다 먼저 오므로,
+      // 남겨 두면 그 사이(서버가 새 세션 크기를 모르면 계속) 앞 세션 크기로 그린다.
+      ptySizeRef.current = null;
+      setFollowView(null);
       const host = hostRef.current;
       if (!host) { setPhase('error'); setError(t('terminal.session.noHost')); return; }
       // 입력은 항상 배선하되 **writer 일 때만 흘린다.** 차례는 attach 뒤에도 오간다
@@ -197,6 +208,7 @@ export function TerminalPanel() {
           attach?.sendResize(cols, rows);
         },
         onDiagnostics: setDiagnostics,
+        onFollow: setFollowView,
       });
       // **차례를 받기 전에는 접어 둔다**(#369). sink 는 `onInput` 이 배선돼 있어 xterm 의
       // stdin 이 켜진 채로 뜨는데, 서버의 첫 `writer` 프레임은 소켓이 붙은 **뒤에** 온다 —
@@ -240,11 +252,19 @@ export function TerminalPanel() {
           // 깜빡여 "칠 수 있다"로 보인다. xterm 의 stdin 자체를 끄면 화면이 스스로
           // 읽기 전용임을 말하고, **왜**는 아래 배지가 글로 적는다.
           sink?.setReadOnly?.(!turn.writer);
+          // 폭의 주인이면 자기 패널로, 아니면 서버가 알려 준 PTY 크기로 그린다(터미널 T2).
+          // 크기를 아직 모르면(구 서버) 지금처럼 자기 패널로 둔다.
+          sink?.follow?.(turn.resize ? null : ptySizeRef.current);
           // 폭 주인이 된 직후 자기 크기를 한 번 보고한다(스펙 §5 "attach 시 writer 의
           // 크기로 resize"). 그 전의 fit 은 위 가드가 버렸으므로, 여기서 다시 재지 않으면
           // PTY 가 이전 주인(또는 spawn 기본값)의 크기로 남는다. **`writer` 가 아니라
           // `resize` 를 본다**(#369) — 관찰 전용 창도 폭의 주인이다.
           if (turn.resize) sink?.refit?.();
+        },
+        onSize: (cols, rows) => {
+          ptySizeRef.current = { cols, rows };
+          // 폭의 주인은 이 값의 출처다 — 자기 fit 을 계속 쓴다.
+          if (!resizeRef.current) sink?.follow?.({ cols, rows });
         },
         // 재접속하지 않는다(agentTerminal.ts 머리 주석) — 끊긴 사실만 그린다.
         onClosed: () => setState('runner-offline'),
@@ -470,6 +490,13 @@ export function TerminalPanel() {
           <p role="note" data-testid="writer-note" data-writer-reason={writerReason ?? 'unknown'}>
             {writerDeniedText(writerReason, t)}
           </p>
+          {/* 크기가 같으면 덧붙일 말이 없다(designer) — 실제로 남의 크기로 그릴 때만. 문장 뒤에 잇지 않고
+              둘째 줄로 내린다(designer s2) — 좁은 패널에서 한 줄이 끝없이 길어진다. */}
+          {followView?.differs && (
+            <p className="text-meta" data-testid="terminal-follow-note" title={t('terminal.follow.tooltip')}>
+              {t('terminal.follow.size', { cols: String(followView.cols), rows: String(followView.rows) })}
+            </p>
+          )}
         </div>
       )}
       {/* 실제로 무엇이 도는지 한 줄. 위 `diagnostics` 주석에 이 줄이 있는 이유가 있다. */}

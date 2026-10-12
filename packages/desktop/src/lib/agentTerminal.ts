@@ -26,6 +26,11 @@ export interface AttachCallbacks {
    * 데스크탑 쪽 절반이다.
    */
   onWriter(turn: AttachTurn): void;
+  /**
+   * 지금 PTY 의 크기(서버 `size` 프레임). 폭을 못 정하는 창은 이 크기로 그려야 줄이 안 꺾인다.
+   * 구 서버는 안 보낸다 — 그때 창은 자기 패널로 맞춘다. 옵셔널: 이 사실이 필요 없는 쪽은 안 받는다.
+   */
+  onSize?(cols: number, rows: number): void;
   /** 소켓이 끊겼다. 재접속하지 않는다(파일 머리 주석). */
   onClosed(): void;
 }
@@ -56,6 +61,11 @@ export interface AttachHandle {
    */
   sendResize(cols: number, rows: number): void;
   close(): void;
+}
+
+/** PTY 크기로 받아들일 수 있는 값인가 — 서버 `ws/relay.ts` 의 `isPtySize` 와 같은 범위. */
+export function isTermSize(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 1000;
 }
 
 /** 바이트 → base64. `btoa` 는 latin1 문자열을 받으므로 바이트를 코드 포인트로 넘긴다. */
@@ -94,6 +104,12 @@ export function connectAgentAttach(
       return;
     }
     if (frame.type === 'status') { cb.onStatus(frame.state); return; }
+    if (frame.type === 'size') {
+      // 서버를 믿더라도 범위는 여기서 다시 묶는다 — 이 숫자로 xterm 이 그만큼의 화면 버퍼를 잡는다
+      // (서버의 `isPtySize` 와 같은 1..1000 정수).
+      if (isTermSize(frame.cols) && isTermSize(frame.rows)) cb.onSize?.(frame.cols, frame.rows);
+      return;
+    }
     // 이유를 **그대로** 넘긴다(#369). 화면이 다시 판정하지 않는다 — 원인을 아는 것은
     // 서버이고, 화면이 지어내면 아무도 안 붙은 멘션 턴에서 "다른 창이 입력 중"이 된다.
     // 구 서버는 `reason` 을 모르므로 `undefined` 로 온다 — `null` 로 정규화한다.

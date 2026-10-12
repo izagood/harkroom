@@ -1536,6 +1536,8 @@ export const ko = {
   /** *"'끝났다'로 쓰지 않는다 — 다른 사실이다"* — 턴은 안 끝났고 소켓만 끊겼다. */
   'terminal.state.runnerOffline': '러너 연결 끊김',
 
+  'terminal.follow.size': '그 창 크기({cols}×{rows})에 맞춰 보는 중',
+  'terminal.follow.tooltip': '입력 중인 창과 같은 크기로 그려야 줄이 깨지지 않습니다. 입력을 가져오면 이 창 크기로 바뀝니다.',
   'terminal.writer.ended': '턴이 끝나 입력이 닫혔다.',
   'terminal.writer.can': '입력 가능 — 마지막으로 연 창이 입력을 가진다.',
   /** **원인을 그대로 말한다** — "관찰 전용"만 적으면 임의의 제약으로 읽힌다. */
