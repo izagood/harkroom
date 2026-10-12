@@ -15,6 +15,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller } from '../src/state/controller';
 import { acc, chan, msg, fakeApi, fakeWsFactory } from './helpers/fakeApi';
+import type { MessageRow } from '@harkroom/shared';
 
 /** c1 에는 뿌리 m1, c2 에는 뿌리 n1. **채널마다 다른 스레드**가 있는 것이 이 파일의 전제다. */
 const PAGES: Record<string, ReturnType<typeof msg>[]> = {
@@ -134,5 +135,39 @@ describe('끊긴 동안 받아 둔 스레드', () => {
     useAppStore.getState().upsertMessages('c1', [msg('x1', 'c1', 5, '남의 뿌리', 'u1')]);
     await c.openThread('m1');
     expect(useAppStore.getState().threadRootId).toBeNull();
+  });
+});
+
+/**
+ * 「다시 연결되면 저절로 불러온다」(designer 시안 ③·④)가 성립하는 근거. 재접속의 증분(`since`)은
+ * 끊긴 사이의 **새** 줄만 주므로, 끊긴 동안 연 스레드에서 못 받은 옛 답글은 따로 물어야 온다.
+ */
+describe('재접속 때 열린 스레드', () => {
+  it('뿌리만 손에 있던 스레드의 옛 답글을 다시 붙으면 받아 온다', async () => {
+    const server: MessageRow[] = [
+      msg('m1', 'c1', 1, '뿌리', 'u1'),
+      msg('m2', 'c1', 2, '옛 답글', 'u2', { threadRootId: 'm1' }),
+      msg('m3', 'c1', 3, '다른 글', 'u1'),
+    ];
+    let up = false;
+    const messages = vi.fn(async (_c: string, o?: { thread?: string; since?: number }) => {
+      if (!up) throw new Error('offline');
+      if (o?.thread) return { messages: server.filter((m) => m.id === o.thread || m.threadRootId === o.thread), hasMore: false };
+      if (o?.since) return { messages: server.filter((m) => m.seq > o.since!), hasMore: false };
+      return { messages: server, hasMore: false };
+    });
+    const api = fakeApi({ messages: messages as never });
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+    // 끊기기 전에 채널 첫 페이지만 받았다 — 뿌리(m1)와 m3 는 있고 답글 m2 는 없다.
+    useAppStore.getState().upsertMessages('c1', [server[0]!, server[2]!]);
+    await c.openThread('m1');
+    expect(useAppStore.getState().threadRootId).toBe('m1');
+    expect(useAppStore.getState().messages.c1!.some((m) => m.id === 'm2')).toBe(false);
+    up = true;
+    callbacks.current!.onOpen();
+    await vi.waitFor(() => expect(useAppStore.getState().messages.c1!.some((m) => m.id === 'm2')).toBe(true));
   });
 });

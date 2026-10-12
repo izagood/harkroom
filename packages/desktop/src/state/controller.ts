@@ -856,9 +856,23 @@ export class Controller {
       // 끊긴 사이의 글을 **끝까지** 받는다 — 한 페이지로 자르면 받은 구간이 틈을 품는다(`pullSince`).
       await this.pullSince(activeChannelId, maxSeq);
     }
+    // **열려 있는 스레드는 통째로 다시 받는다** (2026-10-12). 위 증분은 끊긴 사이의 **새** 답글만
+    // 준다 — 끊긴 동안 연 스레드에서 받지 못했던 옛 답글(뿌리만 손에 있던 경우)과 끊긴 사이 고치거나
+    // 지운 줄은 seq 가 그 아래라 오지 않는다. 그 스레드는 사람이 지금 보고 있는 것이므로 기다리지
+    // 않고 한 번 더 묻는다(다른 갱신을 막지 않는다).
+    const openRoot = this.store.getState().threadRootId;
+    if (activeChannelId && openRoot) this.swallow(this.refreshOpenThread(activeChannelId, openRoot));
     await this.refreshUnread();
     this.swallow(this.refreshInboxMine());
     this.store.getState().set({ leases: await this.api.leases() });
+  }
+
+  /** 재접속 때 열린 스레드의 최신 페이지를 다시 받는다. 그 사이 사람이 다른 곳으로 갔으면 버린다. */
+  private async refreshOpenThread(channelId: string, rootId: string): Promise<void> {
+    const page = await this.api.messages(channelId, { thread: rootId });
+    const now = this.store.getState();
+    if (now.activeChannelId !== channelId || now.threadRootId !== rootId) return;
+    now.upsertMessages(channelId, page.messages);
   }
 
   /** 미지의 작성자가 연달아 오면 요청이 폭주하므로, 진행 중인 조회 하나에 합류시킨다. */
