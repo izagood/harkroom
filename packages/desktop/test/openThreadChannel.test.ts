@@ -81,3 +81,58 @@ describe('다른 채널의 스레드', () => {
     expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/connection/);
   });
 });
+
+/**
+ * **끊긴 동안 이미 본 스레드** (jaebin 보고, 2026-10-12). 스토어에 답글이 있는데도 조회가
+ * 실패했다는 이유로 패널을 닫고 「연결을 확인하라」만 띄웠다. 가진 것은 보여야 한다.
+ */
+describe('끊긴 동안 받아 둔 스레드', () => {
+  const offline = vi.fn(async () => { throw new Error('offline'); });
+
+  it('같은 채널 — 받아 둔 답글이 있으면 조회가 터져도 패널을 닫지 않는다', async () => {
+    const { c } = mount({ messages: offline as never });
+    useAppStore.getState().upsertMessages('c1', [
+      msg('m1', 'c1', 1, 'c1 의 뿌리', 'u1'),
+      msg('m2', 'c1', 2, '받아 둔 답글', 'u2', { threadRootId: 'm1' }),
+    ]);
+    await c.openThread('m1', { focusMessageId: 'm2' });
+    expect(useAppStore.getState().threadRootId).toBe('m1');
+    expect(useAppStore.getState().highlightedMessageId).toBe('m2');
+    expect(useAppStore.getState().notices).toHaveLength(0);
+  });
+
+  it('다른 채널 — 채널 열기가 터져도 받아 둔 스레드는 열린다', async () => {
+    const { c } = mount({ messages: offline as never });
+    useAppStore.getState().upsertMessages('c2', PAGES.c2!);
+    await c.openThread('n1', { channelId: 'c2' });
+    expect(useAppStore.getState().activeChannelId).toBe('c2');
+    expect(useAppStore.getState().threadRootId).toBe('n1');
+    expect(useAppStore.getState().notices).toHaveLength(0);
+  });
+
+  it('다른 채널 — 받아 둔 것이 있으면 답 없는 채널 조회를 기다리지 않는다', async () => {
+    // 서버가 소켓만 받고 답을 안 하는 장애(2026-10-12). 채널 조회는 끝나지 않고 스레드 조회는 터진다.
+    const hang = vi.fn((_c: string, opts?: { thread?: string }) => (opts?.thread
+      ? Promise.reject(new Error('offline'))
+      : new Promise(() => {})));
+    const { c } = mount({ messages: hang as never });
+    useAppStore.getState().upsertMessages('c2', PAGES.c2!);
+    await c.openThread('n1', { channelId: 'c2' });
+    expect(useAppStore.getState().activeChannelId).toBe('c2');
+    expect(useAppStore.getState().threadRootId).toBe('n1');
+  });
+
+  it('다른 채널 — 받아 둔 것이 없으면 조용히 끝나지 않고 사유를 말한다', async () => {
+    const { c } = mount({ messages: offline as never });
+    await expect(c.openThread('n1', { channelId: 'c2' })).resolves.toBeUndefined();
+    expect(useAppStore.getState().threadRootId).toBeNull();
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/connection/);
+  });
+
+  it('다른 스레드의 줄은 손에 든 것으로 치지 않는다', async () => {
+    const { c } = mount({ messages: offline as never });
+    useAppStore.getState().upsertMessages('c1', [msg('x1', 'c1', 5, '남의 뿌리', 'u1')]);
+    await c.openThread('m1');
+    expect(useAppStore.getState().threadRootId).toBeNull();
+  });
+});
