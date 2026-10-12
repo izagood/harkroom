@@ -28,6 +28,26 @@ export function ThreadStateBadge({ state, className = '' }: { state: ThreadState
   );
 }
 
+/**
+ * 「모름」(A3, 시안 ④) — 서버에서 답글을 못 받아 상태를 셀 수 없는 스레드. `ThreadState` 에 넣지 않는 이유:
+ * 그 어휘는 받은 줄로 **계산한** 사실이고, 이것은 계산할 줄이 없다는 표지다(보드·요약은 이 값을 모른다).
+ * `done` 처럼 무채색이다 — 사람이 할 일은 없고, 다시 붙으면 저절로 걷힌다.
+ */
+export function UnknownThreadStateBadge({ className = '' }: { className?: string }) {
+  const t = useT();
+  return (
+    <span
+      data-testid="thread-state"
+      data-state="unknown"
+      data-blocking={false}
+      className={`inline-flex items-center gap-1 rounded-row px-1.5 text-meta font-medium text-fg-subtle ${className}`}
+    >
+      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full border border-fg-subtle" />
+      {t('thread.state.unknown')}
+    </span>
+  );
+}
+
 /** 글자·면. `done` 은 아무 면도 받지 않는다 — 끝난 것은 배경이다. */
 const TONE: Record<ThreadState, string> = {
   'my-turn': 'bg-accent-surface text-state-turn',

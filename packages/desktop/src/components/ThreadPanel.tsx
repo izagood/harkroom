@@ -9,7 +9,7 @@ import { ProgressRow } from './ProgressRow';
 import { groupProgress } from '../lib/progressGroup';
 import { AgentExchange } from './AgentExchange';
 import { groupAgentExchanges, exchangeRows } from '../lib/agentExchange';
-import { ThreadStateBadge } from './ThreadStateBadge';
+import { ThreadStateBadge, UnknownThreadStateBadge } from './ThreadStateBadge';
 import { threadState } from '../lib/threadState';
 import { WaitChainLine } from './WaitChain';
 import { waitChain } from '../lib/waitChain';
@@ -22,7 +22,8 @@ import { TypingLine } from './TypingLine';
 import { isNearBottom } from '../lib/stickyBottom';
 import { appendedFromHere } from '../lib/ownSends';
 import type { SectionId } from './settings/sections';
-import { useT } from '../i18n/useT';
+import { useLocale, useT } from '../i18n/useT';
+import { stampLabel } from '../lib/day';
 
 export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN_CHANNEL_WIDTH }: {
   /** 멘션 이동(#279). 스레드의 멘션도 대화의 멘션과 같게 동작해야 한다. */
@@ -36,7 +37,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   reserveLeft?: number;
 } = {}) {
   const t = useT();
-  const { messages, accounts, me, online, connected } = useActiveStore();
+  const { messages, accounts, me, online, connected, link, offlineSince, threadFetch } = useActiveStore();
+  const locale = useLocale();
   // 보는 자리는 **이 창의 것**이다(새 창 — `state/windowView`). 메인이면 스토어 그대로다.
   const view = useWindowView();
   const { channelId: activeChannelId, threadRootId } = view;
@@ -86,6 +88,21 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
    * (`controller.startRunners` 와 같은 규약).
    */
   const live = useMemo(() => (connected ? new Set(online) : null), [connected, online]);
+
+  /**
+   * 서버에서 못 받은 스레드(A3, 시안 ②④⑥). 받아 둔 것만 그리고 있다는 것을 패널이 **말해야** 한다 —
+   * 말하지 않으면 끊긴 사이의 답글이 「없는 것」으로 읽힌다.
+   * - `stale` — 끊겨 있다(앱 띠가 서 있는 동안, 또는 이 스레드를 끊긴 채 열었다) → 마지막 답글 아래 경계 줄
+   * - `unfetchedEmpty` — 답글을 하나도 못 받았다 → 「끝남」 대신 빈 상태 + 「모름」(④·⑥)
+   * 다시 붙어 `refreshOpenThread` 가 받으면 `threadFetch` 가 걷히고, `link` 가 online 이 되면 경계 줄도 걷힌다(③).
+   */
+  const fetchHere = threadFetch && threadFetch.rootId === threadRootId ? threadFetch.reason : null;
+  const replies = thread.length - (thread.some((m) => m.id === threadRootId) ? 1 : 0);
+  const stale = link !== 'online' || fetchHere === 'offline';
+  const unfetchedEmpty = fetchHere !== null && replies === 0;
+  const rootRow = thread.find((m) => m.id === threadRootId);
+  const boundaryAt = offlineSince ?? (thread.length > 0 ? Date.parse(thread[thread.length - 1]!.createdAt) : null);
+  const retry = () => { void getCommunityController(communityId).retryThread(); };
 
   const state = useMemo(() => threadState({
     messages: thread,
@@ -316,7 +333,9 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
       <header className="flex items-center border-b border-border px-4 py-2">
         <span className="font-semibold">{t('thread.title')}</span>
         {/* `null` 은 '아직 아무 말도 못 봤다' — 그때는 배지를 그리지 않는다(`threadState`). */}
-        {state && <ThreadStateBadge state={state} className="ml-2" />}
+        {unfetchedEmpty
+          ? <UnknownThreadStateBadge className="ml-2" />
+          : state && <ThreadStateBadge state={state} className="ml-2" />}
         {/* 참여자 줄과 터미널 선택자는 **헤더**다 — 세션이 (에이전트, 스레드)당 하나이므로
             문이 달릴 자리가 여기다(규칙 06). */}
         <div className="ml-auto flex items-center gap-2">
@@ -388,8 +407,37 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
         ))}
         {/* 답글이 하나도 없는 스레드 — 머리 하나만 서 있으면 "열렸다"가 아니라 "빈 화면"으로
             읽힌다. 머리는 목록에 포함되므로 길이 1 이 곧 '답글 없음'이다. */}
-        {thread.length <= 1 && (
+        {thread.length <= 1 && !unfetchedEmpty && (
           <p data-testid="thread-empty" className="px-4 py-2 text-meta text-fg-subtle">{t('thread.empty')}</p>
+        )}
+        {/* ② 받아 둔 답글의 끝. 그 아래는 비어 있는 것이 아니라 **모른다.** */}
+        {replies > 0 && stale && fetchHere !== 'noResponse' && (
+          <div data-testid="thread-held-boundary" role="note"
+            className="mx-4 my-2 flex items-center gap-2 text-meta text-fg-subtle">
+            <span aria-hidden="true" className="h-px flex-1 border-t border-dashed border-border" />
+            <span>{t('thread.heldBoundary', { time: boundaryAt != null && !Number.isNaN(boundaryAt) ? stampLabel(new Date(boundaryAt).toISOString(), locale) : '' })}</span>
+            <span aria-hidden="true" className="h-px flex-1 border-t border-dashed border-border" />
+          </div>
+        )}
+        {/* ④ 끊긴 채 열었는데 답글을 하나도 못 받았다 — 「답글 없음」이 아니다. */}
+        {unfetchedEmpty && fetchHere === 'offline' && (
+          <div data-testid="thread-unfetched" className="mx-4 my-2 rounded-row border border-dashed border-border px-3 py-3 text-center">
+            <p className="text-fg-muted">
+              {rootRow?.replyCount ? t('thread.unfetched.title', { count: rootRow.replyCount }) : t('thread.unfetched.titleUnknown')}
+            </p>
+            <p className="mt-1 text-meta text-fg-subtle">{t('thread.unfetched.detail')}</p>
+          </div>
+        )}
+        {/* ⑥ 소켓은 붙어 있는데 이 조회만 답이 없다 — 앱 띠 없이 이 패널 안에서만 말한다. */}
+        {fetchHere === 'noResponse' && (
+          <div data-testid="thread-no-response" role="alert"
+            className="mx-4 my-2 flex items-center gap-2 rounded-row border border-border px-3 py-2 text-meta text-fg-muted">
+            <span className="flex-1">{t('thread.noResponse')}</span>
+            <button type="button" data-testid="thread-retry" onClick={retry}
+              className="rounded-row px-2 py-0.5 font-medium text-fg hover:bg-surface-hover">
+              {t('thread.noResponse.retry')}
+            </button>
+          </div>
         )}
         {/* 바닥 표식. 관찰자 보정이 지켜보는 대상이라 회귀선이 집을 손잡이가 필요하다
             (채널의 `channel-bottom` 과 같다). */}

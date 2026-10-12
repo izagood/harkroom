@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller } from '../src/state/controller';
-import { ApiError } from '../src/lib/api';
+import { ApiError, RequestFailure } from '../src/lib/api';
 import { acc, chan, msg, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 import type { MessageRow } from '@harkroom/shared';
 
@@ -80,7 +80,7 @@ describe('다른 채널의 스레드', () => {
     const { c } = mount({ messages: vi.fn(async () => { throw new Error('offline'); }) as never });
     await c.openThread('m1');
     expect(useAppStore.getState().threadRootId).toBeNull();
-    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/connection/);
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/reconnected/);
   });
 });
 
@@ -128,16 +128,68 @@ describe('끊긴 동안 받아 둔 스레드', () => {
     const { c } = mount({ messages: offline as never });
     await expect(c.openThread('n1', { channelId: 'c2' })).resolves.toBeUndefined();
     expect(useAppStore.getState().threadRootId).toBeNull();
-    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/connection/);
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/reconnected/);
   });
 
   /** designer s1 — 뿌리 한 줄로 패널을 세우면 「답 0개 · 끝남」이 된다. */
-  it('같은 채널 — 뿌리만 있고 답글이 없으면 닫고 사유를 말한다', async () => {
+  // A3 ④ — 뿌리만 손에 있으면 **연다.** 단 `threadFetch` 를 세워 패널이 「끝남」이 아니라 빈 상태 +
+  // 「모름」으로 그리게 한다(designer s1 이 막은 것은 표지 없이 뿌리만 그리는 것이었다).
+  it('같은 채널 — 뿌리만 있고 답글이 없으면 열되 「못 받음」 표지를 세운다(④)', async () => {
     const { c } = mount({ messages: offline as never });
     useAppStore.getState().upsertMessages('c1', [msg('m1', 'c1', 1, 'c1 의 뿌리', 'u1')]);
     await c.openThread('m1');
+    expect(useAppStore.getState().threadRootId).toBe('m1');
+    expect(useAppStore.getState().threadFetch).toEqual({ rootId: 'm1', reason: 'offline' });
+    expect(useAppStore.getState().notices).toHaveLength(0);
+  });
+  it('끊긴 채 뿌리도 없으면 닫고 「다시 붙은 뒤 눌러라」를 말한다', async () => {
+    const { c } = mount({ messages: offline as never });
+    await c.openThread('zz');
     expect(useAppStore.getState().threadRootId).toBeNull();
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/reconnected/);
+  });
+  it('소켓은 붙었는데 답이 없으면 「응답 없음」이고, 뿌리도 없을 때 문구는 예전 것이다(⑥)', async () => {
+    const { c } = mount({ messages: vi.fn(async () => { throw new RequestFailure('timeout', 'timeout'); }) as never });
+    useAppStore.getState().set({ connected: true });
+    held();
+    await c.openThread('m1');
+    expect(useAppStore.getState().threadFetch).toEqual({ rootId: 'm1', reason: 'noResponse' });
+    await c.openThread('zz');
     expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/connection/);
+  });
+  it('[다시 시도]가 받으면 표지를 걷는다(⑥)', async () => {
+    let fail = true;
+    const { c } = mount({
+      messages: vi.fn(async () => {
+        if (fail) throw new RequestFailure('timeout', 'timeout');
+        return { messages: [msg('m1', 'c1', 1, 'c1 의 뿌리', 'u1'), msg('m3', 'c1', 3, '새 답글', 'u2', { threadRootId: 'm1' })], hasMore: false };
+      }) as never,
+    });
+    useAppStore.getState().set({ connected: true });
+    held();
+    await c.openThread('m1');
+    expect(useAppStore.getState().threadFetch?.reason).toBe('noResponse');
+    fail = false;
+    await c.retryThread();
+    expect(useAppStore.getState().threadFetch).toBeNull();
+    expect((useAppStore.getState().messages.c1 ?? []).map((m) => m.id)).toContain('m3');
+  });
+  it('다시 받을 때 403·404 면 패널을 닫는다(security n4)', async () => {
+    let status = 0;
+    const { c } = mount({
+      messages: vi.fn(async () => {
+        if (status) throw new ApiError(status, 'x', 'x');
+        throw new RequestFailure('unreachable', 'down');
+      }) as never,
+    });
+    held();
+    await c.openThread('m1');
+    expect(useAppStore.getState().threadRootId).toBe('m1');
+    status = 404;
+    await c.retryThread();
+    expect(useAppStore.getState().threadRootId).toBeNull();
+    expect(useAppStore.getState().threadFetch).toBeNull();
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/no longer|gone|deleted|exist/i);
   });
 
   /** security F1 — 서버가 답한 거절은 받아 둔 줄이 있어도 닫는다(지워진·빠진 대화). */

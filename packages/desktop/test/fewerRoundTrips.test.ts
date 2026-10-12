@@ -62,7 +62,8 @@ describe('다른 채널의 스레드 열기', () => {
     await c.openThread('root-x', { channelId: 'c2' });
 
     expect(useAppStore.getState().threadRootId).toBeNull();
-    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/Could not open that thread/);
+    // 가짜 소켓은 열리지 않았다(`connected` false) — 그래서 사유는 끊김 문구다(A3 ④).
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/reconnected/);
   });
 });
 
