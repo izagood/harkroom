@@ -1,4 +1,4 @@
-import { ApiError } from './api';
+import { ApiError, RequestFailure } from './api';
 import { en } from '../i18n/en';
 import { detectLocale, isLocale, translator, type MessageKey, type Translate } from '../i18n';
 import { usePrefsStore } from '../state/prefsStore';
@@ -23,6 +23,8 @@ export function errorText(err: unknown, t: Translate, fallback?: string): string
     const key = `apiError.${err.code}`;
     if (Object.hasOwn(en, key)) return t(key as MessageKey);
   }
+  // 시한 초과는 날 영어(`request timed out`)를 보이지 않고 사전의 일반 문장으로 — 갈래별 문구는 A3 몫.
+  if (err instanceof RequestFailure && err.kind === 'timeout') return t('apiError.generic');
   const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
   if (raw) return raw;
   return fallback ?? t('apiError.generic');

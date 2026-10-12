@@ -84,6 +84,29 @@ export interface BundleAcceptResult {
  */
 export const READ_TIMEOUT_MS = 20_000;
 
+/**
+ * 서버의 **답을 받지 못한** 실패. `ApiError`(서버가 답했고 그 답이 거절이다)와 일부러 다른 갈래다 —
+ * 호출부 수십 곳이 `err instanceof ApiError ? err.message : <닿지 않는다 문구>` 로 둘을 가르므로,
+ * 이것을 `ApiError` 로 만들면 그 자리들이 빈 메시지나 날 오류를 보이게 된다.
+ *
+ * `kind` 는 화면이 문구를 가르는 축이다(designer A3 시안 ④·⑥):
+ * - `unreachable` — 요청이 서버에 닿지 못했다(`fetch` 가 거절: 망 끊김·DNS·연결 거부). 끊김 쪽 문구.
+ * - `timeout` — 닿았는지 모르는데 `READ_TIMEOUT_MS` 안에 답이 없었다. 「응답 없음 — 다시 시도」 쪽 문구.
+ * 소켓이 끊겼는지(`connected`)는 이 값과 별개로 스토어가 안다 — 둘을 같이 보면 된다.
+ */
+export type RequestFailureKind = 'timeout' | 'unreachable';
+export class RequestFailure extends Error {
+  constructor(public kind: RequestFailureKind, message: string) {
+    super(message);
+    this.name = 'RequestFailure';
+  }
+}
+
+/** 답을 못 받은 실패면 그 종류, 서버가 답한 실패(`ApiError`)나 그 밖이면 `null`. */
+export function requestFailureKind(err: unknown): RequestFailureKind | null {
+  return err instanceof RequestFailure ? err.kind : null;
+}
+
 export class ApiClient {
   constructor(public baseUrl: string, private token: string | null = null) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -128,9 +151,11 @@ export class ApiClient {
       }
       return { body: json as T, headers: res.headers };
     } catch (e) {
-      // 메시지는 비운다 — `errorText` 가 그러면 사전의 `apiError.generic` 으로 말한다(새 문구 없이).
-      if (abort?.signal.aborted) throw new ApiError(0, 'request_timeout', '');
-      throw e;
+      if (abort?.signal.aborted) throw new RequestFailure('timeout', 'request timed out');
+      if (e instanceof ApiError) throw e;
+      // 여기 오는 것은 `fetch` 자체의 거절뿐이다(본문 해석 실패는 위에서 null 로 삼킨다). 메시지는
+      // 그대로 둔다 — 지금 그 글자(`Failed to fetch` 등)를 보이는 자리가 있다.
+      throw new RequestFailure('unreachable', e instanceof Error ? e.message : String(e));
     } finally {
       if (timer) clearTimeout(timer);
     }

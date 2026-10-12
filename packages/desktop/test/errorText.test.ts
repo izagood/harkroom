@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '../src/lib/api';
 import { errorText } from '../src/lib/errorText';
+import { RequestFailure } from '../src/lib/api';
 import { translator } from '../src/i18n';
 
 /**
@@ -31,5 +32,14 @@ describe('errorText', () => {
     expect(errorText(undefined, tEn, 'Could not save')).toBe('Could not save');
     expect(errorText({}, tKo)).toBe('요청이 처리되지 않았다.');
     expect(errorText(new Error('boom'), tEn)).toBe('boom');
+  });
+});
+
+describe('errorText — 답 못 받은 실패', () => {
+  it('시한 초과는 날 영어 대신 사전의 일반 문장', () => {
+    expect(errorText(new RequestFailure('timeout', 'request timed out'), tEn)).toBe('The request did not go through.');
+  });
+  it('닿지 못한 실패는 지금처럼 원래 글자', () => {
+    expect(errorText(new RequestFailure('unreachable', 'Load failed'), tEn)).toBe('Load failed');
   });
 });

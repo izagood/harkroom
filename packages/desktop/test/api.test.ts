@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { ApiClient, ApiError, READ_TIMEOUT_MS } from '../src/lib/api';
+import { ApiClient, ApiError, READ_TIMEOUT_MS, RequestFailure, requestFailureKind } from '../src/lib/api';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -197,7 +197,7 @@ describe('읽기 시한', () => {
     stubHang();
     const api = new ApiClient('http://x:3400', 'tok');
     const p = api.messages('c1', { thread: 'm1' });
-    const seen = expect(p).rejects.toMatchObject({ status: 0, code: 'request_timeout' });
+    const seen = expect(p).rejects.toMatchObject({ name: 'RequestFailure', kind: 'timeout' });
     await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 1);
     let settled = false;
     p.then(() => { settled = true; }, () => { settled = true; });
@@ -223,9 +223,33 @@ describe('읽기 시한', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('시한 아닌 네트워크 실패는 원래 오류 그대로다', async () => {
+  it('닿지 못한 실패는 unreachable — 원래 글자는 그대로 둔다', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Load failed'); }));
     const api = new ApiClient('http://x:3400', 'tok');
-    await expect(api.channels()).rejects.toThrow('Load failed');
+    const err = await api.channels().catch((e: unknown) => e);
+    expect(requestFailureKind(err)).toBe('unreachable');
+    expect((err as Error).message).toBe('Load failed');
+  });
+
+  it('닿지 못한 실패는 쓰기에서도 unreachable 이다(시한만 GET 전용)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    const api = new ApiClient('http://x:3400', 'tok');
+    expect(requestFailureKind(await api.postMessage('c1', 'hi').catch((e: unknown) => e))).toBe('unreachable');
+  });
+
+  /**
+   * **서버가 답한 거절과 섞이지 않는다.** 호출부가 `instanceof ApiError` 로 「서버가 뭐라 했다」와
+   * 「닿지 않는다」를 가르므로, 답 못 받은 실패가 `ApiError` 가 되면 그 자리들이 빈 글이나 날 오류를 보인다.
+   */
+  it('서버 거절은 ApiError 그대로이고 종류가 없다, 답 못 받은 실패는 ApiError 가 아니다', async () => {
+    stubFetch(403, { error: { code: 'forbidden', message: 'nope' } });
+    const api = new ApiClient('http://x:3400', 'tok');
+    const denied = await api.channels().catch((e: unknown) => e);
+    expect(denied).toBeInstanceOf(ApiError);
+    expect(requestFailureKind(denied)).toBeNull();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Load failed'); }));
+    const down = await api.channels().catch((e: unknown) => e);
+    expect(down).toBeInstanceOf(RequestFailure);
+    expect(down).not.toBeInstanceOf(ApiError);
   });
 });
