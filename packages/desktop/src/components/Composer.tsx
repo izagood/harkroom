@@ -222,6 +222,9 @@ export function Composer({
    */
   const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS;
   const myId = useActiveStore((s) => s.me?.id);
+  // 끊긴 동안은 **보내기만** 잠근다(A3 시안 ⑤, jaebin D4). 쓰기는 막지 않는다 — 초안은 자리별로 남는다.
+  // 국면(`link`)을 보는 이유는 끊김 띠와 같다: 1~2초 끊김마다 버튼이 깜빡이지 않게.
+  const offline = useActiveStore((s) => s.link === 'offline');
   // 채널이 자동으로 멘션하는 에이전트(#173). 키가 없으면 아직 못 받은 것이고 그때는 칩도 접두도 없다.
   const autoRows = useActiveStore((s) => (autoMentionChannelId ? s.channelAutoMentions[autoMentionChannelId] : undefined));
   // `MessageBody` 와 같은 자리에서 읽는다 — 자기 멘션 판정이 두 화면에서 달라지면 안 된다.
@@ -986,6 +989,10 @@ export function Composer({
     // 고정 멘션만으로는 보낼 것이 없다 — 빈 Enter 가 '@fizz' 하나만 던지면 사고다.
     // 다만 파일만 보내는 것은 자연스럽다.
     if (!draft.trim() && !pending.length) return;
+    // 끊긴 동안 Enter 는 보내지 않는다 — 나갔다 실패하고 초안을 되돌리는 동안 "나갔나?" 하는 순간이 생긴다.
+    // 사유는 작성창 아래 줄이 이미 말하고 있다. 줄 세워 뒀다 붙으면 보내기(outbox)는 하지 않는다 — 몇 분
+    // 전 글이 갑자기 나가 에이전트 턴을 띄운다.
+    if (offline) return;
     // 올리지 못한 첨부를 든 채로는 보내지 않는다 — 보내면 그 글은 기다리다 곧장 실패해 돌아온다.
     // 무엇을 하면 되는지 지금 말한다(칩에 [다시]·[×] 가 있다).
     if (failedUpload) {
@@ -2121,12 +2128,17 @@ export function Composer({
             onClick={() => send()}
             // 상한을 넘긴 채로는 누를 수 없다 — 누를 수 있게 두고 실패를 보여 주는 것보다,
             // 애초에 못 누르게 하고 얼마나 넘겼는지 옆에 세우는 것이 고칠 길을 준다.
-            disabled={(!draft.trim() && !pending.length) || tooLong}
+            disabled={(!draft.trim() && !pending.length) || tooLong || offline}
           >
             {t('composer.send.submit')}
           </button>
         </div>
       </div>
+      {offline && (
+        <p role="status" data-testid="composer-offline-hint" className="mt-1 text-meta text-fg-muted">
+          {t('composer.send.offline')}
+        </p>
+      )}
       {scheduleModalOpen && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-20">
           <div className="w-80 rounded-card bg-surface-raised p-4 shadow-float">

@@ -206,6 +206,16 @@ export const en = {
   'connection.projection': 'Status',
   'connection.connected': 'Connected',
   'connection.disconnected': 'Disconnected',
+  // 끊김 띠(A3, designer 시안 ①·③). 「저장된 내용」은 디스크에 남는 것처럼 읽혀서 피했다(D1) — 메모리에 받아 둔 것뿐이다.
+  'link.offline.title': 'Disconnected from the server',
+  'link.offline.detail': 'only what was already loaded is shown. New messages load when it reconnects.',
+  'link.offline.reconnecting': 'Reconnecting…',
+  'link.resyncing.title': 'Reconnected',
+  'link.resyncing.detail': 'loading what you missed',
+  'link.resyncFailed': 'Reconnected, but could not load what you missed',
+  'link.resyncFailed.retry': 'Retry',
+  // 작성창(시안 ⑤, D4) — 쓰기는 막지 않고 보내기만 잠근다. 줄 세워 뒀다 보내기(outbox)는 하지 않는다.
+  'composer.send.offline': 'Disconnected — can\'t send. What you wrote stays here.',
   'appearance.modeSystem': 'System',
   'appearance.modeLight': 'Light',
   'appearance.modeDark': 'Dark',

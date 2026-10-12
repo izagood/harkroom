@@ -182,6 +182,15 @@ export interface AppState {
   leases: LeaseRow[];
   connected: boolean;
   /**
+   * 사람에게 보이는 **연결 국면**(A3, designer 시안 ①·③). `connected` 는 소켓 그 자체라 1~2초 끊김에도
+   * 깜빡이므로, 화면(끊김 띠·보내기 잠금·스레드 경계 줄)은 이것을 본다. 컨트롤러가 관리한다:
+   * - `offline` — 한 번 붙었던 소켓이 끊긴 지 `OFFLINE_DELAY_MS`(3초)가 지났다
+   * - `resyncing` — 그 뒤 다시 붙어 놓친 글을 맞추는 중(`reconcile`)
+   * - `resyncFailed` — 맞추기가 실패했다(다시 시도할 때까지 남는다)
+   * 짧은 끊김(3초 미만)은 `online` 그대로다 — 다시 붙어도 초록 띠를 세우지 않는다.
+   */
+  link: 'online' | 'offline' | 'resyncing' | 'resyncFailed';
+  /**
    * 지금 붙어 있는 서버가 말한 자기 버전(#693). `/healthz` 에서 온다.
    *
    * **`null` 은 "아직/못 물어봤다"** 다 — "버전이 없는 서버"가 아니다. 이 값을 안 싣는 옛
@@ -507,7 +516,7 @@ export const NO_TEAMS: AgentTeamRow[] = [];
 const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, firstPageLoading: {}, backfilling: {}, unread: [], inboxRevision: 0, inboxMine: 0, inboxBoardRevision: 0, reads: {}, dividerSeq: {},
-  online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, serverVersion: null, workspaceIconUrl: null,
+  online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, link: 'online' as AppState['link'], serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
   history: [], historyIndex: -1, notices: [], gates: [], notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,

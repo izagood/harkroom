@@ -344,7 +344,7 @@ export class Controller {
       onOpen: () => {
         markBoot('ws:open');
         this.store.getState().set({ connected: true });
-        this.swallow(this.reconcile());
+        this.onLinkUp();
         // 서버 버전은 **소켓이 열릴 때마다** 다시 묻는다(#693). 주기 갱신이 아닌 이유:
         // 이 값은 서버 프로세스가 다시 뜰 때만 바뀌고, 그때 소켓은 **반드시 끊겼다가
         // 다시 붙는다.** 그래서 재접속이 곧 "버전이 바뀌었을 수 있는 유일한 순간"이다 —
@@ -488,6 +488,7 @@ export class Controller {
     this.ws = null;
     if (this.projectionRefreshInterval) { clearInterval(this.projectionRefreshInterval); this.projectionRefreshInterval = null; }
     if (this.mineTick) { clearInterval(this.mineTick); this.mineTick = null; }
+    this.clearOfflineTimer();
   }
 
   /**
@@ -559,8 +560,54 @@ export class Controller {
     origin: 'notice.sessionLost.origin',
   };
 
+  /** 끊김 띠를 세우기까지 기다리는 시간(designer 시안 ①). 1~2초 끊김마다 화면이 한 줄 밀리면 깜빡임이다. */
+  static readonly OFFLINE_DELAY_MS = 3_000;
+  private offlineTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 이 세션에서 소켓이 한 번이라도 열렸는가. 기동 중 아직 못 붙은 것은 '끊김'이 아니다. */
+  private everConnected = false;
+
+  private clearOfflineTimer(): void {
+    if (this.offlineTimer) { clearTimeout(this.offlineTimer); this.offlineTimer = null; }
+  }
+
+  /**
+   * 소켓이 열렸다. 처음이면 맞추기만 하고, **끊김을 보여 준 뒤**(`link` 가 `offline`·`resyncFailed`)
+   * 다시 붙은 것이면 `resyncing` 을 세웠다가 맞추기가 끝나면 걷는다(시안 ③ — 띠가 바로 사라지면 그 사이
+   * 들어온 글이 원래 있던 것처럼 보인다). 짧은 끊김(띠가 서기 전)은 조용히 맞춘다.
+   */
+  private onLinkUp(): void {
+    this.clearOfflineTimer();
+    const shown = this.store.getState().link !== 'online';
+    this.everConnected = true;
+    if (!shown) { this.swallow(this.reconcile()); return; }
+    this.runResync();
+  }
+
+  private runResync(): void {
+    this.store.getState().set({ link: 'resyncing' });
+    void this.reconcile().then(
+      () => { if (this.store.getState().link === 'resyncing') this.store.getState().set({ link: 'online' }); },
+      () => { if (this.store.getState().link === 'resyncing') this.store.getState().set({ link: 'resyncFailed' }); },
+    );
+  }
+
+  /** 끊김 띠의 [다시] — 맞추기가 실패한 뒤 사람이 누른다. 소켓이 아직 끊겨 있으면 할 일이 없다. */
+  retryResync(): void {
+    if (!this.store.getState().connected) return;
+    this.runResync();
+  }
+
   private handleDown(reason: WsDownReason): void {
     this.store.getState().set({ connected: false });
+    if (this.everConnected && !this.offlineTimer && this.store.getState().link === 'online') {
+      this.offlineTimer = setTimeout(() => {
+        this.offlineTimer = null;
+        if (!this.store.getState().connected) this.store.getState().set({ link: 'offline' });
+      }, Controller.OFFLINE_DELAY_MS);
+    } else if (this.store.getState().link === 'resyncing' || this.store.getState().link === 'resyncFailed') {
+      // 맞추는 도중 다시 끊겼다 — 이미 끊김을 보여 준 사이이므로 기다리지 않고 되돌린다.
+      this.store.getState().set({ link: 'offline' });
+    }
     // 네트워크 끊김은 기다리면 낫는다 — 세션을 건드리지 않는다. 잠깐 끊겼다고 로그아웃시키면 최악이다.
     if (reason === 'network') return;
     // 되돌릴 수 없는 사유다. 로컬 상태를 비우고 사유를 위로 올린다 — 안 그러면 사용자는
@@ -861,11 +908,16 @@ export class Controller {
     // 준다 — 끊긴 동안 연 스레드에서 받지 못했던 옛 답글(뿌리만 손에 있던 경우)과 끊긴 사이 고치거나
     // 지운 줄은 seq 가 그 아래라 오지 않는다. 그 스레드는 사람이 지금 보고 있는 것이므로 기다리지
     // 않고 한 번 더 묻는다(다른 갱신을 막지 않는다).
+    // 맞추기가 끝났다고 말하려면(`link` 의 `resyncing` 을 걷으려면) 이것도 끝나야 한다 — 같이 내고 끝에서
+    // 기다린다. 실패는 맞추기 실패로 치지 않는다(그 스레드 하나의 일이다).
     const openRoot = this.store.getState().threadRootId;
-    if (activeChannelId && openRoot) this.swallow(this.refreshOpenThread(activeChannelId, openRoot));
+    const thread = activeChannelId && openRoot
+      ? this.refreshOpenThread(activeChannelId, openRoot).catch(() => undefined)
+      : null;
     await this.refreshUnread();
     this.swallow(this.refreshInboxMine());
     this.store.getState().set({ leases: await this.api.leases() });
+    await thread;
   }
 
   /** 재접속 때 열린 스레드의 최신 페이지를 다시 받는다. 그 사이 사람이 다른 곳으로 갔으면 버린다. */
