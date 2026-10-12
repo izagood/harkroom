@@ -15,6 +15,7 @@ import { Notice } from './Notice';
 import { GateCard } from './GateCard';
 import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
 import { ServerCompatBanner } from './ServerCompatBanner';
+import { ConnectionBanner } from './ConnectionBanner';
 import { UpdateToast } from './UpdateToast';
 import { ThreadPanel } from './ThreadPanel';
 import { openWindow, popOutChannel } from '../lib/windowActions';
@@ -368,6 +369,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
           있었는데, 그 칸은 "지금 무슨 일이 벌어지는가"를 말하는 자리라 **고장이 일처럼**
           보였고 고치는 문(설정 열기)도 그 좁은 칸에 들어가지 못했다.
         */}
+        {/* 끊김 띠는 **맨 위**다(A3 시안 ①) — 끊긴 동안에는 아래 띠들이 말하는 상태도 최신이 아닐 수 있다. */}
+        <ConnectionBanner />
         <ProjectionBanner onOpenSettings={onOpenSettings} />
         {/* 호환 하한보다 낮은 서버도 **고장**이라 같은 자리에서 말한다(#693 후속).
             투영 띠와 나란히 두는 이유: 둘 다 "지금 무언가 돌지 않는다"는 말이고, 자리를
