@@ -425,6 +425,72 @@ describe('#335 writer 의 폭이 PTY 폭이 되고, 읽기 전용 창의 폭은 
   });
 });
 
+describe('터미널 T2 — 폭을 못 정하는 창은 서버가 알려 준 PTY 크기로 그린다', () => {
+  const mountPanel = async () => {
+    let opts: TerminalSinkOptions | undefined;
+    const follow = vi.fn();
+    setTerminalSinkFactory((_el, o) => {
+      opts = o;
+      return { write: () => {}, refit: () => {}, follow, dispose: () => {} };
+    });
+    const api = {
+      baseUrl: 'http://localhost:8080',
+      agentSessions: vi.fn(async () => [session()]),
+      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session() })),
+    };
+    setController({ api } as unknown as Controller);
+    useAppStore.getState().set({
+      me: acc('u1', 'owner'),
+      accounts: { a1: agent('a1', 'forge', 'u1') },
+      terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1' },
+    });
+    render(<TerminalPanel />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    return { sinkOpts: () => opts, follow };
+  };
+
+  it('읽기 전용 창은 받은 크기로 따라가고, 폭의 주인이 되면 자기 크기로 돌아온다', async () => {
+    const { follow } = await mountPanel();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false, resize: false, reason: 'other-writer' }); });
+    await act(async () => { FakeSocket.last!.deliver({ type: 'size', cols: 180, rows: 50 }); });
+    expect(follow).toHaveBeenLastCalledWith({ cols: 180, rows: 50 });
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true, resize: true, reason: null }); });
+    expect(follow).toHaveBeenLastCalledWith(null);
+    // 주인은 크기 통지를 받아도(자기가 정한 값이다) 따라가지 않는다.
+    follow.mockClear();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'size', cols: 90, rows: 30 }); });
+    expect(follow).not.toHaveBeenCalled();
+  });
+
+  it('강등되면 그때까지 받은 크기로 곧장 따라간다', async () => {
+    const { follow } = await mountPanel();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: true, resize: true, reason: null }); });
+    await act(async () => { FakeSocket.last!.deliver({ type: 'size', cols: 150, rows: 40 }); });
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false, resize: false, reason: 'other-writer' }); });
+    expect(follow).toHaveBeenLastCalledWith({ cols: 150, rows: 40 });
+  });
+
+  it('범위 밖 크기(0·1001·소수)는 버린다 — 서버를 믿더라도 xterm 버퍼 상한', async () => {
+    const { follow } = await mountPanel();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false, resize: false, reason: 'other-writer' }); });
+    follow.mockClear();
+    for (const [cols, rows] of [[0, 40], [1001, 40], [120.5, 40], [120, 5000]]) {
+      await act(async () => { FakeSocket.last!.deliver({ type: 'size', cols, rows }); });
+    }
+    expect(follow).not.toHaveBeenCalled();
+  });
+
+  it('남의 크기로 그릴 때만 배지에 그 크기를 덧붙인다', async () => {
+    const { sinkOpts } = await mountPanel();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false, resize: false, reason: 'other-writer' }); });
+    expect(screen.queryByTestId('terminal-follow-note')).toBeNull();
+    await act(async () => { sinkOpts()!.onFollow!({ cols: 120, rows: 40, fontSize: 13, scroll: false, differs: false }); });
+    expect(screen.queryByTestId('terminal-follow-note')).toBeNull();
+    await act(async () => { sinkOpts()!.onFollow!({ cols: 120, rows: 40, fontSize: 10, scroll: false, differs: true }); });
+    expect(screen.getByTestId('terminal-follow-note').textContent).toContain('120×40');
+  });
+});
+
 /**
  * #369 — 진행 중인 멘션 턴은 관찰 전용이고, 화면이 **왜**인지 말한다.
  *

@@ -3012,6 +3012,8 @@ export const en = {
    * 살아 있는지 화면에서 알 수 없다. 뒤 절반이 **규칙**이라 다음을 예측할 수 있다.
    */
   /** 턴이 끝난 뒤의 차례 줄. 입력이 실제로 닫혔으므로 「입력 가능」을 남기지 않는다. */
+  'terminal.follow.size': 'Showing at its size {cols}×{rows}',
+  'terminal.follow.tooltip': 'Drawn at the typing window’s size so lines don’t break. Take over input to switch to this window’s size.',
   'terminal.writer.ended': 'The turn ended, so input is closed.',
   'terminal.writer.can': 'You can type — the window opened last holds input.',
   /**
