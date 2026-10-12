@@ -60,6 +60,7 @@ import { workItemUpsertSchema } from '../routes/workItemRoutes.js';
 import { listTeams } from '../services/teams.js';
 import { listHandleGroups } from '../services/handleGroups.js';
 import { recordClaudeLane } from '../services/claudeLane.js';
+import { readAgentStop } from '../services/agents.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
 import { recordUpload, resolveAttachmentFor } from '../services/attachments.js';
 import { ARTIFACT_PUBLISH_ARG_MAX_BYTES, ARTIFACT_REJECTION_MESSAGES, attachArtifactVersion } from '../services/artifacts.js';
@@ -1526,6 +1527,11 @@ function buildMcpServer(
       // 배치로는 턴을 띄우지 않는다. 판본이 필요한 순간이 곧 항목이 있는 순간이다.
       if (result.entries.length && account.kind === 'agent') {
         return jsonResult({ ...result, memoryRev: await memoryRev(pool, account.id) });
+      }
+      // 빈 폴에는 종료 요청을 싣는다(`readAgentStop` 주석). **키가 늘 있다**(값이 null 이어도) — 러너는 키가
+      // 있으면 `/agent/config` 를 따로 부르지 않고, 없으면(옛 서버) 전처럼 부른다.
+      if (account.kind === 'agent') {
+        return jsonResult({ ...result, ...(await readAgentStop(pool, account.id)) });
       }
       return jsonResult(result);
     } finally {

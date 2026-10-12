@@ -528,8 +528,14 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       // 상태 보드(2026-10-01)가 스레드의 지금 상태를 함께 받는다. 묻는 쪽만 값을 치른다 —
       // 러너의 폴(`unread=1`)은 머리를 쓰지 않는다. 옛 앱은 이 키를 안 보내 응답이 그대로다.
       threads: z.enum(['1']).optional(),
+      /**
+       * 이 id **뒤에** 생긴 항목만(2026-10-12 inbox 호출 설계 A). 모바일은 `inbox.updated` 마다 inbox 를 통째로
+       * (읽은 것까지, 수천 줄) 다시 받았다 — 새 줄만 받아 붙이면 된다. 읽음 상태가 바뀐 옛 줄은 오지 않으므로
+       * 앱은 시작·재연결·당겨서 새로고침 때 전체를 받는다. 옛 앱은 이 키를 안 보내 응답이 그대로다.
+       */
+      since: z.coerce.number().int().min(0).optional(),
     }).parse(req.query);
-    const entries = await listInbox(pool, req.account!.id, { unreadOnly: q.unread ?? false });
+    const entries = await listInbox(pool, req.account!.id, { unreadOnly: q.unread ?? false, sinceId: q.since });
     if (q.threads !== '1') return { entries };
     const threads = await listInboxThreads(pool, req.account!.id, entries);
     // 내 완료·나중에(089). 머리가 실린 스레드의 것만 — 걸러진 머리의 상태가 따로 새지 않게.
