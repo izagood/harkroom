@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller } from '../src/state/controller';
+import { ApiError } from '../src/lib/api';
 import { acc, chan, msg, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 import type { MessageRow } from '@harkroom/shared';
 
@@ -130,6 +131,59 @@ describe('끊긴 동안 받아 둔 스레드', () => {
     expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/connection/);
   });
 
+  /** designer s1 — 뿌리 한 줄로 패널을 세우면 「답 0개 · 끝남」이 된다. */
+  it('같은 채널 — 뿌리만 있고 답글이 없으면 닫고 사유를 말한다', async () => {
+    const { c } = mount({ messages: offline as never });
+    useAppStore.getState().upsertMessages('c1', [msg('m1', 'c1', 1, 'c1 의 뿌리', 'u1')]);
+    await c.openThread('m1');
+    expect(useAppStore.getState().threadRootId).toBeNull();
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/connection/);
+  });
+
+  /** security F1 — 서버가 답한 거절은 받아 둔 줄이 있어도 닫는다(지워진·빠진 대화). */
+  const held = () => useAppStore.getState().upsertMessages('c1', [
+    msg('m1', 'c1', 1, 'c1 의 뿌리', 'u1'),
+    msg('m2', 'c1', 2, '받아 둔 답글', 'u2', { threadRootId: 'm1' }),
+  ]);
+  it('403 이면 받아 둔 답글이 있어도 닫고 「들어가 있지 않은 대화」라 말한다', async () => {
+    const { c } = mount({ messages: vi.fn(async () => { throw new ApiError(403, 'forbidden', 'nope'); }) as never });
+    held();
+    await c.openThread('m1');
+    expect(useAppStore.getState().threadRootId).toBeNull();
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/not part of/);
+  });
+  it('404 면 받아 둔 답글이 있어도 닫고 「없다」고 말한다', async () => {
+    const { c } = mount({ messages: vi.fn(async () => { throw new ApiError(404, 'not_found', 'gone'); }) as never });
+    held();
+    await c.openThread('m1');
+    expect(useAppStore.getState().threadRootId).toBeNull();
+    expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/gone/);
+  });
+  it('5xx 는 전송 실패로 친다 — 받아 둔 답글로 연다', async () => {
+    const { c } = mount({ messages: vi.fn(async () => { throw new ApiError(503, 'unavailable', 'db down'); }) as never });
+    held();
+    await c.openThread('m1');
+    expect(useAppStore.getState().threadRootId).toBe('m1');
+    expect(useAppStore.getState().notices).toHaveLength(0);
+  });
+
+  /** security n1 — 늦게 온 실패가 그 사이 연 다른 스레드를 닫지 않는다. */
+  it('늦게 온 실패는 그 사이 연 다른 스레드를 건드리지 않는다', async () => {
+    let failX!: (e: Error) => void;
+    const messages = vi.fn((_c: string, o?: { thread?: string }) => (o?.thread === 'x1'
+      ? new Promise((_r, rej) => { failX = rej; })
+      : Promise.reject(new Error('offline'))));
+    const { c } = mount({ messages: messages as never });
+    held();
+    useAppStore.getState().upsertMessages('c1', [msg('x1', 'c1', 5, '안 받아 둔 스레드', 'u1')]);
+    const opening = c.openThread('x1');
+    await c.openThread('m1');
+    expect(useAppStore.getState().threadRootId).toBe('m1');
+    failX(new Error('timeout'));
+    await opening;
+    expect(useAppStore.getState().threadRootId).toBe('m1');
+  });
+
   it('다른 스레드의 줄은 손에 든 것으로 치지 않는다', async () => {
     const { c } = mount({ messages: offline as never });
     useAppStore.getState().upsertMessages('c1', [msg('x1', 'c1', 5, '남의 뿌리', 'u1')]);
@@ -143,7 +197,7 @@ describe('끊긴 동안 받아 둔 스레드', () => {
  * 끊긴 사이의 **새** 줄만 주므로, 끊긴 동안 연 스레드에서 못 받은 옛 답글은 따로 물어야 온다.
  */
 describe('재접속 때 열린 스레드', () => {
-  it('뿌리만 손에 있던 스레드의 옛 답글을 다시 붙으면 받아 온다', async () => {
+  it('일부 답글만 손에 있던 스레드의 옛 답글을 다시 붙으면 받아 온다', async () => {
     const server: MessageRow[] = [
       msg('m1', 'c1', 1, '뿌리', 'u1'),
       msg('m2', 'c1', 2, '옛 답글', 'u2', { threadRootId: 'm1' }),
@@ -161,8 +215,9 @@ describe('재접속 때 열린 스레드', () => {
     const c = new Controller(api, makeWs);
     await c.start();
     useAppStore.getState().set({ activeChannelId: 'c1' });
-    // 끊기기 전에 채널 첫 페이지만 받았다 — 뿌리(m1)와 m3 는 있고 답글 m2 는 없다.
-    useAppStore.getState().upsertMessages('c1', [server[0]!, server[2]!]);
+    // 끊기기 전에 받은 것: 뿌리(m1)·m3·채널에도 올라온 새 답글 m4. 옛 답글 m2 는 없다.
+    server.push(msg('m4', 'c1', 4, '채널에도 올라온 답글', 'u2', { threadRootId: 'm1' }));
+    useAppStore.getState().upsertMessages('c1', [server[0]!, server[2]!, server[3]!]);
     await c.openThread('m1');
     expect(useAppStore.getState().threadRootId).toBe('m1');
     expect(useAppStore.getState().messages.c1!.some((m) => m.id === 'm2')).toBe(false);
