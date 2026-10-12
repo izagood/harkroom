@@ -74,6 +74,16 @@ export interface BundleAcceptResult {
   code?: string;
 }
 
+/**
+ * 읽기(GET) 요청의 시한(ms). **끊김이 거절이 아니라 '응답 없음'으로 올 때**(2026-10-12 DB 장애 —
+ * 서버는 소켓을 받고 답을 안 했다) `fetch` 는 시한이 없어 스레드 클릭이 끝없이 멈춘 것처럼 보였다.
+ * 시한이 지나면 그 조회는 실패로 끝나고, 부른 쪽은 이미 가진 것을 보이거나(`openThread`) 사유를 말한다.
+ *
+ * **GET 에만 건다.** 쓰기를 시한으로 끊으면 서버는 해냈는데 화면은 실패라 하고, 사람이 다시 누르면
+ * 같은 글이 두 번 간다. 첨부·아바타 바이트(`fetchAttachment` 등)도 뺀다 — 큰 파일은 정당하게 오래 걸린다.
+ */
+export const READ_TIMEOUT_MS = 20_000;
+
 export class ApiClient {
   constructor(public baseUrl: string, private token: string | null = null) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -99,16 +109,31 @@ export class ApiClient {
     const headers: Record<string, string> = { ...extra };
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (this.token) headers.authorization = `Bearer ${this.token}`;
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-    if (res.status === 204) return { body: undefined as T, headers: res.headers };
-    const json: unknown = await res.json().catch(() => null);
-    if (!res.ok) {
-      const err = (json as { error?: { code?: string; message?: string } } | null)?.error;
-      throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`, json);
+    // 시한은 본문을 다 읽을 때까지 잰다 — 머리만 오고 본문이 멈추는 것도 같은 '응답 없음'이다.
+    const abort = method === 'GET' ? new AbortController() : null;
+    const timer = abort ? setTimeout(() => abort.abort(), READ_TIMEOUT_MS) : null;
+    try {
+      const res = await fetch(`${this.baseUrl}${path}`, {
+        method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
+        ...(abort ? { signal: abort.signal } : {}),
+      });
+      if (res.status === 204) return { body: undefined as T, headers: res.headers };
+      const json: unknown = await res.json().catch((e: unknown) => {
+        if (abort?.signal.aborted) throw e;
+        return null;
+      });
+      if (!res.ok) {
+        const err = (json as { error?: { code?: string; message?: string } } | null)?.error;
+        throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`, json);
+      }
+      return { body: json as T, headers: res.headers };
+    } catch (e) {
+      // 메시지는 비운다 — `errorText` 가 그러면 사전의 `apiError.generic` 으로 말한다(새 문구 없이).
+      if (abort?.signal.aborted) throw new ApiError(0, 'request_timeout', '');
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    return { body: json as T, headers: res.headers };
   }
 
   private async req<T>(method: string, path: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
