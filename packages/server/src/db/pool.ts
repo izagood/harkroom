@@ -28,9 +28,18 @@ export function createPool(connectionString: string, onError: (err: Error) => vo
   const pool = new pg.Pool({
     connectionString, max: POOL_MAX, connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS,
   });
-  pool.on('error', (err) => {
+  const report = (err: Error) => {
     // 보고가 던지면 가드가 무의미해진다 — 로거가 죽은 상황이 정확히 이런 때다.
     try { onError(err); } catch { /* 삼킨다: 살아 있는 것이 보고보다 중요하다 */ }
-  });
+  };
+  pool.on('error', report);
+  /**
+   * **빌려 간 클라이언트**에도 같은 가드를 단다(2026-10-12). pg-pool 은 위 `error` 를 유휴
+   * 클라이언트에만 걸고, `pool.connect()` 로 내준 동안에는 그 리스너를 뗀다. 그 사이 연결이 끊기고
+   * 마침 질의가 없으면(트랜잭션을 쥔 채 다른 커넥션의 `postMessage` 를 기다리는 sweep 처럼) pg 는
+   * 리스너 없는 `error` 를 emit 한다 — uncaught exception, 곧 프로세스 사망이다. 끊긴 클라이언트는
+   * 반납할 때 pg-pool 이 `_queryable` 을 보고 버리므로 여기서는 알리기만 한다.
+   */
+  pool.on('connect', (client) => { client.on('error', report); });
   return pool;
 }

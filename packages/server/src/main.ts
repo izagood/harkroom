@@ -1,5 +1,5 @@
 import { loadConfig } from './config.js';
-import { runMigrations } from './db/migrate.js';
+import { runMigrationsWhenReachable } from './db/migrate.js';
 import { createPool } from './db/pool.js';
 import { buildServer } from './buildServer.js';
 import { warnIfProjectionDisabled } from './avcs/projection.js';
@@ -15,7 +15,18 @@ const config = loadConfig();
 const pool = createPool(config.databaseUrl, (err) => {
   console.error('postgres pool error (idle client):', err.message);
 });
-await runMigrations(pool);
+// DB 가 아직 안 떴으면 기다린다(2026-10-12) — 이유는 runMigrationsWhenReachable 주석.
+await runMigrationsWhenReachable(pool);
+
+/*
+ * 처리 안 된 거절(unhandled rejection)은 **잡지 않는다** — Node 기본(`throw`)대로 프로세스가 죽는다.
+ * 전역 핸들러로 로그 한 줄만 남기고 살려 두면 이번 사고(sweep 이 DB 오류를 놓쳐 죽던 것)와
+ * 무관한 결함까지 조용히 묻히고, 어디서 무엇이 반쯤 끝났는지 모르는 프로세스가 계속 요청을 받는다.
+ * DB 순간 장애에 살아남는 것은 **각 자리**가 한다: 주기 작업은 자기 오류를 로그로 남기고 다음
+ * 주기에 다시 하고(test/dbOutage.test.ts), 빌려 간 클라이언트의 끊김은 db/pool.ts 가 받는다.
+ * 그 밖에서 새는 거절은 고칠 결함이다 — 죽음과 스택이 그것을 알린다(에이전트 쪽 같은 판단:
+ * packages/agent/src/main.ts 의 unhandledRejection 주석).
+ */
 
 // 클레임 토큰을 심는다(053). 마이그레이션 **뒤**라야 한다 — 그때 테이블이 생긴다.
 // 값이 없으면 아무 일도 하지 않는다: 셀프호스트는 `/bootstrap` 을 쓰고 이 경로를 모른다.
