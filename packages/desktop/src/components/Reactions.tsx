@@ -112,7 +112,7 @@ export function ReactionPickerPanel({ message, onClose }: { message: MessageRow;
       <div className="mb-2 flex items-center justify-between px-0.5 text-meta text-fg-subtle">
         <span>{t('reactions.pickTitle')}</span>
         <button
-          aria-label="Close reaction picker"
+          aria-label={t('chat.closeReactionPicker')}
           className="rounded-sm px-1 hover:bg-surface-hover hover:text-fg"
           onClick={onClose}
         >

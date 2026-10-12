@@ -427,7 +427,7 @@ describe('사이드바 — 언어를 한국어로 바꾸면 한국어로 뜬다'
   it('채널 이름 규칙 오류가 한국어로 바뀐다', () => {
     render(<Sidebar panel="home" {...sidebarProps} />);
     fireEvent.click(screen.getByTestId('add-channel'));
-    fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'Bad Name' } });
+    fireEvent.change(screen.getByLabelText('새 채널 이름'), { target: { value: 'Bad Name' } });
     fireEvent.click(screen.getByText('만들기'));
     expect(screen.getByRole('alert').textContent).toContain('1~48자');
   });
@@ -845,7 +845,7 @@ describe('에이전트 설정 — 언어를 한국어로 바꾸면 한국어로 
     seedAgents([]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-create'));
-    fireEvent.change(await screen.findByLabelText('Agent name'), { target: { value: 'Bad Name' } });
+    fireEvent.change(await screen.findByLabelText('에이전트 이름'), { target: { value: 'Bad Name' } });
     fireEvent.click(screen.getByRole('button', { name: '에이전트 만들기' }));
     expect((await screen.findByRole('alert')).textContent).toContain('2~32자');
   });
@@ -961,15 +961,18 @@ describe('에이전트 설정 — 옮기면서 사실을 잃지 않는다', () =
   });
 
   /**
-   * **번역하지 않은 것이 번역되지 않았다.** `admin`·`PAT`·`harness`·`daemon`·`attach` 는
+   * **번역하지 않은 것이 번역되지 않았다.** `admin`·`PAT`·`daemon`·`attach` 는
    * 이 제품의 고유어이고, 옮기면 사람이 문서·터미널·서버 오류에서 보는 말과 화면의 말이
    * 갈라진다(`en.ts` 의 agents 머리말).
+   *
+   * `harness` 는 이 목록에서 뺐다(2026-10-10, designer i18n P3-b s1): 사전은 이미 23곳에서
+   * 「하네스」 로 옮겨 쓰고 있었고, 같은 폼 안에서 토글 「하네스 기본값 쓰기」 와 칸 「harness 기본값」 이
+   * 두 꼴로 섞였다. 하네스 **이름**(`claude-code`·`codex`)은 값이라 여전히 그대로 선다.
    */
   it('제품 고유어는 두 언어에서 같은 글자다', () => {
     const pairs: [keyof typeof en, string][] = [
       ['agents.run.defaultsNotAdmin', 'admin'],
       ['agents.pat.heading', 'PAT'],
-      ['agents.run.harnessDefault', 'harness'],
       ['agents.runner.daemonScope', 'daemon'],
       ['agents.permissions.ownerNone', 'attach'],
     ];
@@ -2806,7 +2809,7 @@ describe('초대 화면 — 되돌릴 수 없는 것을 두 언어가 다 말한
   });
 });
 
-describe('레일 — 두 언어로 뜨고 칸 이름은 안 옮긴다', () => {
+describe('레일 — 두 언어로 뜨고 칸 이름도 언어를 따른다', () => {
   const railProps = {
     panel: 'home' as const,
     onPanelChange: () => {},
@@ -2817,19 +2820,27 @@ describe('레일 — 두 언어로 뜨고 칸 이름은 안 옮긴다', () => {
   };
 
   /**
-   * **칸 이름 넷은 두 언어 모두 그대로다.** `RAIL_CELLS` 의 그 값들은 62px 레일에서
-   * 폭을 재어 고른 것이라(그 주석의 실측: `Agents` 가 11px 에서 32.89px), 언어마다
-   * 길이가 갈리면 그 계산이 무너진다 — 옮기려면 **먼저 다시 재야 한다.**
+   * **칸 이름 다섯이 고른 언어로 선다**(P3-i). 전에는 폭을 잰 값이라며 영어로 묶어 두어
+   * 한국어 화면에도 `Home`·`Saved` 가 섰다. 폭은 언어마다 다시 쟀다 — 한국어에서 가장 긴
+   * `에이전트` 가 한글 네 자(11px 에서 약 44px)라 54px 버튼 안에 든다(`Rail.tsx` 주석).
    */
-  it('칸 이름 넷이 두 언어에서 같은 글자다', () => {
+  it('칸 이름 다섯이 고른 언어로 선다', () => {
+    const names = {
+      en: ['Home', 'DM', 'Agents', 'Saved', 'Collab'],
+      ko: ['홈', 'DM', '에이전트', '저장', '협업'],
+    } as const;
     for (const locale of ['en', 'ko'] as const) {
       cleanup();
       speak(locale);
       useActiveStore.getState().set({ me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') } });
       render(<Rail {...railProps} />);
       const rail = screen.getByTestId('rail').textContent ?? '';
-      for (const name of ['Home', 'DM', 'Agents', 'Saved']) {
+      for (const name of names[locale]) {
         expect(rail, `${locale}.${name}`).toContain(name);
+      }
+      if (locale === 'ko') {
+        expect(rail).not.toContain('Home');
+        expect(screen.getByTestId('rail-saved').getAttribute('aria-label')).toBe('저장된 메시지');
       }
     }
   });
@@ -2859,7 +2870,7 @@ describe('레일 — 두 언어로 뜨고 칸 이름은 안 옮긴다', () => {
     seedBlocking();
     render(<Rail {...railProps} />);
     expect(screen.getByTestId('rail-home').getAttribute('aria-label'))
-      .toBe('Home — 나를 기다리는 것 2개');
+      .toBe('홈 — 나를 기다리는 것 2개');
   });
 });
 

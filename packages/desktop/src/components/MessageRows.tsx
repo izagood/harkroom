@@ -9,6 +9,7 @@ import { exchangeRows, type ExchangeSlot } from '../lib/agentExchange';
 import type { SectionId } from './settings/sections';
 import type { Locale } from '../i18n';
 import { markFirstMessagePaint } from '../lib/bootTimings';
+import { useT } from '../i18n/useT';
 
 /**
  * 채널 대화 줄들 — **화면에 보이는 줄과 그 앞뒤 버퍼만 마운트한다**(대화 불러오기 성능,
@@ -247,6 +248,7 @@ interface SlotRowProps {
  * 그때 바뀐 것이 없다 — 새로 들어온 줄만 그려야 굴림이 가볍다.
  */
 const SlotRow = memo(function SlotRow({ slot, newDay, divider, locale, index, measureRef, onOpenDirectory, onOpenSettings }: SlotRowProps) {
+  const t = useT();
   const m = slotHead(slot);
   return (
     /* `data-anchor-id` 는 **읽던 자리를 붙잡을 손잡이**다(`lib/scrollAnchor.ts`).
@@ -268,7 +270,7 @@ const SlotRow = memo(function SlotRow({ slot, newDay, divider, locale, index, me
       {divider && (
         <div className="flex items-center gap-2 px-4 py-1" role="separator">
           <span className="h-px flex-1 bg-danger-border" />
-          <span className="text-meta font-medium text-danger">New messages</span>
+          <span className="text-meta font-medium text-danger">{t('chat.newMessages')}</span>
           <span className="h-px flex-1 bg-danger-border" />
         </div>
       )}

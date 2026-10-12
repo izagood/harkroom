@@ -61,6 +61,7 @@ import { AGENT_DETAIL_TABS, parseAgentTarget, type AgentDetailTab } from './agen
 import { ConfirmDialog } from '../ConfirmDialog';
 import { operatorNameOf, operatorPickerLabels } from '../../lib/operatorName';
 import { ImmediateBadge, PendingEditsContext, setLeaveGuard, type PendingHandlers, type RegisterPending } from './pendingEdits';
+import { errorText } from '../../lib/errorText';
 
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 harkroom 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
@@ -1593,7 +1594,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       // 되돌리면 방금 만든 카드를 다시 찾아 눌러야 한다.
       setSelectedTeam(created);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('agents.teams.createFailed'));
+      setError(errorText(e, t, t('agents.teams.createFailed')));
     } finally { setBusy(false); }
   };
 
@@ -2374,10 +2375,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   둘을 한 문장으로 합치면 둘 다 안 읽힌다.
                 */}
                 <label className={label}>
-                  Agent name
+                  {t('agents.profile.name')}
                   <input
                     className={field}
-                    aria-label="Agent name"
+                    aria-label={t('agents.profile.name')}
                     placeholder="fizz"
                     value={draft.handle}
                     onChange={(e) => setDraft({ ...draft, handle: e.target.value })}
@@ -2388,10 +2389,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 </label>
 
                 <label className={label}>
-                  Agent instructions
+                  {t('agents.profile.instructions')}
                   <textarea
                     className={`${field} resize-y`}
-                    aria-label="Agent instructions"
+                    aria-label={t('agents.profile.instructions')}
                     rows={6}
                     placeholder={t('agents.profile.instructionsPlaceholder')}
                     value={draft.instructions}
@@ -2414,19 +2415,19 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <div>
                   {/* 두 단추는 아래 모델·Effort 칸과 같은 12px 이다 — 글자 크기를 안 적으면 단추는 브라우저 기본 16px 로 서서
                       한 단계 커 보였다(designer #1263 nit 3). */}
-                  <div className={label}>AI configuration</div>
+                  <div className={label}>{t('agents.run.aiConfig')}</div>
                   <div className="mt-1 flex gap-1">
                     <button
                       className={`flex-1 rounded-row px-3 py-2 text-meta ${customized ? 'bg-surface-sunken text-fg-muted' : 'bg-surface-raised ring-1 ring-border'}`}
                       onClick={() => setCustomized(false)}
                     >
-                      Use harness defaults
+                      {t('agents.run.useDefaults')}
                     </button>
                     <button
                       className={`flex-1 rounded-row px-3 py-2 text-meta ${customized ? 'bg-surface-raised ring-1 ring-border' : 'bg-surface-sunken text-fg-muted'}`}
                       onClick={() => setCustomized(true)}
                     >
-                      Customize for this agent
+                      {t('agents.run.customize')}
                     </button>
                   </div>
                 </div>
@@ -2448,7 +2449,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       {t('agents.run.effort')}
                       <select
                         className={field}
-                        aria-label="Effort"
+                        aria-label={t('agents.run.effort')}
                         value={draft.effort}
                         onChange={(e) => setDraft({ ...draft, effort: e.target.value })}
                       >
@@ -2460,16 +2461,16 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 )}
 
                 <label className={label}>
-                  Agent harness
+                  {t('agents.run.harness')}
                   <select
                     className={field}
-                    aria-label="Agent harness"
+                    aria-label={t('agents.run.harness')}
                     value={draft.harness}
                     onChange={(e) => setDraft({ ...draft, harness: e.target.value as AgentConfig['harness'] })}
                   >
                     {AGENT_HARNESSES.map((h) =>
                       (RUNNABLE_HARNESSES as readonly string[]).includes(h)
-                        ? <option key={h} value={h}>{h} (default)</option>
+                        ? <option key={h} value={h}>{t('agents.run.harnessOptionDefault', { harness: h })}</option>
                         : <option key={h} value={h} disabled>{t('agents.run.harnessPlanned', { harness: h })}</option>,
                     )}
                     {PLANNED.map((h) => (
@@ -2500,18 +2501,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 )}
                 {agentPool.available && harnessHasAccountPool(draft.harness) && (
                   <label className={label}>
-                    Account pool
+                    {t('agents.run.pool')}
                     <select
                       className={field}
-                      aria-label="Account pool"
+                      aria-label={t('agents.run.pool')}
                       disabled={!agentPool.ready}
                       value={agentPool.assigned}
                       onChange={(e) => void agentPool.assign(e.target.value)}
                     >
                       <option value="">
                         {agentPool.defaultPool
-                          ? `Use the default pool (${agentPool.defaultPool})`
-                          : 'Use the default pool'}
+                          ? t('agents.run.poolDefaultNamed', { pool: agentPool.defaultPool })
+                          : t('agents.run.poolDefault')}
                       </option>
                       {agentPool.pools.map((p) => <option key={p} value={p}>{p}</option>)}
                     </select>
@@ -2520,11 +2521,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         생성 시점에 쓰인다(그래서 첫 러너가 이미 그 풀로 뜬다 — 재시작이
                         필요 없다). 한 문구로 뭉개면 한쪽은 반드시 틀린 말이 된다. */}
                     <span className="mt-1 block text-meta text-fg-subtle">
-                      This machine only — pools are local directories, so this is not shared
-                      with other devices.{' '}
+                      {t('agents.run.poolLocalNote')}{' '}
                       {selected || createdAgentId
-                        ? 'Restart the runner for a change to take effect.'
-                        : 'Applied when the agent is created, before its runner starts.'}
+                        ? t('agents.run.poolRestartNote')
+                        : t('agents.run.poolOnCreateNote')}
                     </span>
                     {agentPool.error && (
                       <span className="mt-1 block text-meta text-danger">{agentPool.error}</span>
@@ -2621,7 +2621,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                             .catch((err: unknown) => setError(
                               err instanceof ApiError && err.code === 'not_capable'
                                 ? t('agents.assignment.notCapable')
-                                : t('agents.assignment.failed', { reason: err instanceof Error ? err.message : String(err) }),
+                                : t('agents.assignment.failed', { reason: errorText(err, t) }),
                             ))
                             .finally(() => setAssigning(false));
                         }}
@@ -2648,7 +2648,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                                 setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
                               })
                               .catch((err: unknown) => setError(
-                                t('agents.assignment.failed', { reason: err instanceof Error ? err.message : String(err) }),
+                                t('agents.assignment.failed', { reason: errorText(err, t) }),
                               ))
                               .finally(() => setAssigning(false));
                           }}
@@ -2777,10 +2777,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     자기가 뭘 잘못했다고 생각한다(#299). 값 자체는 아래 읽기 전용 칸에 적는다. */}
                 {isAdmin && (
                   <label className={label}>
-                    Mention permission
+                    {t('agents.permissions.mention')}
                     <select
                       className={field}
-                      aria-label="Mention permission"
+                      aria-label={t('agents.permissions.mention')}
                       value={draft.mentionPermission}
                       onChange={(e) => setDraft({ ...draft, mentionPermission: e.target.value as MentionPermission })}
                     >
@@ -2795,10 +2795,10 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
 
                 <label className={label}>
-                  Working directory
+                  {t('agents.permissions.workingDir')}
                   <input
                     className={field}
-                    aria-label="Working directory"
+                    aria-label={t('agents.permissions.workingDir')}
                     placeholder={t('agents.permissions.workingDirPlaceholder')}
                     value={draft.workingDir}
                     onChange={(e) => setDraft({ ...draft, workingDir: e.target.value })}
@@ -2810,7 +2810,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     {t('agents.permissions.ownerLabel')}
                     <select
                       className={field}
-                      aria-label="Owner"
+                      aria-label={t('agents.permissions.ownerLabel')}
                       value={draft.ownerAccountId ?? ''}
                       onChange={(e) => setDraft({ ...draft, ownerAccountId: e.target.value || null })}
                     >

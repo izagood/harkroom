@@ -47,6 +47,7 @@ import { SidebarToggleIcon } from './SidebarToggleIcon';
 // 그 갈림의 근거는 `i18n/index.ts::Translate` 머리말에 있다.
 import { useT } from '../i18n/useT';
 import type { MessageKey, Translate } from '../i18n';
+import { errorText } from '../lib/errorText';
 
 /**
  * 메뉴에 그리는 이름. 값(`all`/`mentions`/`none`)은 저장·전송용이라 번역하지 않는다.
@@ -371,7 +372,7 @@ export function Sidebar({
       (info) => setDeleteCount(info.messageCount),
       (err: unknown) => {
         setDeleteCount('error');
-        setDeleteError(err instanceof Error ? err.message : t('sidebar.delete.countFailed'));
+        setDeleteError(errorText(err, t, t('sidebar.delete.countFailed')));
       },
     );
   };
@@ -387,7 +388,7 @@ export function Sidebar({
       await getController().deleteChannel(channelId);
       closeDelete();
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : t('sidebar.delete.failed'));
+      setDeleteError(errorText(err, t, t('sidebar.delete.failed')));
     }
   };
 
@@ -408,7 +409,7 @@ export function Sidebar({
       closeCreate();
     } catch (err) {
       // 실패를 조용히 삼키면 사용자는 눌렀는데 아무 일도 안 난 것으로 본다.
-      setCreateError(err instanceof Error ? err.message : t('sidebar.channel.createFailed'));
+      setCreateError(errorText(err, t, t('sidebar.channel.createFailed')));
     }
   };
 
@@ -455,7 +456,7 @@ export function Sidebar({
       const liveAt = loaded?.length ? loaded[loaded.length - 1]!.createdAt : null;
       return {
         id: dm.id,
-        label: peers.map((id) => accounts[id]?.handle ?? '…').join(', ') || 'just me',
+        label: peers.map((id) => accounts[id]?.handle ?? '…').join(', ') || t('sidebar.dm.justMe'),
         // 둘 중 **늦은 것**. 문자열 비교로 충분하다 — 둘 다 서버가 낸 ISO 8601 UTC 라
         // 사전순이 곧 시간순이다(`Date` 로 감싸면 파싱 비용만 늘고 결과는 같다).
         lastAt: dm.lastMessageAt && liveAt
@@ -482,7 +483,7 @@ export function Sidebar({
         return a.lastAt < b.lastAt ? 1 : -1;
       }
       return a.id.localeCompare(b.id);
-    }), [dms, accounts, me, online, connected, channelPrefs, messages]);
+    }), [dms, accounts, me, online, connected, channelPrefs, messages, t]);
 
   const others = Object.values(accounts).filter((a) => a.id !== me?.id);
 
@@ -1261,7 +1262,7 @@ export function Sidebar({
             <InboxRowBadge />
           </button>
           <button className={`${row(false)} text-fg-muted`} onClick={onOpenDirectory}>
-            Directory
+            {t('chat.directory')}
           </button>
           {/*
             `Saved` 한 줄이 여기 있었다. **레일의 북마크 칸으로 갔다** — 문서: "북마크는
@@ -1312,7 +1313,7 @@ export function Sidebar({
               <div className="mb-1 rounded-row border border-border bg-surface-raised p-1">
                 <input
                   type="text"
-                  aria-label="New channel name"
+                  aria-label={t('chat.newChannelName')}
                   className="mb-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
                   placeholder="channel-name"
                   value={newChannelName}

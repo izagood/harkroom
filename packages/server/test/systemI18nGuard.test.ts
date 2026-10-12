@@ -41,7 +41,8 @@ describe('systemI18n — 서버 빌더', () => {
   });
 
   it('인자가 키 표와 어긋나면 던진다 — 서버 코드의 실수를 조용히 넘기지 않는다', () => {
-    expect(() => systemI18n('system.member.added', {})).toThrow();
-    expect(() => systemI18n('system.member.added', { accountId: 'a', more: 'b' })).toThrow();
+    // 타입이 먼저 막는다(n1-a) — 실행 중 검사도 남아 있는지 `as never` 로 우회해 잰다.
+    expect(() => systemI18n('system.member.added', {} as never)).toThrow();
+    expect(() => systemI18n('system.member.added', { accountId: 'a', more: 'b' } as never)).toThrow();
   });
 });

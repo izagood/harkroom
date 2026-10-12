@@ -20,6 +20,7 @@ import { WindowDragStrip } from './components/WindowDragStrip';
 import { markBoot } from './lib/bootTimings';
 import { BootNotice, type BootWait } from './components/BootNotice';
 import type { SectionId } from './components/settings/sections';
+import { nowT } from './i18n/useT';
 
 /**
  * #166: 세션을 레지스트리를 거쳐 띄운다. `active: true` 는 "화면이 이 커뮤니티를 본다" 는
@@ -185,9 +186,9 @@ export default function App() {
         if (isCredentialRejection(err)) {
           await sessionStore.remove(active.accountId);
           if (cancelled) return;
-          setConnectError('Your saved session has expired, or it was signed out elsewhere. Please sign in again.');
+          setConnectError(nowT()('notice.savedSessionExpired'));
         } else {
-          setConnectError(`Could not reach ${hostOf(active.baseUrl)}. Your saved communities are kept — sign in again, or restart the app to retry.`);
+          setConnectError(nowT()('notice.savedSessionUnreachable', { host: hostOf(active.baseUrl) }));
         }
         setPhase('connect');
       }

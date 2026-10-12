@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { copyText } from '../lib/clipboard';
 import { writeConcealed } from '../lib/concealedClipboard';
+import { useT } from '../i18n/useT';
 
 /**
  * 워크스페이스를 만든 직후 **한 번만** 보여 주는 복구 키.
@@ -27,22 +28,23 @@ export function RecoveryKeyStep({ recoveryKey, communityName, onDone }: {
   communityName: string;
   onDone(): void;
 }) {
+  const t = useT();
   const [saved, setSaved] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const keyRef = useRef<HTMLElement | null>(null);
 
   const copy = async () => {
     if (await writeConcealed(recoveryKey)) {
-      setNote('Copied. The clipboard will be cleared in 60 seconds.');
+      setNote(t('connect.recovery.copiedConcealed'));
       return;
     }
     const outcome = await copyText(recoveryKey, keyRef.current);
     if (outcome === 'copied') {
-      setNote('Copied. Clear your clipboard after you\'ve put it in your password manager.');
+      setNote(t('connect.recovery.copied'));
     } else if (outcome === 'selected') {
-      setNote('Selected — press ⌘C to copy.');
+      setNote(t('connect.recovery.selected'));
     } else {
-      setNote('Could not copy. Select the key and copy it by hand.');
+      setNote(t('connect.recovery.copyFailed'));
     }
   };
 
@@ -56,7 +58,7 @@ export function RecoveryKeyStep({ recoveryKey, communityName, onDone }: {
       a.download = filename;
       a.click();
       // WKWebView 는 저장창 없이 Downloads 에 바로 쓴다 — 평문 파일이 남았다는 것을 말해 준다.
-      setNote(`Saved to Downloads as ${filename} — move it to your password manager and delete the file.`);
+      setNote(t('connect.recovery.savedFile', { filename }));
     } finally {
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
     }
@@ -64,11 +66,9 @@ export function RecoveryKeyStep({ recoveryKey, communityName, onDone }: {
 
   return (
     <div className="space-y-3" data-testid="recovery-key-step">
-      <p className="text-fg font-medium">Save your recovery key</p>
-      <p className="text-meta text-fg-subtle">
-        This key restores the community&apos;s secret vault if the hosting service ever has to be rebuilt.
-        It is shown <span className="font-semibold">only once</span> — nobody, including the operator, keeps a copy.
-        If you leave this screen before saving it, it can&apos;t be shown again.
+      <p className="text-fg font-medium">{t('connect.recovery.title')}</p>
+      <p className="break-keep text-meta text-fg-subtle">
+        {t('connect.recovery.introBefore')}<span className="font-semibold">{t('connect.recovery.introOnce')}</span>{t('connect.recovery.introAfter')}
       </p>
       <code
         ref={keyRef}
@@ -79,19 +79,17 @@ export function RecoveryKeyStep({ recoveryKey, communityName, onDone }: {
       </code>
       <div className="flex gap-2">
         <button type="button" className="flex-1 rounded-row border border-border py-1.5 text-meta hover:bg-surface" onClick={() => { void copy(); }}>
-          Copy
+          {t('connect.recovery.copy')}
         </button>
         <button type="button" className="flex-1 rounded-row border border-border py-1.5 text-meta hover:bg-surface" onClick={saveFile}>
-          Save to file
+          {t('connect.recovery.saveFile')}
         </button>
       </div>
       {note && <p className="text-meta text-fg-subtle" role="status">{note}</p>}
-      <p className="text-meta text-fg-subtle">
-        Copied keys can stay in clipboard history or sync to your other devices. A password manager is the safest place to keep it.
-      </p>
+      <p className="break-keep text-meta text-fg-subtle">{t('connect.recovery.clipboardNote')}</p>
       <label className="flex items-start gap-2 text-meta">
         <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
-        <span>I saved the recovery key somewhere safe.</span>
+        <span>{t('connect.recovery.confirm')}</span>
       </label>
       <button
         type="button"
@@ -99,7 +97,7 @@ export function RecoveryKeyStep({ recoveryKey, communityName, onDone }: {
         onClick={onDone}
         className="w-full rounded-row bg-accent py-2 font-medium text-fg-on-strong disabled:opacity-50"
       >
-        Continue
+        {t('connect.recovery.continue')}
       </button>
     </div>
   );

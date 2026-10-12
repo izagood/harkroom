@@ -133,7 +133,7 @@ describe('private 채널 UI (#182)', () => {
     sidebar();
 
     fireEvent.click(screen.getByTestId('add-channel'));
-    fireEvent.change(screen.getByLabelText('New channel name'), { target: { value: 'newchan' } });
+    fireEvent.change(screen.getByLabelText('새 채널 이름'), { target: { value: 'newchan' } });
     fireEvent.click(screen.getByLabelText('비공개 (멤버만 볼 수 있다)'));
     fireEvent.click(screen.getByText('만들기'));
 

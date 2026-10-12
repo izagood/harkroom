@@ -8,6 +8,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useAgo, useLocale, useT } from '../i18n/useT';
 import { dateTimeText } from '../lib/localeText';
+import { errorText } from '../lib/errorText';
 
 /** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
 const INBOX_NO_TEAMS: never[] = [];
@@ -202,7 +203,7 @@ export function Inbox({ open, onClose }: Props) {
         setEntries([]);
         setThreads(null);
         setThreadStates([]);
-        setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        setLoad({ kind: 'error', message: errorText(err, t) });
       },
     );
     return () => { alive = false; };
@@ -244,7 +245,7 @@ export function Inbox({ open, onClose }: Props) {
     const dm = dms.find((d) => d.id === id);
     if (dm) {
       const peers = dm.memberIds.filter((p) => p !== me?.id);
-      return peers.map((p) => accounts[p]?.handle ?? '…').join(', ') || t('inbox.board.justMe');
+      return peers.map((p) => accounts[p]?.handle ?? '…').join(', ') || t('sidebar.dm.justMe');
     }
     return ch?.name ? `#${ch.name}` : id;
   }, [channels, dms, accounts, me, t]);

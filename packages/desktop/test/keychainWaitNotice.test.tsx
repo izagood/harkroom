@@ -94,7 +94,7 @@ describe('부팅 문구 — 무엇을 기다리는지 말한다 (#460)', () => {
 
     expect(screen.queryByText(TITLE)).toBeNull();
     // 아는 것은 그대로 말한다 — 화면이 비지는 않는다.
-    expect(screen.getByText('Connecting…')).toBeTruthy();
+    expect(screen.getByText('연결하는 중…')).toBeTruthy();
   });
 
   /**
@@ -133,7 +133,7 @@ describe('부팅 문구 — 무엇을 기다리는지 말한다 (#460)', () => {
     act(() => { vi.advanceTimersByTime(KEYCHAIN_NOTICE_DELAY_MS * 100); });
 
     expect(screen.queryByText(TITLE)).toBeNull();
-    expect(screen.getByText('Connecting…')).toBeTruthy();
+    expect(screen.getByText('연결하는 중…')).toBeTruthy();
   });
 });
 

@@ -107,7 +107,7 @@ describe('ChannelPane', () => {
     useAppStore.getState().set({ hasMore: { c1: true } });
     render(<ChannelPane />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Load older messages' }));
+    fireEvent.click(screen.getByRole('button', { name: '이전 메시지 불러오기' }));
 
     expect(c.loadOlder).toHaveBeenCalled();
   });
@@ -116,7 +116,7 @@ describe('ChannelPane', () => {
     fakeController();
     useAppStore.getState().set({ hasMore: { c1: false } });
     render(<ChannelPane />);
-    expect(screen.queryByRole('button', { name: 'Load older messages' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '이전 메시지 불러오기' })).toBeNull();
   });
 
   // 수정된 메시지는 원문과 구별돼야 한다 — 아니면 대화 기록이 조용히 바뀐다.
@@ -128,14 +128,14 @@ describe('ChannelPane', () => {
       },
     });
     render(<ChannelPane />);
-    expect(screen.getByText('(edited)')).toBeTruthy();
+    expect(screen.getByText('(고침)')).toBeTruthy();
   });
 
   it('leaves an untouched message unmarked', () => {
     fakeController();
     useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, '원문', 'u1')] } });
     render(<ChannelPane />);
-    expect(screen.queryByText('(edited)')).toBeNull();
+    expect(screen.queryByText('(고침)')).toBeNull();
   });
 
   // 남의 말을 고치거나 지우는 진입점이 보이면 안 된다 — 서버가 막지만 UI 도 약속을 지켜야 한다.
@@ -150,18 +150,18 @@ describe('ChannelPane', () => {
     // #121: Edit·Delete 는 메시지 호버 툴바의 ⋯ 오버플로 메뉴 안으로 옮겨졌다.
     // #178: 트리거는 이제 **두 메시지 모두**에 있다 — 어떤 메시지든 링크는 만들 수 있어
     // 메뉴가 비지 않는다. 그래서 세는 것은 트리거 수가 아니라 각 메뉴의 내용이다.
-    const triggers = screen.getAllByRole('button', { name: 'More actions' });
+    const triggers = screen.getAllByRole('button', { name: '더 보기' });
     expect(triggers).toHaveLength(2);
     fireEvent.click(triggers[0]!);
-    expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '고치기' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '지우기' })).toBeTruthy();
     // 남의 메시지에는 본문 복사만 있다(링크 복사는 2026-09-09 에 툴바로 올라갔다). 바깥
     // mousedown 으로 첫 메뉴를 닫는다 — click 만으로는 안 닫힌다(Menu 는 mousedown 을 본다).
     fireEvent.mouseDown(document.body);
-    fireEvent.click(screen.getAllByRole('button', { name: 'More actions' })[1]!);
-    expect(screen.getByRole('menuitem', { name: 'Copy text' })).toBeTruthy();
-    expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull();
-    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
+    fireEvent.click(screen.getAllByRole('button', { name: '더 보기' })[1]!);
+    expect(screen.getByRole('menuitem', { name: '텍스트 복사' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: '고치기' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: '지우기' })).toBeNull();
   });
 
   it('sends the rewritten body when an edit is confirmed', () => {
@@ -169,10 +169,10 @@ describe('ChannelPane', () => {
     useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, '고치기 전', 'u1')] } });
     render(<ChannelPane />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: '더 보기' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '고치기' }));
     fireEvent.change(screen.getByDisplayValue('고치기 전'), { target: { value: '고친 뒤' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
 
     expect(c.editMessage).toHaveBeenCalledWith('m1', '고친 뒤');
   });
@@ -182,10 +182,10 @@ describe('ChannelPane', () => {
     useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, '그대로', 'u1')] } });
     render(<ChannelPane />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: '더 보기' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '고치기' }));
     fireEvent.change(screen.getByDisplayValue('그대로'), { target: { value: '버릴 수정' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
 
     expect(c.editMessage).not.toHaveBeenCalled();
     expect(screen.getByText('그대로')).toBeTruthy();
@@ -196,11 +196,11 @@ describe('ChannelPane', () => {
     useAppStore.getState().set({ messages: { c1: [msg('m1', 'c1', 1, '지울 문장', 'u1')] } });
     render(<ChannelPane />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    fireEvent.click(screen.getByRole('button', { name: '더 보기' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '지우기' }));
     // 확인은 메뉴 밖 겹창에 남는다 — 메뉴 안에 두면 항목을 누르는 순간 닫히면서 확인이 사라진다.
-    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete message?' }))
-      .getByRole('button', { name: 'Delete' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: '메시지를 지울까?' }))
+      .getByRole('button', { name: '지우기' }));
 
     expect(c.deleteMessage).toHaveBeenCalledWith('m1');
   });

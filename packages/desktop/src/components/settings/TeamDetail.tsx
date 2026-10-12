@@ -8,6 +8,7 @@ import { Identity } from '../Identity';
 import { Button } from './primitives';
 import { TeamMemberPicker } from './TeamMemberPicker';
 import { useT } from '../../i18n/useT';
+import { errorText } from '../../lib/errorText';
 
 /**
  * 팀 이름 문법. **`HANDLE_PATTERN` 을 그대로 쓴다** — 팀 이름은 계정 handle 과 같은
@@ -150,7 +151,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
       await getController().updateTeam(team.id, next);
       onChanged({ deleted: false });
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('agents.teams.renameFailed'));
+      setError(errorText(e, t, t('agents.teams.renameFailed')));
     } finally { setBusy(false); }
   };
 
@@ -162,7 +163,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
       setConfirmDelete(false);
       onChanged({ deleted: true });
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('agents.teams.deleteFailed'));
+      setError(errorText(e, t, t('agents.teams.deleteFailed')));
     } finally { setBusy(false); }
   };
 
@@ -181,7 +182,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
       setLead(row.leadAccountId);
       onChanged({ deleted: false });
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('agents.teams.leadFailed'));
+      setError(errorText(e, t, t('agents.teams.leadFailed')));
     } finally { setBusy(false); }
   };
 
@@ -195,7 +196,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
       // 바뀌었으면 목록도 다시 읽어야 그 수가 맞는다(`TeamGrid` 의 그 주석).
       onChanged({ deleted: false });
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('agents.teams.memberAddFailed'));
+      setError(errorText(e, t, t('agents.teams.memberAddFailed')));
     } finally { setBusy(false); }
   };
 
@@ -207,7 +208,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
       setMembers(m);
       onChanged({ deleted: false });
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('agents.teams.memberRemoveFailed'));
+      setError(errorText(e, t, t('agents.teams.memberRemoveFailed')));
     } finally { setBusy(false); }
   };
 

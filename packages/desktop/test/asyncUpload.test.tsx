@@ -44,7 +44,7 @@ const fakeController = (over: Partial<Controller> = {}) => {
 };
 
 const pick = (name: string) => {
-  const input = screen.getByLabelText('Attach a file') as HTMLInputElement;
+  const input = screen.getByLabelText('파일 첨부') as HTMLInputElement;
   fireEvent.change(input, { target: { files: [new File(['x'], name, { type: 'text/plain' })] } });
 };
 const typeAndSend = (text: string) => {
@@ -169,7 +169,7 @@ describe('uploading without blocking the composer', () => {
     await waitFor(() => expect(d.calls).toHaveLength(1));
     typeAndSend('잠깐');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Undo send' }));
+    fireEvent.click(screen.getByRole('button', { name: '보내기 취소' }));
     await act(async () => { d.calls[0]!.resolve(att({ id: 'up-3' })); });
 
     expect(onSend).not.toHaveBeenCalled();
@@ -196,7 +196,7 @@ describe('uploading without blocking the composer', () => {
     const d = deferredUploads();
     fakeController({ upload: d.upload });
     render(<Composer onSend={vi.fn()} scopeKey="c1" />);
-    const input = screen.getByLabelText('Attach a file') as HTMLInputElement;
+    const input = screen.getByLabelText('파일 첨부') as HTMLInputElement;
     const files = Array.from({ length: MAX_PARALLEL_UPLOADS + 1 }, (_, i) => new File(['x'], `f${i}.txt`));
     fireEvent.change(input, { target: { files } });
 
@@ -252,7 +252,7 @@ describe('uploading without blocking the composer', () => {
     const d = deferredUploads();
     fakeController({ upload: d.upload });
     render(<Composer onSend={vi.fn()} scopeKey="c1" />);
-    const input = screen.getByLabelText('Attach a file') as HTMLInputElement;
+    const input = screen.getByLabelText('파일 첨부') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File(['x'], 'a.txt'), new File(['x'], 'b.txt')] } });
     await waitFor(() => expect(d.calls).toHaveLength(2));
     await act(async () => { d.calls[0]!.reject(new Error('x')); d.calls[1]!.reject(new Error('x')); });
@@ -272,7 +272,7 @@ describe('uploading without blocking the composer', () => {
       // 서버 바이트는 끝까지 안 온다 — 그 사이에 무엇이 그려지는지 본다.
       fakeController({ upload: d.upload, fetchAttachment: vi.fn(() => new Promise<Blob>(() => {})) });
       render(<Composer onSend={vi.fn()} scopeKey="c1" />);
-      const input = screen.getByLabelText('Attach a file') as HTMLInputElement;
+      const input = screen.getByLabelText('파일 첨부') as HTMLInputElement;
       fireEvent.change(input, { target: { files: [new File(['x'], 'shot.png', { type: 'image/png' })] } });
       await waitFor(() => expect(d.calls).toHaveLength(1));
       const uploading = screen.getByTestId('attachment-local-thumb');

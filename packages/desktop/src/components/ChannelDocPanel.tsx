@@ -7,6 +7,7 @@ import type { ChannelDoc } from '@harkroom/shared';
 import type { SectionId } from './settings/sections';
 import { useLocale, useT } from '../i18n/useT';
 import { dateTimeText } from '../lib/localeText';
+import { errorText } from '../lib/errorText';
 
 interface ChannelDocPanelProps {
   channelId: string;
@@ -70,7 +71,7 @@ export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: 
       })
       .catch((err: unknown) => {
         if (!alive) return;
-        setLoadError(err instanceof Error ? err.message : t('channel.doc.unknownError'));
+        setLoadError(errorText(err, t, t('channel.doc.unknownError')));
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
@@ -106,7 +107,7 @@ export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: 
         expectedRef.current = expectationOf(current);
         setSaveError(t('channel.doc.conflict'));
       } else {
-        setSaveError(err instanceof Error ? err.message : t('channel.doc.saveFailed'));
+        setSaveError(errorText(err, t, t('channel.doc.saveFailed')));
       }
     } finally {
       setSaving(false);

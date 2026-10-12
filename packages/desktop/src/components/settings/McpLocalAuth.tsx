@@ -24,6 +24,7 @@ import { selectAccountNames } from '../../lib/accountNames';
 import { stampLabel } from '../../lib/day';
 import { useActiveStore } from '../../state/communities';
 import { useLocale, useT } from '../../i18n/useT';
+import { errorText } from '../../lib/errorText';
 
 /** 흐름의 수명과 같다(오퍼레이터가 5분에 닫는다). */
 const WAIT_MS = 5 * 60_000;
@@ -57,7 +58,7 @@ export function McpLocalAuth({ entry, warn, disabled, onChanged, onError }: {
 
   if (entry.transport === 'stdio' || !entry.auth) return null;
 
-  const fail = (e: unknown) => onError(t('agents.mcp.auth.failed', { reason: e instanceof Error ? e.message : String(e) }));
+  const fail = (e: unknown) => onError(t('agents.mcp.auth.failed', { reason: errorText(e, t) }));
   const signIn = () => void (async () => {
     try {
       const { authUrl } = await startLocalMcpAuth(entry.name);

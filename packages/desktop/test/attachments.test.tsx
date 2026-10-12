@@ -194,7 +194,7 @@ describe('첨부 저장 실패를 사람 앞에 세운다', () => {
 
 describe('attaching a file in the composer', () => {
   const pick = (name: string, type = 'text/plain') => {
-    const input = screen.getByLabelText('Attach a file') as HTMLInputElement;
+    const input = screen.getByLabelText('파일 첨부') as HTMLInputElement;
     const file = new File(['content'], name, { type });
     fireEvent.change(input, { target: { files: [file] } });
     return file;
@@ -467,7 +467,7 @@ describe('컴포저 밖에 떨어진 파일', () => {
  */
 describe('보내기 전 첨부 칩의 미리보기', () => {
   const pick = (name: string, type: string) => {
-    const input = screen.getByLabelText('Attach a file') as HTMLInputElement;
+    const input = screen.getByLabelText('파일 첨부') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File(['content'], name, { type })] } });
   };
 

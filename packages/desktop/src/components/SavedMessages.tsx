@@ -6,6 +6,7 @@ import { getController } from '../state/controller';
 import { displayBody } from '../lib/mention';
 import { useT, useLocale } from '../i18n/useT';
 import { stampLabel } from '../lib/day';
+import { errorText } from '../lib/errorText';
 
 interface Props {
   open: boolean;
@@ -48,7 +49,7 @@ export function SavedMessages({ open, onClose }: Props) {
       (err: unknown) => {
         if (!alive) return;
         setEntries([]);
-        setLoad({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+        setLoad({ kind: 'error', message: errorText(err, t) });
       },
     );
     return () => { alive = false; };
@@ -75,10 +76,10 @@ export function SavedMessages({ open, onClose }: Props) {
     const dm = dms.find((d) => d.id === id);
     if (dm) {
       const peers = dm.memberIds.filter((p) => p !== me?.id);
-      return peers.map((p) => accounts[p]?.handle ?? '…').join(', ') || 'just me';
+      return peers.map((p) => accounts[p]?.handle ?? '…').join(', ') || t('sidebar.dm.justMe');
     }
     return ch?.name ? `#${ch.name}` : id;
-  }, [channels, dms, accounts, me]);
+  }, [channels, dms, accounts, me, t]);
 
   if (!open) return null;
 
@@ -153,7 +154,7 @@ export function SavedMessages({ open, onClose }: Props) {
   return (
     <Overlay label={t('saved.label')} onClose={onClose}>
         <div className="flex items-center gap-2 border-b border-border p-3">
-          <span className="font-semibold">Saved</span>
+          <span className="font-semibold">{t('chat.saved')}</span>
           <button
             onClick={onClose}
             className="ml-auto rounded-row px-2 py-1 text-fg-muted hover:bg-surface-hover"

@@ -154,7 +154,7 @@ export function SkillsSettings({ targetId }: { targetId?: string } = {}) {
                   <div className="flex items-start gap-4">
                     <div className="min-w-0 flex-1">
                       <span className="font-mono font-medium text-fg">{skill.slug}</span>
-                      <span className="ml-2 text-fg-muted">제안자 @{handleOf(skill.proposedBy)}</span>
+                      <span className="ml-2 text-fg-muted">{t('skills.proposedBy', { handle: handleOf(skill.proposedBy) })}</span>
                       {/* 상대 시각으로(UX ④c). 전체 시각은 올려 두면 보인다. */}
                       <span className="ml-2 text-fg-subtle" title={dateTimeText(skill.proposedAt, locale)}>
                         {ago(new Date(skill.proposedAt).getTime())}

@@ -276,7 +276,7 @@ describe('#342 로그인 전 화면의 창 손잡이', () => {
 
     // 접속 화면이 실제로 떴는지 먼저 확인한다 — 안 뜬 화면에서 손잡이가 없는 것은
     // 이 이슈와 다른 이야기다.
-    expect(await screen.findByText('Server URL')).toBeTruthy();
+    expect(await screen.findByText('서버 주소')).toBeTruthy();
     const strip = findStrip();
     expect(strip).toBeTruthy();
     expect(strip!.hasAttribute('data-tauri-drag-region')).toBe(true);
@@ -285,7 +285,7 @@ describe('#342 로그인 전 화면의 창 손잡이', () => {
   it('로그인 폼의 입력·버튼에는 손잡이가 없다 — 붙으면 포커스가 드래그에 먹힌다', async () => {
     pretendMac();
     render(<App />);
-    expect(await screen.findByText('Server URL')).toBeTruthy();
+    expect(await screen.findByText('서버 주소')).toBeTruthy();
 
     const targets = Array.from(document.querySelectorAll('form button, form input'));
     expect(targets.length).toBeGreaterThan(0);
@@ -300,9 +300,9 @@ describe('#342 로그인 전 화면의 창 손잡이', () => {
   it('로그인 화면의 입력이 여전히 값을 받는다', async () => {
     pretendMac();
     render(<App />);
-    expect(await screen.findByText('Server URL')).toBeTruthy();
+    expect(await screen.findByText('서버 주소')).toBeTruthy();
 
-    const loginId = screen.getByLabelText('Login ID') as HTMLInputElement;
+    const loginId = screen.getByLabelText('로그인 ID') as HTMLInputElement;
     fireEvent.change(loginId, { target: { value: 'admin' } });
     expect(loginId.value).toBe('admin');
   });
@@ -310,7 +310,7 @@ describe('#342 로그인 전 화면의 창 손잡이', () => {
   it('macOS 가 아니면 띠를 그리지 않는다 — OS 장식이 그대로 있다', async () => {
     pretendWindows();
     render(<App />);
-    expect(await screen.findByText('Server URL')).toBeTruthy();
+    expect(await screen.findByText('서버 주소')).toBeTruthy();
     expect(findStrip()).toBeNull();
   });
 });
@@ -389,7 +389,7 @@ describe('#359 띠 높이', () => {
   it('띠가 타이틀바 높이(40px)를 쓴다', async () => {
     pretendMac();
     render(<App />);
-    expect(await screen.findByText('Server URL')).toBeTruthy();
+    expect(await screen.findByText('서버 주소')).toBeTruthy();
 
     const strip = document.querySelector('[data-testid="window-drag-strip"]')!;
     expect(strip.className).toContain(MAC_TITLEBAR_H);

@@ -73,7 +73,7 @@ describe('#254 답글 컨트롤 위치 변경', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
-    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: '메시지 도구' });
     const replyBtn = screen.getByRole('button', { name: '답글 2개' });
 
     // 답글 버튼과 툴바가 다른 부모를 갖는다 (다른 컨테이너)
@@ -112,7 +112,7 @@ describe('#254 답글 컨트롤 위치 변경', () => {
     expect(screen.queryByRole('button', { name: 'Reply in thread' })).toBeNull();
 
     // 진입점은 툴바 안의 아이콘 버튼이다.
-    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: '메시지 도구' });
     const threadBtn = within(toolbar).getByRole('button', { name: '스레드에 답글 달기' });
     expect(threadBtn).toBeTruthy();
 
@@ -137,7 +137,7 @@ describe('#254 답글 컨트롤 위치 변경', () => {
     const c = fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, '테스트', 'u1')} />);
 
-    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: '메시지 도구' });
     fireEvent.mouseEnter(toolbar);
 
     // 인라인 이모지 버튼 3개
@@ -146,10 +146,10 @@ describe('#254 답글 컨트롤 위치 변경', () => {
     expect(within(toolbar).getByRole('button', { name: 'React with ✅' })).toBeTruthy();
 
     // 피커
-    expect(within(toolbar).getByRole('button', { name: /Add reaction|＋/ })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: /리액션 더하기|＋/ })).toBeTruthy();
 
     // 메뉴
-    expect(within(toolbar).getByRole('button', { name: 'More actions' })).toBeTruthy();
+    expect(within(toolbar).getByRole('button', { name: '더 보기' })).toBeTruthy();
   });
 
   // 회귀선 6: 스레드 패널(inThread) 안에서는 답글 컨트롤이 없다 (pill 도, 툴바 아이콘도)
@@ -169,7 +169,7 @@ describe('#254 툴바 앵커 변경 (#145 관련)', () => {
     fakeController();
     render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', { replyCount: 2 })} />);
 
-    const toolbar = screen.getByRole('toolbar', { name: 'message toolbar' });
+    const toolbar = screen.getByRole('toolbar', { name: '메시지 도구' });
 
     // right-full 이 아니어야 함
     expect(toolbar.className).not.toMatch(/\bright-full\b/);

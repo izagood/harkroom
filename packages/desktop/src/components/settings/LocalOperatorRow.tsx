@@ -9,6 +9,7 @@ import { getController } from '../../state/controller';
 import { hasOperatorLocalSurface, listLocalAgents, removeLocalAgent, setLocalAgent } from '../../lib/operatorLocal';
 import { useT } from '../../i18n/useT';
 import { usePendingEdit } from './pendingEdits';
+import { errorText } from '../../lib/errorText';
 
 interface LocalState { registered: boolean; present: boolean; workingDir: string }
 
@@ -36,7 +37,7 @@ export function LocalOperatorRow({ agentId, disabled }: { agentId: string; disab
   const run = async (fn: () => Promise<void>, done: string): Promise<boolean> => {
     setBusy(true); setNotice(null);
     try { await fn(); setNotice(done); load(); return true; }
-    catch (e) { setNotice(t('agents.local.failed', { reason: e instanceof Error ? e.message : String(e) })); return false; }
+    catch (e) { setNotice(t('agents.local.failed', { reason: errorText(e, t) })); return false; }
     finally { setBusy(false); }
   };
 

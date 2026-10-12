@@ -31,7 +31,7 @@ export function ModelPicker({ value, models, onChange, className }: {
     <input
       className={className}
       // 고르개와 같이 설 때는 이름이 겹치지 않게 한다 — 둘 다 'Model' 이면 라벨로 집을 수 없다.
-      aria-label={models === undefined ? 'Model' : 'Model name'}
+      aria-label={models === undefined ? t('agents.run.model') : t('agents.model.nameAria')}
       data-testid="model-custom-input"
       placeholder={t('agents.run.harnessDefault')}
       value={value}
@@ -50,7 +50,7 @@ export function ModelPicker({ value, models, onChange, className }: {
     <>
       <select
         className={className}
-        aria-label="Model"
+        aria-label={t('agents.run.model')}
         data-testid="model-select"
         disabled={models === null}
         value={showCustom ? CUSTOM : value}

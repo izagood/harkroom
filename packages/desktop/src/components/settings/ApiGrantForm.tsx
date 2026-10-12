@@ -5,6 +5,7 @@ import { useLocale } from '../../i18n/useT';
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
 import { useT } from '../../i18n/useT';
+import { errorText } from '../../lib/errorText';
 
 /**
  * 에이전트에게 `api.call` 을 주는 폼(외부 API 권한 C안 P4b, designer v3 ③·④). 「할 수 있는 일」의 [+ 권한 주기]와 막힘 카드의
@@ -87,7 +88,7 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, on
           bad_limits: t('apiGrant.errLimits'), no_connector: t('apiGrant.errConnector'),
         };
         setError(known[e.code] ?? (e.status === 403 ? t('apiGrant.errForbidden') : t('apiGrant.errFailed', { reason: e.message })));
-      } else setError(t('apiGrant.errFailed', { reason: e instanceof Error ? e.message : String(e) }));
+      } else setError(t('apiGrant.errFailed', { reason: errorText(e, t) }));
     } finally { setBusy(false); }
   };
 

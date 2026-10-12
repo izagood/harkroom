@@ -4,6 +4,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
 import { useT } from '../i18n/useT';
+import { errorText } from '../lib/errorText';
 
 /**
  * 채널 이름·주제·저장소 편집 폼(UX ⑦b-2). `Sidebar` 의 인라인 폼을 **그대로** 꺼냈다 — 규칙과 그 근거
@@ -65,7 +66,7 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
         setEditError(t('sidebar.edit.nameTaken'));
         return;
       }
-      setEditError(err instanceof Error ? err.message : t('sidebar.edit.failed'));
+      setEditError(errorText(err, t, t('sidebar.edit.failed')));
     }
   };
 
@@ -90,7 +91,7 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
           */}
           <input
             type="text"
-            aria-label="Channel name"
+            aria-label={t('chat.channelEdit.name')}
             data-testid="channel-edit-name"
             className="mb-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             placeholder={t('sidebar.edit.namePlaceholder')}
@@ -99,7 +100,7 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
           />
           <input
             type="text"
-            aria-label="Topic"
+            aria-label={t('chat.channelEdit.topic')}
             className="mb-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
             placeholder={t('sidebar.edit.topicPlaceholder')}
             value={editTopic}
@@ -108,7 +109,7 @@ export function ChannelEditForm({ channel, onDone }: { channel: ChannelRow; onDo
           <div className="mb-1 flex items-center gap-1">
             <input
               type="text"
-              aria-label="Repository"
+              aria-label={t('chat.channelEdit.repo')}
               className="flex-1 rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
               placeholder={t('sidebar.edit.repoPlaceholder')}
               value={editRepo}

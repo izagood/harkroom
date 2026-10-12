@@ -163,7 +163,7 @@ describe('상한을 넘긴 본문', () => {
     await waitFor(() => expect(c.upload).toHaveBeenCalled());
     await waitFor(() => expect(box().value).toBe(''));
     // 첨부만 남았으니 전송은 다시 살아 있다 — 첨부만 보내는 것은 자연스럽다.
-    expect((screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement).disabled)
+    expect((screen.getByRole('button', { name: '메시지 보내기' }) as HTMLButtonElement).disabled)
       .toBe(false);
   });
 

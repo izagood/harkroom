@@ -585,7 +585,7 @@ describe('부를 상대 미리보기 (#278)', () => {
   it('고정 멘션 칩과 이 줄은 다른 요소다 — 겹쳐도 둘 다 남고, 칩을 지워도 이 줄은 본문 기준이다', () => {
     render(<Composer onSend={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /Add mention/ }));
+    fireEvent.click(screen.getByRole('button', { name: /멘션 더하기/ }));
     fireEvent.click(screen.getAllByRole('option').find((o) => o.getAttribute('data-handle') === 'fizz')!);
     expect(screen.queryAllByTestId('sticky-mention')).toHaveLength(1);
 
