@@ -448,7 +448,8 @@ export class Controller {
     if (!first.hasMore || !first.messages.length || this.backfills.has(channelId)) return;
     const oldest = Math.min(...first.messages.map((m) => m.seq));
     const run = (async () => {
-      const page = await this.api.messages(channelId, { before: oldest, limit: INITIAL_HISTORY_LIMIT - FIRST_PAGE_LIMIT });
+      // 본문에 서는 줄만 센다(`feed`, `api.messages` 의 근거) — 답글로 채운 450 행은 화면에 몇 줄 못 세운다.
+      const page = await this.api.messages(channelId, { before: oldest, limit: INITIAL_HISTORY_LIMIT - FIRST_PAGE_LIMIT, feed: true });
       if (this.stopped) return;
       if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), oldest - 1);
       const store = this.store.getState();
@@ -1562,7 +1563,10 @@ export class Controller {
     if (!rows.length) return;
     const oldest = Math.min(...rows.map((m) => m.seq));
 
-    const page = await this.api.messages(activeChannelId, { before: oldest });
+    // **본문에 서는 줄만** 받는다(`feed`). 답글이 섞인 페이지가 답글뿐이면 화면에 늘어나는 줄이 없고, 다음
+    // 페이지를 부르는 계기는 스크롤 이벤트뿐이라 맨 위에서 멈췄다(`ChannelPane.maybeLoadOlder`, 스레드 36caac7a).
+    // 피드 페이지는 받은 것이 있으면 곧 본문 줄이다 — 그 줄이 높이를 늘려 다음 손짓이 다시 닿는다.
+    const page = await this.api.messages(activeChannelId, { before: oldest, feed: true });
     // `before: X` 는 X 아래 전부를 물은 것이다 — 받은 줄의 seq 가 아니라 물은 범위를 적는다.
     if (page.messages.length) this.addCoverage(activeChannelId, Math.min(...page.messages.map((m) => m.seq)), oldest - 1);
     this.store.getState().upsertMessages(activeChannelId, page.messages);

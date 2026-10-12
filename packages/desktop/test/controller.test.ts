@@ -278,7 +278,7 @@ describe('Controller', () => {
     await c.loadOlder();
 
     const call = (api.messages as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
-    expect(call[1]).toMatchObject({ before: 5 });
+    expect(call[1]).toMatchObject({ before: 5, feed: true });
     expect(useAppStore.getState().messages.c1!.map((m) => m.id)).toEqual(['m1', 'm5', 'm9']);
     expect(useAppStore.getState().hasMore.c1).toBe(false);
   });

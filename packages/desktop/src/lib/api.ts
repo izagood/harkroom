@@ -284,14 +284,22 @@ export class ApiClient {
       startedAt: health.startedAt ?? '',
     };
   }
-  /** `hasMore` 는 '이 페이지보다 오래된 것이 남았는가'다 — 상단 추가 로드 표시에 쓴다. */
+  /**
+   * `hasMore` 는 '이 페이지보다 오래된 것이 남았는가'다 — 상단 추가 로드 표시에 쓴다.
+   *
+   * `feed` 는 **채널 옛 페이지**(`before`)를 본문에 서는 줄(머리·alsoInChannel 답글)만으로 채우라는 뜻이다 —
+   * 기본 페이지는 답글까지 섞여 limit 을 채우므로, 답글이 많은 채널에서 한 페이지가 답글뿐이면 화면에 늘어나는
+   * 줄이 없고 다음 페이지를 부를 스크롤 이벤트도 다시 오지 않았다(스레드 36caac7a). `hasMore` 도 같은 기준이다.
+   * 이 인자를 모르는 옛 서버는 버리고(zod strip) 지금 페이지를 준다 — 판을 갈라 부를 필요가 없다.
+   */
   messages(
     channelId: string,
-    opts?: { since?: number; before?: number; around?: number; limit?: number; thread?: string },
+    opts?: { since?: number; before?: number; around?: number; limit?: number; thread?: string; feed?: boolean },
   ): Promise<{ messages: MessageRow[]; hasMore: boolean }> {
     const q = new URLSearchParams();
     if (opts?.since !== undefined) q.set('since', String(opts.since));
     if (opts?.before !== undefined) q.set('before', String(opts.before));
+    if (opts?.feed) q.set('feed', '1');
     if (opts?.around !== undefined) q.set('around', String(opts.around));
     if (opts?.limit !== undefined) q.set('limit', String(opts.limit));
     if (opts?.thread) q.set('thread', opts.thread);

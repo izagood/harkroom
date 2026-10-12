@@ -44,7 +44,7 @@ describe('채널 히스토리 창', () => {
     await c.openChannel('c1');
     // 첫 화면은 작게 받아 바로 그리고, 나머지는 첫 창(INITIAL_HISTORY_LIMIT)까지 뒤에서 채운다.
     expect(messages).toHaveBeenNthCalledWith(1, 'c1', { since: 0, limit: FIRST_PAGE_LIMIT });
-    expect(messages).toHaveBeenNthCalledWith(2, 'c1', { before: 1, limit: INITIAL_HISTORY_LIMIT - FIRST_PAGE_LIMIT });
+    expect(messages).toHaveBeenNthCalledWith(2, 'c1', { before: 1, limit: INITIAL_HISTORY_LIMIT - FIRST_PAGE_LIMIT, feed: true });
     // 값도 못 박는다: `toHaveBeenCalledWith` 는 `limit: undefined` 를 "없음"과 같게 보므로,
     // 상한을 지운 판본에서도 위 줄만으로는 초록이 된다(서버 기본값은 200 이다).
     expect(INITIAL_HISTORY_LIMIT).toBeGreaterThan(200);
