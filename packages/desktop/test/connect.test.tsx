@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { ConnectScreen } from '../src/screens/ConnectScreen';
+import { READ_TIMEOUT_MS } from '../src/lib/api';
 
 afterEach(() => {
   cleanup();
@@ -36,6 +37,31 @@ describe('ConnectScreen', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'bad-bad-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(screen.getByText('wrong handle or password')).toBeTruthy());
+  });
+
+  /**
+   * security n3 — `/auth/me` 가 읽기 시한을 넘기면 빈 오류 칸이 아니라 「닿지 않는다」 문구다.
+   * 이 화면은 `err instanceof ApiError ? err.message : <닿지 않는다>` 로 가른다 — 시한 실패가
+   * `ApiError` 면 빈 글이 선다.
+   */
+  it('/auth/me 가 시한을 넘기면 「서버에 닿지 않는다」고 말한다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+        if (String(url).endsWith('/auth/login')) return Promise.resolve(new Response(JSON.stringify({ token: 'tok-t' }), { status: 200 }));
+        return new Promise<Response>((_res, rej) => {
+          init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')));
+        });
+      }));
+      render(<ConnectScreen onConnected={vi.fn()} />);
+      fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'admin' } });
+      fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+      await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS + 10);
+      await waitFor(() => expect(screen.getByText('Could not reach the server')).toBeTruthy());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('bootstrap mode creates admin then logs in', async () => {

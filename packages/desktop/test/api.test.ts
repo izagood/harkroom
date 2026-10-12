@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { ApiClient, ApiError } from '../src/lib/api';
+import { ApiClient, ApiError, READ_TIMEOUT_MS, RequestFailure, requestFailureKind } from '../src/lib/api';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -173,5 +173,83 @@ describe('ApiClient', () => {
     instance!.onload!();
 
     await expect(p).rejects.toMatchObject({ status: 400, code: 'not_an_image' });
+  });
+});
+
+/**
+ * 읽기 시한(2026-10-12). 끊김이 '응답 없음'으로 오면 `fetch` 는 영원히 기다린다 —
+ * 스레드 클릭이 멈춘 것처럼 보였다. GET 은 시한에 끊고, 쓰기는 끊지 않는다(두 번 보내기 방지).
+ */
+describe('읽기 시한', () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** 신호가 끊으면 그때 거절하는, 답하지 않는 서버. */
+  function stubHang() {
+    const fn = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_res, rej) => {
+      init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')));
+    }));
+    vi.stubGlobal('fetch', fn);
+    return fn;
+  }
+
+  it('GET 은 READ_TIMEOUT_MS 뒤 request_timeout 으로 끝난다', async () => {
+    vi.useFakeTimers();
+    stubHang();
+    const api = new ApiClient('http://x:3400', 'tok');
+    const p = api.messages('c1', { thread: 'm1' });
+    const seen = expect(p).rejects.toMatchObject({ name: 'RequestFailure', kind: 'timeout' });
+    await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 1);
+    let settled = false;
+    p.then(() => { settled = true; }, () => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await seen;
+  });
+
+  it('쓰기(POST)에는 신호를 싣지 않는다', async () => {
+    const fn = stubFetch(201, { id: 'm1', seq: 1, channelId: 'c1', threadRootId: null, authorId: 'a', body: 'hi', kind: 'user', meta: {}, createdAt: 'now' });
+    const api = new ApiClient('http://x:3400', 'tok');
+    await api.postMessage('c1', 'hi', undefined, 'idem-1');
+    const [, init] = fn.mock.calls[0]! as unknown as [string, RequestInit];
+    expect(init.signal).toBeUndefined();
+  });
+
+  it('제때 온 응답은 그대로이고 시한 타이머를 남기지 않는다', async () => {
+    vi.useFakeTimers();
+    stubFetch(200, { channels: [] });
+    const api = new ApiClient('http://x:3400', 'tok');
+    await expect(api.channels()).resolves.toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('닿지 못한 실패는 unreachable — 원래 글자는 그대로 둔다', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Load failed'); }));
+    const api = new ApiClient('http://x:3400', 'tok');
+    const err = await api.channels().catch((e: unknown) => e);
+    expect(requestFailureKind(err)).toBe('unreachable');
+    expect((err as Error).message).toBe('Load failed');
+  });
+
+  it('닿지 못한 실패는 쓰기에서도 unreachable 이다(시한만 GET 전용)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    const api = new ApiClient('http://x:3400', 'tok');
+    expect(requestFailureKind(await api.postMessage('c1', 'hi').catch((e: unknown) => e))).toBe('unreachable');
+  });
+
+  /**
+   * **서버가 답한 거절과 섞이지 않는다.** 호출부가 `instanceof ApiError` 로 「서버가 뭐라 했다」와
+   * 「닿지 않는다」를 가르므로, 답 못 받은 실패가 `ApiError` 가 되면 그 자리들이 빈 글이나 날 오류를 보인다.
+   */
+  it('서버 거절은 ApiError 그대로이고 종류가 없다, 답 못 받은 실패는 ApiError 가 아니다', async () => {
+    stubFetch(403, { error: { code: 'forbidden', message: 'nope' } });
+    const api = new ApiClient('http://x:3400', 'tok');
+    const denied = await api.channels().catch((e: unknown) => e);
+    expect(denied).toBeInstanceOf(ApiError);
+    expect(requestFailureKind(denied)).toBeNull();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Load failed'); }));
+    const down = await api.channels().catch((e: unknown) => e);
+    expect(down).toBeInstanceOf(RequestFailure);
+    expect(down).not.toBeInstanceOf(ApiError);
   });
 });
