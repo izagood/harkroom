@@ -47,6 +47,8 @@ class FakeWebglAddon {
 
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: FakeWebglAddon }));
 vi.mock('@xterm/xterm/css/xterm.css', () => ({ default: '' }));
+vi.mock('@fontsource/nanum-gothic-coding/korean-400.css', () => ({ default: '' }));
+vi.mock('@fontsource/nanum-gothic-coding/korean-700.css', () => ({ default: '' }));
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     // #369: `options` 를 진짜 xterm 처럼 **생성자 인자에서 그대로 들고 있는다.** 이것이
@@ -126,7 +128,8 @@ beforeEach(() => {
   rectSpy = vi.spyOn(HTMLSpanElement.prototype, 'getBoundingClientRect')
     .mockImplementation(function (this: HTMLSpanElement) {
       const chars = this.textContent?.length ?? 0;
-      return { width: CELL_W * chars, height: CELL_H } as DOMRect;
+      // 글자 높이 14 × lineHeight 1.15 → 내림 16 = CELL_H(sink 는 xterm 처럼 줄 높이 배율로 칸을 잡는다).
+      return { width: CELL_W * chars, height: 14 } as DOMRect;
     });
 });
 

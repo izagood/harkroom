@@ -142,7 +142,22 @@ export function followFontSize(cols: number, panelWidth: number, cellWidthAtBase
   const fit = Math.floor((FONT_SIZE * panelWidth) / (cols * cellWidthAtBase));
   return Math.max(FOLLOW_MIN_FONT_SIZE, Math.min(FONT_SIZE, fit));
 }
-const FONT_FAMILY = 'courier-new, courier, monospace';
+
+/**
+ * 한글이 든 고정폭 글꼴을 **맨 앞에** 둔다(2026-10-12). courier 류에는 한글이 없어 브라우저가
+ * 대신 고른 글꼴의 한글이 2칸보다 좁았고, 글자 사이가 떠 보였다(`머 지 했 다`).
+ * Nanum Gothic Coding 은 영문 0.5em·한글 1em 이라 한글 한 자가 정확히 두 칸이다 — 영문을
+ * 다른 글꼴로 두고 한글만 이것으로 떨어뜨리면 그 비율이 깨지므로 영문까지 이 글꼴로 그린다.
+ * 앱에 번들한다(`@fontsource/nanum-gothic-coding`, SIL OFL 1.1) — 사람 맥에 깔려 있기를 바라지 않는다.
+ */
+const TERMINAL_FONT = 'Nanum Gothic Coding';
+/**
+ * 줄 높이 배율(designer s1, 2026-10-12 캡처). 나눔고딕코딩 한글은 글자 높이가 칸 높이(배율 1)를 넘어 굵은 한글의
+ * 아래가 다음 줄에 닿고 회색 배경 밖으로 삐져나왔다. xterm 의 `lineHeight` 와 `measureCell` 이 **같은 값**을
+ * 써야 fit 의 줄 수가 맞는다.
+ */
+const LINE_HEIGHT = 1.15;
+const FONT_FAMILY = `"${TERMINAL_FONT}", courier-new, courier, monospace`;
 
 /**
  * 이 호스트 요소에 몇 칸이 들어가는가. xterm 은 스스로 컨테이너에 맞추지 않는다 —
@@ -163,7 +178,10 @@ function measureCell(el: HTMLElement): { width: number; height: number } | null 
   const rect = probe.getBoundingClientRect();
   el.removeChild(probe);
   const width = rect.width / 100;
-  const height = rect.height;
+  // xterm 은 칸 높이를 `글자 높이 × lineHeight` 로 잡는다 — 같은 비율로 잰다(아니면 fit 이 줄을 더 센다).
+  // xterm 처럼 기기 px 로 내린다(`floor(글자 높이 × dpr × lineHeight) / dpr`).
+  const dpr = typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+  const height = Math.floor(rect.height * dpr * LINE_HEIGHT) / dpr;
   if (!(width > 0) || !(height > 0)) return null;
   return { width, height };
 }
@@ -474,8 +492,29 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     // 스타일시트를 함께 받는다 — 없으면 xterm 이 셀 크기를 계산하지 못해 화면이 겹친다.
     // 동적 import 안에 두는 이유는 모듈과 같다: 가짜 sink 를 쓰는 테스트가 이것을 로드하지
     // 않게 한다(jsdom 은 CSS 를 파싱하지 않지만, Vite 의 CSS 처리 경로 자체를 태우지 않는다).
+    // 두 스타일시트를 함께 받는다(한 번 기다린다).
+    const fontCss = Promise.all([
+      import('@fontsource/nanum-gothic-coding/korean-400.css'),
+      // 굵은 글씨도 받는다 — 없으면 브라우저가 400 을 흉내 내 굵게 그리는데 webgl 에서는 굵기가 안 보였다(캡처).
+      import('@fontsource/nanum-gothic-coding/korean-700.css'),
+    ]);
     await import('@xterm/xterm/css/xterm.css');
+    // 한글 칸 폭을 맞추는 글꼴(위 `FONT_FAMILY`). `korean-400.css` 는 unicode-range 가 없는 **통짜 한 파일**
+    // (woff2 ~520KB, 영문 포함)이다 — `400.css` 의 조각(93개)을 쓰면 처음 보는 음절의 조각이 늦게 오고,
+    // 그 사이 webgl 아틀라스가 대신 쓴 글꼴의 글리프를 캐시해 버린다.
+    await fontCss;
     const { Terminal } = await import('@xterm/xterm');
+    // **글꼴이 실제로 올라온 뒤에** 연다 — xterm 과 `measureCell` 은 연 순간의 글꼴로 셀을 잰다.
+    // 늦게 오면 대신 쓴 글꼴 폭으로 칸이 정해져 줄 폭이 어긋난다. 못 받으면(오프라인 웹뷰 등) 그냥 연다.
+    // `document.fonts` 가 없는 곳(jsdom)에서는 기다리지 않는다.
+    if (document.fonts) {
+      try {
+        await Promise.all([
+          document.fonts.load(`${FONT_SIZE}px "${TERMINAL_FONT}"`, '가A'),
+          document.fonts.load(`bold ${FONT_SIZE}px "${TERMINAL_FONT}"`, '가A'),
+        ]);
+      } catch { /* 대신 쓴 글꼴로 연다 */ }
+    }
     if (disposed) return;
     const t = new Terminal({
       // 스크롤백은 러너의 ring buffer(256KB)가 재생하는 만큼이면 충분하다 — 여기서 더
@@ -484,6 +523,10 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       convertEol: false,
       fontSize: FONT_SIZE,
       fontFamily: FONT_FAMILY,
+      lineHeight: LINE_HEIGHT,
+      // 한글 글꼴은 KS X 1001 기호(`— … · →` 등)를 전각으로 그리는데 xterm 은 1칸으로 잡는다 — 다음 칸을
+      // 덮지 않게 칸 안으로 줄인다(designer, 캡처에서 `—PR`·`…→` 겹침 확인).
+      rescaleOverlappingGlyphs: true,
       // 쓸 수 없는 사람에게는 xterm 의 stdin 을 아예 끈다(#315) — 커서도 깜빡이지 않고
       // 키를 눌러도 아무것도 그려지지 않으므로, 화면이 "여기는 읽기 전용이다"를 스스로
       // 말한다. 이유는 패널이 글로 따로 적는다(TerminalPanel.tsx).
