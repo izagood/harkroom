@@ -1518,6 +1518,7 @@ export const ko = {
   'terminal.latency.none': '경로 {path} · 입력→화면 측정 전',
   'terminal.path.server': '서버 경유',
   'terminal.path.local': '로컬 직결',
+  'terminal.path.mixed': '보기 직결 · 입력 서버 경유',
   'terminal.header.close': '닫기',
   'terminal.header.closeAction': '터미널 닫기',
   'terminal.header.resize': '터미널 너비 조절',

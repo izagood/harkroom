@@ -54,7 +54,7 @@ import { errorText } from '../lib/errorText';
  * 터미널 바이트가 지나는 길(R1 PR-4). `server` 는 앱 → 서버 → 러너, `local` 은 같은 맥의 오퍼레이터 소켓 직결이다.
  * 진단 줄이 숫자와 함께 이 값을 적는다 — "어느 길에서 잰 숫자인가"를 사람이 따로 알 필요가 없게.
  */
-type TerminalPath = 'server' | 'local';
+type TerminalPath = 'server' | 'local' | 'mixed';
 
 export function TerminalPanel() {
   const target = useActiveStore((s) => s.terminalTarget);
@@ -111,7 +111,10 @@ export function TerminalPanel() {
    * 으로만 말할 수밖에 없었다 — 이 줄이 그 느낌을 사실로 바꾼다.
    */
   const [diagnostics, setDiagnostics] = useState<TerminalDiagnostics | null>(null);
-  /** 지금 바이트가 지나는 길(`TerminalPath`). 직결 구독이 성공했을 때만 `local` 이다. */
+  /**
+   * 지금 바이트가 지나는 길(`TerminalPath`). 직결 구독이 성공했을 때만 `local` 이고, 그 뒤 입력만 서버로 떨어지면
+   * `mixed`(보기 직결 · 입력 서버 경유)다 — 그때 p50 은 서버 왕복이라 `로컬 직결` 이라고 적으면 거짓이 된다(designer s1).
+   */
   const [path, setPath] = useState<TerminalPath>('server');
   /**
    * `onInput` 콜백이 읽는 최신 writer 값. state 만 쓰면 sink 생성 시점의 클로저에 옛
@@ -184,10 +187,68 @@ export function TerminalPanel() {
       dropLocal = null;
       setPath('server');
       const port = local ? getLocalTerminalPort() : null;
+      /** 길이 바뀌면 라벨과 함께 지연 표본도 비운다 — 옛 길의 숫자가 새 라벨 밑에 남지 않게(designer s1). */
+      const switchPath = (next: TerminalPath): void => { setPath(next); sink?.resetLatency?.(); };
       /** 서버가 이 창에 내린 writer 키(R1). 있고 직결이 살아 있으면 입력·크기를 오퍼레이터 소켓으로 보낸다. */
       let writerKey: string | null = null;
       /** 직결로 보낸 입력이 한 번이라도 거절되면 그 뒤로는 서버 경유로만 보낸다 — 순서가 섞이지 않게(n5). */
       let localInput = false;
+      /**
+       * **직결 입력·크기는 한 줄로 간다**(security #1340 F1). 키마다 따로 `invoke` 하면 Rust 가 그것을 여러 스레드에서
+       * 돌려(`spawn_blocking`) 빨리 친 키가 뒤바뀌어 닿을 수 있다 — Enter 가 앞 글자보다 먼저 가면 다른 명령이다.
+       * 그래서 앞 요청이 끝나야 다음을 보내고, 기다리는 동안 쌓인 바이트는 **한 덩어리로** 보낸다(요청 수도 준다, n2).
+       */
+      type LocalOp = { kind: 'input'; bytes: Uint8Array } | { kind: 'resize'; cols: number; rows: number };
+      const queue: LocalOp[] = [];
+      let inFlight = false;
+      /** 서버로 다시 보내도 되는 거절 — 오퍼레이터가 **받지 않았다고 말한 것**뿐이다(security n1). */
+      const EXPLICIT: ReadonlySet<string> = new Set(['not-writer', 'no-such-session', 'runner-gone']);
+      const sendServer = (op: LocalOp): void => {
+        if (op.kind === 'input') attach?.sendInput(op.bytes);
+        else attach?.sendResize(op.cols, op.rows);
+      };
+      /** 직결을 그만두고 남은 줄을 서버로 흘린다. 경로 라벨은 `mixed` — 보기는 여전히 직결이다. */
+      const leaveLocal = (): void => {
+        localInput = false;
+        switchPath('mixed');
+        for (const op of queue.splice(0)) sendServer(op);
+      };
+      const pump = (): void => {
+        if (inFlight || queue.length === 0) return;
+        const key = writerKey;
+        if (!port || !key) { leaveLocal(); return; }
+        // 앞쪽의 연달은 입력을 하나로 묶는다. 크기는 묶지 않는다 — 그 사이 순서를 지킨다.
+        let op = queue.shift()!;
+        if (op.kind === 'input') {
+          const parts: Uint8Array[] = [op.bytes];
+          while (queue[0]?.kind === 'input') parts.push((queue.shift() as { bytes: Uint8Array }).bytes);
+          if (parts.length > 1) {
+            const joined = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+            let at = 0;
+            for (const p of parts) { joined.set(p, at); at += p.length; }
+            op = { kind: 'input', bytes: joined };
+          }
+        }
+        const current = op;
+        inFlight = true;
+        const sent = current.kind === 'input'
+          ? port.input(attached.sessionId, key, encodeBase64(current.bytes))
+          : port.resize(attached.sessionId, key, current.cols, current.rows);
+        void sent.then((refused) => {
+          inFlight = false;
+          if (refused === null) { pump(); return; }
+          // 명시적 거절이면 오퍼레이터가 안 받았다 — 같은 바이트를 서버로 보낸다(security #1302 n5). 던졌거나(시간 초과·끊김
+          // = `unavailable`) 모양 거절이면 받았는지 모른다 — **버린다**(중복 Enter 보다 유실이 안전하다, security #1340 n1).
+          if (EXPLICIT.has(refused)) sendServer(current);
+          leaveLocal();
+        });
+      };
+      const enqueue = (op: LocalOp): boolean => {
+        if (!port || !localInput || !writerKey) return false;
+        queue.push(op);
+        pump();
+        return true;
+      };
       // **다시** 붙을 수 있다([터미널 열기]가 같은 자리에서 새 세션을 연다) — 앞의 소켓과
       // 화면을 먼저 놓는다. 남겨 두면 끝난 세션의 바이트가 계속 흘러들고, sink 가 둘이면
       // 같은 host 에 xterm 이 두 번 붙어 화면이 겹친다.
@@ -210,17 +271,9 @@ export function TerminalPanel() {
         onInput: (data) => {
           if (!writerRef.current) return;
           const bytes = new TextEncoder().encode(data);
-          if (port && localInput && writerKey) {
-            const key = writerKey;
-            // 오퍼레이터가 거절하면(`not-writer` — 입력이 닫혔다 다시 열려 새 키가 안 온 경우 등, security n5) 같은
-            // 바이트를 서버 경유로 보낸다. 서버의 writer 판정이 진짜 게이트이므로 여기서 넓어지는 것은 없다.
-            void port.input(attached.sessionId, key, encodeBase64(bytes)).then((refused) => {
-              if (!refused) return;
-              localInput = false;
-              attach?.sendInput(bytes);
-            });
-            return;
-          }
+          // 직결이면 한 줄 사슬로(위 `pump`), 아니면 서버 경유. 서버의 writer 판정이 진짜 게이트이므로 어느 길이든
+          // 넓어지는 것은 없다.
+          if (enqueue({ kind: 'input', bytes })) return;
           attach?.sendInput(bytes);
         },
         // 크기는 **입력과 다른 가드를 탄다**(#369). `#335`+`#346` 은 둘을 한 가드에 묶었고
@@ -230,13 +283,7 @@ export function TerminalPanel() {
         // 그대로 닿는다. 그래서 여기만 `resizeRef` 를 읽는다.
         onResize: (cols, rows) => {
           if (!resizeRef.current) return;
-          if (port && localInput && writerKey) {
-            const key = writerKey;
-            void port.resize(attached.sessionId, key, cols, rows).then((refused) => {
-              if (refused) attach?.sendResize(cols, rows);
-            });
-            return;
-          }
+          if (enqueue({ kind: 'resize', cols, rows })) return;
           attach?.sendResize(cols, rows);
         },
         onDiagnostics: setDiagnostics,
@@ -275,7 +322,7 @@ export function TerminalPanel() {
             if (refused) { unlisten(); fallbackToServer(); return; }
             dropLocal = () => { unlisten(); void port.unsubscribe(attached.sessionId); };
             localInput = true;
-            setPath('local');
+            switchPath('local');
           })();
         },
         onStatus: (next) => {

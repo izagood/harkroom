@@ -44,7 +44,7 @@ function fakePort(opts: { local?: boolean; subscribe?: LocalRefusal | null; inpu
     isLocal: vi.fn(async () => opts.local ?? true),
     subscribe: vi.fn(async () => opts.subscribe ?? null),
     unsubscribe: vi.fn(async () => {}),
-    input: vi.fn(async () => opts.input ?? null),
+    input: vi.fn(async (_s: string, _k: string, _d: string): Promise<LocalRefusal | null> => opts.input ?? null),
     resize: vi.fn(async () => null),
     listen: vi.fn(async (_s: string, cb: { onOutput(b: string): void; onEnded(r: string | null): void }) => {
       out = cb.onOutput; ended = cb.onEnded;
@@ -57,9 +57,14 @@ function fakePort(opts: { local?: boolean; subscribe?: LocalRefusal | null; inpu
 async function mount(port: LocalTerminalPort | null) {
   const written: string[] = [];
   let sinkOpts: TerminalSinkOptions | undefined;
+  const resets = { n: 0 };
   setTerminalSinkFactory((_el, o) => {
     sinkOpts = o;
-    return { write: (bytes) => written.push(Buffer.from(bytes).toString('utf8')), dispose: () => {} };
+    return {
+      write: (bytes) => written.push(Buffer.from(bytes).toString('utf8')),
+      resetLatency: () => { resets.n += 1; },
+      dispose: () => {},
+    };
   });
   setLocalTerminalPort(port);
   let n = 0;
@@ -77,7 +82,11 @@ async function mount(port: LocalTerminalPort | null) {
   });
   render(<TerminalPanel />);
   await act(flush);
-  return { written, api, type: (s: string) => sinkOpts!.onInput!(s) };
+  return {
+    written, api, resets,
+    type: (s: string) => sinkOpts!.onInput!(s),
+    diag: () => sinkOpts!.onDiagnostics!({ renderer: 'webgl', compositions: 0, imeKeys: 0, hangulKeys: 0, echo: null }),
+  };
 }
 
 beforeEach(() => {
@@ -206,3 +215,56 @@ describe('구독 실패·회수·닫기', () => {
     expect(port.unsubscribe).toHaveBeenCalledWith('sess-1');
   });
 });
+
+/** 직결로 붙고 writer 키·열람 키까지 받은 상태. */
+async function attachedLocal(port: LocalTerminalPort) {
+  const m = await mount(port);
+  const ws = FakeSocket.all[0]!;
+  await act(async () => {
+    ws.deliver({ type: 'writer', writer: true, resize: true, reason: null, writerKey: WKEY });
+    ws.deliver({ type: 'local', viewKey: VIEW });
+    await flush();
+  });
+  return { ...m, ws };
+}
+
+describe('직결 입력의 순서(security #1340 F1)', () => {
+  it('앞 요청이 끝나기 전에는 다음을 보내지 않고, 그동안 쌓인 바이트는 한 덩어리로 순서대로 보낸다', async () => {
+    const { port } = fakePort();
+    const releases: (() => void)[] = [];
+    port.input.mockImplementation(() => new Promise<LocalRefusal | null>((resolve) => { releases.push(() => resolve(null)); }));
+    const { type } = await attachedLocal(port);
+    await act(async () => { type('a'); type('b'); type('\r'); await flush(); });
+    // 첫 요청만 나가 있다 — 둘째·셋째 키는 기다린다.
+    expect(port.input).toHaveBeenCalledTimes(1);
+    expect(port.input.mock.calls[0]![2]).toBe(b64('a'));
+    await act(async () => { releases[0]!(); await flush(); });
+    expect(port.input).toHaveBeenCalledTimes(2);
+    expect(port.input.mock.calls[1]![2]).toBe(b64('b\r'));
+  });
+});
+
+describe('직결 실패 뒤의 입력(security #1340 n1, designer s1)', () => {
+  it('invoke 가 던지면(unavailable) 그 바이트는 서버로 다시 보내지 않고, 다음부터 서버 경유다', async () => {
+    const { port } = fakePort({ input: 'unavailable' });
+    const { type, ws } = await attachedLocal(port);
+    await act(async () => { type('\r'); await flush(); });
+    expect(ws.sent.filter((f) => f.includes('"input"'))).toEqual([]);
+    await act(async () => { type('z'); await flush(); });
+    expect(port.input).toHaveBeenCalledTimes(1);
+    expect(ws.sent.filter((f) => f.includes('"input"')).map((f) => (JSON.parse(f) as { data: string }).data)).toEqual([b64('z')]);
+  });
+
+  it('입력만 서버로 떨어지면 경로는 「보기 직결 · 입력 서버 경유」이고, 길이 바뀔 때마다 지연 표본을 비운다', async () => {
+    const { port } = fakePort({ input: 'not-writer' });
+    const { type, diag, resets } = await attachedLocal(port);
+    await act(async () => { diag(); });
+    expect(screen.getByTestId('terminal-latency').getAttribute('data-path')).toBe('local');
+    const before = resets.n;
+    await act(async () => { type('a'); await flush(); });
+    expect(screen.getByTestId('terminal-latency').getAttribute('data-path')).toBe('mixed');
+    expect(screen.getByTestId('terminal-latency').textContent).toContain('보기 직결 · 입력 서버 경유');
+    expect(resets.n).toBe(before + 1);
+  });
+});
+

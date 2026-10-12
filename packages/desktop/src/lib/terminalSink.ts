@@ -41,6 +41,11 @@ export interface TerminalSink {
    */
   refit?(): void;
   /**
+   * 입력 → 화면 지연 표본을 비운다(designer #1340 s1). 바이트가 지나는 길이 바뀌면(서버 경유 ↔ 직결) 옛 길의
+   * 숫자가 새 라벨 밑에 남지 않게 한다. 옵셔널: 가짜 sink(테스트)는 구현하지 않아도 된다.
+   */
+  resetLatency?(): void;
+  /**
    * 이 터미널을 **읽기 전용으로 접거나 푼다**(#369). xterm 의 stdin 을 끄면 커서가 깜빡이지
    * 않고 키를 눌러도 아무것도 그려지지 않는다 — 화면이 "여기는 못 친다"를 스스로 말한다.
    *
@@ -475,7 +480,7 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
    * 입력 → 첫 출력 지연(`TerminalDiagnostics.echo`). **못 치는 창의 키는 세지 않는다** — 그 키는
    * 어디에도 안 닿으므로 다음 출력은 그 키의 반응이 아니다.
    */
-  const echo = createEchoLatencyTracker();
+  let echo = createEchoLatencyTracker();
   const sendInput = (data: string): void => {
     if (!readOnly) echo.noteInput(performance.now());
     opts?.onInput?.(data);
@@ -682,6 +687,11 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       opts?.onFollow?.(null);
       sent = null;
       applyFit();
+    },
+    resetLatency() {
+      echo = createEchoLatencyTracker();
+      diagnostics.echo = null;
+      reportDiagnostics();
     },
     refit() {
       // "마지막으로 보낸 크기"를 지워 applyFit 의 중복 억제를 한 번 우회한다 — writer

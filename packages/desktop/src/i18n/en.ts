@@ -2982,6 +2982,7 @@ export const en = {
   'terminal.latency.none': 'Path: {path} · input→screen not measured yet',
   'terminal.path.server': 'via server',
   'terminal.path.local': 'direct (local)',
+  'terminal.path.mixed': 'view direct · input via server',
   'terminal.header.close': 'Close',
   /** 그 버튼의 접근 이름. **무엇을 닫는지**를 진다 — 화면에는 이 창만 있는 것이 아니다. */
   'terminal.header.closeAction': 'Close the terminal',
