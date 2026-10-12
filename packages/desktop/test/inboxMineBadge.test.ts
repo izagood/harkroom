@@ -105,13 +105,28 @@ describe('보드와 배지가 조회 하나를 나눈다 (#1076 후속)', () => 
   it('신호 하나에 조회 하나 — 보드는 그 재료를 받아 그린다(inboxBoardRevision)', async () => {
     const t0 = new Date(Date.now() - HOUR).toISOString();
     const data: Board = { entries: [entry(1, 'r1', t0)], threads: [head('r1')], threadStates: [] };
-    const { c, api, changed } = await boot(() => data);
+    // 새 판은 새 객체로 온다(api 가 304 일 때만 같은 객체를 돌려준다 — 아래 시험).
+    const { c, api, changed } = await boot(() => ({ ...data }));
     await vi.waitFor(() => expect(useAppStore.getState().inboxBoardRevision).toBe(1));
     const before = (api.inboxBoard as ReturnType<typeof vi.fn>).mock.calls.length;
     await changed();
     await vi.waitFor(() => expect(useAppStore.getState().inboxBoardRevision).toBe(2));
     expect((api.inboxBoard as ReturnType<typeof vi.fn>).mock.calls.length).toBe(before + 1);
     expect(c.inboxBoardSnapshot()).toEqual(data);
+  });
+
+  // 304(서버 #1329): api 가 들고 있던 **같은 판**을 돌려주면 보드를 다시 그리지 않는다 — 배지는 다시 센다.
+  it('판이 그대로(304, 같은 객체)면 inboxBoardRevision 을 올리지 않는다', async () => {
+    const t0 = new Date(Date.now() - HOUR).toISOString();
+    const data: Board = { entries: [entry(1, 'r1', t0)], threads: [head('r1')], threadStates: [] };
+    const { c, api, changed } = await boot(() => data);
+    await vi.waitFor(() => expect(useAppStore.getState().inboxBoardRevision).toBe(1));
+    const before = (api.inboxBoard as ReturnType<typeof vi.fn>).mock.calls.length;
+    await changed();
+    await vi.waitFor(() => expect((api.inboxBoard as ReturnType<typeof vi.fn>).mock.calls.length).toBe(before + 1));
+    await c.loadInboxBoard();
+    expect(useAppStore.getState().inboxBoardRevision).toBe(1);
+    expect(useAppStore.getState().inboxMine).toBe(1);
   });
 
   it('도는 중에 또 부르면 같은 약속을 받고, 끝난 뒤 한 번 더 받아 새 재료로 풀린다', async () => {

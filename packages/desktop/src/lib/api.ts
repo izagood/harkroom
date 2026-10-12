@@ -107,6 +107,19 @@ export function requestFailureKind(err: unknown): RequestFailureKind | null {
   return err instanceof RequestFailure ? err.kind : null;
 }
 
+/** `GET /inbox/board` 를 앱이 쓰는 모양으로 편 것. */
+export interface InboxBoardResponse {
+  entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[]; truncated?: boolean;
+}
+
+/**
+ * 간추린 보드(`compact=1`)는 본문을 앞 500자에서 자른다 — 끝에 멘션 토큰(`<@id>`)이 반쪽(`<@3f2a`)으로 남을 수 있다
+ * (#1329 security n2). 닫히지 않은 토큰 꼬리만 떼어 낸다. 온전한 본문은 `<@…` 로 끝날 수 없으니 언제 불러도 같다.
+ */
+export function dropCutMention(body: string): string {
+  return body.replace(/<@[^>\s]*$/, '');
+}
+
 export class ApiClient {
   constructor(public baseUrl: string, private token: string | null = null) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -128,7 +141,8 @@ export class ApiClient {
    */
   private async reqWithHeaders<T>(
     method: string, path: string, body?: unknown, extra?: Record<string, string>,
-  ): Promise<{ body: T; headers: Headers }> {
+    init?: { cache?: RequestCache },
+  ): Promise<{ body: T; headers: Headers; status: number }> {
     const headers: Record<string, string> = { ...extra };
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (this.token) headers.authorization = `Bearer ${this.token}`;
@@ -139,8 +153,10 @@ export class ApiClient {
       const res = await fetch(`${this.baseUrl}${path}`, {
         method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
         ...(abort ? { signal: abort.signal } : {}),
+        ...(init?.cache ? { cache: init.cache } : {}),
       });
-      if (res.status === 204) return { body: undefined as T, headers: res.headers };
+      // 304 는 조건부로 물은 호출(`If-None-Match`)만 받는다 — 본문이 없고, 들고 있던 것을 쓰라는 뜻이다.
+      if (res.status === 204 || res.status === 304) return { body: undefined as T, headers: res.headers, status: res.status };
       const json: unknown = await res.json().catch((e: unknown) => {
         if (abort?.signal.aborted) throw e;
         return null;
@@ -149,7 +165,7 @@ export class ApiClient {
         const err = (json as { error?: { code?: string; message?: string } } | null)?.error;
         throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`, json);
       }
-      return { body: json as T, headers: res.headers };
+      return { body: json as T, headers: res.headers, status: res.status };
     } catch (e) {
       if (abort?.signal.aborted) throw new RequestFailure('timeout', 'request timed out');
       if (e instanceof ApiError) throw e;
@@ -437,10 +453,35 @@ export class ApiClient {
    *
    * `truncated` 는 inbox 밖 머리가 서버 상한(300)에서 잘렸다는 뜻이다.
    */
-  async inboxBoard(): Promise<{ entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[]; truncated?: boolean }> {
-    const res = await this.req<{ entries: InboxEntry[]; threads?: MessageRow[]; threadStates?: InboxThreadState[]; truncated?: boolean }>('GET', '/inbox/board');
-    return { entries: res.entries, threads: res.threads ?? null, threadStates: res.threadStates ?? [], truncated: res.truncated ?? false };
+  async inboxBoard(): Promise<InboxBoardResponse> {
+    /**
+     * **간추린 판 + 바뀐 것이 없으면 304**(2026-10-12, 서버 #1329·0.4.57). 예전에는 인박스 전체를 본문째(큰 계정 13.6MB)
+     * 신호마다 받았다. `compact=1` 은 스레드마다 보드가 읽는 줄만·본문 앞 500자를 받고, 들고 있는 판의 태그를
+     * `If-None-Match` 로 보내 그대로면 본문 없이 304 를 받는다 — 그때는 들고 있던 판을 그대로 돌려준다.
+     *
+     * - 옛 서버는 `compact` 를 모르고(쿼리를 읽지 않는다) 태그도 주지 않는다 → 지금까지와 같은 전체 응답.
+     * - 판은 **토큰과 함께** 든다. 계정이 바뀌면 앞 판을 쓰지 않는다(서버 태그에도 계정이 섞여 304 가 안 난다).
+     * - `cache: 'no-store'` — 인박스 본문을 웹뷰의 HTTP 디스크 캐시에 남기지 않는다. 조건부 요청은 우리가 직접
+     *   한다(#1329 security n1).
+     */
+    const held = this.board && this.board.token === this.token ? this.board : null;
+    const res = await this.reqWithHeaders<{ entries: InboxEntry[]; threads?: MessageRow[]; threadStates?: InboxThreadState[]; truncated?: boolean }>(
+      'GET', '/inbox/board?compact=1', undefined, held ? { 'if-none-match': held.etag } : undefined, { cache: 'no-store' },
+    );
+    if (res.status === 304 && held) return held.data;
+    const raw = res.body;
+    const data: InboxBoardResponse = {
+      entries: raw.entries.map((e) => (e.bodyTruncated ? { ...e, body: dropCutMention(e.body) } : e)),
+      threads: raw.threads ? raw.threads.map((m) => ({ ...m, body: dropCutMention(m.body) })) : null,
+      threadStates: raw.threadStates ?? [],
+      truncated: raw.truncated ?? false,
+    };
+    const etag = res.headers.get('etag');
+    this.board = etag ? { token: this.token, etag, data } : null;
+    return data;
   }
+  /** 마지막으로 받은 보드 판과 그 태그(`inboxBoard`). */
+  private board: { token: string | null; etag: string; data: InboxBoardResponse } | null = null;
   /** 스레드 하나의 **내** 완료·나중에(2/2, 089). `state: null` 이면 되돌린다. */
   setInboxThreadState(
     rootId: string, body: { state: 'done' } | { state: 'later'; until: string } | { state: null },
