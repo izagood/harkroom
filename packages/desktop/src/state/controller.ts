@@ -1238,10 +1238,6 @@ export class Controller {
   }
 
   /**
-   * 보드 화면이 열리고 닫힐 때 부른다(`Inbox` 의 `open`). 열리면 미뤄 둔 조회를 걷는다 — 여는 화면이 곧바로
-   * `loadInboxBoard` 를 부르므로 배지도 그때 맞춰진다.
-   */
-  /**
    * 이 기기에서 내가 inbox 를 바꿀 수 있는 동작을 했다(#1333 designer d1). 미뤄 둔 조회가 있으면 걷고 바로 받으며,
    * `OWN_ACTION_WINDOW_MS` 안에 오는 `inbox.updated` 도 미루지 않는다 — 서버 신호가 동작 응답보다 먼저 올 수도,
    * 나중에 올 수도 있어서 둘 다 받는다. 미룸은 남이 보낸 신호에만 남는다.
@@ -1255,6 +1251,10 @@ export class Controller {
     }
   }
 
+  /**
+   * 보드 화면이 열리고 닫힐 때 부른다(`Inbox` 의 `open`). 열리면 미뤄 둔 조회를 걷는다 — 여는 화면이 곧바로
+   * `loadInboxBoard` 를 부르므로 배지도 그때 맞춰진다.
+   */
   setInboxBoardOpen(open: boolean): void {
     this.boardOpenCount = Math.max(0, this.boardOpenCount + (open ? 1 : -1));
     if (open && this.badgeRefreshTimer) { clearTimeout(this.badgeRefreshTimer); this.badgeRefreshTimer = null; }
