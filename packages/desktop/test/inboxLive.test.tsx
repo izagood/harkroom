@@ -10,7 +10,7 @@
 // 그래서 이 파일이 재는 것은 줄의 모양이 아니다(그것은 `inbox.test.tsx` 의 몫이다).
 // **신호가 이 화면에 닿는가**, 그리고 닿는 값이 조회를 헛돌리지 않는가 — 둘뿐이다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, waitFor, act } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, act, fireEvent } from '@testing-library/react';
 import type { InboxEntry } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -82,6 +82,7 @@ describe('인박스는 열어 둔 채로 갱신된다 (2026-09-10)', () => {
   // **이 파일의 심장.** 닫았다 열지 않고 새 줄이 서는가.
   it('열려 있는 동안 서버가 알려 오면 새 줄이 그려진다', async () => {
     const { server, fromPane, serverSaysInboxChanged } = mount([entry(1)]);
+    fireEvent.click(await screen.findByTestId('inbox-view-board'));
     await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
     expect(screen.queryByTestId('inbox-card-m2')).toBeNull();
     const opened = fromPane.mock.calls.length;
@@ -98,6 +99,7 @@ describe('인박스는 열어 둔 채로 갱신된다 (2026-09-10)', () => {
   // 아직 나를 막는 것이 있다고 거짓말한다.
   it('서버에서 빠진 줄은 같은 신호로 사라진다', async () => {
     const { server, serverSaysInboxChanged } = mount([entry(1), entry(2)]);
+    fireEvent.click(await screen.findByTestId('inbox-view-board'));
     await waitFor(() => expect(screen.getByTestId('inbox-card-m2')).toBeTruthy());
 
     server.rows = [entry(1)];
@@ -111,6 +113,7 @@ describe('인박스는 열어 둔 채로 갱신된다 (2026-09-10)', () => {
   // 사람은 이 조회를 기다리고 있지 않다.
   it('갱신 중에 목록이 "불러오는 중"으로 되돌아가지 않는다', async () => {
     const { server, serverSaysInboxChanged } = mount([entry(1)]);
+    fireEvent.click(await screen.findByTestId('inbox-view-board'));
     await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
 
     server.rows = [entry(1), entry(2)];
@@ -125,6 +128,7 @@ describe('인박스는 열어 둔 채로 갱신된다 (2026-09-10)', () => {
   // 나가면 인박스를 열어 두는 것이 서버를 두드리는 일이 된다.
   it('같은 값이 다시 흘러도 조회하지 않는다', async () => {
     const { inbox } = mount([entry(1)]);
+    fireEvent.click(await screen.findByTestId('inbox-view-board'));
     await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
     const before = inbox.mock.calls.length;
 
@@ -138,6 +142,7 @@ describe('인박스는 열어 둔 채로 갱신된다 (2026-09-10)', () => {
   // 아무도 안 보는 목록을 위한 왕복이고, 열 때 같은 조회가 또 나가면 둘이 겹친다.
   it('닫혀 있는 동안에는 보드가 조회하지 않고, 다시 열면 한 번만 조회한다', async () => {
     const { server, fromPane, view, serverSaysInboxChanged } = mount([entry(1)]);
+    fireEvent.click(await screen.findByTestId('inbox-view-board'));
     await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
 
     view.rerender(<Inbox open={false} onClose={vi.fn()} />);
