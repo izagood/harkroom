@@ -1307,6 +1307,80 @@ function attachmentHowTo(): string[] {
   ];
 }
 
+/** 한 턴 프롬프트에 싣는 스레드 글의 상한(개수). 커서 없는 첫 턴이 읽는 최신 페이지(`readThread` 기본 30)와 같다. */
+export const DELTA_MAX_MESSAGES = 30;
+/** 한 턴 프롬프트에 싣는 스레드 글의 상한(글자, 렌더한 줄 기준). 글 하나는 8,000자까지라 개수만으로는 240k 가 될 수 있다. */
+export const DELTA_MAX_CHARS = 60_000;
+
+/**
+ * 델타를 예산 안으로 줄인다(2026-10-12, 스레드 6eca9cee — jaebin 「최신 글·멘션 우선 싣기」).
+ *
+ * 전에는 러너가 커서 뒤 **가장 옛 30개**를 그대로 실었다. 커서가 뒤처진 스레드(#task d63b9aa7)에서 그 턴은 5일 전
+ * 「진행상황 알려줘」에 답했고, 정작 자기를 띄운 07:57 질문은 프롬프트에 없었다. 그래서:
+ * 1. 이 턴을 띄운 멘션(`mentionId`)은 **언제나** 싣는다.
+ * 2. 나머지는 **최신부터 거꾸로** 개수·글자 예산까지 채운다.
+ * 3. 틈(`gapAfterSeq`) 앞의 옛 글은 싣지 않는다 — 틈 너머를 못 읽었으니 이어 붙이면 대화가 끊긴 채 섞인다.
+ * 4. 못 실은 글은 개수로 센다. 틈이 있으면 실제로는 더 많으므로 「이상」이다(`omittedAtLeast`).
+ *
+ * 순서는 seq 오름차순 그대로 돌려준다(읽는 순서는 대화 순서다).
+ */
+export function fitDelta(
+  messages: MessageRow[], handles: Record<string, string>,
+  opts: { mentionId?: string; gapAfterSeq?: number; maxMessages?: number; maxChars?: number } = {},
+): { shown: MessageRow[]; omitted: number; omittedAtLeast: boolean } {
+  const maxMessages = opts.maxMessages ?? DELTA_MAX_MESSAGES;
+  const maxChars = opts.maxChars ?? DELTA_MAX_CHARS;
+  const gap = opts.gapAfterSeq;
+  const isMention = (m: MessageRow): boolean => opts.mentionId !== undefined && m.id === opts.mentionId;
+  const keep = new Set<string>();
+  let count = 0;
+  let chars = 0;
+  const mention = messages.find(isMention);
+  if (mention) {
+    keep.add(mention.id);
+    count += 1;
+    chars += renderLine(mention, handles).length;
+  }
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i]!;
+    if (keep.has(m.id)) continue;
+    if (gap !== undefined && m.seq <= gap) break;
+    const len = renderLine(m, handles).length;
+    if (count >= maxMessages || chars + len > maxChars) break;
+    keep.add(m.id);
+    count += 1;
+    chars += len;
+  }
+  const shown = messages.filter((m) => keep.has(m.id));
+  return { shown, omitted: messages.length - shown.length, omittedAtLeast: gap !== undefined };
+}
+
+/** 생략 줄. 사람의 발화처럼 보이지 않게 괄호로 싸고, 읽을 길을 함께 적는다. */
+export function omittedLine(count: number, atLeast: boolean): string {
+  return `(앞선 글 ${count}개${atLeast ? ' 이상' : ''} 생략 — 필요하면 harkroom MCP 의 \`message.read\` 로 위 channelId·threadRootId 를 읽어라)`;
+}
+
+/**
+ * 커서 뒤 **가장 옛 페이지**(`readThread(…, since)`)와 **최신 페이지**(`readThread(…, undefined, n)`)를 합친다(2026-10-12).
+ * 둘이 맞닿지 않았으면(옛 페이지의 끝보다 최신 페이지의 첫 새 글이 뒤) 그 사이를 못 읽은 것이다 → `gapAfterSeq` 로 알린다.
+ * 옛 페이지가 커서 뒤를 다 담았으면 최신 페이지의 새 글은 전부 그 안에 있으므로 틈은 없다.
+ * 글은 id 로 중복을 빼고 seq 순으로 돌려준다. 최신 페이지는 스레드 머리를 늘 싣는다 — 커서보다 옛것이면 아래 델타에서 걸러진다.
+ */
+export function mergeThreadPages(
+  oldest: MessageRow[], latest: MessageRow[], cursor: number,
+): { messages: MessageRow[]; gapAfterSeq?: number } {
+  const byId = new Map<string, MessageRow>();
+  for (const m of [...oldest, ...latest]) byId.set(m.id, m);
+  const messages = [...byId.values()].sort((a, b) => a.seq - b.seq);
+  const oldIds = new Set(oldest.map((m) => m.id));
+  const oldAfter = oldest.filter((m) => m.seq > cursor);
+  const lateOnly = latest.filter((m) => m.seq > cursor && !oldIds.has(m.id));
+  if (oldAfter.length === 0 || lateOnly.length === 0) return { messages };
+  const oldMax = oldAfter.reduce((max, m) => Math.max(max, m.seq), 0);
+  const lateMin = lateOnly.reduce((min, m) => Math.min(min, m.seq), Number.POSITIVE_INFINITY);
+  return lateMin > oldMax ? { messages, gapAfterSeq: oldMax } : { messages };
+}
+
 /**
  * 스레드 델타를 하네스 턴 프롬프트로 조립한다(spec §4). `lastFedSeq` 보다 큰 seq 만
  * 대상이다. 첫 턴(lastFedSeq 0)은 세션 자체가 없으므로 자기 발화를 포함한 전체가 곧
@@ -1383,10 +1457,21 @@ export function buildTurnPrompt(opts: {
    * 필터에서 빼고 보여 준다. 진행 설명·대기 줄(`NON_UTTERANCE_KINDS`)은 여전히 거른다.
    */
   unseenOwnAfterSeq?: number;
+  /**
+   * 이 턴을 띄운 멘션(`MentionTarget.mentionId`). 델타가 예산(`DELTA_MAX_MESSAGES`·`DELTA_MAX_CHARS`)을 넘어도
+   * **이 글은 언제나 싣는다**(2026-10-12, `fitDelta`). 읽은 페이지에 아예 없으면 링크 한 줄로 알린다.
+   * 깨움·위임 결말 턴은 넘기지 않는다 — 그 id 는 사람의 글이 아니라 대기 줄·결말이다.
+   */
+  mentionId?: string;
+  /**
+   * 이 seq 뒤에 **못 읽은 글이 있다**(`mergeThreadPages` 의 `gapAfterSeq`). 커서 뒤 가장 옛 페이지와 최신 페이지가 맞닿지
+   * 않았다는 뜻이다 — 이 seq 까지의 글(옛 페이지)은 그 틈보다 옛것이라 싣지 않고 생략 줄에 「이상」으로 센다.
+   */
+  gapAfterSeq?: number;
 }): { prompt: string; fedSeq: number } {
   const {
     messages, lastFedSeq, meId, handles, channelId, threadRootId, wake, team, delegation,
-    delegatedBy, editedMention, canceledWakes, unseenOwnAfterSeq,
+    delegatedBy, editedMention, canceledWakes, unseenOwnAfterSeq, mentionId, gapAfterSeq,
   } = opts;
   const freshWake = opts.freshWake === true && wake !== undefined;
   const isFirstTurn = lastFedSeq === 0;
@@ -1413,7 +1498,16 @@ export function buildTurnPrompt(opts: {
   // message.post 에 넘길 위험이 있다 — 사람이 읽어도, 그리고 buildSystemPrompt 의 지시와도
   // 맞물리게 "채널 최상위(없음)"으로 표현한다(§4 발화 경로).
   const head = [`channelId: ${channelId}`, `threadRootId: ${threadRootId ?? '채널 최상위(없음)'}`].join('\n');
-  const lines = toShow.map((m) => renderLine(m, handles));
+  // 예산 안에서 **멘션 + 최신부터** 싣고 넘친 옛 글은 한 줄로 센다(`fitDelta`). 아래 판정(수정 글·첨부 안내)은 실제로
+  // 실린 글(`shown`)로 한다 — 생략한 글의 첨부는 프롬프트에 id 가 없어 열 수 없다.
+  const { shown, omitted, omittedAtLeast } = fitDelta(toShow, handles, { mentionId, gapAfterSeq });
+  const omittedLines = omitted > 0 || omittedAtLeast ? [omittedLine(omitted, omittedAtLeast)] : [];
+  // 멘션이 읽은 두 페이지 어디에도 없다 — 그 뒤로 한 페이지가 넘게 쌓였다. 본문은 못 실어도 **어디 있는지는** 알린다.
+  // 이미 먹인 구간(seq ≤ 커서)에 있으면 `messages` 에 들어 있으므로 여기 걸리지 않는다.
+  if (mentionId !== undefined && editedMention?.id !== mentionId && !messages.some((m) => m.id === mentionId)) {
+    omittedLines.push(`(이 턴을 띄운 글 harkroom://message/${mentionId} 은 위 범위 밖이라 싣지 못했다 — \`message.read\` 로 먼저 읽어라)`);
+  }
+  const lines = [...omittedLines, ...shown.map((m) => renderLine(m, handles))];
   // 깨움 줄을 **사람의 발화처럼 렌더하지 않는다**(`renderLine` 을 쓰지 않는 이유다).
   // "forge: CI 결과 확인" 으로 보이면 에이전트가 자기 옛 말을 새 요청으로 읽는다.
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.
@@ -1431,12 +1525,12 @@ export function buildTurnPrompt(opts: {
   // 둘 다 싣으면 같은 글이 두 번 보인다.
   const editLines = editedMention === undefined ? [] : [
     '(수정으로 추가된 멘션 — 앞서 올라온 글이 고쳐지면서 너를 불렀다. 고친 뒤의 본문을 다시 읽어라)',
-    ...(toShow.some((m) => m.id === editedMention.id) ? [] : [renderLine(editedMention, handles)]),
+    ...(shown.some((m) => m.id === editedMention.id) ? [] : [renderLine(editedMention, handles)]),
     '',
   ];
   // 안내는 첨부 줄 **뒤**에 선다 — 먼저 무엇이 왔는지 보고 그다음 어떻게 여는지 읽는 순서다.
-  // `toShow` 로 판정한다: 보여주지 않은 메시지의 첨부는 프롬프트에 id 가 없어 열 수도 없다.
-  const howTo = toShow.some((m) => m.attachments.length) ? attachmentHowTo() : [];
+  // `shown` 으로 판정한다: 보여주지 않은 메시지의 첨부는 프롬프트에 id 가 없어 열 수도 없다.
+  const howTo = shown.some((m) => m.attachments.length) ? attachmentHowTo() : [];
   // 팀 블록은 **델타 앞**이다 — 사람의 말을 읽기 전에 "너는 이 팀의 창구다"를 알아야
   // 그 말을 팀의 일로 읽는다. `wakeLines` 뒤에 두는 이유: 그 줄은 이 턴이 왜 떴는지이고,
   // 팀 블록은 이 턴이 무엇인지다(둘이 함께 오는 경우는 예약이 걸린 팀 턴이다).
