@@ -857,9 +857,23 @@ export class Controller {
       // 끊긴 사이의 글을 **끝까지** 받는다 — 한 페이지로 자르면 받은 구간이 틈을 품는다(`pullSince`).
       await this.pullSince(activeChannelId, maxSeq);
     }
+    // **열려 있는 스레드는 통째로 다시 받는다** (2026-10-12). 위 증분은 끊긴 사이의 **새** 답글만
+    // 준다 — 끊긴 동안 연 스레드에서 받지 못했던 옛 답글(뿌리만 손에 있던 경우)과 끊긴 사이 고치거나
+    // 지운 줄은 seq 가 그 아래라 오지 않는다. 그 스레드는 사람이 지금 보고 있는 것이므로 기다리지
+    // 않고 한 번 더 묻는다(다른 갱신을 막지 않는다).
+    const openRoot = this.store.getState().threadRootId;
+    if (activeChannelId && openRoot) this.swallow(this.refreshOpenThread(activeChannelId, openRoot));
     await this.refreshUnread();
     this.swallow(this.refreshInboxMine());
     this.store.getState().set({ leases: await this.api.leases() });
+  }
+
+  /** 재접속 때 열린 스레드의 최신 페이지를 다시 받는다. 그 사이 사람이 다른 곳으로 갔으면 버린다. */
+  private async refreshOpenThread(channelId: string, rootId: string): Promise<void> {
+    const page = await this.api.messages(channelId, { thread: rootId });
+    const now = this.store.getState();
+    if (now.activeChannelId !== channelId || now.threadRootId !== rootId) return;
+    now.upsertMessages(channelId, page.messages);
   }
 
   /** 미지의 작성자가 연달아 오면 요청이 폭주하므로, 진행 중인 조회 하나에 합류시킨다. */
@@ -1349,6 +1363,17 @@ export class Controller {
    * (`threadState` 가 빈 목록을 `done` 으로 읽었다). 못 불러온 것을 끝난 것으로 그리는
    * 것이 `design.md` §4 가 금지한 그 거짓말이므로, **뿌리가 응답에 없으면 열지 않는다** —
    * 조회 실패도 `openMessage` 와 같게 사람에게 보인다.
+   *
+   * ## 이미 받아 둔 줄이 있으면 그것부터 보인다 (jaebin 보고, 2026-10-12)
+   *
+   * 위 규율은 **손에 든 것이 없을 때**의 것이다. 서버가 끊긴 동안 이미 본 스레드(답글 7개)를
+   * 누르면 조회가 실패했다는 이유로 패널을 닫았다 — 스토어에 그 7개가 그대로 있는데도. 그것은
+   * "있는 것을 없다고 하기"로, 이 관문이 막으려던 거짓말을 반대 방향으로 한 것이다.
+   * 그래서 스토어에 그 스레드의 **답글**이 있으면 패널을 **조회를 기다리지 않고** 세우고, 조회는
+   * 뒤에서 맞춘다. **전송이 실패하면**(답을 못 받음·5xx) 닫지 않는다(가진 것이 곧 볼 것이다).
+   * 서버가 403·404 로 답하면 받아 둔 줄이 있어도 닫는다 — 지워졌거나 빠진 대화다. 뿌리만 손에
+   * 있는 것은 받아 둔 것으로 치지 않는다(「답 0개 · 끝남」이 된다). 채널 옮기기가 실패해도 같다 —
+   * 예전에는 그것이 먼저 던져 다른 채널의 스레드가 **토스트도 없이** 아무 일도 안 일어났다.
    */
   async openThread(rootId: string, opts: OpenThreadOpts = {}): Promise<void> {
     const channelId = opts.channelId ?? this.store.getState().activeChannelId;
@@ -1362,17 +1387,53 @@ export class Controller {
     // 로 합쳐지므로 어느 쪽이 먼저 와도 결과가 같다. 패널은 채널 열기가 끝난 뒤에 세운다(위 이유).
     const pagePromise = opts.prefetched ?? this.api.messages(channelId, { thread: rootId, around: opts.aroundSeq });
     pagePromise.catch(() => undefined);
-    if (this.store.getState().activeChannelId !== channelId) await this.openChannel(channelId, { reveal: false });
+    // 「받아 둔 것」은 **답글**이다 — 뿌리만으로는 치지 않는다(designer s1). 같은 채널이면 뿌리는 거의
+    // 늘 채널 목록에 있어서, 뿌리 한 줄로 패널을 세우면 `threadState` 가 `[뿌리]` 를 `done` 으로 읽어
+    // 「답 0개 · 끝남」이 된다 — 이 함수가 막으려는 그 거짓말이다.
+    const heldRows = () => (this.store.getState().messages[channelId] ?? [])
+      .filter((m) => m.threadRootId === rootId);
+    // 늦게 온 결과는 **지금도 이 스레드가 열려 있을 때만** 패널을 건드린다(security n1). 그 사이 다른
+    // 스레드로 갔으면 그 패널을 닫으면 안 된다 — 읽기 시한(20초) 때문에 그 창이 넓다.
+    const stillOpen = () => this.store.getState().threadRootId === rootId;
+    if (this.store.getState().activeChannelId !== channelId) {
+      // 채널 열기 실패는 **여기서 판정하지 않는다.** 활성 채널은 그 첫 줄(동기)에서 이미 옮겨졌고,
+      // 열 수 있는지는 손에 든 줄과 아래 스레드 조회가 가른다(위 「이미 받아 둔 줄」).
+      // 손에 든 줄이 있으면 채널 조회를 **기다리지도 않는다** — 서버가 답을 안 하면 시한까지
+      // 받아 둔 것조차 안 보인다.
+      const opening = this.openChannel(channelId, { reveal: false });
+      if (heldRows().length > 0) this.swallow(opening);
+      else { try { await opening; } catch { /* 아래가 가른다 */ } }
+    }
     this.store.getState().pushHistory({ channelId, threadRootId: rootId });
     this.store.getState().set({ threadRootId: rootId });
     let page;
     try {
       page = await pagePromise;
-    } catch {
-      // 열다 만 패널을 남기지 않는다. 남기면 그 자리가 "답이 하나도 없는 끝난 스레드"로
-      // 읽힌다 — 연결이 끊긴 것과 정반대의 사실이다.
+    } catch (e) {
+      if (!stillOpen()) return;
+      // 받아 둔 답글이 있고 **전송이 실패했을 때만**(답을 못 받았거나 서버가 5xx) 패널을 그대로 둔다 —
+      // 그 줄이 곧 이 스레드다. 서버가 **답을 했고** 그것이 403·404 면(채널이 지워졌거나 비공개 채널에서
+      // 빠졌다) 받아 둔 줄이 있어도 닫는다 — 그것까지 남기면 지우기·내보내기를 화면이 따르지 않는다
+      // (security F1). 링크로 온 자리도 손에 있으면 세운다.
+      const status = e instanceof ApiError ? e.status : 0;
+      const transport = status === 0 || status >= 500;
+      const held = heldRows();
+      if (transport && held.length > 0) {
+        if (opts.focusMessageId && held.some((m) => m.id === opts.focusMessageId)) {
+          this.store.getState().set({ highlightedMessageId: opts.focusMessageId });
+        }
+        return;
+      }
+      // 그 밖에는 열다 만 패널을 남기지 않는다. 남기면 그 자리가 "답이 하나도 없는 끝난 스레드"로
+      // 읽힌다 — 연결이 끊긴 것과 정반대의 사실이다. 사유는 `openMessage` 와 같게 가른다.
       this.store.getState().set({ threadRootId: null });
-      this.store.getState().pushNotice(this.t()('notice.openThreadFailed'));
+      this.store.getState().pushNotice(
+        status === 404
+          ? this.t()('notice.threadGone')
+          : status === 403
+            ? this.t()('notice.messageForbidden')
+            : this.t()('notice.openThreadFailed'),
+      );
       return;
     }
     this.store.getState().upsertMessages(channelId, page.messages);
@@ -1388,6 +1449,7 @@ export class Controller {
      * 온다 — 그 스레드는 **볼 것이 있다.** 그것까지 닫으면 이 관문이 고치려던 것과 같은
      * 종류의 거짓말(있는 것을 없다고 하기)을 반대 방향으로 하게 된다.
      */
+    if (!stillOpen()) return;
     if (page.messages.length === 0) {
       this.store.getState().set({ threadRootId: null });
       this.store.getState().pushNotice(this.t()('notice.threadGone'));
