@@ -1463,7 +1463,7 @@ function buildMcpServer(
        */
       lease: z.object({
         runnerId: z.string().min(1).max(128),
-        holding: z.array(z.number().int()).max(1000),
+        holding: z.array(z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)).max(1000),
       }).optional(),
     },
   }, async ({ timeoutMs, version, claudeLane, lease }) => {

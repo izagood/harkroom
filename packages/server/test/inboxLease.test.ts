@@ -97,4 +97,12 @@ describe('inbox.poll 임대', () => {
     expect(row.rows[0].claimed_until).toBeNull();
     expect(await poll(ca, { lease: { runnerId: 'r1', holding: [] } })).toEqual([aid]);
   });
+
+  it('holding 이 안전한 정수 범위를 넘으면 그 폴은 입력 오류다(bigint 캐스트 500 아님, #1334 security n1)', async () => {
+    const a = await createAgent(app, adminToken, 'bigholder');
+    const c = await mcp(a.pat);
+    const r = await c.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0, lease: { runnerId: 'r1', holding: [1e300] } } });
+    expect(r.isError).toBe(true);
+    expect((r.content as { text: string }[])[0]!.text).toMatch(/Input validation error/);
+  });
 });
