@@ -2841,8 +2841,15 @@ const BOARD_COMPACT_KEEP_SQL = `i.id in (
           where i2.account_id = $1 and m2.deleted_at is null) r
         where r.rn <= ${BOARD_COMPACT_LATEST} or r.rr = 1 or r.pinned)`;
 
+/**
+ * `inbox.poll` 이 한 번에 돌려주는 안 읽은 항목의 상한(2026-10-12 쿼리 검토 #4). 전에는 상한이 없어, 러너가 오래
+ * 쉬었거나 부름이 몰린 계정은 폴마다 안 읽은 것을 **전부** 본문과 함께 실어 갔다. 오래된 것부터 이만큼만 주고
+ * 넘치면 `hasMore` 로 알린다 — 러너가 처리해 읽음으로 만들면 다음 폴에 나머지가 온다. `inbox.read` 의 상한과 같다.
+ */
+export const INBOX_POLL_LIMIT = 200;
+
 export async function listInbox(
-  pool: Pool, accountId: string, opts: { unreadOnly?: boolean; compact?: boolean },
+  pool: Pool, accountId: string, opts: { unreadOnly?: boolean; compact?: boolean; limit?: number },
 ): Promise<InboxEntry[]> {
   const bodySql = opts.compact
     ? `left(${displayBodySql('m')}, ${BOARD_COMPACT_BODY_CHARS}) as body,
@@ -2877,8 +2884,9 @@ export async function listInbox(
        and ${channelVisibleSql('c', '$1')}
        ${opts.unreadOnly ? 'and i.read_at is null' : ''}
        ${opts.compact ? `and ${BOARD_COMPACT_KEEP_SQL}` : ''}
-     order by i.id`,
-    [accountId],
+     order by i.id
+     ${opts.limit !== undefined ? 'limit $2::int' : ''}`,
+    opts.limit !== undefined ? [accountId, opts.limit] : [accountId],
   );
 
   /**

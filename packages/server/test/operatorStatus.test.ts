@@ -84,6 +84,39 @@ describe('박동 상태(H1·H5)', () => {
   });
 });
 
+// last_seen_at 은 프레임마다 쓰지 않는다(2026-10-12 쿼리 검토 #2) — 연결 중에는 `LAST_SEEN_WRITE_MS` 에 한 번,
+// 끊길 때 쓰지 못한 프레임이 있었으면 한 번 더. 끊긴 뒤 화면(「마지막으로 본 때」)의 값은 전과 같이 정확해야 한다.
+describe('last_seen_at 쓰기 간격', () => {
+  const seen = async (id: string): Promise<number | null> => {
+    const r = await pool.query(`select last_seen_at from operator where id = $1`, [id]);
+    return r.rows[0].last_seen_at ? (r.rows[0].last_seen_at as Date).getTime() : null;
+  };
+  it('연결 중 잇단 프레임은 첫 번째만 쓰고, 끊길 때 마지막으로 한 번 더 쓴다', async () => {
+    const op = await registerOperator(app, aliceToken, 'vm-seen');
+    const ws = await connect(op.token); // hello 한 프레임
+    await waitFor(async () => (await seen(op.operatorId)) !== null);
+    const first = (await seen(op.operatorId))!;
+    await new Promise((r) => setTimeout(r, 30));
+    beat(ws, { turns: { running: 1, max: 16 } });
+    beat(ws, { turns: { running: 2, max: 16 } });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(await seen(op.operatorId)).toBe(first);
+    ws.close();
+    await waitFor(async () => ((await seen(op.operatorId)) ?? 0) > first);
+  });
+
+  it('끊기기 전에 쓰지 못한 프레임이 없으면 끊길 때 쓰지 않는다', async () => {
+    const op = await registerOperator(app, aliceToken, 'vm-seen-quiet');
+    const ws = await connect(op.token);
+    await waitFor(async () => (await seen(op.operatorId)) !== null);
+    const first = (await seen(op.operatorId))!;
+    ws.close();
+    await waitFor(async () => !(await mine(aliceToken, op.operatorId)).online);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await seen(op.operatorId)).toBe(first);
+  });
+});
+
 describe('머신 묶음표(H8)', () => {
   it('같은 소유자의 같은 머신이면 machineId 가 같고, 소유자가 다르면 같은 digest 여도 다르다. 원래 digest 는 싣지 않는다', async () => {
     const a1 = await registerOperator(app, aliceToken, 'ops-work');

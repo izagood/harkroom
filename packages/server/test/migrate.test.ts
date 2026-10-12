@@ -66,6 +66,72 @@ describe('migrations', () => {
     await expect(insert()).resolves.toBeTruthy();
   });
 
+  // 트랜잭션 밖 파일(2026-10-12, 120·121): `concurrently` 로 만든 인덱스가 **유효하게** 서 있어야 한다.
+  // 실패해 INVALID 로 남은 인덱스는 이름만 있고 플래너가 안 쓴다 — 이름만 보면 놓친다.
+  it('builds the no-transaction (concurrently) indexes as valid indexes', async () => {
+    const res = await pool.query(
+      `select c.relname as name, i.indisvalid as valid
+         from pg_index i join pg_class c on c.oid = i.indexrelid
+        where c.relname in ('inbox_message_idx', 'inbox_unread_idx') order by c.relname`);
+    expect(res.rows).toEqual([
+      { name: 'inbox_message_idx', valid: true },
+      { name: 'inbox_unread_idx', valid: true },
+    ]);
+  });
+
+  it('reruns a no-transaction file over a leftover INVALID index', async () => {
+    const { runMigrations } = await import('../src/db/migrate.js');
+    // 만들다 죽은 꼴을 흉내 낸다: 기록을 지우고 인덱스를 INVALID 로 돌린다.
+    await pool.query(`delete from schema_migrations where name = '121_inbox_unread_index.sql'`);
+    await pool.query(`update pg_index set indisvalid = false where indexrelid = 'inbox_unread_idx'::regclass`);
+    await runMigrations(pool);
+    const res = await pool.query(
+      `select i.indisvalid as valid from pg_index i where i.indexrelid = 'inbox_unread_idx'::regclass`);
+    expect(res.rows[0].valid).toBe(true);
+  });
+
+  it('splits a no-transaction file into statements, skipping comment lines', async () => {
+    const { splitStatements, NO_TRANSACTION_MARK } = await import('../src/db/migrate.js');
+    const sql = '-- migrate: no-transaction\n-- a; b;\ndrop index concurrently if exists x;\ncreate index concurrently\n  if not exists x on t (a);\n';
+    expect(NO_TRANSACTION_MARK.test(sql)).toBe(true);
+    expect(NO_TRANSACTION_MARK.test('-- 트랜잭션 파일\ncreate index x on t (a);')).toBe(false);
+    expect(splitStatements(sql)).toEqual([
+      'drop index concurrently if exists x;',
+      'create index concurrently\n  if not exists x on t (a);',
+    ]);
+  });
+
+  // 잠금 상한(2026-10-12): 트랜잭션 파일은 남이 쥔 테이블 잠금을 5초 넘게 기다리지 않는다 — 기다리는 동안
+  // 그 뒤에 줄 선 쓰기가 전부 서기 때문이다. 상한을 넘기면 마이그레이션이 실패해야 한다.
+  it('gives up on a transactional file when a table lock is held past lock_timeout', async () => {
+    const { MIGRATION_LOCK_TIMEOUT } = await import('../src/db/migrate.js');
+    expect(MIGRATION_LOCK_TIMEOUT).toBe('5s');
+    await pool.query('create database lock_timeout_boot');
+    const target = new URL(uri);
+    target.pathname = '/lock_timeout_boot';
+    const a = new pg.Pool({ connectionString: target.toString() });
+    try {
+      const { runMigrations } = await import('../src/db/migrate.js');
+      await runMigrations(a);
+      // 마지막 트랜잭션 파일을 다시 돌게 하고, 그 표를 다른 연결이 쥐고 놓지 않는다.
+      // 인덱스도 걷는다 — 있으면 `if not exists` 가 잠금 없이 지나갈 수 있다(잠금 대기를 재려는 시험이다).
+      await a.query(`delete from schema_migrations where name = '119_message_channel_feed_index.sql'`);
+      await a.query('drop index message_channel_feed_seq_idx');
+      const holder = await a.connect();
+      await holder.query('begin');
+      await holder.query('lock table message in access exclusive mode');
+      const started = Date.now();
+      await expect(runMigrations(a)).rejects.toThrow(/lock timeout/);
+      expect(Date.now() - started).toBeLessThan(20_000);
+      await holder.query('rollback');
+      holder.release();
+      // 잠금이 풀리면 다시 돌아 끝난다.
+      await runMigrations(a);
+    } finally {
+      await a.end();
+    }
+  }, 30_000);
+
   // 롤링 업데이트(구·신 인스턴스 동시 기동)에서 두 프로세스가 같은 빈 DB에 마이그레이션을
   // 걸면, 잠금이 없으면 뒤늦은 쪽이 'relation already exists'로 부팅 중 죽는다.
   it('lets two instances migrate the same fresh database concurrently', async () => {

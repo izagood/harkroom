@@ -15,7 +15,7 @@ import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
-import { BAD_THREAD_MESSAGE, checkAskMirror, checkAskSupersede, getMessageById, gateAwaitingAccount, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, supersedeAsk, syncAskMirrors, type AskMirrorRefusal, type AskSupersedeRefusal } from '../services/messages.js';
+import { BAD_THREAD_MESSAGE, checkAskMirror, checkAskSupersede, getMessageById, gateAwaitingAccount, INBOX_POLL_LIMIT, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, supersedeAsk, syncAskMirrors, type AskMirrorRefusal, type AskSupersedeRefusal } from '../services/messages.js';
 
 /** `message.ask` 의 `mirrorOf` 거절 사유 — 에이전트가 읽고 고칠 수 있게 무엇을 바꾸면 되는지 적는다. */
 const MIRROR_REFUSAL_MESSAGE: Record<AskMirrorRefusal, string> = {
@@ -1473,7 +1473,10 @@ function buildMcpServer(
     // 말하는 버그**였다: 러너 루프는 단일 스레드라 턴이 도는 동안 폴이 나가지 않으므로
     // 30초 TTL 이 만료됐다. 신호를 게이트로 올리면 도구 하나가 빠뜨릴 수 없다.
     const fetchUnread = async () => {
-      const entries = await listInbox(pool, account.id, { unreadOnly: true });
+      // 상한보다 하나 더 읽어 넘쳤는지 안다. 넘친 것은 다음 폴에 온다(`INBOX_POLL_LIMIT` 주석).
+      const got = await listInbox(pool, account.id, { unreadOnly: true, limit: INBOX_POLL_LIMIT + 1 });
+      const hasMore = got.length > INBOX_POLL_LIMIT;
+      const entries = hasMore ? got.slice(0, INBOX_POLL_LIMIT) : got;
       if (!entries.length) return { entries, messages: [] };
       const ids = entries.map((e) => e.messageId);
       const msgs = await pool.query(
@@ -1481,7 +1484,9 @@ function buildMcpServer(
            author_id as "authorId", body, kind, meta, created_at as "createdAt",
            also_in_channel as "alsoInChannel"
          from message where id = any($1) order by seq`, [ids]);
-      return { entries, messages: await denormalizeBodies(pool, msgs.rows as { body: string }[]) };
+      const messages = await denormalizeBodies(pool, msgs.rows as { body: string }[]);
+      // 넘칠 때만 싣는다 — 옛 러너는 모르는 키를 무시하고, 넘치지 않는 보통 폴의 모양은 그대로다.
+      return hasMore ? { entries, messages, hasMore: true as const } : { entries, messages };
     };
     // Subscribe before the first fetch so an inbox.updated arriving during that DB round trip is
     // not lost in the gap between "query returned empty" and "we started listening" — it sets

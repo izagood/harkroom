@@ -792,7 +792,10 @@ HARKROOM_NEW_PASSWORD=<새 비밀번호> DATABASE_URL=<...> \
 - **데이터 형식 바꾸기.** 063 은 본문의 집합·팀 멘션을 `<@group:id>`·`<@team:id>` 로 다시 썼다.
   DDL 은 아니지만, 옛 코드가 새 형식을 못 읽으면 같은 장애다. 새 코드가 옛 형식도 읽게 한 릴리스를
   먼저 내고, 다시 쓰는 것은 그다음이다.
-- **긴 잠금.** 마이그레이션은 파일마다 트랜잭션이라 `create index concurrently` 를 못 쓴다. 큰
-  테이블에 인덱스를 만들거나 행을 대량으로 고치면, 그동안 옛 파드의 쓰기가 잠금에 걸려 선다.
-  다운타임은 아니지만 느려진다.
+- **긴 잠금.** 마이그레이션은 파일마다 트랜잭션이고, 트랜잭션 파일은 잠금을 `lock_timeout` 5초까지만
+  기다린다(`migrate.ts` `MIGRATION_LOCK_TIMEOUT`) — 넘기면 기동이 실패하고 재시작 정책이 다시 시도한다.
+  큰 테이블에 인덱스를 만들 때는 파일에 `-- migrate: no-transaction` 한 줄을 적고
+  `drop index concurrently if exists X;` + `create index concurrently if not exists X …;` 로 쓴다
+  (120·121). 그 파일은 문장마다 따로 돌고 원자성이 없으므로 **다시 돌아도 같은 결과**여야 한다. 행을
+  대량으로 고치는 것은 여전히 그동안 옛 파드의 쓰기를 막는다 — 다운타임은 아니지만 느려진다.
 - **enum·check 좁히기.** 허용 값을 줄이면 옛 코드가 쓰던 값이 거절된다. 넓히기만 expand 다.

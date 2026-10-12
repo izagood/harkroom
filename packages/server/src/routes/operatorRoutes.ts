@@ -112,6 +112,16 @@ export function machineIdKey(rawSecret: string | null | undefined): Buffer | nul
 
 /** 박동을 DB·이벤트로 처리하는 최소 간격(security n2). 정상 오퍼레이터는 30초에 한 번이다. 허브의 값은 매번 갱신된다. */
 export const STATUS_MIN_INTERVAL_MS = 10_000;
+
+/**
+ * `operator.last_seen_at` 을 쓰는 최소 간격(2026-10-12 쿼리 검토 #2). 전에는 소켓 **프레임마다** 같은 행을
+ * 고쳤다 — 운영에서 초당 8번, 평균 29ms·최대 1.9초. 쓰기를 기다리지 않으므로(fire-and-forget) DB 가 느려지면
+ * 이 쓰기들이 풀 대기열에 쌓여 다른 요청의 연결까지 먹는다.
+ *
+ * 이 값을 읽는 곳은 「오프라인이 된 오퍼레이터를 마지막으로 본 때」 하나다(설정 › 오퍼레이터). 그래서 연결 중에는
+ * 이만큼 늦어도 되고, **끊길 때 한 번 더 쓴다** — 끊긴 뒤 화면에 보이는 값은 전과 같이 정확하다.
+ */
+export const LAST_SEEN_WRITE_MS = 30_000;
 /** 오퍼레이터마다 처리를 기다리는 업그레이드 단계의 상한(security n5). 넘치면 버리고 남긴다. */
 export const UPGRADE_QUEUE_MAX = 20;
 
@@ -248,12 +258,26 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
     const detach = deps.hub.addOperator(operatorId, socket);
     heartbeat.track(socket);
     socket.on('pong', () => heartbeat.pong(socket));
-    socket.on('message', (raw) => {
-      // 프레임 도착 = 생존. last_seen_at 은 "마지막으로 말한 때"이고 실패해도 흐름을 막지 않는다.
+    // 프레임 도착 = 생존. last_seen_at 은 "마지막으로 말한 때"이고 실패해도 흐름을 막지 않는다.
+    // 연결 중에는 `LAST_SEEN_WRITE_MS` 에 한 번만 쓰고, 끊길 때 말한 적이 있으면 마지막으로 한 번 더 쓴다.
+    const touchLastSeen = () => {
       void pool.query(`update operator set last_seen_at = now() where id = $1`, [operatorId]).catch(() => {});
+    };
+    let lastSeenWrittenAt = 0;
+    let unwrittenFrame = false;
+    socket.on('message', (raw) => {
+      const now = Date.now();
+      if (now - lastSeenWrittenAt >= LAST_SEEN_WRITE_MS) {
+        lastSeenWrittenAt = now;
+        unwrittenFrame = false;
+        touchLastSeen();
+      } else {
+        unwrittenFrame = true;
+      }
       deps.hub.onOperatorMessage(operatorId, String(raw));
     });
     socket.on('close', () => {
+      if (unwrittenFrame) touchLastSeen();
       heartbeat.untrack(socket);
       detach();
       emitEvent({ type: 'operator.changed', operatorId, audience: 'all' });
