@@ -136,3 +136,91 @@ describe('around window', () => {
     expect(bodies).not.toContain('r10');
   });
 });
+
+/**
+ * **피드 페이지**(`feed=1`) — 채널 본문에 서는 줄(머리·alsoInChannel 답글)만으로 옛 페이지를 채운다.
+ *
+ * 기본 갈래는 답글까지 섞어 limit 을 채운다. 답글이 많은 채널은 그 페이지가 답글뿐이라 화면에 늘어나는 줄이
+ * 없고, 화면은 다음 페이지를 부를 스크롤 이벤트를 다시 받지 못해 맨 위에서 멈췄다(스레드 36caac7a).
+ */
+describe('feed page (feed=1)', () => {
+  let feedChannel: string;
+  const post = async (payload: Record<string, unknown>) => {
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${feedChannel}/messages`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload,
+    });
+    return res.json() as { id: string; seq: number };
+  };
+  const page = async (query: string) => {
+    const res = await app.inject({
+      method: 'GET', url: `/channels/${feedChannel}/messages?${query}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    return res;
+  };
+  let top: { id: string; seq: number };
+  let busy: { id: string; seq: number };
+
+  beforeAll(async () => {
+    const ch = await app.inject({
+      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'feed-history' },
+    });
+    feedChannel = ch.json().id;
+    await post({ body: 'root-1' });
+    busy = await post({ body: 'root-2' });
+    // root-2 의 스레드가 길다 — 기본 갈래의 옛 페이지는 이 답글들로 다 찬다.
+    for (let i = 1; i <= 6; i += 1) {
+      await post({ body: `reply-${i}`, threadRootId: busy.id, alsoInChannel: i === 3 });
+    }
+    top = await post({ body: 'root-3' });
+  });
+
+  it('fills the older page with channel-feed rows only — roots and alsoInChannel replies', async () => {
+    const res = await page(`before=${top.seq}&limit=2&feed=1`);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().messages.map((m: { body: string }) => m.body)).toEqual(['root-2', 'reply-3']);
+    // root-1 이 남았다 — 「본문에 설 줄이 더 있나」로 답한다.
+    expect(res.json().hasMore).toBe(true);
+  });
+
+  it('says hasMore=false when no feed row is older, even though replies are', async () => {
+    const res = await page(`before=${busy.seq}&limit=5&feed=1`);
+    expect(res.json().messages.map((m: { body: string }) => m.body)).toEqual(['root-1']);
+    expect(res.json().hasMore).toBe(false);
+    // 비어 오면 끝이다.
+    const none = await page(`before=${res.json().messages[0].seq}&feed=1`);
+    expect(none.json()).toEqual({ messages: [], hasMore: false });
+  });
+
+  it('keeps the default page unchanged — replies still fill it', async () => {
+    const res = await page(`before=${top.seq}&limit=2`);
+    expect(res.json().messages.map((m: { body: string }) => m.body)).toEqual(['reply-5', 'reply-6']);
+    const direct = await listMessages(pool, feedChannel, { before: top.seq, limit: 2, feed: true });
+    expect(direct.map((m) => m.body)).toEqual(['root-2', 'reply-3']);
+  });
+
+  it('still shows a deleted root that has live replies (tombstone), and counts it for hasMore', async () => {
+    const lone = await post({ body: 'root-4' });
+    await post({ body: 'keeps-root-4', threadRootId: lone.id });
+    const del = await app.inject({
+      method: 'DELETE', url: `/channels/${feedChannel}/messages/${lone.id}`, headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(del.statusCode).toBeLessThan(300);
+    const last = await post({ body: 'root-5' });
+    const res = await page(`before=${last.seq}&limit=1&feed=1`);
+    const rows = res.json().messages as Array<{ id: string; deletedAt: string | null }>;
+    expect(rows.map((m) => m.id)).toEqual([lone.id]);
+    expect(rows[0]!.deletedAt).not.toBeNull();
+    expect(res.json().hasMore).toBe(true);
+  });
+
+  it('refuses feed=1 without before, or with thread — it only means a channel older page', async () => {
+    expect((await page('feed=1')).statusCode).toBe(400);
+    expect((await page('since=0&feed=1')).statusCode).toBe(400);
+    expect((await page(`around=${top.seq}&feed=1`)).statusCode).toBe(400);
+    expect((await page(`before=${top.seq}&thread=${busy.id}&feed=1`)).statusCode).toBe(400);
+    expect((await page(`before=${top.seq}&feed=true`)).statusCode).toBe(400);
+  });
+});
