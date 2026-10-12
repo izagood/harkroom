@@ -52,6 +52,11 @@ export interface InboxBatch {
    * 온다. 옛 서버는 안 준다 — 그때 캐시는 매번 받아 온다.
    */
   memoryRev?: string;
+  /**
+   * 종료 요청 시각(2026-10-12 inbox 호출 설계 A). 새 서버는 **빈 폴에 늘** 이 키를 싣는다(요청이 없으면 `null`) —
+   * 키가 있으면 러너는 빈 폴마다 `/agent/config` 를 따로 부르지 않는다(`idleStop.ts`). 옛 서버는 키가 없다.
+   */
+  stopRequestedAt?: string | null;
 }
 
 /**

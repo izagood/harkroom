@@ -78,6 +78,9 @@ export const GATE_NOTIFY_WINDOW_MS = 30 * 60 * 1000;
 /** 한 에이전트가 `GATE_NOTIFY_WINDOW_MS` 안에 울릴 수 있는 관문 알림 수(security #1053 권고). */
 export const GATE_NOTIFY_PER_AGENT = 3;
 
+/** 보드가 닫혀 있을 때 배지용 보드 조회를 미루는 시간(`refreshInboxMine`). */
+export const BADGE_REFRESH_MS = 30_000;
+
 export class Controller {
 
   /**
@@ -102,6 +105,9 @@ export class Controller {
   /** 마지막 보드 재료 — 시간만 흘러도(나중에의 시각이 지나도) 수를 다시 세려고 들고 있다. */
   private mineInput: InboxBoardData | null = null;
   private mineTick: ReturnType<typeof setInterval> | null = null;
+  /** 보드가 열려 있나(`setInboxBoardOpen`) · 닫혀 있을 때 배지용으로 미뤄 둔 보드 조회(`refreshInboxMine`). */
+  private boardOpenCount = 0;
+  private badgeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   /** 히스토리를 이미 통째로 받은 채널. 이 집합에 없으면 openChannel이 증분이 아니라 전체를 받는다. */
   private loadedChannels = new Set<string>();
   /**
@@ -325,7 +331,7 @@ export class Controller {
     this.swallow(this.loadSavedSummary());
     // 내 차례 수(배지 A)도 크리티컬 패스 밖이다 — 인박스 전체라 무겁고, 없어도 앱은 선다(배지가 0 일 뿐).
     // 1분마다 다시 센다: 나중에로 미룬 일은 시각이 지나면 서버 신호 없이도 다시 내 차례다.
-    this.swallow(this.refreshInboxMine());
+    this.swallow(this.loadInboxBoard());
     if (!this.mineTick) this.mineTick = setInterval(() => this.recountInboxMine(), 60_000);
     // 투영 상태도 60초마다 갱신한다(#267) — 앱 기동 시 한 번과 정기적으로.
     this.swallow(this.refreshProjectionStatus());
@@ -489,6 +495,7 @@ export class Controller {
     if (this.projectionRefreshInterval) { clearInterval(this.projectionRefreshInterval); this.projectionRefreshInterval = null; }
     if (this.mineTick) { clearInterval(this.mineTick); this.mineTick = null; }
     this.clearOfflineTimer();
+    if (this.badgeRefreshTimer) { clearTimeout(this.badgeRefreshTimer); this.badgeRefreshTimer = null; }
   }
 
   /**
@@ -915,7 +922,8 @@ export class Controller {
       ? this.refreshOpenThread(activeChannelId, openRoot).catch(() => undefined)
       : null;
     await this.refreshUnread();
-    this.swallow(this.refreshInboxMine());
+    // 재연결은 기다리지 않는다 — 끊긴 사이 무엇이 바뀌었는지 모른다(`refreshInboxMine` 의 미룸은 이벤트 몫).
+    this.swallow(this.loadInboxBoard());
     this.store.getState().set({ leases: await this.api.leases() });
     await thread;
   }
@@ -1201,8 +1209,30 @@ export class Controller {
    * 한 번으로 접는다. 실패는 삼킨다: 배지는 다음 신호에 다시 맞춰지고, 앞선 값을 0 으로 지우면
    * 나를 기다리는 일이 없다고 거짓말한다.
    */
+  /**
+   * **보드가 닫혀 있으면 미룬다**(2026-10-12 inbox 호출 설계 A, jaebin 승인). 전에는 `inbox.updated` 마다 보드 재료
+   * 전체(`GET /inbox/board` — inbox 전체 + 스레드 머리 전부, 운영 평균 11초)를 받았다. 배지 숫자 하나 때문이다.
+   * 이제 보드가 열려 있을 때만 바로 받고, 닫혀 있으면 `BADGE_REFRESH_MS` 뒤에 **한 번만** 받는다 — 그 사이에 온
+   * 신호는 같은 예약에 접힌다. 판정은 그대로 `buildBoard` → `mineCount` 하나다(서버로 옮기면 판정이 두 벌이 된다).
+   * 대가는 보드를 닫아 둔 동안 배지가 최대 `BADGE_REFRESH_MS` 늦는 것이다. 기동·재연결은 기다리지 않는다
+   * (`loadInboxBoard` 를 바로 부른다).
+   */
   private async refreshInboxMine(): Promise<void> {
-    await this.loadInboxBoard();
+    if (this.boardOpenCount > 0) { await this.loadInboxBoard(); return; }
+    if (this.badgeRefreshTimer || this.stopped) return;
+    this.badgeRefreshTimer = setTimeout(() => {
+      this.badgeRefreshTimer = null;
+      if (!this.stopped) this.swallow(this.loadInboxBoard());
+    }, BADGE_REFRESH_MS);
+  }
+
+  /**
+   * 보드 화면이 열리고 닫힐 때 부른다(`Inbox` 의 `open`). 열리면 미뤄 둔 조회를 걷는다 — 여는 화면이 곧바로
+   * `loadInboxBoard` 를 부르므로 배지도 그때 맞춰진다.
+   */
+  setInboxBoardOpen(open: boolean): void {
+    this.boardOpenCount = Math.max(0, this.boardOpenCount + (open ? 1 : -1));
+    if (open && this.badgeRefreshTimer) { clearTimeout(this.badgeRefreshTimer); this.badgeRefreshTimer = null; }
   }
 
   /**

@@ -37,6 +37,7 @@ const fakeController = (load: () => Promise<{ entries: InboxEntry[]; threads: Me
     openMessage: vi.fn(async () => undefined),
     openThread: vi.fn(async () => undefined),
     // 보드는 컨트롤러를 지나 조회한다(`loadInboxBoard`) — 목은 api 로 그대로 흘린다.
+    setInboxBoardOpen: vi.fn(),
     loadInboxBoard: vi.fn(() => c.api.inboxBoard()),
     inboxBoardSnapshot: vi.fn(() => null),
     openChannel: vi.fn(async () => undefined),

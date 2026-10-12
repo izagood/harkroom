@@ -885,10 +885,11 @@ class AppState extends ChangeNotifier {
       case 'saved.changed':
         _applySavedChanged(event);
       case 'inbox.updated':
-        // 서버는 "바뀌었다"만 알린다 — 무엇이 바뀌었는지는 싣지 않는다. 한 건을
-        // 끼워 넣으면 그 사이 다른 기기에서 읽은 것이 화면에서 되살아나므로,
-        // **목록을 다시 읽는다**(데스크탑의 같은 판단).
-        unawaited(loadInbox());
+        // 서버는 "바뀌었다"만 알린다. 전에는 그때마다 inbox **전체**(읽은 것까지 수천 줄)를 다시 읽었다.
+        // 이제 마지막 줄 **뒤에 생긴 것만** 받아 합친다(2026-10-12 inbox 호출 설계 A, jaebin 승인).
+        // 대가: 다른 기기에서 읽은 옛 줄의 읽음 표시는 다음 전체 읽기(시작·따라잡기·당겨서 새로고침)
+        // 때 맞춰진다.
+        unawaited(loadInboxNew());
       case 'reaction.added':
       case 'reaction.removed':
         _applyReactionDelta(event);
@@ -1124,6 +1125,36 @@ class AppState extends ChangeNotifier {
       // 이미 보이는 목록이 있으면 그대로 둔다 — 다시 못 읽었다고 지우면 있던 것까지 사라진다.
       failures['inbox'] = LoadFailure.of(e);
       if (inboxLoad != LoadState.loaded) inboxLoad = LoadState.failed;
+    }
+    notifyListeners();
+  }
+
+  /// [inbox] 의 마지막 줄 뒤에 생긴 것만 받아 합친다(`inbox.updated`). 아직 한 번도 못 읽었으면 전체를 읽는다.
+  ///
+  /// **id 로 합친다** — 같은 id 면 새 것으로 바꾸고, 새 id 는 더한 뒤 id 순으로 둔다. 옛 서버는 `since` 를 몰라
+  /// 전체를 주는데, 그때도 이 합치기가 전체 읽기와 같은 결과를 낸다(지워진 줄만 남는다 — 다음 전체 읽기에서 걷힌다).
+  Future<void> loadInboxNew() async {
+    final api = _api;
+    if (api == null) return;
+    if (inboxLoad != LoadState.loaded) return loadInbox();
+    final gen = _generation;
+    final since = inbox.isEmpty ? 0 : inbox.map((e) => e.id).reduce((a, b) => a > b ? a : b);
+    try {
+      final fresh = await api.inbox(since: since);
+      if (gen != _generation) return;
+      if (fresh.isEmpty) return;
+      final byId = {for (final e in inbox) e.id: e};
+      for (final e in fresh) {
+        byId[e.id] = e;
+      }
+      final merged = byId.values.toList()..sort((a, b) => a.id.compareTo(b.id));
+      inbox
+        ..clear()
+        ..addAll(merged);
+    } on Object catch (e) {
+      if (gen != _generation) return;
+      // 보이는 목록은 그대로 둔다(`loadInbox` 와 같은 판단).
+      failures['inbox'] = LoadFailure.of(e);
     }
     notifyListeners();
   }

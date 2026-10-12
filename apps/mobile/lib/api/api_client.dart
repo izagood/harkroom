@@ -412,9 +412,11 @@ class ApiClient {
 
   // ── 받은 것 ───────────────────────────────────────────────────────────
 
-  /// 나를 부른 것들. [unreadOnly] 면 아직 안 본 것만.
-  Future<List<InboxEntry>> inbox({bool unreadOnly = false}) async {
-    final body = _obj(await _send('GET', '/inbox${unreadOnly ? '?unread=1' : ''}'));
+  /// 나를 부른 것들. [unreadOnly] 면 아직 안 본 것만. [since] 를 주면 그 entry id **뒤에** 생긴 것만
+  /// (서버 2026-10-12~ — 옛 서버는 이 키를 모르고 전체를 준다. 받는 쪽이 id 로 합치므로 어느 쪽이든 맞다).
+  Future<List<InboxEntry>> inbox({bool unreadOnly = false, int? since}) async {
+    final query = [if (unreadOnly) 'unread=1', if (since != null) 'since=$since'];
+    final body = _obj(await _send('GET', '/inbox${query.isEmpty ? '' : '?${query.join('&')}'}'));
     return _list(body['entries']).map(InboxEntry.fromJson).toList(growable: false);
   }
 

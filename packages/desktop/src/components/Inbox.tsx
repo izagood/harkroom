@@ -214,6 +214,14 @@ export function Inbox({ open, onClose }: Props) {
     return reload();
   }, [open, reload]);
 
+  // 컨트롤러에 열림을 알린다 — 닫혀 있는 동안에는 배지용 보드 조회를 미룬다(`Controller.refreshInboxMine`).
+  useEffect(() => {
+    if (!open) return;
+    const c = getController();
+    c.setInboxBoardOpen(true);
+    return () => c.setInboxBoardOpen(false);
+  }, [open]);
+
   /**
    * **열려 있는 동안 새로 온 것을 그린다**(2026-09-10 신고). 서버의 `inbox.updated` 에 컨트롤러가
    * 보드 재료를 다시 받고(배지 때문에 어차피 받는다) `inboxBoardRevision` 을 올린다. 이 화면은

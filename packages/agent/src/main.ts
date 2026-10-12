@@ -17,6 +17,7 @@
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
 // 진짜 서버에 붙으려 든다.
 import { resolveTurnModel } from './threadModel.js';
+import { idleStopRequestedAt } from './idleStop.js';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { access, readdir, writeFile } from 'node:fs/promises';
@@ -646,9 +647,10 @@ while (running) {
       // 영원히 물러나지 않는다** — 낡은 코드로 도는 러너가 마침 한가한 경우가 정확히
       // 운영자가 세우고 싶어 하는 경우다. 새 채널을 만드는 것이 아니라 러너가 이미 매 턴
       // 읽는 그 정의를 한 번 더 읽는 것이다(빈 폴은 pollTimeoutMs 만큼 park 된 뒤라 잦지 않다).
-      const idleDef = await harkroom.definition();
-      if (stopRequestedForRunner(idleDef.stopRequestedAt, startedAtMs)) {
-        acceptStopRequest(idleDef.stopRequestedAt!);
+      // 새 서버는 빈 폴에 종료 요청을 싣는다 — 그때는 정의를 따로 읽지 않는다(`idleStop.ts`).
+      const idleStop = await idleStopRequestedAt(batch, () => harkroom.definition());
+      if (stopRequestedForRunner(idleStop, startedAtMs)) {
+        acceptStopRequest(idleStop!);
       }
       continue;
     }

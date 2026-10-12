@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { Controller } from '../src/state/controller';
+import { BADGE_REFRESH_MS, Controller } from '../src/state/controller';
 import { buildBoard, mineCount } from '../src/lib/inboxBoard';
 import { fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
@@ -27,10 +27,15 @@ const head = (id: string): MessageRow => msg(id, 'c1', 1, '머리', 'u2', {
 
 type Board = { entries: InboxEntry[]; threads: MessageRow[]; threadStates: InboxThreadState[] };
 
-async function boot(board: () => Board) {
+/**
+ * `boardOpen`(기본 참): 아래 시험 대부분은 **보드가 열려 있을 때**의 모양이다 — 신호마다 바로 받는다. 닫혀 있을 때
+ * (배지만 맞추는 미룬 조회, 2026-10-12)는 맨 아래 묶음이 잰다.
+ */
+async function boot(board: () => Board, opts: { boardOpen?: boolean } = {}) {
   const api = fakeApi({ inboxBoard: vi.fn(async () => board()) });
   const { makeWs, callbacks } = fakeWsFactory();
   const c = new Controller(api, makeWs);
+  if (opts.boardOpen ?? true) c.setInboxBoardOpen(true);
   await c.start();
   await vi.waitFor(() => expect(api.inboxBoard).toHaveBeenCalled());
   const changed = async (): Promise<void> => {
@@ -159,5 +164,65 @@ describe('보드와 배지가 조회 하나를 나눈다 (#1076 후속)', () => 
     expect(useAppStore.getState().inboxMine).toBe(1);
     await c.loadInboxBoard();
     expect(useAppStore.getState().inboxMine).toBe(0);
+  });
+});
+
+/**
+ * 보드가 **닫혀 있으면** 배지용 보드 조회를 미룬다(2026-10-12 inbox 호출 설계 A, jaebin 승인). 전에는 `inbox.updated`
+ * 마다 보드 재료 전체를 받았다(운영 평균 11초 쿼리). 이제 닫혀 있는 동안 온 신호는 `BADGE_REFRESH_MS` 뒤의 조회
+ * **한 번**으로 접힌다. 배지 숫자는 같은 재료·같은 함수로 세므로 **기다린 뒤에는 전과 같다.**
+ */
+describe('보드가 닫혀 있으면 배지 조회를 미룬다', () => {
+  it('신호 여럿이 조회 하나로 접히고, 그 뒤 배지는 열린 보드와 같은 수다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const t0 = new Date(Date.now() - HOUR).toISOString();
+    let data: Board = { entries: [entry(1, 'r1', t0)], threads: [head('r1')], threadStates: [] };
+    const { api, changed } = await boot(() => data, { boardOpen: false });
+    // 기동은 기다리지 않는다.
+    await vi.waitFor(() => expect(useAppStore.getState().inboxMine).toBe(1));
+    expect(api.inboxBoard).toHaveBeenCalledTimes(1);
+
+    data = { ...data, entries: [entry(2, 'r2', t0), ...data.entries], threads: [head('r1'), head('r2')] };
+    for (let i = 0; i < 5; i++) await changed();
+    await vi.advanceTimersByTimeAsync(BADGE_REFRESH_MS - 1_000);
+    expect(api.inboxBoard).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().inboxMine).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() => expect(api.inboxBoard).toHaveBeenCalledTimes(2));
+    const expected = mineCount(buildBoard({ ...data, me: { id: ME, kind: 'human' }, isAgent: () => false, nowMs: Date.now() }));
+    expect(expected).toBe(2);
+    await vi.waitFor(() => expect(useAppStore.getState().inboxMine).toBe(expected));
+  });
+
+  it('보드를 열면 미룬 조회를 걷고, 열려 있는 동안은 신호마다 바로 받는다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const t0 = new Date(Date.now() - HOUR).toISOString();
+    const data: Board = { entries: [entry(1, 'r1', t0)], threads: [head('r1')], threadStates: [] };
+    const { c, api, changed } = await boot(() => ({ ...data }), { boardOpen: false });
+    await vi.waitFor(() => expect(api.inboxBoard).toHaveBeenCalledTimes(1));
+    await changed();
+    c.setInboxBoardOpen(true);
+    await vi.advanceTimersByTimeAsync(BADGE_REFRESH_MS * 2);
+    // 미룬 조회는 걷혔다(여는 화면이 스스로 `loadInboxBoard` 를 부른다 — 여기서는 화면이 없다).
+    expect(api.inboxBoard).toHaveBeenCalledTimes(1);
+    await changed();
+    await vi.waitFor(() => expect(api.inboxBoard).toHaveBeenCalledTimes(2));
+    // 닫으면 다시 미룬다.
+    c.setInboxBoardOpen(false);
+    await changed();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(api.inboxBoard).toHaveBeenCalledTimes(2);
+  });
+
+  it('멈추면 미룬 조회가 나가지 않는다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const t0 = new Date(Date.now() - HOUR).toISOString();
+    const { c, api, changed } = await boot(() => ({ entries: [entry(1, 'r1', t0)], threads: [head('r1')], threadStates: [] }), { boardOpen: false });
+    await vi.waitFor(() => expect(api.inboxBoard).toHaveBeenCalledTimes(1));
+    await changed();
+    c.stop();
+    await vi.advanceTimersByTimeAsync(BADGE_REFRESH_MS * 2);
+    expect(api.inboxBoard).toHaveBeenCalledTimes(1);
   });
 });
