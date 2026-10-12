@@ -1787,6 +1787,30 @@ describe('runMentionTurn', () => {
       }
     });
 
+    // 2026-10-12(스레드 6eca9cee, jaebin 「최신 글·멘션 우선 싣기」): 위 시험의 「유실 없음」은 **창 안**에서만 지킨다.
+    // 커서 뒤가 한 페이지를 넘게 쌓이면 옛 페이지부터 먹이던 방식은 이 턴을 띄운 멘션을 빼먹었다(#task d63b9aa7 — 5일 전
+    // 요청에 답하고 방금 온 질문은 못 봤다). 이제 멘션 + 최신부터 싣고, 못 실은 앞쪽은 생략 줄로 알린다.
+    it('커서 뒤에 남의 글이 한 페이지를 넘게 쌓이면 멘션과 최신 글을 싣고 앞쪽은 생략 줄로 센다', async () => {
+      const fake = new FakeHarkroom(defOf());
+      fake.seedFrom('human-1', '첫 질문');
+      const { deps, plans, turnOpts } = await makeDeps(fake);
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+      // 그 사이에 한 페이지(30)를 훨씬 넘게 쌓이고, 마지막에 이 턴을 띄운 멘션이 온다.
+      for (let i = 1; i <= 70; i += 1) fake.seedFrom('peer-1', `잡담${String(i).padStart(2, '0')}`);
+      const mention = fake.seedFrom('human-1', '@forge 지금 질문');
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: mention.id });
+
+      const p = plans.at(-1)!;
+      const fedText = turnOpts.at(-1)?.injectPrompt?.text ?? (p.stdinFile ? await readFile(p.stdinFile, 'utf8') : p.args.join(' '));
+      expect(fedText, '① 이 턴을 띄운 멘션').toContain('@forge 지금 질문');
+      expect(fedText, '② 최신 글').toContain('잡담70');
+      expect(fedText, '③ 생략 표시(틈이 있으니 「이상」)').toMatch(/앞선 글 \d+개 이상 생략/);
+      expect(fedText, '틈 앞 옛 글은 싣지 않는다').not.toContain('잡담01');
+      // 커서는 본 것의 끝까지 간다 — 다음 턴이 틈을 다시 「새 것」으로 먹지 않는다.
+      expect(deps.store.get(SessionStore.threadKey(CHANNEL, null))!.lastFedSeq).toBe(mention.seq);
+    });
+
     it('발화 확인 읽기에서 turnStartSeq 로 since 를 건다', async () => {
       const fake = new FakeHarkroom(defOf());
       fake.seedFrom('human-1', '@forge 안녕');

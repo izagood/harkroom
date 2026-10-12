@@ -14,7 +14,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
 import type { FailOpts, Me } from './harkroom.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, buildTurnCommand, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
@@ -922,7 +922,18 @@ export async function runMentionTurn(
   // #80: 이 턴에 새로 먹일 것만 정확히 읽기 위해 lastFedSeq 로 커서를 찍는다.
   // 첫 턴(lastFedSeq=0)에서는 since=0 이라 서버가 최신 N 개를 반환하므로,
   // buildTurnPrompt 가 전체 맥락을 보여주는 동작이 유지된다.
-  const thread = await deps.harkroom.readThread(channelId, anchor, rec.lastFedSeq);
+  //
+  // **커서를 주고 읽었으면 최신 페이지도 읽어 합친다**(2026-10-12, 스레드 6eca9cee). `readThread(…, since)` 는 커서 뒤
+  // **가장 옛 글부터** 한 페이지라, 커서가 한 페이지보다 뒤처지면(#task d63b9aa7: 5일 치) 프롬프트에 옛 글만 실리고
+  // 이 턴을 띄운 멘션은 빠졌다. 두 페이지를 합쳐(`mergeThreadPages`) 맞닿지 않으면 틈(`gapAfterSeq`)을 알리고,
+  // `buildTurnPrompt` 가 멘션 + 최신부터 싣고 나머지는 생략 줄로 센다(`fitDelta`). 최신 페이지를 못 읽으면 옛 페이지만 쓴다.
+  const oldestPage = await deps.harkroom.readThread(channelId, anchor, rec.lastFedSeq);
+  let thread = oldestPage;
+  let gapAfterSeq: number | undefined;
+  if (rec.lastFedSeq > 0) {
+    const latestPage = await deps.harkroom.readThread(channelId, anchor, undefined, DELTA_MAX_MESSAGES).catch(() => null);
+    if (latestPage) ({ messages: thread, gapAfterSeq } = mergeThreadPages(oldestPage, latestPage, rec.lastFedSeq));
+  }
 
   // isFirstTurn 은 원칙적으로 turnsRun 에서 유도한다 — lastFedSeq 는 "무엇을 봤는지"의
   // 경계일 뿐 "하네스를 실제로 돌렸는지"의 증거가 아니다(sessions.ts::SessionRecord.turnsRun
@@ -988,6 +999,8 @@ export async function runMentionTurn(
     ...(target.editedMention ? { editedMention: target.editedMention } : {}),
     ...(freshWake ? { freshWake: true } : {}),
     ...(rec.unseenOwnAfterSeq !== undefined ? { unseenOwnAfterSeq: rec.unseenOwnAfterSeq } : {}),
+    ...(target.wake || target.delegation ? {} : { mentionId }),
+    ...(gapAfterSeq !== undefined ? { gapAfterSeq } : {}),
   });
 
   if (!prompt) {
@@ -1003,17 +1016,11 @@ export async function runMentionTurn(
   // 발화 판정(countOwnPostsSince)의 기준선이다 — 턴 시작 전에 이미 있던 자기 발화까지 세면,
   // 아무것도 안 하고 끝낸 턴도 "발화했다"로 잘못 판정된다.
   //
-  // **커서를 주고 읽었으면 스레드의 진짜 끝을 따로 잰다**(2026-10-12, #task d63b9aa7). `readThread(…, since)` 는 커서 **뒤의
-  // 가장 옛 글부터** 한 페이지를 준다 — 커서가 한 페이지보다 뒤처진 스레드에서는 그 페이지의 끝이 지금보다 한참 옛 seq 다.
-  // 그것을 기준선으로 쓰면 발화 확인(`readThread(…, turnStartSeq)`)이 또 옛 페이지를 읽어 이 턴의 답을 못 보고 「말없이
-  // 끝났다」가 되고, 앵커 밖 관측은 그 옛 seq 부터 채널을 훑어 며칠 치 남의 턴 글까지 잡는다(그날 107건). 페이지 크기로
-  // 「꽉 찼나」를 가르지 않는다 — 그 크기는 클라이언트 기본값이라 여기서 믿을 값이 아니다. 한 줄짜리 읽기 하나다.
-  // 커서 없이 읽은 첫 턴은 이미 최신 페이지라 잴 필요가 없다. 못 읽으면 옛 값으로 간다.
-  let turnStartSeq = thread.reduce((max, m) => Math.max(max, m.seq), 0);
-  if (rec.lastFedSeq > 0) {
-    const latest = await deps.harkroom.readThread(channelId, anchor, undefined, 1).catch(() => [] as MessageRow[]);
-    turnStartSeq = latest.reduce((max, m) => Math.max(max, m.seq), turnStartSeq);
-  }
+  // **기준선은 스레드의 진짜 끝이어야 한다**(2026-10-12, #task d63b9aa7). 커서 뒤 옛 페이지의 끝을 쓰면 발화 확인
+  // (`readThread(…, turnStartSeq)`)이 또 옛 페이지를 읽어 이 턴의 답을 못 보고 「말없이 끝났다」가 되고, 앵커 밖 관측은
+  // 그 옛 seq 부터 채널을 훑어 며칠 치 남의 턴 글까지 잡는다(그날 107건). 위에서 커서를 준 턴은 최신 페이지를 합쳤으므로
+  // `thread` 의 끝이 곧 진짜 끝이다(최신 페이지를 못 읽었으면 옛 값으로 간다). 커서 없는 첫 턴은 처음부터 최신 페이지다.
+  const turnStartSeq = thread.reduce((max, m) => Math.max(max, m.seq), 0);
   // 이 턴의 id(`RUNNER_TURN_ID_ENV`). 하네스 env 로 넘기면 서버가 이 턴의 발화에 `meta.turnId` 로 적는다 — 아래 발화 판정·앵커
   // 밖 관측이 계정이 아니라 턴으로 센다(`prompt.ts::ownedByTurn`). 같은 계정의 턴이 동시에 돌아도 서로의 글을 세지 않는다.
   const turnId = randomUUID();

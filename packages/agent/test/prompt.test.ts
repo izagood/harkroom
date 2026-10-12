@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -1303,5 +1303,80 @@ describe('발화 셈을 턴으로 가른다 (2026-10-12, #174·#task 32ce2cdf)',
     expect(hasOwnWakeSince([post(11, 'OTHER', 'wake')], 'a1', 10, 'TURN')).toBe(false);
     expect(hasOwnWakeSince([post(11, 'TURN', 'wake')], 'a1', 10, 'TURN')).toBe(true);
     expect(hasOwnWakeSince([post(11, null, 'wake')], 'a1', 10, 'TURN')).toBe(true);
+  });
+});
+
+describe('델타를 멘션·최신 우선으로 싣는다 (2026-10-12, 스레드 6eca9cee)', () => {
+  const handles = { u1: 'jaebin', p1: 'peer', a1: 'forge' };
+  const many = (from: number, to: number, author = 'p1') =>
+    Array.from({ length: to - from + 1 }, (_, i) => msg(from + i, author, `글${from + i}`));
+
+  it('mergeThreadPages: 옛 페이지와 최신 페이지가 맞닿지 않으면 틈을 알린다', () => {
+    const r = mergeThreadPages(many(11, 13), many(50, 52), 10);
+    expect(r.messages.map((m) => m.seq)).toEqual([11, 12, 13, 50, 51, 52]);
+    expect(r.gapAfterSeq).toBe(13);
+  });
+
+  it('mergeThreadPages: 옛 페이지가 커서 뒤를 다 담았으면 틈이 없다', () => {
+    const r = mergeThreadPages(many(11, 13), many(12, 13), 10);
+    expect(r.messages.map((m) => m.seq)).toEqual([11, 12, 13]);
+    expect(r.gapAfterSeq).toBeUndefined();
+  });
+
+  it('fitDelta: 최신부터 개수 예산까지 싣고, 멘션은 예산 밖이어도 싣는다', () => {
+    const all = many(1, 50);
+    const r = fitDelta(all, handles, { mentionId: 'm3', maxMessages: 5 });
+    expect(r.shown.map((m) => m.seq)).toEqual([3, 47, 48, 49, 50]);
+    expect(r.omitted).toBe(45);
+    expect(r.omittedAtLeast).toBe(false);
+  });
+
+  it('fitDelta: 글자 예산도 본다', () => {
+    const big = [msg(1, 'p1', 'x'.repeat(100)), msg(2, 'p1', 'y'.repeat(100)), msg(3, 'p1', 'z')];
+    const r = fitDelta(big, handles, { maxChars: 120 });
+    expect(r.shown.map((m) => m.seq)).toEqual([2, 3]);
+    expect(r.omitted).toBe(1);
+  });
+
+  it('fitDelta: 틈 앞의 글은 싣지 않고 「이상」으로 센다', () => {
+    const r = fitDelta([...many(11, 13), ...many(50, 52)], handles, { gapAfterSeq: 13 });
+    expect(r.shown.map((m) => m.seq)).toEqual([50, 51, 52]);
+    expect(r.omitted).toBe(3);
+    expect(r.omittedAtLeast).toBe(true);
+  });
+
+  it('buildTurnPrompt: 예산을 넘으면 생략 줄이 멘션·최신 글 앞에 선다', () => {
+    const msgs = [...many(11, 11 + DELTA_MAX_MESSAGES + 9), msg(100, 'u1', '@forge 지금 질문', { id: 'MENTION' })];
+    const { prompt, fedSeq } = buildTurnPrompt({
+      messages: msgs, lastFedSeq: 10, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'MENTION',
+    });
+    expect(prompt).toContain('jaebin: @forge 지금 질문');
+    expect(prompt).toContain(`peer: 글${11 + DELTA_MAX_MESSAGES + 9}`);
+    expect(prompt).not.toContain('peer: 글11\n'); // 41개 중 멘션 + 최신 29개만 — 옛 11개는 생략
+    expect(prompt).toMatch(/\(앞선 글 11개 생략 — 필요하면 harkroom MCP 의 `message.read`/);
+    expect(prompt.indexOf('앞선 글')).toBeLessThan(prompt.indexOf('peer: 글'));
+    expect(fedSeq).toBe(100);
+  });
+
+  it('buildTurnPrompt: 멘션이 읽은 범위에 없으면 링크 한 줄로 알린다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: many(11, 15), lastFedSeq: 10, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'GONE',
+    });
+    expect(prompt).toContain('(이 턴을 띄운 글 harkroom://message/GONE 은 위 범위 밖이라 싣지 못했다');
+  });
+
+  it('buildTurnPrompt: 멘션이 이미 먹인 구간에 있으면 알리지 않는다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: [msg(5, 'u1', '옛 멘션', { id: 'OLD' }), ...many(11, 12)], lastFedSeq: 10, meId: 'a1', handles,
+      channelId: 'c', threadRootId: null, mentionId: 'OLD',
+    });
+    expect(prompt).not.toContain('범위 밖');
+  });
+
+  it('buildTurnPrompt: 예산 안이면 생략 줄이 없다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: many(11, 15), lastFedSeq: 10, meId: 'a1', handles, channelId: 'c', threadRootId: null,
+    });
+    expect(prompt).not.toContain('생략');
   });
 });
