@@ -13,6 +13,9 @@ export async function runMigrations(pool: Pool): Promise<void> {
   // 마이그레이션마다 커밋해도 유지된다.
   const client = await pool.connect();
   try {
+    // 쿼리 시간 상한(`pool.ts` STATEMENT_TIMEOUT_MS)을 이 세션에서만 푼다. 큰 표의 색인 만들기·채우기는 30초를 넘을 수
+    // 있고, 롤링 업데이트에서 다른 인스턴스의 마이그레이션을 기다리는 잠금 대기도 상한에 걸린다. 반납 전에 되돌린다.
+    await client.query('set statement_timeout = 0');
     await client.query('select pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
     await client.query(`create table if not exists schema_migrations (name text primary key)`);
     const dir = new URL('./migrations/', import.meta.url);
@@ -34,6 +37,8 @@ export async function runMigrations(pool: Pool): Promise<void> {
   } finally {
     // 잠금 해제 실패로 원래 에러를 덮지 않는다. 커넥션을 반납하면 세션 잠금은 어차피 풀린다.
     await client.query('select pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]).catch(() => {});
+    // 연결 시작 값(30초)으로 되돌린다 — 이 클라이언트는 풀로 돌아가 보통 요청을 받는다.
+    await client.query('reset statement_timeout').catch(() => {});
     client.release();
   }
 }

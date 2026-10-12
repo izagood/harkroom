@@ -24,9 +24,37 @@ import pg from 'pg';
 export const POOL_MAX = 20;
 export const POOL_CONNECT_TIMEOUT_MS = 5_000;
 
-export function createPool(connectionString: string, onError: (err: Error) => void): pg.Pool {
+/**
+ * 쿼리 하나의 시간 상한(2026-10-12). 상한이 없던 날, 서버 파드가 바뀐 뒤에도 옛 파드가 낸 메시지 목록 쿼리 9개가
+ * 최대 47분을 돌며 Postgres CPU 를 다 썼다(16:29~16:34 KST 끊김). 앱의 정상 쿼리는 초 단위다 — 30초를 넘는 것은
+ * 고장이고, 끝까지 기다려 줄 사람도 없다(HTTP 쪽은 이미 끊겼다).
+ *
+ * **연결 시작 파라미터로 건다** — pg 가 startup 메시지에 실어 보내므로 서버(Postgres)가 집행한다. 클라이언트 쪽 시한
+ * (`query_timeout`)과 달리 우리 프로세스가 죽어도 쿼리가 끊긴다. 상한을 넘겨야 하는 길(마이그레이션)은 그 세션에서
+ * `set statement_timeout = 0` 으로 푼다(`migrate.ts`).
+ */
+export const STATEMENT_TIMEOUT_MS = 30_000;
+/** 트랜잭션을 연 채 놀고 있는 세션의 상한 — 잠금과 커넥션을 쥔 채 잊힌 트랜잭션을 끊는다. */
+export const IDLE_IN_TRANSACTION_TIMEOUT_MS = 60_000;
+/**
+ * 쿼리가 도는 동안 클라이언트가 살아 있는지 보는 주기(PG14+, Linux). 소켓이 끊겼으면 다음 확인 때 쿼리를
+ * 멈춘다 — 파드가 사라진 뒤 남는 **고아 쿼리**를 statement_timeout 보다 먼저 끊는다.
+ */
+export const CLIENT_CHECK_INTERVAL_MS = 5_000;
+
+export interface PoolLimits {
+  statementTimeoutMs?: number;
+  idleInTransactionTimeoutMs?: number;
+}
+
+export function createPool(
+  connectionString: string, onError: (err: Error) => void, limits: PoolLimits = {},
+): pg.Pool {
   const pool = new pg.Pool({
     connectionString, max: POOL_MAX, connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS,
+    statement_timeout: limits.statementTimeoutMs ?? STATEMENT_TIMEOUT_MS,
+    idle_in_transaction_session_timeout: limits.idleInTransactionTimeoutMs ?? IDLE_IN_TRANSACTION_TIMEOUT_MS,
+    options: `-c client_connection_check_interval=${CLIENT_CHECK_INTERVAL_MS}`,
   });
   const report = (err: Error) => {
     // 보고가 던지면 가드가 무의미해진다 — 로거가 죽은 상황이 정확히 이런 때다.
