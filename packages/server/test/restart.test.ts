@@ -71,7 +71,7 @@ describe('업데이트로 에이전트 세션이 끊기지 않는다', () => {
     await a.lifecycle.beginDrain();
     const result = text(await pending);
 
-    expect(result).toEqual({ entries: [], messages: [] });
+    expect(result).toEqual({ entries: [], messages: [], stopRequestedAt: null });
     expect(Date.now() - started).toBeLessThan(5_000);
     await client.close();
     await a.app.close();
@@ -89,7 +89,7 @@ describe('업데이트로 에이전트 세션이 끊기지 않는다', () => {
     await a.lifecycle.beginDrain();
     await a.app.close();
 
-    expect(text(await pending)).toEqual({ entries: [], messages: [] });
+    expect(text(await pending)).toEqual({ entries: [], messages: [], stopRequestedAt: null });
     await client.close();
   });
 
@@ -101,7 +101,7 @@ describe('업데이트로 에이전트 세션이 끊기지 않는다', () => {
     const started = Date.now();
     const result = text(await client.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 20_000 } }));
 
-    expect(result).toEqual({ entries: [], messages: [] });
+    expect(result).toEqual({ entries: [], messages: [], stopRequestedAt: null });
     expect(Date.now() - started).toBeLessThan(2_000);
     await client.close();
     await a.app.close();
@@ -113,7 +113,7 @@ describe('업데이트로 에이전트 세션이 끊기지 않는다', () => {
     const pending = clientA.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 20_000 } });
     await sleep(300);
     await a.lifecycle.beginDrain();
-    expect(text(await pending)).toEqual({ entries: [], messages: [] });
+    expect(text(await pending)).toEqual({ entries: [], messages: [], stopRequestedAt: null });
     await clientA.close();
     await a.app.close();
 

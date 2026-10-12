@@ -2842,7 +2842,7 @@ const BOARD_COMPACT_KEEP_SQL = `i.id in (
         where r.rn <= ${BOARD_COMPACT_LATEST} or r.rr = 1 or r.pinned)`;
 
 export async function listInbox(
-  pool: Pool, accountId: string, opts: { unreadOnly?: boolean; compact?: boolean },
+  pool: Pool, accountId: string, opts: { unreadOnly?: boolean; compact?: boolean; sinceId?: number },
 ): Promise<InboxEntry[]> {
   const bodySql = opts.compact
     ? `left(${displayBodySql('m')}, ${BOARD_COMPACT_BODY_CHARS}) as body,
@@ -2877,8 +2877,9 @@ export async function listInbox(
        and ${channelVisibleSql('c', '$1')}
        ${opts.unreadOnly ? 'and i.read_at is null' : ''}
        ${opts.compact ? `and ${BOARD_COMPACT_KEEP_SQL}` : ''}
+       ${opts.sinceId !== undefined ? 'and i.id > $2::bigint' : ''}
      order by i.id`,
-    [accountId],
+    opts.sinceId !== undefined ? [accountId, opts.sinceId] : [accountId],
   );
 
   /**

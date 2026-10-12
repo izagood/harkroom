@@ -419,6 +419,22 @@ export async function undoAgentStopRequest(
  * "언제 도달했나"가 러너가 마지막으로 정의를 읽은 시각으로 밀려 의미를 잃는다.
  * 요청이 없으면 아무 행도 건드리지 않는다 — 수령은 요청에 대해서만 존재한다.
  */
+/**
+ * 러너의 빈 폴이 함께 받는 **종료 요청**(2026-10-12 inbox 호출 설계 A). 전에는 러너가 빈 폴마다 `GET /agent/config`
+ * 를 한 번 더 불러 이 값 하나를 봤다 — 25초마다 에이전트마다 REST 왕복 하나(인증 2 + 정의 조회). 폴 응답에 실으면
+ * 질의 하나로 끝난다. 수령 기록(`ackAgentStop`)도 `/agent/config` 와 **같은 규칙**으로 여기서 남긴다 — 러너가 이
+ * 값으로 물러나면 그 뒤로 `/agent/config` 를 부르지 않으므로, 여기서 안 남기면 화면이 「수령」을 영영 못 본다.
+ */
+export async function readAgentStop(pool: Pool, agentId: string): Promise<{ stopRequestedAt: string | null }> {
+  const res = await pool.query(
+    `select stop_requested_at as "stopRequestedAt", stop_acked_at as "stopAckedAt"
+       from agent_config where account_id = $1`, [agentId]);
+  const row = res.rows[0] as { stopRequestedAt: Date | null; stopAckedAt: Date | null } | undefined;
+  if (!row?.stopRequestedAt) return { stopRequestedAt: null };
+  if (!row.stopAckedAt) await ackAgentStop(pool, agentId);
+  return { stopRequestedAt: row.stopRequestedAt.toISOString() };
+}
+
 export async function ackAgentStop(pool: Pool, agentId: string): Promise<string | null> {
   const res = await pool.query(
     `update agent_config set stop_acked_at = now()
