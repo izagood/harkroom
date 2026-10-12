@@ -333,7 +333,11 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
       <header className="flex items-center border-b border-border px-4 py-2">
         <span className="font-semibold">{t('thread.title')}</span>
         {/* `null` 은 '아직 아무 말도 못 봤다' — 그때는 배지를 그리지 않는다(`threadState`). */}
-        {unfetchedEmpty
+        {/* 끊긴 동안(경계 줄이 서는 동안)의 「끝남」은 「모름」이다(designer s1) — `done` 은 '남은 일이 없다'는
+            주장이라 최신 줄을 봐야만 할 수 있고, 경계 줄은 「이 아래는 모른다」고 말한다. 둘이 반대 말을 하면
+            안 된다. 나머지 상태는 그대로다 — 받아 둔 줄 안에 근거(미답 카드·실패 줄)가 보이고, running 은
+            '마지막으로 알던 사실'을 유지하는 규약이다. */}
+        {unfetchedEmpty || (stale && state === 'done')
           ? <UnknownThreadStateBadge className="ml-2" />
           : state && <ThreadStateBadge state={state} className="ml-2" />}
         {/* 참여자 줄과 터미널 선택자는 **헤더**다 — 세션이 (에이전트, 스레드)당 하나이므로
@@ -421,7 +425,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
         )}
         {/* ④ 끊긴 채 열었는데 답글을 하나도 못 받았다 — 「답글 없음」이 아니다. */}
         {unfetchedEmpty && fetchHere === 'offline' && (
-          <div data-testid="thread-unfetched" className="mx-4 my-2 rounded-row border border-dashed border-border px-3 py-3 text-center">
+          // `border-border` 점선은 어둡게에서 바닥에 묻힌다(designer n3) — 한 단계 진한 선 `border-strong`.
+          <div data-testid="thread-unfetched" className="mx-4 my-2 rounded-row border border-dashed border-strong px-3 py-3 text-center">
             <p className="text-fg-muted">
               {rootRow?.replyCount ? t('thread.unfetched.title', { count: rootRow.replyCount }) : t('thread.unfetched.titleUnknown')}
             </p>
@@ -432,9 +437,15 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
         {fetchHere === 'noResponse' && (
           <div data-testid="thread-no-response" role="alert"
             className="mx-4 my-2 flex items-center gap-2 rounded-row border border-border px-3 py-2 text-meta text-fg-muted">
-            <span className="flex-1">{t('thread.noResponse')}</span>
+            {/* 둘째 줄이 원인을 말한다(designer n1) — 없으면 끊김(④)과 구분되지 않는다. 받아 둔 답글이 있으면
+                못 불러온 것은 「새」 답글이다(n5). */}
+            <span className="flex-1">
+              <span className="block text-fg">{t(replies > 0 ? 'thread.noResponse.titleHeld' : 'thread.noResponse')}</span>
+              <span className="block">{t('thread.noResponse.detail')}</span>
+            </span>
+            {/* 앱 띠의 [다시]와 같은 동작이니 같은 모양이다(designer n2). */}
             <button type="button" data-testid="thread-retry" onClick={retry}
-              className="rounded-row px-2 py-0.5 font-medium text-fg hover:bg-surface-hover">
+              className="shrink-0 rounded-row border border-border px-2 py-0.5 font-medium text-fg hover:bg-surface-hover">
               {t('thread.noResponse.retry')}
             </button>
           </div>

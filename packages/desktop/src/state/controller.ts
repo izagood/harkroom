@@ -822,6 +822,9 @@ export class Controller {
           store.set({
             channels: store.channels.filter((c) => c.id !== e.channelId),
             // 받아 둔 줄도 버린다(security n5) — 남기면 인박스·링크로 지워진 채널의 본문이 다시 선다.
+            // 내가 **비공개** 채널에서 빠진 것도 이 길이다: 서버는 그 사람에게 `member_removed` 가 아니라
+            // `channel.deleted` 를 그 사람에게만 보낸다(server `channelRoutes.ts` 내보내기·비공개 전환).
+            // 공개 채널에서 빠진 것은 이 이벤트가 오지 않으므로 줄이 남는다 — 빠져도 읽을 수 있다.
             ...this.dropChannelRows(e.channelId),
             ...(wasActive ? { activeChannelId: null, threadRootId: null } : {}),
           });
@@ -842,15 +845,6 @@ export class Controller {
         // 목록 자체가 생기거나 사라지는 일은 같이 오는 channel.created/deleted 가 맡는다.
         if (store.channelMembers[e.channelId]) {
           this.swallow(this.loadChannelMembers(e.channelId));
-        }
-        // 내가 **비공개** 채널에서 빠졌다 — 그 채널의 받아 둔 줄을 버린다(security n5). 공개 채널은
-        // 빠져도 읽을 수 있으므로 그대로 둔다(보던 화면이 비면 그것이 거짓말이다).
-        if (e.type === 'channel.member_removed' && e.accountId === store.me?.id
-          && store.channels.find((c) => c.id === e.channelId)?.visibility === 'private') {
-          store.set({
-            ...this.dropChannelRows(e.channelId),
-            ...(store.activeChannelId === e.channelId ? { threadRootId: null } : {}),
-          });
         }
         break;
       case 'handle_group.changed':

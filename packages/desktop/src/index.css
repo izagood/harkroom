@@ -52,6 +52,7 @@
   */
   --app-field: #ffffff;
   --app-border: #e6e2dc;          /* 면과 면을 가르는 선 */
+  --app-border-strong: #d3cdc4;   /* 한 단계 진한 선 — 점선처럼 가는 선이 바닥에 묻힐 때(A3 ④ 빈 상태) */
   --app-fg: #1b1a19;              /* 본문 글자 */
   --app-fg-muted: #6b665f;        /* 보조 글자 — 시각·타임스탬프·설명. 바닥과 5.5:1 */
   /* 더 약한 글자 — 3.4:1 이라 AA 미달이다. **플레이스홀더·장식 라벨에만** 쓰고, 읽어야
@@ -142,6 +143,7 @@
   --app-surface-hover: #2e2b28;
   --app-field: #262422;
   --app-border: #34312e;
+  --app-border-strong: #4d4843;
   --app-fg: #ebe7e2;
   --app-fg-muted: #9a938b;
   --app-fg-subtle: #7a746c;
@@ -185,6 +187,7 @@
   --color-surface-hover: var(--app-surface-hover);
   --color-field: var(--app-field);
   --color-border: var(--app-border);
+  --color-border-strong: var(--app-border-strong);
   --color-fg: var(--app-fg);
   --color-fg-muted: var(--app-fg-muted);
   --color-fg-subtle: var(--app-fg-subtle);

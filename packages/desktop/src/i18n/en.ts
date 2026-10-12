@@ -4354,6 +4354,8 @@ export const en = {
   'thread.unfetched.titleUnknown': 'Replies not loaded yet',
   'thread.unfetched.detail': "They'll load automatically when you reconnect",
   'thread.noResponse': "Couldn't load replies",
+  'thread.noResponse.titleHeld': "Couldn't load new replies",
+  'thread.noResponse.detail': 'The server is not responding.',
   'thread.noResponse.retry': 'Try again',
   'thread.state.unknown': 'Unknown',
   'notice.threadGone': 'That thread is gone — it was deleted, or it does not live in this conversation.',

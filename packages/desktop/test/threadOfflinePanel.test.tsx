@@ -78,4 +78,33 @@ describe('끊긴 동안의 스레드 패널 (A3-2)', () => {
     expect(screen.queryByTestId('thread-no-response')).toBeNull();
     expect(screen.getByTestId('thread-state').getAttribute('data-state')).not.toBe('unknown');
   });
+
+  /** designer s1 — 경계 줄이 「이 아래는 모른다」고 하는 동안 배지가 「끝남」이면 서로 반대 말을 한다. */
+  it('끊김 + 받아 둔 답글 + done → 「모름」, 다시 붙으면 「끝남」', () => {
+    fakeController();
+    const { rerender } = render(<ThreadPanel />);
+    expect(screen.getByTestId('thread-state').getAttribute('data-state')).toBe('done');
+    useAppStore.getState().set({ connected: false, link: 'offline', offlineSince: Date.parse('2026-10-12T10:00:00Z') });
+    rerender(<ThreadPanel />);
+    expect(screen.getByTestId('thread-held-boundary')).toBeTruthy();
+    expect(screen.getByTestId('thread-state').getAttribute('data-state')).toBe('unknown');
+    useAppStore.getState().set({ connected: true, link: 'online', offlineSince: null });
+    rerender(<ThreadPanel />);
+    expect(screen.getByTestId('thread-state').getAttribute('data-state')).toBe('done');
+  });
+
+  /** designer n1·n5 — ⑥ 은 원인(서버가 응답하지 않는다)을 말하고, 받아 둔 답글이 있으면 못 받은 것은 「새」 답글이다. */
+  it('⑥ 둘째 줄이 원인을 말하고, 받아 둔 답글이 있으면 「새 답글」이다', () => {
+    fakeController();
+    useAppStore.getState().set({ threadFetch: { rootId: 'm1', reason: 'noResponse' } });
+    const { rerender } = render(<ThreadPanel />);
+    const held = screen.getByTestId('thread-no-response').textContent ?? '';
+    expect(held).toMatch(/Couldn't load new replies/);
+    expect(held).toMatch(/The server is not responding/);
+    useAppStore.getState().set({ messages: { c1: [root] } });
+    rerender(<ThreadPanel />);
+    const empty = screen.getByTestId('thread-no-response').textContent ?? '';
+    expect(empty).toMatch(/Couldn't load replies/);
+    expect(empty).not.toMatch(/new replies/);
+  });
 });

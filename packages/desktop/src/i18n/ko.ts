@@ -2308,6 +2308,8 @@ export const ko = {
   'thread.unfetched.titleUnknown': '답글을 아직 받지 못했다',
   'thread.unfetched.detail': '다시 연결되면 저절로 불러온다',
   'thread.noResponse': '답글을 불러오지 못했다',
+  'thread.noResponse.titleHeld': '새 답글을 불러오지 못했다',
+  'thread.noResponse.detail': '서버가 응답하지 않는다',
   'thread.noResponse.retry': '다시 시도',
   'thread.state.unknown': '모름',
   'notice.threadGone': '그 스레드는 없다 — 지워졌거나 이 대화에 있지 않다.',
