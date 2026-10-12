@@ -614,12 +614,12 @@ async function reportPromiseCheck(
 }
 
 async function offAnchorEvidence(
-  deps: MentionTurnDeps, key: string, channelId: string, anchor: string | null, turnStartSeq: number,
+  deps: MentionTurnDeps, key: string, channelId: string, anchor: string | null, turnStartSeq: number, turnId: string,
 ): Promise<string | null> {
   try {
     // limit 를 넉넉히 준다 — 기본 30 은 바쁜 채널에서 내 발화를 창 밖으로 밀어낸다.
     const channelWide = await deps.harkroom.readChannelSince(channelId, turnStartSeq, 200);
-    const strays = offAnchorPosts(channelWide, deps.me.id, anchor, turnStartSeq);
+    const strays = offAnchorPosts(channelWide, deps.me.id, anchor, turnStartSeq, turnId);
     if (strays.length === 0) return null;
     console.warn(
       `[mentionTurn] ${key}: 앵커에는 발화가 없는데 같은 채널의 다른 스레드에 내 발화가 ` +
@@ -1002,7 +1002,21 @@ export async function runMentionTurn(
 
   // 발화 판정(countOwnPostsSince)의 기준선이다 — 턴 시작 전에 이미 있던 자기 발화까지 세면,
   // 아무것도 안 하고 끝낸 턴도 "발화했다"로 잘못 판정된다.
-  const turnStartSeq = thread.reduce((max, m) => Math.max(max, m.seq), 0);
+  //
+  // **커서를 주고 읽었으면 스레드의 진짜 끝을 따로 잰다**(2026-10-12, #task d63b9aa7). `readThread(…, since)` 는 커서 **뒤의
+  // 가장 옛 글부터** 한 페이지를 준다 — 커서가 한 페이지보다 뒤처진 스레드에서는 그 페이지의 끝이 지금보다 한참 옛 seq 다.
+  // 그것을 기준선으로 쓰면 발화 확인(`readThread(…, turnStartSeq)`)이 또 옛 페이지를 읽어 이 턴의 답을 못 보고 「말없이
+  // 끝났다」가 되고, 앵커 밖 관측은 그 옛 seq 부터 채널을 훑어 며칠 치 남의 턴 글까지 잡는다(그날 107건). 페이지 크기로
+  // 「꽉 찼나」를 가르지 않는다 — 그 크기는 클라이언트 기본값이라 여기서 믿을 값이 아니다. 한 줄짜리 읽기 하나다.
+  // 커서 없이 읽은 첫 턴은 이미 최신 페이지라 잴 필요가 없다. 못 읽으면 옛 값으로 간다.
+  let turnStartSeq = thread.reduce((max, m) => Math.max(max, m.seq), 0);
+  if (rec.lastFedSeq > 0) {
+    const latest = await deps.harkroom.readThread(channelId, anchor, undefined, 1).catch(() => [] as MessageRow[]);
+    turnStartSeq = latest.reduce((max, m) => Math.max(max, m.seq), turnStartSeq);
+  }
+  // 이 턴의 id(`RUNNER_TURN_ID_ENV`). 하네스 env 로 넘기면 서버가 이 턴의 발화에 `meta.turnId` 로 적는다 — 아래 발화 판정·앵커
+  // 밖 관측이 계정이 아니라 턴으로 센다(`prompt.ts::ownedByTurn`). 같은 계정의 턴이 동시에 돌아도 서로의 글을 세지 않는다.
+  const turnId = randomUUID();
   // 보고처의 기준선(2026-10-06). 앵커의 seq 로는 못 잰다: 약속 글은 대개 **다른 스레드에서 깨움보다 뒤에**
   // 쓰여 앵커의 마지막 seq 보다 크다 — 그것을 이 턴의 보고로 잘못 센다. 보고처의 지금 마지막 글을 잰다.
   // 못 읽으면 판정을 접는다(null) — 근거 없이 경고하지 않는다.
@@ -1210,6 +1224,7 @@ export async function runMentionTurn(
     claudeConfigDir: deps.claudeConfigDir,
     // 연쇄 깊이의 앞 고리 — 이 턴을 띄운 멘션이다(앵커가 아니다: 앵커는 스레드 루트일 수 있다).
     causeMessageId: mentionId,
+    turnId,
   });
 
   /**
@@ -1737,7 +1752,7 @@ export async function runMentionTurn(
     const posts: Promise<boolean | null> = end.spoke
       ? Promise.resolve(true)
       : deps.harkroom.readThread(channelId, anchor, turnStartSeq)
-        .then((after) => countOwnPostsSince(after, deps.me.id, turnStartSeq) > 0)
+        .then((after) => countOwnPostsSince(after, deps.me.id, turnStartSeq, turnId) > 0)
         .catch((err: unknown) => {
           if (!end.threadUnreadable) {
             console.error(`[mentionTurn] ${key}: 발화 확인 실패(모르는 것으로 둔다) — ${err instanceof Error ? err.message : String(err)}`);
@@ -2190,7 +2205,7 @@ export async function runMentionTurn(
       // #144: progress 메시지는 결과 발화로 세지 않는다 — 에이전트가 message.progress 로 올린
       // 진행 설명은 .kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
       // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 침묵 통지(`silentTurnNotice`) 로 처리된다.
-      const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
+      const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq, turnId);
       // 실패한 턴에서도 중복 발화는 일어난다(답을 두 번 올리고 나서 죽는다) — 성공 경로와
       // 같은 관측을 여기서도 한다. 안 하면 "실패했으니 안 보였다"가 되어 #90 의 관측이
       // 반쪽이 된다.
@@ -2370,7 +2385,7 @@ export async function runMentionTurn(
     // #144: progress 메시지는 결과 발화로 세지 않는다 — 에이전트가 message.progress 로 올린
     // 진행 설명은 .kind='progress'로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
     // 따라서 "progress 메시지만 있고 결과가 없는 턴"은 침묵 통지(`silentTurnNotice`) 로 처리된다.
-    const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq);
+    const postCount = countOwnPostsSince(after, deps.me.id, turnStartSeq, turnId);
     warnOnDuplicatePosts(key, postCount);
     // 이번 턴에 깨움을 걸었다면 침묵이 아니다 — 스레드에 대기 줄이 보이므로 사람은 무슨
     // 일인지 안다. 여기에 침묵 통지(`silentTurnNotice`) 까지 더하면 CI 를 10분 기다리는 사이 "발화 없음"
@@ -2378,7 +2393,7 @@ export async function runMentionTurn(
     //
     // 커서(lastFedSeq)는 **위에서 이미 전진**했다(발화가 있었든 없었든 성공한 턴은 전진한다) —
     // 여기서 되돌리지 않는다. 되돌리면 깨어난 턴이 옛 멘션을 다시 먹는다.
-    if (postCount === 0 && !hasOwnWakeSince(after, deps.me.id, turnStartSeq)) {
+    if (postCount === 0 && !hasOwnWakeSince(after, deps.me.id, turnStartSeq, turnId)) {
       // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
       // 거부를 사실로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.
@@ -2394,7 +2409,7 @@ export async function runMentionTurn(
       // 여기서만 채널 전체를 훑는 이유는 값이 싸지 않아서다: 이 경로는 드물게 도는 침묵
       // 경로이고, 그때는 사람에게 어차피 통지가 나가므로 한 왕복을 더 쓸 값어치가 있다.
       // 실패해도 통지 자체는 그대로 나간다 — 정황이 없다고 사실을 못 남기면 본말이 뒤집힌다.
-      const offAnchor = await offAnchorEvidence(deps, key, channelId, anchor, turnStartSeq);
+      const offAnchor = await offAnchorEvidence(deps, key, channelId, anchor, turnStartSeq, turnId);
       const notice = silentTurnNotice({
         caller: silentTurnCaller(deps, target, thread), lastSaid, offAnchor,
         pat: deps.runnerSecret, secrets: await tailSecrets(),
@@ -2420,7 +2435,7 @@ export async function runMentionTurn(
     }
     // **약속한 보고처에 말했나**(2026-10-06). 앵커 쪽 판정(위)과 따로 본다 — 앵커에 답하고도 보고처를 잊는 것이
     // 실측된 모양이다(task_manager 10-06). 다시 기다리기로 했으면(새 깨움) 아직 보고할 때가 아니니 경고하지 않는다.
-    if (reportTo && reportBaseSeq !== null && !hasOwnWakeSince(after, deps.me.id, turnStartSeq)) {
+    if (reportTo && reportBaseSeq !== null && !hasOwnWakeSince(after, deps.me.id, turnStartSeq, turnId)) {
       await reportPromiseCheck(deps, reportTo, reportBaseSeq, target.wake?.reason ?? '', anchor ?? mentionId, channelId);
     }
   } catch (err) {

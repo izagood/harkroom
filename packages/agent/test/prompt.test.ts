@@ -1158,8 +1158,9 @@ describe('harnessTailNotice — 버려지던 마지막 출력', () => {
  * 남아, 사람 눈에는 30분 일한 턴이 아무것도 안 한 것으로 보였다.
  */
 describe('앵커 밖 발화 관측 (2026-09-08)', () => {
-  const inThread = (seq: number, authorId: string, root: string | null) =>
-    msg(seq, authorId, `m${seq}`, { threadRootId: root });
+  // 이 턴이 쓴 글(서버가 `meta.turnId` 로 적는다, 2026-10-12). 아래 시험들은 판정 모양을 보므로 전부 이 턴의 글로 만든다.
+  const inThread = (seq: number, authorId: string, root: string | null, turnId: string | null = 'TURN') =>
+    msg(seq, authorId, `m${seq}`, { threadRootId: root, meta: turnId ? { turnId } : {} });
 
   it('앵커가 스레드일 때: 다른 스레드와 채널 최상위의 내 발화를 잡는다', () => {
     const all = [
@@ -1168,28 +1169,46 @@ describe('앵커 밖 발화 관측 (2026-09-08)', () => {
       inThread(13, 'a1', null),   // 채널 최상위 — 내 앵커가 아니다
       inThread(14, 'a2', 'T2'),   // 동료의 발화 — 내 것이 아니다
     ];
-    const strays = offAnchorPosts(all, 'a1', 'T1', 10);
+    const strays = offAnchorPosts(all, 'a1', 'T1', 10, 'TURN');
     expect(strays.map((m) => m.seq)).toEqual([12, 13]);
   });
 
   it('앵커 스레드의 루트 메시지 자신은 앵커 안이다 — id 로도 비교한다', () => {
     const root = msg(20, 'a1', '루트', { id: 'T1', threadRootId: null });
-    expect(offAnchorPosts([root], 'a1', 'T1', 10)).toEqual([]);
+    expect(offAnchorPosts([root], 'a1', 'T1', 10, 'TURN')).toEqual([]);
   });
 
   it('앵커가 채널 최상위(null)면 스레드 답이 앵커 밖이다', () => {
     const all = [inThread(21, 'a1', null), inThread(22, 'a1', 'T9')];
-    expect(offAnchorPosts(all, 'a1', null, 20).map((m) => m.seq)).toEqual([22]);
+    expect(offAnchorPosts(all, 'a1', null, 20, 'TURN').map((m) => m.seq)).toEqual([22]);
   });
 
   it('기준선 이전과 progress·wake 는 세지 않는다 — countOwnPostsSince 와 같은 규칙이다', () => {
     const all = [
       inThread(5, 'a1', 'T2'),                                        // 턴 시작 전
-      msg(31, 'a1', '진행', { threadRootId: 'T2', kind: 'progress' }),
-      msg(32, 'a1', '대기', { threadRootId: 'T2', kind: 'wake' }),
+      msg(31, 'a1', '진행', { threadRootId: 'T2', kind: 'progress', meta: { turnId: 'TURN' } }),
+      msg(32, 'a1', '대기', { threadRootId: 'T2', kind: 'wake', meta: { turnId: 'TURN' } }),
       inThread(33, 'a1', 'T2'),
     ];
-    expect(offAnchorPosts(all, 'a1', 'T1', 10).map((m) => m.seq)).toEqual([33]);
+    expect(offAnchorPosts(all, 'a1', 'T1', 10, 'TURN').map((m) => m.seq)).toEqual([33]);
+  });
+
+  // 10-12 #task 32ce2cdf: 같은 계정의 턴 여럿이 같은 채널의 다른 스레드에서 동시에 돌았고, 한 턴의 침묵 통지가 나머지 턴들의
+  // 글 15개를 「이 요청의 답」으로 링크했다. 계정이 아니라 턴으로 가른다.
+  it('같은 계정이라도 다른 턴이 쓴 글은 잡지 않는다 — 동시에 도는 턴의 글이 침묵 통지에 실리지 않는다', () => {
+    const all = [
+      inThread(51, 'a1', 'T2', 'OTHER'),  // 같은 계정, 같은 채널, 다른 스레드에서 동시에 돈 다른 턴
+      inThread(52, 'a1', 'T3', 'OTHER2'), // 또 다른 턴
+      inThread(53, 'a1', 'T4', 'TURN'),   // 이 턴이 정말 다른 스레드에 쓴 것
+    ];
+    expect(offAnchorPosts(all, 'a1', 'T1', 50, 'TURN').map((m) => m.seq)).toEqual([53]);
+    expect(offAnchorPosts(all, 'a1', 'T1', 50, 'OTHER').map((m) => m.seq)).toEqual([51]);
+  });
+
+  it('턴 id 가 안 적힌 글(옛 서버·옛 브릿지)과 턴 id 없이 부른 경우는 하나도 잡지 않는다 — 모르는 글을 단정하지 않는다', () => {
+    const all = [inThread(61, 'a1', 'T2', null), inThread(62, 'a1', 'T3', 'TURN')];
+    expect(offAnchorPosts(all, 'a1', 'T1', 60, 'TURN').map((m) => m.seq)).toEqual([62]);
+    expect(offAnchorPosts(all, 'a1', 'T1', 60, null)).toEqual([]);
   });
 
   it('통지는 스레드 루트를 중복 없이 permalink 로 싣는다 — 링크가 없으면 찾을 방법이 없다', () => {
@@ -1258,5 +1277,31 @@ describe('guardInjectedPrompt — 주입 첫 글자가 `!`·`/` 가 되지 않�
   it('보통 프롬프트는 그대로다', async () => {
     const { guardInjectedPrompt } = await import('../src/prompt.js');
     expect(guardInjectedPrompt('channelId: x\n본문')).toBe('channelId: x\n본문');
+  });
+});
+
+describe('발화 셈을 턴으로 가른다 (2026-10-12, #174·#task 32ce2cdf)', () => {
+  const post = (seq: number, turnId: string | null, kind = 'user') =>
+    msg(seq, 'a1', `m${seq}`, { threadRootId: 'T1', kind, meta: turnId ? { turnId } : {} });
+
+  it('같은 스레드에서 다른 턴이 쓴 글은 이 턴의 발화로 세지 않는다', () => {
+    const after = [post(11, 'OTHER'), post(12, 'OTHER')];
+    expect(countOwnPostsSince(after, 'a1', 10, 'TURN')).toBe(0);
+    expect(hasOwnPostSince(after, 'a1', 10, 'TURN')).toBe(false);
+    expect(countOwnPostsSince([...after, post(13, 'TURN')], 'a1', 10, 'TURN')).toBe(1);
+  });
+
+  it('턴 id 가 안 적힌 글은 옛 규칙대로 센다 — 서버가 턴을 적기 전에 모든 턴이 침묵으로 몰리지 않게', () => {
+    expect(countOwnPostsSince([post(11, null)], 'a1', 10, 'TURN')).toBe(1);
+  });
+
+  it('턴 id 없이 부르면 옛 규칙(계정) 그대로다', () => {
+    expect(countOwnPostsSince([post(11, 'OTHER'), post(12, null)], 'a1', 10)).toBe(2);
+  });
+
+  it('대기 줄도 턴으로 가른다 — 다른 턴의 예약으로 이 턴의 침묵을 덮지 않는다', () => {
+    expect(hasOwnWakeSince([post(11, 'OTHER', 'wake')], 'a1', 10, 'TURN')).toBe(false);
+    expect(hasOwnWakeSince([post(11, 'TURN', 'wake')], 'a1', 10, 'TURN')).toBe(true);
+    expect(hasOwnWakeSince([post(11, null, 'wake')], 'a1', 10, 'TURN')).toBe(true);
   });
 });

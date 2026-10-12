@@ -58,6 +58,16 @@ export const RUNNER_LINK_ENV = {
  */
 export const RUNNER_TURN_CAUSE_ENV = 'HARKROOM_TURN_CAUSE';
 /**
+ * **이 턴의 id**(2026-10-12, 스레드 6eca9cee). 러너가 턴마다 새 UUID 를 만들어 하네스 env 에 심고, 브릿지가
+ * `mcp.request.turnId` 로, 오퍼레이터가 `TURN_ID_HEADER` 로 서버에 넘긴다. 서버는 에이전트 발화의 `meta.turnId` 에 적는다.
+ *
+ * 원인(`RUNNER_TURN_CAUSE_ENV`)으로는 턴을 못 가른다 — 같은 멘션을 다시 도는 턴(재시도·편집)이 같은 원인을 쓴다.
+ * 러너가 「이 턴이 무엇을 썼나」를 계정이 아니라 턴으로 세려고 둔다(`agent/src/prompt.ts::ownedByTurn`) — 계정으로만
+ * 세면 같은 계정으로 동시에 도는 다른 턴의 글이 이 턴의 것으로 잡힌다(10-12 #task 32ce2cdf: 남의 턴 글 링크 15개).
+ * 없어도 된다(옛 러너·대화형 턴). 없으면 그 글은 「어느 턴 것인지 모른다」로 남는다.
+ */
+export const RUNNER_TURN_ID_ENV = 'HARKROOM_TURN_ID';
+/**
  * **브릿지가 `tools/list` 에 답한 뒤 만들 표식 파일**(2026-10-10, 스레드 20914e42). 러너가 턴마다 새 경로를
  * 심고, 그 파일이 생길 때까지(시한 있음) 프롬프트를 넣지 않는다 — 하네스가 harkroom 도구를 받기 전에 첫
  * 호출을 내면 이어 받은 세션의 캐시가 깨진다(`agent/src/mentionTurn.ts` 의 `mcpReadyFile`).
@@ -66,6 +76,8 @@ export const RUNNER_TURN_CAUSE_ENV = 'HARKROOM_TURN_CAUSE';
 export const RUNNER_MCP_READY_FILE_ENV = 'HARKROOM_MCP_READY_FILE';
 /** 오퍼레이터 → 서버 `/mcp` 요청에서 `RUNNER_TURN_CAUSE_ENV` 값을 싣는 헤더. */
 export const CAUSE_HEADER = 'x-harkroom-cause';
+/** 오퍼레이터 → 서버 `/mcp` 요청에서 `RUNNER_TURN_ID_ENV` 값을 싣는 헤더. */
+export const TURN_ID_HEADER = 'x-harkroom-turn-id';
 /**
  * 「정확한 명령」 권한 요청(H③a)의 파일 해시 — **오퍼레이터가** 그 명령의 파일 자리(shared `validateExactCommand.files`)를 재서
  * `/mcp` 요청에 싣는 헤더(base64 JSON `CommandFileDigest[]`). MCP 본문이 아니라 헤더인 이유: 본문은 에이전트가 쓰고, 헤더는
@@ -134,6 +146,8 @@ export type RunnerLinkRequest =
    */
   | {
     type: 'mcp.request'; id: string; payload: unknown; cause?: string; cwd?: string;
+    /** `turnId` — 이 요청을 낸 턴의 id(`RUNNER_TURN_ID_ENV`). 옛 브릿지는 싣지 않는다. */
+    turnId?: string;
     /**
      * **오퍼레이터 안에서만 쓰는 칸**(H③b): 오퍼레이터가 잰 「정확한 명령」 파일 해시(base64 JSON `CommandFileDigest[]`). forwarder 가
      * `COMMAND_FILES_HEADER` 로 옮긴다. 링크(러너·브릿지)에서 들어온 값은 오퍼레이터가 받자마자 지운다(`turnCommand.stripLinkOnlyFields`).

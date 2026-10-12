@@ -86,7 +86,7 @@ async function prepareItems(
  */
 export async function upsertAskBundle(pool: Pool, args: {
   callerId: string; channelId: string; threadRootId: string; body: string; rootIds: string[]; bundleId?: string;
-  meta?: Record<string, unknown>; causeMessageId?: string | null; chainCause?: string | null;
+  meta?: Record<string, unknown>; causeMessageId?: string | null; chainCause?: string | null; turnId?: string | null;
 }): Promise<{ ok: true; message: MessageRow; added: number; posted?: PostMessageResult } | { ok: false; code: AskBundleRefusal | 'post_failed'; rootId?: string; posted?: PostMessageResult }> {
   const rootIds = [...new Set(args.rootIds)];
   if (rootIds.length === 0) return { ok: false, code: 'bundle_empty' };
@@ -106,6 +106,7 @@ export async function upsertAskBundle(pool: Pool, args: {
     if (prepared.items.length > ASK_BUNDLE_MAX_ITEMS) return { ok: false, code: 'bundle_full' };
     const posted = await postMessage(pool, {
       causeMessageId: args.causeMessageId ?? null, chainCause: args.chainCause ?? null,
+      turnId: args.turnId ?? null,
       channelId: args.channelId, authorId: args.callerId, body: args.body, threadRootId: args.threadRootId,
       meta: { ...(args.meta ?? {}), kind: 'askBundle', askBundle: { items: prepared.items } },
     });
