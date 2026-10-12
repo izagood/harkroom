@@ -55,6 +55,34 @@ describe('채널 목록 변경 이벤트를 받는 데스크탑 (#284)', () => {
     expect((s.notices.at(-1)?.text ?? null)).toBeNull();
   });
 
+  it('지워진 채널의 받아 둔 줄은 버린다(security n5)', async () => {
+    const { callbacks } = await startWith();
+    useAppStore.getState().set({ activeChannelId: 'c1' });
+    useAppStore.getState().upsertMessages('c2', [msg('m1', 'c2', 1, '지워질 글', 'u1')]);
+    callbacks.current!.onEvent({ type: 'channel.deleted', channelId: 'c2', audience: 'all' });
+    expect(useAppStore.getState().messages.c2).toBeUndefined();
+  });
+
+  /**
+   * 비공개 채널에서 내가 빠지면 서버는 `member_removed` 가 아니라 **나에게만** `channel.deleted` 를 보낸다
+   * (security A3 n1 — server `channelRoutes.ts` 내보내기·비공개 전환). 공개 채널에서 빠진 것은 그 이벤트가
+   * 오지 않으므로 줄이 남는다(빠져도 읽을 수 있다).
+   */
+  it('비공개 채널에서 내가 빠지면(나에게만 온 channel.deleted) 줄을 버리고, 공개 채널에서 빠진 것은 그대로 둔다(security n5)', async () => {
+    const { callbacks } = await startWith();
+    useAppStore.getState().set({
+      me: acc('u1', 'me'), activeChannelId: 'c1',
+      channels: [chan('c1', 'general'), chan('c2', 'random'), chan('c3', 'secret', null, 'private')],
+    });
+    useAppStore.getState().upsertMessages('c3', [msg('s1', 'c3', 1, '비밀', 'u2')]);
+    useAppStore.getState().upsertMessages('c2', [msg('p1', 'c2', 1, '공개', 'u2')]);
+    callbacks.current!.onEvent({ type: 'channel.deleted', channelId: 'c3', audience: ['u1'] });
+    callbacks.current!.onEvent({ type: 'channel.member_removed', channelId: 'c2', accountId: 'u1', audience: 'all' });
+    expect(useAppStore.getState().messages.c3).toBeUndefined();
+    expect(useAppStore.getState().channels.some((c) => c.id === 'c3')).toBe(false);
+    expect(useAppStore.getState().messages.c2?.map((m) => m.id)).toEqual(['p1']);
+  });
+
   it('channel.created 는 목록에 채널을 넣고, 같은 채널이 두 번 와도 늘지 않는다', async () => {
     const { callbacks } = await startWith();
     const fresh = chan('c3', 'new-room');

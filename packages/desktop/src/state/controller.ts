@@ -22,7 +22,7 @@ import { RunnerLauncher, tauriDaemonObserver, tauriAppVersionReader, type AppVer
 // 만들기 흐름이 러너를 띄우기 **전에** 풀 배정을 쓴다 — 근거는 `createAgent` 안에 있다.
 import { assignAgentPool } from '../lib/claudeAccounts';
 import { setLocalAgent } from '../lib/operatorLocal';
-import type { AppStore } from './appStore';
+import type { AppState, AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { usePrefsStore } from './prefsStore';
 import { detectLocale, isLocale, translator, type MessageKey, type Translate } from '../i18n';
@@ -586,7 +586,7 @@ export class Controller {
   private runResync(): void {
     this.store.getState().set({ link: 'resyncing' });
     void this.reconcile().then(
-      () => { if (this.store.getState().link === 'resyncing') this.store.getState().set({ link: 'online' }); },
+      () => { if (this.store.getState().link === 'resyncing') this.store.getState().set({ link: 'online', offlineSince: null }); },
       () => { if (this.store.getState().link === 'resyncing') this.store.getState().set({ link: 'resyncFailed' }); },
     );
   }
@@ -600,13 +600,15 @@ export class Controller {
   private handleDown(reason: WsDownReason): void {
     this.store.getState().set({ connected: false });
     if (this.everConnected && !this.offlineTimer && this.store.getState().link === 'online') {
+      // 경계 줄의 시각은 띠가 선 때가 아니라 **끊긴 때**다 — 그 뒤로 받은 것이 없다.
+      const downAt = Date.now();
       this.offlineTimer = setTimeout(() => {
         this.offlineTimer = null;
-        if (!this.store.getState().connected) this.store.getState().set({ link: 'offline' });
+        if (!this.store.getState().connected) this.store.getState().set({ link: 'offline', offlineSince: downAt });
       }, Controller.OFFLINE_DELAY_MS);
     } else if (this.store.getState().link === 'resyncing' || this.store.getState().link === 'resyncFailed') {
       // 맞추는 도중 다시 끊겼다 — 이미 끊김을 보여 준 사이이므로 기다리지 않고 되돌린다.
-      this.store.getState().set({ link: 'offline' });
+      this.store.getState().set({ link: 'offline', offlineSince: Date.now() });
     }
     // 네트워크 끊김은 기다리면 낫는다 — 세션을 건드리지 않는다. 잠깐 끊겼다고 로그아웃시키면 최악이다.
     if (reason === 'network') return;
@@ -819,6 +821,11 @@ export class Controller {
           const wasActive = store.activeChannelId === e.channelId;
           store.set({
             channels: store.channels.filter((c) => c.id !== e.channelId),
+            // 받아 둔 줄도 버린다(security n5) — 남기면 인박스·링크로 지워진 채널의 본문이 다시 선다.
+            // 내가 **비공개** 채널에서 빠진 것도 이 길이다: 서버는 그 사람에게 `member_removed` 가 아니라
+            // `channel.deleted` 를 그 사람에게만 보낸다(server `channelRoutes.ts` 내보내기·비공개 전환).
+            // 공개 채널에서 빠진 것은 이 이벤트가 오지 않으므로 줄이 남는다 — 빠져도 읽을 수 있다.
+            ...this.dropChannelRows(e.channelId),
             ...(wasActive ? { activeChannelId: null, threadRootId: null } : {}),
           });
           if (wasActive) store.pushNotice(this.t()('notice.channelDeleted'));
@@ -920,12 +927,53 @@ export class Controller {
     await thread;
   }
 
+  /** 한 채널의 받아 둔 줄과 그 페이지 표지를 뺀 조각(security n5). */
+  private dropChannelRows(channelId: string): Pick<AppState, 'messages' | 'hasMore'> {
+    const { messages, hasMore } = this.store.getState();
+    const { [channelId]: _m, ...restMessages } = messages;
+    const { [channelId]: _h, ...restHasMore } = hasMore;
+    return { messages: restMessages, hasMore: restHasMore };
+  }
+
   /** 재접속 때 열린 스레드의 최신 페이지를 다시 받는다. 그 사이 사람이 다른 곳으로 갔으면 버린다. */
   private async refreshOpenThread(channelId: string, rootId: string): Promise<void> {
-    const page = await this.api.messages(channelId, { thread: rootId });
-    const now = this.store.getState();
-    if (now.activeChannelId !== channelId || now.threadRootId !== rootId) return;
-    now.upsertMessages(channelId, page.messages);
+    const here = () => {
+      const now = this.store.getState();
+      return now.activeChannelId === channelId && now.threadRootId === rootId;
+    };
+    let page;
+    try {
+      page = await this.api.messages(channelId, { thread: rootId });
+    } catch (e) {
+      if (!here()) throw e;
+      const status = e instanceof ApiError ? e.status : 0;
+      // 끊긴 사이 채널이 지워졌거나 비공개 채널에서 빠졌다 — 받아 둔 줄을 남기지 않는다(security n4,
+      // `openThread` 의 F1 과 같은 판정).
+      if (status === 403 || status === 404) {
+        this.store.getState().set({ threadRootId: null, threadFetch: null });
+        this.store.getState().pushNotice(this.t()(status === 404 ? 'notice.threadGone' : 'notice.messageForbidden'));
+        return;
+      }
+      this.markThreadUnfetched(rootId);
+      throw e;
+    }
+    if (!here()) return;
+    this.store.getState().upsertMessages(channelId, page.messages);
+    if (this.store.getState().threadFetch?.rootId === rootId) this.store.getState().set({ threadFetch: null });
+  }
+
+  /** 열린 스레드를 서버에서 못 받았다고 적는다(시안 ②④⑥). 소켓이 붙어 있으면 「응답 없음」이다. */
+  private markThreadUnfetched(rootId: string): void {
+    this.store.getState().set({
+      threadFetch: { rootId, reason: this.store.getState().connected ? 'noResponse' : 'offline' },
+    });
+  }
+
+  /** 스레드 패널의 [다시 시도](시안 ⑥). 열린 스레드를 한 번 더 받는다 — 실패는 패널이 계속 말한다. */
+  retryThread(): Promise<void> {
+    const { activeChannelId, threadRootId } = this.store.getState();
+    if (!activeChannelId || !threadRootId) return Promise.resolve();
+    return this.refreshOpenThread(activeChannelId, threadRootId).catch(() => undefined);
   }
 
   /** 미지의 작성자가 연달아 오면 요청이 폭주하므로, 진행 중인 조회 하나에 합류시킨다. */
@@ -1462,7 +1510,7 @@ export class Controller {
       else { try { await opening; } catch { /* 아래가 가른다 */ } }
     }
     this.store.getState().pushHistory({ channelId, threadRootId: rootId });
-    this.store.getState().set({ threadRootId: rootId });
+    this.store.getState().set({ threadRootId: rootId, threadFetch: null });
     let page;
     try {
       page = await pagePromise;
@@ -1475,7 +1523,11 @@ export class Controller {
       const status = e instanceof ApiError ? e.status : 0;
       const transport = status === 0 || status >= 500;
       const held = heldRows();
-      if (transport && held.length > 0) {
+      // 뿌리만 손에 있어도 연다(시안 ④) — 단 그때 패널은 「끝남」이 아니라 빈 상태 + 「모름」으로 그린다
+      // (`threadFetch` 가 그 표지다). s1 이 막은 거짓말은 `threadFetch` 없이 뿌리만 그리는 것이었다.
+      const rootHeld = (this.store.getState().messages[channelId] ?? []).some((m) => m.id === rootId);
+      if (transport && (held.length > 0 || rootHeld)) {
+        this.markThreadUnfetched(rootId);
         if (opts.focusMessageId && held.some((m) => m.id === opts.focusMessageId)) {
           this.store.getState().set({ highlightedMessageId: opts.focusMessageId });
         }
@@ -1489,11 +1541,14 @@ export class Controller {
           ? this.t()('notice.threadGone')
           : status === 403
             ? this.t()('notice.messageForbidden')
-            : this.t()('notice.openThreadFailed'),
+            : this.store.getState().connected
+              ? this.t()('notice.openThreadFailed')
+              : this.t()('notice.openThreadOffline'),
       );
       return;
     }
     this.store.getState().upsertMessages(channelId, page.messages);
+    if (stillOpen() && this.store.getState().threadFetch?.rootId === rootId) this.store.getState().set({ threadFetch: null });
     // 머리 줄의 모델 칩(079). 열기를 막지 않는다 — 못 받으면 키가 없어 칩이 서지 않을 뿐이다.
     this.swallow(this.loadThreadAgentModels(channelId, rootId));
     /**

@@ -190,6 +190,16 @@ export interface AppState {
    * 짧은 끊김(3초 미만)은 `online` 그대로다 — 다시 붙어도 초록 띠를 세우지 않는다.
    */
   link: 'online' | 'offline' | 'resyncing' | 'resyncFailed';
+  /** `link` 가 `offline` 이 된 시각(ms) — 스레드 경계 줄 「여기까지 받아 둔 답글 · 시각」(시안 ②). 다시 `online` 이면 null. */
+  offlineSince: number | null;
+  /**
+   * 열린 스레드를 **서버에서 못 받았다**(A3, 시안 ②④⑥). 패널은 받아 둔 것만 그리고 있다는 뜻이다.
+   * - `offline` — 소켓이 끊긴 채 조회가 실패했다. 경계 줄(답글이 있으면)·빈 상태 + 「모름」(뿌리만 있으면).
+   *   다시 붙으면 `reconcile` 의 `refreshOpenThread` 가 받아 걷는다.
+   * - `noResponse` — 소켓은 붙어 있는데 조회만 답이 없다(시한·5xx). 앱 전체 띠 없이 패널 안 [다시 시도].
+   * `rootId` 로 묶는다 — 다른 스레드를 열면 그 값은 이 패널의 사실이 아니다.
+   */
+  threadFetch: { rootId: string; reason: 'offline' | 'noResponse' } | null;
   /**
    * 지금 붙어 있는 서버가 말한 자기 버전(#693). `/healthz` 에서 온다.
    *
@@ -516,7 +526,7 @@ export const NO_TEAMS: AgentTeamRow[] = [];
 const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
   messages: {}, typing: {}, hasMore: {}, firstPageLoading: {}, backfilling: {}, unread: [], inboxRevision: 0, inboxMine: 0, inboxBoardRevision: 0, reads: {}, dividerSeq: {},
-  online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, link: 'online' as AppState['link'], serverVersion: null, workspaceIconUrl: null,
+  online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, link: 'online' as AppState['link'], offlineSince: null, threadFetch: null as AppState['threadFetch'], serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
   history: [], historyIndex: -1, notices: [], gates: [], notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
