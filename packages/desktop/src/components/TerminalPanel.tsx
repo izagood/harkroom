@@ -191,8 +191,13 @@ export function TerminalPanel() {
       const switchPath = (next: TerminalPath): void => { setPath(next); sink?.resetLatency?.(); };
       /** 서버가 이 창에 내린 writer 키(R1). 있고 직결이 살아 있으면 입력·크기를 오퍼레이터 소켓으로 보낸다. */
       let writerKey: string | null = null;
-      /** 직결로 보낸 입력이 한 번이라도 거절되면 그 뒤로는 서버 경유로만 보낸다 — 순서가 섞이지 않게(n5). */
-      let localInput = false;
+      /**
+       * 입력이 지금 어느 길로 가는가. `pending` 은 제어 attach 로 열고 **구독 결과를 기다리는 동안**이다 — 그때 친 키는
+       * 큐에 잡아 둔다(security #1340 n4). 서버(≈0.7s)로 보내 버리면 구독 직후 직결(ms)로 간 키가 앞지른다. 결과가
+       * 나오면 성공은 직결로, 실패는 서버로 차례대로 흘린다. 직결로 보낸 입력이 한 번이라도 거절되면 그 뒤로는 서버로만
+       * 보낸다 — 순서가 섞이지 않게(n5).
+       */
+      let inputMode: 'pending' | 'local' | 'server' = port ? 'pending' : 'server';
       /**
        * **직결 입력·크기는 한 줄로 간다**(security #1340 F1). 키마다 따로 `invoke` 하면 Rust 가 그것을 여러 스레드에서
        * 돌려(`spawn_blocking`) 빨리 친 키가 뒤바뀌어 닿을 수 있다 — Enter 가 앞 글자보다 먼저 가면 다른 명령이다.
@@ -207,14 +212,21 @@ export function TerminalPanel() {
         if (op.kind === 'input') attach?.sendInput(op.bytes);
         else attach?.sendResize(op.cols, op.rows);
       };
+      const flushToServer = (): void => { for (const op of queue.splice(0)) sendServer(op); };
       /** 직결을 그만두고 남은 줄을 서버로 흘린다. 경로 라벨은 `mixed` — 보기는 여전히 직결이다. */
       const leaveLocal = (): void => {
-        localInput = false;
+        inputMode = 'server';
         switchPath('mixed');
-        for (const op of queue.splice(0)) sendServer(op);
+        flushToServer();
+      };
+      /** 구독 결과를 기다리던 입력을 서버로 정한다(직결이 안 열렸다). 라벨은 그대로 `서버 경유` 다. */
+      const settleServer = (): void => {
+        if (inputMode !== 'pending') return;
+        inputMode = 'server';
+        flushToServer();
       };
       const pump = (): void => {
-        if (inFlight || queue.length === 0) return;
+        if (inputMode !== 'local' || inFlight || queue.length === 0) return;
         const key = writerKey;
         if (!port || !key) { leaveLocal(); return; }
         // 앞쪽의 연달은 입력을 하나로 묶는다. 크기는 묶지 않는다 — 그 사이 순서를 지킨다.
@@ -244,7 +256,9 @@ export function TerminalPanel() {
         });
       };
       const enqueue = (op: LocalOp): boolean => {
-        if (!port || !localInput || !writerKey) return false;
+        if (!port || inputMode === 'server') return false;
+        if (inputMode === 'pending') { queue.push(op); return true; }
+        if (!writerKey) return false;
         queue.push(op);
         pump();
         return true;
@@ -307,22 +321,25 @@ export function TerminalPanel() {
         void begin(() => api.attachAgentSession(attached.sessionId), { serverOnly: true });
       };
       attach = connectAgentAttach(api.baseUrl, ticket, {
-        onOutput: (bytes) => sink?.write(bytes),
+        // 서버가 출력을 보낸다 = 보통 attach 로 되돌렸다(제어 소켓에는 출력이 없다) — 기다리던 입력은 서버 몫이다.
+        onOutput: (bytes) => { settleServer(); sink?.write(bytes); },
         onLocal: (viewKey) => {
           if (!port) return;
           void (async () => {
             const unlisten = await port.listen(attached.sessionId, {
               onOutput: (b64) => { try { sink?.write(decodeBase64(b64)); } catch { /* 비정형 바이트는 버린다 */ } },
               onEnded: (reason) => {
-                if (reason === 'revoked') { dropLocal?.(); dropLocal = null; fallbackToServer(); }
+                if (reason === 'revoked') { dropLocal?.(); dropLocal = null; inputMode = 'server'; flushToServer(); fallbackToServer(); }
               },
             });
             const refused = await port.subscribe(attached.sessionId, viewKey);
             if (disposed) { unlisten(); void port.unsubscribe(attached.sessionId); return; }
-            if (refused) { unlisten(); fallbackToServer(); return; }
+            // 실패면 기다리던 입력을 **지금 소켓**으로 먼저 흘린 뒤 갈아탄다 — 순서를 지킨다(n4).
+            if (refused) { unlisten(); settleServer(); fallbackToServer(); return; }
             dropLocal = () => { unlisten(); void port.unsubscribe(attached.sessionId); };
-            localInput = true;
+            if (inputMode === 'pending') inputMode = 'local';
             switchPath('local');
+            pump();
           })();
         },
         onStatus: (next) => {
@@ -351,6 +368,8 @@ export function TerminalPanel() {
         onWriter: (turn) => {
           // 키는 차례마다 새로 온다 — 없으면(강등·입력 닫힘·보통 attach) 서버 경유로 친다.
           writerKey = turn.writerKey ?? null;
+          // 구독을 기다리는데 키 없는 차례가 왔다 = 서버가 직결 입력을 주지 않는다 — 기다리던 입력은 서버 몫이다.
+          if (!writerKey) settleServer();
           writerRef.current = turn.writer;
           resizeRef.current = turn.resize;
           setWriter(turn.writer);
@@ -635,21 +654,28 @@ export function TerminalPanel() {
               **통째로** 다음 줄로 내려가고(`whitespace-nowrap`), 숫자가 바뀌어도 줄이 떨리지 않는다(`tabular-nums`) —
               designer #1290 n1·n2. */}
           <span
-            className="whitespace-nowrap tabular-nums"
             data-testid="terminal-latency"
             data-path={path}
             data-echo-p50={diagnostics.echo?.p50 ?? ''}
             data-echo-p95={diagnostics.echo?.p95 ?? ''}
           >
-            {' · '}
-            {diagnostics.echo
-              ? t('terminal.latency', {
-                path: t(`terminal.path.${path}`),
-                p50: String(Math.round(diagnostics.echo.p50)),
-                p95: String(Math.round(diagnostics.echo.p95)),
-                count: String(diagnostics.echo.count),
-              })
-              : t('terminal.latency.none', { path: t(`terminal.path.${path}`) })}
+            {/* **두 덩어리로 나눈다**(designer #1340 d1) — 하나로 묶으면 400px 창에서 오른쪽 밖으로 잘린다. 좁으면 경로와
+                숫자 사이에서만 줄이 바뀐다. */}
+            <span className="whitespace-nowrap">
+              {' · '}
+              {t('terminal.latency.path', { path: t(`terminal.path.${path}`) })}
+            </span>
+            {' '}
+            <span className="whitespace-nowrap tabular-nums">
+              {'· '}
+              {diagnostics.echo
+                ? t('terminal.latency', {
+                  p50: String(Math.round(diagnostics.echo.p50)),
+                  p95: String(Math.round(diagnostics.echo.p95)),
+                  count: String(diagnostics.echo.count),
+                })
+                : t('terminal.latency.none')}
+            </span>
           </span>
         </p>
       )}

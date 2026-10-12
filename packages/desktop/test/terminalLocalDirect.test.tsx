@@ -255,7 +255,7 @@ describe('직결 실패 뒤의 입력(security #1340 n1, designer s1)', () => {
     expect(ws.sent.filter((f) => f.includes('"input"')).map((f) => (JSON.parse(f) as { data: string }).data)).toEqual([b64('z')]);
   });
 
-  it('입력만 서버로 떨어지면 경로는 「보기 직결 · 입력 서버 경유」이고, 길이 바뀔 때마다 지연 표본을 비운다', async () => {
+  it('입력만 서버로 떨어지면 경로는 「로컬 직결(입력만 서버 경유)」이고, 길이 바뀔 때마다 지연 표본을 비운다', async () => {
     const { port } = fakePort({ input: 'not-writer' });
     const { type, diag, resets } = await attachedLocal(port);
     await act(async () => { diag(); });
@@ -263,8 +263,52 @@ describe('직결 실패 뒤의 입력(security #1340 n1, designer s1)', () => {
     const before = resets.n;
     await act(async () => { type('a'); await flush(); });
     expect(screen.getByTestId('terminal-latency').getAttribute('data-path')).toBe('mixed');
-    expect(screen.getByTestId('terminal-latency').textContent).toContain('보기 직결 · 입력 서버 경유');
+    expect(screen.getByTestId('terminal-latency').textContent).toContain('로컬 직결(입력만 서버 경유)');
     expect(resets.n).toBe(before + 1);
+  });
+});
+
+describe('구독 결과 전의 입력(security #1340 n4)', () => {
+  function delayedSubscribe(result: LocalRefusal | null) {
+    const f = fakePort();
+    let release: () => void = () => {};
+    f.port.subscribe.mockImplementation(() => new Promise<LocalRefusal | null>((resolve) => { release = () => resolve(result); }));
+    return { ...f, release: () => release() };
+  }
+
+  it('구독 결과를 기다리는 동안 친 키는 잡아 두었다가, 성공하면 직결로 순서대로 보낸다', async () => {
+    const { port, release } = delayedSubscribe(null);
+    const { type } = await mount(port);
+    const ws = FakeSocket.all[0]!;
+    await act(async () => {
+      ws.deliver({ type: 'local', viewKey: VIEW });
+      ws.deliver({ type: 'writer', writer: true, resize: true, reason: null, writerKey: WKEY });
+      await flush();
+    });
+    await act(async () => { type('l'); type('s'); await flush(); });
+    expect(port.input).not.toHaveBeenCalled();
+    expect(ws.sent.filter((f) => f.includes('"input"'))).toEqual([]);
+    await act(async () => { release(); await flush(); });
+    expect(port.input).toHaveBeenCalledTimes(1);
+    expect(port.input.mock.calls[0]![2]).toBe(b64('ls'));
+    expect(ws.sent.filter((f) => f.includes('"input"'))).toEqual([]);
+  });
+
+  it('구독이 실패하면 잡아 둔 키를 지금 소켓으로 먼저 흘리고 보통 attach 로 갈아탄다', async () => {
+    const { port, release } = delayedSubscribe('not-viewer');
+    const { type } = await mount(port);
+    const ws = FakeSocket.all[0]!;
+    await act(async () => {
+      ws.deliver({ type: 'local', viewKey: VIEW });
+      ws.deliver({ type: 'writer', writer: true, resize: true, reason: null, writerKey: WKEY });
+      await flush();
+    });
+    await act(async () => { type('q'); await flush(); });
+    expect(ws.sent.filter((f) => f.includes('"input"'))).toEqual([]);
+    await act(async () => { release(); await flush(); });
+    expect(ws.sent.filter((f) => f.includes('"input"')).map((f) => (JSON.parse(f) as { data: string }).data)).toEqual([b64('q')]);
+    expect(port.input).not.toHaveBeenCalled();
+    expect(FakeSocket.all).toHaveLength(2);
   });
 });
 
