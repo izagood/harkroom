@@ -182,6 +182,10 @@ export function TerminalPanel() {
       attach = null;
       sink?.dispose();
       sink = null;
+      // 앞 세션의 PTY 크기를 버린다(security n1) — 새 세션의 `writer` 는 `size` 보다 먼저 오므로,
+      // 남겨 두면 그 사이(서버가 새 세션 크기를 모르면 계속) 앞 세션 크기로 그린다.
+      ptySizeRef.current = null;
+      setFollowView(null);
       const host = hostRef.current;
       if (!host) { setPhase('error'); setError(t('terminal.session.noHost')); return; }
       // 입력은 항상 배선하되 **writer 일 때만 흘린다.** 차례는 attach 뒤에도 오간다
@@ -485,13 +489,14 @@ export function TerminalPanel() {
         <div className="px-3 py-2 text-fg-subtle">
           <p role="note" data-testid="writer-note" data-writer-reason={writerReason ?? 'unknown'}>
             {writerDeniedText(writerReason, t)}
-            {/* 크기가 같으면 덧붙일 말이 없다(designer) — 실제로 남의 크기로 그릴 때만. */}
-            {followView?.differs && (
-              <span data-testid="terminal-follow-note" title={t('terminal.follow.tooltip')}>
-                {' · '}{t('terminal.follow.size', { cols: String(followView.cols), rows: String(followView.rows) })}
-              </span>
-            )}
           </p>
+          {/* 크기가 같으면 덧붙일 말이 없다(designer) — 실제로 남의 크기로 그릴 때만. 문장 뒤에 잇지 않고
+              둘째 줄로 내린다(designer s2) — 좁은 패널에서 한 줄이 끝없이 길어진다. */}
+          {followView?.differs && (
+            <p className="text-meta" data-testid="terminal-follow-note" title={t('terminal.follow.tooltip')}>
+              {t('terminal.follow.size', { cols: String(followView.cols), rows: String(followView.rows) })}
+            </p>
+          )}
         </div>
       )}
       {/* 실제로 무엇이 도는지 한 줄. 위 `diagnostics` 주석에 이 줄이 있는 이유가 있다. */}

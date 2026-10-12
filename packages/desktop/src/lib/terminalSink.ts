@@ -436,8 +436,14 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     const next = followFontSize(followSize.cols, el.clientWidth, cell.width);
     if (next !== fontSize) { fontSize = next; term.options.fontSize = next; }
     term.resize(followSize.cols, followSize.rows);
-    const scale = next / FONT_SIZE;
-    const scroll = followSize.cols * cell.width * scale > el.clientWidth + 0.5;
+    // 넘침은 **그려진 화면 폭**으로 정한다(designer n1). xterm 은 칸을 기기 픽셀로 반올림하므로 10~12px 에서는
+    // `열 × 셀폭 × 비율` 추정이 칸당 몇 분의 1 px 씩 어긋나고, 200열이면 수십 px 가 된다. 화면 요소를 못 찾으면
+    // (가짜 xterm) 추정으로 둔다.
+    const screen = el.querySelector<HTMLElement>('.xterm-screen');
+    const drawnWidth = screen && screen.offsetWidth > 0
+      ? screen.offsetWidth
+      : followSize.cols * cell.width * (next / FONT_SIZE);
+    const scroll = drawnWidth > el.clientWidth + 0.5;
     el.style.overflowX = scroll ? 'auto' : 'hidden';
     // 줄이 넘치면 아래에 붙인다 — 상태 줄·입력 상자가 맨 아래다. 바깥 스크롤은 막고(스크롤백은 xterm 몫)
     // 위치만 바닥으로 옮긴다.

@@ -102,6 +102,17 @@ describe('follow — 남의 크기로 그린다', () => {
     expect(views.at(-1)).toMatchObject({ scroll: true });
   });
 
+  it('넘침은 그려진 화면(.xterm-screen) 폭으로 정한다 — 추정이 맞아도 실제로 넘치면 스크롤(designer n1)', async () => {
+    const { el, sink, views } = await open(780, 640);
+    const screen = document.createElement('div');
+    screen.className = 'xterm-screen';
+    Object.defineProperty(screen, 'offsetWidth', { value: 800, configurable: true }); // 반올림으로 추정(738)보다 넓다
+    el.appendChild(screen);
+    sink.follow!({ cols: 120, rows: 40 });
+    expect(views.at(-1)).toMatchObject({ fontSize: 10, scroll: true });
+    expect(el.style.overflowX).toBe('auto');
+  });
+
   it('받은 크기가 자기 크기와 같으면 differs=false — 배지가 덧붙일 말이 없다', async () => {
     const { sink, views } = await open(960, 640); // 자기 fit = 120x40
     sink.follow!({ cols: 120, rows: 40 });

@@ -435,8 +435,11 @@ describe('터미널 T2 — 폭을 못 정하는 창은 서버가 알려 준 PTY 
     });
     const api = {
       baseUrl: 'http://localhost:8080',
-      agentSessions: vi.fn(async () => [session()]),
-      attachAgentSession: vi.fn(async () => ({ ticket: 'murt_x', session: session() })),
+      // 두 번째 세션은 갈아타기 시험(security n1)용이다.
+      agentSessions: vi.fn(async () => [session(), session({ sessionId: 'sess-2', threadRootId: 'm2' })]),
+      attachAgentSession: vi.fn(async (id: string) => ({
+        ticket: `murt_${id}`, session: id === 'sess-2' ? session({ sessionId: 'sess-2', threadRootId: 'm2' }) : session(),
+      })),
     };
     setController({ api } as unknown as Controller);
     useAppStore.getState().set({
@@ -478,6 +481,23 @@ describe('터미널 T2 — 폭을 못 정하는 창은 서버가 알려 준 PTY 
       await act(async () => { FakeSocket.last!.deliver({ type: 'size', cols, rows }); });
     }
     expect(follow).not.toHaveBeenCalled();
+  });
+
+  it('다른 세션으로 다시 붙으면 앞 세션의 크기로 그리지 않는다(security n1)', async () => {
+    const { follow } = await mountPanel();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false, resize: false, reason: 'other-writer' }); });
+    await act(async () => { FakeSocket.last!.deliver({ type: 'size', cols: 180, rows: 50 }); });
+    expect(follow).toHaveBeenLastCalledWith({ cols: 180, rows: 50 });
+    const first = FakeSocket.last;
+    // 같은 패널이 다른 스레드의 세션으로 갈아탄다 — 새 세션의 writer 가 size 보다 먼저 온다.
+    await act(async () => {
+      useAppStore.getState().set({ terminalTarget: { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm2' } });
+    });
+    for (let k = 0; k < 5; k += 1) await act(async () => { await Promise.resolve(); });
+    expect(FakeSocket.last).not.toBe(first);
+    follow.mockClear();
+    await act(async () => { FakeSocket.last!.deliver({ type: 'writer', writer: false, resize: false, reason: 'other-writer' }); });
+    expect(follow).toHaveBeenLastCalledWith(null);
   });
 
   it('남의 크기로 그릴 때만 배지에 그 크기를 덧붙인다', async () => {
