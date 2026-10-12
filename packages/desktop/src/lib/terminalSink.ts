@@ -41,6 +41,11 @@ export interface TerminalSink {
    */
   refit?(): void;
   /**
+   * 입력 → 화면 지연 표본을 비운다(designer #1340 s1). 바이트가 지나는 길이 바뀌면(서버 경유 ↔ 직결) 옛 길의
+   * 숫자가 새 라벨 밑에 남지 않게 한다. 옵셔널: 가짜 sink(테스트)는 구현하지 않아도 된다.
+   */
+  resetLatency?(): void;
+  /**
    * 이 터미널을 **읽기 전용으로 접거나 푼다**(#369). xterm 의 stdin 을 끄면 커서가 깜빡이지
    * 않고 키를 눌러도 아무것도 그려지지 않는다 — 화면이 "여기는 못 친다"를 스스로 말한다.
    *
@@ -298,31 +303,6 @@ async function enableWebglRenderer(t: WebglTarget): Promise<LoadedAddon | null> 
   }
 }
 
-/**
- * **조합(IME) 입력을 우리가 받는다** — 한글·일본어·중국어 입력이 xterm 을 통과하지 못한다.
- *
- * xterm 의 IME 지원은 macOS/WKWebView 에서 **알려진 채로 깨져 있다**: 조합 이벤트를
- * 자기 `CompositionHelper` 로 처리하는데, 그 경로가 첫 글자만 받거나(xtermjs/xterm.js#1939)
- * 조합 대신 **영문 자모를 그대로 보내거나**(#124) IME 가 `keyCode 229` 를 모든 키에 실어
- * 보내면 글자를 흘린다(#5887, #5894 는 WKWebView 전용). 실측으로도 이 앱에서 한글 입력이
- * 처음부터 안 됐다(2026-09-11, 사람 확인) — 우리가 만든 회귀가 아니라 그 위에 얹혀 있던
- * 결함이다.
- *
- * 그래서 **xterm 에 닿기 전에** 가로챈다(캡처 단계):
- * - `compositionstart/update/end` 를 멈춰 세워 xterm 의 깨진 경로를 아예 타지 않게 한다.
- * - **조합 중의 `keydown` 도 멈춘다.** 이것이 "한글을 쳤는데 영문 자모가 들어가는" 증상을
- *   막는 자리다 — 그 키는 IME 의 것이고 터미널의 것이 아니다.
- * - 확정된 문자열(`compositionend.data`)만 **정확히 한 번** 보낸다. xterm 은 조합을 못 봤
- *   으므로 중복 전송이 원천적으로 없다.
- *
- * 조합 중 화면 표시(밑줄 글자)는 **아직 그리지 않는다.** xterm 의 `.composition-view` 는
- * 위 경로와 함께 죽었고, 대신 우리가 그리려면 셀 좌표를 우리 손으로 계산해야 한다 —
- * 하네스(claude TUI)는 확정 텍스트만 받으면 되므로 그 표시는 다음 판으로 남긴다.
- */
-/**
- * 이 키가 **한글 자모·음절**인가. 조합 없이 자모가 키로 오는 세상을 진단에서 세기 위한 것이다.
- * 범위는 한글 자모(U+1100–11FF) · 호환 자모(U+3130–318F) · 음절(U+AC00–D7A3).
- */
 /** 열어도 되는 링크인가 — http·https 만. 파싱이 안 되면 아니다. */
 export function isWebUrl(uri: string): boolean {
   try {
@@ -333,6 +313,10 @@ export function isWebUrl(uri: string): boolean {
   }
 }
 
+/**
+ * 이 키가 **한글 자모·음절**인가. 조합 없이 자모가 키로 오는 세상을 진단에서 세기 위한 것이다.
+ * 범위는 한글 자모(U+1100–11FF) · 호환 자모(U+3130–318F) · 음절(U+AC00–D7A3).
+ */
 function isHangul(key: string): boolean {
   if (key.length !== 1) return false;
   const c = key.codePointAt(0) ?? 0;
@@ -345,6 +329,18 @@ function isHangul(key: string): boolean {
  * 막고, 터미널이 받을 바이트를 직접 보낸다. 화살표처럼 모드(application cursor)에 따라 바이트가 갈리는 키는 넣지
  * 않는다 — 틀린 바이트를 보내느니 삼킨다(실기 확인 항목).
  */
+/**
+ * 같은 키를 `ev.code` 로도 알아본다(security #1339 n3). WebKit 은 확정 키를 `key: 'Process'` 로 줄 수 있다 — 그때
+ * `key` 만 보면 Enter 가 「IME 가 넣을 글자」로 읽혀 삼켜진다. 물리 키 자리(`code`)는 IME 가 바꾸지 않는다.
+ */
+const COMMIT_CODES: Readonly<Record<string, string>> = {
+  Enter: '\r',
+  NumpadEnter: '\r',
+  Tab: '\t',
+  Escape: '\x1b',
+  Backspace: '\x7f',
+};
+
 const COMMIT_KEYS: Readonly<Record<string, string>> = {
   Enter: '\r',
   Tab: '\t',
@@ -423,7 +419,7 @@ function attachCompositionBridge(el: HTMLElement, io: {
     if (ev.keyCode !== 229) return;
     // 조합 밖의 229 — xterm 에 닿으면 입력칸 차이를 보낸다(위). 막고, 확정 키면 바이트를 직접 보낸다.
     swallow(ev);
-    const commit = COMMIT_KEYS[ev.key];
+    const commit = COMMIT_KEYS[ev.key] ?? COMMIT_CODES[ev.code];
     if (commit !== undefined) { ev.preventDefault(); send(commit); return; }
     imeKeyPending = true;
   };
@@ -484,7 +480,7 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
    * 입력 → 첫 출력 지연(`TerminalDiagnostics.echo`). **못 치는 창의 키는 세지 않는다** — 그 키는
    * 어디에도 안 닿으므로 다음 출력은 그 키의 반응이 아니다.
    */
-  const echo = createEchoLatencyTracker();
+  let echo = createEchoLatencyTracker();
   const sendInput = (data: string): void => {
     if (!readOnly) echo.noteInput(performance.now());
     opts?.onInput?.(data);
@@ -691,6 +687,11 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       opts?.onFollow?.(null);
       sent = null;
       applyFit();
+    },
+    resetLatency() {
+      echo = createEchoLatencyTracker();
+      diagnostics.echo = null;
+      reportDiagnostics();
     },
     refit() {
       // "마지막으로 보낸 크기"를 지워 applyFit 의 중복 억제를 한 번 우회한다 — writer
