@@ -8,6 +8,8 @@ let lastTerm: { options: { fontSize?: number } } | null = null;
 
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class { activate(): void {} onContextLoss(): void {} dispose(): void {} } }));
 vi.mock('@xterm/xterm/css/xterm.css', () => ({ default: '' }));
+vi.mock('@fontsource/nanum-gothic-coding/korean-400.css', () => ({ default: '' }));
+vi.mock('@fontsource/nanum-gothic-coding/korean-700.css', () => ({ default: '' }));
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     options: { fontSize?: number };
@@ -53,7 +55,8 @@ beforeEach(() => {
   fireResize = null;
   vi.stubGlobal('ResizeObserver', FakeResizeObserver);
   vi.spyOn(HTMLSpanElement.prototype, 'getBoundingClientRect')
-    .mockReturnValue({ width: CELL_W * 100, height: CELL_H } as DOMRect);
+    // 글자 높이 14 × lineHeight 1.15 → 내림 16 = CELL_H(sink 는 xterm 처럼 줄 높이 배율로 칸을 잡는다).
+    .mockReturnValue({ width: CELL_W * 100, height: 14 } as DOMRect);
 });
 afterEach(() => {
   vi.restoreAllMocks();
