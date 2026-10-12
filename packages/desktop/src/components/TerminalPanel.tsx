@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentSessionState, AgentSessionView, WriterDeniedReason } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
-import { connectAgentAttach, type AttachHandle } from '../lib/agentTerminal';
+import { connectAgentAttach, decodeBase64, encodeBase64, type AttachHandle } from '../lib/agentTerminal';
+import { getLocalTerminalPort } from '../lib/localTerminal';
 import { getTerminalSinkFactory, type TerminalSink, type TerminalDiagnostics, type TerminalFollowView } from '../lib/terminalSink';
 import { PaneResizer } from './PaneResizer';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -50,10 +51,10 @@ import { errorText } from '../lib/errorText';
  * 보이지 않는다. [터미널 열기] 는 **실패 화면에만** 남는다(러너를 올린 뒤 다시 누를 자리).
  */
 /**
- * 터미널 바이트가 지나는 길. 지금은 언제나 서버를 거친다(앱 → 서버 → 러너). 같은 맥의
- * 러너에 직결하는 길(R1)이 들어오면 붙은 경로에 따라 이 값이 갈린다.
+ * 터미널 바이트가 지나는 길(R1 PR-4). `server` 는 앱 → 서버 → 러너, `local` 은 같은 맥의 오퍼레이터 소켓 직결이다.
+ * 진단 줄이 숫자와 함께 이 값을 적는다 — "어느 길에서 잰 숫자인가"를 사람이 따로 알 필요가 없게.
  */
-const TERMINAL_PATH: 'server' | 'local' = 'server';
+type TerminalPath = 'server' | 'local';
 
 export function TerminalPanel() {
   const target = useActiveStore((s) => s.terminalTarget);
@@ -110,6 +111,8 @@ export function TerminalPanel() {
    * 으로만 말할 수밖에 없었다 — 이 줄이 그 느낌을 사실로 바꾼다.
    */
   const [diagnostics, setDiagnostics] = useState<TerminalDiagnostics | null>(null);
+  /** 지금 바이트가 지나는 길(`TerminalPath`). 직결 구독이 성공했을 때만 `local` 이다. */
+  const [path, setPath] = useState<TerminalPath>('server');
   /**
    * `onInput` 콜백이 읽는 최신 writer 값. state 만 쓰면 sink 생성 시점의 클로저에 옛
    * 값이 얼어붙어, 승격·강등이 입력 가드에 반영되지 않는다.
@@ -174,7 +177,17 @@ export function TerminalPanel() {
      * xterm 배선 → attach 소켓. attach 와 [터미널 열기]가 이 하나로 수렴한다 —
      * 갈라 두면 소켓·sink 정리가 여러 벌이 되고, 한 벌만 고치는 사고가 난다.
      */
-    const attachTo = (ticket: string, attached: AgentSessionView): void => {
+    /** 직결 구독을 끊는 손잡이(R1). 다시 붙거나 패널을 닫을 때 부른다. */
+    let dropLocal: (() => void) | null = null;
+    const attachTo = (ticket: string, attached: AgentSessionView, local: boolean): void => {
+      dropLocal?.();
+      dropLocal = null;
+      setPath('server');
+      const port = local ? getLocalTerminalPort() : null;
+      /** 서버가 이 창에 내린 writer 키(R1). 있고 직결이 살아 있으면 입력·크기를 오퍼레이터 소켓으로 보낸다. */
+      let writerKey: string | null = null;
+      /** 직결로 보낸 입력이 한 번이라도 거절되면 그 뒤로는 서버 경유로만 보낸다 — 순서가 섞이지 않게(n5). */
+      let localInput = false;
       // **다시** 붙을 수 있다([터미널 열기]가 같은 자리에서 새 세션을 연다) — 앞의 소켓과
       // 화면을 먼저 놓는다. 남겨 두면 끝난 세션의 바이트가 계속 흘러들고, sink 가 둘이면
       // 같은 host 에 xterm 이 두 번 붙어 화면이 겹친다.
@@ -196,7 +209,19 @@ export function TerminalPanel() {
       sink = getTerminalSinkFactory()(host, {
         onInput: (data) => {
           if (!writerRef.current) return;
-          attach?.sendInput(new TextEncoder().encode(data));
+          const bytes = new TextEncoder().encode(data);
+          if (port && localInput && writerKey) {
+            const key = writerKey;
+            // 오퍼레이터가 거절하면(`not-writer` — 입력이 닫혔다 다시 열려 새 키가 안 온 경우 등, security n5) 같은
+            // 바이트를 서버 경유로 보낸다. 서버의 writer 판정이 진짜 게이트이므로 여기서 넓어지는 것은 없다.
+            void port.input(attached.sessionId, key, encodeBase64(bytes)).then((refused) => {
+              if (!refused) return;
+              localInput = false;
+              attach?.sendInput(bytes);
+            });
+            return;
+          }
+          attach?.sendInput(bytes);
         },
         // 크기는 **입력과 다른 가드를 탄다**(#369). `#335`+`#346` 은 둘을 한 가드에 묶었고
         // 그 근거는 "읽기 전용 창의 크기가 흘러가면 그 창은 더 이상 읽기 전용이 아니다"
@@ -205,6 +230,13 @@ export function TerminalPanel() {
         // 그대로 닿는다. 그래서 여기만 `resizeRef` 를 읽는다.
         onResize: (cols, rows) => {
           if (!resizeRef.current) return;
+          if (port && localInput && writerKey) {
+            const key = writerKey;
+            void port.resize(attached.sessionId, key, cols, rows).then((refused) => {
+              if (refused) attach?.sendResize(cols, rows);
+            });
+            return;
+          }
           attach?.sendResize(cols, rows);
         },
         onDiagnostics: setDiagnostics,
@@ -218,8 +250,34 @@ export function TerminalPanel() {
       setSession(attached);
       setEnding(false);
       setPhase('attached');
+      /**
+       * 직결을 버리고 **보통 attach 로 다시 붙는다**(R1). 제어 전용 소켓에는 서버가 출력을 보내지 않으므로, 구독이
+       * 실패했거나(열람 키 거절·러너 링크 없음·표면 없음) 오퍼레이터가 구독을 거두면 이 창은 아무것도 못 본다 —
+       * 새 티켓으로 서버 경유로 갈아탄다.
+       */
+      const fallbackToServer = (): void => {
+        if (disposed) return;
+        void begin(() => api.attachAgentSession(attached.sessionId), { serverOnly: true });
+      };
       attach = connectAgentAttach(api.baseUrl, ticket, {
         onOutput: (bytes) => sink?.write(bytes),
+        onLocal: (viewKey) => {
+          if (!port) return;
+          void (async () => {
+            const unlisten = await port.listen(attached.sessionId, {
+              onOutput: (b64) => { try { sink?.write(decodeBase64(b64)); } catch { /* 비정형 바이트는 버린다 */ } },
+              onEnded: (reason) => {
+                if (reason === 'revoked') { dropLocal?.(); dropLocal = null; fallbackToServer(); }
+              },
+            });
+            const refused = await port.subscribe(attached.sessionId, viewKey);
+            if (disposed) { unlisten(); void port.unsubscribe(attached.sessionId); return; }
+            if (refused) { unlisten(); fallbackToServer(); return; }
+            dropLocal = () => { unlisten(); void port.unsubscribe(attached.sessionId); };
+            localInput = true;
+            setPath('local');
+          })();
+        },
         onStatus: (next) => {
           setState(next);
           if (next === 'ended') {
@@ -244,6 +302,8 @@ export function TerminalPanel() {
           // 폴링을 새로 만들지 않는다.
         },
         onWriter: (turn) => {
+          // 키는 차례마다 새로 온다 — 없으면(강등·입력 닫힘·보통 attach) 서버 경유로 친다.
+          writerKey = turn.writerKey ?? null;
           writerRef.current = turn.writer;
           resizeRef.current = turn.resize;
           setWriter(turn.writer);
@@ -268,19 +328,24 @@ export function TerminalPanel() {
         },
         // 재접속하지 않는다(agentTerminal.ts 머리 주석) — 끊긴 사실만 그린다.
         onClosed: () => setState('runner-offline'),
-      });
+      }, { control: Boolean(port) });
     };
 
     /** 티켓 획득 → 배선. 실패는 서버가 쓴 문구를 그대로 올린다. */
     const begin = async (
       issueTicket: () => Promise<{ ticket: string; session: AgentSessionView }>,
+      opts: { serverOnly?: boolean } = {},
     ): Promise<void> => {
       try {
         const { ticket, session: attached } = await issueTicket();
+        // **이 맥의 러너 세션일 때만** 직결을 청한다(security #1302 n3). 서버는 제어 attach 를 요청한 창이 같은
+        // 맥인지 모른다 — 원격 창이 청하면 출력 없는 화면을 받는다. 묻지 못하면(표면 없음·오퍼레이터 없음) 서버 경유다.
+        const port = opts.serverOnly ? null : getLocalTerminalPort();
+        const local = port ? await port.isLocal(attached.sessionId) : false;
         // 티켓을 받은 사이에 패널이 닫혔을 수 있다. 여기서 안 막으면 닫은 뒤에 소켓이
         // 열리고, 그 소켓은 아무도 닫지 않는다(`ws.ts` 의 같은 가드와 같은 이유다).
         if (disposed) return;
-        attachTo(ticket, attached);
+        attachTo(ticket, attached, local);
       } catch (err) {
         if (disposed) return;
         // 러너 오프라인(404)·구버전(409)·codex 거절(409)·타임아웃(504)의 서버 문구가
@@ -335,6 +400,9 @@ export function TerminalPanel() {
       // 흘러들고, 그것은 사람이 보지 않는 화면으로 비밀이 계속 오간다는 뜻이다.
       disposed = true;
       openRef.current = null;
+      // 직결 구독도 끊는다(R1) — 오퍼레이터가 이 접속에 바이트를 계속 흘리지 않게.
+      dropLocal?.();
+      dropLocal = null;
       attach?.close();
       sink?.dispose();
     };
@@ -515,24 +583,26 @@ export function TerminalPanel() {
             imeKeys: String(diagnostics.imeKeys),
             hangulKeys: String(diagnostics.hangulKeys),
           })}
-          {/* 입력 → 첫 출력 지연과 **그 바이트가 지나는 길**(2026-10-10). 경로는 아직 한 가지
-              (서버 경유)뿐이다 — 로컬 직결이 들어오면 그 자리가 이 값을 바꾼다. 둘을 한 줄에
-              두는 이유: 숫자만 보이면 "어느 길에서 잰 숫자인가"를 사람이 따로 알아야 한다. */}
+          {/* 입력 → 첫 출력 지연과 **그 바이트가 지나는 길**(2026-10-10, R1 PR-4 에서 `로컬 직결` 이 생겼다). 둘을 한
+              줄에 두는 이유: 숫자만 보이면 "어느 길에서 잰 숫자인가"를 사람이 따로 알아야 한다. 좁은 창에서는 이 구간이
+              **통째로** 다음 줄로 내려가고(`whitespace-nowrap`), 숫자가 바뀌어도 줄이 떨리지 않는다(`tabular-nums`) —
+              designer #1290 n1·n2. */}
           <span
+            className="whitespace-nowrap tabular-nums"
             data-testid="terminal-latency"
-            data-path={TERMINAL_PATH}
+            data-path={path}
             data-echo-p50={diagnostics.echo?.p50 ?? ''}
             data-echo-p95={diagnostics.echo?.p95 ?? ''}
           >
             {' · '}
             {diagnostics.echo
               ? t('terminal.latency', {
-                path: t(`terminal.path.${TERMINAL_PATH}`),
+                path: t(`terminal.path.${path}`),
                 p50: String(Math.round(diagnostics.echo.p50)),
                 p95: String(Math.round(diagnostics.echo.p95)),
                 count: String(diagnostics.echo.count),
               })
-              : t('terminal.latency.none', { path: t(`terminal.path.${TERMINAL_PATH}`) })}
+              : t('terminal.latency.none', { path: t(`terminal.path.${path}`) })}
           </span>
         </p>
       )}

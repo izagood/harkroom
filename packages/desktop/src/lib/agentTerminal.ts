@@ -77,14 +77,14 @@ export function isTermSize(value: unknown): value is number {
 }
 
 /** 바이트 → base64. `btoa` 는 latin1 문자열을 받으므로 바이트를 코드 포인트로 넘긴다. */
-function encodeBase64(bytes: Uint8Array): string {
+export function encodeBase64(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 }
 
 /** base64 → 바이트. `atob` 는 latin1 문자열을 주므로 코드 포인트가 곧 바이트다. */
-function decodeBase64(data: string): Uint8Array {
+export function decodeBase64(data: string): Uint8Array {
   const binary = atob(data);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
