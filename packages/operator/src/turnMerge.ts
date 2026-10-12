@@ -234,6 +234,19 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     // ②′ 1회 승인(스레드 1b75d7a0, security 순서): 서버의 판정(③)이 승인을 **소모**하므로, 승인이 있으면 그 전에 기록의 계정·head 로
     // GitHub **읽기 전용** 사전 확인을 한다. 여기서 막히면 ③ 을 부르지 않는다 — 승인이 남는다. 사전 확인은 승인을 아끼려는 것일 뿐,
     // 통과 판정은 언제나 ③ 이다. 잠금·해제 API 는 두지 않는다(같은 uid 의 거짓 「실패」 보고로 승인을 되살리는 길이 된다).
+    /**
+     * PR 이 이미 MERGED·CLOSED 다(스레드 0e30c565 Q3-b) — 서버에 알려 **이 에이전트 자신의** 기다리는 머지 카드를 닫는다. 서버는 그
+     * 에이전트의 카드가 있을 때만 받고(없으면 409 no_card), 「머지됨」 줄은 쓰지 않는다. 닿지 않아도 머지 판정에는 영향이 없다.
+     */
+    const reportClosed = async (state: string | undefined): Promise<void> => {
+      if (state !== 'MERGED' && state !== 'CLOSED') return;
+      const res = await deps.forward(agentId, {
+        type: 'http.forward', id: randomUUID(), method: 'POST', path: '/agent/merge-closed',
+        body: JSON.stringify({ leaseId: lease.leaseId, token: lease.token, repo, number, state }), contentType: 'application/json',
+      }).catch(() => null);
+      if (res && res.type === 'http.response' && res.status === 200) deps.log(`merge: ${repo}#${number} 이 이미 ${state} — 기다리던 머지 카드를 닫았다 agent=${agentId}`);
+    };
+
     const pending = await openApprovalFor(agentId, lease, repo, number, headSha);
     if (pending === 'unavailable') return fail('unavailable', 'the server could not be reached — merge refused (fail-closed)');
     let approvedTok: { token: string; login: string; approvalId: string } | null = null;
@@ -246,6 +259,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
         return fail('pr_not_found', `gh pr view failed: ${pre.error} — the one-time approval was not used`);
       }
       const why = refusalOf(pre.pr, headSha, pending.relaxChecks);
+      if (why?.code === 'not_open') await reportClosed(pre.pr.state);
       if (why) return fail(why.code, `${why.message} — the one-time approval was not used`, { pr: { state: pre.pr.state, headRefOid: pre.pr.headRefOid, mergeStateStatus: pre.pr.mergeStateStatus } });
       approvedTok = { ...tok, approvalId: pending.id };
     }
@@ -266,6 +280,17 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       } catch { /* 그대로 */ }
       // P4(스레드 febe9ff8): 서버가 카드를 세울 수 있는 거절에만 `denialId` 를 준다(C2). 에이전트는 그것을 `message.ask` 의
       // `mergeDenialId` 로 실어 소유자에게 [7일 주기] 카드를 세운다 — 카드의 저장소·PR 칸은 서버가 기록에서 채운다.
+      // 거절된 PR 이 이미 머지·닫혔으면 카드를 세울 일이 아니다(Q3) — 읽기 전용으로 한 번 보고, 그렇다면 기다리던 카드를 닫고
+      // `denialId` 없이 `not_open` 으로 끝낸다. 토큰·조회가 안 되면 지금처럼 카드 길로 간다.
+      if (code === 'not_granted' || code === 'cause_not_human') {
+        const tok = await tokenFor(repo);
+        const seen = tok.ok ? await viewPr(repo, number, ghEnv(deps.home, tok.token)) : null;
+        const state = seen && 'pr' in seen ? seen.pr.state : undefined;
+        if (state === 'MERGED' || state === 'CLOSED') {
+          await reportClosed(state);
+          return fail('not_open', `PR is ${state} — nothing to merge and no card is needed`, { pr: { state } });
+        }
+      }
       if (denialId) {
         return { ok: false, value: { error: { code, message: `merge not allowed: ${code} — ask the owner with message.ask and mergeDenialId`, denialId } } };
       }
@@ -307,6 +332,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     try { pr = JSON.parse(view.stdout) as PrView; } catch { await report('failed', null, 'gh pr view: unparseable'); return fail('pr_not_found', 'gh pr view returned no JSON'); }
     const refuse = async (code: string, message: string) => { await report('failed', null, `${code}: ${message}`); return fail(code, message, { pr: { state: pr.state, headRefOid: pr.headRefOid, mergeStateStatus: pr.mergeStateStatus } }); };
     const why = refusalOf(pr, headSha, false);
+    if (why?.code === 'not_open') await reportClosed(pr.state);
     if (why) return refuse(why.code, why.message);
     return mergeNow(tok, false);
 

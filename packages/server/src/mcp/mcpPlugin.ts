@@ -361,6 +361,8 @@ function buildMcpServer(
   commandFiles: CommandFileDigest[] | null = null,
 ): McpServer {
   const server = new McpServer({ name: 'harkroom', version: '0.1.0' });
+  /** 사슬 고리로 **저장할** 원인(118) — 오퍼레이터를 거친 요청의 헤더만(security C1). PAT 로 붙은 클라이언트의 헤더는 깊이 셈에만 쓴다. */
+  const chainCause = operatorId ? cause : null;
 
   /**
    * 고른 값을 다듬고, **하네스가 밝힌 목록**(`checkOffered`)을 게시 전에 본다 — 사람 경로와 같은
@@ -579,7 +581,7 @@ function buildMcpServer(
     if ('error' in picks) return jsonResult({ error: picks.error });
     let changes: PickChange[] = [];
     const posted = await postMessage(pool, {
-      causeMessageId: cause,
+      causeMessageId: cause, chainCause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, alsoInChannel,
       attachmentIds: attachmentIds ?? [],
       meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
@@ -639,7 +641,7 @@ function buildMcpServer(
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     const posted = await postMessage(pool, {
-      causeMessageId: cause,
+      causeMessageId: cause, chainCause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, kind: 'progress',
       meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
     });
@@ -712,7 +714,7 @@ function buildMcpServer(
 
     let published: { artifactId: string; version: number } | null = null;
     const posted = await postMessage(pool, {
-      causeMessageId: cause,
+      causeMessageId: cause, chainCause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       attachmentIds: [htmlId, ...(coverAttachmentId ? [coverAttachmentId] : [])],
       meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
@@ -777,7 +779,7 @@ function buildMcpServer(
       ...(await reportedModelMeta(pool, account.id, model, threadRootId)),
     };
     const posted = await postMessage(pool, {
-      causeMessageId: cause,
+      causeMessageId: cause, chainCause,
       channelId, authorId: account.id, body: permissionCardBody(permissionRequest, `@${account.handle}`), threadRootId,
       meta: meta as unknown as Record<string, unknown>,
     });
@@ -919,7 +921,7 @@ function buildMcpServer(
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
-      causeMessageId: cause,
+      causeMessageId: cause, chainCause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
     });
@@ -970,7 +972,7 @@ function buildMcpServer(
     }
     const result = await upsertAskBundle(pool, {
       callerId: account.id, channelId, threadRootId, body, rootIds: items.map((i) => i.mirrorOf), bundleId,
-      meta: { ...(await reportedModelMeta(pool, account.id, model, threadRootId)) }, causeMessageId: cause,
+      meta: { ...(await reportedModelMeta(pool, account.id, model, threadRootId)) }, causeMessageId: cause, chainCause,
     });
     if (!result.ok) {
       if (result.code === 'post_failed' && result.posted?.failure) return postFailureResult(result.posted.failure);
@@ -1129,7 +1131,7 @@ function buildMcpServer(
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
-      causeMessageId: cause,
+      causeMessageId: cause, chainCause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
       // 차례 주인이 이 글로 알림을 못 받는 자리(남이 세운 스레드에서 불렀다 등)면 Inbox 에 넣는다.
@@ -1250,7 +1252,7 @@ function buildMcpServer(
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
-      causeMessageId: cause,
+      causeMessageId: cause, chainCause,
       channelId, authorId: account.id, body, threadRootId,
       meta: meta as unknown as Record<string, unknown>,
       /*
@@ -1369,7 +1371,7 @@ function buildMcpServer(
       },
     };
     const posted = await postMessage(pool, {
-      causeMessageId: cause,
+      causeMessageId: cause, chainCause,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
     });
@@ -2053,7 +2055,7 @@ function buildMcpServer(
       report = reportTo;
     }
     const result = await scheduleWake(pool, {
-      accountId: account.id, channelId, threadRootId, notBeforeSec, reason,
+      accountId: account.id, channelId, threadRootId, notBeforeSec, reason, chainCause,
       ...(report ? { reportTo: report } : {}),
     });
     if (result.refusal) return jsonResult({ error: result.refusal });

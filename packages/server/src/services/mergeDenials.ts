@@ -44,16 +44,19 @@ export interface MergeDenialMeta {
 interface DenialRow {
   id: string; agentId: string; scope: string; number: number; headSha: string; channelId: string; threadRootId: string;
   expired: boolean; used: boolean; cardMessageId: string | null; reason: 'not_granted' | 'cause_not_human';
+  /** 그 PR 이 머지되거나 닫혀 카드가 닫혔다(118, Q3) — 7일 허락·1회 승인·새 카드 모두 받지 않는다. */
+  obsolete: boolean;
 }
 
 async function readDenial(db: Pool | PoolClient, id: string, now: Date, lock = false): Promise<DenialRow | undefined> {
   return (await db.query<DenialRow>(
     `select id, agent_id as "agentId", scope, pr_number as number, head_sha as "headSha", channel_id as "channelId", thread_root_id as "threadRootId",
-            expires_at <= $2 as expired, used_at is not null as used, card_message_id as "cardMessageId", reason
+            expires_at <= $2 as expired, used_at is not null as used, card_message_id as "cardMessageId", reason,
+            obsoleted_at is not null as obsolete
        from merge_denial where id = $1${lock ? ' for update' : ''}`, [id, now])).rows[0];
 }
 
-export type DenialCardRefusal = 'denial_not_found' | 'denial_other_agent' | 'denial_other_thread' | 'denial_used' | 'denial_expired';
+export type DenialCardRefusal = 'denial_not_found' | 'denial_other_agent' | 'denial_other_thread' | 'denial_used' | 'denial_expired' | 'pr_closed';
 
 export const DENIAL_CARD_REFUSAL_MESSAGE: Record<DenialCardRefusal, string> = {
   denial_not_found: 'no such merge denial — use the denialId the merge wrapper returned',
@@ -61,6 +64,7 @@ export const DENIAL_CARD_REFUSAL_MESSAGE: Record<DenialCardRefusal, string> = {
   denial_other_thread: 'that merge denial happened in another thread; post the card in the thread where the merge was refused',
   denial_used: 'that merge denial was already used to grant permission',
   denial_expired: 'that merge denial expired; ask the wrapper again',
+  pr_closed: 'that pull request was already merged or closed — no card is needed',
 };
 
 /**
@@ -78,6 +82,7 @@ export async function prepareDenialCard(
   if (d.channelId !== args.channelId || d.threadRootId !== (args.threadRootId ?? '')) return { ok: false, code: 'denial_other_thread' };
   if (d.used) return { ok: false, code: 'denial_used' };
   if (d.expired) return { ok: false, code: 'denial_expired' };
+  if (d.obsolete) return { ok: false, code: 'pr_closed' };
 
   const day = now.toISOString().slice(0, 10);
   const key = `merge:${d.agentId}:${d.scope}:${d.threadRootId}:${day}`;
@@ -115,6 +120,7 @@ export async function grantFromDenial(
     if (!d || d.agentId !== args.agentId) { await client.query('rollback'); return { ok: false, status: 404, code: 'not_found', message: 'no such merge denial for this agent' }; }
     if (d.used) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_used', message: 'this denial was already used' }; }
     if (d.expired) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_expired', message: 'this denial expired' }; }
+    if (d.obsolete) { await client.query('rollback'); return { ok: false, status: 409, code: 'pr_closed', message: PR_CLOSED_MESSAGE }; }
     const used = await client.query(
       `update merge_denial set used_at = $2, used_by = $3 where id = $1 and used_at is null returning id`, [d.id, now, args.actorId]);
     if (!used.rowCount) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_used', message: 'this denial was already used' }; }
@@ -147,6 +153,83 @@ export async function grantFromDenial(
   }
 }
 
+export const PR_CLOSED_MESSAGE = 'that pull request was already merged or closed — this card is closed';
+
+/**
+ * PR 이 머지되거나 닫혔다 — 그 (저장소, PR)의 기다리는 머지 카드를 닫는다(118, 스레드 0e30c565 Q3). 닫힌 거절 기록은 7일 허락·1회
+ * 승인·새 카드를 받지 않고(409 `pr_closed`), 권한 요청은 `obsolete` 가 되어 결정을 받지 않으며(409), 카드의 선택 카드도 닫혀 답을
+ * 받지 않는다. 둘 다 「하루 한 장」·pending 중복 판정에서 빠진다 — 그 PR 이 다시 열리거나 새 PR 이 오면 새 카드가 선다.
+ *
+ * `onlyAgentId` 가 있으면 그 에이전트의 것만(래퍼의 `closed` 보고, Q3-b), 없으면 모든 에이전트(통과한 판정 뒤의 `merged` 보고, Q3-a).
+ * 닫은 줄 수를 돌려준다(0 이면 닫을 것이 없었다). 쓰지 않은 1회 승인(`merge_approval`)은 head 에 묶여 있어 그대로 둔다.
+ */
+export async function obsoleteMergeCards(
+  pool: Pool,
+  args: {
+    scope: string; number: number; reason: 'merged' | 'closed'; actorId: string; now: Date; onlyAgentId?: string;
+    audit?: Record<string, unknown>;
+  },
+): Promise<number> {
+  const client = await pool.connect();
+  let denials: { id: string; agentId: string; cardMessageId: string | null }[] = [];
+  let requests: { id: string; agentId: string; cardMessageId: string | null }[] = [];
+  try {
+    await client.query('begin');
+    denials = (await client.query<{ id: string; agentId: string; cardMessageId: string | null }>(
+      `update merge_denial set obsoleted_at = $3
+        where scope = $1 and pr_number = $2 and used_at is null and obsoleted_at is null and ($4::uuid is null or agent_id = $4)
+        returning id, agent_id as "agentId", card_message_id as "cardMessageId"`,
+      [args.scope, args.number, args.now, args.onlyAgentId ?? null])).rows;
+    requests = (await client.query<{ id: string; agentId: string; cardMessageId: string | null }>(
+      `update permission_request set status = 'obsolete', decided_at = $3
+        where kind = 'merge' and status = 'pending' and target = $1 and ($4::uuid is null or agent_id = $4)
+          and denial_id in (select id from merge_denial where scope = $1 and pr_number = $2)
+        returning id, agent_id as "agentId", card_message_id as "cardMessageId"`,
+      [args.scope, args.number, args.now, args.onlyAgentId ?? null])).rows;
+    const at = args.now.toISOString();
+    for (const r of requests) {
+      if (!r.cardMessageId) continue;
+      await client.query(
+        `update message set meta = jsonb_set(meta, '{permissionRequest}', (meta->'permissionRequest') || $2::jsonb)
+          where id = $1 and meta ? 'permissionRequest'`,
+        [r.cardMessageId, JSON.stringify({ status: 'obsolete', obsoleteReason: args.reason, decidedAt: at })]);
+    }
+    for (const d of denials) {
+      if (!d.cardMessageId) continue;
+      await client.query(
+        `update message set meta = jsonb_set(meta, '{mergeDenial,obsolete}', $2::jsonb) where id = $1 and meta ? 'mergeDenial'`,
+        [d.cardMessageId, JSON.stringify({ reason: args.reason, at })]);
+    }
+    // 카드의 선택 카드도 닫는다 — 열린 카드에 답(「다시 머지」 등)을 보내면 ask-answer 가 닫힌 카드로 거절한다.
+    const cardIds = [...new Set([...requests, ...denials].map((x) => x.cardMessageId).filter((x): x is string => !!x))];
+    if (cardIds.length) {
+      await client.query(
+        `update message set meta = jsonb_set(meta, '{ask}', (meta->'ask') || $2::jsonb)
+          where id = any($1::uuid[]) and meta ? 'ask' and meta->'ask'->>'closedAt' is null and meta->'ask'->'answeredWith' is null`,
+        [cardIds, JSON.stringify({ closedAt: at, closedBy: args.actorId })]);
+    }
+    await client.query('commit');
+  } catch (err) {
+    await client.query('rollback').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  const total = denials.length + requests.length;
+  if (!total) return 0;
+  await recordAudit(pool, {
+    action: 'repo.merge.obsoleted', actorId: args.actorId, target: args.scope,
+    detail: {
+      number: args.number, reason: args.reason, onlyAgentId: args.onlyAgentId ?? null,
+      // 래퍼 보고(`closed`)면 서버가 GitHub 에서 확인한 것이 아니다 — 감사에 그렇게 남긴다.
+      source: args.onlyAgentId ? 'wrapper_report' : 'merge_result',
+      denialIds: denials.map((d) => d.id), requestIds: requests.map((r) => r.id), ...(args.audit ?? {}),
+    },
+  });
+  for (const id of new Set([...requests, ...denials].map((x) => x.cardMessageId).filter((x): x is string => !!x))) await emitCard(pool, id);
+  return total;
+}
+
 /** 1회 승인 기록을 쓸 수 있는 시한 — 승인한 뒤 하루 안에 래퍼가 써야 한다. */
 export const APPROVAL_TTL_MS = 24 * 3_600_000;
 
@@ -171,6 +254,7 @@ export async function insertApprovalFromDenial(
   const d = await readDenial(client, args.denialId, args.now, true);
   if (!d || d.agentId !== args.agentId) return { ok: false, status: 404, code: 'not_found', message: 'no such merge denial for this agent' };
   if (d.expired) return { ok: false, status: 409, code: 'denial_expired', message: 'the merge refusal behind this card expired — the agent has to try again' };
+  if (d.obsolete) return { ok: false, status: 409, code: 'pr_closed', message: PR_CLOSED_MESSAGE };
   // 카드가 선 뒤 같은 스레드에서 다른 PR·head 로 다시 거절되면 이 기록이 덮인다 — 소유자가 본 것과 다르면 승인하지 않는다.
   if (d.number !== args.expect.number || d.headSha !== args.expect.headSha) {
     return { ok: false, status: 409, code: 'card_stale', message: 'the card changed since it was shown (a different PR or head) — look at it again' };

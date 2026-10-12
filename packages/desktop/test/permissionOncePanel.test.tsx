@@ -130,6 +130,19 @@ describe('PermissionOncePanel', () => {
     expect(screen.getByTestId('merge-once-7day-note')).toBeTruthy();
   });
 
+  it('PR 이 머지·닫혀 서버가 닫은 카드(obsolete)는 버튼 없이 그 사유 한 줄 (스레드 0e30c565 Q3)', () => {
+    setup();
+    render(<PermissionOncePanel message={card({ status: 'obsolete', obsoleteReason: 'merged' })} />);
+    expect(screen.queryByTestId('merge-once-open')).toBeNull();
+    expect(screen.queryByTestId('merge-once-owner-only')).toBeNull();
+    expect(screen.getByTestId('merge-once-obsolete').getAttribute('data-reason')).toBe('merged');
+    expect(screen.getByTestId('merge-once-obsolete').textContent).toContain('머지됐다');
+    cleanup();
+    render(<PermissionOncePanel message={card({ status: 'obsolete', obsoleteReason: 'closed' })} />);
+    expect(screen.getByTestId('merge-once-obsolete').textContent).toContain('닫혔다');
+    expect(readPermissionOnce(card({ status: 'obsolete' }).meta)).toMatchObject({ status: 'obsolete', obsoleteReason: 'merged' });
+  });
+
   it('결정된 카드(approved_once)는 버튼 대신 한 줄 — 기한이 지나면 회색', () => {
     setup();
     render(<PermissionOncePanel message={card({ status: 'approved_once', decidedBy: ME, approvedOnce: { ghUser: 'izagood', relaxChecks: false, expiresAt: '2999-01-01T00:00:00Z' } })} />);

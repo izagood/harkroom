@@ -5,7 +5,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { checkMerge, mergeableRepos, openMergeApprovals, peekMergeApproval, reportMerge } from '../services/mergeGrants.js';
+import { checkMerge, mergeableRepos, openMergeApprovals, peekMergeApproval, reportMerge, reportMergeClosed } from '../services/mergeGrants.js';
 
 const REPO = z.string().min(3).max(201);
 const SHA = z.string().regex(/^[0-9a-f]{40}$/);
@@ -69,5 +69,21 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
     const r = await reportMerge(pool, { ...who, ...parsed.data });
     if (!r.ok) return reply.code(r.code === 'bad_repo' ? 400 : r.code === 'lease_invalid' ? 403 : 409).send({ error: { code: r.code, message: `merge result not recorded: ${r.code}` } });
     return reply.code(201).send({ messageId: r.messageId });
+  });
+
+  /**
+   * 래퍼가 `gh pr view` 에서 그 PR 이 이미 MERGED·CLOSED 인 것을 봤다(Q3-b) — 그 에이전트 **자신의** 기다리는 머지 카드만 닫는다.
+   * 통과한 판정 없이 받는 길이라 「머지됨」 줄·`repo.merge.merged` 감사는 만들지 않는다. 닫을 카드가 없으면 409 `no_card`.
+   */
+  app.post('/agent/merge-closed', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    const parsed = z.object({
+      leaseId: base.leaseId, token: base.token, repo: base.repo, number: base.number, state: z.enum(['MERGED', 'CLOSED']),
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId, token, repo, number and state (MERGED|CLOSED) are required' } });
+    const r = await reportMergeClosed(pool, { ...who, ...parsed.data });
+    if (!r.ok) return reply.code(r.code === 'bad_repo' ? 400 : r.code === 'lease_invalid' ? 403 : 409).send({ error: { code: r.code, message: `merge cards not closed: ${r.code}` } });
+    return { closed: r.closed };
   });
 }

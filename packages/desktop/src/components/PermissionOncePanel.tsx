@@ -23,7 +23,9 @@ import { prUrlOf } from './MergeDenialPanel';
 export interface PermissionOnceMeta {
   requestId: string; agentId: string; ownerAccountId: string | null; repo: string;
   number: number; headSha: string; reason: 'not_granted' | 'cause_not_human';
-  status: 'pending' | 'granted' | 'denied' | 'approved_once';
+  /** `obsolete` — 그 PR 이 머지되거나 닫혀 서버가 카드를 닫았다(스레드 0e30c565 Q3). 결정은 서버가 409 로 받지 않는다. */
+  status: 'pending' | 'granted' | 'denied' | 'approved_once' | 'obsolete';
+  obsoleteReason: 'merged' | 'closed' | null;
   decidedBy: string | null;
   approvedOnce: { ghUser: string; relaxChecks: boolean; expiresAt: string } | null;
 }
@@ -34,11 +36,11 @@ export function readPermissionOnce(meta: Record<string, unknown>): PermissionOnc
   const o = p.once as Record<string, unknown> | undefined;
   if (!o || typeof o.number !== 'number' || typeof o.headSha !== 'string') return null;
   const a = p.approvedOnce as Record<string, unknown> | undefined;
-  const status = p.status === 'granted' || p.status === 'denied' || p.status === 'approved_once' ? p.status : 'pending';
+  const status = p.status === 'granted' || p.status === 'denied' || p.status === 'approved_once' || p.status === 'obsolete' ? p.status : 'pending';
   return {
     requestId: p.requestId, agentId: p.agentId, ownerAccountId: typeof p.ownerAccountId === 'string' ? p.ownerAccountId : null,
     repo: p.target, number: o.number, headSha: o.headSha, reason: o.reason === 'cause_not_human' ? 'cause_not_human' : 'not_granted',
-    status, decidedBy: typeof p.decidedBy === 'string' ? p.decidedBy : null,
+    status, obsoleteReason: status === 'obsolete' ? (p.obsoleteReason === 'closed' ? 'closed' : 'merged') : null, decidedBy: typeof p.decidedBy === 'string' ? p.decidedBy : null,
     approvedOnce: a && typeof a.ghUser === 'string' && typeof a.expiresAt === 'string'
       ? { ghUser: a.ghUser, relaxChecks: a.relaxChecks === true, expiresAt: a.expiresAt } : null,
   };
@@ -146,6 +148,12 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
             : t(approved.relaxChecks ? 'mergeOnce.approvedRelaxed' : 'mergeOnce.approved', {
               by: d.decidedBy ? accounts[d.decidedBy]?.handle ?? owner : owner, login: approved.ghUser, until: when(approved.expiresAt),
             })}
+        </p>
+      )}
+
+      {d.status === 'obsolete' && (
+        <p className="mt-2 text-fg-subtle" data-testid="merge-once-obsolete" data-reason={d.obsoleteReason ?? 'merged'}>
+          {t(d.obsoleteReason === 'closed' ? 'mergeCard.obsoleteClosed' : 'mergeCard.obsoleteMerged')}
         </p>
       )}
 

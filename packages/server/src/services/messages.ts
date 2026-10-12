@@ -115,6 +115,13 @@ export interface PostMessageInput {
    */
   causeMessageId?: string | null;
   /**
+   * 이 글의 `cause_message_id`(118)로 **저장할** 원인 — 머지 판정이 이 칸을 거슬러 올라가 사슬의 뿌리를 찾는다(`causeChainRoot`).
+   * 부르는 쪽은 **오퍼레이터를 거친 요청**일 때만 넘긴다(security C1, `COMMAND_FILES_HEADER` 와 같은 규칙). 넘겨도 그 메시지가
+   * 작성자를 최근에 실제로 깨웠을 때만 적는다(`verifiedCauseLink`). 깊이 셈(`causeMessageId`)과 따로 둔다 — wake 대기 줄은 사슬의
+   * 고리지만 깊이를 물려받지 않는다.
+   */
+  chainCause?: string | null;
+  /**
    * 에이전트가 돌린 자동화 회차(082)가 물려준 연쇄 깊이. 자동화 글은 **사람(소유자) 이름**으로
    * 나가서 보통은 깊이 0 이다 — 그대로 두면 에이전트가 자동화를 돌려 연쇄 상한을 세탁할 수 있다.
    * 이 값이 있으면 사람 글이어도 이 깊이로 저장하고 상한을 판정한다. 없으면(사람·시계·외부 이벤트) 옛 셈이다.
@@ -748,6 +755,26 @@ async function mentionDepthFor(
  * 턴은 원인에서 깊이를 물려받지 않는다 — 대기 줄은 내 발화라 물려받으면 깨어날 때마다 한 칸씩
  * 쌓이고, 에이전트 답글은 부름이 아니다. 그때는 null 로 옛 셈에 맡긴다.
  */
+/** 사슬 고리로 저장할 수 있는 원인의 신선도 — 턴 예산(30분)에 여유를 둔다. */
+export const CAUSE_LINK_FRESH_MS = 60 * 60_000;
+
+/**
+ * 머지 사슬의 고리(118, security C1). 헤더 값을 그대로 적지 않는다 — 그 메시지가 **이 작성자에게 inbox 를 만들었고**(사유 무관:
+ * 부름·스레드 답·ask 답·wake) 그것이 최근이며 지워지지 않았을 때만 그 id 를, 아니면 null 을 돌려준다. 그래서 에이전트가 소유자의
+ * 아무 글 id 나 헤더에 넣어도, 그 글이 자기를 깨운 것이 아니면 사슬은 끊긴다.
+ */
+export async function verifiedCauseLink(
+  client: Pick<PoolClient, 'query'>, authorId: string, causeMessageId: string, now = new Date(),
+): Promise<string | null> {
+  const row = (await client.query(
+    `select m.id from message m
+      where m.id = $1 and m.deleted_at is null
+        and exists (select 1 from inbox i where i.message_id = m.id and i.account_id = $2 and i.created_at > $3)`,
+    [causeMessageId, authorId, new Date(now.getTime() - CAUSE_LINK_FRESH_MS)],
+  )).rows[0] as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
 async function causeDepth(client: PoolClient, authorId: string, causeMessageId: string): Promise<number | null> {
   const row = (await client.query(
     `select m.mention_depth as depth, (a.kind = 'agent') as author_is_agent,
@@ -1363,9 +1390,12 @@ export async function postMessage(
       }
     }
 
+    const causeLink = authorIsAgent && input.chainCause
+      ? await verifiedCauseLink(client, input.authorId, input.chainCause)
+      : null;
     const inserted = await client.query(
-      `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth)
-       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+      `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth, cause_message_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
       [input.channelId, input.threadRootId ?? null, input.authorId, calls.normalizedBody,
        input.kind ?? 'user',
        // 막힌 호출은 **그 메시지에 남는다** — 조용히 사라지면 사람은 "왜 아무도 안 왔나"를
@@ -1375,7 +1405,7 @@ export async function postMessage(
          ...(guardMetaI18n(input.kind, input.meta) ?? {}),
          ...calls.callMeta,
        }),
-       alsoInChannel, mentionDepth],
+       alsoInChannel, mentionDepth, causeLink],
     );
     const messageId = inserted.rows[0].id as string;
 

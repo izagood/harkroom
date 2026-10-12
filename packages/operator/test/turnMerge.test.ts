@@ -107,6 +107,7 @@ describe('turnMerge', () => {
   });
   const ok = () => mergeCall({ repo: 'izagood/harkroom', number: 7, headSha: SHA });
   const results = () => forwards.filter((f) => f.type === 'http.forward' && f.path === '/agent/merge-results').map((f) => JSON.parse((f as { body?: string }).body ?? '{}'));
+  const closedReports = () => forwards.filter((f) => f.type === 'http.forward' && f.path === '/agent/merge-closed').map((f) => JSON.parse((f as { body?: string }).body ?? '{}'));
   const ghCalls = () => execs.filter((e) => e.args[0] === 'pr').map((e) => e.args.slice(0, 2).join(' '));
 
   it('repo.merge 가 아닌 요청은 건드리지 않는다', async () => {
@@ -131,11 +132,56 @@ describe('turnMerge', () => {
     expect(forwards).toHaveLength(0);
   });
 
-  it('서버가 거절하면 그 코드로 끝난다 — gh 는 한 번도 부르지 않는다', async () => {
+  it('서버가 거절하면 그 코드로 끝난다 — gh 는 읽기(pr view)만 한 번, 머지는 부르지 않는다', async () => {
     checkStatus = 403;
     expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('not_granted');
-    expect(execs).toHaveLength(0);
+    expect(ghCalls()).toEqual(['pr view']);
     expect(results()).toHaveLength(0);
+    expect(closedReports()).toHaveLength(0);
+  });
+
+  it('서버가 거절하면 gh 를 부르지 않는 코드도 있다 — lease_invalid 등은 그대로 끝난다', async () => {
+    checkStatus = 403;
+    denialBody = { error: { code: 'lease_invalid' } };
+    expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('lease_invalid');
+    expect(execs).toHaveLength(0);
+  });
+
+  describe('Q3: PR 이 이미 MERGED·CLOSED 면 기다리던 머지 카드를 닫는다 (스레드 0e30c565)', () => {
+    it('cause_not_human 거절인데 PR 이 MERGED — merge-closed 를 보고하고 denialId 없이 not_open 으로 끝난다(새 카드 없음)', async () => {
+      checkStatus = 403;
+      denialBody = { error: { code: 'cause_not_human', denialId: '0f0e0d0c-0b0a-4908-8706-050403020100' } };
+      pr = { ...pr, state: 'MERGED' };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error.code).toBe('not_open');
+      expect(r.body.error.denialId).toBeUndefined();
+      expect(closedReports()).toEqual([{ leaseId: 'lease-1', token: 'tok-1', repo: 'izagood/harkroom', number: 7, state: 'MERGED' }]);
+      expect(ghCalls()).toEqual(['pr view']);
+    });
+
+    it('거절인데 PR 이 OPEN 이면 보고하지 않고 지금처럼 denialId 를 넘긴다', async () => {
+      checkStatus = 403;
+      const id = '0f0e0d0c-0b0a-4908-8706-050403020100';
+      denialBody = { error: { code: 'cause_not_human', denialId: id } };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.denialId).toBe(id);
+      expect(closedReports()).toHaveLength(0);
+    });
+
+    it('거절인데 gh 를 못 읽으면(계정 없음) 지금처럼 카드 길 — 보고 없음', async () => {
+      checkStatus = 403;
+      ghUser = undefined;
+      const id = '0f0e0d0c-0b0a-4908-8706-050403020100';
+      denialBody = { error: { code: 'not_granted', denialId: id } };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.denialId).toBe(id);
+      expect(closedReports()).toHaveLength(0);
+    });
+
+    it('판정은 통과했는데 머지 전 확인에서 CLOSED — 실패 보고와 함께 merge-closed 도 보고한다', async () => {
+      pr = { ...pr, state: 'CLOSED' };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('not_open');
+      expect(closedReports().map((b) => b.state)).toEqual(['CLOSED']);
+      expect(ghCalls()).not.toContain('pr merge');
+    });
   });
 
   it('P4: 서버가 denialId 를 실은 거절이면 그대로 넘긴다 — 에이전트가 message.ask 의 mergeDenialId 로 카드를 세운다', async () => {
@@ -144,7 +190,7 @@ describe('turnMerge', () => {
     denialBody = { error: { code: 'not_granted', denialId: id } };
     const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
     expect(r).toMatchObject({ isError: true, body: { error: { code: 'not_granted', denialId: id, message: expect.stringContaining('mergeDenialId') } } });
-    expect(execs).toHaveLength(0);
+    expect(ghCalls()).toEqual(['pr view']);
     // uuid 가 아닌 값은 싣지 않는다 — 서버 본문을 그대로 비추지 않는다
     denialBody = { error: { code: 'not_granted', denialId: 'x; rm -rf' } };
     expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.denialId).toBeUndefined();
