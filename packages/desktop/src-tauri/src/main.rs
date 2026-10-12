@@ -951,6 +951,16 @@ fn main() {
             }
             Ok(())
         })
+        // 맥에서 메인 창 X·⌘W 는 창만 숨긴다 — 앱·러너·연결·알림은 계속 돈다(`app_windows::hides_on_close`).
+        // Dock 아이콘을 누르면 아래 `run` 의 `Reopen` 이 다시 띄운다. ⌘Q·업데이트 재시작은 이 이벤트를 거치지 않는다.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if app_windows::hides_on_close(window.label()) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             allow_preview_once,
             secret_get,
@@ -997,11 +1007,13 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Harkroom")
-        .run(|_app, event| {
+        .run(|_app, event| match event {
             // 복구 키를 복사하고 60초가 지나기 전에 앱을 끄면 비우기 스레드가 함께 죽는다 — 끝나기 전에 한 번 비운다.
-            if let tauri::RunEvent::Exit = event {
-                concealed_clipboard::clear_on_exit();
-            }
+            tauri::RunEvent::Exit => concealed_clipboard::clear_on_exit(),
+            // Dock 아이콘 클릭. X 로 숨긴 메인 창을 다시 띄운다 — 새 창만 떠 있어도 메인을 앞으로 가져온다.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => app_windows::show_main(_app),
+            _ => {}
         });
 }
 
