@@ -634,7 +634,10 @@ let backoffMs = 1_000;
 
 while (running) {
   try {
-    const batch = await harkroom.pollInbox(config.pollTimeoutMs, claudeLaneReport());
+    // 쥔 항목(도는 턴의 것)을 알려 서버가 다시 내주지 않게 한다(inbox 임대, 설계 B). 끝난 턴의 항목은 이 목록에서
+    // 빠져 서버가 이 폴에서 풀고, 읽음 처리된 것은 어차피 안 나온다. 러너가 죽으면 서버 임대 시각이 지나 다시 나간다.
+    const batch = await harkroom.pollInbox(config.pollTimeoutMs, claudeLaneReport(),
+      config.inboxLease ? { runnerId: config.operatorLink.runnerId, holding: scheduler.holdingEntries() } : undefined);
     // 이 배치의 메모리 판본 — 사본과 같으면 첫 턴이 메모리를 왕복하지 않는다(`memoryCache.ts`).
     memoryCache.noteRev(batch.memoryRev);
     if (!batch.entries.length) {

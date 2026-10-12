@@ -2842,7 +2842,7 @@ const BOARD_COMPACT_KEEP_SQL = `i.id in (
         where r.rn <= ${BOARD_COMPACT_LATEST} or r.rr = 1 or r.pinned)`;
 
 export async function listInbox(
-  pool: Pool, accountId: string, opts: { unreadOnly?: boolean; compact?: boolean; sinceId?: number },
+  pool: Pool, accountId: string, opts: { unreadOnly?: boolean; compact?: boolean; sinceId?: number; skipLeased?: boolean },
 ): Promise<InboxEntry[]> {
   const bodySql = opts.compact
     ? `left(${displayBodySql('m')}, ${BOARD_COMPACT_BODY_CHARS}) as body,
@@ -2878,6 +2878,7 @@ export async function listInbox(
        ${opts.unreadOnly ? 'and i.read_at is null' : ''}
        ${opts.compact ? `and ${BOARD_COMPACT_KEEP_SQL}` : ''}
        ${opts.sinceId !== undefined ? 'and i.id > $2::bigint' : ''}
+       ${opts.skipLeased ? 'and (i.claimed_until is null or i.claimed_until < now())' : ''}
      order by i.id`,
     opts.sinceId !== undefined ? [accountId, opts.sinceId] : [accountId],
   );
@@ -3088,6 +3089,30 @@ export async function setInboxThreadState(
 }
 
 /** 읽음 처리된 항목 수를 돌려준다. account_id 스코프이므로 남의 entry id 는 아무 것도 지우지 않는다. */
+/** 러너가 쥔 항목의 임대 길이(122). 러너는 폴마다(최대 ~25초 간격) 다시 알려 늘린다 — 죽으면 이만큼 뒤 다시 나간다. */
+export const INBOX_LEASE_MS = 120_000;
+
+/**
+ * 러너가 지금 쥔 항목에 임대를 걸고, 같은 러너가 **더는 쥐지 않는** 항목의 임대는 푼다(2026-10-12 설계 B).
+ * 자기 계정의 안 읽은 줄만 건드린다 — 남의 id·읽은 줄이 섞여 와도 아무 일도 없다. `runnerId` 로 갈라 두는 이유:
+ * 판올림 때 옛 러너와 새 러너가 같은 계정에 잠깐 같이 붙는다. 한쪽 폴이 다른 쪽의 임대를 풀면 쥔 항목이 다시 나간다.
+ */
+export async function leaseInboxEntries(
+  pool: Pool, accountId: string, runnerId: string, holding: number[],
+): Promise<void> {
+  await pool.query(
+    `update inbox set claimed_by = null, claimed_until = null
+      where account_id = $1 and claimed_by = $2 and read_at is null and not (id = any($3::bigint[]))`,
+    [accountId, runnerId, holding],
+  );
+  if (holding.length === 0) return;
+  await pool.query(
+    `update inbox set claimed_by = $2, claimed_until = now() + make_interval(secs => $4::int / 1000.0)
+      where account_id = $1 and id = any($3::bigint[]) and read_at is null`,
+    [accountId, runnerId, holding, INBOX_LEASE_MS],
+  );
+}
+
 export async function markInboxRead(pool: Pool, accountId: string, ids: number[]): Promise<number> {
   const res = await pool.query(
     `update inbox set read_at = now() where account_id = $1 and id = any($2) and read_at is null`,

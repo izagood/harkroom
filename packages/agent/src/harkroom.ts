@@ -467,9 +467,16 @@ export class HarkroomAgentClient {
    * claude 하네스가 아닌 러너는 넘기지 않는다 — 그러면 서버에 행이 안 생기고, 화면은
    * 그것을 **모른다**로 그린다(없는 lane 을 빈 lane 으로 적으면 거짓이 된다).
    */
-  pollInbox(timeoutMs: number, claudeLane?: { pool: string | null; accounts: string[] }): Promise<InboxBatch> {
+  /**
+   * `lease` 를 주면 서버가 `holding` 항목(처리 중이라 아직 안 읽은 것)에 임대를 걸고 결과에서 뺀다(설계 B). 바쁜
+   * 러너도 같은 배치를 곧바로 다시 받지 않고 롱폴로 기다린다. 옛 서버는 이 인자를 무시한다.
+   */
+  pollInbox(
+    timeoutMs: number, claudeLane?: { pool: string | null; accounts: string[] },
+    lease?: { runnerId: string; holding: number[] },
+  ): Promise<InboxBatch> {
     return this.call<InboxBatch>('inbox.poll', {
-      timeoutMs, version: VERSION, ...(claudeLane ? { claudeLane } : {}),
+      timeoutMs, version: VERSION, ...(claudeLane ? { claudeLane } : {}), ...(lease ? { lease } : {}),
     });
   }
 

@@ -15,6 +15,13 @@ describe('loadConfig — HARKROOM_AGENT_INSTANCE (#174)', () => {
    * 요구 1 — 인스턴스가 없으면 **지금과 완전히 같다.** `stateDir` 기본값까지 리터럴로
    * 확인한다: `toBeDefined()` 는 값이 무엇으로 바뀌어도 통과해 아무것도 지키지 않는다.
    */
+  // inbox 임대(설계 B)는 기본 켜짐이고, `AGENT_INBOX_LEASE=0` 만 옛 경로로 돌린다.
+  it('AGENT_INBOX_LEASE 는 기본 켜짐, 0 일 때만 꺼진다', () => {
+    expect(loadConfig({ ...LINK_ENV }).inboxLease).toBe(true);
+    expect(loadConfig({ ...LINK_ENV, AGENT_INBOX_LEASE: '1' }).inboxLease).toBe(true);
+    expect(loadConfig({ ...LINK_ENV, AGENT_INBOX_LEASE: '0' }).inboxLease).toBe(false);
+  });
+
   it('HARKROOM_AGENT_INSTANCE 가 없으면 인스턴스는 undefined 이고 stateDir 기본값이 그대로다', () => {
     const config = loadConfig({ ...LINK_ENV });
     expect(config.agentInstance).toBeUndefined();

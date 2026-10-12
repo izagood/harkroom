@@ -15,7 +15,7 @@ import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
-import { BAD_THREAD_MESSAGE, checkAskMirror, checkAskSupersede, getMessageById, gateAwaitingAccount, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, supersedeAsk, syncAskMirrors, type AskMirrorRefusal, type AskSupersedeRefusal } from '../services/messages.js';
+import { BAD_THREAD_MESSAGE, checkAskMirror, checkAskSupersede, getMessageById, gateAwaitingAccount, leaseInboxEntries, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, supersedeAsk, syncAskMirrors, type AskMirrorRefusal, type AskSupersedeRefusal } from '../services/messages.js';
 
 /** `message.ask` 의 `mirrorOf` 거절 사유 — 에이전트가 읽고 고칠 수 있게 무엇을 바꾸면 되는지 적는다. */
 const MIRROR_REFUSAL_MESSAGE: Record<AskMirrorRefusal, string> = {
@@ -1456,8 +1456,17 @@ function buildMcpServer(
         // 이름만 받는다 — 경로·이메일은 받지 않는다(러너 로그와 같은 규율).
         accounts: z.array(z.string()).max(64),
       }).optional(),
+      /**
+       * 이 러너가 지금 쥔 항목(처리 중이라 아직 안 읽은 것, 2026-10-12 설계 B). 주면 서버가 그 항목에 임대를 걸고
+       * 결과에서 뺀다 — 바쁜 러너가 같은 배치를 5초마다 다시 받지 않고 롱폴로 기다린다. 쥐지 않게 된 것은 이 폴에서
+       * 풀린다. `runnerId` 가 함께 와야 한다. 옛 러너는 안 보낸다 → 전과 같다(임대 없음).
+       */
+      lease: z.object({
+        runnerId: z.string().min(1).max(128),
+        holding: z.array(z.number().int()).max(1000),
+      }).optional(),
     },
-  }, async ({ timeoutMs, version, claudeLane }) => {
+  }, async ({ timeoutMs, version, claudeLane, lease }) => {
     // 버전이 오면 기록한다 — 배포가 넣어 준 빌드 시점 값이다(#129). 값이 바뀔 때만
     // 실제로 쓰이므로 이 핫 패스에 쓰기 비용이 없다(services/runnerVersion.ts 주석).
     if (version) {
@@ -1473,8 +1482,9 @@ function buildMcpServer(
     // 예전에는 이 자리가 유일한 mark 였고, 그것이 **일하는 중인 에이전트를 죽었다고
     // 말하는 버그**였다: 러너 루프는 단일 스레드라 턴이 도는 동안 폴이 나가지 않으므로
     // 30초 TTL 이 만료됐다. 신호를 게이트로 올리면 도구 하나가 빠뜨릴 수 없다.
+    if (lease) await leaseInboxEntries(pool, account.id, lease.runnerId, lease.holding);
     const fetchUnread = async () => {
-      const entries = await listInbox(pool, account.id, { unreadOnly: true });
+      const entries = await listInbox(pool, account.id, { unreadOnly: true, skipLeased: lease !== undefined });
       if (!entries.length) return { entries, messages: [] };
       const ids = entries.map((e) => e.messageId);
       const msgs = await pool.query(
