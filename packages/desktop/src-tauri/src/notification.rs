@@ -275,12 +275,7 @@ mod macos {
     /// 창을 최소화했으면 활성화만으로는 안 보인다. 이동한 화면이 안 보이는 창에서
     /// 일어나면 사용자가 보는 것은 여전히 "아무 일도 안 났다" 다.
     fn focus_main_window(app: &tauri::AppHandle) {
-        use tauri::Manager;
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
+        crate::app_windows::show_main(app);
     }
 }
 

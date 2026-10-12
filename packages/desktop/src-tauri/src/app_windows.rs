@@ -98,6 +98,29 @@ pub fn build_main<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     Ok(())
 }
 
+/// 창 X·⌘W 를 **숨김**으로 바꿀 창인가. macOS 의 메인 창만이다 — 맥 앱 관례(Slack·메일)대로
+/// 마지막 창을 닫아도 앱은 살아 있어야 연결·러너·알림이 끊기지 않는다. 메인 창을 실제로 닫으면
+/// 웹뷰(스토어·컨트롤러·연결)가 함께 사라지고, 새 창(`win-*`)은 그 웹뷰가 포털로 그리던 것이라
+/// 껍데기만 남는다. 새 창은 지금처럼 그냥 닫는다. 맥이 아닌 OS 는 바꾸지 않는다.
+///
+/// **종료 경로는 여기를 지나지 않는다**(Tauri 2.11.5·tao 0.35.3 소스로 확인): ⌘Q·메뉴 Quit 은
+/// `NSApp terminate:` → 루프 끝, 업데이트 뒤 재시작(`plugin-process` 의 `request_restart`)은
+/// `RunEvent::ExitRequested`·`Exit` 로 간다 — 어느 쪽도 창마다 `CloseRequested` 를 보내지 않으니
+/// 숨김이 종료를 막을 수 없다.
+pub fn hides_on_close(label: &str) -> bool {
+    cfg!(target_os = "macos") && label == MAIN_LABEL
+}
+
+/// 숨긴(또는 최소화한) 메인 창을 다시 앞으로. Dock 아이콘 클릭(`RunEvent::Reopen`)과 알림 클릭이 쓴다.
+pub fn show_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager as _;
+    if let Some(window) = app.get_webview_window(MAIN_LABEL) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 /// 재시작 복원(W2)은 사람이 누르지 않은 `window.open` 이다. WKWebView 는 기본으로 그것을
 /// 막는다(`javaScriptCanOpenWindowsAutomatically = NO`). 메인 웹뷰에서만 켠다 — 열 수 있는
 /// 것은 위 `popup_label` 이 받은 창뿐이라 이 스위치가 바깥 문을 넓히지 않는다.
@@ -117,7 +140,7 @@ fn allow_script_windows<R: tauri::Runtime>(_window: &tauri::WebviewWindow<R>) {}
 
 #[cfg(test)]
 mod tests {
-    use super::popup_label;
+    use super::{hides_on_close, popup_label};
     use tauri::Url;
 
     fn label(s: &str) -> Option<String> {
@@ -152,5 +175,13 @@ mod tests {
         assert_eq!(label("about:blank?x=1#hk-win=thread-x"), None);
         assert_eq!(label("about:blank%23hk-win=thread-x%23hk-win=main"), None);
         assert_eq!(label("about:blankx#hk-win=thread-x"), None);
+    }
+
+    #[test]
+    fn 창_닫기를_숨김으로_바꾸는_것은_맥의_메인_창뿐이다() {
+        assert_eq!(hides_on_close("main"), cfg!(target_os = "macos"));
+        assert!(!hides_on_close("win-thread-0b7e2c1a-1111-4a4a-9c9c-123456789abc"));
+        assert!(!hides_on_close("win-channel-abc"));
+        assert!(!hides_on_close("Main"));
     }
 }
