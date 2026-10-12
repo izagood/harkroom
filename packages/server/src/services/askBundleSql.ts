@@ -27,10 +27,24 @@ export const bundledRootSql = (alias: string) => `(
              AND bc.kind = 'standard' AND bc.visibility = 'public' AND bc.archived_at IS NULL
              AND bnd.meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', ${alias}.id::text))))`;
 
-/** 이 글(`alias`)이 **열린 줄을 하나라도 가진** 묶음 카드인가. 줄의 상태는 원본에서 읽는다(정본은 원본). */
+/**
+ * 이 글(`alias`)이 **열린 줄을 하나라도 가진** 묶음 카드인가. 줄의 상태는 원본에서 읽는다(정본은 원본).
+ *
+ * **`br.id` 쪽을 캐스팅하지 않는다**(2026-10-12). 예전 꼴 `br.id::text = bi->>'rootId'` 는 `message_pkey` 를
+ * 못 타서, 이 조각이 도는 행마다 message 를 통째로 훑었다 — 스레드 상태(`FACTS_SQL`)·채널 목록
+ * (`THREAD_STATE_FACTS`)이 스레드 글 수 × 시퀀셜 스캔이 되어 Postgres 가 메모리 한도로 죽었다.
+ * 값 쪽을 uuid 로 바꾸면 pkey 를 탄다.
+ *
+ * uuid 꼴이 아닌 rootId 는 `CASE` 로 먼저 걸러 null 로 둔다(그 줄은 아무 원본과도 맞지 않는다). 그냥
+ * `::uuid` 하면 jsonb 에 이상한 값이 하나만 들어가도 이 조각을 쓰는 쿼리 전체가 터진다 — 채널 목록이
+ * 통째로 500 이 된다. WHERE 의 AND 는 평가 순서를 약속하지 않으므로 거르기는 반드시 CASE 안에서 한다.
+ * 지금 쓰는 길(`upsertAskBundle`)은 원본 행을 읽어 확인한 id 만 넣으므로 걸리는 값은 없어야 한다.
+ */
 export const openBundleSql = (alias: string) => `(${alias}.meta->>'kind' = 'askBundle' AND EXISTS (
         SELECT 1 FROM jsonb_array_elements(${alias}.meta->'askBundle'->'items') bi
-          JOIN message br ON br.id::text = bi->>'rootId'
+          JOIN message br ON br.id = CASE
+            WHEN bi->>'rootId' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            THEN (bi->>'rootId')::uuid END
          WHERE br.deleted_at IS NULL
            AND br.meta->'ask'->>'answeredWith' IS NULL
            AND br.meta->'ask'->>'closedAt' IS NULL))`;

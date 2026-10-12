@@ -9,6 +9,7 @@ import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js
 import { postMessage, supersedeAsk } from '../src/services/messages.js';
 import { isIrreversible, resolveBundleItem, upsertAskBundle } from '../src/services/askBundles.js';
 import { readThreadStatusFacts } from '../src/services/threadStatus.js';
+import { openBundleSql } from '../src/services/askBundleSql.js';
 import { enqueueBundlePush } from '../src/services/push/pushJobs.js';
 import { hashToken } from '../src/auth/tokens.js';
 import type { AskMeta } from '@harkroom/shared';
@@ -265,6 +266,68 @@ describe('🙋·Inbox 는 묶음 하나에 한 줄(3c)', () => {
     await app.inject({ method: 'POST', url: `/channels/${workChannel}/messages/${two.askId}/ask-close`, headers: auth(memberToken) });
     expect(await headCount(pmChannel, pmThread)).toBe(0);
     expect((await readThreadStatusFacts(pool, pmThread))!.facts.humanAsk).toBeNull();
+  });
+
+  // 2026-10-12: rootId 를 uuid 로 바꿔 pkey 를 타게 했다. uuid 꼴이 아닌 값이 jsonb 에 섞여도 쿼리가 터지지 않아야 한다.
+  it('uuid 꼴이 아닌 rootId 가 섞여도 채널 목록·스레드 상태가 터지지 않고, 나머지 줄은 그대로 센다', async () => {
+    const pmHead = await app.inject({ method: 'POST', url: `/channels/${pmChannel}/messages`, headers: auth(memberToken), payload: { body: '망가진 줄' } });
+    const pmThread = pmHead.json().message?.id ?? pmHead.json().id;
+    const one = await seedAsk();
+    const made = await upsertAskBundle(pool, { callerId: pmId, channelId: pmChannel, threadRootId: pmThread, body: '정할 것', rootIds: [one.askId] });
+    expect(made.ok).toBe(true);
+    const bundleId = (made as { message: { id: string } }).message.id;
+    await pool.query(
+      `update message set meta = jsonb_set(meta, '{askBundle,items}',
+         (meta->'askBundle'->'items') || '[{"rootId":"not-a-uuid"},{"rootId":""},{"rootId":null}]'::jsonb)
+       where id = $1`, [bundleId]);
+
+    const res = await app.inject({ method: 'GET', url: `/channels/${pmChannel}/messages?limit=200`, headers: auth(memberToken) });
+    expect(res.statusCode).toBe(200);
+    expect(await headCount(pmChannel, pmThread)).toBe(1);
+    expect((await readThreadStatusFacts(pool, pmThread))!.facts.humanAsk).toMatchObject({ askerId: pmId });
+
+    // 살아 있던 줄이 닫히면 망가진 줄만 남는다 — 그것은 어떤 원본과도 맞지 않으므로 열린 줄이 아니다.
+    await app.inject({ method: 'POST', url: `/channels/${workChannel}/messages/${one.askId}/ask-close`, headers: auth(memberToken) });
+    expect(await headCount(pmChannel, pmThread)).toBe(0);
+    expect((await readThreadStatusFacts(pool, pmThread))!.facts.humanAsk).toBeNull();
+  });
+
+  /**
+   * 원본 찾기가 **message_pkey 를 키로 탄다**(2026-10-12 PG OOM 의 원인). 운영만 한 표에서 계획을 묻는다 — 지금 꼴은
+   * 줄마다 `message_pkey` 의 `id = …` 조건으로 원본을 집고, 예전 `br.id::text = …` 꼴은 키로 쓸 수 있는 색인이 없어
+   * message 를 통째로 훑는다(뮤테이션으로 확인: 예전 꼴이면 이 시험이 빨개진다).
+   */
+  it('묶음 줄의 원본을 message_pkey 로 찾는다(시퀀셜 스캔이 아니다)', async () => {
+    const one = await seedAsk();
+    const made = await bundleOf([one.askId]);
+    const bundleId = (made as { message: { id: string } }).message.id;
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      // 운영 DB 만큼(그날 message 18k 행) 채우고 통계를 새로 한다 — 작은 표에서는 플래너가 통째로 훑는 쪽이 싸다고 본다.
+      // 트랜잭션 안이라 행도 통계도 rollback 으로 사라진다.
+      await client.query(
+        `insert into message (channel_id, author_id, body, kind)
+         select m.channel_id, m.author_id, 'filler', 'user' from message m, generate_series(1, 20000) where m.id = $1`, [one.askId]);
+      await client.query('analyze message');
+      const res = await client.query(
+        `explain (format json) select ${openBundleSql('t')} as open from message t where t.id = $1`, [bundleId]);
+      type Plan = { 'Node Type': string; 'Alias'?: string; 'Index Name'?: string; 'Index Cond'?: string; Plans?: Plan[] };
+      const nodes: Plan[] = [];
+      const walk = (p: Plan) => { nodes.push(p); for (const c of p.Plans ?? []) walk(c); };
+      walk((res.rows[0]['QUERY PLAN'] as { Plan: Plan }[])[0]!.Plan);
+      const br = nodes.filter((n) => n.Alias === 'br');
+      expect(br.length).toBeGreaterThan(0);
+      for (const n of br) {
+        expect(n['Node Type']).toMatch(/Index/);
+        expect(n['Index Name']).toBe('message_pkey');
+        // 원본 하나를 키로 집는다 — 색인을 처음부터 끝까지 훑는 것(조건 없는 Index Scan)이 아니다.
+        expect(n['Index Cond']).toMatch(/\bid = /);
+      }
+    } finally {
+      await client.query('rollback');
+      client.release();
+    }
   });
 });
 
