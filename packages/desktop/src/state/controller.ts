@@ -1173,10 +1173,15 @@ export class Controller {
           this.boardDirty = false;
           data = await this.api.inboxBoard();
           if (this.stopped) return data;
+          // 304 면 api 가 들고 있던 **같은 판**을 돌려준다 — 판이 그대로면 보드를 다시 그리지 않는다.
+          // 배지는 시간만 흘러도 바뀌므로(나중에 시각) 수는 다시 센다.
+          const same = data === this.mineInput;
           this.mineInput = data;
           this.recountInboxMine();
-          const store = this.store.getState();
-          store.set({ inboxBoardRevision: store.inboxBoardRevision + 1 });
+          if (!same) {
+            const store = this.store.getState();
+            store.set({ inboxBoardRevision: store.inboxBoardRevision + 1 });
+          }
         } while (this.boardDirty && !this.stopped);
         return data;
       } finally { this.boardInFlight = null; }
