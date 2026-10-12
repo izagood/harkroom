@@ -78,6 +78,14 @@ export const GATE_NOTIFY_WINDOW_MS = 30 * 60 * 1000;
 /** 한 에이전트가 `GATE_NOTIFY_WINDOW_MS` 안에 울릴 수 있는 관문 알림 수(security #1053 권고). */
 export const GATE_NOTIFY_PER_AGENT = 3;
 
+/** 보드가 닫혀 있을 때 배지용 보드 조회를 미루는 시간(`refreshInboxMine`). */
+export const BADGE_REFRESH_MS = 30_000;
+/**
+ * 이 기기에서 내가 한 동작(글·답글·읽음·리액션) 뒤 이 시간 안에 오는 `inbox.updated` 는 미루지 않는다 — 그 신호는
+ * 내 동작의 결과일 가능성이 크고, 처리했는데 배지가 안 줄면 사람은 처리가 안 된 줄 안다(#1333 designer d1).
+ */
+export const OWN_ACTION_WINDOW_MS = 10_000;
+
 export class Controller {
 
   /**
@@ -102,6 +110,11 @@ export class Controller {
   /** 마지막 보드 재료 — 시간만 흘러도(나중에의 시각이 지나도) 수를 다시 세려고 들고 있다. */
   private mineInput: InboxBoardData | null = null;
   private mineTick: ReturnType<typeof setInterval> | null = null;
+  /** 보드가 열려 있나(`setInboxBoardOpen`) · 닫혀 있을 때 배지용으로 미뤄 둔 보드 조회(`refreshInboxMine`). */
+  private boardOpenCount = 0;
+  private badgeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 이 시각까지 온 `inbox.updated` 는 내 동작의 결과로 보고 바로 받는다(`noteOwnInboxAction`). */
+  private ownActionUntil = 0;
   /** 히스토리를 이미 통째로 받은 채널. 이 집합에 없으면 openChannel이 증분이 아니라 전체를 받는다. */
   private loadedChannels = new Set<string>();
   /**
@@ -325,7 +338,7 @@ export class Controller {
     this.swallow(this.loadSavedSummary());
     // 내 차례 수(배지 A)도 크리티컬 패스 밖이다 — 인박스 전체라 무겁고, 없어도 앱은 선다(배지가 0 일 뿐).
     // 1분마다 다시 센다: 나중에로 미룬 일은 시각이 지나면 서버 신호 없이도 다시 내 차례다.
-    this.swallow(this.refreshInboxMine());
+    this.swallow(this.loadInboxBoard());
     if (!this.mineTick) this.mineTick = setInterval(() => this.recountInboxMine(), 60_000);
     // 투영 상태도 60초마다 갱신한다(#267) — 앱 기동 시 한 번과 정기적으로.
     this.swallow(this.refreshProjectionStatus());
@@ -489,6 +502,7 @@ export class Controller {
     if (this.projectionRefreshInterval) { clearInterval(this.projectionRefreshInterval); this.projectionRefreshInterval = null; }
     if (this.mineTick) { clearInterval(this.mineTick); this.mineTick = null; }
     this.clearOfflineTimer();
+    if (this.badgeRefreshTimer) { clearTimeout(this.badgeRefreshTimer); this.badgeRefreshTimer = null; }
   }
 
   /**
@@ -922,7 +936,8 @@ export class Controller {
       ? this.refreshOpenThread(activeChannelId, openRoot).catch(() => undefined)
       : null;
     await this.refreshUnread();
-    this.swallow(this.refreshInboxMine());
+    // 재연결은 기다리지 않는다 — 끊긴 사이 무엇이 바뀌었는지 모른다(`refreshInboxMine` 의 미룸은 이벤트 몫).
+    this.swallow(this.loadInboxBoard());
     this.store.getState().set({ leases: await this.api.leases() });
     await thread;
   }
@@ -1249,8 +1264,48 @@ export class Controller {
    * 한 번으로 접는다. 실패는 삼킨다: 배지는 다음 신호에 다시 맞춰지고, 앞선 값을 0 으로 지우면
    * 나를 기다리는 일이 없다고 거짓말한다.
    */
+  /**
+   * **보드가 닫혀 있으면 미룬다**(2026-10-12 inbox 호출 설계 A, jaebin 승인). 전에는 `inbox.updated` 마다 보드 재료
+   * 전체(`GET /inbox/board` — inbox 전체 + 스레드 머리 전부, 운영 평균 11초)를 받았다. 배지 숫자 하나 때문이다.
+   * 이제 보드가 열려 있을 때만 바로 받고, 닫혀 있으면 `BADGE_REFRESH_MS` 뒤에 **한 번만** 받는다 — 그 사이에 온
+   * 신호는 같은 예약에 접힌다. 판정은 그대로 `buildBoard` → `mineCount` 하나다(서버로 옮기면 판정이 두 벌이 된다).
+   * 대가는 보드를 닫아 둔 동안 배지가 최대 `BADGE_REFRESH_MS` 늦는 것이다. 기동·재연결은 기다리지 않는다
+   * (`loadInboxBoard` 를 바로 부른다).
+   */
   private async refreshInboxMine(): Promise<void> {
-    await this.loadInboxBoard();
+    if (this.boardOpenCount > 0 || Date.now() < this.ownActionUntil) {
+      if (this.badgeRefreshTimer) { clearTimeout(this.badgeRefreshTimer); this.badgeRefreshTimer = null; }
+      await this.loadInboxBoard();
+      return;
+    }
+    if (this.badgeRefreshTimer || this.stopped) return;
+    this.badgeRefreshTimer = setTimeout(() => {
+      this.badgeRefreshTimer = null;
+      if (!this.stopped) this.swallow(this.loadInboxBoard());
+    }, BADGE_REFRESH_MS);
+  }
+
+  /**
+   * 이 기기에서 내가 inbox 를 바꿀 수 있는 동작을 했다(#1333 designer d1). 미뤄 둔 조회가 있으면 걷고 바로 받으며,
+   * `OWN_ACTION_WINDOW_MS` 안에 오는 `inbox.updated` 도 미루지 않는다 — 서버 신호가 동작 응답보다 먼저 올 수도,
+   * 나중에 올 수도 있어서 둘 다 받는다. 미룸은 남이 보낸 신호에만 남는다.
+   */
+  private noteOwnInboxAction(): void {
+    this.ownActionUntil = Date.now() + OWN_ACTION_WINDOW_MS;
+    if (this.badgeRefreshTimer && !this.stopped) {
+      clearTimeout(this.badgeRefreshTimer);
+      this.badgeRefreshTimer = null;
+      this.swallow(this.loadInboxBoard());
+    }
+  }
+
+  /**
+   * 보드 화면이 열리고 닫힐 때 부른다(`Inbox` 의 `open`). 열리면 미뤄 둔 조회를 걷는다 — 여는 화면이 곧바로
+   * `loadInboxBoard` 를 부르므로 배지도 그때 맞춰진다.
+   */
+  setInboxBoardOpen(open: boolean): void {
+    this.boardOpenCount = Math.max(0, this.boardOpenCount + (open ? 1 : -1));
+    if (open && this.badgeRefreshTimer) { clearTimeout(this.badgeRefreshTimer); this.badgeRefreshTimer = null; }
   }
 
   /**
@@ -1426,6 +1481,7 @@ export class Controller {
       // 배지를 맞춘 뒤, 채널 읽음 위치를 올린다.
       if (ids.length) {
         await this.api.markRead(ids);
+        this.noteOwnInboxAction();
         await this.refreshUnread();
       }
       if (newest <= frozen) return;
@@ -1805,6 +1861,7 @@ export class Controller {
     this.swallow((async () => {
       if (ids.length) {
         await this.api.markRead(ids);
+        this.noteOwnInboxAction();
         await this.refreshUnread();
       }
       if (newest <= frozen) return;
@@ -1839,6 +1896,7 @@ export class Controller {
       // 스토어에 넣기 **전에** id 를 적어야 같은 커밋에서 패널이 "이 기기 것"으로 읽는다.
       this.setOwnSendMarks(markOwnSend(this.ownSendMarks(), message.id));
       this.store.getState().upsertMessages(target, [message]);
+      this.noteOwnInboxAction();
       this.recordNotifiedGap(message.id, body, notified);
     } finally {
       this.setOwnSendMarks(endSend(this.ownSendMarks(), target));
@@ -1916,6 +1974,7 @@ export class Controller {
         : this.api.postMessage(target, body, root, crypto.randomUUID(), attachmentIds, alsoInChannel)));
       this.setOwnSendMarks(markOwnSend(this.ownSendMarks(), message.id));
       this.store.getState().upsertMessages(target, [message]);
+      this.noteOwnInboxAction();
     } finally {
       this.setOwnSendMarks(endSend(this.ownSendMarks(), root));
     }
@@ -2108,6 +2167,7 @@ export class Controller {
     if (on) await this.api.addReaction(channelId, messageId, emoji);
     else await this.api.removeReaction(channelId, messageId, emoji);
     this.store.getState().applyReaction(channelId, messageId, emoji, me.id, on);
+    this.noteOwnInboxAction();
   }
 
   async editMessage(messageId: string, body: string): Promise<void> {

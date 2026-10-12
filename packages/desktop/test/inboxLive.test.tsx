@@ -51,6 +51,7 @@ const mount = (rows: InboxEntry[]) => {
   const fromPane = vi.fn(fetchAndPublish);
   const controller = {
     api: { inboxBoard: inbox },
+    setInboxBoardOpen: vi.fn(),
     loadInboxBoard: fromPane,
     inboxBoardSnapshot: () => snapshot,
     openMessage: vi.fn(async () => undefined),

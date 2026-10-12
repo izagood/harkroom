@@ -42,6 +42,7 @@ const fakeController = (load: () => Promise<{ entries: InboxEntry[]; threads: Me
     },
     openMessage: vi.fn(async () => undefined),
     openThread: vi.fn(async () => undefined),
+    setInboxBoardOpen: vi.fn(),
     loadInboxBoard: vi.fn(() => c.api.inboxBoard()),
     inboxBoardSnapshot: vi.fn(() => null),
     openChannel: vi.fn(async () => undefined),
