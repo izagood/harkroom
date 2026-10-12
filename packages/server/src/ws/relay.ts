@@ -293,6 +293,11 @@ export function createRelayHub(
    * 가리키므로 바이트가 섞이는 상태 자체가 없다 — 잠금 장치를 따로 만들지 않는 이유다.
    */
   const writerOf = new Map<string, Viewer>();
+  /**
+   * 세션별 지금 PTY 크기 — 폭의 주인이 보낸 마지막 resize 다. 붙은 창 모두에 `size` 로 알린다
+   * (폭을 못 정하는 창이 다른 폭으로 접어 줄이 꺾이지 않게). 아직 아무도 안 보냈으면 없다.
+   */
+  const ptySizeOf = new Map<string, { cols: number; rows: number }>();
   /** 로컬 writer 키 번호(R1). 감사 짝맞춤용이고 비밀이 아니다 — 허가 자체는 `newLocalKey` 의 난수다. */
   let nextGen = 0;
   /**
@@ -505,6 +510,8 @@ export function createRelayHub(
     // '끝났다'만 알리고 소켓은 그대로 둔다(닫는 것은 사람의 몫이다).
     broadcastStatus(sessionId, 'ended');
     ownerOf.delete(sessionId);
+    // 끝난 세션의 크기는 남은 창이 마지막 화면을 볼 때만 쓴다 — 아무도 안 보면 버린다.
+    if (!viewers.has(sessionId)) ptySizeOf.delete(sessionId);
     // 끝난 세션의 미결은 흘릴 곳이 없다 — 남겨 두면 집합이 자라기만 한다.
     pendingViewerCounts.delete(sessionId);
   };
@@ -756,6 +763,10 @@ export function createRelayHub(
       } else {
         sendTo(viewer, { type: 'writer', writer: false, resize: false, reason: 'runner-outdated' });
       }
+      // 지금 PTY 크기를 알면 알린다 — 이 창이 폭의 주인이 아니게 되면(다른 창이 더 늦게 붙으면)
+      // 이 값에 맞춰 그린다. 폭의 주인이면 곧 자기 resize 를 보내고 그 값이 다시 온다.
+      const size = ptySizeOf.get(sessionId);
+      if (size) sendTo(viewer, { type: 'size', ...size });
 
       // 러너의 인터랙티브 고아 회수(#337)가 이 수를 본다 — 늘어난 쪽도 알린다(0→1 이
       // 유예 타이머 취소다).
@@ -768,7 +779,10 @@ export function createRelayHub(
           const idx = current.indexOf(viewer);
           if (idx === -1) return;
           current.splice(idx, 1);
-          if (!current.length) viewers.delete(sessionId);
+          if (!current.length) {
+            viewers.delete(sessionId);
+            if (!ownerOf.has(sessionId)) ptySizeOf.delete(sessionId);
+          }
           // 떠나는 창의 로컬 키를 거둔다(R1) — writer 키를 먼저, 그다음 열람 키. 승계는 그 뒤다.
           revokeLocal(sessionId, viewer);
           revokeView(sessionId, viewer);
@@ -814,6 +828,13 @@ export function createRelayHub(
             // 조절은 개입이 아니라 보기다(shared 의 AttachClientFrame 주석).
             if (!isPtySize(frame.cols) || !isPtySize(frame.rows)) return false;
             sendToRunner(target, { type: 'resize', sessionId, cols: frame.cols, rows: frame.rows });
+            // 붙은 모든 창에 새 크기를 알린다 — 같은 값이면 조용히 둔다(드래그 중 같은 칸 수가 반복된다).
+            const prevSize = ptySizeOf.get(sessionId);
+            if (prevSize?.cols !== frame.cols || prevSize?.rows !== frame.rows) {
+              const size = { cols: frame.cols, rows: frame.rows };
+              ptySizeOf.set(sessionId, size);
+              for (const v of viewers.get(sessionId) ?? []) sendTo(v, { type: 'size', ...size });
+            }
             return true;
           }
 
