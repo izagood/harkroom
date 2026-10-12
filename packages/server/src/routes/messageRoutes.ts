@@ -533,7 +533,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
        * (읽은 것까지, 수천 줄) 다시 받았다 — 새 줄만 받아 붙이면 된다. 읽음 상태가 바뀐 옛 줄은 오지 않으므로
        * 앱은 시작·재연결·당겨서 새로고침 때 전체를 받는다. 옛 앱은 이 키를 안 보내 응답이 그대로다.
        */
-      since: z.coerce.number().int().min(0).optional(),
+      since: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
     }).parse(req.query);
     const entries = await listInbox(pool, req.account!.id, { unreadOnly: q.unread ?? false, sinceId: q.since });
     if (q.threads !== '1') return { entries };

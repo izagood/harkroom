@@ -63,6 +63,8 @@ describe('GET /inbox?since=', () => {
 
   it('since 가 숫자가 아니면 400', async () => {
     expect((await app.inject({ method: 'GET', url: '/inbox?since=abc', headers: auth(adminToken) })).statusCode).toBe(400);
+    // bigint 캐스트에서 500 이 나지 않게 안전한 정수 범위에서 자른다(#1332 security n1).
+    expect((await app.inject({ method: 'GET', url: '/inbox?since=1e300', headers: auth(adminToken) })).statusCode).toBe(400);
   });
 });
 
