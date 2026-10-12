@@ -48,6 +48,7 @@ class FakeWebglAddon {
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: FakeWebglAddon }));
 vi.mock('@xterm/xterm/css/xterm.css', () => ({ default: '' }));
 vi.mock('@fontsource/nanum-gothic-coding/korean-400.css', () => ({ default: '' }));
+vi.mock('@fontsource/nanum-gothic-coding/korean-700.css', () => ({ default: '' }));
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     // #369: `options` 를 진짜 xterm 처럼 **생성자 인자에서 그대로 들고 있는다.** 이것이

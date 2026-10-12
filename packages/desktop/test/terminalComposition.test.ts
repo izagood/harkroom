@@ -28,6 +28,7 @@ vi.mock('@xterm/addon-webgl', () => ({
 }));
 vi.mock('@xterm/xterm/css/xterm.css', () => ({ default: '' }));
 vi.mock('@fontsource/nanum-gothic-coding/korean-400.css', () => ({ default: '' }));
+vi.mock('@fontsource/nanum-gothic-coding/korean-700.css', () => ({ default: '' }));
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     options: { disableStdin?: boolean };
