@@ -36,7 +36,7 @@ describe('첫 창 나눠 받기', () => {
     await c.openChannel('c1');
 
     expect(useAppStore.getState().messages.c1).toHaveLength(FIRST_PAGE_LIMIT);
-    expect(messages).toHaveBeenCalledWith('c1', { before: 951, limit: INITIAL_HISTORY_LIMIT - FIRST_PAGE_LIMIT });
+    expect(messages).toHaveBeenCalledWith('c1', { before: 951, limit: INITIAL_HISTORY_LIMIT - FIRST_PAGE_LIMIT, feed: true });
 
     back.resolve({ messages: rows(501, 950), hasMore: true });
     await vi.waitFor(() => expect(useAppStore.getState().messages.c1).toHaveLength(INITIAL_HISTORY_LIMIT));
