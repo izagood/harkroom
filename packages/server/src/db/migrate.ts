@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import type { Pool } from 'pg';
+import { retryWhileDbUnreachable } from './retry.js';
 
 // 마이그레이션 직렬화용 advisory lock 키. 테이블에 의존하지 않는 잠금이어야 한다 —
 // 'create table if not exists schema_migrations' 자체도 동시 실행 시 pg 카탈로그 유니크
@@ -35,4 +36,20 @@ export async function runMigrations(pool: Pool): Promise<void> {
     await client.query('select pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]).catch(() => {});
     client.release();
   }
+}
+
+/**
+ * 기동 때 마이그레이션 — DB 에 아직 닿지 못하면 **기다린다**(2026-10-12). Postgres 가 OOM 으로
+ * 재시작하던 날 서버도 같이 재시작했는데, 그 서버가 다시 뜰 때 DB 는 아직 기동 중이었다.
+ * 바로 죽으면 재시작 정책의 백오프(CrashLoopBackOff)가 쌓여 DB 가 돌아온 뒤에도 몇 분을 더 논다.
+ *
+ * 시한(기본 5분)을 넘기거나 DB 에 닿은 뒤의 실패(깨진 마이그레이션)는 그대로 던진다 — 그때는
+ * 죽어서 재시작 정책에 넘기는 것이 맞다.
+ */
+export async function runMigrationsWhenReachable(
+  pool: Pool, opts: { deadlineMs?: number; log?: (msg: string) => void } = {},
+): Promise<void> {
+  await retryWhileDbUnreachable(() => runMigrations(pool), {
+    label: 'migrations', deadlineMs: opts.deadlineMs ?? 5 * 60_000, log: opts.log,
+  });
 }

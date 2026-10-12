@@ -43,6 +43,7 @@ import { emitEvent } from '../events.js';
 import { createRelayHub, type RelayHub } from '../ws/relay.js';
 import type { AgentPresence } from '../mcp/presence.js';
 import { createCredentialSweep, DEFAULT_REVALIDATE_MS, originAllowed } from '../ws/socketLifetime.js';
+import { retryWhileDbUnreachable } from '../db/retry.js';
 import { createHeartbeat } from '../ws/heartbeat.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
 
@@ -253,8 +254,27 @@ export async function registerAgentRelayRoutes(
   const register = (operatorId: string, runnerId: string, agentId: string): void => {
     const key = runnerKey(operatorId, runnerId);
     if (known.has(key)) return;
-    const entry = (async () => {
-      if (!(await isAssigned(operatorId, agentId))) {
+    // `let` 인 이유: 아래 실패 갈래가 자기 약속과 견줘 지운다(그 사이 다시 등록됐으면 남긴다).
+    let entry: Promise<{ agentId: string; detach: () => void } | null> | undefined;
+    entry = (async () => {
+      /**
+       * 배정 확인은 DB 왕복이다. DB 가 잠깐 끊긴 사이 러너가 뜨면 이 약속이 거절되고, 뒤에 선
+       * `entry.then(...)` 마다 처리 안 된 거절이 되어 프로세스가 죽는다(2026-10-12). 닿지 못한
+       * 실패는 잠깐 다시 하고(뒤따르는 프레임은 순서대로 기다린다), 그래도 안 되면 이 러너를
+       * 잊는다 — 다음 `hello`·`runner.started` 가 다시 등록한다.
+       */
+      let assigned: boolean;
+      try {
+        assigned = await retryWhileDbUnreachable(() => isAssigned(operatorId, agentId), {
+          label: 'runner assignment check', deadlineMs: 60_000,
+          log: (msg) => app.log.warn({ operatorId, runnerId, agentId }, msg),
+        });
+      } catch (err) {
+        app.log.error({ err, operatorId, runnerId, agentId }, '러너 배정 확인 실패 — 이 러너를 잊는다');
+        if (known.get(key) === entry) known.delete(key);
+        return null;
+      }
+      if (!assigned) {
         app.log.warn({ operatorId, runnerId, agentId }, '배정되지 않은 에이전트의 러너 — 프레임을 버린다');
         return null;
       }

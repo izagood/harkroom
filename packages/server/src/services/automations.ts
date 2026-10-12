@@ -762,6 +762,11 @@ export function createAutomationSweeper(pool: Pool, opts: { now?: () => Date } =
       for (let i = 0; i < SWEEP_BATCH_SIZE; i++) if ((await fireOneSchedule(skipA)) === 'none') break;
       const skipB: string[] = [];
       for (let i = 0; i < SWEEP_BATCH_SIZE; i++) if ((await deliverOne(skipB)) === 'none') break;
+    } catch (err) {
+      // DB 에 닿지 못한 것(`pool.connect` 는 한 건 처리의 try 밖이다)이 여기로 온다. 던지면
+      // `void sweep()` 이 처리 안 된 거절이 되어 프로세스가 죽는다(2026-10-12 PG OOM 때 실제로 죽었다).
+      // 로그만 남기고 다음 주기에 다시 한다 — 행은 그대로 대기다.
+      console.error('automation sweep error:', err);
     } finally {
       running = false;
     }

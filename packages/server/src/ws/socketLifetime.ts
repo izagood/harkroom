@@ -63,7 +63,11 @@ export function createCredentialSweep(pool: Pool, intervalMs: number): Credentia
           entry.socket.close(4401, 'credential no longer valid');
         }
       }
-    })();
+    })().catch((err: unknown) => {
+      // DB 가 잠깐 끊겨도 프로세스를 죽이지 않는다(2026-10-12) — 판정은 다음 주기에 다시 한다.
+      // 그 사이 소켓은 끊지 않는다: 자격증명이 죽었는지 모르는 채 끊으면 DB 장애가 전원 로그아웃이 된다.
+      console.error('credential revalidation sweep error:', err);
+    });
   }, intervalMs);
 
   return {
