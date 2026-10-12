@@ -81,6 +81,8 @@ import {
 /** `cause` — 이 브릿지를 띄운 턴의 원인 메시지(`RUNNER_TURN_CAUSE_ENV`). 모든 요청에 싣는다. */
 export interface BridgeLink {
   socketPath: string; runnerId: string; secret: string; cause?: string | null;
+  /** 이 브릿지를 띄운 턴의 id(`RUNNER_TURN_ID_ENV`). 모든 요청에 싣는다 — 서버가 발화에 적는다. */
+  turnId?: string | null;
   /** 하네스가 이 브릿지를 띄운 작업 디렉터리 — `attachment.upload` 의 경로 기준(`turnUploads.ts`). */
   cwd?: string | null;
   /**
@@ -335,6 +337,7 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
         const req: RunnerLinkRequest = {
           type: 'mcp.request', id, payload,
           ...(link.cause ? { cause: link.cause } : {}),
+          ...(link.turnId ? { turnId: link.turnId } : {}),
           ...(link.cwd ? { cwd: link.cwd } : {}),
         };
         const text = `${JSON.stringify(req)}\n`;

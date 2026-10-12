@@ -1480,10 +1480,39 @@ export function freshWakeLines(): string[] {
  * 러너는 내용 있는 설명을 쓸 수 없으므로(하네스 출력 파싱은 pty.ts 의 금지선이다)
  * 스레드 칸을 쓰지 않는 리액션이 옳은 자리다.
  */
-export function countOwnPostsSince(messages: MessageRow[], meId: string, sinceSeq: number): number {
+export function countOwnPostsSince(
+  messages: MessageRow[], meId: string, sinceSeq: number, turnId?: string | null,
+): number {
   return messages.filter(
-    (m) => m.authorId === meId && m.seq > sinceSeq && !NON_UTTERANCE_KINDS.has(m.kind),
+    (m) => m.authorId === meId && m.seq > sinceSeq && !NON_UTTERANCE_KINDS.has(m.kind)
+      && ownedByTurn(m, turnId, 'count'),
   ).length;
+}
+
+/** 글에 적힌 턴 id(서버가 에이전트 발화에 남기는 `meta.turnId`). 없으면 null — 옛 서버·옛 브릿지·사람 글이다. */
+export function messageTurnId(m: Pick<MessageRow, 'meta'>): string | null {
+  const t = (m.meta as { turnId?: unknown } | null | undefined)?.turnId;
+  return typeof t === 'string' && t.length > 0 ? t : null;
+}
+
+/**
+ * 이 글이 **이 턴의 것인가**(2026-10-12, 스레드 6eca9cee). 계정이 같은 턴이 여럿 동시에 돌면 저자만으로는 못 가른다 —
+ * #task 32ce2cdf 에서 침묵 통지가 같은 계정의 다른 턴 15개가 쓴 글을 「이 요청의 답」으로 링크했다. 그래서 러너가 턴마다
+ * 새 id 를 하네스 env 로 넘기고(`RUNNER_TURN_ID_ENV`), 서버가 그 턴의 발화에 `meta.turnId` 로 적는다.
+ *
+ * 턴 id 가 **안 적힌 글**(옛 서버·옛 브릿지)을 어떻게 볼지는 묻는 쪽마다 다르다 — 틀렸을 때의 해가 다르기 때문이다:
+ * - `'count'`(발화 셈·대기 줄): **이 턴 것으로 친다** = 옛 규칙. 남의 것으로 치면 서버가 아직 턴을 안 적는 동안 모든 턴이
+ *   「말없이 끝났다」가 되어 침묵 통지가 쏟아진다. 다른 턴 id 가 적힌 글만 빠진다.
+ * - `'link'`(앵커 밖 링크): **남의 것으로 친다.** 사람에게 「답은 저기 올렸다」고 단정하는 문구라, 모르는 글은 싣지 않는다.
+ *
+ * `turnId` 가 없으면(옛 호출자·대화형 턴) 가르지 않는다 — 옛 규칙 그대로다.
+ */
+export function ownedByTurn(
+  m: Pick<MessageRow, 'meta'>, turnId: string | null | undefined, use: 'count' | 'link',
+): boolean {
+  if (!turnId) return use === 'count';
+  const t = messageTurnId(m);
+  return t === null ? use === 'count' : t === turnId;
 }
 
 /**
@@ -1505,17 +1534,19 @@ export function countOwnPostsSince(messages: MessageRow[], meId: string, sinceSe
  * 발화의 정의는 `countOwnPostsSince` 와 **같다**(progress·wake 제외) — 세는 규칙이 두 벌이
  * 되면 "앵커에는 0건인데 밖에는 1건"의 두 숫자가 서로 다른 뜻을 갖게 된다.
  *
- * ## 이것이 증명하지 못하는 것
+ * ## 이 턴이 쓴 글만 잡는다 (2026-10-12)
  *
- * 같은 채널에서 턴이 **동시에** 돌면 여기 잡힌 발화가 남의 정상 턴의 것일 수 있다(계정이
- * 같아 구분되지 않는다 — `hasOwnPostSince` 의 #174 와 같은 한계다). 그래서 호출부는 이것을
- * 고발이 아니라 정황으로 쓴다: 이미 침묵으로 통지가 나가는 자리에만 덧붙인다.
+ * 전에는 계정으로만 걸러서, 같은 채널에서 같은 계정의 턴이 **동시에** 돌면 남의 정상 턴의 글이 잡혔다 —
+ * #task 32ce2cdf 에서 다른 스레드의 턴들이 쓴 글 15개가 「이 요청의 답」으로 링크됐다. 이제 그 글의
+ * `meta.turnId` 가 이 턴의 id 와 같을 때만 잡는다(`ownedByTurn` 의 `'link'`). 턴 id 가 없는 글(옛 서버·옛 브릿지)과
+ * 턴 id 없이 부른 경우는 **하나도 잡지 않는다** — 단정하는 문구에 모르는 글을 싣지 않는다.
  */
 export function offAnchorPosts(
-  messages: MessageRow[], meId: string, anchor: string | null, sinceSeq: number,
+  messages: MessageRow[], meId: string, anchor: string | null, sinceSeq: number, turnId: string | null,
 ): MessageRow[] {
   return messages.filter((m) => {
     if (m.authorId !== meId || m.seq <= sinceSeq || NON_UTTERANCE_KINDS.has(m.kind)) return false;
+    if (!ownedByTurn(m, turnId, 'link')) return false;
     return anchor === null ? m.threadRootId !== null : (m.threadRootId ?? m.id) !== anchor;
   });
 }
@@ -1599,9 +1630,12 @@ export function reportMissedNotice(reason: string | null, anchor: string): strin
   ].join('\n');
 }
 
-export function hasOwnWakeSince(messages: MessageRow[], meId: string, sinceSeq: number): boolean {
+export function hasOwnWakeSince(
+  messages: MessageRow[], meId: string, sinceSeq: number, turnId?: string | null,
+): boolean {
+  // 대기 줄도 턴으로 가른다(`ownedByTurn`) — 같은 스레드를 다른 턴이 함께 볼 때 그 턴의 예약으로 내 침묵을 덮지 않게.
   return messages.some(
-    (m) => m.authorId === meId && m.seq > sinceSeq && m.kind === MESSAGE_KIND_WAKE,
+    (m) => m.authorId === meId && m.seq > sinceSeq && m.kind === MESSAGE_KIND_WAKE && ownedByTurn(m, turnId, 'count'),
   );
 }
 
@@ -1611,15 +1645,14 @@ export function hasOwnWakeSince(messages: MessageRow[], meId: string, sinceSeq: 
  *
  * #144: progress 메시지는 제외되므로, 진행 설명만 있고 결과가 없는 턴은 silentTurnNotice 를 표시한다.
  *
- * #174: 같은 에이전트를 **여러 인스턴스**로 돌리면 이 판정이 둘을 구분하지 못한다 —
- * 인스턴스 A 가 올린 발화를 B 도 "내 발화"로 본다(계정이 같기 때문이다). 그래서 두
- * 인스턴스가 같은 스레드에 동시에 답하면 답이 둘 남을 수 있다.
- *
- * **그것을 여기서 고치지 않는다.** 인스턴스별 구분을 넣으면 발화를 세는 규칙이 두 벌이
- * 되고(`countOwnPostsSince` 와 갈린다), 이 저장소는 이미 at-least-once 를 택했다. 대가는
- * 문서로 알린다 — `packages/agent/README.md` 의 "대가" 절이 그 자리이고, 인스턴스를
- * 여러 개 띄우는 것은 그 대가를 아는 운영자의 선택이다.
+ * #174: 같은 에이전트를 **여러 인스턴스**로 돌리면 계정만으로는 둘을 구분하지 못한다 —
+ * 인스턴스 A 가 올린 발화를 B 도 "내 발화"로 본다. 2026-10-12 부터 `turnId` 를 주면 턴 id 가
+ * 적힌 글은 턴으로 가른다(`ownedByTurn`) — 세는 규칙은 여전히 `countOwnPostsSince` 하나다.
+ * 턴 id 가 안 적힌 글(옛 서버)은 옛 규칙대로 센다: 그 구간의 대가는 `packages/agent/README.md`
+ * 의 "대가" 절 그대로다(at-least-once).
  */
-export function hasOwnPostSince(messages: MessageRow[], meId: string, sinceSeq: number): boolean {
-  return countOwnPostsSince(messages, meId, sinceSeq) > 0;
+export function hasOwnPostSince(
+  messages: MessageRow[], meId: string, sinceSeq: number, turnId?: string | null,
+): boolean {
+  return countOwnPostsSince(messages, meId, sinceSeq, turnId) > 0;
 }

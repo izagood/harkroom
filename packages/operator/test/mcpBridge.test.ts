@@ -72,6 +72,30 @@ describe('mcp-bridge', () => {
     await done;
   });
 
+  // 2026-10-12: 턴 id(`RUNNER_TURN_ID_ENV`)를 원인과 나란히 모든 요청에 싣는다 — 서버가 이 턴의 발화에 `meta.turnId` 로 적는다.
+  it('턴 id·원인을 받았으면 모든 mcp.request 에 싣고, 없으면 칸을 두지 않는다', async () => {
+    for (const withTurn of [true, false]) {
+      const lines: Record<string, unknown>[] = [];
+      await fakeOperator((socket, value) => {
+        lines.push(value);
+        if (value.type === 'mcp.request') socket.write(encodeLine({ type: 'mcp.response', id: value.id, messages: [{ jsonrpc: '2.0', id: 1, result: {} }] }));
+      });
+      const stdin = new PassThrough(); const stdout = new PassThrough();
+      const done = runMcpBridge(
+        withTurn ? { ...link, cause: 'c-1', turnId: 't-1' } : link,
+        { stdin, stdout, stderr: new PassThrough() },
+      );
+      stdin.write('{"jsonrpc":"2.0","id":1,"method":"tools/call"}\n');
+      await collect(stdout, 1);
+      const req = lines.find((l) => l.type === 'mcp.request')!;
+      if (withTurn) expect(req).toMatchObject({ cause: 'c-1', turnId: 't-1' });
+      else { expect(req).not.toHaveProperty('turnId'); expect(req).not.toHaveProperty('cause'); }
+      stdin.end();
+      await done;
+      await new Promise<void>((r) => (server ? server.close(() => r()) : r())); server = null;
+    }
+  });
+
   it('tools/list 의 답을 stdout 에 쓴 **뒤** onToolsListed 를 한 번만 부른다 — 러너가 이 신호를 기다려 프롬프트를 넣는다', async () => {
     await fakeOperator((socket, value) => {
       if (value.type !== 'mcp.request') return;

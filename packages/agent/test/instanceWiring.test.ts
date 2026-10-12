@@ -85,13 +85,15 @@ describe('#174 인스턴스 값이 턴 로직에 닿지 않는다', () => {
     expect(leaked).toEqual([]);
   });
 
-  it('prompt.ts 의 발화 판정은 인자로 messages·meId·sinceSeq 만 받는다', async () => {
+  // 2026-10-12: 턴 id(`turnId`)가 더해졌다 — 인스턴스 값이 아니라 러너가 **턴마다** 새로 만드는 값이다(`RUNNER_TURN_ID_ENV`).
+  // 이 시험이 막는 것은 여전히 「인스턴스」가 판정에 닿는 것이다.
+  it('prompt.ts 의 발화 판정은 인자로 messages·meId·sinceSeq·turnId 만 받는다', async () => {
     const prompt = await readSrc('prompt.ts');
     expect(prompt).toContain(
-      'export function hasOwnPostSince(messages: MessageRow[], meId: string, sinceSeq: number): boolean',
+      'export function hasOwnPostSince(\n  messages: MessageRow[], meId: string, sinceSeq: number, turnId?: string | null,\n): boolean',
     );
     expect(prompt).toContain(
-      'export function countOwnPostsSince(messages: MessageRow[], meId: string, sinceSeq: number): number',
+      'export function countOwnPostsSince(\n  messages: MessageRow[], meId: string, sinceSeq: number, turnId?: string | null,\n): number',
     );
   });
 });

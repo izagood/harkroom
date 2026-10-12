@@ -229,6 +229,17 @@ class FakeHarkroom implements MentionTurnHarkroom {
     return m;
   }
 
+  /**
+   * 하네스가 MCP 로 올린 발화 — 서버가 그 턴의 id 를 `meta.turnId` 로 적는다(`TURN_ID_HEADER`, 2026-10-12).
+   * `turnId` 는 러너가 하네스 env 에 심은 값(`plan.env.HARKROOM_TURN_ID`)을 그대로 넘긴다 — env 배선까지 함께 잰다.
+   */
+  postFromTurn(channelId: string, body: string, threadRootId: string | null, turnId: string | undefined): Promise<number> {
+    this.posts.push({ channelId, body, threadRootId });
+    const m = this.seedFrom(ME.id, body, threadRootId);
+    if (turnId) (m as { meta: Record<string, unknown> }).meta = { turnId };
+    return Promise.resolve(m.seq);
+  }
+
   /** 테스트용: 호출 기록 초기화 */
   clearCalls(): void {
     this.readThreadCalls = [];
@@ -411,7 +422,7 @@ describe('runMentionTurn', () => {
     fake.seedFrom('human-1', '@forge 이 스레드의 일을 해줘');
     const { deps } = await makeDeps(fake);
     // 하네스가 자기 앵커(채널 최상위)가 아니라 옆 스레드에 답을 올렸다.
-    deps.runTurn = (() => fake.post(CHANNEL, '옆 스레드에 답합니다', 'other-root')
+    deps.runTurn = ((plan) => fake.postFromTurn(CHANNEL, '옆 스레드에 답합니다', 'other-root', plan.env.HARKROOM_TURN_ID)
       .then(() => ({ exitCode: 0, timedOut: false, tail: '' }))) as typeof deps.runTurn;
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
@@ -787,6 +798,62 @@ describe('runMentionTurn', () => {
    * 카드는 대부분 에이전트끼리의 FYI 멘션이었다. progress 줄로 낮추면 데스크톱이 그 스레드를 끝나지 않는
    * '작업 중'으로 칠한다(designer 재검토) — 그래서 칸을 쓰지 않는 리액션이다.
    */
+  /**
+   * 10-12 #task 32ce2cdf: 같은 계정의 턴이 같은 채널의 다른 스레드들에서 동시에 돌았다. 한 턴이 앵커에 말없이 끝나자 침묵 통지가
+   * 나머지 턴들이 쓴 글 15개를 「이 요청의 답은 다른 스레드에 올렸습니다」로 링크했다 — 계정으로만 걸러서다. 이제 턴 id 로 가른다.
+   */
+  it('같은 계정의 다른 턴이 동시에 다른 스레드에 쓴 글은 침묵 통지에 실리지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 이 스레드의 일을 해줘');
+    const { deps } = await makeDeps(fake);
+    // 이 턴이 도는 사이 같은 계정의 **다른 턴**(다른 턴 id)이 옆 스레드에 답을 올렸다. 이 턴 자신은 아무 말 없이 끝난다.
+    deps.runTurn = ((plan) => {
+      expect(plan.env.HARKROOM_TURN_ID, '러너가 턴 id 를 하네스 env 에 심어야 한다').toMatch(/^[0-9a-f-]{36}$/);
+      return fake.postFromTurn(CHANNEL, '다른 턴의 답', 'parallel-root', '00000000-0000-4000-8000-000000000000')
+        .then(() => ({ exitCode: 0, timedOut: false, tail: '' }));
+    }) as typeof deps.runTurn;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    const mine = fake.posts.filter((p) => p.threadRootId === null);
+    expect(mine.map((p) => p.body)).toEqual([NO_REPLY_NOTICE]);
+  });
+
+  it('같은 앵커에 다른 턴이 쓴 글은 이 턴의 발화로 세지 않는다 — 말없이 끝난 턴은 침묵 통지를 받는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 답해줘');
+    const { deps } = await makeDeps(fake);
+    deps.runTurn = (() => fake.postFromTurn(CHANNEL, '다른 턴이 같은 스레드에 쓴 글', null, '00000000-0000-4000-8000-000000000000')
+      .then(() => ({ exitCode: 0, timedOut: false, tail: '' }))) as typeof deps.runTurn;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.posts.map((p) => p.body)).toEqual(['다른 턴이 같은 스레드에 쓴 글', NO_REPLY_NOTICE]);
+  });
+
+  /**
+   * 10-12 #task d63b9aa7: 커서(lastFedSeq)가 한 페이지(30)보다 뒤처진 스레드에서 기준선(turnStartSeq)이 그 옛 페이지의 끝이
+   * 됐다. 발화 확인이 또 옛 페이지를 읽어 이 턴이 앵커에 올린 답을 못 보고 「말없이 끝났다」로 판정했다.
+   */
+  it('커서가 한 페이지보다 뒤처져도 이 턴이 앵커에 올린 답을 본다 — 기준선은 스레드의 진짜 끝이다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.limit = 3;
+    fake.seedFrom('human-1', '@forge 처음 부름');
+    const { deps } = await makeDeps(fake);
+    deps.runTurn = ((plan) => fake.postFromTurn(CHANNEL, '첫 답', null, plan.env.HARKROOM_TURN_ID)
+      .then(() => ({ exitCode: 0, timedOut: false, tail: '' }))) as typeof deps.runTurn;
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    // 첫 턴 뒤로 남의 말이 한 페이지(3)를 넘게 쌓였다 — 다음 턴의 델타 창은 그 가운데 가장 옛 3개뿐이다.
+    for (let i = 0; i < 6; i += 1) fake.seedFrom('human-1', `잡담 ${i}`);
+    fake.seedFrom('human-1', '@forge 지금 부름');
+    deps.runTurn = ((plan) => fake.postFromTurn(CHANNEL, '지금 답', null, plan.env.HARKROOM_TURN_ID)
+      .then(() => ({ exitCode: 0, timedOut: false, tail: '' }))) as typeof deps.runTurn;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.posts.map((p) => p.body)).toEqual(['첫 답', '지금 답']);
+  });
+
   it('에이전트가 부른 턴이 답 없이 끝나면 글 0건, 멘션에 ✅ 하나다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('agent-peer', '@forge FYI — #1013 머지됨').id = MENTION;
@@ -806,7 +873,7 @@ describe('runMentionTurn', () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('agent-peer', '@forge 이 일 해줘').id = MENTION;
     const { deps } = await makeDeps(fake, { agentIds: new Set(['agent-peer']), readLastSaid: async () => null });
-    deps.runTurn = (() => fake.post(CHANNEL, '옆 스레드에 답합니다', 'other-root')
+    deps.runTurn = ((plan) => fake.postFromTurn(CHANNEL, '옆 스레드에 답합니다', 'other-root', plan.env.HARKROOM_TURN_ID)
       .then(() => ({ exitCode: 0, timedOut: false, tail: '' }))) as typeof deps.runTurn;
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
@@ -1645,7 +1712,8 @@ describe('runMentionTurn', () => {
       fake.seedFrom('human-1', '두 번째 질문');
       await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-      expect(fake.readThreadCalls).toHaveLength(2); // 턴 시작 + 발화 확인
+      // 턴 시작 + 스레드의 진짜 끝(커서를 준 턴만, 2026-10-12) + 발화 확인
+      expect(fake.readThreadCalls).toHaveLength(3);
       // 턴 시작 읽기에서 lastFedSeq 가 since 로 전달된다
       expect(fake.readThreadCalls[0]!.since).toBeGreaterThan(0);
     });

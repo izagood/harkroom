@@ -122,6 +122,12 @@ export interface PostMessageInput {
    */
   chainCause?: string | null;
   /**
+   * 이 발화를 낸 **턴의 id**(러너 → 브릿지 → 오퍼레이터 → MCP `TURN_ID_HEADER`, 2026-10-12). 에이전트 글의 `meta.turnId` 로 남긴다 —
+   * 러너가 「이 턴이 무엇을 썼나」를 계정이 아니라 턴으로 센다(`agent/src/prompt.ts::ownedByTurn`). 부르는 쪽은 오퍼레이터를 거친
+   * 요청일 때만 넘긴다(`chainCause` 와 같은 규칙). 판정이 아니라 관측에만 쓰는 값이라 확인하지 않는다 — 틀린 값의 해는 그 턴의 침묵 통지 문구뿐이다.
+   */
+  turnId?: string | null;
+  /**
    * 에이전트가 돌린 자동화 회차(082)가 물려준 연쇄 깊이. 자동화 글은 **사람(소유자) 이름**으로
    * 나가서 보통은 깊이 0 이다 — 그대로 두면 에이전트가 자동화를 돌려 연쇄 상한을 세탁할 수 있다.
    * 이 값이 있으면 사람 글이어도 이 깊이로 저장하고 상한을 판정한다. 없으면(사람·시계·외부 이벤트) 옛 셈이다.
@@ -1411,6 +1417,8 @@ export async function postMessage(
          // `meta.i18n`(시스템 줄 번역 표지)은 서버가 만든 시스템 줄에만 남는다 — security C1.
          ...(guardMetaI18n(input.kind, input.meta) ?? {}),
          ...calls.callMeta,
+         // 에이전트 글에만 — 사람 글에 턴은 없다. 부르는 쪽 meta 의 같은 키를 덮어쓴다(값은 헤더에서만 온다).
+         ...(authorIsAgent && input.turnId ? { turnId: input.turnId } : {}),
        }),
        alsoInChannel, mentionDepth, causeLink],
     );

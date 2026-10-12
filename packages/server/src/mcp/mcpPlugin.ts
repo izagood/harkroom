@@ -10,7 +10,7 @@ import {
   ACCOUNT_GATE_LABEL_PATTERN, FAILURE_CODES, type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
   type MessageRow, type ModelMeta, type ReportMeta,
 } from '@harkroom/shared';
-import { CAUSE_HEADER, COMMAND_FILES_HEADER, type CommandFileDigest } from '@harkroom/shared/runnerLink';
+import { CAUSE_HEADER, COMMAND_FILES_HEADER, TURN_ID_HEADER, type CommandFileDigest } from '@harkroom/shared/runnerLink';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
@@ -360,10 +360,14 @@ function buildMcpServer(
   operatorHub?: OperatorHub,
   /** 오퍼레이터가 잰 「정확한 명령」 파일 해시(`COMMAND_FILES_HEADER`). 없으면 null — 파일 있는 명령은 청할 수 없다. */
   commandFiles: CommandFileDigest[] | null = null,
+  /** 이 요청을 낸 턴의 id(`TURN_ID_HEADER`). 발화 도구가 `postMessage` 에 넘겨 `meta.turnId` 로 남는다. */
+  turnId: string | null = null,
 ): McpServer {
   const server = new McpServer({ name: 'harkroom', version: '0.1.0' });
   /** 사슬 고리로 **저장할** 원인(118) — 오퍼레이터를 거친 요청의 헤더만(security C1). PAT 로 붙은 클라이언트의 헤더는 깊이 셈에만 쓴다. */
   const chainCause = operatorId ? cause : null;
+  /** 발화에 적을 턴 id — 원인과 같은 규칙으로 오퍼레이터를 거친 요청의 헤더만. */
+  const storedTurnId = operatorId ? turnId : null;
 
   /**
    * 고른 값을 다듬고, **하네스가 밝힌 목록**(`checkOffered`)을 게시 전에 본다 — 사람 경로와 같은
@@ -582,7 +586,7 @@ function buildMcpServer(
     if ('error' in picks) return jsonResult({ error: picks.error });
     let changes: PickChange[] = [];
     const posted = await postMessage(pool, {
-      causeMessageId: cause, chainCause,
+      causeMessageId: cause, chainCause, turnId: storedTurnId,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, alsoInChannel,
       attachmentIds: attachmentIds ?? [],
       meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
@@ -642,7 +646,7 @@ function buildMcpServer(
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     const posted = await postMessage(pool, {
-      causeMessageId: cause, chainCause,
+      causeMessageId: cause, chainCause, turnId: storedTurnId,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, kind: 'progress',
       meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
     });
@@ -715,7 +719,7 @@ function buildMcpServer(
 
     let published: { artifactId: string; version: number } | null = null;
     const posted = await postMessage(pool, {
-      causeMessageId: cause, chainCause,
+      causeMessageId: cause, chainCause, turnId: storedTurnId,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       attachmentIds: [htmlId, ...(coverAttachmentId ? [coverAttachmentId] : [])],
       meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
@@ -780,7 +784,7 @@ function buildMcpServer(
       ...(await reportedModelMeta(pool, account.id, model, threadRootId)),
     };
     const posted = await postMessage(pool, {
-      causeMessageId: cause, chainCause,
+      causeMessageId: cause, chainCause, turnId: storedTurnId,
       channelId, authorId: account.id, body: permissionCardBody(permissionRequest, `@${account.handle}`), threadRootId,
       meta: meta as unknown as Record<string, unknown>,
     });
@@ -922,7 +926,7 @@ function buildMcpServer(
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
-      causeMessageId: cause, chainCause,
+      causeMessageId: cause, chainCause, turnId: storedTurnId,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
     });
@@ -973,7 +977,7 @@ function buildMcpServer(
     }
     const result = await upsertAskBundle(pool, {
       callerId: account.id, channelId, threadRootId, body, rootIds: items.map((i) => i.mirrorOf), bundleId,
-      meta: { ...(await reportedModelMeta(pool, account.id, model, threadRootId)) }, causeMessageId: cause, chainCause,
+      meta: { ...(await reportedModelMeta(pool, account.id, model, threadRootId)) }, causeMessageId: cause, chainCause, turnId: storedTurnId,
     });
     if (!result.ok) {
       if (result.code === 'post_failed' && result.posted?.failure) return postFailureResult(result.posted.failure);
@@ -1132,7 +1136,7 @@ function buildMcpServer(
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
-      causeMessageId: cause, chainCause,
+      causeMessageId: cause, chainCause, turnId: storedTurnId,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
       // 차례 주인이 이 글로 알림을 못 받는 자리(남이 세운 스레드에서 불렀다 등)면 Inbox 에 넣는다.
@@ -1253,7 +1257,7 @@ function buildMcpServer(
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
-      causeMessageId: cause, chainCause,
+      causeMessageId: cause, chainCause, turnId: storedTurnId,
       channelId, authorId: account.id, body, threadRootId,
       meta: meta as unknown as Record<string, unknown>,
       /*
@@ -1372,7 +1376,7 @@ function buildMcpServer(
       },
     };
     const posted = await postMessage(pool, {
-      causeMessageId: cause, chainCause,
+      causeMessageId: cause, chainCause, turnId: storedTurnId,
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
     });
@@ -2071,7 +2075,7 @@ function buildMcpServer(
       report = reportTo;
     }
     const result = await scheduleWake(pool, {
-      accountId: account.id, channelId, threadRootId, notBeforeSec, reason, chainCause,
+      accountId: account.id, channelId, threadRootId, notBeforeSec, reason, chainCause, turnId: storedTurnId,
       ...(report ? { reportTo: report } : {}),
     });
     if (result.refusal) return jsonResult({ error: result.refusal });
@@ -2428,7 +2432,10 @@ export async function registerMcp(
     const cause = typeof rawCause === 'string' && UUID_RE.test(rawCause) ? rawCause : null;
     // 오퍼레이터를 거친 요청의 헤더만 믿는다(사람 PAT 로 붙은 클라이언트는 이 헤더를 쓸 이유가 없다).
     const commandFiles = req.operator ? parseCommandFilesHeader(req.headers[COMMAND_FILES_HEADER]) : null;
-    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null, operatorHub, commandFiles);
+    // 턴의 id(`TURN_ID_HEADER`). 모양만 본다 — 관측용 표지라 확인할 원본이 없다(`PostMessageInput.turnId`).
+    const rawTurnId = req.headers[TURN_ID_HEADER];
+    const turnId = typeof rawTurnId === 'string' && UUID_RE.test(rawTurnId) ? rawTurnId : null;
+    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null, operatorHub, commandFiles, turnId);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {
