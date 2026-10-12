@@ -41,6 +41,9 @@ importers:
 
   packages/desktop:
     dependencies:
+      '@fontsource/nanum-gothic-coding':
+        specifier: 5.3.0
+        version: 5.3.0
       '@harkroom/shared':
         specifier: workspace:*
         version: link:../shared
@@ -534,6 +537,9 @@ packages:
 
   '@fastify/websocket@11.3.0':
     resolution: {integrity: sha512-g89ag4BCcD9YP5wBZXixzoLnuf5j89p/sXFcfpCiv2pdEkYYukBEoK3heVzqsp0EAtszVDc2BBZG0KZqeAShIA==}
+
+  '@fontsource/nanum-gothic-coding@5.3.0':
+    resolution: {integrity: sha512-1xUOE+ro+F1J5lYw+0WwMbhesK85JCjbAP3/rOGHB3DbZI2/s0dR4WHSuTcag1uJAfT8ozH9B50L88tMn4eFkw==}
 
   '@grpc/grpc-js@1.14.4':
     resolution: {integrity: sha512-k9Dj3DV/itK9D06Y8f190Qgop7/Ui+D0njFV3LHMPwPT75DpXLQohE9Wmz0QElrJnzsjB7KPWiKJbOl7IPDArQ==}
@@ -3124,6 +3130,8 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@fontsource/nanum-gothic-coding@5.3.0': {}
 
   '@grpc/grpc-js@1.14.4':
     dependencies:
