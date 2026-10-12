@@ -77,6 +77,30 @@ describe('inbox.poll 임대', () => {
     expect(await poll(c, { lease: { runnerId: 'new', holding: [] } })).toEqual([id]);
   });
 
+  // A1(빈 폴의 stopRequestedAt, #1332)과 B(임대)가 한 폴에서 같이 돈다(#1334 를 A1 위로 rebase 한 뒤). 쥔 항목만 남아
+  // 결과가 비면 그 폴은 **빈 폴**이다 — 종료 요청 키가 실리고, 요청이 오면 그 시각이 실린다. 쥔 항목은 그대로 빠진다.
+  it('쥔 항목만 남은 빈 폴에도 stopRequestedAt 이 실리고, 종료 요청이 오면 그 시각이 실린다', async () => {
+    const { pat, accountId } = await createAgent(app, adminToken, 'stopleasebot');
+    const c = await mcp(pat);
+    await call('stopleasebot', '일');
+    const [id] = await poll(c, { lease: { runnerId: 'r1', holding: [] } });
+    const raw = async () => JSON.parse(((await c.callTool({
+      name: 'inbox.poll', arguments: { timeoutMs: 0, lease: { runnerId: 'r1', holding: [id] } },
+    })).content as { text: string }[])[0]!.text) as { entries: unknown[]; stopRequestedAt?: string | null };
+    const idle = await raw();
+    expect(idle.entries).toEqual([]);
+    expect(idle).toHaveProperty('stopRequestedAt', null);
+
+    const stopReq = await app.inject({ method: 'POST', url: `/accounts/agents/${accountId}/stop`, headers: auth(adminToken) });
+    expect(stopReq.statusCode).toBeLessThan(300);
+    const stopped = await raw();
+    expect(stopped.entries).toEqual([]);
+    expect(typeof stopped.stopRequestedAt).toBe('string');
+    const row = await pool.query('select stop_acked_at, (select claimed_until from inbox where id = $2) as cu from agent_config where account_id = $1', [accountId, id]);
+    expect(row.rows[0].stop_acked_at).not.toBeNull();
+    expect(row.rows[0].cu).not.toBeNull();
+  });
+
   it('임대를 모르는 폴(옛 러너)은 전처럼 쥔 항목도 받는다', async () => {
     const { pat } = await createAgent(app, adminToken, 'oldbot');
     const c = await mcp(pat);
