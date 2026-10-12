@@ -497,6 +497,13 @@ const LIST_VISIBLE = `(m.deleted_at is null or (m.thread_root_id is null and exi
 )))`;
 
 /**
+ * **채널 본문(피드)에 서는 줄**이다 — 스레드 머리와 `alsoInChannel` 답글. 데스크톱·모바일의 채널 화면이
+ * 그리는 줄과 같은 술어다(`ChannelPane` 의 `roots`). 피드 페이지(`listMessages` 의 `feed`)와 그
+ * `hasMore`(`hasOlderFeedMessages`)가 이 하나를 같이 쓴다 — 둘이 갈리면 「더 있다」는데 받을 것이 없다.
+ */
+const FEED_ROW = `(m.thread_root_id is null or m.also_in_channel)`;
+
+/**
  * 숨긴 채널(#376)을 다시 나타나게 하는 inbox 사유들. **`dm` 은 없다.**
  *
  * `mention`·`thread_reply` 는 누군가 나를 **지목한** 것이다(평범한 멘션·`@channel`·집합·내가
@@ -1631,6 +1638,20 @@ export async function hasOlderMessages(pool: Pool, channelId: string, oldestSeq:
 }
 
 /**
+ * 채널 **본문에 서는 줄**(`FEED_ROW`) 중 `oldestSeq` 보다 오래된 것이 남았나. 피드 페이지의 `hasMore` 다 —
+ * [hasOlderMessages] 를 쓰면 답글까지 세어, 본문에 설 줄이 더 없는데도 참이 된다. 보이는가는 목록과 같은
+ * `LIST_VISIBLE` 로 잰다(답글이 남은 지운 머리는 자리표시자로 목록에 선다).
+ */
+export async function hasOlderFeedMessages(pool: Pool, channelId: string, oldestSeq: number): Promise<boolean> {
+  const res = await pool.query(
+    `select 1 from message m
+     where m.channel_id = $1 and m.seq < $2 and ${FEED_ROW} and ${LIST_VISIBLE} limit 1`,
+    [channelId, oldestSeq],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
  * 이 스레드에 `oldestSeq` 보다 오래된 답글이 남았나. 스레드 조회의 `hasMore` 다 — 채널의
  * [hasOlderMessages] 를 쓰면 **다른 스레드·채널 글**까지 세어 늘 참이 된다.
  */
@@ -2535,7 +2556,7 @@ export async function getMessageById(pool: Pool, messageId: string): Promise<Mes
 
 export async function listMessages(
   pool: Pool, channelId: string,
-  opts: { since?: number; before?: number; around?: number; threadRootId?: string | null; limit?: number },
+  opts: { since?: number; before?: number; around?: number; threadRootId?: string | null; limit?: number; feed?: boolean },
 ): Promise<MessageRow[]> {
   const limit = Math.min(opts.limit ?? 200, 500);
   if (opts.threadRootId) {
@@ -2640,11 +2661,16 @@ export async function listMessages(
   }
   // 역방향 페이지: before 보다 오래된 것 중 '가장 최신 limit 개'를 잡아 오름차순으로 되돌린다.
   // desc 로 잡지 않으면 채널 맨 앞부터 limit 개를 주게 되어 페이지가 이어지지 않는다.
+  //
+  // `feed` 면 **채널 본문에 서는 줄만** 센다(`FEED_ROW`). 기본 갈래는 스레드 답글까지 섞어 limit 을 채우므로,
+  // 답글이 많은 채널은 한 페이지가 답글뿐이라 화면에 아무 줄도 늘지 않았다 — 화면은 다음 페이지를 부를
+  // 스크롤 이벤트를 다시 받지 못해 맨 위에서 멈췄다(스레드 36caac7a). 답글은 스레드를 열 때 따로 받는다.
+  // 옛 서버는 이 인자를 모르고 버린다(zod strip) — 그러면 지금 갈래 그대로라 부르는 쪽이 나눌 필요가 없다.
   if (opts.before !== undefined) {
     const res = await pool.query(
       `select * from (
          select ${LIST_COLS} from message m ${THREAD_STATS}
-         where m.channel_id = $1 and m.seq < $2 and ${LIST_VISIBLE}
+         where m.channel_id = $1 and m.seq < $2 and ${LIST_VISIBLE}${opts.feed ? ` and ${FEED_ROW}` : ''}
          order by m.seq desc limit $3
        ) older
        order by seq`,

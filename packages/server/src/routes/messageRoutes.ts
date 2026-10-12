@@ -5,7 +5,7 @@ import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { acceptRecommended, answerBundleItem } from '../services/askBundles.js';
-import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isPermissionCardMessage, getMessageById, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE } from '../services/messages.js';
+import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isPermissionCardMessage, getMessageById, hasOlderFeedMessages, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -305,15 +305,22 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       around: z.coerce.number().int().min(0).optional(),
       limit: z.coerce.number().int().min(1).max(500).optional(),
       thread: z.string().uuid().optional(),
+      // 채널 본문에 서는 줄(머리·alsoInChannel 답글)만으로 옛 페이지를 채운다(`listMessages` 의 before 갈래).
+      feed: z.literal('1').optional(),
     }).refine((v) => [v.before, v.since, v.around].filter((x) => x !== undefined).length <= 1, {
       // 서로 다른 방향이다. 함께 오면 어느 쪽을 의도했는지 서버가 고를 수 없다.
       message: 'before, since and around are different directions — send one',
+    }).refine((v) => v.feed === undefined || (v.before !== undefined && v.thread === undefined), {
+      // 피드 페이지는 **채널의 옛 페이지**에만 뜻이 있다. 다른 조회에 붙으면 조용히 무시하는 대신 거절한다 —
+      // 무시하면 부른 쪽은 걸렀다고 믿고 답글 섞인 페이지를 받는다.
+      message: 'feed=1 goes with before on a channel page (not with since, around or thread)',
     }).parse(req.query);
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
     const messages = await listMessages(pool, id, {
       since: q.since, before: q.before, around: q.around, limit: q.limit, threadRootId: q.thread ?? null,
+      feed: q.feed === '1',
     });
     // 스레드 조회의 `hasMore` 는 **그 스레드의 답글**로만 센다 — 받은 답글 중 가장 오래된 것보다
     // 앞선 답글이 남았나. 루트는 세지 않는다(루트는 첫 페이지에 늘 실린다). 다음 페이지는
@@ -326,7 +333,10 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       hasMore = q.since === undefined && q.around === undefined && oldestReply !== undefined
         && (await hasOlderThreadReplies(pool, id, q.thread, oldestReply.seq));
     } else {
-      hasMore = messages.length > 0 && (await hasOlderMessages(pool, id, messages[0]!.seq));
+      // 피드 페이지는 「본문에 설 줄이 더 있나」로 답한다 — 답글까지 세면 받을 것이 없는데 참이 될 수 있다
+      // (머리가 안 보이는 답글: 지운 머리 아래 진행 줄뿐인 스레드 등).
+      const older = q.feed === '1' ? hasOlderFeedMessages : hasOlderMessages;
+      hasMore = messages.length > 0 && (await older(pool, id, messages[0]!.seq));
     }
     return { messages, hasMore };
   });
