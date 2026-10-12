@@ -28,6 +28,7 @@
 // 둘 중 하나만 올리지 말고, `^` 로 마이너를 열지 마라.
 
 import { createEchoLatencyTracker, type EchoLatencyStats } from './terminalLatency';
+import { getExternalOpener } from './openExternal';
 
 export interface TerminalSink {
   /** PTY raw 바이트. 디코드는 xterm 의 상태 기계가 한다. */
@@ -242,7 +243,16 @@ function trackHelperTextarea(el: HTMLElement, term: {
   };
   place();
   const sub = term.onCursorMove(place);
-  return () => sub.dispose();
+  // **xterm 이 포커스·커서마다 이 입력칸의 inline 스타일을 다시 쓴다**(`_syncTextArea` — 5.5·6.0 둘 다, 탐침 확인).
+  // 크기·위치는 xterm 것도 커서 자리 셀이라 괜찮지만, `z-index:-5` 로 되돌리면 다시 WebGL 캔버스 밑에 깔린다.
+  // 그래서 그 두 값만 지킨다. 같은 값이면 쓰지 않아 관찰이 되먹임하지 않는다.
+  const keep = (): void => {
+    if (textarea.style.zIndex !== '5') textarea.style.zIndex = '5';
+    if (textarea.style.opacity !== '0.01') textarea.style.opacity = '0.01';
+  };
+  const observer = typeof MutationObserver !== 'undefined' ? new MutationObserver(keep) : null;
+  observer?.observe(textarea, { attributes: true, attributeFilter: ['style'] });
+  return () => { sub.dispose(); observer?.disconnect(); };
 }
 
 export type TerminalSinkFactory = (el: HTMLElement, opts?: TerminalSinkOptions) => TerminalSink;
@@ -313,12 +323,58 @@ async function enableWebglRenderer(t: WebglTarget): Promise<LoadedAddon | null> 
  * 이 키가 **한글 자모·음절**인가. 조합 없이 자모가 키로 오는 세상을 진단에서 세기 위한 것이다.
  * 범위는 한글 자모(U+1100–11FF) · 호환 자모(U+3130–318F) · 음절(U+AC00–D7A3).
  */
+/** 열어도 되는 링크인가 — http·https 만. 파싱이 안 되면 아니다. */
+export function isWebUrl(uri: string): boolean {
+  try {
+    const u = new URL(uri);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function isHangul(key: string): boolean {
   if (key.length !== 1) return false;
   const c = key.codePointAt(0) ?? 0;
   return (c >= 0x1100 && c <= 0x11ff) || (c >= 0x3130 && c <= 0x318f) || (c >= 0xac00 && c <= 0xd7a3);
 }
 
+/**
+ * 조합이 끝난 뒤 229 로 온 **확정 키**(H-B). WebKit 은 조합을 끝내는 키를 `compositionend` **뒤에** `keyCode 229` 로
+ * 줄 수 있다 — 그 키가 xterm 에 닿으면 xterm 은 IME 키로 읽고 입력칸 차이를 보내 버린다(아래 주석). 그래서 우리가
+ * 막고, 터미널이 받을 바이트를 직접 보낸다. 화살표처럼 모드(application cursor)에 따라 바이트가 갈리는 키는 넣지
+ * 않는다 — 틀린 바이트를 보내느니 삼킨다(실기 확인 항목).
+ */
+const COMMIT_KEYS: Readonly<Record<string, string>> = {
+  Enter: '\r',
+  Tab: '\t',
+  Escape: '\x1b',
+  Backspace: '\x7f',
+};
+
+/**
+ * **조합(IME) 입력을 우리가 끝까지 받는다**(H-B, 스레드 8d233406) — xterm 의 IME 경로를 타지 않는다.
+ *
+ * ## 무엇이 깨졌었나 (10-08 조사, 코드 확정)
+ * 첫 판(#771)은 `compositionstart/end` 만 가로챘다. 그러면 xterm `CompositionHelper._isComposing` 이 **늘 false** 다.
+ * 그런데 WebKit 은 조합 주변 keydown 에 `keyCode 229` 를 싣고, 그 키가 xterm 에 닿으면 xterm 은
+ * `_handleAnyTextareaChanges()` 로 setTimeout 뒤 **숨은 입력칸의 차이를 그대로 PTY 에 보낸다** — 조합 중 자모가 따로
+ * 들어가고(ㅎ한), 짧아졌으면 DEL 을 보내 확정 글자를 지우고, 같은 길이면 입력칸 **전체 값**을 보낸다. 그것을 막는
+ * 가드가 바로 우리가 꺼 버린 `_isComposing` 이었다. 업스트림도 같은 갈래가 열려 있다(xterm.js #5704·#6140·#6089·#6090·#6065).
+ *
+ * ## 그래서
+ * - **229 키·조합 중 키는 하나도 xterm 에 보내지 않는다.** 대신 그 키가 만든 글자는 입력칸의 `input` 이벤트에서
+ *   우리가 받는다(`insertText`) — 조합 없이 IME 가 바로 넣는 기호·숫자도 이 길로 온다(#5887 의 글자 유실).
+ * - 조합 이벤트와 조합용 `input`(`insertCompositionText`·`insertFromComposition`·`deleteCompositionText`)도 막고,
+ *   확정 문자열(`compositionend.data`)만 정확히 한 번 보낸다.
+ * - 확정 뒤 **입력칸을 비운다** — 비우지 않으면 값이 쌓이고, 무엇이든 그 값을 다시 읽는 순간 옛 글자가 되살아난다.
+ * - 조합이 끝난 뒤 229 로 온 확정 키(Enter 등)는 `COMMIT_KEYS` 로 직접 보낸다.
+ * - 조합 밖의 보통 키(영문·화살표·Ctrl-C, 229 가 아닌 것)는 **건드리지 않는다** — xterm 이 지금처럼 처리한다.
+ * - 못 치는 창(읽기 전용·관찰 전용)이면 이 경로로 들어온 것도 버린다 — `disableStdin` 은 xterm 의 문이고, 이 경로는
+ *   그 문을 지나지 않는다.
+ *
+ * 조합 중 밑줄 글자 표시는 아직 없다(PR-6~7 입력줄·오버레이 몫).
+ */
 function attachCompositionBridge(el: HTMLElement, io: {
   /** 확정된 문자열을 PTY 로 보낸다(xterm 의 `onData` 와 같은 자리로 들어간다). */
   send: (text: string) => void;
@@ -330,41 +386,57 @@ function attachCompositionBridge(el: HTMLElement, io: {
   onKeyObserved?: (kind: 'ime' | 'hangul') => void;
 }): () => void {
   let composing = false;
+  /** 지금 처리 중인 키가 IME 의 것(229)이었는가 — 그 키가 만든 `insertText` 는 우리가 보낸다. */
+  let imeKeyPending = false;
   const swallow = (ev: Event): void => { ev.stopImmediatePropagation(); };
+  const send = (text: string): void => { if (text && !io.blocked()) io.send(text); };
+  /** 입력칸을 비운다. 브라우저가 이벤트를 다 끝낸 뒤에 — 이벤트 도중 값을 바꾸면 WebKit 이 조합을 되살린다. */
+  const clearSoon = (target: EventTarget | null): void => {
+    if (!(target instanceof HTMLTextAreaElement)) return;
+    setTimeout(() => { if (!composing) target.value = ''; }, 0);
+  };
   const onStart = (ev: Event): void => { composing = true; io.onCompositionStart?.(); swallow(ev); };
   const onEnd = (ev: Event): void => {
     composing = false;
     swallow(ev);
     // `data` 가 비면 조합을 **취소**한 것이다(Esc·지우기) — 보낼 것이 없다.
-    const text = (ev as CompositionEvent).data;
-    if (!text) return;
-    // 읽기 전용 창에서 친 것은 여기서 버린다. `disableStdin` 은 xterm 의 문이고, 이 경로는
-    // 그 문을 지나지 않으므로 **같은 판정을 여기서 한 번 더** 해야 한다.
-    if (io.blocked()) return;
-    io.send(text);
+    send((ev as CompositionEvent).data);
+    clearSoon(ev.target);
+  };
+  const onInput = (ev: Event): void => {
+    const ie = ev as InputEvent;
+    const type = ie.inputType ?? '';
+    if (composing || type.includes('Composition')) { swallow(ev); return; }
+    // IME 키(229)가 조합 없이 바로 넣은 글자 — xterm 은 그 키를 못 봤으므로(우리가 막았다) 우리가 보낸다.
+    if (imeKeyPending && type === 'insertText') {
+      swallow(ev);
+      send(ie.data ?? '');
+      clearSoon(ev.target);
+    }
   };
   const onKeyDown = (ev: KeyboardEvent): void => {
-    // 조합 중의 키는 IME 의 것이다 — 그 키가 xterm 에 닿으면 원문자가 한 번 더 들어간다.
-    //
-    // **`keyCode === 229` 하나만으로는 막지 않는다**(2026-09-12 수정). 처음엔 그것도
-    // 조건에 넣었는데, 그러면 *조합이 시작조차 안 한* 경우까지 삼킨다: 웹뷰가
-    // `compositionstart` 를 안 쏘면서 키에 229 만 실어 보내면 우리가 키를 먹어 버려
-    // **아무것도 안 들어가는** 상태가 된다(엉뚱한 글자가 들어가던 것보다 나쁘다 — 조용해서
-    // 원인을 못 짚는다). 그래서 **조합이 실제로 시작된 뒤**(`composing`)나 표준 신호
-    // (`isComposing`)가 있을 때만 막는다. 조합 밖의 키(영문·화살표·Ctrl-C)는 건드리지 않는다.
-    if (composing || ev.isComposing) ev.stopImmediatePropagation();
     // **여기서 세는 것은 막는 것과 무관하다** — 무엇이 들어오는지 알기 위한 관측이다.
     if (ev.keyCode === 229 || ev.isComposing) io.onKeyObserved?.('ime');
     if (isHangul(ev.key)) io.onKeyObserved?.('hangul');
+    imeKeyPending = false;
+    if (composing || ev.isComposing) { swallow(ev); return; }
+    if (ev.keyCode !== 229) return;
+    // 조합 밖의 229 — xterm 에 닿으면 입력칸 차이를 보낸다(위). 막고, 확정 키면 바이트를 직접 보낸다.
+    swallow(ev);
+    const commit = COMMIT_KEYS[ev.key];
+    if (commit !== undefined) { ev.preventDefault(); send(commit); return; }
+    imeKeyPending = true;
   };
   el.addEventListener('compositionstart', onStart, true);
   el.addEventListener('compositionupdate', swallow, true);
   el.addEventListener('compositionend', onEnd, true);
+  el.addEventListener('input', onInput, true);
   el.addEventListener('keydown', onKeyDown, true);
   return () => {
     el.removeEventListener('compositionstart', onStart, true);
     el.removeEventListener('compositionupdate', swallow, true);
     el.removeEventListener('compositionend', onEnd, true);
+    el.removeEventListener('input', onInput, true);
     el.removeEventListener('keydown', onKeyDown, true);
   };
 }
@@ -527,6 +599,13 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       // 한글 글꼴은 KS X 1001 기호(`— … · →` 등)를 전각으로 그리는데 xterm 은 1칸으로 잡는다 — 다음 칸을
       // 덮지 않게 칸 안으로 줄인다(designer, 캡처에서 `—PR`·`…→` 겹침 확인).
       rescaleOverlappingGlyphs: true,
+      // **터미널 출력의 링크(OSC 8)는 http·https 만 연다**(security #1294 n1). xterm 기본 경로는 scheme 을 거르지 않고
+      // confirm 뒤 `window.open` 한다 — 에이전트 출력이 `file:`·앱 스킴 링크를 심을 수 있다. 여는 것은 앱의 외부 열기
+      // 하나로 모은다(메시지 본문 링크와 같은 문).
+      linkHandler: {
+        activate: (_ev, uri) => { if (isWebUrl(uri)) void getExternalOpener().open(uri).catch(() => { /* 못 열면 그만 */ }); },
+        allowNonHttpProtocols: false,
+      },
       // 쓸 수 없는 사람에게는 xterm 의 stdin 을 아예 끈다(#315) — 커서도 깜빡이지 않고
       // 키를 눌러도 아무것도 그려지지 않으므로, 화면이 "여기는 읽기 전용이다"를 스스로
       // 말한다. 이유는 패널이 글로 따로 적는다(TerminalPanel.tsx).

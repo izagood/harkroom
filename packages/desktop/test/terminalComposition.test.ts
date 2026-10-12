@@ -57,6 +57,7 @@ vi.mock('@xterm/xterm', () => ({
       ta.addEventListener('keydown', (e) => { xtermSaw.push(`keydown:${(e as KeyboardEvent).key}`); });
       ta.addEventListener('compositionstart', () => { xtermSaw.push('compositionstart'); });
       ta.addEventListener('compositionend', () => { xtermSaw.push('compositionend'); });
+      ta.addEventListener('input', (e) => { xtermSaw.push(`input:${(e as InputEvent).inputType}`); });
       el.appendChild(ta);
       helperTextarea = ta;
       lastTerm = this as unknown as { moveCursor(x: number, y: number): void };
@@ -71,7 +72,7 @@ vi.mock('@xterm/xterm', () => ({
   },
 }));
 
-import { getTerminalSinkFactory } from '../src/lib/terminalSink';
+import { getTerminalSinkFactory, isWebUrl } from '../src/lib/terminalSink';
 
 const settle = async (): Promise<void> => {
   for (let i = 0; i < 20; i += 1) await Promise.resolve();
@@ -126,17 +127,98 @@ describe('한글 입력 — 조합은 xterm 이 아니라 sink 가 받는다', (
   });
 
   /**
-   * **가드가 너무 넓었던 자리**(2026-09-12 수정). 처음엔 `keyCode === 229` 하나만으로도
-   * 키를 막았는데, 그러면 *조합이 시작조차 안 한* 경우까지 삼킨다: 웹뷰가
-   * `compositionstart` 를 안 쏘면서 키에 229 만 실어 보내면 **아무것도 안 들어간다**.
-   * 엉뚱한 글자가 들어가던 것보다 나쁘다 — 조용해서 원인을 못 짚는다.
+   * **H-B(스레드 8d233406)에서 뒤집었다.** #792 는 "조합이 안 시작됐으면 229 만으로는 막지 않는다"였다 — 막으면
+   * 아무것도 안 들어간다는 이유였다. 그런데 그 키가 xterm 에 닿으면 xterm 은 IME 키로 읽고 **숨은 입력칸의 차이를
+   * PTY 로 보낸다**(자모 중복·DEL·누적값). 이제는 막고, 그 키가 만든 글자를 입력칸의 `input` 에서 우리가 받는다.
    */
-  it('조합이 시작되지 않았으면 keyCode 229 만으로는 막지 않는다', async () => {
+  it('조합 밖의 229 키는 xterm 에 닿지 않고, 그 키가 넣은 글자는 sink 가 정확히 한 번 보낸다', async () => {
+    const sent: string[] = [];
+    const sink = getTerminalSinkFactory()(host(), { onInput: (d) => sent.push(d) });
+    await settle();
+    sink.setReadOnly!(false);
+
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, keyCode: 229, key: '.' } as KeyboardEventInit));
+    helperTextarea!.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: '.' }));
+    expect(xtermSaw).toEqual([]);
+    expect(sent).toEqual(['.']);
+    sink.dispose();
+  });
+
+  it('IME 키가 아닌 키 뒤의 insertText 는 xterm 몫이다 — 영문 타자를 두 번 보내지 않는다', async () => {
+    const sent: string[] = [];
+    const sink = getTerminalSinkFactory()(host(), { onInput: (d) => sent.push(d) });
+    await settle();
+    sink.setReadOnly!(false);
+
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'a' }));
+    helperTextarea!.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'a' }));
+    expect(xtermSaw).toEqual(['keydown:a', 'input:insertText']);
+    expect(sent).toEqual([]);
+    sink.dispose();
+  });
+
+  it('조합용 input 이벤트는 xterm 에 닿지 않는다', async () => {
     const sink = getTerminalSinkFactory()(host(), { onInput: () => {} });
     await settle();
 
-    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, keyCode: 229, key: 'Process' } as KeyboardEventInit));
-    expect(xtermSaw).toEqual(['keydown:Process']);
+    helperTextarea!.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    helperTextarea!.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertCompositionText', data: 'ㅎ' }));
+    helperTextarea!.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '하' }));
+    helperTextarea!.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromComposition', data: '하' }));
+    expect(xtermSaw).toEqual([]);
+    sink.dispose();
+  });
+
+  it('조합이 끝난 뒤 229 로 온 확정 키(Enter·Backspace)는 터미널 바이트로 바로 보낸다', async () => {
+    const sent: string[] = [];
+    const sink = getTerminalSinkFactory()(host(), { onInput: (d) => sent.push(d) });
+    await settle();
+    sink.setReadOnly!(false);
+
+    compose(helperTextarea!, '한');
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, keyCode: 229, key: 'Enter' } as KeyboardEventInit));
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, keyCode: 229, key: 'Backspace' } as KeyboardEventInit));
+    expect(sent).toEqual(['한', '\r', '\x7f']);
+    expect(xtermSaw).toEqual([]);
+    sink.dispose();
+  });
+
+  it('조합 중의 Backspace 는 IME 의 것이다 — 확정 글자를 지우는 DEL 을 보내지 않는다', async () => {
+    const sent: string[] = [];
+    const sink = getTerminalSinkFactory()(host(), { onInput: (d) => sent.push(d) });
+    await settle();
+    sink.setReadOnly!(false);
+
+    helperTextarea!.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, keyCode: 229, key: 'Backspace', isComposing: true } as KeyboardEventInit));
+    helperTextarea!.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '' }));
+    expect(sent).toEqual([]);
+    expect(xtermSaw).toEqual([]);
+    sink.dispose();
+  });
+
+  it('확정 뒤 숨은 입력칸을 비운다 — 쌓인 값이 다시 읽히면 옛 글자가 되살아난다', async () => {
+    const sink = getTerminalSinkFactory()(host(), { onInput: () => {} });
+    await settle();
+    sink.setReadOnly!(false);
+
+    helperTextarea!.value = '한글';
+    compose(helperTextarea!, '글');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(helperTextarea!.value).toBe('');
+    sink.dispose();
+  });
+
+  it('못 치는 창이면 229 로 들어온 글자·확정 키도 보내지 않는다', async () => {
+    const sent: string[] = [];
+    const sink = getTerminalSinkFactory()(host(), { onInput: (d) => sent.push(d) });
+    await settle();
+    sink.setReadOnly!(true);
+
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, keyCode: 229, key: '.' } as KeyboardEventInit));
+    helperTextarea!.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: '.' }));
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, keyCode: 229, key: 'Enter' } as KeyboardEventInit));
+    expect(sent).toEqual([]);
     sink.dispose();
   });
 
@@ -368,5 +450,29 @@ describe('진단 — 조합이 아니라 키로 들어오는 경우를 센다', 
     helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'a' }));
     expect(last.hangulKeys).toBe(2);
     sink.dispose();
+  });
+});
+
+describe('xterm 이 입력칸 스타일을 다시 써도 캔버스 위에 남는다(H-B)', () => {
+  it('z-index 를 -5 로 되돌리면 다시 5 로 올린다', async () => {
+    const sink = getTerminalSinkFactory()(host(), { onInput: () => {} });
+    await settle();
+    helperTextarea!.style.zIndex = '-5';
+    helperTextarea!.style.opacity = '0';
+    await new Promise((r) => setTimeout(r, 0));
+    expect(helperTextarea!.style.zIndex).toBe('5');
+    expect(helperTextarea!.style.opacity).toBe('0.01');
+    sink.dispose();
+  });
+});
+
+describe('터미널 링크는 http·https 만 연다(security #1294 n1)', () => {
+  it('isWebUrl', () => {
+    expect(isWebUrl('https://example.com/a')).toBe(true);
+    expect(isWebUrl('http://example.com')).toBe(true);
+    expect(isWebUrl('file:///etc/passwd')).toBe(false);
+    expect(isWebUrl('javascript:alert(1)')).toBe(false);
+    expect(isWebUrl('harkroom://message/x')).toBe(false);
+    expect(isWebUrl('not a url')).toBe(false);
   });
 });
