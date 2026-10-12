@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -5,7 +6,7 @@ import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { acceptRecommended, answerBundleItem } from '../services/askBundles.js';
-import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isPermissionCardMessage, getMessageById, hasOlderFeedMessages, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE } from '../services/messages.js';
+import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isPermissionCardMessage, getMessageById, hasOlderFeedMessages, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE, BOARD_COMPACT_BODY_CHARS } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -541,11 +542,35 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
    * 답한 스레드 30일 ∩ 에이전트가 낀 것(`listBoardRootIds`). 옛 `?threads=1` 은 그대로 둔다(옛 앱).
    * `truncated` 는 inbox 밖 머리가 상한에서 잘렸다는 뜻이다.
    */
-  app.get('/inbox/board', { preHandler: app.requireAccount }, async (req) => {
-    const entries = await listInbox(pool, req.account!.id, { unreadOnly: false });
-    const { threads, truncated } = await listBoardThreads(pool, req.account!.id, entries);
-    const threadStates = await listInboxThreadStates(pool, req.account!.id, threads.map((m) => m.id));
-    return { entries, threads, threadStates, truncated };
+  app.get('/inbox/board', { preHandler: app.requireAccount }, async (req, reply) => {
+    // `compact=1`(2026-10-12): 스레드마다 보드가 읽는 줄만, 본문은 앞부분만(`listInbox` 의 간추림 주석).
+    // 옛 앱은 이 키를 안 보내 응답이 그대로다.
+    const q = z.object({ compact: z.enum(['1']).optional() }).parse(req.query);
+    const accountId = req.account!.id;
+    const entries = await listInbox(pool, accountId, { unreadOnly: false, compact: q.compact === '1' });
+    const { threads, truncated } = await listBoardThreads(pool, accountId, entries);
+    const threadStates = await listInboxThreadStates(pool, accountId, threads.map((m) => m.id));
+    // 간추림이면 머리 본문도 같은 상한으로 자른다 — 보드는 머리 본문도 첫 문장만 쓴다(`buildBoard` 요약).
+    if (q.compact === '1') {
+      for (const head of threads) {
+        // 글자(코드 포인트)로 자른다 — SQL `left()` 와 같은 단위, 이모지 반쪽을 남기지 않는다.
+        if (head.body.length > BOARD_COMPACT_BODY_CHARS) head.body = Array.from(head.body).slice(0, BOARD_COMPACT_BODY_CHARS).join('');
+      }
+    }
+    const body = JSON.stringify({ entries, threads, threadStates, truncated });
+    /**
+     * **바뀐 것이 없으면 304**(2026-10-12). 보드는 신호마다 다시 받는데 대개 그대로다 — 같은 판이면 본문을
+     * 보내지 않아 전송·파싱·다시 그리기를 아낀다. 태그는 **계정 id 를 섞은** 해시라 두 사람의 판이 같아도
+     * 태그가 갈린다(남의 판을 태그로 맞혀 보는 길이 없다). 사람마다 다른 응답이니 공유 캐시는 금지(`private`),
+     * 쓰기 전에 늘 다시 묻게 한다(`no-cache`).
+     */
+    const etag = `"${createHash('sha256').update(accountId).update('\0').update(body).digest('base64url').slice(0, 32)}"`;
+    void reply.header('etag', etag).header('cache-control', 'private, no-cache');
+    const ifNoneMatch = req.headers['if-none-match'];
+    if (typeof ifNoneMatch === 'string' && ifNoneMatch.split(',').some((t) => t.trim() === etag)) {
+      return reply.code(304).send();
+    }
+    return reply.type('application/json; charset=utf-8').send(body);
   });
 
   /**

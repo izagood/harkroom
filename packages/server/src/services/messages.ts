@@ -2807,16 +2807,54 @@ function isReportTo(v: unknown): v is WakeReportTo {
   return typeof o.channelId === 'string' && typeof o.threadRootId === 'string';
 }
 
+/**
+ * 「내 작업」 보드의 간추린 재료(2026-10-12). 보드(`buildBoard`·InboxList)가 스레드마다 실제로 읽는 줄만 남긴다:
+ * 최신 몇 줄(요약·「요약과 다른 최근 한 줄」·여는 메시지), **열린 물음**(내 차례 판정), **실패 줄**, 그리고
+ * **사유(reason)마다 한 줄**(나를 불렀는가 판정). 예전에는 인박스 전체(큰 계정 6천 줄)를 본문째 내려 응답이
+ * 13.5MB·평균 10초였고, 신호마다 다시 받았다.
+ */
+export const BOARD_COMPACT_LATEST = 5;
+/**
+ * 간추린 줄의 본문 상한 — 보드는 본문에서 **첫 문장 하나**(`oneSentence`, 160자)만 쓴다. 넘으면 `bodyTruncated: true`.
+ * 알려 둔 차이: `oneSentence` 는 물음표로 끝나는 줄을 먼저 고르므로, 그 줄이 500자 뒤에만 있으면 요약이 첫 줄로
+ * 바뀔 수 있다(물음 카드·실패 줄은 본문이 아니라 meta 에서 요약하므로 해당 없다).
+ */
+export const BOARD_COMPACT_BODY_CHARS = 500;
+
+/**
+ * 간추림에 남길 inbox id 들. 스레드(같은 머리)는 한 채널이라 가시성이 스레드 안에서 같다 — 바깥 쿼리의 가시성
+ * 거르기와 순위가 엇갈리지 않는다. 열린 물음의 조건은 넓게 잡는다(물음 꼴·닫히지 않음) — 더 실려도 화면은 같고,
+ * 덜 실리면 내 차례가 사라진다.
+ */
+const BOARD_COMPACT_KEEP_SQL = `i.id in (
+       select r.id from (
+         select i2.id,
+                row_number() over (partition by coalesce(m2.thread_root_id, m2.id)
+                                   order by m2.created_at desc, i2.id desc) as rn,
+                row_number() over (partition by coalesce(m2.thread_root_id, m2.id), i2.reason
+                                   order by m2.created_at desc, i2.id desc) as rr,
+                (m2.meta->>'kind' = 'failure'
+                  or (m2.meta->>'kind' = 'ask'
+                      and m2.meta->'ask'->>'answeredWith' is null
+                      and m2.meta->'ask'->>'closedAt' is null)) as pinned
+           from inbox i2 join message m2 on m2.id = i2.message_id
+          where i2.account_id = $1 and m2.deleted_at is null) r
+        where r.rn <= ${BOARD_COMPACT_LATEST} or r.rr = 1 or r.pinned)`;
+
 export async function listInbox(
-  pool: Pool, accountId: string, opts: { unreadOnly?: boolean },
+  pool: Pool, accountId: string, opts: { unreadOnly?: boolean; compact?: boolean },
 ): Promise<InboxEntry[]> {
+  const bodySql = opts.compact
+    ? `left(${displayBodySql('m')}, ${BOARD_COMPACT_BODY_CHARS}) as body,
+            length(${displayBodySql('m')}) > ${BOARD_COMPACT_BODY_CHARS} as "bodyTruncated"`
+    : `${displayBodySql('m')} as body`;
   const res = await pool.query(
     `select i.id::int as id, i.message_id as "messageId", i.reason, i.read_at as "readAt",
             m.channel_id as "channelId",
             -- 줄이 네 가지를 말할 재료(#488 C2): 누가 · 무슨 말 · 무엇을 · 언제·어디.
             -- 이미 message 를 join 하고 있었으므로 컬럼만 더한다 — 새 왕복이 없다.
             -- 시스템 메시지의 자리표시자는 여기서 채운다 — 인박스 항목에는 kind 가 없어 화면이 못 채운다.
-            m.author_id as "authorId", ${displayBodySql('m')} as body, m.meta,
+            m.author_id as "authorId", ${bodySql}, m.meta,
             m.created_at as "createdAt", m.thread_root_id as "threadRootId",
             -- 팀 부름의 팀(047). 명단은 아래에서 한 번에 채운다 — 여기서 join 하면
             -- 팀원 수만큼 행이 불어나 항목이 여러 번 나온다.
@@ -2838,6 +2876,7 @@ export async function listInbox(
      where i.account_id = $1 and m.deleted_at is null
        and ${channelVisibleSql('c', '$1')}
        ${opts.unreadOnly ? 'and i.read_at is null' : ''}
+       ${opts.compact ? `and ${BOARD_COMPACT_KEEP_SQL}` : ''}
      order by i.id`,
     [accountId],
   );
@@ -2974,6 +3013,8 @@ export async function listInbox(
   for (const row of rows) delete row.teamId;
   // `viaEdit` 는 참일 때만 나간다(`InboxEntry.viaEdit`) — 게시로 생긴 항목의 모양을 넓히지 않는다.
   for (const row of rows as { viaEdit?: boolean }[]) if (!row.viaEdit) delete row.viaEdit;
+  // `bodyTruncated` 도 참일 때만(간추린 보드에서 본문을 잘랐을 때).
+  for (const row of rows as { bodyTruncated?: boolean }[]) if (!row.bodyTruncated) delete row.bodyTruncated;
   return rows;
 }
 
