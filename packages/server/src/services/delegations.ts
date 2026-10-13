@@ -101,21 +101,40 @@ export async function leadTeamFor(
 export async function roundsUsed(
   db: Pick<Pool, 'query'>, args: { threadRootId: string; leadAccountId: string },
 ): Promise<number> {
-  const res = await db.query<{ n: number }>(
-    `select count(*)::int as n
-       from team_delegation d
-      where d.thread_root_id = $1
-        and d.lead_account_id = $2
-        and d.created_at > coalesce((
-          select max(m.created_at) from message m
-           join account a on a.id = m.author_id
-          where coalesce(m.thread_root_id, m.id) = $1
-            and a.kind = 'human'
-            and m.deleted_at is null
-        ), 'epoch'::timestamptz)`,
-    [args.threadRootId, args.leadAccountId],
+  return (await roundsUsedMany(db, [args]))[0] ?? 0;
+}
+
+/**
+ * `roundsUsed` 를 여러 (스레드, 팀장) 쌍에 한 번에(2026-10-13 쿼리 개선 Q4). inbox 의 위임 결말 줄마다 따로 부르던
+ * N+1 을 없앤다. 돌려주는 순서는 `pairs` 와 같다.
+ *
+ * 「사람의 마지막 발화」 조회를 `coalesce(thread_root_id, id) = $1` 로 쓰면 색인을 못 타 message 를 통째로 훑는다
+ * (로컬 운영 크기 6.6ms/회). 같은 뜻을 `thread_root_id = $1 or (id = $1 and thread_root_id is null)` 로 적어
+ * `(thread_root_id, seq)`·pkey 색인을 탄다.
+ */
+export async function roundsUsedMany(
+  db: Pick<Pool, 'query'>, pairs: { threadRootId: string; leadAccountId: string }[],
+): Promise<number[]> {
+  if (pairs.length === 0) return [];
+  const res = await db.query<{ i: number; n: number }>(
+    `select p.i::int as i,
+            (select count(*)::int
+               from team_delegation d
+              where d.thread_root_id = p.root
+                and d.lead_account_id = p.lead
+                and d.created_at > coalesce((
+                  select max(m.created_at) from message m
+                   join account a on a.id = m.author_id
+                  where (m.thread_root_id = p.root or (m.id = p.root and m.thread_root_id is null))
+                    and a.kind = 'human'
+                    and m.deleted_at is null
+                ), 'epoch'::timestamptz)) as n
+       from unnest($1::uuid[], $2::uuid[]) with ordinality as p(root, lead, i)`,
+    [pairs.map((p) => p.threadRootId), pairs.map((p) => p.leadAccountId)],
   );
-  return res.rows[0]?.n ?? 0;
+  const out = new Array<number>(pairs.length).fill(0);
+  for (const r of res.rows) out[r.i - 1] = r.n;
+  return out;
 }
 
 /**
@@ -460,11 +479,10 @@ export async function outcomesFor(
     if (row.outcome === 'timeout') entry.timedOut = true;
   }
 
-  for (const [messageId, entry] of out) {
-    const t = threads.get(messageId)!;
-    const used = await roundsUsed(db, { threadRootId: t.threadRootId, leadAccountId: t.leadAccountId });
-    entry.roundsLeft = Math.max(0, TEAM_ROUND_LIMIT - used);
-  }
+  // 줄마다 따로 묻지 않는다(Q4) — 결말이 난 위임 전부의 라운드를 한 번에 센다.
+  const ids = [...out.keys()];
+  const used = await roundsUsedMany(db, ids.map((id) => threads.get(id)!));
+  ids.forEach((id, i) => { out.get(id)!.roundsLeft = Math.max(0, TEAM_ROUND_LIMIT - (used[i] ?? 0)); });
   return out;
 }
 

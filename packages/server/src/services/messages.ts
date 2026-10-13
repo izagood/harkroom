@@ -362,12 +362,24 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
 LEFT JOIN LATERAL (
   -- 마지막 말 하나. 그것이 진행이고 저자가 살아 있는 에이전트일 때만 '도는 중'이므로,
   -- 화면은 이 둘(kind·저자)에 자기가 아는 생존을 곱해 판정한다.
-  SELECT t.kind as last_kind, t.author_id::text as last_author_id
-  FROM message t
-  WHERE (t.id = m.id OR t.thread_root_id = m.id) AND t.deleted_at IS NULL
-    -- 루트에서만 계산한다 — 근거는 THREAD_STATS 위 주석.
-    AND m.thread_root_id IS NULL
-  ORDER BY t.seq DESC LIMIT 1
+  --
+  -- 「가장 최근의 살아 있는 답글」과 「루트 자신」 둘 중 seq 가 큰 것이다(2026-10-13 쿼리 개선 Q4). 예전 꼴
+  -- WHERE (t.id = m.id OR t.thread_root_id = m.id) ORDER BY seq DESC LIMIT 1 은 OR 때문에 색인 순서를 못 써서
+  -- 스레드 전체를 모아 정렬했다(답글 2,600개 스레드면 2,600행 정렬). 답글 쪽은 (thread_root_id, seq) 색인을
+  -- 거꾸로 한 줄만 읽고, 루트는 이미 손에 있는 m 이다. 둘을 seq 로 견주므로 뜻은 같다.
+  SELECT x.kind as last_kind, x.author_id as last_author_id
+  FROM (
+    (SELECT t.kind, t.author_id::text as author_id, t.seq
+       FROM message t
+      WHERE t.thread_root_id = m.id AND t.deleted_at IS NULL
+        -- 루트에서만 계산한다 — 근거는 THREAD_STATS 위 주석.
+        AND m.thread_root_id IS NULL
+      ORDER BY t.seq DESC LIMIT 1)
+    UNION ALL
+    (SELECT m.kind, m.author_id::text, m.seq
+      WHERE m.deleted_at IS NULL AND m.thread_root_id IS NULL)
+  ) x
+  ORDER BY x.seq DESC LIMIT 1
 ) thread_last ON true`;
 
 // 스레드 메타데이터: 루트 메시지에만 계산. LATERAL join으로 같은 쿼리에서 계산한다 (N+1 방지).
