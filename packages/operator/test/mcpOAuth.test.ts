@@ -27,6 +27,10 @@ interface Fake {
   refreshToken: string;
   /** refresh 를 거절하게 한다(invalid_grant). */
   revoke(): void;
+  /** MCP 가 받아 주는 access 토큰들. 지우면 그 토큰은 401 이다(slack 이 갓 받은 토큰을 죽이던 모양). */
+  live: Set<string>;
+  /** 토큰 엔드포인트가 다음 응답을 이 모양으로 낸다(Slack 모양 흉내). */
+  nextTokenShape: 'spec' | 'authed_user' | 'ok_false';
   close(): Promise<void>;
 }
 
@@ -35,6 +39,18 @@ async function fakeServer(opts: { dcr?: boolean } = {}): Promise<Fake> {
   const challenges = new Map<string, string>();
   let gen = 1;
   let revoked = false;
+  const live = new Set<string>();
+  const shaped = { next: 'spec' as Fake['nextTokenShape'] };
+  /** 토큰 응답을 모양대로 낸다. 낸 access 토큰은 MCP 가 받아 준다. */
+  const issue = (res: import('node:http').ServerResponse, t: { access_token: string; refresh_token: string; expires_in: number }) => {
+    const shape = shaped.next;
+    shaped.next = 'spec';
+    if (shape === 'ok_false') { json(res, 200, { ok: false, error: 'invalid_refresh_token' }); return false; }
+    live.add(t.access_token);
+    if (shape === 'authed_user') { json(res, 200, { ok: true, app_id: 'X', authed_user: { id: 'U1', ...t, token_type: 'user' } }); return true; }
+    json(res, 200, { ...t, token_type: 'Bearer' });
+    return true;
+  };
   const state = { refresh: 'R1' };
   let origin = '';
   const json = (res: import('node:http').ServerResponse, status: number, v: unknown, headers: Record<string, string> = {}) => {
@@ -44,6 +60,8 @@ async function fakeServer(opts: { dcr?: boolean } = {}): Promise<Fake> {
   const server: Server = createServer((req, res) => void (async () => {
     const u = new URL(req.url ?? '/', origin);
     if (u.pathname === '/mcp') {
+      const bearer = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
+      if (bearer && live.has(bearer)) { json(res, 200, { jsonrpc: '2.0', id: 1, result: {} }); return; }
       json(res, 401, { error: 'unauthorized' }, { 'www-authenticate': `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"` });
       return;
     }
@@ -70,15 +88,16 @@ async function fakeServer(opts: { dcr?: boolean } = {}): Promise<Fake> {
         const want = challenges.get(f.get('code') ?? '');
         const got = createHash('sha256').update(f.get('code_verifier') ?? '').digest('base64url');
         if (!want || want !== got || f.get('resource') !== `${origin}/mcp`) { json(res, 400, { error: 'invalid_grant' }); return; }
-        json(res, 200, { access_token: 'A1', refresh_token: 'R1', expires_in: 3600, token_type: 'Bearer' });
+        issue(res, { access_token: 'A1', refresh_token: 'R1', expires_in: 3600 });
         return;
       }
       if (f.get('grant_type') === 'refresh_token') {
         calls.refresh += 1;
         if (revoked || f.get('refresh_token') !== state.refresh) { json(res, 400, { error: 'invalid_grant' }); return; }
+        if (shaped.next === 'ok_false') { issue(res, { access_token: '', refresh_token: '', expires_in: 0 }); return; }
         gen += 1;
         state.refresh = `R${gen}`; // 회전한다 — 옛 refresh 토큰은 이제 거절된다
-        json(res, 200, { access_token: `A${gen}`, refresh_token: state.refresh, expires_in: 3600 });
+        issue(res, { access_token: `A${gen}`, refresh_token: state.refresh, expires_in: 3600 });
         return;
       }
     }
@@ -90,6 +109,9 @@ async function fakeServer(opts: { dcr?: boolean } = {}): Promise<Fake> {
     origin, mcpUrl: `${origin}/mcp`, calls, challenges,
     get refreshToken() { return state.refresh; },
     revoke: () => { revoked = true; },
+    live,
+    get nextTokenShape() { return shaped.next; },
+    set nextTokenShape(v) { shaped.next = v; },
     close: () => new Promise((r) => server.close(() => r())),
   };
 }
@@ -351,6 +373,89 @@ describe('MCP 서버 거절 보고(reportRejected, 2026-10-01)', () => {
     expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' })).toEqual({ action: 'expired' });
     expect(await oauth.reportRejected('slack', { turnStartedAtMs: after() + 6 * 60_000, agentId: 'agent-a' })).toEqual({ action: 'ignored', reason: 'not_ok' });
     expect(fake.calls.refresh).toBe(1);
+  });
+});
+
+describe('Slack 모양 응답과 받은 직후 검사(2026-10-07)', () => {
+  async function authed(): Promise<void> {
+    const { authUrl } = await oauth.start('slack', { type: 'http', url: fake.mcpUrl });
+    await approve(fake, authUrl);
+    await until(async () => (await oauth.status('slack', fake.mcpUrl)).state === 'ok');
+  }
+  const after = () => clock + 1;
+
+  it('토큰 응답의 키 구조만 로그에 남긴다 — 값은 싣지 않는다', async () => {
+    await authed();
+    clock += 3600_000;
+    await oauth.refreshDue();
+    const line = logs.find((l) => l.includes('refresh 응답 키'));
+    expect(line).toContain('access_token:str');
+    expect(line).toContain('refresh_token:str');
+    expect(line).toContain('expires_in:number');
+    expect(logs.join('\n')).toContain('토큰 교환 응답 키');
+    expect(logs.join('\n')).not.toMatch(/A1|A2|R1|R2/);
+  });
+
+  it('HTTP 200 에 ok:false 면 거절이다 — 토큰 없는 응답을 성공으로 읽지 않는다', async () => {
+    await authed();
+    fake.nextTokenShape = 'ok_false';
+    clock += 3600_000;
+    expect(await oauth.tokensFor({ slack: { url: fake.mcpUrl } })).toEqual({ tokens: {}, expired: ['slack'] });
+    expect(logs.join('\n')).toMatch(/refresh 거절\(invalid_refresh_token\).*응답 키: error:str ok=false/);
+  });
+
+  it('맨 위에 access_token 이 없고 authed_user 에 있으면 그것을 쓴다', async () => {
+    await authed();
+    fake.nextTokenShape = 'authed_user';
+    clock += 3600_000;
+    expect((await oauth.tokensFor({ slack: { url: fake.mcpUrl } })).tokens).toEqual({ slack: 'A2' });
+    expect(fake.refreshToken).toBe('R2');
+    clock += 3600_000 - 60_000;
+    expect((await oauth.tokensFor({ slack: { url: fake.mcpUrl } })).tokens).toEqual({ slack: 'A3' });
+  });
+
+  it('refresh 로 받은 새 토큰을 MCP 가 곧바로 거절하면 굽지 않고 rejected — 회전한 refresh 토큰은 남긴다', async () => {
+    await authed();
+    clock += 3600_000;
+    const realAdd = fake.live.add.bind(fake.live);
+    fake.live.add = (v: string) => (v === 'A2' ? fake.live : realAdd(v)); // A2 는 받자마자 죽은 토큰
+    expect(await oauth.tokensFor({ slack: { url: fake.mcpUrl } })).toEqual({ tokens: {}, expired: ['slack'] });
+    expect(await oauth.status('slack', fake.mcpUrl)).toMatchObject({ state: 'rejected' });
+    expect(logs.join('\n')).toContain('곧바로 거절했다');
+    const stored = JSON.parse(await readFile(join(dir, 'secrets', 'mcp-oauth.json'), 'utf8')) as Record<string, { refreshToken: string; rejectedBy?: string }>;
+    expect(stored.slack!.refreshToken).toBe('R2');
+    expect(stored.slack!.rejectedBy).toBeUndefined();
+  });
+
+  it('거절 보고로 당긴 새 토큰이 받은 직후 검사에서 거절되면 rejected 를 돌려준다', async () => {
+    await authed();
+    clock += 60_000;
+    const realAdd = fake.live.add.bind(fake.live);
+    fake.live.add = (v: string) => (v === 'A2' ? fake.live : realAdd(v));
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' })).toEqual({ action: 'rejected' });
+  });
+
+  it('검사가 판정하지 못하면(네트워크·5xx) 토큰을 그대로 쓴다 — 401 만 거절이다', async () => {
+    oauth.close();
+    oauth = createMcpOAuth({
+      storePath: join(dir, 'secrets', 'mcp-oauth.json'), now: () => clock, log: (l) => logs.push(l),
+      verifyToken: async () => 'unknown',
+    });
+    await authed();
+    fake.live.clear();
+    clock += 3600_000;
+    expect((await oauth.tokensFor({ slack: { url: fake.mcpUrl } })).tokens).toEqual({ slack: 'A2' });
+  });
+
+  it('인증 흐름에서 받은 토큰이 곧바로 거절되면 저장하지 않고 흐름이 이유와 함께 실패한다', async () => {
+    const realAdd = fake.live.add.bind(fake.live);
+    fake.live.add = (v: string) => (v === 'A1' ? fake.live : realAdd(v));
+    const { authUrl } = await oauth.start('slack', { type: 'http', url: fake.mcpUrl });
+    const res = await approve(fake, authUrl);
+    expect(res.status).toBe(400);
+    await until(async () => (await oauth.status('slack', fake.mcpUrl)).state === 'error');
+    expect(await oauth.status('slack', fake.mcpUrl)).toEqual({ state: 'error', reason: 'MCP 서버가 갓 받은 토큰을 거절했다(401)' });
+    expect(tokens).toEqual([]);
   });
 });
 
