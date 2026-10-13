@@ -586,6 +586,20 @@ class InboxEntry {
 
   bool get isUnread => readAt == null;
 
+  /// 읽음 시각만 바꾼 사본(카드를 열었을 때 화면에서 먼저 고친다).
+  InboxEntry withReadAt(String at) => InboxEntry(
+        id: id,
+        messageId: messageId,
+        reason: reason,
+        channelId: channelId,
+        authorId: authorId,
+        body: body,
+        createdAt: createdAt,
+        threadRootId: threadRootId,
+        readAt: at,
+        meta: meta,
+      );
+
   /// 본문만 바꾼 사본(간추린 판의 잘린 멘션 떼기).
   InboxEntry withBody(String next) => InboxEntry(
         id: id,

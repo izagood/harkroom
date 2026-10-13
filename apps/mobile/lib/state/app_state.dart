@@ -19,6 +19,7 @@ import 'package:flutter/foundation.dart';
 import '../api/api_client.dart';
 import '../api/api_error.dart';
 import '../api/ask.dart';
+import '../api/inbox_board.dart';
 import '../api/models.dart';
 import '../api/ws.dart';
 import '../api/ws_socket.dart';
@@ -229,8 +230,125 @@ class AppState extends ChangeNotifier {
   /// 나를 부른 것들(새것 먼저). 서버가 준 순서를 뒤집지 않는다.
   final List<InboxEntry> inbox = [];
 
-  /// 아직 안 본 부름의 수. 탭 배지가 읽는다.
+  /// 아직 안 본 부름의 수. 앱 아이콘 배지(푸시)가 아직 이것을 읽는다 — 탭 배지·머리 숫자는 [inboxMine] 이다.
   int get inboxUnread => inbox.where((e) => e.isUnread).length;
+
+  // ── Inbox 보드(A안, 데스크톱 `lib/inboxBoard.ts` 와 같은 판정 — `api/inbox_board.dart`) ──────────
+
+  /// `GET /inbox/board` 한 판. 아직 못 받았으면 null.
+  InboxBoardData? board;
+
+  /// 보드를 읽는 상태.
+  LoadState boardLoad = LoadState.loading;
+
+  Future<void>? _boardInFlight;
+  bool _boardDirty = false;
+  List<BoardCard>? _boardCards;
+  InboxBoardData? _boardCardsFor;
+  int _boardCardsMinute = -1;
+  int _boardCardsAccounts = -1;
+
+  /// 판정한 카드들. 같은 판·같은 분이면 다시 세지 않는다(화면이 build 마다 읽는다). 분이 바뀌면 다시 세는 이유:
+  /// 7일 접힘·나중에 풀림이 시각으로 갈린다.
+  List<BoardCard> get boardCards {
+    final b = board;
+    final mine = me;
+    if (b == null || mine == null) return const [];
+    final minute = DateTime.now().millisecondsSinceEpoch ~/ 60000;
+    if (_boardCards != null && identical(_boardCardsFor, b) && _boardCardsMinute == minute && _boardCardsAccounts == accounts.length) {
+      return _boardCards!;
+    }
+    final cards = buildBoard(
+      entries: b.entries,
+      threads: b.threads,
+      // 모바일은 사람만 로그인한다.
+      me: BoardMe(id: mine.id, isHuman: true),
+      threadStates: b.threadStates,
+      isAgent: (id) => accounts[id]?.isAgent ?? false,
+      nowMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    _boardCards = cards;
+    _boardCardsFor = b;
+    _boardCardsMinute = minute;
+    _boardCardsAccounts = accounts.length;
+    return cards;
+  }
+
+  /// **나를 기다리는 일 수** — 인박스 탭 배지와 머리 숫자(G1 (b), 2026-10-13 jaebin). 데스크톱 보드·배지와 같은
+  /// 함수(`mineCount`)다 — 같은 계정에서 두 기기가 다른 숫자를 말하지 않게. 7일 넘은 것·미룬 것·치운 것은 빠진다.
+  int get inboxMine => mineCount(boardCards);
+
+  /// 보드를 다시 받는다. 받는 중에 또 부르면 끝난 뒤 한 번 더 받는다(신호가 몰려도 조회는 둘을 넘지 않는다).
+  Future<void> loadBoard() {
+    if (_boardInFlight != null) {
+      _boardDirty = true;
+      return _boardInFlight!;
+    }
+    final run = () async {
+      do {
+        _boardDirty = false;
+        await _loadBoardOnce();
+      } while (_boardDirty);
+    }();
+    _boardInFlight = run.whenComplete(() => _boardInFlight = null);
+    return _boardInFlight!;
+  }
+
+  Future<void> _loadBoardOnce() async {
+    final api = _api;
+    if (api == null) return;
+    if (boardLoad != LoadState.loaded) {
+      boardLoad = LoadState.loading;
+      notifyListeners();
+    }
+    final gen = _generation;
+    try {
+      final next = await api.inboxBoard();
+      if (gen != _generation) return;
+      board = next;
+      boardLoad = LoadState.loaded;
+    } on Object catch (e) {
+      if (gen != _generation) return;
+      // 보이는 판은 그대로 둔다 — 다시 못 받았다고 있던 줄을 지우지 않는다(`loadInbox` 와 같은 판단).
+      failures['board'] = LoadFailure.of(e);
+      if (boardLoad != LoadState.loaded) boardLoad = LoadState.failed;
+    }
+    notifyListeners();
+  }
+
+  /// 묶인 줄들의 **내** 상태를 바꾼다 — 치우기(`done`)·나중에(`later` + [until])·되돌리기(`null`). 묶인 일
+  /// (`similar`)까지 전부다. 실패하면 던진다(화면이 알린다). 성공·실패 모두 끝에 판을 다시 받는다 — 일부만 바뀌었어도
+  /// 화면이 서버 사실대로 선다.
+  Future<void> setBoardState(List<BoardGroup> groups, String? state, {DateTime? until}) async {
+    final api = _api;
+    if (api == null) return;
+    try {
+      for (final g in groups) {
+        for (final c in [g.card, ...g.similar]) {
+          await api.setInboxThreadState(c.rootId, state: state, until: until);
+        }
+      }
+    } finally {
+      await loadBoard();
+    }
+  }
+
+  /// 카드를 열었다 — 그 일에서 나에게 온 안 읽은 항목을 읽음으로. 판과 [inbox] 둘 다 화면에서 먼저 고친다.
+  Future<void> markBoardCardRead(BoardCard card) async {
+    final ids = [for (final e in card.entries) if (e.isUnread) e.id];
+    if (ids.isEmpty) return;
+    final b = board;
+    if (b != null) {
+      final now = DateTime.now().toUtc().toIso8601String();
+      board = InboxBoardData(
+        entries: [for (final e in b.entries) ids.contains(e.id) ? e.withReadAt(now) : e],
+        threads: b.threads,
+        threadStates: b.threadStates,
+        truncated: b.truncated,
+      );
+    }
+    await markInboxRead(ids);
+  }
 
   /// 채널 id → 읽음 위치와 안 읽은 수. **서버가 센다** — 클라이언트가 세면 열지 않은
   /// 채널에서 틀린다.
@@ -708,6 +826,7 @@ class AppState extends ChangeNotifier {
     _openSocket();
     // 부팅을 막지 않는다 — 채널 목록이 먼저 서고 받은 것은 뒤따라 온다.
     unawaited(loadInbox());
+    unawaited(loadBoard());
     unawaited(loadSavedSummary());
     _startOtherPolling();
   }
@@ -838,6 +957,7 @@ class AppState extends ChangeNotifier {
           ..addEntries(fresh.map((r) => MapEntry(r.channelId, r)));
       },
       loadInbox,
+      loadBoard,
       loadSavedSummary,
     ];
     await runLimited(jobs, catchUpConcurrency);
@@ -890,6 +1010,9 @@ class AppState extends ChangeNotifier {
         // 대가: 다른 기기에서 읽은 옛 줄의 읽음 표시는 다음 전체 읽기(시작·따라잡기·당겨서 새로고침)
         // 때 맞춰진다.
         unawaited(loadInboxNew());
+        // 보드는 머리의 지금 상태(열린 물음·실패·서버 상태)와 내 완료·나중에가 함께 바뀌므로 판째 다시 받는다
+        // (간추린 판 `compact=1`). 몰리면 `loadBoard` 가 조회 둘로 묶는다.
+        unawaited(loadBoard());
       case 'reaction.added':
       case 'reaction.removed':
         _applyReactionDelta(event);
@@ -1179,6 +1302,7 @@ class AppState extends ChangeNotifier {
         createdAt: e.createdAt,
         threadRootId: e.threadRootId,
         readAt: now,
+        meta: e.meta,
       );
     }
     notifyListeners();
@@ -2275,6 +2399,10 @@ class AppState extends ChangeNotifier {
   void _resetSession() {
     me = null;
     inbox.clear();
+    board = null;
+    boardLoad = LoadState.loading;
+    _boardCards = null;
+    _boardCardsFor = null;
     agentActivity.clear();
     agentWakes.clear();
     agentsLoad = LoadState.loading;

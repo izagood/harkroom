@@ -496,8 +496,90 @@ abstract class Strings {
   /// 인박스 맨 위 줄 — 그 커뮤니티로 옮긴다.
   String get inboxOtherView;
 
-  /// 전부 읽음으로.
-  String get inboxMarkAllRead;
+  /// 할 일 갈래 — 내 차례(Inbox A안).
+  String get inboxTabTodo;
+
+  /// 소식 갈래 — 나를 불렀지만 지금 내 손이 필요 없는 일.
+  String get inboxTabNews;
+
+  /// 미룬 것 갈래.
+  String get inboxTabLater;
+
+  /// 치운 것 갈래.
+  String get inboxTabCleared;
+
+  /// 할 일 묶음 머리 — 결정.
+  String get inboxSectionDecision;
+
+  /// 할 일 묶음 머리 — 막힘.
+  String get inboxSectionBlocker;
+
+  /// 할 일 묶음 머리 — 그 밖.
+  String get inboxSectionNews;
+
+  /// 줄의 종류 꼬리표(할 일 갈래 밖에서만).
+  String get inboxKindDecision;
+
+  /// 줄의 종류 꼬리표 — 막힘.
+  String get inboxKindBlocker;
+
+  /// 줄의 종류 꼬리표 — 소식.
+  String get inboxKindNews;
+
+  /// 7일 넘게 기다린 것의 접힘 줄. `{count}` 가 바뀐다.
+  String get inboxStale;
+
+  /// 접힘 줄에 섞인 결정 수. `{count}` 가 바뀐다.
+  String get inboxStaleDecisions;
+
+  /// 7일 넘은 것을 한 번에 치운다(펼친 뒤에만 보인다).
+  String get inboxClearAll;
+
+  /// 치우기 — 내 목록에서만 내린다. 새 말이 오면 다시 선다.
+  String get inboxDismiss;
+
+  /// 나중에 — 내일 아침까지 미룬다.
+  String get inboxLater;
+
+  /// 치운 것·미룬 것을 되돌린다.
+  String get inboxPutBack;
+
+  /// 알림의 되돌리기.
+  String get inboxUndo;
+
+  /// 상세에서 그 스레드를 연다.
+  String get inboxOpenThread;
+
+  /// 상세의 「마지막 말」 머리.
+  String get inboxLatest;
+
+  /// 스레드 답글 수. `{count}` 가 바뀐다.
+  String get inboxReplies;
+
+  /// 안 읽은 말이 있는 줄의 표시.
+  String get inboxNew;
+
+  /// 기다린 날수. `{count}` 가 바뀐다.
+  String get inboxDays;
+
+  /// 치운 뒤 알림. `{count}` 가 바뀐다.
+  String get inboxDismissed;
+
+  /// 미룬 뒤 알림. `{count}` 가 바뀐다.
+  String get inboxSnoozed;
+
+  /// 치우기·미루기·되돌리기가 실패했다.
+  String get inboxActionFailed;
+
+  /// 할 일이 0 이다 — 이 화면의 목적이다.
+  String get inboxMineEmpty;
+
+  /// 할 일 0 일 때 소식 갈래로 가는 버튼. `{count}` 가 바뀐다.
+  String get inboxShowNews;
+
+  /// 소식·미룬 것·치운 것 갈래가 비었다.
+  String get inboxTabEmpty;
+
 
   /// 누가 나를 불렀다.
   String get inboxReasonMention;
@@ -1203,7 +1285,34 @@ Map<String, String> stringsToMap(Strings s) => {
       'inboxEmpty': s.inboxEmpty,
       'inboxOtherCommunity': s.inboxOtherCommunity,
       'inboxOtherView': s.inboxOtherView,
-      'inboxMarkAllRead': s.inboxMarkAllRead,
+      'inboxTabTodo': s.inboxTabTodo,
+      'inboxTabNews': s.inboxTabNews,
+      'inboxTabLater': s.inboxTabLater,
+      'inboxTabCleared': s.inboxTabCleared,
+      'inboxSectionDecision': s.inboxSectionDecision,
+      'inboxSectionBlocker': s.inboxSectionBlocker,
+      'inboxSectionNews': s.inboxSectionNews,
+      'inboxKindDecision': s.inboxKindDecision,
+      'inboxKindBlocker': s.inboxKindBlocker,
+      'inboxKindNews': s.inboxKindNews,
+      'inboxStale': s.inboxStale,
+      'inboxStaleDecisions': s.inboxStaleDecisions,
+      'inboxClearAll': s.inboxClearAll,
+      'inboxDismiss': s.inboxDismiss,
+      'inboxLater': s.inboxLater,
+      'inboxPutBack': s.inboxPutBack,
+      'inboxUndo': s.inboxUndo,
+      'inboxOpenThread': s.inboxOpenThread,
+      'inboxLatest': s.inboxLatest,
+      'inboxReplies': s.inboxReplies,
+      'inboxNew': s.inboxNew,
+      'inboxDays': s.inboxDays,
+      'inboxDismissed': s.inboxDismissed,
+      'inboxSnoozed': s.inboxSnoozed,
+      'inboxActionFailed': s.inboxActionFailed,
+      'inboxMineEmpty': s.inboxMineEmpty,
+      'inboxShowNews': s.inboxShowNews,
+      'inboxTabEmpty': s.inboxTabEmpty,
       'inboxReasonMention': s.inboxReasonMention,
       'inboxReasonThreadReply': s.inboxReasonThreadReply,
       'inboxReasonDm': s.inboxReasonDm,

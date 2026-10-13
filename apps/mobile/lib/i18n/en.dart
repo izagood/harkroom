@@ -377,7 +377,61 @@ class StringsEn implements Strings {
   String get inboxEmpty => 'Nothing here yet.';
 
   @override
-  String get inboxMarkAllRead => 'Mark all read';
+  String get inboxTabTodo => 'To do';
+  @override
+  String get inboxTabNews => 'Updates';
+  @override
+  String get inboxTabLater => 'Later';
+  @override
+  String get inboxTabCleared => 'Cleared';
+  @override
+  String get inboxSectionDecision => 'Needs your decision';
+  @override
+  String get inboxSectionBlocker => 'Blocked, waiting on you';
+  @override
+  String get inboxSectionNews => 'Also waiting on you';
+  @override
+  String get inboxKindDecision => 'Decide';
+  @override
+  String get inboxKindBlocker => 'Blocked';
+  @override
+  String get inboxKindNews => 'Update';
+  @override
+  String get inboxStale => 'Waiting over a week ({count})';
+  @override
+  String get inboxStaleDecisions => '{count} decisions';
+  @override
+  String get inboxClearAll => 'Dismiss all';
+  @override
+  String get inboxDismiss => 'Dismiss';
+  @override
+  String get inboxLater => 'Later';
+  @override
+  String get inboxPutBack => 'Put back';
+  @override
+  String get inboxUndo => 'Undo';
+  @override
+  String get inboxOpenThread => 'Open thread';
+  @override
+  String get inboxLatest => 'Latest';
+  @override
+  String get inboxReplies => '{count} replies';
+  @override
+  String get inboxNew => 'New';
+  @override
+  String get inboxDays => '{count}d';
+  @override
+  String get inboxDismissed => 'Dismissed {count}';
+  @override
+  String get inboxSnoozed => 'Snoozed {count} until tomorrow';
+  @override
+  String get inboxActionFailed => 'Could not update. Try again.';
+  @override
+  String get inboxMineEmpty => 'Nothing is waiting on you';
+  @override
+  String get inboxShowNews => 'See {count} updates';
+  @override
+  String get inboxTabEmpty => 'Nothing here';
 
   @override
   String get inboxReasonMention => 'Called you';

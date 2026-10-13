@@ -376,7 +376,61 @@ class StringsKo implements Strings {
   String get inboxEmpty => '인박스가 비어 있다.';
 
   @override
-  String get inboxMarkAllRead => '모두 읽음';
+  String get inboxTabTodo => '할 일';
+  @override
+  String get inboxTabNews => '소식';
+  @override
+  String get inboxTabLater => '미룬 것';
+  @override
+  String get inboxTabCleared => '치운 것';
+  @override
+  String get inboxSectionDecision => '결정이 필요한 것';
+  @override
+  String get inboxSectionBlocker => '막혀서 나를 기다림';
+  @override
+  String get inboxSectionNews => '그 밖에 나를 기다림';
+  @override
+  String get inboxKindDecision => '결정';
+  @override
+  String get inboxKindBlocker => '막힘';
+  @override
+  String get inboxKindNews => '소식';
+  @override
+  String get inboxStale => '일주일 넘게 기다린 것 {count}';
+  @override
+  String get inboxStaleDecisions => '결정 {count}';
+  @override
+  String get inboxClearAll => '전부 치우기';
+  @override
+  String get inboxDismiss => '치우기';
+  @override
+  String get inboxLater => '나중에';
+  @override
+  String get inboxPutBack => '되돌리기';
+  @override
+  String get inboxUndo => '되돌리기';
+  @override
+  String get inboxOpenThread => '스레드 열기';
+  @override
+  String get inboxLatest => '마지막 말';
+  @override
+  String get inboxReplies => '답글 {count}';
+  @override
+  String get inboxNew => '새 말';
+  @override
+  String get inboxDays => '{count}일째';
+  @override
+  String get inboxDismissed => '{count}건 치웠다';
+  @override
+  String get inboxSnoozed => '{count}건을 내일 아침으로 미뤘다';
+  @override
+  String get inboxActionFailed => '바꾸지 못했다. 다시 해 보세요.';
+  @override
+  String get inboxMineEmpty => '나를 기다리는 일이 없다';
+  @override
+  String get inboxShowNews => '소식 {count} 보기';
+  @override
+  String get inboxTabEmpty => '여기는 비어 있다';
 
   @override
   String get inboxReasonMention => '불렀다';
