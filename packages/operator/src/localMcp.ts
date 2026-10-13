@@ -18,7 +18,11 @@ import type { McpOAuth } from './mcpOAuth.js';
 export interface LocalMcpPort {
   list(): Promise<OperatorMcpListResult>;
   /** http·sse 만 — stdio 는 소켓으로 받지 않는다(`readOperatorMcpSetPayload` 주석, #431). */
-  set(name: string, definition: OperatorMcpRemoteDefinition): Promise<void>;
+  /**
+   * `opts.clientSecret`: 문자열이면 오퍼레이터의 비밀 파일에 넣고, `null` 이면 지운다, 없으면 그대로 둔다.
+   * 정의 파일에는 **절대** 넣지 않는다(2026-10-07).
+   */
+  set(name: string, definition: OperatorMcpRemoteDefinition, opts?: { clientSecret?: string | null }): Promise<void>;
   remove(name: string): Promise<void>;
   /**
    * 원격 정의의 OAuth(2026-09-30, `mcpOAuth.ts`). 정의는 두 파일을 합친 표에서 찾는다 — `~/.claude.json`
@@ -57,6 +61,7 @@ export function describeMcpDefinition(name: string, source: OperatorMcpEntry['so
     return {
       name, source, transport: def.type === 'sse' ? 'sse' : 'http', target: def.url, args: [],
       envKeys: [], headerKeys: keys(def.headers), oauth: isRecord(def.oauth),
+      ...(isRecord(def.oauth) && typeof def.oauth.clientId === 'string' ? { oauthClientId: def.oauth.clientId } : {}),
     };
   }
   return {
@@ -87,7 +92,10 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
   };
   return {
     async authStart(name) { return oauth().start(name, await remoteDefinition(name)); },
-    async authStatus(name) { return oauth().status(name, (await remoteDefinition(name)).url); },
+    async authStatus(name) {
+      const def = await remoteDefinition(name);
+      return oauth().status(name, def.url, def.oauth?.clientId);
+    },
     async authForget(name) { await oauth().forget(name); },
     async list() {
       const out = new Map<string, OperatorMcpEntry>();
@@ -104,23 +112,40 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
       if (deps.oauth) {
         for (const e of out.values()) {
           if (e.transport === 'stdio') continue;
-          e.auth = await deps.oauth.status(e.name, e.target).catch(() => ({ state: 'error' as const, reason: '상태를 읽지 못했다' }));
+          e.auth = await deps.oauth.status(e.name, e.target, e.oauthClientId).catch(() => ({ state: 'error' as const, reason: '상태를 읽지 못했다' }));
+          if (e.source === 'operator') e.oauthClientSecret = await deps.oauth.hasClientSecret(e.name, e.oauthClientId ?? '').catch(() => false);
         }
       }
       return { servers: [...out.values()].sort((a, b) => a.name.localeCompare(b.name)) };
     },
-    async set(name, definition) {
+    async set(name, definition, opts = {}) {
+      if (opts.clientSecret !== undefined && !deps.oauth) throw new Error('이 오퍼레이터에는 MCP OAuth 가 배선되지 않았다 — client secret 을 둘 곳이 없다');
       const table = await readTable(deps.registryPath);
-      table[name] = definition;
+      const prev = table[name];
+      const prevClientId = isRecord(prev) && isRecord(prev.oauth) && typeof prev.oauth.clientId === 'string' ? prev.oauth.clientId : undefined;
+      const nextClientId = definition.oauth?.clientId;
+      if (typeof opts.clientSecret === 'string' && !nextClientId) throw new Error('client secret 은 oauth.clientId 와 함께만 넣는다');
+      // 정의에 secret 이 섞여 들어오지 않게 한 번 더 걸러 낸다(소켓 읽기가 이미 뺐다).
+      const { oauth: o, ...rest } = definition;
+      table[name] = o ? { ...rest, oauth: { ...(o.clientId ? { clientId: o.clientId } : {}), ...(o.callbackPort ? { callbackPort: o.callbackPort } : {}) } } : rest;
       await writeTable(deps.registryPath, table);
+      // 클라이언트를 갈아탔으면 옛 토큰을 버린다 — 남겨 두면 1분 refresh 가 옛 클라이언트로 계속 돌린다
+      // (security F2). 새 secret 이 함께 오지 않았으면 옛 secret 도 지운다(F1).
+      const clientSwitched = prev !== undefined && prevClientId !== nextClientId;
+      if (clientSwitched) {
+        await deps.oauth?.forget(name);
+        if (opts.clientSecret === undefined) await deps.oauth?.setClientSecret(name, null, null);
+      }
+      if (opts.clientSecret !== undefined) await deps.oauth!.setClientSecret(name, nextClientId ?? null, opts.clientSecret);
     },
     async remove(name) {
       const table = await readTable(deps.registryPath);
       if (!(name in table)) return;
       delete table[name];
       await writeTable(deps.registryPath, table);
-      // 정의를 뺐으면 그 토큰도 들고 있을 이유가 없다.
+      // 정의를 뺐으면 그 토큰·client secret 도 들고 있을 이유가 없다.
       await deps.oauth?.forget(name);
+      await deps.oauth?.setClientSecret(name, null, null);
     },
   };
 }
