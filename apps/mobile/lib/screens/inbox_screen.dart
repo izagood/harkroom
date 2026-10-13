@@ -624,13 +624,18 @@ class _InboxDetailScreenState extends State<InboxDetailScreen> {
 
   Future<void> _act(BoardGroup group, BoardAction a) async {
     if (_busy) return;
-    setState(() => _busy = true);
-    final nav = Navigator.of(context);
-    await runBoardAction(context, [group], a);
-    if (!mounted) return;
-    setState(() => _busy = false);
-    // 치우거나 미루면 목록으로 돌아간다 — 그 자리 다음 줄이 보인다(designer: J/K 대신).
-    if (a != BoardAction.restore) nav.pop();
+    if (a == BoardAction.restore) {
+      setState(() => _busy = true);
+      await runBoardAction(context, [group], a);
+      if (mounted) setState(() => _busy = false);
+      return;
+    }
+    // 치우거나 미루면 **먼저** 목록으로 돌아간다 — 그 자리 다음 줄이 보이고(designer: J/K 대신), 되돌리기 알림이
+    // 목록 위에 선다. `runBoardAction` 은 첫 await 전에 앱·문구·메신저를 쥐므로 닫히는 화면의 context 로도 된다.
+    _busy = true;
+    final ctx = context;
+    Navigator.of(context).pop();
+    await runBoardAction(ctx, [group], a);
   }
 
   @override
