@@ -7,6 +7,7 @@ import '../state/app_scope.dart';
 import '../time.dart';
 import '../ui/tokens.dart';
 import '../mention/render.dart';
+import 'agent_exchange.dart';
 
 /// 진행 줄 — **말풍선이 아니라 상태 한 줄**이다.
 ///
@@ -238,6 +239,97 @@ class _Section extends StatelessWidget {
               child: Text('· $item', style: theme.textTheme.bodySmall),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// 접힌 에이전트 주고받기 한 줄 — 「forge ↔ codex · 끝냈다 테스트 통과 · 3번 주고받음」.
+///
+/// 데스크톱 `AgentExchange` 의 접힌 줄과 같은 말을 같은 순서로 싣는다: 참여자 → 결론(없으면
+/// 마지막 말 한 줄) → 횟수. **줄 전체가 손잡이다**(데스크톱과 같다 — 「펼치기」 글자를 두지 않는다).
+/// 펼친 상태에서는 머리 줄 「forge ↔ codex · 접기」가 되고, 펼친 줄들은 부르는 쪽이 아래에 세운다.
+class ExchangeRow extends StatelessWidget {
+  const ExchangeRow({super.key, required this.exchange, required this.open, required this.onToggle});
+
+  final FoldExchange exchange;
+  final bool open;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final app = context.app;
+    final k = context.tokens;
+    final messages = exchange.messages;
+    final names = exchangeParticipants(messages).map(app.displayNameOf).join(' ↔ ');
+    final speech = messages.where(isExchangeSpeech).length;
+
+    final List<InlineSpan> rest;
+    if (open) {
+      rest = [TextSpan(text: ' · ${t.exchangeCollapse}', style: TextStyle(color: k.fgSubtle))];
+    } else {
+      final conclusion = exchangeConclusion(messages);
+      final last = conclusion == null
+          ? exchangeLastLine(messages, (m) => renderMentions(m.body, app.accounts, t.mentionUnknown))
+          : null;
+      rest = [
+        if (conclusion != null) ...[
+          TextSpan(
+            text: ' · ${conclusion.source == ExchangeConclusionSource.ask ? t.exchangeDecided : t.exchangeFinished} ',
+            style: TextStyle(color: k.fgSubtle),
+          ),
+          TextSpan(text: conclusion.text, style: TextStyle(color: k.fgMuted)),
+        ] else if (last != null) ...[
+          TextSpan(text: ' · ${app.displayNameOf(last.authorId)}: ', style: TextStyle(color: k.fgSubtle)),
+          TextSpan(
+            text: last.text ?? t.exchangeAttachments(last.attachments ?? 0),
+            style: TextStyle(color: k.fgMuted),
+          ),
+        ],
+        TextSpan(text: ' · ${t.exchangeCount(speech)}', style: TextStyle(color: k.fgSubtle)),
+      ];
+    }
+
+    return Semantics(
+      button: true,
+      expanded: open,
+      child: InkWell(
+        key: Key('exchange-${exchange.rows.first.id}'),
+        onTap: onToggle,
+        child: Padding(
+          // 본문 열(아바타 뒤)에 맞춘다 — 진행 줄(`ProgressRow`)과 같은 들여쓰기.
+          padding: const EdgeInsets.fromLTRB(
+              HarkroomSize.gutter + HarkroomSize.avatar + 10, 8, HarkroomSize.gutter, 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(color: k.borderAgent, borderRadius: BorderRadius.circular(1.5)),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text.rich(
+                  TextSpan(
+                    style: TextStyle(fontSize: 12, height: 1.35, color: k.fgAgent),
+                    children: [
+                      TextSpan(text: names, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      ...rest,
+                    ],
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Icon(open ? Icons.expand_less : Icons.expand_more, size: 16, color: k.fgSubtle),
+            ],
+          ),
+        ),
       ),
     );
   }

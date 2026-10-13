@@ -322,6 +322,13 @@ abstract class Strings {
   /// 진행 줄의 머리말. 뒤에 마지막 진행 문구가 붙는다.
   String get agentWorking;
 
+  /// 접힌 에이전트 주고받기 줄(데스크톱 `speech.exchange.*` 와 같은 말).
+  String get exchangeDecided;
+  String get exchangeFinished;
+  String get exchangeCollapse;
+  String exchangeCount(int n);
+  String exchangeAttachments(int n);
+
   /// 대기 줄의 머리말.
   String get agentWaiting;
 
@@ -1134,6 +1141,11 @@ Map<String, String> stringsToMap(Strings s) => {
       'timeIn': s.timeIn,
       'timeSoon': s.timeSoon,
       'agentWorking': s.agentWorking,
+      'exchangeDecided': s.exchangeDecided,
+      'exchangeFinished': s.exchangeFinished,
+      'exchangeCollapse': s.exchangeCollapse,
+      'exchangeCount': s.exchangeCount(0),
+      'exchangeAttachments': s.exchangeAttachments(0),
       'agentWaiting': s.agentWaiting,
       'reportTitle': s.reportTitle,
       'reportChecks': s.reportChecks,
