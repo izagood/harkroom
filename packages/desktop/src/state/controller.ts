@@ -3132,9 +3132,14 @@ export class Controller {
     await this.loadSavedSummary();
   }
 
+  /**
+   * 던지는 것은 **상태 바꾸기(PUT)가 실패했을 때뿐**이다. 패널은 이 실패를 보고 옮긴 행을
+   * 되돌린다(낙관적 갱신, #1347) — 뒤따르는 요약 갱신의 실패까지 던지면 서버에서는 옮겨졌는데
+   * 화면만 되돌아가 둘이 갈라진다. 요약은 배지 숫자일 뿐이고 `saved.changed` 가 다시 맞춘다.
+   */
   async updateSavedMessageState(messageId: string, state: 'open' | 'done'): Promise<void> {
     await this.api.updateSavedMessage(messageId, state);
-    await this.loadSavedSummary();
+    this.swallow(this.loadSavedSummary());
   }
 
   async listTeams(): Promise<AgentTeamRow[]> {
