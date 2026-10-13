@@ -8,6 +8,7 @@ import 'package:http_parser/http_parser.dart' show MediaType;
 import 'api_error.dart';
 import 'content_type.dart';
 import 'ask.dart';
+import 'inbox_board.dart';
 import 'models.dart';
 
 /// 서버 REST 클라이언트. 데스크탑 `api.ts` 의 **같은 규약**을 따른다:
@@ -418,6 +419,27 @@ class ApiClient {
     final query = [if (unreadOnly) 'unread=1', if (since != null) 'since=$since'];
     final body = _obj(await _send('GET', '/inbox${query.isEmpty ? '' : '?${query.join('&')}'}'));
     return _list(body['entries']).map(InboxEntry.fromJson).toList(growable: false);
+  }
+
+  /// Inbox 보드의 재료(데스크톱 `inboxBoard` 와 같은 라우트) — 전체 항목 + 그 항목들의 **스레드 머리** + inbox 밖
+  /// 머리(내가 연·말한 스레드) + 내 완료·나중에. 판정은 `inbox_board.dart` 의 `buildBoard` 가 한다.
+  ///
+  /// `compact=1` 로 받는다 — 스레드마다 보드가 읽는 줄만·본문 앞부분만 온다(서버 #1329, 옛 서버는 이 키를
+  /// 무시하고 전체를 준다). 304 조건부 요청(`If-None-Match`)은 아직 쓰지 않는다 — 화면(M2)에서 판을 들고 있게
+  /// 되면 그때 붙인다.
+  Future<InboxBoardData> inboxBoard() async =>
+      InboxBoardData.fromJson(_obj(await _send('GET', '/inbox/board?compact=1')));
+
+  /// 스레드 하나의 **내** 완료(`done`)·나중에(`later` + [until])·되돌리기(`null`). 바꾸는 것은 언제나 내 행이다 —
+  /// 남에게 보이는 흔적이 없다. 서버는 나중에의 [until] 이 지금보다 뒤·90일 안이 아니면 400 `bad_until` 을 준다.
+  Future<void> setInboxThreadState(String rootId, {required String? state, DateTime? until}) async {
+    final Map<String, Object?> body = switch (state) {
+      'done' => {'state': 'done'},
+      'later' => {'state': 'later', 'until': until!.toUtc().toIso8601String()},
+      null => {'state': null},
+      _ => throw ArgumentError.value(state, 'state', 'done · later · null 만 받는다'),
+    };
+    await _send('PUT', '/inbox/threads/${Uri.encodeComponent(rootId)}', body: body);
   }
 
   /// 읽음 처리. **entry id 로 보낸다** — 메시지 id 가 아니다(같은 메시지로 두 번

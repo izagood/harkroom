@@ -564,6 +564,7 @@ class InboxEntry {
     required this.createdAt,
     required this.threadRootId,
     required this.readAt,
+    this.meta = const {},
   });
 
   /// 읽음 처리에 쓰는 열쇠. **메시지 id 가 아니다** — 같은 메시지로 두 번 불릴 수 있다.
@@ -579,7 +580,25 @@ class InboxEntry {
   final String? threadRootId;
   final String? readAt;
 
+  /// 그 말의 `meta`(물음·실패 등). Inbox 보드 판정이 읽는다(`inbox_board.dart`) — 해석하지 않고 들고만 있는다.
+  /// 옛 서버나 간추린 판에서 빠질 수 있다 — 그때는 빈 맵이다.
+  final Map<String, Object?> meta;
+
   bool get isUnread => readAt == null;
+
+  /// 본문만 바꾼 사본(간추린 판의 잘린 멘션 떼기).
+  InboxEntry withBody(String next) => InboxEntry(
+        id: id,
+        messageId: messageId,
+        reason: reason,
+        channelId: channelId,
+        authorId: authorId,
+        body: next,
+        createdAt: createdAt,
+        threadRootId: threadRootId,
+        readAt: readAt,
+        meta: meta,
+      );
 
   static InboxEntry fromJson(Map<String, Object?> j) => InboxEntry(
         id: _int(j['id']),
@@ -592,6 +611,7 @@ class InboxEntry {
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
         threadRootId: j['threadRootId'] as String?,
         readAt: j['readAt'] as String?,
+        meta: j['meta'] is Map ? Map<String, Object?>.from(j['meta']! as Map) : const {},
       );
 }
 
