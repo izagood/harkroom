@@ -68,6 +68,10 @@ export function SavedMessages({ open, onClose }: Props) {
   // 답을 기다리는 옮기기(messageId → 무엇을 어디로). 탭을 바꿔 목록을 새로 받아도 이 표를
   // 겹치므로, 서버가 아직 반영하기 전이라도 옮긴 행이 되살아나거나 사라지지 않는다.
   const pendingRef = useRef(new Map<string, PendingMove>());
+  // 답이 왔어도(성공) 그 전에 떠난 목록 읽기가 남아 있으면 그 읽기는 옛 목록을 가져온다 — 그래서
+  // 끝난 옮기기는 날아가는 읽기가 다 끝날 때까지 `pendingRef` 에 두고 여기 적어 둔다.
+  const settledRef = useRef(new Set<string>());
+  const readsInFlightRef = useRef(0);
   // 비동기 답이 돌아왔을 때 지금 보이는 탭. 클로저의 `tab` 은 누른 때의 값이다.
   const tabRef = useRef<Tab>(tab);
   tabRef.current = tab;
@@ -84,9 +88,21 @@ export function SavedMessages({ open, onClose }: Props) {
   const reload = useCallback((): (() => void) => {
     let alive = true;
     setLoad({ kind: 'loading' });
+    readsInFlightRef.current += 1;
+    // 겹치기를 **마친 뒤에** 끝난 옮기기를 걷는다 — 먼저 걷으면 이 (옛) 목록이 옮긴 행을 되살린다.
+    const settle = (): void => {
+      readsInFlightRef.current -= 1;
+      if (readsInFlightRef.current > 0) return;
+      for (const id of settledRef.current) pendingRef.current.delete(id);
+      settledRef.current.clear();
+    };
     getController().loadSavedMessages(tab).then(
-      (rows) => { if (alive) { setEntries(overlayPending(rows, tab, community, pendingRef.current)); setLoad({ kind: 'ready' }); } },
+      (rows) => {
+        if (alive) { setEntries(overlayPending(rows, tab, community, pendingRef.current)); setLoad({ kind: 'ready' }); }
+        settle();
+      },
       (err: unknown) => {
+        settle();
         if (!alive) return;
         setEntries([]);
         setLoad({ kind: 'error', message: errorText(err, t) });
@@ -143,9 +159,11 @@ export function SavedMessages({ open, onClose }: Props) {
     setEntries((rows) => rows.filter((r) => r.messageId !== e.messageId));
     try {
       await getController().updateSavedMessageState(e.messageId, next);
-      pendingRef.current.delete(e.messageId);
+      if (readsInFlightRef.current === 0) pendingRef.current.delete(e.messageId);
+      else settledRef.current.add(e.messageId);
     } catch (err: unknown) {
       pendingRef.current.delete(e.messageId);
+      settledRef.current.delete(e.messageId);
       // 지금 보는 곳이 누른 때의 그 커뮤니티·그 탭일 때만 되돌려 끼운다.
       if (communityRef.current !== mine) { setMoveFailed(errorText(err, t)); return; }
       const shown = tabRef.current;

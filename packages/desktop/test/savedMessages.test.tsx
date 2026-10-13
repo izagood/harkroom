@@ -187,6 +187,25 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
     await waitFor(() => expect(screen.getByTestId('saved-empty')).toBeTruthy());
   });
 
+  it('답이 오기 전에 떠난 목록 읽기가 옛 목록을 가져와도 옮긴 행이 빠지지 않는다', async () => {
+    let releasePut!: () => void;
+    let releaseDone!: (rows: SavedMessageRow[]) => void;
+    fakeController({
+      loadSavedMessages: vi.fn((tab: 'open' | 'done') => (tab === 'open'
+        ? Promise.resolve([entry('m1', 'open')])
+        // 완료 탭 읽기는 PUT 이 반영되기 전의 서버 목록(m1 없음)을 늦게 돌려준다.
+        : new Promise<SavedMessageRow[]>((r) => { releaseDone = r; }))),
+      updateSavedMessageState: vi.fn(() => new Promise<void>((r) => { releasePut = r; })),
+    });
+    render(<SavedMessages open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('saved-toggle-m1'));
+    fireEvent.click(screen.getByText('완료'));
+    await act(async () => { releasePut(); await Promise.resolve(); });
+    await act(async () => { releaseDone([]); await Promise.resolve(); });
+    await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
+  });
+
   it('n1. 답을 기다리는 옮기기는 다른 커뮤니티의 목록에 끼지 않는다', async () => {
     // A 에서 m1 을 완료로 누르고(답은 오지 않는다) B 로 바꾼다. B 의 서버는 빈 목록을 준다.
     fakeController({
