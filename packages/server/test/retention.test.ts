@@ -7,7 +7,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
 import { postMessage } from '../src/services/messages.js';
-import { createRetentionSweeper, RETENTION_BATCH } from '../src/services/retention.js';
+import { createRetentionSweeper, RETENTION_BATCH, retentionDeleteEnabled } from '../src/services/retention.js';
 
 let app: FastifyInstance; let pool: Pool; let stop: () => Promise<void>;
 let adminId: string; let channelId: string; let messageId: string;
@@ -41,7 +41,7 @@ describe('보존 기간 정리 (Q5-c)', () => {
     await sess('rt-dead', '-30 days -1 minute');
     await sess('rt-recent-expired', '-29 days');
     await sess('rt-live', '+14 days');
-    const res = await createRetentionSweeper(pool, { log: () => {} }).sweep();
+    const res = await createRetentionSweeper(pool, { log: () => {}, deleteEnabled: true }).sweep();
     expect(await has('idempotency_key', 'key', 'rt-old')).toBe(false);
     expect(await has('idempotency_key', 'key', 'rt-edge')).toBe(true);
     expect(await has('session', 'token_hash', 'rt-dead')).toBe(false);
@@ -54,7 +54,7 @@ describe('보존 기간 정리 (Q5-c)', () => {
     await key('rt-a', '8 days'); await key('rt-b', '9 days');
     await sess('rt-gone', '-40 days');
     const lines: string[] = [];
-    const s = createRetentionSweeper(pool, { log: (m) => lines.push(m) });
+    const s = createRetentionSweeper(pool, { log: (m) => lines.push(m), deleteEnabled: true });
     await s.sweep();
     const counts = lines.filter((l) => l.includes('eligible='));
     expect(counts).toEqual([
@@ -74,10 +74,35 @@ describe('보존 기간 정리 (Q5-c)', () => {
       `insert into idempotency_key (key, message_id, author_id, channel_id, created_at)
        select 'rt-bulk-' || g, $1, $2, $3, now() - interval '10 days' from generate_series(1, $4::int) g`,
       [messageId, adminId, channelId, RETENTION_BATCH + 50]);
-    const s = createRetentionSweeper(pool, { log: () => {} });
+    const s = createRetentionSweeper(pool, { log: () => {}, deleteEnabled: true });
     expect((await s.sweep()).find((r) => r.table === 'idempotency_key')!.deleted).toBe(RETENTION_BATCH);
     expect((await s.sweep()).find((r) => r.table === 'idempotency_key')!.deleted).toBe(50);
     expect((await pool.query(`select count(*)::int as n from idempotency_key where key like 'rt-bulk-%'`)).rows[0].n).toBe(0);
+  });
+
+  it('스위치가 꺼져 있으면(기본) 한 줄도 지우지 않고, sweep 마다 대상 수만 dry-run 으로 남긴다', async () => {
+    await key('rt-dry', '8 days');
+    await sess('rt-dry-sess', '-40 days');
+    const lines: string[] = [];
+    const s = createRetentionSweeper(pool, { log: (m) => lines.push(m) });
+    for (let i = 0; i < 2; i++) {
+      const res = await s.sweep();
+      expect(res.every((r) => r.deleted === 0)).toBe(true);
+    }
+    expect(await has('idempotency_key', 'key', 'rt-dry')).toBe(true);
+    expect(await has('session', 'token_hash', 'rt-dry-sess')).toBe(true);
+    expect(lines.filter((l) => l.includes('deleted='))).toEqual([]);
+    // 두 번 다 센다(켜진 경우와 달리 첫 회만이 아니다).
+    expect(lines.filter((l) => /^retention: idempotency_key eligible=1 \(dry-run\)$/.test(l))).toHaveLength(2);
+    expect(lines.filter((l) => /^retention: session eligible=1 \(dry-run\)$/.test(l))).toHaveLength(2);
+  });
+
+  it('스위치는 HARKROOM_RETENTION_DELETE 가 정확히 1 일 때만 켜진다', () => {
+    expect(retentionDeleteEnabled({})).toBe(false);
+    expect(retentionDeleteEnabled({ HARKROOM_RETENTION_DELETE: '' })).toBe(false);
+    expect(retentionDeleteEnabled({ HARKROOM_RETENTION_DELETE: 'true' })).toBe(false);
+    expect(retentionDeleteEnabled({ HARKROOM_RETENTION_DELETE: '0' })).toBe(false);
+    expect(retentionDeleteEnabled({ HARKROOM_RETENTION_DELETE: '1' })).toBe(true);
   });
 
   it('지우지 않기로 한 표(secret_turn_lease·inbox·audit_log)는 규칙에 없다', async () => {

@@ -66,7 +66,7 @@ import { createAgentWakeSweeper } from './services/agentWakes.js';
 import { emitEvent } from './events.js';
 import { createStaleRequestSweeper } from './services/staleRequests.js';
 import { createDelegationDeadlineSweeper } from './services/delegations.js';
-import { createRetentionSweeper } from './services/retention.js';
+import { createRetentionSweeper, retentionDeleteEnabled } from './services/retention.js';
 
 /**
  * 인증 표면 기본 리밋.
@@ -568,7 +568,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * 위 주석과 같은 이유다.
    */
   // 보존 기간 정리(Q5-c) — idempotency_key 7일·만료 30일 지난 session 만. 근거와 지우지 않는 표는 retention.ts 주석.
-  createRetentionSweeper(deps.pool, { log: (m) => app.log.info(m) }).startSweep(app);
+  // 지우기는 HARKROOM_RETENTION_DELETE=1 일 때만 — 꺼져 있으면 지울 수만 세어 로그에 남긴다(사람이 보고 켠다).
+  createRetentionSweeper(deps.pool, { log: (m) => app.log.info(m), deleteEnabled: retentionDeleteEnabled() }).startSweep(app);
 
   const staleSweeper = createStaleRequestSweeper(deps.pool, {
     presence: agentPresence,

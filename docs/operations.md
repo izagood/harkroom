@@ -799,3 +799,19 @@ HARKROOM_NEW_PASSWORD=<새 비밀번호> DATABASE_URL=<...> \
   (120·121). 그 파일은 문장마다 따로 돌고 원자성이 없으므로 **다시 돌아도 같은 결과**여야 한다. 행을
   대량으로 고치는 것은 여전히 그동안 옛 파드의 쓰기를 막는다 — 다운타임은 아니지만 느려진다.
 - **enum·check 좁히기.** 허용 값을 줄이면 옛 코드가 쓰던 값이 거절된다. 넓히기만 expand 다.
+
+## 13. 보존 기간 정리 — 스위치를 켜기 전에 숫자를 본다
+
+서버는 자라기만 하던 표 둘을 정리한다(`services/retention.ts`, 2026-10-13): `idempotency_key` 는 만든 지 7일 지난 것,
+`session` 은 만료된 지 30일 지난 것. `secret_turn_lease`·읽은 `inbox`·`audit_log`·`secret_access_log` 는 지우지 않는다.
+
+**지우기는 `HARKROOM_RETENTION_DELETE=1` 일 때만 한다. 기본은 꺼짐(dry-run)이다.** 꺼져 있으면 sweep 은 기동 5분 뒤부터 한 시간마다
+표마다 `retention: <표> eligible=N (dry-run)` 을 서버 로그에 남기고 아무것도 지우지 않는다.
+
+켜는 순서:
+1. 판올림 뒤 서버 로그에서 `eligible=` 두 줄을 찾아 숫자를 본다.
+2. 괜찮으면 배포 설정(env)에 `HARKROOM_RETENTION_DELETE=1` 을 넣고 서버를 다시 띄운다.
+3. 켠 뒤 첫 sweep 이 지우기 전에 `eligible=N (before deleting)` 을 한 번 더 남기고, 그 뒤로는 표마다 한 시간에 1,000줄까지
+   지우며 `deleted=N` 을 남긴다. 로그에는 표 이름과 수만 있다(행 내용 없음).
+
+`session` 을 지우면 그 세션의 `push_device` 행도 cascade 로 지워진다 — 만료된 세션의 기기는 이미 푸시를 받지 않는다.

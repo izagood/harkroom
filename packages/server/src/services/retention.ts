@@ -14,9 +14,11 @@ import type { SweepHost } from './delegations.js';
  * **지우지 않는 것**(같은 결정): `secret_turn_lease`(「(에이전트, cause) 당 평생 하나」 약속이 행에 기댄다 — security),
  * 읽은 `inbox`(보드·모바일 기록), `audit_log`·`secret_access_log`(감사 기록, audit_log 는 append-only 트리거).
  *
- * 한 시간마다 표마다 `RETENTION_BATCH` 줄까지만 지운다 — 처음 켤 때 쌓인 것이 많아도 한 번에 큰 삭제로 표를 붙잡지 않는다.
- * **처음 도는 sweep 은 지우기 전에 표마다 지울 대상 수를 세어 로그에 남긴다**(jaebin 조건). 로그에는 표 이름과 수만
- * 남기고 행 내용(토큰 해시·키 값)은 남기지 않는다.
+ * **지우기는 스위치 뒤에 있고 기본은 꺼짐이다**(`HARKROOM_RETENTION_DELETE=1` 일 때만, task_manager·jaebin 조건). 꺼져 있으면
+ * sweep 은 **세기만** 한다 — 한 시간마다 표마다 `retention: <표> eligible=N (dry-run)` 을 남기고 아무것도 지우지 않는다.
+ * 운영 순서: 판올림 → 그 로그의 숫자를 사람이 보고 → 괜찮으면 스위치를 켠다. 켜면 첫 sweep 이 지우기 전에 대상 수를 한 번 더
+ * 남기고(`eligible=N (before deleting)`), 그 뒤 한 시간마다 표마다 `RETENTION_BATCH` 줄까지만 지운다 — 쌓인 것이 많아도 한 번에
+ * 큰 삭제로 표를 붙잡지 않는다. 로그에는 표 이름과 수만 남기고 행 내용(토큰 해시·키 값)은 남기지 않는다.
  */
 export const RETENTION_RULES = [
   { table: 'idempotency_key', where: `created_at < now() - interval '7 days'` },
@@ -28,11 +30,17 @@ export const RETENTION_SWEEP_INTERVAL_MS = 60 * 60_000;
 /** 기동 직후에는 몰리는 일이 많다 — 첫 sweep 은 잠깐 뒤에. */
 export const RETENTION_FIRST_DELAY_MS = 5 * 60_000;
 
-export function createRetentionSweeper(pool: Pool, opts: { log?: (msg: string) => void } = {}): {
+/** 지우기 스위치. 정확히 `'1'` 일 때만 켜진다 — 오타·빈 값·`true` 는 꺼짐(세기만)으로 떨어진다. */
+export function retentionDeleteEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.HARKROOM_RETENTION_DELETE === '1';
+}
+
+export function createRetentionSweeper(pool: Pool, opts: { log?: (msg: string) => void; deleteEnabled?: boolean } = {}): {
   startSweep(app: SweepHost): void;
   sweep(): Promise<{ table: string; deleted: number }[]>;
 } {
   const log = opts.log ?? ((m: string) => console.log(m));
+  const deleteEnabled = opts.deleteEnabled ?? false;
   let counted = false;
   let running = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -42,13 +50,15 @@ export function createRetentionSweeper(pool: Pool, opts: { log?: (msg: string) =
     if (running) return [];
     running = true;
     try {
-      if (!counted) {
+      // 꺼져 있으면 매번 세기만 한다. 켜져 있으면 첫 sweep 에서 지우기 전에 한 번 센다.
+      if (!deleteEnabled || !counted) {
         for (const r of RETENTION_RULES) {
           const c = await pool.query<{ n: string }>(`select count(*) as n from ${r.table} where ${r.where}`);
-          log(`retention: ${r.table} eligible=${c.rows[0]?.n ?? '0'} (first sweep, before deleting)`);
+          log(`retention: ${r.table} eligible=${c.rows[0]?.n ?? '0'} (${deleteEnabled ? 'before deleting' : 'dry-run'})`);
         }
         counted = true;
       }
+      if (!deleteEnabled) return RETENTION_RULES.map((r) => ({ table: r.table, deleted: 0 }));
       const out: { table: string; deleted: number }[] = [];
       for (const r of RETENTION_RULES) {
         const res = await pool.query(
