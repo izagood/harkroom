@@ -99,9 +99,9 @@ void main() {
 
     server.gate = Completer<void>();
     final pending = app.catchUp();
-    // 다른 조회가 끝나기를 기다리지 않고 모두 떠 있어야 한다: 채널 5 + reads + 인박스.
+    // 다른 조회가 끝나기를 기다리지 않고 모두 떠 있어야 한다: 채널 5 + reads + 인박스 + Inbox 보드(A안).
     await pumpEventQueue();
-    expect(server.maxInFlight, _channels.length + 2);
+    expect(server.maxInFlight, _channels.length + 3);
     server.gate!.complete();
     await pending;
 

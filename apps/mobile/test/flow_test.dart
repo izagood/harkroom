@@ -86,7 +86,8 @@ MockClient _server() => MockClient((req) async {
               'channelId': 'c1',
               'authorId': 'a1',
               'body': '@me 이거 봐 줘',
-              'createdAt': '2026-09-28T00:00:00.000Z',
+              // 오늘 온 부름이어야 받은 일 목록에 선다(7일 넘게 조용한 것은 접힌다 — Inbox A안).
+              'createdAt': DateTime.now().toUtc().toIso8601String(),
               'readAt': null,
             },
           ],
@@ -788,7 +789,7 @@ void main() {
     expect(find.byKey(const Key('mention-picker')), findsNothing);
   });
 
-  testWidgets('받은 것 탭에서 부름을 눌러 그 채널로 간다', (tester) async {
+  testWidgets('받은 것 탭에서 일을 눌러 상세를 보고, [스레드 열기]로 그 채널로 간다 (Inbox A안)', (tester) async {
     final state = _state();
     await tester.pumpWidget(HarkroomApp(state: state));
     await tester.pumpAndSettle();
@@ -797,8 +798,16 @@ void main() {
     await tester.tap(find.byKey(const Key('tab-inbox')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('inbox-1')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('inbox-1')));
+    // 이 부름은 물음·실패가 없는 멘션이라 내 차례가 아니다 — 소식 갈래에 선다.
+    await tester.tap(find.byKey(const Key('inbox-tab-news')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('inbox-card-m1')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('inbox-card-m1')));
+    await tester.pumpAndSettle();
+    // 누르면 상세로 간다 — 스레드로 바로 가지 않는다(아직 읽음도 아니다).
+    expect(find.byKey(const Key('inbox-detail')), findsOneWidget);
+    expect(state.inboxUnread, 1);
+    await tester.tap(find.byKey(const Key('inbox-detail-open')));
     await _settle(tester);
 
     // 눌러서 열면 읽음이 된다 — **훑기만 해도 사라지지는 않는다.**
