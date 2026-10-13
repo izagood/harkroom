@@ -66,6 +66,7 @@ import { createAgentWakeSweeper } from './services/agentWakes.js';
 import { emitEvent } from './events.js';
 import { createStaleRequestSweeper } from './services/staleRequests.js';
 import { createDelegationDeadlineSweeper } from './services/delegations.js';
+import { createRetentionSweeper } from './services/retention.js';
 
 /**
  * 인증 표면 기본 리밋.
@@ -566,6 +567,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * 에이전트의 스레드마다 거짓 통지가 남는다. presence 를 한 번 만들어 여러 곳에 넘기는
    * 위 주석과 같은 이유다.
    */
+  // 보존 기간 정리(Q5-c) — idempotency_key 7일·만료 30일 지난 session 만. 근거와 지우지 않는 표는 retention.ts 주석.
+  createRetentionSweeper(deps.pool, { log: (m) => app.log.info(m) }).startSweep(app);
+
   const staleSweeper = createStaleRequestSweeper(deps.pool, {
     presence: agentPresence,
     now: deps.now,
