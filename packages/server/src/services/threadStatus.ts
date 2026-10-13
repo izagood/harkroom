@@ -6,7 +6,7 @@ import {
 
 import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
 import { audienceFor } from './channels.js';
-import { bundledRootSql, openBundleSql } from './askBundleSql.js';
+import { bundledRootSql, openBundleSql, uuidOrNullSql } from './askBundleSql.js';
 import type { AgentPresence } from '../mcp/presence.js';
 
 /**
@@ -35,7 +35,7 @@ select
        and t.meta->'ask'->>'answeredWith' is null and t.meta->'ask'->>'closedAt' is null
        and (t.meta->'ask'->'to'->>'kind' = 'human'
          or (t.meta->'ask'->'to'->>'kind' = 'account'
-           and exists (select 1 from account x where x.id::text = t.meta->'ask'->'to'->>'accountId' and x.kind = 'human')))
+           and exists (select 1 from account x where x.id = ${uuidOrNullSql(`t.meta->'ask'->'to'->>'accountId'`)} and x.kind = 'human')))
        and not ${bundledRootSql('t')})
        or ${openBundleSql('t')}
      order by t.seq limit 1) as human_ask,
@@ -60,7 +60,7 @@ select
        where t.meta->>'kind' = 'ask'
          and t.meta->'ask'->>'answeredWith' is null and t.meta->'ask'->>'closedAt' is null
          and t.meta->'ask'->'to'->>'kind' = 'account'
-         and exists (select 1 from account x where x.id::text = t.meta->'ask'->'to'->>'accountId' and x.kind = 'agent')
+         and exists (select 1 from account x where x.id = ${uuidOrNullSql(`t.meta->'ask'->'to'->>'accountId'`)} and x.kind = 'agent')
        order by t.seq limit 1),
     (select json_build_object('waiterId', t.author_id, 'blockedById', t.meta->'delegation'->'open'->>0)
        from t
