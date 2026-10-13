@@ -599,6 +599,8 @@ async function insertInboxMany(
   client: PoolClient, accountIds: string[], messageId: string, reason: InboxEntry['reason'], notified: Set<string>,
   teamId?: string,
 ): Promise<void> {
+  // 같은 사람이 두 번 오면 한 줄만(#1343 security n1) — 중복 없음을 부르는 쪽에 기대지 않고 관문이 지킨다. 순서는 처음 나온 자리.
+  accountIds = [...new Set(accountIds)];
   if (!accountIds.length) return;
   /**
    * 차단(109) — 받는 사람이 작성자를 차단했으면 부름을 만들지 않는다. 이 관문이 부름을 만드는 유일한

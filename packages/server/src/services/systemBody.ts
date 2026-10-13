@@ -1,4 +1,5 @@
 import { SYSTEM_ACCOUNT_PLACEHOLDER, UNKNOWN_ACCOUNT_LABEL } from '@harkroom/shared';
+import { uuidOrNullSql } from './askBundleSql.js';
 
 /** SQL 문자열 리터럴. 아래 두 상수는 코드에 박힌 값이지만, 따옴표가 들어오는 날에도 안 깨지게 감싼다. */
 const lit = (s: string) => `'${s.replace(/'/g, "''")}'`;
@@ -19,7 +20,7 @@ const lit = (s: string) => `'${s.replace(/'/g, "''")}'`;
 export function displayBodySql(m: string): string {
   return `case when ${m}.kind = 'system' and jsonb_typeof(${m}.meta->'accountId') = 'string'
             then replace(${m}.body, ${lit(SYSTEM_ACCOUNT_PLACEHOLDER)},
-                         coalesce((select sa.handle from account sa where sa.id::text = ${m}.meta->>'accountId'),
+                         coalesce((select sa.handle from account sa where sa.id = ${uuidOrNullSql(`${m}.meta->>'accountId'`)}),
                                   ${lit(UNKNOWN_ACCOUNT_LABEL)}))
             else ${m}.body end`;
 }
