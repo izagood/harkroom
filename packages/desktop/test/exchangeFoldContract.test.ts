@@ -98,6 +98,7 @@ const CASES: Case[] = [
   { name: '예약 줄만으로는 접지 않는다', messages: [F('m1'), W('w1', CODEX), W('w2', FORGE)] },
   { name: '에이전트 루트는 접지 않는다', rootId: 'r', messages: [F('r', '스레드 시작'), C('m1'), F('m2'), C('m3')] },
   { name: '사람 루트', rootId: 'r', messages: [H('r', '@forge @codex 봐 줘'), F('m1'), C('m2'), F('m3')] },
+  { name: '사람 원글에서 에이전트 둘을 부르면 각자 첫 답은 펼친다', rootId: 'r', messages: [H('r', '<@22222222-2222-4222-8222-222222222222> <@33333333-3333-4333-8333-333333333333> 봐 줘'), F('m1', '봤다'), C('m2', '나도 봤다'), F('m3'), C('m4')] },
   { name: '사람 루트 뒤 사람 말', rootId: 'r', messages: [H('r'), F('m1'), H('h1'), F('m2'), C('m3'), F('m4'), C('m5')] },
   { name: '시스템 줄도 말이다', messages: [F('m1'), { id: 's1', authorId: CODEX, kind: 'system', body: '시스템' }, F('m2')] },
   { name: '첨부만 있는 마지막 말', messages: [F('m1'), C('m2', '', { attachments: 2 })] },

@@ -119,6 +119,11 @@ List<FoldSlot> groupAgentExchanges(
 
     if (m.id == rootId) {
       flush();
+      // 사람이 쓴 루트는 사람의 발화다 — 기준선을 연다(원본 주석, 2026-10-13).
+      if (!isAgent(m.authorId)) {
+        turnOpen = true;
+        answered.clear();
+      }
       out.add(slot);
       continue;
     }

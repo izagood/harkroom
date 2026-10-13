@@ -2585,15 +2585,88 @@
           "message": "r"
         },
         {
+          "message": "m1"
+        },
+        {
+          "message": "m2"
+        },
+        {
+          "message": "m3"
+        }
+      ]
+    },
+    {
+      "name": "사람 원글에서 에이전트 둘을 부르면 각자 첫 답은 펼친다",
+      "rootId": "r",
+      "messages": [
+        {
+          "id": "r",
+          "seq": 1,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "<@22222222-2222-4222-8222-222222222222> <@33333333-3333-4333-8333-333333333333> 봐 줘",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m1",
+          "seq": 2,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "봤다",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "나도 봤다",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 4,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m4",
+          "seq": 5,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m4 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:04:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "r"
+        },
+        {
+          "message": "m1"
+        },
+        {
+          "message": "m2"
+        },
+        {
           "exchange": [
             {
-              "message": "m1"
-            },
-            {
-              "message": "m2"
-            },
-            {
               "message": "m3"
+            },
+            {
+              "message": "m4"
             }
           ],
           "participants": [
@@ -2602,8 +2675,8 @@
           ],
           "conclusion": null,
           "lastLine": {
-            "authorId": "22222222-2222-4222-8222-222222222222",
-            "text": "m3 말"
+            "authorId": "33333333-3333-4333-8333-333333333333",
+            "text": "m4 말"
           }
         }
       ]
