@@ -12,7 +12,7 @@ import { getHandleGroupByHandle, listHandleGroupMembers } from './handleGroups.j
 import { getTeam, getTeamByName, listTeamMembers } from './teams.js';
 import { invokeFactsFor, mayInvoke, mayInvokeTeam, type InvokeVia } from './invokeGate.js';
 import { closeReplyGrants, openReplyGrants } from './replyGrants.js';
-import { enqueueInboxPush } from './push/pushJobs.js';
+import { enqueueInboxPushMany } from './push/pushJobs.js';
 import { displayBodySql } from './systemBody.js';
 import { guardMetaI18n } from './systemI18n.js';
 
@@ -584,23 +584,44 @@ async function insertInbox(
    */
   teamId?: string,
 ): Promise<void> {
+  await insertInboxMany(client, [accountId], messageId, reason, notified, teamId);
+}
+
+/**
+ * 부름을 만드는 **유일한 관문**(위 `insertInbox` 는 한 사람짜리 감싸개다). 받는 사람 여럿을 질의 셋으로 넣는다
+ * (2026-10-13 쿼리 개선 Q3): inbox · 푸시 job · 숨김 되돌리기. 예전에는 사람마다 이 셋을 따로 냈다 — `@channel`
+ * 하나가 받는 사람 25명이면 질의 75개였고, 그 전부가 **채널 seq 락을 쥔 채** 돌았다(`postMessage` 의 락 주석:
+ * 락은 커밋까지 쥐어야 한다, #523). 그동안 같은 채널의 다음 글은 커넥션을 쥔 채 줄을 섰다.
+ *
+ * 규칙은 그대로다 — 순서를 지킨다(`with ordinality`, inbox id 가 예전 루프와 같은 순서로 나간다):
+ */
+async function insertInboxMany(
+  client: PoolClient, accountIds: string[], messageId: string, reason: InboxEntry['reason'], notified: Set<string>,
+  teamId?: string,
+): Promise<void> {
+  if (!accountIds.length) return;
   /**
    * 차단(109) — 받는 사람이 작성자를 차단했으면 부름을 만들지 않는다. 이 관문이 부름을 만드는 유일한
    * 자리라 멘션·DM·스레드 답글·팀·집합이 한꺼번에 막히고, 푸시·숨김 되돌리기도 따라 빠진다.
    */
-  const inserted = await client.query<{ id: string }>(
+  const inserted = await client.query<{ id: string; account_id: string }>(
     `insert into inbox (account_id, message_id, reason, team_id)
-     select $1, $2, $3, $4
+     select a.id, $2, $3, $4
+       from unnest($1::uuid[]) with ordinality as a(id, ord)
       where not exists (
         select 1 from account_block b join message m on m.id = $2
-         where b.blocker_id = $1 and b.blocked_id = m.author_id)
-     returning id`,
-    [accountId, messageId, reason, teamId ?? null],
+         where b.blocker_id = a.id and b.blocked_id = m.author_id)
+      order by a.ord
+     returning id, account_id`,
+    [accountIds, messageId, reason, teamId ?? null],
   );
   if (!inserted.rowCount) return;
   // 푸시(093): 같은 트랜잭션에 job 을 넣는다. 사람이고 기기가 있을 때만 행이 생긴다.
   // 이 관문이 부름을 만드는 유일한 자리라 "알림을 받은 사람"과 "폰이 울리는 사람"이 갈리지 않는다.
-  await enqueueInboxPush(client, inserted.rows[0]!.id, accountId, messageId, reason);
+  await enqueueInboxPushMany(
+    client, inserted.rows.map((r) => ({ inboxId: r.id, accountId: r.account_id })), messageId, reason,
+  );
+  const got = inserted.rows.map((r) => r.account_id);
   /**
    * 숨김 되돌리기(#376 결정 B) — **부름은 숨김을 뚫는다.** 이 자리인 이유: inbox 항목을
    * 만드는 관문이 이 함수 하나이므로, "알림을 받은 사람"과 "사이드바에 다시 나타나는 사람"이
@@ -624,12 +645,12 @@ async function insertInbox(
   if (REVEAL_REASONS.has(reason)) {
     await client.query(
       `update channel_pref set hidden_at = null
-        where account_id = $1 and hidden_at is not null
+        where account_id = any($1::uuid[]) and hidden_at is not null
           and channel_id = (select channel_id from message where id = $2)`,
-      [accountId, messageId],
+      [got, messageId],
     );
   }
-  notified.add(accountId);
+  for (const id of got) notified.add(id);
 }
 
 /**
@@ -679,12 +700,15 @@ async function fanOutMention(
   // 걸러진 부름은 meta 에 남지 않는다(행이 이미 나갔다) — 팀·auto-mention 은 넣는 시점에 400 으로
   // 막히므로 이 거름은 그 전에 들어간 옛 데이터를 위한 방어다.
   const facts = await invokeFactsFor(client, audience.rows.map((r) => r.id));
+  // 거르기는 사람마다(호출 게이트는 에이전트에게만 질의가 있다), 넣기는 한 번에(Q3 — `insertInboxMany` 주석).
+  const recipients: string[] = [];
   for (const row of audience.rows) {
     if (notified.has(row.id)) continue;
     const fact = facts.get(row.id);
     if (fact && !(await mayInvoke(client, fact, { callerId: input.authorId, channelId: input.channelId, via }))) continue;
-    await insertInbox(client, row.id, input.messageId, call.reason, notified, call.teamId);
+    recipients.push(row.id);
   }
+  await insertInboxMany(client, recipients, input.messageId, call.reason, notified, call.teamId);
 }
 
 /**
@@ -1127,12 +1151,17 @@ async function fanOutCalls(
     막힌 호출은 조용히 사라지지 않고 `meta.mentionChainCapped` 로 그 메시지에 남는다 —
     화면이 그 사실을 그려야 사람이 "왜 아무도 안 왔나"를 묻지 않는다(design.md §4).
   */
+  // 넣기는 묶어서 한다(Q3 — `insertInboxMany` 주석). 사유·팀이 같은 **연속한** 사람끼리 한 번에 넣으므로 inbox id 의
+  // 순서는 예전 한 사람씩 넣던 순서와 같다. 같은 사람이 두 번 오면(본문에 두 번 부름) 처음 것만 넣는다 — 예전에는
+  // 첫 insert 가 `notified` 에 들어가 두 번째를 건넜다.
+  const runs: { reason: InboxEntry['reason']; teamId?: string; ids: string[] }[] = [];
+  const queued = new Set<string>();
   for (const accountId of calledIds) {
     // 상한에 걸린 에이전트는 **inbox 항목을 받지 않는다** — 그것이 곧 턴이 뜨지 않는다는
     // 뜻이다(러너는 inbox 를 폴한다). 판정은 위에서 이미 끝났고 여기서 다시 하지 않는다.
     // 지칭(`refIds`)도 같은 이유로 여기 오지 않는다 — 이름은 본문에 남고 턴은 뜨지 않는다.
     // 이미 받은 사람은 건너뛴다 — 게시에서는 이 시점에 비어 있고, 수정은 이 메시지로 이미 받은 명단으로 시작한다.
-    if (notified.has(accountId)) continue;
+    if (notified.has(accountId) || queued.has(accountId)) continue;
     if (accountId !== ctx.authorId && !cappedIds.has(accountId) && !deniedIds.has(accountId)) {
       /*
         **팀과 그 팀장을 한 발화에서 함께 불렀으면 팀장 항목에 팀을 싣는다**(`@ops @lead`).
@@ -1142,11 +1171,14 @@ async function fanOutCalls(
         팀장인 줄 몰랐던 자리다. 누가 팀장 하나로 가는지는 insert 앞에서 이미 정했다(`teamPlans`).
       */
       const ledTeam = teamPlans.find((p) => p.viaLead && p.recipients[0] === accountId);
-      await insertInbox(
-        client, accountId, ctx.messageId, ledTeam ? 'team_mention' : 'mention', notified, ledTeam?.teamId,
-      );
+      const reason: InboxEntry['reason'] = ledTeam ? 'team_mention' : 'mention';
+      const last = runs[runs.length - 1];
+      if (last && last.reason === reason && last.teamId === ledTeam?.teamId) last.ids.push(accountId);
+      else runs.push({ reason, teamId: ledTeam?.teamId, ids: [accountId] });
+      queued.add(accountId);
     }
   }
+  for (const run of runs) await insertInboxMany(client, run.ids, ctx.messageId, run.reason, notified, run.teamId);
 
   // `@channel`(#225) — 판정(`channelCalled`)과 근거는 `resolveMentionCalls` 에 있다.
   if (channelCalled && !accountHandles.has(CHANNEL_MENTION_HANDLE)) {
@@ -1549,14 +1581,16 @@ export async function postMessage(
       );
       // 상대가 에이전트면 호출 게이트를 지난다(바로 위 스레드 답글과 같은 이유). 사람은 facts 에 없어 그대로 받는다.
       const dmFacts = await invokeFactsFor(client, members.rows.map((r) => r.account_id));
+      const dmRecipients: string[] = [];
       for (const row of members.rows) {
         if (notified.has(row.account_id)) continue;
         const fact = dmFacts.get(row.account_id);
         if (fact && !(await mayInvoke(client, fact, {
           callerId: input.authorId, channelId: input.channelId, via: 'mention', replyGrantThreadId: input.threadRootId ?? null,
         }))) continue;
-        await insertInbox(client, row.account_id, message.id, 'dm', notified);
+        dmRecipients.push(row.account_id);
       }
+      await insertInboxMany(client, dmRecipients, message.id, 'dm', notified);
     }
 
     /**
