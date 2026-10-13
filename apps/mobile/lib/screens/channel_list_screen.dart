@@ -303,7 +303,7 @@ class ShortcutCards extends StatelessWidget {
               key: const Key('card-my-turn'),
               icon: Icons.inbox_outlined,
               label: t.cardMyTurn,
-              count: app.inboxUnread,
+              count: app.inboxMine,
               selected: false,
               onTap: () => app.selectTab(2),
             ),

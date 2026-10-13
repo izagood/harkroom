@@ -484,7 +484,7 @@ List<BoardCard> buildBoard({
     // 가장 늦은 시각 — 같으면 앞 것(TS reduce 의 `>=`).
     final candidates = [head?.lastReplyAt, head?.createdAt, latest?.createdAt].whereType<DateTime>();
     final lastActivityAt = candidates.reduce((a, b) => a.millisecondsSinceEpoch >= b.millisecondsSinceEpoch ? a : b);
-    final stale = nowMs - lastActivityAt.millisecondsSinceEpoch > recentMs;
+    final stale = _known(lastActivityAt) && nowMs - lastActivityAt.millisecondsSinceEpoch > recentMs;
     final running = head?.lastKind == 'progress';
     final state = _effectiveState(states[rootId], latest?.createdAt.millisecondsSinceEpoch ?? 0, nowMs);
     final openAsk = list.where((e) => _askForMe(e.meta, me, scope) != null).firstOrNull;
@@ -510,6 +510,7 @@ List<BoardCard> buildBoard({
       column = BoardColumn.done;
       fold = BoardFold.cleared;
     } else if ((column == BoardColumn.mine || column == BoardColumn.blocked) &&
+        _known(sinceAt) &&
         nowMs - sinceAt.millisecondsSinceEpoch > recentMs) {
       fold = BoardFold.stale;
     } else if (column == BoardColumn.active && stale && !running) {
@@ -571,5 +572,10 @@ int? daysWaiting(DateTime sinceAt, int nowMs) {
   final days = ((nowMs - sinceAt.millisecondsSinceEpoch) / 86400000).floor();
   return days >= 1 ? days : null;
 }
+
+/// 시각을 읽었나. 읽기에 실패한 시각은 epoch 0 으로 떨어진다(`InboxEntry.fromJson`·`BoardHead.fromJson`) — 그것으로
+/// 7일을 재면 **접혀 숫자에서 빠진다.** TS 는 같은 자리에서 NaN 이라 접히지 않는다(security #1351 n1). 못 읽은
+/// 시각은 접는 근거로 쓰지 않는다 — 숨기는 쪽보다 한 번 더 보이는 쪽이 싸다.
+bool _known(DateTime d) => d.millisecondsSinceEpoch != 0;
 
 DateTime? _date(Object? v) => v is String ? DateTime.tryParse(v)?.toUtc() : null;

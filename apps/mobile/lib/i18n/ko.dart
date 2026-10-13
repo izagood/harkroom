@@ -376,6 +376,8 @@ class StringsKo implements Strings {
   String get inboxEmpty => '인박스가 비어 있다.';
 
   @override
+  String get inboxMineCount => '나를 기다리는 일 {count}';
+  @override
   String get inboxTabTodo => '할 일';
   @override
   String get inboxTabNews => '소식';

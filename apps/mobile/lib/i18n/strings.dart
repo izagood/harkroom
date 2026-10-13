@@ -496,6 +496,9 @@ abstract class Strings {
   /// 인박스 맨 위 줄 — 그 커뮤니티로 옮긴다.
   String get inboxOtherView;
 
+  /// 머리 숫자 — 나를 기다리는 일 수(mineCount, G1 (b)). `{count}` 가 바뀐다.
+  String get inboxMineCount;
+
   /// 할 일 갈래 — 내 차례(Inbox A안).
   String get inboxTabTodo;
 
@@ -1285,6 +1288,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'inboxEmpty': s.inboxEmpty,
       'inboxOtherCommunity': s.inboxOtherCommunity,
       'inboxOtherView': s.inboxOtherView,
+      'inboxMineCount': s.inboxMineCount,
       'inboxTabTodo': s.inboxTabTodo,
       'inboxTabNews': s.inboxTabNews,
       'inboxTabLater': s.inboxTabLater,

@@ -274,6 +274,13 @@ class AppState extends ChangeNotifier {
     return cards;
   }
 
+  /// 보드 줄의 채널 이름 — DM 은 이름 그대로, 채널은 `#이름`. 모르는 채널(목록에 아직 없다)은 `#…`.
+  String boardChannelLabel(String channelId) {
+    final c = channels.where((x) => x.id == channelId).firstOrNull;
+    if (c == null) return '#…';
+    return c.isDm ? c.name : '#${c.name}';
+  }
+
   /// **나를 기다리는 일 수** — 인박스 탭 배지와 머리 숫자(G1 (b), 2026-10-13 jaebin). 데스크톱 보드·배지와 같은
   /// 함수(`mineCount`)다 — 같은 계정에서 두 기기가 다른 숫자를 말하지 않게. 7일 넘은 것·미룬 것·치운 것은 빠진다.
   int get inboxMine => mineCount(boardCards);

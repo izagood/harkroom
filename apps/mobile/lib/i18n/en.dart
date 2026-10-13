@@ -377,6 +377,8 @@ class StringsEn implements Strings {
   String get inboxEmpty => 'Nothing here yet.';
 
   @override
+  String get inboxMineCount => '{count} waiting on you';
+  @override
   String get inboxTabTodo => 'To do';
   @override
   String get inboxTabNews => 'Updates';
