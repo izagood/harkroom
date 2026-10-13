@@ -71,6 +71,30 @@ export async function enqueueInboxPush(
   );
 }
 
+/**
+ * `enqueueInboxPush` 를 여러 받는 사람에 한 번에(2026-10-13 쿼리 개선 Q3). `@channel`·집합·DM 팬아웃이 사람마다
+ * 질의를 하나씩 내던 것을 한 번으로 줄인다 — 이 질의는 채널 seq 락을 쥔 채 돌므로(`postMessage`) 줄 수록 같은 채널의
+ * 다음 글이 덜 기다린다. 규칙(사유·사람만·기기 있는 사람만·늦춤)은 위 함수와 같다.
+ */
+export async function enqueueInboxPushMany(
+  client: PoolClient | Pool, rows: { inboxId: string | number; accountId: string }[], messageId: string, reason: string,
+): Promise<void> {
+  if (!rows.length || !INBOX_PUSH_REASONS.has(reason)) return;
+  await client.query(
+    `insert into push_job (account_id, message_id, inbox_id, reason, not_before)
+     select r.account_id, $3, r.inbox_id, $4,
+            now() + case when $4 <> 'dm' and ${agentPlainSql('m', 'au')} and ${mineThreadSql('m', 'r.account_id')}
+                         then make_interval(secs => $5) else interval '15 seconds' end
+       from unnest($1::uuid[], $2::bigint[]) with ordinality as r(account_id, inbox_id, ord)
+       join message m on m.id = $3
+       join account au on au.id = m.author_id
+      where exists (select 1 from account where id = r.account_id and kind = 'human')
+        and exists (select 1 from push_device where account_id = r.account_id)
+      order by r.ord`,
+    [rows.map((r) => r.accountId), rows.map((r) => String(r.inboxId)), messageId, reason, PUSH_AGENT_REPLY_DELAY_SEC],
+  );
+}
+
 /** inbox 를 거치지 않는 `ask`(G4). 받는 사람은 부르는 쪽이 차례 주인으로 정해 넘긴다. */
 export async function enqueueAskPush(pool: Pool | PoolClient, accountId: string, messageId: string): Promise<void> {
   await pool.query(
