@@ -1233,17 +1233,32 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
     final gen = _generation;
+    _savedReadsInFlight++;
     try {
       final entries = await api.savedMessages(state);
       if (gen != _generation) return;
-      saved[state]!
+      final list = saved[state]!
         ..clear()
         ..addAll(entries);
+      // 답을 기다리는 옮기기를 겹친다 — 떠난 줄은 빼고, 들어온 줄은 없으면 끼운다.
+      for (final moved in _savedMoving.values) {
+        if (moved.state == state) {
+          if (!list.any((e) => e.messageId == moved.messageId)) _insertSaved(list, moved);
+        } else {
+          list.removeWhere((e) => e.messageId == moved.messageId);
+        }
+      }
       savedLoad[state] = LoadState.loaded;
     } on Object catch (e) {
       if (gen != _generation) return;
       failures['saved-${state.name}'] = LoadFailure.of(e);
       if (savedLoad[state] != LoadState.loaded) savedLoad[state] = LoadState.failed;
+    } finally {
+      // 겹치기를 **마친 뒤에** 끝난 옮기기를 걷는다 — 먼저 걷으면 이 (옛) 목록이 옮긴 줄을 되살린다.
+      if (gen == _generation && --_savedReadsInFlight == 0) {
+        _savedSettled.forEach(_savedMoving.remove);
+        _savedSettled.clear();
+      }
     }
     notifyListeners();
   }
@@ -1292,25 +1307,63 @@ class AppState extends ChangeNotifier {
     unawaited(loadSavedSummary());
   }
 
-  /// 할 것 ↔ 완료. 줄을 다른 칸으로 옮긴다(그 칸을 읽어 둔 때만 — 안 읽었으면 열 때 서버에서 읽는다).
+  /// 할 것 ↔ 완료 옮기기: id → 옮겨 간 칸의 모양(state 는 이미 새 칸). [loadSaved] 가 서버가 아직
+  /// 반영하기 전의 목록을 받아도 옮긴 줄이 되살아나거나 사라지지 않게 겹친다. 답이 와도(성공) 그 전에
+  /// 떠난 읽기가 남아 있으면 그 읽기가 옛 목록을 가져오므로, 날아가는 읽기가 없어질 때까지 둔다.
+  final _savedMoving = <String, SavedEntry>{};
+  final _savedSettled = <String>{};
+  var _savedReadsInFlight = 0;
+
+  /// 할 것 ↔ 완료. **줄을 먼저 옮기고**(낙관적) 요청은 뒤에서 보낸다 — 서버 답(~0.4초)을 기다리는 동안
+  /// 줄이 제자리에 서 있었다(데스크톱 #1347 과 같은 동작). 줄마다 따로 돈다 — 연달아 눌러도 서로를
+  /// 기다리지 않는다. 실패하면 **그 줄만** 원래 칸·원래 자리로 되돌리고 던진다(부르는 화면이 알린다).
+  /// 옮긴 칸은 읽어 둔 때만 끼운다 — 안 읽었으면 열 때 서버에서 읽는다.
   Future<void> setSavedState(String messageId, SavedState next) async {
     final gen = _generation;
-    await _api!.setSavedState(messageId, next);
-    if (gen != _generation) return;
-    final from = saved[next == SavedState.open ? SavedState.done : SavedState.open]!;
+    final api = _api!;
+    if (_savedMoving.containsKey(messageId)) return;
+    final fromState = next == SavedState.open ? SavedState.done : SavedState.open;
+    final from = saved[fromState]!;
     final at = from.indexWhere((e) => e.messageId == messageId);
+    SavedEntry? original;
     if (at >= 0) {
-      final moved = from.removeAt(at).withState(next);
-      if (savedLoad[next] == LoadState.loaded) {
-        final to = saved[next]!..removeWhere((e) => e.messageId == messageId);
-        // 서버 순서(담은 때 새것 먼저)대로 끼운다.
-        final pos = to.indexWhere((e) => e.createdAt.isBefore(moved.createdAt));
-        to.insert(pos < 0 ? to.length : pos, moved);
-      }
+      original = from.removeAt(at);
+      final moved = original.withState(next);
+      _savedMoving[messageId] = moved;
+      if (savedLoad[next] == LoadState.loaded) _insertSaved(saved[next]!, moved);
     }
-    savedOpenCount = (savedOpenCount + (next == SavedState.open ? 1 : -1)).clamp(0, 1 << 30);
+    final delta = next == SavedState.open ? 1 : -1;
+    savedOpenCount = (savedOpenCount + delta).clamp(0, 1 << 30);
     notifyListeners();
+    try {
+      await api.setSavedState(messageId, next);
+    } on Object {
+      if (gen != _generation) rethrow;
+      _savedMoving.remove(messageId);
+      _savedSettled.remove(messageId);
+      saved[next]!.removeWhere((e) => e.messageId == messageId);
+      if (original != null && savedLoad[fromState] == LoadState.loaded) {
+        final list = saved[fromState]!..removeWhere((e) => e.messageId == messageId);
+        list.insert(at.clamp(0, list.length), original);
+      }
+      savedOpenCount = (savedOpenCount - delta).clamp(0, 1 << 30);
+      notifyListeners();
+      rethrow;
+    }
+    if (gen != _generation) return;
+    if (_savedReadsInFlight == 0) {
+      _savedMoving.remove(messageId);
+    } else {
+      _savedSettled.add(messageId);
+    }
     unawaited(loadSavedSummary());
+  }
+
+  /// 서버 순서(담은 때 새것 먼저)대로 끼운다. 이미 있으면 바꿔 끼운다.
+  void _insertSaved(List<SavedEntry> to, SavedEntry entry) {
+    to.removeWhere((e) => e.messageId == entry.messageId);
+    final pos = to.indexWhere((e) => e.createdAt.isBefore(entry.createdAt));
+    to.insert(pos < 0 ? to.length : pos, entry);
   }
 
   /// DM 의 이름: 나를 뺀 상대들의 이름을 쉼표로. 나 혼자인 DM(메모)이면 내 이름.
@@ -2252,6 +2305,9 @@ class AppState extends ChangeNotifier {
     // 담아 둔 것도 그 계정의 것이다.
     savedIds.clear();
     savedOpenCount = 0;
+    _savedMoving.clear();
+    _savedSettled.clear();
+    _savedReadsInFlight = 0;
     for (final state in SavedState.values) {
       saved[state]!.clear();
       savedLoad[state] = LoadState.loading;

@@ -15,6 +15,7 @@ import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_scope.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:harkroom/theme.dart';
+import 'package:harkroom/ui/states.dart';
 import 'package:harkroom/ui/tokens.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -44,6 +45,12 @@ class _Server {
 
   /// PATCH 를 실패시킨다(밀기가 실패하면 줄이 제자리로 돌아오는지).
   bool failPatch = false;
+
+  /// 이 id 의 PATCH 만 실패시킨다(연달아 누른 줄이 서로 독립인지).
+  final failPatchIds = <String>{};
+
+  /// 차 있으면 PATCH 가 이것을 기다린다 — 답이 오기 전에 줄이 이미 옮겨졌는지(낙관적 갱신).
+  Completer<void>? holdPatch;
 
   /// 차 있으면 PUT 이 이것을 기다린다 — 기다리는 사이 계정을 바꾸는 시험.
   Completer<void>? holdPut;
@@ -123,7 +130,8 @@ class _Server {
               saved[id] = ('open', _clock++);
               return _json(_entry(id));
             case 'PATCH':
-              if (failPatch) return _json({'error': {'code': 'boom', 'message': 'x'}}, 500);
+              if (holdPatch != null) await holdPatch!.future;
+              if (failPatch || failPatchIds.contains(id)) return _json({'error': {'code': 'boom', 'message': 'x'}}, 500);
               final state = (jsonDecode(req.body) as Map)['state'] as String;
               saved[id] = (state, saved[id]!.$2);
               return _json(_entry(id));
@@ -196,6 +204,58 @@ void main() {
       expect(app.isSaved('m2'), isTrue);
       await app.loadSavedSummary();
       expect(app.savedOpenCount, 3);
+    });
+
+    test('✓ 는 답을 기다리지 않고 줄을 옮긴다 — 실패하면 그 줄만 원래 칸·자리로, 다른 줄은 그대로', () async {
+      final server = _Server();
+      server.saved['m2'] = ('open', 5);
+      final app = await _open(server);
+      addTearDown(app.dispose);
+      await app.loadSaved(SavedState.open);
+      await app.loadSaved(SavedState.done);
+      expect(app.saved[SavedState.open]!.map((e) => e.messageId), ['m2', 'm1', 'gone']);
+      final openBefore = app.savedOpenCount;
+
+      server.holdPatch = Completer<void>();
+      server.failPatchIds.add('m1');
+      // 실패를 바로 받아 둔다 — 아래에서 기다리는 사이 처리 안 된 오류로 떨어지지 않게.
+      final m1Failed = app.setSavedState('m1', SavedState.done).then((_) => false, onError: (Object _) => true);
+      final gone = app.setSavedState('gone', SavedState.done);
+      // 답이 오기 전 — 두 줄 다 이미 완료 칸에 있고 숫자도 줄었다.
+      expect(app.saved[SavedState.open]!.map((e) => e.messageId), ['m2']);
+      expect(app.saved[SavedState.done]!.map((e) => e.messageId).toSet(), {'m1', 'gone', 'hidden'});
+      expect(app.savedOpenCount, openBefore - 2);
+
+      // 답을 기다리는 사이 목록을 다시 읽어도(서버는 아직 옛 상태) 옮긴 줄이 되살아나지 않는다.
+      final reread = <SavedState, Future<void>>{
+        for (final st in SavedState.values) st: app.loadSaved(st),
+      };
+      server.holdPatch!.complete();
+      await Future.wait(reread.values);
+      expect(await m1Failed, isTrue);
+      await gone;
+
+      // m1 만 실패 — 원래 자리(m2 다음)로 돌아오고, gone 은 완료에 남는다.
+      expect(app.saved[SavedState.open]!.map((e) => e.messageId), ['m2', 'm1']);
+      expect(app.saved[SavedState.done]!.map((e) => e.messageId), contains('gone'));
+      expect(app.saved[SavedState.done]!.map((e) => e.messageId), isNot(contains('m1')));
+      expect(app.savedOpenCount, openBefore - 1);
+    });
+
+    test('답을 기다리는 사이 다시 읽은 목록에 옮긴 줄을 겹친다', () async {
+      final server = _Server();
+      final app = await _open(server);
+      addTearDown(app.dispose);
+      await app.loadSaved(SavedState.open);
+      await app.loadSaved(SavedState.done);
+      server.holdPatch = Completer<void>();
+      final move = app.setSavedState('m1', SavedState.done);
+      await app.loadSaved(SavedState.open);
+      await app.loadSaved(SavedState.done);
+      expect(app.saved[SavedState.open]!.map((e) => e.messageId), isNot(contains('m1')));
+      expect(app.saved[SavedState.done]!.map((e) => e.messageId), contains('m1'));
+      server.holdPatch!.complete();
+      await move;
     });
 
     test('빼기 → DELETE, 두 칸 어디서든 줄이 빠진다', () async {
@@ -460,6 +520,20 @@ void main() {
       await _settle(tester);
       expect(server.bodies.last, {'state': 'open'});
       expect(find.byKey(const Key('saved-row-m1')), findsOneWidget);
+    });
+
+    testWidgets('✓ 를 누르면 답이 오기 전에 그 줄만 빠진다 — 로딩 칸이 서지 않는다', (tester) async {
+      final (server, _) = await pump(tester);
+      server.holdPatch = Completer<void>();
+      await tester.tap(find.byKey(const Key('saved-toggle-m1')));
+      await tester.pump();
+      expect(find.byKey(const Key('saved-row-m1')), findsNothing);
+      expect(find.byKey(const Key('saved-row-gone')), findsOneWidget);
+      expect(find.byType(LoadingSkeleton), findsNothing);
+      server.holdPatch!.complete();
+      await _settle(tester);
+      expect(find.byKey(const Key('saved-row-m1')), findsNothing);
+      expect(find.byKey(const Key('saved-moved-done')), findsOneWidget);
     });
 
     testWidgets('완료 칸: 볼 수 없는 채널의 글 문구, 버튼은 ↺(할 것으로 되돌리기)', (tester) async {
