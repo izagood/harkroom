@@ -4095,6 +4095,7 @@ export const en = {
   'saved.markDone': 'Mark as done',
   /** **표시가 아니라 이동이다** — 서버가 행을 다른 탭으로 옮기고, 사람이 보는 것이 그것이다. */
   'saved.markOpen': 'Put back on the list',
+  'saved.moveFailed': "Couldn't move it, so it's back — {reason}",
   'saved.retry': 'Try again',
   'saved.tabDone': 'Done',
   'saved.tabOpen': 'To do',

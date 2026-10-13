@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Overlay } from './Overlay';
 import type { SavedMessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
@@ -23,6 +23,25 @@ type Tab = 'open' | 'done';
 /** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
 const NO_TEAMS_FALLBACK: never[] = [];
 
+/** 옮기기 실패 알림이 떠 있는 시간. */
+const MOVE_FAILED_MS = 5_000;
+
+/** 서버에 보내 놓고 아직 답을 못 받은 옮기기 하나. 행은 이미 화면에서 옮겨져 있다. */
+interface PendingMove { row: SavedMessageRow; to: Tab }
+
+/**
+ * 서버에서 받은 한 탭의 목록에 아직 끝나지 않은 옮기기를 겹친다. 목록을 받는 사이에 서버가
+ * 그 옮기기를 반영했는지 모르므로, 떠나는 행은 빼고 들어오는 행은 없을 때만 맨 앞에 끼운다.
+ */
+function overlayPending(rows: SavedMessageRow[], tab: Tab, pending: ReadonlyMap<string, PendingMove>): SavedMessageRow[] {
+  if (pending.size === 0) return rows;
+  const out = rows.filter((r) => { const p = pending.get(r.messageId); return !p || p.to === tab; });
+  for (const p of pending.values()) {
+    if (p.to === tab && !out.some((r) => r.messageId === p.row.messageId)) out.unshift({ ...p.row, state: tab });
+  }
+  return out;
+}
+
 export function SavedMessages({ open, onClose }: Props) {
   const t = useT();
   const locale = useLocale();
@@ -37,15 +56,29 @@ export function SavedMessages({ open, onClose }: Props) {
   const [entries, setEntries] = useState<SavedMessageRow[]>([]);
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
   const [tab, setTab] = useState<Tab>('open');
-  // 체크를 누른 뒤 목록을 다시 받게 하는 방아쇠. 서버가 행을 다른 탭으로 옮겼으니
-  // 지역 상태만 고쳐 두면 화면과 서버가 갈라진다.
+  // 목록을 다시 받게 하는 방아쇠 — [다시 시도] 만 당긴다. 체크(✓·↺)는 당기지 않는다:
+  // 누를 때마다 목록 전체가 '불러오는 중' 으로 깜빡였다(10-13 jaebin). 체크는 그 행만
+  // 낙관적으로 옮기고 요청은 뒤에서 보낸다(`toggleState`).
   const [reloadSeq, setReloadSeq] = useState(0);
+  // 답을 기다리는 옮기기(messageId → 무엇을 어디로). 탭을 바꿔 목록을 새로 받아도 이 표를
+  // 겹치므로, 서버가 아직 반영하기 전이라도 옮긴 행이 되살아나거나 사라지지 않는다.
+  const pendingRef = useRef(new Map<string, PendingMove>());
+  // 비동기 답이 돌아왔을 때 지금 보이는 탭. 클로저의 `tab` 은 누른 때의 값이다.
+  const tabRef = useRef<Tab>(tab);
+  tabRef.current = tab;
+  const [moveFailed, setMoveFailed] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (moveFailed === null) return;
+    const id = setTimeout(() => setMoveFailed(null), MOVE_FAILED_MS);
+    return () => clearTimeout(id);
+  }, [moveFailed]);
 
   const reload = useCallback((): (() => void) => {
     let alive = true;
     setLoad({ kind: 'loading' });
     getController().loadSavedMessages(tab).then(
-      (rows) => { if (alive) { setEntries(rows); setLoad({ kind: 'ready' }); } },
+      (rows) => { if (alive) { setEntries(overlayPending(rows, tab, pendingRef.current)); setLoad({ kind: 'ready' }); } },
       (err: unknown) => {
         if (!alive) return;
         setEntries([]);
@@ -88,10 +121,31 @@ export function SavedMessages({ open, onClose }: Props) {
     onClose();
   };
 
+  /**
+   * 그 행만 지금 이 탭에서 빼고 요청은 뒤에서 보낸다. 행마다 따로 돈다 — 여러 개를 연달아
+   * 눌러도 서로를 기다리지 않는다. 실패하면 그 행만 원래 자리로 되돌리고 알린다.
+   */
   const toggleState = async (e: SavedMessageRow): Promise<void> => {
-    const next = e.state === 'open' ? 'done' : 'open';
-    await getController().updateSavedMessageState(e.messageId, next);
-    setReloadSeq((n) => n + 1);
+    const from: Tab = e.state;
+    const next: Tab = from === 'open' ? 'done' : 'open';
+    if (pendingRef.current.has(e.messageId)) return;
+    const at = entries.findIndex((r) => r.messageId === e.messageId);
+    pendingRef.current.set(e.messageId, { row: e, to: next });
+    setEntries((rows) => rows.filter((r) => r.messageId !== e.messageId));
+    try {
+      await getController().updateSavedMessageState(e.messageId, next);
+      pendingRef.current.delete(e.messageId);
+    } catch (err: unknown) {
+      pendingRef.current.delete(e.messageId);
+      const shown = tabRef.current;
+      setEntries((rows) => {
+        const rest = rows.filter((r) => r.messageId !== e.messageId);
+        if (shown !== from) return rest;
+        const pos = at < 0 ? 0 : Math.min(at, rest.length);
+        return [...rest.slice(0, pos), e, ...rest.slice(pos)];
+      });
+      setMoveFailed(errorText(err, t));
+    }
   };
 
   /**
@@ -178,6 +232,11 @@ export function SavedMessages({ open, onClose }: Props) {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
+          {moveFailed !== null && (
+            <div role="status" data-testid="saved-move-failed" className="mb-2 rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta text-danger">
+              {t('saved.moveFailed', { reason: moveFailed })}
+            </div>
+          )}
           {load.kind === 'error' && (
             <div role="alert" className="mb-3 rounded-row border border-danger-border bg-danger-surface p-2 text-danger">
               {t('saved.listFailed', { reason: load.message })}

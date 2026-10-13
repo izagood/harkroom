@@ -113,6 +113,79 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
     await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
   });
 
+  it('체크는 목록을 다시 받지 않는다 — 그 행만 즉시 빠지고 "불러오는 중" 이 뜨지 않는다', async () => {
+    // 서버 답을 붙잡아 둔다: 답이 오기 전에 이미 행이 빠져 있어야 낙관적 갱신이다.
+    let release!: () => void;
+    const c = fakeController({
+      loadSavedMessages: vi.fn(async (tab: 'open' | 'done') =>
+        (tab === 'open' ? [entry('m1', 'open'), entry('m2', 'open')] : [])),
+      updateSavedMessageState: vi.fn(() => new Promise<void>((r) => { release = r; })),
+    });
+    render(<SavedMessages open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
+    expect(c.loadSavedMessages).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId('saved-toggle-m1'));
+    expect(screen.queryByTestId('saved-entry-m1')).toBeNull();
+    expect(screen.getByTestId('saved-entry-m2')).toBeTruthy();
+    expect(screen.queryByText('불러오는 중…')).toBeNull();
+
+    release();
+    await waitFor(() => expect(c.updateSavedMessageState).toHaveBeenCalledWith('m1', 'done'));
+    await Promise.resolve();
+    expect(screen.queryByText('불러오는 중…')).toBeNull();
+    expect(c.loadSavedMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('실패하면 그 행만 원래 자리로 돌아오고 짧게 알린다 — 다른 행의 옮기기는 그대로다', async () => {
+    const holds = new Map<string, { ok: () => void; fail: (e: Error) => void }>();
+    const c = fakeController({
+      loadSavedMessages: vi.fn(async (tab: 'open' | 'done') =>
+        (tab === 'open' ? [entry('m1', 'open'), entry('m2', 'open'), entry('m3', 'open')] : [])),
+      updateSavedMessageState: vi.fn((id: string) =>
+        new Promise<void>((ok, fail) => { holds.set(id, { ok: () => ok(), fail }); })),
+    });
+    render(<SavedMessages open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('saved-entry-m2')).toBeTruthy());
+
+    // 연달아 둘을 누른다 — 둘 다 요청이 나가고 서로를 기다리지 않는다.
+    fireEvent.click(screen.getByTestId('saved-toggle-m2'));
+    fireEvent.click(screen.getByTestId('saved-toggle-m3'));
+    expect(c.updateSavedMessageState).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId('saved-entry-m2')).toBeNull();
+    expect(screen.queryByTestId('saved-entry-m3')).toBeNull();
+
+    holds.get('m2')!.fail(new Error('boom'));
+    await waitFor(() => expect(screen.getByTestId('saved-entry-m2')).toBeTruthy());
+    expect(screen.getByTestId('saved-move-failed')).toBeTruthy();
+    // 원래 자리(m1 다음)로 돌아온다.
+    const ids = screen.getAllByTestId(/^saved-entry-/).map((el) => el.getAttribute('data-testid'));
+    expect(ids).toEqual(['saved-entry-m1', 'saved-entry-m2']);
+
+    holds.get('m3')!.ok();
+    await Promise.resolve();
+    expect(screen.queryByTestId('saved-entry-m3')).toBeNull();
+    expect(c.loadSavedMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('답을 기다리는 사이 완료 탭을 열어도 옮긴 행이 보인다', async () => {
+    const c = fakeController({
+      // 서버는 아직 옮기기를 반영하지 않았다.
+      loadSavedMessages: vi.fn(async (tab: 'open' | 'done') => (tab === 'open' ? [entry('m1', 'open')] : [])),
+      updateSavedMessageState: vi.fn(() => new Promise<void>(() => undefined)),
+    });
+    render(<SavedMessages open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('saved-toggle-m1'));
+    fireEvent.click(screen.getByText('완료'));
+    await waitFor(() => expect(c.loadSavedMessages).toHaveBeenCalledWith('done'));
+    await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
+    expect(screen.getByTestId('saved-toggle-m1').textContent).toBe('↺');
+    // 다시 할 것 탭으로 가도 서버 목록의 낡은 행이 되살아나지 않는다.
+    fireEvent.click(screen.getByText('할 것'));
+    await waitFor(() => expect(screen.getByTestId('saved-empty')).toBeTruthy());
+  });
+
   it('4. 삭제된 메시지는 "삭제된 메시지" 로 남고 누를 수 없다', async () => {
     const c = fakeController({
       loadSavedMessages: vi.fn(async () => [entry('m1', 'open', { deleted: true, message: null })]),

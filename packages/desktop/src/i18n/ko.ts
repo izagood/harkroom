@@ -2115,6 +2115,7 @@ export const ko = {
   'saved.loading': '불러오는 중…',
   'saved.markDone': '완료로 표시',
   'saved.markOpen': '할 것으로 되돌리기',
+  'saved.moveFailed': '옮기지 못해 되돌렸다 — {reason}',
   'saved.retry': '다시 시도',
   'saved.tabDone': '완료',
   'saved.tabOpen': '할 것',
