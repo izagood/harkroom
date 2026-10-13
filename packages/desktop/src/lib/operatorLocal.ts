@@ -51,9 +51,15 @@ export function listLocalMcpServers(): Promise<OperatorMcpListResult> {
   return call('operator_mcp_list') as Promise<OperatorMcpListResult>;
 }
 
-/** http·sse 정의만 넣는다 — stdio 는 오퍼레이터가 거절한다(#431). */
-export async function setLocalMcpServer(name: string, definition: OperatorMcpRemoteDefinition): Promise<void> {
-  await call('operator_mcp_set', { name, definition });
+/**
+ * http·sse 정의만 넣는다 — stdio 는 오퍼레이터가 거절한다(#431).
+ * `clientSecret` 은 사람이 칸에 적었을 때만 싣는다(2026-10-07). 오퍼레이터가 정의에서 빼서 자기 비밀 파일에만
+ * 두고, 목록으로는 "있다"만 돌려준다 — 앱은 이 값을 다시 읽지 못한다.
+ */
+export async function setLocalMcpServer(name: string, definition: OperatorMcpRemoteDefinition, opts: { clientSecret?: string } = {}): Promise<void> {
+  const secret = opts.clientSecret?.trim();
+  const def = secret ? { ...definition, oauth: { ...(definition.oauth ?? {}), clientSecret: secret } } : definition;
+  await call('operator_mcp_set', { name, definition: def });
 }
 
 export async function removeLocalMcpServer(name: string): Promise<void> {
