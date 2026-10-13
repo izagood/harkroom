@@ -493,6 +493,16 @@ class StringsEn implements Strings {
 
   @override
   String get agentWorking => 'Working';
+  @override
+  String get exchangeDecided => 'Decided';
+  @override
+  String get exchangeFinished => 'Finished';
+  @override
+  String get exchangeCollapse => 'Collapse';
+  @override
+  String exchangeCount(int n) => n == 1 ? '1 exchange' : '$n exchanges';
+  @override
+  String exchangeAttachments(int n) => n == 1 ? '1 attachment' : '$n attachments';
 
   @override
   String get agentWaiting => 'Waiting';

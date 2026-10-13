@@ -1,0 +1,3383 @@
+{
+  "agents": [
+    "22222222-2222-4222-8222-222222222222",
+    "33333333-3333-4333-8333-333333333333",
+    "44444444-4444-4444-8444-444444444444"
+  ],
+  "cases": [
+    {
+      "name": "에이전트 둘이 주고받으면 접힌다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "혼잣말은 접지 않는다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "m1"
+        },
+        {
+          "message": "m2"
+        },
+        {
+          "message": "m3"
+        }
+      ]
+    },
+    {
+      "name": "말 하나는 접지 않는다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "p1",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "진행",
+          "kind": "progress",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "m1"
+        },
+        {
+          "progress": [
+            "p1"
+          ],
+          "endedAt": null
+        }
+      ]
+    },
+    {
+      "name": "사람이 끼면 구간이 끊긴다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "h1",
+          "seq": 3,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "그만",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 4,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 <@11111111-1111-4111-8111-111111111111> 알겠다",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m4",
+          "seq": 5,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m4 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:04:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m5",
+          "seq": 6,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m5 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:05:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "33333333-3333-4333-8333-333333333333",
+            "text": "m2 말"
+          }
+        },
+        {
+          "message": "h1"
+        },
+        {
+          "message": "m3"
+        },
+        {
+          "message": "m4"
+        },
+        {
+          "message": "m5"
+        }
+      ]
+    },
+    {
+      "name": "사람이 부른 뒤 각 에이전트의 첫 답은 펼친다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "h1",
+          "seq": 1,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "h1 사람 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m1",
+          "seq": 2,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 4,
+          "authorId": "44444444-4444-4444-8444-444444444444",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m4",
+          "seq": 5,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m4 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:04:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m5",
+          "seq": 6,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m5 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:05:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m6",
+          "seq": 7,
+          "authorId": "44444444-4444-4444-8444-444444444444",
+          "body": "m6 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:06:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "h1"
+        },
+        {
+          "message": "m1"
+        },
+        {
+          "message": "m2"
+        },
+        {
+          "message": "m3"
+        },
+        {
+          "exchange": [
+            {
+              "message": "m4"
+            },
+            {
+              "message": "m5"
+            },
+            {
+              "message": "m6"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333",
+            "44444444-4444-4444-8444-444444444444"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "44444444-4444-4444-8444-444444444444",
+            "text": "m6 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "사람이 말한 적 없으면 첫 답 예외가 없다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "44444444-4444-4444-8444-444444444444",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333",
+            "44444444-4444-4444-8444-444444444444"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "44444444-4444-4444-8444-444444444444",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "실패는 접지 않는다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "못 했다",
+          "kind": "user",
+          "meta": {
+            "kind": "failure",
+            "failure": {
+              "what": "못 했다",
+              "retryable": true
+            }
+          },
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m4",
+          "seq": 4,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m4 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m5",
+          "seq": 5,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m5 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:04:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "33333333-3333-4333-8333-333333333333",
+            "text": "m2 말"
+          }
+        },
+        {
+          "message": "m3"
+        },
+        {
+          "exchange": [
+            {
+              "message": "m4"
+            },
+            {
+              "message": "m5"
+            }
+          ],
+          "participants": [
+            "33333333-3333-4333-8333-333333333333",
+            "22222222-2222-4222-8222-222222222222"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m5 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "retryable 이 boolean 이 아닌 실패는 실패로 안 읽는다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "못 했다",
+          "kind": "user",
+          "meta": {
+            "kind": "failure",
+            "failure": {
+              "what": "못 했다",
+              "retryable": "yes"
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "사람에게 온 미답 선택은 접지 않는다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "고를까",
+          "kind": "user",
+          "meta": {
+            "kind": "ask",
+            "ask": {
+              "options": [
+                {
+                  "id": "a",
+                  "label": "첫째 안"
+                },
+                {
+                  "id": "b",
+                  "label": "둘째 안"
+                }
+              ],
+              "to": {
+                "kind": "human"
+              }
+            }
+          },
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m4",
+          "seq": 4,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m4 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m5",
+          "seq": 5,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m5 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:04:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "33333333-3333-4333-8333-333333333333",
+            "text": "m2 말"
+          }
+        },
+        {
+          "message": "m3"
+        },
+        {
+          "exchange": [
+            {
+              "message": "m4"
+            },
+            {
+              "message": "m5"
+            }
+          ],
+          "participants": [
+            "33333333-3333-4333-8333-333333333333",
+            "22222222-2222-4222-8222-222222222222"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m5 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "답한 선택은 접히고 결론이 된다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "고를까",
+          "kind": "user",
+          "meta": {
+            "kind": "ask",
+            "ask": {
+              "options": [
+                {
+                  "id": "a",
+                  "label": "첫째 안"
+                },
+                {
+                  "id": "b",
+                  "label": "둘째 안"
+                }
+              ],
+              "to": {
+                "kind": "human"
+              },
+              "answeredWith": "b",
+              "answeredBy": "11111111-1111-4111-8111-111111111111"
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": {
+            "source": "ask",
+            "text": "둘째 안"
+          },
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "닫힌 선택도 접힌다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "고를까",
+          "kind": "user",
+          "meta": {
+            "kind": "ask",
+            "ask": {
+              "options": [
+                {
+                  "id": "a",
+                  "label": "첫째 안"
+                },
+                {
+                  "id": "b",
+                  "label": "둘째 안"
+                }
+              ],
+              "to": {
+                "kind": "human"
+              },
+              "closedAt": "2026-10-13T00:00:00.000Z"
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "에이전트에게 간 선택은 접힌다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "고를까",
+          "kind": "user",
+          "meta": {
+            "kind": "ask",
+            "ask": {
+              "options": [
+                {
+                  "id": "a",
+                  "label": "첫째 안"
+                },
+                {
+                  "id": "b",
+                  "label": "둘째 안"
+                }
+              ],
+              "to": {
+                "kind": "account",
+                "accountId": "22222222-2222-4222-8222-222222222222"
+              }
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "선택지 하나짜리 ask 는 선택이 아니다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "이거",
+          "kind": "user",
+          "meta": {
+            "kind": "ask",
+            "ask": {
+              "options": [
+                {
+                  "id": "a",
+                  "label": "첫째 안"
+                }
+              ],
+              "to": {
+                "kind": "human"
+              }
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "수신자를 못 읽는 ask 는 선택이 아니다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "이거",
+          "kind": "user",
+          "meta": {
+            "kind": "ask",
+            "ask": {
+              "options": [
+                {
+                  "id": "a",
+                  "label": "첫째 안"
+                },
+                {
+                  "id": "b",
+                  "label": "둘째 안"
+                }
+              ],
+              "to": {
+                "kind": "team"
+              }
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "보고가 결론이 된다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "끝",
+          "kind": "user",
+          "meta": {
+            "kind": "report",
+            "report": {
+              "checks": [
+                "테스트\n  통과",
+                "둘째"
+              ]
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": {
+            "source": "report",
+            "text": "테스트 통과"
+          },
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "빈 checks 보고는 결론이 아니다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "끝",
+          "kind": "user",
+          "meta": {
+            "kind": "report",
+            "report": {
+              "checks": []
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "**마지막** 말이다",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "마지막 말이다"
+          }
+        }
+      ]
+    },
+    {
+      "name": "빈 글자가 섞인 checks 보고는 결론이 아니다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "끝",
+          "kind": "user",
+          "meta": {
+            "kind": "report",
+            "report": {
+              "checks": [
+                "",
+                "둘째"
+              ]
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "사람 멘션은 접지 않는다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "<@11111111-1111-4111-8111-222222222222> 확인 부탁",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "m1"
+        },
+        {
+          "message": "m2"
+        },
+        {
+          "message": "m3"
+        }
+      ]
+    },
+    {
+      "name": "모르는 계정 멘션도 사람으로 센다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "<@55555555-5555-4555-8555-555555555555> 봐",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "m1"
+        },
+        {
+          "message": "m2"
+        },
+        {
+          "message": "m3"
+        }
+      ]
+    },
+    {
+      "name": "코드 안 멘션은 부름이 아니다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "이렇게 쓴다 `<@11111111-1111-4111-8111-111111111111>`",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "```\n<@11111111-1111-4111-8111-111111111111>\n```",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": null
+        }
+      ]
+    },
+    {
+      "name": "인용 안 멘션은 부름이 아니다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "> <@11111111-1111-4111-8111-111111111111> 가 말했다\n그래서",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "자기 멘션·에이전트 멘션은 사람이 아니다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "<@22222222-2222-4222-8222-222222222222> 나다",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "<@22222222-2222-4222-8222-222222222222> 너에게",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "위임은 사람의 차례를 닫는다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "h1",
+          "seq": 1,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "h1 사람 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "d1",
+          "seq": 2,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "나눴다",
+          "kind": "user",
+          "meta": {
+            "kind": "delegation",
+            "delegation": {
+              "to": [
+                "33333333-3333-4333-8333-333333333333",
+                "44444444-4444-4444-8444-444444444444"
+              ],
+              "unreachable": [],
+              "deadlineAt": "2026-10-13T00:00:00.000Z"
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 4,
+          "authorId": "44444444-4444-4444-8444-444444444444",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m4",
+          "seq": 5,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "<@11111111-1111-4111-8111-111111111111> 최종 답",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:04:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "h1"
+        },
+        {
+          "message": "d1"
+        },
+        {
+          "exchange": [
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "33333333-3333-4333-8333-333333333333",
+            "44444444-4444-4444-8444-444444444444"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "44444444-4444-4444-8444-444444444444",
+            "text": "m3 말"
+          }
+        },
+        {
+          "message": "m4"
+        }
+      ]
+    },
+    {
+      "name": "to 가 배열이 아닌 위임은 위임이 아니다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "h1",
+          "seq": 1,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "h1 사람 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "d1",
+          "seq": 2,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "나눴다",
+          "kind": "user",
+          "meta": {
+            "kind": "delegation",
+            "delegation": {
+              "to": "codex",
+              "unreachable": [],
+              "deadlineAt": "2026-10-13T00:00:00.000Z"
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 4,
+          "authorId": "44444444-4444-4444-8444-444444444444",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "h1"
+        },
+        {
+          "message": "d1"
+        },
+        {
+          "message": "m2"
+        },
+        {
+          "message": "m3"
+        }
+      ]
+    },
+    {
+      "name": "open 이 없는 옛 위임도 위임이다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "h1",
+          "seq": 1,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "h1 사람 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "d1",
+          "seq": 2,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "나눴다",
+          "kind": "user",
+          "meta": {
+            "kind": "delegation",
+            "delegation": {
+              "to": [
+                "33333333-3333-4333-8333-333333333333"
+              ],
+              "unreachable": [],
+              "deadlineAt": "2026-10-13T00:00:00.000Z"
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 4,
+          "authorId": "44444444-4444-4444-8444-444444444444",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "h1"
+        },
+        {
+          "message": "d1"
+        },
+        {
+          "exchange": [
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "33333333-3333-4333-8333-333333333333",
+            "44444444-4444-4444-8444-444444444444"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "44444444-4444-4444-8444-444444444444",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "진행은 구간을 끊지 않는다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "p1",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "진행",
+          "kind": "progress",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "p2",
+          "seq": 3,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "진행",
+          "kind": "progress",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 4,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "p3",
+          "seq": 5,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "진행",
+          "kind": "progress",
+          "meta": {},
+          "createdAt": "2026-10-13T00:04:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 6,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:05:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "progress": [
+                "p1",
+                "p2"
+              ],
+              "endedAt": "2026-10-13T00:03:00.000Z"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "progress": [
+                "p3"
+              ],
+              "endedAt": "2026-10-13T00:05:00.000Z"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "진행만 남긴 에이전트는 참여자가 아니다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "p1",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "진행",
+          "kind": "progress",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "m1"
+        },
+        {
+          "progress": [
+            "p1"
+          ],
+          "endedAt": null
+        },
+        {
+          "message": "m2"
+        }
+      ]
+    },
+    {
+      "name": "맨 끝에 도는 진행은 구간 밖",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "p1",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "진행",
+          "kind": "progress",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "p2",
+          "seq": 4,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "진행",
+          "kind": "progress",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "33333333-3333-4333-8333-333333333333",
+            "text": "m2 말"
+          }
+        },
+        {
+          "progress": [
+            "p1"
+          ],
+          "endedAt": null
+        },
+        {
+          "progress": [
+            "p2"
+          ],
+          "endedAt": null
+        }
+      ]
+    },
+    {
+      "name": "맨 끝 진행이라도 끝났으면 구간 안",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "p1",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "진행",
+          "kind": "progress",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 4,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "progress": [
+                "p1"
+              ],
+              "endedAt": "2026-10-13T00:02:00.000Z"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "남의 글 너머의 진행도 같은 저자의 다음 말이 닫는다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "p1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "진행",
+          "kind": "progress",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m1",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "44444444-4444-4444-8444-444444444444",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 4,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "p2",
+          "seq": 5,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "진행",
+          "kind": "progress",
+          "meta": {},
+          "createdAt": "2026-10-13T00:04:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "progress": [
+                "p1"
+              ],
+              "endedAt": "2026-10-13T00:03:00.000Z"
+            },
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "33333333-3333-4333-8333-333333333333",
+            "44444444-4444-4444-8444-444444444444",
+            "22222222-2222-4222-8222-222222222222"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m3 말"
+          }
+        },
+        {
+          "progress": [
+            "p2"
+          ],
+          "endedAt": null
+        }
+      ]
+    },
+    {
+      "name": "예약 줄은 구간 안, 세지 않는다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "w1",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "will check again",
+          "kind": "wake",
+          "meta": {
+            "kind": "wake",
+            "wake": {
+              "wakeAt": "2026-10-13T01:00:00.000Z"
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "w2",
+          "seq": 4,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "will check again",
+          "kind": "wake",
+          "meta": {
+            "kind": "wake",
+            "wake": {
+              "wakeAt": "2026-10-13T01:00:00.000Z"
+            }
+          },
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "w1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "w2"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "33333333-3333-4333-8333-333333333333",
+            "text": "m2 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "예약 줄은 첫 답 장부를 안 쓴다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "h1",
+          "seq": 1,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "h1 사람 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "w1",
+          "seq": 2,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "will check again",
+          "kind": "wake",
+          "meta": {
+            "kind": "wake",
+            "wake": {
+              "wakeAt": "2026-10-13T01:00:00.000Z"
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m1",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 4,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 5,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:04:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m4",
+          "seq": 6,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m4 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:05:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "h1"
+        },
+        {
+          "message": "w1"
+        },
+        {
+          "message": "m1"
+        },
+        {
+          "message": "m2"
+        },
+        {
+          "exchange": [
+            {
+              "message": "m3"
+            },
+            {
+              "message": "m4"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "33333333-3333-4333-8333-333333333333",
+            "text": "m4 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "예약 줄만으로는 접지 않는다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "w1",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "will check again",
+          "kind": "wake",
+          "meta": {
+            "kind": "wake",
+            "wake": {
+              "wakeAt": "2026-10-13T01:00:00.000Z"
+            }
+          },
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "w2",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "will check again",
+          "kind": "wake",
+          "meta": {
+            "kind": "wake",
+            "wake": {
+              "wakeAt": "2026-10-13T01:00:00.000Z"
+            }
+          },
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "m1"
+        },
+        {
+          "message": "w1"
+        },
+        {
+          "message": "w2"
+        }
+      ]
+    },
+    {
+      "name": "에이전트 루트는 접지 않는다",
+      "rootId": "r",
+      "messages": [
+        {
+          "id": "r",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "스레드 시작",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m1",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 4,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "r"
+        },
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            },
+            {
+              "message": "m3"
+            }
+          ],
+          "participants": [
+            "33333333-3333-4333-8333-333333333333",
+            "22222222-2222-4222-8222-222222222222"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "33333333-3333-4333-8333-333333333333",
+            "text": "m3 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "사람 루트",
+      "rootId": "r",
+      "messages": [
+        {
+          "id": "r",
+          "seq": 1,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "@forge @codex 봐 줘",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m1",
+          "seq": 2,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 4,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "r"
+        },
+        {
+          "message": "m1"
+        },
+        {
+          "message": "m2"
+        },
+        {
+          "message": "m3"
+        }
+      ]
+    },
+    {
+      "name": "사람 원글에서 에이전트 둘을 부르면 각자 첫 답은 펼친다",
+      "rootId": "r",
+      "messages": [
+        {
+          "id": "r",
+          "seq": 1,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "<@22222222-2222-4222-8222-222222222222> <@33333333-3333-4333-8333-333333333333> 봐 줘",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m1",
+          "seq": 2,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "봤다",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "나도 봤다",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 4,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m4",
+          "seq": 5,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m4 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:04:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "r"
+        },
+        {
+          "message": "m1"
+        },
+        {
+          "message": "m2"
+        },
+        {
+          "exchange": [
+            {
+              "message": "m3"
+            },
+            {
+              "message": "m4"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "33333333-3333-4333-8333-333333333333",
+            "text": "m4 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "사람 루트 뒤 사람 말",
+      "rootId": "r",
+      "messages": [
+        {
+          "id": "r",
+          "seq": 1,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "r 사람 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m1",
+          "seq": 2,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "h1",
+          "seq": 3,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "h1 사람 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 4,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 5,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:04:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m4",
+          "seq": 6,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m4 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:05:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m5",
+          "seq": 7,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m5 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:06:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "r"
+        },
+        {
+          "message": "m1"
+        },
+        {
+          "message": "h1"
+        },
+        {
+          "message": "m2"
+        },
+        {
+          "message": "m3"
+        },
+        {
+          "exchange": [
+            {
+              "message": "m4"
+            },
+            {
+              "message": "m5"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "33333333-3333-4333-8333-333333333333",
+            "text": "m5 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "시스템 줄도 말이다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "s1",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "시스템",
+          "kind": "system",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "s1"
+            },
+            {
+              "message": "m2"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m2 말"
+          }
+        }
+      ]
+    },
+    {
+      "name": "첨부만 있는 마지막 말",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": [
+            {
+              "id": "m2-att0"
+            },
+            {
+              "id": "m2-att1"
+            }
+          ]
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "33333333-3333-4333-8333-333333333333",
+            "attachments": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "빈 마지막 말",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 2,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "   ",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "exchange": [
+            {
+              "message": "m1"
+            },
+            {
+              "message": "m2"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": null
+        }
+      ]
+    },
+    {
+      "name": "모르는 저자는 사람이다",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "m1",
+          "seq": 1,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "x1",
+          "seq": 2,
+          "authorId": "55555555-5555-4555-8555-555555555555",
+          "body": "누구",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 4,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "m1"
+        },
+        {
+          "message": "x1"
+        },
+        {
+          "message": "m2"
+        },
+        {
+          "message": "m3"
+        }
+      ]
+    },
+    {
+      "name": "긴 대화",
+      "rootId": null,
+      "messages": [
+        {
+          "id": "h1",
+          "seq": 1,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "h1 사람 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:00:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m1",
+          "seq": 2,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m1 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:01:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m2",
+          "seq": 3,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m2 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:02:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "p1",
+          "seq": 4,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "진행",
+          "kind": "progress",
+          "meta": {},
+          "createdAt": "2026-10-13T00:03:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m3",
+          "seq": 5,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m3 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:04:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m4",
+          "seq": 6,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m4 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:05:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "w1",
+          "seq": 7,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "will check again",
+          "kind": "wake",
+          "meta": {
+            "kind": "wake",
+            "wake": {
+              "wakeAt": "2026-10-13T01:00:00.000Z"
+            }
+          },
+          "createdAt": "2026-10-13T00:06:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m5",
+          "seq": 8,
+          "authorId": "44444444-4444-4444-8444-444444444444",
+          "body": "m5 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:07:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m6",
+          "seq": 9,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "끝",
+          "kind": "user",
+          "meta": {
+            "kind": "report",
+            "report": {
+              "checks": [
+                "배포 확인"
+              ]
+            }
+          },
+          "createdAt": "2026-10-13T00:08:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m7",
+          "seq": 10,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m7 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:09:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "h2",
+          "seq": 11,
+          "authorId": "11111111-1111-4111-8111-111111111111",
+          "body": "고마워",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:10:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m8",
+          "seq": 12,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m8 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:11:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m9",
+          "seq": 13,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "m9 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:12:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "m10",
+          "seq": 14,
+          "authorId": "22222222-2222-4222-8222-222222222222",
+          "body": "m10 말",
+          "kind": "user",
+          "meta": {},
+          "createdAt": "2026-10-13T00:13:00.000Z",
+          "attachments": []
+        },
+        {
+          "id": "p2",
+          "seq": 15,
+          "authorId": "33333333-3333-4333-8333-333333333333",
+          "body": "진행",
+          "kind": "progress",
+          "meta": {},
+          "createdAt": "2026-10-13T00:14:00.000Z",
+          "attachments": []
+        }
+      ],
+      "slots": [
+        {
+          "message": "h1"
+        },
+        {
+          "message": "m1"
+        },
+        {
+          "message": "m2"
+        },
+        {
+          "exchange": [
+            {
+              "progress": [
+                "p1"
+              ],
+              "endedAt": "2026-10-13T00:04:00.000Z"
+            },
+            {
+              "message": "m3"
+            },
+            {
+              "message": "m4"
+            },
+            {
+              "message": "w1"
+            }
+          ],
+          "participants": [
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "conclusion": null,
+          "lastLine": {
+            "authorId": "33333333-3333-4333-8333-333333333333",
+            "text": "m4 말"
+          }
+        },
+        {
+          "message": "m5"
+        },
+        {
+          "exchange": [
+            {
+              "message": "m6"
+            },
+            {
+              "message": "m7"
+            }
+          ],
+          "participants": [
+            "33333333-3333-4333-8333-333333333333",
+            "22222222-2222-4222-8222-222222222222"
+          ],
+          "conclusion": {
+            "source": "report",
+            "text": "배포 확인"
+          },
+          "lastLine": {
+            "authorId": "22222222-2222-4222-8222-222222222222",
+            "text": "m7 말"
+          }
+        },
+        {
+          "message": "h2"
+        },
+        {
+          "message": "m8"
+        },
+        {
+          "message": "m9"
+        },
+        {
+          "message": "m10"
+        },
+        {
+          "progress": [
+            "p2"
+          ],
+          "endedAt": null
+        }
+      ]
+    }
+  ],
+  "firstLines": [
+    {
+      "body": "그냥 한 줄",
+      "line": "그냥 한 줄"
+    },
+    {
+      "body": "@forge @codex, 머리 멘션은 뺀다",
+      "line": "머리 멘션은 뺀다"
+    },
+    {
+      "body": "@forge\n@codex\n둘째 줄이 첫 줄",
+      "line": "둘째 줄이 첫 줄"
+    },
+    {
+      "body": "가운데 @forge 는 말의 일부",
+      "line": "가운데 @forge 는 말의 일부"
+    },
+    {
+      "body": "```\ncode\n```\n코드 뒤",
+      "line": "코드 뒤"
+    },
+    {
+      "body": "~~~\nx\n~~~\n물결 울타리 뒤",
+      "line": "물결 울타리 뒤"
+    },
+    {
+      "body": "> 인용\n인용 뒤",
+      "line": "인용 뒤"
+    },
+    {
+      "body": "---\n가로줄 뒤",
+      "line": "가로줄 뒤"
+    },
+    {
+      "body": "* * *\n별 가로줄 뒤",
+      "line": "별 가로줄 뒤"
+    },
+    {
+      "body": "| 칸 | 둘 |\n|---|:--:|\n| a | b |",
+      "line": "칸 · 둘"
+    },
+    {
+      "body": "|---|---|\n| 구분 먼저 |",
+      "line": "구분 먼저"
+    },
+    {
+      "body": "# 제목",
+      "line": "제목"
+    },
+    {
+      "body": "## **굵은** 제목",
+      "line": "굵은 제목"
+    },
+    {
+      "body": "- 목록 하나",
+      "line": "목록 하나"
+    },
+    {
+      "body": "1. 번호 목록",
+      "line": "번호 목록"
+    },
+    {
+      "body": "2) 괄호 번호",
+      "line": "괄호 번호"
+    },
+    {
+      "body": "[링크 글](https://example.com) 과 ![그림](x.png)",
+      "line": "링크 글 과 그림"
+    },
+    {
+      "body": "`코드` 와 ~~취소~~ 와 __밑줄__",
+      "line": "코드 와 취소 와 밑줄"
+    },
+    {
+      "body": "*기울임* 과 _밑줄 기울임_",
+      "line": "기울임 과 밑줄 기울임"
+    },
+    {
+      "body": "snake_case_name 은 그대로",
+      "line": "snake_case_name 은 그대로"
+    },
+    {
+      "body": "   \n\n  공백 뒤 줄  ",
+      "line": "공백 뒤 줄"
+    },
+    {
+      "body": "여러    칸   공백",
+      "line": "여러 칸 공백"
+    },
+    {
+      "body": "",
+      "line": ""
+    },
+    {
+      "body": "@forge",
+      "line": ""
+    },
+    {
+      "body": "@forge\n",
+      "line": ""
+    },
+    {
+      "body": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+      "line": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가"
+    },
+    {
+      "body": "이모지 🎉 와 한글",
+      "line": "이모지 🎉 와 한글"
+    },
+    {
+      "body": "  > 들여쓴 인용\n본문",
+      "line": "본문"
+    },
+    {
+      "body": "@forge, @codex 쉼표 머리",
+      "line": "쉼표 머리"
+    }
+  ]
+}

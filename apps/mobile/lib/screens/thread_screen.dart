@@ -10,7 +10,9 @@ import '../state/app_state.dart';
 import '../ui/parts.dart';
 import '../ui/states.dart';
 import '../ui/tokens.dart';
+import 'agent_exchange.dart';
 import 'agent_model.dart';
+import 'agent_rows.dart';
 import 'composer_attachments.dart';
 import 'mention_button.dart';
 import 'message_feed.dart';
@@ -188,6 +190,35 @@ class _ThreadScreenState extends State<ThreadScreen> {
   }
 
   /// 찾은 줄이면 강조로 감싼다.
+  /// 이 화면에서 펼친 주고받기(구간 첫 행 id). 화면을 떠나면 다시 접힌다 — 데스크톱도 펼침을 기억하지 않는다.
+  final Set<String> _openExchanges = {};
+
+  Widget _replyRow(BuildContext context, FeedItem item) => buildFeedItem(context, item,
+      mark: item is FeedMessage ? (row) => _mark(item.message.id, row) : null);
+
+  /// 접힌 주고받기. 찾기·링크로 온 줄([ThreadScreen.highlightId])이 그 안에 있으면 **펼쳐서** 연다 —
+  /// 접힌 줄 뒤에 숨은 것을 가리키면 사람은 엉뚱한 자리에 떨어진다.
+  List<Widget> _exchangeRows(BuildContext context, FeedExchange item) {
+    final hit = widget.highlightId != null && item.slot.rows.any((m) => m.id == widget.highlightId);
+    final open = hit || _openExchanges.contains(item.key);
+    void toggle() => setState(() {
+          if (!_openExchanges.remove(item.key)) _openExchanges.add(item.key);
+        });
+    final header = ExchangeRow(exchange: item.slot, open: open, onToggle: hit ? () {} : toggle);
+    if (!open) return [header];
+    final k = context.tokens;
+    return [
+      header,
+      Container(
+        decoration: BoxDecoration(border: Border(left: BorderSide(color: k.borderAgent, width: 2))),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [for (final it in item.items) _replyRow(context, it)],
+        ),
+      ),
+    ];
+  }
+
   Widget _mark(String? id, Widget child) =>
       id != null && id == widget.highlightId ? HitFlash(key: _hitKey, child: child) : child;
 
@@ -229,13 +260,23 @@ class _ThreadScreenState extends State<ThreadScreen> {
     // 채널 화면에서 들어온 답글은 **말풍선이 되는 것만** 그린다(`progress`·`wake` 제외) —
     // 채널에서와 같은 기준이어야 같은 스레드가 두 화면에서 달라 보이지 않는다.
     // 원글은 상태층이 `threadRoots` 로 갈라 둔다 — `threads` 에는 답글만 있다.
-    final built = buildFeed(app.threads[widget.rootId] ?? const <MessageRow>[]);
+    final threadRows = app.threads[widget.rootId] ?? const <MessageRow>[];
+    final built = buildFeed(threadRows);
+    // 에이전트끼리의 주고받기를 **데스크톱과 같은 판정으로** 접는다(`agent_exchange.dart`). 판정은 원글까지
+    // 넣어 돌린다 — 데스크톱 스레드 패널이 원글을 목록 첫 줄로 넣고 루트 id 를 주는 것과 같은 입력이어야
+    // 같은 글이 접힌다. 원글 자체는 루트라 접히지 않고, 화면은 따로 그린다.
+    final folds = groupAgentExchanges(
+      groupProgress([?root, ...threadRows]),
+      (id) => app.accounts[id]?.isAgent ?? false,
+      rootId: widget.rootId,
+    );
     // **첫 답글 위에는 날짜 줄을 세우지 않는다** — 바로 위 「답글 n개」 줄과 구분선이 둘 연달아 서면
     // 위계가 흐려진다(designer #1040). 원글과 날짜가 다르면 그 날짜를 구분 줄 글자에 붙인다.
     final first = built.isEmpty ? null : built.first;
-    final replies = first is FeedMessage && first.dayBreak
+    final unfolded = first is FeedMessage && first.dayBreak
         ? [FeedMessage(first.message, continued: first.continued), ...built.skip(1)]
         : built;
+    final replies = foldExchanges(unfolded, folds);
     final firstReplyAt = first is FeedMessage ? first.message.createdAt : null;
     final failed = app.failedSends[widget.rootId] ?? const <FailedSend>[];
     final load = app.threadLoad[widget.rootId];
@@ -258,7 +299,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
       }
     }
     // 답글 수는 서버가 센 원글의 `replyCount` 를 믿는다. 아직 없으면 받은 말풍선 수(진행 줄 묶음은 빼고).
-    final replyCount = root?.replyCount ?? replies.whereType<FeedMessage>().length;
+    final replyCount = root?.replyCount ?? unfolded.whereType<FeedMessage>().length;
     final countLabel = repliesCountLabel(t, replyCount);
     final dividerLabel = threadDividerLabel(t, replyCount, rootAt: root?.createdAt, firstReplyAt: firstReplyAt);
     final where = channelLabel(channel);
@@ -296,8 +337,11 @@ class _ThreadScreenState extends State<ThreadScreen> {
           ),
         )
       else
-        ...replies.map((item) => buildFeedItem(context, item,
-            mark: item is FeedMessage ? (row) => _mark(item.message.id, row) : null)),
+        for (final item in replies)
+          if (item is FeedExchange)
+            ..._exchangeRows(context, item)
+          else
+            _replyRow(context, item),
       // 링크·찾기로 받은 창 **아래**가 비었다(최신 답글이 안 실렸다) — 스레드가 여기서 끝난 것처럼 보이지 않게
       // 띠를 세운다. 누르면 최신 페이지로 간다(designer n1, #1191 후속 d1).
       if (load == LoadState.loaded && app.threadTailMissing.contains(widget.rootId))

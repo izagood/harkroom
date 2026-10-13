@@ -1,4 +1,5 @@
 import '../api/models.dart';
+import 'agent_exchange.dart';
 
 /// 화면에 실제로 그릴 줄들. **이어진 진행은 한 줄로 접힌다.**
 ///
@@ -78,5 +79,76 @@ List<FeedItem> buildFeed(List<MessageRow> messages) {
     prev = m;
   }
   flush();
+  return out;
+}
+
+/// 접힌 에이전트 주고받기 — 그 구간의 줄들([items])을 한 줄로 접는다.
+///
+/// **무엇을 접는지는 여기서 정하지 않는다** — 데스크톱과 같은 판정(`agent_exchange.dart`)이 낸
+/// 구간을 그대로 옮길 뿐이다. 이 타입은 그 구간을 이미 지은 줄들([buildFeed])에 덧씌운다.
+class FeedExchange extends FeedItem {
+  const FeedExchange({required this.items, required this.slot});
+
+  /// 펼치면 원래 자리에 그대로 서는 줄들(진행 묶음 포함).
+  final List<FeedItem> items;
+
+  /// 판정이 낸 구간 — 참여자·결론·마지막 말을 읽는다.
+  final FoldExchange slot;
+
+  /// 펼침 상태의 키 — 구간의 첫 행 id. 새 답글이 붙어도 앞머리는 그대로다.
+  String get key => slot.rows.first.id;
+}
+
+/// [feed] 의 줄 중 [slots] 가 주고받기로 접은 구간을 [FeedExchange] 로 덮는다.
+///
+/// 줄 경계가 어긋나지 않는 이유: 진행 묶음은 양쪽 다 「같은 저자의 연속 진행」이고, 주고받기
+/// 구간은 그 묶음을 쪼개지 않는다(구간은 말 사이 또는 맨 끝의 도는 진행 앞에서만 끊긴다).
+/// 접힌 구간 바로 뒤의 말은 이어 말한 줄로 붙이지 않는다 — 머리(이름)가 접힌 줄 안에 있으면
+/// 그 말이 누구 것인지 사라진다.
+List<FeedItem> foldExchanges(List<FeedItem> feed, List<FoldSlot> slots) {
+  final owner = <String, FoldExchange>{};
+  for (final s in slots) {
+    if (s is FoldExchange) {
+      for (final m in s.rows) {
+        owner[m.id] = s;
+      }
+    }
+  }
+  if (owner.isEmpty) return feed;
+
+  String firstId(FeedItem it) => switch (it) {
+        FeedMessage(:final message) => message.id,
+        FeedProgressRun(:final run) => run.first.id,
+        FeedExchange(:final key) => key,
+      };
+
+  final out = <FeedItem>[];
+  FoldExchange? open;
+  var group = <FeedItem>[];
+  void close() {
+    if (open == null) return;
+    out.add(FeedExchange(items: List.unmodifiable(group), slot: open!));
+    open = null;
+    group = <FeedItem>[];
+  }
+
+  for (final it in feed) {
+    final ex = owner[firstId(it)];
+    if (ex != null && identical(ex, open)) {
+      group.add(it);
+      continue;
+    }
+    final wasFolded = open != null;
+    close();
+    if (ex != null) {
+      open = ex;
+      group.add(it);
+      continue;
+    }
+    out.add(wasFolded && it is FeedMessage && it.continued
+        ? FeedMessage(it.message, dayBreak: it.dayBreak)
+        : it);
+  }
+  close();
   return out;
 }

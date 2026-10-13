@@ -167,8 +167,15 @@ export function groupAgentExchanges(
     const m = slot.message;
 
     // 루트 — 무엇에 대한 스레드인지 말하는 자리다. 저자가 에이전트여도 펼친다.
+    // **사람이 쓴 루트는 사람의 발화다**(2026-10-13, jaebin A) — 기준선을 연다. 전에는 이 분기가
+    // 사람 분기보다 먼저라 기준선이 열리지 않아, 사람이 원글로 에이전트 둘을 부르면 두 첫 답이
+    // 「에이전트끼리」로 접혔다.
     if (m.id === rootId) {
       flush();
+      if (!isAgent(m.authorId)) {
+        turnOpen = true;
+        answered.clear();
+      }
       out.push(slot);
       continue;
     }

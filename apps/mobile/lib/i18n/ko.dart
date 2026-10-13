@@ -492,6 +492,16 @@ class StringsKo implements Strings {
 
   @override
   String get agentWorking => '작업 중';
+  @override
+  String get exchangeDecided => '정했다';
+  @override
+  String get exchangeFinished => '끝냈다';
+  @override
+  String get exchangeCollapse => '접기';
+  @override
+  String exchangeCount(int n) => '$n번 주고받음';
+  @override
+  String exchangeAttachments(int n) => '첨부 $n개';
 
   @override
   String get agentWaiting => '대기 중';
