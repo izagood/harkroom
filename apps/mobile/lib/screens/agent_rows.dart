@@ -287,9 +287,9 @@ class ExchangeRow extends StatelessWidget {
             style: TextStyle(color: k.fgMuted),
           ),
         ],
-        TextSpan(text: ' · ${t.exchangeCount(speech)}', style: TextStyle(color: k.fgSubtle)),
       ];
     }
+    final base = TextStyle(fontSize: 12, height: 1.35, color: k.fgAgent);
 
     return Semantics(
       button: true,
@@ -316,16 +316,27 @@ class ExchangeRow extends StatelessWidget {
               Expanded(
                 child: Text.rich(
                   TextSpan(
-                    style: TextStyle(fontSize: 12, height: 1.35, color: k.fgAgent),
+                    style: base,
                     children: [
                       TextSpan(text: names, style: const TextStyle(fontWeight: FontWeight.w600)),
                       ...rest,
                     ],
                   ),
+                  key: Key('exchange-line-${exchange.rows.first.id}'),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              // 횟수는 **말줄임 밖** 줄 끝에 따로 선다(designer d1) — 미리보기와 한 글에 두면 마지막 말이 길 때
+              // 말줄임이 횟수까지 잘랐다. 데스크톱 접힌 줄의 `truncate` + `shrink-0` 과 같은 꼴이다.
+              if (!open)
+                Text(
+                  ' · ${t.exchangeCount(speech)}',
+                  key: Key('exchange-count-${exchange.rows.first.id}'),
+                  style: base.copyWith(color: k.fgSubtle),
+                  maxLines: 1,
+                  softWrap: false,
+                ),
               Icon(open ? Icons.expand_less : Icons.expand_more, size: 16, color: k.fgSubtle),
             ],
           ),

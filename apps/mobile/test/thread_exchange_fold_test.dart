@@ -19,15 +19,19 @@ import 'package:http/testing.dart';
 http.Response _json(Object body, [int status = 200]) =>
     http.Response.bytes(utf8.encode(jsonEncode(body)), status, headers: {'content-type': 'application/json'});
 
-// 원글은 에이전트(forge) 것이다 — 원글이 사람이면 첫 답 예외가 어떻게 걸리는지가 jaebin 결정 대기라
-// (스레드 d2e624cd A/B) 그 갈래에 기대지 않는 모양으로 짠다.
-const _rows = [
-  ('root', 'forge', '원글: 테스트 돌려 줘'),
-  ('r2', 'codex', '돌리는 중이다'),
-  ('r3', 'forge', '실패 둘 고쳤다'),
-  ('r4', 'codex', '다시 돌렸다 전부 통과'),
-  ('r5', 'me-1', '사람 말: 고마워'),
-];
+// 원글이 에이전트(forge)인 모양 — 원글 뒤 첫 답 예외에 기대지 않고 접힘만 본다.
+const _shortLast = '다시 돌렸다 전부 통과';
+
+/// 구간의 마지막 말(r4). 긴 말에서도 횟수가 보이는지 볼 때 바꾼다.
+var _lastBody = _shortLast;
+
+List<(String, String, String)> get _rows => [
+      ('root', 'forge', '원글: 테스트 돌려 줘'),
+      ('r2', 'codex', '돌리는 중이다'),
+      ('r3', 'forge', '실패 둘 고쳤다'),
+      ('r4', 'codex', _lastBody),
+      ('r5', 'me-1', '사람 말: 고마워'),
+    ];
 
 MockClient _client() => MockClient((req) async {
       final path = req.url.path;
@@ -104,21 +108,40 @@ Future<void> _open(WidgetTester tester, {String? highlightId, int? highlightSeq}
 }
 
 final _fold = find.byKey(const Key('exchange-r2'));
+final _count = find.byKey(const Key('exchange-count-r2'));
 
 void main() {
   testWidgets('에이전트끼리 주고받은 답글은 한 줄로 접히고, 원글과 사람 말은 그대로 선다', (tester) async {
     await _open(tester);
     expect(_fold, findsOneWidget);
     // 접힌 줄: 참여자 → 마지막 말 → 횟수.
-    final line = tester.widget<Text>(find.descendant(of: _fold, matching: find.byType(Text))).textSpan!.toPlainText();
+    final line = tester.widget<Text>(find.byKey(const Key('exchange-line-r2'))).textSpan!.toPlainText();
     expect(line, contains('codex ↔ forge'));
     expect(line, contains('다시 돌렸다 전부 통과'));
-    expect(line, contains(stringsFor('ko').exchangeCount(3)));
+    expect(tester.widget<Text>(_count).data, contains(stringsFor('ko').exchangeCount(3)));
     for (final hidden in ['돌리는 중이다', '실패 둘 고쳤다']) {
       expect(find.textContaining(hidden), findsNothing, reason: hidden);
     }
     expect(find.textContaining('원글: 테스트 돌려 줘'), findsOneWidget);
     expect(find.textContaining('사람 말: 고마워'), findsOneWidget);
+  });
+
+  testWidgets('마지막 말이 길어도 횟수는 말줄임에 잘리지 않고 줄 끝에 보인다(designer d1)', (tester) async {
+    _lastBody = '전부 다시 돌렸다 ' * 20;
+    addTearDown(() => _lastBody = _shortLast);
+    tester.view.physicalSize = const Size(320, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await _open(tester);
+    // 횟수는 미리보기 글(말줄임 대상) 밖의 따로 선 글이다.
+    expect(find.descendant(of: find.byKey(const Key('exchange-line-r2')), matching: find.textContaining('주고받음')),
+        findsNothing);
+    expect(tester.widget<Text>(_count).data, contains(stringsFor('ko').exchangeCount(3)));
+    // 화면 안, 미리보기 오른쪽에 온전히 선다.
+    final count = tester.getRect(_count);
+    expect(count.right, lessThanOrEqualTo(320));
+    expect(count.left, greaterThanOrEqualTo(tester.getRect(find.byKey(const Key('exchange-line-r2'))).right));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('접힌 줄을 누르면 펼쳐지고, 다시 누르면 접힌다', (tester) async {
