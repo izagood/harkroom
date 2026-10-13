@@ -1,0 +1,5161 @@
+{
+  "note": "packages/desktop/src/lib/inboxBoard.ts 가 원본. 손으로 고치지 말고 UPDATE_INBOX_BOARD_CASES=1 로 다시 뽑는다.",
+  "nowMs": 1790856000000,
+  "me": {
+    "id": "me",
+    "kind": "human"
+  },
+  "agentIds": [
+    "bot",
+    "bot2"
+  ],
+  "cases": [
+    {
+      "name": "나를 지목한 열린 물음 = 내 차례·결정",
+      "input": {
+        "entries": [
+          {
+            "id": 1,
+            "messageId": "m1",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 1",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "prompt": "어느 쪽으로 갈까?",
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "account",
+                  "accountId": "me"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m1"
+            ],
+            "summary": "어느 쪽으로 갈까?",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": {
+              "messageId": "m1",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "이대로"
+                },
+                {
+                  "id": "b",
+                  "label": "다시"
+                }
+              ]
+            },
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 1
+      }
+    },
+    {
+      "name": "남에게 간 물음은 내 차례가 아니다",
+      "input": {
+        "entries": [
+          {
+            "id": 2,
+            "messageId": "m2",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 2",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "account",
+                  "accountId": "other"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "other"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m2"
+            ],
+            "summary": "머리 r1",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "수신자 없는 물음은 내 스레드에서만",
+      "input": {
+        "entries": [
+          {
+            "id": 3,
+            "messageId": "m3",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 3",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "human"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          },
+          {
+            "id": 4,
+            "messageId": "m4",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 4",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "human"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r2"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 1,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "r2",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r2",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 1,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m3"
+            ],
+            "summary": "말 3",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": {
+              "messageId": "m3",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "이대로"
+                },
+                {
+                  "id": "b",
+                  "label": "다시"
+                }
+              ]
+            },
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "r2",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m4"
+            ],
+            "summary": "머리 r2",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ],
+          [
+            "r2"
+          ]
+        ],
+        "mineCount": 1
+      }
+    },
+    {
+      "name": "에이전트에게는 사람 앞 물음이 내 차례가 아니다",
+      "input": {
+        "entries": [
+          {
+            "id": 5,
+            "messageId": "m5",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 5",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "human"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 1,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "agent"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "blocked",
+            "fold": null,
+            "entryIds": [
+              "m5"
+            ],
+            "summary": "머리 r1",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "닫히거나 답한 물음은 열린 물음이 아니다",
+      "input": {
+        "entries": [
+          {
+            "id": 6,
+            "messageId": "m6",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 6",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "prompt": "답했나?",
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "account",
+                  "accountId": "me"
+                },
+                "answeredWith": "a"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          },
+          {
+            "id": 7,
+            "messageId": "m7",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 7",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "prompt": "닫혔나?",
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "account",
+                  "accountId": "me"
+                },
+                "closedAt": "2026-10-01T12:00:00.000Z"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r2"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "bot",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "r2",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r2",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "bot",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "done",
+            "fold": null,
+            "entryIds": [
+              "m6"
+            ],
+            "summary": "머리 r1",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "r2",
+            "channelId": "c1",
+            "column": "done",
+            "fold": null,
+            "entryIds": [
+              "m7"
+            ],
+            "summary": "머리 r2",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ],
+          [
+            "r2"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "선택지가 하나·여섯이거나 수신자를 못 읽으면 물음이 아니다",
+      "input": {
+        "entries": [
+          {
+            "id": 8,
+            "messageId": "m8",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 8",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "A"
+                  }
+                ],
+                "to": {
+                  "kind": "account",
+                  "accountId": "me"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          },
+          {
+            "id": 9,
+            "messageId": "m9",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 9",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "options": [
+                  {
+                    "id": "o1",
+                    "label": "1"
+                  },
+                  {
+                    "id": "o2",
+                    "label": "2"
+                  },
+                  {
+                    "id": "o3",
+                    "label": "3"
+                  },
+                  {
+                    "id": "o4",
+                    "label": "4"
+                  },
+                  {
+                    "id": "o5",
+                    "label": "5"
+                  },
+                  {
+                    "id": "o6",
+                    "label": "6"
+                  }
+                ],
+                "to": {
+                  "kind": "account",
+                  "accountId": "me"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r2"
+          },
+          {
+            "id": 10,
+            "messageId": "m10",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 10",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "A"
+                  },
+                  {
+                    "id": "b",
+                    "label": "B"
+                  }
+                ],
+                "to": {
+                  "kind": "robot"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r3"
+          }
+        ],
+        "threads": null,
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m8"
+            ],
+            "summary": "말 8",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": null
+          },
+          {
+            "rootId": "r2",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m9"
+            ],
+            "summary": "말 9",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": null
+          },
+          {
+            "rootId": "r3",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m10"
+            ],
+            "summary": "말 10",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": null
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ],
+          [
+            "r2"
+          ],
+          [
+            "r3"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "내 스레드의 실패 = 내 차례·막힘, 제목은 원인",
+      "input": {
+        "entries": [
+          {
+            "id": 11,
+            "messageId": "m11",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 11",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "관문 화면에 섰다"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m11"
+            ],
+            "summary": "관문 화면에 섰다",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": "[\"c1\",\"bot\",null,\"관문 화면에 섰다\"]",
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 1
+      }
+    },
+    {
+      "name": "원인이 없으면 무엇이 제목이다",
+      "input": {
+        "entries": [
+          {
+            "id": 12,
+            "messageId": "m12",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 12",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m12"
+            ],
+            "summary": "하네스가 사람의 확인을 기다린다",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": "[\"c1\",\"bot\",null,\"하네스가 사람의 확인을 기다린다\"]",
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 1
+      }
+    },
+    {
+      "name": "retryable 이 불리언이 아니면 실패로 읽지 않는다",
+      "input": {
+        "entries": [
+          {
+            "id": 13,
+            "messageId": "m13",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 13",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "what": "이상한 실패"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": null,
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m13"
+            ],
+            "summary": "말 13",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": null
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "계정 관문 = 내 차례·막힘",
+      "input": {
+        "entries": [
+          {
+            "id": 14,
+            "messageId": "m14",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 14",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null,
+            "openGateAccountIds": [
+              "me"
+            ]
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m14"
+            ],
+            "summary": "머리 r1",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 1
+      }
+    },
+    {
+      "name": "대기 마디가 나를 막고 있다 = 내 차례",
+      "input": {
+        "entries": [
+          {
+            "id": 15,
+            "messageId": "m15",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 15",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [
+              {
+                "waiter": "bot",
+                "blockedBy": "me",
+                "askedAt": "2026-10-01T00:00:00.000Z"
+              }
+            ],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m15"
+            ],
+            "summary": "머리 r1",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 1
+      }
+    },
+    {
+      "name": "내가 연 스레드가 남을 기다리면 막힘",
+      "input": {
+        "entries": [
+          {
+            "id": 16,
+            "messageId": "m16",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 16",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "other"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "blocked",
+            "fold": null,
+            "entryIds": [
+              "m16"
+            ],
+            "summary": "머리 r1",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "내가 기다리는 마디가 있으면 막힘",
+      "input": {
+        "entries": [
+          {
+            "id": 17,
+            "messageId": "m17",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 17",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [
+              {
+                "waiter": "me",
+                "blockedBy": "other",
+                "askedAt": "2026-10-01T00:00:00.000Z"
+              }
+            ],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "blocked",
+            "fold": null,
+            "entryIds": [
+              "m17"
+            ],
+            "summary": "머리 r1",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "에이전트의 답으로 끝난 것 = 끝남, 사람이 마지막이면 진행",
+      "input": {
+        "entries": [
+          {
+            "id": 18,
+            "messageId": "m18",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 18",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          },
+          {
+            "id": 19,
+            "messageId": "m19",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 19",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r2"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "bot",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "r2",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 r2",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r2",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m19"
+            ],
+            "summary": "머리 r2",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "done",
+            "fold": null,
+            "entryIds": [
+              "m18"
+            ],
+            "summary": "머리 r1",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r2"
+          ],
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "도는 중(progress)이면 끝남이 아니다",
+      "input": {
+        "entries": [
+          {
+            "id": 20,
+            "messageId": "m20",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 20",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "progress",
+            "lastAuthorId": "bot",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m20"
+            ],
+            "summary": "머리 r1",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "서버 상태가 열을 정한다",
+      "input": {
+        "entries": [
+          {
+            "id": 21,
+            "messageId": "m21",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 21",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "run"
+          },
+          {
+            "id": 22,
+            "messageId": "m22",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 22",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "recv"
+          },
+          {
+            "id": 23,
+            "messageId": "m23",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 23",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "wait"
+          },
+          {
+            "id": 24,
+            "messageId": "m24",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 24",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "turn"
+          },
+          {
+            "id": 25,
+            "messageId": "m25",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 25",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "mystuck"
+          },
+          {
+            "id": 26,
+            "messageId": "m26",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 26",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "stuck"
+          },
+          {
+            "id": 27,
+            "messageId": "m27",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 27",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "done"
+          }
+        ],
+        "threads": [
+          {
+            "id": "run",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 run",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null,
+            "statusReaction": {
+              "status": "running",
+              "emoji": "·",
+              "accountId": "bot",
+              "reason": null,
+              "updatedAt": "2026-10-01T12:00:00.000Z"
+            }
+          },
+          {
+            "id": "recv",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 recv",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null,
+            "statusReaction": {
+              "status": "received",
+              "emoji": "·",
+              "accountId": "bot",
+              "reason": null,
+              "updatedAt": "2026-10-01T12:00:00.000Z"
+            }
+          },
+          {
+            "id": "wait",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 wait",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null,
+            "statusReaction": {
+              "status": "waiting",
+              "emoji": "·",
+              "accountId": "bot",
+              "reason": null,
+              "updatedAt": "2026-10-01T12:00:00.000Z"
+            }
+          },
+          {
+            "id": "turn",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 turn",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null,
+            "statusReaction": {
+              "status": "my-turn",
+              "emoji": "·",
+              "accountId": "bot",
+              "reason": null,
+              "updatedAt": "2026-10-01T12:00:00.000Z"
+            }
+          },
+          {
+            "id": "mystuck",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 mystuck",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null,
+            "statusReaction": {
+              "status": "stuck",
+              "emoji": "·",
+              "accountId": "bot",
+              "reason": null,
+              "updatedAt": "2026-10-01T12:00:00.000Z"
+            }
+          },
+          {
+            "id": "stuck",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 stuck",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null,
+            "statusReaction": {
+              "status": "stuck",
+              "emoji": "·",
+              "accountId": "bot",
+              "reason": null,
+              "updatedAt": "2026-10-01T12:00:00.000Z"
+            }
+          },
+          {
+            "id": "done",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 done",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "me",
+            "alsoInChannel": false,
+            "deletedAt": null,
+            "statusReaction": {
+              "status": "done",
+              "emoji": "·",
+              "accountId": "bot",
+              "reason": null,
+              "updatedAt": "2026-10-01T12:00:00.000Z"
+            }
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "mystuck",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m25"
+            ],
+            "summary": "머리 mystuck",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "wait",
+            "channelId": "c1",
+            "column": "blocked",
+            "fold": null,
+            "entryIds": [
+              "m23"
+            ],
+            "summary": "머리 wait",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "turn",
+            "channelId": "c1",
+            "column": "blocked",
+            "fold": null,
+            "entryIds": [
+              "m24"
+            ],
+            "summary": "머리 turn",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "stuck",
+            "channelId": "c1",
+            "column": "blocked",
+            "fold": null,
+            "entryIds": [
+              "m26"
+            ],
+            "summary": "머리 stuck",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "run",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m21"
+            ],
+            "summary": "머리 run",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "recv",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m22"
+            ],
+            "summary": "머리 recv",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "done",
+            "channelId": "c1",
+            "column": "done",
+            "fold": null,
+            "entryIds": [
+              "m27"
+            ],
+            "summary": "머리 done",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "mystuck"
+          ],
+          [
+            "wait"
+          ],
+          [
+            "turn"
+          ],
+          [
+            "stuck"
+          ],
+          [
+            "run"
+          ],
+          [
+            "recv"
+          ],
+          [
+            "done"
+          ]
+        ],
+        "mineCount": 1
+      }
+    },
+    {
+      "name": "치움 — 내 차례도 이기고 끝남 맨 아래로",
+      "input": {
+        "entries": [
+          {
+            "id": 28,
+            "messageId": "m28",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 28",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "account",
+                  "accountId": "me"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          },
+          {
+            "id": 29,
+            "messageId": "m29",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 29",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r2"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "r2",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 r2",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "bot",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [
+          {
+            "rootId": "r1",
+            "state": "done",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "until": null
+          },
+          {
+            "rootId": "r2",
+            "state": "done",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "until": null
+          }
+        ],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "done",
+            "fold": "cleared",
+            "entryIds": [
+              "m28"
+            ],
+            "summary": "말 28",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": {
+              "messageId": "m28",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "이대로"
+                },
+                {
+                  "id": "b",
+                  "label": "다시"
+                }
+              ]
+            },
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "r2",
+            "channelId": "c1",
+            "column": "done",
+            "fold": "cleared",
+            "entryIds": [
+              "m29"
+            ],
+            "summary": "머리 r2",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ],
+          [
+            "r2"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "치운 뒤 나에게 새 말이 오면 다시 선다",
+      "input": {
+        "entries": [
+          {
+            "id": 30,
+            "messageId": "m30",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 30",
+            "meta": {},
+            "createdAt": "2026-10-01T06:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [
+          {
+            "rootId": "r1",
+            "state": "done",
+            "updatedAt": "2026-10-01T00:00:00.000Z",
+            "until": null
+          }
+        ],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m30"
+            ],
+            "summary": "머리 r1",
+            "whoId": "other",
+            "sinceAt": 1790834400000,
+            "lastActivityAt": 1790834400000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 1
+      }
+    },
+    {
+      "name": "나중에 — 접히고, 시각이 지나면 다시 선다",
+      "input": {
+        "entries": [
+          {
+            "id": 31,
+            "messageId": "m31",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 31",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          },
+          {
+            "id": 32,
+            "messageId": "m32",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 32",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r2"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "r2",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r2",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [
+          {
+            "rootId": "r1",
+            "state": "later",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "until": "2026-10-02T12:00:00.000Z"
+          },
+          {
+            "rootId": "r2",
+            "state": "later",
+            "updatedAt": "2026-09-30T12:00:00.000Z",
+            "until": "2026-10-01T09:00:00.000Z"
+          }
+        ],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": "later",
+            "entryIds": [
+              "m31"
+            ],
+            "summary": "머리 r1",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": 1790942400000,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "r2",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m32"
+            ],
+            "summary": "머리 r2",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ],
+          [
+            "r2"
+          ]
+        ],
+        "mineCount": 1
+      }
+    },
+    {
+      "name": "7일 넘게 기다린 내 차례·막힘은 stale, 기간은 들어오게 한 말부터",
+      "input": {
+        "entries": [
+          {
+            "id": 33,
+            "messageId": "m33",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 33",
+            "meta": {},
+            "createdAt": "2026-09-30T12:00:00.000Z",
+            "threadRootId": "fresh"
+          },
+          {
+            "id": 34,
+            "messageId": "m34",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 34",
+            "meta": {},
+            "createdAt": "2026-09-21T12:00:00.000Z",
+            "threadRootId": "old"
+          },
+          {
+            "id": 35,
+            "messageId": "m35",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 35",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "prompt": "열흘 된 물음?",
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "account",
+                  "accountId": "me"
+                }
+              }
+            },
+            "createdAt": "2026-09-21T12:00:00.000Z",
+            "threadRootId": "reply"
+          },
+          {
+            "id": 36,
+            "messageId": "m36",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 36",
+            "meta": {},
+            "createdAt": "2026-09-30T12:00:00.000Z",
+            "threadRootId": "reply"
+          },
+          {
+            "id": 37,
+            "messageId": "m37",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 37",
+            "meta": {},
+            "createdAt": "2026-09-23T12:00:00.000Z",
+            "threadRootId": "blk"
+          }
+        ],
+        "threads": [
+          {
+            "id": "fresh",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 fresh",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "old",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 old",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "reply",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 reply",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": "2026-09-30T12:00:00.000Z",
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "blk",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 blk",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-09-23T12:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "other"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "fresh",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m33"
+            ],
+            "summary": "머리 fresh",
+            "whoId": "other",
+            "sinceAt": 1790769600000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "old",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": "stale",
+            "entryIds": [
+              "m34"
+            ],
+            "summary": "머리 old",
+            "whoId": "other",
+            "sinceAt": 1789992000000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "reply",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": "stale",
+            "entryIds": [
+              "m36",
+              "m35"
+            ],
+            "summary": "열흘 된 물음?",
+            "whoId": "bot",
+            "sinceAt": 1789992000000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": {
+              "messageId": "m35",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "이대로"
+                },
+                {
+                  "id": "b",
+                  "label": "다시"
+                }
+              ]
+            },
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "blk",
+            "channelId": "c1",
+            "column": "blocked",
+            "fold": "stale",
+            "entryIds": [
+              "m37"
+            ],
+            "summary": "머리 blk",
+            "whoId": "me",
+            "sinceAt": 1790164800000,
+            "lastActivityAt": 1790164800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "fresh"
+          ],
+          [
+            "old"
+          ],
+          [
+            "reply"
+          ],
+          [
+            "blk"
+          ]
+        ],
+        "mineCount": 1
+      }
+    },
+    {
+      "name": "7일 조용한 진행은 quiet, 도는 중이면 아니다 · 7일 지난 끝남은 old",
+      "input": {
+        "entries": [
+          {
+            "id": 38,
+            "messageId": "m38",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 38",
+            "meta": {},
+            "createdAt": "2026-09-22T12:00:00.000Z",
+            "threadRootId": "q"
+          },
+          {
+            "id": 39,
+            "messageId": "m39",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 39",
+            "meta": {},
+            "createdAt": "2026-09-22T12:00:00.000Z",
+            "threadRootId": "qr"
+          },
+          {
+            "id": 40,
+            "messageId": "m40",
+            "reason": "thread_reply",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 40",
+            "meta": {},
+            "createdAt": "2026-09-22T12:00:00.000Z",
+            "threadRootId": "o"
+          }
+        ],
+        "threads": [
+          {
+            "id": "q",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 q",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-09-22T12:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "qr",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 qr",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-09-22T12:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "progress",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "o",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 o",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-09-22T12:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "bot",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "q",
+            "channelId": "c1",
+            "column": "active",
+            "fold": "quiet",
+            "entryIds": [
+              "m38"
+            ],
+            "summary": "머리 q",
+            "whoId": "me",
+            "sinceAt": 1790078400000,
+            "lastActivityAt": 1790078400000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "qr",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m39"
+            ],
+            "summary": "머리 qr",
+            "whoId": "me",
+            "sinceAt": 1790078400000,
+            "lastActivityAt": 1790078400000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "o",
+            "channelId": "c1",
+            "column": "done",
+            "fold": "old",
+            "entryIds": [
+              "m40"
+            ],
+            "summary": "머리 o",
+            "whoId": "me",
+            "sinceAt": 1790078400000,
+            "lastActivityAt": 1790078400000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "q"
+          ],
+          [
+            "qr"
+          ],
+          [
+            "o"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "옛 서버(머리 없음) — 항목 meta 로",
+      "input": {
+        "entries": [
+          {
+            "id": 41,
+            "messageId": "m41",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 41",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "prompt": "옛 서버?",
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "account",
+                  "accountId": "me"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          },
+          {
+            "id": 42,
+            "messageId": "m42",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 42",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": null
+          },
+          {
+            "id": 43,
+            "messageId": "m43",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 43",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "옛 실패"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r3"
+          }
+        ],
+        "threads": null,
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m41"
+            ],
+            "summary": "옛 서버?",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": {
+              "messageId": "m41",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "이대로"
+                },
+                {
+                  "id": "b",
+                  "label": "다시"
+                }
+              ]
+            },
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": null
+          },
+          {
+            "rootId": "r3",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m43"
+            ],
+            "summary": "옛 실패",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": "[\"c1\",\"bot\",null,\"옛 실패\"]",
+            "replyCount": null
+          },
+          {
+            "rootId": "m42",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m42"
+            ],
+            "summary": "말 42",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": null
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ],
+          [
+            "r3"
+          ],
+          [
+            "m42"
+          ]
+        ],
+        "mineCount": 2
+      }
+    },
+    {
+      "name": "머리를 물었는데 안 왔으면(지워짐) 세우지 않는다",
+      "input": {
+        "entries": [
+          {
+            "id": 44,
+            "messageId": "m44",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 44",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "gone"
+          }
+        ],
+        "threads": [],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [],
+        "groups": [],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "inbox 밖의 머리는 항목 없는 카드다(상태 유지)",
+      "input": {
+        "entries": [],
+        "threads": [
+          {
+            "id": "asked",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "<@bot> 이거 해 줘",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T06:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null,
+            "statusReaction": {
+              "status": "received",
+              "emoji": "·",
+              "accountId": "bot",
+              "reason": null,
+              "updatedAt": "2026-10-01T12:00:00.000Z"
+            }
+          },
+          {
+            "id": "kept",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 kept",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null,
+            "statusReaction": {
+              "status": "running",
+              "emoji": "·",
+              "accountId": "bot",
+              "reason": null,
+              "updatedAt": "2026-10-01T12:00:00.000Z"
+            }
+          }
+        ],
+        "threadStates": [
+          {
+            "rootId": "kept",
+            "state": "done",
+            "updatedAt": "2026-09-30T12:00:00.000Z",
+            "until": null
+          }
+        ],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "asked",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [],
+            "summary": "이거 해 줘",
+            "whoId": "me",
+            "sinceAt": 1790834400000,
+            "lastActivityAt": 1790834400000,
+            "unread": false,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "kept",
+            "channelId": "c1",
+            "column": "done",
+            "fold": "cleared",
+            "entryIds": [],
+            "summary": "머리 kept",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": false,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "asked"
+          ],
+          [
+            "kept"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "같은 실패는 ×N — 채널·작성자·원인이 같아야, 결정 카드는 묶지 않는다",
+      "input": {
+        "entries": [
+          {
+            "id": 45,
+            "messageId": "m45",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 45",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "관문"
+              }
+            },
+            "createdAt": "2026-10-01T11:59:00.000Z",
+            "threadRootId": "f1"
+          },
+          {
+            "id": 46,
+            "messageId": "m46",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 46",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "관문"
+              }
+            },
+            "createdAt": "2026-10-01T11:58:00.000Z",
+            "threadRootId": "f2"
+          },
+          {
+            "id": 47,
+            "messageId": "m47",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 47",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "관문"
+              }
+            },
+            "createdAt": "2026-10-01T11:57:00.000Z",
+            "threadRootId": "f3"
+          },
+          {
+            "id": 48,
+            "messageId": "m48",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 48",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "다른 원인"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "f4"
+          },
+          {
+            "id": 49,
+            "messageId": "m49",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c2",
+            "authorId": "bot",
+            "body": "말 49",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "관문"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "f5"
+          },
+          {
+            "id": 50,
+            "messageId": "m50",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot2",
+            "body": "말 50",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "관문"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "f6"
+          },
+          {
+            "id": 51,
+            "messageId": "m51",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 51",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "관문",
+                "code": "gate"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "f7"
+          },
+          {
+            "id": 52,
+            "messageId": "m52",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 52",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "prompt": "q1?",
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "account",
+                  "accountId": "me"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "q1"
+          },
+          {
+            "id": 53,
+            "messageId": "m53",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 53",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "관문"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "q1"
+          },
+          {
+            "id": 54,
+            "messageId": "m54",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 54",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "prompt": "q2?",
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "account",
+                  "accountId": "me"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "q2"
+          },
+          {
+            "id": 55,
+            "messageId": "m55",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 55",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "관문"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "q2"
+          },
+          {
+            "id": 56,
+            "messageId": "m56",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 56",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "관문"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "d1"
+          },
+          {
+            "id": 57,
+            "messageId": "m57",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 57",
+            "meta": {
+              "kind": "failure",
+              "failure": {
+                "retryable": true,
+                "what": "하네스가 사람의 확인을 기다린다",
+                "reason": "관문"
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "d2"
+          }
+        ],
+        "threads": [
+          {
+            "id": "f1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 f1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "f2",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 f2",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "f3",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 f3",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "f4",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 f4",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "f6",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 f6",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "f7",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 f7",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "q1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 q1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "q2",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 q2",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "f5",
+            "seq": 1,
+            "channelId": "c2",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 f5",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "d1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 d1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "d2",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 d2",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 1,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "f1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m45"
+            ],
+            "summary": "관문",
+            "whoId": "bot",
+            "sinceAt": 1790855940000,
+            "lastActivityAt": 1790855940000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": "[\"c1\",\"bot\",null,\"관문\"]",
+            "replyCount": 0
+          },
+          {
+            "rootId": "f2",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m46"
+            ],
+            "summary": "관문",
+            "whoId": "bot",
+            "sinceAt": 1790855880000,
+            "lastActivityAt": 1790855880000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": "[\"c1\",\"bot\",null,\"관문\"]",
+            "replyCount": 0
+          },
+          {
+            "rootId": "f3",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m47"
+            ],
+            "summary": "관문",
+            "whoId": "bot",
+            "sinceAt": 1790855820000,
+            "lastActivityAt": 1790855820000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": "[\"c1\",\"bot\",null,\"관문\"]",
+            "replyCount": 0
+          },
+          {
+            "rootId": "f4",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m48"
+            ],
+            "summary": "다른 원인",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": "[\"c1\",\"bot\",null,\"다른 원인\"]",
+            "replyCount": 0
+          },
+          {
+            "rootId": "f5",
+            "channelId": "c2",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m49"
+            ],
+            "summary": "관문",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": "[\"c2\",\"bot\",null,\"관문\"]",
+            "replyCount": 0
+          },
+          {
+            "rootId": "f6",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m50"
+            ],
+            "summary": "관문",
+            "whoId": "bot2",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": "[\"c1\",\"bot2\",null,\"관문\"]",
+            "replyCount": 0
+          },
+          {
+            "rootId": "f7",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m51"
+            ],
+            "summary": "관문",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "blocker",
+            "similarKey": "[\"c1\",\"bot\",\"gate\",\"관문\"]",
+            "replyCount": 0
+          },
+          {
+            "rootId": "q1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m52",
+              "m53"
+            ],
+            "summary": "q1?",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": {
+              "messageId": "m52",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "이대로"
+                },
+                {
+                  "id": "b",
+                  "label": "다시"
+                }
+              ]
+            },
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "q2",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m54",
+              "m55"
+            ],
+            "summary": "q2?",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": {
+              "messageId": "m54",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "이대로"
+                },
+                {
+                  "id": "b",
+                  "label": "다시"
+                }
+              ]
+            },
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "d1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m56"
+            ],
+            "summary": "관문",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "d2",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m57"
+            ],
+            "summary": "관문",
+            "whoId": "bot",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "f1",
+            "f2",
+            "f3"
+          ],
+          [
+            "f4"
+          ],
+          [
+            "f5"
+          ],
+          [
+            "f6"
+          ],
+          [
+            "f7"
+          ],
+          [
+            "q1"
+          ],
+          [
+            "q2"
+          ],
+          [
+            "d1"
+          ],
+          [
+            "d2"
+          ]
+        ],
+        "mineCount": 11
+      }
+    },
+    {
+      "name": "최근 것이 위 — 같은 시각이면 원래 자리 그대로",
+      "input": {
+        "entries": [
+          {
+            "id": 58,
+            "messageId": "m58",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 58",
+            "meta": {},
+            "createdAt": "2026-09-30T12:00:00.000Z",
+            "threadRootId": "a"
+          },
+          {
+            "id": 59,
+            "messageId": "m59",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 59",
+            "meta": {},
+            "createdAt": "2026-09-28T12:00:00.000Z",
+            "threadRootId": "b"
+          },
+          {
+            "id": 60,
+            "messageId": "m60",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 60",
+            "meta": {},
+            "createdAt": "2026-09-30T12:00:00.000Z",
+            "threadRootId": "c"
+          },
+          {
+            "id": 61,
+            "messageId": "m61",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 61",
+            "meta": {},
+            "createdAt": "2026-09-29T12:00:00.000Z",
+            "threadRootId": "d"
+          }
+        ],
+        "threads": [
+          {
+            "id": "a",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 a",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "b",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 b",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "c",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 c",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "d",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 d",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "a",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m58"
+            ],
+            "summary": "머리 a",
+            "whoId": "other",
+            "sinceAt": 1790769600000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "c",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m60"
+            ],
+            "summary": "머리 c",
+            "whoId": "other",
+            "sinceAt": 1790769600000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "d",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m61"
+            ],
+            "summary": "머리 d",
+            "whoId": "other",
+            "sinceAt": 1790683200000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "b",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m59"
+            ],
+            "summary": "머리 b",
+            "whoId": "other",
+            "sinceAt": 1790596800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "a"
+          ],
+          [
+            "c"
+          ],
+          [
+            "d"
+          ],
+          [
+            "b"
+          ]
+        ],
+        "mineCount": 4
+      }
+    },
+    {
+      "name": "한 문장 — 표·코드·멘션·마크다운을 벗기고 물음 줄을 고른다",
+      "input": {
+        "entries": [
+          {
+            "id": 62,
+            "messageId": "m62",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "<@bot> 안녕\n| a | b |\n```\ncode?\n```\n## **굵게** 그리고 [링크](https://example.com) 를 볼까?",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "s1"
+          },
+          {
+            "id": 63,
+            "messageId": "m63",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "- `x` 와 _y_ 와 *기울임*을 했다\n\n둘째 줄",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "s2"
+          }
+        ],
+        "threads": [
+          {
+            "id": "s1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "bot",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "s2",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 s2",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "bot",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "s1",
+            "channelId": "c1",
+            "column": "done",
+            "fold": null,
+            "entryIds": [
+              "m62"
+            ],
+            "summary": "굵게 그리고 링크 를 볼까?",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          },
+          {
+            "rootId": "s2",
+            "channelId": "c1",
+            "column": "done",
+            "fold": null,
+            "entryIds": [
+              "m63"
+            ],
+            "summary": "머리 s2",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "s1"
+          ],
+          [
+            "s2"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "답글 수·안 읽음·작성자 없는 깨움",
+      "input": {
+        "entries": [
+          {
+            "id": 64,
+            "messageId": "m64",
+            "reason": "thread_reply",
+            "readAt": "2026-10-01T12:00:00.000Z",
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 64",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          },
+          {
+            "id": 65,
+            "messageId": "m65",
+            "reason": "wake",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": null,
+            "body": "말 65",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r2"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 57,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "bot",
+            "alsoInChannel": false,
+            "deletedAt": null
+          },
+          {
+            "id": "r2",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "me",
+            "body": "머리 r2",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 3,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r2",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m65"
+            ],
+            "summary": "머리 r2",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 3
+          },
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "done",
+            "fold": null,
+            "entryIds": [
+              "m64"
+            ],
+            "summary": "머리 r1",
+            "whoId": "me",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": false,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 57
+          }
+        ],
+        "groups": [
+          [
+            "r2"
+          ],
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 0
+      }
+    },
+    {
+      "name": "머리만 나를 지목한 물음도 결정이다",
+      "input": {
+        "entries": [
+          {
+            "id": 66,
+            "messageId": "m66",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 66",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": {
+          "id": "me",
+          "kind": "human"
+        }
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "mine",
+            "fold": null,
+            "entryIds": [
+              "m66"
+            ],
+            "summary": "머리 r1",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "decision",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 1
+      }
+    },
+    {
+      "name": "나를 모르면 내 차례가 없다",
+      "input": {
+        "entries": [
+          {
+            "id": 67,
+            "messageId": "m67",
+            "reason": "mention",
+            "readAt": null,
+            "channelId": "c1",
+            "authorId": "bot",
+            "body": "말 67",
+            "meta": {
+              "kind": "ask",
+              "ask": {
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "이대로"
+                  },
+                  {
+                    "id": "b",
+                    "label": "다시"
+                  }
+                ],
+                "to": {
+                  "kind": "account",
+                  "accountId": "me"
+                }
+              }
+            },
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "threadRootId": "r1"
+          }
+        ],
+        "threads": [
+          {
+            "id": "r1",
+            "seq": 1,
+            "channelId": "c1",
+            "threadRootId": null,
+            "authorId": "other",
+            "body": "머리 r1",
+            "kind": "user",
+            "meta": {},
+            "createdAt": "2026-10-01T00:00:00.000Z",
+            "editedAt": null,
+            "reactions": [],
+            "attachments": [],
+            "replyCount": 0,
+            "activityCount": null,
+            "lastReplyAt": null,
+            "participantIds": null,
+            "openAskHumanCount": 0,
+            "openAskAccountIds": [
+              "me"
+            ],
+            "openAskLinks": [],
+            "failureCount": 0,
+            "unresolvedFailureCount": 0,
+            "lastKind": "user",
+            "lastAuthorId": "other",
+            "alsoInChannel": false,
+            "deletedAt": null
+          }
+        ],
+        "threadStates": [],
+        "me": null
+      },
+      "expected": {
+        "cards": [
+          {
+            "rootId": "r1",
+            "channelId": "c1",
+            "column": "active",
+            "fold": null,
+            "entryIds": [
+              "m67"
+            ],
+            "summary": "머리 r1",
+            "whoId": "other",
+            "sinceAt": 1790812800000,
+            "lastActivityAt": 1790812800000,
+            "unread": true,
+            "ask": null,
+            "laterUntil": null,
+            "kind": "news",
+            "similarKey": null,
+            "replyCount": 0
+          }
+        ],
+        "groups": [
+          [
+            "r1"
+          ]
+        ],
+        "mineCount": 0
+      }
+    }
+  ],
+  "oneSentence": [
+    {
+      "body": "",
+      "sentence": ""
+    },
+    {
+      "body": "그냥 한 줄",
+      "sentence": "그냥 한 줄"
+    },
+    {
+      "body": "첫 줄\n둘째 줄?",
+      "sentence": "둘째 줄?"
+    },
+    {
+      "body": "> 인용된 물음?",
+      "sentence": "인용된 물음?"
+    },
+    {
+      "body": "1) 번호 붙은 줄",
+      "sentence": "번호 붙은 줄"
+    },
+    {
+      "body": "---\n| 표 |\n본문",
+      "sentence": "본문"
+    },
+    {
+      "body": "<@a><@b> 멘션 둘 뒤",
+      "sentence": "멘션 둘 뒤"
+    },
+    {
+      "body": "![그림](x.png) 과 [글](y)",
+      "sentence": "그림 과 글"
+    },
+    {
+      "body": "snake_case_name 은 그대로",
+      "sentence": "snake_case_name 은 그대로"
+    },
+    {
+      "body": "_강조_ 는 벗긴다.",
+      "sentence": "강조 는 벗긴다."
+    },
+    {
+      "body": "**굵은** ~~취소~~ `코드`",
+      "sentence": "굵은 취소 코드"
+    },
+    {
+      "body": "전각 물음표？",
+      "sentence": "전각 물음표？"
+    },
+    {
+      "body": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+      "sentence": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가…"
+    },
+    {
+      "body": "```\n울타리 안?\n```\n밖",
+      "sentence": "밖"
+    },
+    {
+      "body": "  앞뒤 공백  ",
+      "sentence": "앞뒤 공백"
+    }
+  ],
+  "daysWaiting": [
+    {
+      "sinceAt": "2026-10-01T12:00:00.000Z",
+      "days": null
+    },
+    {
+      "sinceAt": "2026-10-01T00:00:00.000Z",
+      "days": null
+    },
+    {
+      "sinceAt": "2026-09-30T12:00:00.000Z",
+      "days": 1
+    },
+    {
+      "sinceAt": "2026-09-28T11:59:59.999Z",
+      "days": 3
+    },
+    {
+      "sinceAt": "2026-09-21T12:00:00.000Z",
+      "days": 10
+    }
+  ]
+}
