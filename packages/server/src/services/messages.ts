@@ -277,9 +277,12 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
     --
     -- 사람이 되묻는 말은 풀지 않는다. 그때는 정말로 막혀 있는 것이고, 그것을 '끝남'으로
     -- 칠하는 것이 이 필드가 막으려는 반대쪽 거짓말이다.
+    --
+    -- **CASE 로 감싼다**(2026-10-13 쿼리 개선 Q1). 집계의 FILTER 안 AND 는 적힌 순서대로 끊기지 않아, 이 하위 질의가
+    -- 실패가 아닌 행에서도 돌았다 — 보드 머리 한 번에 스레드의 모든 행만큼(로컬 17,543번·11.5만 블록). CASE 는 평가 순서를
+    -- 약속한다. 아래 open_gate_account_ids 도 같다.
     COUNT(*) FILTER (
-      WHERE t.meta->>'kind' = 'failure'
-        AND NOT EXISTS (
+      WHERE CASE WHEN t.meta->>'kind' = 'failure' THEN NOT EXISTS (
           SELECT 1 FROM message r
           WHERE (r.id = m.id OR r.thread_root_id = m.id)
             AND r.deleted_at IS NULL
@@ -287,16 +290,16 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
             AND (r.kind IN ('progress', 'wake')
               OR r.meta->>'kind' = 'report'
               OR r.author_id = t.author_id)
-        )
+        ) ELSE false END
     )::int as unresolved_failure_count,
     -- 안 풀린 account_gate 실패의 차례 주인들(2026-10-02). 해소 규칙은 바로 위와 **같다** —
     -- 갈라지면 🙋 가 풀린 뒤에도 Inbox 의 내 차례에 남는다. 차례 주인을 못 정한 실패
     -- (awaitingAccountId 없음)는 넣지 않는다: 아무 계정 id 로 채우면 그 사람만 강조를 받는다.
     COALESCE(ARRAY_AGG(DISTINCT t.meta->'failure'->>'awaitingAccountId') FILTER (
-      WHERE t.meta->>'kind' = 'failure'
+      WHERE CASE WHEN t.meta->>'kind' = 'failure'
         AND t.meta->'failure'->>'code' = 'account_gate'
         AND t.meta->'failure'->>'awaitingAccountId' IS NOT NULL
-        AND NOT EXISTS (
+        THEN NOT EXISTS (
           SELECT 1 FROM message r
           WHERE (r.id = m.id OR r.thread_root_id = m.id)
             AND r.deleted_at IS NULL
@@ -304,7 +307,7 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
             AND (r.kind IN ('progress', 'wake')
               OR r.meta->>'kind' = 'report'
               OR r.author_id = t.author_id)
-        )
+        ) ELSE false END
     ), '{}'::text[]) as open_gate_account_ids,
     -- 마디들: 누가 → 누구를 기다리는가(#488 A3-b). 위의 두 집계로는 부족하다 —
     -- open_ask_account_ids 는 '답해야 하는 쪽'만 모은 집합이라 누가 물었는지가
