@@ -268,20 +268,32 @@ class _SectionHeader extends SliverPersistentHeaderDelegate {
   @override
   double get maxExtent => 30;
 
+  // 색은 [_SectionHeaderBar] 가 제 build 에서 읽는다 — 이 build 는 [shouldRebuild] 가 false 면 다시 안 불려서,
+  // 여기서 테마를 읽으면 다크로 바뀌어도 밝은 바탕이 남는다(designer s1, 갤러리 45번의 흰 띠).
   @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) =>
+      _SectionHeaderBar(key: Key(keyName), text: text);
+
+  @override
+  bool shouldRebuild(_SectionHeader oldDelegate) => oldDelegate.text != text;
+}
+
+class _SectionHeaderBar extends StatelessWidget {
+  const _SectionHeaderBar({super.key, required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
     final k = context.tokens;
     return Container(
-      key: Key(keyName),
-      color: k.surface,
+      // 목록과 같은 바탕 — 머리가 화면에서 가장 밝은 것이 되지 않게(designer s1).
+      color: Theme.of(context).scaffoldBackgroundColor,
       alignment: Alignment.centerLeft,
       padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter),
       child: Text(text, style: TextStyle(color: k.fgMuted, fontSize: 12, fontWeight: FontWeight.w600)),
     );
   }
-
-  @override
-  bool shouldRebuild(_SectionHeader oldDelegate) => oldDelegate.text != text;
 }
 
 class _MineEmpty extends StatelessWidget {
@@ -406,9 +418,11 @@ class BoardRow extends StatelessWidget {
           Text(t.inboxDismiss, style: TextStyle(color: k.fg, fontWeight: FontWeight.w700, fontSize: 13)),
         ]),
       ),
-      // 언제나 false — 줄은 판이 지운다(다시 받은 판에서 빠진다). true 면 실패한 줄도 사라진다.
+      // 언제나 false — 줄은 판이 지운다. `setBoardState` 가 호출 **전에** 먼저 바꾼 상태로 줄을 빼므로 다음 그림에서
+      // 바로 사라지고, 실패하면 판이 되살린다(designer s2). 그래서 호출을 기다리지 않는다. true 면 실패한 줄이 판에
+      // 되살아날 때 Dismissible 이 꼬인다.
       confirmDismiss: (_) async {
-        await runBoardAction(context, [group], BoardAction.dismiss);
+        unawaited(runBoardAction(context, [group], BoardAction.dismiss));
         return false;
       },
       child: row,

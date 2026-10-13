@@ -136,11 +136,20 @@ Map<String, Object?> _board() {
   for (final e in entries) {
     e['channelId'] = channelOf[e['threadRootId']];
   }
-  return {'entries': entries, 'threads': threads, 'threadStates': <Object?>[]};
+  return {
+    'entries': entries,
+    'threads': threads,
+    'threadStates': [
+      for (final MapEntry(key: root, value: st) in _states.entries)
+        {'rootId': root, 'state': st, 'until': null, 'updatedAt': DateTime.now().toUtc().toIso8601String()},
+    ],
+  };
 }
 
 http.Response _json(Object body, [int status = 200]) =>
     http.Response.bytes(utf8.encode(jsonEncode(body)), status, headers: {'content-type': 'application/json'});
+
+final _states = <String, String>{};
 
 MockClient _server() => MockClient((req) async {
       final path = req.url.path;
@@ -163,7 +172,17 @@ MockClient _server() => MockClient((req) async {
       if (path == '/reads') return _json({'reads': <Object?>[]});
       if (path == '/inbox/board') return _json(_board());
       if (path.startsWith('/inbox') && req.method == 'GET') return _json({'entries': <Object?>[]});
-      if (path.startsWith('/inbox/threads/')) return _json({'state': null});
+      if (path.startsWith('/inbox/threads/')) {
+        // 실서버처럼 내 상태를 기억한다 — 43번(밀어 치운 뒤)에서 그 줄이 빠지고 숫자가 준다.
+        final root = path.split('/').last;
+        final st = (jsonDecode(req.body) as Map)['state'] as String?;
+        if (st == null) {
+          _states.remove(root);
+        } else {
+          _states[root] = st;
+        }
+        return _json({'state': st});
+      }
       if (path == '/ws-ticket') return _json({'ticket': 'tk'});
       if (path.startsWith('/saved')) return _json({'open': 0, 'entries': <Object?>[]});
       return _json({'error': {'code': 'not_found', 'message': path}}, 404);

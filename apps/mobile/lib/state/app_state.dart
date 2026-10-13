@@ -247,6 +247,14 @@ class AppState extends ChangeNotifier {
   InboxBoardData? _boardCardsFor;
   int _boardCardsMinute = -1;
   int _boardCardsAccounts = -1;
+  int _boardCardsPendingRev = -1;
+
+  /// 화면이 먼저 바꾼 **내** 상태(밀어서 치우기 등) — 호출이 끝나기 전에 줄을 빼고 숫자를 줄이려고(designer s2).
+  /// 값이 `null` 이면 되돌리기(상태 없음). 호출이 실패하면 지우고(줄이 되살아난다), 성공하면 **그 뒤에 시작한**
+  /// 판 조회가 서버 사실을 가져온 다음에 지운다 — 그 전에 지우면 낡은 판이 줄을 잠깐 되살린다.
+  final Map<String, _BoardPending> _boardPending = {};
+  int _boardPendingRev = 0;
+  int _boardFetchSeq = 0;
 
   /// 판정한 카드들. 같은 판·같은 분이면 다시 세지 않는다(화면이 build 마다 읽는다). 분이 바뀌면 다시 세는 이유:
   /// 7일 접힘·나중에 풀림이 시각으로 갈린다.
@@ -255,15 +263,27 @@ class AppState extends ChangeNotifier {
     final mine = me;
     if (b == null || mine == null) return const [];
     final minute = DateTime.now().millisecondsSinceEpoch ~/ 60000;
-    if (_boardCards != null && identical(_boardCardsFor, b) && _boardCardsMinute == minute && _boardCardsAccounts == accounts.length) {
+    if (_boardCards != null &&
+        identical(_boardCardsFor, b) &&
+        _boardCardsMinute == minute &&
+        _boardCardsAccounts == accounts.length &&
+        _boardCardsPendingRev == _boardPendingRev) {
       return _boardCards!;
     }
+    final states = _boardPending.isEmpty
+        ? b.threadStates
+        : [
+            for (final s in b.threadStates)
+              if (!_boardPending.containsKey(s.rootId)) s,
+            for (final p in _boardPending.values)
+              if (p.state != null) p.state!,
+          ];
     final cards = buildBoard(
       entries: b.entries,
       threads: b.threads,
       // 모바일은 사람만 로그인한다.
       me: BoardMe(id: mine.id, isHuman: true),
-      threadStates: b.threadStates,
+      threadStates: states,
       isAgent: (id) => accounts[id]?.isAgent ?? false,
       nowMs: DateTime.now().millisecondsSinceEpoch,
     );
@@ -271,6 +291,7 @@ class AppState extends ChangeNotifier {
     _boardCardsFor = b;
     _boardCardsMinute = minute;
     _boardCardsAccounts = accounts.length;
+    _boardCardsPendingRev = _boardPendingRev;
     return cards;
   }
 
@@ -309,11 +330,16 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
     final gen = _generation;
+    final seq = ++_boardFetchSeq;
     try {
       final next = await api.inboxBoard();
       if (gen != _generation) return;
       board = next;
       boardLoad = LoadState.loaded;
+      // 이 조회보다 먼저 끝난 호출의 먼저-바꾼 상태는 이제 판이 말한다.
+      final before = _boardPending.length;
+      _boardPending.removeWhere((_, p) => p.settledBefore != null && p.settledBefore! < seq);
+      if (_boardPending.length != before) _boardPendingRev++;
     } on Object catch (e) {
       if (gen != _generation) return;
       // 보이는 판은 그대로 둔다 — 다시 못 받았다고 있던 줄을 지우지 않는다(`loadInbox` 와 같은 판단).
@@ -326,18 +352,40 @@ class AppState extends ChangeNotifier {
   /// 묶인 줄들의 **내** 상태를 바꾼다 — 치우기(`done`)·나중에(`later` + [until])·되돌리기(`null`). 묶인 일
   /// (`similar`)까지 전부다. 실패하면 던진다(화면이 알린다). 성공·실패 모두 끝에 판을 다시 받는다 — 일부만 바뀌었어도
   /// 화면이 서버 사실대로 선다.
+  ///
+  /// 줄은 **호출 전에** 판에서 뺀다(먼저 바꾼 상태, [_boardPending]) — 밀자마자 줄이 빠지고 숫자가 준다. 실패하면
+  /// 먼저 바꾼 것을 걷어 줄을 되살린 뒤 던진다.
   Future<void> setBoardState(List<BoardGroup> groups, String? state, {DateTime? until}) async {
     final api = _api;
     if (api == null) return;
+    final now = DateTime.now().toUtc();
+    final mine = <String, _BoardPending>{
+      for (final g in groups)
+        for (final c in [g.card, ...g.similar])
+          c.rootId: _BoardPending(
+            state == null ? null : InboxThreadState(rootId: c.rootId, state: state, until: until?.toUtc(), updatedAt: now),
+          ),
+    };
+    _boardPending.addAll(mine);
+    _boardPendingRev++;
+    notifyListeners();
     try {
-      for (final g in groups) {
-        for (final c in [g.card, ...g.similar]) {
-          await api.setInboxThreadState(c.rootId, state: state, until: until);
-        }
+      for (final rootId in mine.keys) {
+        await api.setInboxThreadState(rootId, state: state, until: until);
       }
-    } finally {
+    } on Object {
+      // 일부만 바뀌었을 수 있다 — 먼저 바꾼 것은 걷고 서버 사실대로 다시 받는다.
+      _boardPending.removeWhere((k, p) => identical(mine[k], p));
+      _boardPendingRev++;
+      notifyListeners();
       await loadBoard();
+      rethrow;
     }
+    // 지금부터 시작하는 조회가 끝나면 걷는다. 그 사이 같은 줄을 또 바꿨으면(되돌리기) 그 값이 남는다.
+    for (final MapEntry(key: k, value: p) in mine.entries) {
+      if (identical(_boardPending[k], p)) p.settledBefore = _boardFetchSeq + 1;
+    }
+    await loadBoard();
   }
 
   /// 카드를 열었다 — 그 일에서 나에게 온 안 읽은 항목을 읽음으로. 판과 [inbox] 둘 다 화면에서 먼저 고친다.
@@ -2410,6 +2458,8 @@ class AppState extends ChangeNotifier {
     boardLoad = LoadState.loading;
     _boardCards = null;
     _boardCardsFor = null;
+    _boardPending.clear();
+    _boardPendingRev++;
     agentActivity.clear();
     agentWakes.clear();
     agentsLoad = LoadState.loading;
@@ -2529,4 +2579,12 @@ Future<void> runLimited(List<Future<void> Function()> jobs, int limit) async {
   }
 
   await Future.wait([for (var i = 0; i < limit && i < jobs.length; i++) worker()]);
+}
+
+/// 화면이 먼저 바꾼 내 상태 하나. [settledBefore] 는 호출이 성공한 뒤에 정해진다 — 그 번호 이상의 판 조회가 끝나면 걷는다.
+class _BoardPending {
+  _BoardPending(this.state);
+
+  final InboxThreadState? state;
+  int? settledBefore;
 }
