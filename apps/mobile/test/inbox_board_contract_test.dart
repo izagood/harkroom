@@ -105,6 +105,23 @@ void main() {
     }
   });
 
+  test('시각을 못 읽은 카드는 7일 접힘으로 숨기지 않는다 (security #1351 n1)', () {
+    final cards = buildBoard(
+      entries: [
+        InboxEntry.fromJson({'id': 1, 'messageId': 'm1', 'reason': 'mention', 'channelId': 'c1', 'authorId': 'bot',
+          'body': '시각이 깨졌다', 'createdAt': 'not-a-date', 'threadRootId': 'r1', 'readAt': null}),
+      ],
+      threads: [BoardHead.fromJson({'id': 'r1', 'channelId': 'c1', 'authorId': 'other', 'body': '머리', 'createdAt': 'not-a-date', 'openAskAccountIds': ['me']})],
+      me: const BoardMe(id: 'me', isHuman: true),
+      threadStates: const [],
+      isAgent: (_) => false,
+      nowMs: nowMs,
+    );
+    expect(cards.single.column, BoardColumn.mine);
+    expect(cards.single.fold, isNull, reason: '접히면 숫자에서 빠져 숨는다');
+    expect(mineCount(cards), 1);
+  });
+
   group('InboxBoardData.fromJson (간추린 판)', () {
     test('잘린 본문 끝의 반쪽 멘션을 뗀다 — 항목은 bodyTruncated 일 때만, 머리는 늘', () {
       final data = InboxBoardData.fromJson({

@@ -47,7 +47,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final t = context.t;
     final app = context.app;
-    final unread = app.inboxUnread;
+    // 인박스 탭 배지 = 나를 기다리는 일 수(G1 (b), 2026-10-13 jaebin) — 데스크톱 배지와 같은 mineCount.
+    final unread = app.inboxMine;
     // DM 탭 배지 = DM 채널들의 안 읽은 수 합(서버가 센 값).
     var dmUnread = 0;
     for (final c in app.channels) {

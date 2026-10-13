@@ -87,6 +87,7 @@ class PushCoordinator extends ChangeNotifier {
     if (app.phase != AppPhase.ready) return;
     try {
       await app.loadInbox();
+      await app.loadBoard();
       await app.refreshOtherCounts();
     } on Object {
       // 다음에 다시 읽는다.
