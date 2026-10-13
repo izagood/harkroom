@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Overlay } from './Overlay';
 import type { SavedMessageRow } from '@harkroom/shared';
-import { useActiveStore } from '../state/communities';
+import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { displayBody } from '../lib/mention';
 import { useT, useLocale } from '../i18n/useT';
@@ -26,18 +26,22 @@ const NO_TEAMS_FALLBACK: never[] = [];
 /** 옮기기 실패 알림이 떠 있는 시간. */
 const MOVE_FAILED_MS = 5_000;
 
-/** 서버에 보내 놓고 아직 답을 못 받은 옮기기 하나. 행은 이미 화면에서 옮겨져 있다. */
-interface PendingMove { row: SavedMessageRow; to: Tab }
+/**
+ * 서버에 보내 놓고 아직 답을 못 받은 옮기기 하나. 행은 이미 화면에서 옮겨져 있다.
+ * `community` 는 누른 때의 활성 커뮤니티다 — 이 패널(`Workspace`)은 커뮤니티를 바꿔도
+ * 새로 그려지지 않아 표가 살아남으므로, 다른 커뮤니티의 목록에 끼우지 않으려고 적어 둔다.
+ */
+interface PendingMove { row: SavedMessageRow; to: Tab; community: string }
 
 /**
  * 서버에서 받은 한 탭의 목록에 아직 끝나지 않은 옮기기를 겹친다. 목록을 받는 사이에 서버가
  * 그 옮기기를 반영했는지 모르므로, 떠나는 행은 빼고 들어오는 행은 없을 때만 맨 앞에 끼운다.
  */
-function overlayPending(rows: SavedMessageRow[], tab: Tab, pending: ReadonlyMap<string, PendingMove>): SavedMessageRow[] {
+function overlayPending(rows: SavedMessageRow[], tab: Tab, community: string, pending: ReadonlyMap<string, PendingMove>): SavedMessageRow[] {
   if (pending.size === 0) return rows;
-  const out = rows.filter((r) => { const p = pending.get(r.messageId); return !p || p.to === tab; });
+  const out = rows.filter((r) => { const p = pending.get(r.messageId); return !p || p.community !== community || p.to === tab; });
   for (const p of pending.values()) {
-    if (p.to === tab && !out.some((r) => r.messageId === p.row.messageId)) out.unshift({ ...p.row, state: tab });
+    if (p.community === community && p.to === tab && !out.some((r) => r.messageId === p.row.messageId)) out.unshift({ ...p.row, state: tab });
   }
   return out;
 }
@@ -52,6 +56,7 @@ export function SavedMessages({ open, onClose }: Props) {
   const groups = useActiveStore((s) => s.groups);
   const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS_FALLBACK;
   const me = useActiveStore((s) => s.me);
+  const community = useCommunityRegistry((r) => r.activeId);
 
   const [entries, setEntries] = useState<SavedMessageRow[]>([]);
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
@@ -66,6 +71,8 @@ export function SavedMessages({ open, onClose }: Props) {
   // 비동기 답이 돌아왔을 때 지금 보이는 탭. 클로저의 `tab` 은 누른 때의 값이다.
   const tabRef = useRef<Tab>(tab);
   tabRef.current = tab;
+  const communityRef = useRef(community);
+  communityRef.current = community;
   const [moveFailed, setMoveFailed] = useState<string | null>(null);
 
   useEffect(() => {
@@ -78,7 +85,7 @@ export function SavedMessages({ open, onClose }: Props) {
     let alive = true;
     setLoad({ kind: 'loading' });
     getController().loadSavedMessages(tab).then(
-      (rows) => { if (alive) { setEntries(overlayPending(rows, tab, pendingRef.current)); setLoad({ kind: 'ready' }); } },
+      (rows) => { if (alive) { setEntries(overlayPending(rows, tab, community, pendingRef.current)); setLoad({ kind: 'ready' }); } },
       (err: unknown) => {
         if (!alive) return;
         setEntries([]);
@@ -86,12 +93,13 @@ export function SavedMessages({ open, onClose }: Props) {
       },
     );
     return () => { alive = false; };
-  }, [tab]);
+    // 커뮤니티를 바꾸면 그 커뮤니티의 목록을 새로 받는다 — 앞 커뮤니티의 행을 남기지 않는다.
+  }, [tab, community]);
 
   useEffect(() => {
     if (!open) return;
-    // `reloadSeq` 가 의존성에 있는 것이 핵심이다 — 체크를 누르면 이 effect 가 다시 돌아
-    // 서버의 새 상태를 받는다.
+    // `reloadSeq` 는 [다시 시도] 의 방아쇠다 — 누르면 이 effect 가 다시 돌아 목록을 새로 받는다.
+    // 체크(✓·↺)는 이것을 당기지 않는다(`toggleState` 가 그 행만 옮긴다).
     void reloadSeq;
     return reload();
   }, [open, reload, reloadSeq]);
@@ -130,13 +138,16 @@ export function SavedMessages({ open, onClose }: Props) {
     const next: Tab = from === 'open' ? 'done' : 'open';
     if (pendingRef.current.has(e.messageId)) return;
     const at = entries.findIndex((r) => r.messageId === e.messageId);
-    pendingRef.current.set(e.messageId, { row: e, to: next });
+    const mine = community;
+    pendingRef.current.set(e.messageId, { row: e, to: next, community: mine });
     setEntries((rows) => rows.filter((r) => r.messageId !== e.messageId));
     try {
       await getController().updateSavedMessageState(e.messageId, next);
       pendingRef.current.delete(e.messageId);
     } catch (err: unknown) {
       pendingRef.current.delete(e.messageId);
+      // 지금 보는 곳이 누른 때의 그 커뮤니티·그 탭일 때만 되돌려 끼운다.
+      if (communityRef.current !== mine) { setMoveFailed(errorText(err, t)); return; }
       const shown = tabRef.current;
       setEntries((rows) => {
         const rest = rows.filter((r) => r.messageId !== e.messageId);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within, act } from '@testing-library/react';
 import type { SavedMessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller, setController, type Controller as ControllerType } from '../src/state/controller';
@@ -9,6 +9,7 @@ import { Rail } from '../src/components/Rail';
 import { Workspace } from '../src/components/Workspace';
 import { acc, chan, msg, fakeApi, scheduledApiStub } from './helpers/fakeApi';
 import { usePrefsStore } from '../src/state/prefsStore';
+import { useCommunityRegistry, resetCommunityRegistry } from '../src/state/communities';
 
 /**
  * **언어를 한국어로 고정한다.** 이 파일이 재는 것은 언어가 아니라 **그 언어로 표현된
@@ -184,6 +185,32 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
     // 다시 할 것 탭으로 가도 서버 목록의 낡은 행이 되살아나지 않는다.
     fireEvent.click(screen.getByText('할 것'));
     await waitFor(() => expect(screen.getByTestId('saved-empty')).toBeTruthy());
+  });
+
+  it('n1. 답을 기다리는 옮기기는 다른 커뮤니티의 목록에 끼지 않는다', async () => {
+    // A 에서 m1 을 완료로 누르고(답은 오지 않는다) B 로 바꾼다. B 의 서버는 빈 목록을 준다.
+    fakeController({
+      loadSavedMessages: vi.fn(async (tab: 'open' | 'done') => (tab === 'open' ? [entry('m1', 'open')] : [])),
+      updateSavedMessageState: vi.fn(() => new Promise<void>(() => undefined)),
+    });
+    try {
+      render(<SavedMessages open onClose={vi.fn()} />);
+      await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
+      fireEvent.click(screen.getByTestId('saved-toggle-m1'));
+
+      const reg = useCommunityRegistry.getState();
+      const b = reg.register({ baseUrl: 'http://b.example.com' });
+      const bc = { loadSavedMessages: vi.fn(async () => [] as SavedMessageRow[]), loadSavedSummary: vi.fn(async () => ({ openCount: 0, messageIds: [] as string[] })) };
+      reg.attachController(b.id, bc as unknown as ControllerType);
+      act(() => useCommunityRegistry.getState().setActive(b.id));
+      fireEvent.click(screen.getByText('완료'));
+      await waitFor(() => expect(bc.loadSavedMessages).toHaveBeenCalledWith('done'));
+      await waitFor(() => expect(screen.getByTestId('saved-empty')).toBeTruthy());
+      expect(screen.queryByTestId('saved-entry-m1')).toBeNull();
+    } finally {
+      cleanup();
+      resetCommunityRegistry();
+    }
   });
 
   it('4. 삭제된 메시지는 "삭제된 메시지" 로 남고 누를 수 없다', async () => {
@@ -389,6 +416,24 @@ describe('담아 둔 메시지 — Workspace 배선 (#219)', () => {
       messages: { c1: [msg('m9', 'c1', 5, 'read me later', 'u2')] },
       connected: true,
     });
+  });
+
+  it('n2. 옮기기는 성공했는데 배지 갱신만 실패하면 행을 되돌리지 않는다', async () => {
+    const api = fakeApi({
+      savedMessages: vi.fn(async (state: 'open' | 'done') => (state === 'open' ? [entry('m1', 'open')] : [])),
+      updateSavedMessage: vi.fn(async () => entry('m1', 'done')),
+      savedSummary: vi.fn(async () => { throw new Error('summary down'); }),
+    });
+    setController(new Controller(api));
+    render(<SavedMessages open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('saved-toggle-m1'));
+    await waitFor(() => expect(api.updateSavedMessage).toHaveBeenCalledWith('m1', 'done'));
+    await waitFor(() => expect(api.savedSummary).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId('saved-entry-m1')).toBeNull();
+    expect(screen.queryByTestId('saved-move-failed')).toBeNull();
   });
 
   it('툴바에서 담으면 사이드바 배지가 갱신되고 패널이 그 행을 그린다', async () => {
