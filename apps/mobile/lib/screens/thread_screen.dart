@@ -68,6 +68,11 @@ class _ThreadScreenState extends State<ThreadScreen> {
   final _hitKey = GlobalKey();
   bool _hitDone = false;
   int _hitTries = 0;
+  /// 찾기 사슬이 이미 다음 프레임에 걸려 있다. 빌드마다 새 사슬을 걸면 사슬끼리 [_hitTries] 를 나눠 써서
+  /// 일찍 포기했다(2026-10-13 신고) — 사슬은 늘 하나다.
+  bool _hitScheduled = false;
+  /// 지난 시도 때의 끝 자리. 끝에 닿았는데 끝이 더 자라지 않았으면 그 줄은 목록에 없다.
+  double? _hitLastExtent;
 
   /// 목록 맨 위(reverse 라 끝)에 닿으면 옛 답글을 받는다 — 채널 화면의 `_maybeLoadOlder` 와 같다.
   final _scroll = ScrollController();
@@ -193,6 +198,20 @@ class _ThreadScreenState extends State<ThreadScreen> {
 
   /// 찾은 줄로 굴린다. 목록은 화면 밖 줄을 짓지 않으므로(지연 빌드) 아직 없으면 위로(reverse 라 끝 쪽으로)
   /// 한 화면씩 밀며 찾는다 — 찾거나 끝에 닿으면 멈춘다.
+  ///
+  /// **시도 횟수가 아니라 끝으로 멈춘다**(2026-10-13). 전에는 30번(약 24화면)에서 끊었다 — 표가 든 긴 보고가
+  /// 59개 달린 스레드에서 루트 링크를 누르면 루트에 닿기 전에 포기해 스레드 한가운데에 섰다. 끝은 지연 빌드라
+  /// 미는 동안 자라므로, 끝에 닿았고 끝이 지난 시도보다 자라지 않았을 때만 "없다"로 본다. 옛 답글을 받는 중이면
+  /// 그 답을 기다린다. [_hitTries] 는 무한 루프를 막는 안전띠다(한 프레임에 한 화면이면 600화면).
+  void _scheduleHit() {
+    if (_hitScheduled || _hitDone) return;
+    _hitScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _hitScheduled = false;
+      _scrollToHit();
+    });
+  }
+
   void _scrollToHit() {
     if (_hitDone || widget.highlightId == null || !mounted) return;
     final ctx = _hitKey.currentContext;
@@ -201,11 +220,18 @@ class _ThreadScreenState extends State<ThreadScreen> {
       Scrollable.ensureVisible(ctx, alignment: 0.5, duration: HarkroomMotion.base, curve: HarkroomMotion.ease);
       return;
     }
-    if (!_scroll.hasClients || ++_hitTries > 30) return;
+    if (!_scroll.hasClients || ++_hitTries > 600) return;
     final pos = _scroll.position;
-    if (pos.pixels >= pos.maxScrollExtent) return;
+    if (pos.pixels >= pos.maxScrollExtent) {
+      final grew = _hitLastExtent == null || pos.maxScrollExtent > _hitLastExtent!;
+      _hitLastExtent = pos.maxScrollExtent;
+      // 끝에 닿았다. 옛 답글이 오는 중이거나 끝이 방금 자랐으면 한 번 더 본다 — 아니면 그 줄은 목록에 없다.
+      if (grew || AppScope.read(context).loadingOlderThread.contains(widget.rootId)) _scheduleHit();
+      return;
+    }
+    _hitLastExtent = pos.maxScrollExtent;
     _scroll.jumpTo((pos.pixels + pos.viewportDimension * 0.8).clamp(0, pos.maxScrollExtent));
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToHit());
+    _scheduleHit();
   }
 
   @override
@@ -213,7 +239,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final t = context.t;
     final app = context.app;
     if (!_hitDone && widget.highlightId != null && app.threadLoad[widget.rootId] == LoadState.loaded) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToHit());
+      _scheduleHit();
     }
 
     // 루트는 채널 목록의 것을 먼저 쓰고(채널 화면과 같은 줄), 없으면 스레드 응답에 함께 온
