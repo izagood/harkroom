@@ -373,8 +373,6 @@ class StringsEn implements Strings {
   @override
   String get newDmNoMatch => 'No one matches.';
   @override
-  String get newMessagePeople => 'People';
-  @override
   String get newMessageDmFailed => "Couldn't open the DM.";
   @override
   String get unreadOnlyEmpty => 'All caught up.';

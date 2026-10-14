@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -115,9 +116,17 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     // 탭은 [AppState.homeTab] 이 쥔다 — 커뮤니티를 옮기며 부팅 화면을 거쳐도 살아남게.
     final tab = app.homeTab.clamp(0, 3);
-    // 키보드가 올라오면 탭 바는 키보드 뒤로 숨고 입력창만 키보드 위에 남는다(D2). 내리면 같은 프레임에 돌아온다.
-    // 찾기처럼 탭 바를 숨기는 화면이 이 탭 맨 위에 있어도 숨긴다.
-    final hideBar = MediaQuery.viewInsetsOf(context).bottom > 0 || _tabs.barHidden(tab).value;
+    final mq = MediaQuery.of(context);
+    final keyboard = mq.viewInsets.bottom;
+    final barHeight = floatingTabBarHeight(mq);
+    final barless = _tabs.barHidden(tab).value;
+    // 키보드가 올라오면 탭 바는 키보드 뒤로 숨고 입력창만 키보드 위에 남는다(D2). 탭 바는 **키보드가 다 덮은
+    // 뒤에** 뺀다 — 오르는 동안은 키보드가 아래에서 덮어 간다. 찾기처럼 탭 바를 숨기는 화면이 맨 위여도 숨긴다.
+    final hideBar = keyboard >= barHeight || barless;
+    // 안쪽 화면이 비울 아래 여백 = 탭 바 높이 − 키보드(designer #1368 n1). 안쪽 Scaffold 는 키보드만큼 줄어들므로
+    // 둘을 더하면 늘 max(탭 바, 키보드) — 키보드가 오르는 첫 프레임에 입력창이 탭 바 높이만큼 떨어졌다가
+    // 따라 올라오지 않는다. Scaffold 가 extendBody 로 넣는 여백은 탭 바가 빠지는 순간 0 으로 뛰어서 쓰지 않는다.
+    final bodyBottom = barless ? mq.padding.bottom : math.max(barHeight - keyboard, 0.0);
 
     return Scaffold(
       // 떠 있는 막대 뒤로 목록이 흐르게 — 막대가 내용을 가리지 않도록 몸통 아래에 막대 높이만큼 비운다.
@@ -125,7 +134,9 @@ class _HomeScreenState extends State<HomeScreen> {
       extendBody: true,
       // 키보드는 **안쪽** 화면(채널·스레드의 Scaffold)이 비킨다. 여기서도 비키면 두 번 줄어든다.
       resizeToAvoidBottomInset: false,
-      body: IndexedStack(
+      body: MediaQuery(
+        data: mq.copyWith(padding: mq.padding.copyWith(bottom: bodyBottom)),
+        child: IndexedStack(
         index: tab,
         // **`IndexedStack` 이다.** 탭을 옮길 때마다 화면을 새로 만들면 스크롤 위치와
         // 치던 글이 사라진다 — 채널을 보다 받은 것을 확인하고 돌아오는 것이 이 앱에서
@@ -136,7 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _tabNavigator(2, const InboxScreen(), tab),
           _tabNavigator(3, const AgentsScreen(), tab),
         ],
-      ),
+      )),
       // 개정판 3.1: 떠 있는 둥근 막대에 탭 넷 + 오른쪽 둥근 찾기 버튼. 찾기 버튼은 어느 탭에서나
       // 같은 자리에 서고 **전체** 범위로 연다(채널·스레드 범위는 그 화면 머리의 돋보기).
       bottomNavigationBar: hideBar
@@ -144,6 +155,8 @@ class _HomeScreenState extends State<HomeScreen> {
           : SafeArea(
               key: const Key('home-tab-bar'),
               minimum: const EdgeInsets.only(bottom: 8),
+              // 키보드가 오르는 동안 아래 여백이 줄어 막대가 같이 내려가지 않게 — 높이는 [floatingTabBarHeight] 와 같다.
+              maintainBottomViewPadding: true,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
                 child: Row(children: [
@@ -168,6 +181,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
+/// 떠 있는 탭 바가 차지하는 높이 — 막대(48 + 위아래 5 = 찾기 버튼 58)와 그 아래 안전 여백(최소 8).
+/// 키보드와 상관없이 같은 값이다(viewPadding) — 탭 바도 `maintainBottomViewPadding` 으로 같은 높이를 쓴다.
+double floatingTabBarHeight(MediaQueryData mq) => 58 + math.max(mq.viewPadding.bottom, 8.0);
 
 /// 탭 하나.
 class TabItem {

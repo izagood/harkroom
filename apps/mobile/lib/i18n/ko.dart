@@ -372,8 +372,6 @@ class StringsKo implements Strings {
   @override
   String get newDmNoMatch => '맞는 사람이 없다.';
   @override
-  String get newMessagePeople => '사람';
-  @override
   String get newMessageDmFailed => 'DM 을 열지 못했다.';
   @override
   String get unreadOnlyEmpty => '새로 온 것이 없다.';

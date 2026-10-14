@@ -235,9 +235,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
               onPicksChanged: (next) => setState(() => _picks = next),
             ),
             ComposerAttachments(composerKey: widget.channelId),
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 8, 8, 12),
+            // 떠 있는 알약(D5). 구분선 대신 그림자가 피드와 가른다.
+            ComposerPill(
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [

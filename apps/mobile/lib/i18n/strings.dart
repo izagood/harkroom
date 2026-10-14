@@ -487,9 +487,6 @@ abstract class Strings {
   /// 거르기에 맞는 사람이 없다.
   String get newDmNoMatch;
 
-  /// 새 메시지 시트의 사람 묶음.
-  String get newMessagePeople;
-
   /// DM 을 열지 못했을 때.
   String get newMessageDmFailed;
 
@@ -1294,7 +1291,6 @@ Map<String, String> stringsToMap(Strings s) => {
       'newDmStart': s.newDmStart,
       'newDmFilter': s.newDmFilter,
       'newDmNoMatch': s.newDmNoMatch,
-      'newMessagePeople': s.newMessagePeople,
       'newMessageDmFailed': s.newMessageDmFailed,
       'unreadOnlyEmpty': s.unreadOnlyEmpty,
       'inboxEmpty': s.inboxEmpty,

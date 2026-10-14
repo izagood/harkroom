@@ -440,9 +440,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
               onPicksChanged: (next) => setState(() => _picks = next),
             ),
             ComposerAttachments(composerKey: widget.rootId),
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 8, 8, 12),
+            // 떠 있는 알약(D5). 구분선 대신 그림자가 피드와 가른다.
+            ComposerPill(
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [

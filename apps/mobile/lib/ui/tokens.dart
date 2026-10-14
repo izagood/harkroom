@@ -254,6 +254,9 @@ abstract final class HarkroomRadius {
   static const double row = 8;
   static const double card = 12;
   static const double compose = 14;
+
+  /// 떠 있는 입력창 알약([ComposerPill]). 한 줄일 때 양끝이 반원이 되는 값이다.
+  static const double pill = 26;
   static const double avatar = 10;
   static const double avatarSmall = 6;
   static const double full = 999;

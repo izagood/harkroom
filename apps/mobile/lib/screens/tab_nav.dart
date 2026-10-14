@@ -139,13 +139,16 @@ Future<void> openChannelScreen(
   final nav = navigator ?? Navigator.of(context);
   final tabs = TabNavigators.active;
   final inTab = tabs != null && tabs.keys.any((k) => k.currentState == nav);
-  if (tabs == null || inTab) {
+  final app = AppScope.read(context);
+  final tab = tabForChannel(app, channelId);
+  final target = tabs?.navigator(tab);
+  // 탭 쌓기가 아직 붙지 않은 프레임(홈이 막 선 때)이면 건네받은 쪽에 민다 — 조용히 버리면 알림 탭이
+  // 아무 일도 안 한 것이 된다(security #1368 n1).
+  if (tabs == null || inTab || target == null) {
     await nav.push(MaterialPageRoute<void>(builder: builder));
     return;
   }
-  final app = AppScope.read(context);
-  final tab = tabForChannel(app, channelId);
   Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
   app.selectTab(tab);
-  await tabs.navigator(tab)?.push(MaterialPageRoute<void>(builder: builder));
+  await target.push(MaterialPageRoute<void>(builder: builder));
 }

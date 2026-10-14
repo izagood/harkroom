@@ -289,19 +289,48 @@ class SectionHeader extends StatelessWidget {
 /// 작성칸 테두리. 둥근 칸, 쉴 때 1px 선 · 포커스일 때 1px 회색(개정판 3.4 — 주황 2px 테두리는
 /// 보내기 버튼과 강조가 겹쳤다).
 InputDecoration composerDecoration(BuildContext context, String hint) {
-  final k = context.tokens;
-  OutlineInputBorder edge(Color c) => OutlineInputBorder(
-        borderRadius: BorderRadius.circular(HarkroomRadius.compose),
-        borderSide: BorderSide(color: c, width: 1),
-      );
+  // 칸에는 선을 긋지 않는다 — 둘레는 [ComposerPill] 이 그린다(하단 네비 D5). 선이 둘이면 알약 안에 알약이다.
   return InputDecoration(
     hintText: hint,
     isDense: true,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-    border: edge(HarkroomShadow.composeBorder(Theme.of(context).brightness).color),
-    enabledBorder: edge(HarkroomShadow.composeBorder(Theme.of(context).brightness).color),
-    focusedBorder: edge(k.fgMuted),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+    border: InputBorder.none,
+    enabledBorder: InputBorder.none,
+    focusedBorder: InputBorder.none,
   );
+}
+
+/// 떠 있는 입력창 알약(하단 네비 D5, 2026-10-14). 채널·스레드가 같은 것을 쓴다.
+///
+/// 탭 바와 같은 바탕·그림자·테두리라 아래 막대와 한 묶음으로 읽힌다. 좌우 여백은 탭 바와 같은 12,
+/// 아래는 6 — 탭 바가 있으면 탭 바 위 6, 키보드가 올라오면 키보드 위 6([floatingBarInset] 이 그 아래를 비운다).
+class ComposerPill extends StatelessWidget {
+  const ComposerPill({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    final b = Theme.of(context).brightness;
+    const shape = RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(HarkroomRadius.pill)));
+    return Padding(
+      key: const Key('composer-pill'),
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+      child: DecoratedBox(
+        decoration: ShapeDecoration(
+          shape: shape.copyWith(side: HarkroomShadow.floatBorder(b)),
+          shadows: HarkroomShadow.float(b),
+        ),
+        child: Material(
+          color: k.surface,
+          shape: shape,
+          clipBehavior: Clip.antiAlias,
+          child: Padding(padding: const EdgeInsets.fromLTRB(2, 4, 4, 4), child: child),
+        ),
+      ),
+    );
+  }
 }
 
 /// [soft] 는 보낼 글이 없을 때의 흐린 모양(잠긴 모양과 같은 색).
