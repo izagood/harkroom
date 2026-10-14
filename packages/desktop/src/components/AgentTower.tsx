@@ -25,6 +25,7 @@ import { getController } from '../state/controller';
 import { AgentTurns } from './AgentTurns';
 import { AgentWaits } from './AgentWaits';
 import { useAgentTurns, useAgentWakes, useThreadRoots, threadTitle } from '../lib/agentTurns';
+import { useAgentPoolChains } from './settings/useAgentPool';
 
 /** 빈 배열 리터럴을 매 렌더 새로 만들면 `useMemo` 의존성이 매번 달라진다. */
 const NO_TEAMS: never[] = [];
@@ -56,6 +57,7 @@ export function AgentTower({ onOpenThread }: {
     const channel = channels.find((c) => c.id === id);
     return channel ? `${channel.visibility === 'private' ? '🔒' : '#'}${channel.name}` : id;
   };
+  const poolChains = useAgentPoolChains();
   const roots = useThreadRoots(
     snapshot.kind === 'known' ? snapshot.turns.map((turn) => turn.threadRootId) : [],
   );
@@ -66,6 +68,7 @@ export function AgentTower({ onOpenThread }: {
     <main data-testid="agent-tower" className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-surface-raised">
       <AgentTurns
         variant="tower"
+        poolChainOf={(id) => poolChains.get(id)}
         snapshot={snapshot}
         handleOf={(id) => accounts[id]?.handle ?? id}
         channelLabel={channelLabelOf}

@@ -128,6 +128,10 @@ describe('payload 검증', () => {
       { defaultPool: null, order: { work: 'x' }, agents: {} },
       { defaultPool: null, order: {}, agents: { a1: 9 } },
       { defaultPool: null, order: {}, agents: { a1: ['work', 9] } },
+      // security n1·n3: 프로토타입 키·상한을 넘는 목록
+      JSON.parse('{"defaultPool":null,"order":{},"agents":{"__proto__":["work"]}}'),
+      JSON.parse('{"defaultPool":null,"order":{"__proto__":[]},"agents":{}}'),
+      { defaultPool: null, order: {}, agents: { a1: Array.from({ length: 17 }, (_, i) => `p${i}`) } },
     ]) {
       expect(isError(await send('claudeAccountsConfigure', bad)), JSON.stringify(bad)).toBe(true);
     }

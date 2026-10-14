@@ -42,7 +42,7 @@ import { useLocale, useT } from '../i18n/useT';
 
 export function AgentTurns({
   snapshot, handleOf, channelLabel, threadTitleOf, onOpenThread, onCancelTurns, onOpenTerminal,
-  variant = 'panel', now = Date.now(),
+  variant = 'panel', now = Date.now(), poolChainOf,
 }: {
   snapshot: AgentTurnsSnapshot;
   /** 계정 id → `@handle`. 스토어 모양을 이 컴포넌트가 알지 않게 함수로 받는다. */
@@ -75,6 +75,12 @@ export function AgentTurns({
    * 길로 연다: 새 경로를 만들면 같은 문에 손잡이가 둘이 된다).
    */
   onOpenTerminal?: (turn: AgentSessionView) => void;
+  /**
+   * 에이전트 계정 id → 이 기기의 **풀 순서**(2026-10-15 풀 n개). 턴이 1번이 아닌 풀에서 돌면 계정 배지
+   * 옆에 「↓ 2번 풀」 칩을 붙인다. 없거나 그 풀이 목록에 없으면 칩을 세우지 않는다 — 확인하지 않은
+   * 순서를 단언하지 않는다. 1번 풀에서는 붙이지 않는다(평소 상태에 표시를 더하지 않는다).
+   */
+  poolChainOf?: (agentAccountId: string) => readonly string[] | undefined;
   /**
    * **좁은 칸(`panel`)이냐 본문(`tower`)이냐.**
    *
@@ -330,6 +336,16 @@ export function AgentTurns({
                           {turn.claudeAccount ?? t('agentTurns.accountDefault')}
                         </span>
                       )}
+                      {(() => {
+                        const idx = turn.claudePool ? (poolChainOf?.(turn.agentAccountId)?.indexOf(turn.claudePool) ?? -1) : -1;
+                        return idx > 0 ? (
+                          <span data-testid={`agent-turn-pool-fallback-${turn.sessionId}`}
+                            title={t('agentTurns.poolFallbackTitle', { n: idx + 1, pool: turn.claudePool! })}
+                            className="shrink-0 rounded-sm bg-warning-surface px-1 text-warning">
+                            {t('agentTurns.poolFallback', { n: idx + 1 })}
+                          </span>
+                        ) : null;
+                      })()}
                       {/*
                         하네스는 **본문에서만 자기 칸을 갖는다.** 칸(300px)에서는 경과
                         시간이 그 자리를 쓰고 있어서, 하네스는 시각을 못 읽을 때만 대신

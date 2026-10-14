@@ -5,6 +5,7 @@ import {
   orderAccounts,
   DEFAULT_ASSIGN_THRESHOLDS,
   agentPoolChain,
+  MAX_AGENT_POOLS,
   parseClaudePoolsConfig,
   resolveAssignThresholds,
   resolvePoolName,
@@ -43,6 +44,15 @@ describe('parseClaudePoolsConfig', () => {
     expect(cfg.agents).toEqual({ a1: ['work', 'personal'], a2: ['work'], a3: ['work', 'team-b'] });
     expect(agentPoolChain(cfg, 'a1')).toEqual(['work', 'personal']);
     expect(agentPoolChain(cfg, 'a4')).toEqual([]);
+  });
+
+  it('프로토타입을 바꾸는 키는 버리고 목록은 상한까지만 읽는다(security n1·n3)', () => {
+    const cfg = parseClaudePoolsConfig(JSON.parse(
+      `{"agents":{"__proto__":["work"],"constructor":["work"],"a1":${JSON.stringify(Array.from({ length: 40 }, (_, i) => `p${i}`))}}}`,
+    ));
+    expect(Object.getPrototypeOf(cfg.agents)).toBe(Object.prototype);
+    expect(Object.keys(cfg.agents)).toEqual(['a1']);
+    expect(cfg.agents.a1).toHaveLength(MAX_AGENT_POOLS);
   });
 
   it('모양이 틀린 항목만 버리고 나머지는 살린다', () => {

@@ -21,7 +21,7 @@ import { calledGroups, notifiedSummary, type NotifiedResult } from '../lib/notif
 import { beginSend, endSend, markOwnSend, type OwnSendMarks } from '../lib/ownSends';
 import { RunnerLauncher, tauriDaemonObserver, tauriAppVersionReader, type AppVersionReader, type DaemonObserver } from '../lib/runnerLauncher';
 // 만들기 흐름이 러너를 띄우기 **전에** 풀 배정을 쓴다 — 근거는 `createAgent` 안에 있다.
-import { assignAgentPool } from '../lib/claudeAccounts';
+import { assignAgentPools } from '../lib/claudeAccounts';
 import { setLocalAgent } from '../lib/operatorLocal';
 import type { AppState, AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
@@ -2392,7 +2392,7 @@ export class Controller {
 
   async createAgent(
     input: { handle: string; displayName: string } & Partial<import('@harkroom/shared').AgentConfig>,
-    opts?: { claudePool?: string; localOperator?: { baseUrl: string; operatorId: string; workingDir?: string } },
+    opts?: { claudePools?: string[]; localOperator?: { baseUrl: string; operatorId: string; workingDir?: string } },
   ): Promise<{ agent: import('@harkroom/shared').AgentView; poolError: string | null; attachError: string | null }> {
     const agent = await this.api.createAgent(input);
     /**
@@ -2405,9 +2405,9 @@ export class Controller {
      * 못했다"를 말한다.
      */
     let poolError: string | null = null;
-    if (opts?.claudePool) {
+    if (opts?.claudePools?.length) {
       try {
-        await assignAgentPool(agent.id, opts.claudePool);
+        await assignAgentPools(agent.id, opts.claudePools);
       } catch (err) {
         poolError = errorText(err, this.t());
       }
