@@ -454,8 +454,11 @@ interactive = createInteractiveManager({
   // 세션을 첫 계정으로 resume 하면 죽는다(`InteractiveTurnDeps.configDirOf`, 실측 2026-09-21).
   // 지운 계정은 따르지 않는다 — 없는 디렉터리로 띄우면 claude 가 그것을 다시 만든다
   // (`presentAccounts` 주석). 그때는 아래 `currentAccount` 로 간다.
-  configDirOf: (name) => {
-    const dir = [...liveLane.snapshot().lane, ...accountLane].find((a) => a?.name === name)?.configDir ?? null;
+  // 풀이 여럿이면 다른 풀의 계정일 수 있다 — 기록에 풀이 있으면 그 풀에서 찾는다(2026-10-15).
+  configDirOf: (name, pool) => {
+    const snap = liveLane.snapshot();
+    const dir = [...snap.lane, ...(snap.chain ?? []).flatMap((c) => c.accounts), ...accountLane]
+      .find((a) => a?.name === name && (typeof pool !== 'string' || (a.pool ?? null) === null || a.pool === pool))?.configDir ?? null;
     return dir && existsSync(dir) ? dir : null;
   },
   currentAccount: async () => {
@@ -491,6 +494,7 @@ const accountAssigner = createAccountAssigner({
   current: () => liveLane.current(),
   root: claudeAccountsRoot(),
   pinnedOf: (key) => store.get(key)?.claudeAccount ?? null,
+  pinnedPoolOf: (key) => store.get(key)?.claudePool,
 });
 
 // 턴 임대(비밀 보관소 PR 3). 멘션마다 한 번 받아 오퍼레이터에 맡긴다 — 토큰은 relay 로만 간다(R2).
@@ -591,9 +595,9 @@ const scheduler = createMentionScheduler({
     piHome,
     claudeAccount: account?.name ?? null,
     claudeConfigDir: account?.configDir ?? null,
-    // 풀은 계정과 달리 축을 따라 바뀌지 않는다(축 자체가 한 풀이다) — 기동 때 정한 lane
-    // 에서 그대로 온다. 화면이 "어느 풀의 어느 계정"을 말할 수 있으려면 짝이 필요하다.
-    claudePool: lane.pool ?? null,
+    // 풀은 그 계정이 든 풀이다 — 풀 순서(2026-10-15)면 축이 풀 여러 개에 걸친다. 계정이 풀을
+    // 모르면(암묵 풀) 기동 때 정한 lane 의 풀이다. 화면이 "어느 풀의 어느 계정"을 말하는 짝이다.
+    claudePool: account?.pool ?? lane.pool ?? null,
     // 사람을 부를 때 쓰는 이름과 원장(2026-09-08). **원장은 러너 수명 동안 하나다** —
     // 턴마다 새로 만들면 매번 "처음 부르는 계정"이 되어, 7개 스레드가 동시에 걸렸을 때
     // 창이 7개 뜬다. 관문은 계정 단위라 하나만 지나면 나머지가 함께 풀린다.

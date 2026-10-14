@@ -181,6 +181,28 @@ describe('loadClaudeAccountLane — 풀 축', () => {
     expect(lane.accounts).toEqual([]);
   });
 
+  it('에이전트의 풀 순서를 chain 으로 싣는다 — 없는 풀은 건너뛰고 대표는 계정이 있는 첫 풀', async () => {
+    const root = await poolFixture(
+      { work: [], personal: ['gmail'], 'team-b': ['tb'] },
+      { defaultPool: 'work', agents: { a1: ['work', 'gone', 'personal', 'team-b'] } },
+    );
+    const lane = await loadClaudeAccountLane({ root, agentId: 'a1' });
+    expect(lane.chain?.map((c) => [c.pool, c.accounts.map((a) => a.name)])).toEqual([
+      ['work', []], ['personal', ['gmail']], ['team-b', ['tb']],
+    ]);
+    expect(lane.pool).toBe('personal');
+    expect(lane.accounts).toEqual([{ name: 'gmail', configDir: join(root, 'personal', 'gmail'), pool: 'personal' }]);
+  });
+
+  it('목록이 있으면 기본 풀은 끼지 않는다(D5) — 목록이 비었을 때만 기본 풀', async () => {
+    const root = await poolFixture(
+      { work: ['aria'], personal: ['gmail'] },
+      { defaultPool: 'work', agents: { a1: ['personal'] } },
+    );
+    expect((await loadClaudeAccountLane({ root, agentId: 'a1' })).chain?.map((c) => c.pool)).toEqual(['personal']);
+    expect((await loadClaudeAccountLane({ root, agentId: 'a2' })).chain?.map((c) => c.pool)).toEqual(['work']);
+  });
+
   it('풀 안 순서를 pools.json 이 정한다', async () => {
     const root = await poolFixture(
       { work: ['aria', 'cedar', 'zebra'] },

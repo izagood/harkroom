@@ -12,7 +12,7 @@
  *
  * 순수 함수다 — 사실은 호출자가 모아 넘긴다(`useGateTerminalTarget`).
  */
-import type { ClaudeAccountsSnapshot } from './claudeAccounts';
+import { agentPoolsOf, type ClaudeAccountsSnapshot } from './claudeAccounts';
 
 export type GateTerminalTarget =
   /** 이 기기에서 연다 — 데몬에 넘길 이름 둘. */
@@ -55,7 +55,7 @@ export function resolveGateTerminalTarget(f: GateTerminalFacts): GateTerminalTar
   const pools = f.snapshot.pools.filter((p) => p.accounts.some((a) => a.name === name)).map((p) => p.name);
   if (!pools.length) return { kind: 'missing' };
   // 고르는 순서: 이름표에 풀이 있으면 그 풀 → 그 에이전트의 로컬 지정 풀 → 배정 → 기본 풀 → 하나뿐이면 그것.
-  const preferred = [labelPool, f.localPool, f.snapshot.agents[f.agentId], f.snapshot.defaultPool]
+  const preferred = [labelPool, f.localPool, ...agentPoolsOf(f.snapshot, f.agentId), f.snapshot.defaultPool]
     .filter((p): p is string => typeof p === 'string');
   for (const p of preferred) if (pools.includes(p)) return { kind: 'open', pool: p, account: name };
   if (pools.length === 1) return { kind: 'open', pool: pools[0]!, account: name };

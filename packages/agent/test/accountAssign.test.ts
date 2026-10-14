@@ -386,3 +386,97 @@ describe('createAccountAssigner', () => {
     expect((await as2.laneFor('t3'))[0]!.name).toBe('a');
   });
 });
+
+describe('createAccountAssigner — 풀 순서(2026-10-15, D1~D5 A)', () => {
+  const at = (pool: string, name: string) => ({ name, configDir: `/x/${pool}/${name}`, pool });
+  const chain = [
+    { pool: 'work', accounts: [at('work', 'a'), at('work', 'b')] },
+    { pool: 'personal', accounts: [at('personal', 'c')] },
+  ];
+
+  async function rootWith(entries: ClaudeUsageEntry[]): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), 'assign-chain-'));
+    await writeFile(join(root, 'usage.json'), JSON.stringify({ version: 1, writtenAtMs: NOW, accounts: entries }));
+    return root;
+  }
+  const make = (root: string, pins: Map<string, [string, string | undefined]>, lines: string[] = []) => createAccountAssigner({
+    lane: chain[0]!.accounts, pool: 'work', root,
+    current: async () => ({ pool: 'work', lane: chain[0]!.accounts, chain }),
+    pinnedOf: (k) => pins.get(k)?.[0] ?? null,
+    pinnedPoolOf: (k) => pins.get(k)?.[1],
+    now: () => NOW, random: () => 0, log: (l) => lines.push(l),
+    readAttention: async () => null,
+  });
+  const names = (lane: readonly ({ name: string; pool?: string | null } | null)[]) => lane.map((a) => `${a?.pool}/${a?.name}`);
+
+  it('평소에는 1번 풀에서 고르고, 다른 풀 계정은 페일오버 꼬리다', async () => {
+    const root = await rootWith([
+      { ...entry('a', { weekly: 50 }), pool: 'work' },
+      { ...entry('b', { weekly: 10 }), pool: 'work' },
+      { ...entry('c', { weekly: 0 }), pool: 'personal' },
+    ]);
+    expect(names(await make(root, new Map()).laneFor('t1'))).toEqual(['work/b', 'work/a', 'personal/c']);
+  });
+
+  it('1번 풀이 모두 소진되면 새 스레드는 2번 풀로 간다', async () => {
+    const root = await rootWith([
+      { ...entry('a', { session: 90 }), pool: 'work' },
+      { ...entry('b', { session: 86 }), pool: 'work' },
+      { ...entry('c', { session: 40 }), pool: 'personal' },
+    ]);
+    const lines: string[] = [];
+    expect(names(await make(root, new Map(), lines).laneFor('t1'))[0]).toBe('personal/c');
+    expect(lines.some((l) => l.includes('2번 personal') && l.includes('소진: work'))).toBe(true);
+  });
+
+  it('1번 풀이 풀려도 2번에 붙은 스레드는 그대로다(D3) — 새 스레드만 1번으로', async () => {
+    const root = await rootWith([
+      { ...entry('a', { session: 10 }), pool: 'work' },
+      { ...entry('b', { session: 10 }), pool: 'work' },
+      { ...entry('c', { session: 90 }), pool: 'personal' }, // 새 배정 기준은 넘었지만 옮기기(95) 아래
+    ]);
+    const as = make(root, new Map([['old', ['c', 'personal']]]));
+    expect(names(await as.laneFor('old'))[0]).toBe('personal/c');
+    expect(names(await as.laneFor('new'))[0]).toMatch(/^work\//);
+  });
+
+  it('붙은 계정이 옮기기 기준을 넘으면 지금 쓸 풀(1번)로 옮긴다', async () => {
+    const root = await rootWith([
+      { ...entry('a', { session: 10 }), pool: 'work' },
+      { ...entry('b', { session: 10 }), pool: 'work' },
+      { ...entry('c', { session: 96 }), pool: 'personal' },
+    ]);
+    const lines: string[] = [];
+    expect(names(await make(root, new Map([['old', ['c', 'personal']]]), lines).laneFor('old'))[0]).toMatch(/^work\//);
+    expect(lines.some((l) => l.includes('old: 옮김'))).toBe(true);
+  });
+
+  it('같은 이름이 두 풀에 있으면 기록의 풀을 따른다', async () => {
+    const dup = [
+      { pool: 'work', accounts: [at('work', 'x')] },
+      { pool: 'personal', accounts: [at('personal', 'x')] },
+    ];
+    const root = await rootWith([
+      { ...entry('x', { session: 10 }), pool: 'work' },
+      { ...entry('x', { session: 10 }), pool: 'personal' },
+    ]);
+    const as = createAccountAssigner({
+      lane: dup[0]!.accounts, pool: 'work', root,
+      current: async () => ({ pool: 'work', lane: dup[0]!.accounts, chain: dup }),
+      pinnedOf: () => 'x', pinnedPoolOf: () => 'personal',
+      now: () => NOW, random: () => 0, log: () => {}, readAttention: async () => null,
+    });
+    expect(names(await as.laneFor('t'))[0]).toBe('personal/x');
+  });
+
+  it('모든 풀이 소진이면 멈추지 않고 가장 먼저 풀리는 풀로 보낸다(D4)', async () => {
+    const root = await rootWith([
+      { ...entry('a', { session: 90, sessionResetH: 3 }), pool: 'work' },
+      { ...entry('b', { session: 90, sessionResetH: 3 }), pool: 'work' },
+      { ...entry('c', { session: 90, sessionResetH: 1 }), pool: 'personal' },
+    ]);
+    const lines: string[] = [];
+    expect(names(await make(root, new Map(), lines).laneFor('t'))[0]).toBe('personal/c');
+    expect(lines.some((l) => l.includes('모든 풀이'))).toBe(true);
+  });
+});

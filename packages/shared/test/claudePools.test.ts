@@ -4,6 +4,7 @@ import {
   CLAUDE_POOL_NAME_PATTERN,
   orderAccounts,
   DEFAULT_ASSIGN_THRESHOLDS,
+  agentPoolChain,
   parseClaudePoolsConfig,
   resolveAssignThresholds,
   resolvePoolName,
@@ -26,7 +27,22 @@ describe('parseClaudePoolsConfig', () => {
       defaultPool: 'work',
       order: { work: ['aria', 'cedar'] },
       agents: { a1: 'personal' },
-    })).toEqual({ defaultPool: 'work', order: { work: ['aria', 'cedar'] }, agents: { a1: 'personal' }, assign: {} });
+    })).toEqual({ defaultPool: 'work', order: { work: ['aria', 'cedar'] }, agents: { a1: ['personal'] }, assign: {} });
+  });
+
+  it('에이전트 배정은 풀 순서 목록이다 — 옛 문자열은 길이 1 목록, 겹친 이름·틀린 이름만 버린다', () => {
+    const cfg = parseClaudePoolsConfig({
+      agents: {
+        a1: ['work', 'personal'],
+        a2: 'work',
+        a3: ['work', '../x', 'work', 7, 'team-b'],
+        a4: [],
+        a5: ['../x'],
+      },
+    });
+    expect(cfg.agents).toEqual({ a1: ['work', 'personal'], a2: ['work'], a3: ['work', 'team-b'] });
+    expect(agentPoolChain(cfg, 'a1')).toEqual(['work', 'personal']);
+    expect(agentPoolChain(cfg, 'a4')).toEqual([]);
   });
 
   it('모양이 틀린 항목만 버리고 나머지는 살린다', () => {
@@ -37,7 +53,7 @@ describe('parseClaudePoolsConfig', () => {
     });
     expect(cfg.defaultPool).toBe(null);
     expect(cfg.order).toEqual({ work: ['aria'] });
-    expect(cfg.agents).toEqual({ a1: 'personal' });
+    expect(cfg.agents).toEqual({ a1: ['personal'] });
   });
 
   it('이름 문법에 안 맞는 풀·계정 이름을 버린다', () => {
@@ -66,6 +82,10 @@ describe('resolvePoolName', () => {
 
   it('에이전트 배정이 기본 풀보다 세다', () => {
     expect(resolvePoolName(cfg, 'a1')).toBe('personal');
+  });
+
+  it('풀 순서면 첫 풀이다', () => {
+    expect(resolvePoolName(parseClaudePoolsConfig({ defaultPool: 'work', agents: { a1: ['team-b', 'work'] } }), 'a1')).toBe('team-b');
   });
 
   it('배정이 없으면 기본 풀이다', () => {

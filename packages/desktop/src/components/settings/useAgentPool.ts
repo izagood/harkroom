@@ -32,6 +32,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
+  agentPoolsOf,
   assignAgentPool,
   hasClaudeAccountsSurface,
   listClaudeAccounts,
@@ -129,7 +130,7 @@ export function useAgentPool(agentId: string | null): AgentPoolState {
       // 것은 **되돌아 그리지 않기 위한 것**뿐이다(`assigned` 의 대체값).
       const agents = { ...snap.agents };
       if (pool === '') delete agents[agentId];
-      else agents[agentId] = pool;
+      else agents[agentId] = [pool];
       setSnap({ ...snap, agents });
       setError(null);
     } catch (err) {
@@ -141,7 +142,7 @@ export function useAgentPool(agentId: string | null): AgentPoolState {
     available,
     ready: snap !== null,
     pools: (snap?.pools ?? []).map((p) => p.name).filter((n) => n !== ''),
-    assigned: chosen ?? ((agentId && snap?.agents[agentId]) || ''),
+    assigned: chosen ?? ((agentId && snap && agentPoolsOf(snap, agentId)[0]) || ''),
     defaultPool: snap?.defaultPool ?? null,
     assign,
     error,
