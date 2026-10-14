@@ -12,6 +12,7 @@ import { displayBody } from '../lib/mention';
 import { ThreadPanel } from './ThreadPanel';
 import { ChannelPane } from './ChannelPane';
 import { ChannelSettingsSheet } from './ChannelSettingsSheet';
+import { ArtifactPanel } from './ArtifactPreview';
 import { useT } from '../i18n/useT';
 import { HostDocumentContext } from '../lib/hostDocument';
 import { paneStorage } from '../lib/prefs';
@@ -86,7 +87,9 @@ function AppWindowPortal({ entry }: { entry: AppWindowEntry }) {
       <WindowBar entry={entry} />
       {entry.target.kind === 'thread'
         ? <ThreadWindow entry={entry} channelId={entry.target.channelId} rootId={entry.target.rootId} />
-        : <ChannelWindow entry={entry} channelId={entry.target.channelId} />}
+        : entry.target.kind === 'artifact'
+          ? <ArtifactWindow entry={entry} />
+          : <ChannelWindow entry={entry} channelId={entry.target.channelId} />}
     </div>
     </HostDocumentContext.Provider>,
     root,
@@ -94,6 +97,23 @@ function AppWindowPortal({ entry }: { entry: AppWindowEntry }) {
 }
 
 type LoadState = 'loading' | 'ok' | 'gone';
+
+/**
+ * 미리보기 창(900×720): 패널과 같은 화면이 창을 채운다. **연 판에 머문다** — 새 판이 올라와도 바꾸지 않는다
+ * (`AppWindowTarget` artifact 주석). 창 제목은 「제목 · v판」.
+ */
+function ArtifactWindow({ entry }: { entry: AppWindowEntry }) {
+  const attachment = entry.attachment;
+  const t = useT();
+  useEffect(() => {
+    if (!attachment) return;
+    const ref = attachment.artifact;
+    const title = ref?.title ?? attachment.filename;
+    entry.win.document.title = ref ? `${title} · ${t('artifact.card.version', { version: ref.version })}` : title;
+  }, [entry, attachment, t]);
+  if (!attachment) return null;
+  return <ArtifactPanel windowed={{ attachment, onClose: () => closeAppWindow(entry.target) }} />;
+}
 
 /** 스레드 창(420×680): 패널과 같은 화면·입력창이 창을 채운다(판 3). */
 function ThreadWindow({ entry, channelId, rootId }: { entry: AppWindowEntry; channelId: string; rootId: string }) {
@@ -184,7 +204,10 @@ function WindowBar({ entry }: { entry: AppWindowEntry }) {
     closeAppWindow(target);
     const c = getController();
     if (target.kind === 'thread') void c.openThread(target.rootId, { channelId: target.channelId });
-    else void c.openChannel(target.channelId);
+    else if (target.kind === 'artifact') {
+      // 메인의 미리보기 패널로 돌린다. 패널은 지금 보는 칸 곁에 선다 — 그 칸이 다른 채널이어도 판은 그대로다.
+      if (entry.attachment) c.openArtifactPreview(entry.attachment);
+    } else void c.openChannel(target.channelId);
   };
   return (
     <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border bg-surface px-2 py-1 text-meta">

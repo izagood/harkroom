@@ -10,6 +10,7 @@ import { stampLabel } from '../lib/day';
 import { ImageLightbox } from './ImageLightbox';
 import { useT, useLocale } from '../i18n/useT';
 import { useLatestKnownVersion, noteArtifactOpener } from './ArtifactPreview';
+import { findAppWindow } from '../lib/appWindows';
 
 /**
  * 그림을 연 **칸**의 넘겨 보기 범위 — 채널 본문(`ChannelPane`)과 스레드 패널(`ThreadPanel`)이 준다.
@@ -340,6 +341,9 @@ function ArtifactCard({ attachment, cover, from }: {
       type="button"
       onClick={(e) => {
         // detail 0 = Enter·Space(키보드). 닫을 때 포커스를 돌려줄지가 이것으로 갈린다(`ArtifactPreview.tsx`).
+        // 이 판을 이미 새 창으로 떼어 냈으면 그 창을 앞으로 가져온다 — 패널에 같은 판을 또 띄우지 않는다.
+        const popped = findAppWindow({ kind: 'artifact', channelId: '', attachmentId: attachment.id });
+        if (popped) { popped.win.focus(); return; }
         noteArtifactOpener(e.currentTarget, e.detail === 0);
         getController().openArtifactPreview(attachment, from);
       }}
