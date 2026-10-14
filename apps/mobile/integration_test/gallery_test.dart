@@ -64,19 +64,19 @@ void main() {
     await tester.tap(find.byKey(const Key('section-starred')));
     await shot(tester, '01b-home-starred-folded');
     await tester.tap(find.byKey(const Key('section-starred')));
-    // S5c: 「새로 온 것」 카드로 좁힌 홈 · 새 메시지 시트.
+    // S5c: 「새로 온 것」 카드로 좁힌 홈.
     await tester.tap(find.byKey(const Key('card-new')));
     await shot(tester, '01d-home-new-only');
     await tester.tap(find.byKey(const Key('card-new')));
-    await tester.tap(find.byKey(const Key('new-message')));
-    await shot(tester, '01e-new-message-sheet');
-    await tester.tapAt(const Offset(20, 80));
-    for (var i = 0; i < 8; i++) {
-      await tester.pump(const Duration(milliseconds: 60));
-    }
 
     await tester.tap(find.byKey(const Key('channel-c1')));
     await shot(tester, '02-channel');
+    // 하단 네비 D2: 입력창을 누르면 키보드가 올라오고 탭 바는 숨는다.
+    await tester.tap(find.byKey(const Key('composer')));
+    await tester.pump(const Duration(milliseconds: 700));
+    await shot(tester, '02g-channel-keyboard');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump(const Duration(milliseconds: 700));
 
     // 첨부 시트. 시뮬레이터라 [사진 찍기] 줄이 비활성으로 선다 — 실기기와 배치가 같다.
     await tester.tap(find.byKey(const Key('attach')));
@@ -107,6 +107,11 @@ void main() {
     }
     await tester.tap(open);
     await shot(tester, '03-thread');
+    await tester.tap(find.byKey(const Key('thread-composer')));
+    await tester.pump(const Duration(milliseconds: 700));
+    await shot(tester, '03b-thread-keyboard');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump(const Duration(milliseconds: 700));
     // @ 버튼(S4c): 누르면 칸에 @ 가 들어가 후보 줄이 선다. 키보드는 내려서 찍는다.
     await tester.tap(find.byKey(const Key('mention-add')).last);
     await tester.pump(const Duration(milliseconds: 300));
@@ -127,6 +132,13 @@ void main() {
     // S5a: DM 탭 · 에이전트 탭(S7 전 빈 자리).
     await tester.tap(find.byKey(const Key('tab-dms')));
     await shot(tester, '04b-dms');
+    // 하단 네비 D8: DM 탭 머리 ＋ → 사람 고르기.
+    await tester.tap(find.byKey(const Key('new-dm')));
+    await shot(tester, '04e-new-dm');
+    await tester.tap(find.byType(BackButton));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
     await tester.tap(find.byKey(const Key('tab-agents')));
     await shot(tester, '04c-agents');
     // 찾기 n2: 바로 가기에 DM 이 없는 에이전트도 선다(한 글자라 서버에는 묻지 않는다).
