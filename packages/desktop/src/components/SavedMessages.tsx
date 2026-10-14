@@ -1,20 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Overlay } from './Overlay';
 import type { SavedMessageRow } from '@harkroom/shared';
 import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { displayBody } from '../lib/mention';
 import { useT, useLocale } from '../i18n/useT';
-import { stampLabel } from '../lib/day';
+import { shortStampLabel, stampLabel } from '../lib/day';
 import { errorText } from '../lib/errorText';
-
-interface Props {
-  open: boolean;
-  onClose: () => void;
-}
 
 /**
  * 담아 둔 메시지 목록(#219). **세 상태**다 — loading / ready / error.
+ *
+ * **사이드바 칸이다 — 모달이 아니다**(jaebin, 2026-10-15). 레일의 북마크 칸을 누르면 DM 칸이
+ * DM 목록을 세우듯 이 목록이 사이드바 자리에 선다. 모달일 때는 줄을 누르면 모달이 닫혀서
+ * 다음 것을 보려면 다시 열어야 했다 — 칸이면 목록이 왼쪽에 남은 채 본문만 바뀐다. 그래서
+ * 이 컴포넌트에는 `open`·`onClose` 가 없다: 그려지면 열린 것이고, 닫는 것은 다른 칸을 고르는 것이다.
  * 조회 실패를 빈 배열로 삼키면 "담은 것이 없다"와 "못 읽었다"가 한 화면이 된다(design.md §4).
  */
 type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string };
@@ -46,7 +45,7 @@ function overlayPending(rows: SavedMessageRow[], tab: Tab, community: string, pe
   return out;
 }
 
-export function SavedMessages({ open, onClose }: Props) {
+export function SavedMessages() {
   const t = useT();
   const locale = useLocale();
   const channels = useActiveStore((s) => s.channels);
@@ -78,6 +77,9 @@ export function SavedMessages({ open, onClose }: Props) {
   const communityRef = useRef(community);
   communityRef.current = community;
   const [moveFailed, setMoveFailed] = useState<string | null>(null);
+  // 마지막으로 누른 줄. 목록이 사이드바에 남으므로 지금 본문에 무엇을 열어 두었는지 줄이 말한다
+  // (채널 목록의 고른 줄과 같은 면).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (moveFailed === null) return;
@@ -113,19 +115,17 @@ export function SavedMessages({ open, onClose }: Props) {
   }, [tab, community]);
 
   useEffect(() => {
-    if (!open) return;
     // `reloadSeq` 는 [다시 시도] 의 방아쇠다 — 누르면 이 effect 가 다시 돌아 목록을 새로 받는다.
     // 체크(✓·↺)는 이것을 당기지 않는다(`toggleState` 가 그 행만 옮긴다).
     void reloadSeq;
     return reload();
-  }, [open, reload, reloadSeq]);
+  }, [reload, reloadSeq]);
 
   useEffect(() => {
-    if (!open) return;
-    // 배지와 `⋯` 메뉴 문구를 패널을 열 때 한 번 맞춰 둔다. 실패는 배지 숫자를 그대로 두는
+    // 배지와 `⋯` 메뉴 문구를 칸을 열 때 한 번 맞춰 둔다. 실패는 배지 숫자를 그대로 두는
     // 것뿐이라 여기서는 화면에 그리지 않는다 — 목록의 실패는 위에서 따로 보인다.
     void getController().loadSavedSummary().catch(() => undefined);
-  }, [open]);
+  }, []);
 
   const channelLabel = useCallback((id: string): string => {
     const ch = channels.find((c) => c.id === id);
@@ -138,11 +138,10 @@ export function SavedMessages({ open, onClose }: Props) {
     return ch?.name ? `#${ch.name}` : id;
   }, [channels, dms, accounts, me, t]);
 
-  if (!open) return null;
-
+  // 목록은 닫지 않는다 — 본문만 그 메시지로 간다(위 컴포넌트 주석).
   const openEntry = (e: SavedMessageRow): void => {
+    setSelectedId(e.messageId);
     void getController().openMessage(e.messageId);
-    onClose();
   };
 
   /**
@@ -180,53 +179,69 @@ export function SavedMessages({ open, onClose }: Props) {
   /**
    * 행 하나. 바깥을 `<button>` 으로 감싸지 않는다 — 안의 체크 버튼이 버튼 안의 버튼이 되어
    * 유효하지 않은 문서가 되고, 클릭이 어느 쪽으로 가는지 브라우저마다 갈린다.
+   *
+   * **두 줄이다.** 모달은 폭이 넓어 칩·작성자·본문·시각을 한 줄에 세웠는데, 사이드바 폭
+   * (기본 260px 안팎)에서는 본문이 몇 글자만 남는다. 윗줄이 어디·누구·언제, 아랫줄이 본문
+   * 두 줄까지다 — 무엇을 담았는지 알아보는 것은 본문이라 그쪽에 자리를 준다.
    */
   const entryRow = (e: SavedMessageRow) => {
-    const time = stampLabel(e.createdAt, locale);
+    // 줄에는 짧은 도장, 긴 도장은 `title` 로 — 사이드바 폭에서 긴 꼴이 칩·작성자를 밀어냈다.
+    const when = e.message?.createdAt ?? e.createdAt;
+    const stamp = (
+      <span className="ml-auto shrink-0 text-fg-subtle" title={stampLabel(when, locale)}>
+        {shortStampLabel(when, locale)}
+      </span>
+    );
     // 시스템 메시지는 본문에 이름이 없고 자리표시자만 있다 — `displayBody` 를 지나지 않으면
     // 이 목록에만 그 글자가 남는다(#329).
     const body = e.message ? displayBody(e.message, accounts, groups, teams) : '';
     const preview = body.length > 100 ? `${body.slice(0, 100)}…` : body;
+    const selected = selectedId === e.messageId;
+    const chip = (
+      <span className="min-w-0 max-w-[55%] shrink-0 truncate rounded-sm bg-surface-sunken px-1 uppercase tracking-wide text-fg-muted">
+        {channelLabel(e.channelId)}
+      </span>
+    );
 
     return (
-      <li key={e.messageId} className="flex items-center gap-2 rounded-row px-2 py-1.5 hover:bg-surface-hover">
+      <li key={e.messageId} className={`flex items-start gap-1 rounded-row px-2 py-1.5 hover:bg-surface-raised ${selected ? 'bg-surface-raised' : ''}`}>
         {/* #219 결정 3: 지워진 메시지도 자리가 남는다 — 담아 둔 사실은 내 기록이다.
             본문은 서버가 내주지 않으므로(`message: null`) 그릴 것이 없고, 갈 곳도 없어
             누를 수 없게 둔다. 눌러도 아무 일이 없는 버튼은 거짓 신호다(design.md §4). */}
         {e.message === null ? (
           <span
             data-testid={`saved-entry-${e.messageId}`}
-            className="flex flex-1 items-center gap-2 text-left"
+            className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
           >
-            <span className="rounded-sm bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted">
-              {channelLabel(e.channelId)}
+            <span className="flex min-w-0 items-center gap-1.5 text-meta">
+              {chip}
+              {stamp}
             </span>
-            <span className="flex-1 italic text-fg-subtle">{e.deleted ? t('saved.deleted') : t('saved.unavailable')}</span>
-            <span className="text-meta text-fg-subtle">{time}</span>
+            <span className="italic text-fg-subtle">{e.deleted ? t('saved.deleted') : t('saved.unavailable')}</span>
           </span>
         ) : (
           <button
             data-testid={`saved-entry-${e.messageId}`}
+            aria-current={selected ? 'true' : undefined}
             onClick={() => openEntry(e)}
-            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+            className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
           >
-            <span className="rounded-sm bg-surface-sunken px-1 text-meta uppercase tracking-wide text-fg-muted">
-              {channelLabel(e.channelId)}
+            <span className="flex min-w-0 items-center gap-1.5 text-meta">
+              {chip}
+              <span className="min-w-0 truncate text-fg-muted">@{accounts[e.message.authorId]?.handle ?? '…'}</span>
+              {stamp}
             </span>
-            <span className="text-fg-muted">@{accounts[e.message.authorId]?.handle ?? '…'}</span>
-            <span className="min-w-0 flex-1 truncate text-fg-muted">
+            <span className="line-clamp-2 break-words text-fg">
               {preview}
-            </span>
-            <span className="text-meta text-fg-subtle">
-              {stampLabel(e.message.createdAt, locale)}
             </span>
           </button>
         )}
         <button
           data-testid={`saved-toggle-${e.messageId}`}
           aria-label={e.state === 'open' ? t('saved.markDone') : t('saved.markOpen')}
+          title={e.state === 'open' ? t('saved.markDone') : t('saved.markOpen')}
           onClick={() => { void toggleState(e); }}
-          className="shrink-0 rounded-row border border-border px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
+          className="mt-0.5 shrink-0 rounded-row border border-border px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-hover"
         >
           {e.state === 'open' ? '✓' : '↺'}
         </button>
@@ -234,33 +249,30 @@ export function SavedMessages({ open, onClose }: Props) {
     );
   };
 
+  // 탭은 칸 머리 아래 작은 두 칸이다 — 모달의 큰 알약을 그대로 옮기면 좁은 칸에서 목록보다 먼저 눈을 끈다.
+  const tabButton = (value: Tab, label: string) => (
+    <button
+      role="tab"
+      aria-selected={tab === value}
+      data-testid={`saved-tab-${value}`}
+      className={`rounded-row px-2 py-0.5 text-meta ${tab === value ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-raised'}`}
+      onClick={() => setTab(value)}
+    >
+      {label}
+    </button>
+  );
+
   return (
-    <Overlay label={t('saved.label')} onClose={onClose}>
-        <div className="flex items-center gap-2 border-b border-border p-3">
-          <span className="font-semibold">{t('chat.saved')}</span>
-          <button
-            onClick={onClose}
-            className="ml-auto rounded-row px-2 py-1 text-fg-muted hover:bg-surface-hover"
-            aria-label={t('saved.close')}
-          >
-            ✕
-          </button>
+    <section aria-label={t('saved.label')} data-testid="saved-panel">
+        {/* 칸 이름은 다른 칸의 묶음 머리(`FAVORITES`·`CHANNELS`)와 같은 모양이다. */}
+        <div className="flex items-center gap-1 px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
+          {t('chat.saved')}
         </div>
-        <div className="flex items-center gap-3 border-b border-border p-3">
-          <button
-            className={`rounded-row px-2 py-1 ${tab === 'open' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'}`}
-            onClick={() => setTab('open')}
-          >
-            {t('saved.tabOpen')}
-          </button>
-          <button
-            className={`rounded-row px-2 py-1 ${tab === 'done' ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'}`}
-            onClick={() => setTab('done')}
-          >
-            {t('saved.tabDone')}
-          </button>
+        <div role="tablist" aria-label={t('saved.label')} className="mb-1 flex items-center gap-1 px-2">
+          {tabButton('open', t('saved.tabOpen'))}
+          {tabButton('done', t('saved.tabDone'))}
         </div>
-        <div className="flex-1 overflow-y-auto p-2">
+        <div>
           {moveFailed !== null && (
             <div role="status" data-testid="saved-move-failed" className="mb-2 rounded-row border border-danger-border bg-danger-surface px-2 py-1 text-meta text-danger">
               {t('saved.moveFailed', { reason: moveFailed })}
@@ -288,6 +300,6 @@ export function SavedMessages({ open, onClose }: Props) {
           )}
           {load.kind === 'ready' && entries.length > 0 && <ul>{entries.map(entryRow)}</ul>}
         </div>
-    </Overlay>
+    </section>
   );
 }

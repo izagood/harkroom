@@ -165,7 +165,7 @@ describe('#329 시스템 메시지가 현재 handle 로 그려진다', () => {
     } as unknown as Controller);
     useAppStore.getState().set({ channels: [chan('c1', 'general')] });
 
-    render(<SavedMessages open onClose={() => undefined} />);
+    render(<SavedMessages />);
 
     expect(await screen.findByText('targetuser님이 채널에 추가되었습니다.')).toBeTruthy();
     expect(screen.queryByText(new RegExp(SYSTEM_ACCOUNT_PLACEHOLDER.replace(/[{}]/g, '\\$&')))).toBeNull();

@@ -2127,7 +2127,6 @@ export const ko = {
   // 그대로 두되 영어가 `Put back on the list` 인 이유가 `en.ts` 표에 있다.
   // ---------------------------------------------------------------------------
 
-  'saved.close': '패널 닫기',
   'saved.deleted': '삭제된 메시지',
   'saved.emptyDone': '완료된 메시지가 없다',
   'saved.emptyOpen': '저장된 메시지가 없다',

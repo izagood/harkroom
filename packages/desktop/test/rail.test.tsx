@@ -56,7 +56,6 @@ const blocking = (id: number, channelId: string): InboxEntry => ({
 const mountRail = (props: Partial<{
   panel: RailPanel;
   onPanelChange: (p: RailPanel) => void;
-  onOpenSaved: () => void;
   onOpenSettings: (section?: SectionId) => void;
   onManageCommunities: () => void;
   onLogout: () => void;
@@ -65,7 +64,6 @@ const mountRail = (props: Partial<{
     <Rail
       panel={props.panel ?? 'home'}
       onPanelChange={props.onPanelChange ?? vi.fn()}
-      onOpenSaved={props.onOpenSaved ?? vi.fn()}
       onOpenSettings={props.onOpenSettings ?? vi.fn()}
       onManageCommunities={props.onManageCommunities ?? vi.fn()}
       onLogout={props.onLogout ?? vi.fn()}
@@ -168,21 +166,21 @@ describe('레일 네 칸', () => {
     expect(onPanelChange).toHaveBeenCalledWith('agents');
   });
 
-  it('북마크 칸은 패널이 아니라 오버레이를 연다', () => {
+  it('북마크 칸도 DM 칸처럼 사이드바 칸을 고른다 — 오버레이가 아니다', () => {
     /*
-      문서: *"북마크는 레일에만 둔다 — 자기 칸이 있는데 홈에도 한 줄을 세우면 같은 것으로
-      가는 길이 둘이 되고, 그때부터 사람은 어느 쪽이 맞는지 매번 고른다."* 그 칸이 여는 것은
-      기존 `SavedMessages` 오버레이라, 칸을 골라 둔 상태가 따로 생기지 않는다.
+      jaebin(2026-10-15): 저장한 메시지는 모달이 아니라 DM 처럼 사이드바에 선다. 칸을 고른
+      상태가 생기므로 고른 칸의 면도 북마크 칸에 선다.
     */
     fakeController();
-    const onOpenSaved = vi.fn();
     const onPanelChange = vi.fn();
-    mountRail({ onOpenSaved, onPanelChange });
+    mountRail({ onPanelChange });
 
     fireEvent.click(screen.getByTestId('rail-saved'));
-    expect(onOpenSaved).toHaveBeenCalled();
-    // 칸이 바뀌지 않는다 — 오버레이를 닫으면 원래 보던 목록으로 돌아온다.
-    expect(onPanelChange).not.toHaveBeenCalled();
+    expect(onPanelChange).toHaveBeenCalledWith('saved');
+
+    cleanup();
+    mountRail({ panel: 'saved' });
+    expect(screen.getByTestId('rail-saved').getAttribute('aria-current')).toBeTruthy();
   });
 
   it('키보드로 칸에 갈 수 있고 포커스 링이 앱 강조색이다', () => {
@@ -241,11 +239,10 @@ describe('홈 칸이 배지를 대신 받는다', () => {
 });
 
 describe('숫자 단축키가 레일 순서를 그대로 따른다', () => {
-  it('⌘1~⌘3 이 세 패널을, ⌘4 가 북마크를, ⌘5 가 협업을 연다', () => {
+  it('⌘1~⌘5 가 레일 순서대로 칸을 연다 — ⌘4 는 북마크 칸', () => {
     fakeController();
     const onPanelChange = vi.fn();
-    const onOpenSaved = vi.fn();
-    mountRail({ onPanelChange, onOpenSaved });
+    mountRail({ onPanelChange });
 
     fireEvent.keyDown(document, { key: '1', metaKey: true });
     fireEvent.keyDown(document, { key: '2', metaKey: true });
@@ -253,8 +250,7 @@ describe('숫자 단축키가 레일 순서를 그대로 따른다', () => {
     fireEvent.keyDown(document, { key: '4', metaKey: true });
     fireEvent.keyDown(document, { key: '5', metaKey: true });
 
-    expect(onPanelChange.mock.calls.map((c) => c[0])).toEqual(['home', 'dm', 'agents', 'collab']);
-    expect(onOpenSaved).toHaveBeenCalledTimes(1);
+    expect(onPanelChange.mock.calls.map((c) => c[0])).toEqual(['home', 'dm', 'agents', 'saved', 'collab']);
   });
 
   it('없는 칸의 숫자는 아무 일도 하지 않는다', () => {

@@ -9,6 +9,7 @@ import { Rail } from '../src/components/Rail';
 import { Workspace } from '../src/components/Workspace';
 import { acc, chan, msg, fakeApi, scheduledApiStub } from './helpers/fakeApi';
 import { usePrefsStore } from '../src/state/prefsStore';
+import { sidebarStorage } from '../src/lib/prefs';
 import { useCommunityRegistry, resetCommunityRegistry } from '../src/state/communities';
 
 /**
@@ -85,7 +86,7 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
       loadSavedMessages: vi.fn(async (state: 'open' | 'done') =>
         state === 'open' ? [entry('m1', 'open')] : []),
     });
-    render(<SavedMessages open onClose={vi.fn()} />);
+    render(<SavedMessages />);
 
     await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
     expect(c.loadSavedMessages).toHaveBeenCalledWith('open');
@@ -101,7 +102,7 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
         (tab === state ? [entry('m1', state)] : [])),
       updateSavedMessageState: vi.fn(async (_id: string, next: 'open' | 'done') => { state = next; }),
     });
-    render(<SavedMessages open onClose={vi.fn()} />);
+    render(<SavedMessages />);
     await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
 
     fireEvent.click(screen.getByTestId('saved-toggle-m1'));
@@ -122,7 +123,7 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
         (tab === 'open' ? [entry('m1', 'open'), entry('m2', 'open')] : [])),
       updateSavedMessageState: vi.fn(() => new Promise<void>((r) => { release = r; })),
     });
-    render(<SavedMessages open onClose={vi.fn()} />);
+    render(<SavedMessages />);
     await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
     expect(c.loadSavedMessages).toHaveBeenCalledTimes(1);
 
@@ -146,7 +147,7 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
       updateSavedMessageState: vi.fn((id: string) =>
         new Promise<void>((ok, fail) => { holds.set(id, { ok: () => ok(), fail }); })),
     });
-    render(<SavedMessages open onClose={vi.fn()} />);
+    render(<SavedMessages />);
     await waitFor(() => expect(screen.getByTestId('saved-entry-m2')).toBeTruthy());
 
     // 연달아 둘을 누른다 — 둘 다 요청이 나가고 서로를 기다리지 않는다.
@@ -175,7 +176,7 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
       loadSavedMessages: vi.fn(async (tab: 'open' | 'done') => (tab === 'open' ? [entry('m1', 'open')] : [])),
       updateSavedMessageState: vi.fn(() => new Promise<void>(() => undefined)),
     });
-    render(<SavedMessages open onClose={vi.fn()} />);
+    render(<SavedMessages />);
     await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
     fireEvent.click(screen.getByTestId('saved-toggle-m1'));
     fireEvent.click(screen.getByText('완료'));
@@ -197,7 +198,7 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
         : new Promise<SavedMessageRow[]>((r) => { releaseDone = r; }))),
       updateSavedMessageState: vi.fn(() => new Promise<void>((r) => { releasePut = r; })),
     });
-    render(<SavedMessages open onClose={vi.fn()} />);
+    render(<SavedMessages />);
     await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
     fireEvent.click(screen.getByTestId('saved-toggle-m1'));
     fireEvent.click(screen.getByText('완료'));
@@ -213,7 +214,7 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
       updateSavedMessageState: vi.fn(() => new Promise<void>(() => undefined)),
     });
     try {
-      render(<SavedMessages open onClose={vi.fn()} />);
+      render(<SavedMessages />);
       await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
       fireEvent.click(screen.getByTestId('saved-toggle-m1'));
 
@@ -236,7 +237,7 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
     const c = fakeController({
       loadSavedMessages: vi.fn(async () => [entry('m1', 'open', { deleted: true, message: null })]),
     });
-    render(<SavedMessages open onClose={vi.fn()} />);
+    render(<SavedMessages />);
 
     const row = await screen.findByTestId('saved-entry-m1');
     expect(row.textContent).toContain('삭제된 메시지');
@@ -252,7 +253,7 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
     fakeController({
       loadSavedMessages: vi.fn(async () => [entry('m1', 'open', { deleted: false, message: null })]),
     });
-    render(<SavedMessages open onClose={vi.fn()} />);
+    render(<SavedMessages />);
     const row = await screen.findByTestId('saved-entry-m1');
     expect(row.textContent).toContain('이 채널을 볼 수 없어 내용을 보여 줄 수 없다');
     expect(row.textContent).not.toContain('삭제된 메시지');
@@ -263,7 +264,7 @@ describe('담아 둔 메시지 — 패널 (#219)', () => {
     fakeController({
       loadSavedMessages: vi.fn(async () => { throw new Error('boom'); }),
     });
-    render(<SavedMessages open onClose={vi.fn()} />);
+    render(<SavedMessages />);
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('불러오지 못했다');
@@ -384,7 +385,7 @@ describe('담아 둔 메시지 — 툴바와 사이드바 (#219)', () => {
     useAppStore.getState().set({ savedCount: 3, savedIds: ['m1', 'm2', 'm3', 'm4'] });
     render(
       <Rail
-        panel="home" onPanelChange={vi.fn()} onOpenSaved={vi.fn()}
+        panel="home" onPanelChange={vi.fn()}
         onOpenSettings={vi.fn()} onManageCommunities={vi.fn()} onLogout={vi.fn()}
       />,
     );
@@ -401,7 +402,7 @@ describe('담아 둔 메시지 — 툴바와 사이드바 (#219)', () => {
     useAppStore.getState().set({ savedCount: 0 });
     render(
       <Rail
-        panel="home" onPanelChange={vi.fn()} onOpenSaved={vi.fn()}
+        panel="home" onPanelChange={vi.fn()}
         onOpenSettings={vi.fn()} onManageCommunities={vi.fn()} onLogout={vi.fn()}
       />,
     );
@@ -444,7 +445,7 @@ describe('담아 둔 메시지 — Workspace 배선 (#219)', () => {
       savedSummary: vi.fn(async () => { throw new Error('summary down'); }),
     });
     setController(new Controller(api));
-    render(<SavedMessages open onClose={vi.fn()} />);
+    render(<SavedMessages />);
     await waitFor(() => expect(screen.getByTestId('saved-entry-m1')).toBeTruthy());
 
     fireEvent.click(screen.getByTestId('saved-toggle-m1'));
@@ -470,10 +471,42 @@ describe('담아 둔 메시지 — Workspace 배선 (#219)', () => {
       screen.getByTestId('rail-saved').getAttribute('aria-label'),
     ).toContain('담아 둔 메시지 1개'));
 
-    // 레일의 북마크 칸을 누르면 패널이 열리고 그 행이 있다.
+    // 레일의 북마크 칸을 누르면 **사이드바 칸**이 그 목록을 세우고 그 행이 있다 — 모달이 아니다.
     fireEvent.click(screen.getByTestId('rail-saved'));
-    const panel = await screen.findByRole('dialog', { name: '저장된 메시지' });
+    const panel = await screen.findByRole('region', { name: '저장된 메시지' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(panel.closest('aside')).toBeTruthy();
     await waitFor(() => expect(within(panel).getByTestId('saved-entry-m9')).toBeTruthy());
+  });
+
+  it('줄을 누르면 본문이 그 메시지로 가고 목록은 사이드바에 남는다', async () => {
+    const { c } = realController();
+    const openMessage = vi.spyOn(c, 'openMessage').mockResolvedValue(undefined);
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('toolbar-save'));
+    await waitFor(() => expect(
+      screen.getByTestId('rail-saved').getAttribute('aria-label'),
+    ).toContain('담아 둔 메시지 1개'));
+    fireEvent.click(screen.getByTestId('rail-saved'));
+    const row = await screen.findByTestId('saved-entry-m9');
+
+    fireEvent.click(row);
+    expect(openMessage).toHaveBeenCalledWith('m9');
+    // 닫히지 않는다 — 다음 것을 보려고 다시 열 필요가 없다. 누른 줄이 고른 줄로 선다.
+    expect(screen.getByRole('region', { name: '저장된 메시지' })).toBeTruthy();
+    expect(screen.getByTestId('saved-entry-m9').getAttribute('aria-current')).toBe('true');
+  });
+
+  it('사이드바가 접혀 있으면 북마크 칸이 펴서 목록을 보인다', async () => {
+    realController();
+    sidebarStorage.saveCollapsed(true);
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+    expect(screen.queryByRole('region', { name: '저장된 메시지' })).toBeNull();
+
+    fireEvent.click(screen.getByTestId('rail-saved'));
+    expect(await screen.findByRole('region', { name: '저장된 메시지' })).toBeTruthy();
+    sidebarStorage.saveCollapsed(false);
   });
 
   it('담은 뒤 같은 칸이 해제로 바뀐다 — 재마운트 없이도', async () => {

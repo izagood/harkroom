@@ -12,11 +12,11 @@ import { useT } from '../i18n/useT';
 import type { MessageKey, Translate } from '../i18n';
 
 /**
- * 레일이 고른 칸. **북마크가 없다** — 북마크는 패널이 아니라 오버레이(`SavedMessages`)를
- * 열고 곧 원래 칸으로 돌아온다. 칸을 만들면 "북마크 패널"이라는 없는 화면을 타입이
- * 약속하게 된다.
+ * 레일이 고른 칸. **북마크도 칸이다**(jaebin, 2026-10-15) — 예전에는 오버레이를 열고 곧 원래
+ * 칸으로 돌아왔는데, 줄을 누르면 오버레이가 닫혀 다음 것을 보려면 다시 열어야 했다. 이제
+ * DM 칸처럼 사이드바에 목록(`SavedMessages`)이 서고 본문만 바뀐다.
  */
-export type RailPanel = 'home' | 'dm' | 'agents' | 'collab';
+export type RailPanel = 'home' | 'dm' | 'agents' | 'saved' | 'collab';
 
 /**
  * 레일 폭. **62px 에서 70px 로 넓혔다**(사용자 요청 1·3, 2026-09-08 — "제일 오른쪽 버튼이
@@ -48,8 +48,7 @@ export const RAIL_W_PX = 70;
  * 단축키 매는 곳)에 적으면 한쪽만 고쳐 `⌘3` 이 두 번째 칸을 여는 날이 온다.
  */
 interface RailCell {
-  /** `panel` 이 없는 칸은 오버레이를 여는 칸이다(북마크). */
-  panel: RailPanel | null;
+  panel: RailPanel;
   /** 화면에 서는 이름의 사전 키. 11px 한 줄 — 문서: "아이콘에 글자를 붙인다". */
   label: MessageKey;
   /** 접근성 이름의 사전 키. 그림은 `aria-hidden` 이라 이름을 여기서 준다. */
@@ -76,7 +75,7 @@ const RAIL_CELLS: RailCell[] = [
   { panel: 'home', label: 'rail.cell.home', ariaLabel: 'rail.cell.homeName', Icon: HomeIcon, testId: 'rail-home' },
   { panel: 'dm', label: 'rail.cell.dm', ariaLabel: 'rail.cell.dmName', Icon: DmIcon, testId: 'rail-dm' },
   { panel: 'agents', label: 'rail.cell.agents', ariaLabel: 'rail.cell.agentsName', Icon: AgentsIcon, testId: 'rail-agents' },
-  { panel: null, label: 'rail.cell.savedLabel', ariaLabel: 'rail.cell.savedName', Icon: SavedIcon, testId: 'rail-saved' },
+  { panel: 'saved', label: 'rail.cell.savedLabel', ariaLabel: 'rail.cell.savedName', Icon: SavedIcon, testId: 'rail-saved' },
   /*
     다섯째 칸(`docs/desktop-collab.html` 「협업 탭 — 레일의 다섯째 칸」). 이 칸이 avcshub 웹의
     `/[org]/[repo]/proposals` 를 대신한다.
@@ -124,12 +123,9 @@ const RAIL_FOCUS = 'outline-none focus-visible:outline-solid focus-visible:outli
  * 문서: "레일에서 세로를 쓰는 것은 네 칸뿐이어야 한다." 그래서 커뮤니티 마크와 내 얼굴은
  * 스크롤에 들어가지 않고 위아래에 **고정**이고, 가운데 네 칸만 필요하면 스크롤한다.
  */
-export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onManageCommunities, onLogout }: {
+export function Rail({ panel, onPanelChange, onOpenSettings, onManageCommunities, onLogout }: {
   panel: RailPanel;
   onPanelChange: (panel: RailPanel) => void;
-  /** 북마크 칸이 여는 오버레이. **옵셔널이 아니다** — 기본값을 여기서 공급하면 배선을
-   *  잊은 화면에서도 칸이 그려지고 눌러도 아무 일이 없다(design.md §4). */
-  onOpenSaved: () => void;
   onOpenSettings: (section?: SectionId) => void;
   /** 전환 팝오버의 「커뮤니티 추가」·「커뮤니티 관리…」가 가는 곳(설정 › 커뮤니티). */
   onManageCommunities: () => void;
@@ -192,12 +188,11 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onMana
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
       e.preventDefault();
-      if (cell.panel) onPanelChange(cell.panel);
-      else onOpenSaved();
+      onPanelChange(cell.panel);
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onPanelChange, onOpenSaved]);
+  }, [onPanelChange]);
 
   /**
    * `⌘,` 로 설정을 연다(#488 A1). **`Sidebar` 에서 그대로 옮겨 왔다** — 메뉴에 `⌘,` 를
@@ -277,14 +272,14 @@ export function Rail({ panel, onPanelChange, onOpenSaved, onOpenSettings, onMana
             <RailButton
               key={cell.testId}
               cell={cell}
-              active={cell.panel !== null && cell.panel === panel}
+              active={cell.panel === panel}
               badge={cell.panel === 'home' ? blockingCount : 0}
               /* 북마크 수는 배지가 아니라 이름으로만 간다(위 `savedCount` 주석). */
               countInName={cell.testId === 'rail-saved' && savedCount > 0
                 ? t('rail.cell.saved', { count: savedCount })
                 : undefined}
               t={t}
-              onClick={() => { if (cell.panel) onPanelChange(cell.panel); else onOpenSaved(); }}
+              onClick={() => onPanelChange(cell.panel)}
             />
           ))}
         </div>

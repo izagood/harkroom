@@ -26,6 +26,7 @@ import { SidebarFind } from './SidebarFind';
 import { runnerReason, runnerStatusLabel } from './RunnerStatus';
 import { AgentGrid } from './settings/AgentGrid';
 import { Collab } from './Collab';
+import { SavedMessages } from './SavedMessages';
 import { useCollabProposals, type CollabFilter } from '../lib/collabProposals';
 // 띄울 권한 판정은 `lib/` 하나가 낸다 — 설정 › 에이전트가 같은 판정을 쓴다.
 // 설정 문의 판정도 한 벌이다(`lib/agentConfigGate.ts`) — 프로필·본문 멘션이 같은 함수를
@@ -1546,6 +1547,11 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
           협업 칸(`docs/desktop-collab.html` 다섯째 칸). 내용은 `Collab.tsx` 에 있다 — 이
           파일은 이미 충분히 길고, 새 칸을 여기서 펼치면 다음 칸도 여기로 온다.
         */}
+        {/*
+          북마크 칸(jaebin, 2026-10-15 — 모달에서 옮겨 왔다). DM 칸과 같은 자리·같은 규칙이다:
+          이 칸일 때만 그리므로 목록 조회도 칸을 열 때 돈다.
+        */}
+        {panel === 'saved' && <SavedMessages />}
         {panel === 'collab' && (
           <Collab
             snapshot={collab}

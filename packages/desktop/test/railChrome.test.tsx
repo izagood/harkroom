@@ -43,7 +43,6 @@ const mountRail = () =>
     <Rail
       panel="home"
       onPanelChange={vi.fn()}
-      onOpenSaved={vi.fn()}
       onOpenSettings={vi.fn()}
       onManageCommunities={vi.fn()}
       onLogout={vi.fn()}

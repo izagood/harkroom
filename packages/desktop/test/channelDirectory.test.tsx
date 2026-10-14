@@ -39,7 +39,6 @@ const sidebarProps = {
   onOpenProfile: () => {},
   onOpenChannelDirectory: () => {},
   onOpenInbox: () => {},
-  onOpenSaved: () => {},
   onLogout: () => {},
   onOpenSettings: () => {},
   collapsed: false,

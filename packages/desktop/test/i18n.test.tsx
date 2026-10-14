@@ -2814,7 +2814,6 @@ describe('레일 — 두 언어로 뜨고 칸 이름도 언어를 따른다', ()
   const railProps = {
     panel: 'home' as const,
     onPanelChange: () => {},
-    onOpenSaved: () => {},
     onOpenSettings: () => {},
     onManageCommunities: () => {},
     onLogout: () => {},

@@ -50,7 +50,6 @@ const mount = (props: Partial<{ onOpenSettings: (section?: SectionId) => void; o
       <Rail
         panel="home"
         onPanelChange={vi.fn()}
-        onOpenSaved={vi.fn()}
         onOpenSettings={props.onOpenSettings ?? (() => {})}
         onManageCommunities={vi.fn()}
         onLogout={props.onLogout ?? (() => {})}
