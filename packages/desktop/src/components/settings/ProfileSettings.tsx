@@ -6,7 +6,7 @@ import { AVATAR_ACCEPT, AVATAR_FORMATS } from '../../lib/avatar';
 import { Identity } from '../Identity';
 import { ReadonlyRow, SettingsGroup, SettingsPage } from './primitives';
 import { useT } from '../../i18n/useT';
-import { AvatarStatus, useAvatarEdit } from './avatarEdit';
+import { AvatarAdjustTrigger, AvatarCropHost, AvatarStatus, useAvatarEdit, type AvatarEditInput } from './avatarEdit';
 
 /**
  * 프로필 사진 행(#159). **이 화면에 처음 들어오는 쓰기 경로다** — 나머지 항목은 서버에
@@ -20,17 +20,23 @@ function AvatarRow() {
   const t = useT();
   const me = useActiveStore((s) => s.me);
   const apply = useCallback(
-    (file: File | null, onProgress?: (f: number) => void) => getController().setAvatar(file, onProgress),
+    (save: AvatarEditInput | null, onProgress?: (f: number) => void) => {
+      // 맞추기를 켠 훅이라 파일이 그대로 올 일은 없다. 오면 null(=지우기)로 바꾸지 말고 멈춘다.
+      if (save instanceof File) throw new Error('avatar crop required');
+      return getController().setAvatar(save, onProgress);
+    },
     [],
   );
-  const edit = useAvatarEdit(apply);
+  const edit = useAvatarEdit(apply, { accountId: me?.id, avatarAttachmentId: me?.avatarAttachmentId });
 
   return (
     <div className="px-4 py-3">
       <div className="flex items-center gap-4">
         <span className="font-medium text-fg">{t('profileAvatar.photo')}</span>
         <span className="ml-auto flex items-center gap-3">
-          <Identity account={me ?? undefined} className="h-10 w-10 text-base" variant="avatar" />
+          <AvatarAdjustTrigger edit={edit} enabled={!!me?.avatarAttachmentId} testId="avatar-adjust-photo">
+            <Identity account={me ?? undefined} className="h-10 w-10 text-base" variant="avatar" />
+          </AvatarAdjustTrigger>
           <input
             ref={edit.pickRef}
             type="file"
@@ -46,6 +52,16 @@ function AvatarRow() {
           >
             {t('profileAvatar.upload')}
           </button>
+          {me?.avatarAttachmentId && (
+            <button
+              className="rounded-card border border-border px-3 py-1.5 font-medium text-fg hover:bg-surface disabled:opacity-50"
+              data-testid="avatar-adjust"
+              disabled={edit.busy}
+              onClick={edit.openAdjust}
+            >
+              {t('avatarCrop.adjust')}
+            </button>
+          )}
           {/*
             지우기는 **두 걸음**이다. 한 걸음이던 동안은 실수로 스친 클릭 하나가 사진을
             지웠고, 지운 뒤에도 아무 말이 없어 눌린 것조차 알 수 없었다. 이 저장소가
@@ -85,6 +101,7 @@ function AvatarRow() {
       <div className="flex justify-end">
         <AvatarStatus phase={edit.phase} />
       </div>
+      <AvatarCropHost edit={edit} name={me?.displayName || me?.handle || ''} />
     </div>
   );
 }

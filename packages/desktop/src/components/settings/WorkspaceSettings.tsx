@@ -4,7 +4,7 @@ import { getController } from '../../state/controller';
 import { AVATAR_ACCEPT, AVATAR_FORMATS } from '../../lib/avatar';
 import { SettingsGroup, SettingsPage } from './primitives';
 import { useT } from '../../i18n/useT';
-import { AvatarStatus, useAvatarEdit } from './avatarEdit';
+import { AvatarStatus, useAvatarEdit, type AvatarEditInput } from './avatarEdit';
 
 /**
  * 워크스페이스 설정 — 지금은 커뮤니티 레일에 걸리는 **아이콘** 하나다(2026-09-29).
@@ -21,10 +21,12 @@ export function WorkspaceSettings() {
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
   const iconUrl = useActiveStore((s) => s.workspaceIconUrl);
   const apply = useCallback(
-    (file: File | null, onProgress?: (f: number) => void) => getController().setWorkspaceIcon(file, onProgress),
+    // 맞추기 없이(`target` null) 쓰므로 들어오는 것은 늘 고른 파일이다 — 아이콘은 둥글게 자르지 않는다.
+    (input: AvatarEditInput | null, onProgress?: (f: number) => void) =>
+      getController().setWorkspaceIcon(input instanceof File ? input : null, onProgress),
     [],
   );
-  const edit = useAvatarEdit(apply);
+  const edit = useAvatarEdit(apply, null);
 
   return (
     <SettingsPage section="workspace" description={t('workspaceIcon.description')}>

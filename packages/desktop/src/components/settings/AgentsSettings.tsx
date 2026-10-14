@@ -54,7 +54,7 @@ import { TeamDetail } from './TeamDetail';
 import { AVATAR_ACCEPT, AVATAR_FORMATS } from '../../lib/avatar';
 import { Identity } from '../Identity';
 import { Button, DangerZone, SettingsColumns, SettingsWrap } from './primitives';
-import { AvatarStatus, useAvatarEdit } from './avatarEdit';
+import { AvatarAdjustTrigger, AvatarCropHost, AvatarStatus, useAvatarEdit, type AvatarEditInput } from './avatarEdit';
 import { useAgentPool } from './useAgentPool';
 import { navKey } from './sections';
 import { AGENT_DETAIL_TABS, parseAgentTarget, type AgentDetailTab } from './agentDetailTabs';
@@ -1247,9 +1247,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    */
   const selectedId = selected?.id ?? null;
   const applyAvatar = useCallback(
-    async (file: File | null, onProgress?: (f: number) => void): Promise<void> => {
+    async (save: AvatarEditInput | null, onProgress?: (f: number) => void): Promise<void> => {
       if (!selectedId) return;
-      const avatarAttachmentId = await getController().setAgentAvatar(selectedId, file, onProgress);
+      // 맞추기를 켠 훅이라 파일이 그대로 올 일은 없다. 오면 null(=지우기)로 바꾸지 말고 멈춘다.
+      if (save instanceof File) throw new Error('avatar crop required');
+      const avatarAttachmentId = await getController().setAgentAvatar(selectedId, save, onProgress);
       // 이 화면은 고른 에이전트(`selected`)와 목록(`agents`)을 **자기 상태로** 들고 있다 — 스토어의 계정 표만
       // 고치면 사이드바·메시지는 바뀌는데 바로 여기 설정 화면과 그리드의 사진은 옛 첨부 id 에 머물러, 다른 화면에
       // 다녀와야(목록을 다시 받아야) 바뀌었다(jaebin 신고 10-14). 그래서 서버가 받은 id 로 두 상태도 함께 고친다.
@@ -1259,7 +1261,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     },
     [selectedId],
   );
-  const avatarEdit = useAvatarEdit(applyAvatar);
+  const avatarEdit = useAvatarEdit(applyAvatar, { accountId: selectedId, avatarAttachmentId: selected?.avatarAttachmentId });
 
   const pick = (a: AgentView, tab: AgentDetailTab = 'overview') => {
     setSelected(a);
@@ -2371,7 +2373,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 {selected && (
                   <div>
                     <div className="flex items-center gap-3">
-                      <Identity account={selected} className="h-12 w-12 text-base" variant="avatar" />
+                      <AvatarAdjustTrigger edit={avatarEdit} enabled={!!selected.avatarAttachmentId} testId="agent-avatar-adjust-photo">
+                        <Identity account={selected} className="h-12 w-12 text-base" variant="avatar" />
+                      </AvatarAdjustTrigger>
                       <input
                         ref={avatarEdit.pickRef}
                         type="file"
@@ -2383,6 +2387,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       <Button disabled={avatarEdit.busy} onClick={avatarEdit.openPicker}>
                         {t('agents.profile.avatarUpload')}
                       </Button>
+                      {selected.avatarAttachmentId && (
+                        <Button disabled={avatarEdit.busy} onClick={avatarEdit.openAdjust}>
+                          {t('avatarCrop.adjust')}
+                        </Button>
+                      )}
                       {/*
                         지우기는 **두 걸음**이다(같은 화면의 `confirmingDisable` 과 같은 모양).
                         한 걸음이던 동안은 스친 클릭 하나로 사진이 사라졌고, 사라진 뒤에도
@@ -2407,6 +2416,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       </span>
                     </div>
                     <AvatarStatus phase={avatarEdit.phase} />
+                    <AvatarCropHost edit={avatarEdit} name={selected.displayName || selected.handle} />
                   </div>
                 )}
                 {/*

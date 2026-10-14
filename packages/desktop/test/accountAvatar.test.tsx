@@ -9,6 +9,13 @@ import { MessageItem } from '../src/components/MessageItem';
 import { ProfileSettings } from '../src/components/settings/ProfileSettings';
 import { acc, msg } from './helpers/fakeApi';
 import { ApiError } from '../src/lib/api';
+import { pickAndSave } from './helpers/avatarCrop';
+
+// 캔버스가 없는 jsdom — 잘라 내기만 목으로 바꾼다(셈은 진짜를 쓴다).
+vi.mock('../src/lib/avatarCrop', async (orig) => ({
+  ...(await orig<typeof import('../src/lib/avatarCrop')>()),
+  renderCrop: vi.fn(async () => new Blob(['cropped'], { type: 'image/webp' })),
+}));
 
 /** 문구가 아니라 **사실**을 잰다 — 어투가 바뀌어도(`~습니다` → `~다`) 이 축은 산다. */
 const ko = translator('ko');
@@ -149,10 +156,10 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     render(<ProfileSettings onSignOut={() => {}} />);
 
     const file = new File(['png-bytes'], 'me.png', { type: 'image/png' });
-    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+    await pickAndSave('avatar-file', file);
 
     // 진행률 콜백이 2번째 인자로 함께 간다 — 그것이 막대가 차오르는 근거다.
-    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(file, expect.any(Function)));
+    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(expect.objectContaining({ source: { kind: 'file', file: file }, cropped: expect.any(Blob) }), expect.any(Function)));
   });
 
   it('지우기는 명시적 null 로 간다', async () => {
@@ -216,7 +223,7 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     render(<ProfileSettings onSignOut={() => {}} />);
 
     const file = new File(['png-bytes'], 'me.png', { type: 'image/png' });
-    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+    await pickAndSave('avatar-file', file);
 
     // 아직 한 바이트도 안 갔다 — 비율을 모르는 구간이다. 0% 라고 쓰면 거짓이 된다.
     const bar = await screen.findByTestId('avatar-progress');
@@ -257,7 +264,7 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     render(<ProfileSettings onSignOut={() => {}} />);
 
     const file = new File(['<html>'], 'evil.png', { type: 'image/png' });
-    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+    await pickAndSave('avatar-file', file);
 
     const alert = await screen.findByRole('alert');
     // "안 된다"만 말하고 끝나면 사람은 다음에 무엇을 고를지 모른 채 같은 실패를 반복한다.
@@ -277,7 +284,7 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     render(<ProfileSettings onSignOut={() => {}} />);
 
     const file = new File(['<svg/>'], 'big.svg', { type: 'image/svg+xml' });
-    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+    await pickAndSave('avatar-file', file);
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toMatch(/256 KiB/);
@@ -293,7 +300,7 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     render(<ProfileSettings onSignOut={() => {}} />);
 
     const file = new File(['png-bytes'], 'me.png', { type: 'image/png' });
-    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
+    await pickAndSave('avatar-file', file);
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toMatch(/연결/);
@@ -310,8 +317,8 @@ describe('#159 프로필 화면의 쓰기 경로', () => {
     expect(screen.getByTestId('avatar-file').getAttribute('accept')).toContain('image/svg+xml');
 
     const file = new File(['<svg/>'], 'me.svg', { type: 'image/svg+xml' });
-    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [file] } });
-    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(file, expect.any(Function)));
+    await pickAndSave('avatar-file', file);
+    await waitFor(() => expect(c.setAvatar).toHaveBeenCalledWith(expect.objectContaining({ source: { kind: 'file', file: file }, cropped: expect.any(Blob) }), expect.any(Function)));
   });
 
   it('읽기 전용 안내가 사진은 바꿀 수 있다고 말한다', () => {

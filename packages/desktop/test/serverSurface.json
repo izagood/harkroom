@@ -31,6 +31,7 @@
   "DELETE /teams/:p/members/:p": "0.1.167",
   "GET /accounts": "0.1.167",
   "GET /accounts/:p/avatar": "0.1.167",
+  "GET /accounts/:p/avatar/source": "0.4.84",
   "GET /accounts/:p/grants": "0.2.9",
   "GET /accounts/:p/pats": "0.1.167",
   "GET /accounts/agents": "0.1.167",
