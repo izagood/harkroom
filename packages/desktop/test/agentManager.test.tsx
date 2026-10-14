@@ -867,7 +867,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
     expect(screen.queryByTestId('identity-avatar')).toBeNull();
 
     const file = new File([new Uint8Array([1])], 'bot.png', { type: 'image/png' });
-    fireEvent.change(await screen.findByTestId('agent-avatar-file'), { target: { files: [file] } });
+    await pickAndSave('agent-avatar-file', file);
 
     expect(await screen.findByTestId('identity-avatar')).toBeTruthy();
     expect(fetchAvatar).toHaveBeenCalledWith('id-rusalka');
