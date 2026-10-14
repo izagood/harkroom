@@ -303,6 +303,13 @@ void main() {
     // 서버가 더 오래된 것이 없다고 했다 → 맨 위에 채널 시작 줄이 선다(designer #996).
     expect(find.byKey(const Key('channel-start')), findsOneWidget);
     expect(find.textContaining('#harkroom'), findsWidgets);
+    // D3 반투명 머리: 피드는 머리 밑(화면 맨 위)부터 그리고, 맨 위 줄은 위 여백으로 머리 밑에 선다.
+    await _settle(tester);
+    final glass = tester.getRect(find.byKey(const Key('glass-app-bar')));
+    expect(tester.getRect(find.byKey(const Key('channel-feed'))).top, 0);
+    // 맨 위(가장 옛 줄)까지 굴렸을 때 머리에 가리지 않게 — 목록 위 여백이 머리 높이 이상이다.
+    final pad = tester.widget<ListView>(find.byKey(const Key('channel-feed'))).padding! as EdgeInsets;
+    expect(pad.top, greaterThanOrEqualTo(glass.bottom));
 
     await tester.enterText(find.byKey(const Key('composer')), '@forge 이거 해 줘');
     // 친 글이 있어야 보내기가 살아난다(빈 칸이면 soft) — 그 한 프레임을 그린다.
@@ -976,7 +983,8 @@ void main() {
       expect(focused(tester, 'composer'), isTrue);
 
       // 목록은 아래부터 쌓이므로 맨 위 띠는 빈 곳이다.
-      await tester.tapAt(tester.getTopLeft(find.byKey(const Key('channel-feed'))) + const Offset(100, 4));
+      // 피드는 반투명 머리(D3) 밑까지 흐른다 — 머리 바로 밑의 빈 곳을 누른다.
+      await tester.tapAt(tester.getBottomLeft(find.byKey(const Key('glass-app-bar')).last) + const Offset(100, 40));
       await _settle(tester);
       expect(focused(tester, 'composer'), isFalse);
       expect(text(tester, 'composer'), '쓰던 글');
@@ -1006,7 +1014,8 @@ void main() {
       await tester.tap(find.byKey(const Key('thread-composer')));
       await tester.pump();
       expect(focused(tester, 'thread-composer'), isTrue);
-      await tester.tapAt(tester.getTopLeft(find.byKey(const Key('thread-feed'))) + const Offset(100, 4));
+      // 피드는 반투명 머리(D3)·모델 바 밑까지 흐른다 — 모델 바 바로 밑의 빈 곳을 누른다.
+      await tester.tapAt(tester.getBottomLeft(find.byType(ThreadModelBar)) + const Offset(100, 20));
       await _settle(tester);
       expect(focused(tester, 'thread-composer'), isFalse);
       expect(text(tester, 'thread-composer'), '답글 쓰는 중');

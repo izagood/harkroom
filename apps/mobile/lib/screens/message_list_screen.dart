@@ -153,32 +153,37 @@ class _MessageListScreenState extends State<MessageListScreen> {
       // 크게 보기에서 넘겨 볼 그림의 범위(그림 넘겨 보기 사양 1·5).
       messages: () => (app.messages[widget.channelId] ?? const <MessageRow>[]).where((m) => m.inChannelFeed).toList(),
       child: Scaffold(
+      // 반투명 머리(D3) — 피드가 그 밑으로 흐른다.
+      extendBodyBehindAppBar: true,
       // 개정판 3.3: 왼쪽 정렬 "# task" + 부제(주제). 주제가 없으면 한 줄.
-      appBar: AppBar(
+      appBar: GlassAppBar(bar: AppBar(
         title: ScreenTitle(title: label, subtitle: channel?.topic),
         // 머리 돋보기 → **이 채널** 범위로 연다(데스크톱 채널 머리 버튼과 같은 물음).
         actions: [
           SearchButton(key: const Key('channel-search'), scope: SearchScope.channel, channelId: widget.channelId),
           const SizedBox(width: 4),
         ],
-      ),
+      )),
       // 토스트를 작성칸 위로 올린다(states.dart ComposerScope).
+      // 위는 [GlassBody] 가 맡는다 — SafeArea 가 위를 먹으면 피드가 머리 밑으로 흐르지 못한다.
       body: ComposerScope(child: SafeArea(
+        top: false,
         child: Column(
           children: [
-            const ConnectionBand(),
             Expanded(
-              child: FeedKeyboardDismiss(child: switch (app.channelLoad[widget.channelId]) {
+              child: GlassBody(
+                header: const ConnectionBand(),
+                builder: (context, inset) => FeedKeyboardDismiss(child: switch (app.channelLoad[widget.channelId]) {
                 // 아직 판정 전(열자마자)도 읽는 중으로 본다 — 그 한 프레임에 "비어 있다"가
                 // 스쳐 지나가면 사람은 빈 채널로 읽는다.
-                null || LoadState.loading => const LoadingSkeleton(),
+                null || LoadState.loading => Padding(padding: EdgeInsets.only(top: inset), child: const LoadingSkeleton()),
                 LoadState.failed => FailedState(
                     title: t.messagesLoadFailed,
                     cause: app.failures[widget.channelId] ?? LoadFailure.network,
                     onRetry: () => app.openChannel(widget.channelId),
                   ),
                 LoadState.loaded => feed.isEmpty && failed.isEmpty
-                  ? EmptyState(title: t.messagesEmpty, hint: t.messagesEmptyHint)
+                  ? Padding(padding: EdgeInsets.only(top: inset), child: EmptyState(title: t.messagesEmpty, hint: t.messagesEmptyHint))
                   // **아래에서부터 쌓는다**(`reverse`). 위에서부터면 채널을 열었을 때 불러온
                   // 첫 페이지 중 **가장 오래된 것**이 보이고, 새 말은 화면 밖 아래로 붙는다 —
                   // 채팅에서 사람이 보려는 것은 늘 맨 아래다. 짧은 시험 목록에서는 한 화면에
@@ -190,7 +195,8 @@ class _MessageListScreenState extends State<MessageListScreen> {
                       // 짧은 채널도 늘 끌리게 둔다 — 끌기 시작이 키보드를 내린다([FeedKeyboardDismiss]).
                       // 안 그러면 Android 에서 한 화면에 다 드는 채널은 끌기가 아예 시작되지 않는다.
                       physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      // 위 여백 = 머리 + 띠 — 맨 위(가장 옛 줄)까지 굴려도 머리에 가리지 않는다.
+                      padding: EdgeInsets.only(top: 8 + inset, bottom: 8),
                       // 못 보낸 말이 **맨 아래**(reverse 라 앞쪽)에 선다 — 보낸 자리다. 맨 위(끝)에는
                       // 회전자·"다시 시도"·채널 시작 중 하나를 둔다([FeedTop]).
                       itemCount: feed.length + failed.length + (top == null ? 0 : 1),
@@ -225,7 +231,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
                         ),
                       ),
                     ),
-              }),
+              })),
             ),
             MentionModelBar(
               controller: _composer,

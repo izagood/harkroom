@@ -77,6 +77,13 @@ void main() {
     await shot(tester, '02g-channel-keyboard');
     FocusManager.instance.primaryFocus?.unfocus();
     await tester.pump(const Duration(milliseconds: 700));
+    // designer #1369 d1·d3: 글이 있으면 보내기가 accent 로 찬다 · 여섯 줄을 쳐도 칸은 다섯 줄에서 멈춘다.
+    await tester.enterText(find.byKey(const Key('composer')), '하나\n둘\n셋\n넷\n다섯\n여섯');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await shot(tester, '02h-channel-typed');
+    await tester.enterText(find.byKey(const Key('composer')), '');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump(const Duration(milliseconds: 300));
 
     // 첨부 시트. 시뮬레이터라 [사진 찍기] 줄이 비활성으로 선다 — 실기기와 배치가 같다.
     await tester.tap(find.byKey(const Key('attach')));
