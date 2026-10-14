@@ -397,6 +397,12 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     }).parse(req.body);
 
     const account = req.account!;
+    // Chrome 연동 **켜기**는 사람의 로그인 세션만 한다(security F2, 스레드 e8c8365d). 사람의 브라우저를 조작하게 하는
+    // 권한이라, 다른 에이전트의 owner 로 지정된 에이전트나 admin 에이전트가 PAT 로 켜는 길을 닫는다. 끄기는 좁히는
+    // 쪽이라 지금처럼 owner·admin 누구나 한다.
+    if (patch.chromeEnabled === true && !(account.kind === 'human' && req.authVia === 'session')) {
+      return reply.code(403).send({ error: { code: 'human_session_required', message: 'only a signed-in human can enable Chrome control' } });
+    }
     if (!account.isAdmin) {
       // `Object.keys` 를 보는 이유: zod 는 보내지 않은 키를 만들지 않으므로 키의 **존재**가
       // "이 필드를 건드리려 한다"와 같다. 값으로 판정하면 `disabled: false` 나

@@ -51,6 +51,22 @@ describe('Chrome 연동(chromeEnabled)', () => {
     expect(await auditDetails(accountId)).toEqual([]);
   });
 
+  it('에이전트 PAT 로는 켤 수 없다 — owner 로 지정된 에이전트여도 403, 끄기는 된다(security F2)', async () => {
+    const lead = await createAgent(app, adminToken, 'qa-chrome-lead');
+    const { accountId } = await createAgent(app, adminToken, 'qa-chrome-led');
+    await pool.query(`update agent_config set owner_account_id = $1 where account_id = $2`, [lead.accountId, accountId]);
+    const on = await patch(lead.pat, accountId, true);
+    expect(on.statusCode).toBe(403);
+    expect(on.json().error.code).toBe('human_session_required');
+    expect((await view(accountId)).chromeEnabled).toBe(false);
+    // 자기 자신도 못 켠다.
+    expect((await patch(lead.pat, lead.accountId, true)).statusCode).toBe(403);
+    // 끄기는 owner 에이전트도 한다(좁히는 쪽).
+    expect((await patch(adminToken, accountId, true)).statusCode).toBe(200);
+    expect((await patch(lead.pat, accountId, false)).statusCode).toBe(200);
+    expect((await view(accountId)).chromeEnabled).toBe(false);
+  });
+
   it('소유자도 admin 도 아닌 멤버는 켤 수 없다', async () => {
     const { accountId } = await createAgent(app, adminToken, 'qa-chrome-guard');
     expect((await patch(bobToken, accountId, true)).statusCode).toBeGreaterThanOrEqual(403);
