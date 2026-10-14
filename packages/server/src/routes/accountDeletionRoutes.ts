@@ -8,6 +8,7 @@ import type { StorageBackend } from '../storage/local.js';
 import { deleteHumanAccount } from '../services/accountDeletion.js';
 import { emitEvent } from '../events.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
+import { releaseAvatarFiles } from '../services/avatars.js';
 
 /**
  * `DELETE /accounts/me` — 사람이 이 워크스페이스에서 자기 계정을 지운다(서비스 주석 참고).
@@ -58,13 +59,8 @@ export async function registerAccountDeletionRoutes(
       opts.operatorHub.disconnect(operatorId, 4401, 'operator revoked');
       emitEvent({ type: 'operator.changed', operatorId, audience: 'all' });
     }
-    if (result.avatarStorageKey) {
-      await storage.remove(result.avatarStorageKey).catch((err) => req.log.warn({ err }, 'avatar file removal failed'));
-    }
-    // 사진 맞추기의 원본도 지운다. 같은 파일이면 한 번만.
-    if (result.avatarSourceStorageKey && result.avatarSourceStorageKey !== result.avatarStorageKey) {
-      await storage.remove(result.avatarSourceStorageKey).catch((err) => req.log.warn({ err }, 'avatar source file removal failed'));
-    }
+    // 사진·원본은 아무도 안 쓰면 지운다. 그 사람의 에이전트가 같은 첨부를 쓰면 남는다(security n1).
+    await releaseAvatarFiles(pool, storage, result.avatarIds, req.log);
     // 옛 handle 은 남기지 않는다 — 감사는 id 로 가리킨다(이름을 지우는 삭제다).
     await recordAudit(pool, { action: 'account.deleted', actorId: me.id, actorHandle: null }, req);
     return reply.code(204).send();

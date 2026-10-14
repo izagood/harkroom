@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { emitEvent } from '../events.js';
 import {
-  detectAvatarType, findAvatarOriginal, findAvatarSource, findAvatarSourceTarget, findAvatarTarget,
+  currentAvatarIds, detectAvatarType, findAvatarOriginal, releaseAvatarFiles, findAvatarSource, findAvatarSourceTarget, findAvatarTarget,
   setAccountAvatar, type AvatarSetting,
 } from '../services/avatars.js';
 import type { StorageBackend } from '../storage/local.js';
@@ -49,11 +49,15 @@ const avatarBody = z.object({
 async function applyAvatar(
   pool: Pool, storage: StorageBackend, reply: FastifyReply,
   targetId: string, uploaderId: string, raw: unknown,
+  log?: { warn(obj: unknown, msg: string): void },
 ) {
   const body = avatarBody.parse(raw);
+  // 바꾸기 전의 사진 둘 — 바꾼 뒤 아무도 안 가리키면 지운다(후속 ②). 새 값과 같은 id 는 아직 쓰이니 저절로 남는다.
+  const previous = await currentAvatarIds(pool, targetId);
   if (body.attachmentId === null) {
     await setAccountAvatar(pool, targetId, null);
     emitEvent({ type: 'avatar.changed', accountId: targetId, avatarAttachmentId: null });
+    await releaseAvatarFiles(pool, storage, previous, log);
     return { avatarAttachmentId: null };
   }
 
@@ -93,6 +97,7 @@ async function applyAvatar(
 
   await setAccountAvatar(pool, targetId, setting);
   emitEvent({ type: 'avatar.changed', accountId: targetId, avatarAttachmentId: found.id });
+  await releaseAvatarFiles(pool, storage, previous, log);
   return { avatarAttachmentId: found.id };
 }
 
@@ -102,7 +107,7 @@ export async function registerAvatarRoutes(
   app.put('/accounts/me/avatar', { preHandler: app.requireAccount }, async (req, reply) => {
     // 대상 id 를 받지 않는다 — `me` 하나뿐이다. 남의 아바타를 바꾸는 경로는 만들지 않는다.
     const me = req.account!;
-    return applyAvatar(pool, storage, reply, me.id, me.id, req.body);
+    return applyAvatar(pool, storage, reply, me.id, me.id, req.body, req.log);
   });
 
   /**
@@ -141,7 +146,7 @@ export async function registerAvatarRoutes(
     }
 
     // 업로더 검사는 **요청자 자신**으로 좁힌다(소유자가 자기 업로드를 자기 에이전트에 건다).
-    return applyAvatar(pool, storage, reply, id, me.id, req.body);
+    return applyAvatar(pool, storage, reply, id, me.id, req.body, req.log);
   });
 
   app.get('/accounts/:id/avatar', { preHandler: app.requireAccount }, async (req, reply) => {

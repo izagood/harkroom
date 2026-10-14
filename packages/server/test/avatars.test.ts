@@ -11,6 +11,7 @@ import { AVATAR_PIXEL_LIMITS, looksLikeSvg, startsLikeSvg, SVG_MAX_BYTES } from 
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
+let pool: import('pg').Pool;
 let adminToken: string;
 let adminId: string;
 let otherToken: string;
@@ -38,6 +39,7 @@ const SVG = Buffer.from(
 
 beforeAll(async () => {
   const db = await startTestDb();
+  pool = db.pool;
   stop = db.stop;
   storageRoot = await mkdtemp(join(tmpdir(), 'harkroom-avatar-'));
   // 업로드 리밋을 넓힌다 — 사진 맞추기 시험은 한 번 저장에 업로드가 둘(원본·잘린 것)이라 기본 리밋에 닿는다.
@@ -453,6 +455,90 @@ describe('가로·세로 상한 (사진 후속 ① · security n6)', () => {
     const res = await setAvatar(adminToken, { attachmentId: id });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('not_an_image');
+  });
+});
+
+describe('옛 사진 정리 (사진 후속 ② · security n1·n2)', () => {
+  const exists = async (id: string) =>
+    (await pool.query(`select 1 from attachment where id = $1`, [id])).rowCount === 1;
+  const fileOf = async (id: string) =>
+    (await pool.query<{ k: string }>(`select storage_key as k from attachment where id = $1`, [id])).rows[0]!.k;
+  const onDisk = async (key: string) => {
+    try { await (await import('node:fs/promises')).access(join(storageRoot, key)); return true; } catch { return false; }
+  };
+
+  it('사진을 바꾸면 옛 아바타·옛 원본의 행과 파일이 지워진다', async () => {
+    const o1 = await upload(otherToken, 'o1.png', PNG, 'image/png');
+    const c1 = await upload(otherToken, 'c1.png', PNG, 'image/png');
+    await setAvatar(otherToken, { attachmentId: c1, source: { attachmentId: o1, crop: { x: 0, y: 0, size: 1 } } });
+    const [k1, k2] = [await fileOf(o1), await fileOf(c1)];
+
+    const c2 = await upload(otherToken, 'c2.png', PNG, 'image/png');
+    expect((await setAvatar(otherToken, { attachmentId: c2 })).statusCode).toBe(200);
+    expect(await exists(o1)).toBe(false);
+    expect(await exists(c1)).toBe(false);
+    expect(await onDisk(k1)).toBe(false);
+    expect(await onDisk(k2)).toBe(false);
+    expect(await exists(c2)).toBe(true);
+  });
+
+  it('옛 사진을 원본으로 다시 맞추면 옛 사진은 원본으로 남는다', async () => {
+    const legacy = await upload(otherToken, 'legacy.png', PNG, 'image/png');
+    await setAvatar(otherToken, { attachmentId: legacy });
+    const cropped = await upload(otherToken, 'cr.png', PNG, 'image/png');
+    await setAvatar(otherToken, { attachmentId: cropped, source: { attachmentId: legacy, crop: { x: 0, y: 0, size: 1 } } });
+    expect(await exists(legacy)).toBe(true);
+    expect(await exists(cropped)).toBe(true);
+  });
+
+  it('지우기(null)도 정리한다', async () => {
+    const c = await upload(otherToken, 'd.png', PNG, 'image/png');
+    await setAvatar(otherToken, { attachmentId: c });
+    await setAvatar(otherToken, { attachmentId: null });
+    expect(await exists(c)).toBe(false);
+  });
+
+  it('같은 업로드를 다른 계정(내 에이전트)이 쓰면 남긴다', async () => {
+    const created = await app.inject({
+      method: 'POST', url: '/accounts/agents', headers: auth(adminToken),
+      payload: { handle: 'picsharebot', displayName: 'picsharebot' },
+    });
+    const agentId = created.json().id as string;
+    const shared = await upload(adminToken, 'shared.png', PNG, 'image/png');
+    await setAvatar(adminToken, { attachmentId: shared });
+    await app.inject({
+      method: 'PUT', url: `/accounts/agents/${agentId}/avatar`, headers: auth(adminToken), payload: { attachmentId: shared },
+    });
+    const mine = await upload(adminToken, 'mine-only.png', PNG, 'image/png');
+    // 내 원본 = 에이전트와 같이 쓰는 그림, 내 아바타 = 나만 쓰는 그림. 바꾸면 후보가 둘이다.
+    await setAvatar(adminToken, { attachmentId: mine, source: { attachmentId: shared, crop: { x: 0, y: 0, size: 1 } } });
+    const next = await upload(adminToken, 'next.png', PNG, 'image/png');
+    await setAvatar(adminToken, { attachmentId: next });
+    expect(await exists(shared)).toBe(true);
+    // 같이 쓰는 후보가 섞여도 나만 쓰던 것은 지워진다 — 쓰이는지 검사가 없으면 FK 가 삭제문 전체를 막아 이것도 남는다.
+    expect(await exists(mine)).toBe(false);
+  });
+
+  it('에이전트를 지우면 사진 칸을 비우고 파일을 치운다(security n2)', async () => {
+    const created = await app.inject({
+      method: 'POST', url: '/accounts/agents', headers: auth(adminToken),
+      payload: { handle: 'picgonebot', displayName: 'picgonebot' },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const agentId = created.json().id as string;
+    const o = await upload(adminToken, 'go.png', PNG, 'image/png');
+    const c = await upload(adminToken, 'gc.png', PNG, 'image/png');
+    await app.inject({
+      method: 'PUT', url: `/accounts/agents/${agentId}/avatar`, headers: auth(adminToken),
+      payload: { attachmentId: c, source: { attachmentId: o, crop: { x: 0, y: 0, size: 1 } } },
+    });
+    const del = await app.inject({ method: 'DELETE', url: `/accounts/agents/${agentId}`, headers: auth(adminToken) });
+    expect(del.statusCode, del.body).toBe(204);
+    const row = await pool.query(
+      `select avatar_attachment_id, avatar_source_attachment_id, avatar_crop from account where id = $1`, [agentId]);
+    expect(row.rows[0]).toEqual({ avatar_attachment_id: null, avatar_source_attachment_id: null, avatar_crop: null });
+    expect(await exists(o)).toBe(false);
+    expect(await exists(c)).toBe(false);
   });
 });
 

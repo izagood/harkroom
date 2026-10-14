@@ -21,8 +21,12 @@ import {
 } from '../services/memory.js';
 import { archiveMemory, unarchiveMemory } from '../services/memoryCurate.js';
 import { getHandleGroupByHandle } from '../services/handleGroups.js';
+import { releaseAvatarFiles } from '../services/avatars.js';
+import type { StorageBackend } from '../storage/local.js';
 
 export interface AccountRouteDeps {
+  /** 첨부 저장소(요청 시점에 꺼낸다). 에이전트를 지울 때 그 사진 파일을 치운다(사진 후속 ②). 테스트는 생략할 수 있다. */
+  storage?: () => StorageBackend;
   /** 오퍼레이터 허브 — 에이전트 목록에 배정 거절 사유를 붙인다(`OperatorHub.refusalOf`). 테스트는 생략한다. */
   operatorHub?: {
     refusalOf(agentId: string): { reason: string; at: string } | null;
@@ -683,6 +687,10 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     if (!removed) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such agent' } });
     }
+    // 지운 에이전트의 사진·원본은 아무도 다시 보지 않는다(security n2). 다른 자리가 같은 첨부를 쓰면 남는다.
+    const storage = routeDeps.storage?.();
+    if (storage) await releaseAvatarFiles(pool, storage, removed.avatarIds, req.log);
+    emitEvent({ type: 'avatar.changed', accountId: id, avatarAttachmentId: null });
     await recordAudit(pool, {
       // 지시문도 기억 본문도 넣지 않는다 — 감사에 본문을 복사하면 삭제가 삭제가 아니다
       // (종료 요청 기록과 같은 규칙). 누가·언제·누구를, 그리고 함께 죽은 PAT 만 남긴다.

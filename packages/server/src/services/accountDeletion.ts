@@ -28,7 +28,7 @@ export type AccountDeletionBlock =
   | { code: 'last_admin' };
 
 export type AccountDeletionResult =
-  | { ok: true; handle: string; avatarStorageKey: string | null; avatarSourceStorageKey: string | null; revokedOperatorIds: string[] }
+  | { ok: true; handle: string; avatarIds: (string | null)[]; revokedOperatorIds: string[] }
   | { ok: false; block: AccountDeletionBlock };
 
 export async function deleteHumanAccount(pool: Pool, accountId: string): Promise<AccountDeletionResult> {
@@ -52,16 +52,15 @@ export async function deleteHumanAccount(pool: Pool, accountId: string): Promise
       }
     }
     // 같은 사람의 두 요청이 서로의 판정을 못 보고 둘 다 지나가지 않게 잠근다.
-    const me = await client.query<{ avatarStorageKey: string | null; avatarSourceStorageKey: string | null }>(
-      `select att.storage_key as "avatarStorageKey", src.storage_key as "avatarSourceStorageKey"
-         from account a left join attachment att on att.id = a.avatar_attachment_id
-         left join attachment src on src.id = a.avatar_source_attachment_id
+    const me = await client.query<{ a: string | null; s: string | null }>(
+      `select a.avatar_attachment_id as a, a.avatar_source_attachment_id as s
+         from account a
         where a.id = $1 and a.deleted_at is null
         for update of a`, [accountId]);
     if (!me.rowCount) throw new Error('account not found');
-    const avatarStorageKey = me.rows[0]?.avatarStorageKey ?? null;
-    // 사진 맞추기의 원본도 같은 사람의 얼굴이다 — 걸린 아바타와 함께 지운다.
-    const avatarSourceStorageKey = me.rows[0]?.avatarSourceStorageKey ?? null;
+    // 사진 둘의 id. 파일은 커밋 뒤에 라우트가 `releaseAvatarFiles` 로 치운다 — 같은 첨부를 그 사람의 에이전트가
+    // 쓰고 있으면 남긴다(security n1: 예전엔 파일을 무조건 지워 에이전트 사진이 깨졌다).
+    const avatarIds = [me.rows[0]!.a, me.rows[0]!.s];
 
     const owned = await client.query<{ id: string; handle: string }>(
       `select a.id, a.handle from agent_config c join account a on a.id = c.account_id
@@ -100,7 +99,7 @@ export async function deleteHumanAccount(pool: Pool, accountId: string): Promise
     await client.query(`delete from api_connector where owner_account_id = $1`, [accountId]);
     await client.query(`delete from secret where owner_account_id = $1`, [accountId]);
     await client.query('commit');
-    return { ok: true, handle, avatarStorageKey, avatarSourceStorageKey, revokedOperatorIds: ops.rows.map((r) => r.id) };
+    return { ok: true, handle, avatarIds, revokedOperatorIds: ops.rows.map((r) => r.id) };
   } catch (err) {
     await client.query('rollback').catch(() => {});
     throw err;

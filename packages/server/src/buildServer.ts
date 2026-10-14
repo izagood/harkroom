@@ -605,7 +605,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 오퍼레이터 허브(스펙 2026-09-20 §4)를 여기서 만든다 — 계정 라우트가 배정 거절 사유를 여기서
   // 읽는다. 라우트 등록은 아래(릴레이 뒤)다: 허브는 소켓이 붙기 전엔 빈 표일 뿐이라 순서가 무관하다.
   const operatorHub = createOperatorHub();
-  await registerAccountRoutes(app, deps.pool, { operatorHub });
+  // 첨부 저장소는 아래에서 만든다(multipart 등록 순서) — 에이전트 삭제가 사진 파일을 치울 때(요청 시점)만 꺼낸다.
+  await registerAccountRoutes(app, deps.pool, { operatorHub, storage: () => storage });
   // 권한 부여·회수·역할(스펙 2026-09-20 §6). 계정 라우트 바로 뒤 — 같은 `/accounts/:id/*` 표면이다.
   await registerGrantRoutes(app, deps.pool);
   await registerConnectorRoutes(app, deps.pool);
