@@ -12,6 +12,7 @@ import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { normalizeSearchQuery } from '../services/mentions.js';
 import { decideFromCard } from '../services/permissionRequests.js';
+import { applyChatApproval } from '../services/chatApproval.js';
 import { extractUrls, queueLinkPreviewFetch } from '../services/linkPreview.js';
 import { axisValid, cleanAxis, clearThreadAgentModel, isChannelRoot, setThreadAgentModel } from '../services/threadAgentModels.js';
 import { agentModelInput, announceChange, checkOffered, emitChanged } from './threadAgentModelRoutes.js';
@@ -116,6 +117,8 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
       // 사람이 카드 대신 글로 답했으면 그 스레드의 열린 카드를 접는다(선택 카드 A′, `closeAsksByReply`).
       if (req.account!.kind === 'human') await closeAsksByReply(pool, message);
+      // 소유자가 글로 권한 요청을 승인한다(스레드 795a9663) — 앱에 로그인한 사람 세션의 글만. PAT·오퍼레이터는 사람이어도 안 된다.
+      if (req.account!.kind === 'human' && req.authVia === 'session') await applyChatApproval(pool, message);
       const urls = extractUrls(body.body);
       for (const url of urls) {
         queueLinkPreviewFetch(pool, url).catch(() => {});
