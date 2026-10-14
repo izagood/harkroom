@@ -463,6 +463,7 @@ interactive = createInteractiveManager({
     return { configDir: head?.configDir ?? null, name: head?.name ?? null };
   },
   operatorBin: config.operatorBin,
+  chromeHost: config.chromeHost,
   relay, registry, queue: mentionQueue,
   orphanMs: config.interactiveOrphanMs,
 });
@@ -606,7 +607,7 @@ const scheduler = createMentionScheduler({
       markAccountGate: () => { void markAccountNeedsAttention(account.configDir, Date.now()).catch(() => undefined); },
       accountGateCleared: async () => !isAttentionActive(await readAccountAttention(account.configDir), Date.now()),
     } : {}),
-    operatorBin: config.operatorBin, runnerSecret: config.operatorLink.secret, commandHook: config.commandHook,
+    operatorBin: config.operatorBin, runnerSecret: config.operatorLink.secret, commandHook: config.commandHook, chromeHost: config.chromeHost,
     turnTimeoutMs: config.turnTimeoutMs,
     harnessStallMs: config.harnessStallMs,
     relay,

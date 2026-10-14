@@ -38,6 +38,11 @@ export interface AssignmentDeps {
   /** `operator.json` 의 `commandHook === true` 인가(H③b). spawn 마다 다시 읽는다 — 없으면 꺼짐. */
   commandHook?: () => Promise<boolean>;
   /**
+   * 이 머신이 Claude in Chrome 을 열 수 있는가(`chromeHost.ts`). spawn 마다 다시 잰다 — 사람이 확장을 깔거나 지운 것을
+   * 오퍼레이터 재시작 없이 따라간다. 없거나 던지면 닫힘. 에이전트별 켜짐은 러너가 정의의 `chromeEnabled` 로 합친다.
+   */
+  chromeHost?: () => Promise<boolean>;
+  /**
    * 이 커뮤니티에서 이 오퍼레이터의 소유자 id(`/operators/self`). 교차 불변식(스펙 §7)의 재료다 —
    * 모르면(null) personal 배정은 거절한다. 모르는 채로 여는 쪽이 더 나쁘다.
    */
@@ -154,6 +159,10 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         ...(local?.claudePool ? { HARKROOM_CLAUDE_POOL: local.claudePool } : {}),
         // 「정확한 명령」 hook(H③b) — 켜졌을 때만. 못 읽으면 꺼짐.
         ...((await deps.commandHook?.().catch(() => false)) ? { HARKROOM_COMMAND_HOOK: '1' } : {}),
+        // Claude in Chrome — 머신이 열 수 있을 때만 '1'(앱이 띄운 로컬 + native host). 못 재면 닫힘.
+        // **늘 '0'/'1' 로 명시한다**(security F1): 러너 env 는 오퍼레이터의 process.env 위에 얹히므로(`runners.ts::withUserEnv`)
+        // 거짓일 때 키를 빼면 `run` 오퍼레이터를 띄운 셸에 있던 `HARKROOM_CHROME_HOST=1` 이 그대로 새어 열린다.
+        HARKROOM_CHROME_HOST: (await deps.chromeHost?.().catch(() => false)) ? '1' : '0',
       };
       let result: Awaited<ReturnType<AssignmentDeps['spawn']>>;
       try {

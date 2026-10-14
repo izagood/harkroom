@@ -51,6 +51,12 @@ export interface RunnerConfig {
   /** 「정확한 명령」 PreToolUse hook 을 claude 멘션 턴에 다는가(H③b, 기본 false). */
   commandHook: boolean;
   /**
+   * 이 머신에서 Claude in Chrome 을 열 수 있는가(스레드 e8c8365d) — 오퍼레이터가 **앱이 띄운 로컬
+   * 오퍼레이터이고** 확장 native host 가 깔려 있을 때만 `HARKROOM_CHROME_HOST=1` 을 준다. 이것이 거짓이면
+   * 에이전트의 `chromeEnabled` 가 켜져 있어도 `--no-chrome` 으로 뜬다.
+   */
+  chromeHost: boolean;
+  /**
    * 오퍼레이터가 spawn 전에 써 둔 하네스 MCP 설정 파일(스펙 2026-09-20 §6). harkroom 브릿지·avcs·
    * 에이전트의 mcpServers 가 합쳐져 있다. 러너는 만들지 않고 이 경로를 그대로 쓴다.
    */
@@ -110,6 +116,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
     operatorBin: required(env, 'HARKROOM_OPERATOR_BIN'),
     // 「정확한 명령」 hook(H③b) — 오퍼레이터가 `operator.json` 의 commandHook 로 켤 때만 '1'. 기본 꺼짐.
     commandHook: env.HARKROOM_COMMAND_HOOK === '1',
+    // Claude in Chrome — 오퍼레이터가 '1' 을 줄 때만. 없으면 꺼짐(사람 브라우저를 조작하는 권한이라 닫힌 쪽이 기본).
+    chromeHost: env.HARKROOM_CHROME_HOST === '1',
     mcpConfigPath: required(env, 'HARKROOM_MCP_CONFIG'),
     // 서버의 inbox.poll 상한은 25초다.
     pollTimeoutMs: Number(env.AGENT_POLL_TIMEOUT_MS ?? 25_000),

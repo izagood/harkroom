@@ -17,7 +17,7 @@ import type { FailOpts, Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
-import { attachesCommandHook, buildTurnCommand, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
+import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome, waitsForMcpBeforePrompt } from './adapters/index.js';
 import { RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
 import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
@@ -265,6 +265,8 @@ export interface MentionTurnDeps {
   operatorBin: string;
   /** 「정확한 명령」 hook(H③b). 오퍼레이터 설정이 켰을 때만 true. */
   commandHook?: boolean;
+  /** 이 머신이 Claude in Chrome 을 열 수 있는가(`RunnerConfig.chromeHost`). 생략은 거짓이다. */
+  chromeHost?: boolean;
   /**
    * 러너의 링크 secret. 하네스가 env 를 화면에 찍으면 이 값이 tail 에 들어온다 — 옛 PAT 이
    * 그랬듯 대화로 새면 안 된다(`harnessTailNotice` 가 가린다). 이 값으로 할 수 있는 것은 이
@@ -1222,6 +1224,7 @@ export async function runMentionTurn(
     mergeRepos,
     toolAllows,
     commandHook: deps.commandHook === true,
+    chrome: chromeTurnFor(def, deps.chromeHost),
     apiConnectors,
     apiDelegatable: apiInfo.delegatable,
     codexHome: deps.codexHome,
