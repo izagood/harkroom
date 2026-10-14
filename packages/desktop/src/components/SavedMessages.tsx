@@ -4,7 +4,7 @@ import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { displayBody } from '../lib/mention';
 import { useT, useLocale } from '../i18n/useT';
-import { stampLabel } from '../lib/day';
+import { shortStampLabel, stampLabel } from '../lib/day';
 import { errorText } from '../lib/errorText';
 
 /**
@@ -185,14 +185,20 @@ export function SavedMessages() {
    * 두 줄까지다 — 무엇을 담았는지 알아보는 것은 본문이라 그쪽에 자리를 준다.
    */
   const entryRow = (e: SavedMessageRow) => {
-    const time = stampLabel(e.createdAt, locale);
+    // 줄에는 짧은 도장, 긴 도장은 `title` 로 — 사이드바 폭에서 긴 꼴이 칩·작성자를 밀어냈다.
+    const when = e.message?.createdAt ?? e.createdAt;
+    const stamp = (
+      <span className="ml-auto shrink-0 text-fg-subtle" title={stampLabel(when, locale)}>
+        {shortStampLabel(when, locale)}
+      </span>
+    );
     // 시스템 메시지는 본문에 이름이 없고 자리표시자만 있다 — `displayBody` 를 지나지 않으면
     // 이 목록에만 그 글자가 남는다(#329).
     const body = e.message ? displayBody(e.message, accounts, groups, teams) : '';
     const preview = body.length > 100 ? `${body.slice(0, 100)}…` : body;
     const selected = selectedId === e.messageId;
     const chip = (
-      <span className="min-w-0 max-w-[50%] shrink truncate rounded-sm bg-surface-sunken px-1 uppercase tracking-wide text-fg-muted">
+      <span className="min-w-0 max-w-[55%] shrink-0 truncate rounded-sm bg-surface-sunken px-1 uppercase tracking-wide text-fg-muted">
         {channelLabel(e.channelId)}
       </span>
     );
@@ -209,7 +215,7 @@ export function SavedMessages() {
           >
             <span className="flex min-w-0 items-center gap-1.5 text-meta">
               {chip}
-              <span className="ml-auto shrink-0 text-fg-subtle">{time}</span>
+              {stamp}
             </span>
             <span className="italic text-fg-subtle">{e.deleted ? t('saved.deleted') : t('saved.unavailable')}</span>
           </span>
@@ -223,9 +229,7 @@ export function SavedMessages() {
             <span className="flex min-w-0 items-center gap-1.5 text-meta">
               {chip}
               <span className="min-w-0 truncate text-fg-muted">@{accounts[e.message.authorId]?.handle ?? '…'}</span>
-              <span className="ml-auto shrink-0 text-fg-subtle">
-                {stampLabel(e.message.createdAt, locale)}
-              </span>
+              {stamp}
             </span>
             <span className="line-clamp-2 break-words text-fg">
               {preview}

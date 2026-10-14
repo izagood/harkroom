@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stampLabel } from '../src/lib/day';
+import { shortStampLabel, stampLabel } from '../src/lib/day';
 
 /**
  * **시각 도장이 어느 날 것인지 말하는가**(2026-09-10 보고: *"시간만 있고 날짜가 없어서
@@ -50,5 +50,29 @@ describe('stampLabel', () => {
   it('언어를 따른다 — 날짜 순서는 우리가 정하지 않는다', () => {
     const at = local(2026, 9, 9, 23, 26);
     expect(stampLabel(at.toISOString(), 'en', now)).toContain(at.toLocaleDateString('en'));
+  });
+});
+
+/**
+ * 사이드바 칸의 저장한 메시지 줄에 서는 짧은 도장. 긴 도장(`stampLabel`)이 좁은 폭에서
+ * 채널 칩·작성자를 밀어냈다 — 날짜를 버리지 않고 줄이는지 본다.
+ */
+describe('shortStampLabel', () => {
+  const now = new Date(2026, 9, 15, 12, 0);
+
+  it('오늘이면 시각만 — 긴 도장과 같다', () => {
+    const iso = new Date(2026, 9, 15, 9, 30).toISOString();
+    expect(shortStampLabel(iso, 'en', now)).toBe(stampLabel(iso, 'en', now));
+  });
+
+  it('올해 다른 날이면 월·일만 — 시각과 연도는 뺀다', () => {
+    const iso = new Date(2026, 9, 14, 23, 37).toISOString();
+    expect(shortStampLabel(iso, 'en', now)).toBe('10/14');
+    expect(shortStampLabel(iso, 'en', now).length).toBeLessThan(stampLabel(iso, 'en', now).length);
+  });
+
+  it('지난해 것이면 연도를 남긴다 — 같은 월·일이 두 해에 있을 수 있다', () => {
+    const iso = new Date(2025, 9, 14, 23, 37).toISOString();
+    expect(shortStampLabel(iso, 'en', now)).toBe('10/14/2025');
   });
 });

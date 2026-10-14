@@ -105,3 +105,21 @@ export function stampLabel(iso: string, locale: Locale, now: Date = new Date()):
     sameDay ? TIME_PARTS : { year: 'numeric', month: 'numeric', day: 'numeric', ...TIME_PARTS },
   ).format(d);
 }
+
+/**
+ * 좁은 자리(사이드바의 저장한 메시지 줄)에 서는 **짧은 도장**. 오늘이면 시각만, 올해면
+ * 월·일만, 그 전이면 연·월·일이다(`오후 11:26` / `10. 14.` / `2025. 10. 14.`).
+ *
+ * `stampLabel` 의 긴 꼴은 사이드바 폭에서 줄의 절반을 먹어 채널 칩과 작성자가 `#..` 로
+ * 잘렸다(2026-10-15 사이드바 칸 캡처). 정확한 시각이 필요한 사람을 위해 부르는 자리가
+ * 긴 꼴을 `title` 로 함께 단다 — 여기서는 날짜를 버리지 않고 **줄일** 뿐이다.
+ */
+export function shortStampLabel(iso: string, locale: Locale, now: Date = new Date()): string {
+  const d = new Date(iso);
+  if (keyOf(d) === keyOf(now)) return new Intl.DateTimeFormat(locale, TIME_PARTS).format(d);
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return new Intl.DateTimeFormat(
+    locale,
+    sameYear ? { month: 'numeric', day: 'numeric' } : { year: 'numeric', month: 'numeric', day: 'numeric' },
+  ).format(d);
+}
