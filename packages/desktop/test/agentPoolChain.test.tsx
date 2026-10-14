@@ -119,6 +119,20 @@ describe('AgentPoolChain', () => {
     expect(screen.getByTestId('agent-pool-chain-status').dataset.tone).toBe('danger');
   });
 
+  it('넘어갈 풀이 없으면(풀 1개) 그것을 미리 말한다', () => {
+    show(['work'], usage([{ pool: 'work', account: 'w1', s: 20 }]));
+    expect(screen.getByTestId('agent-pool-chain-status').textContent).toBe('1번 work 을 쓰는 중 — 넘어갈 풀이 없다. 다 쓰면 가장 먼저 풀리는 계정으로 보낸다.');
+    cleanup();
+    show(['work', 'personal'], usage([{ pool: 'work', account: 'w1', s: 20 }]));
+    expect(screen.getByTestId('agent-pool-chain-status').textContent).toBe('1번 work 을 쓰는 중.');
+  });
+
+  it('「쓰는 중」 칩은 초록, 「소진」만 빨강(designer s4)', () => {
+    show(['work', 'personal'], usage([{ pool: 'work', account: 'w1', s: 90 }, { pool: 'work', account: 'w2', s: 90 }]));
+    expect(screen.getByTestId('agent-pool-chain-chip-personal').className).toMatch(/text-success/);
+    expect(screen.getByTestId('agent-pool-chain-chip-work').className).toMatch(/text-danger/);
+  });
+
   it('풀을 다 넣으면 「추가」 자리에 그 사실을 한 줄 남긴다', () => {
     show(['work', 'personal'], null);
     expect(screen.queryByTestId('agent-pool-chain-add')).toBeNull();

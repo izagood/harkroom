@@ -921,6 +921,7 @@ export const ko = {
   'agents.run.poolChain.statusDefaultNamed': '목록이 비었다 — 기본 풀 {pool} 을 쓴다.',
   'agents.run.poolChain.statusNone': '쓸 수 있는 풀이 없다 — 목록의 풀이 이 기기에 없거나 계정이 없다.',
   'agents.run.poolChain.statusFirst': '1번 {pool} 을 쓰는 중.',
+  'agents.run.poolChain.statusOnly': '1번 {pool} 을 쓰는 중 — 넘어갈 풀이 없다. 다 쓰면 가장 먼저 풀리는 계정으로 보낸다.',
   'agents.run.poolChain.statusFallback': '{n}번 {pool} 을 쓰는 중 — {m}번 {prev} 은 {reason}. {time} 에 풀리면 새 스레드부터 돌아간다.',
   'agents.run.poolChain.statusFallbackUnknown': '{n}번 {pool} 을 쓰는 중 — {m}번 {prev} 은 {reason}.',
   'agents.run.poolChain.reason.session': '5시간 한도에 닿았다',

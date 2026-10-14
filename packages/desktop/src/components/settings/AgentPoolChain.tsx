@@ -33,7 +33,9 @@ function chipOf(entry: PoolChainEntry, i: number, state: PoolChainState): Chip {
 }
 
 const CHIP_CLASS: Record<Chip, string> = {
-  active: 'bg-accent-surface text-accent',
+  // 「쓰는 중」은 초록 — accent 는 이 크기에서 「소진」(danger)과 같은 빨강으로 보인다(designer s4).
+  // 빨강은 「소진」에만 남아야 어느 풀이 막혔나가 한눈에 보인다.
+  active: 'bg-success-surface text-success',
   exhausted: 'bg-danger-surface text-danger',
   waiting: 'bg-surface-raised text-fg-muted',
   missing: 'bg-surface-raised text-fg-subtle',
@@ -102,7 +104,10 @@ export function AgentPoolChain({
         ? t('agents.run.poolChain.statusAllOut', { n: i + 1, pool: e.pool, time: clock(e.unblockAtMs, locale) })
         : t('agents.run.poolChain.statusAllOutUnknown', { n: i + 1, pool: e.pool });
     } else if (i === 0) {
-      status = t('agents.run.poolChain.statusFirst', { pool: state.entries[0]!.pool });
+      // 넘어갈 풀이 없으면 그것을 미리 말한다 — 풀을 하나 더 붙일 이유를 화면이 알려 주는 자리(designer).
+      const usable = state.entries.filter((e) => e.status === 'available' || e.status === 'exhausted').length;
+      status = t(usable > 1 ? 'agents.run.poolChain.statusFirst' : 'agents.run.poolChain.statusOnly',
+        { pool: state.entries[0]!.pool });
     } else {
       tone = 'warning';
       // 왜 건너뛰었나(designer s2): 앞 풀 중 **가장 먼저 풀리는** 소진 풀의 이름과 이유. 소진 풀이 없으면

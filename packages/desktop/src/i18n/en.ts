@@ -1440,6 +1440,7 @@ export const en = {
   'agents.run.poolChain.statusDefaultNamed': 'The list is empty — using the default pool {pool}.',
   'agents.run.poolChain.statusNone': 'No usable pool — the listed pools are missing on this machine or have no accounts.',
   'agents.run.poolChain.statusFirst': 'Using #1 {pool}.',
+  'agents.run.poolChain.statusOnly': 'Using #1 {pool} — there is no pool to fall back to. When it is used up, threads go to the account that resets first.',
   'agents.run.poolChain.statusFallback': 'Using #{n} {pool} — #{m} {prev} {reason}. New threads go back when it resets at {time}.',
   'agents.run.poolChain.statusFallbackUnknown': 'Using #{n} {pool} — #{m} {prev} {reason}.',
   'agents.run.poolChain.reason.session': 'hit the 5-hour limit',
