@@ -847,8 +847,10 @@ export class Controller {
         }
         break;
       case 'saved.changed':
-        // 담기 상태가 바뀌면 사이드바의 "Saved N" 을 갱신한다(#219).
+        // 담기 상태가 바뀌면 사이드바의 "Saved N" 을 갱신한다(#219). 열려 있는 저장 칸도
+        // 맞춘다(`noteSavedChange`) — 다른 기기에서 담거나 옮긴 것도 이 길로 온다.
         if (e.accountId === store.me?.id) {
+          this.noteSavedChange(e.messageId, e.state);
           this.swallow(this.loadSavedSummary());
         }
         break;
@@ -3150,13 +3152,32 @@ export class Controller {
     return summary;
   }
 
-  async saveMessage(messageId: string): Promise<void> {
+  /**
+   * 열려 있는 저장 칸에 "이 메시지의 담기 상태가 바뀌었다"고 알린다(`AppState.savedChange`).
+   * 요약(`savedIds`)만 고치면 칸의 목록은 그대로라, 칸을 연 채 담은 것이 안 보였다(10-15).
+   * 같은 변경이 이 앱의 호출과 서버 이벤트로 두 번 올 수 있다 — 칸은 둘 다 같은 결과로 맞춘다.
+   */
+  private noteSavedChange(messageId: string, state: 'open' | 'done' | null, row?: SavedMessageRow): void {
+    const prev = this.store.getState().savedChange;
+    this.store.getState().set({ savedChange: { seq: (prev?.seq ?? 0) + 1, messageId, state, ...(row ? { row } : {}) } });
+  }
+
+  /**
+   * `message` 를 주면(툴바 — 화면에 그 줄이 있다) 저장 칸이 목록을 다시 받기 전에 맨 위에 끼운다.
+   * 칸이 쓰는 꼴은 서버의 `GET /saved` 행과 같다 — 갓 담은 것은 `open`·지워지지 않음이다.
+   */
+  async saveMessage(messageId: string, message?: MessageRow): Promise<void> {
     await this.api.saveMessage(messageId);
+    const row: SavedMessageRow | undefined = message
+      ? { messageId, channelId: message.channelId, state: 'open', createdAt: new Date().toISOString(), doneAt: null, deleted: false, message }
+      : undefined;
+    this.noteSavedChange(messageId, 'open', row);
     await this.loadSavedSummary();
   }
 
   async unsaveMessage(messageId: string): Promise<void> {
     await this.api.unsaveMessage(messageId);
+    this.noteSavedChange(messageId, null);
     await this.loadSavedSummary();
   }
 

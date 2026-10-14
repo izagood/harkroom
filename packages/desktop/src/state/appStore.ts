@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage, stickyMentionsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, ServerVersion, ThreadStatusReaction } from '@harkroom/shared';
+import type { AccountStatus, AccountView, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, SavedMessageRow, ServerVersion, ThreadStatusReaction } from '@harkroom/shared';
 import type { ObservedRunner, RunnerState } from '../lib/runnerLauncher';
 import type { NotifiedSummary } from '../lib/notified';
 
@@ -261,6 +261,13 @@ export interface AppState {
    * (완료로 옮긴 것은 배지에서 빠져야 한다).
    */
   savedCount: number;
+  /**
+   * 담기 상태가 바뀐 마지막 한 건(저장·해제·완료·되돌리기). `seq` 가 오를 때마다 열려 있는
+   * 저장 칸(`SavedMessages`)이 자기 목록을 맞춘다 — 목록은 칸의 지역 상태라(`savedIds` 주석)
+   * 이 신호가 없으면 칸을 열어 둔 채 저장한 것이 다른 곳에 다녀올 때까지 안 보였다(10-15).
+   * `row` 는 이 앱에서 방금 저장한 것일 때만 있다 — 칸이 왕복을 기다리지 않고 맨 위에 끼운다.
+   */
+  savedChange: { seq: number; messageId: string; state: 'open' | 'done' | null; row?: SavedMessageRow } | null;
   /**
    * 채널별 멤버 목록. channelId → members. **키가 없는 것과 빈 배열은 다르다** —
    * 없으면 "아직 안 받았다", 빈 배열이면 "정말 아무도 없다"다. 조회 실패를 빈 배열로
@@ -532,7 +539,7 @@ const initial = {
   history: [], historyIndex: -1, notices: [], gates: [], notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
   ownSendIds: {}, sendsInFlight: {},
   highlightedMessageId: null, channelRevealSeq: 0,
-  runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0,
+  runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0, savedChange: null,
   linkPreviewReadyAt: {}, skillsRevision: 0, operatorsRevision: 0,
 };
 
