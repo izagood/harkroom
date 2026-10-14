@@ -209,7 +209,7 @@ describe('팀 설정 화면 (#172)', () => {
     // 그리고 후보가 **얼굴을 갖는다** — 옆 격자의 그 얼굴이다(`Identity` 의 avatar variant).
     // 앞 화면의 결함이 정확히 *"같은 에이전트가 여기서는 얼굴이 없다"* 였다.
     const candidate = screen.getByTestId('team-candidate-helper');
-    expect(candidate.querySelector('.rounded-full')).toBeTruthy();
+    expect(candidate.querySelector('[class*="rounded-[27.78%]"]')).toBeTruthy();
     expect(candidate.textContent).toContain('helper');
   });
 
@@ -301,7 +301,7 @@ describe('팀 설정 화면 (#172)', () => {
     expect(botRow.textContent).toContain('@bot');
     expect(botRow.textContent).not.toContain('비활성');
     // **얼굴이 남는다**(문서: *"지우면 왜 안 불렸는지를 알 수 없으므로 얼굴은 남긴다"*).
-    expect(helperRow.querySelector('.rounded-full')).toBeTruthy();
+    expect(helperRow.querySelector('[class*="rounded-[27.78%]"]')).toBeTruthy();
     expect(helperRow.textContent).toContain('@helper');
     expect(helperRow.textContent).toContain('비활성');
   });

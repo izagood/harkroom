@@ -146,7 +146,7 @@ describe('#365 고치면서 건드리지 않은 것', () => {
 
     const box = gutter().firstElementChild as HTMLElement;
     // 원이다 — 모서리만 둥근 사각(`rounded`)이 아니다.
-    expect(box.classList.contains('rounded-full')).toBe(true);
+    expect(box.classList.contains('rounded-[27.78%]')).toBe(true);
     expect(box.classList.contains('rounded')).toBe(false);
     // 사진(#159)이 상자를 넘지 않는 계약.
     expect(box.classList.contains('overflow-hidden')).toBe(true);

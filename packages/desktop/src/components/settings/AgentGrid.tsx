@@ -857,7 +857,7 @@ export function AgentGrid<T extends AgentCardSubject>({
               <span aria-hidden="true" className={`${s.faceText} leading-none`}>+</span>
             ) : (
               <span
-                className={`flex ${s.face} items-center justify-center rounded-full border
+                className={`flex ${s.face} items-center justify-center rounded-[27.78%] border
                             border-dashed border-border group-hover:border-fg-subtle`}
               >
                 <span aria-hidden="true" className={`${s.faceText} leading-none`}>+</span>

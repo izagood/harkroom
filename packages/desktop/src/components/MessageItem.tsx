@@ -615,7 +615,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
         <button
           type="button"
           data-testid="author-gutter"
-          className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full"
+          className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[27.78%]"
           onClick={authorOpen.run}
           aria-hidden="true"
           tabIndex={-1}
@@ -927,16 +927,16 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                     읽지 않도록 aria-hidden 처리하고 sr-only 도 안 준다. #277: variant="avatar" */}
                 <span className="flex -space-x-1" aria-hidden="true">
                   {displayedParticipants.map((id) => (
-                    // #471: 래퍼에 `rounded-full` 이 **있어야 한다**. 링을 그리는 것은 안쪽
+                    // #471: 래퍼에 아바타와 같은 곡률(`rounded-[27.78%]`)이 **있어야 한다**. 링을 그리는 것은 안쪽
                     // 아바타가 아니라 이 래퍼라, 곡률이 없으면 링이 사각형으로 그려지고
                     // 겹친 자리에서 그 세로 변이 앞 아바타 위에 선처럼 얹힌다. 링의 목적은
                     // 겹친 원들을 떼어 놓는 것인데 사각 링은 반대로 경계를 만든다.
-                    <span key={id} className="rounded-full ring-1 ring-surface">
+                    <span key={id} className="rounded-[27.78%] ring-1 ring-surface">
                       <ParticipantFace id={id} />
                     </span>
                   ))}
                   {remainingCount > 0 && (
-                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-surface-hover text-[8px] font-medium text-fg-muted ring-1 ring-surface">
+                    <span className="flex h-4 w-4 items-center justify-center rounded-[27.78%] bg-surface-hover text-[8px] font-medium text-fg-muted ring-1 ring-surface">
                       +{remainingCount}
                     </span>
                   )}

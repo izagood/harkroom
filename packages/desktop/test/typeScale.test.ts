@@ -151,12 +151,12 @@ const SCALE_NAME = /(?<![\w-])(?:[a-z-]+:)*text-(xs|sm|base|lg|xl|[2-9]xl)(?![\w
 const ALLOWED: { file: string; contains: string; why: string }[] = [
   {
     file: 'components/Identity.tsx',
-    contains: 'rounded-full bg-fg-subtle text-[10px] font-semibold',
+    contains: 'rounded-[27.78%] bg-fg-subtle text-[10px] font-semibold',
     why: '아바타 원(h-5) 안의 `?` 글리프 — 상자에 묶인 크기다',
   },
   {
     file: 'components/Identity.tsx',
-    contains: "overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)}",
+    contains: "overflow-hidden rounded-[27.78%] text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)}",
     why: '아바타 원(h-5) 안의 머리글자 — 사람·에이전트 두 분기가 같은 줄을 쓴다',
   },
   {
@@ -191,7 +191,7 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
   },
   {
     file: 'components/MessageItem.tsx',
-    contains: 'flex h-4 w-4 items-center justify-center rounded-full bg-surface-hover text-[8px]',
+    contains: 'flex h-4 w-4 items-center justify-center rounded-[27.78%] bg-surface-hover text-[8px]',
     why: '그 줄 끝의 `+N` — 옆 아바타와 같은 h-4 상자이므로 같은 글리프 크기',
   },
   {

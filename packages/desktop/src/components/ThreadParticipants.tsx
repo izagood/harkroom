@@ -63,8 +63,8 @@ export function ThreadParticipants({ messages, live }: { messages: MessageRow[];
             data-testid={`participant-${a.handle}`}
             // 모를 때는 흐리게 하지 않는다(위 주석).
             data-alive={live === null ? 'unknown' : live.has(a.id)}
-            // #471: `rounded-full` 이 없으면 링이 사각형으로 그려져 겹친 자리에 세로선이 생긴다.
-            className={`rounded-full ring-1 ring-surface-raised ${live !== null && !live.has(a.id) ? 'opacity-40' : ''}`}
+            // #471: 아바타와 같은 곡률이 없으면 링이 각진 사각형으로 그려져 겹친 자리에 세로선이 생긴다.
+            className={`rounded-[27.78%] ring-1 ring-surface-raised ${live !== null && !live.has(a.id) ? 'opacity-40' : ''}`}
           >
             {/* `h-5` 상자에는 10px 글리프가 짝이다(`Identity` 의 주석) — 이 자리만 9px 이라
                 같은 20px 원인데 인박스의 아바타보다 머리글자가 작았다. 4단과는 무관한
