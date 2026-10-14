@@ -150,6 +150,10 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect(body).toContain('2개라');
     expect(body).toContain(link(a.cardId));
     expect(body).toContain(link(b.cardId));
+    // 후보 목록은 링크만 — 규칙 원문·채널 이름·핸들을 싣지 않는다(security F2).
+    expect(body).not.toContain('kubectl');
+    expect(body).not.toContain('#sitebot');
+    expect(body).not.toContain('sitebot ·');
   });
 
   it('T3 — 글보다 뒤에 생긴 요청은 대상이 아니다', async () => {
@@ -183,6 +187,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect([await status(a.requestId), await status(b.requestId)]).toEqual(['pending', 'pending']);
     expect((await systemLines(thread))[0]!.body).toContain('2장');
     expect((await systemLines(thread))[0]!.body).toContain(link(a.cardId));
+    expect((await systemLines(thread))[0]!.body).not.toContain('kubectl');
     await say(alice.token, `승인 ${link(b.cardId)}`, thread);
     expect([await status(a.requestId), await status(b.requestId)]).toEqual(['pending', 'granted']);
   });
@@ -202,7 +207,36 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     const elsewhere = await root(otherCh);
     await say(alice.token, `승인 ${link(cardId)}`, elsewhere, otherCh);
     expect(await status(requestId)).toBe('pending');
-    expect((await systemLines(elsewhere))[0]!.body).toContain('볼 수 없다');
+    // 거절 줄에는 그 채널의 이름·규칙 원문이 실리지 않는다(security F1).
+    const line = (await systemLines(elsewhere))[0]!;
+    expect(line.body).toContain('볼 수 없는 채널의 카드');
+    expect(line.body).not.toContain('kubectl');
+    expect(line.body).not.toContain('admin-only');
+    expect(JSON.stringify(line.meta.chatApproval)).not.toContain(requestId);
+  });
+
+  it('T3 — 유일한 후보가 볼 수 없는 채널의 요청이면 승인하지 않고 내용도 적지 않는다', async () => {
+    await expireAll();
+    const { requestId } = await ask(await root(bobOnly), bobOnly);
+    const elsewhere = await root(otherCh);
+    await say(alice.token, '승인', elsewhere, otherCh);
+    expect(await status(requestId)).toBe('pending');
+    const body = (await systemLines(elsewhere))[0]!.body;
+    expect(body).toContain('볼 수 없는 채널의 카드');
+    expect(body).not.toContain('kubectl');
+    expect(body).not.toContain('admin-only');
+  });
+
+  it('T3 — 권한 카드가 이미 정해진 스레드의 「승인」은 다른 스레드의 요청으로 넘어가지 않는다(F3)', async () => {
+    await expireAll();
+    const thread = await root();
+    const decided = await ask(thread);
+    const btn = await app.inject({ method: 'POST', url: `/agents/${agentId}/permission-requests/${decided.requestId}/approve`, headers: auth(alice.token) });
+    expect(btn.statusCode).toBe(200);
+    const other = await ask(await root());
+    await say(alice.token, '승인', thread);
+    expect(await status(other.requestId)).toBe('pending');
+    expect((await systemLines(thread))[0]!.body).toContain('이미 정해졌거나 만료돼');
   });
 
   it('맨 글을 고쳐 링크를 덧붙여도 다시 판정하지 않는다', async () => {

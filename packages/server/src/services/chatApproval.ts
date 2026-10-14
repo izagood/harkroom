@@ -75,7 +75,7 @@ const CANDIDATE_SQL = `
     left join agent_config c on c.account_id = p.agent_id
     left join channel ch on ch.id = p.channel_id`;
 
-type Outcome = { c: Candidate; ok: true; grantExpiresAt: string | null; grantMode?: 'once' | 'hour' } | { c: Candidate; ok: false; why: string };
+type Outcome = { c: Candidate; ok: true; grantExpiresAt: string | null; grantMode?: 'once' | 'hour' } | { c: Candidate; ok: false; why: string; hidden?: true };
 
 /**
  * 사람이 앱에서 올린 글 하나를 보고, 「명시적 승인」이면 가리킨 권한 요청을 승인한다. 부르는 쪽(글 올리기 라우트)이
@@ -112,12 +112,14 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
     }
   } else {
     // T2 — 글이 권한 카드의 스레드 안이면 그 스레드만 본다: 글보다 먼저 있던 열린 권한 카드가 딱 하나일 때.
-    const open = (await pool.query<Candidate>(
+    // 상태와 관계없이 이 스레드의 권한 카드를 다 읽는다 — 하나라도 있으면 T3 로 넘기지 않는다(security F3: 버튼으로 정한 뒤 같은
+    // 스레드에 쓴 「승인」이 다른 스레드의 관계없는 요청을 승인하면 안 된다).
+    const inThread = (await pool.query<Candidate>(
       `${CANDIDATE_SQL}
         where m.channel_id = $1 and (m.id = $2 or m.thread_root_id = $2) and m.seq < $3
-          and p.status = 'pending' and p.expires_at > now()
         order by m.seq`,
       [message.channelId, threadRootId, message.seq])).rows;
+    const open = inThread.filter((c) => c.status === 'pending' && !c.expired);
     if (open.length > 1) {
       // 남의 카드만 있는 스레드에서 쓴 「승인」에는 안내를 달지 않는다 — 그 사람이 정할 수 있는 카드가 아니다.
       if (open.some((c) => c.ownerAccountId === actorId)) await notice(pool, message, actorId, `이 스레드에 기다리는 권한 카드가 ${open.length}장이라 어느 것인지 몰라 승인하지 않았다. 승인할 카드의 링크를 붙여 다시 써라:`, open);
@@ -126,8 +128,13 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
     if (open.length === 1) {
       targets = open;
       target = 'T2';
+    } else if (inThread.length > 0) {
+      if (inThread.some((c) => c.ownerAccountId === actorId)) {
+        await notice(pool, message, actorId, '이 스레드의 권한 카드는 이미 정해졌거나 만료돼 승인할 것이 없다. 다른 요청을 승인하려면 그 카드의 링크를 붙여 다시 써라.');
+      }
+      return;
     } else {
-      // T3 — 권한 카드가 없는 스레드의 맨 글(jaebin 카드 077fa790: 「맨 글도 인정, 경쟁 위험 감수」). 이 소유자의 에이전트들이 낸
+      // T3 — 권한 카드가 (상태와 관계없이) 하나도 없는 스레드의 맨 글(jaebin 카드 077fa790: 「맨 글도 인정, 경쟁 위험 감수」). 이 소유자의 에이전트들이 낸
       // 요청 가운데 글보다 먼저 생기고 아직 기다리는 것이 **정확히 하나**일 때만. 머지 거절 카드·볼 수 없는 채널의 요청도 후보로 세고
       // (그래야 「하나뿐」이 거짓이 되지 않는다) 결정 단계에서 거절한다.
       const mine = (await pool.query<Candidate>(
@@ -158,7 +165,7 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
 
 async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Candidate, target: ChatTarget): Promise<Outcome> {
   if (c.ownerAccountId !== actorId) return { c, ok: false, why: '이 에이전트의 소유자가 아니다' };
-  if (!(await assertChannelVisible(pool, c.channelId, actorId))) return { c, ok: false, why: '그 카드의 채널을 볼 수 없다' };
+  if (!(await assertChannelVisible(pool, c.channelId, actorId))) return { c, ok: false, why: '볼 수 없는 채널의 카드 — 승인하지 않았다', hidden: true };
   // 카드가 글보다 먼저 있었어야 한다 — 같은 채널이면 seq, 다른 채널이면 시각으로 본다.
   const before = c.channelId === message.channelId ? c.cardSeq < message.seq : c.cardCreatedAt.getTime() <= new Date(message.createdAt).getTime();
   if (!before) return { c, ok: false, why: '글보다 나중에 선 카드다' };
@@ -188,6 +195,8 @@ const plain = (s: string) => s.replace(/@/g, '＠').replace(/`/g, "'");
 
 async function confirm(pool: Pool, message: MessageRow, actorId: string, outcomes: Outcome[]): Promise<void> {
   const lines = outcomes.map((o) => {
+    // 볼 수 없는 채널의 카드는 내용을 적지 않는다(security F1) — 규칙 원문·채널 이름이 글 쓴 채널에 새지 않게.
+    if (!o.ok && o.hidden) return `- ✗ ${o.why}`;
     const what = `${plain(o.c.agentHandle)} · ${o.c.kind === 'merge' ? '머지' : '명령'} \`${plain(o.c.target)}\` · #${plain(o.c.channelName ?? '?')}`;
     if (!o.ok) return `- ✗ ${what} — ${o.why}`;
     const until = o.grantMode === 'once' ? '이번 한 번' : o.grantExpiresAt ? `${o.grantExpiresAt.slice(0, 16).replace('T', ' ')} UTC 까지` : '';
@@ -199,14 +208,16 @@ async function confirm(pool: Pool, message: MessageRow, actorId: string, outcome
   await post(pool, message, actorId, `${head}\n${lines.join('\n')}${tail}`, {
     chatApproval: {
       messageId: message.id,
-      results: outcomes.map((o) => ({ requestId: o.c.requestId, cardMessageId: o.c.cardMessageId, ok: o.ok, ...(o.ok ? {} : { why: o.why }) })),
+      results: outcomes.map((o) => (!o.ok && o.hidden ? { ok: false, why: o.why } : { requestId: o.c.requestId, cardMessageId: o.c.cardMessageId, ok: o.ok, ...(o.ok ? {} : { why: o.why }) })),
     },
   });
 }
 
 async function notice(pool: Pool, message: MessageRow, actorId: string, text: string, candidates: Candidate[] = []): Promise<void> {
-  // 후보 목록은 링크로 싣는다 — 소유자가 「승인 <링크>」로 바로 풀 수 있게. 규칙·채널은 요청 행에서 그린다.
-  const list = candidates.slice(0, 10).map((c) => `\n- ${plain(c.agentHandle)} · \`${plain(c.target)}\` · #${plain(c.channelName ?? '?')} — harkroom://message/${c.cardMessageId}`).join('');
+  // 후보 목록은 링크로 싣는다 — 소유자가 「승인 <링크>」로 바로 풀 수 있게.
+  // 링크**만** 싣는다(security F2) — 후보에는 글쓴이가 볼 수 없는 채널의 요청도 있을 수 있어서, 규칙·채널 이름을 적으면 그대로 샌다.
+  // 링크는 열 때 볼 수 있는지 다시 판정한다.
+  const list = candidates.slice(0, 10).map((c) => `\n- harkroom://message/${c.cardMessageId}`).join('');
   const more = candidates.length > 10 ? `\n- …그 밖 ${candidates.length - 10}개` : '';
   await post(pool, message, actorId, `⚠️ ${text}${list}${more}`, {
     chatApproval: { messageId: message.id, results: [], candidates: candidates.slice(0, 10).map((c) => c.cardMessageId) },
