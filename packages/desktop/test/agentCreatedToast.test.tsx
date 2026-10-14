@@ -1,6 +1,9 @@
 /**
  * **만들었다는 것이 보인다.** 만들기 화면은 만든 뒤에도 그대로 서 있어서, 성공해도 바뀌는
  * 것이 없었다 — 사람은 격자로 돌아가 카드를 찾아봐야 만들어졌는지 알았다.
+ *
+ * 그래서 만들면 **팝업이 뜨고 격자(목록)로 넘어가며, 방금 만든 카드가 팝업 동안 강조된다**
+ * (스레드 fe5505ea).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
@@ -28,14 +31,20 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); usePrefsStore.getState().setLocale('system'); });
 
 function setupUi(createAgent: (...a: unknown[]) => Promise<unknown>) {
+  // 서버처럼 — 만든 뒤의 다시 읽기는 만든 것을 돌려준다.
+  const made: AgentView[] = [];
   setController({
     api: { baseUrl: 'http://x' },
-    listAgents: vi.fn(async () => []),
+    listAgents: vi.fn(async () => [...made]),
     listPats: vi.fn(async () => []),
     agentMemory: vi.fn(async () => []),
     agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
     operators: vi.fn(async () => []),
-    createAgent: vi.fn(createAgent),
+    createAgent: vi.fn(async (...a: unknown[]) => {
+      const r = await createAgent(...a) as { agent: AgentView };
+      made.push(r.agent);
+      return r;
+    }),
   } as unknown as ControllerType);
 }
 
@@ -73,10 +82,36 @@ describe('만들기 성공 팝업', () => {
     expect(screen.queryByTestId('agent-created-toast')).toBeNull();
   });
 
+  it('만들면 목록으로 넘어가고, 방금 만든 카드가 팝업 동안만 강조된다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setupUi(async () => ({ agent: { id: 'a-1', handle: 'newbie' } as AgentView, poolError: null, attachError: null }));
+    await create('newbie');
+    await screen.findByTestId('agent-created-toast', {}, { timeout: 5000 });
+    // 상세(만들기)가 아니라 격자다 — 돌아가는 길이 없고 「만들기」 카드가 선다.
+    expect(screen.queryByTestId('agent-back')).toBeNull();
+    expect(screen.getByTestId('agent-create')).toBeTruthy();
+    const card = await screen.findByTestId('agent-card-newbie', {}, { timeout: 5000 });
+    expect(card.getAttribute('data-selected')).toBe('true');
+    await act(async () => {});
+    act(() => { vi.advanceTimersByTime(CREATED_TOAST_MS + 100); });
+    expect(screen.queryByTestId('agent-created-toast')).toBeNull();
+    expect(screen.getByTestId('agent-card-newbie').getAttribute('data-selected')).toBe('false');
+  });
+
+  it('풀 배정이 실패해도 목록으로 넘어가고, 그 이유는 목록 위에 남는다', async () => {
+    setupUi(async () => ({ agent: { id: 'a-1', handle: 'newbie' } as AgentView, poolError: 'disk full', attachError: null }));
+    await create('newbie');
+    await screen.findByTestId('agent-created-toast', {}, { timeout: 5000 });
+    expect(screen.queryByTestId('agent-back')).toBeNull();
+    expect(screen.getByRole('alert').textContent).toContain('disk full');
+  });
+
   it('실패하면 뜨지 않는다', async () => {
     setupUi(async () => { throw new Error('taken'); });
     await create('newbie');
     await screen.findByText(/was not created/, {}, { timeout: 5000 });
     expect(screen.queryByTestId('agent-created-toast')).toBeNull();
+    // 만들기 화면에 그대로 남는다 — 고쳐서 다시 누를 자리다.
+    expect(screen.getByTestId('agent-back')).toBeTruthy();
   });
 });
