@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
+import 'package:harkroom/ui/parts.dart';
 import 'package:harkroom/screens/channel_list_screen.dart';
 import 'package:harkroom/screens/message_list_screen.dart';
 import 'package:harkroom/screens/search_screen.dart';
@@ -406,5 +408,34 @@ void main() {
     expect(find.byType(MessageListScreen), findsOneWidget);
     expect(find.byKey(const Key('home-tab-bar')), findsOneWidget);
     expect(root.canPop(), isFalse, reason: '루트가 아니라 DM 탭 쌓기에 들어갔다');
+  });
+
+  testWidgets('g1 반투명 머리 — 기본은 흐림, 「대비 증가」·「투명도 줄이기」면 불투명으로', (tester) async {
+    await _pump(tester);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('glass-app-bar')), findsOneWidget);
+    expect(find.byKey(const Key('glass-app-bar-blur')), findsOneWidget, reason: '기본은 반투명');
+
+    tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(highContrast: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await tester.pump();
+    expect(find.byKey(const Key('glass-app-bar')), findsOneWidget, reason: '자리는 그대로');
+    expect(find.byKey(const Key('glass-app-bar-blur')), findsNothing, reason: '대비 증가면 흐림을 걷는다');
+    tester.platformDispatcher.clearAccessibilityFeaturesTestValue();
+    await tester.pump();
+    expect(find.byKey(const Key('glass-app-bar-blur')), findsOneWidget);
+
+    // 투명도 줄이기는 Flutter 가 안 넘겨줘서 네이티브 채널로 묻는다.
+    const device = MethodChannel('harkroom/device');
+    tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(device, (call) async => call.method == 'reduceTransparency' ? true : null);
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(device, null);
+      ReduceTransparency.enabled.value = false;
+    });
+    await ReduceTransparency.refresh();
+    await tester.pump();
+    expect(find.byKey(const Key('glass-app-bar-blur')), findsNothing, reason: '투명도 줄이기면 흐림을 걷는다');
   });
 }

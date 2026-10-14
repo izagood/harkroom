@@ -71,6 +71,11 @@ void main() {
 
     await tester.tap(find.byKey(const Key('channel-c1')));
     await shot(tester, '02-channel');
+    // designer g1: 「대비 증가」(iOS 손쉬운 사용)면 반투명 머리를 걷고 불투명으로.
+    tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(highContrast: true);
+    await shot(tester, '02i-channel-opaque-head');
+    tester.platformDispatcher.clearAccessibilityFeaturesTestValue();
+    await tester.pump(const Duration(milliseconds: 100));
     // 하단 네비 D2: 입력창을 누르면 키보드가 올라오고 탭 바는 숨는다.
     await tester.tap(find.byKey(const Key('composer')));
     await tester.pump(const Duration(milliseconds: 700));

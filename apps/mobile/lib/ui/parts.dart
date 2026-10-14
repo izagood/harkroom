@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../state/app_scope.dart';
 import 'tokens.dart';
@@ -359,11 +360,34 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
   Size get preferredSize => bar.preferredSize;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ValueListenableBuilder<bool>(
+        valueListenable: ReduceTransparency.enabled,
+        builder: (context, reduce, _) => _build(context, opaque: reduce || MediaQuery.highContrastOf(context)),
+      );
+
+  Widget _build(BuildContext context, {required bool opaque}) {
     final k = context.tokens;
     final theme = Theme.of(context);
+    // iOS 「투명도 줄이기」·「대비 증가」면 흐림을 걷고 불투명 머리로(designer g1) — 그 설정을 켠 사람은
+    // 뒤가 비치는 면을 읽기 어려워서 켰다. 자리·높이는 그대로라 몸통 배치는 바뀌지 않는다.
+    if (opaque) {
+      return DecoratedBox(
+        key: const Key('glass-app-bar'),
+        decoration: BoxDecoration(color: k.surface, border: Border(bottom: BorderSide(color: k.border))),
+        child: Theme(
+          data: theme.copyWith(
+            appBarTheme: theme.appBarTheme.copyWith(
+              backgroundColor: Colors.transparent,
+              shape: const RoundedRectangleBorder(),
+            ),
+          ),
+          child: bar,
+        ),
+      );
+    }
     return ClipRect(
       child: BackdropFilter(
+        key: const Key('glass-app-bar-blur'),
         filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
         child: DecoratedBox(
           key: const Key('glass-app-bar'),
@@ -384,6 +408,23 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
         ),
       ),
     );
+  }
+}
+
+/// iOS 「투명도 줄이기」(손쉬운 사용 › 디스플레이). Flutter 는 이 설정을 넘겨주지 않아서
+/// (`AccessibilityFeatures` 에는 고대비만 있다) `harkroom/device` 채널로 직접 묻는다. 앱이 켜질 때와
+/// 앞으로 돌아올 때마다 다시 읽는다 — 설정 앱에서 바꾸고 돌아오는 것이 바꾸는 유일한 길이다.
+abstract final class ReduceTransparency {
+  static final enabled = ValueNotifier<bool>(false);
+  static const _device = MethodChannel('harkroom/device');
+
+  /// 묻지 못하면(안드로이드·시험·옛 네이티브) 꺼진 것으로 본다 — 반투명이 기본 사양이다.
+  static Future<void> refresh() async {
+    try {
+      enabled.value = await _device.invokeMethod<bool>('reduceTransparency') ?? false;
+    } on Object {
+      enabled.value = false;
+    }
   }
 }
 
