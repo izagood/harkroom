@@ -3949,7 +3949,17 @@ export interface OperatorCapabilities {
   /** 로컬 설정에 있어 이 머신에서 돌릴 수 있는 에이전트. */
   agentIds: string[];
   harnesses: Record<string, { installed: boolean; loggedIn: boolean; models?: HarnessModel[] }>;
+  /**
+   * 이 머신이 Claude in Chrome 을 열 수 있는가(`operator/src/chromeHost.ts`). 없으면 옛 오퍼레이터 — "모른다"다.
+   */
+  chrome?: ChromeHostState;
 }
+
+/**
+ * 오퍼레이터 기계의 Claude in Chrome 상태. `available` = 앱이 띄운 로컬 오퍼레이터이고 확장 native host 가 있다.
+ * `remote` = `run` 으로 뜬 오퍼레이터(원격 VM·launchd) — 설정과 상관없이 닫는다. `no_extension` = 로컬인데 확장이 없다.
+ */
+export type ChromeHostState = 'available' | 'no_extension' | 'remote';
 
 /**
  * 하네스가 이 머신에서 받는다고 **스스로 밝힌** 모델 하나(`operator/src/harnessModels.ts`).

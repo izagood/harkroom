@@ -9,6 +9,7 @@
  *    확장과 이야기한다(claude 2.1.299 바이너리: 같은 이름을 Chrome·Brave·Arc·Chromium·Edge 자리에 쓴다).
  */
 import { join } from 'node:path';
+import type { ChromeHostState } from '@harkroom/shared';
 
 export const CHROME_NATIVE_HOST = 'com.anthropic.claude_browser_extension';
 
@@ -38,9 +39,17 @@ export interface ChromeHostDeps {
 }
 
 export async function chromeHostAvailable(deps: ChromeHostDeps): Promise<boolean> {
-  if (!deps.appLaunched) return false;
+  return (await chromeHostState(deps)) === 'available';
+}
+
+/**
+ * 화면에 보일 까닭까지 담은 판정(`OperatorCapabilities.chrome`). 닫힌 까닭이 둘이라 사람이 할 일이 다르다 —
+ * `remote` 는 이 기계에서 고칠 길이 없고, `no_extension` 은 확장을 깔면 열린다. 판정 순서는 `chromeHostAvailable` 과 같다.
+ */
+export async function chromeHostState(deps: ChromeHostDeps): Promise<ChromeHostState> {
+  if (!deps.appLaunched) return 'remote';
   for (const dir of chromeNativeHostDirs(deps.platform, deps.home)) {
-    if (await deps.exists(join(dir, `${CHROME_NATIVE_HOST}.json`)).catch(() => false)) return true;
+    if (await deps.exists(join(dir, `${CHROME_NATIVE_HOST}.json`)).catch(() => false)) return 'available';
   }
-  return false;
+  return 'no_extension';
 }

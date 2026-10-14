@@ -2456,7 +2456,7 @@ export class Controller {
   updateAgent(
     id: string,
     patch: Partial<import('@harkroom/shared').AgentConfig>
-      & { handle?: string; displayName?: string; mcpServers?: string[]; trustSiblings?: boolean },
+      & { handle?: string; displayName?: string; mcpServers?: string[]; trustSiblings?: boolean; chromeEnabled?: boolean },
   ): Promise<import('@harkroom/shared').AgentView> {
     return this.api.updateAgent(id, patch);
   }
