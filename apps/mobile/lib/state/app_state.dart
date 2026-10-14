@@ -1077,6 +1077,22 @@ class AppState extends ChangeNotifier {
         final rootId = event['rootId'];
         if (channelId is! String || rootId is! String) return;
         _applyThreadStatus(channelId, rootId, ThreadStatusMark.fromJson(event['statusReaction']));
+      case 'avatar.changed':
+        // 다른 기기(데스크톱)에서 사진을 바꾸면 여기로 온다. 이것을 안 받으면 앱을 다시 켤 때까지 옛 사진(또는 글자)이다.
+        final id = event['accountId'];
+        final att = event['avatarAttachmentId'];
+        if (id is! String || (att != null && att is! String)) return;
+        final existing = accounts[id];
+        if (existing == null) return;
+        accounts[id] = AccountView(
+          id: existing.id,
+          handle: existing.handle,
+          displayName: existing.displayName,
+          isAgent: existing.isAgent,
+          isDisabled: existing.isDisabled,
+          avatarAttachmentId: att as String?,
+        );
+        notifyListeners();
       case 'account.handle_changed':
         final id = event['accountId'];
         final handle = event['newHandle'];

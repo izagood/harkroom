@@ -456,6 +456,14 @@ class ApiClient {
   /// 남는다.
   String attachmentUrl(String attachmentId) => '$baseUrl/attachments/$attachmentId';
 
+  /// 계정 프로필 사진의 주소(서버 #159). 첨부 라우트가 아니라 전용 라우트다 — 아바타는 메시지에 붙지 않은 업로드라
+  /// `/attachments/:id` 로는 올린 사람 말고 모두 403 이다. 그릴 때 [authHeaders] 를 함께 넘긴다.
+  ///
+  /// `?v=` 에 **첨부 id** 를 싣는다. 서버는 쿼리를 보지 않지만, 주소가 계정마다 하나면 사진을 바꿔도 같은 주소라
+  /// 이미지 캐시(`NetworkImage` 는 주소로 캐시한다)가 옛 사진을 계속 낸다.
+  String avatarUrl(String accountId, String attachmentId) =>
+      '$baseUrl/accounts/${Uri.encodeComponent(accountId)}/avatar?v=${Uri.encodeComponent(attachmentId)}';
+
   /// 미리보기 서명 경로를 받는다(서버 0.3.131~, #1045). WebView 는 Bearer 헤더를 못 싣기 때문에 60초짜리
   /// 서명 경로를 받아 연다 — 토큰은 그 URL 에 없다. 열 때·다시 불러올 때마다 새로 받는다(만료는 오류가 아니다).
   Future<PreviewTicket> issuePreview(String attachmentId) async =>
