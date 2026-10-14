@@ -1,4 +1,4 @@
-import { AVATAR_CROP_HEADER } from '@harkroom/shared';
+import { AVATAR_SOURCE_HEADER, type AvatarSourceMeta } from '@harkroom/shared';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -164,7 +164,7 @@ export async function registerAvatarRoutes(
   });
 
   /**
-   * 사진 맞추기의 **원본**과 고른 자리(`AVATAR_CROP_HEADER`). 걸린 아바타와 달리 **모두에게 열지 않는다** —
+   * 사진 맞추기의 **원본**과 그 첨부 id·고른 자리(`AVATAR_SOURCE_HEADER`). 걸린 아바타와 달리 **모두에게 열지 않는다** —
    * 원본에는 사람이 원 밖으로 일부러 뺀 부분이 남아 있다. 그 사진을 다시 맞출 수 있는 사람(자기 자신, 에이전트면
    * 소유자·admin)만 받는다. 판정은 `checkOwnerOrAdmin` 하나를 그대로 쓴다.
    *
@@ -192,7 +192,7 @@ export async function registerAvatarRoutes(
       .header('x-content-type-options', 'nosniff')
       .header('content-disposition', 'attachment')
       .header('content-length', String(target.sizeBytes))
-      .header(AVATAR_CROP_HEADER, target.crop ? JSON.stringify(target.crop) : '')
+      .header(AVATAR_SOURCE_HEADER, JSON.stringify({ attachmentId: target.attachmentId, crop: target.crop } satisfies AvatarSourceMeta))
       .type(target.contentType)
       .send(body);
   });

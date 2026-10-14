@@ -477,7 +477,7 @@ describe('사진 맞추기 — 원본과 고른 자리(S1)', () => {
 
     const res = await source(otherId, otherToken);
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.headers['x-harkroom-avatar-crop'] as string)).toEqual(CROP);
+    expect(JSON.parse(res.headers['x-harkroom-avatar-source'] as string)).toEqual({ attachmentId: original, crop: CROP });
     expect(res.headers['content-disposition']).toContain('attachment');
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     // 걸린 아바타는 그대로 잘린 쪽이다 — 그리는 쪽은 원본을 모른다.
@@ -493,7 +493,7 @@ describe('사진 맞추기 — 원본과 고른 자리(S1)', () => {
     const moved = { x: 0.1, y: 0.2, size: 0.3 };
     const res = await setAvatar(otherToken, { attachmentId: second, source: { attachmentId: orig, crop: moved } });
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse((await source(otherId, otherToken)).headers['x-harkroom-avatar-crop'] as string)).toEqual(moved);
+    expect(JSON.parse((await source(otherId, otherToken)).headers['x-harkroom-avatar-source'] as string)).toEqual({ attachmentId: orig, crop: moved });
   });
 
   it('원본이 없는 옛 사진은 걸린 아바타를 원본으로 삼을 수 있다 — 업로더가 달라도', async () => {

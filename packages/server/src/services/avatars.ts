@@ -282,9 +282,9 @@ export async function findAvatarTarget(pool: Pool, accountId: string): Promise<A
 /** 사진 맞추기 원본의 바이트와 고른 자리. 원본이 없으면(옛 사진·지운 사진) null. */
 export async function findAvatarSourceTarget(
   pool: Pool, accountId: string,
-): Promise<(AvatarTarget & { crop: AvatarCrop | null }) | null> {
+): Promise<(AvatarTarget & { attachmentId: string; crop: AvatarCrop | null }) | null> {
   const res = await pool.query(
-    `select a.storage_key as "storageKey", a.content_type as "contentType", a.size_bytes::int as "sizeBytes",
+    `select a.id as "attachmentId", a.storage_key as "storageKey", a.content_type as "contentType", a.size_bytes::int as "sizeBytes",
             acc.avatar_crop as crop
        from account acc join attachment a on a.id = acc.avatar_source_attachment_id
       where acc.id = $1`,

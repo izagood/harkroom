@@ -1289,10 +1289,14 @@ export const MENTION_EDIT_SKIPPED_HEADER = 'x-harkroom-mention-edit-skipped';
 export interface AvatarCrop { x: number; y: number; size: number }
 
 /**
- * 원본 바이트(`GET /accounts/:id/avatar/source`)에 자른 자리(`AvatarCrop` JSON)를 싣는 헤더. 바이트와
- * 자리가 한 응답에 와야 「원본은 새 것인데 자리는 옛 것」인 순간이 없다. CORS `exposedHeaders` 에 있어야 앱이 읽는다.
+ * 원본 바이트(`GET /accounts/:id/avatar/source`)에 **원본 첨부 id 와 자른 자리**(`AvatarSourceMeta` JSON)를 싣는 헤더.
+ * 바이트와 자리가 한 응답에 와야 「원본은 새 것인데 자리는 옛 것」인 순간이 없다. id 가 있어야 다시 맞출 때 원본을 새로
+ * 올리지 않고 같은 첨부를 다시 가리킨다. CORS `exposedHeaders` 에 있어야 앱이 읽는다.
  */
-export const AVATAR_CROP_HEADER = 'x-harkroom-avatar-crop';
+export const AVATAR_SOURCE_HEADER = 'x-harkroom-avatar-source';
+
+/** `AVATAR_SOURCE_HEADER` 의 값. `crop` 은 원본만 있고 자리가 없을 때 null 이다. */
+export interface AvatarSourceMeta { attachmentId: string; crop: AvatarCrop | null }
 
 /** `too_old`: 작성 뒤 `MENTION_EDIT_WINDOW_MS` 가 지났다 · `agent_author`: 에이전트가 쓴 글이다(사람의 글만 수정으로 부른다). */
 export type MentionEditSkipReason = 'too_old' | 'agent_author';
