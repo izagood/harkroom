@@ -8,6 +8,7 @@ import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
 import 'package:harkroom/ui/parts.dart';
+import 'package:harkroom/ui/tokens.dart';
 import 'package:harkroom/screens/channel_list_screen.dart';
 import 'package:harkroom/screens/message_list_screen.dart';
 import 'package:harkroom/screens/search_screen.dart';
@@ -443,5 +444,22 @@ void main() {
     await ReduceTransparency.refresh();
     await tester.pump();
     expect(find.byKey(const Key('glass-app-bar-blur')), findsNothing, reason: '투명도 줄이기면 흐림을 걷는다');
+  });
+
+  testWidgets('④·g1 첫 화면 넷도 고대비면 불투명 머리, 아래 선은 한 단 진하게(designer g1-1)', (tester) async {
+    await _pump(tester);
+    tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(highContrast: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await tester.pump();
+    for (final tab in ['tab-home', 'tab-dms', 'tab-inbox', 'tab-agents']) {
+      await tester.tap(find.byKey(Key(tab)));
+      await tester.pumpAndSettle();
+      final head = find.byKey(const Key('glass-app-bar'));
+      expect(head, findsOneWidget, reason: tab);
+      expect(find.byKey(const Key('glass-app-bar-blur')), findsNothing, reason: '$tab 고대비면 흐림 없음');
+      final k = Theme.of(tester.element(head)).extension<HarkroomTokens>()!;
+      final border = ((tester.widget<DecoratedBox>(head).decoration as BoxDecoration).border! as Border).bottom;
+      expect(border.color, k.fgSubtle, reason: '$tab 아래 선은 fgSubtle');
+    }
   });
 }

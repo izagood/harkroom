@@ -457,6 +457,8 @@ class AppState extends ChangeNotifier {
   /// 목록에 없는 채널이 DM 인지 알아야 할 때(알림으로 막 생긴 DM 이 들어왔다) `GET /dms` 를 다시 받아
   /// 새 DM 을 목록에 붙인다. 알림에는 채널 종류가 실려 오지 않는다 — 목록을 다시 받는 것이 유일한 근거다.
   /// 이미 있는 채널이면 묻지 않는다. 못 받으면 조용히 그대로 둔다(그 채널은 홈 탭에 열린다, 전과 같다).
+  static const dmsRefreshTimeout = Duration(seconds: 2);
+
   Future<void> refreshDmsFor(String channelId) async {
     if (channels.any((c) => c.id == channelId)) return;
     final gen = _generation;
@@ -464,7 +466,9 @@ class AppState extends ChangeNotifier {
     if (api == null) return;
     final List<ChannelRow> rows;
     try {
-      rows = await api.dms();
+      // 2초 넘게 걸리면 기다리지 않는다(designer #1371 n2-1) — 알림을 누르고 아무것도 안 열린 채 있으면
+      // 사람은 알림이 안 먹혔다고 본다. 넘기면 아래 catch 로 빠져 전처럼 홈 탭에 연다.
+      rows = await api.dms().timeout(dmsRefreshTimeout);
     } on Object {
       return;
     }
