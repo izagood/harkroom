@@ -182,6 +182,9 @@ import UserNotifications
         #else
         result(UIImagePickerController.isSourceTypeAvailable(.camera))
         #endif
+      case "reduceTransparency":
+        // 손쉬운 사용 › 디스플레이 › 투명도 줄이기. Flutter 는 이 값을 넘겨주지 않는다(고대비만 있다).
+        result(UIAccessibility.isReduceTransparencyEnabled)
       default:
         result(FlutterMethodNotImplemented)
       }

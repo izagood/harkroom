@@ -9,6 +9,7 @@ import 'push/push_platform.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'session/recent_search_store.dart';
+import 'ui/parts.dart';
 import 'session/session_store.dart';
 import 'state/app_scope.dart';
 import 'state/app_state.dart';
@@ -58,6 +59,17 @@ class _HarkroomAppState extends State<HarkroomApp> {
     // 보관된 세션을 읽는다. 키체인 접근은 느릴 수 있어서 그동안 `booting` 이 선다 —
     // 화면이 "연결 중"이라고 **지어내지 않게** 단계를 값으로 둔다.
     widget.state.boot();
+    // 반투명 머리를 걷을지(designer g1) — 켤 때 한 번, 설정 앱에서 돌아올 때마다 다시.
+    unawaited(ReduceTransparency.refresh());
+    _life = AppLifecycleListener(onResume: () => unawaited(ReduceTransparency.refresh()));
+  }
+
+  late final AppLifecycleListener _life;
+
+  @override
+  void dispose() {
+    _life.dispose();
+    super.dispose();
   }
 
   @override
