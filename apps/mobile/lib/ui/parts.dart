@@ -362,10 +362,13 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<bool>(
         valueListenable: ReduceTransparency.enabled,
-        builder: (context, reduce, _) => _build(context, opaque: reduce || MediaQuery.highContrastOf(context)),
+        builder: (context, reduce, _) {
+          final contrast = MediaQuery.highContrastOf(context);
+          return _build(context, opaque: reduce || contrast, contrast: contrast);
+        },
       );
 
-  Widget _build(BuildContext context, {required bool opaque}) {
+  Widget _build(BuildContext context, {required bool opaque, required bool contrast}) {
     final k = context.tokens;
     final theme = Theme.of(context);
     // iOS 「투명도 줄이기」·「대비 증가」면 흐림을 걷고 불투명 머리로(designer g1) — 그 설정을 켠 사람은
@@ -373,7 +376,8 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
     if (opaque) {
       return DecoratedBox(
         key: const Key('glass-app-bar'),
-        decoration: BoxDecoration(color: k.surface, border: Border(bottom: BorderSide(color: k.border))),
+        // 「대비 증가」면 아래 선도 한 단 진하게(designer #1372 g1-1) — 옅은 선은 그 설정을 켠 사람에게 안 보인다.
+        decoration: BoxDecoration(color: k.surface, border: Border(bottom: BorderSide(color: contrast ? k.fgSubtle : k.border))),
         child: Theme(
           data: theme.copyWith(
             appBarTheme: theme.appBarTheme.copyWith(

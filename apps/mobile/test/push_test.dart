@@ -52,6 +52,9 @@ class _Server {
   final dms = <Map<String, Object?>>[];
   int dmsCalls = 0;
 
+  /// `GET /dms` 를 이만큼 늦게 답한다 — 느린 망.
+  Duration? dmsDelay;
+
   MockClient client(String? token) => MockClient((req) async {
         final path = req.url.path;
         if (path == '/push/devices' || path == '/push/devices/current') {
@@ -64,6 +67,7 @@ class _Server {
         }
         if (path == '/auth/logout') return http.Response('', 204);
         if (token != 'tok') return _json({'error': {'code': 'unauthorized', 'message': 'x'}}, 401);
+        if (path == '/dms' && dmsDelay != null) await Future<void>.delayed(dmsDelay!);
         return switch (path) {
           '/auth/me' => _json({'id': meId, 'handle': 'me', 'displayName': 'me', 'isAdmin': false}),
           '/channels' => _json({'channels': [{'id': _ch, 'name': 'general', 'kind': 'standard'}]}),
@@ -395,6 +399,22 @@ void main() {
       unawaited(push.open(_hk(_a)));
       await settle(tester);
       expect(acme.dmsCalls, before + 1);
+    });
+
+    testWidgets('DM 목록이 2초 안에 안 오면 기다리지 않고 전처럼 홈 탭에 연다(designer #1371 n2-1)', (tester) async {
+      final acme = _Server(_a);
+      final (app, push) = await pumpTwo(tester, acmeServer: acme);
+      acme.dms.add({'id': _dm, 'memberIds': [_a, _b], 'lastMessageAt': '2026-10-14T00:00:00Z'});
+      acme.dmsDelay = const Duration(seconds: 5);
+      unawaited(push.open(_hk(_a, channel: _dm)));
+      // 2초 + 조금 — 늦은 답을 기다리지 않고 열렸다.
+      for (var i = 0; i < 50; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(tester.widget<MessageListScreen>(find.byType(MessageListScreen)).channelId, _dm);
+      expect(app.homeTab, TabNavigators.home);
+      // 늦은 답이 마저 오게 둔다(남은 타이머).
+      await tester.pump(const Duration(seconds: 4));
     });
 
     testWidgets('겹치는 계정 id 의 알림은 아무 화면도 열지 않는다', (tester) async {

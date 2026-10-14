@@ -75,7 +75,9 @@ class _InboxScreenState extends State<InboxScreen> {
     final mine = app.inboxMine;
 
     return Scaffold(
-      appBar: AppBar(
+      // 반투명 머리(④) — 목록이 그 밑으로 흐른다.
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(bar: AppBar(
         title: ScreenTitle(
           key: const Key('inbox-title'),
           title: t.tabInbox,
@@ -100,32 +102,55 @@ class _InboxScreenState extends State<InboxScreen> {
           const OpenMeButton(),
           const SizedBox(width: 8),
         ],
-      ),
+      )),
+      // 위는 [GlassBody] 가 맡는다. 끊김 띠와 탭 칩은 머리 밑에 고정하고(designer #1373 s1 — 칩은
+      // 이 화면의 길잡이라 굴려도 남는다), 다른 커뮤니티 줄은 목록의 첫 줄이라 같이 굴러간다.
       body: SafeArea(
-        child: Column(
-          children: [
+        top: false,
+        child: GlassBody(
+          // stretch — 칩 줄 바탕이 화면 폭을 다 덮어야 밑의 줄이 양옆으로 비치지 않는다.
+          header: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             const ConnectionBand(),
-            for (final c in app.communities)
-              if (c.key != app.activeKey && !c.isExpired && (app.otherWaiting[c.key] ?? 0) > 0)
-                OtherCommunityInboxRow(community: c, count: app.otherWaiting[c.key]!),
-            if (app.board != null) _TabChips(tab: _tab, counts: counts, onTab: (v) => setState(() => _tab = v)),
-            Expanded(
-              child: app.board != null
-                  ? RefreshIndicator(
-                      onRefresh: app.loadBoard,
-                      child: _list(context, todo: todo, stale: stale, news: news, later: later, cleared: cleared),
-                    )
-                  : switch (app.boardLoad) {
-                      LoadState.loading => const LoadingSkeleton(rows: 3),
-                      LoadState.failed => FailedState(
-                          title: t.inboxLoadFailed,
-                          cause: app.failures['board'] ?? LoadFailure.network,
-                          onRetry: app.loadBoard,
-                        ),
-                      LoadState.loaded => EmptyState(title: t.inboxEmpty, hint: t.inboxEmptyHint),
-                    },
-            ),
-          ],
+            // 칩 줄 바탕은 불투명 surface — 밑으로 흐르는 줄이 칩 사이로 비치면 칩 글자가 읽히지 않는다.
+            if (app.board != null)
+              ColoredBox(
+                key: const Key('inbox-tab-chips'),
+                color: context.tokens.surface,
+                child: _TabChips(tab: _tab, counts: counts, onTab: (v) => setState(() => _tab = v)),
+              ),
+          ]),
+          builder: (context, inset) {
+            final lead = <Widget>[
+              for (final c in app.communities)
+                if (c.key != app.activeKey && !c.isExpired && (app.otherWaiting[c.key] ?? 0) > 0)
+                  OtherCommunityInboxRow(community: c, count: app.otherWaiting[c.key]!),
+            ];
+            if (app.board != null) {
+              return RefreshIndicator(
+                // 당기기 회전자는 머리 밑에서 나온다 — 0 이면 반투명 머리 뒤에 숨는다.
+                edgeOffset: inset,
+                onRefresh: app.loadBoard,
+                child: _list(context, inset: inset, lead: lead, todo: todo, stale: stale, news: news, later: later, cleared: cleared),
+              );
+            }
+            return Padding(
+              padding: EdgeInsets.only(top: inset),
+              child: Column(children: [
+                ...lead,
+                Expanded(
+                  child: switch (app.boardLoad) {
+                    LoadState.loading => const LoadingSkeleton(rows: 3),
+                    LoadState.failed => FailedState(
+                        title: t.inboxLoadFailed,
+                        cause: app.failures['board'] ?? LoadFailure.network,
+                        onRetry: app.loadBoard,
+                      ),
+                    LoadState.loaded => EmptyState(title: t.inboxEmpty, hint: t.inboxEmptyHint),
+                  },
+                ),
+              ]),
+            );
+          },
         ),
       ),
     );
@@ -133,6 +158,8 @@ class _InboxScreenState extends State<InboxScreen> {
 
   Widget _list(
     BuildContext context, {
+    required double inset,
+    required List<Widget> lead,
     required List<BoardCard> todo,
     required List<BoardCard> stale,
     required List<BoardCard> news,
@@ -140,7 +167,12 @@ class _InboxScreenState extends State<InboxScreen> {
     required List<BoardCard> cleared,
   }) {
     final t = context.t;
-    final slivers = <Widget>[];
+    final slivers = <Widget>[
+      // 머리 + 끊김 띠 + 탭 칩 높이만큼 **고정된 빈 머리** — 아래 묶음 머리(pinned)가 맨 위(반투명 머리 뒤)가
+      // 아니라 이 밑에 붙는다. 그리는 것도 누르는 것도 없어 밑으로 흐르는 줄이 그대로 비친다.
+      SliverPersistentHeader(pinned: true, delegate: _TopInset(inset)),
+      for (final w in lead) SliverToBoxAdapter(child: w),
+    ];
     switch (_tab) {
       case InboxTab.todo:
         for (final kind in BoardKind.values) {
@@ -255,6 +287,26 @@ class _TabChips extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 반투명 머리 밑을 비우는 고정 빈 머리 — [InboxScreen] 의 묶음 머리가 이 밑에 붙는다.
+class _TopInset extends SliverPersistentHeaderDelegate {
+  _TopInset(this.height);
+
+  final double height;
+
+  @override
+  double get minExtent => height;
+
+  @override
+  double get maxExtent => height;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) =>
+      const SizedBox.expand(key: Key('inbox-top-inset'));
+
+  @override
+  bool shouldRebuild(_TopInset old) => old.height != height;
 }
 
 class _SectionHeader extends SliverPersistentHeaderDelegate {

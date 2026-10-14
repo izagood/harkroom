@@ -42,9 +42,47 @@ class ChannelListScreen extends StatelessWidget {
       }
     }
 
+    Widget row(BuildContext context, Object item) {
+      if (item is HomeSection) {
+        return _SectionHeader(
+          section: item,
+          collapsed: app.collapsedSections.contains(item.key),
+          onTap: () => app.toggleSection(item.key),
+        );
+      }
+      final channel = item as ChannelRow;
+      final unread = app.reads[channel.id]?.unread ?? 0;
+      return ListTile(
+        // 글자로 줄을 집지 않는다 — 이름은 번역되고 바뀐다.
+        key: Key('channel-${channel.id}'),
+        leading: Icon(channel.isDm
+            ? Icons.alternate_email
+            : channel.isPrivate
+                ? Icons.lock_outline
+                : Icons.tag),
+        // **안 읽은 채널은 굵게, 읽은 채널은 회색.** 배지만으로는 눈이 오른쪽
+        // 끝까지 가야 안다 — 이름의 굵기가 왼쪽에서 먼저 말한다.
+        title: _ChannelName(name: channel.name, unread: unread > 0),
+        // 주제는 줄을 두 줄로 늘린다 — 44 줄에 넣지 않는다. 채널 머리의
+        // 부제가 그 자리다(S4).
+        // 안 읽은 수는 **서버가 센다.** 클라이언트가 세면 열지 않은
+        // 채널에서 틀리고, 틀린 배지는 없는 배지보다 나쁘다.
+        trailing: UnreadBadge(count: unread),
+        onTap: () {
+          app.openChannel(channel.id);
+          Navigator.of(context).push(MaterialPageRoute<void>(
+            builder: (_) => MessageListScreen(channelId: channel.id),
+          ));
+        },
+      );
+    }
+
+    final empty = rows.isEmpty || (unreadOnly && items.isEmpty);
     return Scaffold(
+      // 반투명 머리(④, 2026-10-14) — 목록이 그 밑으로 흐른다(채널·스레드 #1370 과 같은 머리).
+      extendBodyBehindAppBar: true,
       // 머리 왼쪽이 커뮤니티 자리다(설계 ①) — 데스크탑 레일 맨 위 타일과 같은 규칙.
-      appBar: AppBar(
+      appBar: GlassAppBar(bar: AppBar(
         titleSpacing: 8,
         title: dms
             ? Text(t.tabDms)
@@ -53,18 +91,30 @@ class ChannelListScreen extends StatelessWidget {
                 : const CommunityHeader(),
         // 「나」 는 탭이 아니라 머리 오른쪽의 프로필 사진이다(개정판 3.1·3.8). DM 탭은 그 앞에 ＋(새 DM, D8).
         actions: [if (dms) const NewDmButton(), const OpenMeButton(), const SizedBox(width: 8)],
-      ),
+      )),
+      // 위는 [GlassBody] 가 맡는다 — SafeArea 가 위를 먹으면 목록이 머리 밑으로 흐르지 못한다.
       body: SafeArea(
-        child: Column(
-          children: [
-            // 끊김은 **모든 화면 공통 띠**다(제목 줄 아래 작은 회색 글씨였다 — 늘 22px 를 차지했고
-            // 끊겼을 때도 잘 안 읽혔다).
-            const ConnectionBand(),
-            if (app.noticeKey != null) _Notice(messageKey: app.noticeKey!),
-            if (!dms) ShortcutCards(newCount: rows.where((c) => (app.reads[c.id]?.unread ?? 0) > 0).length),
-            Expanded(
-              child: rows.isEmpty || (unreadOnly && items.isEmpty)
-                  ? dms
+        top: false,
+        // 끊김은 **모든 화면 공통 띠**다 — 머리 밑에 고정한다(굴려도 끊긴 줄 안다). 알림·바로 가기
+        // 카드는 목록의 첫 줄들이라 같이 굴러간다(designer ④).
+        child: GlassBody(
+          header: const ConnectionBand(),
+          builder: (context, inset) => CustomScrollView(
+            // 커뮤니티를 옮기면 맨 위부터 — 앞 커뮤니티의 스크롤 자리를 이어받지 않는다(설계 ④).
+            key: PageStorageKey('${dms ? 'dms' : 'channels'}-${app.activeKey}'),
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              // 위 여백 = 머리 + 끊김 띠 — 맨 위에서 첫 줄이 머리에 가리지 않는다.
+              SliverToBoxAdapter(child: SizedBox(key: const Key('channel-list-top'), height: inset)),
+              if (app.noticeKey != null) SliverToBoxAdapter(child: _Notice(messageKey: app.noticeKey!)),
+              if (!dms)
+                SliverToBoxAdapter(
+                  child: ShortcutCards(newCount: rows.where((c) => (app.reads[c.id]?.unread ?? 0) > 0).length),
+                ),
+              if (empty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: dms
                       // DM 이 없으면 빈 화면에 같은 버튼 하나(D8) — 머리 ＋ 를 못 찾아도 길이 있다.
                       ? Center(
                           child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -77,49 +127,15 @@ class ChannelListScreen extends StatelessWidget {
                             ),
                           ]),
                         )
-                      : Center(child: Text(unreadOnly ? t.unreadOnlyEmpty : t.channelsEmpty))
-                  : ListView.builder(
-                      // 커뮤니티를 옮기면 맨 위부터 — 앞 커뮤니티의 스크롤 자리를 이어받지 않는다(설계 ④).
-                      key: PageStorageKey('${dms ? 'dms' : 'channels'}-${app.activeKey}'),
-                      itemCount: items.length,
-                      itemBuilder: (context, i) {
-                        final item = items[i];
-                        if (item is HomeSection) {
-                          return _SectionHeader(
-                            section: item,
-                            collapsed: app.collapsedSections.contains(item.key),
-                            onTap: () => app.toggleSection(item.key),
-                          );
-                        }
-                        final channel = item as ChannelRow;
-                        final unread = app.reads[channel.id]?.unread ?? 0;
-                        return ListTile(
-                          // 글자로 줄을 집지 않는다 — 이름은 번역되고 바뀐다.
-                          key: Key('channel-${channel.id}'),
-                          leading: Icon(channel.isDm
-                              ? Icons.alternate_email
-                              : channel.isPrivate
-                                  ? Icons.lock_outline
-                                  : Icons.tag),
-                          // **안 읽은 채널은 굵게, 읽은 채널은 회색.** 배지만으로는 눈이 오른쪽
-                          // 끝까지 가야 안다 — 이름의 굵기가 왼쪽에서 먼저 말한다.
-                          title: _ChannelName(name: channel.name, unread: unread > 0),
-                          // 주제는 줄을 두 줄로 늘린다 — 44 줄에 넣지 않는다. 채널 머리의
-                          // 부제가 그 자리다(S4).
-                          // 안 읽은 수는 **서버가 센다.** 클라이언트가 세면 열지 않은
-                          // 채널에서 틀리고, 틀린 배지는 없는 배지보다 나쁘다.
-                          trailing: UnreadBadge(count: unread),
-                          onTap: () {
-                            app.openChannel(channel.id);
-                            Navigator.of(context).push(MaterialPageRoute<void>(
-                              builder: (_) => MessageListScreen(channelId: channel.id),
-                            ));
-                          },
-                        );
-                      },
-                    ),
-            ),
-          ],
+                      : Center(child: Text(unreadOnly ? t.unreadOnlyEmpty : t.channelsEmpty)),
+                )
+              else
+                SliverList.builder(
+                  itemCount: items.length,
+                  itemBuilder: (context, i) => row(context, items[i]),
+                ),
+            ],
+          ),
         ),
       ),
     );
