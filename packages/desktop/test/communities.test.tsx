@@ -80,7 +80,7 @@ const renderSidebar = () => render(
  */
 const renderRail = () => render(
   <Rail
-    panel="home" onPanelChange={() => {}} onOpenSaved={() => {}}
+    panel="home" onPanelChange={() => {}}
     onOpenSettings={() => {}} onManageCommunities={() => {}} onLogout={() => {}}
   />,
 );

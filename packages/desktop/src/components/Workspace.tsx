@@ -28,7 +28,6 @@ import { ChannelSettingsSheet } from './ChannelSettingsSheet';
 import { Profile } from './Profile';
 import { ChannelDirectory } from './ChannelDirectory';
 import { Inbox } from './Inbox';
-import { SavedMessages } from './SavedMessages';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
 
@@ -54,7 +53,6 @@ export function Workspace({ onLogout, onOpenSettings }: {
   const [directoryAccountId, setDirectoryAccountId] = useState<string | null>(null);
   const [profileAccountId, setProfileAccountId] = useState<string | null>(null);
   const [inboxOpen, setInboxOpen] = useState(false);
-  const [savedOpen, setSavedOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarStorage.loadCollapsed());
   /**
    * 레일이 고른 칸(정본 문서 `docs/desktop-rail.html` 1단계). **레일 안이 아니라 여기서
@@ -88,6 +86,19 @@ export function Workspace({ onLogout, onOpenSettings }: {
     setInboxOpen(false);
     setRailPanel((p) => (p === 'agents' ? 'home' : p));
   }, [channelRevealSeq]);
+
+  /**
+   * 레일 칸 고르기. **북마크 칸은 접힌 사이드바를 편다** — 북마크가 오버레이였을 때는 접혀
+   * 있어도 목록이 떴다. 칸으로 옮기면서 접힌 채 누르면 아무것도 안 보이는 클릭이 되므로
+   * 그 동작만은 지킨다. 다른 칸은 예전처럼 접힘을 건드리지 않는다.
+   */
+  const handleRailPanel = useCallback((next: RailPanel) => {
+    setRailPanel(next);
+    if (next === 'saved' && sidebarCollapsed) {
+      setSidebarCollapsed(false);
+      sidebarStorage.saveCollapsed(false);
+    }
+  }, [sidebarCollapsed]);
 
   const canGoBack = historyIndex > 0;
   const canGoForward = historyIndex < history.length - 1;
@@ -267,8 +278,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
       */}
       <Rail
         panel={railPanel}
-        onPanelChange={setRailPanel}
-        onOpenSaved={() => setSavedOpen(true)}
+        onPanelChange={handleRailPanel}
         onOpenSettings={onOpenSettings}
         onManageCommunities={() => onOpenSettings('communities')}
         onLogout={onLogout}
@@ -474,7 +484,6 @@ export function Workspace({ onLogout, onOpenSettings }: {
       <ChannelDirectory open={channelDirectoryOpen} onClose={() => setChannelDirectoryOpen(false)} />
       {/* `<Inbox>` 가 여기 있었다 — 이 묶음은 **화면을 덮는 것들**이고, 인박스는 이제
           덮지 않는다(위 패널 줄의 주석). 나머지는 그대로 `Overlay` 를 쓴다. */}
-      <SavedMessages open={savedOpen} onClose={() => setSavedOpen(false)} />
     </div>
   );
 }

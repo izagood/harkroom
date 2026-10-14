@@ -4108,7 +4108,6 @@ export const en = {
   // - **`✓` · `↺` · `✕`** — 기호다. 접근 이름은 아래 둘이 진다
   // ---------------------------------------------------------------------------
 
-  'saved.close': 'Close the panel',
   'saved.deleted': 'Deleted message',
   'saved.emptyDone': 'Nothing done yet',
   'saved.emptyOpen': 'Nothing saved yet',
