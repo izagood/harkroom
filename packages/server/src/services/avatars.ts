@@ -409,27 +409,56 @@ export async function currentAvatarIds(pool: Pool, accountId: string): Promise<(
 export const SVG_RASTER_PX = 512;
 
 /**
- * SVG 안에서 **밖을 가리키는 참조**(`href`·`src`·`url(...)` 가 `#` 조각이나 `data:` 가 아닌 것). 굳히는 동안 libvips
- * (librsvg)가 그것을 따라가면 서버의 파일이나 내부 주소를 읽는 통로가 된다. librsvg 는 바탕 주소가 없으면 밖을 읽지
- * 않는다고 알려져 있지만, 그 성질에 기대지 않고 **굳히기 전에 거절**한다. 화면(`<img>`)에서 그리는 SVG 는 이 검사
- * 없이도 밖을 못 부른다 — 이 검사는 서버가 직접 그리는 이 길에만 필요하다.
+ * 서버가 굳히기 **전에** 거절하는 SVG(사진 후속 ③ · security F2). 누구나 SVG 를 아바타로 걸 수 있으니, 이 길은
+ * 공격자가 고른 SVG 를 서버의 librsvg 가 그리는 자리다. 밖을 읽는 통로를 두 겹으로 막는다 — 첫 겹이 이 검사다.
+ * (두 번째 겹: 버퍼로 넣은 SVG 는 바탕 주소가 없어 librsvg 가 file://·절대·상대 경로를 읽지 않는다. 시험이 이
+ * 검사를 끈 채로 그것을 따로 증명한다.) 화면(그림 태그 안의 SVG)은 이 검사 없이도 밖을 못 부른다 — 서버 길에만 필요하다.
+ *
+ * - `href`·`src`·`url(...)` 이 `#` 조각이나 `data:` 가 아닌 것 — 밖 참조.
+ * - `data:` 는 래스터 그림(`image/png|jpeg|gif|webp`)만 — 겹친 SVG(`data:image/svg+xml`)는 안쪽 참조를 base64 에 숨긴다.
+ * - `@import` — `url()` 없는 문자열 꼴(`@import "file:///…"`)로도 밖을 부른다.
+ * - 스타일 안의 백슬래시 — CSS 이스케이프(`\75 rl(…)`)로 위 낱말들을 감춘다.
  */
-const SVG_EXTERNAL_REF = /(?:\bhref|\bsrc)\s*=\s*["']\s*(?!#|data:)[^"'\s]|url\(\s*["']?\s*(?!#|data:)[^)"'\s]/i;
+export function svgRasterRefusal(text: string): string | null {
+  if (/(?:\bhref|\bsrc)\s*=\s*["']\s*(?!#|data:)[^"'\s]|url\(\s*["']?\s*(?!#|data:)[^)"'\s]/i.test(text)) return 'external_ref';
+  if (/\bdata:(?!image\/(?:png|jpeg|gif|webp)[;,])/i.test(text)) return 'data_not_raster';
+  if (/@import/i.test(text)) return 'css_import';
+  const styles = [...text.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>|\bstyle\s*=\s*("[^"]*"|'[^']*')/gi)];
+  if (styles.some((m) => (m[1] ?? m[2] ?? '').includes('\\'))) return 'css_escape';
+  return null;
+}
+
+/** 굳히기 한 번의 시간 상한(security F1). 필터·블러를 무겁게 넣은 SVG 가 libuv 스레드풀을 붙잡지 못하게. */
+export const SVG_RASTER_TIMEOUT_SECONDS = 3;
+
+/** 검사 없이 그리기만 한다 — 시험이 두 번째 겹(librsvg 가 밖을 안 읽는다)을 따로 재려고 내보낸다. 부르지 마라. */
+export async function renderSvgPngUnchecked(svg: Buffer): Promise<Buffer> {
+  return sharp(svg, { limitInputPixels: SVG_RASTER_PX * SVG_RASTER_PX * 16 })
+    // `cover`(가운데 기준) — 데스크톱이 SVG 를 `object-cover` 로 그리는 것과 같게, 정사각이 아니면 넘치는 쪽을
+    // 자른다. `contain` 이면 투명 띠가 생겨 모바일에서만 그림이 작아 보인다(designer s1).
+    .resize(SVG_RASTER_PX, SVG_RASTER_PX, { fit: 'cover', position: 'centre' })
+    .timeout({ seconds: SVG_RASTER_TIMEOUT_SECONDS })
+    .png()
+    .toBuffer();
+}
+
+/**
+ * 굳히기는 **한 번에 하나**(security F1 — 세마포어 1). 아바타 SVG 는 드물고 결과는 캐시되므로 줄을 서도 느려지지
+ * 않는다. 무거운 SVG 가 여럿 와도 스레드풀을 하나만 붙잡는다(파일 읽기와 같은 풀이다).
+ */
+let svgQueue: Promise<unknown> = Promise.resolve();
 
 /**
  * SVG 아바타를 `SVG_RASTER_PX` PNG 로 굳힌다(사진 후속 ③). 모바일(Flutter `Image`)은 SVG 를 그리지 못해 글자로
- * 대신했다. 밖을 가리키는 참조가 있거나 굳히지 못하면 null — 부르는 쪽은 그때 원래 바이트(SVG)를 그대로 낸다
- * (모바일은 글자로 남는다. 지금과 같다).
+ * 대신했다. 거절할 것이 있거나 굳히지 못하면(시간 초과 포함) null — 부르는 쪽은 그때 원래 바이트(SVG)를 그대로
+ * 낸다(모바일은 글자로 남는다. 고치기 전과 같다).
  */
 export async function rasterizeSvgAvatar(svg: Buffer): Promise<Buffer | null> {
-  if (SVG_EXTERNAL_REF.test(svg.toString('utf8'))) return null;
+  if (svgRasterRefusal(svg.toString('utf8'))) return null;
+  const run = svgQueue.then(() => renderSvgPngUnchecked(svg));
+  svgQueue = run.catch(() => undefined);
   try {
-    return await sharp(svg, { limitInputPixels: SVG_RASTER_PX * SVG_RASTER_PX * 16 })
-      // `cover`(가운데 기준) — 데스크톱이 SVG 를 `object-cover` 로 그리는 것과 같게, 정사각이 아니면 넘치는 쪽을
-      // 자른다. `contain` 이면 투명 띠가 생겨 모바일에서만 그림이 작아 보인다(designer s1).
-      .resize(SVG_RASTER_PX, SVG_RASTER_PX, { fit: 'cover', position: 'centre' })
-      .png()
-      .toBuffer();
+    return await run;
   } catch {
     return null;
   }

@@ -7,7 +7,10 @@ import { join } from 'node:path';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
-import { AVATAR_PIXEL_LIMITS, looksLikeSvg, rasterizeSvgAvatar, startsLikeSvg, SVG_MAX_BYTES, SVG_RASTER_PX } from '../src/services/avatars.js';
+import {
+  AVATAR_PIXEL_LIMITS, looksLikeSvg, rasterizeSvgAvatar, renderSvgPngUnchecked, startsLikeSvg, SVG_MAX_BYTES, SVG_RASTER_PX,
+  svgRasterRefusal,
+} from '../src/services/avatars.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -601,6 +604,54 @@ describe('SVG 아바타를 모바일용으로 굳힌다 (사진 후속 ③)', ()
     }
     // 조각(#)과 data: 는 밖이 아니다.
     expect(await rasterizeSvgAvatar(wrap('<defs><linearGradient id="g"/></defs><rect width="8" height="8" fill="url(#g)"/>'))).not.toBeNull();
+  });
+
+  it('security F2 — @import·CSS 이스케이프·겹친 SVG data: 를 굳히기 전에 거른다', () => {
+    const wrap = (inner: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">${inner}</svg>`;
+    const cases: [string, string][] = [
+      ['<style>@import "file:///etc/passwd";</style><rect width="8" height="8"/>', 'css_import'],
+      ['<style>rect { fill: \\75 rl(file:///etc/passwd) }</style><rect width="8" height="8"/>', 'css_escape'],
+      ['<rect width="8" height="8" style="fill:\\75 rl(http://example.com/x)"/>', 'css_escape'],
+      ['<image href="data:image/svg+xml;base64,PHN2Zy8+" width="8" height="8"/>', 'data_not_raster'],
+      ['<image href="data:text/html,hi" width="8" height="8"/>', 'data_not_raster'],
+    ];
+    for (const [inner, why] of cases) expect(svgRasterRefusal(wrap(inner)), inner).toBe(why);
+    // 래스터 data: 와 조각(#)은 지난다.
+    expect(svgRasterRefusal(wrap('<image href="data:image/png;base64,AAAA" width="8" height="8"/>'))).toBeNull();
+    expect(svgRasterRefusal(wrap('<rect width="8" height="8" fill="url(#g)"/>'))).toBeNull();
+  });
+
+  it('security F2 두 번째 겹 — 사전 검사를 끈 채로도 librsvg 는 file://·절대·상대 경로 그림을 읽지 않는다', async () => {
+    // 빨강 PNG 를 실제 파일로 두고 가리킨다. 읽었다면 첫 픽셀이 불투명 빨강이다.
+    const dir = await mkdtemp(join(tmpdir(), 'harkroom-svgref-'));
+    const red = await sharp({ create: { width: 8, height: 8, channels: 4, background: '#ff0000ff' } }).png().toBuffer();
+    const file = join(dir, 'red.png');
+    await (await import('node:fs/promises')).writeFile(file, red);
+    const firstPixel = async (svg: Buffer) => {
+      const { data } = await sharp(await renderSvgPngUnchecked(svg)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      return { r: data[0], a: data[3] };
+    };
+    const img = (href: string) => Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="8" height="8"><image href="${href}" xlink:href="${href}" width="8" height="8"/></svg>`);
+    try {
+      for (const href of [`file://${file}`, file, 'red.png']) {
+        expect(await firstPixel(img(href)), href).toEqual({ r: 0, a: 0 });
+      }
+      // 대조군: 같은 그림을 data: 로 넣으면 실제로 그려진다 — 위 측정이 「읽었다」를 잡을 수 있다는 증거.
+      expect(await firstPixel(img(`data:image/png;base64,${red.toString('base64')}`))).toEqual({ r: 255, a: 255 });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('security F1 — 같은 SVG 를 동시에 여럿이 청해도 모두 같은 PNG 를 받는다(한 번 굳혀 나눠 준다)', async () => {
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="#06c"/></svg>');
+    const id = await upload(otherToken, 'many.svg', svg, 'image/svg+xml');
+    expect((await setAvatar(otherToken, { attachmentId: id })).statusCode).toBe(200);
+    const all = await Promise.all(Array.from({ length: 6 }, () =>
+      app.inject({ method: 'GET', url: `/accounts/${otherId}/avatar?raster=1`, headers: auth(adminToken) })));
+    for (const r of all) expect(r.headers['content-type']).toContain('image/png');
+    expect(new Set(all.map((r) => r.rawPayload.toString('base64'))).size).toBe(1);
   });
 
   it('굳히지 못하는 SVG 는 원래 바이트로 떨어진다', async () => {

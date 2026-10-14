@@ -110,13 +110,25 @@ export async function registerAvatarRoutes(
    * PNG 하나가 수십 KB 라 64장으로 묶는다. 실패(null)도 담는다 — 같은 SVG 를 매번 다시 굳히려 들지 않게.
    */
   const rasterCache = new Map<string, Buffer | null>();
-  async function rasterOf(target: { attachmentId: string; storageKey: string; sizeBytes: number }): Promise<Buffer | null> {
+  /**
+   * 굳히는 중인 것(security F1 — single-flight). 같은 첨부를 동시에 여럿이 청해도 굳히기는 한 번이다. 캐시가
+   * 차기 전에 몰린 요청이 각자 따로 그리던 틈을 닫는다.
+   */
+  const rasterInFlight = new Map<string, Promise<Buffer | null>>();
+  function rasterOf(target: { attachmentId: string; storageKey: string; sizeBytes: number }): Promise<Buffer | null> {
     if (rasterCache.has(target.attachmentId)) {
       const hit = rasterCache.get(target.attachmentId)!;
       rasterCache.delete(target.attachmentId);
       rasterCache.set(target.attachmentId, hit);
-      return hit;
+      return Promise.resolve(hit);
     }
+    const flying = rasterInFlight.get(target.attachmentId);
+    if (flying) return flying;
+    const run = rasterNow(target).finally(() => rasterInFlight.delete(target.attachmentId));
+    rasterInFlight.set(target.attachmentId, run);
+    return run;
+  }
+  async function rasterNow(target: { attachmentId: string; storageKey: string; sizeBytes: number }): Promise<Buffer | null> {
     // SVG 는 걸 때 256KiB 상한을 지났다(`detectAvatarType`) — 통째로 올려도 된다.
     const svg = await readHead(storage, target.storageKey, Math.max(target.sizeBytes, 1));
     const png = await rasterizeSvgAvatar(svg);
