@@ -40,6 +40,8 @@ const CODE_KEY: Record<string, MessageKey> = {
   // 형식보다 훨씬 낮다. 이유를 뭉개면 SVG 를 든 사람이 "SVG 만 쓸 수 있다"를 듣는다.
   svg_too_large: 'avatar.error.svgTooLarge',
   not_found: 'avatar.error.notFound',
+  // 가로·세로 상한(서버 `AVATAR_PIXEL_LIMITS`). 파일이 작아도 풀면 큰 그림이다 — 「너무 크다(바이트)」와 다른 말이다.
+  image_dimensions_too_large: 'avatar.error.dimensionsTooLarge',
 };
 
 /**

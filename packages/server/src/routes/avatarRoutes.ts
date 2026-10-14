@@ -85,7 +85,8 @@ async function applyAvatar(
         error: { code: 'source_not_found', message: 'no usable original with that id' },
       });
     }
-    const originalType = await detectAvatarType(storage, original);
+    // 원본은 데스크톱이 다시 맞출 때만 푼다 — 폰 원본 사진이 지나게 넉넉한 상한(`AVATAR_PIXEL_LIMITS.original`).
+    const originalType = await detectAvatarType(storage, original, 'original');
     if (!originalType.type) return reply.code(400).send({ error: originalType.error });
     setting.source = { attachmentId: original.id, contentType: originalType.type, crop: body.source.crop };
   }

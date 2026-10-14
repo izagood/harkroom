@@ -18,10 +18,11 @@ let memberToken: string;
 let storageRoot: string;
 let pool: import('pg').Pool;
 
-const PNG = Buffer.concat([
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-  Buffer.alloc(64, 7),
-]);
+/** 진짜 1×1 PNG. 크기 상한(헤더로 가로·세로를 읽는다)을 지나려면 libvips 가 읽을 수 있는 그림이어야 한다. */
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
 const HTML = Buffer.from('<html><script>alert(1)</script></html>');
 
 beforeAll(async () => {

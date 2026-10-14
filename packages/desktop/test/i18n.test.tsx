@@ -2891,12 +2891,13 @@ describe('사진 오류 — 원인별로 다른 말을 한다', () => {
    * **원인이 다르면 문장이 다르다.** 앞 판은 무엇이 실패했든 한 문장이라, 서버가 죽었을
    * 때도 사람에게는 **자기 파일 탓**으로 보였고 파일을 바꿔 가며 다시 시도하게 만들었다.
    */
-  it('네 코드가 두 언어 모두 서로 다른 문장을 받는다', () => {
+  it('다섯 코드가 두 언어 모두 서로 다른 문장을 받는다', () => {
     for (const locale of ['en', 'ko'] as const) {
       const t = translator(locale);
-      const texts = ['not_an_image', 'too_large', 'svg_too_large', 'not_found']
+      // image_dimensions_too_large: 서버 가로·세로 상한(사진 후속 ①). 바이트 크기(too_large)와 다른 원인이다.
+      const texts = ['not_an_image', 'too_large', 'svg_too_large', 'not_found', 'image_dimensions_too_large']
         .map((c) => avatarErrorMessage(err(c), t));
-      expect(new Set(texts).size, locale).toBe(4);
+      expect(new Set(texts).size, locale).toBe(5);
     }
   });
 
