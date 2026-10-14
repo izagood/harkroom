@@ -13,14 +13,14 @@ import { communityKey, readConfig, rememberOperatorId } from './config.js';
 import { createForwarder } from './forward.js';
 import { detectHarnesses, HARNESS_BINARIES } from './harnesses.js';
 import { listHarnessModels } from './harnessModels.js';
-import type { HarnessModel, OperatorCapabilities } from '@harkroom/shared';
+import type { ChromeHostState, HarnessModel, OperatorCapabilities } from '@harkroom/shared';
 import { readLoginPath } from './loginPath.js';
 import type { RunnerLinkServer } from './runnerLink.js';
 import type { RunnerRegistry, RunnerHost } from './runners.js';
 import { fileSecrets, type OperatorSecrets } from './secrets.js';
 import { buildMcpConfig, claudeConfigPath, readLocalMcpDefinitions, writeAgentMcpConfig } from './mcpConfig.js';
 import type { McpOAuth } from './mcpOAuth.js';
-import { chromeHostAvailable } from './chromeHost.js';
+import { chromeHostAvailable, chromeHostState } from './chromeHost.js';
 import { access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -109,6 +109,13 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     return out;
   };
 
+  // Claude in Chrome 을 이 머신에서 열 수 있는가(`chromeHost.ts`). spawn 은 매번 새로 재고, 능력(hello·capabilities)은
+  // 하네스처럼 마지막 잰 값을 싣고 다시 잰다 — 화면이 「이 기계에 확장 없음」·「원격」을 배정된 기계 기준으로 보인다.
+  const chromeDeps = { appLaunched: deps.appLaunched === true, platform: process.platform, home: homedir(), exists };
+  const probeChromeHost = () => chromeHostAvailable(chromeDeps);
+  let chrome: ChromeHostState = await chromeHostState(chromeDeps).catch(() => 'no_extension' as const);
+  const refreshChrome = () => { void chromeHostState(chromeDeps).then((v) => { chrome = v; }, () => { chrome = 'no_extension'; }); };
+
   const runnerDeps = (community: { current: CommunityInstance | null }): AssignmentDeps => ({
     async spawn(agentId, env, runnerId) {
       const before = deps.registry.currentIncarnation(agentId);
@@ -132,10 +139,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     ...(deps.turnSecretsDir ? { turnSecretsDir: deps.turnSecretsDir } : {}),
     operatorBin: deps.operatorBin,
     commandHook: async () => (await readConfig(configPath)).commandHook === true,
-    chromeHost: () => chromeHostAvailable({
-      appLaunched: deps.appLaunched === true, platform: process.platform, home: homedir(),
-      exists: (p) => access(p).then(() => true, () => false),
-    }),
+    chromeHost: probeChromeHost,
     operatorOwnerId: () => community.current?.ownerAccountId() ?? Promise.resolve(null),
     async mcpConfig(definition) {
       const definitions = await readLocalMcpDefinitions({
@@ -188,6 +192,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
       runnerLink: deps.runnerLink, forwarder, fetchImpl: deps.fetchImpl,
       ...(deps.localTerminal ? { localTerminal: deps.localTerminal } : {}),
       harnesses: () => { refreshHarnesses(); return withModels(); },
+      chrome: () => { refreshChrome(); return chrome; },
       // 실패는 삼킨다 — 못 적어도 이 오퍼레이터는 그대로 돈다. 앱의 '이 기기' 기본값만 늦어진다.
       onSelf: (operatorId) => {
         void rememberOperatorId(configPath, baseUrl, operatorId)
