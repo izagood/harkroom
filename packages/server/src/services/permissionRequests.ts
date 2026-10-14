@@ -329,7 +329,7 @@ export async function decidePermissionRequest(
     /** 머지 거절 카드의 `approve_once` 일 때만 — 머지에 쓸 gh 계정과 CI 완화 여부. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
     once?: { ghUser: string; relaxChecks: boolean; number: number; headSha: string };
     /** 버튼이 아닌 길로 정했으면 그 길 — 소유자가 글로 승인했다(`chatApproval`). 카드 meta·감사 기록에 남는다. */
-    via?: { kind: 'chat'; messageId: string };
+    via?: { kind: 'chat'; messageId: string; target?: 'T1' | 'T2' | 'T3' };
   },
 ): Promise<({ ok: true; status: 'granted' | 'denied' | 'approved_once'; grantExpiresAt: string | null; approvalExpiresAt?: string; cardMessageId: string | null; grantMode?: 'once' | 'hour' }) | ({ ok: false } & DecideRefusal)> {
   const now = args.now ?? new Date();
@@ -437,7 +437,7 @@ export async function decidePermissionRequest(
       ...(row.kind === 'command' ? { threadRootId: row.threadRootId } : {}),
       ...(grantExpiresAt ? { grantExpiresAt: grantExpiresAt.toISOString() } : {}),
       ...(grantMode ? { grantMode, commandGrantId } : {}),
-      ...(args.via ? { via: args.via.kind, messageId: args.via.messageId } : {}),
+      ...(args.via ? { via: args.via.kind, messageId: args.via.messageId, ...(args.via.target ? { chatTarget: args.via.target } : {}) } : {}),
     },
   });
   if (grantExpiresAt && row.kind === 'command') {

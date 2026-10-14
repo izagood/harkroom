@@ -97,7 +97,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect(await status(requestId)).toBe('granted');
     const meta = await card(cardId);
     expect(meta.ask.answeredWith).toBe('approve');
-    expect(meta.permissionRequest.decidedVia).toEqual({ kind: 'chat', messageId: res.json().id });
+    expect(meta.permissionRequest.decidedVia).toEqual({ kind: 'chat', messageId: res.json().id, target: 'T2' });
     // 카드 답이 요청한 에이전트를 깨운다 — 버튼과 같은 `ask_answered`.
     expect((await pool.query(`select 1 from inbox where account_id = $1 and message_id = $2 and reason = 'ask_answered'`, [agentId, cardId])).rowCount).toBe(1);
     const lines = await systemLines(thread);
@@ -120,15 +120,60 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect(await systemLines(thread)).toHaveLength(0);
   });
 
-  it('링크 없는 다른 스레드 글은 승인하지 않고 안내만 남긴다', async () => {
+  /** T3 시험은 「소유자의 기다리는 요청 수」를 세므로 앞 시험이 남긴 요청을 먼저 만료시킨다. */
+  const expireAll = () => pool.query(`update permission_request set expires_at = now() - interval '1 second' where status = 'pending'`);
+
+  it('T3 — 카드 없는 다른 스레드의 맨 「승인」: 기다리는 요청이 하나뿐이면 그것을 승인하고 확인 줄을 단다', async () => {
+    await expireAll();
     const thread = await root();
-    const { requestId } = await ask(thread);
+    const { cardId, requestId } = await ask(thread);
     const elsewhere = await root(otherCh);
-    expect((await say(alice.token, '승인함', elsewhere, otherCh)).statusCode).toBe(201);
-    expect(await status(requestId)).toBe('pending');
+    const res = await say(alice.token, '승인함', elsewhere, otherCh);
+    expect(res.statusCode).toBe(201);
+    expect(await status(requestId)).toBe('granted');
+    expect((await card(cardId)).ask.answeredWith).toBe('approve');
     const lines = await systemLines(elsewhere);
     expect(lines).toHaveLength(1);
-    expect(lines[0]!.body).toContain('어느 권한 요청인지 몰라');
+    expect(lines[0]!.body).toContain('✓ sitebot');
+    expect(lines[0]!.body).toContain('거두려면');
+    const audit = (await pool.query(`select detail from audit_log where action = 'permission.approved' and detail->>'requestId' = $1`, [requestId])).rows[0].detail;
+    expect(audit).toMatchObject({ via: 'chat', messageId: res.json().id, chatTarget: 'T3' });
+  });
+
+  it('T3 — 기다리는 요청이 둘이면 승인하지 않고 후보 링크 목록만 남긴다', async () => {
+    await expireAll();
+    const a = await ask(await root()); const b = await ask(await root());
+    const elsewhere = await root(otherCh);
+    await say(alice.token, '승인', elsewhere, otherCh);
+    expect([await status(a.requestId), await status(b.requestId)]).toEqual(['pending', 'pending']);
+    const body = (await systemLines(elsewhere))[0]!.body;
+    expect(body).toContain('2개라');
+    expect(body).toContain(link(a.cardId));
+    expect(body).toContain(link(b.cardId));
+  });
+
+  it('T3 — 글보다 뒤에 생긴 요청은 대상이 아니다', async () => {
+    await expireAll();
+    const { cardId, requestId } = await ask(await root());
+    await pool.query(`update message set created_at = now() + interval '1 minute' where id = $1`, [cardId]);
+    const elsewhere = await root(otherCh);
+    await say(alice.token, '승인', elsewhere, otherCh);
+    expect(await status(requestId)).toBe('pending');
+    expect((await systemLines(elsewhere))[0]!.body).toContain('먼저 온 권한 요청이 없어');
+  });
+
+  it('T3 — 남의 에이전트 요청은 대상이 아니다', async () => {
+    await expireAll();
+    const { requestId } = await ask(await root());
+    await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agentId, bob.accountId]);
+    try {
+      const elsewhere = await root(otherCh);
+      await say(alice.token, '승인', elsewhere, otherCh);
+      expect(await status(requestId)).toBe('pending');
+      expect(await systemLines(elsewhere)).toHaveLength(0);
+    } finally {
+      await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agentId, alice.accountId]);
+    }
   });
 
   it('카드가 둘인 스레드의 맨 「승인」은 하나도 승인하지 않는다 — 링크를 붙이면 그 카드만', async () => {
@@ -137,6 +182,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     await say(alice.token, '승인', thread);
     expect([await status(a.requestId), await status(b.requestId)]).toEqual(['pending', 'pending']);
     expect((await systemLines(thread))[0]!.body).toContain('2장');
+    expect((await systemLines(thread))[0]!.body).toContain(link(a.cardId));
     await say(alice.token, `승인 ${link(b.cardId)}`, thread);
     expect([await status(a.requestId), await status(b.requestId)]).toEqual(['pending', 'granted']);
   });
@@ -163,7 +209,8 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     const thread = await root();
     const { cardId, requestId } = await ask(thread);
     const elsewhere = await root(otherCh);
-    const posted = await say(alice.token, '승인', elsewhere, otherCh);
+    // 처음엔 승인 꼴이 아닌 글 — 고쳐서 승인 꼴이 돼도 다시 판정하지 않는다.
+    const posted = await say(alice.token, '확인해 볼게', elsewhere, otherCh);
     const edit = await app.inject({
       method: 'PATCH', url: `/channels/${otherCh}/messages/${posted.json().id}`, headers: auth(alice.token), payload: { body: `승인 ${link(cardId)}` },
     });

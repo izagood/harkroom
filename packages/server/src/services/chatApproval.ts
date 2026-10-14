@@ -17,7 +17,8 @@ import { decidePermissionRequest, type PermissionDecision, type PermissionKind }
  * - 글 전체가 승인 낱말 하나 + (멘션·카드 링크) 뿐이어야 한다. 인용(`>`)·코드가 섞이면 보지 않는다. 문장 속 낱말로는
  *   판정하지 않으므로 「승인 말고 기다려」 같은 부정·의문은 처음부터 맞지 않는다. 거절은 글로 받지 않는다.
  * - 어느 요청인지는 **구조로만** 정한다: 본문의 `harkroom://message/<카드 id>` 링크(1~5개, 어느 채널이든), 링크가 없으면
- *   같은 스레드에 글보다 먼저 있던 열린 권한 카드가 딱 하나일 때 그 카드. 링크 없는 다른 스레드 글은 승인하지 않는다.
+ *   같은 스레드에 글보다 먼저 있던 열린 권한 카드가 딱 하나일 때 그 카드, 그 스레드에 권한 카드가 없으면 소유자의 에이전트들이 글보다
+ *   먼저 낸 기다리는 요청이 딱 하나일 때 그것(T3 — jaebin 이 경쟁 위험을 알고 골랐다, 카드 077fa790). 둘 이상이면 승인하지 않는다.
  * - 올린 순간의 본문만 본다(수정은 다시 판정하지 않는다). 승인했으면 글 아래에 요청 행에서 그린 확인 줄을, 승인 낱말인데
  *   어느 요청인지 몰랐으면 그렇다는 안내 줄을 단다 — 조용히 넘기지 않는다(사례 ①).
  */
@@ -34,6 +35,8 @@ const MESSAGE_LINK = new RegExp(`harkroom://message/(${UUID})`, 'gi');
 const MD_MESSAGE_LINK = new RegExp(`\\[[^\\]\\n]{0,200}\\]\\(\\s*harkroom://message/(${UUID})\\s*\\)`, 'gi');
 
 export type ChatApprovalParse = { cardIds: string[] };
+/** 어떻게 가리켰나 — T1 카드 링크 · T2 카드 스레드 안의 맨 글 · T3 카드 없는 스레드의 맨 글(소유자 요청이 하나뿐). 감사에 남는다. */
+export type ChatTarget = 'T1' | 'T2' | 'T3';
 
 /**
  * 본문이 「명시적 승인」 꼴인가. 아니면 null. 맞으면 본문에서 뽑은 카드 id(중복 제거, 순서 유지)를 준다 — 빈 배열이면 링크 없는 승인.
@@ -92,6 +95,7 @@ export async function applyChatApproval(pool: Pool, message: MessageRow): Promis
 async function approveFromMessage(pool: Pool, message: MessageRow, actorId: string, parsed: ChatApprovalParse): Promise<void> {
   const threadRootId = message.threadRootId ?? message.id;
   let targets: Candidate[];
+  let target: ChatTarget = 'T1';
   if (parsed.cardIds.length > 0) {
     if (parsed.cardIds.length > CHAT_APPROVAL_MAX_CARDS) {
       await notice(pool, message, actorId, `한 글로는 권한 카드를 ${CHAT_APPROVAL_MAX_CARDS}장까지 승인한다 — 아무것도 승인하지 않았다. 나눠서 다시 써라.`);
@@ -107,32 +111,52 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
       return;
     }
   } else {
-    // 링크 없는 승인은 그 카드의 스레드 안에서만 — 글보다 먼저 있던 열린 권한 카드가 딱 하나일 때.
+    // T2 — 글이 권한 카드의 스레드 안이면 그 스레드만 본다: 글보다 먼저 있던 열린 권한 카드가 딱 하나일 때.
     const open = (await pool.query<Candidate>(
       `${CANDIDATE_SQL}
         where m.channel_id = $1 and (m.id = $2 or m.thread_root_id = $2) and m.seq < $3
-          and p.status = 'pending' and p.expires_at > now()`,
+          and p.status = 'pending' and p.expires_at > now()
+        order by m.seq`,
       [message.channelId, threadRootId, message.seq])).rows;
-    if (open.length !== 1) {
-      if (open.length > 1) {
-        await notice(pool, message, actorId, `이 스레드에 기다리는 권한 카드가 ${open.length}장이라 어느 것인지 몰라 승인하지 않았다. 승인할 카드의 링크를 붙여 다시 써라.`);
-      } else if (await ownsPendingRequest(pool, actorId)) {
-        await notice(pool, message, actorId, '어느 권한 요청인지 몰라 승인하지 않았다. 다른 스레드에서는 승인할 카드의 링크(harkroom://message/…)를 붙여 다시 써라.');
-      }
+    if (open.length > 1) {
+      // 남의 카드만 있는 스레드에서 쓴 「승인」에는 안내를 달지 않는다 — 그 사람이 정할 수 있는 카드가 아니다.
+      if (open.some((c) => c.ownerAccountId === actorId)) await notice(pool, message, actorId, `이 스레드에 기다리는 권한 카드가 ${open.length}장이라 어느 것인지 몰라 승인하지 않았다. 승인할 카드의 링크를 붙여 다시 써라:`, open);
       return;
     }
-    targets = open;
+    if (open.length === 1) {
+      targets = open;
+      target = 'T2';
+    } else {
+      // T3 — 권한 카드가 없는 스레드의 맨 글(jaebin 카드 077fa790: 「맨 글도 인정, 경쟁 위험 감수」). 이 소유자의 에이전트들이 낸
+      // 요청 가운데 글보다 먼저 생기고 아직 기다리는 것이 **정확히 하나**일 때만. 머지 거절 카드·볼 수 없는 채널의 요청도 후보로 세고
+      // (그래야 「하나뿐」이 거짓이 되지 않는다) 결정 단계에서 거절한다.
+      const mine = (await pool.query<Candidate>(
+        `${CANDIDATE_SQL}
+          where c.owner_account_id = $1 and p.status = 'pending' and p.expires_at > now() and m.created_at < $2
+          order by m.created_at`,
+        [actorId, message.createdAt])).rows;
+      if (mine.length !== 1) {
+        if (mine.length > 1) {
+          await notice(pool, message, actorId, `기다리는 권한 요청이 ${mine.length}개라 어느 것인지 몰라 승인하지 않았다. 승인할 카드의 링크를 붙여 다시 써라:`, mine);
+        } else if (await ownsPendingRequest(pool, actorId)) {
+          await notice(pool, message, actorId, '이 글보다 먼저 온 권한 요청이 없어 승인하지 않았다. 승인할 카드의 링크(harkroom://message/…)를 붙여 다시 써라.');
+        }
+        return;
+      }
+      targets = mine;
+      target = 'T3';
+    }
   }
 
   const outcomes: Outcome[] = [];
-  for (const c of targets) outcomes.push(await decideOne(pool, message, actorId, c));
+  for (const c of targets) outcomes.push(await decideOne(pool, message, actorId, c, target));
   // 이 사람의 것이 아닌 카드만 링크했으면 아무 줄도 남기지 않는다 — 남의 에이전트 요청을 글로 들춰 보이지 않는다.
   const mine = outcomes.filter((o) => o.c.ownerAccountId === actorId);
   if (mine.length === 0) return;
   await confirm(pool, message, actorId, mine);
 }
 
-async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Candidate): Promise<Outcome> {
+async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Candidate, target: ChatTarget): Promise<Outcome> {
   if (c.ownerAccountId !== actorId) return { c, ok: false, why: '이 에이전트의 소유자가 아니다' };
   if (!(await assertChannelVisible(pool, c.channelId, actorId))) return { c, ok: false, why: '그 카드의 채널을 볼 수 없다' };
   // 카드가 글보다 먼저 있었어야 한다 — 같은 채널이면 seq, 다른 채널이면 시각으로 본다.
@@ -145,7 +169,7 @@ async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Ca
   // 정확한 명령은 가장 좁게 — 이번 한 번만. 1시간은 카드 버튼에서만 준다.
   const decision: PermissionDecision = c.kind === 'command' ? 'approve_once' : 'approve';
   const d = await decidePermissionRequest(pool, {
-    agentId: c.agentId, requestId: c.requestId, actorId, decision, via: { kind: 'chat', messageId: message.id },
+    agentId: c.agentId, requestId: c.requestId, actorId, decision, via: { kind: 'chat', messageId: message.id, target },
   });
   if (!d.ok) return { c, ok: false, why: d.message };
   return { c, ok: true, grantExpiresAt: d.grantExpiresAt, ...(d.grantMode ? { grantMode: d.grantMode } : {}) };
@@ -180,8 +204,13 @@ async function confirm(pool: Pool, message: MessageRow, actorId: string, outcome
   });
 }
 
-async function notice(pool: Pool, message: MessageRow, actorId: string, text: string): Promise<void> {
-  await post(pool, message, actorId, `⚠️ ${text}`, { chatApproval: { messageId: message.id, results: [] } });
+async function notice(pool: Pool, message: MessageRow, actorId: string, text: string, candidates: Candidate[] = []): Promise<void> {
+  // 후보 목록은 링크로 싣는다 — 소유자가 「승인 <링크>」로 바로 풀 수 있게. 규칙·채널은 요청 행에서 그린다.
+  const list = candidates.slice(0, 10).map((c) => `\n- ${plain(c.agentHandle)} · \`${plain(c.target)}\` · #${plain(c.channelName ?? '?')} — harkroom://message/${c.cardMessageId}`).join('');
+  const more = candidates.length > 10 ? `\n- …그 밖 ${candidates.length - 10}개` : '';
+  await post(pool, message, actorId, `⚠️ ${text}${list}${more}`, {
+    chatApproval: { messageId: message.id, results: [], candidates: candidates.slice(0, 10).map((c) => c.cardMessageId) },
+  });
 }
 
 async function post(pool: Pool, message: MessageRow, actorId: string, body: string, meta: Record<string, unknown>): Promise<void> {
