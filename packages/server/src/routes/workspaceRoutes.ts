@@ -39,7 +39,8 @@ export async function registerWorkspaceRoutes(
           error: { code: 'not_found', message: 'no unattached upload of yours with that id' },
         });
       }
-      const detected = await detectAvatarType(storage, source);
+      // 아이콘은 데스크톱 레일만 그린다 — 원본과 같은 넉넉한 상한.
+      const detected = await detectAvatarType(storage, source, 'original');
       if (!detected.type) return reply.code(400).send({ error: detected.error });
       await setWorkspaceIcon(pool, { attachmentId: source.id, contentType: detected.type });
     } else {

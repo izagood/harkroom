@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
-import { looksLikeSvg, startsLikeSvg, SVG_MAX_BYTES } from '../src/services/avatars.js';
+import sharp from 'sharp';
+import { AVATAR_PIXEL_LIMITS, looksLikeSvg, startsLikeSvg, SVG_MAX_BYTES } from '../src/services/avatars.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -23,11 +24,11 @@ let storageRoot: string;
 let bigApp: FastifyInstance;
 let bigStorageRoot: string;
 
-/** 진짜 PNG 시그니처(8바이트) + 뒤를 채우는 바이트. 판정은 앞 12바이트만 본다. */
-const PNG = Buffer.concat([
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-  Buffer.alloc(64, 7),
-]);
+/** 진짜 1×1 PNG. 크기 상한(헤더로 가로·세로를 읽는다)을 지나려면 libvips 가 읽을 수 있는 그림이어야 한다. */
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
 /** 이미지가 아닌 파일. `<script>` 를 담은 HTML 이 아바타로 전원에게 서빙되면 안 된다. */
 const HTML = Buffer.from('<html><script>alert(1)</script></html>');
 /** 그리기 도구가 내놓는 모양 그대로 — XML 선언이 앞에 붙는다. */
@@ -411,6 +412,50 @@ describe('에이전트 아바타 (Task 15-4)', () => {
  * 여기서 막는 것들은 **각각 다른 이유로** 막는 것이라 하나씩 세워 두어야 나중에 누가
  * 정규식을 손댈 때 무엇이 깨졌는지 보인다.
  */
+describe('가로·세로 상한 (사진 후속 ① · security n6)', () => {
+  /** 한 색 PNG — 압축이 잘 돼서 파일은 작은데 풀면 크다(압축 폭탄의 모양). */
+  const solid = (width: number, height: number) =>
+    sharp({ create: { width, height, channels: 3, background: '#888' } }).png().toBuffer();
+
+  it('한 변이 상한을 넘는 아바타는 파일이 작아도 거절하고, 걸지 않는다', async () => {
+    const wide = await solid(AVATAR_PIXEL_LIMITS.avatar.maxSide + 1, 4);
+    expect(wide.length).toBeLessThan(4096); // 업로드 상한(4KiB) 안 — 바이트로는 못 막는다.
+    const before = (await meView(adminToken)).avatarAttachmentId;
+    const id = await upload(adminToken, 'wide.png', wide, 'image/png');
+    const res = await setAvatar(adminToken, { attachmentId: id });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('image_dimensions_too_large');
+    expect((await meView(adminToken)).avatarAttachmentId).toBe(before);
+  });
+
+  it('상한 안의 그림은 지난다 — 경계값', async () => {
+    const edge = await solid(AVATAR_PIXEL_LIMITS.avatar.maxSide, 1);
+    const id = await upload(adminToken, 'edge.png', edge, 'image/png');
+    expect((await setAvatar(adminToken, { attachmentId: id })).statusCode).toBe(200);
+  });
+
+  it('원본(사진 맞추기)은 넉넉한 상한이라 큰 폰 사진 크기도 지나고, 그보다 크면 막는다', async () => {
+    const cropped = await upload(adminToken, 'c.png', PNG, 'image/png');
+    const phone = await upload(adminToken, 'phone.png', await solid(8064, 2), 'image/png');
+    const ok = await setAvatar(adminToken, { attachmentId: cropped, source: { attachmentId: phone, crop: { x: 0, y: 0, size: 1 } } });
+    expect(ok.statusCode).toBe(200);
+
+    const cropped2 = await upload(adminToken, 'c2.png', PNG, 'image/png');
+    const huge = await upload(adminToken, 'huge.png', await solid(AVATAR_PIXEL_LIMITS.original.maxSide + 1, 1), 'image/png');
+    const bad = await setAvatar(adminToken, { attachmentId: cropped2, source: { attachmentId: huge, crop: { x: 0, y: 0, size: 1 } } });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error.code).toBe('image_dimensions_too_large');
+  });
+
+  it('매직 바이트만 그림이고 헤더가 깨진 파일은 크기를 모르니 받지 않는다', async () => {
+    const fake = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 7)]);
+    const id = await upload(adminToken, 'fake.png', fake, 'image/png');
+    const res = await setAvatar(adminToken, { attachmentId: id });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('not_an_image');
+  });
+});
+
 describe('looksLikeSvg', () => {
   const svg = (inner: string) => Buffer.from(inner);
 

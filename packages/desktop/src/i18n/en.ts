@@ -474,6 +474,7 @@ export const en = {
   'attachment.fetchFailed': 'The attachment could not be loaded',
   'attachment.missing': 'The attachment is not on the server',
 
+  'avatar.error.dimensionsTooLarge': 'The image resolution is too high. Shrink it, or upload it again through Adjust photo.',
   'avatar.error.notAnImage': '{formats} files only. We judge by content, not by the file name.',
   'avatar.error.notFound': 'The uploaded file was not found. Try again.',
   /** 서버가 코드까지 준 경우. 알 수 없는 코드가 와도 **그 코드를 그대로 보여 준다.** */

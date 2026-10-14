@@ -1,4 +1,5 @@
 import type { AvatarCrop } from '@harkroom/shared';
+import sharp from 'sharp';
 import type { Pool } from 'pg';
 import type { StorageBackend } from '../storage/local.js';
 
@@ -118,7 +119,59 @@ export function startsLikeSvg(bytes: Buffer): boolean {
  */
 export type AvatarTypeResult =
   | { type: string; error?: undefined }
-  | { type: null; error: { code: 'not_an_image' | 'svg_too_large'; message: string } };
+  | { type: null; error: { code: 'not_an_image' | 'svg_too_large' | 'image_dimensions_too_large'; message: string } };
+
+/**
+ * 래스터 그림의 **가로·세로 상한**(security n6 — 사진 작업 후속 ①). 파일 크기 상한만으로는 부족하다: 작게 압축된
+ * PNG 가 수만 × 수만 픽셀로 풀릴 수 있고(압축 폭탄), 아바타는 그 사람이 나오는 **모든 화면·모든 기기**가 푼다.
+ * 모바일은 디코드를 그릴 크기로 줄이지만(#1360) 엔진이 원본 해상도로 한 번 풀었다가 줄일 수 있어, 근본 고침은 여기다.
+ *
+ * - `avatar`: 걸리는 아바타. 4096 한 변·16.7M 픽셀(=4096²). 데스크톱 사진 맞추기(#1358)는 512 로 잘라 올리니
+ *   새 앱은 늘 지나고, 12MP 폰 사진(4032×3024)도 그대로 지난다.
+ * - `original`: 사진 맞추기 원본·워크스페이스 아이콘. 다시 맞출 때·설정 화면에서만 데스크톱이 푼다. 48MP 폰
+ *   사진(8064×6048)이 지나게 16384 한 변·64M 픽셀로 넉넉히 둔다 — 원본이 거절되면 아바타 저장 전체가 실패한다.
+ *
+ * 픽셀 수는 **장 수까지 곱한다**(움직이는 GIF·WebP 는 장마다 푼다).
+ */
+export const AVATAR_PIXEL_LIMITS = {
+  avatar: { maxSide: 4096, maxPixels: 4096 * 4096 },
+  original: { maxSide: 16384, maxPixels: 8192 * 8192 },
+} as const;
+export type AvatarPurpose = keyof typeof AVATAR_PIXEL_LIMITS;
+
+/** 크기를 재려고 올리는 바이트의 상한. 업로드 상한보다 넉넉하다 — 넘는 파일은 애초에 업로드되지 않는다. */
+const DIMENSION_READ_MAX_BYTES = 64 * 1024 * 1024;
+
+/**
+ * 래스터의 가로·세로·장 수를 **헤더로** 읽어 상한과 견준다. `metadata()` 는 픽셀을 풀지 않는다
+ * (`mcp/imageDownscale.ts` 와 같은 쓰임). 크기를 읽지 못하면 거절한다 — 모르는 크기를 모든 기기에 내려보내지 않는다.
+ */
+async function checkRasterDimensions(
+  storage: StorageBackend, source: { storageKey: string; sizeBytes: number }, purpose: AvatarPurpose,
+): Promise<AvatarTypeResult['error'] | null> {
+  const limits = AVATAR_PIXEL_LIMITS[purpose];
+  const tooLarge = (detail: string) => ({
+    code: 'image_dimensions_too_large' as const,
+    message: `image is ${detail}; at most ${limits.maxSide}px per side and ${limits.maxPixels} pixels`,
+  });
+  try {
+    const bytes = await readHead(storage, source.storageKey, Math.min(source.sizeBytes, DIMENSION_READ_MAX_BYTES));
+    // limitInputPixels 는 metadata 에는 걸리지 않지만, 혹시 풀게 되는 길이 생겨도 상한 위로는 못 풀게 함께 준다.
+    const meta = await sharp(bytes, { limitInputPixels: limits.maxPixels, animated: true }).metadata();
+    const width = meta.width ?? 0;
+    // animated 로 읽으면 height 는 모든 장을 이어 붙인 높이다 — 한 장의 높이는 pageHeight.
+    const pages = meta.pages ?? 1;
+    const height = meta.pageHeight ?? meta.height ?? 0;
+    if (!width || !height) return tooLarge('of unknown size');
+    if (width > limits.maxSide || height > limits.maxSide || width * height * pages > limits.maxPixels) {
+      return tooLarge(`${width}x${height}${pages > 1 ? ` x ${pages} frames` : ''}`);
+    }
+    return null;
+  } catch {
+    // 매직 바이트는 그림인데 libvips 가 헤더를 못 읽는다 — 깨진 파일이다. 크기를 모르니 받지 않는다.
+    return { code: 'not_an_image', message: NOT_AN_IMAGE.error!.message };
+  }
+}
 
 /** 받아 주는 목록을 적어 둔다 — 목록이 바뀌었을 때 제일 먼저 눈에 띄는 자리다. */
 const NOT_AN_IMAGE: AvatarTypeResult = {
@@ -145,6 +198,8 @@ const SVG_PROBE_BYTES = 4096;
  */
 export async function detectAvatarType(
   storage: StorageBackend, source: { storageKey: string; sizeBytes: number },
+  /** 어디에 거는가 — 가로·세로 상한이 갈린다(`AVATAR_PIXEL_LIMITS`). SVG 는 벡터라 재지 않는다. */
+  purpose: AvatarPurpose = 'avatar',
 ): Promise<AvatarTypeResult> {
   // 상한을 넘는 파일은 SVG 로 받지 않는다. 앞부분만 읽고 통과시키면 뒤쪽에 무엇이 있는지
   // 모른 채 받아 주는 셈이다 — 대신 앞부분으로 **거절 이유**만 가른다.
@@ -152,7 +207,10 @@ export async function detectAvatarType(
   const want = oversize ? SVG_PROBE_BYTES : Math.max(source.sizeBytes, IMAGE_HEAD_BYTES);
   const bytes = await readHead(storage, source.storageKey, want);
   const binary = sniffImageType(bytes);
-  if (binary) return { type: binary };
+  if (binary) {
+    const error = await checkRasterDimensions(storage, source, purpose);
+    return error ? { type: null, error } : { type: binary };
+  }
   if (oversize) return startsLikeSvg(bytes) ? SVG_TOO_LARGE : NOT_AN_IMAGE;
   return looksLikeSvg(bytes) ? { type: 'image/svg+xml' } : NOT_AN_IMAGE;
 }
