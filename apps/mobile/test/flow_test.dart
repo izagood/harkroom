@@ -282,6 +282,9 @@ void main() {
   });
 
   testWidgets('보관된 세션으로 켜면 채널 목록이 뜨고, 채널을 열어 말을 보낸다', (tester) async {
+    // 탭 바가 채널 안에서도 남는다 — 600 높이에서는 맨 위 「채널 시작」 줄이 화면 밖으로 밀린다.
+    tester.view.physicalSize = const Size(2400, 2400);
+    addTearDown(tester.view.resetPhysicalSize);
     final state = _state();
     await tester.pumpWidget(HarkroomApp(state: state));
     await tester.pumpAndSettle();

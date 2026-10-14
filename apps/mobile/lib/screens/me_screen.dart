@@ -23,6 +23,7 @@ import '../push/push_platform.dart';
 /// [opener] 는 시트를 연 쪽의 context 다 — 시트를 닫은 뒤 [모두 로그아웃] 확인을 그 위에 연다.
 Future<void> openMeSheet(BuildContext opener) => showModalBottomSheet<void>(
       context: opener,
+      useRootNavigator: true,
       isScrollControlled: true,
       showDragHandle: true,
       useSafeArea: true,
@@ -64,6 +65,7 @@ class MeSheetBody extends StatelessWidget {
     final app = AppScope.read(at);
     final ok = await showModalBottomSheet<bool>(
       context: at,
+      useRootNavigator: true,
       builder: (ctx) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),

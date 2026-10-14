@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
@@ -13,12 +14,14 @@ import 'message_list_screen.dart';
 import 'thread_screen.dart';
 import 'inbox_screen.dart';
 import 'search_screen.dart';
+import 'tab_nav.dart';
 import '../ui/tokens.dart';
 
 /// 폰의 루트 — **탭 넷**(개정판 3.1: 홈 · DM · 인박스 · 에이전트). 「나」 는 머리의 프로필 사진이다.
 ///
 /// 데스크탑의 3컬럼(레일·사이드바·채널)을 접지 않는다. 접으면 셋 다 좁아진다.
-/// 폰에서는 한 번에 하나를 보고, 채널 → 스레드는 **화면을 밀어 넣어** 연다.
+/// 폰에서는 한 번에 하나를 보고, 채널 → 스레드는 **그 탭의 쌓기에 밀어 넣어** 연다 — 탭 바는 채널·스레드
+/// 안에서도 남는다([TabNavigators], 하단 네비 고정 D2).
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -30,9 +33,17 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 다른 커뮤니티의 수를 받는 시계(D5). 홈이 떠 있는 동안만 돈다.
   Timer? _others;
 
+  /// 탭마다 자기 화면 쌓기. 홈이 사라지면(커뮤니티 전환은 부팅 화면을 거친다) 함께 사라진다 —
+  /// 앞 커뮤니티의 채널·스레드가 새 커뮤니티의 탭에 남지 않는다.
+  final _tabs = TabNavigators();
+
   @override
   void initState() {
     super.initState();
+    TabNavigators.active = _tabs;
+    for (var i = 0; i < TabNavigators.count; i++) {
+      _tabs.barHidden(i).addListener(_onBarHidden);
+    }
     final app = AppScope.read(context);
     _others = Timer.periodic(app.otherPollEvery, (_) => app.refreshOtherCounts());
   }
@@ -40,8 +51,56 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _others?.cancel();
+    if (identical(TabNavigators.active, _tabs)) TabNavigators.active = null;
+    _tabs.dispose();
     super.dispose();
   }
+
+  void _onBarHidden() {
+    if (!mounted) return;
+    // 경로는 Navigator 의 build 안에서도 바뀐다 — 그때는 다음 프레임에 다시 그린다.
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    } else {
+      setState(() {});
+    }
+  }
+
+  /// 탭을 누른다. 다른 탭이면 옮기기만(그 탭에서 보던 화면이 그대로 있다). **지금 탭을 다시 누르면**
+  /// 뿌리로 돌아가고, 이미 뿌리면 맨 위로 굴린다(D4 — 탭 바가 늘 떠 있으니 「목록으로」 가 이 한 번이다).
+  void _select(int i) {
+    final app = AppScope.read(context);
+    if (i != app.homeTab) {
+      app.selectTab(i);
+      return;
+    }
+    final nav = _tabs.navigator(i);
+    if (nav != null && nav.canPop()) {
+      nav.popUntil((r) => r.isFirst);
+      return;
+    }
+    final scroll = _tabs.scrolls[i];
+    if (scroll.hasClients) {
+      scroll.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut).ignore();
+    }
+  }
+
+  Widget _tabNavigator(int i, Widget root, int selected) => NavigatorPopHandler(
+        // 안드로이드 뒤로는 **보고 있는 탭**의 쌓기를 먼저 뺀다. 뿌리면 앱이 받는다.
+        enabled: i == selected,
+        onPopWithResult: (_) => _tabs.navigator(i)?.maybePop(),
+        child: Navigator(
+          key: _tabs.keys[i],
+          observers: [_tabs.observers[i]],
+          onGenerateRoute: (settings) => MaterialPageRoute<void>(
+            settings: settings,
+            // 맨 위로 굴리기(D4)는 **뿌리 화면의 목록**만 집는다 — 쌓기 위 채널·스레드 목록은 제 손잡이를 쓴다.
+            builder: (_) => PrimaryScrollController(controller: _tabs.scrolls[i], child: root),
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -56,48 +115,56 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     // 탭은 [AppState.homeTab] 이 쥔다 — 커뮤니티를 옮기며 부팅 화면을 거쳐도 살아남게.
     final tab = app.homeTab.clamp(0, 3);
+    // 키보드가 올라오면 탭 바는 키보드 뒤로 숨고 입력창만 키보드 위에 남는다(D2). 내리면 같은 프레임에 돌아온다.
+    // 찾기처럼 탭 바를 숨기는 화면이 이 탭 맨 위에 있어도 숨긴다.
+    final hideBar = MediaQuery.viewInsetsOf(context).bottom > 0 || _tabs.barHidden(tab).value;
 
     return Scaffold(
       // 떠 있는 막대 뒤로 목록이 흐르게 — 막대가 내용을 가리지 않도록 몸통 아래에 막대 높이만큼 비운다.
+      // 그 높이는 MediaQuery 의 아래 여백으로 쌓기 안 화면까지 내려간다 — 채널·스레드의 입력창이 막대 위에 선다.
       extendBody: true,
-      // 새 메시지는 홈·DM 에서만(S5c). 막대 위에 선다 — Scaffold 가 bottomNavigationBar 위로 올린다.
-      floatingActionButton: tab <= 1 ? const NewMessageButton() : null,
+      // 키보드는 **안쪽** 화면(채널·스레드의 Scaffold)이 비킨다. 여기서도 비키면 두 번 줄어든다.
+      resizeToAvoidBottomInset: false,
       body: IndexedStack(
         index: tab,
         // **`IndexedStack` 이다.** 탭을 옮길 때마다 화면을 새로 만들면 스크롤 위치와
         // 치던 글이 사라진다 — 채널을 보다 받은 것을 확인하고 돌아오는 것이 이 앱에서
-        // 가장 흔한 동작이다.
-        children: const [
-          ChannelListScreen(),
-          ChannelListScreen(dms: true),
-          InboxScreen(),
-          AgentsScreen(),
+        // 가장 흔한 동작이다. 탭마다 제 쌓기가 있어서 보던 채널·스레드도 남는다.
+        children: [
+          _tabNavigator(0, const ChannelListScreen(), tab),
+          _tabNavigator(1, const ChannelListScreen(dms: true), tab),
+          _tabNavigator(2, const InboxScreen(), tab),
+          _tabNavigator(3, const AgentsScreen(), tab),
         ],
       ),
       // 개정판 3.1: 떠 있는 둥근 막대에 탭 넷 + 오른쪽 둥근 찾기 버튼. 찾기 버튼은 어느 탭에서나
       // 같은 자리에 서고 **전체** 범위로 연다(채널·스레드 범위는 그 화면 머리의 돋보기).
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.only(bottom: 8),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-          child: Row(children: [
-            Expanded(child: FloatingTabBar(
-            selected: tab,
-            onSelect: app.selectTab,
-            items: [
-              TabItem(key: const Key('tab-home'), icon: Icons.home_outlined, selectedIcon: Icons.home, label: t.tabHome),
-              TabItem(key: const Key('tab-dms'), icon: Icons.mail_outline, selectedIcon: Icons.mail, label: t.tabDms, badge: dmUnread),
-              // 안 본 것이 **0 이면 배지를 그리지 않는다** — 빈 배지는 "뭔가 있다"는 거짓 신호다.
-              // 고른 탭에서도 수를 보인다(designer #976 판정 ②).
-              TabItem(key: const Key('tab-inbox'), icon: Icons.inbox_outlined, selectedIcon: Icons.inbox, label: t.tabInbox, badge: unread),
-              TabItem(key: const Key('tab-agents'), icon: Icons.smart_toy_outlined, selectedIcon: Icons.smart_toy, label: t.tabAgents),
-            ],
-            )),
-            const SizedBox(width: 8),
-            const FloatingSearchButton(),
-          ]),
-        ),
-      ),
+      bottomNavigationBar: hideBar
+          ? null
+          : SafeArea(
+              key: const Key('home-tab-bar'),
+              minimum: const EdgeInsets.only(bottom: 8),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                child: Row(children: [
+                  Expanded(
+                      child: FloatingTabBar(
+                    selected: tab,
+                    onSelect: _select,
+                    items: [
+                      TabItem(key: const Key('tab-home'), icon: Icons.home_outlined, selectedIcon: Icons.home, label: t.tabHome),
+                      TabItem(key: const Key('tab-dms'), icon: Icons.mail_outline, selectedIcon: Icons.mail, label: t.tabDms, badge: dmUnread),
+                      // 안 본 것이 **0 이면 배지를 그리지 않는다** — 빈 배지는 "뭔가 있다"는 거짓 신호다.
+                      // 고른 탭에서도 수를 보인다(designer #976 판정 ②).
+                      TabItem(key: const Key('tab-inbox'), icon: Icons.inbox_outlined, selectedIcon: Icons.inbox, label: t.tabInbox, badge: unread),
+                      TabItem(key: const Key('tab-agents'), icon: Icons.smart_toy_outlined, selectedIcon: Icons.smart_toy, label: t.tabAgents),
+                    ],
+                  )),
+                  const SizedBox(width: 8),
+                  const FloatingSearchButton(),
+                ]),
+              ),
+            ),
     );
   }
 }
@@ -247,13 +314,15 @@ class AgentsScreen extends StatelessWidget {
     }
 
     Future<void> open(String channelId, String? rootId) async {
-      final nav = Navigator.of(context);
       await app.openChannel(channelId);
-      await nav.push(MaterialPageRoute<void>(
-        builder: (_) => rootId == null
+      if (!context.mounted) return;
+      await openChannelScreen(
+        context,
+        channelId,
+        (_) => rootId == null
             ? MessageListScreen(channelId: channelId)
             : ThreadScreen(channelId: channelId, rootId: rootId),
-      ));
+      );
     }
 
     final Widget body;

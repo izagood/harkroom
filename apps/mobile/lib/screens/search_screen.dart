@@ -15,6 +15,7 @@ import 'channel_list_screen.dart';
 import 'message_link.dart';
 import 'message_list_screen.dart';
 import 'message_tile.dart';
+import 'tab_nav.dart';
 
 /// 찾기의 범위. **연 자리가 정한다**(designer 찾기 안 F1): 탭 막대 버튼 = 전체, 채널 머리 = 이
 /// 채널, 스레드 머리 = 이 스레드. 데스크톱 `SearchPalette` 의 ⌘K·⌘F 와 같은 물음이다.
@@ -28,9 +29,9 @@ Future<void> openSearch(
   String? channelId,
   String? threadRootId,
 }) =>
-    Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => SearchScreen(initialScope: scope, channelId: channelId, threadRootId: threadRootId),
-    ));
+    // 찾기는 탭 바를 숨기는 전체 화면이다(하단 네비 숨김 규칙). 지금 탭 쌓기에 올린다 — 결과로 연
+    // 스레드에서 뒤로 오면 결과가 남는다.
+    pushBarless<void>(context, (_) => SearchScreen(initialScope: scope, channelId: channelId, threadRootId: threadRootId));
 
 /// 탭 막대·머리에 다는 돋보기. 열쇠는 시험과 VoiceOver 가 찾는 자리다.
 class SearchButton extends StatelessWidget {
@@ -496,7 +497,8 @@ class _SearchScreenState extends State<SearchScreen> {
             subtitle: c.isDm ? Text(context.t.tabDms) : null,
             onTap: () {
               context.app.openChannel(c.id);
-              Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => MessageListScreen(channelId: c.id)));
+              // 찾기 위에 쌓는다 — 채널 안에서는 탭 바가 돌아오고, 뒤로 오면 찾기가 남는다.
+              openChannelScreen(context, c.id, (_) => MessageListScreen(channelId: c.id));
             },
           )
         else

@@ -364,7 +364,13 @@ class StringsKo implements Strings {
   @override
   String get savedUnavailable => '이 채널을 볼 수 없어 내용을 보여 줄 수 없다';
   @override
-  String get newMessage => '새 메시지';
+  String get newDm => '새 DM';
+  @override
+  String get newDmStart => '사람 골라 DM 시작';
+  @override
+  String get newDmFilter => '이름으로 찾기';
+  @override
+  String get newDmNoMatch => '맞는 사람이 없다.';
   @override
   String get newMessagePeople => '사람';
   @override

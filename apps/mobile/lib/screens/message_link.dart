@@ -6,6 +6,7 @@ import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
 import '../ui/states.dart';
 import 'thread_screen.dart';
+import 'tab_nav.dart';
 
 /// 본문의 `harkroom://message/<id>` 를 눌렀을 때 **앱 안에서** 그 메시지로 간다.
 ///
@@ -69,12 +70,12 @@ Future<void> _openRow(BuildContext context, NavigatorState navigator, MessageRow
   final app = AppScope.read(context);
   await app.openChannel(row.channelId);
   if (!context.mounted) return;
-  await navigator.push(MaterialPageRoute<void>(
-    builder: (_) => ThreadScreen(
+  // 탭 안(스레드의 링크)이면 그 탭에, 찾기 화면이면 찾기를 걷고 그 채널의 탭에 민다.
+  await openChannelScreen(context, row.channelId, navigator: navigator, (_) => ThreadScreen(
       channelId: row.channelId,
       rootId: row.threadRootId ?? row.id,
       highlightId: highlight ? row.id : null,
       highlightSeq: highlight ? row.seq : null,
     ),
-  ));
+  );
 }

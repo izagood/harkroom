@@ -539,6 +539,7 @@ Future<ModelSheetResult?> showAgentModelSheet(
   bool clearsThread = false,
 }) => showModalBottomSheet<ModelSheetResult>(
   context: context,
+  useRootNavigator: true,
   isScrollControlled: true,
   showDragHandle: true,
   builder: (_) => _ModelSheet(

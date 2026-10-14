@@ -8,6 +8,7 @@ import '../screens/thread_screen.dart';
 import '../state/app_scope.dart';
 import 'push_coordinator.dart';
 import 'push_platform.dart';
+import '../screens/tab_nav.dart';
 
 /// 준비된 앱(홈) 위에 서서 푸시의 화면 일을 한다.
 /// - 첫 로그인 뒤 **한 번** 안내 시트를 띄운다(결정 7). OS 권한 창은 사람이 [켜기]를 누를 때만 뜬다
@@ -47,7 +48,9 @@ class _PushGateState extends State<PushGate> {
   }
 
   void _popToHome() {
-    if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    if (!mounted) return;
+    Navigator.of(context).popUntil((r) => r.isFirst);
+    TabNavigators.active?.popAll();
   }
 
   Future<void> _maybePrompt(PushCoordinator push) async {
@@ -60,6 +63,7 @@ class _PushGateState extends State<PushGate> {
     if (!mounted) return;
     final enable = await showModalBottomSheet<bool>(
       context: context,
+      useRootNavigator: true,
       showDragHandle: true,
       builder: (context) => const _PushPromptSheet(),
     );
@@ -78,11 +82,15 @@ class _PushGateState extends State<PushGate> {
     final app = context.app;
     unawaited(app.openChannel(target.channelId));
     final root = target.threadRootId;
-    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => root == null
+    // 홈 **위**에서 부른다 — 루트를 걷고 그 채널이 사는 탭(DM·홈)을 골라 그 쌓기에 민다.
+    unawaited(openChannelScreen(
+      context,
+      target.channelId,
+      navigator: Navigator.of(context),
+      (_) => root == null
           ? MessageListScreen(channelId: target.channelId)
           : ThreadScreen(channelId: target.channelId, rootId: root),
-    )));
+    ));
   }
 
   @override

@@ -365,7 +365,13 @@ class StringsEn implements Strings {
   @override
   String get savedUnavailable => 'You no longer have access to this channel';
   @override
-  String get newMessage => 'New message';
+  String get newDm => 'New DM';
+  @override
+  String get newDmStart => 'Start a DM';
+  @override
+  String get newDmFilter => 'Search people';
+  @override
+  String get newDmNoMatch => 'No one matches.';
   @override
   String get newMessagePeople => 'People';
   @override
