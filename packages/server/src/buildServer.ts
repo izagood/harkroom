@@ -4,7 +4,7 @@ import fastifyMultipart from '@fastify/multipart';
 import type { Pool } from 'pg';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { MENTION_EDIT_SKIPPED_HEADER, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, projectionState, type ProjectionRuntime, type ProjectionStatus, type ServerHealth } from '@harkroom/shared';
+import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, projectionState, type ProjectionRuntime, type ProjectionStatus, type ServerHealth } from '@harkroom/shared';
 import { serverVersion } from './version.js';
 import { channelVisibleSql } from './services/channels.js';
 import { registerAuth } from './auth/plugin.js';
@@ -369,7 +369,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // 헤더로 싣기로 한 이상(`NOTIFIED_HEADER`) 이 줄이 없으면 데스크탑에서는 그 헤더가
     // 존재하지 않는 것과 같다 — 서버는 보냈다고 믿고 화면은 못 받는 조용한 실패다.
     // retry-after: 429 의 남은 시간(비밀 보관소 잠금 해제·보기). 본문 `retryAfterSec` 와 같은 값이다.
-    exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER, MENTION_EDIT_SKIPPED_HEADER, 'retry-after'],
+    // AVATAR_SOURCE_HEADER: 사진 원본과 함께 오는 원본 id·자른 자리(사진 맞추기).
+    exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER, MENTION_EDIT_SKIPPED_HEADER, AVATAR_SOURCE_HEADER, 'retry-after'],
   });
 
   // 푸시 worker 는 아래(비밀 가림을 만든 뒤)에서 만든다. healthz 는 그보다 먼저 등록되므로 늦게 묶는다.

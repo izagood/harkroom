@@ -1,3 +1,4 @@
+import type { AvatarCrop } from '@harkroom/shared';
 import type { Pool } from 'pg';
 import type { StorageBackend } from '../storage/local.js';
 
@@ -194,22 +195,64 @@ export async function findAvatarSource(
 }
 
 /**
+ * 사진 맞추기의 **원본**으로 쓸 수 있는 업로드를 찾는다. `findAvatarSource` 가 받는 것(자기가 올렸고 아직
+ * 메시지에 붙지 않은 업로드)에 더해, **그 계정에 이미 걸려 있는 그림**(지금 아바타·지금 원본)도 받는다.
+ *
+ * 더 받는 이유: 다시 맞출 때는 원본을 새로 올리지 않는다 — 걸려 있는 원본을 그대로 다시 가리킨다. 에이전트의
+ * 원본은 다른 소유자·admin 이 올렸을 수 있어서 업로더 검사만으로는 그 일이 막힌다. 그리고 원본이 없는 옛 사진은
+ * 걸려 있는 아바타를 원본으로 삼는다. 둘 다 **이미 그 계정에 걸린 바이트**라, 남의 업로드를 가져다 거는 길이 아니다.
+ */
+export async function findAvatarOriginal(
+  pool: Pool, attachmentId: string, uploaderId: string, targetAccountId: string,
+): Promise<{ id: string; storageKey: string; sizeBytes: number } | null> {
+  const own = await findAvatarSource(pool, attachmentId, uploaderId);
+  if (own) return own;
+  const res = await pool.query(
+    `select att.id, att.storage_key as "storageKey", att.size_bytes::int as "sizeBytes"
+       from account a join attachment att
+         on att.id = $1 and att.id in (a.avatar_attachment_id, a.avatar_source_attachment_id)
+      where a.id = $2`,
+    [attachmentId, targetAccountId],
+  );
+  return res.rowCount ? res.rows[0] : null;
+}
+
+/** 걸 아바타 하나. `source` 는 사진 맞추기의 원본과 고른 자리 — 없으면 원본 칸을 비운다. */
+export interface AvatarSetting {
+  attachmentId: string;
+  contentType: string;
+  source?: { attachmentId: string; contentType: string; crop: AvatarCrop } | null;
+}
+
+/**
  * 아바타를 건다(또는 null 로 지운다). 세우는 경우 판정한 타입을 첨부 행에 **덮어쓴다** —
  * 그래야 내려줄 때 클라이언트가 보낸 문자열이 아니라 서버가 확인한 사실을 헤더에 싣는다.
  * 한 트랜잭션인 이유: 타입만 고쳐지고 계정이 안 걸리면 아무도 안 쓰는 수정이 남는다.
+ *
+ * **원본 칸은 아바타와 함께만 바뀐다.** 원본 없이 새 사진을 걸면(옛 앱) 원본 칸을 비운다 — 남겨 두면 다음에
+ * 다시 맞출 때 지금 걸린 그림과 무관한 옛 원본이 열린다.
  */
 export async function setAccountAvatar(
-  pool: Pool, accountId: string, avatar: { attachmentId: string; contentType: string } | null,
+  pool: Pool, accountId: string, avatar: AvatarSetting | null,
 ): Promise<void> {
   if (!avatar) {
-    await pool.query(`update account set avatar_attachment_id = null where id = $1`, [accountId]);
+    await pool.query(
+      `update account set avatar_attachment_id = null, avatar_source_attachment_id = null, avatar_crop = null
+        where id = $1`, [accountId]);
     return;
   }
   const client = await pool.connect();
   try {
     await client.query('begin');
     await client.query(`update attachment set content_type = $2 where id = $1`, [avatar.attachmentId, avatar.contentType]);
-    await client.query(`update account set avatar_attachment_id = $2 where id = $1`, [accountId, avatar.attachmentId]);
+    if (avatar.source) {
+      await client.query(`update attachment set content_type = $2 where id = $1`, [avatar.source.attachmentId, avatar.source.contentType]);
+    }
+    await client.query(
+      `update account set avatar_attachment_id = $2, avatar_source_attachment_id = $3, avatar_crop = $4::jsonb
+        where id = $1`,
+      [accountId, avatar.attachmentId, avatar.source?.attachmentId ?? null,
+        avatar.source ? JSON.stringify(avatar.source.crop) : null]);
     await client.query('commit');
   } catch (err) {
     await client.query('rollback');
@@ -230,6 +273,20 @@ export async function findAvatarTarget(pool: Pool, accountId: string): Promise<A
   const res = await pool.query(
     `select a.storage_key as "storageKey", a.content_type as "contentType", a.size_bytes::int as "sizeBytes"
        from account acc join attachment a on a.id = acc.avatar_attachment_id
+      where acc.id = $1`,
+    [accountId],
+  );
+  return res.rowCount ? res.rows[0] : null;
+}
+
+/** 사진 맞추기 원본의 바이트와 고른 자리. 원본이 없으면(옛 사진·지운 사진) null. */
+export async function findAvatarSourceTarget(
+  pool: Pool, accountId: string,
+): Promise<(AvatarTarget & { attachmentId: string; crop: AvatarCrop | null }) | null> {
+  const res = await pool.query(
+    `select a.id as "attachmentId", a.storage_key as "storageKey", a.content_type as "contentType", a.size_bytes::int as "sizeBytes",
+            acc.avatar_crop as crop
+       from account acc join attachment a on a.id = acc.avatar_source_attachment_id
       where acc.id = $1`,
     [accountId],
   );

@@ -1278,6 +1278,26 @@ export const NOTIFIED_HEADER_MAX_IDS = 100;
  */
 export const MENTION_EDIT_SKIPPED_HEADER = 'x-harkroom-mention-edit-skipped';
 
+/**
+ * 프로필 사진의 **원본에서 고른 자리**(사진 맞추기). 걸려 있는 아바타는 앱이 이 자리를 512px 정사각형으로
+ * 잘라 올린 결과이고, 이 값은 다음에 다시 맞출 때 원본 위에서 같은 자리로 시작하려고 남긴다.
+ *
+ * 값은 **원본 크기에 대한 비율**이다(픽셀이 아니다): `x`·`y` 는 왼쪽 위 모서리를 원본 폭·높이로 나눈 값,
+ * `size` 는 정사각형 한 변을 원본의 **짧은 변**으로 나눈 값(0 초과 1 이하). 비율로 두는 이유: 서버는 원본의
+ * 픽셀 크기를 모르고(판정은 앞 12바이트뿐이다), SVG 처럼 그릴 때 크기가 정해지는 원본에도 같은 뜻이 선다.
+ */
+export interface AvatarCrop { x: number; y: number; size: number }
+
+/**
+ * 원본 바이트(`GET /accounts/:id/avatar/source`)에 **원본 첨부 id 와 자른 자리**(`AvatarSourceMeta` JSON)를 싣는 헤더.
+ * 바이트와 자리가 한 응답에 와야 「원본은 새 것인데 자리는 옛 것」인 순간이 없다. id 가 있어야 다시 맞출 때 원본을 새로
+ * 올리지 않고 같은 첨부를 다시 가리킨다. CORS `exposedHeaders` 에 있어야 앱이 읽는다.
+ */
+export const AVATAR_SOURCE_HEADER = 'x-harkroom-avatar-source';
+
+/** `AVATAR_SOURCE_HEADER` 의 값. `crop` 은 원본만 있고 자리가 없을 때 null 이다. */
+export interface AvatarSourceMeta { attachmentId: string; crop: AvatarCrop | null }
+
 /** `too_old`: 작성 뒤 `MENTION_EDIT_WINDOW_MS` 가 지났다 · `agent_author`: 에이전트가 쓴 글이다(사람의 글만 수정으로 부른다). */
 export type MentionEditSkipReason = 'too_old' | 'agent_author';
 
