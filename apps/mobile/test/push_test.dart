@@ -14,6 +14,7 @@ import 'package:harkroom/push/push_coordinator.dart';
 import 'package:harkroom/push/push_platform.dart';
 import 'package:harkroom/push/push_target.dart';
 import 'package:harkroom/screens/message_list_screen.dart';
+import 'package:harkroom/screens/tab_nav.dart';
 import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
@@ -25,6 +26,7 @@ const _a = '11111111-1111-4111-8111-111111111111';
 const _b = '22222222-2222-4222-8222-222222222222';
 const _ch = '33333333-3333-4333-8333-333333333333';
 const _root = '44444444-4444-4444-8444-444444444444';
+const _dm = '66666666-6666-4666-8666-666666666666';
 const _acmeUrl = 'https://acme.example.com';
 const _betaUrl = 'https://beta.example.com';
 
@@ -46,6 +48,10 @@ class _Server {
   /// #1088 이전 서버 흉내 — prefs 는 받지만 badge 키를 모른다.
   bool noBadgePrefs = false;
 
+  /// `GET /dms` 가 돌려줄 DM — 시험 중에 더하면 「알림으로 막 생긴 DM」 이다.
+  final dms = <Map<String, Object?>>[];
+  int dmsCalls = 0;
+
   MockClient client(String? token) => MockClient((req) async {
         final path = req.url.path;
         if (path == '/push/devices' || path == '/push/devices/current') {
@@ -64,6 +70,10 @@ class _Server {
           '/accounts' => _json({'accounts': <Object?>[]}),
           '/reads' => _json({'reads': <Object?>[]}),
           '/ws-ticket' => _json({'ticket': 'tk'}),
+          '/dms' => () {
+              dmsCalls++;
+              return _json({'dms': dms});
+            }(),
           _ when path.startsWith('/inbox') && failInbox => throw http.ClientException('망 없음'),
           _ when path.startsWith('/inbox') => _json({'entries': <Object?>[]}),
           _ when path.endsWith('/messages') => _json({'messages': <Object?>[], 'hasMore': false}),
@@ -320,8 +330,8 @@ void main() {
   });
 
   group('누름 → 화면 (④)', () {
-    Future<(AppState, PushCoordinator)> pumpTwo(WidgetTester tester) async {
-      final acme = _Server(_a);
+    Future<(AppState, PushCoordinator)> pumpTwo(WidgetTester tester, {_Server? acmeServer}) async {
+      final acme = acmeServer ?? _Server(_a);
       final beta = _Server(_b);
       final app = AppState(
         sessions: MemorySessionStore(seed: jsonEncode({
@@ -367,6 +377,24 @@ void main() {
       await settle(tester);
       expect(app.activeKey, '$_acmeUrl#$_a');
       expect(tester.widget<MessageListScreen>(find.byType(MessageListScreen)).channelId, _ch);
+    });
+
+    testWidgets('목록에 아직 없는 DM 의 알림은 DM 목록을 다시 받아 DM 탭 쌓기에 연다(security #1368 n2)', (tester) async {
+      final acme = _Server(_a);
+      final (app, push) = await pumpTwo(tester, acmeServer: acme);
+      final before = acme.dmsCalls;
+      // 부팅 뒤에 생긴 DM — 앱 목록에는 없다.
+      acme.dms.add({'id': _dm, 'memberIds': [_a, _b], 'lastMessageAt': '2026-10-14T00:00:00Z'});
+      unawaited(push.open(_hk(_a, channel: _dm)));
+      await settle(tester);
+      expect(acme.dmsCalls, before + 1);
+      expect(app.channels.any((c) => c.id == _dm && c.isDm), isTrue);
+      expect(app.homeTab, TabNavigators.dms, reason: '홈 탭이 아니라 DM 탭');
+      expect(tester.widget<MessageListScreen>(find.byType(MessageListScreen)).channelId, _dm);
+      // 이미 아는 채널의 알림은 DM 목록을 다시 묻지 않는다.
+      unawaited(push.open(_hk(_a)));
+      await settle(tester);
+      expect(acme.dmsCalls, before + 1);
     });
 
     testWidgets('겹치는 계정 id 의 알림은 아무 화면도 열지 않는다', (tester) async {
