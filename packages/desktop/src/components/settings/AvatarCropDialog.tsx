@@ -61,8 +61,8 @@ export function AvatarCropDialog({
   const [saving, setSaving] = useState(false);
   const drag = useRef<{ x: number; y: number; view: CropView } | null>(null);
 
-  // 원본이 바뀌면(다른 사진) 처음부터 다시 잰다.
-  useEffect(() => { setSize(null); setView(null); setFailed(false); }, [src]);
+  // 원본이 바뀌면(다른 사진) 부르는 쪽이 `key={src}` 로 이 창을 새로 띄운다 — 여기서 effect 로 상태를 비우면
+  // 빨리 뜬 그림의 load 가 그 effect 보다 먼저 와서 잰 크기가 지워지고 「여는 중」에 멈춘다(캡처로 확인).
 
   const onLoad = useCallback(() => {
     const el = imgRef.current;
