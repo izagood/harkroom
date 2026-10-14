@@ -57,7 +57,10 @@ describe('AgentPoolChain', () => {
   it('앞 풀이 모두 기준에 닿으면 2번 — 상태 줄이 언제 돌아가는지 말한다', () => {
     const state = show(['work', 'personal'], usage([{ pool: 'work', account: 'w1', s: 90 }, { pool: 'work', account: 'w2', s: 88 }]));
     expect(state?.activeIndex).toBe(1);
-    expect(screen.getByTestId('agent-pool-chain-status').textContent).toMatch(/2번 personal 을 쓰는 중 — 앞 풀이 소진됐다\. .+ 에 풀리면/);
+    const status = screen.getByTestId('agent-pool-chain-status');
+    // 왜(designer s2) — 어느 풀이 어느 창 때문에, 언제 돌아가나. 칸 색(s3)은 경고.
+    expect(status.textContent).toMatch(/2번 personal 을 쓰는 중 — 1번 work 은 5시간 한도에 닿았다\. .+ 에 풀리면/);
+    expect(status.dataset.tone).toBe('warning');
     expect(screen.getByTestId('agent-pool-chain-chip-work').textContent).toMatch(/^소진 · /);
     expect(screen.getByTestId('agent-pool-chain-chip-personal').textContent).toBe('쓰는 중');
   });
@@ -96,6 +99,30 @@ describe('AgentPoolChain', () => {
     cleanup();
     render(<AgentPoolChain chain={full.slice(1)} pools={[...full, 'extra']} defaultPool="work" state={null} ready onChange={() => {}} />);
     expect(screen.getByTestId('agent-pool-chain-add')).toBeTruthy();
+  });
+
+  it('상태 줄의 이유는 소진 원인(주간·관문)과 없는 풀을 말한다', () => {
+    show(['work', 'personal'], usage([{ pool: 'work', account: 'w1', s: 10, w: 98 }, { pool: 'work', account: 'w2', s: 10, w: 99 }]));
+    expect(screen.getByTestId('agent-pool-chain-status').textContent).toMatch(/1번 work 은 주간 한도에 닿았다/);
+    cleanup();
+    show(['ghost', 'work'], null);
+    expect(screen.getByTestId('agent-pool-chain-status').textContent).toMatch(/1번 ghost 은 이 기기에 없다/);
+  });
+
+  it('평소는 조용한 줄, 모두 소진은 위험 칸', () => {
+    show(['work', 'personal'], usage([{ pool: 'work', account: 'w1', s: 20 }]));
+    expect(screen.getByTestId('agent-pool-chain-status').dataset.tone).toBe('quiet');
+    cleanup();
+    show(['work', 'personal'], usage([
+      { pool: 'work', account: 'w1', s: 90 }, { pool: 'work', account: 'w2', s: 90 }, { pool: 'personal', account: 'p1', s: 90 },
+    ]));
+    expect(screen.getByTestId('agent-pool-chain-status').dataset.tone).toBe('danger');
+  });
+
+  it('풀을 다 넣으면 「추가」 자리에 그 사실을 한 줄 남긴다', () => {
+    show(['work', 'personal'], null);
+    expect(screen.queryByTestId('agent-pool-chain-add')).toBeNull();
+    expect(screen.getByTestId('agent-pool-chain-add-none').textContent).toBe('모든 풀을 넣었다.');
   });
 
   it('이 기기에 없는 풀은 건너뛰되 목록에서 빼지 않는다', () => {

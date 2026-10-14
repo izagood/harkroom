@@ -48,7 +48,8 @@ function AccountUsage({ a }: { a: PoolChainAccount }) {
       <span className="truncate">{a.account}</span>
       <span aria-hidden className="relative inline-block h-1.5 w-10 shrink-0 overflow-hidden rounded-full bg-border">
         {pct !== null && (
-          <span className={`absolute inset-y-0 left-0 ${a.hot ? 'bg-danger' : 'bg-accent'}`}
+          // 막대 색은 설정 › Claude 계정(`ProviderUsageBars`)과 같은 말을 한다 — 평소 중립, 기준에 닿으면 경고.
+          <span className={`absolute inset-y-0 left-0 ${a.hot ? 'bg-warning' : 'bg-fg-muted'}`}
             style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
         )}
       </span>
@@ -83,6 +84,8 @@ export function AgentPoolChain({
   const addable = chain.length >= MAX_AGENT_POOLS ? [] : pools.filter((p) => !chain.includes(p));
 
   let status: string | null = null;
+  /** 상태 줄의 칸 색(designer s3): 평소는 조용히, 뒤 풀로 내려왔으면 경고, 모두 소진·쓸 풀 없음은 위험. */
+  let tone: 'quiet' | 'warning' | 'danger' = 'quiet';
   if (!chain.length) {
     status = defaultPool
       ? t('agents.run.poolChain.statusDefaultNamed', { pool: defaultPool })
@@ -91,7 +94,9 @@ export function AgentPoolChain({
     const i = state.activeIndex;
     if (i === null) {
       status = t('agents.run.poolChain.statusNone');
+      tone = 'danger';
     } else if (state.allExhausted) {
+      tone = 'danger';
       const e = state.entries[i]!;
       status = e.unblockAtMs !== null
         ? t('agents.run.poolChain.statusAllOut', { n: i + 1, pool: e.pool, time: clock(e.unblockAtMs, locale) })
@@ -99,19 +104,34 @@ export function AgentPoolChain({
     } else if (i === 0) {
       status = t('agents.run.poolChain.statusFirst', { pool: state.entries[0]!.pool });
     } else {
-      // 앞 풀 중 가장 먼저 풀리는 것 — 그때 새 스레드부터 앞으로 돌아온다(D3).
-      const back = state.entries.slice(0, i).map((e) => e.unblockAtMs).filter((v): v is number => v !== null);
-      const pool = state.entries[i]!.pool;
-      status = back.length
-        ? t('agents.run.poolChain.statusFallback', { n: i + 1, pool, time: clock(Math.min(...back), locale) })
-        : t('agents.run.poolChain.statusFallbackUnknown', { n: i + 1, pool });
+      tone = 'warning';
+      // 왜 건너뛰었나(designer s2): 앞 풀 중 **가장 먼저 풀리는** 소진 풀의 이름과 이유. 소진 풀이 없으면
+      // (앞 풀이 이 기기에 없거나 빈 풀) 그 첫 풀과 그 사실을 말한다. 그 시각에 새 스레드부터 돌아온다(D3).
+      const before = state.entries.slice(0, i).map((e, idx) => ({ e, idx }));
+      const out = before.filter(({ e }) => e.status === 'exhausted')
+        .sort((a, b) => (a.e.unblockAtMs ?? Infinity) - (b.e.unblockAtMs ?? Infinity) || a.idx - b.idx);
+      const why = out[0] ?? before[0]!;
+      // 쓰는 풀 앞에는 쓸 수 있는 풀이 없다(그렇다면 그것이 쓰는 풀이다) — 소진·없음·빈 풀뿐이다.
+      const reasonKey = why.e.status === 'exhausted' ? (why.e.exhaustedBy ?? 'mixed')
+        : why.e.status === 'empty' ? 'empty' : 'missing';
+      const vars = {
+        n: i + 1, pool: state.entries[i]!.pool, m: why.idx + 1, prev: why.e.pool,
+        reason: t(`agents.run.poolChain.reason.${reasonKey}`),
+      };
+      status = why.e.unblockAtMs !== null
+        ? t('agents.run.poolChain.statusFallback', { ...vars, time: clock(why.e.unblockAtMs, locale) })
+        : t('agents.run.poolChain.statusFallbackUnknown', vars);
     }
   }
 
   return (
     <div className="mt-1 space-y-1.5" data-testid="agent-pool-chain">
       {status && (
-        <p className="text-meta text-fg-muted" role="status" data-testid="agent-pool-chain-status">{status}</p>
+        <p role="status" data-testid="agent-pool-chain-status" data-tone={tone}
+          className={tone === 'quiet' ? 'text-meta text-fg-muted'
+            : `rounded-md px-2 py-1.5 text-meta text-fg ${tone === 'warning' ? 'bg-warning-surface' : 'bg-danger-surface'}`}>
+          {status}
+        </p>
       )}
       {chain.length > 0 && (
         <ol className="space-y-1">
@@ -120,7 +140,7 @@ export function AgentPoolChain({
             const chip = entry && state && chain.length > 0 ? chipOf(entry, i, state) : null;
             return (
               <li key={pool} data-testid={`agent-pool-chain-row-${pool}`}
-                className="rounded-md border border-border px-2 py-1.5 text-meta">
+                className={`rounded-md border border-border px-2 py-1.5 text-meta${entry?.status === 'missing' ? ' opacity-60' : ''}`}>
                 <div className="flex items-center gap-2">
                   <span className="w-4 shrink-0 text-right tabular-nums text-fg-subtle">{i + 1}</span>
                   <span className="min-w-0 truncate font-medium text-fg">{pool}</span>
@@ -160,6 +180,14 @@ export function AgentPoolChain({
             );
           })}
         </ol>
+      )}
+      {/* 더 넣을 풀이 없으면 자리를 비우지 않고 이유를 한 줄 남긴다(designer n2) — 비면 "추가 기능이 없다"로 읽힌다. */}
+      {addable.length === 0 && chain.length > 0 && (
+        <p className="text-meta text-fg-subtle" data-testid="agent-pool-chain-add-none">
+          {chain.length >= MAX_AGENT_POOLS
+            ? t('agents.run.poolChain.atLimit', { max: MAX_AGENT_POOLS })
+            : t('agents.run.poolChain.allAdded')}
+        </p>
       )}
       {addable.length > 0 && (
         <select
