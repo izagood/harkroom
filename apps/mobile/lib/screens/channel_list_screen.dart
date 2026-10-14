@@ -512,7 +512,7 @@ class _NewDmScreenState extends State<NewDmScreen> {
                         key: const Key('new-dm-list'),
                         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                         children: [
-                          SectionHeader(label: t.newMessagePeople),
+                          // 절이 하나뿐이라 「사람」 머리를 달지 않는다(designer #1368 n2).
                           for (final a in people)
                             ListTile(
                               key: Key('new-dm-person-${a.id}'),

@@ -358,6 +358,28 @@ void main() {
     expect(find.byKey(const Key('home-tab-bar')), findsOneWidget);
   });
 
+  testWidgets('n1 키보드가 오르는 동안 입력창은 떨어지지 않고, 다 오르면 키보드 위 6 에 선다', (tester) async {
+    await _pump(tester);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await tester.pumpAndSettle();
+    final pill = find.byKey(const Key('composer-pill'));
+    final rest = tester.getRect(pill).bottom;
+    final screen = tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    final bar = tester.getRect(find.byKey(const Key('home-tab-bar')));
+    expect(rest, bar.top, reason: '알약(아래 여백 6 포함)이 탭 바 바로 위에 선다');
+    addTearDown(tester.view.resetViewInsets);
+    // 첫 프레임: 키보드가 20 만 올라왔다. 탭 바는 아직 있고 입력창은 그대로다.
+    tester.view.viewInsets = FakeViewPadding(bottom: 20 * tester.view.devicePixelRatio);
+    await tester.pump();
+    expect(find.byKey(const Key('home-tab-bar')), findsOneWidget);
+    expect(tester.getRect(pill).bottom, rest, reason: '탭 바 높이만큼 툭 떨어지지 않는다');
+    // 다 올라왔다: 탭 바는 빠지고 알약은 키보드 바로 위(아래 여백 6 은 알약 안).
+    tester.view.viewInsets = FakeViewPadding(bottom: 300 * tester.view.devicePixelRatio);
+    await tester.pump();
+    expect(find.byKey(const Key('home-tab-bar')), findsNothing);
+    expect(tester.getRect(pill).bottom, screen - 300);
+  });
+
   testWidgets('찾기는 탭 바를 숨기고, 결과로 연 화면에서는 돌아오며, 뒤로 오면 찾기가 남는다', (tester) async {
     await _pump(tester);
     await tester.tap(find.byKey(const Key('tab-search')));
