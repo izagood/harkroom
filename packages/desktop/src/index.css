@@ -95,6 +95,14 @@
   --app-warning-surface: #fff1cc; /* 경고 상자의 면 */
   --app-warning-surface-strong: #fbe3a6; /* 한 단계 짙은 틴트 — 강조된 메시지·배지 */
   --app-warning-border: #e9c76a;  /* 경고 상자의 선 */
+  /*
+    **담아 둔 표시**(B안, designer 시안 2026-10-14). 강조(주황)·경고(노랑 — 나를 부름·시스템·
+    이동 하이라이트)와 겹치지 않는 남보라 한 벌이다. 담김은 나를 막는 것이 아니라 내가 스스로
+    붙인 표시라 강조 예산(`accentBudget.test`)을 쓰지 않는다. `saved` 는 띠·글자(바닥과 6.9:1),
+    `saved-surface` 는 줄 전체에 까는 옅은 면이다.
+  */
+  --app-saved: #4f46c8;
+  --app-saved-surface: #efeefc;
   --app-success: #1b7d45;         /* 정상 — 연결됨 표시. 바닥과 5.0:1 */
   --app-success-surface: #e6f6ec; /* 정상 상자의 면 */
   /*
@@ -168,6 +176,8 @@
   --app-warning-surface: #33290f;
   --app-warning-surface-strong: #473816;
   --app-warning-border: #5e4a1c;
+  --app-saved: #a9a3ff;
+  --app-saved-surface: #23213a;
   --app-success: #5ccf86;
   --app-success-surface: #16301f;
   --app-fg-on-strong: #1c1b19;
@@ -203,6 +213,8 @@
   --color-warning-surface: var(--app-warning-surface);
   --color-warning-surface-strong: var(--app-warning-surface-strong);
   --color-warning-border: var(--app-warning-border);
+  --color-saved: var(--app-saved);
+  --color-saved-surface: var(--app-saved-surface);
   --color-success: var(--app-success);
   --color-success-surface: var(--app-success-surface);
   --color-link: var(--app-link);
