@@ -389,7 +389,8 @@ void main() {
       await _settle(tester);
       expect(server.calls, contains('PUT /saved/m2'));
       expect(find.byKey(const Key('saved-mark-m2')), findsOneWidget);
-      expect(find.text('나중을 위해 저장됨'), findsOneWidget);
+      expect(find.text('저장됨'), findsOneWidget);
+      expect(find.byKey(const Key('saved-band-m2')), findsOneWidget);
       expect(find.byKey(const Key('saved-added')), findsOneWidget);
       expect(find.text('목록 보기'), findsOneWidget);
     });
@@ -431,12 +432,33 @@ void main() {
       expect(server.calls.skip(before).where((c) => c.startsWith('PUT /saved')), isEmpty);
     });
 
-    testWidgets('표식은 글자용 accentText 로 그린다 — 11pt 에서 accent 는 대비가 모자란다(designer #1231)', (tester) async {
+    testWidgets('담은 글은 줄 왼쪽 띠 + 옅은 면, 이름줄 끝 「저장됨」은 saved 색이다(B안, 2026-10-14)', (tester) async {
       await pump(tester, 'm1');
-      final mark = tester.widget<Text>(find.text('나중을 위해 저장됨'));
-      expect(mark.style!.color, HarkroomTokens.light.accentText);
-      final icon = tester.widget<Icon>(find.descendant(of: find.byKey(const Key('saved-mark-m1')), matching: find.byType(Icon)));
-      expect(icon.color, HarkroomTokens.light.accentText);
+      final band = tester.widget<DecoratedBox>(find.byKey(const Key('saved-band-m1')));
+      final deco = band.decoration as BoxDecoration;
+      expect(deco.color, HarkroomTokens.light.savedSurface);
+      expect((deco.border! as Border).left.color, HarkroomTokens.light.saved);
+      expect((deco.border! as Border).left.width, 3);
+      // 띠 폭만큼 왼쪽 여백을 줄인다 — 담고 풀 때 본문이 옆으로 뛰지 않게.
+      final pad = tester.widget<Padding>(find.byKey(const Key('message-m1'))).padding as EdgeInsets;
+      expect(pad.left + 3, HarkroomSize.gutter);
+      // 표식은 이름줄(시각 옆) 안이다 — 이름 위에 줄을 따로 세우지 않는다.
+      final mark = find.byKey(const Key('saved-mark-m1'));
+      expect(tester.getCenter(mark).dy, closeTo(tester.getCenter(find.byKey(const Key('time-m1'))).dy, 4));
+      final text = tester.widget<Text>(find.descendant(of: mark, matching: find.text('저장됨')));
+      expect(text.style!.color, HarkroomTokens.light.saved);
+      final icon = tester.widget<Icon>(find.descendant(of: mark, matching: find.byType(Icon)));
+      expect(icon.color, HarkroomTokens.light.saved);
+      // 스크린리더에는 긴 말로 읽힌다(데스크톱 title 과 같은 말).
+      final sem = tester.widget<Semantics>(find.descendant(of: mark, matching: find.byType(Semantics)).first);
+      expect(sem.properties.label, '나중을 위해 저장됨');
+    });
+
+    testWidgets('안 담은 글에는 띠가 없고 왼쪽 여백은 그대로다', (tester) async {
+      await pump(tester, 'm2');
+      expect(find.byKey(const Key('saved-band-m2')), findsNothing);
+      final pad = tester.widget<Padding>(find.byKey(const Key('message-m2'))).padding as EdgeInsets;
+      expect(pad.left, HarkroomSize.gutter);
     });
 
     testWidgets('시스템 글에는 담기·빼기 줄이 없다', (tester) async {

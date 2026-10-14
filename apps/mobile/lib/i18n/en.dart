@@ -325,7 +325,9 @@ class StringsEn implements Strings {
   @override
   String get messageUnsave => 'Unsave';
   @override
-  String get messageSavedMark => 'Saved for later';
+  String get messageSavedMark => 'Saved';
+  @override
+  String get messageSavedMarkLong => 'Saved for later';
   @override
   String get savedAdded => 'Saved';
   @override

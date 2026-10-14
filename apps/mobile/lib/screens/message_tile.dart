@@ -75,10 +75,14 @@ class MessageTile extends StatelessWidget {
     // 카드 → 첨부 순서가 뒤집힌다(security n2).
     final attachmentsInGlow = body.isEmpty && card == null;
 
-    return Padding(
+    // 담아 둔 글은 줄 전체에 **왼쪽 띠 + 옅은 면**(데스크톱과 같은 B안, 2026-10-14). 띠가 늘 같은 x
+    // 에 서니 훑을 때 잡히고, 이어 말한 줄(머리 없음)에도 같은 규칙이 선다. 띠 폭만큼 왼쪽 여백을
+    // 줄여 담고 풀 때 본문이 옆으로 뛰지 않게 한다.
+    final saved = app.isSaved(message.id);
+    final row = Padding(
       key: Key('message-${message.id}'),
       padding: EdgeInsets.fromLTRB(
-          HarkroomSize.gutter, continued ? 1 : 8, HarkroomSize.gutter, 2),
+          HarkroomSize.gutter - (saved ? _savedBand : 0), continued ? 1 : 8, HarkroomSize.gutter, 2),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -99,9 +103,9 @@ class MessageTile extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // 담아 둔 글은 이름 위에 표식(데스크톱 savedMark 와 같은 말·자리) — 담았는지 보려고 시트를 다시 열지 않게.
-                      if (app.isSaved(message.id)) _SavedMark(key: Key('saved-mark-${message.id}')),
-                      if (!continued) _Header(message: message, isAgent: author?.isAgent == true),
+                      // 담아 둔 글의 「저장됨」은 이름줄 끝에 선다(_Header) — 위에 줄을 따로 세우면 그 줄의
+                      // 세로 위치가 앞 글 길이를 따라 흔들린다. 이어 말한 줄은 머리가 없으니 띠만 말한다.
+                      if (!continued) _Header(message: message, isAgent: author?.isAgent == true, saved: saved),
                       // 작은 마크다운(코드·목록·인용·굵게·링크). 모르는 것은 글자 그대로 둔다.
                       // 번역된 시스템 줄은 **글로만** 그린다 — 인자에 바깥 글자(경로·저장소 이름)가 들어가므로
                       // 마크다운·링크를 지나지 않는다(security C4, i18n P5 ③).
@@ -161,6 +165,15 @@ class MessageTile extends StatelessWidget {
           ),
         ],
       ),
+    );
+    if (!saved) return row;
+    return DecoratedBox(
+      key: Key('saved-band-${message.id}'),
+      decoration: BoxDecoration(
+        color: k.savedSurface,
+        border: Border(left: BorderSide(color: k.saved, width: _savedBand)),
+      ),
+      child: row,
     );
   }
 
@@ -764,23 +777,28 @@ Future<void> pickReaction(BuildContext context, MessageRow message) async {
   }
 }
 
-/// 「나중을 위해 저장됨」 한 줄.
+/// 담아 둔 글 줄의 왼쪽 띠 폭(데스크톱 `inset 3px`).
+const double _savedBand = 3;
+
+/// 이름줄 끝의 「저장됨」 — 책갈피 + 짧은 글자, `saved` 색(데스크톱 savedMark 와 같은 말·자리).
+/// 눈에 띄는 일은 줄의 띠가 하고, 이것은 그 띠가 무슨 뜻인지 말한다. 스크린리더에는 긴 말로 읽힌다.
 class _SavedMark extends StatelessWidget {
   const _SavedMark({super.key});
 
   @override
   Widget build(BuildContext context) {
     final k = context.tokens;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
+    final t = context.t;
+    return Semantics(
+      label: t.messageSavedMarkLong,
+      excludeSemantics: true,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 11pt 라 accent 는 라이트 표면에서 대비가 4.5 에 못 미친다 — 글자용 accentText 를 쓴다(designer #1231).
-          Icon(Icons.bookmark, size: 12, color: k.accentText),
-          const SizedBox(width: 4),
-          Text(context.t.messageSavedMark,
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: k.accentText)),
+          Icon(Icons.bookmark, size: 12, color: k.saved),
+          const SizedBox(width: 2),
+          Text(t.messageSavedMark,
+              style: TextStyle(fontSize: HarkroomType.meta, fontWeight: FontWeight.w600, color: k.saved)),
         ],
       ),
     );
@@ -789,10 +807,11 @@ class _SavedMark extends StatelessWidget {
 
 /// 이름 · (에이전트 표지) · 시각 한 줄.
 class _Header extends StatelessWidget {
-  const _Header({required this.message, required this.isAgent});
+  const _Header({required this.message, required this.isAgent, this.saved = false});
 
   final MessageRow message;
   final bool isAgent;
+  final bool saved;
 
   @override
   Widget build(BuildContext context) {
@@ -833,6 +852,10 @@ class _Header extends StatelessWidget {
             key: Key('time-${message.id}'),
             style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted),
           ),
+          if (saved) ...[
+            const SizedBox(width: 6),
+            _SavedMark(key: Key('saved-mark-${message.id}')),
+          ],
         ],
       ),
     );
