@@ -348,42 +348,39 @@ describe('AgentsSettings — 에이전트별 계정 풀', () => {
     // 하네스가 실제로 codex 인 상세를 보고 있다는 것을 먼저 못 박는다 — 안 하면 "선택이
     // 없다"가 엉뚱한 화면을 본 결과일 수 있다.
     await waitFor(() => expect((screen.getByLabelText('에이전트 하네스') as HTMLSelectElement).value).toBe('codex'));
-    expect(screen.queryByLabelText('계정 풀')).toBeNull();
+    expect(screen.queryByTestId('agent-pool-chain')).toBeNull();
   });
 
 
-  it('실행 묶음에 풀 선택이 있고 기본은 기본 풀 사용이다', async () => {
+  /** 「＋ 풀 추가」 select. 목록 칸이 그려졌다는 손잡이이기도 하다. */
+  const addSelect = () => screen.findByLabelText('＋ 풀 추가') as Promise<HTMLSelectElement>;
+
+  it('실행 묶음에 풀 목록이 있고 비었으면 기본 풀을 쓴다고 말한다', async () => {
     await openDetail();
-    const select = await screen.findByLabelText('계정 풀');
-    // 배정이 없으면 빈 값 — "기본 풀 사용"이다. 그 상태가 표현되지 않으면 사용자가
-    // 배정을 지울 방법이 없다.
-    expect((select as HTMLSelectElement).value).toBe('');
-    expect(screen.getByText(/기본 풀/)).toBeTruthy();
+    await addSelect();
+    // 목록이 비면 기본 풀(D5). 그 상태가 말로 서지 않으면 사람은 어느 풀로 도는지 모른다.
+    expect(screen.getByTestId('agent-pool-chain-status').textContent).toMatch(/기본 풀 work/);
   });
 
-  it('풀 목록을 계정 스냅샷에서 읽는다 — 지어내지 않는다', async () => {
+  it('추가할 풀을 계정 스냅샷에서 읽는다 — 지어내지 않는다', async () => {
     await openDetail();
-    await screen.findByLabelText('계정 풀');
-    const options = screen.getAllByRole('option').map((o) => (o as HTMLOptionElement).value);
-    expect(options).toContain('work');
-    expect(options).toContain('personal');
+    const options = [...(await addSelect()).options].map((o) => o.value);
+    expect(options).toEqual(['', 'work', 'personal']);
   });
 
-  it('이 기기에만 저장된다는 사실을 적는다', async () => {
-    // 안 적으면 사용자는 다른 기기에서 안 보이는 것을 버그로 읽는다.
+  it('이 기기에만 저장되고, 다음 새 스레드부터 적용된다고 적는다 — 러너 재시작 문구는 없다', async () => {
+    // 러너는 5초마다 pools.json 을 다시 읽는다(`createLiveAccountLane`) — "재시작해야 적용"은 틀린 말이다.
     await openDetail();
-    await screen.findByLabelText('계정 풀');
+    await addSelect();
     expect(screen.getByText(/이 기기에만/)).toBeTruthy();
+    expect(screen.getByText(/다음 새 스레드부터/)).toBeTruthy();
+    expect(screen.queryByText(/다시 시작해야/)).toBeNull();
   });
 
-  it('고르면 계정 설정 경로로 쓴다 — 에이전트 저장 버튼을 거치지 않는다', async () => {
-    // `AgentConfig` 의 다른 필드와 저장 경로가 다르다. 같은 저장 버튼에 묶으면 서버
-    // PATCH 에 이 값이 실려 가거나, 반대로 저장을 눌러야 반영되는 것으로 오해된다.
+  it('추가하면 계정 설정 경로로 쓴다 — 에이전트 저장 버튼을 거치지 않는다', async () => {
     await openDetail();
-    const select = await screen.findByLabelText('계정 풀');
     const { fireEvent } = await import('@testing-library/react');
-    fireEvent.change(select, { target: { value: 'personal' } });
-
+    fireEvent.change(await addSelect(), { target: { value: 'personal' } });
     await waitFor(() => {
       const call = invoked.find((c) => c.cmd === 'claude_accounts_configure');
       const config = call?.args?.config as { agents?: Record<string, string[]> } | undefined;
@@ -391,26 +388,40 @@ describe('AgentsSettings — 에이전트별 계정 풀', () => {
     });
   });
 
-  it('기본 풀 사용으로 되돌리면 배정을 지운다', async () => {
+  it('↑↓ 로 순서를 바꾸고, 줄이 하나면 ↑↓ 를 그리지 않는다', async () => {
     await openDetail();
-    const select = await screen.findByLabelText('계정 풀');
     const { fireEvent } = await import('@testing-library/react');
-    fireEvent.change(select, { target: { value: 'personal' } });
-    await waitFor(() => expect(invoked.some((c) => c.cmd === 'claude_accounts_configure')).toBe(true));
+    fireEvent.change(await addSelect(), { target: { value: 'work' } });
+    await screen.findByTestId('agent-pool-chain-row-work');
+    expect(screen.queryByLabelText('work 을 위로')).toBeNull();
+    expect(screen.queryByLabelText('work 을 아래로')).toBeNull();
+    fireEvent.change(await addSelect(), { target: { value: 'personal' } });
+    await screen.findByTestId('agent-pool-chain-row-personal');
     invoked = [];
-    fireEvent.change(select, { target: { value: '' } });
-
+    fireEvent.click(screen.getByLabelText('personal 을 위로'));
     await waitFor(() => {
       const call = invoked.find((c) => c.cmd === 'claude_accounts_configure');
-      const config = call?.args?.config as { agents?: Record<string, string> } | undefined;
+      const config = call?.args?.config as { agents?: Record<string, string[]> } | undefined;
+      expect(config?.agents).toEqual({ [AGENT.id]: ['personal', 'work'] });
+    });
+  });
+
+  it('마지막 풀을 빼면 배정 키를 지운다 — 빈 목록을 보내지 않는다', async () => {
+    await openDetail();
+    const { fireEvent } = await import('@testing-library/react');
+    fireEvent.change(await addSelect(), { target: { value: 'personal' } });
+    await waitFor(() => expect(invoked.some((c) => c.cmd === 'claude_accounts_configure')).toBe(true));
+    invoked = [];
+    fireEvent.click(await screen.findByLabelText('personal 을 목록에서 빼기'));
+    await waitFor(() => {
+      const call = invoked.find((c) => c.cmd === 'claude_accounts_configure');
+      const config = call?.args?.config as { agents?: Record<string, string[]> } | undefined;
       expect(config?.agents).toEqual({});
     });
   });
 
   it('목록 조회가 실패해도 칸을 감추지 않고 왜 못 골랐는지 적는다', async () => {
-    // 실패를 "기능 없음"으로 그리면 사람은 이 앱에 그런 기능이 아예 없다고 읽는다 —
-    // 실제로 그렇게 읽힌 적이 있다. 데몬이 대답을 못 한 것과 이 빌드에 표면이 없는 것은
-    // 다른 사실이고, 화면이 그 둘을 같은 모습으로 그리면 안 된다.
+    // 실패를 "기능 없음"으로 그리면 사람은 이 앱에 그런 기능이 아예 없다고 읽는다.
     vi.stubGlobal('__TAURI_INTERNALS__', {
       transformCallback: () => 1,
       invoke: vi.fn(async (cmd: string) => {
@@ -419,9 +430,7 @@ describe('AgentsSettings — 에이전트별 계정 풀', () => {
       }),
     });
     await openDetail();
-    const select = await screen.findByLabelText('계정 풀');
-    // 잠근다 — 읽지 못한 목록에서 고르게 두면 배정이 스냅샷 없이 쓰여 순서·기본 풀이 지워진다.
-    expect((select as HTMLSelectElement).disabled).toBe(true);
+    expect(await screen.findByTestId('agent-pool-chain')).toBeTruthy();
     await waitFor(() => expect(screen.getByText(/데몬이 죽었다/)).toBeTruthy());
   });
 
@@ -430,7 +439,7 @@ describe('AgentsSettings — 에이전트별 계정 풀', () => {
     vi.unstubAllGlobals();
     await openDetail();
     await screen.findByLabelText('에이전트 하네스');
-    expect(screen.queryByLabelText('계정 풀')).toBeNull();
+    expect(screen.queryByTestId('agent-pool-chain')).toBeNull();
   });
 
   /**
@@ -499,26 +508,24 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
     await waitFor(() => expect(screen.queryByTestId('agent-defaults-box')).toBeNull());
   }
 
-  it('만들기 화면에도 풀 선택이 있다 — 만든 뒤 상세로 다시 들어가게 만들지 않는다', async () => {
+  it('만들기 화면에도 풀 목록이 있다 — 만든 뒤 상세로 다시 들어가게 만들지 않는다', async () => {
     await openCreate();
-    const select = await screen.findByLabelText('계정 풀');
-    const options = screen.getAllByRole('option').map((o) => (o as HTMLOptionElement).value);
-    expect(options).toContain('work');
-    expect(options).toContain('personal');
-    expect((select as HTMLSelectElement).value).toBe('');
+    const add = await screen.findByLabelText('＋ 풀 추가') as HTMLSelectElement;
+    expect([...add.options].map((o) => o.value)).toEqual(['', 'work', 'personal']);
   });
 
-  it('고른 풀을 생성 호출에 실어 보낸다 — 러너가 뜨기 전에 쓰여야 첫 러너가 그 풀로 돈다', async () => {
+  it('고른 순서를 생성 호출에 실어 보낸다 — 러너가 뜨기 전에 쓰여야 첫 러너가 그 풀로 돈다', async () => {
     await openCreate();
     const { fireEvent } = await import('@testing-library/react');
-    fireEvent.change(await screen.findByLabelText('계정 풀'), { target: { value: 'personal' } });
+    fireEvent.change(await screen.findByLabelText('＋ 풀 추가'), { target: { value: 'personal' } });
+    await screen.findByTestId('agent-pool-chain-row-personal');
+    fireEvent.change(screen.getByLabelText('＋ 풀 추가'), { target: { value: 'work' } });
+    await screen.findByTestId('agent-pool-chain-row-work');
     fireEvent.change(screen.getByLabelText('에이전트 이름'), { target: { value: 'beta' } });
     screen.getByRole('button', { name: '에이전트 만들기' }).click();
 
     await waitFor(() => expect(createAgent).toHaveBeenCalled());
-    // 배정을 생성 **뒤에** 쓰면 `startCreated` 가 이미 기본 풀로 러너를 띄운다 —
-    // 그래서 값이 생성 호출 자체에 실려야 한다.
-    expect(createAgent.mock.calls[0]![1]).toEqual({ claudePool: 'personal' });
+    expect(createAgent.mock.calls[0]![1]).toEqual({ claudePools: ['personal', 'work'] });
   });
 
   it('기본 풀 사용이면 아무것도 실어 보내지 않는다', async () => {

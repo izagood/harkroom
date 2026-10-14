@@ -56,6 +56,7 @@ import { Identity } from '../Identity';
 import { Button, DangerZone, SettingsColumns, SettingsWrap } from './primitives';
 import { AvatarAdjustTrigger, AvatarCropHost, AvatarStatus, useAvatarEdit, type AvatarEditInput } from './avatarEdit';
 import { useAgentPool } from './useAgentPool';
+import { AgentPoolChain } from './AgentPoolChain';
 import { navKey } from './sections';
 import { AGENT_DETAIL_TABS, parseAgentTarget, type AgentDetailTab } from './agentDetailTabs';
 import { ConfirmDialog } from '../ConfirmDialog';
@@ -1383,7 +1384,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       const opts = {
         // 고른 풀을 **여기서** 넘긴다 — 러너가 뜨기 전에 쓰여야 첫 러너가 그 풀로 돈다
         // (`controller.createAgent` 의 근거). `''` 은 배정 없음이라 넘길 것이 없다.
-        ...(agentPool.assigned ? { claudePool: agentPool.assigned } : {}),
+        ...(agentPool.chain.length ? { claudePools: agentPool.chain } : {}),
         // 이 기기에서 돌린다 — 로컬 설정에 넣고 배정까지 쓴다. 이것이 없으면 만든
         // 에이전트는 계정만 있고 아무도 안 띄우는, 멈춘 상태로 선다.
         ...(attachTo ? { localOperator: { ...attachTo, ...(draft.workingDir ? { workingDir: draft.workingDir } : {}) } } : {}),
@@ -2559,36 +2560,32 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   </span>
                 )}
                 {agentPool.available && harnessHasAccountPool(draft.harness) && (
-                  <label className={label}>
+                  <div className={label}>
                     {t('agents.run.pool')}
-                    <select
-                      className={field}
-                      aria-label={t('agents.run.pool')}
-                      disabled={!agentPool.ready}
-                      value={agentPool.assigned}
-                      onChange={(e) => void agentPool.assign(e.target.value)}
-                    >
-                      <option value="">
-                        {agentPool.defaultPool
-                          ? t('agents.run.poolDefaultNamed', { pool: agentPool.defaultPool })
-                          : t('agents.run.poolDefault')}
-                      </option>
-                      {agentPool.pools.map((p) => <option key={p} value={p}>{p}</option>)}
-                    </select>
-                    {/* 만들기와 상세에서 **적용 시점이 다르다.** 상세는 고르는 즉시 데몬에
-                        쓰이고 러너 재시작이 필요하지만, 만들기에는 쓸 대상이 아직 없어
-                        생성 시점에 쓰인다(그래서 첫 러너가 이미 그 풀로 뜬다 — 재시작이
-                        필요 없다). 한 문구로 뭉개면 한쪽은 반드시 틀린 말이 된다. */}
+                    {/* **풀 순서 목록**(2026-10-15 풀 n개). 앞 풀의 계정이 모두 소진되면 다음 풀로
+                        넘어가고, 앞 풀이 풀리면 새 스레드부터 돌아온다. 판정은 러너와 같은 식이다
+                        (`useAgentPool` 의 `state`). */}
+                    <AgentPoolChain
+                      chain={agentPool.chain}
+                      pools={agentPool.pools}
+                      defaultPool={agentPool.defaultPool}
+                      state={agentPool.state}
+                      ready={agentPool.ready}
+                      onChange={(next) => void agentPool.setChain(next)}
+                    />
+                    {/* 만들기와 상세에서 **적용 시점이 다르다.** 상세는 고치는 즉시 데몬에 쓰이고
+                        러너가 5초마다 다시 읽어 **다음 새 스레드부터** 적용된다(재시작 필요 없음).
+                        만들기에는 쓸 대상이 아직 없어 생성 시점에 쓰인다. */}
                     <span className="mt-1 block text-meta text-fg-subtle">
                       {t('agents.run.poolLocalNote')}{' '}
                       {selected || createdAgentId
-                        ? t('agents.run.poolRestartNote')
+                        ? t('agents.run.poolNextThreadNote')
                         : t('agents.run.poolOnCreateNote')}
                     </span>
                     {agentPool.error && (
                       <span className="mt-1 block text-meta text-danger">{agentPool.error}</span>
                     )}
-                  </label>
+                  </div>
                 )}
 
                 {/* **어디서 돌리나 — 만들기의 기본값**(#856).

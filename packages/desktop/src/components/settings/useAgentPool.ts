@@ -24,57 +24,102 @@
  * ## 만들기 화면은 예외다 — 쓸 대상이 아직 없다
  *
  * 배정은 **에이전트 id 로 적히는 값**이고, 만들 때는 그 id 가 아직 없다. 그래서 이 훅은
- * `agentId === null` 이면 고른 값만 기억하고(`chosen`) 데몬에 쓰지 않는다. 실제로 적는
+ * `agentId === null` 이면 고른 목록만 기억하고(`chosen`) 데몬에 쓰지 않는다. 실제로 적는
  * 것은 `controller.createAgent` 이며, **러너가 뜨기 전에** 적는다 — 러너는 자기 풀을
  * 시작할 때 한 번만 읽으므로 그 뒤에 적으면 방금 만든 에이전트의 첫 러너는 기본 풀로
  * 돈다. 근거 전문은 그 메서드 안에 있다.
+ *
+ * ## 풀 n개(2026-10-15)
+ *
+ * 배정은 풀 하나가 아니라 **풀 순서 목록**이다(jaebin D1~D5 전부 A). 화면이 말하는 "지금 어느 풀을
+ * 왜 쓰나"는 러너와 **같은 식**(`@harkroom/shared/claudePoolChain` 의 `poolChainState`)으로 잰다 —
+ * 두 곳이 다른 식을 쓰면 화면은 1번을 쓴다는데 러너는 2번으로 보내는 날이 온다.
+ * 러너는 5초마다 pools.json 을 다시 읽으므로(`createLiveAccountLane`) 바꾼 순서는 **다음 새
+ * 스레드부터** 적용된다 — 러너를 다시 시작할 필요가 없다.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import { poolChainState, type PoolChainState } from '@harkroom/shared/claudePoolChain';
+import type { ClaudeUsageEntry } from '@harkroom/shared/claudeUsage';
 
 import {
   agentPoolsOf,
-  assignAgentPool,
+  assignAgentPools,
   hasClaudeAccountsSurface,
   listClaudeAccounts,
   type ClaudeAccountsSnapshot,
 } from '../../lib/claudeAccounts';
 import { errorTextNow } from '../../lib/errorText';
+import { useProviderUsage, type ProviderUsageSnapshot } from '../../lib/providerUsage';
 
 export interface AgentPoolState {
   /**
    * 이 빌드에 Tauri 표면이 있는가. 거짓이면 화면이 선택을 **그리지 않는다.**
    *
-   * **볼 에이전트가 정해졌는지는 여기 섞지 않는다.** 앞 판본은 `agentId !== null` 을 함께
-   * 봤고, 그래서 만들기 화면(`selected === null`)에는 풀 선택이 **아예 나타나지 않았다** —
-   * 사람은 에이전트를 만든 뒤 상세로 다시 들어가야 풀을 고를 수 있었고, 그 사이 러너는
-   * 이미 기본 풀로 떠 있었다. 고를 수 있는 풀 목록은 에이전트와 무관한 기기의 사실이다.
-   *
-   * **스냅샷을 아직 못 읽은 것은 여기 섞지 않는다.** 섞으면 조회가 실패했을 때 선택이
-   * 통째로 사라지고, 그러면 `error` 를 그릴 자리도 같이 없어져 사람은 "이 앱에는 그런
-   * 기능이 없다"고 읽는다 — 실제로 그렇게 읽힌 적이 있다. 못 읽은 것은 `ready` 가 말한다.
+   * **볼 에이전트가 정해졌는지는 여기 섞지 않는다** — 만들기 화면에서도 고를 수 있어야 한다.
+   * **스냅샷을 아직 못 읽은 것도 섞지 않는다** — 섞으면 조회 실패가 "이 앱엔 그런 기능이 없다"로
+   * 읽힌다. 못 읽은 것은 `ready` 가 말한다.
    */
   available: boolean;
-  /** 스냅샷을 읽었는가. 거짓이면 화면은 선택을 **그리되 잠근다**(고를 것이 아직 없다). */
+  /** 스냅샷을 읽었는가. 거짓이면 화면은 목록을 **그리되 잠근다**(고를 것이 아직 없다). */
   ready: boolean;
-  /** 고를 수 있는 풀 이름. **스냅샷에서 온다** — 지어내지 않는다. */
+  /** 이 기기에 있는 풀 이름. **스냅샷에서 온다** — 지어내지 않는다. */
   pools: string[];
   /**
-   * 지금 배정. `''` 은 배정 없음(기본 풀 사용)이다.
-   *
-   * 사람이 방금 고른 값이 있으면 **그 값**이고, 없으면 스냅샷의 배정이다. 만들기 화면에는
-   * 스냅샷 쪽 값이 없으므로(에이전트 id 가 아직 없다) 고른 값만이 화면의 근거다.
+   * 지금 풀 순서. 빈 목록은 배정 없음(기본 풀 사용, D5)이다. 사람이 방금 고친 목록이 있으면 그
+   * 목록이고, 없으면 스냅샷의 배정이다(만들기 화면에는 스냅샷 쪽 값이 없다).
    */
-  assigned: string;
-  /** 기본 풀 이름. 화면이 "기본 풀 사용"이 무엇을 뜻하는지 말할 때 쓴다. */
+  chain: string[];
+  /** 기본 풀 이름. 목록이 비었을 때 무엇을 쓰는지 말할 때 쓴다. */
   defaultPool: string | null;
   /**
-   * 배정을 바꾼다. `''` 이면 배정을 **지운다**.
-   *
-   * 에이전트 id 가 없으면(만들기 화면) 데몬에 쓰지 않고 고른 값만 기억한다 — 쓸 대상이
-   * 아직 없다. 그 값을 실제로 적는 것은 `createAgent` 다.
+   * 러너와 같은 식으로 잰 판정. 목록이 비었으면 기본 풀 하나를 잰다(D5). 스냅샷을 못 읽었거나
+   * 잴 풀이 없으면 `null`. 사용량을 못 읽은 계정은 "모름"이지 소진이 아니다.
    */
-  assign(pool: string): Promise<void>;
+  state: PoolChainState | null;
+  /**
+   * 풀 순서를 통째로 바꾼다. 빈 목록이면 배정을 **지운다**(키 삭제 — 데몬은 빈 목록을 거절한다).
+   * 에이전트 id 가 없으면(만들기 화면) 데몬에 쓰지 않고 기억만 한다 — 적는 것은 `createAgent` 다.
+   */
+  setChain(pools: readonly string[]): Promise<void>;
   error: string | null;
+}
+
+/**
+ * 사용량 스냅샷을 판정 식의 입력으로 옮긴다. **못 읽은 것은 모르는 것이다** — 오류 꼬리표가 붙었거나
+ * 주간 창이 없으면 `readAtMs: null` 로 넘겨, 판정 식이 그 계정을 소진으로 세지 않게 한다.
+ * 신선도(10분)는 판정 식이 `fetchedAtMs` 로 잰다.
+ */
+export function usageEntriesOf(snap: ProviderUsageSnapshot | null): ClaudeUsageEntry[] {
+  if (!Array.isArray(snap?.accounts)) return [];
+  return snap.accounts.map((a) => ({
+    pool: a.pool ?? '',
+    account: a.account,
+    signIn: null,
+    session: a.session,
+    weekly: a.weekly,
+    modelWeekly: [],
+    readAtMs: !a.error && a.weekly && a.fetchedAtMs > 0 ? a.fetchedAtMs : null,
+    ...(a.error ? { error: a.error } : {}),
+  }));
+}
+
+/** 스냅샷 + 사용량 → 판정. 화면 시험이 훅 없이 같은 값을 만들 수 있게 따로 둔다. */
+export function agentPoolChainState(
+  snap: ClaudeAccountsSnapshot, chain: readonly string[], usage: ProviderUsageSnapshot | null, now: number,
+): PoolChainState | null {
+  const measured = chain.length ? chain : snap.defaultPool ? [snap.defaultPool] : [];
+  if (!measured.length) return null;
+  const accountsByPool = new Map(snap.pools.filter((p) => p.name).map((p) => [p.name, p.accounts.map((a) => a.name)] as const));
+  const attention = new Set(snap.pools.flatMap((p) => p.accounts.filter((a) => a.attention).map((a) => `${p.name}/${a.name}`)));
+  return poolChainState({
+    chain: measured,
+    accountsByPool,
+    usage: usageEntriesOf(usage),
+    cfg: { defaultPool: snap.defaultPool, order: {}, agents: {}, ...(snap.assign ? { assign: snap.assign } : {}) },
+    now,
+    blocked: (pool, account) => attention.has(`${pool}/${account}`),
+  });
 }
 
 export function useAgentPool(agentId: string | null): AgentPoolState {
@@ -82,15 +127,12 @@ export function useAgentPool(agentId: string | null): AgentPoolState {
   const [snap, setSnap] = useState<ClaudeAccountsSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   /**
-   * 사람이 **방금 고른** 값. `null` 은 "고른 적 없다"이고 `''` 은 "기본 풀 사용을 골랐다"다 —
-   * 그 둘을 한 값으로 뭉개면 만들기 화면에서 배정을 지우는 조작이 표현되지 않는다.
-   *
-   * 왜 스냅샷만으로는 안 되나: 만들기 화면에는 **아직 에이전트 id 가 없다.** 배정은
-   * id 로 적히는 값이므로 고르는 순간에는 쓸 곳이 없고, 그동안 화면이 보여 줄 값은
-   * 스냅샷이 아니라 이 상태다. 그 값을 실제로 적는 것은 `controller.createAgent` 다.
+   * 사람이 **방금 고친** 목록. `null` 은 "고친 적 없다"이고 `[]` 은 "기본 풀 사용으로 비웠다"다 —
+   * 그 둘을 뭉개면 만들기 화면에서 목록을 비우는 조작이 표현되지 않는다.
    */
-  const [chosen, setChosen] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<string[] | null>(null);
   const prevAgentId = useRef(agentId);
+  const { snap: usage } = useProviderUsage('claude', available);
 
   useEffect(() => {
     if (!available) return;
@@ -104,12 +146,8 @@ export function useAgentPool(agentId: string | null): AgentPoolState {
   }, [available]);
 
   /**
-   * 보던 대상이 **다른 에이전트로** 바뀌면 고른 값을 버린다 — 남기면 앞 에이전트의 선택이
-   * 뒤 에이전트의 배정으로 보인다.
-   *
-   * `null → id` 전이는 **예외로 지나간다.** 그것은 만들기 화면이 방금 만든 에이전트로
-   * 이어지는 전이이고, 그 값은 이미 데몬에 쓰였다(`controller.createAgent`). 여기서 지우면 화면이
-   * 방금 적용한 선택을 "기본 풀 사용"으로 되돌려 그린다 — 사람은 배정이 안 됐다고 읽는다.
+   * 보던 대상이 **다른 에이전트로** 바뀌면 고친 목록을 버린다. `null → id`(만들기 → 방금 만든
+   * 에이전트)는 지나간다 — 그 목록은 이미 데몬에 쓰였다(`controller.createAgent`).
    */
   useEffect(() => {
     const prev = prevAgentId.current;
@@ -118,19 +156,16 @@ export function useAgentPool(agentId: string | null): AgentPoolState {
     setChosen(null);
   }, [agentId]);
 
-  const assign = useCallback(async (pool: string): Promise<void> => {
+  const setChain = useCallback(async (pools: readonly string[]): Promise<void> => {
     if (!snap) return;
-    setChosen(pool);
-    // **만들기 화면에는 아직 쓸 곳이 없다.** id 가 없으면 고른 값만 기억하고 끝낸다 —
-    // 그 값은 `createAgent` 가 러너를 띄우기 **전에** 실어 보낸다(위 머리말).
+    const next = [...pools];
+    setChosen(next);
     if (!agentId) return;
     try {
-      await assignAgentPool(agentId, pool);
-      // 병합은 `assignAgentPool` 이 새로 읽은 스냅샷으로 한다. 여기서 캐시를 갱신하는
-      // 것은 **되돌아 그리지 않기 위한 것**뿐이다(`assigned` 의 대체값).
+      await assignAgentPools(agentId, next);
       const agents = { ...snap.agents };
-      if (pool === '') delete agents[agentId];
-      else agents[agentId] = [pool];
+      if (!next.length) delete agents[agentId];
+      else agents[agentId] = next;
       setSnap({ ...snap, agents });
       setError(null);
     } catch (err) {
@@ -138,13 +173,40 @@ export function useAgentPool(agentId: string | null): AgentPoolState {
     }
   }, [snap, agentId]);
 
+  const chain = chosen ?? (agentId && snap ? agentPoolsOf(snap, agentId) : []);
+  const chainKey = chain.join('\n');
+  const state = useMemo(
+    () => (snap ? agentPoolChainState(snap, chain, usage, Date.now()) : null),
+    [snap, chainKey, usage],
+  );
+
   return {
     available,
     ready: snap !== null,
     pools: (snap?.pools ?? []).map((p) => p.name).filter((n) => n !== ''),
-    assigned: chosen ?? ((agentId && snap && agentPoolsOf(snap, agentId)[0]) || ''),
+    chain,
     defaultPool: snap?.defaultPool ?? null,
-    assign,
+    state,
+    setChain,
     error,
   };
+}
+
+/**
+ * 에이전트 id → 풀 순서(이 기기). 턴 줄의 「↓ 2번 풀」 칩이 쓴다 — 표면이 없거나 못 읽었으면 빈 맵이고,
+ * 그때 칩은 서지 않는다(확인하지 않은 것을 단언하지 않는다).
+ */
+export function useAgentPoolChains(): ReadonlyMap<string, string[]> {
+  const available = hasClaudeAccountsSurface();
+  const [snap, setSnap] = useState<ClaudeAccountsSnapshot | null>(null);
+  useEffect(() => {
+    if (!available) return;
+    let dead = false;
+    void listClaudeAccounts().then((s) => { if (!dead) setSnap(s); }, () => {});
+    return () => { dead = true; };
+  }, [available]);
+  return useMemo(
+    () => new Map(snap ? Object.keys(snap.agents).map((id) => [id, agentPoolsOf(snap, id)] as const) : []),
+    [snap],
+  );
 }
