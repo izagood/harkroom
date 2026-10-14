@@ -75,7 +75,11 @@ class HarkroomAvatar extends StatelessWidget {
       excludeSemantics: true,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
-        child: Image(
+        // 사진 뒤에 바탕을 깐다 — 투명 로고·SVG 가 채팅 바탕색에 녹지 않게. 데스크톱 `Identity` 가 사진 뒤에
+        // `bg-surface-hover` 를 까는 것과 같다(designer n1). 테마가 없는 자리(시험)는 바탕 없이.
+        child: ColoredBox(
+          color: Theme.of(context).extension<HarkroomTokens>()?.surfaceHover ?? Colors.transparent,
+          child: Image(
           key: ValueKey('avatar-photo-$attachmentId'),
           // **디코드를 그릴 크기에 묶는다**(security F1·designer n2). 서버는 래스터 아바타의 픽셀 수를 막지 않으므로
           // (옛 사진·옛 앱·PAT 로 올린 사진은 512 로 잘리지 않는다) 원본 해상도로 풀면 그 사람이 나오는 화면마다
@@ -93,6 +97,7 @@ class HarkroomAvatar extends StatelessWidget {
           // 받는 동안·못 받으면 글자 — 빈 칸이 깜박이지 않게.
           frameBuilder: (context, child, frame, sync) => frame == null && !sync ? initials : child,
           errorBuilder: (context, error, stack) => initials,
+          ),
         ),
       ),
     );

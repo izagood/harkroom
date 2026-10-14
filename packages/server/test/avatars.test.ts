@@ -575,6 +575,19 @@ describe('SVG 아바타를 모바일용으로 굳힌다 (사진 후속 ③)', ()
     expect([meta.width, meta.height]).toEqual([SVG_RASTER_PX, SVG_RASTER_PX]);
   });
 
+  it('정사각이 아닌 SVG 는 꽉 채워 자른다 — 투명 띠 없이(데스크톱 object-cover 와 같게, designer s1)', async () => {
+    const wide = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="8" viewBox="0 0 32 8"><rect width="32" height="8" fill="#c00"/></svg>');
+    const out = await rasterizeSvgAvatar(wide);
+    expect(out).not.toBeNull();
+    const { data, info } = await sharp(out!).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    // 위·아래 모서리 픽셀이 투명하면 contain(띠)이다. cover 면 빨강으로 차 있다.
+    for (const [x, y] of [[0, 0], [info.width - 1, 0], [0, info.height - 1], [info.width - 1, info.height - 1]]) {
+      const i = (y! * info.width + x!) * info.channels;
+      expect(data[i + 3], `alpha at ${x},${y}`).toBe(255);
+      expect(data[i], `red at ${x},${y}`).toBeGreaterThan(150);
+    }
+  });
+
   it('밖을 가리키는 참조가 있으면 굳히지 않는다 — 서버가 파일·내부 주소를 읽는 통로가 되지 않게', async () => {
     const wrap = (inner: string) =>
       Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 8 8">${inner}</svg>`);

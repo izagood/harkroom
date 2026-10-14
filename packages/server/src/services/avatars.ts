@@ -425,7 +425,9 @@ export async function rasterizeSvgAvatar(svg: Buffer): Promise<Buffer | null> {
   if (SVG_EXTERNAL_REF.test(svg.toString('utf8'))) return null;
   try {
     return await sharp(svg, { limitInputPixels: SVG_RASTER_PX * SVG_RASTER_PX * 16 })
-      .resize(SVG_RASTER_PX, SVG_RASTER_PX, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      // `cover`(가운데 기준) — 데스크톱이 SVG 를 `object-cover` 로 그리는 것과 같게, 정사각이 아니면 넘치는 쪽을
+      // 자른다. `contain` 이면 투명 띠가 생겨 모바일에서만 그림이 작아 보인다(designer s1).
+      .resize(SVG_RASTER_PX, SVG_RASTER_PX, { fit: 'cover', position: 'centre' })
       .png()
       .toBuffer();
   } catch {

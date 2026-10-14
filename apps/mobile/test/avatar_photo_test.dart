@@ -6,7 +6,9 @@ import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_scope.dart';
 import 'package:harkroom/state/app_state.dart';
+import 'package:harkroom/theme.dart';
 import 'package:harkroom/ui/parts.dart';
+import 'package:harkroom/ui/tokens.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -57,6 +59,7 @@ void main() {
     final app = (await tester.runAsync(_boot))!;
     addTearDown(app.dispose);
     await tester.pumpWidget(MaterialApp(
+      theme: harkroomTheme(Brightness.light),
       home: AppScope(
         state: app,
         child: const Row(children: [
@@ -81,6 +84,10 @@ void main() {
     expect(net.headers?['authorization'], 'Bearer tok');
     expect(find.byKey(const ValueKey('avatar-photo-att-forge')), findsNothing);
     expect(find.text('F'), findsOneWidget);
+    // 사진 뒤 바탕은 데스크톱과 같은 surfaceHover(designer n1) — 투명 사진이 채팅 바탕에 녹지 않게.
+    final bg = tester.widget<ColoredBox>(
+      find.ancestor(of: find.byKey(const ValueKey('avatar-photo-att-me')), matching: find.byType(ColoredBox)).first);
+    expect(bg.color, HarkroomTokens.light.surfaceHover);
 
     app.applyEvent({'type': 'avatar.changed', 'accountId': 'forge', 'avatarAttachmentId': 'att-forge'});
     await tester.pump();
