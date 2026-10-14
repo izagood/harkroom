@@ -270,17 +270,16 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    */
   const [group, setGroup] = useState<'agents' | 'teams'>('agents');
   /**
-   * 방금 만든 에이전트의 id. **만들기 화면은 만든 뒤에도 그대로 서 있다**(PAT 를 그 자리에
-   * 보여 줘야 하므로 상세로 넘기지 않는다) — 그동안 풀 선택이 다시 바뀌면 쓸 대상이
-   * 필요하다. 이 값이 없으면 그 조작은 아무 데도 쓰이지 않는다.
+   * 방금 만든 에이전트의 id. 만든 뒤에는 **격자로 돌아가고**(아래 `submit`) 이 id 의 카드를
+   * 팝업이 떠 있는 동안 강조한다 — 사람이 방금 만든 것을 목록에서 찾지 않아도 된다.
+   * 격자에서 새 초안(`startNew`)이나 다른 카드(`pick`)로 가면 지운다.
    */
   const [createdAgentId, setCreatedAgentId] = useState<string | null>(null);
   /**
    * 방금 만든 에이전트의 이름 — **만들었다는 팝업**의 재료.
    *
-   * 만들기 화면은 만든 뒤에도 그대로 서 있으므로(위 `createdAgentId`) 성공해도 화면에
-   * 바뀌는 것이 없었다 — 사람은 눌린 것인지, 아직 도는 것인지, 만들어졌는지를 알 길이
-   * 없어 격자로 돌아가 카드를 찾아봐야 했다. 실패는 `error` 줄이 말하는데 성공만 조용했다.
+   * 예전에는 만들기 화면이 만든 뒤에도 그대로 서 있어 사람이 격자로 돌아가 카드를 찾아봐야
+   * 했다. 지금은 격자로 넘어가고, 이 팝업은 **격자 위에** 뜬다(상세·격자 두 화면 모두 그린다).
    *
    * `Notice` 에 싣지 않는다 — 그 자리는 실패 전용이다(저절로 사라지지 않는 경고색). 이건
    * 확인일 뿐이라 몇 초 뒤 스스로 걷힌다.
@@ -291,6 +290,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
     const timer = setTimeout(() => setCreatedToast(null), CREATED_TOAST_MS);
     return () => clearTimeout(timer);
   }, [createdToast]);
+  /**
+   * 만든 뒤 격자로 넘어오면 **그 카드가 보이도록** 굴린다 — 에이전트가 많아 격자가 길면 새 카드는
+   * 맨 끝에 서서 화면 밖이다. 다시 읽기(`reload`)로 카드 자리가 바뀌어도 한 번 더 맞춘다.
+   * `scrollIntoView` 가 없는 환경(jsdom)에서는 아무것도 하지 않는다.
+   */
+  const gridRef = useRef<HTMLDivElement>(null);
+  const highlightId = view === 'grid' && createdToast ? createdAgentId : null;
+  useEffect(() => {
+    if (!highlightId) return;
+    const card = gridRef.current?.querySelector<HTMLElement>('[data-selected="true"]');
+    card?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }, [highlightId, agents]);
   /** 에이전트별 계정 풀 배정(기기 로컬). 이 값은 서버로 가지 않는다 — `useAgentPool` 주석. */
   const agentPool = useAgentPool(selected?.id ?? createdAgentId);
   /**
@@ -1377,6 +1388,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
       );
       setCreatedAgentId(agent.id);
       setCreatedToast(agent.handle ?? draft.handle);
+      // **목록으로 간다**(jaebin 지시, 스레드 fe5505ea). 다시 읽기가 오기 전에도 카드가 서도록
+      // 응답의 정의를 먼저 끼운다 — 그래야 강조·스크롤이 빈 자리를 가리키지 않는다.
+      setAgents((prev) => (prev.some((a) => a.id === agent.id) ? prev : [...prev, agent]));
+      setGroup('agents');
+      setView('grid');
+      setDraft(null);
       // 배정 실패는 **생성 실패가 아니다.** 에이전트는 이미 만들어졌다.
       // 둘 다 실패하면 앞의 것만 보인다 — 한 줄에 둘을 이어 붙이면 사람이 무엇을 고쳐야
       // 하는지가 흐려진다. 나머지는 상세 화면의 같은 절이 다시 말한다.
@@ -1743,13 +1760,36 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   }
 
   /**
+   * 만들었다는 팝업. **격자와 상세 두 화면이 같은 것을 그린다** — 만든 뒤 격자로 넘어가므로
+   * 팝업은 격자 위에 서야 하고, 상세에 남는 경우(만든 직후 사람이 다른 카드를 연 때)도 그대로 보인다.
+   */
+  const createdToastEl = createdToast ? (
+    <div
+      data-testid="agent-created-toast"
+      // 확인이지 경보가 아니다 — `Notice` 의 `alert` 보다 약하게 둔다(`UpdateToast` 와 같은 판단).
+      role="status"
+      className="absolute bottom-4 left-1/2 z-50 flex max-w-[90%] -translate-x-1/2 items-center gap-2 rounded-full bg-surface-raised py-1.5 pl-3 pr-1.5 text-body shadow-float"
+    >
+      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-accent-brand" />
+      <span className="truncate">{t('agents.create.created', { handle: createdToast })}</span>
+      <button
+        className="rounded-full px-1.5 text-fg-muted hover:bg-surface-hover"
+        aria-label={t('agents.create.createdDismiss')}
+        onClick={() => setCreatedToast(null)}
+      >
+        ×
+      </button>
+    </div>
+  ) : null;
+
+  /**
    * **한 번에 한 화면이다**(identity 문서). 그리드를 보거나 상세를 보거나 — 나란히 두지
    * 않는다. 문서의 목업이 그리드에는 곁창을 그리지 않았고 상세에는 `← 에이전트` 로 돌아가는
    * 길을 그렸다. 나란히 두면 상세의 폭이 좁아져 세 묶음이 다시 한 줄로 흐른다.
    */
   if (view === 'grid') {
     return (
-      <div className="flex h-full min-h-0 flex-col bg-surface-raised p-5">
+      <div ref={gridRef} className="relative flex h-full min-h-0 flex-col bg-surface-raised p-5">
         {groupTabs}
         <div className="mb-4">
           {/* **칸 제목은 이름줄단 15px 이다.** 이 화면은 `SettingsPage` 를 쓰지 않고 두 칸을
@@ -1773,7 +1813,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
         <AgentGrid
           agents={agents}
           mergeCounts={mergeCounts}
-          selectedId={null}
+          /* 방금 만든 에이전트만 강조한다 — 팝업이 떠 있는 동안. 격자에는 「골랐다」는 상태가 없으므로
+             이 테가 다른 뜻으로 읽힐 일이 없고, 팝업과 함께 걷혀 계속 남는 표지가 되지 않는다. */
+          selectedId={highlightId}
           runnerStates={runnerStates}
           online={online}
           connected={connected}
@@ -1810,6 +1852,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
              봐야 "3대"가 격자에서 어느 셋인지 맞는다(문서 2쪽 「러너 버전」). */
           operatorVersions={operatorVersions}
         />
+        {createdToastEl}
       </div>
     );
   }
@@ -3391,24 +3434,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
             </footer>
           )}
         </div>
-      {createdToast && (
-        <div
-          data-testid="agent-created-toast"
-          // 확인이지 경보가 아니다 — `Notice` 의 `alert` 보다 약하게 둔다(`UpdateToast` 와 같은 판단).
-          role="status"
-          className="absolute bottom-4 left-1/2 z-50 flex max-w-[90%] -translate-x-1/2 items-center gap-2 rounded-full bg-surface-raised py-1.5 pl-3 pr-1.5 text-body shadow-float"
-        >
-          <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-accent-brand" />
-          <span className="truncate">{t('agents.create.created', { handle: createdToast })}</span>
-          <button
-            className="rounded-full px-1.5 text-fg-muted hover:bg-surface-hover"
-            aria-label={t('agents.create.createdDismiss')}
-            onClick={() => setCreatedToast(null)}
-          >
-            ×
-          </button>
-        </div>
-      )}
+      {createdToastEl}
       {confirmingRevokeAll && selected && (
         <ConfirmDialog
           title={t('agents.pat.revokeAllTitle', { count: livePats.length })}
