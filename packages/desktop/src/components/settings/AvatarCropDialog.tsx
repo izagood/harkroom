@@ -20,9 +20,10 @@ const ZOOM_STEP = 1.1;
 
 /** 미리보기 — 실제 쓰이는 크기 넷(designer 시안). */
 const PREVIEWS = [
-  { px: 64, key: 'avatarCrop.previewSettings' },
-  { px: 40, key: 'avatarCrop.previewMessage' },
-  { px: 24, key: 'avatarCrop.previewList' },
+  // 실제로 그리는 크기다(designer n1): 에이전트 설정 Profile h-12 · 내 프로필 h-10 · 메시지 거터 h-8 · 멘션·목록 h-5.
+  { px: 48, key: 'avatarCrop.previewAgentProfile' },
+  { px: 40, key: 'avatarCrop.previewMyProfile' },
+  { px: 32, key: 'avatarCrop.previewMessage' },
   { px: 20, key: 'avatarCrop.previewMention' },
 ] as const;
 
@@ -59,6 +60,8 @@ export function AvatarCropDialog({
   const [failed, setFailed] = useState(false);
   const [view, setView] = useState<CropView | null>(null);
   const [saving, setSaving] = useState(false);
+  /** 잘라 내기(캔버스)가 실패했다. 사진은 떠 있으니 「열 수 없다」와 다른 말이 필요하다(designer s2). */
+  const [saveFailed, setSaveFailed] = useState(false);
   const drag = useRef<{ x: number; y: number; view: CropView } | null>(null);
 
   // 원본이 바뀌면(다른 사진) 부르는 쪽이 `key={src}` 로 이 창을 새로 띄운다 — 여기서 effect 로 상태를 비우면
@@ -99,11 +102,13 @@ export function AvatarCropDialog({
   const save = useCallback(async () => {
     if (!size || !view || !imgRef.current || saving) return;
     setSaving(true);
+    setSaveFailed(false);
     try {
       const blob = await renderCrop(imgRef.current, viewToRect(size, view));
       onSave({ blob, crop: viewToCrop(size, view) });
     } catch {
-      setFailed(true);
+      // 조용히 버튼만 되살리면 사람은 저장이 된 줄 안다 — 저장 버튼 옆에 말한다.
+      setSaveFailed(true);
       setSaving(false);
     }
   }, [size, view, saving, onSave]);
@@ -187,7 +192,7 @@ export function AvatarCropDialog({
               {ready && (
                 <div
                   aria-hidden
-                  className="pointer-events-none absolute rounded-[27.78%] border-[1.5px] border-white/90"
+                  className="pointer-events-none absolute rounded-avatar border-[1.5px] border-white/90"
                   // 틀 밖을 덮는 막. 그림자 하나로 칸 전체를 덮는다 — 라이트·다크 모두 사진 위라 같은 막을 쓴다.
                   // 틀은 원이 아니라 아바타와 같은 둥근 사각형(모바일 비율 10/36, #1361)이다 — 맞춘 그대로 보이게.
                   style={{ left: INSET, top: INSET, width: CIRCLE_PX, height: CIRCLE_PX, boxShadow: '0 0 0 9999px rgb(0 0 0 / 0.5)' }}
@@ -223,7 +228,7 @@ export function AvatarCropDialog({
             <div className="mb-3 mt-1.5 flex flex-wrap items-end gap-4">
               {PREVIEWS.map(({ px, key }) => (
                 <figure key={px} className="m-0 text-center text-meta text-fg-muted">
-                  <div className="relative mx-auto mb-1 overflow-hidden rounded-[27.78%] bg-surface-sunken" style={{ width: px, height: px }}>
+                  <div className="relative mx-auto mb-1 overflow-hidden rounded-avatar bg-surface-sunken" style={{ width: px, height: px }}>
                     {pic(px)}
                   </div>
                   {t(key)}
@@ -231,7 +236,7 @@ export function AvatarCropDialog({
               ))}
             </div>
             <div className="flex items-start gap-2 rounded-card bg-surface-sunken px-2.5 py-2">
-              <div className="relative shrink-0 overflow-hidden rounded-[27.78%] bg-surface" style={{ width: 32, height: 32 }}>{pic(32)}</div>
+              <div className="relative shrink-0 overflow-hidden rounded-avatar bg-surface" style={{ width: 32, height: 32 }}>{pic(32)}</div>
               <div className="min-w-0">
                 <span className="font-medium text-fg">{name}</span>
                 <p className="text-fg">{t('avatarCrop.previewSample')}</p>
@@ -258,7 +263,10 @@ export function AvatarCropDialog({
           >
             {t('avatarCrop.reset')}
           </button>
-          <span className="flex gap-2">
+          <span className="flex flex-wrap items-center justify-end gap-2">
+            {saveFailed && (
+              <span role="alert" data-testid="avatar-crop-save-failed" className="text-meta text-danger">{t('avatarCrop.saveFailed')}</span>
+            )}
             <Button disabled={saving} onClick={onCancel}>{t('avatarCrop.cancel')}</Button>
             <Button variant="primary" disabled={!ready || saving} onClick={() => void save()}>{t('avatarCrop.save')}</Button>
           </span>

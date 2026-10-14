@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
+import { render, renderHook, act, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { resetAvatarCache } from '../src/components/Identity';
 import { ProfileSettings } from '../src/components/settings/ProfileSettings';
 import { parseAvatarSource } from '../src/lib/api';
+import { useAvatarEdit } from '../src/components/settings/avatarEdit';
 import {
-  ZOOM_MAX, clampView, cropToView, fitView, panBy, viewToCrop, viewToRect, zoomAround,
+  ZOOM_MAX, clampView, renderCrop, cropToView, fitView, panBy, viewToCrop, viewToRect, zoomAround,
 } from '../src/lib/avatarCrop';
 import { acc } from './helpers/fakeApi';
 
@@ -187,6 +188,62 @@ describe('「사진 맞추기」 모달 (designer 시안 A)', () => {
       expect.objectContaining({ source: { kind: 'attached', attachmentId: 'att-old' } }),
       expect.any(Function),
     ));
+  });
+
+  it('잘라 내기가 실패하면 저장 버튼 옆에 말하고 올리지 않는다(designer s2)', async () => {
+    const c = fakeController();
+    vi.mocked(renderCrop).mockRejectedValueOnce(new Error('webp encode failed'));
+    useAppStore.getState().set({ me: acc('u1', 'me') });
+    render(<ProfileSettings onSignOut={() => {}} />);
+    fireEvent.change(screen.getByTestId('avatar-file'), { target: { files: [new File(['x'], 'a.png', { type: 'image/png' })] } });
+    const dialog = await loaded();
+    fireEvent.click(within(dialog).getByRole('button', { name: '저장' }));
+    expect(await within(dialog).findByTestId('avatar-crop-save-failed')).toBeTruthy();
+    expect(c.setAvatar).not.toHaveBeenCalled();
+    // 다시 누르면 된다.
+    fireEvent.click(within(dialog).getByRole('button', { name: '저장' }));
+    await waitFor(() => expect(c.setAvatar).toHaveBeenCalled());
+  });
+
+  it('다시 맞추려고 원본을 받는 동안 「여는 중」을 보인다(designer n2)', async () => {
+    let release: (v: null) => void = () => {};
+    fakeController({ fetchAvatarSource: vi.fn(() => new Promise<null>((r) => { release = r; })) });
+    useAppStore.getState().set({ me: acc('u1', 'me', 'human', false, { avatarAttachmentId: 'att-1' }) });
+    render(<ProfileSettings onSignOut={() => {}} />);
+    fireEvent.click(screen.getByTestId('avatar-adjust'));
+    expect(await screen.findByTestId('avatar-opening')).toBeTruthy();
+    release(null);
+    await screen.findByTestId('avatar-crop');
+    expect(screen.queryByTestId('avatar-opening')).toBeNull();
+  });
+
+  it('창이 열린 사이 대상이 바뀌면 창을 닫는다 — 저장이 새로 고른 에이전트에 걸리지 않게(security n3)', async () => {
+    const apply = vi.fn(async () => undefined);
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useAvatarEdit(apply, { accountId: id, avatarAttachmentId: null }),
+      { initialProps: { id: 'agent-a' } },
+    );
+    act(() => {
+      result.current.onPicked({ target: { files: [new File(['x'], 'a.png', { type: 'image/png' })], value: '' } } as unknown as React.ChangeEvent<HTMLInputElement>);
+    });
+    expect(result.current.crop?.accountId).toBe('agent-a');
+    rerender({ id: 'agent-b' });
+    expect(result.current.crop).toBeNull();
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it('원본을 받는 사이 대상이 바뀌면 창을 열지 않는다(security n3)', async () => {
+    let release: (v: null) => void = () => {};
+    fakeController({ fetchAvatarSource: vi.fn(() => new Promise<null>((r) => { release = r; })) });
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useAvatarEdit(vi.fn(async () => undefined), { accountId: id, avatarAttachmentId: 'att-1' }),
+      { initialProps: { id: 'agent-a' } },
+    );
+    act(() => { result.current.openAdjust(); });
+    rerender({ id: 'agent-b' });
+    await act(async () => { release(null); await new Promise((r) => setTimeout(r, 20)); });
+    expect(result.current.crop).toBeNull();
+    expect(result.current.busy).toBe(false);
   });
 
   it('사진이 없으면 다시 맞출 곳이 없다', () => {

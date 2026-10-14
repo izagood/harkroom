@@ -317,11 +317,11 @@ export const ko = {
   'avatarCrop.title': '사진 맞추기',
   'avatarCrop.stageAria': '사진 자리. 끌거나 방향키로 옮기고, +, − 로 확대한다',
   'avatarCrop.zoom': '확대',
-  'avatarCrop.hint': '끌어서 옮기기 · 휠/핀치로 확대 · 0 초기화',
+  'avatarCrop.hint': '끌거나 방향키로 옮기기 · 휠/핀치로 확대 · 0 초기화',
   'avatarCrop.preview': '미리보기',
-  'avatarCrop.previewSettings': '64 설정',
-  'avatarCrop.previewMessage': '40 메시지',
-  'avatarCrop.previewList': '24 목록',
+  'avatarCrop.previewAgentProfile': '48 에이전트 설정',
+  'avatarCrop.previewMyProfile': '40 내 프로필',
+  'avatarCrop.previewMessage': '32 메시지',
   'avatarCrop.previewMention': '20 멘션',
   'avatarCrop.previewSample': '새 사진이 이렇게 보인다.',
   'avatarCrop.gif': '움직이는 GIF는 첫 장만 남는다.',
@@ -332,6 +332,7 @@ export const ko = {
   'avatarCrop.save': '저장',
   'avatarCrop.loading': '사진을 여는 중…',
   'avatarCrop.loadFailed': '이 사진을 열 수 없다.',
+  'avatarCrop.saveFailed': '저장할 사진을 만들지 못했다. 다시 시도해 달라.',
   'avatarCrop.adjust': '맞추기',
 
   // ---------------------------------------------------------------------------

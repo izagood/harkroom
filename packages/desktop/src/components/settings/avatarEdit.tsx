@@ -18,6 +18,8 @@ import { AvatarCropDialog } from './AvatarCropDialog';
  */
 export type AvatarPhase =
   | { kind: 'idle' }
+  /** 다시 맞추려고 원본을 받는 중. 원본이 크면 몇 초 걸린다 — 말이 없으면 고장으로 보인다(designer n2). */
+  | { kind: 'opening' }
   /** 바이트가 가는 중. `fraction` 은 0~1 — 서버가 total 을 안 주면 `null` 이다. */
   | { kind: 'uploading'; fraction: number | null }
   /** 바이트는 다 갔고 계정에 잇는 중이다(PUT). 여기서 막대는 꽉 찬 상태로 기다린다. */
@@ -34,6 +36,8 @@ const DONE_MS = 3000;
  * `source` 는 저장할 때 원본으로 가리킬 것 — 새로 고른 파일이거나 이미 걸린 첨부다.
  */
 export type CropSession = {
+  /** 이 창을 연 대상 계정. 창이 열린 사이 다른 에이전트를 고르면 창을 닫는다(security n3) — 저장이 새로 고른 쪽에 걸리면 안 된다. */
+  accountId: string | null;
   src: string;
   isGif: boolean;
   initialCrop: AvatarCrop | null;
@@ -139,20 +143,40 @@ export function useAvatarEdit(
     }
   }, [apply, settle, t]);
 
-  const accountId = target?.accountId;
+  const accountId = target?.accountId ?? null;
   const avatarAttachmentId = target?.avatarAttachmentId;
   const cropping = target !== null;
+  /** 지금 대상. 원본을 받는 await 뒤에 대상이 바뀌었는지 이것으로 본다. */
+  const currentTarget = useRef(accountId);
+  currentTarget.current = accountId;
+  // 대상이 바뀌면(에이전트 설정에서 다른 에이전트를 골랐다) 열린 창을 닫는다. 남겨 두면 저장 버튼이 **새로 고른
+  // 에이전트**에 사진을 건다 — 권한이 오르는 것은 아니지만 엉뚱한 얼굴이 걸린다(security n3).
+  useEffect(() => {
+    setCrop((cur) => {
+      if (!cur || cur.accountId === accountId) return cur;
+      if (cropUrl.current) URL.revokeObjectURL(cropUrl.current);
+      cropUrl.current = null;
+      return null;
+    });
+  }, [accountId]);
   const openAdjust = useCallback(async () => {
     if (!accountId || !avatarAttachmentId || opening) return;
     setConfirmingRemove(false);
     setOpening(true);
+    if (clearTimer.current) clearTimeout(clearTimer.current);
+    setPhase({ kind: 'opening' });
+    const opener = accountId;
     try {
       // 원본이 있으면 원본과 지난 자리로, 없으면(이번 변경 전에 건 사진·옛 서버) 걸린 그림을 원본으로 연다 —
       // 그때는 확대만 의미가 있다(designer 시안 「흐름」 표).
       const original = await getController().fetchAvatarSource(accountId);
       const blob = original?.blob ?? await getController().fetchAvatar(accountId);
       if (!alive.current) return;
+      setPhase({ kind: 'idle' });
+      // 받는 사이 다른 에이전트를 골랐으면 열지 않는다(security n3).
+      if (currentTarget.current !== opener) return;
       openCrop({
+        accountId: opener,
         src: URL.createObjectURL(blob),
         isGif: blob.type === 'image/gif',
         initialCrop: original?.meta.crop ?? null,
@@ -165,7 +189,7 @@ export function useAvatarEdit(
     }
   }, [accountId, avatarAttachmentId, opening, openCrop, settle, t]);
 
-  const busy = phase.kind === 'uploading' || phase.kind === 'applying' || phase.kind === 'removing';
+  const busy = phase.kind === 'uploading' || phase.kind === 'applying' || phase.kind === 'removing' || phase.kind === 'opening';
 
   return {
     phase,
@@ -180,7 +204,7 @@ export function useAvatarEdit(
       e.target.value = '';
       if (!f) return;
       if (!cropping) { void run(f); return; }
-      openCrop({ src: URL.createObjectURL(f), isGif: f.type === 'image/gif', initialCrop: null, source: { kind: 'file', file: f } });
+      openCrop({ accountId, src: URL.createObjectURL(f), isGif: f.type === 'image/gif', initialCrop: null, source: { kind: 'file', file: f } });
     },
     crop,
     opening,
@@ -207,6 +231,10 @@ export function useAvatarEdit(
 export function AvatarStatus({ phase }: { phase: AvatarPhase }) {
   const t = useT();
   if (phase.kind === 'idle') return null;
+
+  if (phase.kind === 'opening') {
+    return <p role="status" data-testid="avatar-opening" className="mt-1 text-meta text-fg-muted">{t('avatarCrop.loading')}</p>;
+  }
 
   if (phase.kind === 'error') {
     return <p role="alert" data-testid="avatar-error" className="mt-1 text-meta text-danger">{phase.message}</p>;
@@ -297,12 +325,12 @@ export function AvatarAdjustTrigger({ edit, enabled, children, testId }: {
       aria-label={t('avatarCrop.title')}
       disabled={edit.busy}
       onClick={edit.openAdjust}
-      className="group relative shrink-0 rounded-[27.78%] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-default"
+      className="group relative shrink-0 rounded-avatar focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-default"
     >
       {children}
       <span
         aria-hidden
-        className="absolute inset-0 flex items-center justify-center rounded-[27.78%] bg-black/45 text-meta font-medium text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-disabled:opacity-0"
+        className="absolute inset-0 flex items-center justify-center rounded-avatar bg-black/45 text-meta font-medium text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-disabled:opacity-0"
       >
         {t('avatarCrop.adjust')}
       </span>
