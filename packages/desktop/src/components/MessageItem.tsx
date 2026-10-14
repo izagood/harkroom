@@ -441,6 +441,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
   // 집합을 통째로 들지 않고 **이 행의 답**만 구독한다 — 하나를 담거나 풀 때 행 전부가 다시
   // 그려지지 않도록(대화 불러오기 성능, 2026-09-29).
   const isSaved = useActiveStore((s) => s.savedIds.includes(message.id));
+  // 줄 전체 띠·면은 강조·시스템 줄이 아닐 때만 — 순위는 아래 행 className 주석.
+  const savedBand = isSaved && !highlighted && !isSystem;
 
   const save = () => {
     const next = draft ?? '';
@@ -589,8 +591,16 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
       ref={rowRef}
       // 강조는 system 배경을 덮는다 — 둘 다 배경을 칠하면 어느 쪽이 이길지 클래스 문자열이
       // 정하지 못한다. 링크로 방금 왔다는 사실이 더 급한 정보다.
-      className={`group relative flex gap-2 px-4 py-1.5 hover:bg-surface ${isSystem ? 'border-l-2 border-warning-border' : ''} ${highlighted ? 'bg-warning-surface-strong ring-1 ring-warning-border' : isSystem ? 'bg-warning-surface' : ''}`}
+      //
+      // **담아 둔 줄**(B안, 2026-10-14)은 왼쪽 3px 띠 + 옅은 면이다. 순위는 강조 > 시스템 >
+      // 담김: 강조는 잠깐이고, 시스템 줄은 이미 왼쪽 띠(경고색)를 갖고 있어 띠를 둘 겹치면
+      // 무엇의 띠인지 읽히지 않는다 — 그때 담김은 이름줄 끝 글자만 말한다. 띠는 `border-l`
+      // 이 아니라 **안쪽 그림자**로 긋는다: 테두리는 폭을 먹어 담고 풀 때마다 본문이 3px
+      // 옆으로 뛴다. 담긴 줄은 hover 면을 바꾸지 않는다 — `bg-surface` 로 덮으면 마우스를
+      // 올린 줄만 담김 면이 사라져 "풀렸다"로 읽힌다.
+      className={`group relative flex gap-2 px-4 py-1.5 ${savedBand ? '' : 'hover:bg-surface'} ${isSystem ? 'border-l-2 border-warning-border' : ''} ${highlighted ? 'bg-warning-surface-strong ring-1 ring-warning-border' : isSystem ? 'bg-warning-surface' : savedBand ? 'bg-saved-surface shadow-[inset_3px_0_0_var(--color-saved)]' : ''}`}
       data-highlighted={highlighted ? 'true' : undefined}
+      data-saved={isSaved ? 'true' : undefined}
       onPointerEnter={liveToolbar}
       onMouseEnter={liveToolbar}
       onFocus={liveToolbar}
@@ -650,53 +660,6 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
         최대폭과는 다른 문제다.
       */}
       <div data-testid="message-body-column" className="min-w-0 max-w-[1422px] flex-1">
-        {/*
-          **담아 둔 표식**(요청 2026-09-09). `⋯` 메뉴를 열어야만 알 수 있던 사실을 목록에
-          그대로 세운다 — 담아 두는 까닭이 "나중에 이 자리로 돌아온다"인데, 정작 채널을
-          훑을 때 어느 것을 담았는지 보이지 않으면 담긴 목록(레일 `Saved`)을 따로 열어
-          맞춰 보는 수밖에 없었다.
-
-          **이름줄 위**다. 이름줄 안(배지들 옆)에 두면 작성자·시각과 나란히 서서 "이 말에
-          붙은 사실"로 읽히는데, 담김은 말이 아니라 **나만의** 표시다(`savedIds` 는 내
-          것이다). 위에 한 줄을 따로 세우면 그 다름이 자리로 말해진다 — 채널 메아리
-          배지(`channel-echo-mark`)가 이름줄에 있는 것과 반대되는 이유가 이것이다.
-
-          강조색을 쓰지 않는다(`accentBudget.test.tsx`): 이것은 나를 막는 것이 아니라 내가
-          스스로 붙여 둔 표시다. 눈에 띄는 일은 책갈피 그림이 하고, 색은 곁정보단에 맡긴다.
-
-          **글자 줄이 아니라 칩이다**(요청 2026-09-10 — *"기존 디자인과 통일성은 있지만 너무
-          눈에 띄지 않는다"*). 앞 판은 배경 없는 12px 회색 글자였는데, 그 무게가 같은 줄의
-          시각·꼬리표와 정확히 같아서 훑는 눈에는 이름줄 위 여백으로 지나갔다 — 게다가 이
-          줄의 세로 위치는 앞 메시지의 본문 길이를 따라 매번 달라지므로, 눈이 따라갈 열이
-          없다. 그래서 **선과 면을 준다**: 색을 하나도 더 쓰지 않고 형태만으로 "물건"이 되게
-          하는 것이 강조 예산을 지키면서 무게를 올리는 유일한 길이다(색을 올리면 곁정보단이
-          본문단보다 진해지고, 강조색은 위 문단이 금한다).
-
-          책갈피는 **채운다** — 툴바의 담김 상태와 같은 어휘다(`MessageToolbar` 의
-          `[&_path]:fill-current`). 담김을 두 자리가 그리는데 한쪽은 빈 그림, 한쪽은 채운
-          그림이면 같은 사실이 서로 다른 것으로 읽힌다. 그림을 복제하지 않고 CSS 로 채우는
-          이유도 그 파일과 같다(`SavedIcon` 의 `fill="none"` 속성을 CSS 가 이긴다).
-
-          `w-fit` 이라 칩은 글자만큼만 넓다. `inline-flex` 가 아니라 `flex` 인 것은 줄상자를
-          만들지 않기 위해서다 — 인라인이면 글꼴의 아랫여백이 `mb-0.5` 위에 얹혀 이름줄과의
-          간격이 이 자리에서만 커진다.
-
-          해제하면 이 줄은 사라진다 — `savedIds` 는 `unsaveMessage` 가 요약을 다시 받아
-          갱신하므로(`controller.unsaveMessage`) 별도 상태가 없다. 담김을 '완료'로 옮긴
-          것은 여전히 담긴 것이라 표식이 남는다(`savedIds` 는 open+done 전부다).
-        */}
-        {isSaved && (
-          <div
-            data-testid="saved-mark"
-            className="mb-0.5 flex w-fit items-center gap-1 rounded-row border border-border
-                       bg-surface-raised px-1.5 py-0.5 text-meta font-medium text-fg"
-          >
-            <span className="[&_path]:fill-current">
-              <SavedIcon size={12} />
-            </span>
-            {t('message.savedMark')}
-          </div>
-        )}
         <div className="flex items-baseline gap-2">
           {/* `data-testid` 를 두는 이유는 위 `author-gutter` 와 같다: 이 자리가 **작성자**의
               것이라는 사실을 회귀선이 클래스 문자열로 더듬지 않게 한다. 아바타(`Identity`)도
@@ -792,6 +755,37 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           {avcsType && <span className="rounded-sm bg-warning-surface-strong px-1 text-meta text-warning">{avcsType}</span>}
           <span className="text-meta text-fg-muted">{time}</span>
           {message.editedAt && <span className="text-meta text-fg-muted">{t('chat.message.edited')}</span>}
+          {/*
+            **담아 둔 표식**(요청 2026-09-09, B안 2026-10-14). `⋯` 메뉴를 열어야만 알 수 있던
+            사실을 목록에 세운다 — 담아 두는 까닭이 "나중에 이 자리로 돌아온다"인데, 채널을
+            훑을 때 어느 것을 담았는지 보이지 않으면 레일 `Saved` 를 따로 열어 맞춰 보는
+            수밖에 없었다.
+
+            앞 판은 이름줄 **위** 회색 칩이었다. 칩 면(`surface-raised`)과 바닥의 명도 차가
+            라이트 1.02:1·다크 1.12:1 이라 형태가 안 보였고, 그 줄의 세로 위치가 앞 메시지
+            길이를 따라 매번 달라져 눈이 따라갈 열이 없었다(2026-10-14 「눈에 안 띈다」).
+            그래서 눈에 띄는 일은 **줄의 왼쪽 띠**(위 행 className — 늘 같은 x)가 하고, 여기는
+            그 띠가 무슨 뜻인지 말하는 짧은 글자만 남는다. 줄이 하나 줄어 세로 흔들림도 없다.
+
+            색은 강조가 아니라 `saved` 토큰이다(`accentBudget.test.tsx`): 담김은 나를 막는
+            것이 아니라 내가 붙인 표시다. 책갈피는 **채운다** — 툴바의 담김 상태와 같은
+            어휘다(`MessageToolbar` 의 `[&_path]:fill-current`).
+
+            해제하면 사라진다 — `savedIds` 만 보므로 별도 상태가 없다. '완료'로 옮긴 것도
+            여전히 담긴 것이라 남는다(`savedIds` 는 open+done 전부다).
+          */}
+          {isSaved && (
+            <span
+              data-testid="saved-mark"
+              className="inline-flex items-center gap-0.5 self-center text-meta font-semibold text-saved"
+              title={t('message.savedMarkTooltip')}
+            >
+              <span className="[&_path]:fill-current">
+                <SavedIcon size={11} />
+              </span>
+              {t('message.savedMark')}
+            </span>
+          )}
         </div>
 
         {draft === null ? (

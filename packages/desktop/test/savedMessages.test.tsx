@@ -312,38 +312,70 @@ describe('담아 둔 메시지 — 툴바와 사이드바 (#219)', () => {
    * 집으면 번역 한 줄에 회귀선이 조용히 아무것도 안 지키게 된다. 다만 **무엇이라고 적히는지**
    * 도 한 번은 재야 하므로 첫 줄에서만 문구를 확인한다(이 파일은 언어를 ko 로 못 박았다).
    */
-  it('6d. 담긴 메시지에는 이름줄 위에 표식이 선다', () => {
+  it('6d. 담긴 메시지에는 이름줄 끝에 표식이 선다 — 이름줄 위 칩 줄은 없다', () => {
     fakeController();
     useAppStore.getState().set({ savedIds: ['m9'] });
     render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
 
     const mark = screen.getByTestId('saved-mark');
-    expect(mark.textContent).toContain('나중을 위해 저장됨');
-    // 이름줄 **위**여야 한다 — 이름줄 안에 들어가면 작성자에게 붙은 사실로 읽힌다.
-    const column = screen.getByTestId('message-body-column');
-    expect(column.firstElementChild).toBe(mark);
+    expect(mark.textContent).toContain('저장됨');
+    expect(mark.getAttribute('title')).toBe('나중을 위해 저장됨');
+    // 이름줄 **안**이다(B안) — 위에 줄을 따로 세우면 그 줄의 세로 위치가 앞 메시지 길이를
+    // 따라 흔들린다. 그래서 본문 열의 첫 자식은 이름줄이고, 표식은 그 안에 있다.
+    const nameLine = screen.getByTestId('author-name').parentElement!;
+    expect(nameLine.contains(mark)).toBe(true);
+    expect(screen.getByTestId('message-body-column').firstElementChild).toBe(nameLine);
   });
 
   /**
-   * **표식은 형태를 지닌다**(요청 2026-09-10 — *"통일성은 있지만 너무 눈에 띄지 않는다"*).
+   * **눈에 띄는 일은 줄의 왼쪽 띠가 한다**(B안, 2026-10-14 — *"저장됨 표시가 눈에 잘 안 띈다"*).
    *
-   * 앞 판은 배경 없는 곁정보단 회색 글자라 같은 줄의 시각·꼬리표와 무게가 같았다. 고친 것은
-   * 색이 아니라 형태(선·면)이므로, 이 줄이 지키는 것도 그 둘이다 — 클래스 문자열을 통째로
-   * 재면 여백 하나만 바뀌어도 빨개지니 **선·면·글자색 세 가지**만 본다.
+   * 앞 판(선·면 칩)은 면과 바닥의 명도 차가 1.02~1.12:1 이라 형태가 안 보였다. 이번에 고친
+   * 것은 **자리**(늘 같은 x 인 줄 왼쪽 끝)와 **색**(`saved` 토큰)이므로 이 줄은 그 둘을 잰다.
+   * 클래스 문자열을 통째로 재면 여백 하나에 빨개지니 띠·면·글자색만 본다.
    *
-   * 강조색은 여전히 금지다(`accentBudget.test.tsx` 가 소스를 직접 읽어 그것을 지킨다).
-   * 여기서 `text-fg-muted` 가 아님을 재는 이유는, 곁정보단 회색으로 되돌아가면 칩의 선·면이
-   * 남아 있어도 처음 문제(*안 보인다*)가 그대로 돌아오기 때문이다.
+   * 강조색은 여전히 금지다(`accentBudget.test.tsx`). 표식 글자가 곁정보단 회색으로 돌아가면
+   * 띠가 있어도 그 띠가 무슨 뜻인지 읽히지 않으므로 `text-saved` 를 잰다.
    */
-  it('6d-2. 표식은 선과 면을 지닌 칩이다 — 배경 없는 회색 글자가 아니다', () => {
+  it('6d-2. 담긴 줄은 왼쪽 띠와 옅은 면을 깔고, 표식 글자는 saved 색이다', () => {
     fakeController();
     useAppStore.getState().set({ savedIds: ['m9'] });
     render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
 
+    const row = screen.getByTestId('message-body-column').parentElement!;
+    expect(row.getAttribute('data-saved')).toBe('true');
+    expect(row.className).toContain('bg-saved-surface');
+    expect(row.className).toContain('inset_3px_0_0_var(--color-saved)');
+    // 담긴 줄은 hover 면을 바꾸지 않는다 — 마우스를 올린 줄만 담김 면이 사라지면 "풀렸다"로 읽힌다.
+    expect(row.className).not.toContain('hover:bg-surface');
     const mark = screen.getByTestId('saved-mark');
-    expect(mark.className).toMatch(/border/);
-    expect(mark.className).toMatch(/bg-/);
-    expect(mark.className).not.toContain('text-fg-muted');
+    expect(mark.className).toContain('text-saved');
+    expect(mark.className).not.toMatch(/accent/);
+  });
+
+  it('6d-3. 담기지 않은 줄에는 띠·면이 없고 hover 면은 그대로다', () => {
+    fakeController();
+    render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
+
+    const row = screen.getByTestId('message-body-column').parentElement!;
+    expect(row.getAttribute('data-saved')).toBeNull();
+    expect(row.className).not.toContain('saved');
+    expect(row.className).toContain('hover:bg-surface');
+  });
+
+  /**
+   * 링크로 방금 온 줄(강조)은 띠·면을 강조에 내준다 — 둘 다 면을 칠하면 어느 쪽이 이길지
+   * 클래스 문자열이 정하지 못한다. 그래도 담겼다는 사실은 이름줄 끝 글자로 남는다.
+   */
+  it('6d-4. 강조된 줄은 강조가 이기고 표식 글자는 남는다', () => {
+    fakeController();
+    useAppStore.getState().set({ savedIds: ['m9'], highlightedMessageId: 'm9' });
+    render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
+
+    const row = screen.getByTestId('message-body-column').parentElement!;
+    expect(row.className).toContain('bg-warning-surface-strong');
+    expect(row.className).not.toContain('bg-saved-surface');
+    expect(screen.getByTestId('saved-mark')).toBeTruthy();
   });
 
   it('6e. 담기지 않은 메시지에는 표식이 없다', () => {
