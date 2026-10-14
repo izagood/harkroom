@@ -187,8 +187,9 @@ export function AvatarCropDialog({
               {ready && (
                 <div
                   aria-hidden
-                  className="pointer-events-none absolute rounded-full border-[1.5px] border-white/90"
-                  // 원 밖을 덮는 막. 그림자 하나로 칸 전체를 덮는다 — 라이트·다크 모두 사진 위라 같은 막을 쓴다.
+                  className="pointer-events-none absolute rounded-[27.78%] border-[1.5px] border-white/90"
+                  // 틀 밖을 덮는 막. 그림자 하나로 칸 전체를 덮는다 — 라이트·다크 모두 사진 위라 같은 막을 쓴다.
+                  // 틀은 원이 아니라 아바타와 같은 둥근 사각형(모바일 비율 10/36, #1361)이다 — 맞춘 그대로 보이게.
                   style={{ left: INSET, top: INSET, width: CIRCLE_PX, height: CIRCLE_PX, boxShadow: '0 0 0 9999px rgb(0 0 0 / 0.5)' }}
                 />
               )}
@@ -222,7 +223,7 @@ export function AvatarCropDialog({
             <div className="mb-3 mt-1.5 flex flex-wrap items-end gap-4">
               {PREVIEWS.map(({ px, key }) => (
                 <figure key={px} className="m-0 text-center text-meta text-fg-muted">
-                  <div className="relative mx-auto mb-1 overflow-hidden rounded-full bg-surface-sunken" style={{ width: px, height: px }}>
+                  <div className="relative mx-auto mb-1 overflow-hidden rounded-[27.78%] bg-surface-sunken" style={{ width: px, height: px }}>
                     {pic(px)}
                   </div>
                   {t(key)}
@@ -230,7 +231,7 @@ export function AvatarCropDialog({
               ))}
             </div>
             <div className="flex items-start gap-2 rounded-card bg-surface-sunken px-2.5 py-2">
-              <div className="relative shrink-0 overflow-hidden rounded-full bg-surface" style={{ width: 32, height: 32 }}>{pic(32)}</div>
+              <div className="relative shrink-0 overflow-hidden rounded-[27.78%] bg-surface" style={{ width: 32, height: 32 }}>{pic(32)}</div>
               <div className="min-w-0">
                 <span className="font-medium text-fg">{name}</span>
                 <p className="text-fg">{t('avatarCrop.previewSample')}</p>

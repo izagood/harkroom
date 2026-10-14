@@ -297,12 +297,12 @@ export function AvatarAdjustTrigger({ edit, enabled, children, testId }: {
       aria-label={t('avatarCrop.title')}
       disabled={edit.busy}
       onClick={edit.openAdjust}
-      className="group relative shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-default"
+      className="group relative shrink-0 rounded-[27.78%] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-default"
     >
       {children}
       <span
         aria-hidden
-        className="absolute inset-0 flex items-center justify-center rounded-full bg-black/45 text-meta font-medium text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-disabled:opacity-0"
+        className="absolute inset-0 flex items-center justify-center rounded-[27.78%] bg-black/45 text-meta font-medium text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-disabled:opacity-0"
       >
         {t('avatarCrop.adjust')}
       </span>
