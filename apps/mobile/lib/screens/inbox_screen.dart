@@ -103,18 +103,27 @@ class _InboxScreenState extends State<InboxScreen> {
           const SizedBox(width: 8),
         ],
       )),
-      // 위는 [GlassBody] 가 맡는다. 끊김 띠만 머리 밑에 고정하고, 다른 커뮤니티 줄·탭 칩은 목록의
-      // 첫 줄들이라 같이 굴러간다(designer ④ — 띠는 목록 안으로).
+      // 위는 [GlassBody] 가 맡는다. 끊김 띠와 탭 칩은 머리 밑에 고정하고(designer #1373 s1 — 칩은
+      // 이 화면의 길잡이라 굴려도 남는다), 다른 커뮤니티 줄은 목록의 첫 줄이라 같이 굴러간다.
       body: SafeArea(
         top: false,
         child: GlassBody(
-          header: const ConnectionBand(),
+          // stretch — 칩 줄 바탕이 화면 폭을 다 덮어야 밑의 줄이 양옆으로 비치지 않는다.
+          header: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const ConnectionBand(),
+            // 칩 줄 바탕은 불투명 surface — 밑으로 흐르는 줄이 칩 사이로 비치면 칩 글자가 읽히지 않는다.
+            if (app.board != null)
+              ColoredBox(
+                key: const Key('inbox-tab-chips'),
+                color: context.tokens.surface,
+                child: _TabChips(tab: _tab, counts: counts, onTab: (v) => setState(() => _tab = v)),
+              ),
+          ]),
           builder: (context, inset) {
             final lead = <Widget>[
               for (final c in app.communities)
                 if (c.key != app.activeKey && !c.isExpired && (app.otherWaiting[c.key] ?? 0) > 0)
                   OtherCommunityInboxRow(community: c, count: app.otherWaiting[c.key]!),
-              if (app.board != null) _TabChips(tab: _tab, counts: counts, onTab: (v) => setState(() => _tab = v)),
             ];
             if (app.board != null) {
               return RefreshIndicator(
@@ -159,7 +168,7 @@ class _InboxScreenState extends State<InboxScreen> {
   }) {
     final t = context.t;
     final slivers = <Widget>[
-      // 머리 + 끊김 띠 높이만큼 **고정된 빈 머리** — 아래 묶음 머리(pinned)가 맨 위(반투명 머리 뒤)가
+      // 머리 + 끊김 띠 + 탭 칩 높이만큼 **고정된 빈 머리** — 아래 묶음 머리(pinned)가 맨 위(반투명 머리 뒤)가
       // 아니라 이 밑에 붙는다. 그리는 것도 누르는 것도 없어 밑으로 흐르는 줄이 그대로 비친다.
       SliverPersistentHeader(pinned: true, delegate: _TopInset(inset)),
       for (final w in lead) SliverToBoxAdapter(child: w),

@@ -45,6 +45,25 @@ void main() {
     await tester.tap(find.byKey(const Key('tab-inbox')));
     await tester.pumpAndSettle();
     await shot(tester, '41-inbox-todo');
+    // designer #1373 s1 p1: 조금 내린 상태 — 탭 칩은 고정, 묶음 머리는 칩 밑에 붙고, 머리 밑으로 줄이 흐려 비친다.
+    {
+      final list = tester.getRect(find.byKey(const Key('inbox-list-todo')));
+      final g = await tester.startGesture(Offset(list.center.dx, list.top + list.height * 0.6));
+      // 갤러리 목록은 짧아서 손을 떼면 되돌아간다 — 끄는 중에 찍는다.
+      for (var i = 0; i < 6; i++) {
+        await g.moveBy(const Offset(0, -40));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await shot(tester, '41b-inbox-scrolled-p1');
+      await g.up();
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+      await tester.drag(find.byKey(const Key('inbox-list-todo')), const Offset(0, 400));
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+    }
 
     await tester.tap(find.byKey(const Key('inbox-card-d1')));
     await tester.pumpAndSettle();

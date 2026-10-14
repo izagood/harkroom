@@ -887,15 +887,18 @@ void main() {
     bandUnderHead();
     expect(find.byKey(const Key('card-my-turn')), findsNothing);
 
-    // 받은 것: 고정 빈 머리가 머리 + 띠만큼 비워서, 묶음 머리(pinned)가 반투명 머리 뒤로 숨지 않는다.
+    // 받은 것: 탭 칩은 끊김 띠 바로 밑에 고정(designer #1373 s1) — 목록(Scrollable) 밖이다.
     await tester.tap(find.byKey(const Key('tab-inbox')));
     await tester.pumpAndSettle();
     bandUnderHead();
-    expect(tester.getRect(find.byKey(const Key('inbox-top-inset'))).bottom,
-        tester.getRect(find.byKey(const Key('connection-band'))).bottom);
-    // 당기기 회전자도 머리 밑에서 나온다.
-    expect(tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).edgeOffset,
-        tester.getRect(find.byKey(const Key('connection-band'))).bottom);
+    final chips = find.byKey(const Key('inbox-tab-chips'));
+    expect(chips, findsOneWidget);
+    expect(find.ancestor(of: chips, matching: find.byType(Scrollable)), findsNothing, reason: '칩은 굴러가지 않는다');
+    expect(tester.getRect(chips).top, tester.getRect(find.byKey(const Key('connection-band'))).bottom);
+    // 고정 빈 머리가 머리 + 띠 + 칩만큼 비워서, 묶음 머리(pinned)가 칩 밑에 붙는다.
+    expect(tester.getRect(find.byKey(const Key('inbox-top-inset'))).bottom, tester.getRect(chips).bottom);
+    // 당기기 회전자도 칩 밑에서 나온다.
+    expect(tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).edgeOffset, tester.getRect(chips).bottom);
 
     // 에이전트 탭의 목록 여백은 tab_bar_test(S7)가 잰다 — 이 가짜 서버에는 에이전트 응답이 없다.
     await tester.tap(find.byKey(const Key('tab-agents')));
