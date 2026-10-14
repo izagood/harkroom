@@ -6,7 +6,7 @@ import type { AgentSessionView } from '@harkroom/shared';
 
 import { MAX_AGENT_POOLS } from '@harkroom/shared/claudePools';
 
-import { AgentPoolChain } from '../src/components/settings/AgentPoolChain';
+import { AgentPoolChain, clock } from '../src/components/settings/AgentPoolChain';
 import { agentPoolChainState } from '../src/components/settings/useAgentPool';
 import type { ClaudeAccountsSnapshot } from '../src/lib/claudeAccounts';
 import type { ProviderUsageSnapshot } from '../src/lib/providerUsage';
@@ -102,6 +102,14 @@ describe('AgentPoolChain', () => {
     show(['ghost', 'work'], null);
     expect(screen.getByTestId('agent-pool-chain-chip-ghost').textContent).toBe('이 기기에 없음');
     expect(screen.getByTestId('agent-pool-chain-chip-work').textContent).toBe('쓰는 중');
+  });
+});
+
+describe('clock — 풀리는 시각', () => {
+  it('오늘이면 시각만, 아니면 날짜를 붙인다(주간 한도가 오늘로 읽히지 않게)', () => {
+    const base = new Date(2026, 9, 15, 9, 0).getTime();
+    expect(clock(base + 2 * H, 'ko', base)).toBe('11:00');
+    expect(clock(new Date(2026, 9, 18, 9, 0).getTime(), 'ko', base)).toBe('10/18 09:00');
   });
 });
 

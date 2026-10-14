@@ -14,8 +14,14 @@ import { MAX_AGENT_POOLS } from '@harkroom/shared/claudePools';
 
 import { useLocale, useT } from '../../i18n/useT';
 
-function clock(ms: number, locale: string): string {
-  return new Date(ms).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false });
+/**
+ * 풀리는 시각. **오늘이 아니면 날짜를 붙인다** — 주간 한도는 며칠 뒤에 풀리는데 시각만 쓰면 오늘
+ * 그 시각으로 읽힌다(캡처에서 드러남, 시안 「주간 한도(97%) · 10/18 09:00」).
+ */
+export function clock(ms: number, locale: string, now: number = Date.now()): string {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false });
+  return d.toDateString() === new Date(now).toDateString() ? time : `${d.getMonth() + 1}/${d.getDate()} ${time}`;
 }
 
 type Chip = 'active' | 'exhausted' | 'waiting' | 'missing' | 'empty';
