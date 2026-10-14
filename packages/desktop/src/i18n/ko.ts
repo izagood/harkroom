@@ -300,7 +300,7 @@ export const ko = {
   'attachment.fetchFailed': '첨부를 불러오지 못했다',
   'attachment.missing': '첨부 파일이 서버에 없다',
 
-  'avatar.error.dimensionsTooLarge': '사진 해상도가 너무 크다. 가로·세로를 줄이거나 「사진 맞추기」로 다시 올린다.',
+  'avatar.error.dimensionsTooLarge': '사진 해상도가 너무 크다(한 변 4096px 이하로 줄여 달라).',
   'avatar.error.notAnImage': '{formats} 파일만 쓸 수 있다. 파일 이름이 아니라 내용으로 판정한다.',
   'avatar.error.notFound': '업로드한 파일을 찾지 못했다. 다시 시도한다.',
   'avatar.error.other': '사진을 바꾸지 못했다 ({code}).',
