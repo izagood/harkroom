@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 
+import '../state/app_scope.dart';
 import 'tokens.dart';
 
 /// 공통 부품. 화면들이 같은 것을 **각자 다시 짓지 않게** 한 곳에 둔다 — 뒤의 PR(상태 화면·
 /// 메시지 줄·탭 구조)이 모두 이것을 쓴다.
 
-/// 둥근 사각 아바타. 사진이 없으면 **이름의 첫 글자 + id 로 정해지는 색**이다.
+/// 둥근 사각 아바타. 사진이 걸린 계정이면 **사진**을, 없으면 **이름의 첫 글자 + id 로 정해지는 색**이다.
+///
+/// 사진은 계정 표(`AppState.accounts`)의 `avatarAttachmentId` 로 찾는다 — 부르는 자리(열댓 곳)가 각자 사진을 넘기면
+/// 한 곳만 빠뜨려도 그 자리만 글자로 남는다. 이 부품이 한동안 **사진을 아예 그리지 않았다**: 모델은 id 를 받는데
+/// 그리는 곳이 안 써서, 데스크톱에서 사진을 올려도 모바일은 늘 글자였다(10-14 jaebin 신고).
 ///
 /// 색을 이름이 아니라 **id 로** 고른다: 이름(handle)은 바뀐다. 바뀔 때마다 아바타 색이
 /// 바뀌면 사람은 다른 사람인 줄 안다.
@@ -52,8 +57,48 @@ class HarkroomAvatar extends StatelessWidget {
     return '?';
   }
 
+  /// 사진을 풀 최대 픽셀(가로·세로 각각). 그릴 크기 × dpr × 2 — 위 `ResizeImage` 주석.
+  int decodePx(BuildContext context) => (size * MediaQuery.devicePixelRatioOf(context) * 2).round();
+
+  /// 모서리 반지름. 크기에 **비례**한다(36px 에서 10px) — 데스크톱도 이 비율을 따른다.
+  double get radius => HarkroomRadius.avatar * size / HarkroomSize.avatar;
+
   @override
   Widget build(BuildContext context) {
+    // AppScope 가 없는 자리(시험·로그인 전 화면)에서는 글자만 그린다.
+    final app = context.dependOnInheritedWidgetOfExactType<AppScope>()?.notifier;
+    final attachmentId = app?.accounts[id]?.avatarAttachmentId;
+    final api = app?.api;
+    final initials = _initials();
+    if (attachmentId == null || api == null) return initials;
+    return Semantics(
+      excludeSemantics: true,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: Image(
+          key: ValueKey('avatar-photo-$attachmentId'),
+          // **디코드를 그릴 크기에 묶는다**(security F1·designer n2). 서버는 래스터 아바타의 픽셀 수를 막지 않으므로
+          // (옛 사진·옛 앱·PAT 로 올린 사진은 512 로 잘리지 않는다) 원본 해상도로 풀면 그 사람이 나오는 화면마다
+          // 메모리가 터질 수 있다. `fit` 이라 가로세로 둘 다 상한 안에 들고 비율은 지킨다. 상한을 그릴 크기의 두 배로
+          // 잡아, 2:1 까지의 사진은 `cover` 로 잘라도 짧은 변이 그릴 크기 × dpr 아래로 내려가지 않는다.
+          image: ResizeImage(
+            NetworkImage(api.avatarUrl(id, attachmentId), headers: api.authHeaders),
+            width: decodePx(context),
+            height: decodePx(context),
+            policy: ResizeImagePolicy.fit,
+          ),
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          // 받는 동안·못 받으면 글자 — 빈 칸이 깜박이지 않게.
+          frameBuilder: (context, child, frame, sync) => frame == null && !sync ? initials : child,
+          errorBuilder: (context, error, stack) => initials,
+        ),
+      ),
+    );
+  }
+
+  Widget _initials() {
     return Semantics(
       // 아바타는 이름 옆에 있다 — 읽어 주면 이름을 두 번 읽는다.
       excludeSemantics: true,
@@ -63,7 +108,7 @@ class HarkroomAvatar extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: colorFor(id),
-          borderRadius: BorderRadius.circular(HarkroomRadius.avatar * size / HarkroomSize.avatar),
+          borderRadius: BorderRadius.circular(radius),
         ),
         child: Text(
           initialOf(name),
