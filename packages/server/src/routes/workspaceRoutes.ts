@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { emitEvent } from '../events.js';
 import { recordAudit } from '../audit.js';
-import { detectAvatarType, findAvatarSource } from '../services/avatars.js';
+import { detectAvatarType, findAvatarSource, releaseAvatarFiles } from '../services/avatars.js';
 import { findWorkspaceIcon, getWorkspaceIconId, setWorkspaceIcon } from '../services/workspaceProfile.js';
 import type { StorageBackend } from '../storage/local.js';
 
@@ -47,6 +47,8 @@ export async function registerWorkspaceRoutes(
       await setWorkspaceIcon(pool, null);
     }
 
+    // 바뀌어 아무도 안 쓰는 옛 아이콘을 지운다(사진 후속 ②와 같은 정리).
+    if (before && before !== body.attachmentId) await releaseAvatarFiles(pool, storage, [before], req.log);
     emitEvent({ type: 'workspace.icon.changed', iconAttachmentId: body.attachmentId });
     await recordAudit(pool, {
       action: 'workspace.icon.updated', actorId: me.id, actorHandle: me.handle,

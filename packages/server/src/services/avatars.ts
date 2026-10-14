@@ -350,3 +350,56 @@ export async function findAvatarSourceTarget(
   );
   return res.rowCount ? res.rows[0] : null;
 }
+
+/**
+ * 더는 아무도 가리키지 않는 사진 첨부를 지운다(행 + 파일) — 사진 작업 후속 ②.
+ *
+ * 사진을 바꾸거나 지우면 옛 아바타·옛 원본은 어떤 메시지에도 붙지 않은 업로드로 남는다. 고아 업로드 GC 는 아직
+ * 없고(023 이 예고만 했다), 사진은 사람 얼굴이라 남길 이유가 없다. 그래서 바꾸는 자리에서 **그 자리가 놓은 id 만**
+ * 후보로 받아 지운다. 표 전체를 훑지 않는다 — 훑는 GC 는 다른 용도로 막 올린 업로드를 지울 수 있다.
+ *
+ * **아직 누가 쓰면 지우지 않는다.** 한 첨부를 여러 자리가 같이 가리킬 수 있다: 옛 사진을 원본으로 다시 맞춘 경우
+ * (원본 = 옛 아바타), 소유자가 같은 업로드를 사람·에이전트에 같이 건 경우, 워크스페이스 아이콘·아티팩트. 그 검사를
+ * 삭제문 하나의 조건으로 둔다 — 따로 읽고 지우면 그 사이 다른 요청이 같은 id 를 걸 수 있다(그때는 FK restrict 가
+ * 지우기를 막는다 — 023 주석의 「소리 내어 실패」). 메시지에 붙은 첨부는 애초에 아바타가 될 수 없지만 조건에 둔다.
+ *
+ * 파일은 행을 지운 뒤에 지운다. 행이 남고 파일만 사라지면 깨진 그림이 되고, 파일이 남는 쪽은 무해하다.
+ * 실패는 던지지 않는다 — 사진 바꾸기·계정 삭제는 이미 끝났고, 정리 실패로 그 결과를 뒤집을 이유가 없다.
+ */
+export async function releaseAvatarFiles(
+  pool: Pool, storage: StorageBackend, candidates: (string | null | undefined)[],
+  log?: { warn(obj: unknown, msg: string): void },
+): Promise<number> {
+  const ids = [...new Set(candidates.filter((id): id is string => typeof id === 'string'))];
+  if (!ids.length) return 0;
+  let keys: string[] = [];
+  try {
+    const res = await pool.query<{ storage_key: string }>(
+      `delete from attachment a
+        where a.id = any($1::uuid[])
+          and a.message_id is null
+          and not exists (select 1 from account c
+                           where c.avatar_attachment_id = a.id or c.avatar_source_attachment_id = a.id)
+          and not exists (select 1 from workspace_profile w where w.icon_attachment_id = a.id)
+          and not exists (select 1 from artifact_version v
+                           where v.attachment_id = a.id or v.cover_attachment_id = a.id)
+        returning a.storage_key`,
+      [ids],
+    );
+    keys = res.rows.map((r) => r.storage_key);
+  } catch (err) {
+    log?.warn({ err }, 'avatar attachment cleanup failed');
+    return 0;
+  }
+  for (const key of keys) {
+    await storage.remove(key).catch((err) => log?.warn({ err }, 'avatar file removal failed'));
+  }
+  return keys.length;
+}
+
+/** 그 계정에 지금 걸린 사진 첨부 id 둘(아바타·원본). 바꾸기 전에 읽어 두었다가 바꾼 뒤 `releaseAvatarFiles` 에 준다. */
+export async function currentAvatarIds(pool: Pool, accountId: string): Promise<(string | null)[]> {
+  const res = await pool.query<{ a: string | null; s: string | null }>(
+    `select avatar_attachment_id as a, avatar_source_attachment_id as s from account where id = $1`, [accountId]);
+  return res.rowCount ? [res.rows[0]!.a, res.rows[0]!.s] : [];
+}

@@ -515,7 +515,7 @@ export async function revokeAllPats(db: Pool | PoolClient, accountId: string): P
  */
 export async function deleteAgentAccount(
   pool: Pool, id: string,
-): Promise<{ handle: string; revokedPats: string[] } | null> {
+): Promise<{ handle: string; revokedPats: string[]; avatarIds: (string | null)[] } | null> {
   const before = await getAgent(pool, id);
   // 이미 삭제된 것도 여기서 null 이다(`getAgent` 가 거른다) — 두 번째 호출은 404 이고,
   // 감사에 같은 삭제가 두 번 남지 않는다.
@@ -523,8 +523,14 @@ export async function deleteAgentAccount(
   const client = await pool.connect();
   try {
     await client.query('begin');
+    // 사진 칸도 비운다(security n2) — 남기면 지운 에이전트의 원본을 소유자가 계속 읽고, 파일은 영영 안 지워진다.
+    // 비운 id 는 돌려주어 라우트가 커밋 뒤에 파일을 치운다(`releaseAvatarFiles`).
+    const pics = await client.query<{ a: string | null; s: string | null }>(
+      `select avatar_attachment_id as a, avatar_source_attachment_id as s from account where id = $1 for update`, [id]);
     await client.query(
-      `update account set deleted_at = now(), disabled_at = coalesce(disabled_at, now()) where id = $1`,
+      `update account set deleted_at = now(), disabled_at = coalesce(disabled_at, now()),
+              avatar_attachment_id = null, avatar_source_attachment_id = null, avatar_crop = null
+        where id = $1`,
       [id],
     );
     const revokedPats = await revokeAllPats(client, id);
@@ -550,7 +556,7 @@ export async function deleteAgentAccount(
     // cascade 가 돌지 않는다 — 지운 계정의 기기로 알림이 가는 길을 여기서도 닫는다(security G1).
     await client.query(`delete from push_device where account_id = $1`, [id]);
     await client.query('commit');
-    return { handle: before.handle, revokedPats };
+    return { handle: before.handle, revokedPats, avatarIds: [pics.rows[0]?.a ?? null, pics.rows[0]?.s ?? null] };
   } catch (err) {
     await client.query('rollback');
     throw err;
