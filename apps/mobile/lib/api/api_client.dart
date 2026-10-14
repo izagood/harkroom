@@ -461,8 +461,11 @@ class ApiClient {
   ///
   /// `?v=` 에 **첨부 id** 를 싣는다. 서버는 쿼리를 보지 않지만, 주소가 계정마다 하나면 사진을 바꿔도 같은 주소라
   /// 이미지 캐시(`NetworkImage` 는 주소로 캐시한다)가 옛 사진을 계속 낸다.
+  ///
+  /// `raster=1`: Flutter `Image` 는 SVG 를 못 그린다 — 걸린 사진이 SVG 면 서버가 PNG 로 굳혀 준다(사진 후속 ③).
+  /// 그 쿼리를 모르는 옛 서버는 SVG 를 그대로 내고, 그때는 지금처럼 글자로 남는다.
   String avatarUrl(String accountId, String attachmentId) =>
-      '$baseUrl/accounts/${Uri.encodeComponent(accountId)}/avatar?v=${Uri.encodeComponent(attachmentId)}';
+      '$baseUrl/accounts/${Uri.encodeComponent(accountId)}/avatar?v=${Uri.encodeComponent(attachmentId)}&raster=1';
 
   /// 미리보기 서명 경로를 받는다(서버 0.3.131~, #1045). WebView 는 Bearer 헤더를 못 싣기 때문에 60초짜리
   /// 서명 경로를 받아 연다 — 토큰은 그 URL 에 없다. 열 때·다시 불러올 때마다 새로 받는다(만료는 오류가 아니다).

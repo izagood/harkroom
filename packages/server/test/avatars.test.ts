@@ -1,13 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { mkdtemp, rm } from 'node:fs/promises';
+import sharp from 'sharp';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
-import sharp from 'sharp';
-import { AVATAR_PIXEL_LIMITS, looksLikeSvg, startsLikeSvg, SVG_MAX_BYTES } from '../src/services/avatars.js';
+import {
+  AVATAR_PIXEL_LIMITS, looksLikeSvg, rasterizeSvgAvatar, renderSvgPngUnchecked, startsLikeSvg, SVG_MAX_BYTES, SVG_RASTER_PX,
+  svgRasterRefusal,
+} from '../src/services/avatars.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -539,6 +542,124 @@ describe('옛 사진 정리 (사진 후속 ② · security n1·n2)', () => {
     expect(row.rows[0]).toEqual({ avatar_attachment_id: null, avatar_source_attachment_id: null, avatar_crop: null });
     expect(await exists(o)).toBe(false);
     expect(await exists(c)).toBe(false);
+  });
+});
+
+describe('SVG 아바타를 모바일용으로 굳힌다 (사진 후속 ③)', () => {
+  const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  it('raster=1 이면 걸린 SVG 를 PNG 로 내고, 없으면 SVG 그대로다', async () => {
+    const id = await upload(otherToken, 'r.svg', SVG, 'image/svg+xml');
+    expect((await setAvatar(otherToken, { attachmentId: id })).statusCode).toBe(200);
+
+    const png = await app.inject({ method: 'GET', url: `/accounts/${otherId}/avatar?v=${id}&raster=1`, headers: auth(adminToken) });
+    expect(png.statusCode).toBe(200);
+    expect(png.headers['content-type']).toContain('image/png');
+    expect(png.rawPayload.subarray(0, 8)).toEqual(PNG_SIG);
+    // 방어 헤더는 같다.
+    expect(png.headers['x-content-type-options']).toBe('nosniff');
+    expect(png.headers['content-disposition']).toContain('attachment');
+
+    const svg = await app.inject({ method: 'GET', url: `/accounts/${otherId}/avatar?v=${id}`, headers: auth(adminToken) });
+    expect(svg.headers['content-type']).toContain('image/svg+xml');
+  });
+
+  it('래스터 아바타는 raster=1 이어도 바이트를 그대로 낸다', async () => {
+    const id = await upload(otherToken, 'p.png', PNG, 'image/png');
+    await setAvatar(otherToken, { attachmentId: id });
+    const res = await app.inject({ method: 'GET', url: `/accounts/${otherId}/avatar?raster=1`, headers: auth(adminToken) });
+    expect(res.rawPayload).toEqual(PNG);
+  });
+
+  it('굳힌 그림은 정해진 크기의 정사각형이다', async () => {
+    const out = await rasterizeSvgAvatar(SVG);
+    expect(out).not.toBeNull();
+    const meta = await sharp(out!).metadata();
+    expect([meta.width, meta.height]).toEqual([SVG_RASTER_PX, SVG_RASTER_PX]);
+  });
+
+  it('정사각이 아닌 SVG 는 꽉 채워 자른다 — 투명 띠 없이(데스크톱 object-cover 와 같게, designer s1)', async () => {
+    const wide = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="8" viewBox="0 0 32 8"><rect width="32" height="8" fill="#c00"/></svg>');
+    const out = await rasterizeSvgAvatar(wide);
+    expect(out).not.toBeNull();
+    const { data, info } = await sharp(out!).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    // 위·아래 모서리 픽셀이 투명하면 contain(띠)이다. cover 면 빨강으로 차 있다.
+    for (const [x, y] of [[0, 0], [info.width - 1, 0], [0, info.height - 1], [info.width - 1, info.height - 1]]) {
+      const i = (y! * info.width + x!) * info.channels;
+      expect(data[i + 3], `alpha at ${x},${y}`).toBe(255);
+      expect(data[i], `red at ${x},${y}`).toBeGreaterThan(150);
+    }
+  });
+
+  it('밖을 가리키는 참조가 있으면 굳히지 않는다 — 서버가 파일·내부 주소를 읽는 통로가 되지 않게', async () => {
+    const wrap = (inner: string) =>
+      Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 8 8">${inner}</svg>`);
+    for (const inner of [
+      '<image href="file:///etc/passwd" width="8" height="8"/>',
+      '<image xlink:href="http://169.254.169.254/latest" width="8" height="8"/>',
+      '<rect width="8" height="8" style="fill:url(https://example.com/x.svg#p)"/>',
+      "<image href='/etc/hosts' width='8' height='8'/>",
+    ]) {
+      expect(await rasterizeSvgAvatar(wrap(inner)), inner).toBeNull();
+    }
+    // 조각(#)과 data: 는 밖이 아니다.
+    expect(await rasterizeSvgAvatar(wrap('<defs><linearGradient id="g"/></defs><rect width="8" height="8" fill="url(#g)"/>'))).not.toBeNull();
+  });
+
+  it('security F2 — @import·CSS 이스케이프·겹친 SVG data: 를 굳히기 전에 거른다', () => {
+    const wrap = (inner: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">${inner}</svg>`;
+    const cases: [string, string][] = [
+      ['<style>@import "file:///etc/passwd";</style><rect width="8" height="8"/>', 'css_import'],
+      ['<style>rect { fill: \\75 rl(file:///etc/passwd) }</style><rect width="8" height="8"/>', 'css_escape'],
+      ['<rect width="8" height="8" style="fill:\\75 rl(http://example.com/x)"/>', 'css_escape'],
+      ['<image href="data:image/svg+xml;base64,PHN2Zy8+" width="8" height="8"/>', 'data_not_raster'],
+      ['<image href="data:text/html,hi" width="8" height="8"/>', 'data_not_raster'],
+    ];
+    for (const [inner, why] of cases) expect(svgRasterRefusal(wrap(inner)), inner).toBe(why);
+    // 래스터 data: 와 조각(#)은 지난다.
+    expect(svgRasterRefusal(wrap('<image href="data:image/png;base64,AAAA" width="8" height="8"/>'))).toBeNull();
+    expect(svgRasterRefusal(wrap('<rect width="8" height="8" fill="url(#g)"/>'))).toBeNull();
+  });
+
+  it('security F2 두 번째 겹 — 사전 검사를 끈 채로도 librsvg 는 file://·절대·상대 경로 그림을 읽지 않는다', async () => {
+    // 빨강 PNG 를 실제 파일로 두고 가리킨다. 읽었다면 첫 픽셀이 불투명 빨강이다.
+    const dir = await mkdtemp(join(tmpdir(), 'harkroom-svgref-'));
+    const red = await sharp({ create: { width: 8, height: 8, channels: 4, background: '#ff0000ff' } }).png().toBuffer();
+    const file = join(dir, 'red.png');
+    await (await import('node:fs/promises')).writeFile(file, red);
+    const firstPixel = async (svg: Buffer) => {
+      const { data } = await sharp(await renderSvgPngUnchecked(svg)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      return { r: data[0], a: data[3] };
+    };
+    const img = (href: string) => Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="8" height="8"><image href="${href}" xlink:href="${href}" width="8" height="8"/></svg>`);
+    try {
+      for (const href of [`file://${file}`, file, 'red.png']) {
+        expect(await firstPixel(img(href)), href).toEqual({ r: 0, a: 0 });
+      }
+      // 대조군: 같은 그림을 data: 로 넣으면 실제로 그려진다 — 위 측정이 「읽었다」를 잡을 수 있다는 증거.
+      expect(await firstPixel(img(`data:image/png;base64,${red.toString('base64')}`))).toEqual({ r: 255, a: 255 });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('security F1 — 같은 SVG 를 동시에 여럿이 청해도 모두 같은 PNG 를 받는다(한 번 굳혀 나눠 준다)', async () => {
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="#06c"/></svg>');
+    const id = await upload(otherToken, 'many.svg', svg, 'image/svg+xml');
+    expect((await setAvatar(otherToken, { attachmentId: id })).statusCode).toBe(200);
+    const all = await Promise.all(Array.from({ length: 6 }, () =>
+      app.inject({ method: 'GET', url: `/accounts/${otherId}/avatar?raster=1`, headers: auth(adminToken) })));
+    for (const r of all) expect(r.headers['content-type']).toContain('image/png');
+    expect(new Set(all.map((r) => r.rawPayload.toString('base64'))).size).toBe(1);
+  });
+
+  it('굳히지 못하는 SVG 는 원래 바이트로 떨어진다', async () => {
+    const ext = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><image href="http://example.com/a.png" width="8" height="8"/></svg>');
+    const id = await upload(otherToken, 'ext.svg', ext, 'image/svg+xml');
+    expect((await setAvatar(otherToken, { attachmentId: id })).statusCode).toBe(200);
+    const res = await app.inject({ method: 'GET', url: `/accounts/${otherId}/avatar?raster=1`, headers: auth(adminToken) });
+    expect(res.headers['content-type']).toContain('image/svg+xml');
   });
 });
 
