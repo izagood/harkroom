@@ -278,7 +278,8 @@ describe('담아 둔 메시지 — 툴바와 사이드바 (#219)', () => {
     render(<MessageItem message={msg('m9', 'c1', 5, 'later', 'u2')} />);
 
     fireEvent.click(screen.getByTestId('toolbar-save'));
-    expect(c.saveMessage).toHaveBeenCalledWith('m9');
+    // 화면에 있는 줄을 같이 넘긴다 — 열려 있는 저장 칸이 왕복 없이 맨 위에 끼운다.
+    expect(c.saveMessage).toHaveBeenCalledWith('m9', expect.objectContaining({ id: 'm9' }));
   });
 
   it('6b. 이미 담긴 메시지면 같은 칸이 해제가 된다', () => {
@@ -539,6 +540,83 @@ describe('담아 둔 메시지 — Workspace 배선 (#219)', () => {
     fireEvent.click(screen.getByTestId('rail-saved'));
     expect(await screen.findByRole('region', { name: '저장된 메시지' })).toBeTruthy();
     sidebarStorage.saveCollapsed(false);
+  });
+
+  // 10-15 버그: 칸을 연 채 툴바에서 담으면 목록이 그대로였다 — 칸은 탭·커뮤니티가 바뀔 때만 읽었다.
+  it('칸을 열어 둔 채 담으면 "할 것" 맨 위에 바로 생긴다 — "불러오는 중" 깜빡임 없이', async () => {
+    const { api } = realController();
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('rail-saved'));
+    const panel = await screen.findByRole('region', { name: '저장된 메시지' });
+    await within(panel).findByTestId('saved-empty');
+    const readsBefore = (api.savedMessages as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    fireEvent.click(screen.getByTestId('toolbar-save'));
+    await waitFor(() => expect(within(panel).getByTestId('saved-entry-m9')).toBeTruthy());
+    expect(within(panel).queryByText('불러오는 중…')).toBeNull();
+    // 뒤에서 그 탭을 조용히 다시 받는다 — 다른 기기 변경도 같은 길로 맞는다.
+    await waitFor(() => expect((api.savedMessages as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(readsBefore));
+    expect(within(panel).getByTestId('saved-entry-m9')).toBeTruthy();
+  });
+
+  it('왕복을 기다리지 않는다 — 다시 읽기가 끝나기 전에 담은 줄이 먼저 선다', async () => {
+    const { api } = realController();
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('rail-saved'));
+    const panel = await screen.findByRole('region', { name: '저장된 메시지' });
+    await within(panel).findByTestId('saved-empty');
+    // 이제부터의 목록 읽기는 답하지 않는다.
+    (api.savedMessages as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => undefined));
+
+    fireEvent.click(screen.getByTestId('toolbar-save'));
+    await waitFor(() => expect(within(panel).getByTestId('saved-entry-m9')).toBeTruthy());
+    expect(within(panel).queryByTestId('saved-empty')).toBeNull();
+  });
+
+  it('칸을 열어 둔 채 해제하면 그 줄이 바로 빠진다', async () => {
+    const { api } = realController();
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('toolbar-save'));
+    await waitFor(() => expect(screen.getByTestId('toolbar-save').getAttribute('aria-label')).toBe('담은 것 빼기'));
+    fireEvent.click(screen.getByTestId('rail-saved'));
+    const panel = await screen.findByRole('region', { name: '저장된 메시지' });
+    await within(panel).findByTestId('saved-entry-m9');
+    (api.unsaveMessage as ReturnType<typeof vi.fn>).mockImplementation(async () => undefined);
+    (api.savedMessages as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => undefined));
+
+    fireEvent.click(screen.getByTestId('toolbar-save'));
+    await waitFor(() => expect(within(panel).queryByTestId('saved-entry-m9')).toBeNull());
+  });
+
+  it('다른 기기에서 담은 것(saved.changed)도 열린 칸에 들어온다', async () => {
+    const { c, api } = realController();
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('rail-saved'));
+    const panel = await screen.findByRole('region', { name: '저장된 메시지' });
+    await within(panel).findByTestId('saved-empty');
+    (api.savedMessages as ReturnType<typeof vi.fn>).mockImplementation(async (state: 'open' | 'done') =>
+      (state === 'open' ? [entry('m7', 'open')] : []));
+
+    act(() => {
+      (c as unknown as { handleEvent: (e: unknown) => void }).handleEvent({ type: 'saved.changed', messageId: 'm7', state: 'open', accountId: 'u1' });
+    });
+    await waitFor(() => expect(within(panel).getByTestId('saved-entry-m7')).toBeTruthy());
+  });
+
+  it('다른 기기에서 완료로 옮긴 것은 열린 "할 것" 칸에서 바로 빠진다', async () => {
+    const { c, api } = realController();
+    (api.savedMessages as ReturnType<typeof vi.fn>).mockImplementation(async (state: 'open' | 'done') =>
+      (state === 'open' ? [entry('m7', 'open')] : []));
+    render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('rail-saved'));
+    const panel = await screen.findByRole('region', { name: '저장된 메시지' });
+    await within(panel).findByTestId('saved-entry-m7');
+    (api.savedMessages as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => undefined));
+
+    act(() => {
+      (c as unknown as { handleEvent: (e: unknown) => void }).handleEvent({ type: 'saved.changed', messageId: 'm7', state: 'done', accountId: 'u1' });
+    });
+    await waitFor(() => expect(within(panel).queryByTestId('saved-entry-m7')).toBeNull());
   });
 
   it('담은 뒤 같은 칸이 해제로 바뀐다 — 재마운트 없이도', async () => {

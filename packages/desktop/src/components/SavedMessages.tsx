@@ -55,6 +55,7 @@ export function SavedMessages() {
   const groups = useActiveStore((s) => s.groups);
   const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS_FALLBACK;
   const me = useActiveStore((s) => s.me);
+  const savedChange = useActiveStore((s) => s.savedChange);
   const community = useCommunityRegistry((r) => r.activeId);
 
   const [entries, setEntries] = useState<SavedMessageRow[]>([]);
@@ -87,8 +88,14 @@ export function SavedMessages() {
     return () => clearTimeout(id);
   }, [moveFailed]);
 
+  // 목록 읽기마다 번호를 붙여 가장 마지막에 떠난 읽기의 답만 쓴다 — 탭을 연 읽기와 담기 변경이
+  // 부른 조용한 읽기가 겹치면 늦게 돌아온 옛 답이 새 답을 덮는다.
+  const fetchSeqRef = useRef(0);
+  const seenChangeRef = useRef({ community, change: savedChange });
+
   const reload = useCallback((): (() => void) => {
     let alive = true;
+    const mySeq = ++fetchSeqRef.current;
     setLoad({ kind: 'loading' });
     readsInFlightRef.current += 1;
     // 겹치기를 **마친 뒤에** 끝난 옮기기를 걷는다 — 먼저 걷으면 이 (옛) 목록이 옮긴 행을 되살린다.
@@ -100,12 +107,12 @@ export function SavedMessages() {
     };
     getController().loadSavedMessages(tab).then(
       (rows) => {
-        if (alive) { setEntries(overlayPending(rows, tab, community, pendingRef.current)); setLoad({ kind: 'ready' }); }
+        if (alive && mySeq === fetchSeqRef.current) { setEntries(overlayPending(rows, tab, community, pendingRef.current)); setLoad({ kind: 'ready' }); }
         settle();
       },
       (err: unknown) => {
         settle();
-        if (!alive) return;
+        if (!alive || mySeq !== fetchSeqRef.current) return;
         setEntries([]);
         setLoad({ kind: 'error', message: errorText(err, t) });
       },
@@ -120,6 +127,61 @@ export function SavedMessages() {
     void reloadSeq;
     return reload();
   }, [reload, reloadSeq]);
+
+  /**
+   * 칸을 연 채 담기 상태가 바뀌면(툴바의 저장·해제, 다른 기기, 서버 이벤트) 목록을 맞춘다(10-15).
+   * 전에는 탭·커뮤니티가 바뀔 때만 읽어서, 열어 둔 칸에 방금 담은 것이 다른 곳에 다녀올 때까지
+   * 안 보였다. 두 단계다:
+   * 1. **바로** — 해제·다른 탭으로 옮김은 그 행을 빼고, 이 앱에서 방금 담은 것(`row`)은 '할 것'
+   *    맨 위에 끼운다. 왕복을 기다리지 않는다.
+   * 2. **조용히 다시 읽기** — '불러오는 중' 으로 깜빡이지 않고 뒤에서 이 탭을 다시 받는다. 다른
+   *    기기에서 담은 것처럼 행 내용을 모르는 변경도 여기서 들어온다. 실패해도 지금 목록을 둔다.
+   * 내 ✓·↺ 로 생긴 변경(`pendingRef` 에 있음)은 1단계를 건너뛴다 — 이미 옮겨 두었다.
+   */
+  useEffect(() => {
+    // 칸을 열 때 이미 있던 변경과, 커뮤니티를 바꿔 다른 스토어의 값이 보이는 것은 변경이 아니다 —
+    // 그때의 목록은 위 `reload` 가 받는다.
+    const seen = seenChangeRef.current;
+    seenChangeRef.current = { community, change: savedChange };
+    if (seen.community !== community || savedChange === null || savedChange === seen.change) return;
+    const { messageId, state, row } = savedChange;
+    const shown = tabRef.current;
+    if (!pendingRef.current.has(messageId)) {
+      setEntries((rows) => {
+        const rest = rows.filter((r) => r.messageId !== messageId);
+        if (state === shown) {
+          const had = rows.find((r) => r.messageId === messageId);
+          if (had) return rows.map((r) => (r.messageId === messageId ? { ...r, state } : r));
+          return row ? [row, ...rest] : rows;
+        }
+        return rest;
+      });
+      // 비어 있다고 그리던 칸도 끼운 행을 보여야 한다 — 읽기가 실패한 칸은 그대로 둔다.
+      if (state === shown && row) setLoad((l) => (l.kind === 'loading' ? l : { kind: 'ready' }));
+    }
+    let alive = true;
+    const mySeq = ++fetchSeqRef.current;
+    const mine = communityRef.current;
+    readsInFlightRef.current += 1;
+    const settle = (): void => {
+      readsInFlightRef.current -= 1;
+      if (readsInFlightRef.current > 0) return;
+      for (const id of settledRef.current) pendingRef.current.delete(id);
+      settledRef.current.clear();
+    };
+    getController().loadSavedMessages(shown).then(
+      (rows) => {
+        if (alive && mySeq === fetchSeqRef.current && tabRef.current === shown && communityRef.current === mine) {
+          setEntries(overlayPending(rows, shown, mine, pendingRef.current));
+          setLoad({ kind: 'ready' });
+        }
+        settle();
+      },
+      () => { settle(); },
+    );
+    return () => { alive = false; };
+    // `savedChange` 는 바뀔 때마다 새 객체다(`seq` 가 오른다).
+  }, [savedChange, community]);
 
   useEffect(() => {
     // 배지와 `⋯` 메뉴 문구를 칸을 열 때 한 번 맞춰 둔다. 실패는 배지 숫자를 그대로 두는

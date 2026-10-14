@@ -215,7 +215,7 @@ export function MessageToolbar({ message, inThread, menuItems, onCopyLink }: {
         aria-pressed={isSaved}
         onClick={() => {
           const c = getController();
-          void (isSaved ? c.unsaveMessage(message.id) : c.saveMessage(message.id));
+          void (isSaved ? c.unsaveMessage(message.id) : c.saveMessage(message.id, message));
         }}
       >
         {/* 담긴 것은 **채운 책갈피**다 — 색이 아니라 형태로 가른다. `SavedIcon` 은 `fill="none"`
