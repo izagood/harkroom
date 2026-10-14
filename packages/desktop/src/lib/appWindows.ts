@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { AttachmentRow } from '@harkroom/shared';
 
 /**
  * 채널·스레드 **새 창**의 장부(designer 판 3, jaebin 결정 W1~W4).
@@ -20,7 +21,13 @@ import { create } from 'zustand';
 
 export type AppWindowTarget =
   | { kind: 'thread'; channelId: string; rootId: string }
-  | { kind: 'channel'; channelId: string };
+  | { kind: 'channel'; channelId: string }
+  /**
+   * 미리보기(아티팩트) 창 — **연 판(첨부 하나)에 머문다**. 새 판은 새 첨부라 키가 다르고, 이 창은 따라가지 않는다
+   * (사람이 보던 것이 저절로 바뀌지 않게). 새 판은 카드에서 다시 열면 그 판의 창이 따로 뜬다. 첨부 행은
+   * `AppWindowEntry.attachment` 가 쥔다 — 재시작 복원 목록에는 넣지 않는다(서명 경로는 열 때마다 받는다).
+   */
+  | { kind: 'artifact'; channelId: string; attachmentId: string };
 
 /** 합쳐 열 수 있는 창 수(C6). */
 export const MAX_APP_WINDOWS = 8;
@@ -29,6 +36,7 @@ export const MAX_APP_WINDOWS = 8;
 export const APP_WINDOW_SIZE = {
   thread: { width: 420, height: 680 },
   channel: { width: 820, height: 720 },
+  artifact: { width: 900, height: 720 },
 } as const;
 
 /**
@@ -37,7 +45,7 @@ export const APP_WINDOW_SIZE = {
  * 두 번 눌러도 창이 하나다.
  */
 export function appWindowKey(target: AppWindowTarget): string {
-  const id = target.kind === 'thread' ? target.rootId : target.channelId;
+  const id = target.kind === 'thread' ? target.rootId : target.kind === 'artifact' ? target.attachmentId : target.channelId;
   return `${target.kind}-${id.toLowerCase().replace(/[^a-z0-9-]/g, '')}`;
 }
 
@@ -57,6 +65,8 @@ export interface AppWindowEntry {
    * 쓰지도 않는다. 없으면 창이 기본값(`channelWindowPaneDefault`)을 고른다.
    */
   paneWidth?: number;
+  /** 미리보기 창이 그릴 첨부(판 하나). `target.kind === 'artifact'` 일 때만 있다. */
+  attachment?: AttachmentRow;
 }
 
 /** 열 때 줄 수 있는 것(재시작 복원). */
@@ -65,6 +75,8 @@ export interface OpenOptions {
   bounds?: WindowBounds;
   pinned?: boolean;
   paneWidth?: number;
+  /** 미리보기 창이 그릴 첨부. 없으면 미리보기 창을 열지 않는다(`blocked`). */
+  attachment?: AttachmentRow;
 }
 
 export interface WindowBounds { x: number; y: number; width: number; height: number }
@@ -113,6 +125,7 @@ export function openAppWindow(target: AppWindowTarget, opts: OpenOptions = {}): 
     existing.win.focus();
     return { kind: 'focused', entry: existing };
   }
+  if (target.kind === 'artifact' && opts.attachment?.id !== target.attachmentId) return { kind: 'blocked' };
   const live = prune();
   if (live.length >= MAX_APP_WINDOWS) return { kind: 'limit' };
   const key = appWindowKey(target);
@@ -123,6 +136,7 @@ export function openAppWindow(target: AppWindowTarget, opts: OpenOptions = {}): 
   const entry: AppWindowEntry = {
     key, target, win, pinned: false, communityId: opts.communityId ?? null,
     ...(opts.paneWidth ? { paneWidth: opts.paneWidth } : {}),
+    ...(target.kind === 'artifact' ? { attachment: opts.attachment } : {}),
   };
   adoptStyles(win.document);
   win.addEventListener('pagehide', () => {
@@ -270,7 +284,8 @@ export function persistAppWindows(): void {
   if (frozen) return;
   const others = loadSavedAppWindows().filter((w) => w.communityId !== scope);
   const mine: SavedAppWindow[] = prune()
-    .filter((e) => !e.gone && e.communityId === scope)
+    // 미리보기 창은 복원하지 않는다 — 첨부 행을 저장소에 적지 않고, 판은 그때그때 카드에서 고른다.
+    .filter((e) => !e.gone && e.communityId === scope && e.target.kind !== 'artifact')
     .map((e) => ({
       target: e.target, communityId: e.communityId, pinned: e.pinned, bounds: boundsOf(e.win),
       ...(e.paneWidth ? { paneWidth: e.paneWidth } : {}),

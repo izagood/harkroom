@@ -278,6 +278,7 @@ export const ko = {
   'thread.title': '스레드',
   'thread.empty': '아직 답글이 없습니다. 첫 답글로 스레드를 시작하세요.',
   'window.openThread': '스레드를 새 창으로 열기',
+  'window.openArtifact': '미리보기를 새 창으로 열기',
   'window.popOut': '새 창으로 열기',
   'window.limit': '창이 이미 {count}개 열려 있습니다. 하나를 닫고 다시 여세요.',
   'window.blocked': '새 창을 열지 못했습니다.',

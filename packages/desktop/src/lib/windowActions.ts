@@ -2,7 +2,7 @@ import { getActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { usePrefsStore } from '../state/prefsStore';
 import { detectLocale, isLocale, translator } from '../i18n';
-import { MAX_APP_WINDOWS, findAppWindow, openAppWindow, type AppWindowTarget, type OpenResult } from './appWindows';
+import { MAX_APP_WINDOWS, findAppWindow, openAppWindow, type AppWindowTarget, type OpenOptions, type OpenResult } from './appWindows';
 
 /**
  * 새 창을 여는 **손짓들이 모이는 곳**(패널 ⧉ · 메시지 ⋯ · ⌘-클릭 · ⌘⇧O · 사이드바).
@@ -11,9 +11,9 @@ import { MAX_APP_WINDOWS, findAppWindow, openAppWindow, type AppWindowTarget, ty
  * 9번째는 **조용히 닫지 않는다**(C6) — 사람이 누른 것이 아무 일도 안 일으키면 클릭이 먹지 않은
  * 것으로 읽는다. 앱 전체 통지 줄(`notice`)로 이유를 말한다.
  */
-export function openWindow(target: AppWindowTarget): OpenResult {
+export function openWindow(target: AppWindowTarget, extra: Pick<OpenOptions, 'attachment'> = {}): OpenResult {
   // 창은 지금 커뮤니티의 스토어를 그린다 — 커뮤니티를 적어 두어야 옮길 때 닫고, 복원 때 고른다.
-  const result = openAppWindow(target, { communityId: useCommunityRegistry.getState().activeId });
+  const result = openAppWindow(target, { ...extra, communityId: useCommunityRegistry.getState().activeId });
   if (result.kind === 'limit' || result.kind === 'blocked') {
     const pref = usePrefsStore.getState().locale;
     const t = translator(isLocale(pref) ? pref : detectLocale());

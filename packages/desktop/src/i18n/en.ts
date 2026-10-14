@@ -543,6 +543,7 @@ export const en = {
   'thread.empty': 'No replies yet. Start the thread with the first reply.',
   // 채널·스레드 새 창(designer 판 3). `window.limit` 의 {count} 는 `MAX_APP_WINDOWS`.
   'window.openThread': 'Open thread in new window',
+  'window.openArtifact': 'Open preview in new window',
   'window.popOut': 'Open in new window',
   'window.limit': '{count} windows are already open. Close one, then try again.',
   'window.blocked': 'Could not open a new window.',

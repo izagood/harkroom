@@ -9,6 +9,7 @@ import { formatSize } from './Attachments';
 import { isMacOS, macTopBarMinHeight, macTrafficLightInset } from '../lib/platform';
 import { allowPreviewOnce } from '../lib/previewAllowance';
 import { PaneResizer } from './PaneResizer';
+import { openWindow } from '../lib/windowActions';
 import {
   paneStorage, paneMaxWidth, MIN_PREVIEW_WIDTH, MAX_PREVIEW_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH, PREVIEW_DEFAULT_CSS,
 } from '../lib/prefs';
@@ -66,14 +67,21 @@ function reasonOf(err: unknown): 'tooLarge' | 'forbidden' | 'gone' | 'failed' {
  * 닫는다(창 전체 → 패널 → 닫힘). 머리줄·아래 줄은 **iframe 밖에서 앱이 그린다** — 페이지가 앱 화면을 흉내
  * 내도 머리줄은 진짜라는 것이 보여야 한다.
  */
-export function ArtifactPanel({ fill = false }: {
+export function ArtifactPanel({ fill = false, windowed }: {
   /** 곁의 내용 칸이 고정 폭(스레드)일 때 남는 폭을 미리보기가 채운다(`Workspace.tsx` 수정 1). */
   fill?: boolean;
+  /**
+   * 미리보기 **새 창** 안이다(`AppWindowsHost`). 그 창이 쥔 판 하나를 그리고 창을 채운다 — 손잡이·⤢·⧉ 가 없고,
+   * × 는 창을 닫는다. 메인 패널의 가게 값(`artifactPreview`)·칸 바뀜 닫기·Esc 는 보지 않는다.
+   */
+  windowed?: { attachment: AttachmentRow; onClose: () => void };
 } = {}) {
   // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
   const hostDoc = useHostDocument();
   const t = useT();
-  const attachment = useActiveStore((s) => s.artifactPreview);
+  const fromStore = useActiveStore((s) => s.artifactPreview);
+  const attachment = windowed ? windowed.attachment : fromStore;
+  const channelId = useActiveStore((s) => s.activeChannelId);
   const [expanded, setExpanded] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
   const loads = useRef(0);
@@ -114,6 +122,7 @@ export function ArtifactPanel({ fill = false }: {
   */
   const wasOpen = useRef(false);
   useEffect(() => {
+    if (windowed) return;
     if (attachment) { wasOpen.current = true; return; }
     if (!wasOpen.current) return;
     wasOpen.current = false;
@@ -132,6 +141,7 @@ export function ArtifactPanel({ fill = false }: {
   const place = useActiveStore((s) => `${s.activeChannelId ?? ''}/${s.threadRootId ?? ''}`);
   const openedAt = useRef<string | null>(null);
   useEffect(() => {
+    if (windowed) return;
     if (!attachment) { openedAt.current = null; return; }
     if (openedAt.current === null) { openedAt.current = place; return; }
     if (openedAt.current !== place) getController().closeArtifactPreview();
@@ -151,7 +161,7 @@ export function ArtifactPanel({ fill = false }: {
   const dragWidth = Math.max(MIN_PREVIEW_WIDTH, fill ? Math.max(width ?? 0, measured) : (width ?? measured));
 
   useEffect(() => {
-    if (!attachment) return;
+    if (!attachment || windowed) return;
     // 페이지 안을 한 번 누르면 키 입력은 교차 origin iframe 으로 가고 Esc 는 앱에 오지 않는다 — 막을 길이 없다.
     // 그때 닫는 길은 머리줄의 ×다. 시험은 "프레임에 포커스가 없을 때"를 전제로 한다.
     const onKey = (e: KeyboardEvent) => {
@@ -175,7 +185,10 @@ export function ArtifactPanel({ fill = false }: {
       aria-label={t('artifact.panel.label')}
       data-testid="artifact-panel"
       data-expanded={expanded ? 'true' : 'false'}
-      className={expanded
+      data-windowed={windowed ? 'true' : undefined}
+      className={windowed
+        ? 'relative flex min-h-0 flex-1 flex-col bg-surface'
+        : expanded
         ? 'fixed inset-0 z-40 flex flex-col bg-surface'
         : fill
           ? 'relative flex flex-1 flex-col border-l border-border bg-surface'
@@ -185,7 +198,7 @@ export function ArtifactPanel({ fill = false }: {
         채널이면 대화의 하한, 스레드(fill)면 스레드의 하한. fill 일 때는 남는 폭을 채우되 끈 폭보다 좁아지지
         않는다(`minWidth`) — 그래야 끌어 넓힌 만큼 스레드가 줄어든다. 창이 좁아지면 `paneMaxWidth` 가 이긴다.
       */
-      style={expanded ? undefined : fill
+      style={expanded || windowed ? undefined : fill
         ? { minWidth: `min(${width ?? MIN_PREVIEW_WIDTH}px, ${paneMaxWidth(MIN_PREVIEW_WIDTH, MIN_THREAD_WIDTH)})` }
         : {
           width: width ?? PREVIEW_DEFAULT_CSS,
@@ -193,7 +206,7 @@ export function ArtifactPanel({ fill = false }: {
           maxWidth: paneMaxWidth(MIN_PREVIEW_WIDTH, MIN_CHANNEL_WIDTH),
         }}
     >
-      {!expanded && (
+      {!expanded && !windowed && (
         <PaneResizer
           label={t('artifact.panel.resize')}
           width={dragWidth}
@@ -218,17 +231,34 @@ export function ArtifactPanel({ fill = false }: {
         <span className="truncate font-medium" data-testid="artifact-panel-title">{title}</span>
         {ref && <span className="shrink-0 text-meta text-fg-subtle">{t('artifact.card.version', { version: ref.version })}</span>}
         <span className="ml-auto" />
-        <button
-          type="button"
-          className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-row text-body text-fg-muted hover:bg-surface-sunken"
-          onClick={() => setExpanded((v) => !v)}
-          aria-label={expanded ? t('artifact.panel.collapse') : t('artifact.panel.expand')}
-          data-testid="artifact-panel-expand"
-        >{expanded ? '⤡' : '⤢'}</button>
+        {!windowed && (
+          <button
+            type="button"
+            className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-row text-body text-fg-muted hover:bg-surface-sunken"
+            onClick={() => setExpanded((v) => !v)}
+            aria-label={expanded ? t('artifact.panel.collapse') : t('artifact.panel.expand')}
+            data-testid="artifact-panel-expand"
+          >{expanded ? '⤡' : '⤢'}</button>
+        )}
+        {/* ⧉ 새 창으로 떼어 낸다 — 스레드 패널 머리의 ⧉ 와 같은 글리프·자리(× 왼쪽). **옮긴다**(W1): 창이 열리면
+            이 패널은 닫는다. 창은 **이 판**에 머문다(`AppWindowTarget` 의 artifact 주석). */}
+        {!windowed && channelId && (
+          <button
+            type="button"
+            className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-row text-body text-fg-muted hover:bg-surface-sunken"
+            onClick={() => {
+              const r = openWindow({ kind: 'artifact', channelId, attachmentId: attachment.id }, { attachment });
+              if (r.kind === 'opened' || r.kind === 'focused') getController().closeArtifactPreview();
+            }}
+            title={t('window.openArtifact')}
+            aria-label={t('window.openArtifact')}
+            data-testid="artifact-pop-out"
+          >⧉</button>
+        )}
         <button
           type="button"
           className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-row text-name leading-none text-fg-muted hover:bg-surface-sunken"
-          onClick={() => getController().closeArtifactPreview()}
+          onClick={() => (windowed ? windowed.onClose() : getController().closeArtifactPreview())}
           aria-label={t('artifact.panel.close')}
           data-testid="artifact-panel-close"
         >×</button>
