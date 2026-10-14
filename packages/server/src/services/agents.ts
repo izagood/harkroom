@@ -28,6 +28,8 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   coalesce(c.trust_siblings, true) as "trustSiblings",
   -- 106. 표시용 — 배정을 막지 않는다.
   coalesce(c.requires_macos, false) as "requiresMacos",
+  -- 126. 사람 브라우저 조작 권한이라 행이 없으면 꺼짐.
+  coalesce(c.chrome_enabled, false) as "chromeEnabled",
   coalesce((select json_agg(m.name order by m.name) from agent_mcp_server m where m.agent_id = a.id), '[]'::json) as "mcpServers",
   a.disabled_at is not null as disabled,
   -- 이 목록은 삭제된 것을 아예 빼므로 항상 false 다. 그래도 싣는 이유는 AgentView 가
@@ -217,6 +219,17 @@ export async function setRequiresMacos(db: Pool | PoolClient, agentId: string, o
   await db.query(
     `insert into agent_config (account_id, requires_macos) values ($1, $2)
      on conflict (account_id) do update set requires_macos = excluded.requires_macos, updated_at = now()`,
+    [agentId, on]);
+}
+
+/**
+ * Claude in Chrome 연동(126). `setRequiresMacos` 와 같은 upsert 다. 값만 든다 — 실제로 붙는지는 러너가
+ * 그 기계의 native host·원격 여부를 보고 정한다.
+ */
+export async function setChromeEnabled(db: Pool | PoolClient, agentId: string, on: boolean): Promise<void> {
+  await db.query(
+    `insert into agent_config (account_id, chrome_enabled) values ($1, $2)
+     on conflict (account_id) do update set chrome_enabled = excluded.chrome_enabled, updated_at = now()`,
     [agentId, on]);
 }
 
