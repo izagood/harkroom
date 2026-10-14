@@ -1249,7 +1249,13 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const applyAvatar = useCallback(
     async (file: File | null, onProgress?: (f: number) => void): Promise<void> => {
       if (!selectedId) return;
-      await getController().setAgentAvatar(selectedId, file, onProgress);
+      const avatarAttachmentId = await getController().setAgentAvatar(selectedId, file, onProgress);
+      // 이 화면은 고른 에이전트(`selected`)와 목록(`agents`)을 **자기 상태로** 들고 있다 — 스토어의 계정 표만
+      // 고치면 사이드바·메시지는 바뀌는데 바로 여기 설정 화면과 그리드의 사진은 옛 첨부 id 에 머물러, 다른 화면에
+      // 다녀와야(목록을 다시 받아야) 바뀌었다(jaebin 신고 10-14). 그래서 서버가 받은 id 로 두 상태도 함께 고친다.
+      const patch = (a: AgentView) => (a.id === selectedId ? { ...a, avatarAttachmentId } : a);
+      setSelected((prev) => (prev ? patch(prev) : prev));
+      setAgents((prev) => prev.map(patch));
     },
     [selectedId],
   );

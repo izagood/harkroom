@@ -777,6 +777,9 @@ export class ApiClient {
   async fetchAvatar(accountId: string): Promise<Blob> {
     const res = await fetch(`${this.baseUrl}/accounts/${accountId}/avatar`, {
       headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+      // 주소가 계정마다 **하나**라 사진을 바꿔도 같은 URL 이다. 웹뷰 HTTP 캐시가 옛 응답을 쥐고 있으면 새 첨부 id 로
+      // 다시 받아도 옛 바이트가 온다. 캐시는 `Identity` 의 첨부 id 키 메모리 캐시 하나로 충분하다.
+      cache: 'no-store',
     });
     if (!res.ok) throw new ApiError(res.status, 'avatar_failed', `HTTP ${res.status}`);
     return res.blob();

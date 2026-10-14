@@ -2116,14 +2116,17 @@ export class Controller {
    * 업로드는 기존 `POST /uploads` 를 쓰고, 여기서는 그 업로드 하나를 계정에 잇는다.
    *
    * 스토어의 계정 표를 함께 갱신한다: 그러지 않으면 방금 올린 사진이 설정 화면에만 보이고
-   * 대화·그리드의 아바타는 옛 색으로 남는다.
+   * 대화·그리드의 아바타는 옛 색으로 남는다. 반대로 설정 화면은 자기 상태를 들고 있어 스토어만으로는
+   * 안 바뀐다 — 그래서 걸린 첨부 id 를 돌려준다.
    */
   async setAgentAvatar(
     agentId: string, file: File | null, onProgress?: (fraction: number) => void,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const attachmentId = file ? (await this.api.upload(file, onProgress)).id : null;
     const { avatarAttachmentId } = await this.api.setAgentAvatar(agentId, attachmentId);
     this.store.getState().applyAvatar(agentId, avatarAttachmentId);
+    // 부르는 화면이 자기 상태(에이전트 설정의 `selected`·`agents`)를 같은 값으로 고치게 돌려준다.
+    return avatarAttachmentId;
   }
 
   /**

@@ -844,6 +844,26 @@ describe('에이전트 사진 (Task 15-4)', () => {
     ).toHaveBeenCalledWith('id-rusalka', file, expect.any(Function)));
   });
 
+  it('올린 직후 설정 화면의 사진이 바로 바뀐다 — 다른 화면에 다녀오지 않아도', async () => {
+    // 이 화면은 고른 에이전트를 자기 상태로 들고 있어서, 스토어만 고치면 여기 사진은 옛 것에 머물렀다(10-14 신고).
+    const c = fakeController([agent('rusalka')]);
+    const fetchAvatar = vi.fn(async () => new Blob(['png'], { type: 'image/png' }));
+    Object.assign(c as object, {
+      setAgentAvatar: vi.fn(async () => 'att-new'),
+      fetchAvatar,
+    });
+    render(<AgentsSettings />);
+    fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-profile'));
+    expect(screen.queryByTestId('identity-avatar')).toBeNull();
+
+    const file = new File([new Uint8Array([1])], 'bot.png', { type: 'image/png' });
+    fireEvent.change(await screen.findByTestId('agent-avatar-file'), { target: { files: [file] } });
+
+    expect(await screen.findByTestId('identity-avatar')).toBeTruthy();
+    expect(fetchAvatar).toHaveBeenCalledWith('id-rusalka');
+  });
+
   it('사진이 없으면 지우기가 없다 — 지울 것이 없는 버튼을 그리지 않는다', async () => {
     fakeController([agent('rusalka')]);
     render(<AgentsSettings />);
