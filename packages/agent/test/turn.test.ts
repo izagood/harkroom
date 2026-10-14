@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { GRANT_DELEGATE_TOOL, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { GRANT_DELEGATE_TOOL, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -1036,5 +1036,38 @@ describe('attachesCommandHook', () => {
     expect(attachesCommandHook('claude-code', 'auto', false)).toBe(false);
     expect(attachesCommandHook('claude-code', 'readonly', true)).toBe(false);
     expect(attachesCommandHook('codex', 'auto', true)).toBe(false);
+  });
+});
+
+// 에이전트별 Claude in Chrome(스레드 e8c8365d). 꺼짐도 플래그로 말해야 한다 — 플래그가 없으면 claude 가 확장 설치를 보고
+// 스스로 켤 수 있다(claude 2.1.299 바이너리: `tengu_chrome_auto_enable` + `cachedChromeExtensionInstalled`).
+describe('Claude in Chrome — 켜진 에이전트·열 수 있는 머신에서만 --chrome, 그 밖엔 --no-chrome', () => {
+  const claude = { ...base, harness: 'claude-code' as const, sessionId: 'uuid-1', isFirstTurn: true };
+
+  it('claude: 생략·false 는 --no-chrome, true 만 --chrome — 멘션·인터랙티브·읽기 전용 모두', () => {
+    for (const mode of ['mention', 'interactive'] as const) {
+      for (const mentionPermission of ['auto', 'readonly'] as const) {
+        const off = buildTurnCommand({ ...claude, mode, mentionPermission }).args;
+        expect(off).toContain('--no-chrome');
+        expect(off).not.toContain('--chrome');
+        expect(buildTurnCommand({ ...claude, mode, mentionPermission, chrome: false }).args).toContain('--no-chrome');
+        const on = buildTurnCommand({ ...claude, mode, mentionPermission, chrome: true }).args;
+        expect(on).toContain('--chrome');
+        expect(on).not.toContain('--no-chrome');
+      }
+    }
+  });
+
+  it('claude 가 아닌 하네스엔 어느 쪽 플래그도 붙지 않는다', () => {
+    const args = buildTurnCommand({ ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true, chrome: true }).args;
+    expect(args.some((a) => a.includes('chrome'))).toBe(false);
+  });
+
+  it('chromeTurnFor: 에이전트 값과 머신 값이 둘 다 참일 때만 연다 — 옛 서버(값 없음)·원격(머신 거짓)은 닫힘', () => {
+    expect(chromeTurnFor({ chromeEnabled: true }, true)).toBe(true);
+    expect(chromeTurnFor({ chromeEnabled: true }, false)).toBe(false);
+    expect(chromeTurnFor({ chromeEnabled: true }, undefined)).toBe(false);
+    expect(chromeTurnFor({ chromeEnabled: false }, true)).toBe(false);
+    expect(chromeTurnFor({}, true)).toBe(false);
   });
 });

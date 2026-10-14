@@ -22,7 +22,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
 import type { Me } from './harkroom.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
-import { buildTurnCommand, preassignsSessionId, type McpServerEntry, type TurnPlan } from './turn.js';
+import { buildTurnCommand, chromeTurnFor, preassignsSessionId, type McpServerEntry, type TurnPlan } from './turn.js';
 import { discoversSessionIdAfterTurn, hasAccountPool } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { PtyControls, TurnResult } from './pty.js';
@@ -136,6 +136,8 @@ export interface InteractiveTurnDeps {
    */
   readTurnMcp?: (harness: AgentHarness) => Promise<Record<string, McpServerEntry>>;
   /** `harkroom-operator` 실행 파일 — 하네스의 harkroom MCP(`mcp-bridge`) 명령(스펙 2026-09-20 §5). */
+  /** 이 머신이 Claude in Chrome 을 열 수 있는가(`RunnerConfig.chromeHost`). 생략은 거짓이다 — 멘션 턴과 같은 규칙. */
+  chromeHost?: boolean;
   operatorBin: string;
   codexHome: string;
   /** 인터랙티브 codex 를 띄우기 직전에 활성 codex 계정으로 링크를 돌린다(`MentionTurnDeps.syncCodexAuth`). */
@@ -346,6 +348,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
     opencodeHome: deps.opencodeHome,
       piHome: deps.piHome,
       claudeConfigDir,
+      chrome: chromeTurnFor(def, deps.chromeHost),
     });
 
     // definition() 을 기다리는 사이 멘션 턴이 시작됐을 수 있다 — 등록 직전에 다시 본다.

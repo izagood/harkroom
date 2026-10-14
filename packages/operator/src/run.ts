@@ -687,6 +687,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
         appDataDir, registry, host: options.host ?? nodeRunnerHost,
         appVersion: args.appVersion ?? null, log,
         runnerLink, socketPath: outcome.paths.socketPath, operatorBin: entryPath, mcpOAuth,
+        // 앱만 `--launch-nonce` 를 준다(`daemon_client.rs`). `run`(원격·launchd)은 Claude in Chrome 을 열지 않는다.
+        appLaunched: args.launchNonce !== undefined,
         localTerminal: { hub: localTerminal, agentOf: (runnerId) => runnerLink.agentOf(runnerId) },
         turnSecretsDir: join(appDataDir, 'turn-secrets'),
         // 박동(P3a) — 서버가 「호스트」 화면에 보일 이 머신의 지금 상태. 머신 값은 한 번 읽어 둔다.

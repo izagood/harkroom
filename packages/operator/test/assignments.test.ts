@@ -297,3 +297,18 @@ describe('restart — 사람의 [재시작]', () => {
     expect(h.signals).toHaveLength(0);
   });
 });
+
+// Claude in Chrome(스레드 e8c8365d) — 머신이 열 수 있을 때만 러너에 `HARKROOM_CHROME_HOST=1`. 못 재면 닫힘.
+describe('HARKROOM_CHROME_HOST', () => {
+  const cases: [string, AssignmentDeps['chromeHost'], string | undefined][] = [
+    ['참이면 1 을 준다', async () => true, '1'],
+    ['거짓이면 주지 않는다', async () => false, undefined],
+    ['판정이 던지면 주지 않는다', async () => { throw new Error('boom'); }, undefined],
+    ['판정이 없으면(옛 배선) 주지 않는다', undefined, undefined],
+  ];
+  it.each(cases)('%s', async (_label, chromeHost, want) => {
+    const h = harness(chromeHost ? { chromeHost } : {});
+    await createAssignmentReconciler(h.deps).onAssign('https://example.com', def(), undefined);
+    expect(h.spawned[0]!.env.HARKROOM_CHROME_HOST).toBe(want);
+  });
+});

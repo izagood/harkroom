@@ -87,6 +87,11 @@ export interface BuildTurnCommandOptions {
   toolAllows?: readonly string[];
   /** 「정확한 명령」 PreToolUse hook 을 인라인 `--settings` 로 단다(H③b, 기본 false). */
   commandHook?: boolean;
+  /**
+   * Claude in Chrome 을 이 턴에 붙이는가(스레드 e8c8365d). `true` 일 때만 열고, 생략·false 는 **명시적으로 닫는다**
+   * (`chromeTurnFor` 가 에이전트 값·머신 값을 합친다). 하네스 표의 `chrome` 이 없는 하네스는 무시한다.
+   */
+  chrome?: boolean;
   /** 서버가 이 에이전트에 api.call 을 허락한 연결(`GET /agent/api-grants`). 비면 allow 규칙을 안 준다. */
   apiConnectors?: readonly string[];
   /** 그중 다시 줄 수 있는 연결(`GET /agent/api-grants` 의 `delegatable`). 있으면 `grant.delegate` MCP 도구를 allow 한다. */
@@ -182,6 +187,11 @@ interface HarnessPreset {
    * 같은 계정 풀을 쓰는 **모든** 에이전트에 퍼진다(09-30 결정). argv 는 이 턴, 이 에이전트뿐이다.
    * deny/allow 문법이 없는 하네스는 생략한다 — 그쪽은 프롬프트의 "머지는 래퍼로만" 한 줄뿐이다(한계, docs/agent-merge.md).
    */
+  /**
+   * Claude in Chrome 플래그(스레드 e8c8365d). 없는 하네스는 붙일 것이 없다. **꺼짐도 플래그로 말한다** — 이유는
+   * CLAUDE_PRESET 주석.
+   */
+  chrome?(enabled: boolean): string[];
   permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[]; apiConnectors?: readonly string[]; apiDelegatable?: readonly string[]; toolAllows?: readonly string[]; claudeConfigDir?: string | null; commandHook?: boolean }): string[];
 }
 
@@ -257,6 +267,14 @@ const CLAUDE_PRESET: HarnessPreset = {
   },
   // claude 는 멘션·인터랙티브 모두 같은 `claude` 커맨드라 모드별 차이가 없고, 붙일 것도 없다.
   alwaysArgs: () => [],
+  /**
+   * 실측 2026-10-14(claude 2.1.299 바이너리, 스레드 e8c8365d): `--chrome` 은 내장 `claude-in-chrome` MCP 를 **동적 MCP
+   * 목록**에 합치므로 `--strict-mcp-config` 와 함께 붙는다. 플래그가 없을 때는 claude 가 스스로 켤 수 있다 — 서버 기능
+   * 플래그(`tengu_chrome_auto_enable`)가 켜졌고 계정의 `.claude.json` 이 확장 설치를 기억하면(`cachedChromeExtensionInstalled`)
+   * **모든** 에이전트가 사람의 Chrome 에 닿는다. 그래서 꺼짐을 `--no-chrome` 으로 **명시한다**. 계정 config(같은 풀의 모든
+   * 에이전트가 공유한다)에는 아무것도 쓰지 않는다 — argv 는 이 턴, 이 에이전트뿐이다.
+   */
+  chrome: (enabled) => (enabled ? ['--chrome'] : ['--no-chrome']),
   /**
    * 실측 2026-10-02(claude 2.1.287, 스레드 3deac356 T1~T4): allow 규칙에 걸린 명령은 auto 분류기를 **거치지
    * 않고** 실행되고, deny 규칙은 분류기보다 먼저·allow 보다 우선해 결정적으로 막는다. `:*` 는 단어 경계를 본다
@@ -680,6 +698,15 @@ export function safeToolAllows(rules: readonly string[]): string[] {
   });
 }
 
+/**
+ * 이 턴에 Claude in Chrome 을 여는가(스레드 e8c8365d). **둘 다 참일 때만** 연다 — 에이전트 소유자가 켰고(`chromeEnabled`,
+ * 서버 값·옛 서버는 싣지 않으니 없음=꺼짐), 이 머신이 열 수 있다(`chromeHost`: 앱이 띄운 로컬 오퍼레이터 + native host).
+ * 원격 오퍼레이터에서는 사람의 브라우저가 거기 없으므로 설정값과 상관없이 닫힌다.
+ */
+export function chromeTurnFor(def: { chromeEnabled?: boolean }, chromeHost: boolean | undefined): boolean {
+  return def.chromeEnabled === true && chromeHost === true;
+}
+
 export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   const preset = PRESETS[opts.harness];
   if (preset === 'unsupported') {
@@ -718,6 +745,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
     ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [], apiDelegatable: opts.apiDelegatable ?? [], toolAllows: opts.toolAllows ?? [], claudeConfigDir: opts.claudeConfigDir ?? null, commandHook: opts.commandHook === true }) ?? []),
     ...(readonlyByList ? ['--tools', opts.readonlyToolList as string] : []),
+    ...(preset.chrome?.(opts.chrome === true) ?? []),
     // pi 의 세션 자리는 **저장소가 정할 수 있다**(`.pi/settings.json` 의 `sessionDir`, 신뢰 판정 전) —
     // CLI 인자로 러너 루트에 못박는다(`piHome.ts::piSessionsDir`, security U1).
     ...(usesPiHome(opts.harness) ? ['--session-dir', piSessionsDir(opts.piHome as string)] : []),

@@ -4588,3 +4588,22 @@ describe('MCP 준비 표식', () => {
     expect((turnOpts[0] as { injectPrompt?: { waitFor?: WaitFor } }).injectPrompt?.waitFor).toBeUndefined();
   });
 });
+
+// 에이전트별 Claude in Chrome(스레드 e8c8365d) — 서버 값(`chromeEnabled`)과 머신 값(`chromeHost`)이 멘션 턴 argv 까지 간다.
+describe('Claude in Chrome — 멘션 턴 배선', () => {
+  for (const [label, chromeEnabled, chromeHost, want] of [
+    ['켜짐 + 열 수 있는 머신 → --chrome', true, true, '--chrome'],
+    ['켜짐 + 원격·확장 없음 → --no-chrome', true, false, '--no-chrome'],
+    ['꺼짐 + 열 수 있는 머신 → --no-chrome', false, true, '--no-chrome'],
+    ['옛 서버(값 없음) → --no-chrome', undefined, true, '--no-chrome'],
+  ] as const) {
+    it(label, async () => {
+      const fakeHarkroom = new FakeHarkroom(defOf(chromeEnabled === undefined ? {} : { chromeEnabled }));
+      fakeHarkroom.seedFrom('human-1', '@forge 안녕');
+      const { deps, plans } = await makeDeps(fakeHarkroom);
+      await runMentionTurn({ ...deps, chromeHost }, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+      expect(plans[0]!.args).toContain(want);
+      expect(plans[0]!.args).not.toContain(want === '--chrome' ? '--no-chrome' : '--chrome');
+    });
+  }
+});

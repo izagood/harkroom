@@ -20,6 +20,7 @@ import type { RunnerRegistry, RunnerHost } from './runners.js';
 import { fileSecrets, type OperatorSecrets } from './secrets.js';
 import { buildMcpConfig, claudeConfigPath, readLocalMcpDefinitions, writeAgentMcpConfig } from './mcpConfig.js';
 import type { McpOAuth } from './mcpOAuth.js';
+import { chromeHostAvailable } from './chromeHost.js';
 import { access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -46,6 +47,11 @@ export interface StartCommunitiesDeps {
   heartbeat?: CommunityDeps['heartbeat'];
   /** 같은 머신의 터미널 직결 허브(R1 PR-3b). 커뮤니티마다 그대로 넘긴다. */
   localTerminal?: CommunityDeps['localTerminal'];
+  /**
+   * 앱이 띄운 오퍼레이터인가(`--launch-nonce`). 거짓(`run` — 원격 VM·launchd)이면 Claude in Chrome 을 열지 않는다
+   * (`chromeHost.ts`). 생략은 거짓이다.
+   */
+  appLaunched?: boolean;
 }
 
 export interface CommunityRuntime {
@@ -126,6 +132,10 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     ...(deps.turnSecretsDir ? { turnSecretsDir: deps.turnSecretsDir } : {}),
     operatorBin: deps.operatorBin,
     commandHook: async () => (await readConfig(configPath)).commandHook === true,
+    chromeHost: () => chromeHostAvailable({
+      appLaunched: deps.appLaunched === true, platform: process.platform, home: homedir(),
+      exists: (p) => access(p).then(() => true, () => false),
+    }),
     operatorOwnerId: () => community.current?.ownerAccountId() ?? Promise.resolve(null),
     async mcpConfig(definition) {
       const definitions = await readLocalMcpDefinitions({
