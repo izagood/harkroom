@@ -277,6 +277,7 @@ Future<void> _rowSheet(BuildContext context, SavedEntry entry) async {
   final m = entry.message;
   final pick = await showModalBottomSheet<String>(
     context: context,
+    useRootNavigator: true,
     showDragHandle: true,
     builder: (sheet) => SafeArea(
       child: Column(

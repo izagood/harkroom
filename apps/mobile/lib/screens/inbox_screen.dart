@@ -522,6 +522,7 @@ class BoardRow extends StatelessWidget {
     final t = context.t;
     final pick = await showModalBottomSheet<BoardAction>(
       context: context,
+      useRootNavigator: true,
       showDragHandle: true,
       builder: (sheet) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [

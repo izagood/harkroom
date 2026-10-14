@@ -7,6 +7,7 @@ import '../time.dart';
 import 'artifact_preview.dart';
 import 'message_link.dart';
 import '../ui/tokens.dart';
+import 'tab_nav.dart';
 
 /// 그림 넘겨 보기의 **범위**(designer 사양 1·5, 2026-10-02) — 그림을 연 화면이 준다.
 /// 채널 화면은 최상위 글(+채널에도 올린 답글), 스레드 화면은 루트와 답글이다. 없으면 그 그림 한 장만 본다.
@@ -231,7 +232,7 @@ class _Preview extends StatelessWidget {
       items = [GalleryItem(attachment, m)];
       start = 0;
     }
-    Navigator.of(context).push(MaterialPageRoute<void>(
+    pushRoot(context, MaterialPageRoute<void>(
       builder: (_) => ImageGallery(
         items: items,
         start: start,

@@ -36,6 +36,7 @@ class MergeOnceNote extends StatelessWidget {
         key: Key('merge-once-${message.id}'),
         onPressed: () => showModalBottomSheet<void>(
           context: context,
+          useRootNavigator: true,
           builder: (ctx) => SafeArea(
             child: Padding(
               key: const Key('merge-once-sheet'),

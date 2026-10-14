@@ -283,6 +283,7 @@ Future<bool?> showLinkConfirm(BuildContext context, Uri uri) {
   final k = context.tokens;
   return showModalBottomSheet<bool>(
     context: context,
+    useRootNavigator: true,
     showDragHandle: true,
     builder: (ctx) => SafeArea(
       child: Padding(

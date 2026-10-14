@@ -475,8 +475,17 @@ abstract class Strings {
   /// 볼 수 없는 채널의 글 자리.
   String get savedUnavailable;
 
-  /// 떠 있는 새 메시지 버튼(S5c).
-  String get newMessage;
+  /// DM 탭 머리 ＋·사람 고르기 화면 제목(하단 네비 D8).
+  String get newDm;
+
+  /// DM 이 없을 때 빈 화면의 버튼.
+  String get newDmStart;
+
+  /// 사람 고르기 화면의 거르기 칸.
+  String get newDmFilter;
+
+  /// 거르기에 맞는 사람이 없다.
+  String get newDmNoMatch;
 
   /// 새 메시지 시트의 사람 묶음.
   String get newMessagePeople;
@@ -1281,7 +1290,10 @@ Map<String, String> stringsToMap(Strings s) => {
       'savedMovedOpen': s.savedMovedOpen,
       'savedDeleted': s.savedDeleted,
       'savedUnavailable': s.savedUnavailable,
-      'newMessage': s.newMessage,
+      'newDm': s.newDm,
+      'newDmStart': s.newDmStart,
+      'newDmFilter': s.newDmFilter,
+      'newDmNoMatch': s.newDmNoMatch,
       'newMessagePeople': s.newMessagePeople,
       'newMessageDmFailed': s.newMessageDmFailed,
       'unreadOnlyEmpty': s.unreadOnlyEmpty,

@@ -10,6 +10,7 @@ import 'community_screens.dart';
 import 'saved_screen.dart';
 import 'me_screen.dart';
 import 'message_list_screen.dart';
+import 'tab_nav.dart';
 
 /// 채널 목록. 폰의 루트 화면이고, 여기서 채널을 **밀어 넣어** 연다(옆 패널이 아니다).
 class ChannelListScreen extends StatelessWidget {
@@ -50,8 +51,8 @@ class ChannelListScreen extends StatelessWidget {
             : app.activeCommunity == null
                 ? Text(t.channelsTitle)
                 : const CommunityHeader(),
-        // 「나」 는 탭이 아니라 머리 오른쪽의 프로필 사진이다(개정판 3.1·3.8).
-        actions: const [OpenMeButton(), SizedBox(width: 8)],
+        // 「나」 는 탭이 아니라 머리 오른쪽의 프로필 사진이다(개정판 3.1·3.8). DM 탭은 그 앞에 ＋(새 DM, D8).
+        actions: [if (dms) const NewDmButton(), const OpenMeButton(), const SizedBox(width: 8)],
       ),
       body: SafeArea(
         child: Column(
@@ -63,7 +64,20 @@ class ChannelListScreen extends StatelessWidget {
             if (!dms) ShortcutCards(newCount: rows.where((c) => (app.reads[c.id]?.unread ?? 0) > 0).length),
             Expanded(
               child: rows.isEmpty || (unreadOnly && items.isEmpty)
-                  ? Center(child: Text(dms ? t.dmsEmpty : unreadOnly ? t.unreadOnlyEmpty : t.channelsEmpty))
+                  ? dms
+                      // DM 이 없으면 빈 화면에 같은 버튼 하나(D8) — 머리 ＋ 를 못 찾아도 길이 있다.
+                      ? Center(
+                          child: Column(mainAxisSize: MainAxisSize.min, children: [
+                            Text(t.dmsEmpty),
+                            const SizedBox(height: 12),
+                            FilledButton.tonal(
+                              key: const Key('new-dm-empty'),
+                              onPressed: () => openNewDm(context),
+                              child: Text(t.newDmStart),
+                            ),
+                          ]),
+                        )
+                      : Center(child: Text(unreadOnly ? t.unreadOnlyEmpty : t.channelsEmpty))
                   : ListView.builder(
                       // 커뮤니티를 옮기면 맨 위부터 — 앞 커뮤니티의 스크롤 자리를 이어받지 않는다(설계 ④).
                       key: PageStorageKey('${dms ? 'dms' : 'channels'}-${app.activeKey}'),
@@ -405,43 +419,44 @@ class _ShortcutCard extends StatelessWidget {
   }
 }
 
-/// 떠 있는 새 메시지 버튼(S5c). 누르면 시트: 채널을 고르거나 사람을 골라 DM 을 연다.
-class NewMessageButton extends StatelessWidget {
-  const NewMessageButton({super.key});
+/// DM 탭 머리의 ＋ — 사람을 골라 DM 을 시작한다(하단 네비 D8, 2026-10-14). 떠 있는 ✎ 버튼을 뺀 자리다.
+/// 「채널 고르기」는 없앴다 — 홈 목록과 같은 일이다.
+class NewDmButton extends StatelessWidget {
+  const NewDmButton({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final t = context.t;
-    return FloatingActionButton(
-      key: const Key('new-message'),
-      tooltip: t.newMessage,
-      onPressed: () => showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        showDragHandle: true,
-        builder: (_) => const NewMessageSheet(),
-      ),
-      child: const Icon(Icons.edit_outlined),
-    );
-  }
+  Widget build(BuildContext context) => IconButton(
+        key: const Key('new-dm'),
+        tooltip: context.t.newDm,
+        icon: const Icon(Icons.add),
+        onPressed: () => openNewDm(context),
+      );
 }
 
-class NewMessageSheet extends StatefulWidget {
-  const NewMessageSheet({super.key});
+/// 사람 고르기 화면을 DM 탭 쌓기에 민다 — 탭 바는 남는다(탭에 속한 화면).
+Future<void> openNewDm(BuildContext context) =>
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const NewDmScreen()));
+
+/// 사람을 골라 DM 을 연다(없으면 만든다). 고르면 이 화면을 그 DM 으로 **바꿔 끼운다** — 뒤로 가면
+/// 고르던 화면이 아니라 DM 목록이다.
+class NewDmScreen extends StatefulWidget {
+  const NewDmScreen({super.key});
 
   @override
-  State<NewMessageSheet> createState() => _NewMessageSheetState();
+  State<NewDmScreen> createState() => _NewDmScreenState();
 }
 
-class _NewMessageSheetState extends State<NewMessageSheet> {
+class _NewDmScreenState extends State<NewDmScreen> {
+  final _filter = TextEditingController();
   bool _busy = false;
 
-  void _push(NavigatorState nav, String channelId) {
-    context.app.openChannel(channelId);
-    nav.push(MaterialPageRoute<void>(builder: (_) => MessageListScreen(channelId: channelId)));
+  @override
+  void dispose() {
+    _filter.dispose();
+    super.dispose();
   }
 
-  Future<void> _openDm(String accountId) async {
+  Future<void> _open(String accountId) async {
     if (_busy) return;
     setState(() => _busy = true);
     final app = context.app;
@@ -451,9 +466,11 @@ class _NewMessageSheetState extends State<NewMessageSheet> {
     try {
       final id = await app.openDmWith(accountId);
       if (!mounted) return;
-      nav.pop();
-      // null: 커뮤니티가 바뀌었다 — 시트만 닫고 아무 데로도 가지 않는다.
-      if (id != null) _push(nav, id);
+      // null: 커뮤니티가 바뀌었다 — 아무 데로도 가지 않는다(홈이 새로 선다).
+      if (id == null) return;
+      await app.openChannel(id);
+      if (!mounted) return;
+      await nav.pushReplacement(MaterialPageRoute<void>(builder: (_) => MessageListScreen(channelId: id)));
     } catch (_) {
       if (!mounted) return;
       setState(() => _busy = false);
@@ -465,50 +482,48 @@ class _NewMessageSheetState extends State<NewMessageSheet> {
   Widget build(BuildContext context) {
     final t = context.t;
     final app = context.app;
-    final k = context.tokens;
-    final channels = app.channels
-        .where((c) => !c.isDm && app.channelPrefs[c.id]?.hidden != true)
-        .toList(growable: false)
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final q = _filter.text.trim().toLowerCase();
     final people = app.accounts.values
         .where((a) => a.id != app.me?.id && !a.isDisabled)
+        .where((a) => q.isEmpty || a.handle.toLowerCase().contains(q) || a.displayName.toLowerCase().contains(q))
         .toList(growable: false)
       ..sort((a, b) => a.handle.toLowerCase().compareTo(b.handle.toLowerCase()));
-    Widget head(String text) => Padding(
-          padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 12, HarkroomSize.gutter, 4),
-          child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fgMuted)),
-        );
-    return SafeArea(
-      child: SizedBox(
-        height: MediaQuery.sizeOf(context).height * 0.7,
+    return Scaffold(
+      appBar: AppBar(title: Text(t.newDm)),
+      body: SafeArea(
         child: AbsorbPointer(
           absorbing: _busy,
-          child: ListView(
-            key: const Key('new-message-sheet'),
+          child: Column(
             children: [
-              head(t.sectionChannels),
-              for (final c in channels)
-                ListTile(
-                  key: Key('new-message-channel-${c.id}'),
-                  dense: true,
-                  leading: Icon(c.isPrivate ? Icons.lock_outline : Icons.tag, size: 20),
-                  title: Text(c.name),
-                  onTap: () {
-                    final nav = Navigator.of(context);
-                    nav.pop();
-                    _push(nav, c.id);
-                  },
+              Padding(
+                padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 8, HarkroomSize.gutter, 4),
+                child: TextField(
+                  key: const Key('new-dm-filter'),
+                  controller: _filter,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(prefixIcon: const Icon(Icons.search), hintText: t.newDmFilter, isDense: true),
                 ),
-              head(t.newMessagePeople),
-              for (final a in people)
-                ListTile(
-                  key: Key('new-message-person-${a.id}'),
-                  dense: true,
-                  leading: HarkroomAvatar(id: a.id, name: a.handle, size: 24),
-                  title: Text(a.displayName.isNotEmpty ? a.displayName : a.handle),
-                  subtitle: a.displayName.isNotEmpty && a.displayName != a.handle ? Text('@${a.handle}') : null,
-                  onTap: () => _openDm(a.id),
-                ),
+              ),
+              if (_busy) const LinearProgressIndicator(minHeight: 2),
+              Expanded(
+                child: people.isEmpty
+                    ? EmptyState(title: t.newDmNoMatch)
+                    : ListView(
+                        key: const Key('new-dm-list'),
+                        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                        children: [
+                          SectionHeader(label: t.newMessagePeople),
+                          for (final a in people)
+                            ListTile(
+                              key: Key('new-dm-person-${a.id}'),
+                              leading: HarkroomAvatar(id: a.id, name: a.handle, size: 28),
+                              title: Text(a.displayName.isNotEmpty ? a.displayName : a.handle),
+                              subtitle: a.displayName.isNotEmpty && a.displayName != a.handle ? Text('@${a.handle}') : null,
+                              onTap: () => _open(a.id),
+                            ),
+                        ],
+                      ),
+              ),
             ],
           ),
         ),
@@ -529,7 +544,9 @@ Future<void> openDmScreen(BuildContext context, String accountId) async {
     final id = await app.openDmWith(accountId);
     if (id == null) return;
     await app.openChannel(id);
-    await nav.push(MaterialPageRoute<void>(builder: (_) => MessageListScreen(channelId: id)));
+    if (!context.mounted) return;
+    // 에이전트 탭이면 그 탭에, 찾기 화면이면 찾기를 걷고 DM 탭에 민다.
+    await openChannelScreen(context, id, navigator: nav, (_) => MessageListScreen(channelId: id));
   } catch (_) {
     messenger.showSnackBar(SnackBar(content: Text(failed), behavior: SnackBarBehavior.floating));
   }

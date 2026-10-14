@@ -10,6 +10,7 @@ import '../ui/tokens.dart';
 import 'artifact_preview.dart' show formatBytes;
 import 'attach_pickers.dart';
 import 'attachments.dart' show ImageViewport;
+import 'tab_nav.dart';
 
 /// 작성칸에 붙여 둔 첨부와, 파일을 고르는 버튼.
 ///
@@ -200,7 +201,7 @@ void _openViewer(
   final images = [for (final p in items) if (p.preview != null) p];
   final index = images.indexOf(start);
   if (index < 0) return;
-  Navigator.of(context).push(MaterialPageRoute<void>(
+  pushRoot(context, MaterialPageRoute<void>(
     builder: (_) => PendingViewer(items: images, initialIndex: index, onRemove: remove),
   ));
 }
@@ -425,6 +426,7 @@ Future<_AttachChoice?> _showAttachSheet(BuildContext context, {required bool has
 
   return showModalBottomSheet<_AttachChoice>(
     context: context,
+    useRootNavigator: true,
     showDragHandle: true,
     builder: (ctx) => SafeArea(
       child: Column(
@@ -449,6 +451,7 @@ Future<void> _showCameraDenied(BuildContext context, Future<void> Function() ope
   final k = context.tokens;
   return showModalBottomSheet<void>(
     context: context,
+    useRootNavigator: true,
     showDragHandle: true,
     builder: (ctx) => SafeArea(
       child: Padding(

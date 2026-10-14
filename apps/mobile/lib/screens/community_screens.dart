@@ -10,6 +10,7 @@ import '../ui/parts.dart';
 import '../ui/states.dart';
 import '../ui/tokens.dart';
 import 'me_screen.dart';
+import 'tab_nav.dart';
 
 /// 여러 커뮤니티(designer 설계 harkroom://message/30621120-f955-4f07-8f23-9f1837ab99cd, M1 = ③⑧⑨).
 ///
@@ -41,7 +42,8 @@ Future<void> enterCommunity(BuildContext context, String key, {bool toChannels =
   final messenger = ScaffoldMessenger.of(context);
   final t = context.t;
   final margin = toastMargin(context);
-  Navigator.of(context).popUntil((r) => r.isFirst);
+  Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
+  TabNavigators.active?.popAll();
   if (!await app.switchTo(key)) return;
   showSwitchedToast(messenger, t, app.activeCommunity!, app.me?.handle, margin);
 }
@@ -71,7 +73,7 @@ void showSwitchedToast(
 ///
 /// [initialUrl] 은 만료된 커뮤니티의 「다시 로그인」이 주소를 채워 둘 때 쓴다.
 Future<void> openAddCommunity(BuildContext context, {String? initialUrl}) async {
-  final added = await Navigator.of(context).push<StoredCommunity>(MaterialPageRoute(
+  final added = await pushRoot<StoredCommunity>(context, MaterialPageRoute(
     fullscreenDialog: true,
     builder: (_) => AddCommunityScreen(initialUrl: initialUrl),
   ));
@@ -458,6 +460,7 @@ class CommunityHeader extends StatelessWidget {
 Future<void> showCommunitySwitcher(BuildContext context) {
   return showModalBottomSheet<void>(
     context: context,
+    useRootNavigator: true,
     isScrollControlled: true,
     builder: (sheet) => const _CommunitySwitcher(),
   ).then((_) {});

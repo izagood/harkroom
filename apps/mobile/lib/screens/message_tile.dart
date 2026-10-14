@@ -383,6 +383,7 @@ Future<void> showMessageActions(BuildContext context, MessageRow message, {VoidC
       );
   final choice = await showModalBottomSheet<_SheetPick>(
     context: context,
+    useRootNavigator: true,
     // 다른 시트(첨부·모델·푸시·링크)와 같이 손잡이를 단다(designer n1).
     showDragHandle: true,
     isScrollControlled: true,
@@ -728,6 +729,7 @@ Future<void> pickReaction(BuildContext context, MessageRow message) async {
   final app = context.app;
   final emoji = await showModalBottomSheet<String>(
     context: context,
+    useRootNavigator: true,
     builder: (sheet) => SafeArea(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 12),

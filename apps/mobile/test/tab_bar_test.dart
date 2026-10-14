@@ -6,6 +6,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
+import 'package:harkroom/screens/channel_list_screen.dart';
+import 'package:harkroom/screens/message_list_screen.dart';
+import 'package:harkroom/screens/search_screen.dart';
+import 'package:harkroom/screens/tab_nav.dart';
+import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:http/http.dart' as http;
@@ -30,7 +35,7 @@ class _Idle implements WsConnection {
   }
 }
 
-MockClient _server() => MockClient((req) async {
+MockClient _server({bool noDms = false}) => MockClient((req) async {
       final path = req.url.path;
       if (path == '/auth/me') return _json({'id': 'me-1', 'handle': 'me', 'displayName': 'me', 'isAdmin': false});
       if (path == '/channels') {
@@ -49,6 +54,7 @@ MockClient _server() => MockClient((req) async {
         return _json({'error': {'code': 'bad_request', 'message': 'x'}}, 400);
       }
       if (path == '/dms') {
+        if (noDms) return _json({'dms': <Object?>[]});
         return _json({
           'dms': [
             {'id': 'd1', 'memberIds': ['me-1', 'a-designer'], 'lastMessageAt': '2026-10-01T00:00:00Z'},
@@ -103,7 +109,7 @@ MockClient _server() => MockClient((req) async {
       return _json({'error': {'code': 'not_found', 'message': path}}, 404);
     });
 
-Future<AppState> _pump(WidgetTester tester) async {
+Future<AppState> _pump(WidgetTester tester, {bool noDms = false}) async {
   final app = AppState(
     sessions: SessionStore.inMemory(
       seed: jsonEncode({
@@ -113,7 +119,7 @@ Future<AppState> _pump(WidgetTester tester) async {
         ],
       }),
     ),
-    apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: _server()),
+    apiFactory: (b, t) => ApiClient(baseUrl: b, token: t, httpClient: _server(noDms: noDms)),
     connector: (_) async => _Idle(),
   );
   addTearDown(app.dispose);
@@ -269,26 +275,114 @@ void main() {
     expect(find.byKey(const Key('card-my-turn')), findsNothing, reason: '인박스 탭으로 옮겼다');
   });
 
-  testWidgets('S5c 새 메시지: 사람을 고르면 POST /dms 로 DM 을 열고 DM 탭에 선다', (tester) async {
+  testWidgets('D8 DM 탭 ＋: 사람을 고르면 POST /dms 로 DM 을 열고, 뒤로 가면 DM 목록이다 — ✎ 버튼은 없다', (tester) async {
     await _pump(tester);
-    expect(find.byKey(const Key('new-message')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('new-message')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('new-message-channel-c1')), findsOneWidget);
-    expect(find.byKey(const Key('new-message-channel-c3')), findsNothing, reason: '치운 채널');
-    expect(find.byKey(const Key('new-message-person-me-1')), findsNothing, reason: '나는 없다');
-    await tester.tap(find.byKey(const Key('new-message-person-a-qa')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('new-message-sheet')), findsNothing);
-    expect(find.byType(BackButton), findsOneWidget);
-    await tester.tap(find.byType(BackButton));
-    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('new-message')), findsNothing, reason: '떠 있는 ✎ 는 뺐다');
+    expect(find.byKey(const Key('new-dm')), findsNothing, reason: '＋ 는 DM 탭 머리에만');
     await tester.tap(find.byKey(const Key('tab-dms')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('new-dm')));
+    await tester.pumpAndSettle();
+    expect(find.byType(NewDmScreen), findsOneWidget);
+    expect(find.byKey(const Key('home-tab-bar')), findsOneWidget, reason: '사람 고르기도 탭에 속한 화면');
+    expect(find.byKey(const Key('new-dm-person-me-1')), findsNothing, reason: '나는 없다');
+    await tester.enterText(find.byKey(const Key('new-dm-filter')), 'des');
+    await tester.pump();
+    expect(find.byKey(const Key('new-dm-person-a-qa')), findsNothing);
+    expect(find.byKey(const Key('new-dm-person-a-designer')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('new-dm-filter')), '');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('new-dm-person-a-qa')));
+    await tester.pumpAndSettle();
+    expect(find.byType(NewDmScreen), findsNothing, reason: '고르면 DM 으로 바꿔 끼운다');
+    expect(tester.widget<MessageListScreen>(find.byType(MessageListScreen)).channelId, 'd2');
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
     expect(find.descendant(of: find.byKey(const Key('channel-d2')), matching: find.text('qa')), findsOneWidget);
-    // 인박스·에이전트 탭에는 새 메시지 버튼이 없다.
+  });
+
+  testWidgets('D8 DM 이 없으면 빈 화면에 「사람 골라 DM 시작」', (tester) async {
+    await _pump(tester, noDms: true);
+    await tester.tap(find.byKey(const Key('tab-dms')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('new-dm-empty')));
+    await tester.pumpAndSettle();
+    expect(find.byType(NewDmScreen), findsOneWidget);
+  });
+
+  testWidgets('D2 채널·스레드 안에서도 탭 바가 남고, 다른 탭에 갔다 와도 보던 화면이 남는다', (tester) async {
+    await _pump(tester);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await tester.pumpAndSettle();
+    expect(find.byType(MessageListScreen), findsOneWidget);
+    expect(find.byKey(const Key('home-tab-bar')), findsOneWidget);
+    unawaited(TabNavigators.active!.navigator(0)!
+        .push(MaterialPageRoute<void>(builder: (_) => const ThreadScreen(channelId: 'c1', rootId: 'r1'))));
+    await tester.pumpAndSettle();
+    expect(find.byType(ThreadScreen), findsOneWidget);
+    expect(find.byKey(const Key('home-tab-bar')), findsOneWidget, reason: '스레드에서도 보인다(D2 B)');
     await tester.tap(find.byKey(const Key('tab-inbox')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('new-message')), findsNothing);
+    expect(find.byType(ThreadScreen), findsNothing);
+    await tester.tap(find.byKey(const Key('tab-home')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ThreadScreen), findsOneWidget, reason: '홈 탭 쌓기가 그대로 남았다');
+  });
+
+  testWidgets('D4 지금 탭을 다시 누르면 뿌리로, 뿌리에서 한 번 더 누르면 맨 위로', (tester) async {
+    await _pump(tester);
+    await tester.tap(find.byKey(const Key('channel-c1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('tab-home')));
+    await tester.pumpAndSettle();
+    expect(find.byType(MessageListScreen), findsNothing);
+    expect(find.byKey(const Key('channel-c1')), findsOneWidget);
+    // 뿌리 목록이 그 탭의 손잡이를 집는다 — 그래야 한 번 더 누를 때 굴릴 수 있다.
+    final scroll = TabNavigators.active!.scrolls[0];
+    expect(scroll.hasClients, isTrue);
+    scroll.jumpTo(scroll.position.maxScrollExtent);
+    await tester.tap(find.byKey(const Key('tab-home')));
+    await tester.pumpAndSettle();
+    expect(scroll.offset, 0);
+  });
+
+  testWidgets('키보드가 올라오면 탭 바는 숨고, 내리면 돌아온다', (tester) async {
+    await _pump(tester);
+    expect(find.byKey(const Key('home-tab-bar')), findsOneWidget);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pump();
+    expect(find.byKey(const Key('home-tab-bar')), findsNothing);
+    tester.view.resetViewInsets();
+    await tester.pump();
+    expect(find.byKey(const Key('home-tab-bar')), findsOneWidget);
+  });
+
+  testWidgets('찾기는 탭 바를 숨기고, 결과로 연 화면에서는 돌아오며, 뒤로 오면 찾기가 남는다', (tester) async {
+    await _pump(tester);
+    await tester.tap(find.byKey(const Key('tab-search')));
+    await tester.pumpAndSettle();
+    expect(find.byType(SearchScreen), findsOneWidget);
+    expect(find.byKey(const Key('home-tab-bar')), findsNothing);
+    // 찾기 위에 채널을 쌓는다(결과·바로 가기가 하는 일).
+    final ctx = tester.element(find.byType(SearchScreen));
+    unawaited(openChannelScreen(ctx, 'c1', (_) => const MessageListScreen(channelId: 'c1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('home-tab-bar')), findsOneWidget);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(find.byType(SearchScreen), findsOneWidget);
+    expect(find.byKey(const Key('home-tab-bar')), findsNothing);
+  });
+
+  testWidgets('탭 밖(푸시·부팅)에서 DM 을 열면 DM 탭을 골라 그 쌓기에 민다', (tester) async {
+    final app = await _pump(tester);
+    final root = tester.state<NavigatorState>(find.byType(Navigator).first);
+    unawaited(openChannelScreen(root.context, 'd1', navigator: root, (_) => const MessageListScreen(channelId: 'd1')));
+    await tester.pumpAndSettle();
+    expect(app.homeTab, 1);
+    expect(find.byType(MessageListScreen), findsOneWidget);
+    expect(find.byKey(const Key('home-tab-bar')), findsOneWidget);
+    expect(root.canPop(), isFalse, reason: '루트가 아니라 DM 탭 쌓기에 들어갔다');
   });
 }

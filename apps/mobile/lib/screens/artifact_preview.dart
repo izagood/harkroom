@@ -6,6 +6,7 @@ import '../api/api_error.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
+import 'tab_nav.dart';
 
 /// 미리보기(아티팩트) ⑤ — 에이전트가 `artifact.publish` 로 올린 HTML 을 앱 안 WebView 로 본다.
 /// 사양: designer d8ca47be·abcc05cf, 조건: security(harkroom 스레드 31121b84).
@@ -147,7 +148,7 @@ Future<bool> confirmLeavePreview(BuildContext context, Uri uri) async {
 
 /// 미리보기를 연다 — 아래에서 올라오는 전체 화면(designer ⑤).
 Future<void> openArtifactPreview(BuildContext context, AttachmentRow attachment) {
-  return Navigator.of(context).push(MaterialPageRoute<void>(
+  return pushRoot(context, MaterialPageRoute<void>(
     fullscreenDialog: true,
     builder: (_) => ArtifactScreen(attachment: attachment),
   ));
