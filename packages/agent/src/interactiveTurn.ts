@@ -171,7 +171,7 @@ export interface InteractiveTurnDeps {
    * 디렉터리에 있어서, 첫 계정으로 `--resume` 하면 "No conversation found" 로 죽는다(실측
    * 2026-09-21). 모르는 이름이면 null → 기본(`claudeConfigDir`)으로 간다.
    */
-  configDirOf?: (account: string) => string | null;
+  configDirOf?: (account: string, pool?: string | null) => string | null;
   /**
    * 지금 쓸 기본 계정(턴을 열 때마다 부른다). 있으면 `claudeConfigDir`·`claudeAccount` 대신
    * 이것을 쓴다 — 기동 뒤 사람이 첫 계정을 지웠으면 그 경로로 claude 를 띄우지 않기 위해서다
@@ -314,7 +314,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
 
     // 이 세션을 만든 계정을 따른다(`configDirOf` 주석). 기록에 계정이 없거나 이 러너가 모르는
     // 이름이면 첫 계정 — 그것이 옛 동작이고, 새 세션도 그 계정에서 시작한다.
-    const followed = rec.claudeAccount ? deps.configDirOf?.(rec.claudeAccount) ?? null : null;
+    const followed = rec.claudeAccount ? deps.configDirOf?.(rec.claudeAccount, rec.claudePool) ?? null : null;
     const fallback = followed ? null : await deps.currentAccount?.();
     const claudeConfigDir = followed ?? (fallback ? fallback.configDir : deps.claudeConfigDir);
     const claudeAccount = followed

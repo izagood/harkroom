@@ -51,7 +51,11 @@ export interface ClaudeAccountsSnapshot {
   /** `flat` = `pools.json` 이 없다. 그때 `pools` 는 이름이 빈 풀 하나다. */
   mode: 'flat' | 'pools';
   defaultPool: string | null;
-  agents: Record<string, string>;
+  /**
+   * 에이전트 id → 풀 순서(2026-10-15 풀 n개). 옛 데몬은 풀 이름 하나(문자열)를 싣는다 — 읽을 때는
+   * `agentPoolsOf` 를 거친다.
+   */
+  agents: Record<string, string[]>;
   /** 풀별 배정 기준(`pools.json` 의 `assign`). 옛 데몬은 싣지 않는다 — 없으면 기본값이다. */
   assign?: NonNullable<ClaudePoolsConfig['assign']>;
   pools: ClaudePoolView[];
@@ -238,13 +242,29 @@ export async function listenClaudeLogin(
  * 스냅샷을 그대로 실어 보내는 것이 바로 위 문단이 말한 '조용히 날아가는' 경로다.
  */
 export async function assignAgentPool(agentId: string, pool: string): Promise<void> {
+  await assignAgentPools(agentId, pool === '' ? [] : [pool]);
+}
+
+/**
+ * 에이전트의 **풀 순서**를 통째로 바꾼다(2026-10-15 풀 n개). 빈 목록이면 배정을 지운다(= 기본 풀).
+ * 병합 규율은 위 `assignAgentPool` 과 같다 — 스냅샷을 매번 다시 읽어 기본 풀·순서를 같이 싣는다.
+ */
+export async function assignAgentPools(agentId: string, pools: readonly string[]): Promise<void> {
   const snap = await listClaudeAccounts();
   const order: Record<string, string[]> = {};
   for (const p of snap.pools) if (p.name) order[p.name] = p.accounts.map((a) => a.name);
-  const agents = { ...snap.agents };
-  // 빈 문자열은 이름 문법(`CLAUDE_POOL_NAME_PATTERN`)에 걸려 데몬이 거절한다 —
-  // **키를 지우는 것**이 "기본 풀 사용"의 유일한 표현이다.
-  if (pool === '') delete agents[agentId];
-  else agents[agentId] = pool;
+  const agents: Record<string, string[]> = {};
+  for (const id of Object.keys(snap.agents)) agents[id] = agentPoolsOf(snap, id);
+  // 빈 목록은 데몬이 "이름이 떨어져 나갔다"로 거절한다 — **키를 지우는 것**이 "기본 풀 사용"의
+  // 유일한 표현이다.
+  if (!pools.length) delete agents[agentId];
+  else agents[agentId] = [...pools];
   await configureClaudeAccounts({ defaultPool: snap.defaultPool, order, agents });
+}
+
+/** 이 에이전트의 풀 순서. 옛 데몬의 문자열 하나는 길이 1 목록이다. 배정이 없으면 빈 목록. */
+export function agentPoolsOf(snap: Pick<ClaudeAccountsSnapshot, 'agents'>, agentId: string): string[] {
+  const v: unknown = snap.agents[agentId];
+  if (Array.isArray(v)) return v.filter((p): p is string => typeof p === 'string');
+  return typeof v === 'string' && v ? [v] : [];
 }

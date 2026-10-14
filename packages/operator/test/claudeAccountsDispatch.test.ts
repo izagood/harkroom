@@ -127,11 +127,15 @@ describe('payload 검증', () => {
       { defaultPool: null, order: {}, agents: [] },
       { defaultPool: null, order: { work: 'x' }, agents: {} },
       { defaultPool: null, order: {}, agents: { a1: 9 } },
+      { defaultPool: null, order: {}, agents: { a1: ['work', 9] } },
     ]) {
       expect(isError(await send('claudeAccountsConfigure', bad)), JSON.stringify(bad)).toBe(true);
     }
     expect(isError(await send('claudeAccountsConfigure', {
       defaultPool: 'work', order: { work: ['aria'] }, agents: { a1: 'work' },
+    }))).toBe(false);
+    expect(isError(await send('claudeAccountsConfigure', {
+      defaultPool: 'work', order: { work: ['aria'] }, agents: { a1: ['work', 'personal'] },
     }))).toBe(false);
   });
 

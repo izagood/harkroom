@@ -26,6 +26,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  agentPoolChain,
   orderAccounts,
   parseClaudePoolsConfig,
   type ClaudePoolsConfig,
@@ -44,6 +45,17 @@ export interface ClaudeAccount {
   name: string;
   /** 이 계정의 `CLAUDE_CONFIG_DIR`. 자격증명·세션·설정이 모두 이 아래 있다. */
   configDir: string;
+  /**
+   * 이 계정이 든 풀(2026-10-15 풀 n개). 생략·`null` 은 뿌리(암묵 풀)다. 축이 풀 여러 개에 걸치면
+   * 턴이 "어느 풀의 계정"인지 이 값으로 안다 — 같은 이름이 다른 풀에 있을 수 있다.
+   */
+  pool?: string | null;
+}
+
+/** 에이전트 풀 순서의 한 칸 — 디스크에 있는 풀과 그 안의 계정(페일오버 순서). */
+export interface ClaudePoolLane {
+  pool: string;
+  accounts: ClaudeAccount[];
 }
 
 /** 계정 풀의 뿌리. `HARKROOM_CLAUDE_ACCOUNTS_DIR` 로 옮길 수 있다(테스트와 다른 볼륨용). */
@@ -309,15 +321,20 @@ async function accountsIn(
   root: string, pool: string, cfg: ClaudePoolsConfig, order: string | undefined,
 ): Promise<ClaudeAccount[]> {
   const dir = join(root, pool);
-  if (order && order.trim()) return loadClaudeAccounts({ root: dir, order });
+  if (order && order.trim()) return (await loadClaudeAccounts({ root: dir, order })).map((a) => ({ ...a, pool }));
   const found = (await loadClaudeAccounts({ root: dir })).map((a) => a.name);
-  return orderAccounts(cfg, pool, found).map((name) => ({ name, configDir: join(dir, name) }));
+  return orderAccounts(cfg, pool, found).map((name) => ({ name, configDir: join(dir, name), pool }));
 }
 
 /**
  * 이 러너가 쓸 계정 목록(페일오버 순서)과 그 풀 이름.
  *
  * 해석 순서(spec §5): 강제(env) → 에이전트 배정 → 기본 풀 → 암묵 풀 → 없음.
+ *
+ * **에이전트 배정은 풀 목록이다**(2026-10-15 풀 n개). 디스크에 있는 풀만 순서대로 `chain` 에
+ * 담는다 — 새 스레드가 어느 풀로 갈지는 턴마다 `accountAssign.ts` 가 `chain` 에서 고른다.
+ * `pool`·`accounts` 는 그 첫 칸이다(기동 로그·인터랙티브 턴·폴 신고값이 쓰는 대표값).
+ * 목록의 풀이 하나도 디스크에 없으면 기본 풀로 떨어진다 — 전에 풀 하나가 없을 때와 같다.
  *
  * **관용성이 갈린다**(spec §5-1):
  * - `forcedPool`(env)이 없는 풀을 가리키면 **던진다.** 사람이 방금 타이핑한 의도라, 조용히
@@ -336,7 +353,7 @@ export async function loadClaudeAccountLane(opts: {
   forcedPool?: string | undefined;
   /** `HARKROOM_CLAUDE_ACCOUNTS`. */
   order?: string | undefined;
-}): Promise<{ pool: string | null; accounts: ClaudeAccount[] }> {
+}): Promise<{ pool: string | null; accounts: ClaudeAccount[]; chain?: ClaudePoolLane[] }> {
   const root = opts.root ?? claudeAccountsRoot();
   const cfg = await readPoolsConfig(root);
 
@@ -357,16 +374,26 @@ export async function loadClaudeAccountLane(opts: {
     return { pool: opts.forcedPool, accounts: await accountsIn(root, opts.forcedPool, cfg, opts.order) };
   }
 
-  for (const [label, candidate] of [
-    ['에이전트 배정', cfg.agents[opts.agentId]],
-    ['기본 풀', cfg.defaultPool],
-  ] as const) {
-    if (!candidate) continue;
+  const chain: ClaudePoolLane[] = [];
+  for (const candidate of agentPoolChain(cfg, opts.agentId)) {
     if (!pools.includes(candidate)) {
-      console.warn(`[claudeAccounts] ${label}이 없는 풀을 가리킨다 — 무시한다: ${candidate}`);
+      console.warn(`[claudeAccounts] 에이전트 배정이 없는 풀을 가리킨다 — 건너뛴다: ${candidate}`);
       continue;
     }
-    return { pool: candidate, accounts: await accountsIn(root, candidate, cfg, opts.order) };
+    chain.push({ pool: candidate, accounts: await accountsIn(root, candidate, cfg, opts.order) });
+  }
+  if (chain.length) {
+    // 대표값은 계정이 있는 첫 풀이다 — 빈 풀을 대표로 두면 축이 `[null]`(시스템 기본 로그인)이 된다.
+    const head = chain.find((c) => c.accounts.length) ?? chain[0]!;
+    return { pool: head.pool, accounts: head.accounts, chain };
+  }
+
+  if (cfg.defaultPool) {
+    if (pools.includes(cfg.defaultPool)) {
+      const accounts = await accountsIn(root, cfg.defaultPool, cfg, opts.order);
+      return { pool: cfg.defaultPool, accounts, chain: [{ pool: cfg.defaultPool, accounts }] };
+    }
+    console.warn(`[claudeAccounts] 기본 풀이 없는 풀을 가리킨다 — 무시한다: ${cfg.defaultPool}`);
   }
   return { pool: null, accounts: [] };
 }
@@ -398,11 +425,21 @@ export async function presentAccounts(
   return kept.length ? kept : [null];
 }
 
+export interface LiveLaneValue {
+  pool: string | null;
+  lane: (ClaudeAccount | null)[];
+  /**
+   * 에이전트의 풀 순서(2026-10-15). 디렉터리가 있는 계정만 담는다(빈 풀도 칸은 남는다). 생략은
+   * 풀이 하나뿐인 옛 동작이다 — 그때는 `pool`·`lane` 이 전부다.
+   */
+  chain?: ClaudePoolLane[];
+}
+
 export interface LiveAccountLane {
   /** 지금 풀과 계정 축(디렉터리가 있는 계정만, 비면 `[null]`). 턴마다 부른다. */
-  current(): Promise<{ pool: string | null; lane: (ClaudeAccount | null)[] }>;
+  current(): Promise<LiveLaneValue>;
   /** 마지막으로 읽은 값(동기). 폴이 서버에 싣는 신고값·인터랙티브의 경로 찾기가 쓴다. */
-  snapshot(): { pool: string | null; lane: (ClaudeAccount | null)[] };
+  snapshot(): LiveLaneValue;
 }
 
 /**
@@ -426,8 +463,8 @@ export interface LiveAccountLane {
  * - 목록이 바뀌면 한 줄 로그를 남긴다(이름만 — 이메일·경로는 없다).
  */
 export function createLiveAccountLane(opts: {
-  initial: { pool: string | null; accounts: ClaudeAccount[] };
-  load: () => Promise<{ pool: string | null; accounts: ClaudeAccount[] }>;
+  initial: { pool: string | null; accounts: ClaudeAccount[]; chain?: ClaudePoolLane[] };
+  load: () => Promise<{ pool: string | null; accounts: ClaudeAccount[]; chain?: ClaudePoolLane[] }>;
   minIntervalMs?: number;
   now?: () => number;
   isDir?: (path: string) => Promise<boolean>;
@@ -437,25 +474,40 @@ export function createLiveAccountLane(opts: {
   const now = opts.now ?? Date.now;
   const log = opts.log ?? ((line: string) => console.log(line));
   const toLane = (accounts: ClaudeAccount[]): (ClaudeAccount | null)[] => (accounts.length ? accounts : [null]);
-  const describe = (v: { pool: string | null; lane: (ClaudeAccount | null)[] }): string =>
-    `${v.pool ?? '기본'}: ${v.lane.map((a) => a?.name ?? '(시스템 기본)').join(', ')}`;
+  const describe = (v: LiveLaneValue): string => v.chain && v.chain.length > 1
+    ? v.chain.map((c, i) => `${i + 1}.${c.pool}: ${c.accounts.map((a) => a.name).join(', ') || '(없음)'}`).join(' / ')
+    : `${v.pool ?? '기본'}: ${v.lane.map((a) => a?.name ?? '(시스템 기본)').join(', ')}`;
+  /** 풀 순서의 계정도 지운 것은 뺀다 — 빈 풀은 `[]` 로 남긴다(`[null]` 은 풀 하나일 때만 뜻이 있다). */
+  const presentChain = async (chain: ClaudePoolLane[] | undefined): Promise<ClaudePoolLane[] | undefined> => {
+    if (!chain) return undefined;
+    const out: ClaudePoolLane[] = [];
+    for (const c of chain) {
+      out.push({ pool: c.pool, accounts: (await presentAccounts(c.accounts, opts.isDir)).filter((a): a is ClaudeAccount => a !== null) });
+    }
+    return out;
+  };
+  const withChain = (v: LiveLaneValue, chain: ClaudePoolLane[] | undefined): LiveLaneValue =>
+    (chain ? { ...v, chain } : v);
 
-  let last = { pool: opts.initial.pool, lane: toLane(opts.initial.accounts) };
+  let last: LiveLaneValue = withChain({ pool: opts.initial.pool, lane: toLane(opts.initial.accounts) }, opts.initial.chain);
   let readAt = -Infinity;
-  let inflight: Promise<{ pool: string | null; lane: (ClaudeAccount | null)[] }> | null = null;
+  let inflight: Promise<LiveLaneValue> | null = null;
   let warned: string | null = null;
 
-  async function refresh(): Promise<{ pool: string | null; lane: (ClaudeAccount | null)[] }> {
-    let next: { pool: string | null; lane: (ClaudeAccount | null)[] };
+  async function refresh(): Promise<LiveLaneValue> {
+    let next: LiveLaneValue;
     try {
       const loaded = await opts.load();
-      next = { pool: loaded.pool, lane: await presentAccounts(toLane(loaded.accounts), opts.isDir) };
+      next = withChain(
+        { pool: loaded.pool, lane: await presentAccounts(toLane(loaded.accounts), opts.isDir) },
+        await presentChain(loaded.chain),
+      );
       warned = null;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (warned !== msg) console.warn(`[claudeAccounts] 계정 축을 다시 읽지 못했다 — 앞 목록에서 지운 계정만 뺀다: ${msg}`);
       warned = msg;
-      next = { pool: last.pool, lane: await presentAccounts(last.lane, opts.isDir) };
+      next = withChain({ pool: last.pool, lane: await presentAccounts(last.lane, opts.isDir) }, await presentChain(last.chain));
     }
     if (describe(next) !== describe(last)) log(`[계정 축] 바뀜 — ${describe(last)} → ${describe(next)}`);
     last = next;

@@ -316,15 +316,21 @@ MCP 설정을 상속하지 않는다. 승인된 Codex 스킬은 공식 저장소
 {
   "defaultPool": "work",
   "order": { "work": ["aria", "cedar"] },
-  "agents": { "<agent account id>": "personal" }
+  "agents": { "<agent account id>": ["personal", "work"] }
 }
 ```
+
+`agents` 값은 **풀 순서**다(옛 파일의 문자열 하나는 길이 1 목록으로 읽는다). 새 스레드는
+소진되지 않은 첫 풀로 간다 — 소진은 그 풀의 계정이 **모두** 새 배정 기준(5시간 85%·주간 97%,
+풀별 `assign`)에 닿은 상태다. 앞 풀이 풀리면 새 스레드부터 앞으로 돌아오고, 이미 붙은 스레드는
+옮기기 기준(95/98)을 넘기 전까지 그 풀에 남는다. 모두 소진이면 가장 먼저 풀리는 풀로 보낸다.
+판정 식은 `@harkroom/shared/claudePoolChain` 이고 설정 화면과 같이 쓴다.
 
 러너가 쓸 풀은 이 순서로 정해진다.
 
 1. `HARKROOM_CLAUDE_POOL` — 운영자 강제. 없는 풀이면 **기동 실패**다.
-2. `pools.json`의 `agents[<이 에이전트의 계정 id>]` — 에이전트별 지정.
-3. `pools.json`의 `defaultPool` — 기본 풀.
+2. `pools.json`의 `agents[<이 에이전트의 계정 id>]` — 에이전트별 풀 순서(디스크에 없는 풀은 건너뛴다).
+3. `pools.json`의 `defaultPool` — 기본 풀(목록이 비었거나 목록의 풀이 하나도 없을 때만).
 4. 없으면 뿌리 자체(평평한 구조).
 5. 그래도 계정이 없으면 **계정 지정 없음** — 시스템 기본 `~/.claude`를 쓴다.
 

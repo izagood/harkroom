@@ -386,8 +386,8 @@ describe('AgentsSettings — 에이전트별 계정 풀', () => {
 
     await waitFor(() => {
       const call = invoked.find((c) => c.cmd === 'claude_accounts_configure');
-      const config = call?.args?.config as { agents?: Record<string, string> } | undefined;
-      expect(config?.agents).toEqual({ [AGENT.id]: 'personal' });
+      const config = call?.args?.config as { agents?: Record<string, string[]> } | undefined;
+      expect(config?.agents).toEqual({ [AGENT.id]: ['personal'] });
     });
   });
 

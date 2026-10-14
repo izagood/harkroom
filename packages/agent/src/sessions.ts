@@ -50,6 +50,12 @@ export interface SessionRecord {
    */
   claudeAccount?: string | null;
   /**
+   * 그 계정의 풀(2026-10-15 풀 n개). 에이전트가 풀 여러 개를 쓰면 **같은 이름의 계정이 다른 풀에**
+   * 있을 수 있다 — 이름만으로는 세션 파일이 있는 디렉터리를 못 가린다. `undefined` 는 이 필드 이전의
+   * 옛 레코드라 풀을 재지 않는다(재면 업데이트하는 순간 모든 스레드가 세션을 잃는다).
+   */
+  claudePool?: string | null;
+  /**
    * **이 세션이 쓰지 않은 내 발화가 이 seq 뒤에 있다**(2026-10-09, 예약 깨움을 새 세션으로).
    *
    * 예약으로 깨어난 턴(`turn.wake`)은 이 레코드의 큰 세션을 이어받지 않고 버리는 작은 세션으로
@@ -72,7 +78,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 // 단서가 하나도 안 남는다. 저장 전에 모양을 확인해서 여기서 걸러낸다.
 function isSessionRecord(value: unknown): value is SessionRecord {
   if (!isPlainObject(value)) return false;
-  const { workspaceDir, sessionId, harness, lastFedSeq, turnsRun, claudeAccount, unseenOwnAfterSeq } = value;
+  const { workspaceDir, sessionId, harness, lastFedSeq, turnsRun, claudeAccount, claudePool, unseenOwnAfterSeq } = value;
   return (
     typeof workspaceDir === 'string' &&
     (sessionId === null || typeof sessionId === 'string') &&
@@ -84,6 +90,7 @@ function isSessionRecord(value: unknown): value is SessionRecord {
     // 러너가 기동하면서 모든 스레드의 세션을 조용히 잃는다(위 함수 주석의 "레코드만 버린다"
     // 경로를 전부 태운다).
     (claudeAccount === undefined || claudeAccount === null || typeof claudeAccount === 'string') &&
+    (claudePool === undefined || claudePool === null || typeof claudePool === 'string') &&
     (unseenOwnAfterSeq === undefined || typeof unseenOwnAfterSeq === 'number')
   );
 }

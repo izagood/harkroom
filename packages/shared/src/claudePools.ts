@@ -32,8 +32,14 @@ export interface ClaudePoolsConfig {
   defaultPool: string | null;
   /** 풀별 계정 순서(페일오버 순서). 디스크에서 유도할 수 없으므로 파일이 유일한 표현이다. */
   order: Record<string, string[]>;
-  /** 에이전트 계정 id → 풀 이름. 배정이 없는 에이전트는 여기 없다. */
-  agents: Record<string, string>;
+  /**
+   * 에이전트 계정 id → 풀 이름 **목록**(쓸 순서). 배정이 없는 에이전트는 여기 없다 — 빈 목록도 적지 않는다.
+   *
+   * 2026-10-15(풀 n개) 전에는 풀 이름 하나였다. 옛 파일의 문자열은 길이 1 목록으로 읽는다
+   * (`parseClaudePoolsConfig`). 앞 풀의 계정이 **모두** 새 배정 기준에 닿으면 다음 풀로 넘어가고,
+   * 앞 풀이 풀리면 새 스레드부터 앞으로 돌아온다(`claudePoolChain.ts`).
+   */
+  agents: Record<string, string[]>;
   /**
    * 풀별 계정 배정 기준(2026-09-29 C ③). 없는 풀·없는 칸은 `DEFAULT_ASSIGN_THRESHOLDS` 를 쓴다.
    * **선택 필드다** — 이 칸을 모르는 옛 데몬·UI 가 쓴 파일도 그대로 읽힌다.
@@ -113,13 +119,15 @@ export function parseClaudePoolsConfig(raw: unknown): ClaudePoolsConfig {
     }
   }
 
-  const agents: Record<string, string> = {};
+  const agents: Record<string, string[]> = {};
   if (isRecord(raw.agents)) {
-    for (const [agentId, pool] of Object.entries(raw.agents)) {
+    for (const [agentId, pools] of Object.entries(raw.agents)) {
       // agentId 는 서버가 발급한 UUID 라 문법을 여기서 재지 않는다 — 재면 서버의 형식 변경이
       // 이 파일을 깨뜨린다. **풀 이름만** 잰다: 그것이 경로가 되는 쪽이다.
-      const p = name(pool);
-      if (p !== null) agents[agentId] = p;
+      // 옛 모양(문자열 하나)은 길이 1 목록이다. 틀린 이름·겹친 이름만 버린다(모듈 규율).
+      const list = (Array.isArray(pools) ? pools : [pools]).map(name)
+        .filter((n, i, all): n is string => n !== null && all.indexOf(n) === i);
+      if (list.length) agents[agentId] = list;
     }
   }
 
@@ -151,7 +159,15 @@ export function resolvePoolName(
   forced?: string | null,
 ): string | null {
   if (forced) return forced;
-  return cfg.agents[agentId] ?? cfg.defaultPool;
+  return agentPoolChain(cfg, agentId)[0] ?? cfg.defaultPool;
+}
+
+/**
+ * 이 에이전트의 풀 순서. 배정이 없으면 빈 목록이다 — 그때는 기본 풀을 쓴다(D5: 목록이 비었을
+ * 때만 기본 풀, 목록이 있으면 목록이 전부다). 실재 여부는 여기서 모른다(디스크를 안 본다).
+ */
+export function agentPoolChain(cfg: ClaudePoolsConfig, agentId: string): string[] {
+  return cfg.agents[agentId] ?? [];
 }
 
 /**

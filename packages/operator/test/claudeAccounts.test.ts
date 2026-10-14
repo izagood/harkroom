@@ -103,7 +103,17 @@ describe('list', () => {
     await writeFile(join(root, 'pools.json'), JSON.stringify({
       defaultPool: 'work', agents: { a1: 'work' },
     }));
-    expect((await port(root).list()).agents).toEqual({ a1: 'work' });
+    // 옛 모양(풀 이름 하나)은 길이 1 목록으로 읽는다(2026-10-15 풀 n개).
+    expect((await port(root).list()).agents).toEqual({ a1: ['work'] });
+  });
+
+  it('에이전트의 풀 순서를 그대로 실어 준다', async () => {
+    const root = await tmp();
+    await mkdir(join(root, 'work'), { recursive: true });
+    await writeFile(join(root, 'pools.json'), JSON.stringify({
+      defaultPool: 'work', agents: { a1: ['personal', 'work'] },
+    }));
+    expect((await port(root).list()).agents).toEqual({ a1: ['personal', 'work'] });
   });
 });
 
@@ -132,8 +142,17 @@ describe('configure', () => {
 
   it('배정에만 나오는 풀도 만든다', async () => {
     const root = await tmp();
-    await port(root).configure({ defaultPool: null, order: {}, agents: { a1: 'personal' } });
-    expect((await port(root).list()).pools.map((p) => p.name)).toEqual(['personal']);
+    await port(root).configure({ defaultPool: null, order: {}, agents: { a1: ['personal', 'team-b'] } });
+    expect((await port(root).list()).pools.map((p) => p.name)).toEqual(['personal', 'team-b']);
+    expect(JSON.parse(await readFile(join(root, 'pools.json'), 'utf8')).agents).toEqual({ a1: ['personal', 'team-b'] });
+  });
+
+  it('옛 UI 가 보낸 풀 이름 하나도 받는다 — 길이 1 목록으로 쓴다', async () => {
+    const root = await tmp();
+    await port(root).configure({
+      defaultPool: null, order: {}, agents: { a1: 'personal' as unknown as string[] },
+    });
+    expect(JSON.parse(await readFile(join(root, 'pools.json'), 'utf8')).agents).toEqual({ a1: ['personal'] });
   });
 
   it('이름 문법을 다시 잰다 — 웹뷰를 신뢰하지 않는다', async () => {
@@ -143,7 +162,12 @@ describe('configure', () => {
       .rejects.toThrow();
     await expect(port(root).configure({ defaultPool: null, order: { '../x': [] }, agents: {} }))
       .rejects.toThrow();
-    await expect(port(root).configure({ defaultPool: null, order: {}, agents: { a1: '../x' } }))
+    await expect(port(root).configure({ defaultPool: null, order: {}, agents: { a1: ['../x'] } }))
+      .rejects.toThrow();
+    // 목록 안의 한 칸만 틀려도 던진다 — 조용히 빼면 화면의 순서와 디스크가 갈린다.
+    await expect(port(root).configure({ defaultPool: null, order: {}, agents: { a1: ['work', '../x'] } }))
+      .rejects.toThrow();
+    await expect(port(root).configure({ defaultPool: null, order: {}, agents: { a1: ['work', 'work'] } }))
       .rejects.toThrow();
   });
 
@@ -192,7 +216,7 @@ describe('removeAccount · removePool', () => {
     }));
     await port(root).removeAccount('work', 'aria');
     expect(JSON.parse(await readFile(join(root, 'pools.json'), 'utf8'))).toEqual({
-      defaultPool: 'work', order: { work: ['cedar'] }, agents: { [agentId]: 'work' },
+      defaultPool: 'work', order: { work: ['cedar'] }, agents: { [agentId]: ['work'] },
     });
   });
 

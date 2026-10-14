@@ -1125,6 +1125,43 @@ describe('runMentionTurn', () => {
     expect(secondArgs.join(' ')).not.toContain(String(firstSessionId));
   });
 
+  // 풀 n개(2026-10-15): 같은 이름의 계정이 다른 풀에 있을 수 있다 — 세션 파일은 다른 디렉터리에 있다.
+  it('같은 이름이라도 풀이 바뀌면 세션을 버린다 — 풀을 적지 않은 옛 레코드는 그대로', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'claude-code' }));
+    fake.seedFrom('human-1', '첫 질문');
+    const { deps, plans, runTurn } = await makeDeps(fake, {
+      claudeAccount: 'x', claudeConfigDir: '/work/x', claudePool: 'work',
+    });
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '답', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    const key = SessionStore.threadKey(CHANNEL, null);
+    const first = deps.store.get(key)!;
+    expect(first.claudePool).toBe('work');
+
+    fake.seedFrom('human-1', '두 번째');
+    await runMentionTurn(
+      { ...deps, claudeConfigDir: '/personal/x', claudePool: 'personal' },
+      { channelId: CHANNEL, threadRootId: null, mentionId: MENTION },
+    );
+    expect(deps.store.get(key)!.sessionId).not.toBe(first.sessionId);
+    expect(deps.store.get(key)!.claudePool).toBe('personal');
+    expect(plans[1]!.args).not.toContain('-r');
+
+    // 옛 레코드(풀 없음)는 풀을 재지 않는다 — 업데이트하는 순간 세션을 잃지 않게.
+    const { claudePool: _drop, ...old } = deps.store.get(key)!;
+    void _drop;
+    await deps.store.put(key, { ...old, turnsRun: 1 });
+    fake.seedFrom('human-1', '세 번째');
+    await runMentionTurn(
+      { ...deps, claudeConfigDir: '/work/x', claudePool: 'work' },
+      { channelId: CHANNEL, threadRootId: null, mentionId: MENTION },
+    );
+    expect(deps.store.get(key)!.sessionId).toBe(old.sessionId);
+  });
+
   it('계정이 같으면 세션을 유지한다', async () => {
     const fake = new FakeHarkroom(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');

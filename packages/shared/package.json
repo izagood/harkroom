@@ -11,6 +11,7 @@
     "./operatorProtocol": "./src/operatorProtocol.ts",
     "./runnerLink": "./src/runnerLink.ts",
     "./claudePools": "./src/claudePools.ts",
+    "./claudePoolChain": "./src/claudePoolChain.ts",
     "./codexAccounts": "./src/codexAccounts.ts",
     "./claudeUsage": "./src/claudeUsage.ts",
     "./claudeGates": "./src/claudeGates.ts",

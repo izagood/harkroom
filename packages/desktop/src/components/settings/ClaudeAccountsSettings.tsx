@@ -269,7 +269,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
   const writeConfig = async (over: Partial<{
     defaultPool: string | null;
     order: Record<string, string[]>;
-    agents: Record<string, string>;
+    agents: Record<string, string[]>;
     assign: NonNullable<ClaudePoolsConfig['assign']>;
   }>): Promise<void> => {
     if (!snap) return;

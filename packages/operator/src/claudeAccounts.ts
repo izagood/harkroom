@@ -95,7 +95,8 @@ export interface ClaudeAccountsSnapshot {
    */
   mode: 'flat' | 'pools';
   defaultPool: string | null;
-  agents: Record<string, string>;
+  /** 에이전트 id → 풀 순서(`ClaudePoolsConfig.agents`). */
+  agents: Record<string, string[]>;
   /** 풀별 배정 기준(C ③). 빈 칸은 `DEFAULT_ASSIGN_THRESHOLDS`. */
   assign: NonNullable<ClaudePoolsConfig['assign']>;
   pools: ClaudePoolView[];
@@ -494,7 +495,8 @@ export interface ClaudeAccountsLayout {
   root: string;
   mode: 'flat' | 'pools';
   defaultPool: string | null;
-  agents: Record<string, string>;
+  /** 에이전트 id → 풀 순서(`ClaudePoolsConfig.agents`). */
+  agents: Record<string, string[]>;
   /** 풀별 배정 기준(`pools.json` 의 `assign`). 평평한 구조면 비어 있다. */
   assign: NonNullable<ClaudePoolsConfig['assign']>;
   strays: string[];
@@ -694,13 +696,20 @@ export function createClaudeAccountsPort(opts: {
       if (Object.keys(norm.agents).length !== Object.keys(cfg.agents ?? {}).length) {
         throw new Error('agents 에 문법에 맞지 않는 풀 이름이 있다');
       }
+      for (const [agentId, list] of Object.entries(cfg.agents ?? {})) {
+        // 옛 UI 는 풀 이름 하나를 보낸다(길이 1 목록). 겹친 이름도 떨어져 나간 것으로 센다.
+        const sent = Array.isArray(list) ? list.length : 1;
+        if ((norm.agents[agentId] ?? []).length !== sent) {
+          throw new Error(`agents[${agentId}] 에 문법에 맞지 않거나 겹친 풀 이름이 있다`);
+        }
+      }
 
       await mkdir(root, { recursive: true, mode: 0o700 });
       // **설정에 이름이 나타나면 그 풀이 생긴다** — 별도 createPool 을 두지 않는다.
       for (const name of new Set([
         ...(norm.defaultPool ? [norm.defaultPool] : []),
         ...Object.keys(norm.order),
-        ...Object.values(norm.agents),
+        ...Object.values(norm.agents).flat(),
       ])) {
         await mkdir(under(root, name), { recursive: true, mode: 0o700 });
       }

@@ -929,12 +929,15 @@ function readPoolsConfigPayload(payload: unknown): ClaudePoolsConfig | DaemonErr
     }
     outOrder[pool] = list as string[];
   }
-  const outAgents: Record<string, string> = {};
-  for (const [agentId, pool] of Object.entries(agents as Record<string, unknown>)) {
-    if (typeof pool !== 'string') {
-      return daemonError('bad-payload', `agents.${agentId} 가 문자열이 아니다`);
+  // 풀 순서(2026-10-15 풀 n개). 옛 UI 의 문자열 하나는 길이 1 목록으로 받는다 — 같은 앱 안이라도
+  // 업데이트 도중 옛 웹뷰가 남아 있을 수 있다.
+  const outAgents: Record<string, string[]> = {};
+  for (const [agentId, pools] of Object.entries(agents as Record<string, unknown>)) {
+    const list = typeof pools === 'string' ? [pools] : pools;
+    if (!Array.isArray(list) || list.some((n) => typeof n !== 'string')) {
+      return daemonError('bad-payload', `agents.${agentId} 가 문자열 배열이 아니다`);
     }
-    outAgents[agentId] = pool;
+    outAgents[agentId] = list as string[];
   }
   // 배정 기준(C ③)은 **있을 때만** 싣는다 — 이 칸을 모르는 옛 UI 가 보낸 설정은 그대로다. 칸의
   // 모양은 포트가 정규화한다(틀린 숫자는 기본값으로 떨어질 뿐 풀 이름처럼 위험하지 않다).

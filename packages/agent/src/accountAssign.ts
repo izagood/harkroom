@@ -25,7 +25,9 @@ import {
   parseClaudePoolsConfig,
   resolveAssignThresholds,
   type ClaudeAssignThresholds,
+  type ClaudePoolsConfig,
 } from '@harkroom/shared/claudePools';
+import { poolChainState } from '@harkroom/shared/claudePoolChain';
 import {
   CLAUDE_USAGE_FILE,
   headroomPerHour,
@@ -36,7 +38,7 @@ import {
 import { isAttentionActive, readAccountAttention, type ClaudeAccountAttention } from '@harkroom/shared/claudeGates';
 import type { ProviderUsageWindow } from '@harkroom/shared/daemonProtocol';
 
-import type { ClaudeAccount } from './claudeAccounts.js';
+import type { ClaudeAccount, ClaudePoolLane } from './claudeAccounts.js';
 
 /**
  * 기준 % 넷은 `pools.json` 의 풀별 `assign` 에서 온다(설정 › Claude 계정, 비면 jaebin 이 고른
@@ -293,11 +295,16 @@ export interface AccountAssignerDeps {
    * pools.json 을 고치면 러너를 다시 띄우지 않아도 다음 배정부터 따른다(2026-09-30). 여기서
    * 돌려준 축은 이미 디렉터리가 있는 계정만 담고 있어야 한다(`presentAccounts`).
    */
-  current?: () => Promise<{ pool: string | null; lane: readonly (ClaudeAccount | null)[] }>;
+  current?: () => Promise<{ pool: string | null; lane: readonly (ClaudeAccount | null)[]; chain?: readonly ClaudePoolLane[] }>;
   /** claude-accounts 뿌리 — usage.json 이 여기 있다. */
   root: string;
   /** 스레드에 고정된 계정(`SessionRecord.claudeAccount`). */
   pinnedOf(threadKey: string): string | null;
+  /**
+   * 그 계정의 풀(`SessionRecord.claudePool`). `undefined` 는 풀을 적기 전의 옛 레코드다 — 그때는
+   * 풀 순서에서 그 이름이 처음 나오는 풀로 본다. 생략하면 언제나 `undefined` 다.
+   */
+  pinnedPoolOf?(threadKey: string): string | null | undefined;
   /** 주면 `pools.json` 을 읽지 않고 이것을 쓴다(테스트). */
   policy?: AssignPolicy;
   now?: () => number;
@@ -319,7 +326,7 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
   const now = deps.now ?? Date.now;
   const random = deps.random ?? Math.random;
   const log = deps.log ?? ((line: string) => console.log(line));
-  const current = deps.current ?? (async () => ({ pool: deps.pool, lane: deps.lane }));
+  const current: NonNullable<AccountAssignerDeps['current']> = deps.current ?? (async () => ({ pool: deps.pool, lane: deps.lane }));
   /** 이 러너가 새로 배정한 기록. 스냅숏이 그 뒤에 읽혔으면 이미 값에 반영됐으므로 세지 않는다. */
   const assigned: { account: string; atMs: number }[] = [];
   /** "풀 전체가 뜨겁다"는 한 번만 알린다 — 풀리면 다시 알릴 수 있게 된다. */
@@ -329,29 +336,144 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
    * 기준은 **턴마다** 읽는다 — 사람이 설정에서 숫자를 바꾸면 러너를 다시 띄우지 않아도 다음
    * 새 스레드부터 따른다. 파일이 없거나 깨졌으면 기본값이다(러너는 이 파일을 쓰지 않는다).
    */
-  async function readPolicy(pool: string | null): Promise<AssignPolicy> {
-    if (deps.policy) return deps.policy;
-    let cfg = null;
+  async function readConfig(): Promise<ClaudePoolsConfig | null> {
     try {
-      cfg = parseClaudePoolsConfig(JSON.parse(await readFile(join(deps.root, 'pools.json'), 'utf8')));
-    } catch { /* 없다·깨졌다 = 기본값 */ }
+      return parseClaudePoolsConfig(JSON.parse(await readFile(join(deps.root, 'pools.json'), 'utf8')));
+    } catch {
+      return null; // 없다·깨졌다 = 기본값
+    }
+  }
+
+  function policyOf(cfg: ClaudePoolsConfig | null, pool: string | null): AssignPolicy {
+    if (deps.policy) return deps.policy;
     return { ...DEFAULT_ASSIGN_POLICY, ...resolveAssignThresholds(cfg, pool) };
   }
 
-  async function readUsage(poolKey: string): Promise<Map<string, ClaudeUsageEntry>> {
+  async function readPolicy(pool: string | null): Promise<AssignPolicy> {
+    return deps.policy ?? policyOf(await readConfig(), pool);
+  }
+
+  async function readUsageAll(): Promise<ClaudeUsageEntry[]> {
     let raw: unknown;
     try {
       raw = JSON.parse(await readFile(join(deps.root, CLAUDE_USAGE_FILE), 'utf8'));
     } catch {
-      return new Map(); // 파일이 없다 = 폴러가 아직 안 돌았다. "모른다"의 정상 경로다.
+      return []; // 파일이 없다 = 폴러가 아직 안 돌았다. "모른다"의 정상 경로다.
     }
-    const file = parseClaudeUsageFile(raw);
-    return new Map(file.accounts.filter((e) => e.pool === poolKey).map((e) => [e.account, e]));
+    return parseClaudeUsageFile(raw).accounts;
+  }
+
+  async function readUsage(poolKey: string): Promise<Map<string, ClaudeUsageEntry>> {
+    return new Map((await readUsageAll()).filter((e) => e.pool === poolKey).map((e) => [e.account, e]));
+  }
+
+  /** 최근 배정 수(스냅숏이 그 뒤에 읽혔으면 이미 값에 반영됐으므로 세지 않는다). 키는 `풀/계정`. */
+  function recentFor(t: number, readAtOf: (key: string) => number | null): Map<string, number> {
+    while (assigned.length && t - assigned[0]!.atMs > ASSIGNMENT_MEMORY_MS) assigned.shift();
+    const recent = new Map<string, number>();
+    for (const a of assigned) {
+      const readAt = readAtOf(a.account);
+      if (readAt !== null && readAt >= a.atMs) continue;
+      recent.set(a.account, (recent.get(a.account) ?? 0) + 1);
+    }
+    return recent;
+  }
+
+  /** 마지막으로 알린 "새 스레드가 가는 풀"(풀 순서일 때). 바뀔 때만 한 줄 남긴다. */
+  let lastActivePool: string | null = null;
+
+  /**
+   * **풀 여러 개**(2026-10-15, jaebin D1~D5 전부 A). 새 스레드는 소진되지 않은 첫 풀에서 고르고,
+   * 이미 붙은 스레드는 그 계정이 옮기기 기준을 넘기 전까지 그 풀에 둔다(D3) — 앞 풀이 풀려도 세션을
+   * 잃지 않게. 옮겨야 하면 새 스레드처럼 지금 쓸 풀로 간다. 모두 소진이면 가장 먼저 풀리는 풀(D4).
+   * 판정 식은 화면과 같은 `poolChainState` 다. 페일오버 꼬리에는 다른 풀의 계정을 순서대로 붙인다 —
+   * 고른 풀이 한도 오류로 다 실패하면 다음 풀이 받는다.
+   */
+  async function laneForChain(
+    threadKey: string, model: string | null | undefined, chain: readonly ClaudePoolLane[], fallback: readonly (ClaudeAccount | null)[],
+  ): Promise<readonly (ClaudeAccount | null)[]> {
+    const t = now();
+    const readAttention = deps.readAttention ?? readAccountAttention;
+    const all = chain.flatMap((c) => c.accounts.map((a) => ({ pool: c.pool, account: a })));
+    const keyOf = (pool: string, name: string): string => `${pool}/${name}`;
+    const [cfg, usageAll, attention] = await Promise.all([
+      deps.policy ? Promise.resolve(null) : readConfig(),
+      readUsageAll(),
+      Promise.all(all.map(async ({ pool, account }) =>
+        [keyOf(pool, account.name), await readAttention(account.configDir).catch(() => null)] as const)),
+    ]);
+    const blockedKeys = new Set(attention.filter(([, at]) => isAttentionActive(at, t)).map(([k]) => k));
+    // 테스트가 기준을 직접 주면 모든 풀이 그 기준이다.
+    const chainCfg: ClaudePoolsConfig | null = deps.policy
+      ? { defaultPool: null, order: {}, agents: {}, assign: Object.fromEntries(chain.map((c) => [c.pool, deps.policy!])) }
+      : cfg;
+    const state = poolChainState({
+      chain: chain.map((c) => c.pool),
+      accountsByPool: new Map(chain.map((c) => [c.pool, c.accounts.map((a) => a.name)])),
+      usage: usageAll, cfg: chainCfg, now: t,
+      blocked: (pool, name) => blockedKeys.has(keyOf(pool, name)),
+    });
+
+    const usageKeyed = new Map(usageAll.map((e) => [keyOf(e.pool, e.account), e]));
+    const recentAll = recentFor(t, (k) => usageKeyed.get(k)?.readAtMs ?? null);
+    const pickIn = (idx: number, pinned: string | null): PickResult => {
+      const c = chain[idx]!;
+      const names = c.accounts.map((a) => a.name);
+      return pickAccount({
+        accounts: names,
+        usage: new Map(usageAll.filter((e) => e.pool === c.pool).map((e) => [e.account, e])),
+        pinned, policy: policyOf(cfg, c.pool), now: t,
+        recentAssignments: new Map(names.map((n) => [n, recentAll.get(keyOf(c.pool, n)) ?? 0])),
+        model: model ?? null, random,
+        blocked: new Set(names.filter((n) => blockedKeys.has(keyOf(c.pool, n)))),
+      });
+    };
+
+    const pinnedName = deps.pinnedOf(threadKey);
+    const pinnedPool = deps.pinnedPoolOf?.(threadKey);
+    const pinIdx = pinnedName === null ? -1 : chain.findIndex((c) =>
+      (typeof pinnedPool !== 'string' || c.pool === pinnedPool) && c.accounts.some((a) => a.name === pinnedName));
+
+    const finish = (idx: number, res: PickResult, reason: PickReason): readonly ClaudeAccount[] => {
+      const c = chain[idx]!;
+      const byName = new Map(c.accounts.map((a) => [a.name, a]));
+      const head = res.order.map((n) => byName.get(n)!);
+      const tail = chain.flatMap((o, i) => (i === idx ? [] : o.accounts));
+      const first = head[0]!;
+      if (reason !== 'kept' && reason !== 'unknown') {
+        assigned.push({ account: keyOf(c.pool, first.name), atMs: t });
+        const what = reason === 'moved' ? '옮김' : reason === 'all-hot' ? '새 스레드(풀 전체 뜨거움)' : '새 스레드';
+        log(`[계정 배정] ${threadKey}: ${what} → ${idx + 1}번 풀 ${c.pool} › ${first.name} — ${res.detail}`);
+      }
+      return [...head, ...tail];
+    };
+
+    if (pinIdx >= 0) {
+      const res = pickIn(pinIdx, pinnedName);
+      if (res.reason === 'kept') return finish(pinIdx, res, 'kept');
+    }
+
+    const active = state.activeIndex;
+    // 쓸 수 있는 풀이 하나도 없다(전부 빈 풀) — 기동 때 축으로 떨어진다.
+    if (active === null) return fallback;
+    const activePool = chain[active]!.pool;
+    if (activePool !== lastActivePool) {
+      const skipped = state.entries.slice(0, active).filter((e) => e.status === 'exhausted').map((e) => e.pool);
+      log(state.allExhausted
+        ? `[풀 순서] 모든 풀이 새 배정 기준 이상 — 가장 먼저 풀리는 ${active + 1}번 ${activePool} 로 보낸다`
+        : `[풀 순서] 새 스레드는 ${active + 1}번 ${activePool}${skipped.length ? ` (소진: ${skipped.join(', ')})` : ''}`);
+      lastActivePool = activePool;
+    }
+    const res = pickIn(active, pinIdx === active ? pinnedName : null);
+    // 다른 풀에 붙어 있던 스레드를 옮겼으면 그것도 옮김이다.
+    const reason: PickReason = pinIdx >= 0 && res.reason === 'new' ? 'moved' : res.reason;
+    return finish(active, res, reason);
   }
 
   return {
     async laneFor(threadKey, model) {
-      const { pool, lane } = await current();
+      const { pool, lane, chain } = await current();
+      if (chain && chain.length > 1) return laneForChain(threadKey, model, chain, lane);
       const accounts = lane.filter((a): a is ClaudeAccount => a !== null);
       const byName = new Map(accounts.map((a) => [a.name, a]));
       // 계정이 하나 이하면 고를 것이 없다.
@@ -363,13 +485,7 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
         Promise.all(accounts.map(async (a) => [a.name, await readAttention(a.configDir).catch(() => null)] as const)),
       ]);
       const blocked = new Set(attention.filter(([, at]) => isAttentionActive(at, t)).map(([name]) => name));
-      while (assigned.length && t - assigned[0]!.atMs > ASSIGNMENT_MEMORY_MS) assigned.shift();
-      const recent = new Map<string, number>();
-      for (const a of assigned) {
-        const readAt = usage.get(a.account)?.readAtMs ?? null;
-        if (readAt !== null && readAt >= a.atMs) continue;
-        recent.set(a.account, (recent.get(a.account) ?? 0) + 1);
-      }
+      const recent = recentFor(t, (name) => usage.get(name)?.readAtMs ?? null);
       const pinnedRaw = deps.pinnedOf(threadKey);
       const pinned = pinnedRaw && byName.has(pinnedRaw) ? pinnedRaw : null;
       const res = pickAccount({
