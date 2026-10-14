@@ -67,10 +67,17 @@ void main() {
     ));
 
     final mine = tester.widget<Image>(find.byKey(const ValueKey('avatar-photo-att-me')));
-    final url = (mine.image as NetworkImage).url;
+    // 디코드는 그릴 크기에 묶인다(security F1) — 원본 해상도로 풀지 않는다.
+    final resized = mine.image as ResizeImage;
+    final dpr = tester.view.devicePixelRatio;
+    expect(resized.width, (36 * dpr * 2).round());
+    expect(resized.height, (36 * dpr * 2).round());
+    expect(resized.policy, ResizeImagePolicy.fit);
+    final net = resized.imageProvider as NetworkImage;
+    final url = net.url;
     // 주소마다 첨부 id 가 실려야 사진을 바꿨을 때 이미지 캐시가 옛 사진을 내지 않는다.
     expect(url, 'https://h.example.com/accounts/me-1/avatar?v=att-me');
-    expect((mine.image as NetworkImage).headers?['authorization'], 'Bearer tok');
+    expect(net.headers?['authorization'], 'Bearer tok');
     expect(find.byKey(const ValueKey('avatar-photo-att-forge')), findsNothing);
     expect(find.text('F'), findsOneWidget);
 
