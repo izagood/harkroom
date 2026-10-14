@@ -8,6 +8,13 @@ import { setController, type Controller } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { acc } from './helpers/fakeApi';
 import { ApiError } from '../src/lib/api';
+import { pickAndSave } from './helpers/avatarCrop';
+
+// 캔버스가 없는 jsdom — 잘라 내기만 목으로 바꾼다(셈은 진짜를 쓴다).
+vi.mock('../src/lib/avatarCrop', async (orig) => ({
+  ...(await orig<typeof import('../src/lib/avatarCrop')>()),
+  renderCrop: vi.fn(async () => new Blob(['cropped'], { type: 'image/webp' })),
+}));
 import { guardedLeave } from '../src/components/settings/pendingEdits';
 
 /** 문구가 아니라 **사실**을 잰다 — 어투가 바뀌어도(`~습니다` → `~다`) 이 축은 산다. */
@@ -835,13 +842,15 @@ describe('에이전트 사진 (Task 15-4)', () => {
       vi.fn(async () => undefined);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    // 맞추기 창은 사진이 선 탭 안에서 뜬다 — 다른 탭이 보이는 동안 숨은 칸에서 열리지 않게 탭을 연다.
+    fireEvent.click(await screen.findByTestId('agent-tab-profile'));
 
     const file = new File([new Uint8Array([1, 2, 3])], 'bot.png', { type: 'image/png' });
-    fireEvent.change(await screen.findByTestId('agent-avatar-file'), { target: { files: [file] } });
+    await pickAndSave('agent-avatar-file', file);
 
     await waitFor(() => expect(
       (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
-    ).toHaveBeenCalledWith('id-rusalka', file, expect.any(Function)));
+    ).toHaveBeenCalledWith('id-rusalka', expect.objectContaining({ source: { kind: 'file', file: file }, cropped: expect.any(Blob) }), expect.any(Function)));
   });
 
   it('올린 직후 설정 화면의 사진이 바로 바뀐다 — 다른 화면에 다녀오지 않아도', async () => {
@@ -858,7 +867,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
     expect(screen.queryByTestId('identity-avatar')).toBeNull();
 
     const file = new File([new Uint8Array([1])], 'bot.png', { type: 'image/png' });
-    fireEvent.change(await screen.findByTestId('agent-avatar-file'), { target: { files: [file] } });
+    await pickAndSave('agent-avatar-file', file);
 
     expect(await screen.findByTestId('identity-avatar')).toBeTruthy();
     expect(fetchAvatar).toHaveBeenCalledWith('id-rusalka');
@@ -922,7 +931,7 @@ describe('에이전트 사진 (Task 15-4)', () => {
     fireEvent.click(await screen.findByTestId('agent-tab-profile'));
 
     const file = new File([new Uint8Array([1])], 'evil.png', { type: 'image/png' });
-    fireEvent.change(await screen.findByTestId('agent-avatar-file'), { target: { files: [file] } });
+    await pickAndSave('agent-avatar-file', file);
 
     // 목록을 함께 낸다 — "안 된다"만 말하면 사람은 다음에 무엇을 고를지 모른다.
     const alert = await screen.findByRole('alert');
@@ -936,15 +945,16 @@ describe('에이전트 사진 (Task 15-4)', () => {
       vi.fn(async () => undefined);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
+    fireEvent.click(await screen.findByTestId('agent-tab-profile'));
 
     const input = await screen.findByTestId('agent-avatar-file');
     expect(input.getAttribute('accept')).toContain('image/svg+xml');
 
     const file = new File(['<svg/>'], 'face.svg', { type: 'image/svg+xml' });
-    fireEvent.change(input, { target: { files: [file] } });
+    await pickAndSave('agent-avatar-file', file);
     await waitFor(() => expect(
       (c as unknown as { setAgentAvatar: ReturnType<typeof vi.fn> }).setAgentAvatar,
-    ).toHaveBeenCalledWith('id-rusalka', file, expect.any(Function)));
+    ).toHaveBeenCalledWith('id-rusalka', expect.objectContaining({ source: { kind: 'file', file: file }, cropped: expect.any(Blob) }), expect.any(Function)));
   });
 });
 

@@ -499,6 +499,27 @@ export const en = {
   'avatarEdit.progress.uploadingPct': 'Uploading the photo… {pct}%',
   'avatarEdit.result.changed': 'The photo was changed',
   'avatarEdit.result.removed': 'The photo was removed',
+  // avatarCrop — 화면 이름. `settings/AvatarCropDialog.tsx` 「사진 맞추기」 모달(designer 시안 A).
+  'avatarCrop.title': 'Adjust photo',
+  'avatarCrop.stageAria': 'Photo position. Drag or use the arrow keys to move, + and − to zoom',
+  'avatarCrop.zoom': 'Zoom',
+  'avatarCrop.hint': 'Drag or use the arrow keys to move · scroll or pinch to zoom · 0 resets',
+  'avatarCrop.preview': 'Preview',
+  /** 이 창을 연 설정 화면의 크기 — 에이전트 48 · 내 프로필 40. */
+  'avatarCrop.previewSettings': '{px} settings',
+  'avatarCrop.previewMessage': '32 message',
+  'avatarCrop.previewMention': '20 mention',
+  'avatarCrop.previewSample': 'This is how the new photo looks.',
+  'avatarCrop.gif': 'Animated GIFs keep only the first frame.',
+  'avatarCrop.small': 'This photo is small and may look blurry.',
+  'avatarCrop.other': 'Choose another photo…',
+  'avatarCrop.reset': 'Reset',
+  'avatarCrop.cancel': 'Cancel',
+  'avatarCrop.save': 'Save',
+  'avatarCrop.loading': 'Opening the photo…',
+  'avatarCrop.loadFailed': "Couldn't open this photo.",
+  'avatarCrop.saveFailed': "Couldn't prepare the photo to save. Please try again.",
+  'avatarCrop.adjust': 'Adjust',
   // ---------------------------------------------------------------------------
   // accountOpen — **판정 이름이다.** `lib/accountOpen.ts` 가 내는 접근 이름이고,
   // 이름을 누를 수 있는 자리마다 쓰인다(본문 멘션 · 참여자 줄 · 아바타).

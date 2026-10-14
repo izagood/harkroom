@@ -1,4 +1,4 @@
-import type { AccountStatus, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
+import type { AccountStatus, AvatarSourceMeta, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import { endSession } from '../lib/sessionEnd';
 import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchResult } from '../lib/memoryList';
 import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
@@ -6,7 +6,8 @@ import { buildBoard, mineCount } from '../lib/inboxBoard';
 
 /** 보드 한 판의 재료 — `GET /inbox/board` 의 응답(`ApiClient.inboxBoard`). `truncated` 는 옛 시험 목이 안 줄 수 있다. */
 export interface InboxBoardData { entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[]; truncated?: boolean }
-import { ApiClient, ApiError, type BundleAcceptResult, type PreviewTicket } from '../lib/api';
+import { ApiClient, ApiError, type AvatarSourceRef, type BundleAcceptResult, type PreviewTicket } from '../lib/api';
+import type { AvatarSave } from '../lib/avatarCrop';
 export type { BundleAcceptResult } from '../lib/api';
 import { addRange, coversSeq, type SeqRange } from '../lib/seqCoverage';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
@@ -2104,11 +2105,35 @@ export class Controller {
    * 서버가 받아들인 뒤에 화면을 갱신한다: 미리 그려 두면 서버가 거절한 사진(이미지가 아닌
    * 파일은 400 이다)이 잠깐 내 얼굴로 떴다가 사라진다.
    */
-  async setAvatar(file: File | null, onProgress?: (fraction: number) => void): Promise<void> {
-    const attachmentId = file ? (await this.api.upload(file, onProgress)).id : null;
-    const { avatarAttachmentId } = await this.api.setAvatar(attachmentId);
+  async setAvatar(save: AvatarSave | null, onProgress?: (fraction: number) => void): Promise<void> {
+    const { attachmentId, source } = save ? await this.uploadAvatarSave(save, onProgress) : { attachmentId: null, source: undefined };
+    const { avatarAttachmentId } = await this.api.setAvatar(attachmentId, source);
     const me = this.store.getState().me;
     if (me) this.store.getState().applyAvatar(me.id, avatarAttachmentId);
+  }
+
+  /**
+   * 사진 맞추기 저장의 업로드 두 걸음(S1): 새로 고른 원본이 있으면 먼저 올리고, 잘라 낸 정사각형을 올린다.
+   * 진행률은 두 업로드를 바이트 크기 비율로 이어 붙인다 — 막대가 0→1 을 두 번 달리면 끝난 줄 알았다가 되돌아간다.
+   * 다시 맞추기는 원본을 새로 올리지 않고 걸린 원본의 id 를 그대로 가리킨다.
+   */
+  private async uploadAvatarSave(
+    save: AvatarSave, onProgress?: (fraction: number) => void,
+  ): Promise<{ attachmentId: string; source: AvatarSourceRef }> {
+    const original = save.source.kind === 'file' ? save.source.file : null;
+    const total = (original?.size ?? 0) + save.cropped.size || 1;
+    const head = (original?.size ?? 0) / total;
+    const sourceId = save.source.kind === 'file'
+      ? (await this.api.upload(save.source.file, onProgress ? (f) => onProgress(Math.min(f, 1) * head) : undefined)).id
+      : save.source.attachmentId;
+    const cropped = new File([save.cropped], save.cropped.type === 'image/webp' ? 'avatar.webp' : 'avatar.png', { type: save.cropped.type });
+    const { id } = await this.api.upload(cropped, onProgress ? (f) => onProgress(head + Math.min(f, 1) * (1 - head)) : undefined);
+    return { attachmentId: id, source: { attachmentId: sourceId, crop: save.crop } };
+  }
+
+  /** 사진 맞추기의 원본·지난 자리. 없으면 null(옛 사진·옛 서버). */
+  fetchAvatarSource(accountId: string): Promise<{ blob: Blob; meta: AvatarSourceMeta } | null> {
+    return this.api.fetchAvatarSource(accountId);
   }
 
   /**
@@ -2120,10 +2145,10 @@ export class Controller {
    * 안 바뀐다 — 그래서 걸린 첨부 id 를 돌려준다.
    */
   async setAgentAvatar(
-    agentId: string, file: File | null, onProgress?: (fraction: number) => void,
+    agentId: string, save: AvatarSave | null, onProgress?: (fraction: number) => void,
   ): Promise<string | null> {
-    const attachmentId = file ? (await this.api.upload(file, onProgress)).id : null;
-    const { avatarAttachmentId } = await this.api.setAgentAvatar(agentId, attachmentId);
+    const { attachmentId, source } = save ? await this.uploadAvatarSave(save, onProgress) : { attachmentId: null, source: undefined };
+    const { avatarAttachmentId } = await this.api.setAgentAvatar(agentId, attachmentId, source);
     this.store.getState().applyAvatar(agentId, avatarAttachmentId);
     // 부르는 화면이 자기 상태(에이전트 설정의 `selected`·`agents`)를 같은 값으로 고치게 돌려준다.
     return avatarAttachmentId;

@@ -3,11 +3,33 @@ import type {
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
-import { MENTION_EDIT_SKIPPED_HEADER, type GrantRow, type Capability, type ApiConnectorView, type ApiGrantLimits, type ApiMethod } from '@harkroom/shared';
+import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, type AvatarCrop, type AvatarSourceMeta, type GrantRow, type Capability, type ApiConnectorView, type ApiGrantLimits, type ApiMethod } from '@harkroom/shared';
 import type { MemoryAudit, MemoryBatchResult, MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 /** `POST /attachments/:id/preview` 의 답. `latestTitle` 은 091(#1065) 서버부터 싣는다. */
+/** PUT 아바타에 싣는 사진 맞추기의 원본(첨부 id)과 고른 자리. */
+export interface AvatarSourceRef { attachmentId: string; crop: AvatarCrop }
+
+/**
+ * `AVATAR_SOURCE_HEADER` 를 읽는다. id 가 없거나 모양이 틀리면 null(그때 화면은 걸린 아바타로 연다).
+ * 자리만 틀리면 자리를 null 로 — 틀린 자리로 여느니 처음 모양으로 연다.
+ */
+export function parseAvatarSource(raw: string | null): AvatarSourceMeta | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as { attachmentId?: unknown; crop?: Partial<AvatarCrop> | null };
+    if (typeof v.attachmentId !== 'string' || !v.attachmentId) return null;
+    const c = v.crop;
+    const ok = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1;
+    const crop = c && ok(c.x) && ok(c.y) && ok(c.size) && (c.size as number) > 0
+      ? { x: c.x!, y: c.y!, size: c.size! } : null;
+    return { attachmentId: v.attachmentId, crop };
+  } catch {
+    return null;
+  }
+}
+
 export interface PreviewTicket {
   path: string;
   expiresAt: string;
@@ -786,6 +808,22 @@ export class ApiClient {
   }
 
   /**
+   * 사진 맞추기의 원본과 그 첨부 id·지난번 자리(`AVATAR_SOURCE_HEADER`). 자기 자신·자기 에이전트만 받는다(서버 판정).
+   * **원본이 없으면(옛 사진·옛 서버) null** — 화면은 걸린 아바타를 원본으로 연다.
+   */
+  async fetchAvatarSource(accountId: string): Promise<{ blob: Blob; meta: AvatarSourceMeta } | null> {
+    const res = await fetch(`${this.baseUrl}/accounts/${accountId}/avatar/source`, {
+      headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new ApiError(res.status, 'avatar_source_failed', `HTTP ${res.status}`);
+    const meta = parseAvatarSource(res.headers.get(AVATAR_SOURCE_HEADER));
+    // 헤더가 없으면(노출 안 된 CORS 등) 원본을 어느 첨부로 가리킬지 모른다 — 없는 것으로 친다.
+    if (!meta) return null;
+    return { blob: await res.blob(), meta };
+  }
+
+  /**
    * 워크스페이스 아이콘 바이트(커뮤니티 레일의 사진). `fetchAvatar` 와 같은 이유로 토큰을 URL 에
    * 넣지 않는다. **걸린 것이 없으면(404) null** 이다 — 레일은 그때 이름 첫 글자로 폴백한다.
    * 이 라우트가 없는 옛 서버도 404 라 같은 폴백으로 떨어진다.
@@ -808,17 +846,17 @@ export class ApiClient {
    * 내 아바타를 정하거나(첨부 id) 지운다(**명시적 null**). 키를 생략하지 않는다 —
    * `undefined` 는 `JSON.stringify` 가 버려서 지우기가 조용히 무시된다.
    */
-  setAvatar(attachmentId: string | null): Promise<{ avatarAttachmentId: string | null }> {
-    return this.req('PUT', '/accounts/me/avatar', { attachmentId });
+  setAvatar(attachmentId: string | null, source?: AvatarSourceRef): Promise<{ avatarAttachmentId: string | null }> {
+    return this.req('PUT', '/accounts/me/avatar', source ? { attachmentId, source } : { attachmentId });
   }
   /**
    * 에이전트의 사진. **자기 사진을 올릴 손이 없으므로** 소유자·admin 이 대신 건다
    * (서버가 `requireOwnerOrAdmin` 으로 판정한다).
    */
   setAgentAvatar(
-    agentId: string, attachmentId: string | null,
+    agentId: string, attachmentId: string | null, source?: AvatarSourceRef,
   ): Promise<{ avatarAttachmentId: string | null }> {
-    return this.req('PUT', `/accounts/agents/${agentId}/avatar`, { attachmentId });
+    return this.req('PUT', `/accounts/agents/${agentId}/avatar`, source ? { attachmentId, source } : { attachmentId });
   }
 
   markRead(ids: number[]): Promise<void> { return this.req('POST', '/inbox/read', { ids }); }
