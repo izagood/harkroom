@@ -321,6 +321,7 @@ export async function setAccountAvatar(
 }
 
 export interface AvatarTarget {
+  attachmentId: string;
   storageKey: string;
   contentType: string;
   sizeBytes: number;
@@ -329,7 +330,7 @@ export interface AvatarTarget {
 /** 그 계정이 지금 걸어 둔 아바타의 바이트를 찾는다. 없으면 null. */
 export async function findAvatarTarget(pool: Pool, accountId: string): Promise<AvatarTarget | null> {
   const res = await pool.query(
-    `select a.storage_key as "storageKey", a.content_type as "contentType", a.size_bytes::int as "sizeBytes"
+    `select a.id as "attachmentId", a.storage_key as "storageKey", a.content_type as "contentType", a.size_bytes::int as "sizeBytes"
        from account acc join attachment a on a.id = acc.avatar_attachment_id
       where acc.id = $1`,
     [accountId],
@@ -402,4 +403,32 @@ export async function currentAvatarIds(pool: Pool, accountId: string): Promise<(
   const res = await pool.query<{ a: string | null; s: string | null }>(
     `select avatar_attachment_id as a, avatar_source_attachment_id as s from account where id = $1`, [accountId]);
   return res.rowCount ? [res.rows[0]!.a, res.rows[0]!.s] : [];
+}
+
+/** SVG 아바타를 굳힐 한 변(px). 모바일이 그리는 가장 큰 자리(48pt × 3x = 144)의 세 배를 넉넉히 넘는다. */
+export const SVG_RASTER_PX = 512;
+
+/**
+ * SVG 안에서 **밖을 가리키는 참조**(`href`·`src`·`url(...)` 가 `#` 조각이나 `data:` 가 아닌 것). 굳히는 동안 libvips
+ * (librsvg)가 그것을 따라가면 서버의 파일이나 내부 주소를 읽는 통로가 된다. librsvg 는 바탕 주소가 없으면 밖을 읽지
+ * 않는다고 알려져 있지만, 그 성질에 기대지 않고 **굳히기 전에 거절**한다. 화면(`<img>`)에서 그리는 SVG 는 이 검사
+ * 없이도 밖을 못 부른다 — 이 검사는 서버가 직접 그리는 이 길에만 필요하다.
+ */
+const SVG_EXTERNAL_REF = /(?:\bhref|\bsrc)\s*=\s*["']\s*(?!#|data:)[^"'\s]|url\(\s*["']?\s*(?!#|data:)[^)"'\s]/i;
+
+/**
+ * SVG 아바타를 `SVG_RASTER_PX` PNG 로 굳힌다(사진 후속 ③). 모바일(Flutter `Image`)은 SVG 를 그리지 못해 글자로
+ * 대신했다. 밖을 가리키는 참조가 있거나 굳히지 못하면 null — 부르는 쪽은 그때 원래 바이트(SVG)를 그대로 낸다
+ * (모바일은 글자로 남는다. 지금과 같다).
+ */
+export async function rasterizeSvgAvatar(svg: Buffer): Promise<Buffer | null> {
+  if (SVG_EXTERNAL_REF.test(svg.toString('utf8'))) return null;
+  try {
+    return await sharp(svg, { limitInputPixels: SVG_RASTER_PX * SVG_RASTER_PX * 16 })
+      .resize(SVG_RASTER_PX, SVG_RASTER_PX, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toBuffer();
+  } catch {
+    return null;
+  }
 }

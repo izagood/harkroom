@@ -76,7 +76,8 @@ void main() {
     final net = resized.imageProvider as NetworkImage;
     final url = net.url;
     // 주소마다 첨부 id 가 실려야 사진을 바꿨을 때 이미지 캐시가 옛 사진을 내지 않는다.
-    expect(url, 'https://h.example.com/accounts/me-1/avatar?v=att-me');
+    // raster=1: SVG 사진이면 서버가 PNG 로 굳혀 준다(사진 후속 ③).
+    expect(url, 'https://h.example.com/accounts/me-1/avatar?v=att-me&raster=1');
     expect(net.headers?['authorization'], 'Bearer tok');
     expect(find.byKey(const ValueKey('avatar-photo-att-forge')), findsNothing);
     expect(find.text('F'), findsOneWidget);

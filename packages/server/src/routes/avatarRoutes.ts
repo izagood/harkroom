@@ -5,7 +5,8 @@ import { z } from 'zod';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { emitEvent } from '../events.js';
 import {
-  currentAvatarIds, detectAvatarType, findAvatarOriginal, releaseAvatarFiles, findAvatarSource, findAvatarSourceTarget, findAvatarTarget,
+  currentAvatarIds, detectAvatarType, findAvatarOriginal, findAvatarSource, findAvatarSourceTarget, findAvatarTarget,
+  rasterizeSvgAvatar, readHead, releaseAvatarFiles,
   setAccountAvatar, type AvatarSetting,
 } from '../services/avatars.js';
 import type { StorageBackend } from '../storage/local.js';
@@ -104,6 +105,26 @@ async function applyAvatar(
 export async function registerAvatarRoutes(
   app: FastifyInstance, pool: Pool, storage: StorageBackend,
 ): Promise<void> {
+  /**
+   * 굳힌 PNG 캐시 — 첨부 id 가 키라 사진이 바뀌면 저절로 새것이다. SVG 아바타는 드물고(새 데스크톱은 래스터로 올린다)
+   * PNG 하나가 수십 KB 라 64장으로 묶는다. 실패(null)도 담는다 — 같은 SVG 를 매번 다시 굳히려 들지 않게.
+   */
+  const rasterCache = new Map<string, Buffer | null>();
+  async function rasterOf(target: { attachmentId: string; storageKey: string; sizeBytes: number }): Promise<Buffer | null> {
+    if (rasterCache.has(target.attachmentId)) {
+      const hit = rasterCache.get(target.attachmentId)!;
+      rasterCache.delete(target.attachmentId);
+      rasterCache.set(target.attachmentId, hit);
+      return hit;
+    }
+    // SVG 는 걸 때 256KiB 상한을 지났다(`detectAvatarType`) — 통째로 올려도 된다.
+    const svg = await readHead(storage, target.storageKey, Math.max(target.sizeBytes, 1));
+    const png = await rasterizeSvgAvatar(svg);
+    rasterCache.set(target.attachmentId, png);
+    if (rasterCache.size > 64) rasterCache.delete(rasterCache.keys().next().value!);
+    return png;
+  }
+
   app.put('/accounts/me/avatar', { preHandler: app.requireAccount }, async (req, reply) => {
     // 대상 id 를 받지 않는다 — `me` 하나뿐이다. 남의 아바타를 바꾸는 경로는 만들지 않는다.
     const me = req.account!;
@@ -151,9 +172,25 @@ export async function registerAvatarRoutes(
 
   app.get('/accounts/:id/avatar', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    // `raster=1`: SVG 를 못 그리는 클라이언트(모바일)가 청한다 — 걸린 사진이 SVG 면 PNG 로 굳혀 준다(사진 후속 ③).
+    // 다른 쿼리(`v=` 캐시 키 등)는 보지 않는다.
+    const { raster } = z.object({ raster: z.literal('1').optional() }).passthrough().parse(req.query ?? {});
     const target = await findAvatarTarget(pool, id);
     if (!target) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no avatar' } });
+    }
+
+    if (raster && target.contentType === 'image/svg+xml') {
+      const png = await rasterOf(target);
+      if (png) {
+        return reply
+          .header('x-content-type-options', 'nosniff')
+          .header('content-disposition', 'attachment')
+          .header('content-length', String(png.length))
+          .type('image/png')
+          .send(png);
+      }
+      // 굳히지 못했다 — 원래 바이트를 낸다(모바일은 글자로 남는다. 고치기 전과 같다).
     }
 
     const body = await storage.read(target.storageKey);
