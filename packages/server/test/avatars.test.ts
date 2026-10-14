@@ -39,7 +39,11 @@ beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
   storageRoot = await mkdtemp(join(tmpdir(), 'harkroom-avatar-'));
-  app = await buildServer({ pool: db.pool, storage: { root: storageRoot, maxBytes: 4096 } });
+  // 업로드 리밋을 넓힌다 — 사진 맞추기 시험은 한 번 저장에 업로드가 둘(원본·잘린 것)이라 기본 리밋에 닿는다.
+  app = await buildServer({
+    pool: db.pool, storage: { root: storageRoot, maxBytes: 4096 },
+    rateLimits: { upload: { windowMs: 60_000, max: 1000 } },
+  });
   bigStorageRoot = await mkdtemp(join(tmpdir(), 'harkroom-avatar-big-'));
   bigApp = await buildServer({ pool: db.pool, storage: { root: bigStorageRoot, maxBytes: SVG_MAX_BYTES * 4 } });
   ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
@@ -442,5 +446,126 @@ describe('looksLikeSvg', () => {
     // 앞부분만 잘려 있어도 답한다(상한 넘는 파일은 앞 4 KiB 만 읽어 온다).
     expect(startsLikeSvg(svg('<?xml version="1.0"?><svg viewBox="0 0 1 1"><rect'))).toBe(true);
     expect(startsLikeSvg(HTML)).toBe(false);
+  });
+});
+
+describe('사진 맞추기 — 원본과 고른 자리(S1)', () => {
+  let agentId: string;
+  const CROP = { x: 0.25, y: 0, size: 0.5 };
+
+  const source = (id: string, token: string) =>
+    app.inject({ method: 'GET', url: `/accounts/${id}/avatar/source`, headers: auth(token) });
+
+  beforeAll(async () => {
+    const created = await app.inject({
+      method: 'POST', url: '/accounts/agents', headers: auth(adminToken),
+      payload: { handle: 'cropbot', displayName: 'cropbot' },
+    });
+    agentId = created.json().id as string;
+    await app.inject({
+      method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(adminToken),
+      payload: { ownerAccountId: otherId },
+    });
+  });
+
+  it('잘라 올린 아바타와 함께 원본·자리를 남기고, 원본 라우트가 둘을 한 응답으로 준다', async () => {
+    const original = await upload(otherToken, 'orig.png', PNG, 'image/png');
+    const cropped = await upload(otherToken, 'crop.png', PNG, 'image/png');
+    const set = await setAvatar(otherToken, { attachmentId: cropped, source: { attachmentId: original, crop: CROP } });
+    expect(set.statusCode).toBe(200);
+    expect(set.json()).toEqual({ avatarAttachmentId: cropped });
+
+    const res = await source(otherId, otherToken);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.headers['x-harkroom-avatar-crop'] as string)).toEqual(CROP);
+    expect(res.headers['content-disposition']).toContain('attachment');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    // 걸린 아바타는 그대로 잘린 쪽이다 — 그리는 쪽은 원본을 모른다.
+    expect((await meView(otherToken)).avatarAttachmentId).toBe(cropped);
+  });
+
+  it('다시 맞출 때는 원본을 새로 올리지 않고 걸린 원본을 다시 가리킨다', async () => {
+    // 첫 저장의 원본을 두 번째 저장이 그대로 다시 가리킨다(자리만 바뀐다).
+    const orig = await upload(otherToken, 'orig2.png', PNG, 'image/png');
+    const first = await upload(otherToken, 'c1.png', PNG, 'image/png');
+    await setAvatar(otherToken, { attachmentId: first, source: { attachmentId: orig, crop: CROP } });
+    const second = await upload(otherToken, 'c2.png', PNG, 'image/png');
+    const moved = { x: 0.1, y: 0.2, size: 0.3 };
+    const res = await setAvatar(otherToken, { attachmentId: second, source: { attachmentId: orig, crop: moved } });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse((await source(otherId, otherToken)).headers['x-harkroom-avatar-crop'] as string)).toEqual(moved);
+  });
+
+  it('원본이 없는 옛 사진은 걸린 아바타를 원본으로 삼을 수 있다 — 업로더가 달라도', async () => {
+    // admin 이 올려 건 에이전트 사진을 소유자(other)가 다시 맞춘다.
+    const legacy = await upload(adminToken, 'legacy.png', PNG, 'image/png');
+    expect((await app.inject({
+      method: 'PUT', url: `/accounts/agents/${agentId}/avatar`, headers: auth(adminToken), payload: { attachmentId: legacy },
+    })).statusCode).toBe(200);
+    expect((await source(agentId, otherToken)).statusCode).toBe(404);
+
+    const cropped = await upload(otherToken, 'agent-crop.png', PNG, 'image/png');
+    const res = await app.inject({
+      method: 'PUT', url: `/accounts/agents/${agentId}/avatar`, headers: auth(otherToken),
+      payload: { attachmentId: cropped, source: { attachmentId: legacy, crop: CROP } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((await source(agentId, otherToken)).statusCode).toBe(200);
+  });
+
+  it('남의 업로드는 원본으로도 걸 수 없고, 아바타도 걸리지 않는다', async () => {
+    const theirs = await upload(adminToken, 'theirs.png', PNG, 'image/png');
+    const mine = await upload(otherToken, 'mine.png', PNG, 'image/png');
+    const before = (await meView(otherToken)).avatarAttachmentId;
+    const res = await setAvatar(otherToken, { attachmentId: mine, source: { attachmentId: theirs, crop: CROP } });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('source_not_found');
+    expect((await meView(otherToken)).avatarAttachmentId).toBe(before);
+  });
+
+  it('이미지가 아닌 원본은 거절한다', async () => {
+    const html = await upload(otherToken, 'x.html', HTML, 'text/html');
+    const mine = await upload(otherToken, 'ok.png', PNG, 'image/png');
+    const res = await setAvatar(otherToken, { attachmentId: mine, source: { attachmentId: html, crop: CROP } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('not_an_image');
+  });
+
+  it('자리가 0~1 밖이거나 크기가 0 이면 400 이다', async () => {
+    const orig = await upload(otherToken, 'o.png', PNG, 'image/png');
+    const mine = await upload(otherToken, 'm.png', PNG, 'image/png');
+    for (const crop of [{ x: -0.1, y: 0, size: 0.5 }, { x: 0, y: 1.5, size: 0.5 }, { x: 0, y: 0, size: 0 }]) {
+      const res = await setAvatar(otherToken, { attachmentId: mine, source: { attachmentId: orig, crop } });
+      expect(res.statusCode).toBe(400);
+    }
+  });
+
+  it('원본 없이 새 사진을 걸면(옛 앱) 원본 칸을 비운다', async () => {
+    const orig = await upload(otherToken, 'o2.png', PNG, 'image/png');
+    const c = await upload(otherToken, 'c3.png', PNG, 'image/png');
+    await setAvatar(otherToken, { attachmentId: c, source: { attachmentId: orig, crop: CROP } });
+    const plain = await upload(otherToken, 'plain.png', PNG, 'image/png');
+    expect((await setAvatar(otherToken, { attachmentId: plain })).statusCode).toBe(200);
+    expect((await source(otherId, otherToken)).statusCode).toBe(404);
+  });
+
+  it('지우면 원본도 함께 지운다', async () => {
+    const orig = await upload(otherToken, 'o3.png', PNG, 'image/png');
+    const c = await upload(otherToken, 'c4.png', PNG, 'image/png');
+    await setAvatar(otherToken, { attachmentId: c, source: { attachmentId: orig, crop: CROP } });
+    expect((await setAvatar(otherToken, { attachmentId: null })).statusCode).toBe(200);
+    expect((await source(otherId, otherToken)).statusCode).toBe(404);
+  });
+
+  it('원본은 모두에게 열지 않는다 — 남의 사람 계정은 admin 이어도, 에이전트는 소유자·admin 만', async () => {
+    const orig = await upload(otherToken, 'o4.png', PNG, 'image/png');
+    const c = await upload(otherToken, 'c5.png', PNG, 'image/png');
+    await setAvatar(otherToken, { attachmentId: c, source: { attachmentId: orig, crop: CROP } });
+    // 걸린 아바타는 admin 이 받지만 원본은 못 받는다.
+    expect((await source(otherId, adminToken)).statusCode).toBe(403);
+    // 에이전트 원본은 admin 도 받는다(다시 맞출 수 있는 사람이다).
+    expect((await source(agentId, adminToken)).statusCode).toBe(200);
+    // 남의 사람 계정 원본을 일반 계정이 부르면 거절.
+    expect([403, 404]).toContain((await source(adminId, otherToken)).statusCode);
   });
 });

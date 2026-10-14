@@ -61,6 +61,10 @@ export async function registerAccountDeletionRoutes(
     if (result.avatarStorageKey) {
       await storage.remove(result.avatarStorageKey).catch((err) => req.log.warn({ err }, 'avatar file removal failed'));
     }
+    // 사진 맞추기의 원본도 지운다. 같은 파일이면 한 번만.
+    if (result.avatarSourceStorageKey && result.avatarSourceStorageKey !== result.avatarStorageKey) {
+      await storage.remove(result.avatarSourceStorageKey).catch((err) => req.log.warn({ err }, 'avatar source file removal failed'));
+    }
     // 옛 handle 은 남기지 않는다 — 감사는 id 로 가리킨다(이름을 지우는 삭제다).
     await recordAudit(pool, { action: 'account.deleted', actorId: me.id, actorHandle: null }, req);
     return reply.code(204).send();
