@@ -298,7 +298,7 @@ describe('Task 12 에이전트 아바타는 사람과 같다', () => {
     const humanBox = box(human.container);
     cleanup();
     const agentBox = box(render(<Identity account={acc('a1', 'alpha', 'agent')} variant="avatar" />).container);
-    for (const cls of ['h-5', 'w-5', 'rounded-full', 'overflow-hidden']) {
+    for (const cls of ['h-5', 'w-5', 'rounded-avatar', 'overflow-hidden']) {
       expect(humanBox).toContain(cls);
       expect(agentBox).toContain(cls);
     }
@@ -313,7 +313,7 @@ describe('Task 12 에이전트 아바타는 사람과 같다', () => {
  * 선처럼 얹힌다. 링의 목적은 겹친 원들을 떼어 놓는 것인데 사각 링은 반대로 경계를 만든다.
  */
 describe('#471 겹친 아바타의 링은 원이어야 한다', () => {
-  it('답글 스택의 아바타 래퍼가 rounded-full 을 갖는다', () => {
+  it('답글 스택의 아바타 래퍼가 아바타와 같은 곡률을 갖는다', () => {
     fakeController();
     const { container } = render(<MessageItem message={msg('m1', 'c1', 1, 'root', 'u2', {
       replyCount: 2, participantIds: ['u2', 'u3'],
@@ -323,6 +323,6 @@ describe('#471 겹친 아바타의 링은 원이어야 한다', () => {
       .filter((el) => el.className.includes('ring-1') && el.className.includes('ring-surface'));
     expect(ringed.length).toBeGreaterThan(0);
     // 링을 두른 래퍼는 전부 원이어야 한다 — 하나라도 사각이면 그 자리에 선이 생긴다.
-    for (const el of ringed) expect(el.className).toContain('rounded-full');
+    for (const el of ringed) expect(el.className).toContain('rounded-avatar');
   });
 });

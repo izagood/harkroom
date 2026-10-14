@@ -134,7 +134,7 @@ const FACE = 'h-11 w-11 text-[15px]';
  * ## 겹침은 **이미 있는 선례를 쓴다** — 새로 만들지 않는다
  *
  * `ThreadParticipants.tsx` 와 `MessageItem.tsx` 가 같은 일을 하고 있고 모양이 이것이다:
- * `flex -space-x-1` + 래퍼의 `rounded-full ring-1` + `+N` 칸. `#471` 의 교훈이 그 래퍼에
+ * `flex -space-x-1` + 래퍼의 곡률(아바타와 같은 `rounded-avatar`) `ring-1` + `+N` 칸. `#471` 의 교훈이 그 래퍼에
  * 적혀 있다 — *"`rounded-full` 이 없으면 링이 사각형으로 그려지고 겹친 자리에서 그 세로 변이
  * 앞 아바타 위에 선처럼 얹힌다."* 링의 목적이 겹친 원을 떼어 놓는 것인데 사각 링은 반대로
  * 경계를 만든다.
@@ -173,7 +173,7 @@ function TeamFaces({ team, accounts, runnerStates, online, connected }: {
       <span
         data-testid={`team-faces-${team.name}`}
         data-members="unknown"
-        className={`flex ${FACE} items-center justify-center rounded-full border border-dashed
+        className={`flex ${FACE} items-center justify-center rounded-avatar border border-dashed
                     border-border text-fg-subtle`}
         aria-hidden="true"
       >
@@ -217,8 +217,8 @@ function TeamFaces({ team, accounts, runnerStates, online, connected }: {
               뒤집히는, 화면에서 확인할 수 없는 종류의 결함이 된다.
             */
             style={{ zIndex: TEAM_FACE_SLOTS - i }}
-            // #471: `rounded-full` 이 없으면 링이 사각으로 그려져 겹친 자리에 세로선이 생긴다.
-            className="relative rounded-full ring-1 ring-surface-raised"
+            // #471: 아바타와 같은 곡률이 없으면 링이 각진 사각으로 그려져 겹친 자리에 세로선이 생긴다.
+            className="relative rounded-avatar ring-1 ring-surface-raised"
           >
             {/*
               **실패는 붉은 테를 받는다.** 에이전트 카드는 그 테를 상자로 올렸지만(그 파일의
@@ -234,7 +234,7 @@ function TeamFaces({ team, accounts, runnerStates, online, connected }: {
               문서가 겹침 순서를 정한 이유가 정확히 이 테다(*"붉은 테가 옆 얼굴에 잘려
               사라진다"*). 위 `zIndex` 와 `sortTeamFaces` 두 장치가 그것을 함께 막는다.
             */}
-            <span className={face === 'failed' ? 'block rounded-full ring-2 ring-state-stuck' : 'block'}>
+            <span className={face === 'failed' ? 'block rounded-avatar ring-2 ring-state-stuck' : 'block'}>
               {/* 멈춘·모르는·물러나는 얼굴은 색이 빠진다 — 판정과 필터 모두 에이전트
                   카드와 **같은 것**이다(`isFaceGreyed`). 세기까지 같은 값을 쓴다: 두 묶음이
                   같은 러너를 다른 회색으로 그리면 사람이 그 차이를 뜻으로 읽는다. */}
@@ -255,7 +255,7 @@ function TeamFaces({ team, accounts, runnerStates, online, connected }: {
            작고, 기본 쌓임이 이미 그것을 준다 — 앞 얼굴들이 명시적으로 큰 값을 받았다. */
         <span
           data-testid={`team-overflow-${team.name}`}
-          className={`relative flex ${FACE} items-center justify-center rounded-full
+          className={`relative flex ${FACE} items-center justify-center rounded-avatar
                       bg-surface-hover font-medium text-fg-muted ring-1 ring-surface-raised`}
         >
           +{rest}

@@ -187,7 +187,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
   if (!account) {
     return (
       <span
-        className={`relative inline-flex h-5 w-5 items-center justify-center rounded-full bg-fg-subtle text-[10px] font-semibold text-fg-on-strong ${className}`}
+        className={`relative inline-flex h-5 w-5 items-center justify-center rounded-avatar bg-fg-subtle text-[10px] font-semibold text-fg-on-strong ${className}`}
       >
         <span aria-hidden="true">?</span>
         <span className="sr-only">{t('identity.account.unknown')}</span>
@@ -207,13 +207,17 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
   // 이 자리에 있던 #277 의 주석은 여기에 variant 분기를 넣지 않은 근거였다: "고칠 것 없는
   // 자리를 바꿔 `rounded-full` 이 `rounded` 로 갈리는 식의 무관한 회귀만 생긴다."
   // **그 판단은 그때 기준으로 틀리지 않았다** — 사람 아바타는 32px 거터를 넘친 적이 없다.
-  // 넘친 것은 에이전트 쪽 배지였고, 그 배지는 이제 없다. `rounded-full`·`overflow-hidden`
-  // 은 그대로이며 #277 회귀선이 계속 지킨다.
+  // 넘친 것은 에이전트 쪽 배지였고, 그 배지는 이제 없다. 곡률(`rounded-avatar`)·`overflow-hidden`
+  // 은 #277 회귀선이 계속 지킨다.
+  //
+  // **모양은 원이 아니라 둥근 사각형이다(10-14 jaebin).** 모바일(`HarkroomAvatar`: 36px 에 반지름 10px)과
+  // 같은 비율 10/36 = 27.78% 를 토큰 `rounded-avatar`(index.css `--radius-avatar`)로, 크기마다 px 이 아니라 비율로 준다 — 데스크톱에서 맞춘 사진이 모바일에서도
+  // 같은 모양으로 잘린다. 겹친 아바타의 링 래퍼(#471)도 같은 곡률이어야 링이 아바타를 따라 그려진다.
   //
   // `overflow-hidden` 은 이 자리에도 걸려 있다 — 사진(#159)이 상자를 넘지 않아야 한다.
   return (
     <span
-      className={`relative inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
+      className={`relative inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-avatar text-[10px] font-semibold text-fg-on-strong ${avatarUrl ? 'bg-surface-hover' : handleColor(account.handle)} ${className}`}
     >
       {avatarUrl ? (
         // `alt` 를 **비운다**. 접근성 이름은 아래 sr-only 가 이미 내고 있고, 사진에 핸들을

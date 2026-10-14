@@ -77,8 +77,8 @@ describe('#277 에이전트 거터 넘침 방지', () => {
     render(<MessageItem message={msg('m1', 'c1', 1, '안녕', 'u1')} />);
 
     const box = gutterIdentity();
-    // 둥근 아바타다 — 모서리만 둥근 사각(`rounded`)이 아니라 원(`rounded-full`)이다.
-    expect(box.classList.contains('rounded-full')).toBe(true);
+    // 모바일과 같은 비율의 둥근 사각(`rounded-avatar`)이다 — 고정 px 모서리(`rounded`)가 아니다(10-14).
+    expect(box.classList.contains('rounded-avatar')).toBe(true);
     expect(box.classList.contains('rounded')).toBe(false);
     // 이니셜 폴백과 접근성 이름(핸들)도 그대로.
     expect(within(box).getByText('A')).toBeTruthy();
