@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import '../state/app_scope.dart';
@@ -343,4 +345,86 @@ ButtonStyle sendButtonStyle(BuildContext context, {bool soft = false}) {
     disabledForegroundColor: k.fgMuted,
     minimumSize: const Size(40, 40),
   );
+}
+
+/// 반투명 머리(하단 네비 D3, 2026-10-14) — 전체 폭 띠, 바탕 72% + 흐림 14 + 아래 선 70%(시안 `.glass`).
+///
+/// 몸통이 그 밑으로 흐르려면 Scaffold 에 `extendBodyBehindAppBar: true` 를 주고 몸통은 [GlassBody] 로 감싼다.
+class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
+  const GlassAppBar({super.key, required this.bar});
+
+  final AppBar bar;
+
+  @override
+  Size get preferredSize => bar.preferredSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    final theme = Theme.of(context);
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: DecoratedBox(
+          key: const Key('glass-app-bar'),
+          decoration: BoxDecoration(
+            color: k.surface.withValues(alpha: 0.72),
+            border: Border(bottom: BorderSide(color: k.border.withValues(alpha: 0.7))),
+          ),
+          child: Theme(
+            // 바탕·선은 위 상자가 그린다 — AppBar 는 비운다.
+            data: theme.copyWith(
+              appBarTheme: theme.appBarTheme.copyWith(
+                backgroundColor: Colors.transparent,
+                shape: const RoundedRectangleBorder(),
+              ),
+            ),
+            child: bar,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 반투명 머리 밑의 몸통. [header](끊김 띠·모델 바처럼 늘 위에 서는 것)는 머리 바로 밑에 겹쳐 세우고,
+/// [builder] 의 목록은 화면 맨 위부터 그려 머리·[header] 밑으로 흐르게 한다. [builder] 가 받는 `top` 이
+/// 목록 위쪽에 비울 여백이다(머리 + [header] 높이) — 맨 위까지 굴려도 첫 줄이 가려지지 않는다.
+class GlassBody extends StatefulWidget {
+  const GlassBody({super.key, required this.header, required this.builder});
+
+  final Widget header;
+  final Widget Function(BuildContext context, double top) builder;
+
+  @override
+  State<GlassBody> createState() => _GlassBodyState();
+}
+
+class _GlassBodyState extends State<GlassBody> {
+  final _headerKey = GlobalKey();
+  double _header = 0;
+
+  void _measure() {
+    final h = _headerKey.currentContext?.size?.height ?? 0;
+    if (mounted && h != _header) setState(() => _header = h);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 띠는 생겼다 사라진다(끊김) — 그릴 때마다 다음 프레임에 높이를 다시 잰다.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+    final top = MediaQuery.paddingOf(context).top;
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: MediaQuery.removePadding(
+            context: context,
+            removeTop: true,
+            child: Builder(builder: (context) => widget.builder(context, top + _header)),
+          ),
+        ),
+        Positioned(top: top, left: 0, right: 0, child: KeyedSubtree(key: _headerKey, child: widget.header)),
+      ],
+    );
+  }
 }

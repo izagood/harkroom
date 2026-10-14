@@ -391,8 +391,10 @@ class _ThreadScreenState extends State<ThreadScreen> {
       // 크게 보기에서 넘겨 볼 그림의 범위(그림 넘겨 보기 사양 1·5).
       messages: () => [?root, ...?app.threads[widget.rootId]],
       child: Scaffold(
+      // 반투명 머리(D3) — 피드가 그 밑으로 흐른다.
+      extendBodyBehindAppBar: true,
       // 개정판 3.5: 「스레드」 + 부제 「# task · 답글 n개」.
-      appBar: AppBar(
+      appBar: GlassAppBar(bar: AppBar(
         title: ScreenTitle(
           title: t.threadTitle,
           subtitle: where.isEmpty ? countLabel : '$where · $countLabel',
@@ -407,26 +409,32 @@ class _ThreadScreenState extends State<ThreadScreen> {
           ),
           const SizedBox(width: 4),
         ],
-      ),
+      )),
       // 토스트를 작성칸 위로 올린다(states.dart ComposerScope).
+      // 위는 [GlassBody] 가 맡는다 — SafeArea 가 위를 먹으면 피드가 머리 밑으로 흐르지 못한다.
       body: ComposerScope(child: SafeArea(
+        top: false,
         child: Column(
           children: [
-            ThreadModelBar(channelId: widget.channelId, rootId: widget.rootId, agentIds: threadAgents),
             // `onOpenThread` 를 주지 않는다 — **이미 스레드 안이라 들어갈 곳이 없다.**
-            const ConnectionBand(),
             Expanded(
-              child: FeedKeyboardDismiss(
+              child: GlassBody(
+                // 모델 바·끊김 띠는 머리 바로 밑에 겹쳐 선다 — 피드는 그 밑까지 흐르고 위 여백으로 비킨다.
+                header: Column(mainAxisSize: MainAxisSize.min, children: [
+                  ThreadModelBar(channelId: widget.channelId, rootId: widget.rootId, agentIds: threadAgents),
+                  const ConnectionBand(),
+                ]),
+                builder: (context, inset) => FeedKeyboardDismiss(
                 child: ListView(
                   key: const Key('thread-feed'),
                   controller: _scroll,
                   reverse: true,
                   // 채널 화면과 같다 — 짧아도 끌려야 키보드를 내린다([FeedKeyboardDismiss]).
                   physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  padding: EdgeInsets.only(top: 8 + inset, bottom: 8),
                   children: rows.reversed.toList(growable: false),
                 ),
-              ),
+              )),
             ),
             // **스레드의 작성칸은 자기 키를 쓴다** — 채널에서 고른 사진이 답글에
             // 딸려 가지 않게.
