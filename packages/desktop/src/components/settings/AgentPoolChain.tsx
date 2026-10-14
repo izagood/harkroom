@@ -10,6 +10,7 @@
  * 계정 이름만 보인다 — 이메일·경로는 이 화면에 싣지 않는다.
  */
 import type { PoolChainAccount, PoolChainEntry, PoolChainState } from '@harkroom/shared/claudePoolChain';
+import { MAX_AGENT_POOLS } from '@harkroom/shared/claudePools';
 
 import { useLocale, useT } from '../../i18n/useT';
 
@@ -72,7 +73,8 @@ export function AgentPoolChain({
     [next[i], next[i + d]] = [next[i + d]!, next[i]!];
     onChange(next);
   };
-  const addable = pools.filter((p) => !chain.includes(p));
+  // 상한(security n3)에 닿으면 더 넣을 수 없다 — 오퍼레이터가 거절할 쓰기를 화면이 만들지 않는다.
+  const addable = chain.length >= MAX_AGENT_POOLS ? [] : pools.filter((p) => !chain.includes(p));
 
   let status: string | null = null;
   if (!chain.length) {

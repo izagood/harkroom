@@ -27,6 +27,20 @@
  */
 export const CLAUDE_POOL_NAME_PATTERN = /^[a-z0-9-]{1,32}$/;
 
+/**
+ * 에이전트 하나의 풀 순서 길이 상한(security n3, 2026-10-15). 화면이 그리는 줄 수이고 러너가 턴마다
+ * 재는 풀 수다. 넘는 꼬리는 읽을 때 버리고(모듈 규율), 오퍼레이터는 쓰기 전에 거절한다.
+ */
+export const MAX_AGENT_POOLS = 16;
+
+/**
+ * 객체 키로 쓰면 프로토타입을 바꾸는 이름(security n1). 에이전트 id 는 문법을 재지 않으므로 이것만
+ * 따로 막는다 — 풀 이름은 문법(`[a-z0-9-]`)이 이미 막는다.
+ */
+export function isUnsafeKey(key: string): boolean {
+  return key === '__proto__' || key === 'constructor' || key === 'prototype';
+}
+
 export interface ClaudePoolsConfig {
   /** 어느 풀이 기본인가. `null` 은 지정 없음. */
   defaultPool: string | null;
@@ -122,12 +136,13 @@ export function parseClaudePoolsConfig(raw: unknown): ClaudePoolsConfig {
   const agents: Record<string, string[]> = {};
   if (isRecord(raw.agents)) {
     for (const [agentId, pools] of Object.entries(raw.agents)) {
+      if (isUnsafeKey(agentId)) continue;
       // agentId 는 서버가 발급한 UUID 라 문법을 여기서 재지 않는다 — 재면 서버의 형식 변경이
       // 이 파일을 깨뜨린다. **풀 이름만** 잰다: 그것이 경로가 되는 쪽이다.
       // 옛 모양(문자열 하나)은 길이 1 목록이다. 틀린 이름·겹친 이름만 버린다(모듈 규율).
       const list = (Array.isArray(pools) ? pools : [pools]).map(name)
         .filter((n, i, all): n is string => n !== null && all.indexOf(n) === i);
-      if (list.length) agents[agentId] = list;
+      if (list.length) agents[agentId] = list.slice(0, MAX_AGENT_POOLS);
     }
   }
 

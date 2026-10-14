@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import type { AgentSessionView } from '@harkroom/shared';
 
+import { MAX_AGENT_POOLS } from '@harkroom/shared/claudePools';
+
 import { AgentPoolChain } from '../src/components/settings/AgentPoolChain';
 import { agentPoolChainState } from '../src/components/settings/useAgentPool';
 import type { ClaudeAccountsSnapshot } from '../src/lib/claudeAccounts';
@@ -85,6 +87,15 @@ describe('AgentPoolChain', () => {
       { pool: 'personal', account: 'p1', s: 90, reset: NOW + H },
     ]));
     expect(screen.getByTestId('agent-pool-chain-status').textContent).toMatch(/모든 풀이 소진됐다 — 가장 먼저 풀리는 2번 personal/);
+  });
+
+  it('목록이 상한(MAX_AGENT_POOLS)에 닿으면 「＋ 풀 추가」를 그리지 않는다(security n3)', () => {
+    const full = Array.from({ length: MAX_AGENT_POOLS }, (_, i) => `p${i}`);
+    render(<AgentPoolChain chain={full} pools={[...full, 'extra']} defaultPool="work" state={null} ready onChange={() => {}} />);
+    expect(screen.queryByTestId('agent-pool-chain-add')).toBeNull();
+    cleanup();
+    render(<AgentPoolChain chain={full.slice(1)} pools={[...full, 'extra']} defaultPool="work" state={null} ready onChange={() => {}} />);
+    expect(screen.getByTestId('agent-pool-chain-add')).toBeTruthy();
   });
 
   it('이 기기에 없는 풀은 건너뛰되 목록에서 빼지 않는다', () => {

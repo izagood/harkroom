@@ -64,7 +64,7 @@ import type { LocalMcpPort } from './localMcp.js';
 import type { LocalMergePort } from './localMerge.js';
 import type { WorkspaceCleanup } from './workspaceCleanupService.js';
 import type { LocalTerminalHub, LocalTerminalSubscriber } from './localTerminal.js';
-import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
+import { isUnsafeKey, MAX_AGENT_POOLS, type ClaudePoolsConfig } from '@harkroom/shared/claudePools';
 
 export interface DaemonServerDeps {
   /**
@@ -927,6 +927,7 @@ function readPoolsConfigPayload(payload: unknown): ClaudePoolsConfig | DaemonErr
     if (!Array.isArray(list) || list.some((n) => typeof n !== 'string')) {
       return daemonError('bad-payload', `order.${pool} 가 문자열 배열이 아니다`);
     }
+    if (isUnsafeKey(pool)) return daemonError('bad-payload', `order 에 쓸 수 없는 키가 있다: ${pool}`);
     outOrder[pool] = list as string[];
   }
   // 풀 순서(2026-10-15 풀 n개). 옛 UI 의 문자열 하나는 길이 1 목록으로 받는다 — 같은 앱 안이라도
@@ -936,6 +937,11 @@ function readPoolsConfigPayload(payload: unknown): ClaudePoolsConfig | DaemonErr
     const list = typeof pools === 'string' ? [pools] : pools;
     if (!Array.isArray(list) || list.some((n) => typeof n !== 'string')) {
       return daemonError('bad-payload', `agents.${agentId} 가 문자열 배열이 아니다`);
+    }
+    // security n1·n3: 프로토타입을 바꾸는 키와 지나치게 긴 목록은 받지 않는다.
+    if (isUnsafeKey(agentId)) return daemonError('bad-payload', `agents 에 쓸 수 없는 키가 있다: ${agentId}`);
+    if (list.length > MAX_AGENT_POOLS) {
+      return daemonError('bad-payload', `agents.${agentId} 풀이 ${MAX_AGENT_POOLS}개를 넘는다`);
     }
     outAgents[agentId] = list as string[];
   }
