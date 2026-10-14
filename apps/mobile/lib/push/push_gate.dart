@@ -8,6 +8,7 @@ import '../screens/thread_screen.dart';
 import '../state/app_scope.dart';
 import 'push_coordinator.dart';
 import 'push_platform.dart';
+import 'push_target.dart';
 import '../screens/tab_nav.dart';
 
 /// 준비된 앱(홈) 위에 서서 푸시의 화면 일을 한다.
@@ -79,18 +80,26 @@ class _PushGateState extends State<PushGate> {
     if (push == null || !mounted) return;
     final target = push.takePending();
     if (target == null) return;
+    unawaited(_open(target));
+  }
+
+  Future<void> _open(PushTarget target) async {
     final app = context.app;
     unawaited(app.openChannel(target.channelId));
+    // 목록에 아직 없는 채널(알림으로 막 생긴 DM)이면 DM 목록을 다시 받는다 — 그래야 DM 탭을 고른다
+    // (security #1368 n2). 이미 아는 채널이면 묻지 않고 곧장 간다.
+    await app.refreshDmsFor(target.channelId);
+    if (!mounted) return;
     final root = target.threadRootId;
     // 홈 **위**에서 부른다 — 루트를 걷고 그 채널이 사는 탭(DM·홈)을 골라 그 쌓기에 민다.
-    unawaited(openChannelScreen(
+    await openChannelScreen(
       context,
       target.channelId,
       navigator: Navigator.of(context),
       (_) => root == null
           ? MessageListScreen(channelId: target.channelId)
           : ThreadScreen(channelId: target.channelId, rootId: root),
-    ));
+    );
   }
 
   @override

@@ -454,6 +454,32 @@ class AppState extends ChangeNotifier {
     return id;
   }
 
+  /// 목록에 없는 채널이 DM 인지 알아야 할 때(알림으로 막 생긴 DM 이 들어왔다) `GET /dms` 를 다시 받아
+  /// 새 DM 을 목록에 붙인다. 알림에는 채널 종류가 실려 오지 않는다 — 목록을 다시 받는 것이 유일한 근거다.
+  /// 이미 있는 채널이면 묻지 않는다. 못 받으면 조용히 그대로 둔다(그 채널은 홈 탭에 열린다, 전과 같다).
+  Future<void> refreshDmsFor(String channelId) async {
+    if (channels.any((c) => c.id == channelId)) return;
+    final gen = _generation;
+    final api = _api;
+    if (api == null) return;
+    final List<ChannelRow> rows;
+    try {
+      rows = await api.dms();
+    } on Object {
+      return;
+    }
+    // 기다리는 사이 커뮤니티가 바뀌었다 — 옛 커뮤니티의 DM 을 새 목록에 붙이지 않는다.
+    if (gen != _generation) return;
+    final myId = me?.id ?? '';
+    var added = false;
+    for (final d in rows) {
+      if (channels.any((c) => c.id == d.id)) continue;
+      channels.add(d.withName(dmTitle(d, myId)));
+      added = true;
+    }
+    if (added) notifyListeners();
+  }
+
   void toggleSection(String key) {
     if (!collapsedSections.remove(key)) collapsedSections.add(key);
     notifyListeners();
