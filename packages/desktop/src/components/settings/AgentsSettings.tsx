@@ -38,6 +38,7 @@ import { LocalOperatorRow } from './LocalOperatorRow';
 import { ModelPicker } from './ModelPicker';
 import { hasOperatorLocalSurface, listLocalAgents } from '../../lib/operatorLocal';
 import { AgentScopeSection } from './AgentScopeSection';
+import { AgentChromeSection } from './AgentChromeSection';
 import { AgentGrantsSection, liveMergeCount, type MergeCount } from './AgentGrantsSection';
 import { AgentPickableSection } from './AgentPickableSection';
 import { kindLabel, MemoryDetail } from './MemoryDetail';
@@ -394,6 +395,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * 읽음, `'unknown'` 은 못 읽음(오프라인·권한 없음·오퍼레이터를 모름)이다.
    */
   const [modelCaps, setModelCaps] = useState<OperatorCapabilities['harnesses'] | 'unknown' | null>(null);
+  /** 배정된 기계의 Claude in Chrome 상태(`OperatorCapabilities.chrome`). 배정이 없거나 못 읽으면 undefined(모름). */
+  const [chromeMachine, setChromeMachine] = useState<OperatorCapabilities['chrome']>(undefined);
   /** 만들기 화면의 '이 기기에서 돌린다'. 기본이 켜짐이다 — 그것이 흔한 답이다. */
   const [runHere, setRunHere] = useState(true);
   const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
@@ -504,16 +507,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   const modelOperatorId = selected?.assignment?.operatorId
     ?? (typeof localOperator === 'object' && localOperator !== null ? localOperator.operatorId : null);
   const modelOperatorKnown = selected?.assignment != null || localOperator !== null;
+  const assignedOperatorId = selected?.assignment?.operatorId ?? null;
   useEffect(() => {
+    setChromeMachine(undefined);
     if (!modelOperatorId) { setModelCaps(modelOperatorKnown ? 'unknown' : null); return; }
     let live = true;
     setModelCaps(null);
+    // Chrome 은 **배정된** 기계만 본다 — 배정 전의 '이 기기' 기본값으로 판정하면 다른 기계에 배정된 뒤에도 그 값이 남는다.
+    const assigned = assignedOperatorId === modelOperatorId;
     void Promise.resolve()
       .then(() => getController().operatorCapabilities(modelOperatorId))
-      .then((c) => { if (live) setModelCaps(c.harnesses); })
+      .then((c) => { if (live) { setModelCaps(c.harnesses); if (assigned) setChromeMachine(c.chrome); } })
       .catch(() => { if (live) setModelCaps('unknown'); });
     return () => { live = false; };
-  }, [modelOperatorId, modelOperatorKnown]);
+  }, [modelOperatorId, modelOperatorKnown, assignedOperatorId]);
 
   /**
    * 이 기기의 오퍼레이터를 한 번 읽는다 — 만들기 화면의 기본 배정처(`localOperator`).
@@ -2908,6 +2915,19 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 <AgentScopeSection
                   agent={selected}
                   agents={agents}
+                  disabled={busy}
+                  onUpdated={(updated) => {
+                    setSelected(updated);
+                    setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                  }}
+                />
+              )}
+
+              {/* Claude in Chrome(스레드 e8c8365d). Claude 하네스만 — 다른 러너는 이 값을 보지 않는다. 옛 서버는 필드가 없다. */}
+              {selected && (isAdmin || isOwner) && selected.harness === 'claude-code' && selected.chromeEnabled !== undefined && (
+                <AgentChromeSection
+                  agent={selected}
+                  machine={chromeMachine}
                   disabled={busy}
                   onUpdated={(updated) => {
                     setSelected(updated);
