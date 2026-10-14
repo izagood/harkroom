@@ -39,6 +39,8 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     required this.dangerSurface,
     required this.warning,
     required this.warningSurface,
+    required this.saved,
+    required this.savedSurface,
     required this.success,
     required this.successSurface,
     required this.fgAgent,
@@ -104,6 +106,12 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
   final Color dangerSurface;
   final Color warning;
   final Color warningSurface;
+  /// **담아 둔 글**의 띠·글자(데스크톱 `--app-saved`, B안 2026-10-14). 강조(주황)·경고(노랑)와
+  /// 겹치지 않는 남보라 — 담김은 나를 막는 것이 아니라 내가 붙인 표시라 강조를 쓰지 않는다.
+  final Color saved;
+
+  /// 담아 둔 글 줄 전체에 까는 옅은 면(`--app-saved-surface`).
+  final Color savedSurface;
   final Color success;
   final Color successSurface;
   /// 에이전트 표지. 사람과 같은 모양에 색만 가른다(채도를 뺀 청록 회색).
@@ -147,6 +155,8 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     dangerSurface: Color(0xFFFDECEA),
     warning: Color(0xFF8A5A00),
     warningSurface: Color(0xFFFFF1CC),
+    saved: Color(0xFF4F46C8),
+    savedSurface: Color(0xFFEFEEFC),
     success: Color(0xFF1B7D45),
     successSurface: Color(0xFFE6F6EC),
     fgAgent: Color(0xFF4E5A56),
@@ -187,6 +197,8 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     dangerSurface: Color(0xFF3A1D1B),
     warning: Color(0xFFF0B43C),
     warningSurface: Color(0xFF33290F),
+    saved: Color(0xFFA9A3FF),
+    savedSurface: Color(0xFF23213A),
     success: Color(0xFF5CCF86),
     successSurface: Color(0xFF16301F),
     fgAgent: Color(0xFF8FA39D),

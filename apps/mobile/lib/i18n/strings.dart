@@ -415,8 +415,11 @@ abstract class Strings {
   /// 메시지 시트: 담은 것을 목록에서 빼기.
   String get messageUnsave;
 
-  /// 담긴 글의 이름 위 표식(데스크톱 message.savedMark).
+  /// 담긴 글의 이름줄 끝 표식(데스크톱 message.savedMark) — 짧은 말.
   String get messageSavedMark;
+
+  /// 그 표식의 긴 말(스크린리더, 데스크톱 message.savedMarkTooltip).
+  String get messageSavedMarkLong;
 
   /// 담은 뒤 토스트.
   String get savedAdded;
@@ -1268,6 +1271,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'messageSave': s.messageSave,
       'messageUnsave': s.messageUnsave,
       'messageSavedMark': s.messageSavedMark,
+      'messageSavedMarkLong': s.messageSavedMarkLong,
       'savedAdded': s.savedAdded,
       'savedOpenList': s.savedOpenList,
       'savedRemoved': s.savedRemoved,

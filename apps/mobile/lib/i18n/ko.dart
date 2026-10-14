@@ -324,7 +324,9 @@ class StringsKo implements Strings {
   @override
   String get messageUnsave => '담은 것 빼기';
   @override
-  String get messageSavedMark => '나중을 위해 저장됨';
+  String get messageSavedMark => '저장됨';
+  @override
+  String get messageSavedMarkLong => '나중을 위해 저장됨';
   @override
   String get savedAdded => '담았다';
   @override
