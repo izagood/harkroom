@@ -76,13 +76,13 @@ class MessageTile extends StatelessWidget {
     final attachmentsInGlow = body.isEmpty && card == null;
 
     // 담아 둔 글은 줄 전체에 **왼쪽 띠 + 옅은 면**(데스크톱과 같은 B안, 2026-10-14). 띠가 늘 같은 x
-    // 에 서니 훑을 때 잡히고, 이어 말한 줄(머리 없음)에도 같은 규칙이 선다. 띠 폭만큼 왼쪽 여백을
-    // 줄여 담고 풀 때 본문이 옆으로 뛰지 않게 한다.
+    // 에 서니 훑을 때 잡히고, 이어 말한 줄(머리 없음)에도 같은 규칙이 선다. 띠는 DecoratedBox 의
+    // 선이라 자식을 밀지 않는다(데스크톱의 안쪽 그림자와 같다) — 담고 풀 때 아바타·본문이 그대로다.
     final saved = app.isSaved(message.id);
     final row = Padding(
       key: Key('message-${message.id}'),
       padding: EdgeInsets.fromLTRB(
-          HarkroomSize.gutter - (saved ? _savedBand : 0), continued ? 1 : 8, HarkroomSize.gutter, 2),
+          HarkroomSize.gutter, continued ? 1 : 8, HarkroomSize.gutter, 2),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

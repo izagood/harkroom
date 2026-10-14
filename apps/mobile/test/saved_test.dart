@@ -15,6 +15,7 @@ import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_scope.dart';
 import 'package:harkroom/state/app_state.dart';
 import 'package:harkroom/theme.dart';
+import 'package:harkroom/ui/parts.dart';
 import 'package:harkroom/ui/states.dart';
 import 'package:harkroom/ui/tokens.dart';
 import 'package:http/http.dart' as http;
@@ -439,9 +440,8 @@ void main() {
       expect(deco.color, HarkroomTokens.light.savedSurface);
       expect((deco.border! as Border).left.color, HarkroomTokens.light.saved);
       expect((deco.border! as Border).left.width, 3);
-      // 띠 폭만큼 왼쪽 여백을 줄인다 — 담고 풀 때 본문이 옆으로 뛰지 않게.
-      final pad = tester.widget<Padding>(find.byKey(const Key('message-m1'))).padding as EdgeInsets;
-      expect(pad.left + 3, HarkroomSize.gutter);
+      // 띠는 자식을 밀지 않는다 — 담은 글의 아바타가 안 담은 글과 같은 x 에 선다.
+      expect(tester.getTopLeft(find.byType(HarkroomAvatar).first).dx, HarkroomSize.gutter);
       // 표식은 이름줄(시각 옆) 안이다 — 이름 위에 줄을 따로 세우지 않는다.
       final mark = find.byKey(const Key('saved-mark-m1'));
       expect(tester.getCenter(mark).dy, closeTo(tester.getCenter(find.byKey(const Key('time-m1'))).dy, 4));
@@ -454,11 +454,10 @@ void main() {
       expect(sem.properties.label, '나중을 위해 저장됨');
     });
 
-    testWidgets('안 담은 글에는 띠가 없고 왼쪽 여백은 그대로다', (tester) async {
+    testWidgets('안 담은 글에는 띠가 없고 아바타는 같은 x 다', (tester) async {
       await pump(tester, 'm2');
       expect(find.byKey(const Key('saved-band-m2')), findsNothing);
-      final pad = tester.widget<Padding>(find.byKey(const Key('message-m2'))).padding as EdgeInsets;
-      expect(pad.left, HarkroomSize.gutter);
+      expect(tester.getTopLeft(find.byType(HarkroomAvatar).first).dx, HarkroomSize.gutter);
     });
 
     testWidgets('시스템 글에는 담기·빼기 줄이 없다', (tester) async {
