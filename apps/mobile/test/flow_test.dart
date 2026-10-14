@@ -850,6 +850,59 @@ void main() {
     expect(find.byKey(const Key('channel-c1')), findsOneWidget);
   });
 
+  testWidgets('④ 탭 첫 화면 넷도 반투명 머리 — 목록은 머리 밑부터, 끊김 띠만 고정, 바로 가기 카드는 목록 안', (tester) async {
+    final state = _state();
+    await tester.pumpWidget(HarkroomApp(state: state));
+    await tester.pumpAndSettle();
+    addTearDown(state.dispose);
+    state.connection = SocketState.reconnecting;
+    state.notifyListeners();
+    await _settle(tester);
+
+    // 지금 보이는 탭의 머리·끊김 띠(다른 탭은 IndexedStack 뒤에 숨어 finder 가 건너뛴다).
+    Rect glass() => tester.getRect(find.byKey(const Key('glass-app-bar')));
+    void bandUnderHead() {
+      final band = find.byKey(const Key('connection-band'));
+      expect(band, findsOneWidget);
+      // 끊김 띠는 머리 바로 밑에 붙고, 굴러가는 목록 밖이다(고정).
+      expect(tester.getRect(band).top, glass().bottom);
+      expect(find.ancestor(of: band, matching: find.byType(Scrollable)), findsNothing);
+    }
+
+    // 홈: 목록은 화면 맨 위부터 그리고, 맨 위 여백이 머리 + 띠를 비운다.
+    expect(tester.getRect(find.byType(CustomScrollView)).top, 0);
+    final top = tester.getRect(find.byKey(const Key('channel-list-top')));
+    expect(top.bottom, greaterThanOrEqualTo(tester.getRect(find.byKey(const Key('connection-band'))).bottom));
+    bandUnderHead();
+    // 바로 가기 카드는 목록의 첫 줄 — 같이 굴러간다.
+    expect(
+      find.descendant(of: find.byType(CustomScrollView), matching: find.byKey(const Key('card-my-turn'))),
+      findsOneWidget,
+    );
+    expect(tester.getRect(find.byKey(const Key('card-my-turn'))).top, greaterThanOrEqualTo(glass().bottom));
+
+    // DM
+    await tester.tap(find.byKey(const Key('tab-dms')));
+    await tester.pumpAndSettle();
+    bandUnderHead();
+    expect(find.byKey(const Key('card-my-turn')), findsNothing);
+
+    // 받은 것: 고정 빈 머리가 머리 + 띠만큼 비워서, 묶음 머리(pinned)가 반투명 머리 뒤로 숨지 않는다.
+    await tester.tap(find.byKey(const Key('tab-inbox')));
+    await tester.pumpAndSettle();
+    bandUnderHead();
+    expect(tester.getRect(find.byKey(const Key('inbox-top-inset'))).bottom,
+        tester.getRect(find.byKey(const Key('connection-band'))).bottom);
+    // 당기기 회전자도 머리 밑에서 나온다.
+    expect(tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).edgeOffset,
+        tester.getRect(find.byKey(const Key('connection-band'))).bottom);
+
+    // 에이전트 탭의 목록 여백은 tab_bar_test(S7)가 잰다 — 이 가짜 서버에는 에이전트 응답이 없다.
+    await tester.tap(find.byKey(const Key('tab-agents')));
+    await tester.pumpAndSettle();
+    bandUnderHead();
+  });
+
   testWidgets('빈 작성칸이면 보내기가 흐리고 아무것도 안 가며, 글을 치면 주황이 된다', (tester) async {
     final state = _state();
     await tester.pumpWidget(HarkroomApp(state: state));

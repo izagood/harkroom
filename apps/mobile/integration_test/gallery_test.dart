@@ -252,6 +252,41 @@ void main() {
   });
 
   // ── 답글이 많은 채널(실기기 #task 의 모양). 최근 500 줄 대부분이 스레드 답글이다.
+  // ── ④ 탭 첫 화면 반투명(2026-10-14): 네 목록을 굴리기 전 · 손가락으로 위로 끄는 중(목록이 머리 밑으로
+  // 흐르는 모습). 끊김 띠를 세워 그 띠만 머리 밑에 고정되는 것도 같이 본다.
+  testWidgets('첫 화면 반투명', (tester) async {
+    final app = _galleryApp(_busyServer());
+    addTearDown(app.dispose);
+    await tester.pumpWidget(HarkroomApp(state: app));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    app.connection = SocketState.reconnecting;
+    app.notifyListeners();
+    Future<void> pair(String name) async {
+      await shot(tester, '40-$name-top');
+      final size = tester.view.physicalSize / tester.view.devicePixelRatio;
+      final g = await tester.startGesture(Offset(size.width / 2, size.height * 0.6));
+      for (var i = 0; i < 8; i++) {
+        await g.moveBy(const Offset(0, -40));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await shot(tester, '40-$name-scrolled');
+      await g.up();
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+    }
+
+    await pair('a-home');
+    await tester.tap(find.byKey(const Key('tab-dms')));
+    await pair('b-dms');
+    await tester.tap(find.byKey(const Key('tab-inbox')));
+    await pair('c-inbox');
+    await tester.tap(find.byKey(const Key('tab-agents')));
+    await pair('d-agents');
+  });
+
   testWidgets('답글 많은 채널', (tester) async {
     final app = _galleryApp(_busyServer());
     addTearDown(app.dispose);

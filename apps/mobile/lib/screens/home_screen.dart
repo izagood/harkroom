@@ -342,21 +342,28 @@ class AgentsScreen extends StatelessWidget {
       );
     }
 
-    final Widget body;
+    // [inset] = 반투명 머리 + 끊김 띠 높이 — 목록은 화면 맨 위부터 그리고 그만큼 비운다.
+    Widget body(double inset) {
     if (app.agentsLoad == LoadState.failed && app.agentActivity.isEmpty && app.agentWakes.isEmpty) {
-      body = FailedState(
-        title: t.agentsLoadFailed,
-        cause: app.failures['agents'] ?? LoadFailure.network,
-        onRetry: app.loadAgents,
+      return Padding(
+        padding: EdgeInsets.only(top: inset),
+        child: FailedState(
+          title: t.agentsLoadFailed,
+          cause: app.failures['agents'] ?? LoadFailure.network,
+          onRetry: app.loadAgents,
+        ),
       );
     } else if (app.agentsLoad == LoadState.loading && app.agentActivity.isEmpty) {
-      body = const LoadingSkeleton(rows: 3);
-    } else {
-      body = RefreshIndicator(
+      return Padding(padding: EdgeInsets.only(top: inset), child: const LoadingSkeleton(rows: 3));
+    }
+      return RefreshIndicator(
+        // 당기기 회전자는 머리 밑에서 나온다 — 0 이면 반투명 머리 뒤에 숨는다.
+        edgeOffset: inset,
         onRefresh: app.loadAgents,
         child: ListView(
           key: const Key('agents-list'),
           physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.only(top: inset),
           children: [
             head(t.agentsRunning, 'agents-running'),
             if (app.agentActivity.isEmpty)
@@ -422,8 +429,10 @@ class AgentsScreen extends StatelessWidget {
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text(t.tabAgents), actions: const [OpenMeButton(), SizedBox(width: 8)]),
-      body: SafeArea(child: Column(children: [const ConnectionBand(), Expanded(child: body)])),
+      // 반투명 머리(④) — 목록이 그 밑으로 흐르고, 끊김 띠만 머리 밑에 고정한다.
+      extendBodyBehindAppBar: true,
+      appBar: GlassAppBar(bar: AppBar(title: Text(t.tabAgents), actions: const [OpenMeButton(), SizedBox(width: 8)])),
+      body: SafeArea(top: false, child: GlassBody(header: const ConnectionBand(), builder: (context, inset) => body(inset))),
     );
   }
 }

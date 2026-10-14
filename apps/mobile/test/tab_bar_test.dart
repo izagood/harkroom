@@ -166,6 +166,12 @@ void main() {
         findsOneWidget);
     expect(find.byKey(const Key('agent-a-designer')), findsOneWidget);
     expect(find.byKey(const Key('agent-a-qa')), findsOneWidget);
+    // ④ 반투명 머리: 목록은 화면 맨 위부터 그리고, 위 여백이 머리를 비운다. 당기기 회전자도 머리 밑.
+    final head = tester.getRect(find.byKey(const Key('glass-app-bar'))).bottom;
+    expect(tester.getRect(find.byKey(const Key('agents-list'))).top, 0);
+    final pad = tester.widget<ListView>(find.byKey(const Key('agents-list'))).padding! as EdgeInsets;
+    expect(pad.top, head);
+    expect(tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).edgeOffset, head);
     // 읽기 전용 — 터미널·멈춤 아이콘이 없다.
     expect(find.byIcon(Icons.terminal), findsNothing);
     expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
