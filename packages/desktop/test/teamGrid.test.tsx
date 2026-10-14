@@ -436,7 +436,7 @@ describe('팀 카드 — 틀이 에이전트 카드와 같다', () => {
     expect(faces.querySelector('.h-\\[88px\\]')).toBeNull();
     // 겹침과 링은 **선례의 그것**이다(`ThreadParticipants`·`MessageItem`) — `#471`.
     expect(faces.className).toContain('-space-x-1');
-    expect(screen.getByTestId('team-face-release-a').className).toContain('rounded-[27.78%]');
+    expect(screen.getByTestId('team-face-release-a').className).toContain('rounded-avatar');
     expect(screen.getByTestId('team-face-release-a').className).toContain('ring-1');
   });
 
