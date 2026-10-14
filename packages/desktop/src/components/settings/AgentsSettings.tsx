@@ -2926,6 +2926,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
               {/* Claude in Chrome(스레드 e8c8365d). Claude 하네스만 — 다른 러너는 이 값을 보지 않는다. 옛 서버는 필드가 없다. */}
               {selected && (isAdmin || isOwner) && selected.harness === 'claude-code' && selected.chromeEnabled !== undefined && (
                 <AgentChromeSection
+                  // 에이전트를 바꾸면 새로 그린다 — 경고 확인 상태가 다른 에이전트로 넘어가지 않게(security F3).
+                  key={selected.id}
                   agent={selected}
                   machine={chromeMachine}
                   disabled={busy}

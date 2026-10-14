@@ -71,6 +71,8 @@ describe('AgentChromeSection', () => {
     render(<AgentChromeSection agent={agent(over as Partial<AgentView>)} machine={machine} onUpdated={vi.fn()} />);
     expect(toggle().disabled).toBe(true);
     expect(screen.getByTestId('agent-chrome-status').textContent).toContain(text);
+    // 상태가 먼저 온다(designer s1) — 까닭만 있으면 「꺼짐」과 결이 갈린다.
+    expect(screen.getByTestId('agent-chrome-status').textContent).toMatch(/^꺼짐 — 켤 수 없다: /);
   });
 
   it('켜진 채 막혔으면 「켜져 있지만 붙지 않는다」를 말하고 끌 수는 있다', async () => {
@@ -87,6 +89,28 @@ describe('AgentChromeSection', () => {
     render(<AgentChromeSection agent={agent()} machine={undefined} onUpdated={vi.fn()} />);
     expect(toggle().disabled).toBe(false);
     expect(screen.getByTestId('agent-chrome-status').textContent).toContain('읽지 못했다');
+  });
+
+  it('경고를 띄운 채 다른 에이전트로 바꾸면 경고가 사라지고 꺼진 채다 — A 에서 띄운 확인으로 B 를 켜지 못한다(security F3)', () => {
+    const update = setup();
+    const { rerender } = render(<AgentChromeSection agent={agent()} machine="available" onUpdated={vi.fn()} />);
+    fireEvent.click(toggle());
+    expect(screen.getByTestId('agent-chrome-warning')).toBeTruthy();
+    rerender(<AgentChromeSection agent={agent({ id: 'agent-2', handle: 'other' })} machine="available" onUpdated={vi.fn()} />);
+    expect(screen.queryByTestId('agent-chrome-warning')).toBeNull();
+    expect(toggle().checked).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('경고가 뜨면 포커스는 [취소]에 있고, Esc 로 닫힌다 — 상태 줄은 확인을 기다린다고 말한다(designer n3·n4)', () => {
+    const update = setup();
+    render(<AgentChromeSection agent={agent()} machine="available" onUpdated={vi.fn()} />);
+    fireEvent.click(toggle());
+    expect(document.activeElement).toBe(screen.getByTestId('agent-chrome-cancel'));
+    expect(screen.getByTestId('agent-chrome-status').textContent).toContain('확인을 기다린다');
+    fireEvent.keyDown(screen.getByTestId('agent-chrome-cancel'), { key: 'Escape' });
+    expect(screen.queryByTestId('agent-chrome-warning')).toBeNull();
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('서버가 사람 세션이 아니라고 거절하면(403 human_session_required) 그 까닭을 보인다', async () => {
