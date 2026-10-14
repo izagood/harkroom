@@ -159,8 +159,10 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         ...(local?.claudePool ? { HARKROOM_CLAUDE_POOL: local.claudePool } : {}),
         // 「정확한 명령」 hook(H③b) — 켜졌을 때만. 못 읽으면 꺼짐.
         ...((await deps.commandHook?.().catch(() => false)) ? { HARKROOM_COMMAND_HOOK: '1' } : {}),
-        // Claude in Chrome — 머신이 열 수 있을 때만(앱이 띄운 로컬 + native host). 못 재면 닫힘.
-        ...((await deps.chromeHost?.().catch(() => false)) ? { HARKROOM_CHROME_HOST: '1' } : {}),
+        // Claude in Chrome — 머신이 열 수 있을 때만 '1'(앱이 띄운 로컬 + native host). 못 재면 닫힘.
+        // **늘 '0'/'1' 로 명시한다**(security F1): 러너 env 는 오퍼레이터의 process.env 위에 얹히므로(`runners.ts::withUserEnv`)
+        // 거짓일 때 키를 빼면 `run` 오퍼레이터를 띄운 셸에 있던 `HARKROOM_CHROME_HOST=1` 이 그대로 새어 열린다.
+        HARKROOM_CHROME_HOST: (await deps.chromeHost?.().catch(() => false)) ? '1' : '0',
       };
       let result: Awaited<ReturnType<AssignmentDeps['spawn']>>;
       try {

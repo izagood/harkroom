@@ -1069,5 +1069,8 @@ describe('Claude in Chrome — 켜진 에이전트·열 수 있는 머신에서�
     expect(chromeTurnFor({ chromeEnabled: true }, undefined)).toBe(false);
     expect(chromeTurnFor({ chromeEnabled: false }, true)).toBe(false);
     expect(chromeTurnFor({}, true)).toBe(false);
+    // 읽기 전용 에이전트는 닫힌다(security n1).
+    expect(chromeTurnFor({ chromeEnabled: true, mentionPermission: 'readonly' }, true)).toBe(false);
+    expect(chromeTurnFor({ chromeEnabled: true, mentionPermission: 'auto' }, true)).toBe(true);
   });
 });

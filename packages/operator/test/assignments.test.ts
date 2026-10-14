@@ -300,11 +300,17 @@ describe('restart — 사람의 [재시작]', () => {
 
 // Claude in Chrome(스레드 e8c8365d) — 머신이 열 수 있을 때만 러너에 `HARKROOM_CHROME_HOST=1`. 못 재면 닫힘.
 describe('HARKROOM_CHROME_HOST', () => {
+  it('늘 명시한다 — 러너 env 가 얹히는 자리(process.env)에 1 이 있어도 머신이 못 열면 0 이 이긴다(security F1)', async () => {
+    const h = harness({ chromeHost: async () => false });
+    await createAssignmentReconciler(h.deps).onAssign('https://example.com', def(), undefined);
+    const merged = { ...{ HARKROOM_CHROME_HOST: '1' }, ...h.spawned[0]!.env };
+    expect(merged.HARKROOM_CHROME_HOST).toBe('0');
+  });
   const cases: [string, AssignmentDeps['chromeHost'], string | undefined][] = [
     ['참이면 1 을 준다', async () => true, '1'],
-    ['거짓이면 주지 않는다', async () => false, undefined],
-    ['판정이 던지면 주지 않는다', async () => { throw new Error('boom'); }, undefined],
-    ['판정이 없으면(옛 배선) 주지 않는다', undefined, undefined],
+    ['거짓이면 0 으로 덮는다', async () => false, '0'],
+    ['판정이 던지면 0', async () => { throw new Error('boom'); }, '0'],
+    ['판정이 없으면(옛 배선) 0', undefined, '0'],
   ];
   it.each(cases)('%s', async (_label, chromeHost, want) => {
     const h = harness(chromeHost ? { chromeHost } : {});

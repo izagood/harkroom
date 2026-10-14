@@ -701,9 +701,12 @@ export function safeToolAllows(rules: readonly string[]): string[] {
 /**
  * 이 턴에 Claude in Chrome 을 여는가(스레드 e8c8365d). **둘 다 참일 때만** 연다 — 에이전트 소유자가 켰고(`chromeEnabled`,
  * 서버 값·옛 서버는 싣지 않으니 없음=꺼짐), 이 머신이 열 수 있다(`chromeHost`: 앱이 띄운 로컬 오퍼레이터 + native host).
- * 원격 오퍼레이터에서는 사람의 브라우저가 거기 없으므로 설정값과 상관없이 닫힌다.
+ * 원격 오퍼레이터에서는 사람의 브라우저가 거기 없으므로 설정값과 상관없이 닫힌다. 읽기 전용 에이전트도 닫힌다.
  */
-export function chromeTurnFor(def: { chromeEnabled?: boolean }, chromeHost: boolean | undefined): boolean {
+export function chromeTurnFor(def: { chromeEnabled?: boolean; mentionPermission?: MentionPermission }, chromeHost: boolean | undefined): boolean {
+  // 읽기 전용 에이전트는 닫는다(security n1): plan 모드가 페이지 클릭·폼 입력처럼 **바깥 웹에 쓰는** 동작을 어디까지
+  // 막는지 재지 않았다. 열어 두면 「읽기 전용」이 사람의 로그인된 사이트에서 쓰기를 할 수 있는 길이 된다.
+  if (def.mentionPermission === 'readonly') return false;
   return def.chromeEnabled === true && chromeHost === true;
 }
 
