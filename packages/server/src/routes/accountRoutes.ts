@@ -8,7 +8,7 @@ import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
 import {
   ackAgentStop, assignmentOf, createAgentAccount, definitionFor, deleteAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
-  revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, setRequiresMacos, setTrustSiblings, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
+  revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, setChromeEnabled, setRequiresMacos, setTrustSiblings, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
 } from '../services/agents.js';
 import { isEligibleDelegate } from '../services/invokeGate.js';
 import { actorOf, recordAudit } from '../audit.js';
@@ -230,10 +230,11 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
    * - `harness`: 어느 CLI 바이너리가 실제로 실행되는지.
    * - `instructions`: 에이전트가 무엇을 하도록 지시받는지. 원문은 남기지 않는다.
    * - `trustSiblings`: 같은 소유자의 owner 에이전트가 명단 없이 이 에이전트를 깨우는지(083).
+   * - `chromeEnabled`: 이 에이전트가 오퍼레이터 기계의 Chrome(사람의 로그인 세션 포함)을 조작하는지(126).
    */
   const AUDITED_FIELDS = {
     mentionPermission: 'value', workingDir: 'value', ownerAccountId: 'value',
-    harness: 'value', instructions: 'changed', trustSiblings: 'value',
+    harness: 'value', instructions: 'changed', trustSiblings: 'value', chromeEnabled: 'value',
   } as const;
 
   type AuditedField = keyof typeof AUDITED_FIELDS;
@@ -394,9 +395,18 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       trustSiblings: z.boolean().optional(),
       // 맥 전용 표시(106). 소유자·admin 이 정한다. 배정을 막지 않는다 — 화면이 경고만 한다(v3).
       requiresMacos: z.boolean().optional(),
+      // Claude in Chrome 연동(126). 소유자·admin 이 정한다. 사람의 브라우저를 조작하게 하는 권한이라
+      // 감사 대상이다(`AUDITED_FIELDS`).
+      chromeEnabled: z.boolean().optional(),
     }).parse(req.body);
 
     const account = req.account!;
+    // Chrome 연동 **켜기**는 사람의 로그인 세션만 한다(security F2, 스레드 e8c8365d). 사람의 브라우저를 조작하게 하는
+    // 권한이라, 다른 에이전트의 owner 로 지정된 에이전트나 admin 에이전트가 PAT 로 켜는 길을 닫는다. 끄기는 좁히는
+    // 쪽이라 지금처럼 owner·admin 누구나 한다.
+    if (patch.chromeEnabled === true && !(account.kind === 'human' && req.authVia === 'session')) {
+      return reply.code(403).send({ error: { code: 'human_session_required', message: 'only a signed-in human can enable Chrome control' } });
+    }
     if (!account.isAdmin) {
       // `Object.keys` 를 보는 이유: zod 는 보내지 않은 키를 만들지 않으므로 키의 **존재**가
       // "이 필드를 건드리려 한다"와 같다. 값으로 판정하면 `disabled: false` 나
@@ -469,6 +479,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     if (patch.mcpServers !== undefined) await setAgentMcpServers(pool, id, patch.mcpServers);
     if (patch.trustSiblings !== undefined) await setTrustSiblings(pool, id, patch.trustSiblings);
     if (patch.requiresMacos !== undefined) await setRequiresMacos(pool, id, patch.requiresMacos);
+    if (patch.chromeEnabled !== undefined) await setChromeEnabled(pool, id, patch.chromeEnabled);
 
     let revokedLabels: string[] = [];
     if (patch.disabled !== undefined && patch.disabled !== before.disabled) {

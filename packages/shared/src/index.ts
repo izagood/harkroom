@@ -256,6 +256,12 @@ export interface AgentView extends AccountView, AgentConfig {
    * 옛 서버는 싣지 않는다(없음 = false).
    */
   requiresMacos?: boolean;
+  /**
+   * Claude in Chrome 연동(마이그레이션 126, 기본 false). 켜져 있으면 러너가 claude 턴에 `--chrome` 을 붙인다 —
+   * 단 그 오퍼레이터 기계에 확장 native host 가 있고 원격 오퍼레이터가 아닐 때만. 꺼져 있으면 `--no-chrome`.
+   * claude 가 아닌 하네스는 무시한다. 옛 서버는 싣지 않는다 — 화면은 없으면 토글을 그리지 않는다.
+   */
+  chromeEnabled?: boolean;
   /** 이 에이전트에 붙는 MCP 서버 **이름**들 — `mcp_server` 레지스트리의 부분집합(스펙 §6). 정의는 오퍼레이터 머신에 있다. */
   mcpServers: string[];
 }
