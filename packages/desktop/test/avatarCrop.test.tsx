@@ -104,6 +104,10 @@ describe('「사진 맞추기」 모달 (designer 시안 A)', () => {
     const dialog = await loaded();
     // 움직이는 GIF 는 첫 장만 남는다고 미리 말한다.
     expect(within(dialog).getByText('움직이는 GIF는 첫 장만 남는다.')).toBeTruthy();
+    // 미리보기 첫 칸은 이 창을 연 화면(내 프로필 40)의 크기다 — 다른 화면의 크기를 거짓 칸으로 세우지 않는다(designer nit).
+    expect(within(dialog).getByText('40 설정')).toBeTruthy();
+    expect(within(dialog).queryByText('48 설정')).toBeNull();
+    expect(within(dialog).getByText('32 메시지')).toBeTruthy();
     expect(c.setAvatar).not.toHaveBeenCalled();
 
     fireEvent.click(within(dialog).getByRole('button', { name: '취소' }));

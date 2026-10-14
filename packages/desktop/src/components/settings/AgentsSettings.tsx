@@ -2416,7 +2416,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       </span>
                     </div>
                     <AvatarStatus phase={avatarEdit.phase} />
-                    <AvatarCropHost edit={avatarEdit} name={selected.displayName || selected.handle} />
+                    <AvatarCropHost edit={avatarEdit} name={selected.displayName || selected.handle} settingsPx={48} />
                   </div>
                 )}
                 {/*

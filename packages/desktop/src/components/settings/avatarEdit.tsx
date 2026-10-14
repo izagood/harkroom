@@ -292,7 +292,7 @@ export function AvatarStatus({ phase }: { phase: AvatarPhase }) {
  * 맞추기 창을 띄우는 자리. 두 화면(내 프로필·에이전트)이 같은 창을 같은 규칙으로 띄운다.
  * 「다른 사진…」은 같은 파일 고르개를 다시 연다 — 고르면 `onPicked` 가 창의 사진을 바꾼다.
  */
-export function AvatarCropHost({ edit, name }: { edit: AvatarEdit; name: string }) {
+export function AvatarCropHost({ edit, name, settingsPx }: { edit: AvatarEdit; name: string; settingsPx: number }) {
   if (!edit.crop) return null;
   return (
     <AvatarCropDialog
@@ -301,6 +301,7 @@ export function AvatarCropHost({ edit, name }: { edit: AvatarEdit; name: string 
       isGif={edit.crop.isGif}
       initialCrop={edit.crop.initialCrop}
       name={name}
+      settingsPx={settingsPx}
       onCancel={edit.cancelCrop}
       onSave={edit.saveCrop}
       onPickOther={edit.openPicker}

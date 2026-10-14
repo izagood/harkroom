@@ -505,8 +505,8 @@ export const en = {
   'avatarCrop.zoom': 'Zoom',
   'avatarCrop.hint': 'Drag or use the arrow keys to move · scroll or pinch to zoom · 0 resets',
   'avatarCrop.preview': 'Preview',
-  'avatarCrop.previewAgentProfile': '48 agent profile',
-  'avatarCrop.previewMyProfile': '40 my profile',
+  /** 이 창을 연 설정 화면의 크기 — 에이전트 48 · 내 프로필 40. */
+  'avatarCrop.previewSettings': '{px} settings',
   'avatarCrop.previewMessage': '32 message',
   'avatarCrop.previewMention': '20 mention',
   'avatarCrop.previewSample': 'This is how the new photo looks.',

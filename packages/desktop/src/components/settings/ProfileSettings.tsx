@@ -101,7 +101,7 @@ function AvatarRow() {
       <div className="flex justify-end">
         <AvatarStatus phase={edit.phase} />
       </div>
-      <AvatarCropHost edit={edit} name={me?.displayName || me?.handle || ''} />
+      <AvatarCropHost edit={edit} name={me?.displayName || me?.handle || ''} settingsPx={40} />
     </div>
   );
 }

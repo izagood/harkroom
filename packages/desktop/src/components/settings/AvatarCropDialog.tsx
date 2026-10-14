@@ -18,11 +18,12 @@ const STEP_BIG_PX = 20;
 /** +/− 한 번의 배율. */
 const ZOOM_STEP = 1.1;
 
-/** 미리보기 — 실제 쓰이는 크기 넷(designer 시안). */
-const PREVIEWS = [
-  // 실제로 그리는 크기다(designer n1): 에이전트 설정 Profile h-12 · 내 프로필 h-10 · 메시지 거터 h-8 · 멘션·목록 h-5.
-  { px: 48, key: 'avatarCrop.previewAgentProfile' },
-  { px: 40, key: 'avatarCrop.previewMyProfile' },
+/**
+ * 미리보기 — 실제로 그리는 크기 셋(designer n1·nit). 첫 칸은 **이 창을 연 설정 화면의 크기**라 부르는 쪽이 넘긴다
+ * (에이전트 설정 h-12 = 48, 내 프로필 h-10 = 40). 둘을 다 세우면 한쪽은 늘 그 화면에 없는 거짓 칸이고, 칸 넷이면 줄이 넘쳤다.
+ * 나머지는 메시지 거터 h-8 · 멘션·목록 h-5.
+ */
+const PREVIEWS_REST = [
   { px: 32, key: 'avatarCrop.previewMessage' },
   { px: 20, key: 'avatarCrop.previewMention' },
 ] as const;
@@ -38,7 +39,7 @@ const PREVIEWS = [
  * 같은 `placement` 로 그린다(보이는 것과 저장되는 것이 어긋나지 않게).
  */
 export function AvatarCropDialog({
-  src, isGif, initialCrop, name, onCancel, onSave, onPickOther,
+  src, isGif, initialCrop, name, settingsPx, onCancel, onSave, onPickOther,
 }: {
   /** 원본을 가리키는 objectURL. 부르는 쪽이 만들고 치운다. */
   src: string;
@@ -48,6 +49,8 @@ export function AvatarCropDialog({
   initialCrop: AvatarCrop | null;
   /** 미리보기 메시지 줄의 이름. */
   name: string;
+  /** 이 창을 연 설정 화면이 아바타를 그리는 크기(px). 미리보기 첫 칸이 된다. */
+  settingsPx: number;
   onCancel(): void;
   onSave(result: { blob: Blob; crop: AvatarCrop }): void;
   /** 「다른 사진…」 — 파일 창을 다시 연다. 고르면 부르는 쪽이 `src` 를 바꿔 이 창을 다시 그린다. */
@@ -226,12 +229,12 @@ export function AvatarCropDialog({
           <div className="min-w-0 flex-1">
             <p className="text-meta text-fg-muted">{t('avatarCrop.preview')}</p>
             <div className="mb-3 mt-1.5 flex flex-wrap items-end gap-4">
-              {PREVIEWS.map(({ px, key }) => (
+              {[{ px: settingsPx, key: 'avatarCrop.previewSettings' as const }, ...PREVIEWS_REST].map(({ px, key }) => (
                 <figure key={px} className="m-0 text-center text-meta text-fg-muted">
                   <div className="relative mx-auto mb-1 overflow-hidden rounded-avatar bg-surface-sunken" style={{ width: px, height: px }}>
                     {pic(px)}
                   </div>
-                  {t(key)}
+                  {t(key, { px })}
                 </figure>
               ))}
             </div>
