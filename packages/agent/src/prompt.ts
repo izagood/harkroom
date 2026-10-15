@@ -62,6 +62,26 @@ export function silentTurnNotice(opts: {
 }
 
 
+/**
+ * **하위 에이전트를 기다리다 거둔 턴의 통지**(2026-10-16). 러너는 차례를 끝낸 턴에 백그라운드 하위 에이전트가
+ * 남아 있으면 거두지 않고 기다린다(`mentionTurn.ts` 의 `backgroundWaitMs`). 그 상한이 차서 거뒀을 때 남는 글이다 —
+ * 하위 에이전트는 하네스와 같은 프로세스 안에서 돌아 함께 끝난다. 사람이 "아직 작업 중"으로 믿고 기다리지
+ * 않도록, 끊긴 것과 다시 부르면 된다는 것을 같이 말한다. 마지막 말은 `silentTurnNotice` 와 같은 규칙으로 가린다.
+ */
+export function backgroundCutNotice(opts: {
+  count: number;
+  waitedMs: number;
+  lastSaid: string | null;
+  pat: string;
+  secrets?: readonly string[];
+}): string {
+  const minutes = Math.max(1, Math.round(opts.waitedMs / 60_000));
+  const said = quotedLine(opts.lastSaid, opts.pat, opts.secrets);
+  return `하위 에이전트 ${opts.count}개가 ${minutes}분 안에 끝나지 않아 턴을 거뒀습니다 — 그 작업은 끊겼습니다.`
+    + (said ? ` 마지막 말: "${said}"` : '')
+    + ' 다시 부르면 이어서 합니다.';
+}
+
 /** 통지에 실을 하네스 출력의 상한. 이 길이를 넘으면 앞을 자르고 뒤를 남긴다. */
 const TAIL_NOTICE_MAX_CHARS = 1000;
 
@@ -903,6 +923,10 @@ export function buildSystemPrompt(opts: {
     '',
     '네가 말을 멈추면 이 프로세스는 그 자리에서 죽는다. "나중에", "결과가 나오면"은 실행되지',
     '않는다 — 백그라운드로 띄운 명령도 프로세스와 함께 죽는다.',
+    // 2026-10-16(#rcms): rcms·designer 가 하위 에이전트를 백그라운드로 띄우고 "결과를 기다린다"며 차례를 끝냈다.
+    // 러너는 이제 남은 하위 에이전트를 기다려 주지만(`backgroundWaitMs`) 상한이 있다 — 결과를 받고 끝내는 것이 정도다.
+    '하위 에이전트(Agent 도구)를 띄웠으면 그 결과를 받아 쓴 뒤에 차례를 끝낸다. 러너는 남은 하위 에이전트를',
+    '턴 예산만큼 기다려 주지만, 넘기면 하위 에이전트도 함께 끊긴다.',
     '',
     ...(budgetMinutes === null ? [] : [
       `이 턴의 예산은 ${budgetMinutes}분이다. 그 안에 끝나는 기다림은 포그라운드에서 기다려도 된다.`,

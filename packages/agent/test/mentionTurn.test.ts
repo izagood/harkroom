@@ -3650,12 +3650,20 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
     expect(fake.posts.map((p) => p.body)).toEqual([NO_REPLY_NOTICE]);
   });
 
-  it('end_turn 뒤 서브에이전트가 남아 있으면(pending > 0) 지금처럼 유예한다 — 10-01 사고의 재발 방지', async () => {
+  /**
+   * 하위 에이전트를 남긴 채 끝낸 턴(2026-10-16 #rcms). 전에는 `orphanMs`(60초) 뒤 SIGTERM 으로 하위 에이전트까지
+   * 같이 죽이고 ✅ 만 남겼다. 이제는 `backgroundWaitMs` 까지 거두지 않고, 차면 거두며 끊겼다고 알린다.
+   * 되돌려 RED: `reconsiderEnd` 의 pending 가지를 빼면 `orphanMs`(20ms) 만에 죽어 시간 단언이, 통지를 빼면
+   * 글 단언이 깨진다.
+   */
+  it('end_turn 뒤 하위 에이전트가 남아 있으면(pending > 0) 거두지 않고 기다리다, 상한이 차면 거두고 끊겼다고 알린다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 확인해 줘');
     const t = tuiScript(() => {}, 5_000);
     const { deps, runTurn } = await makeDeps(fake, {
-      utteranceProbeMs: 5, orphanMs: 150, readTurnState: async () => 'ended', readPendingBackground: async () => 2,
+      utteranceProbeMs: 5, orphanMs: 20, backgroundWaitMs: 300,
+      readTurnState: async () => 'ended', readPendingBackground: async () => 2,
+      readLastSaid: async () => '하위 에이전트 결과를 기다린다',
       harnessStallMs: 0, readTranscriptMtime: async () => null,
     });
     runTurn.script = t.script;
@@ -3663,7 +3671,62 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
     const started = Date.now();
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
     expect(t.killed()).toBe('SIGTERM');
-    expect(Date.now() - started).toBeGreaterThanOrEqual(150);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+    expect(fake.posts.map((p) => p.body)).toEqual([
+      '하위 에이전트 2개가 1분 안에 끝나지 않아 턴을 거뒀습니다 — 그 작업은 끊겼습니다. 마지막 말: "하위 에이전트 결과를 기다린다" 다시 부르면 이어서 합니다.',
+    ]);
+  });
+
+  it('하위 에이전트를 기다리는 동안에는 무발화 시계가 턴을 실패로 접지 않는다 — 대기 상한이 정한다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 확인해 줘');
+    const t = tuiScript(() => {}, 5_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 20, backgroundWaitMs: 300, turnTimeoutMs: 100,
+      readTurnState: async () => 'ended', readPendingBackground: async () => 1,
+      readLastSaid: async () => null,
+      harnessStallMs: 0, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    // 되돌려 RED: 무발화 시계가 100ms 에 접으면 실패 경로로 던진다.
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(t.killed()).toBe('SIGTERM');
+    expect(fake.posts.map((p) => p.body)).toEqual([
+      '하위 에이전트 1개가 1분 안에 끝나지 않아 턴을 거뒀습니다 — 그 작업은 끊겼습니다. 다시 부르면 이어서 합니다.',
+    ]);
+  });
+
+  /**
+   * claude TUI 는 하위 에이전트가 끝나면 그 결과로 다음 차례를 스스로 시작한다(PTY 프로브 실측, 2.1.301).
+   * 그 차례가 하위 에이전트 없이 끝나면 그때 바로 거둔다 — 끊겼다는 통지는 없다.
+   * 되돌려 RED: pending 가지를 빼면 첫 `ended`(pending 2)에서 `orphanMs` 뒤 죽어 tail 이 `working` 으로 바뀌기 전에 끝난다.
+   */
+  it('기다리는 동안 하네스가 결과를 받아 다시 일하고 하위 에이전트 없이 끝내면 그때 거둔다 — 끊김 통지는 없다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 확인해 줘');
+    const t = tuiScript(() => {}, 5_000);
+    let reads = 0;
+    const startedAt = Date.now();
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 20, backgroundWaitMs: 60_000,
+      // 0~150ms: 차례 끝·하위 2개 남음 → 150~250ms: 결과를 받아 다시 일함 → 그 뒤: 끝·남은 것 없음.
+      readTurnState: async () => {
+        reads += 1;
+        const at = Date.now() - startedAt;
+        return at < 150 ? 'ended' : at < 250 ? 'working' : 'ended';
+      },
+      readPendingBackground: async () => (Date.now() - startedAt < 150 ? 2 : 0),
+      harnessStallMs: 0, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(t.killed()).toBe('SIGTERM');
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    expect(reads).toBeGreaterThan(3);
+    expect(fake.posts.map((p) => p.body)).toEqual([NO_REPLY_NOTICE]);
   });
 
   it('자식 작업 수를 모르면(null) 유예한다 — 모르는 것을 "없다"로 읽지 않는다', async () => {
