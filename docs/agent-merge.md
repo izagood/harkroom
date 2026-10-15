@@ -82,7 +82,10 @@
   쓰지 않고 기다리던 머지 카드도 닫지 않는다 — 큐가 실제로 머지했는지는 이 보고가 말하지 않는다.
 - **큐가 머지할 때까지 기다리지 않는다. 확인은 같은 명령을 다시 부르는 것이다.** 아직 큐에 있으면 `alreadyQueued: true`
   (오류 아님, 아무것도 하지 않고 보고도 없다), 큐가 머지했으면 `not_open`(pr.state `MERGED`). 큐가 PR 을 빼냈으면(OPEN·큐에 없음)
-  다시 부르는 것은 새 머지 요청이다 — 관문을 처음부터 다시 지난다.
+  다시 부르는 것은 새 머지 요청이다 — 관문을 처음부터 다시 지난다. 이미 MERGED·CLOSED 인 PR 에는 「⛔ 머지 실패」 줄을 쓰지 않고
+  기다리던 카드만 닫는다(`merge-closed`).
+- 실측(10-16, 시험 저장소, 래퍼 본체 + 모의 서버): 큐 브랜치의 ready PR 은 `CLEAN` 으로 온다. 큐에 든 PR 에 다시 넣으면 GitHub 은
+  `Pull request is already in the queue`(UNPROCESSABLE), head 가 바뀐 뒤 옛 head 로 넣으면 `expected head oid does not match the current head oid` 로 거절한다.
 - 이미 큐에 있는 PR 은 어느 길에서든 읽기 전용으로 알아보고 끝낸다: 1회 승인 사전 확인(승인을 쓰지 않는다), 권한 거절
   (`not_granted`·`cause_not_human` — 카드를 세우지 않는다), 판정 통과(다시 넣지 않는다). 넣는 사이 다른 쪽이 먼저 넣었다는
   GitHub 오류도 `alreadyQueued` 로 돌려준다.

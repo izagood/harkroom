@@ -218,9 +218,12 @@ export function parseQueueInfo(stdout: string): QueueInfo | null {
   } catch { return null; }
 }
 
-/** 큐에 넣으려는데 이미 들어 있다는 GitHub 의 답(경합 — 우리가 읽은 뒤 누가 넣었다). */
+/**
+ * 큐에 넣으려는데 이미 들어 있다는 GitHub 의 답(경합 — 우리가 읽은 뒤 누가 넣었다). 실측(10-16, mq-sandbox): GraphQL
+ * `UNPROCESSABLE` 「Pull request is already in the queue」 — 「merge」 낱말이 없다. 문구만 믿지 않고 다시 읽는다(security n1).
+ */
 export function isAlreadyQueuedError(stderr: string): boolean {
-  return /already (?:been )?(?:added to|in|queued in) (?:the )?merge queue|is already queued/i.test(stderr);
+  return /already (?:been )?(?:added to|in|queued in) (?:the )?(?:merge )?queue|is already queued/i.test(stderr);
 }
 
 export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
@@ -400,7 +403,12 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     const queue = pr.state === 'OPEN' ? await queueInfo(repo, number, env) : null;
     if (queue?.inQueue) return alreadyQueued(repo, number, headSha, queue.entry, pr.headRefOid);
     const why = refusalOf(pr, headSha, false);
-    if (why?.code === 'not_open') await reportClosed(pr.state);
+    // 이미 MERGED·CLOSED 면 「머지 실패」 줄을 쓰지 않는다 — merge queue 의 확인 길(같은 명령 재호출)이 큐가 머지한 PR 에
+    // 「⛔ 머지 실패」를 남기게 된다(10-16 mq-sandbox 실측). 기다리던 카드만 닫고 not_open 으로 끝낸다.
+    if (why?.code === 'not_open') {
+      await reportClosed(pr.state);
+      return fail(why.code, why.message, { pr: { state: pr.state, headRefOid: pr.headRefOid, mergeStateStatus: pr.mergeStateStatus } });
+    }
     if (why) return refuse(why.code, why.message);
     return mergeNow(tok, false, queue, pr.headRefOid);
 

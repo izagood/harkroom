@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
-import { createTurnMerge, ghEnv, parseMergeArgs, parseQueueInfo, ENQUEUE_MUTATION, QUEUE_QUERY, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
+import { createTurnMerge, ghEnv, isAlreadyQueuedError, parseMergeArgs, parseQueueInfo, ENQUEUE_MUTATION, QUEUE_QUERY, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
 import { pickMergeGhUser } from '../src/localMerge.js';
 
 // 에이전트 머지 래퍼(PR 2/3) — 오퍼레이터 쪽 판정·gh 호출. 설계·security F3 는 스레드 3deac356.
@@ -519,6 +519,9 @@ describe('turnMerge', () => {
       const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
       expect(r.body.error.code).toBe('not_open');
       expect(enqueues()).toHaveLength(0);
+      // 「⛔ 머지 실패」 줄을 남기지 않는다 — 카드만 닫는다(10-16 실측에서 찾음).
+      expect(results()).toHaveLength(0);
+      expect(closedReports()).toEqual([expect.objectContaining({ state: 'MERGED', number: 7 })]);
     });
 
     it('1회 승인: 이미 큐에 있으면 승인을 쓰지 않는다(merge-checks 를 부르지 않는다)', async () => {
@@ -551,7 +554,7 @@ describe('turnMerge', () => {
 
     it('넣는 사이 누가 먼저 넣었으면 already_queued, 그 밖의 실패는 enqueue_failed + failed 보고', async () => {
       queue = { enabled: true, inQueue: false, entry: null };
-      enqueueResult = { code: 1, stdout: '', stderr: 'GraphQL: Pull request is already in the merge queue (enqueuePullRequest)' };
+      enqueueResult = { code: 1, stdout: '', stderr: 'gh: Pull request is already in the queue' };
       // 문구가 맞아도 다시 읽어 큐에 없으면 거짓 「큐에 있음」을 내지 않는다(security n1).
       expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('enqueue_failed');
       expect(results()).toEqual([expect.objectContaining({ result: 'failed' })]);
@@ -565,6 +568,12 @@ describe('turnMerge', () => {
       expect(r.body.error.code).toBe('enqueue_failed');
       expect(results()).toEqual([expect.objectContaining({ result: 'failed', error: expect.stringContaining('not mergeable') })]);
     });
+  });
+
+  it('isAlreadyQueuedError — 실측 문구(10-16 mq-sandbox)를 알아본다', () => {
+    expect(isAlreadyQueuedError('gh: Pull request is already in the queue')).toBe(true);
+    expect(isAlreadyQueuedError('GraphQL: Pull request is already in the merge queue')).toBe(true);
+    expect(isAlreadyQueuedError('gh: Pull request is not mergeable')).toBe(false);
   });
 
   it('parseQueueInfo — 모양이 틀리면 null, 큐 항목이 있으면 inQueue', () => {
