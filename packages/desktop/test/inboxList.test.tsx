@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within, act } from '@testing-library/react';
 import type { AskMeta, InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -71,6 +71,15 @@ afterEach(() => {
 });
 
 const open = (onClose = vi.fn()) => render(<Inbox open onClose={onClose} />);
+/**
+ * 목록이 보일 때까지 기다리고 **그 렌더의 effect 까지 흘린다.** 보드 조회는 act 밖에서 풀리므로 `findBy` 는 DOM 이
+ * 붙은 순간 돌아오는데, 단축키 listener(`InboxList` 의 useEffect)는 그 뒤에 붙는다 — 느린 CI 에서 키가 listener 없이
+ * 지나가 J/E/L 이 아무 일도 안 했다(10-16 #1394 check 세 번).
+ */
+const listReady = async (): Promise<void> => {
+  await screen.findByTestId('inbox-list-view');
+  await act(async () => {});
+};
 const states = (c: ReturnType<typeof fakeController>) =>
   c.api.setInboxThreadState.mock.calls.map((x) => x as unknown as [string, { state: string | null }]);
 const selectedRoot = (): string | null =>
@@ -97,7 +106,7 @@ describe('받은 일 — 기본 보기 (A안)', () => {
   it('할 일을 결정 → 막힘으로 묶고, 묶음 머리가 일 수를 말하고, 맨 위 줄이 골라져 있다', async () => {
     fakeController(async () => mixed());
     open();
-    await screen.findByTestId('inbox-list-view');
+    await listReady();
     expect(screen.queryByTestId('inbox-board')).toBeNull();
     const sections = screen.getAllByTestId(/^inbox-section-(decision|blocker|news)$/).map((el) => el.getAttribute('data-testid'));
     expect(sections).toEqual(['inbox-section-decision', 'inbox-section-blocker']);
@@ -169,7 +178,7 @@ describe('키보드 — J/K · E · L · ↵', () => {
     let threadStates: InboxThreadState[] = [];
     const c = fakeController(async () => ({ ...mixed(), threadStates }));
     open();
-    await screen.findByTestId('inbox-list-view');
+    await listReady();
     fireEvent.keyDown(screen.getByTestId('inbox-list-view'), { key: 'j' });
     expect(selectedRoot()).toBe('d2');
     fireEvent.keyDown(screen.getByTestId('inbox-list-view'), { key: 'k' });
@@ -191,7 +200,7 @@ describe('키보드 — J/K · E · L · ↵', () => {
     try {
       fakeController(async () => mixed());
       open();
-      await screen.findByTestId('inbox-list-view');
+      await listReady();
       scroll.mockClear();
       fireEvent.keyDown(screen.getByTestId('inbox-list-view'), { key: 'j' });
       expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
@@ -204,7 +213,7 @@ describe('키보드 — J/K · E · L · ↵', () => {
   it('L 은 내일 아침으로 미룬다', async () => {
     const c = fakeController(async () => mixed());
     open();
-    await screen.findByTestId('inbox-list-view');
+    await listReady();
     fireEvent.keyDown(screen.getByTestId('inbox-list-view'), { key: 'l' });
     await waitFor(() => expect(states(c)[0]?.[0]).toBe('d1'));
     expect(states(c)[0]![1].state).toBe('later');
@@ -214,7 +223,7 @@ describe('키보드 — J/K · E · L · ↵', () => {
   it('↵ 는 고른 줄의 스레드를 연다', async () => {
     const c = fakeController(async () => mixed());
     open();
-    await screen.findByTestId('inbox-list-view');
+    await listReady();
     fireEvent.keyDown(screen.getByTestId('inbox-list-view'), { key: 'Enter' });
     expect(c.openThread).toHaveBeenCalledWith('d1', { channelId: 'c1' });
   });
@@ -222,7 +231,7 @@ describe('키보드 — J/K · E · L · ↵', () => {
   it('Inbox 밖에 포커스가 있으면 단축키를 받지 않는다 — 옆 스레드의 E·↓ 를 먹지 않는다 (security F1)', async () => {
     const c = fakeController(async () => mixed());
     open();
-    await screen.findByTestId('inbox-list-view');
+    await listReady();
     // 옆 칸(스레드 패널 등)의 버튼 — Inbox 자리 밖이다.
     const outside = document.createElement('button');
     document.body.appendChild(outside);
@@ -252,7 +261,7 @@ describe('키보드 — J/K · E · L · ↵', () => {
   it('글을 쓰는 중이면 단축키를 삼키지 않는다', async () => {
     const c = fakeController(async () => mixed());
     open();
-    await screen.findByTestId('inbox-list-view');
+    await listReady();
     const input = document.createElement('textarea');
     document.body.appendChild(input);
     fireEvent.keyDown(input, { key: 'e' });

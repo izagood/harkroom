@@ -282,7 +282,8 @@ export async function checkMerge(
 export type MergeReport = {
   agentId: string; operatorId: string; leaseId: string; token: string;
   repo: string; number: number; headSha: string;
-  result: 'merged' | 'failed'; mergeSha?: string | null; error?: string | null; now?: Date;
+  /** `queued`(10-16): 대상 브랜치가 merge queue 를 써서 래퍼가 큐에 넣었다. 큐가 실제로 머지했는지는 이 보고가 말하지 않는다. */
+  result: 'merged' | 'queued' | 'failed'; mergeSha?: string | null; error?: string | null; now?: Date;
 };
 
 /**
@@ -302,7 +303,7 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   // 보고를 받으면 grant 없는 에이전트도 자기 스레드에 "머지됨" 줄을 쓸 수 있어 감사가 거짓이 된다.
   const trail = await pool.query<{ action: string; viaChain: { rootId?: unknown } | null }>(
     `select action, detail->'viaChain' as "viaChain" from audit_log
-      where action in ('repo.merge.checked', 'repo.merge.merged', 'repo.merge.failed')
+      where action in ('repo.merge.checked', 'repo.merge.merged', 'repo.merge.queued', 'repo.merge.failed')
         and target = $1 and detail->>'leaseId' = $2 and (detail->>'number')::int = $3 and detail->>'headSha' = $4`,
     [scope, lease.id, r.number, r.headSha]);
   if (trail.rows.some((x) => x.action !== 'repo.merge.checked')) return { ok: false, code: 'already_reported' };
@@ -321,7 +322,9 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   // 본문의 멘션을 풀기 때문에 gh 의 오류 문구 속 `@…` 가 실제 부름이 된다.
   const body = r.result === 'merged'
     ? `🔀 ${repo}#${r.number} 머지됨 · ${(r.mergeSha ?? r.headSha).slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ' (래퍼 보고)'
-    : `⛔ ${repo}#${r.number} 머지 실패 · head ${r.headSha.slice(0, 9)} (래퍼 보고)`;
+    : r.result === 'queued'
+      ? `📥 ${repo}#${r.number} 머지 큐에 넣음 · head ${r.headSha.slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ' (래퍼 보고)'
+      : `⛔ ${repo}#${r.number} 머지 실패 · head ${r.headSha.slice(0, 9)} (래퍼 보고)`;
   const posted = await postMessage(pool, {
     channelId: lease.channelId, threadRootId: lease.threadRootId, authorId: r.agentId, body, kind: 'system',
     meta: {
@@ -335,13 +338,17 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
         ? (granter && granterId
           ? systemI18n('system.merge.mergedGranted', { repo, number: r.number, sha: (r.mergeSha ?? r.headSha).slice(0, 9), granterId })
           : systemI18n('system.merge.merged', { repo, number: r.number, sha: (r.mergeSha ?? r.headSha).slice(0, 9) }))
-        : systemI18n('system.merge.failed', { repo, number: r.number, head: r.headSha.slice(0, 9) }),
+        : r.result === 'queued'
+          ? (granter && granterId
+            ? systemI18n('system.merge.queuedGranted', { repo, number: r.number, head: r.headSha.slice(0, 9), granterId })
+            : systemI18n('system.merge.queued', { repo, number: r.number, head: r.headSha.slice(0, 9) }))
+          : systemI18n('system.merge.failed', { repo, number: r.number, head: r.headSha.slice(0, 9) }),
     },
   });
   if (posted.failure) return { ok: false, code: 'post_failed' };
   const msg = posted.message;
   await recordAudit(pool, {
-    action: r.result === 'merged' ? 'repo.merge.merged' : 'repo.merge.failed', actorId: r.agentId, target: scope,
+    action: r.result === 'merged' ? 'repo.merge.merged' : r.result === 'queued' ? 'repo.merge.queued' : 'repo.merge.failed', actorId: r.agentId, target: scope,
     detail: { number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, operatorId: r.operatorId, leaseId: lease.id, messageId: msg.id },
   });
   // Q3-a: 통과한 판정(N1 관문)을 지난 `merged` 보고면 그 PR 의 기다리는 머지 카드를 **모든 에이전트에 걸쳐** 닫는다. 실패해도 보고는 남는다.

@@ -244,6 +244,28 @@ describe('repo.merge grant', () => {
       expect(again.json().error.code).toBe('already_reported');
       expect((await pool.query(`select count(*)::int as n from message where kind = 'system' and thread_root_id = $1`, [cause])).rows[0].n).toBe(1);
     });
+    it('merge-results queued(merge queue): 「큐에 넣음」 줄·repo.merge.queued 감사, 보고는 한 번뿐이고 카드는 닫지 않는다', async () => {
+      const cause = await mention(alice.accountId);
+      const l = await lease(cause);
+      expect((await check(l, 'izagood/harkroom', { number: 17 })).statusCode).toBe(200);
+      const post = (result: string) => app.inject({
+        method: 'POST', url: '/agent/merge-results', headers: asAgent(),
+        payload: { leaseId: l.id, token: l.token, repo: 'izagood/harkroom', number: 17, headSha: SHA, result, mergeSha: null },
+      });
+      const obsoletedBefore = (await pool.query(`select 1 from audit_log where action = 'repo.merge.obsoleted'`)).rowCount;
+      const res = await post('queued');
+      expect(res.statusCode).toBe(201);
+      const msg = (await pool.query(`select body, kind, meta from message where id = $1`, [res.json().messageId])).rows[0];
+      expect(msg.kind).toBe('system');
+      expect(msg.body).toBe(`📥 izagood/harkroom#17 머지 큐에 넣음 · head ${SHA.slice(0, 9)} · 권한: alice (래퍼 보고)`);
+      expect(msg.meta.merge).toMatchObject({ result: 'queued', number: 17, mergeSha: null });
+      expect(msg.meta.i18n).toMatchObject({ key: 'system.merge.queuedGranted' });
+      expect((await pool.query(`select 1 from audit_log where action = 'repo.merge.queued'`)).rowCount).toBe(1);
+      expect((await pool.query(`select 1 from audit_log where action = 'repo.merge.obsoleted'`)).rowCount).toBe(obsoletedBefore);
+      // 같은 판정으로 또 보고(merged 든 queued 든)하면 거절 — 큐가 나중에 머지한 것은 래퍼가 보고하지 않는다.
+      expect((await post('merged')).json().error.code).toBe('already_reported');
+      expect((await post('nope')).statusCode).toBe(400);
+    });
     it('N1: 앞선 통과 판정이 없는 보고는 줄을 쓰지 않는다(권한 없는 저장소·다른 PR·다른 head)', async () => {
       const cause = await mention(alice.accountId);
       const l = await lease(cause);

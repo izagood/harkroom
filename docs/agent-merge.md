@@ -25,7 +25,8 @@
    서버가 그 턴을 띄운 메시지로 판정한다.
 4. 오퍼레이터가 ① 인자 모양 ② 턴 임대 ③ 서버 `POST /agent/merge-checks`(grant 정확 일치 또는 조직 grant `owner/*`, 그 턴을 띄운 메시지가
    사람 글인지) ④ `gh pr view`(OPEN·draft 아님·head 일치·CLEAN·체크 초록) ⑤ `gh pr merge --squash
-   --match-head-commit` ⑥ `POST /agent/merge-results` 순으로 한다. 서버에 닿지 않으면 머지하지 않는다.
+   --match-head-commit`(대상 브랜치가 merge queue 를 쓰면 대신 큐에 넣는다 — 아래) ⑥ `POST /agent/merge-results` 순으로 한다.
+   서버에 닿지 않으면 머지하지 않는다.
 5. 서버가 그 턴의 스레드에 시스템 줄을 남긴다(`🔀 owner/repo#N 머지됨 · sha · 권한: handle (래퍼 보고)`). "래퍼
    보고"인 이유: 서버가 GitHub 에서 직접 확인한 것이 아니다.
 
@@ -67,6 +68,58 @@
   새 기록은 에이전트마다 24시간에 20개까지다. 넘으면 `not_granted` 는 그대로이고 `denialId` 만 없다.
 - 래퍼는 `denialId` 를 에이전트 답의 `error.denialId` 로 그대로 넘긴다(uuid 모양일 때만). 프롬프트가 "그 값을 `mergeDenialId` 로
   실어 카드를 세워라, `to`·`mirrorOf` 는 싣지 마라"를 지시한다.
+
+## merge queue
+
+대상 브랜치가 merge queue 를 쓰면 GitHub 은 `gh pr merge --squash` 를 거절한다(머지 전략은 큐가 정하고, auto-merge 가 꺼진
+저장소에서는 `--auto` 도 안 된다). 래퍼는 ⑤ 에서 GraphQL `pullRequest.isMergeQueueEnabled` 를 읽고, 켜져 있으면
+`enqueuePullRequest(pullRequestId, expectedHeadOid = --head)` 로 **큐에 넣는다**. `jump`(맨 앞으로)는 쓰지 않는다.
+
+- ①~④ 관문(인자·임대·서버 판정·OPEN·head 일치·CLEAN·CI 초록, 1회 승인의 사전 확인)은 큐에 넣기 **전에** 똑같이 건다.
+  큐에 넣는 길은 squash 머지와 같은 자리(⑤)에서만 갈린다.
+- 결과: `{ merged: false, queued: true, alreadyQueued: false, queue: { position, state } }`. 서버 보고는 `result: "queued"` 이고
+  스레드에 `📥 owner/repo#N 머지 큐에 넣음 · head … · 권한: handle (래퍼 보고)` 줄이 선다(감사 `repo.merge.queued`). 「머지됨」 줄은
+  쓰지 않고 기다리던 머지 카드도 닫지 않는다 — 큐가 실제로 머지했는지는 이 보고가 말하지 않는다.
+- **큐가 머지할 때까지 기다리지 않는다. 확인은 같은 명령을 다시 부르는 것이다.** 아직 큐에 있으면 `alreadyQueued: true`
+  (오류 아님, 아무것도 하지 않고 보고도 없다), 큐가 머지했으면 `not_open`(pr.state `MERGED`). 큐가 PR 을 빼냈으면(OPEN·큐에 없음)
+  다시 부르는 것은 새 머지 요청이다 — 관문을 처음부터 다시 지난다. 이미 MERGED·CLOSED 인 PR 에는 「⛔ 머지 실패」 줄을 쓰지 않고
+  기다리던 카드만 닫는다(`merge-closed`).
+- 실측(10-16, 시험 저장소, 래퍼 본체 + 모의 서버): 큐 브랜치의 ready PR 은 `CLEAN` 으로 온다. 큐에 든 PR 에 다시 넣으면 GitHub 은
+  `Pull request is already in the queue`(UNPROCESSABLE), head 가 바뀐 뒤 옛 head 로 넣으면 `expected head oid does not match the current head oid` 로 거절한다.
+- 이미 큐에 있는 PR 은 어느 길에서든 읽기 전용으로 알아보고 끝낸다: 1회 승인 사전 확인(승인을 쓰지 않는다), 권한 거절
+  (`not_granted`·`cause_not_human` — 카드를 세우지 않는다), 판정 통과(다시 넣지 않는다). 넣는 사이 다른 쪽이 먼저 넣었다는
+  GitHub 오류도 `alreadyQueued` 로 돌려준다.
+- 큐 브랜치에서는 머지 방식(squash·merge·rebase)과 묶음을 **큐 설정이 정한다** — 래퍼의 「squash 로만」 불변식은 그 브랜치에선
+  큐 설정(ruleset)의 몫으로 넘어간다. 큐를 켤 때 squash 로 맞춰 둔다.
+- 「이미 큐에 있음」은 head 대조보다 먼저 나오므로 결과에 PR 의 지금 head(`prHeadRefOid`)를 같이 싣고, `--head` 와 다르면 note 에 적는다.
+  1회 승인이 소모된 뒤 경합으로 이 답이 나오면 note 에 `the one-time approval was used` 가 붙는다. enqueue 가 「이미 큐」 문구로
+  실패해도 다시 읽어 정말 큐에 있을 때만 이 답이고, 아니면 `enqueue_failed` 다.
+- 큐 정보를 읽지 못하면(GraphQL 실패) 지금처럼 squash 를 시도한다 — 큐 브랜치라면 GitHub 이 거절하고 `merge_failed` 가 된다.
+- 옛 서버(`queued` 를 모르는 판)는 보고를 400 으로 거절한다 — 큐에는 들어갔고 시스템 줄만 없다(오퍼레이터 로그에 남는다).
+
+## 래퍼 결과·오류 코드
+
+성공이면 `merged` 또는 `queued` 가 `true` 다. 거절·실패는 `error.code` 하나로 갈린다.
+
+| 결과 / `error.code` | 뜻 | 에이전트가 할 일 |
+|---|---|---|
+| `merged: true` | squash 머지됨, 시스템 줄 `🔀 … 머지됨` | 머지됐다고 보고 |
+| `queued: true`, `alreadyQueued: false` | merge queue 에 넣음, 시스템 줄 `📥 … 큐에 넣음` | 「큐에 넣음」으로 보고, 확인은 같은 명령 |
+| `queued: true`, `alreadyQueued: true` | 이미 큐에 있다 — 아무것도 안 함 | 기다리거나 나중에 같은 명령 |
+| `bad_request` | 인자 모양이 틀림 | 명령을 고친다 |
+| `no_lease` | 이 턴에 임대가 없다(권한 아님, 턴 임대가 오퍼레이터에 없다) | 사람에게 넘긴다 |
+| `unavailable` | 서버에 닿지 않음 — fail-closed | 나중에 다시 |
+| `not_granted`·`cause_not_human` (+`denialId`) | 권한 없음 / 사람 글이 띄운 턴이 아님 | `denialId` 가 있으면 `message.ask` `mergeDenialId` 카드 |
+| `approval_mismatch` | 서버가 쓴 1회 승인이 사전 확인한 것과 다름 | 다시 승인받는다 |
+| `no_gh_user`·`gh_user_not_logged_in`·`gh_token_failed` | 이 기기에서 그 저장소에 쓸 gh 계정이 없음/로그인 안 됨 | 사람에게 넘긴다 |
+| `no_repo_access` | 그 gh 계정이 저장소에 닿지 못함 | 「사람이 머지」 |
+| `pr_not_found` | `gh pr view` 실패 | 번호·저장소 확인 |
+| `not_open`·`draft`·`head_moved`·`not_mergeable`·`ci_not_green` | PR 상태 관문 | 원인을 고치거나 사람에게 |
+| `merge_failed` | `gh pr merge` 실패 | 오류를 적어 사람에게 |
+| `enqueue_failed` | `enqueuePullRequest` 실패(이미 큐에 있음 제외) | 오류를 적어 사람에게 |
+| `merge_error` | 래퍼 내부 오류 | 사람에게 |
+
+오류 문구 끝의 `the one-time approval was not used` 는 1회 승인이 남았다는 뜻이고, `approve again` 은 이미 쓰였다는 뜻이다.
 
 ## 「사람이 머지」 (`no_repo_access`)
 
