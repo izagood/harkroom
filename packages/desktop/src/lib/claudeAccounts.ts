@@ -39,6 +39,12 @@ export interface ClaudeAccountView {
    * (2026-10-01). 있으면 화면이 "승인 필요"와 [터미널 열기]를 보인다. 옛 데몬은 싣지 않는다.
    */
   attention?: { atMs: number };
+  /**
+   * 러너가 이 계정의 턴을 **하네스 로그인 실패**로 넘겼다(2026-10-15, operator #1386). `status.loggedIn` 은
+   * Keychain 항목의 존재만 봐서 만료 계정도 참이다 — 이것이 그 빈틈을 메운다. 그 계정으로 턴이 성공하거나
+   * 다시 로그인하면 사라진다. 옛 데몬은 싣지 않는다.
+   */
+  authFailure?: { atMs: number };
 }
 
 export interface ClaudePoolView {
