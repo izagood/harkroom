@@ -133,6 +133,8 @@ export interface OpenSessionInput {
    */
   claudeAccount?: string | null;
   claudePool?: string | null;
+  /** 그 풀의 풀 순서 번호(1부터, `AgentSessionView.claudePoolRank`). 생략은 모른다. */
+  claudePoolRank?: number;
   /** 이 세션의 뷰어 수 변동 통지(#337). 인터랙티브 턴만 넘긴다 — 멘션 턴의 끝은 exit 뿐이다. */
   onViewerCount?: (count: number) => void;
   /**
@@ -579,6 +581,8 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         // 뒤에도 옛 계정을 계속 주장한다.
         claudeAccount: input.claudeAccount,
         claudePool: input.claudePool,
+        // 순서 번호는 러너 기기의 풀 순서다 — 원격 오퍼레이터의 턴도 화면이 맞는 칩을 단다(f3).
+        ...(input.claudePoolRank !== undefined ? { claudePoolRank: input.claudePoolRank } : {}),
       };
       const live: LiveSession = {
         info,

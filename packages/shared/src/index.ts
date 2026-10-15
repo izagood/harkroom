@@ -2931,6 +2931,23 @@ export interface AgentSessionView {
    * 하나로는 화면이 어느 줄을 가리키는지 확정할 수 없다.
    */
   claudePool?: string | null;
+  /**
+   * 그 풀이 이 에이전트의 풀 순서에서 몇 번째인가(1부터, 풀 n개 후속 f3 2026-10-15).
+   *
+   * 왜 러너가 싣나: 순서는 **러너가 도는 기기의** `pools.json` 에 있다. 원격 오퍼레이터에서 도는
+   * 에이전트를 데스크톱이 자기 기기의 순서로 재면 「↓ N번 풀」 칩이 틀리거나 빠진다. 턴을 연
+   * 그 순간 러너가 쓴 순서를 그대로 싣는다.
+   *
+   * 없으면(`undefined`) 모른다 — 이 칸을 모르는 옛 러너이거나 풀 순서가 없는 턴이다. 그때 화면은
+   * 예전처럼 이 기기의 순서로 판단한다. 숫자만 싣는다(풀 이름은 `claudePool` 이 이미 싣는다).
+   * 서버는 이 값을 열지 않고 나르므로 화면이 `isPoolRank` 로 형식을 다시 본다.
+   */
+  claudePoolRank?: number;
+}
+
+/** `AgentSessionView.claudePoolRank` 형식 — 1 이상의 정수, 풀 상한(`MAX_AGENT_POOLS`) 이하. 러너가 보낸 값을 화면이 다시 본다. */
+export function isPoolRank(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_AGENT_POOLS;
 }
 
 /**
@@ -3816,6 +3833,7 @@ export * from './threadStatus.js';
 // 시스템 줄의 번역 표지(meta.i18n) 키 표·검사 — 서버가 쓰고 앱이 그린다(i18n P5).
 export * from './systemI18n.js';
 import type { Capability, Role } from './permissions.js';
+import { MAX_AGENT_POOLS } from './claudePools.js';
 
 /**
  * `/auth/me` 의 응답 — 내 계정에 **전역으로** 유효한 capability 목록이 붙는다. 화면은 이것으로

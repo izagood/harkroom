@@ -171,4 +171,40 @@ describe('AgentTurns — 「↓ N번 풀」 칩', () => {
     expect(screen.queryByTestId('agent-turn-pool-fallback-s-work')).toBeNull();
     expect(screen.getByTestId('agent-turn-pool-fallback-s-personal').textContent).toBe('↓ 2번 풀');
   });
+
+  // f3: 원격 오퍼레이터의 턴은 이 기기의 순서와 다를 수 있다 — 러너가 실은 번호가 이긴다.
+  it('러너가 실은 순서 번호가 이 기기의 순서보다 먼저다', () => {
+    render(
+      <AgentTurns
+        snapshot={{ kind: 'known', turns: [
+          { ...turn('work'), claudePoolRank: 3 },
+          { ...turn('personal'), claudePoolRank: 1 },
+          { ...turn('remote-only'), claudePoolRank: 2 },
+        ] } as never}
+        handleOf={(id) => id} channelLabel={(id) => id} onOpenThread={() => {}} now={NOW}
+        poolChainOf={() => ['work', 'personal']}
+      />,
+    );
+    expect(screen.getByTestId('agent-turn-pool-fallback-s-work').textContent).toBe('↓ 3번 풀');
+    expect(screen.queryByTestId('agent-turn-pool-fallback-s-personal')).toBeNull();
+    // 이 기기에는 없는 풀이어도 러너의 번호로 붙는다.
+    expect(screen.getByTestId('agent-turn-pool-fallback-s-remote-only').textContent).toBe('↓ 2번 풀');
+  });
+
+  it('형식이 틀린 번호는 버리고 이 기기의 순서로 잰다', () => {
+    render(
+      <AgentTurns
+        snapshot={{ kind: 'known', turns: [
+          { ...turn('personal'), claudePoolRank: 0 },
+          { ...turn('work'), sessionId: 's-w2', claudePoolRank: 1.5 },
+          { ...turn('work'), sessionId: 's-w3', claudePoolRank: 99 },
+          { ...turn('work'), sessionId: 's-w4', claudePoolRank: '2' },
+        ] } as never}
+        handleOf={(id) => id} channelLabel={(id) => id} onOpenThread={() => {}} now={NOW}
+        poolChainOf={() => ['work', 'personal']}
+      />,
+    );
+    expect(screen.getByTestId('agent-turn-pool-fallback-s-personal').textContent).toBe('↓ 2번 풀');
+    for (const id of ['s-w2', 's-w3', 's-w4']) expect(screen.queryByTestId(`agent-turn-pool-fallback-${id}`)).toBeNull();
+  });
 });

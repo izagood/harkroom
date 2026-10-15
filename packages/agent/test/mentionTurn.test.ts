@@ -2816,7 +2816,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
   function fakeRelay() {
     const opened: {
       agentAccountId: string; channelId: string; threadRootId: string | null; harness: string;
-      claudeAccount?: string | null; claudePool?: string | null;
+      claudeAccount?: string | null; claudePool?: string | null; claudePoolRank?: number;
     }[] = [];
     const bytes: Buffer[] = [];
     /** `bindInput` 으로 받은 PTY 통로들(#315). 세션 순서대로 쌓인다. */
@@ -2828,7 +2828,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
         openSession(input: {
           agentAccountId: string; channelId: string; threadRootId: string | null;
           harness: AgentHarness;
-          claudeAccount?: string | null; claudePool?: string | null;
+          claudeAccount?: string | null; claudePool?: string | null; claudePoolRank?: number;
         }) {
           opened.push(input);
           return {
@@ -2901,6 +2901,25 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     expect(r.opened.map((o) => [o.claudeAccount, o.claudePool])).toEqual([['lime', 'work']]);
+    // 순서 번호를 모르면 싣지 않는다 — 화면이 자기 기기의 순서로 잰다(f3).
+    expect('claudePoolRank' in r.opened[0]!).toBe(false);
+  });
+
+  // 풀 n개 후속 f3: 원격 오퍼레이터의 턴도 「↓ N번 풀」 칩이 러너의 순서를 쓰게 번호를 싣는다.
+  it('claude 턴은 풀 순서 번호를 세션에 싣고, codex 턴은 싣지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const r = fakeRelay();
+    const { deps } = await makeDeps(fake, { relay: r.relay, claudeAccount: 'lime', claudePool: 'personal', claudePoolRank: 2 });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(r.opened[0]!.claudePoolRank).toBe(2);
+
+    const fake2 = new FakeHarkroom(defOf({ harness: 'codex' }));
+    fake2.seedFrom('human-1', '@forge 안녕');
+    const r2 = fakeRelay();
+    const { deps: deps2 } = await makeDeps(fake2, { relay: r2.relay, claudeAccount: 'lime', claudePool: 'personal', claudePoolRank: 2 });
+    await runMentionTurn(deps2, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect('claudePoolRank' in r2.opened[0]!).toBe(false);
   });
 
   /*

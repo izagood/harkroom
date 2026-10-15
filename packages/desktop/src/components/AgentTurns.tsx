@@ -32,7 +32,7 @@
  * 그리면** 사람은 폭주가 멈춘 줄 안다.
  */
 import { useState } from 'react';
-import type { AgentSessionView } from '@harkroom/shared';
+import { isPoolRank, type AgentSessionView } from '@harkroom/shared';
 import type { AgentTurnsSnapshot } from '../lib/agentTurns';
 import { groupTurnsByThread } from '../lib/agentTurns';
 import { Menu } from './Menu';
@@ -337,7 +337,11 @@ export function AgentTurns({
                         </span>
                       )}
                       {(() => {
-                        const idx = turn.claudePool ? (poolChainOf?.(turn.agentAccountId)?.indexOf(turn.claudePool) ?? -1) : -1;
+                        // 러너가 실은 순서 번호가 먼저다(f3) — 원격 오퍼레이터의 턴은 이 기기의 순서와
+                        // 다를 수 있다. 없거나 형식이 틀리면(옛 러너) 이 기기의 순서로 잰다.
+                        const idx = !turn.claudePool ? -1
+                          : isPoolRank(turn.claudePoolRank) ? turn.claudePoolRank - 1
+                          : (poolChainOf?.(turn.agentAccountId)?.indexOf(turn.claudePool) ?? -1);
                         return idx > 0 ? (
                           <span data-testid={`agent-turn-pool-fallback-${turn.sessionId}`}
                             title={t('agentTurns.poolFallbackTitle', { n: idx + 1, pool: turn.claudePool! })}
