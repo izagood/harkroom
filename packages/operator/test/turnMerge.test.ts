@@ -67,13 +67,15 @@ describe('turnMerge', () => {
   // merge queue — GraphQL 읽기의 답(null 이면 gh 가 실패한다)·뮤테이션의 답.
   let queue: { enabled: boolean; inQueue: boolean; entry: { position: number; state: string } | null } | null;
   let enqueueResult: ExecResult;
+  // 읽을 때마다 차례로 내줄 큐 상태(비면 `queue`) — 경합 재현용.
+  let queueSeq: (typeof queue)[];
   let tm: TurnMerge;
 
   beforeEach(() => {
     forwards = []; execs = []; checkStatus = 200; mergeCode = 0; mergeStderr = 'GraphQL: Base branch was modified'; viewStderr = null; denialBody = { error: { code: 'not_granted' } }; ghUser = 'izagood'; pickByScope = null;
     lease = { leaseId: 'lease-1', token: 'tok-1', agentId: 'a1' };
     approvals = []; checkApproval = null; peekStatus = 200;
-    queue = { enabled: false, inQueue: false, entry: null };
+    queue = { enabled: false, inQueue: false, entry: null }; queueSeq = [];
     enqueueResult = { code: 0, stdout: JSON.stringify({ data: { enqueuePullRequest: { mergeQueueEntry: { position: 3, state: 'QUEUED' } } } }), stderr: '' };
     pr = { state: 'OPEN', isDraft: false, headRefOid: SHA, baseRefName: 'main', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }] };
     tm = createTurnMerge({
@@ -107,8 +109,9 @@ describe('turnMerge', () => {
         if (args[0] === 'pr' && args[1] === 'view') return viewStderr ? { code: 1, stdout: '', stderr: viewStderr } : { code: 0, stdout: JSON.stringify(pr), stderr: '' };
         if (args[0] === 'pr' && args[1] === 'merge') return { code: mergeCode, stdout: '', stderr: mergeCode ? mergeStderr : '' };
         if (args[0] === 'api' && args[1] === 'graphql' && args[3] === `query=${QUEUE_QUERY}`) {
-          if (!queue) return { code: 1, stdout: '', stderr: 'HTTP 502' };
-          return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { id: 'PR_kw1', isMergeQueueEnabled: queue.enabled, isInMergeQueue: queue.inQueue, mergeQueueEntry: queue.entry } } } }), stderr: '' };
+          const qv = queueSeq.length ? queueSeq.shift()! : queue;
+          if (!qv) return { code: 1, stdout: '', stderr: 'HTTP 502' };
+          return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { id: 'PR_kw1', isMergeQueueEnabled: qv.enabled, isInMergeQueue: qv.inQueue, mergeQueueEntry: qv.entry } } } }), stderr: '' };
         }
         if (args[0] === 'api' && args[1] === 'graphql' && args[3] === `query=${ENQUEUE_MUTATION}`) return enqueueResult;
         return { code: 1, stdout: '', stderr: 'unexpected' };
@@ -485,7 +488,13 @@ describe('turnMerge', () => {
       // 큐에 든 동안의 mergeStateStatus 로 막히지 않는다.
       pr = { ...pr, mergeStateStatus: 'BLOCKED' };
       const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
-      expect(r).toMatchObject({ isError: false, body: { merged: false, queued: true, alreadyQueued: true, queue: { position: 2, state: 'AWAITING_CHECKS' } } });
+      expect(r).toMatchObject({ isError: false, body: { merged: false, queued: true, alreadyQueued: true, prHeadRefOid: SHA, queue: { position: 2, state: 'AWAITING_CHECKS' } } });
+      expect(r.body.note).not.toContain('not the --head');
+      // 큐에 든 head 가 인자와 다르면 그 사실을 싣는다(security n2).
+      pr = { ...pr, headRefOid: 'd'.repeat(40) };
+      const r2 = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r2.body).toMatchObject({ alreadyQueued: true, headSha: SHA, prHeadRefOid: 'd'.repeat(40) });
+      expect(r2.body.note).toContain(`the PR head is ${'d'.repeat(40)}, not the --head you passed`);
       expect(enqueues()).toHaveLength(0);
       expect(ghCalls()).not.toContain('pr merge');
       expect(results()).toHaveLength(0);
@@ -530,10 +539,26 @@ describe('turnMerge', () => {
       expect(results()).toEqual([expect.objectContaining({ result: 'queued' })]);
     });
 
+    it('1회 승인: 사전 확인 뒤 누가 먼저 넣었으면 alreadyQueued 에 「승인이 쓰였다」를 적는다(security n3)', async () => {
+      approvals = [{ id: 'ap-1', ghUser: 'corp-account', relaxChecks: false }];
+      checkApproval = { id: 'ap-1', ghUser: 'corp-account', relaxChecks: false };
+      queueSeq = [{ enabled: true, inQueue: false, entry: null }, { enabled: true, inQueue: true, entry: { position: 1, state: 'QUEUED' } }];
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body).toMatchObject({ alreadyQueued: true });
+      expect(r.body.note).toContain('the one-time approval was used');
+      expect(enqueues()).toHaveLength(0);
+    });
+
     it('넣는 사이 누가 먼저 넣었으면 already_queued, 그 밖의 실패는 enqueue_failed + failed 보고', async () => {
       queue = { enabled: true, inQueue: false, entry: null };
       enqueueResult = { code: 1, stdout: '', stderr: 'GraphQL: Pull request is already in the merge queue (enqueuePullRequest)' };
-      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body).toMatchObject({ alreadyQueued: true });
+      // 문구가 맞아도 다시 읽어 큐에 없으면 거짓 「큐에 있음」을 내지 않는다(security n1).
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('enqueue_failed');
+      expect(results()).toEqual([expect.objectContaining({ result: 'failed' })]);
+      forwards = [];
+      // 다시 읽으니 정말 큐에 있다 — 경합이다.
+      queueSeq = [{ enabled: true, inQueue: false, entry: null }, { enabled: true, inQueue: true, entry: { position: 5, state: 'QUEUED' } }];
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body).toMatchObject({ alreadyQueued: true, queue: { position: 5 } });
       expect(results()).toHaveLength(0);
       enqueueResult = { code: 1, stdout: '', stderr: 'GraphQL: Pull request is not mergeable (enqueuePullRequest)' };
       const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));

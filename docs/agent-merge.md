@@ -86,6 +86,11 @@
 - 이미 큐에 있는 PR 은 어느 길에서든 읽기 전용으로 알아보고 끝낸다: 1회 승인 사전 확인(승인을 쓰지 않는다), 권한 거절
   (`not_granted`·`cause_not_human` — 카드를 세우지 않는다), 판정 통과(다시 넣지 않는다). 넣는 사이 다른 쪽이 먼저 넣었다는
   GitHub 오류도 `alreadyQueued` 로 돌려준다.
+- 큐 브랜치에서는 머지 방식(squash·merge·rebase)과 묶음을 **큐 설정이 정한다** — 래퍼의 「squash 로만」 불변식은 그 브랜치에선
+  큐 설정(ruleset)의 몫으로 넘어간다. 큐를 켤 때 squash 로 맞춰 둔다.
+- 「이미 큐에 있음」은 head 대조보다 먼저 나오므로 결과에 PR 의 지금 head(`prHeadRefOid`)를 같이 싣고, `--head` 와 다르면 note 에 적는다.
+  1회 승인이 소모된 뒤 경합으로 이 답이 나오면 note 에 `the one-time approval was used` 가 붙는다. enqueue 가 「이미 큐」 문구로
+  실패해도 다시 읽어 정말 큐에 있을 때만 이 답이고, 아니면 `enqueue_failed` 다.
 - 큐 정보를 읽지 못하면(GraphQL 실패) 지금처럼 squash 를 시도한다 — 큐 브랜치라면 GitHub 이 거절하고 `merge_failed` 가 된다.
 - 옛 서버(`queued` 를 모르는 판)는 보고를 400 으로 거절한다 — 큐에는 들어갔고 시스템 줄만 없다(오퍼레이터 로그에 남는다).
 
