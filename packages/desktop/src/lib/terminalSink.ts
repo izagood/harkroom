@@ -161,12 +161,47 @@ const LINE_HEIGHT = 1.15;
 const FONT_FAMILY = `"${TERMINAL_FONT}", courier-new, courier, monospace`;
 
 /**
+ * xterm 이 칸 높이를 잡는 식 그대로(2026-10-15, 터미널 하단 잘림). 글자 높이를 **기기 px 로 올리고**(`ceil`)
+ * 줄 높이 배율을 곱해 **내린다** — `@xterm/addon-webgl` 0.19 `WebglRenderer._updateDimensions` 와 xterm 6
+ * `DomRenderer` 가 같은 식이다. 둘을 맞추지 않으면 fit 이 줄을 실제보다 많이 세고, 넘친 맨 아래 줄(claude 입력 상자·
+ * 상태 줄)이 호스트 밖으로 나간다.
+ */
+export function xtermCellHeight(charHeight: number, dpr: number, lineHeight: number = LINE_HEIGHT): number {
+  return Math.floor(Math.ceil(charHeight * dpr) * lineHeight) / dpr;
+}
+
+/**
+ * xterm 이 글자 높이를 재는 자리와 같은 곳에서 잰다 — `OffscreenCanvas` 의 `measureText` 폰트 상자
+ * (xterm 6 `CharSizeService` 의 `TextMetricsMeasureStrategy`). 못 쓰는 곳(jsdom·옛 웹뷰)에서는 `null` 이고,
+ * 그때는 xterm 도 DOM span 으로 재므로 아래 span 값이 같은 자리다.
+ */
+function canvasCharHeight(): number | null {
+  try {
+    if (typeof OffscreenCanvas === 'undefined') return null;
+    const ctx = new OffscreenCanvas(1, 1).getContext('2d');
+    if (!ctx) return null;
+    ctx.font = `${FONT_SIZE}px ${FONT_FAMILY}`;
+    const m = ctx.measureText('W');
+    const h = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent;
+    return h > 0 ? h : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 이 호스트 요소에 몇 칸이 들어가는가. xterm 은 스스로 컨테이너에 맞추지 않는다 —
  * `resize` 를 부르는 쪽이 크기를 정해야 하고, 그 크기를 아는 방법은 셀 하나를 실제로
  * 재는 것뿐이다.
  *
  * `@xterm/addon-fit` 을 쓰지 않는 이유: 그 애드온이 하는 일이 이 함수이고, 의존을 하나
  * 더 늘리면 터미널 폭이라는 한 가지 사실이 두 패키지의 버전 조합에 걸린다.
+ *
+ * **폭과 높이를 재는 자리가 다르다**(2026-10-15). 앱 배율이 100% 가 아니면 DOM span 의 높이는 기기 px 로
+ * 반올림되고(90%: 13 → 12.22) canvas 폰트 상자는 그대로라, span 으로 잰 높이는 xterm 의 칸보다 작았다 —
+ * 90% 에서 1000px 호스트에 줄을 66px 더 셌다(WKWebView 실측). 그래서 높이는 xterm 과 같은 자리·같은 식으로 잰다.
+ * 폭은 span 그대로 둔다: xterm 의 폭 식(`floor(w·dpr)/dpr`)은 webgl 것이고 DOM 렌더러는 그보다 넓게 그려서,
+ * 폭을 그 식으로 잡으면 DOM 렌더러(WebGL 을 못 켠 곳·컨텍스트 상실 뒤)일 때 오른쪽이 넘친다(90%: 800px 에 846px).
  *
  * 잴 수 없으면(레이아웃 전, jsdom) `null` 이다 — 0 으로 계산해 1x1 을 보내지 않는다.
  */
@@ -179,10 +214,8 @@ function measureCell(el: HTMLElement): { width: number; height: number } | null 
   const rect = probe.getBoundingClientRect();
   el.removeChild(probe);
   const width = rect.width / 100;
-  // xterm 은 칸 높이를 `글자 높이 × lineHeight` 로 잡는다 — 같은 비율로 잰다(아니면 fit 이 줄을 더 센다).
-  // xterm 처럼 기기 px 로 내린다(`floor(글자 높이 × dpr × lineHeight) / dpr`).
   const dpr = typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
-  const height = Math.floor(rect.height * dpr * LINE_HEIGHT) / dpr;
+  const height = xtermCellHeight(canvasCharHeight() ?? rect.height, dpr);
   if (!(width > 0) || !(height > 0)) return null;
   return { width, height };
 }
@@ -548,16 +581,40 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     });
   };
 
+  /** 마지막으로 잰 크기(줄이기 전). 같은 측정이 반복되면 xterm 을 다시 건드리지 않는다. */
+  let measured: { cols: number; rows: number } | null = null;
+  /**
+   * **그려진 화면이 호스트를 넘으면 줄·열을 줄인다**(안전망, 2026-10-15). 재는 식을 xterm 에 맞췄어도 렌더러의
+   * 식은 버전·렌더러마다 바뀐다(위 `measureCell` 의 폭 이야기가 그 예다). 맨 아래 줄은 claude 입력 상자라 한 줄만
+   * 넘쳐도 못 친다 — 그래서 추정이 아니라 `term.resize` 뒤의 `.xterm-screen` 크기로 판정한다(follow 의 넘침 판정과
+   * 같은 방식). 화면 요소를 못 찾으면(가짜 xterm) 잰 크기 그대로다.
+   */
+  const shrinkToHost = (size: { cols: number; rows: number }): { cols: number; rows: number } => {
+    const screen = el.querySelector<HTMLElement>('.xterm-screen');
+    if (!term || !screen || !(screen.offsetHeight > 0) || !(screen.offsetWidth > 0)) return size;
+    const overH = screen.offsetHeight - el.clientHeight;
+    const overW = screen.offsetWidth - el.clientWidth;
+    if (overH <= 0 && overW <= 0) return size;
+    const rows = overH > 0 ? Math.max(1, size.rows - Math.ceil(overH / (screen.offsetHeight / size.rows))) : size.rows;
+    const cols = overW > 0 ? Math.max(1, size.cols - Math.ceil(overW / (screen.offsetWidth / size.cols))) : size.cols;
+    term.resize(cols, rows);
+    return { cols, rows };
+  };
+
   const applyFit = (): void => {
     if (!term) return;
     // 남의 크기로 그리는 중이면 패널이 바뀌어도 크기는 그대로 — 글자 크기·스크롤만 다시 정한다.
     if (followSize) { applyFollow(); return; }
     const size = fitDimensions(el);
     if (!size) return;
-    if (sent && sent.cols === size.cols && sent.rows === size.rows) return;
-    sent = size;
+    if (measured && measured.cols === size.cols && measured.rows === size.rows) return;
+    measured = size;
     term.resize(size.cols, size.rows);
-    opts?.onResize?.(size.cols, size.rows);
+    // 알리는 것은 **줄인 뒤의** 크기다 — PTY 줄 수가 보이는 줄 수와 같아야 맨 아래가 안 잘린다.
+    const fitted = shrinkToHost(size);
+    if (sent && sent.cols === fitted.cols && sent.rows === fitted.rows) return;
+    sent = fitted;
+    opts?.onResize?.(fitted.cols, fitted.rows);
   };
 
   void (async () => {
@@ -654,6 +711,10 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     webgl = await enableWebglRenderer(t);
     diagnostics.renderer = webgl ? 'webgl' : 'dom';
     reportDiagnostics();
+    // **렌더러가 바뀌면 다시 맞춘다**(2026-10-15). 첫 fit 은 DOM 렌더러일 때 돌았고, webgl 은 칸을 다른 식으로
+    // 그린다 — 호스트 크기는 그대로라 ResizeObserver 는 울리지 않는다. 잰 크기만 비워 다시 재고, 알릴 크기가
+    // 같으면 보내지 않는다(`sent` 는 그대로).
+    if (webgl && !disposed) { measured = null; applyFit(); }
     // 애드온을 받는 동안 닫혔을 수도 있다 — 그때는 여기서 바로 버린다. `dispose` 는 이미
     // 지나갔으므로 이 자리가 마지막 기회다.
     if (disposed) {
@@ -690,12 +751,14 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       fontSize = FONT_SIZE;
       opts?.onFollow?.(null);
       sent = null;
+      measured = null;
       applyFit();
     },
     refit() {
       // "마지막으로 보낸 크기"를 지워 applyFit 의 중복 억제를 한 번 우회한다 — writer
       // 승격 직후에는 크기가 안 바뀌었어도 알려야 한다(승격 전의 보고는 버려졌다, #346).
       sent = null;
+      measured = null;
       applyFit();
     },
     dispose() {
