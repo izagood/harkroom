@@ -229,6 +229,31 @@ export function permissionDenialNotice(
   return ['권한 거부(auto mode 분류기) — 이 명령은 실행되지 않았다:', ...lines].join('\n');
 }
 
+/**
+ * macOS 권한 창(TCC) 앞에 선 턴을 스레드에 알리는 통지(스레드 f3bf04de, 2026-10-15). 창은 Harkroom 뒤에 숨으므로
+ * 사람이 할 일(창을 찾아 [허용] / 거부됐으면 시스템 설정)을 적는다. 러너는 대신 허용하지 않는다.
+ */
+export function macPermissionNotice(
+  waits: ReadonlyArray<{ state: 'waiting' | 'timeout' | 'denied'; target: string | null; input: string }>,
+  pat: string,
+  secrets: readonly string[] = [],
+): string {
+  // 앱 이름은 명령에서 온 글이라 코드 스팬에 넣는다 — 밖에 두면 `@누구` 가 멘션이 된다(security n2).
+  const app = (t: string | null): string => (t ? `\`${oneLine(t, pat, 60, secrets)}\`` : '다른 앱');
+  const lines = waits.map((w) => {
+    const what = `\`${oneLine(w.input, pat, undefined, secrets)}\``;
+    if (w.state === 'denied') {
+      return `- 거부됨: Harkroom → ${app(w.target)} 제어 — 시스템 설정 › 개인정보 보호 및 보안 › 자동화 › Harkroom 에서 ${app(w.target)} 을(를) 켜 주세요. ${what}`;
+    }
+    const tail = w.state === 'timeout' ? '명령이 시간 초과로 끝났다' : '명령이 답을 기다리는 중이다';
+    return `- Harkroom → ${app(w.target)} 제어 [허용] 필요 — 「'Harkroom'에서 …을(를) 제어하려고 합니다」 창이 Harkroom 뒤에 떠 있을 수 있다(${tail}). ${what}`;
+  });
+  return ['macOS 권한 창 — 사람이 눌러야 진행된다:', ...lines].join('\n');
+}
+
+/** 한 턴에 올리는 macOS 권한 통지의 상한. */
+export const MAC_PERMISSION_NOTICE_MAX_PER_TURN = 3;
+
 /** MAX_ATTEMPTS 를 소진했을 때 채널에 남기는 통지문구(#82). */
 export const FAILURE_NOTICE = '(답변에 실패했습니다 — 운영자 확인이 필요합니다)';
 

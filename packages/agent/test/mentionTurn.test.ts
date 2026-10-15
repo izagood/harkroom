@@ -4314,6 +4314,28 @@ describe('러너가 턴의 사정을 스레드에 드러낸다 (2026-09-30)', ()
     expect(bodies.at(-1)).toBe(NO_REPLY_NOTICE);
   });
 
+  it('macOS 권한 창 앞에 선 osascript 를 스레드에 호출당 한 번 알린다 — 발화로 세지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 사내 페이지 열어 봐');
+    const cmd = `osascript -e 'tell application "Google Chrome" to get URL of active tab of front window'`;
+    let reads = 0;
+    const t = tui(async () => { for (let i = 0; i < 100 && reads < 3; i += 1) await new Promise((r) => setTimeout(r, 5)); }, 1_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => (reads >= 3 ? 'ended' : 'working'),
+      readTranscriptMtime: async () => Date.now(),
+      // 대기로 처음 보이고, 같은 호출이 뒤에 시간 초과로 바뀌어도 다시 쓰지 않는다.
+      readMacPermission: async () => [{ toolUseId: 't1', state: (reads += 1) === 1 ? 'waiting' as const : 'timeout' as const, target: 'Google Chrome', input: cmd }],
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    const notices = fake.posts.map((p) => p.body).filter((b) => b.startsWith('macOS 권한 창'));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('Harkroom → `Google Chrome` 제어 [허용] 필요');
+    expect(notices[0]).toContain('답을 기다리는 중');
+    expect(fake.posts.map((p) => p.body).at(-1)).toBe(NO_REPLY_NOTICE);
+  });
+
   it('MCP 헤더 거절을 오퍼레이터에 이름당 한 번만 알린다 — 스레드에는 쓰지 않는다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge slack 에서 찾아 줘');

@@ -14,7 +14,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
 import type { FailOpts, Me } from './harkroom.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
@@ -28,7 +28,7 @@ import { readLastApiError } from './harnessErrors.js';
 import type { AttentionLedger } from './attentionLedger.js';
 import { readSkillUses } from './skillUsage.js';
 import type { ReviewFork } from './reviewFork.js';
-import { readLastAssistantText, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type PermissionDenial } from './harnessErrors.js';
+import { readLastAssistantText, readMacPermissionWaits, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type MacPermissionWait, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { opencodeDirs } from './opencodeHome.js';
@@ -403,6 +403,12 @@ export interface MentionTurnDeps {
     harness: AgentHarness, sessionId: string | null,
     opts: { configDir?: string | null; sinceMs?: number },
   ) => Promise<PermissionDenial[]>;
+  /** 이 턴에 macOS 권한 창 앞에 선 osascript 호출을 읽는다(기본 `readMacPermissionWaits`). 주입 이유는 `readApiError` 와 같다. */
+  readMacPermission?: (
+    harness: AgentHarness,
+    sessionId: string | null,
+    opts: { configDir?: string | null; sinceMs?: number },
+  ) => Promise<MacPermissionWait[]>;
   /** 이 턴에 Authorization 헤더를 거절당한 MCP 서버 이름을 읽는다(기본 `readMcpAuthRejections`). 주입 이유는 `readApiError` 와 같다. */
   readMcpAuthRejections?: (
     harness: AgentHarness, sessionId: string | null,
@@ -1406,6 +1412,9 @@ export async function runMentionTurn(
     deniedSeen: Set<string>;
     /** 이 턴에 올린 권한 거부 통지 수(`DENIAL_NOTICE_MAX_PER_TURN` 까지). */
     denialNotices: number;
+    /** 이미 알린 macOS 권한 대기 호출과 통지 수(`MAC_PERMISSION_NOTICE_MAX_PER_TURN` 까지). */
+    macSeen: Set<string>;
+    macNotices: number;
     /** 이미 오퍼레이터에 알린, 헤더를 거절당한 MCP 서버 이름. 턴마다 이름당 한 번만 알린다. */
     mcpRejectedSeen: Set<string>;
     cancelReclaim: (() => void) | null; cancelProbe: (() => void) | null; cancelSilence: (() => void) | null;
@@ -1418,7 +1427,7 @@ export async function runMentionTurn(
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     apiError: null, canceledBy: null, fencedOut: false, stalled: false, awaitingHuman: false, gateNoticed: false,
     lastLifeMs: 0, lastDataAtMs: 0, screenTail: '', unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, reclaimGraceMs: 0, tail: null,
-    threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, mcpRejectedSeen: new Set(),
+    threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, macSeen: new Set(), macNotices: 0, mcpRejectedSeen: new Set(),
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
     gateHeld: null, gateRequeue: null, cancelGateWatch: null,
   };
@@ -1751,6 +1760,30 @@ export async function runMentionTurn(
   };
 
   /**
+   * **macOS 권한 창(TCC) 앞에 선 턴을 스레드에 알린다**(스레드 f3bf04de, 2026-10-15). 창은 Harkroom 뒤에 숨어
+   * 사람이 모른 채 턴이 시간 초과로 끝났다. 새로 본 호출만 한 통지로 묶어 progress 로 올린다(발화로 세지 않는다).
+   * 같은 호출은 한 번만(대기 → 시간 초과로 바뀌어도 다시 안 쓴다). 허용·우회는 하지 않는다. 던지지 않는다.
+   */
+  const probeMacPermission = async (): Promise<void> => {
+    if (end.macNotices >= MAC_PERMISSION_NOTICE_MAX_PER_TURN) return;
+    const read = deps.readMacPermission ?? readMacPermissionWaits;
+    const all = await read(def.harness, sessionIdForProbe, {
+      configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+    }).catch(() => [] as MacPermissionWait[]);
+    const fresh = all.filter((w) => !end.macSeen.has(w.toolUseId));
+    if (fresh.length === 0) return;
+    for (const w of fresh) end.macSeen.add(w.toolUseId);
+    end.macNotices += 1;
+    for (const w of fresh) console.error(`[mentionTurn] ${key}: macOS 권한 창 ${w.state}`);
+    // 마운트한 비밀이 명령에 펼쳐져 실려도 가린다(security n1).
+    const secrets = deps.secretNeedles ? await deps.secretNeedles(mentionId).catch(() => [] as string[]) : [];
+    await deps.harkroom.progress(channelId, macPermissionNotice(fresh, deps.runnerSecret, secrets).slice(0, BODY_LIMIT), anchor)
+      .catch((err: unknown) => {
+        console.error(`[mentionTurn] ${key}: macOS 권한 통지 실패 — ${err instanceof Error ? err.message : String(err)}`);
+      });
+  };
+
+  /**
    * **MCP 헤더 거절을 오퍼레이터에 알린다**(2026-10-01). 거절은 턴 시작 때 한 번 기록되므로
    * 주기마다 보되 이름당 한 번만 보낸다. 스레드에는 안 쓴다 — 하네스가 같은 사실을 시스템 알림으로
    * 받아 스스로 말할 수 있고, 고칠 수 있는 쪽(토큰 주인)은 오퍼레이터다. 던지지 않는다.
@@ -1792,6 +1825,7 @@ export async function runMentionTurn(
         end.threadUnreadable = spoke === null;
         if (spoke === true) end.spoke = true;
         await probeDenials();
+        await probeMacPermission();
         await probeMcpAuth();
         if (end.exited) return;
         if (spoke === false) {
