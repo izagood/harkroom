@@ -495,6 +495,7 @@ const accountAssigner = createAccountAssigner({
   root: claudeAccountsRoot(),
   pinnedOf: (key) => store.get(key)?.claudeAccount ?? null,
   pinnedPoolOf: (key) => store.get(key)?.claudePool,
+  sessionIdOf: (key) => store.get(key)?.sessionId ?? null,
 });
 
 // 턴 임대(비밀 보관소 PR 3). 멘션마다 한 번 받아 오퍼레이터에 맡긴다 — 토큰은 relay 로만 간다(R2).

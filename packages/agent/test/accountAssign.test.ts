@@ -469,6 +469,29 @@ describe('createAccountAssigner — 풀 순서(2026-10-15, D1~D5 A)', () => {
     expect(names(await as.laneFor('t'))[0]).toBe('personal/x');
   });
 
+  it('풀을 모르는 옛 레코드 + 같은 이름이 두 풀에: 세션 파일이 있는 풀을 따른다(security n2)', async () => {
+    const dup = [
+      { pool: 'work', accounts: [at('work', 'x')] },
+      { pool: 'personal', accounts: [at('personal', 'x')] },
+    ];
+    const root = await rootWith([
+      { ...entry('x', { session: 10 }), pool: 'work' },
+      { ...entry('x', { session: 10 }), pool: 'personal' },
+    ]);
+    const seen: string[] = [];
+    const make2 = (sessionIn: string | null) => createAccountAssigner({
+      lane: dup[0]!.accounts, pool: 'work', root,
+      current: async () => ({ pool: 'work', lane: dup[0]!.accounts, chain: dup }),
+      pinnedOf: () => 'x', pinnedPoolOf: () => undefined, sessionIdOf: () => 'sess-1',
+      hasSession: async (id, dir) => { seen.push(`${id}@${dir}`); return dir === sessionIn; },
+      now: () => NOW, random: () => 0, log: () => {}, readAttention: async () => null,
+    });
+    expect(names(await make2('/x/personal/x').laneFor('t'))[0]).toBe('personal/x');
+    expect(seen).toEqual(['sess-1@/x/work/x', 'sess-1@/x/personal/x']);
+    // 어디에도 없으면 예전처럼 첫 풀
+    expect(names(await make2(null).laneFor('t'))[0]).toBe('work/x');
+  });
+
   it('모든 풀이 소진이면 멈추지 않고 가장 먼저 풀리는 풀로 보낸다(D4)', async () => {
     const root = await rootWith([
       { ...entry('a', { session: 90, sessionResetH: 3 }), pool: 'work' },

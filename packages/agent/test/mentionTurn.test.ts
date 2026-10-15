@@ -1160,6 +1160,8 @@ describe('runMentionTurn', () => {
       { channelId: CHANNEL, threadRootId: null, mentionId: MENTION },
     );
     expect(deps.store.get(key)!.sessionId).toBe(old.sessionId);
+    // 그 턴이 풀을 채워 둔다 — 다음 턴부터는 풀도 잰다(security n2).
+    expect(deps.store.get(key)!.claudePool).toBe('work');
   });
 
   it('계정이 같으면 세션을 유지한다', async () => {

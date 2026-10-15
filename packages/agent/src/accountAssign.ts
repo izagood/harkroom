@@ -39,6 +39,7 @@ import { isAttentionActive, readAccountAttention, type ClaudeAccountAttention } 
 import type { ProviderUsageWindow } from '@harkroom/shared/daemonProtocol';
 
 import type { ClaudeAccount, ClaudePoolLane } from './claudeAccounts.js';
+import { claudeSessionFileExists } from './claudeSessions.js';
 
 /**
  * 기준 % 넷은 `pools.json` 의 풀별 `assign` 에서 온다(설정 › Claude 계정, 비면 jaebin 이 고른
@@ -305,6 +306,14 @@ export interface AccountAssignerDeps {
    * 풀 순서에서 그 이름이 처음 나오는 풀로 본다. 생략하면 언제나 `undefined` 다.
    */
   pinnedPoolOf?(threadKey: string): string | null | undefined;
+  /**
+   * 스레드의 claude 세션 id(`SessionRecord.sessionId`). 풀을 적기 전의 옛 레코드인데 같은 이름의 계정이
+   * 여러 풀에 있으면, 이 세션 파일이 **실제로 있는** 풀의 계정을 고른다(security n2, 2026-10-15) —
+   * 첫 풀로 짐작하면 다른 디렉터리에서 resume 하다 한 번 실패한다.
+   */
+  sessionIdOf?(threadKey: string): string | null;
+  /** 그 세션 파일이 이 계정 디렉터리에 있나. 생략하면 `claudeSessionFileExists`. */
+  hasSession?(sessionId: string, configDir: string): Promise<boolean>;
   /** 주면 `pools.json` 을 읽지 않고 이것을 쓴다(테스트). */
   policy?: AssignPolicy;
   now?: () => number;
@@ -431,8 +440,20 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
 
     const pinnedName = deps.pinnedOf(threadKey);
     const pinnedPool = deps.pinnedPoolOf?.(threadKey);
-    const pinIdx = pinnedName === null ? -1 : chain.findIndex((c) =>
+    const holders = pinnedName === null ? [] : chain.map((c, i) => ({ c, i })).filter(({ c }) =>
       (typeof pinnedPool !== 'string' || c.pool === pinnedPool) && c.accounts.some((a) => a.name === pinnedName));
+    let pinIdx = holders[0]?.i ?? -1;
+    // 풀을 모르는 옛 레코드 + 같은 이름이 여러 풀에: 세션 파일이 있는 풀을 따른다. 아무 데도 없으면 첫 풀.
+    if (holders.length > 1 && typeof pinnedPool !== 'string') {
+      const sessionId = deps.sessionIdOf?.(threadKey) ?? null;
+      if (sessionId) {
+        const has = deps.hasSession ?? ((id: string, dir: string) => claudeSessionFileExists(id, { configDir: dir }));
+        for (const { c, i } of holders) {
+          const dir = c.accounts.find((a) => a.name === pinnedName)!.configDir;
+          if (await has(sessionId, dir).catch(() => false)) { pinIdx = i; break; }
+        }
+      }
+    }
 
     const finish = (idx: number, res: PickResult, reason: PickReason): readonly ClaudeAccount[] => {
       const c = chain[idx]!;
