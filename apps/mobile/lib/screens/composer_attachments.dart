@@ -411,7 +411,11 @@ enum _AttachChoice { library, camera, file }
 Future<_AttachChoice?> _showAttachSheet(BuildContext context, {required bool hasCamera}) {
   final t = context.t;
   final k = context.tokens;
-  Widget row(_AttachChoice c, IconData icon, String label, String key, {bool enabled = true, String? note}) {
+  // 시트는 **루트** Navigator 에 뜬다. 닫을 때는 시트 안의 context(`ctx`)로 그 Navigator 를 집는다 —
+  // 바깥 [context] 는 탭 쌓기(#1368) 안의 채널·스레드 화면이라, 그것으로 `pop` 하면 시트는 남고
+  // **보던 화면이 빠져** 탭 뿌리(홈)로 간다. picker 도 열리지 않는다.
+  Widget row(BuildContext ctx, _AttachChoice c, IconData icon, String label, String key,
+      {bool enabled = true, String? note}) {
     return ListTile(
       key: Key(key),
       enabled: enabled,
@@ -420,7 +424,7 @@ Future<_AttachChoice?> _showAttachSheet(BuildContext context, {required bool has
       title: Text(label),
       subtitle: note == null ? null : Text(note, style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted)),
       // 비활성이면 누르면 아무 일도 없다.
-      onTap: enabled ? () => Navigator.of(context).pop(c) : null,
+      onTap: enabled ? () => Navigator.of(ctx).pop(c) : null,
     );
   }
 
@@ -433,10 +437,10 @@ Future<_AttachChoice?> _showAttachSheet(BuildContext context, {required bool has
         key: const Key('attach-sheet'),
         mainAxisSize: MainAxisSize.min,
         children: [
-          row(_AttachChoice.library, Icons.photo_library_outlined, t.attachLibrary, 'attach-library'),
-          row(_AttachChoice.camera, Icons.photo_camera_outlined, t.attachCamera, 'attach-camera',
+          row(ctx, _AttachChoice.library, Icons.photo_library_outlined, t.attachLibrary, 'attach-library'),
+          row(ctx, _AttachChoice.camera, Icons.photo_camera_outlined, t.attachCamera, 'attach-camera',
               enabled: hasCamera, note: hasCamera ? null : t.attachCameraUnavailable),
-          row(_AttachChoice.file, Icons.insert_drive_file_outlined, t.attachFile, 'attach-file'),
+          row(ctx, _AttachChoice.file, Icons.insert_drive_file_outlined, t.attachFile, 'attach-file'),
           const SizedBox(height: 8),
         ],
       ),
