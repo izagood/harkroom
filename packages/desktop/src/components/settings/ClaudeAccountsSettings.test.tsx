@@ -753,7 +753,9 @@ describe('로그인이 풀린 계정 (2026-10-15, 로그인 끊김 경고 ③-2)
     expect(line.textContent).toMatch(/Usage lookup was rejected/);
     expect(line.textContent).not.toMatch(/agents skip this account/);
     expect(line.textContent).not.toMatch(/ · \d/);
-    expect(within(screen.getByTestId('claude-account-work-cedar')).getByTestId('claude-account-signed-out-chip')).toBeTruthy();
+    // 401 만이면 단정하지 않는다 — 칩은 「확인 필요」, 풀 머리 숫자에도 안 든다(designer q1).
+    expect(within(screen.getByTestId('claude-account-work-cedar')).getByTestId('claude-account-signed-out-chip').textContent).toBe('Check sign-in');
+    expect(screen.queryByTestId('claude-pool-signed-out-work')).toBeNull();
   });
 
   it('깨진 표식 시각(Date 범위 밖)이면 시각만 빼고 화면은 산다(security n2)', async () => {
