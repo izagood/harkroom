@@ -166,6 +166,19 @@ void main() {
     expect(_puts.last, 'b1 {"state":null}');
   });
 
+  testWidgets('되돌리기 알림은 누르지 않아도 6초 뒤 저절로 내린다', (tester) async {
+    await _openInbox(tester);
+    await tester.drag(find.byKey(const ValueKey('inbox-swipe-b1')), const Offset(-500, 0));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('inbox-toast')), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
+    expect(find.byKey(const Key('inbox-toast')), findsOneWidget, reason: '시간 전엔 그대로');
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('inbox-toast')), findsNothing);
+    expect(_puts, ['b1 {"state":"done"}'], reason: '저절로 내려도 되돌리지 않는다');
+  });
+
   testWidgets('밀면 호출이 끝나기 전에 줄이 빠지고 숫자가 준다 (designer s2)', (tester) async {
     final state = await _openInbox(tester);
     expect(state.inboxMine, 2);
