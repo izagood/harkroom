@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -1378,5 +1378,23 @@ describe('델타를 멘션·최신 우선으로 싣는다 (2026-10-12, 스레드
       messages: many(11, 15), lastFedSeq: 10, meId: 'a1', handles, channelId: 'c', threadRootId: null,
     });
     expect(prompt).not.toContain('생략');
+  });
+});
+
+describe('macPermissionNotice (security n1·n2, PR #1384)', () => {
+  it('앱 이름은 코드 스팬 안에 두어 멘션이 되지 않고, 마운트한 비밀은 가린다', () => {
+    const body = macPermissionNotice(
+      [{ state: 'waiting', target: '@jaebin', input: `osascript -e 'tell application "@jaebin" to get s3cr3t-token-value'` }],
+      'hrkp_x', ['s3cr3t-token-value'],
+    );
+    expect(body).toContain('Harkroom → `@jaebin` 제어 [허용] 필요');
+    // 코드 스팬 밖에 맨몸 `@jaebin` 이 없다.
+    expect(body.replace(/`[^`]*`/g, '')).not.toContain('@jaebin');
+    expect(body).not.toContain('s3cr3t-token-value');
+  });
+
+  it('거부면 시스템 설정 › 자동화 길을 준다', () => {
+    const body = macPermissionNotice([{ state: 'denied', target: 'Google Chrome', input: 'osascript x' }], 'hrkp_x');
+    expect(body).toContain('시스템 설정 › 개인정보 보호 및 보안 › 자동화 › Harkroom');
   });
 });

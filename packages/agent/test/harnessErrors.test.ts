@@ -402,7 +402,7 @@ describe('readMcpAuthRejections', () => {
   });
 });
 
-// 실물 모양(2026-10-14 rcms 턴): osascript 가 TCC 창 앞에서 멈추면 Bash 시한 머리가 결과로 온다.
+// 실물 모양(2026-10-14 사내 페이지 턴): osascript 가 TCC 창 앞에서 멈추면 Bash 시한 머리가 결과로 온다.
 describe('readMacPermissionWaits', () => {
   const T0 = Date.parse('2026-10-14T07:30:00.000Z');
   const at = (s: number) => new Date(T0 + s * 1000).toISOString();
@@ -431,7 +431,7 @@ describe('readMacPermissionWaits', () => {
   it('곧 끝난 호출·대기 문턱 전·osascript 아닌 명령·이 턴 이전·말 속 인용은 세지 않는다', async () => {
     const projectsDir = await seed([
       use(-30, 'old', CHROME), result(-29, 'old', 'Not authorized to send Apple events (-1743)'),
-      use(1, 'ok', CHROME), result(2, 'ok', 'https://rcms.rbln.in/'),
+      use(1, 'ok', CHROME), result(2, 'ok', 'https://example.test/'),
       use(3, 'sleep', 'sleep 200'), result(123, 'sleep', 'Command did not complete within its 120s timeout and was moved to the background'),
       use(150, 'fresh', CHROME),
       { type: 'assistant', timestamp: at(151), message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'osascript -1743 Not authorized to send Apple events' }] } },

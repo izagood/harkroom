@@ -408,7 +408,7 @@ export const MAC_PERMISSION_PENDING_MS = 15_000;
  * **왜 필요한가.** 러너가 띄운 턴의 `osascript` 가 다른 앱(Google Chrome 등)을 처음 부르면 macOS 가
  * 「'Harkroom'에서 'Google Chrome'을(를) 제어하려고 합니다」 창을 띄우고, 사람이 누를 때까지 명령이 멈춘다.
  * 그 창은 Harkroom 전체 화면 뒤에 숨어서 사람은 몰랐고, 턴은 Bash 시한(120초)에 걸려 "시간 초과"만 남겼다
- * (10-14 rcms 턴, 하루가 날아갔다). 러너가 이 사실을 대신 **알린다** — 허용하거나 돌아가지는 않는다.
+ * (10-14 사내 페이지 턴, 하루가 날아갔다). 러너가 이 사실을 대신 **알린다** — 허용하거나 돌아가지는 않는다.
  *
  * 판정은 Bash `tool_use` 의 명령에 `osascript` 가 있을 때만 한다: 결과가 거부 표지면 `denied`, 시한 머리면
  * `timeout`, 결과 없이 `pendingMs` 가 지났으면 `waiting`. 에이전트가 말 속에 같은 문구를 인용해도 걸리지 않는다.

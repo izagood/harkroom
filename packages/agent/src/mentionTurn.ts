@@ -1774,8 +1774,10 @@ export async function runMentionTurn(
     if (fresh.length === 0) return;
     for (const w of fresh) end.macSeen.add(w.toolUseId);
     end.macNotices += 1;
-    for (const w of fresh) console.error(`[mentionTurn] ${key}: macOS 권한 창 ${w.state} — ${w.target ?? '?'}`);
-    await deps.harkroom.progress(channelId, macPermissionNotice(fresh, deps.runnerSecret).slice(0, BODY_LIMIT), anchor)
+    for (const w of fresh) console.error(`[mentionTurn] ${key}: macOS 권한 창 ${w.state}`);
+    // 마운트한 비밀이 명령에 펼쳐져 실려도 가린다(security n1).
+    const secrets = deps.secretNeedles ? await deps.secretNeedles(mentionId).catch(() => [] as string[]) : [];
+    await deps.harkroom.progress(channelId, macPermissionNotice(fresh, deps.runnerSecret, secrets).slice(0, BODY_LIMIT), anchor)
       .catch((err: unknown) => {
         console.error(`[mentionTurn] ${key}: macOS 권한 통지 실패 — ${err instanceof Error ? err.message : String(err)}`);
       });

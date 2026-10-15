@@ -236,15 +236,17 @@ export function permissionDenialNotice(
 export function macPermissionNotice(
   waits: ReadonlyArray<{ state: 'waiting' | 'timeout' | 'denied'; target: string | null; input: string }>,
   pat: string,
+  secrets: readonly string[] = [],
 ): string {
-  const app = (t: string | null): string => (t ? `'${oneLine(t, pat, 60)}'` : '다른 앱');
+  // 앱 이름은 명령에서 온 글이라 코드 스팬에 넣는다 — 밖에 두면 `@누구` 가 멘션이 된다(security n2).
+  const app = (t: string | null): string => (t ? `\`${oneLine(t, pat, 60, secrets)}\`` : '다른 앱');
   const lines = waits.map((w) => {
-    const what = `\`${oneLine(w.input, pat)}\``;
+    const what = `\`${oneLine(w.input, pat, undefined, secrets)}\``;
     if (w.state === 'denied') {
       return `- 거부됨: Harkroom → ${app(w.target)} 제어 — 시스템 설정 › 개인정보 보호 및 보안 › 자동화 › Harkroom 에서 ${app(w.target)} 을(를) 켜 주세요. ${what}`;
     }
     const tail = w.state === 'timeout' ? '명령이 시간 초과로 끝났다' : '명령이 답을 기다리는 중이다';
-    return `- Harkroom → ${app(w.target)} 제어 [허용] 필요 — 「'Harkroom'에서 ${app(w.target)}을(를) 제어하려고 합니다」 창이 Harkroom 뒤에 떠 있을 수 있다(${tail}). ${what}`;
+    return `- Harkroom → ${app(w.target)} 제어 [허용] 필요 — 「'Harkroom'에서 …을(를) 제어하려고 합니다」 창이 Harkroom 뒤에 떠 있을 수 있다(${tail}). ${what}`;
   });
   return ['macOS 권한 창 — 사람이 눌러야 진행된다:', ...lines].join('\n');
 }
