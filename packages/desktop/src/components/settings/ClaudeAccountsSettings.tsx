@@ -66,7 +66,7 @@ import { ProviderSection } from './ProviderSection';
 import { AccountRowsSkeleton, ProviderUsageBars, ProviderUsageSkeleton, UsageRefreshControl } from './ProviderUsageBars';
 import { ClaudeAssignThresholdsRow } from './ClaudeAssignThresholds';
 import { refreshKey, usageFor, usageUpdatedAt, useProviderUsage } from '../../lib/providerUsage';
-import { useT } from '../../i18n/useT';
+import { useLocale, useT } from '../../i18n/useT';
 import type { Translate } from '../../i18n';
 import { errorText } from '../../lib/errorText';
 
@@ -130,6 +130,25 @@ function signedInAs(status: ClaudeAuthStatus): string {
   return [status.email, status.subscriptionType].filter(Boolean).join(' · ');
 }
 
+/**
+ * 이 계정의 로그인이 **풀렸다**(2026-10-15, 로그인 끊김 경고 ③-2). 둘 중 하나면 그렇다: 러너가 이 계정의 턴을
+ * 하네스 로그인 실패로 넘겼다(`authFailure`, operator #1386), 또는 사용량 조회가 401 을 받았다. `status.loggedIn` 은
+ * Keychain 항목의 존재만 봐서 만료 계정도 참이다 — 그것만 믿으면 풀린 계정이 「로그인됨」으로 보인다.
+ */
+/**
+ * 표식 시각을 ` · 14:02` 로. 깨진 값(유한하지만 Date 범위 밖)이면 **시각을 뺀다** — `Intl.DateTimeFormat.format`
+ * 이 RangeError 를 던져 설정 화면이 통째로 깨지지 않게(security n2).
+ */
+function formatAtTime(locale: string, atMs: number): string {
+  const d = new Date(atMs);
+  if (Number.isNaN(d.getTime())) return '';
+  return ` · ${new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(d)}`;
+}
+
+function isSignedOut(a: ClaudeAccountView, usageError: string | undefined): boolean {
+  return !!a.authFailure || usageError === 'unauthorized';
+}
+
 /** 확인 문구·메뉴에 쓰는 한 줄 이름. */
 function accountLabel(a: ClaudeAccountView, t: Translate): string {
   return a.status.loggedIn ? statusLine(a.status, t) : t('claudeAccounts.accountNotSignedIn', { name: a.name });
@@ -157,6 +176,7 @@ function StandalonePage({ description, width, actions, children }: {
  */
 export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolean } = {}) {
   const t = useT();
+  const locale = useLocale();
   const Shell = embedded ? ClaudeSection : StandalonePage;
   // 한도 사용률: CLI(`/usage`) 먼저, 실패하면 같은 API(`usageChain.ts`). 사용량은 이것 하나다.
   const available = hasClaudeAccountsSurface();
@@ -444,6 +464,20 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                 */}
                 {pool.accounts.length > 1 && ` · ${t('claudeAccounts.pool.orderNote')}`}
               </span>
+              {/*
+                풀린 계정 수를 풀 머리에 센다(designer 시안 ③) — 아래 줄을 훑지 않아도 풀이 얼마나 남았는지
+                보인다. 하나도 없으면 아무것도 그리지 않는다.
+              */}
+              {(() => {
+                const out = pool.accounts.filter((a) => isSignedOut(
+                  a, providerSnap ? usageFor(providerSnap, a.name, pool.name)?.error : undefined,
+                )).length;
+                return out > 0 ? (
+                  <span className="text-meta text-warning" data-testid={`claude-pool-signed-out-${pool.name}`}>
+                    {t('claudeAccounts.pool.signedOutSummary', { count: out, total: pool.accounts.length })}
+                  </span>
+                ) : null;
+              })()}
             </div>
             <div className="flex items-center gap-3">
               {pool.name && snap.defaultPool !== pool.name && (
@@ -516,6 +550,7 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
             const pu = providerSnap ? usageFor(providerSnap, a.name, pool.name) : null;
             // 같은 로그인이 둘이면 페일오버가 같은 한도로 옮겨 탈 뿐이다 — 사람이 알아야 한다.
             const dup = sameSignInAs(pool.accounts, a.name);
+            const signedOut = isSignedOut(a, pu?.error);
             return (
               // 줄과 막대를 **한 자식**으로 묶는다 — `SettingsGroup` 이 자식 사이에 선을 긋는데,
               // 막대가 따로 서면 계정과 그 계정의 한도 사이에 선이 생긴다.
@@ -537,7 +572,21 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   좁아질 수 있는 열이라 잘리는 대신 `title` 로 전문을 남긴다.
                 */}
                 <span className="flex min-w-0 items-baseline gap-2 text-meta" title={statusLine(a.status, t)}>
-                  {a.status.loggedIn && <span className="truncate text-fg-muted">{signedInAs(a.status)}</span>}
+                  {/*
+                    풀린 계정은 「로그인됨」으로 보이면 안 된다(designer 시안 ③). 메일은 지우지 않고 흐리게 둔다 —
+                    어느 로그인으로 다시 들어가야 하는지가 그 메일이다. 칩이 글자로 같은 말을 한다(색만으로 말하지 않는다).
+                  */}
+                  {a.status.loggedIn && (
+                    <span className={`truncate ${signedOut ? 'text-fg-subtle' : 'text-fg-muted'}`}>{signedInAs(a.status)}</span>
+                  )}
+                  {signedOut && (
+                    <span
+                      className="shrink-0 rounded-row border border-warning px-1 text-warning"
+                      data-testid="claude-account-signed-out-chip"
+                    >
+                      {t('claudeAccounts.signedOut.chip')}
+                    </span>
+                  )}
                   {/* 디렉터리 이름은 id 로만 선다 — `HARKROOM_CLAUDE_ACCOUNTS`·로그가 이것을 쓴다. */}
                   <span className="shrink-0 font-mono text-fg-subtle">{a.name}</span>
                   {dup && (
@@ -616,7 +665,34 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   </button>
                 </div>
               )}
-              {pu ? (
+              {/*
+                로그인이 풀렸으면 사용량 막대 자리를 **이유 줄**로 바꾼다(designer 시안 ③) — 회색 「재인증하세요」
+                글자 위에 ⚠ 가 따로 서지 않게 한 줄로. 관문 ⚠ 줄(`claude-account-attention`)과 같은 모양이고,
+                [다시 로그인] 은 기존 확인창을 연다. 표식에는 시한이 없어 「다시 로그인하면 풀린다」를 같이 적는다(security n4).
+              */}
+              {signedOut ? (
+                <div
+                  className="flex flex-wrap items-baseline gap-x-2 px-4 pb-2.5 text-meta"
+                  data-testid="claude-account-signed-out"
+                >
+                  <span className="text-warning">
+                    {/* 러너 표식이 있을 때만 「에이전트가 건너뛴다」가 사실이다 — 배정기(`readAccountBlocked`)는 사용량
+                        401 만으로는 건너뛰지 않는다(security n1). 401 만이면 사용량 쪽 사실만 말한다. */}
+                    ⚠ {a.authFailure ? t('claudeAccounts.signedOut.notice') : t('claudeAccounts.signedOut.usageNotice')}
+                    {a.authFailure && formatAtTime(locale, a.authFailure.atMs)}
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-accent underline hover:text-fg"
+                    aria-label={t('claudeAccounts.account.signInAgainTo', { account: a.name })}
+                    data-testid="claude-account-signed-out-reauth"
+                    onClick={() => setReauthAsk({ pool: pool.name, account: a.name, label: accountLabel(a, t) })}
+                  >
+                    {t('claudeAccounts.account.signInAgain')}
+                  </button>
+                  <span className="text-fg-muted">{t('claudeAccounts.signedOut.hint')}</span>
+                </div>
+              ) : pu ? (
                 <div
                   // 이 계정(또는 전부)을 새로 재는 중이면 막대를 흐리게 — 지금 보이는 % 가 곧 바뀐다는 뜻이다.
                   className={`px-4 pb-2.5 transition-opacity ${

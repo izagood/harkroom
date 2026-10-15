@@ -697,3 +697,78 @@ describe('앱 언어를 따른다', () => {
     expect(screen.getByText('1 account')).toBeTruthy();
   });
 });
+
+describe('로그인이 풀린 계정 (2026-10-15, 로그인 끊김 경고 ③-2)', () => {
+  // `status.loggedIn` 은 Keychain 항목의 존재만 본다 — 만료 계정도 참이다. 러너가 남긴 `authFailure` 가
+  // 그 빈틈을 메운다(operator #1386).
+  const SIGNED_OUT = {
+    ...POOLS_SNAPSHOT,
+    pools: [{
+      name: 'work',
+      accounts: [
+        { name: 'aria', status: { loggedIn: true, email: 'me@corp.example', orgName: 'Corp' }, authFailure: { atMs: 1 } },
+        { name: 'cedar', status: { loggedIn: true, email: 'cedar@corp.example' } },
+        { name: 'lychee', status: { loggedIn: true, email: 'lychee@corp.example' } },
+      ],
+    }],
+  };
+
+  it('풀린 계정에만 칩과 이유 줄이 서고, 풀 머리가 n개 중 k개를 센다', async () => {
+    stubTauri(SIGNED_OUT);
+    render(<ClaudeAccountsSettings />);
+    const lines = await screen.findAllByTestId('claude-account-signed-out');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.textContent).toMatch(/Signed out — agents skip this account/);
+    // 표식에 시한이 없다 — 다시 로그인하면 풀린다는 것을 글자로 말한다(security n4).
+    expect(lines[0]!.textContent).toMatch(/Signing in again clears this/);
+    const row = screen.getByTestId('claude-account-work-aria');
+    expect(within(row).getByTestId('claude-account-signed-out-chip').textContent).toBe('Signed out');
+    // 메일은 지우지 않는다 — 어느 로그인으로 다시 들어갈지가 그 메일이다.
+    expect(within(row).getByText('me@corp.example')).toBeTruthy();
+    expect(within(screen.getByTestId('claude-account-work-cedar')).queryByTestId('claude-account-signed-out-chip')).toBeNull();
+    expect(screen.getByTestId('claude-pool-signed-out-work').textContent).toBe('1 of 3 signed out');
+  });
+
+  it('[Sign in again] 은 기존 확인창을 거친다 — 누르기만으로 로그인을 띄우지 않는다', async () => {
+    stubTauri(SIGNED_OUT);
+    render(<ClaudeAccountsSettings />);
+    fireEvent.click(await screen.findByTestId('claude-account-signed-out-reauth'));
+    const dialog = screen.getByRole('dialog', { name: /Sign in again to/ });
+    expect(calls.filter((c) => c.cmd === 'claude_account_login_start')).toHaveLength(0);
+    fireEvent.click(within(dialog).getByTestId('confirm-ok'));
+    await waitFor(() => expect(calls.filter((c) => c.cmd === 'claude_account_login_start').map((c) => c.args))
+      .toEqual([{ pool: 'work', account: 'aria', reauth: true }]));
+  });
+
+  it('사용량 401 만 있으면(표식 없음) 칩과 이유 줄은 서되 「건너뛴다」·시각을 말하지 않는다(designer n1·security n1)', async () => {
+    const noMark = { ...SIGNED_OUT, pools: [{ name: 'work', accounts: SIGNED_OUT.pools[0]!.accounts.map(({ authFailure: _f, ...rest }) => rest) }] };
+    stubTauri(noMark, {
+      claude_accounts_provider_usage: {
+        measuredAtMs: 1,
+        accounts: [{ account: 'cedar', pool: 'work', source: 'api', fetchedAtMs: 1, session: null, weekly: null, error: 'unauthorized' }],
+      },
+    });
+    render(<ClaudeAccountsSettings />);
+    const line = await screen.findByTestId('claude-account-signed-out');
+    expect(line.textContent).toMatch(/Usage lookup was rejected/);
+    expect(line.textContent).not.toMatch(/agents skip this account/);
+    expect(line.textContent).not.toMatch(/ · \d/);
+    expect(within(screen.getByTestId('claude-account-work-cedar')).getByTestId('claude-account-signed-out-chip')).toBeTruthy();
+  });
+
+  it('깨진 표식 시각(Date 범위 밖)이면 시각만 빼고 화면은 산다(security n2)', async () => {
+    stubTauri({ ...SIGNED_OUT, pools: [{ name: 'work', accounts: [{ ...SIGNED_OUT.pools[0]!.accounts[0]!, authFailure: { atMs: 1e300 } }] }] });
+    render(<ClaudeAccountsSettings />);
+    const line = await screen.findByTestId('claude-account-signed-out');
+    expect(line.textContent).toMatch(/agents skip this account/);
+    expect(line.textContent).not.toMatch(/ · \d/);
+  });
+
+  it('표식이 없으면 아무것도 그리지 않는다', async () => {
+    stubTauri({ ...SIGNED_OUT, pools: [{ name: 'work', accounts: SIGNED_OUT.pools[0]!.accounts.map(({ authFailure: _f, ...rest }) => rest) }] });
+    render(<ClaudeAccountsSettings />);
+    await screen.findByTestId('claude-account-work-aria');
+    expect(screen.queryByTestId('claude-account-signed-out')).toBeNull();
+    expect(screen.queryByTestId('claude-pool-signed-out-work')).toBeNull();
+  });
+});
