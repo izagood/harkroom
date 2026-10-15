@@ -134,6 +134,16 @@ function signedInAs(status: ClaudeAuthStatus): string {
  * 하네스 로그인 실패로 넘겼다(`authFailure`, operator #1386), 또는 사용량 조회가 401 을 받았다. `status.loggedIn` 은
  * Keychain 항목의 존재만 봐서 만료 계정도 참이다 — 그것만 믿으면 풀린 계정이 「로그인됨」으로 보인다.
  */
+/**
+ * 표식 시각을 ` · 14:02` 로. 깨진 값(유한하지만 Date 범위 밖)이면 **시각을 뺀다** — `Intl.DateTimeFormat.format`
+ * 이 RangeError 를 던져 설정 화면이 통째로 깨지지 않게(security n2).
+ */
+function formatAtTime(locale: string, atMs: number): string {
+  const d = new Date(atMs);
+  if (Number.isNaN(d.getTime())) return '';
+  return ` · ${new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(d)}`;
+}
+
 function isSignedOut(a: ClaudeAccountView, usageError: string | undefined): boolean {
   return !!a.authFailure || usageError === 'unauthorized';
 }
@@ -656,9 +666,10 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                   data-testid="claude-account-signed-out"
                 >
                   <span className="text-warning">
-                    ⚠ {t('claudeAccounts.signedOut.notice')}
-                    {a.authFailure && ` · ${new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' })
-                      .format(new Date(a.authFailure.atMs))}`}
+                    {/* 러너 표식이 있을 때만 「에이전트가 건너뛴다」가 사실이다 — 배정기(`readAccountBlocked`)는 사용량
+                        401 만으로는 건너뛰지 않는다(security n1). 401 만이면 사용량 쪽 사실만 말한다. */}
+                    ⚠ {a.authFailure ? t('claudeAccounts.signedOut.notice') : t('claudeAccounts.signedOut.usageNotice')}
+                    {a.authFailure && formatAtTime(locale, a.authFailure.atMs)}
                   </span>
                   <button
                     type="button"

@@ -740,6 +740,30 @@ describe('로그인이 풀린 계정 (2026-10-15, 로그인 끊김 경고 ③-2)
       .toEqual([{ pool: 'work', account: 'aria', reauth: true }]));
   });
 
+  it('사용량 401 만 있으면(표식 없음) 칩과 이유 줄은 서되 「건너뛴다」·시각을 말하지 않는다(designer n1·security n1)', async () => {
+    const noMark = { ...SIGNED_OUT, pools: [{ name: 'work', accounts: SIGNED_OUT.pools[0]!.accounts.map(({ authFailure: _f, ...rest }) => rest) }] };
+    stubTauri(noMark, {
+      claude_accounts_provider_usage: {
+        measuredAtMs: 1,
+        accounts: [{ account: 'cedar', pool: 'work', source: 'api', fetchedAtMs: 1, session: null, weekly: null, error: 'unauthorized' }],
+      },
+    });
+    render(<ClaudeAccountsSettings />);
+    const line = await screen.findByTestId('claude-account-signed-out');
+    expect(line.textContent).toMatch(/Usage lookup was rejected/);
+    expect(line.textContent).not.toMatch(/agents skip this account/);
+    expect(line.textContent).not.toMatch(/ · \d/);
+    expect(within(screen.getByTestId('claude-account-work-cedar')).getByTestId('claude-account-signed-out-chip')).toBeTruthy();
+  });
+
+  it('깨진 표식 시각(Date 범위 밖)이면 시각만 빼고 화면은 산다(security n2)', async () => {
+    stubTauri({ ...SIGNED_OUT, pools: [{ name: 'work', accounts: [{ ...SIGNED_OUT.pools[0]!.accounts[0]!, authFailure: { atMs: 1e300 } }] }] });
+    render(<ClaudeAccountsSettings />);
+    const line = await screen.findByTestId('claude-account-signed-out');
+    expect(line.textContent).toMatch(/agents skip this account/);
+    expect(line.textContent).not.toMatch(/ · \d/);
+  });
+
   it('표식이 없으면 아무것도 그리지 않는다', async () => {
     stubTauri({ ...SIGNED_OUT, pools: [{ name: 'work', accounts: SIGNED_OUT.pools[0]!.accounts.map(({ authFailure: _f, ...rest }) => rest) }] });
     render(<ClaudeAccountsSettings />);

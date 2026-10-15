@@ -1950,6 +1950,7 @@ export const ko = {
   'claudeAccounts.attention.notice': 'Claude Code가 설정 화면에서 선택을 기다리고 있습니다. 답하기 전까지 이 계정은 새 스레드에서 맨 마지막으로 쓰입니다.',
   'claudeAccounts.signedOut.chip': '로그인 풀림',
   'claudeAccounts.signedOut.notice': '로그인이 풀렸습니다 — 에이전트가 이 계정을 건너뜁니다',
+  'claudeAccounts.signedOut.usageNotice': '사용량 조회가 거절됐습니다 — 이 계정의 로그인이 풀렸을 수 있습니다',
   'claudeAccounts.signedOut.hint': '다시 로그인하면 풀립니다',
   'claudeAccounts.pool.signedOutSummary': '{total}개 중 {count}개 로그인 풀림',
   'claudeAccounts.attention.openAria': '{account} 터미널 열기',

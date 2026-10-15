@@ -3736,6 +3736,7 @@ export const en = {
   'claudeAccounts.attention.notice': 'Claude Code is waiting for your choice on a setup screen. New threads try this account last until you answer it.',
   'claudeAccounts.signedOut.chip': 'Signed out',
   'claudeAccounts.signedOut.notice': 'Signed out — agents skip this account',
+  'claudeAccounts.signedOut.usageNotice': 'Usage lookup was rejected — this account may be signed out',
   'claudeAccounts.signedOut.hint': 'Signing in again clears this',
   'claudeAccounts.pool.signedOutSummary': '{count} of {total} signed out',
   'claudeAccounts.attention.openAria': 'Open a terminal for {account}',
