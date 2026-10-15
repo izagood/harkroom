@@ -320,8 +320,7 @@ void _toast(ScaffoldMessengerState messenger, EdgeInsets margin, String text,
       margin: margin,
       duration: const Duration(seconds: 4),
       action: actionLabel == null || onAction == null ? null : SnackBarAction(label: actionLabel, onPressed: onAction),
-      // 행동이 있어도 시간이 되면 내린다 — Flutter 기본은 행동 단 토스트를 붙잡아 둔다([showFailureToast]).
-      persist: false,
+      persist: actionToastPersists(messenger.context),
     ));
 }
 

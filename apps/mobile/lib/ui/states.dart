@@ -312,9 +312,6 @@ class SendButton extends StatelessWidget {
 
 /// 실패를 잠깐 알리는 토스트(ask 답·리액션처럼 줄 안에 남길 자리가 없는 것). **다시 시도**를
 /// 단다 — "실패했다"만 말하면 사람은 같은 버튼을 다시 찾아 눌러야 한다.
-///
-/// 행동 단 토스트는 **`persist: false` 를 꼭 준다.** Flutter 는 `action` 이 있으면 `persist` 를
-/// 기본 true 로 잡아 `duration` 이 지나도 안 내린다 — 쓸어내려야만 사라지는 검은 띠가 남았다.
 void showFailureToast(BuildContext context, String text, {VoidCallback? retry}) {
   final t = context.t;
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -322,9 +319,17 @@ void showFailureToast(BuildContext context, String text, {VoidCallback? retry}) 
     behavior: SnackBarBehavior.floating,
     margin: toastMargin(context),
     action: retry == null ? null : SnackBarAction(label: t.commonRetry, onPressed: retry),
-    persist: false,
+    persist: actionToastPersists(context),
   ));
 }
+
+/// 행동(되돌리기·다시 시도)을 단 토스트의 `persist` — 그런 토스트는 **언제나 이것을 준다**.
+///
+/// Flutter 는 `action` 이 있으면 `persist` 를 기본 true 로 잡아 `duration` 이 지나도 안 내린다 —
+/// 쓸어내려야만 사라지는 띠가 남았다. 그래서 시간이 되면 내리되, VoiceOver 같은 접근성 탐색 중에는
+/// 붙잡아 둔다: 3.47 의 ScaffoldMessenger 는 그때도 타이머로 내려서, 스크린리더 사용자는 버튼까지
+/// 가기 전에 띠를 잃는다.
+bool actionToastPersists(BuildContext context) => MediaQuery.accessibleNavigationOf(context);
 
 /// 작성칸이 있는 화면(채널·스레드)의 몸통을 감싼다. 그 안에서 뜨는 토스트는 작성칸 **위**에
 /// 선다(개정판 3.3) — 작성칸은 Scaffold 몸통 안에 있어서, 그냥 띄우면 토스트가 작성칸을 덮는다.
