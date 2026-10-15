@@ -36,7 +36,10 @@ import { RunnerStatusLine, runnerStatusLabel } from '../RunnerStatus';
 import { AgentGrid } from './AgentGrid';
 import { LocalOperatorRow } from './LocalOperatorRow';
 import { ModelPicker } from './ModelPicker';
-import { hasOperatorLocalSurface, listLocalAgents } from '../../lib/operatorLocal';
+import { hasOperatorLocalSurface, listLocalAgents, setLocalAgent } from '../../lib/operatorLocal';
+import { poolGateEditable, poolGateOf } from '../../lib/poolGate';
+import { useAgentTurns } from '../../lib/agentTurns';
+import { isPoolRank } from '@harkroom/shared';
 import { AgentScopeSection } from './AgentScopeSection';
 import { AgentGrantsSection, liveMergeCount, type MergeCount } from './AgentGrantsSection';
 import { AgentPickableSection } from './AgentPickableSection';
@@ -57,6 +60,8 @@ import { Button, DangerZone, SettingsColumns, SettingsWrap } from './primitives'
 import { AvatarAdjustTrigger, AvatarCropHost, AvatarStatus, useAvatarEdit, type AvatarEditInput } from './avatarEdit';
 import { useAgentPool } from './useAgentPool';
 import { AgentPoolChain } from './AgentPoolChain';
+import { PoolGateBand, PoolGateKept, type RecentPoolTurn } from './PoolGateBand';
+import { useLocalAgentPresence } from './useLocalAgentPresence';
 import { navKey } from './sections';
 import { AGENT_DETAIL_TABS, parseAgentTarget, type AgentDetailTab } from './agentDetailTabs';
 import { ConfirmDialog } from '../ConfirmDialog';
@@ -305,6 +310,24 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
   }, [highlightId, agents]);
   /** 에이전트별 계정 풀 배정(기기 로컬). 이 값은 서버로 가지 않는다 — `useAgentPool` 주석. */
   const agentPool = useAgentPool(selected?.id ?? createdAgentId);
+  /**
+   * 그 풀 순서가 **이 맥에서 쓰이는가**(2026-10-15, `lib/poolGate.ts`). 서버 배정과 이 맥 오퍼레이터 설정을
+   * 맞춰 본다 — 어긋나면 순서를 잠그고 이유를 띠로 보인다. 만들기 화면(`selected` 없음)은 판정하지 않는다
+   * (그쪽은 「이 맥에서 돌리기」 체크가 풀 칸을 보이거나 감춘다).
+   */
+  const localPresence = useLocalAgentPresence(selected?.id ?? null);
+  const poolGate = selected ? poolGateOf(selected.assignment?.operatorId ?? null, localPresence) : null;
+  const [poolGateBusy, setPoolGateBusy] = useState(false);
+  const [assignmentFlash, setAssignmentFlash] = useState(false);
+  // 다른 머신에서 도는 에이전트만 턴을 읽는다 — 그 머신의 러너가 실어 온 풀을 보이려고(E4).
+  const poolTurns = useAgentTurns(poolGate?.kind === 'elsewhere');
+  const recentPoolTurn: RecentPoolTurn | null = (() => {
+    if (!selected || poolGate?.kind !== 'elsewhere' || poolTurns.kind !== 'known') return null;
+    const mine = poolTurns.turns
+      .filter((x) => x.agentAccountId === selected.id && typeof x.claudePool === 'string' && x.claudePool)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+    return mine ? { pool: mine.claudePool!, account: mine.claudeAccount ?? null, rank: isPoolRank(mine.claudePoolRank) ? mine.claudePoolRank : null } : null;
+  })();
   /**
    * 상세를 열고 있는 팀. `null` 이면 격자다 — `selected`(에이전트)와 **같은 짝**이고,
    * 두 값이 동시에 서지 않는 것은 `group` 이 한 번에 하나이기 때문이다.
@@ -2559,9 +2582,64 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     {t('agents.run.poolNotForHarness', { harness: draft.harness })}
                   </span>
                 )}
-                {agentPool.available && harnessHasAccountPool(draft.harness) && (
+                {/* 만들기 화면은 「이 맥에서 돌리기」를 끄면 풀 칸을 감춘다 — 이 맥에서 돌지 않을 에이전트의 순서는 아무 데도
+                    쓰이지 않는다(풀 ↔ 이 맥 배정). 이 기기 오퍼레이터를 못 읽었으면(error) 감추지 않는다. */}
+                {agentPool.available && harnessHasAccountPool(draft.harness)
+                  && (selected || createdAgentId || (runHere && localOperator !== 'none')) && (
                   <div className={label}>
                     {t('agents.run.pool')}
+                    {poolGate && (
+                      <PoolGateBand
+                        gate={poolGate}
+                        operatorName={poolGate.kind === 'elsewhere' && Array.isArray(operators)
+                          ? operatorNameOf(operators.find((o) => o.id === poolGate.operatorId)) ?? null : null}
+                        recent={recentPoolTurn}
+                        busy={poolGateBusy || !agentPool.ready}
+                        canAct={isAdmin || isOwner}
+                        canRunHere={typeof localOperator === 'object' && localOperator !== null}
+                        onRunHere={() => {
+                          if (!selected || typeof localOperator !== 'object' || localOperator === null) return;
+                          setPoolGateBusy(true);
+                          setError(null);
+                          const target = localOperator;
+                          // 누르기 직전에 배정을 다시 읽는다(security n3) — 화면이 들고 있는 "배정 없음"이 낡았으면
+                          // 그 사이 다른 머신에 붙은 배정을 덮어 그 러너를 멈추게 된다. 바뀌었으면 화면만 고친다.
+                          void getController().listAgents()
+                            .then(async (fresh) => {
+                              const now = fresh.find((x) => x.id === selected.id);
+                              if (now?.assignment) {
+                                setSelected(now);
+                                setAgents(fresh);
+                                return;
+                              }
+                              const assignment = await getController().assignAgentHere(selected.id, target);
+                              const updated = { ...selected, assignment };
+                              setSelected(updated);
+                              setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                            })
+                            .catch((err: unknown) => setError(t('agents.assignment.failed', { reason: errorText(err, t) })))
+                            .finally(() => setPoolGateBusy(false));
+                        }}
+                        onEnableHere={() => {
+                          const baseUrl = getController().api?.baseUrl ?? null;
+                          if (!selected || !baseUrl) return;
+                          setPoolGateBusy(true);
+                          // 다시 읽고 **없을 때만** 넣는다(security n2) — 그 사이 다른 곳에서 켰다면 다시 쓰면 작업 폴더가 지워진다.
+                          void listLocalAgents()
+                            .then((r) => (r.communities.find((c) => c.baseUrl === baseUrl)?.agents[selected.id] === undefined
+                              ? setLocalAgent(baseUrl, selected.id, {})
+                              : undefined))
+                            .catch((err: unknown) => setError(t('agents.local.failed', { reason: errorText(err, t) })))
+                            .finally(() => setPoolGateBusy(false));
+                        }}
+                        onGoToAssignment={() => {
+                          document.querySelector('[data-testid="agent-assignment-section"]')
+                            ?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+                          setAssignmentFlash(true);
+                          window.setTimeout(() => setAssignmentFlash(false), 1600);
+                        }}
+                      />
+                    )}
                     {/* **풀 순서 목록**(2026-10-15 풀 n개). 앞 풀의 계정이 모두 소진되면 다음 풀로
                         넘어가고, 앞 풀이 풀리면 새 스레드부터 돌아온다. 판정은 러너와 같은 식이다
                         (`useAgentPool` 의 `state`). */}
@@ -2572,16 +2650,20 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       state={agentPool.state}
                       ready={agentPool.ready}
                       onChange={(next) => void agentPool.setChain(next)}
+                      locked={poolGate !== null && !poolGateEditable(poolGate)}
                     />
+                    {poolGate !== null && !poolGateEditable(poolGate) && agentPool.chain.length > 0 && (
+                      <PoolGateKept busy={poolGateBusy || !agentPool.ready} onClear={() => void agentPool.setChain([])} />
+                    )}
                     {/* 만들기와 상세에서 **적용 시점이 다르다.** 상세는 고치는 즉시 데몬에 쓰이고
                         러너가 5초마다 다시 읽어 **다음 새 스레드부터** 적용된다(재시작 필요 없음).
                         만들기에는 쓸 대상이 아직 없어 생성 시점에 쓰인다. */}
-                    <span className="mt-1 block text-meta text-fg-subtle">
+                    {(poolGate === null || poolGateEditable(poolGate)) && <span className="mt-1 block text-meta text-fg-subtle">
                       {t('agents.run.poolLocalNote')}{' '}
                       {selected || createdAgentId
                         ? t('agents.run.poolNextThreadNote')
                         : t('agents.run.poolOnCreateNote')}
-                    </span>
+                    </span>}
                     {agentPool.error && (
                       <span className="mt-1 block text-meta text-danger">{agentPool.error}</span>
                     )}
@@ -2626,7 +2708,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                   서버에 배정을 쓰면 그 오퍼레이터가 러너를 띄운다. 러너 실행·중지 절 바로 뒤에
                   두는 이유: 그 절의 '실행'이 실제로 무엇을 켜는지가 이 배정으로 정해진다. */}
               {selected && (isAdmin || isOwner) && (
-                <div className="rounded-row border border-border p-3">
+                <div data-testid="agent-assignment-section" data-flash={assignmentFlash || undefined}
+                  className={`rounded-row border p-3 transition-shadow ${assignmentFlash ? 'border-accent ring-2 ring-accent' : 'border-border'}`}>
                   <div className="text-meta font-medium text-fg-muted">{t('agents.assignment.heading')}</div>
                   <p className="mt-1 max-w-[68ch] text-meta text-fg-subtle" data-testid="agent-assignment-current">
                     {(() => {

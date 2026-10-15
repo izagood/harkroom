@@ -478,6 +478,11 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
             pools: [{ name: 'work', accounts: [] }, { name: 'personal', accounts: [] }],
           };
         }
+        // 이 맥 오퍼레이터가 이 커뮤니티에 등록돼 있다 — 없으면 「이 기기에서 돌린다」가 서지 않고, 이 맥에서 돌지
+        // 않을 에이전트의 풀 칸은 감춘다(풀 ↔ 이 맥 배정).
+        if (cmd === 'operator_agents_list') {
+          return { communities: [{ baseUrl: 'https://c.test', registered: true, operatorId: 'op-mac', agents: {} }] };
+        }
         return {};
       }),
     });
@@ -485,6 +490,7 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
       agent: makeAgent({ id: 'agent-new', handle: 'beta' }), poolError: null,
     }));
     setController({
+      api: { baseUrl: 'https://c.test' },
       listAgents: vi.fn(async () => []),
       listPats: vi.fn(async () => []),
       agentMemory: vi.fn(async () => ({ profile: null, entries: [] })),
@@ -525,7 +531,9 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
     screen.getByRole('button', { name: '에이전트 만들기' }).click();
 
     await waitFor(() => expect(createAgent).toHaveBeenCalled());
-    expect(createAgent.mock.calls[0]![1]).toEqual({ claudePools: ['personal', 'work'] });
+    expect(createAgent.mock.calls[0]![1]).toEqual({
+      claudePools: ['personal', 'work'], localOperator: { baseUrl: 'https://c.test', operatorId: 'op-mac' },
+    });
   });
 
   it('기본 풀 사용이면 아무것도 실어 보내지 않는다', async () => {
@@ -535,7 +543,7 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
     screen.getByRole('button', { name: '에이전트 만들기' }).click();
 
     await waitFor(() => expect(createAgent).toHaveBeenCalled());
-    expect(createAgent.mock.calls[0]![1]).toBeUndefined();
+    expect(createAgent.mock.calls[0]![1]).toEqual({ localOperator: { baseUrl: 'https://c.test', operatorId: 'op-mac' } });
   });
 
   it('풀 배정만 실패하면 생성 실패라고 말하지 않는다', async () => {
@@ -547,6 +555,7 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
       poolError: '데몬이 죽었다',
     }));
     setController({
+      api: { baseUrl: 'https://c.test' },
       listAgents: vi.fn(async () => []),
       listPats: vi.fn(async () => []),
       agentMemory: vi.fn(async () => ({ profile: null, entries: [] })),
@@ -564,3 +573,172 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
   });
 });
 
+
+/**
+ * 계정 풀 ↔ 이 맥 배정(2026-10-15, 시안 pool_gate v2, jaebin E1~E4 전부 A).
+ *
+ * 풀 순서는 이 맥 오퍼레이터가 띄운 러너만 읽는다. 서버 배정이 이 맥이 아니거나 이 맥 설정에 없으면 고친 순서가
+ * 아무 데도 쓰이지 않으므로 **잠그고 이유를 띠로** 보인다. 띠의 버튼을 누르면 새로고침 없이 잠금이 풀리는지까지
+ * 잰다 — 안 풀리면 사람은 눌러도 안 된다고 읽는다.
+ */
+describe('AgentsSettings — 계정 풀 ↔ 이 맥 배정', () => {
+  const BASE = 'https://c.test';
+  const ASSIGNED_HERE = { agentId: AGENT_ID, operatorId: 'op-mac', assignedBy: ME_ID, assignedAt: '2026-10-15T00:00:00Z' };
+  const ASSIGNED_VM = { ...ASSIGNED_HERE, operatorId: 'op-vm' };
+  let present: boolean;
+  let listFails: boolean;
+  let invoked: { cmd: string; args?: Record<string, unknown> }[];
+  let assignAgentHere: ReturnType<typeof vi.fn>;
+
+  function stub(): void {
+    vi.stubGlobal('__TAURI_INTERNALS__', {
+      transformCallback: () => 1,
+      invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+        invoked.push({ cmd, args });
+        if (cmd === 'claude_accounts_list') {
+          return {
+            root: '/r', mode: 'pools', defaultPool: 'work', strays: [],
+            agents: { [AGENT_ID]: ['work', 'personal'] },
+            // 「＋ 풀 추가」가 서려면 순서에 없는 풀이 하나 있어야 한다 — 그 select 가 「고칠 수 있다」의 손잡이다.
+            pools: [{ name: 'work', accounts: [] }, { name: 'personal', accounts: [] }, { name: 'spare', accounts: [] }],
+          };
+        }
+        if (cmd === 'operator_agents_list') {
+          if (listFails) throw new Error('daemon down');
+          return { communities: [{ baseUrl: BASE, registered: true, operatorId: 'op-mac', agents: present ? { [AGENT_ID]: {} } : {} }] };
+        }
+        if (cmd === 'operator_agent_set') { present = true; return {}; }
+        return {};
+      }),
+    });
+  }
+
+  function controller(agent: AgentView): void {
+    setController({
+      api: {
+        baseUrl: BASE,
+        agentSessions: vi.fn(async () => [{
+          id: 's1', agentAccountId: AGENT_ID, startedAt: '2026-10-15T05:00:00Z',
+          claudePool: 'work', claudeAccount: 'lychee', claudePoolRank: 1,
+        }]),
+      },
+      listAgents: vi.fn(async () => [agent]),
+      listPats: vi.fn(async () => []),
+      agentMemory: vi.fn(async () => ({ profile: null, entries: [] })),
+      agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
+      operators: vi.fn(async () => [
+        { id: 'op-mac', ownerAccountId: ME_ID, name: 'jaebin-mbp', label: null, createdAt: '', lastSeenAt: null, revokedAt: null, online: true, version: null },
+        { id: 'op-vm', ownerAccountId: ME_ID, name: 'homelab-vm', label: null, createdAt: '', lastSeenAt: null, revokedAt: null, online: true, version: null },
+      ]),
+      assignAgentHere,
+    } as unknown as Controller);
+  }
+
+  beforeEach(() => {
+    resetCommunityRegistry();
+    useActiveStore.setState({ me: ME, accounts: { [ME_ID]: ME } });
+    present = false;
+    listFails = false;
+    invoked = [];
+    assignAgentHere = vi.fn(async () => {
+      // 진짜 컨트롤러처럼 이 맥 설정에 넣고(신호가 난다) 배정을 돌려준다.
+      const { setLocalAgent } = await import('../../lib/operatorLocal');
+      await setLocalAgent(BASE, AGENT_ID, {});
+      return ASSIGNED_HERE;
+    });
+    stub();
+  });
+
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); setController(null); });
+
+  async function open(agent: AgentView): Promise<void> {
+    controller(agent);
+    render(<AgentsSettings />);
+    (await screen.findByRole('button', { name: /alpha/ })).click();
+    (await screen.findByTestId('agent-tab-run')).click();
+    await screen.findByTestId('agent-pool-chain-row-work');
+  }
+  const gate = () => screen.findByTestId('agent-pool-gate');
+
+  it('① 이 맥에서 돌면 띠가 없고 순서를 고칠 수 있다 — 「이 기기에만」 문구가 남는다', async () => {
+    present = true;
+    await open(makeAgent({ assignment: ASSIGNED_HERE } as Partial<AgentView>));
+    await screen.findByLabelText('＋ 풀 추가');
+    await waitFor(() => expect(invoked.some((c) => c.cmd === 'operator_agents_list')).toBe(true));
+    expect(screen.queryByTestId('agent-pool-gate')).toBeNull();
+    expect(screen.getByText(/이 기기에만/)).toBeTruthy();
+  });
+
+  it('② 배정이 없으면 잠그고, [이 맥에서 돌리기] 로 배정하면 새로고침 없이 풀린다', async () => {
+    await open(makeAgent());
+    expect((await gate()).dataset.gate).toBe('unassigned');
+    expect(screen.getByTestId('agent-pool-chain-chip-work').textContent).toBe('쓰이지 않음');
+    expect(screen.queryByLabelText('＋ 풀 추가')).toBeNull();
+    expect(screen.queryByText(/이 기기에만/)).toBeNull();
+
+    screen.getByTestId('agent-pool-gate-run-here').click();
+    await waitFor(() => expect(assignAgentHere).toHaveBeenCalledWith(AGENT_ID, { baseUrl: BASE, operatorId: 'op-mac' }));
+    await waitFor(() => expect(screen.queryByTestId('agent-pool-gate')).toBeNull());
+    expect(await screen.findByLabelText('＋ 풀 추가')).toBeTruthy();
+  });
+
+  it('③ 다른 머신이면 그 머신 이름과 최근 턴의 풀을 말하고, 옮기지 않고 배정 칸으로 데려간다', async () => {
+    await open(makeAgent({ assignment: ASSIGNED_VM } as Partial<AgentView>));
+    const el = await gate();
+    expect(el.dataset.gate).toBe('elsewhere');
+    expect(el.textContent).toMatch(/homelab-vm 에서 돈다/);
+    expect((await screen.findByTestId('agent-pool-gate-recent')).textContent).toBe('그 머신에서 최근 턴: work › lychee (1번 풀)');
+    expect(screen.queryByTestId('agent-pool-gate-run-here')).toBeNull();
+
+    screen.getByTestId('agent-pool-gate-goto').click();
+    await waitFor(() => expect(screen.getByTestId('agent-assignment-section').dataset.flash).toBe('true'));
+    expect(assignAgentHere).not.toHaveBeenCalled();
+  });
+
+  it('④ 배정은 이 맥인데 설정에 없으면 반쪽 — [이 맥 오퍼레이터에서 켜기] 로 체크 하나만 켠다', async () => {
+    await open(makeAgent({ assignment: ASSIGNED_HERE } as Partial<AgentView>));
+    expect((await gate()).dataset.gate).toBe('half');
+    screen.getByTestId('agent-pool-gate-enable').click();
+    await waitFor(() => expect(invoked.some((c) => c.cmd === 'operator_agent_set' && c.args?.agentId === AGENT_ID)).toBe(true));
+    await waitFor(() => expect(screen.queryByTestId('agent-pool-gate')).toBeNull());
+    expect(assignAgentHere).not.toHaveBeenCalled();
+  });
+
+  it('⑤ 이 맥 설정을 못 읽으면 잠그지 않고 회색 한 줄만', async () => {
+    listFails = true;
+    await open(makeAgent());
+    expect((await gate()).dataset.gate).toBe('unknown');
+    expect(await screen.findByLabelText('＋ 풀 추가')).toBeTruthy();
+    expect(screen.queryByTestId('agent-pool-gate-clear')).toBeNull();
+  });
+
+  it('[이 순서 지우기] 는 그 에이전트의 순서만 지운다', async () => {
+    await open(makeAgent());
+    (await screen.findByTestId('agent-pool-gate-clear')).click();
+    await waitFor(() => {
+      const call = invoked.find((c) => c.cmd === 'claude_accounts_configure');
+      const config = call?.args?.config as { agents?: Record<string, string[]> } | undefined;
+      expect(config?.agents).toEqual({});
+    });
+  });
+
+  it('만들기 화면: 「이 맥에서 돌리기」를 끄면 풀 칸을 감춘다', async () => {
+    setController({
+      api: { baseUrl: BASE },
+      listAgents: vi.fn(async () => []),
+      listPats: vi.fn(async () => []),
+      agentMemory: vi.fn(async () => ({ profile: null, entries: [] })),
+      agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
+    } as unknown as Controller);
+    render(<AgentsSettings />);
+    (await screen.findByTestId('agent-create')).click();
+    await waitFor(() => expect(screen.queryByTestId('agent-defaults-box')).toBeNull());
+    expect(await screen.findByLabelText('＋ 풀 추가')).toBeTruthy();
+    const runHere = await screen.findByLabelText('이 기기에서 돌린다') as HTMLInputElement;
+    await waitFor(() => expect(runHere.disabled).toBe(false));
+    runHere.click();
+    await waitFor(() => expect(screen.queryByTestId('agent-pool-chain')).toBeNull());
+    runHere.click();
+    expect(await screen.findByTestId('agent-pool-chain')).toBeTruthy();
+  });
+});
