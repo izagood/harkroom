@@ -11,7 +11,7 @@
  * 실제 프로세스 소유는 `runners.ts`(RunnerRegistry)가 그대로 맡는다.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { RunnerExitReason } from '@harkroom/shared';
+import { EX_CONFIG, type RunnerExitReason } from '@harkroom/shared';
 import type { AgentDefinition, RunnerAnnounce } from '@harkroom/shared/operatorProtocol';
 import { RUNNER_LINK_ENV } from '@harkroom/shared/runnerLink';
 import type { LocalAgentConfig } from './config.js';
@@ -235,7 +235,8 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
       // **하네스 로그인이 풀려 물러났다**(2026-10-15) — 60초마다 다시 띄우면 멘션마다 같은 자리에서 죽는다
       // (실측: 한 맥에서 code=78 재기동 615회). 간격을 넓힌다. 다시 로그인해도 길어야 이 간격
       // 뒤에 다시 뜬다 — 그 사이 온 멘션은 inbox 에 남아 사라지지 않는다.
-      const delay = reason === 'harness-login-required' ? Math.max(base, loginRespawnFloorMs) : base;
+      // 종료 코드도 함께 본다(security n1) — 78 이 아닌 죽음의 꼬리에 옛 마커 줄이 남아 있어도 늦추지 않는다.
+      const delay = code === EX_CONFIG && reason === 'harness-login-required' ? Math.max(base, loginRespawnFloorMs) : base;
       backoff.set(agentId, Math.min(base * 2, respawnCeilingMs));
       deps.log(`러너가 죽었다: agent=${entry.definition.handle} code=${code ?? 'signal'}${reason ? ` (${reason})` : ''} — ${Math.round(delay / 1000)}초 뒤 다시 띄운다`);
       respawns.get(agentId)?.();

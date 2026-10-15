@@ -240,6 +240,14 @@ describe('러너가 죽으면 — 배정이 살아 있는 동안은 다시 띄�
     r.onRunnerExit('a-1', 78, 'credential-rejected');
     expect(h.timers.at(-1)!.ms).toBeLessThan(300_000);
   });
+  it('78 이 아니면 꼬리에 로그인 마커가 남아 있어도 바로 다시 띄운다(security n1)', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler({ ...h.deps, respawnBackoffMs: 100, loginRespawnFloorMs: 300_000 });
+    await r.onAssign('https://example.com', def(), undefined);
+    h.exit('a-1');
+    r.onRunnerExit('a-1', 1, 'harness-login-required');
+    expect(h.timers.at(-1)!.ms).toBe(100);
+  });
 });
 
 // 교차 불변식(스펙 2026-09-20 §7). 서버가 배정을 거절해야 맞지만 오퍼레이터는 서버만 믿지
