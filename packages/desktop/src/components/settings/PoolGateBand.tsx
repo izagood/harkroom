@@ -15,7 +15,7 @@ import { useT } from '../../i18n/useT';
 export interface RecentPoolTurn { pool: string; account: string | null; rank: number | null }
 
 export function PoolGateBand({
-  gate, operatorName, recent, hasChain, busy, canAct, onRunHere, onEnableHere, onGoToAssignment, onClear,
+  gate, operatorName, recent, hasChain, busy, canAct, canRunHere, onRunHere, onEnableHere, onGoToAssignment, onClear,
 }: {
   gate: PoolGate;
   /** ③ 의 오퍼레이터 이름. 모르면 `null`. */
@@ -26,6 +26,8 @@ export function PoolGateBand({
   busy: boolean;
   /** 배정을 바꿀 수 있는 사람인가(소유자·admin). 아니면 버튼 없이 이유만. */
   canAct: boolean;
+  /** ② 의 [이 맥에서 돌리기] 를 그릴 수 있나 — 이 맥 오퍼레이터가 이 커뮤니티에 등록돼 있어야 배정할 곳이 있다. */
+  canRunHere: boolean;
   onRunHere(): void;
   onEnableHere(): void;
   onGoToAssignment(): void;
@@ -55,7 +57,7 @@ export function PoolGateBand({
       )}
       {hasChain && <p className="text-fg-muted">{t('agents.run.poolGate.kept')}</p>}
       <div className="flex flex-wrap gap-2">
-        {canAct && gate.kind === 'unassigned' && (
+        {canAct && canRunHere && gate.kind === 'unassigned' && (
           <button type="button" className={btn} disabled={busy} onClick={onRunHere} data-testid="agent-pool-gate-run-here">
             {t('agents.run.poolGate.runHere')}
           </button>

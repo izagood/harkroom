@@ -18,6 +18,7 @@ vi.mock('../src/lib/operatorLocal', () => ({
   listLocalAgents: async () => ({ communities: [] }),
   setLocalAgent: async () => undefined,
   removeLocalAgent: async () => undefined,
+  onLocalAgentsChanged: () => () => {},
   registerLocalOperator: async () => ({ operatorId: 'op-1', name: 'n', baseUrl: 'http://x' }),
 }));
 

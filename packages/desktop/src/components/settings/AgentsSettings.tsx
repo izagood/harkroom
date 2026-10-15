@@ -2597,6 +2597,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         hasChain={agentPool.chain.length > 0}
                         busy={poolGateBusy || !agentPool.ready}
                         canAct={isAdmin || isOwner}
+                        canRunHere={typeof localOperator === 'object' && localOperator !== null}
                         onRunHere={() => {
                           if (!selected || typeof localOperator !== 'object' || localOperator === null) return;
                           setPoolGateBusy(true);
