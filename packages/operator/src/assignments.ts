@@ -11,6 +11,7 @@
  * 실제 프로세스 소유는 `runners.ts`(RunnerRegistry)가 그대로 맡는다.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
+import { EX_CONFIG, type RunnerExitReason } from '@harkroom/shared';
 import type { AgentDefinition, RunnerAnnounce } from '@harkroom/shared/operatorProtocol';
 import { RUNNER_LINK_ENV } from '@harkroom/shared/runnerLink';
 import type { LocalAgentConfig } from './config.js';
@@ -66,6 +67,8 @@ export interface AssignmentDeps {
    */
   respawnBackoffMs?: number;
   respawnCeilingMs?: number;
+  /** 하네스 로그인이 풀려 물러난 러너를 다시 띄우기까지의 최소 간격. 기본 5분. */
+  loginRespawnFloorMs?: number;
   /**
    * spawn 이 `retiring`(앞 세대 러너가 아직 물러나는 중)으로 거절됐을 때 다시 띄워 보는 간격.
    * 레지스트리는 그 러너가 죽어야 자리를 내주는데, 그 러너는 우리 표에 없어 exit 통지가 없다 —
@@ -88,7 +91,11 @@ export interface AssignmentReconciler {
    * 러너가 죽었다(레지스트리의 exit 통지). 배정이 살아 있으면 백오프 뒤 다시 띄운다 —
    * 회수 중(unassign)이거나 배정이 없으면 아무것도 안 한다.
    */
-  onRunnerExit(agentId: string, code: number | null): void;
+  /**
+   * `reason` 은 러너 로그 꼬리로 가린 78 의 사유(`@harkroom/shared::runnerExitReason`). 하네스 로그인이
+   * 풀려 물러난 러너는 사람이 다시 로그인하기 전엔 다시 띄워도 같은 자리에서 죽으므로 간격을 넓힌다.
+   */
+  onRunnerExit(agentId: string, code: number | null, reason?: RunnerExitReason | null): void;
   /**
    * 사람의 [재시작] — 배정은 두고 러너에 SIGTERM 을 보낸다. 러너가 턴을 마치고 물러나면
    * `onRunnerExit` 가 배정을 보고 다시 띄운다. 백오프는 처음부터다(사람이 누른 것이지 죽음의
@@ -104,6 +111,7 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
   const killGraceMs = deps.killGraceMs ?? 5_000;
   const respawnBackoffMs = deps.respawnBackoffMs ?? 1_000;
   const respawnCeilingMs = deps.respawnCeilingMs ?? 60_000;
+  const loginRespawnFloorMs = deps.loginRespawnFloorMs ?? 5 * 60_000;
   const retiringRetryMs = deps.retiringRetryMs ?? 5_000;
   const now = deps.now ?? Date.now;
   /** "한동안 살았다"의 기준 — 이보다 오래 살았으면 다음 죽음의 백오프는 처음부터다. */
@@ -218,14 +226,19 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
       return deps.signal(agentId, 'SIGTERM');
     },
 
-    onRunnerExit(agentId, code) {
+    onRunnerExit(agentId, code, reason) {
       const entry = assigned.get(agentId);
       // 배정이 없거나 회수 중이면 죽는 것이 맞다 — 다시 띄우면 unassign 이 무의미해진다.
       if (!entry || reclaims.has(agentId)) return;
       const stable = now() - (lastSpawnAt.get(agentId) ?? 0) > STABLE_MS;
-      const delay = stable ? respawnBackoffMs : (backoff.get(agentId) ?? respawnBackoffMs);
-      backoff.set(agentId, Math.min(delay * 2, respawnCeilingMs));
-      deps.log(`러너가 죽었다: agent=${entry.definition.handle} code=${code ?? 'signal'} — ${Math.round(delay / 1000)}초 뒤 다시 띄운다`);
+      const base = stable ? respawnBackoffMs : (backoff.get(agentId) ?? respawnBackoffMs);
+      // **하네스 로그인이 풀려 물러났다**(2026-10-15) — 60초마다 다시 띄우면 멘션마다 같은 자리에서 죽는다
+      // (실측: 한 맥에서 code=78 재기동 615회). 간격을 넓힌다. 다시 로그인해도 길어야 이 간격
+      // 뒤에 다시 뜬다 — 그 사이 온 멘션은 inbox 에 남아 사라지지 않는다.
+      // 종료 코드도 함께 본다(security n1) — 78 이 아닌 죽음의 꼬리에 옛 마커 줄이 남아 있어도 늦추지 않는다.
+      const delay = code === EX_CONFIG && reason === 'harness-login-required' ? Math.max(base, loginRespawnFloorMs) : base;
+      backoff.set(agentId, Math.min(base * 2, respawnCeilingMs));
+      deps.log(`러너가 죽었다: agent=${entry.definition.handle} code=${code ?? 'signal'}${reason ? ` (${reason})` : ''} — ${Math.round(delay / 1000)}초 뒤 다시 띄운다`);
       respawns.get(agentId)?.();
       respawns.set(agentId, deps.schedule(() => {
         respawns.delete(agentId);

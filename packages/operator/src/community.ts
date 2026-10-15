@@ -11,7 +11,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
-import type { OperatorCapabilities, OperatorStatus } from '@harkroom/shared';
+import type { OperatorCapabilities, OperatorStatus, RunnerExitReason } from '@harkroom/shared';
 import type { AgentDefinition, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import type { Forwarder } from './forward.js';
@@ -77,7 +77,7 @@ export interface CommunityInstance {
   start(): void;
   stop(): void;
   /** 레지스트리의 exit 통지를 조정기에 넘긴다 — 배정이 살아 있으면 다시 띄운다. */
-  onRunnerExit(agentId: string, code: number | null): void;
+  onRunnerExit(agentId: string, code: number | null, reason?: RunnerExitReason | null): void;
   /** 이 커뮤니티의 로컬 설정에 있는 에이전트인가 — 러너 프레임을 어느 커뮤니티로 보낼지의 근거. */
   knowsAgent(agentId: string): boolean;
   /**
@@ -249,10 +249,10 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       if (beatTimer) { clearInterval(beatTimer); beatTimer = null; }
       link.stop();
     },
-    onRunnerExit: (agentId, code) => {
+    onRunnerExit: (agentId, code, reason) => {
       // 이 커뮤니티의 배정이 아니면 남의 exit 이다 — 조정기가 assigned 로 다시 거르지만
       // 여기서 먼저 거르면 로그가 커뮤니티마다 한 줄씩 찍히지 않는다.
-      if (assignments.has(agentId)) deps.reconciler.onRunnerExit(agentId, code);
+      if (assignments.has(agentId)) deps.reconciler.onRunnerExit(agentId, code, reason);
     },
     knowsAgent: (agentId) => agentId in agents,
     onRunnerFrame: (runnerId, frame) => {

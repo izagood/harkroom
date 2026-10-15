@@ -40,10 +40,12 @@ import {
 import {
   CLAUDE_ATTENTION_FILE,
   clearAccountAttention,
+  clearAccountCredentialFailure,
   isAttentionActive,
   markClaudeAccountGates,
   markClaudeWorkspaceTrusted,
   readAccountAttention,
+  readAccountCredentialFailure,
 } from '@harkroom/shared/claudeGates';
 import type { ProviderAccountUsage, ProviderUsageRequest, ProviderUsageSnapshot } from '@harkroom/shared/daemonProtocol';
 
@@ -80,6 +82,14 @@ export interface ClaudeAccountView {
    * 서 있을 때만 싣는다(`isAttentionActive`, 시한 없음). 화면은 "승인 필요"와 [터미널 열기]를 보인다.
    */
   attention?: { atMs: number };
+  /**
+   * **로그인이 풀렸다**(2026-10-15). 러너가 이 계정의 턴을 하네스 로그인 실패로 넘긴 시각
+   * (`@harkroom/shared/claudeGates::CLAUDE_AUTH_FILE`). `status.loggedIn` 은 Keychain 항목의 **존재**만
+   * 보므로 만료된 계정도 참이다(`accountStatusFromDisk` 주석) — 이 필드가 그 빈틈을 메운다. 화면은
+   * "로그인 풀림"과 [다시 로그인]을 보인다. 서 있을 때만 싣는다. 그 계정으로 턴이 성공하거나 다시
+   * 로그인하면 지워진다.
+   */
+  authFailure?: { atMs: number };
 }
 
 export interface ClaudePoolView {
@@ -636,10 +646,12 @@ export function createClaudeAccountsPort(opts: {
         const accounts: ClaudeAccountView[] = [];
         for (const a of p.accounts) {
           const attention = await readAccountAttention(a.dir).catch(() => null);
+          const authFailure = await readAccountCredentialFailure(a.dir).catch(() => null);
           accounts.push({
             name: a.name,
             status: readStatus(await runStatus(a.dir)),
             ...(attention && isAttentionActive(attention, now()) ? { attention: { atMs: attention.atMs } } : {}),
+            ...(authFailure && isAttentionActive(authFailure, now()) ? { authFailure: { atMs: authFailure.atMs } } : {}),
           });
         }
         pools.push({ name: p.name, accounts });
@@ -883,6 +895,8 @@ export function createClaudeAccountsPort(opts: {
           if (status.loggedIn) {
             // 다시 로그인했다 = 관문 표식은 옛 로그인의 사정이다. 아직 막혀 있으면 러너가 다시 세운다.
             await clearAccountAttention(configDir).catch(() => undefined);
+            // 로그인 풀림 표식도 옛 로그인의 사정이다 — 새 로그인이 또 풀려 있으면 러너가 다시 세운다.
+            await clearAccountCredentialFailure(configDir).catch(() => undefined);
             // 첫 실행 테마 선택·auto mode 안내 창을 미리 지나 둔다(`@harkroom/shared/claudeGates`).
             // 러너도 턴마다 같은 것을 적지만, 그 전에 사람이 이 계정을 터미널로 열 수 있다 —
             // 그때 테마 화면부터 만나지 않게 여기서도 적는다. 실패해도 로그인은 성공이다.
