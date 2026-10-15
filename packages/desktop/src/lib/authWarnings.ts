@@ -20,6 +20,11 @@ export interface AuthWarningS1 {
   left: number;
   total: number;
   atMs: number;
+  /**
+   * 풀 하나가 **전부** 풀렸지만 아무 에이전트도 멈추지 않았다 — 그 풀을 쓰는 에이전트는 다음 풀로 돈다
+   * (designer s1). 빨강·OS 알림을 쓰지 않고 노랑으로 말한다. `account` 는 그 풀의 첫 번째 풀린 계정.
+   */
+  wholePool?: true;
 }
 
 export interface AuthWarningS2 {
@@ -79,6 +84,14 @@ export function authWarnings(
       if (card) { card.agentIds.push(agentId); placed.add(agentId); }
     }
   }
+  // 아무도 안 멈춘 전부 풀린 풀은 노랑으로 내린다(designer s1). **기본 풀은 내리지 않는다** — 순서가 없는
+  // 에이전트는 `snap.agents` 에 없어 "아무도 안 멈췄다"를 알 수 없다.
+  for (let i = s2.length - 1; i >= 0; i -= 1) {
+    const c = s2[i]!;
+    if (c.agentIds.length || c.pool === null || c.pool === snap?.defaultPool) continue;
+    s2.splice(i, 1);
+    s1.push({ kind: 's1', pool: c.pool, account: c.account!, left: 0, total: c.total, atMs: c.atMs, wholePool: true });
+  }
   const orphans = [...stopped.entries()].filter(([id]) => !placed.has(id));
   if (orphans.length) {
     s2.push({
@@ -96,6 +109,33 @@ export function authWarnings(
  */
 export function authWarningKey(w: AuthWarning): string {
   return w.kind === 's1'
-    ? `s1:${w.pool}:${w.account}:${w.atMs}`
+    ? `s1:${w.wholePool ? 'pool' : ''}:${w.pool}:${w.account}:${w.atMs}`
     : `s2:${w.pool ?? ''}:${w.agentIds.length}:${w.atMs}`;
+}
+
+/**
+ * 계정 목록이 회복을 보여 주면 멈춤 기억을 지운다(security n2·designer n2). 러너 종료로 기억한 에이전트의 풀
+ * (순서, 없으면 기본 풀) 가운데 **하나라도 표식 없는 계정이 있으면** 그 에이전트는 다시 돈다 — 터미널에서 직접
+ * 다시 로그인했거나 그 계정으로 턴이 성공해 표식이 지워진 경우다. 풀을 모르는 에이전트는 그대로 둔다.
+ * 바뀐 것이 없으면 같은 객체를 돌려준다(리렌더를 일으키지 않게).
+ */
+export function pruneStopped(
+  snap: ClaudeAccountsSnapshot | null,
+  stopped: ReadonlyMap<string, number>,
+): ReadonlyMap<string, number> {
+  if (!snap || !stopped.size) return stopped;
+  const recovered = (pool: string): boolean => {
+    const p = snap.pools.find((x) => x.name === pool);
+    return !!p && p.accounts.some((a) => !a.authFailure);
+  };
+  let next: Map<string, number> | null = null;
+  for (const agentId of stopped.keys()) {
+    const chain = agentPoolsOf(snap, agentId);
+    const pools = chain.length ? chain : snap.defaultPool !== null ? [snap.defaultPool] : [];
+    if (pools.length && pools.some(recovered)) {
+      next ??= new Map(stopped);
+      next.delete(agentId);
+    }
+  }
+  return next ?? stopped;
 }

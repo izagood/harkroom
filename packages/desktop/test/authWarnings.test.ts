@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authWarningKey, authWarnings } from '../src/lib/authWarnings';
+import { authWarningKey, authWarnings, pruneStopped } from '../src/lib/authWarnings';
 import type { ClaudeAccountsSnapshot } from '../src/lib/claudeAccounts';
 
 const acct = (name: string, failAt?: number) => ({
@@ -49,5 +49,28 @@ describe('authWarnings (로그인 끊김 경고 S1/S2, 2026-10-15)', () => {
     const one = authWarnings(snap([{ name: 'work', accounts: [acct('a', 1), acct('b')] }]), none)[0]!;
     const two = authWarnings(snap([{ name: 'work', accounts: [acct('a', 1), acct('b', 2)] }]), none)[0]!;
     expect(authWarningKey(one)).not.toBe(authWarningKey(two));
+  });
+
+  it('다음 풀이 살아 있어 아무도 안 멈췄으면 S2 가 아니다 — 노랑(wholePool)으로 내린다(designer s1)', () => {
+    const w = authWarnings(snap(
+      [{ name: 'work', accounts: [acct('a', 2)] }, { name: 'home', accounts: [acct('p')] }],
+      { design: ['work', 'home'] }, 'home',
+    ), none);
+    expect(w).toEqual([{ kind: 's1', pool: 'work', account: 'a', left: 0, total: 1, atMs: 2, wholePool: true }]);
+  });
+
+  it('기본 풀이 전부 풀리면 멈춘 에이전트를 몰라도 S2 로 둔다', () => {
+    const w = authWarnings(snap([{ name: 'work', accounts: [acct('a', 2)] }], {}, 'work'), none);
+    expect(w[0]!.kind).toBe('s2');
+  });
+});
+
+describe('pruneStopped (security n2)', () => {
+  it('그 에이전트의 풀에 표식 없는 계정이 생기면 멈춤 기억을 지운다', () => {
+    const stopped = new Map([['forge', 1]]);
+    const dead = snap([{ name: 'work', accounts: [acct('a', 1)] }], { forge: ['work'] });
+    expect(pruneStopped(dead, stopped)).toBe(stopped);
+    const back = snap([{ name: 'work', accounts: [acct('a')] }], { forge: ['work'] });
+    expect([...pruneStopped(back, stopped).keys()]).toEqual([]);
   });
 });

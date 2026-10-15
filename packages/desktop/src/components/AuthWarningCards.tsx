@@ -15,8 +15,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EX_CONFIG } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
-import { useT } from '../i18n/useT';
-import { authWarningKey, authWarnings, type AuthWarning } from '../lib/authWarnings';
+import { useLocale, useT } from '../i18n/useT';
+import { authWarningKey, authWarnings, pruneStopped, type AuthWarning } from '../lib/authWarnings';
 import {
   hasClaudeAccountsSurface,
   listClaudeAccounts,
@@ -69,11 +69,9 @@ export function useAuthWarnings(): AuthWarning[] {
         }
         void refresh();
       }),
-      // 다시 로그인을 마쳤다 — 표식은 오퍼레이터가 지웠다. 멈춤 기억도 내린다(살아난 계정 하나면 돈다).
-      listenClaudeLogin((e) => {
-        if ((e as { done?: unknown }).done === true) setStopped(new Map());
-        void refresh();
-      }),
+      // 다시 로그인을 마쳤다 — 표식은 오퍼레이터가 지웠다. 목록을 다시 읽으면 `pruneStopped` 가 그 풀의
+      // 멈춤 기억만 내린다(다른 풀 때문에 멈춘 에이전트는 그대로, designer n2).
+      listenClaudeLogin(() => { void refresh(); }),
     ];
     return () => {
       clearInterval(timer);
@@ -81,12 +79,15 @@ export function useAuthWarnings(): AuthWarning[] {
       for (const off of offs) void off.then((f) => f());
     };
   }, [available, refresh]);
+  // 목록이 회복을 보여 주면 멈춤 기억을 지운다 — 터미널에서 직접 다시 로그인한 경우도(security n2).
+  useEffect(() => { setStopped((cur) => pruneStopped(snap, cur)); }, [snap]);
   return useMemo(() => authWarnings(snap, stopped), [snap, stopped]);
 }
 
 /** 관문 카드와 로그인 경고 카드를 한 자리에 쌓는다. `Workspace` 의 본문 칸에 둔다. */
 export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: SectionId, targetId?: string) => void }) {
   const t = useT();
+  const locale = useLocale();
   const warnings = useAuthWarnings();
   const accounts = useActiveStore((s) => s.accounts);
   const gateOpen = useActiveStore((s) => s.gates.some((g) => !g.dismissed));
@@ -95,18 +96,26 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
   const notifier = useMemo(() => createNotifier(), []);
 
   // 지금 커뮤니티에 없는 에이전트는 지운다 — 이름이 없는 id 를 그리지 않고, 다른 커뮤니티를 섞지 않는다.
+  // 열쇠는 **거르기 전** 경고로 짓는다 — 커뮤니티를 바꿔 거른 수가 달라져도 같은 상태면 같은 열쇠다(security n1).
   const shown = warnings
-    .map((w) => (w.kind === 's2' ? { ...w, agentIds: w.agentIds.filter((id) => accounts[id]) } : w))
-    .filter((w) => !(w.kind === 's2' && w.pool === null && w.agentIds.length === 0))
-    .filter((w) => !dismissed.has(authWarningKey(w)));
+    .map((orig) => ({
+      key: authWarningKey(orig),
+      w: orig.kind === 's2' ? { ...orig, agentIds: orig.agentIds.filter((id) => accounts[id]) } : orig,
+    }))
+    .filter(({ w }) => !(w.kind === 's2' && w.pool === null && w.agentIds.length === 0))
+    .filter(({ key }) => !dismissed.has(key));
 
   const handles = (ids: string[]): string[] => ids.map((id) => `@${accounts[id]!.handle}`);
+  /** 이름은 두 개까지, 나머지는 「외 n」(designer n4). */
+  const shortNames = (names: string[]): string => names.length > 2
+    ? `${names.slice(0, 2).join(' · ')} ${t('gate.more', { count: names.length - 2 })}`
+    : names.join(' · ');
+  const time = new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' });
 
   // S2 는 상태 전이마다 OS 알림 1회(같은 열쇠로는 다시 안 보낸다).
   useEffect(() => {
-    for (const w of shown) {
+    for (const { key, w } of shown) {
       if (w.kind !== 's2') continue;
-      const key = authWarningKey(w);
       if (notified.current.has(key)) continue;
       notified.current.add(key);
       writeSet(NOTIFIED_KEY, notified.current);
@@ -118,16 +127,20 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
     }
   });
 
-  const s2 = shown.filter((w) => w.kind === 's2');
-  const s1 = shown.filter((w) => w.kind === 's1');
-  type Slot = { kind: 'gate' } | AuthWarning;
-  const slots: Slot[] = [...s2, ...(gateOpen ? [{ kind: 'gate' as const }] : []), ...s1];
+  const s2 = shown.filter(({ w }) => w.kind === 's2');
+  const s1 = shown.filter(({ w }) => w.kind === 's1');
+  type Slot = { kind: 'gate' } | { kind: 'auth'; key: string; w: AuthWarning };
+  const slots: Slot[] = [
+    ...s2.map((x) => ({ kind: 'auth' as const, ...x })),
+    ...(gateOpen ? [{ kind: 'gate' as const }] : []),
+    ...s1.map((x) => ({ kind: 'auth' as const, ...x })),
+  ];
   const visible = slots.slice(0, 2);
   const hidden = slots.length - visible.length;
   if (!visible.length) return null;
 
-  const dismiss = (w: AuthWarning): void => {
-    const next = new Set(dismissed).add(authWarningKey(w));
+  const dismiss = (key: string): void => {
+    const next = new Set(dismissed).add(key);
     setDismissed(next);
     writeSet(DISMISSED_KEY, next);
   };
@@ -140,24 +153,27 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
     <div className="pointer-events-none absolute right-3 top-14 z-40 flex w-80 max-w-[calc(100%-1.5rem)] flex-col gap-2">
       {visible.map((slot, i) => {
         const more = i === visible.length - 1 && hidden > 0 ? hidden : 0;
-        if (slot.kind === 'gate') return <GateCard key="gate" />;
-        const w = slot;
+        // 마지막 칸이 관문 카드여도 숨은 수를 잃지 않는다(designer s2).
+        if (slot.kind === 'gate') return <GateCard key="gate" extraMore={more} />;
+        const { w, key } = slot;
         const names = w.kind === 's2' ? handles(w.agentIds) : [];
         const title = w.kind === 's1'
-          ? t('authWarn.s1.title', { account: w.account })
+          ? w.wholePool ? t('authWarn.s1.titlePool', { pool: w.pool || t('authWarn.defaultPool') }) : t('authWarn.s1.title', { account: w.account })
           : names.length === 1
             ? t('authWarn.s2.titleOne', { handle: names[0]! })
             : names.length > 1
               ? t('authWarn.s2.titleMany', { count: names.length })
               : t('authWarn.s2.titlePool', { pool: w.pool ?? '' });
         const line = w.kind === 's1'
-          ? t('authWarn.s1.line', { pool: w.pool || t('authWarn.defaultPool'), left: w.left, total: w.total })
+          ? w.wholePool
+            ? t('authWarn.s1.linePool')
+            : t('authWarn.s1.line', { pool: w.pool || t('authWarn.defaultPool'), left: w.left, total: w.total })
           : w.pool !== null
-            ? t('authWarn.s2.line', { pool: w.pool || t('authWarn.defaultPool'), total: w.total, since: new Date(w.atMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })
+            ? t('authWarn.s2.line', { pool: w.pool || t('authWarn.defaultPool'), total: w.total, since: time.format(new Date(w.atMs)) })
             : t('authWarn.s2.lineUnknown');
         return (
           <div
-            key={authWarningKey(w)}
+            key={key}
             role={w.kind === 's2' ? 'alert' : 'status'}
             data-testid={`auth-warn-${w.kind}`}
             className={`pointer-events-auto rounded-card border border-border border-l-4 bg-surface-raised px-3 py-2.5 shadow-float ${w.kind === 's2' ? 'border-l-danger' : 'border-l-warning'}`}
@@ -166,24 +182,23 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
               <span className={w.kind === 's2' ? 'text-danger' : 'text-warning'}>{w.kind === 's2' ? '⛔' : '⚠'}</span> {title}
             </p>
             <p className="mt-0.5 truncate text-meta text-fg-muted" title={line}>{line}</p>
-            {names.length > 1 && <p className="truncate text-meta text-fg-muted">{names.join(' · ')}</p>}
+            {names.length > 1 && <p className="truncate text-meta text-fg-muted">{shortNames(names)}</p>}
             <p className="text-meta text-fg-subtle">{t('authWarn.hint')}</p>
             <div className="mt-2 flex items-center gap-1.5">
-              {w.account && (
-                <button
-                  type="button"
-                  data-testid="auth-warn-reauth"
-                  className="rounded-row bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
-                  onClick={() => reauth(w)}
-                >
-                  {t('authWarn.reauth')}
-                </button>
-              )}
+              {/* 풀을 모르면 열 계정이 없다 — 설정으로 데려가기만 한다(designer s3). */}
+              <button
+                type="button"
+                data-testid={w.account ? 'auth-warn-reauth' : 'auth-warn-settings'}
+                className="rounded-row bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
+                onClick={() => reauth(w)}
+              >
+                {w.account ? t('authWarn.reauth') : t('authWarn.openSettings')}
+              </button>
               <button
                 type="button"
                 data-testid="auth-warn-later"
                 className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-hover"
-                onClick={() => dismiss(w)}
+                onClick={() => dismiss(key)}
               >
                 {t('gate.later')}
               </button>

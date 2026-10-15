@@ -28,7 +28,10 @@ const SNIPPET_CHARS = 40;
  * 여럿이면 가장 최근 하나를 그리고 나머지는 "외 n" 으로 센다. `role="status"` — 실패가
  * 아니라 할 일이라 끼어들어 읽지 않는다.
  */
-export function GateCard() {
+export function GateCard({ extraMore = 0 }: {
+  /** 스택에서 이 카드 아래로 숨은 로그인 경고 수(designer s2) — 자기 「외 n」에 더한다. */
+  extraMore?: number;
+} = {}) {
   const t = useT();
   const gates = useActiveStore((s) => s.gates);
   const open = gates.filter((g) => !g.dismissed);
@@ -81,8 +84,8 @@ export function GateCard() {
         >
           {t('gate.later')}
         </button>
-        {open.length > 1 && (
-          <span className="ml-auto text-meta text-fg-subtle">{t('gate.more', { count: open.length - 1 })}</span>
+        {open.length - 1 + extraMore > 0 && (
+          <span className="ml-auto text-meta text-fg-subtle">{t('gate.more', { count: open.length - 1 + extraMore })}</span>
         )}
       </div>
     </div>
