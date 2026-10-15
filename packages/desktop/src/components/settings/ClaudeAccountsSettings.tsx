@@ -52,6 +52,7 @@ import {
   sameSignInAs,
   startClaudeLogin,
   submitClaudeLoginCode,
+  takeClaudeReauthRequest,
   type ClaudeAccountsSnapshot,
   type ClaudeAccountView,
   type ClaudeAuthStatus,
@@ -195,6 +196,15 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
   }, [available]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // 전역 경고 카드의 [다시 로그인] 으로 왔다 — 목록을 읽은 뒤 그 계정의 다시 로그인 확인창을 바로 연다.
+  useEffect(() => {
+    if (!snap) return;
+    const req = takeClaudeReauthRequest();
+    if (!req) return;
+    const acct = snap.pools.find((p) => p.name === req.pool)?.accounts.find((a) => a.name === req.account);
+    if (acct) setReauthAsk({ pool: req.pool, account: req.account, label: accountLabel(acct, t) });
+  }, [snap]);
 
   // 다시 읽은 목록에서 그 계정의 표식이 사라졌으면 끝이다 — 안내를 "돌아왔다"로 바꾸고 포커스마다
   // 다시 읽기도 멈춘다(designer D3). 아직 남아 있으면(사람이 고르지 않고 나왔다) 그대로 둔다.

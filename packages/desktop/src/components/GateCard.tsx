@@ -24,6 +24,7 @@ const SNIPPET_CHARS = 40;
  * 터미널 패널 머리의 ⧉·× 를 덮어, 관문을 기다리는 동안 패널을 닫으려면 [나중에]부터 눌러야
  * 했다(designer).
  *
+ * 자리는 `AttentionStack`(AuthWarningCards.tsx)이 잡는다 — 로그인 경고 카드와 S2 → 관문 → S1 순으로 쌓인다(2026-10-15).
  * 여럿이면 가장 최근 하나를 그리고 나머지는 "외 n" 으로 센다. `role="status"` — 실패가
  * 아니라 할 일이라 끼어들어 읽지 않는다.
  */
@@ -53,7 +54,7 @@ export function GateCard() {
     <div
       role="status"
       data-testid="gate-card"
-      className="absolute right-3 top-14 z-40 w-80 max-w-[calc(100%-1.5rem)] rounded-card border border-border border-l-4 border-l-accent-brand bg-surface-raised px-3 py-2.5 shadow-float"
+      className="pointer-events-auto rounded-card border border-border border-l-4 border-l-accent-brand bg-surface-raised px-3 py-2.5 shadow-float"
     >
       <p className="text-body font-semibold text-fg">
         ⌨ {t('gate.title', { handle: gate.agentHandle })}
