@@ -25,6 +25,14 @@ const disposeOrder: string[] = [];
 let addonDisposeThrows = false;
 /** 터미널 정리가 던지는 세상. */
 let termDisposeThrows = false;
+/**
+ * 가짜 xterm 이 **실제로 그리는** 칸 크기(2026-10-15 하단 잘림). 있으면 `resize` 마다 `.xterm-screen` 의
+ * 크기를 `열×폭`·`줄×높이` 로 둔다 — 진짜 xterm 처럼 resize 직후 동기로 바뀐다(WKWebView 실측). `null` 이면
+ * 화면 요소의 크기는 0 이다(잴 수 없는 세상 — 안전망은 비켜선다).
+ */
+let drawCell: { w: number; h: number } | null = null;
+/** 애드온이 얹히는 순간 그리는 칸이 바뀐다(webgl 은 DOM 과 다른 식으로 그린다). */
+let drawCellAfterWebgl: { w: number; h: number } | null = null;
 
 /** 컨텍스트 상실 핸들러와 dispose 를 드러내는 가짜 애드온. */
 class FakeWebglAddon {
@@ -56,12 +64,34 @@ vi.mock('@xterm/xterm', () => ({
     // 통째로 지워도 초록이 된다(실측했다).
     options: { disableStdin?: boolean };
     constructor(opts: { disableStdin?: boolean }) { this.options = { ...opts }; lastTerm = this; }
-    open(): void { /* jsdom 에는 캔버스가 없다 */ }
+    screen: HTMLElement | null = null;
+    cols = 0;
+    rows = 0;
+    // jsdom 에는 캔버스가 없다 — 그려진 화면의 크기만 흉내낸다(`drawCell`).
+    open(el: HTMLElement): void {
+      this.screen = document.createElement('div');
+      this.screen.className = 'xterm-screen';
+      el.appendChild(this.screen);
+    }
     write(): void { /* 이 파일은 바이트를 안 본다 */ }
     onData(): void { /* 같음 */ }
-    resize(cols: number, rows: number): void { resizes.push([cols, rows]); }
+    resize(cols: number, rows: number): void {
+      resizes.push([cols, rows]);
+      this.cols = cols;
+      this.rows = rows;
+      this.draw();
+    }
+    draw(): void {
+      if (!this.screen) return;
+      const c = drawCell ?? { w: 0, h: 0 };
+      Object.defineProperty(this.screen, 'offsetWidth', { value: this.cols * c.w, configurable: true });
+      Object.defineProperty(this.screen, 'offsetHeight', { value: this.rows * c.h, configurable: true });
+    }
     // 진짜 xterm 과 같은 자리 — 애드온은 `open()` 뒤에 얹힌다.
-    loadAddon(addon: FakeWebglAddon): void { loadedAddons.push(addon); }
+    loadAddon(addon: FakeWebglAddon): void {
+      loadedAddons.push(addon);
+      if (drawCellAfterWebgl) { drawCell = drawCellAfterWebgl; this.draw(); }
+    }
     dispose(): void {
       disposeOrder.push('term');
       disposed = true;
@@ -70,7 +100,7 @@ vi.mock('@xterm/xterm', () => ({
   },
 }));
 
-import { getTerminalSinkFactory } from '../src/lib/terminalSink';
+import { getTerminalSinkFactory, xtermCellHeight } from '../src/lib/terminalSink';
 
 /**
  * 셀 하나가 8x16 인 세상. `fitDimensions` 는 숨은 span 에 'W' 100 개를 넣고 재므로,
@@ -119,6 +149,8 @@ beforeEach(() => {
   disposeOrder.length = 0;
   addonDisposeThrows = false;
   termDisposeThrows = false;
+  drawCell = null;
+  drawCellAfterWebgl = null;
   lastTerm = null;
   fireResize = null;
   observing = false;
@@ -365,5 +397,102 @@ describe('로딩 중에 닫히면 렌더러를 남기지 않는다', () => {
       // 얹히지 않았거나(0개), 얹혔더라도 버려져 있어야 한다.
       expect(loadedAddons.every((a) => a.disposed)).toBe(true);
     });
+  });
+});
+
+/**
+ * 2026-10-15 터미널 하단 잘림 — 앱 배율이 100% 가 아니면 fit 이 줄을 실제보다 많이 셌고, 넘친 맨 아래 줄
+ * (claude 입력 상자·상태 줄)이 호스트 밖으로 나갔다. 원인은 칸 높이를 재는 자리·식이 xterm 과 달랐던 것이다
+ * (span 높이는 배율에 따라 기기 px 로 반올림되고, xterm 은 canvas 폰트 상자를 `ceil` 한다).
+ */
+describe('칸 높이는 xterm 과 같은 식으로 잰다(배율 ≠ 100%)', () => {
+  // WKWebView 실측(Nanum Gothic Coding 13px, 폰트 상자 13)과 같은 값 — 배율 70·80·90·100·110·125·150%.
+  it.each([
+    [1.4, 15], [1.6, 15], [1.8, 15], [2, 14.5], [2.2, 15], [2.5, 14.8], [3, 44 / 3],
+  ])('dpr %s 에서 13px 글자의 칸은 %s px', (dpr, cell) => {
+    expect(xtermCellHeight(13, dpr)).toBeCloseTo(cell, 9);
+  });
+
+  it('높이는 canvas 폰트 상자로 잰다 — 배율로 줄어든 span 높이를 쓰면 줄을 더 센다', async () => {
+    // 90%(dpr 1.8): span 은 12.22 로 반올림되지만 xterm 의 칸은 canvas 13 → 15px 다.
+    rectSpy!.mockImplementation(function (this: HTMLSpanElement) {
+      return { width: CELL_W * (this.textContent?.length ?? 0), height: 12.22 } as DOMRect;
+    });
+    vi.stubGlobal('devicePixelRatio', 1.8);
+    vi.stubGlobal('OffscreenCanvas', class {
+      getContext() {
+        return { font: '', measureText: () => ({ width: 6.5, fontBoundingBoxAscent: 10, fontBoundingBoxDescent: 3 }) };
+      }
+    });
+    const el = host(640, 1000);
+    const reported: [number, number][] = [];
+    const sink = getTerminalSinkFactory()(el, { onResize: (c, r) => reported.push([c, r]) });
+    await settle();
+    // 1000/15 = 66 줄. span 식이었다면 floor(12.22·1.8·1.15)/1.8 = 13.89 → 71 줄(5 줄이 화면 밖).
+    // 폭은 span 그대로 640/8 = 80 칸.
+    expect(reported).toEqual([[80, 66]]);
+    sink.dispose();
+  });
+});
+
+describe('그려진 화면이 호스트를 넘으면 줄여서 알린다(안전망)', () => {
+  it('넘친 만큼 줄·열을 줄여 다시 resize 하고, 줄인 크기를 PTY 로 보낸다', async () => {
+    // 렌더러가 잰 것보다 큰 칸으로 그린다(17×9 — 높이 1, 폭 1 씩 크다).
+    drawCell = { w: 9, h: 17 };
+    const el = host(640, 480);
+    const reported: [number, number][] = [];
+    const sink = getTerminalSinkFactory()(el, { onResize: (c, r) => reported.push([c, r]) });
+    await settle();
+    // 잰 크기 80×30 → 그린 720×510 이 넘친다 → 71×28(639×476).
+    expect(resizes).toEqual([[80, 30], [71, 28]]);
+    expect(reported).toEqual([[71, 28]]);
+    // 같은 측정이 다시 와도 xterm 을 또 흔들지 않는다(드래그 한 번이 수십 프레임이다).
+    fireResize!();
+    expect(resizes).toEqual([[80, 30], [71, 28]]);
+    expect(reported).toEqual([[71, 28]]);
+    sink.dispose();
+  });
+
+  it('넘치지 않으면 손대지 않는다', async () => {
+    drawCell = { w: CELL_W, h: CELL_H };
+    const el = host(640, 480);
+    const reported: [number, number][] = [];
+    const sink = getTerminalSinkFactory()(el, { onResize: (c, r) => reported.push([c, r]) });
+    await settle();
+    expect(resizes).toEqual([[80, 30]]);
+    expect(reported).toEqual([[80, 30]]);
+    sink.dispose();
+  });
+
+  it('webgl 을 얹은 직후 다시 맞춘다 — 렌더러가 바뀌어도 호스트 크기는 그대로라 관찰이 울리지 않는다', async () => {
+    drawCell = { w: CELL_W, h: CELL_H };
+    drawCellAfterWebgl = { w: CELL_W, h: 17 };
+    const el = host(640, 480);
+    const reported: [number, number][] = [];
+    const sink = getTerminalSinkFactory()(el, { onResize: (c, r) => reported.push([c, r]) });
+    await vi.waitFor(() => expect(reported).toEqual([[80, 30], [80, 28]]));
+    sink.dispose();
+  });
+
+  it('webgl 이 같은 크기로 그리면 다시 알리지 않는다', async () => {
+    drawCell = { w: CELL_W, h: CELL_H };
+    const el = host(640, 480);
+    const reported: [number, number][] = [];
+    const sink = getTerminalSinkFactory()(el, { onResize: (c, r) => reported.push([c, r]) });
+    await vi.waitFor(() => expect(loadedAddons).toHaveLength(1));
+    await settle();
+    expect(reported).toEqual([[80, 30]]);
+    sink.dispose();
+  });
+
+  it('refit 은 줄인 크기를 다시 알린다 — writer 승격 직후', async () => {
+    drawCell = { w: CELL_W, h: 17 };
+    const el = host(640, 480);
+    const reported: [number, number][] = [];
+    const sink = getTerminalSinkFactory()(el, { onResize: (c, r) => reported.push([c, r]) });
+    await settle();
+    sink.refit!();
+    expect(reported).toEqual([[80, 28], [80, 28]]);
+    sink.dispose();
   });
 });
