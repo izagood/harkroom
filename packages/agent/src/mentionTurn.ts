@@ -912,6 +912,12 @@ export async function runMentionTurn(
     };
   }
 
+  // 풀을 적기 전의 옛 레코드는 이 턴의 풀로 채운다(security n2) — 계정이 같아 세션을 이어 가면 그
+  // 세션은 이 풀의 디렉터리에 있다(배정기가 세션 파일로 골랐다). 다음 턴부터는 풀도 잰다.
+  if (rec && rec.claudePool === undefined && hasAccountPool(def.harness)) {
+    rec = { ...rec, claudePool: deps.claudePool ?? null };
+  }
+
   if (!rec) {
     const workspaceDir = await resolveWorkspaceDir(deps, def, key);
     rec = {
