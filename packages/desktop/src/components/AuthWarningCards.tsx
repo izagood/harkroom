@@ -111,6 +111,11 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
     ? `${names.slice(0, 2).join(' · ')} ${t('gate.more', { count: names.length - 2 })}`
     : names.join(' · ');
   const time = new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' });
+  /** 깨진 시각(유한하지만 Date 범위 밖)이면 「?」 — `format` 이 RangeError 로 화면을 깨지 않게(security n2). */
+  const sinceText = (atMs: number): string => {
+    const d = new Date(atMs);
+    return Number.isNaN(d.getTime()) ? '?' : time.format(d);
+  };
 
   // S2 는 상태 전이마다 OS 알림 1회(같은 열쇠로는 다시 안 보낸다).
   useEffect(() => {
@@ -169,7 +174,7 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
             ? t('authWarn.s1.linePool')
             : t('authWarn.s1.line', { pool: w.pool || t('authWarn.defaultPool'), left: w.left, total: w.total })
           : w.pool !== null
-            ? t('authWarn.s2.line', { pool: w.pool || t('authWarn.defaultPool'), total: w.total, since: time.format(new Date(w.atMs)) })
+            ? t('authWarn.s2.line', { pool: w.pool || t('authWarn.defaultPool'), total: w.total, since: sinceText(w.atMs) })
             : t('authWarn.s2.lineUnknown');
         return (
           <div
