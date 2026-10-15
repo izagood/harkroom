@@ -1,17 +1,26 @@
 // 계정 풀 순서 목록 화면(2026-10-15 풀 n개). 판정은 러너와 같은 식(`poolChainState`)에서 오고, 화면은
 // 그 값을 그대로 말해야 한다 — designer 확인 항목(모름·리셋 지남·소진·없는 풀·턴 칩)을 여기서 잰다.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { AgentSessionView } from '@harkroom/shared';
 
 import { MAX_AGENT_POOLS } from '@harkroom/shared/claudePools';
 
 import { AgentPoolChain, clock } from '../src/components/settings/AgentPoolChain';
 import { agentPoolChainState } from '../src/components/settings/useAgentPool';
-import type { ClaudeAccountsSnapshot } from '../src/lib/claudeAccounts';
+import { assignAgentPools, type ClaudeAccountsSnapshot } from '../src/lib/claudeAccounts';
 import type { ProviderUsageSnapshot } from '../src/lib/providerUsage';
 import { AgentTurns } from '../src/components/AgentTurns';
 import { usePrefsStore } from '../src/state/prefsStore';
+
+// jsdom 에는 PointerEvent 가 없다 — 좌표가 실리도록 MouseEvent 를 물려 만든다(imageLightbox.test 와 같다).
+if (typeof window.PointerEvent === 'undefined') {
+  class PointerEventPolyfill extends MouseEvent {
+    pointerId: number;
+    constructor(type: string, init: PointerEventInit = {}) { super(type, init); this.pointerId = init.pointerId ?? 1; }
+  }
+  (window as unknown as { PointerEvent: typeof PointerEventPolyfill }).PointerEvent = PointerEventPolyfill;
+}
 
 const NOW = Date.UTC(2026, 9, 15, 6, 0);
 const H = 3600_000;
@@ -170,5 +179,151 @@ describe('AgentTurns — 「↓ N번 풀」 칩', () => {
     );
     expect(screen.queryByTestId('agent-turn-pool-fallback-s-work')).toBeNull();
     expect(screen.getByTestId('agent-turn-pool-fallback-s-personal').textContent).toBe('↓ 2번 풀');
+  });
+});
+
+describe('AgentPoolChain — 끌어 순서 바꾸기(f1)', () => {
+  const ROW_H = 40;
+  /** 줄 i 를 y = i*40 ~ i*40+40 에 둔다(jsdom 은 배치를 하지 않는다). */
+  function layout(chain: string[]) {
+    chain.forEach((pool, i) => {
+      const el = screen.getByTestId(`agent-pool-chain-row-${pool}`);
+      el.getBoundingClientRect = () => ({
+        top: i * ROW_H, bottom: i * ROW_H + ROW_H, height: ROW_H, left: 0, right: 200, width: 200, x: 0, y: i * ROW_H,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    });
+  }
+  function mount(chain: string[], ready = true) {
+    const onChange = vi.fn();
+    render(<AgentPoolChain chain={chain} pools={chain} defaultPool={null} state={null} ready={ready} onChange={onChange} />);
+    layout(chain);
+    return onChange;
+  }
+  const chain = ['a', 'b', 'c'];
+
+  it('손잡이를 끌어 놓으면 새 순서를 ↑↓ 와 같은 onChange 로 넘긴다', () => {
+    const onChange = mount(chain);
+    const h = screen.getByTestId('agent-pool-chain-handle-a');
+    expect(h.getAttribute('aria-label')).toBe('a 을 끌어 순서 바꾸기');
+    expect(h.className).toMatch(/touch-none/);
+    expect(h.className).toMatch(/cursor-grab/);
+    fireEvent.pointerDown(h, { pointerId: 1, clientY: 20 });
+    fireEvent.pointerMove(h, { pointerId: 1, clientY: 110 }); // c 의 가운데(100) 아래
+    expect(screen.getByTestId('agent-pool-chain-row-a').dataset.dragging).toBe('true');
+    // 아래로 옮기면 놓일 자리(c) 아래에 선이 선다.
+    expect(screen.getByTestId('agent-pool-chain-row-c').querySelector('[data-testid="agent-pool-chain-drop"]')).toBeTruthy();
+    fireEvent.pointerUp(h, { pointerId: 1, clientY: 110 });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(['b', 'c', 'a']);
+    expect(screen.queryByTestId('agent-pool-chain-drop')).toBeNull();
+  });
+
+  it('위로 끌기 — c 를 맨 위로', () => {
+    const onChange = mount(chain);
+    const h = screen.getByTestId('agent-pool-chain-handle-c');
+    fireEvent.pointerDown(h, { pointerId: 1, clientY: 100 });
+    fireEvent.pointerMove(h, { pointerId: 1, clientY: 5 });
+    expect(screen.getByTestId('agent-pool-chain-row-a').querySelector('[data-testid="agent-pool-chain-drop"]')).toBeTruthy();
+    fireEvent.pointerUp(h, { pointerId: 1, clientY: 5 });
+    expect(onChange).toHaveBeenCalledWith(['c', 'a', 'b']);
+  });
+
+  it('pointercancel 이면 쓰지 않는다', () => {
+    const onChange = mount(chain);
+    const h = screen.getByTestId('agent-pool-chain-handle-a');
+    fireEvent.pointerDown(h, { pointerId: 1, clientY: 20 });
+    fireEvent.pointerMove(h, { pointerId: 1, clientY: 110 });
+    fireEvent.pointerCancel(h, { pointerId: 1 });
+    fireEvent.pointerUp(h, { pointerId: 1, clientY: 110 });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId('agent-pool-chain-row-a').dataset.dragging).toBeUndefined();
+  });
+
+  it('Escape 면 거둔다', () => {
+    const onChange = mount(chain);
+    const h = screen.getByTestId('agent-pool-chain-handle-a');
+    fireEvent.pointerDown(h, { pointerId: 1, clientY: 20 });
+    fireEvent.pointerMove(h, { pointerId: 1, clientY: 110 });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.pointerUp(h, { pointerId: 1, clientY: 110 });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('제자리에 놓으면 쓰지 않는다', () => {
+    const onChange = mount(chain);
+    const h = screen.getByTestId('agent-pool-chain-handle-b');
+    fireEvent.pointerDown(h, { pointerId: 1, clientY: 60 });
+    fireEvent.pointerMove(h, { pointerId: 1, clientY: 110 });
+    fireEvent.pointerMove(h, { pointerId: 1, clientY: 58 });
+    fireEvent.pointerUp(h, { pointerId: 1, clientY: 58 });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('저장할 수 없으면(ready=false) 손잡이도 ↑↓ 처럼 잠긴다', () => {
+    const onChange = mount(chain, false);
+    const h = screen.getByTestId('agent-pool-chain-handle-a') as HTMLButtonElement;
+    expect(h.disabled).toBe(true);
+    fireEvent.pointerDown(h, { pointerId: 1, clientY: 20 });
+    fireEvent.pointerMove(h, { pointerId: 1, clientY: 110 });
+    fireEvent.pointerUp(h, { pointerId: 1, clientY: 110 });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('줄이 하나면 손잡이를 그리지 않는다', () => {
+    mount(['a']);
+    expect(screen.queryByTestId('agent-pool-chain-handle-a')).toBeNull();
+  });
+});
+
+describe('assignAgentPools — 쓰기 줄 세우기(f4)', () => {
+  const g = globalThis as unknown as { __TAURI_INTERNALS__?: unknown };
+  afterEach(() => { delete g.__TAURI_INTERNALS__; });
+
+  /** 읽고-쓰기가 각각 기다리는 가짜 데몬. 읽기는 빠르고 첫 쓰기는 느리다 — 줄이 없으면 엇갈린다. */
+  function fakeDaemon(opts: { failFirstWrite?: boolean } = {}) {
+    const log: string[] = [];
+    let stored: Record<string, string[]> = {};
+    let writes = 0;
+    const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    g.__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string, args?: { config: { agents: Record<string, string[]> } }) => {
+        if (cmd === 'claude_accounts_list') {
+          log.push('list');
+          await tick(1);
+          return { ...snap, agents: { ...stored } };
+        }
+        if (cmd === 'claude_accounts_configure') {
+          const n = ++writes;
+          log.push(`write:${n}:start`);
+          await tick(n === 1 ? 20 : 1);
+          log.push(`write:${n}:end`);
+          if (n === 1 && opts.failFirstWrite) throw new Error('boom');
+          stored = { ...args!.config.agents };
+          return undefined;
+        }
+        throw new Error(`unexpected ${cmd}`);
+      },
+    };
+    return { log, get stored() { return stored; } };
+  }
+
+  it('빠르게 두 번 부르면 차례로 돌고, 마지막 순서가 남는다', async () => {
+    const d = fakeDaemon();
+    const p1 = assignAgentPools('ag', ['work', 'personal']);
+    const p2 = assignAgentPools('ag', ['personal', 'work']);
+    await Promise.all([p1, p2]);
+    // 두 번째 읽기는 첫 쓰기가 끝난 **뒤에** 온다.
+    expect(d.log).toEqual(['list', 'write:1:start', 'write:1:end', 'list', 'write:2:start', 'write:2:end']);
+    expect(d.stored.ag).toEqual(['personal', 'work']);
+  });
+
+  it('앞 쓰기가 실패해도 줄은 이어지고, 실패는 그 호출에만 간다', async () => {
+    const d = fakeDaemon({ failFirstWrite: true });
+    const p1 = assignAgentPools('ag', ['work']);
+    const p2 = assignAgentPools('ag', ['personal']);
+    await expect(p1).rejects.toThrow('boom');
+    await expect(p2).resolves.toBeUndefined();
+    expect(d.stored.ag).toEqual(['personal']);
   });
 });

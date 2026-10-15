@@ -944,6 +944,7 @@ export const ko = {
   'agents.run.poolChain.missingNote': '이 기기에는 이 풀이 없어 건너뛴다. 목록에서 빼지는 않는다.',
   'agents.run.poolChain.up': '{pool} 을 위로',
   'agents.run.poolChain.down': '{pool} 을 아래로',
+  'agents.run.poolChain.drag': '{pool} 을 끌어 순서 바꾸기',
   'agents.run.poolChain.remove': '{pool} 을 목록에서 빼기',
   'agents.run.poolChain.add': '＋ 풀 추가',
   'agentTurns.poolFallback': '↓ {n}번 풀',

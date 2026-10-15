@@ -1463,6 +1463,7 @@ export const en = {
   'agents.run.poolChain.missingNote': 'This pool is not on this machine, so it is skipped. It stays in the list.',
   'agents.run.poolChain.up': 'Move {pool} up',
   'agents.run.poolChain.down': 'Move {pool} down',
+  'agents.run.poolChain.drag': 'Drag to reorder {pool}',
   'agents.run.poolChain.remove': 'Remove {pool} from the list',
   'agents.run.poolChain.add': '+ Add pool',
   'agentTurns.poolFallback': '↓ pool #{n}',

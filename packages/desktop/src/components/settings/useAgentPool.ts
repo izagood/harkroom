@@ -156,19 +156,34 @@ export function useAgentPool(agentId: string | null): AgentPoolState {
     setChosen(null);
   }, [agentId]);
 
+  /**
+   * 마지막으로 보낸 쓰기의 번호(풀 n개 후속 f4). ↑↓ 를 빠르게 누르면 쓰기 여럿이 줄을 서고
+   * (`assignAgentPools` 가 차례로 돌린다) 그 응답도 차례로 온다 — **마지막 쓰기의 응답만** 화면에
+   * 반영한다. 앞 쓰기의 성공이 뒤 쓰기의 실패 표시를 지우거나, 낡은 순서를 스냅샷에 되돌려 놓지 않게.
+   * 화면이 그리는 순서는 그동안 `chosen`(방금 고친 목록)이 쥐고 있다.
+   */
+  const writeSeq = useRef(0);
+
   const setChain = useCallback(async (pools: readonly string[]): Promise<void> => {
     if (!snap) return;
     const next = [...pools];
     setChosen(next);
     if (!agentId) return;
+    const seq = ++writeSeq.current;
     try {
       await assignAgentPools(agentId, next);
-      const agents = { ...snap.agents };
-      if (!next.length) delete agents[agentId];
-      else agents[agentId] = next;
-      setSnap({ ...snap, agents });
+      if (seq !== writeSeq.current) return;
+      // 함수형으로 고친다 — 이 콜백이 쥔 `snap` 은 그 사이 다시 읽혔을 수 있다.
+      setSnap((cur) => {
+        if (!cur) return cur;
+        const agents = { ...cur.agents };
+        if (!next.length) delete agents[agentId];
+        else agents[agentId] = next;
+        return { ...cur, agents };
+      });
       setError(null);
     } catch (err) {
+      if (seq !== writeSeq.current) return;
       setError(errorTextNow(err));
     }
   }, [snap, agentId]);

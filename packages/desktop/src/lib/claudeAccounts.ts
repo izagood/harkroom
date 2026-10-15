@@ -249,7 +249,21 @@ export async function assignAgentPool(agentId: string, pool: string): Promise<vo
  * 에이전트의 **풀 순서**를 통째로 바꾼다(2026-10-15 풀 n개). 빈 목록이면 배정을 지운다(= 기본 풀).
  * 병합 규율은 위 `assignAgentPool` 과 같다 — 스냅샷을 매번 다시 읽어 기본 풀·순서를 같이 싣는다.
  */
-export async function assignAgentPools(agentId: string, pools: readonly string[]): Promise<void> {
+export function assignAgentPools(agentId: string, pools: readonly string[]): Promise<void> {
+  const next = [...pools];
+  // **한 번에 하나씩, 부른 순서대로**(풀 n개 후속 f4). 이 쓰기는 읽고-고치고-쓰기다 — ↑↓ 를 빠르게
+  // 누르면 두 쓰기가 같은 스냅샷을 읽고 엇갈려 끝나, 늦게 끝난 **앞** 쓰기가 마지막 순서를 덮는다.
+  // 줄을 세우면 각 쓰기는 앞 쓰기가 끝난 뒤의 스냅샷을 읽고, 마지막에 부른 순서가 남는다.
+  // 앞 쓰기가 실패해도 줄은 이어진다(그 실패는 그 호출자에게만 간다).
+  const run = assignQueue.then(() => writeAgentPools(agentId, next));
+  assignQueue = run.catch(() => {});
+  return run;
+}
+
+/** `assignAgentPools` 의 줄. 모듈 하나에 하나 — 웹뷰 안의 모든 배정 쓰기가 이 줄을 지난다. */
+let assignQueue: Promise<void> = Promise.resolve();
+
+async function writeAgentPools(agentId: string, pools: readonly string[]): Promise<void> {
   const snap = await listClaudeAccounts();
   const order: Record<string, string[]> = {};
   for (const p of snap.pools) if (p.name) order[p.name] = p.accounts.map((a) => a.name);

@@ -7,8 +7,12 @@
  * "소진"으로 남지 않고(판정이 이미 풀렸다고 본다), 사용량을 모르는 계정은 「?」로 그린다.
  *
  * 순서는 ↑↓ 버튼으로 바꾼다(키보드·스크린리더로도 된다). 줄이 하나면 ↑↓ 는 그리지 않는다.
+ * 마우스·터치로는 줄 왼쪽 손잡이(⋮⋮)를 끌어 옮긴다(풀 n개 후속 f1) — HTML5 끌어놓기가 아니라 포인터
+ * 이벤트다(웹뷰마다 다르게 굴고 터치에서 안 된다). 놓으면 ↑↓ 와 같은 `onChange` 로 저장한다.
  * 계정 이름만 보인다 — 이메일·경로는 이 화면에 싣지 않는다.
  */
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+
 import type { PoolChainAccount, PoolChainEntry, PoolChainState } from '@harkroom/shared/claudePoolChain';
 import { MAX_AGENT_POOLS } from '@harkroom/shared/claudePools';
 
@@ -82,6 +86,65 @@ export function AgentPoolChain({
     [next[i], next[i + d]] = [next[i + d]!, next[i]!];
     onChange(next);
   };
+
+  /**
+   * 끌기(f1). `from` 은 끄는 줄, `to` 는 놓으면 그 줄이 갈 **최종 자리**다. 상태는 그리기용이고
+   * 판단은 ref 가 쥔다 — pointermove 가 잇달아 오면 다시 그려지기 전에 다음 이벤트가 온다.
+   */
+  const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
+  const dragRef = useRef<{ from: number; to: number; pointerId: number } | null>(null);
+  const rowEls = useRef<(HTMLLIElement | null)[]>([]);
+  const endDrag = () => { dragRef.current = null; setDrag(null); };
+  /** 끄는 줄을 뺀 나머지 줄 중 가운데가 포인터보다 위인 것의 수 = 놓을 자리. */
+  const targetOf = (from: number, clientY: number): number => {
+    let to = 0;
+    chain.forEach((_, j) => {
+      const el = rowEls.current[j];
+      if (j === from || !el) return;
+      const r = el.getBoundingClientRect();
+      if (r.top + r.height / 2 < clientY) to += 1;
+    });
+    return to;
+  };
+  const onHandleDown = (i: number) => (e: ReactPointerEvent<HTMLElement>) => {
+    if (!ready || chain.length < 2 || e.button !== 0) return;
+    e.preventDefault();
+    // jsdom 등 포인터 캡처가 없는 곳도 있다 — 없으면 캡처 없이 간다.
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    dragRef.current = { from: i, to: i, pointerId: e.pointerId };
+    setDrag({ from: i, to: i });
+  };
+  const onHandleMove = (e: ReactPointerEvent<HTMLElement>) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const to = targetOf(d.from, e.clientY);
+    if (to === d.to) return;
+    dragRef.current = { ...d, to };
+    setDrag({ from: d.from, to });
+  };
+  const onHandleUp = (e: ReactPointerEvent<HTMLElement>) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    endDrag();
+    // 제자리에 놓았으면 쓰지 않는다 — 바뀐 것이 없는 쓰기는 데몬을 한 번 더 깨울 뿐이다.
+    if (d.to === d.from || !ready) return;
+    const next = chain.filter((_, j) => j !== d.from);
+    next.splice(d.to, 0, chain[d.from]!);
+    onChange(next);
+  };
+  const onHandleCancel = (e: ReactPointerEvent<HTMLElement>) => {
+    if (dragRef.current?.pointerId === e.pointerId) endDrag();
+  };
+  // Escape 는 끌기를 거둔다. 포인터를 캡처한 동안 초점은 다른 데 있을 수 있어 창에서 듣는다.
+  const dragging = drag !== null;
+  useEffect(() => {
+    if (!dragging) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') endDrag(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [dragging]);
+  // 저장할 수 없게 되면(스냅샷을 다시 못 읽는 등) 끌던 것도 거둔다 — ↑↓ 가 잠기는 것과 같다.
+  useEffect(() => { if (!ready) endDrag(); }, [ready]);
   // 상한(security n3)에 닿으면 더 넣을 수 없다 — 오퍼레이터가 거절할 쓰기를 화면이 만들지 않는다.
   const addable = chain.length >= MAX_AGENT_POOLS ? [] : pools.filter((p) => !chain.includes(p));
 
@@ -143,10 +206,29 @@ export function AgentPoolChain({
           {chain.map((pool, i) => {
             const entry = state?.entries[i];
             const chip = entry && state && chain.length > 0 ? chipOf(entry, i, state) : null;
+            const dragged = drag?.from === i;
+            // 놓일 자리 선: 위로 옮기면 그 자리 줄의 위, 아래로 옮기면 그 자리 줄의 아래.
+            const dropLine = drag && drag.to !== drag.from && drag.to === i
+              ? (drag.to < drag.from ? 'top' : 'bottom') : null;
             return (
               <li key={pool} data-testid={`agent-pool-chain-row-${pool}`}
-                className={`rounded-md border border-border px-2 py-1.5 text-meta${entry?.status === 'missing' ? ' opacity-60' : ''}`}>
+                ref={(el) => { rowEls.current[i] = el; }}
+                data-dragging={dragged || undefined}
+                className={`relative rounded-md border border-border px-2 py-1.5 text-meta${dragged ? ' opacity-50' : entry?.status === 'missing' ? ' opacity-60' : ''}`}>
+                {dropLine && (
+                  <span aria-hidden data-testid="agent-pool-chain-drop"
+                    className={`pointer-events-none absolute inset-x-0 h-0.5 rounded-full bg-accent ${dropLine === 'top' ? '-top-[3px]' : '-bottom-[3px]'}`} />
+                )}
                 <div className="flex items-center gap-2">
+                  {chain.length > 1 && (
+                    // 끌기 손잡이 — 포인터 전용이라 탭 순서에서 뺀다(키보드는 ↑↓ 가 한다).
+                    <button type="button" tabIndex={-1} data-testid={`agent-pool-chain-handle-${pool}`}
+                      className="-ml-1 shrink-0 cursor-grab touch-none select-none rounded px-0.5 text-fg-subtle hover:bg-surface-raised active:cursor-grabbing disabled:cursor-default disabled:opacity-30"
+                      disabled={!ready}
+                      aria-label={t('agents.run.poolChain.drag', { pool })}
+                      onPointerDown={onHandleDown(i)} onPointerMove={onHandleMove}
+                      onPointerUp={onHandleUp} onPointerCancel={onHandleCancel}>⋮⋮</button>
+                  )}
                   <span className="w-4 shrink-0 text-right tabular-nums text-fg-subtle">{i + 1}</span>
                   <span className="min-w-0 truncate font-medium text-fg">{pool}</span>
                   {chip && entry && (
