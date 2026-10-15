@@ -11,7 +11,14 @@
  *   소켓으로 `mcp.request{tools/call repo.merge}` 를 보낸다(`main.ts::mergeMain`) → 여기서 받는다:
  *   ① 인자 모양(F3) ② 턴 임대(러너가 relay 로 맡긴 것, `turnSecrets`) ③ 서버 `POST /agent/merge-checks`
  *   (grant·사람 cause, F1·F2·F4 — 닿지 않으면 fail-closed) ④ `gh pr view` 로 OPEN·head 일치·CLEAN·체크 초록
- *   ⑤ `gh pr merge --squash --match-head-commit` ⑥ `POST /agent/merge-results`(서버가 스레드에 시스템 줄).
+ *   ⑤ `gh pr merge --squash --match-head-commit` — 대상 브랜치가 merge queue 를 쓰면 대신 GraphQL `enqueuePullRequest`
+ *   (`expectedHeadOid` = `--head`)로 **큐에 넣는다** ⑥ `POST /agent/merge-results`(서버가 스레드에 시스템 줄).
+ *
+ * merge queue(10-16, rcms): 큐를 쓰는 브랜치에는 `gh pr merge --squash` 가 거절된다(전략은 큐가 정하고 auto-merge 는 꺼져
+ * 있다). 그래서 ⑤ 만 갈린다 — ①~④ 관문은 큐에 넣기 **전에** 똑같이 건다(큐 넣기가 관문을 돌아가는 길이 되면 안 된다).
+ * 큐가 끝까지 머지했는지는 기다리지 않는다. **같은 명령을 다시 부르는 것이 확인이다**: 아직 큐에 있으면 `already_queued`
+ * (위치·상태), 큐가 머지했으면 `not_open`(pr.state MERGED). 이미 큐에 있는 PR 은 어느 길(1회 승인 사전 확인·권한 거절·
+ * 판정 통과)에서도 읽기 전용으로 알아보고 아무것도 하지 않는다 — 다시 넣지 않고, 승인도 쓰지 않고, 카드도 세우지 않는다.
  *
  * F3 를 지키는 자리:
  * - 인자는 네 가지뿐이고 그 밖은 거절한다. `--admin`·`--auto`·`-R` 같은 것은 **문법에 없다**.
@@ -187,6 +194,35 @@ export function refusalOf(pr: PrView, headSha: string, relaxChecks: boolean): { 
   return null;
 }
 
+/** merge queue 를 알아보는 GraphQL — 읽기 전용. 대상은 변수로만 받는다(문자열에 끼워 넣지 않는다). */
+export const QUEUE_QUERY = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id isMergeQueueEnabled isInMergeQueue mergeQueueEntry{position state}}}}';
+/** 큐에 넣는 뮤테이션 — `jump`(맨 앞으로)는 문법에 없다. `expectedHeadOid` 로 head 를 못박는다(`--match-head-commit` 자리). */
+export const ENQUEUE_MUTATION = 'mutation($id:ID!,$head:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$head}){mergeQueueEntry{position state}}}';
+
+export interface QueueEntry { position: number | null; state: string | null }
+export interface QueueInfo { id: string; enabled: boolean; inQueue: boolean; entry: QueueEntry | null }
+
+function entryOf(e: unknown): QueueEntry | null {
+  if (typeof e !== 'object' || e === null) return null;
+  const { position, state } = e as { position?: unknown; state?: unknown };
+  return { position: typeof position === 'number' ? position : null, state: typeof state === 'string' ? state.slice(0, 40) : null };
+}
+
+/** `gh api graphql` 의 답에서 큐 정보를 꺼낸다. 모양이 틀리면 null. */
+export function parseQueueInfo(stdout: string): QueueInfo | null {
+  try {
+    const pr = (JSON.parse(stdout) as { data?: { repository?: { pullRequest?: Record<string, unknown> | null } | null } }).data?.repository?.pullRequest;
+    if (!pr || typeof pr.id !== 'string' || typeof pr.isMergeQueueEnabled !== 'boolean') return null;
+    const entry = entryOf(pr.mergeQueueEntry);
+    return { id: pr.id, enabled: pr.isMergeQueueEnabled, inQueue: pr.isInMergeQueue === true || entry !== null, entry };
+  } catch { return null; }
+}
+
+/** 큐에 넣으려는데 이미 들어 있다는 GitHub 의 답(경합 — 우리가 읽은 뒤 누가 넣었다). */
+export function isAlreadyQueuedError(stderr: string): boolean {
+  return /already (?:been )?(?:added to|in|queued in) (?:the )?merge queue|is already queued/i.test(stderr);
+}
+
 export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
   const exec = deps.exec ?? defaultExec;
 
@@ -219,6 +255,22 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
   };
 
   const gh = async (args: string[], env: Record<string, string>): Promise<ExecResult> => exec(deps.ghPath, args, env);
+
+  /** PR 의 merge queue 정보(읽기 전용). 읽지 못하면 null — 부르는 쪽이 정한다. */
+  const queueInfo = async (repo: string, number: number, env: Record<string, string>): Promise<QueueInfo | null> => {
+    const [owner, name] = repo.split('/');
+    const r = await gh(['api', 'graphql', '-f', `query=${QUEUE_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`], env);
+    if (r.code !== 0) return null;
+    return parseQueueInfo(r.stdout);
+  };
+
+  /** 이미 큐에 있다 — 오류가 아니다(요구 5). 아무것도 하지 않았고 보고도 하지 않는다. 다시 부르면 같은 답이거나 MERGED 다. */
+  const alreadyQueued = (repo: string, number: number, headSha: string, entry: QueueEntry | null, note = '') => ({
+    ok: true, value: {
+      merged: false, queued: true, alreadyQueued: true, repo, number, headSha, queue: entry,
+      note: `already in the merge queue — nothing was done${note}. Call the same command again later to check: already_queued while it waits, not_open with pr.state MERGED once the queue merged it.`,
+    },
+  });
 
   const run = async (runnerId: string, agentId: string, req: RunnerLinkRequest & { type: 'mcp.request' }, call: JsonRpcCall)
     : Promise<{ ok: boolean; value: unknown }> => {
@@ -258,6 +310,10 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
         if (isRepoAccessError(pre.error)) return fail('no_repo_access', `${noRepoAccess(tok.login)} — the one-time approval was not used`);
         return fail('pr_not_found', `gh pr view failed: ${pre.error} — the one-time approval was not used`);
       }
+      if (pre.pr.state === 'OPEN') {
+        const q = await queueInfo(repo, number, ghEnv(deps.home, tok.token));
+        if (q?.inQueue) return alreadyQueued(repo, number, headSha, q.entry, ' (the one-time approval was not used)');
+      }
       const why = refusalOf(pre.pr, headSha, pending.relaxChecks);
       if (why?.code === 'not_open') await reportClosed(pre.pr.state);
       if (why) return fail(why.code, `${why.message} — the one-time approval was not used`, { pr: { state: pre.pr.state, headRefOid: pre.pr.headRefOid, mergeStateStatus: pre.pr.mergeStateStatus } });
@@ -290,6 +346,11 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
           await reportClosed(state);
           return fail('not_open', `PR is ${state} — nothing to merge and no card is needed`, { pr: { state } });
         }
+        // 이미 큐에 있다(예: 1회 승인으로 넣은 뒤 확인하러 다시 불렀다) — 카드를 세울 일이 아니다. 읽기 전용, 아무것도 안 한다.
+        if (tok.ok && state === 'OPEN') {
+          const q = await queueInfo(repo, number, ghEnv(deps.home, tok.token));
+          if (q?.inQueue) return alreadyQueued(repo, number, headSha, q.entry);
+        }
       }
       if (denialId) {
         return { ok: false, value: { error: { code, message: `merge not allowed: ${code} — ask the owner with message.ask and mergeDenialId`, denialId } } };
@@ -299,7 +360,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     let granted: { grantedBy?: string; causeByHuman?: boolean; approval?: { id?: string; ghUser?: string; relaxChecks?: boolean } } = {};
     try { granted = JSON.parse(check.body) as typeof granted; } catch { /* 선택 정보 */ }
 
-    const report = async (result: 'merged' | 'failed', mergeSha: string | null, error: string | null): Promise<void> => {
+    const report = async (result: 'merged' | 'queued' | 'failed', mergeSha: string | null, error: string | null): Promise<void> => {
       const res = await deps.forward(agentId, {
         type: 'http.forward', id: randomUUID(), method: 'POST', path: '/agent/merge-results',
         body: JSON.stringify({ leaseId: lease.leaseId, token: lease.token, repo, number, headSha, result, mergeSha, error }), contentType: 'application/json',
@@ -331,14 +392,24 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     let pr: PrView = {};
     try { pr = JSON.parse(view.stdout) as PrView; } catch { await report('failed', null, 'gh pr view: unparseable'); return fail('pr_not_found', 'gh pr view returned no JSON'); }
     const refuse = async (code: string, message: string) => { await report('failed', null, `${code}: ${message}`); return fail(code, message, { pr: { state: pr.state, headRefOid: pr.headRefOid, mergeStateStatus: pr.mergeStateStatus } }); };
+    // 이미 큐에 있으면 다시 넣지 않는다(요구 5). 큐에 든 동안의 mergeStateStatus 로 판정하지 않도록 관문보다 먼저 본다 —
+    // 이 길은 아무것도 하지 않으므로 관문을 돌아가는 길이 아니다.
+    const queue = pr.state === 'OPEN' ? await queueInfo(repo, number, env) : null;
+    if (queue?.inQueue) return alreadyQueued(repo, number, headSha, queue.entry);
     const why = refusalOf(pr, headSha, false);
     if (why?.code === 'not_open') await reportClosed(pr.state);
     if (why) return refuse(why.code, why.message);
-    return mergeNow(tok, false);
+    return mergeNow(tok, false, queue);
 
-    /** ⑤ squash 로만, head 를 못박고. `--admin` 은 문법에 없다. */
-    async function mergeNow(t: { token: string; login: string }, viaApproval: boolean): Promise<{ ok: boolean; value: unknown }> {
+    /**
+     * ⑤ squash 로만, head 를 못박고. `--admin` 은 문법에 없다. 대상 브랜치가 merge queue 를 쓰면 대신 큐에 넣는다(요구 1).
+     * 큐 정보를 읽지 못하면 지금처럼 squash 를 시도한다 — 큐 브랜치면 GitHub 이 거절하고(`merge_failed`), 아무것도 머지되지 않는다.
+     */
+    async function mergeNow(t: { token: string; login: string }, viaApproval: boolean, known: QueueInfo | null = null): Promise<{ ok: boolean; value: unknown }> {
       const menv = ghEnv(deps.home, t.token);
+      const q = known ?? await queueInfo(repo, number, menv);
+      if (q?.inQueue) return alreadyQueued(repo, number, headSha, q.entry);
+      if (q?.enabled) return enqueueNow(t, viaApproval, q, menv);
       const merge = await gh(['pr', 'merge', String(number), '-R', repo, '--squash', '--match-head-commit', headSha], menv);
       if (merge.code !== 0) {
         const err = merge.stderr.trim().slice(0, 300);
@@ -352,7 +423,42 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       try { const oid = (JSON.parse(after.stdout) as PrView).mergeCommit?.oid; if (oid && SHA_RE.test(oid)) mergeSha = oid; } catch { /* 없어도 된다 */ }
       await report('merged', mergeSha, null);
       deps.log(`merge: ${repo}#${number} 머지됨 ${mergeSha ?? '(sha 모름)'} agent=${agentId}${viaApproval ? ' (1회 승인)' : ''}`);
-      return { ok: true, value: { merged: true, repo, number, headSha, mergeSha, grantedBy: granted.grantedBy ?? null, viaApproval, ghUser: t.login, note: 'reported to the thread as a system line' } };
+      return { ok: true, value: { merged: true, queued: false, repo, number, headSha, mergeSha, grantedBy: granted.grantedBy ?? null, viaApproval, ghUser: t.login, note: 'reported to the thread as a system line' } };
+    }
+
+    /** ⑤′ merge queue — 큐에 넣고 끝낸다. 큐가 머지할 때까지 기다리지 않는다(요구 4). */
+    async function enqueueNow(t: { token: string; login: string }, viaApproval: boolean, q: QueueInfo, menv: Record<string, string>): Promise<{ ok: boolean; value: unknown }> {
+      const r = await gh(['api', 'graphql', '-f', `query=${ENQUEUE_MUTATION}`, '-f', `id=${q.id}`, '-f', `head=${headSha}`], menv);
+      let entry: QueueEntry | null = null;
+      let gqlError: string | null = null;
+      if (r.code === 0) {
+        try {
+          const d = JSON.parse(r.stdout) as { data?: { enqueuePullRequest?: { mergeQueueEntry?: unknown } | null }; errors?: { message?: string }[] };
+          if (d.errors?.length) gqlError = d.errors.map((e) => e.message ?? '').join('; ');
+          else entry = entryOf(d.data?.enqueuePullRequest?.mergeQueueEntry);
+        } catch { gqlError = 'enqueuePullRequest returned no JSON'; }
+      }
+      const err = (r.code !== 0 ? r.stderr : gqlError ?? (entry ? '' : 'enqueuePullRequest returned no queue entry')).trim().slice(0, 300);
+      if (err) {
+        // 우리가 읽은 뒤 누가 먼저 넣었다 — 오류가 아니다. 이 판정의 보고는 하지 않는다(우리는 아무것도 안 했다).
+        if (isAlreadyQueuedError(err)) {
+          const now = await queueInfo(repo, number, menv);
+          return alreadyQueued(repo, number, headSha, now?.entry ?? null);
+        }
+        await report('failed', null, `enqueue: ${err}`);
+        const used = viaApproval ? ' — the one-time approval was used; ask the owner to approve again (a new card)' : '';
+        if (isRepoAccessError(err)) return fail('no_repo_access', noRepoAccess(t.login) + used);
+        return fail('enqueue_failed', `enqueuePullRequest failed: ${err}${used}`);
+      }
+      await report('queued', null, null);
+      deps.log(`merge: ${repo}#${number} 머지 큐에 넣음 위치=${entry?.position ?? '?'} agent=${agentId}${viaApproval ? ' (1회 승인)' : ''}`);
+      return {
+        ok: true, value: {
+          merged: false, queued: true, alreadyQueued: false, repo, number, headSha, queue: entry,
+          grantedBy: granted.grantedBy ?? null, viaApproval, ghUser: t.login,
+          note: 'added to the merge queue and reported to the thread as a system line — the queue merges it later. Call the same command again to check: already_queued while it waits, not_open with pr.state MERGED once merged.',
+        },
+      };
     }
   };
 

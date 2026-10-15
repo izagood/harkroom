@@ -61,7 +61,7 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
     if (!who) return reply;
     const parsed = z.object({
       ...base,
-      result: z.enum(['merged', 'failed']),
+      result: z.enum(['merged', 'queued', 'failed']),
       mergeSha: SHA.nullable().optional(),
       error: z.string().max(1000).nullable().optional(),
     }).safeParse(req.body ?? {});

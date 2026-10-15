@@ -39,6 +39,8 @@ export const SYSTEM_I18N_ARGS = Object.freeze({
   'system.merge.approvalUsedRelaxed': ['repo', 'number', 'head', 'ghUser'],
   'system.merge.merged': ['repo', 'number', 'sha'],
   'system.merge.mergedGranted': ['repo', 'number', 'sha', 'granterId'],
+  'system.merge.queued': ['repo', 'number', 'head'],
+  'system.merge.queuedGranted': ['repo', 'number', 'head', 'granterId'],
   'system.merge.failed': ['repo', 'number', 'head'],
   'system.apiCall.done': ['connector', 'method', 'path', 'status'],
   'system.apiCall.doneGranted': ['connector', 'method', 'path', 'status', 'granterId'],

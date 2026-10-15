@@ -1003,6 +1003,8 @@ class StringsKo implements Strings {
         'system.merge.approvalUsedRelaxed': '🔓 {repo}#{number} 1회 승인으로 머지 시도 · head {head} · gh {ghUser} · CI 판정은 GitHub 에 맡김',
         'system.merge.merged': '🔀 {repo}#{number} 머지됨 · {sha} (래퍼 보고)',
         'system.merge.mergedGranted': '🔀 {repo}#{number} 머지됨 · {sha} · 권한: {granterId} (래퍼 보고)',
+        'system.merge.queued': '📥 {repo}#{number} 머지 큐에 넣음 · head {head} (래퍼 보고)',
+        'system.merge.queuedGranted': '📥 {repo}#{number} 머지 큐에 넣음 · head {head} · 권한: {granterId} (래퍼 보고)',
         'system.merge.failed': '⛔ {repo}#{number} 머지 실패 · head {head} (래퍼 보고)',
         'system.apiCall.done': '🔌 {connector} {method} {path} · {status} (래퍼 보고)',
         'system.apiCall.doneGranted': '🔌 {connector} {method} {path} · {status} · 권한: {granterId} (래퍼 보고)',

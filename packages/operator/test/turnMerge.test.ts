@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
-import { createTurnMerge, ghEnv, parseMergeArgs, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
+import { createTurnMerge, ghEnv, parseMergeArgs, parseQueueInfo, ENQUEUE_MUTATION, QUEUE_QUERY, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
 import { pickMergeGhUser } from '../src/localMerge.js';
 
 // 에이전트 머지 래퍼(PR 2/3) — 오퍼레이터 쪽 판정·gh 호출. 설계·security F3 는 스레드 3deac356.
@@ -64,12 +64,17 @@ describe('turnMerge', () => {
   let approvals: Record<string, unknown>[];
   let checkApproval: Record<string, unknown> | null;
   let peekStatus: number;
+  // merge queue — GraphQL 읽기의 답(null 이면 gh 가 실패한다)·뮤테이션의 답.
+  let queue: { enabled: boolean; inQueue: boolean; entry: { position: number; state: string } | null } | null;
+  let enqueueResult: ExecResult;
   let tm: TurnMerge;
 
   beforeEach(() => {
     forwards = []; execs = []; checkStatus = 200; mergeCode = 0; mergeStderr = 'GraphQL: Base branch was modified'; viewStderr = null; denialBody = { error: { code: 'not_granted' } }; ghUser = 'izagood'; pickByScope = null;
     lease = { leaseId: 'lease-1', token: 'tok-1', agentId: 'a1' };
     approvals = []; checkApproval = null; peekStatus = 200;
+    queue = { enabled: false, inQueue: false, entry: null };
+    enqueueResult = { code: 0, stdout: JSON.stringify({ data: { enqueuePullRequest: { mergeQueueEntry: { position: 3, state: 'QUEUED' } } } }), stderr: '' };
     pr = { state: 'OPEN', isDraft: false, headRefOid: SHA, baseRefName: 'main', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }] };
     tm = createTurnMerge({
       ghPath: GH, home: '/Users/x', log: () => {},
@@ -101,6 +106,11 @@ describe('turnMerge', () => {
         if (args[0] === 'pr' && args[1] === 'view' && args.includes('mergeCommit')) return { code: 0, stdout: JSON.stringify({ mergeCommit: { oid: MERGE_SHA } }), stderr: '' };
         if (args[0] === 'pr' && args[1] === 'view') return viewStderr ? { code: 1, stdout: '', stderr: viewStderr } : { code: 0, stdout: JSON.stringify(pr), stderr: '' };
         if (args[0] === 'pr' && args[1] === 'merge') return { code: mergeCode, stdout: '', stderr: mergeCode ? mergeStderr : '' };
+        if (args[0] === 'api' && args[1] === 'graphql' && args[3] === `query=${QUEUE_QUERY}`) {
+          if (!queue) return { code: 1, stdout: '', stderr: 'HTTP 502' };
+          return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { id: 'PR_kw1', isMergeQueueEnabled: queue.enabled, isInMergeQueue: queue.inQueue, mergeQueueEntry: queue.entry } } } }), stderr: '' };
+        }
+        if (args[0] === 'api' && args[1] === 'graphql' && args[3] === `query=${ENQUEUE_MUTATION}`) return enqueueResult;
         return { code: 1, stdout: '', stderr: 'unexpected' };
       },
     });
@@ -109,6 +119,7 @@ describe('turnMerge', () => {
   const results = () => forwards.filter((f) => f.type === 'http.forward' && f.path === '/agent/merge-results').map((f) => JSON.parse((f as { body?: string }).body ?? '{}'));
   const closedReports = () => forwards.filter((f) => f.type === 'http.forward' && f.path === '/agent/merge-closed').map((f) => JSON.parse((f as { body?: string }).body ?? '{}'));
   const ghCalls = () => execs.filter((e) => e.args[0] === 'pr').map((e) => e.args.slice(0, 2).join(' '));
+  const enqueues = () => execs.filter((e) => e.args[0] === 'api' && e.args[3] === `query=${ENQUEUE_MUTATION}`);
 
   it('repo.merge 가 아닌 요청은 건드리지 않는다', async () => {
     expect(await tm.maybeHandle('r1', 'a1', { type: 'mcp.request', id: 'x', payload: { method: 'tools/call', params: { name: 'secret.mount' } } })).toBeNull();
@@ -423,5 +434,118 @@ describe('turnMerge', () => {
     const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
     expect(r.body.error.code).toBe('merge_failed');
     expect(results()).toEqual([expect.objectContaining({ result: 'failed', error: expect.stringContaining('Base branch was modified') })]);
+  });
+
+  describe('merge queue (10-16)', () => {
+    it('큐를 쓰는 브랜치면 squash 대신 큐에 넣는다 — expectedHeadOid=--head, jump 없음, 결과·보고는 queued', async () => {
+      queue = { enabled: true, inQueue: false, entry: null };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r).toMatchObject({ isError: false, body: { merged: false, queued: true, alreadyQueued: false, queue: { position: 3, state: 'QUEUED' }, ghUser: 'izagood' } });
+      expect(ghCalls()).toEqual(['pr view']);
+      const [e] = enqueues();
+      expect(e!.args).toEqual(['api', 'graphql', '-f', `query=${ENQUEUE_MUTATION}`, '-f', 'id=PR_kw1', '-f', `head=${SHA}`]);
+      expect(ENQUEUE_MUTATION).toContain('expectedHeadOid:$head');
+      expect(ENQUEUE_MUTATION).not.toMatch(/jump/);
+      expect(e!.env.GH_TOKEN).toBe('tok-from-gh');
+      expect(results()).toEqual([expect.objectContaining({ result: 'queued', mergeSha: null, headSha: SHA })]);
+    });
+
+    it('큐를 안 쓰면 지금처럼 squash — 결과에 queued:false', async () => {
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body).toMatchObject({ merged: true, queued: false });
+      expect(ghCalls()).toContain('pr merge');
+      expect(enqueues()).toHaveLength(0);
+    });
+
+    it('큐 정보를 못 읽으면 squash 를 시도한다(큐 브랜치면 GitHub 이 거절 → merge_failed)', async () => {
+      queue = null;
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.merged).toBe(true);
+      expect(enqueues()).toHaveLength(0);
+    });
+
+    it('관문은 큐에 넣기 전에 똑같이 건다 — CI 빨강·CLEAN 아님·head 바뀜·서버 거절이면 큐에 넣지 않는다', async () => {
+      queue = { enabled: true, inQueue: false, entry: null };
+      const cases: [() => void, string][] = [
+        [() => { pr = { ...pr, statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'FAILURE', name: 'check' }] }; }, 'ci_not_green'],
+        [() => { pr = { ...pr, mergeStateStatus: 'BLOCKED' }; }, 'not_mergeable'],
+        [() => { pr = { ...pr, headRefOid: 'c'.repeat(40) }; }, 'head_moved'],
+        [() => { checkStatus = 403; denialBody = { error: { code: 'cause_not_human' } }; }, 'cause_not_human'],
+        [() => { checkStatus = null; }, 'unavailable'],
+      ];
+      for (const [arrange, code] of cases) {
+        const saved = { ...pr }; checkStatus = 200; arrange();
+        expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code, code).toBe(code);
+        expect(enqueues(), code).toHaveLength(0);
+        pr = saved;
+      }
+    });
+
+    it('이미 큐에 있으면 오류가 아니라 already_queued — 다시 넣지 않고 보고도 하지 않는다', async () => {
+      queue = { enabled: true, inQueue: true, entry: { position: 2, state: 'AWAITING_CHECKS' } };
+      // 큐에 든 동안의 mergeStateStatus 로 막히지 않는다.
+      pr = { ...pr, mergeStateStatus: 'BLOCKED' };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r).toMatchObject({ isError: false, body: { merged: false, queued: true, alreadyQueued: true, queue: { position: 2, state: 'AWAITING_CHECKS' } } });
+      expect(enqueues()).toHaveLength(0);
+      expect(ghCalls()).not.toContain('pr merge');
+      expect(results()).toHaveLength(0);
+    });
+
+    it('권한이 없어도 이미 큐에 있으면 카드 없이 already_queued(확인하러 다시 부른 경우) — 큐에 없으면 지금처럼 denialId', async () => {
+      checkStatus = 403; denialBody = { error: { code: 'not_granted', denialId: '11111111-2222-4333-8444-555555555555' } };
+      queue = { enabled: true, inQueue: true, entry: { position: 1, state: 'MERGEABLE' } };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body).toMatchObject({ alreadyQueued: true });
+      expect(r.body.error).toBeUndefined();
+      expect(enqueues()).toHaveLength(0);
+      queue = { enabled: true, inQueue: false, entry: null };
+      const r2 = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r2.body.error).toMatchObject({ code: 'not_granted', denialId: '11111111-2222-4333-8444-555555555555' });
+      expect(enqueues()).toHaveLength(0);
+    });
+
+    it('큐가 머지한 뒤 다시 부르면 not_open(MERGED) — 확인 길', async () => {
+      queue = { enabled: true, inQueue: false, entry: null };
+      pr = { ...pr, state: 'MERGED' };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error.code).toBe('not_open');
+      expect(enqueues()).toHaveLength(0);
+    });
+
+    it('1회 승인: 이미 큐에 있으면 승인을 쓰지 않는다(merge-checks 를 부르지 않는다)', async () => {
+      approvals = [{ id: 'ap-1', ghUser: 'corp-account', relaxChecks: false }];
+      queue = { enabled: true, inQueue: true, entry: { position: 4, state: 'QUEUED' } };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body).toMatchObject({ alreadyQueued: true });
+      expect(forwards.some((f) => f.type === 'http.forward' && f.path === '/agent/merge-checks')).toBe(false);
+    });
+
+    it('1회 승인으로도 큐에 넣는다 — 승인 계정 토큰으로', async () => {
+      approvals = [{ id: 'ap-1', ghUser: 'corp-account', relaxChecks: false }];
+      checkApproval = { id: 'ap-1', ghUser: 'corp-account', relaxChecks: false };
+      queue = { enabled: true, inQueue: false, entry: null };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body).toMatchObject({ queued: true, alreadyQueued: false, viaApproval: true, ghUser: 'corp-account' });
+      expect(enqueues()[0]!.env.GH_TOKEN).toBe('tok-approved');
+      expect(results()).toEqual([expect.objectContaining({ result: 'queued' })]);
+    });
+
+    it('넣는 사이 누가 먼저 넣었으면 already_queued, 그 밖의 실패는 enqueue_failed + failed 보고', async () => {
+      queue = { enabled: true, inQueue: false, entry: null };
+      enqueueResult = { code: 1, stdout: '', stderr: 'GraphQL: Pull request is already in the merge queue (enqueuePullRequest)' };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body).toMatchObject({ alreadyQueued: true });
+      expect(results()).toHaveLength(0);
+      enqueueResult = { code: 1, stdout: '', stderr: 'GraphQL: Pull request is not mergeable (enqueuePullRequest)' };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error.code).toBe('enqueue_failed');
+      expect(results()).toEqual([expect.objectContaining({ result: 'failed', error: expect.stringContaining('not mergeable') })]);
+    });
+  });
+
+  it('parseQueueInfo — 모양이 틀리면 null, 큐 항목이 있으면 inQueue', () => {
+    expect(parseQueueInfo('nope')).toBeNull();
+    expect(parseQueueInfo(JSON.stringify({ data: { repository: { pullRequest: null } } }))).toBeNull();
+    expect(parseQueueInfo(JSON.stringify({ data: { repository: { pullRequest: { id: 'X', isMergeQueueEnabled: true, isInMergeQueue: false, mergeQueueEntry: { position: 1, state: 'QUEUED' } } } } })))
+      .toEqual({ id: 'X', enabled: true, inQueue: true, entry: { position: 1, state: 'QUEUED' } });
   });
 });

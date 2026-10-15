@@ -613,6 +613,17 @@ describe('buildSystemPrompt', () => {
     expect(granted).not.toContain('**1회 승인**한 PR');
   });
 
+  // merge queue(10-16): 큐에 넣은 것을 「머지됨」이라 보고하지 않고, 같은 명령으로 확인하는 길을 안다(새 어휘는 프롬프트에 — #809 교훈).
+  it('머지 절: merge queue — queued·alreadyQueued·같은 명령으로 확인하는 길을 말한다', () => {
+    const common = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } as MemoryContext };
+    const p = buildSystemPrompt({ ...common, merge: { operatorBin: '/x', repos: ['izagood/harkroom'] } });
+    expect(p).toContain('**큐에 넣는다**(`queued: true`·`merged: false`·`queue.position`)');
+    expect(p).toContain('「머지됨」이라고 쓰지 않는다');
+    expect(p).toContain('**같은 명령을 다시 부른다**');
+    expect(p).toContain('`alreadyQueued: true`(오류 아님)');
+    expect(p).toContain('`enqueue_failed`');
+  });
+
   // 권한 요청(스레드 f61af808): 막히면 우회하지 말고 permission.request, 이 턴에서 재시도 금지, 거두기는 permission.revoke.
   it('권한 요청 절: permissions 가 있을 때만 — 청하는 법·재시도 금지·거두기·지금 규칙', () => {
     const common = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } as MemoryContext };

@@ -1092,6 +1092,10 @@ function mergeSection(merge: { operatorBin: string; repos: readonly string[]; ap
     '`gh pr merge`·`gh api …/merge`·`git push … main` 은 쓰지 않는다(막혀 있다). squash 로만 머지되고 head 가',
     '바뀌었으면 거절된다. 결과는 서버가 이 스레드에 시스템 줄로 남긴다. 머지 전에 CI 가 초록이고 검토가 끝났는지',
     '네가 먼저 확인한다.',
+    // 10-16 merge queue(rcms): 큐를 쓰는 브랜치는 래퍼가 머지 대신 큐에 넣는다 — 「머지됨」이라고 보고하지 않게 한다.
+    '대상 브랜치가 merge queue 를 쓰면 래퍼는 머지하지 않고 **큐에 넣는다**(`queued: true`·`merged: false`·`queue.position`).',
+    '그때는 「큐에 넣음」이라고 보고하고 「머지됨」이라고 쓰지 않는다. 머지됐는지 확인하려면 **같은 명령을 다시 부른다** —',
+    '아직 큐에 있으면 `alreadyQueued: true`(오류 아님), 큐가 머지했으면 `not_open`(pr.state MERGED). 기다릴 일이면 `turn.wake` 로 예약한다.',
     '거절되면 `error.code` 로 갈린다:',
     '- `error.denialId` 가 있으면(`not_granted`·`cause_not_human`): **곧바로** harkroom MCP 의 `message.ask` 에',
     '  `mergeDenialId: <그 값>` 을 실어 이 스레드에 카드를 세운다(`to`·`mirrorOf` 는 싣지 않는다). 서버가 그것을 권한 카드로',
@@ -1105,7 +1109,7 @@ function mergeSection(merge: { operatorBin: string; repos: readonly string[]; ap
     '  `approve again` 이 있으면 승인은 이미 쓰였다 — 다시 불러 새 `denialId` 를 받아 새 카드를 세운다.',
     '- `no_repo_access`: 이 오퍼레이터의 gh 계정은 그 저장소에 닿지 못한다 — 권한을 더 줘도 풀리지 않는다. 「이 저장소는',
     '  사람이 머지」라고 쓰고 PR 번호·head sha 를 적어 사람에게 넘긴다. 카드는 세우지 않는다.',
-    '- 그 밖의 코드(`head_moved`·`ci_not_green`·`not_mergeable` 등)는 원인을 고치거나 그 코드를 적어 사람에게 넘긴다.',
+    '- 그 밖의 코드(`head_moved`·`ci_not_green`·`not_mergeable`·`enqueue_failed` 등)는 원인을 고치거나 그 코드를 적어 사람에게 넘긴다.',
     '',
   ];
 }

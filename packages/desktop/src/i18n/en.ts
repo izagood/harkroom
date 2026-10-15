@@ -4490,6 +4490,8 @@ export const en = {
   'system.merge.approvalUsedRelaxed': '🔓 {repo}#{number} merge attempted with a one-time approval · head {head} · gh {ghUser} · CI check left to GitHub',
   'system.merge.merged': '🔀 {repo}#{number} merged · {sha} (wrapper report)',
   'system.merge.mergedGranted': '🔀 {repo}#{number} merged · {sha} · permission: {granterId} (wrapper report)',
+  'system.merge.queued': '📥 {repo}#{number} added to the merge queue · head {head} (wrapper report)',
+  'system.merge.queuedGranted': '📥 {repo}#{number} added to the merge queue · head {head} · permission: {granterId} (wrapper report)',
   'system.merge.failed': '⛔ {repo}#{number} merge failed · head {head} (wrapper report)',
   'system.apiCall.done': '🔌 {connector} {method} {path} · {status} (wrapper report)',
   'system.apiCall.doneGranted': '🔌 {connector} {method} {path} · {status} · permission: {granterId} (wrapper report)',
