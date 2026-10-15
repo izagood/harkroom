@@ -598,6 +598,14 @@ const scheduler = createMentionScheduler({
     // 풀은 그 계정이 든 풀이다 — 풀 순서(2026-10-15)면 축이 풀 여러 개에 걸친다. 계정이 풀을
     // 모르면(암묵 풀) 기동 때 정한 lane 의 풀이다. 화면이 "어느 풀의 어느 계정"을 말하는 짝이다.
     claudePool: account?.pool ?? lane.pool ?? null,
+    // 그 풀이 이 러너의 풀 순서에서 몇 번째인가(f3) — 원격 오퍼레이터의 턴도 화면이 이 기기의
+    // 순서가 아니라 **러너가 쓴 순서**로 칩을 단다. 순서가 풀 하나뿐이거나 풀을 모르면 싣지 않는다.
+    ...(() => {
+      const chain = liveLane.snapshot().chain ?? [];
+      const pool = account?.pool ?? lane.pool ?? null;
+      const idx = pool === null ? -1 : chain.findIndex((c) => c.pool === pool);
+      return idx >= 0 ? { claudePoolRank: idx + 1 } : {};
+    })(),
     // 사람을 부를 때 쓰는 이름과 원장(2026-09-08). **원장은 러너 수명 동안 하나다** —
     // 턴마다 새로 만들면 매번 "처음 부르는 계정"이 되어, 7개 스레드가 동시에 걸렸을 때
     // 창이 7개 뜬다. 관문은 계정 단위라 하나만 지나면 나머지가 함께 풀린다.

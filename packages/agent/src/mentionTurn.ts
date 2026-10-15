@@ -161,6 +161,7 @@ export interface TurnRelay {
      */
     claudeAccount?: string | null;
     claudePool?: string | null;
+    claudePoolRank?: number;
     /**
      * 지금 이 세션을 보고 있는 사람 수. **턴의 끝이 이 값에 걸려 있다**(2026-09-08):
      * TUI 는 답하고도 죽지 않으므로 러너가 끝을 정해야 하고, 그 조건이 "발화했고 아무도
@@ -261,6 +262,11 @@ export interface MentionTurnDeps {
    * 호출부의 턴은 그대로 돌고 화면만 풀을 말하지 못한다.
    */
   claudePool?: string | null;
+  /**
+   * 그 풀의 풀 순서 번호(1부터, 풀 n개 후속 f3). `claudePool` 과 같은 관찰용이다 — 화면의
+   * 「↓ N번 풀」 칩이 러너 기기의 순서를 쓰게 한다. 생략은 모른다(화면이 자기 순서로 잰다).
+   */
+  claudePoolRank?: number;
   /** `harkroom-operator` 실행 파일 — 하네스의 harkroom MCP(`mcp-bridge`) 명령(스펙 2026-09-20 §5). */
   operatorBin: string;
   /** 「정확한 명령」 hook(H③b). 오퍼레이터 설정이 켰을 때만 true. */
@@ -1481,6 +1487,7 @@ export async function runMentionTurn(
     // 이고, 모르는 것으로 남기는 편이 틀린 것을 단언하는 것보다 낫다.
     claudeAccount: hasAccountPool(def.harness) ? deps.claudeAccount : undefined,
     claudePool: hasAccountPool(def.harness) ? (deps.claudePool ?? null) : undefined,
+    ...(hasAccountPool(def.harness) && deps.claudePoolRank !== undefined ? { claudePoolRank: deps.claudePoolRank } : {}),
     onViewerCount,
     /*
       **사람이 [중단] 을 눌렀다**(3단계). 죽이는 것은 릴레이가 아니라 여기다 —
