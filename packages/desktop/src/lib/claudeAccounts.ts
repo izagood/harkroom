@@ -15,6 +15,7 @@
  * 표면 부재 판정(`hasTauri`)도 두 가지가 된다.
  */
 import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
+import { runnerExitReason, type RunnerExitReason } from '@harkroom/shared';
 // **사용량 타입은 베끼지 않는다.** 아래 `ClaudeAccountsSnapshot` 은 데몬의 선언을 손으로
 // 베낀 것인데(이 파일이 생긴 순서 때문이다) 그 결과 필드가 늘면 두 곳을 고쳐야 한다.
 // 새 말은 프로토콜의 한 벌을 그대로 쓴다.
@@ -39,6 +40,12 @@ export interface ClaudeAccountView {
    * (2026-10-01). 있으면 화면이 "승인 필요"와 [터미널 열기]를 보인다. 옛 데몬은 싣지 않는다.
    */
   attention?: { atMs: number };
+  /**
+   * 러너가 이 계정의 턴을 **하네스 로그인 실패**로 넘겼다(2026-10-15, operator #1386). `status.loggedIn` 은
+   * Keychain 항목의 존재만 봐서 만료 계정도 참이다 — 이것이 그 빈틈을 메운다. 그 계정으로 턴이 성공하거나
+   * 다시 로그인하면 사라진다. 옛 데몬은 싣지 않는다.
+   */
+  authFailure?: { atMs: number };
 }
 
 export interface ClaudePoolView {
@@ -281,4 +288,58 @@ export function agentPoolsOf(snap: Pick<ClaudeAccountsSnapshot, 'agents'>, agent
   const v: unknown = snap.agents[agentId];
   if (Array.isArray(v)) return v.filter((p): p is string => typeof p === 'string');
   return typeof v === 'string' && v ? [v] : [];
+}
+
+
+/** Rust 가 쓰는 러너 종료 이벤트 이름. `main.rs::RUNNER_EXIT_EVENT` 와 **같은 값**이어야 한다. */
+export const RUNNER_EXIT_EVENT = 'harkroom://runner-exit';
+
+/** 러너 종료 — 화면이 쓰는 것만. **로그 꼬리 원문은 싣지 않는다**(사유 이름만, security ③ 조건). */
+export interface RunnerExitNotice {
+  agentId: string;
+  code: number | null;
+  reason: RunnerExitReason | null;
+}
+
+/**
+ * 이 맥 오퍼레이터가 띄운 러너의 종료를 듣는다(2026-10-15, 로그인 끊김 경고 S2). 반환값은 해제 함수다.
+ *
+ * 이벤트는 오퍼레이터 `broadcastRunnerExit` → Rust `runner_exit_emitter` 로 이미 올라오고 있었다 — 옛
+ * `listenRunnerExit` 이 지워진 뒤 아무도 안 들었다. 사유는 shared `runnerExitReason` 한 곳에서 가리고
+ * **꼬리 줄은 여기서 버린다** — 화면 어디에도 원문이 닿지 않게. 이 맥 오퍼레이터의 러너뿐이라 다른 기기·
+ * 다른 오퍼레이터의 에이전트는 섞이지 않는다. 표면이 없으면 아무것도 안 하는 해제 함수(`listenClaudeLogin` 과 같다).
+ */
+export async function listenRunnerExit(cb: (e: RunnerExitNotice) => void): Promise<() => void> {
+  const api = internals();
+  if (typeof api?.invoke !== 'function' || typeof api.transformCallback !== 'function') {
+    return () => undefined;
+  }
+  const invoke = api.invoke;
+  const handlerId = api.transformCallback((payload) => {
+    const body = (payload as { payload?: unknown })?.payload as
+      { agentId?: unknown; code?: unknown; tailLines?: unknown } | undefined;
+    if (!body || typeof body.agentId !== 'string') return;
+    const tail = Array.isArray(body.tailLines) ? body.tailLines.filter((l): l is string => typeof l === 'string') : [];
+    cb({ agentId: body.agentId, code: typeof body.code === 'number' ? body.code : null, reason: runnerExitReason(tail) });
+  });
+  const eventId = await invoke('plugin:event|listen', {
+    event: RUNNER_EXIT_EVENT,
+    target: { kind: 'Any' },
+    handler: handlerId,
+  });
+  return () => {
+    void invoke('plugin:event|unlisten', { event: RUNNER_EXIT_EVENT, eventId });
+  };
+}
+
+/**
+ * 전역 경고 카드의 [다시 로그인] 이 설정 › Claude 계정에 넘기는 부탁(2026-10-15). 설정 화면이 목록을 읽은 뒤
+ * 한 번 꺼내 그 계정의 다시 로그인 확인창을 연다. 화면 사이 한 번 건네는 값이라 스토어에 두지 않는다.
+ */
+let reauthRequest: { pool: string; account: string } | null = null;
+export function requestClaudeReauth(pool: string, account: string): void { reauthRequest = { pool, account }; }
+export function takeClaudeReauthRequest(): { pool: string; account: string } | null {
+  const r = reauthRequest;
+  reauthRequest = null;
+  return r;
 }

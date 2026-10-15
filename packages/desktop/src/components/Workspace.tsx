@@ -12,7 +12,7 @@ import { SidebarToggleIcon } from './SidebarToggleIcon';
 import { ChannelPane } from './ChannelPane';
 import { AgentTower } from './AgentTower';
 import { Notice } from './Notice';
-import { GateCard } from './GateCard';
+import { AttentionStack } from './AuthWarningCards';
 import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
 import { ServerCompatBanner } from './ServerCompatBanner';
 import { ConnectionBanner } from './ConnectionBanner';
@@ -390,7 +390,7 @@ export function Workspace({ onLogout, onOpenSettings }: {
           {/* 관문 카드·실패 토스트는 본문 위에 **겹쳐** 그린다(2026-10-09 A안). 전에는 헤더 아래
               흐름 안의 띠라 뜰 때마다 화면 전체가 한 줄 내려갔다. 채널 안이 아니라 여기인 이유는
               그대로다 — 채널을 못 연 실패를 보여 줄 자리가 채널 안에는 없다. */}
-          <GateCard />
+          <AttentionStack onOpenSettings={onOpenSettings} />
           <Notice />
           {/* 멘션 이동(#279)의 배선은 **여기**다. 초판이 이 두 줄을 빼먹어 앱에서 모든
               멘션이 눌러도 아무 일이 없는 버튼이었다 — 단위 테스트는 props 를 손으로
