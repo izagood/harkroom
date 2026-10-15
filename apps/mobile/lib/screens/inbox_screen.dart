@@ -660,6 +660,8 @@ Future<void> runBoardAction(BuildContext context, List<BoardGroup> groups, Board
           unawaited(app.setBoardState(groups, null).catchError((Object _) {}));
         },
       ),
+      // 행동이 있어도 시간이 되면 내린다 — Flutter 기본은 행동 단 토스트를 붙잡아 둔다([showFailureToast]).
+      persist: false,
     ));
 }
 

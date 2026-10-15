@@ -543,6 +543,19 @@ void main() {
       expect(find.byKey(const Key('saved-row-m1')), findsOneWidget);
     });
 
+    testWidgets('「완료로 옮겼다 · 되돌리기」는 누르지 않아도 4초 뒤 저절로 내린다', (tester) async {
+      final (server, _) = await pump(tester);
+      await tester.tap(find.byKey(const Key('saved-toggle-m1')));
+      await _settle(tester);
+      expect(find.byKey(const Key('saved-moved-done')), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.byKey(const Key('saved-moved-done')), findsOneWidget, reason: '시간 전엔 그대로');
+      await tester.pump(const Duration(seconds: 2));
+      await _settle(tester);
+      expect(find.byKey(const Key('saved-moved-done')), findsNothing);
+      expect(server.bodies.last, {'state': 'done'}, reason: '저절로 내려도 되돌리지 않는다');
+    });
+
     testWidgets('✓ 를 누르면 답이 오기 전에 그 줄만 빠진다 — 로딩 칸이 서지 않는다', (tester) async {
       final (server, _) = await pump(tester);
       server.holdPatch = Completer<void>();

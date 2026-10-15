@@ -312,6 +312,9 @@ class SendButton extends StatelessWidget {
 
 /// 실패를 잠깐 알리는 토스트(ask 답·리액션처럼 줄 안에 남길 자리가 없는 것). **다시 시도**를
 /// 단다 — "실패했다"만 말하면 사람은 같은 버튼을 다시 찾아 눌러야 한다.
+///
+/// 행동 단 토스트는 **`persist: false` 를 꼭 준다.** Flutter 는 `action` 이 있으면 `persist` 를
+/// 기본 true 로 잡아 `duration` 이 지나도 안 내린다 — 쓸어내려야만 사라지는 검은 띠가 남았다.
 void showFailureToast(BuildContext context, String text, {VoidCallback? retry}) {
   final t = context.t;
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -319,6 +322,7 @@ void showFailureToast(BuildContext context, String text, {VoidCallback? retry}) 
     behavior: SnackBarBehavior.floating,
     margin: toastMargin(context),
     action: retry == null ? null : SnackBarAction(label: t.commonRetry, onPressed: retry),
+    persist: false,
   ));
 }
 
