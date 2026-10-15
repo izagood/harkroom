@@ -16,6 +16,7 @@ import {
   type DaemonEndpointPaths,
   type DaemonPidRecord,
 } from '@harkroom/shared/daemonEndpoint';
+import { runnerExitReason } from '@harkroom/shared';
 import type { AdoptRunnerResult, DaemonIdentity } from '@harkroom/shared/daemonProtocol';
 
 import type { DaemonArgs } from './args.js';
@@ -416,7 +417,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
         // 서버가 그 러너를 지운다 — 안 알리면 다음 hello 까지 죽은 러너가 서버 표에 남는다.
         c.notifyRunnerExited(notice.incarnationId, notice.code ?? null);
         // 배정이 살아 있으면 오퍼레이터가 스스로 다시 띄운다(assignments.ts::onRunnerExit).
-        c.onRunnerExit(notice.agentId, notice.code ?? null);
+        // 78 의 사유(로그인 풀림·PAT 거절·하네스 부재)는 로그 꼬리로만 가린다 — 판정은 shared 한 곳.
+        c.onRunnerExit(notice.agentId, notice.code ?? null, runnerExitReason(notice.tailLines));
       }
     },
     ledgerSink,

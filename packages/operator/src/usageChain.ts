@@ -23,6 +23,9 @@ export const USAGE_CACHE_MS = 2 * 60 * 1000;
 
 type Measured = Omit<ProviderAccountUsage, 'account' | 'pool'>;
 
+/** 공급자가 로그인을 받지 않았다는 API 쪽 이유(`providerUsage.ts::errorLabel`·토큰 읽기). */
+const AUTH_ERRORS: ReadonlySet<string> = new Set(['unauthorized', 'no-credentials']);
+
 export async function cliThenApi(
   cli: () => Promise<UsageResult>,
   api: () => Promise<UsageResult>,
@@ -30,8 +33,12 @@ export async function cliThenApi(
   const a = await cli();
   if (!a.error) return { ...a, source: 'cli' };
   const b = await api();
+  if (!b.error) return { ...b, source: 'api' };
   // 둘 다 실패하면 **CLI 쪽 이유**를 싣는다 — 사람이 고칠 수 있는 것(로그인·CLI 설치)이 그쪽이다.
-  return b.error ? { ...a, source: 'cli' } : { ...b, source: 'api' };
+  // **단, API 가 로그인 문제를 밝혔으면 그쪽이다**(2026-10-15). 로그인이 풀린 CLI 는 사용량 대신
+  // "Not logged in" 을 찍어 `cli-unparsed` 가 되고, 그대로 실으면 "읽지 못했다"로 보여 사람은 로그인이
+  // 풀린 줄 모른다. `token-expired` 는 넣지 않는다 — 다음 턴이 갱신하는 정상 상태다.
+  return AUTH_ERRORS.has(b.error) ? { ...b, source: 'api' } : { ...a, source: 'cli' };
 }
 
 /**

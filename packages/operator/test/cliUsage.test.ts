@@ -130,8 +130,19 @@ describe('usageChain', () => {
     expect(await cliThenApi(async () => ok, async () => { throw new Error('불리면 안 된다'); }))
       .toMatchObject({ source: 'cli' });
     expect(await cliThenApi(async () => bad, async () => ok)).toMatchObject({ source: 'api' });
-    expect(await cliThenApi(async () => bad, async () => ({ ...bad, error: 'unauthorized' })))
+    expect(await cliThenApi(async () => bad, async () => ({ ...bad, error: 'timeout' })))
       .toMatchObject({ source: 'cli', error: 'cli-unavailable' });
+    // 토큰 만료는 다음 턴이 갱신하는 정상 상태라 로그인 문제로 올리지 않는다.
+    expect(await cliThenApi(async () => bad, async () => ({ ...bad, error: 'token-expired' })))
+      .toMatchObject({ source: 'cli', error: 'cli-unavailable' });
+  });
+
+  it('둘 다 실패해도 API 가 로그인 문제를 밝혔으면 그쪽 이유다 — 로그인 풀린 CLI 는 cli-unparsed 로 덮는다(2026-10-15)', async () => {
+    const unparsed = { ...bad, error: 'cli-unparsed' };
+    expect(await cliThenApi(async () => unparsed, async () => ({ ...bad, error: 'unauthorized' })))
+      .toMatchObject({ source: 'api', error: 'unauthorized' });
+    expect(await cliThenApi(async () => unparsed, async () => ({ ...bad, error: 'no-credentials' })))
+      .toMatchObject({ source: 'api', error: 'no-credentials' });
   });
 
   it('캐시: TTL 안에서는 한 번만 잰다', async () => {

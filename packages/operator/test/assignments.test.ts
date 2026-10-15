@@ -227,6 +227,19 @@ describe('러너가 죽으면 — 배정이 살아 있는 동안은 다시 띄�
     await fire();
     expect(h.timers.at(-1)!.ms).toBe(100);
   });
+  it('하네스 로그인이 풀려 물러났으면(78) 최소 간격을 둔다 — 다른 사유는 그대로다(2026-10-15)', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler({ ...h.deps, respawnBackoffMs: 100, loginRespawnFloorMs: 300_000 });
+    await r.onAssign('https://example.com', def(), undefined);
+    h.exit('a-1');
+    r.onRunnerExit('a-1', 78, 'harness-login-required');
+    expect(h.timers.at(-1)!.ms).toBe(300_000);
+    h.timers.at(-1)!.fn();
+    await new Promise((res) => setTimeout(res, 0));
+    h.exit('a-1');
+    r.onRunnerExit('a-1', 78, 'credential-rejected');
+    expect(h.timers.at(-1)!.ms).toBeLessThan(300_000);
+  });
 });
 
 // 교차 불변식(스펙 2026-09-20 §7). 서버가 배정을 거절해야 맞지만 오퍼레이터는 서버만 믿지
