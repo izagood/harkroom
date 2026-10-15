@@ -22,7 +22,7 @@ import { beginSend, endSend, markOwnSend, type OwnSendMarks } from '../lib/ownSe
 import { RunnerLauncher, tauriDaemonObserver, tauriAppVersionReader, type AppVersionReader, type DaemonObserver } from '../lib/runnerLauncher';
 // 만들기 흐름이 러너를 띄우기 **전에** 풀 배정을 쓴다 — 근거는 `createAgent` 안에 있다.
 import { assignAgentPools } from '../lib/claudeAccounts';
-import { setLocalAgent } from '../lib/operatorLocal';
+import { listLocalAgents, setLocalAgent } from '../lib/operatorLocal';
 import type { AppState, AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { usePrefsStore } from './prefsStore';
@@ -2383,6 +2383,26 @@ export class Controller {
       try {
         await this.api.assignAgent(agentId, target.operatorId);
         return;
+      } catch (err) {
+        if (attempt >= 4 || !(err instanceof ApiError) || err.code !== 'not_capable') throw err;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    }
+  }
+
+  /**
+   * 이 에이전트를 **이 맥에서 돌린다** — 이 맥 오퍼레이터 설정에 넣고 서버 배정을 이 맥으로 쓴다(풀 ↔ 이 맥 배정,
+   * 계정 풀 칸의 [이 맥에서 돌리기]). 설정에 이미 있으면 건드리지 않는다 — 다시 쓰면 작업 폴더를 지운다.
+   * 오퍼레이터가 아직 능력을 알리지 못했으면(`not_capable`) 만들기 흐름과 같게 잠깐 다시 해 본다.
+   */
+  async assignAgentHere(
+    agentId: string, target: { baseUrl: string; operatorId: string },
+  ): Promise<import('@harkroom/shared').AgentAssignmentView> {
+    const cur = (await listLocalAgents()).communities.find((c) => c.baseUrl === target.baseUrl)?.agents[agentId];
+    if (cur === undefined) await setLocalAgent(target.baseUrl, agentId, {});
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.api.assignAgent(agentId, target.operatorId);
       } catch (err) {
         if (attempt >= 4 || !(err instanceof ApiError) || err.code !== 'not_capable') throw err;
         await new Promise((resolve) => setTimeout(resolve, 300));

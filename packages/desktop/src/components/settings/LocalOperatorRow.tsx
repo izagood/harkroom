@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { getController } from '../../state/controller';
-import { hasOperatorLocalSurface, listLocalAgents, removeLocalAgent, setLocalAgent } from '../../lib/operatorLocal';
+import { hasOperatorLocalSurface, listLocalAgents, onLocalAgentsChanged, removeLocalAgent, setLocalAgent } from '../../lib/operatorLocal';
 import { useT } from '../../i18n/useT';
 import { usePendingEdit } from './pendingEdits';
 import { errorText } from '../../lib/errorText';
@@ -33,6 +33,8 @@ export function LocalOperatorRow({ agentId, disabled }: { agentId: string; disab
     }).catch(() => setState('error'));
   }, [available, baseUrl, agentId]);
   useEffect(() => { load(); }, [load]);
+  // 계정 풀 칸의 [이 맥 오퍼레이터에서 켜기] 처럼 다른 자리에서 바꿔도 체크가 따라온다.
+  useEffect(() => onLocalAgentsChanged(load), [load]);
 
   const run = async (fn: () => Promise<void>, done: string): Promise<boolean> => {
     setBusy(true); setNotice(null);

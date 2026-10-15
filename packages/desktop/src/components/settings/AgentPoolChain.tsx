@@ -69,7 +69,7 @@ function AccountUsage({ a }: { a: PoolChainAccount }) {
 }
 
 export function AgentPoolChain({
-  chain, pools, defaultPool, state, ready, onChange,
+  chain, pools, defaultPool, state, ready, onChange, locked = false,
 }: {
   chain: readonly string[];
   /** 이 기기에 있는 풀. */
@@ -78,6 +78,12 @@ export function AgentPoolChain({
   state: PoolChainState | null;
   ready: boolean;
   onChange(next: string[]): void;
+  /**
+   * 이 맥에서 쓰이지 않는 순서다(`lib/poolGate.ts` — 이 맥에 배정되지 않았거나 다른 머신에서 돈다). 흐리게
+   * 보이기만 하고 고치지 못한다(↑↓✕·끌기·추가 없음, 시안 pool_gate E1 A). 칩은 「쓰이지 않음」, 상태 줄과 사용량
+   * 막대는 그리지 않는다 — 둘 다 "이 순서가 지금 쓰인다"를 말한다. 이유와 할 일은 위의 띠가 말한다.
+   */
+  locked?: boolean;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -151,7 +157,9 @@ export function AgentPoolChain({
   let status: string | null = null;
   /** 상태 줄의 칸 색(designer s3): 평소는 조용히, 뒤 풀로 내려왔으면 경고, 모두 소진·쓸 풀 없음은 위험. */
   let tone: 'quiet' | 'warning' | 'danger' = 'quiet';
-  if (!chain.length) {
+  if (locked) {
+    status = null;
+  } else if (!chain.length) {
     status = defaultPool
       ? t('agents.run.poolChain.statusDefaultNamed', { pool: defaultPool })
       : t('agents.run.poolChain.statusDefault');
@@ -205,7 +213,7 @@ export function AgentPoolChain({
         <ol className="space-y-1">
           {chain.map((pool, i) => {
             const entry = state?.entries[i];
-            const chip = entry && state && chain.length > 0 ? chipOf(entry, i, state) : null;
+            const chip = !locked && entry && state && chain.length > 0 ? chipOf(entry, i, state) : null;
             const dragged = drag?.from === i;
             // 놓일 자리 선: 위로 옮기면 그 자리 줄의 위, 아래로 옮기면 그 자리 줄의 아래.
             const dropLine = drag && drag.to !== drag.from && drag.to === i
@@ -214,13 +222,13 @@ export function AgentPoolChain({
               <li key={pool} data-testid={`agent-pool-chain-row-${pool}`}
                 ref={(el) => { rowEls.current[i] = el; }}
                 data-dragging={dragged || undefined}
-                className={`relative rounded-md border border-border px-2 py-1.5 text-meta${dragged ? ' opacity-50' : entry?.status === 'missing' ? ' opacity-60' : ''}`}>
+                className={`relative rounded-md border border-border px-2 py-1.5 text-meta${dragged ? ' opacity-50' : locked || entry?.status === 'missing' ? ' opacity-60' : ''}`}>
                 {dropLine && (
                   <span aria-hidden data-testid="agent-pool-chain-drop"
                     className={`pointer-events-none absolute inset-x-0 h-0.5 rounded-full bg-accent ${dropLine === 'top' ? '-top-[3px]' : '-bottom-[3px]'}`} />
                 )}
                 <div className="flex items-center gap-2">
-                  {chain.length > 1 && (
+                  {chain.length > 1 && !locked && (
                     // 끌기 손잡이 — 포인터 전용이라 탭 순서에서 뺀다(키보드는 ↑↓ 가 한다).
                     <button type="button" tabIndex={-1} data-testid={`agent-pool-chain-handle-${pool}`}
                       className="-ml-1 shrink-0 cursor-grab touch-none select-none rounded px-0.5 text-fg-subtle hover:bg-surface-raised active:cursor-grabbing disabled:cursor-default disabled:opacity-30"
@@ -231,6 +239,12 @@ export function AgentPoolChain({
                   )}
                   <span className="w-4 shrink-0 text-right tabular-nums text-fg-subtle">{i + 1}</span>
                   <span className="min-w-0 truncate font-medium text-fg">{pool}</span>
+                  {locked && (
+                    <span data-testid={`agent-pool-chain-chip-${pool}`}
+                      className="shrink-0 rounded-sm bg-surface-raised px-1 text-fg-subtle">
+                      {t('agents.run.poolChain.chip.unused')}
+                    </span>
+                  )}
                   {chip && entry && (
                     <span data-testid={`agent-pool-chain-chip-${pool}`}
                       className={`shrink-0 rounded-sm px-1 ${CHIP_CLASS[chip]}`}>
@@ -239,7 +253,7 @@ export function AgentPoolChain({
                         : t(`agents.run.poolChain.chip.${chip}`)}
                     </span>
                   )}
-                  <span className="ml-auto flex shrink-0 items-center gap-0.5">
+                  {!locked && <span className="ml-auto flex shrink-0 items-center gap-0.5">
                     {chain.length > 1 && (
                       <>
                         <button type="button" className="rounded px-1 text-fg-muted hover:bg-surface-raised disabled:opacity-30"
@@ -253,9 +267,9 @@ export function AgentPoolChain({
                     <button type="button" className="rounded px-1 text-fg-muted hover:bg-surface-raised disabled:opacity-30"
                       disabled={!ready} onClick={() => onChange(chain.filter((p) => p !== pool))}
                       aria-label={t('agents.run.poolChain.remove', { pool })}>✕</button>
-                  </span>
+                  </span>}
                 </div>
-                {entry && entry.accounts.length > 0 && (
+                {!locked && entry && entry.accounts.length > 0 && (
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-6 text-fg-muted">
                     {entry.accounts.map((a) => <AccountUsage key={a.account} a={a} />)}
                   </div>
@@ -269,14 +283,14 @@ export function AgentPoolChain({
         </ol>
       )}
       {/* 더 넣을 풀이 없으면 자리를 비우지 않고 이유를 한 줄 남긴다(designer n2) — 비면 "추가 기능이 없다"로 읽힌다. */}
-      {addable.length === 0 && chain.length > 0 && (
+      {!locked && addable.length === 0 && chain.length > 0 && (
         <p className="text-meta text-fg-subtle" data-testid="agent-pool-chain-add-none">
           {chain.length >= MAX_AGENT_POOLS
             ? t('agents.run.poolChain.atLimit', { max: MAX_AGENT_POOLS })
             : t('agents.run.poolChain.allAdded')}
         </p>
       )}
-      {addable.length > 0 && (
+      {!locked && addable.length > 0 && (
         <select
           className="rounded-md border border-border bg-surface px-2 py-1 text-meta text-fg-muted"
           aria-label={t('agents.run.poolChain.add')}

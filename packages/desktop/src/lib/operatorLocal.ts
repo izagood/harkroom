@@ -36,10 +36,26 @@ export function listLocalAgents(): Promise<OperatorAgentsListResult> {
 
 export async function setLocalAgent(baseUrl: string, agentId: string, config: OperatorLocalAgent): Promise<void> {
   await call('operator_agent_set', { baseUrl, agentId, config });
+  notifyLocalAgentsChanged();
 }
 
 export async function removeLocalAgent(baseUrl: string, agentId: string): Promise<void> {
   await call('operator_agent_remove', { baseUrl, agentId });
+  notifyLocalAgentsChanged();
+}
+
+/**
+ * 이 머신 설정에 에이전트를 넣거나 뺐다는 신호(2026-10-15 풀 ↔ 이 맥 배정). 같은 사실을 읽는 화면이
+ * 둘이다 — 「이 머신」 체크(`LocalOperatorRow`)와 계정 풀 칸의 잠금(`useLocalAgentPresence`). 한쪽에서
+ * 바꾸면 다른 쪽이 새로고침 없이 따라오게 한다. 바뀐 내용은 싣지 않는다 — 받는 쪽이 다시 읽는다.
+ */
+const localAgentsListeners = new Set<() => void>();
+export function onLocalAgentsChanged(cb: () => void): () => void {
+  localAgentsListeners.add(cb);
+  return () => { localAgentsListeners.delete(cb); };
+}
+function notifyLocalAgentsChanged(): void {
+  for (const cb of [...localAgentsListeners]) cb();
 }
 
 /**
