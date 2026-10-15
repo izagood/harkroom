@@ -178,6 +178,55 @@ void main() {
     expect(find.text('카메라를 열지 못했다.'), findsOneWidget);
   });
 
+  // 앱에서는 작성칸이 **탭 쌓기**(#1368) 안의 채널·스레드 화면에 있고, 시트는 루트에 뜬다. 행을 누를 때
+  // 바깥 context 로 닫으면 시트 대신 채널 화면이 빠져 탭 뿌리(홈)로 갔다 — 위 시험들은 Navigator 가
+  // 하나뿐이라 못 잡았다.
+  testWidgets('탭 쌓기 안에서 [사진 보관함] 을 눌러도 보던 화면이 남고 picker 가 열린다', (tester) async {
+    final pickers = _FakePickers();
+    await tester.pumpWidget(MaterialApp(
+      theme: harkroomTheme(Brightness.light),
+      home: I18n(
+        strings: stringsFor('ko'),
+        child: Navigator(
+          onGenerateRoute: (_) => MaterialPageRoute<void>(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  key: const Key('open-channel'),
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => Scaffold(
+                      key: const Key('channel'),
+                      body: Center(
+                        child: AttachButton(
+                          composerKey: 'c1',
+                          pickers: pickers,
+                          onPicked: (name, bytes) async => delivered.add(name),
+                        ),
+                      ),
+                    ),
+                  )),
+                  child: const Text('home'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('open-channel')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('channel')), findsOneWidget);
+
+    await openSheet(tester);
+    await tester.tap(find.byKey(const Key('attach-library')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('attach-sheet')), findsNothing);
+    expect(find.byKey(const Key('channel')), findsOneWidget);
+    expect(pickers.calls, ['library']);
+    expect(delivered, ['IMG_0001.heic']);
+  });
+
   testWidgets('시트를 그냥 닫으면 아무것도 부르지 않는다', (tester) async {
     final p = _FakePickers();
     await tester.pumpWidget(host(p));
