@@ -8,7 +8,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readLastApiError, readLastAssistantText, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
+import { readLastApiError, readLastAssistantText, readMacPermissionWaits, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince } from '../src/harnessErrors.js';
 
 /** `isApiErrorMessage` 레코드 한 줄. 실물 세션 파일의 모양을 그대로 쓴다. */
 const rec = (timestamp: string, text: string): string => JSON.stringify({
@@ -399,5 +399,47 @@ describe('readMcpAuthRejections', () => {
     expect(await readMcpAuthRejections('codex', SID, { projectsDir, sinceMs: T0 })).toEqual([]);
     expect(await readMcpAuthRejections('claude-code', null, { projectsDir })).toEqual([]);
     expect(await readMcpAuthRejections('claude-code', 'ffffffff-0000-0000-0000-000000000000', { projectsDir })).toEqual([]);
+  });
+});
+
+// 실물 모양(2026-10-14 rcms 턴): osascript 가 TCC 창 앞에서 멈추면 Bash 시한 머리가 결과로 온다.
+describe('readMacPermissionWaits', () => {
+  const T0 = Date.parse('2026-10-14T07:30:00.000Z');
+  const at = (s: number) => new Date(T0 + s * 1000).toISOString();
+  const use = (s: number, id: string, command: string, name = 'Bash') => ({
+    type: 'assistant', timestamp: at(s),
+    message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id, name, input: { command } }] },
+  });
+  const result = (s: number, id: string, content: string) => ({
+    type: 'user', timestamp: at(s), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content }] },
+  });
+  const CHROME = `osascript -e 'tell application "Google Chrome" to get URL of active tab of front window'`;
+
+  it('시간 초과·거부(-1743)·결과 없는 오래된 호출을 가른다', async () => {
+    const projectsDir = await seed([
+      use(1, 't1', CHROME), result(121, 't1', 'Command did not complete within its 120s timeout and was moved to the background (ID: b2g).'),
+      use(130, 't2', CHROME), result(131, 't2', "Exit code 1 execution error: Not authorized to send Apple events to Google Chrome. (-1743)"),
+      use(140, 't3', `osascript -e 'tell application "Finder" to get name of front window'`),
+    ]);
+    expect(await readMacPermissionWaits('claude-code', SID, { projectsDir, sinceMs: T0, nowMs: T0 + 160_000 })).toEqual([
+      { toolUseId: 't1', state: 'timeout', target: 'Google Chrome', input: CHROME },
+      { toolUseId: 't2', state: 'denied', target: 'Google Chrome', input: CHROME },
+      { toolUseId: 't3', state: 'waiting', target: 'Finder', input: `osascript -e 'tell application "Finder" to get name of front window'` },
+    ]);
+  });
+
+  it('곧 끝난 호출·대기 문턱 전·osascript 아닌 명령·이 턴 이전·말 속 인용은 세지 않는다', async () => {
+    const projectsDir = await seed([
+      use(-30, 'old', CHROME), result(-29, 'old', 'Not authorized to send Apple events (-1743)'),
+      use(1, 'ok', CHROME), result(2, 'ok', 'https://rcms.rbln.in/'),
+      use(3, 'sleep', 'sleep 200'), result(123, 'sleep', 'Command did not complete within its 120s timeout and was moved to the background'),
+      use(150, 'fresh', CHROME),
+      { type: 'assistant', timestamp: at(151), message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'osascript -1743 Not authorized to send Apple events' }] } },
+    ]);
+    expect(await readMacPermissionWaits('claude-code', SID, { projectsDir, sinceMs: T0, nowMs: T0 + 160_000 })).toEqual([]);
+  });
+
+  it('기록을 못 읽는 하네스는 빈 배열이다', async () => {
+    expect(await readMacPermissionWaits('codex', SID, {})).toEqual([]);
   });
 });

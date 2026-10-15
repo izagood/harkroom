@@ -381,6 +381,84 @@ export async function readPermissionDenials(
   return out;
 }
 
+/** macOS 권한 창(TCC) 앞에 선 도구 호출 하나(스레드 f3bf04de, 2026-10-15). */
+export interface MacPermissionWait {
+  /** 짝 맞춤과 중복 제거의 열쇠. */
+  toolUseId: string;
+  /** `waiting` 결과 없이 오래 걸림(창이 떠 있을 공산) · `timeout` 하네스 시한에 걸림 · `denied` 거부됨(-1743). */
+  state: 'waiting' | 'timeout' | 'denied';
+  /** `tell application "…"` 의 앱 이름. 못 읽으면 null. */
+  target: string | null;
+  /** 명령 원문(가리기는 호출자가 한다). */
+  input: string;
+}
+
+/** 자동화(Apple Events) 권한 거부의 표지 — 코드(-1743, errAEEventNotPermitted)와 영문·한글 문구. */
+const APPLE_EVENT_DENIED = /-1743\b|Not authori[sz]ed to send Apple events|Apple 이벤트를 보낼 권한/;
+/** claude Bash 도구가 시한을 넘긴 명령에 붙이는 머리(2026-10-14 실측: `… within its 120s timeout and was moved to the background`). */
+const BASH_TIMEOUT_HEAD = /^Command did not complete within its \d+s timeout/;
+const OSASCRIPT = /(^|[\s;&|(])osascript\b/;
+const TELL_APP = /tell application "([^"\n]{1,80})"/;
+/** osascript 는 보통 몇 초 안에 끝난다. 이만큼 결과가 없으면 권한 창 앞에 선 것으로 본다. */
+export const MAC_PERMISSION_PENDING_MS = 15_000;
+
+/**
+ * 이 턴에 **macOS 권한 창(TCC) 앞에 선** osascript 호출들(2026-10-15). 앞에서부터, 없으면 빈 배열.
+ *
+ * **왜 필요한가.** 러너가 띄운 턴의 `osascript` 가 다른 앱(Google Chrome 등)을 처음 부르면 macOS 가
+ * 「'Harkroom'에서 'Google Chrome'을(를) 제어하려고 합니다」 창을 띄우고, 사람이 누를 때까지 명령이 멈춘다.
+ * 그 창은 Harkroom 전체 화면 뒤에 숨어서 사람은 몰랐고, 턴은 Bash 시한(120초)에 걸려 "시간 초과"만 남겼다
+ * (10-14 rcms 턴, 하루가 날아갔다). 러너가 이 사실을 대신 **알린다** — 허용하거나 돌아가지는 않는다.
+ *
+ * 판정은 Bash `tool_use` 의 명령에 `osascript` 가 있을 때만 한다: 결과가 거부 표지면 `denied`, 시한 머리면
+ * `timeout`, 결과 없이 `pendingMs` 가 지났으면 `waiting`. 에이전트가 말 속에 같은 문구를 인용해도 걸리지 않는다.
+ */
+export async function readMacPermissionWaits(
+  harness: AgentHarness,
+  sessionId: string | null,
+  opts: { projectsDir?: string; configDir?: string | null; sinceMs?: number; nowMs?: number; pendingMs?: number } = {},
+): Promise<MacPermissionWait[]> {
+  if (!readsSessionTranscript(harness)) return [];
+  if (!sessionId) return [];
+  const text = await readTranscriptTail(sessionId, opts);
+  if (text === null) return [];
+  const now = opts.nowMs ?? Date.now();
+  const pendingMs = opts.pendingMs ?? MAC_PERMISSION_PENDING_MS;
+  const uses = new Map<string, { command: string; at: number }>();
+  const done = new Set<string>();
+  const out: MacPermissionWait[] = [];
+  const of = (id: string, state: MacPermissionWait['state'], command: string): MacPermissionWait => ({
+    toolUseId: id, state, target: TELL_APP.exec(command)?.[1] ?? null, input: command,
+  });
+  for (const r of recordsSince(text, undefined)) {
+    const content = r.message?.content;
+    if (!Array.isArray(content)) continue;
+    const at = typeof r.timestamp === 'string' ? Date.parse(r.timestamp) : NaN;
+    for (const part of content as Array<Record<string, unknown>>) {
+      if (!part || typeof part !== 'object') continue;
+      if (part.type === 'tool_use' && typeof part.id === 'string' && part.name === 'Bash') {
+        const command = (part.input as { command?: unknown } | undefined)?.command;
+        if (typeof command === 'string' && OSASCRIPT.test(command)) uses.set(part.id, { command, at });
+        continue;
+      }
+      if (part.type !== 'tool_result' || typeof part.tool_use_id !== 'string') continue;
+      const use = uses.get(part.tool_use_id);
+      if (!use) continue;
+      done.add(part.tool_use_id);
+      if (opts.sinceMs !== undefined && (!Number.isFinite(at) || at < opts.sinceMs)) continue;
+      const body = typeof part.content === 'string' ? part.content : textOf({ message: { content: part.content } }) ?? '';
+      if (APPLE_EVENT_DENIED.test(body)) out.push(of(part.tool_use_id, 'denied', use.command));
+      else if (BASH_TIMEOUT_HEAD.test(body)) out.push(of(part.tool_use_id, 'timeout', use.command));
+    }
+  }
+  for (const [id, use] of uses) {
+    if (done.has(id) || !Number.isFinite(use.at)) continue;
+    if (opts.sinceMs !== undefined && use.at < opts.sinceMs) continue;
+    if (now - use.at >= pendingMs) out.push(of(id, 'waiting', use.command));
+  }
+  return out;
+}
+
 /**
  * claude 가 "헤더로 받은 토큰을 MCP 서버가 401 로 거절했다"에 붙이는 코드(2026-10-01 실측,
  * claude 2.1.286). 문구는 `Server rejected the configured Authorization header (HTTP 401) …
