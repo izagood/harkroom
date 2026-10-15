@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { poolGateEditable, poolGateOf, type PoolGate } from '../src/lib/poolGate';
-import { PoolGateBand } from '../src/components/settings/PoolGateBand';
+import { PoolGateBand, PoolGateKept } from '../src/components/settings/PoolGateBand';
 import { AgentPoolChain } from '../src/components/settings/AgentPoolChain';
 import { onLocalAgentsChanged, removeLocalAgent, setLocalAgent } from '../src/lib/operatorLocal';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -41,8 +41,8 @@ describe('poolGateOf', () => {
 describe('PoolGateBand', () => {
   function band(gate: PoolGate, over: Partial<Parameters<typeof PoolGateBand>[0]> = {}) {
     const props = {
-      gate, operatorName: 'homelab-vm', recent: null, hasChain: true, busy: false, canAct: true, canRunHere: true,
-      onRunHere: vi.fn(), onEnableHere: vi.fn(), onGoToAssignment: vi.fn(), onClear: vi.fn(), ...over,
+      gate, operatorName: 'homelab-vm', recent: null, busy: false, canAct: true, canRunHere: true,
+      onRunHere: vi.fn(), onEnableHere: vi.fn(), onGoToAssignment: vi.fn(), ...over,
     };
     render(<PoolGateBand {...props} />);
     return props;
@@ -62,24 +62,30 @@ describe('PoolGateBand', () => {
     expect(buttons()).toEqual([]);
   });
 
-  it('② 미배정 — [이 맥에서 돌리기] 와 [이 순서 지우기], 순서는 남긴다고 말한다', () => {
+  it('② 미배정 — 노란 띠에 할 일 하나, [이 맥에서 돌리기] 는 주 버튼(designer s1). 지우기는 띠 밖(s2)', () => {
     const p = band({ kind: 'unassigned' });
-    expect(screen.getByTestId('agent-pool-gate').textContent).toMatch(/어디에도 배정되지 않아/);
-    expect(screen.getByTestId('agent-pool-gate').textContent).toMatch(/이 순서가 그대로 쓰인다/);
-    expect(buttons()).toEqual(['agent-pool-gate-run-here', 'agent-pool-gate-clear']);
+    const el = screen.getByTestId('agent-pool-gate');
+    expect(el.textContent).toMatch(/어디에도 배정되지 않아/);
+    expect(el.className).toMatch(/bg-warning-surface/);
+    expect(buttons()).toEqual(['agent-pool-gate-run-here']);
+    expect(screen.getByTestId('agent-pool-gate-run-here').className).toMatch(/bg-accent/);
     fireEvent.click(screen.getByTestId('agent-pool-gate-run-here'));
     expect(p.onRunHere).toHaveBeenCalledTimes(1);
   });
 
   it('② 이 맥 오퍼레이터가 등록되지 않았으면 [이 맥에서 돌리기] 를 그리지 않는다 — 배정할 곳이 없다', () => {
     band({ kind: 'unassigned' }, { canRunHere: false });
-    expect(buttons()).toEqual(['agent-pool-gate-clear']);
+    expect(buttons()).toEqual([]);
   });
 
   it('③ 다른 머신 — 옮기지 않고 「어디서 돌리나」로 데려가기만 한다(E2 A)', () => {
     const p = band({ kind: 'elsewhere', operatorId: 'op-vm' });
     expect(screen.getByTestId('agent-pool-gate').textContent).toMatch(/^homelab-vm 에서 돈다 — 계정 풀은 그 머신에서 정한다/);
-    expect(buttons()).toEqual(['agent-pool-gate-goto', 'agent-pool-gate-clear']);
+    // 고칠 상태가 아니라 사실이다 — 중립 띠, 보조 버튼(designer s3).
+    expect(screen.getByTestId('agent-pool-gate').className).not.toMatch(/bg-warning-surface/);
+    expect(screen.getByTestId('agent-pool-gate').className).toMatch(/bg-surface-raised/);
+    expect(buttons()).toEqual(['agent-pool-gate-goto']);
+    expect(screen.getByTestId('agent-pool-gate-goto').className).not.toMatch(/bg-accent/);
     fireEvent.click(screen.getByTestId('agent-pool-gate-goto'));
     expect(p.onGoToAssignment).toHaveBeenCalledTimes(1);
     // 최근 턴 값이 없으면 그 줄을 생략한다(E4 A).
@@ -97,26 +103,28 @@ describe('PoolGateBand', () => {
   it('④ 반쪽 — [이 맥 오퍼레이터에서 켜기] 체크 하나만', () => {
     const p = band({ kind: 'half' });
     expect(screen.getByTestId('agent-pool-gate').textContent).toMatch(/오퍼레이터에 켜져 있지 않다/);
-    expect(buttons()).toEqual(['agent-pool-gate-enable', 'agent-pool-gate-clear']);
+    expect(buttons()).toEqual(['agent-pool-gate-enable']);
+    expect(screen.getByTestId('agent-pool-gate-enable').className).toMatch(/bg-accent/);
     fireEvent.click(screen.getByTestId('agent-pool-gate-enable'));
     expect(p.onEnableHere).toHaveBeenCalledTimes(1);
   });
 
-  it('저장된 순서가 없으면 「남겨 둔다」와 [지우기] 가 없다', () => {
-    band({ kind: 'unassigned' }, { hasChain: false });
-    expect(screen.getByTestId('agent-pool-gate').textContent).not.toMatch(/남겨 둔다/);
-    expect(buttons()).toEqual(['agent-pool-gate-run-here']);
-  });
-
-  it('배정을 바꿀 수 없는 사람에게는 이유만 — 지우기는 이 기기 설정이라 남는다', () => {
+  it('배정을 바꿀 수 없는 사람에게는 이유만', () => {
     band({ kind: 'elsewhere', operatorId: 'op-vm' }, { canAct: false });
-    expect(buttons()).toEqual(['agent-pool-gate-clear']);
+    expect(buttons()).toEqual([]);
   });
+});
 
-  it('[이 순서 지우기] 는 onClear 를 부른다', () => {
-    const p = band({ kind: 'unassigned' });
-    fireEvent.click(screen.getByTestId('agent-pool-gate-clear'));
-    expect(p.onClear).toHaveBeenCalledTimes(1);
+describe('PoolGateKept — 잠긴 목록 아래 한 줄(designer s2)', () => {
+  it('순서를 남긴다고 말하고, 조용한 [이 순서 지우기] 가 onClear 를 부른다', () => {
+    const onClear = vi.fn();
+    render(<PoolGateKept busy={false} onClear={onClear} />);
+    expect(screen.getByTestId('agent-pool-gate-kept').textContent).toMatch(/이 순서가 그대로 쓰인다/);
+    const clear = screen.getByTestId('agent-pool-gate-clear');
+    expect(clear.className).toMatch(/underline/);
+    expect(clear.className).not.toMatch(/bg-accent/);
+    fireEvent.click(clear);
+    expect(onClear).toHaveBeenCalledTimes(1);
   });
 });
 

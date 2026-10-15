@@ -1468,7 +1468,7 @@ export const en = {
   'agents.run.poolGate.kept': 'The saved order is kept — it is used as is once this agent runs on this Mac.',
   'agents.run.poolGate.runHere': 'Run on this Mac',
   'agents.run.poolGate.enableHere': 'Turn on in this Mac\'s operator',
-  'agents.run.poolGate.goToAssignment': 'Go to “Where it runs”',
+  'agents.run.poolGate.goToAssignment': 'See where it runs',
   'agents.run.poolGate.clear': 'Clear this order',
   'agents.run.poolChain.chipExhaustedAt': 'Used up · {time}',
   'agents.run.poolChain.blocked': '⚠ waiting for a choice',

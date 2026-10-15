@@ -60,7 +60,7 @@ import { Button, DangerZone, SettingsColumns, SettingsWrap } from './primitives'
 import { AvatarAdjustTrigger, AvatarCropHost, AvatarStatus, useAvatarEdit, type AvatarEditInput } from './avatarEdit';
 import { useAgentPool } from './useAgentPool';
 import { AgentPoolChain } from './AgentPoolChain';
-import { PoolGateBand, type RecentPoolTurn } from './PoolGateBand';
+import { PoolGateBand, PoolGateKept, type RecentPoolTurn } from './PoolGateBand';
 import { useLocalAgentPresence } from './useLocalAgentPresence';
 import { navKey } from './sections';
 import { AGENT_DETAIL_TABS, parseAgentTarget, type AgentDetailTab } from './agentDetailTabs';
@@ -2594,7 +2594,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                         operatorName={poolGate.kind === 'elsewhere' && Array.isArray(operators)
                           ? operatorNameOf(operators.find((o) => o.id === poolGate.operatorId)) ?? null : null}
                         recent={recentPoolTurn}
-                        hasChain={agentPool.chain.length > 0}
                         busy={poolGateBusy || !agentPool.ready}
                         canAct={isAdmin || isOwner}
                         canRunHere={typeof localOperator === 'object' && localOperator !== null}
@@ -2602,8 +2601,18 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                           if (!selected || typeof localOperator !== 'object' || localOperator === null) return;
                           setPoolGateBusy(true);
                           setError(null);
-                          void getController().assignAgentHere(selected.id, localOperator)
-                            .then((assignment) => {
+                          const target = localOperator;
+                          // 누르기 직전에 배정을 다시 읽는다(security n3) — 화면이 들고 있는 "배정 없음"이 낡았으면
+                          // 그 사이 다른 머신에 붙은 배정을 덮어 그 러너를 멈추게 된다. 바뀌었으면 화면만 고친다.
+                          void getController().listAgents()
+                            .then(async (fresh) => {
+                              const now = fresh.find((x) => x.id === selected.id);
+                              if (now?.assignment) {
+                                setSelected(now);
+                                setAgents(fresh);
+                                return;
+                              }
+                              const assignment = await getController().assignAgentHere(selected.id, target);
                               const updated = { ...selected, assignment };
                               setSelected(updated);
                               setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
@@ -2615,7 +2624,11 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                           const baseUrl = getController().api?.baseUrl ?? null;
                           if (!selected || !baseUrl) return;
                           setPoolGateBusy(true);
-                          void setLocalAgent(baseUrl, selected.id, {})
+                          // 다시 읽고 **없을 때만** 넣는다(security n2) — 그 사이 다른 곳에서 켰다면 다시 쓰면 작업 폴더가 지워진다.
+                          void listLocalAgents()
+                            .then((r) => (r.communities.find((c) => c.baseUrl === baseUrl)?.agents[selected.id] === undefined
+                              ? setLocalAgent(baseUrl, selected.id, {})
+                              : undefined))
                             .catch((err: unknown) => setError(t('agents.local.failed', { reason: errorText(err, t) })))
                             .finally(() => setPoolGateBusy(false));
                         }}
@@ -2625,7 +2638,6 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                           setAssignmentFlash(true);
                           window.setTimeout(() => setAssignmentFlash(false), 1600);
                         }}
-                        onClear={() => void agentPool.setChain([])}
                       />
                     )}
                     {/* **풀 순서 목록**(2026-10-15 풀 n개). 앞 풀의 계정이 모두 소진되면 다음 풀로
@@ -2640,6 +2652,9 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       onChange={(next) => void agentPool.setChain(next)}
                       locked={poolGate !== null && !poolGateEditable(poolGate)}
                     />
+                    {poolGate !== null && !poolGateEditable(poolGate) && agentPool.chain.length > 0 && (
+                      <PoolGateKept busy={poolGateBusy || !agentPool.ready} onClear={() => void agentPool.setChain([])} />
+                    )}
                     {/* 만들기와 상세에서 **적용 시점이 다르다.** 상세는 고치는 즉시 데몬에 쓰이고
                         러너가 5초마다 다시 읽어 **다음 새 스레드부터** 적용된다(재시작 필요 없음).
                         만들기에는 쓸 대상이 아직 없어 생성 시점에 쓰인다. */}

@@ -949,7 +949,7 @@ export const ko = {
   'agents.run.poolGate.kept': '저장된 순서는 남겨 둔다 — 이 맥에서 돌리면 이 순서가 그대로 쓰인다.',
   'agents.run.poolGate.runHere': '이 맥에서 돌리기',
   'agents.run.poolGate.enableHere': '이 맥 오퍼레이터에서 켜기',
-  'agents.run.poolGate.goToAssignment': '「어디서 돌리나」로',
+  'agents.run.poolGate.goToAssignment': '어디서 돌리나 보기',
   'agents.run.poolGate.clear': '이 순서 지우기',
   'agents.run.poolChain.chipExhaustedAt': '소진 · {time}',
   'agents.run.poolChain.blocked': '⚠ 선택 대기',
