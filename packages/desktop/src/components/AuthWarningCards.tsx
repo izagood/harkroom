@@ -26,6 +26,7 @@ import {
   type ClaudeAccountsSnapshot,
 } from '../lib/claudeAccounts';
 import { createNotifier } from '../lib/notify';
+import { useAuthWarningsStore } from '../state/authWarningsStore';
 import { GateCard } from './GateCard';
 import type { SectionId } from './settings/sections';
 
@@ -81,7 +82,10 @@ export function useAuthWarnings(): AuthWarning[] {
   }, [available, refresh]);
   // 목록이 회복을 보여 주면 멈춤 기억을 지운다 — 터미널에서 직접 다시 로그인한 경우도(security n2).
   useEffect(() => { setStopped((cur) => pruneStopped(snap, cur)); }, [snap]);
-  return useMemo(() => authWarnings(snap, stopped), [snap, stopped]);
+  const warnings = useMemo(() => authWarnings(snap, stopped), [snap, stopped]);
+  // 사이드바도 같은 판정을 읽는다(③-3) — 조회·구독을 둘로 만들지 않는다.
+  useEffect(() => { useAuthWarningsStore.setState({ warnings }); }, [warnings]);
+  return warnings;
 }
 
 /** 관문 카드와 로그인 경고 카드를 한 자리에 쌓는다. `Workspace` 의 본문 칸에 둔다. */
@@ -112,9 +116,9 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
     : names.join(' · ');
   const time = new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' });
   /** 깨진 시각(유한하지만 Date 범위 밖)이면 「?」 — `format` 이 RangeError 로 화면을 깨지 않게(security n2). */
-  const sinceText = (atMs: number): string => {
+  const sinceText = (atMs: number): string | null => {
     const d = new Date(atMs);
-    return Number.isNaN(d.getTime()) ? '?' : time.format(d);
+    return Number.isNaN(d.getTime()) ? null : time.format(d);
   };
 
   // S2 는 상태 전이마다 OS 알림 1회(같은 열쇠로는 다시 안 보낸다).
@@ -174,7 +178,14 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
             ? t('authWarn.s1.linePool')
             : t('authWarn.s1.line', { pool: w.pool || t('authWarn.defaultPool'), left: w.left, total: w.total })
           : w.pool !== null
-            ? t('authWarn.s2.line', { pool: w.pool || t('authWarn.defaultPool'), total: w.total, since: sinceText(w.atMs) })
+            ? (() => {
+              // 깨진 시각이면 「· …부터」 마디를 통째로 뺀다(designer q2) — 「?부터」로 읽히지 않게.
+              const since = sinceText(w.atMs);
+              const pool = w.pool || t('authWarn.defaultPool');
+              return since === null
+                ? t('authWarn.s2.lineNoSince', { pool, total: w.total })
+                : t('authWarn.s2.line', { pool, total: w.total, since });
+            })()
             : t('authWarn.s2.lineUnknown');
         return (
           <div

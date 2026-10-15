@@ -469,9 +469,8 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                 보인다. 하나도 없으면 아무것도 그리지 않는다.
               */}
               {(() => {
-                const out = pool.accounts.filter((a) => isSignedOut(
-                  a, providerSnap ? usageFor(providerSnap, a.name, pool.name)?.error : undefined,
-                )).length;
+                // 러너 표식이 있는 계정만 센다 — 사용량 401 만으로는 「풀렸을 수 있다」일 뿐이다(designer q1).
+                const out = pool.accounts.filter((a) => a.authFailure).length;
                 return out > 0 ? (
                   <span className="text-meta text-warning" data-testid={`claude-pool-signed-out-${pool.name}`}>
                     {t('claudeAccounts.pool.signedOutSummary', { count: out, total: pool.accounts.length })}
@@ -584,7 +583,8 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
                       className="shrink-0 rounded-row border border-warning px-1 text-warning"
                       data-testid="claude-account-signed-out-chip"
                     >
-                      {t('claudeAccounts.signedOut.chip')}
+                      {/* 401 만이면 단정하지 않는다 — 이유 줄의 「풀렸을 수 있습니다」와 같은 말(designer q1). */}
+                      {a.authFailure ? t('claudeAccounts.signedOut.chip') : t('claudeAccounts.signedOut.chipCheck')}
                     </span>
                   )}
                   {/* 디렉터리 이름은 id 로만 선다 — `HARKROOM_CLAUDE_ACCOUNTS`·로그가 이것을 쓴다. */}

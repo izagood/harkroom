@@ -24,6 +24,8 @@ import { SidebarFind } from './SidebarFind';
 // "같은 사실이 화면마다 네 가지로 그려진다"가 사이드바 안에서는 이것으로 끝난다.
 // `runnerStatusLabel` 은 DM 줄이 쓴다 — 아바타에 실은 상태를 접근 이름으로도 내야 한다.
 import { runnerReason, runnerStatusLabel } from './RunnerStatus';
+import { useAuthWarningsStore, stoppedWarningFor } from '../state/authWarningsStore';
+import { requestClaudeReauth } from '../lib/claudeAccounts';
 import { AgentGrid } from './settings/AgentGrid';
 import { Collab } from './Collab';
 import { SavedMessages } from './SavedMessages';
@@ -176,7 +178,7 @@ function InboxRowBadge() {
 
 export function Sidebar({
   panel, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, onOpenAgentConfig, onOpenProfile,
-  onOpenProjectionSettings, collapsed, onToggleCollapse, footer,
+  onOpenProjectionSettings, onOpenClaudeReauth, collapsed, onToggleCollapse, footer,
 }: {
   /**
    * 목록 **아래**, 흐름 안에 서는 칸(UX ③: 업데이트 알림). 목록은 그 위에서 스크롤하므로
@@ -230,6 +232,12 @@ export function Sidebar({
    */
   onOpenProjectionSettings?: () => void;
   /**
+   * 로그인이 풀려 멈춘 에이전트 줄의 ⚠ 버튼이 여는 곳 — 설정 › Claude 계정(2026-10-15, ③-3). 위 둘과 같은 이유로
+   * 설정 전체가 아니라 그 칸 하나로 좁혔다. 어느 계정의 다시 로그인 확인창을 열지는 버튼이 먼저 부탁해 둔다
+   * (`requestClaudeReauth`). 옵셔널 — 없으면 버튼을 그리지 않고 줄의 글자만 남는다.
+   */
+  onOpenClaudeReauth?: () => void;
+  /**
    * 설정을 볼 수 없는 사람이 카드를 눌렀을 때 여는 곳(`onPick` 주석에 근거). 위
    * `onOpenDirectory`(누구를 지목하지 않는 검색 목록)와 **다른 화면**이다 — 디렉터리는
    * "누가 있나", 프로필은 "이 사람이 무엇인가"에 답한다(`Workspace.handleOpenDirectory` 주석).
@@ -259,6 +267,7 @@ export function Sidebar({
   const appWindowEntries = useAppWindows((st) => st.entries);
   /** 터미널에서 사람을 기다리는 에이전트(2026-10-09 A안) — 카드를 접어도 그 줄에 ⌨ 가 남는다. */
   const gates = useActiveStore((s) => s.gates);
+  const authWarnings = useAuthWarningsStore((s) => s.warnings);
   const poppedChannels = useMemo(
     () => new Set(appWindowEntries.flatMap((e) => (e.target.kind === 'channel' ? [e.target.channelId] : []))),
     [appWindowEntries],
@@ -726,8 +735,14 @@ export function Sidebar({
       : t(PRESENCE_LABEL[dm.presence]);
     const gate = dm.agentId ? gates.filter((g) => g.agentAccountId === dm.agentId).at(-1) : undefined;
     const gateRoot = gate?.threadRootId;
+    /**
+     * **로그인이 풀려 멈췄다**(S2, 2026-10-15 ③-3). 이 맥 오퍼레이터의 러너 종료 사유와 계정 목록으로만 안다
+     * (`useAuthWarningsStore`) — 이 줄은 지금 커뮤니티의 DM 이라 다른 커뮤니티 에이전트는 여기 오지 않는다.
+     * 러너 상태(`runnerStates`)의 사유가 있으면 그쪽이 먼저다.
+     */
+    const loginStop = dm.agentId && !reason ? stoppedWarningFor(authWarnings, dm.agentId) : undefined;
     const rowButton = (
-      <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason ? 'flex-col items-start' : ''} ${gate ? 'min-w-0 flex-1' : ''}`} data-channel-row={dm.id}
+      <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason || loginStop ? 'flex-col items-start' : ''} ${gate || loginStop ? 'min-w-0 flex-1' : ''}`} data-channel-row={dm.id}
         onClick={(e) => openChannelFrom(e, dm.id, () => void getController().openChannel(dm.id))}>
         <span className="flex min-w-0 items-center gap-1.5">
           {/*
@@ -739,7 +754,7 @@ export function Sidebar({
             data-testid={`dm-face-${dm.id}`}
             data-face={face}
             title={stateLabel}
-            className={`shrink-0 ${face === 'failed' ? 'rounded-full ring-2 ring-state-stuck' : ''}`}
+            className={`shrink-0 ${face === 'failed' ? 'rounded-full ring-2 ring-state-stuck' : loginStop ? 'rounded-full ring-2 ring-warning' : ''}`}
           >
             {/* 회색조 숫자는 격자에서 그대로 가져온 것이다 — 이유는 그쪽 주석에 있다. */}
             {/*
@@ -794,9 +809,40 @@ export function Sidebar({
               : t('sidebar.runner.launchFailed', { reason })}
           </span>
         )}
+        {loginStop && (
+          // 사람 말이 먼저, 종료 코드는 툴팁에만(designer 시안 ④). 사유 이름만 쓰고 러너 로그 원문은 없다.
+          <span data-testid={`runner-login-${dm.agentId}`} title={t('authWarn.sidebar.title')}
+            className="whitespace-normal text-left text-meta text-warning">
+            {t('authWarn.sidebar.reason')}
+          </span>
+        )}
       </button>
     );
-    if (!gate || !gateRoot) return rowButton;
+    // 다시 로그인 문 — 관문 ⌨ 버튼과 같은 자리·같은 이유(카드를 [나중에]로 접은 뒤 돌아갈 문). 줄 버튼 **옆의 형제**다.
+    const reauthButton = loginStop && onOpenClaudeReauth ? (
+      <button
+        type="button"
+        data-testid={`login-reauth-${dm.agentId}`}
+        aria-label={t('authWarn.sidebar.reauthFor', { handle: dm.label })}
+        title={t('authWarn.reauth')}
+        className="mr-1 shrink-0 rounded-sm px-1 text-meta text-warning hover:bg-surface-hover"
+        onClick={() => {
+          if (loginStop.account && loginStop.pool !== null) requestClaudeReauth(loginStop.pool, loginStop.account);
+          onOpenClaudeReauth();
+        }}
+      >
+        ⚠
+      </button>
+    ) : null;
+    if ((!gate || !gateRoot) && !reauthButton) return rowButton;
+    if (!gate || !gateRoot) {
+      return (
+        <div key={dm.id} className="flex min-w-0 items-center gap-1">
+          {rowButton}
+          {reauthButton}
+        </div>
+      );
+    }
     // 터미널에서 사람을 기다린다(2026-10-09 A안) — 카드를 [나중에]로 접은 뒤 돌아갈 문이다.
     // 줄 버튼 **옆의 형제 버튼**이다: 버튼 안에 클릭 요소를 넣으면 키보드·스크린리더가 그것을
     // 따로 집지 못한다. 관문이 풀리면(`gates` 에서 빠지면) 줄은 원래 모양으로 돌아간다.
@@ -815,6 +861,7 @@ export function Sidebar({
         >
           {t('agentTurns.waiting')}
         </button>
+        {reauthButton}
       </div>
     );
   };

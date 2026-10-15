@@ -26,6 +26,8 @@ import { usePrefsStore } from '../src/state/prefsStore';
 import { translator } from '../src/i18n';
 import type { RunnerState } from '../src/lib/runnerLauncher';
 import type { DmView } from '@harkroom/shared';
+import { useAuthWarningsStore } from '../src/state/authWarningsStore';
+import { takeClaudeReauthRequest } from '../src/lib/claudeAccounts';
 
 const fakeController = () => {
   const c = {
@@ -345,5 +347,44 @@ describe('터미널 대기 칩 (2026-10-09 배너 A안)', () => {
     useAppStore.getState().set({ ...사람과에이전트, dms: [dm('d-forge', 'forge', '2026-09-05T00:00:00.000Z')] });
     renderDmPanel();
     expect(screen.queryByTestId('gate-waiting-forge')).toBeNull();
+  });
+});
+
+describe('로그인이 풀려 멈춘 에이전트 (2026-10-15 ③-3)', () => {
+  const s2 = { kind: 's2' as const, pool: 'work', account: 'aria', total: 1, agentIds: ['forge'], atMs: 1 };
+  afterEach(() => { useAuthWarningsStore.setState({ warnings: [] }); takeClaudeReauthRequest(); });
+
+  it('사람 말로 「멈춤 · Claude 로그인 풀림」, 종료 코드는 툴팁에만 — ⚠ 는 줄 옆 형제 버튼이고 그 계정 다시 로그인을 부탁한다', () => {
+    const c = fakeController();
+    useAppStore.getState().set({ ...사람과에이전트, dms: [dm('d-forge', 'forge', '2026-09-05T00:00:00.000Z')] });
+    useAuthWarningsStore.setState({ warnings: [s2] });
+    const onReauth = vi.fn();
+    render(
+      <Sidebar panel="dm" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}}
+        onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()}
+        onOpenClaudeReauth={onReauth} />,
+    );
+    const line = screen.getByTestId('runner-login-forge');
+    expect(line.textContent).toBe('멈춤 · Claude 로그인 풀림');
+    expect(line.textContent).not.toContain('78');
+    expect(line.getAttribute('title')).toContain('78');
+    const btn = screen.getByTestId('login-reauth-forge');
+    expect(btn.closest('[data-channel-row]')).toBeNull();
+    act(() => { btn.click(); });
+    expect(onReauth).toHaveBeenCalledTimes(1);
+    expect(takeClaudeReauthRequest()).toEqual({ pool: 'work', account: 'aria' });
+    expect(c.openChannel).not.toHaveBeenCalled();
+  });
+
+  it('S1(계정 하나 풀림)이나 다른 에이전트의 S2 면 아무것도 그리지 않는다', () => {
+    fakeController();
+    useAppStore.getState().set({ ...사람과에이전트, dms: [dm('d-forge', 'forge', '2026-09-05T00:00:00.000Z')] });
+    useAuthWarningsStore.setState({ warnings: [
+      { kind: 's1', pool: 'work', account: 'aria', left: 1, total: 2, atMs: 1 },
+      { ...s2, agentIds: ['other'] },
+    ] });
+    renderDmPanel();
+    expect(screen.queryByTestId('runner-login-forge')).toBeNull();
+    expect(screen.queryByTestId('login-reauth-forge')).toBeNull();
   });
 });
