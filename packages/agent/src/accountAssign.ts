@@ -35,7 +35,7 @@ import {
   parseClaudeUsageFile,
   type ClaudeUsageEntry,
 } from '@harkroom/shared/claudeUsage';
-import { isAttentionActive, readAccountAttention, type ClaudeAccountAttention } from '@harkroom/shared/claudeGates';
+import { isAttentionActive, readAccountBlocked, type ClaudeAccountAttention } from '@harkroom/shared/claudeGates';
 import type { ProviderUsageWindow } from '@harkroom/shared/daemonProtocol';
 
 import type { ClaudeAccount, ClaudePoolLane } from './claudeAccounts.js';
@@ -319,7 +319,7 @@ export interface AccountAssignerDeps {
   now?: () => number;
   random?: () => number;
   log?: (line: string) => void;
-  /** 관문 표식 읽기(`@harkroom/shared/claudeGates`). 테스트가 가짜를 끼운다. */
+  /** 관문·로그인 풀림 표식 읽기(`@harkroom/shared/claudeGates::readAccountBlocked`). 테스트가 가짜를 끼운다. */
   readAttention?: (configDir: string) => Promise<ClaudeAccountAttention | null>;
 }
 
@@ -402,7 +402,7 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
     threadKey: string, model: string | null | undefined, chain: readonly ClaudePoolLane[], fallback: readonly (ClaudeAccount | null)[],
   ): Promise<readonly (ClaudeAccount | null)[]> {
     const t = now();
-    const readAttention = deps.readAttention ?? readAccountAttention;
+    const readAttention = deps.readAttention ?? readAccountBlocked;
     const all = chain.flatMap((c) => c.accounts.map((a) => ({ pool: c.pool, account: a })));
     const keyOf = (pool: string, name: string): string => `${pool}/${name}`;
     const [cfg, usageAll, attention] = await Promise.all([
@@ -500,7 +500,7 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
       // 계정이 하나 이하면 고를 것이 없다.
       if (accounts.length < 2) return lane;
       const t = now();
-      const readAttention = deps.readAttention ?? readAccountAttention;
+      const readAttention = deps.readAttention ?? readAccountBlocked;
       const [usage, policy, attention] = await Promise.all([
         readUsage(pool ?? ''), readPolicy(pool),
         Promise.all(accounts.map(async (a) => [a.name, await readAttention(a.configDir).catch(() => null)] as const)),

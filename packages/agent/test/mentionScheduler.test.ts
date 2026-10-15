@@ -922,6 +922,78 @@ describe('mentionScheduler 관문 표식 (사람이 지나야 하는 관문, 202
 });
 
 
+describe('mentionScheduler 로그인 풀림 표식 (2026-10-15)', () => {
+  // 풀의 한 계정만 로그인이 풀리면 다음 계정이 이어받아 턴은 성공한다 — 사람이 그 사실을 알 길이
+  // 러너 로그 한 줄뿐이었다(10-15 실측 42회). 표식이 설정·전역 카드의 재료다.
+  const a = { name: 'a', configDir: '/x/a' };
+  const b = { name: 'b', configDir: '/x/b' };
+  const loginExpired = () => Object.assign(new Error('harness 종료 1'), {
+    harnessApiError: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+  });
+
+  function run(failA: () => Error | null, failB: () => Error | null = () => null) {
+    const marked: string[] = [];
+    const cleared: string[] = [];
+    const notices: string[] = [];
+    const scheduler = createMentionScheduler({
+      harkroom: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [a, b],
+      accountAuth: {
+        mark: async (acc) => { marked.push(acc.name); },
+        clear: async (acc) => { cleared.push(acc.name); },
+      },
+      runMentionTurn: async (d) => {
+        const { name, delivered } = d as unknown as { name: string | null; delivered?: () => void };
+        delivered?.();
+        const err = name === 'a' ? failA() : failB();
+        if (err) throw err;
+        return { stopRequestedAt: null };
+      },
+      buildTurnDeps: ({ account, onPromptDelivered }) => ({ name: account?.name ?? null, delivered: onPromptDelivered }) as never,
+      hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async (_e, _c, _a, id) => { notices.push(id); } },
+      startedAtMs: 0,
+    });
+    return { scheduler, marked, cleared, notices };
+  }
+
+  it('로그인이 풀린 계정은 다음 계정이 이어받아 성공해도 표식이 남는다', async () => {
+    const h = run(loginExpired);
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.marked).toEqual(['a']);
+    expect(h.cleared).toEqual(['b']);
+    // 턴은 성공했다 — 스레드 통지는 없다(풀 전체가 풀렸을 때만).
+    expect(h.notices).toEqual([]);
+  });
+
+  it('풀 전체가 풀리면 둘 다 표시하고 스레드에 통지한다', async () => {
+    const h = run(loginExpired, loginExpired);
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.marked).toEqual(['a', 'b']);
+    expect(h.cleared).toEqual([]);
+    expect(h.notices).toEqual(['m1']);
+  });
+
+  it('한도·평범한 실패는 표시하지 않는다', async () => {
+    const quota = () => Object.assign(new Error('harness 종료 1'), { harnessApiError: "You've hit your session limit · resets 11pm" });
+    const h = run(quota);
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.marked).toEqual([]);
+  });
+
+  it('그 계정으로 성공하면 표식을 지운다 — 다시 로그인한 뒤 저절로 풀린다', async () => {
+    const h = run(() => null);
+    await h.scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1' }]), ctx);
+    await h.scheduler.drain();
+    expect(h.marked).toEqual([]);
+    expect(h.cleared).toEqual(['a']);
+  });
+});
+
 
 // ── 계정 관문으로 접은 멘션(2026-10-02). 실패가 아니다 — 읽음 처리·실패 통지·재시도 회계 없이 다시 띄운다.
 describe('계정 관문으로 접은 멘션', () => {

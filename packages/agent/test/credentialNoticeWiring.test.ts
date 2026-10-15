@@ -36,7 +36,10 @@ describe('자격증명·한도 통지 배선', () => {
     // 로그인 통지는 main.ts 의 noticeIfHarnessLogin 에 남아 있고(정의를 읽어야 한다),
     // 한도 통지는 스케줄러로 옮겨갔다. 둘 다 앵커로 간다는 것이 이 검사의 주장이다.
     const main = await readSrc('main.ts');
-    expect(main).toMatch(/harnessLoginNotice\([\s\S]{0,120}?\),\s*anchor,?\s*\)/);
+    // 2026-10-15: 로그인 통지도 `post` → `fail` 로 바뀌었다(한도 통지와 같은 이유). 옵션 객체가 뒤에 붙는
+    // 것만 허용하고 `anchor` 는 계속 요구한다.
+    expect(main).toMatch(/harnessLoginNotice\([\s\S]{0,120}?\),\s*anchor\s*[,)]/);
+    expect(main).toMatch(/harkroom\.fail\(channelId, harnessLoginNotice\(/);
     const src = await readSrc('mentionScheduler.ts');
     // 한도 통지는 2026-09-09 에 `post` → `fail` 로 바뀌었다(평문은 스레드 머리를 `끝남` 으로
     // 만든다 — `harkroom.ts::fail` 주석). **이 검사가 지키는 것은 그대로다**: 통지가 앵커로
