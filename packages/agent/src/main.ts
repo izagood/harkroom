@@ -48,7 +48,7 @@ import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
 import { claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, presentAccounts } from './claudeAccounts.js';
 import { createAccountAssigner } from './accountAssign.js';
-import { clearAccountAttention, isAttentionActive, markAccountNeedsAttention, readAccountAttention } from '@harkroom/shared/claudeGates';
+import { clearAccountAttention, clearAccountCredentialFailure, isAttentionActive, markAccountCredentialFailed, markAccountNeedsAttention, readAccountAttention } from '@harkroom/shared/claudeGates';
 import { syncCodexAuth } from './codexHome.js';
 import { allXdgApps, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
 import { ensurePiHome } from './piHome.js';
@@ -231,14 +231,26 @@ async function noticeIfHarnessLogin(
   err: unknown, channelId: string, anchor: string, messageId: string,
 ): Promise<void> {
   if (isCredentialFailure(err) !== 'harness-credential') return;
-  try {
-    // 하네스 이름은 정의에서 읽는다 — 지어내지 않는다(#368). 사람이 실행할 명령이
-    // 에이전트마다 다르므로(`claude-code` → `claude`) 이름이 없으면 문구가 명령을 뺀다.
-    const def = await harkroom.definition();
-    await harkroom.post(channelId, harnessLoginNotice(harnessBinaryName(def.harness)), anchor);
-  } catch (notifyErr) {
-    console.error(`  ${messageId} 로그인 통지 발화 실패(물러남은 계속):`,
-      notifyErr instanceof Error ? notifyErr.message : notifyErr);
+  // **평문이 아니라 실패로 남긴다**(2026-10-15) — 평문은 스레드 머리를 `끝남` 으로 칠하고 미해결 실패
+  // 칸에도 안 든다(`harkroom.ts::fail` 주석). 다시 로그인한 뒤 다시 부르면 되므로 retryable 이다.
+  // **한 번 더 시도한다**: 10-15 실측에서 물러나기 직전 MCP 가 끊겨(`Connection closed`) 통지가 통째로
+  // 사라졌다. 이 통지가 사람이 보는 유일한 자리라 한 번 잃으면 아무도 모른다.
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      // 하네스 이름은 정의에서 읽는다 — 지어내지 않는다(#368). 사람이 실행할 명령이
+      // 에이전트마다 다르므로(`claude-code` → `claude`) 이름이 없으면 문구가 명령을 뺀다.
+      const def = await harkroom.definition();
+      await harkroom.fail(channelId, harnessLoginNotice(harnessBinaryName(def.harness)), anchor, {
+        retryable: true,
+        what: '하네스 로그인이 풀려 답하지 못했다',
+        reason: '그 하네스로 다시 로그인한 뒤 다시 부르면 된다',
+      });
+      return;
+    } catch (notifyErr) {
+      console.error(`  ${messageId} 로그인 통지 발화 실패(${attempt}/2, 물러남은 계속):`,
+        notifyErr instanceof Error ? notifyErr.message : notifyErr);
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 1_000));
+    }
   }
 }
 
@@ -570,6 +582,11 @@ const scheduler = createMentionScheduler({
     mark: (a) => markAccountNeedsAttention(a.configDir, Date.now()),
     clear: async (a) => { await clearAccountAttention(a.configDir); },
     active: async (dir) => isAttentionActive(await readAccountAttention(dir), Date.now()),
+  },
+  // 로그인이 풀린 계정을 표시한다(설정 › Provider accounts·전역 카드, 2026-10-15).
+  accountAuth: {
+    mark: (a) => markAccountCredentialFailed(a.configDir, Date.now()),
+    clear: async (a) => { await clearAccountCredentialFailure(a.configDir); },
   },
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —

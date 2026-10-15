@@ -143,6 +143,16 @@ export interface MentionSchedulerDeps {
      */
     active?(configDir: string): Promise<boolean>;
   };
+  /**
+   * **로그인이 풀린 계정**의 표식(2026-10-15, `@harkroom/shared/claudeGates::CLAUDE_AUTH_FILE`). 이 계정의
+   * 턴이 하네스 로그인 실패(`accountFailureOf(err).kind === 'credential'`)로 끝나면 `mark`, 이 계정으로 턴이
+   * 성공하면 `clear`. 풀의 다른 계정이 이어받아 턴이 성공해도 표식은 남는다 — 그래야 사람이 풀이 줄어든
+   * 것을 안다. 배정기는 이 계정을 맨 뒤로 보낸다. **던지지 않아야 한다.** 생략하면 아무것도 안 남긴다.
+   */
+  accountAuth?: {
+    mark(account: ClaudeAccount): Promise<void>;
+    clear(account: ClaudeAccount): Promise<void>;
+  };
   runMentionTurn(deps: MentionTurnDeps, target: MentionTarget): Promise<MentionTurnResult>;
   /** 계정 두 필드까지 채운 완성 deps 를 만든다. 조립은 main 이 갖는다. */
   buildTurnDeps(args: {
@@ -486,6 +496,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           ).then(
             (result) => {
               if (account && delivered) void deps.accountAttention?.clear(account).catch(() => undefined);
+              // 이 계정으로 끝까지 돌았다 — 로그인은 살아 있다.
+              if (account) void deps.accountAuth?.clear(account).catch(() => undefined);
               return result;
             },
             (err: unknown) => {
@@ -498,6 +510,10 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
               } else if (account && delivered) {
                 // 입력창까지 간 뒤의 실패(한도·하네스 오류 등) — 그 계정의 관문은 지나 있다.
                 void deps.accountAttention?.clear(account).catch(() => undefined);
+              }
+              // 로그인이 풀렸다 — 다음 계정이 이어받아도 사람이 알 수 있게 그 계정에 표식을 남긴다.
+              if (account && accountFailureOf(err)?.kind === 'credential') {
+                void deps.accountAuth?.mark(account).catch(() => undefined);
               }
               throw err;
             },

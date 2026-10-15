@@ -6,7 +6,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CLAUDE_ATTENTION_FILE,
+  CLAUDE_AUTH_FILE,
   clearAccountAttention,
+  clearAccountCredentialFailure,
+  markAccountCredentialFailed,
+  readAccountBlocked,
+  readAccountCredentialFailure,
   isAttentionActive,
   markAccountNeedsAttention,
   markClaudeAccountGates,
@@ -105,5 +110,41 @@ describe('관문 표식 (사람이 지나야 하는 관문, 2026-10-01)', () => 
     const doc = JSON.parse(await readFile(join(d, '.claude.json'), 'utf8'));
     expect(doc).toEqual({ x: 1, projects: { '/a': { y: 2 }, '/w': { hasTrustDialogAccepted: true } } });
     expect(await markClaudeWorkspaceTrusted(d, '/w')).toBe(false);
+  });
+});
+
+describe('로그인 풀림 표식 (2026-10-15)', () => {
+  const dir = () => mkdtemp(join(tmpdir(), 'auth-'));
+
+  it('남기고 읽고 지운다 — 관문 표식과 다른 파일이다', async () => {
+    const d = await dir();
+    expect(await readAccountCredentialFailure(d)).toBeNull();
+    await markAccountCredentialFailed(d, 2_000);
+    expect(await readAccountCredentialFailure(d)).toEqual({ kind: 'credential', atMs: 2_000 });
+    expect(JSON.parse(await readFile(join(d, CLAUDE_AUTH_FILE), 'utf8'))).toEqual({ kind: 'credential', atMs: 2_000 });
+    // 관문 표식으로는 안 읽힌다 — 옛 화면이 "승인 필요"로 그리지 않고, 관문 대기 턴이 여기 묶이지 않는다.
+    expect(await readAccountAttention(d)).toBeNull();
+    await expect(stat(join(d, CLAUDE_ATTENTION_FILE))).rejects.toThrow();
+    expect(await clearAccountCredentialFailure(d)).toBe(true);
+    expect(await readAccountCredentialFailure(d)).toBeNull();
+    expect(await clearAccountCredentialFailure(d)).toBe(false);
+  });
+
+  it('깨졌거나 다른 갈래면 없는 것으로 본다', async () => {
+    const d = await dir();
+    await writeFile(join(d, CLAUDE_AUTH_FILE), '{ nope');
+    expect(await readAccountCredentialFailure(d)).toBeNull();
+    await writeFile(join(d, CLAUDE_AUTH_FILE), JSON.stringify({ kind: 'gate', atMs: 1 }));
+    expect(await readAccountCredentialFailure(d)).toBeNull();
+  });
+
+  it('배정기 읽기는 관문이 먼저, 없으면 로그인 풀림이다', async () => {
+    const d = await dir();
+    expect(await readAccountBlocked(d)).toBeNull();
+    await markAccountCredentialFailed(d, 2_000);
+    expect(await readAccountBlocked(d)).toEqual({ kind: 'credential', atMs: 2_000 });
+    await markAccountNeedsAttention(d, 1_000);
+    expect(await readAccountBlocked(d)).toEqual({ kind: 'gate', atMs: 1_000 });
+    expect(isAttentionActive(await readAccountBlocked(d), 3_000)).toBe(true);
   });
 });

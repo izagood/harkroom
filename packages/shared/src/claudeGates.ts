@@ -92,7 +92,8 @@ export async function markClaudeAccountGates(configDir: string): Promise<boolean
 export const CLAUDE_ATTENTION_FILE = '.harkroom-attention.json';
 
 export interface ClaudeAccountAttention {
-  kind: 'gate';
+  /** `gate` = 관문 표식(`CLAUDE_ATTENTION_FILE`), `credential` = 로그인 풀림 표식(`CLAUDE_AUTH_FILE`). */
+  kind: 'gate' | 'credential';
   atMs: number;
 }
 
@@ -139,6 +140,63 @@ export async function clearAccountAttention(configDir: string): Promise<boolean>
   const had = await stat(path).then(() => true, () => false);
   if (had) await rm(path, { force: true });
   return had;
+}
+
+// ── 로그인이 풀린 계정 표식(2026-10-15) ─────────────────────────────────────────
+//
+// 풀의 한 계정만 로그인이 풀리면 러너는 다음 계정으로 갈아타고 턴은 성공한다 — 그 사실은 러너 로그
+// 한 줄(`계정 전환: … (이유: credential)`)에만 남아, 사람은 풀이 줄어든 것을 모른다(10-15 실측: 한 러너에서
+// 42회). 그래서 그 계정 디렉터리에 표식을 남긴다. 화면(operator → 설정·전역 카드)이 이것을 읽는다.
+//
+// **관문 표식과 파일을 나눈 이유**: 관문 표식은 "승인 필요 · [터미널 열기]"로 그려지고, 관문 때문에 접은
+// 턴은 그 표식이 지워질 때까지 다시 뜨지 않는다(`accountGateCleared`). 로그인 풀림을 같은 파일에 쓰면
+// 옛 화면이 그것을 관문으로 그리고, 관문 대기 턴이 로그인 표식에 묶인다. 규율(원자적 쓰기·원문 없음·
+// 시각만)은 관문 표식과 같다.
+// - 지우는 곳: 그 계정으로 턴이 성공했을 때(러너), 다시 로그인했을 때(operator).
+
+/** 계정 config 디렉터리 안의 로그인 풀림 표식 파일. */
+export const CLAUDE_AUTH_FILE = '.harkroom-auth.json';
+
+export async function markAccountCredentialFailed(configDir: string, atMs: number): Promise<void> {
+  const path = join(configDir, CLAUDE_AUTH_FILE);
+  const tmp = `${path}.tmp-${randomUUID()}`;
+  const body: ClaudeAccountAttention = { kind: 'credential', atMs };
+  await writeFile(tmp, JSON.stringify(body), { mode: 0o600 });
+  await rename(tmp, path);
+}
+
+/** 로그인 풀림 표식. 없거나 깨졌으면 `null`. 서 있는지는 `isAttentionActive` 로 잰다. */
+export async function readAccountCredentialFailure(configDir: string): Promise<ClaudeAccountAttention | null> {
+  let text: string;
+  try {
+    text = await readFile(join(configDir, CLAUDE_AUTH_FILE), 'utf8');
+  } catch {
+    return null;
+  }
+  try {
+    const v = JSON.parse(text) as { kind?: unknown; atMs?: unknown };
+    return v.kind === 'credential' && typeof v.atMs === 'number' && Number.isFinite(v.atMs)
+      ? { kind: 'credential', atMs: v.atMs }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 로그인 풀림 표식을 지운다. 없으면 아무 일도 없다. 지웠으면 `true`. */
+export async function clearAccountCredentialFailure(configDir: string): Promise<boolean> {
+  const path = join(configDir, CLAUDE_AUTH_FILE);
+  const had = await stat(path).then(() => true, () => false);
+  if (had) await rm(path, { force: true });
+  return had;
+}
+
+/**
+ * 배정기가 맨 뒤로 보낼 표식 — 관문이 먼저, 없으면 로그인 풀림. 둘 다 "이 계정으로 먼저 가면 헛돈다"는
+ * 같은 뜻이라 배정에서는 한 축이다(`accountAssign.ts`).
+ */
+export async function readAccountBlocked(configDir: string): Promise<ClaudeAccountAttention | null> {
+  return (await readAccountAttention(configDir)) ?? (await readAccountCredentialFailure(configDir));
 }
 
 /**
