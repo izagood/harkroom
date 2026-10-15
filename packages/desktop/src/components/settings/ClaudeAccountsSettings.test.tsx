@@ -9,7 +9,7 @@
  * 파괴적 연산에 확인을 두는지, 러너 반영을 안내하는지, 표면이 없을 때 정직한지.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { ClaudeAccountsSettings } from './ClaudeAccountsSettings';
 import { usePrefsStore } from '../../state/prefsStore';
@@ -645,6 +645,9 @@ describe('사람이 지나야 하는 관문 (2026-10-01)', () => {
     render(<ClaudeAccountsSettings />);
     fireEvent.click(await screen.findByTestId('claude-account-attention-open'));
     await screen.findByTestId('claude-account-terminal-note');
+    // 포커스 listener 는 안내가 선 렌더의 useEffect 에서 붙는다 — 그 effect(와 아직 도는 첫 조회)까지 흘린 뒤 센다.
+    // 흘리지 않으면 느린 CI 에서 포커스가 listener 없이 지나가거나(1→2 실패) 늦은 조회가 끼어 하나 더 센다(3→4 실패, 10-16 #1394).
+    await act(async () => {});
     const lists = () => calls.filter((c) => c.cmd === 'claude_accounts_list').length;
     // 아직 고르지 않았다 — 안내는 그대로, 포커스마다 다시 읽는다.
     let before = lists();
