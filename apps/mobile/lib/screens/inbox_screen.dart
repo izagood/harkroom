@@ -618,6 +618,7 @@ Future<void> runBoardAction(BuildContext context, List<BoardGroup> groups, Board
   final app = context.app;
   final t = context.t;
   final messenger = ScaffoldMessenger.of(context);
+  final persist = actionToastPersists(context); // context 는 await 앞에서만 읽는다
   final gen = app.sessionGeneration;
   final n = _workCount(groups);
   final hasDecision = groups.any((g) => [g.card, ...g.similar].any((c) => c.kind == BoardKind.decision));
@@ -660,8 +661,7 @@ Future<void> runBoardAction(BuildContext context, List<BoardGroup> groups, Board
           unawaited(app.setBoardState(groups, null).catchError((Object _) {}));
         },
       ),
-      // 행동이 있어도 시간이 되면 내린다 — Flutter 기본은 행동 단 토스트를 붙잡아 둔다([showFailureToast]).
-      persist: false,
+      persist: persist,
     ));
 }
 

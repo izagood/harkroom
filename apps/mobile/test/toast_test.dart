@@ -70,13 +70,32 @@ void main() {
     expect(find.text('못 보냈다'), findsNothing);
   });
 
-  test('행동 단 토스트는 전부 persist: false 를 준다', () {
+  testWidgets('VoiceOver 같은 접근성 탐색 중에는 시간이 지나도 붙잡아 둔다', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      builder: (c, child) => MediaQuery(data: MediaQuery.of(c).copyWith(accessibleNavigation: true), child: child!),
+      home: I18n(
+        strings: stringsFor('ko'),
+        child: Scaffold(body: Builder(builder: (c) => TextButton(
+              onPressed: () => showFailureToast(c, '못 보냈다', retry: () {}),
+              child: const Text('go'),
+            ))),
+      ),
+    ));
+    await tester.tap(find.text('go'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+    expect(find.text('못 보냈다'), findsOneWidget);
+  });
+
+  test('행동 단 토스트는 전부 actionToastPersists 로 persist 를 정한다(파일마다 행동 수 = 부른 수)', () {
     final offenders = <String>[];
     for (final f in Directory('lib').listSync(recursive: true).whereType<File>().where((f) => f.path.endsWith('.dart'))) {
-      final src = f.readAsStringSync();
+      // 주석 줄은 세지 않는다 — 설명에 적힌 낱말이 수를 맞춰 주면 빠뜨린 토스트를 못 잡는다(security #1392 n1).
+      final src = f.readAsLinesSync().where((l) => !l.trimLeft().startsWith('//')).join('\n');
       final actions = 'SnackBarAction('.allMatches(src).length;
-      final persists = 'persist: false'.allMatches(src).length;
-      if (actions > persists) offenders.add('${f.path} (행동 $actions · persist:false $persists)');
+      final persists = RegExp(r'(?<!bool )actionToastPersists\(').allMatches(src).length; // 정의 줄은 빼고 부른 곳만
+      if (actions != persists) offenders.add('${f.path} (행동 $actions · persist $persists)');
     }
     expect(offenders, isEmpty);
   });
