@@ -14,7 +14,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
 import type { FailOpts, Me } from './harkroom.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
@@ -326,6 +326,15 @@ export interface MentionTurnDeps {
    * 사람이 본 "느린 반응"의 가장 큰 고정 비용이었다(task_manager 실측 64s).
    */
   finishedReclaimMs?: number;
+  /**
+   * **끝낸 턴에 하위 에이전트가 남아 있을 때 기다리는 상한**(기본 `turnTimeoutMs`, 2026-10-16).
+   * claude TUI 는 백그라운드 하위 에이전트가 끝나면 그 결과(`<task-notification>`)를 스스로 다음 차례로
+   * 이어 받는다(PTY 프로브 실측, 2.1.301). 그러니 `end_turn` 했어도 `pending > 0` 이면 거두지 않고 그 차례를
+   * 기다린다. 전에는 60초(`orphanMs`) 뒤 SIGTERM 으로 하위 에이전트까지 같이 죽였다 — 10-16 #rcms 에서
+   * rcms·designer 의 하위 에이전트 4개가 그렇게 죽었고, 스레드에는 ✅ 만 남았다.
+   * 상한은 이 턴에서 처음 `pending > 0` 을 본 때부터 잰다. 넘으면 거두고 스레드에 끊겼다고 알린다.
+   */
+  backgroundWaitMs?: number;
   /**
    * 발화를 확인하는 주기(기본 3초, 2026-09-08). TUI 는 답하고도 안 죽으므로 러너가
    * "답했는가"를 직접 봐야 하고, 그 사실은 스레드에만 있다 — 에이전트는 자기 PAT 로
@@ -1394,6 +1403,10 @@ export async function runMentionTurn(
      * 0 일 때만 유예 없이 거둔다 — 10-01 사고(서브에이전트를 띄운 턴을 60초 뒤 죽임)의 재발 방지가 이 값이다.
      */
     pending: number | null;
+    /** 이 턴에서 처음으로 `finished && pending > 0` 을 본 시각(ms). 하위 에이전트 대기 상한의 기준점. */
+    backgroundSinceMs: number | null;
+    /** 하위 에이전트 대기 상한이 차서 거뒀다 — 그때 남아 있던 하위 에이전트 수. 스레드에 끊겼다고 알린다. */
+    backgroundCut: number | null;
     /** 지금 선 회수 시계의 유예(ms). 더 짧은 유예가 가능해지면 시계를 다시 세운다. */
     reclaimGraceMs: number;
     /** 마지막으로 읽은 기록 꼬리. `null` 은 판정할 수 없다는 뜻이다(읽지 못하는 하네스·파일 없음). */
@@ -1426,7 +1439,7 @@ export async function runMentionTurn(
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     apiError: null, canceledBy: null, fencedOut: false, stalled: false, awaitingHuman: false, gateNoticed: false,
-    lastLifeMs: 0, lastDataAtMs: 0, screenTail: '', unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, reclaimGraceMs: 0, tail: null,
+    lastLifeMs: 0, lastDataAtMs: 0, screenTail: '', unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, backgroundSinceMs: null, backgroundCut: null, reclaimGraceMs: 0, tail: null,
     threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, macSeen: new Set(), macNotices: 0, mcpRejectedSeen: new Set(),
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
     gateHeld: null, gateRequeue: null, cancelGateWatch: null,
@@ -1468,6 +1481,29 @@ export async function runMentionTurn(
     // 사람이 attach 할 틈, 그리고 `end_turn` 뒤에도 돌 수 있는 자식(서브에이전트·백그라운드 작업)의
     // 보호. 앞은 `viewers > 0` 이 따로 지키고, 뒤는 기록의 `pending` 이 말해 준다. 그래서 자식이
     // 0 으로 **확인된** 턴만 바로 거두고, 남았거나 모르면(`null`) 지금처럼 유예한다.
+    //
+    // **하위 에이전트가 남았으면 거두지 않고 기다린다**(2026-10-16, `backgroundWaitMs` 주석). 하네스가 결과를
+    // 받아 다음 차례를 시작하면 꼬리가 `working` 으로 바뀌어 위의 "안 끝났다" 가지로 간다. 상한이 차면 거두고
+    // 그 사실을 남긴다(`backgroundCut`) — 조용히 죽이던 것이 이 사고의 절반이었다.
+    if (end.finished && end.pending !== null && end.pending > 0) {
+      const now = deps.now?.() ?? Date.now();
+      if (end.backgroundSinceMs === null) {
+        end.backgroundSinceMs = now;
+        console.error(`[mentionTurn] ${key}: 차례는 끝났지만 하위 에이전트 ${end.pending}개가 남았다 — 거두지 않고 기다린다`);
+      }
+      const limit = deps.backgroundWaitMs ?? deps.turnTimeoutMs;
+      if (now - end.backgroundSinceMs < limit) {
+        end.cancelReclaim?.();
+        end.cancelReclaim = null;
+        return;
+      }
+      console.error(`[mentionTurn] ${key}: 하위 에이전트 ${end.pending}개를 ${limit}ms 기다렸다 — 거둔다`);
+      end.backgroundCut = end.pending;
+      end.cancelReclaim?.();
+      end.cancelReclaim = null;
+      reclaim();
+      return;
+    }
     const grace = end.finished && end.pending === 0 ? (deps.finishedReclaimMs ?? 0) : (deps.orphanMs ?? 60_000);
     if (end.cancelReclaim) {
       // 이미 유예 중 — 다시 세우면 유예가 늘어난다. 더 **짧은** 유예가 가능해졌을 때만 바꿔 세운다.
@@ -2103,6 +2139,9 @@ export async function runMentionTurn(
         if (usesTui) {
           const onSilence = (): void => {
             if (end.exited || end.spoke || end.viewers > 0) return;
+            // 차례를 끝내고 하위 에이전트를 기다리는 중이면 그 상한(`backgroundWaitMs`)이 정한다 — 말이 없는 것은
+            // 결과가 아직 안 와서다. 여기서 죽이면 10-16 사고(하위 에이전트와 함께 죽음)가 30분 뒤로 옮겨 갈 뿐이다.
+            if (end.backgroundSinceMs !== null && end.finished && (end.pending ?? 0) > 0) return;
             // **발화를 확인할 수 없으면 한 번 미룬다**(2026-09-30, `threadUnreadable` 주석). 그 사이
             // 하네스가 `end_turn` 하면 기록 꼬리가 끝을 정한다(로컬이라 링크와 무관하다).
             if (end.threadUnreadable && !end.silenceDeferred) {
@@ -2454,7 +2493,18 @@ export async function runMentionTurn(
     //
     // 커서(lastFedSeq)는 **위에서 이미 전진**했다(발화가 있었든 없었든 성공한 턴은 전진한다) —
     // 여기서 되돌리지 않는다. 되돌리면 깨어난 턴이 옛 멘션을 다시 먹는다.
-    if (postCount === 0 && !hasOwnWakeSince(after, deps.me.id, turnStartSeq, turnId)) {
+    if (end.backgroundCut !== null) {
+      // **하위 에이전트를 기다리다 상한이 차서 거뒀다**(2026-10-16). 답을 했든 안 했든 알린다 — 일이 중간에
+      // 끊겼다는 사실은 ✅ 나 침묵 통지로는 안 보였다(10-16 #rcms: ✅ 만 남고 40분 동안 아무 신호가 없었다).
+      const lastSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
+        configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+      }).catch(() => null);
+      const body = backgroundCutNotice({
+        count: end.backgroundCut, waitedMs: deps.backgroundWaitMs ?? deps.turnTimeoutMs, lastSaid,
+        pat: deps.runnerSecret, secrets: await tailSecrets(),
+      });
+      await deps.harkroom.post(channelId, body.slice(0, BODY_LIMIT), anchor);
+    } else if (postCount === 0 && !hasOwnWakeSince(after, deps.me.id, turnStartSeq, turnId)) {
       // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전
       // 거부를 사실로 남기던 자리를 이 경로가 대신한다: 침묵을 침묵으로 남기지 않는다.
