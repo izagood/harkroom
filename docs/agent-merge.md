@@ -24,7 +24,7 @@
    오퍼레이터에 묻는다. 토큰도 임대도 래퍼 프로세스에는 없다. `--approval` 같은 승인 id 는 받지 않는다 — 승인 근거는
    서버가 그 턴을 띄운 메시지로 판정한다.
 4. 오퍼레이터가 ① 인자 모양 ② 턴 임대 ③ 서버 `POST /agent/merge-checks`(grant 정확 일치 또는 조직 grant `owner/*`, 그 턴을 띄운 메시지가
-   사람 글인지) ④ `gh pr view`(OPEN·draft 아님·head 일치·CLEAN·체크 초록) ⑤ `gh pr merge --squash
+   사람 글인지) ④ `gh pr view`(OPEN·draft 아님·head 일치·CLEAN·체크 초록 — `UNSTABLE` 이면 필수 체크만, 아래) ⑤ `gh pr merge --squash
    --match-head-commit`(대상 브랜치가 merge queue 를 쓰면 대신 큐에 넣는다 — 아래) ⑥ `POST /agent/merge-results` 순으로 한다.
    서버에 닿지 않으면 머지하지 않는다.
 5. 서버가 그 턴의 스레드에 시스템 줄을 남긴다(`🔀 owner/repo#N 머지됨 · sha · 권한: handle (래퍼 보고)`). "래퍼
@@ -70,6 +70,23 @@
   실어 카드를 세워라, `to`·`mirrorOf` 는 싣지 마라"를 지시한다.
 
 ## merge queue
+
+### `UNSTABLE` — 필수가 아닌 체크가 실패한 PR
+
+GitHub 의 `mergeStateStatus: UNSTABLE` 은 「초록이 아닌 체크가 있지만 필수 체크는 통과해 머지할 수 있다」는 뜻이다. 래퍼의
+「CI 초록」 규칙은 이때 **필수 체크**에 건다. ④ 에서 `UNSTABLE` 이면 GraphQL 로 head 커밋의 체크마다
+`isRequired(pullRequestNumber:)`(브랜치 보호와 ruleset 의 required status checks 를 둘 다 반영한다)를 읽는다(읽기 전용).
+
+- 필수 체크가 하나 이상 있고 **전부 초록**이면 통과한다. 초록이 아닌 비필수 체크 이름은 결과 JSON `ignoredChecks` 에 싣는다.
+  이름별 판정(같은 이름에 빨강이 하나라도 있으면 빨강)은 그대로다.
+- **필수 체크가 하나도 없는 저장소는 통과시키지 않는다** — 그러면 Test 가 빨개도 머지되는 길이 된다. 지금처럼 모든 체크가
+  초록이어야 하고, `ci_not_green` 문구에 실패한 이름과 「꼭 통과해야 할 체크를 required 로 정하라」를 싣는다. 실패해도 되는
+  체크(봇 리뷰 등)가 있는 저장소는 Lint·Test 같은 체크를 브랜치 보호나 ruleset 의 required status checks 로 정하면 된다.
+- 필수 체크가 초록이 아니면 `ci_not_green`(`required checks not green: …`). 조회가 실패하거나 모양이 틀리면 원래대로
+  `not_mergeable`(fail-closed), 조회한 커밋이 `--head` 와 다르면 `head_moved`, 체크가 100개를 넘으면 판정하지 않는다.
+- `BLOCKED`·`DIRTY` 등 다른 상태는 지금처럼 `not_mergeable` 이고, 문구에 초록이 아닌 체크 이름을 더한다.
+- 실측(10-16, 시험 저장소, 래퍼 본체 + 모의 서버): 필수 체크 없음 + 실패 체크 1개 → `ci_not_green`(문구에 이름), ruleset 으로
+  다른 체크를 required 로 정한 뒤 → 큐에 넣음·`ignoredChecks: ["review"]`.
 
 대상 브랜치가 merge queue 를 쓰면 GitHub 은 `gh pr merge --squash` 를 거절한다(머지 전략은 큐가 정하고, auto-merge 가 꺼진
 저장소에서는 `--auto` 도 안 된다). 래퍼는 ⑤ 에서 GraphQL `pullRequest.isMergeQueueEnabled` 를 읽고, 켜져 있으면

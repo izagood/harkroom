@@ -181,17 +181,80 @@ export function refusalOf(pr: PrView, headSha: string, relaxChecks: boolean): { 
   if (pr.isDraft) return { code: 'draft', message: 'PR is a draft' };
   if (pr.headRefOid !== headSha) return { code: 'head_moved', message: `PR head is ${pr.headRefOid ?? '?'}, not ${headSha}` };
   if (relaxChecks) return null;
-  if (pr.mergeStateStatus !== 'CLEAN') return { code: 'not_mergeable', message: `mergeStateStatus is ${pr.mergeStateStatus ?? 'unknown'} (need CLEAN)` };
-  const checks = pr.statusCheckRollup ?? [];
-  const byName = new Map<string, { green: boolean; red: boolean }>();
+  const byName = checksByName(pr.statusCheckRollup ?? []);
+  const red = notGreen(byName);
+  if (pr.mergeStateStatus !== 'CLEAN') {
+    return { code: 'not_mergeable', message: `mergeStateStatus is ${pr.mergeStateStatus ?? 'unknown'} (need CLEAN)${red.length ? ` — not green: ${namesOf(red)}` : ''}` };
+  }
+  if (!byName.size || red.length) return { code: 'ci_not_green', message: byName.size ? `not green: ${namesOf(red)}` : 'no checks reported' };
+  return null;
+}
+
+type CheckItem = NonNullable<PrView['statusCheckRollup']>[number] & { isRequired?: boolean };
+type ByName = Map<string, { green: boolean; red: boolean; required: boolean }>;
+
+/** 이름별로 묶는다(C1) — 빨강이 하나라도 있으면 빨강, 초록이 하나는 있어야 초록. 이름이 하나라도 required 면 required. */
+function checksByName(checks: CheckItem[]): ByName {
+  const byName: ByName = new Map();
   checks.forEach((c, i) => {
     const k = c.name ?? c.context ?? `#${i}`;
-    const cur = byName.get(k) ?? { green: false, red: false };
-    byName.set(k, { green: cur.green || checkGreen(c), red: cur.red || checkRed(c) });
+    const cur = byName.get(k) ?? { green: false, red: false, required: false };
+    byName.set(k, { green: cur.green || checkGreen(c), red: cur.red || checkRed(c), required: cur.required || c.isRequired === true });
   });
-  const red = [...byName.entries()].filter(([, v]) => v.red || !v.green).map(([k]) => k);
-  if (!byName.size || red.length) return { code: 'ci_not_green', message: byName.size ? `not green: ${red.join(', ').slice(0, 200)}` : 'no checks reported' };
-  return null;
+  return byName;
+}
+const notGreen = (byName: ByName, only?: (v: { required: boolean }) => boolean): string[] =>
+  [...byName.entries()].filter(([, v]) => (!only || only(v)) && (v.red || !v.green)).map(([k]) => k);
+const namesOf = (names: string[]): string => names.join(', ').slice(0, 200);
+/** 결과 JSON 의 `ignoredChecks` — UNSTABLE 로 통과했을 때만 싣는다(이름은 80자·20개까지). */
+const ignoredOf = (ignored: string[]): { ignoredChecks?: string[] } => (ignored.length ? { ignoredChecks: ignored.slice(0, 20).map((n) => n.slice(0, 80)) } : {});
+
+/**
+ * 필수 체크 조회(GraphQL, 읽기 전용) — `isRequired(pullRequestNumber:)` 는 브랜치 보호와 ruleset 의 required status checks 를
+ * 둘 다 반영한 GitHub 의 판정이다. head 커밋의 oid 도 같이 읽어 사전 확인과 다른 커밋을 보지 않게 한다.
+ */
+export const REQUIRED_QUERY = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){commits(last:1){nodes{commit{oid statusCheckRollup{contexts(first:100){pageInfo{hasNextPage} nodes{__typename ... on CheckRun{name status conclusion isRequired(pullRequestNumber:$number)} ... on StatusContext{context state isRequired(pullRequestNumber:$number)}}}}}}}}}}';
+
+export interface RequiredChecks { headOid: string; truncated: boolean; checks: CheckItem[] }
+
+/** `REQUIRED_QUERY` 의 답. 모양이 틀리면 null(→ 머지하지 않는다). */
+export function parseRequiredChecks(stdout: string): RequiredChecks | null {
+  try {
+    const commit = (JSON.parse(stdout) as { data?: { repository?: { pullRequest?: { commits?: { nodes?: { commit?: Record<string, unknown> }[] } } | null } | null } })
+      .data?.repository?.pullRequest?.commits?.nodes?.[0]?.commit;
+    if (!commit || typeof commit.oid !== 'string') return null;
+    const ctx = (commit.statusCheckRollup as { contexts?: { pageInfo?: { hasNextPage?: boolean }; nodes?: unknown[] } } | null)?.contexts;
+    const nodes = Array.isArray(ctx?.nodes) ? ctx.nodes : [];
+    const checks: CheckItem[] = nodes.filter((n): n is Record<string, unknown> => typeof n === 'object' && n !== null).map((n) => ({
+      ...(typeof n.name === 'string' ? { name: n.name } : {}),
+      ...(typeof n.context === 'string' ? { context: n.context } : {}),
+      ...(typeof n.status === 'string' ? { status: n.status } : {}),
+      ...(typeof n.conclusion === 'string' ? { conclusion: n.conclusion } : {}),
+      ...(typeof n.state === 'string' ? { state: n.state } : {}),
+      isRequired: n.isRequired === true,
+    }));
+    return { headOid: commit.oid, truncated: ctx?.pageInfo?.hasNextPage === true, checks };
+  } catch { return null; }
+}
+
+/**
+ * `UNSTABLE`(필수가 아닌 체크가 실패·진행 중이지만 GitHub 은 머지를 허용) 판정. 「CI 초록」 규칙은 **필수 체크**에 건다:
+ * 필수 체크가 하나 이상 있고 그 전부가 초록이면 통과하고, 초록이 아닌 비필수 체크 이름을 `ignored` 로 돌려준다.
+ * 필수 체크가 하나도 없는 저장소는 통과시키지 않는다 — 그러면 Test 가 빨개도 머지되는 길이 된다. 그 저장소는 지금처럼
+ * 전부 초록이어야 하고, 문구가 「필수 체크를 정하라」를 알려 준다.
+ */
+export function unstableVerdict(rc: RequiredChecks, headSha: string): { ignored: string[] } | { code: string; message: string } {
+  if (rc.headOid !== headSha) return { code: 'head_moved', message: `PR head is ${rc.headOid}, not ${headSha}` };
+  if (rc.truncated) return { code: 'not_mergeable', message: 'mergeStateStatus is UNSTABLE and the PR has more than 100 checks — not judged (need CLEAN)' };
+  const byName = checksByName(rc.checks);
+  const required = [...byName.values()].filter((v) => v.required).length;
+  const red = notGreen(byName);
+  if (!required) {
+    return { code: 'ci_not_green', message: `not green: ${namesOf(red) || '(none reported)'} — the base branch defines no required status checks, so every check must pass; make the checks that must pass required (branch protection or a ruleset) to let other failures through` };
+  }
+  const requiredRed = notGreen(byName, (v) => v.required);
+  if (requiredRed.length) return { code: 'ci_not_green', message: `required checks not green: ${namesOf(requiredRed)}` };
+  return { ignored: red };
 }
 
 /** merge queue 를 알아보는 GraphQL — 읽기 전용. 대상은 변수로만 받는다(문자열에 끼워 넣지 않는다). */
@@ -305,9 +368,24 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       if (res && res.type === 'http.response' && res.status === 200) deps.log(`merge: ${repo}#${number} 이 이미 ${state} — 기다리던 머지 카드를 닫았다 agent=${agentId}`);
     };
 
+    /**
+     * 관문 판정. `UNSTABLE` 이면 필수 체크를 따로 읽어 다시 잰다 — 필수가 전부 초록이면 통과하고 초록 아닌 비필수 이름을
+     * `ignored` 로 싣는다. 필수 조회가 안 되면 원래 거절 그대로다(fail-closed).
+     */
+    const judge = async (pr: PrView, env: Record<string, string>, relaxChecks: boolean): Promise<{ why: { code: string; message: string } | null; ignored: string[] }> => {
+      const why = refusalOf(pr, headSha, relaxChecks);
+      if (why?.code !== 'not_mergeable' || pr.mergeStateStatus !== 'UNSTABLE') return { why, ignored: [] };
+      const [owner, name] = repo.split('/') as [string, string];
+      const r = await gh(['api', 'graphql', '-f', `query=${REQUIRED_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`], env);
+      const rc = r.code === 0 ? parseRequiredChecks(r.stdout) : null;
+      if (!rc) return { why: { code: why.code, message: `${why.message} — could not read which checks are required` }, ignored: [] };
+      const v = unstableVerdict(rc, headSha);
+      return 'code' in v ? { why: v, ignored: [] } : { why: null, ignored: v.ignored };
+    };
+
     const pending = await openApprovalFor(agentId, lease, repo, number, headSha);
     if (pending === 'unavailable') return fail('unavailable', 'the server could not be reached — merge refused (fail-closed)');
-    let approvedTok: { token: string; login: string; approvalId: string; prHead?: string } | null = null;
+    let approvedTok: { token: string; login: string; approvalId: string; prHead?: string; ignored: string[] } | null = null;
     if (pending) {
       const tok = await tokenForLogin(pending.ghUser, 'chosen in the one-time approval');
       if (!tok.ok) return fail(tok.code, `${tok.message} — the one-time approval was not used`);
@@ -320,10 +398,10 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
         const q = await queueInfo(repo, number, ghEnv(deps.home, tok.token));
         if (q?.inQueue) return alreadyQueued(repo, number, headSha, q.entry, pre.pr.headRefOid, ' (the one-time approval was not used)');
       }
-      const why = refusalOf(pre.pr, headSha, pending.relaxChecks);
+      const { why, ignored } = await judge(pre.pr, ghEnv(deps.home, tok.token), pending.relaxChecks);
       if (why?.code === 'not_open') await reportClosed(pre.pr.state);
       if (why) return fail(why.code, `${why.message} — the one-time approval was not used`, { pr: { state: pre.pr.state, headRefOid: pre.pr.headRefOid, mergeStateStatus: pre.pr.mergeStateStatus } });
-      approvedTok = { ...tok, approvalId: pending.id, prHead: pre.pr.headRefOid };
+      approvedTok = { ...tok, approvalId: pending.id, prHead: pre.pr.headRefOid, ignored };
     }
 
     // ③ 서버 판정. 닿지 않으면 머지하지 않는다(fail-closed).
@@ -382,7 +460,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
         await report('failed', null, 'approval_mismatch: the approval used by the server is not the one pre-checked');
         return fail('approval_mismatch', 'the server used a one-time approval this wrapper did not pre-check — nothing was merged; ask the owner to approve again');
       }
-      return mergeNow(approvedTok, true, null, approvedTok.prHead);
+      return mergeNow(approvedTok, true, null, approvedTok.prHead, approvedTok.ignored);
     }
 
     // ④ 머지 전 확인. gh 는 절대 경로·빈 env 로만 부른다. 토큰이 없으면 여기서 끝 — 활성 계정으로 넘어가지 않는다(P1).
@@ -402,7 +480,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     // 이 길은 아무것도 하지 않으므로 관문을 돌아가는 길이 아니다.
     const queue = pr.state === 'OPEN' ? await queueInfo(repo, number, env) : null;
     if (queue?.inQueue) return alreadyQueued(repo, number, headSha, queue.entry, pr.headRefOid);
-    const why = refusalOf(pr, headSha, false);
+    const { why, ignored } = await judge(pr, env, false);
     // 이미 MERGED·CLOSED 면 「머지 실패」 줄을 쓰지 않는다 — merge queue 의 확인 길(같은 명령 재호출)이 큐가 머지한 PR 에
     // 「⛔ 머지 실패」를 남기게 된다(10-16 mq-sandbox 실측). 기다리던 카드만 닫고 not_open 으로 끝낸다.
     if (why?.code === 'not_open') {
@@ -410,19 +488,19 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       return fail(why.code, why.message, { pr: { state: pr.state, headRefOid: pr.headRefOid, mergeStateStatus: pr.mergeStateStatus } });
     }
     if (why) return refuse(why.code, why.message);
-    return mergeNow(tok, false, queue, pr.headRefOid);
+    return mergeNow(tok, false, queue, pr.headRefOid, ignored);
 
     /**
      * ⑤ squash 로만, head 를 못박고. `--admin` 은 문법에 없다. 대상 브랜치가 merge queue 를 쓰면 대신 큐에 넣는다(요구 1).
      * 큐 정보를 읽지 못하면 지금처럼 squash 를 시도한다 — 큐 브랜치면 GitHub 이 거절하고(`merge_failed`), 아무것도 머지되지 않는다.
      */
-    async function mergeNow(t: { token: string; login: string }, viaApproval: boolean, known: QueueInfo | null, prHead: string | undefined): Promise<{ ok: boolean; value: unknown }> {
+    async function mergeNow(t: { token: string; login: string }, viaApproval: boolean, known: QueueInfo | null, prHead: string | undefined, ignored: string[]): Promise<{ ok: boolean; value: unknown }> {
       const menv = ghEnv(deps.home, t.token);
       // 여기까지 왔으면 1회 승인은 이미 소모됐다 — 경합으로 「이미 큐」가 되면 그 사실을 note 에 남긴다(security n3).
       const usedNote = viaApproval ? ' (the one-time approval was used)' : '';
       const q = known ?? await queueInfo(repo, number, menv);
       if (q?.inQueue) return alreadyQueued(repo, number, headSha, q.entry, prHead, usedNote);
-      if (q?.enabled) return enqueueNow(t, viaApproval, q, menv, prHead, usedNote);
+      if (q?.enabled) return enqueueNow(t, viaApproval, q, menv, prHead, usedNote, ignored);
       const merge = await gh(['pr', 'merge', String(number), '-R', repo, '--squash', '--match-head-commit', headSha], menv);
       if (merge.code !== 0) {
         const err = merge.stderr.trim().slice(0, 300);
@@ -435,12 +513,12 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       const after = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'mergeCommit'], menv);
       try { const oid = (JSON.parse(after.stdout) as PrView).mergeCommit?.oid; if (oid && SHA_RE.test(oid)) mergeSha = oid; } catch { /* 없어도 된다 */ }
       await report('merged', mergeSha, null);
-      deps.log(`merge: ${repo}#${number} 머지됨 ${mergeSha ?? '(sha 모름)'} agent=${agentId}${viaApproval ? ' (1회 승인)' : ''}`);
-      return { ok: true, value: { merged: true, queued: false, repo, number, headSha, mergeSha, grantedBy: granted.grantedBy ?? null, viaApproval, ghUser: t.login, note: 'reported to the thread as a system line' } };
+      deps.log(`merge: ${repo}#${number} 머지됨 ${mergeSha ?? '(sha 모름)'} agent=${agentId}${viaApproval ? ' (1회 승인)' : ''}${ignored.length ? ` 비필수 체크 무시: ${namesOf(ignored)}` : ''}`);
+      return { ok: true, value: { merged: true, queued: false, repo, number, headSha, mergeSha, grantedBy: granted.grantedBy ?? null, viaApproval, ghUser: t.login, ...ignoredOf(ignored), note: 'reported to the thread as a system line' } };
     }
 
     /** ⑤′ merge queue — 큐에 넣고 끝낸다. 큐가 머지할 때까지 기다리지 않는다(요구 4). */
-    async function enqueueNow(t: { token: string; login: string }, viaApproval: boolean, q: QueueInfo, menv: Record<string, string>, prHead: string | undefined, usedNote: string): Promise<{ ok: boolean; value: unknown }> {
+    async function enqueueNow(t: { token: string; login: string }, viaApproval: boolean, q: QueueInfo, menv: Record<string, string>, prHead: string | undefined, usedNote: string, ignored: string[]): Promise<{ ok: boolean; value: unknown }> {
       const r = await gh(['api', 'graphql', '-f', `query=${ENQUEUE_MUTATION}`, '-f', `id=${q.id}`, '-f', `head=${headSha}`], menv);
       let entry: QueueEntry | null = null;
       let gqlError: string | null = null;
@@ -465,11 +543,11 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
         return fail('enqueue_failed', `enqueuePullRequest failed: ${err}${used}`);
       }
       await report('queued', null, null);
-      deps.log(`merge: ${repo}#${number} 머지 큐에 넣음 위치=${entry?.position ?? '?'} agent=${agentId}${viaApproval ? ' (1회 승인)' : ''}`);
+      deps.log(`merge: ${repo}#${number} 머지 큐에 넣음 위치=${entry?.position ?? '?'} agent=${agentId}${viaApproval ? ' (1회 승인)' : ''}${ignored.length ? ` 비필수 체크 무시: ${namesOf(ignored)}` : ''}`);
       return {
         ok: true, value: {
           merged: false, queued: true, alreadyQueued: false, repo, number, headSha, queue: entry,
-          grantedBy: granted.grantedBy ?? null, viaApproval, ghUser: t.login,
+          grantedBy: granted.grantedBy ?? null, viaApproval, ghUser: t.login, ...ignoredOf(ignored),
           note: 'added to the merge queue and reported to the thread as a system line — the queue merges it later. Call the same command again to check: already_queued while it waits, not_open with pr.state MERGED once merged.',
         },
       };

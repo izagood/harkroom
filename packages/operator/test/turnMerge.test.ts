@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
-import { createTurnMerge, ghEnv, isAlreadyQueuedError, parseMergeArgs, parseQueueInfo, ENQUEUE_MUTATION, QUEUE_QUERY, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
+import { createTurnMerge, ghEnv, isAlreadyQueuedError, parseMergeArgs, parseQueueInfo, parseRequiredChecks, unstableVerdict, ENQUEUE_MUTATION, QUEUE_QUERY, REQUIRED_QUERY, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
 import { pickMergeGhUser } from '../src/localMerge.js';
 
 // 에이전트 머지 래퍼(PR 2/3) — 오퍼레이터 쪽 판정·gh 호출. 설계·security F3 는 스레드 3deac356.
@@ -69,6 +69,8 @@ describe('turnMerge', () => {
   let enqueueResult: ExecResult;
   // 읽을 때마다 차례로 내줄 큐 상태(비면 `queue`) — 경합 재현용.
   let queueSeq: (typeof queue)[];
+  // 필수 체크 GraphQL 의 답(null 이면 gh 가 실패한다).
+  let required: { oid: string; hasNextPage?: boolean; nodes: Record<string, unknown>[] } | null;
   let tm: TurnMerge;
 
   beforeEach(() => {
@@ -76,6 +78,7 @@ describe('turnMerge', () => {
     lease = { leaseId: 'lease-1', token: 'tok-1', agentId: 'a1' };
     approvals = []; checkApproval = null; peekStatus = 200;
     queue = { enabled: false, inQueue: false, entry: null }; queueSeq = [];
+    required = null;
     enqueueResult = { code: 0, stdout: JSON.stringify({ data: { enqueuePullRequest: { mergeQueueEntry: { position: 3, state: 'QUEUED' } } } }), stderr: '' };
     pr = { state: 'OPEN', isDraft: false, headRefOid: SHA, baseRefName: 'main', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }] };
     tm = createTurnMerge({
@@ -114,6 +117,10 @@ describe('turnMerge', () => {
           return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { id: 'PR_kw1', isMergeQueueEnabled: qv.enabled, isInMergeQueue: qv.inQueue, mergeQueueEntry: qv.entry } } } }), stderr: '' };
         }
         if (args[0] === 'api' && args[1] === 'graphql' && args[3] === `query=${ENQUEUE_MUTATION}`) return enqueueResult;
+        if (args[0] === 'api' && args[1] === 'graphql' && args[3] === `query=${REQUIRED_QUERY}`) {
+          if (!required) return { code: 1, stdout: '', stderr: 'HTTP 502' };
+          return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { commits: { nodes: [{ commit: { oid: required.oid, statusCheckRollup: { contexts: { pageInfo: { hasNextPage: required.hasNextPage ?? false }, nodes: required.nodes } } } }] } } } } }), stderr: '' };
+        }
         return { code: 1, stdout: '', stderr: 'unexpected' };
       },
     });
@@ -568,6 +575,92 @@ describe('turnMerge', () => {
       expect(r.body.error.code).toBe('enqueue_failed');
       expect(results()).toEqual([expect.objectContaining({ result: 'failed', error: expect.stringContaining('not mergeable') })]);
     });
+  });
+
+  describe('UNSTABLE — 필수 체크만 초록이면 통과 (스레드 1fccc9a5)', () => {
+    const run = (name: string, conclusion: string, isRequired: boolean) => ({ __typename: 'CheckRun', name, status: 'COMPLETED', conclusion, isRequired });
+    const requiredCalls = () => execs.filter((e) => e.args[0] === 'api' && e.args[3] === `query=${REQUIRED_QUERY}`);
+    beforeEach(() => {
+      pr = { ...pr, mergeStateStatus: 'UNSTABLE', statusCheckRollup: [{ name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }, { name: 'review / review', status: 'COMPLETED', conclusion: 'FAILURE' }] };
+    });
+
+    it('필수 체크가 전부 초록이면 squash 하고, 초록 아닌 비필수 체크 이름을 ignoredChecks 로 싣는다', async () => {
+      required = { oid: SHA, nodes: [run('test', 'SUCCESS', true), run('review / review', 'FAILURE', false)] };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r).toMatchObject({ isError: false, body: { merged: true, ignoredChecks: ['review / review'] } });
+      expect(ghCalls()).toEqual(['pr view', 'pr merge', 'pr view']);
+      // 조회는 저장소·번호를 변수로만 넘긴다.
+      expect(requiredCalls()[0]!.args.slice(4)).toEqual(['-f', 'owner=izagood', '-f', 'name=harkroom', '-F', 'number=7']);
+    });
+
+    it('merge queue 저장소면 큐에 넣고 ignoredChecks 를 같이 싣는다', async () => {
+      queue = { enabled: true, inQueue: false, entry: null };
+      required = { oid: SHA, nodes: [run('test', 'SUCCESS', true), run('review / review', 'FAILURE', false)] };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r).toMatchObject({ isError: false, body: { queued: true, ignoredChecks: ['review / review'] } });
+      expect(enqueues()).toHaveLength(1);
+    });
+
+    it('필수 체크가 하나도 없는 저장소는 거절한다 — 실패한 이름과 「필수 체크를 정하라」를 문구에 싣는다', async () => {
+      required = { oid: SHA, nodes: [run('test', 'SUCCESS', false), run('review / review', 'FAILURE', false)] };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error.code).toBe('ci_not_green');
+      expect(r.body.error.message).toContain('not green: review / review');
+      expect(r.body.error.message).toContain('no required status checks');
+      expect(ghCalls()).toEqual(['pr view']);
+      expect(results()).toEqual([expect.objectContaining({ result: 'failed' })]);
+    });
+
+    it.each([
+      ['필수 체크가 빨강', [run('test', 'FAILURE', true), run('review / review', 'FAILURE', false)], 'ci_not_green'],
+      ['필수 체크가 아직 도는 중', [{ __typename: 'CheckRun', name: 'test', status: 'IN_PROGRESS', conclusion: null, isRequired: true }], 'ci_not_green'],
+      ['같은 이름에 필수 초록과 빨강이 함께(C1)', [run('test', 'SUCCESS', true), run('test', 'FAILURE', true)], 'ci_not_green'],
+      ['옛 status-context 필수가 실패', [run('build', 'SUCCESS', true), { __typename: 'StatusContext', context: 'ci/legacy', state: 'FAILURE', isRequired: true }], 'ci_not_green'],
+    ])('%s → %s (merge 0건)', async (_l, nodes, code) => {
+      required = { oid: SHA, nodes: nodes as Record<string, unknown>[] };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe(code);
+      expect(ghCalls()).toEqual(['pr view']);
+    });
+
+    it('필수 체크 조회가 실패하면 원래대로 not_mergeable — 실패한 체크 이름을 싣는다(fail-closed)', async () => {
+      required = null;
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error.code).toBe('not_mergeable');
+      expect(r.body.error.message).toMatch(/UNSTABLE \(need CLEAN\) — not green: review \/ review — could not read which checks are required/);
+      expect(ghCalls()).toEqual(['pr view']);
+    });
+
+    it('조회한 커밋이 --head 와 다르면 head_moved, 체크가 100개를 넘으면 판정하지 않는다', async () => {
+      required = { oid: 'c'.repeat(40), nodes: [run('test', 'SUCCESS', true)] };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('head_moved');
+      required = { oid: SHA, hasNextPage: true, nodes: [run('test', 'SUCCESS', true)] };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('not_mergeable');
+      expect(ghCalls()).toEqual(['pr view', 'pr view']);
+    });
+
+    it('UNSTABLE 이 아닌 거절(BLOCKED 등)은 필수 체크를 묻지 않는다 — 문구에 초록 아닌 이름만 더한다', async () => {
+      pr = { ...pr, mergeStateStatus: 'BLOCKED' };
+      required = { oid: SHA, nodes: [run('test', 'SUCCESS', true)] };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error).toMatchObject({ code: 'not_mergeable', message: 'mergeStateStatus is BLOCKED (need CLEAN) — not green: review / review' });
+      expect(requiredCalls()).toHaveLength(0);
+    });
+
+    it('CLEAN 인데 체크가 빨강이면(있을 수 없지만) 지금처럼 ci_not_green — 필수 조회로 풀리지 않는다', async () => {
+      pr = { ...pr, mergeStateStatus: 'CLEAN' };
+      required = { oid: SHA, nodes: [run('test', 'SUCCESS', true), run('review / review', 'FAILURE', false)] };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('ci_not_green');
+      expect(requiredCalls()).toHaveLength(0);
+    });
+  });
+
+  it('parseRequiredChecks·unstableVerdict — 모양이 틀리면 null, isRequired 는 true 만 필수', () => {
+    expect(parseRequiredChecks('nope')).toBeNull();
+    expect(parseRequiredChecks(JSON.stringify({ data: { repository: { pullRequest: { commits: { nodes: [] } } } } }))).toBeNull();
+    const rc = parseRequiredChecks(JSON.stringify({ data: { repository: { pullRequest: { commits: { nodes: [{ commit: { oid: SHA, statusCheckRollup: null } }] } } } } }));
+    expect(rc).toEqual({ headOid: SHA, truncated: false, checks: [] });
+    expect(unstableVerdict(rc!, SHA)).toMatchObject({ code: 'ci_not_green' });
+    expect(unstableVerdict({ headOid: SHA, truncated: false, checks: [{ name: 'a', status: 'COMPLETED', conclusion: 'SUCCESS', isRequired: true }, { name: 'b', status: 'QUEUED' }] }, SHA)).toEqual({ ignored: ['b'] });
   });
 
   it('isAlreadyQueuedError — 실측 문구(10-16 mq-sandbox)를 알아본다', () => {
