@@ -1116,6 +1116,9 @@ function mergeSection(merge: { operatorBin: string; repos: readonly string[]; ap
     '`gh pr merge`·`gh api …/merge`·`git push … main` 은 쓰지 않는다(막혀 있다). squash 로만 머지되고 head 가',
     '바뀌었으면 거절된다. 결과는 서버가 이 스레드에 시스템 줄로 남긴다. 머지 전에 CI 가 초록이고 검토가 끝났는지',
     '네가 먼저 확인한다.',
+    // 10-16 UNSTABLE(스레드 1fccc9a5): 필수 체크만 초록이면 래퍼가 통과시키고 무시한 체크를 싣는다 — 숨기지 않고 보고에 적게 한다.
+    '필수가 아닌 체크만 실패했으면(GitHub `UNSTABLE`) 필수 체크가 전부 초록일 때 통과하고 결과에 `ignoredChecks` 가 실린다 —',
+    '보고에 그 이름을 적는다. 필수 체크가 하나도 없는 저장소는 모든 체크가 초록이어야 한다(`ci_not_green`).',
     // 10-16 merge queue(rcms): 큐를 쓰는 브랜치는 래퍼가 머지 대신 큐에 넣는다 — 「머지됨」이라고 보고하지 않게 한다.
     '대상 브랜치가 merge queue 를 쓰면 래퍼는 머지하지 않고 **큐에 넣는다**(`queued: true`·`merged: false`·`queue.position`).',
     '그때는 「큐에 넣음」이라고 보고하고 「머지됨」이라고 쓰지 않는다. 머지됐는지 확인하려면 **같은 명령을 다시 부른다** —',
