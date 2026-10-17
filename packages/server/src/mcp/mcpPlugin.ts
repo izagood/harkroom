@@ -80,7 +80,7 @@ import { listGrantedSecrets } from '../services/secretAccess.js';
 import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../services/secretLeakGuard.js';
 import type { AgentPresence } from './presence.js';
 import { enqueueAskPush, enqueueBundlePush } from '../services/push/pushJobs.js';
-import { DENIAL_CARD_REFUSAL_MESSAGE, prepareDenialCard } from '../services/mergeDenials.js';
+import { DENIAL_CARD_REFUSAL_MESSAGE, prepareDenialCard, type MergeDenialReason } from '../services/mergeDenials.js';
 import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant } from '../services/permissionRequests.js';
 
 /**
@@ -764,7 +764,7 @@ function buildMcpServer(
   const raisePermission = async (
     { kind, rule, repo, command, reason, channelId, threadRootId, model, denial, commandFiles: files }:
       { kind: 'tool' | 'merge' | 'command'; rule?: string; repo?: string; command?: string; reason: string; channelId: string; threadRootId: string; model?: string;
-        denial?: { id: string; number: number; headSha: string; reason: 'not_granted' | 'cause_not_human' }; commandFiles?: CommandFileDigest[] | null },
+        denial?: { id: string; number: number; headSha: string; reason: MergeDenialReason; failedChecks?: string[] }; commandFiles?: CommandFileDigest[] | null },
   ) => {
     const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, command, reason, channelId, threadRootId, denial, commandFiles: files ?? null });
     if (!opened.ok) return jsonResult({ error: opened.refusal });
@@ -914,8 +914,8 @@ function buildMcpServer(
       const d = prepared.meta;
       return raisePermission({
         kind: 'merge', repo: d.repo, channelId, threadRootId: threadRootId!, model,
-        reason: `PR #${d.number} 머지가 ${d.reason === 'cause_not_human' ? '사람이 띄운 턴이 아니라서(cause_not_human)' : '권한 없음(not_granted)으로'} 막혔다 — ${body}`,
-        denial: { id: d.denialId, number: d.number, headSha: d.headSha ?? '', reason: d.reason ?? 'not_granted' },
+        reason: `PR #${d.number} 머지가 ${d.reason === 'cause_not_human' ? '사람이 띄운 턴이 아니라서(cause_not_human)' : d.reason === 'ci_not_green' ? 'CI 가 초록이 아니라서(ci_not_green)' : '권한 없음(not_granted)으로'} 막혔다 — ${body}`,
+        denial: { id: d.denialId, number: d.number, headSha: d.headSha ?? '', reason: d.reason ?? 'not_granted', ...(d.failedChecks ? { failedChecks: d.failedChecks } : {}) },
       });
     }
     const meta: AskMeta & Partial<ModelMeta> = {

@@ -64,11 +64,17 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
       result: z.enum(['merged', 'queued', 'failed']),
       mergeSha: SHA.nullable().optional(),
       error: z.string().max(1000).nullable().optional(),
+      // CI 거절(스레드 1fccc9a5) — 체크 이름은 서버가 다시 거른다(`sanitizeCheckNames`). 여기서는 모양과 크기만 본다.
+      ciRefusal: z.object({
+        code: z.string().max(40), mergeState: z.string().max(40).nullable().optional(), checks: z.array(z.string().max(1000)).max(100),
+      }).nullable().optional(),
+      ignoredChecks: z.array(z.string().max(1000)).max(100).optional(),
     }).safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId, token, repo, number, headSha and result are required' } });
     const r = await reportMerge(pool, { ...who, ...parsed.data });
     if (!r.ok) return reply.code(r.code === 'bad_repo' ? 400 : r.code === 'lease_invalid' ? 403 : 409).send({ error: { code: r.code, message: `merge result not recorded: ${r.code}` } });
-    return reply.code(201).send({ messageId: r.messageId });
+    // `denialId`: CI 거절이면 카드용 거절 기록 — 래퍼가 거절 JSON 에 실어 에이전트가 `message.ask` 의 `mergeDenialId` 로 카드를 세운다.
+    return reply.code(201).send({ messageId: r.messageId, ...(r.denialId ? { denialId: r.denialId } : {}) });
   });
 
   /**

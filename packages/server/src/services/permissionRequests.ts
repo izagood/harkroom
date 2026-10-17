@@ -5,7 +5,7 @@ import { repoGrantScope, repoScope, toolScope, validateExactCommand, validateToo
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
-import { insertApprovalFromDenial } from './mergeDenials.js';
+import { CI_CARD_ONCE_ONLY_MESSAGE, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
 import { getMessageById, recordAskAnswer } from './messages.js';
 
 /**
@@ -60,7 +60,7 @@ export interface PermissionRequestMeta {
    * 머지 거절에서 온 요청(스레드 1b75d7a0)이면 그 PR·head·사유 — 카드가 [이번 한 번 머지](이 PR·이 head 만)를 함께 보인다.
    * 값은 거절 기록에서 온다(에이전트가 쓴 글이 아니다).
    */
-  once?: { number: number; headSha: string; reason: 'not_granted' | 'cause_not_human' };
+  once?: { number: number; headSha: string; reason: MergeDenialReason; failedChecks?: string[] };
   reason: string;
   requestedAt: string;
   expiresAt: string;
@@ -109,6 +109,11 @@ const RULE_REFUSAL_MESSAGE: Record<ToolRuleRefusal, string> = {
   chart_not_pinned: 'helm install/upgrade/template need `<release> oci://<chart>` right after the subcommand and --version',
 };
 
+/** 카드 meta 의 `once` 칸 — 1회 승인이 쓸 거절 기록의 PR·head·사유. CI 거절이면 실패한 체크 이름(서버가 거른 값)도 싣는다. */
+function onceMeta(d: { number: number; headSha: string; reason: MergeDenialReason; failedChecks?: string[] }): { number: number; headSha: string; reason: MergeDenialReason; failedChecks?: string[] } {
+  return { number: d.number, headSha: d.headSha, reason: d.reason, ...(d.reason === 'ci_not_green' ? { failedChecks: d.failedChecks ?? [] } : {}) };
+}
+
 export async function openPermissionRequest(
   pool: Pool,
   args: {
@@ -117,7 +122,7 @@ export async function openPermissionRequest(
     commandFiles?: CommandFileDigest[] | null;
     channelId: string; threadRootId: string; now?: Date;
     /** 머지 거절 기록에서 온 요청(`message.ask` 의 `mergeDenialId`). 거절 기록 검증(`prepareDenialCard`)은 부르는 쪽이 먼저 한다. */
-    denial?: { id: string; number: number; headSha: string; reason: 'not_granted' | 'cause_not_human' };
+    denial?: { id: string; number: number; headSha: string; reason: MergeDenialReason; failedChecks?: string[] };
   },
 ): Promise<OpenResult> {
   const now = args.now ?? new Date();
@@ -172,7 +177,7 @@ export async function openPermissionRequest(
       if (pending.cardMessageId) {
         await pool.query(
           `update message set meta = jsonb_set(meta, '{permissionRequest,once}', $2::jsonb) where id = $1 and meta ? 'permissionRequest'`,
-          [pending.cardMessageId, JSON.stringify({ number: args.denial.number, headSha: args.denial.headSha, reason: args.denial.reason })]);
+          [pending.cardMessageId, JSON.stringify(onceMeta(args.denial))]);
         // 열린 화면이 옛 PR·head 를 계속 보이지 않게 알린다(security F1). 승인 쪽은 그래도 대조값으로 한 번 더 막는다.
         const card = await getMessageById(pool, pending.cardMessageId);
         if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
@@ -206,7 +211,7 @@ export async function openPermissionRequest(
         target: args.kind === 'merge' ? target.slice('repo:'.length) : target,
         channelId: args.kind === 'tool' ? args.channelId : null,
         warnings, reason: oneLineReason(args.reason),
-        ...(args.denial ? { once: { number: args.denial.number, headSha: args.denial.headSha, reason: args.denial.reason } } : {}), requestedAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
+        ...(args.denial ? { once: onceMeta(args.denial) } : {}), requestedAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
       },
     },
   };
@@ -316,7 +321,7 @@ export async function linkPermissionCard(pool: Pool, requestId: string, cardMess
   await pool.query(`update permission_request set card_message_id = $2 where id = $1 and card_message_id is null`, [requestId, cardMessageId]);
 }
 
-export type DecideRefusal = { status: 403 | 404 | 409; code: string; message: string };
+export type DecideRefusal = { status: 400 | 403 | 404 | 409; code: string; message: string };
 
 /**
  * 소유자가 카드에서 정한다. 사람 세션·소유자 판정은 라우트가 먼저 한다. 범위·기한은 이 줄과 상수뿐이다 — 요청 본문은 읽지 않는다.
@@ -387,6 +392,14 @@ export async function decidePermissionRequest(
          select $1, $2, $3, $4, $5, $6, $7, $8, $9, r.file_digests from permission_request r where r.id = $8 returning id`,
         [args.agentId, r.channelId, r.threadRootId, r.target, grantMode === 'once', grantExpiresAt, args.actorId, r.id, now])).rows[0]!.id;
     } else if (args.decision === 'approve') {
+      // CI 거절 카드는 7일 허락을 주지 않는다(security D4 — 화면 버튼만 숨기지 않고 서버가 막는다). 권한은 이미 있다.
+      if (r.kind === 'merge' && r.denialId) {
+        const reason = (await client.query<{ reason: string }>(`select reason from merge_denial where id = $1`, [r.denialId])).rows[0]?.reason;
+        if (reason === 'ci_not_green') {
+          await client.query('rollback');
+          return { ok: false, status: 400, code: 'ci_card_once_only', message: CI_CARD_ONCE_ONLY_MESSAGE };
+        }
+      }
       grantExpiresAt = new Date(now.getTime() + PERMISSION_GRANT_TTL_MS);
       const capability = r.kind === 'tool' ? 'tool.allow' : 'repo.merge';
       const scope = r.kind === 'tool' ? toolScope(r.channelId, r.target) : r.target;

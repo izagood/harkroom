@@ -69,6 +69,25 @@
 - 래퍼는 `denialId` 를 에이전트 답의 `error.denialId` 로 그대로 넘긴다(uuid 모양일 때만). 프롬프트가 "그 값을 `mergeDenialId` 로
   실어 카드를 세워라, `to`·`mirrorOf` 는 싣지 마라"를 지시한다.
 
+## CI 실패 무시 1회 승인
+
+CI 오류를 고치는 PR 처럼 CI 가 빨간 채로 머지해야 할 때가 있다. 기본은 그대로 「CI 초록」이다(초록의 기준은 아래 `UNSTABLE` 절 —
+저장소의 required 집합을 따르므로, required 를 하찮은 체크 하나로만 두면 그만큼 느슨해진다. 이것은 저장소 정책의 몫이다).
+소유자가 명시적으로 승인하면 **그 PR·그 head 한 번만** CI 조건 없이 머지한다.
+
+- 7일 grant 가 있어도 래퍼가 `ci_not_green`, 또는 `not_mergeable` + `UNSTABLE` 로 거절하면 실패 보고(`/agent/merge-results`)에
+  `ciRefusal{code, mergeState, checks}` 를 싣는다. 서버는 **같은 임대로 판정을 통과한 그 repo·PR·head** 의 보고에서만 거절 기록
+  (reason `ci_not_green`, 실패 체크 이름)을 남기고 `denialId` 를 돌려준다. 묶음·하루 상한은 위 거절 기록과 같다(CI 기록끼리만 다시 쓴다).
+  체크 이름은 서버가 다시 거른다 — 제어·서식(bidi 포함) 문자를 빼고, 이름당 80자·20개까지.
+- 카드는 [이번 한 번 머지] 하나다. 서버가 막는다: 이 기록으로는 7일 grant 를 만들 수 없고(400 `ci_card_once_only`, 두 길 다),
+  `relaxChecks:false` 승인도 받지 않는다(400 `relax_required`). 승인은 사람 세션·소유자만, 카드가 보여 준 PR·head 가 다르면 409 `card_stale`.
+- **쓰는 턴도 사람이 띄운 것**이어야 한다(`merge_approval.ci_override`) — 사람 글, 또는 소유자가 에이전트의 카드에 답한 턴. wake·에이전트
+  위임 턴에서는 판정도 peek 도 이 승인을 고르지 않는다(남는다).
+- 승인을 쓴 순간 「🔓 … CI 실패 무시 승인으로 머지 시도 · 승인: handle」 줄이 선다. 머지 보고에는 래퍼가 그때 다시 읽은 초록 아닌
+  체크 이름(`ignoredChecks`)을 싣고, 줄에 「· CI 실패 무시 승인 · 무시: …」, 승인 때 본 목록보다 늘었으면 「(승인 뒤 늘어남)」을 붙인다.
+  감사(`repo.merge.merged`)에는 approvalId·approvedBy·이름 목록이 남는다. 이 줄들은 아직 번역 표지 없이 본문으로 그려진다.
+- 승인 없이 비필수 체크를 무시하고 머지한 경우(`UNSTABLE`, 필수 체크 초록)도 같은 `ignoredChecks` 로 줄·감사에 이름이 남는다.
+
 ## merge queue
 
 ### `UNSTABLE` — 필수가 아닌 체크가 실패한 PR

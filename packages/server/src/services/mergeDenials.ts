@@ -35,15 +35,22 @@ export interface MergeDenialMeta {
   firstAt: string;
   lastAt: string;
   granted?: { by: string; at: string; expiresAt: string };
-  /** 왜 막혔나 — `not_granted`(권한 없음) · `cause_not_human`(권한은 있는데 사람이 띄운 턴이 아님). 카드 문구가 가른다. */
-  reason?: 'not_granted' | 'cause_not_human';
+  /**
+   * 왜 막혔나 — `not_granted`(권한 없음) · `cause_not_human`(권한은 있는데 사람이 띄운 턴이 아님) · `ci_not_green`(권한은 있는데
+   * CI 가 초록이 아님 — 카드는 「CI 실패 무시하고 이번 한 번 머지」 하나뿐). 카드 문구가 가른다.
+   */
+  reason?: MergeDenialReason;
+  /** `ci_not_green` 일 때 래퍼가 보고한 초록 아닌 체크 이름(서버가 거른 값). 데이터로만 그린다. */
+  failedChecks?: string[];
   /** 이 거절 기록의 head — 1회 승인은 이 head 하나에 묶인다. */
   headSha?: string;
 }
 
+export type MergeDenialReason = 'not_granted' | 'cause_not_human' | 'ci_not_green';
+
 interface DenialRow {
   id: string; agentId: string; scope: string; number: number; headSha: string; channelId: string; threadRootId: string;
-  expired: boolean; used: boolean; cardMessageId: string | null; reason: 'not_granted' | 'cause_not_human';
+  expired: boolean; used: boolean; cardMessageId: string | null; reason: MergeDenialReason; failedChecks: string[];
   /** 그 PR 이 머지되거나 닫혀 카드가 닫혔다(118, Q3) — 7일 허락·1회 승인·새 카드 모두 받지 않는다. */
   obsolete: boolean;
 }
@@ -52,7 +59,7 @@ async function readDenial(db: Pool | PoolClient, id: string, now: Date, lock = f
   return (await db.query<DenialRow>(
     `select id, agent_id as "agentId", scope, pr_number as number, head_sha as "headSha", channel_id as "channelId", thread_root_id as "threadRootId",
             expires_at <= $2 as expired, used_at is not null as used, card_message_id as "cardMessageId", reason,
-            obsoleted_at is not null as obsolete
+            failed_checks as "failedChecks", obsoleted_at is not null as obsolete
        from merge_denial where id = $1${lock ? ' for update' : ''}`, [id, now])).rows[0];
 }
 
@@ -92,6 +99,7 @@ export async function prepareDenialCard(
     key, denialId: d.id, agentId: d.agentId, ownerAccountId: owner?.ownerAccountId ?? null,
     repo: d.scope.slice('repo:'.length), number: d.number,
     count: 1, firstAt: now.toISOString(), lastAt: now.toISOString(), reason: d.reason, headSha: d.headSha,
+    ...(d.reason === 'ci_not_green' ? { failedChecks: d.failedChecks } : {}),
   };
   return { ok: true, meta };
 }
@@ -101,7 +109,7 @@ async function emitCard(pool: Pool, id: string): Promise<void> {
   if (row) emitEvent({ type: 'message.updated', message: row, audience: await audienceFor(pool, row.channelId) });
 }
 
-export type DenialGrantRefusal = { status: 403 | 404 | 409; code: string; message: string };
+export type DenialGrantRefusal = { status: 400 | 403 | 404 | 409; code: string; message: string };
 
 /**
  * [7일 주기] — 거절 기록을 **한 번** 써서 그 저장소 grant 를 7일 준다(C4). 사람 세션·소유자 판정은 라우트가 먼저 한다(C5).
@@ -121,6 +129,8 @@ export async function grantFromDenial(
     if (d.used) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_used', message: 'this denial was already used' }; }
     if (d.expired) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_expired', message: 'this denial expired' }; }
     if (d.obsolete) { await client.query('rollback'); return { ok: false, status: 409, code: 'pr_closed', message: PR_CLOSED_MESSAGE }; }
+    // CI 거절 카드는 7일 허락을 주지 않는다 — 권한은 이미 있고, 이 카드의 뜻은 「이번 한 번 CI 무시」뿐이다(security D4: 버튼만 숨기지 않고 서버가 막는다).
+    if (d.reason === 'ci_not_green') { await client.query('rollback'); return { ok: false, status: 400, code: 'ci_card_once_only', message: CI_CARD_ONCE_ONLY_MESSAGE }; }
     const used = await client.query(
       `update merge_denial set used_at = $2, used_by = $3 where id = $1 and used_at is null returning id`, [d.id, now, args.actorId]);
     if (!used.rowCount) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_used', message: 'this denial was already used' }; }
@@ -154,6 +164,27 @@ export async function grantFromDenial(
 }
 
 export const PR_CLOSED_MESSAGE = 'that pull request was already merged or closed — this card is closed';
+export const CI_CARD_ONCE_ONLY_MESSAGE = 'a CI-failure card only approves one merge with the CI check skipped — it never grants 7 days';
+
+/** 거절 기록·승인에 담는 체크 이름의 상한(security: 사람이 이 문구를 보고 판단한다). */
+export const CHECK_NAME_MAX = 80;
+export const CHECK_NAMES_MAX = 20;
+
+/**
+ * 래퍼가 보고한 체크 이름을 거른다. 이름은 PR 작성자가 workflow 로 정할 수 있는 문자열이다 — 제어(Cc)·서식(Cf, bidi·zero-width
+ * 포함) 문자를 빼고, 앞뒤 공백을 자르고, 이름당 80자·20개까지, 빈 것·겹친 것은 버린다. 문자열이 아닌 항목은 버린다.
+ */
+export function sanitizeCheckNames(names: unknown): string[] {
+  if (!Array.isArray(names)) return [];
+  const out: string[] = [];
+  for (const n of names) {
+    if (typeof n !== 'string') continue;
+    const clean = n.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, '').trim().slice(0, CHECK_NAME_MAX).trim();
+    if (clean && !out.includes(clean)) out.push(clean);
+    if (out.length >= CHECK_NAMES_MAX) break;
+  }
+  return out;
+}
 
 /**
  * PR 이 머지되거나 닫혔다 — 그 (저장소, PR)의 기다리는 머지 카드를 닫는다(118, 스레드 0e30c565 Q3). 닫힌 거절 기록은 7일 허락·1회
@@ -259,13 +290,19 @@ export async function insertApprovalFromDenial(
   if (d.number !== args.expect.number || d.headSha !== args.expect.headSha) {
     return { ok: false, status: 409, code: 'card_stale', message: 'the card changed since it was shown (a different PR or head) — look at it again' };
   }
+  // CI 거절 카드의 뜻은 「CI 무시하고 한 번」 그 자체다 — relax 를 끈 승인은 받지 않는다(security D4).
+  const ciOverride = d.reason === 'ci_not_green';
+  if (ciOverride && !args.relaxChecks) {
+    return { ok: false, status: 400, code: 'relax_required', message: 'a CI-failure card approves the merge with the CI check skipped — relaxChecks must be true' };
+  }
   const used = await client.query(
     `update merge_denial set used_at = $2, used_by = $3 where id = $1 and used_at is null returning id`, [d.id, args.now, args.actorId]);
   if (!used.rowCount) return { ok: false, status: 409, code: 'denial_used', message: 'the merge refusal behind this card was already used' };
   const expiresAt = new Date(args.now.getTime() + APPROVAL_TTL_MS);
   const row = (await client.query<{ id: string }>(
-    `insert into merge_approval (denial_id, agent_id, scope, pr_number, head_sha, gh_user, relax_checks, channel_id, thread_root_id, approved_by, approved_at, expires_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id`,
-    [d.id, d.agentId, d.scope, d.number, d.headSha, args.ghUser, args.relaxChecks, d.channelId, d.threadRootId, args.actorId, args.now, expiresAt])).rows[0]!;
+    `insert into merge_approval (denial_id, agent_id, scope, pr_number, head_sha, gh_user, relax_checks, channel_id, thread_root_id, approved_by, approved_at, expires_at, ci_override, approved_checks)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) returning id`,
+    [d.id, d.agentId, d.scope, d.number, d.headSha, args.ghUser, args.relaxChecks, d.channelId, d.threadRootId, args.actorId, args.now, expiresAt,
+      ciOverride, ciOverride ? d.failedChecks : []])).rows[0]!;
   return { ok: true, approvalId: row.id, scope: d.scope, number: d.number, headSha: d.headSha, reason: d.reason, expiresAt };
 }
