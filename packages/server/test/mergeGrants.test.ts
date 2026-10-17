@@ -706,7 +706,10 @@ describe('repo.merge grant', () => {
       expect((await decide(bob.token, card.requestId, { ghUser: 'izagood', relaxChecks: true, number: 31, headSha: SHA3 })).statusCode).toBe(403);
       expect((await app.inject({ method: 'POST', url: `/agents/${agentId}/permission-requests/${card.requestId}/approve-once`, headers: asAgent(), payload: { ghUser: 'izagood', relaxChecks: true, number: 31, headSha: SHA3 } })).statusCode).toBe(403);
 
-      const ok = await decide(alice.token, card.requestId, { ghUser: 'izagood', relaxChecks: true, number: 31, headSha: SHA3 });
+      // n1: 사람이 본 실패 목록이 거절 기록과 다르면(빠졌거나 다르면) card_stale.
+      expect((await decide(alice.token, card.requestId, { ghUser: 'izagood', relaxChecks: true, number: 31, headSha: SHA3 })).json().error.code).toBe('card_stale');
+      expect((await decide(alice.token, card.requestId, { ghUser: 'izagood', relaxChecks: true, number: 31, headSha: SHA3, failedChecks: ['test'] })).json().error.code).toBe('card_stale');
+      const ok = await decide(alice.token, card.requestId, { ghUser: 'izagood', relaxChecks: true, number: 31, headSha: SHA3, failedChecks: [...row.failed_checks].reverse() });
       expect(ok.statusCode).toBe(200);
       const appr = (await pool.query(`select ci_override, relax_checks, approved_checks from merge_approval where denial_id = $1`, [denialId])).rows[0];
       expect(appr).toEqual({ ci_override: true, relax_checks: true, approved_checks: row.failed_checks });
@@ -719,7 +722,7 @@ describe('repo.merge grant', () => {
       const first = await ciRefused('izagood/ci-b', 32, ['test', 'review']);
       const thread = (await pool.query(`select thread_root_id from secret_turn_lease where id = $1`, [first.l.id])).rows[0].thread_root_id as string;
       const card = await cardFor(first.denialId!, thread);
-      expect((await decide(alice.token, card.requestId, { ghUser: 'izagood', relaxChecks: true, number: 32, headSha: SHA3 })).statusCode).toBe(200);
+      expect((await decide(alice.token, card.requestId, { ghUser: 'izagood', relaxChecks: true, number: 32, headSha: SHA3, failedChecks: ['test', 'review'] })).statusCode).toBe(200);
       const peek = (l: { id: string; token: string }) => app.inject({ method: 'POST', url: '/agent/merge-approvals/peek', headers: asAgent(), payload: { leaseId: l.id, token: l.token, repo: 'izagood/ci-b', number: 32, headSha: SHA3 } });
 
       // 다른 에이전트가 띄운 턴(위임) — peek 도 판정도 승인을 고르지 않는다.
@@ -741,7 +744,7 @@ describe('repo.merge grant', () => {
       const merged = await report(human, 'izagood/ci-b', 32, SHA3, { result: 'merged', mergeSha: 'd'.repeat(40), ignoredChecks: ['test', 'review', 'late @bob'] });
       expect(merged.statusCode).toBe(201);
       const line = (await pool.query(`select body, meta from message where id = $1`, [merged.json().messageId])).rows[0];
-      expect(line.body).toBe(`🔀 izagood/ci-b#32 머지됨 · ddddddddd · 권한: alice · CI 실패 무시 승인 · 무시: test, review, late ＠bob (승인 뒤 늘어남) (래퍼 보고)`);
+      expect(line.body).toBe(`🔀 izagood/ci-b#32 머지됨 · ddddddddd · 권한: alice · CI 실패 무시 승인 · 무시: \`test\`, \`review\`, \`late ＠bob\` (승인 뒤 늘어남) (래퍼 보고)`);
       expect(line.meta.merge).toMatchObject({ ciOverride: true, ignoredChecks: ['test', 'review', 'late @bob'], grewAfterApproval: true, viaApproval: true });
       expect(line.meta.i18n).toEqual({ key: 'system.merge.mergedCiOverrideGrew', args: { repo: 'izagood/ci-b', number: 32, sha: 'ddddddddd', granterId: alice.accountId, checks: 'test, review, late ＠bob' } });
       const audit = (await pool.query(`select detail from audit_log where action = 'repo.merge.merged' and target = 'repo:izagood/ci-b'`)).rows[0].detail;
@@ -777,7 +780,7 @@ describe('repo.merge grant', () => {
         requestId: 'r', agentId, ownerAccountId: alice.accountId, kind: 'merge', target: 'izagood/ci-x', channelId: null, warnings: [], reason: 'fix ci',
         once: { number: 9, headSha: SHA3, reason: 'ci_not_green', failedChecks: ['test', '@channel <@x>'] }, requestedAt: '', expiresAt: '',
       } as Parameters<typeof permissionCardBody>[0], '@tm');
-      expect(body).toBe("권한 요청 · @tm\nCI 실패 무시하고 이번 한 번 머지 `izagood/ci-x` PR #9 · head ccccccccc\n실패한 체크: test, ＠channel ‹＠x›\n이유: fix ci");
+      expect(body).toBe("권한 요청 · @tm\nCI 실패 무시하고 이번 한 번 머지 `izagood/ci-x` PR #9 · head ccccccccc\n실패한 체크: `test`, `＠channel ‹＠x›`\n이유: fix ci");
     });
 
     it('#1396 n1: 승인 없이 비필수 체크를 무시하고 머지했으면 줄·감사에 이름이 남는다', async () => {
@@ -786,7 +789,7 @@ describe('repo.merge grant', () => {
       expect((await check(l, 'izagood/ci-d', { number: 36, headSha: SHA3 })).statusCode).toBe(200);
       const res = await report(l, 'izagood/ci-d', 36, SHA3, { result: 'queued', ignoredChecks: ['review / review'] });
       const line = (await pool.query(`select body, meta from message where id = $1`, [res.json().messageId])).rows[0];
-      expect(line.body).toBe(`📥 izagood/ci-d#36 머지 큐에 넣음 · head ccccccccc · 권한: alice · 무시: review / review (래퍼 보고)`);
+      expect(line.body).toBe(`📥 izagood/ci-d#36 머지 큐에 넣음 · head ccccccccc · 권한: alice · 무시: \`review / review\` (래퍼 보고)`);
       expect(line.meta.merge.ciOverride).toBeUndefined();
       expect(line.meta.i18n).toMatchObject({ key: 'system.merge.queuedIgnoring', args: { checks: 'review / review' } });
     });

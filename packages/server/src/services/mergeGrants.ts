@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { repoScope } from '@harkroom/shared';
 import { mergeGrantFor } from '../auth/permissions.js';
 import { recordAudit } from '../audit.js';
-import { obsoleteMergeCards, sanitizeCheckNames } from './mergeDenials.js';
+import { checkNamesForBody, checkNamesText, obsoleteMergeCards, sanitizeCheckNames } from './mergeDenials.js';
 import { postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
 
@@ -309,8 +309,6 @@ export type MergeReport = {
   ignoredChecks?: unknown;
 };
 
-/** 시스템 줄 본문에 끼우는 체크 이름 — 거른 이름에서 멘션·토큰이 되는 글자를 비슷한 글자로 바꾼다(본문은 멘션이 풀린다, N2). */
-const checksForBody = (names: string[]): string => names.join(', ').replace(/@/g, '＠').replace(/</g, '‹').replace(/>/g, '›');
 
 /** CI 거절 카드를 세울 수 있는 래퍼 판정인가 — `ci_not_green`, 또는 `not_mergeable` 인데 GitHub 이 UNSTABLE 이라고 한 것. */
 export function isCiRefusal(c: MergeReport['ciRefusal']): boolean {
@@ -353,7 +351,7 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   const ciOverride = usedApproval?.ciOverride === true;
   const grewAfterApproval = ciOverride && ignored.some((n) => !usedApproval!.approvedChecks.includes(n));
   const ignoredTail = (ciOverride ? ' · CI 실패 무시 승인' : '')
-    + (ignored.length ? ` · 무시: ${checksForBody(ignored)}` : '') + (grewAfterApproval ? ' (승인 뒤 늘어남)' : '');
+    + (ignored.length ? ` · 무시: ${checkNamesForBody(ignored)}` : '') + (grewAfterApproval ? ' (승인 뒤 늘어남)' : '');
   const granterId = approvedBy ?? grant?.grantedBy ?? null;
   const granter = granterId
     ? (await pool.query<{ handle: string }>(`select handle from account where id = $1`, [granterId])).rows[0]?.handle ?? null
@@ -368,8 +366,8 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   const tailVariant = ignored.length ? (ciOverride ? (grewAfterApproval ? 'CiOverrideGrew' : 'CiOverride') : 'Ignoring') : null;
   const tailI18n = r.result !== 'failed' && tailVariant && granter && granterId
     ? (r.result === 'merged'
-      ? systemI18n(`system.merge.merged${tailVariant}`, { repo, number: r.number, sha: (r.mergeSha ?? r.headSha).slice(0, 9), granterId, checks: checksForBody(ignored) })
-      : systemI18n(`system.merge.queued${tailVariant}`, { repo, number: r.number, head: r.headSha.slice(0, 9), granterId, checks: checksForBody(ignored) }))
+      ? systemI18n(`system.merge.merged${tailVariant}`, { repo, number: r.number, sha: (r.mergeSha ?? r.headSha).slice(0, 9), granterId, checks: checkNamesText(ignored) })
+      : systemI18n(`system.merge.queued${tailVariant}`, { repo, number: r.number, head: r.headSha.slice(0, 9), granterId, checks: checkNamesText(ignored) }))
     : null;
   const posted = await postMessage(pool, {
     channelId: lease.channelId, threadRootId: lease.threadRootId, authorId: r.agentId, body, kind: 'system',

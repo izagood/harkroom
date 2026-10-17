@@ -88,7 +88,7 @@ describe('PermissionOncePanel', () => {
     expect(screen.getByTestId('merge-once-ci-fixed')).toBeTruthy();
     fireEvent.change(select, { target: { value: 'izagood' } });
     fireEvent.click(screen.getByTestId('merge-once-submit'));
-    await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { ghUser: 'izagood', relaxChecks: true, number: 42, headSha: HEAD }));
+    await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { ghUser: 'izagood', relaxChecks: true, number: 42, headSha: HEAD, failedChecks: items }));
   });
 
   it('readPermissionOnce — 모르는 사유는 not_granted, CI 사유가 아니면 failedChecks 를 읽지 않는다', () => {

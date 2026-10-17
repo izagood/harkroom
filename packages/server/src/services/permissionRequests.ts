@@ -5,7 +5,7 @@ import { repoGrantScope, repoScope, toolScope, validateExactCommand, validateToo
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
-import { CI_CARD_ONCE_ONLY_MESSAGE, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
+import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
 import { getMessageById, recordAskAnswer } from './messages.js';
 
 /**
@@ -290,7 +290,7 @@ export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: str
   // CI 거절 카드(스레드 1fccc9a5): 뜻은 「CI 실패 무시하고 이번 한 번 머지」 하나다 — 7일이 아니다. 체크 이름(서버가 거른 값)은
   // 멘션·토큰이 되는 글자를 비슷한 글자로 바꿔 싣는다(본문은 멘션이 풀린다).
   if (meta.kind === 'merge' && meta.once?.reason === 'ci_not_green') {
-    const names = (meta.once.failedChecks ?? []).join(', ').replace(/@/g, '＠').replace(/</g, '‹').replace(/>/g, '›').replace(/`/g, "'");
+    const names = checkNamesForBody(meta.once.failedChecks ?? []);
     return `권한 요청 · ${agentHandle}\nCI 실패 무시하고 이번 한 번 머지 \`${meta.target}\` PR #${meta.once.number} · head ${meta.once.headSha.slice(0, 9)}`
       + `${names ? `\n실패한 체크: ${names}` : ''}\n이유: ${oneLineReason(meta.reason)}`;
   }
@@ -341,7 +341,7 @@ export async function decidePermissionRequest(
   args: {
     agentId: string; requestId: string; actorId: string; decision: PermissionDecision; now?: Date;
     /** 머지 거절 카드의 `approve_once` 일 때만 — 머지에 쓸 gh 계정과 CI 완화 여부. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
-    once?: { ghUser: string; relaxChecks: boolean; number: number; headSha: string };
+    once?: { ghUser: string; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] };
     /** 버튼이 아닌 길로 정했으면 그 길 — 소유자가 글로 승인했다(`chatApproval`). 카드 meta·감사 기록에 남는다. */
     via?: { kind: 'chat'; messageId: string; target?: 'T1' | 'T2' | 'T3' };
   },
@@ -375,7 +375,7 @@ export async function decidePermissionRequest(
         await client.query('rollback');
         return { ok: false, status: 409, code: 'not_once', message: 'only a card raised from a merge refusal can approve one merge' };
       }
-      const made = await insertApprovalFromDenial(client, { agentId: args.agentId, denialId: r.denialId, actorId: args.actorId, ghUser: args.once.ghUser, relaxChecks: args.once.relaxChecks, expect: { number: args.once.number, headSha: args.once.headSha }, now });
+      const made = await insertApprovalFromDenial(client, { agentId: args.agentId, denialId: r.denialId, actorId: args.actorId, ghUser: args.once.ghUser, relaxChecks: args.once.relaxChecks, expect: { number: args.once.number, headSha: args.once.headSha, ...(args.once.failedChecks ? { failedChecks: args.once.failedChecks } : {}) }, now });
       if (!made.ok) { await client.query('rollback'); return made; }
       approval = made;
     }

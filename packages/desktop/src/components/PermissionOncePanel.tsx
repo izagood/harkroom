@@ -135,7 +135,8 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
       // number·headSha 는 이 카드가 보여 준 값 — 서버가 거절 기록과 대조해 다르면 card_stale 로 거절한다(security F1).
       // CI 거절 카드의 뜻은 「CI 무시하고 한 번」 그 자체다 — 체크박스가 아니라 언제나 켠다(서버도 끈 승인은 400).
       const relaxChecks = ci || relax;
-      const r = await getController().approvePermissionOnce(d.agentId, d.requestId, { ghUser, relaxChecks, number: d.number, headSha: d.headSha });
+      // CI 카드는 보여 준 실패 목록도 대조값으로 보낸다(n1) — 그 사이 목록이 바뀌었으면 서버가 card_stale 로 거절한다.
+      const r = await getController().approvePermissionOnce(d.agentId, d.requestId, { ghUser, relaxChecks, number: d.number, headSha: d.headSha, ...(ci ? { failedChecks: d.failedChecks } : {}) });
       setDone({ ghUser, relaxChecks, expiresAt: r.approvalExpiresAt ?? new Date(Date.now() + 86_400_000).toISOString() });
     } catch (e) {
       setError({ code: e instanceof ApiError ? e.code : 'failed', raw: errorText(e, t) });
