@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { repoScope } from '@harkroom/shared';
 import { mergeGrantFor } from '../auth/permissions.js';
 import { recordAudit } from '../audit.js';
-import { obsoleteMergeCards } from './mergeDenials.js';
+import { obsoleteMergeCards, sanitizeCheckNames } from './mergeDenials.js';
 import { postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
 
@@ -31,7 +31,7 @@ export type MergeCheck =
       /** 위임 사슬로 통과했으면 그 뿌리(소유자 글) — A안. */
       viaChain?: { rootId: string };
       /** 1회 승인(`merge_approval`)으로 통과했으면 그 기록 — 래퍼는 이 계정만 쓰고, `relaxChecks` 일 때만 CI·CLEAN 판정을 GitHub 에 맡긴다. */
-      approval?: { id: string; ghUser: string; relaxChecks: boolean } }
+      approval?: { id: string; ghUser: string; relaxChecks: boolean; ciOverride: boolean } }
   /** `denialId` 는 거절 카드를 세울 수 있는 거절에만 있다(사람이 띄운 턴의 `not_granted`, 그리고 `cause_not_human` — C2·1회 승인). */
   | { ok: false; code: MergeDenial; denialId?: string };
 
@@ -187,36 +187,48 @@ export async function checkMerge(
 
   // 1회 승인(스레드 1b75d7a0): 소유자가 이 (PR, head, 스레드)를 한 번 승인했으면 grant·사람 턴 판정 대신 그것을 인정한다.
   // F1 임대·F2 저장소 모양은 위에서 이미 봤다. 소모는 `used_at is null` 을 단 한 문장 update — 두 래퍼가 동시에 와도 하나만 쓴다.
-  const approval = (await pool.query<{ id: string; ghUser: string; relaxChecks: boolean; approvedBy: string; approvedAt: Date }>(
+  // CI 실패 무시 승인(`ci_override`, 스레드 1fccc9a5 D3)은 **쓰는 턴도 사람이 띄운 것**이어야 한다 — wake·에이전트 위임 턴에서는
+  // 고르지 않는다(소모되지 않고 남는다). 그 턴은 아래 grant 판정으로 간다.
+  const approval = (await pool.query<{ id: string; ghUser: string; relaxChecks: boolean; ciOverride: boolean; approvedBy: string; approvedAt: Date }>(
     `update merge_approval set used_at = $8, used_lease_id = $9
       where id = (select id from merge_approval
                    where agent_id = $1 and scope = $2 and pr_number = $3 and head_sha = $4
                      and channel_id = $5 and thread_root_id = $6 and used_at is null and expires_at > $7
+                     and (not ci_override or $10::boolean)
                    order by approved_at desc limit 1)
         and used_at is null
-      returning id, gh_user as "ghUser", relax_checks as "relaxChecks", approved_by as "approvedBy", approved_at as "approvedAt"`,
-    [args.agentId, scope, args.number, args.headSha, lease!.channelId, lease!.threadRootId, now, now, lease!.id])).rows[0];
+      returning id, gh_user as "ghUser", relax_checks as "relaxChecks", ci_override as "ciOverride", approved_by as "approvedBy", approved_at as "approvedAt"`,
+    [args.agentId, scope, args.number, args.headSha, lease!.channelId, lease!.threadRootId, now, now, lease!.id, causeByHuman(lease!)])).rows[0];
   if (approval) {
     await recordAudit(pool, {
       action: 'repo.merge.checked', actorId: args.agentId, target: scope,
-      detail: { number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: lease!.id, grantedBy: approval.approvedBy, approvalId: approval.id, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks, causeByHuman: causeByHuman(lease!) },
+      detail: { number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: lease!.id, grantedBy: approval.approvedBy, approvalId: approval.id, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks, ciOverride: approval.ciOverride, causeByHuman: causeByHuman(lease!) },
     });
+    const approver = approval.ciOverride
+      ? (await pool.query<{ handle: string }>(`select handle from account where id = $1`, [approval.approvedBy])).rows[0]?.handle ?? null
+      : null;
     // 쓴 순간 스레드에 남긴다(무엇을·누구 승인으로·어느 계정으로). 본문은 고정 문구와 서버 값뿐 — 멘션이 풀리지 않게 handle 은 meta 에만.
     await postMessage(pool, {
       channelId: lease!.channelId, threadRootId: lease!.threadRootId, authorId: args.agentId, kind: 'system',
-      body: `🔓 ${scope.slice('repo:'.length)}#${args.number} 1회 승인으로 머지 시도 · head ${args.headSha.slice(0, 9)} · gh ${approval.ghUser}${approval.relaxChecks ? ' · CI 판정은 GitHub 에 맡김' : ''}`,
+      // CI 실패 무시 승인은 누가 승인했는지 본문에 적는다(handle 은 `@` 없이 — 「권한: handle」 과 같다). 이 갈래의 번역 표지는
+      // 앱 사전에 키가 생길 때(데스크톱·모바일 PR) 붙인다 — 그때까지는 본문으로 그려진다.
+      body: approval.ciOverride
+        ? `🔓 ${scope.slice('repo:'.length)}#${args.number} CI 실패 무시 승인으로 머지 시도${approver ? ` · 승인: ${approver}` : ''} · head ${args.headSha.slice(0, 9)} · gh ${approval.ghUser}`
+        : `🔓 ${scope.slice('repo:'.length)}#${args.number} 1회 승인으로 머지 시도 · head ${args.headSha.slice(0, 9)} · gh ${approval.ghUser}${approval.relaxChecks ? ' · CI 판정은 GitHub 에 맡김' : ''}`,
       meta: {
-        mergeApproval: { id: approval.id, repo: scope.slice('repo:'.length), number: args.number, headSha: args.headSha, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks, approvedBy: approval.approvedBy },
+        mergeApproval: { id: approval.id, repo: scope.slice('repo:'.length), number: args.number, headSha: args.headSha, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks, ciOverride: approval.ciOverride, approvedBy: approval.approvedBy },
         // 번역 표지(i18n P5) — 본문과 같은 값, 같은 갈래(CI 판정을 GitHub 에 맡겼나).
-        i18n: systemI18n(approval.relaxChecks ? 'system.merge.approvalUsedRelaxed' : 'system.merge.approvalUsed', {
-          repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: approval.ghUser,
+        ...(approval.ciOverride ? {} : {
+          i18n: systemI18n(approval.relaxChecks ? 'system.merge.approvalUsedRelaxed' : 'system.merge.approvalUsed', {
+            repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: approval.ghUser,
+          }),
         }),
       },
     });
     return {
       ok: true, leaseId: lease!.id, channelId: lease!.channelId, threadRootId: lease!.threadRootId, scope,
       grantedBy: approval.approvedBy, grantedAt: approval.approvedAt.toISOString(), causeByHuman: causeByHuman(lease!),
-      approval: { id: approval.id, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks },
+      approval: { id: approval.id, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks, ciOverride: approval.ciOverride },
     };
   }
 
@@ -235,6 +247,7 @@ export async function checkMerge(
         where id = (select id from merge_denial
                      where agent_id = $1 and scope = $2 and channel_id = $3 and thread_root_id = $4
                        and used_at is null and obsoleted_at is null and expires_at > $8
+                       and reason in ('not_granted', 'cause_not_human')
                      order by created_at desc limit 1)
         returning id`,
       [args.agentId, scope, lease!.channelId, lease!.threadRootId, args.number, args.headSha, lease!.id, now, code])).rows[0];
@@ -284,14 +297,30 @@ export type MergeReport = {
   repo: string; number: number; headSha: string;
   /** `queued`(10-16): 대상 브랜치가 merge queue 를 써서 래퍼가 큐에 넣었다. 큐가 실제로 머지했는지는 이 보고가 말하지 않는다. */
   result: 'merged' | 'queued' | 'failed'; mergeSha?: string | null; error?: string | null; now?: Date;
+  /**
+   * `failed` 이고 래퍼가 **CI 때문에** 거절했을 때(스레드 1fccc9a5): 그 판정과 초록 아닌 체크 이름. 서버는 이것으로 `ci_not_green`
+   * 거절 기록을 남기고 `denialId` 를 돌려준다(카드용). `ci_not_green` 이거나 `not_mergeable` + UNSTABLE 일 때만 받는다.
+   */
+  ciRefusal?: { code: string; mergeState?: string | null; checks?: unknown } | null;
+  /** `merged`·`queued` 일 때 래퍼가 머지 직전에 다시 읽은 초록 아닌 체크 이름(무시하고 넘어간 것). 시스템 줄·감사에 남긴다. */
+  ignoredChecks?: unknown;
 };
+
+/** 시스템 줄 본문에 끼우는 체크 이름 — 거른 이름에서 멘션·토큰이 되는 글자를 비슷한 글자로 바꾼다(본문은 멘션이 풀린다, N2). */
+const checksForBody = (names: string[]): string => names.join(', ').replace(/@/g, '＠').replace(/</g, '‹').replace(/>/g, '›');
+
+/** CI 거절 카드를 세울 수 있는 래퍼 판정인가 — `ci_not_green`, 또는 `not_mergeable` 인데 GitHub 이 UNSTABLE 이라고 한 것. */
+export function isCiRefusal(c: MergeReport['ciRefusal']): boolean {
+  if (!c) return false;
+  return c.code === 'ci_not_green' || (c.code === 'not_mergeable' && c.mergeState === 'UNSTABLE');
+}
 
 /**
  * 래퍼의 보고를 스레드에 시스템 줄로 남긴다. **서버가 GitHub 에서 직접 확인한 것이 아니다** — 줄에
  * "래퍼 보고"라고 밝힌다(security 2). 임대가 맞지 않으면 아무것도 쓰지 않는다: 남의 스레드에 줄을
  * 꽂는 길이 되기 때문이다.
  */
-export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: true; messageId: string } | { ok: false; code: 'lease_invalid' | 'bad_repo' | 'not_checked' | 'already_reported' | 'post_failed' }> {
+export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: true; messageId: string; denialId?: string } | { ok: false; code: 'lease_invalid' | 'bad_repo' | 'not_checked' | 'already_reported' | 'post_failed' }> {
   const now = r.now ?? new Date();
   const lease = await readLease(pool, { leaseId: r.leaseId, token: r.token, now });
   // 보고는 턴이 끝난 뒤 올 수 있으니 `ended` 는 보지 않는다. 만료·소속은 본다.
@@ -311,9 +340,17 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   const chainRootId = trail.rows.find((x) => x.action === 'repo.merge.checked' && x.viaChain)?.viaChain?.rootId;
   const grant = await mergeGrantFor(pool, r.agentId, repo);
   // 1회 승인으로 통과한 판정이면 승인한 사람이 「권한」이다(grant 가 없을 수 있다).
-  const approvedBy = (await pool.query<{ approvedBy: string }>(
-    `select approved_by as "approvedBy" from merge_approval where used_lease_id = $1 and scope = $2 and pr_number = $3 and head_sha = $4`,
-    [lease.id, scope, r.number, r.headSha])).rows[0]?.approvedBy ?? null;
+  const usedApproval = (await pool.query<{ id: string; approvedBy: string; ciOverride: boolean; approvedChecks: string[] }>(
+    `select id, approved_by as "approvedBy", ci_override as "ciOverride", approved_checks as "approvedChecks"
+       from merge_approval where used_lease_id = $1 and scope = $2 and pr_number = $3 and head_sha = $4`,
+    [lease.id, scope, r.number, r.headSha])).rows[0] ?? null;
+  const approvedBy = usedApproval?.approvedBy ?? null;
+  // 무시한 체크(#1396 n1·CI 무시 승인): 래퍼가 머지 때 다시 읽은 값이다 — 거절 기록을 복사하지 않는다. 승인 때 본 것보다 늘었으면 표시한다.
+  const ignored = r.result !== 'failed' ? sanitizeCheckNames(r.ignoredChecks) : [];
+  const ciOverride = usedApproval?.ciOverride === true;
+  const grewAfterApproval = ciOverride && ignored.some((n) => !usedApproval!.approvedChecks.includes(n));
+  const ignoredTail = (ciOverride ? ' · CI 실패 무시 승인' : '')
+    + (ignored.length ? ` · 무시: ${checksForBody(ignored)}` : '') + (grewAfterApproval ? ' (승인 뒤 늘어남)' : '');
   const granterId = approvedBy ?? grant?.grantedBy ?? null;
   const granter = granterId
     ? (await pool.query<{ handle: string }>(`select handle from account where id = $1`, [granterId])).rows[0]?.handle ?? null
@@ -321,20 +358,24 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   // N2: 본문은 고정 문구뿐이다. 래퍼가 준 `error` 는 meta 에만 둔다 — `postMessage` 는 kind 와 상관없이
   // 본문의 멘션을 풀기 때문에 gh 의 오류 문구 속 `@…` 가 실제 부름이 된다.
   const body = r.result === 'merged'
-    ? `🔀 ${repo}#${r.number} 머지됨 · ${(r.mergeSha ?? r.headSha).slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ' (래퍼 보고)'
+    ? `🔀 ${repo}#${r.number} 머지됨 · ${(r.mergeSha ?? r.headSha).slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ignoredTail + ' (래퍼 보고)'
     : r.result === 'queued'
-      ? `📥 ${repo}#${r.number} 머지 큐에 넣음 · head ${r.headSha.slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ' (래퍼 보고)'
+      ? `📥 ${repo}#${r.number} 머지 큐에 넣음 · head ${r.headSha.slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ignoredTail + ' (래퍼 보고)'
       : `⛔ ${repo}#${r.number} 머지 실패 · head ${r.headSha.slice(0, 9)} (래퍼 보고)`;
   const posted = await postMessage(pool, {
     channelId: lease.channelId, threadRootId: lease.threadRootId, authorId: r.agentId, body, kind: 'system',
     meta: {
       merge: {
         repo, number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, result: r.result, grantedBy: granterId, viaApproval: approvedBy !== null, error: r.error?.slice(0, 1000) ?? null,
+        ...(ciOverride ? { ciOverride: true } : {}),
+        ...(ignored.length ? { ignoredChecks: ignored } : {}),
+        ...(grewAfterApproval ? { grewAfterApproval: true } : {}),
         // 위임 사슬로 통과했으면 그 뿌리(소유자 글) — **meta 에만** 둔다(C5). 본문은 위의 고정 문구 그대로다(N2).
         ...(typeof chainRootId === 'string' ? { chainRootId } : {}),
       },
       // 번역 표지(i18n P5). 본문의 「권한: handle」 은 granter 의 handle 이 있을 때만 서므로 표지도 같은 조건이다.
-      i18n: r.result === 'merged'
+      // 무시한 체크·CI 무시 승인이 붙은 줄은 앱 사전에 키가 생길 때까지 표지 없이 본문으로 그린다(본문과 표지가 다른 말을 하지 않게, C8).
+      ...(ignoredTail ? {} : { i18n: r.result === 'merged'
         ? (granter && granterId
           ? systemI18n('system.merge.mergedGranted', { repo, number: r.number, sha: (r.mergeSha ?? r.headSha).slice(0, 9), granterId })
           : systemI18n('system.merge.merged', { repo, number: r.number, sha: (r.mergeSha ?? r.headSha).slice(0, 9) }))
@@ -342,20 +383,60 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
           ? (granter && granterId
             ? systemI18n('system.merge.queuedGranted', { repo, number: r.number, head: r.headSha.slice(0, 9), granterId })
             : systemI18n('system.merge.queued', { repo, number: r.number, head: r.headSha.slice(0, 9) }))
-          : systemI18n('system.merge.failed', { repo, number: r.number, head: r.headSha.slice(0, 9) }),
+          : systemI18n('system.merge.failed', { repo, number: r.number, head: r.headSha.slice(0, 9) }) }),
     },
   });
   if (posted.failure) return { ok: false, code: 'post_failed' };
   const msg = posted.message;
+  // CI 거절이면 카드용 거절 기록을 남긴다. 이 자리는 N1 관문(같은 임대로 통과한 그 repo·PR·head 의 판정, 보고 한 번) 뒤라 grant 없는
+  // PR·다른 head 로는 오지 못한다. 1회 승인 사전 확인에서 막힌 거절(DIRTY 등)은 판정 전이라 여기 오지 않는다 — 승인도 남고 기록도 없다.
+  const ciChecks = r.result === 'failed' && isCiRefusal(r.ciRefusal) ? sanitizeCheckNames(r.ciRefusal!.checks) : null;
+  const denialId = ciChecks ? await recordCiDenial(pool, { agentId: r.agentId, scope, lease, number: r.number, headSha: r.headSha, failedChecks: ciChecks, now }) : null;
   await recordAudit(pool, {
     action: r.result === 'merged' ? 'repo.merge.merged' : r.result === 'queued' ? 'repo.merge.queued' : 'repo.merge.failed', actorId: r.agentId, target: scope,
-    detail: { number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, operatorId: r.operatorId, leaseId: lease.id, messageId: msg.id },
+    detail: {
+      number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, operatorId: r.operatorId, leaseId: lease.id, messageId: msg.id,
+      ...(usedApproval ? { approvalId: usedApproval.id, approvedBy: usedApproval.approvedBy, ciOverride } : {}),
+      ...(ignored.length ? { ignoredChecks: ignored } : {}),
+      ...(grewAfterApproval ? { grewAfterApproval: true } : {}),
+      ...(ciChecks ? { ciRefusal: { code: r.ciRefusal!.code, mergeState: r.ciRefusal!.mergeState ?? null, checks: ciChecks }, denialId } : {}),
+    },
   });
   // Q3-a: 통과한 판정(N1 관문)을 지난 `merged` 보고면 그 PR 의 기다리는 머지 카드를 **모든 에이전트에 걸쳐** 닫는다. 실패해도 보고는 남는다.
   if (r.result === 'merged') {
     await obsoleteMergeCards(pool, { scope, number: r.number, reason: 'merged', actorId: r.agentId, now }).catch(() => null);
   }
-  return { ok: true, messageId: msg.id };
+  return { ok: true, messageId: msg.id, ...(denialId ? { denialId } : {}) };
+}
+
+/**
+ * CI 거절 카드의 거절 기록(reason `ci_not_green`). L2(security #1158)는 다른 거절과 같다: 같은 (에이전트, 저장소, 채널, 스레드)의
+ * 안 쓰고 안 만료된 **CI 거절** 기록이 있으면 그것을 다시 쓰고(PR·head·임대·체크만 지금 것으로), 새로 만드는 것은 에이전트마다
+ * 24시간에 `MERGE_DENIAL_DAILY_CAP` 개까지 — 넘으면 null(거절은 그대로, 카드만 없다). 기록은 아무 권한도 열지 않는다.
+ */
+export async function recordCiDenial(
+  pool: Pool,
+  args: { agentId: string; scope: string; lease: LeaseRow; number: number; headSha: string; failedChecks: string[]; now: Date },
+): Promise<string | null> {
+  const { lease } = args;
+  const reused = (await pool.query<{ id: string }>(
+    `update merge_denial set pr_number = $5, head_sha = $6, lease_id = $7, failed_checks = $9
+      where id = (select id from merge_denial
+                   where agent_id = $1 and scope = $2 and channel_id = $3 and thread_root_id = $4
+                     and used_at is null and obsoleted_at is null and expires_at > $8 and reason = 'ci_not_green'
+                   order by created_at desc limit 1)
+      returning id`,
+    [args.agentId, args.scope, lease.channelId, lease.threadRootId, args.number, args.headSha, lease.id, args.now, args.failedChecks])).rows[0];
+  if (reused) return reused.id;
+  const recent = (await pool.query<{ n: number }>(
+    `select count(*)::int as n from merge_denial where agent_id = $1 and created_at > $2`,
+    [args.agentId, new Date(args.now.getTime() - 24 * 3_600_000)])).rows[0]!.n;
+  if (recent >= MERGE_DENIAL_DAILY_CAP) return null;
+  return (await pool.query<{ id: string }>(
+    `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at, reason, failed_checks)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, 'ci_not_green', $9) returning id`,
+    [args.agentId, args.scope, args.number, args.headSha, lease.channelId, lease.threadRootId, lease.id,
+      new Date(args.now.getTime() + MERGE_DENIAL_TTL_MS), args.failedChecks])).rows[0]!.id;
 }
 
 /** 이 에이전트가 머지해도 되는 저장소 목록 — 러너가 턴을 띄울 때 allow/deny 규칙을 고르는 근거(PR 2). */
@@ -404,12 +485,14 @@ export async function peekMergeApproval(
   if (!lease || lease.agentId !== args.agentId || lease.operatorId !== args.operatorId || lease.expired || lease.ended) return null;
   const scope = repoScope(args.repo);
   if (!scope) return null;
+  // `checkMerge` 와 같은 조건 — CI 실패 무시 승인은 사람이 띄운 턴에서만 고른다(D3).
   return (await pool.query<{ id: string; ghUser: string; relaxChecks: boolean }>(
     `select id, gh_user as "ghUser", relax_checks as "relaxChecks" from merge_approval
       where agent_id = $1 and scope = $2 and pr_number = $3 and head_sha = $4
         and channel_id = $5 and thread_root_id = $6 and used_at is null and expires_at > $7
+        and (not ci_override or $8::boolean)
       order by approved_at desc limit 1`,
-    [args.agentId, scope, args.number, args.headSha, lease.channelId, lease.threadRootId, now])).rows[0] ?? null;
+    [args.agentId, scope, args.number, args.headSha, lease.channelId, lease.threadRootId, now, causeByHuman(lease)])).rows[0] ?? null;
 }
 
 /**
