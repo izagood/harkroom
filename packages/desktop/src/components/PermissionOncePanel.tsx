@@ -23,12 +23,30 @@ import { errorText } from '../lib/errorText';
  */
 export interface PermissionOnceMeta {
   requestId: string; agentId: string; ownerAccountId: string | null; repo: string;
-  number: number; headSha: string; reason: 'not_granted' | 'cause_not_human';
+  number: number; headSha: string; reason: 'not_granted' | 'cause_not_human' | 'ci_not_green';
+  /** `ci_not_green` 카드의 실패한 체크 이름 — 서버가 거른 값을 여기서 한 번 더 거른다. 텍스트로만 그린다. */
+  failedChecks: string[];
   /** `obsolete` — 그 PR 이 머지되거나 닫혀 서버가 카드를 닫았다(스레드 0e30c565 Q3). 결정은 서버가 409 로 받지 않는다. */
   status: 'pending' | 'granted' | 'denied' | 'approved_once' | 'obsolete';
   obsoleteReason: 'merged' | 'closed' | null;
   decidedBy: string | null;
   approvedOnce: { ghUser: string; relaxChecks: boolean; expiresAt: string } | null;
+}
+
+/**
+ * 체크 이름 거르기(스레드 1fccc9a5, security) — 이름은 PR 작성자가 정할 수 있는 문자열이다. 서버도 거르지만 그리기 전에 다시:
+ * 제어(Cc)·서식(Cf, bidi·zero-width) 문자를 빼고, 이름당 80자·20개까지, 빈 것은 버린다.
+ */
+export function cleanCheckNames(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const n of v) {
+    if (typeof n !== 'string') continue;
+    const c = n.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, '').trim().slice(0, 80);
+    if (c) out.push(c);
+    if (out.length >= 20) break;
+  }
+  return out;
 }
 
 export function readPermissionOnce(meta: Record<string, unknown>): PermissionOnceMeta | null {
@@ -40,7 +58,9 @@ export function readPermissionOnce(meta: Record<string, unknown>): PermissionOnc
   const status = p.status === 'granted' || p.status === 'denied' || p.status === 'approved_once' || p.status === 'obsolete' ? p.status : 'pending';
   return {
     requestId: p.requestId, agentId: p.agentId, ownerAccountId: typeof p.ownerAccountId === 'string' ? p.ownerAccountId : null,
-    repo: p.target, number: o.number, headSha: o.headSha, reason: o.reason === 'cause_not_human' ? 'cause_not_human' : 'not_granted',
+    repo: p.target, number: o.number, headSha: o.headSha,
+    reason: o.reason === 'cause_not_human' ? 'cause_not_human' : o.reason === 'ci_not_green' ? 'ci_not_green' : 'not_granted',
+    failedChecks: o.reason === 'ci_not_green' ? cleanCheckNames(o.failedChecks) : [],
     status, obsoleteReason: status === 'obsolete' ? (p.obsoleteReason === 'closed' ? 'closed' : 'merged') : null, decidedBy: typeof p.decidedBy === 'string' ? p.decidedBy : null,
     approvedOnce: a && typeof a.ghUser === 'string' && typeof a.expiresAt === 'string'
       ? { ghUser: a.ghUser, relaxChecks: a.relaxChecks === true, expiresAt: a.expiresAt } : null,
@@ -101,6 +121,7 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
   }, [open, d?.agentId, repoKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!d) return null;
+  const ci = d.reason === 'ci_not_green';
   const owner = d.ownerAccountId ? accounts[d.ownerAccountId]?.handle ?? '?' : '?';
   const url = prUrlOf({ repo: d.repo, number: d.number });
   const approved = done ?? (d.status === 'approved_once' ? d.approvedOnce : null);
@@ -112,8 +133,10 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
     setBusy(true); setError(null);
     try {
       // number·headSha 는 이 카드가 보여 준 값 — 서버가 거절 기록과 대조해 다르면 card_stale 로 거절한다(security F1).
-      const r = await getController().approvePermissionOnce(d.agentId, d.requestId, { ghUser, relaxChecks: relax, number: d.number, headSha: d.headSha });
-      setDone({ ghUser, relaxChecks: relax, expiresAt: r.approvalExpiresAt ?? new Date(Date.now() + 86_400_000).toISOString() });
+      // CI 거절 카드의 뜻은 「CI 무시하고 한 번」 그 자체다 — 체크박스가 아니라 언제나 켠다(서버도 끈 승인은 400).
+      const relaxChecks = ci || relax;
+      const r = await getController().approvePermissionOnce(d.agentId, d.requestId, { ghUser, relaxChecks, number: d.number, headSha: d.headSha });
+      setDone({ ghUser, relaxChecks, expiresAt: r.approvalExpiresAt ?? new Date(Date.now() + 86_400_000).toISOString() });
     } catch (e) {
       setError({ code: e instanceof ApiError ? e.code : 'failed', raw: errorText(e, t) });
     } finally {
@@ -137,8 +160,18 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
         </dd>
         <dt className="text-fg-subtle">{t('mergeOnce.why')}</dt>
         <dd data-testid="merge-once-reason" data-reason={d.reason}>
-          {d.reason === 'cause_not_human' ? t('mergeOnce.reasonNotHuman') : t('mergeOnce.reasonNotGranted')}
+          {d.reason === 'cause_not_human' ? t('mergeOnce.reasonNotHuman') : ci ? t('mergeOnce.reasonCi') : t('mergeOnce.reasonNotGranted')}
         </dd>
+        {ci && d.failedChecks.length > 0 && (
+          <>
+            <dt className="text-fg-subtle">{t('mergeOnce.failedChecks')}</dt>
+            <dd data-testid="merge-once-checks">
+              <ul className="flex flex-wrap gap-1">
+                {d.failedChecks.map((n) => <li key={n} className="break-all rounded-row bg-surface-sunken px-1 font-mono text-fg-muted">{n}</li>)}
+              </ul>
+            </dd>
+          </>
+        )}
       </dl>
 
       {approved && (
@@ -168,7 +201,7 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
           {!open ? (
             <button type="button" data-testid="merge-once-open" onClick={() => setOpen(true)}
               className="rounded bg-accent px-2 py-1 font-medium text-fg-on-strong">
-              {t('mergeOnce.open', { n: String(d.number) })}
+              {t(ci ? 'mergeOnce.openCi' : 'mergeOnce.open', { n: String(d.number) })}
             </button>
           ) : (
             <div className="space-y-1.5 rounded-row border border-border p-2" data-testid="merge-once-form">
@@ -193,15 +226,19 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
                   {ghUser && reach[ghUser] !== 'ok' && (
                     <p className="text-warning" data-testid="merge-once-unknown">{t('mergeOnce.reachUnknown', { login: ghUser })}</p>
                   )}
-                  <label className="flex items-start gap-2">
-                    <input type="checkbox" data-testid="merge-once-relax" checked={relax} disabled={busy} onChange={(e) => setRelax(e.target.checked)} className="mt-0.5" />
-                    <span>{t('mergeOnce.relax')}<span className="block text-fg-subtle">{t('mergeOnce.relaxHint')}</span></span>
-                  </label>
+                  {ci ? (
+                    <p className="text-fg" data-testid="merge-once-ci-fixed">{t('mergeOnce.ciFixed')}</p>
+                  ) : (
+                    <label className="flex items-start gap-2">
+                      <input type="checkbox" data-testid="merge-once-relax" checked={relax} disabled={busy} onChange={(e) => setRelax(e.target.checked)} className="mt-0.5" />
+                      <span>{t('mergeOnce.relax')}<span className="block text-fg-subtle">{t('mergeOnce.relaxHint')}</span></span>
+                    </label>
+                  )}
                   <p className="text-fg-subtle">{t('mergeOnce.note')}</p>
                   <div className="flex items-center gap-2">
                     <button type="button" data-testid="merge-once-submit" disabled={busy || !ghUser} onClick={() => void submit()}
                       className="rounded bg-accent px-2 py-1 font-medium text-fg-on-strong disabled:opacity-60">
-                      {t('mergeOnce.submit')}
+                      {t(ci ? 'mergeOnce.submitCi' : 'mergeOnce.submit')}
                     </button>
                     <button type="button" className="text-fg-muted underline" onClick={() => setOpen(false)}>{t('mergeOnce.cancel')}</button>
                   </div>

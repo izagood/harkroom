@@ -8,7 +8,7 @@ import { can, mergeGrantFor } from '../src/auth/permissions.js';
 import { mintPat } from '../src/services/pats.js';
 import { prepareDenialCard } from '../src/services/mergeDenials.js';
 import { MERGE_DENIAL_DAILY_CAP } from '../src/services/mergeGrants.js';
-import { openPermissionRequest, releaseGrant } from '../src/services/permissionRequests.js';
+import { openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant } from '../src/services/permissionRequests.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
@@ -736,14 +736,14 @@ describe('repo.merge grant', () => {
       const used = (await pool.query(`select body, meta from message where thread_root_id = $1 and kind = 'system' and meta ? 'mergeApproval'`, [thread])).rows;
       expect(used).toHaveLength(1);
       expect(used[0].body).toContain('CI 실패 무시 승인으로 머지 시도 · 승인: alice');
-      expect(used[0].meta.i18n).toBeUndefined();
+      expect(used[0].meta.i18n).toMatchObject({ key: 'system.merge.approvalUsedCiOverride', args: { approverId: alice.accountId, ghUser: 'izagood' } });
 
       const merged = await report(human, 'izagood/ci-b', 32, SHA3, { result: 'merged', mergeSha: 'd'.repeat(40), ignoredChecks: ['test', 'review', 'late @bob'] });
       expect(merged.statusCode).toBe(201);
       const line = (await pool.query(`select body, meta from message where id = $1`, [merged.json().messageId])).rows[0];
       expect(line.body).toBe(`🔀 izagood/ci-b#32 머지됨 · ddddddddd · 권한: alice · CI 실패 무시 승인 · 무시: test, review, late ＠bob (승인 뒤 늘어남) (래퍼 보고)`);
       expect(line.meta.merge).toMatchObject({ ciOverride: true, ignoredChecks: ['test', 'review', 'late @bob'], grewAfterApproval: true, viaApproval: true });
-      expect(line.meta.i18n).toBeUndefined();
+      expect(line.meta.i18n).toEqual({ key: 'system.merge.mergedCiOverrideGrew', args: { repo: 'izagood/ci-b', number: 32, sha: 'ddddddddd', granterId: alice.accountId, checks: 'test, review, late ＠bob' } });
       const audit = (await pool.query(`select detail from audit_log where action = 'repo.merge.merged' and target = 'repo:izagood/ci-b'`)).rows[0].detail;
       expect(audit).toMatchObject({ approvedBy: alice.accountId, ciOverride: true, ignoredChecks: ['test', 'review', 'late @bob'], grewAfterApproval: true, approvalId: expect.any(String) });
       // 같은 승인은 두 번 쓰이지 않는다.
@@ -770,6 +770,16 @@ describe('repo.merge grant', () => {
       expect((await pool.query(`select pr_number, failed_checks from merge_denial where id = $1`, [a.denialId])).rows[0]).toEqual({ pr_number: 35, failed_checks: ['lint'] });
     });
 
+    it('CI 거절 카드는 선택지가 [거절] 하나 · 본문은 「CI 실패 무시하고 이번 한 번 머지」와 거른 체크 이름(멘션 글자는 바꿔서)', () => {
+      expect(permissionCardOptions('merge', true).map((o) => o.id)).toEqual(['deny']);
+      expect(permissionCardOptions('merge').map((o) => o.id)).toEqual(['approve', 'deny']);
+      const body = permissionCardBody({
+        requestId: 'r', agentId, ownerAccountId: alice.accountId, kind: 'merge', target: 'izagood/ci-x', channelId: null, warnings: [], reason: 'fix ci',
+        once: { number: 9, headSha: SHA3, reason: 'ci_not_green', failedChecks: ['test', '@channel <@x>'] }, requestedAt: '', expiresAt: '',
+      } as Parameters<typeof permissionCardBody>[0], '@tm');
+      expect(body).toBe("권한 요청 · @tm\nCI 실패 무시하고 이번 한 번 머지 `izagood/ci-x` PR #9 · head ccccccccc\n실패한 체크: test, ＠channel ‹＠x›\n이유: fix ci");
+    });
+
     it('#1396 n1: 승인 없이 비필수 체크를 무시하고 머지했으면 줄·감사에 이름이 남는다', async () => {
       expect((await grant(alice.token, { scope: 'repo:izagood/ci-d' })).statusCode).toBe(200);
       const l = await lease(await mention(alice.accountId));
@@ -778,6 +788,7 @@ describe('repo.merge grant', () => {
       const line = (await pool.query(`select body, meta from message where id = $1`, [res.json().messageId])).rows[0];
       expect(line.body).toBe(`📥 izagood/ci-d#36 머지 큐에 넣음 · head ccccccccc · 권한: alice · 무시: review / review (래퍼 보고)`);
       expect(line.meta.merge.ciOverride).toBeUndefined();
+      expect(line.meta.i18n).toMatchObject({ key: 'system.merge.queuedIgnoring', args: { checks: 'review / review' } });
     });
   });
 

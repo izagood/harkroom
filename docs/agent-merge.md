@@ -85,7 +85,12 @@ CI 오류를 고치는 PR 처럼 CI 가 빨간 채로 머지해야 할 때가 �
   위임 턴에서는 판정도 peek 도 이 승인을 고르지 않는다(남는다).
 - 승인을 쓴 순간 「🔓 … CI 실패 무시 승인으로 머지 시도 · 승인: handle」 줄이 선다. 머지 보고에는 래퍼가 그때 다시 읽은 초록 아닌
   체크 이름(`ignoredChecks`)을 싣고, 줄에 「· CI 실패 무시 승인 · 무시: …」, 승인 때 본 목록보다 늘었으면 「(승인 뒤 늘어남)」을 붙인다.
-  감사(`repo.merge.merged`)에는 approvalId·approvedBy·이름 목록이 남는다. 이 줄들은 아직 번역 표지 없이 본문으로 그려진다.
+  감사(`repo.merge.merged`)에는 approvalId·approvedBy·이름 목록이 남는다.
+- **CI 를 건너뛰는 승인은 CI 만 건너뛴다**(relaxChecks — 이 카드와 기존 카드의 「체크 판정은 GitHub 에 맡기기」 둘 다): `mergeStateStatus` 가
+  CLEAN·UNSTABLE·HAS_HOOKS 일 때만 지나가고, DIRTY(충돌)·BEHIND·UNKNOWN·BLOCKED(리뷰 필수 같은 브랜치 보호)·draft 는 승인이 있어도 래퍼가
+  거절한다. 이 거절은 승인을 쓰기 **전** 사전 확인에서 나므로 승인은 남고 거절 기록도 생기지 않는다. 필수 체크 빨강 때문에 생긴 BLOCKED 를
+  가려 푸는 것은 다음 단계로 따로 설계한다.
+- 카드: 제목 「CI 실패 무시하고 이번 한 번 머지」, 실패 체크 이름(앱이 한 번 더 거르고 텍스트로만), PR 링크·head 9자. 체크박스·7일 버튼이 없다.
 - 승인 없이 비필수 체크를 무시하고 머지한 경우(`UNSTABLE`, 필수 체크 초록)도 같은 `ignoredChecks` 로 줄·감사에 이름이 남는다.
 
 ## merge queue
