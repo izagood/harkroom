@@ -174,6 +174,24 @@ export const CHECK_NAMES_MAX = 20;
  * 래퍼가 보고한 체크 이름을 거른다. 이름은 PR 작성자가 workflow 로 정할 수 있는 문자열이다 — 제어(Cc)·서식(Cf, bidi·zero-width
  * 포함) 문자를 빼고, 앞뒤 공백을 자르고, 이름당 80자·20개까지, 빈 것·겹친 것은 버린다. 문자열이 아닌 항목은 버린다.
  */
+/** 두 이름 목록이 같은 집합인가(순서 무관). 한쪽이 없으면 다르다. */
+function sameNames(a: string[] | undefined, b: string[]): boolean {
+  if (!a) return false;
+  const x = [...new Set(a)].sort(); const y = [...new Set(b)].sort();
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+/**
+ * 시스템 줄·카드 **본문**에 끼우는 체크 이름(n2): 이름마다 코드 스팬으로 감싸 마크다운(링크 등)으로 읽히지 않게 하고, 멘션·토큰이 되는
+ * 글자는 비슷한 글자로 바꾼다. 번역 표지 인자는 앱이 텍스트로만 그리므로 `checkNamesText` 를 쓴다.
+ */
+export function checkNamesForBody(names: string[]): string {
+  return names.map((n) => `\`${n.replace(/`/g, "'").replace(/@/g, '＠').replace(/</g, '‹').replace(/>/g, '›')}\``).join(', ');
+}
+export function checkNamesText(names: string[]): string {
+  return names.join(', ').replace(/@/g, '＠').replace(/</g, '‹').replace(/>/g, '›');
+}
+
 export function sanitizeCheckNames(names: unknown): string[] {
   if (!Array.isArray(names)) return [];
   const out: string[] = [];
@@ -278,7 +296,7 @@ export async function insertApprovalFromDenial(
   args: {
     agentId: string; denialId: string; actorId: string; ghUser: string; relaxChecks: boolean; now: Date;
     /** 카드가 보여 준 PR·head(security F1) — 값의 출처는 거절 기록이고, 이것은 「본 것을 승인한다」 대조에만 쓴다. */
-    expect: { number: number; headSha: string };
+    expect: { number: number; headSha: string; failedChecks?: string[] };
   },
 ): Promise<{ ok: true; approvalId: string; scope: string; number: number; headSha: string; reason: string; expiresAt: Date } | ({ ok: false } & DenialGrantRefusal)> {
   if (!GH_LOGIN_RE.test(args.ghUser)) return { ok: false, status: 403, code: 'bad_gh_user', message: 'ghUser must be a GitHub login' };
@@ -294,6 +312,10 @@ export async function insertApprovalFromDenial(
   const ciOverride = d.reason === 'ci_not_green';
   if (ciOverride && !args.relaxChecks) {
     return { ok: false, status: 400, code: 'relax_required', message: 'a CI-failure card approves the merge with the CI check skipped — relaxChecks must be true' };
+  }
+  // n1(security #1397): 같은 PR·head 로 다시 거절되면 실패 목록만 바뀔 수 있다 — 사람이 본 목록과 다르면 승인하지 않는다.
+  if (ciOverride && !sameNames(args.expect.failedChecks, d.failedChecks)) {
+    return { ok: false, status: 409, code: 'card_stale', message: 'the failing checks changed since the card was shown — look at it again' };
   }
   const used = await client.query(
     `update merge_denial set used_at = $2, used_by = $3 where id = $1 and used_at is null returning id`, [d.id, args.now, args.actorId]);

@@ -755,6 +755,10 @@ class StringsKo implements Strings {
   String get mergeOnceSheetTitle => '데스크톱에서 승인하세요';
   @override
   String get mergeOnceSheetBody => '이번 한 번 머지는 머지할 GitHub 계정을 고르는 승인이다. 계정은 그 에이전트가 도는 기기의 것이라 데스크톱 앱의 이 카드에서 고른다. 7일 허락과 거절은 여기서도 된다.';
+  @override
+  String get mergeOnceCiButton => 'CI 실패 무시하고 이번 한 번 머지';
+  @override
+  String get mergeOnceCiSheetBody => 'CI 실패를 무시하는 이번 한 번 머지는 머지할 GitHub 계정을 고르는 승인이라 데스크톱 앱의 이 카드에서 한다. 이 카드에는 7일 허락이 없다. 거절은 여기서도 된다.';
 
   @override
   String get reactionFailed => '리액션을 바꾸지 못했다';
@@ -1005,6 +1009,13 @@ class StringsKo implements Strings {
         'system.merge.mergedGranted': '🔀 {repo}#{number} 머지됨 · {sha} · 권한: {granterId} (래퍼 보고)',
         'system.merge.queued': '📥 {repo}#{number} 머지 큐에 넣음 · head {head} (래퍼 보고)',
         'system.merge.queuedGranted': '📥 {repo}#{number} 머지 큐에 넣음 · head {head} · 권한: {granterId} (래퍼 보고)',
+        'system.merge.approvalUsedCiOverride': '🔓 {repo}#{number} CI 실패 무시 승인으로 머지 시도 · 승인: {approverId} · head {head} · gh {ghUser}',
+        'system.merge.mergedIgnoring': '🔀 {repo}#{number} 머지됨 · {sha} · 권한: {granterId} · 무시: {checks} (래퍼 보고)',
+        'system.merge.mergedCiOverride': '🔀 {repo}#{number} 머지됨 · {sha} · 권한: {granterId} · CI 실패 무시 승인 · 무시: {checks} (래퍼 보고)',
+        'system.merge.mergedCiOverrideGrew': '🔀 {repo}#{number} 머지됨 · {sha} · 권한: {granterId} · CI 실패 무시 승인 · 무시: {checks} (승인 뒤 늘어남) (래퍼 보고)',
+        'system.merge.queuedIgnoring': '📥 {repo}#{number} 머지 큐에 넣음 · head {head} · 권한: {granterId} · 무시: {checks} (래퍼 보고)',
+        'system.merge.queuedCiOverride': '📥 {repo}#{number} 머지 큐에 넣음 · head {head} · 권한: {granterId} · CI 실패 무시 승인 · 무시: {checks} (래퍼 보고)',
+        'system.merge.queuedCiOverrideGrew': '📥 {repo}#{number} 머지 큐에 넣음 · head {head} · 권한: {granterId} · CI 실패 무시 승인 · 무시: {checks} (승인 뒤 늘어남) (래퍼 보고)',
         'system.merge.failed': '⛔ {repo}#{number} 머지 실패 · head {head} (래퍼 보고)',
         'system.apiCall.done': '🔌 {connector} {method} {path} · {status} (래퍼 보고)',
         'system.apiCall.doneGranted': '🔌 {connector} {method} {path} · {status} · 권한: {granterId} (래퍼 보고)',

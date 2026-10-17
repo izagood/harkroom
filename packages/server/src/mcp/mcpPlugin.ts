@@ -779,7 +779,7 @@ function buildMcpServer(
     }
     const { requestId, meta: permissionRequest } = opened.created;
     const meta: AskMeta & Partial<ModelMeta> & { permissionRequest: typeof permissionRequest } = {
-      kind: 'ask', ask: { options: permissionCardOptions(kind), to: { kind: 'human' }, prompt: '권한을 줄까?' },
+      kind: 'ask', ask: { options: permissionCardOptions(kind, denial?.reason === 'ci_not_green'), to: { kind: 'human' }, prompt: denial?.reason === 'ci_not_green' ? 'CI 실패를 무시하고 이번 한 번 머지할까?' : '권한을 줄까?' },
       permissionRequest,
       ...(await reportedModelMeta(pool, account.id, model, threadRootId)),
     };

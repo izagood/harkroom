@@ -286,6 +286,12 @@ abstract class Strings {
   /// 위 시트의 본문 — 왜 데스크톱인지.
   String get mergeOnceSheetBody;
 
+  /// CI 거절 카드(스레드 1fccc9a5)의 버튼 — 「CI 실패 무시하고 이번 한 번 머지」.
+  String get mergeOnceCiButton;
+
+  /// CI 거절 카드의 시트 본문 — 이 카드에는 7일 허락이 없다.
+  String get mergeOnceCiSheetBody;
+
   /// 리액션 실패 토스트.
   String get reactionFailed;
 
@@ -1223,6 +1229,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'mergeOnceButton': s.mergeOnceButton,
       'mergeOnceSheetTitle': s.mergeOnceSheetTitle,
       'mergeOnceSheetBody': s.mergeOnceSheetBody,
+      'mergeOnceCiButton': s.mergeOnceCiButton,
+      'mergeOnceCiSheetBody': s.mergeOnceCiSheetBody,
       'reactionFailed': s.reactionFailed,
       'timeUnderMinute': s.timeUnderMinute,
       'timeMinutes': s.timeMinutes,

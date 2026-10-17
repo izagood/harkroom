@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { repoScope } from '@harkroom/shared';
 import { mergeGrantFor } from '../auth/permissions.js';
 import { recordAudit } from '../audit.js';
-import { obsoleteMergeCards, sanitizeCheckNames } from './mergeDenials.js';
+import { checkNamesForBody, checkNamesText, obsoleteMergeCards, sanitizeCheckNames } from './mergeDenials.js';
 import { postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
 
@@ -210,15 +210,18 @@ export async function checkMerge(
     // 쓴 순간 스레드에 남긴다(무엇을·누구 승인으로·어느 계정으로). 본문은 고정 문구와 서버 값뿐 — 멘션이 풀리지 않게 handle 은 meta 에만.
     await postMessage(pool, {
       channelId: lease!.channelId, threadRootId: lease!.threadRootId, authorId: args.agentId, kind: 'system',
-      // CI 실패 무시 승인은 누가 승인했는지 본문에 적는다(handle 은 `@` 없이 — 「권한: handle」 과 같다). 이 갈래의 번역 표지는
-      // 앱 사전에 키가 생길 때(데스크톱·모바일 PR) 붙인다 — 그때까지는 본문으로 그려진다.
+      // CI 실패 무시 승인은 누가 승인했는지 본문에 적는다(handle 은 `@` 없이 — 「권한: handle」 과 같다). 표지는 승인자 id 로 싣는다.
       body: approval.ciOverride
         ? `🔓 ${scope.slice('repo:'.length)}#${args.number} CI 실패 무시 승인으로 머지 시도${approver ? ` · 승인: ${approver}` : ''} · head ${args.headSha.slice(0, 9)} · gh ${approval.ghUser}`
         : `🔓 ${scope.slice('repo:'.length)}#${args.number} 1회 승인으로 머지 시도 · head ${args.headSha.slice(0, 9)} · gh ${approval.ghUser}${approval.relaxChecks ? ' · CI 판정은 GitHub 에 맡김' : ''}`,
       meta: {
         mergeApproval: { id: approval.id, repo: scope.slice('repo:'.length), number: args.number, headSha: args.headSha, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks, ciOverride: approval.ciOverride, approvedBy: approval.approvedBy },
         // 번역 표지(i18n P5) — 본문과 같은 값, 같은 갈래(CI 판정을 GitHub 에 맡겼나).
-        ...(approval.ciOverride ? {} : {
+        ...(approval.ciOverride ? (approver ? {
+          i18n: systemI18n('system.merge.approvalUsedCiOverride', {
+            repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: approval.ghUser, approverId: approval.approvedBy,
+          }),
+        } : {}) : {
           i18n: systemI18n(approval.relaxChecks ? 'system.merge.approvalUsedRelaxed' : 'system.merge.approvalUsed', {
             repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: approval.ghUser,
           }),
@@ -306,8 +309,6 @@ export type MergeReport = {
   ignoredChecks?: unknown;
 };
 
-/** 시스템 줄 본문에 끼우는 체크 이름 — 거른 이름에서 멘션·토큰이 되는 글자를 비슷한 글자로 바꾼다(본문은 멘션이 풀린다, N2). */
-const checksForBody = (names: string[]): string => names.join(', ').replace(/@/g, '＠').replace(/</g, '‹').replace(/>/g, '›');
 
 /** CI 거절 카드를 세울 수 있는 래퍼 판정인가 — `ci_not_green`, 또는 `not_mergeable` 인데 GitHub 이 UNSTABLE 이라고 한 것. */
 export function isCiRefusal(c: MergeReport['ciRefusal']): boolean {
@@ -350,7 +351,7 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   const ciOverride = usedApproval?.ciOverride === true;
   const grewAfterApproval = ciOverride && ignored.some((n) => !usedApproval!.approvedChecks.includes(n));
   const ignoredTail = (ciOverride ? ' · CI 실패 무시 승인' : '')
-    + (ignored.length ? ` · 무시: ${checksForBody(ignored)}` : '') + (grewAfterApproval ? ' (승인 뒤 늘어남)' : '');
+    + (ignored.length ? ` · 무시: ${checkNamesForBody(ignored)}` : '') + (grewAfterApproval ? ' (승인 뒤 늘어남)' : '');
   const granterId = approvedBy ?? grant?.grantedBy ?? null;
   const granter = granterId
     ? (await pool.query<{ handle: string }>(`select handle from account where id = $1`, [granterId])).rows[0]?.handle ?? null
@@ -362,6 +363,12 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
     : r.result === 'queued'
       ? `📥 ${repo}#${r.number} 머지 큐에 넣음 · head ${r.headSha.slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ignoredTail + ' (래퍼 보고)'
       : `⛔ ${repo}#${r.number} 머지 실패 · head ${r.headSha.slice(0, 9)} (래퍼 보고)`;
+  const tailVariant = ignored.length ? (ciOverride ? (grewAfterApproval ? 'CiOverrideGrew' : 'CiOverride') : 'Ignoring') : null;
+  const tailI18n = r.result !== 'failed' && tailVariant && granter && granterId
+    ? (r.result === 'merged'
+      ? systemI18n(`system.merge.merged${tailVariant}`, { repo, number: r.number, sha: (r.mergeSha ?? r.headSha).slice(0, 9), granterId, checks: checkNamesText(ignored) })
+      : systemI18n(`system.merge.queued${tailVariant}`, { repo, number: r.number, head: r.headSha.slice(0, 9), granterId, checks: checkNamesText(ignored) }))
+    : null;
   const posted = await postMessage(pool, {
     channelId: lease.channelId, threadRootId: lease.threadRootId, authorId: r.agentId, body, kind: 'system',
     meta: {
@@ -374,8 +381,9 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
         ...(typeof chainRootId === 'string' ? { chainRootId } : {}),
       },
       // 번역 표지(i18n P5). 본문의 「권한: handle」 은 granter 의 handle 이 있을 때만 서므로 표지도 같은 조건이다.
-      // 무시한 체크·CI 무시 승인이 붙은 줄은 앱 사전에 키가 생길 때까지 표지 없이 본문으로 그린다(본문과 표지가 다른 말을 하지 않게, C8).
-      ...(ignoredTail ? {} : { i18n: r.result === 'merged'
+      // 무시한 체크·CI 무시 승인이 붙은 줄은 그 갈래의 키로 — 맞는 키가 없는 드문 꼴(권한 이름 없음·무시 0개인 CI 무시 승인)은
+      // 표지 없이 본문으로 그린다(본문과 표지가 다른 말을 하지 않게, C8).
+      ...(ignoredTail ? (tailI18n ? { i18n: tailI18n } : {}) : { i18n: r.result === 'merged'
         ? (granter && granterId
           ? systemI18n('system.merge.mergedGranted', { repo, number: r.number, sha: (r.mergeSha ?? r.headSha).slice(0, 9), granterId })
           : systemI18n('system.merge.merged', { repo, number: r.number, sha: (r.mergeSha ?? r.headSha).slice(0, 9) }))

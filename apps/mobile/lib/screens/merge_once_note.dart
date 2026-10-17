@@ -27,9 +27,18 @@ class MergeOnceNote extends StatelessWidget {
     return n is int ? n : null;
   }
 
+  /// CI 거절에서 온 카드인가(스레드 1fccc9a5) — 버튼·시트 문구가 「CI 실패 무시하고 이번 한 번」이고 7일 허락이 없다.
+  static bool isCi(Map<String, Object?> meta) {
+    final p = meta['permissionRequest'];
+    if (p is! Map) return false;
+    final once = p['once'];
+    return once is Map && once['reason'] == 'ci_not_green';
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.t;
+    final ci = isCi(message.meta);
     return Align(
       alignment: Alignment.centerLeft,
       child: OutlinedButton(
@@ -47,7 +56,7 @@ class MergeOnceNote extends StatelessWidget {
                 children: [
                   Text(t.mergeOnceSheetTitle, style: Theme.of(ctx).textTheme.titleMedium),
                   const SizedBox(height: 8),
-                  Text(t.mergeOnceSheetBody),
+                  Text(ci ? t.mergeOnceCiSheetBody : t.mergeOnceSheetBody),
                   const SizedBox(height: 12),
                   Align(
                     alignment: Alignment.centerRight,
@@ -58,7 +67,7 @@ class MergeOnceNote extends StatelessWidget {
             ),
           ),
         ),
-        child: Text('${t.mergeOnceButton} · PR #$number'),
+        child: Text('${ci ? t.mergeOnceCiButton : t.mergeOnceButton} · PR #$number'),
       ),
     );
   }

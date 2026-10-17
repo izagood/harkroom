@@ -756,6 +756,10 @@ class StringsEn implements Strings {
   String get mergeOnceSheetTitle => 'Approve on desktop';
   @override
   String get mergeOnceSheetBody => 'Merging just this once means picking the GitHub account to merge with. The accounts live on the device the agent runs on, so pick it on this card in the desktop app. Allowing 7 days and declining work here too.';
+  @override
+  String get mergeOnceCiButton => 'Merge once ignoring CI failures';
+  @override
+  String get mergeOnceCiSheetBody => 'Merging once while ignoring CI failures means picking the GitHub account to merge with, so it happens on this card in the desktop app. This card has no 7-day option. Declining works here too.';
 
   @override
   String get reactionFailed => 'Could not change the reaction';
@@ -1006,6 +1010,13 @@ class StringsEn implements Strings {
         'system.merge.mergedGranted': '🔀 {repo}#{number} merged · {sha} · permission: {granterId} (wrapper report)',
         'system.merge.queued': '📥 {repo}#{number} added to the merge queue · head {head} (wrapper report)',
         'system.merge.queuedGranted': '📥 {repo}#{number} added to the merge queue · head {head} · permission: {granterId} (wrapper report)',
+        'system.merge.approvalUsedCiOverride': '🔓 {repo}#{number} merge attempted with a CI-failure override · approved by {approverId} · head {head} · gh {ghUser}',
+        'system.merge.mergedIgnoring': '🔀 {repo}#{number} merged · {sha} · permission: {granterId} · ignored: {checks} (wrapper report)',
+        'system.merge.mergedCiOverride': '🔀 {repo}#{number} merged · {sha} · permission: {granterId} · CI-failure override · ignored: {checks} (wrapper report)',
+        'system.merge.mergedCiOverrideGrew': '🔀 {repo}#{number} merged · {sha} · permission: {granterId} · CI-failure override · ignored: {checks} (more than when approved) (wrapper report)',
+        'system.merge.queuedIgnoring': '📥 {repo}#{number} added to the merge queue · head {head} · permission: {granterId} · ignored: {checks} (wrapper report)',
+        'system.merge.queuedCiOverride': '📥 {repo}#{number} added to the merge queue · head {head} · permission: {granterId} · CI-failure override · ignored: {checks} (wrapper report)',
+        'system.merge.queuedCiOverrideGrew': '📥 {repo}#{number} added to the merge queue · head {head} · permission: {granterId} · CI-failure override · ignored: {checks} (more than when approved) (wrapper report)',
         'system.merge.failed': '⛔ {repo}#{number} merge failed · head {head} (wrapper report)',
         'system.apiCall.done': '🔌 {connector} {method} {path} · {status} (wrapper report)',
         'system.apiCall.doneGranted': '🔌 {connector} {method} {path} · {status} · permission: {granterId} (wrapper report)',

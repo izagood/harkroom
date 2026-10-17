@@ -71,6 +71,8 @@ describe('turnMerge', () => {
   let queueSeq: (typeof queue)[];
   // 필수 체크 GraphQL 의 답(null 이면 gh 가 실패한다).
   let required: { oid: string; hasNextPage?: boolean; nodes: Record<string, unknown>[] } | null;
+  // merge-results 의 201 본문 — CI 거절이면 서버가 카드용 denialId 를 싣는다.
+  let resultsBody: string;
   let tm: TurnMerge;
 
   beforeEach(() => {
@@ -79,6 +81,7 @@ describe('turnMerge', () => {
     approvals = []; checkApproval = null; peekStatus = 200;
     queue = { enabled: false, inQueue: false, entry: null }; queueSeq = [];
     required = null;
+    resultsBody = '{"messageId":"m1"}';
     enqueueResult = { code: 0, stdout: JSON.stringify({ data: { enqueuePullRequest: { mergeQueueEntry: { position: 3, state: 'QUEUED' } } } }), stderr: '' };
     pr = { state: 'OPEN', isDraft: false, headRefOid: SHA, baseRefName: 'main', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }] };
     tm = createTurnMerge({
@@ -100,7 +103,7 @@ describe('turnMerge', () => {
             ? { type: 'http.response', id: req.id, status: 200, body: JSON.stringify({ allowed: true, grantedBy: 'owner-1', causeByHuman: true, ...(checkApproval ? { approval: checkApproval } : {}) }) }
             : { type: 'http.response', id: req.id, status: checkStatus, body: JSON.stringify(denialBody) };
         }
-        return { type: 'http.response', id: req.id, status: 201, body: '{"messageId":"m1"}' };
+        return { type: 'http.response', id: req.id, status: 201, body: req.path === '/agent/merge-results' ? resultsBody : '{"messageId":"m1"}' };
       },
       exec: async (file, args, env): Promise<ExecResult> => {
         execs.push({ file, args, env });
@@ -272,14 +275,34 @@ describe('turnMerge', () => {
       expect(JSON.parse((forwards[0] as { body?: string }).body ?? '{}')).toMatchObject({ leaseId: 'lease-1', token: 'tok-1', repo: 'izagood/harkroom', number: 7, headSha: SHA });
     });
 
-    it('relaxChecks 는 승인 기록의 칸으로만 — 켜져 있으면 CI·CLEAN 은 GitHub 에 맡긴다(OPEN·head 는 그대로 본다)', async () => {
+    it('relaxChecks 는 승인 기록의 칸으로만 — 켜져 있으면 CI 는 건너뛰고(UNSTABLE·빨강) 건너뛴 체크를 남긴다', async () => {
       approvals = [{ ...approvals[0]!, relaxChecks: true }];
       checkApproval = { ...checkApproval!, relaxChecks: true };
-      pr = { ...pr, mergeStateStatus: 'BLOCKED', statusCheckRollup: [] };
-      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body).toMatchObject({ merged: true });
+      pr = { ...pr, mergeStateStatus: 'UNSTABLE', statusCheckRollup: [{ name: 'test', status: 'COMPLETED', conclusion: 'FAILURE' }, { name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' }] };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body).toMatchObject({ merged: true, ignoredChecks: ['test'] });
+      expect(results()).toEqual([expect.objectContaining({ result: 'merged', ignoredChecks: ['test'] })]);
       // 꺼진 승인이면 같은 PR 이 막힌다
       approvals = [{ ...approvals[0]!, relaxChecks: false }];
       expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('not_mergeable');
+    });
+
+    it.each(['DIRTY', 'BEHIND', 'UNKNOWN', 'BLOCKED', undefined])('F1(스레드 1fccc9a5): CI 를 건너뛰는 승인이어도 %s 는 사전 확인에서 거절 — 승인을 쓰지 않고 보고도 없다', async (state) => {
+      approvals = [{ ...approvals[0]!, relaxChecks: true }];
+      checkApproval = { ...checkApproval!, relaxChecks: true };
+      pr = { ...pr, mergeStateStatus: state, statusCheckRollup: [{ name: 'test', status: 'COMPLETED', conclusion: 'FAILURE' }] };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error.code).toBe('not_mergeable');
+      expect(r.body.error.message).toContain('approval was not used');
+      expect(checksCalled()).toBe(0);
+      expect(results()).toEqual([]);
+      expect(ghCalls()).not.toContain('pr merge');
+    });
+
+    it('F1: draft 도 CI 를 건너뛰는 승인으로 풀리지 않는다', async () => {
+      approvals = [{ ...approvals[0]!, relaxChecks: true }];
+      pr = { ...pr, isDraft: true };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('draft');
+      expect(checksCalled()).toBe(0);
     });
 
     it('서버가 쓴 승인이 사전 확인한 것(id)과 다르면 머지하지 않는다 — 계정이 같아도(security F2)', async () => {
@@ -651,6 +674,37 @@ describe('turnMerge', () => {
       required = { oid: SHA, nodes: [run('test', 'SUCCESS', true), run('review / review', 'FAILURE', false)] };
       expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('ci_not_green');
       expect(requiredCalls()).toHaveLength(0);
+    });
+  });
+
+  describe('CI 거절 → 카드 (스레드 1fccc9a5)', () => {
+    const DENIAL = '11111111-2222-4333-8444-555555555555';
+    it('ci_not_green 이면 ciRefusal(초록 아닌 이름)을 보고하고, 서버가 준 denialId 를 넘긴다', async () => {
+      pr = { ...pr, statusCheckRollup: [{ name: 'test', status: 'COMPLETED', conclusion: 'FAILURE' }, { name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' }] };
+      resultsBody = JSON.stringify({ messageId: 'm1', denialId: DENIAL });
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error).toMatchObject({ code: 'ci_not_green', denialId: DENIAL });
+      expect(r.body.error.message).toContain('mergeDenialId');
+      expect(results()).toEqual([expect.objectContaining({ result: 'failed', ciRefusal: { code: 'ci_not_green', mergeState: 'CLEAN', checks: ['test'] } })]);
+    });
+
+    it('UNSTABLE 인데 필수 체크가 없으면 not green 이름으로 ciRefusal — denialId 가 uuid 가 아니면 넘기지 않는다', async () => {
+      pr = { ...pr, mergeStateStatus: 'UNSTABLE', statusCheckRollup: [{ name: 'review', status: 'COMPLETED', conclusion: 'FAILURE' }, { name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }] };
+      required = { oid: SHA, nodes: [{ __typename: 'CheckRun', name: 'review', status: 'COMPLETED', conclusion: 'FAILURE', isRequired: false }, { __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS', isRequired: false }] };
+      resultsBody = JSON.stringify({ messageId: 'm1', denialId: 'not-a-uuid' });
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error.code).toBe('ci_not_green');
+      expect(r.body.error.denialId).toBeUndefined();
+      expect(results()[0]).toMatchObject({ ciRefusal: { code: 'ci_not_green', mergeState: 'UNSTABLE', checks: ['review'] } });
+    });
+
+    it('BLOCKED·DIRTY·head_moved 는 CI 거절이 아니다 — ciRefusal 을 싣지 않는다', async () => {
+      for (const patch of [{ mergeStateStatus: 'BLOCKED' }, { mergeStateStatus: 'DIRTY' }, { headRefOid: 'c'.repeat(40) }]) {
+        forwards = [];
+        pr = { ...pr, mergeStateStatus: 'CLEAN', headRefOid: SHA, ...patch, statusCheckRollup: [{ name: 'test', status: 'COMPLETED', conclusion: 'FAILURE' }] };
+        resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+        expect(results()[0]!.ciRefusal, JSON.stringify(patch)).toBeUndefined();
+      }
     });
   });
 
