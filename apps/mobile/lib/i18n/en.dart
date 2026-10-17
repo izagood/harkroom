@@ -756,6 +756,10 @@ class StringsEn implements Strings {
   String get mergeOnceSheetTitle => 'Approve on desktop';
   @override
   String get mergeOnceSheetBody => 'Merging just this once means picking the GitHub account to merge with. The accounts live on the device the agent runs on, so pick it on this card in the desktop app. Allowing 7 days and declining work here too.';
+  @override
+  String get mergeOnceCiButton => 'Merge once ignoring CI failures';
+  @override
+  String get mergeOnceCiSheetBody => 'Merging once while ignoring CI failures means picking the GitHub account to merge with, so it happens on this card in the desktop app. This card has no 7-day option. Declining works here too.';
 
   @override
   String get reactionFailed => 'Could not change the reaction';

@@ -163,14 +163,19 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
         <dd data-testid="merge-once-reason" data-reason={d.reason}>
           {d.reason === 'cause_not_human' ? t('mergeOnce.reasonNotHuman') : ci ? t('mergeOnce.reasonCi') : t('mergeOnce.reasonNotGranted')}
         </dd>
-        {ci && d.failedChecks.length > 0 && (
+        {ci && (
           <>
             <dt className="text-fg-subtle">{t('mergeOnce.failedChecks')}</dt>
-            <dd data-testid="merge-once-checks">
-              <ul className="flex flex-wrap gap-1">
-                {d.failedChecks.map((n) => <li key={n} className="break-all rounded-row bg-surface-sunken px-1 font-mono text-fg-muted">{n}</li>)}
-              </ul>
-            </dd>
+            {d.failedChecks.length > 0 ? (
+              <dd data-testid="merge-once-checks">
+                <ul className="flex flex-wrap gap-1">
+                  {d.failedChecks.map((n) => <li key={n} className="break-all rounded-row bg-surface-sunken px-1 font-mono text-danger">✕ {n}</li>)}
+                </ul>
+              </dd>
+            ) : (
+              // 체크가 하나도 보고되지 않은 거절(push 직후 등) — 무엇을 무시하는지 모르는 채 승인하지 않게 알린다. 막지는 않는다(designer s2).
+              <dd className="text-warning" data-testid="merge-once-no-checks">{t('mergeOnce.noChecksYet')}</dd>
+            )}
           </>
         )}
       </dl>

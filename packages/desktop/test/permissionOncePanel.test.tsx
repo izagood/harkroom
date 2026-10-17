@@ -78,7 +78,7 @@ describe('PermissionOncePanel', () => {
     render(<PermissionOncePanel message={card({}, { reason: 'ci_not_green', failedChecks: names })} />);
     expect(screen.getByTestId('merge-once-reason').getAttribute('data-reason')).toBe('ci_not_green');
     const items = [...screen.getByTestId('merge-once-checks').querySelectorAll('li')].map((li) => li.textContent);
-    expect(items.slice(0, 4)).toEqual(['test', 'review', '<b>x</b>', 'y'.repeat(80)]);
+    expect(items.slice(0, 4)).toEqual(['✕ test', '✕ review', '✕ <b>x</b>', `✕ ${'y'.repeat(80)}`]);
     expect(items).toHaveLength(20);
     expect(screen.getByTestId('merge-once-checks').querySelector('b')).toBeNull();
     expect(screen.getByTestId('merge-once-open').textContent).toContain('CI 실패 무시하고 이번 한 번 머지');
@@ -88,7 +88,15 @@ describe('PermissionOncePanel', () => {
     expect(screen.getByTestId('merge-once-ci-fixed')).toBeTruthy();
     fireEvent.change(select, { target: { value: 'izagood' } });
     fireEvent.click(screen.getByTestId('merge-once-submit'));
-    await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { ghUser: 'izagood', relaxChecks: true, number: 42, headSha: HEAD, failedChecks: items }));
+    await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { ghUser: 'izagood', relaxChecks: true, number: 42, headSha: HEAD, failedChecks: items.map((x) => x!.slice(2)) }));
+  });
+
+  it('CI 카드에 실패 체크가 하나도 없으면 칩 대신 경고 한 줄(designer s2) — 승인 버튼은 그대로', () => {
+    tauri(); setup();
+    render(<PermissionOncePanel message={card({}, { reason: 'ci_not_green', failedChecks: [] })} />);
+    expect(screen.queryByTestId('merge-once-checks')).toBeNull();
+    expect(screen.getByTestId('merge-once-no-checks').textContent).toContain('아직 보고된 체크가 없다');
+    expect(screen.getByTestId('merge-once-open')).toBeTruthy();
   });
 
   it('readPermissionOnce — 모르는 사유는 not_granted, CI 사유가 아니면 failedChecks 를 읽지 않는다', () => {

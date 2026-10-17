@@ -18,6 +18,13 @@ void main() {
     expect(MergeOnceNote.pendingNumber(meta(status: 'pending'), 'me'), 42);
   });
 
+  test('CI 거절 카드는 isCi — 그 밖은 아니다', () {
+    expect(MergeOnceNote.isCi(meta(once: const {'number': 42, 'headSha': 'a', 'reason': 'ci_not_green'})), isTrue);
+    expect(MergeOnceNote.isCi(meta(once: const {'number': 42, 'headSha': 'a', 'reason': 'not_granted'})), isFalse);
+    expect(MergeOnceNote.isCi(meta()), isFalse);
+    expect(MergeOnceNote.isCi(const {}), isFalse);
+  });
+
   test('그 밖이면 서지 않는다', () {
     expect(MergeOnceNote.pendingNumber(meta(owner: 'someone'), 'me'), isNull);
     expect(MergeOnceNote.pendingNumber(meta(), null), isNull);
