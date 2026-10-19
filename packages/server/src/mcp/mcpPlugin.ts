@@ -41,7 +41,7 @@ import {
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import {
   listMemoryIndex, MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH,
-  MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, memoryRev, readMemoryCounted, searchMemory, auditMemory,
+  MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, memoryRev, readMemoryCounted, searchMemory, recordRecall, auditMemory,
   setMemory, lastCleanRevision, coreSections, listMemoryRevisions,
 } from '../services/memory.js';
 import {
@@ -1659,6 +1659,16 @@ function buildMcpServer(
         : { includeArchived: includeArchived ?? false }),
     });
     return jsonResult(recall ? res : { hits: res.hits });
+  });
+
+  // memory.recalled — 러너가 턴 프롬프트에 실제로 실은 recall 을 턴이 성공한 뒤 알린다(S0 N4).
+  // search 때 세면(recordTop) 러너가 그 뒤 거른 것·실패한 턴까지 쓰인 것이 된다. 옛 서버는 이 도구가 없다 — 러너가 삼킨다.
+  server.registerTool('memory.recalled', {
+    description: '러너 전용: 이번 턴 프롬프트에 실은 기억(slug 또는 slug@updatedAt)을 recall_count 로 센다',
+    inputSchema: { slugs: z.array(z.string().min(1).max(300)).min(1).max(5) },
+  }, async ({ slugs }) => {
+    await recordRecall(pool, account.id, slugs);
+    return jsonResult({ ok: true });
   });
 
   // memory.audit — 정리 턴(M4)이 볼 후보. 판단은 에이전트가 한다; 서버는 사실만 모은다.

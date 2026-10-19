@@ -766,6 +766,31 @@ describe('runMentionTurn', () => {
     expect(queries).toHaveLength(1);
   });
 
+  // S0 N4: recall_count 는 찾을 때가 아니라 성공한 턴 뒤 실제로 실은 것만 센다.
+  it('실은 recall 은 성공한 턴 뒤에만 recordRecall 로 알린다 — 찾을 때는 recordTop 을 안 보낸다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    const opts: unknown[] = [];
+    const reported: string[][] = [];
+    Object.assign(fake, {
+      searchMemory: async (_q: string, _l: number, o: unknown) => {
+        opts.push(o);
+        return { hits: [{ slug: 'mem/deploy', score: 3, nameHits: 1, value: '절차', updatedAt: 'T1' }], terms: ['배포'] };
+      },
+      recordRecall: async (keys: string[]) => { reported.push(keys); },
+    });
+    fake.seedFrom('human-1', '@forge 배포 절차 확인해줘');
+    const { deps, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: '' });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch(() => {});
+    expect(opts).toHaveLength(1);
+    expect(opts[0]).not.toHaveProperty('recordTop');
+    expect(reported).toEqual([]);
+
+    runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(reported).toEqual([['mem/deploy@T1']]);
+  });
+
   /**
    * **TUI 꼬리 원문은 통지에 싣지 않는다** (2026-10-01). 09-07 에는 버려지던 출력을 살리려 꼬리를 붙였지만,
    * 실제로 붙은 것은 상태줄·입력창·이스케이프 잔여(`<u>4m…`)라 사람이 못 읽었다. 이제 하네스 기록의

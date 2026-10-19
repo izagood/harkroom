@@ -366,6 +366,33 @@ describe('memory MCP tools', () => {
     }
   });
 
+  // S0 N4: 새 러너는 recordTop 없이 찾고, 턴이 성공한 뒤 실은 것만 memory.recalled 로 알린다.
+  it('memory.recalled counts only what the runner reports as injected (slug or slug@updatedAt)', async () => {
+    const { accountId, pat } = await createAgent(app, adminToken, 'recalled-agent');
+    const client = await mcpClient(pat);
+    try {
+      await callTool(client, 'memory.set', { slug: 'mem/ret-a', value: '보관', description: '보관 정책' });
+      await callTool(client, 'memory.set', { slug: 'mem/ret-b', value: '보관', description: '보관 측정' });
+      const counts = async () => Object.fromEntries((await pool.query(
+        `select slug, recall_count, last_recalled_at is not null as at from agent_memory where account_id = $1 order by slug`, [accountId],
+      )).rows.map((r: { slug: string; recall_count: number; at: boolean }) => [r.slug, [r.recall_count, r.at]]));
+
+      // 찾기만 하면 세지 않는다.
+      const found = await callTool(client, 'memory.search', { query: '보관 봐', recall: true, includeValue: true });
+      expect((found.hits as unknown[]).length).toBe(2);
+      expect(await counts()).toEqual({ 'mem/ret-a': [0, false], 'mem/ret-b': [0, false] });
+
+      // 알린 것만 — 판 붙은 키도 slug 로 센다. 겹친 키는 한 번, core·없는 slug 는 무시.
+      const res = await callTool(client, 'memory.recalled', {
+        slugs: [`mem/ret-a@${(found.hits as { slug: string; updatedAt: string }[]).find((h) => h.slug === 'mem/ret-a')!.updatedAt}`, 'mem/ret-a', 'core', 'mem/nope'],
+      });
+      expect(res).toEqual({ ok: true });
+      expect(await counts()).toEqual({ 'mem/ret-a': [1, true], 'mem/ret-b': [0, false] });
+    } finally {
+      await client.close();
+    }
+  });
+
   // G: focus(새 말)를 주면 서버가 후속 턴 게이트를 걸고, recordTop 은 게이트를 지난 것만 센다.
   it('memory.search recall focus gates on fresh-message terms, returns focusTerms/termHits, counts only gated hits', async () => {
     const { accountId, pat } = await createAgent(app, adminToken, 'recall-focus-agent');

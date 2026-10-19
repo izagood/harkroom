@@ -75,10 +75,10 @@ export interface RecallResult {
 }
 
 /**
- * `exclude` 는 이 세션에 이미 실은 판의 키, `recordTop` 은 실을 개수다 — 서버가 이미 실은 판을 빼고
- * 앞 `recordTop` 개를 recall_count 로 센다(S2 F1). 옛 서버는 둘 다 버리므로 러너도 제 쪽에서 거른다.
+ * `exclude` 는 이 세션에 이미 실은 판의 키다 — 서버가 이미 실은 판을 뺀다(S2 F6). 옛 서버는 버리므로 러너도 제 쪽에서 거른다.
+ * 찾을 때는 세지 않는다(S0 N4) — 실은 것은 턴이 성공한 뒤 `MemoryPlan.recalled` 로 따로 알린다.
  */
-type RecallSearch = (query: string, opts: { exclude: string[]; recordTop: number; focus?: string }) => Promise<RecallResult>;
+type RecallSearch = (query: string, opts: { exclude: string[]; focus?: string }) => Promise<RecallResult>;
 
 /** 이미 실은 판인가를 가르는 키(F6). */
 export function recallKey(h: { slug: string; updatedAt?: string }): string {
@@ -156,6 +156,11 @@ export interface MemoryPlan {
   turnLines: string[];
   /** 성공한 턴 뒤에 부른다 — 알린 상태를 저장한다. 실패는 삼킨다(다음 턴이 다시 알린다). */
   commit(sessionId: string | null): Promise<void>;
+  /**
+   * 이 턴 프롬프트에 실제로 실은 recall 의 키(`slug@updatedAt`). 성공한 턴 뒤 러너가 서버에 알려 recall_count 로
+   * 센다(S0 N4) — 찾을 때 세면 러너가 그 뒤 거른 것·실패한 턴까지 쓰인 것이 됐다.
+   */
+  recalled: string[];
 }
 
 const sha = (text: string | null): string | null =>
@@ -227,7 +232,7 @@ export async function planMemory(opts: {
   const noop: MemoryPlan['commit'] = async () => {};
 
   // 못 읽었고 사본도 없다 — #139 규칙대로 아무것도 싣지 않는다. 고정도 건드리지 않는다.
-  if (opts.memory === 'unavailable') return { system: 'unavailable', turnLines: [], commit: noop };
+  if (opts.memory === 'unavailable') return { system: 'unavailable', turnLines: [], commit: noop, recalled: [] };
   const memory = opts.memory;
   const stale = memory.stale ? ['', ...staleMemoryLines(memory.stale.fetchedAt)] : [];
   // journal(070)은 목록에 싣지 않는다 — 한 작업의 경위라 적고 나면 거의 안 읽혔다(감사: pr-* 41%).
@@ -273,6 +278,7 @@ export async function planMemory(opts: {
         announcedCoreSha: sha(memory.core), announcedSlugs: visible, recalled, ...keep,
         announcedSignals: signals.codes,
       }),
+      recalled: recall.slugs,
     };
   }
 
@@ -303,6 +309,7 @@ export async function planMemory(opts: {
     system: { core: pin.systemCore, slugs: memory.slugs },
     turnLines: trimLeading(lines),
     commit: save({ ...pin, announcedCoreSha: coreSha, announcedSlugs: visible, recalled, ...keep, announcedSignals: signals.codes }),
+    recalled: recall.slugs,
   };
 }
 
@@ -319,14 +326,14 @@ function withRootHead<T extends { query: string }>(recall: T, rootHead: string |
 /**
  * 후속 턴 게이트(G). 루트 머리를 붙인 턴(`focus` 가 있다)에서는 **새 말 낱말이 이름·요약에 하나 이상 걸린
  * 것만** 싣는다 — 루트 낱말로만 걸린 것은 첫 턴에 이미 실렸고, 그것이 빠진 자리에 올라온 3·4순위가
- * 잡음이었다(qa M4: 후속 턴 정답 6/92). 게이트는 서버가 건다(그래야 recall_count 가 실린 것만 센다).
+ * 잡음이었다(qa M4: 후속 턴 정답 6/92). 게이트는 서버가 건다(러너가 거르면 limit 안의 자리를 잃는다).
  * 서버가 `focusTerms` 를 안 주면 옛 서버다 — 게이트 없이 루트 낱말로 고른 결과라 버리고, **루트 머리 없이**
  * 새 말로만 다시 묻는다(F2 전 동작).
  */
 async function searchGated(
   recall: { query: string; search: RecallSearch; focus?: string }, skip: Set<string>,
 ): Promise<RecallResult> {
-  const base = { exclude: [...skip], recordTop: RECALL_MAX_ITEMS };
+  const base = { exclude: [...skip] };
   if (recall.focus === undefined) return recall.search(recall.query, base);
   const found = await recall.search(recall.query, { ...base, focus: recall.focus });
   if (found.focusTerms) return found;
