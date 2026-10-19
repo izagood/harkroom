@@ -77,6 +77,14 @@ export interface ScanDeps {
 
 const GIT_ENV = (home: string) => ({ HOME: home, PATH: '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', GIT_TERMINAL_PROMPT: '0' });
 
+/** PR head 가 worktree head 와 같거나 그 조상인가. 어느 쪽이든 모르거나 로컬에 그 커밋이 없으면 false. */
+export async function prHeadIsOurs(deps: ScanDeps, path: string, prHead: string | null, head: string | null): Promise<boolean> {
+  if (!prHead || !head) return false;
+  if (prHead === head) return true;
+  const r = await deps.exec(deps.gitPath, ['-C', path, 'merge-base', '--is-ancestor', prHead, head], GIT_ENV(deps.home));
+  return r.code === 0;
+}
+
 /** 한 저장소의 worktree 들(main 제외)에 브랜치·PR·크기·주인을 붙인다. */
 export async function scanRepo(deps: ScanDeps, repo: string, owners: ReadonlyMap<string, { channelId: string; threadRootId: string }>): Promise<ObservedWorktree[]> {
   const env = GIT_ENV(deps.home);
@@ -95,6 +103,9 @@ export async function scanRepo(deps: ScanDeps, repo: string, owners: ReadonlyMap
       args.push(...(w.branch ? ['--head', w.branch] : ['--search', w.head!]));
       const g = await deps.exec(deps.ghPath, args, deps.ghEnv);
       pr = g.code === 0 ? parsePrList(g.stdout) : null;
+      // 그 PR 이 **이 worktree 의** PR 인지 본다: PR head 가 worktree head 와 같거나 그 조상일 때만. 브랜치 이름을 다시 쓰면
+      // `--head` 가 옛 머지 PR 을 잡는다 — 그대로 두면 새 작업이 「머지됨」으로 목록에 올라 지워진다. 못 대면 PR 모름.
+      if (pr && !(await prHeadIsOurs(deps, w.path, pr.headSha, w.head))) pr = null;
     }
     const o = owners.get(normalizeCleanupPath(w.path));
     const owner = o ? { thread: { channelId: o.channelId, threadRootId: o.threadRootId } } : null;

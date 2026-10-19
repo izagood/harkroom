@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { CLEANUP_REPORT_PATH, type CleanupLedger } from '@harkroom/shared/workspaceCleanup';
 import { defaultExec, type Exec } from '../src/turnMerge.js';
 import { createCleanupOwners } from '../src/workspaceCleanupOwners.js';
-import { repoOfWorktree } from '../src/workspaceCleanupScan.js';
+import { prHeadIsOurs, repoOfWorktree } from '../src/workspaceCleanupScan.js';
 import { createWorkspaceCleanup } from '../src/workspaceCleanupService.js';
 
 const C = '11111111-1111-1111-1111-111111111111';
@@ -26,7 +26,14 @@ async function fixture() {
   git(repo, 'add', '.gitignore');
   git(repo, 'commit', '-q', '-m', 'init');
   git(repo, 'remote', 'add', 'origin', 'https://github.com/acme/app.git');
-  const wt = { merged: join(root, 'wt-merged'), dirty: join(root, 'wt-dirty'), closed: join(root, 'wt-closed') };
+  // 같은 브랜치 이름의 옛 머지 PR — 그 head 는 지금 worktree 의 조상이 아니다(security n1).
+  git(repo, 'checkout', '-q', '-b', 'old-work');
+  await writeFile(join(repo, 'old.txt'), 'old');
+  git(repo, 'add', 'old.txt');
+  git(repo, 'commit', '-q', '-m', 'old work');
+  const oldHead = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'checkout', '-q', 'main');
+  const wt = { merged: join(root, 'wt-merged'), dirty: join(root, 'wt-dirty'), closed: join(root, 'wt-closed'), reused: join(root, 'wt-reused') };
   for (const [b, p] of Object.entries(wt)) git(repo, 'worktree', 'add', '-q', '-b', b, p);
   await mkdir(join(wt.merged, 'node_modules', 'x'), { recursive: true });
   await writeFile(join(wt.merged, 'node_modules', 'x', 'i.js'), '');
@@ -36,9 +43,9 @@ async function fixture() {
     if (file !== '/gh') return defaultExec(file, args, env);
     const branch = args[args.indexOf('--head') + 1];
     const state = branch === 'closed' ? 'CLOSED' : 'MERGED';
-    return { code: 0, stdout: JSON.stringify([{ number: 7, state, headRefOid: head }]), stderr: '' };
+    return { code: 0, stdout: JSON.stringify([{ number: 7, state, headRefOid: branch === 'reused' ? oldHead : head }]), stderr: '' };
   };
-  return { root, repo, wt, exec };
+  return { root, repo, wt, exec, head, oldHead };
 }
 
 describe('저장소는 러너가 보고한 worktree 에서 찾는다(workingDir 이 없어도)', () => {
@@ -52,12 +59,27 @@ describe('저장소는 러너가 보고한 worktree 에서 찾는다(workingDir 
     expect(await repoOfWorktree(deps, join(f.root, 'plain'))).toBeNull();
   });
 
+  it('PR head 는 worktree head 와 같거나 그 조상이어야 그 worktree 의 PR 이다', async () => {
+    const f = await fixture();
+    const deps = { exec: f.exec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: f.root };
+    await writeFile(join(f.wt.merged, 'more.txt'), 'x');
+    execFileSync('git', ['-C', f.wt.merged, 'add', 'more.txt']);
+    execFileSync('git', ['-C', f.wt.merged, '-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'more']);
+    const ahead = execFileSync('git', ['-C', f.wt.merged, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    expect(await prHeadIsOurs(deps, f.wt.merged, f.head, f.head)).toBe(true);
+    expect(await prHeadIsOurs(deps, f.wt.merged, f.head, ahead)).toBe(true); // PR head 가 조상
+    expect(await prHeadIsOurs(deps, f.wt.merged, ahead, f.head)).toBe(false); // PR head 가 더 앞(이 worktree 의 것이 아님)
+    expect(await prHeadIsOurs(deps, f.wt.reused, f.oldHead, f.head)).toBe(false); // 옆 갈래 — 옛 PR
+    expect(await prHeadIsOurs(deps, f.wt.merged, 'f'.repeat(40), f.head)).toBe(false); // 로컬에 없는 커밋
+    expect(await prHeadIsOurs(deps, f.wt.merged, null, f.head)).toBe(false);
+  });
+
   it('한 바퀴: 넣기 + 의존성 지우기 → 기한 뒤 지우기, 미커밋은 ⚠ 보류', async () => {
     const f = await fixture();
     const owners = createCleanupOwners({ path: join(f.root, 'owners.json') });
     const t = (n: number, worktrees: string[]) => ({ channelId: C, threadRootId: R(n), worktrees, lastTurnAt: '2026-09-01T00:00:00Z', running: false });
     await owners.maybeHandle('run1', 'agentA', req({ threads: [
-      t(1, [f.wt.merged, join(f.root, 'wt-gone')]), t(2, [f.wt.dirty]), t(3, [f.wt.closed]),
+      t(1, [f.wt.merged, join(f.root, 'wt-gone')]), t(2, [f.wt.dirty]), t(3, [f.wt.closed]), t(4, [f.wt.reused]),
     ] }), 'relay');
     const configPath = join(f.root, 'operator.json');
     await writeFile(configPath, JSON.stringify({ communities: {}, cleanup: { enabled: true, graceDays: 7 } }));
@@ -75,6 +97,7 @@ describe('저장소는 러너가 보고한 worktree 에서 찾는다(workingDir 
 
     await cleanup.sweep();
     const first = byPath(await ledger());
+    // 브랜치 이름이 옛 머지 PR 과 같은 worktree 는 그 PR head 가 조상이 아니라 PR 모름 → 올리지 않는다(security n1).
     expect(Object.keys(first).sort()).toEqual([f.wt.closed, f.wt.dirty, f.wt.merged].sort());
     for (const i of Object.values(first)) expect(i).toMatchObject({ kind: 'worktree', state: 'listed', repo: f.repo });
     // 규칙: 넣을 때 무시되는 node_modules 는 바로 지운다
@@ -87,6 +110,7 @@ describe('저장소는 러너가 보고한 worktree 에서 찾는다(workingDir 
     expect(await lstat(f.wt.closed).catch(() => null)).toBeNull();
     expect(second.items).toEqual([expect.objectContaining({ path: f.wt.dirty, state: 'blocked', blockReason: 'uncommitted' })]);
     expect(await lstat(join(f.wt.dirty, 'wip.txt'))).toBeTruthy();
+    expect(await lstat(f.wt.reused)).toBeTruthy();
     expect(second.events.filter((e) => e.action === 'deleted').map((e) => e.path).sort()).toEqual([f.wt.closed, f.wt.merged].sort());
   });
 });
