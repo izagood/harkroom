@@ -41,6 +41,17 @@ describe('runnerLink 서버', () => {
     expect(link.isLinked('r-1')).toBe(true);
   });
 
+  it('linkedAgents 는 relay 로 붙어 있는 러너의 에이전트만 — 끊기면 빠진다(정리 화면의 「러너 꺼짐」)', () => {
+    const link = createRunnerLinkServer({ onFrame: () => {}, log: () => {} });
+    link.expect('r-1', 'agent-a', 'sec');
+    link.expect('r-2', 'agent-b', 'sec2');
+    const s = fakeSocket();
+    link.accept(s.socket, hello('r-1', 'sec'), []);
+    expect([...link.linkedAgents()]).toEqual(['agent-a']);
+    s.close();
+    expect([...link.linkedAgents()]).toEqual([]);
+  });
+
   it('secret 이 틀리거나 모르는 runnerId 면 거절하고 끊는다', () => {
     const link = createRunnerLinkServer({ onFrame: () => {}, log: () => {} });
     link.expect('r-1', 'agent-a', 'sec');
