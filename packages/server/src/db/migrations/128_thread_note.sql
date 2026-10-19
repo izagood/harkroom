@@ -7,7 +7,8 @@
 -- - 본인만 읽고 쓴다. 쓰기 검사(080)에 걸린 판은 `flag_reason` 을 남기고 싣지 않는다.
 create table thread_note (
   account_id uuid not null references account(id) on delete cascade,
-  thread_root_id uuid not null references message(id),
+  -- 채널 삭제(#155)는 message 를 실제로 지운다 — 메모가 그것을 막으면 안 된다(079·087·110 과 같이 cascade).
+  thread_root_id uuid not null references message(id) on delete cascade,
   body text not null check (char_length(body) between 1 and 4000),
   flag_reason text null,
   updated_at timestamptz not null default now(),
