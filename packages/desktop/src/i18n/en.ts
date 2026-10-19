@@ -4318,7 +4318,7 @@ export const en = {
   'community.manage.addNote': 'Sign in to another harkroom server. The communities you are already in stay connected.',
   'community.manage.add': 'Add community',
   'community.manage.createTitle': 'Create a community',
-  'community.manage.createNote': 'Start a new hosted community with an invite code. The communities you are already in stay connected.',
+  'community.manage.createNote': 'Start a new hosted community with an invite code.',
   'community.manage.create': 'Create community',
   'community.manage.alreadyAdded': 'This community is already on this device.',
   'community.manage.sessionFailed': 'Signed in, but starting the session failed.',

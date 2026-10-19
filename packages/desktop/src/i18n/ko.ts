@@ -2270,7 +2270,7 @@ export const ko = {
   'community.manage.addNote': '다른 harkroom 서버에 로그인한다. 이미 들어가 있는 커뮤니티는 연결된 채로 남는다.',
   'community.manage.add': '커뮤니티 추가',
   'community.manage.createTitle': '커뮤니티 만들기',
-  'community.manage.createNote': '초대 코드로 호스팅 커뮤니티를 새로 만든다. 이미 들어가 있는 커뮤니티는 연결된 채로 남는다.',
+  'community.manage.createNote': '초대 코드로 호스팅 커뮤니티를 새로 만든다.',
   'community.manage.create': '커뮤니티 만들기',
   'community.manage.alreadyAdded': '이 커뮤니티는 이미 이 기기에 있다.',
   'community.manage.sessionFailed': '로그인은 됐지만 세션을 시작하지 못했다.',
