@@ -36,7 +36,15 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
   const entries = useCommunityRegistry((r) => r.entries);
   const activeId = useCommunityRegistry((r) => r.activeId);
 
-  const [addOpen, setAddOpen] = useState(false);
+  /**
+   * 겹창이 무엇으로 열렸나 — `add` 는 다른 서버에 로그인, `create` 는 새 커뮤니티 만들기. 둘 다 같은
+   * `ConnectScreen` 겹창이고 성공도 같은 `handleAdded` 로 온다. 다른 것은 끝에 그리로 옮겨 가느냐다.
+   */
+  const [overlay, setOverlay] = useState<'add' | 'create' | null>(null);
+  const addOpen = overlay !== null;
+  /** 복구 키 단계 — 바깥 클릭·Esc 로 겹창을 닫지 않는다(그 키는 다시 볼 수 없다). */
+  const [holdOpen, setHoldOpen] = useState(false);
+  const closeOverlay = (): void => { if (!holdOpen) setOverlay(null); };
   const [addError, setAddError] = useState<string | null>(null);
   // 이름 편집·제거 확인은 **한 번에 하나씩만** 연다. 여럿을 동시에 열면 어느 커뮤니티를
   // 고치고 있는지가 화면에서 사라진다(`Sidebar` 의 멤버 패널과 같은 규칙).
@@ -90,6 +98,10 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
    * 추가 성공. **`phase` 를 건드리지 않는다** — `active: false` 로 띄우므로 보고 있는
    * 커뮤니티도 바뀌지 않는다(추가는 전환이 아니다). 보관본의 `active` 도 그대로 둔다.
    *
+   * **만들기는 다르다** — 방금 만든 커뮤니티에는 그 사람밖에 없고, 만든 사람이 다음에 할 일은
+   * 그 안에서 채널을 열고 사람을 부르는 것이다. 그래서 보관까지 끝낸 뒤 그리로 전환한다.
+   * 전환은 `switchCommunity` 하나다 — 다른 커뮤니티들의 세션은 그대로 살아 있다.
+   *
    * 순서가 중요하다: 세션을 **먼저** 띄우고 그 다음에 보관한다. 거꾸로 하면 로그인이
    * 실패한 커뮤니티의 토큰이 키체인에 남는다.
    */
@@ -103,8 +115,10 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
       setAddError(t('community.manage.alreadyAdded'));
       return;
     }
+    const switchTo = overlay === 'create';
+    let entry: CommunityEntry;
     try {
-      await startCommunitySession({
+      entry = await startCommunitySession({
         baseUrl, token, accountId, label: null, active: false, notifier: createNotifier(),
       });
     } catch (err) {
@@ -122,7 +136,10 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
       stored.communities.push({ accountId, baseUrl, token, handle, label: null });
     }
     await sessionStore.save(stored);
-    setAddOpen(false);
+    // 보관한 **뒤에** 옮긴다 — `switchCommunity` 는 보관본의 `active` 를 이 계정으로 고쳐 적는데,
+    // 보관본에 아직 없는 계정을 활성으로 적으면 다음 기동이 그것을 못 찾는다.
+    if (switchTo) await switchCommunity(entry.id);
+    setOverlay(null);
   };
 
   return (
@@ -168,9 +185,23 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
           </span>
           <button
             className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium hover:bg-surface"
-            onClick={() => { setAddOpen(true); setAddError(null); }}
+            onClick={() => { setOverlay('add'); setAddError(null); }}
           >
             {t('community.manage.add')}
+          </button>
+        </div>
+        {/* 만들기는 최초 진입에만 있었다 — 이미 들어와 있는 사람은 로그아웃해야 만들 수 있었다.
+            같은 겹창이 `start="create"` 로 열린다(흐름은 최초 진입의 것 그대로). */}
+        <div className="flex items-center gap-4 px-4 py-3" data-testid="community-create-row">
+          <span className="min-w-0 flex-1">
+            <span className="block font-medium text-fg">{t('community.manage.createTitle')}</span>
+            <span className="mt-0.5 block break-keep text-fg-subtle">{t('community.manage.createNote')}</span>
+          </span>
+          <button
+            className="shrink-0 rounded-card border border-border px-3 py-1.5 font-medium hover:bg-surface"
+            onClick={() => { setOverlay('create'); setAddError(null); }}
+          >
+            {t('community.manage.create')}
           </button>
         </div>
         {/* 겹창이 열려 있는 동안은 여기 적지 않는다 — 겹창이 이 자리를 덮으므로, 로그인에
@@ -188,18 +219,20 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
       {addOpen && (
         <div
           className="fixed inset-0 z-40 flex items-start justify-center bg-black/60 p-8"
-          onClick={() => setAddOpen(false)}
+          onClick={closeOverlay}
         >
           <div
             role="dialog"
-            aria-label={t('community.manage.add')}
+            aria-label={overlay === 'create' ? t('community.manage.create') : t('community.manage.add')}
             onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => { if (e.key === 'Escape') setAddOpen(false); }}
+            onKeyDown={(e) => { if (e.key === 'Escape') closeOverlay(); }}
           >
             <ConnectScreen
               mode="add"
+              start={overlay === 'create' ? 'create' : 'signin'}
               onAdded={handleAdded}
-              onCancel={() => setAddOpen(false)}
+              onCancel={() => setOverlay(null)}
+              onHoldOpen={setHoldOpen}
             />
             {/* 추가가 **폼 밖에서** 막힌 경우(이미 이 기기에 있는 커뮤니티, 세션 시작 실패)를
                 겹창 안에서 말한다. 폼 안의 오류(로그인 실패)는 `ConnectScreen` 이 자기가

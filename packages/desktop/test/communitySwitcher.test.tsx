@@ -15,6 +15,7 @@ import {
 } from '../src/state/communities';
 import { setController, startCommunitySession, type Controller } from '../src/state/controller';
 import { acc, chan, fakeApi } from './helpers/fakeApi';
+import { pendingWorkspace } from '../src/lib/gate';
 import { usePrefsStore } from '../src/state/prefsStore';
 
 /**
@@ -567,6 +568,156 @@ describe('커뮤니티 추가 (#165 결정 3)', () => {
 
     expect(useCommunityRegistry.getState().entries).toHaveLength(1);
     expect(useCommunityRegistry.getState().activeId).toBe(a.id);
+  });
+});
+
+/**
+ * 설정 › Communities 의 「커뮤니티 만들기」. 만들기는 최초 진입(로그아웃 뒤 첫 화면)에만 있었다 —
+ * 들어와 있는 사람은 로그아웃해야 만들 수 있었다. 같은 `ConnectScreen` 만들기 흐름을 겹창으로 연다.
+ *
+ * 지키는 것: ① 다른 커뮤니티의 연결이 끊기지 않는다 ② 만든 커뮤니티로 옮겨 간다(추가와 다르다)
+ * ③ 복구 키 단계에서는 바깥 클릭·Esc 로 겹창이 닫히지 않는다(그 키는 다시 볼 수 없다).
+ */
+describe('커뮤니티 만들기 — 설정 › Communities', () => {
+  const GATE = 'https://gate.example';
+  const NEW = 'https://new.example';
+  const KEY = ['hrk1', 'new', 'k1', 'A'.repeat(43), 'abcd'].join('.');
+
+  /** 서버 두 대(a·b) 위에 gate 와 만들어질 커뮤니티(new)를 얹는다. */
+  function createFetch(opts: { recoveryKey?: string } = {}) {
+    const base = serverFetch();
+    return vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+      if (url === `${GATE}/api/workspaces`) {
+        return json({
+          jobId: 'job-n', name: 'new', url: NEW, claimToken: 'claim_n',
+          ...(opts.recoveryKey ? { recoveryKey: opts.recoveryKey } : {}),
+        }, 202);
+      }
+      if (url.startsWith(`${GATE}/api/workspaces/job-n`)) return json({ status: 'ready', message: '준비됨', url: NEW, done: true });
+      if (url.startsWith(NEW)) {
+        const account = {
+          id: 'acct-n', handle: 'owner', displayName: 'owner', kind: 'human', isAdmin: true,
+          disabled: false, deleted: false, status: 'available', statusText: null, ownerAccountId: null,
+          avatarAttachmentId: null,
+        };
+        if (url.endsWith('/claim')) return json({ id: 'acct-n' }, 201);
+        if (url.endsWith('/auth/login')) return json({ token: 'tok-n' });
+        if (url.endsWith('/auth/me')) return json(account);
+        if (url.endsWith('/accounts')) return json({ accounts: [account], groups: [] });
+        if (url.endsWith('/channels')) return json({ channels: [] });
+        if (url.endsWith('/channels/prefs')) return json({ prefs: [] });
+        if (url.endsWith('/dms')) return json({ dms: [] });
+        if (url.endsWith('/leases')) return json({ leases: [] });
+        if (url.includes('/inbox')) return json({ entries: [] });
+        if (url.endsWith('/reads')) return json({ reads: [] });
+        return json({});
+      }
+      return base(input);
+    });
+  }
+
+  const fillCreate = (dialog: HTMLElement) => {
+    fireEvent.change(within(dialog).getByLabelText('커뮤니티 만드는 서비스 주소'), { target: { value: GATE } });
+    fireEvent.change(within(dialog).getByLabelText('커뮤니티 이름'), { target: { value: 'new' } });
+    fireEvent.change(within(dialog).getByLabelText('초대 코드'), { target: { value: 'hrg_ok' } });
+    fireEvent.change(within(dialog).getByLabelText('이메일'), { target: { value: 'me@example.com' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '커뮤니티 만들기' }));
+  };
+
+  const claim = async (dialog: HTMLElement) => {
+    const submit = await within(dialog).findByRole('button', { name: '관리자 계정 만들기' });
+    fireEvent.change(within(dialog).getByLabelText('로그인 ID'), { target: { value: 'owner' } });
+    fireEvent.change(within(dialog).getByLabelText('불리는 이름 (@)'), { target: { value: 'owner' } });
+    fireEvent.change(within(dialog).getByLabelText('비밀번호'), { target: { value: 'pw123456' } });
+    fireEvent.click(submit);
+  };
+
+  it('1. 만들고 클레임하면 그 커뮤니티로 옮겨 가고, 원래 커뮤니티의 연결은 그대로다 (App 배선)', async () => {
+    storeSessions([{ accountId: 'acct-a', baseUrl: 'https://a.example', handle: 'me-a' }]);
+    vi.stubGlobal('fetch', createFetch());
+
+    await openCommunitySettingsInApp('me-a');
+    expect(wsSpy.count).toBe(1);
+
+    // 「커뮤니티 추가」 옆에 「커뮤니티 만들기」가 선다.
+    const row = screen.getByTestId('community-create-row');
+    fireEvent.click(within(row).getByRole('button', { name: '커뮤니티 만들기' }));
+    const dialog = await screen.findByRole('dialog', { name: '커뮤니티 만들기' });
+    // 로그인 폼이 아니라 만들기 폼으로 바로 열린다. 빈 폼에서 돌아갈 「로그인」은 없다 — 나가는 길은 취소다.
+    expect(within(dialog).getByLabelText('커뮤니티 만드는 서비스 주소')).toBeTruthy();
+    expect(within(dialog).queryByLabelText('서버 주소')).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: '로그인으로 돌아가기' })).toBeNull();
+    // 설정 화면은 그대로 서 있다(phase 를 connect 로 되돌리지 않았다).
+    expect(screen.getByRole('heading', { name: '커뮤니티 목록' })).toBeTruthy();
+
+    fillCreate(dialog);
+    await claim(dialog);
+
+    await waitFor(() => expect(useCommunityRegistry.getState().entries).toHaveLength(2));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const { entries, activeId } = useCommunityRegistry.getState();
+    const created = entries.find((e) => e.accountId === 'acct-n')!;
+    expect(created.baseUrl).toBe(NEW);
+    // **만든 커뮤니티로 옮겨 갔다** — 추가(5b)와 다른 점이다.
+    expect(activeId).toBe(created.id);
+    const stored = JSON.parse(localStorage.getItem('harkroom.sessions')!) as {
+      active: string; communities: { accountId: string }[];
+    };
+    expect(stored.communities.map((c) => c.accountId)).toEqual(['acct-a', 'acct-n']);
+    expect(stored.active).toBe('acct-n');
+    // 원래 커뮤니티는 목록에 남고 연결도 끊기지 않았다 — 새 커뮤니티의 연결 하나만 더 생겼다.
+    expect(entries.some((e) => e.accountId === 'acct-a')).toBe(true);
+    expect(wsSpy.closed).toBe(0);
+    expect(wsSpy.count).toBe(2);
+  });
+
+  it('2. 복구 키 단계에서는 바깥 클릭·Esc 로 닫히지 않는다 — 저장을 확인한 뒤에야 놓아 준다', async () => {
+    const a = await community('https://a.example', 'acct-a', true);
+    seed(a, 'me-a', true);
+    vi.stubGlobal('fetch', createFetch({ recoveryKey: KEY }));
+
+    render(<CommunitySettings onCommunitiesEmpty={vi.fn()} />);
+    fireEvent.click(within(screen.getByTestId('community-create-row')).getByRole('button', { name: '커뮤니티 만들기' }));
+    const dialog = await screen.findByRole('dialog', { name: '커뮤니티 만들기' });
+    fillCreate(dialog);
+    expect((await within(dialog).findByTestId('recovery-key-value')).textContent).toBe(KEY);
+
+    // 바깥(겹창 배경)을 누르고 Esc 를 쳐도 그대로다. 취소 버튼도 없다.
+    fireEvent.click(dialog.parentElement!);
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.getByRole('dialog', { name: '커뮤니티 만들기' })).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: '취소' })).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole('checkbox'));
+    fireEvent.click(within(dialog).getByRole('button', { name: '계속' }));
+    // 키를 받은 뒤에는 원래대로 닫을 수 있다 — 만들던 것은 보관본에 남아 다시 열면 이어받는다.
+    await within(dialog).findByRole('button', { name: '관리자 계정 만들기' });
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    fireEvent.click(within(screen.getByTestId('community-create-row')).getByRole('button', { name: '커뮤니티 만들기' }));
+    const again = await screen.findByRole('dialog', { name: '커뮤니티 만들기' });
+    expect(await within(again).findByText(NEW)).toBeTruthy();
+    expect(await within(again).findByRole('button', { name: '관리자 계정 만들기' })).toBeTruthy();
+    // 키는 다시 나오지 않는다(R1).
+    expect(within(again).queryByTestId('recovery-key-step')).toBeNull();
+  });
+
+  it('3. 로그인으로 연 「커뮤니티 추가」 겹창은 만들던 것을 들이밀지 않는다', async () => {
+    const a = await community('https://a.example', 'acct-a', true);
+    seed(a, 'me-a', true);
+    pendingWorkspace.write({ gateUrl: GATE, jobId: 'job-n', claimToken: 'claim_n', url: NEW, name: 'new' });
+    vi.stubGlobal('fetch', createFetch());
+
+    render(<CommunitySettings onCommunitiesEmpty={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '커뮤니티 추가' }));
+    const dialog = await screen.findByRole('dialog', { name: '커뮤니티 추가' });
+    expect(within(dialog).getByLabelText('서버 주소')).toBeTruthy();
+    expect(within(dialog).queryByText(NEW)).toBeNull();
+    // 보관본은 지우지 않는다 — 「커뮤니티 만들기」로 열면 이어받는다.
+    expect(pendingWorkspace.read()?.claimToken).toBe('claim_n');
   });
 });
 

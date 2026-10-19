@@ -25,12 +25,27 @@ type Credentials = (baseUrl: string, token: string, accountId: string, handle: s
  */
 export type ConnectScreenProps =
   | { mode?: 'initial'; onConnected: Credentials; initialError?: string | null }
-  | { mode: 'add'; onAdded: Credentials; onCancel(): void; initialError?: string | null };
+  | {
+    mode: 'add'; onAdded: Credentials; onCancel(): void; initialError?: string | null;
+    /**
+     * 겹창이 무엇으로 열렸나. `create` 는 설정 › Communities 의 「커뮤니티 만들기」다 — 최초 진입의
+     * 만들기 흐름을 **그대로** 쓰고, 성공은 다른 추가와 같이 `onAdded` 로 올라간다. 주지 않으면
+     * 로그인(`signin`)으로 연다(오늘의 「커뮤니티 추가」).
+     */
+    start?: 'signin' | 'create';
+    /**
+     * 겹창을 닫으면 잃는 것이 있는 동안 참이다 — 지금은 **복구 키 단계**다. 그 키는 다시 볼 수
+     * 없으므로(R1) 겹창 쪽이 바깥 클릭·Esc 로 닫지 않게 이 신호를 받는다.
+     */
+    onHoldOpen?(hold: boolean): void;
+  };
 
 export function ConnectScreen(props: ConnectScreenProps) {
   const t = useT();
   const { initialError = null } = props;
   const adding = props.mode === 'add';
+  /** 설정에서 「커뮤니티 만들기」로 연 겹창. 만들기가 이 겹창의 처음이자 끝이다. */
+  const createOnly = props.mode === 'add' && props.start === 'create';
   // 직전에 로그인에 성공한 주소로 채운다. 한 번도 없으면 self-host 기본값(localhost)이다.
   const [baseUrl, setBaseUrl] = useState(() => lastWorkspaceUrlStorage.load());
   const [loginId, setLoginId] = useState('');
@@ -47,7 +62,9 @@ export function ConnectScreen(props: ConnectScreenProps) {
    * 서버에 "지금 부트스트랩이 가능한가"를 묻는 표면이 없어서(`POST /bootstrap` 을 실제로
    * 불러 봐야 409 를 안다) 사용자가 고르게 둔다 — 추측해서 잘못된 폼을 보여주면 그게 더 나쁘다.
    */
-  const [authMode, setAuthMode] = useState<'signin' | 'bootstrap' | 'register' | 'create'>('signin');
+  const [authMode, setAuthMode] = useState<'signin' | 'bootstrap' | 'register' | 'create'>(
+    createOnly ? 'create' : 'signin',
+  );
   const [error, setError] = useState<string | null>(initialError ?? null);
   const [busy, setBusy] = useState(false);
 
@@ -76,17 +93,30 @@ export function ConnectScreen(props: ConnectScreenProps) {
   }, [initialError]);
 
   /**
-   * 앱을 닫았다 열어도 **만들다 만 것을 이어받는다**(`add` 겹창에서는 하지 않는다 —
-   * 거기서 새 워크스페이스를 만드는 것은 이 화면의 일이 아니다).
+   * 앱을 닫았다 열어도 **만들다 만 것을 이어받는다**. 로그인으로 연 `add` 겹창에서는 하지
+   * 않는다 — 다른 서버에 로그인하러 온 사람에게 만들던 것을 들이밀지 않는다. 「커뮤니티 만들기」로
+   * 연 겹창은 이어받는다: 기다리다 겹창을 닫은 사람이 다시 열면 그 자리로 돌아와야 한다.
    *
    * 이것이 없으면 기다리는 동안 앱을 닫은 사람은 `claimToken` 을 잃고, 그 토큰은 다시 볼
    * 수 없으므로 워크스페이스가 **만들어졌는데 아무도 가져갈 수 없는** 상태가 된다.
    */
   useEffect(() => {
-    if (adding) return;
+    if (adding && !createOnly) return;
     const saved = pendingWorkspace.read();
     if (saved) { setPending(saved); setAuthMode('create'); }
-  }, [adding]);
+  }, [adding, createOnly]);
+
+  /**
+   * 복구 키 단계 동안 겹창을 붙잡는다(`onHoldOpen`). 키를 싣는 **같은 자리에서** 부른다 — effect 로
+   * 따라가게 두면 키가 그려진 뒤 한 프레임 동안 겹창이 아직 안 붙잡혀 있어, 그 사이 바깥 클릭이
+   * 키를 날린다(시험이 부하에서 실제로 잡았다). 화면이 사라질 때는 놓는다.
+   */
+  const onHoldOpen = props.mode === 'add' ? props.onHoldOpen : undefined;
+  const showRecoveryKey = (key: string | null): void => {
+    setRecoveryKey(key);
+    onHoldOpen?.(key !== null);
+  };
+  useEffect(() => () => onHoldOpen?.(false), [onHoldOpen]);
 
   /** 화면이 사라질 때 폴링을 멈춘다 — 안 멈추면 언마운트 뒤에도 setState 가 돈다. */
   useEffect(() => () => { if (pollTimer.current) clearTimeout(pollTimer.current); }, []);
@@ -139,7 +169,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
       // **응답을 화면에 그리기 전에 적는다.** 클레임 토큰은 이 응답에만 있고, 여기서
       // 앱이 죽으면 그 워크스페이스는 영영 가져갈 수 없다.
       pendingWorkspace.write(p);
-      if (res.recoveryKey) setRecoveryKey(res.recoveryKey);
+      if (res.recoveryKey) showRecoveryKey(res.recoveryKey);
       setPending(p);
       setProgress(t('connect.gate.committed'));
     } catch (err) {
@@ -179,7 +209,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
   const discardPending = () => {
     if (pollTimer.current) clearTimeout(pollTimer.current);
     pendingWorkspace.clear();
-    setPending(null); setClaimable(false); setProgress(null); setError(null); setRecoveryKey(null);
+    setPending(null); setClaimable(false); setProgress(null); setError(null); showRecoveryKey(null);
   };
 
   const submit = async () => {
@@ -263,7 +293,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
         {authMode === 'create' ? (
           pending && recoveryKey ? (
             /* 진행·클레임으로 넘어가기 **전에** 복구 키를 받게 한다. 폴링은 뒤에서 계속 돈다. */
-            <RecoveryKeyStep recoveryKey={recoveryKey} communityName={pending.name} onDone={() => setRecoveryKey(null)} />
+            <RecoveryKeyStep recoveryKey={recoveryKey} communityName={pending.name} onDone={() => showRecoveryKey(null)} />
           ) : pending ? (
             <>
               {/* 만들어지는 중이거나, 준비돼 클레임을 기다리는 자리. */}
@@ -442,7 +472,8 @@ export function ConnectScreen(props: ConnectScreenProps) {
         ) : authMode === 'create' ? (
           // 복구 키 단계에서는 빠져나가는 길이 Continue 하나다 — 여기서 버리면 다시 볼 수 없는 키가
           // 클레임 보관본과 함께 사라진다(designer F1). 겹창의 Cancel 도 같은 이유로 숨긴다(아래).
-          recoveryKey ? null : (
+          // 「커뮤니티 만들기」 겹창에는 돌아갈 로그인이 없다 — 빈 폼에서 나가는 길은 Cancel 이다.
+          recoveryKey || (createOnly && !pending) ? null : (
           <button
             type="button"
             className="w-full text-meta text-fg-subtle underline"
@@ -450,10 +481,11 @@ export function ConnectScreen(props: ConnectScreenProps) {
               // 만들던 것이 있으면 **그것까지 버린다.** 보관본만 남겨 두고 화면을 벗어나면
               // 다음 기동에 되살아나 사용자가 버린 것이 돌아온다.
               if (pending) discardPending();
-              setAuthMode('signin'); setError(null);
+              // 만들기로 연 겹창은 버린 뒤 빈 만들기 폼으로 돌아간다 — 로그인 폼은 그 겹창의 일이 아니다.
+              setAuthMode(createOnly ? 'create' : 'signin'); setError(null);
             }}
           >
-            {pending ? t('connect.alt.discard') : t('connect.alt.back')}
+            {pending ? (createOnly ? t('connect.alt.discardRestart') : t('connect.alt.discard')) : t('connect.alt.back')}
           </button>
           )
         ) : (
