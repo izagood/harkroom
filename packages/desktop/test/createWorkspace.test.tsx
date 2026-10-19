@@ -287,7 +287,7 @@ describe('ConnectScreen — 복구 키는 만든 직후 한 번만 (R1)', () => 
   });
 
   it('키 단계에는 빠져나가는 길이 Continue 하나다 — Discard·Cancel 이 없다', async () => {
-    // `add` 겹창에는 만들기 진입이 없어 키 단계에 닿지 않는다 — Cancel 숨김은 방어로만 두고, 여기서는 Discard 를 본다.
+    // `add` 겹창의 Cancel 숨김은 설정 쪽 시험(communitySwitcher 「만들기」)이 본다 — 여기서는 Discard 를 본다.
     stubGate(true);
     render(<ConnectScreen onConnected={vi.fn()} />);
     fillCreateForm();
