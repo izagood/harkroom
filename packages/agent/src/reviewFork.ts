@@ -82,7 +82,7 @@ export const REVIEW_PROMPT = [
   '쓰는 법:',
   '- 먼저 memory.list·memory.search·memory.get 으로 이미 있는 항목을 찾는다. 있으면 그것을 고친다(ifUpdatedAt). 새 slug 를 늘리지 않는다.',
   '- 사건 서술·PR 번호·날짜별 경위는 쓰지 않는다. 일반 규칙과 **왜 그런지**를 쓴다.',
-  '- core 에는 포인터 한 줄만. 주제는 mem/<이름> 에, 언제 열어 볼지 알 수 있는 description 과 함께.',
+  '- core 에는 포인터 한 줄만. 주제는 mem/<이름> 에, 언제 열어 볼지 알 수 있는 description 과 kind(topic=되풀이할 사실·교훈 | procedure=절차)를 함께.',
   '- 스킬(skill.propose)은 같은 절차를 세 번쯤 되풀이했고 **다른 에이전트도 그대로 따라 할 수 있을 때만** 제안한다. 확실하지 않으면 제안하지 않는다.',
   '',
   '**남길 것이 없으면 아무 도구도 부르지 말고 끝내라 — 그것이 가장 흔한 정답이다.**',

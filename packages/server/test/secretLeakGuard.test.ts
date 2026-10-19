@@ -97,7 +97,7 @@ describe('본문 거절 (D5)', () => {
       expect(r1.error?.code).toBe('secret_in_body');
       expect(JSON.stringify(r1)).not.toContain(VALUE);
       expect(JSON.stringify(r1)).not.toContain('gh');
-      const r2 = toolJson(await c.callTool({ name: 'memory.set', arguments: { slug: 'mem/x', value: Buffer.from(VALUE).toString('base64') } }));
+      const r2 = toolJson(await c.callTool({ name: 'memory.set', arguments: { kind: 'topic', slug: 'mem/x', value: Buffer.from(VALUE).toString('base64') } }));
       expect(r2.error?.code).toBe('secret_in_body');
       const r3 = toolJson(await c.callTool({ name: 'skill.propose', arguments: { slug: 'leak', body: `k=${encodeURIComponent(VALUE)}`, channelId } }));
       expect(r3.error?.code).toBe('secret_in_body');
