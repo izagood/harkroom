@@ -548,7 +548,8 @@ export async function expirePermissionRequests(pool: Pool, args: { now: Date; re
   for (const r of rows) {
     // 만료는 이미 커밋됐다 — 한 줄의 뒤처리가 실패해도 나머지 카드는 알린다.
     try {
-      await recordAudit(pool, { action: 'permission.expired', actorId: r.agentId, target: r.agentId, detail: { requestId: r.id } });
+      // 만료는 서버가 한 일이다 — 행위자는 없다(security n2). 대상은 그 에이전트.
+      await recordAudit(pool, { action: 'permission.expired', actorId: null, target: r.agentId, detail: { requestId: r.id } });
       if (!r.cardMessageId) continue;
       const card = await getMessageById(pool, r.cardMessageId);
       if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });

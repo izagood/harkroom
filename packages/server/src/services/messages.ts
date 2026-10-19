@@ -2118,7 +2118,7 @@ export async function syncAskMirrors(pool: Pool, rootId: string): Promise<void> 
           set meta = jsonb_set(
                 jsonb_set(
                   jsonb_set(meta::jsonb, '{ask,answeredWith}', to_jsonb($2::text)),
-                  '{ask,answeredBy}', to_jsonb($3::text)),
+                  '{ask,answeredBy}', coalesce(to_jsonb($3::text), 'null'::jsonb)),  -- 닫힘 분기와 같은 이유(security n3)
                 '{ask,answeredAt}', to_jsonb($4::text))
         where meta->'ask'->>'mirrorOf' = $1
           and deleted_at is null
