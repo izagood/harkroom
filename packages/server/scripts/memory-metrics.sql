@@ -6,6 +6,8 @@
 --
 -- 「상태 기록」 판정(stateLike): 스레드 진행 상태를 담은 기억 — 이름이 delegation-*·review-* 이거나,
 -- 요약에 PR 번호(#123)와 진행 낱말(CI·머지·대기·초록·검토·rebase·head)이 같이 있는 것. journal 은 따로 센다.
+-- `CI` 는 대문자 낱말 그대로만 센다(policy·decision 의 ci 에 걸리지 않게 — security n1). 앞뒤가 영문자가 아니면 된다(「CI초록」도 걸린다).
+-- 판정은 services/memory.ts::looksLikeThreadState 와 같아야 한다.
 -- 보관된 것(archived_at)과 쓰기 검사에 걸린 것(flagged_at)은 recall·목록에 안 실리므로 뺀다.
 
 -- name: memory_by_agent
@@ -14,7 +16,8 @@ with m as (
   select a.handle, a.id as account_id, am.slug, am.kind, am.description,
     (am.slug ~ '^mem/(.*/)?(delegation|review)-'
       or (coalesce(am.description, '') ~ '#[0-9]+'
-          and coalesce(am.description, '') ~* '(CI|머지|대기|초록|검토|rebase|head)')) as state_like
+          and (coalesce(am.description, '') ~ '(^|[^A-Za-z])CI([^A-Za-z]|$)'
+               or coalesce(am.description, '') ~* '(머지|대기|초록|검토|rebase|head)'))) as state_like
   from agent_memory am
   join account a on a.id = am.account_id and a.kind = 'agent'
   where am.slug <> 'core' and am.archived_at is null and am.flagged_at is null
@@ -50,7 +53,9 @@ order by index_chars_est desc;
 select a.handle, a.id as account_id,
   sum(am.recall_count) as recalls,
   sum(am.recall_count) filter (where am.slug ~ '^mem/(.*/)?(delegation|review)-'
-    or (coalesce(am.description, '') ~ '#[0-9]+' and coalesce(am.description, '') ~* '(CI|머지|대기|초록|검토|rebase|head)')) as state_like_recalls
+    or (coalesce(am.description, '') ~ '#[0-9]+'
+        and (coalesce(am.description, '') ~ '(^|[^A-Za-z])CI([^A-Za-z]|$)'
+             or coalesce(am.description, '') ~* '(머지|대기|초록|검토|rebase|head)'))) as state_like_recalls
 from agent_memory am
 join account a on a.id = am.account_id and a.kind = 'agent'
 where am.slug <> 'core'

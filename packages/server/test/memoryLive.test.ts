@@ -291,6 +291,9 @@ describe('memory MCP tools', () => {
       expect((await callTool(client, 'memory.set', { slug: 'mem/feature', value: 'v2', kind: 'topic' })).threadState).toBeDefined();
       const lesson = await callTool(client, 'memory.set', { slug: 'mem/lesson', value: 'v', kind: 'topic', description: '마이그레이션에 FK 를 달면 색인도' });
       expect(lesson).toEqual({ ok: true });
+      // CI 는 대문자 낱말로만 센다 — policy·decision 의 ci 에는 걸리지 않는다(지표 SQL 과 같은 자).
+      expect(await callTool(client, 'memory.set', { slug: 'mem/policy', value: 'v', kind: 'topic', description: '#3 policy decision' })).toEqual({ ok: true });
+      expect((await callTool(client, 'memory.set', { slug: 'mem/ci-glued', value: 'v', kind: 'topic', description: '#5 CI초록' })).threadState).toBeDefined();
     } finally {
       await client.close();
     }

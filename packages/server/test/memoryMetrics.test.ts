@@ -26,7 +26,9 @@ beforeAll(async () => {
        ($1, 'mem/delegation-x', 'v', '위임 상태', 'topic', 3),
        ($1, 'mem/deploy', 'v', '#12 CI 초록 머지 대기', 'topic', 1),
        ($1, 'mem/how-to', 'v', '배포 절차', 'procedure', 2),
-       ($1, 'mem/log', 'v', null, 'journal', 0)`,
+       ($1, 'mem/log', 'v', null, 'journal', 0),
+       ($1, 'mem/policy', 'v', '#3 policy decision', 'topic', 0),
+       ($1, 'mem/ci-glued', 'v', '#5 CI초록', 'topic', 0)`,
     [agent],
   );
 });
@@ -46,8 +48,9 @@ describe('memory-metrics.sql', () => {
   it('memory_by_agent separates kinds and state-like records', async () => {
     const rows = (await pool.query(statements.find((s) => s.name === 'memory_by_agent')!.text)).rows;
     const r = rows.find((x: { handle: string }) => x.handle === 'metrics-agent');
-    expect(r).toMatchObject({ mem_total: '4', topic: '2', procedure: '1', journal: '1', state_like: '2' });
-    expect(Number(r.procedure_pct)).toBeCloseTo(33.3, 1);
-    expect(Number(r.state_like_pct)).toBeCloseTo(66.7, 1);
+    // mem/policy(#3 policy decision)는 상태가 아니고 mem/ci-glued(#5 CI초록)는 상태다 — CI 는 대문자 낱말로만(security n1).
+    expect(r).toMatchObject({ mem_total: '6', topic: '4', procedure: '1', journal: '1', state_like: '3' });
+    expect(Number(r.procedure_pct)).toBeCloseTo(20, 1);
+    expect(Number(r.state_like_pct)).toBeCloseTo(60, 1);
   });
 });

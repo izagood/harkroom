@@ -711,7 +711,8 @@ export const MEMORY_SLUG_HINT = 'slug must be "core" or "mem/<name>" '
 export function looksLikeThreadState(slug: string, description: string | null | undefined): boolean {
   if (/^mem\/(.*\/)?(delegation|review)-/.test(slug)) return true;
   const d = description ?? '';
-  return /#[0-9]+/.test(d) && /(CI|머지|대기|초록|검토|rebase|head)/i.test(d);
+  // `CI` 는 대문자 낱말 그대로만(security n1 — `/i` 면 policy·decision 의 ci 에도 걸렸다). 앞뒤가 영문자만 아니면 된다.
+  return /#[0-9]+/.test(d) && (/(^|[^A-Za-z])CI(?![A-Za-z])/.test(d) || /(머지|대기|초록|검토|rebase|head)/i.test(d));
 }
 
 /** S3: `mem/*` 쓰기에 줄 수 있는 종류. journal 은 새로 쓰지 않는다 — 진행 상태는 `thread.note`. */
