@@ -1,0 +1,92 @@
+import { execFileSync } from 'node:child_process';
+import { lstat, mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { CLEANUP_REPORT_PATH, type CleanupLedger } from '@harkroom/shared/workspaceCleanup';
+import { defaultExec, type Exec } from '../src/turnMerge.js';
+import { createCleanupOwners } from '../src/workspaceCleanupOwners.js';
+import { repoOfWorktree } from '../src/workspaceCleanupScan.js';
+import { createWorkspaceCleanup } from '../src/workspaceCleanupService.js';
+
+const C = '11111111-1111-1111-1111-111111111111';
+const R = (n: number) => `3333333${n}-3333-3333-3333-333333333333`;
+const req = (body: unknown) => ({ type: 'http.forward' as const, id: 'q', method: 'POST', path: CLEANUP_REPORT_PATH, body: JSON.stringify(body) });
+
+/** 실제 git 저장소 하나 + worktree 셋(머지·미커밋·닫힘). gh 만 가짜다. */
+async function fixture() {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'cleanup-repos-')));
+  const repo = join(root, 'repo');
+  await mkdir(repo);
+  const git = (cwd: string, ...a: string[]) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8' }).trim();
+  git(repo, 'init', '-q', '-b', 'main');
+  git(repo, 'config', 'user.email', 't@example.com');
+  git(repo, 'config', 'user.name', 't');
+  await writeFile(join(repo, '.gitignore'), 'node_modules/\n');
+  git(repo, 'add', '.gitignore');
+  git(repo, 'commit', '-q', '-m', 'init');
+  git(repo, 'remote', 'add', 'origin', 'https://github.com/acme/app.git');
+  const wt = { merged: join(root, 'wt-merged'), dirty: join(root, 'wt-dirty'), closed: join(root, 'wt-closed') };
+  for (const [b, p] of Object.entries(wt)) git(repo, 'worktree', 'add', '-q', '-b', b, p);
+  await mkdir(join(wt.merged, 'node_modules', 'x'), { recursive: true });
+  await writeFile(join(wt.merged, 'node_modules', 'x', 'i.js'), '');
+  await writeFile(join(wt.dirty, 'wip.txt'), 'not committed');
+  const head = git(repo, 'rev-parse', 'HEAD');
+  const exec: Exec = async (file, args, env) => {
+    if (file !== '/gh') return defaultExec(file, args, env);
+    const branch = args[args.indexOf('--head') + 1];
+    const state = branch === 'closed' ? 'CLOSED' : 'MERGED';
+    return { code: 0, stdout: JSON.stringify([{ number: 7, state, headRefOid: head }]), stderr: '' };
+  };
+  return { root, repo, wt, exec };
+}
+
+describe('저장소는 러너가 보고한 worktree 에서 찾는다(workingDir 이 없어도)', () => {
+  it('worktree → main worktree 경로. 사라진 경로·git 아닌 폴더는 null', async () => {
+    const f = await fixture();
+    const deps = { exec: f.exec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: f.root };
+    expect(await repoOfWorktree(deps, f.wt.merged)).toBe(f.repo);
+    expect(await repoOfWorktree(deps, f.repo)).toBe(f.repo);
+    expect(await repoOfWorktree(deps, join(f.root, 'gone'))).toBeNull();
+    await mkdir(join(f.root, 'plain'));
+    expect(await repoOfWorktree(deps, join(f.root, 'plain'))).toBeNull();
+  });
+
+  it('한 바퀴: 넣기 + 의존성 지우기 → 기한 뒤 지우기, 미커밋은 ⚠ 보류', async () => {
+    const f = await fixture();
+    const owners = createCleanupOwners({ path: join(f.root, 'owners.json') });
+    const t = (n: number, worktrees: string[]) => ({ channelId: C, threadRootId: R(n), worktrees, lastTurnAt: '2026-09-01T00:00:00Z', running: false });
+    await owners.maybeHandle('run1', 'agentA', req({ threads: [
+      t(1, [f.wt.merged, join(f.root, 'wt-gone')]), t(2, [f.wt.dirty]), t(3, [f.wt.closed]),
+    ] }), 'relay');
+    const configPath = join(f.root, 'operator.json');
+    await writeFile(configPath, JSON.stringify({ communities: {}, cleanup: { enabled: true, graceDays: 7 } }));
+    const ledgerPath = join(f.root, 'ledger.json');
+    let now = new Date('2026-10-06T00:00:00Z');
+    const cleanup = createWorkspaceCleanup({
+      ledgerPath, configPath, owners,
+      agents: async () => [{ agentId: 'agentA', workingDir: null }],
+      forward: async (_a, r) => ({ type: 'http.response', id: r.id, status: 200, body: JSON.stringify({ statusReaction: { status: 'done' } }) }),
+      exec: f.exec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: f.root,
+      now: () => now, log: () => {},
+    });
+    const ledger = async () => JSON.parse(await readFile(ledgerPath, 'utf8')) as CleanupLedger;
+    const byPath = (l: CleanupLedger) => Object.fromEntries(l.items.map((i) => [i.path, i]));
+
+    await cleanup.sweep();
+    const first = byPath(await ledger());
+    expect(Object.keys(first).sort()).toEqual([f.wt.closed, f.wt.dirty, f.wt.merged].sort());
+    for (const i of Object.values(first)) expect(i).toMatchObject({ kind: 'worktree', state: 'listed', repo: f.repo });
+    // 규칙: 넣을 때 무시되는 node_modules 는 바로 지운다
+    expect(await lstat(join(f.wt.merged, 'node_modules')).catch(() => null)).toBeNull();
+
+    now = new Date('2026-10-14T00:00:00Z');
+    await cleanup.sweep();
+    const second = await ledger();
+    expect(await lstat(f.wt.merged).catch(() => null)).toBeNull();
+    expect(await lstat(f.wt.closed).catch(() => null)).toBeNull();
+    expect(second.items).toEqual([expect.objectContaining({ path: f.wt.dirty, state: 'blocked', blockReason: 'uncommitted' })]);
+    expect(await lstat(join(f.wt.dirty, 'wip.txt'))).toBeTruthy();
+    expect(second.events.filter((e) => e.action === 'deleted').map((e) => e.path).sort()).toEqual([f.wt.closed, f.wt.merged].sort());
+  });
+});
