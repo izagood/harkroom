@@ -148,7 +148,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
             </span>
           </button>
           {!kept && (
-            <span className={`shrink-0 text-meta ${row.tone === 'warn' ? 'text-warning' : off ? 'text-fg-subtle' : due.today ? 'font-medium text-accent' : 'text-fg-muted'}`} data-testid="cleanup-due">
+            <span className={`shrink-0 text-meta ${row.tone === 'warn' ? 'text-warning' : off ? 'text-fg-subtle' : row.tone === 'deferred' ? 'text-fg-muted' : due.today ? 'font-medium text-accent' : 'text-fg-muted'}`} data-testid="cleanup-due">
               {row.tone === 'warn' ? t('cleanup.stopped') : off ? t('cleanup.offNoDelete') : row.tone === 'deferred' ? t(row.deferReason === 'runner-off' ? 'cleanup.runnerOffWaiting' : 'cleanup.deferred') : row.tone === 'deleting' ? t('cleanup.deleting') : due.text}
             </span>
           )}
