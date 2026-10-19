@@ -75,7 +75,7 @@ import { Readable } from 'node:stream';
 import { downscaleImage, DOWNSCALE_READ_MAX_BYTES, tryAcquireDownscaleSlot } from './imageDownscale.js';
 
 // slug 문법과 거절 문구는 services/memory.ts 에 있다 — 사람용 REST(accountRoutes)도 같은 것을 쓴다.
-import { isValidSlug, MEMORY_SLUG_HINT } from '../services/memory.js';
+import { isValidSlug, kindRefusal, looksLikeThreadState, MEMORY_SLUG_HINT, THREAD_NOTE_HINT } from '../services/memory.js';
 import { getThreadNote, MAX_THREAD_NOTE_LENGTH, setThreadNote, threadRootChannel } from '../services/threadNote.js';
 import { listGrantedSecrets } from '../services/secretAccess.js';
 import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../services/secretLeakGuard.js';
@@ -365,6 +365,11 @@ function buildMcpServer(
   turnId: string | null = null,
 ): McpServer {
   const server = new McpServer({ name: 'harkroom', version: '0.1.0' });
+  /** S3 상태성 경고용 — 요약을 생략한 쓰기는 있던 요약을 유지하므로 그것으로 판정한다. 읽기 횟수는 세지 않는다. */
+  const readMemoryDescription = async (slug: string): Promise<string | null> => {
+    const r = await pool.query(`select description from agent_memory where account_id = $1 and slug = $2`, [account.id, slug]);
+    return (r.rows[0] as { description: string | null } | undefined)?.description ?? null;
+  };
   /** 사슬 고리로 **저장할** 원인(118) — 오퍼레이터를 거친 요청의 헤더만(security C1). PAT 로 붙은 클라이언트의 헤더는 깊이 셈에만 쓴다. */
   const chainCause = operatorId ? cause : null;
   /** 발화에 적을 턴 id — 원인과 같은 규칙으로 오퍼레이터를 거친 요청의 헤더만. */
@@ -1685,12 +1690,13 @@ function buildMcpServer(
   // value 가 null 이면 삭제 — 키 부재가 아니라 명시적 null 이 삭제다.
   // .nullable() 은 "값이 반드시 있고 null 일 수 있다"를 의미한다.
   server.registerTool('memory.set', {
-    description: `메모리 저장 또는 삭제(value가 null이면 삭제). ifUpdatedAt(memory.get 의 updatedAt, 새로 만들 땐 null)을 주면 그 사이 바뀌었을 때 conflict 로 거절한다. description 은 목록에 같이 실리는 한 줄 요약(생략하면 있던 것 유지, 빈 문자열이면 지움). core 는 ${MAX_CORE_MEMORY_LENGTH}자까지. kind: topic(기본)·procedure(절차)·journal(한 작업의 경위 — 목록에 안 실리고 최근 ${MAX_JOURNAL_MEMORIES_PER_ACCOUNT}개만 남는다)`,
+    description: `메모리 저장 또는 삭제(value가 null이면 삭제). ifUpdatedAt(memory.get 의 updatedAt, 새로 만들 땐 null)을 주면 그 사이 바뀌었을 때 conflict 로 거절한다. description 은 목록에 같이 실리는 한 줄 요약(생략하면 있던 것 유지, 빈 문자열이면 지움). core 는 ${MAX_CORE_MEMORY_LENGTH}자까지. mem/* 는 kind 필수: topic(여러 스레드에서 되풀이할 사실·교훈)·procedure(따라 할 절차). journal 은 새로 쓰지 않는다 — 한 스레드의 진행 상태는 thread.note 에 쓴다`,
     inputSchema: {
       slug: z.string().min(1),
       value: z.string().max(MAX_MEMORY_VALUE_LENGTH).nullable(),
       description: z.string().max(MAX_MEMORY_DESCRIPTION_LENGTH).optional(),
-      // 종류(070). 생략하면 새 기억은 topic, 있던 기억은 그대로다.
+      // 종류(070). S3 부터 `mem/*` 쓰기는 topic·procedure 필수(core·삭제는 필요 없다). journal 은 zod 가 아니라
+      // 아래에서 안내와 함께 거절한다 — enum 에서 빼면 "invalid enum" 만 받고 어디에 써야 할지 모른다.
       kind: z.enum(MEMORY_KINDS).optional(),
       // 낙관적 동시성(M3). memory.get 이 준 updatedAt 을 그대로 준다 — 그 사이 누가 고쳤으면
       // 쓰지 않고 conflict 를 돌려준다. null 은 "아직 없어야 한다". 생략하면 무조건 쓴다.
@@ -1714,6 +1720,11 @@ function buildMcpServer(
           sections: coreSections(value),
         },
       });
+    }
+    // S3: `mem/*` 는 kind 필수, journal 새 쓰기 폐지. 거절에 다음 행동(thread.note·topic·procedure)을 싣는다.
+    if (slug !== 'core' && value !== null) {
+      const refusal = kindRefusal(kind);
+      if (refusal) return jsonResult({ error: refusal });
     }
     // 쓰기 검사(080, contentScan.ts). 걸려도 거절하지 않는다 — 저장하고 표시한다.
     const flag = value === null ? null : scanWrite(value, description);
@@ -1742,7 +1753,12 @@ function buildMcpServer(
     }
     // 쓴 자리에서 알린다(C1): core 가 곧 넘침·항목이 곧 상한·journal 이 곧 밀려남. 비어 있으면 싣지 않는다.
     const warnings = await memoryWarnings(pool, account.id);
-    const warn = warnings.length ? { warnings } : {};
+    // S3: 진행 상태로 보이면 저장은 하되 알린다(지표 state_like 와 같은 판정). 요약을 생략하면 있던 요약으로 본다.
+    const stateLike = value !== null && slug !== 'core' && looksLikeThreadState(slug, description ?? (await readMemoryDescription(slug)));
+    const warn = {
+      ...(warnings.length ? { warnings } : {}),
+      ...(stateLike ? { threadState: `이 기억은 한 스레드의 진행 상태로 보인다. ${THREAD_NOTE_HINT} 여기에는 여러 스레드에서 되풀이할 교훈만 남겨라.` } : {}),
+    };
     if (flag) {
       return jsonResult({
         ok: true,
@@ -1860,7 +1876,7 @@ function buildMcpServer(
 
   server.registerTool('memory.merge', {
     description: '기억 여럿을 하나로 합친다 — 한 호출로 into 를 value 로 쓰고 from 을 전부 보관한다(두 호출로 나누면 그 사이 다른 턴이 from 을 고친다). '
-      + 'into 는 있는 것이든 새 이름이든 된다. ifUpdatedAt 은 {slug: updatedAt} 꼴로, 적은 slug 만 대 본다(into 가 없어야 하면 null). '
+      + 'into 는 있는 것이든 새 이름이든 된다. kind(topic|procedure) 필수. ifUpdatedAt 은 {slug: updatedAt} 꼴로, 적은 slug 만 대 본다(into 가 없어야 하면 null). '
       + '이전 판이 reason=merge 로 남아 memory.restore 로 되돌린다. 합친 본문에는 from 의 되풀이할 사실만 남기고 경위는 버려라',
     inputSchema: {
       into: slugArg,
@@ -1873,6 +1889,9 @@ function buildMcpServer(
   }, async ({ into, from, value, description, kind, ifUpdatedAt }) => {
     for (const s of [into, ...from]) if (!isValidSlug(s)) return jsonResult({ error: { code: 'invalid_slug', slug: s, message: MEMORY_SLUG_HINT } });
     if (into === 'core' || from.includes('core')) return jsonResult({ error: { code: 'core_not_mergeable', message: 'core 는 합치기의 대상이 아니다 — memory.set 으로 써라' } });
+    // S3: 합친 결과도 `mem/*` 쓰기다 — kind 필수, journal 로는 합치지 않는다.
+    const refusal = kindRefusal(kind);
+    if (refusal) return jsonResult({ error: refusal });
     const flag = scanWrite(value, description);
     const expect = ifUpdatedAt
       ? Object.fromEntries(Object.entries(ifUpdatedAt).map(([k, v]) => [k, v === null ? null : new Date(v)]))
@@ -1885,6 +1904,8 @@ function buildMcpServer(
     return jsonResult({
       ok: true, archived: from.filter((s) => s !== into),
       ...(warnings.length ? { warnings } : {}),
+      ...(looksLikeThreadState(into, description ?? (await readMemoryDescription(into)))
+        ? { threadState: `합친 기억이 한 스레드의 진행 상태로 보인다. ${THREAD_NOTE_HINT}` } : {}),
       ...(flag ? { flagged: { reason: flag.reason, rules: flag.rules }, notice: '합친 본문이 쓰기 검사에 걸렸다 — 사람이 확인할 때까지 프롬프트에 안 실린다. 지시문·비밀 값 없이 다시 써라.' } : {}),
     });
   });

@@ -703,6 +703,42 @@ export const MEMORY_SLUG_HINT = 'slug must be "core" or "mem/<name>" '
   + '(segments of [a-z0-9][a-z0-9_-]* joined by "/", e.g. "mem/deploy" or "mem/people/alex"; '
   + 'no dots, no uppercase, and the "mem/" prefix is required)';
 
+/**
+ * 한 스레드의 진행 상태로 보이는 기억(메모리 재설계 S3). 판정은 `scripts/memory-metrics.sql` 의 `state_like` 와
+ * 글자까지 같다 — 쓰는 자리의 경고와 지표가 같은 자로 잰다. 이름이 `delegation-*`·`review-*` 이거나, 요약에
+ * PR 번호와 진행 낱말이 함께 있다.
+ */
+export function looksLikeThreadState(slug: string, description: string | null | undefined): boolean {
+  if (/^mem\/(.*\/)?(delegation|review)-/.test(slug)) return true;
+  const d = description ?? '';
+  return /#[0-9]+/.test(d) && /(CI|머지|대기|초록|검토|rebase|head)/i.test(d);
+}
+
+/** S3: `mem/*` 쓰기에 줄 수 있는 종류. journal 은 새로 쓰지 않는다 — 진행 상태는 `thread.note`. */
+export const WRITABLE_MEMORY_KINDS = ['topic', 'procedure'] as const;
+
+/** kind 없는·journal 쓰기의 거절과 상태성 경고에 쓰는 문장. 다음 행동을 함께 말한다. */
+export const THREAD_NOTE_HINT = '한 스레드의 진행 상태(맡긴 일·검토 대기·PR 번호·head·다음 할 일)라면 기억이 아니라 '
+  + '`thread.note`(threadRootId·body)에 써라 — 그 스레드의 다음 턴에 자동으로 실린다.';
+
+export function kindRefusal(kind: string | undefined): { code: string; message: string } | null {
+  if (kind === 'journal') {
+    return {
+      code: 'journal_retired',
+      message: 'journal 은 더 이상 새로 쓰지 않는다(있던 journal 은 그대로 읽힌다). ' + THREAD_NOTE_HINT
+        + ' 여러 스레드에서 되풀이할 교훈이면 kind: "topic", 절차면 kind: "procedure" 로 다시 써라.',
+    };
+  }
+  if (kind === undefined) {
+    return {
+      code: 'kind_required',
+      message: '`mem/*` 를 쓸 때는 kind 를 준다 — "topic"(여러 스레드에서 되풀이할 사실·교훈) 또는 "procedure"(따라 할 절차). '
+        + '있던 기억을 고칠 때도 준다(memory.get 으로 지금 값을 읽었다면 같은 종류로). ' + THREAD_NOTE_HINT,
+    };
+  }
+  return null;
+}
+
 export function isValidSlug(slug: string): boolean {
   return slug.length > 0 && slug.length <= 255 && MEMORY_SLUG_REGEX.test(slug);
 }

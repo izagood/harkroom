@@ -584,8 +584,9 @@ const MEMORY_USAGE_LINES = [
   '된다. 길거나 한 가지 주제인 것은 `mem/*` 로 나눠 담고 `core` 에는 포인터 한 줄만 남긴다.',
   '`mem/*` 를 쓸 때는 `description` 에 **언제 열어 볼지 알 수 있는 한 줄 요약**을 같이 준다 — 목록에',
   '이름 옆에 실리고, 요약이 없으면 이름만 보고 열지 말지 정해야 한다(생략하면 있던 요약이 유지된다).',
-  '한 작업의 경위(PR 하나의 진행 기록 같은 것)는 `kind: "journal"` 로 쓴다 — 목록에 안 실리고 최근 60개만',
-  '남는다. 되풀이할 교훈은 journal 이 아니라 주제 기억(`topic`)·절차(`procedure`)로 따로 증류한다.',
+  // S3: kind 필수·journal 폐지. 서버가 kind 없는 `mem/*` 쓰기를 `kind_required` 로 거절한다.
+  '`mem/*` 를 쓸 때는 **`kind` 를 꼭 준다** — `"topic"`(여러 스레드에서 되풀이할 사실·교훈) 또는 `"procedure"`(따라 할',
+  '절차). 고쳐 쓸 때도 준다 — 빠지면 `kind_required` 로 거절된다. journal 은 더 이상 새로 쓰지 않는다(있던 것은 `memory.search` 로 찾힌다).',
   '목록에 없는 것은 `memory.search` 로 찾는다.',
   '',
   // 메모리 재설계 S1: 진행 상태의 자리(`thread.note`). 이 줄이 없으면 도구가 생겨도 아무도 안 쓴다(#762 교훈).
@@ -597,7 +598,7 @@ const MEMORY_USAGE_LINES = [
   '**정리하는 법** — 정리하라는 요청(주간 정리 자동화 등)을 받았거나 `<memory-index>` 머리에 정리 신호가 보이면:',
   '① `memory.lease`(acquire)로 정리 임대를 잡는다 — 다른 턴이 들고 있으면 물러난다. ② `memory.audit` 으로',
   '후보(안 쓰임·비슷한 이름·비슷한 본문·곧 밀려날 journal·오래 안 고친 것·큰 것)를 받아 **하나씩 읽고** 판단한다',
-  '(`truncated` 면 고친 뒤 다시 audit). ③ 같은 주제 여럿은 `memory.merge`(into·from·value) **한 번**으로 합친다 —',
+  '(`truncated` 면 고친 뒤 다시 audit). ③ 같은 주제 여럿은 `memory.merge`(into·from·value·kind) **한 번**으로 합친다 —',
   'set 과 지우기를 따로 하면 그 사이 다른 턴이 고친다. ④ 안 쓰는 것 같으면 **지우지 말고 `memory.archive`** 로',
   '보관한다 — 목록·recall·200 상한에서 빠지고 `memory.unarchive` 로 돌아온다. ⑤ 잘못 고쳤으면 `memory.revisions` →',
   '`memory.restore`. ⑥ 끝나면 임대를 놓고(release) 무엇을 바꿨는지 보고한다.',
