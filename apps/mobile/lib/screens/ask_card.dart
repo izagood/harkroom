@@ -84,6 +84,7 @@ class _AskCardState extends State<AskCard> {
                 (false, _) when ask.isReplied =>
                   closedByName == null ? t.askReplied : '${t.askReplied} · $closedByName',
                 (false, _) when ask.isSuperseded => t.askSuperseded,
+                (false, _) when ask.isExpired => '${t.askExpired} · ${t.askExpiredHint}',
                 (false, _) => t.askClosed,
                 (true, AskAccount()) => t.askToYou,
                 (true, AskAnyHuman()) => t.askToAnyone,
@@ -145,7 +146,7 @@ class _AskCardState extends State<AskCard> {
                   ),
                 ),
               )
-            else if (ask.answeredWith != null || !(ask.isReplied || ask.isSuperseded))
+            else if (ask.answeredWith != null || !(ask.isReplied || ask.isSuperseded || ask.isExpired))
               // **고른 것을 남긴다.** 버튼이 사라지고 결과가 그 자리에 선다 — 누른 뒤에도
               // 버튼이 있으면 사람은 자기가 누른 것을 의심한다.
               Text(

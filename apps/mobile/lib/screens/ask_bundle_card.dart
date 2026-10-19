@@ -319,6 +319,7 @@ class _BundleRow extends StatelessWidget {
               ],
             ),
           BundleRowSuperseded() => Text(t.askSuperseded, style: muted),
+          BundleRowExpired() => Text('${t.askExpired} · ${t.askExpiredHint}', style: muted),
           BundleRowDeclined() => Text(t.askClosed, style: muted),
         },
         if (skip != null)

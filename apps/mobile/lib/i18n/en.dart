@@ -188,6 +188,12 @@ class StringsEn implements Strings {
   String get askSuperseded => 'Replaced by a new question';
 
   @override
+  String get askExpired => 'Expired';
+
+  @override
+  String get askExpiredHint => 'The agent has to ask again';
+
+  @override
   String askPickAnyway(int n) => 'Pick anyway ($n)';
 
   @override

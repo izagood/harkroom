@@ -78,6 +78,7 @@ class AskMeta {
     this.replyMessageId,
     this.replyNote,
     this.replyNoteBy,
+    this.permissionExpiresAt,
   });
 
   /// 무엇을 묻는지. 본문에 이미 적혀 있으면 없다 — **같은 말을 두 번 그리지 않는다.**
@@ -94,7 +95,7 @@ class AskMeta {
   final String? closedAt;
   final String? closedBy;
 
-  /// 왜 닫혔나 — `declined`(답하지 않기)·`replied`(글로 답함, A′)·`superseded`(새 카드로 바뀜).
+  /// 왜 닫혔나 — `declined`(답하지 않기)·`replied`(글로 답함, A′)·`superseded`(새 카드로 바뀜)·`expired`(권한 요청 시한 지남).
   /// 옛 서버는 싣지 않는다 — 그때는 `declined` 로 읽는다(전에는 닫힘이 그것 하나였다).
   final String? closedReason;
 
@@ -107,6 +108,20 @@ class AskMeta {
   /// [replyNote] 를 쓴 계정(관리 에이전트, security n1). 화면은 「○○ 요약:」으로 밝힌다 — 사람의 말로 읽히면 안 된다.
   final String? replyNoteBy;
 
+  /// 권한 요청 카드의 답할 시한(`meta.permissionRequest.expiresAt`, 아직 기다리는 요청일 때만). 서버가 1분마다 닫지만
+  /// 그 전이나 옛 서버에서도 열린 버튼을 그리지 않으려고 읽는다(스레드 65f3b26e).
+  final String? permissionExpiresAt;
+
+  /// 서버가 닫기 전인데 권한 요청 시한이 지났다.
+  bool get _lapsed {
+    if (answeredWith != null || closedAt != null || permissionExpiresAt == null) return false;
+    final at = DateTime.tryParse(permissionExpiresAt!);
+    return at != null && !at.isAfter(DateTime.now());
+  }
+
+  /// 권한 요청 시한이 지나 닫혔다(서버 `closedReason: 'expired'`) — 결정은 더 받지 않는다, 에이전트가 다시 청해야 한다.
+  bool get isExpired => answeredWith == null && ((closedAt != null && closedReason == 'expired') || _lapsed);
+
   /// 글로 답해 닫혔다 — 차례는 넘어갔지만 늦게 고를 수는 있다(서버가 받는다).
   bool get isReplied => answeredWith == null && closedAt != null && closedReason == 'replied';
 
@@ -114,7 +129,7 @@ class AskMeta {
   bool get isSuperseded => answeredWith == null && closedAt != null && closedReason == 'superseded';
 
   /// 아직 누군가를 **막고 있는가.** 답도 없고 닫히지도 않았을 때만 참이다.
-  bool get isOpen => answeredWith == null && closedAt == null;
+  bool get isOpen => answeredWith == null && closedAt == null && !_lapsed;
 
   /// `meta` 가 선택 요청인지 판정한다. 아니면 `null` — 화면은 본문만 그린다.
   ///
@@ -124,6 +139,10 @@ class AskMeta {
     if (meta['kind'] != 'ask') return null;
     final ask = meta['ask'];
     if (ask is! Map) return null;
+    final pr = meta['permissionRequest'];
+    final prExpiresAt = pr is Map && (pr['status'] == null || pr['status'] == 'pending') && pr['expiresAt'] is String
+        ? pr['expiresAt'] as String
+        : null;
 
     final rawOptions = ask['options'];
     if (rawOptions is! List) return null;
@@ -152,6 +171,7 @@ class AskMeta {
       replyMessageId: ask['replyMessageId'] as String?,
       replyNote: ask['replyNote'] as String?,
       replyNoteBy: ask['replyNoteBy'] as String?,
+      permissionExpiresAt: prExpiresAt,
     );
   }
 }
@@ -242,6 +262,10 @@ class BundleRowSuperseded extends BundleRowState {
   const BundleRowSuperseded();
 }
 
+class BundleRowExpired extends BundleRowState {
+  const BundleRowExpired();
+}
+
 class BundleRowDeclined extends BundleRowState {
   const BundleRowDeclined();
 }
@@ -264,6 +288,7 @@ BundleRowState bundleRowState(AskBundleItem item, Map<String, Object?>? root, {b
   if (item.link && ask.isOpen) return const BundleRowLink();
   if (ask.closedReason == 'replied') return BundleRowReplied(by: ask.closedBy, note: ask.replyNote, noteBy: ask.replyNoteBy);
   if (ask.closedReason == 'superseded') return const BundleRowSuperseded();
+  if (ask.isExpired) return const BundleRowExpired();
   if (ask.closedAt != null) return const BundleRowDeclined();
   return BundleRowOpen(ask);
 }

@@ -187,6 +187,12 @@ class StringsKo implements Strings {
   String get askSuperseded => '새 질문으로 바뀜';
 
   @override
+  String get askExpired => '만료됨';
+
+  @override
+  String get askExpiredHint => '에이전트가 다시 청해야 한다';
+
+  @override
   String askPickAnyway(int n) => '그래도 고르기 ($n)';
 
   @override
