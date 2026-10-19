@@ -64,6 +64,7 @@ import { registerThreadClaimRoutes } from './routes/threadClaimRoutes.js';
 import { createSecretLeakGuard, leakGuardHook } from './services/secretLeakGuard.js';
 import type { RevealLimiter } from './services/secretAccess.js';
 import { createAgentWakeSweeper } from './services/agentWakes.js';
+import { createPermissionExpirySweeper } from './services/permissionRequests.js';
 import { emitEvent } from './events.js';
 import { createStaleRequestSweeper } from './services/staleRequests.js';
 import { createDelegationDeadlineSweeper } from './services/delegations.js';
@@ -571,6 +572,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // 백그라운드 회차 sweep(BG1) — HARKROOM_BACKGROUND_ENABLED=1 일 때만 일한다. 지금은 집고 죽은 회차·지난 날 일감을 닫기만 한다.
   createBgJobSweeper(deps.pool).startSweep(app);
+
+  // 권한 요청 만료(129) — 시한이 지난 요청의 카드를 「만료됨」으로 닫는다. 이것이 없으면 카드가 열린 채 버튼이 눌리지 않는다.
+  createPermissionExpirySweeper(deps.pool).startSweep(app);
 
   /**
    * 아무도 집지 않은 요청을 스레드에 말하는 스위퍼(049).

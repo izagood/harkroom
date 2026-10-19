@@ -1384,11 +1384,13 @@ export interface AskMeta {
      *   세우면 거짓말이다. 고를 길은 남는다 — 이 사유로 닫힌 카드는 늦게 골라도 받는다
      *   (`answeredWith` 가 닫힘보다 강하다는 서버 규칙 그대로). 어느 글인지는 `replyMessageId`.
      * - `superseded` — 물어본 쪽이 같은 스레드에 새 카드를 내며 이것을 대신했다(`supersededBy`).
+     * - `expired` — 권한 요청 카드의 요청이 시한(24시간)을 넘겨 서버가 닫았다(2026-10-19). 결정은 더 받지 않는다 —
+     *   에이전트가 다시 청해야 한다. 거울은 원본의 사유를 그대로 옮긴다.
      *
      * **모르는 값이 와도 닫힌 것은 닫힌 것이다**(`isAskOpen` 은 `closedAt` 만 본다) — 옛 화면은
      * 새 사유를 `declined` 문장으로 그릴 뿐 열린 카드로 되살리지 않는다.
      */
-    closedReason?: 'declined' | 'replied' | 'superseded';
+    closedReason?: 'declined' | 'replied' | 'superseded' | 'expired';
     /** `closedReason: 'replied'` 일 때 카드를 닫은 사람 글의 id. 화면이 인용 한 줄을 여기서 찾는다. */
     replyMessageId?: string;
     /** `closedReason: 'superseded'` 일 때 이 카드를 대신한 새 카드의 id. */

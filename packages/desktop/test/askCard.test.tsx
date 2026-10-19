@@ -259,3 +259,41 @@ describe('AskCard — 글로 답함 · 새 질문으로 바뀜', () => {
     expect(screen.queryByTestId('ask-pick-anyway')).toBeNull();
   });
 });
+
+// 스레드 65f3b26e(10-19): 시한이 지난 권한 요청 카드가 열린 채 [승인] 을 보였고, 누르면 409 만 돌아왔다.
+describe('AskCard — 권한 요청 만료', () => {
+  const optionLocked = (id: string) => {
+    const b = screen.queryByTestId(`ask-option-${id}`) as HTMLButtonElement | null;
+    return b === null || b.disabled;
+  };
+
+  it('서버가 만료로 닫은 카드는 「만료됨」 이고 누를 수 없다', () => {
+    render(<MessageItem message={askMessage({
+      ...askMeta({ closedAt: new Date().toISOString(), closedReason: 'expired' }),
+      permissionRequest: { status: 'expired', expiresAt: new Date(Date.now() - 60_000).toISOString() },
+    })} />);
+    const card = screen.getByTestId('ask-card');
+    expect(card.dataset.closedReason).toBe('expired');
+    expect(screen.getByText('만료됨')).toBeTruthy();
+    expect(screen.getByText('에이전트가 다시 청해야 한다')).toBeTruthy();
+    expect(optionLocked('new')).toBe(true);
+  });
+
+  it('서버가 닫기 전이라도 시한이 지난 권한 카드는 만료로 그린다', () => {
+    render(<MessageItem message={askMessage({
+      ...askMeta(),
+      permissionRequest: { status: 'pending', expiresAt: new Date(Date.now() - 60_000).toISOString() },
+    })} />);
+    expect(screen.getByTestId('ask-card').dataset.closedReason).toBe('expired');
+    expect(optionLocked('new')).toBe(true);
+    expect(optionLocked('edit')).toBe(true);
+  });
+
+  it('시한 안의 권한 카드는 그대로 누를 수 있다', () => {
+    render(<MessageItem message={askMessage({
+      ...askMeta(),
+      permissionRequest: { status: 'pending', expiresAt: new Date(Date.now() + 60_000).toISOString() },
+    })} />);
+    expect(screen.getByTestId('ask-card').dataset.closed).toBe('false');
+  });
+});

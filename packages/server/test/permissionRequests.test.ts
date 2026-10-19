@@ -7,7 +7,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { can, mergeGrantFor } from '../src/auth/permissions.js';
-import { PERMISSION_GRANT_TTL_MS, toolAllowsFor } from '../src/services/permissionRequests.js';
+import { PERMISSION_GRANT_TTL_MS, createPermissionExpirySweeper, toolAllowsFor } from '../src/services/permissionRequests.js';
 
 // 에이전트 권한 요청(111, 스레드 f61af808) — 요청은 아무것도 열지 않고, 소유자 사람 세션의 승인만 grant 를 만든다.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -223,6 +223,45 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
     await pool.query(`update permission_request set expires_at = now() - interval '1 minute' where id = $1`, [r.requestId]);
     expect((await decide(alice.token, r.requestId, 'approve')).json().error.code).toBe('request_expired');
     expect(await toolAllowsFor(pool, agentId, ch)).toEqual([]);
+  });
+
+  // 스레드 65f3b26e(10-19): 만료된 요청의 카드가 열린 채 버튼을 보여 「승인이 안 눌린다」로 보였다. 거울도 같이 열려 있었다.
+  it('시한이 지난 요청은 스윕이 카드를 「만료됨」으로 닫고, 다른 채널의 거울도 같은 사유로 닫는다', async () => {
+    const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context ops get nodes)', threadRootId: await root() });
+    const mirrorId = (await pool.query(
+      `insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, '거울', 'user', $3) returning id`,
+      [otherCh, admin.accountId, JSON.stringify({ kind: 'ask', ask: { to: { kind: 'human' }, options: [{ id: 'approve', label: '승인' }, { id: 'deny', label: '거절' }], mirrorOf: r.cardMessageId } })],
+    )).rows[0].id as string;
+    const sweeper = createPermissionExpirySweeper(pool);
+    await sweeper.sweep();
+    // 시한 안의 요청은 건드리지 않는다.
+    expect((await pool.query(`select status from permission_request where id = $1`, [r.requestId])).rows[0].status).toBe('pending');
+
+    await pool.query(`update permission_request set expires_at = now() - interval '1 minute' where id = $1`, [r.requestId]);
+    await sweeper.sweep();
+    expect((await pool.query(`select status from permission_request where id = $1`, [r.requestId])).rows[0].status).toBe('expired');
+    const card = (await pool.query(`select meta from message where id = $1`, [r.cardMessageId])).rows[0].meta;
+    expect(card.permissionRequest.status).toBe('expired');
+    expect(card.ask).toMatchObject({ closedReason: 'expired' });
+    expect(card.ask.closedAt).toBeTruthy();
+    expect(card.ask.answeredWith).toBeUndefined();
+    const mirror = (await pool.query(`select meta from message where id = $1`, [mirrorId])).rows[0].meta;
+    expect(mirror.ask).toMatchObject({ closedReason: 'expired' });
+    // 닫힌 뒤에도 결정은 받지 않는다 — 다시 청해야 한다.
+    expect((await decide(alice.token, r.requestId, 'approve')).json().error.code).toBe('already_decided');
+    expect(await toolAllowsFor(pool, agentId, ch)).toEqual([]);
+  });
+
+  it('스윕 전에 만료된 카드를 누르면 그 자리에서 카드가 닫힌다', async () => {
+    const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context ops get svc)', threadRootId: await root() });
+    await pool.query(`update permission_request set expires_at = now() - interval '1 minute' where id = $1`, [r.requestId]);
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${ch}/messages/${r.cardMessageId}/ask-answer`, headers: auth(alice.token), payload: { optionId: 'approve' },
+    });
+    expect(res.statusCode).toBe(409);
+    const card = (await pool.query(`select meta from message where id = $1`, [r.cardMessageId])).rows[0].meta;
+    expect(card.ask).toMatchObject({ closedReason: 'expired' });
+    expect(card.permissionRequest.status).toBe('expired');
   });
 
   it('머지(kind=merge)도 같은 카드로 받고, 승인하면 그 저장소 grant 가 생긴다', async () => {

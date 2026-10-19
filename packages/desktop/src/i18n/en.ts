@@ -3660,6 +3660,8 @@ export const en = {
   'speech.ask.pickAnyway': 'Pick anyway ({n})',
   /** 물어본 쪽이 새 카드로 이 카드를 대신했다(`supersedes`). */
   'speech.ask.superseded': 'Replaced by a new question',
+  'speech.ask.expired': 'Expired',
+  'speech.ask.expiredHint': 'The agent has to ask again',
   'speech.bundle.remaining': '{n} of {m} left to decide',
   'speech.bundle.allDone': 'All {m} decided',
   'speech.bundle.acceptRecommended': 'Accept {n} recommended',

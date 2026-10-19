@@ -27,7 +27,8 @@ export interface PermissionOnceMeta {
   /** `ci_not_green` 카드의 실패한 체크 이름 — 서버가 거른 값을 여기서 한 번 더 거른다. 텍스트로만 그린다. */
   failedChecks: string[];
   /** `obsolete` — 그 PR 이 머지되거나 닫혀 서버가 카드를 닫았다(스레드 0e30c565 Q3). 결정은 서버가 409 로 받지 않는다. */
-  status: 'pending' | 'granted' | 'denied' | 'approved_once' | 'obsolete';
+  /** `expired` — 요청 시한이 지났다(스레드 65f3b26e). 서버가 닫기 전이라도 `expiresAt` 이 지났으면 그렇게 읽는다 — 버튼을 그리지 않는다. */
+  status: 'pending' | 'granted' | 'denied' | 'approved_once' | 'obsolete' | 'expired';
   obsoleteReason: 'merged' | 'closed' | null;
   decidedBy: string | null;
   approvedOnce: { ghUser: string | null; relaxChecks: boolean; expiresAt: string } | null;
@@ -55,7 +56,9 @@ export function readPermissionOnce(meta: Record<string, unknown>): PermissionOnc
   const o = p.once as Record<string, unknown> | undefined;
   if (!o || typeof o.number !== 'number' || typeof o.headSha !== 'string') return null;
   const a = p.approvedOnce as Record<string, unknown> | undefined;
-  const status = p.status === 'granted' || p.status === 'denied' || p.status === 'approved_once' || p.status === 'obsolete' ? p.status : 'pending';
+  const decided = p.status === 'granted' || p.status === 'denied' || p.status === 'approved_once' || p.status === 'obsolete' || p.status === 'expired';
+  const lapsed = !decided && typeof p.expiresAt === 'string' && Date.parse(p.expiresAt) <= Date.now();
+  const status = decided ? p.status as PermissionOnceMeta['status'] : lapsed ? 'expired' : 'pending';
   return {
     requestId: p.requestId, agentId: p.agentId, ownerAccountId: typeof p.ownerAccountId === 'string' ? p.ownerAccountId : null,
     repo: p.target, number: o.number, headSha: o.headSha,

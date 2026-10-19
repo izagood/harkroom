@@ -6,7 +6,7 @@ import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
 import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
-import { getMessageById, recordAskAnswer } from './messages.js';
+import { getMessageById, recordAskAnswer, syncAskMirrors } from './messages.js';
 
 /**
  * 에이전트 권한 요청 → 소유자 승인 → 적용(스레드 f61af808, jaebin D1~D4 10-07).
@@ -371,7 +371,12 @@ export async function decidePermissionRequest(
     // PR 이 머지되거나 닫혀 카드가 닫혔다(Q3-c) — 승인·7일 허락·거절 어느 결정도 받지 않는다.
     if (r.status === 'obsolete') { await client.query('rollback'); return { ok: false, status: 409, code: 'pr_closed', message: 'that pull request was already merged or closed — this card is closed' }; }
     if (r.status !== 'pending') { await client.query('rollback'); return { ok: false, status: 409, code: 'already_decided', message: `this request is already ${r.status}` }; }
-    if (r.expired) { await client.query('rollback'); return { ok: false, status: 409, code: 'request_expired', message: 'this request expired — the agent has to ask again' }; }
+    if (r.expired) {
+      await client.query('rollback');
+      // 스윕을 기다리지 않고 이 자리에서 카드를 닫는다 — 누른 사람의 화면이 곧바로 「만료됨」으로 바뀐다.
+      await expirePermissionRequests(pool, { now, requestId: r.id });
+      return { ok: false, status: 409, code: 'request_expired', message: 'this request expired — the agent has to ask again' };
+    }
     // 「한 번」은 종류마다 뜻이 다르다: command 는 그 명령 1회 grant(아래), merge 는 거절 카드의 이 PR·이 head 1회 머지(스레드 1b75d7a0).
     if (args.decision === 'approve_once' && r.kind !== 'command') {
       if (r.kind !== 'merge' || !r.denialId || !args.once) {
@@ -493,6 +498,98 @@ export async function decidePermissionRequest(
     if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
   }
   return { ok: true, status, grantExpiresAt: grantExpiresAt?.toISOString() ?? null, ...(approval ? { approvalExpiresAt: approval.expiresAt.toISOString() } : {}), cardMessageId: row.cardMessageId, ...(grantMode ? { grantMode } : {}) };
+}
+
+/** 만료 스윕 주기. 요청 시한은 하루라 1분이면 화면이 늦어도 1분이다(누르면 그 자리에서 닫힌다). */
+export const PERMISSION_EXPIRE_SWEEP_INTERVAL_MS = 60_000;
+/** 한 번의 스윕에서 닫을 요청 수의 상한. */
+const PERMISSION_EXPIRE_BATCH = 50;
+
+/**
+ * 시한이 지난 기다리는 요청을 닫는다(스레드 65f3b26e, 2026-10-19). 전에는 요청만 만료되고 카드는 열린 채 버튼을 보였다 —
+ * 누르면 409 `request_expired` 가 돌아올 뿐 화면은 그대로여서 「승인 버튼이 안 눌린다」로 보였다.
+ *
+ * 요청은 `expired`, 카드 meta 의 `permissionRequest.status` 도 `expired`, 카드의 선택 카드는 `closedReason: 'expired'` 로 닫는다(닫은 사람이 없으므로 `closedBy` 는 없다)
+ * (`obsoleteMergeCards` 와 같은 모양). 닫은 뒤 `syncAskMirrors` 로 거울·묶음 줄을 같은 사유로 닫는다 — 다른 채널에 세운 거울도
+ * 열린 채 남지 않는다. 요청한 에이전트는 깨우지 않는다(다시 청하라고 알릴지는 후속 D). 닫은 요청 수를 돌려준다.
+ * `requestId` 가 있으면 그 요청만(결정 경로가 만료를 만났을 때).
+ */
+export async function expirePermissionRequests(pool: Pool, args: { now: Date; requestId?: string }): Promise<number> {
+  const client = await pool.connect();
+  let rows: { id: string; agentId: string; cardMessageId: string | null }[] = [];
+  try {
+    await client.query('begin');
+    rows = (await client.query<{ id: string; agentId: string; cardMessageId: string | null }>(
+      `update permission_request set status = 'expired', decided_at = $1
+        where id in (select id from permission_request
+                      where status = 'pending' and expires_at <= $1 and ($2::uuid is null or id = $2)
+                      order by expires_at limit $3 for update skip locked)
+        returning id, agent_id as "agentId", card_message_id as "cardMessageId"`,
+      [args.now, args.requestId ?? null, PERMISSION_EXPIRE_BATCH])).rows;
+    const at = args.now.toISOString();
+    for (const r of rows) {
+      if (!r.cardMessageId) continue;
+      await client.query(
+        `update message set meta = jsonb_set(meta, '{permissionRequest}', (meta->'permissionRequest') || $2::jsonb)
+          where id = $1 and meta ? 'permissionRequest'`,
+        [r.cardMessageId, JSON.stringify({ status: 'expired', decidedAt: at })]);
+      await client.query(
+        `update message set meta = jsonb_set(meta, '{ask}', (meta->'ask') || $2::jsonb)
+          where id = $1 and meta ? 'ask' and meta->'ask'->>'closedAt' is null and meta->'ask'->'answeredWith' is null`,
+        [r.cardMessageId, JSON.stringify({ closedAt: at, closedReason: 'expired' })]);
+    }
+    await client.query('commit');
+  } catch (err) {
+    await client.query('rollback').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  for (const r of rows) {
+    // 만료는 이미 커밋됐다 — 한 줄의 뒤처리가 실패해도 나머지 카드는 알린다.
+    try {
+      await recordAudit(pool, { action: 'permission.expired', actorId: r.agentId, target: r.agentId, detail: { requestId: r.id } });
+      if (!r.cardMessageId) continue;
+      const card = await getMessageById(pool, r.cardMessageId);
+      if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
+      await syncAskMirrors(pool, r.cardMessageId);
+    } catch (err) {
+      console.error('permission expiry follow-up error:', err);
+    }
+  }
+  return rows.length;
+}
+
+/** 만료 스위퍼 — 다른 스위퍼와 같은 모양(프로세스 안 겹침은 깃발, `onClose` 에서 interval 정리). */
+export function createPermissionExpirySweeper(pool: Pool, opts: { now?: () => Date } = {}): {
+  startSweep(app: { addHook(hook: 'onClose', fn: () => void | Promise<void>): void }): void;
+  sweep(): Promise<void>;
+} {
+  let sweepInterval: ReturnType<typeof setInterval> | null = null;
+  let running = false;
+  const sweep = async () => {
+    if (running) return;
+    running = true;
+    try {
+      while ((await expirePermissionRequests(pool, { now: opts.now?.() ?? new Date() })) >= PERMISSION_EXPIRE_BATCH) { /* 다음 묶음 */ }
+    } catch (err) {
+      // 던지면 `void sweep()` 이 처리 안 된 거절이 되어 프로세스가 죽는다(agentWakes 의 10-12 사고). 다음 주기에 다시 한다.
+      console.error('permission expiry sweep error:', err);
+    } finally {
+      running = false;
+    }
+  };
+  return {
+    startSweep(app) {
+      if (sweepInterval) return;
+      sweepInterval = setInterval(() => { void sweep(); }, PERMISSION_EXPIRE_SWEEP_INTERVAL_MS);
+      app.addHook('onClose', () => {
+        if (sweepInterval) clearInterval(sweepInterval);
+        sweepInterval = null;
+      });
+    },
+    sweep,
+  };
 }
 
 /** 러너가 턴을 띄울 때 — 이 에이전트가 이 채널에서 받은 살아 있는 allow 규칙(D2). */
