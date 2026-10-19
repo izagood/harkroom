@@ -3,7 +3,7 @@
  *
  * 무엇을 어디서 읽나(스레드 9e909150 설계 ①):
  * - worktree: 각 저장소의 `git worktree list --porcelain`. 저장소 = 이 오퍼레이터의 에이전트 `workingDir` + 원장에 이미 있는
- *   저장소. main worktree 는 빼고 센다(절대 지우지 않는다).
+ *   저장소 + 러너가 보고한 worktree 의 저장소(`repoOfWorktree`). main worktree 는 빼고 센다(절대 지우지 않는다).
  * - 주인(스레드): 러너가 relay 로 보고한 장부(`workspaceCleanupOwners.ts`). 오퍼레이터는 러너 상태 트리를 읽지 않는다
  *   (#431 D5). 보고에 없는 worktree 는 주인 모름이다.
  * - PR: `gh pr list`(브랜치, detached 면 sha). 실패하면 PR 모름 → 목록에 넣지 않는다.
@@ -12,7 +12,8 @@
  * **이 모듈은 아무것도 지우지 않는다.**
  */
 import { randomUUID } from 'node:crypto';
-import { stat } from 'node:fs/promises';
+import { lstat, stat } from 'node:fs/promises';
+import { basename, dirname } from 'node:path';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import { normalizeCleanupPath, type CleanupPr } from '@harkroom/shared/workspaceCleanup';
 import type { Exec } from './turnMerge.js';
@@ -76,6 +77,14 @@ export interface ScanDeps {
 
 const GIT_ENV = (home: string) => ({ HOME: home, PATH: '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', GIT_TERMINAL_PROMPT: '0' });
 
+/** PR head 가 worktree head 와 같거나 그 조상인가. 어느 쪽이든 모르거나 로컬에 그 커밋이 없으면 false. */
+export async function prHeadIsOurs(deps: ScanDeps, path: string, prHead: string | null, head: string | null): Promise<boolean> {
+  if (!prHead || !head) return false;
+  if (prHead === head) return true;
+  const r = await deps.exec(deps.gitPath, ['-C', path, 'merge-base', '--is-ancestor', prHead, head], GIT_ENV(deps.home));
+  return r.code === 0;
+}
+
 /** 한 저장소의 worktree 들(main 제외)에 브랜치·PR·크기·주인을 붙인다. */
 export async function scanRepo(deps: ScanDeps, repo: string, owners: ReadonlyMap<string, { channelId: string; threadRootId: string }>): Promise<ObservedWorktree[]> {
   const env = GIT_ENV(deps.home);
@@ -94,6 +103,9 @@ export async function scanRepo(deps: ScanDeps, repo: string, owners: ReadonlyMap
       args.push(...(w.branch ? ['--head', w.branch] : ['--search', w.head!]));
       const g = await deps.exec(deps.ghPath, args, deps.ghEnv);
       pr = g.code === 0 ? parsePrList(g.stdout) : null;
+      // 그 PR 이 **이 worktree 의** PR 인지 본다: PR head 가 worktree head 와 같거나 그 조상일 때만. 브랜치 이름을 다시 쓰면
+      // `--head` 가 옛 머지 PR 을 잡는다 — 그대로 두면 새 작업이 「머지됨」으로 목록에 올라 지워진다. 못 대면 PR 모름.
+      if (pr && !(await prHeadIsOurs(deps, w.path, pr.headSha, w.head))) pr = null;
     }
     const o = owners.get(normalizeCleanupPath(w.path));
     const owner = o ? { thread: { channelId: o.channelId, threadRootId: o.threadRootId } } : null;
@@ -104,6 +116,18 @@ export async function scanRepo(deps: ScanDeps, repo: string, owners: ReadonlyMap
     });
   }
   return out;
+}
+
+/**
+ * worktree 경로 → 그 저장소(main worktree 경로). 에이전트 `workingDir` 은 대개 비어 있어서, 러너가 보고한 worktree 가
+ * 청소할 저장소를 알 수 있는 유일한 길이다. 사라진 경로·git 이 아닌 폴더·bare 저장소는 null.
+ */
+export async function repoOfWorktree(deps: ScanDeps, path: string): Promise<string | null> {
+  if (!(await lstat(path).catch(() => null))?.isDirectory()) return null;
+  const r = await deps.exec(deps.gitPath, ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir'], GIT_ENV(deps.home));
+  if (r.code !== 0) return null;
+  const common = r.stdout.trim();
+  return basename(common) === '.git' ? dirname(common) : null;
 }
 
 export type Forward = (agentId: string, req: RunnerLinkRequest) => Promise<RunnerLinkResponse>;

@@ -34,7 +34,7 @@ import {
   type ObservedWorktree,
 } from './workspaceCleanup.js';
 import type { CleanupOwners } from './workspaceCleanupOwners.js';
-import { isThreadDone, scanRepo, type Forward, type ScanDeps } from './workspaceCleanupScan.js';
+import { isThreadDone, repoOfWorktree, scanRepo, type Forward, type ScanDeps } from './workspaceCleanupScan.js';
 
 export interface WorkspaceCleanupView {
   settings: CleanupSettings;
@@ -165,14 +165,17 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: Cleanup
   const observe = async (prev: CleanupLedger) => {
     const agents = await deps.agents();
     const owners = await deps.owners.ownerOf();
-    const repos = new Set<string>();
-    for (const a of agents) if (a.workingDir) repos.add(a.workingDir);
-    for (const i of prev.items) if (i.repo) repos.add(i.repo);
+    const repos = new Map<string, string>(); // 정규화한 경로 → 경로(`/tmp`·`/private/tmp` 를 한 번만 훑는다)
+    const addRepo = (r: string) => { if (!repos.has(normalizeCleanupPath(r))) repos.set(normalizeCleanupPath(r), r); };
+    for (const a of agents) if (a.workingDir) addRepo(a.workingDir);
+    for (const i of prev.items) if (i.repo) addRepo(i.repo);
+    // 러너가 보고한 worktree 의 저장소 — workingDir 이 없는 에이전트(기본)는 이것 말고 저장소를 알 길이 없다. 사라진 경로는 건너뛴다.
+    for (const p of owners.keys()) { const r = await repoOfWorktree(deps, p); if (r) addRepo(r); }
     const worktrees: ObservedWorktree[] = [];
     const seen = new Set<string>();
     // 에이전트의 workingDir 자체는 후보가 아니다 — 그것이 linked worktree 여도(에이전트가 일하는 자리다).
     const workingDirs = new Set(agents.flatMap((a) => (a.workingDir ? [normalizeCleanupPath(a.workingDir)] : [])));
-    for (const repo of repos) {
+    for (const repo of repos.values()) {
       if (!(await lstat(join(repo, '.git')).catch(() => null))) continue;
       for (const w of await scanRepo(deps, repo, owners)) {
         if (seen.has(w.path) || workingDirs.has(normalizeCleanupPath(w.path))) continue;
