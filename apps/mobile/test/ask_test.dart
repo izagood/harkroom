@@ -95,6 +95,30 @@ void main() {
     expect(askMaxOptions, 5);
   });
 
+  group('권한 요청 만료(스레드 65f3b26e)', () {
+    Map<String, Object?> card(Map<String, Object?> ask, Map<String, Object?>? pr) =>
+        {..._meta({'options': _twoOptions, 'to': {'kind': 'human'}, ...ask}), 'permissionRequest': ?pr};
+    String at(Duration d) => DateTime.now().add(d).toUtc().toIso8601String();
+
+    test('서버가 만료로 닫은 카드는 만료이고 열려 있지 않다', () {
+      final a = AskMeta.read(card({'closedAt': 't', 'closedReason': 'expired'}, {'status': 'expired', 'expiresAt': at(const Duration(minutes: -1))}))!;
+      expect(a.isExpired, isTrue);
+      expect(a.isOpen, isFalse);
+    });
+
+    test('서버가 닫기 전이라도 시한이 지난 기다리는 요청은 만료다', () {
+      final a = AskMeta.read(card({}, {'status': 'pending', 'expiresAt': at(const Duration(minutes: -1))}))!;
+      expect(a.isExpired, isTrue);
+      expect(a.isOpen, isFalse);
+    });
+
+    test('시한 안이거나 권한 카드가 아니면 그대로 열려 있다', () {
+      expect(AskMeta.read(card({}, {'status': 'pending', 'expiresAt': at(const Duration(minutes: 1))}))!.isOpen, isTrue);
+      expect(AskMeta.read(card({}, null))!.isOpen, isTrue);
+      expect(AskMeta.read(card({}, null))!.isExpired, isFalse);
+    });
+  });
+
   group('묶음 카드(선택 카드 P1)', () {
     Map<String, Object?> bundle(List<Map<String, Object?>> items) => {'kind': 'askBundle', 'askBundle': {'items': items}};
     final item = {'rootId': 'r1', 'askerId': 'ag', 'channelId': 'c', 'threadRootId': null, 'prompt': '어느 쪽?', 'options': _twoOptions};
@@ -149,6 +173,14 @@ void main() {
     test('새 질문·답 없이 닫힘', () {
       expect(bundleRowState(b, root({'closedAt': 't', 'closedReason': 'superseded'})), isA<BundleRowSuperseded>());
       expect(bundleRowState(b, root({'closedAt': 't'})), isA<BundleRowDeclined>());
+    });
+
+    // 스레드 65f3b26e(designer s1): 만료로 닫힌 권한 줄을 「답 없이 닫힘」으로 말하지 않는다.
+    test('권한 요청이 만료된 줄은 만료 — 서버가 닫았든, 시한만 지났든', () {
+      expect(bundleRowState(link, root({'closedAt': 't', 'closedReason': 'expired'})), isA<BundleRowExpired>());
+      final past = DateTime.now().subtract(const Duration(minutes: 1)).toUtc().toIso8601String();
+      final lapsed = {...root({}), 'permissionRequest': {'status': 'pending', 'expiresAt': past}};
+      expect(bundleRowState(link, lapsed), isA<BundleRowExpired>());
     });
 
     test('링크 줄은 열린 동안·못 볼 때 링크, 정해지면 결과', () {

@@ -768,6 +768,10 @@ abstract class Strings {
   /// 물어본 쪽이 새 카드로 대신한 물음(`supersedes`).
   String get askSuperseded;
 
+  /// 권한 요청 시한(24시간)이 지나 닫힌 카드(스레드 65f3b26e). [askExpiredHint] 와 한 줄로 그린다.
+  String get askExpired;
+  String get askExpiredHint;
+
   /// 글로 답한 뒤에도 고를 수 있게 선택지를 다시 펼치는 단추. [n] 은 선택지 수.
   String askPickAnyway(int n);
 
@@ -1393,6 +1397,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'askClosed': s.askClosed,
       'askReplied': s.askReplied,
       'askSuperseded': s.askSuperseded,
+      'askExpired': s.askExpired,
+      'askExpiredHint': s.askExpiredHint,
       'askPickAnyway': s.askPickAnyway(0),
       'askDecline': s.askDecline,
       'askToYou': s.askToYou,
