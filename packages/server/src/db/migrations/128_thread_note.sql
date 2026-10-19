@@ -14,3 +14,6 @@ create table thread_note (
   updated_at timestamptz not null default now(),
   primary key (account_id, thread_root_id)
 );
+-- message 를 가리키는 외래키는 앞자리 색인이 있어야 한다(123, messageFkIndexes.test) — 기본키는 account_id 가 앞이라
+-- 메시지를 지울 때 이 표를 통째로 훑는다.
+create index thread_note_thread on thread_note (thread_root_id);
