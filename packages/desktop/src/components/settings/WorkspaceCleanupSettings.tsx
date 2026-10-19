@@ -143,7 +143,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
             </span>
             <span className="mt-0.5 block text-meta text-fg-subtle">
               {row.prNumber !== null ? t(`cleanup.pr.${row.prState ?? 'open'}` as MessageKey, { n: row.prNumber }) : t('cleanup.pr.none')}
-              {' · '}{row.parts.map(partLabel).join(' · ')}{' · '}{formatBytes(row.sizeNow)}
+              {' · '}{row.parts.map(partLabel).join(' · ')}{' · '}<span className="whitespace-nowrap">{formatBytes(row.sizeNow)}</span>
               {kept && row.actedAt ? <> {' · '}<span data-testid="cleanup-kept-by">{whoOf(row.actedBy) ? t('cleanup.keptBy', { who: whoOf(row.actedBy)!, date: fmtDay(row.actedAt) }) : t('cleanup.keptAuto', { date: fmtDay(row.actedAt) })}</span></> : null}
             </span>
           </button>
@@ -257,7 +257,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
                     {u.branch ? t('cleanup.branch', { name: u.branch }) : t('cleanup.detached', { sha: (u.headSha ?? '').slice(0, 7) })}
                     {' · '}{u.pr ? t(`cleanup.pr.${u.pr.state}` as MessageKey, { n: u.pr.number }) : t('cleanup.pr.unknown')}
                     {u.lastModifiedAt ? <>{' · '}{t('cleanup.lastModified', { date: fmtDay(u.lastModifiedAt) })}</> : null}
-                    {' · '}{formatBytes(u.sizeNow)}
+                    {' · '}<span className="whitespace-nowrap">{formatBytes(u.sizeNow)}</span>
                   </span>
                 </span>
                 <button className="shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50"

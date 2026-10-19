@@ -143,7 +143,7 @@ export const ko = {
   'cleanup.lastModified': "마지막 수정 {date}",
   'cleanup.reason.uncommitted': "커밋하지 않은 변경이 있어 지우지 않았다.",
   'cleanup.reason.unpushed': "원격에 올리지 않은 커밋이 있어 지우지 않았다.",
-  'cleanup.reason.runnerOff': "에이전트 러너가 꺼져 있어 미뤘다. 러너가 다시 붙으면 지운다.",
+  'cleanup.reason.runnerOff': "기한이 지났지만 이 에이전트의 러너가 연결돼 있지 않아 지우지 못했다. 러너가 다시 붙으면 지운다.",
   'cleanup.reason.turnRunning': "이 스레드에서 지금 턴이 돌고 있어 미뤘다. 다음 정리 때 다시 본다.",
   'cleanup.event.listed': "삭제 예정에 넣음 · {name}",
   'cleanup.event.deps-removed': "의존성 폴더 지움 · {name} · {size}",

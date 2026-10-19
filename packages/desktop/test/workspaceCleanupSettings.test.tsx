@@ -150,7 +150,7 @@ describe('작업 폴더 정리 화면', () => {
     expect(due0.textContent).toBe('러너 꺼짐 · 지우기 대기');
     expect(due0.className).toContain('text-fg-muted');
     expect(due0.className).not.toContain('text-accent');
-    expect(screen.getByTestId('cleanup-reason').textContent).toContain('러너가 꺼져 있어');
+    expect(screen.getByTestId('cleanup-reason').textContent).toContain('러너가 연결돼 있지 않아');
     expect(screen.getByTestId('cleanup-reason').textContent).not.toContain('⚠');
     expect(screen.getByTestId('cleanup-owners-pending')).toBeTruthy();
     fireEvent.click(screen.getAllByTestId('cleanup-keep')[1]!);
