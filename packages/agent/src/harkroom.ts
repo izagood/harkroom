@@ -436,6 +436,15 @@ export class HarkroomAgentClient {
     };
   }
 
+  /**
+   * 이 턴 프롬프트에 실은 recall 을 알린다(`memory.recalled`, S0 N4) — 서버가 recall_count 로 센다.
+   * 옛 서버는 도구가 없어 던진다 — 부르는 쪽(mentionTurn)이 삼킨다.
+   */
+  async recordRecall(keys: string[]): Promise<void> {
+    if (!keys.length) return;
+    await this.call<unknown>('memory.recalled', { slugs: keys.slice(0, 5) });
+  }
+
   /** `memory.get` 의 본문만. 없으면 null. */
   async getMemoryValue(slug: string): Promise<string | null> {
     const got = await this.call<{ value?: string; error?: unknown }>('memory.get', { slug });

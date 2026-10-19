@@ -80,6 +80,8 @@ export interface MentionTurnHarkroom {
   readMemory(): Promise<{ core: string | null; slugs: string[] }>;
   /** 관련 기억 찾기(`memory.search`, 본문 포함). 없으면(테스트·옛 조립) 찾지 않는다. */
   searchMemory?(query: string, limit: number, opts?: { exclude?: string[]; recordTop?: number; focus?: string }): Promise<RecallResult>;
+  /** 이 턴에 실은 recall 을 알린다(`memory.recalled`, S0 N4). 없으면(테스트·옛 조립) 알리지 않는다. */
+  recordRecall?(keys: string[]): Promise<void>;
   /**
    * #140: 승인된 스킬 목록. **실패는 던진다** — 러너가 stderr 에 한 줄 남길 수 있어야 한다.
    * 여기서 빈 배열로 삼키면 "스킬이 없다"와 "서버를 못 읽었다"가 같은 값이 되고, 그러면
@@ -1111,7 +1113,7 @@ export async function runMentionTurn(
       recall: {
         query: recallQuery,
         ...(root ? { rootHead: root.body.slice(0, RECALL_ROOT_HEAD_CHARS) } : {}),
-        search: (q: string, o: { exclude: string[]; recordTop: number; focus?: string }) => search(q, RECALL_MAX_ITEMS + 3, o),
+        search: (q: string, o: { exclude: string[]; focus?: string }) => search(q, RECALL_MAX_ITEMS + 3, o),
       },
     } : {}),
   });
@@ -2437,6 +2439,12 @@ export async function runMentionTurn(
   await memoryPlan.commit(rec.sessionId);
   // 깨움 세션은 버리므로 하네스 메모리 알림도 "알렸다"로 적지 않는다 — 다음 이어받는 턴이 알아야 한다.
   if (!freshWake) await harnessNotice?.commit();
+  // 실은 recall 을 센다(S0 N4) — 성공한 턴만, 실제로 프롬프트에 붙인 것만. best-effort: 옛 서버엔 도구가 없다.
+  if (memoryPlan.recalled.length && deps.harkroom.recordRecall) {
+    await deps.harkroom.recordRecall(memoryPlan.recalled).catch((err: unknown) => {
+      console.error(`[mentionTurn] ${key}: recall 집계 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
 
   // 이 턴에 부른 스킬을 서버에 남긴다(D3) — 안 쓰는 스킬을 "후보"로 띄우는 재료다. 성공한 턴만
   // 센다: 실패한 턴은 재시도가 같은 기록을 다시 읽어 두 번 세게 된다. 셀 수 없는 하네스는

@@ -607,8 +607,12 @@ function isExcluded(skip: Set<string>, slug: string, updatedAt: Date): boolean {
 /**
  * 러너가 턴 프롬프트에 실은 기억을 센다(F1, 096). recall 은 러너가 고르므로 서버는 러너가
  * `recordTop` 으로 "앞 몇 개를 싣는다"고 말한 것만 센다 — 돌려준 후보 전부를 세면 안 실린 것까지 쓰인 것이 된다.
+ * S0 N4: 새 러너는 recordTop 을 보내지 않고, 턴이 성공한 뒤 실제로 실은 것을 `memory.recalled` 로 알린다
+ * (`recordTop` 은 러너가 그 뒤 거른 것·실패한 턴까지 셌다). `recordTop` 길은 옛 러너용으로 남긴다.
+ * `slug@updatedAt` 키(러너의 recallKey)도 받는다 — 판은 세지 않고 slug 만 본다.
  */
-async function recordRecall(pool: Pool, accountId: string, slugs: string[]): Promise<void> {
+export async function recordRecall(pool: Pool, accountId: string, keys: string[]): Promise<void> {
+  const slugs = [...new Set(keys.map((k) => k.replace(/@[^@]*$/, '')).filter((s) => s && s !== 'core'))];
   if (!slugs.length) return;
   await pool.query(
     `update agent_memory set recall_count = recall_count + 1, last_recalled_at = now()
