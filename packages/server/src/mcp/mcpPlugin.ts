@@ -76,6 +76,7 @@ import { downscaleImage, DOWNSCALE_READ_MAX_BYTES, tryAcquireDownscaleSlot } fro
 
 // slug 문법과 거절 문구는 services/memory.ts 에 있다 — 사람용 REST(accountRoutes)도 같은 것을 쓴다.
 import { isValidSlug, MEMORY_SLUG_HINT } from '../services/memory.js';
+import { getThreadNote, MAX_THREAD_NOTE_LENGTH, setThreadNote, threadRootChannel } from '../services/threadNote.js';
 import { listGrantedSecrets } from '../services/secretAccess.js';
 import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../services/secretLeakGuard.js';
 import type { AgentPresence } from './presence.js';
@@ -1753,6 +1754,70 @@ function buildMcpServer(
       });
     }
     return jsonResult({ ok: true, ...warn });
+  });
+
+  // thread.note — 스레드 메모(메모리 재설계 S1, services/threadNote.ts). 그 스레드의 진행 상태를 적는 자리이고,
+  // 러너가 그 스레드의 턴에만 싣는다. body 를 안 주면 읽기, 문자열이면 덮어쓰기, null 이면 지우기.
+  server.registerTool('thread.note', {
+    description: `스레드 메모 — 이 스레드에서 무엇이 어디까지 왔는지(맡긴 일·검토 대기·PR 번호·head·다음 할 일)를 적는 한 장(${MAX_THREAD_NOTE_LENGTH}자, 덮어쓰기). `
+      + '러너가 이 스레드의 다음 턴(예약으로 깨어난 턴 포함)에 자동으로 실어 준다 — 다른 스레드·목록·recall 에는 안 실린다. '
+      + '진행 상태는 memory.set(mem/delegation-* 등) 대신 여기에 써라; 여러 스레드에서 되풀이할 교훈만 mem/* 로 남긴다. '
+      + 'body 생략=읽기, 문자열=덮어쓰기, null=지우기. 고칠 땐 읽은 updatedAt 을 ifUpdatedAt 으로 준다(새로 만들 땐 null)',
+    inputSchema: {
+      threadRootId: z.string().uuid(),
+      body: z.string().min(1).max(MAX_THREAD_NOTE_LENGTH).nullable().optional(),
+      ifUpdatedAt: z.string().datetime({ offset: true }).nullable().optional(),
+    },
+  }, async ({ threadRootId, body, ifUpdatedAt }) => {
+    // 사람 계정에는 실어 줄 러너가 없다 — 쓰게 두면 아무 데도 안 쓰이는 표가 찬다.
+    if (account.kind !== 'agent') {
+      return jsonResult({ error: { code: 'agents_only', message: '스레드 메모는 에이전트만 쓴다' } });
+    }
+    const root = await threadRootChannel(pool, threadRootId);
+    if (root === 'not_found') return jsonResult({ error: { code: 'not_found', message: '그런 글이 없다' } });
+    if (root === 'not_root') {
+      return jsonResult({ error: { code: 'not_root', message: '스레드 루트 글의 id 를 줘라(대화 프롬프트 맨 위의 threadRootId)' } });
+    }
+    // 못 보는 채널의 스레드에는 읽기·쓰기 모두 거절한다 — 메모 자체는 본인 것이지만 "그 스레드가 있다"를 새지 않는다.
+    if (!(await assertChannelVisible(pool, root.channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    if (body === undefined) {
+      const note = await getThreadNote(pool, account.id, threadRootId);
+      if (!note) return jsonResult({ note: null });
+      return jsonResult({
+        note: {
+          body: note.body, updatedAt: note.updatedAt.toISOString(),
+          ...(note.flagReason ? { flagged: { reason: note.flagReason } } : {}),
+        },
+      });
+    }
+    // 쓰기 검사(080) — 걸려도 저장하되 러너는 싣지 않는다(memory.set 과 같은 규칙). 메모는 다음 턴의
+    // 지시 자리 바로 앞에 실리므로, 남의 글에서 옮긴 지시문이 거기 눌러앉는 길을 막는다.
+    const flag = body === null ? null : scanWrite(body);
+    const res = await setThreadNote(
+      pool, account.id, threadRootId, body,
+      ifUpdatedAt === undefined ? undefined : { updatedAt: ifUpdatedAt === null ? null : new Date(ifUpdatedAt) },
+      flag?.reason ?? null,
+    );
+    if ('conflict' in res) {
+      const now = res.conflict.updatedAt;
+      return jsonResult({
+        error: {
+          code: 'conflict', updatedAt: now ? now.toISOString() : null,
+          message: now
+            ? `그 사이 다른 턴이 이 메모를 고쳤다(지금 판 ${now.toISOString()}). thread.note 로 다시 읽고 합쳐서 그 updatedAt 으로 써라.`
+            : '그 사이 메모가 지워졌거나 아직 없다. 새로 쓸 거면 ifUpdatedAt: null 로 써라.',
+        },
+      });
+    }
+    return jsonResult({
+      ok: true, updatedAt: res.updatedAt ? res.updatedAt.toISOString() : null,
+      ...(flag ? {
+        flagged: { reason: flag.reason, rules: flag.rules },
+        notice: `저장했지만 쓰기 검사에 걸렸다(${flag.reason}) — 다음 턴에 싣지 않는다. 남의 글을 옮겼거나 비밀 값을 넣었다면 빼고 다시 써라.`,
+      } : {}),
+    });
   });
 
   // ── 정리 도구(C1, services/memoryCurate.ts). 지우기 대신 보관, 합치기는 한 호출, 되돌리기는 도구로. ──
