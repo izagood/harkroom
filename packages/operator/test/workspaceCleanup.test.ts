@@ -344,6 +344,16 @@ describe('live — 화면이 그리는 그 순간 상태(「지우는 중」·�
     o.cancelDelete({ channelId: C, threadRootId: R });
     expect((await o.live()).threads[K]!.deleteRequestedAt).toBeNull();
   });
+  it('linkedAgents 를 주면 연결은 relay 링크로 잰다 — 다시 붙은 뒤 보고 전이어도 꺼짐이 아니고, 링크가 끊기면 꺼짐', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'owners-'));
+    let linked = new Set(['agentA']);
+    const o = createCleanupOwners({ path: join(d, 'owners.json'), linkedAgents: () => linked });
+    await o.maybeHandle('run1', 'agentA', req({ threads: [T0] }), 'relay');
+    o.releaseRunner('run1'); // relay 재접속(onRelayAttach) — 아직 새 보고는 없다
+    expect((await o.live()).threads[K]!.runnerConnected).toBe(true);
+    linked = new Set();
+    expect((await o.live()).threads[K]!.runnerConnected).toBe(false);
+  });
   it('다른 에이전트의 러너가 붙어 있어도 그 스레드 폴더 주인의 러너가 아니면 연결로 치지 않는다', async () => {
     const d = await mkdtemp(join(tmpdir(), 'owners-'));
     const o = createCleanupOwners({ path: join(d, 'owners.json') });

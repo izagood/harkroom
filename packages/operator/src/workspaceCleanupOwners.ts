@@ -62,6 +62,11 @@ export function createCleanupOwners(opts: {
   now?: () => Date;
   /** 자동 정리가 지금 켜져 있나 — 답을 짓는 순간 다시 본다(설정 파일을 손으로 끈 경우까지, security F1). 없으면 켜짐. */
   enabled?: () => Promise<boolean>;
+  /**
+   * relay 로 지금 붙어 있는 러너의 에이전트들 — 「러너가 붙어 있다」의 근거. 보고 수신(`agentOf`)으로 재면 오퍼레이터가 다시
+   * 뜨거나 relay 가 다시 붙은 뒤 다음 보고(최대 30분)까지 살아 있는 러너도 꺼진 것으로 보인다. 없으면 보고 수신으로 잰다.
+   */
+  linkedAgents?: () => ReadonlySet<string>;
 }): CleanupOwners {
   const runningBy = new Map<string, Set<string>>();
   /** runnerId → agentId. 보고한 러너만 오르고 `releaseRunner` 로 빠진다 — 「러너가 붙어 있다」의 근거. */
@@ -158,7 +163,7 @@ export function createCleanupOwners(opts: {
     retainDeletes(keys) { for (const k of [...pendingDelete.keys()]) if (!keys.has(k)) pendingDelete.delete(k); },
     async live(keys) {
       const all = await load();
-      const connected = new Set(agentOf.values());
+      const connected = opts.linkedAgents ? opts.linkedAgents() : new Set(agentOf.values());
       const threads: CleanupLive['threads'] = {};
       for (const [k, rec] of Object.entries(all)) {
         if (!rec.workspaceDir || (keys && !keys.has(k))) continue;

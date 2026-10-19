@@ -144,9 +144,9 @@ describe('작업 폴더 정리 화면', () => {
     expect(rows.map((r) => r.getAttribute('data-tone'))).toEqual(['deferred', 'deleting']);
     expect(screen.getAllByTestId('cleanup-due')[1]!.textContent).toBe('지우는 중 · 30분 안');
     expect(screen.getByTestId('cleanup-deleting-note').textContent).toContain('최대 30분');
-    // 미룸의 오른쪽 글은 「미룸」만 — 까닭은 이유 줄이 말한다(designer n2).
-    expect(screen.getAllByTestId('cleanup-due')[0]!.textContent).toBe('미룸');
-    expect(screen.getByTestId('cleanup-reason').textContent).toContain('러너가 꺼져 있어');
+    // 러너 꺼짐은 오른쪽 글이 「러너 꺼짐 — 지우기 대기」(jaebin B2) — 까닭은 이유 줄이 말한다.
+    expect(screen.getAllByTestId('cleanup-due')[0]!.textContent).toBe('러너 꺼짐 — 지우기 대기');
+    expect(screen.getByTestId('cleanup-reason').textContent).toContain('러너가 연결돼 있지 않아');
     expect(screen.getByTestId('cleanup-reason').textContent).not.toContain('⚠');
     expect(screen.getByTestId('cleanup-owners-pending')).toBeTruthy();
     fireEvent.click(screen.getAllByTestId('cleanup-keep')[1]!);

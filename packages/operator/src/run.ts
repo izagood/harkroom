@@ -267,6 +267,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   const cleanupOwners = createCleanupOwners({
     path: cleanupOwnersPath(appDataDir), log,
     enabled: async () => (await readCleanupSettings(join(appDataDir, 'operator', 'operator.json'))).enabled,
+    // runnerLink 는 아래에서 만든다 — 화면이 live 를 물을 때(기동 뒤)만 부른다.
+    linkedAgents: () => runnerLink.linkedAgents(),
   });
   // 앞 오퍼레이터가 남긴 턴 디렉터리는 이 프로세스가 모르는 임대의 것이다 — 기동 때 지운다.
   void turnSecrets.sweepAll().then((n) => { if (n) log(`turn-secrets: 앞 오퍼레이터가 남긴 턴 디렉터리 ${n}개를 지웠다`); });
