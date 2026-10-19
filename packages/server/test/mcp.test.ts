@@ -135,6 +135,35 @@ describe('mcp surface', () => {
     await client.close();
   });
 
+  it('thread.note — 루트 글마다 한 장, 덮어쓰기·동시성·지우기, 답글 id·사람은 거절', async () => {
+    const client = await mcpClient(botPat);
+    const root = text(await client.callTool({ name: 'message.post', arguments: { channelId, body: 'note root' } })) as { message: { id: string } };
+    const rootId = root.message.id;
+    const empty = text(await client.callTool({ name: 'thread.note', arguments: { threadRootId: rootId } })) as { note: null };
+    expect(empty.note).toBeNull();
+    const first = text(await client.callTool({ name: 'thread.note', arguments: { threadRootId: rootId, body: 'PR #1 열림', ifUpdatedAt: null } })) as { ok: boolean; updatedAt: string };
+    expect(first.ok).toBe(true);
+    // 낡은 updatedAt 으로는 못 덮는다.
+    const stale = text(await client.callTool({ name: 'thread.note', arguments: { threadRootId: rootId, body: 'x', ifUpdatedAt: null } })) as { error: { code: string } };
+    expect(stale.error.code).toBe('conflict');
+    await client.callTool({ name: 'thread.note', arguments: { threadRootId: rootId, body: 'PR #1 CI 초록', ifUpdatedAt: first.updatedAt } });
+    const got = text(await client.callTool({ name: 'thread.note', arguments: { threadRootId: rootId } })) as { note: { body: string } };
+    expect(got.note.body).toBe('PR #1 CI 초록');
+    // 답글 id 는 루트가 아니다.
+    const reply = text(await client.callTool({ name: 'message.post', arguments: { channelId, threadRootId: rootId, body: 'reply' } })) as { message: { id: string } };
+    const notRoot = text(await client.callTool({ name: 'thread.note', arguments: { threadRootId: reply.message.id } })) as { error: { code: string } };
+    expect(notRoot.error.code).toBe('not_root');
+    // 다른 에이전트는 이 메모를 못 본다 — 메모는 계정마다 따로다.
+    const other = await createAgent(app, adminToken, 'notebot');
+    const otherClient = await mcpClient(other.pat);
+    const theirs = text(await otherClient.callTool({ name: 'thread.note', arguments: { threadRootId: rootId } })) as { note: null };
+    expect(theirs.note).toBeNull();
+    await otherClient.close();
+    const del = text(await client.callTool({ name: 'thread.note', arguments: { threadRootId: rootId, body: null } })) as { ok: boolean; updatedAt: null };
+    expect(del).toMatchObject({ ok: true, updatedAt: null });
+    await client.close();
+  });
+
   it('lists tools, posts and reads messages', async () => {
     const client = await mcpClient(botPat);
     const tools = await client.listTools();
@@ -143,7 +172,7 @@ describe('mcp surface', () => {
       'account.list', 'account.me', 'agent.modelOptions', 'artifact.publish', 'attachment.fetch', 'attachment.upload', 'automation.list', 'automation.propose', 'automation.run', 'channel.doc', 'channel.list', 'grant.delegate', 'grant.list', 'grant.revoke', 'inbox.poll', 'inbox.read',
       'memory.archive', 'memory.audit', 'memory.get', 'memory.lease', 'memory.list', 'memory.merge', 'memory.recalled', 'memory.restore', 'memory.revisions', 'memory.search', 'memory.set', 'memory.unarchive',
       'message.ask', 'message.askBundle', 'message.askBundleResolve', 'message.delegate', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact', 'permission.request', 'permission.revoke',
-      'secret.generate', 'secret.import', 'secret.list', 'secret.mount', 'secret.rotate', 'skill.propose', 'turn.wake', 'workitem.list', 'workitem.remove', 'workitem.upsert', 'workspace.guide',
+      'secret.generate', 'secret.import', 'secret.list', 'secret.mount', 'secret.rotate', 'skill.propose', 'thread.note', 'turn.wake', 'workitem.list', 'workitem.remove', 'workitem.upsert', 'workspace.guide',
     ]);
 
     const posted = text(await client.callTool({

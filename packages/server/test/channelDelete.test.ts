@@ -87,6 +87,31 @@ describe('channel delete (#155)', () => {
     expect(ch).toBeFalsy();
   });
 
+  it('스레드 메모(128)가 붙은 채널도 지워지고 메모 행이 남지 않는다', async () => {
+    const created = await app.inject({
+      method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+      payload: { name: 'delete-with-thread-note', topic: 'test' },
+    });
+    const channelId = created.json().id as string;
+    const root = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`, headers: { authorization: `Bearer ${adminToken}` },
+      payload: { body: 'root' },
+    });
+    const rootId = root.json().id as string;
+    await pool.query(`insert into thread_note (account_id, thread_root_id, body) values ($1, $2, 'PR 대기')`, [userId, rootId]);
+
+    await app.inject({
+      method: 'PATCH', url: `/channels/${channelId}`, headers: { authorization: `Bearer ${adminToken}` },
+      payload: { archived: true },
+    });
+    const deleted = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}`, headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(deleted.statusCode).toBe(204);
+    const left = await pool.query(`select 1 from thread_note where thread_root_id = $1`, [rootId]);
+    expect(left.rowCount).toBe(0);
+  });
+
   it('non-archived channel deletion returns 409 and channel remains', async () => {
     const created = await app.inject({
       method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },

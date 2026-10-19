@@ -445,6 +445,22 @@ export class HarkroomAgentClient {
     await this.call<unknown>('memory.recalled', { slugs: keys.slice(0, 5) });
   }
 
+  /**
+   * 스레드 메모(`thread.note`, 메모리 재설계 S1) 읽기. 옛 서버는 도구가 없어 던진다 — 호출자가
+   * `'unavailable'` 로 삼킨다(메모 없이도 턴은 돈다).
+   */
+  async readThreadNote(threadRootId: string): Promise<{ body: string; updatedAt: string; flagged?: { reason: string } } | null> {
+    const res = await this.call<{ note?: { body?: unknown; updatedAt?: unknown; flagged?: { reason?: unknown } } | null }>(
+      'thread.note', { threadRootId },
+    );
+    const n = res.note;
+    if (!n || typeof n.body !== 'string' || typeof n.updatedAt !== 'string') return null;
+    return {
+      body: n.body, updatedAt: n.updatedAt,
+      ...(n.flagged ? { flagged: { reason: typeof n.flagged.reason === 'string' ? n.flagged.reason : 'flagged' } } : {}),
+    };
+  }
+
   /** `memory.get` 의 본문만. 없으면 null. */
   async getMemoryValue(slug: string): Promise<string | null> {
     const got = await this.call<{ value?: string; error?: unknown }>('memory.get', { slug });
