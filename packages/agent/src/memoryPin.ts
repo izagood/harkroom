@@ -214,6 +214,12 @@ function indexLines(
   ];
 }
 
+/** 깨움 세션의 목록 자리(S2). 기억이 없으면 아무것도 싣지 않는다 — 시스템 프롬프트가 이미 비었다고 말한다. */
+function slimIndexLines(total: number): string[] {
+  if (!total) return [];
+  return [`(기억 목록은 이 깨움 턴에 싣지 않았다 — 기억 ${total}개. 필요하면 \`memory.search\`·\`memory.list\` 로 찾고 \`memory.get\` 으로 읽어라.)`];
+}
+
 export async function planMemory(opts: {
   stateDir: string;
   /** 세션 키(`SessionStore.threadKey`). */
@@ -227,6 +233,12 @@ export async function planMemory(opts: {
    * 찾아 관련 상위 몇 개의 본문을 턴 프롬프트에 붙여 준다. 실패는 삼킨다(없어도 턴은 돈다).
    */
   recall?: { query: string; search: RecallSearch; rootHead?: string };
+  /**
+   * 깨움 세션(메모리 재설계 S2, N3). 예약 확인은 짧은 턴인데 새 세션이라 `<memory-index>` 전체(12~28k자)를
+   * 매번 실었다. core 는 시스템 프롬프트에 그대로 있고 진행 상태는 스레드 메모(`threadNotePin.ts`)가 실으니,
+   * 목록·정리 신호는 빼고 「어디서 찾는지」 한 줄만 남긴다. 고정은 어차피 저장하지 않는다(mentionTurn).
+   */
+  slim?: boolean;
 }): Promise<MemoryPlan> {
   const file = pinFile(opts.stateDir, opts.key);
   const noop: MemoryPlan['commit'] = async () => {};
@@ -268,8 +280,9 @@ export async function planMemory(opts: {
   const keep = rootHead ? { rootHead } : {};
 
   if (!pinUsable) {
-    // 새 세션(또는 고정을 잃었다): 지금 값으로 고정하고 목록 전체를 싣는다.
-    const lines = [...indexLines(visible, memory.descriptions, journalCount, total, signals.lines), ...recall.lines, ...stale];
+    // 새 세션(또는 고정을 잃었다): 지금 값으로 고정하고 목록 전체를 싣는다. 깨움 세션은 목록 대신 한 줄(S2).
+    const index = opts.slim ? slimIndexLines(total) : indexLines(visible, memory.descriptions, journalCount, total, signals.lines);
+    const lines = [...index, ...recall.lines, ...stale];
     return {
       system: { core: memory.core, slugs: memory.slugs },
       turnLines: trimLeading(lines),
