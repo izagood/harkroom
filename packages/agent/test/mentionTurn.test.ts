@@ -617,6 +617,26 @@ describe('runMentionTurn', () => {
       expect(rec.unseenOwnAfterSeq).toBeUndefined();
     });
 
+    it('S2: 깨움 세션은 <memory-index> 목록을 싣지 않고 찾는 길 한 줄만 남긴다', async () => {
+      const { fake, deps, runTurn, plans, turnOpts } = await afterFirstTurn();
+      fake.memory = { core: '코어고유문구', slugs: ['mem/목록고유문구'] };
+      runTurn.script = async () => {
+        await fake.post(CHANNEL, '깨움턴답고유문구', null);
+        return { exitCode: 0, timedOut: false, tail: '' };
+      };
+      const log = vi.spyOn(console, 'log');
+      await runMentionTurn(deps, {
+        channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+        wake: { reason: 'CI 결과 확인' }, scheduledWake: true,
+      });
+      const prompt = (await getPlanContent(plans, turnOpts))[1]!;
+      expect(prompt).not.toContain('<memory-index>');
+      expect(prompt).not.toContain('mem/목록고유문구');
+      expect(prompt).toContain('기억 목록은 이 깨움 턴에 싣지 않았다 — 기억 2개');
+      expect(log.mock.calls.some(([l]) => typeof l === 'string' && l.startsWith('[memoryPin] inject') && l.includes(': wake head='))).toBe(true);
+      log.mockRestore();
+    });
+
     it('선택 답(scheduledWake 없는 wake)은 그대로 이어받는다', async () => {
       const { first, deps, plans } = await afterFirstTurn();
       await runMentionTurn(deps, {

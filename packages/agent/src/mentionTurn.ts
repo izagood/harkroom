@@ -1112,6 +1112,8 @@ export async function runMentionTurn(
   const search = deps.harkroom.searchMemory?.bind(deps.harkroom);
   const plannedMemory = await planMemory({
     stateDir: deps.stateDir, key, sessionId: rec.sessionId, isFirstTurn, memory,
+    // 깨움 세션은 목록을 빼고 core(시스템 프롬프트)+스레드 메모만(S2). recall 은 원래 깨움에서 안 찾는다.
+    ...(freshWake ? { slim: true } : {}),
     ...(search && recallQuery ? {
       recall: {
         query: recallQuery,
@@ -1141,7 +1143,8 @@ export async function runMentionTurn(
   // 하네스 파일 메모리 수확 알림(U5, `harnessMemory.ts`). 어댑터가 그 자리를 아는 하네스만
   // (지금은 claude). 읽기 실패는 빈 목록이라 턴을 막지 않는다.
   const fileMemoryRoot = fileMemoryDirUnderConfig(def.harness);
-  const harnessNotice = fileMemoryRoot
+  // 깨움 세션에는 싣지 않는다(S2) — 정리 권고는 짧은 확인 턴의 일이 아니고, 깨움은 commit 도 안 해 매번 다시 실렸다.
+  const harnessNotice = fileMemoryRoot && !freshWake
     ? await planHarnessMemoryNotice({
       stateDir: deps.stateDir, key,
       files: await scanHarnessMemory(claudeMemoryDir(deps.claudeConfigDir, rec.workspaceDir, fileMemoryRoot)),
@@ -1152,6 +1155,10 @@ export async function runMentionTurn(
     ...(notePlan.lines.length ? ['', ...notePlan.lines] : []),
     ...(harnessNotice?.lines.length ? ['', ...harnessNotice.lines] : []),
   ];
+  // 주입 크기를 턴마다 한 줄(S2 지표 — 설계 3절 「깨움 턴 주입 ≤4k」·「첫 턴 index ≤6k」). 본문은 남기지 않는다.
+  console.log(`[memoryPin] inject ${key}: ${freshWake ? 'wake' : isFirstTurn ? 'first' : 'resume'}`
+    + ` head=${headLines.join('\n').length} core=${memoryPlan.system === 'unavailable' ? '?' : memoryPlan.system.core?.length ?? 0}`
+    + ` note=${notePlan.lines.join('\n').length}`);
   const turnPrompt = headLines.length
     ? `${headLines.join('\n').replace(/^\n+/, '')}\n\n${prompt}`
     : prompt;

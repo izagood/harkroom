@@ -35,6 +35,21 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
   });
 
   // 이 PR 의 핵심 회귀선: 세션 도중 기억이 바뀌어도 시스템 프롬프트는 바이트 단위로 같다.
+  it('S2: slim(깨움 세션)은 목록·정리 신호 대신 한 줄만, core 는 시스템 프롬프트에 그대로', async () => {
+    const plan = await planMemory({
+      stateDir, key: KEY, sessionId: SID, isFirstTurn: true, slim: true,
+      memory: { core: 'C1', slugs: ['mem/a', 'mem/b'], descriptions: { 'mem/a': '요약고유' } },
+    });
+    const text = plan.turnLines.join('\n');
+    expect(text).not.toContain('<memory-index>');
+    expect(text).not.toContain('mem/a');
+    expect(text).not.toContain('요약고유');
+    expect(text).toContain('기억 3개');
+    expect(sys(plan.system)).toContain('C1');
+    const empty = await planMemory({ stateDir, key: 'other', sessionId: SID, isFirstTurn: true, slim: true, memory: { core: null, slugs: [] } });
+    expect(empty.turnLines).toEqual([]);
+  });
+
   it('core·목록이 바뀌어도 이어받은 세션의 시스템 프롬프트는 그대로다', async () => {
     const first = await turn({ core: 'C1', slugs: ['mem/a'] }, true);
     const second = await turn({ core: 'C2', slugs: ['mem/a', 'mem/b'] }, false);
