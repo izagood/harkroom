@@ -28,6 +28,8 @@ export interface ThreadRow {
   /** 보존한 사람·시각(보존 묶음일 때). */
   actedBy: string | null;
   actedAt: string | null;
+  /** 기한이 지났는데 지울 러너가 지금 안 떠 있다(오퍼레이터가 잰 `awaitingRunner`) — 「러너 꺼짐 — 지우기 대기」. */
+  awaitingRunner: boolean;
 }
 
 export interface CleanupScreenModel {
@@ -57,7 +59,7 @@ function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function rowOf(key: string, parts: CleanupItem[], now: Date): ThreadRow {
+function rowOf(key: string, parts: CleanupItem[], now: Date, awaiting: ReadonlySet<string>): ThreadRow {
   const warn = parts.find((p) => p.state === 'blocked' && isWarn(p.blockReason));
   const deferred = parts.find((p) => p.state === 'blocked' && p.blockReason === 'turn-running');
   const dates = parts.map((p) => p.deleteAfter).filter((d): d is string => !!d).sort();
@@ -73,27 +75,30 @@ function rowOf(key: string, parts: CleanupItem[], now: Date): ThreadRow {
     sizeNow: parts.some((p) => p.sizeNow !== null) ? sum(parts.map((p) => p.sizeNow)) : null,
     prNumber: pr?.number ?? null, prState: pr?.state ?? null,
     actedBy: acted?.actedBy ?? null, actedAt: acted?.actedAt ?? null,
+    awaitingRunner: parts.some((p) => awaiting.has(p.path)),
   };
 }
 
 const TONE_ORDER: Record<RowTone, number> = { warn: 0, deferred: 1, due: 2, listed: 3 };
 
-function group(items: CleanupItem[], now: Date): ThreadRow[] {
+function group(items: CleanupItem[], now: Date, awaiting: ReadonlySet<string> = new Set()): ThreadRow[] {
   const byKey = new Map<string, CleanupItem[]>();
   for (const i of items) {
     // 주인 모름에서 사람이 넣은 것은 스레드가 없다 — 경로가 곧 줄이다.
     const k = i.thread ? threadKeyOf(i.thread) : `path:${i.path}`;
     byKey.set(k, [...(byKey.get(k) ?? []), i]);
   }
-  return [...byKey.entries()].map(([k, parts]) => rowOf(k, parts, now));
+  return [...byKey.entries()].map(([k, parts]) => rowOf(k, parts, now, awaiting));
 }
 
-export function buildCleanupModel(ledger: CleanupLedger, now: Date): CleanupScreenModel {
+/** `awaitingRunner` — 오퍼레이터가 실어 준 「러너 꺼짐」 경로들. 옛 오퍼레이터는 안 보낸다(없으면 아무 줄도 아니다). */
+export function buildCleanupModel(ledger: CleanupLedger, now: Date, awaitingRunner: readonly string[] = []): CleanupScreenModel {
+  const awaiting = new Set(awaitingRunner);
   const listedItems = ledger.items.filter((i) => i.state === 'listed' || i.state === 'blocked');
   const keptItems = ledger.items.filter((i) => i.state === 'kept');
   const unowned = ledger.items.filter((i) => i.state === 'unowned')
     .sort((a, b) => (a.lastModifiedAt ?? '').localeCompare(b.lastModifiedAt ?? ''));
-  const listed = group(listedItems, now).sort((a, b) =>
+  const listed = group(listedItems, now, awaiting).sort((a, b) =>
     TONE_ORDER[a.tone] - TONE_ORDER[b.tone] || (a.deleteAfter ?? '').localeCompare(b.deleteAfter ?? ''));
   const kept = group(keptItems, now).sort((a, b) => (b.actedAt ?? '').localeCompare(a.actedAt ?? ''));
   const weekAgo = now.getTime() - 7 * 86_400_000;

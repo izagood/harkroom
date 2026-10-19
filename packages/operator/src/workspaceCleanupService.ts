@@ -35,7 +35,32 @@ import {
 import type { CleanupOwners } from './workspaceCleanupOwners.js';
 import { isThreadDone, scanRepo, type Forward, type ScanDeps } from './workspaceCleanupScan.js';
 
-export interface WorkspaceCleanupView { settings: CleanupSettings; ledger: CleanupLedger; running: boolean }
+export interface WorkspaceCleanupView {
+  settings: CleanupSettings;
+  ledger: CleanupLedger;
+  running: boolean;
+  /**
+   * 기한이 지났는데 지울 러너가 지금 붙어 있지 않은 스레드 폴더 경로들 — 화면이 「러너 꺼짐 — 지우기 대기」로 보인다.
+   * 원장에는 적지 않고 볼 때마다 잰다(러너가 붙고 끊기는 것은 원장의 사실이 아니다). 러너 연결을 모르면 싣지 않는다.
+   */
+  awaitingRunner?: string[];
+}
+
+/**
+ * 스레드 폴더는 그 에이전트의 러너가 지운다(#431 D5) — 러너가 안 떠 있으면 기한이 지나도 그대로 남는다. 그런 항목을 고른다.
+ * 주인 에이전트를 모르는 항목은 고르지 않는다(꺼졌다고 말할 근거가 없다).
+ */
+export function awaitingRunnerPaths(
+  ledger: CleanupLedger, owners: readonly { channelId: string; threadRootId: string; agentId: string }[],
+  liveAgents: ReadonlySet<string>, now: Date,
+): string[] {
+  const agentOf = new Map(owners.map((o) => [threadKey(o), o.agentId]));
+  const at = now.toISOString();
+  return ledger.items
+    .filter((i) => i.kind !== 'worktree' && (i.state === 'listed' || i.state === 'blocked') && !!i.deleteAfter && i.deleteAfter <= at)
+    .filter((i) => { const a = i.thread ? agentOf.get(threadKey(i.thread)) : undefined; return !!a && !liveAgents.has(a); })
+    .map((i) => i.path);
+}
 
 export interface WorkspaceCleanup {
   get(): Promise<WorkspaceCleanupView>;
@@ -52,6 +77,8 @@ export interface WorkspaceCleanupDeps extends ScanDeps {
   /** 이 오퍼레이터에 배정된 에이전트(id·workingDir). */
   agents(): Promise<{ agentId: string; workingDir: string | null }[]>;
   forward: Forward;
+  /** relay 로 지금 붙어 있는 러너의 에이전트들. 없으면 「러너 꺼짐」을 판정하지 않는다. */
+  liveAgents?: () => ReadonlySet<string>;
   now?: () => Date;
   log(line: string): void;
 }
@@ -148,9 +175,12 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: Cleanup
     return next;
   };
 
-  const view = async (): Promise<WorkspaceCleanupView> => ({
-    settings: await readCleanupSettings(deps.configPath), ledger: await readLedger(deps.ledgerPath), running,
-  });
+  const view = async (): Promise<WorkspaceCleanupView> => {
+    const settings = await readCleanupSettings(deps.configPath);
+    const ledger = await readLedger(deps.ledgerPath);
+    if (!deps.liveAgents) return { settings, ledger, running };
+    return { settings, ledger, running, awaitingRunner: awaitingRunnerPaths(ledger, await deps.owners.threads(), deps.liveAgents(), now()) };
+  };
 
   const observe = async (prev: CleanupLedger) => {
     const agents = await deps.agents();

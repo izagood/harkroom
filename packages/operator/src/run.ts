@@ -581,6 +581,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       const c = communities.find((x) => x.knowsAgent(agentId));
       return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
     },
+    liveAgents: () => runnerLink.linkedAgents(),
     exec: defaultExec,
     gitPath: GIT_PATH,
     ghPath: GH_PATH,

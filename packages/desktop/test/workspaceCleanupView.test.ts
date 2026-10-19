@@ -70,3 +70,18 @@ describe('dueTodayIf · nextSweepAt · formatBytes', () => {
     expect(formatBytes(1.5 * 1024 ** 3)).toBe('1.5 GB');
   });
 });
+
+describe('buildCleanupModel — 러너 꺼짐', () => {
+  it('awaitingRunner 경로가 든 줄만 표시한다(스레드의 다른 부분이어도 줄 단위)', () => {
+    const base = { kind: 'threadDir' as const, state: 'listed' as const, repo: null, branch: null, headSha: null, pr: null,
+      lastModifiedAt: null, listedAt: '2026-10-01T00:00:00Z', deleteAfter: '2026-10-02T00:00:00Z', blockReason: null,
+      actedBy: null, actedAt: null, sizeBefore: null, sizeNow: null };
+    const l = { version: 1 as const, events: [], lastSweepAt: null, items: [
+      { ...base, path: '/a', thread: { channelId: 'c', threadRootId: 'r1' } },
+      { ...base, path: '/b', thread: { channelId: 'c', threadRootId: 'r2' } },
+    ] };
+    const m = buildCleanupModel(l, new Date('2026-10-03T00:00:00Z'), ['/b']);
+    expect(m.listed.map((r) => [r.key, r.awaitingRunner])).toEqual([['c/r1', false], ['c/r2', true]]);
+    expect(buildCleanupModel(l, new Date('2026-10-03T00:00:00Z')).listed.every((r) => !r.awaitingRunner)).toBe(true);
+  });
+});

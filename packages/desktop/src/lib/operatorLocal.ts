@@ -128,6 +128,8 @@ export interface WorkspaceCleanupView {
   settings: CleanupSettings;
   ledger: CleanupLedger;
   running: boolean;
+  /** 기한이 지났는데 지울 러너가 안 떠 있는 스레드 폴더 경로들. 옛 오퍼레이터는 싣지 않는다. */
+  awaitingRunner?: string[];
 }
 
 export function getWorkspaceCleanup(): Promise<WorkspaceCleanupView> {

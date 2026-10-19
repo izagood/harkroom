@@ -77,6 +77,8 @@ export interface RunnerLinkServer {
   sendNotice(runnerId: string, notice: OperatorToRunnerNotice): boolean;
   isLinked(runnerId: string): boolean;
   agentOf(runnerId: string): string | null;
+  /** relay 로 지금 붙어 있는 러너들의 에이전트 id(작업 폴더 정리 화면의 「러너 꺼짐」 판정). */
+  linkedAgents(): ReadonlySet<string>;
   /** 붙어 있는 러너 전부를 끊는다(종료 경로). 러너 프로세스는 건드리지 않는다. */
   close(): void;
 }
@@ -218,6 +220,11 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
 
     isLinked: (runnerId) => linked.has(runnerId),
     agentOf: (runnerId) => expected.get(runnerId)?.agentId ?? null,
+    linkedAgents() {
+      const out = new Set<string>();
+      for (const runnerId of linked.keys()) { const a = expected.get(runnerId)?.agentId; if (a) out.add(a); }
+      return out;
+    },
 
     close() {
       for (const [runnerId, socket] of linked) { linked.delete(runnerId); socket.destroy(); }

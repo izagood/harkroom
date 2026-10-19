@@ -120,6 +120,8 @@ export const ko = {
   'cleanup.stopped': "⚠ 멈춤",
   'cleanup.deferred': "미룸 · 다음 정리 때",
   'cleanup.dueNow': "다음 정리 때",
+  'cleanup.awaitingRunner': "러너 꺼짐 — 지우기 대기",
+  'cleanup.awaitingRunnerHint': "이 폴더는 그 에이전트의 러너가 지운다. 러너가 다시 뜨면 다음 정리 때 지운다.",
   'cleanup.dueToday': "오늘 {time}",
   'cleanup.dueIn': "{n}일 뒤 · {date} 삭제",
   'cleanup.threadTitle': "스레드 {id}",

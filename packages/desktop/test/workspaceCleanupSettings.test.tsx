@@ -125,6 +125,30 @@ describe('작업 폴더 정리 화면', () => {
     render(<WorkspaceCleanupSettings now={NOW} />);
     expect((await screen.findByTestId('cleanup-kept-by')).textContent).toBe('보존 · mina · 10-04');
   });
+  it('기한 지났는데 러너가 꺼진 스레드 폴더는 「러너 꺼짐 — 지우기 대기」 — 꺼져 있으면 꺼짐이 먼저, 안 실리면 기한 그대로', async () => {
+    const due = item({ path: '/state/ws-1', kind: 'threadDir', thread: T('r-off'), pr: null, branch: null, deleteAfter: '2026-10-05T00:00:00Z' });
+    const ledger: CleanupLedger = { ...LEDGER, items: [due] };
+    const respond = (enabled: boolean, awaitingRunner?: string[]) => {
+      (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {
+        invoke: vi.fn(async () => ({ settings: { enabled, graceDays: 7 }, ledger, running: false, ...(awaitingRunner ? { awaitingRunner } : {}) })),
+      };
+    };
+    respond(true, ['/state/ws-1']);
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    expect((await screen.findByTestId('cleanup-awaiting-runner')).textContent).toBe('러너 꺼짐 — 지우기 대기');
+    expect(screen.getByTestId('cleanup-due').textContent).not.toBe('다음 정리 때');
+    cleanup();
+    respond(false, ['/state/ws-1']);
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    expect((await screen.findByTestId('cleanup-due')).textContent).toBe('꺼짐 · 지우지 않음');
+    expect(screen.queryByTestId('cleanup-awaiting-runner')).toBeNull();
+    cleanup();
+    respond(true); // 옛 오퍼레이터 — 칸이 없다
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    expect((await screen.findByTestId('cleanup-due')).textContent).toBe('다음 정리 때');
+    expect(screen.queryByTestId('cleanup-awaiting-runner')).toBeNull();
+  });
+
   it('Tauri 표면이 없으면 안내만', () => {
     render(<WorkspaceCleanupSettings now={NOW} />);
     expect(screen.getByTestId('cleanup-unavailable')).toBeTruthy();

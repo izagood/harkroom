@@ -269,6 +269,8 @@ export const en = {
   'cleanup.stopped': "⚠ Stopped",
   'cleanup.deferred': "Deferred · next cleanup",
   'cleanup.dueNow': "Next cleanup",
+  'cleanup.awaitingRunner': "Runner offline — waiting to delete",
+  'cleanup.awaitingRunnerHint': "This folder is deleted by that agent's runner. It will be deleted at the next cleanup after the runner starts again.",
   'cleanup.dueToday': "Today {time}",
   'cleanup.dueIn': "In {n} d · deletes {date}",
   'cleanup.threadTitle': "Thread {id}",

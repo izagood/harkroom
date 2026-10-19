@@ -64,7 +64,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
     void run(() => actWorkspaceCleanup(path, action, me.id));
   };
 
-  const model = useMemo(() => (typeof view === 'object' ? buildCleanupModel(view.ledger, now) : null), [view, now]);
+  const model = useMemo(() => (typeof view === 'object' ? buildCleanupModel(view.ledger, now, view.awaitingRunner) : null), [view, now]);
 
   // 스레드 첫 줄 — 줄의 제목. 목록에 보이는 스레드만, 한 번씩 읽는다.
   const [titles, setTitles] = useState<Record<string, string>>({});
@@ -144,8 +144,9 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
             </span>
           </button>
           {!kept && (
-            <span className={`shrink-0 text-meta ${row.tone === 'warn' ? 'text-warning' : off ? 'text-fg-subtle' : due.today ? 'font-medium text-accent' : 'text-fg-muted'}`} data-testid="cleanup-due">
-              {row.tone === 'warn' ? t('cleanup.stopped') : off ? t('cleanup.offNoDelete') : row.tone === 'deferred' ? t('cleanup.deferred') : due.text}
+            <span className={`shrink-0 text-meta ${row.tone === 'warn' ? 'text-warning' : off ? 'text-fg-subtle' : row.awaitingRunner ? 'text-fg-muted' : due.today ? 'font-medium text-accent' : 'text-fg-muted'}`} data-testid="cleanup-due">
+              {row.tone === 'warn' ? t('cleanup.stopped') : off ? t('cleanup.offNoDelete') : row.tone === 'deferred' ? t('cleanup.deferred')
+                : row.awaitingRunner ? <span title={t('cleanup.awaitingRunnerHint')} data-testid="cleanup-awaiting-runner">{t('cleanup.awaitingRunner')}</span> : due.text}
             </span>
           )}
           <button className="shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50"
