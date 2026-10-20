@@ -159,6 +159,40 @@ describe('사용', () => {
     expect(bodies[0]![0]).toBe(400);
   });
 
+  it('발급 뒤 발급자가 강등되면 그 코드는 죽는다(security F1)', async () => {
+    const adm = await createMember(app, owner.token, 'demoted');
+    const setRole = (id: string, role: string) =>
+      app.inject({ method: 'PUT', url: `/accounts/${id}/role`, headers: auth(owner.token), payload: { role } });
+    expect((await setRole(adm.accountId, 'admin')).statusCode).toBe(200);
+    const mem = await createMember(app, owner.token, 'demotetarget');
+    await stepUp(adm.token);
+    const res = await issue(adm.token, mem.accountId);
+    expect(res.statusCode).toBe(201);
+    expect((await setRole(adm.accountId, 'member')).statusCode).toBe(200);
+    const used = await redeem('demotetarget', res.json().code);
+    expect(used.statusCode).toBe(400);
+    expect(used.json().error.code).toBe('invalid_reset_code');
+    // 발급자를 다시 올리면 같은 코드가 산다 — 막은 것이 바로 그 조건임을 보인다.
+    expect((await setRole(adm.accountId, 'admin')).statusCode).toBe(200);
+    expect((await redeem('demotetarget', res.json().code)).statusCode).toBe(200);
+  });
+
+  it('발급 뒤 대상이 admin 으로 오르면 admin 이 발급한 코드는 죽는다(security F1)', async () => {
+    const adm = await createMember(app, owner.token, 'issueradm');
+    const tgt = await createMember(app, owner.token, 'promoted');
+    const setRole = (id: string, role: string) =>
+      app.inject({ method: 'PUT', url: `/accounts/${id}/role`, headers: auth(owner.token), payload: { role } });
+    expect((await setRole(adm.accountId, 'admin')).statusCode).toBe(200);
+    await stepUp(adm.token);
+    const res = await issue(adm.token, tgt.accountId);
+    expect(res.statusCode).toBe(201);
+    expect((await setRole(tgt.accountId, 'admin')).statusCode).toBe(200);
+    expect((await redeem('promoted', res.json().code)).json().error.code).toBe('invalid_reset_code');
+    // owner 가 발급한 코드는 admin 대상에도 산다.
+    const byOwner = await issued(tgt.accountId);
+    expect((await redeem('promoted', byOwner)).statusCode).toBe(200);
+  });
+
   it('로그인 ID 단위로 시도를 센다', async () => {
     for (let i = 0; i < ACCOUNT_MAX; i += 1) expect((await redeem('limited', 'AAAA-AAAA-AAAA')).statusCode).toBe(400);
     const limited = await redeem('LIMITED', 'AAAA-AAAA-AAAA');

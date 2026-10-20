@@ -160,12 +160,19 @@ export async function registerPasswordResetRoutes(app: FastifyInstance, pool: Po
       await client.query('begin');
       // 코드·로그인 ID·계정 상태를 한 줄로 본다 — 어느 조건에서 떨어졌는지 알 수 없게(R1).
       // `for update of c` 로 같은 코드를 든 두 요청이 동시에 통과하지 못하게 한다.
+      // **발급 조건을 쓰는 순간에 다시 본다**(security F1): 30분 사이 발급자가 강등·비활성·삭제됐거나 대상이
+      // admin 으로 올랐으면 그 코드는 죽는다 — 발급 때의 `targetFor` 판정만 믿으면 강등된 admin 이 받아 둔
+      // 코드로 계정을 가져가고, 승격된 대상에게 「admin 대상은 owner 만」 선이 뚫린다.
       const r = await client.query<{ id: string; accountId: string; handle: string }>(
         `select c.id, c.account_id as "accountId", a.handle
-           from password_reset_code c join account a on a.id = c.account_id
+           from password_reset_code c
+           join account a on a.id = c.account_id
+           join account i on i.id = c.issued_by
           where c.code_hash = $1 and lower(a.login_id) = lower($2)
             and c.used_at is null and c.revoked_at is null and c.expires_at > now()
             and a.kind = 'human' and a.deleted_at is null and a.disabled_at is null and a.role <> 'owner'
+            and i.kind = 'human' and i.deleted_at is null and i.disabled_at is null and i.role in ('owner', 'admin')
+            and (a.role <> 'admin' or i.role = 'owner')
           for update of c`,
         [hashToken(normalized), loginId]);
       const row = r.rows[0];
