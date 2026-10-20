@@ -93,6 +93,14 @@ CI 오류를 고치는 PR 처럼 CI 가 빨간 채로 머지해야 할 때가 �
 - 카드: 제목 「CI 실패 무시하고 이번 한 번 머지」, 실패 체크 이름(앱이 한 번 더 거르고 텍스트로만), PR 링크·head 9자. 체크박스·7일 버튼이 없다.
 - 승인 없이 비필수 체크를 무시하고 머지한 경우(`UNSTABLE`, 필수 체크 초록)도 같은 `ignoredChecks` 로 줄·감사에 이름이 남는다.
 
+## 체크 판정 — 같은 이름의 실행 여럿
+
+같은 head 에 같은 이름의 체크가 실행 여럿으로 남는다(재실행, PR 본문 수정으로 다시 돈 workflow). 래퍼는 이름(check-run 은
+workflow 이름 + 체크 이름, status-context 는 context)별로 **가장 늦게 시작한(`startedAt`) 실행 하나**만 센다 — GitHub 의
+required checks 판정과 같다. 옛 실패가 새 초록을 막지 않고, 옛 초록이 새 빨강을 덮지 않으며, 최신이 아직 돌면 초록이 아니다.
+취소(CANCELLED)된 실행은 최신으로 고르지 않는다(전부 취소면 초록 아님). 시각을 모르는 실행(대기 중이면 시각이 없다)이 끼었거나
+최신이 동률이면 그 실행들이 모두 초록이어야 초록이다. `CLEAN` 판정과 `UNSTABLE` 의 필수 체크 판정 둘 다 이 규칙을 쓴다.
+
 ## merge queue
 
 ### `UNSTABLE` — 필수가 아닌 체크가 실패한 PR
@@ -102,7 +110,7 @@ GitHub 의 `mergeStateStatus: UNSTABLE` 은 「초록이 아닌 체크가 있지
 `isRequired(pullRequestNumber:)`(브랜치 보호와 ruleset 의 required status checks 를 둘 다 반영한다)를 읽는다(읽기 전용).
 
 - 필수 체크가 하나 이상 있고 **전부 초록**이면 통과한다. 초록이 아닌 비필수 체크 이름은 결과 JSON `ignoredChecks` 에 싣는다.
-  이름별 판정(같은 이름에 빨강이 하나라도 있으면 빨강)은 그대로다.
+  이름별 판정(위 「같은 이름의 실행 여럿」)은 그대로다.
 - **필수 체크가 하나도 없는 저장소는 통과시키지 않는다** — 그러면 Test 가 빨개도 머지되는 길이 된다. 지금처럼 모든 체크가
   초록이어야 하고, `ci_not_green` 문구에 실패한 이름과 「꼭 통과해야 할 체크를 required 로 정하라」를 싣는다. 실패해도 되는
   체크(봇 리뷰 등)가 있는 저장소는 Lint·Test 같은 체크를 브랜치 보호나 ruleset 의 required status checks 로 정하면 된다.
