@@ -3162,6 +3162,8 @@ export const ko = {
   'pwreset.form.codeHint': '하이픈은 없어도 되고 대소문자도 가리지 않는다. 0·O·1·I·L 은 코드에 쓰지 않는다.',
   'pwreset.form.newPassword': '새 비밀번호',
   'pwreset.form.confirm': '새 비밀번호 확인',
+  'pwreset.form.tooLong': '128자를 넘을 수 없다.',
+  'pwreset.notice.revokedTag': '(거둠)',
   'pwreset.form.tooShort': '8자 이상이어야 한다.',
   'pwreset.form.mismatch': '두 비밀번호가 다르다.',
   'pwreset.form.submit': '비밀번호 바꾸고 로그인',

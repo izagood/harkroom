@@ -13,6 +13,7 @@ import { setController, type Controller } from '../src/state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setConcealedClipboardInvoke } from '../src/lib/concealedClipboard';
+import { ApiError } from '../src/lib/api';
 import { acc } from './helpers/fakeApi';
 
 const owner = acc('o1', 'boss', 'human', true, { role: 'owner' });
@@ -24,6 +25,7 @@ function setup(over: Partial<Record<string, unknown>> = {}) {
   const c = {
     refreshAccounts: vi.fn(async () => undefined),
     unlockSecrets: vi.fn(async () => ({ steppedUpUntil: new Date(Date.now() + 900_000).toISOString() })),
+    lockSecrets: vi.fn(async () => undefined),
     issuePasswordResetCode: vi.fn(async () => ({ code: 'K7QF-9MXD-2PQR', expiresAt: new Date(Date.now() + 1_800_000).toISOString() })),
     revokePasswordResetCode: vi.fn(async () => undefined),
     passwordResetNotices: vi.fn(async () => ({ notices: [] })),
@@ -77,8 +79,13 @@ describe('누가 누구에게', () => {
 });
 
 describe('발급 창', () => {
-  it('비밀번호를 확인한 뒤 코드를 한 번 보이고, 복사는 가림 클립보드를 먼저 쓴다', async () => {
-    const c = setup();
+  const stepUpRequired = () => new ApiError(403, 'step_up_required', 'confirm your password');
+  const CODE = { code: 'K7QF-9MXD-2PQR', expiresAt: new Date(Date.now() + 1_800_000).toISOString() };
+
+  it('창이 잠겨 있으면 비밀번호로 열고 코드를 한 번 보인다 — 복사는 가림 클립보드 먼저, 닫으면 내가 연 창을 잠근다', async () => {
+    const c = setup({
+      issuePasswordResetCode: vi.fn().mockRejectedValueOnce(stepUpRequired()).mockResolvedValue(CODE),
+    });
     const writes: string[] = [];
     setConcealedClipboardInvoke(async (_cmd: string, args: unknown) => { writes.push((args as { text: string }).text); });
     useActiveStore.getState().set({ me: owner, accounts: { o1: owner, m1: member } });
@@ -92,6 +99,27 @@ describe('발급 창', () => {
     fireEvent.click(screen.getByTestId('reset-code-copy'));
     await waitFor(() => expect(writes).toEqual(['K7QF-9MXD-2PQR']));
     expect(screen.getByText('복사했다. 클립보드는 60초 뒤에 비운다.')).toBeTruthy();
+    cleanup();
+    expect(c.lockSecrets).toHaveBeenCalledTimes(1);
+  });
+
+  it('이미 열려 있던 창이면 비밀번호를 묻지 않고, 닫아도 그 창을 잠그지 않는다', async () => {
+    const c = setup();
+    useActiveStore.getState().set({ me: owner, accounts: { o1: owner, m1: member } });
+    render(<ResetCodeDialog account={member} onClose={() => {}} />);
+    fireEvent.click(screen.getByTestId('reset-code-issue'));
+    await screen.findByTestId('reset-code-value');
+    expect(c.unlockSecrets).not.toHaveBeenCalled();
+    cleanup();
+    expect(c.lockSecrets).not.toHaveBeenCalled();
+  });
+
+  it('창이 잠겨 있는데 비밀번호를 안 쓰면 그렇게 말한다', async () => {
+    setup({ issuePasswordResetCode: vi.fn().mockRejectedValue(stepUpRequired()) });
+    useActiveStore.getState().set({ me: owner, accounts: { o1: owner, m1: member } });
+    render(<ResetCodeDialog account={member} onClose={() => {}} />);
+    fireEvent.click(screen.getByTestId('reset-code-issue'));
+    expect((await screen.findByTestId('reset-code-error')).textContent).toBe('코드를 발급하려면 비밀번호를 입력해라.');
   });
 
   it('거두면 코드가 화면에서 사라진다', async () => {
@@ -139,6 +167,17 @@ describe('로그인 화면', () => {
       .toBe('코드가 맞지 않거나 이미 쓴 코드거나 만료됐다. 관리자에게 새 코드를 받아라.');
   });
 
+  it('새 비밀번호가 128자를 넘으면 보내지 않는다(n2)', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<ResetWithCodeForm baseUrl="https://hk.example.com" initialLoginId="minji" onSignedIn={vi.fn()} onBack={() => {}} />);
+    fill();
+    const long = 'x'.repeat(129);
+    fireEvent.change(screen.getByTestId('pwreset-new'), { target: { value: long } });
+    fireEvent.change(screen.getByTestId('pwreset-confirm'), { target: { value: long } });
+    expect(screen.getByText('128자를 넘을 수 없다.')).toBeTruthy();
+    expect((screen.getByTestId('pwreset-submit') as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('옛 서버면 라우트를 부르지 않고 「지원하지 않는다」를 말한다', async () => {
     const fetch = vi.fn(async () => json(200, { ok: true, version: '0.4.113' }));
     vi.stubGlobal('fetch', fetch);
@@ -177,6 +216,24 @@ describe('본인 알림', () => {
     fireEvent.click(screen.getByTestId('pwreset-notice-ack'));
     await waitFor(() => expect(screen.queryByTestId('pwreset-notice')).toBeNull());
     expect(c.ackPasswordResetNotices).toHaveBeenCalledWith(['n1']);
+  });
+
+  it('여러 건이면 전부 보이고, [확인] 은 보인 id 만 내린다(security F1)', async () => {
+    const c = setup({
+      passwordResetNotices: vi.fn(async () => ({ notices: [
+        { id: 'n2', issuedById: 'o1', issuedAt: '2026-10-20T04:00:00Z', expiresAt: '2026-10-20T04:30:00Z', usedAt: '2026-10-20T04:05:00Z', revokedAt: null },
+        { id: 'n1', issuedById: 'a1', issuedAt: '2026-10-20T03:00:00Z', expiresAt: '2026-10-20T03:30:00Z', usedAt: '2026-10-20T03:10:00Z', revokedAt: null },
+      ] })),
+    });
+    useActiveStore.getState().set({ me: member, accounts: { m1: member, a1: admin, o1: { ...owner, displayName: '' } } });
+    setServer('0.4.122');
+    render(<PasswordResetNoticeBanner />);
+    expect((await screen.findByTestId('pwreset-notice-n1')).textContent).toContain('adm (@adm)');
+    // 표시 이름이 비면 handle 로(n3).
+    expect(screen.getByTestId('pwreset-notice-n2').textContent).toContain('boss (@boss)');
+    fireEvent.click(screen.getByTestId('pwreset-notice-ack'));
+    await waitFor(() => expect(screen.queryByTestId('pwreset-notice')).toBeNull());
+    expect(c.ackPasswordResetNotices).toHaveBeenCalledWith(['n2', 'n1']);
   });
 
   it('옛 서버에는 묻지 않는다', async () => {

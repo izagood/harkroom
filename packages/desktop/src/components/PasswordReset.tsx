@@ -78,21 +78,32 @@ export function ResetCodeDialog({ account, onClose }: { account: AccountView; on
   // 코드는 이 창이 닫히면 함께 사라진다 — 상태 밖(스토어·저장소)에 두지 않는다.
   useEffect(() => () => { setIssued(null); }, []);
 
+  /** 이 창이 step-up 창을 직접 열었는가 — 그때만 닫을 때 잠근다(security #1410 n1). 이미 열려 있던 창은 건드리지 않는다. */
+  const openedStepUp = useRef(false);
+  useEffect(() => () => { if (openedStepUp.current) void getController().lockSecrets().catch(() => {}); }, []);
+
   const issue = async () => {
     if (busy) return;
     setBusy(true); setError(null);
     try {
-      if (password) {
+      let r: Issued;
+      try {
+        // 먼저 그냥 발급해 본다 — 창이 이미 열려 있으면 비밀번호 없이 된다.
+        r = await getController().issuePasswordResetCode(account.id);
+      } catch (e) {
+        const needs = e instanceof ApiError && e.code === 'step_up_required';
+        if (!needs || !password) throw e;
         await getController().unlockSecrets(password);
+        openedStepUp.current = true;
         setPassword('');
+        r = await getController().issuePasswordResetCode(account.id);
       }
-      const r = await getController().issuePasswordResetCode(account.id);
       setIssued(r); setStep('code');
     } catch (e) {
       const wait = retryAfterSec(e);
       if (wait !== null) setError(t('pwreset.issue.limited', { minutes: String(Math.max(1, Math.ceil(wait / 60))) }));
       else if (e instanceof ApiError && e.status === 401) setError(t('pwreset.issue.wrongPassword'));
-      else if (e instanceof ApiError && (e.payload as { error?: { code?: string } } | null)?.error?.code === 'step_up_required') setError(t('pwreset.issue.needPassword'));
+      else if (e instanceof ApiError && e.code === 'step_up_required') setError(t('pwreset.issue.needPassword'));
       else setError(e instanceof ApiError ? e.message : t('pwreset.issue.failed'));
     } finally { setBusy(false); }
   };
@@ -216,6 +227,8 @@ export function ResetWithCodeForm({ baseUrl, initialLoginId, onSignedIn, onBack 
   const [busy, setBusy] = useState(false);
   const mismatch = pw2 !== '' && pw !== pw2;
   const short = pw !== '' && pw.length < 8;
+  // 서버 규칙은 8~128자다. 넘기면 서버의 400 이 「코드가 틀렸다」로 읽히므로 화면에서 막는다(security #1410 n2).
+  const long = pw.length > 128;
 
   const submit = async () => {
     if (busy) return;
@@ -255,6 +268,7 @@ export function ResetWithCodeForm({ baseUrl, initialLoginId, onSignedIn, onBack 
         {t('pwreset.form.newPassword')}
         <input className={field} type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} data-testid="pwreset-new" />
         {short && <span className="mt-1 block font-normal text-danger">{t('pwreset.form.tooShort')}</span>}
+        {long && <span className="mt-1 block font-normal text-danger">{t('pwreset.form.tooLong')}</span>}
       </label>
       <label className="block text-meta font-medium">
         {t('pwreset.form.confirm')}
@@ -263,7 +277,7 @@ export function ResetWithCodeForm({ baseUrl, initialLoginId, onSignedIn, onBack 
       </label>
       {error && <p role="alert" className="break-keep text-danger" data-testid="pwreset-error">{error}</p>}
       <button type="button" onClick={() => void submit()} data-testid="pwreset-submit"
-        disabled={busy || !loginId.trim() || code.replace(/-/g, '').length !== 12 || pw.length < 8 || pw !== pw2}
+        disabled={busy || !loginId.trim() || code.replace(/-/g, '').length !== 12 || pw.length < 8 || long || pw !== pw2}
         className="w-full rounded-row bg-accent py-2 font-medium text-fg-on-strong disabled:opacity-50">{t('pwreset.form.submit')}</button>
       <button type="button" className="w-full text-meta text-fg-subtle underline" onClick={onBack}>{t('pwreset.back')}</button>
     </div>
@@ -291,21 +305,35 @@ export function PasswordResetNoticeBanner() {
   }, [me?.id, version]);
 
   if (notices.length === 0) return null;
-  const n = notices[0]!;
-  const issuer = accounts[n.issuedById];
-  const by = issuer ? `${issuer.displayName} (@${issuer.handle})` : t('pwreset.notice.unknownAdmin');
-  const when = new Date(n.issuedAt).toLocaleString(locale);
+  // 줄마다 하나씩 그린다(security #1410 F1) — 가장 최근 것 하나만 보이면 그 앞의 「부탁하지 않은 재설정」이 보지도 못한 채
+  // [확인] 에 함께 내려간다. 서버가 최대 20개라 짧다. [확인] 은 **화면에 그린 id 만** 내린다.
+  const nameOf = (id: string) => {
+    const a = accounts[id];
+    return a ? `${a.displayName || a.handle} (@${a.handle})` : t('pwreset.notice.unknownAdmin');
+  };
+  const anyUsed = notices.some((x) => x.usedAt);
   const ack = () => {
     const ids = notices.map((x) => x.id);
-    setNotices([]);
+    setNotices((cur) => cur.filter((x) => !ids.includes(x.id)));
     void getController().ackPasswordResetNotices(ids).catch(() => {});
   };
   return (
     <div role="status" data-testid="pwreset-notice"
       className="flex items-start gap-2 border-b border-warning-border bg-warning-surface px-4 py-2 text-body text-warning">
       <div className="flex-1">
-        <span className="font-medium">{n.usedAt ? t('pwreset.notice.used', { by, when }) : t('pwreset.notice.issued', { by, when })}</span>
-        <span className="ml-2 opacity-80">{n.usedAt ? t('pwreset.notice.usedDetail') : t('pwreset.notice.issuedDetail')}</span>
+        <ul className="space-y-0.5">
+          {notices.map((n) => {
+            const by = nameOf(n.issuedById);
+            const when = new Date(n.issuedAt).toLocaleString(locale);
+            return (
+              <li key={n.id} data-testid={`pwreset-notice-${n.id}`} className="font-medium">
+                {n.usedAt ? t('pwreset.notice.used', { by, when }) : t('pwreset.notice.issued', { by, when })}
+                {!n.usedAt && n.revokedAt && <span className="ml-1 font-normal opacity-80">{t('pwreset.notice.revokedTag')}</span>}
+              </li>
+            );
+          })}
+        </ul>
+        <p className="mt-0.5 opacity-80">{anyUsed ? t('pwreset.notice.usedDetail') : t('pwreset.notice.issuedDetail')}</p>
       </div>
       <button type="button" onClick={ack} data-testid="pwreset-notice-ack"
         className="shrink-0 rounded-row border border-warning-border px-2 py-0.5 text-meta hover:bg-surface">{t('pwreset.notice.ack')}</button>

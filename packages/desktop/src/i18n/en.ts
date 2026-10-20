@@ -5376,6 +5376,8 @@ export const en = {
   'pwreset.form.codeHint': 'Dashes and letter case don’t matter. Codes never use 0, O, 1, I or L.',
   'pwreset.form.newPassword': 'New password',
   'pwreset.form.confirm': 'Confirm new password',
+  'pwreset.form.tooLong': 'At most 128 characters.',
+  'pwreset.notice.revokedTag': '(revoked)',
   'pwreset.form.tooShort': 'At least 8 characters.',
   'pwreset.form.mismatch': 'The two passwords don’t match.',
   'pwreset.form.submit': 'Change password and sign in',
