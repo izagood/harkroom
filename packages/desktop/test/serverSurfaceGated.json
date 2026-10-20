@@ -1,3 +1,8 @@
 {
-  "POST /agents/:p/permission-requests/:p/approve-once": "0.4.30"
+  "DELETE /accounts/:p/password-reset-code": "0.4.122",
+  "GET /auth/password-reset-notices": "0.4.122",
+  "POST /accounts/:p/password-reset-code": "0.4.122",
+  "POST /agents/:p/permission-requests/:p/approve-once": "0.4.30",
+  "POST /auth/password-reset": "0.4.122",
+  "POST /auth/password-reset-notices/ack": "0.4.122"
 }
