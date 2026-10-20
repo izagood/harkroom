@@ -151,7 +151,7 @@ function argsOf(call: JsonRpcCall): MergeArgs | { error: string } {
 
 export interface PrView {
   state?: string; isDraft?: boolean; headRefOid?: string; baseRefName?: string; mergeStateStatus?: string;
-  statusCheckRollup?: { status?: string; conclusion?: string; state?: string; name?: string; context?: string }[];
+  statusCheckRollup?: { status?: string; conclusion?: string; state?: string; name?: string; context?: string; workflowName?: string; startedAt?: string }[];
   mergeCommit?: { oid?: string } | null;
 }
 
@@ -172,9 +172,9 @@ function checkRed(c: NonNullable<PrView['statusCheckRollup']>[number]): boolean 
  * 머지 전 PR 상태 판정. OPEN·draft 아님·head 일치는 늘 본다. `relaxChecks`(1회 승인의 칸 — 래퍼 인자가 아니다)면 CLEAN·체크
  * 초록은 harkroom 이 따로 보지 않고 GitHub 의 판정(브랜치 보호·required checks)에 맡긴다. `--match-head-commit` 은 그대로다.
  *
- * 체크는 **이름별**로 본다(security C1). 같은 이름의 취소된 중복 실행(CANCELLED, #1078·#1083 에서 실제로 남았다)만 무시한다 —
- * 그 이름에 **빨강(FAILURE·TIMED_OUT·ACTION_REQUIRED)이 하나라도 있으면 빨강**이고, 초록이 하나는 있어야 한다. "초록 하나면
- * 초록"으로 두면 재실행이 빨간데 옛 실행이 초록인 경우가 통과한다. 이름이 없는 항목은 그 항목 하나.
+ * 체크는 **이름별 최신 실행**으로 본다(`checksByName`). 같은 head 에 같은 이름이 실행 여럿으로 남는다(재실행·PR 본문 수정으로 다시 돈
+ * workflow, homelab #219) — GitHub 의 required checks 판정처럼 가장 늦게 시작한 실행 하나만 센다. 옛 실패가 새 초록을 막지
+ * 않고, 옛 초록이 새 빨강을 덮지도 않는다(security C1).
  */
 /** CI 를 건너뛰는 승인이 지나갈 수 있는 `mergeStateStatus` — CI 말고는 막는 것이 없는 상태. */
 const RELAX_STATES = new Set(['CLEAN', 'UNSTABLE', 'HAS_HOOKS']);
@@ -204,20 +204,52 @@ export function refusalOf(pr: PrView, headSha: string, relaxChecks: boolean): { 
 }
 
 type CheckItem = NonNullable<PrView['statusCheckRollup']>[number] & { isRequired?: boolean };
-type ByName = Map<string, { green: boolean; red: boolean; required: boolean }>;
+type ByName = Map<string, { name: string; green: boolean; red: boolean; required: boolean }>;
 
-/** 이름별로 묶는다(C1) — 빨강이 하나라도 있으면 빨강, 초록이 하나는 있어야 초록. 이름이 하나라도 required 면 required. */
+/** 시작 시각(ms). 없거나 gh 의 빈 값(`0001-01-01…`)이면 null. */
+const startedOf = (c: CheckItem): number | null => {
+  const t = c.startedAt ? Date.parse(c.startedAt) : NaN;
+  return Number.isFinite(t) && t > 0 ? t : null;
+};
+
+/**
+ * 이름별로 묶어 **최신 실행 하나**로 판정한다. 열쇠는 workflow 이름 + 체크 이름(다른 workflow 의 같은 job 이름이 서로를 가리지
+ * 않게), status-context 는 context. 최신 = `startedAt` 이 가장 늦은 실행 — 아직 도는 최신은 초록이 아니다.
+ * - 취소(CANCELLED)된 실행은 최신 고르기에서 뺀다(전부 취소면 남긴다). 판정 없이 끝난 중복이고(#1078·#1083), 막 취소된
+ *   대기 실행이 성공한 앞 실행보다 늦게 찍힌다. 같은 head 의 실행이라 앞 실행의 판정이 그대로 이 코드의 판정이다.
+ * - 시각을 모르는 실행(아직 대기 중이면 `startedAt` 이 없다)이 끼었으면 전부, 최신이 동률이면 그 동률끼리 본다 — 모두 초록이어야 초록.
+ * 이름이 하나라도 required 면 required.
+ */
 function checksByName(checks: CheckItem[]): ByName {
-  const byName: ByName = new Map();
+  const groups = new Map<string, { name: string; runs: CheckItem[] }>();
   checks.forEach((c, i) => {
-    const k = c.name ?? c.context ?? `#${i}`;
-    const cur = byName.get(k) ?? { green: false, red: false, required: false };
-    byName.set(k, { green: cur.green || checkGreen(c), red: cur.red || checkRed(c), required: cur.required || c.isRequired === true });
+    const name = c.name ?? c.context ?? `#${i}`;
+    const k = c.name !== undefined ? `run\0${c.workflowName ?? ''}\0${c.name}` : c.context !== undefined ? `ctx\0${c.context}` : `#${i}`;
+    const g = groups.get(k) ?? { name, runs: [] };
+    g.runs.push(c);
+    groups.set(k, g);
   });
+  const byName: ByName = new Map();
+  for (const [k, { name, runs }] of groups) {
+    const live = runs.filter((c) => c.conclusion !== 'CANCELLED');
+    const pool = live.length ? live : runs;
+    const times = pool.map(startedOf);
+    let judged = pool;
+    if (times.every((t): t is number => t !== null)) {
+      const max = Math.max(...times);
+      judged = pool.filter((_, i) => times[i] === max);
+    }
+    byName.set(k, {
+      name,
+      green: judged.every(checkGreen),
+      red: judged.some(checkRed),
+      required: runs.some((c) => c.isRequired === true),
+    });
+  }
   return byName;
 }
 const notGreen = (byName: ByName, only?: (v: { required: boolean }) => boolean): string[] =>
-  [...byName.entries()].filter(([, v]) => (!only || only(v)) && (v.red || !v.green)).map(([k]) => k);
+  [...byName.values()].filter((v) => (!only || only(v)) && (v.red || !v.green)).map((v) => v.name);
 const namesOf = (names: string[]): string => names.join(', ').slice(0, 200);
 /** 결과 JSON 의 `ignoredChecks` — UNSTABLE 로 통과했을 때만 싣는다(이름은 80자·20개까지). */
 const ignoredOf = (ignored: string[]): { ignoredChecks?: string[] } => (ignored.length ? { ignoredChecks: ignored.slice(0, 20).map((n) => n.slice(0, 80)) } : {});
@@ -226,9 +258,14 @@ const ignoredOf = (ignored: string[]): { ignoredChecks?: string[] } => (ignored.
  * 필수 체크 조회(GraphQL, 읽기 전용) — `isRequired(pullRequestNumber:)` 는 브랜치 보호와 ruleset 의 required status checks 를
  * 둘 다 반영한 GitHub 의 판정이다. head 커밋의 oid 도 같이 읽어 사전 확인과 다른 커밋을 보지 않게 한다.
  */
-export const REQUIRED_QUERY = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){commits(last:1){nodes{commit{oid statusCheckRollup{contexts(first:100){pageInfo{hasNextPage} nodes{__typename ... on CheckRun{name status conclusion isRequired(pullRequestNumber:$number)} ... on StatusContext{context state isRequired(pullRequestNumber:$number)}}}}}}}}}}';
+export const REQUIRED_QUERY = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){commits(last:1){nodes{commit{oid statusCheckRollup{contexts(first:100){pageInfo{hasNextPage} nodes{__typename ... on CheckRun{name status conclusion startedAt checkSuite{workflowRun{workflow{name}}} isRequired(pullRequestNumber:$number)} ... on StatusContext{context state createdAt isRequired(pullRequestNumber:$number)}}}}}}}}}}';
 
 export interface RequiredChecks { headOid: string; truncated: boolean; checks: CheckItem[] }
+
+const workflowNameOf = (n: Record<string, unknown>): string | undefined => {
+  const w = (n.checkSuite as { workflowRun?: { workflow?: { name?: unknown } | null } | null } | null | undefined)?.workflowRun?.workflow?.name;
+  return typeof w === 'string' ? w : undefined;
+};
 
 /** `REQUIRED_QUERY` 의 답. 모양이 틀리면 null(→ 머지하지 않는다). */
 export function parseRequiredChecks(stdout: string): RequiredChecks | null {
@@ -244,6 +281,9 @@ export function parseRequiredChecks(stdout: string): RequiredChecks | null {
       ...(typeof n.status === 'string' ? { status: n.status } : {}),
       ...(typeof n.conclusion === 'string' ? { conclusion: n.conclusion } : {}),
       ...(typeof n.state === 'string' ? { state: n.state } : {}),
+      // `gh pr view` 와 같은 모양으로 — 최신 실행 고르기(checksByName)가 두 길에서 같은 열쇠·시각을 본다.
+      ...(workflowNameOf(n) !== undefined ? { workflowName: workflowNameOf(n) } : {}),
+      ...(typeof n.startedAt === 'string' ? { startedAt: n.startedAt } : typeof n.createdAt === 'string' ? { startedAt: n.createdAt } : {}),
       isRequired: n.isRequired === true,
     }));
     return { headOid: commit.oid, truncated: ctx?.pageInfo?.hasNextPage === true, checks };

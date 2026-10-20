@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
-import { createTurnMerge, ghEnv, isAlreadyQueuedError, parseMergeArgs, parseQueueInfo, parseRequiredChecks, unstableVerdict, ENQUEUE_MUTATION, QUEUE_QUERY, REQUIRED_QUERY, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
+import { createTurnMerge, ghEnv, isAlreadyQueuedError, notGreenChecks, parseMergeArgs, parseQueueInfo, parseRequiredChecks, unstableVerdict, ENQUEUE_MUTATION, QUEUE_QUERY, REQUIRED_QUERY, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
 import { pickMergeGhUser } from '../src/localMerge.js';
 
 // 에이전트 머지 래퍼(PR 2/3) — 오퍼레이터 쪽 판정·gh 호출. 설계·security F3 는 스레드 3deac356.
@@ -452,6 +452,82 @@ describe('turnMerge', () => {
       expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code, bad).toBe('ci_not_green');
     }
     expect(ghCalls().filter((c) => c === 'pr merge')).toEqual([]);
+  });
+
+  describe('이름별 최신 실행만 센다 (homelab #219)', () => {
+    const at = (name: string, conclusion: string | null, startedAt: string, extra: Record<string, unknown> = {}) =>
+      ({ __typename: 'CheckRun', name, workflowName: 'PR guard', status: conclusion ? 'COMPLETED' : 'IN_PROGRESS', conclusion, startedAt, ...extra });
+
+    it('옛 실행이 빨강이고 최신이 초록이면 초록 — 실측 #219 모양(실행 셋, 옛 둘 FAILURE)', async () => {
+      pr = { ...pr, statusCheckRollup: [
+        at('commit-emails', 'FAILURE', '2026-10-19T09:06:40Z'), at('commit-emails', 'FAILURE', '2026-10-19T09:22:58Z'), at('commit-emails', 'SUCCESS', '2026-10-19T09:23:58Z'),
+        at('secrets', 'FAILURE', '2026-10-19T09:06:40Z'), at('secrets', 'FAILURE', '2026-10-19T09:22:59Z'), at('secrets', 'SUCCESS', '2026-10-19T09:23:58Z'),
+        at('pr-body', 'SUCCESS', '2026-10-19T09:06:40Z'), at('pr-body', 'SUCCESS', '2026-10-19T09:23:58Z'),
+      ] };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok()))).toMatchObject({ isError: false, body: { merged: true } });
+      expect(notGreenChecks(pr)).toEqual([]);
+    });
+
+    it('옛 실행이 초록이고 최신이 빨강이면 빨강 — 배열 순서와 무관하게 시각으로 고른다', async () => {
+      pr = { ...pr, statusCheckRollup: [at('check', 'FAILURE', '2026-10-19T09:30:00Z'), at('check', 'SUCCESS', '2026-10-19T09:00:00Z')] };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error).toMatchObject({ code: 'ci_not_green', message: 'not green: check' });
+      expect(ghCalls().filter((c) => c === 'pr merge')).toEqual([]);
+    });
+
+    it('최신이 아직 도는 중이면 초록이 아니다 — 옛 초록으로 통과하지 않는다', async () => {
+      pr = { ...pr, statusCheckRollup: [at('check', 'SUCCESS', '2026-10-19T09:00:00Z'), at('check', null, '2026-10-19T09:30:00Z')] };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('ci_not_green');
+      expect(ghCalls().filter((c) => c === 'pr merge')).toEqual([]);
+    });
+
+    it('취소된 실행은 최신으로 고르지 않는다 — 늦게 찍힌 취소가 앞 초록을 막지 않고, 앞 빨강을 풀지도 않는다', async () => {
+      pr = { ...pr, statusCheckRollup: [at('check', 'SUCCESS', '2026-10-19T09:00:00Z'), at('check', 'CANCELLED', '2026-10-19T09:30:00Z')] };
+      expect(notGreenChecks(pr)).toEqual([]);
+      pr = { ...pr, statusCheckRollup: [at('check', 'FAILURE', '2026-10-19T09:00:00Z'), at('check', 'CANCELLED', '2026-10-19T09:30:00Z')] };
+      expect(notGreenChecks(pr)).toEqual(['check']);
+    });
+
+    it('시각을 모르는 실행이 끼었거나 최신이 동률이면 모두 초록이어야 초록 — 대기 중(startedAt 없음)인 새 실행은 옛 초록으로 넘지 않는다', () => {
+      pr = { ...pr, statusCheckRollup: [at('check', 'SUCCESS', '2026-10-19T09:00:00Z'), { name: 'check', workflowName: 'PR guard', status: 'QUEUED', conclusion: '' }] };
+      expect(notGreenChecks(pr)).toEqual(['check']);
+      pr = { ...pr, statusCheckRollup: [at('check', 'FAILURE', '2026-10-19T09:00:00Z'), at('check', 'SUCCESS', '0001-01-01T00:00:00Z')] };
+      expect(notGreenChecks(pr)).toEqual(['check']);
+      pr = { ...pr, statusCheckRollup: [at('check', 'FAILURE', '2026-10-19T09:30:00Z'), at('check', 'SUCCESS', '2026-10-19T09:30:00Z')] };
+      expect(notGreenChecks(pr)).toEqual(['check']);
+    });
+
+    it('다른 workflow 의 같은 이름은 서로를 가리지 않는다', () => {
+      pr = { ...pr, statusCheckRollup: [at('test', 'FAILURE', '2026-10-19T09:00:00Z', { workflowName: 'A' }), at('test', 'SUCCESS', '2026-10-19T09:30:00Z', { workflowName: 'B' })] };
+      expect(notGreenChecks(pr)).toEqual(['test']);
+    });
+
+    it('UNSTABLE 길도 같다 — 필수 체크의 옛 빨강은 무시, 비필수의 최신 빨강만 ignoredChecks', async () => {
+      pr = { ...pr, mergeStateStatus: 'UNSTABLE', statusCheckRollup: [at('test', 'SUCCESS', '2026-10-19T09:30:00Z'), at('lint', 'FAILURE', '2026-10-19T09:30:00Z')] };
+      const node = (name: string, conclusion: string, startedAt: string, isRequired: boolean) =>
+        ({ __typename: 'CheckRun', name, status: 'COMPLETED', conclusion, startedAt, checkSuite: { workflowRun: { workflow: { name: 'PR guard' } } }, isRequired });
+      required = { oid: SHA, nodes: [
+        node('test', 'FAILURE', '2026-10-19T09:00:00Z', true), node('test', 'SUCCESS', '2026-10-19T09:30:00Z', true),
+        node('lint', 'SUCCESS', '2026-10-19T09:00:00Z', false), node('lint', 'FAILURE', '2026-10-19T09:30:00Z', false),
+      ] };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok()))).toMatchObject({ isError: false, body: { merged: true, ignoredChecks: ['lint'] } });
+      // 필수의 최신이 빨강이면 거절.
+      required = { oid: SHA, nodes: [node('test', 'SUCCESS', '2026-10-19T09:00:00Z', true), node('test', 'FAILURE', '2026-10-19T09:30:00Z', true)] };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error).toMatchObject({ code: 'ci_not_green', message: 'required checks not green: test' });
+    });
+
+    it('parseRequiredChecks 는 workflow 이름과 시각(status-context 는 createdAt)을 gh pr view 모양으로 옮긴다', () => {
+      const rc = parseRequiredChecks(JSON.stringify({ data: { repository: { pullRequest: { commits: { nodes: [{ commit: { oid: SHA, statusCheckRollup: { contexts: { nodes: [
+        { __typename: 'CheckRun', name: 't', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2026-10-19T09:00:00Z', checkSuite: { workflowRun: { workflow: { name: 'CI' } } }, isRequired: true },
+        { __typename: 'CheckRun', name: 'ext', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2026-10-19T09:00:00Z', checkSuite: { workflowRun: null }, isRequired: false },
+        { __typename: 'StatusContext', context: 'ci/legacy', state: 'SUCCESS', createdAt: '2026-10-19T08:00:00Z', isRequired: false },
+      ] } } } }] } } } } }));
+      expect(rc!.checks).toEqual([
+        { name: 't', status: 'COMPLETED', conclusion: 'SUCCESS', workflowName: 'CI', startedAt: '2026-10-19T09:00:00Z', isRequired: true },
+        { name: 'ext', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2026-10-19T09:00:00Z', isRequired: false },
+        { context: 'ci/legacy', state: 'SUCCESS', startedAt: '2026-10-19T08:00:00Z', isRequired: false },
+      ]);
+    });
   });
 
   it('operator.json merge.ghUser 의 계정 토큰을 GH_TOKEN 으로 준다 — auth token 호출 자체는 토큰 없이', async () => {
