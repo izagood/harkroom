@@ -92,6 +92,8 @@ export async function can(
   if (cap === 'api.call') return false;
   // `tool.allow` 도 같다 — 채널·규칙 정확 일치만 보는 `permissionRequests.ts::toolAllowsFor` 가 판정한다(스레드 f61af808).
   if (cap === 'tool.allow') return false;
+  // `member.reset_password` 는 역할로만 — grant 를 보지 않는다(jaebin D3 「관리자만」). 줄 수도 없다(grantRoutes).
+  if (cap === 'member.reset_password') return actor.role === 'owner' || actor.role === 'admin';
   if (target && await isOwnerOf(pool, actor.id, target)) return true;
   // guest 는 기본 capability 가 없다 — 외부인을 채널 하나에만 들이는 자리다(스펙 §6, v2).
   if (actor.role !== 'guest' && MEMBER_DEFAULT_CAPABILITIES.includes(cap)) return true;

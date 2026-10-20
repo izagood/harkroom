@@ -9,6 +9,7 @@ import { serverVersion } from './version.js';
 import { channelVisibleSql } from './services/channels.js';
 import { registerAuth } from './auth/plugin.js';
 import { registerAuthRoutes } from './routes/authRoutes.js';
+import { registerPasswordResetRoutes } from './routes/passwordResetRoutes.js';
 import { registerAccountRoutes } from './routes/accountRoutes.js';
 import { registerGrantRoutes } from './routes/grantRoutes.js';
 import { registerConnectorRoutes } from './routes/connectorRoutes.js';
@@ -92,12 +93,18 @@ const DEFAULT_RATE_LIMITS: Record<RateLimitName, RateLimitRule> = {
   // 첨부는 크기 제한(25MB)만으로 부족하다 — 그건 **한 번의** 업로드만 막고, 반복하면 디스크가
   // 조용히 찬다. 분당 20건이면 사람의 정상 사용(스크린샷 몇 장)에는 걸리지 않는다.
   upload: { windowMs: 60_000, max: 20 },
+  // 비밀번호 재설정 코드(130). 인증 없는 표면이라 주소 단위로 좁히고(`passwordReset`), 로그인 ID 단위로도
+  // 센다(`passwordResetAccount`, 핸들러 안 — 성공하면 지운다). 코드는 2^59 공간이라 맞히기는 리밋 없이도
+  // 비현실적이지만, Argon2 를 도는 표면이라 CPU 소진을 막는다.
+  passwordReset: { windowMs: 15 * 60_000, max: 10 },
+  passwordResetAccount: { windowMs: 15 * 60_000, max: 10 },
 };
 
-type RateLimitName = 'login' | 'loginAccountIp' | 'loginAccount' | 'signup' | 'ticket' | 'upload';
+type RateLimitName = 'login' | 'loginAccountIp' | 'loginAccount' | 'signup' | 'ticket' | 'upload'
+  | 'passwordReset' | 'passwordResetAccount';
 
 /** 어떤 경로에 어떤 리밋을 적용하는가. 인증 표면만 좁힌다 — 발화·조회는 건드리지 않는다. */
-const LIMITED_ROUTES: { method: string; url: string; rule: Exclude<RateLimitName, 'loginAccount' | 'loginAccountIp'> }[] = [
+const LIMITED_ROUTES: { method: string; url: string; rule: Exclude<RateLimitName, 'loginAccount' | 'loginAccountIp' | 'passwordResetAccount'> }[] = [
   { method: 'POST', url: '/auth/login', rule: 'login' },
   { method: 'POST', url: '/auth/register', rule: 'signup' },
   { method: 'POST', url: '/bootstrap', rule: 'signup' },
@@ -107,6 +114,7 @@ const LIMITED_ROUTES: { method: string; url: string; rule: Exclude<RateLimitName
   { method: 'POST', url: '/claim', rule: 'signup' },
   { method: 'POST', url: '/ws-ticket', rule: 'ticket' },
   { method: 'POST', url: '/uploads', rule: 'upload' },
+  { method: 'POST', url: '/auth/password-reset', rule: 'passwordReset' },
 ];
 
 export interface ServerDeps {
@@ -602,6 +610,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await registerAuthRoutes(app, deps.pool, {
     limiter, loginAccountRule: rules.loginAccount, loginAccountIpRule: rules.loginAccountIp,
   });
+  await registerPasswordResetRoutes(app, deps.pool, { limiter, accountRule: rules.passwordResetAccount });
   // 오퍼레이터 허브(스펙 2026-09-20 §4)를 여기서 만든다 — 계정 라우트가 배정 거절 사유를 여기서
   // 읽는다. 라우트 등록은 아래(릴레이 뒤)다: 허브는 소켓이 붙기 전엔 빈 표일 뿐이라 순서가 무관하다.
   const operatorHub = createOperatorHub();

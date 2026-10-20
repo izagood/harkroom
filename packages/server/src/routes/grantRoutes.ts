@@ -145,6 +145,10 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
     if (capability !== 'api.call' && (parsed.data.limits !== undefined || parsed.data.delegateDepth !== undefined || parsed.data.writeNeedsHumanCause !== undefined)) {
       return reply.code(400).send({ error: { code: 'bad_request', message: 'limits·delegateDepth·writeNeedsHumanCause 는 api.call 전용이다' } });
     }
+    // 역할로만 갖는 것(jaebin D3 「관리자만」) — 줄로 넓히지 않는다. `can()` 도 grant 를 보지 않는다.
+    if (capability === 'member.reset_password') {
+      return reply.code(400).send({ error: { code: 'not_grantable', message: 'member.reset_password 는 owner·admin 역할로만 갖는다' } });
+    }
     if (capability === 'api.call') {
       const check = await checkApiGrant(pool, req, id, scope, parsed.data);
       if (!check.ok) return reply.code(check.status).send({ error: { code: check.code, message: check.message } });

@@ -13,7 +13,7 @@ import { getHandleGroupByHandle } from '../services/handleGroups.js';
 import { endStepUp, openStepUp } from '../services/stepUp.js';
 import { OncePerWindow } from '../services/secretAccess.js';
 
-const SESSION_TTL_DAYS = 14;
+export const SESSION_TTL_DAYS = 14;
 
 /** 다시 확인(step-up) 시도 상한 — 계정마다. 계정 삭제의 비밀번호 재확인(`ACCOUNT_DELETE_RULE`)과 같은 값이다. */
 export const STEP_UP_RULE: RateLimitRule = { windowMs: 15 * 60_000, max: 10 };
@@ -31,6 +31,12 @@ const credentials = z.object({
   displayName: z.string().min(1).max(64),
   password: z.string().min(8).max(128),
 });
+
+/** 비밀번호 규칙 — 가입·변경·재설정 코드가 **같은 것**을 쓴다. 여러 곳에 다시 적으면 갈린다. */
+export const passwordRule = credentials.shape.password;
+
+/** 계정 단위 리밋 키에 쓰는 login_id 정규화 — 재설정(`passwordResetRoutes.ts`)도 같은 규칙으로 센다. */
+export { normalizeLoginKey };
 
 export interface AuthRouteOpts {
   /** 계정 단위 로그인 상한(`DEFAULT_RATE_LIMITS.loginAccount*`). 주소 단위 리밋과 같은 저장소를 쓴다. */
