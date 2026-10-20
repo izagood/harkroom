@@ -14,6 +14,7 @@ import { AgentTower } from './AgentTower';
 import { Notice } from './Notice';
 import { AttentionStack } from './AuthWarningCards';
 import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
+import { PasswordResetNoticeBanner } from './PasswordReset';
 import { ServerCompatBanner } from './ServerCompatBanner';
 import { ConnectionBanner } from './ConnectionBanner';
 import { UpdateToast } from './UpdateToast';
@@ -387,6 +388,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
             투영 띠와 나란히 두는 이유: 둘 다 "지금 무언가 돌지 않는다"는 말이고, 자리를
             갈라 두면 사람이 화면의 두 곳을 봐야 한다. */}
         <ServerCompatBanner onOpenSettings={onOpenSettings} />
+        {/* 내 계정에 재설정 코드가 발급됐다는 알림(R7) — 확인할 때까지 남는다. */}
+        <PasswordResetNoticeBanner />
         <div className="relative flex flex-1 overflow-hidden">
           {/* 관문 카드·실패 토스트는 본문 위에 **겹쳐** 그린다(2026-10-09 A안). 전에는 헤더 아래
               흐름 안의 띠라 뜰 때마다 화면 전체가 한 줄 내려갔다. 채널 안이 아니라 여기인 이유는

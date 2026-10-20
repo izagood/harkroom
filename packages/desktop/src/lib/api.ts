@@ -9,6 +9,12 @@ import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
 /** `POST /attachments/:id/preview` 의 답. `latestTitle` 은 091(#1065) 서버부터 싣는다. */
 /** PUT 아바타에 싣는 사진 맞추기의 원본(첨부 id)과 고른 자리. */
+/** `GET /auth/password-reset-notices` 의 한 줄(서버 #1409). */
+export interface PasswordResetNotice {
+  id: string; issuedById: string; issuedAt: string; expiresAt: string;
+  usedAt: string | null; revokedAt: string | null;
+}
+
 export interface AvatarSourceRef { attachmentId: string; crop: AvatarCrop }
 
 /**
@@ -861,6 +867,28 @@ export class ApiClient {
 
   markRead(ids: number[]): Promise<void> { return this.req('POST', '/inbox/read', { ids }); }
   createDm(accountIds: string[]): Promise<ChannelRow> { return this.req('POST', '/dms', { accountIds }); }
+  /**
+   * 비밀번호 재설정 코드(서버 #1409, 0.4.122~). 코드는 응답에 한 번만 실린다 — 저장하지 않는다.
+   * 발급은 세션 + step-up(`unlockSecrets`) 뒤에만 된다(403 `step_up_required`).
+   */
+  issuePasswordResetCode(accountId: string): Promise<{ code: string; expiresAt: string }> {
+    return this.req('POST', `/accounts/${encodeURIComponent(accountId)}/password-reset-code`);
+  }
+  /** 살아 있는 코드를 거둔다 — 멱등. */
+  revokePasswordResetCode(accountId: string): Promise<void> {
+    return this.req('DELETE', `/accounts/${encodeURIComponent(accountId)}/password-reset-code`);
+  }
+  /** 코드로 비밀번호를 바꾸고 새 세션을 받는다. 실패는 하나(`400 invalid_reset_code`)다. */
+  resetPasswordWithCode(loginId: string, code: string, newPassword: string): Promise<{ token: string }> {
+    return this.req('POST', '/auth/password-reset', { loginId, code, newPassword });
+  }
+  /** 내게 발급된 재설정 코드 중 아직 확인하지 않은 것. 발급자는 id 로만 온다. */
+  passwordResetNotices(): Promise<{ notices: PasswordResetNotice[] }> {
+    return this.req('GET', '/auth/password-reset-notices');
+  }
+  ackPasswordResetNotices(ids: string[]): Promise<void> {
+    return this.req('POST', '/auth/password-reset-notices/ack', { ids });
+  }
   /** 초대 토큰을 발급한다 — admin 전용. 토큰은 생성 직후 한 번만 볼 수 있다. */
   createInvite(): Promise<string> {
     return (this.req<{ token: string }>('POST', '/invites')).then((r) => r.token);

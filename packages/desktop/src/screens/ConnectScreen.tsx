@@ -6,6 +6,7 @@ import { Logo } from '../components/Logo';
 import { RecoveryKeyStep } from '../components/RecoveryKeyStep';
 import { ConnectUpdateBanner } from '../components/ConnectUpdateBanner';
 import { lastWorkspaceUrlStorage } from '../lib/prefs';
+import { ForgotPasswordGuide, ResetWithCodeForm } from '../components/PasswordReset';
 import { useT } from '../i18n/useT';
 
 /** 로그인이 성공했을 때 위로 올려 보내는 것. 두 모드가 같은 값을 다른 곳으로 보낸다. */
@@ -66,6 +67,11 @@ export function ConnectScreen(props: ConnectScreenProps) {
     createOnly ? 'create' : 'signin',
   );
   const [error, setError] = useState<string | null>(initialError ?? null);
+  /**
+   * 비밀번호 되찾기(스레드 a6017542). `authMode` 와 따로 둔다 — 로그인 폼 위에 덮는 두 단계(안내 → 코드)일 뿐이라
+   * 로그인 제출·버튼 규칙을 건드리지 않는다. 안내 단계는 서버를 부르지 않는다(R2).
+   */
+  const [recover, setRecover] = useState<null | 'guide' | 'code'>(null);
   const [busy, setBusy] = useState(false);
 
   /**
@@ -241,6 +247,14 @@ export function ConnectScreen(props: ConnectScreenProps) {
   };
 
   const field = 'w-full rounded-row border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
+  /** 코드로 비밀번호를 바꾼 뒤의 로그인 — `submit` 의 뒷부분과 같은 길(토큰 싣기 → me → 주소 적기 → 올려 보내기). */
+  const signedInWithReset = async (api: ApiClient, token: string) => {
+    api.setToken(token);
+    const me = await api.me();
+    lastWorkspaceUrlStorage.save(api.baseUrl);
+    if (props.mode === 'add') await props.onAdded(api.baseUrl, token, me.id, me.handle);
+    else await props.onConnected(api.baseUrl, token, me.id, me.handle);
+  };
   // `add` 는 겹창 안에서 그려진다 — 화면 전체를 차지하는 껍데기는 겹창이 이미 갖고 있고,
   // 여기서 창 높이(`h-full`)를 또 두면 모달 안에 빈 화면 하나가 더 생긴다.
   //
@@ -250,6 +264,23 @@ export function ConnectScreen(props: ConnectScreenProps) {
   const shell = adding
     ? 'flex items-center justify-center'
     : 'flex h-full items-center justify-center bg-surface-sunken';
+  if (recover) {
+    return (
+      <div className={shell}>
+        <div className="w-80 space-y-3 rounded-card bg-surface-raised p-6 shadow-float">
+          <p className="truncate font-mono text-meta text-fg-subtle">{baseUrl}</p>
+          {recover === 'guide'
+            ? <ForgotPasswordGuide onHaveCode={() => setRecover('code')} onBack={() => setRecover(null)} />
+            : <ResetWithCodeForm baseUrl={baseUrl} initialLoginId={loginId} onSignedIn={signedInWithReset} onBack={() => setRecover('guide')} />}
+          {props.mode === 'add' && (
+            <button type="button" className="w-full rounded-row border border-border py-1.5 text-meta font-medium hover:bg-surface" onClick={props.onCancel}>
+              {t('connect.cancel')}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={shell}>
       <form
@@ -408,7 +439,17 @@ export function ConnectScreen(props: ConnectScreenProps) {
           </label>
         )}
         <label className="block text-meta font-medium">
-          {t('connect.field.password')}
+          <span className="flex items-baseline justify-between">
+            {t('connect.field.password')}
+            {/* 링크는 비밀번호 라벨 오른쪽(시안 ①) — 아래 「다른 길」 목록에 넣으면 초대·관리자 만들기 사이에 묻힌다.
+                로그인에서만 보인다. 실패해도 자리·오류 문구는 그대로다(계정 유무를 말하지 않는다). */}
+            {authMode === 'signin' && (
+              <button type="button" data-testid="connect-forgot" className="text-meta font-normal text-accent hover:underline"
+                onClick={() => { setError(null); setRecover('guide'); }}>
+                {t('connect.alt.forgot')}
+              </button>
+            )}
+          </span>
           <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </label>
         </>

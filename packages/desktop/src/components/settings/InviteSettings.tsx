@@ -6,6 +6,7 @@ import { DirectoryRow } from '../Directory';
 import { hasCapability } from '../../lib/capabilities';
 import { SettingsColumns, SettingsGrid, SettingsGroup, SettingsPage } from './primitives';
 import { errorText } from '../../lib/errorText';
+import { canIssueResetCode, ResetCodeButton, resetSupported } from '../PasswordReset';
 
 /**
  * 설정 › 워크스페이스 › **멤버와 초대**(UX ⑥b-5, designer 사양 ⑥: "Invite + Directory 의 사람 목록").
@@ -27,6 +28,8 @@ export function InviteSettings() {
   const t = useT();
   const me = useActiveStore((s) => s.me);
   const accounts = useActiveStore((s) => s.accounts);
+  // 재설정 코드(#1409)는 서버 판과 capability 둘 다로 연다 — 옛 서버엔 버튼이 없다(하한을 올리지 않는다).
+  const resetOn = resetSupported(useActiveStore((s) => s.serverVersion?.version ?? null));
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -91,7 +94,8 @@ export function InviteSettings() {
                 )}
                 {people.length === 0
                   ? <p className="px-2 py-1 text-fg-subtle">{load.kind === 'loading' ? t('directory.loading') : t('members.list.empty')}</p>
-                  : <SettingsGrid as="ul" className="gap-y-0">{people.map((a) => <DirectoryRow key={a.id} account={a} showKind={false} />)}</SettingsGrid>}
+                  : <SettingsGrid as="ul" className="gap-y-0">{people.map((a) => <DirectoryRow key={a.id} account={a} showKind={false}
+                    actions={resetOn && canIssueResetCode(me, a) ? <ResetCodeButton account={a} /> : null} />)}</SettingsGrid>}
               </div>
             </SettingsGroup>
           </>

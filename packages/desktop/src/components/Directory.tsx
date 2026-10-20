@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Overlay } from './Overlay';
 import type { AccountView } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
@@ -174,8 +174,10 @@ export function Directory({ open, onClose, accountId }: Props) {
  * 때문이다. 줄을 거기서 다시 짜면 비활성·낡은 presence 같은 규칙(#443)이 한쪽에서만 산다.
  * 보여 주는 것의 경계(`AccountView` 가 주는 것만)는 위 `Directory` 주석 그대로다.
  */
-export function DirectoryRow({ account: a, selected: isSelected = false, showKind = true }: {
+export function DirectoryRow({ account: a, selected: isSelected = false, showKind = true, actions }: {
   account: AccountView; selected?: boolean;
+  /** 줄 끝에 붙는 동작(멤버와 초대의 「재설정 코드」 등). 없으면 아무것도 그리지 않는다. */
+  actions?: ReactNode;
   /** 종류 칩(`HUMAN`/`AGENT`). 사람만 싣는 목록(멤버와 초대)에서는 모든 줄에 같은 칩이 서서 소음이다. */
   showKind?: boolean;
 }) {
@@ -239,6 +241,7 @@ export function DirectoryRow({ account: a, selected: isSelected = false, showKin
         {t('directory.disabled')}
       </span>
     )}
+    {actions && <span className="ml-auto flex shrink-0 items-center gap-1">{actions}</span>}
   </li>
   );
 }
