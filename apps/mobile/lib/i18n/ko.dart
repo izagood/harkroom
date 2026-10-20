@@ -65,7 +65,7 @@ class StringsKo implements Strings {
   @override
   String get pwresetGuideBody => '이 커뮤니티의 비밀번호는 관리자가 발급하는 재설정 코드로 바꾼다.';
   @override
-  String get pwresetGuideStep1 => '1. 관리자에게 로그인 ID를 알려 주고 코드를 달라고 한다.';
+  String get pwresetGuideStep1 => '1. 관리자에게 로그인 아이디를 알려 주고 코드를 달라고 한다.';
   @override
   String get pwresetGuideStep2 => '2. 코드를 받으면 아래 버튼을 눌러 새 비밀번호를 정한다.';
   @override
@@ -96,6 +96,8 @@ class StringsKo implements Strings {
   String get pwresetFormMismatch => '두 비밀번호가 다르다.';
   @override
   String get pwresetFormSubmit => '바꾸고 로그인';
+  @override
+  String get pwresetFormSubmitting => '바꾸는 중…';
   @override
   String get pwresetFormInvalid => '코드가 맞지 않거나 이미 쓴 코드거나 만료됐다. 관리자에게 새 코드를 받아라.';
   @override

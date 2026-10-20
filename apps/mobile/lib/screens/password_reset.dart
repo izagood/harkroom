@@ -252,7 +252,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
               FilledButton(
                 key: const Key('pwreset-submit'),
                 onPressed: _blocked ? null : _submit,
-                child: Text(_busy ? t.commonLoading : t.pwresetFormSubmit),
+                child: Text(_busy ? t.pwresetFormSubmitting : t.pwresetFormSubmit),
               ),
             ],
           ),

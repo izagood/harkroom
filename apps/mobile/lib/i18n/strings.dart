@@ -910,6 +910,7 @@ abstract class Strings {
   String get pwresetFormTooLong;
   String get pwresetFormMismatch;
   String get pwresetFormSubmit;
+  String get pwresetFormSubmitting;
   String get pwresetFormInvalid;
   String get pwresetFormLimited;
   String get pwresetFormUnsupported;
@@ -1486,6 +1487,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'pwresetFormTooLong': s.pwresetFormTooLong,
       'pwresetFormMismatch': s.pwresetFormMismatch,
       'pwresetFormSubmit': s.pwresetFormSubmit,
+      'pwresetFormSubmitting': s.pwresetFormSubmitting,
       'pwresetFormInvalid': s.pwresetFormInvalid,
       'pwresetFormLimited': s.pwresetFormLimited,
       'pwresetFormUnsupported': s.pwresetFormUnsupported,

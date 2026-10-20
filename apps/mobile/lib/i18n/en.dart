@@ -98,6 +98,8 @@ class StringsEn implements Strings {
   @override
   String get pwresetFormSubmit => 'Change and sign in';
   @override
+  String get pwresetFormSubmitting => 'Changing…';
+  @override
   String get pwresetFormInvalid => 'The code is wrong, already used, or expired. Ask an admin for a new one.';
   @override
   String get pwresetFormLimited => 'Too many attempts. Try again later.';
