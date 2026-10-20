@@ -5,6 +5,7 @@ import '../i18n/i18n.dart';
 import '../session/session_store.dart';
 import '../state/app_scope.dart';
 import 'community_screens.dart';
+import 'password_reset.dart';
 
 /// 아이디·비밀번호를 받는다. 서버 주소는 이미 정해진 뒤다(`ConnectScreen`).
 class LoginScreen extends StatefulWidget {
@@ -101,6 +102,17 @@ class _LoginScreenState extends State<LoginScreen> {
                 textInputAction: TextInputAction.go,
                 onSubmitted: (_) => _submit(),
                 decoration: InputDecoration(labelText: t.loginPasswordLabel),
+              ),
+              // 링크는 비밀번호 칸 **아래 오른쪽**(시안 M1 — 폰은 라벨 줄이 좁다). 탭 영역 44pt.
+              // 칸 뒤·로그인 앞이라 포커스 순서도 데스크톱(#1410 s1)과 같다.
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  key: const Key('login-forgot'),
+                  style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+                  onPressed: _busy ? null : () => showForgotPasswordSheet(context, loginId: _loginId.text.trim()),
+                  child: Text(t.loginForgot),
+                ),
               ),
               if (errorKey != null)
                 Padding(

@@ -725,7 +725,48 @@ class AppState extends ChangeNotifier {
   Future<void> login(String loginId, String password) async {
     final api = _api;
     if (api == null || baseUrl == null) throw StateError('서버 주소가 없다');
-    final token = await api.login(loginId, password);
+    await _signInWith(await api.login(loginId, password));
+  }
+
+  /// 관리자가 발급한 재설정 코드로 비밀번호를 바꾸고 곧바로 들어간다(스레드 a6017542, 서버 #1409).
+  /// 서버가 0.4.122 보다 옛 판이면 라우트를 부르지 않고 [ResetUnsupported] 를 던진다 — 옛 서버의 404 가
+  /// 「코드가 틀렸다」로 읽히지 않게.
+  Future<void> resetPasswordWithCode(String loginId, String code, String newPassword) async {
+    final api = _api;
+    if (api == null || baseUrl == null) throw StateError('서버 주소가 없다');
+    final version = await api.serverVersion().catchError((Object _) => null);
+    if (version != null && !versionAtLeast(version, passwordResetSince)) throw const ResetUnsupported();
+    await _signInWith(await api.resetPasswordWithCode(loginId, code, newPassword));
+  }
+
+  /// 내게 발급된 재설정 코드 알림(R7). 전부 들고 있고, 화면이 전부 그린다.
+  List<PasswordResetNotice> passwordResetNotices = const [];
+
+  Future<void> _loadPasswordResetNotices() async {
+    final api = _api;
+    if (api == null) return;
+    try {
+      passwordResetNotices = await api.passwordResetNotices();
+    } on Object {
+      // 옛 서버(404)·일시 실패 — 띠를 안 그릴 이유일 뿐이다.
+      passwordResetNotices = const [];
+    }
+    notifyListeners();
+  }
+
+  /// [ids] 는 **화면에 보인 것만**(security #1410 F1). 그 사이 새로 온 알림은 남는다.
+  Future<void> ackPasswordResetNotices(List<String> ids) async {
+    passwordResetNotices = passwordResetNotices.where((n) => !ids.contains(n.id)).toList(growable: false);
+    notifyListeners();
+    try {
+      await _api?.ackPasswordResetNotices(ids);
+    } on Object {
+      // 못 내렸으면 다음 기동에 다시 보인다 — 숨긴 것을 되살리지는 않는다.
+    }
+  }
+
+  Future<void> _signInWith(String token) async {
+    final api = _api!;
     api.token = token;
     final who = await api.me();
 
@@ -867,6 +908,7 @@ class AppState extends ChangeNotifier {
         ..clear()
         ..addEntries((results[3] as List<ChannelPref>).map((p) => MapEntry(p.channelId, p)));
       me = who;
+      unawaited(_loadPasswordResetNotices());
       channels
         ..clear()
         ..addAll(results[0] as List<ChannelRow>);
@@ -2633,4 +2675,23 @@ class _BoardPending {
 
   final InboxThreadState? state;
   int? settledBefore;
+}
+
+/// 재설정 코드가 들어간 서버 릴리스(#1409).
+const passwordResetSince = '0.4.122';
+
+/// 서버가 아직 재설정 코드를 모른다.
+class ResetUnsupported implements Exception {
+  const ResetUnsupported();
+}
+
+/// `X.Y.Z` 만 견준다. 모양이 다르면 「모른다」로 보고 막지 않는다(서버가 판정한다).
+bool versionAtLeast(String version, String min) {
+  final a = version.split('.').map(int.tryParse).toList();
+  final b = min.split('.').map(int.tryParse).toList();
+  if (a.length != 3 || a.contains(null)) return true;
+  for (var i = 0; i < 3; i++) {
+    if (a[i]! != b[i]!) return a[i]! > b[i]!;
+  }
+  return true;
 }

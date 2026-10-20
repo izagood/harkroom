@@ -147,6 +147,29 @@ class ApiClient {
     await _send('DELETE', '/push/devices/current');
   }
 
+  /// 재설정 코드로 비밀번호를 바꾸고 새 세션 토큰을 받는다(서버 #1409, 0.4.122~). 실패는 하나(`400 invalid_reset_code`)다.
+  Future<String> resetPasswordWithCode(String loginId, String code, String newPassword) async {
+    final body = _obj(await _send('POST', '/auth/password-reset',
+        body: {'loginId': loginId, 'code': code, 'newPassword': newPassword}));
+    final token = body['token'];
+    if (token is! String || token.isEmpty) {
+      throw ApiError(200, 'malformed_login', '재설정 응답에 토큰이 없다', body);
+    }
+    return token;
+  }
+
+  /// 내게 발급된 재설정 코드 중 아직 확인하지 않은 것.
+  Future<List<PasswordResetNotice>> passwordResetNotices() async =>
+      _list(_obj(await _send('GET', '/auth/password-reset-notices'))['notices'])
+          .map(PasswordResetNotice.fromJson)
+          .whereType<PasswordResetNotice>()
+          .toList(growable: false);
+
+  /// 알림을 확인했다 — **화면에 보인 id 만** 준다(security #1410 F1).
+  Future<void> ackPasswordResetNotices(List<String> ids) async {
+    await _send('POST', '/auth/password-reset-notices/ack', body: {'ids': ids});
+  }
+
   /// 서버 릴리스 번호(`/healthz` 의 `version`). 인증 없이 읽힌다. 모르면 `null`.
   Future<String?> serverVersion() async {
     final v = _obj(await _send('GET', '/healthz'))['version'];

@@ -58,6 +58,68 @@ class StringsEn implements Strings {
   @override
   String get loginErrorRejected => 'That login ID or password is not right.';
 
+  // 비밀번호 재설정 코드(서버 #1409).
+  @override
+  String get loginForgot => 'Forgot your password?';
+  @override
+  String get pwresetGuideTitle => 'Recover your password';
+  @override
+  String get pwresetGuideBody => 'In this community, passwords are reset with a reset code that an admin issues.';
+  @override
+  String get pwresetGuideStep1 => '1. Tell an admin your login ID and ask for a reset code.';
+  @override
+  String get pwresetGuideStep2 => '2. Once you have the code, choose a new password.';
+  @override
+  String get pwresetGuideNote => 'A code works once, for 30 minutes. The admin never sees your new password.';
+  @override
+  String get pwresetGuideHaveCode => 'I have a reset code';
+  @override
+  String get pwresetGuideClose => 'Close';
+  @override
+  String get pwresetGuideNoAdminSummary => 'No admin, or the admin is locked out?';
+  @override
+  String get pwresetGuideNoAdminBody => 'Whoever runs the server has to reset it on the server host. Hosted communities: use password recovery on the service that created your community.';
+  @override
+  String get pwresetFormTitle => 'New password';
+  @override
+  String get pwresetFormCode => 'Reset code';
+  @override
+  String get pwresetFormCodeHint => 'Paste is fine · letter case doesn’t matter';
+  @override
+  String get pwresetFormNewPassword => 'New password';
+  @override
+  String get pwresetFormConfirm => 'Confirm new password';
+  @override
+  String get pwresetFormTooShort => 'At least 8 characters.';
+  @override
+  String get pwresetFormTooLong => 'At most 128 characters.';
+  @override
+  String get pwresetFormMismatch => 'The two passwords don’t match.';
+  @override
+  String get pwresetFormSubmit => 'Change and sign in';
+  @override
+  String get pwresetFormSubmitting => 'Changing…';
+  @override
+  String get pwresetFormInvalid => 'The code is wrong, already used, or expired. Ask an admin for a new one.';
+  @override
+  String get pwresetFormLimited => 'Too many attempts. Try again later.';
+  @override
+  String get pwresetFormUnsupported => 'This server doesn’t support reset codes yet. Ask whoever runs it to update.';
+  @override
+  String get pwresetNoticeIssuedDetail => 'If you didn’t ask for it, tell the owner.';
+  @override
+  String get pwresetNoticeUsedDetail => 'All other devices were signed out.';
+  @override
+  String get pwresetNoticeUnknownAdmin => 'An admin';
+  @override
+  String get pwresetNoticeRevokedTag => '(revoked)';
+  @override
+  String get pwresetNoticeAck => 'Got it';
+  @override
+  String pwresetNoticeIssued(String by, String when) => '$by issued a password reset code for your account ($when).';
+  @override
+  String pwresetNoticeUsed(String by, String when) => 'Your password was changed with a reset code issued by $by ($when).';
+
   @override
   String get loginErrorUnreachable => 'Could not reach the server. Check the address and your connection.';
 
