@@ -57,6 +57,66 @@ class StringsKo implements Strings {
   @override
   String get loginErrorRejected => '로그인 아이디나 비밀번호가 맞지 않는다.';
 
+  // 비밀번호 재설정 코드(서버 #1409).
+  @override
+  String get loginForgot => '비밀번호를 잊었다면';
+  @override
+  String get pwresetGuideTitle => '비밀번호 되찾기';
+  @override
+  String get pwresetGuideBody => '이 커뮤니티의 비밀번호는 관리자가 발급하는 재설정 코드로 바꾼다.';
+  @override
+  String get pwresetGuideStep1 => '1. 관리자에게 로그인 ID를 알려 주고 코드를 달라고 한다.';
+  @override
+  String get pwresetGuideStep2 => '2. 코드를 받으면 아래 버튼을 눌러 새 비밀번호를 정한다.';
+  @override
+  String get pwresetGuideNote => '코드는 30분 동안 한 번만 쓸 수 있다. 관리자도 새 비밀번호는 보지 못한다.';
+  @override
+  String get pwresetGuideHaveCode => '재설정 코드가 있다';
+  @override
+  String get pwresetGuideClose => '닫기';
+  @override
+  String get pwresetGuideNoAdminSummary => '관리자가 없거나 관리자 자신이 잠겼다면';
+  @override
+  String get pwresetGuideNoAdminBody => '서버를 운영하는 사람이 서버 호스트에서 재설정해야 한다. 호스팅 커뮤니티라면 커뮤니티를 만들어 준 서비스의 비밀번호 복구를 쓴다.';
+  @override
+  String get pwresetFormTitle => '새 비밀번호';
+  @override
+  String get pwresetFormCode => '재설정 코드';
+  @override
+  String get pwresetFormCodeHint => '붙여넣기 가능 · 대소문자 상관없음';
+  @override
+  String get pwresetFormNewPassword => '새 비밀번호';
+  @override
+  String get pwresetFormConfirm => '새 비밀번호 확인';
+  @override
+  String get pwresetFormTooShort => '8자 이상이어야 한다.';
+  @override
+  String get pwresetFormTooLong => '128자를 넘을 수 없다.';
+  @override
+  String get pwresetFormMismatch => '두 비밀번호가 다르다.';
+  @override
+  String get pwresetFormSubmit => '바꾸고 로그인';
+  @override
+  String get pwresetFormInvalid => '코드가 맞지 않거나 이미 쓴 코드거나 만료됐다. 관리자에게 새 코드를 받아라.';
+  @override
+  String get pwresetFormLimited => '시도가 너무 많다. 잠시 뒤에 다시 해 봐라.';
+  @override
+  String get pwresetFormUnsupported => '이 서버는 아직 재설정 코드를 지원하지 않는다. 서버를 운영하는 사람에게 업데이트를 부탁해라.';
+  @override
+  String get pwresetNoticeIssuedDetail => '요청한 적이 없다면 소유자에게 알려라.';
+  @override
+  String get pwresetNoticeUsedDetail => '다른 기기의 로그인은 모두 끊었다.';
+  @override
+  String get pwresetNoticeUnknownAdmin => '관리자';
+  @override
+  String get pwresetNoticeRevokedTag => '(거둠)';
+  @override
+  String get pwresetNoticeAck => '확인';
+  @override
+  String pwresetNoticeIssued(String by, String when) => '$by이(가) 내 계정의 비밀번호 재설정 코드를 발급했다($when).';
+  @override
+  String pwresetNoticeUsed(String by, String when) => '$by이(가) 발급한 재설정 코드로 비밀번호를 바꿨다($when).';
+
   @override
   String get loginErrorUnreachable => '서버에 연결하지 못했다. 주소와 네트워크를 확인해 달라.';
 

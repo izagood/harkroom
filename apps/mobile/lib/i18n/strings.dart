@@ -890,6 +890,38 @@ abstract class Strings {
   /// 서버가 자격증명을 거절했다. **무엇이 틀렸는지 말하지 않는다** — 아이디가 있는지 없는지를 알려 주면 계정 목록을 훑을 수 있다.
   String get loginErrorRejected;
 
+  // ── 비밀번호 재설정 코드(스레드 a6017542, 서버 #1409) ──────────────────────
+  String get loginForgot;
+  String get pwresetGuideTitle;
+  String get pwresetGuideBody;
+  String get pwresetGuideStep1;
+  String get pwresetGuideStep2;
+  String get pwresetGuideNote;
+  String get pwresetGuideHaveCode;
+  String get pwresetGuideClose;
+  String get pwresetGuideNoAdminSummary;
+  String get pwresetGuideNoAdminBody;
+  String get pwresetFormTitle;
+  String get pwresetFormCode;
+  String get pwresetFormCodeHint;
+  String get pwresetFormNewPassword;
+  String get pwresetFormConfirm;
+  String get pwresetFormTooShort;
+  String get pwresetFormTooLong;
+  String get pwresetFormMismatch;
+  String get pwresetFormSubmit;
+  String get pwresetFormInvalid;
+  String get pwresetFormLimited;
+  String get pwresetFormUnsupported;
+  String get pwresetNoticeIssuedDetail;
+  String get pwresetNoticeUsedDetail;
+  String get pwresetNoticeUnknownAdmin;
+  String get pwresetNoticeRevokedTag;
+  String get pwresetNoticeAck;
+  String pwresetNoticeIssued(String by, String when);
+  String pwresetNoticeUsed(String by, String when);
+
+
   /// 서버에 닿지 못했다. 자격증명 문제와 **갈라서** 말한다 — 사람이 할 일이 다르다.
   String get loginErrorUnreachable;
 
@@ -1435,6 +1467,35 @@ Map<String, String> stringsToMap(Strings s) => {
       'loginPasswordLabel': s.loginPasswordLabel,
       'loginSubmit': s.loginSubmit,
       'loginErrorRejected': s.loginErrorRejected,
+      'loginForgot': s.loginForgot,
+      'pwresetGuideTitle': s.pwresetGuideTitle,
+      'pwresetGuideBody': s.pwresetGuideBody,
+      'pwresetGuideStep1': s.pwresetGuideStep1,
+      'pwresetGuideStep2': s.pwresetGuideStep2,
+      'pwresetGuideNote': s.pwresetGuideNote,
+      'pwresetGuideHaveCode': s.pwresetGuideHaveCode,
+      'pwresetGuideClose': s.pwresetGuideClose,
+      'pwresetGuideNoAdminSummary': s.pwresetGuideNoAdminSummary,
+      'pwresetGuideNoAdminBody': s.pwresetGuideNoAdminBody,
+      'pwresetFormTitle': s.pwresetFormTitle,
+      'pwresetFormCode': s.pwresetFormCode,
+      'pwresetFormCodeHint': s.pwresetFormCodeHint,
+      'pwresetFormNewPassword': s.pwresetFormNewPassword,
+      'pwresetFormConfirm': s.pwresetFormConfirm,
+      'pwresetFormTooShort': s.pwresetFormTooShort,
+      'pwresetFormTooLong': s.pwresetFormTooLong,
+      'pwresetFormMismatch': s.pwresetFormMismatch,
+      'pwresetFormSubmit': s.pwresetFormSubmit,
+      'pwresetFormInvalid': s.pwresetFormInvalid,
+      'pwresetFormLimited': s.pwresetFormLimited,
+      'pwresetFormUnsupported': s.pwresetFormUnsupported,
+      'pwresetNoticeIssuedDetail': s.pwresetNoticeIssuedDetail,
+      'pwresetNoticeUsedDetail': s.pwresetNoticeUsedDetail,
+      'pwresetNoticeUnknownAdmin': s.pwresetNoticeUnknownAdmin,
+      'pwresetNoticeRevokedTag': s.pwresetNoticeRevokedTag,
+      'pwresetNoticeAck': s.pwresetNoticeAck,
+      'pwresetNoticeIssued': s.pwresetNoticeIssued('', ''),
+      'pwresetNoticeUsed': s.pwresetNoticeUsed('', ''),
       'loginErrorUnreachable': s.loginErrorUnreachable,
       'signOut': s.signOut,
       'channelsTitle': s.channelsTitle,

@@ -10,6 +10,7 @@ import 'community_screens.dart';
 import 'saved_screen.dart';
 import 'me_screen.dart';
 import 'message_list_screen.dart';
+import 'password_reset.dart';
 import 'tab_nav.dart';
 
 /// 채널 목록. 폰의 루트 화면이고, 여기서 채널을 **밀어 넣어** 연다(옆 패널이 아니다).
@@ -107,6 +108,8 @@ class ChannelListScreen extends StatelessWidget {
               // 위 여백 = 머리 + 끊김 띠 — 맨 위에서 첫 줄이 머리에 가리지 않는다.
               SliverToBoxAdapter(child: SizedBox(key: const Key('channel-list-top'), height: inset)),
               if (app.noticeKey != null) SliverToBoxAdapter(child: _Notice(messageKey: app.noticeKey!)),
+              // 내 계정에 발급된 재설정 코드 알림(R7) — 홈 탭에서만, 확인할 때까지 남는다.
+              if (!dms && app.passwordResetNotices.isNotEmpty) const SliverToBoxAdapter(child: PasswordResetNoticeBand()),
               if (!dms)
                 SliverToBoxAdapter(
                   child: ShortcutCards(newCount: rows.where((c) => (app.reads[c.id]?.unread ?? 0) > 0).length),

@@ -842,3 +842,24 @@ class SavedSummary {
   static SavedSummary fromJson(Map<String, Object?> j) =>
       SavedSummary(openCount: _int(j['openCount']), messageIds: _strList(j['messageIds']).toSet());
 }
+
+/// 내 계정에 발급된 비밀번호 재설정 코드 알림(서버 #1409, `GET /auth/password-reset-notices`). 발급자는 id 로만 온다 —
+/// 이름은 계정 목록에서 푼다(이름은 바뀌는 이름표다).
+class PasswordResetNotice {
+  const PasswordResetNotice({required this.id, required this.issuedById, required this.issuedAt, this.usedAt, this.revokedAt});
+
+  final String id;
+  final String issuedById;
+  final DateTime issuedAt;
+  final DateTime? usedAt;
+  final DateTime? revokedAt;
+
+  static PasswordResetNotice? fromJson(Map<String, Object?> j) {
+    final id = j['id'];
+    final by = j['issuedById'];
+    final at = DateTime.tryParse('${j['issuedAt']}');
+    if (id is! String || by is! String || at == null) return null;
+    DateTime? opt(Object? v) => v is String ? DateTime.tryParse(v) : null;
+    return PasswordResetNotice(id: id, issuedById: by, issuedAt: at, usedAt: opt(j['usedAt']), revokedAt: opt(j['revokedAt']));
+  }
+}
