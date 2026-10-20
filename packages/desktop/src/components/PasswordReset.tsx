@@ -317,6 +317,8 @@ export function PasswordResetNoticeBanner() {
     return a ? `${a.displayName || a.handle} (@${a.handle})` : t('pwreset.notice.unknownAdmin');
   };
   const anyUsed = notices.some((x) => x.usedAt);
+  // 사용 안 된 발급이 섞여 있으면 「요청한 적 없다면 소유자에게」도 함께 말한다(designer #1410 n7).
+  const anyUnused = notices.some((x) => !x.usedAt);
   const ack = () => {
     const ids = notices.map((x) => x.id);
     setNotices((cur) => cur.filter((x) => !ids.includes(x.id)));
@@ -338,7 +340,9 @@ export function PasswordResetNoticeBanner() {
             );
           })}
         </ul>
-        <p className="mt-0.5 opacity-80">{anyUsed ? t('pwreset.notice.usedDetail') : t('pwreset.notice.issuedDetail')}</p>
+        <p className="mt-0.5 opacity-80" data-testid="pwreset-notice-detail">
+          {[anyUsed && t('pwreset.notice.usedDetail'), anyUnused && t('pwreset.notice.issuedDetail')].filter(Boolean).join(' ')}
+        </p>
       </div>
       <button type="button" onClick={ack} data-testid="pwreset-notice-ack"
         className="shrink-0 rounded-row border border-warning-border px-2 py-0.5 text-meta hover:bg-surface">{t('pwreset.notice.ack')}</button>

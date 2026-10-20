@@ -295,6 +295,21 @@ describe('본인 알림', () => {
     expect(c.ackPasswordResetNotices).toHaveBeenCalledWith(['n2', 'n1']);
   });
 
+  it('사용됨과 사용 안 된 발급이 섞이면 두 설명을 다 보인다(designer n7)', async () => {
+    setup({
+      passwordResetNotices: vi.fn(async () => ({ notices: [
+        { id: 'n2', issuedById: 'a1', issuedAt: '2026-10-20T04:00:00Z', expiresAt: '2026-10-20T04:30:00Z', usedAt: null, revokedAt: null },
+        { id: 'n1', issuedById: 'o1', issuedAt: '2026-10-20T03:00:00Z', expiresAt: '2026-10-20T03:30:00Z', usedAt: '2026-10-20T03:10:00Z', revokedAt: null },
+      ] })),
+    });
+    useActiveStore.getState().set({ me: member, accounts: { m1: member, a1: admin, o1: owner } });
+    setServer('0.4.122');
+    render(<PasswordResetNoticeBanner />);
+    const detail = await screen.findByTestId('pwreset-notice-detail');
+    expect(detail.textContent).toContain('다른 기기의 로그인은 모두 끊었다.');
+    expect(detail.textContent).toContain('요청한 적이 없다면 소유자에게 알려라.');
+  });
+
   it('옛 서버에는 묻지 않는다', async () => {
     const c = setup();
     useActiveStore.getState().set({ me: member, accounts: { m1: member } });
