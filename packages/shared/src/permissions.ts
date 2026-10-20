@@ -15,6 +15,9 @@ export const CAPABILITIES = [
   'team.create', 'team.manage',
   'agent.create', 'agent.manage', 'agent.privileged',
   'member.invite', 'audit.read',
+  // 멤버의 비밀번호 재설정 코드 발급(130, 스레드 a6017542). owner·admin 만 — grant 로 넓히지 않는다(jaebin D3).
+  // 판정은 `can()` 의 역할 분기다. owner 계정은 대상이 될 수 없다(`passwordResetRoutes.ts`).
+  'member.reset_password',
   'operator.register', 'operator.manage',
   // 에이전트가 PR 을 머지한다(설계 스레드 3deac356). scope 는 `repo:<owner>/<name>` 만 — 전역('')은
   // 이 capability 에 한해 아무것도 열지 않는다(security F1). 판정은 서버 `canMergeRepo` 하나다.
