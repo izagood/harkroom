@@ -438,20 +438,22 @@ export function ConnectScreen(props: ConnectScreenProps) {
             />
           </label>
         )}
-        <label className="block text-meta font-medium">
-          <span className="flex items-baseline justify-between">
+        {/* 링크는 비밀번호 라벨 오른쪽(시안 ①) — 아래 「다른 길」 목록에 넣으면 초대·관리자 만들기 사이에 묻힌다.
+            **label 밖에 둔다**(designer #1410 s1): label 안 input 앞에 버튼이 있으면 label 이 그 버튼에 붙어, 「비밀번호」를
+            누르면 되찾기가 열리고 칸은 이름을 잃는다. DOM 에서는 칸 **뒤**에 두고 자리만 라벨 줄 오른쪽으로 올린다 —
+            Tab 이 ID → 비밀번호 → 잊었다면 → 로그인 순으로 간다. 로그인에서만 보인다. 실패해도 자리·오류 문구는 그대로다. */}
+        <div className="relative">
+          <label className="block text-meta font-medium">
             {t('connect.field.password')}
-            {/* 링크는 비밀번호 라벨 오른쪽(시안 ①) — 아래 「다른 길」 목록에 넣으면 초대·관리자 만들기 사이에 묻힌다.
-                로그인에서만 보인다. 실패해도 자리·오류 문구는 그대로다(계정 유무를 말하지 않는다). */}
-            {authMode === 'signin' && (
-              <button type="button" data-testid="connect-forgot" className="text-meta font-normal text-accent hover:underline"
-                onClick={() => { setError(null); setRecover('guide'); }}>
-                {t('connect.alt.forgot')}
-              </button>
-            )}
-          </span>
-          <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        </label>
+            <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} data-testid="connect-password" />
+          </label>
+          {authMode === 'signin' && (
+            <button type="button" data-testid="connect-forgot" className="absolute right-0 top-0 text-meta font-normal text-accent hover:underline"
+              onClick={() => { setError(null); setRecover('guide'); }}>
+              {t('connect.alt.forgot')}
+            </button>
+          )}
+        </div>
         </>
         )}
         {/* 오류는 본문단이다 — 로그인이 막힌 사람에게 이 한 줄이 유일한 단서다. */}

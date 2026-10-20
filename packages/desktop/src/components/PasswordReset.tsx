@@ -53,7 +53,8 @@ export function ResetCodeButton({ account }: { account: AccountView }) {
   return (
     <>
       <button type="button" className="rounded-row border border-border px-2 py-0.5 text-meta hover:bg-surface-hover"
-        data-testid={`reset-code-open-${account.id}`} onClick={() => setOpen(true)}>
+        data-testid={`reset-code-open-${account.id}`} onClick={() => setOpen(true)}
+        aria-label={t('pwreset.issue.openLabel', { name: account.displayName || account.handle })}>
         {t('pwreset.issue.open')}
       </button>
       {open && <ResetCodeDialog account={account} onClose={() => setOpen(false)} />}
@@ -128,7 +129,7 @@ export function ResetCodeDialog({ account, onClose }: { account: AccountView; on
   const until = issued ? new Date(issued.expiresAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : '';
 
   return (
-    <Overlay label={t('pwreset.issue.title', { name })} onClose={busy ? () => {} : onClose} align="center" className="w-[min(440px,calc(100vw-32px))]">
+    <Overlay label={t('pwreset.issue.title', { name })} onClose={busy || step === 'code' ? () => {} : onClose} align="center" className="w-[min(440px,calc(100vw-32px))]">
       <div className="p-4" data-testid="reset-code-dialog">
         <h2 className="text-body font-medium">{t('pwreset.issue.title', { name })}</h2>
         {step === 'confirm' && (
@@ -226,9 +227,13 @@ export function ResetWithCodeForm({ baseUrl, initialLoginId, onSignedIn, onBack 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const mismatch = pw2 !== '' && pw !== pw2;
-  const short = pw !== '' && pw.length < 8;
+  // 「8자 이상」은 칸을 떠난 뒤나 제출을 시도한 뒤에만 말한다(designer n5) — 첫 글자부터 빨갛게 서면 꾸지람처럼 읽힌다.
+  const [pwTouched, setPwTouched] = useState(false);
+  const [tried, setTried] = useState(false);
+  const short = (pwTouched || tried) && pw !== '' && pw.length < 8;
   // 서버 규칙은 8~128자다. 넘기면 서버의 400 이 「코드가 틀렸다」로 읽히므로 화면에서 막는다(security #1410 n2).
   const long = pw.length > 128;
+  const blocked = busy || !loginId.trim() || code.replace(/-/g, '').length !== 12 || pw.length < 8 || long || pw !== pw2;
 
   const submit = async () => {
     if (busy) return;
@@ -251,22 +256,23 @@ export function ResetWithCodeForm({ baseUrl, initialLoginId, onSignedIn, onBack 
   };
 
   return (
-    <div className="space-y-3" data-testid="pwreset-form">
+    <form className="space-y-3" data-testid="pwreset-form" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!blocked) void submit(); }}>
       <h2 className="text-body font-semibold">{t('pwreset.form.title')}</h2>
       <label className="block text-meta font-medium">
         {t('connect.field.loginId')}
-        <input className={field} value={loginId} autoComplete="username" onChange={(e) => setLoginId(e.target.value)} data-testid="pwreset-login-id" />
+        <input className={field} value={loginId} autoComplete="username" autoFocus={!initialLoginId} onChange={(e) => setLoginId(e.target.value)} data-testid="pwreset-login-id" />
       </label>
       <label className="block text-meta font-medium">
         {t('pwreset.form.code')}
-        <input className={`${field} font-mono tracking-wider`} value={code} autoComplete="one-time-code" spellCheck={false}
+        <input className={`${field} font-mono tracking-wider`} value={code} autoComplete="one-time-code" spellCheck={false} autoFocus={!!initialLoginId}
           autoCapitalize="characters" placeholder="K7QF-9MXD-2PQR" data-testid="pwreset-code"
           onChange={(e) => setCode(groupCode(e.target.value))} />
         <span className="mt-1 block font-normal text-fg-subtle">{t('pwreset.form.codeHint')}</span>
       </label>
       <label className="block text-meta font-medium">
         {t('pwreset.form.newPassword')}
-        <input className={field} type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} data-testid="pwreset-new" />
+        <input className={field} type="password" autoComplete="new-password" value={pw} maxLength={128}
+          onChange={(e) => setPw(e.target.value)} onBlur={() => setPwTouched(true)} data-testid="pwreset-new" />
         {short && <span className="mt-1 block font-normal text-danger">{t('pwreset.form.tooShort')}</span>}
         {long && <span className="mt-1 block font-normal text-danger">{t('pwreset.form.tooLong')}</span>}
       </label>
@@ -276,11 +282,10 @@ export function ResetWithCodeForm({ baseUrl, initialLoginId, onSignedIn, onBack 
         {mismatch && <span className="mt-1 block font-normal text-danger">{t('pwreset.form.mismatch')}</span>}
       </label>
       {error && <p role="alert" className="break-keep text-danger" data-testid="pwreset-error">{error}</p>}
-      <button type="button" onClick={() => void submit()} data-testid="pwreset-submit"
-        disabled={busy || !loginId.trim() || code.replace(/-/g, '').length !== 12 || pw.length < 8 || long || pw !== pw2}
+      <button type="submit" data-testid="pwreset-submit" disabled={blocked}
         className="w-full rounded-row bg-accent py-2 font-medium text-fg-on-strong disabled:opacity-50">{t('pwreset.form.submit')}</button>
       <button type="button" className="w-full text-meta text-fg-subtle underline" onClick={onBack}>{t('pwreset.back')}</button>
-    </div>
+    </form>
   );
 }
 

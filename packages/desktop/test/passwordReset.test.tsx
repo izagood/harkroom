@@ -9,6 +9,7 @@ import {
   canIssueResetCode, groupCode, PasswordResetNoticeBanner, ResetCodeDialog, ResetWithCodeForm, ForgotPasswordGuide,
 } from '../src/components/PasswordReset';
 import { InviteSettings } from '../src/components/settings/InviteSettings';
+import { ConnectScreen } from '../src/screens/ConnectScreen';
 import { setController, type Controller } from '../src/state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -122,6 +123,28 @@ describe('발급 창', () => {
     expect((await screen.findByTestId('reset-code-error')).textContent).toBe('코드를 발급하려면 비밀번호를 입력해라.');
   });
 
+  it('코드가 보이는 동안 Esc 로는 닫히지 않는다(designer n1) — [닫기] 로만', async () => {
+    setup();
+    useActiveStore.getState().set({ me: owner, accounts: { o1: owner, m1: member } });
+    const onClose = vi.fn();
+    render(<ResetCodeDialog account={member} onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('reset-code-issue'));
+    await screen.findByTestId('reset-code-value');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.keyDown(screen.getByTestId('reset-code-dialog'), { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('reset-code-close'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('줄 버튼 이름은 사람마다 다르다(n3)', () => {
+    setup();
+    useActiveStore.getState().set({ me: owner, accounts: { o1: owner, m1: member } });
+    setServer('0.4.122');
+    render(<InviteSettings />);
+    return screen.findByRole('button', { name: 'minji의 비밀번호 재설정 코드' });
+  });
+
   it('거두면 코드가 화면에서 사라진다', async () => {
     const c = setup();
     useActiveStore.getState().set({ me: owner, accounts: { o1: owner, m1: member } });
@@ -136,6 +159,42 @@ describe('발급 창', () => {
 });
 
 describe('로그인 화면', () => {
+  it('「비밀번호」 라벨은 칸에 붙고, 「잊었다면」은 칸 뒤·로그인 앞이다(designer s1)', () => {
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    const input = screen.getByTestId('connect-password');
+    // 라벨 이름이 칸에 붙어 있다 — 버튼이 label 안에 있으면 이 조회가 버튼을 돌려준다.
+    expect(screen.getByLabelText('비밀번호')).toBe(input);
+    const forgot = screen.getByTestId('connect-forgot');
+    expect(forgot.closest('label')).toBeNull();
+    expect(input.compareDocumentPosition(forgot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const submit = screen.getByRole('button', { name: '로그인' });
+    expect(forgot.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(forgot);
+    expect(screen.getByTestId('pwreset-guide')).toBeTruthy();
+  });
+
+  it('코드 화면은 Enter(폼 제출)로 보내고, 로그인 ID 가 있으면 코드 칸에 포커스한다(s2·n4)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => String(url).endsWith('/healthz')
+      ? new Response(JSON.stringify({ ok: true, version: '0.4.122' }), { status: 200 })
+      : new Response(JSON.stringify({ token: 'hrks_new' }), { status: 200 })));
+    const onSignedIn = vi.fn(async () => {});
+    render(<ResetWithCodeForm baseUrl="https://hk.example.com" initialLoginId="minji" onSignedIn={onSignedIn} onBack={() => {}} />);
+    expect(document.activeElement).toBe(screen.getByTestId('pwreset-code'));
+    fireEvent.change(screen.getByTestId('pwreset-code'), { target: { value: 'k7qf9mxd2pqr' } });
+    fireEvent.change(screen.getByTestId('pwreset-new'), { target: { value: 'new-pass-1234' } });
+    fireEvent.change(screen.getByTestId('pwreset-confirm'), { target: { value: 'new-pass-1234' } });
+    fireEvent.submit(screen.getByTestId('pwreset-form'));
+    await waitFor(() => expect(onSignedIn).toHaveBeenCalled());
+  });
+
+  it('「8자 이상」은 칸을 떠난 뒤에야 보인다(n5)', () => {
+    render(<ResetWithCodeForm baseUrl="https://hk.example.com" initialLoginId="" onSignedIn={vi.fn()} onBack={() => {}} />);
+    fireEvent.change(screen.getByTestId('pwreset-new'), { target: { value: 'abc' } });
+    expect(screen.queryByText('8자 이상이어야 한다.')).toBeNull();
+    fireEvent.blur(screen.getByTestId('pwreset-new'));
+    expect(screen.getByText('8자 이상이어야 한다.')).toBeTruthy();
+  });
+
   it('안내 단계는 서버를 부르지 않는다', () => {
     const fetch = vi.fn();
     vi.stubGlobal('fetch', fetch);
