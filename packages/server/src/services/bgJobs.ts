@@ -10,6 +10,10 @@
  */
 import type { Pool } from 'pg';
 
+import {
+  JOURNAL_EXPIRING_WINDOW, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MEMORY_CORE_WARN_CHARS, MEMORY_ITEMS_WARN_COUNT,
+} from '@harkroom/shared';
+
 import { channelVisibleSql } from './channels.js';
 
 export const BG_KINDS = ['distill', 'cleanup'] as const;
@@ -241,6 +245,53 @@ export async function produceDistillJobs(pool: Pool, now: Date = new Date(), env
   return out;
 }
 
+/** 정리를 백그라운드 회차가 맡는가(BG5) — 전역 스위치 켜짐 + 소유자 토글 켬. 러너가 정리 신호를 뺄지 이것으로 정한다. */
+export async function bgCleanupOn(pool: Pool, accountId: string, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  if (!backgroundEnabled(env)) return false;
+  const r = await pool.query<{ bg_enabled: boolean }>(`select bg_enabled from agent_config where account_id = $1`, [accountId]);
+  return r.rows[0]?.bg_enabled === true;
+}
+
+/** 주간 정리를 거는 최소 항목 수 — 설계 3절 목표(`mem/*` < 60)를 넘은 에이전트만 주 1회. 신호가 켜지면 수와 상관없이. */
+export const CLEANUP_WEEKLY_MIN_ITEMS = 60;
+export const CLEANUP_WEEKLY_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * 정리 생산자(BG5) — 주간 정리(C3)와 정리 신호를 옮겨 온 것. 에이전트마다:
+ * - 정리 신호가 켜졌으면(core 2,600자↑·항목 180↑·journal 이 곧 밀려남 — 러너 `memorySignals` 와 같은 문턱) 그날,
+ * - 아니면 살아 있는 항목이 60개 이상이고 지난 7일에 정리 회차가 없을 때(주 1회)
+ * cleanup 일감을 넣는다. (에이전트, cleanup, KST 날짜) 유일·소유자 토글·3연속 실패 멈춤·서버 하루 상한은 enqueue 가 본다.
+ * 창(03~07 KST)이 끝난 뒤엔 넣지 않는다.
+ */
+export async function produceCleanupJobs(pool: Pool, now: Date = new Date(), env: NodeJS.ProcessEnv = process.env): Promise<{ queued: number; refused: Record<string, number> }> {
+  const out = { queued: 0, refused: {} as Record<string, number> };
+  if (!backgroundEnabled(env)) return out;
+  if (new Date(now.getTime() + KST_OFFSET_MS).getUTCHours() >= BG_WINDOW_KST[1]) return out;
+  const r = await pool.query<{ account_id: string; core_len: number; active: number; journals: number; recent: boolean }>(
+    `select a.id as account_id,
+            coalesce((select char_length(value) from agent_memory where account_id = a.id and slug = 'core'), 0)::int as core_len,
+            (select count(*) from agent_memory where account_id = a.id and archived_at is null)::int as active,
+            (select count(*) from agent_memory where account_id = a.id and kind = 'journal' and archived_at is null)::int as journals,
+            exists (select 1 from bg_job j where j.account_id = a.id and j.kind = 'cleanup' and j.created_at > $1) as recent
+       from account a
+      where a.kind = 'agent' and a.deleted_at is null
+        and exists (select 1 from agent_memory m where m.account_id = a.id)`,
+    [new Date(now.getTime() - CLEANUP_WEEKLY_MS)],
+  );
+  for (const row of r.rows) {
+    const reasons: string[] = [];
+    if (row.core_len >= MEMORY_CORE_WARN_CHARS) reasons.push('core_near_limit');
+    if (row.active >= MEMORY_ITEMS_WARN_COUNT) reasons.push('items_near_limit');
+    if (row.journals > MAX_JOURNAL_MEMORIES_PER_ACCOUNT - JOURNAL_EXPIRING_WINDOW) reasons.push('journal_expiring');
+    if (!reasons.length && row.active >= CLEANUP_WEEKLY_MIN_ITEMS && !row.recent) reasons.push('weekly');
+    if (!reasons.length) continue;
+    const res = await enqueueBgJob(pool, { accountId: row.account_id, kind: 'cleanup', input: { reasons }, now }, env);
+    if ('job' in res) out.queued += 1;
+    else out.refused[res.refused] = (out.refused[res.refused] ?? 0) + 1;
+  }
+  return out;
+}
+
 export interface SweepHost {
   addHook(hook: 'onClose', fn: () => void | Promise<void>): void;
 }
@@ -264,6 +315,8 @@ export function createBgJobSweeper(pool: Pool, env: NodeJS.ProcessEnv = process.
         lastProducedAt = now.getTime();
         const p = await produceDistillJobs(pool, now, env);
         if (p.queued || Object.keys(p.refused).length) console.log(`bg: distill queued=${p.queued} refused=${JSON.stringify(p.refused)}`);
+        const c = await produceCleanupJobs(pool, now, env);
+        if (c.queued || Object.keys(c.refused).length) console.log(`bg: cleanup queued=${c.queued} refused=${JSON.stringify(c.refused)}`);
       }
       await pool.query(
         `update bg_job set status = 'failed', error = 'timeout', finished_at = now()
