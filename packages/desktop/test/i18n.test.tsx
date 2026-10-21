@@ -1850,6 +1850,10 @@ describe('작성창 — 두 언어로 뜬다', () => {
   it('버튼 이름이 영어로 뜬다', () => {
     render(composer());
     expect(screen.getByText('Send')).toBeTruthy();
+    // 예약은 보내기 옆 ⌄ 메뉴 안이다(입력창 개편 P2).
+    // ⌄ 는 전송처럼 본문이 있어야 열린다.
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hi' } });
+    fireEvent.click(screen.getByLabelText('Send options'));
     expect(screen.getByLabelText('Send later')).toBeTruthy();
   });
 
@@ -1857,6 +1861,9 @@ describe('작성창 — 두 언어로 뜬다', () => {
     speak('ko');
     render(composer());
     expect(screen.getByText('전송')).toBeTruthy();
+    // ⌄ 는 전송처럼 본문이 있어야 열린다.
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hi' } });
+    fireEvent.click(screen.getByLabelText('보내기 옵션'));
     expect(screen.getByLabelText('나중에 보내기')).toBeTruthy();
   });
 
@@ -1867,6 +1874,7 @@ describe('작성창 — 두 언어로 뜬다', () => {
   it('예약 겹창이 두 언어로 뜬다', () => {
     render(composer());
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hi' } });
+    fireEvent.click(screen.getByLabelText('Send options'));
     fireEvent.click(screen.getByLabelText('Send later'));
     expect(screen.getByText('Schedule this message')).toBeTruthy();
     expect(screen.getByLabelText('Send at')).toBeTruthy();
@@ -1875,6 +1883,7 @@ describe('작성창 — 두 언어로 뜬다', () => {
     speak('ko');
     render(composer());
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hi' } });
+    fireEvent.click(screen.getByLabelText('보내기 옵션'));
     fireEvent.click(screen.getByLabelText('나중에 보내기'));
     expect(screen.getByText('예약 발송')).toBeTruthy();
     expect(screen.getByLabelText('예약 시각')).toBeTruthy();

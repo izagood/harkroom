@@ -44,6 +44,12 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
 
+/** 예약은 보내기 옆 ⌄ 메뉴 안에 있다(입력창 개편 P2 — 지금까지는 왼쪽 🕐). */
+const openLater = () => {
+  fireEvent.click(screen.getByRole('button', { name: '보내기 옵션' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: '나중에 보내기' }));
+};
+
 describe('예약 발송 컴포저 (#222)', () => {
   it('시계 버튼 → 시각 입력 → 예약 요청이 나가고 컴포저가 빈다', async () => {
     const api = mount({});
@@ -51,7 +57,7 @@ describe('예약 발송 컴포저 (#222)', () => {
 
     const textbox = screen.getByRole('textbox') as HTMLTextAreaElement;
     fireEvent.change(textbox, { target: { value: '나중에 보낼 말' } });
-    fireEvent.click(screen.getByRole('button', { name: '나중에 보내기' }));
+    openLater();
 
     const at = screen.getByLabelText('예약 시각') as HTMLInputElement;
     // 열릴 때 **미래**로 채워져야 한다 — 지금으로 채우면 그대로 눌렀을 때 서버가 400 을 준다.
@@ -79,7 +85,7 @@ describe('예약 발송 컴포저 (#222)', () => {
     render(<Composer onSend={vi.fn()} scopeKey="c1" channelId="c1" />);
 
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'x' } });
-    fireEvent.click(screen.getByRole('button', { name: '나중에 보내기' }));
+    openLater();
     fireEvent.click(screen.getByRole('button', { name: '예약' }));
 
     const alert = await screen.findByRole('alert');
@@ -141,7 +147,7 @@ describe('예약 발송 컴포저 (#222)', () => {
     await screen.findByText(/note\.txt/);
 
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '첨부와 함께' } });
-    fireEvent.click(screen.getByRole('button', { name: '나중에 보내기' }));
+    openLater();
     fireEvent.click(screen.getByRole('button', { name: '예약' }));
 
     const alert = await screen.findByRole('alert');
@@ -156,7 +162,8 @@ describe('예약 발송 컴포저 (#222)', () => {
   it('channelId 가 없으면 시계 버튼이 없다', () => {
     setController({ typing: vi.fn(), upload: vi.fn() } as unknown as Controller);
     render(<Composer onSend={vi.fn()} scopeKey="c1" />);
-    expect(screen.queryByRole('button', { name: '나중에 보내기' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '보내기 옵션' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: '나중에 보내기' })).toBeNull();
   });
 
   // (#398) min 제약이 있어 모달을 연 시점 이후만 고를 수 있어야 한다.
@@ -165,7 +172,7 @@ describe('예약 발송 컴포저 (#222)', () => {
     render(<Composer onSend={vi.fn()} scopeKey="c1" channelId="c1" />);
 
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '예약 메시지' } });
-    fireEvent.click(screen.getByRole('button', { name: '나중에 보내기' }));
+    openLater();
     const at = screen.getByLabelText('예약 시각') as HTMLInputElement;
 
     expect(at.min).not.toBe('');
@@ -178,7 +185,7 @@ describe('예약 발송 컴포저 (#222)', () => {
     render(<Composer onSend={vi.fn()} scopeKey="c1" channelId="c1" />);
 
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '과거 예약' } });
-    fireEvent.click(screen.getByRole('button', { name: '나중에 보내기' }));
+    openLater();
 
     const at = screen.getByLabelText('예약 시각') as HTMLInputElement;
     const pastValue = new Date(Date.now() - 3600_000).toISOString().slice(0, 16);

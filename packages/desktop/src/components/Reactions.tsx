@@ -18,7 +18,7 @@ import { useHostDocument, viewOf } from '../lib/hostDocument';
  * #145: 인라인 버튼(툴바에 바로 보이는 3개)은 👀💬 를 제외한다 — 그 둘은 에이전트 상태 신호로 쓰이고,
  * 사람이 그걸 흉내 내면 신호의 의미가 무너진다.
  */
-const QUICK = ['👀', '💬', '👍', '🎉', '✅', '🔥', '🤔', '😄'];
+export const QUICK_REACTIONS = ['👀', '💬', '👍', '🎉', '✅', '🔥', '🤔', '😄'];
 
 /**
  * 에이전트가 상태 신호로 쓰는 이모지. 인라인 버튼에서 제외하는 근거가 이 목록이다.
@@ -29,7 +29,7 @@ export const STATUS_SIGNAL_EMOJI = ['👀', '💬'];
 /**
  * 인라인 세 칸 — **요청받은 순서 그대로의 고정 목록**(2026-09-09).
  *
- * 앞 판은 규칙으로 골랐다: `QUICK` 에서 상태 신호(👀 💬)를 뺀 뒤 앞에서 셋(`pickInline`).
+ * 앞 판은 규칙으로 골랐다: `QUICK_REACTIONS` 에서 상태 신호(👀 💬)를 뺀 뒤 앞에서 셋(`pickInline`).
  * 그 규칙의 목적은 **상태 신호가 인라인으로 새어 들어오지 않게** 하는 것이었다(#144·#145 —
  * 사람이 에이전트의 신호를 흉내 내면 신호의 뜻이 무너진다).
  *
@@ -120,7 +120,7 @@ export function ReactionPickerPanel({ message, onClose }: { message: MessageRow;
         </button>
       </div>
       <div className="grid grid-cols-6 gap-1">
-        {QUICK.map((e) => {
+        {QUICK_REACTIONS.map((e) => {
           const mine = myId !== null && !!message.reactions.find((r) => r.emoji === e)?.accountIds.includes(myId);
           return (
             <button

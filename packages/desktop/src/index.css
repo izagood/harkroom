@@ -518,8 +518,13 @@ button:disabled,
   `:focus-within` 이 아니라 `:has(:focus-visible)` 인 것은 전역 규칙과 같은 이유(#511, focusRing.test)다 —
   글 칸(contenteditable)은 마우스로 눌러도 focus-visible 이라 textarea 때와 똑같이 선다.
 */
-.composer-cm:has(:focus-visible) { outline: 2px solid var(--app-accent); outline-offset: -2px; }
-.composer-cm .cm-scroller { font-family: inherit; line-height: inherit; max-height: var(--composer-max, 40vh); overflow-y: auto; }
+.composer-box:has(.cm-content:focus-visible) { outline: 2px solid var(--app-accent); outline-offset: -2px; }
+/*
+  높이 상한(결정 8 + #1427): 칸 높이의 40%(`--composer-max`, ComposerEditor), 그러나 30rem(기본 글자 크기에서 480px)
+  넘게는 아니다. 40% 는 나머지 60% 에 대화가 남아야 무엇에 답하는지 보면서 쓰기 때문이고, rem 상한은 큰 모니터에서
+  입력창이 화면을 덮는 것을 막는다(1440px 창의 40% 는 576px — 한 화면을 채우는 글은 거기서 굴려도 된다).
+*/
+.composer-cm .cm-scroller { font-family: inherit; line-height: inherit; max-height: min(var(--composer-max, 40vh), 30rem); overflow-y: auto; }
 .composer-cm .cm-content { padding: 0; min-height: calc(var(--composer-rows, 2) * 1lh); caret-color: currentColor; }
 .composer-cm .cm-line { padding: 0; }
 .composer-cm .cm-placeholder { color: var(--color-fg-subtle); }
@@ -531,4 +536,5 @@ button:disabled,
 /* 보낸 메시지의 링크(MessageBody: text-link underline underline-offset-2)와 같은 모양 — 쓸 때와 보낸 뒤가 같아야 한다. */
 .composer-cm .cm-md-link { color: var(--color-link); text-decoration-line: underline; text-underline-offset: 2px; }
 .composer-cm .cm-md-url { color: var(--color-fg-muted); }
-.composer-cm .cm-md-quote { color: var(--color-fg-muted); }
+/* 인용 색은 줄 장식(`>` 로 시작하는 줄)에 둔다 — 문법의 인용 구간은 뒤의 평문 줄까지 품는다(게으른 이음). */
+.composer-cm .cm-md-quoteline { border-left: 2px solid var(--color-border); padding-left: 0.5rem; color: var(--color-fg-muted); }
