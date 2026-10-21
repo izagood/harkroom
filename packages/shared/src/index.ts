@@ -3942,6 +3942,36 @@ export interface OperatorStatus {
   /** 에이전트별 러너가 돌리는 턴 수. */
   runners?: { agentId: string; turns: number }[];
   credentials?: { kind: 'claude' | 'codex' | 'mcp' | 'gh'; name: string; state: OperatorCredentialState; agentIds: string[] }[];
+  /**
+   * 이 오퍼레이터의 MCP 상태(MCP 설정 v2 PR4). 이름은 **그 커뮤니티가 이 오퍼레이터에 배정한 에이전트가 켠 이름**만
+   * 싣는다 — 서버가 이미 보낸 이름이라 새는 것이 없다. 값(URL·헤더·env·토큰·Client ID)은 칸이 없다.
+   * 서버는 오퍼레이터 **주인에게만** 이 칸을 보인다(`GET /operators`). 옛 오퍼레이터는 싣지 않는다(없음 = 모른다).
+   */
+  mcp?: OperatorMcpStatusEntry[];
+}
+
+/** 박동에 싣는 인증 상태 — `OperatorMcpAuthState` 의 `state` 만. 사유 글·토큰은 없다. */
+export type OperatorMcpAuthSummary = 'none' | 'pending' | 'ok' | 'expired' | 'rejected' | 'error';
+
+/** 박동의 MCP 한 줄(`OperatorStatus.mcp`). */
+export interface OperatorMcpStatusEntry {
+  name: string;
+  /** 이 오퍼레이터에 정의가 있나. false 면 아래 칸은 없다 — 켠 에이전트는 배정이 거절된다(`mcp_server_missing`). */
+  defined: boolean;
+  /** 정의가 어디서 왔나 — 오퍼레이터의 `mcp-servers.json` 또는 `~/.claude.json`(앱에서 못 고친다). */
+  source?: 'operator' | 'claude';
+  transport?: 'stdio' | 'http' | 'sse';
+  /** 정의에 `oauth` 가 있다(원격 MCP 인증을 오퍼레이터가 한다). */
+  oauth?: boolean;
+  /** 원격 정의만. */
+  auth?: OperatorMcpAuthSummary;
+  /** `ok` 면 그 토큰을 받은 때, `rejected` 면 거절된 때(ISO). */
+  authAt?: string;
+  /**
+   * 정의의 `oauth.clientId` 지문 — **값이 아니다**. `sha256("harkroom-mcp-client:" + 서버 주소 + "\n" + clientId)` 앞 16 hex.
+   * 같은 주인의 다른 오퍼레이터가 **같은 OAuth 앱**으로 인증했는지 견주는 데만 쓴다(토큰 칸 상한 경고, D11).
+   */
+  clientIdFp?: string;
 }
 
 /** 오퍼레이터가 `hello` 에 싣는 능력 — 연결이 살아 있는 동안만 서버가 든다. */

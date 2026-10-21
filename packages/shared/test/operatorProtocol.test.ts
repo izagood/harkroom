@@ -47,6 +47,33 @@ describe('operatorProtocol', () => {
   });
 });
 
+describe('박동의 MCP 칸 — MCP 설정 v2 PR4', () => {
+  it('허용한 칸만 남긴다 — URL·Client ID·토큰은 칸이 없어 버리고, 이름·지문 꼴이 틀리면 그 줄·그 칸을 뗀다', () => {
+    const out = parseOperatorStatus({
+      turns: { running: 0, max: null },
+      mcp: [
+        { name: 'slack', defined: true, source: 'operator', transport: 'http', oauth: true, auth: 'rejected', authAt: '2026-10-21T08:55:00Z',
+          clientIdFp: 'ABCDEF', url: 'https://x.example.com', clientId: '1111.2222', token: 't' },
+        { name: 'slack', defined: false },
+        { name: 'UPPER', defined: true },
+        { name: 'jira', defined: false, source: 'operator', auth: 'ok' },
+        { name: 'ctx', defined: true, auth: 'weird', transport: 'ftp', clientIdFp: '0123456789abcdef' },
+        { defined: true },
+      ],
+    });
+    expect(out?.mcp).toEqual([
+      { name: 'slack', defined: true, source: 'operator', transport: 'http', oauth: true, auth: 'rejected', authAt: '2026-10-21T08:55:00.000Z' },
+      { name: 'jira', defined: false },
+      { name: 'ctx', defined: true, clientIdFp: '0123456789abcdef' },
+    ]);
+  });
+
+  it('줄 수는 상한까지만 받는다', () => {
+    const many = Array.from({ length: 200 }, (_, i) => ({ name: `m${i}`, defined: false }));
+    expect(parseOperatorStatus({ turns: { running: 0 }, mcp: many })?.mcp).toHaveLength(64);
+  });
+});
+
 describe('박동(status) — 원격 호스트 관리 P2a', () => {
   it('status 프레임은 runnerId 없이 받는다', () => {
     expect(parseOperatorFrame(JSON.stringify({ type: 'status', status: { turns: { running: 0 } } }))).toMatchObject({ type: 'status' });

@@ -99,18 +99,30 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 
 /** 두 파일을 합친 정의 표. 레지스트리(앞)가 claude 설정(뒤)을 이긴다. 없는 파일은 빈 표, 깨진 파일은 던진다. */
 export async function readLocalMcpDefinitions(paths: { registryPath: string; claudeConfigPath: string | null }): Promise<Record<string, McpServerDefinition>> {
-  const out: Record<string, McpServerDefinition> = {};
+  const { operator, claude } = await readLocalMcpSources(paths);
+  return { ...claude, ...operator };
+}
+
+/**
+ * 두 파일을 **따로** 읽는다 — 박동(MCP 설정 v2 PR4)이 정의가 어디서 왔는지(앱에서 고칠 수 있나)를 알린다.
+ * 같은 이름이 둘 다에 있으면 `operator` 가 이긴다(`readLocalMcpDefinitions` 와 같은 순서).
+ */
+export async function readLocalMcpSources(paths: { registryPath: string; claudeConfigPath: string | null }): Promise<{
+  operator: Record<string, McpServerDefinition>; claude: Record<string, McpServerDefinition>;
+}> {
+  const claude: Record<string, McpServerDefinition> = {};
+  const operator: Record<string, McpServerDefinition> = {};
   if (paths.claudeConfigPath) {
-    const claude = await readJsonIfExists(paths.claudeConfigPath);
-    if (isRecord(claude) && isRecord(claude.mcpServers)) {
-      for (const [name, def] of Object.entries(claude.mcpServers)) if (isRecord(def)) out[name] = def as unknown as McpServerDefinition;
+    const raw = await readJsonIfExists(paths.claudeConfigPath);
+    if (isRecord(raw) && isRecord(raw.mcpServers)) {
+      for (const [name, def] of Object.entries(raw.mcpServers)) if (isRecord(def)) claude[name] = def as unknown as McpServerDefinition;
     }
   }
   const registry = await readJsonIfExists(paths.registryPath);
   if (isRecord(registry)) {
-    for (const [name, def] of Object.entries(registry)) if (isRecord(def)) out[name] = def as unknown as McpServerDefinition;
+    for (const [name, def] of Object.entries(registry)) if (isRecord(def)) operator[name] = def as unknown as McpServerDefinition;
   }
-  return out;
+  return { operator, claude };
 }
 
 /** `<dir>/<agentId>.json` 을 0600 으로. env 에 토큰이 실릴 수 있어 파일도 비밀로 다룬다. */

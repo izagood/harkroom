@@ -440,7 +440,7 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
         return { state: 'rejected', at: rec.rejectedAt ?? rec.updatedAt, ...(rec.rejectedBy ? { agentId: rec.rejectedBy } : {}) };
       }
       if (rec.expiresAt !== undefined && rec.expiresAt <= now() && !rec.refreshToken) return { state: 'expired' };
-      return { state: 'ok', ...(rec.expiresAt !== undefined ? { expiresAt: rec.expiresAt } : {}) };
+      return { state: 'ok', at: rec.updatedAt, ...(rec.expiresAt !== undefined ? { expiresAt: rec.expiresAt } : {}) };
     },
 
     async tokensFor(defs) {

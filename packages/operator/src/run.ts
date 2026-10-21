@@ -40,7 +40,7 @@ import { createLocalMcpPort } from './localMcp.js';
 import { createLocalMergePort, pickMergeGhUser } from './localMerge.js';
 import { createMcpOAuth } from './mcpOAuth.js';
 import { rewriteMcpConfigTokens } from './mcpConfig.js';
-import { claudeConfigPath, readLocalMcpDefinitions } from './mcpConfig.js';
+import { claudeConfigPath, readLocalMcpDefinitions, readLocalMcpSources } from './mcpConfig.js';
 import { fileSecrets } from './secrets.js';
 import { createRunnerLinkServer } from './runnerLink.js';
 import { createLocalTerminalHub } from './localTerminal.js';
@@ -52,7 +52,7 @@ import { createTurnMerge, defaultExec, ghEnv, GH_PATH } from './turnMerge.js';
 import { createTurnCommand, stripLinkOnlyFields } from './turnCommand.js';
 import { createTurnApi } from './turnApi.js';
 import { createTurnSlots, MAX_TURNS_ENV, parseMaxTurns } from './turnSlots.js';
-import { collectStatus, readMachineDigest } from './heartbeat.js';
+import { collectMcpStatus, collectStatus, readMachineDigest } from './heartbeat.js';
 import { announceOf } from './communities.js';
 import { createTurnUploads } from './turnUploads.js';
 import { cleanupLedgerPath } from './workspaceCleanup.js';
@@ -222,6 +222,20 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   const turnSlots = createTurnSlots({ max: parseMaxTurns(process.env[MAX_TURNS_ENV], log), log });
   const daemonStartedAt = new Date();
   let machineDigest: Promise<string | null> | null = null;
+  /** 박동의 MCP 정의 읽기 캐시(PR4) — 커뮤니티마다 30초에 한 번 박동이 나가므로 20초면 한 번 읽어 나눠 쓴다. */
+  let mcpSourcesAt = 0;
+  let mcpSources: ReturnType<typeof readLocalMcpSources> | null = null;
+  const mcpSourcesCached = (): ReturnType<typeof readLocalMcpSources> => {
+    if (!mcpSources || Date.now() - mcpSourcesAt > 20_000) {
+      mcpSourcesAt = Date.now();
+      mcpSources = readLocalMcpSources({
+        registryPath: join(appDataDir, 'operator', 'mcp-servers.json'),
+        claudeConfigPath: claudeConfigPath(process.env, homedir()),
+      });
+      mcpSources.catch(() => { mcpSources = null; });
+    }
+    return mcpSources;
+  };
   if (turnSlots.max !== null) log(`동시 턴 상한: ${turnSlots.max}`);
   const turnMerge = createTurnMerge({
     forward: async (agentId, req) => {
@@ -736,6 +750,11 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
             dataDir: appDataDir,
           }),
           machine: () => (machineDigest ??= readMachineDigest()),
+          // MCP 상태(PR4). 정의 파일은 박동마다 커뮤니티 수만큼 읽히므로 짧게 캐시한다.
+          mcp: (names, baseUrl) => collectMcpStatus(names, baseUrl, {
+            definitions: () => mcpSourcesCached(),
+            auth: (name, url, clientId) => mcpOAuth.status(name, url, clientId),
+          }),
         },
       });
       communities = runtime.communities;

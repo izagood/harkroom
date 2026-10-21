@@ -60,6 +60,8 @@ export function statusSignature(status: OperatorStatus): string {
   return JSON.stringify([
     status.turns.running, status.turns.max,
     (status.credentials ?? []).map((c) => `${c.kind}:${c.name}:${c.state}`).sort(),
+    // MCP 상태(PR4) — 정의가 생기거나 인증이 풀리면 주인 화면이 바로 다시 읽는다. 시각은 넣지 않는다(refresh 마다 깜빡임).
+    (status.mcp ?? []).map((m) => `${m.name}:${m.defined}:${m.auth ?? ''}:${m.clientIdFp ?? ''}`).sort(),
   ]);
 }
 
@@ -128,8 +130,18 @@ export const UPGRADE_QUEUE_MAX = 20;
 export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, deps: OperatorRoutesDeps): Promise<void> {
   const codes = createRegisterCodes(REGISTER_CODE_TTL_MS);
   const presence: OperatorPresence = deps.hub;
-  const view = (row: Omit<OperatorView, 'online'>): OperatorView =>
-    ({ ...row, online: presence.isOnline(row.id), status: presence.status(row.id) });
+  /**
+   * 박동의 MCP 칸(PR4)은 **오퍼레이터 주인에게만** 보인다(시안 v2 D8) — `operator.manage` 로 남의 오퍼레이터를 보는
+   * 관리자에게도 그 사람이 어떤 MCP 를 어디에 정의·인증했는지는 가린다. 숫자(턴·메모리·디스크)는 그대로다.
+   * `viewer` 가 없으면(오퍼레이터 자신의 `/operators/self`) 그대로 둔다.
+   */
+  const view = (row: Omit<OperatorView, 'online'>, viewer?: string): OperatorView => {
+    const status = presence.status(row.id);
+    const shown = status?.mcp && viewer !== undefined && viewer !== row.ownerAccountId
+      ? (({ mcp: _mcp, ...rest }) => rest)(status)
+      : status;
+    return { ...row, online: presence.isOnline(row.id), status: shown };
+  };
 
   /**
    * 하트비트. 옛 `/agent-relay` 에 넣었던 것과 같은 배선(b485b9d8; 그 소켓은 단계 3 에서 이 채널로
@@ -383,7 +395,7 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
     const res = await pool.query(
       `select ${OP_COLS} from operator where revoked_at is null and ($1::bool or owner_account_id = $2) order by created_at`,
       [all, req.account!.id]);
-    return { operators: res.rows.map(view) };
+    return { operators: res.rows.map((row) => view(row, req.account!.id)) };
   });
 
   app.get('/operators/self', { preHandler: app.requireOperator }, async (req) => view(req.operator!));
@@ -435,7 +447,7 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
         await recordAudit(pool, { action: 'operator.renamed', ...actorOf(req), target: id, detail: { from: before, to: label } }, req);
         emitEvent({ type: 'operator.changed', operatorId: id, audience: 'all' });
       }
-      return view(row);
+      return view(row, req.account!.id);
     });
 
   app.delete<{ Params: { id: string } }>(
