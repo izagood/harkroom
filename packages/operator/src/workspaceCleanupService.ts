@@ -27,6 +27,7 @@ import {
   removeRebuildable,
   runSweep,
   threadKey,
+  unownedPrMatches,
   writeLedger,
   type CleanupPorts,
   type HumanAction,
@@ -34,7 +35,7 @@ import {
   type ObservedWorktree,
 } from './workspaceCleanup.js';
 import type { CleanupOwners } from './workspaceCleanupOwners.js';
-import { isThreadDone, repoOfWorktree, scanRepo, type Forward, type ScanDeps } from './workspaceCleanupScan.js';
+import { isThreadDone, lastActivityAt, onlyRebuildableIgnored, repoOfWorktree, scanRepo, type Forward, type ScanDeps } from './workspaceCleanupScan.js';
 
 export interface WorkspaceCleanupView {
   settings: CleanupSettings;
@@ -93,7 +94,8 @@ export function createCleanupPorts(deps: ScanDeps): CleanupPorts {
     async check(item, running): Promise<CleanupBlockReason | null> {
       if (item.thread && running.has(threadKey(item.thread))) return 'turn-running';
       if (item.kind !== 'worktree') return null;
-      const st = await deps.exec(deps.gitPath, ['-C', item.path, 'status', '--porcelain'], env);
+      // `--untracked-files=all`: 저장소 설정 `status.showUntrackedFiles=no` 여도 untracked 를 본다(security n3).
+      const st = await deps.exec(deps.gitPath, ['-C', item.path, 'status', '--porcelain', '--untracked-files=all'], env);
       if (st.code !== 0 || st.stdout.trim()) return 'uncommitted';
       // HEAD·브랜치는 **지금** 다시 읽는다. 원장 값은 스캔 때 것이라 그 사이 커밋이 더 생겼을 수 있다 — 낡은 값으로 "올라감"을
       // 판정하면 새 커밋이 브랜치와 함께 사라진다. 원장과 다르면 다음 회차의 스캔이 새 값을 잴 때까지 막는다.
@@ -182,6 +184,18 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: Cleanup
         seen.add(w.path);
         worktrees.push(w);
       }
+    }
+    // 주인 모름 자동 후보(PR 머지·닫힘 + PR head == HEAD)만 더 잰다: 지우기 직전 검사와 같은 판정으로 깨끗한가, 언제 마지막으로 손댔나.
+    for (const w of worktrees) {
+      if (w.thread || !unownedPrMatches(w)) continue;
+      const probe: CleanupItem = {
+        path: w.path, kind: 'worktree', state: 'unowned', repo: w.repo, branch: w.branch, headSha: w.headSha, thread: null, pr: w.pr,
+        lastModifiedAt: w.lastModifiedAt, listedAt: null, deleteAfter: null, blockReason: null, actedBy: null, actedAt: null,
+        sizeBefore: w.size, sizeNow: w.size,
+      };
+      w.clean = (await base.check(probe, new Set())) === null;
+      w.onlyRebuildableIgnored = await onlyRebuildableIgnored(deps, w.path);
+      w.lastActivityAt = await lastActivityAt(deps, w.path);
     }
     // 스레드 ✅ 는 조건이 될 만한 것(PR 머지·닫힘 + 주인 있음)만 묻는다 — 스레드마다 한 번, 그 스레드를 알린 에이전트로.
     const doneThreads = new Set<string>();

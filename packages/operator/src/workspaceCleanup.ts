@@ -7,7 +7,8 @@
  *   사람이 커밋했을 수 있다.
  *
  * 지키는 것:
- * - `unowned`·`kept` 는 청소기가 바꾸지 않는다(사람만 바꾼다).
+ * - `kept` 는 청소기가 바꾸지 않는다(사람만 바꾼다). `unowned` 는 사람이 넣거나, 아래 「주인 모름 자동」 조건을 **모두**
+ *   만족할 때만 넣는다(`qualifiesUnowned`).
  * - 그 스레드에 새 턴이 오면 목록에서 뺀다(되살리기).
  * - 의존성 폴더가 심링크면 **링크만** 지운다 — PR worktree 의 `node_modules` 는 공유 트리를 가리키는 일이 많다.
  */
@@ -83,6 +84,14 @@ export interface ObservedWorktree {
   pr: CleanupPr | null;
   lastModifiedAt: string | null;
   size: number | null;
+  /**
+   * 주인 모름 자동 후보만 잰다(아니면 비움): 커밋 안 된 변경도 push 안 된 커밋도 없는가 — 지우기 직전 검사(`check`)와 같은 판정.
+   */
+  clean?: boolean | null;
+  /** 주인 모름 자동 후보만: 마지막으로 손댄 흔적(HEAD 커밋·HEAD reflog·worktree 를 만든 시각 중 늦은 것). */
+  lastActivityAt?: string | null;
+  /** 주인 모름 자동 후보만: 무시된 파일이 다시 만들 수 있는 폴더(`REBUILDABLE_DIRS`) 안에만 있는가 — `.env` 같은 손 파일이 없는가. */
+  onlyRebuildableIgnored?: boolean | null;
 }
 
 export interface ObservedIdle {
@@ -137,6 +146,25 @@ function qualifies(w: ObservedWorktree, facts: SweepFacts): boolean {
   return !!w.thread && !!w.pr && w.pr.state !== 'open' && facts.doneThreads.has(threadKey(w.thread));
 }
 
+/**
+ * 주인 모름 자동(jaebin 10-19 #task c77dcd20): 스레드를 모르는 worktree 도 아래를 **모두** 만족하면 목록에 넣는다.
+ * - PR 이 머지·닫힘이고 그 PR head 가 worktree HEAD 와 **같다**(조상은 안 된다 — 주인이 없으니 더 좁게).
+ * - 커밋 안 된 변경·push 안 된 커밋이 없다(`clean`). 무시된 파일도 다시 만들 수 있는 폴더 안에만 있다(`onlyRebuildableIgnored`) —
+ *   주인 모름엔 사람이 손으로 만든 worktree 도 들어가고, `worktree remove` 는 무시된 `.env`·로컬 DB 도 함께 지운다.
+ * - 보존 기간보다 오래 손대지 않았다 — 주인 스레드가 없어 「새 턴이면 되살리기」를 못 하므로 이것으로 대신한다.
+ * PR 이 열려 있거나 없으면 지금처럼 보이기만 한다.
+ */
+/** 조건 1·2 — PR 이 머지·닫힘이고 PR head 가 HEAD 와 같다. 넣은 뒤 이것이 깨지면(새 커밋·PR 다시 열림) 되살린다. */
+export function unownedPrMatches(w: Pick<ObservedWorktree, 'pr' | 'headSha'>): boolean {
+  return !!w.pr && w.pr.state !== 'open' && !!w.headSha && w.pr.headSha === w.headSha;
+}
+
+export function qualifiesUnowned(w: ObservedWorktree, settings: CleanupSettings, now: Date): boolean {
+  if (w.thread || !unownedPrMatches(w)) return false;
+  if (w.clean !== true || w.onlyRebuildableIgnored !== true || !w.lastActivityAt) return false;
+  return Date.parse(w.lastActivityAt) <= now.getTime() - clampGraceDays(settings.graceDays) * DAY_MS;
+}
+
 export function planSweep(prev: CleanupLedger, facts: SweepFacts, settings: CleanupSettings, now: Date): SweepPlan {
   const at = now.toISOString();
   const grace = clampGraceDays(settings.graceDays) * DAY_MS;
@@ -153,11 +181,12 @@ export function planSweep(prev: CleanupLedger, facts: SweepFacts, settings: Clea
     return next;
   };
 
-  const step = (observed: CleanupItem, eligible: boolean) => {
+  const step = (observed: CleanupItem, eligible: boolean, unowned: { activityAt: string | null; prMatches: boolean } | null = null) => {
     seen.add(observed.path);
     const old = byPath.get(observed.path);
     if (!old) {
-      if (!observed.thread) { out.push(observed); return; } // 주인 모름 — 보이기만 한다
+      // 주인 모름 — 자동 조건을 다 맞추지 않으면 보이기만 한다.
+      if (!observed.thread) { out.push(eligible && settings.enabled ? list(observed) : observed); return; }
       if (eligible && settings.enabled) out.push(list(observed));
       return; // 아직 조건이 안 됐으면 원장에 올리지 않는다
     }
@@ -169,8 +198,17 @@ export function planSweep(prev: CleanupLedger, facts: SweepFacts, settings: Clea
       lastModifiedAt: observed.lastModifiedAt ?? old.lastModifiedAt,
       sizeNow: observed.sizeNow ?? old.sizeNow,
     };
-    if (item.state === 'unowned' && item.thread && item.actedBy === null && eligible && settings.enabled) {
-      item = list(item); // 나중에 주인이 밝혀졌고 조건도 맞는다
+    if (item.state === 'unowned' && item.actedBy === null && eligible && settings.enabled) {
+      item = list(item); // 나중에 주인이 밝혀졌고 조건도 맞는다, 또는 주인 모름 자동 조건을 다 맞췄다
+    }
+    // 주인 모름을 자동으로 넣은 뒤 누가 손댔다 → 되살린다. 스레드가 없으니 이것이 규칙 4 를 대신한다.
+    // - 조건 1·2 가 깨짐(새 커밋으로 HEAD ≠ PR head, PR 다시 열림·못 읽음): 손댄 시각을 재지 못해도 이것만으로(security F1).
+    //   여기서 돌아가므로 원장의 headSha 를 새 HEAD 로 덮지 않는다 — 덮으면 지우기 직전 HEAD 재확인이 새 커밋을 놓친다.
+    // - 손댄 흔적(커밋·checkout·reset·다시 만든 worktree)이 넣은 뒤에 생김.
+    if (unowned && (old.state === 'listed' || old.state === 'blocked') && !old.thread && old.actedBy === null && old.listedAt
+      && (!unowned.prMatches || (unowned.activityAt !== null && unowned.activityAt > old.listedAt))) {
+      events.push(event(at, old, 'revived'));
+      return;
     }
     if ((item.state === 'listed' || item.state === 'blocked') && item.thread && item.listedAt) {
       const last = facts.lastTurnAt.get(threadKey(item.thread));
@@ -191,7 +229,8 @@ export function planSweep(prev: CleanupLedger, facts: SweepFacts, settings: Clea
       repo: w.repo, branch: w.branch, headSha: w.headSha, thread: w.thread, pr: w.pr,
       lastModifiedAt: w.lastModifiedAt, sizeBefore: w.size, sizeNow: w.size,
     };
-    step(item, qualifies(w, facts));
+    step(item, w.thread ? qualifies(w, facts) : qualifiesUnowned(w, settings, now),
+      w.thread ? null : { activityAt: w.lastActivityAt ?? null, prMatches: unownedPrMatches(w) });
   }
   for (const d of facts.idle) {
     step({ ...blank(d.path, d.kind), thread: d.thread, lastModifiedAt: d.lastModifiedAt, sizeBefore: d.size, sizeNow: d.size }, true);
