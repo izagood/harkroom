@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
-import { useActiveStore } from '../state/communities';
-import { getController } from '../state/controller';
+import { useActiveStore, useCommunityRegistry } from '../state/communities';
+import { getController, type Controller } from '../state/controller';
 import { openChannelFrom, popOutChannel } from '../lib/windowActions';
 import { useAppWindows } from '../lib/appWindows';
 import { sidebarStorage, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from '../lib/prefs';
@@ -419,10 +419,13 @@ export function Sidebar({
       setCreateError(t('sidebar.channel.createInvalidName'));
       return;
     }
+    // 만들기와 섹션 넣기는 **같은 서버**로 가야 한다 — 그 사이 커뮤니티를 바꾸면 `getController()` 가
+    // 다른 서버를 가리킨다(security n1). 시작할 때 잡은 컨트롤러 하나로 끝까지 간다.
+    const ctl = getController();
     try {
-      const created = await getController().createChannel(newChannelName, newChannelPrivate ? 'private' : 'public');
+      const created = await ctl.createChannel(newChannelName, newChannelPrivate ? 'private' : 'public');
       // 섹션 머리 ＋ 로 만든 채널만 그 섹션에 들어간다(관계 규칙) — 나머지는 CHANNELS 로.
-      if (createInSection) await getController().moveChannelToSection(created.id, createInSection);
+      if (createInSection) await ctl.moveChannelToSection(created.id, createInSection);
       closeCreate();
     } catch (err) {
       // 실패를 조용히 삼키면 사용자는 눌렀는데 아무 일도 안 난 것으로 본다.
@@ -538,12 +541,33 @@ export function Sidebar({
   const [newSectionDraft, setNewSectionDraft] = useState('');
   const [sectionError, setSectionError] = useState<string | null>(null);
   const [createInSection, setCreateInSection] = useState<string | null>(null);
-  const [sectionUndo, setSectionUndo] = useState<{ section: ChannelSectionRow; channelIds: string[] } | null>(null);
+  /*
+   * `ctl` 은 지운 그 커뮤니티의 컨트롤러다 — 되돌리기는 그 서버로만 간다(security n1). 사이드바는
+   * 커뮤니티를 바꿔도 다시 마운트되지 않으므로, 이것이 없으면 8초 안에 바꾼 뒤 누른 되돌리기가
+   * 지운 섹션 이름과 원래 커뮤니티의 채널 id 를 새 커뮤니티 서버로 보낸다.
+   */
+  const [sectionUndo, setSectionUndo] = useState<
+    { removed: { section: ChannelSectionRow; channelIds: string[] }; ctl: Controller } | null
+  >(null);
   useEffect(() => {
     if (!sectionUndo) return;
     const timer = setTimeout(() => setSectionUndo(null), SECTION_UNDO_MS);
     return () => clearTimeout(timer);
   }, [sectionUndo]);
+  // 커뮤니티가 바뀌면 그 커뮤니티에 묶인 섹션 상태(되돌리기·＋ 로 연 만들기·이름 고치기)를 비운다 —
+  // 다른 서버의 섹션 id 를 새 서버에 들고 가지 않는다.
+  // 섹션 이름 고치기 입력칸 하나가 이미 보냈는가(Enter 뒤 blur 가 두 번째로 보내지 않게, designer n1).
+  const renameSubmitted = useRef(false);
+  const activeCommunityId = useCommunityRegistry((r) => r.activeId);
+  const lastCommunityId = useRef(activeCommunityId);
+  useEffect(() => {
+    if (lastCommunityId.current === activeCommunityId) return;
+    lastCommunityId.current = activeCommunityId;
+    setSectionUndo(null);
+    setSectionError(null);
+    setCreateInSection(null);
+    setSectionRenameFor(null);
+  }, [activeCommunityId]);
   // 접힌 섹션(D4)이 무엇을 남기고 머리에 점을 찍을지 정하는 두 값 — 채널 줄의 배지·점과 같은 출처다.
   const inboxUnread = useActiveStore((s) => s.unread);
   const reads = useActiveStore((s) => s.reads);
@@ -973,8 +997,12 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
       (i) => !visible.includes(i) && (reads[i.channel.id]?.unread ?? 0) > 0,
     );
     const toggle = () => { void getController().setSectionCollapsed(sec.id, !sec.collapsed).catch(() => {}); };
-    const startRename = () => { setSectionRenameFor(sec.id); setSectionRenameDraft(sec.name); };
+    const startRename = () => { renameSubmitted.current = false; setSectionRenameFor(sec.id); setSectionRenameDraft(sec.name); };
     const submitRename = () => {
+      // Enter 로 보내면 입력칸이 사라지며 blur 가 한 번 더 온다 — 두 번째는 낡은 `sec.name` 으로 같은 이름을
+      // 다시 보내 `section_exists` 가 잠깐 뜬다(designer n1). 이 입력칸에서 한 번만 보낸다.
+      if (renameSubmitted.current) return;
+      renameSubmitted.current = true;
       const name = sectionRenameDraft.trim();
       setSectionRenameFor(null);
       setSectionRenameDraft('');
@@ -989,8 +1017,9 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
       void getController().reorderSections(ids).catch((err) => setSectionError(sectionErrorText(err)));
     };
     const remove = () => {
-      void getController().deleteSection(sec.id)
-        .then((removed) => setSectionUndo(removed))
+      const ctl = getController();
+      void ctl.deleteSection(sec.id)
+        .then((removed) => setSectionUndo({ removed, ctl }))
         .catch((err) => setSectionError(sectionErrorText(err)));
     };
     const header = sectionRenameFor === sec.id ? (
@@ -1006,7 +1035,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
         onBlur={submitRename}
         onKeyDown={(e) => {
           if (e.key === 'Enter') submitRename();
-          if (e.key === 'Escape') { setSectionRenameFor(null); setSectionRenameDraft(''); }
+          if (e.key === 'Escape') { renameSubmitted.current = true; setSectionRenameFor(null); setSectionRenameDraft(''); }
         }}
       />
     ) : (
@@ -1629,23 +1658,6 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
               }}
             />
           ) : addRow(t('sidebar.section.create'), () => setNewSectionOpen(true), 'add-section'))}
-          {sectionError && <p role="alert" data-testid="section-error" className="px-2 text-meta text-danger">{sectionError}</p>}
-          {sectionUndo && (
-            <div data-testid="section-undo" role="status" className="mx-1 mt-2 flex items-center gap-2 rounded-row bg-fg px-2 py-1.5 text-meta text-surface">
-              <span className="min-w-0 flex-1">
-                {t('sidebar.section.deleted', { name: sectionUndo.section.name, count: sectionUndo.channelIds.length })}
-              </span>
-              <button
-                data-testid="section-undo-button"
-                className="shrink-0 font-medium underline"
-                onClick={() => {
-                  const removed = sectionUndo;
-                  setSectionUndo(null);
-                  void getController().restoreSection(removed).catch((err) => setSectionError(sectionErrorText(err)));
-                }}
-              >{t('sidebar.section.undo')}</button>
-            </div>
-          )}
           {!channelSections && groupedChannels.map((group) => {
             const sectionName = group.section;
             const isRenaming = sectionRenameFor === sectionName;
@@ -1949,6 +1961,31 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
         */}
         <LeasePanel />
         </nav>
+        {/*
+          섹션 오류·되돌리기 줄은 스크롤 목록(`nav`) **밖**, 사이드바 아래에 고정한다(designer s1). 목록 끝에 두면
+          채널이 화면을 넘을 때 위쪽 섹션을 지운 되돌리기가 화면 밖에서 8초를 다 쓰고 사라진다.
+        */}
+        {(sectionError || sectionUndo) && (
+          <div data-testid="section-footer" className="sticky bottom-0 z-10 space-y-1 bg-surface-sunken px-2 pb-2 pt-1">
+            {sectionError && <p role="alert" data-testid="section-error" className="px-1 text-meta text-danger">{sectionError}</p>}
+            {sectionUndo && (
+              <div data-testid="section-undo" role="status" className="flex items-center gap-2 rounded-row bg-fg px-2 py-1.5 text-meta text-surface">
+                <span className="min-w-0 flex-1">
+                  {t('sidebar.section.deleted', { name: sectionUndo.removed.section.name, count: sectionUndo.removed.channelIds.length })}
+                </span>
+                <button
+                  data-testid="section-undo-button"
+                  className="shrink-0 font-medium underline"
+                  onClick={() => {
+                    const { removed, ctl } = sectionUndo;
+                    setSectionUndo(null);
+                    void ctl.restoreSection(removed).catch((err) => setSectionError(sectionErrorText(err)));
+                  }}
+                >{t('sidebar.section.undo')}</button>
+              </div>
+            )}
+          </div>
+        )}
         {footer}
         {/*
           **내 자리가 여기 있었다**(#488 A1). 레일 맨 아래로 갔다 — 정본 문서

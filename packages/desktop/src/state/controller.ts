@@ -3010,11 +3010,18 @@ export class Controller {
     this.store.getState().set({ channelSections: sections });
   }
 
-  /** 채널을 섹션에 넣거나(id) 미분류로 뺀다(null) — 136 의 id 길. */
+  /**
+   * 채널을 섹션에 넣거나(id) 미분류로 뺀다(null) — 136 의 id 길.
+   *
+   * 옮겨 간 섹션이 **접혀 있으면 펼친다**(designer s2). 접힌 섹션은 멘션 온 채널만 남기므로(D4),
+   * 펼치지 않으면 방금 옮긴 채널이 말없이 사라져 옮기기가 실패한 것처럼 보인다.
+   */
   async moveChannelToSection(channelId: string, sectionId: string | null): Promise<void> {
     const updated = await this.api.updateChannelPref(channelId, { sectionId });
     const store = this.store.getState();
     store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
+    const target = sectionId === null ? undefined : store.channelSections?.find((s) => s.id === sectionId);
+    if (target?.collapsed) await this.setSectionCollapsed(sectionId!, false).catch(() => {});
   }
 
   /**

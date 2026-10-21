@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within, act } from '@testing-library/react';
 import type { ChannelPrefRow, ChannelSectionRow, InboxEntry } from '@harkroom/shared';
-import { useActiveStore as useAppStore } from '../src/state/communities';
+import { useActiveStore as useAppStore, useCommunityRegistry, resetCommunityRegistry } from '../src/state/communities';
 import { Controller, setController } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -151,5 +151,78 @@ describe('사이드바 섹션 표 (136)', () => {
     mount();
     expect(screen.queryByTestId('add-section')).toBeNull();
     expect(screen.getByTestId('section-header-회사')).toBeTruthy();
+  });
+});
+
+describe('사이드바 섹션 표 — 검토 후속 (designer s1·s2·n1, security n1)', () => {
+  afterEach(() => { resetCommunityRegistry(); });
+
+  const seed = () => useAppStore.getState().set({
+    channels: [chan('c1', 'rcms'), chan('c2', 'avcs')],
+    channelSections: [section('s1', '회사', 0), section('s2', '개인', 1, { collapsed: true })],
+    channelPrefs: { c1: pref('c1', { sectionId: 's1' }), c2: pref('c2', { sectionId: 's2' }) },
+  });
+
+  it('s1: 되돌리기 줄은 스크롤 목록(nav) 밖, 사이드바 아래 고정 칸에 선다', async () => {
+    const removed = { section: section('s1', '회사', 0), channelIds: ['c1'] };
+    setController(new Controller(fakeApi({ deleteChannelSection: vi.fn(async () => removed) })));
+    seed();
+    mount();
+    fireEvent.click(screen.getByTestId('section-menu-s1'));
+    fireEvent.click(await screen.findByText('섹션 삭제 — 채널 1개는 Channels로'));
+    const undo = await screen.findByTestId('section-undo');
+    expect(undo.closest('nav')).toBeNull();
+    const footer = screen.getByTestId('section-footer');
+    expect(footer.contains(undo)).toBe(true);
+    expect(footer.className).toContain('sticky');
+    expect(footer.className).toContain('bottom-0');
+  });
+
+  it('s2: 접힌 섹션으로 옮기면 그 섹션을 펼친다', async () => {
+    const api = fakeApi();
+    setController(new Controller(api));
+    seed();
+    mount();
+    const row = screen.getAllByRole('button').find((b) => (b.textContent ?? '').startsWith('#rcms'))!;
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByText('섹션: 개인'));
+    await waitFor(() => expect(api.updateChannelSection).toHaveBeenCalledWith('s2', { collapsed: false }));
+    expect(useAppStore.getState().channelSections!.find((s) => s.id === 's2')!.collapsed).toBe(false);
+  });
+
+  it('n1: 이름 바꾸기는 Enter 뒤 blur 가 와도 한 번만 보낸다', async () => {
+    const api = fakeApi();
+    setController(new Controller(api));
+    seed();
+    mount();
+    fireEvent.doubleClick(screen.getByTestId('section-toggle-s1'));
+    const input = screen.getByTestId('section-rename-s1');
+    fireEvent.change(input, { target: { value: '본업' } });
+    // Enter 와 그 뒤의 blur 가 입력칸이 사라지기 전 한 묶음 안에 온다(실물의 순서).
+    act(() => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+      fireEvent.blur(input);
+    });
+    await waitFor(() => expect(api.updateChannelSection).toHaveBeenCalledWith('s1', { name: '본업' }));
+    expect((api.updateChannelSection as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[1]?.name !== undefined)).toHaveLength(1);
+  });
+
+  it('security n1: 지운 뒤 커뮤니티를 바꾸면 되돌리기가 사라지고, 새 커뮤니티 서버로 아무것도 안 간다', async () => {
+    const removed = { section: section('s1', '회사', 0), channelIds: ['c1'] };
+    setController(new Controller(fakeApi({ deleteChannelSection: vi.fn(async () => removed) })));
+    seed();
+    mount();
+    fireEvent.click(screen.getByTestId('section-menu-s1'));
+    fireEvent.click(await screen.findByText('섹션 삭제 — 채널 1개는 Channels로'));
+    await screen.findByTestId('section-undo');
+
+    const reg = useCommunityRegistry.getState();
+    const b = reg.register({ baseUrl: 'https://b.example.com' });
+    const bApi = fakeApi();
+    reg.attachController(b.id, new Controller(bApi));
+    act(() => { useCommunityRegistry.getState().setActive(b.id); });
+
+    await waitFor(() => expect(screen.queryByTestId('section-undo')).toBeNull());
+    expect(bApi.createChannelSection).not.toHaveBeenCalled();
   });
 });
