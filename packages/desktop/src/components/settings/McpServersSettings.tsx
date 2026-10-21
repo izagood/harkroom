@@ -6,14 +6,15 @@
  * - **operator 칸**: 그 operator 의 정의(URL·Client ID)와 OAuth 인증. 토큰은 그 operator 가 들고, 그 operator 의
  *   모든 에이전트가(계정 풀의 어느 계정이든) 같이 쓴다. 인증·정의는 **내 기계**의 일이라 권한과 무관하다.
  *
- * 지금 데스크톱이 다룰 수 있는 operator 는 이 맥 하나다 — 원격 operator 칸은 박동에 MCP 상태가 실린 뒤
- * (PR5) 같은 칸 목록에 더해진다. 칸이 하나뿐이면 칸 상자를 그리지 않고 두 줄로 접는다(시안 D9).
+ * 지금 데스크톱이 고칠 수 있는 operator 는 이 맥 하나다. 내가 주인인 원격 operator(시안 D8)는 박동 `status.mcp`
+ * 로 **상태만** 보이는 칸이 된다(PR5) — 편집·인증은 P3b·P6 뒤. 칸이 하나뿐이면 칸 상자를 그리지 않고 두 줄로
+ * 접는다(시안 D9).
  *
  * 지우기는 두 갈래다(시안 D2): 「이 맥에서 지우기」(칸의 ⋯, 이 맥의 정의와 토큰)와 「커뮤니티에서 삭제」(머리의 ⋯,
  * 모든 멤버의 모든 operator 에서 이름이 빠진다). 자리가 범위를 말한다.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AgentView, McpServerRow } from '@harkroom/shared';
+import type { AgentView, McpServerRow, OperatorView } from '@harkroom/shared';
 import type { OperatorMcpEntry } from '@harkroom/shared/daemonProtocol';
 import { hasOperatorLocalSurface, listLocalMcpServers, removeLocalMcpServer } from '../../lib/operatorLocal';
 import { useMcpSignIn } from './McpLocalAuth';
@@ -30,13 +31,17 @@ import { useLocale, useT } from '../../i18n/useT';
 import { errorText } from '../../lib/errorText';
 import { useLocalOperatorId } from '../../lib/useLocalOperatorId';
 import { takeMcpFocus } from '../../lib/mcpFocus';
+import { clientIdFingerprint, remoteMcpState, useActiveBaseUrl, useOwnedOperators, type RemoteMcpState } from '../../lib/mcpRemote';
+import { operatorDisplayName } from '../../lib/operatorName';
 
-/** operator 칸 하나. 지금은 이 맥(`local`)뿐이다 — 원격 칸은 PR5 에서 상태만 보이는 모양으로 더한다. */
+/** operator 칸 하나. 이 맥(`local`)은 고치고 인증한다. 원격은 박동 상태만 보인다. */
 export interface McpOperatorCell {
   key: string;
   label: string;
   /** 이 맥이면 칸에서 고치고 인증한다. */
   local: boolean;
+  /** 원격 칸의 operator(박동 상태의 출처). */
+  op?: OperatorView;
   /** 그 operator 의 정의. 없으면 「정의 없음」. */
   entry: OperatorMcpEntry | undefined;
   /** 그 operator 에 배정됐고 이 서버를 켠 에이전트 이름. `null` = 모른다(목록을 못 읽음). */
@@ -74,8 +79,17 @@ function withTail(items: MenuItem[], tail: MenuItem[]): MenuItem[] {
   return [...items, ...tail.map((x, i) => (i === 0 && items.length > 0 ? { ...x, separatorBefore: true } : x))];
 }
 
-function LocalCell({ row, entry, collapsed, agentsOn, tailItems, onDefine, onEdit, onRemove, onChanged, onError }: {
+/** D11 재료 — 내 다른 operator 하나와 그 operator 의 이 이름 상태. */
+interface SlotPeer { label: string; state: RemoteMcpState; agents: string[] | null }
+
+function LocalCell({ row, entry, collapsed, agentsOn, slotPeers, baseUrl, tailItems, onDefine, onEdit, onRemove, onChanged, onError }: {
   row: McpServerRow;
+  /**
+   * 토큰 칸 상한이 있는 프리셋(`tokenSlots`)일 때만 — 내 다른 operator 들의 이 이름 상태. 같은 지문으로 인증돼 있으면
+   * [인증] 전에 묻는다(시안 v2 D11). 상한이 없는 서버는 빈 목록.
+   */
+  slotPeers: SlotPeer[];
+  baseUrl: string | null;
   entry: OperatorMcpEntry | undefined;
   collapsed: boolean;
   /** 이 operator 에서 이 서버를 켠 에이전트 — 정의가 없는데 켠 에이전트가 있으면 [이 맥에 추가] 를 채운 색으로(시안 v2 §2). */
@@ -91,8 +105,26 @@ function LocalCell({ row, entry, collapsed, agentsOn, tailItems, onDefine, onEdi
   const t = useT();
   const locale = useLocale();
   const names = useActiveStore(selectAccountNames);
-  const { waiting, signIn, signOut } = useMcpSignIn(row.name, onChanged, onError);
+  const { waiting, signIn: rawSignIn, signOut } = useMcpSignIn(row.name, onChanged, onError);
   const defLabel = collapsed ? t('mcpServers.cell.defHere') : t('mcpServers.cell.def');
+
+  // D11: 이 맥 정의의 Client ID 지문(오퍼레이터와 같은 식). 지문이 같은 다른 operator 가 인증돼 있으면 묻고 연다.
+  const clientId = entry?.oauthClientId ?? (entry ? presetForName(entry.name)?.definition.oauth?.clientId : undefined);
+  const [fp, setFp] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    setFp(null);
+    if (!clientId || !baseUrl || slotPeers.length === 0) return;
+    void clientIdFingerprint(baseUrl, clientId).then((v) => { if (live) setFp(v); }).catch(() => { if (live) setFp(null); });
+    return () => { live = false; };
+  }, [clientId, baseUrl, slotPeers.length]);
+  const clashing = fp ? slotPeers.filter((p) => p.state.kind === 'defined' && p.state.entry.clientIdFp === fp
+    && (p.state.entry.auth === 'ok' || p.state.entry.auth === 'expired')) : [];
+  // 지문을 모르는 다른 operator(박동 전·오프라인·옛 판) — 창 대신 회색 한 줄(시안 §6 표).
+  const unknownPeers = slotPeers.filter((p) => p.state.kind === 'unknown' || p.state.kind === 'offline'
+    || (p.state.kind === 'defined' && !p.state.entry.clientIdFp));
+  const [askClash, setAskClash] = useState(false);
+  const signIn = () => { if (clashing.length > 0) setAskClash(true); else rawSignIn(); };
 
   if (!entry) {
     return (
@@ -158,6 +190,11 @@ function LocalCell({ row, entry, collapsed, agentsOn, tailItems, onDefine, onEdi
           {entry.source === 'claude' && <span className="rounded-row border border-border px-1.5 text-fg-muted">{t('mcpServers.cell.claudeJson')}</span>}
           {entry.source === 'operator' && entry.headerKeys.length > 0 && <span className="rounded-row border border-border px-1.5 text-fg-muted">{t('mcpServers.cell.headers')}</span>}
         </div>
+        {entry.oauth && unknownPeers.length > 0 && (
+          <div className="mt-1 text-fg-subtle" data-testid={`mcp-cell-slot-note-${row.name}`}>
+            {t('mcpServers.slots.unknownNote', { hosts: unknownPeers.map((p) => p.label).join(' · '), name: row.name })}
+          </div>
+        )}
         {authText && (
           <div className="mt-1 flex flex-wrap items-center gap-1.5" data-testid={`agent-mcp-auth-${row.name}`}
             title={st?.state === 'rejected' ? t('agents.mcp.auth.rejectedNote') : t('agents.mcp.auth.note')}>
@@ -173,6 +210,96 @@ function LocalCell({ row, entry, collapsed, agentsOn, tailItems, onDefine, onEdi
               {st?.state === 'none' ? t('agents.mcp.auth.start') : t('agents.mcp.auth.again')}</button>
           : canEditHere && <button type="button" className={BTN} data-testid={`mcp-cell-primary-${row.name}`} onClick={() => onEdit(entry)}>{t('mcpServers.cell.edit')}</button>}
         <MenuButton items={withTail(items, tailItems)} label={t('mcpServers.cell.menu', { name: row.name })} testid={`mcp-cell-menu-${row.name}`} />
+      </span>
+      {askClash && clashing.length > 0 && (
+        <ConfirmDialog
+          title={t('mcpServers.slots.title', { name: row.name, host: clashing[0]!.label })}
+          detail={(
+            <span className="flex flex-col gap-2" data-testid={`mcp-slot-clash-${row.name}`}>
+              <span>{t('mcpServers.slots.why', { tail: clientId ? clientIdTail(clientId) : '' })}</span>
+              {clashing.map((p) => (
+                <span key={p.label} className="rounded-row border border-warning-border bg-warning-surface px-2 py-1 text-warning">
+                  {t('mcpServers.slots.peer', {
+                    host: p.label,
+                    state: p.state.kind === 'defined' && p.state.entry.auth === 'expired' ? t('mcpServers.cell.expired') : t('agents.mcp.auth.ok'),
+                    agents: p.agents && p.agents.length > 0 ? p.agents.join(' · ') : '—',
+                  })}
+                </span>
+              ))}
+              <span className="text-fg-subtle">{t('mcpServers.slots.hintOtherApp')}</span>
+              <span className="text-fg-subtle">{t('mcpServers.slots.hintSignOut', { host: clashing[0]!.label })}</span>
+              {editable(entry) && (
+                <button type="button" className="self-start text-accent-text hover:underline" data-testid={`mcp-slot-edit-${row.name}`}
+                  onClick={() => { setAskClash(false); onEdit(entry); }}>{t('mcpServers.slots.otherClientId')}</button>
+              )}
+            </span>
+          )}
+          confirmLabel={t('mcpServers.slots.anyway')}
+          cancelLabel={t('mcpServers.cancel')}
+          detailKind="note"
+          onConfirm={() => { setAskClash(false); rawSignIn(); }}
+          onCancel={() => setAskClash(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * 원격 operator 칸 — 박동 상태만 보인다(시안 v2 §2, D10). 버튼은 없고 「보기만」 칩. 정의가 없는데 그 operator 에서
+ * 켠 에이전트가 있으면 빨강(그 에이전트는 배정이 거절돼 멈춰 있다).
+ */
+function RemoteCell({ row, state, agentsOn }: { row: McpServerRow; state: RemoteMcpState; agentsOn: string[] | null }) {
+  const t = useT();
+  const locale = useLocale();
+  const testid = `mcp-remote-state-${row.name}`;
+  const line = (() => {
+    if (state.kind === 'offline') {
+      return <span className="text-fg-subtle" data-testid={testid}>{state.lastSeenAt
+        ? t('mcpServers.remote.offlineAt', { time: stampLabel(state.lastSeenAt, locale) }) : t('mcpServers.remote.offline')}</span>;
+    }
+    if (state.kind === 'unknown') return <span className="text-fg-subtle" data-testid={testid}>{t('mcpServers.remote.unknown')}</span>;
+    if (state.kind === 'missing') {
+      return agentsOn && agentsOn.length > 0
+        ? <span className="text-danger" data-testid={testid}>{t('mcpServers.remote.missingOn', { agents: agentsOn.join(' · ') })}</span>
+        : <span className="text-fg-subtle" data-testid={testid}>{t('mcpServers.cell.none')}</span>;
+    }
+    return null;
+  })();
+  const entry = state.kind === 'defined' ? state.entry : null;
+  const auth = (() => {
+    if (!entry || entry.transport === 'stdio' || !entry.auth) return null;
+    const time = entry.authAt ? stampLabel(entry.authAt, locale) : null;
+    switch (entry.auth) {
+      case 'ok': return { tone: 'text-fg-muted', dot: 'bg-success', text: time ? t('mcpServers.cell.okAt', { time }) : t('agents.mcp.auth.ok') };
+      case 'rejected': return { tone: 'text-danger', dot: 'bg-danger', text: time ? t('mcpServers.cell.rejectedNoAgent', { time }) : t('agents.mcp.authWord.rejected') };
+      case 'expired': return { tone: 'text-danger', dot: 'bg-danger', text: t('mcpServers.cell.expired') };
+      case 'error': return { tone: 'text-danger', dot: 'bg-danger', text: t('agents.mcp.authWord.error') };
+      case 'pending': return { tone: 'text-fg-subtle', dot: 'bg-fg-subtle', text: t('agents.mcp.auth.pending') };
+      default: return entry.oauth ? { tone: 'text-warning', dot: 'bg-warning', text: t('mcpServers.cell.needed') } : null;
+    }
+  })();
+  return (
+    <div className="flex items-start gap-3">
+      <div className="min-w-0 flex-1 text-meta">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="min-w-16 text-fg-muted">{t('mcpServers.cell.def')}</span>
+          {line ?? (
+            <span className="text-fg-muted" data-testid={testid}>
+              {entry!.source === 'claude' ? t('mcpServers.remote.definedClaude') : t('mcpServers.remote.defined')}
+            </span>
+          )}
+        </div>
+        {auth && (
+          <div className="mt-1 flex flex-wrap items-center gap-1.5" data-testid={`mcp-remote-auth-${row.name}`}>
+            <span className="min-w-16 text-fg-muted">{t('mcpServers.cell.auth')}</span>
+            <span aria-hidden className={`inline-block h-1.5 w-1.5 rounded-full ${auth.dot}`} />
+            <span className={auth.tone}>{auth.text}</span>
+          </div>
+        )}
+      </div>
+      <span className="shrink-0 rounded-row border border-border px-1.5 text-meta text-fg-muted" title={t('mcpServers.remote.viewOnlyNote')}>
+        {t('mcpServers.remote.viewOnly')}
       </span>
     </div>
   );
@@ -210,12 +337,18 @@ export function McpServersSection() {
       .then((rows) => { if (live) setAgents(rows); }).catch(() => { if (live) setAgents(null); });
     return () => { live = false; };
   }, []);
-  const onHere = (name: string): string[] | null => {
-    if (!agents || typeof localOperatorId !== 'string') return null;
+  const onAt = (operatorId: string, name: string): string[] | null => {
+    if (!agents) return null;
     return agents
-      .filter((a) => a.assignment?.operatorId === localOperatorId && (a.mcpServers ?? []).includes(name))
+      .filter((a) => a.assignment?.operatorId === operatorId && (a.mcpServers ?? []).includes(name))
       .map((a) => a.displayName || a.handle);
   };
+  const onHere = (name: string): string[] | null => (typeof localOperatorId === 'string' ? onAt(localOperatorId, name) : null);
+
+  /** 내가 주인인 원격 operator(시안 D8). 이 기기 operator 를 아직 모르면 가를 수 없어 그리지 않는다. */
+  const owned = useOwnedOperators();
+  const baseUrl = useActiveBaseUrl();
+  const remotes: OperatorView[] = owned && localOperatorId !== 'unknown' ? owned.filter((o) => o.id !== localOperatorId) : [];
   /** 이름을 켠 에이전트 전부(어느 operator 든) — 커뮤니티 삭제는 모든 operator 에서 이름이 빠진다. */
   const onAnywhere = (name: string): string[] | null =>
     agents ? agents.filter((a) => (a.mcpServers ?? []).includes(name)).map((a) => a.displayName || a.handle) : null;
@@ -224,16 +357,24 @@ export function McpServersSection() {
    * 에이전트 화면의 「연동에서 … →」 로 왔으면 그 줄로 스크롤하고 잠깐(2초) 강조한다(`mcpFocus`). 목록이 그려진 뒤 한 번.
    */
   const [flash, setFlash] = useState<string | null>(null);
+  const [flashOp, setFlashOp] = useState<string | null>(null);
   const focusTaken = useRef(false);
   useEffect(() => {
     if (focusTaken.current || !Array.isArray(rows)) return;
     focusTaken.current = true;
-    const name = takeMcpFocus();
-    if (!name) return;
+    const focus = takeMcpFocus();
+    if (!focus) return;
+    const { name, operatorId } = focus;
     setFlash(name);
+    setFlashOp(operatorId ?? null);
     // 이름은 레지스트리 문법([a-z0-9-])이라 선택자에 그대로 넣어도 된다 — 그래도 문법을 벗어나면 찾지 않는다.
-    if (/^[a-z0-9-]{1,32}$/.test(name)) document.querySelector(`[data-testid="mcp-server-${name}"]`)?.scrollIntoView?.({ block: 'center' });
-    const timer = setTimeout(() => setFlash(null), 2000);
+    // 원격 칸으로 가는 링크면(designer #1455 n3) 그 칸을, 칸이 아직 없으면 줄을 보인다.
+    if (/^[a-z0-9-]{1,32}$/.test(name)) {
+      const cell = operatorId && /^[A-Za-z0-9-]{1,64}$/.test(operatorId)
+        ? document.querySelector(`[data-testid="mcp-cell-${name}-${operatorId}"]`) : null;
+      (cell ?? document.querySelector(`[data-testid="mcp-server-${name}"]`))?.scrollIntoView?.({ block: 'center' });
+    }
+    const timer = setTimeout(() => { setFlash(null); setFlashOp(null); }, 2000);
     return () => clearTimeout(timer);
   }, [rows]);
 
@@ -268,8 +409,16 @@ export function McpServersSection() {
   };
 
   const registry = Array.isArray(rows) ? rows : [];
-  const cellsOf = (row: McpServerRow): McpOperatorCell[] =>
-    local ? [{ key: 'local', label: t('mcpServers.cell.thisMac'), local: true, entry: localEntry(row.name), agents: onHere(row.name) }] : [];
+  const cellsOf = (row: McpServerRow): McpOperatorCell[] => [
+    ...(local ? [{ key: 'local', label: t('mcpServers.cell.thisMac'), local: true, entry: localEntry(row.name), agents: onHere(row.name) }] : []),
+    ...remotes.map((op) => ({ key: op.id, label: operatorDisplayName(op), local: false, op, entry: undefined, agents: onAt(op.id, row.name) })),
+  ];
+  /** D11 재료 — 토큰 칸 상한이 있는 프리셋일 때만 내 다른 operator 들의 상태. */
+  const slotPeersOf = (row: McpServerRow): SlotPeer[] => (presetForName(row.name)?.tokenSlots
+    ? remotes.map((op) => ({ label: operatorDisplayName(op), state: remoteMcpState(op, row.name), agents: onAt(op.id, row.name) }))
+    : []);
+  /** 원격 칸 안내는 원격 칸이 처음 나오는 줄에 한 번만(시안 D10). */
+  const firstRemoteRow = remotes.length > 0 ? registry[0]?.name : undefined;
   const canAdd = canEdit || (hasOperatorLocalSurface() && registry.length > 0);
 
   return (
@@ -284,13 +433,13 @@ export function McpServersSection() {
           )}
         </div>
         <div className="divide-y divide-border rounded-compose border border-border bg-surface-raised">
-          <p className="px-4 py-3 text-meta text-fg-subtle" data-testid="mcp-servers-description">{t('mcpServers.descriptionHere')}</p>
+          <p className="px-4 py-3 text-meta text-fg-subtle" data-testid="mcp-servers-description">{remotes.length > 0 ? t('mcpServers.descriptionOperators') : t('mcpServers.descriptionHere')}</p>
           {rows === null && <p className="px-4 py-3 text-meta text-fg-muted">{t('mcpServers.loading')}</p>}
           {rows === 'error' && <p role="alert" className="px-4 py-3 text-meta text-danger">{t('mcpServers.listFailed')}</p>}
           {Array.isArray(rows) && rows.length === 0 && <p className="px-4 py-3 text-meta text-fg-subtle">{t('mcpServers.none')}</p>}
           {registry.map((row) => {
             const cells = cellsOf(row);
-            const collapsed = cells.length === 1;
+            const collapsed = cells.length === 1 && cells[0]!.local;
             const headItems: MenuItem[] = canEdit
               ? [{ label: t('mcpServers.removeCommunity'), tone: 'danger', onSelect: () => { setError(null); setAlsoLocal(false); setConfirming(row); } }]
               : [];
@@ -305,17 +454,25 @@ export function McpServersSection() {
                   {!collapsed && <MenuButton items={headItems} label={t('mcpServers.removeAction', { name: row.name })} testid={`mcp-server-menu-${row.name}`} />}
                 </div>
                 {cells.map((cell) => {
-                  const body = (
-                    <LocalCell row={row} entry={cell.entry} collapsed={collapsed} agentsOn={cell.agents} tailItems={collapsed ? headItems : []}
+                  const body = !cell.local ? (
+                    <RemoteCell row={row} state={remoteMcpState(cell.op!, row.name)} agentsOn={cell.agents} />
+                  ) : (
+                    <LocalCell row={row} entry={cell.entry} collapsed={collapsed} agentsOn={cell.agents} slotPeers={slotPeersOf(row)} baseUrl={baseUrl}
+                      tailItems={collapsed ? headItems : []}
                       onDefine={() => { setError(null); setDialog({ kind: 'define', row }); }}
                       onEdit={(entry) => { setError(null); setDialog({ kind: 'edit', row, entry }); }}
                       onRemove={(entry) => { setError(null); setRemovingLocal(entry); }}
                       onChanged={reloadLocal} onError={setError} />
                   );
+                  const lit = flash === row.name && flashOp === cell.key;
                   return collapsed ? <div key={cell.key}>{body}</div> : (
-                    <div key={cell.key} className="grid grid-cols-[8.5rem_1fr] gap-2 rounded-row border border-border bg-surface px-2.5 py-2">
-                      <span className="flex flex-col text-meta font-semibold text-fg">
-                        {cell.label}
+                    <div key={cell.key} data-testid={`mcp-cell-${row.name}-${cell.key}`} data-flash={lit ? 'true' : undefined}
+                      className={`grid grid-cols-1 gap-2 rounded-row border px-2.5 py-2 sm:grid-cols-[8.5rem_1fr] ${cell.local ? 'border-border bg-surface' : 'border-dashed border-border bg-transparent'} ${lit ? 'bg-accent-surface' : ''}`}>
+                      <span className="flex min-w-0 flex-col text-meta font-semibold text-fg">
+                        <span className="truncate" title={cell.label}>
+                          {cell.label}
+                          {!cell.local && <span className="ml-1 rounded-row border border-border px-1 font-normal text-fg-subtle">{t('agents.mcp.where.remoteTag')}</span>}
+                        </span>
                         {cell.agents && (
                           <span className="font-normal text-fg-subtle" title={cell.agents.join(', ')} data-testid={`mcp-cell-agents-${row.name}`}>
                             {t('mcpServers.cell.agentCount', { n: cell.agents.length })}
@@ -326,6 +483,9 @@ export function McpServersSection() {
                     </div>
                   );
                 })}
+                {row.name === firstRemoteRow && (
+                  <p className="text-meta text-fg-subtle" data-testid="mcp-remote-hint">{t('mcpServers.remote.viewOnlyNote')}</p>
+                )}
               </div>
             );
           })}

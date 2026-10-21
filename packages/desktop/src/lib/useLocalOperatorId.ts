@@ -24,7 +24,9 @@ export function useLocalOperatorId(): string | null | 'unknown' {
     setId('unknown');
     const load = () => {
       if (!hasOperatorLocalSurface()) { setId(null); return; }
-      const baseUrl = getController().api?.baseUrl ?? null;
+      // 활성 항목의 baseUrl 을 그대로 쓴다 — 컨트롤러가 늦게 바뀌면 옛 주소를 한 번 읽을 틈이 있었다(security #1455 낮음).
+      // 레지스트리에 주소가 아직 없을 때(기동 직후 엔트리)만 컨트롤러 값으로 물러선다.
+      const baseUrl = activeKey.slice(activeKey.indexOf('|') + 1) || getController().api?.baseUrl || null;
       if (!baseUrl) { setId(null); return; }
       void listLocalAgents().then((r) => {
         if (!live) return;

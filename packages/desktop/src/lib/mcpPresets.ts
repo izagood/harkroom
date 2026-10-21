@@ -18,11 +18,17 @@ export interface McpPreset {
   label: string;
   credentialKind: 'community' | 'personal';
   definition: OperatorMcpRemoteDefinition;
+  /**
+   * 그 서비스가 한 사람·한 OAuth 앱에 살려 두는 토큰 수 상한(알려진 것만). 있으면 같은 앱으로 내 다른 operator 가
+   * 이미 인증돼 있을 때 [인증] 전에 경고한다(시안 v2 D11) — 갱신 때 서로 밀어내 한쪽이 끊긴다(Slack 은 2개).
+   * 이름 글자로 고르지 않는다(이름은 바뀐다).
+   */
+  tokenSlots?: number;
 }
 
 export const MCP_PRESETS: readonly McpPreset[] = [
   {
-    id: 'slack', name: 'slack', label: 'Slack', credentialKind: 'personal',
+    id: 'slack', name: 'slack', label: 'Slack', credentialKind: 'personal', tokenSlots: 2,
     definition: { type: 'http', url: 'https://mcp.slack.com/mcp', oauth: { clientId: '1601185624273.8899143856786', callbackPort: 3118 } },
   },
   {

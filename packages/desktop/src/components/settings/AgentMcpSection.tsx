@@ -28,6 +28,7 @@ import { useLocalOperatorId } from '../../lib/useLocalOperatorId';
 import { requestMcpFocus } from '../../lib/mcpFocus';
 import { operatorNameOf } from '../../lib/operatorName';
 import { McpServerDialog } from './McpServerDialog';
+import { remoteMcpState } from '../../lib/mcpRemote';
 import type { SectionId } from './sections';
 import { useT } from '../../i18n/useT';
 import { errorText } from '../../lib/errorText';
@@ -46,7 +47,8 @@ function authNeed(entry: OperatorMcpEntry): 'start' | 'again' | null {
   return null;
 }
 
-const LINK = 'text-accent-text hover:underline disabled:opacity-50';
+// 빨간 상태 글 바로 옆에 붙는다 — 강조색이면 둘이 한 덩어리로 읽혀(designer #1455 n4) 흐린 글+밑줄로 낮춘다.
+const LINK = 'text-fg-muted underline underline-offset-2 hover:text-fg disabled:opacity-50';
 
 export function AgentMcpSection({ agent, disabled, onUpdated, onOpenSection }: {
   agent: AgentView;
@@ -142,10 +144,19 @@ export function AgentMcpSection({ agent, disabled, onUpdated, onOpenSection }: {
     return t('agents.scope.errFailed', { reason: errorText(err, t) });
   };
 
+  /** 원격 배정이면 그 오퍼레이터(박동 상태의 출처). */
+  const assignedOp = where.kind === 'remote' ? operators?.find((o) => o.id === assignedId) : undefined;
+  const remoteState = (n: string) => (assignedOp ? remoteMcpState(assignedOp, n) : { kind: 'unknown' as const });
+
   /** 켜는 이름에 그 오퍼레이터의 정의가 없을(수 있을) 때 — 켜기는 하되 뜨지 않는다고 말한다(시안 v2 D12). */
   const warnFor = (n: string): string | null => {
     if (where.kind === 'here' && definedHere(n) === false) return t('agents.mcp.warnNoDefinitionHere', { name: n });
-    if (where.kind === 'remote') return t('agents.mcp.warnNoDefinitionRemote', { name: n, host: where.name });
+    if (where.kind === 'remote') {
+      const st = remoteState(n);
+      if (st.kind === 'defined') return null;
+      if (st.kind === 'missing') return t('agents.mcp.warnMissingRemote', { name: n, host: where.name });
+      return t('agents.mcp.warnNoDefinitionRemote', { name: n, host: where.name });
+    }
     return null;
   };
 
@@ -197,7 +208,8 @@ export function AgentMcpSection({ agent, disabled, onUpdated, onOpenSection }: {
   };
 
   const goIntegrations = (name?: string) => {
-    if (name) requestMcpFocus(name);
+    // 원격 배정이면 그 호스트 칸으로 간다(designer #1455 n3).
+    if (name) requestMcpFocus(name, where.kind === 'remote' && assignedId ? assignedId : undefined);
     onOpenSection?.('integrations');
   };
   const link = (label: string, name: string | undefined, testid: string) => onOpenSection && (
@@ -232,7 +244,37 @@ export function AgentMcpSection({ agent, disabled, onUpdated, onOpenSection }: {
       }
       return null;
     }
-    if ((where.kind === 'remote' || where.kind === 'unknown') && on) {
+    if (where.kind === 'remote') {
+      // 그 호스트의 박동 상태로(#1451) — 박동이 없거나 그 이름이 실리지 않았으면 「상태 모름」.
+      const st = remoteState(row.name);
+      if (st.kind === 'missing') {
+        return (
+          <>
+            <span className={on ? 'text-danger' : 'text-fg-subtle'} data-testid={`agent-mcp-missing-${row.name}`}>
+              {on ? t('agents.mcp.missingOnRemote', { host: where.name }) : t('agents.mcp.missingRemote', { host: where.name })}
+            </span>
+            {on && link(t('agents.mcp.linkView'), row.name, `agent-mcp-link-${row.name}`)}
+          </>
+        );
+      }
+      if (st.kind === 'defined') {
+        const a = st.entry.auth;
+        const need = st.entry.transport !== 'stdio' && (a === 'rejected' || a === 'expired' || a === 'error' || (a === 'none' && st.entry.oauth));
+        if (!need) return null;
+        const word = a === 'rejected' ? t('agents.mcp.authWord.rejected') : a === 'expired' ? t('agents.mcp.authWord.expired')
+          : a === 'error' ? t('agents.mcp.authWord.error') : t('agents.mcp.authWord.needed');
+        return (
+          <>
+            <span className={on ? 'text-danger' : 'text-fg-subtle'} data-testid={`agent-mcp-auth-${row.name}`}>{word}</span>
+            {on && link(t('agents.mcp.linkView'), row.name, `agent-mcp-link-${row.name}`)}
+          </>
+        );
+      }
+      if (!on) return null;
+      return <span className="text-fg-subtle" data-testid={`agent-mcp-unknown-${row.name}`}>
+        {st.kind === 'offline' ? t('agents.mcp.stateOffline') : t('agents.mcp.stateUnknown')}</span>;
+    }
+    if (where.kind === 'unknown' && on) {
       return <span className="text-fg-subtle" data-testid={`agent-mcp-unknown-${row.name}`}>{t('agents.mcp.stateUnknown')}</span>;
     }
     return null;
@@ -298,6 +340,7 @@ export function AgentMcpSection({ agent, disabled, onUpdated, onOpenSection }: {
             agentName: agent.displayName || agent.handle,
             remoteHost: where.kind === 'remote' ? where.name : null,
             narrowsToOwner: agent.credentialScope !== 'personal',
+            remoteDefined: (n) => { const st = remoteState(n); return st.kind === 'defined' ? true : st.kind === 'missing' ? false : null; },
           }}
           onDone={afterDialog} onCancel={() => setAdding(false)} />
       )}
