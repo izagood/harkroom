@@ -6,7 +6,7 @@ import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
 import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
-import { getMessageById, recordAskAnswer, syncAskMirrors } from './messages.js';
+import { getMessageById, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
 
 /**
  * 에이전트 권한 요청 → 소유자 승인 → 적용(스레드 f61af808, jaebin D1~D4 10-07).
@@ -198,6 +198,7 @@ export async function openPermissionRequest(
     `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, denial_id)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
     [args.agentId, args.kind, target, args.reason, warnings, args.channelId, args.threadRootId, now, expiresAt, args.denial?.id ?? null])).rows[0]!.id;
+  await supersedeOlderRequests(pool, { newId: id, agentId: args.agentId, kind: args.kind, target, channelId: args.channelId, threadRootId: args.threadRootId, now });
   await recordAudit(pool, {
     action: 'permission.requested', actorId: args.agentId, target: args.agentId,
     detail: { requestId: id, kind: args.kind, target, warnings, channelId: args.channelId, threadRootId: args.threadRootId },
@@ -261,6 +262,7 @@ async function openCommandRequest(
     `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at)
      values ($1, 'command', $2, $3, $4, $5, $6, $7, $8) returning id`,
     [args.agentId, v.command, args.reason, v.warnings, args.channelId, args.threadRootId, args.now, expiresAt])).rows[0]!.id;
+  await supersedeOlderRequests(pool, { newId: id, agentId: args.agentId, kind: 'command', target: v.command, channelId: args.channelId, threadRootId: args.threadRootId, now: args.now });
   await pool.query(`update permission_request set file_digests = $2::jsonb where id = $1`, [id, JSON.stringify(canonicalDigests(files.files))]);
   await recordAudit(pool, {
     action: 'permission.requested', actorId: args.agentId, target: args.agentId,
@@ -328,6 +330,60 @@ export function permissionCardOptions(kind: PermissionKind = 'tool', ciOnce = fa
 
 export async function linkPermissionCard(pool: Pool, requestId: string, cardMessageId: string): Promise<void> {
   await pool.query(`update permission_request set card_message_id = $2 where id = $1 and card_message_id is null`, [requestId, cardMessageId]);
+  await closeSupersededCards(pool, requestId, cardMessageId);
+}
+
+/**
+ * 같은 요청(에이전트·종류·대상·채널·스레드 — 「이미 기다리는 것을 돌려준다」와 같은 열쇠)을 새로 냈을 때 옛 요청을 새 요청에 잇는다(132).
+ *
+ * 시한 안의 기다리는 요청이 있으면 `open*` 이 그것을 돌려주고 여기까지 오지 않는다. 그래서 여기서 만나는 옛 요청은
+ * ① 시한이 지났는데 스윕이 아직 닫지 않은 `pending` — `superseded` 로 바꾼다(만료로 깨우지 않는다: 에이전트가 방금 다시 청했다),
+ * ② 이미 `expired` — 상태는 두고 `superseded_by` 만 적는다(만료 기록은 사실이다). 한 줄은 한 번만 잇는다(`superseded_by is null`).
+ */
+async function supersedeOlderRequests(
+  pool: Pool,
+  args: { newId: string; agentId: string; kind: PermissionKind; target: string; channelId: string; threadRootId: string; now: Date },
+): Promise<void> {
+  await pool.query(
+    `update permission_request
+        set superseded_by = $6,
+            status = case when status = 'pending' then 'superseded' else status end,
+            decided_at = coalesce(decided_at, $7)
+      where agent_id = $1 and kind = $2 and target = $3 and channel_id = $4 and thread_root_id = $5
+        and id <> $6 and superseded_by is null and status in ('pending', 'expired')`,
+    [args.agentId, args.kind, args.target, args.channelId, args.threadRootId, args.newId, args.now]);
+}
+
+/**
+ * 새 요청의 카드가 서면 그것이 대체한 옛 요청의 카드를 닫는다 — `closedReason: 'superseded'`, `supersededBy` 는 새 카드 id
+ * (`message.ask` 의 대체와 같은 모양). 이미 닫힌 카드(만료로 닫힘)는 그대로 둔다. 거울도 `syncAskMirrors` 로 같은 사유로 닫는다.
+ * 뒤처리라 실패해도 던지지 않는다 — 새 카드는 이미 섰다.
+ */
+async function closeSupersededCards(pool: Pool, newRequestId: string, newCardId: string): Promise<void> {
+  try {
+    const old = (await pool.query<{ id: string; status: string; cardMessageId: string }>(
+      `select id, status, card_message_id as "cardMessageId" from permission_request
+        where superseded_by = $1 and card_message_id is not null`, [newRequestId])).rows;
+    const at = new Date().toISOString();
+    for (const o of old) {
+      if (o.status === 'superseded') {
+        await pool.query(
+          `update message set meta = jsonb_set(meta, '{permissionRequest}', (meta->'permissionRequest') || $2::jsonb)
+            where id = $1 and meta ? 'permissionRequest'`,
+          [o.cardMessageId, JSON.stringify({ status: 'superseded', supersededBy: newRequestId, decidedAt: at })]);
+      }
+      const closed = await pool.query(
+        `update message set meta = jsonb_set(meta, '{ask}', (meta->'ask') || $2::jsonb)
+          where id = $1 and meta ? 'ask' and meta->'ask'->>'closedAt' is null and meta->'ask'->'answeredWith' is null`,
+        [o.cardMessageId, JSON.stringify({ closedAt: at, closedReason: 'superseded', supersededBy: newCardId })]);
+      if (!closed.rowCount && o.status !== 'superseded') continue;
+      const card = await getMessageById(pool, o.cardMessageId);
+      if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
+      if (closed.rowCount) await syncAskMirrors(pool, o.cardMessageId);
+    }
+  } catch (err) {
+    console.error('permission supersede follow-up error:', err);
+  }
 }
 
 export type DecideRefusal = { status: 400 | 403 | 404 | 409; code: string; message: string };
@@ -370,6 +426,8 @@ export async function decidePermissionRequest(
     if (!r || r.agentId !== args.agentId) { await client.query('rollback'); return { ok: false, status: 404, code: 'not_found', message: 'no such permission request for this agent' }; }
     // PR 이 머지되거나 닫혀 카드가 닫혔다(Q3-c) — 승인·7일 허락·거절 어느 결정도 받지 않는다.
     if (r.status === 'obsolete') { await client.query('rollback'); return { ok: false, status: 409, code: 'pr_closed', message: 'that pull request was already merged or closed — this card is closed' }; }
+    // 같은 요청을 에이전트가 다시 내서 새 카드가 대신했다(132) — 결정은 새 카드에서.
+    if (r.status === 'superseded') { await client.query('rollback'); return { ok: false, status: 409, code: 'superseded', message: 'the agent asked again — decide on the newer card' }; }
     if (r.status !== 'pending') { await client.query('rollback'); return { ok: false, status: 409, code: 'already_decided', message: `this request is already ${r.status}` }; }
     if (r.expired) {
       await client.query('rollback');
@@ -511,12 +569,14 @@ const PERMISSION_EXPIRE_BATCH = 50;
  *
  * 요청은 `expired`, 카드 meta 의 `permissionRequest.status` 도 `expired`, 카드의 선택 카드는 `closedReason: 'expired'` 로 닫는다(닫은 사람이 없으므로 `closedBy` 는 없다)
  * (`obsoleteMergeCards` 와 같은 모양). 닫은 뒤 `syncAskMirrors` 로 거울·묶음 줄을 같은 사유로 닫는다 — 다른 채널에 세운 거울도
- * 열린 채 남지 않는다. 요청한 에이전트는 깨우지 않는다(다시 청하라고 알릴지는 후속 D). 닫은 요청 수를 돌려준다.
+ * 열린 채 남지 않는다. 카드를 실제로 닫았으면 요청한 에이전트를 한 번 깨운다(`ask_closed`). 닫은 요청 수를 돌려준다.
  * `requestId` 가 있으면 그 요청만(결정 경로가 만료를 만났을 때).
  */
 export async function expirePermissionRequests(pool: Pool, args: { now: Date; requestId?: string }): Promise<number> {
   const client = await pool.connect();
   let rows: { id: string; agentId: string; cardMessageId: string | null }[] = [];
+  /** 이번 만료가 실제로 닫은 카드 — 그 카드의 에이전트만 깨운다(이미 사람이 닫은 카드는 그때 깨웠다). */
+  const closedCards = new Set<string>();
   try {
     await client.query('begin');
     rows = (await client.query<{ id: string; agentId: string; cardMessageId: string | null }>(
@@ -533,10 +593,11 @@ export async function expirePermissionRequests(pool: Pool, args: { now: Date; re
         `update message set meta = jsonb_set(meta, '{permissionRequest}', (meta->'permissionRequest') || $2::jsonb)
           where id = $1 and meta ? 'permissionRequest'`,
         [r.cardMessageId, JSON.stringify({ status: 'expired', decidedAt: at })]);
-      await client.query(
+      const closed = await client.query(
         `update message set meta = jsonb_set(meta, '{ask}', (meta->'ask') || $2::jsonb)
           where id = $1 and meta ? 'ask' and meta->'ask'->>'closedAt' is null and meta->'ask'->'answeredWith' is null`,
         [r.cardMessageId, JSON.stringify({ closedAt: at, closedReason: 'expired' })]);
+      if (closed.rowCount) closedCards.add(r.cardMessageId);
     }
     await client.query('commit');
   } catch (err) {
@@ -554,6 +615,10 @@ export async function expirePermissionRequests(pool: Pool, args: { now: Date; re
       const card = await getMessageById(pool, r.cardMessageId);
       if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
       await syncAskMirrors(pool, r.cardMessageId);
+      // 요청한 에이전트를 한 번 깨운다(`ask_closed`, 카드 자신을 가리킨다) — 러너는 `closedReason: 'expired'` 를 보고
+      // 「만료됐다, 아직 필요하면 다시 청해라」로 알린다. 한 줄은 위의 `status = 'pending'` 갱신에서 한 번만 돌아오므로 깨움도 한 번이다.
+      // 행위자는 서버다 — 빈 값을 넘겨 자기 깨움 거름(`askerId === actorId`)에 걸리지 않게 한다.
+      if (closedCards.has(r.cardMessageId)) await wakeAsker(pool, r.agentId, '', r.cardMessageId, 'ask_closed');
     } catch (err) {
       console.error('permission expiry follow-up error:', err);
     }
