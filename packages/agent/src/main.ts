@@ -317,10 +317,14 @@ const { codexHome } = await syncCodexAuth(codexHomeDir);
 // 사람 설정에서 물려받는 것은 `provider`·`model` 뿐이다 — `mcp` 를 물려받으면 운영자 개인
 // MCP 가 에이전트 턴에 붙는다(claude 의 `--strict-mcp-config` 와 같은 자리).
 // 루트 하나에 opencode 와 Kilo(포크)가 **하위 디렉터리만 달리해** 함께 산다(`xdgApp`) — 둘 다 적는다.
+// 전용 제공사 경로로 뜬 러너인가(`providerLane.ts`). opencode 홈도 이것으로 lane 블록을 고른다(ⓕ).
+const providerLaneOn = process.env[PROVIDER_LANE_ENV] === '1';
 const startupMcp = await readMcpServers(config.mcpConfigPath);
 let opencodeHome = opencodeHomeDir;
 for (const app of allXdgApps()) {
-  opencodeHome = await ensureOpencodeHome({ opencodeHome: opencodeHomeDir, mcpServers: startupMcp, app });
+  opencodeHome = await ensureOpencodeHome({
+    opencodeHome: opencodeHomeDir, mcpServers: startupMcp, app, ...(providerLaneOn ? { providerLane: { model: null } } : {}),
+  });
 }
 // pi 도 같은 이유로 격리한다 — 한 변수(`PI_CODING_AGENT_DIR`)이고 MCP 는 그 안의 `mcp.json` 뿐이다(`piHome.ts`).
 const piHome = await ensurePiHome({ piHome: piHomeDir, mcpServers: startupMcp });
@@ -346,7 +350,6 @@ const piHome = await ensurePiHome({ piHome: piHomeDir, mcpServers: startupMcp })
 // 전용 제공사 경로(`providerLane.ts`, security ⓒ): 오퍼레이터가 켰으면 계정 축은 **이 에이전트 전용 디렉터리 하나**다.
 // 풀·`~/.claude` 를 읽지 않으므로 페일오버·사용량 배정·로그인 경고에 이 에이전트가 들어가지 않고, 한 자식에 OAuth 와
 // 키가 같이 드는 일이 없다. 디렉터리는 비어 있어야 정상이다(로그인이 없다) — 키는 턴마다 env 로만 든다.
-const providerLaneOn = process.env[PROVIDER_LANE_ENV] === '1';
 if (providerLaneOn) await mkdir(providerLaneClaudeDir, { recursive: true, mode: 0o700 });
 const providerLaneAccount: ClaudeAccount = { name: 'provider-lane', configDir: providerLaneClaudeDir, pool: null };
 const loadLane = async () => providerLaneOn
@@ -414,10 +417,15 @@ const extraMcpServers = await readExtraMcpServers(mcpConfigPath);
 // **턴마다 다시 읽는다**(2026-09-30) — 오퍼레이터가 OAuth 토큰을 refresh 하면 이 파일에 새 토큰을
 // 넣는다. 위의 한 번 읽은 값은 읽기가 실패할 때의 바닥이다. opencode 는 표를 제 설정 파일로 번역해
 // 두므로 그 파일도 다시 쓴다(`ensureOpencodeHome` 은 같은 입력이면 같은 파일을 쓴다).
-const readTurnMcp = async (harness: AgentHarness): Promise<Record<string, McpServerEntry>> => {
+// lane 러너(`providerLane.ts`)면 그 턴의 모델을 lane provider 블록에 적는다 — opencode 는 목록에 없는 모델을 거절한다.
+const readTurnMcp = async (harness: AgentHarness, model?: string | null): Promise<Record<string, McpServerEntry>> => {
   const all = await readMcpServers(mcpConfigPath);
   const app = xdgAppFor(harness);
-  if (usesXdgHome(harness) && app) await ensureOpencodeHome({ opencodeHome: opencodeHomeDir, mcpServers: all, app });
+  if (usesXdgHome(harness) && app) {
+    await ensureOpencodeHome({
+      opencodeHome: opencodeHomeDir, mcpServers: all, app, ...(providerLaneOn ? { providerLane: { model: model ?? null } } : {}),
+    });
+  }
   if (usesPiHome(harness)) await ensurePiHome({ piHome: piHomeDir, mcpServers: all });
   const { harkroom: _harkroom, avcs: _avcs, ...extra } = all;
   return extra;

@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  ensureOpencodeHome, opencodeConfigFile, opencodeDirs, OPENCODE_READONLY_AGENT, stripJsonc, toOpencodeMcp,
+  ensureOpencodeHome, opencodeConfigFile, opencodeDirs, OPENCODE_READONLY_AGENT, providerLaneModelId, stripJsonc, toOpencodeMcp,
 } from '../src/opencodeHome.js';
 import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
 
@@ -166,5 +166,65 @@ describe('Kilo(opencode 포크) — 같은 루트, 다른 이름표', () => {
 
   it('JSONC 를 벗길 때 문자열 안의 `//` 는 건드리지 않는다', () => {
     expect(JSON.parse(stripJsonc('{"u":"https://a.example/v1", // x\n "b":[1,2,],}'))).toEqual({ u: 'https://a.example/v1', b: [1, 2] });
+  });
+});
+
+// 전용 제공사 경로(security ⓕ): provider 블록은 그 에이전트 홈에만, 키는 자식 env 로만.
+describe('lane 러너의 opencode 홈', () => {
+  it('사람의 provider·모델·로그인을 물리지 않고 lane 블록 하나만 연다 — 값은 `{env:}` 참조뿐이다', async () => {
+    const f = await fixture();
+    await ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: 'harkroom-lane/MiniMax-M2.7' },
+    });
+    const text = await readFile(opencodeConfigFile(f.home), 'utf8');
+    const cfg = JSON.parse(text);
+    expect(Object.keys(cfg.provider)).toEqual(['harkroom-lane']);
+    expect(cfg.provider['harkroom-lane']).toEqual({
+      npm: '@ai-sdk/anthropic',
+      name: 'Harkroom provider lane',
+      options: { baseURL: '{env:HARKROOM_PROVIDER_BASE_URL}/v1', apiKey: '{env:HARKROOM_PROVIDER_TOKEN}' },
+      models: { 'MiniMax-M2.7': { name: 'MiniMax-M2.7' } },
+    });
+    // 다른 provider(무료 티어·사람 로그인)로 돌지 않는다.
+    expect(cfg.enabled_providers).toEqual(['harkroom-lane']);
+    expect(cfg.model).toBe('harkroom-lane/MiniMax-M2.7');
+    expect(cfg.agent[OPENCODE_READONLY_AGENT].model).toBe('harkroom-lane/MiniMax-M2.7');
+    expect(text).not.toContain('gateway.example');
+    expect(cfg.mcp).toEqual({ harkroom: expect.objectContaining({ type: 'local' }) });
+    expect(cfg.mcp.gmail).toBeUndefined();
+    // 사람 로그인을 링크하지 않는다(ⓒ).
+    expect(await lstat(join(opencodeDirs(f.home).XDG_DATA_HOME, 'opencode', 'auth.json')).catch(() => null)).toBeNull();
+  });
+
+  it('lane 이 아니던 때 남은 로그인 **링크만** 뗀다 — 사람 파일은 그대로', async () => {
+    const f = await fixture();
+    await ensureOpencodeHome({ opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData });
+    const link = join(opencodeDirs(f.home).XDG_DATA_HOME, 'opencode', 'auth.json');
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    await ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData, providerLane: { model: null },
+    });
+    expect(await lstat(link).catch(() => null)).toBeNull();
+    expect(await readFile(join(f.sourceData, 'auth.json'), 'utf8')).toContain('rro');
+  });
+
+  it('모델을 모르거나 lane 모델이 아니면 목록을 비운다 — 그 턴은 실패하고 다른 provider 로 안 떨어진다', async () => {
+    const f = await fixture();
+    await ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData, providerLane: { model: 'rro/some/model' },
+    });
+    const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    expect(cfg.provider['harkroom-lane'].models).toEqual({});
+    expect(cfg.model).toBeUndefined();
+    expect(cfg.enabled_providers).toEqual(['harkroom-lane']);
+  });
+
+  it('모델 이름에 `{env:}`·`{file:}` 가 섞이면 받지 않는다 — opencode 가 본문 전체에서 바꿔 넣는다', () => {
+    expect(providerLaneModelId('harkroom-lane/MiniMax-M2.7')).toBe('MiniMax-M2.7');
+    expect(providerLaneModelId('harkroom-lane/{env:HARKROOM_PROVIDER_TOKEN}')).toBeNull();
+    expect(providerLaneModelId('harkroom-lane/{file:/etc/passwd}')).toBeNull();
+    expect(providerLaneModelId('harkroom-lane/')).toBeNull();
+    expect(providerLaneModelId(null)).toBeNull();
   });
 });

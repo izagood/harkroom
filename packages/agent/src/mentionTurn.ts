@@ -231,7 +231,7 @@ export interface MentionTurnDeps {
    * `--mcp-config` 를 읽어 저절로 받지만, codex(`-c`)·opencode(설정 파일)는 러너가 뜰 때 한 번 읽은
    * 표로 돌아 만료된 토큰을 계속 들고 있었다. 없거나 실패하면 `extraMcpServers` 그대로다.
    */
-  readTurnMcp?: (harness: AgentHarness) => Promise<Record<string, McpServerEntry>>;
+  readTurnMcp?: (harness: AgentHarness, model?: string | null) => Promise<Record<string, McpServerEntry>>;
   /**
    * 러너의 상태 디렉터리(config.ts::stateDir). 지시문 파일을 여기 쓴다 —
    * **에이전트의 워크스페이스 안에 두면 안 된다**: `mentionPermission: 'auto'`
@@ -1247,7 +1247,7 @@ export async function runMentionTurn(
   // 여기서 정해지므로 도중에 바꾼 값은 이 턴에 닿지 않는다. 채널 최상위 멘션이면 그 글이 루트다.
   const turnModel = await resolveTurnModel(deps.harkroom, def, anchor ?? mentionId);
   const extraMcpServers = deps.readTurnMcp
-    ? await deps.readTurnMcp(def.harness).catch(() => deps.extraMcpServers)
+    ? await deps.readTurnMcp(def.harness, turnModel.model).catch(() => deps.extraMcpServers)
     : deps.extraMcpServers;
   // **허용 도구 목록으로 읽기 전용을 거는 하네스(pi)** — 턴 직전에 그 하네스에게 MCP 도구 이름을
   // 묻는다. MCP 이름에 `*` 가 안 먹어서(실측) 이름을 다 적어야 한다. 못 받으면 내장 읽기 도구만
