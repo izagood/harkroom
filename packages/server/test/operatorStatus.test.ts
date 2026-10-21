@@ -86,6 +86,37 @@ describe('박동 상태(H1·H5)', () => {
 
 // last_seen_at 은 프레임마다 쓰지 않는다(2026-10-12 쿼리 검토 #2) — 연결 중에는 `LAST_SEEN_WRITE_MS` 에 한 번,
 // 끊길 때 쓰지 못한 프레임이 있었으면 한 번 더. 끊긴 뒤 화면(「마지막으로 본 때」)의 값은 전과 같이 정확해야 한다.
+describe('박동의 MCP 상태 — MCP 설정 v2 PR4', () => {
+  it('주인에게만 mcp 칸이 보인다 — operator.manage 로 남의 오퍼레이터를 보는 관리자에게는 가린다. 값 칸은 서버가 버린다', async () => {
+    const op = await registerOperator(app, aliceToken, 'vm-mcp');
+    const ws = await connect(op.token);
+    beat(ws, {
+      turns: { running: 0, max: null },
+      mcp: [
+        { name: 'slack', defined: true, source: 'operator', transport: 'http', oauth: true, auth: 'ok', authAt: '2026-10-21T08:55:00.000Z',
+          clientIdFp: '0123456789abcdef', url: 'https://secret-host.example.com/mcp', clientId: '1111.2222', token: 'secret-value' },
+        { name: 'jira', defined: false },
+        { name: 'Bad Name', defined: true },
+      ],
+    });
+    await waitFor(async () => (await mine(aliceToken, op.operatorId)).status?.mcp != null);
+    const own = await mine(aliceToken, op.operatorId);
+    expect(own.status?.mcp).toEqual([
+      { name: 'slack', defined: true, source: 'operator', transport: 'http', oauth: true, auth: 'ok', authAt: '2026-10-21T08:55:00.000Z', clientIdFp: '0123456789abcdef' },
+      { name: 'jira', defined: false },
+    ]);
+    for (const leak of ['secret-host', '1111.2222', 'secret-value']) expect(JSON.stringify(own)).not.toContain(leak);
+    // 관리자는 이 오퍼레이터를 목록에서 보지만(operator.manage) MCP 칸은 없다. 턴 숫자는 그대로다.
+    const admin = await mine(adminToken, op.operatorId);
+    expect(admin).toBeDefined();
+    expect(admin.status?.turns).toEqual({ running: 0, max: null });
+    expect(admin.status).not.toHaveProperty('mcp');
+    // 남(bob)은 목록에 이 오퍼레이터가 없다.
+    expect(await mine(bobToken, op.operatorId)).toBeUndefined();
+    ws.close();
+  });
+});
+
 describe('last_seen_at 쓰기 간격', () => {
   const seen = async (id: string): Promise<number | null> => {
     const r = await pool.query(`select last_seen_at from operator where id = $1`, [id]);

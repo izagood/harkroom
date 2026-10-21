@@ -11,7 +11,10 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { readFile, statfs } from 'node:fs/promises';
 import { freemem, platform, totalmem } from 'node:os';
-import type { OperatorPlatform, OperatorStatus } from '@harkroom/shared';
+import type { OperatorMcpStatusEntry, OperatorPlatform, OperatorStatus } from '@harkroom/shared';
+import type { OperatorMcpAuthState } from '@harkroom/shared/daemonProtocol';
+import { MAX_STATUS_MCP } from '@harkroom/shared/operatorProtocol';
+import type { McpServerDefinition } from './mcpConfig.js';
 
 /** 박동 주기. 서버는 이보다 촘촘한 박동을 거른다(`STATUS_MIN_INTERVAL_MS`). */
 export const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -69,4 +72,54 @@ export async function readMachineDigest(
   if (!raw) return null;
   // 접두를 섞는다 — 같은 machine-id 를 다른 용도로 해시한 값과 겹치지 않게.
   return createHash('sha256').update(`harkroom-operator-machine:${raw}`).digest('hex');
+}
+
+/**
+ * MCP 상태의 재료(MCP 설정 v2 PR4). 정의는 두 파일을 따로 읽고(`readLocalMcpSources`), 인증 상태는
+ * 오퍼레이터의 OAuth 저장소에 묻는다. 둘 다 **값을 밖으로 내지 않는다** — 여기서 상태 낱말·지문으로 줄인다.
+ */
+export interface McpStatusSources {
+  definitions(): Promise<{ operator: Record<string, McpServerDefinition>; claude: Record<string, McpServerDefinition> }>;
+  auth?: (name: string, url: string, clientId?: string) => Promise<OperatorMcpAuthState>;
+}
+
+/**
+ * Client ID 지문 — **원래 값을 싣지 않는다.** 서버 주소를 섞는다(머신 값의 n7 과 같은 판단): 같은 주인의 오퍼레이터는
+ * 같은 서버에 붙으니 서로 견줄 수 있고, 서버가 다르면 값이 갈려 두 서버의 관리자가 대조하지 못한다.
+ * Client ID 는 비밀이 아니라 공개 값이라(브라우저 주소에 실린다) HMAC 키까지는 두지 않는다 — 오퍼레이터는 서버
+ * 비밀을 모르고, 지문의 쓰임은 「같은 앱인가」 대조뿐이다.
+ */
+export function clientIdFingerprint(baseUrl: string, clientId: string): string {
+  return createHash('sha256').update(`harkroom-mcp-client:${baseUrl}\n${clientId}`).digest('hex').slice(0, 16);
+}
+
+/**
+ * `names` 에 대한 MCP 상태. 이름은 **부르는 쪽이 고른다** — 커뮤니티마다 그 커뮤니티가 배정한 에이전트가 켠 이름만
+ * 넘긴다(`community.ts` 의 박동). 여기서 이 머신의 다른 정의를 덧붙이지 않는다.
+ */
+export async function collectMcpStatus(names: readonly string[], baseUrl: string, src: McpStatusSources): Promise<OperatorMcpStatusEntry[]> {
+  const { operator, claude } = await src.definitions();
+  const out: OperatorMcpStatusEntry[] = [];
+  for (const name of [...new Set(names)].slice(0, MAX_STATUS_MCP)) {
+    const fromOperator = Object.hasOwn(operator, name);
+    const def = fromOperator ? operator[name] : Object.hasOwn(claude, name) ? claude[name] : undefined;
+    if (!def) { out.push({ name, defined: false }); continue; }
+    const entry: OperatorMcpStatusEntry = { name, defined: true, source: fromOperator ? 'operator' : 'claude' };
+    if ('url' in def && typeof def.url === 'string') {
+      entry.transport = def.type === 'sse' ? 'sse' : 'http';
+      const clientId = typeof def.oauth?.clientId === 'string' && def.oauth.clientId ? def.oauth.clientId : undefined;
+      entry.oauth = def.oauth !== undefined && def.oauth !== null;
+      if (clientId) entry.clientIdFp = clientIdFingerprint(baseUrl, clientId);
+      if (src.auth) {
+        const st = await src.auth(name, def.url, clientId).catch((): OperatorMcpAuthState => ({ state: 'error', reason: '' }));
+        entry.auth = st.state;
+        const at = st.state === 'ok' ? st.at : st.state === 'rejected' ? st.at : undefined;
+        if (typeof at === 'number' && Number.isFinite(at)) entry.authAt = new Date(at).toISOString();
+      }
+    } else {
+      entry.transport = 'stdio';
+    }
+    out.push(entry);
+  }
+  return out;
 }

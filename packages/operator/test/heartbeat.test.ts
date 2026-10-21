@@ -1,7 +1,7 @@
 // 오퍼레이터 박동(원격 호스트 관리 P3a) — 무엇을 싣고 무엇을 싣지 않나, 언제 보내나.
 import { describe, it, expect, vi } from 'vitest';
 import { parseOperatorStatus } from '@harkroom/shared/operatorProtocol';
-import { collectStatus, readMachineDigest } from '../src/heartbeat.js';
+import { clientIdFingerprint, collectMcpStatus, collectStatus, readMachineDigest } from '../src/heartbeat.js';
 import { createCommunity } from '../src/community.js';
 import type { AssignmentReconciler } from '../src/assignments.js';
 import type { LinkDialer } from '../src/serverLink.js';
@@ -99,5 +99,95 @@ describe('박동의 커뮤니티 경계 — security #1203 F1·n7', () => {
     expect(work.status.turns).toEqual({ running: 2, max: 6 });
     expect(work.machine).not.toBe(home.machine);
     expect(work.machine).not.toBe('e'.repeat(64));
+  });
+});
+
+describe('박동의 MCP 상태 — MCP 설정 v2 PR4', () => {
+  const CLIENT = '1111111111.2222222222';
+  const sources = {
+    definitions: async () => ({
+      operator: {
+        slack: { type: 'http' as const, url: 'https://mcp.example.com/mcp', headers: { Authorization: 'Bearer SECRET-TOKEN' }, oauth: { clientId: CLIENT, callbackPort: 3118 } },
+        local: { command: 'tool-mcp', args: ['--x'], env: { API_KEY: 'SECRET-ENV' } },
+      },
+      claude: { ctx: { type: 'sse' as const, url: 'https://ctx.example.com/sse' }, slack: { type: 'http' as const, url: 'https://other.example.com' } },
+    }),
+    auth: async (name: string) => (name === 'slack' ? { state: 'ok' as const, at: Date.UTC(2026, 9, 21, 8, 55), expiresAt: 1 } : { state: 'none' as const }),
+  };
+
+  it('이름마다 정의 유무·출처·transport·인증 상태·지문만 싣는다 — URL·헤더·env·토큰·Client ID 원문이 없다', async () => {
+    const out = await collectMcpStatus(['slack', 'local', 'ctx', 'jira'], 'https://work.example.com', sources);
+    expect(out).toEqual([
+      { name: 'slack', defined: true, source: 'operator', transport: 'http', oauth: true, auth: 'ok', authAt: '2026-10-21T08:55:00.000Z', clientIdFp: clientIdFingerprint('https://work.example.com', CLIENT) },
+      { name: 'local', defined: true, source: 'operator', transport: 'stdio' },
+      { name: 'ctx', defined: true, source: 'claude', transport: 'sse', oauth: false, auth: 'none' },
+      { name: 'jira', defined: false },
+    ]);
+    const json = JSON.stringify(out);
+    for (const leak of ['SECRET', 'mcp.example.com', 'ctx.example.com', CLIENT, '1111111111', 'tool-mcp', 'API_KEY']) expect(json).not.toContain(leak);
+    // 서버 화이트리스트를 그대로 통과한다.
+    expect(parseOperatorStatus({ turns: { running: 0, max: null }, mcp: out })?.mcp).toEqual(out);
+  });
+
+  it('지문은 원문을 품지 않고, 같은 서버면 같고 서버가 다르면 다르다', () => {
+    const a = clientIdFingerprint('https://work.example.com', CLIENT);
+    expect(a).toMatch(/^[0-9a-f]{16}$/);
+    expect(a).toBe(clientIdFingerprint('https://work.example.com', CLIENT));
+    expect(a).not.toBe(clientIdFingerprint('https://home.example.com', CLIENT));
+    expect(a).not.toBe(clientIdFingerprint('https://work.example.com', '9999999999.2222222222'));
+  });
+
+  it('커뮤니티 박동에는 그 커뮤니티가 배정한 에이전트가 켠 이름만 실린다 — 다른 커뮤니티 이름이 새지 않는다', async () => {
+    const asked: string[][] = [];
+    const shared = {
+      status: async () => ({ turns: { running: 0, max: null } }),
+      machine: async () => null,
+      mcp: async (names: string[], baseUrl: string) => { asked.push(names); return collectMcpStatus(names, baseUrl, sources); },
+    };
+    const beatOf = async (baseUrl: string, agentId: string, mcpServers: string[]) => {
+      const sent: string[] = [];
+      const dial: LinkDialer = (_u, _t, h) => { h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
+      const c = createCommunity({ baseUrl, token: 'hkop_x', agents: { [agentId]: {} }, reconciler, dial, schedule: () => {}, log: () => {}, heartbeat: shared });
+      c.assignments.set(agentId, { agentId, mcpServers } as never);
+      // 이 오퍼레이터의 로컬 설정에 없는 에이전트의 배정은 세지 않는다.
+      c.assignments.set('ghost', { agentId: 'ghost', mcpServers: ['ghost-mcp'] } as never);
+      c.start();
+      await new Promise((r) => setTimeout(r, 0));
+      return JSON.parse(sent.find((d) => JSON.parse(d).type === 'status')!);
+    };
+    const work = await beatOf('https://work.example.com', 'work-a', ['slack', 'jira']);
+    const home = await beatOf('https://home.example.com', 'home-b', ['ctx']);
+    expect(work.status.mcp.map((m: { name: string }) => m.name)).toEqual(['jira', 'slack']);
+    expect(home.status.mcp.map((m: { name: string }) => m.name)).toEqual(['ctx']);
+    expect(JSON.stringify(work)).not.toContain('ctx');
+    expect(JSON.stringify(home)).not.toContain('slack');
+    expect(asked.flat()).not.toContain('ghost-mcp');
+  });
+
+  it('켠 MCP 가 없으면 칸을 싣지 않는다 · MCP 상태를 못 만들어도 박동은 나간다', async () => {
+    const sent: string[] = [];
+    const dial: LinkDialer = (_u, _t, h) => { h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
+    const mcp = vi.fn(async () => { throw new Error('boom'); });
+    const c = createCommunity({
+      baseUrl: 'https://work.example.com', token: 'hkop_x', agents: { a: {} }, reconciler, dial, schedule: () => {}, log: () => {},
+      heartbeat: { status: async () => ({ turns: { running: 0, max: null } }), machine: async () => null, mcp },
+    });
+    c.start();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mcp).not.toHaveBeenCalled();
+    expect(JSON.parse(sent.find((d) => JSON.parse(d).type === 'status')!).status).not.toHaveProperty('mcp');
+    c.stop();
+    const sent2: string[] = [];
+    const c2 = createCommunity({
+      baseUrl: 'https://work.example.com', token: 'hkop_x', agents: { a: {} }, reconciler,
+      dial: (_u, _t, h) => { h.onOpen({ send: (d) => sent2.push(d), close: () => {} }); }, schedule: () => {}, log: () => {},
+      heartbeat: { status: async () => ({ turns: { running: 0, max: null } }), machine: async () => null, mcp },
+    });
+    c2.assignments.set('a', { agentId: 'a', mcpServers: ['slack'] } as never);
+    c2.start();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mcp).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(sent2.find((d) => JSON.parse(d).type === 'status')!).status).toEqual({ turns: { running: 0, max: null } });
+    c2.stop();
   });
 });

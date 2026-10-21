@@ -14,7 +14,8 @@
  * 같은 판단).
  */
 import type {
-  AgentSessionView, OperatorCapabilities, OperatorCredentialState, OperatorPlatform, OperatorStatus, OperatorUpgradeStage, RunnerCap,
+  AgentSessionView, OperatorCapabilities, OperatorCredentialState, OperatorMcpAuthSummary, OperatorMcpStatusEntry, OperatorPlatform,
+  OperatorStatus, OperatorUpgradeStage, RunnerCap,
 } from './index.js';
 
 /** 오퍼레이터가 spawn 마다 만드는 러너 식별자. 데몬의 `incarnationId` 와 같은 것이다 — 이름만 통일한다. */
@@ -228,6 +229,44 @@ export function parseOperatorStatus(value: unknown): OperatorStatus | null {
       creds.push({ kind, name, state, agentIds });
     }
     out.credentials = creds;
+  }
+  const mcp = parseMcpStatus(v.mcp);
+  if (mcp) out.mcp = mcp;
+  return out;
+}
+
+const MCP_NAME = /^[a-z0-9-]{1,32}$/;
+const MCP_AUTH = new Set<OperatorMcpAuthSummary>(['none', 'pending', 'ok', 'expired', 'rejected', 'error']);
+const MCP_TRANSPORTS = new Set(['stdio', 'http', 'sse']);
+const MCP_FINGERPRINT = /^[0-9a-f]{16}$/;
+/** 박동 하나에 싣는 MCP 줄의 상한 — 레지스트리 이름 수보다 넉넉하다. */
+export const MAX_STATUS_MCP = 64;
+
+/**
+ * 박동의 MCP 칸(MCP 설정 v2 PR4)을 허용한 칸만 골라 만든다. 이름은 레지스트리 이름 꼴만, 지문은 16 hex 만 —
+ * URL·Client ID 원문 같은 값이 실려 와도 칸이 없어 버려진다.
+ */
+function parseMcpStatus(value: unknown): OperatorMcpStatusEntry[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: OperatorMcpStatusEntry[] = [];
+  const seen = new Set<string>();
+  for (const e of value.slice(0, MAX_STATUS_MCP)) {
+    if (typeof e !== 'object' || e === null) continue;
+    const r = e as Record<string, unknown>;
+    const name = typeof r.name === 'string' && MCP_NAME.test(r.name) ? r.name : null;
+    if (!name || seen.has(name) || typeof r.defined !== 'boolean') continue;
+    seen.add(name);
+    const entry: OperatorMcpStatusEntry = { name, defined: r.defined };
+    if (r.defined) {
+      if (r.source === 'operator' || r.source === 'claude') entry.source = r.source;
+      if (typeof r.transport === 'string' && MCP_TRANSPORTS.has(r.transport)) entry.transport = r.transport as 'stdio' | 'http' | 'sse';
+      if (typeof r.oauth === 'boolean') entry.oauth = r.oauth;
+      if (typeof r.auth === 'string' && MCP_AUTH.has(r.auth as OperatorMcpAuthSummary)) entry.auth = r.auth as OperatorMcpAuthSummary;
+      const at = shortText(r.authAt, 40);
+      if (at && !Number.isNaN(Date.parse(at))) entry.authAt = new Date(at).toISOString();
+      if (typeof r.clientIdFp === 'string' && MCP_FINGERPRINT.test(r.clientIdFp)) entry.clientIdFp = r.clientIdFp;
+    }
+    out.push(entry);
   }
   return out;
 }

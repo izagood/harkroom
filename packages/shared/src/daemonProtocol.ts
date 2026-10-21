@@ -736,7 +736,8 @@ export interface OperatorMcpEntry {
 export type OperatorMcpAuthState =
   | { state: 'none' }
   | { state: 'pending' }
-  | { state: 'ok'; expiresAt?: number }
+  /** `at` 은 지금 토큰을 받은 때(ms, 인증·refresh). 옛 오퍼레이터는 싣지 않는다. */
+  | { state: 'ok'; expiresAt?: number; at?: number }
   | { state: 'expired' }
   /**
    * MCP 서버가 토큰을 거절했고 즉시 refresh 한 것도 거절됐다(2026-10-01). `at` 은 그때(ms),

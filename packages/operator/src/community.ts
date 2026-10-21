@@ -64,7 +64,15 @@ export interface CommunityDeps {
    * 박동(P3a). 붙을 때 한 번, 그 뒤 `heartbeatMs` 마다 `status` 프레임을 낸다. 없으면 박동이 없다(옛 동작).
    * 끊겨 있는 동안은 보내지 않는다 — 다음 붙음이 곧바로 하나를 낸다.
    */
-  heartbeat?: { status: () => Promise<OperatorStatus>; machine: () => Promise<string | null> };
+  heartbeat?: {
+    status: () => Promise<OperatorStatus>;
+    machine: () => Promise<string | null>;
+    /**
+     * MCP 상태(MCP 설정 v2 PR4). `names` 는 이 커뮤니티가 배정한 에이전트가 켠 이름뿐이다 — 다른 커뮤니티의
+     * 이름·이 머신의 다른 정의는 싣지 않는다(#1203 F1 과 같은 경계). 없으면 싣지 않는다(옛 동작).
+     */
+    mcp?: (names: string[], baseUrl: string) => Promise<OperatorStatus['mcp']>;
+  };
   heartbeatMs?: number;
   log: (line: string) => void;
 }
@@ -218,14 +226,21 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
   const beat = (): void => {
     const hb = deps.heartbeat;
     if (!hb) return;
-    void Promise.all([hb.status(), hb.machine()])
-      .then(([status, machine]) => {
+    // 이 커뮤니티가 이 오퍼레이터에 배정한 에이전트가 켠 MCP 이름 — 서버가 보낸 이름이라 새는 것이 없다.
+    const mcpNames = [...new Set([...assignments.values()].filter((d) => d.agentId in agents).flatMap((d) => d.mcpServers ?? []))].sort();
+    const mcpOf = hb.mcp && mcpNames.length > 0 ? hb.mcp(mcpNames, deps.baseUrl) : Promise.resolve(undefined);
+    void Promise.all([hb.status(), hb.machine(), mcpOf.catch((err: unknown) => {
+      deps.log(`박동의 MCP 상태를 만들지 못했다: ${err instanceof Error ? err.message : String(err)}`);
+      return undefined;
+    })])
+      .then(([status, machine, mcp]) => {
         // 이 커뮤니티의 에이전트만 싣는다(security #1203 F1) — hello 가 `reconciler.announce()` 로 거르는 것과 같은
         // 경계다. 재료는 오퍼레이터 전역이라 거르지 않으면 회사 서버에 개인 에이전트의 id·턴 수가 간다.
         // 턴 합계·메모리·디스크는 머신의 값이라 그대로 둔다(상한은 커뮤니티 사이에 공유된다).
-        const own: OperatorStatus = status.runners
-          ? { ...status, runners: status.runners.filter((r) => r.agentId in agents) }
-          : status;
+        const own: OperatorStatus = {
+          ...(status.runners ? { ...status, runners: status.runners.filter((r) => r.agentId in agents) } : status),
+          ...(mcp ? { mcp } : {}),
+        };
         // 머신 값에 이 서버 주소를 섞는다(security #1203 n7) — 서버마다 값이 달라 두 서버의 관리자가 서로
         // 대조해 같은 머신인지 알 수 없다. 한 서버 안(같은 소유자)의 묶음에는 지장이 없다.
         const scoped = machine ? createHash('sha256').update(`${machine}\n${deps.baseUrl}`).digest('hex') : null;
