@@ -153,7 +153,8 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
               onClick={() => { setUrl(saved?.baseUrl ?? ''); setSecretName(saved?.secretName ?? ''); if (!saved) setMode('pool'); }}>
               {t('agents.lane.revert')}
             </button>
-            <span className="text-meta text-fg-subtle">{t('agents.lane.applyNote')}</span>
+            {/* 켜기는 러너가 다시 떠야 들고, 이미 켠 연결의 주소·비밀 바꾸기는 다음 턴에 든다(C1). */}
+            <span className="text-meta text-fg-subtle">{t(saved === null ? 'agents.lane.restartNote' : 'agents.lane.applyNote')}</span>
           </div>
         </div>
       )}
@@ -219,10 +220,18 @@ export function ModelConnectionStatus({ lane }: { lane: ProviderLaneState }) {
   const locale = useLocale();
   const status = lane.status;
   const time = useMemo(() => (status ? new Date(status.at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false }) : ''), [status, locale]);
-  if (!lane.lane) return null;
+  if (!lane.lane && !lane.pending) return null;
   return (
     <section className="flex flex-col gap-2" data-testid="lane-status">
       <h3 className="text-meta font-medium text-fg-muted">{t('agents.lane.statusTitle')}</h3>
+      {/* C1: 설정과 러너 모드가 다르다 — 러너가 도는 턴을 끝내고 다시 뜨기 전이다. 그동안 오퍼레이터가 새 턴을 막는다. */}
+      {lane.pending && (
+        <div className="rounded-row bg-warning-surface px-3 py-2 text-meta text-warning" data-testid="lane-pending" role="status">
+          {/* 끈 직후면 방향(계정 풀로 돌아감)을 밝힌다 — 지운 연결을 설명하는 줄은 아래에서 숨긴다(designer s2). */}
+          {t(lane.lane ? 'agents.lane.pending' : 'agents.lane.pendingOff')}
+        </div>
+      )}
+      {lane.lane && <>
       {status === null && <div className="text-meta text-fg-subtle">{t('agents.lane.lastNone')}</div>}
       {status?.ok && <div className="rounded-row bg-success-surface px-3 py-2 text-meta text-success">✓ {t('agents.lane.lastOk', { time })}</div>}
       {status && !status.ok && (
@@ -234,6 +243,7 @@ export function ModelConnectionStatus({ lane }: { lane: ProviderLaneState }) {
       <span className="text-meta text-fg-subtle">{t('agents.lane.noPool')}</span>
       <span className="text-meta text-fg-subtle">{t('agents.lane.terminalBlocked')}</span>
       <span className="text-meta text-fg-subtle">{t('agents.lane.moveNote')}</span>
+      </>}
     </section>
   );
 }

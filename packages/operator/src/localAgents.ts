@@ -37,6 +37,8 @@ export function createLocalAgentsPort(deps: {
   dataDir: string;
   /** API 키 연결 에이전트의 마지막 키 받기 결과(메모리). 없으면 싣지 않는다. */
   laneStatus?: () => OperatorAgentsListResult['laneStatus'];
+  /** 에이전트별 「적용 대기」(C1) — 러너가 턴 자리 문에 막히는가. 없으면 싣지 않는다. */
+  lanePending?: () => OperatorAgentsListResult['lanePending'];
 }): LocalAgentsPort {
   return {
     async register(baseUrl, code, name) {
@@ -55,7 +57,12 @@ export function createLocalAgentsPort(deps: {
         });
       }
       const laneStatus = deps.laneStatus?.();
-      return { communities, ...(laneStatus && Object.keys(laneStatus).length ? { laneStatus } : {}) };
+      const lanePending = deps.lanePending?.();
+      return {
+        communities,
+        ...(laneStatus && Object.keys(laneStatus).length ? { laneStatus } : {}),
+        ...(lanePending && Object.keys(lanePending).length ? { lanePending } : {}),
+      };
     },
     async set(rawUrl, agentId, cfg) {
       const baseUrl = communityKey(rawUrl);

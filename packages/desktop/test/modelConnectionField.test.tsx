@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { usePrefsStore } from '../src/state/prefsStore';
-import { ModelConnectionField, opencodeLaneModel, urlProblem } from '../src/components/settings/ModelConnectionField';
+import { ModelConnectionField, ModelConnectionStatus, opencodeLaneModel, urlProblem } from '../src/components/settings/ModelConnectionField';
 import { laneCodeKey, laneCodeName } from '../src/lib/laneCodes';
 import type { LaneSecretOption, ProviderLaneState } from '../src/lib/useProviderLane';
 
@@ -12,7 +12,7 @@ const secret = (name: string, over: Partial<LaneSecretOption> = {}): LaneSecretO
 
 function laneState(over: Partial<ProviderLaneState> = {}): ProviderLaneState {
   return {
-    available: true, present: true, lane: null, status: null, secrets: [secret('llm-api-key')], secretsError: null, error: null,
+    available: true, present: true, lane: null, status: null, pending: false, secrets: [secret('llm-api-key')], secretsError: null, error: null,
     reload: vi.fn(), save: vi.fn(async () => {}), ...over,
   };
 }
@@ -131,5 +131,32 @@ describe('laneCodes', () => {
     expect(laneCodeKey('interactive_unsupported')).toBe('lane.code.interactive_unsupported');
     expect(laneCodeKey('https://gateway.example')).toBe('lane.code.unknown');
     expect(laneCodeName('https://gateway.example')).toBe('unknown');
+  });
+});
+
+// C1: 켜기·끄기는 러너가 다시 떠야 든다. 그 사이는 「적용 대기」로 보인다.
+describe('적용 시점(C1)', () => {
+  it('켤 때는 「러너가 다시 뜬다」, 이미 켠 연결을 고칠 때는 「다음 턴부터」', () => {
+    renderField(laneState());
+    fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));
+    expect(screen.getByText(/러너가 다시 뜬다/)).toBeTruthy();
+    expect(screen.queryByText(/재기동 필요 없음/)).toBeNull();
+    cleanup();
+    renderField(laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'llm-api-key' } }));
+    expect(screen.getByText(/다음 턴부터 적용된다/)).toBeTruthy();
+  });
+
+  it('러너 모드가 설정과 다르면 상태 칸에 「적용 대기」 — 끈 직후(설정 없음)에도 보인다', () => {
+    render(<ModelConnectionStatus lane={laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'k' }, pending: true })} />);
+    expect(screen.getByTestId('lane-pending').textContent).toContain('적용 대기');
+    cleanup();
+    render(<ModelConnectionStatus lane={laneState({ lane: null, pending: true })} />);
+    // 끈 직후(designer s2): 방향을 밝히고, 지운 연결을 설명하는 줄은 숨긴다.
+    expect(screen.getByTestId('lane-pending').textContent).toContain('계정 풀로 돈다');
+    expect(screen.queryByText(/계정 풀을 쓰지 않는다/)).toBeNull();
+    expect(screen.queryByText(/API 키를 쓴 턴이 아직 없다/)).toBeNull();
+    cleanup();
+    render(<ModelConnectionStatus lane={laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'k' }, pending: false })} />);
+    expect(screen.queryByTestId('lane-pending')).toBeNull();
   });
 });

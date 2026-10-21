@@ -319,6 +319,81 @@ describe('restart — 사람의 [재시작]', () => {
   });
 });
 
+// API 키 연결(C1): 켜짐/꺼짐이 바뀌면 러너를 다시 띄우고, 새 env 로 뜬다. 다르게 도는 러너의 턴은 막는다(security ⓒ).
+describe('API 키 연결 — 로컬 설정이 바뀌면', () => {
+  const lane = { baseUrl: 'https://gateway.example', secretName: 'gw-key' };
+  const flush = () => new Promise((res) => setTimeout(res, 0));
+  const runnerIdOf = (env: Record<string, string>) => env.HARKROOM_RUNNER_ID ?? Object.values(env).find((v) => /^[0-9a-f-]{36}$/.test(v))!;
+
+  it('켜면 SIGTERM → 물러나면 새 env(HARKROOM_PROVIDER_LANE=1)로 다시 뜬다', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler(h.deps);
+    await r.onAssign('https://example.com', def(), { workingDir: '~/w' });
+    expect(h.spawned[0]!.env.HARKROOM_PROVIDER_LANE).toBe('0');
+    expect(r.setLocal('a-1', { workingDir: '~/w', providerLane: lane })).toBe('restarting');
+    expect(h.signals.at(-1)).toEqual({ agentId: 'a-1', signal: 'SIGTERM' });
+    h.exit('a-1'); r.onRunnerExit('a-1', 0);
+    expect(h.timers.at(-1)!.ms).toBe(1_000);
+    h.timers.at(-1)!.fn(); await flush();
+    expect(h.spawned).toHaveLength(2);
+    expect(h.spawned[1]!.env.HARKROOM_PROVIDER_LANE).toBe('1');
+    expect(h.spawned[1]!.env.HARKROOM_WORKING_DIR).toBe('~/w');
+  });
+
+  it('끄면 다시 뜨고 새 러너는 풀(0)로 뜬다', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler(h.deps);
+    await r.onAssign('https://example.com', def(), { providerLane: lane });
+    expect(h.spawned[0]!.env.HARKROOM_PROVIDER_LANE).toBe('1');
+    expect(r.setLocal('a-1', {})).toBe('restarting');
+    h.exit('a-1'); r.onRunnerExit('a-1', 0); h.timers.at(-1)!.fn(); await flush();
+    expect(h.spawned[1]!.env.HARKROOM_PROVIDER_LANE).toBe('0');
+  });
+
+  it('주소·비밀 이름만 바뀌면 다시 띄우지 않는다', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler(h.deps);
+    await r.onAssign('https://example.com', def(), { providerLane: lane });
+    expect(r.setLocal('a-1', { providerLane: { baseUrl: 'https://gateway.example/v2', secretName: 'other-key' } })).toBe('updated');
+    expect(h.signals).toHaveLength(0);
+  });
+
+  it('도는 턴 중 저장 — 옛 러너는 다시 뜰 때까지 설정과 달라 턴 자리가 막히고, 새 러너는 풀린다', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler(h.deps);
+    await r.onAssign('https://example.com', def(), {});
+    const old = runnerIdOf(h.spawned[0]!.env);
+    expect(r.laneMismatch(old, 'a-1')).toBe(false);
+    r.setLocal('a-1', { providerLane: lane });
+    // SIGTERM 은 보냈지만 러너는 아직 도는 턴을 끝내는 중이다 — 그 사이 새 턴을 풀 계정으로 세우면 안 된다.
+    expect(r.laneMismatch(old, 'a-1')).toBe(true);
+    expect(r.lanePending()).toEqual({ 'a-1': true }); // 문과 같은 판정 — 옛 러너는 막힌다
+    h.exit('a-1'); r.onRunnerExit('a-1', 0); h.timers.at(-1)!.fn(); await flush();
+    const fresh = runnerIdOf(h.spawned[1]!.env);
+    expect(fresh).not.toBe(old);
+    expect(r.laneMismatch(fresh, 'a-1')).toBe(false);
+    expect(r.lanePending()).toEqual({ 'a-1': false });
+  });
+
+  it('모드를 모르는 러너(옛 판)는 lane 이 켜져 있으면 막고, 러너가 알리면 그 값을 믿는다', async () => {
+    const h = harness();
+    const r = createAssignmentReconciler(h.deps);
+    await r.onAssign('https://example.com', def(), { providerLane: lane });
+    expect(r.laneMismatch('r-adopted', 'a-1')).toBe(true);
+    r.noteRunnerLane('r-adopted', true);
+    expect(r.laneMismatch('r-adopted', 'a-1')).toBe(false);
+    expect(r.laneMismatch('r-any', 'a-unassigned')).toBe(false);
+    // 앱 「적용 대기」도 같은 판정이다(designer s1) — 살아 있는데 모드를 모르는 러너(앞 세대, 이 조정기가 안 띄움)는 대기로 보인다.
+    const h2 = harness();
+    const r2 = createAssignmentReconciler(h2.deps);
+    await r2.onAssign('https://example.com', def(), {});
+    r2.setLocal('a-1', { providerLane: lane });
+    expect(r2.lanePending()).toEqual({ 'a-1': true });
+    h2.exit('a-1');
+    expect(r2.lanePending()).toEqual({ 'a-1': false }); // 러너가 없으면 다음 spawn 이 새 env — 대기 아님
+  });
+});
+
 // Claude in Chrome(스레드 e8c8365d) — 머신이 열 수 있을 때만 러너에 `HARKROOM_CHROME_HOST=1`. 못 재면 닫힘.
 describe('HARKROOM_CHROME_HOST', () => {
   it('늘 명시한다 — 러너 env 가 얹히는 자리(process.env)에 1 이 있어도 머신이 못 열면 0 이 이긴다(security F1)', async () => {

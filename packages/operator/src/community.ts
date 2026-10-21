@@ -106,6 +106,12 @@ export interface CommunityInstance {
   ownerAccountId(): Promise<string | null>;
   /** 로컬 설정의 에이전트 표를 바꾸고 서버에 능력을 다시 낸다(`capabilities` 프레임). */
   setAgents(agents: Record<string, LocalAgentConfig>): void;
+  /** API 키 연결: 이 러너의 모드가 설정과 다른가(턴 자리를 막을지). 조정기에 넘긴다(C1). */
+  laneMismatch?(runnerId: string, agentId: string): boolean;
+  /** 러너가 알린 제 API 키 연결 모드. */
+  noteRunnerLane?(runnerId: string, on: boolean): void;
+  /** 에이전트별 「적용 대기」(조정기 `lanePending`). */
+  lanePending?(): Record<string, boolean>;
   /** 하네스 능력이 바뀌었다(모델 목록이 늦게 도착했다 등) — 서버에 능력을 다시 낸다. */
   announceCapabilities(): void;
 }
@@ -288,9 +294,15 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     ownerAccountId: () => selfOwner ?? (selfOwner = readSelf()),
     setAgents: (next) => {
       agents = next;
+      // 배정된 에이전트의 로컬 설정을 조정기에 넘긴다 — 다음 spawn 이 새 env 를 쓰고, API 키 연결이 켜지거나 꺼졌으면
+      // 러너가 다시 뜬다(C1: 이 줄이 없을 때는 설정을 바꿔도 러너가 처음 받은 env 로 계속 돌았다).
+      for (const agentId of assignments.keys()) deps.reconciler.setLocal(agentId, next[agentId]);
       // 끊겨 있으면 다음 hello 가 새 표를 싣는다 — send 의 false 는 실패가 아니다.
       link.send({ type: 'capabilities', capabilities: capabilities() });
     },
+    laneMismatch: (runnerId, agentId) => deps.reconciler.laneMismatch(runnerId, agentId),
+    noteRunnerLane: (runnerId, on) => deps.reconciler.noteRunnerLane(runnerId, on),
+    lanePending: () => deps.reconciler.lanePending(),
     announceCapabilities: () => { link.send({ type: 'capabilities', capabilities: capabilities() }); },
     forward: async (agentId, req) => {
       if (!deps.forwarder) {

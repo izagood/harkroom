@@ -14,7 +14,7 @@ function fakeReconciler() {
     onUnassign: async (baseUrl, agentId, drain) => { calls.push(`unassign ${baseUrl} ${agentId} ${drain}`); },
     restart: (agentId) => { calls.push(`restart ${agentId}`); return true; },
     onRunnerExit: (agentId, code) => { calls.push(`exit ${agentId} ${code}`); },
-    announce: () => [{ agentId: 'a-1', runnerId: 'r-1', pid: 7 }],
+    announce: () => [{ agentId: 'a-1', runnerId: 'r-1', pid: 7 }], setLocal: (agentId, local) => { calls.push(`local ${agentId} ${local?.providerLane ? 'lane' : 'pool'}`); return 'none' as const; }, noteRunnerLane: () => {}, laneMismatch: () => false, lanePending: () => ({}),
   };
   return { reconciler, calls };
 }
@@ -177,7 +177,7 @@ describe('community — 소유자 확인과 거절 통지', () => {
     const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
     const reconciler: AssignmentReconciler = {
       onAssign: async () => ({ refused: 'personal_on_foreign_operator' }),
-      onUnassign: async () => {}, onRunnerExit: () => {}, restart: () => false, announce: () => [],
+      onUnassign: async () => {}, onRunnerExit: () => {}, restart: () => false, announce: () => [], setLocal: () => 'none' as const, noteRunnerLane: () => {}, laneMismatch: () => false, lanePending: () => ({}),
     };
     const c = createCommunity({ baseUrl: 'https://example.com', token: 'hkop_x', agents: { 'a-1': {} }, reconciler, dial, schedule: () => {}, log: () => {} });
     c.start();
@@ -194,6 +194,22 @@ describe('community — 소유자 확인과 거절 통지', () => {
 });
 
 describe('community — 로컬 설정이 바뀌면 능력을 다시 낸다', () => {
+  // C1: 설정이 바뀌면 이미 배정된 에이전트의 설정을 조정기에 넘긴다 — 없으면 러너가 처음 받은 env 로 계속 돈다.
+  it('setAgents 는 배정된 에이전트의 새 로컬 설정을 조정기에 넘긴다(배정 안 된 것은 안 넘긴다)', async () => {
+    let handlers: Parameters<LinkDialer>[2] | null = null;
+    const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: () => {}, close: () => {} }); };
+    const { reconciler, calls } = fakeReconciler();
+    const c = createCommunity({ baseUrl: 'https://example.com', token: 'hkop_x', agents: { 'a-1': {}, 'a-2': {} }, reconciler, dial, schedule: () => {}, log: () => {} });
+    c.start();
+    handlers!.onMessage(JSON.stringify({ type: 'assign', agentId: 'a-1', definition: {
+      agentId: 'a-1', handle: 'one', harness: 'claude-code', instructions: '', model: null, effort: null,
+      mentionPermission: 'auto', workingDirDefault: null, credentialScope: 'none', ownerAccountId: null, mcpServers: [],
+    } }));
+    await new Promise((r) => setTimeout(r, 0));
+    c.setAgents({ 'a-1': { providerLane: { baseUrl: 'https://gateway.example', secretName: 'gw-key' } }, 'a-2': {} });
+    expect(calls.filter((x) => x.startsWith('local'))).toEqual(['local a-1 lane']);
+  });
+
   it('setAgents 는 capabilities 프레임을 보내고, 그 뒤의 assign 은 새 표로 판정한다', async () => {
     const sent: string[] = [];
     let handlers: Parameters<LinkDialer>[2] | null = null;

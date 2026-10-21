@@ -10,6 +10,7 @@
  * - 설정이 없으면 `{lane: null}`(200). 러너는 lane 으로 떴는데 이 답이면 턴을 멈춘다 — 계정 로그인으로 떨어지지 않는다.
  */
 import type { RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
+import { TURN_SLOTS_PATH } from './turnSlots.js';
 import { PROVIDER_LANE_MOUNT_PATH, providerLaneFailureCode, readProviderLaneConfig, type ProviderLaneConfig, type ProviderLaneFailureCode, type ProviderLaneMountResult, type ProviderLaneStatus } from '@harkroom/shared/providerLane';
 import type { TurnSecrets } from './turnSecrets.js';
 
@@ -74,6 +75,26 @@ export function createProviderLaneMount(deps: ProviderLaneMountDeps): ProviderLa
         return refuse(req, out.code === 'no_lease' ? 409 : 502, out.code);
       }
       return answer(req, 200, { lane: { baseUrl: lane.baseUrl, path: out.path } } satisfies ProviderLaneMountResult);
+    },
+  };
+}
+
+/**
+ * 러너의 API 키 연결 모드가 지금 설정과 다르면 **새 턴 자리**를 막는다(C1, security ⓒ). 켰는데 아직 옛 러너(풀 모드)면 그 러너가
+ * 풀 계정으로 새 턴을 세우는 틈이 생긴다 — 설정을 바꾸면 러너를 다시 띄우지만, 다시 뜨기 전까지(도는 턴이 끝날 때까지)가 그 틈이다.
+ * 409 는 러너가 「가득 참」으로 읽어 읽음 처리 없이 다음 폴로 미룬다. 자리 **놓기**(`/release`)는 막지 않는다. 같은 러너는 한 번만 적는다.
+ */
+export function createLaneTurnGate(deps: { mismatch(runnerId: string, agentId: string): boolean; log(line: string): void }) {
+  const logged = new Set<string>();
+  return {
+    maybeBlock(runnerId: string, agentId: string, req: RunnerLinkRequest, from: RunnerLinkKind): RunnerLinkResponse | null {
+      if (from !== 'relay' || req.type !== 'http.forward' || req.method !== 'POST' || req.path.split('?')[0] !== TURN_SLOTS_PATH) return null;
+      if (!deps.mismatch(runnerId, agentId)) { logged.delete(runnerId); return null; }
+      if (!logged.has(runnerId)) {
+        logged.add(runnerId);
+        deps.log(`API 키 연결: agent=${agentId} 러너 모드가 설정과 달라 새 턴을 막는다 — 러너가 다시 뜨면 풀린다`);
+      }
+      return { type: 'http.response', id: req.id, status: 409, body: JSON.stringify({ error: { code: 'lane_pending' } }) };
     },
   };
 }

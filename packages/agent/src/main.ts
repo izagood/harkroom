@@ -115,6 +115,8 @@ if (handoverDone.size) console.log(`[main] 이관: 앞 러너가 끝냈지만 �
 
 const relay = createRelayClient({
   link: config.operatorLink,
+  // API 키 연결 모드를 붙을 때마다 알린다(C1) — 아래 `providerLaneOn` 과 같은 env 를 읽는다(그 줄은 relay 보다 뒤에 선다).
+  providerLane: process.env[PROVIDER_LANE_ENV] === '1',
   // #337: 서버의 interactive.open 은 매니저가 처리한다. 매니저가 relay 를 필요로 해서
   // (세션 열기) 상호 참조가 생기므로 늦게 배선한다 — 매니저가 아직 없으면 릴레이가
   // 스스로 interactive.error 로 답한다(relay.ts 의 훅 부재 처리).

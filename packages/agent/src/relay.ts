@@ -188,6 +188,11 @@ export interface OpenSession {
 
 export interface RelayClientOptions {
   link: RunnerLinkTarget;
+  /**
+   * 이 러너의 API 키 연결 모드(`HARKROOM_PROVIDER_LANE`). 붙을 때마다 오퍼레이터에 알린다(`providerLane.mode`) — 오퍼레이터는 설정과 다른 러너의
+   * 턴 자리를 막고, 앱 실행 탭에 「적용 대기」를 띄운다(C1). 생략하면 알리지 않는다(시험).
+   */
+  providerLane?: boolean;
   unixDial?: RelayUnixDialer;
   /** 재접속 예약. 테스트가 시간을 직접 돌리려고 뽑아 뒀다. */
   schedule?: (fn: () => void, ms: number) => void;
@@ -481,6 +486,10 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         // announce **뒤**다. 오퍼레이터가 이 러너를 알아본 뒤에 와야 하는 말이고, 무엇보다
         // 교체 러너를 띄우라는 신호라 순서가 뒤집히면 교체가 announce 를 앞지른다.
         sendPollStopped();
+        // 내 API 키 연결 모드 — 재접속마다(오퍼레이터가 바뀌었을 수 있다). 통지라 답이 없다.
+        if (opts.providerLane !== undefined) {
+          try { t.send(JSON.stringify({ type: 'providerLane.mode', on: opts.providerLane })); } catch { /* 끊겼다 — 다음 붙을 때 다시 */ }
+        }
       },
       onMessage: onServerFrame,
       onClose: (reason) => {
