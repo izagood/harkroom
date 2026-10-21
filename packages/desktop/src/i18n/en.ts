@@ -4813,6 +4813,7 @@ export const en = {
   'agents.mcp.custom': 'Other (enter a URL)',
   'agents.mcp.url': 'URL',
   'agents.mcp.clientId': 'OAuth Client ID (optional)',
+  'agents.mcp.clientIdPlaceholder': 'Leave empty to use the default (shared Slack app)',
   'agents.mcp.clientNote': 'Only for your own registered OAuth app with PKCE turned on (no client secret). Changing the Client ID drops the current sign-in — sign in again once.',
   'agents.mcp.addNote': 'Registers the name, saves the definition on this machine, and turns it on for this agent. Only http/sse servers can be added here.',
   'agents.mcp.addSubmit': 'Add and turn on',

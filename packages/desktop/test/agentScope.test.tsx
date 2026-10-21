@@ -206,7 +206,9 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
     fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
     fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'slack' } });
-    expect((screen.getByTestId('agent-mcp-client-id') as HTMLInputElement).value).toBe('1601185624273.8899143856786');
+    // 공용 값을 미리 채우지 않는다 — 비움 = 기본(designer s1). 보이는 이름표로 찾힌다.
+    expect((screen.getByLabelText(/OAuth Client ID/) as HTMLInputElement).value).toBe('');
+    expect((screen.getByTestId('agent-mcp-client-id') as HTMLInputElement).placeholder).toContain('비우면 기본');
     expect(screen.queryByTestId('agent-mcp-client-secret')).toBeNull();
     fireEvent.change(screen.getByTestId('agent-mcp-client-id'), { target: { value: ' 111.222 ' } });
     fireEvent.click(screen.getByTestId('agent-mcp-add-submit'));
@@ -217,7 +219,18 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     });
   });
 
-  it('Client ID 를 그대로 두면 프리셋 정의를 그대로 보낸다', async () => {
+  it('oauth 가 없는 프리셋(Jira)에는 Client ID 칸이 없다 — 직접 URL 을 넣을 땐 있다(designer n1)', async () => {
+    fakeLocal([]);
+    setup({ mcpServers: vi.fn(async () => []) });
+    render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
+    fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'jira' } });
+    expect(screen.queryByTestId('agent-mcp-client-id')).toBeNull();
+    fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'custom' } });
+    expect(screen.getByTestId('agent-mcp-client-id')).toBeTruthy();
+  });
+
+  it('Client ID 를 비워 두면 프리셋 정의를 그대로 보낸다', async () => {
     const calls = fakeLocal([]);
     setup({ mcpServers: vi.fn(async () => [{ name: 'slack', credentialKind: 'personal', createdBy: null, createdAt: '' }]) });
     render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);

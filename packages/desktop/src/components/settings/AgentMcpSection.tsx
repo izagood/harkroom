@@ -69,8 +69,9 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
   const [name, setName] = useState(MCP_PRESETS[0]!.name);
   const [url, setUrl] = useState(MCP_PRESETS[0]!.definition.url);
   const [kind, setKind] = useState<'community' | 'personal'>(MCP_PRESETS[0]!.credentialKind);
-  // 등록된 OAuth 클라이언트(전용 Slack 앱, PKCE 공개 클라이언트). 프리셋 값이 기본이고, 바꾸면 다음 인증부터 그 클라이언트다.
-  const [clientId, setClientId] = useState(MCP_PRESETS[0]!.definition.oauth?.clientId ?? '');
+  // 전용 OAuth 앱(PKCE 공개 클라이언트)의 Client ID. 비우면 프리셋 기본값(공용 앱)을 그대로 쓴다 — 공용 값을
+  // 칸에 미리 채우면 "지워야 하나?"로 읽힌다(designer s1, #1244).
+  const [clientId, setClientId] = useState('');
 
   const [restarted, setRestarted] = useState(false);
   const restartNow = () => void (async () => {
@@ -137,8 +138,9 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
   const pickPreset = (id: string) => {
     setPresetId(id);
     const p = MCP_PRESETS.find((x) => x.id === id);
-    if (p) { setName(p.name); setUrl(p.definition.url); setKind(p.credentialKind); setClientId(p.definition.oauth?.clientId ?? ''); }
-    else { setName(''); setUrl(''); setKind('personal'); setClientId(''); }
+    if (p) { setName(p.name); setUrl(p.definition.url); setKind(p.credentialKind); }
+    else { setName(''); setUrl(''); setKind('personal'); }
+    setClientId('');
   };
 
   const add = () => void run(async () => {
@@ -241,10 +243,16 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
               <option value="community">{t('mcpServers.kind.community')}</option>
             </select>
           </div>
-          <input aria-label={t('agents.mcp.clientId')} data-testid="agent-mcp-client-id"
-            className="min-w-0 rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
-            value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder={t('agents.mcp.clientId')} autoComplete="off" spellCheck={false} />
-          <p className="text-meta text-fg-subtle">{t('agents.mcp.clientNote')}</p>
+          {/* OAuth 를 쓰는 프리셋이거나 직접 URL 을 넣을 때만 — Jira 처럼 oauth 가 없는 프리셋엔 잡음이다(designer n1). */}
+          {(!MCP_PRESETS.some((x) => x.id === presetId) || MCP_PRESETS.some((x) => x.id === presetId && x.definition.oauth)) && (
+            <label className="flex flex-col gap-1 text-meta text-fg">
+              {t('agents.mcp.clientId')}
+              <input data-testid="agent-mcp-client-id"
+                className="min-w-0 rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
+                value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder={t('agents.mcp.clientIdPlaceholder')} autoComplete="off" spellCheck={false} />
+              <span className="text-meta text-fg-subtle">{t('agents.mcp.clientNote')}</span>
+            </label>
+          )}
           <p className="text-meta text-fg-subtle">{t('agents.mcp.addNote')}</p>
           <div className="flex gap-2">
             <button className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
