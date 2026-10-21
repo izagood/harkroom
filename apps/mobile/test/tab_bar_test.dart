@@ -132,6 +132,23 @@ Future<AppState> _pump(WidgetTester tester, {bool noDms = false}) async {
 }
 
 void main() {
+  // 상태바 글자색 — 밝은 화면엔 검은 글자(iOS statusBarBrightness: light = "바탕이 밝다"), 어두운 화면엔 흰 글자.
+  // 반투명 머리의 AppBar 는 투명이라 Flutter 가 "어두운 바탕"으로 짐작해 밝은 모드에서도 흰 글자였다.
+  for (final b in Brightness.values) {
+    testWidgets('상태바 글자색이 테마를 따른다 — 탭 넷(${b.name})', (tester) async {
+      tester.platformDispatcher.platformBrightnessTestValue = b;
+      addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+      await _pump(tester);
+      for (final k in ['tab-home', 'tab-dms', 'tab-inbox', 'tab-agents']) {
+        await tester.tap(find.byKey(Key(k)));
+        await tester.pumpAndSettle();
+        expect(SystemChrome.latestStyle?.statusBarBrightness, b, reason: '$k iOS');
+        expect(SystemChrome.latestStyle?.statusBarIconBrightness,
+            b == Brightness.light ? Brightness.dark : Brightness.light, reason: '$k Android');
+      }
+    });
+  }
+
   testWidgets('탭 넷이 서고 「나」 탭은 없다', (tester) async {
     await _pump(tester);
     for (final k in ['tab-home', 'tab-dms', 'tab-inbox', 'tab-agents']) {

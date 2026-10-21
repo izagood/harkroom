@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../state/app_scope.dart';
+import '../theme.dart';
 import 'tokens.dart';
 
 /// 공통 부품. 화면들이 같은 것을 **각자 다시 짓지 않게** 한 곳에 둔다 — 뒤의 PR(상태 화면·
@@ -383,6 +384,7 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
             appBarTheme: theme.appBarTheme.copyWith(
               backgroundColor: Colors.transparent,
               shape: const RoundedRectangleBorder(),
+              systemOverlayStyle: statusBarStyle(theme.brightness),
             ),
           ),
           child: bar,
@@ -405,6 +407,8 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
               appBarTheme: theme.appBarTheme.copyWith(
                 backgroundColor: Colors.transparent,
                 shape: const RoundedRectangleBorder(),
+                // 투명 AppBar 는 상태바를 흰 글자로 짐작한다 — 테마 밝기로 정한다(statusBarStyle).
+                systemOverlayStyle: statusBarStyle(theme.brightness),
               ),
             ),
             child: bar,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'ui/tokens.dart';
 
@@ -145,3 +146,16 @@ ThemeData harkroomTheme(Brightness brightness) {
     progressIndicatorTheme: ProgressIndicatorThemeData(color: k.fgMuted),
   );
 }
+
+/// 상태바(시간·신호·배터리) 글자색 — **화면 밝기를 따른다**: 밝은 화면엔 검은 글자, 어두운 화면엔 흰 글자.
+///
+/// `AppBar` 는 이 값을 안 주면 자기 바탕색의 밝기로 짐작한다. 반투명 머리(`GlassAppBar`)는
+/// 바탕을 위 상자가 그리고 AppBar 자신은 투명(`0x00000000`)으로 비우는데, 투명은 휘도 0 이라
+/// "어두운 바탕"으로 읽혀 밝은 화면에서도 흰 글자가 됐다(스레드·채널·인박스 머리). 그래서
+/// 짐작에 맡기지 않고 테마 밝기로 정한다. 머리가 없는 화면은 `main.dart` 가 같은 값을 깐다.
+///
+/// iOS 는 `statusBarBrightness`(바탕의 밝기), Android 는 `statusBarIconBrightness`(글자의
+/// 밝기)를 읽는다 — `SystemUiOverlayStyle.dark`/`.light` 가 둘을 같이 맞춘다.
+SystemUiOverlayStyle statusBarStyle(Brightness brightness) =>
+    (brightness == Brightness.dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
+        .copyWith(statusBarColor: Colors.transparent);
