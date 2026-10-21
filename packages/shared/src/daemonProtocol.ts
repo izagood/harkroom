@@ -720,8 +720,6 @@ export interface OperatorMcpEntry {
   oauth: boolean;
   /** 정의의 `oauth.clientId`(공개 값). 없으면 동적 등록·공용 클라이언트. */
   oauthClientId?: string;
-  /** 오퍼레이터가 이 이름의 client secret 을 들고 있는가 — 값은 소켓으로 내보내지 않는다. */
-  oauthClientSecret?: boolean;
   /** 오퍼레이터가 든 OAuth 토큰의 상태(원격 정의만). 없으면 옛 오퍼레이터 — 모른다. */
   auth?: OperatorMcpAuthState;
 }
@@ -763,12 +761,7 @@ function readMcpName(v: unknown, method: string): string | DaemonError {
   return v;
 }
 
-/**
- * `clientSecret` 은 정의에 넣지 않고 따로 돌려준다(2026-10-07) — 정의 파일(`mcp-servers.json`)·목록·
- * 러너 설정 어디에도 실리지 않고, 오퍼레이터의 비밀 파일에만 간다. `undefined` = 그대로 둔다,
- * `null` = 지운다(빈 문자열을 보냈을 때).
- */
-export function readOperatorMcpSetPayload(payload: unknown): { name: string; definition: OperatorMcpRemoteDefinition; clientSecret?: string | null } | DaemonError {
+export function readOperatorMcpSetPayload(payload: unknown): { name: string; definition: OperatorMcpRemoteDefinition } | DaemonError {
   const p = payload as { name?: unknown; definition?: unknown } | null;
   if (!p) return daemonError('bad-payload', 'operatorMcpSet 에는 name·definition 이 필요하다');
   const name = readMcpName(p.name, 'operatorMcpSet');
@@ -780,7 +773,6 @@ export function readOperatorMcpSetPayload(payload: unknown): { name: string; def
     if (d.headers !== undefined && !isStringRecord(d.headers)) return daemonError('bad-payload', 'headers 는 문자열 표여야 한다');
     const def: OperatorMcpRemoteDefinition = { type: d.type, url: d.url.trim() };
     if (d.headers && Object.keys(d.headers).length) def.headers = d.headers as Record<string, string>;
-    let clientSecret: string | null | undefined;
     if (d.oauth !== undefined) {
       const o = d.oauth as { clientId?: unknown; callbackPort?: unknown; clientSecret?: unknown } | null;
       if (!o || typeof o !== 'object') return daemonError('bad-payload', 'oauth 는 객체여야 한다');
@@ -788,18 +780,13 @@ export function readOperatorMcpSetPayload(payload: unknown): { name: string; def
       if (o.callbackPort !== undefined && !(Number.isInteger(o.callbackPort) && (o.callbackPort as number) > 0 && (o.callbackPort as number) < 65536)) {
         return daemonError('bad-payload', 'oauth.callbackPort 는 1~65535 정수여야 한다');
       }
-      if (o.clientSecret !== undefined) {
-        if (typeof o.clientSecret !== 'string' || o.clientSecret.length > 512 || /[\s]/.test(o.clientSecret)) {
-          return daemonError('bad-payload', 'oauth.clientSecret 은 공백 없는 512자 이하 문자열이어야 한다');
-        }
-        clientSecret = o.clientSecret === '' ? null : o.clientSecret;
-      }
+      // client secret 은 받지 않는다 — 정의 파일·러너 설정에 실리는 값이라 비밀을 둘 자리가 아니다.
+      // 전용 Slack 앱은 PKCE 공개 클라이언트로 쓴다(2026-10-21).
+      if (o.clientSecret !== undefined) return daemonError('bad-payload', 'oauth.clientSecret 은 받지 않는다 — PKCE 공개 클라이언트의 clientId 만 넣는다');
       const clientId = typeof o.clientId === 'string' ? o.clientId.trim() : '';
-      // secret 은 clientId 에 묶어 저장한다(security F1, #1243) — clientId 없는 secret 은 받지 않는다.
-      if (typeof clientSecret === 'string' && !clientId) return daemonError('bad-payload', 'oauth.clientSecret 은 oauth.clientId 와 함께만 넣는다');
       def.oauth = { ...(clientId ? { clientId } : {}), ...(o.callbackPort ? { callbackPort: o.callbackPort as number } : {}) };
     }
-    return { name, definition: def, ...(clientSecret !== undefined ? { clientSecret } : {}) };
+    return { name, definition: def };
   }
   // stdio 정의는 **소켓으로 받지 않는다**(#431). 그 command 는 에이전트 턴이 그대로 실행한다 —
   // 웹뷰가 채우게 두면 "웹뷰는 프로그램·인자를 고르지 못한다"는 경계에 옆문이 난다. stdio 는

@@ -36,7 +36,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { callbackPageLang, renderCallbackPage, type CallbackPageKind } from './callbackPage.js';
 import type { OperatorMcpAuthState, OperatorMcpRemoteDefinition } from '@harkroom/shared/daemonProtocol';
 
@@ -87,17 +87,6 @@ export interface McpOAuth {
    * `expired` 는 쓸 수 없는 이름(사람이 다시 인증해야 한다).
    */
   tokensFor(defs: Record<string, { url?: string; clientId?: string }>): Promise<{ tokens: Record<string, string>; expired: string[] }>;
-  /**
-   * 등록된 클라이언트의 secret(2026-10-07, 전용 Slack 앱). 정의 파일이 아니라 `<secrets>/mcp-oauth-clients.json`
-   * (0600)에 둔다. `null` 은 지운다. 값은 소켓·로그로 나가지 않는다 — 있는지만 `hasClientSecret` 으로 본다.
-   */
-  /**
-   * secret 은 **그 clientId 에 묶여** 저장된다(security F1, #1243) — 실을 때 clientId 가 같을 때만 싣는다.
-   * 다른 클라이언트·다른 인가 서버로 이 값이 나가지 않는다. `secret: null` 이면 clientId 와 상관없이 지운다.
-   */
-  setClientSecret(name: string, clientId: string | null, secret: string | null): Promise<void>;
-  /** `clientId` 를 주면 그 클라이언트에 묶인 secret 만 센다. */
-  hasClientSecret(name: string, clientId?: string): Promise<boolean>;
   /** 만료가 가까운 것을 전부 refresh 한다. 새 토큰이 생긴 이름을 돌려준다(설정 재작성용). */
   refreshDue(): Promise<Record<string, { url: string; accessToken: string }>>;
   /**
@@ -136,7 +125,6 @@ export interface McpOAuthDeps {
 }
 
 type Store = Record<string, McpOAuthRecord>;
-type ClientStore = Record<string, { clientId: string; clientSecret: string }>;
 
 interface Flow {
   url: string;
@@ -165,28 +153,6 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
   /** refresh 는 이름마다 한 번에 하나 — refresh 토큰이 회전하면 둘째 요청이 첫째가 받은 것을 무효로 만든다. */
   const refreshing = new Map<string, Promise<McpOAuthRecord | null>>();
   let chain: Promise<unknown> = Promise.resolve();
-  const clientsPath = join(dirname(deps.storePath), 'mcp-oauth-clients.json');
-  let clientsChain: Promise<unknown> = Promise.resolve();
-
-  async function loadClients(): Promise<ClientStore> {
-    let raw: string;
-    try { raw = await readFile(clientsPath, 'utf8'); } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
-      throw err;
-    }
-    // JSON.parse 의 오류 문구에는 입력 앞부분이 들어간다(Node 22) — secret 조각이 소켓 오류로 나가지 않게
-    // 고정 문구로 바꾼다(security n1, #1243).
-    let parsed: unknown;
-    try { parsed = JSON.parse(raw); } catch { throw new Error('client secret 파일을 읽지 못했다(형식이 깨졌다)'); }
-    return isRecord(parsed) ? (parsed as ClientStore) : {};
-  }
-  /** 그 이름·그 clientId 에 묶인 secret. clientId 가 다르면 없다. */
-  const clientSecretFor = async (name: string, clientId: string | undefined): Promise<string | undefined> => {
-    if (!clientId) return undefined;
-    const c = await loadClients();
-    const v = Object.hasOwn(c, name) ? c[name] : undefined;
-    return v && v.clientId === clientId && typeof v.clientSecret === 'string' && v.clientSecret ? v.clientSecret : undefined;
-  };
   /** 지금 정의의 clientId 와 기록의 clientId 가 다른가. 정의를 모르면 다르지 않다고 본다. */
   const clientChanged = async (name: string, rec: McpOAuthRecord): Promise<boolean> => {
     if (!deps.currentClientId) return false;
@@ -329,13 +295,10 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       }
       let r;
       try {
-        // secret 은 지금 비밀 파일의 것을 먼저 — 인증 뒤에 넣거나 바꿔도 다음 refresh 부터 실린다.
-        // 둘 다 없으면 PKCE 공개 클라이언트로 refresh 한다(Slack PKCE 앱).
-        // 이름이 아니라 **기록의 clientId** 에 묶인 것만(security F1). DCR 로 받은 secret 은 기록에 있다.
-        const secret = (await clientSecretFor(name, rec.clientId).catch(() => undefined)) ?? rec.clientSecret;
+        // secret 은 DCR 로 받은 것만 기록에 있다. 없으면 PKCE 공개 클라이언트로 refresh 한다(Slack PKCE 앱).
         r = await tokenRequest(rec.tokenEndpoint, {
           grant_type: 'refresh_token', refresh_token: rec.refreshToken, client_id: rec.clientId, resource: rec.resource,
-          ...(secret ? { client_secret: secret } : {}),
+          ...(rec.clientSecret ? { client_secret: rec.clientSecret } : {}),
         });
       } catch (err) {
         // 네트워크 실패는 거절이 아니다 — 들고 있는 토큰을 그대로 두고 다음에 다시 한다.
@@ -381,10 +344,8 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       const challenge = b64url(createHash('sha256').update(verifier).digest());
       const state = b64url(randomBytes(16));
       let redirectUri = '';
-      const secret = await clientSecretFor(name, definition.oauth?.clientId);
-      let client: { clientId: string; clientSecret?: string } | null = definition.oauth?.clientId
-        ? { clientId: definition.oauth.clientId, ...(secret ? { clientSecret: secret } : {}) }
-        : null;
+      // 정의의 clientId 는 PKCE 공개 클라이언트로 쓴다 — client secret 은 받지도 싣지도 않는다(Slack PKCE 앱).
+      let client: { clientId: string; clientSecret?: string } | null = definition.oauth?.clientId ? { clientId: definition.oauth.clientId } : null;
 
       const flow: Flow = { url: definition.url, servers: [], timer: setTimeout(() => {}, 0), state: 'pending' };
       const fail = (error: string) => {
@@ -530,29 +491,6 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       if (next.accessToken === rec.accessToken) return { action: 'ignored', reason: 'network' };
       deps.log(`MCP OAuth: ${name} MCP 서버 거절 보고로 토큰을 새로 받았다 (agent=${report.agentId})`);
       return { action: 'refreshed', url: next.url, accessToken: next.accessToken };
-    },
-
-    async setClientSecret(name, clientId, secret) {
-      if (secret !== null && !clientId) throw new Error('client secret 은 clientId 와 함께만 넣는다');
-      const next = clientsChain.then(async () => {
-        const c = await loadClients();
-        if (secret === null) { if (!Object.hasOwn(c, name)) return; delete c[name]; }
-        else c[name] = { clientId: clientId!, clientSecret: secret };
-        await mkdir(dirname(clientsPath), { recursive: true, mode: 0o700 });
-        const tmp = `${clientsPath}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
-        await writeFile(tmp, `${JSON.stringify(c, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-        await rename(tmp, clientsPath);
-      });
-      clientsChain = next.catch(() => undefined);
-      await next;
-      deps.log(`MCP OAuth: ${name} client secret ${secret === null ? '지움' : '넣음'}`);
-    },
-
-    async hasClientSecret(name, clientId) {
-      const c = await loadClients();
-      const v = Object.hasOwn(c, name) ? c[name] : undefined;
-      if (!v || typeof v.clientSecret !== 'string' || !v.clientSecret) return false;
-      return clientId === undefined || v.clientId === clientId;
     },
 
     async forget(name) {
