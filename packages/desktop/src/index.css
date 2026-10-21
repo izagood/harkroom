@@ -509,3 +509,26 @@ button:disabled,
 [aria-disabled='true'] {
   cursor: not-allowed;
 }
+
+/* 입력창 편집기(CodeMirror 6, ComposerEditor). 상자 여백·줄높이는 COMPOSER_BOX 가 든다. */
+.composer-cm .cm-editor { background: transparent; }
+.composer-cm .cm-editor.cm-focused { outline: none; }
+/*
+  링은 편집기 속이 아니라 상자에 선다 — textarea 시절의 `:focus-visible` 링(전역 규칙)과 같은 모양·자리다.
+  `:focus-within` 이 아니라 `:has(:focus-visible)` 인 것은 전역 규칙과 같은 이유(#511, focusRing.test)다 —
+  글 칸(contenteditable)은 마우스로 눌러도 focus-visible 이라 textarea 때와 똑같이 선다.
+*/
+.composer-cm:has(:focus-visible) { outline: 2px solid var(--app-accent); outline-offset: -2px; }
+.composer-cm .cm-scroller { font-family: inherit; line-height: inherit; max-height: var(--composer-max, 40vh); overflow-y: auto; }
+.composer-cm .cm-content { padding: 0; min-height: calc(var(--composer-rows, 2) * 1lh); caret-color: currentColor; }
+.composer-cm .cm-line { padding: 0; }
+.composer-cm .cm-placeholder { color: var(--color-fg-subtle); }
+.composer-cm .cm-md-mark { opacity: 0.4; }
+.composer-cm .cm-md-code { background: var(--color-surface-sunken); border-radius: 4px; font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.92em; padding: 0.1em 0.2em; }
+.composer-cm .cm-md-codeblock { background: var(--color-surface-sunken); font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.92em; }
+.composer-cm .cm-md-codeblock .cm-md-code { background: transparent; padding: 0; }
+.composer-cm .cm-md-strike { text-decoration-line: line-through; text-decoration-style: solid; text-decoration-color: currentColor; text-decoration-thickness: 1px; }
+/* 보낸 메시지의 링크(MessageBody: text-link underline underline-offset-2)와 같은 모양 — 쓸 때와 보낸 뒤가 같아야 한다. */
+.composer-cm .cm-md-link { color: var(--color-link); text-decoration-line: underline; text-underline-offset: 2px; }
+.composer-cm .cm-md-url { color: var(--color-fg-muted); }
+.composer-cm .cm-md-quote { color: var(--color-fg-muted); }

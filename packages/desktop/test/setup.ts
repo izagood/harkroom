@@ -70,6 +70,9 @@ if (__delayMs > 0) {
 // 자기 코드에 닿기도 전에 `window is not defined` 로 죽는다.
 if (typeof window !== 'undefined') {
   setUpBrowserStubs();
+  // 입력창 편집기(CM6)를 textarea 처럼 다루게 한다 — 이유는 그 파일 머리에. 동적 import 인 것은
+  // node 환경 파일이 CodeMirror 를 읽지 않게 하려는 것이다.
+  (await import('./helpers/cmTextbox')).installCmTextbox();
 }
 
 function setUpBrowserStubs(): void {
