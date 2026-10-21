@@ -513,7 +513,7 @@ button:disabled,
 /* 입력창 편집기(CodeMirror 6, ComposerEditor). 상자 여백·줄높이는 COMPOSER_BOX 가 든다. */
 .composer-cm .cm-editor { background: transparent; }
 .composer-cm .cm-editor.cm-focused { outline: none; }
-.composer-cm .cm-scroller { font-family: inherit; line-height: inherit; max-height: 40vh; overflow-y: auto; }
+.composer-cm .cm-scroller { font-family: inherit; line-height: inherit; max-height: var(--composer-max, 40vh); overflow-y: auto; }
 .composer-cm .cm-content { padding: 0; min-height: calc(var(--composer-rows, 2) * 1lh); caret-color: currentColor; }
 .composer-cm .cm-line { padding: 0; }
 .composer-cm .cm-placeholder { color: var(--color-fg-muted); }

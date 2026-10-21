@@ -33,34 +33,6 @@ export function codeMarks(text: string): CodeMark[] {
   return out;
 }
 
-/** 겹판이 그리는 조각. `plain` 도 조각으로 남는 것이 요점이다(아래). */
-export interface CodePiece {
-  text: string;
-  kind: 'plain' | 'inline' | 'block';
-}
-
-/**
- * 초안을 겹판이 그릴 조각으로 나눈다.
- *
- * **조각을 이어 붙이면 원문과 글자 하나까지 같다.** 그것이 이 함수의 계약이고
- * (`test/composerCodeMarks.test.ts` 가 잰다), 겹판이 입력칸과 **같은 자리에서 줄바꿈**하기
- * 위한 조건이다 — 글자 하나가 빠지거나 늘면 그 줄부터 칠이 밀려서, 칠한 자리와 글자가
- * 어긋난다. 그래서 조각을 `splitCode` 의 조각에서 직접 만들지 않고 **위치로 잘라** 만든다:
- * `splitCode` 의 평문 조각은 펜스 앞뒤의 개행을 품지 않아(줄 단위로 잘리므로) 이어 붙여도
- * 원문이 되지 않는다.
- */
-export function codePieces(text: string): CodePiece[] {
-  const out: CodePiece[] = [];
-  let at = 0;
-  for (const m of codeMarks(text)) {
-    if (m.start > at) out.push({ text: text.slice(at, m.start), kind: 'plain' });
-    out.push({ text: text.slice(m.start, m.end), kind: m.kind });
-    at = m.end;
-  }
-  if (at < text.length) out.push({ text: text.slice(at), kind: 'plain' });
-  return out;
-}
-
 /** 토글 뒤의 초안과 선택 범위. 선택은 **코드 안쪽 글자**를 잡는다. */
 export interface CodeToggle {
   text: string;

@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
-import { EditorState, RangeSetBuilder, type Extension } from '@codemirror/state';
+import { EditorState, Prec, RangeSetBuilder, type Extension } from '@codemirror/state';
 import {
   Decoration, EditorView, ViewPlugin, keymap, placeholder as cmPlaceholder,
   type DecorationSet, type ViewUpdate,
@@ -25,6 +25,11 @@ import { tags } from '@lezer/highlight';
  * `**굵게**` 의 `**` 는 커서가 그 굵은 구간 밖에 있으면 숨기고, 안에 들어오면 옅게 보인다.
  * 숨긴 기호도 문서에는 남아 있다 — 지우거나 고치려면 커서를 그 구간에 넣으면 된다.
  */
+
+/**
+ * 입력칸 상자 값(모서리·테두리 자리·여백·줄높이). 편집기 둘레 칸과 맞추려고 한 곳에 둔다.
+ */
+export const COMPOSER_BOX = 'rounded-compose border px-3 py-2.5 leading-relaxed';
 
 /** textarea 를 흉내 내는 손잡이 — `Composer` 의 옛 `ref.current` 자리에 그대로 들어간다. */
 export interface ComposerTextBox {
@@ -78,7 +83,7 @@ const mdHighlight = HighlightStyle.define([
   { tag: tags.url, class: 'cm-md-url' },
   { tag: tags.monospace, class: 'cm-md-code' },
   { tag: tags.quote, class: 'cm-md-quote' },
-  { tag: tags.processingInstruction, class: 'cm-md-mark' },
+  // 기호(`**`·`` ` ``·`>`)는 여기서 칠하지 않는다 — `liveMarks` 가 숨기거나 옅게 한다. 둘 다 칠하면 옅음이 겹친다.
 ]);
 
 /** 숨기거나 옅게 보일 기호 노드. 이름은 `@lezer/markdown` 의 것이다. */
@@ -177,11 +182,17 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
     const extensions: Extension[] = [
       history(),
       EditorView.lineWrapping,
-      markdown({ extensions: [Strikethrough] }),
+      // 붙여넣은 주소를 링크로 바꾸는 것과 목록 잇기는 `Composer` 가 한다(링크 제안 버튼·Shift+Enter) —
+      // 편집기의 것까지 켜면 같은 일을 두 번, 다른 규칙으로 한다.
+      markdown({ extensions: [Strikethrough], pasteURLAsLink: false, addKeymap: false }),
       syntaxHighlighting(mdHighlight),
       liveMarks,
       EditorView.contentAttributes.of({ 'aria-multiline': 'true', role: 'textbox' }),
-      EditorView.domEventHandlers({
+      /*
+        `Composer` 의 열쇠 처리기가 **편집기 기본 열쇠보다 먼저** 본다. 기본 열쇠표(`defaultKeymap`)는
+        Enter 를 줄바꿈으로 먹어 버리므로, 같은 순위면 Enter 가 보내기에 닿지 못한다.
+      */
+      Prec.highest(EditorView.domEventHandlers({
         keydown: (e) => {
           const handler = latest.current.onKeyDown;
           if (!handler) return false;
@@ -199,7 +210,7 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
           handler({ clipboardData: e.clipboardData, preventDefault: () => e.preventDefault(), currentTarget: box.current });
           return e.defaultPrevented;
         },
-      }),
+      })),
       keymap.of([...historyKeymap, ...defaultKeymap]),
       EditorView.updateListener.of((u) => {
         if (syncing.current) return;
@@ -208,7 +219,11 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
         else if (u.selectionSet) latest.current.onSelect?.(u.state.doc.toString(), caret);
       }),
     ];
-    if (props.placeholder) extensions.push(cmPlaceholder(props.placeholder));
+    if (props.placeholder) {
+      // 자리표시 글은 그림(`cmPlaceholder`)과 속성 둘 다로 둔다 — 화면 읽기 프로그램은 그림을 읽지 않는다.
+      extensions.push(cmPlaceholder(props.placeholder));
+      extensions.push(EditorView.contentAttributes.of({ 'aria-placeholder': props.placeholder, placeholder: props.placeholder }));
+    }
     const view = new EditorView({
       parent: host.current!,
       state: EditorState.create({ doc: props.value, extensions }),
@@ -219,8 +234,13 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
     // 자리표시 글은 처음 한 번만 — 바뀌면 다시 만든다.
   }, [props.placeholder]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 바깥(보내기·되돌리기·⌘E 등)에서 바뀐 값을 편집기에 옮긴다.
-  useEffect(() => {
+  /*
+    바깥(보내기·되돌리기·⌘E·멘션 고르기)에서 바뀐 값을 편집기에 옮긴다. **레이아웃 효과**인 것이 요점이다:
+    `Composer` 는 멘션을 고른 뒤 같은 렌더의 레이아웃 효과에서 커서를 새 글의 끝에 둔다. 자식의 레이아웃
+    효과가 부모의 것보다 먼저 돌므로 여기서 글을 먼저 바꿔 두어야 그 커서가 옛 글 길이에 잘리지 않는다
+    (잘리면 커서가 `@fi` 안에 남아 자동완성이 다시 열린다).
+  */
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     const cur = view.state.doc.toString();
@@ -237,6 +257,26 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
       syncing.current = false;
     }
   }, [props.value]);
+
+  /*
+    높이 상한 = 이 입력창이 든 칸(채널 `main`·스레드 `section`) 높이의 40%(결정 8). 창 높이(`vh`)가
+    아니라 칸 높이인 것은 스레드 패널·분할 창에서도 대화가 입력창에 묻히지 않게 하려는 것이다.
+    칸을 못 찾거나 배치가 없으면(시험) CSS 의 `40vh` 가 남는다.
+  */
+  useEffect(() => {
+    const el = host.current;
+    const pane = el?.closest('main, section');
+    if (!el || !pane) return;
+    const apply = () => {
+      const h = pane.clientHeight;
+      if (h > 0) el.style.setProperty('--composer-max', `${Math.round(h * 0.4)}px`);
+    };
+    apply();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(apply);
+    ro.observe(pane);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const el = viewRef.current?.contentDOM;

@@ -120,8 +120,8 @@ describe('스레드 창', () => {
     expect(c.closeThread).toHaveBeenCalled();
     const popup = wins[0]!.document;
     // createHTMLDocument 는 defaultView 가 없어 role 조회가 안 된다 — 요소를 직접 찾는다.
-    await waitFor(() => expect(popup.querySelector('textarea')).toBeTruthy());
-    expect(popup.querySelector('textarea')!.value).toBe('쓰다 만 답글');
+    await waitFor(() => expect(popup.querySelector('.cm-content')).toBeTruthy());
+    expect(popup.querySelector('.cm-content')!.textContent).toBe('쓰다 만 답글');
   });
 
   it('이미 띄운 스레드를 다시 떼면 새로 열지 않고 앞으로만(완료 조건 ④)', () => {

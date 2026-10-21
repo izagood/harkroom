@@ -63,9 +63,15 @@ beforeEach(() => {
     private watch: Watch;
     constructor(callback: Watch['callback'], options?: { root?: Element | Document | null }) {
       this.watch = { callback, root: (options?.root as Element | null) ?? null, targets: [] };
-      watches.push(this.watch);
     }
-    observe(target: Element): void { this.watch.targets.push(target); }
+    observe(target: Element): void {
+      // 입력창 편집기(CodeMirror 6)도 제 자리를 재려고 이것을 만든다 — 그건 이 시험이 재는 보정이
+      // 아니다. 그래서 만들 때가 아니라 편집기 밖의 것을 지켜볼 때 센다. 편집기는 제 class 가 붙기
+      // 전에 지켜보기 시작하므로 입력창 칸(`.composer-cm`)으로 가른다.
+      if (target.closest('.composer-cm')) return;
+      if (!watches.includes(this.watch)) watches.push(this.watch);
+      this.watch.targets.push(target);
+    }
     unobserve(): void {}
     disconnect(): void {}
     takeRecords(): [] { return []; }

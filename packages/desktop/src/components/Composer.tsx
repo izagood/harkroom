@@ -26,8 +26,8 @@ import { undoSendStorage } from '../lib/prefs';
 import { callsInText, quoteText, MANY_CALLS } from '../lib/pasteCalls';
 // 입력 중인 코드에 면을 깔고(겹판), ⌘E 로 감싸거나 벗긴다. 무엇이 코드인지는 보낸 뒤
 // 메시지를 그리는 것과 **같은 함수**(`splitCode`)가 정한다 — 그 파일의 주석이 근거다.
-import { COMPOSER_BOX } from './ComposerCode';
-import { ComposerEditor, type ComposerKeyEvent, type ComposerPasteEvent, type ComposerTextBox } from './ComposerEditor';
+import { continueList, formatShortcut, inFence, toggleInline, toggleLinePrefix, type FormatEdit } from '../lib/mdFormat';
+import { COMPOSER_BOX, ComposerEditor, type ComposerKeyEvent, type ComposerPasteEvent, type ComposerTextBox } from './ComposerEditor';
 import { toggleCode } from '../lib/codeMarks';
 // 하이퍼링크를 **쓰는** 쪽(⌘K · 고른 글 위에 주소 붙여넣기). 그리는 쪽은 #216 부터 있었다 —
 // 무엇이 링크 문법인지는 렌더러가 쓰는 함수(`linkAt`)가 정한다. 그 파일의 주석이 근거다.
@@ -1337,6 +1337,21 @@ export function Composer({
       if (last) { e.preventDefault(); setOpenModelFor(last); }
       return;
     }
+    /*
+      ⌘B·⌘I·⌘⇧X·⌘⇧7/8/9 — 서식 단축키(입력창 개편 P1, 시안 v1 키보드 표). ⌘E·⌘K 와 같은
+      길이다: 문자열에 기호를 넣고 빼고(`mdFormat`), 커서는 렌더 뒤에 돌려놓는다.
+      `e.code` 로 가린다 — 한글 입력 상태에서는 `e.key` 가 `ㅠ`·`ㅑ` 로 오고, ⇧ 와 함께면
+      숫자 열쇠가 `&`·`*`·`(` 로 온다.
+    */
+    const fmt = formatShortcut(e);
+    if (fmt) {
+      e.preventDefault();
+      const el = e.currentTarget;
+      applyEdit(fmt.kind === 'inline'
+        ? toggleInline(el.value, el.selectionStart, el.selectionEnd, fmt.mark)
+        : toggleLinePrefix(el.value, el.selectionStart, el.selectionEnd, fmt.line));
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key === 'e') {
       e.preventDefault();
       const el = e.currentTarget;
@@ -1383,10 +1398,36 @@ export function Composer({
       });
       return;
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    // ⌘Enter 는 어디서든 보낸다 — 코드 블록 안에서 Enter 가 줄바꿈이 되므로 보낼 길이 따로 있어야 한다.
+    if (e.metaKey || e.ctrlKey) {
       e.preventDefault();
       send();
+      return;
     }
+    const el = e.currentTarget;
+    if (e.shiftKey) {
+      // 목록 항목에서 줄을 바꾸면 다음 기호를 이어 준다. 목록이 아니면 편집기가 그냥 줄을 바꾼다.
+      const next = el.selectionStart === el.selectionEnd ? continueList(el.value, el.selectionStart) : null;
+      if (next) { e.preventDefault(); applyEdit(next); }
+      return;
+    }
+    // 코드 블록 안의 Enter 는 줄바꿈이다 — 보내기면 블록의 첫 줄만 치고 날아간다.
+    if (inFence(el.value, el.selectionStart)) return;
+    e.preventDefault();
+    send();
+  };
+
+  /** 서식 단축키·목록 잇기의 결과를 초안에 넣고, 렌더가 끝난 뒤 선택 범위를 돌려놓는다(⌘E 와 같은 이유). */
+  const applyEdit = (next: FormatEdit) => {
+    setDraftLocal(next.text);
+    recompute(next.text, next.end);
+    requestAnimationFrame(() => {
+      const box = ref.current;
+      if (!box) return;
+      box.focus();
+      box.setSelectionRange(next.start, next.end);
+    });
   };
 
   // 예약 발송 핸들러(#222)

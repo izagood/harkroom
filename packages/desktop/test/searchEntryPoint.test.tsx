@@ -226,9 +226,10 @@ describe('검색 진입점 배선 (#258)', () => {
     fakeController();
     render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 
-    const textareas = document.querySelectorAll('textarea');
-    expect(textareas.length, '작성칸이 있어야 이 테스트가 뜻이 있다').toBeGreaterThan(0);
-    pressCmdF(textareas[0]!);
+    // 작성칸은 CodeMirror 6 의 글 칸이다(입력창 개편 P1).
+    const boxes = document.querySelectorAll('.cm-content');
+    expect(boxes.length, '작성칸이 있어야 이 테스트가 뜻이 있다').toBeGreaterThan(0);
+    pressCmdF(boxes[0]!);
 
     expect(screen.getByLabelText('검색어 입력')).toBeTruthy();
   });
