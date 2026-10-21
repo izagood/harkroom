@@ -570,6 +570,17 @@ void main() {
       expect(linkSpan(tester).style!.backgroundColor, isNull);
     });
 
+    test('링크 눌림색은 줄 꾹 누름 강조색·멘션 칩 색과 다르다 — 밝은·다크 모두', () {
+      // 줄 강조(`message_tile` InkWell)가 surfaceHover 다. 같으면 링크를 눌러도 줄 전체와 한 색이 된다.
+      for (final b in Brightness.values) {
+        final k = harkroomTheme(b).extension<HarkroomTokens>()!;
+        final pressed = linkPressedColor(k, b);
+        expect(pressed, isNot(k.surfaceHover), reason: '$b');
+        expect(pressed, isNot(k.accentSurface), reason: '$b');
+        expect(pressed.a, b == Brightness.dark ? closeTo(0.18, 0.01) : closeTo(0.14, 0.01));
+      }
+    });
+
     testWidgets('앱 안 링크는 이동이 끝날 때까지 바탕을 두고, 그 사이 다시 눌러도 한 번만 간다', (tester) async {
       final went = <String>[];
       final done = Completer<void>();

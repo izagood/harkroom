@@ -296,8 +296,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
               style: TextStyle(
                 color: k.link,
                 decoration: TextDecoration.underline,
-                // 눌림·이동 중 표시. 멘션 칩(accentSurface)과 섞이지 않게 중립 바탕을 쓴다.
-                backgroundColor: lit ? k.surfaceHover : null,
+                backgroundColor: lit ? linkPressedColor(k, Theme.of(context).brightness) : null,
               ),
               semanticsLabel: text,
             ));
@@ -307,6 +306,12 @@ class _MarkdownBodyState extends State<MarkdownBody> {
     return Text.rich(TextSpan(style: base, children: spans), textAlign: align);
   }
 }
+
+/// 링크의 눌림·이동 중 바탕 — **링크 색을 옅게 깐 면**이다. 중립 `surfaceHover` 는 줄 꾹 누름 강조
+/// (`message_tile` 의 InkWell)와 같은 색이라, 링크를 누르면 줄 전체와 링크가 한 색이 되어 링크만 눌린 것이
+/// 안 보였다(designer #1415). 멘션 칩(`accentSurface`)과도 다르다. 다크는 링크 색이 밝아 조금 더 진하게 깐다.
+Color linkPressedColor(HarkroomTokens k, Brightness b) =>
+    k.link.withValues(alpha: b == Brightness.dark ? 0.18 : 0.14);
 
 /// 블록 위젯 [key] 의 종류(`md-table`·`md-list`…). 그 밖의 키면 `null`.
 String? mdKind(Key? key) => key is ValueKey<(String, int)> ? key.value.$1 : null;
