@@ -519,6 +519,7 @@ interactive = createInteractiveManager({
   },
   operatorBin: config.operatorBin,
   chromeHost: config.chromeHost,
+  providerLane: providerLaneOn,
   relay, registry, queue: mentionQueue,
   orphanMs: config.interactiveOrphanMs,
 });
