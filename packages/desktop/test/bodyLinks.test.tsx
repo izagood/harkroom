@@ -158,3 +158,29 @@ describe('여는 데 실패하면 사람에게 보인다', () => {
     expect(alert.textContent).toMatch(/example\.com/);
   });
 });
+
+describe('눌린 것이 보인다(스레드 ae5505cc)', () => {
+  // 앱 안 링크는 조회·채널 열기를 거쳐 1초 넘게 걸린다. 그 사이 아무 변화가 없으면 사람은
+  // 눌린 줄 모르고 또 누른다 — 이동이 끝날 때까지 진행 중임을 보이고, 다시 눌러도 한 번만 간다.
+  it('이동이 끝날 때까지 aria-busy 를 두고, 그 사이 다시 눌러도 한 번만 연다', async () => {
+    let finish!: () => void;
+    const c = { openMessage: vi.fn(() => new Promise<void>((r) => { finish = r; })) };
+    setController(c as unknown as ControllerType);
+    show(`결정은 여기 ${messagePermalink('11111111-2222-4333-8444-555555555555')}`);
+
+    const link = screen.getByTestId('body-link');
+    expect(link.getAttribute('aria-busy')).toBeNull();
+    // 누르는 순간의 바탕은 CSS(:active)라 jsdom 이 못 잰다 — 클래스가 붙어 있는지만 본다.
+    expect(link.className).toContain('active:bg-surface-hover');
+
+    fireEvent.click(link);
+    await waitFor(() => expect(link.getAttribute('aria-busy')).toBe('true'));
+    fireEvent.click(link);
+    expect(c.openMessage).toHaveBeenCalledTimes(1);
+
+    finish();
+    await waitFor(() => expect(link.getAttribute('aria-busy')).toBeNull());
+    fireEvent.click(link);
+    expect(c.openMessage).toHaveBeenCalledTimes(2);
+  });
+});
