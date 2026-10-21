@@ -5345,6 +5345,7 @@ export const en = {
   'mcpServers.cell.expired': 'expired — sign in again',
   'mcpServers.cell.rejected': 'rejected · {time} · {agent}',
   'mcpServers.cell.rejectedNoAgent': 'rejected · {time}',
+  'mcpServers.cell.okAt': 'signed in · {time}',
   'mcpServers.dialog.addTitle': 'Add MCP server',
   'mcpServers.dialog.defineTitle': '{name} — add a definition on this Mac',
   'mcpServers.dialog.editTitle': '{name} — edit this Mac\'s definition',

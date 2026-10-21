@@ -59,6 +59,7 @@ export function describeMcpDefinition(name: string, source: OperatorMcpEntry['so
       name, source, transport: def.type === 'sse' ? 'sse' : 'http', target: def.url, args: [],
       envKeys: [], headerKeys: keys(def.headers), oauth: isRecord(def.oauth),
       ...(isRecord(def.oauth) && typeof def.oauth.clientId === 'string' ? { oauthClientId: def.oauth.clientId } : {}),
+      ...(isRecord(def.oauth) && Number.isInteger(def.oauth.callbackPort) ? { oauthCallbackPort: def.oauth.callbackPort as number } : {}),
     };
   }
   return {
@@ -118,9 +119,15 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
       const table = await readTable(deps.registryPath);
       const prev = table[name];
       const prevClientId = isRecord(prev) && isRecord(prev.oauth) && typeof prev.oauth.clientId === 'string' ? prev.oauth.clientId : undefined;
-      const nextClientId = definition.oauth?.clientId;
+      const prevUrl = isRecord(prev) && typeof prev.url === 'string' ? prev.url : undefined;
+      // Client ID 칸을 비워 보냈으면 **같은 URL 일 때만** 지금 값을 유지한다(MCP 설정 v2 PR3) — 비움이 공용 앱으로
+      // 되돌리는 것이 되면 토큰 칸 상한이 있는 서버에서 서로 밀어낸다(security #1244 n1). URL 이 바뀌면 그 클라이언트는
+      // 새 서버의 것이 아니므로 따라가지 않는다(security #1453 n4). 공용으로 되돌리기는 프리셋 값을 명시해 보낸다.
+      const keep = !definition.oauth?.clientId && prevClientId !== undefined && prevUrl === definition.url;
+      const nextClientId = keep ? prevClientId : definition.oauth?.clientId;
       // 정의에는 clientId·callbackPort 만 둔다(소켓 읽기가 이미 걸렀다).
-      const { oauth: o, ...rest } = definition;
+      const { oauth: given, ...rest } = definition;
+      const o = keep ? { ...(given ?? {}), clientId: prevClientId } : given;
       table[name] = o ? { ...rest, oauth: { ...(o.clientId ? { clientId: o.clientId } : {}), ...(o.callbackPort ? { callbackPort: o.callbackPort } : {}) } } : rest;
       await writeTable(deps.registryPath, table);
       // 클라이언트를 갈아탔으면 옛 토큰을 버린다 — 남겨 두면 1분 refresh 가 옛 클라이언트로 계속 돌린다

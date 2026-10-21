@@ -164,6 +164,37 @@ describe('박동의 MCP 상태 — MCP 설정 v2 PR4', () => {
     expect(asked.flat()).not.toContain('ghost-mcp');
   });
 
+  it('MCP 상태를 못 만들면 고정 문구만 남긴다 — 깨진 ~/.claude.json 의 내용이 로그에 실리지 않는다(security #1451 n1)', async () => {
+    const logs: string[] = [];
+    const broken = '{"mcpServers":{"slack":{"headers":{"Authorization":"Bearer LEAKY-TOKEN"'; // 닫히지 않은 JSON
+    const mcp = async () => { JSON.parse(broken); return []; };
+    const c = createCommunity({
+      baseUrl: 'https://work.example.com', token: 'hkop_x', agents: { a: {} }, reconciler,
+      dial: (_u, _t, h) => { h.onOpen({ send: () => {}, close: () => {} }); }, schedule: () => {}, log: (l) => logs.push(l),
+      heartbeat: { status: async () => ({ turns: { running: 0, max: null } }), machine: async () => null, mcp },
+    });
+    c.assignments.set('a', { agentId: 'a', mcpServers: ['slack'] } as never);
+    c.start();
+    await new Promise((r) => setTimeout(r, 0));
+    const line = logs.find((l) => l.includes('박동의 MCP 상태'));
+    expect(line).toBe('박동의 MCP 상태를 만들지 못했다(정의 파일을 읽지 못했거나 형식이 깨졌다)');
+    expect(logs.join('\n')).not.toMatch(/LEAKY|Bearer|mcpServers/);
+    // 파일 시스템 오류면 코드만 덧붙인다.
+    const logs2: string[] = [];
+    const c2 = createCommunity({
+      baseUrl: 'https://work.example.com', token: 'hkop_x', agents: { a: {} }, reconciler,
+      dial: (_u, _t, h) => { h.onOpen({ send: () => {}, close: () => {} }); }, schedule: () => {}, log: (l) => logs2.push(l),
+      heartbeat: { status: async () => ({ turns: { running: 0, max: null } }), machine: async () => null,
+        mcp: async () => { throw Object.assign(new Error('EACCES: permission denied, open /secret/path'), { code: 'EACCES' }); } },
+    });
+    c2.assignments.set('a', { agentId: 'a', mcpServers: ['slack'] } as never);
+    c2.start();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(logs2.find((l) => l.includes('박동의 MCP 상태'))).toBe('박동의 MCP 상태를 만들지 못했다(정의 파일을 읽지 못했거나 형식이 깨졌다) EACCES');
+    expect(logs2.join('\n')).not.toContain('/secret/path');
+    c.stop(); c2.stop();
+  });
+
   it('켠 MCP 가 없으면 칸을 싣지 않는다 · MCP 상태를 못 만들어도 박동은 나간다', async () => {
     const sent: string[] = [];
     const dial: LinkDialer = (_u, _t, h) => { h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };

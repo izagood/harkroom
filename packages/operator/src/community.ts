@@ -236,7 +236,10 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     const mcpNames = [...new Set([...assignments.values()].filter((d) => d.agentId in agents).flatMap((d) => d.mcpServers ?? []))].sort();
     const mcpOf = hb.mcp && mcpNames.length > 0 ? hb.mcp(mcpNames, deps.baseUrl) : Promise.resolve(undefined);
     void Promise.all([hb.status(), hb.machine(), mcpOf.catch((err: unknown) => {
-      deps.log(`박동의 MCP 상태를 만들지 못했다: ${err instanceof Error ? err.message : String(err)}`);
+      // 고정 문구만 남긴다 — 깨진 ~/.claude.json 이면 JSON.parse 오류 문구에 파일 앞부분(MCP 헤더 토큰일 수 있다)이
+      // 실린다(security #1451 n1). 파일 시스템 오류면 그 코드(ENOENT 등)만 덧붙인다.
+      const code = (err as NodeJS.ErrnoException | null)?.code;
+      deps.log(`박동의 MCP 상태를 만들지 못했다(정의 파일을 읽지 못했거나 형식이 깨졌다)${typeof code === 'string' && /^E[A-Z]+$/.test(code) ? ` ${code}` : ''}`);
       return undefined;
     })])
       .then(([status, machine, mcp]) => {

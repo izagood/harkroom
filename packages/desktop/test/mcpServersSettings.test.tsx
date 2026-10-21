@@ -184,6 +184,17 @@ describe('McpServersSettings — 이 맥 칸', () => {
     expect(screen.getByTestId('mcp-cell-primary-linear').textContent).toBe('이 맥에 추가');
   });
 
+  it('「인증됨」 옆에 받은 때를 적는다 — 시각이 없으면(옛 오퍼레이터) 낱말만(designer #1453 n3)', async () => {
+    useActiveStore.getState().set({ me: me([]) as never });
+    const at = Date.UTC(2026, 9, 21, 8, 55);
+    local([remote('slack', { state: 'ok', at }), remote('github', { state: 'ok' }, { oauth: false })]);
+    fake([{ name: 'slack', credentialKind: 'personal' }, { name: 'github', credentialKind: 'community' }]);
+    render(<McpServersSection />);
+    const slack = (await screen.findByTestId('agent-mcp-auth-slack')).textContent ?? '';
+    expect(slack).toMatch(/인증됨 · \S/);
+    expect(screen.getByTestId('agent-mcp-auth-github').textContent).not.toContain('·');
+  });
+
   it('[인증] 은 오퍼레이터가 만든 인가 url 을 브라우저로 연다', async () => {
     useActiveStore.getState().set({ me: me([]) as never });
     const calls = local([remote('slack', { state: 'none' })]);
@@ -302,6 +313,22 @@ describe('buildMcpDefinition', () => {
   it('프리셋이 아닌 정의를 되돌리면 clientId 없이 oauth 만 남긴다', () => {
     expect(buildMcpDefinition({ name: 'x', url: 'https://x.example.com/mcp', clientId: '', revert: true, entry: entry({ oauthClientId: 'old-1' }) }))
       .toEqual({ type: 'http', url: 'https://x.example.com/mcp', oauth: {} });
+  });
+  it('칸을 비우면 같은 URL 일 때만 지금 Client ID 를 싣는다 — URL 이 바뀌면 싣지 않는다(security #1453 n4)', () => {
+    expect(buildMcpDefinition({ name: 'x', url: 'https://x.example.com/mcp', clientId: '', revert: false, entry: entry({ oauthClientId: 'old-1' }) }))
+      .toEqual({ type: 'http', url: 'https://x.example.com/mcp', oauth: { clientId: 'old-1' } });
+    expect(buildMcpDefinition({ name: 'x', url: 'https://y.example.com/mcp', clientId: '', revert: false, entry: entry({ oauthClientId: 'old-1' }) }))
+      .toEqual({ type: 'http', url: 'https://y.example.com/mcp', oauth: {} });
+  });
+  it('프리셋이 아닌 정의는 목록의 callbackPort 를 지킨다', () => {
+    expect(buildMcpDefinition({ name: 'x', url: 'https://x.example.com/mcp', clientId: '', revert: false, entry: entry({ oauthCallbackPort: 4555 }) }))
+      .toEqual({ type: 'http', url: 'https://x.example.com/mcp', oauth: { callbackPort: 4555 } });
+  });
+  it('slack 을 되돌리면 URL 을 바꿨어도 프리셋 Client ID 를 명시해 보낸다', () => {
+    const slack = (over: Record<string, unknown>) => entry({ name: 'slack', target: 'https://mcp.slack.com/mcp', oauthClientId: 'own-1', ...over });
+    const out = buildMcpDefinition({ name: 'slack', url: 'https://mcp.slack.com/mcp', clientId: '', revert: true, entry: slack({}) });
+    expect(out.oauth?.clientId).toBeTruthy();
+    expect(out.oauth?.clientId).not.toBe('own-1');
   });
   it('oauth 없는 새 정의는 type·url 만', () => {
     expect(buildMcpDefinition({ name: 'x', url: 'https://x.example.com/mcp', clientId: '', revert: false }))
