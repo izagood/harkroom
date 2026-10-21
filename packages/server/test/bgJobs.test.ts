@@ -9,7 +9,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, registerOperator } from './helpers/fixtures.js';
 import {
-  BG_MAX_WRITES, claimBgJob, completeBgJob, createBgJobSweeper, DISTILL_MAX_THREADS, enqueueBgJob, inBgWindow, kstDay, produceDistillJobs,
+  BG_MAX_WRITES, claimBgJob, completeBgJob, createBgJobSweeper, CLEANUP_WEEKLY_MIN_ITEMS, DISTILL_MAX_THREADS, enqueueBgJob, inBgWindow, kstDay, produceCleanupJobs, produceDistillJobs,
 } from '../src/services/bgJobs.js';
 import { getThreadNote, setThreadNote } from '../src/services/threadNote.js';
 
@@ -194,6 +194,60 @@ describe('bg_job (BG1)', () => {
     });
   });
 
+  describe('정리 생산자(BG5)', () => {
+    const fill = async (accountId: string, n: number, kind = 'topic') => {
+      await pool.query(
+        `insert into agent_memory (account_id, slug, value, kind) select $1, 'mem/f' || g || $3, 'v', $3 from generate_series(1, $2) g`,
+        [accountId, n, kind],
+      );
+    };
+    const cleanupOf = async (accountId: string) =>
+      (await pool.query(`select day::text, input from bg_job where account_id = $1 and kind = 'cleanup' order by created_at`, [accountId])).rows;
+
+    it('항목 60 이상이고 지난 7일 정리가 없으면 주 1회(weekly), 정리 신호(core·항목·journal)면 그날 — 적은 에이전트·창 끝·스위치 꺼짐은 안 넣는다', async () => {
+      const weekly = await agent('bg-c-weekly');
+      await fill(weekly.accountId, CLEANUP_WEEKLY_MIN_ITEMS);
+      const small = await agent('bg-c-small');
+      await fill(small.accountId, 5);
+      const core = await agent('bg-c-core');
+      await fill(core.accountId, 3);
+      await pool.query(`insert into agent_memory (account_id, slug, value, kind) values ($1, 'core', $2, 'topic')`, [core.accountId, 'x'.repeat(2600)]);
+      const journal = await agent('bg-c-journal');
+      await fill(journal.accountId, 56, 'journal');
+
+      expect((await produceCleanupJobs(pool, new Date('2026-10-20T23:30:00Z'), ON)).queued).toBe(0); // 08:30 KST
+      expect((await produceCleanupJobs(pool, IN_WINDOW, {})).queued).toBe(0);
+      await produceCleanupJobs(pool, IN_WINDOW, ON);
+      expect((await cleanupOf(weekly.accountId)).map((r) => r.input.reasons)).toEqual([['weekly']]);
+      expect(await cleanupOf(small.accountId)).toEqual([]);
+      expect((await cleanupOf(core.accountId))[0]?.input.reasons).toEqual(['core_near_limit']);
+      expect((await cleanupOf(journal.accountId))[0]?.input.reasons).toEqual(['journal_expiring']);
+
+      // 다음 날: weekly 는 7일 안에 한 번 돌았으니 안 넣는다. 신호는 그날 다시 넣는다.
+      const nextDay = new Date(IN_WINDOW.getTime() + 24 * 3600_000);
+      await pool.query(`update bg_job set status = 'done' where account_id = any($1::uuid[]) and kind = 'cleanup'`, [[weekly.accountId, core.accountId]]);
+      await produceCleanupJobs(pool, nextDay, ON);
+      expect(await cleanupOf(weekly.accountId)).toHaveLength(1);
+      expect(await cleanupOf(core.accountId)).toHaveLength(2);
+    });
+
+    it('memory.list 는 정리를 백그라운드가 맡을 때만 bgCleanup 을 싣는다(스위치 켜짐 + 소유자 토글 켬)', async () => {
+      const a = await agent('bg-c-list');
+      const c = await connect({ ...auth(a.pat) });
+      try {
+        expect((await call(c, 'memory.list')).bgCleanup).toBe(true); // 이 시험 묶음은 스위치를 켰다
+        await pool.query(`update agent_config set bg_enabled = false where account_id = $1`, [a.accountId]);
+        expect((await call(c, 'memory.list')).bgCleanup).toBeUndefined();
+        await pool.query(`update agent_config set bg_enabled = true where account_id = $1`, [a.accountId]);
+        process.env.HARKROOM_BACKGROUND_ENABLED = '0';
+        expect((await call(c, 'memory.list')).bgCleanup).toBeUndefined();
+      } finally {
+        process.env.HARKROOM_BACKGROUND_ENABLED = '1';
+        await c.close();
+      }
+    });
+  });
+
   describe('cause bg:<jobId> — 서버 허용 목록', () => {
     it('밖 도구·입력 밖 스레드·메모 쓰기·core·지우기를 거절하고, 쓰기는 회차에 묶어 센다', async () => {
       const a = await agent('bg-m1');
@@ -212,6 +266,8 @@ describe('bg_job (BG1)', () => {
         expect((await call(c, 'thread.note', { threadRootId: root, body: '덮기' })).error.code).toBe('bg_note_read_only');
         expect((await call(c, 'thread.note', { threadRootId: root })).note).toBeNull();
         expect((await call(c, 'memory.set', { slug: 'core', value: 'x' })).error.code).toBe('bg_core_forbidden');
+        // 정리 회차(BG5)가 후보를 받는 memory.audit 은 허용(읽기 전용).
+        expect((await call(c, 'memory.audit', {})).error).toBeUndefined();
 
         expect(await call(c, 'memory.set', { slug: 'mem/lesson', value: 'v1', kind: 'topic' })).toEqual({ ok: true });
         expect(await call(c, 'memory.set', { slug: 'mem/lesson', value: 'v2', kind: 'topic' })).toEqual({ ok: true });

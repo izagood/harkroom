@@ -46,6 +46,8 @@ export interface MemorySnapshot {
   descriptions?: Record<string, string>;
   /** slug → 종류(서버 070). topic 이 아닌 것만. */
   kinds?: Record<string, string>;
+  /** 서버가 이 에이전트의 정리를 백그라운드 회차로 맡았다(BG5). 참이면 턴 프롬프트에 정리 신호를 싣지 않는다. */
+  bgCleanup?: boolean;
   /** 서버에서 받아 온 시각(ISO). 폴백일 때 프롬프트가 "언제 것인지"를 말한다. */
   fetchedAt: string;
 }
@@ -55,13 +57,14 @@ export interface MemoryRead {
   slugs: string[];
   descriptions?: Record<string, string>;
   kinds?: Record<string, string>;
+  bgCleanup?: boolean;
   /** 서버를 못 읽어 사본으로 돈다 — 그 사본을 받은 시각. */
   stale?: { fetchedAt: string };
 }
 
 /** 서버에서 읽는 두 가지. `HarkroomAgentClient` 가 구현한다. 실패는 던진다. */
 export interface MemorySource {
-  listMemory(): Promise<{ slugs: string[]; rev?: string; entries?: { slug: string; description: string | null; kind?: string }[] }>;
+  listMemory(): Promise<{ slugs: string[]; rev?: string; entries?: { slug: string; description: string | null; kind?: string }[]; bgCleanup?: boolean }>;
   getMemoryValue(slug: string): Promise<string | null>;
 }
 
@@ -79,6 +82,7 @@ function view(snap: MemorySnapshot): MemoryRead {
     core: snap.core, slugs: snap.slugs,
     ...(snap.descriptions ? { descriptions: snap.descriptions } : {}),
     ...(snap.kinds ? { kinds: snap.kinds } : {}),
+    ...(snap.bgCleanup ? { bgCleanup: true } : {}),
   };
 }
 
@@ -107,6 +111,7 @@ export function createMemoryCache(deps: {
           fetchedAt: parsed.fetchedAt,
           ...(parsed.descriptions && typeof parsed.descriptions === 'object' ? { descriptions: parsed.descriptions } : {}),
           ...(parsed.kinds && typeof parsed.kinds === 'object' ? { kinds: parsed.kinds } : {}),
+          ...(parsed.bgCleanup === true ? { bgCleanup: true } : {}),
         }
         : null;
     } catch {
@@ -149,8 +154,16 @@ export function createMemoryCache(deps: {
         const listed = await deps.source.listMemory();
         const rev = typeof listed.rev === 'string' ? listed.rev : null;
         const slugs = (listed.slugs ?? []).filter((s) => s !== 'core');
+        // 정리를 누가 맡나(BG5)는 기억 판본(rev)과 따로 바뀐다(서버 스위치·소유자 토글) — 목록을 받았으면 늘 지금 값으로.
+        const bgCleanup = listed.bgCleanup === true;
         if (rev !== null && cached?.rev === rev) {
           // 목록만 확인하면 됐다 — core 본문은 사본 그대로다.
+          if ((cached.bgCleanup === true) !== bgCleanup) {
+            const { bgCleanup: _old, ...rest } = cached;
+            snap = { ...rest, ...(bgCleanup ? { bgCleanup: true } : {}) };
+            await persist(snap);
+            return view(snap);
+          }
           return view(cached);
         }
         const core = (listed.slugs ?? []).includes('core')
@@ -166,6 +179,7 @@ export function createMemoryCache(deps: {
           rev, core, slugs, fetchedAt: now().toISOString(),
           ...(Object.keys(descriptions).length ? { descriptions } : {}),
           ...(Object.keys(kinds).length ? { kinds } : {}),
+          ...(bgCleanup ? { bgCleanup: true } : {}),
         };
         snap = next;
         await persist(next);

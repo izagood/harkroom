@@ -86,6 +86,21 @@ describe('memoryCache', () => {
     expect([state.lists, state.gets]).toEqual([2, 1]);
   });
 
+  it('BG5: bgCleanup 은 rev 와 따로 — 같은 rev 여도 목록을 받았으면 지금 값으로 바꾸고 사본에 남긴다', async () => {
+    const { state, source } = fakeSource({ core: 'C', slugs: [], rev: 'r1' });
+    let flag = false;
+    const list = source.listMemory.bind(source);
+    source.listMemory = async () => ({ ...(await list()), ...(flag ? { bgCleanup: true } : {}) });
+    const cache = createMemoryCache({ stateDir, source, now, log: silent });
+    expect((await cache.read()).bgCleanup).toBeUndefined();
+    flag = true;
+    expect((await cache.read()).bgCleanup).toBe(true);
+    expect(JSON.parse(await readFile(file, 'utf8')).bgCleanup).toBe(true);
+    flag = false;
+    expect((await cache.read()).bgCleanup).toBeUndefined();
+    expect(state.gets).toBe(1); // core 는 다시 안 받는다
+  });
+
   it('changed rev fetches the new core (edits still land next turn)', async () => {
     const { state, source } = fakeSource({ core: 'C', slugs: [], rev: 'r1' });
     const cache = createMemoryCache({ stateDir, source, now, log: silent });

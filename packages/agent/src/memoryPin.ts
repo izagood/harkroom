@@ -252,7 +252,9 @@ export async function planMemory(opts: {
   const visible = memory.slugs.filter((s) => !isJournal(s));
   const journalCount = memory.slugs.length - visible.length;
   const total = memory.slugs.length + (memory.core !== null ? 1 : 0);
-  const signals = memorySignals(memory.core, total, journalCount);
+  // 정리를 서버가 백그라운드 회차로 맡았으면(BG5, 스위치 켜짐 + 소유자 토글 켬) 정리 신호를 싣지 않는다 — 그 신호는
+  // 「이 턴 뒤에 네가 정리하라」는 권고였고, 지금 맡은 일과 겨루면 늘 졌다(설계 R4). 스위치가 꺼져 있으면 지금 그대로.
+  const signals = memory.bgCleanup ? { codes: [] as MemorySignal[], lines: [] as string[] } : memorySignals(memory.core, total, journalCount);
 
   const pin = opts.isFirstTurn ? null : await loadPin(file);
   const pinUsable = pin !== null
