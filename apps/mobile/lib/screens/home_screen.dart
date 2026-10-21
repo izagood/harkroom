@@ -197,6 +197,9 @@ class TabItem {
 }
 
 /// 떠 있는 둥근 막대(개정판 3.1). 고른 탭은 옅은 바탕 + 굵게, 배지는 수가 있을 때만.
+/// 탭 라벨이 따르는 글자 배율 상한. 아이콘 22 + 틈 2 + 라벨 한 줄이 칸 48 안에 들어가는 값이다.
+const double _tabLabelMaxTextScale = 1.3;
+
 class FloatingTabBar extends StatelessWidget {
   const FloatingTabBar({super.key, required this.selected, required this.onSelect, required this.items});
 
@@ -245,12 +248,24 @@ class FloatingTabBar extends StatelessWidget {
                                 size: 22, color: i == selected ? k.fg : k.fgMuted),
                           ),
                           const SizedBox(height: 2),
-                          Text(
-                            items[i].label,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: i == selected ? FontWeight.w600 : FontWeight.w400,
-                              color: i == selected ? k.fg : k.fgMuted,
+                          // 칸 높이(48)는 막대 높이([floatingTabBarHeight])에 묶여 있어 키울 수 없다. 큰 글자에서
+                          // 라벨이 두 줄로 접히면 칸을 넘친다(375 폭·×1.3 에서 16px) — 그래서 **한 줄**로 묶고,
+                          // 칸보다 넓으면 줄여 맞추고, 배율은 이 라벨만 [_tabLabelMaxTextScale] 까지 따른다.
+                          // 앱의 다른 글자는 큰 글자를 그대로 따른다.
+                          MediaQuery.withClampedTextScaling(
+                            maxScaleFactor: _tabLabelMaxTextScale,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                items[i].label,
+                                maxLines: 1,
+                                softWrap: false,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: i == selected ? FontWeight.w600 : FontWeight.w400,
+                                  color: i == selected ? k.fg : k.fgMuted,
+                                ),
+                              ),
                             ),
                           ),
                         ],
