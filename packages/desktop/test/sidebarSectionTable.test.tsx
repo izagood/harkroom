@@ -280,6 +280,45 @@ describe('사이드바 섹션 표 — 끌어 옮기기 (S3)', () => {
     expect(screen.queryByTestId('drop-line')).toBeNull();
   });
 
+  it('d1·d2: 섹션 표시선은 섹션 블록에 하나만 겹쳐 그린다(줄을 밀지 않는다)', () => {
+    // jsdom 은 끌기 clientY 를 싣지 않아 「앞」만 잰다 — 「뒤」(블록 끝)는 Chrome 하네스 캡처로 본다.
+    setController(new Controller(fakeApi()));
+    seed3();
+    mount();
+    fireEvent.dragStart(screen.getByTestId('section-head-s2'));
+    fireEvent.dragOver(screen.getByTestId('section-head-s1'));
+    const lines = within(screen.getByTestId('section-s1')).getAllByTestId('drop-line');
+    const line = lines[0]!;
+    expect(lines).toHaveLength(1);
+    expect(line.getAttribute('data-after')).toBe('false');
+    expect(line.className).toContain('absolute');
+    expect(line.className).toContain('-top-px');
+    expect(screen.getByTestId('section-s1').className).toContain('relative');
+  });
+
+  it('d3: 놓을 수 없는 곳으로 나가면 표시가 지워진다', () => {
+    setController(new Controller(fakeApi()));
+    seed3();
+    mount();
+    fireEvent.dragStart(screen.getByTestId('channel-drag-c1'));
+    fireEvent.dragOver(screen.getByTestId('section-head-s2'));
+    expect(screen.getByTestId('section-head-s2').className).toContain('ring-accent');
+    fireEvent.dragOver(document.querySelector('nav')!);
+    expect(screen.getByTestId('section-head-s2').className).not.toContain('ring-accent');
+  });
+
+  it('d3: 빈 섹션 안내 줄에 놓으면 그 섹션으로 들어간다', async () => {
+    const api = fakeApi();
+    setController(new Controller(api));
+    seed3();
+    useAppStore.getState().set({
+      channelSections: [section('s1', '회사', 0), section('s2', '개인', 1, { collapsed: true }), section('s3', '빈', 2)],
+    });
+    mount();
+    drag(screen.getByTestId('channel-drag-c1'), screen.getByTestId('section-empty-s3'));
+    await waitFor(() => expect(api.updateChannelPref).toHaveBeenCalledWith('c1', { sectionId: 's3' }));
+  });
+
   it('채널을 접힌 섹션 머리에 놓으면 그 섹션으로 옮기고 펼친다', async () => {
     const api = fakeApi();
     setController(new Controller(api));
@@ -342,7 +381,12 @@ describe('사이드바 섹션 표 — 끌어 옮기기 (S3)', () => {
     expect(current.disabled).toBe(true);
     expect(current.textContent).toContain('✓');
     expect((screen.getByTestId('section-pick-c1-s2') as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.keyDown(screen.getByTestId('section-pick-c1'), { key: 'Escape' });
+    // n8: 포커스는 처음으로 누를 수 있는 항목에 — 지금 섹션(disabled)이 아니다.
+    expect(document.activeElement).toBe(screen.getByTestId('section-pick-c1-s2'));
+    // 고르기 칸은 채널 줄 **아래**에 선다.
+    const pick = screen.getByTestId('section-pick-c1');
+    expect(row.compareDocumentPosition(pick) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.keyDown(pick, { key: 'Escape' });
     expect(screen.queryByTestId('section-pick-c1')).toBeNull();
   });
 

@@ -1375,7 +1375,7 @@ export const ko = {
   'sidebar.section.deleted': '「{name}」 섹션을 지웠습니다 · 채널 {count}개는 Channels로',
   'sidebar.section.undo': '되돌리기',
   'sidebar.section.empty': '채널을 옮겨 넣으세요',
-  'sidebar.section.pickLabel': '#{name} 옮길 섹션',
+  'sidebar.section.pickLabel': '#{name} 채널을 옮길 곳',
   'sidebar.section.create': '섹션 만들기',
   'sidebar.section.createPlaceholder': '새 섹션 이름 · Enter 만들기 · Esc 취소',
   'sidebar.section.nameTaken': '같은 이름의 섹션이 이미 있습니다',

@@ -123,8 +123,21 @@ const isLowerHalf = (e: { clientY: number; currentTarget: Element }) => {
   return e.clientY > rect.top + rect.height / 2;
 };
 
-/** 놓을 자리 표시선 — 시안 ③의 2px 강조색 줄. */
-const DropLine = () => <div data-testid="drop-line" aria-hidden="true" className="mx-2 h-0.5 rounded-full bg-accent" />;
+/**
+ * 놓을 자리 표시선 — 시안 ③의 2px 강조색 줄. `relative` 인 줄·섹션 상자 위에 **겹쳐** 그린다(designer d2):
+ * 끼워 넣으면 나타날 때마다 아래 줄이 밀려 손 아래 앞/뒤 판정이 다시 뒤집혔다(떨림).
+ */
+const DropLine = ({ after }: { after: boolean }) => (
+  <div
+    data-testid="drop-line"
+    data-after={after}
+    aria-hidden="true"
+    className={`pointer-events-none absolute inset-x-2 z-10 h-0.5 rounded-full bg-accent ${after ? '-bottom-px' : '-top-px'}`}
+  />
+);
+
+/** 끌기 데이터 종류 — `text/plain` 에 실으면 입력창·다른 앱에 놓을 때 uuid 가 글자로 들어간다(security 참고). */
+const DRAG_MIME = { section: 'application/x-harkroom-section', channel: 'application/x-harkroom-channel' } as const;
 
 /**
  * 섹션 머리의 접힘 갈매기(designer n6). 글자 ▾/▸ 는 글꼴에 따라 6px 남짓으로 작아 접힘 상태가
@@ -1095,7 +1108,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
         draggable
         onDragStart={(e) => {
           dragItem.current = { kind: 'section', id: sec.id };
-          e.dataTransfer?.setData('text/plain', sec.id);
+          e.dataTransfer?.setData(DRAG_MIME.section, sec.id);
           if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
         }}
         onDragEnd={endDrag}
@@ -1163,13 +1176,26 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
       </div>
     );
     return (
-      <div key={sec.id} data-testid={`section-${sec.id}`}>
-        {dropMark?.kind === 'section' && dropMark.id === sec.id && !dropMark.after && <DropLine />}
+      <div key={sec.id} data-testid={`section-${sec.id}`} className="relative">
+        {/*
+          「뒤」 선은 섹션 블록 **맨 끝**(채널 목록 뒤)에 긋는다(designer d1) — 머리 밑에 그으면 「이 섹션
+          첫 줄로 들어간다」처럼 읽혔다. 접혀 있으면 블록 끝이 곧 머리 밑이다.
+        */}
+        {dropMark?.kind === 'section' && dropMark.id === sec.id && <DropLine after={dropMark.after} />}
         {header}
-        {dropMark?.kind === 'section' && dropMark.id === sec.id && dropMark.after && <DropLine />}
         {createChannelOpen && createInSection === sec.id && createChannelForm()}
         {!sec.collapsed && group.channels.length === 0 && (
-          <p data-testid={`section-empty-${sec.id}`} className="px-6 py-0.5 text-meta text-fg-subtle">{t('sidebar.section.empty')}</p>
+          // 빈 섹션 안내 줄도 「안으로」 대상이다(designer d3) — 머리와 같은 칠로 보인다.
+          <p
+            data-testid={`section-empty-${sec.id}`}
+            onDragOver={(e) => {
+              if (dragItem.current?.kind !== 'channel') return;
+              e.preventDefault();
+              setDropMark({ kind: 'into', id: sec.id });
+            }}
+            onDrop={onDrop}
+            className="px-6 py-0.5 text-meta text-fg-subtle"
+          >{t('sidebar.section.empty')}</p>
         )}
         {visible.map((item) => channelRow(item.channel))}
       </div>
@@ -1459,6 +1485,8 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
       && groupedChannels.some((g) => g.channels.some((i) => i.channel.id === ch.id));
     const pickSections = channelSections ? [...channelSections].sort((a, b) => a.position - b.position) : [];
     const closePick = () => setSectionPickFor(null);
+    // 처음으로 누를 수 있는 항목에 포커스(designer n8) — 지금 섹션 버튼은 disabled 라 포커스를 못 받고 Esc 도 안 먹었다.
+    const firstPick = pickSections.findIndex((sec) => sec.id !== pref?.sectionId);
     return (
       <div
         key={ch.id}
@@ -1467,7 +1495,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
         draggable={inGroup && sectionEditFor !== ch.id && sectionPickFor !== ch.id}
         onDragStart={inGroup ? (e) => {
           dragItem.current = { kind: 'channel', id: ch.id };
-          e.dataTransfer?.setData('text/plain', ch.id);
+          e.dataTransfer?.setData(DRAG_MIME.channel, ch.id);
           if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
         } : undefined}
         onDragEnd={inGroup ? endDrag : undefined}
@@ -1479,50 +1507,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
         } : undefined}
         onDrop={inGroup ? onDrop : undefined}
       >
-      {dropMark?.kind === 'channel' && dropMark.id === ch.id && !dropMark.after && <DropLine />}
-      {sectionPickFor === ch.id && (
-        <div
-          data-testid={`section-pick-${ch.id}`}
-          role="group"
-          aria-label={t('sidebar.section.pickLabel', { name: ch.name ?? '' })}
-          className="mb-1 rounded-row border border-border bg-surface-raised p-1"
-          onKeyDown={(e) => { if (e.key === 'Escape') closePick(); }}
-        >
-          <p className="px-1 pb-1 text-meta text-fg-subtle">{t('sidebar.section.pickLabel', { name: ch.name ?? '' })}</p>
-          {pickSections.map((sec, i) => {
-            const current = sec.id === pref?.sectionId;
-            return (
-              <button
-                key={sec.id}
-                autoFocus={i === 0}
-                data-testid={`section-pick-${ch.id}-${sec.id}`}
-                disabled={current}
-                aria-current={current || undefined}
-                className={`flex w-full items-center gap-1 rounded-row px-2 py-0.5 text-left text-meta ${current ? 'text-fg-subtle' : 'text-fg-muted hover:bg-surface-hover hover:text-fg'}`}
-                onClick={() => { closePick(); void getController().moveChannelToSection(ch.id, sec.id); }}
-              >
-                <span aria-hidden="true" className="w-3 shrink-0">{current ? '✓' : ''}</span>
-                <span className="truncate">{sec.name}</span>
-              </button>
-            );
-          })}
-          <div role="separator" className="my-1 border-t border-border" />
-          <button
-            className="block w-full rounded-row px-2 py-0.5 text-left text-meta text-fg-muted hover:bg-surface-hover hover:text-fg"
-            onClick={() => { closePick(); setSectionEditFor(ch.id); setSectionDraft(''); }}
-          >{t('sidebar.menu.sectionNew')}</button>
-          {pref?.sectionId && (
-            <button
-              className="block w-full rounded-row px-2 py-0.5 text-left text-meta text-fg-muted hover:bg-surface-hover hover:text-fg"
-              onClick={() => { closePick(); void getController().moveChannelToSection(ch.id, null); }}
-            >{t('sidebar.menu.sectionClear')}</button>
-          )}
-          <button
-            className="block w-full rounded-row px-2 py-0.5 text-left text-meta text-fg-subtle hover:bg-surface-hover"
-            onClick={closePick}
-          >{t('sidebar.section.cancel')}</button>
-        </div>
-      )}
+      {dropMark?.kind === 'channel' && dropMark.id === ch.id && <DropLine after={dropMark.after} />}
       {sectionEditFor === ch.id && (
         <div className="mb-1 rounded-row border border-border bg-surface-raised p-1">
           <input
@@ -1592,7 +1577,51 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
           openOnContextMenu
         />
       </div>
-      {dropMark?.kind === 'channel' && dropMark.id === ch.id && dropMark.after && <DropLine />}
+      {/* 고르기 칸은 시안대로 줄 **아래**에 연다 — 고른 채널 이름이 칸 바로 위에 남는다. */}
+      {sectionPickFor === ch.id && (
+        <div
+          data-testid={`section-pick-${ch.id}`}
+          role="group"
+          aria-label={t('sidebar.section.pickLabel', { name: ch.name ?? '' })}
+          className="mt-1 rounded-row border border-border bg-surface-raised p-1"
+          onKeyDown={(e) => { if (e.key === 'Escape') closePick(); }}
+        >
+          <p className="px-1 pb-1 text-meta text-fg-subtle">{t('sidebar.section.pickLabel', { name: ch.name ?? '' })}</p>
+          {pickSections.map((sec, i) => {
+            const current = sec.id === pref?.sectionId;
+            return (
+              <button
+                key={sec.id}
+                autoFocus={i === firstPick}
+                data-testid={`section-pick-${ch.id}-${sec.id}`}
+                disabled={current}
+                aria-current={current || undefined}
+                className={`flex w-full items-center gap-1 rounded-row px-2 py-0.5 text-left text-meta ${current ? 'text-fg-subtle' : 'text-fg-muted hover:bg-surface-hover hover:text-fg'}`}
+                onClick={() => { closePick(); void getController().moveChannelToSection(ch.id, sec.id); }}
+              >
+                <span aria-hidden="true" className="w-3 shrink-0">{current ? '✓' : ''}</span>
+                <span className="truncate">{sec.name}</span>
+              </button>
+            );
+          })}
+          <div role="separator" className="my-1 border-t border-border" />
+          <button
+            autoFocus={firstPick === -1}
+            className="block w-full rounded-row px-2 py-0.5 text-left text-meta text-fg-muted hover:bg-surface-hover hover:text-fg"
+            onClick={() => { closePick(); setSectionEditFor(ch.id); setSectionDraft(''); }}
+          >{t('sidebar.menu.sectionNew')}</button>
+          {pref?.sectionId && (
+            <button
+              className="block w-full rounded-row px-2 py-0.5 text-left text-meta text-fg-muted hover:bg-surface-hover hover:text-fg"
+              onClick={() => { closePick(); void getController().moveChannelToSection(ch.id, null); }}
+            >{t('sidebar.menu.sectionClear')}</button>
+          )}
+          <button
+            className="block w-full rounded-row px-2 py-0.5 text-left text-meta text-fg-subtle hover:bg-surface-hover"
+            onClick={closePick}
+          >{t('sidebar.section.cancel')}</button>
+        </div>
+      )}
       </div>
     );
   };
@@ -1736,7 +1765,20 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
         나오고 어느 쪽이 무엇인지 알 수 없다. 찾기 줄이 이 상자 밖으로 나갔는지를 재는
         시험도 이 이름으로 상자를 집는다.
       */}
-      <nav aria-label={t('sidebar.brand.nav')} className="flex-1 space-y-4 overflow-y-auto p-2">
+      <nav
+        aria-label={t('sidebar.brand.nav')}
+        className="flex-1 space-y-4 overflow-y-auto p-2"
+        /*
+          놓을 수 없는 곳(FAVORITES·목록 아래 빈 곳 등)에 오면 표시를 지운다(designer d3) — 대상은 dragover 를
+          preventDefault 하므로, 여기까지 올라온 것 중 막히지 않은 것이 대상 밖이다. 사이드바 밖으로 나가도 지운다.
+        */
+        onDragOver={(e) => { if (dragItem.current && !e.defaultPrevented) setDropMark(null); }}
+        onDragLeave={(e) => {
+          if (!dragItem.current) return;
+          const to = e.relatedTarget as Node | null;
+          if (!to || !e.currentTarget.contains(to)) setDropMark(null);
+        }}
+      >
         {/*
           **레일이 고른 칸의 묶음만 그린다**(정본 문서 1단계). 이 `nav` 는 여전히
           `overflow-y-auto` 이지만, 이제 한 번에 한 목록만 담으므로 그 목록이 세로를 다 쓴다 —
