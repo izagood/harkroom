@@ -3,7 +3,8 @@ import type { MessageRow } from '@harkroom/shared';
 import { emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor } from './channels.js';
 import { postMessage } from './messages.js';
-import { decidePermissionRequest, type PermissionDecision, type PermissionKind } from './permissionRequests.js';
+import { decide } from './decisions.js';
+import type { PermissionDecision, PermissionKind } from './permissionRequests.js';
 
 /**
  * 소유자가 **글로** 권한 요청을 승인한다(스레드 795a9663, jaebin B 「명시적으로 승인하면 승인이 되어야 해」, 10-14).
@@ -175,10 +176,13 @@ async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Ca
   if (c.expired) return { c, ok: false, why: '만료된 요청이다' };
   // 정확한 명령은 가장 좁게 — 이번 한 번만. 1시간은 카드 버튼에서만 준다.
   const decision: PermissionDecision = c.kind === 'command' ? 'approve_once' : 'approve';
-  const d = await decidePermissionRequest(pool, {
-    agentId: c.agentId, requestId: c.requestId, actorId, decision, via: { kind: 'chat', messageId: message.id, target },
+  // 소유자는 위에서 대조했다 — ref 에 ownerAccountId 를 싣지 않는다.
+  const out = await decide(pool, { kind: 'permission', agentId: c.agentId, requestId: c.requestId, cardMessageId: c.cardMessageId }, actorId, {
+    option: decision, via: 'chat', chat: { messageId: message.id, target },
   });
-  if (!d.ok) return { c, ok: false, why: d.message };
+  if (out.kind !== 'permission') return { c, ok: false, why: '권한 요청이 아니다' };
+  if (!out.ok) return { c, ok: false, why: out.message };
+  const d = out.result;
   return { c, ok: true, grantExpiresAt: d.grantExpiresAt, ...(d.grantMode ? { grantMode: d.grantMode } : {}) };
 }
 

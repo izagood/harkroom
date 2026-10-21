@@ -765,7 +765,7 @@ function buildMcpServer(
 
   /**
    * 권한 요청 줄을 열고 소유자 앞 권한 카드를 세운다 — `permission.request` 와 머지 거절 카드(P4, `message.ask` 의 `mergeDenialId`)가
-   * 함께 쓴다. 카드는 일반 ask 꼴이라 데스크톱·모바일·웹 어디서든 [7일 허락하고 다시 시도]가 눌린다(ask-answer → decideFromCard).
+   * 함께 쓴다. 카드는 일반 ask 꼴이라 데스크톱·모바일·웹 어디서든 [7일 허락하고 다시 시도]가 눌린다(ask-answer → decisions.decide).
    */
   const raisePermission = async (
     { kind, rule, repo, command, reason, channelId, threadRootId, model, denial, commandFiles: files }:

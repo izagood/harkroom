@@ -7,7 +7,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { readLease } from '../services/mergeGrants.js';
-import { commandGrantsFor, decidePermissionRequest, matchCommandGrant, toolAllowsFor } from '../services/permissionRequests.js';
+import { decide } from '../services/decisions.js';
+import { commandGrantsFor, matchCommandGrant, toolAllowsFor } from '../services/permissionRequests.js';
 
 const params = z.object({ id: z.string().uuid(), requestId: z.string().uuid(), decision: z.enum(['approve', 'deny', 'approve-once', 'approve_once', 'approve_hour']) });
 /** [이번 한 번 머지](스레드 1b75d7a0) — 받는 것은 gh 계정·CI 완화 둘뿐. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
@@ -36,8 +37,13 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
         once = { ghUser: b.data.ghUser, relaxChecks: b.data.relaxChecks ?? false, number: b.data.number, headSha: b.data.headSha, ...(b.data.failedChecks ? { failedChecks: b.data.failedChecks } : {}) };
       }
       const decision = p.data.decision === 'approve-once' ? 'approve_once' : p.data.decision;
-      const r = await decidePermissionRequest(pool, { agentId: p.data.id, requestId: p.data.requestId, actorId: req.account!.id, decision, ...(once ? { once } : {}) });
-      if (!r.ok) return reply.code(r.status).send({ error: { code: r.code, message: r.message } });
+      // 소유자는 위에서 `:id` 로 대조했다 — ref 에 ownerAccountId 를 싣지 않는다(남의 요청 id 는 decidePermissionRequest 가 404 로 닫는다).
+      const d = await decide(pool, { kind: 'permission', agentId: p.data.id, requestId: p.data.requestId, cardMessageId: null }, req.account!.id, {
+        option: decision, via: 'button', ...(once ? { once } : {}),
+      });
+      if (d.kind !== 'permission') throw new Error('permission route resolved to an ask');
+      if (!d.ok) return reply.code(d.status).send({ error: { code: d.code, message: d.message } });
+      const r = d.result;
       return { status: r.status, grantExpiresAt: r.grantExpiresAt, ...(r.approvalExpiresAt ? { approvalExpiresAt: r.approvalExpiresAt } : {}), cardMessageId: r.cardMessageId, ...(r.grantMode ? { grantMode: r.grantMode } : {}) };
     });
 

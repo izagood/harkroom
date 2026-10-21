@@ -342,8 +342,11 @@ export async function decidePermissionRequest(
     agentId: string; requestId: string; actorId: string; decision: PermissionDecision; now?: Date;
     /** 머지 거절 카드의 `approve_once` 일 때만 — 머지에 쓸 gh 계정과 CI 완화 여부. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
     once?: { ghUser: string; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] };
-    /** 버튼이 아닌 길로 정했으면 그 길 — 소유자가 글로 승인했다(`chatApproval`). 카드 meta·감사 기록에 남는다. */
-    via?: { kind: 'chat'; messageId: string; target?: 'T1' | 'T2' | 'T3' };
+    /**
+     * 어느 길로 정했나(`decisions.decide`). 글 승인(`chatApproval`)은 카드 meta(`decidedVia`)·감사 기록에, 버튼은 감사 기록에만
+     * 남는다(카드 meta 는 전과 같다).
+     */
+    via?: { kind: 'chat'; messageId: string; target?: 'T1' | 'T2' | 'T3' } | { kind: 'button' };
   },
 ): Promise<({ ok: true; status: 'granted' | 'denied' | 'approved_once'; grantExpiresAt: string | null; approvalExpiresAt?: string; cardMessageId: string | null; grantMode?: 'once' | 'hour' }) | ({ ok: false } & DecideRefusal)> {
   const now = args.now ?? new Date();
@@ -433,7 +436,7 @@ export async function decidePermissionRequest(
           ...(grantExpiresAt ? { grantExpiresAt: grantExpiresAt.toISOString() } : {}),
           ...(approval && args.once ? { approvedOnce: { ghUser: args.once.ghUser, relaxChecks: args.once.relaxChecks, expiresAt: approval.expiresAt.toISOString() } } : {}),
           ...(grantMode ? { grantMode } : {}),
-          ...(args.via ? { decidedVia: args.via } : {}),
+          ...(args.via?.kind === 'chat' ? { decidedVia: args.via } : {}),
         })]);
     }
     await client.query('commit');
@@ -459,7 +462,8 @@ export async function decidePermissionRequest(
       ...(row.kind === 'command' ? { threadRootId: row.threadRootId } : {}),
       ...(grantExpiresAt ? { grantExpiresAt: grantExpiresAt.toISOString() } : {}),
       ...(grantMode ? { grantMode, commandGrantId } : {}),
-      ...(args.via ? { via: args.via.kind, messageId: args.via.messageId, ...(args.via.target ? { chatTarget: args.via.target } : {}) } : {}),
+      ...(args.via?.kind === 'chat' ? { via: args.via.kind, messageId: args.via.messageId, ...(args.via.target ? { chatTarget: args.via.target } : {}) }
+        : args.via ? { via: args.via.kind } : {}),
     },
   });
   if (grantExpiresAt && row.kind === 'command') {
@@ -504,30 +508,6 @@ export async function toolAllowsFor(pool: Pool, agentId: string, channelId: stri
     const v = validateToolRule(rule);
     return v.ok && v.rule === rule;
   });
-}
-
-/**
- * 카드의 선택지를 **어느 클라이언트에서든**(모바일·웹·데스크톱) 누르는 길(10-07 jaebin: 데스크톱을 못 쓰는 동안에도 승인돼야 한다).
- * 일반 `ask-answer` 라우트가 권한 카드를 만나면 여기로 온다. 사람 세션 판정은 라우트가, 소유자 판정은 여기서 요청 줄의
- * 에이전트로 한다(카드 meta 가 아니라 서버 줄). 선택지 id 가 곧 결정이다 — approve/deny 말고는 없다.
- */
-export async function decideFromCard(
-  pool: Pool, args: { messageId: string; actorId: string; optionId: string },
-): Promise<{ ok: true; card: MessageRow | null } | ({ ok: false } & DecideRefusal) | { ok: false; status: 400; code: 'unknown_option'; message: string }> {
-  const r = (await pool.query<{ id: string; agentId: string; ownerAccountId: string | null }>(
-    `select p.id, p.agent_id as "agentId", c.owner_account_id as "ownerAccountId"
-       from permission_request p join agent_config c on c.account_id = p.agent_id
-      where p.card_message_id = $1`, [args.messageId])).rows[0];
-  if (!r) return { ok: false, status: 404, code: 'not_found', message: 'no permission request behind this card' };
-  if (r.ownerAccountId !== args.actorId) return { ok: false, status: 403, code: 'forbidden', message: 'only the owner of this agent can decide its permission requests' };
-  const decision: PermissionDecision | null = args.optionId === PERMISSION_OPTION_APPROVE ? 'approve'
-    : args.optionId === PERMISSION_OPTION_APPROVE_ONCE ? 'approve_once'
-    : args.optionId === PERMISSION_OPTION_APPROVE_HOUR ? 'approve_hour'
-    : args.optionId === PERMISSION_OPTION_DENY ? 'deny' : null;
-  if (!decision) return { ok: false, status: 400, code: 'unknown_option', message: 'a permission card takes approve, approve_once, approve_hour or deny' };
-  const d = await decidePermissionRequest(pool, { agentId: r.agentId, requestId: r.id, actorId: args.actorId, decision });
-  if (!d.ok) return d;
-  return { ok: true, card: await getMessageById(pool, args.messageId) };
 }
 
 /**
