@@ -33,7 +33,8 @@ export async function threadRootChannel(
 
 export async function getThreadNote(pool: Pool, accountId: string, threadRootId: string): Promise<ThreadNote | null> {
   const res = await pool.query(
-    `select body, updated_at, flag_reason from thread_note where account_id = $1 and thread_root_id = $2`,
+    // 보관된 메모(증류가 끝난 스레드, 135)는 없는 것으로 본다 — 읽기·러너 주입 모두.
+    `select body, updated_at, flag_reason from thread_note where account_id = $1 and thread_root_id = $2 and archived_at is null`,
     [accountId, threadRootId],
   );
   const row = res.rows[0] as { body: string; updated_at: Date; flag_reason: string | null } | undefined;
@@ -52,10 +53,12 @@ export async function setThreadNote(
   try {
     await client.query('begin');
     const cur = await client.query(
-      `select updated_at from thread_note where account_id = $1 and thread_root_id = $2 for update`,
+      `select updated_at, archived_at from thread_note where account_id = $1 and thread_root_id = $2 for update`,
       [accountId, threadRootId],
     );
-    const now = (cur.rows[0] as { updated_at: Date } | undefined)?.updated_at ?? null;
+    // 보관된 메모는 없는 것과 같다 — 새로 쓰기(ifUpdatedAt: null)로 다시 연다.
+    const row = cur.rows[0] as { updated_at: Date; archived_at: Date | null } | undefined;
+    const now = row && !row.archived_at ? row.updated_at : null;
     if (guard && (guard.updatedAt?.getTime() ?? null) !== (now?.getTime() ?? null)) {
       await client.query('rollback');
       return { conflict: { updatedAt: now } };
@@ -68,7 +71,7 @@ export async function setThreadNote(
     const res = await client.query(
       `insert into thread_note (account_id, thread_root_id, body, flag_reason) values ($1, $2, $3, $4)
        on conflict (account_id, thread_root_id) do update
-         set body = excluded.body, flag_reason = excluded.flag_reason,
+         set body = excluded.body, flag_reason = excluded.flag_reason, archived_at = null, archived_by_run = null,
              updated_at = greatest(now(), thread_note.updated_at + interval '1 millisecond')
        returning updated_at`,
       [accountId, threadRootId, body, flagReason],

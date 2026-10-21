@@ -115,7 +115,7 @@ export async function bgRunChanges(pool: Pool, accountId: string, runId: string)
 }
 
 export type RevertResult =
-  | { reverted: string[]; skipped: { slug: string; reason: 'changed_since' | 'gone' | 'too_many' | 'error' }[] }
+  | { reverted: string[]; skipped: { slug: string; reason: 'changed_since' | 'gone' | 'too_many' | 'error' }[]; notesReopened: number }
   | 'not_found' | 'already_reverted' | 'not_finished';
 
 /**
@@ -167,5 +167,10 @@ export async function revertBgRun(pool: Pool, accountId: string, runId: string, 
       skipped.push({ slug, reason: 'error' });
     }
   }
-  return { reverted, skipped };
+  // 이 회차가 보관한 스레드 메모도 다시 연다(설계 4절 「회차를 되돌리면 메모도 다시 연다」). 그 사이 새로 쓴 메모는 이미 열려 있다.
+  const notes = await pool.query(
+    `update thread_note set archived_at = null, archived_by_run = null where account_id = $1 and archived_by_run = $2`,
+    [accountId, runId],
+  );
+  return { reverted, skipped, notesReopened: notes.rowCount ?? 0 };
 }

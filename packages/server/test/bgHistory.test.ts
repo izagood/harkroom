@@ -93,6 +93,7 @@ describe('background history (BG4)', () => {
     expect(rv.statusCode).toBe(200);
     expect(rv.json().reverted.sort()).toEqual(['mem/arch', 'mem/keep', 'mem/merged', 'mem/old']);
     expect(rv.json().skipped).toEqual([{ slug: 'mem/new', reason: 'changed_since' }]);
+    expect(rv.json().notesReopened).toBe(0);
     const rows = Object.fromEntries((await pool.query(`select slug, value, archived_at from agent_memory where account_id = $1`, [agent.accountId])).rows
       .map((r) => [r.slug, r]));
     expect(rows['mem/old']).toMatchObject({ value: 'v0', archived_at: null });
@@ -103,6 +104,22 @@ describe('background history (BG4)', () => {
 
     expect((await app.inject({ method: 'POST', url: `${base()}/runs/${runId}/revert`, headers: auth(alice.token) })).statusCode).toBe(409);
     expect((await app.inject({ method: 'POST', url: `${base()}/runs/${runId}/revert`, headers: auth(bob.token) })).statusCode).toBe(403);
+  });
+
+  it('되돌리면 그 회차가 보관한 스레드 메모도 다시 연다(BG3)', async () => {
+    const ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'bg-hist-note' } })).json().id as string;
+    const root = (await app.inject({ method: 'POST', url: `/channels/${ch}/messages`, headers: auth(admin.token), payload: { body: 'r' } })).json().id as string;
+    await pool.query(`insert into thread_note (account_id, thread_root_id, body) values ($1, $2, '메모')`, [agent.accountId, root]);
+    const runId = (await pool.query(
+      `insert into bg_job (account_id, kind, day, status, input, claimed_at) values ($1, 'distill', '2026-09-01', 'running', $2::jsonb, now()) returning id`,
+      [agent.accountId, JSON.stringify({ threadIds: [root] })],
+    )).rows[0].id as string;
+    const { completeBgJob } = await import('../src/services/bgJobs.js');
+    expect(await completeBgJob(pool, agent.accountId, runId, { status: 'done', summary: '없음' })).toBe('ok');
+    expect((await pool.query(`select archived_at from thread_note where thread_root_id = $1`, [root])).rows[0].archived_at).not.toBeNull();
+    const rv = await app.inject({ method: 'POST', url: `${base()}/runs/${runId}/revert`, headers: auth(alice.token) });
+    expect(rv.json()).toMatchObject({ reverted: [], skipped: [], notesReopened: 1 });
+    expect((await pool.query(`select archived_at from thread_note where thread_root_id = $1`, [root])).rows[0].archived_at).toBeNull();
   });
 
   it('도는 회차는 되돌리지 못하고, 토글을 끄면 일감을 넣지 않는다', async () => {
