@@ -350,7 +350,9 @@ async function supersedeOlderRequests(
             status = case when status = 'pending' then 'superseded' else status end,
             decided_at = coalesce(decided_at, $7)
       where agent_id = $1 and kind = $2 and target = $3 and channel_id = $4 and thread_root_id = $5
-        and id <> $6 and superseded_by is null and status in ('pending', 'expired')`,
+        and id <> $6 and superseded_by is null
+        -- 살아 있는 pending 은 대체하지 않는다(같은 요청이 동시에 들어와도 열린 카드가 바뀌지 않게) — 기한이 지난 것만.
+        and (status = 'expired' or (status = 'pending' and expires_at <= $7))`,
     [args.agentId, args.kind, args.target, args.channelId, args.threadRootId, args.newId, args.now]);
 }
 
