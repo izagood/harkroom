@@ -5,8 +5,9 @@
  * 돌든 같은 토큰을 쓴다. 인가 url 은 오퍼레이터가 만들고(PKCE·state), 여기서는 브라우저로 열고
  * 끝날 때까지 상태를 물을 뿐이다.
  *
- * 두 화면이 같이 쓴다: 워크스페이스 설정 › 연동 › MCP 서버(사람이 인증하러 먼저 찾는 곳)와
- * 에이전트 상세의 MCP 절. 처음에는 에이전트 상세에만 두었다가 "인증이 없는데?"를 들었다(09-30).
+ * 인증은 설정 › 연동 › MCP 서버의 operator 칸에서만 한다(MCP 설정 시안 v2, 2026-10-21) — 에이전트 상세의 MCP 절은
+ * 상태 한 줄과 「연동에서 … →」 링크만 둔다. 처음에는 에이전트 상세에만 두었다가 "인증이 없는데?"를 들었고(09-30),
+ * 두 화면에 같은 버튼을 두다가 v2 에서 연동 하나로 모았다.
  *
  * `rejected`(2026-10-01) 는 오퍼레이터의 판정이다: 하네스가 MCP 서버에 이 토큰을 거절당했고, 그 보고로
  * 곧바로 받은 새 토큰도 다시 거절됐다. 전에는 같은 일이 일어나도 저장된 토큰만 보고 "인증됨"을
@@ -17,13 +18,9 @@
  * (slack 프리셋) 요구한다고 보고, `warn`(에이전트에 켠 줄)이면 빨갛게 보인다.
  */
 import { useEffect, useState } from 'react';
-import type { OperatorMcpEntry } from '@harkroom/shared/daemonProtocol';
 import { forgetLocalMcpAuth, localMcpAuthStatus, startLocalMcpAuth } from '../../lib/operatorLocal';
 import { getExternalOpener } from '../../lib/openExternal';
-import { selectAccountNames } from '../../lib/accountNames';
-import { stampLabel } from '../../lib/day';
-import { useActiveStore } from '../../state/communities';
-import { useLocale, useT } from '../../i18n/useT';
+import { useT } from '../../i18n/useT';
 import { errorText } from '../../lib/errorText';
 
 /** 흐름의 수명과 같다(오퍼레이터가 5분에 닫는다). */
@@ -32,7 +29,7 @@ const POLL_MS = 1500;
 
 /**
  * 인증 흐름(브라우저 열기 → 끝날 때까지 상태 묻기)과 해제. 버튼 모양은 부르는 쪽이 정한다 — 연동 화면의
- * operator 칸(`McpServersSettings`)과 이 컴포넌트가 같이 쓴다.
+ * operator 칸(`McpServersSettings`)이 쓴다.
  */
 export function useMcpSignIn(name: string, onChanged: () => void, onError: (message: string) => void) {
   const t = useT();
@@ -64,66 +61,4 @@ export function useMcpSignIn(name: string, onChanged: () => void, onError: (mess
   })();
   const signOut = () => void forgetLocalMcpAuth(name).then(onChanged, fail);
   return { waiting, signIn, signOut };
-}
-
-export function McpLocalAuth({ entry, warn, disabled, onChanged, onError }: {
-  entry: OperatorMcpEntry;
-  warn?: boolean;
-  disabled?: boolean;
-  /** 상태가 바뀌었다 — 목록을 다시 읽는다. */
-  onChanged: () => void;
-  onError: (message: string) => void;
-}) {
-  const t = useT();
-  const locale = useLocale();
-  const names = useActiveStore(selectAccountNames);
-  const { waiting, signIn, signOut } = useMcpSignIn(entry.name, onChanged, onError);
-
-  if (entry.transport === 'stdio' || !entry.auth) return null;
-
-  const id = entry.name;
-  const st = waiting ? { state: 'pending' as const } : entry.auth;
-  const button = (label: string, action: () => void, testid: string) => (
-    <button className="rounded-row border border-border px-1.5 py-0.5 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
-      data-testid={testid} disabled={disabled} onClick={action}>{label}</button>
-  );
-  if (st.state === 'ok') {
-    return (
-      <span className="flex items-center gap-1" data-testid={`agent-mcp-auth-${id}`}>
-        <span className="text-fg-subtle">{t('agents.mcp.auth.ok')}</span>
-        {button(t('agents.mcp.auth.again'), signIn, `agent-mcp-auth-start-${id}`)}
-        {button(t('agents.mcp.auth.forget'), signOut, `agent-mcp-auth-forget-${id}`)}
-      </span>
-    );
-  }
-  if (st.state === 'pending') {
-    return <span className="text-fg-subtle" data-testid={`agent-mcp-auth-${id}`}>{t('agents.mcp.auth.pending')}</span>;
-  }
-  if (st.state === 'rejected') {
-    // 이름은 표시용이다 — 오퍼레이터는 id 로 남긴다. 모르는 id(다른 워크스페이스의 에이전트)는 이름 없이.
-    const agent = st.agentId ? names[st.agentId] : undefined;
-    const time = stampLabel(new Date(st.at).toISOString(), locale);
-    return (
-      <span className="flex items-center gap-1" data-testid={`agent-mcp-auth-${id}`} title={t('agents.mcp.auth.rejectedNote')}>
-        <span className="text-danger">
-          {agent
-            ? t('agents.mcp.auth.rejected', { time, agent: agent.displayName || agent.handle })
-            : t('agents.mcp.auth.rejectedNoAgent', { time })}
-        </span>
-        {button(t('agents.mcp.auth.again'), signIn, `agent-mcp-auth-start-${id}`)}
-      </span>
-    );
-  }
-  const text = st.state === 'expired'
-    ? t('agents.mcp.auth.expired')
-    : st.state === 'error'
-      ? t('agents.mcp.auth.error', { reason: st.reason })
-      : entry.oauth ? t('agents.mcp.auth.needed') : null;
-  const red = warn && (st.state !== 'none' || entry.oauth);
-  return (
-    <span className="flex items-center gap-1" data-testid={`agent-mcp-auth-${id}`} title={t('agents.mcp.auth.note')}>
-      {text && <span className={red ? 'text-danger' : 'text-fg-subtle'}>{text}</span>}
-      {button(st.state === 'none' ? t('agents.mcp.auth.start') : t('agents.mcp.auth.again'), signIn, `agent-mcp-auth-start-${id}`)}
-    </span>
-  );
 }

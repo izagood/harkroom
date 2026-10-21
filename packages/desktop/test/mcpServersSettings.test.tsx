@@ -18,6 +18,7 @@ import { resetCommunityRegistry, useActiveStore } from '../src/state/communities
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc } from './helpers/fakeApi';
 import { setExternalOpener } from '../src/lib/openExternal';
+import { requestMcpFocus, takeMcpFocus } from '../src/lib/mcpFocus';
 
 function fake(rows: { name: string; credentialKind: 'community' | 'personal' }[] = []) {
   const c = {
@@ -306,5 +307,77 @@ describe('buildMcpDefinition', () => {
   it('oauth 없는 새 정의는 type·url 만', () => {
     expect(buildMcpDefinition({ name: 'x', url: 'https://x.example.com/mcp', clientId: '', revert: false }))
       .toEqual({ type: 'http', url: 'https://x.example.com/mcp' });
+  });
+});
+
+/**
+ * PR2(시안 v2 §2·§4·§7): 이 맥 오퍼레이터에 배정된 에이전트가 무엇을 켰나 — [이 맥에 추가] 의 색, 지우기 확인창의
+ * 「영향받는 에이전트」, 에이전트 화면 링크로 왔을 때의 강조.
+ */
+describe('McpServersSettings — 이 맥에 배정된 에이전트', () => {
+  const BASE = 'https://c.test';
+  const ag = (id: string, handle: string, operatorId: string, mcpServers: string[]) => ({
+    ...acc(id, handle, 'agent'), assignment: { agentId: id, operatorId, assignedBy: 'me', assignedAt: '' }, mcpServers,
+  });
+  function withAgents(rows: { name: string; credentialKind: 'community' | 'personal' }[], servers: Record<string, unknown>[]) {
+    const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+    (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string, args?: Record<string, unknown>) => {
+        calls.push({ cmd, args });
+        if (cmd === 'operator_mcp_list') return { servers };
+        if (cmd === 'operator_agents_list') return { communities: [{ baseUrl: BASE, registered: true, operatorId: 'op-mac', agents: {} }] };
+        return {};
+      },
+    };
+    const c = {
+      api: { baseUrl: BASE },
+      mcpServers: vi.fn(async () => rows.map((r) => ({ ...r, createdBy: null, createdAt: '' }))),
+      putMcpServer: vi.fn(async () => undefined),
+      deleteMcpServer: vi.fn(async () => undefined),
+      listAgents: vi.fn(async () => [
+        ag('a-tm', 'task_manager', 'op-mac', ['jira', 'github']),
+        ag('a-hk', 'harkroom', 'op-mac', ['github']),
+        ag('a-rb', 'rbln_infra', 'op-vm', ['jira', 'github']),
+      ]),
+    };
+    setController(c as unknown as Controller);
+    return { calls, c };
+  }
+
+  it('정의가 없는데 이 맥 에이전트가 켜 두었으면 그 이름을 빨갛게, [이 맥에 추가] 는 채운 색 — 원격 에이전트는 세지 않는다', async () => {
+    withAgents([{ name: 'jira', credentialKind: 'personal' }], []);
+    render(<McpServersSection />);
+    const line = await screen.findByTestId('mcp-cell-missing-on-jira');
+    expect(line.textContent).toContain('task_manager');
+    expect(line.textContent).not.toContain('rbln_infra');
+    expect(screen.getByTestId('mcp-cell-primary-jira').className).toContain('bg-accent');
+  });
+
+  it('「이 맥에서 지우기」 확인창은 이 맥에서 켠 에이전트만, 「커뮤니티에서 삭제」 는 어디서든 켠 에이전트를 보인다', async () => {
+    useActiveStore.getState().set({ me: me(['agent.privileged']) as never });
+    withAgents([{ name: 'github', credentialKind: 'community' }], [remote('github', { state: 'ok' }, { oauth: false })]);
+    render(<McpServersSection />);
+    await screen.findByTestId('mcp-cell-primary-github');
+    fireEvent.click(screen.getByTestId('mcp-cell-menu-github'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /이 맥에서 지우기/ }));
+    const here = await screen.findByTestId('mcp-remove-here-affected');
+    expect(here.textContent).toContain('task_manager');
+    expect(here.textContent).toContain('harkroom');
+    expect(here.textContent).not.toContain('rbln_infra');
+    fireEvent.click(screen.getByText('취소'));
+    fireEvent.click(screen.getByTestId('mcp-cell-menu-github'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: '커뮤니티에서 삭제' }));
+    const all = await screen.findByTestId('mcp-confirm-affected');
+    expect(all.textContent).toContain('3');
+    expect(all.textContent).toContain('rbln_infra');
+  });
+
+  it('에이전트 화면의 링크로 왔으면 그 줄을 강조한다(mcpFocus 를 한 번 꺼낸다)', async () => {
+    withAgents([{ name: 'github', credentialKind: 'community' }, { name: 'jira', credentialKind: 'personal' }], []);
+    requestMcpFocus('jira');
+    render(<McpServersSection />);
+    await waitFor(() => expect(screen.getByTestId('mcp-server-jira').getAttribute('data-flash')).toBe('true'));
+    expect(screen.getByTestId('mcp-server-github').getAttribute('data-flash')).toBeNull();
+    expect(takeMcpFocus()).toBeNull();
   });
 });

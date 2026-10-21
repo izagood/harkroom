@@ -17,16 +17,19 @@ import { useActiveStore } from '../../state/communities';
 import { ApiError } from '../../lib/api';
 import { useT } from '../../i18n/useT';
 import { AgentMcpSection } from './AgentMcpSection';
+import type { SectionId } from './sections';
 import { ImmediateBadge } from './pendingEdits';
 import { Toggle } from './primitives';
 import { errorText } from '../../lib/errorText';
 
-export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
+export function AgentScopeSection({ agent, agents = [], disabled, onUpdated, onOpenSection }: {
   agent: AgentView;
   /** 대리 호출자 후보를 고를 목록 — 상세 화면이 이미 받아 둔 `listAgents()` 결과다(새 왕복 없음). */
   agents?: AgentView[];
   disabled?: boolean;
   onUpdated: (next: AgentView) => void;
+  /** MCP 절의 「연동에서 … →」 링크가 쓴다. */
+  onOpenSection?: (section: SectionId) => void;
 }) {
   const t = useT();
   const accounts = useActiveStore((s) => s.accounts);
@@ -219,7 +222,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated }: {
       )}
 
       {/* MCP 는 한 절에서 끝낸다(레지스트리·이 머신 정의·scope) — `AgentMcpSection` 머리 주석. */}
-      <AgentMcpSection agent={agent} disabled={disabled} onUpdated={onUpdated} />
+      <AgentMcpSection agent={agent} disabled={disabled} onUpdated={onUpdated} {...(onOpenSection ? { onOpenSection } : {})} />
       </details>
 
       {error && <p role="alert" className="mt-2 text-meta text-danger" data-testid="agent-scope-error">{error}</p>}
