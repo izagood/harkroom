@@ -35,6 +35,8 @@ export function createLocalAgentsPort(deps: {
   /** claim 요청에 쓴다. 테스트가 바꿔 끼운다. */
   fetchImpl?: typeof fetch;
   dataDir: string;
+  /** API 키 연결 에이전트의 마지막 키 받기 결과(메모리). 없으면 싣지 않는다. */
+  laneStatus?: () => OperatorAgentsListResult['laneStatus'];
 }): LocalAgentsPort {
   return {
     async register(baseUrl, code, name) {
@@ -52,7 +54,8 @@ export function createLocalAgentsPort(deps: {
           operatorId: section.operatorId ?? null, agents: section.agents,
         });
       }
-      return { communities };
+      const laneStatus = deps.laneStatus?.();
+      return { communities, ...(laneStatus && Object.keys(laneStatus).length ? { laneStatus } : {}) };
     },
     async set(rawUrl, agentId, cfg) {
       const baseUrl = communityKey(rawUrl);

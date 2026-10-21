@@ -47,7 +47,7 @@ import { createLocalTerminalHub } from './localTerminal.js';
 import type { CommunityInstance } from './community.js';
 import { createTurnSecrets } from './turnSecrets.js';
 import { communityKey, readConfig } from './config.js';
-import { createProviderLaneMount } from './providerLaneMount.js';
+import { createProviderLaneMount, createProviderLaneStatusBook } from './providerLaneMount.js';
 import { createTurnMerge, defaultExec, ghEnv, GH_PATH } from './turnMerge.js';
 import { createTurnCommand, stripLinkOnlyFields } from './turnCommand.js';
 import { createTurnApi } from './turnApi.js';
@@ -256,6 +256,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     log,
   });
   // 전용 제공사 경로(`providerLaneMount.ts`) — 러너가 PTY 직전에 relay 로 부른다. 설정은 매번 operator.json 에서 읽는다.
+  const providerLaneStatus = createProviderLaneStatusBook();
   const providerLaneMount = createProviderLaneMount({
     laneOf: async (agentId) => {
       const c = communities.find((x) => x.knowsAgent(agentId));
@@ -264,6 +265,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       return section?.agents[agentId]?.providerLane ?? null;
     },
     turnSecrets,
+    status: providerLaneStatus,
     log,
   });
   // 턴 파일 올리기(미리보기 PR ③). 브릿지의 `attachment.upload{path}` 를 여기서 받아 워크스페이스 안의 파일을
@@ -346,6 +348,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       // 턴 임대를 맡긴다·놓는다(비밀 보관소). relay 소켓에서만 온다 — 브릿지의 통지는 링크가 버린다.
       if (notice.type === 'secret.lease') { turnSecrets.noteLease(runnerId, agentId, notice); return; }
       if (notice.type === 'secret.leaseEnded') { void turnSecrets.leaseEnded(runnerId, notice.cause); return; }
+      // API 키 연결의 그 턴 결과 — 실행 탭 「마지막 시도」 줄의 출처(2a). 코드는 링크가 허용 목록으로 이미 걸렀다.
+      if (notice.type === 'providerLane.result') { providerLaneStatus.note(agentId, notice.ok, notice.code); return; }
       if (notice.type === 'mcp.authRejected') {
         // 하네스가 우리가 구운 Authorization 헤더를 거절당했다. 보고는 신호일 뿐이라 판단은
         // `mcpOAuth.reportRejected` 가 한다(저장소에 없는 이름·옛 토큰·쿨다운은 거기서 버린다).
@@ -537,6 +541,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     dataDir: appDataDir,
     onChanged: (baseUrl, agents) => { for (const c of communities) if (c.baseUrl === baseUrl) c.setAgents(agents); },
     onRegistered: async (baseUrl) => { await startCommunity(baseUrl); },
+    laneStatus: () => providerLaneStatus.snapshot(),
   });
 
   // 이 머신의 MCP 정의(스펙 §6). 러너 config 를 만드는 쪽(`communities.ts::mcpConfig`)과 같은 두 파일을 본다.

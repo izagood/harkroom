@@ -23,6 +23,7 @@
 // 시 서버의 `replay.request` 에 그 스냅샷으로 답한다. DB 에 저장하지 않는다 — PTY 출력에는
 // 하네스가 화면에 그린 모든 것(토큰, 환경변수, 사람이 붙여 넣은 비밀)이 들어간다. 프로세스가
 // 죽으면 스크롤백도 같이 사라지는 것이 이 설계의 결과이고, 그것이 의도다.
+import type { ProviderLaneFailureCode } from '@harkroom/shared/providerLane';
 import { randomUUID } from 'node:crypto';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
@@ -256,6 +257,8 @@ export interface RelayClient {
    */
   notifySecretLease(cause: string, lease: { id: string; token: string; expiresAt: string }): void;
   notifySecretLeaseEnded(cause: string): void;
+  /** API 키 연결의 그 턴 키 받기 결과(2a) — 실행 탭 「마지막 시도」 줄의 출처. 링크가 없으면 버린다(표시일 뿐이다). */
+  notifyProviderLaneResult(ok: boolean, code?: ProviderLaneFailureCode): void;
   /**
    * 링크가 붙을 때까지 기다린다(기동 경로용). 이미 붙어 있으면 즉시, `timeoutMs` 안에 못 붙으면
    * false — 던지지 않는다: 기동은 계속되고, 그 뒤의 호출이 status 0 으로 거절되며 poll 루프가
@@ -549,6 +552,11 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
       catch { /* 끊겼다 — 이 턴은 비밀 없이 돈다 */ }
     },
 
+    notifyProviderLaneResult(ok, code) {
+      if (!transport) return;
+      try { transport.send(JSON.stringify({ type: 'providerLane.result', ok, ...(ok || !code ? {} : { code }) })); }
+      catch { /* 끊겼다 — 표시만 늦는다 */ }
+    },
     notifySecretLeaseEnded(cause) {
       if (!transport) return;
       try { transport.send(JSON.stringify({ type: 'secret.leaseEnded', cause })); }

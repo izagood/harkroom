@@ -137,9 +137,28 @@ export function providerLaneModelId(model: string | null | undefined): string | 
  * 주소·키는 값이 아니라 `{env:…}` 참조다 — 값은 그 턴의 자식 env 에만 있다(ⓐ).
  * `enabled_providers` 로 다른 provider(무료 티어·사람 로그인)를 닫아, 값을 못 받으면 다른 길로 돌지 않고 실패한다.
  */
-function providerLaneConfig(model: string | null): Record<string, unknown> {
+/** lane 블록에 남겨 둘 모델 수(n6). 넘치면 오래된 것부터 뺀다 — 이번 턴 모델은 늘 남는다. */
+export const PROVIDER_LANE_MODEL_KEEP = 16;
+
+/**
+ * 지난번 이 파일에 적힌 lane 모델 id 들(n6). 설정 파일은 에이전트당 하나라, 같은 에이전트의 동시 턴이 서로 다른 모델이면
+ * 나중 턴이 앞 턴의 모델을 목록에서 지워 앞 턴이 `Model not found` 로 죽는다 — 그래서 **덮지 않고 쌓는다**. 각 턴은
+ * argv `-m` 으로 제 모델을 고르므로 목록에 있기만 하면 된다. 이름 문법은 다시 잰다(손으로 고친 파일도 지난다).
+ */
+async function previousLaneModels(file: string): Promise<string[]> {
+  try {
+    const doc = JSON.parse(await readFile(file, 'utf8')) as { provider?: Record<string, { models?: Record<string, unknown> }> };
+    const models = doc.provider?.[PROVIDER_LANE_OPENCODE_PROVIDER]?.models;
+    return models && typeof models === 'object' ? Object.keys(models).filter((id) => LANE_MODEL_ID.test(id)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function providerLaneConfig(model: string | null, previous: readonly string[] = []): Record<string, unknown> {
   const id = providerLaneModelId(model);
   const name = PROVIDER_LANE_OPENCODE_PROVIDER;
+  const ids = [...previous.filter((x) => x !== id), ...(id ? [id] : [])].slice(-PROVIDER_LANE_MODEL_KEEP);
   return {
     provider: {
       [name]: {
@@ -150,8 +169,8 @@ function providerLaneConfig(model: string | null): Record<string, unknown> {
           baseURL: `{env:${PROVIDER_LANE_OPENCODE_ENV.baseUrl}}/v1`,
           apiKey: `{env:${PROVIDER_LANE_OPENCODE_ENV.token}}`,
         },
-        // 목록에 없는 모델은 opencode 가 거절한다(1.18.32 실측 `Model not found`) — 이 턴의 모델 하나만 적는다.
-        models: id ? { [id]: { name: id } } : {},
+        // 목록에 없는 모델은 opencode 가 거절한다(1.18.32 실측 `Model not found`) — 이 턴의 모델에 지난 턴들의 모델을 더해 둔다(n6).
+        models: Object.fromEntries(ids.map((x) => [x, { name: x }])),
       },
     },
     enabled_providers: [name],
@@ -232,7 +251,7 @@ export async function ensureOpencodeHome(opts: {
 
   const inherited: Record<string, unknown> = {};
   if (opts.providerLane) {
-    Object.assign(inherited, providerLaneConfig(opts.providerLane.model));
+    Object.assign(inherited, providerLaneConfig(opts.providerLane.model, await previousLaneModels(opencodeConfigFile(opencodeHome, app))));
   } else {
     const user = await readUserConfig(app, opts.sourceConfig);
     for (const key of INHERITED_KEYS) if (user[key] !== undefined) inherited[key] = user[key];

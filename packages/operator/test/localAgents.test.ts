@@ -37,6 +37,14 @@ describe('localAgents', () => {
     await port.setProviderLane('https://example.com', 'a-1', null);
     expect((await port.list()).communities[0]!.agents['a-1']).toEqual({ workingDir: '~/y' });
   });
+  it('목록에 마지막 키 받기 결과를 싣는다 — 비어 있으면 칸이 없다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
+    let status: Record<string, { at: string; ok: boolean }> = {};
+    const port = createLocalAgentsPort({ configPath: join(dir, 'operator.json'), secrets: secretsWith([]), dataDir: dir, onChanged: () => {}, onRegistered: async () => {}, laneStatus: () => status });
+    expect('laneStatus' in (await port.list())).toBe(false);
+    status = { 'a-1': { at: '2026-10-21T00:00:00.000Z', ok: true } };
+    expect((await port.list()).laneStatus).toEqual(status);
+  });
   it('등록 전 커뮤니티에도 자리를 만든다 — register 가 토큰을 채우면 그대로 능력이 된다', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
     const port = createLocalAgentsPort({ configPath: join(dir, 'operator.json'), secrets: secretsWith([]), dataDir: dir, onChanged: () => {}, onRegistered: async () => {} });

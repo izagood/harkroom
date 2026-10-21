@@ -85,3 +85,15 @@ export type ProviderLaneFailureCode = (typeof PROVIDER_LANE_FAILURE_CODES)[numbe
 export function providerLaneFailureCode(raw: unknown): ProviderLaneFailureCode {
   return (PROVIDER_LANE_FAILURE_CODES as readonly string[]).includes(raw as string) ? raw as ProviderLaneFailureCode : 'unknown';
 }
+
+/**
+ * 에이전트의 **마지막 키 받기** 결과(2a). 오퍼레이터가 메모리에 들고 `operatorAgentsList` 에 실어 앱의 실행 탭 「마지막 시도」
+ * 줄·격자 빨간 점이 읽는다. 러너가 그 턴의 값을 받았는지(성공) 또는 못 받은 까닭 코드(허용 목록)만 — 주소·이름·경로는 없다.
+ * 하네스가 API 를 부르다 실패한 것은 여기 안 든다(스레드 실패 카드에 남는다).
+ */
+export interface ProviderLaneStatus {
+  /** ISO 시각. */
+  at: string;
+  ok: boolean;
+  code?: ProviderLaneFailureCode;
+}

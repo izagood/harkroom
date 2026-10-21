@@ -10,15 +10,39 @@
  * - 설정이 없으면 `{lane: null}`(200). 러너는 lane 으로 떴는데 이 답이면 턴을 멈춘다 — 계정 로그인으로 떨어지지 않는다.
  */
 import type { RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
-import { PROVIDER_LANE_MOUNT_PATH, readProviderLaneConfig, type ProviderLaneConfig, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
+import { PROVIDER_LANE_MOUNT_PATH, providerLaneFailureCode, readProviderLaneConfig, type ProviderLaneConfig, type ProviderLaneFailureCode, type ProviderLaneMountResult, type ProviderLaneStatus } from '@harkroom/shared/providerLane';
 import type { TurnSecrets } from './turnSecrets.js';
 
 const CAUSE_MAX = 128;
+
+/**
+ * 에이전트별 마지막 키 받기 결과(2a, `ProviderLaneStatus`). **메모리에만** 둔다 — 화면의 「마지막 시도」 줄을 위한 것이라
+ * 오퍼레이터가 다시 뜨면 비어도 된다(다음 턴이 채운다). 러너의 결과 통지가 정본이고, 마운트 실패는 러너가 통지를
+ * 못 보내고 죽는 경우를 위해 여기서도 적는다.
+ */
+export interface ProviderLaneStatusBook {
+  note(agentId: string, ok: boolean, code?: ProviderLaneFailureCode): void;
+  snapshot(): Record<string, ProviderLaneStatus>;
+}
+
+export function createProviderLaneStatusBook(now: () => number = Date.now): ProviderLaneStatusBook {
+  const book = new Map<string, ProviderLaneStatus>();
+  return {
+    note(agentId, ok, code) {
+      book.set(agentId, { at: new Date(now()).toISOString(), ok, ...(ok ? {} : { code: providerLaneFailureCode(code) }) });
+    },
+    snapshot() {
+      return Object.fromEntries(book);
+    },
+  };
+}
 
 export interface ProviderLaneMountDeps {
   /** 그 에이전트의 로컬 lane 설정. 매번 파일에서 읽는다 — 앱이 바꾼 값이 다음 턴에 바로 든다. */
   laneOf(agentId: string): Promise<ProviderLaneConfig | null>;
   turnSecrets: Pick<TurnSecrets, 'mountFor'>;
+  /** 마운트 실패를 적을 곳. 없으면 안 적는다. */
+  status?: ProviderLaneStatusBook;
   log(line: string): void;
 }
 
@@ -46,6 +70,7 @@ export function createProviderLaneMount(deps: ProviderLaneMountDeps): ProviderLa
       if (!out.ok) {
         // 거절 코드는 비밀이 아니다 — 러너가 실패 통지에 싣는다. 이름·주소는 찍지 않는다.
         deps.log(`provider-lane: agent=${agentId} 비밀을 못 꺼냈다 — ${out.code}`);
+        deps.status?.note(agentId, false, providerLaneFailureCode(out.code));
         return refuse(req, out.code === 'no_lease' ? 409 : 502, out.code);
       }
       return answer(req, 200, { lane: { baseUrl: lane.baseUrl, path: out.path } } satisfies ProviderLaneMountResult);
