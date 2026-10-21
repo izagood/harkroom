@@ -191,6 +191,8 @@ describe('#329 시스템 메시지가 현재 handle 로 그려진다', () => {
       notify: vi.fn(async (n: { title: string; body: string }) => { sent.push(n); }),
     });
     await c.start();
+    // 선호 읽기는 기동이 기다리지 않는 갈래다(`swallow`) — 'all' 수준이 스토어에 선 뒤에 이벤트를 넣는다.
+    await vi.waitFor(() => expect(useAppStore.getState().channelPrefs.c1?.notifyLevel).toBe('all'));
     // 작성자는 admin 이고 나는 다른 사람이어야 알림이 나간다 — 내 발화는 알리지 않는다.
     useAppStore.getState().set({ me: acc(TARGET_ID, 'targetuser') });
 

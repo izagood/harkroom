@@ -1,8 +1,12 @@
 {
   "DELETE /accounts/:p/password-reset-code": "0.4.122",
+  "DELETE /channel-sections/:p": "0.4.140",
   "GET /auth/password-reset-notices": "0.4.122",
+  "PATCH /channel-sections/:p": "0.4.140",
   "POST /accounts/:p/password-reset-code": "0.4.122",
   "POST /agents/:p/permission-requests/:p/approve-once": "0.4.30",
   "POST /auth/password-reset": "0.4.122",
-  "POST /auth/password-reset-notices/ack": "0.4.122"
+  "POST /auth/password-reset-notices/ack": "0.4.122",
+  "POST /channel-sections": "0.4.140",
+  "PUT /channel-sections/order": "0.4.140"
 }

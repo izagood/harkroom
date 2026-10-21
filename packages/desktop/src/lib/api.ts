@@ -2,7 +2,7 @@ import type {
   AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView,
-  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
+  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, type AvatarCrop, type AvatarSourceMeta, type GrantRow, type Capability, type ApiConnectorView, type ApiGrantLimits, type ApiMethod } from '@harkroom/shared';
 import type { MemoryAudit, MemoryBatchResult, MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
@@ -1062,11 +1062,43 @@ export class ApiClient {
     return (await this.req<{ prefs: ChannelPrefRow[] }>('GET', '/channels/prefs')).prefs;
   }
 
+  /**
+   * 채널 선호와 사이드바 섹션(136)을 한 번에. `sections` 가 없으면(0.4.140 이전 서버) null —
+   * 그때 사이드바는 `section` 이름 문자열로 묶는 옛 모양으로 물러난다.
+   */
+  async channelPrefsAndSections(): Promise<{ prefs: ChannelPrefRow[]; sections: ChannelSectionRow[] | null }> {
+    const res = await this.req<{ prefs: ChannelPrefRow[]; sections?: ChannelSectionRow[] }>('GET', '/channels/prefs');
+    return { prefs: res.prefs, sections: res.sections ?? null };
+  }
+
+  /** 섹션 만들기(136). `position`·`channelIds` 는 지우기 되돌리기와 「새 섹션…」이 쓴다. */
+  createChannelSection(body: { name: string; position?: number; channelIds?: string[] }):
+    Promise<{ section: ChannelSectionRow; prefs: ChannelPrefRow[] }> {
+    return this.req('POST', '/channel-sections', body);
+  }
+
+  /** 이름 바꾸기·접기(136). 보낸 것만 바뀐다. 같은 이름은 409 `section_exists`. */
+  updateChannelSection(id: string, patch: { name?: string; collapsed?: boolean }): Promise<{ section: ChannelSectionRow }> {
+    return this.req('PATCH', `/channel-sections/${id}`, patch);
+  }
+
+  /** 섹션 지우기(136). 응답이 되돌리기에 필요한 전부다(섹션·안에 있던 채널). */
+  deleteChannelSection(id: string): Promise<{ section: ChannelSectionRow; channelIds: string[] }> {
+    return this.req('DELETE', `/channel-sections/${id}`);
+  }
+
+  /** 섹션 순서(136). 내 섹션 전부를 새 순서로 — 그새 바뀌었으면 409 `sections_changed`. */
+  reorderChannelSections(ids: string[]): Promise<{ sections: ChannelSectionRow[] }> {
+    return this.req('PUT', '/channel-sections/order', { ids });
+  }
+
   /** `muted` 는 없다 — `notifyLevel` 이 대체했다(#224). */
   updateChannelPref(
     channelId: string,
     patch: {
       notifyLevel?: NotifyLevel; starred?: boolean; section?: string | null; sortOrder?: number | null;
+      /** 섹션 id 로 넣기·빼기(136). `section`(이름)과 함께 보내지 않는다. */
+      sectionId?: string | null;
       /** 사이드바에서 치우기(#376). 시각이 아니라 불리언 — "언제 숨겼나"는 서버가 정한다. */
       hidden?: boolean;
     },

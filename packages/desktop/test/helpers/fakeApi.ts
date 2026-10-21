@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import type {
-  InboxEntry, AccountView, AgentSessionView, AgentTeamRow, ChannelRow, HandleGroupRow, MeView, MessageRow, PinRow } from '@harkroom/shared';
+  InboxEntry, AccountView, AgentSessionView, AgentTeamRow, ChannelPrefRow, ChannelRow, HandleGroupRow, MeView, MessageRow, PinRow } from '@harkroom/shared';
 import { CAPABILITIES } from '@harkroom/shared';
 import type { ApiClient } from '../../src/lib/api';
 
@@ -126,6 +126,18 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
       lastPolledAt: Date.now(), lastAdvancedAt: null, lastError: null,
     })),
     channelPrefs: vi.fn(async () => []),
+    // 섹션 표(136)를 모르는 서버 흉내가 기본이다 — 옛 섹션 시험들이 그 모양 위에 서 있다.
+    // `channelPrefs` 를 덮은 시험이 그대로 돌도록 그 함수를 거쳐 읽는다(`this` = 완성된 목).
+    channelPrefsAndSections: vi.fn(async function (this: { channelPrefs: () => Promise<ChannelPrefRow[]> }) {
+      return { prefs: await this.channelPrefs(), sections: null };
+    }),
+    createChannelSection: vi.fn(async (body: { name: string; position?: number }) =>
+      ({ section: { id: `sec-${body.name}`, name: body.name, position: body.position ?? 0, collapsed: false, createdAt: '2026-10-21T00:00:00.000Z' }, prefs: [] })),
+    updateChannelSection: vi.fn(async (id: string, patch: { name?: string; collapsed?: boolean }) =>
+      ({ section: { id, name: patch.name ?? id, position: 0, collapsed: !!patch.collapsed, createdAt: '2026-10-21T00:00:00.000Z' } })),
+    deleteChannelSection: vi.fn(async (id: string) =>
+      ({ section: { id, name: id, position: 0, collapsed: false, createdAt: '2026-10-21T00:00:00.000Z' }, channelIds: [] as string[] })),
+    reorderChannelSections: vi.fn(async () => ({ sections: [] })),
     agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
     // 스레드 × 에이전트 모델 지정(079). 기본은 "지정 없음" — 머리 줄이 `모두 기본` 으로 접힌다.
     threadAgentModels: vi.fn(async () => []),
