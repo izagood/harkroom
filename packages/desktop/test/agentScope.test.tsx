@@ -198,6 +198,50 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     expect(set?.args).toEqual({ name: 'jira', definition: { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp' } });
   });
 
+  it('Slack 프리셋은 Client ID 칸을 싣는다 — 바꾼 clientId 를 정의에 넣고, secret 칸은 없다(2026-10-21 전용 앱, PKCE)', async () => {
+    const calls = fakeLocal([]);
+    setup({
+      mcpServers: vi.fn(async () => [{ name: 'slack', credentialKind: 'personal', createdBy: null, createdAt: '' }]),
+    });
+    render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
+    fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'slack' } });
+    // 공용 값을 미리 채우지 않는다 — 비움 = 기본(designer s1). 보이는 이름표로 찾힌다.
+    expect((screen.getByLabelText(/OAuth Client ID/) as HTMLInputElement).value).toBe('');
+    expect((screen.getByTestId('agent-mcp-client-id') as HTMLInputElement).placeholder).toContain('비우면 기본');
+    expect(screen.queryByTestId('agent-mcp-client-secret')).toBeNull();
+    fireEvent.change(screen.getByTestId('agent-mcp-client-id'), { target: { value: ' 111.222 ' } });
+    fireEvent.click(screen.getByTestId('agent-mcp-add-submit'));
+    await waitFor(() => expect(calls.some((x) => x.cmd === 'operator_mcp_set')).toBe(true));
+    expect(calls.find((x) => x.cmd === 'operator_mcp_set')?.args).toEqual({
+      name: 'slack',
+      definition: { type: 'http', url: 'https://mcp.slack.com/mcp', oauth: { clientId: '111.222', callbackPort: 3118 } },
+    });
+  });
+
+  it('oauth 가 없는 프리셋(Jira)에는 Client ID 칸이 없다 — 직접 URL 을 넣을 땐 있다(designer n1)', async () => {
+    fakeLocal([]);
+    setup({ mcpServers: vi.fn(async () => []) });
+    render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
+    fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'jira' } });
+    expect(screen.queryByTestId('agent-mcp-client-id')).toBeNull();
+    fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'custom' } });
+    expect(screen.getByTestId('agent-mcp-client-id')).toBeTruthy();
+  });
+
+  it('Client ID 를 비워 두면 프리셋 정의를 그대로 보낸다', async () => {
+    const calls = fakeLocal([]);
+    setup({ mcpServers: vi.fn(async () => [{ name: 'slack', credentialKind: 'personal', createdBy: null, createdAt: '' }]) });
+    render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
+    fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'slack' } });
+    fireEvent.click(screen.getByTestId('agent-mcp-add-submit'));
+    await waitFor(() => expect(calls.some((x) => x.cmd === 'operator_mcp_set')).toBe(true));
+    const def = (calls.find((x) => x.cmd === 'operator_mcp_set')?.args as { definition: { oauth?: Record<string, unknown> } }).definition;
+    expect(def.oauth).toEqual({ clientId: '1601185624273.8899143856786', callbackPort: 3118 });
+  });
+
   it('저장 뒤 [지금 재시작] 이 그 자리에서 agent.restart 를 부른다 — 멈춰 둔 에이전트에는 없다', async () => {
     fakeLocal([{ name: 'github' }, { name: 'slack' }]);
     const c = setup({ restartAgent: vi.fn(async () => ({ operatorId: 'op-1' })) });

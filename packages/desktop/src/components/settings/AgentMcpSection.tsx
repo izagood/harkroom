@@ -69,6 +69,9 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
   const [name, setName] = useState(MCP_PRESETS[0]!.name);
   const [url, setUrl] = useState(MCP_PRESETS[0]!.definition.url);
   const [kind, setKind] = useState<'community' | 'personal'>(MCP_PRESETS[0]!.credentialKind);
+  // 전용 OAuth 앱(PKCE 공개 클라이언트)의 Client ID. 비우면 프리셋 기본값(공용 앱)을 그대로 쓴다 — 공용 값을
+  // 칸에 미리 채우면 "지워야 하나?"로 읽힌다(designer s1, #1244).
+  const [clientId, setClientId] = useState('');
 
   const [restarted, setRestarted] = useState(false);
   const restartNow = () => void (async () => {
@@ -137,6 +140,7 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
     const p = MCP_PRESETS.find((x) => x.id === id);
     if (p) { setName(p.name); setUrl(p.definition.url); setKind(p.credentialKind); }
     else { setName(''); setUrl(''); setKind('personal'); }
+    setClientId('');
   };
 
   const add = () => void run(async () => {
@@ -145,9 +149,11 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
     if (!/^https?:\/\//.test(url.trim())) { setError(t('agents.mcp.errUrl')); return; }
     if (!hasOperatorLocalSurface()) { setError(t('agents.mcp.errNoLocal')); return; }
     const preset = MCP_PRESETS.find((x) => x.id === presetId);
-    const definition: OperatorMcpRemoteDefinition = preset && preset.name === n && preset.definition.url === url.trim()
+    const base: OperatorMcpRemoteDefinition = preset && preset.name === n && preset.definition.url === url.trim()
       ? preset.definition
       : { type: 'http', url: url.trim() };
+    const id = clientId.trim();
+    const definition: OperatorMcpRemoteDefinition = id ? { ...base, oauth: { ...(base.oauth ?? {}), clientId: id } } : base;
     // 1) 레지스트리 이름 — 없을 때만. agent.privileged 가 없으면 403 → 여기서 멈춘다(막는다).
     const known = Array.isArray(registry) && registry.some((r) => r.name === n);
     if (!known) await getController().putMcpServer(n, kind);
@@ -237,6 +243,16 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
               <option value="community">{t('mcpServers.kind.community')}</option>
             </select>
           </div>
+          {/* OAuth 를 쓰는 프리셋이거나 직접 URL 을 넣을 때만 — Jira 처럼 oauth 가 없는 프리셋엔 잡음이다(designer n1). */}
+          {(!MCP_PRESETS.some((x) => x.id === presetId) || MCP_PRESETS.some((x) => x.id === presetId && x.definition.oauth)) && (
+            <label className="flex flex-col gap-1 text-meta text-fg">
+              {t('agents.mcp.clientId')}
+              <input data-testid="agent-mcp-client-id"
+                className="min-w-0 rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
+                value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder={t('agents.mcp.clientIdPlaceholder')} autoComplete="off" spellCheck={false} />
+              <span className="text-meta text-fg-subtle">{t('agents.mcp.clientNote')}</span>
+            </label>
+          )}
           <p className="text-meta text-fg-subtle">{t('agents.mcp.addNote')}</p>
           <div className="flex gap-2">
             <button className="rounded-row border border-border px-2 py-1 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50"
