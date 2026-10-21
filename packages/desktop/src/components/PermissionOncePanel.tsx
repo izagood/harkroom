@@ -56,9 +56,10 @@ export function readPermissionOnce(meta: Record<string, unknown>): PermissionOnc
   const o = p.once as Record<string, unknown> | undefined;
   if (!o || typeof o.number !== 'number' || typeof o.headSha !== 'string') return null;
   const a = p.approvedOnce as Record<string, unknown> | undefined;
-  const decided = p.status === 'granted' || p.status === 'denied' || p.status === 'approved_once' || p.status === 'obsolete' || p.status === 'expired';
+  // `superseded`(132): 시한이 지난 요청을 에이전트가 다시 내서 새 카드가 대신했다 — 이 카드에서는 「만료됨」으로 보인다.
+  const decided = p.status === 'granted' || p.status === 'denied' || p.status === 'approved_once' || p.status === 'obsolete' || p.status === 'expired' || p.status === 'superseded';
   const lapsed = !decided && typeof p.expiresAt === 'string' && Date.parse(p.expiresAt) <= Date.now();
-  const status = decided ? p.status as PermissionOnceMeta['status'] : lapsed ? 'expired' : 'pending';
+  const status = p.status === 'superseded' ? 'expired' : decided ? p.status as PermissionOnceMeta['status'] : lapsed ? 'expired' : 'pending';
   return {
     requestId: p.requestId, agentId: p.agentId, ownerAccountId: typeof p.ownerAccountId === 'string' ? p.ownerAccountId : null,
     repo: p.target, number: o.number, headSha: o.headSha,

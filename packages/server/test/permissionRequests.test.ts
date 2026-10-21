@@ -252,6 +252,76 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
     expect(await toolAllowsFor(pool, agentId, ch)).toEqual([]);
   });
 
+  // 만료 전환(132): 요청한 에이전트를 한 번 깨우고, 두 번째 스윕은 아무것도 하지 않는다. 감사도 한 줄.
+  it('만료 스윕은 요청한 에이전트를 한 번만 깨우고(ask_closed), 다시 돌아도 아무것도 바꾸지 않는다', async () => {
+    const errors: unknown[] = [];
+    const origError = console.error;
+    console.error = (...a: unknown[]) => { errors.push(a); origError(...a); };
+    try {
+      const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context ops get pods)', threadRootId: await root() });
+      const mirrorId = (await pool.query(
+        `insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, '거울', 'user', $3) returning id`,
+        [otherCh, admin.accountId, JSON.stringify({ kind: 'ask', ask: { to: { kind: 'human' }, options: [{ id: 'approve', label: '승인' }], mirrorOf: r.cardMessageId } })],
+      )).rows[0].id as string;
+      await pool.query(`update permission_request set expires_at = now() - interval '1 minute' where id = $1`, [r.requestId]);
+      const wakes = async () => (await pool.query(
+        `select count(*)::int as n from inbox where account_id = $1 and message_id = $2 and reason = 'ask_closed'`, [agentId, r.cardMessageId])).rows[0].n;
+      const sweeper = createPermissionExpirySweeper(pool);
+      await sweeper.sweep();
+      expect(await wakes()).toBe(1);
+      const card1 = (await pool.query(`select meta from message where id = $1`, [r.cardMessageId])).rows[0].meta;
+      expect(card1).not.toBeNull();
+      expect(card1.ask).toMatchObject({ closedReason: 'expired' });
+      expect((await pool.query(`select meta from message where id = $1`, [mirrorId])).rows[0].meta.ask).toMatchObject({ closedReason: 'expired' });
+      const audits = async () => (await pool.query(
+        `select count(*)::int as n from audit_log where action = 'permission.expired' and detail->>'requestId' = $1`, [r.requestId])).rows[0].n;
+      expect(await audits()).toBe(1);
+
+      await sweeper.sweep();
+      expect(await wakes()).toBe(1);
+      expect(await audits()).toBe(1);
+      expect((await pool.query(`select meta from message where id = $1`, [r.cardMessageId])).rows[0].meta).toEqual(card1);
+      expect(errors.filter((e) => String((e as unknown[])[0]).includes('sweep error') || String((e as unknown[])[0]).includes('follow-up error'))).toEqual([]);
+    } finally {
+      console.error = origError;
+    }
+  });
+
+  // 대체(132): 만료된 요청을 다시 내면 옛 요청이 새 요청을 가리킨다. 시한 안이면 지금처럼 같은 요청을 돌려준다.
+  it('시한이 지난 같은 요청을 다시 내면 옛 요청은 superseded 로 새 요청에 이어지고 옛 카드는 대체로 닫힌다', async () => {
+    const thread = await root();
+    const rule = 'Bash(kubectl --context ops get deploy)';
+    const first = await request({ kind: 'tool', rule, threadRootId: thread });
+    // 시한 안 — 같은 요청을 돌려준다(대체 없음).
+    const again = await request({ kind: 'tool', rule, threadRootId: thread });
+    expect(again).toMatchObject({ requestId: first.requestId, pending: true });
+    expect((await pool.query(`select superseded_by from permission_request where id = $1`, [first.requestId])).rows[0].superseded_by).toBeNull();
+
+    // 시한이 지났지만 스윕 전(pending) → superseded.
+    await pool.query(`update permission_request set expires_at = now() - interval '1 minute' where id = $1`, [first.requestId]);
+    const second = await request({ kind: 'tool', rule, threadRootId: thread });
+    expect(second.requestId).not.toBe(first.requestId);
+    const old = (await pool.query(`select status, superseded_by from permission_request where id = $1`, [first.requestId])).rows[0];
+    expect(old).toEqual({ status: 'superseded', superseded_by: second.requestId });
+    const oldCard = (await pool.query(`select meta from message where id = $1`, [first.cardMessageId])).rows[0].meta;
+    expect(oldCard.ask).toMatchObject({ closedReason: 'superseded', supersededBy: second.cardMessageId });
+    expect(oldCard.permissionRequest).toMatchObject({ status: 'superseded', supersededBy: second.requestId });
+    expect((await decide(alice.token, first.requestId, 'approve')).json().error.code).toBe('superseded');
+    // 대체는 깨우지 않는다 — 에이전트가 방금 다시 청했다. 스윕도 그 줄을 건드리지 않는다.
+    await createPermissionExpirySweeper(pool).sweep();
+    expect((await pool.query(`select count(*)::int as n from inbox where account_id = $1 and message_id = $2`, [agentId, first.cardMessageId])).rows[0].n).toBe(0);
+
+    // 이미 expired 로 닫힌 요청 → 상태는 두고 superseded_by 만 잇는다.
+    await pool.query(`update permission_request set expires_at = now() - interval '1 minute' where id = $1`, [second.requestId]);
+    await createPermissionExpirySweeper(pool).sweep();
+    const third = await request({ kind: 'tool', rule, threadRootId: thread });
+    expect((await pool.query(`select status, superseded_by from permission_request where id = $1`, [second.requestId])).rows[0])
+      .toEqual({ status: 'expired', superseded_by: third.requestId });
+    expect((await pool.query(`select meta from message where id = $1`, [second.cardMessageId])).rows[0].meta.ask).toMatchObject({ closedReason: 'expired' });
+    // 이미 이어진 줄은 다시 잇지 않는다.
+    expect((await pool.query(`select superseded_by from permission_request where id = $1`, [first.requestId])).rows[0].superseded_by).toBe(second.requestId);
+  });
+
   it('스윕 전에 만료된 카드를 누르면 그 자리에서 카드가 닫힌다', async () => {
     const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context ops get svc)', threadRootId: await root() });
     await pool.query(`update permission_request set expires_at = now() - interval '1 minute' where id = $1`, [r.requestId]);

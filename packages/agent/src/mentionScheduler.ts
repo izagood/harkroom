@@ -248,7 +248,13 @@ export function fencedNotice(): string {
     + ' 남은 일은 넘겨받은 쪽이 잇는다)';
 }
 
-function askClosedNote(): string {
+function askClosedNote(mention?: { meta?: unknown }): string {
+  // 권한 요청 카드가 시한을 넘겨 서버가 닫았다(132) — 사람이 거절한 것이 아니다. 아직 필요하면 다시 청해야 한다.
+  const ask = (mention?.meta as { ask?: { closedReason?: string } } | undefined)?.ask;
+  if (ask?.closedReason === 'expired') {
+    return '내가 낸 권한 요청이 승인 없이 시한을 넘겨 만료됐다 — 아직 그 권한이 필요하면 permission.request 로 다시 청하고,'
+      + ' 필요 없으면 그것 없이 접어라';
+  }
   return '내가 낸 선택지에 사람이 답하지 않기로 했다 — 그 선택을 기다리지 말고,'
     + ' 지금 아는 것으로 접거나 다른 길을 골라라(같은 물음을 다시 내지 마라)';
 }
@@ -444,7 +450,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
        * 때문이다 — 사람은 버튼만 눌렀지 새 메시지를 쓰지 않았으므로 델타가 비고, 비면
        * 러너가 하네스를 돌리지 않아 그 결정이 흔적 없이 사라진다.
        */
-      ...(reason === 'ask_closed' ? { wake: { reason: askClosedNote() } } : {}),
+      ...(reason === 'ask_closed' ? { wake: { reason: askClosedNote(mention) } } : {}),
       /**
        * **팀장으로 불렸다**(047). `wake` 계열과 달리 델타를 대신하지 않는다 — 팀 부름에는
        * 사람의 새 발화가 있고(팀을 부른 그 말), 이것은 그 위에 덧붙는 맥락이다.
