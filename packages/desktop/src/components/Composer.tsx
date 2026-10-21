@@ -682,6 +682,19 @@ export function Composer({
     return () => hostDoc.removeEventListener('mousedown', onMouseDown);
   }, [open]);
 
+  /** ☺·⌄ 메뉴도 입력창 밖을 누르면 닫는다 — 자동완성 목록과 같은 경계(`containerRef`)다. */
+  useEffect(() => {
+    if (!emojiOpen && !sendMenu) return;
+    const onMouseDown = (e: MouseEvent): void => {
+      const target = e.target as Node | null;
+      if (target && containerRef.current?.contains(target)) return;
+      setEmojiOpen(false);
+      setSendMenu(false);
+    };
+    hostDoc.addEventListener('mousedown', onMouseDown);
+    return () => hostDoc.removeEventListener('mousedown', onMouseDown);
+  }, [emojiOpen, sendMenu]);
+
   /**
    * 입력 상태를 서버에 알린다. 초안이 비면 즉시 멈춤을 보낸다 — 만료를 기다리면 지운 뒤에도
    * 몇 초 동안 '입력 중'으로 남는다.
@@ -1299,6 +1312,14 @@ export function Composer({
   };
 
   const onKeyDown = (e: ComposerKeyEvent) => {
+    // ☺·⌄ 메뉴는 누를 때 편집기 포커스를 뺏지 않으므로(고른 범위를 지키려고) Escape 는 메뉴가 아니라
+    // 여기로 온다. 메뉴의 onKeyDown 만 믿으면 열린 메뉴가 Escape 로 닫히지 않는다.
+    if (e.key === 'Escape' && (emojiOpen || sendMenu)) {
+      e.preventDefault();
+      setEmojiOpen(false);
+      setSendMenu(false);
+      return;
+    }
     if (open) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();

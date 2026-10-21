@@ -532,3 +532,4 @@ button:disabled,
 .composer-cm .cm-md-link { color: var(--color-link); text-decoration-line: underline; text-underline-offset: 2px; }
 .composer-cm .cm-md-url { color: var(--color-fg-muted); }
 .composer-cm .cm-md-quote { color: var(--color-fg-muted); }
+.composer-cm .cm-md-quoteline { border-left: 2px solid var(--color-border); padding-left: 0.5rem; }

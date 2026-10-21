@@ -104,6 +104,26 @@ describe('입력 중인 코드에 면이 깔린다', () => {
     expect(screen.getByTestId('composer-editor').textContent).toBe('[문서](https://example.com) 끝');
   });
 
+  it('링크 이름에 마우스를 올리면 실제 주소가 보인다 — 보이는 이름과 주소가 다른 것을 보내기 전에 알 수 있다', () => {
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('[문서](https://example.com) 끝');
+    const titled = [...document.querySelectorAll('.cm-content [title]')];
+    expect(titled.map((el) => el.getAttribute('title'))).toEqual(['https://example.com']);
+    expect(titled[0]!.textContent).toBe('문서');
+  });
+
+  it('인용 줄은 왼쪽 선으로 표시하고, 커서 밖이면 `> ` 를 빈칸까지 숨긴다', () => {
+    render(<Composer onSend={vi.fn()} />);
+    const box = typeInto('> 첫 줄\n> 둘째 줄\n평문');
+    const quoted = () => [...document.querySelectorAll('.cm-content .cm-md-quoteline')].map((el) => el.textContent);
+    // 커서는 인용 밖(마지막 평문 줄)이다 — 선은 `>` 줄에만, 기호는 빈칸까지 숨는다.
+    expect(quoted()).toEqual(['첫 줄', '둘째 줄']);
+    // 커서가 든 줄만 기호가 보인다(둘째 줄의 `>` 는 부모가 문단이어도 같다).
+    box.setSelectionRange(8, 8);
+    expect(quoted()).toEqual(['첫 줄', '> 둘째 줄']);
+    expect(useAppStore.getState().drafts['']).toBe('> 첫 줄\n> 둘째 줄\n평문');
+  });
+
   it('입력칸 상자 값은 한 곳(COMPOSER_BOX)에서 오고, 면은 감싸는 칸이 든다', () => {
     render(<Composer onSend={vi.fn()} />);
     const editor = screen.getByTestId('composer-editor');

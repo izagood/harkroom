@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
-import { EditorState, Prec, Transaction, RangeSetBuilder, type Extension } from '@codemirror/state';
+import { EditorState, Prec, Transaction, type Extension, type Range } from '@codemirror/state';
 import {
   Decoration, EditorView, ViewPlugin, keymap, placeholder as cmPlaceholder,
   type DecorationSet, type ViewUpdate,
@@ -104,6 +104,8 @@ const SPAN_NODES = new Set(['StrongEmphasis', 'Emphasis', 'Strikethrough', 'Inli
 const hiddenMark = Decoration.replace({});
 const faintMark = Decoration.mark({ class: 'cm-md-mark' });
 const codeLine = Decoration.line({ class: 'cm-md-codeblock' });
+/** 인용 줄의 왼쪽 2px 선(designer n1) — 보낸 메시지의 `<blockquote>`(border-l-2 pl-2)와 같은 모양이다. */
+const quoteLine = Decoration.line({ class: 'cm-md-quoteline' });
 
 function touches(state: EditorState, from: number, to: number): boolean {
   return state.selection.ranges.some((r) => r.from <= to && r.to >= from);
@@ -111,19 +113,42 @@ function touches(state: EditorState, from: number, to: number): boolean {
 
 function buildMarks(view: EditorView): DecorationSet {
   const { state } = view;
-  // 줄 장식은 범위 장식보다 먼저, 모두 시작 위치 순으로 넣어야 한다(RangeSetBuilder 계약).
-  const items: { from: number; to: number; deco: Decoration }[] = [];
+  const items: Range<Decoration>[] = [];
+  // 줄 장식은 한 줄에 하나 — 겹친 인용(`> > `)이 같은 줄에 선을 두 번 긋지 않게 한다.
+  const lined = new Set<number>();
+  const eachLine = (from: number, to: number, deco: Decoration) => {
+    for (let pos = from; pos <= to;) {
+      const line = state.doc.lineAt(pos);
+      if (!lined.has(line.from)) {
+        lined.add(line.from);
+        items.push(deco.range(line.from));
+      }
+      pos = line.to + 1;
+    }
+  };
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
       from, to,
       enter: (node) => {
         if (node.name === 'FencedCode') {
-          for (let pos = node.from; pos <= node.to;) {
-            const line = state.doc.lineAt(pos);
-            items.push({ from: line.from, to: line.from, deco: codeLine });
-            pos = line.to + 1;
-          }
+          eachLine(node.from, node.to, codeLine);
           return;
+        }
+        /*
+          선은 `>` 로 시작하는 줄에만 긋는다 — 마크다운은 인용 바로 뒤의 평문 줄도 인용에 이어 붙이지만
+          (게으른 이음), 보낸 메시지(`MessageBody`)는 `>` 줄만 인용으로 그린다. 쓸 때와 보낸 뒤가 같아야 한다.
+        */
+        if (node.name === 'QuoteMark') eachLine(node.from, node.from, quoteLine);
+        /*
+          링크 이름에 주소를 title 로 단다(security n2) — 주소를 숨긴 채 이름만 보이면 보내기 전에
+          「보이는 이름 ≠ 실제 주소」를 확인할 길이 없다. 보낸 메시지의 링크와 같이 hover 로 보인다.
+        */
+        if (node.name === 'Link') {
+          const url = node.node.getChild('URL');
+          if (url) {
+            const title = state.doc.sliceString(url.from, url.to);
+            items.push(Decoration.mark({ attributes: { title } }).range(node.from, node.to));
+          }
         }
         /*
           링크의 주소도 기호처럼 다룬다 — 커서가 링크 밖이면 `[이름](주소)` 가 「이름」만 남는다.
@@ -133,25 +158,30 @@ function buildMarks(view: EditorView): DecorationSet {
         if (!MARK_NODES.has(node.name) && !isLinkUrl) return;
         // 목록 기호(`- `·`1. `)는 늘 보인다 — 숨기면 목록인지 알 수 없다. 옅게만 한다.
         if (node.name === 'ListMark') {
-          items.push({ from: node.from, to: node.to, deco: faintMark });
+          items.push(faintMark.range(node.from, node.to));
           return;
         }
         const parent = node.node.parent;
         const span = parent && SPAN_NODES.has(parent.name) ? parent : null;
-        // 인용 기호는 그 줄에 커서가 있을 때 보인다(인용 구간 전체가 아니라).
-        const show = span
-          ? (span.name === 'Blockquote'
-            ? touches(state, state.doc.lineAt(node.from).from, state.doc.lineAt(node.from).to)
-            : touches(state, span.from, span.to))
-          : true;
-        items.push({ from: node.from, to: node.to, deco: show ? faintMark : hiddenMark });
+        /*
+          인용 기호는 그 줄에 커서가 있을 때 보인다(인용 구간 전체가 아니라). 둘째 줄부터의 `>` 는
+          부모가 Blockquote 가 아니라 그 안의 문단이라, 부모로 가르지 않고 이름으로 가른다.
+        */
+        const show = node.name === 'QuoteMark'
+          ? touches(state, state.doc.lineAt(node.from).from, state.doc.lineAt(node.from).to)
+          : span ? touches(state, span.from, span.to) : true;
+        if (show) {
+          items.push(faintMark.range(node.from, node.to));
+          return;
+        }
+        // 숨긴 인용 기호는 뒤 공백까지 숨긴다 — 선이 인용을 알리니 `> ` 의 빈칸이 글을 한 칸 밀 이유가 없다.
+        const end = node.name === 'QuoteMark' && state.doc.sliceString(node.to, node.to + 1) === ' ' ? node.to + 1 : node.to;
+        items.push(hiddenMark.range(node.from, end));
       },
     });
   }
-  items.sort((a, b) => a.from - b.from || (a.deco === codeLine ? -1 : 0) - (b.deco === codeLine ? -1 : 0));
-  const builder = new RangeSetBuilder<Decoration>();
-  for (const it of items) builder.add(it.from, it.to, it.deco);
-  return builder.finish();
+  // 줄 장식·범위 장식이 섞이고 범위가 겹친다(링크 title 이 숨긴 기호를 품는다) — 정렬은 CM6 에 맡긴다.
+  return Decoration.set(items, true);
 }
 
 const liveMarks = ViewPlugin.fromClass(class {
