@@ -32,7 +32,8 @@ import { runPtyTurn } from './pty.js';
 import { avcsGuideFlag } from './avcsGuideFlag.js';
 import { SessionStore } from './sessions.js';
 import { ensureNameLink, resolveAgentStateDir } from './stateDir.js';
-import { assertHarnessContract, readExtraMcpServers, readMcpServers, type McpServerEntry } from './turn.js';
+import { assertHarnessContract, buildTurnCommand, readExtraMcpServers, readMcpServers, writeSystemPromptFile, type McpServerEntry } from './turn.js';
+import { BG_POLL_INTERVAL_MS, BG_SYSTEM_PROMPT, BgExecutor } from './bgExecutor.js';
 import { createStoppableSleep } from './stoppableSleep.js';
 import type { Exec } from './workspace.js';
 import { isCredentialFailure, nextBackoffMs } from './policy.js';
@@ -450,6 +451,29 @@ const attentionLedger = createAttentionLedger();
 // 턴 뒤 리뷰 포크(D1 실험, `reviewFork.ts`). 켜는 법: 오퍼레이터 env `HARKROOM_REVIEW_FORK_AGENTS=<에이전트 id>`
 // 또는 이 상태 디렉터리에 `review-fork.on` 파일. 둘 다 없으면 세기만 안 하고 아무것도 안 한다.
 const reviewFork = new ReviewFork({ stateDir: agentStateDir });
+// 백그라운드 회차(G1 · BG2, `bgExecutor.ts`). 서버 스위치(HARKROOM_BACKGROUND_ENABLED)가 꺼져 있으면 `bg.claim` 이
+// 늘 null 이라 아무것도 안 돈다. 창(03~07 KST) 밖에서는 서버에 묻지도 않는다. 일반 턴과 같은 조립이되 새 세션·원인 `bg:<id>`.
+const bgExecutor = new BgExecutor({
+  harness: async () => (await harkroom.definition()).harness,
+  harkroom: { claimBg: () => harkroom.claimBg(), completeBg: (id, r) => harkroom.completeBg(id, r) },
+  slots: { acquire: (key, o) => harkroom.acquireTurnSlot(key, o), release: (key) => harkroom.releaseTurnSlot(key) },
+  stateDir: agentStateDir,
+  buildPlan: async (job, sessionId, cwd) => {
+    const def = await harkroom.definition();
+    const head = (await liveLane.current()).lane[0] ?? null;
+    return buildTurnCommand({
+      harness: def.harness, mode: 'mention', sessionId, isFirstTurn: true,
+      systemPrompt: BG_SYSTEM_PROMPT, systemPromptFile: await writeSystemPromptFile(cwd, BG_SYSTEM_PROMPT),
+      promptCtx: '', stdinFile: null, model: def.model, effort: def.effort,
+      // argv 의 권한 인자는 bgExecutorArgs 가 dontAsk + 허용 목록으로 바꾼다. 여기 값은 쓰이지 않는다.
+      mentionPermission: 'readonly',
+      mcpConfigPath, extraMcpServers: {}, operatorBin: config.operatorBin, codexHome, opencodeHome, piHome,
+      claudeConfigDir: head?.configDir ?? null, chrome: false,
+      causeMessageId: `bg:${job.id}`, turnId: randomUUID(),
+    });
+  },
+});
+setInterval(() => { void bgExecutor.tick().catch((err: unknown) => console.error(`[bg] tick 오류: ${err instanceof Error ? err.message : String(err)}`)); }, BG_POLL_INTERVAL_MS).unref();
 interactive = createInteractiveManager({
   harkroom, store, exec, runTurn: runPtyTurn, me,
   workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp, codexHome, opencodeHome, piHome,

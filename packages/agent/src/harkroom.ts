@@ -10,6 +10,7 @@
 // 그래서 이 파일에 PAT 도 URL 도 없다.
 import type { TurnModel } from './threadModel.js';
 import type { RecallHit, RecallResult } from './memoryPin.js';
+import type { BgJob } from './bgExecutor.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { AccountView, AgentView, InboxEntry, MessageRow } from '@harkroom/shared';
 import type { RelayClient } from './relay.js';
@@ -314,11 +315,12 @@ export class HarkroomAgentClient {
    * 200 받음 · 409 꽉 참 · 그 밖(옛 오퍼레이터가 서버로 넘겨 받은 404, 링크 끊김)은 'unsupported' —
    * 상한은 자원 보호라 확인하지 못하면 띄운다(fail-open). 스레드 임대와 반대인 이유는 `turnSlots.ts`.
    */
-  async acquireTurnSlot(key: string): Promise<'granted' | 'full' | 'unsupported'> {
+  async acquireTurnSlot(key: string, opts: { keepFree?: number } = {}): Promise<'granted' | 'full' | 'unsupported'> {
     try {
       const res = await this.link.request({
         type: 'http.forward', method: 'POST', path: '/agent/turn-slots',
-        body: JSON.stringify({ key }), contentType: 'application/json',
+        // keepFree: 백그라운드 회차가 사람 턴 몫을 남긴다(BG2). 옛 오퍼레이터는 버린다.
+        body: JSON.stringify({ key, ...(opts.keepFree ? { keepFree: opts.keepFree } : {}) }), contentType: 'application/json',
       });
       if (res.status === 200) return 'granted';
       if (res.status === 409) return 'full';
@@ -459,6 +461,22 @@ export class HarkroomAgentClient {
       body: n.body, updatedAt: n.updatedAt,
       ...(n.flagged ? { flagged: { reason: typeof n.flagged.reason === 'string' ? n.flagged.reason : 'flagged' } } : {}),
     };
+  }
+
+  /**
+   * 백그라운드 일감 하나를 집는다(`bg.claim`, BG1). 러너의 호출은 턴 표지(원인·턴 id)가 없어 서버가 러너로 본다.
+   * 옛 서버(도구 없음)·창 밖·일감 없음은 모두 null — 다음 주기에 다시 묻는다.
+   */
+  async claimBg(): Promise<BgJob | null> {
+    const res = await this.call<{ job?: BgJob | null }>('bg.claim');
+    const j = res.job;
+    if (!j || typeof j.id !== 'string' || typeof j.kind !== 'string') return null;
+    return { id: j.id, kind: j.kind, day: typeof j.day === 'string' ? j.day : '', input: j.input && typeof j.input === 'object' ? j.input : {} };
+  }
+
+  /** 백그라운드 회차를 닫는다(`bg.complete`). 채팅이 아니라 회차 행에만 남는다. */
+  async completeBg(jobId: string, r: { status: 'done' | 'failed' | 'skipped'; summary?: string; error?: string; tokens?: number; durationMs?: number }): Promise<void> {
+    await this.call<unknown>('bg.complete', { jobId, ...r });
   }
 
   /** `memory.get` 의 본문만. 없으면 null. */

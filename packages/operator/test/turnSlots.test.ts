@@ -40,6 +40,19 @@ describe('createTurnSlots', () => {
     expect(s.inUse()).toBe(2);
   });
 
+  it('keepFree(백그라운드 회차, BG2): 그만큼 자리를 남긴다 — 상한 2 에 하나 쓰이면 keepFree 1 은 409, 보통 턴은 200', () => {
+    const s = createTurnSlots({ max: 2 });
+    const bg = (runner: string): RunnerLinkRequest => ({
+      type: 'http.forward', id: `r${n++}`, method: 'POST', path: TURN_SLOTS_PATH, body: JSON.stringify({ key: 'bg', keepFree: 1 }), contentType: 'application/json',
+    });
+    expect(status(s.maybeHandle('r1', bg('r1'), 'relay'))).toBe(200);
+    expect(status(s.maybeHandle('r2', bg('r2'), 'relay'))).toBe(409);
+    expect(status(s.maybeHandle('r2', req(TURN_SLOTS_PATH, 'a'), 'relay'))).toBe(200);
+    // 이상한 keepFree 는 0 으로 본다.
+    const odd = createTurnSlots({ max: 1 });
+    expect(status(odd.maybeHandle('r1', { ...bg('r1'), body: JSON.stringify({ key: 'bg', keepFree: 99 }) }, 'relay'))).toBe(200);
+  });
+
   it('같은 (러너, 키)를 다시 잡으면 두 번 세지 않는다', () => {
     const s = createTurnSlots({ max: 1 });
     expect(status(s.maybeHandle('r1', req(TURN_SLOTS_PATH, 'a'), 'relay'))).toBe(200);
