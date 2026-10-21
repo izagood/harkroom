@@ -84,10 +84,12 @@ describe('작업 폴더 정리 화면', () => {
     render(<WorkspaceCleanupSettings now={NOW} />);
     await screen.findAllByTestId('cleanup-row');
     const tags = screen.getAllByTestId('cleanup-unowned-auto');
-    expect(tags.map((t) => t.textContent)).toEqual(['주인 모름 · 자동']);
+    expect(tags.map((t) => t.textContent)).toEqual(['주인 모름 · 자동으로 넣음']);
     expect(tags[0]!.closest('[data-testid="cleanup-row"]')!.textContent).toContain('auto');
     expect(screen.getByText(/7일 넘게 손대지 않았으면 삭제 예정에 자동으로 넣는다/)).toBeTruthy();
     expect(screen.queryByText(/자동으로 지우지 않음/)).toBeNull();
+    // 스위치 설명(켤 때 동의하는 범위)에도 주인 모름 자동이 적혀 있다(designer s1).
+    expect(screen.getByText(/주인 모름 worktree는 PR이 머지·닫혔고 변경이 다 올라가 있으면 넣는다/)).toBeTruthy();
   });
   it('주인 모름: 「삭제 예정에 넣기」와 「보존」만 — 바로 지우는 버튼은 어디에도 없다', async () => {
     const invoke = tauri();
