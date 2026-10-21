@@ -2216,6 +2216,7 @@ export const en = {
   /** `{name}` 은 사람이 지은 섹션 이름이다 — 번역하지 않는다. */
   'sidebar.menu.section': 'Section: {name}',
   'sidebar.menu.sectionClear': 'Remove from section',
+  'sidebar.menu.sectionMove': 'Move to section…',
   'sidebar.menu.sectionNew': 'New section…',
   'sidebar.menu.star': 'Add to favorites',
   'sidebar.menu.unarchive': 'Unarchive',
@@ -2266,6 +2267,7 @@ export const en = {
   'sidebar.section.deleted': 'Deleted section {name} · {count} channels moved to Channels',
   'sidebar.section.undo': 'Undo',
   'sidebar.section.empty': 'Move channels here',
+  'sidebar.section.pickLabel': 'Move #{name} to',
   'sidebar.section.create': 'Create section',
   'sidebar.section.createPlaceholder': 'New section name · Enter to create · Esc to cancel',
   'sidebar.section.nameTaken': 'A section with that name already exists',

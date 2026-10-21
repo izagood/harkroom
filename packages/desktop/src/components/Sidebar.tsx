@@ -108,6 +108,38 @@ function ChannelUnreadDot({ channelId, name }: { channelId: string; name: string
 /** 섹션 지우기 되돌리기 창(시안 흐름 ⑥). */
 const SECTION_UNDO_MS = 8000;
 
+/**
+ * 끌어 옮기기에서 놓을 자리(S3). `section`·`channel` 은 그 줄의 앞(after false)·뒤(true)에 표시선,
+ * `into` 는 그 섹션(미분류는 id null) 머리를 칠해 「안으로 넣는다」를 보인다.
+ */
+type DropMark =
+  | { kind: 'section'; id: string; after: boolean }
+  | { kind: 'channel'; id: string; after: boolean }
+  | { kind: 'into'; id: string | null; after?: undefined };
+
+/** 놓는 손이 줄의 아래 절반이면 「뒤」다. */
+const isLowerHalf = (e: { clientY: number; currentTarget: Element }) => {
+  const rect = e.currentTarget.getBoundingClientRect();
+  return e.clientY > rect.top + rect.height / 2;
+};
+
+/** 놓을 자리 표시선 — 시안 ③의 2px 강조색 줄. */
+const DropLine = () => <div data-testid="drop-line" aria-hidden="true" className="mx-2 h-0.5 rounded-full bg-accent" />;
+
+/**
+ * 섹션 머리의 접힘 갈매기(designer n6). 글자 ▾/▸ 는 글꼴에 따라 6px 남짓으로 작아 접힘 상태가
+ * 안 읽혔다 — 10px SVG 하나를 돌려 쓴다(펼침 = 90° 돌림).
+ */
+const SectionChevron = ({ open }: { open: boolean }) => (
+  <svg
+    aria-hidden="true"
+    width="10" height="10" viewBox="0 0 10 10"
+    className={`shrink-0 text-fg-subtle transition-transform ${open ? 'rotate-90' : ''}`}
+  >
+    <path d="M3.5 2 6.5 5 3.5 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLevel: NotifyLevel }) {
   const unread = useActiveStore((s) => s.unread);
   const count = unread.filter((e) => e.channelId === channelId && !e.readAt).length;
@@ -556,6 +588,22 @@ export function Sidebar({
   }, [sectionUndo]);
   // 커뮤니티가 바뀌면 그 커뮤니티에 묶인 섹션 상태(되돌리기·＋ 로 연 만들기·이름 고치기)를 비운다 —
   // 다른 서버의 섹션 id 를 새 서버에 들고 가지 않는다.
+  /*
+   * 끌어 옮기기(S3, D3·D5). 섹션 머리는 섹션 순서를, 채널 줄은 섹션 넘나들기·섹션 안 순서를 바꾼다.
+   * HTML5 끌기다 — 새 의존성 없이 데스크톱 웹뷰가 그대로 지원한다. 끄는 것은 ref(놓을 때만 읽는다),
+   * 놓을 자리(`dropMark`)는 표시선을 그려야 하니 상태와 ref 둘에 둔다(drop 이 dragover 직후 같은
+   * 틱에 와도 ref 는 최신이다). 키보드 대안은 ⋯·채널 메뉴의 위/아래와 「섹션으로 옮기기…」다.
+   */
+  const dragItem = useRef<{ kind: 'section' | 'channel'; id: string } | null>(null);
+  const [dropMark, setDropMarkState] = useState<DropMark | null>(null);
+  const dropMarkRef = useRef<DropMark | null>(null);
+  const setDropMark = (mark: DropMark | null) => {
+    const prev = dropMarkRef.current;
+    dropMarkRef.current = mark;
+    if (prev?.kind !== mark?.kind || prev?.id !== mark?.id || prev?.after !== mark?.after) setDropMarkState(mark);
+  };
+  // 「섹션으로 옮기기…」(designer n2)를 고른 채널 — 그 줄 아래에 섹션 고르기 칸이 선다.
+  const [sectionPickFor, setSectionPickFor] = useState<string | null>(null);
   // 섹션 이름 고치기 입력칸 하나가 이미 보냈는가(Enter 뒤 blur 가 두 번째로 보내지 않게, designer n1).
   const renameSubmitted = useRef(false);
   const activeCommunityId = useCommunityRegistry((r) => r.activeId);
@@ -567,6 +615,9 @@ export function Sidebar({
     setSectionError(null);
     setCreateInSection(null);
     setSectionRenameFor(null);
+    setSectionPickFor(null);
+    dragItem.current = null;
+    setDropMark(null);
   }, [activeCommunityId]);
   // 접힌 섹션(D4)이 무엇을 남기고 머리에 점을 찍을지 정하는 두 값 — 채널 줄의 배지·점과 같은 출처다.
   const inboxUnread = useActiveStore((s) => s.unread);
@@ -1039,7 +1090,27 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
         }}
       />
     ) : (
-      <div className="group mt-1 flex items-center gap-1 rounded-row pl-1 pr-1 hover:bg-surface-raised">
+      <div
+        data-testid={`section-head-${sec.id}`}
+        draggable
+        onDragStart={(e) => {
+          dragItem.current = { kind: 'section', id: sec.id };
+          e.dataTransfer?.setData('text/plain', sec.id);
+          if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+        }}
+        onDragEnd={endDrag}
+        onDragOver={(e) => {
+          const item = dragItem.current;
+          if (!item || (item.kind === 'section' && item.id === sec.id)) return;
+          e.preventDefault();
+          setDropMark(item.kind === 'section'
+            ? { kind: 'section', id: sec.id, after: isLowerHalf(e) }
+            : { kind: 'into', id: sec.id });
+        }}
+        onDrop={onDrop}
+        className={`group mt-1 flex items-center gap-1 rounded-row pl-1 pr-1 hover:bg-surface-raised ${
+          dropMark?.kind === 'into' && dropMark.id === sec.id ? 'bg-accent-surface ring-1 ring-accent' : ''}`}
+      >
         <button
           data-testid={`section-toggle-${sec.id}`}
           aria-expanded={!sec.collapsed}
@@ -1048,7 +1119,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
           onClick={toggle}
           onDoubleClick={startRename}
         >
-          <span aria-hidden="true" className="w-3 shrink-0 text-center text-fg-subtle">{sec.collapsed ? '▸' : '▾'}</span>
+          <SectionChevron open={!sec.collapsed} />
           <span className="truncate">{sec.name}</span>
           {hiddenUnread && (
             <span
@@ -1093,7 +1164,9 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
     );
     return (
       <div key={sec.id} data-testid={`section-${sec.id}`}>
+        {dropMark?.kind === 'section' && dropMark.id === sec.id && !dropMark.after && <DropLine />}
         {header}
+        {dropMark?.kind === 'section' && dropMark.id === sec.id && dropMark.after && <DropLine />}
         {createChannelOpen && createInSection === sec.id && createChannelForm()}
         {!sec.collapsed && group.channels.length === 0 && (
           <p data-testid={`section-empty-${sec.id}`} className="px-6 py-0.5 text-meta text-fg-subtle">{t('sidebar.section.empty')}</p>
@@ -1101,6 +1174,53 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
         {visible.map((item) => channelRow(item.channel))}
       </div>
     );
+  };
+
+  const endDrag = () => { dragItem.current = null; setDropMark(null); };
+
+  /**
+   * 놓기(S3). 섹션 → 섹션 순서(`reorderSections`), 채널 → 섹션 넘나들기(`moveChannelToSection`,
+   * 접힌 섹션이면 펼친다 — S2 s2 규칙)와 그 섹션 안 손 순서(`reorderChannels`).
+   * 즐겨찾기 채널은 FAVORITES 에만 보이므로 끌 수 없다(줄이 draggable 이 아니다).
+   */
+  const onDrop = (e: { preventDefault: () => void }) => {
+    e.preventDefault();
+    const item = dragItem.current;
+    const mark = dropMarkRef.current;
+    endDrag();
+    if (!item || !mark) return;
+    const ctl = getController();
+    const fail = (err: unknown) => setSectionError(sectionErrorText(err));
+    if (item.kind === 'section') {
+      if (mark.kind !== 'section') return;
+      const before = groupedChannels.filter((g) => g.row).map((g) => g.row!.id);
+      const ids = before.filter((id) => id !== item.id);
+      ids.splice(ids.indexOf(mark.id) + (mark.after ? 1 : 0), 0, item.id);
+      if (ids.join() === before.join()) return;
+      void ctl.reorderSections(ids).catch(fail);
+      return;
+    }
+    let target: string | null;
+    let ordered: string[] | null = null;
+    if (mark.kind === 'into') {
+      target = mark.id;
+    } else if (mark.kind === 'channel') {
+      const group = groupedChannels.find((g) => g.channels.some((i) => i.channel.id === mark.id));
+      if (!group) return;
+      target = group.row?.id ?? null;
+      const ids = group.channels.map((i) => i.channel.id).filter((id) => id !== item.id);
+      ids.splice(ids.indexOf(mark.id) + (mark.after ? 1 : 0), 0, item.id);
+      ordered = ids;
+    } else {
+      return;
+    }
+    const known = new Set((channelSections ?? []).map((sec) => sec.id));
+    const current = channelPrefs[item.id]?.sectionId ?? null;
+    const from = current && known.has(current) ? current : null;
+    void (async () => {
+      if (from !== target) await ctl.moveChannelToSection(item.id, target);
+      if (ordered) await ctl.reorderChannels(ordered);
+    })().catch(fail);
   };
 
   /** 섹션 조작 실패 문구 — 같은 이름(409)만 따로 말한다. */
@@ -1234,19 +1354,12 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
        * Electron 에서 꺼져 있으면 아무 일도 일어나지 않는 죽은 항목이 된다.
        */
       ...(ch.kind === 'standard' && channelSections ? [
-        ...[...channelSections].sort((a, b) => a.position - b.position)
-          .filter((sec) => sec.id !== pref?.sectionId)
-          .map((sec) => ({
-            label: t('sidebar.menu.section', { name: sec.name }),
-            onSelect: () => void getController().moveChannelToSection(ch.id, sec.id),
-          })),
-        {
-          label: t('sidebar.menu.sectionNew'),
-          onSelect: () => { setSectionEditFor(ch.id); setSectionDraft(''); },
-        },
-        ...(pref?.sectionId ? [
-          { label: t('sidebar.menu.sectionClear'), onSelect: () => void getController().moveChannelToSection(ch.id, null) },
-        ] : []),
+        /*
+         * 섹션마다 「섹션: X」 한 줄씩이던 것을 한 항목으로 모았다(designer n2) — 섹션이 다섯을 넘으면
+         * 채널 메뉴가 섹션 목록이 되어 버렸다. Menu 에 하위 메뉴가 없어 이 항목은 채널 줄 아래에
+         * 섹션 고르기 칸을 연다(`sectionPickFor`).
+         */
+        { label: t('sidebar.menu.sectionMove'), onSelect: () => setSectionPickFor(ch.id) },
       ] : []),
       ...(ch.kind === 'standard' && !channelSections ? [
         ...knownSections
@@ -1342,8 +1455,74 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
       }
       void getController().setChannelSection(ch.id, name === '' ? null : name);
     };
+    const inGroup = !!channelSections && ch.kind === 'standard' && !isStarred
+      && groupedChannels.some((g) => g.channels.some((i) => i.channel.id === ch.id));
+    const pickSections = channelSections ? [...channelSections].sort((a, b) => a.position - b.position) : [];
+    const closePick = () => setSectionPickFor(null);
     return (
-      <div key={ch.id} className="relative w-full">
+      <div
+        key={ch.id}
+        data-testid={`channel-drag-${ch.id}`}
+        className="relative w-full"
+        draggable={inGroup && sectionEditFor !== ch.id && sectionPickFor !== ch.id}
+        onDragStart={inGroup ? (e) => {
+          dragItem.current = { kind: 'channel', id: ch.id };
+          e.dataTransfer?.setData('text/plain', ch.id);
+          if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+        } : undefined}
+        onDragEnd={inGroup ? endDrag : undefined}
+        onDragOver={inGroup ? (e) => {
+          const item = dragItem.current;
+          if (item?.kind !== 'channel' || item.id === ch.id) return;
+          e.preventDefault();
+          setDropMark({ kind: 'channel', id: ch.id, after: isLowerHalf(e) });
+        } : undefined}
+        onDrop={inGroup ? onDrop : undefined}
+      >
+      {dropMark?.kind === 'channel' && dropMark.id === ch.id && !dropMark.after && <DropLine />}
+      {sectionPickFor === ch.id && (
+        <div
+          data-testid={`section-pick-${ch.id}`}
+          role="group"
+          aria-label={t('sidebar.section.pickLabel', { name: ch.name ?? '' })}
+          className="mb-1 rounded-row border border-border bg-surface-raised p-1"
+          onKeyDown={(e) => { if (e.key === 'Escape') closePick(); }}
+        >
+          <p className="px-1 pb-1 text-meta text-fg-subtle">{t('sidebar.section.pickLabel', { name: ch.name ?? '' })}</p>
+          {pickSections.map((sec, i) => {
+            const current = sec.id === pref?.sectionId;
+            return (
+              <button
+                key={sec.id}
+                autoFocus={i === 0}
+                data-testid={`section-pick-${ch.id}-${sec.id}`}
+                disabled={current}
+                aria-current={current || undefined}
+                className={`flex w-full items-center gap-1 rounded-row px-2 py-0.5 text-left text-meta ${current ? 'text-fg-subtle' : 'text-fg-muted hover:bg-surface-hover hover:text-fg'}`}
+                onClick={() => { closePick(); void getController().moveChannelToSection(ch.id, sec.id); }}
+              >
+                <span aria-hidden="true" className="w-3 shrink-0">{current ? '✓' : ''}</span>
+                <span className="truncate">{sec.name}</span>
+              </button>
+            );
+          })}
+          <div role="separator" className="my-1 border-t border-border" />
+          <button
+            className="block w-full rounded-row px-2 py-0.5 text-left text-meta text-fg-muted hover:bg-surface-hover hover:text-fg"
+            onClick={() => { closePick(); setSectionEditFor(ch.id); setSectionDraft(''); }}
+          >{t('sidebar.menu.sectionNew')}</button>
+          {pref?.sectionId && (
+            <button
+              className="block w-full rounded-row px-2 py-0.5 text-left text-meta text-fg-muted hover:bg-surface-hover hover:text-fg"
+              onClick={() => { closePick(); void getController().moveChannelToSection(ch.id, null); }}
+            >{t('sidebar.menu.sectionClear')}</button>
+          )}
+          <button
+            className="block w-full rounded-row px-2 py-0.5 text-left text-meta text-fg-subtle hover:bg-surface-hover"
+            onClick={closePick}
+          >{t('sidebar.section.cancel')}</button>
+        </div>
+      )}
       {sectionEditFor === ch.id && (
         <div className="mb-1 rounded-row border border-border bg-surface-raised p-1">
           <input
@@ -1413,6 +1592,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
           openOnContextMenu
         />
       </div>
+      {dropMark?.kind === 'channel' && dropMark.id === ch.id && dropMark.after && <DropLine />}
       </div>
     );
   };
@@ -1627,8 +1807,32 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
             const rows = groupedChannels.filter((g) => g.row).map((g) => g.row!);
             return groupedChannels.filter((g) => g.row).map((g, i) => sectionBlock(g, i, rows));
           })()}
-          <div className={`flex items-center gap-1 px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle ${channelSections?.length ? 'mt-2' : ''}`}>
-            {t('sidebar.channel.heading')}
+          <div
+            data-testid="channels-heading"
+            onDragOver={channelSections ? (e) => {
+              if (dragItem.current?.kind !== 'channel') return;
+              e.preventDefault();
+              setDropMark({ kind: 'into', id: null });
+            } : undefined}
+            onDrop={channelSections ? onDrop : undefined}
+            className={`group flex items-center gap-1 rounded-row px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle ${channelSections?.length ? 'mt-2' : ''} ${
+              dropMark?.kind === 'into' && dropMark.id === null ? 'bg-accent-surface ring-1 ring-accent' : ''}`}
+          >
+            <span className="flex-1">{t('sidebar.channel.heading')}</span>
+            {/*
+              섹션 표가 있는 서버에서는 「채널 만들기」가 머리의 ＋ 다(designer n3) — 섹션 머리 ＋ 와 같은
+              자리·모양이라, 채널을 어디에 만드는지가 머리마다 한 규칙으로 읽힌다. 옛 서버에서는 #488 의
+              첫 줄 `+` 를 그대로 둔다.
+            */}
+            {channelSections && me?.isAdmin && (
+              <button
+                data-testid="add-channel"
+                aria-label={t('sidebar.channel.create')}
+                title={t('sidebar.channel.create')}
+                className="rounded-sm px-1 normal-case hover:bg-surface-hover"
+                onClick={() => { setCreateInSection(null); setCreateChannelOpen(true); }}
+              >＋</button>
+            )}
           </div>
           {/*
             `+` 는 목록의 **첫 칸**이다(#488 A2) — 예전에는 채널 목록 **끝**이라 채널이
@@ -1637,7 +1841,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
           */}
           {me?.isAdmin && (
             createChannelOpen && createInSection === null ? createChannelForm()
-              : addRow(t('sidebar.channel.create'), () => setCreateChannelOpen(true), 'add-channel')
+              : !channelSections && addRow(t('sidebar.channel.create'), () => setCreateChannelOpen(true), 'add-channel')
           )}
           {/* 섹션(#157)으로 묶어 그린다. 섹션 없는 것들은 맨 아래 무제목 묶음이다. */}
           {channelSections && groupedChannels.filter((g) => !g.row).flatMap((g) => g.channels).map((item) => channelRow(item.channel))}
