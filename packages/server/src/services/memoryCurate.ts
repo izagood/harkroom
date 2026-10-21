@@ -95,7 +95,7 @@ async function withTx<T>(pool: Pool, fn: (c: PoolClient) => Promise<T>): Promise
 
 interface LockedRow { slug: string; value: string; description: string | null; updated_at: Date; flagged_at: Date | null; archived_at: Date | null; kind: MemoryKind }
 
-async function lockRows(c: PoolClient, accountId: string, slugs: string[]): Promise<Map<string, LockedRow>> {
+export async function lockRows(c: PoolClient, accountId: string, slugs: string[]): Promise<Map<string, LockedRow>> {
   const res = await c.query(
     `select slug, value, description, updated_at, flagged_at, archived_at, kind from agent_memory
      where account_id = $1 and slug = any($2::text[]) order by slug for update`,
@@ -104,7 +104,7 @@ async function lockRows(c: PoolClient, accountId: string, slugs: string[]): Prom
   return new Map((res.rows as LockedRow[]).map((r) => [r.slug, r]));
 }
 
-async function activeCount(c: PoolClient, accountId: string): Promise<number> {
+export async function activeCount(c: PoolClient, accountId: string): Promise<number> {
   const r = await c.query(`select count(*)::int as n from agent_memory where account_id = $1 and archived_at is null`, [accountId]);
   return r.rows[0].n as number;
 }

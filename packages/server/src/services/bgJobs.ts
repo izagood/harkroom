@@ -78,7 +78,7 @@ export async function bgPaused(pool: Pool, accountId: string, kind: BgKind): Pro
   return r.rows.length === BG_PAUSE_AFTER_FAILURES && r.rows.every((x) => x.status === 'failed');
 }
 
-export type EnqueueResult = { job: BgJobRow } | { refused: 'disabled' | 'exists' | 'daily_cap' | 'paused' };
+export type EnqueueResult = { job: BgJobRow } | { refused: 'disabled' | 'exists' | 'daily_cap' | 'paused' | 'agent_off' };
 
 /** 서버 sweep(종류별 생산자) 전용. 같은 (에이전트, 종류, 날짜)는 한 번뿐이다. */
 export async function enqueueBgJob(
@@ -89,6 +89,9 @@ export async function enqueueBgJob(
   const now = input.now ?? new Date();
   const day = kstDay(now);
   if (await bgPaused(pool, input.accountId, input.kind)) return { refused: 'paused' };
+  // 소유자의 「백그라운드 정리」 토글(132). 꺼진 에이전트에는 넣지 않는다.
+  const on = await pool.query<{ bg_enabled: boolean }>(`select bg_enabled from agent_config where account_id = $1`, [input.accountId]);
+  if (on.rows[0] && !on.rows[0].bg_enabled) return { refused: 'agent_off' };
   const r = await pool.query<{ id: string }>(
     `insert into bg_job (account_id, kind, day, input)
      select $1, $2, $3::date, $4::jsonb
