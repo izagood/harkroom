@@ -1492,6 +1492,7 @@ export const en = {
   'agents.lane.desktopOnly': 'Only this Mac\'s desktop app can change this. Agents, MCP tools and other devices can\'t change the URL or key.',
   'agents.lane.applyNote': 'Changing the URL or secret applies from the next turn.',
   'agents.lane.pending': 'Pending — the runner restarts after the current turn to apply this. New turns wait until then.',
+  'agents.lane.pendingOff': 'Pending — the runner restarts after the current turn and goes back to the account pool. New turns wait until then.',
   'agents.lane.restartNote': 'Turning this on or off restarts this agent\'s runner (after the current turn).',
   'agents.lane.harnessOnly': 'Available for claude-code and opencode only.',
   'agents.lane.notHere': 'Turn on running this agent on this Mac first — API key settings live on this device.',

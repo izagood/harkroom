@@ -7,7 +7,7 @@ import type { AssignmentReconciler } from '../src/assignments.js';
 import type { LinkDialer } from '../src/serverLink.js';
 
 const reconciler: AssignmentReconciler = {
-  onAssign: async () => 'spawned', onUnassign: async () => {}, restart: () => true, onRunnerExit: () => {}, announce: () => [], setLocal: () => 'none' as const, noteRunnerLane: () => {}, laneMismatch: () => false, laneModes: () => ({}),
+  onAssign: async () => 'spawned', onUnassign: async () => {}, restart: () => true, onRunnerExit: () => {}, announce: () => [], setLocal: () => 'none' as const, noteRunnerLane: () => {}, laneMismatch: () => false, lanePending: () => ({}),
 };
 
 describe('collectStatus', () => {

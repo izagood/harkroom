@@ -12,7 +12,7 @@ const secret = (name: string, over: Partial<LaneSecretOption> = {}): LaneSecretO
 
 function laneState(over: Partial<ProviderLaneState> = {}): ProviderLaneState {
   return {
-    available: true, present: true, lane: null, status: null, runnerMode: null, pending: false, secrets: [secret('llm-api-key')], secretsError: null, error: null,
+    available: true, present: true, lane: null, status: null, pending: false, secrets: [secret('llm-api-key')], secretsError: null, error: null,
     reload: vi.fn(), save: vi.fn(async () => {}), ...over,
   };
 }
@@ -147,13 +147,16 @@ describe('적용 시점(C1)', () => {
   });
 
   it('러너 모드가 설정과 다르면 상태 칸에 「적용 대기」 — 끈 직후(설정 없음)에도 보인다', () => {
-    render(<ModelConnectionStatus lane={laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'k' }, runnerMode: false, pending: true })} />);
+    render(<ModelConnectionStatus lane={laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'k' }, pending: true })} />);
     expect(screen.getByTestId('lane-pending').textContent).toContain('적용 대기');
     cleanup();
-    render(<ModelConnectionStatus lane={laneState({ lane: null, runnerMode: true, pending: true })} />);
-    expect(screen.getByTestId('lane-pending')).toBeTruthy();
+    render(<ModelConnectionStatus lane={laneState({ lane: null, pending: true })} />);
+    // 끈 직후(designer s2): 방향을 밝히고, 지운 연결을 설명하는 줄은 숨긴다.
+    expect(screen.getByTestId('lane-pending').textContent).toContain('계정 풀로 돈다');
+    expect(screen.queryByText(/계정 풀을 쓰지 않는다/)).toBeNull();
+    expect(screen.queryByText(/API 키를 쓴 턴이 아직 없다/)).toBeNull();
     cleanup();
-    render(<ModelConnectionStatus lane={laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'k' }, runnerMode: true, pending: false })} />);
+    render(<ModelConnectionStatus lane={laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'k' }, pending: false })} />);
     expect(screen.queryByTestId('lane-pending')).toBeNull();
   });
 });

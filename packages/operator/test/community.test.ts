@@ -14,7 +14,7 @@ function fakeReconciler() {
     onUnassign: async (baseUrl, agentId, drain) => { calls.push(`unassign ${baseUrl} ${agentId} ${drain}`); },
     restart: (agentId) => { calls.push(`restart ${agentId}`); return true; },
     onRunnerExit: (agentId, code) => { calls.push(`exit ${agentId} ${code}`); },
-    announce: () => [{ agentId: 'a-1', runnerId: 'r-1', pid: 7 }], setLocal: (agentId, local) => { calls.push(`local ${agentId} ${local?.providerLane ? 'lane' : 'pool'}`); return 'none' as const; }, noteRunnerLane: () => {}, laneMismatch: () => false, laneModes: () => ({}),
+    announce: () => [{ agentId: 'a-1', runnerId: 'r-1', pid: 7 }], setLocal: (agentId, local) => { calls.push(`local ${agentId} ${local?.providerLane ? 'lane' : 'pool'}`); return 'none' as const; }, noteRunnerLane: () => {}, laneMismatch: () => false, lanePending: () => ({}),
   };
   return { reconciler, calls };
 }
@@ -177,7 +177,7 @@ describe('community — 소유자 확인과 거절 통지', () => {
     const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
     const reconciler: AssignmentReconciler = {
       onAssign: async () => ({ refused: 'personal_on_foreign_operator' }),
-      onUnassign: async () => {}, onRunnerExit: () => {}, restart: () => false, announce: () => [], setLocal: () => 'none' as const, noteRunnerLane: () => {}, laneMismatch: () => false, laneModes: () => ({}),
+      onUnassign: async () => {}, onRunnerExit: () => {}, restart: () => false, announce: () => [], setLocal: () => 'none' as const, noteRunnerLane: () => {}, laneMismatch: () => false, lanePending: () => ({}),
     };
     const c = createCommunity({ baseUrl: 'https://example.com', token: 'hkop_x', agents: { 'a-1': {} }, reconciler, dial, schedule: () => {}, log: () => {} });
     c.start();

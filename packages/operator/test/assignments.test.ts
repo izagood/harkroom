@@ -367,12 +367,12 @@ describe('API 키 연결 — 로컬 설정이 바뀌면', () => {
     r.setLocal('a-1', { providerLane: lane });
     // SIGTERM 은 보냈지만 러너는 아직 도는 턴을 끝내는 중이다 — 그 사이 새 턴을 풀 계정으로 세우면 안 된다.
     expect(r.laneMismatch(old, 'a-1')).toBe(true);
-    expect(r.laneModes()).toEqual({ 'a-1': false });
+    expect(r.lanePending()).toEqual({ 'a-1': true }); // 문과 같은 판정 — 옛 러너는 막힌다
     h.exit('a-1'); r.onRunnerExit('a-1', 0); h.timers.at(-1)!.fn(); await flush();
     const fresh = runnerIdOf(h.spawned[1]!.env);
     expect(fresh).not.toBe(old);
     expect(r.laneMismatch(fresh, 'a-1')).toBe(false);
-    expect(r.laneModes()).toEqual({ 'a-1': true });
+    expect(r.lanePending()).toEqual({ 'a-1': false });
   });
 
   it('모드를 모르는 러너(옛 판)는 lane 이 켜져 있으면 막고, 러너가 알리면 그 값을 믿는다', async () => {
@@ -383,6 +383,14 @@ describe('API 키 연결 — 로컬 설정이 바뀌면', () => {
     r.noteRunnerLane('r-adopted', true);
     expect(r.laneMismatch('r-adopted', 'a-1')).toBe(false);
     expect(r.laneMismatch('r-any', 'a-unassigned')).toBe(false);
+    // 앱 「적용 대기」도 같은 판정이다(designer s1) — 살아 있는데 모드를 모르는 러너(앞 세대, 이 조정기가 안 띄움)는 대기로 보인다.
+    const h2 = harness();
+    const r2 = createAssignmentReconciler(h2.deps);
+    await r2.onAssign('https://example.com', def(), {});
+    r2.setLocal('a-1', { providerLane: lane });
+    expect(r2.lanePending()).toEqual({ 'a-1': true });
+    h2.exit('a-1');
+    expect(r2.lanePending()).toEqual({ 'a-1': false }); // 러너가 없으면 다음 spawn 이 새 env — 대기 아님
   });
 });
 

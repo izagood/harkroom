@@ -36,9 +36,10 @@ export interface ProviderLaneState {
   present: boolean;
   lane: ProviderLaneConfig | null;
   status: ProviderLaneStatus | null;
-  /** 지금 러너의 API 키 연결 모드(오퍼레이터가 앎, C1). 러너가 없거나 모르면 null. */
-  runnerMode: boolean | null;
-  /** 설정과 러너 모드가 다르다 — 러너가 도는 턴을 끝내고 다시 뜨기 전이다(「적용 대기」). */
+  /**
+   * 「적용 대기」 — 오퍼레이터가 이 에이전트의 새 턴을 막고 있다(러너 모드가 설정과 달라 다시 뜨기 전, C1). 오퍼레이터의 턴 자리 문과
+   * 같은 판정을 그대로 받는다(designer s1) — 앱이 따로 셈하지 않는다.
+   */
   pending: boolean;
   /** null = 아직 안 읽음. */
   secrets: LaneSecretOption[] | null;
@@ -55,7 +56,7 @@ export function useProviderLane(agentId: string | null): ProviderLaneState {
   const [available, setAvailable] = useState(false);
   const [lane, setLane] = useState<ProviderLaneConfig | null>(null);
   const [status, setStatus] = useState<ProviderLaneStatus | null>(null);
-  const [runnerMode, setRunnerMode] = useState<boolean | null>(null);
+  const [pending, setPending] = useState(false);
   const [secrets, setSecrets] = useState<LaneSecretOption[] | null>(null);
   const [secretsError, setSecretsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +75,7 @@ export function useProviderLane(agentId: string | null): ProviderLaneState {
         setPresent(entry !== undefined);
         setLane(entry?.providerLane ?? null);
         setStatus(r.laneStatus?.[agentId] ?? null);
-        setRunnerMode(r.laneModes?.[agentId] ?? null);
+        setPending(r.lanePending?.[agentId] === true);
         setError(null);
       })
       .catch((e: unknown) => { if (live) { setAvailable(false); setError(e instanceof Error ? e.message : String(e)); } });
@@ -113,7 +114,6 @@ export function useProviderLane(agentId: string | null): ProviderLaneState {
   }, [agentId, available, present, tick]);
 
   const reload = useCallback(() => setTick((n) => n + 1), []);
-  const pending = runnerMode !== null && runnerMode !== (lane !== null);
   // 적용 대기 동안은 다시 읽는다 — 러너가 다시 뜨면 오퍼레이터의 모드가 바뀌고 이 줄이 사라져야 한다.
   useEffect(() => {
     if (!pending) return;
@@ -125,5 +125,5 @@ export function useProviderLane(agentId: string | null): ProviderLaneState {
     await setLocalAgentProviderLane(baseUrl, agentId, next);
   }, [agentId, baseUrl]);
 
-  return { available, present, lane, status, runnerMode, pending, secrets, secretsError, error, reload, save };
+  return { available, present, lane, status, pending, secrets, secretsError, error, reload, save };
 }

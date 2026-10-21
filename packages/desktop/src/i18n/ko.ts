@@ -973,6 +973,7 @@ export const ko = {
   'agents.lane.desktopOnly': '이 설정은 이 맥의 데스크톱에서만 바꿀 수 있다. 에이전트·MCP 도구·다른 기기는 주소와 키를 바꾸지 못한다.',
   'agents.lane.applyNote': '주소·비밀을 바꾸면 다음 턴부터 적용된다.',
   'agents.lane.pending': '적용 대기 — 도는 턴이 끝나면 러너가 다시 떠서 적용된다. 그동안 새 턴은 기다린다.',
+  'agents.lane.pendingOff': '적용 대기 — 도는 턴이 끝나면 러너가 다시 떠서 계정 풀로 돈다. 그동안 새 턴은 기다린다.',
   'agents.lane.restartNote': '켜거나 끄면 이 에이전트의 러너가 다시 뜬다(도는 턴이 끝난 뒤).',
   'agents.lane.harnessOnly': 'claude-code·opencode에서만 쓸 수 있다.',
   'agents.lane.notHere': '이 맥에서 돌리기를 먼저 켜라 — API 키 설정은 이 기기에 둔다.',

@@ -552,7 +552,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     onChanged: (baseUrl, agents) => { for (const c of communities) if (c.baseUrl === baseUrl) c.setAgents(agents); },
     onRegistered: async (baseUrl) => { await startCommunity(baseUrl); },
     laneStatus: () => providerLaneStatus.snapshot(),
-    laneModes: () => Object.assign({}, ...communities.map((c) => c.laneModes?.() ?? {})),
+    lanePending: () => Object.assign({}, ...communities.map((c) => c.lanePending?.() ?? {})),
   });
 
   // 이 머신의 MCP 정의(스펙 §6). 러너 config 를 만드는 쪽(`communities.ts::mcpConfig`)과 같은 두 파일을 본다.

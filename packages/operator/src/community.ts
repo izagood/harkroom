@@ -102,8 +102,8 @@ export interface CommunityInstance {
   laneMismatch?(runnerId: string, agentId: string): boolean;
   /** 러너가 알린 제 API 키 연결 모드. */
   noteRunnerLane?(runnerId: string, on: boolean): void;
-  /** 에이전트별 지금 러너의 모드 — 앱 「적용 대기」. */
-  laneModes?(): Record<string, boolean | null>;
+  /** 에이전트별 「적용 대기」(조정기 `lanePending`). */
+  lanePending?(): Record<string, boolean>;
   /** 하네스 능력이 바뀌었다(모델 목록이 늦게 도착했다 등) — 서버에 능력을 다시 낸다. */
   announceCapabilities(): void;
 }
@@ -287,7 +287,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     },
     laneMismatch: (runnerId, agentId) => deps.reconciler.laneMismatch(runnerId, agentId),
     noteRunnerLane: (runnerId, on) => deps.reconciler.noteRunnerLane(runnerId, on),
-    laneModes: () => deps.reconciler.laneModes(),
+    lanePending: () => deps.reconciler.lanePending(),
     announceCapabilities: () => { link.send({ type: 'capabilities', capabilities: capabilities() }); },
     forward: async (agentId, req) => {
       if (!deps.forwarder) {

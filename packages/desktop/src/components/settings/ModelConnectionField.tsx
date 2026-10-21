@@ -227,9 +227,11 @@ export function ModelConnectionStatus({ lane }: { lane: ProviderLaneState }) {
       {/* C1: 설정과 러너 모드가 다르다 — 러너가 도는 턴을 끝내고 다시 뜨기 전이다. 그동안 오퍼레이터가 새 턴을 막는다. */}
       {lane.pending && (
         <div className="rounded-row bg-warning-surface px-3 py-2 text-meta text-warning" data-testid="lane-pending" role="status">
-          {t('agents.lane.pending')}
+          {/* 끈 직후면 방향(계정 풀로 돌아감)을 밝힌다 — 지운 연결을 설명하는 줄은 아래에서 숨긴다(designer s2). */}
+          {t(lane.lane ? 'agents.lane.pending' : 'agents.lane.pendingOff')}
         </div>
       )}
+      {lane.lane && <>
       {status === null && <div className="text-meta text-fg-subtle">{t('agents.lane.lastNone')}</div>}
       {status?.ok && <div className="rounded-row bg-success-surface px-3 py-2 text-meta text-success">✓ {t('agents.lane.lastOk', { time })}</div>}
       {status && !status.ok && (
@@ -241,6 +243,7 @@ export function ModelConnectionStatus({ lane }: { lane: ProviderLaneState }) {
       <span className="text-meta text-fg-subtle">{t('agents.lane.noPool')}</span>
       <span className="text-meta text-fg-subtle">{t('agents.lane.terminalBlocked')}</span>
       <span className="text-meta text-fg-subtle">{t('agents.lane.moveNote')}</span>
+      </>}
     </section>
   );
 }

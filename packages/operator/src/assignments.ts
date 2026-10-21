@@ -117,8 +117,11 @@ export interface AssignmentReconciler {
    * 모드를 모르는 러너(옛 판·앞 세대)는 lane 이 켜져 있는 한 다르다고 본다. 배정이 없으면 false.
    */
   laneMismatch(runnerId: string, agentId: string): boolean;
-  /** 에이전트별 지금 러너의 모드(모르면 null). 앱 실행 탭 「적용 대기」의 출처. */
-  laneModes(): Record<string, boolean | null>;
+  /**
+   * 에이전트별 「적용 대기」 — 지금 러너가 턴 자리 문에 막히는가(`laneMismatch` 와 **같은 판정**, designer s1). 러너가 없으면 false
+   * (다음 spawn 이 새 env 로 뜬다). 살아 있는데 모드를 모르는 러너(앞 세대)는 lane 이 켜져 있는 한 true. 앱 실행 탭은 이 값만 쓴다.
+   */
+  lanePending(): Record<string, boolean>;
   /** 살아 있는 러너 전부 — hello 의 announce 에 실린다. */
   announce(): RunnerAnnounce[];
 }
@@ -283,11 +286,12 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
       return laneOn(entry.local) ? mode !== true : mode === true;
     },
 
-    laneModes() {
-      const out: Record<string, boolean | null> = {};
-      for (const agentId of assigned.keys()) {
+    lanePending() {
+      const out: Record<string, boolean> = {};
+      for (const [agentId, entry] of assigned) {
+        if (!deps.isAlive(agentId)) { out[agentId] = false; continue; }
         const id = currentRunner.get(agentId);
-        out[agentId] = id === undefined ? null : (runnerLane.get(id) ?? null);
+        out[agentId] = id === undefined ? laneOn(entry.local) : self.laneMismatch(id, agentId);
       }
       return out;
     },
