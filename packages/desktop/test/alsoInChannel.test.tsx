@@ -13,7 +13,7 @@ import { en } from '../src/i18n/en';
 // 이 파일이 조용히 옛 문구를 지킨다. jsdom 은 영어라 영어 사전이 뜬다.
 const RECENT_REPLIES = en['message.recentReplies'];
 const CHANNEL_ECHO = en['message.channelEcho'];
-const ALSO_POST = en['thread.alsoPostToChannel'];
+const ALSO_POST = en['thread.alsoPostToChannel'].replace('{channel}', '# general');
 
 // #231: 스레드 답을 채널에도 함께 올린다. **메시지는 하나**이고 두 곳에 보인다 —
 // 그래서 이 파일의 회귀선은 "같은 id 가 두 화면에 각각 뜨는가"를 본다.
@@ -167,6 +167,19 @@ describe('#231 스레드 답을 채널에도 함께 올린다', () => {
     fireEvent.change(box, { target: { value: 'on it' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(c.reply).toHaveBeenCalledWith('on it', [], 'c1', 'm1', true);
+  });
+
+  // 입력창 개편 P3: 체크는 입력 상자 **안**, 본문 아래·동작줄 위에 서고, 어느 채널인지 이름(굵게)으로 말한다.
+  it('채널에도 올리기는 입력 상자 안, 채널 이름을 굵게 단다', () => {
+    fakeController();
+    render(<ThreadPanel />);
+    const check = screen.getByLabelText(ALSO_POST);
+    const box = document.querySelector('.composer-box');
+    expect(box?.contains(check)).toBe(true);
+    expect(check.closest('label')?.querySelector('strong')?.textContent).toBe('# general');
+    const text = screen.getByPlaceholderText('Reply…');
+    expect(text.compareDocumentPosition(check) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(check.compareDocumentPosition(screen.getByTestId('composer-toolbar-toggle')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 

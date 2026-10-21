@@ -561,7 +561,7 @@ export const en = {
   // thread — 스레드 패널. `thread.*` 영역이 이미 있고(상태 다섯), 여기 둘을 더한다.
   // ---------------------------------------------------------------------------
 
-  'thread.alsoPostToChannel': 'Also post to the channel',
+  'thread.alsoPostToChannel': 'Also post to {channel}',
   'thread.resizeHandle': 'Resize the thread panel',
   'thread.title': 'Thread',
   // 답글이 하나도 없는 스레드를 열었을 때. 이 줄이 없으면 패널에 머리말 하나만 서서

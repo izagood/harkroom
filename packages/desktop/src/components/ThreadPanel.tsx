@@ -37,7 +37,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   reserveLeft?: number;
 } = {}) {
   const t = useT();
-  const { messages, accounts, me, online, connected, link, offlineSince, threadFetch } = useActiveStore();
+  const { messages, channels, accounts, me, online, connected, link, offlineSince, threadFetch } = useActiveStore();
   const locale = useLocale();
   // 보는 자리는 **이 창의 것**이다(새 창 — `state/windowView`). 메인이면 스토어 그대로다.
   const view = useWindowView();
@@ -49,6 +49,9 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   /** 채널과 같은 판정을 쓴다 — 모르는 계정은 에이전트로 치지 않는다(`lib/agentExchange`). */
   const isAgent = (id: string): boolean => accounts[id]?.kind === 'agent';
   const [alsoInChannel, setAlsoInChannel] = useState(false);
+  const channelName = channels.find((c) => c.id === activeChannelId)?.name ?? '';
+  // 문구 안의 채널 이름만 굵게 — 말 순서가 언어마다 달라(「# 채널에도 올리기」·「Also post to # channel」) 자리표로 가른다.
+  const alsoPostParts = t('thread.alsoPostToChannel', { channel: '\uE000' }).split('\uE000');
   // 접힌 `모델 · 모두 기본` 칩을 눌러 연 줄(결정 10). 스레드를 바꾸면 다시 접는다.
   const [modelsOpen, setModelsOpen] = useState(false);
   useEffect(() => { setModelsOpen(false); }, [threadRootId]);
@@ -472,17 +475,6 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
       </div>
       <TypingLine />
       <div className="border-t border-border p-3">
-        {/* 이 체크박스를 켜면 말이 채널에도 나간다 — 읽고 정하는 자리라 본문단이다
-            (앱 기본값 13px 이라 크기를 안 적는다). */}
-        <label className="mb-2 flex items-center gap-2 text-fg-muted">
-          <input
-            type="checkbox"
-            checked={alsoInChannel}
-            onChange={(e) => setAlsoInChannel(e.target.checked)}
-            className="rounded-row border-border"
-          />
-          {t('thread.alsoPostToChannel')}
-        </label>
         <Composer
           scopeKey={`thread:${threadRootId}`}
           // 스레드도 그 채널 안이다 — 채널이 부르는 에이전트는 스레드 답글에서도 불린다(#173).
@@ -490,6 +482,24 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
           // 예약 표면은 스레드 뿌리를 못 실어서 답글을 채널 본문으로 내보낸다.
           autoMentionChannelId={activeChannelId ?? undefined}
           placeholder={t('chat.replyPlaceholder')}
+          // 이 체크박스를 켜면 말이 채널에도 나간다 — 보내는 글에 딸린 선택이라 입력 상자 안 본문 아래·동작줄 위에 둔다(입력창 개편 P3 시안).
+          // 읽고 정하는 자리라 본문단이다(앱 기본값 13px 이라 크기를 안 적는다).
+          // 어느 채널인지 이름으로 말한다: 「채널에도」만으로는 스레드 창에서 어디로 가는지 안 보인다.
+          belowText={(
+            <label className="flex items-center gap-2 text-fg-muted">
+              <input
+                type="checkbox"
+                checked={alsoInChannel}
+                onChange={(e) => setAlsoInChannel(e.target.checked)}
+                className="rounded-row border-border"
+              />
+              <span>
+                {alsoPostParts[0]}
+                <strong className="font-semibold text-fg">{`# ${channelName}`}</strong>
+                {alsoPostParts[1]}
+              </span>
+            </label>
+          )}
           // 채널과 스레드 뿌리를 지금 것으로 붙인다(#223) — 창이 도는 동안 패널을 닫으면
           // 스토어의 `threadRootId` 는 null 이 되어 답글이 조용히 사라진다.
           onSend={(body, attachmentIds, agentModels) =>

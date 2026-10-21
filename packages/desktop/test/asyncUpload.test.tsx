@@ -81,6 +81,19 @@ describe('uploading without blocking the composer', () => {
     expect(screen.getByTestId('pending-attachment').textContent).toContain('42%');
   });
 
+  // 입력창 개편 P3(designer n5): 첨부는 본문 아래·동작줄 위 — 쓰는 자리가 위에서 밀려 내려가지 않는다.
+  it('puts the attachment tiles below the text, above the action row', async () => {
+    const d = deferredUploads();
+    fakeController({ upload: d.upload });
+    render(<Composer onSend={vi.fn()} scopeKey="c1" />);
+    pick('big.txt');
+    const chip = await screen.findByTestId('pending-attachment');
+    const text = screen.getByRole('textbox');
+    const attach = screen.getByTestId('composer-toolbar-toggle');
+    expect(text.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chip.compareDocumentPosition(attach) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('sends while the upload is still running — the message waits for it, the composer does not', async () => {
     const d = deferredUploads();
     const onSend = vi.fn();
