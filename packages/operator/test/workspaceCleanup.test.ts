@@ -60,7 +60,7 @@ describe('planSweep', () => {
 describe('주인 모름 자동(규칙: 머지·닫힘 + PR head == HEAD + 깨끗 + 보존 기간보다 오래 손대지 않음)', () => {
   // 주인 모름 후보 — 다 맞춘 모양. 시험마다 하나씩 뺀다.
   const OLD = '2026-09-20T00:00:00.000Z'; // NOW(10-06) 에서 16일 전 — 7일보다 오래
-  const u = (o: Partial<ObservedWorktree> = {}) => wt({ thread: null, clean: true, lastActivityAt: OLD, ...o });
+  const u = (o: Partial<ObservedWorktree> = {}) => wt({ thread: null, clean: true, onlyRebuildableIgnored: true, lastActivityAt: OLD, ...o });
   const plan = (w: ObservedWorktree, settings = S, now = NOW, prev = emptyLedger()) => planSweep(prev, facts({ worktrees: [w], doneThreads: new Set() }), settings, now);
   it('다 맞으면 목록에 넣고 의존성 지우기 — 사람 손 없이(actedBy null)', () => {
     const p = plan(u());
@@ -80,6 +80,8 @@ describe('주인 모름 자동(규칙: 머지·닫힘 + PR head == HEAD + 깨끗
     ['HEAD 모름', { headSha: null }],
     ['커밋 안 된 변경·push 안 된 커밋이 있음', { clean: false }],
     ['깨끗한지 재지 못함', { clean: null }],
+    ['다시 만들 수 없는 무시된 파일(.env 등)이 있음', { onlyRebuildableIgnored: false }],
+    ['무시된 파일을 재지 못함', { onlyRebuildableIgnored: null }],
     ['보존 기간 안에 손댐', { lastActivityAt: '2026-10-01T00:00:00.000Z' }],
     ['손댄 시각 모름', { lastActivityAt: null }],
   ])('%s → 주인 모름 그대로, 할 일 없음', (_name, o) => {
@@ -98,6 +100,30 @@ describe('주인 모름 자동(규칙: 머지·닫힘 + PR head == HEAD + 깨끗
     expect(plan(u(), S, NOW, shown).ledger.items[0]!.state).toBe('listed');
     const kept = applyHumanAction(shown, '/tmp/wt-a', 'keep', 'acct-1', S, NOW).ledger;
     expect(plan(u(), S, NOW, kept).ledger.items[0]!.state).toBe('kept');
+  });
+  it('F1: 넣은 뒤 새 커밋으로 HEAD ≠ PR head 면 손댄 시각을 몰라도 되살린다 — 기한이 지나도 지우지 않고 원장 head 를 덮지 않는다', () => {
+    const listed = plan(u()).ledger;
+    const due = new Date('2026-10-20T00:00:00Z');
+    // 새 커밋 def(push 돼 있어도) — 1·2 를 맞추지 않으니 서비스는 손댄 시각을 재지 않는다(lastActivityAt null)
+    const r = plan(u({ headSha: 'def', lastActivityAt: null, clean: null, onlyRebuildableIgnored: null }), S, due, listed);
+    expect(r.actions).toEqual([]);
+    expect(r.ledger.items.find((i) => i.path === '/tmp/wt-a')).toBeUndefined();
+    expect(r.ledger.events.at(-1)).toMatchObject({ action: 'revived', path: '/tmp/wt-a' });
+  });
+  it('F1: 넣은 뒤 PR 이 다시 열리거나 PR 을 못 읽으면 되살린다', () => {
+    const listed = plan(u()).ledger;
+    const due = new Date('2026-10-20T00:00:00Z');
+    for (const pr of [{ number: 1, state: 'open' as const, headSha: 'abc' }, null]) {
+      const r = plan(u({ pr }), S, due, listed);
+      expect(r.actions).toEqual([]);
+      expect(r.ledger.events.at(-1)!.action).toBe('revived');
+    }
+  });
+  it('F1 경계: 사람이 넣은 주인 모름은 되살리지 않는다(사람이 정한 것) — 지우기 직전 check() 가 HEAD 변경을 막는다', () => {
+    const shown = plan(u({ clean: false })).ledger;
+    const byHand = applyHumanAction(shown, '/tmp/wt-a', 'list', 'acct-1', S, NOW).ledger;
+    const r = plan(u({ headSha: 'def' }), S, new Date('2026-10-20T00:00:00Z'), byHand);
+    expect(r.ledger.items[0]).toMatchObject({ state: 'listed', actedBy: 'acct-1' });
   });
   it('자동으로 넣은 뒤 손댄 흔적이 새로 생기면 되살린다(스레드가 없어 새 턴 대신)', () => {
     const listed = plan(u()).ledger;

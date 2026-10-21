@@ -1,13 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { lstat, mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CLEANUP_REPORT_PATH, type CleanupLedger } from '@harkroom/shared/workspaceCleanup';
 import { defaultExec, type Exec } from '../src/turnMerge.js';
 import { createCleanupOwners } from '../src/workspaceCleanupOwners.js';
-import { prHeadIsOurs, repoOfWorktree } from '../src/workspaceCleanupScan.js';
-import { createWorkspaceCleanup } from '../src/workspaceCleanupService.js';
+import { lastActivityAt, onlyRebuildableIgnored, prHeadIsOurs, repoOfWorktree } from '../src/workspaceCleanupScan.js';
+import { createCleanupPorts, createWorkspaceCleanup } from '../src/workspaceCleanupService.js';
 
 const C = '11111111-1111-1111-1111-111111111111';
 const R = (n: number) => `3333333${n}-3333-3333-3333-333333333333`;
@@ -112,6 +112,74 @@ describe('저장소는 러너가 보고한 worktree 에서 찾는다(workingDir 
     expect(await lstat(join(f.wt.dirty, 'wip.txt'))).toBeTruthy();
     expect(await lstat(f.wt.reused)).toBeTruthy();
     expect(second.events.filter((e) => e.action === 'deleted').map((e) => e.path).sort()).toEqual([f.wt.closed, f.wt.merged].sort());
+  });
+
+  it('손댄 시각: reflog(checkout·reset)도 센다 · 무시된 파일은 다시 만들 수 있는 폴더 안에만 있어야 한다', async () => {
+    const f = await fixture();
+    const deps = { exec: f.exec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: f.root };
+    const gitDir = execFileSync('git', ['-C', f.wt.closed, 'rev-parse', '--path-format=absolute', '--git-dir'], { encoding: 'utf8' }).trim();
+    const old = new Date('2020-01-01T00:00:00Z');
+    await utimes(join(f.wt.closed, '.git'), old, old);
+    await utimes(join(gitDir, 'logs', 'HEAD'), old, old);
+    const before = await lastActivityAt(deps, f.wt.closed); // 커밋 시각만 남는다(방금 만든 커밋)
+    const future = new Date(Math.floor((Date.now() + 5 * 86_400_000) / 1000) * 1000); // 초 단위(파일 시각 반올림을 피한다)
+    await utimes(join(gitDir, 'logs', 'HEAD'), future, future); // checkout·reset 이 reflog 를 쓴 것과 같다
+    expect(await lastActivityAt(deps, f.wt.closed)).toBe(future.toISOString());
+    expect(before! < future.toISOString()).toBe(true);
+    // 무시된 것: node_modules(깊이 무관) 는 된다, .env 는 안 된다
+    expect(await onlyRebuildableIgnored(deps, f.wt.merged)).toBe(true);
+    await mkdir(join(f.wt.closed, 'pkg', 'node_modules', 'x'), { recursive: true });
+    await writeFile(join(f.wt.closed, 'pkg', 'node_modules', 'x', 'i.js'), '');
+    expect(await onlyRebuildableIgnored(deps, f.wt.closed)).toBe(true);
+    await writeFile(join(f.wt.closed, '.gitignore-local'), '');
+    execFileSync('git', ['-C', f.wt.closed, 'config', 'core.excludesFile', join(f.wt.closed, '.gitignore-local')]);
+    await writeFile(join(f.repo, '.git', 'info', 'exclude'), '.env\n.gitignore-local\n');
+    await writeFile(join(f.wt.closed, '.env'), 'SECRET=1');
+    expect(await onlyRebuildableIgnored(deps, f.wt.closed)).toBe(false);
+    expect(await onlyRebuildableIgnored(deps, join(f.root, 'gone'))).toBe(false);
+  });
+
+  it('n3: 저장소가 status.showUntrackedFiles=no 여도 지우기 직전 검사는 untracked 를 본다', async () => {
+    const f = await fixture();
+    execFileSync('git', ['-C', f.repo, 'config', 'status.showUntrackedFiles', 'no']);
+    await writeFile(join(f.wt.closed, 'notes.txt'), 'hand-written');
+    const ports = createCleanupPorts({ exec: f.exec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: f.root });
+    const item = { path: f.wt.closed, kind: 'worktree' as const, state: 'listed' as const, repo: f.repo, branch: 'closed', headSha: f.head, thread: null,
+      pr: { number: 7, state: 'closed' as const, headSha: f.head }, lastModifiedAt: null, listedAt: null, deleteAfter: null, blockReason: null,
+      actedBy: null, actedAt: null, sizeBefore: null, sizeNow: null };
+    expect(await ports.check(item, new Set())).toBe('uncommitted');
+  });
+
+  it('F1(실제 git): 주인 모름을 넣은 뒤 새 커밋+push → 기한이 지나도 지우지 않고 되살린다', async () => {
+    const f = await fixture();
+    const owners = createCleanupOwners({ path: join(f.root, 'owners.json') });
+    const configPath = join(f.root, 'operator.json');
+    await writeFile(configPath, JSON.stringify({ communities: {}, cleanup: { enabled: true, graceDays: 7 } }));
+    const ledgerPath = join(f.root, 'ledger.json');
+    const DAY = 86_400_000;
+    let now = new Date(Date.now() + 10 * DAY);
+    const cleanup = createWorkspaceCleanup({
+      ledgerPath, configPath, owners,
+      agents: async () => [{ agentId: 'agentA', workingDir: f.repo }],
+      forward: async () => { throw new Error('주인 모름은 스레드를 묻지 않는다'); },
+      exec: f.exec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: f.root,
+      now: () => now, log: () => {},
+    });
+    const ledger = async () => JSON.parse(await readFile(ledgerPath, 'utf8')) as CleanupLedger;
+    await cleanup.sweep();
+    expect((await ledger()).items.find((i) => i.path === f.wt.merged)).toMatchObject({ state: 'listed', actedBy: null });
+    // 누가 그 worktree 에서 일을 다시 한다 — 새 커밋을 만들고 원격에 올렸다(원격 ref 로 흉내).
+    await writeFile(join(f.wt.merged, 'again.txt'), 'work');
+    execFileSync('git', ['-C', f.wt.merged, 'add', 'again.txt']);
+    execFileSync('git', ['-C', f.wt.merged, '-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'again']);
+    const newHead = execFileSync('git', ['-C', f.wt.merged, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    execFileSync('git', ['-C', f.repo, 'update-ref', 'refs/remotes/origin/merged', newHead]);
+    now = new Date(Date.now() + 20 * DAY); // 기한(넣은 뒤 7일)을 넘겼다
+    await cleanup.sweep();
+    expect(await lstat(join(f.wt.merged, 'again.txt'))).toBeTruthy();
+    const l = await ledger();
+    expect(l.events.some((e) => e.path === f.wt.merged && e.action === 'revived')).toBe(true);
+    expect(l.events.some((e) => e.path === f.wt.merged && e.action === 'deleted')).toBe(false);
   });
 
   it('주인 모름 자동: 보고 없는 worktree 도 머지·닫힘 + PR head == HEAD + 깨끗 + 오래 손 안 댐이면 넣고 지운다', async () => {

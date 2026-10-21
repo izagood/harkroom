@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
-import { normalizeCleanupPath, type CleanupPr } from '@harkroom/shared/workspaceCleanup';
+import { normalizeCleanupPath, REBUILDABLE_DIRS, type CleanupPr } from '@harkroom/shared/workspaceCleanup';
 import type { Exec } from './turnMerge.js';
 import type { ObservedWorktree } from './workspaceCleanup.js';
 
@@ -131,15 +131,33 @@ export async function repoOfWorktree(deps: ScanDeps, path: string): Promise<stri
 }
 
 /**
- * 마지막으로 손댄 흔적 — HEAD 커밋 시각과 worktree 를 만든 시각(`<path>/.git` 파일) 중 늦은 것. 폴더 자체의 mtime 은 쓰지 않는다:
- * 청소기가 `node_modules` 를 지우면 그것이 바뀌어 스스로 「최근에 손댐」을 만든다. 둘 다 못 읽으면 null(자동 대상 아님).
+ * 마지막으로 손댄 흔적 — HEAD 커밋 시각, HEAD reflog(`<git-dir>/logs/HEAD`: commit·checkout·switch·reset 이 쓴다), worktree 를
+ * 만든 시각(`<path>/.git` 파일) 중 가장 늦은 것. 쓰지 않는 것: 폴더 mtime(청소기가 `node_modules` 를 지우면 바뀐다)·`index`
+ * mtime(`git status` 가 건드린다) — 둘 다 스스로 「최근에 손댐」을 만든다. 하나도 못 읽으면 null(자동 대상 아님).
  */
 export async function lastActivityAt(deps: ScanDeps, path: string): Promise<string | null> {
-  const r = await deps.exec(deps.gitPath, ['-C', path, 'log', '-1', '--format=%cI', 'HEAD'], GIT_ENV(deps.home));
+  const env = GIT_ENV(deps.home);
+  const r = await deps.exec(deps.gitPath, ['-C', path, 'log', '-1', '--format=%cI', 'HEAD'], env);
   const commit = r.code === 0 ? Date.parse(r.stdout.trim()) : Number.NaN;
+  const g = await deps.exec(deps.gitPath, ['-C', path, 'rev-parse', '--path-format=absolute', '--git-dir'], env);
+  const reflog = g.code === 0 && g.stdout.trim()
+    ? (await lstat(join(g.stdout.trim(), 'logs', 'HEAD')).catch(() => null))?.mtimeMs ?? Number.NaN : Number.NaN;
   const made = (await lstat(join(path, '.git')).catch(() => null))?.mtimeMs ?? Number.NaN;
-  const t = Math.max(Number.isNaN(commit) ? -Infinity : commit, Number.isNaN(made) ? -Infinity : made);
+  const t = Math.max(...[commit, reflog, made].map((x) => (Number.isNaN(x) ? -Infinity : x)));
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
+/**
+ * 무시된 파일이 다시 만들 수 있는 폴더(`REBUILDABLE_DIRS`, 어느 깊이든) 안에만 있는가. `.env`·로컬 DB·생성 설정처럼 그 밖의 무시된
+ * 것이 하나라도 있으면 false — `git worktree remove` 는 그것까지 지운다. git 이 못 읽으면 false.
+ */
+export async function onlyRebuildableIgnored(deps: ScanDeps, path: string): Promise<boolean> {
+  // matching: 무시 규칙에 걸린 경로 그대로(`pkg/node_modules/`) — traditional 은 무시된 것만 든 부모를 `pkg/` 로 접어 이름을 잃는다.
+  // 무시된 파일만 든 폴더(`logs/`)도 한 줄로 나오는데, 이름이 다시 만들 수 있는 폴더가 아니면 손 파일로 친다(지우지 않는 쪽).
+  const r = await deps.exec(deps.gitPath, ['-C', path, 'status', '--porcelain', '-z', '--ignored=matching', '--untracked-files=normal'], GIT_ENV(deps.home));
+  if (r.code !== 0) return false;
+  const rebuildable = new Set<string>(REBUILDABLE_DIRS);
+  return r.stdout.split('\0').filter((e) => e.startsWith('!! ')).every((e) => e.slice(3).replace(/\/$/, '').split('/').some((s) => rebuildable.has(s)));
 }
 
 export type Forward = (agentId: string, req: RunnerLinkRequest) => Promise<RunnerLinkResponse>;
