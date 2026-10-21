@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -532,5 +534,65 @@ void main() {
     expect(find.byKey(const Key('link-warn-nonascii')), findsOneWidget);
     expect(find.descendant(of: find.byKey(const Key('link-open')), matching: find.byType(Text)), findsOneWidget);
     expect(tester.widget(find.byKey(const Key('link-open'))), isA<OutlinedButton>());
+  });
+
+  group('눌린 것이 보인다(스레드 ae5505cc)', () {
+    Widget host(Widget child) => MaterialApp(
+          theme: harkroomTheme(Brightness.light),
+          home: I18n(strings: stringsFor('ko'), child: Scaffold(body: child)),
+        );
+
+    /// 본문의 첫 링크 조각(인식기가 달린 것).
+    TextSpan linkSpan(WidgetTester tester) {
+      TextSpan? hit;
+      for (final rich in tester.widgetList<RichText>(find.byType(RichText))) {
+        rich.text.visitChildren((span) {
+          if (span is TextSpan && span.recognizer is TapGestureRecognizer) hit ??= span;
+          return true;
+        });
+      }
+      return hit!;
+    }
+
+    testWidgets('누르는 동안 바탕이 깔리고, 떼면 걷힌다 — 인식기는 다시 그려도 같은 것이다', (tester) async {
+      await tester.pumpWidget(host(MarkdownBody('여기 https://docs.example.com/a 봐', openLink: (_) async {})));
+      final r = linkSpan(tester).recognizer! as TapGestureRecognizer;
+      expect(linkSpan(tester).style!.backgroundColor, isNull);
+
+      r.onTapDown!(TapDownDetails());
+      await tester.pump();
+      expect(linkSpan(tester).style!.backgroundColor, isNotNull);
+      // 다시 그리면서 인식기를 갈아 끼우면 손가락이 잡은 탭이 사라진다.
+      expect(identical(linkSpan(tester).recognizer, r), isTrue);
+
+      r.onTapCancel!();
+      await tester.pump();
+      expect(linkSpan(tester).style!.backgroundColor, isNull);
+    });
+
+    testWidgets('앱 안 링크는 이동이 끝날 때까지 바탕을 두고, 그 사이 다시 눌러도 한 번만 간다', (tester) async {
+      final went = <String>[];
+      final done = Completer<void>();
+      await tester.pumpWidget(host(MarkdownBody(
+        '결정은 harkroom://message/11111111-2222-4333-8444-555555555555',
+        openMessage: (m) {
+          went.add(m);
+          return done.future;
+        },
+      )));
+      final r = linkSpan(tester).recognizer! as TapGestureRecognizer;
+      r.onTap!();
+      await tester.pump();
+      expect(linkSpan(tester).style!.backgroundColor, isNotNull);
+      r.onTap!();
+      await tester.pump();
+      expect(went, hasLength(1));
+
+      done.complete();
+      // 완료가 finally 의 setState 에 닿기까지 한 프레임이 더 든다.
+      await tester.pump();
+      await tester.pump();
+      expect(linkSpan(tester).style!.backgroundColor, isNull);
+    });
   });
 }
