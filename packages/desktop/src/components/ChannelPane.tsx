@@ -642,6 +642,10 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       else restoreAnchor();
     });
     ro.observe(box);
+    // 스크롤 상자 자체도 본다 — 입력창이 글을 따라 자라면(`lib/composerGrow`) 이 상자가 그만큼
+    // **줄어들고**, 바닥에 붙어 있던 마지막 줄이 입력창 뒤로 밀려난다. 내용은 그대로라 위의 관찰만으로는
+    // 모른다. 바닥 표식 관찰자도 결국 잡지만 한 프레임 늦어 마지막 줄이 깜빡인다.
+    if (listRef.current) ro.observe(listRef.current);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChannelId]);

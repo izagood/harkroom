@@ -19,7 +19,7 @@ import { Composer } from './Composer';
 import { PaneResizer } from './PaneResizer';
 import { paneStorage, paneMaxWidth, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH, MIN_CHANNEL_WIDTH } from '../lib/prefs';
 import { TypingLine } from './TypingLine';
-import { isNearBottom } from '../lib/stickyBottom';
+import { distanceFromBottom, isNearBottom } from '../lib/stickyBottom';
 import { appendedFromHere } from '../lib/ownSends';
 import type { SectionId } from './settings/sections';
 import { useLocale, useT } from '../i18n/useT';
@@ -262,6 +262,23 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     );
     io.observe(marker);
     return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadRootId]);
+
+  /**
+   * **입력창이 자라 목록 상자가 줄어도 바닥에 남는다**(입력창 자동 높이, `lib/composerGrow`). 상자가
+   * 줄면 `scrollTop` 은 그대로라 마지막 답글이 입력창 뒤로 밀린다. 위의 바닥 표식 관찰자도 결국
+   * 내려가지만 비동기라 한 프레임 늦다 — `ResizeObserver` 는 그리기 전에 돈다. 사람이 위를 읽는
+   * 중(`stickyRef` 거짓)이면 건드리지 않는다.
+   */
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (stickyRef.current && distanceFromBottom(el) > 0) scrollToBottom();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadRootId]);
 

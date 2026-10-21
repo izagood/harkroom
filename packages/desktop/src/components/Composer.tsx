@@ -27,6 +27,7 @@ import { callsInText, quoteText, MANY_CALLS } from '../lib/pasteCalls';
 // 입력 중인 코드에 면을 깔고(겹판), ⌘E 로 감싸거나 벗긴다. 무엇이 코드인지는 보낸 뒤
 // 메시지를 그리는 것과 **같은 함수**(`splitCode`)가 정한다 — 그 파일의 주석이 근거다.
 import { ComposerCode, COMPOSER_BOX } from './ComposerCode';
+import { COMPOSER_MAX_H, fitComposerHeight } from '../lib/composerGrow';
 import { toggleCode } from '../lib/codeMarks';
 // 하이퍼링크를 **쓰는** 쪽(⌘K · 고른 글 위에 주소 붙여넣기). 그리는 쪽은 #216 부터 있었다 —
 // 무엇이 링크 문법인지는 렌더러가 쓰는 함수(`linkAt`)가 정한다. 그 파일의 주석이 근거다.
@@ -389,6 +390,30 @@ export function Composer({
   // 전환에도 유지되기 때문에(ChannelPane 이 같은 자리에 렌더한다) A 에 쓴 글이 B 입력창에
   // 남고 B 로 나간다 — 그게 #184 다. 스토어가 영속까지 책임진다.
   const draft = useActiveStore((s) => s.drafts[scopeKey] ?? '');
+  /**
+   * 칸 키를 글에 맞춘다(`lib/composerGrow`). 초안이 바뀔 때마다 — 치기·붙여넣기·보낸 뒤 비우기·
+   * 자리(채널·스레드)를 옮겨 다른 초안이 들어올 때 모두 `draft` 가 바뀐다. 보내면 빈 글이 되어
+   * 바닥 키로 돌아온다.
+   */
+  useLayoutEffect(() => {
+    if (ref.current) fitComposerHeight(ref.current);
+  }, [draft]);
+  /**
+   * 폭이 바뀌면 줄바꿈 자리가 바뀌어 같은 글의 키도 바뀐다(창 크기·스레드 패널 폭). 키 변화는
+   * 무시하고 폭만 본다 — 키를 보면 우리가 적은 키에 다시 불려 되먹임이 된다.
+   */
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let width = el.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      fitComposerHeight(el);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const setDraftLocal = (next: string | ((current: string) => string)): void => {
     const store = useActiveStore.getState();
     const current = store.drafts[scopeKey] ?? '';
@@ -2021,7 +2046,11 @@ export function Composer({
            * 틈이 남고, 감싸는 칸에 면이 생긴 뒤로는 그 틈이 테두리 밖의 띠로 보인다.
            * `bg-transparent` 도 같은 판단의 짝이다(면은 감싸는 칸이 든다).
            */
-          className={`block w-full resize-none border-transparent bg-transparent ${COMPOSER_BOX}`}
+          /*
+           * 키는 글을 따라 자라고(`fitComposerHeight`) `COMPOSER_MAX_H` 에서 멈춘다 — 넘친 글은
+           * `overflow-y-auto` 로 칸 안에서 굴러간다. 상한 전에는 키가 글과 같아 굴림막대가 서지 않는다.
+           */
+          className={`block w-full resize-none overflow-y-auto border-transparent bg-transparent ${COMPOSER_MAX_H} ${COMPOSER_BOX}`}
           rows={rows}
           autoFocus={autoFocus}
           placeholder={placeholder}
