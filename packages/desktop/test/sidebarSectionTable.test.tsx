@@ -126,7 +126,8 @@ describe('사이드바 섹션 표 (136)', () => {
     mount();
     const row = screen.getAllByRole('button').find((b) => (b.textContent ?? '').startsWith('#rcms'))!;
     fireEvent.contextMenu(row);
-    fireEvent.click(await screen.findByText('섹션: 개인'));
+    fireEvent.click(await screen.findByText('섹션으로 옮기기…'));
+    fireEvent.click(screen.getByTestId('section-pick-c1-s2'));
     await waitFor(() => expect(api.updateChannelPref).toHaveBeenCalledWith('c1', { sectionId: 's2' }));
   });
 
@@ -185,7 +186,8 @@ describe('사이드바 섹션 표 — 검토 후속 (designer s1·s2·n1, securi
     mount();
     const row = screen.getAllByRole('button').find((b) => (b.textContent ?? '').startsWith('#rcms'))!;
     fireEvent.contextMenu(row);
-    fireEvent.click(await screen.findByText('섹션: 개인'));
+    fireEvent.click(await screen.findByText('섹션으로 옮기기…'));
+    fireEvent.click(screen.getByTestId('section-pick-c1-s2'));
     await waitFor(() => expect(api.updateChannelSection).toHaveBeenCalledWith('s2', { collapsed: false }));
     expect(useAppStore.getState().channelSections!.find((s) => s.id === 's2')!.collapsed).toBe(false);
   });
@@ -224,5 +226,190 @@ describe('사이드바 섹션 표 — 검토 후속 (designer s1·s2·n1, securi
 
     await waitFor(() => expect(screen.queryByTestId('section-undo')).toBeNull());
     expect(bApi.createChannelSection).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * S3 — 끌어 옮기기(섹션 순서·채널 넘나들기)와 designer n2(섹션 고르기 칸)·n3(CHANNELS 머리 ＋)·n6(갈매기).
+ * jsdom 에는 레이아웃이 없어 줄 높이가 0 이다 — `clientY` 0 은 「앞」, 1 은 「뒤」로 읽힌다(isLowerHalf).
+ */
+describe('사이드바 섹션 표 — 끌어 옮기기 (S3)', () => {
+  const seed3 = () => useAppStore.getState().set({
+    channels: [chan('c1', 'rcms'), chan('c2', 'avcs'), chan('c3', 'cmdb'), chan('c4', 'study')],
+    channelSections: [section('s1', '회사', 0), section('s2', '개인', 1, { collapsed: true })],
+    channelPrefs: {
+      c1: pref('c1', { sectionId: 's1', sortOrder: 0 }),
+      c3: pref('c3', { sectionId: 's1', sortOrder: 1 }),
+      c2: pref('c2', { sectionId: 's2' }),
+      c4: pref('c4', { starredAt: '2026-10-21T00:00:00.000Z', sectionId: 's1' }),
+    },
+  });
+  // jsdom 의 끌기 이벤트는 `clientY` 를 싣지 않는다 — 늘 「앞」에 놓인다.
+  const drag = (from: HTMLElement, to: HTMLElement) => {
+    fireEvent.dragStart(from);
+    fireEvent.dragOver(to);
+    fireEvent.drop(to);
+  };
+
+  it('섹션 머리를 다른 머리 앞에 놓으면 섹션 전부를 새 순서로 보낸다', async () => {
+    const api = fakeApi();
+    setController(new Controller(api));
+    seed3();
+    mount();
+    drag(screen.getByTestId('section-head-s2'), screen.getByTestId('section-head-s1'));
+    await waitFor(() => expect(api.reorderChannelSections).toHaveBeenCalledWith(['s2', 's1']));
+  });
+
+  it('제자리에 놓으면 아무것도 보내지 않는다', () => {
+    const api = fakeApi();
+    setController(new Controller(api));
+    seed3();
+    mount();
+    drag(screen.getByTestId('section-head-s1'), screen.getByTestId('section-head-s2'));
+    expect(api.reorderChannelSections).not.toHaveBeenCalled();
+  });
+
+  it('끄는 동안 놓을 자리에 표시선이 서고, 끝나면 사라진다', () => {
+    setController(new Controller(fakeApi()));
+    seed3();
+    mount();
+    fireEvent.dragStart(screen.getByTestId('section-head-s2'));
+    fireEvent.dragOver(screen.getByTestId('section-head-s1'));
+    expect(within(screen.getByTestId('section-s1')).getByTestId('drop-line')).toBeTruthy();
+    fireEvent.dragEnd(screen.getByTestId('section-head-s2'));
+    expect(screen.queryByTestId('drop-line')).toBeNull();
+  });
+
+  it('d1·d2: 섹션 표시선은 섹션 블록에 하나만 겹쳐 그린다(줄을 밀지 않는다)', () => {
+    // jsdom 은 끌기 clientY 를 싣지 않아 「앞」만 잰다 — 「뒤」(블록 끝)는 Chrome 하네스 캡처로 본다.
+    setController(new Controller(fakeApi()));
+    seed3();
+    mount();
+    fireEvent.dragStart(screen.getByTestId('section-head-s2'));
+    fireEvent.dragOver(screen.getByTestId('section-head-s1'));
+    const lines = within(screen.getByTestId('section-s1')).getAllByTestId('drop-line');
+    const line = lines[0]!;
+    expect(lines).toHaveLength(1);
+    expect(line.getAttribute('data-after')).toBe('false');
+    expect(line.className).toContain('absolute');
+    expect(line.className).toContain('-top-px');
+    expect(screen.getByTestId('section-s1').className).toContain('relative');
+  });
+
+  it('d3: 놓을 수 없는 곳으로 나가면 표시가 지워진다', () => {
+    setController(new Controller(fakeApi()));
+    seed3();
+    mount();
+    fireEvent.dragStart(screen.getByTestId('channel-drag-c1'));
+    fireEvent.dragOver(screen.getByTestId('section-head-s2'));
+    expect(screen.getByTestId('section-head-s2').className).toContain('ring-accent');
+    fireEvent.dragOver(document.querySelector('nav')!);
+    expect(screen.getByTestId('section-head-s2').className).not.toContain('ring-accent');
+  });
+
+  it('d3: 빈 섹션 안내 줄에 놓으면 그 섹션으로 들어간다', async () => {
+    const api = fakeApi();
+    setController(new Controller(api));
+    seed3();
+    useAppStore.getState().set({
+      channelSections: [section('s1', '회사', 0), section('s2', '개인', 1, { collapsed: true }), section('s3', '빈', 2)],
+    });
+    mount();
+    drag(screen.getByTestId('channel-drag-c1'), screen.getByTestId('section-empty-s3'));
+    await waitFor(() => expect(api.updateChannelPref).toHaveBeenCalledWith('c1', { sectionId: 's3' }));
+  });
+
+  it('채널을 접힌 섹션 머리에 놓으면 그 섹션으로 옮기고 펼친다', async () => {
+    const api = fakeApi();
+    setController(new Controller(api));
+    seed3();
+    mount();
+    drag(screen.getByTestId('channel-drag-c1'), screen.getByTestId('section-head-s2'));
+    await waitFor(() => expect(api.updateChannelPref).toHaveBeenCalledWith('c1', { sectionId: 's2' }));
+    await waitFor(() => expect(api.updateChannelSection).toHaveBeenCalledWith('s2', { collapsed: false }));
+  });
+
+  it('채널을 같은 섹션의 다른 채널 앞에 놓으면 섹션은 그대로 두고 손 순서만 다시 매긴다', async () => {
+    const api = fakeApi();
+    setController(new Controller(api));
+    seed3();
+    mount();
+    drag(screen.getByTestId('channel-drag-c3'), screen.getByTestId('channel-drag-c1'));
+    await waitFor(() => expect(api.updateChannelPref).toHaveBeenCalledWith('c1', { sortOrder: 1 }));
+    expect(api.updateChannelPref).toHaveBeenCalledWith('c3', { sortOrder: 0 });
+    expect(api.updateChannelPref).not.toHaveBeenCalledWith('c3', expect.objectContaining({ sectionId: expect.anything() }));
+  });
+
+  it('채널을 CHANNELS 머리에 놓으면 섹션에서 뺀다', async () => {
+    const api = fakeApi();
+    setController(new Controller(api));
+    seed3();
+    mount();
+    drag(screen.getByTestId('channel-drag-c1'), screen.getByTestId('channels-heading'));
+    await waitFor(() => expect(api.updateChannelPref).toHaveBeenCalledWith('c1', { sectionId: null }));
+  });
+
+  it('즐겨찾기 채널은 끌 수 없다(FAVORITES 에만 보인다)', () => {
+    setController(new Controller(fakeApi()));
+    seed3();
+    mount();
+    expect(screen.getByTestId('channel-drag-c4').getAttribute('draggable')).toBe('false');
+    expect(screen.getByTestId('channel-drag-c1').getAttribute('draggable')).toBe('true');
+  });
+
+  it('순서 바꾸기가 409(sections_changed)면 다시 읽는다', async () => {
+    const api = fakeApi({
+      reorderChannelSections: vi.fn(async () => { throw Object.assign(new Error('changed'), { code: 'sections_changed' }); }),
+    });
+    setController(new Controller(api));
+    seed3();
+    mount();
+    drag(screen.getByTestId('section-head-s2'), screen.getByTestId('section-head-s1'));
+    await waitFor(() => expect(api.channelPrefsAndSections).toHaveBeenCalled());
+  });
+
+  it('n2: 채널 메뉴에는 「섹션으로 옮기기…」 하나만 서고, 고르기 칸은 지금 섹션에 ✓·누를 수 없음', async () => {
+    setController(new Controller(fakeApi()));
+    seed3();
+    mount();
+    const row = screen.getAllByRole('button').find((b) => (b.textContent ?? '').startsWith('#rcms'))!;
+    fireEvent.contextMenu(row);
+    await screen.findByText('섹션으로 옮기기…');
+    expect(screen.queryByText('섹션: 개인')).toBeNull();
+    fireEvent.click(screen.getByText('섹션으로 옮기기…'));
+    const current = screen.getByTestId('section-pick-c1-s1') as HTMLButtonElement;
+    expect(current.disabled).toBe(true);
+    expect(current.textContent).toContain('✓');
+    expect((screen.getByTestId('section-pick-c1-s2') as HTMLButtonElement).disabled).toBe(false);
+    // n8: 포커스는 처음으로 누를 수 있는 항목에 — 지금 섹션(disabled)이 아니다.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('section-pick-c1-s2')));
+    // 고르기 칸은 채널 줄 **아래**에 선다.
+    const pick = screen.getByTestId('section-pick-c1');
+    expect(row.compareDocumentPosition(pick) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.keyDown(pick, { key: 'Escape' });
+    expect(screen.queryByTestId('section-pick-c1')).toBeNull();
+    // d5: 닫히면 포커스가 그 채널 줄로 돌아온다.
+    await waitFor(() => expect(document.activeElement?.getAttribute('data-channel-row')).toBe('c1'));
+  });
+
+  it('n3: 섹션 표가 있으면 「채널 만들기」는 CHANNELS 머리의 ＋ 다(첫 줄 + 는 없다)', () => {
+    setController(new Controller(fakeApi()));
+    seed3();
+    useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
+    mount();
+    const add = screen.getByTestId('add-channel');
+    expect(screen.getByTestId('channels-heading').contains(add)).toBe(true);
+    expect(add.getAttribute('aria-label')).toBe('채널 만들기');
+  });
+
+  it('n6: 섹션 머리 갈매기는 SVG 이고 펼친 섹션만 90° 돈다', () => {
+    setController(new Controller(fakeApi()));
+    seed3();
+    mount();
+    const open = screen.getByTestId('section-toggle-s1').querySelector('svg')!;
+    const closed = screen.getByTestId('section-toggle-s2').querySelector('svg')!;
+    expect(open.getAttribute('class')).toContain('rotate-90');
+    expect(closed.getAttribute('class')).not.toContain('rotate-90');
+    expect(screen.getByTestId('section-toggle-s1').textContent).not.toMatch(/[▾▸]/);
   });
 });

@@ -3006,8 +3006,14 @@ export class Controller {
 
   /** 섹션 순서(136). 내 섹션 전부를 새 순서로 보낸다. */
   async reorderSections(orderedIds: string[]): Promise<void> {
-    const { sections } = await this.api.reorderChannelSections(orderedIds);
-    this.store.getState().set({ channelSections: sections });
+    try {
+      const { sections } = await this.api.reorderChannelSections(orderedIds);
+      this.store.getState().set({ channelSections: sections });
+    } catch (err) {
+      // 그새 다른 기기가 섹션을 만들거나 지웠다(409 sections_changed) — 다시 읽어 지금 모양으로 맞춘다.
+      if ((err as { code?: string } | null)?.code === 'sections_changed') await this.refreshChannelPrefs().catch(() => {});
+      throw err;
+    }
   }
 
   /**

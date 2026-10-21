@@ -2031,6 +2031,8 @@ export const en = {
   'sidebar.channel.archived': 'Archived ({count})',
   'sidebar.channel.cancel': 'Cancel',
   'sidebar.channel.create': 'Create channel',
+  /** CHANNELS 머리 ＋ 의 읽는 이름(designer n12) — 글자 줄 「Create channel」과 달리 아이콘이라 우리말로 읽는다. */
+  'sidebar.channel.createLabel': 'Create channel',
   'sidebar.channel.createFailed': 'The channel was not created',
   /**
    * 이름 규칙. **`Invalid name` 이 아니라 무엇이 되는지를 적는다** — 이 저장소의
@@ -2216,6 +2218,7 @@ export const en = {
   /** `{name}` 은 사람이 지은 섹션 이름이다 — 번역하지 않는다. */
   'sidebar.menu.section': 'Section: {name}',
   'sidebar.menu.sectionClear': 'Remove from section',
+  'sidebar.menu.sectionMove': 'Move to section…',
   'sidebar.menu.sectionNew': 'New section…',
   'sidebar.menu.star': 'Add to favorites',
   'sidebar.menu.unarchive': 'Unarchive',
@@ -2266,6 +2269,7 @@ export const en = {
   'sidebar.section.deleted': 'Deleted section {name} · {count} channels moved to Channels',
   'sidebar.section.undo': 'Undo',
   'sidebar.section.empty': 'Move channels here',
+  'sidebar.section.pickLabel': 'Move #{name} to',
   'sidebar.section.create': 'Create section',
   'sidebar.section.createPlaceholder': 'New section name · Enter to create · Esc to cancel',
   'sidebar.section.nameTaken': 'A section with that name already exists',
