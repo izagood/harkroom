@@ -247,7 +247,9 @@ async function checkMergeByChain(
       detail: { number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: lease!.id, grantedBy: approval.approvedBy, approvalId: approval.id, ghUser: approval.ghUser, ...(approval.ghUser ? {} : { ghUserChosenBy: 'operator' }), relaxChecks: approval.relaxChecks, ciOverride: approval.ciOverride, causeByHuman: causeByHuman(lease!) },
     });
     // 계정을 비운 승인(G1)은 오퍼레이터가 고른다 — 이 줄을 쓰는 지금은 아직 서버가 그 계정을 모른다.
-    const ghShown = approval.ghUser ?? 'operator-chosen';
+    // 본문(한국어)에는 「(오퍼레이터가 고름)」, 번역 표지 인자는 언어 중립 값을 그대로 둔다(번역 키는 후속).
+    const ghShown = approval.ghUser ?? '(오퍼레이터가 고름)';
+    const ghArg = approval.ghUser ?? 'operator-chosen';
     const approver = approval.ciOverride
       ? (await pool.query<{ handle: string }>(`select handle from account where id = $1`, [approval.approvedBy])).rows[0]?.handle ?? null
       : null;
@@ -263,11 +265,11 @@ async function checkMergeByChain(
         // 번역 표지(i18n P5) — 본문과 같은 값, 같은 갈래(CI 판정을 GitHub 에 맡겼나).
         ...(approval.ciOverride ? (approver ? {
           i18n: systemI18n('system.merge.approvalUsedCiOverride', {
-            repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: ghShown, approverId: approval.approvedBy,
+            repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: ghArg, approverId: approval.approvedBy,
           }),
         } : {}) : {
           i18n: systemI18n(approval.relaxChecks ? 'system.merge.approvalUsedRelaxed' : 'system.merge.approvalUsed', {
-            repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: ghShown,
+            repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: ghArg,
           }),
         }),
       },

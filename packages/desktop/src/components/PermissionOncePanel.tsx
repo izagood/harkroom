@@ -220,7 +220,7 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
                     <span className="text-fg-muted">{t('mergeOnce.account')}</span>
                     <select data-testid="merge-once-account" value={ghUser} disabled={busy || merge === null || merge === 'error'}
                       onChange={(e) => setGhUser(e.target.value)}
-                      className={`rounded-row border px-1.5 py-0.5 font-mono text-meta ${ghUser ? 'border-border bg-surface-sunken text-fg' : 'border-dashed border-warning-border bg-transparent text-warning'}`}>
+                      className="rounded-row border border-border bg-surface-sunken px-1.5 py-0.5 font-mono text-meta text-fg">
                       <option value="">{t('mergeOnce.pick')}</option>
                       {sorted.map((a) => (
                         <option key={a.login} value={a.login} disabled={reach[a.login] === 'no'}>{a.login + mark(a.login)}</option>

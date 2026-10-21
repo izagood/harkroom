@@ -139,10 +139,12 @@ describe('PermissionOncePanel', () => {
     const select = await screen.findByTestId('merge-once-account') as HTMLSelectElement;
     await waitFor(() => expect([...select.options].some((o) => o.value === 'izagood')).toBe(true));
     expect(select.value).toBe('');
-    expect(screen.getByTestId('merge-once-operator-picks').textContent).toContain('오퍼레이터가 이 저장소용 계정으로 고른다');
+    // 빈칸이 기본값이라 경고 모양(주황 점선)이 아니다 — 경고색은 reachUnknown 줄에만.
+    expect(select.className).not.toMatch(/warning|border-dashed/);
+    expect(screen.getByTestId('merge-once-operator-picks').textContent).toContain('오퍼레이터가 이 저장소용 계정을 고른다');
     fireEvent.click(screen.getByTestId('merge-once-submit'));
     await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { relaxChecks: false, number: 42, headSha: HEAD }));
-    expect((await screen.findByTestId('merge-once-approved')).textContent).toContain('오퍼레이터가 고른 계정');
+    expect((await screen.findByTestId('merge-once-approved')).textContent).toContain('계정 오퍼레이터가 고름');
     cleanup();
     render(<PermissionOncePanel message={card()} />);
     fireEvent.click(screen.getByTestId('merge-once-open'));
@@ -168,7 +170,7 @@ describe('PermissionOncePanel', () => {
     const c = setup();
     render(<PermissionOncePanel message={card({}, { reason: 'ci_not_green', failedChecks: ['test'] })} />);
     fireEvent.click(screen.getByTestId('merge-once-open'));
-    expect((await screen.findByTestId('merge-once-operator-picks')).textContent).toContain('오퍼레이터가 이 저장소용 계정으로 고른다');
+    expect((await screen.findByTestId('merge-once-operator-picks')).textContent).toContain('오퍼레이터가 이 저장소용 계정을 고른다');
     fireEvent.click(screen.getByTestId('merge-once-submit'));
     await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { relaxChecks: true, number: 42, headSha: HEAD, failedChecks: ['test'] }));
   });
