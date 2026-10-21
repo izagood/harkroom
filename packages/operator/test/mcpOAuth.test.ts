@@ -366,19 +366,22 @@ describe('MCP 서버 거절 보고(reportRejected, 2026-10-01)', () => {
     expect(await oauth.status('slack', fake.mcpUrl)).toMatchObject({ state: 'ok' });
   });
 
-  it('보고가 refresh 를 당기는 것은 이름마다 쿨다운에 한 번이다 — 거짓 보고로 토큰을 계속 돌리지 못한다', async () => {
-    // 쿨다운이 토큰 수명보다 길어야 "플래그가 지워진 뒤의 보고"를 잴 수 있다 — 이 인스턴스만 2시간.
-    oauth.close();
-    oauth = createMcpOAuth({ storePath: join(dir, 'secrets', 'mcp-oauth.json'), now: () => clock, log: (l) => logs.push(l), rejectCooldownMs: 2 * 3600_000 });
+  it('거절로 당기는 refresh 는 인증 한 번에 한 번이다 — 시간 refresh 뒤의 거절도 다시 당기지 않는다', async () => {
     await authed();
     clock += 60_000;
     expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' })).toMatchObject({ action: 'refreshed', accessToken: 'A2' });
-    // 시간 refresh 가 새 토큰을 주면 "거절로 당긴 토큰" 표시는 지워진다 — 그래도 쿨다운은 남는다.
+    // 시간 refresh 가 새 토큰을 줘도 "이 인증에서 한 번 썼다"는 남는다.
     clock += 3600_000;
     expect(await oauth.refreshDue()).toEqual({ slack: { url: fake.mcpUrl, accessToken: 'A3' } });
-    expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' })).toEqual({ action: 'ignored', reason: 'cooldown' });
     clock += 3600_000;
-    expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' })).toMatchObject({ action: 'refreshed', accessToken: 'A4' });
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-b' })).toEqual({ action: 'rejected' });
+    expect(fake.calls.refresh).toBe(2);
+    expect(await oauth.status('slack', fake.mcpUrl)).toEqual({ state: 'rejected', at: clock, agentId: 'agent-b' });
+    // 다시 인증하면 한 번이 돌아온다 — 곧바로 rejected 로 두지 않고 refresh 를 다시 당긴다.
+    // (가짜 서버는 인증마다 같은 R1 을 주므로 그 refresh 결과는 따지지 않는다.)
+    await authed();
+    clock += 60_000;
+    expect(await oauth.reportRejected('slack', { turnStartedAtMs: after(), agentId: 'agent-a' })).not.toEqual({ action: 'rejected' });
     expect(fake.calls.refresh).toBe(3);
   });
 

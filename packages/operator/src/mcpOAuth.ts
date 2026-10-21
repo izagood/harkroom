@@ -62,6 +62,13 @@ export interface McpOAuthRecord {
   updatedAt: number;
   /** 이 토큰이 **거절 보고로 당겨 받은** 것인가. 이것이 다시 거절되면 `rejected` 다. */
   refreshedOnReject?: boolean;
+  /**
+   * 사람이 인증한 뒤로 거절 보고가 refresh 를 **이미 한 번 당겼다**. 시간 refresh 는 이 표시를 지우지 않는다 —
+   * 지우는 것은 새 인증뿐이다. 그래서 거절 보고로 새 토큰을 받는 일은 인증 한 번에 한 번이다.
+   * Slack 은 같은 앱·사용자에게 살아 있는 토큰을 2개까지만 두고 넘치면 오래된 것을 회수한다 — 거절마다
+   * 새 토큰을 받으면 같은 칸을 쓰는 다른 클라이언트와 서로 밀어낸다(2026-10-21 분석: 10번 중 1번만 살렸다).
+   */
+  rejectRefreshUsed?: boolean;
   /** `rejected` 가 된 시각과 그 보고를 한 에이전트 id. 새 토큰이 들어오면 지운다. */
   rejectedAt?: number;
   rejectedBy?: string;
@@ -94,6 +101,8 @@ export interface McpOAuth {
    * - 그 턴이 **지금 토큰을 받기 전에** 떴으면(`turnStartedAtMs < updatedAt`) 옛 토큰의 늦은 보고다.
    * - 즉시 refresh 는 이름마다 `rejectCooldownMs` 에 한 번이다 — 거짓 보고로 토큰을 계속 돌리지 못한다.
    * - `rejected` 는 보고만으로 붙이지 않는다. **거절로 당겨 받은 토큰이 다시 거절됐을 때만** 붙인다.
+   * - 거절로 당기는 refresh 는 **인증 한 번에 한 번**이다(`rejectRefreshUsed`). 그 뒤 시간 refresh 로 받은
+   *   토큰이 거절돼도 다시 당기지 않고 `rejected` 로 둔다 — 사람이 다시 인증해야 한다.
    */
   reportRejected(name: string, report: { turnStartedAtMs: number; agentId: string }): Promise<McpRejectOutcome>;
   forget(name: string): Promise<void>;
@@ -299,7 +308,7 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       const { rejectedAt: _at, rejectedBy: _by, refreshedOnReject: _was, ...kept } = rec;
       const next: McpOAuthRecord = {
         ...kept,
-        ...(onReject ? { refreshedOnReject: true } : {}),
+        ...(onReject ? { refreshedOnReject: true, rejectRefreshUsed: true } : {}),
         accessToken: r.body.access_token as string,
         // 회전하지 않는 서버는 새 refresh 토큰을 안 준다 — 있던 것을 그대로 쓴다.
         refreshToken: typeof r.body.refresh_token === 'string' ? r.body.refresh_token : rec.refreshToken,
@@ -446,8 +455,8 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       if (!rec) return { action: 'ignored', reason: 'unknown' };
       if (rec.status !== 'ok') return { action: 'ignored', reason: 'not_ok' };
       if (!(report.turnStartedAtMs >= rec.updatedAt)) return { action: 'ignored', reason: 'stale' };
-      if (rec.refreshedOnReject) {
-        // 거절로 당겨 받은 토큰도 거절됐다 — refresh 로는 안 낫는다. 사람이 다시 인증해야 한다.
+      if (rec.refreshedOnReject || rec.rejectRefreshUsed) {
+        // 거절로 당겨 받은 토큰도 거절됐거나, 이 인증에서 당길 한 번을 이미 썼다 — 사람이 다시 인증해야 한다.
         const at = now();
         await update((s) => {
           const cur = s[name];
