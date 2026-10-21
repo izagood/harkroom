@@ -306,6 +306,11 @@ export interface MentionTurnDeps {
    */
   sessionMaterialized?: (harness: AgentHarness, sessionId: string, claudeConfigDir: string | null) => Promise<boolean>;
   /**
+   * 전용 제공사 경로(`providerLane.ts`) — 있으면 PTY 를 띄우기 직전에 그 턴의 base URL·키를 받아 하네스 env 에만 넣는다.
+   * 던지면 턴을 띄우지 않는다(fail-closed: 계정 로그인으로 떨어지지 않는다). 없으면 lane 이 아닌 러너다.
+   */
+  providerEnv?: (cause: string, harness: AgentHarness) => Promise<Record<string, string>>;
+  /**
    * 이 턴의 하네스 기록 파일을 알린다(비밀 보관소 D7). 멘션이 끝날 때 러너가 그 파일에서 마운트한 값을 가린다
    * (`secretLeases.ts`). claude 는 세션 jsonl, codex 는 rollout. 세션이 sqlite 인 하네스(opencode 계열)는 없다.
    */
@@ -1267,6 +1272,8 @@ export async function runMentionTurn(
     }
     turnReadonlyTools = readonlyToolList(allowlist, discovered);
   }
+  // lane 이면 그 턴의 값을 지금 받는다 — 임대는 스케줄러가 이 멘션의 첫 시도 전에 받아 두었다.
+  const providerEnv = deps.providerEnv ? await deps.providerEnv(mentionId, def.harness) : null;
   const plan = buildTurnCommand({
     harness: def.harness,
     mode: 'mention',
@@ -1296,6 +1303,7 @@ export async function runMentionTurn(
     // 연쇄 깊이의 앞 고리 — 이 턴을 띄운 멘션이다(앵커가 아니다: 앵커는 스레드 루트일 수 있다).
     causeMessageId: mentionId,
     turnId,
+    providerEnv,
   });
 
   /**

@@ -33,6 +33,7 @@ import {
   NdjsonDecoder,
   parseRequest,
   readOperatorAgentRemovePayload,
+  readOperatorAgentProviderLanePayload,
   readOperatorAgentSetPayload,
   readOperatorRegisterPayload,
   readOperatorMcpRemovePayload,
@@ -410,6 +411,16 @@ export class DaemonServer {
         if (isDaemonError(p)) return p;
         await port.set(p.baseUrl, p.agentId, p.config);
         this.log(`로컬 설정: agent=${p.agentId} @ ${p.baseUrl} 넣음`);
+        return {};
+      }
+      case 'operatorAgentProviderLaneSet': {
+        const port = this.deps.localAgents;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 로컬 설정이 배선되지 않았다');
+        const p = readOperatorAgentProviderLanePayload(req.payload);
+        if (isDaemonError(p)) return p;
+        await port.setProviderLane(p.baseUrl, p.agentId, p.lane);
+        // 주소·비밀 이름은 찍지 않는다 — 켜졌는지만.
+        this.log(`로컬 설정: agent=${p.agentId} @ ${p.baseUrl} 전용 제공사 경로 ${p.lane ? '켬' : '끔'}`);
         return {};
       }
       case 'operatorAgentRemove': {

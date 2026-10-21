@@ -10,6 +10,7 @@
  * spawn·kill·시계를 전부 주입받는다 — 결정을 프로세스 없이 재려고(`assignments.test.ts`).
  * 실제 프로세스 소유는 `runners.ts`(RunnerRegistry)가 그대로 맡는다.
  */
+import { PROVIDER_LANE_ENV, readProviderLaneConfig } from '@harkroom/shared/providerLane';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { EX_CONFIG, type RunnerExitReason } from '@harkroom/shared';
 import type { AgentDefinition, RunnerAnnounce } from '@harkroom/shared/operatorProtocol';
@@ -171,6 +172,9 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         // **늘 '0'/'1' 로 명시한다**(security F1): 러너 env 는 오퍼레이터의 process.env 위에 얹히므로(`runners.ts::withUserEnv`)
         // 거짓일 때 키를 빼면 `run` 오퍼레이터를 띄운 셸에 있던 `HARKROOM_CHROME_HOST=1` 이 그대로 새어 열린다.
         HARKROOM_CHROME_HOST: (await deps.chromeHost?.().catch(() => false)) ? '1' : '0',
+        // 전용 제공사 경로(`@harkroom/shared/providerLane`) — 켜졌는지만 싣는다. 주소·키는 턴마다 relay 로 받는다(값이 러너 env 에 살지 않게).
+        // 늘 '0'/'1' 로 명시하는 이유는 위 줄과 같다.
+        [PROVIDER_LANE_ENV]: readProviderLaneConfig(local?.providerLane) ? '1' : '0',
       };
       let result: Awaited<ReturnType<AssignmentDeps['spawn']>>;
       try {

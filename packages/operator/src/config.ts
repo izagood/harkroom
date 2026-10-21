@@ -11,12 +11,18 @@
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import type { ProviderLaneConfig } from '@harkroom/shared/providerLane';
 
 export interface LocalAgentConfig {
   /** 이 머신에서의 작업 디렉터리. 없으면 서버 정의의 `workingDirDefault`. */
   workingDir?: string;
   /** claude 계정 풀 이름(`pools.json`). 없으면 시스템 기본 로그인. */
   claudePool?: string;
+  /**
+   * 전용 제공사 경로(`@harkroom/shared/providerLane`). 있으면 이 에이전트는 계정 풀을 쓰지 않고 이 base URL 과
+   * 보관소 비밀로 돈다. 값이 아니라 이름만 적힌다. 쓰는 길은 `operatorAgentProviderLaneSet` 하나다.
+   */
+  providerLane?: ProviderLaneConfig;
 }
 
 export interface CommunityConfig {

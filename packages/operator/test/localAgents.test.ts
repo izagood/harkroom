@@ -24,6 +24,19 @@ describe('localAgents', () => {
     const list = await port.list();
     expect(list.communities).toEqual([{ baseUrl: 'https://example.com', registered: true, operatorId: null, agents: { 'a-1': { workingDir: '~/x' } } }]);
   });
+  it('전용 제공사 경로는 그 명령으로만 바뀌고, 작업 디렉터리를 고쳐도 지워지지 않는다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
+    const configPath = join(dir, 'operator.json');
+    const port = createLocalAgentsPort({ configPath, secrets: secretsWith([]), dataDir: dir, onChanged: () => {}, onRegistered: async () => {} });
+    await port.set('https://example.com', 'a-1', { workingDir: '~/x' });
+    await port.setProviderLane('https://example.com', 'a-1', { baseUrl: 'https://gateway.example', secretName: 'gw-key' });
+    // 옛 앱의 set 은 providerLane 을 모른다 — 그래도 남아야 한다.
+    await port.set('https://example.com', 'a-1', { workingDir: '~/y' });
+    const lane = { baseUrl: 'https://gateway.example', secretName: 'gw-key' };
+    expect((await port.list()).communities[0]!.agents['a-1']).toEqual({ workingDir: '~/y', providerLane: lane });
+    await port.setProviderLane('https://example.com', 'a-1', null);
+    expect((await port.list()).communities[0]!.agents['a-1']).toEqual({ workingDir: '~/y' });
+  });
   it('등록 전 커뮤니티에도 자리를 만든다 — register 가 토큰을 채우면 그대로 능력이 된다', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
     const port = createLocalAgentsPort({ configPath: join(dir, 'operator.json'), secrets: secretsWith([]), dataDir: dir, onChanged: () => {}, onRegistered: async () => {} });
