@@ -77,6 +77,11 @@ export interface TurnSecrets {
    * 쪽도 이 프로세스 안이다 — 하네스로는 여전히 안 나간다.
    */
   lookup(runnerId: string, cause: string): { leaseId: string; token: string; agentId: string } | null;
+  /**
+   * 이름으로 그 턴의 임대에 마운트한다(전용 제공사 경로, `providerLaneMount.ts`). `secret.mount` 도구와 같은 길 —
+   * 값은 임대 디렉터리 파일로만 나가고 경로만 돌려준다. 임대가 없으면 `no_lease`(재기동한 러너: R1 fail-closed).
+   */
+  mountFor(runnerId: string, cause: string, name: string): Promise<{ ok: true; path: string } | { ok: false; code: string }>;
   /** 만료된 임대의 디렉터리를 지운다. 주기적으로 부른다. */
   sweepExpired(): Promise<number>;
   /** 기동 때 한 번 — 앞 오퍼레이터가 남긴 디렉터리를 전부 지운다(그 임대는 이 프로세스가 모른다). */
@@ -309,6 +314,13 @@ export function createTurnSecrets(deps: TurnSecretsDeps): TurnSecrets {
   };
 
   return {
+    async mountFor(runnerId, cause, name) {
+      const lease = leases.get(keyOf(runnerId, cause));
+      if (!lease || lease.expiresAtMs <= now()) return { ok: false, code: 'no_lease' };
+      const out = await mount(lease, name);
+      if (out.ok) return { ok: true, path: (out.value as { path: string }).path };
+      return { ok: false, code: (out.value as { error?: { code?: string } }).error?.code ?? 'unavailable' };
+    },
     noteLease(runnerId, agentId, notice) {
       const expiresAtMs = Date.parse(notice.expiresAt);
       if (!Number.isFinite(expiresAtMs)) return;

@@ -15,7 +15,8 @@
     "./codexAccounts": "./src/codexAccounts.ts",
     "./claudeUsage": "./src/claudeUsage.ts",
     "./claudeGates": "./src/claudeGates.ts",
-    "./workspaceCleanup": "./src/workspaceCleanup.ts"
+    "./workspaceCleanup": "./src/workspaceCleanup.ts",
+    "./providerLane": "./src/providerLane.ts"
   },
   "scripts": { "test": "vitest run", "typecheck": "tsc -p ." },
   "devDependencies": {

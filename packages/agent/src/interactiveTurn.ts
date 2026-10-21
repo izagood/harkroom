@@ -49,6 +49,9 @@ const NO_RELAY_REJECTION = '이 스레드에 멘션 턴이 진행 중이지만 �
 /**
  * 멘션 턴이 시작되는 중인데(스케줄러 예약) 기다려도 등록되지 않았다. 사람 화면에 그대로 뜬다.
  */
+/** 전용 제공사 경로 에이전트의 터미널 열기 거절(security F1). 사람 화면에 그대로 뜬다 — 코드는 앞에 붙여 앱이 문장을 고를 수 있게. */
+export const PROVIDER_LANE_INTERACTIVE_REJECTION = 'interactive_unsupported: gateway 경로 에이전트는 아직 터미널 열기를 지원하지 않는다';
+
 const MENTION_STARTING_REJECTION = '이 스레드에 멘션 턴이 막 시작되는 중이다 — 잠시 뒤 다시 열어라';
 
 /**
@@ -138,6 +141,12 @@ export interface InteractiveTurnDeps {
   /** `harkroom-operator` 실행 파일 — 하네스의 harkroom MCP(`mcp-bridge`) 명령(스펙 2026-09-20 §5). */
   /** 이 머신이 Claude in Chrome 을 열 수 있는가(`RunnerConfig.chromeHost`). 생략은 거짓이다 — 멘션 턴과 같은 규칙. */
   chromeHost?: boolean;
+  /**
+   * 전용 제공사 경로(`providerLane.ts`)로 뜬 러너인가. 참이면 터미널 열기를 **모두** 거절한다(security F1, #1430) —
+   * 새 PTY 는 lane 값 없이 빈 전용 디렉터리로 떠서 로그인 화면이 나오고, 도는 멘션 턴에 붙어도 사람이 `/login` 을 칠 수
+   * 있다. 어느 쪽이든 그 디렉터리에 OAuth 가 생기면 다음 멘션 턴마다 계정과 키가 한 자식에 같이 든다(ⓒ·#374).
+   */
+  providerLane?: boolean;
   operatorBin: string;
   codexHome: string;
   /** 인터랙티브 codex 를 띄우기 직전에 활성 codex 계정으로 링크를 돌린다(`MentionTurnDeps.syncCodexAuth`). */
@@ -578,6 +587,8 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
 
   const open = async (req: InteractiveOpenRequest): Promise<InteractiveOpenResult> => {
     const key = SessionStore.threadKey(req.channelId, req.threadRootId);
+    // 붙기·새로 열기 모두 막는다(`providerLane` 주석).
+    if (deps.providerLane) throw new Error(PROVIDER_LANE_INTERACTIVE_REJECTION);
 
     // ── 분기 ①·② — 이미 도는 턴이 있으면 새 PTY 를 띄우지 않는다. 시작되는 중인 멘션 턴은
     // 분기 ③(`spawn`)이 등록 직전에 기다렸다 붙는다(`awaitMentionStart`).

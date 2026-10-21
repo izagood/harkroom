@@ -652,6 +652,44 @@ describe('계정별 CLAUDE_CONFIG_DIR 주입', () => {
   });
 });
 
+// 전용 제공사 경로(security ⓑ): 그 턴이 받은 값만, 그 하네스의 허용 목록 키로만 든다.
+describe('전용 제공사 경로 env', () => {
+  const lane = { ANTHROPIC_BASE_URL: 'https://gateway.example', ANTHROPIC_AUTH_TOKEN: 'tok-lane' };
+
+  it('claude 는 그 턴의 base URL·키를 받는다 — 부모 env 의 키는 여전히 지운다', () => {
+    const prev = process.env.ANTHROPIC_AUTH_TOKEN;
+    process.env.ANTHROPIC_AUTH_TOKEN = 'tok-parent';
+    try {
+      const withLane = buildTurnCommand({
+        ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true,
+        claudeConfigDir: '/state/claude-provider-lane', providerEnv: lane,
+      });
+      expect(withLane.env.ANTHROPIC_AUTH_TOKEN).toBe('tok-lane');
+      expect(withLane.env.ANTHROPIC_BASE_URL).toBe('https://gateway.example');
+      const without = buildTurnCommand({
+        ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true, claudeConfigDir: null,
+      });
+      expect('ANTHROPIC_AUTH_TOKEN' in without.env).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN; else process.env.ANTHROPIC_AUTH_TOKEN = prev;
+    }
+  });
+
+  it('허용 목록 밖 키는 조립을 거절한다', () => {
+    expect(() => buildTurnCommand({
+      ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true,
+      claudeConfigDir: null, providerEnv: { ...lane, ANTHROPIC_API_KEY: 'x' },
+    })).toThrow(/ANTHROPIC_API_KEY/);
+  });
+
+  it('lane 키를 모르는 하네스에는 넣지 않는다(거절)', () => {
+    expect(() => buildTurnCommand({
+      ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true,
+      claudeConfigDir: null, providerEnv: lane,
+    })).toThrow(/codex/);
+  });
+});
+
 // 오퍼레이터는 "설치됨" 이라 말하는데 러너의 PTY 는 같은 실행 파일을 못 찾아 죽던 자리다
 // (실측 2026-09-22, 앱 0.3.3 의 첫 opencode 턴). 둘이 **같은 표**를 봐야 그 갈림이 없다.
 describe('하네스를 부르는 PATH 는 한 함수에서 나온다', () => {

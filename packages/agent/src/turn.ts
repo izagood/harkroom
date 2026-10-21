@@ -8,6 +8,7 @@
 // 옮긴 것이다 — 스파이크(task-1)가 실측으로 확정했고, 초판의 추정 네 곳을 여기서 뒤집는다:
 // codex 에 `-a` 가 없다(sandbox 단독), codex MCP 는 파일이 아니라 턴별 `-c` 오버라이드,
 // claude 는 `--strict-mcp-config` 를 항상 받는다, gemini 는 이번 범위에서 미지원.
+import { providerLaneKeys } from './providerLane.js';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -134,6 +135,12 @@ export interface BuildTurnCommandOptions {
    * 러너가 그것으로 「이 턴이 쓴 글」을 가른다(`prompt.ts::ownedByTurn`). 없으면 원인과 같은 이유로 빈 문자열로 덮는다.
    */
   turnId?: string | null;
+  /**
+   * 전용 제공사 경로(`providerLane.ts`)의 그 턴 env — base URL 과 키. **그 하네스의 허용 목록 키만** 받는다
+   * (`PROVIDER_LANE_ENV_KEYS`, security ⓑ). 목록 밖 키가 오면 조립을 거절한다. 부모 env 의 denylist 는 그대로 지운 **뒤에**
+   * 얹는다 — 부모에서 오는 키는 여전히 막히고, 이 턴이 받은 값만 든다.
+   */
+  providerEnv?: Record<string, string> | null;
 }
 
 /** 멘션 턴(화면 앞에 사람이 없다)의 권한 매핑. 인터랙티브 턴은 아예 플래그를 안 준다(spec §6). */
@@ -773,6 +780,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
       claudeConfigDir: opts.harness === 'claude-code' ? opts.claudeConfigDir : null,
       causeMessageId: opts.causeMessageId ?? null,
       turnId: opts.turnId ?? null,
+      providerEnv: opts.providerEnv ?? null,
       }),
       ...(preset.mcpEnv?.(opts.extraMcpServers ?? {}) ?? {}),
     },
@@ -873,6 +881,7 @@ function childEnv(
     piHome?: string | null;
     causeMessageId: string | null;
     turnId?: string | null;
+    providerEnv?: Record<string, string> | null;
   },
 ): Record<string, string> {
   const env: Record<string, string> = {};
@@ -882,6 +891,16 @@ function childEnv(
   // 부모에 있어도 자식에는 없어야 하는 키를 뺀다(#374). 복사 뒤에 지우는 이유: 복사 루프에
   // 조건을 섞으면 '전체 상속'이라는 규칙과 그 예외가 한 줄에 엉켜 둘 다 읽기 어려워진다.
   for (const key of HARNESS_ENV_DENYLIST) delete env[key];
+  // 전용 제공사 경로(security ⓑ): 지운 **뒤에** 이 턴이 받은 값만 얹는다. 허용 목록 밖 키는 조립을 거절한다 —
+  // 조용히 버리면 lane 에이전트가 계정 로그인으로 돈다.
+  if (homes.providerEnv) {
+    const keys = providerLaneKeys(homes.harness);
+    const allowed = keys ? new Set([keys.baseUrl, keys.token]) : new Set<string>();
+    for (const [key, value] of Object.entries(homes.providerEnv)) {
+      if (!allowed.has(key)) throw new Error(`buildTurnCommand: 전용 제공사 경로가 ${homes.harness} 에 허용되지 않은 env 를 넣으려 했다: ${key}`);
+      env[key] = value;
+    }
+  }
   // PAT 을 덮어쓰던 자리였다. 이제 하네스가 서버에 닿는 길은 `mcp-bridge` 뿐이고, 브릿지가 읽는
   // 것은 러너 env 의 오퍼레이터 소켓·러너 id·secret 이다 — 여기서는 전체 상속으로 하네스까지 간다.
   // **하네스 → 브릿지 한 단은 하네스 몫이다.** claude·opencode 는 MCP 자식에 env 를 물려주지만

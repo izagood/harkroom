@@ -8,6 +8,7 @@
 // MCP 는 링크 위의 트랜스포트(`mcp.request`)로, 몇 안 되는 REST(`/agent/config` 등)는
 // `http.forward` 로 간다. 인증(오퍼레이터 토큰 + `X-Harkroom-Agent`)은 오퍼레이터가 붙인다 —
 // 그래서 이 파일에 PAT 도 URL 도 없다.
+import { PROVIDER_LANE_MOUNT_PATH } from '@harkroom/shared/providerLane';
 import type { TurnModel } from './threadModel.js';
 import type { RecallHit, RecallResult } from './memoryPin.js';
 import type { BgJob } from './bgExecutor.js';
@@ -328,6 +329,18 @@ export class HarkroomAgentClient {
     } catch {
       return 'unsupported';
     }
+  }
+
+  /**
+   * 전용 제공사 경로의 턴 마운트(`operator/src/providerLaneMount.ts`). 오퍼레이터가 직접 답한다 — 서버로 안 나간다.
+   * 판정은 `providerLane.ts` 가 한다(여기는 나를 뿐이다). 링크 오류는 던진다 — lane 턴은 비밀 없이 띄우지 않는다.
+   */
+  async mountProviderLane(cause: string): Promise<{ status: number; body: string }> {
+    const res = await this.link.request({
+      type: 'http.forward', method: 'POST', path: PROVIDER_LANE_MOUNT_PATH,
+      body: JSON.stringify({ cause }), contentType: 'application/json',
+    });
+    return { status: res.status, body: res.body };
   }
 
   async releaseTurnSlot(key: string): Promise<void> {

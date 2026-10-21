@@ -16,11 +16,13 @@
 // mentionTurn.ts::runMentionTurn 에 있다: main.ts 는 top-level await 로 접속·설정 파일
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
 // 진짜 서버에 붙으려 든다.
+import { PROVIDER_LANE_ENV } from '@harkroom/shared/providerLane';
+import { createProviderLane, ProviderLaneError } from './providerLane.js';
 import { resolveTurnModel } from './threadModel.js';
 import { idleStopRequestedAt } from './idleStop.js';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { access, readdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { loadConfig, runnerLabel } from './config.js';
@@ -47,7 +49,7 @@ import { createInteractiveManager, type InteractiveManager } from './interactive
 import { createAttentionLedger } from './attentionLedger.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
-import { claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, presentAccounts } from './claudeAccounts.js';
+import { claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, presentAccounts, type ClaudeAccount } from './claudeAccounts.js';
 import { createAccountAssigner } from './accountAssign.js';
 import { clearAccountAttention, clearAccountCredentialFailure, isAttentionActive, markAccountCredentialFailed, markAccountNeedsAttention, readAccountAttention } from '@harkroom/shared/claudeGates';
 import { syncCodexAuth } from './codexHome.js';
@@ -297,7 +299,7 @@ const [me, guide] = await (async () => {
 // 뿌리가 아직 없는 첫 기동이면 읽을 것이 없다 — 그때는 빈 목록이고 새 이름으로 만든다.
 const stateDirNames = await readdir(config.stateDir).catch(() => [] as string[]);
 const {
-  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir, cleanupBackfillPath,
+  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir, cleanupBackfillPath, providerLaneClaudeDir,
 } = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance, stateDirNames);
 
 // 뿌리 이름이 id 하나라(#850) 사람이 눈으로 찾을 길을 따로 낸다: `by-name/<handle> -> ../<뿌리>`.
@@ -341,11 +343,19 @@ const piHome = await ensurePiHome({ piHome: piHomeDir, mcpServers: startupMcp })
 // **러너는 `pools.json` 을 쓰지 않는다.** 읽기만 한다 — 그 파일의 writer 는 데몬 하나이고,
 // 두 번째 writer 가 생기면 lost update 가 조용히 난다(`daemonProtocol.ts` 머리 주석이
 // `sessions.json` 에 대해 적은 것과 같은 근거).
-const loadLane = () => loadClaudeAccountLane({
-  agentId: me.id,
-  forcedPool: process.env.HARKROOM_CLAUDE_POOL,
-  order: process.env.HARKROOM_CLAUDE_ACCOUNTS,
-});
+// 전용 제공사 경로(`providerLane.ts`, security ⓒ): 오퍼레이터가 켰으면 계정 축은 **이 에이전트 전용 디렉터리 하나**다.
+// 풀·`~/.claude` 를 읽지 않으므로 페일오버·사용량 배정·로그인 경고에 이 에이전트가 들어가지 않고, 한 자식에 OAuth 와
+// 키가 같이 드는 일이 없다. 디렉터리는 비어 있어야 정상이다(로그인이 없다) — 키는 턴마다 env 로만 든다.
+const providerLaneOn = process.env[PROVIDER_LANE_ENV] === '1';
+if (providerLaneOn) await mkdir(providerLaneClaudeDir, { recursive: true, mode: 0o700 });
+const providerLaneAccount: ClaudeAccount = { name: 'provider-lane', configDir: providerLaneClaudeDir, pool: null };
+const loadLane = async () => providerLaneOn
+  ? { pool: null, accounts: [providerLaneAccount] }
+  : loadClaudeAccountLane({
+    agentId: me.id,
+    forcedPool: process.env.HARKROOM_CLAUDE_POOL,
+    order: process.env.HARKROOM_CLAUDE_ACCOUNTS,
+  });
 const lane = await loadLane();
 const claudeAccounts = lane.accounts;
 // **이름만 적는다** — 이메일·토큰·Keychain 서비스명은 적지 않는다(PAT 규율과 같다).
@@ -368,6 +378,8 @@ const accountLane = claudeAccounts.length ? claudeAccounts : [null];
 // 만든다(값이 바뀔 때만 서버가 쓴다).
 const liveLane = createLiveAccountLane({ initial: lane, load: loadLane });
 const claudeLaneReport = () => {
+  // lane 의 전용 디렉터리는 계정이 아니다 — 서버·화면의 계정 칩에 올리지 않는다.
+  if (providerLaneOn) return { pool: null, accounts: [] };
   const now = liveLane.snapshot();
   return { pool: now.pool, accounts: now.lane.flatMap((a) => (a ? [a.name] : [])) };
 };
@@ -459,6 +471,8 @@ const bgExecutor = new BgExecutor({
   slots: { acquire: (key, o) => harkroom.acquireTurnSlot(key, o), release: (key) => harkroom.releaseTurnSlot(key) },
   stateDir: agentStateDir,
   buildPlan: async (job, sessionId, cwd) => {
+    // 백그라운드 턴은 아직 lane 값을 받지 않는다 — 키 없이 띄우지 않고 거절한다(후속).
+    if (providerLaneOn) throw new ProviderLaneError('bg_unsupported');
     const def = await harkroom.definition();
     const head = (await liveLane.current()).lane[0] ?? null;
     return buildTurnCommand({
@@ -505,6 +519,7 @@ interactive = createInteractiveManager({
   },
   operatorBin: config.operatorBin,
   chromeHost: config.chromeHost,
+  providerLane: providerLaneOn,
   relay, registry, queue: mentionQueue,
   orphanMs: config.interactiveOrphanMs,
 });
@@ -544,6 +559,11 @@ const secretLeases = createSecretLeases({
   // 오퍼레이터가 spawn 때 준다. 없으면(옛 오퍼레이터) 기록을 가리지 않는다 — 마운트도 그 오퍼레이터에는 없다.
   turnSecretsDir: process.env.HARKROOM_TURN_SECRETS_DIR ?? null,
 });
+
+// 전용 제공사 경로의 턴 값(`providerLane.ts`). 값 파일은 위 임대 디렉터리에 써지므로 기록 가리기가 그대로 그 값을 가린다(ⓔ).
+const providerLane = providerLaneOn
+  ? createProviderLane({ mount: (cause) => harkroom.mountProviderLane(cause), turnSecretsDir: process.env.HARKROOM_TURN_SECRETS_DIR ?? null })
+  : null;
 
 // 스레드 임대(서버 095). holder 는 **이 프로세스**다 — 앱 업데이트로 같은 에이전트의 옛 러너와 겹쳐 도는 동안
 // 둘을 가르는 값이라 기동마다 새로 짓는다(같은 에이전트 자격이라 계정 id 로는 못 가른다).
@@ -627,6 +647,7 @@ const scheduler = createMentionScheduler({
       turnTranscripts.set(cause, list);
     },
     secretNeedles: (cause: string) => secretLeases.needles(cause),
+    ...(providerLane ? { providerEnv: (cause: string, harness: AgentHarness) => providerLane.envFor(cause, harness) } : {}),
     harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),
     handles: ctx.handles, agentIds: ctx.agentIds, workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp,

@@ -46,7 +46,8 @@ import { createRunnerLinkServer } from './runnerLink.js';
 import { createLocalTerminalHub } from './localTerminal.js';
 import type { CommunityInstance } from './community.js';
 import { createTurnSecrets } from './turnSecrets.js';
-import { readConfig } from './config.js';
+import { communityKey, readConfig } from './config.js';
+import { createProviderLaneMount } from './providerLaneMount.js';
 import { createTurnMerge, defaultExec, ghEnv, GH_PATH } from './turnMerge.js';
 import { createTurnCommand, stripLinkOnlyFields } from './turnCommand.js';
 import { createTurnApi } from './turnApi.js';
@@ -254,6 +255,17 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     lookupLease: (runnerId, cause) => turnSecrets.lookup(runnerId, cause),
     log,
   });
+  // 전용 제공사 경로(`providerLaneMount.ts`) — 러너가 PTY 직전에 relay 로 부른다. 설정은 매번 operator.json 에서 읽는다.
+  const providerLaneMount = createProviderLaneMount({
+    laneOf: async (agentId) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      if (!c) return null;
+      const section = (await readConfig(join(appDataDir, 'operator', 'operator.json'))).communities[communityKey(c.baseUrl)];
+      return section?.agents[agentId]?.providerLane ?? null;
+    },
+    turnSecrets,
+    log,
+  });
   // 턴 파일 올리기(미리보기 PR ③). 브릿지의 `attachment.upload{path}` 를 여기서 받아 워크스페이스 안의 파일을
   // 서버 `/uploads` 로 올린다 — 모델이 바이너리를 base64 로 쓰지 않게(`turnUploads.ts`).
   const turnUploads = createTurnUploads({
@@ -303,6 +315,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       if (commanded) return commanded;
       const slot = turnSlots.maybeHandle(runnerId, req, kind);
       if (slot) return slot;
+      const laneMounted = await providerLaneMount.maybeHandle(runnerId, agentId, req, kind);
+      if (laneMounted) return laneMounted;
       const mounted = await turnSecrets.maybeHandle(runnerId, agentId, req);
       if (mounted) return mounted;
       const merged = await turnMerge.maybeHandle(runnerId, agentId, req);

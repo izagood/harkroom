@@ -10,6 +10,7 @@ import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorRegisterResu
 import { register as claimAndSave } from './cli.js';
 import { communityKey, readConfig, writeConfig, type LocalAgentConfig } from './config.js';
 import type { OperatorSecrets } from './secrets.js';
+import type { ProviderLaneConfig } from '@harkroom/shared/providerLane';
 
 export interface LocalAgentsPort {
   /**
@@ -19,6 +20,8 @@ export interface LocalAgentsPort {
   register(baseUrl: string, code: string, name?: string): Promise<OperatorRegisterResult>;
   list(): Promise<OperatorAgentsListResult>;
   set(baseUrl: string, agentId: string, config: OperatorLocalAgent): Promise<void>;
+  /** 전용 제공사 경로만 넣고 뺀다(`null`). 다른 칸은 그대로 둔다. */
+  setProviderLane(baseUrl: string, agentId: string, lane: ProviderLaneConfig | null): Promise<void>;
   remove(baseUrl: string, agentId: string): Promise<void>;
 }
 
@@ -56,7 +59,24 @@ export function createLocalAgentsPort(deps: {
       const config = await readConfig(deps.configPath);
       // 등록 전이라도 자리를 만든다 — `register` 가 토큰을 채우면 그대로 능력이 된다.
       const section = (config.communities[baseUrl] ??= { agents: {} });
-      section.agents[agentId] = { ...(cfg.workingDir ? { workingDir: cfg.workingDir } : {}), ...(cfg.claudePool ? { claudePool: cfg.claudePool } : {}) };
+      // lane 은 이 길로 바뀌지 않는다 — 옛 앱이 작업 디렉터리만 고쳐도 lane 이 지워지지 않게 있던 값을 그대로 옮긴다.
+      const lane = section.agents[agentId]?.providerLane;
+      section.agents[agentId] = {
+        ...(cfg.workingDir ? { workingDir: cfg.workingDir } : {}),
+        ...(cfg.claudePool ? { claudePool: cfg.claudePool } : {}),
+        ...(lane ? { providerLane: lane } : {}),
+      };
+      await writeConfig(deps.configPath, config);
+      deps.onChanged(baseUrl, section.agents);
+    },
+    async setProviderLane(rawUrl, agentId, lane) {
+      const baseUrl = communityKey(rawUrl);
+      const config = await readConfig(deps.configPath);
+      const section = (config.communities[baseUrl] ??= { agents: {} });
+      const entry = { ...(section.agents[agentId] ?? {}) };
+      if (lane) entry.providerLane = { baseUrl: lane.baseUrl, secretName: lane.secretName };
+      else delete entry.providerLane;
+      section.agents[agentId] = entry;
       await writeConfig(deps.configPath, config);
       deps.onChanged(baseUrl, section.agents);
     },

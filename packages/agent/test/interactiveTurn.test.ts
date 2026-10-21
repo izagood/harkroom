@@ -168,6 +168,25 @@ const waitReleased = async (registry: TurnRegistry, ms = 2000): Promise<void> =>
   }
 };
 
+describe('전용 제공사 경로 — 터미널 열기 거절(security F1)', () => {
+  it('새로 열기를 거절하고 PTY 를 띄우지 않는다', async () => {
+    const h = await makeHarness();
+    const manager = createInteractiveManager({ ...h.deps, providerLane: true });
+    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', cols: 100, rows: 30 }))
+      .rejects.toThrow(/^interactive_unsupported: /);
+    expect(h.plans).toHaveLength(0);
+    expect(h.registry.get(KEY)).toBeUndefined();
+  });
+
+  it('도는 턴에 붙기도 거절한다 — 그 TUI 에서 /login 을 칠 수 있다', async () => {
+    const h = await makeHarness();
+    h.registry.register(KEY, { kind: 'mention', sessionId: 'relay-mention' } as never);
+    const manager = createInteractiveManager({ ...h.deps, providerLane: true });
+    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', cols: 100, rows: 30 }))
+      .rejects.toThrow(/interactive_unsupported/);
+  });
+});
+
 describe('#337 분기 ③ — 아무 턴도 없으면 새로 연다', () => {
   it('세션을 만들고(uuid 발급) 인터랙티브 plan 으로 spawn 하며, exit 을 기다리지 않고 돌아온다', async () => {
     const h = await makeHarness();

@@ -26,6 +26,7 @@
  * writer 가 되면 lost update 가 조용히 난다. daemon 이 소유하는 것은 **프로세스**이지
  * 세션이 아니다.
  */
+import { readProviderLaneConfig, type ProviderLaneConfig } from './providerLane.js';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 
 import { DAEMON_PROTOCOL_VERSION } from './daemonEndpoint.js';
@@ -112,6 +113,8 @@ export const REQUEST_TYPES = [
   'operatorAgentsList',
   'operatorAgentSet',
   'operatorAgentRemove',
+  // 전용 제공사 경로(provider lane, `providerLane.ts`). base URL·비밀 **이름**만 오간다 — 값은 보관소에 있다. 사람이 앱에서만 정한다.
+  'operatorAgentProviderLaneSet',
   // 등록(스펙 §3). 앱이 발급한 코드를 이 머신의 오퍼레이터에 넘기면 오퍼레이터가 claim 을 대신
   // 하고 곧바로 그 커뮤니티에 붙는다 — 사람이 터미널을 열거나 오퍼레이터를 다시 띄울 일이 없다.
   'operatorRegister',
@@ -657,7 +660,24 @@ export interface OperatorAgentsListResult {
    */
   communities: { baseUrl: string; registered: boolean; operatorId: string | null; agents: Record<string, OperatorLocalAgent> }[];
 }
-export interface OperatorLocalAgent { workingDir?: string; claudePool?: string }
+export interface OperatorLocalAgent {
+  workingDir?: string;
+  claudePool?: string;
+  /** 전용 제공사 경로(`providerLane.ts`). `operatorAgentSet` 은 이 칸을 건드리지 않는다 — `operatorAgentProviderLaneSet` 만 쓴다. */
+  providerLane?: ProviderLaneConfig;
+}
+
+/** `operatorAgentProviderLaneSet` — `lane: null` 이면 뺀다. */
+export function readOperatorAgentProviderLanePayload(payload: unknown): { baseUrl: string; agentId: string; lane: ProviderLaneConfig | null } | DaemonError {
+  const p = payload as { baseUrl?: unknown; agentId?: unknown; lane?: unknown } | null;
+  if (!p || typeof p.baseUrl !== 'string' || !p.baseUrl || typeof p.agentId !== 'string' || !p.agentId) {
+    return daemonError('bad-payload', 'operatorAgentProviderLaneSet 에는 baseUrl·agentId 가 필요하다');
+  }
+  if (p.lane === null) return { baseUrl: p.baseUrl, agentId: p.agentId, lane: null };
+  const lane = readProviderLaneConfig(p.lane);
+  if (!lane) return daemonError('bad-payload', 'lane 은 { baseUrl: https URL, secretName: 비밀 이름 } 이어야 한다');
+  return { baseUrl: p.baseUrl, agentId: p.agentId, lane };
+}
 
 export function readOperatorAgentSetPayload(payload: unknown): { baseUrl: string; agentId: string; config: OperatorLocalAgent } | DaemonError {
   const p = payload as { baseUrl?: unknown; agentId?: unknown; config?: unknown } | null;
