@@ -130,6 +130,56 @@ describe('스레드 스크롤', () => {
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' }));
   });
 
+  /**
+   * 입력창이 자라 **목록 상자가 줄 때**(2026-10-21). 줄 수·내용은 그대로라 위의 효과들은 안 돈다 — 상자 크기를
+   * 지켜보는 `ResizeObserver` 만 안다. jsdom 에는 없어 가짜를 놓고 콜백을 손으로 부른다.
+   */
+  describe('입력창이 자라 목록 상자가 줄면', () => {
+    const observers: { cb: () => void; els: Element[] }[] = [];
+    beforeEach(() => {
+      observers.length = 0;
+      vi.stubGlobal('ResizeObserver', class {
+        entry: { cb: () => void; els: Element[] };
+        constructor(cb: () => void) { this.entry = { cb, els: [] }; observers.push(this.entry); }
+        observe(el: Element) { this.entry.els.push(el); }
+        disconnect() { this.entry.els = []; }
+      });
+    });
+    afterEach(() => { vi.unstubAllGlobals(); });
+
+    /** 상자가 줄어 바닥이 아래로 밀린 상태(바닥에서 120px)를 세우고 그 상자의 관찰자를 부른다. */
+    const shrink = (el: HTMLElement, scrolledUp: boolean) => {
+      Object.defineProperty(el, 'scrollHeight', { configurable: true, value: 2000 });
+      Object.defineProperty(el, 'clientHeight', { configurable: true, value: 380 });
+      Object.defineProperty(el, 'scrollTop', { configurable: true, writable: true, value: scrolledUp ? 0 : 1500 });
+      for (const o of observers) if (o.els.includes(el)) o.cb();
+    };
+
+    it('바닥에 붙어 있었으면 그리기 전에 다시 바닥으로 간다', async () => {
+      render(<ThreadPanel />);
+      const list = screen.getByTestId('thread-scroll');
+      await waitFor(() => expect(observers.some((o) => o.els.includes(list))).toBe(true));
+      const scrollIntoView = spyScroll();
+      shrink(list, false);
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    });
+
+    it('위를 읽는 중이면 건드리지 않는다', async () => {
+      render(<ThreadPanel />);
+      const list = screen.getByTestId('thread-scroll');
+      // 사람이 위로 올린 것: 바닥(1500)에서 0 으로. 「고정」은 위로 움직였을 때만 풀린다(`onListScroll`).
+      lookUp(list);
+      (list as unknown as { scrollTop: number }).scrollTop = 1500;
+      fireEvent.scroll(list);
+      (list as unknown as { scrollTop: number }).scrollTop = 0;
+      fireEvent.scroll(list);
+      await waitFor(() => expect(observers.some((o) => o.els.includes(list))).toBe(true));
+      const scrollIntoView = spyScroll();
+      shrink(list, true);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    });
+  });
+
   it('다른 스레드로 옮기면 다시 바닥에서 시작한다', async () => {
     render(<ThreadPanel />);
     // 앞 스레드에서 위를 보던 상태. 상자는 스레드가 바뀌어도 같은 DOM 이라 그대로 남는다.
