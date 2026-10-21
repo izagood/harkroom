@@ -269,6 +269,21 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    testWidgets('취소선은 글자를 옅게, 줄을 1.5 로 — 한글은 줄이 ㅗ·ㅜ 가로획과 겹친다(designer f1)', (tester) async {
+      await tester.pumpWidget(host(const MarkdownBody('앞 ~~취소~~ 뒤')));
+      TextStyle? strike;
+      for (final rich in tester.widgetList<RichText>(find.byType(RichText))) {
+        rich.text.visitChildren((span) {
+          if (span is TextSpan && span.text == '취소') strike = span.style;
+          return true;
+        });
+      }
+      const k = HarkroomTokens.light;
+      expect(strike!.decoration, TextDecoration.lineThrough);
+      expect(strike!.decorationThickness, 1.5);
+      expect(strike!.color, k.fgMuted);
+    });
+
     testWidgets('맨 주소는 보이는 그대로라 바로 연다', (tester) async {
       final opened = <Uri>[];
       await tester.pumpWidget(host(MarkdownBody(

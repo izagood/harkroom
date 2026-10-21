@@ -393,7 +393,8 @@ export function MessageBody({
    */
   const withEmphasis = (node: ReactNode, e: Emphasis, key: string): ReactNode => {
     let out = node;
-    if (e.strike) out = <s data-testid="md-strike">{out}</s>;
+    // 글자를 옅게 + 줄 1.5px(#1428 designer f1) — 한글은 줄이 ㅗ·ㅜ 가로획과 겹쳐 1px 이면 보통 글처럼 읽힌다. 입력창·모바일과 같은 값.
+    if (e.strike) out = <s data-testid="md-strike" className="text-fg-muted decoration-[1.5px]">{out}</s>;
     if (e.em) out = <em data-testid="md-em">{out}</em>;
     if (e.strong) out = <strong className="font-semibold" data-testid="md-strong">{out}</strong>;
     return <Fragment key={key}>{out}</Fragment>;

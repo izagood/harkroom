@@ -120,6 +120,9 @@ describe('강조가 강조로 그려진다', () => {
     expect(screen.getByTestId('md-strong').textContent).toBe('굵게');
     expect(screen.getByTestId('md-em').textContent).toBe('기울임');
     expect(screen.getByTestId('md-strike').textContent).toBe('취소');
+    // 한글 취소선(#1428 designer f1): 글자를 옅게, 줄 1.5px — 입력창·모바일과 같은 값.
+    expect(screen.getByTestId('md-strike').className).toContain('text-fg-muted');
+    expect(screen.getByTestId('md-strike').className).toContain('decoration-[1.5px]');
     // 굵기만 필요하면 font-bold 로 끝나지만, 그러면 스크린리더에 아무것도 전달되지 않는다.
     expect(screen.getByTestId('md-strong').tagName).toBe('STRONG');
     expect(bodyText()).toBe('굵게 와 기울임 과 취소');

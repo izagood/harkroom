@@ -9,6 +9,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { Strikethrough } from '@lezer/markdown';
 import { tags } from '@lezer/highlight';
+import { clean } from '../lib/systemText';
 
 /**
  * 입력창 편집기(입력창 개편 P1, 결정 1 = CodeMirror 6).
@@ -145,7 +146,8 @@ function buildMarks(view: EditorView): DecorationSet {
         if (node.name === 'Link') {
           const url = node.node.getChild('URL');
           if (url) {
-            const title = state.doc.sliceString(url.from, url.to);
+            // 방향 바꿈·제어 문자는 지운다(#1431 security n1) — 그대로 두면 주소 안의 RLO 가 마우스 올림 글을 뒤집어 보인다.
+            const title = clean(state.doc.sliceString(url.from, url.to));
             items.push(Decoration.mark({ attributes: { title } }).range(node.from, node.to));
           }
         }
