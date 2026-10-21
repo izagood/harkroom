@@ -1,0 +1,259 @@
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
+import { EditorState, RangeSetBuilder, type Extension } from '@codemirror/state';
+import {
+  Decoration, EditorView, ViewPlugin, keymap, placeholder as cmPlaceholder,
+  type DecorationSet, type ViewUpdate,
+} from '@codemirror/view';
+import { history, historyKeymap, defaultKeymap } from '@codemirror/commands';
+import { markdown } from '@codemirror/lang-markdown';
+import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
+import { Strikethrough } from '@lezer/markdown';
+import { tags } from '@lezer/highlight';
+
+/**
+ * 입력창 편집기(입력창 개편 P1, 결정 1 = CodeMirror 6).
+ *
+ * ## 원문은 마크다운 그대로다
+ *
+ * 문서는 **문자열 하나**이고 서식은 그 위에 입힌 장식이다. 그래서 쓴 글 = 보낸 글 = 에이전트가
+ * 읽는 글이다. 멘션 후보·예약·보냄 취소·붙여넣기는 모두 그 문자열과 커서 위치에 서 있으므로
+ * (`Composer.tsx`), 이 편집기는 그쪽에 **textarea 와 같은 손잡이**(`ComposerTextBox`)를 준다 —
+ * 값·선택 범위·`setSelectionRange`·`focus`. 그 위의 기능은 편집기가 바뀐 줄 모른다.
+ *
+ * ## 기호는 커서가 닿은 구간에서만 보인다 (결정 2)
+ *
+ * `**굵게**` 의 `**` 는 커서가 그 굵은 구간 밖에 있으면 숨기고, 안에 들어오면 옅게 보인다.
+ * 숨긴 기호도 문서에는 남아 있다 — 지우거나 고치려면 커서를 그 구간에 넣으면 된다.
+ */
+
+/** textarea 를 흉내 내는 손잡이 — `Composer` 의 옛 `ref.current` 자리에 그대로 들어간다. */
+export interface ComposerTextBox {
+  readonly value: string;
+  readonly selectionStart: number;
+  readonly selectionEnd: number;
+  setSelectionRange(start: number, end: number): void;
+  focus(): void;
+}
+
+/** 열쇠 처리기에 넘기는 것. React 의 KeyboardEvent 에서 `Composer` 가 쓰던 부분만 있다. */
+export interface ComposerKeyEvent {
+  key: string;
+  code: string;
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  isComposing: boolean;
+  preventDefault(): void;
+  currentTarget: ComposerTextBox;
+}
+
+export interface ComposerPasteEvent {
+  clipboardData: DataTransfer;
+  preventDefault(): void;
+  currentTarget: ComposerTextBox;
+}
+
+interface Props {
+  value: string;
+  placeholder?: string;
+  autoFocus?: boolean;
+  /** 보이는 최소 줄 수. 내용이 늘면 `maxHeight` 까지 자란다(결정 8). */
+  rows?: number;
+  ariaExpanded?: boolean;
+  ariaControls?: string;
+  ariaActiveDescendant?: string;
+  className?: string;
+  onChange(value: string, caret: number): void;
+  onSelect?(value: string, caret: number): void;
+  onKeyDown?(e: ComposerKeyEvent): void;
+  onPaste?(e: ComposerPasteEvent): void;
+}
+
+const mdHighlight = HighlightStyle.define([
+  { tag: tags.strong, fontWeight: '700' },
+  { tag: tags.emphasis, fontStyle: 'italic' },
+  { tag: tags.strikethrough, textDecoration: 'line-through' },
+  { tag: tags.link, class: 'cm-md-link' },
+  { tag: tags.url, class: 'cm-md-url' },
+  { tag: tags.monospace, class: 'cm-md-code' },
+  { tag: tags.quote, class: 'cm-md-quote' },
+  { tag: tags.processingInstruction, class: 'cm-md-mark' },
+]);
+
+/** 숨기거나 옅게 보일 기호 노드. 이름은 `@lezer/markdown` 의 것이다. */
+const MARK_NODES = new Set(['EmphasisMark', 'CodeMark', 'StrikethroughMark', 'LinkMark', 'QuoteMark', 'ListMark']);
+/** 기호를 품은 구간 노드. 커서가 이 구간에 닿으면 기호를 보인다. */
+const SPAN_NODES = new Set(['StrongEmphasis', 'Emphasis', 'Strikethrough', 'InlineCode', 'Link', 'Blockquote']);
+
+const hiddenMark = Decoration.replace({});
+const faintMark = Decoration.mark({ class: 'cm-md-mark' });
+const codeLine = Decoration.line({ class: 'cm-md-codeblock' });
+
+function touches(state: EditorState, from: number, to: number): boolean {
+  return state.selection.ranges.some((r) => r.from <= to && r.to >= from);
+}
+
+function buildMarks(view: EditorView): DecorationSet {
+  const { state } = view;
+  // 줄 장식은 범위 장식보다 먼저, 모두 시작 위치 순으로 넣어야 한다(RangeSetBuilder 계약).
+  const items: { from: number; to: number; deco: Decoration }[] = [];
+  for (const { from, to } of view.visibleRanges) {
+    syntaxTree(state).iterate({
+      from, to,
+      enter: (node) => {
+        if (node.name === 'FencedCode') {
+          for (let pos = node.from; pos <= node.to;) {
+            const line = state.doc.lineAt(pos);
+            items.push({ from: line.from, to: line.from, deco: codeLine });
+            pos = line.to + 1;
+          }
+          return;
+        }
+        if (!MARK_NODES.has(node.name)) return;
+        // 목록 기호(`- `·`1. `)는 늘 보인다 — 숨기면 목록인지 알 수 없다. 옅게만 한다.
+        if (node.name === 'ListMark') {
+          items.push({ from: node.from, to: node.to, deco: faintMark });
+          return;
+        }
+        const parent = node.node.parent;
+        const span = parent && SPAN_NODES.has(parent.name) ? parent : null;
+        // 인용 기호는 그 줄에 커서가 있을 때 보인다(인용 구간 전체가 아니라).
+        const show = span
+          ? (span.name === 'Blockquote'
+            ? touches(state, state.doc.lineAt(node.from).from, state.doc.lineAt(node.from).to)
+            : touches(state, span.from, span.to))
+          : true;
+        items.push({ from: node.from, to: node.to, deco: show ? faintMark : hiddenMark });
+      },
+    });
+  }
+  items.sort((a, b) => a.from - b.from || (a.deco === codeLine ? -1 : 0) - (b.deco === codeLine ? -1 : 0));
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const it of items) builder.add(it.from, it.to, it.deco);
+  return builder.finish();
+}
+
+const liveMarks = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+  constructor(view: EditorView) { this.decorations = buildMarks(view); }
+  update(u: ViewUpdate) {
+    /*
+      **조합 중에는 장식을 다시 짜지 않는다.** 조합 중인 글자 둘레의 DOM 을 장식이 바꾸면
+      입력기가 붙잡고 있던 자리를 잃어 글자가 튀거나 두 번 들어간다(CM6 도 조합 둘레를
+      보호하지만, 기호를 숨기고 보이는 것은 바로 그 자리의 글자 수를 바꾼다).
+    */
+    if (u.view.composing) return;
+    if (u.docChanged || u.selectionSet || u.viewportChanged || syntaxTree(u.startState) !== syntaxTree(u.state)) {
+      this.decorations = buildMarks(u.view);
+    }
+  }
+}, { decorations: (v) => v.decorations });
+
+export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function ComposerEditor(props, ref) {
+  const host = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  // 처리기는 렌더마다 바뀐다 — 편집기는 한 번만 만들므로 최신 것을 ref 로 본다.
+  const latest = useRef(props);
+  latest.current = props;
+  // 바깥에서 값을 넣는 중에는 onChange 를 되돌려 보내지 않는다(제어 값의 메아리).
+  const syncing = useRef(false);
+
+  const box = useRef<ComposerTextBox>({
+    get value() { return viewRef.current?.state.doc.toString() ?? ''; },
+    get selectionStart() { return viewRef.current?.state.selection.main.from ?? 0; },
+    get selectionEnd() { return viewRef.current?.state.selection.main.to ?? 0; },
+    setSelectionRange(start, end) {
+      const v = viewRef.current;
+      if (!v) return;
+      const len = v.state.doc.length;
+      v.dispatch({ selection: { anchor: Math.min(start, len), head: Math.min(end, len) }, scrollIntoView: true });
+    },
+    focus() { viewRef.current?.focus(); },
+  });
+  useImperativeHandle(ref, () => box.current, []);
+
+  useLayoutEffect(() => {
+    const extensions: Extension[] = [
+      history(),
+      EditorView.lineWrapping,
+      markdown({ extensions: [Strikethrough] }),
+      syntaxHighlighting(mdHighlight),
+      liveMarks,
+      EditorView.contentAttributes.of({ 'aria-multiline': 'true', role: 'textbox' }),
+      EditorView.domEventHandlers({
+        keydown: (e) => {
+          const handler = latest.current.onKeyDown;
+          if (!handler) return false;
+          handler({
+            key: e.key, code: e.code, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey,
+            altKey: e.altKey, isComposing: e.isComposing,
+            preventDefault: () => e.preventDefault(),
+            currentTarget: box.current,
+          });
+          return e.defaultPrevented;
+        },
+        paste: (e) => {
+          const handler = latest.current.onPaste;
+          if (!handler || !e.clipboardData) return false;
+          handler({ clipboardData: e.clipboardData, preventDefault: () => e.preventDefault(), currentTarget: box.current });
+          return e.defaultPrevented;
+        },
+      }),
+      keymap.of([...historyKeymap, ...defaultKeymap]),
+      EditorView.updateListener.of((u) => {
+        if (syncing.current) return;
+        const caret = u.state.selection.main.head;
+        if (u.docChanged) latest.current.onChange(u.state.doc.toString(), caret);
+        else if (u.selectionSet) latest.current.onSelect?.(u.state.doc.toString(), caret);
+      }),
+    ];
+    if (props.placeholder) extensions.push(cmPlaceholder(props.placeholder));
+    const view = new EditorView({
+      parent: host.current!,
+      state: EditorState.create({ doc: props.value, extensions }),
+    });
+    viewRef.current = view;
+    if (props.autoFocus) view.focus();
+    return () => { view.destroy(); viewRef.current = null; };
+    // 자리표시 글은 처음 한 번만 — 바뀌면 다시 만든다.
+  }, [props.placeholder]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 바깥(보내기·되돌리기·⌘E 등)에서 바뀐 값을 편집기에 옮긴다.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const cur = view.state.doc.toString();
+    if (cur === props.value) return;
+    syncing.current = true;
+    try {
+      const len = props.value.length;
+      const sel = view.state.selection.main;
+      view.dispatch({
+        changes: { from: 0, to: cur.length, insert: props.value },
+        selection: { anchor: Math.min(sel.anchor, len), head: Math.min(sel.head, len) },
+      });
+    } finally {
+      syncing.current = false;
+    }
+  }, [props.value]);
+
+  useEffect(() => {
+    const el = viewRef.current?.contentDOM;
+    if (!el) return;
+    const set = (k: string, v: string | undefined) => (v === undefined ? el.removeAttribute(k) : el.setAttribute(k, v));
+    set('aria-expanded', props.ariaExpanded === undefined ? undefined : String(props.ariaExpanded));
+    set('aria-controls', props.ariaControls);
+    set('aria-activedescendant', props.ariaActiveDescendant);
+  }, [props.ariaExpanded, props.ariaControls, props.ariaActiveDescendant]);
+
+  const rows = props.rows ?? 2;
+  return (
+    <div
+      ref={host}
+      data-testid="composer-editor"
+      className={`composer-cm ${props.className ?? ''}`}
+      style={{ ['--composer-rows' as string]: rows }}
+    />
+  );
+});
