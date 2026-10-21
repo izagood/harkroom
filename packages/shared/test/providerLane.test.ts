@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeProviderBaseUrl, providerLaneFailureCode, readProviderLaneConfig } from '../src/providerLane.js';
 import { readOperatorAgentProviderLanePayload } from '../src/daemonProtocol.js';
+import { isRunnerLinkNotice } from '../src/runnerLink.js';
 
 describe('normalizeProviderBaseUrl', () => {
   it('https 는 받고 끝 슬래시를 뗀다 — 경로 접두는 남긴다', () => {
@@ -33,5 +34,14 @@ describe('providerLaneFailureCode', () => {
   it('목록의 코드는 그대로, 나머지는 unknown', () => {
     expect(providerLaneFailureCode('not_granted')).toBe('not_granted');
     for (const bad of ['http_502', 'https://gateway.example', '', undefined, 3]) expect(providerLaneFailureCode(bad)).toBe('unknown');
+  });
+});
+
+describe('providerLane.result 통지', () => {
+  it('ok 와 허용 목록 코드만 받는다', () => {
+    expect(isRunnerLinkNotice({ type: 'providerLane.result', ok: true })).toBe(true);
+    expect(isRunnerLinkNotice({ type: 'providerLane.result', ok: false, code: 'not_granted' })).toBe(true);
+    expect(isRunnerLinkNotice({ type: 'providerLane.result', ok: false, code: 'https://gateway.example' })).toBe(false);
+    expect(isRunnerLinkNotice({ type: 'providerLane.result' })).toBe(false);
   });
 });

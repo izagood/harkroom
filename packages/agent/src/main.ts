@@ -570,7 +570,11 @@ const secretLeases = createSecretLeases({
 
 // 전용 제공사 경로의 턴 값(`providerLane.ts`). 값 파일은 위 임대 디렉터리에 써지므로 기록 가리기가 그대로 그 값을 가린다(ⓔ).
 const providerLane = providerLaneOn
-  ? createProviderLane({ mount: (cause) => harkroom.mountProviderLane(cause), turnSecretsDir: process.env.HARKROOM_TURN_SECRETS_DIR ?? null })
+  ? createProviderLane({
+    mount: (cause) => harkroom.mountProviderLane(cause),
+    turnSecretsDir: process.env.HARKROOM_TURN_SECRETS_DIR ?? null,
+    report: (ok, code) => relay.notifyProviderLaneResult(ok, code),
+  })
   : null;
 
 // 스레드 임대(서버 095). holder 는 **이 프로세스**다 — 앱 업데이트로 같은 에이전트의 옛 러너와 겹쳐 도는 동안

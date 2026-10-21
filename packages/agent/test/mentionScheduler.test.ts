@@ -619,6 +619,27 @@ describe('mentionScheduler 승인 관문', () => {
     expect(발화[0]!.body).not.toContain('gateway.example');
   });
 
+  it('provider_lane 첫 통지가 네트워크로 실패하면 다시 올리지 않는다 — 두 번 가지 않게(n8)', async () => {
+    let calls = 0;
+    const scheduler = createMentionScheduler({
+      harkroom: {
+        markRead: async (ids) => ids.length,
+        post: async () => 1,
+        fail: async () => { calls += 1; throw new Error('MCP error -32001: Request timed out'); },
+      },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [null],
+      runMentionTurn: async () => { throw new ProviderLaneError('no_lease'); },
+      buildTurnDeps: () => ({}) as never,
+      hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
+      startedAtMs: 0,
+    });
+    await scheduler.admit(batchOf([{ entryId: 10, messageId: 'm-lane-net' }]), ctx);
+    await scheduler.drain();
+    expect(calls).toBe(1);
+  });
+
   it('옛 서버가 provider_lane 표지를 거절하면 표지 없이 한 번 더 올린다', async () => {
     const 발화: { code?: string }[] = [];
     const scheduler = createMentionScheduler({

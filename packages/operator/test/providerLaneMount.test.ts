@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PROVIDER_LANE_MOUNT_PATH } from '@harkroom/shared/providerLane';
 import type { RunnerLinkRequest } from '@harkroom/shared/runnerLink';
-import { createProviderLaneMount } from '../src/providerLaneMount.js';
+import { createProviderLaneMount, createProviderLaneStatusBook } from '../src/providerLaneMount.js';
 
 const req = (body: unknown, path = PROVIDER_LANE_MOUNT_PATH): RunnerLinkRequest =>
   ({ type: 'http.forward', id: 'r1', method: 'POST', path, body: JSON.stringify(body), contentType: 'application/json' });
@@ -59,5 +59,32 @@ describe('providerLaneMount', () => {
 
   it('cause 가 없으면 400', async () => {
     expect(await make().m.maybeHandle('run-1', 'a-1', req({}), 'relay')).toMatchObject({ status: 400 });
+  });
+});
+
+describe('마지막 키 받기 장부(2a)', () => {
+  it('에이전트마다 마지막 결과 하나 — 성공은 코드 없이, 목록 밖 코드는 unknown', () => {
+    let t = Date.parse('2026-10-21T00:00:00Z');
+    const book = createProviderLaneStatusBook(() => t);
+    book.note('a-1', false, 'no_lease');
+    t += 1000;
+    book.note('a-2', false, 'weird' as never);
+    book.note('a-1', true);
+    expect(book.snapshot()).toEqual({
+      'a-1': { at: '2026-10-21T00:00:01.000Z', ok: true },
+      'a-2': { at: '2026-10-21T00:00:01.000Z', ok: false, code: 'unknown' },
+    });
+  });
+
+  it('마운트 실패도 적는다 — 러너가 통지를 못 보내고 죽는 경우', async () => {
+    const status = createProviderLaneStatusBook();
+    const m = createProviderLaneMount({
+      laneOf: async () => lane,
+      turnSecrets: { mountFor: async () => ({ ok: false, code: 'not_granted' }) },
+      status,
+      log: () => {},
+    });
+    await m.maybeHandle('run-1', 'a-1', req({ cause: 'm1' }), 'relay');
+    expect(status.snapshot()['a-1']).toMatchObject({ ok: false, code: 'not_granted' });
   });
 });

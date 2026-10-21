@@ -17,6 +17,7 @@
  * 토큰)뿐이다. 오퍼레이터는 첫 줄의 `role` 로 갈라 받는다. 그 뒤 줄들은 양쪽 다 릴레이 프레임
  * 한 개씩이다.
  */
+import { PROVIDER_LANE_FAILURE_CODES, type ProviderLaneFailureCode } from './providerLane.js';
 import type { RelayRunnerFrame, RelayServerFrame } from './index.js';
 import type { OperatorToServerFrame, ServerToOperatorFrame } from './operatorProtocol.js';
 
@@ -185,7 +186,11 @@ export type RunnerLinkNotice =
   | { type: 'runner.pollStopped'; holding: number[]; done?: number[] }
   | McpAuthRejectedNotice
   | SecretLeaseNotice
-  | SecretLeaseEndedNotice;
+  | SecretLeaseEndedNotice
+  | ProviderLaneResultNotice;
+
+/** API 키 연결(provider lane)의 그 턴 키 받기 결과(`providerLane.ts::ProviderLaneStatus`). 코드는 허용 목록만 — 밖이면 통지째 버린다. */
+export type ProviderLaneResultNotice = { type: 'providerLane.result'; ok: boolean; code?: ProviderLaneFailureCode };
 
 /**
  * 비밀 보관소(PR 3): 러너가 멘션을 집으며 받은 **턴 임대**를 오퍼레이터에 맡긴다.
@@ -245,6 +250,9 @@ export function isRunnerLinkNotice(value: unknown): value is RunnerLinkNotice {
   const str = (v: unknown, max = 200) => typeof v === 'string' && v.length > 0 && v.length <= max;
   if (m.type === 'secret.lease') return str(m.cause) && str(m.leaseId) && str(m.token) && str(m.expiresAt);
   if (m.type === 'secret.leaseEnded') return str(m.cause);
+  if (m.type === 'providerLane.result') {
+    return typeof m.ok === 'boolean' && (m.code === undefined || (PROVIDER_LANE_FAILURE_CODES as readonly unknown[]).includes(m.code));
+  }
   if (m.type !== 'runner.pollStopped') return false;
   const ids = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === 'number' && Number.isInteger(x));
   return ids(m.holding) && (m.done === undefined || ids(m.done));

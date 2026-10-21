@@ -42,6 +42,8 @@ export interface ProviderLaneDeps {
   mount(cause: string): Promise<{ status: number; body: string }>;
   /** 오퍼레이터의 턴 비밀 루트(`HARKROOM_TURN_SECRETS_DIR`). 값 파일은 이 아래에만 있어야 한다. */
   turnSecretsDir: string | null;
+  /** 그 턴 결과를 오퍼레이터에 알린다(relay 통지, `notifyProviderLaneResult`). 없으면 안 알린다. */
+  report?(ok: boolean, code?: ProviderLaneFailureCode): void;
 }
 
 /** 이 하네스의 lane 키를 고른다. 없으면 null. */
@@ -50,30 +52,41 @@ export function providerLaneKeys(harness: AgentHarness): { baseUrl: string; toke
 }
 
 export function createProviderLane(deps: ProviderLaneDeps): { envFor(cause: string, harness: AgentHarness): Promise<Record<string, string>> } {
-  return {
-    async envFor(cause, harness) {
-      const keys = providerLaneKeys(harness);
-      if (!keys) throw new ProviderLaneError('harness_unsupported');
-      if (!deps.turnSecretsDir) throw new ProviderLaneError('no_turn_secrets_dir');
-      let res: { status: number; body: string };
-      try { res = await deps.mount(cause); } catch { throw new ProviderLaneError('operator_unreachable'); }
-      let body: Partial<ProviderLaneMountResult> & { error?: { code?: unknown } } = {};
-      try { body = JSON.parse(res.body) as typeof body; } catch { /* 아래에서 */ }
-      if (res.status !== 200) {
-        throw new ProviderLaneError(typeof body.error?.code === 'string' ? body.error.code : `http_${res.status}`);
-      }
-      if (!body.lane) throw new ProviderLaneError('lane_unset');
-      const baseUrl = normalizeProviderBaseUrl(body.lane.baseUrl);
-      if (!baseUrl) throw new ProviderLaneError('bad_base_url');
-      // 값 파일은 오퍼레이터의 턴 비밀 루트 아래에만 있어야 한다 — 다른 자리를 읽으면 엉뚱한 파일이 키가 된다.
-      const path = typeof body.lane.path === 'string' ? body.lane.path : '';
-      const real = await realpath(path).catch(() => null);
-      const root = await realpath(deps.turnSecretsDir).catch(() => null);
-      const rel = real && root ? relative(root, real) : '..';
-      if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new ProviderLaneError('bad_path');
-      const value = (await readFile(real!, 'utf8').catch(() => '')).replace(/\r?\n$/, '');
-      if (!value || /[\r\n\0]/.test(value)) throw new ProviderLaneError('bad_value');
-      return { [keys.baseUrl]: baseUrl, [keys.token]: value };
-    },
+  // 결과를 알린다(2a). 성공·실패 모두 — 다음 성공이 「마지막 시도」 빨간 줄을 지운다.
+  const envFor = async (cause: string, harness: AgentHarness): Promise<Record<string, string>> => {
+    try {
+      const env = await prepare(cause, harness);
+      deps.report?.(true);
+      return env;
+    } catch (err) {
+      if (err instanceof ProviderLaneError) deps.report?.(false, err.code);
+      throw err;
+    }
   };
+  return { envFor };
+
+  async function prepare(cause: string, harness: AgentHarness): Promise<Record<string, string>> {
+    const keys = providerLaneKeys(harness);
+    if (!keys) throw new ProviderLaneError('harness_unsupported');
+    if (!deps.turnSecretsDir) throw new ProviderLaneError('no_turn_secrets_dir');
+    let res: { status: number; body: string };
+    try { res = await deps.mount(cause); } catch { throw new ProviderLaneError('operator_unreachable'); }
+    let body: Partial<ProviderLaneMountResult> & { error?: { code?: unknown } } = {};
+    try { body = JSON.parse(res.body) as typeof body; } catch { /* 아래에서 */ }
+    if (res.status !== 200) {
+      throw new ProviderLaneError(typeof body.error?.code === 'string' ? body.error.code : `http_${res.status}`);
+    }
+    if (!body.lane) throw new ProviderLaneError('lane_unset');
+    const baseUrl = normalizeProviderBaseUrl(body.lane.baseUrl);
+    if (!baseUrl) throw new ProviderLaneError('bad_base_url');
+    // 값 파일은 오퍼레이터의 턴 비밀 루트 아래에만 있어야 한다 — 다른 자리를 읽으면 엉뚱한 파일이 키가 된다.
+    const path = typeof body.lane.path === 'string' ? body.lane.path : '';
+    const real = await realpath(path).catch(() => null);
+    const root = await realpath(deps.turnSecretsDir).catch(() => null);
+    const rel = real && root ? relative(root, real) : '..';
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new ProviderLaneError('bad_path');
+    const value = (await readFile(real!, 'utf8').catch(() => '')).replace(/\r?\n$/, '');
+    if (!value || /[\r\n\0]/.test(value)) throw new ProviderLaneError('bad_value');
+    return { [keys.baseUrl]: baseUrl, [keys.token]: value };
+  }
 }

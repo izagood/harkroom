@@ -28,6 +28,16 @@ import type { ThreadClaim, ThreadClaims } from './threadClaims.js';
 import { looksLikeGate, PromptNotDeliveredError } from './pty.js';
 
 /**
+ * 서버가 도구 입력을 검증에서 거절했나(MCP `-32602` Invalid params). 옛 서버가 모르는 실패 표지를 받으면 이 모양이다 —
+ * 이것만 「표지 없이 다시」로 간다. 연결이 끊겨 답을 못 받은 것과 가르는 이유는 provider_lane 분기 주석.
+ */
+export function isInvalidToolInput(err: unknown): boolean {
+  if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === -32602) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /-32602|invalid arguments|invalid enum/i.test(message);
+}
+
+/**
  * `tried` 번 실패한 entry 가 다음 시도까지 쉬는 시간(ms).
  *
  * 여기 걸린 트레이드오프: 짧으면 일시적 실패(서버 재시작, 순간적 네트워크 단절)에서 빨리
@@ -663,8 +673,12 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           reason: '데스크톱의 에이전트 설정에서 API 주소·키를 확인해야 한다 — 같은 설정으로는 다시 실패한다',
         };
         await deps.harkroom.fail(mention.channelId, providerLaneNotice(err.code), anchor, { ...opts, code: 'provider_lane', laneCode: err.code })
-          // 옛 서버는 이 표지를 입력에서 거절한다 — 표지 없이 한 번 더 올린다(사람에게는 닿아야 한다).
-          .catch(() => deps.harkroom.fail(mention.channelId, providerLaneNotice(err.code), anchor, opts))
+          // 옛 서버는 이 표지를 입력 검증에서 거절한다 — 그때만 표지 없이 한 번 더 올린다(사람에게는 닿아야 한다).
+          // 네트워크 실패 등은 다시 올리지 않는다: 첫 글이 실제로는 올라갔을 수 있어 두 번 간다(security n8).
+          .catch((e: unknown) => {
+            if (!isInvalidToolInput(e)) throw e;
+            return deps.harkroom.fail(mention.channelId, providerLaneNotice(err.code), anchor, opts);
+          })
           .catch((e: unknown) => {
             console.error(`  ${mention.id} API 키 연결 실패 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
           });

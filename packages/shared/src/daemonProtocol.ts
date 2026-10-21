@@ -26,7 +26,7 @@
  * writer 가 되면 lost update 가 조용히 난다. daemon 이 소유하는 것은 **프로세스**이지
  * 세션이 아니다.
  */
-import { readProviderLaneConfig, type ProviderLaneConfig } from './providerLane.js';
+import { readProviderLaneConfig, type ProviderLaneConfig, type ProviderLaneStatus } from './providerLane.js';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 
 import { DAEMON_PROTOCOL_VERSION } from './daemonEndpoint.js';
@@ -659,6 +659,11 @@ export interface OperatorAgentsListResult {
    * 아직 모르면 null: 한 번도 붙지 못한 옛 설정이다.
    */
   communities: { baseUrl: string; registered: boolean; operatorId: string | null; agents: Record<string, OperatorLocalAgent> }[];
+  /**
+   * API 키 연결 에이전트의 마지막 키 받기 결과(에이전트 id → 상태, `providerLane.ts::ProviderLaneStatus`). 오퍼레이터 메모리에만
+   * 있어 재기동하면 비어 있다. 옛 오퍼레이터는 싣지 않는다.
+   */
+  laneStatus?: Record<string, ProviderLaneStatus>;
 }
 export interface OperatorLocalAgent {
   workingDir?: string;

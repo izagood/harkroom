@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  ensureOpencodeHome, opencodeConfigFile, opencodeDirs, OPENCODE_READONLY_AGENT, providerLaneModelId, stripJsonc, toOpencodeMcp,
+  ensureOpencodeHome, opencodeConfigFile, opencodeDirs, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
 } from '../src/opencodeHome.js';
 import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
 
@@ -175,7 +175,7 @@ describe('lane 러너의 opencode 홈', () => {
     const f = await fixture();
     await ensureOpencodeHome({
       opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
-      providerLane: { model: 'harkroom-lane/MiniMax-M2.7' },
+      providerLane: { model: 'harkroom-lane/example-model' },
     });
     const text = await readFile(opencodeConfigFile(f.home), 'utf8');
     const cfg = JSON.parse(text);
@@ -184,17 +184,36 @@ describe('lane 러너의 opencode 홈', () => {
       npm: '@ai-sdk/anthropic',
       name: 'Harkroom provider lane',
       options: { baseURL: '{env:HARKROOM_PROVIDER_BASE_URL}/v1', apiKey: '{env:HARKROOM_PROVIDER_TOKEN}' },
-      models: { 'MiniMax-M2.7': { name: 'MiniMax-M2.7' } },
+      models: { 'example-model': { name: 'example-model' } },
     });
     // 다른 provider(무료 티어·사람 로그인)로 돌지 않는다.
     expect(cfg.enabled_providers).toEqual(['harkroom-lane']);
-    expect(cfg.model).toBe('harkroom-lane/MiniMax-M2.7');
-    expect(cfg.agent[OPENCODE_READONLY_AGENT].model).toBe('harkroom-lane/MiniMax-M2.7');
+    expect(cfg.model).toBe('harkroom-lane/example-model');
+    expect(cfg.agent[OPENCODE_READONLY_AGENT].model).toBe('harkroom-lane/example-model');
     expect(text).not.toContain('gateway.example');
     expect(cfg.mcp).toEqual({ harkroom: expect.objectContaining({ type: 'local' }) });
     expect(cfg.mcp.gmail).toBeUndefined();
     // 사람 로그인을 링크하지 않는다(ⓒ).
     expect(await lstat(join(opencodeDirs(f.home).XDG_DATA_HOME, 'opencode', 'auth.json')).catch(() => null)).toBeNull();
+  });
+
+  // n6: 설정 파일은 에이전트당 하나다. 동시 턴이 서로 다른 모델이면 나중 턴이 앞 턴의 모델을 지우지 않아야 한다.
+  it('lane 모델 목록은 쌓인다 — 앞 턴의 모델이 남고, 상한을 넘으면 오래된 것부터 빠진다', async () => {
+    const f = await fixture();
+    const write = (model: string) => ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData, providerLane: { model },
+    });
+    await write('harkroom-lane/model-a');
+    await write('harkroom-lane/model-b');
+    let cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    expect(Object.keys(cfg.provider['harkroom-lane'].models)).toEqual(['model-a', 'model-b']);
+    expect(cfg.model).toBe('harkroom-lane/model-b');
+    for (let i = 0; i < PROVIDER_LANE_MODEL_KEEP + 2; i += 1) await write(`harkroom-lane/m-${i}`);
+    cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    const ids = Object.keys(cfg.provider['harkroom-lane'].models);
+    expect(ids).toHaveLength(PROVIDER_LANE_MODEL_KEEP);
+    expect(ids.at(-1)).toBe(`m-${PROVIDER_LANE_MODEL_KEEP + 1}`);
+    expect(ids).not.toContain('model-a');
   });
 
   it('lane 이 아니던 때 남은 로그인 **링크만** 뗀다 — 사람 파일은 그대로', async () => {
@@ -221,7 +240,7 @@ describe('lane 러너의 opencode 홈', () => {
   });
 
   it('모델 이름에 `{env:}`·`{file:}` 가 섞이면 받지 않는다 — opencode 가 본문 전체에서 바꿔 넣는다', () => {
-    expect(providerLaneModelId('harkroom-lane/MiniMax-M2.7')).toBe('MiniMax-M2.7');
+    expect(providerLaneModelId('harkroom-lane/example-model')).toBe('example-model');
     expect(providerLaneModelId('harkroom-lane/{env:HARKROOM_PROVIDER_TOKEN}')).toBeNull();
     expect(providerLaneModelId('harkroom-lane/{file:/etc/passwd}')).toBeNull();
     expect(providerLaneModelId('harkroom-lane/')).toBeNull();

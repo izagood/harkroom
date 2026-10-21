@@ -82,3 +82,15 @@ describe('ProviderLaneError', () => {
     expect(new ProviderLaneError('no_lease').code).toBe('no_lease');
   });
 });
+
+describe('providerLane 결과 통지(2a)', () => {
+  it('성공은 ok, 실패는 접힌 코드로 알린다 — 실패해도 던지는 것은 그대로', async () => {
+    const t = await setup();
+    const seen: unknown[] = [];
+    const good = createProviderLane({ mount: ok({ baseUrl: 'https://gateway.example', path: t.path }), turnSecretsDir: t.secretsDir, report: (o, c) => seen.push([o, c]) });
+    await good.envFor('m1', 'claude-code');
+    const bad = createProviderLane({ mount: async () => ({ status: 502, body: JSON.stringify({ error: { code: 'https://x' } }) }), turnSecretsDir: t.secretsDir, report: (o, c) => seen.push([o, c]) });
+    await expect(bad.envFor('m1', 'claude-code')).rejects.toBeInstanceOf(ProviderLaneError);
+    expect(seen).toEqual([[true, undefined], [false, 'unknown']]);
+  });
+});
