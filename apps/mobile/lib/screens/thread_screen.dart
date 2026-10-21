@@ -460,13 +460,13 @@ class _ThreadScreenState extends State<ThreadScreen> {
                     onInserted: () => setState(() {}),
                   ),
                   Expanded(
-                    child: TextField(
+                    // 채널 작성칸과 같은 자라는 칸이다([composerField]).
+                    child: composerField(
                       key: const Key('thread-composer'),
+                      context: context,
                       controller: _composer,
                       focusNode: _composerFocus,
                       onChanged: (_) => setState(() {}),
-                      minLines: 1,
-                      maxLines: 5,
                       decoration: composerDecoration(context, t.threadReplyHint),
                     ),
                   ),

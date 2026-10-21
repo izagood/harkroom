@@ -304,6 +304,59 @@ InputDecoration composerDecoration(BuildContext context, String hint) {
   );
 }
 
+/// 작성칸이 자랄 수 있는 키의 몫 — 키보드 위 남은 높이의 40%(입력창 자동 높이, 2026-10-21).
+///
+/// 옛 규칙은 `maxLines: 5` 였다. 다섯 줄은 길게 쓰는 글에 너무 낮아 쓰는 내내 칸 안을 위아래로
+/// 굴려야 했고, 줄 수로 못박으면 화면이 큰 기기에서도 똑같이 낮다. 그래서 줄이 아니라 **남은
+/// 높이**로 상한을 잡는다. 40% 인 이유: 나머지 60% 에 대화가 남아야 무엇에 답하는지 보면서 쓴다.
+const double composerGrowShare = 0.4;
+
+/// 작성칸 글자 칸의 최대 키(px). 키보드가 오르내리면 [MediaQuery] 가 바뀌어 다시 잰다.
+///
+/// **[context] 는 화면 Scaffold 의 바깥 것이어야 한다**(채널·스레드 화면 State 의 context). 채널·스레드
+/// Scaffold 는 키보드만큼 몸통을 줄이면서 그 안쪽 [MediaQuery] 의 `viewInsets` 를 0 으로 지운다 —
+/// 안쪽 context 로 재면 키보드가 없는 것으로 보여 상한이 화면 전체의 40% 가 된다.
+///
+/// 한 줄 칸보다 작게는 내려가지 않는다 — 가로 화면에서 키보드가 화면 대부분을 덮어도 칸이
+/// 한 줄은 지킨다(그보다 작으면 쓰는 글자가 잘린다).
+double composerMaxHeight(BuildContext context) {
+  final mq = MediaQuery.of(context);
+  final free = mq.size.height - mq.viewInsets.bottom - mq.padding.top - mq.padding.bottom;
+  return (free * composerGrowShare).clamp(composerMinHeight, double.infinity);
+}
+
+/// 한 줄 작성칸의 대략 키 — [composerDecoration] 의 위아래 여백 10+10 에 한 줄(약 24)을 더한 값.
+const double composerMinHeight = 44;
+
+/// 채널·스레드 작성칸이 같이 쓰는 **자라는 글자 칸.** 한 줄에서 시작해 줄이 늘면 위로 자라고
+/// ([ComposerPill] 이 화면 아래에 붙어 있으므로 키가 늘면 위로 커진다), [composerMaxHeight] 를
+/// 넘으면 그때부터 칸 안에서 굴러간다. 커서 줄은 [TextField] 가 스스로 보이게 굴린다.
+///
+/// `maxLines: null` + 바깥 상한이 요점이다 — `maxLines` 에 숫자를 주면 상한이 줄 수가 된다.
+Widget composerField({
+  required Key key,
+  // 화면 Scaffold 바깥의 context — [composerMaxHeight] 의 주석.
+  required BuildContext context,
+  required TextEditingController controller,
+  required FocusNode focusNode,
+  required ValueChanged<String> onChanged,
+  required InputDecoration decoration,
+}) {
+  return ConstrainedBox(
+    constraints: BoxConstraints(maxHeight: composerMaxHeight(context)),
+    child: TextField(
+      key: key,
+      controller: controller,
+      focusNode: focusNode,
+      onChanged: onChanged,
+      minLines: 1,
+      maxLines: null,
+      textInputAction: TextInputAction.newline,
+      decoration: decoration,
+    ),
+  );
+}
+
 /// 떠 있는 입력창 알약(하단 네비 D5, 2026-10-14). 채널·스레드가 같은 것을 쓴다.
 ///
 /// 탭 바와 같은 바탕·그림자·테두리라 아래 막대와 한 묶음으로 읽힌다. 좌우 여백은 탭 바와 같은 12,
