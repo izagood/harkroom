@@ -30,17 +30,26 @@ export const COMPOSER_MAX_H = 'max-h-[min(40vh,30rem)]';
  */
 export function fitComposerHeight(el: HTMLTextAreaElement): void {
   const prevTop = el.scrollTop;
+  /*
+   * 접는 동안 **감싸는 칸의 키를 붙잡는다.** 안 붙잡으면 칸이 바닥 키로 접힌 그 순간 위의 메시지
+   * 목록이 그만큼 늘고, 브라우저가 목록의 `scrollTop` 을 늘어난 상자의 최대값으로 깎는다. 곧바로
+   * 키를 되돌려 목록이 원래 크기로 돌아오면 `ResizeObserver` 는 **크기가 안 바뀌었으니** 아무 말도
+   * 안 하고, 바닥에 붙어 있던 목록이 입력창이 큰 만큼 위로 밀린 채 남는다(WebKit 탐침에서 266px).
+   */
+  const holder = el.parentElement;
+  if (holder) holder.style.minHeight = `${holder.offsetHeight}px`;
   el.style.height = 'auto';
   // 아직 배치되지 않은 칸(숨은 창·접힌 패널)은 0 을 잰다. 그 값을 적으면 키 0 으로 굳으니 비워 둔다 —
   // `rows` 가 정하는 바닥 키로 서고, 다음 글 변화나 폭 변화에 다시 잰다.
   if (el.scrollHeight === 0) {
     el.style.height = '';
-    return;
+  } else {
+    // scrollHeight 는 테두리를 빼고 잰다. 상자가 border-box 라 테두리만큼 더해 줘야 마지막 줄이
+    // 1~2px 잘려 굴림막대가 서는 일이 없다.
+    const border = el.offsetHeight - el.clientHeight;
+    el.style.height = `${el.scrollHeight + border}px`;
+    const atEnd = el.selectionStart === el.value.length && el.selectionEnd === el.value.length;
+    el.scrollTop = atEnd ? el.scrollHeight : prevTop;
   }
-  // scrollHeight 는 테두리를 빼고 잰다. 상자가 border-box 라 테두리만큼 더해 줘야 마지막 줄이
-  // 1~2px 잘려 굴림막대가 서는 일이 없다.
-  const border = el.offsetHeight - el.clientHeight;
-  el.style.height = `${el.scrollHeight + border}px`;
-  const atEnd = el.selectionStart === el.value.length && el.selectionEnd === el.value.length;
-  el.scrollTop = atEnd ? el.scrollHeight : prevTop;
+  if (holder) holder.style.minHeight = '';
 }

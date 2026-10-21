@@ -46,6 +46,23 @@ describe('fitComposerHeight', () => {
     expect(el.style.height).toBe('');
   });
 
+  it('감싸는 칸의 키는 접는 동안만 붙잡고 끝나면 놓는다 — 목록 scrollTop 이 깎이지 않게', () => {
+    const el = box({ content: 300 });
+    const holder = document.createElement('div');
+    holder.appendChild(el);
+    Object.defineProperty(holder, 'offsetHeight', { configurable: true, get: () => 310 });
+    const seen: string[] = [];
+    const desc = Object.getOwnPropertyDescriptor(CSSStyleDeclaration.prototype, 'height');
+    Object.defineProperty(el.style, 'height', {
+      configurable: true,
+      get: () => desc?.get?.call(el.style) as string,
+      set: (v: string) => { seen.push(holder.style.minHeight); desc?.set?.call(el.style, v); },
+    });
+    fitComposerHeight(el);
+    expect(seen[0]).toBe('310px');
+    expect(holder.style.minHeight).toBe('');
+  });
+
   it('상한은 창 높이의 40% 와 30rem 중 작은 쪽', () => {
     expect(COMPOSER_MAX_H).toBe('max-h-[min(40vh,30rem)]');
   });
