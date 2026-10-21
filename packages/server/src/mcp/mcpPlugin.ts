@@ -77,6 +77,10 @@ import { downscaleImage, DOWNSCALE_READ_MAX_BYTES, tryAcquireDownscaleSlot } fro
 // slug 문법과 거절 문구는 services/memory.ts 에 있다 — 사람용 REST(accountRoutes)도 같은 것을 쓴다.
 import { isValidSlug, kindRefusal, looksLikeThreadState, MEMORY_SLUG_HINT, THREAD_NOTE_HINT } from '../services/memory.js';
 import { getThreadNote, MAX_THREAD_NOTE_LENGTH, setThreadNote, threadRootChannel } from '../services/threadNote.js';
+import {
+  BG_MAX_WRITES, claimBgJob, completeBgJob, getBgJob, recordBgChange, releaseBgWrite, reserveBgWrite,
+} from '../services/bgJobs.js';
+import { withWriteOrigin } from '../services/writeOrigin.js';
 import { listGrantedSecrets } from '../services/secretAccess.js';
 import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../services/secretLeakGuard.js';
 import type { AgentPresence } from './presence.js';
@@ -95,6 +99,15 @@ import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissi
 const MODEL_ARG = z.string().min(1).max(MODEL_ID_MAX).optional();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** 백그라운드 회차가 쓸 수 있는 도구(설계 5절). 이 밖은 서버가 거절한다. */
+const BG_ALLOWED_TOOLS = new Set([
+  'memory.get', 'memory.list', 'memory.search', 'memory.set', 'memory.archive', 'memory.merge',
+  'thread.note', 'message.read', 'bg.complete',
+]);
+/** 그중 기억을 바꾸는 것 — 회차당 상한(20)을 센다. */
+const BG_WRITE_TOOLS = new Set(['memory.set', 'memory.archive', 'memory.merge']);
+/** cause 헤더의 백그라운드 꼴 `bg:<jobId>`. */
+const BG_CAUSE_RE = /^bg:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
 /** 미리보기 제목을 파일명으로 — 받은 파일이 무엇인지 보이게. 경로 성분·제어문자는 `displayName` 이 한 번 더 지운다. */
 function slugFilename(title: string): string {
@@ -363,6 +376,8 @@ function buildMcpServer(
   commandFiles: CommandFileDigest[] | null = null,
   /** 이 요청을 낸 턴의 id(`TURN_ID_HEADER`). 발화 도구가 `postMessage` 에 넘겨 `meta.turnId` 로 남는다. */
   turnId: string | null = null,
+  /** 백그라운드 회차(cause `bg:<jobId>`, 오퍼레이터를 거친 요청만). 있으면 서버 허용 목록이 걸린다(BG1). */
+  bgJobId: string | null = null,
 ): McpServer {
   const server = new McpServer({ name: 'harkroom', version: '0.1.0' });
   /** S3 상태성 경고용 — 요약을 생략한 쓰기는 있던 요약을 유지하므로 그것으로 판정한다. 읽기 횟수는 세지 않는다. */
@@ -412,6 +427,76 @@ function buildMcpServer(
         }
         return run(...a);
       });
+    };
+  }
+
+  /**
+   * 백그라운드 회차의 서버 쪽 범위(G1 · BG1, 설계 5절). 하네스 플래그(dontAsk + allowedTools)가 1차 장치이고, 이것이
+   * **러너가 뚫려도 서버에서 막는** 2차 장치다 — 사람이 보지 않는 턴이라 둘 다 둔다. 모든 도구를 등록 자리에서 감싼다
+   * (leakGuard 와 같은 이유: 새 도구가 생겨도 빠지지 않는다).
+   * - 허용 목록 밖 도구는 거절한다. 회차가 running·같은 계정인지 매 호출 본다(닫힌 회차의 세션으로는 아무것도 못 한다).
+   * - message.read·thread.note 는 그 회차 입력 스레드로만, thread.note 는 읽기만.
+   * - 기억 쓰기: core 금지·지우기 금지(보관을 쓴다)·회차당 20건(원자 예약). 바뀐 것은 bg_job_change 에 남긴다.
+   * 모든 요청에서: 쓰기의 출처(회차·턴)를 이전 판 기록에 싣는다(`writeOrigin.ts`).
+   */
+  {
+    const register = server.registerTool.bind(server) as (...a: unknown[]) => unknown;
+    (server as unknown as { registerTool: (...a: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, handler: unknown) => {
+      const run = handler as (...a: unknown[]) => Promise<unknown>;
+      const toolName = String(name);
+      return register(name, config, async (...a: unknown[]) => withWriteOrigin({ runId: bgJobId, turnId }, async () => {
+        if (!bgJobId) return run(...a);
+        const refused = (code: string, message: string) => jsonResult({ error: { code, message } });
+        if (!BG_ALLOWED_TOOLS.has(toolName)) return refused('bg_tool_not_allowed', `백그라운드 회차에서는 ${toolName} 을 쓸 수 없다`);
+        const job = await getBgJob(pool, bgJobId);
+        if (!job || job.accountId !== account.id || job.status !== 'running') {
+          return refused('bg_job_not_running', '이 백그라운드 회차는 이미 닫혔거나 이 계정의 것이 아니다');
+        }
+        const args = (a[0] ?? {}) as Record<string, unknown>;
+        const threads = new Set(job.input.threadIds ?? []);
+        if (toolName === 'message.read' || toolName === 'thread.note') {
+          if (typeof args.threadRootId !== 'string' || !threads.has(args.threadRootId)) {
+            return refused('bg_thread_not_in_input', '이 회차의 입력 스레드만 읽을 수 있다');
+          }
+          if (toolName === 'thread.note' && args.body !== undefined) return refused('bg_note_read_only', '백그라운드 회차에서 스레드 메모는 읽기만 한다');
+          return run(...a);
+        }
+        if (toolName === 'bg.complete') return run(...a);
+        if (!BG_WRITE_TOOLS.has(toolName)) return run(...a);
+        const slug = String(toolName === 'memory.merge' ? args.into : args.slug);
+        if (slug === 'core' || (Array.isArray(args.from) && args.from.includes('core'))) {
+          return refused('bg_core_forbidden', '백그라운드 회차는 core 를 쓰지 못한다 — 매 턴 실리는 자리다');
+        }
+        if (toolName === 'memory.set' && args.value === null) return refused('bg_delete_forbidden', '백그라운드 회차는 기억을 지우지 않는다 — memory.archive 로 보관해라');
+        const before = await pool.query<{ updated_at: Date }>(`select updated_at from agent_memory where account_id = $1 and slug = $2`, [account.id, slug]);
+        // merge 는 into 하나 + 보관하는 from 수만큼 센다(security F1 — 한 건으로 세면 상한이 10배 풀린다).
+        const cost = toolName === 'memory.merge' && Array.isArray(args.from)
+          ? 1 + new Set(args.from.filter((f): f is string => typeof f === 'string' && f !== slug)).size
+          : 1;
+        if (!(await reserveBgWrite(pool, bgJobId, cost))) return refused('bg_write_limit', `이 회차의 기억 쓰기 상한(${BG_MAX_WRITES})에 닿았다 — 남은 것은 다음 회차에 맡기고 bg.complete 로 끝내라`);
+        // 핸들러가 던져도 예약은 돌려준다(security n1).
+        let res: { content?: { type: string; text?: string }[] } | undefined;
+        let failed = true;
+        try {
+          res = await run(...a) as { content?: { type: string; text?: string }[] };
+          try { failed = Boolean((JSON.parse(res.content?.[0]?.text ?? '{}') as { error?: unknown }).error); } catch { /* 모양을 모르면 실패로 본다 */ }
+        } finally {
+          if (failed) await releaseBgWrite(pool, bgJobId, cost);
+        }
+        if (failed) return res;
+        const after = await pool.query<{ updated_at: Date }>(`select updated_at from agent_memory where account_id = $1 and slug = $2`, [account.id, slug]);
+        const op = toolName === 'memory.archive' ? 'archive' : toolName === 'memory.merge' ? 'merge' : before.rowCount ? 'update' : 'create';
+        await recordBgChange(pool, bgJobId, slug, op, after.rows[0]?.updated_at ?? null);
+        // 합치기는 from 을 보관한다 — 되돌리기(BG4)가 그것도 되살리도록 따로 적는다.
+        if (toolName === 'memory.merge' && Array.isArray(args.from)) {
+          for (const f of args.from) {
+            if (typeof f !== 'string' || f === slug) continue;
+            const fr = await pool.query<{ updated_at: Date }>(`select updated_at from agent_memory where account_id = $1 and slug = $2`, [account.id, f]);
+            await recordBgChange(pool, bgJobId, f, 'archive', fr.rows[0]?.updated_at ?? null);
+          }
+        }
+        return res;
+      }));
     };
   }
 
@@ -1772,6 +1857,42 @@ function buildMcpServer(
     return jsonResult({ ok: true, ...warn });
   });
 
+  // bg.claim · bg.complete — 백그라운드 회차(G1 · BG1, services/bgJobs.ts). claim 은 **러너만**: 오퍼레이터를 거쳤고 턴 표지(원인·턴 id)가
+  // 없는 요청이다 — 하네스 안의 턴은 늘 턴 id 를 싣는다. complete 는 러너(실패·시한)와 그 회차의 턴(결과 요약)이 부른다.
+  server.registerTool('bg.claim', {
+    description: '러너 전용 — 이 에이전트의 백그라운드 일감 하나를 집는다(03~07 KST 창, 스위치가 켜졌을 때만). 턴 안에서는 거절된다',
+  }, async () => {
+    if (account.kind !== 'agent' || !operatorId || cause || turnId || bgJobId) {
+      return jsonResult({ error: { code: 'runner_only', message: 'bg.claim 은 러너만 부른다' } });
+    }
+    const r = await claimBgJob(pool, account.id);
+    if (!r.job) return jsonResult({ job: null, reason: r.reason });
+    return jsonResult({ job: { id: r.job.id, kind: r.job.kind, day: r.job.day, input: r.job.input } });
+  });
+
+  server.registerTool('bg.complete', {
+    description: '백그라운드 회차를 끝낸다 — status(done|skipped|failed)와 한 줄 summary(무엇을 남겼나, 또는 「없음」과 그 사유). 그 회차의 턴과 러너만 부른다',
+    inputSchema: {
+      jobId: z.string().uuid(),
+      status: z.enum(['done', 'skipped', 'failed']),
+      summary: z.string().max(500).optional(),
+      error: z.string().max(200).optional(),
+      tokens: z.number().int().min(0).optional(),
+      durationMs: z.number().int().min(0).optional(),
+    },
+  }, async ({ jobId, status, summary, error, tokens, durationMs }) => {
+    // 그 회차의 턴이면 자기 회차만, 러너면(턴 표지 없음) 자기 계정 회차를. 일반 턴은 못 닫는다.
+    const runner = !!operatorId && !cause && !turnId && !bgJobId;
+    if (account.kind !== 'agent' || (!runner && bgJobId !== jobId.toLowerCase())) {
+      return jsonResult({ error: { code: 'not_your_job', message: '이 회차를 닫을 수 없다' } });
+    }
+    const r = await completeBgJob(pool, account.id, jobId, {
+      status, summary: summary ?? null, error: error ?? null, tokens: tokens ?? null, durationMs: durationMs ?? null,
+    });
+    if (r !== 'ok') return jsonResult({ error: { code: r, message: r === 'not_running' ? '이미 닫힌 회차다' : '그런 회차가 없다' } });
+    return jsonResult({ ok: true });
+  });
+
   // thread.note — 스레드 메모(메모리 재설계 S1, services/threadNote.ts). 그 스레드의 진행 상태를 적는 자리이고,
   // 러너가 그 스레드의 턴에만 싣는다. body 를 안 주면 읽기, 문자열이면 덮어쓰기, null 이면 지우기.
   server.registerTool('thread.note', {
@@ -2526,12 +2647,15 @@ export async function registerMcp(
     */
     const rawCause = req.headers[CAUSE_HEADER];
     const cause = typeof rawCause === 'string' && UUID_RE.test(rawCause) ? rawCause : null;
+    // 백그라운드 회차(BG1) — 오퍼레이터를 거친 요청만 믿는다. 이 꼴은 권한을 넓히지 않고 좁히기만 한다(허용 목록).
+    const bgMatch = req.operator && typeof rawCause === 'string' ? BG_CAUSE_RE.exec(rawCause) : null;
+    const bgJobId = bgMatch ? bgMatch[1]!.toLowerCase() : null;
     // 오퍼레이터를 거친 요청의 헤더만 믿는다(사람 PAT 로 붙은 클라이언트는 이 헤더를 쓸 이유가 없다).
     const commandFiles = req.operator ? parseCommandFilesHeader(req.headers[COMMAND_FILES_HEADER]) : null;
     // 턴의 id(`TURN_ID_HEADER`). 모양만 본다 — 관측용 표지라 확인할 원본이 없다(`PostMessageInput.turnId`).
     const rawTurnId = req.headers[TURN_ID_HEADER];
     const turnId = typeof rawTurnId === 'string' && UUID_RE.test(rawTurnId) ? rawTurnId : null;
-    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null, operatorHub, commandFiles, turnId);
+    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null, operatorHub, commandFiles, turnId, bgJobId);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {
