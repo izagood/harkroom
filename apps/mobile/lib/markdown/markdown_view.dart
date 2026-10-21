@@ -245,6 +245,10 @@ class _MarkdownBodyState extends State<MarkdownBody> {
             fontWeight: bold ? FontWeight.w600 : null,
             fontStyle: italic ? FontStyle.italic : null,
             decoration: strike ? TextDecoration.lineThrough : null,
+            // 한글 취소선(designer f1): 줄이 ㅗ·ㅜ 가로획과 겹쳐 가는 줄이면 보통 글처럼 읽힌다 — 글자를 옅게, 줄을 1.5 로.
+            // 데스크톱 입력창·메시지와 같은 값이다.
+            color: strike ? k.fgMuted : null,
+            decorationThickness: strike ? 1.5 : null,
           );
           // `@handle` 은 **칩**으로 — 사람을 부르는 말이 본문에 묻히면 "나를 불렀나"를 다시
           // 읽어야 한다(사양 3.3). 코드 안의 `@` 는 여기 오지 않는다(코드 조각은 따로다).

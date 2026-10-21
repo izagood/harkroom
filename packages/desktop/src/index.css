@@ -532,7 +532,11 @@ button:disabled,
 .composer-cm .cm-md-code { background: var(--color-surface-sunken); border-radius: 4px; font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.92em; padding: 0.1em 0.2em; }
 .composer-cm .cm-md-codeblock { background: var(--color-surface-sunken); font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.92em; }
 .composer-cm .cm-md-codeblock .cm-md-code { background: transparent; padding: 0; }
-.composer-cm .cm-md-strike { text-decoration-line: line-through; text-decoration-style: solid; text-decoration-color: currentColor; text-decoration-thickness: 1px; }
+/*
+  한글 취소선(#1428 designer f1): 줄이 ㅗ·ㅜ 가로획과 같은 높이라 1px 이면 「취소」가 보통 글처럼 읽힌다. 글자를 한 단계
+  옅게(fg-muted) 하고 줄을 1.5px 로 — 보낸 메시지(MessageBody `<s>`)·모바일과 같은 값이다.
+*/
+.composer-cm .cm-md-strike { color: var(--color-fg-muted); text-decoration-line: line-through; text-decoration-style: solid; text-decoration-color: currentColor; text-decoration-thickness: 1.5px; }
 /* 보낸 메시지의 링크(MessageBody: text-link underline underline-offset-2)와 같은 모양 — 쓸 때와 보낸 뒤가 같아야 한다. */
 .composer-cm .cm-md-link { color: var(--color-link); text-decoration-line: underline; text-underline-offset: 2px; }
 .composer-cm .cm-md-url { color: var(--color-fg-muted); }

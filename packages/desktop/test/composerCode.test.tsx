@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
@@ -110,6 +112,21 @@ describe('입력 중인 코드에 면이 깔린다', () => {
     const titled = [...document.querySelectorAll('.cm-content [title]')];
     expect(titled.map((el) => el.getAttribute('title'))).toEqual(['https://example.com']);
     expect(titled[0]!.textContent).toBe('문서');
+  });
+
+  it('마우스 올림 주소에서는 방향 바꿈·제어 문자를 지운다 — 주소 안의 RLO 가 보이는 주소를 뒤집지 못한다(#1431 security n1)', () => {
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('[문서](https://example.com/‮gpj.exe) 끝');
+    const title = document.querySelector('.cm-content [title]')!.getAttribute('title')!;
+    expect(title).not.toMatch(/[‪-‮⁦-⁩‎‏]/);
+    expect(title).toBe('https://example.com/ gpj.exe');
+  });
+
+  it('취소선은 글자를 옅게, 줄을 1.5px 로 — 한글은 줄이 ㅗ·ㅜ 가로획과 겹친다(#1428 designer f1)', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8');
+    const rule = css.match(/\.composer-cm \.cm-md-strike \{([^}]*)\}/)?.[1] ?? '';
+    expect(rule).toContain('color: var(--color-fg-muted)');
+    expect(rule).toContain('text-decoration-thickness: 1.5px');
   });
 
   it('인용 줄은 왼쪽 선으로 표시하고, 커서 밖이면 `> ` 를 빈칸까지 숨긴다', () => {
