@@ -145,6 +145,47 @@ async function followLink(target: LinkTarget, t: Translate): Promise<void> {
 }
 
 /**
+ * 본문 링크 하나. **눌린 것이 보여야 한다**(스레드 ae5505cc) — 앱 안 링크(`harkroom://message`)는
+ * 대상 조회·채널 열기·스레드 조회를 거쳐 1초 넘게 걸릴 수 있는데, 그 사이 화면에 아무 변화가
+ * 없어 사람은 눌린 줄 모르고 다시 눌렀다. 그래서 두 가지를 보인다:
+ *  - 누르는 순간(`active:`) 바탕을 깐다 — 마우스를 떼기 전부터 "잡혔다"가 보인다.
+ *  - 이동이 끝날 때까지 `aria-busy` 와 흐린 글자·진행 커서를 둔다. 그 사이 다시 눌러도
+ *    한 번만 간다 — 같은 조회를 두 번 띄우면 늦게 끝난 쪽이 강조를 덮는다.
+ * 바깥 링크는 OS 로 넘기는 순간 끝나므로 진행 표시는 앱 안 링크에만 실질적으로 보인다.
+ */
+function BodyLink({ label, href, target, t }: { label: string; href: string; target: LinkTarget; t: Translate }) {
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+  return (
+    <a
+      // href 를 두는 이유: 마우스를 올리면 어디로 가는지 보이고 키보드로도 잡힌다.
+      // 실제 이동은 우리가 한다 — 웹뷰가 스스로 따라가면 앱이 그 페이지로 바뀐다.
+      href={href}
+      rel="noreferrer noopener"
+      data-testid="body-link"
+      data-link-kind={target.kind}
+      aria-busy={busy || undefined}
+      className={`rounded-sm text-link underline underline-offset-2 hover:decoration-2 active:bg-surface-hover ${busy ? 'cursor-progress bg-surface-hover opacity-70' : ''}`}
+      onClick={(e) => {
+        e.preventDefault();
+        if (busyRef.current) return;
+        busyRef.current = true;
+        setBusy(true);
+        void followLink(target, t).finally(() => {
+          busyRef.current = false;
+          // 이동하면서 이 줄이 화면에서 내려갔을 수 있다 — 내려간 컴포넌트에는 쓰지 않는다.
+          if (alive.current) setBusy(false);
+        });
+      }}
+    >
+      {label}
+    </a>
+  );
+}
+
+/**
  * 멘션을 눌렀을 때 갈 곳(#279). 두 신호를 **옵셔널**로 두는 이유와 그 위험을 함께 적는다:
  * 이 컴포넌트는 채널 문서 패널처럼 이동이 없는 자리에서도 쓰이고, 단위 테스트가 본문만
  * 띄우기도 한다. 대신 옵셔널이 **조용히 죽은 버튼을 만드는 것**은 막는다 — 신호가 없으면
@@ -255,19 +296,7 @@ export function MessageBody({
    * 이동 경로가 신뢰 경계라서(외부 셸로 나가는 자리다) 두 벌로 두면 한쪽만 고쳐진다.
    */
   const anchor = (label: string, href: string, target: LinkTarget, key: string) => (
-    <a
-      key={key}
-      // href 를 두는 이유: 마우스를 올리면 어디로 가는지 보이고 키보드로도 잡힌다.
-      // 실제 이동은 우리가 한다 — 웹뷰가 스스로 따라가면 앱이 그 페이지로 바뀐다.
-      href={href}
-      rel="noreferrer noopener"
-      data-testid="body-link"
-      data-link-kind={target.kind}
-      className="text-link underline underline-offset-2 hover:decoration-2"
-      onClick={(e) => { e.preventDefault(); void followLink(target, t); }}
-    >
-      {label}
-    </a>
+    <BodyLink key={key} label={label} href={href} target={target} t={t} />
   );
 
   /** 코드가 아닌 구간만 멘션·링크 조각으로 나눠 그린다. */
