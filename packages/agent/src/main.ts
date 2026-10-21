@@ -33,7 +33,7 @@ import { avcsGuideFlag } from './avcsGuideFlag.js';
 import { SessionStore } from './sessions.js';
 import { ensureNameLink, resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, buildTurnCommand, readExtraMcpServers, readMcpServers, writeSystemPromptFile, type McpServerEntry } from './turn.js';
-import { BG_POLL_INTERVAL_MS, BG_SYSTEM_PROMPT, BgExecutor } from './bgExecutor.js';
+import { BG_POLL_INTERVAL_MS, BG_SYSTEM_PROMPT, BgExecutor, writeBgMcpConfig } from './bgExecutor.js';
 import { createStoppableSleep } from './stoppableSleep.js';
 import type { Exec } from './workspace.js';
 import { isCredentialFailure, nextBackoffMs } from './policy.js';
@@ -467,7 +467,9 @@ const bgExecutor = new BgExecutor({
       promptCtx: '', stdinFile: null, model: def.model, effort: def.effort,
       // argv 의 권한 인자는 bgExecutorArgs 가 dontAsk + 허용 목록으로 바꾼다. 여기 값은 쓰이지 않는다.
       mentionPermission: 'readonly',
-      mcpConfigPath, extraMcpServers: {}, operatorBin: config.operatorBin, codexHome, opencodeHome, piHome,
+      // harkroom 하나만 담은 전용 설정(security F1) — avcs·사람이 붙인 MCP 는 서버 허용 목록이 덮지 못한다.
+      mcpConfigPath: await writeBgMcpConfig(cwd, await readMcpServers(mcpConfigPath)),
+      extraMcpServers: {}, operatorBin: config.operatorBin, codexHome, opencodeHome, piHome,
       claudeConfigDir: head?.configDir ?? null, chrome: false,
       causeMessageId: `bg:${job.id}`, turnId: randomUUID(),
     });

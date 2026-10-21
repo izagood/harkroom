@@ -13,13 +13,13 @@
 // - 1차는 claude 만. 다른 하네스는 집지 않는다(일감은 창이 지나면 서버가 expired 로 닫는다).
 import { randomUUID } from 'node:crypto';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { AgentHarness } from '@harkroom/shared';
 
 import { parseForkResult } from './reviewFork.js';
-import type { TurnPlan } from './turn.js';
+import type { McpServerEntry, TurnPlan } from './turn.js';
 
 /** 하드 시한(설계 3절). 넘으면 죽이고 failed(timeout). */
 export const BG_TIMEOUT_MS = 10 * 60_000;
@@ -75,6 +75,14 @@ export interface BgJob {
  * 뒤의 위치 인자를 도구 이름으로 먹는다 — reviewFork 와 같은 이유).
  */
 export function bgExecutorArgs(planArgs: readonly string[], sessionId: string): string[] {
+  // 조립은 readonly(`--permission-mode plan`)로만 한다(security n1) — auto 로 조립하면 가변 인자 `--allowedTools <규칙...>` 이
+  // 실리는데, 아래는 값을 하나만 떼므로 남은 규칙 토큰이 다른 인자로 먹힌다. 그런 plan 은 받지 않는다(닫힌 쪽으로 실패).
+  for (const f of ['--allowedTools', '--allowed-tools', '--disallowedTools', '--disallowed-tools', '--dangerously-skip-permissions']) {
+    if (planArgs.some((a) => a === f || a.startsWith(`${f}=`))) throw new Error(`bgExecutorArgs: plan 에 ${f} 가 있다 — 백그라운드는 readonly 로만 조립한다`);
+  }
+  const mode = planArgs.indexOf('--permission-mode');
+  if (mode >= 0 && planArgs[mode + 1] !== 'plan') throw new Error('bgExecutorArgs: plan 의 권한 모드가 plan(readonly)이 아니다');
+  if (planArgs.filter((a) => a === '--mcp-config').length !== 1) throw new Error('bgExecutorArgs: --mcp-config 는 정확히 하나(백그라운드 전용 파일)여야 한다');
   const dropWithValue = new Set(['--session-id', '-r', '--resume', '--permission-mode', '--allowedTools', '--allowed-tools',
     '--disallowedTools', '--disallowed-tools', '--settings', '--tools', '--max-turns', '--output-format']);
   const dropFlag = new Set(['--dangerously-skip-permissions', '-p', '--print', '--continue', '-c']);
@@ -89,6 +97,9 @@ export function bgExecutorArgs(planArgs: readonly string[], sessionId: string): 
   return [
     '-p', '--session-id', sessionId, '--output-format', 'json', '--max-turns', String(BG_MAX_TURNS),
     ...kept,
+    // 내장 도구는 ToolSearch 하나로 못박는다(security F1) — dontAsk 는 「미리 허락된 것」을 돌리는데, 거기에는 계정 config
+    // (같은 풀이 공유)의 settings.json allow 규칙과 읽기 내장 도구도 든다. 목록에서 아예 빼야 진짜 허용 목록이다.
+    '--tools', 'ToolSearch',
     '--permission-mode', 'dontAsk',
     '--allowedTools', BG_ALLOWED_TOOLS.join(','),
     '--disallowedTools', BG_DISALLOWED_TOOLS.join(','),
@@ -103,6 +114,21 @@ export const BG_SYSTEM_PROMPT = [
   '너는 harkroom 에이전트의 백그라운드 회차다. 사람과 대화하지 않는다 — 채팅·발화·예약·셸·파일 편집 도구는 없다.',
   '기억 도구로만 일하고, 끝나면 마지막 답으로 한 줄 요약만 남긴다.',
 ].join('\n');
+
+/** 백그라운드 전용 MCP 설정 파일 이름(작업 폴더 안, 회차가 끝나면 폴더째 지운다). */
+export const BG_MCP_CONFIG_FILE = 'bg-mcp.json';
+
+/**
+ * harkroom 하나만 담은 MCP 설정을 쓴다(security F1). 일반 턴의 설정에는 avcs·사람이 붙인 MCP 가 함께 실리는데, 서버의 2차
+ * 장치(cause bg: 허용 목록)는 harkroom 만 덮는다 — 다른 MCP 는 하네스 목록에서 아예 빠져야 한다. harkroom 이 없으면 던진다.
+ */
+export async function writeBgMcpConfig(dir: string, servers: Record<string, McpServerEntry>): Promise<string> {
+  const harkroom = servers.harkroom;
+  if (!harkroom) throw new Error('writeBgMcpConfig: MCP 설정에 harkroom 이 없다');
+  const path = join(dir, BG_MCP_CONFIG_FILE);
+  await writeFile(path, JSON.stringify({ mcpServers: { harkroom } }), { mode: 0o600 });
+  return path;
+}
 
 /** 종류별 프롬프트. 입력(스레드 id)은 데이터로 싣는다. */
 export function bgPrompt(job: BgJob): string {
@@ -134,6 +160,7 @@ export function bgPrompt(job: BgJob): string {
 }
 
 export interface BgChild {
+  pid?: number;
   stdout: NodeJS.ReadableStream | null;
   stdin: NodeJS.WritableStream | null;
   on(event: 'close', cb: (code: number | null) => void): unknown;
@@ -164,8 +191,17 @@ export interface BgExecutorDeps {
   log?: (line: string) => void;
 }
 
+// 자기 프로세스 그룹으로 띄운다 — 시한에 그룹째 죽여야 claude 가 띄운 MCP 브릿지 자식이 남지 않는다(security n2).
 function defaultSpawn(command: string, args: string[], opts: { cwd: string; env: Record<string, string> }): BgChild {
-  return nodeSpawn(command, args, { cwd: opts.cwd, env: opts.env, stdio: ['pipe', 'pipe', 'ignore'] });
+  return nodeSpawn(command, args, { cwd: opts.cwd, env: opts.env, stdio: ['pipe', 'pipe', 'ignore'], detached: true });
+}
+
+/** 그룹째 죽인다. 그룹이 없으면(시험의 가짜 자식·이미 끝남) 자식만. */
+function killTree(child: BgChild): void {
+  if (typeof child.pid === 'number') {
+    try { process.kill(-child.pid, 'SIGKILL'); return; } catch { /* 그룹이 없으면 아래로 */ }
+  }
+  child.kill('SIGKILL');
 }
 
 /** 할당량·로그인 문제로 보이는 끝 — 실패가 아니라 「다음 창」(skipped). */
@@ -224,7 +260,7 @@ export class BgExecutor {
       child.stdin?.end(bgPrompt(job));
       let timedOut = false;
       const exitCode = await new Promise<number | null>((resolve) => {
-        const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, this.deps.timeoutMs ?? BG_TIMEOUT_MS);
+        const timer = setTimeout(() => { timedOut = true; killTree(child); }, this.deps.timeoutMs ?? BG_TIMEOUT_MS);
         child.on('error', (err) => { clearTimeout(timer); this.log(`[bg] 띄우기 실패 — ${err.message}`); resolve(null); });
         child.on('close', (code) => { clearTimeout(timer); resolve(code); });
       });

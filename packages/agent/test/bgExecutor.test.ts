@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { BG_ALLOWED_TOOLS, BgExecutor, bgExecutorArgs, bgPrompt, inBgWindow, type BgChild, type BgJob } from '../src/bgExecutor.js';
+import { readFile } from 'node:fs/promises';
+import { BG_ALLOWED_TOOLS, BG_SYSTEM_PROMPT, BgExecutor, bgExecutorArgs, bgPrompt, inBgWindow, writeBgMcpConfig, type BgChild, type BgJob } from '../src/bgExecutor.js';
+import { buildTurnCommand } from '../src/turn.js';
 
 const IN_WINDOW = new Date('2026-10-20T19:00:00Z'); // 04:00 KST
 const NOON = new Date('2026-10-21T03:00:00Z'); // 12:00 KST
@@ -38,7 +40,7 @@ async function make(opts: { harness?: string; slot?: 'granted' | 'full' | 'unsup
     },
     buildPlan: async (job, sessionId) => ({
       command: 'claude',
-      args: ['--session-id', 'old', '--permission-mode', 'auto', '--allowedTools', 'Bash(git:*)', '--mcp-config', '/m.json', '--strict-mcp-config', '--model', 'sonnet', '--append-system-prompt-file', '/s.md', '--no-chrome'],
+      args: ['--session-id', 'old', '--permission-mode', 'plan', '--mcp-config', '/bg-mcp.json', '--strict-mcp-config', '--model', 'sonnet', '--append-system-prompt-file', '/s.md', '--no-chrome'],
       env: { HARKROOM_TURN_CAUSE: `bg:${job.id}`, SESSION: sessionId },
       stdinFile: null,
     }),
@@ -53,19 +55,46 @@ async function make(opts: { harness?: string; slot?: 'granted' | 'full' | 'unsup
 }
 
 describe('bgExecutor (BG2)', () => {
-  it('argv: 일반 턴의 세션·권한·허용 인자를 빼고 -p·새 세션·max-turns·dontAsk·허용 목록을 단다', () => {
-    const args = bgExecutorArgs(['--session-id', 'old', '--permission-mode', 'auto', '--allowedTools', 'Bash(git:*)', '--dangerously-skip-permissions', '--mcp-config', '/m.json', '--strict-mcp-config', '--model', 'sonnet'], 'new');
+  it('argv: readonly 로 조립한 plan 에서 세션·권한 인자를 빼고 -p·새 세션·max-turns·--tools ToolSearch·dontAsk·허용 목록을 단다', () => {
+    const args = bgExecutorArgs(['--session-id', 'old', '--permission-mode', 'plan', '--mcp-config', '/bg-mcp.json', '--strict-mcp-config', '--model', 'sonnet'], 'new');
     expect(args.slice(0, 7)).toEqual(['-p', '--session-id', 'new', '--output-format', 'json', '--max-turns', '40']);
     expect(args).not.toContain('old');
-    expect(args).not.toContain('Bash(git:*)');
-    expect(args).not.toContain('--dangerously-skip-permissions');
-    expect(args).toEqual(expect.arrayContaining(['--mcp-config', '/m.json', '--strict-mcp-config', '--model', 'sonnet']));
+    expect(args).toEqual(expect.arrayContaining(['--mcp-config', '/bg-mcp.json', '--strict-mcp-config', '--model', 'sonnet']));
+    // 내장 도구는 ToolSearch 하나로 못박는다(security F1).
+    expect(args[args.indexOf('--tools') + 1]).toBe('ToolSearch');
+    expect(args.filter((a) => a === '--tools')).toHaveLength(1);
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('dontAsk');
     expect(args.filter((a) => a === '--permission-mode')).toHaveLength(1);
     const allowed = args[args.indexOf('--allowedTools') + 1]!.split(',');
     expect(allowed).toEqual([...BG_ALLOWED_TOOLS]);
     expect(allowed.some((t) => /message_post|turn_wake|Bash/.test(t))).toBe(false);
     expect(args[args.indexOf('--disallowedTools') + 1]).toContain('mcp__harkroom__message_post');
+  });
+
+  it('argv: readonly 가 아니거나 허용 규칙이 실린 plan·--mcp-config 가 하나가 아닌 plan 은 받지 않는다(security n1)', () => {
+    expect(() => bgExecutorArgs(['--permission-mode', 'auto', '--mcp-config', '/m.json'], 'n')).toThrow(/readonly|plan/);
+    expect(() => bgExecutorArgs(['--permission-mode', 'plan', '--allowedTools', 'Bash(git:*)', 'Read', '--mcp-config', '/m.json'], 'n')).toThrow(/--allowedTools/);
+    expect(() => bgExecutorArgs(['--dangerously-skip-permissions', '--mcp-config', '/m.json'], 'n')).toThrow();
+    expect(() => bgExecutorArgs(['--permission-mode', 'plan'], 'n')).toThrow(/mcp-config/);
+  });
+
+  it('실제 claude 조립(readonly)을 그대로 받고, MCP 설정은 harkroom 하나만 담은 전용 파일이다(security F1)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bgmcp-'));
+    const path = await writeBgMcpConfig(dir, {
+      harkroom: { command: '/op', args: ['mcp-bridge'] }, avcs: { command: 'avcs', args: ['mcp'] }, slack: { type: 'http', url: 'https://mcp.example.com' },
+    } as never);
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ mcpServers: { harkroom: { command: '/op', args: ['mcp-bridge'] } } });
+    await expect(writeBgMcpConfig(dir, { avcs: { command: 'avcs' } } as never)).rejects.toThrow(/harkroom/);
+    const plan = buildTurnCommand({
+      harness: 'claude-code', mode: 'mention', sessionId: '33333333-3333-3333-3333-333333333333', isFirstTurn: true,
+      systemPrompt: BG_SYSTEM_PROMPT, systemPromptFile: join(dir, 's.md'), promptCtx: '', stdinFile: null, model: null, effort: null,
+      mentionPermission: 'readonly', mcpConfigPath: path, extraMcpServers: {}, operatorBin: '/op', codexHome: dir,
+      claudeConfigDir: null, chrome: false, causeMessageId: `bg:${JOB.id}`, turnId: '44444444-4444-4444-4444-444444444444',
+    });
+    const args = bgExecutorArgs(plan.args, 'new');
+    expect(args[args.indexOf('--mcp-config') + 1]).toBe(path);
+    expect(args[args.indexOf('--tools') + 1]).toBe('ToolSearch');
+    expect(plan.env.HARKROOM_TURN_CAUSE ?? Object.values(plan.env).find((v) => v === `bg:${JOB.id}`)).toBe(`bg:${JOB.id}`);
   });
 
   it('프롬프트: 입력 스레드는 uuid 꼴만 데이터로 싣고, 채팅에 쓰지 말라·한 줄 요약을 말한다', () => {
