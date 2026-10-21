@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'connect/connect_screen.dart';
@@ -110,11 +111,15 @@ class _HarkroomAppState extends State<HarkroomApp> {
       },
       theme: harkroomTheme(Brightness.light),
       darkTheme: harkroomTheme(Brightness.dark),
-      builder: (context, child) => I18n(
-        strings: stringsFor(Localizations.localeOf(context).languageCode),
-        child: AppScope(
-          state: widget.state,
-          child: PushScope(push: widget.push, child: child ?? const SizedBox.shrink()),
+      // 머리(AppBar)가 없는 화면(부팅·연결 끊김 등)의 상태바 글자색 바닥값 — 머리가 있으면 그쪽이 덮는다.
+      builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
+        value: statusBarStyle(Theme.of(context).brightness),
+        child: I18n(
+          strings: stringsFor(Localizations.localeOf(context).languageCode),
+          child: AppScope(
+            state: widget.state,
+            child: PushScope(push: widget.push, child: child ?? const SizedBox.shrink()),
+          ),
         ),
       ),
       home: _Root(push: widget.push),

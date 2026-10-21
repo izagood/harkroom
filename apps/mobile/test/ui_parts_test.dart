@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/theme.dart';
 import 'package:harkroom/ui/parts.dart';
@@ -123,5 +124,30 @@ void main() {
     await tester.pump();
     expect(focus.hasFocus, isFalse);
     expect(field.text, '쓰던 글');
+  });
+
+  group('상태바 글자색', () {
+    Future<Brightness?> statusBar(WidgetTester tester, Brightness b, PreferredSizeWidget bar) async {
+      await tester.pumpWidget(MaterialApp(
+        theme: harkroomTheme(b),
+        home: Scaffold(extendBodyBehindAppBar: true, appBar: bar, body: const SizedBox.expand()),
+      ));
+      // 테마가 바뀌면 MaterialApp 이 색을 200ms 동안 옮겨 간다 — 끝까지 흘려야 새 밝기가 선다.
+      await tester.pumpAndSettle();
+      return SystemChrome.latestStyle?.statusBarBrightness;
+    }
+
+    testWidgets('불투명 머리(투명도 줄이기)도 테마를 따른다', (tester) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue = FakeAccessibilityFeatures(highContrast: true);
+      addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+      for (final b in Brightness.values) {
+        expect(await statusBar(tester, b, GlassAppBar(bar: AppBar(title: const Text('t')))), b, reason: b.name);
+      }
+    });
+
+    testWidgets('검은 바탕 뷰어 머리는 밝은 모드에서도 흰 글자 그대로 — 테마 값으로 덮지 않는다', (tester) async {
+      final viewer = AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white);
+      expect(await statusBar(tester, Brightness.light, viewer), Brightness.dark);
+    });
   });
 }
