@@ -37,6 +37,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { callbackPageLang, renderCallbackPage, type CallbackPageKind } from './callbackPage.js';
 import type { OperatorMcpAuthState, OperatorMcpRemoteDefinition } from '@harkroom/shared/daemonProtocol';
 
 export interface McpOAuthRecord {
@@ -338,13 +339,15 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
       const { servers, port } = await listen(definition.oauth?.callbackPort ?? 0, (req, res) => {
         const u = new URL(req.url ?? '/', 'http://localhost');
         if (u.pathname !== '/callback') { res.writeHead(404).end(); return; }
-        const page = (status: number, text: string) => {
-          res.writeHead(status, { 'content-type': 'text/html; charset=utf-8' });
-          res.end(`<!doctype html><meta charset="utf-8"><title>Harkroom</title><p style="font:16px system-ui;margin:3em">${text}</p>`);
+        const lang = callbackPageLang(req.headers['accept-language']);
+        const page = (kind: CallbackPageKind, code?: string) => {
+          const p = renderCallbackPage({ kind, name, lang, ...(code ? { code } : {}) });
+          res.writeHead(p.status, p.headers);
+          res.end(p.body);
         };
-        if (u.searchParams.get('state') !== state) { page(400, '인증 요청이 맞지 않습니다. 앱에서 다시 시도하세요.'); return; }
+        if (u.searchParams.get('state') !== state) { page('expired'); return; }
         const code = u.searchParams.get('code');
-        if (!code) { const e = u.searchParams.get('error') ?? 'no_code'; page(400, `인증이 거절됐습니다(${e}).`); fail(`인가 거절: ${e}`); return; }
+        if (!code) { const e = u.searchParams.get('error') ?? 'no_code'; page('denied', e); fail(`인가 거절: ${e}`); return; }
         void (async () => {
           try {
             const r = await tokenRequest(as.token_endpoint as string, {
@@ -352,7 +355,7 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
               code_verifier: verifier, resource: definition.url,
               ...(client!.clientSecret ? { client_secret: client!.clientSecret } : {}),
             });
-            if (!r.ok) { page(400, `토큰 교환에 실패했습니다(${r.error}).`); fail(`토큰 교환 실패: ${r.error}`); return; }
+            if (!r.ok) { page('exchange_failed', r.error); fail(`토큰 교환 실패: ${r.error}`); return; }
             const rec: McpOAuthRecord = {
               url: definition.url, clientId: client!.clientId, ...(client!.clientSecret ? { clientSecret: client!.clientSecret } : {}),
               tokenEndpoint: as.token_endpoint as string, resource: definition.url,
@@ -361,12 +364,12 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
               expiresAt: expiresAtOf(r.body), status: 'ok', updatedAt: now(),
             };
             await update((s) => { s[name] = rec; });
-            page(200, '인증됐습니다. 이 창을 닫고 Harkroom 으로 돌아가세요.');
+            page('ok');
             closeFlow(name);
             deps.log(`MCP OAuth: ${name} 인증됨`);
             await deps.onToken?.(name, { url: rec.url, accessToken: rec.accessToken });
           } catch (err) {
-            page(500, '토큰을 저장하지 못했습니다.');
+            page('save_failed');
             fail(err instanceof Error ? err.message : String(err));
           }
         })();
