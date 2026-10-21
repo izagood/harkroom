@@ -41,7 +41,13 @@ export async function issueTurnLease(
     // 같은 (에이전트, 멘션) 의 동시 발급을 줄 세운다 — 둘 다 "살아 있는 임대 없음"을 보면 둘이 생긴다.
     await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [`lease:${args.agentId}:${args.causeMessageId}`]);
     const msg = await client.query(
-      `select m.channel_id as "channelId", coalesce(m.thread_root_id, m.id) as "threadRootId"
+      `select m.channel_id as "channelId", coalesce(m.thread_root_id, m.id) as "threadRootId",
+              -- 위임 키(133, W1): cause 글의 위임, 없으면 그 글이 연 깨움 행의 위임. 이 에이전트의 지금 소유자가 위임 소유자일 때만.
+              (select d.id from mandate d join agent_config c on c.account_id = i.account_id
+                where c.owner_account_id = d.owner_account_id
+                  and d.id = coalesce(m.mandate_id,
+                    (select w.mandate_id from agent_wake w where w.message_id = m.id and w.account_id = i.account_id
+                      order by w.created_at desc limit 1))) as "mandateId"
          from inbox i join message m on m.id = i.message_id
         where i.account_id = $1 and i.message_id = $2 and i.created_at > $3 and m.deleted_at is null
         limit 1`,
@@ -53,11 +59,11 @@ export async function issueTurnLease(
     if (used.rowCount) { await client.query('rollback'); return { ok: false, code: 'lease_used' }; }
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(now.getTime() + LEASE_TTL_MS);
-    const { channelId, threadRootId } = msg.rows[0] as { channelId: string; threadRootId: string };
+    const { channelId, threadRootId, mandateId } = msg.rows[0] as { channelId: string; threadRootId: string; mandateId: string | null };
     const ins = await client.query(
-      `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, created_at, expires_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
-      [sha256(token), args.agentId, args.operatorId, args.causeMessageId, channelId, threadRootId, now, expiresAt]);
+      `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, created_at, expires_at, mandate_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
+      [sha256(token), args.agentId, args.operatorId, args.causeMessageId, channelId, threadRootId, now, expiresAt, mandateId]);
     await client.query('commit');
     return { ok: true, leaseId: (ins.rows[0] as { id: string }).id, token, channelId, threadRootId, expiresAt: expiresAt.toISOString() };
   } catch (e) {

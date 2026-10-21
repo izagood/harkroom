@@ -4,6 +4,7 @@ import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type Men
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
+import { mandateForAgentPost, stampHumanMandate } from './mandates.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
 import { bundledRootSql, openBundleSql } from './askBundleSql.js';
@@ -1496,6 +1497,17 @@ export async function postMessage(
 
     const notified = new Set<string>();
     await fanOutCalls(client, { channelId: input.channelId, authorId: input.authorId, messageId: message.id }, calls, notified);
+    // 위임 키(133, W1) — 서버만 적는다. 사람 글: 자기 에이전트를 깨운 새 머리면 만들고, 위임 머리의 답글이면 잇는다.
+    // 에이전트 글: 검증된 원인으로 받은 살아 있는 임대의 위임(같은 소유자일 때만). 판정은 아직 이 값을 쓰지 않는다(그림자).
+    if (authorKind === 'human' && (input.kind ?? 'user') === 'user' && !(input.meta && 'automation' in input.meta)) {
+      await stampHumanMandate(client, {
+        messageId: message.id, authorId: input.authorId, channelId: input.channelId,
+        threadRootId: input.threadRootId ?? null, notifiedIds: [...notified],
+      });
+    } else if (authorIsAgent && causeLink) {
+      const mandateId = await mandateForAgentPost(client, { agentId: input.authorId, causeMessageId: causeLink });
+      if (mandateId) await client.query(`update message set mandate_id = $2 where id = $1`, [message.id, mandateId]);
+    }
     /*
       회신권(084)을 연다 — 실제로 inbox 가 간 상대에게만(막힌·상한 걸린 부름은 열지 않는다). 최상위
       글이면 그 글 자신이 스레드 머리다: 불린 쪽은 그 아래에 답한다. 작성자가 게이트에 걸리는
