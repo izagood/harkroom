@@ -64,10 +64,18 @@ function MenuButton({ items, label, testid }: { items: MenuItem[]; label: string
   );
 }
 
-function LocalCell({ row, entry, collapsed, onDefine, onEdit, onRemove, onChanged, onError }: {
+/** 접힌 줄(칸 하나)의 머리 항목을 칸 ⋯ 끝에 붙인다 — ⋯ 가 위아래로 둘이면 어느 쪽이 위험한지 모양으로 못 가른다(designer #1453-1). */
+function withTail(items: MenuItem[], tail: MenuItem[]): MenuItem[] {
+  if (!tail.length) return items;
+  return [...items, ...tail.map((x, i) => (i === 0 && items.length > 0 ? { ...x, separatorBefore: true } : x))];
+}
+
+function LocalCell({ row, entry, collapsed, tailItems, onDefine, onEdit, onRemove, onChanged, onError }: {
   row: McpServerRow;
   entry: OperatorMcpEntry | undefined;
   collapsed: boolean;
+  /** 접힌 줄이면 머리 ⋯ 대신 여기 끝에 붙는 항목(커뮤니티에서 삭제). */
+  tailItems: MenuItem[];
   onDefine: () => void;
   onEdit: (entry: OperatorMcpEntry) => void;
   onRemove: (entry: OperatorMcpEntry) => void;
@@ -89,7 +97,10 @@ function LocalCell({ row, entry, collapsed, onDefine, onEdit, onRemove, onChange
             <span className="text-fg-subtle">{t('mcpServers.cell.none')}</span>
           </div>
         </div>
-        <button type="button" className={BTN} data-testid={`mcp-cell-primary-${row.name}`} onClick={onDefine}>{t('mcpServers.cell.addHere')}</button>
+        <span className="flex shrink-0 items-center gap-1">
+          <button type="button" className={BTN} data-testid={`mcp-cell-primary-${row.name}`} onClick={onDefine}>{t('mcpServers.cell.addHere')}</button>
+          <MenuButton items={tailItems} label={t('mcpServers.cell.menu', { name: row.name })} testid={`mcp-cell-menu-${row.name}`} />
+        </span>
       </div>
     );
   }
@@ -148,7 +159,7 @@ function LocalCell({ row, entry, collapsed, onDefine, onEdit, onRemove, onChange
           ? <button type="button" className={BTN_PRI} data-testid={`agent-mcp-auth-start-${row.name}`} onClick={signIn}>
               {st?.state === 'none' ? t('agents.mcp.auth.start') : t('agents.mcp.auth.again')}</button>
           : canEditHere && <button type="button" className={BTN} data-testid={`mcp-cell-primary-${row.name}`} onClick={() => onEdit(entry)}>{t('mcpServers.cell.edit')}</button>}
-        <MenuButton items={items} label={t('mcpServers.cell.menu', { name: row.name })} testid={`mcp-cell-menu-${row.name}`} />
+        <MenuButton items={withTail(items, tailItems)} label={t('mcpServers.cell.menu', { name: row.name })} testid={`mcp-cell-menu-${row.name}`} />
       </span>
     </div>
   );
@@ -236,11 +247,11 @@ export function McpServersSection() {
                     <span className="font-mono font-medium text-fg">{row.name}</span>
                     <span className="text-meta text-fg-subtle"> · {t(`mcpServers.kind.${row.credentialKind}`)}</span>
                   </span>
-                  <MenuButton items={headItems} label={t('mcpServers.removeAction', { name: row.name })} testid={`mcp-server-menu-${row.name}`} />
+                  {!collapsed && <MenuButton items={headItems} label={t('mcpServers.removeAction', { name: row.name })} testid={`mcp-server-menu-${row.name}`} />}
                 </div>
                 {cells.map((cell) => {
                   const body = (
-                    <LocalCell row={row} entry={cell.entry} collapsed={collapsed}
+                    <LocalCell row={row} entry={cell.entry} collapsed={collapsed} tailItems={collapsed ? headItems : []}
                       onDefine={() => { setError(null); setDialog({ kind: 'define', row }); }}
                       onEdit={(entry) => { setError(null); setDialog({ kind: 'edit', row, entry }); }}
                       onRemove={(entry) => { setError(null); setRemovingLocal(entry); }}

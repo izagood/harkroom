@@ -85,13 +85,13 @@ describe('McpServersSettings — 커뮤니티 이름', () => {
     expect(c.putMcpServer).not.toHaveBeenCalled();
   });
 
-  it('커뮤니티에서 삭제는 머리의 ⋯ 에 있고 한 번 묻는다 — 체크(기본 켬)면 이 맥 정의도 지운다', async () => {
+  it('커뮤니티에서 삭제는 (접힌 줄이면) 칸 ⋯ 맨 끝에 있고 한 번 묻는다 — 체크(기본 켬)면 이 맥 정의도 지운다', async () => {
     useActiveStore.getState().set({ me: me(['agent.privileged']) as never });
     const calls = local([remote('github', { state: 'ok' }, { oauth: false })]);
     const c = fake([{ name: 'github', credentialKind: 'community' }]);
     render(<McpServersSection />);
     await screen.findByTestId('mcp-cell-primary-github');
-    fireEvent.click(screen.getByTestId('mcp-server-menu-github'));
+    fireEvent.click(screen.getByTestId('mcp-cell-menu-github'));
     fireEvent.click(await screen.findByRole('menuitem', { name: '커뮤니티에서 삭제' }));
     expect(c.deleteMcpServer).not.toHaveBeenCalled();
     expect((screen.getByTestId('mcp-confirm-also-local') as HTMLInputElement).checked).toBe(true);
@@ -100,13 +100,32 @@ describe('McpServersSettings — 커뮤니티 이름', () => {
     await waitFor(() => expect(calls).toContainEqual({ cmd: 'operator_mcp_remove', args: { name: 'github' } }));
   });
 
+  it('접힌 줄의 ⋯ 는 하나다 — 이 맥 항목 뒤 맨 끝에 「커뮤니티에서 삭제」, 정의 없는 줄은 삭제 하나만(designer #1453-1)', async () => {
+    useActiveStore.getState().set({ me: me(['agent.privileged']) as never });
+    local([remote('github', { state: 'ok' }, { oauth: false })]);
+    fake([{ name: 'github', credentialKind: 'community' }, { name: 'jira', credentialKind: 'personal' }]);
+    render(<McpServersSection />);
+    await screen.findByTestId('mcp-cell-primary-github');
+    for (const name of ['github', 'jira']) {
+      const row = screen.getByTestId(`mcp-server-${name}`);
+      expect(row.querySelectorAll('[data-testid^="mcp-server-menu-"], [data-testid^="mcp-cell-menu-"]')).toHaveLength(1);
+    }
+    fireEvent.click(screen.getByTestId('mcp-cell-menu-github'));
+    const items = (await screen.findAllByRole('menuitem')).map((x) => x.textContent ?? '');
+    expect(items.at(-1)).toBe('커뮤니티에서 삭제');
+    expect(items.some((x) => x.includes('이 맥에서 지우기'))).toBe(true);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    fireEvent.click(screen.getByTestId('mcp-cell-menu-jira'));
+    await waitFor(() => expect(screen.getAllByRole('menuitem').map((x) => x.textContent)).toEqual(['커뮤니티에서 삭제']));
+  });
+
   it('체크를 끄면 커뮤니티 이름만 지우고 이 맥 정의는 둔다', async () => {
     useActiveStore.getState().set({ me: me(['agent.privileged']) as never });
     const calls = local([remote('github', { state: 'ok' }, { oauth: false })]);
     const c = fake([{ name: 'github', credentialKind: 'community' }]);
     render(<McpServersSection />);
     await screen.findByTestId('mcp-cell-primary-github');
-    fireEvent.click(screen.getByTestId('mcp-server-menu-github'));
+    fireEvent.click(screen.getByTestId('mcp-cell-menu-github'));
     fireEvent.click(await screen.findByRole('menuitem', { name: '커뮤니티에서 삭제' }));
     fireEvent.click(screen.getByTestId('mcp-confirm-also-local'));
     fireEvent.click(screen.getByTestId('confirm-ok'));

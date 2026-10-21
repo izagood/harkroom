@@ -171,6 +171,7 @@ export function McpServerDialog({ mode, registry, canEdit, onDone, onCancel }: {
           <span className="text-fg-subtle">{t('mcpServers.dialog.noteOwnApp')}</span>
           <span className="text-fg-subtle">{t('mcpServers.dialog.notePkce')}</span>
           {mode.kind === 'edit' && <span className="text-fg-subtle">{t('mcpServers.dialog.noteChange')}</span>}
+          {mode.kind === 'edit' && <span className="text-fg-subtle">{t('mcpServers.dialog.noteSignInAgain')}</span>}
         </label>
         {error && <p role="alert" className="text-meta text-danger">{error}</p>}
         <div className="flex items-center justify-between gap-2">
