@@ -531,5 +531,5 @@ button:disabled,
 /* 보낸 메시지의 링크(MessageBody: text-link underline underline-offset-2)와 같은 모양 — 쓸 때와 보낸 뒤가 같아야 한다. */
 .composer-cm .cm-md-link { color: var(--color-link); text-decoration-line: underline; text-underline-offset: 2px; }
 .composer-cm .cm-md-url { color: var(--color-fg-muted); }
-.composer-cm .cm-md-quote { color: var(--color-fg-muted); }
-.composer-cm .cm-md-quoteline { border-left: 2px solid var(--color-border); padding-left: 0.5rem; }
+/* 인용 색은 줄 장식(`>` 로 시작하는 줄)에 둔다 — 문법의 인용 구간은 뒤의 평문 줄까지 품는다(게으른 이음). */
+.composer-cm .cm-md-quoteline { border-left: 2px solid var(--color-border); padding-left: 0.5rem; color: var(--color-fg-muted); }

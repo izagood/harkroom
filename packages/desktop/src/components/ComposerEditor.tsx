@@ -92,7 +92,6 @@ const mdHighlight = HighlightStyle.define([
   { tag: tags.link, class: 'cm-md-link' },
   { tag: tags.url, class: 'cm-md-url' },
   { tag: tags.monospace, class: 'cm-md-code' },
-  { tag: tags.quote, class: 'cm-md-quote' },
   // 기호(`**`·`` ` ``·`>`)는 여기서 칠하지 않는다 — `liveMarks` 가 숨기거나 옅게 한다. 둘 다 칠하면 옅음이 겹친다.
 ]);
 
