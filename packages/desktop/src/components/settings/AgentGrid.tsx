@@ -17,6 +17,8 @@ import { baselineOf, staleRunners, type OperatorVersions } from '../../lib/runne
 import { lastTurnAgo } from '../../lib/lastTurn';
 import type { MessageKey } from '../../i18n';
 import { useT, useLocale } from '../../i18n/useT';
+import { useLocalLanes } from '../../lib/localLanes';
+import { laneCodeText } from '../../lib/laneCodes';
 
 /**
  * 이 격자가 카드 하나를 그리는 데 **실제로 필요한 것**. `AgentView` 를 요구하지 않는 이유가
@@ -768,6 +770,7 @@ export function AgentGrid<T extends AgentCardSubject>({
   // 이 격자의 말은 전부 `grid.*` 를 지난다. 활동 경과만 `lib/time.ts` 가 낸다 —
   // *"숫자는 `Intl` 이, 뜻은 사전이"*.
   const t = useT();
+  const lanes = useLocalLanes();
   const locale = useLocale();
   const s = PLACE[place];
 
@@ -1143,6 +1146,26 @@ export function AgentGrid<T extends AgentCardSubject>({
                       <span className="block truncate text-fg-subtle">
                         {a.model ?? t('grid.card.harnessDefault')}
                       </span>
+                      {/* API 키 연결(이 맥 설정, designer v3 ③). 칩은 보라 하나 — 상태색을 쓰지 않는다. 마지막 키 받기가
+                          실패였으면 빨간 점 칩을 곁에 둔다(실패 카드·실행 탭과 같은 코드→문장 표). */}
+                      {lanes.has(a.id) && (() => {
+                        const st = lanes.get(a.id)!.status;
+                        return (
+                          <span className="mt-0.5 flex flex-wrap items-center gap-1">
+                            <span data-testid={`agent-lane-chip-${a.handle}`}
+                              className="rounded-full bg-surface-lane px-1.5 text-meta font-semibold text-fg-lane">
+                              {t('agents.lane.chip')}
+                            </span>
+                            {st && !st.ok && (
+                              <span data-testid={`agent-lane-fail-${a.handle}`} title={laneCodeText(t, st.code)}
+                                className="inline-flex items-center gap-1 rounded-full bg-danger-surface px-1.5 text-meta font-semibold text-state-stuck">
+                                <span aria-hidden="true" className="block h-1.5 w-1.5 rounded-full bg-state-stuck" />
+                                {t('agents.lane.cantStart')}
+                              </span>
+                            )}
+                          </span>
+                        );
+                      })()}
                     </InfoRow>
                   )}
                   {a.runnerVersion !== undefined && (

@@ -7,6 +7,7 @@ import { getTerminalSinkFactory, type TerminalSink, type TerminalDiagnostics, ty
 import { PaneResizer } from './PaneResizer';
 import { ConfirmDialog } from './ConfirmDialog';
 import { paneStorage, paneMaxWidth, MIN_TERMINAL_WIDTH, MAX_TERMINAL_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH } from '../lib/prefs';
+import { isInteractiveUnsupported } from '../lib/laneCodes';
 import { useT } from '../i18n/useT';
 import type { MessageKey, Translate } from '../i18n';
 import { errorText } from '../lib/errorText';
@@ -459,6 +460,11 @@ export function TerminalPanel() {
       {phase === 'opening' && <p className="px-3 py-2 text-fg-subtle">{t('terminal.session.opening')}</p>}
       {phase === 'error' && (
         <div className="px-3 py-2">
+          {/* 러너가 API 키 연결 에이전트의 터미널을 거절했다(`interactive_unsupported: …`) — 다른 기기에서 도는 lane 에이전트라
+              화면이 미리 못 끈 경우다. 러너 원문 대신 진입점과 같은 문장을 쓰고, 다시 눌러도 같으니 [열기]를 그리지 않는다. */}
+          {error && isInteractiveUnsupported(error) ? (
+            <p data-testid="terminal-lane-blocked" className="text-fg-muted">{t('agents.lane.terminalBlocked')}</p>
+          ) : (<>
           <p className="text-warning">{t('terminal.session.openFailed', { reason: error ?? '' })}</p>
           {/* **실패에만 남는 버튼이다.** 자동 열기가 지운 것은 "턴이 없다"는 막다른 길
               하나이고, 실패는 다르다 — 러너를 올린 뒤 다시 누를 자리가 없으면 사람은
@@ -469,6 +475,7 @@ export function TerminalPanel() {
           >
             {t('terminal.session.open')}
           </button>
+          </>)}
         </div>
       )}
       {/* **차례를 항상 적는다.** writer 통지가 온 뒤에만 그린다(null 이면 아직 모르거나

@@ -18,13 +18,13 @@ import { SettingsPage } from './primitives';
 // 1단에서 Codex 가 Claude 밑줄에 붙고, Cursor 에만 밑줄이 없었다).
 const PROVIDER_GRID = 'grid grid-cols-1 items-start gap-x-6 gap-y-8 pt-8 [&>section]:border-b-0 [&>section]:py-0 @min-[1100px]/settings:grid-cols-2 @min-[1700px]/settings:grid-cols-3';
 
-export function ProviderAccountsSettings() {
+export function ProviderAccountsSettings({ onOpenAgent }: { onOpenAgent?: (agentId: string) => void } = {}) {
   const t = useT();
   return (
     <SettingsPage section="claude-accounts" description={t('providerAccounts.page.subtitle')} layout="list">
       {/* Claude 는 계정끼리 숫자를 견주는 표라 꽉 찬 폭을 쓴다. 나머지 하네스 칸은 넓은 창에서 2·3단으로 선다
           (설정 폭 시안 v1 list) — 한 칸에 계정 몇 줄뿐이라 2200px 로 늘이면 이름과 단추가 멀어진다. */}
-      <ClaudeAccountsSettings embedded />
+      <ClaudeAccountsSettings embedded onOpenAgent={onOpenAgent} />
       <div data-testid="provider-accounts-grid" className={PROVIDER_GRID}>
         <CodexAccountsSettings />
         <OpenCodeAccountsCard />

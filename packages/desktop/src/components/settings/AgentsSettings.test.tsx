@@ -666,7 +666,8 @@ describe('AgentsSettings — 계정 풀 ↔ 이 맥 배정', () => {
     await screen.findByLabelText('＋ 풀 추가');
     await waitFor(() => expect(invoked.some((c) => c.cmd === 'operator_agents_list')).toBe(true));
     expect(screen.queryByTestId('agent-pool-gate')).toBeNull();
-    expect(screen.getByText(/이 기기에만/)).toBeTruthy();
+    // 「모델 연결 · 이 기기에만」 머리(API 키 연결)와 겹치지 않게 풀 칸의 문구로 찾는다.
+    expect(screen.getByText(/이 기기에만 해당한다/)).toBeTruthy();
   });
 
   it('② 배정이 없으면 잠그고, [이 맥에서 돌리기] 로 배정하면 새로고침 없이 풀린다', async () => {

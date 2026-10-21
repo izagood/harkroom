@@ -156,3 +156,30 @@ describe('FailureCard — 계정 관문', () => {
     expect(screen.getByTestId('failure-card').className).toContain('border-state-stuck');
   });
 });
+
+describe('FailureCard — API 키 연결(designer v3 ④)', () => {
+  it('까닭 코드를 표의 문장으로, 계정 로그인으로 넘어가지 않는다는 말과 [에이전트 설정 열기]를 둔다', () => {
+    const onOpenSettings = vi.fn();
+    const m = failMsg(failMeta({ retryable: false, code: 'provider_lane', laneCode: 'secret_expired', what: '러너 문구', reason: '러너 이유' }));
+    render(<MessageItem message={m} onOpenSettings={onOpenSettings} />);
+    expect(screen.getByText('@forge 턴을 띄우지 않았다')).toBeTruthy();
+    const line = screen.getByTestId('lane-failure-line');
+    expect(line.textContent).toBe('키 비밀이 만료됐다 · 계정 로그인으로 대신 돌지 않는다.');
+    expect(screen.queryByText('러너 문구')).toBeNull();
+    expect(screen.queryByText('러너 이유')).toBeNull();
+    // 터미널은 아직 못 연다 — 카드 안에 진입점을 그리지 않는다(이름줄 칩은 TerminalChip 이 따로 끈다). 다시 부르기도 없다.
+    expect(screen.getByTestId('failure-card').textContent).not.toContain('터미널 보기');
+    expect(screen.queryByTestId('failure-retry')).toBeNull();
+    expect(screen.getByTestId('lane-failure-code').textContent).toBe('secret_expired');
+    fireEvent.click(screen.getByTestId('lane-open-settings'));
+    expect(onOpenSettings).toHaveBeenCalledWith('agents', `${FORGE}#run`);
+  });
+
+  it('모르는 까닭 코드는 unknown 문장으로 접는다', () => {
+    const m = failMsg(failMeta({ retryable: false, code: 'provider_lane', laneCode: 'https://x.example' as never }));
+    render(<MessageItem message={m} />);
+    expect(screen.getByTestId('lane-failure-line').textContent).toContain('API 키를 준비하지 못했다');
+    expect(screen.getByTestId('lane-failure-code').textContent).toBe('unknown');
+    expect(screen.queryByTestId('lane-open-settings')).toBeNull();
+  });
+});

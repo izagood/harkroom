@@ -36,7 +36,8 @@ import { RunnerStatusLine, runnerStatusLabel } from '../RunnerStatus';
 import { AgentGrid } from './AgentGrid';
 import { LocalOperatorRow } from './LocalOperatorRow';
 import { ModelPicker } from './ModelPicker';
-import { hasOperatorLocalSurface, listLocalAgents, setLocalAgent } from '../../lib/operatorLocal';
+import { hasOperatorLocalSurface, listLocalAgents, listLocalMcpServers, setLocalAgent } from '../../lib/operatorLocal';
+import type { SectionId } from './sections';
 import { poolGateEditable, poolGateOf } from '../../lib/poolGate';
 import { useAgentTurns } from '../../lib/agentTurns';
 import { isPoolRank } from '@harkroom/shared';
@@ -68,6 +69,8 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { operatorNameOf, operatorPickerLabels } from '../../lib/operatorName';
 import { ImmediateBadge, PendingEditsContext, setLeaveGuard, type PendingHandlers, type RegisterPending } from './pendingEdits';
 import { errorText } from '../../lib/errorText';
+import { useProviderLane } from '../../lib/useProviderLane';
+import { LANE_HARNESSES, ModelConnectionField, ModelConnectionStatus, opencodeLaneModel } from './ModelConnectionField';
 
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 harkroom 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
@@ -243,7 +246,7 @@ export const MEMORY_TWO_PANE_MIN_PX = 768;
  */
 const FORM_PANEL = 'space-y-4 max-w-[880px]';
 
-export function AgentsSettings({ targetId }: { targetId?: string }) {
+export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string; onOpenSection?: (section: SectionId) => void }) {
   // 시간 표기는 언어를 따른다(`lib/time.ts`). 접두는 사전을 지난다.
   const t = useT();
   const locale = useLocale();
@@ -316,6 +319,19 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
    * (그쪽은 「이 맥에서 돌리기」 체크가 풀 칸을 보이거나 감춘다).
    */
   const localPresence = useLocalAgentPresence(selected?.id ?? null);
+  /** API 키 연결(이 맥 로컬 설정, `useProviderLane`). 상세에서만 읽는다 — 만들기에는 고를 대상이 없다. */
+  const providerLane = useProviderLane(selected?.id ?? null);
+  /** 이 에이전트에 붙은 외부 stdio MCP(harkroom 제외) — API 키 연결의 키가 그 자식에도 넘어가므로 경고에 이름을 띄운다(security n1). */
+  const [stdioServers, setStdioServers] = useState<string[]>([]);
+  useEffect(() => {
+    const names = (selected?.mcpServers ?? []).filter((n) => n !== 'harkroom');
+    if (!providerLane.lane || !names.length) { setStdioServers([]); return; }
+    let live = true;
+    void listLocalMcpServers()
+      .then((r) => { if (live) setStdioServers(names.filter((n) => r.servers.some((d) => d.name === n && d.transport === 'stdio'))); })
+      .catch(() => { if (live) setStdioServers([]); });
+    return () => { live = false; };
+  }, [selected?.mcpServers, providerLane.lane]);
   const poolGate = selected ? poolGateOf(selected.assignment?.operatorId ?? null, localPresence) : null;
   const [poolGateBusy, setPoolGateBusy] = useState(false);
   const [assignmentFlash, setAssignmentFlash] = useState(false);
@@ -2042,6 +2058,12 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                     })}
                   </span>
                 )}
+                {/* API 키 연결(designer v3 ③): 상세 머리에도 격자 카드와 같은 보라 칩. 이 맥 로컬 설정에서만 안다. */}
+                {providerLane.lane && (
+                  <span data-testid="agent-header-lane" className="rounded-full bg-surface-lane px-1.5 text-meta font-semibold text-fg-lane">
+                    {t('agents.lane.chip')}
+                  </span>
+                )}
                 {runnerStates[selected.id]?.status === 'failed' && (
                   <span
                     data-testid={`agent-runner-failed-${selected.id}`}
@@ -2584,7 +2606,8 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                 )}
                 {/* 만들기 화면은 「이 맥에서 돌리기」를 끄면 풀 칸을 감춘다 — 이 맥에서 돌지 않을 에이전트의 순서는 아무 데도
                     쓰이지 않는다(풀 ↔ 이 맥 배정). 이 기기 오퍼레이터를 못 읽었으면(error) 감추지 않는다. */}
-                {agentPool.available && harnessHasAccountPool(draft.harness)
+                {(() => {
+                  const poolBlock = agentPool.available && harnessHasAccountPool(draft.harness)
                   && (selected || createdAgentId || (runHere && localOperator !== 'none')) && (
                   <div className={label}>
                     {t('agents.run.pool')}
@@ -2668,7 +2691,33 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
                       <span className="mt-1 block text-meta text-danger">{agentPool.error}</span>
                     )}
                   </div>
-                )}
+                );
+                  // API 키 연결(designer v3 안 A): 상세 화면에서 이 맥 로컬 설정에 이 에이전트가 있으면 풀 칸이 「모델 연결」의
+                  // [계정 풀] 자리로 들어간다. 이 맥에 없으면 고를 수 없다(설정이 이 기기에 산다 — `useProviderLane`).
+                  if (!selected || !providerLane.available || !LANE_HARNESSES.includes(draft.harness)) return poolBlock || null;
+                  if (!providerLane.present) {
+                    return <>{poolBlock || null}<span className="mt-1 block text-meta text-fg-subtle">{t('agents.lane.notHere')}</span></>;
+                  }
+                  return (
+                    <ModelConnectionField
+                      harness={draft.harness}
+                      lane={providerLane}
+                      pool={poolBlock || null}
+                      stdioServers={stdioServers}
+                      label={label}
+                      onOpenSecrets={onOpenSection ? () => onOpenSection('secrets') : undefined}
+                      onSaved={async (next) => {
+                        // opencode 는 lane 모델을 `harkroom-lane/<id>` 로만 부른다 — 켤 때 모델 칸을 그 모양으로 채운다.
+                        if (!next || draft.harness !== 'opencode') return;
+                        const model = opencodeLaneModel(selected.model ?? null);
+                        if (!model) return;
+                        const updated = await getController().updateAgent(selected.id, { model });
+                        setSelected(updated);
+                        setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                      }}
+                    />
+                  );
+                })()}
 
                 {/* **어디서 돌리나 — 만들기의 기본값**(#856).
 
@@ -2704,6 +2753,7 @@ export function AgentsSettings({ targetId }: { targetId?: string }) {
 
                 </>}
                 secondary={selected && (isAdmin || isOwner) ? (<>
+              {providerLane.lane && <ModelConnectionStatus lane={providerLane} />}
               {/* 스펙 2026-09-20 §3: **어디서 돌리나.** 앱은 러너를 띄우지 않는다 — 이 고르개가
                   서버에 배정을 쓰면 그 오퍼레이터가 러너를 띄운다. 러너 실행·중지 절 바로 뒤에
                   두는 이유: 그 절의 '실행'이 실제로 무엇을 켜는지가 이 배정으로 정해진다. */}

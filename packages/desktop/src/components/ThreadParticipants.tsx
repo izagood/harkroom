@@ -3,6 +3,7 @@ import type { AccountView, MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { Identity } from './Identity';
 import { useT } from '../i18n/useT';
+import { useLocalLanes } from '../lib/localLanes';
 import type { Liveness } from './../lib/threadState';
 
 /**
@@ -26,6 +27,7 @@ import type { Liveness } from './../lib/threadState';
  */
 export function ThreadParticipants({ messages, live }: { messages: MessageRow[]; live: Liveness }) {
   const t = useT();
+  const lanes = useLocalLanes();
   const accounts = useActiveStore((s) => s.accounts);
   const me = useActiveStore((s) => s.me);
   const set = useActiveStore((s) => s.set);
@@ -94,7 +96,10 @@ export function ThreadParticipants({ messages, live }: { messages: MessageRow[];
                 <li key={a.id}>
                   <button
                     data-testid={`terminal-open-${a.handle}`}
-                    className="w-full px-3 py-1 text-left text-meta hover:bg-surface-hover"
+                    // API 키로 도는 에이전트는 아직 터미널을 못 연다(designer v3 ⑥) — 목록에 두되 꺼 둔다.
+                    disabled={lanes.has(a.id)}
+                    title={lanes.has(a.id) ? t('agents.lane.terminalBlocked') : undefined}
+                    className="w-full px-3 py-1 text-left text-meta hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => {
                       const m = lastOf(a.id);
                       set({
