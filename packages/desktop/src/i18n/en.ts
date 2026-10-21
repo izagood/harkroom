@@ -562,6 +562,9 @@ export const en = {
   // ---------------------------------------------------------------------------
 
   'thread.alsoPostToChannel': 'Also post to {channel}',
+  'thread.alsoSendToDm': 'Also send to {conversation}',
+  'thread.alsoDmTarget': 'conversation',
+  'thread.alsoPostFallback': 'Also post to the channel',
   'thread.resizeHandle': 'Resize the thread panel',
   'thread.title': 'Thread',
   // 답글이 하나도 없는 스레드를 열었을 때. 이 줄이 없으면 패널에 머리말 하나만 서서

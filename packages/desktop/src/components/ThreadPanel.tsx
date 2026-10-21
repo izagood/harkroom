@@ -37,7 +37,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   reserveLeft?: number;
 } = {}) {
   const t = useT();
-  const { messages, channels, accounts, me, online, connected, link, offlineSince, threadFetch } = useActiveStore();
+  const { messages, channels, dms, accounts, me, online, connected, link, offlineSince, threadFetch } = useActiveStore();
   const locale = useLocale();
   // 보는 자리는 **이 창의 것**이다(새 창 — `state/windowView`). 메인이면 스토어 그대로다.
   const view = useWindowView();
@@ -49,9 +49,18 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   /** 채널과 같은 판정을 쓴다 — 모르는 계정은 에이전트로 치지 않는다(`lib/agentExchange`). */
   const isAgent = (id: string): boolean => accounts[id]?.kind === 'agent';
   const [alsoInChannel, setAlsoInChannel] = useState(false);
-  const channelName = channels.find((c) => c.id === activeChannelId)?.name ?? '';
-  // 문구 안의 채널 이름만 굵게 — 말 순서가 언어마다 달라(「# 채널에도 올리기」·「Also post to # channel」) 자리표로 가른다.
-  const alsoPostParts = t('thread.alsoPostToChannel', { channel: '\uE000' }).split('\uE000');
+  /*
+    「…에도 올리기」의 대상. `ChannelPane` 머리글과 같은 갈래다: 채널이면 「# 이름」, DM 이면 낱말 「대화」(DM 에 '#' 을
+    붙이면 없는 채널 이름이 된다 — 상대 핸들은 길어서 넣지 않는다), 어느 쪽도 못 찾으면 이름 없는 옛 문구.
+    문구 안의 대상만 굵게 — 말 순서가 언어마다 달라(「# 채널에도 올리기」·「Also post to # channel」) 자리표로 가른다.
+  */
+  const alsoChannel = channels.find((c) => c.id === activeChannelId);
+  const alsoDm = !alsoChannel && dms.some((d) => d.id === activeChannelId);
+  const alsoPost: { parts: string[]; target: string } | null = alsoChannel
+    ? { parts: t('thread.alsoPostToChannel', { channel: '\uE000' }).split('\uE000'), target: `# ${alsoChannel.name}` }
+    : alsoDm
+      ? { parts: t('thread.alsoSendToDm', { conversation: '\uE000' }).split('\uE000'), target: t('thread.alsoDmTarget') }
+      : null;
   // 접힌 `모델 · 모두 기본` 칩을 눌러 연 줄(결정 10). 스레드를 바꾸면 다시 접는다.
   const [modelsOpen, setModelsOpen] = useState(false);
   useEffect(() => { setModelsOpen(false); }, [threadRootId]);
@@ -493,11 +502,15 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
                 onChange={(e) => setAlsoInChannel(e.target.checked)}
                 className="rounded-row border-border"
               />
-              <span>
-                {alsoPostParts[0]}
-                <strong className="font-semibold text-fg">{`# ${channelName}`}</strong>
-                {alsoPostParts[1]}
-              </span>
+              {alsoPost ? (
+                <span>
+                  {alsoPost.parts[0]}
+                  <strong className="font-semibold text-fg">{alsoPost.target}</strong>
+                  {alsoPost.parts[1]}
+                </span>
+              ) : (
+                <span>{t('thread.alsoPostFallback')}</span>
+              )}
             </label>
           )}
           // 채널과 스레드 뿌리를 지금 것으로 붙인다(#223) — 창이 도는 동안 패널을 닫으면

@@ -181,6 +181,27 @@ describe('#231 스레드 답을 채널에도 함께 올린다', () => {
     expect(text.compareDocumentPosition(check) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(check.compareDocumentPosition(screen.getByTestId('composer-toolbar-toggle')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+
+  // DM 은 채널이 아니다 — 「# 」 뒤가 빈칸으로 깨지지 않고 낱말 「conversation」을 쓴다(#1441 designer 1, ChannelPane 머리글과 같은 갈래).
+  it('DM 스레드에서는 「# 」 없이 대화로 말한다', () => {
+    fakeController();
+    useAppStore.getState().set({
+      channels: [],
+      dms: [{ id: 'c1', memberIds: ['u1', 'u2'] }] as never,
+    });
+    render(<ThreadPanel />);
+    const label = en['thread.alsoSendToDm'].replace('{conversation}', en['thread.alsoDmTarget']);
+    const check = screen.getByLabelText(label);
+    expect(check.closest('label')?.querySelector('strong')?.textContent).toBe('conversation');
+    expect(check.closest('label')?.textContent).not.toContain('#');
+  });
+
+  it('채널도 DM 도 못 찾으면 이름 없는 옛 문구로 떨어진다', () => {
+    fakeController();
+    useAppStore.getState().set({ channels: [], dms: [] });
+    render(<ThreadPanel />);
+    expect(screen.getByLabelText(en['thread.alsoPostFallback'])).toBeTruthy();
+  });
 });
 
 
