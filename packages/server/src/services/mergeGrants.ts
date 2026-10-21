@@ -6,6 +6,7 @@ import { recordAudit } from '../audit.js';
 import { checkNamesForBody, checkNamesText, obsoleteMergeCards, sanitizeCheckNames } from './mergeDenials.js';
 import { postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
+import { validMandateOwner } from './mandates.js';
 
 /**
  * 에이전트 머지 권한 — 서버 쪽 판정과 기록. 설계 스레드 3deac356(채널 a42006a1), security F1~F4.
@@ -46,6 +47,8 @@ export interface LeaseRow {
   expired: boolean; ended: boolean; causeKind: string | null;
   /** 이 턴을 띄운 메시지 — 위임 사슬(`causeChainRoot`)의 출발점. */
   causeMessageId: string;
+  /** 위임 키(133, W1) — 발급 때 서버가 적은 값. 판정에는 아직 쓰지 않는다(그림자 기록만). */
+  mandateId: string | null;
   /** cause 메시지가 **이 에이전트 자신의 선택 카드**(ask)이고 사람이 답한 경우 — 답한 사람의 id·kind. 아니면 null. */
   causeAskAuthorId: string | null; askAnsweredBy: string | null; askAnswererKind: string | null; askAnswererOwnsAgent: boolean;
 }
@@ -54,7 +57,7 @@ export async function readLease(pool: Pool, args: { leaseId: string; token: stri
   return (await pool.query(
     `select l.id, l.agent_id as "agentId", l.operator_id as "operatorId", l.channel_id as "channelId",
             l.thread_root_id as "threadRootId", l.expires_at <= $3 as expired, l.ended_at is not null as ended,
-            l.cause_message_id as "causeMessageId",
+            l.cause_message_id as "causeMessageId", l.mandate_id as "mandateId",
             a.kind as "causeKind",
             case when m.meta ? 'ask' and m.meta->'ask'->>'mirrorOf' is null and m.meta->'ask'->>'answeredVia' is null
                  then m.author_id end as "causeAskAuthorId",
@@ -165,6 +168,45 @@ export async function causeChainRoot(
  * 아니면(에이전트의 위임·멘션) grant 에 `allow_agent_cause` 가 켜져 있어야 한다.
  */
 export async function checkMerge(
+  pool: Pool,
+  args: { agentId: string; operatorId: string; leaseId: string; token: string; repo: string; number: number; headSha: string; now?: Date },
+): Promise<MergeCheck> {
+  const result = await checkMergeByChain(pool, args);
+  // 위임(mandate) W1 — 그림자 기록만. 실패해도 판정은 그대로 나간다.
+  try { await shadowMandate(pool, args, result); } catch { /* 그림자는 판정을 바꾸지 않는다 */ }
+  return result;
+}
+
+/**
+ * 위임 판정을 사슬 판정 옆에서 계산해 감사(`mandate.shadow`)에 남긴다. **결과를 바꾸지 않는다.** 위임 판정: 임대의 위임이 유효하고
+ * (끝나지 않음·7일 안), 그 소유자가 에이전트의 지금 소유자이며, 이 저장소에 그 소유자가 준 머지 grant 가 있다.
+ */
+async function shadowMandate(
+  pool: Pool,
+  args: { agentId: string; operatorId: string; leaseId: string; token: string; repo: string; now?: Date },
+  result: MergeCheck,
+): Promise<void> {
+  const now = args.now ?? new Date();
+  const lease = await readLease(pool, { leaseId: args.leaseId, token: args.token, now });
+  if (!lease || lease.agentId !== args.agentId || lease.operatorId !== args.operatorId) return;
+  const scope = repoScope(args.repo);
+  if (!scope) return;
+  const owner = await validMandateOwner(pool, lease.mandateId, now);
+  const agentOwner = owner
+    ? (await pool.query<{ owner: string | null }>(`select owner_account_id as owner from agent_config where account_id = $1`, [args.agentId])).rows[0]?.owner ?? null
+    : null;
+  const grant = owner && agentOwner === owner ? await mergeGrantFor(pool, args.agentId, args.repo) : null;
+  const mandateVerdict = !!grant && grant.grantedBy === owner;
+  await recordAudit(pool, {
+    action: 'mandate.shadow', actorId: args.agentId, target: scope,
+    detail: {
+      chainVerdict: result.ok ? 'allowed' : result.code, mandateVerdict: mandateVerdict ? 'allowed' : 'denied',
+      mandateId: lease.mandateId, agentId: args.agentId, repo: scope, leaseId: lease.id,
+    },
+  });
+}
+
+async function checkMergeByChain(
   pool: Pool,
   args: { agentId: string; operatorId: string; leaseId: string; token: string; repo: string; number: number; headSha: string; now?: Date },
 ): Promise<MergeCheck> {

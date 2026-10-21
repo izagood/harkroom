@@ -146,8 +146,9 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
   }
 
   const res = await pool.query(
-    `insert into agent_wake (account_id, channel_id, message_id, wake_at)
-     values ($1, $2, $3, $4) returning id`,
+    // 위임 키(133, W1): 깨움 글이 지금 임대에서 물려받은 위임을 깨움 행에도 둔다 — 깨어난 턴의 임대가 이것을 잇는다.
+    `insert into agent_wake (account_id, channel_id, message_id, wake_at, mandate_id)
+     values ($1, $2, $3, $4, (select mandate_id from message where id = $3)) returning id`,
     [input.accountId, input.channelId, posted.message.id, wakeAt.toISOString()],
   );
   return {
