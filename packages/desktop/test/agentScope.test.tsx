@@ -205,7 +205,7 @@ describe('AgentMcpSection — 배정된 오퍼레이터 기준(MCP 설정 시안
     expect(missing.className).toContain('text-danger');
     fireEvent.click(screen.getByTestId('agent-mcp-link-github'));
     expect(onOpenSection).toHaveBeenCalledWith('integrations');
-    expect(takeMcpFocus()).toBe('github');
+    expect(takeMcpFocus()).toEqual({ name: 'github' });
   });
 
   it('인증이 사람 손을 기다리면 한 낱말 + 「연동에서 다시 인증 →」 — 이 화면에는 인증 버튼이 없다', async () => {

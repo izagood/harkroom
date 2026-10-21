@@ -70,6 +70,11 @@ export interface McpDialogAttach {
   remoteHost: string | null;
   /** 이 에이전트가 아직 personal 이 아니다 — personal 서버를 켜면 부를 수 있는 사람이 소유자로 좁혀진다. */
   narrowsToOwner: boolean;
+  /**
+   * 원격 호스트 박동상 그 이름의 정의가 있나 — `true` 면 「정의가 없으면 뜨지 않는다」를 띄우지 않는다(designer #1455 n2).
+   * `null`·없음 = 모른다.
+   */
+  remoteDefined?: (name: string) => boolean | null;
 }
 
 export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCancel }: {
@@ -212,7 +217,8 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
             <span>
               {t('mcpServers.dialog.attach', { agent: attach.agentName })}
               {remoteOnly
-                ? <span className="text-fg-subtle"> — {t('mcpServers.dialog.attachRemoteNote', { host: attach.remoteHost! })}</span>
+                ? attach.remoteDefined?.(name.trim()) !== true
+                  && <span className="text-fg-subtle" data-testid="mcp-dialog-attach-remote-note"> — {t('mcpServers.dialog.attachRemoteNote', { host: attach.remoteHost! })}</span>
                 : attach.narrowsToOwner && (known?.credentialKind ?? kind) === 'personal'
                   && <span className="text-fg-subtle"> — {t('mcpServers.dialog.attachPersonalNote')}</span>}
             </span>
@@ -220,7 +226,12 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
         )}
         {error && <p role="alert" className="text-meta text-danger">{error}</p>}
         <div className="flex items-center justify-between gap-2">
-          <span className="text-meta text-fg-subtle">{mode.kind === 'edit' || remoteOnly ? '' : t('mcpServers.dialog.afterSave')}</span>
+          <span className="text-meta text-fg-subtle" data-testid="mcp-dialog-foot-note">
+            {mode.kind === 'edit' ? ''
+              // 이미 등록된 이름인데 켜기를 끈 채면 [켜기] 가 비활성이다 — 이유를 버튼 곁에 적는다(designer #1455 n1).
+              : remoteOnly ? (known && !attachOn ? t('mcpServers.dialog.attachNeedsCheck') : '')
+                : t('mcpServers.dialog.afterSave')}
+          </span>
           <span className="flex gap-2">
             <button type="button" className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken" disabled={busy}
               onClick={onCancel}>{t('mcpServers.cancel')}</button>
