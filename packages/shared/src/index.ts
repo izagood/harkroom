@@ -2260,9 +2260,30 @@ export interface ChannelPrefRow {
    */
   section: string | null;
   /**
+   * 채널이 속한 섹션의 id(`ChannelSectionRow.id`). null 이면 미분류(CHANNELS).
+   * `section` 은 그 섹션 이름의 거울이다. 옵셔널인 이유: 이 필드 이전 서버는 보내지 않는다 —
+   * 그때는 `section` 이름으로 묶는다.
+   */
+  sectionId?: string | null;
+  /**
    * 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
    */
   sortOrder: number | null;
+}
+
+/**
+ * 사이드바 섹션 하나(136, 계정별). 채널이 없어도 있다(빈 섹션).
+ *
+ * - `position`: 사이드바에서의 섹션 순서, 0..n-1(손으로 정한다).
+ * - `collapsed`: 접힘 상태 — 기기 사이에 따라온다.
+ * - `name`: 한 계정 안에서 겹치지 않는다(옛 앱이 이름으로 섹션을 가리킨다).
+ */
+export interface ChannelSectionRow {
+  id: string;
+  name: string;
+  position: number;
+  collapsed: boolean;
+  createdAt: string;
 }
 
 /**

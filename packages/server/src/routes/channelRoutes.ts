@@ -6,8 +6,12 @@ import {
   addChannelMember, assertChannelVisible, audienceFor, channelListAudience, channelListLostAudience,
   channelMembershipGate, channelPostGate, createChannel, deleteChannel,
   findDm, getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
-  updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs, renameSection,
+  updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs, renameSection, normalizeSectionName,
 } from '../services/channels.js';
+import {
+  SectionNameTakenError, createChannelSection, deleteChannelSection, getChannelSection, listChannelSections,
+  reorderChannelSections, updateChannelSection,
+} from '../services/channelSections.js';
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
 import {
   listChannelAutoMentions, setChannelAutoMention, unsetChannelAutoMention,
@@ -463,8 +467,11 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     return reply.code(201).send(channel);
   });
 
+  // `sections` 를 같이 싣는 이유: 사이드바는 둘을 늘 함께 그린다 — 따로 받으면 빈 섹션이
+  // 잠깐 사라졌다 나타나고, 왕복이 하나 는다(136 이전 서버는 `prefs` 만 준다).
   app.get('/channels/prefs', { preHandler: app.requireAccount }, async (req) => ({
     prefs: await listChannelPrefs(pool, req.account!.id),
+    sections: await listChannelSections(pool, req.account!.id),
   }));
 
   const prefParam = z.object({ id: z.string().uuid() });
@@ -479,6 +486,8 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // null 은 "섹션에서 빼기"고, 빈 문자열도 null 로 변환된다.
     // .min(1) 이 아니라 .max(40) 만 — 빈 문자열은 라우트에서 거르고 service 에서 null 로 변환.
     section: sectionName.optional(),
+    // 섹션 id 로 넣기·빼기(136). 새 앱의 길이다 — `section`(이름)과 함께 보내면 400.
+    sectionId: z.string().uuid().nullable().optional(),
     // 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
     // `nullable` 인 이유: "지우기"는 명시적 null 이다 — 이것이 없으면 한 번 매긴 순서를
     // 되돌릴 방법이 없다(`undefined` 는 JSON 에서 키 자체가 사라져 "안 보냈다"가 된다).
@@ -504,9 +513,17 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
 
+    if (patch.section !== undefined && patch.sectionId !== undefined) {
+      return reply.code(400).send({ error: { code: 'invalid_body', message: 'send either section or sectionId' } });
+    }
+    // 남의 섹션 id 는 없는 것과 같다 — 있는지조차 말하지 않는다.
+    if (patch.sectionId != null && !(await getChannelSection(pool, req.account!.id, patch.sectionId))) {
+      return reply.code(404).send({ error: { code: 'section_not_found', message: 'no such section' } });
+    }
+
     // DM 은 섹션을 가질 수 없다(#157). null 은 "섹션에서 빼기"이므로 허용한다 —
     // 이미 붙은 섹션을 뗄 길이 없으면 잘못 들어간 DM 이 영영 그 자리에 남는다.
-    if (patch.section !== undefined && patch.section !== null) {
+    if ((patch.section !== undefined && patch.section !== null) || patch.sectionId != null) {
       const channel = await pool.query(`select kind from channel where id = $1`, [id]);
       if (!channel.rowCount) {
         return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
@@ -545,6 +562,97 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
 
     const prefs = await renameSection(pool, req.account!.id, oldName, newName);
     return { prefs };
+  });
+
+  /**
+   * 사이드바 섹션(136, 계정별). `/channels/sections/:name`(#323, 이름 기반)과 경로를 가른 이유:
+   * 같은 자리에 `:id` 를 두면 이름과 id 가 한 매개변수를 다툰다. 옛 경로는 옛 앱을 위해 남긴다.
+   *
+   * 이름 규칙은 위 `sectionName`(길이)과 `normalizeSectionName`(공백·빈 값)을 그대로 쓴다 —
+   * 다만 여기서 빈 이름은 "섹션 없음"이 아니라 오류다(이름 없는 섹션 행은 뜻이 없다).
+   */
+  const sectionIdParam = z.object({ id: z.string().uuid() });
+  const badName = { error: { code: 'invalid_name', message: 'section name must be 1-40 characters' } };
+  const nameTaken = { error: { code: 'section_exists', message: 'a section with that name already exists' } };
+
+  app.get('/channel-sections', { preHandler: app.requireAccount }, async (req) => ({
+    sections: await listChannelSections(pool, req.account!.id),
+  }));
+
+  /**
+   * 만들기. `channelIds` 는 만들면서 넣을 채널이다 — 지우기 되돌리기(8초)가 `position` 과 함께
+   * 원래 모양으로 되살릴 때와, 채널 메뉴의 「새 섹션…」이 쓴다. 넣을 채널마다 `/channels/:id/pref`
+   * 와 같은 검사(보이는가 → DM 인가)를 같은 순서로 한다.
+   */
+  app.post('/channel-sections', { preHandler: app.requireAccount }, async (req, reply) => {
+    const body = z.object({
+      name: sectionName,
+      position: z.number().int().min(0).optional(),
+      channelIds: z.array(z.string().uuid()).max(500).optional(),
+    }).strict().parse(req.body);
+    const name = normalizeSectionName(body.name);
+    if (name === null) return reply.code(400).send(badName);
+
+    const channelIds = [...new Set(body.channelIds ?? [])];
+    for (const channelId of channelIds) {
+      if (!(await assertChannelVisible(pool, channelId, req.account!.id))) {
+        return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+      }
+    }
+    if (channelIds.length) {
+      const dms = await pool.query(`select 1 from channel where id = any($1::uuid[]) and kind = 'dm'`, [channelIds]);
+      if (dms.rowCount) {
+        return reply.code(400).send({ error: { code: 'cannot_section_dm', message: 'DMs cannot have a section' } });
+      }
+    }
+    try {
+      const section = await createChannelSection(pool, req.account!.id, { name, position: body.position, channelIds });
+      return reply.code(201).send({ section, prefs: await listChannelPrefs(pool, req.account!.id) });
+    } catch (e) {
+      if (e instanceof SectionNameTakenError) return reply.code(409).send(nameTaken);
+      throw e;
+    }
+  });
+
+  /** 이름 바꾸기·접기. 보낸 것만 바꾼다. 다른 섹션과 같은 이름은 409(합치기는 하지 않는다). */
+  app.patch('/channel-sections/:id', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = sectionIdParam.parse(req.params);
+    const body = z.object({
+      name: sectionName.optional(),
+      collapsed: z.boolean().optional(),
+    }).strict().parse(req.body);
+    let name: string | undefined;
+    if (body.name !== undefined) {
+      const normalized = normalizeSectionName(body.name);
+      if (normalized === null) return reply.code(400).send(badName);
+      name = normalized;
+    }
+    try {
+      const section = await updateChannelSection(pool, req.account!.id, id, { name, collapsed: body.collapsed });
+      if (!section) return reply.code(404).send({ error: { code: 'section_not_found', message: 'no such section' } });
+      return { section };
+    } catch (e) {
+      if (e instanceof SectionNameTakenError) return reply.code(409).send(nameTaken);
+      throw e;
+    }
+  });
+
+  /** 지우기. 채널은 미분류로 돌아간다. 응답은 되돌리기에 필요한 전부(섹션·채널 id)다. */
+  app.delete('/channel-sections/:id', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { id } = sectionIdParam.parse(req.params);
+    const removed = await deleteChannelSection(pool, req.account!.id, id);
+    if (!removed) return reply.code(404).send({ error: { code: 'section_not_found', message: 'no such section' } });
+    return removed;
+  });
+
+  /** 섹션 순서(D3). 요청자의 섹션 전부를 새 순서로 받는다 — 집합이 다르면 409(다시 읽고 다시 보낸다). */
+  app.put('/channel-sections/order', { preHandler: app.requireAccount }, async (req, reply) => {
+    const { ids } = z.object({ ids: z.array(z.string().uuid()).max(500) }).strict().parse(req.body);
+    const sections = await reorderChannelSections(pool, req.account!.id, ids);
+    if (!sections) {
+      return reply.code(409).send({ error: { code: 'sections_changed', message: 'section set changed; reload and retry' } });
+    }
+    return { sections };
   });
 
   /**
