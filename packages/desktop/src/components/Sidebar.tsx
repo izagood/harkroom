@@ -617,6 +617,18 @@ export function Sidebar({
   };
   // 「섹션으로 옮기기…」(designer n2)를 고른 채널 — 그 줄 아래에 섹션 고르기 칸이 선다.
   const [sectionPickFor, setSectionPickFor] = useState<string | null>(null);
+  /*
+   * 칸이 열리면 처음으로 누를 수 있는 항목에 포커스(designer n8·d5). autoFocus 는 첫 항목이 지금 섹션
+   * (disabled)이면 아무 데도 안 갔고, 메뉴가 닫히며 트리거(채널 줄)로 포커스를 돌려주는 것과도 겹쳤다 —
+   * 그 뒤 틱에 옮긴다.
+   */
+  useEffect(() => {
+    if (!sectionPickFor) return;
+    const timer = setTimeout(() => {
+      document.querySelector<HTMLElement>(`[data-testid="section-pick-${sectionPickFor}"] button:not(:disabled)`)?.focus();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [sectionPickFor]);
   // 섹션 이름 고치기 입력칸 하나가 이미 보냈는가(Enter 뒤 blur 가 두 번째로 보내지 않게, designer n1).
   const renameSubmitted = useRef(false);
   const activeCommunityId = useCommunityRegistry((r) => r.activeId);
@@ -1484,9 +1496,11 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
     const inGroup = !!channelSections && ch.kind === 'standard' && !isStarred
       && groupedChannels.some((g) => g.channels.some((i) => i.channel.id === ch.id));
     const pickSections = channelSections ? [...channelSections].sort((a, b) => a.position - b.position) : [];
-    const closePick = () => setSectionPickFor(null);
-    // 처음으로 누를 수 있는 항목에 포커스(designer n8) — 지금 섹션 버튼은 disabled 라 포커스를 못 받고 Esc 도 안 먹었다.
-    const firstPick = pickSections.findIndex((sec) => sec.id !== pref?.sectionId);
+    /** 닫으면 포커스를 그 채널 줄로 돌려준다(designer d5) — 「새 섹션…」은 이름 칸이 포커스를 가져가니 빼고. */
+    const closePick = (refocus = true) => {
+      setSectionPickFor(null);
+      if (refocus) setTimeout(() => document.querySelector<HTMLElement>(`[data-channel-row="${ch.id}"]`)?.focus(), 0);
+    };
     return (
       <div
         key={ch.id}
@@ -1592,7 +1606,6 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
             return (
               <button
                 key={sec.id}
-                autoFocus={i === firstPick}
                 data-testid={`section-pick-${ch.id}-${sec.id}`}
                 disabled={current}
                 aria-current={current || undefined}
@@ -1606,20 +1619,19 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
           })}
           <div role="separator" className="my-1 border-t border-border" />
           <button
-            autoFocus={firstPick === -1}
-            className="block w-full rounded-row px-2 py-0.5 text-left text-meta text-fg-muted hover:bg-surface-hover hover:text-fg"
-            onClick={() => { closePick(); setSectionEditFor(ch.id); setSectionDraft(''); }}
-          >{t('sidebar.menu.sectionNew')}</button>
+            className="flex w-full items-center gap-1 rounded-row px-2 py-0.5 text-left text-meta text-fg-muted hover:bg-surface-hover hover:text-fg"
+            onClick={() => { closePick(false); setSectionEditFor(ch.id); setSectionDraft(''); }}
+          ><span aria-hidden="true" className="w-3 shrink-0" />{t('sidebar.menu.sectionNew')}</button>
           {pref?.sectionId && (
             <button
-              className="block w-full rounded-row px-2 py-0.5 text-left text-meta text-fg-muted hover:bg-surface-hover hover:text-fg"
+              className="flex w-full items-center gap-1 rounded-row px-2 py-0.5 text-left text-meta text-fg-muted hover:bg-surface-hover hover:text-fg"
               onClick={() => { closePick(); void getController().moveChannelToSection(ch.id, null); }}
-            >{t('sidebar.menu.sectionClear')}</button>
+            ><span aria-hidden="true" className="w-3 shrink-0" />{t('sidebar.menu.sectionClear')}</button>
           )}
           <button
-            className="block w-full rounded-row px-2 py-0.5 text-left text-meta text-fg-subtle hover:bg-surface-hover"
-            onClick={closePick}
-          >{t('sidebar.section.cancel')}</button>
+            className="flex w-full items-center gap-1 rounded-row px-2 py-0.5 text-left text-meta text-fg-subtle hover:bg-surface-hover"
+            onClick={() => closePick()}
+          ><span aria-hidden="true" className="w-3 shrink-0" />{t('sidebar.section.cancel')}</button>
         </div>
       )}
       </div>
@@ -1869,11 +1881,16 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
             {channelSections && me?.isAdmin && (
               <button
                 data-testid="add-channel"
-                aria-label={t('sidebar.channel.create')}
-                title={t('sidebar.channel.create')}
-                className="rounded-sm px-1 normal-case hover:bg-surface-hover"
+                aria-label={t('sidebar.channel.createLabel')}
+                title={t('sidebar.channel.createLabel')}
+                className="rounded-sm p-0.5 text-fg-subtle hover:bg-surface-hover hover:text-fg"
                 onClick={() => { setCreateInSection(null); setCreateChannelOpen(true); }}
-              >＋</button>
+              >
+                {/* 머리 글자와 같은 색의 12px ＋(designer n12) — 글꼴 ＋ 는 작고 옅어 눌러지는 것으로 안 보였다. */}
+                <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" className="block">
+                  <path d="M6 2v8M2 6h8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
             )}
           </div>
           {/*

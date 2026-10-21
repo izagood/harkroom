@@ -382,12 +382,14 @@ describe('사이드바 섹션 표 — 끌어 옮기기 (S3)', () => {
     expect(current.textContent).toContain('✓');
     expect((screen.getByTestId('section-pick-c1-s2') as HTMLButtonElement).disabled).toBe(false);
     // n8: 포커스는 처음으로 누를 수 있는 항목에 — 지금 섹션(disabled)이 아니다.
-    expect(document.activeElement).toBe(screen.getByTestId('section-pick-c1-s2'));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('section-pick-c1-s2')));
     // 고르기 칸은 채널 줄 **아래**에 선다.
     const pick = screen.getByTestId('section-pick-c1');
     expect(row.compareDocumentPosition(pick) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.keyDown(pick, { key: 'Escape' });
     expect(screen.queryByTestId('section-pick-c1')).toBeNull();
+    // d5: 닫히면 포커스가 그 채널 줄로 돌아온다.
+    await waitFor(() => expect(document.activeElement?.getAttribute('data-channel-row')).toBe('c1'));
   });
 
   it('n3: 섹션 표가 있으면 「채널 만들기」는 CHANNELS 머리의 ＋ 다(첫 줄 + 는 없다)', () => {
@@ -397,7 +399,7 @@ describe('사이드바 섹션 표 — 끌어 옮기기 (S3)', () => {
     mount();
     const add = screen.getByTestId('add-channel');
     expect(screen.getByTestId('channels-heading').contains(add)).toBe(true);
-    expect(add.getAttribute('aria-label')).toBe('Create channel');
+    expect(add.getAttribute('aria-label')).toBe('채널 만들기');
   });
 
   it('n6: 섹션 머리 갈매기는 SVG 이고 펼친 섹션만 90° 돈다', () => {

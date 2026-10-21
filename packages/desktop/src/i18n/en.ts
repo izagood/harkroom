@@ -2031,6 +2031,8 @@ export const en = {
   'sidebar.channel.archived': 'Archived ({count})',
   'sidebar.channel.cancel': 'Cancel',
   'sidebar.channel.create': 'Create channel',
+  /** CHANNELS 머리 ＋ 의 읽는 이름(designer n12) — 글자 줄 「Create channel」과 달리 아이콘이라 우리말로 읽는다. */
+  'sidebar.channel.createLabel': 'Create channel',
   'sidebar.channel.createFailed': 'The channel was not created',
   /**
    * 이름 규칙. **`Invalid name` 이 아니라 무엇이 되는지를 적는다** — 이 저장소의

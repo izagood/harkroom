@@ -1242,6 +1242,8 @@ export const ko = {
   'sidebar.channel.archived': 'Archived ({count})',
   'sidebar.channel.cancel': '취소',
   'sidebar.channel.create': 'Create channel',
+  /** CHANNELS 머리 ＋ 의 읽는 이름(designer n12) — 글자 줄 「Create channel」과 달리 아이콘이라 우리말로 읽는다. */
+  'sidebar.channel.createLabel': '채널 만들기',
   'sidebar.channel.createFailed': '채널 생성에 실패했다',
   'sidebar.channel.createInvalidName': '이름은 영문 소문자·숫자·`-`·`_` 만 쓸 수 있다 (1~48자)',
   'sidebar.channel.createSubmit': '만들기',
