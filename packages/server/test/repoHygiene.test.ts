@@ -261,6 +261,66 @@ describe('repo hygiene', () => {
     });
   });
 
+  /**
+   * 홈 디렉터리 경로에 사람 이름이 실리지 않는다(security P3, 2026-10-21). 실측 화면·로그를 픽스처로 떠 오면
+   * `/Users/<로그인 이름>/…` 이나 claude 의 프로젝트 폴더 이름(`-Users-<이름>-…`)이 같이 딸려 온다.
+   * 이름은 막을 목록이 아니라 **통과시킬 예시 이름**의 허용 목록으로 본다 — 막을 이름을 여기 적으면 그것이 곧 공개다.
+   * 새 예시 이름이 필요하면 이 목록에 한 줄 더한다(리뷰에 드러난다).
+   */
+  describe('홈 경로에 실제 사람 이름이 없다', () => {
+    const 예시이름 = new Set(['u', 'x', 'me', 'you', 'alice', 'alice2', 'bob', 'someone', 'secret', 'user', 'example', 'runner']);
+    // `/Users/<이름>`·`/home/<이름>`·claude 프로젝트 폴더 `-Users-<이름>-`. `<이름>`·`${…}` 자리표시자는 이름이 아니다.
+    const 홈경로 = /(?:\/Users\/|\/home\/|-Users-)([A-Za-z0-9_]+)/g;
+    const 자기자신 = join(getRoot(), 'packages/server/test/repoHygiene.test.ts');
+
+    function 훑을파일(): string[] {
+      const out: string[] = [];
+      const walk = (dir: string): void => {
+        if (!existsSync(dir)) return;
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, e.name);
+          if (e.isDirectory()) {
+            if (['node_modules', 'dist', 'target', '.git', 'build', '.dart_tool', 'Pods'].includes(e.name)) continue;
+            walk(full);
+          } else if (/\.(ts|tsx|rs|md|json|txt|dart|sh|ya?ml|toml|swift|plist)$/.test(e.name)) {
+            out.push(full);
+          }
+        }
+      };
+      for (const root of CODE_ROOTS) walk(join(getRoot(), root));
+      walk(join(getRoot(), 'docs'));
+      walk(join(getRoot(), 'ops'));
+      out.push(join(getRoot(), 'README.md'));
+      return out;
+    }
+
+    function 걸리는이름(text: string): string[] {
+      return [...text.matchAll(홈경로)].map((m) => m[1]!).filter((name) => !예시이름.has(name));
+    }
+
+    it('소스·픽스처·문서의 홈 경로 이름이 모두 예시 이름이다', () => {
+      const 걸린것: string[] = [];
+      for (const file of 훑을파일()) {
+        if (file === 자기자신) continue;
+        const 이름들 = 걸리는이름(readFileSync(file, 'utf-8'));
+        // 이름 자체는 찍지 않는다 — 파일 자리와 개수만. 실패 기록(CI 로그)도 공개다.
+        if (이름들.length) 걸린것.push(`${file.slice(getRoot().length + 1)}: 예시 아닌 이름 ${이름들.length}곳`);
+      }
+      expect(
+        걸린것,
+        '홈 경로에 예시가 아닌 이름이 있다. `/Users/alice/…` 처럼 예시 이름으로 바꾼다(정말 예시면 `예시이름` 에 더한다):\n'
+          + 걸린것.join('\n'),
+      ).toEqual([]);
+    });
+
+    it('이 회귀선이 실제로 잡는다 — 예시는 통과하고 다른 이름은 걸린다', () => {
+      expect(걸리는이름('/Users/alice/.harkroom-agent · -Users-alice--harkroom · /Users/x/wt · /home/u/x')).toEqual([]);
+      // 합성한 이름이다 — 실제 누구의 것도 아니다.
+      expect(걸리는이름('/Users/zed-q/x')).toEqual(['zed']);
+      expect(걸리는이름('/…/-Users-quill-orca-workspaces')).toEqual(['quill']);
+    });
+  });
+
   describe('README environment variables table', () => {
 
     // 툴체인이 주는 변수는 README 의 harkroom 설정 표에 적을 것이 아니다.
