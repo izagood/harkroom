@@ -12,6 +12,7 @@ import { readFile, realpath } from 'node:fs/promises';
 import { relative, isAbsolute } from 'node:path';
 import { normalizeProviderBaseUrl, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
 import type { AgentHarness } from '@harkroom/shared';
+import { PROVIDER_LANE_OPENCODE_ENV } from './opencodeHome.js';
 
 /**
  * 하네스별로 lane 이 넣을 수 있는 키(security ⓑ). 여기 없는 하네스는 lane 을 못 쓴다 — 넣을 자리를 모르면
@@ -19,6 +20,8 @@ import type { AgentHarness } from '@harkroom/shared';
  */
 export const PROVIDER_LANE_ENV_KEYS: Partial<Record<AgentHarness, { baseUrl: string; token: string }>> = {
   'claude-code': { baseUrl: 'ANTHROPIC_BASE_URL', token: 'ANTHROPIC_AUTH_TOKEN' },
+  // opencode 는 설정 파일의 lane provider 블록이 `{env:…}` 로 이 둘을 읽는다(`opencodeHome.ts`, ⓕ).
+  opencode: PROVIDER_LANE_OPENCODE_ENV,
 };
 
 export class ProviderLaneError extends Error {

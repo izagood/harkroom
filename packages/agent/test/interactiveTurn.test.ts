@@ -172,7 +172,7 @@ describe('전용 제공사 경로 — 터미널 열기 거절(security F1)', () 
   it('새로 열기를 거절하고 PTY 를 띄우지 않는다', async () => {
     const h = await makeHarness();
     const manager = createInteractiveManager({ ...h.deps, providerLane: true });
-    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', cols: 100, rows: 30 }))
+    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice', cols: 100, rows: 30 }))
       .rejects.toThrow(/^interactive_unsupported: /);
     expect(h.plans).toHaveLength(0);
     expect(h.registry.get(KEY)).toBeUndefined();
@@ -182,7 +182,7 @@ describe('전용 제공사 경로 — 터미널 열기 거절(security F1)', () 
     const h = await makeHarness();
     h.registry.register(KEY, { kind: 'mention', sessionId: 'relay-mention' } as never);
     const manager = createInteractiveManager({ ...h.deps, providerLane: true });
-    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', cols: 100, rows: 30 }))
+    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice', cols: 100, rows: 30 }))
       .rejects.toThrow(/interactive_unsupported/);
   });
 });

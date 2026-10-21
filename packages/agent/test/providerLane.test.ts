@@ -24,6 +24,16 @@ describe('providerLane.envFor', () => {
     });
   });
 
+  it('opencode 에는 lane provider 블록이 `{env:}` 로 읽는 두 이름만 — 키는 `ANTHROPIC_*` 로 가지 않는다(ⓕ)', async () => {
+    const t = await setup();
+    const lane = createProviderLane({ mount: ok({ baseUrl: 'https://gateway.example', path: t.path }), turnSecretsDir: t.secretsDir });
+    expect(await lane.envFor('m1', 'opencode')).toEqual({
+      HARKROOM_PROVIDER_BASE_URL: 'https://gateway.example', HARKROOM_PROVIDER_TOKEN: 'tok-123',
+    });
+    // 포크(Kilo)는 아직 표에 없다 — 넣을 자리를 모르면 던진다.
+    await expect(lane.envFor('m1', 'kilo')).rejects.toMatchObject({ code: 'harness_unsupported' });
+  });
+
   it('설정이 없다는 답(lane null)은 던진다 — 계정 로그인으로 떨어지지 않는다', async () => {
     const t = await setup();
     const lane = createProviderLane({ mount: ok(null), turnSecretsDir: t.secretsDir });

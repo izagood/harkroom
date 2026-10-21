@@ -26,7 +26,7 @@
 // 만들어 준 표(claude 형식 `mcpServers`)를 opencode 모양으로 **번역해** 이 루트에 적는다.
 // harkroom 항목은 stdio 브릿지(`harkroom-operator mcp-bridge`)이고, 실측으로 그대로 붙는다
 // (`opencode mcp list` → `✓ connected`).
-import { chmod, lstat, mkdir, readFile, readlink, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, readlink, symlink, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { XdgApp } from './adapters/contract.js';
@@ -112,6 +112,54 @@ export function toOpencodeMcp(
 const INHERITED_KEYS = ['provider', 'model', 'small_model'] as const;
 
 /**
+ * 전용 제공사 경로(provider lane, `providerLane.ts`)의 provider 이름. 에이전트 모델은 `harkroom-lane/<모델 id>` 로 적는다.
+ * 내장 `anthropic` 이 아니라 새 이름이어야 한다 — 내장 provider 는 지운 `ANTHROPIC_API_KEY` 를 찾는다.
+ */
+export const PROVIDER_LANE_OPENCODE_PROVIDER = 'harkroom-lane';
+/** lane 값이 들어오는 자식 env 이름(`PROVIDER_LANE_ENV_KEYS.opencode`). 설정 파일에는 값이 아니라 이 참조만 적는다. */
+export const PROVIDER_LANE_OPENCODE_ENV = { baseUrl: 'HARKROOM_PROVIDER_BASE_URL', token: 'HARKROOM_PROVIDER_TOKEN' } as const;
+/**
+ * 모델 id 문법. opencode 는 설정 **본문 전체**에서 `{env:…}`·`{file:…}` 를 바꿔 넣으므로, 서버에서 온 모델 이름에
+ * 중괄호가 섞이면 키나 아무 파일이 모델 이름 자리로 gateway 에 실려 간다. 그래서 글자를 좁힌다.
+ */
+const LANE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+/** `harkroom-lane/<id>` 에서 id 를 꺼낸다. 아니면 null — 그 턴은 모델을 못 찾고 실패한다(다른 provider 로 안 떨어진다). */
+export function providerLaneModelId(model: string | null | undefined): string | null {
+  const prefix = `${PROVIDER_LANE_OPENCODE_PROVIDER}/`;
+  if (!model?.startsWith(prefix)) return null;
+  const id = model.slice(prefix.length);
+  return LANE_MODEL_ID.test(id) ? id : null;
+}
+
+/**
+ * lane 에이전트의 provider 블록(security ⓕ). 사람 설정의 provider 는 **물리지 않고** 이 블록 하나만 연다.
+ * 주소·키는 값이 아니라 `{env:…}` 참조다 — 값은 그 턴의 자식 env 에만 있다(ⓐ).
+ * `enabled_providers` 로 다른 provider(무료 티어·사람 로그인)를 닫아, 값을 못 받으면 다른 길로 돌지 않고 실패한다.
+ */
+function providerLaneConfig(model: string | null): Record<string, unknown> {
+  const id = providerLaneModelId(model);
+  const name = PROVIDER_LANE_OPENCODE_PROVIDER;
+  return {
+    provider: {
+      [name]: {
+        npm: '@ai-sdk/anthropic',
+        name: 'Harkroom provider lane',
+        options: {
+          // @ai-sdk/anthropic 의 baseURL 은 `/v1` 까지다. lane 의 base URL 은 claude-code(`ANTHROPIC_BASE_URL`)와 같은 뿌리다.
+          baseURL: `{env:${PROVIDER_LANE_OPENCODE_ENV.baseUrl}}/v1`,
+          apiKey: `{env:${PROVIDER_LANE_OPENCODE_ENV.token}}`,
+        },
+        // 목록에 없는 모델은 opencode 가 거절한다(1.18.32 실측 `Model not found`) — 이 턴의 모델 하나만 적는다.
+        models: id ? { [id]: { name: id } } : {},
+      },
+    },
+    enabled_providers: [name],
+    ...(id ? { model: `${name}/${id}`, small_model: `${name}/${id}` } : {}),
+  };
+}
+
+/**
  * JSONC(주석·끝 쉼표)를 JSON 으로. Kilo 의 사람 설정은 `kilo.jsonc` 이다(실측 — 처음 뜰 때
  * 그 이름으로 만든다). 문자열 안의 `//`(URL)는 건드리지 않는다.
  */
@@ -169,6 +217,11 @@ export async function ensureOpencodeHome(opts: {
   sourceData?: string;
   /** 어느 하네스의 이름표로 쓰나(어댑터의 `xdgApp`). 없으면 opencode. */
   app?: XdgApp;
+  /**
+   * 전용 제공사 경로로 뜬 러너면 그 턴의 모델(`harkroom-lane/<id>`, 모르면 null). 주면 사람 설정의 provider·모델을
+   * 물리지 않고 lane 블록만 쓰며, 사람 로그인(`auth.json`)도 링크하지 않는다(security ⓒ·ⓕ).
+   */
+  providerLane?: { model: string | null };
 }): Promise<string> {
   const { opencodeHome } = opts;
   const app = opts.app ?? OPENCODE_APP;
@@ -177,9 +230,13 @@ export async function ensureOpencodeHome(opts: {
   await chmod(opencodeHome, 0o700);
   for (const dir of Object.values(dirs)) await mkdir(dir, { recursive: true, mode: 0o700 });
 
-  const user = await readUserConfig(app, opts.sourceConfig);
   const inherited: Record<string, unknown> = {};
-  for (const key of INHERITED_KEYS) if (user[key] !== undefined) inherited[key] = user[key];
+  if (opts.providerLane) {
+    Object.assign(inherited, providerLaneConfig(opts.providerLane.model));
+  } else {
+    const user = await readUserConfig(app, opts.sourceConfig);
+    for (const key of INHERITED_KEYS) if (user[key] !== undefined) inherited[key] = user[key];
+  }
 
   const config = {
     $schema: app.schema,
@@ -206,6 +263,13 @@ export async function ensureOpencodeHome(opts: {
   const sourceAuth = join(opts.sourceData ?? sourceOpencodeData(process.env, homedir(), app), 'auth.json');
   const targetDir = join(dirs.XDG_DATA_HOME, app.dir);
   const targetAuth = join(targetDir, 'auth.json');
+  if (opts.providerLane) {
+    // lane 에는 사람 로그인을 붙이지 않는다 — 한 자식에 로그인과 lane 키가 같이 들면 #374 가 막던 상황이다(ⓒ).
+    // 전에 lane 이 아니던 에이전트라 링크가 남아 있으면 **링크만** 뗀다(사람 파일은 안 건드린다).
+    const stat = await lstat(targetAuth).catch(() => null);
+    if (stat?.isSymbolicLink()) await unlink(targetAuth);
+    return opencodeHome;
+  }
   if (!(await lstat(sourceAuth).catch(() => null))) return opencodeHome;
   await mkdir(targetDir, { recursive: true, mode: 0o700 });
 
