@@ -42,7 +42,10 @@ class ChannelListScreen extends StatelessWidget {
         items.add(sec);
         if (!app.isSectionCollapsed(sec.key)) {
           items.addAll(sec.channels);
-          if (sec.channels.isEmpty && sec.sectionId != null) items.add(_EmptySectionHint(sec.key));
+          // 빈 섹션 안내는 이 기기에서 이번에 만든 섹션에만(designer n7) — 받아 온 빈 섹션마다 서면 시끄럽다.
+          if (sec.channels.isEmpty && sec.sectionId != null && app.freshSections.contains(sec.sectionId)) {
+            items.add(_EmptySectionHint(sec.key));
+          }
         } else {
           // 접혀도 나를 부른 채널과 지금 보는 채널은 남는다(D4) — 접기는 소음을 줄이는 것이지 부름을 숨기는 것이 아니다.
           items.addAll(sec.channels.where((c) => app.hasUnreadCallIn(c.id) || app.openChannelId == c.id));

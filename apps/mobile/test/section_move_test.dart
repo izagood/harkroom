@@ -140,7 +140,7 @@ void main() {
   testWidgets('접기는 서버에 적고, 접혀도 부름 채널은 남고 숨은 안 읽음은 머리에 점', (tester) async {
     final server = _Server()..inboxMentionC2 = true;
     final app = await _pump(tester, server);
-    expect(find.byKey(const Key('section-empty-sid:s2')), findsOneWidget, reason: '빈 섹션은 안내 한 줄');
+    expect(find.byKey(const Key('section-empty-sid:s2')), findsNothing, reason: '서버에서 받아 온 빈 섹션엔 안내가 없다(designer n7)');
     await tester.tap(find.byKey(const Key('section-sid:s0')));
     await tester.pumpAndSettle();
     expect(server.calls, contains('PATCH /channel-sections/s0'));
@@ -243,6 +243,48 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('section-moved')), findsNothing, reason: '스낵바는 스스로 내려간다');
+  });
+
+  testWidgets('섹션 펼치기는 정해 쓴다 — 이미 펼쳐진 섹션은 도로 접지 않고, 보내지도 않는다(security 참고)', (tester) async {
+    final server = _Server();
+    final app = await _pump(tester, server);
+    expect(app.isSectionCollapsed('sid:s1'), isFalse);
+    await app.setServerSectionCollapsed('s1', false);
+    await tester.pumpAndSettle();
+    expect(app.isSectionCollapsed('sid:s1'), isFalse, reason: '뒤집기였다면 여기서 접혔다');
+    expect(server.calls.where((c) => c == 'PATCH /channel-sections/s1'), isEmpty);
+
+    // 펼쳐진 섹션으로 옮기면 접힘을 건드리지 않는다.
+    await app.moveChannelToSection('c4', 's1');
+    await tester.pumpAndSettle();
+    expect(app.isSectionCollapsed('sid:s1'), isFalse);
+    expect(server.calls.where((c) => c == 'PATCH /channel-sections/s1'), isEmpty);
+
+    // 접힌 섹션으로 옮기면 collapsed=false 를 한 번 정해 쓴다.
+    await app.setServerSectionCollapsed('s0', true);
+    await tester.pumpAndSettle();
+    await app.moveChannelToSection('c3', 's0');
+    await tester.pumpAndSettle();
+    expect(app.isSectionCollapsed('sid:s0'), isFalse);
+    expect(server.bodies[server.calls.lastIndexOf('PATCH /channel-sections/s0')], {'collapsed': false});
+  });
+
+  testWidgets('빈 섹션 안내는 이 기기에서 이번에 만든 섹션에만 선다(designer n7)', (tester) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final server = _Server();
+    final app = await _pump(tester, server);
+    expect(find.byKey(const Key('section-empty-sid:s2')), findsNothing, reason: '받아 온 빈 섹션');
+
+    await app.createSectionWith('실험', 'c4');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('section-empty-sid:snew')), findsNothing, reason: '채널이 들어 있으면 안내가 없다');
+
+    await app.moveChannelToSection('c4', null);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('section-empty-sid:snew')), findsOneWidget, reason: '방금 만든 섹션이 비면 안내');
+    expect(find.byKey(const Key('section-empty-sid:s2')), findsNothing);
   });
 
   testWidgets('섹션에서 빼면 「#채널 → 채널」, 별표 채널 시트에는 안내 한 줄(designer n4)', (tester) async {
