@@ -32,7 +32,6 @@
  *
  * | 값 | 왜 | 무엇이 깨지나 |
  * |---|---|---|
- * | `0.4.140` | 사이드바 섹션(136): `POST /channel-sections`·`PATCH`·`DELETE /channel-sections/:id`·`PUT /channel-sections/order` 와 `/channels/prefs` 의 `sections`·pref `sectionId` 가 그 릴리스에 들어갔고(#1437), 사이드바 섹션 머리·접기·지우기·순서가 그것을 부른다. 사이드바는 `sections` 가 없으면 이름으로 묶는 옛 모양으로 물러난다 | 옛 서버에서는 섹션 머리 대신 옛 이름 묶음이 서고, 「섹션 만들기」가 안 보인다 |
  * | `0.4.84` | 사진 맞추기: `GET /accounts/:id/avatar/source` 와 PUT 아바타의 `source` 키가 그 릴리스에 들어갔고(#1357), 「사진 맞추기」 모달이 다시 열 때 원본을 부른다 | 옛 서버에서는 원본이 404 라 걸린 아바타로 열리고(확대만 의미 있음), 원본·자리가 남지 않는다 |
  * | `0.4.35` | 묶음 카드(선택 카드 P1): `POST /channels/:id/messages/:id/ask-bundle/answer`·`…/accept-recommended` 가 그 릴리스에 들어갔고(#1280), 묶음 카드의 칩·「남은 n개 추천대로」가 그것을 부른다. 묶음 카드 자체가 그 서버부터 생기므로 옛 서버에서 깨지는 화면은 없다 — 하한을 올리는 것은 회귀선 규칙 때문이다 | 없음(옛 서버에는 묶음 카드가 서지 않는다) |
  * | `0.4.20` | 비밀 보관소 소유자 보기(114): `POST/DELETE /auth/step-up`·`POST /secrets/:id/reveal` 이 그 릴리스에 들어갔고(#1253), 설정 › 비밀과 API 의 잠금 해제·[값 보기]·[내려받기]가 그것을 부른다. 화면은 서버가 이보다 낮으면 그 버튼을 아예 숨긴다 | 옛 서버에서는 값 보기가 안 보인다(나머지 비밀 화면은 그대로) |
@@ -68,7 +67,7 @@
  *
  * 근거 없이 높이지는 않는다 — 멀쩡한 서버가 고장으로 그려지면 그 순간 이 값은 소음이 된다.
  */
-export const MIN_SERVER_VERSION = '0.4.140';
+export const MIN_SERVER_VERSION = '0.4.84';
 
 /** `X.Y.Z` 만 견준다. 그 밖의 모양은 견주지 않는다(아래 `compareRelease` 주석). */
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
