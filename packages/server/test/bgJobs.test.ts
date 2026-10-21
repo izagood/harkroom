@@ -119,9 +119,12 @@ describe('bg_job (BG1)', () => {
   });
 
   describe('증류 생산자(BG3)', () => {
-    /** 스레드 하나: 루트 글 + done 상태(나이) + 그 에이전트의 메모. */
+    /**
+     * 스레드 하나: 루트 글 + done 상태(나이) + 그 에이전트의 메모. 루트는 SQL 로 바로 넣는다 — API 로 올리면
+     * 스레드 상태 감시(300ms 디바운스)가 다시 판정해 손으로 넣은 thread_status 를 지운다(CI 에서 10개 중 5개만 남던 원인).
+     */
     const thread = async (ch: string, agentId: string, o: { doneAgoMs?: number; status?: string; note?: boolean } = {}) => {
-      const root = (await app.inject({ method: 'POST', url: `/channels/${ch}/messages`, headers: auth(admin.token), payload: { body: 'distill me' } })).json().id as string;
+      const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'distill me', 'user') returning id`, [ch, admin.accountId])).rows[0].id as string;
       await pool.query(
         `insert into thread_status (root_id, status, emoji, account_id, updated_at) values ($1, $2, '✅', $3, now() - ($4 || ' milliseconds')::interval)`,
         [root, o.status ?? 'done', agentId, String(o.doneAgoMs ?? 25 * 3600_000)],
