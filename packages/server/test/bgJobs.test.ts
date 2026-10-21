@@ -9,8 +9,9 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, registerOperator } from './helpers/fixtures.js';
 import {
-  BG_MAX_WRITES, claimBgJob, completeBgJob, createBgJobSweeper, enqueueBgJob, inBgWindow, kstDay,
+  BG_MAX_WRITES, claimBgJob, completeBgJob, createBgJobSweeper, DISTILL_MAX_THREADS, enqueueBgJob, inBgWindow, kstDay, produceDistillJobs,
 } from '../src/services/bgJobs.js';
+import { getThreadNote, setThreadNote } from '../src/services/threadNote.js';
 
 // 백그라운드 턴 G1 · BG1(설계 harkroom://message/4a44f18a) — 큐·창·상한·서버 허용 목록의 회귀선.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -115,6 +116,76 @@ describe('bg_job (BG1)', () => {
     const rows = (await pool.query(`select id, status, error from bg_job where id = any($1::uuid[])`, [[stale, old]])).rows;
     expect(rows.find((r) => r.id === stale)).toMatchObject({ status: 'failed', error: 'timeout' });
     expect(rows.find((r) => r.id === old)).toMatchObject({ status: 'skipped', error: 'expired' });
+  });
+
+  describe('증류 생산자(BG3)', () => {
+    /** 스레드 하나: 루트 글 + done 상태(나이) + 그 에이전트의 메모. */
+    const thread = async (ch: string, agentId: string, o: { doneAgoMs?: number; status?: string; note?: boolean } = {}) => {
+      const root = (await app.inject({ method: 'POST', url: `/channels/${ch}/messages`, headers: auth(admin.token), payload: { body: 'distill me' } })).json().id as string;
+      await pool.query(
+        `insert into thread_status (root_id, status, emoji, account_id, updated_at) values ($1, $2, '✅', $3, now() - ($4 || ' milliseconds')::interval)`,
+        [root, o.status ?? 'done', agentId, String(o.doneAgoMs ?? 25 * 3600_000)],
+      );
+      if (o.note !== false) await setThreadNote(pool, agentId, root, '진행 메모', undefined, null);
+      return root;
+    };
+
+    it('done 24h 넘은 메모 스레드를 볼 수 있는 것만 오래된 것부터 10개 묶어 하루 1회 넣고, 창이 끝난 뒤엔 넣지 않는다', async () => {
+      const a = await agent('bg-d1');
+      const pub = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'bg-d1-pub' } })).json().id as string;
+      const priv = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'bg-d1-priv', visibility: 'private' } })).json().id as string;
+      const old = await thread(pub, a.accountId, { doneAgoMs: 48 * 3600_000 });
+      const fresh = await thread(pub, a.accountId, { doneAgoMs: 3600_000 }); // done 1시간 — 아직
+      const running = await thread(pub, a.accountId, { status: 'running' });
+      // 그 에이전트가 못 보는 채널 — 가장 오래 done 이라, 거르지 않으면 맨 앞에 선다.
+      const hidden = await thread(priv, a.accountId, { doneAgoMs: 100 * 3600_000 });
+      const noNote = await thread(pub, a.accountId, { note: false, doneAgoMs: 80 * 3600_000 });
+      const archived = await thread(pub, a.accountId, { doneAgoMs: 90 * 3600_000 });
+      await pool.query(`update thread_note set archived_at = now() where thread_root_id = $1`, [archived]);
+      const more: string[] = [];
+      for (let i = 0; i < DISTILL_MAX_THREADS + 2; i++) more.push(await thread(pub, a.accountId, { doneAgoMs: (40 - i) * 3600_000 }));
+
+      expect((await produceDistillJobs(pool, new Date('2026-10-20T23:30:00Z'), ON)).queued).toBe(0); // 08:30 KST — 창 끝남
+      const done = await produceDistillJobs(pool, IN_WINDOW, ON);
+      expect(done.queued).toBeGreaterThanOrEqual(1);
+      const job = (await pool.query(`select input from bg_job where account_id = $1 and kind = 'distill' and day = '2026-10-21'`, [a.accountId])).rows[0];
+      const ids = job.input.threadIds as string[];
+      expect(ids).toHaveLength(DISTILL_MAX_THREADS);
+      expect(ids[0]).toBe(old); // 가장 오래 done 인 것부터
+      for (const x of [fresh, running, hidden, noNote, archived]) expect(ids).not.toContain(x);
+      // 하루 1회 — 다시 돌아도 늘지 않는다.
+      expect((await produceDistillJobs(pool, IN_WINDOW, ON)).refused.exists).toBeGreaterThanOrEqual(1);
+      // 날짜로 좁힌다 — 서버의 진짜 sweep(이 시험이 스위치를 켰다)이 실제 03~07 KST 에 돌면 오늘 날짜로 하나를 더 넣을 수 있다.
+      expect((await pool.query(`select count(*)::int as n from bg_job where account_id = $1 and kind = 'distill' and day = '2026-10-21'`, [a.accountId])).rows[0].n).toBe(1);
+      expect((await produceDistillJobs(pool, IN_WINDOW, {})).queued).toBe(0); // 스위치 꺼짐
+    });
+
+    it('done 으로 끝난 증류 회차는 입력 메모를 보관하고(읽기에서 빠짐), 다시 쓰면 열린다 · 실패한 회차는 보관하지 않는다', async () => {
+      const a = await agent('bg-d2');
+      const ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'bg-d2' } })).json().id as string;
+      const r1 = await thread(ch, a.accountId);
+      const r2 = await thread(ch, a.accountId);
+      const ok = (await pool.query(`insert into bg_job (account_id, kind, day, status, input, claimed_at) values ($1, 'distill', '2026-10-21', 'running', $2::jsonb, now()) returning id`, [a.accountId, JSON.stringify({ threadIds: [r1] })])).rows[0].id;
+      const bad = (await pool.query(`insert into bg_job (account_id, kind, day, status, input, claimed_at) values ($1, 'distill', '2026-10-22', 'running', $2::jsonb, now()) returning id`, [a.accountId, JSON.stringify({ threadIds: [r2] })])).rows[0].id;
+      expect(await completeBgJob(pool, a.accountId, ok, { status: 'done', summary: '없음' })).toBe('ok');
+      expect(await completeBgJob(pool, a.accountId, bad, { status: 'failed', error: 'timeout' })).toBe('ok');
+      expect(await getThreadNote(pool, a.accountId, r1)).toBeNull();
+      expect(await getThreadNote(pool, a.accountId, r2)).not.toBeNull();
+      expect((await pool.query(`select archived_by_run from thread_note where thread_root_id = $1`, [r1])).rows[0].archived_by_run).toBe(ok);
+      // 보관된 메모는 없는 것과 같다 — 새로 쓰기로 다시 연다.
+      expect(await setThreadNote(pool, a.accountId, r1, '다시', { updatedAt: null }, null)).toMatchObject({ updatedAt: expect.any(Date) });
+      expect((await getThreadNote(pool, a.accountId, r1))?.body).toBe('다시');
+    });
+
+    it('하루 상한은 동시에 넣어도 넘지 않는다(security n4)', async () => {
+      const xs = await Promise.all(['bg-n4a', 'bg-n4b', 'bg-n4c'].map((h) => agent(h)));
+      const day = new Date('2026-11-01T19:00:00Z');
+      const used = (await pool.query(`select count(*)::int as n from bg_job where day = $1::date`, [kstDay(day)])).rows[0].n as number;
+      const env = { ...ON, HARKROOM_BACKGROUND_DAILY_MAX: String(used + 1) } as NodeJS.ProcessEnv;
+      const rs = await Promise.all(xs.map((x) => enqueueBgJob(pool, { accountId: x.accountId, kind: 'cleanup', input: {}, now: day }, env)));
+      expect(rs.filter((r) => 'job' in r)).toHaveLength(1);
+      expect(rs.filter((r) => 'refused' in r && r.refused === 'daily_cap')).toHaveLength(2);
+    });
   });
 
   describe('cause bg:<jobId> — 서버 허용 목록', () => {

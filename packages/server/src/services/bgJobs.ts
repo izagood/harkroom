@@ -10,6 +10,8 @@
  */
 import type { Pool } from 'pg';
 
+import { channelVisibleSql } from './channels.js';
+
 export const BG_KINDS = ['distill', 'cleanup'] as const;
 export type BgKind = typeof BG_KINDS[number];
 export type BgStatus = 'queued' | 'running' | 'done' | 'failed' | 'skipped';
@@ -92,14 +94,27 @@ export async function enqueueBgJob(
   // 소유자의 「백그라운드 정리」 토글(132). 꺼진 에이전트에는 넣지 않는다.
   const on = await pool.query<{ bg_enabled: boolean }>(`select bg_enabled from agent_config where account_id = $1`, [input.accountId]);
   if (on.rows[0] && !on.rows[0].bg_enabled) return { refused: 'agent_off' };
-  const r = await pool.query<{ id: string }>(
-    `insert into bg_job (account_id, kind, day, input)
-     select $1, $2, $3::date, $4::jsonb
-     where (select count(*) from bg_job where day = $3::date) < $5
-     on conflict (account_id, kind, day) do nothing
-     returning id`,
-    [input.accountId, input.kind, day, JSON.stringify(input.input), backgroundDailyMax(env)],
-  );
+  // 하루 상한은 날짜별 advisory 잠금으로 직렬화한다(security n4) — 두 생산자가 동시에 세면 상한을 넘긴다.
+  const client = await pool.connect();
+  let r: { rows: { id: string }[] };
+  try {
+    await client.query('begin');
+    await client.query(`select pg_advisory_xact_lock(hashtext('bg_job_daily:' || $1))`, [day]);
+    r = await client.query<{ id: string }>(
+      `insert into bg_job (account_id, kind, day, input)
+       select $1, $2, $3::date, $4::jsonb
+       where (select count(*) from bg_job where day = $3::date) < $5
+       on conflict (account_id, kind, day) do nothing
+       returning id`,
+      [input.accountId, input.kind, day, JSON.stringify(input.input), backgroundDailyMax(env)],
+    );
+    await client.query('commit');
+  } catch (err) {
+    await client.query('rollback').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
   if (!r.rows[0]) {
     const exists = await pool.query(`select 1 from bg_job where account_id = $1 and kind = $2 and day = $3::date`, [input.accountId, input.kind, day]);
     return { refused: exists.rowCount ? 'exists' : 'daily_cap' };
@@ -140,12 +155,24 @@ export interface CompleteInput {
 
 /** running 인 자기 일감만 닫는다. 이미 닫혔으면 not_running(두 번 닫기·늦은 러너 보고는 덮지 않는다). */
 export async function completeBgJob(pool: Pool, accountId: string, jobId: string, c: CompleteInput): Promise<'ok' | 'not_found' | 'not_running'> {
-  const r = await pool.query(
+  const r = await pool.query<{ kind: string; input: BgJobRow['input'] }>(
     `update bg_job set status = $3, summary = $4, error = $5, tokens = $6, duration_ms = $7, finished_at = now()
-     where id = $1 and account_id = $2 and status = 'running'`,
+     where id = $1 and account_id = $2 and status = 'running'
+     returning kind, input`,
     [jobId, accountId, c.status, c.summary ?? null, c.error ?? null, c.tokens ?? null, c.durationMs ?? null],
   );
-  if (r.rowCount) return 'ok';
+  if (r.rows[0]) {
+    // 증류가 끝났으면(done) 입력 스레드의 메모를 보관한다(BG3). 실패·건너뜀이면 그대로 두어 다음 날 다시 고른다.
+    const row = r.rows[0];
+    if (c.status === 'done' && row.kind === 'distill' && Array.isArray(row.input.threadIds) && row.input.threadIds.length) {
+      await pool.query(
+        `update thread_note set archived_at = now(), archived_by_run = $3
+          where account_id = $1 and thread_root_id = any($2::uuid[]) and archived_at is null`,
+        [accountId, row.input.threadIds, jobId],
+      );
+    }
+    return 'ok';
+  }
   const exists = await pool.query(`select 1 from bg_job where id = $1 and account_id = $2`, [jobId, accountId]);
   return exists.rowCount ? 'not_running' : 'not_found';
 }
@@ -176,6 +203,44 @@ export async function recordBgChange(
   );
 }
 
+/** 증류 한 회차의 스레드 상한(설계 3절). 넘는 것은 다음 날로. */
+export const DISTILL_MAX_THREADS = 10;
+/** done 이 이만큼 유지된 스레드만 증류한다 — done 은 「지금 걸린 것 없음」이라 바로는 끝이 아니다(설계 2절). */
+export const DISTILL_DONE_AGE_MS = 24 * 60 * 60 * 1000;
+/** 생산자를 도는 간격. sweep 은 1분마다 돌지만 생산은 한 시간에 한 번이면 된다. */
+export const DISTILL_PRODUCE_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * 증류 생산자(BG3). 스레드 메모가 있고(보관·쓰기 검사 걸림 제외) 그 스레드가 done 으로 24h 넘게 머문 (에이전트, 스레드)를
+ * 에이전트마다 오래된 것부터 10개 묶어 하루 1회 넣는다. **그 에이전트가 지금 볼 수 있는 채널의 스레드만** — 회차의
+ * message.read·thread.note 허용 목록이 이 입력으로 묶이므로, 못 보는 스레드가 섞이면 허용 목록이 그것을 열어 준다.
+ * 창(03~07 KST)이 끝나기 전에만 넣는다 — 그 뒤에 넣으면 집지 못하고 다음 날 expired 로 닫힌다.
+ */
+export async function produceDistillJobs(pool: Pool, now: Date = new Date(), env: NodeJS.ProcessEnv = process.env): Promise<{ queued: number; refused: Record<string, number> }> {
+  const out = { queued: 0, refused: {} as Record<string, number> };
+  if (!backgroundEnabled(env)) return out;
+  if (new Date(now.getTime() + KST_OFFSET_MS).getUTCHours() >= BG_WINDOW_KST[1]) return out;
+  const r = await pool.query<{ account_id: string; threads: string[] }>(
+    `select n.account_id, (array_agg(n.thread_root_id order by s.updated_at, n.thread_root_id))[1:$2] as threads
+       from thread_note n
+       join account a on a.id = n.account_id and a.kind = 'agent' and a.deleted_at is null
+       join thread_status s on s.root_id = n.thread_root_id
+       join message m on m.id = n.thread_root_id and m.deleted_at is null
+       join channel c on c.id = m.channel_id
+      where s.status = 'done' and s.updated_at < $1
+        and n.archived_at is null and n.flag_reason is null
+        and ${channelVisibleSql('c', 'n.account_id')}
+      group by n.account_id`,
+    [new Date(now.getTime() - DISTILL_DONE_AGE_MS), DISTILL_MAX_THREADS],
+  );
+  for (const row of r.rows) {
+    const res = await enqueueBgJob(pool, { accountId: row.account_id, kind: 'distill', input: { threadIds: row.threads }, now }, env);
+    if ('job' in res) out.queued += 1;
+    else out.refused[res.refused] = (out.refused[res.refused] ?? 0) + 1;
+  }
+  return out;
+}
+
 export interface SweepHost {
   addHook(hook: 'onClose', fn: () => void | Promise<void>): void;
 }
@@ -189,10 +254,17 @@ export const BG_SWEEP_INTERVAL_MS = 60_000;
 export function createBgJobSweeper(pool: Pool, env: NodeJS.ProcessEnv = process.env): { startSweep(app: SweepHost): void; sweep(now?: Date): Promise<void> } {
   let timer: ReturnType<typeof setInterval> | null = null;
   let running = false;
+  let lastProducedAt = 0;
   const sweep = async (now: Date = new Date()) => {
     if (!backgroundEnabled(env) || running) return;
     running = true;
     try {
+      // 생산(BG3)은 한 시간에 한 번. (에이전트, 종류, 날짜) 유일이라 더 자주 돌아도 늘지 않지만 질의를 아낀다.
+      if (now.getTime() - lastProducedAt >= DISTILL_PRODUCE_INTERVAL_MS) {
+        lastProducedAt = now.getTime();
+        const p = await produceDistillJobs(pool, now, env);
+        if (p.queued || Object.keys(p.refused).length) console.log(`bg: distill queued=${p.queued} refused=${JSON.stringify(p.refused)}`);
+      }
       await pool.query(
         `update bg_job set status = 'failed', error = 'timeout', finished_at = now()
          where status = 'running' and claimed_at < $1`,
