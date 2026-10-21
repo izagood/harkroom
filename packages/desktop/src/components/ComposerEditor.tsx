@@ -115,7 +115,12 @@ function buildMarks(view: EditorView): DecorationSet {
           }
           return;
         }
-        if (!MARK_NODES.has(node.name)) return;
+        /*
+          링크의 주소도 기호처럼 다룬다 — 커서가 링크 밖이면 `[이름](주소)` 가 「이름」만 남는다.
+          주소만 남기면 「이름https://…」 처럼 붙어 보여서 링크가 오히려 읽기 어렵다.
+        */
+        const isLinkUrl = node.name === 'URL' && node.node.parent?.name === 'Link';
+        if (!MARK_NODES.has(node.name) && !isLinkUrl) return;
         // 목록 기호(`- `·`1. `)는 늘 보인다 — 숨기면 목록인지 알 수 없다. 옅게만 한다.
         if (node.name === 'ListMark') {
           items.push({ from: node.from, to: node.to, deco: faintMark });

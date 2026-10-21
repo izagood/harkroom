@@ -88,6 +88,16 @@ describe('입력 중인 코드에 면이 깔린다', () => {
     expect([...document.querySelectorAll('.cm-md-mark')].map((el) => el.textContent)).toEqual(['**', '**']);
   });
 
+  it('링크는 커서 밖이면 이름만 남는다 — 주소도 기호처럼 숨고, 초안에는 그대로 있다', () => {
+    render(<Composer onSend={vi.fn()} />);
+    const box = typeInto('[문서](https://example.com) 끝');
+    expect(screen.getByTestId('composer-editor').textContent).toBe('문서 끝');
+    expect(useAppStore.getState().drafts['']).toBe('[문서](https://example.com) 끝');
+
+    box.setSelectionRange(2, 2);
+    expect(screen.getByTestId('composer-editor').textContent).toBe('[문서](https://example.com) 끝');
+  });
+
   it('입력칸 상자 값은 한 곳(COMPOSER_BOX)에서 오고, 면은 감싸는 칸이 든다', () => {
     render(<Composer onSend={vi.fn()} />);
     const editor = screen.getByTestId('composer-editor');
