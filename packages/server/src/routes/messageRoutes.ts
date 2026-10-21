@@ -11,7 +11,7 @@ import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateS
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { normalizeSearchQuery } from '../services/mentions.js';
-import { decideFromCard } from '../services/permissionRequests.js';
+import { decide, decidedCard, resolveDecision } from '../services/decisions.js';
 import { applyChatApproval } from '../services/chatApproval.js';
 import { extractUrls, queueLinkPreviewFetch } from '../services/linkPreview.js';
 import { axisValid, cleanAxis, clearThreadAgentModel, isChannelRoot, setThreadAgentModel } from '../services/threadAgentModels.js';
@@ -367,14 +367,23 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       if (req.account!.kind !== 'human' || req.authVia !== 'session') {
         return reply.code(403).send({ error: { code: 'forbidden', message: 'only the owner signed in to the app can decide a permission request' } });
       }
-      const decided = await decideFromCard(pool, { messageId, actorId: req.account!.id, optionId });
+      const ref = await resolveDecision(pool, messageId);
+      if (ref?.kind !== 'permission') return reply.code(404).send({ error: { code: 'not_found', message: 'no permission request behind this card' } });
+      const decided = await decide(pool, ref, req.account!.id, { option: optionId, via: 'button' });
+      if (decided.kind !== 'permission') throw new Error('permission card resolved to an ask');
       if (!decided.ok) {
         const code = decided.code === 'already_decided' || decided.code === 'request_expired' ? 'already_answered' : decided.code;
         return reply.code(decided.status).send({ error: { code, message: decided.message } });
       }
-      return decided.card;
+      return decidedCard(pool, ref);
     }
-    const result = await recordAskAnswer(pool, { messageId, actorId: req.account!.id, optionId });
+    // 권한 카드가 아니면 물음 길이다. 거울은 `decide` 가 거울 글로 답한다(원본에 먼저 적는 것·권한 카드 거울 거절은 `recordAskAnswer`).
+    const ref = await resolveDecision(pool, messageId);
+    const decided = await decide(pool, ref?.mirrorMessageId ? ref : { kind: 'ask', cardMessageId: messageId }, req.account!.id, {
+      option: optionId, via: ref?.mirrorMessageId ? 'mirror' : 'button',
+    });
+    if (decided.kind !== 'ask') throw new Error('ask path resolved to a permission decision');
+    const result = decided.result;
     if (result === 'not_found') {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
     }
