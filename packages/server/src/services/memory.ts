@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { writeOrigin } from './writeOrigin.js';
 
 // 두 한도의 정본은 `@harkroom/shared` 다 — 설정 화면이 같은 값을 그려야 하는데
 // 데스크탑은 이 패키지를 import 할 수 없다. 여기서는 다시 내보내기만 한다.
@@ -154,9 +155,9 @@ async function deleteWithRevision(pool: Pool, accountId: string, slug: string): 
     `with d as (
        delete from agent_memory where account_id = $1 and slug = $2
        returning slug, value, description, updated_at, flagged_at, kind)
-     insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind)
-     select $1, slug, value, description, updated_at, flagged_at is not null, kind from d`,
-    [accountId, slug],
+     insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind, run_id, turn_id)
+     select $1, slug, value, description, updated_at, flagged_at is not null, kind, $3::uuid, $4::uuid from d`,
+    [accountId, slug, writeOrigin().runId, writeOrigin().turnId],
   );
   await pruneRevisions(pool, accountId, slug);
 }
@@ -230,9 +231,9 @@ export async function setMemory(
         `with d as (
            delete from agent_memory where account_id = $1 and slug = $2 and ${MS_EQ.replace('$EXPECT', '$3')}
            returning slug, value, description, updated_at, flagged_at, kind)
-         insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind)
-         select $1, slug, value, description, updated_at, flagged_at is not null, kind from d returning 1`,
-        [accountId, slug, expect.updatedAt],
+         insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind, run_id, turn_id)
+         select $1, slug, value, description, updated_at, flagged_at is not null, kind, $4::uuid, $5::uuid from d returning 1`,
+        [accountId, slug, expect.updatedAt, writeOrigin().runId, writeOrigin().turnId],
       );
       if (d.rowCount) {
         await pruneRevisions(pool, accountId, slug);
@@ -280,14 +281,14 @@ export async function setMemory(
           or ($8 = 'at' and date_trunc('milliseconds', agent_memory.updated_at) = date_trunc('milliseconds', $9::timestamptz))
        returning 1),
      rev as (
-       insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind)
-       select $1, slug, value, description, updated_at, flagged_at is not null, kind from prev where exists (select 1 from ins)
+       insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind, run_id, turn_id)
+       select $1, slug, value, description, updated_at, flagged_at is not null, kind, $11::uuid, $12::uuid from prev where exists (select 1 from ins)
        returning 1)
      select (select count(*) from ins)::int as n`,
     [
       accountId, slug, value, MAX_MEMORY_ITEMS_PER_ACCOUNT, description ?? null, description !== undefined, kind ?? null,
       !expect ? 'none' : expect.updatedAt === null ? 'absent' : 'at', expect?.updatedAt ?? null,
-      flagReason ?? null,
+      flagReason ?? null, writeOrigin().runId, writeOrigin().turnId,
     ],
   );
   if (!res.rows[0].n) {

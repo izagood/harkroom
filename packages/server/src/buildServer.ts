@@ -68,6 +68,7 @@ import { emitEvent } from './events.js';
 import { createStaleRequestSweeper } from './services/staleRequests.js';
 import { createDelegationDeadlineSweeper } from './services/delegations.js';
 import { createRetentionSweeper, retentionDeleteEnabled } from './services/retention.js';
+import { createBgJobSweeper } from './services/bgJobs.js';
 
 /**
  * 인증 표면 기본 리밋.
@@ -567,6 +568,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 대기가 영원히 깨어나지 않는다: 스레드에는 "기다린다"는 줄만 남고 후속은 오지 않는다.
   const wakeSweeper = createAgentWakeSweeper(deps.pool);
   wakeSweeper.startSweep(app);
+
+  // 백그라운드 회차 sweep(BG1) — HARKROOM_BACKGROUND_ENABLED=1 일 때만 일한다. 지금은 집고 죽은 회차·지난 날 일감을 닫기만 한다.
+  createBgJobSweeper(deps.pool).startSweep(app);
 
   /**
    * 아무도 집지 않은 요청을 스레드에 말하는 스위퍼(049).

@@ -4,6 +4,7 @@ import {
   pickExpiringJournals, pruneRevisions, type MemoryKind,
 } from './memory.js';
 import { MEMORY_CORE_WARN_CHARS, MEMORY_ITEMS_WARN_COUNT } from '@harkroom/shared';
+import { writeOrigin } from './writeOrigin.js';
 
 /**
  * 기억 정리의 **쓰기 쪽**(메모리 자동 요약·압축 C1, 2026-10-02, 설계
@@ -213,11 +214,11 @@ export async function mergeMemory(pool: Pool, accountId: string, input: MergeInp
     // **지금 쓰는 본문**이므로 걸림 표시도 지금 검사 결과를 따른다 — 깨끗한 판으로 적으면
     // `lastCleanRevision`·restore 가 걸린 글을 깨끗한 것처럼 돌려준다(security F1).
     await c.query(
-      `insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail, kind)
-       values ($1, $2, $3, $4, $5, $6, 'merge', $7::jsonb, $8)`,
+      `insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail, kind, run_id, turn_id)
+       values ($1, $2, $3, $4, $5, $6, 'merge', $7::jsonb, $8, $9::uuid, $10::uuid)`,
       [accountId, input.into, prev?.value ?? input.value, prev ? prev.description : (input.description ?? null),
         prev?.updated_at ?? new Date(), prev ? prev.flagged_at !== null : input.flagReason != null,
-        JSON.stringify({ from, created: !prev }), prev?.kind ?? input.kind ?? 'topic'],
+        JSON.stringify({ from, created: !prev }), prev?.kind ?? input.kind ?? 'topic', writeOrigin().runId, writeOrigin().turnId],
     );
     if (from.length) {
       await c.query(
@@ -264,9 +265,10 @@ export async function restoreMemory(
     }
     if (cur) {
       await c.query(
-        `insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail, kind)
-         values ($1, $2, $3, $4, $5, $6, 'restore', $7::jsonb, $8)`,
-        [accountId, slug, cur.value, cur.description, cur.updated_at, cur.flagged_at !== null, JSON.stringify({ revisionId: target.id }), cur.kind],
+        `insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail, kind, run_id, turn_id)
+         values ($1, $2, $3, $4, $5, $6, 'restore', $7::jsonb, $8, $9::uuid, $10::uuid)`,
+        [accountId, slug, cur.value, cur.description, cur.updated_at, cur.flagged_at !== null, JSON.stringify({ revisionId: target.id }), cur.kind,
+          writeOrigin().runId, writeOrigin().turnId],
       );
     }
     await c.query(
