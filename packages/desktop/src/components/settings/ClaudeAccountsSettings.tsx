@@ -69,6 +69,8 @@ import { refreshKey, usageFor, usageUpdatedAt, useProviderUsage } from '../../li
 import { useLocale, useT } from '../../i18n/useT';
 import type { Translate } from '../../i18n';
 import { errorText } from '../../lib/errorText';
+import { useLocalLanes } from '../../lib/localLanes';
+import { useActiveStore } from '../../state/communities';
 
 /** 제공업체 계정 화면 안의 Claude 칸. `SettingsPage` 와 같은 인자를 받아 `Shell` 로 갈아 끼운다. */
 function ClaudeSection({ description, actions, children }: {
@@ -174,7 +176,11 @@ function StandalonePage({ description, width, actions, children }: {
  * `embedded` = 제공업체 계정 화면(`ProviderAccountsSettings`)의 한 칸으로 그린다. 그때는 화면
  * 껍데기(`SettingsPage`) 대신 하네스 칸(`ProviderSection`)을 쓴다 — 껍데기가 둘이면 제목이 둘이다.
  */
-export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolean } = {}) {
+export function ClaudeAccountsSettings({ embedded = false, onOpenAgent }: {
+  embedded?: boolean;
+  /** 「계정 풀을 쓰지 않는 에이전트」 줄을 누르면 그 에이전트의 설정으로 간다. 없으면 줄은 글이다. */
+  onOpenAgent?: (agentId: string) => void;
+} = {}) {
   const t = useT();
   const locale = useLocale();
   const Shell = embedded ? ClaudeSection : StandalonePage;
@@ -763,6 +769,8 @@ export function ClaudeAccountsSettings({ embedded = false }: { embedded?: boolea
         )}
       </SettingsGroup>
 
+      <LaneAgentsGroup onOpenAgent={onOpenAgent} />
+
       {/* 계정 추가 — URL 을 링크로 보여 주고 코드를 받는다. */}
       {login && (
         <SettingsGroup title={login.reauth ? t('claudeAccounts.login.reauthTitle', { label: login.reauth.label }) : t('claudeAccounts.pool.addAccountTo', { pool: login.pool })}>
@@ -916,5 +924,39 @@ function LoginCodeForm({ onSubmit }: { onSubmit(code: string): Promise<void> }) 
         </Button>
       </div>
     </>
+  );
+}
+
+/**
+ * 계정 풀을 쓰지 않는 에이전트(이 맥에서 API 키로 도는 것, designer v3 ③). 이 화면은 풀·계정만 보여 주므로 그 에이전트가
+ * 「사라진」 것이 아니라 「여기서 빠진」 것임을 한 줄로 남긴다. 사용량 막대·로그인 경고는 그리지 않는다. 없으면 묶음도 없다.
+ */
+function LaneAgentsGroup({ onOpenAgent }: { onOpenAgent?: (agentId: string) => void }) {
+  const t = useT();
+  const lanes = useLocalLanes();
+  const accounts = useActiveStore((s) => s.accounts);
+  const rows = [...lanes.keys()]
+    .map((id) => ({ id, handle: accounts[id]?.handle ?? id }))
+    .sort((a, b) => a.handle.localeCompare(b.handle));
+  if (!rows.length) return null;
+  return (
+    <SettingsGroup title={`${t('claudeAccounts.lane.heading')} · ${rows.length}`}>
+      {rows.map((r) => {
+        const name = (
+          <span className="flex items-center gap-1.5">
+            <span className="font-medium text-fg">@{r.handle}</span>
+            <span className="rounded-full bg-surface-lane px-1.5 text-meta font-semibold text-fg-lane">{t('agents.lane.chip')}</span>
+          </span>
+        );
+        return (
+          <div key={r.id} data-testid={`lane-agent-row-${r.handle}`} className="flex items-center justify-between gap-3 px-4 py-2.5">
+            {onOpenAgent ? (
+              <button type="button" className="rounded-row hover:underline" onClick={() => onOpenAgent(r.id)}>{name}</button>
+            ) : name}
+            <span className="text-meta text-fg-subtle">{t('claudeAccounts.lane.row')}</span>
+          </div>
+        );
+      })}
+    </SettingsGroup>
   );
 }

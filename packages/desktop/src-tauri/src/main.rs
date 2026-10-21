@@ -635,6 +635,21 @@ async fn operator_agent_set(
     .await
 }
 
+/// API 키 연결 설정(provider lane). 사람이 실행 탭에서 [저장]·[지우고 저장]을 누를 때만 부른다(security n2).
+#[tauri::command]
+async fn operator_agent_provider_lane_set(
+    app: tauri::AppHandle,
+    base_url: String,
+    agent_id: String,
+    lane: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.operator_agent_provider_lane_set(&base_url, &agent_id, lane)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn operator_agent_remove(
     app: tauri::AppHandle,
@@ -992,6 +1007,7 @@ fn main() {
             operator_register,
             operator_agents_list,
             operator_agent_set,
+            operator_agent_provider_lane_set,
             operator_mcp_list,
             operator_mcp_set,
             operator_mcp_remove,

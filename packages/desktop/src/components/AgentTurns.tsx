@@ -39,6 +39,7 @@ import { Menu } from './Menu';
 import { ConfirmDialog } from './ConfirmDialog';
 import { runningLabel } from '../lib/time';
 import { useLocale, useT } from '../i18n/useT';
+import { useLocalLanes } from '../lib/localLanes';
 
 export function AgentTurns({
   snapshot, handleOf, channelLabel, threadTitleOf, onOpenThread, onCancelTurns, onOpenTerminal,
@@ -98,6 +99,7 @@ export function AgentTurns({
   now?: number;
 }) {
   const t = useT();
+  const lanes = useLocalLanes();
   const locale = useLocale();
   /**
    * `전부 중단` 확인 겹창(3단계). **줄·스레드 단위에는 확인을 두지 않는다** — 그 둘은
@@ -372,8 +374,10 @@ export function AgentTurns({
                       {tower && onOpenTerminal && turn.threadRootId && (
                         <button type="button" data-testid={`agent-turn-terminal-${turn.sessionId}`}
                           onClick={() => onOpenTerminal(turn)}
-                          title={t('agentTurns.terminalTitle')}
-                          className="shrink-0 rounded-sm px-1 text-fg-muted hover:bg-surface-hover">
+                          // API 키로 도는 에이전트(이 맥)는 아직 터미널을 못 연다(designer v3 ⑥) — 꺼 두고 까닭을 단다.
+                          disabled={lanes.has(turn.agentAccountId)}
+                          title={lanes.has(turn.agentAccountId) ? t('agents.lane.terminalBlocked') : t('agentTurns.terminalTitle')}
+                          className="shrink-0 rounded-sm px-1 text-fg-muted hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-60">
                           {t('agentTurns.terminal')}
                         </button>
                       )}

@@ -603,7 +603,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(callers).toEqual([{ fn: 'daemon_command', file: 'daemon_client.rs' }]);
     });
 
-    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 8종(operator_*)·작업 폴더 정리 2종뿐이다', () => {
+    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 9종(operator_*)·작업 폴더 정리 2종뿐이다', () => {
       const commands = [...mainRs.matchAll(
         /#\[tauri::command\]\s*\n\s*(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g,
       )].map((m) => {
@@ -634,7 +634,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'codex_account_activate', 'codex_account_login_cancel', 'codex_account_login_start',
           'codex_account_remove', 'codex_accounts_provider_usage',
           'daemon_kill_runner', 'daemon_spawn_runner',
-          'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_merge_check', 'operator_merge_set', 'operator_register',
+          'operator_agent_provider_lane_set', 'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_merge_check', 'operator_merge_set', 'operator_register',
           'secret_delete', 'secret_get', 'secret_set',
           'workspace_cleanup_act', 'workspace_cleanup_settings_set',
         ]);
@@ -657,6 +657,10 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       // 작업 디렉터리 **문자열**뿐이다. 파일은 데몬이 쓰고, 프로그램·인자를 고를 자리가 없다.
       const setLocal = commands.find((c) => c.fn === 'operator_agent_set')!;
       expect(setLocal.webviewParams.sort()).toEqual(['agent_id: String', 'base_url: String', 'config: serde_json::Value']);
+      // API 키 연결(provider lane): 서버 URL·에이전트 id 와 { baseUrl, secretName } 또는 null. 값은 싣지 않는다 —
+      // 주소 모양·비밀 이름 문법은 오퍼레이터가 다시 잰다(`readOperatorAgentProviderLanePayload`).
+      const setLane = commands.find((c) => c.fn === 'operator_agent_provider_lane_set')!;
+      expect(setLane.webviewParams.sort()).toEqual(['agent_id: String', 'base_url: String', 'lane: serde_json::Value']);
       const removeLocal = commands.find((c) => c.fn === 'operator_agent_remove')!;
       expect(removeLocal.webviewParams.sort()).toEqual(['agent_id: String', 'base_url: String']);
       // 이 머신의 MCP 정의(스펙 §6): 이름 문자열과 정의 JSON. 그 JSON 에 **stdio command 를 실을 수

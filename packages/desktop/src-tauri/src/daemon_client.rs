@@ -2109,6 +2109,14 @@ impl DaemonConnection {
         )
     }
 
+    /// API 키 연결(provider lane) — 주소·비밀 **이름**만 오간다. `lane` 이 null 이면 그 칸을 지운다.
+    pub fn operator_agent_provider_lane_set(&self, base_url: &str, agent_id: &str, lane: Value) -> Result<Value, String> {
+        self.request(
+            "operatorAgentProviderLaneSet",
+            json!({ "baseUrl": base_url, "agentId": agent_id, "lane": lane }),
+        )
+    }
+
     pub fn operator_agent_remove(&self, base_url: &str, agent_id: &str) -> Result<Value, String> {
         self.request(
             "operatorAgentRemove",

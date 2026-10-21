@@ -6,6 +6,8 @@ import { getController } from '../state/controller';
 import { threadRowFor } from '../lib/threadModels';
 import { AgentModelChip } from './AgentModelChip';
 import { GateTerminalButton } from './GateTerminalButton';
+import { laneCodeName, laneCodeText } from '../lib/laneCodes';
+import type { SectionId } from './settings/sections';
 
 /**
  * 실패 카드 — 에이전트가 **스스로 못 끝냈다**(규칙 03).
@@ -27,10 +29,12 @@ import { GateTerminalButton } from './GateTerminalButton';
  * 형식을 못 알아보면 아무것도 그리지 않는다 — `MessageItem` 이 본문을 이미 그렸으므로
  * 사람은 평문으로 읽는다. 빈 상자는 거짓 신호다.
  */
-export function FailureCard({ message, inThread = false }: {
+export function FailureCard({ message, inThread = false, onOpenSettings }: {
   message: MessageRow;
   /** 스레드 안이면 작성창의 scope 가 다르다 — 채널 작성창을 채우면 사람이 그것을 못 본다. */
   inThread?: boolean;
+  /** API 키 연결 실패의 [에이전트 설정 열기]. 없는 자리(미리보기 등)면 버튼을 그리지 않는다. */
+  onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
   const t = useT();
   const author = useActiveStore((s) => s.accounts[message.authorId]);
@@ -53,6 +57,11 @@ export function FailureCard({ message, inThread = false }: {
     러너의 what·reason 대신 계정 이름을 말하는 한 줄로 대신한다(F2).
   */
   const gate = failure.code === 'account_gate' && !!failure.account;
+  /*
+    **API 키 연결 실패**(designer v3 ④). 턴이 아예 안 떴다 — 러너의 what·reason 대신 까닭 코드를 표(`laneCodes`)로
+    사람 말로 바꾸고, 계정 로그인으로 넘어가지 않는다는 것을 같은 줄에 둔다. 고칠 곳은 이 맥의 에이전트 설정이다.
+  */
+  const lane = failure.code === 'provider_lane';
   const scope = inThread ? `thread:${rootId}` : message.channelId;
 
   /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
@@ -67,13 +76,19 @@ export function FailureCard({ message, inThread = false }: {
     >
       <div className="flex items-baseline gap-2 px-3 pt-2">
         <span className={`text-meta font-semibold ${gate ? 'text-state-turn' : 'text-state-stuck'}`}>
-          {t(gate ? 'gate.card.title' : 'speech.failure.title')}
+          {gate ? t('gate.card.title')
+            : lane ? t('agents.lane.failTitle', { handle: author?.handle ?? '' })
+            : t('speech.failure.title')}
         </span>
-        {!gate && failure.what && <span className="text-meta text-fg-muted">{failure.what}</span>}
+        {!gate && !lane && failure.what && <span className="text-meta text-fg-muted">{failure.what}</span>}
       </div>
       {gate ? (
         <p data-testid="gate-card-line" className="px-3 pt-1 text-body text-fg-muted">
           {gateLine(t('gate.card.line', { account: GATE_ACCOUNT_SLOT }), failure.account!)}
+        </p>
+      ) : lane ? (
+        <p data-testid="lane-failure-line" data-lane-code={failure.laneCode ?? 'unknown'} className="px-3 pt-1 text-body text-fg-muted">
+          {laneCodeText(t, failure.laneCode)} · {t('agents.lane.failNoFallback')}
         </p>
       ) : (
         /* 이유는 **사람이 읽는 말**이다 — 스택트레이스가 아니다. 자세한 것은 터미널이 답한다. */
@@ -81,7 +96,20 @@ export function FailureCard({ message, inThread = false }: {
       )}
 
       <div className="flex items-center gap-2 p-2 pt-1.5">
-        <TerminalChip account={author} message={message} />
+        {/* API 키 연결 에이전트는 아직 터미널을 못 연다 — 눌러도 안 되는 문을 그리지 않는다. */}
+        {!lane && <TerminalChip account={author} message={message} />}
+        {lane && onOpenSettings && (
+          <button
+            type="button"
+            data-testid="lane-open-settings"
+            className="rounded-row bg-accent px-2 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
+            onClick={() => onOpenSettings('agents', message.authorId)}
+          >
+            {t('agents.lane.openSettings')}
+          </button>
+        )}
+        {/* 코드는 맨 끝에 작게(designer v3 ④) — 문장은 사람 말, 코드는 물어볼 때 쓸 이름표. 허용 목록 밖은 unknown 으로 접힌다. */}
+        {lane && <span data-testid="lane-failure-code" className="ml-auto font-mono text-meta text-fg-subtle">{laneCodeName(failure.laneCode)}</span>}
         {/*
           **계정 관문**(2026-10-02, 관문 대응 PR-4): 턴 시작 때 그 계정의 설정 확인 화면이 사람을 기다린다.
           그 계정의 터미널을 열면 사람이 거기서 고르고, 러너가 같은 멘션을 다시 띄운다(#1047).

@@ -1,6 +1,7 @@
 import type { AccountView, MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { useT } from '../i18n/useT';
+import { useLocalLane } from '../lib/localLanes';
 
 /**
  * 진행 중인 에이전트 터미널로 들어가는 진입점(#141 Phase 2, 스펙 §5 "소유자").
@@ -30,6 +31,8 @@ export function TerminalChip({ account, message }: {
   const set = useActiveStore((s) => s.set);
   // 훅은 아래 두 `return null` 보다 먼저여야 한다.
   const t = useT();
+  // API 키로 도는 에이전트(이 맥 설정)는 아직 터미널을 못 연다(designer v3 ⑥) — 문은 그리되 꺼 두고 까닭을 단다.
+  const lane = useLocalLane(account?.id);
 
   if (!account || account.kind !== 'agent' || !me) return null;
   // `ownerAccountId === null` 은 `me.id` 와 결코 같아지지 않으므로 이 비교만으로도
@@ -37,6 +40,20 @@ export function TerminalChip({ account, message }: {
   // `auth/plugin.ts::checkOwnerOrAdmin` 이 같은 이유로 null 분기를 명시한다.
   const isOwner = account.ownerAccountId !== null && account.ownerAccountId === me.id;
   if (!me.isAdmin && !isOwner) return null;
+
+  if (lane) {
+    return (
+      <button
+        type="button"
+        disabled
+        data-testid="terminal-chip-lane-blocked"
+        className="cursor-not-allowed rounded-row bg-surface-raised px-1.5 py-0.5 text-meta text-fg-subtle opacity-60"
+        title={t('agents.lane.terminalBlocked')}
+      >
+        {t('terminal.chip.label')}
+      </button>
+    );
+  }
 
   return (
     <button

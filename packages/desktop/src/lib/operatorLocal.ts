@@ -4,6 +4,7 @@
  * `claudeAccounts.ts` 와 같은 경계다: 웹뷰가 넘기는 것은 URL·id·문자열뿐이고 Rust 커맨드가
  * 데몬에 전달한다.
  */
+import type { ProviderLaneConfig } from '@harkroom/shared/providerLane';
 import type { CleanupLedger, CleanupLive, CleanupSettings } from '@harkroom/shared/workspaceCleanup';
 import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorMcpAuthStartResult, OperatorMcpAuthState, OperatorMcpListResult, OperatorMcpRemoteDefinition, OperatorMergeCheckResult, OperatorMergeState, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 
@@ -36,6 +37,15 @@ export function listLocalAgents(): Promise<OperatorAgentsListResult> {
 
 export async function setLocalAgent(baseUrl: string, agentId: string, config: OperatorLocalAgent): Promise<void> {
   await call('operator_agent_set', { baseUrl, agentId, config });
+  notifyLocalAgentsChanged();
+}
+
+/**
+ * API 키 연결 설정을 넣거나(`lane`) 지운다(`null`). 값이 아니라 주소·비밀 **이름**만 간다 — 값은 보관소에 있고 턴마다
+ * 오퍼레이터가 꺼낸다. 사람 화면의 클릭에서만 부른다(security n2).
+ */
+export async function setLocalAgentProviderLane(baseUrl: string, agentId: string, lane: ProviderLaneConfig | null): Promise<void> {
+  await call('operator_agent_provider_lane_set', { baseUrl, agentId, lane });
   notifyLocalAgentsChanged();
 }
 

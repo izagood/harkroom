@@ -49,6 +49,9 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
   const [section, setSection] = useState<SectionId>(
     isSectionId(initialSection) ? initialSection : DEFAULT_SECTION,
   );
+  /** 다른 섹션에서 에이전트 하나를 가리켜 연 경우(Provider accounts 의 「계정 풀을 쓰지 않는 에이전트」 줄). */
+  const [agentTarget, setAgentTarget] = useState<string | undefined>(undefined);
+  const openAgent = (id: string) => { setAgentTarget(id); setSection('agents'); };
   const me = useActiveStore((s) => s.me);
   /**
    * 설정이 열린 채 커뮤니티가 바뀌면(알림 클릭은 설정을 닫지 않고 전환한다) 본문을 **새로 띄운다.**
@@ -123,8 +126,8 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           {section === 'appearance' && <AppearanceSettings />}
           {section === 'communities' && <CommunitySettings onCommunitiesEmpty={onCommunitiesEmpty} />}
           {/* AgentsSettings 는 자체 2단 레이아웃이라 SettingsPage 여백을 쓰지 않는다. */}
-          {section === 'agents' && <AgentsSettings targetId={targetId} />}
-          {section === 'claude-accounts' && <ProviderAccountsSettings />}
+          {section === 'agents' && <AgentsSettings targetId={agentTarget ?? targetId} onOpenSection={setSection} />}
+          {section === 'claude-accounts' && <ProviderAccountsSettings onOpenAgent={openAgent} />}
           {section === 'agent-defaults' && <AgentDefaultsSettings />}
           {section === 'workspace' && <WorkspaceSettings />}
           {section === 'operators' && <OperatorsSettings onOpenSection={setSection} />}
