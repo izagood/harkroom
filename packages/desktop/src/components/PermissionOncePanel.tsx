@@ -15,8 +15,8 @@ import { errorText } from '../lib/errorText';
  * 서버가 거절 기록으로 채운 `meta.permissionRequest.once`(PR·head·사유)가 있을 때만 선다. 기존 [승인](7일)·[거절]은 그 아래
  * `AskCard` 의 선택지 그대로다. 「한 번」을 누르면 계정·CI 칸이 펼쳐진다 — 늘 보이면 7일 승인도 그 계정을 쓰는 것처럼 읽힌다.
  *
- * - 계정은 **이 기기 오퍼레이터**의 gh 목록이다. 에이전트가 다른 기기에서 돌면 이 기기 계정으로 승인해도 래퍼가 못 쓴다 →
- *   버튼 대신 「그 기기에서」 안내만 둔다.
+ * - 계정은 비워 두는 것이 기본이다(G1) — 에이전트가 도는 오퍼레이터가 그 저장소용 계정을 고른다. 기기와 상관없이 승인할 수 있다.
+ *   에이전트가 이 기기에서 돌고 계정 목록이 있을 때만 계정을 골라 고정할 수 있다(선택).
  * - 닿지 않는(✕) 계정은 고를 수 없다(사전 확인에서 반드시 막힌다). 「확인 못 함」은 고를 수 있고 한 줄 경고를 붙인다.
  * - 고른 계정은 저장하지 않는다(`byScope` 는 7일 grant 줄의 것) — 이 PR 한 번만의 선택이다.
  * - 보내는 것은 계정·CI 완화뿐이고 저장소·PR·head 는 서버가 거절 기록에서 가져온다.
@@ -30,7 +30,7 @@ export interface PermissionOnceMeta {
   status: 'pending' | 'granted' | 'denied' | 'approved_once' | 'obsolete';
   obsoleteReason: 'merged' | 'closed' | null;
   decidedBy: string | null;
-  approvedOnce: { ghUser: string; relaxChecks: boolean; expiresAt: string } | null;
+  approvedOnce: { ghUser: string | null; relaxChecks: boolean; expiresAt: string } | null;
 }
 
 /**
@@ -62,8 +62,8 @@ export function readPermissionOnce(meta: Record<string, unknown>): PermissionOnc
     reason: o.reason === 'cause_not_human' ? 'cause_not_human' : o.reason === 'ci_not_green' ? 'ci_not_green' : 'not_granted',
     failedChecks: o.reason === 'ci_not_green' ? cleanCheckNames(o.failedChecks) : [],
     status, obsoleteReason: status === 'obsolete' ? (p.obsoleteReason === 'closed' ? 'closed' : 'merged') : null, decidedBy: typeof p.decidedBy === 'string' ? p.decidedBy : null,
-    approvedOnce: a && typeof a.ghUser === 'string' && typeof a.expiresAt === 'string'
-      ? { ghUser: a.ghUser, relaxChecks: a.relaxChecks === true, expiresAt: a.expiresAt } : null,
+    approvedOnce: a && (typeof a.ghUser === 'string' || a.ghUser === null) && typeof a.expiresAt === 'string'
+      ? { ghUser: typeof a.ghUser === 'string' ? a.ghUser : null, relaxChecks: a.relaxChecks === true, expiresAt: a.expiresAt } : null,
   };
 }
 
@@ -103,15 +103,13 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
         const s = await getLocalMerge();
         if (!alive) return;
         setMerge(s);
-        const pre = s.byScope?.[repoKey] ?? null;
         try {
           const r = await checkLocalMerge([repoKey]);
           if (!alive) return;
           const byLogin: Reach = {};
           for (const [login, v] of Object.entries(r.reach[repoKey] ?? {})) byLogin[login] = v.status;
           setReach(byLogin);
-          // 이 저장소 줄에 정해 둔 계정이 닿으면 미리 고른다. 그 밖엔 빈칸 — 고르기 전엔 승인 버튼이 꺼져 있다.
-          if (pre && byLogin[pre] === 'ok') setGhUser((cur) => cur || pre);
+          // 미리 고르지 않는다 — 비워 두면 오퍼레이터가 이 저장소용 계정(그 줄의 것)을 고른다.
         } catch { /* 닿음을 못 재면 상태 없이 고르게 둔다 */ }
       } catch {
         if (alive) { setDevice('here'); setMerge('error'); }
@@ -129,15 +127,14 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
   const when = (iso: string) => new Date(iso).toLocaleString(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 
   const submit = async () => {
-    if (!ghUser) return;
     setBusy(true); setError(null);
     try {
       // number·headSha 는 이 카드가 보여 준 값 — 서버가 거절 기록과 대조해 다르면 card_stale 로 거절한다(security F1).
       // CI 거절 카드의 뜻은 「CI 무시하고 한 번」 그 자체다 — 체크박스가 아니라 언제나 켠다(서버도 끈 승인은 400).
       const relaxChecks = ci || relax;
       // CI 카드는 보여 준 실패 목록도 대조값으로 보낸다(n1) — 그 사이 목록이 바뀌었으면 서버가 card_stale 로 거절한다.
-      const r = await getController().approvePermissionOnce(d.agentId, d.requestId, { ghUser, relaxChecks, number: d.number, headSha: d.headSha, ...(ci ? { failedChecks: d.failedChecks } : {}) });
-      setDone({ ghUser, relaxChecks, expiresAt: r.approvalExpiresAt ?? new Date(Date.now() + 86_400_000).toISOString() });
+      const r = await getController().approvePermissionOnce(d.agentId, d.requestId, { ...(ghUser ? { ghUser } : {}), relaxChecks, number: d.number, headSha: d.headSha, ...(ci ? { failedChecks: d.failedChecks } : {}) });
+      setDone({ ghUser: ghUser || null, relaxChecks, expiresAt: r.approvalExpiresAt ?? new Date(Date.now() + 86_400_000).toISOString() });
     } catch (e) {
       setError({ code: e instanceof ApiError ? e.code : 'failed', raw: errorText(e, t) });
     } finally {
@@ -184,9 +181,9 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
         <p className={`mt-2 ${Date.parse(approved.expiresAt) <= Date.now() ? 'text-fg-subtle' : 'text-fg'}`} data-testid="merge-once-approved"
           data-expired={Date.parse(approved.expiresAt) <= Date.now() || undefined}>
           {Date.parse(approved.expiresAt) <= Date.now()
-            ? t('mergeOnce.approvedExpired', { login: approved.ghUser })
+            ? t('mergeOnce.approvedExpired', { login: approved.ghUser ?? t('mergeOnce.operatorAccount') })
             : t(approved.relaxChecks ? 'mergeOnce.approvedRelaxed' : 'mergeOnce.approved', {
-              by: d.decidedBy ? accounts[d.decidedBy]?.handle ?? owner : owner, login: approved.ghUser, until: when(approved.expiresAt),
+              by: d.decidedBy ? accounts[d.decidedBy]?.handle ?? owner : owner, login: approved.ghUser ?? t('mergeOnce.operatorAccount'), until: when(approved.expiresAt),
             })}
         </p>
       )}
@@ -212,23 +209,27 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
           ) : (
             <div className="space-y-1.5 rounded-row border border-border p-2" data-testid="merge-once-form">
               {device === 'checking' && <p className="text-fg-subtle">{t('mergeOnce.checking')}</p>}
-              {(device === 'elsewhere' || device === 'no-surface') && (
-                <p className="text-fg" data-testid="merge-once-elsewhere">{t('mergeOnce.elsewhere')}</p>
-              )}
-              {device === 'here' && (
+              {device !== 'checking' && (
                 <>
+                  {device === 'elsewhere' && <p className="text-fg" data-testid="merge-once-elsewhere">{t('mergeOnce.elsewhere')}</p>}
+                  {(device === 'no-surface' || (device === 'here' && merge !== null && merge !== 'error' && list.length === 0)) && (
+                    <p className="text-fg" data-testid="merge-once-operator-picks">{t('mergeOnce.operatorPicks')}</p>
+                  )}
+                  {device === 'here' && (merge === null || merge === 'error' || list.length > 0) && (
                   <label className="flex flex-wrap items-center gap-2">
                     <span className="text-fg-muted">{t('mergeOnce.account')}</span>
                     <select data-testid="merge-once-account" value={ghUser} disabled={busy || merge === null || merge === 'error'}
                       onChange={(e) => setGhUser(e.target.value)}
                       className={`rounded-row border px-1.5 py-0.5 font-mono text-meta ${ghUser ? 'border-border bg-surface-sunken text-fg' : 'border-dashed border-warning-border bg-transparent text-warning'}`}>
-                      <option value="" disabled>{t('mergeOnce.pick')}</option>
+                      <option value="">{t('mergeOnce.pick')}</option>
                       {sorted.map((a) => (
                         <option key={a.login} value={a.login} disabled={reach[a.login] === 'no'}>{a.login + mark(a.login)}</option>
                       ))}
                     </select>
                   </label>
-                  {merge === 'error' && <p role="alert" className="text-danger">{t('mergeOnce.accountsFailed')}</p>}
+                  )}
+                  {device === 'here' && !ghUser && list.length > 0 && <p className="text-fg-subtle" data-testid="merge-once-operator-picks">{t('mergeOnce.operatorPicks')}</p>}
+                  {device === 'here' && merge === 'error' && <p role="alert" className="text-danger">{t('mergeOnce.accountsFailed')}</p>}
                   {ghUser && reach[ghUser] !== 'ok' && (
                     <p className="text-warning" data-testid="merge-once-unknown">{t('mergeOnce.reachUnknown', { login: ghUser })}</p>
                   )}
@@ -242,7 +243,7 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
                   )}
                   <p className="text-fg-subtle">{t('mergeOnce.note')}</p>
                   <div className="flex items-center gap-2">
-                    <button type="button" data-testid="merge-once-submit" disabled={busy || !ghUser} onClick={() => void submit()}
+                    <button type="button" data-testid="merge-once-submit" disabled={busy} onClick={() => void submit()}
                       className="rounded bg-accent px-2 py-1 font-medium text-fg-on-strong disabled:opacity-60">
                       {t(ci ? 'mergeOnce.submitCi' : 'mergeOnce.submit')}
                     </button>

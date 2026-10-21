@@ -445,9 +445,10 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
 
     const pending = await openApprovalFor(agentId, lease, repo, number, headSha);
     if (pending === 'unavailable') return fail('unavailable', 'the server could not be reached — merge refused (fail-closed)');
-    let approvedTok: { token: string; login: string; approvalId: string; prHead?: string; ignored: string[] } | null = null;
+    let approvedTok: { token: string; login: string; approvalId: string; approvalGhUser: string | null; prHead?: string; ignored: string[] } | null = null;
     if (pending) {
-      const tok = await tokenForLogin(pending.ghUser, 'chosen in the one-time approval');
+      // 승인에 계정이 없으면(G1) 이 오퍼레이터가 그 저장소용 계정을 고른다 — 7일 grant 와 같은 길, 없으면 머지하지 않는다(no_gh_user).
+      const tok = pending.ghUser ? await tokenForLogin(pending.ghUser, 'chosen in the one-time approval') : await tokenFor(repo);
       if (!tok.ok) return fail(tok.code, `${tok.message} — the one-time approval was not used`);
       const pre = await viewPr(repo, number, ghEnv(deps.home, tok.token));
       if ('error' in pre) {
@@ -462,7 +463,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       // 사전 확인 거절은 판정 전이라 보고하지 않는다 — 승인은 남고, 서버에 CI 거절 기록도 생기지 않는다.
       if (why?.code === 'not_open') await reportClosed(pre.pr.state);
       if (why) return fail(why.code, `${why.message} — the one-time approval was not used`, { pr: { state: pre.pr.state, headRefOid: pre.pr.headRefOid, mergeStateStatus: pre.pr.mergeStateStatus } });
-      approvedTok = { ...tok, approvalId: pending.id, prHead: pre.pr.headRefOid, ignored };
+      approvedTok = { ...tok, approvalId: pending.id, approvalGhUser: pending.ghUser, prHead: pre.pr.headRefOid, ignored };
     }
 
     // ③ 서버 판정. 닿지 않으면 머지하지 않는다(fail-closed).
@@ -502,7 +503,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       }
       return fail(code, `merge not allowed: ${code}`);
     }
-    let granted: { grantedBy?: string; causeByHuman?: boolean; approval?: { id?: string; ghUser?: string; relaxChecks?: boolean } } = {};
+    let granted: { grantedBy?: string; causeByHuman?: boolean; approval?: { id?: string; ghUser?: string | null; relaxChecks?: boolean } } = {};
     try { granted = JSON.parse(check.body) as typeof granted; } catch { /* 선택 정보 */ }
 
     /**
@@ -534,7 +535,11 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     // 서버가 돌려준 계정이 사전 확인한 계정과 다르면(그 사이 다른 승인이 쓰였다) 머지하지 않는다 — 다른 계정으로 내려가지 않는다.
     if (granted.approval) {
       // 사전 확인한 바로 그 승인(id)이어야 한다(security F2) — 계정만 맞으면 relaxChecks 가 다른 승인이 쓰여도 지나간다.
-      if (!approvedTok || granted.approval.id !== approvedTok.approvalId || granted.approval.ghUser !== approvedTok.login) {
+      // 계정: 승인에 적혀 있으면 사전 확인한 토큰의 계정과 같아야 한다. 비어 있으면(G1) 서버도 비어 있다고 말해야 하고, 고른 계정은 이 래퍼의 것이다.
+      const sameAccount = approvedTok && (approvedTok.approvalGhUser
+        ? granted.approval.ghUser === approvedTok.login
+        : (granted.approval.ghUser ?? null) === null);
+      if (!approvedTok || granted.approval.id !== approvedTok.approvalId || !sameAccount) {
         await report('failed', null, 'approval_mismatch: the approval used by the server is not the one pre-checked');
         return fail('approval_mismatch', 'the server used a one-time approval this wrapper did not pre-check — nothing was merged; ask the owner to approve again');
       }
@@ -647,7 +652,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
    * 판정이 아니다 — 사전 확인의 계정·CI 완화 여부를 알려고 읽는다. 200 이 아니거나 닿지 않으면 unavailable(머지하지 않는다).
    */
   const openApprovalFor = async (agentId: string, lease: MergeLease, repo: string, number: number, headSha: string)
-    : Promise<{ id: string; ghUser: string; relaxChecks: boolean } | null | 'unavailable'> => {
+    : Promise<{ id: string; ghUser: string | null; relaxChecks: boolean } | null | 'unavailable'> => {
     const res = await deps.forward(agentId, {
       type: 'http.forward', id: randomUUID(), method: 'POST', path: '/agent/merge-approvals/peek',
       body: JSON.stringify({ leaseId: lease.leaseId, token: lease.token, repo, number, headSha }), contentType: 'application/json',
@@ -656,7 +661,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     try {
       const a = (JSON.parse(res.body) as { approval?: Record<string, unknown> | null }).approval;
       if (!a) return null;
-      if (typeof a.id === 'string' && typeof a.ghUser === 'string') return { id: a.id, ghUser: a.ghUser, relaxChecks: a.relaxChecks === true };
+      if (typeof a.id === 'string' && (typeof a.ghUser === 'string' || a.ghUser === null)) return { id: a.id, ghUser: a.ghUser, relaxChecks: a.relaxChecks === true };
     } catch { /* 모양이 틀리면 아래 */ }
     return 'unavailable';
   };

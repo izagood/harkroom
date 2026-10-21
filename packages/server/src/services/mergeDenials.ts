@@ -294,12 +294,13 @@ export const GH_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 export async function insertApprovalFromDenial(
   client: PoolClient,
   args: {
-    agentId: string; denialId: string; actorId: string; ghUser: string; relaxChecks: boolean; now: Date;
+    agentId: string; denialId: string; actorId: string; ghUser: string | null; relaxChecks: boolean; now: Date;
     /** 카드가 보여 준 PR·head(security F1) — 값의 출처는 거절 기록이고, 이것은 「본 것을 승인한다」 대조에만 쓴다. */
     expect: { number: number; headSha: string; failedChecks?: string[] };
   },
 ): Promise<{ ok: true; approvalId: string; scope: string; number: number; headSha: string; reason: string; expiresAt: Date } | ({ ok: false } & DenialGrantRefusal)> {
-  if (!GH_LOGIN_RE.test(args.ghUser)) return { ok: false, status: 403, code: 'bad_gh_user', message: 'ghUser must be a GitHub login' };
+  // null 이면 오퍼레이터가 그 저장소용 계정을 고른다(G1). 값이 있으면 지금처럼 모양을 본다.
+  if (args.ghUser !== null && !GH_LOGIN_RE.test(args.ghUser)) return { ok: false, status: 403, code: 'bad_gh_user', message: 'ghUser must be a GitHub login' };
   const d = await readDenial(client, args.denialId, args.now, true);
   if (!d || d.agentId !== args.agentId) return { ok: false, status: 404, code: 'not_found', message: 'no such merge denial for this agent' };
   if (d.expired) return { ok: false, status: 409, code: 'denial_expired', message: 'the merge refusal behind this card expired — the agent has to try again' };

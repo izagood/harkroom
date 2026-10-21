@@ -1,7 +1,7 @@
 /**
  * 머지 거절에서 온 권한 카드의 [이번 한 번 머지](스레드 1b75d7a0 ③). 판정은 전부 서버다. 여기서 재는 것:
  * `once` 가 있을 때만 서는가 · 소유자에게만 버튼 · 펼친 뒤에만 계정·CI 칸 · ✕ 계정은 못 고름 · byScope ✓ 미리 고름 ·
- * 다른 기기면 버튼 대신 안내 · 보내는 것은 계정·CI 완화뿐 · 결정 뒤 한 줄 · cause_not_human 은 7일이 안 풀린다는 안내.
+ * 계정은 비워 두는 것이 기본(오퍼레이터가 고른다) · 다른 기기여도 승인 버튼 · 보내는 것은 계정·CI 완화뿐 · 결정 뒤 한 줄 · cause_not_human 은 7일이 안 풀린다는 안내.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
@@ -115,13 +115,14 @@ describe('PermissionOncePanel', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it('펼치면 ✕ 계정은 못 고르고, 고르기 전엔 승인이 꺼져 있고, 보내는 것은 계정·CI 완화뿐이다', async () => {
+  it('펼치면 ✕ 계정은 못 고르고, 비워 둔 채로도 승인할 수 있고, 보내는 것은 계정·CI 완화뿐이다', async () => {
     tauri(); const c = setup();
     render(<PermissionOncePanel message={card()} />);
     fireEvent.click(screen.getByTestId('merge-once-open'));
     const select = await screen.findByTestId('merge-once-account') as HTMLSelectElement;
     await waitFor(() => expect([...select.options].find((o) => o.value === 'corp-account')?.disabled).toBe(true));
-    expect((screen.getByTestId('merge-once-submit') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId('merge-once-submit') as HTMLButtonElement).disabled).toBe(false);
+    expect(select.value).toBe('');
     fireEvent.change(select, { target: { value: 'izagood' } });
     fireEvent.click(screen.getByTestId('merge-once-relax'));
     fireEvent.click(screen.getByTestId('merge-once-submit'));
@@ -131,23 +132,50 @@ describe('PermissionOncePanel', () => {
     expect(invoke.mock.calls.map((x) => x[0])).not.toContain('operator_merge_set');
   });
 
-  it('이 저장소 줄에 정해 둔 계정이 ✓ 이면 미리 고른다 · 「확인 못 함」은 고를 수 있고 경고를 붙인다', async () => {
-    tauri({ byScope: { 'example-org/service-api': 'izagood' } }); setup();
+  it('이 저장소 줄에 정해 둔 계정이 있어도 미리 고르지 않는다(기본은 오퍼레이터가 고름) · 「확인 못 함」은 고를 수 있고 경고를 붙인다', async () => {
+    tauri({ byScope: { 'example-org/service-api': 'izagood' } }); const c = setup();
     render(<PermissionOncePanel message={card()} />);
     fireEvent.click(screen.getByTestId('merge-once-open'));
     const select = await screen.findByTestId('merge-once-account') as HTMLSelectElement;
-    await waitFor(() => expect(select.value).toBe('izagood'));
-    fireEvent.change(select, { target: { value: 'other' } });
+    await waitFor(() => expect([...select.options].some((o) => o.value === 'izagood')).toBe(true));
+    expect(select.value).toBe('');
+    expect(screen.getByTestId('merge-once-operator-picks').textContent).toContain('오퍼레이터가 이 저장소용 계정으로 고른다');
+    fireEvent.click(screen.getByTestId('merge-once-submit'));
+    await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { relaxChecks: false, number: 42, headSha: HEAD }));
+    expect((await screen.findByTestId('merge-once-approved')).textContent).toContain('오퍼레이터가 고른 계정');
+    cleanup();
+    render(<PermissionOncePanel message={card()} />);
+    fireEvent.click(screen.getByTestId('merge-once-open'));
+    const select2 = await screen.findByTestId('merge-once-account') as HTMLSelectElement;
+    await waitFor(() => expect([...select2.options].some((o) => o.value === 'other')).toBe(true));
+    fireEvent.change(select2, { target: { value: 'other' } });
     expect(screen.getByTestId('merge-once-unknown')).toBeTruthy();
   });
 
-  it('에이전트가 다른 기기에서 돌면 계정 칸 대신 「그 기기에서」 안내만', async () => {
-    tauri({ here: false }); setup();
+  it('에이전트가 다른 기기에서 돌아도 승인 버튼이 있다 — 계정 칸 없이, ghUser 없이 보낸다(G1)', async () => {
+    tauri({ here: false }); const c = setup();
     render(<PermissionOncePanel message={card()} />);
     fireEvent.click(screen.getByTestId('merge-once-open'));
-    expect(await screen.findByTestId('merge-once-elsewhere')).toBeTruthy();
+    expect((await screen.findByTestId('merge-once-elsewhere')).textContent).toContain('그 기기의 오퍼레이터');
     expect(screen.queryByTestId('merge-once-account')).toBeNull();
     expect(invoke.mock.calls.map((x) => x[0])).toEqual(['operator_agents_list']);
+    fireEvent.click(screen.getByTestId('merge-once-submit'));
+    await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { relaxChecks: false, number: 42, headSha: HEAD }));
+    expect(Object.keys((c.approvePermissionOnce.mock.calls[0] as unknown[])[2] as object)).not.toContain('ghUser');
+  });
+
+  it('오퍼레이터 로컬 창구가 없어도(no-surface) 승인할 수 있다 — 오퍼레이터가 고른다는 안내', async () => {
+    const c = setup();
+    render(<PermissionOncePanel message={card({}, { reason: 'ci_not_green', failedChecks: ['test'] })} />);
+    fireEvent.click(screen.getByTestId('merge-once-open'));
+    expect((await screen.findByTestId('merge-once-operator-picks')).textContent).toContain('오퍼레이터가 이 저장소용 계정으로 고른다');
+    fireEvent.click(screen.getByTestId('merge-once-submit'));
+    await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { relaxChecks: true, number: 42, headSha: HEAD, failedChecks: ['test'] }));
+  });
+
+  it('readPermissionOnce — 계정을 비운 승인(ghUser null)도 읽는다', () => {
+    expect(readPermissionOnce(card({ status: 'approved_once', approvedOnce: { ghUser: null, relaxChecks: false, expiresAt: '2999-01-01T00:00:00Z' } }).meta)?.approvedOnce)
+      .toEqual({ ghUser: null, relaxChecks: false, expiresAt: '2999-01-01T00:00:00Z' });
   });
 
   it('소유자가 아니면 버튼 없이 기다림 안내 · cause_not_human 은 7일로 안 풀린다는 줄', () => {
