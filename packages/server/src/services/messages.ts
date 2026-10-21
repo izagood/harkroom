@@ -2118,7 +2118,7 @@ export async function syncAskMirrors(pool: Pool, rootId: string): Promise<void> 
           set meta = jsonb_set(
                 jsonb_set(
                   jsonb_set(meta::jsonb, '{ask,answeredWith}', to_jsonb($2::text)),
-                  '{ask,answeredBy}', to_jsonb($3::text)),
+                  '{ask,answeredBy}', coalesce(to_jsonb($3::text), 'null'::jsonb)),  -- 닫힘 분기와 같은 이유(security n3)
                 '{ask,answeredAt}', to_jsonb($4::text))
         where meta->'ask'->>'mirrorOf' = $1
           and deleted_at is null
@@ -2134,7 +2134,9 @@ export async function syncAskMirrors(pool: Pool, rootId: string): Promise<void> 
           set meta = jsonb_set(
                 jsonb_set(
                   jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb($2::text)),
-                  '{ask,closedBy}', to_jsonb($3::text)),
+                  -- 닫은 사람이 없을 수 있다(만료로 서버가 닫음). to_jsonb(null) 은 SQL NULL 이고 jsonb_set 은 NULL 을 받으면
+                  -- meta 전체를 NULL 로 만든다 — JSON null 로 바꿔 넣는다.
+                  '{ask,closedBy}', coalesce(to_jsonb($3::text), 'null'::jsonb)),
                 '{ask,closedReason}', to_jsonb($4::text))
         where meta->'ask'->>'mirrorOf' = $1
           and deleted_at is null

@@ -1895,6 +1895,9 @@ export const ko = {
   'speech.ask.replied': '글로 답했다',
   'speech.ask.pickAnyway': '그래도 고르기 ({n})',
   'speech.ask.superseded': '새 질문으로 바뀜',
+  // 권한 요청 시한(24시간)이 지나 닫힌 카드(스레드 65f3b26e). 결정은 더 받지 않는다.
+  'speech.ask.expired': '만료됨',
+  'speech.ask.expiredHint': '에이전트가 다시 청해야 한다',
   'speech.bundle.remaining': '정할 것 {n}/{m} 남음',
   'speech.bundle.allDone': '{m}개 모두 정해졌다',
   'speech.bundle.acceptRecommended': '남은 {n}개 추천대로',

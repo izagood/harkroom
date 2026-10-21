@@ -134,6 +134,7 @@ type RowState =
   | { kind: 'answered'; root: MessageRow; label: string | null; by: string | null }
   | { kind: 'replied'; root: MessageRow; note: string | null; noteBy: string | null; by: string | null }
   | { kind: 'superseded' }
+  | { kind: 'expired' }
   | { kind: 'declined' };
 
 function rowState(item: AskBundleItem, root: MessageRow | 'unavailable' | undefined): RowState {
@@ -147,6 +148,8 @@ function rowState(item: AskBundleItem, root: MessageRow | 'unavailable' | undefi
   if (item.link && isAskOpen(ask)) return { kind: 'link' };
   if (ask.closedReason === 'replied') return { kind: 'replied', root, note: ask.replyNote ?? null, noteBy: ask.replyNoteBy ?? null, by: ask.closedBy ?? null };
   if (ask.closedReason === 'superseded') return { kind: 'superseded' };
+  // 권한 요청 시한이 지나 서버가 닫았다(스레드 65f3b26e) — 「답 없이 닫힘」으로 말하면 없던 결정을 읽힌다.
+  if (ask.closedReason === 'expired') return { kind: 'expired' };
   if (ask.closedAt != null) return { kind: 'declined' };
   return { kind: 'open', root };
 }
@@ -226,6 +229,7 @@ function BundleRow({ item, state, accounts, t, canPick, onPick, result }: {
         </div>
       )}
       {state.kind === 'superseded' && <p className="mt-0.5 text-meta text-fg-subtle">{t('speech.ask.superseded')}</p>}
+      {state.kind === 'expired' && <p className="mt-0.5 text-meta text-fg-subtle">{t('speech.ask.expired')} · {t('speech.ask.expiredHint')}</p>}
       {state.kind === 'declined' && <p className="mt-0.5 text-meta text-fg-subtle">{t('speech.ask.declined')}</p>}
       {result && result.outcome !== 'answered' && result.outcome !== 'resolved' && (
         <p data-testid={`ask-bundle-skip-${item.rootId}`} data-outcome={result.outcome} className="mt-0.5 text-meta text-fg-muted">

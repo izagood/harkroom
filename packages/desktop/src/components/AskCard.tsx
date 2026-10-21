@@ -51,7 +51,16 @@ export function AskCard({ message }: { message: MessageRow }) {
    * 화면이 말할 것이 다르기 때문이다: 하나는 "이것으로 정해졌다", 다른 하나는 "이 물음은
    * 답 없이 닫혔다". 카드는 **지워지지 않는다** — 무엇을 물었는지는 기록이다.
    */
-  const closed = ask.closedAt != null;
+  /**
+   * **권한 요청이 시한을 넘겼다**(스레드 65f3b26e, 2026-10-19). 서버가 1분마다 닫지만(`closedReason: 'expired'`), 그 전이나
+   * 옛 서버에서도 열린 버튼을 그리지 않는다 — 누르면 409 만 돌아와 「버튼이 안 눌린다」로 보였다.
+   */
+  const pr = message.meta?.permissionRequest as { status?: unknown; expiresAt?: unknown } | undefined;
+  const lapsed = !answered && ask.closedAt == null && pr != null && (pr.status ?? 'pending') === 'pending'
+    && typeof pr.expiresAt === 'string' && Date.parse(pr.expiresAt) <= Date.now();
+  const closed = ask.closedAt != null || lapsed;
+  const closedReason = lapsed ? 'expired' : ask.closedReason;
+  const expired = !answered && closed && closedReason === 'expired';
   /**
    * **글로 답했다**(A′, 2026-10-09). 사람이 카드를 누르지 않고 같은 스레드에 글을 써서 서버가
    * 닫은 카드다. 차례는 이미 물어본 쪽으로 넘어갔으므로 강조는 거두되, 고를 길은 남긴다
@@ -89,7 +98,7 @@ export function AskCard({ message }: { message: MessageRow }) {
       data-for-me={forMe}
       data-answered={answered}
       data-closed={closed}
-      data-closed-reason={closed && !answered ? (ask.closedReason ?? 'declined') : undefined}
+      data-closed-reason={closed && !answered ? (closedReason ?? 'declined') : undefined}
       className={`mt-1.5 rounded-card border ${
         // 강조는 **답을 기다리는 내 차례**에만 간다. 답이 끝난 카드는 기록이므로 강조를
         // 거둔다 — 안 그러면 끝난 스레드가 계속 나를 부른다.
@@ -100,12 +109,13 @@ export function AskCard({ message }: { message: MessageRow }) {
         <span
           className={`text-meta font-semibold ${canChoose ? 'text-state-turn' : 'text-fg-agent'}`}
         >
-          {headline(ask.to, myId, accounts, answered, closed, t, ask.closedReason)}
+          {headline(ask.to, myId, accounts, answered, closed, t, closedReason)}
         </span>
         {answered && answeredByName && (
           <span className="text-meta text-fg-subtle">{t('speech.ask.answeredBy', { name: answeredByName })}</span>
         )}
-        {!answered && closed && !replied && !superseded && closedByName && (
+        {expired && <span className="text-meta text-fg-subtle">{t('speech.ask.expiredHint')}</span>}
+        {!answered && closed && !replied && !superseded && !expired && closedByName && (
           <span className="text-meta text-fg-subtle">{t('speech.ask.declinedBy', { name: closedByName })}</span>
         )}
         {replied && closedByName && <span className="text-meta text-fg-subtle">{closedByName}</span>}
@@ -205,11 +215,12 @@ function headline(
   answered: boolean,
   closed: boolean,
   t: Translate,
-  closedReason?: 'declined' | 'replied' | 'superseded',
+  closedReason?: 'declined' | 'replied' | 'superseded' | 'expired',
 ): string {
   if (answered) return t('speech.ask.decided');
   if (closed && closedReason === 'replied') return t('speech.ask.replied');
   if (closed && closedReason === 'superseded') return t('speech.ask.superseded');
+  if (closed && closedReason === 'expired') return t('speech.ask.expired');
   // 답 없이 닫힌 물음. `decided` 를 쓸 수 없다 — 정해진 것이 없다.
   if (closed) return t('speech.ask.declined');
   if (isForMe(to, myId)) return t('speech.ask.pickOne');

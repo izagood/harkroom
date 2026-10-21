@@ -68,6 +68,15 @@ describe('AskBundleCard', () => {
     expect(openMessage).toHaveBeenCalledWith('r1');
   });
 
+  // 스레드 65f3b26e(designer s1): 만료로 닫힌 권한 줄을 「답 없이 닫힘」으로 말하지 않는다.
+  it('권한 요청이 만료돼 닫힌 줄은 「만료됨」 이다', async () => {
+    roots = { r1: root('r1', { closedAt: new Date().toISOString(), closedReason: 'expired' }) };
+    render(<MessageItem message={bundleMessage([item('r1', { link: true })])} />);
+    await waitFor(() => expect(screen.getByTestId('ask-bundle-row-r1').dataset.state).toBe('expired'));
+    expect(screen.getByTestId('ask-bundle-row-r1').textContent).toContain('만료됨 · 에이전트가 다시 청해야 한다');
+    expect(screen.getByTestId('ask-bundle-row-r1').textContent).not.toContain('답 없이');
+  });
+
   it('글로 답한 줄의 요지는 누가 요약했는지 밝힌다(security n1)', async () => {
     roots = { r1: root('r1', { closedAt: '2026-10-10T00:00:00Z', closedBy: ME, closedReason: 'replied', replyNote: 'PAT 는 다르게', replyNoteBy: PM }) };
     render(<MessageItem message={bundleMessage([item('r1')])} />);
