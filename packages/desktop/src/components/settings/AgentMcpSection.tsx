@@ -69,9 +69,8 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
   const [name, setName] = useState(MCP_PRESETS[0]!.name);
   const [url, setUrl] = useState(MCP_PRESETS[0]!.definition.url);
   const [kind, setKind] = useState<'community' | 'personal'>(MCP_PRESETS[0]!.credentialKind);
-  // 등록된 OAuth 클라이언트(2026-10-07, 전용 Slack 앱). 프리셋 값이 기본이고, 바꾸면 다음 인증부터 그 클라이언트다.
+  // 등록된 OAuth 클라이언트(전용 Slack 앱, PKCE 공개 클라이언트). 프리셋 값이 기본이고, 바꾸면 다음 인증부터 그 클라이언트다.
   const [clientId, setClientId] = useState(MCP_PRESETS[0]!.definition.oauth?.clientId ?? '');
-  const [clientSecret, setClientSecret] = useState('');
 
   const [restarted, setRestarted] = useState(false);
   const restartNow = () => void (async () => {
@@ -140,7 +139,6 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
     const p = MCP_PRESETS.find((x) => x.id === id);
     if (p) { setName(p.name); setUrl(p.definition.url); setKind(p.credentialKind); setClientId(p.definition.oauth?.clientId ?? ''); }
     else { setName(''); setUrl(''); setKind('personal'); setClientId(''); }
-    setClientSecret('');
   };
 
   const add = () => void run(async () => {
@@ -148,8 +146,6 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
     if (!NAME.test(n)) { setError(t('mcpServers.badName')); return; }
     if (!/^https?:\/\//.test(url.trim())) { setError(t('agents.mcp.errUrl')); return; }
     if (!hasOperatorLocalSurface()) { setError(t('agents.mcp.errNoLocal')); return; }
-    // secret 은 clientId 에 묶여 저장된다 — 오퍼레이터도 거절하지만 여기서 먼저 말한다(#1243 F1).
-    if (clientSecret.trim() && !clientId.trim()) { setError(t('agents.mcp.errSecretNeedsClientId')); return; }
     const preset = MCP_PRESETS.find((x) => x.id === presetId);
     const base: OperatorMcpRemoteDefinition = preset && preset.name === n && preset.definition.url === url.trim()
       ? preset.definition
@@ -160,8 +156,7 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
     const known = Array.isArray(registry) && registry.some((r) => r.name === n);
     if (!known) await getController().putMcpServer(n, kind);
     // 2) 이 머신의 정의 — 오퍼레이터가 쓴다.
-    await setLocalMcpServer(n, definition, { clientSecret });
-    setClientSecret('');
+    await setLocalMcpServer(n, definition);
     setAdding(false);
     reload();
     const rows = await getController().mcpServers();
@@ -246,14 +241,9 @@ export function AgentMcpSection({ agent, disabled, onUpdated }: {
               <option value="community">{t('mcpServers.kind.community')}</option>
             </select>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <input aria-label={t('agents.mcp.clientId')} data-testid="agent-mcp-client-id"
-              className="min-w-0 flex-1 rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
-              value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder={t('agents.mcp.clientId')} autoComplete="off" spellCheck={false} />
-            <input aria-label={t('agents.mcp.clientSecret')} data-testid="agent-mcp-client-secret" type="password"
-              className="min-w-0 flex-1 rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
-              value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} placeholder={t('agents.mcp.clientSecret')} autoComplete="off" />
-          </div>
+          <input aria-label={t('agents.mcp.clientId')} data-testid="agent-mcp-client-id"
+            className="min-w-0 rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
+            value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder={t('agents.mcp.clientId')} autoComplete="off" spellCheck={false} />
           <p className="text-meta text-fg-subtle">{t('agents.mcp.clientNote')}</p>
           <p className="text-meta text-fg-subtle">{t('agents.mcp.addNote')}</p>
           <div className="flex gap-2">

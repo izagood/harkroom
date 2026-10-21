@@ -198,7 +198,7 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     expect(set?.args).toEqual({ name: 'jira', definition: { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp' } });
   });
 
-  it('Slack 프리셋은 Client ID·secret 칸을 싣는다 — secret 은 적었을 때만 보내고 칸은 비운다(2026-10-07 전용 앱)', async () => {
+  it('Slack 프리셋은 Client ID 칸을 싣는다 — 바꾼 clientId 를 정의에 넣고, secret 칸은 없다(2026-10-21 전용 앱, PKCE)', async () => {
     const calls = fakeLocal([]);
     setup({
       mcpServers: vi.fn(async () => [{ name: 'slack', credentialKind: 'personal', createdBy: null, createdAt: '' }]),
@@ -207,31 +207,17 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
     fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'slack' } });
     expect((screen.getByTestId('agent-mcp-client-id') as HTMLInputElement).value).toBe('1601185624273.8899143856786');
-    expect((screen.getByTestId('agent-mcp-client-secret') as HTMLInputElement).type).toBe('password');
+    expect(screen.queryByTestId('agent-mcp-client-secret')).toBeNull();
     fireEvent.change(screen.getByTestId('agent-mcp-client-id'), { target: { value: ' 111.222 ' } });
-    fireEvent.change(screen.getByTestId('agent-mcp-client-secret'), { target: { value: 'S-x' } });
     fireEvent.click(screen.getByTestId('agent-mcp-add-submit'));
     await waitFor(() => expect(calls.some((x) => x.cmd === 'operator_mcp_set')).toBe(true));
     expect(calls.find((x) => x.cmd === 'operator_mcp_set')?.args).toEqual({
       name: 'slack',
-      definition: { type: 'http', url: 'https://mcp.slack.com/mcp', oauth: { clientId: '111.222', callbackPort: 3118, clientSecret: 'S-x' } },
+      definition: { type: 'http', url: 'https://mcp.slack.com/mcp', oauth: { clientId: '111.222', callbackPort: 3118 } },
     });
   });
 
-  it('Client ID 없이 secret 만 적으면 막는다 — 정의를 보내지 않는다', async () => {
-    const calls = fakeLocal([]);
-    setup({ mcpServers: vi.fn(async () => [{ name: 'slack', credentialKind: 'personal', createdBy: null, createdAt: '' }]) });
-    render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
-    fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
-    fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'slack' } });
-    fireEvent.change(screen.getByTestId('agent-mcp-client-id'), { target: { value: ' ' } });
-    fireEvent.change(screen.getByTestId('agent-mcp-client-secret'), { target: { value: 'S-x' } });
-    fireEvent.click(screen.getByTestId('agent-mcp-add-submit'));
-    expect((await screen.findByTestId('agent-mcp-error')).textContent).toContain('Client secret 은 Client ID 와 함께');
-    expect(calls.some((x) => x.cmd === 'operator_mcp_set')).toBe(false);
-  });
-
-  it('secret 칸이 비어 있으면 clientSecret 을 싣지 않는다 — 들고 있던 것을 지우지 않는다', async () => {
+  it('Client ID 를 그대로 두면 프리셋 정의를 그대로 보낸다', async () => {
     const calls = fakeLocal([]);
     setup({ mcpServers: vi.fn(async () => [{ name: 'slack', credentialKind: 'personal', createdBy: null, createdAt: '' }]) });
     render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
