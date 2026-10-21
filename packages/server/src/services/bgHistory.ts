@@ -115,7 +115,7 @@ export async function bgRunChanges(pool: Pool, accountId: string, runId: string)
 }
 
 export type RevertResult =
-  | { reverted: string[]; skipped: { slug: string; reason: 'changed_since' | 'gone' | 'too_many' }[] }
+  | { reverted: string[]; skipped: { slug: string; reason: 'changed_since' | 'gone' | 'too_many' | 'error' }[] }
   | 'not_found' | 'already_reverted' | 'not_finished';
 
 /**
@@ -142,24 +142,30 @@ export async function revertBgRun(pool: Pool, accountId: string, runId: string, 
   const ops = new Map<string, string[]>();
   for (const c of ch.rows) { last.set(c.slug, c.after_updated_at); ops.set(c.slug, [...(ops.get(c.slug) ?? []), c.op]); }
   const reverted: string[] = [];
-  const skipped: { slug: string; reason: 'changed_since' | 'gone' | 'too_many' }[] = [];
+  const skipped: { slug: string; reason: 'changed_since' | 'gone' | 'too_many' | 'error' }[] = [];
   for (const [slug, after] of last) {
-    const cur = await pool.query<{ updated_at: Date }>(`select updated_at from agent_memory where account_id = $1 and slug = $2`, [accountId, slug]);
-    if (!cur.rows[0]) { skipped.push({ slug, reason: 'gone' }); continue; }
-    if (!sameMs(cur.rows[0].updated_at, after)) { skipped.push({ slug, reason: 'changed_since' }); continue; }
-    const first = await pool.query<{ id: number; reason: string | null; created: boolean }>(
-      `select id::int as id, reason, coalesce((detail->>'created')::boolean, false) as created
-         from agent_memory_revision where account_id = $1 and slug = $2 and run_id = $3 order by replaced_at, id limit 1`,
-      [accountId, slug, runId],
-    );
-    const f = first.rows[0];
-    const created = (ops.get(slug)?.[0] === 'create') || (f?.reason === 'merge' && f.created);
-    let r: unknown;
-    if (created) r = await archiveMemory(pool, accountId, slug, cur.rows[0].updated_at);
-    else if (f) r = await restoreMemory(pool, accountId, slug, f.id, (v, d) => scanWrite(v, d)?.reason ?? null);
-    else r = await unarchiveMemory(pool, accountId, slug);
-    if (r === 'ok') reverted.push(slug);
-    else skipped.push({ slug, reason: r === 'too_many' ? 'too_many' : 'changed_since' });
+    // 한 기억의 실패가 나머지를 막지 않는다(security n2) — 회차는 이미 「되돌림」으로 찍혔으니, 던지면 남은 것을 다시 시도할 길이 없다.
+    try {
+      const cur = await pool.query<{ updated_at: Date }>(`select updated_at from agent_memory where account_id = $1 and slug = $2`, [accountId, slug]);
+      if (!cur.rows[0]) { skipped.push({ slug, reason: 'gone' }); continue; }
+      if (!sameMs(cur.rows[0].updated_at, after)) { skipped.push({ slug, reason: 'changed_since' }); continue; }
+      const first = await pool.query<{ id: number; reason: string | null; created: boolean }>(
+        `select id::int as id, reason, coalesce((detail->>'created')::boolean, false) as created
+           from agent_memory_revision where account_id = $1 and slug = $2 and run_id = $3 order by replaced_at, id limit 1`,
+        [accountId, slug, runId],
+      );
+      const f = first.rows[0];
+      const created = (ops.get(slug)?.[0] === 'create') || (f?.reason === 'merge' && f.created);
+      let r: unknown;
+      if (created) r = await archiveMemory(pool, accountId, slug, cur.rows[0].updated_at);
+      else if (f) r = await restoreMemory(pool, accountId, slug, f.id, (v, d) => scanWrite(v, d)?.reason ?? null);
+      else r = await unarchiveMemory(pool, accountId, slug);
+      if (r === 'ok') reverted.push(slug);
+      else skipped.push({ slug, reason: r === 'too_many' ? 'too_many' : 'changed_since' });
+    } catch (err) {
+      console.error('bg revert error:', slug, err);
+      skipped.push({ slug, reason: 'error' });
+    }
   }
   return { reverted, skipped };
 }
