@@ -253,16 +253,15 @@ class _MessageListScreenState extends State<MessageListScreen> {
                     onInserted: () => setState(() {}),
                   ),
                   Expanded(
-                    child: TextField(
+                    // 줄이 늘면 키보드 위 남은 높이의 40% 까지 위로 자란다([composerField]).
+                    child: composerField(
                       key: const Key('composer'),
+                      context: context,
                       controller: _composer,
                       focusNode: _composerFocus,
                       // 글자가 바뀔 때마다 후보를 다시 세운다. 커서만 움직여도 바뀌므로
                       // `onChanged` 로는 모자라지만, 그 경우는 다음 입력에 따라잡힌다.
                       onChanged: (_) => setState(() {}),
-                      minLines: 1,
-                      maxLines: 5,
-                      textInputAction: TextInputAction.newline,
                       decoration: composerDecoration(
                         context,
                         t.composerHint.replaceAll('{name}', label),
