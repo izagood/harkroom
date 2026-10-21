@@ -406,6 +406,18 @@ abstract class Strings {
   String get sectionStarred;
   String get sectionChannels;
 
+  /// 섹션 옮기기 시트·섹션 머리(S4, 서버 섹션 표).
+  String sectionMoveTitle(String channel);
+  String get sectionNew;
+  String get sectionRemove;
+  String get sectionNameHint;
+  String get sectionCreate;
+  String get sectionCancel;
+  String get sectionMoveFailed;
+  String get sectionNameTaken;
+  String get sectionHasUnread;
+  String get sectionEmpty;
+
   /// 바로가기 카드(S5c): 나를 기다리는 것(인박스 안 본 수).
   String get cardMyTurn;
 
@@ -1310,6 +1322,16 @@ Map<String, String> stringsToMap(Strings s) => {
       'dmsEmpty': s.dmsEmpty,
       'sectionStarred': s.sectionStarred,
       'sectionChannels': s.sectionChannels,
+      'sectionMoveTitle': s.sectionMoveTitle('{channel}'),
+      'sectionNew': s.sectionNew,
+      'sectionRemove': s.sectionRemove,
+      'sectionNameHint': s.sectionNameHint,
+      'sectionCreate': s.sectionCreate,
+      'sectionCancel': s.sectionCancel,
+      'sectionMoveFailed': s.sectionMoveFailed,
+      'sectionNameTaken': s.sectionNameTaken,
+      'sectionHasUnread': s.sectionHasUnread,
+      'sectionEmpty': s.sectionEmpty,
       'cardMyTurn': s.cardMyTurn,
       'cardNew': s.cardNew,
       'cardSaved': s.cardSaved,

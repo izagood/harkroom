@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../api/api_error.dart';
 import '../api/models.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
@@ -37,18 +38,36 @@ class ChannelListScreen extends StatelessWidget {
     } else if (unreadOnly) {
       items.addAll(rows.where((c) => (app.reads[c.id]?.unread ?? 0) > 0));
     } else {
-      for (final sec in homeSections(rows, app.channelPrefs)) {
+      for (final sec in homeSections(rows, app.channelPrefs, sections: app.sections)) {
         items.add(sec);
-        if (!app.collapsedSections.contains(sec.key)) items.addAll(sec.channels);
+        if (!app.isSectionCollapsed(sec.key)) {
+          items.addAll(sec.channels);
+          if (sec.channels.isEmpty && sec.sectionId != null) items.add(_EmptySectionHint(sec.key));
+        } else {
+          // 접혀도 나를 부른 채널과 지금 보는 채널은 남는다(D4) — 접기는 소음을 줄이는 것이지 부름을 숨기는 것이 아니다.
+          items.addAll(sec.channels.where((c) => app.hasUnreadCallIn(c.id) || app.openChannelId == c.id));
+        }
       }
     }
 
     Widget row(BuildContext context, Object item) {
       if (item is HomeSection) {
+        final collapsed = app.isSectionCollapsed(item.key);
         return _SectionHeader(
           section: item,
-          collapsed: app.collapsedSections.contains(item.key),
+          collapsed: collapsed,
+          // 접힌 머리의 점: 안에 숨은 안 읽은 채널이 있다(남겨 둔 부름 채널은 제 배지가 말한다).
+          unreadDot: collapsed &&
+              item.channels.any((c) =>
+                  (app.reads[c.id]?.unread ?? 0) > 0 && !app.hasUnreadCallIn(c.id) && app.openChannelId != c.id),
           onTap: () => app.toggleSection(item.key),
+        );
+      }
+      if (item is _EmptySectionHint) {
+        return Padding(
+          key: Key('section-empty-${item.key}'),
+          padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter + 21, 6, HarkroomSize.gutter, 8),
+          child: Text(context.t.sectionEmpty, style: TextStyle(fontSize: 12, color: context.tokens.fgMuted)),
         );
       }
       final channel = item as ChannelRow;
@@ -69,6 +88,8 @@ class ChannelListScreen extends StatelessWidget {
         // 안 읽은 수는 **서버가 센다.** 클라이언트가 세면 열지 않은
         // 채널에서 틀리고, 틀린 배지는 없는 배지보다 나쁘다.
         trailing: UnreadBadge(count: unread),
+        // 길게 누르면 섹션으로 옮기기(S4). 섹션 표가 없는 옛 서버·DM 탭에서는 내지 않는다.
+        onLongPress: channel.isDm || app.sections == null ? null : () => openSectionMoveSheet(context, channel),
         onTap: () {
           app.openChannel(channel.id);
           Navigator.of(context).push(MaterialPageRoute<void>(
@@ -210,12 +231,21 @@ class OpenMeButton extends StatelessWidget {
   }
 }
 
+/// 빈 서버 섹션 아래 안내 한 줄의 자리표(목록 항목).
+class _EmptySectionHint {
+  const _EmptySectionHint(this.key);
+  final String key;
+}
+
 /// 홈의 한 묶음.
 class HomeSection {
-  const HomeSection({required this.key, required this.kind, required this.name, required this.channels});
+  const HomeSection({required this.key, required this.kind, required this.name, required this.channels, this.sectionId});
 
-  /// 접기 상태의 열쇠: `starred` · `section:<이름>` · `channels`.
+  /// 접기 상태의 열쇠: `starred` · `sid:<섹션 id>`(서버 섹션) · `section:<이름>`(옛 서버) · `channels`.
   final String key;
+
+  /// 서버 섹션 id(섹션 표가 있는 서버에서 custom 일 때만).
+  final String? sectionId;
   final HomeSectionKind kind;
 
   /// 사용자 섹션 이름(kind 가 custom 일 때만).
@@ -231,7 +261,11 @@ enum HomeSectionKind { starred, custom, channels }
 /// - 그다음 사용자 섹션을 이름순으로, 섹션 없는 채널은 맨 아래 「채널」.
 /// - 묶음 안은 수동 순서(`sortOrder`, 없으면 뒤) → 이름.
 /// - 빈 묶음은 세우지 않는다 — 단 「채널」 은 다른 묶음이 하나도 없을 때도 선다(목록 머리).
-List<HomeSection> homeSections(List<ChannelRow> channels, Map<String, ChannelPref> prefs) {
+///
+/// [sections] 가 있으면(서버 0.4.140~) 사용자 섹션은 **그 순서대로, 빈 섹션도** 선다(손으로 정한 순서, D3).
+/// 채널은 `sectionId` 로 묶고, 모르는 id 를 가리키는 채널은 「채널」 로 간다(그새 지워진 섹션).
+List<HomeSection> homeSections(List<ChannelRow> channels, Map<String, ChannelPref> prefs,
+    {List<ChannelSection>? sections}) {
   int byOrder(ChannelRow a, ChannelRow b) {
     final oa = prefs[a.id]?.sortOrder;
     final ob = prefs[b.id]?.sortOrder;
@@ -248,6 +282,13 @@ List<HomeSection> homeSections(List<ChannelRow> channels, Map<String, ChannelPre
     final p = prefs[c.id];
     if (p?.starred == true) {
       starred.add(c);
+    } else if (sections != null) {
+      final sid = p?.sectionId;
+      if (sid != null && sections.any((x) => x.id == sid)) {
+        bySection.putIfAbsent(sid, () => []).add(c);
+      } else {
+        plain.add(c);
+      }
     } else if (p?.section != null) {
       bySection.putIfAbsent(p!.section!, () => []).add(c);
     } else {
@@ -258,9 +299,21 @@ List<HomeSection> homeSections(List<ChannelRow> channels, Map<String, ChannelPre
   if (starred.isNotEmpty) {
     out.add(HomeSection(key: 'starred', kind: HomeSectionKind.starred, name: null, channels: starred..sort(byOrder)));
   }
-  final names = bySection.keys.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-  for (final n in names) {
-    out.add(HomeSection(key: 'section:$n', kind: HomeSectionKind.custom, name: n, channels: bySection[n]!..sort(byOrder)));
+  if (sections != null) {
+    for (final sec in [...sections]..sort((a, b) => a.position.compareTo(b.position))) {
+      out.add(HomeSection(
+        key: 'sid:${sec.id}',
+        kind: HomeSectionKind.custom,
+        name: sec.name,
+        sectionId: sec.id,
+        channels: (bySection[sec.id] ?? <ChannelRow>[])..sort(byOrder),
+      ));
+    }
+  } else {
+    final names = bySection.keys.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    for (final n in names) {
+      out.add(HomeSection(key: 'section:$n', kind: HomeSectionKind.custom, name: n, channels: bySection[n]!..sort(byOrder)));
+    }
   }
   if (plain.isNotEmpty || out.isEmpty) {
     out.add(HomeSection(key: 'channels', kind: HomeSectionKind.channels, name: null, channels: plain..sort(byOrder)));
@@ -270,11 +323,14 @@ List<HomeSection> homeSections(List<ChannelRow> channels, Map<String, ChannelPre
 
 /// 묶음 머리 한 줄(개정판 3.2 「☆ 즐겨찾기 ⌃」). 누르면 접고 편다.
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.section, required this.collapsed, required this.onTap});
+  const _SectionHeader({required this.section, required this.collapsed, required this.onTap, this.unreadDot = false});
 
   final HomeSection section;
   final bool collapsed;
   final VoidCallback onTap;
+
+  /// 접힌 섹션 안에 숨은 안 읽은 채널이 있다(D4 — 머리 오른쪽 회색 점).
+  final bool unreadDot;
 
   @override
   Widget build(BuildContext context) {
@@ -288,6 +344,7 @@ class _SectionHeader extends StatelessWidget {
     return Semantics(
       button: true,
       expanded: !collapsed,
+      hint: unreadDot ? t.sectionHasUnread : null,
       child: InkWell(
         key: Key('section-${section.key}'),
         onTap: onTap,
@@ -305,6 +362,14 @@ class _SectionHeader extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: k.fg)),
               ),
+              if (unreadDot)
+                Container(
+                  key: Key('section-dot-${section.key}'),
+                  width: 6,
+                  height: 6,
+                  margin: const EdgeInsets.only(right: 8),
+                  decoration: BoxDecoration(color: k.fgMuted, shape: BoxShape.circle),
+                ),
               Icon(collapsed ? Icons.expand_more : Icons.expand_less, size: 18, color: k.fgMuted),
             ],
           ),
@@ -569,4 +634,113 @@ Future<void> openDmScreen(BuildContext context, String accountId) async {
   } catch (_) {
     messenger.showSnackBar(SnackBar(content: Text(failed), behavior: SnackBarBehavior.floating));
   }
+}
+
+/// 채널을 섹션으로 옮기는 시트(S4, 채널 길게 누르기). 내 섹션들(지금 섹션에 ✓) · 「새 섹션…」 · 「섹션에서 빼기」.
+///
+/// 줄이 몇 개든 작은 폰(375×667)·큰 글자에서도 넘치지 않게 **목록이 스크롤된다**(시트 높이는 화면의 80% 까지).
+/// 시트는 **제 context 로** 닫는다 — 바깥 context 로 pop 하면 탭 쌓기의 화면이 빠진다(#1368·#1390 교훈).
+Future<void> openSectionMoveSheet(BuildContext context, ChannelRow channel) async {
+  final app = context.app;
+  final messenger = ScaffoldMessenger.of(context);
+  final t = context.t;
+  final current = app.channelPrefs[channel.id]?.sectionId;
+  // 고른 것: ('move', id|null) 또는 ('new', null).
+  final picked = await showModalBottomSheet<(String, String?)>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (sheet) {
+      final k = sheet.tokens;
+      final secs = app.sections ?? const <ChannelSection>[];
+      return SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheet).height * 0.8),
+          child: ListView(
+            key: const Key('section-move-sheet'),
+            shrinkWrap: true,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 0, HarkroomSize.gutter, 8),
+                child: Text(t.sectionMoveTitle(channel.name),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: k.fgMuted)),
+              ),
+              for (final sec in secs)
+                ListTile(
+                  key: Key('section-move-${sec.id}'),
+                  leading: const Icon(Icons.folder_outlined),
+                  title: Text(sec.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  trailing: sec.id == current ? const Icon(Icons.check) : null,
+                  selected: sec.id == current,
+                  onTap: () => Navigator.of(sheet).pop(('move', sec.id)),
+                ),
+              ListTile(
+                key: const Key('section-move-new'),
+                leading: const Icon(Icons.add),
+                title: Text(t.sectionNew),
+                onTap: () => Navigator.of(sheet).pop(('new', null)),
+              ),
+              if (current != null)
+                ListTile(
+                  key: const Key('section-move-remove'),
+                  leading: const Icon(Icons.remove_circle_outline),
+                  title: Text(t.sectionRemove),
+                  onTap: () => Navigator.of(sheet).pop(('move', null)),
+                ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+  if (picked == null || !context.mounted) return;
+  try {
+    if (picked.$1 == 'new') {
+      final name = await _askSectionName(context);
+      if (name == null) return;
+      await app.createSectionWith(name, channel.id);
+    } else if (picked.$2 != current) {
+      await app.moveChannelToSection(channel.id, picked.$2);
+    }
+  } on ApiError catch (e) {
+    messenger.showSnackBar(SnackBar(
+        content: Text(e.code == 'section_exists' ? t.sectionNameTaken : t.sectionMoveFailed),
+        behavior: SnackBarBehavior.floating));
+  } on Object {
+    messenger.showSnackBar(SnackBar(content: Text(t.sectionMoveFailed), behavior: SnackBarBehavior.floating));
+  }
+}
+
+/// 새 섹션 이름을 묻는다(1~40자, 앞뒤 공백 제거). 취소면 null.
+Future<String?> _askSectionName(BuildContext context) async {
+  final controller = TextEditingController();
+  final t = context.t;
+  // 컨트롤러는 닫힘 애니메이션이 끝날 때까지 쓰인다 — 여기서 바로 dispose 하면 닫히는 칸이 죽은 컨트롤러를 읽는다.
+  return showDialog<String>(
+      context: context,
+      builder: (dialog) {
+        void submit() {
+          final v = controller.text.trim();
+          if (v.isNotEmpty) Navigator.of(dialog).pop(v);
+        }
+
+        return AlertDialog(
+          title: Text(t.sectionNew),
+          content: TextField(
+            key: const Key('section-new-name'),
+            controller: controller,
+            autofocus: true,
+            maxLength: 40,
+            decoration: InputDecoration(hintText: t.sectionNameHint),
+            onSubmitted: (_) => submit(),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialog).pop(), child: Text(t.sectionCancel)),
+            FilledButton(key: const Key('section-new-create'), onPressed: submit, child: Text(t.sectionCreate)),
+          ],
+        );
+      },
+    );
 }

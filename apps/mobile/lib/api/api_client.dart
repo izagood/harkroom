@@ -215,10 +215,29 @@ class ApiClient {
           .toList(growable: false);
 
   /// 내 채널 선호(즐겨찾기·섹션·순서·치움). 데스크탑 사이드바와 같은 값이다.
-  Future<List<ChannelPref>> channelPrefs() async =>
-      _list(_obj(await _send('GET', '/channels/prefs'))['prefs'])
-          .map(ChannelPref.fromJson)
-          .toList(growable: false);
+  Future<List<ChannelPref>> channelPrefs() async => (await channelPrefsAndSections()).prefs;
+
+  /// 선호와 섹션을 한 번에. `sections` 가 null 이면 옛 서버(0.4.140 전) — 홈은 이름으로 묶는다.
+  Future<({List<ChannelPref> prefs, List<ChannelSection>? sections})> channelPrefsAndSections() async {
+    final o = _obj(await _send('GET', '/channels/prefs'));
+    final prefs = _list(o['prefs']).map(ChannelPref.fromJson).toList(growable: false);
+    final raw = o['sections'];
+    final sections = raw is List ? _list(raw).map(ChannelSection.fromJson).toList(growable: false) : null;
+    return (prefs: prefs, sections: sections);
+  }
+
+  /// 채널을 섹션에 넣거나(id) 뺀다(null).
+  Future<void> setChannelSection(String channelId, String? sectionId) =>
+      _send('PATCH', '/channels/$channelId/pref', body: {'sectionId': sectionId});
+
+  /// 섹션 만들기(맨 뒤). [channelIds] 를 만들면서 넣는다.
+  Future<ChannelSection> createSection(String name, {List<String> channelIds = const []}) async =>
+      ChannelSection.fromJson(_obj(_obj(await _send('POST', '/channel-sections',
+          body: {'name': name, 'channelIds': channelIds}))['section']));
+
+  /// 섹션 접기·펴기(기기 사이에 같다).
+  Future<void> setSectionCollapsed(String sectionId, bool collapsed) =>
+      _send('PATCH', '/channel-sections/$sectionId', body: {'collapsed': collapsed});
 
   /// 채널 자동 멘션(#173). 채널을 볼 수 있는 사람 누구나 읽는다 — 작성칸이 칩을 그려야 한다.
   Future<List<ChannelAutoMention>> channelAutoMentions(String channelId) async =>

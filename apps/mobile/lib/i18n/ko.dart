@@ -382,6 +382,26 @@ class StringsKo implements Strings {
   @override
   String get sectionChannels => '채널';
   @override
+  String sectionMoveTitle(String channel) => '#$channel — 섹션으로 옮기기';
+  @override
+  String get sectionNew => '새 섹션…';
+  @override
+  String get sectionRemove => '섹션에서 빼기';
+  @override
+  String get sectionNameHint => '섹션 이름';
+  @override
+  String get sectionCreate => '만들기';
+  @override
+  String get sectionCancel => '취소';
+  @override
+  String get sectionMoveFailed => '채널을 옮기지 못했다.';
+  @override
+  String get sectionNameTaken => '같은 이름의 섹션이 이미 있다.';
+  @override
+  String get sectionHasUnread => '안 읽은 채널 있음';
+  @override
+  String get sectionEmpty => '채널을 길게 눌러 이 섹션으로 옮긴다';
+  @override
   String get cardMyTurn => '내 차례';
   @override
   String get cardNew => '새로 온 것';
