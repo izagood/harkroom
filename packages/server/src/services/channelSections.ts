@@ -19,6 +19,16 @@ export class SectionNameTakenError extends Error {
   constructor() { super('section name already exists'); }
 }
 
+/**
+ * 계정당 섹션 상한. 순서 바꾸기(`PUT /channel-sections/order`)가 받는 `ids` 상한(500)보다
+ * 작아야 한다 — 그보다 많으면 순서를 바꿀 길이 없어진다. `/channels/prefs` 응답 크기도 이 수에 묶인다.
+ */
+export const MAX_SECTIONS_PER_ACCOUNT = 200;
+
+export class SectionLimitError extends Error {
+  constructor() { super(`at most ${MAX_SECTIONS_PER_ACCOUNT} sections per account`); }
+}
+
 export async function listChannelSections(db: Queryable, accountId: string): Promise<ChannelSectionRow[]> {
   const res = await db.query<ChannelSectionRow>(
     `select ${SECTION_COLUMNS} from channel_section where account_id = $1 order by position, name`,
@@ -64,17 +74,20 @@ export async function setChannelSection(
 export async function findOrCreateSectionByName(
   db: Queryable, accountId: string, name: string,
 ): Promise<string> {
+  // 상한(`MAX_SECTIONS_PER_ACCOUNT`)에 닿았으면 새 행을 만들지 않는다 — 이미 있는 이름은 그대로 찾는다.
   await db.query(
     `insert into channel_section (account_id, name, position)
      select $1, $2, coalesce(max(position) + 1, 0) from channel_section where account_id = $1
+     having count(*) < $3
      on conflict (account_id, name) do nothing`,
-    [accountId, name],
+    [accountId, name, MAX_SECTIONS_PER_ACCOUNT],
   );
   const res = await db.query<{ id: string }>(
     `select id from channel_section where account_id = $1 and name = $2`,
     [accountId, name],
   );
-  return res.rows[0]!.id;
+  if (!res.rows[0]) throw new SectionLimitError();
+  return res.rows[0].id;
 }
 
 /** 섹션 순서를 0..n-1 로 다시 매긴다(지금 순서를 지킨 채 틈만 메운다). */
@@ -126,6 +139,7 @@ export async function createChannelSection(
         `select count(*)::integer as n from channel_section where account_id = $1`, [accountId],
       );
       const n = count.rows[0]!.n;
+      if (n >= MAX_SECTIONS_PER_ACCOUNT) throw new SectionLimitError();
       const position = input.position === undefined ? n : Math.min(Math.max(input.position, 0), n);
       await client.query(
         `update channel_section set position = position + 1 where account_id = $1 and position >= $2`,
