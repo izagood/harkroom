@@ -8,12 +8,20 @@
  */
 import { useEffect, useState } from 'react';
 import { getController } from '../state/controller';
+import { useCommunityRegistry } from '../state/communities';
 import { hasOperatorLocalSurface, listLocalAgents, onLocalAgentsChanged } from './operatorLocal';
 
 export function useLocalOperatorId(): string | null | 'unknown' {
   const [id, setId] = useState<string | null | 'unknown'>('unknown');
+  // 지금 커뮤니티가 바뀌면 다시 읽는다 — 설정 화면이 다시 마운트되지 않아도 옛 커뮤니티의 오퍼레이터로
+  // 「이 맥/원격」을 그리지 않게(security #1455 n1).
+  const activeKey = useCommunityRegistry((r) => {
+    const e = r.entries.find((x) => x.id === r.activeId);
+    return e ? `${e.id}|${e.baseUrl}` : '';
+  });
   useEffect(() => {
     let live = true;
+    setId('unknown');
     const load = () => {
       if (!hasOperatorLocalSurface()) { setId(null); return; }
       const baseUrl = getController().api?.baseUrl ?? null;
@@ -27,6 +35,6 @@ export function useLocalOperatorId(): string | null | 'unknown' {
     load();
     const off = onLocalAgentsChanged(load);
     return () => { live = false; off(); };
-  }, []);
+  }, [activeKey]);
   return id;
 }

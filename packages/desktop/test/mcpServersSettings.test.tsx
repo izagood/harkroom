@@ -337,7 +337,7 @@ describe('McpServersSettings — 이 맥에 배정된 에이전트', () => {
       listAgents: vi.fn(async () => [
         ag('a-tm', 'task_manager', 'op-mac', ['jira', 'github']),
         ag('a-hk', 'harkroom', 'op-mac', ['github']),
-        ag('a-rb', 'rbln_infra', 'op-vm', ['jira', 'github']),
+        ag('a-infra', 'infra_bot', 'op-vm', ['jira', 'github']),
       ]),
     };
     setController(c as unknown as Controller);
@@ -349,7 +349,7 @@ describe('McpServersSettings — 이 맥에 배정된 에이전트', () => {
     render(<McpServersSection />);
     const line = await screen.findByTestId('mcp-cell-missing-on-jira');
     expect(line.textContent).toContain('task_manager');
-    expect(line.textContent).not.toContain('rbln_infra');
+    expect(line.textContent).not.toContain('infra_bot');
     expect(screen.getByTestId('mcp-cell-primary-jira').className).toContain('bg-accent');
   });
 
@@ -363,13 +363,13 @@ describe('McpServersSettings — 이 맥에 배정된 에이전트', () => {
     const here = await screen.findByTestId('mcp-remove-here-affected');
     expect(here.textContent).toContain('task_manager');
     expect(here.textContent).toContain('harkroom');
-    expect(here.textContent).not.toContain('rbln_infra');
+    expect(here.textContent).not.toContain('infra_bot');
     fireEvent.click(screen.getByText('취소'));
     fireEvent.click(screen.getByTestId('mcp-cell-menu-github'));
     fireEvent.click(await screen.findByRole('menuitem', { name: '커뮤니티에서 삭제' }));
     const all = await screen.findByTestId('mcp-confirm-affected');
     expect(all.textContent).toContain('3');
-    expect(all.textContent).toContain('rbln_infra');
+    expect(all.textContent).toContain('infra_bot');
   });
 
   it('에이전트 화면의 링크로 왔으면 그 줄을 강조한다(mcpFocus 를 한 번 꺼낸다)', async () => {
