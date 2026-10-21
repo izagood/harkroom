@@ -113,4 +113,41 @@ describe('저장소는 러너가 보고한 worktree 에서 찾는다(workingDir 
     expect(await lstat(f.wt.reused)).toBeTruthy();
     expect(second.events.filter((e) => e.action === 'deleted').map((e) => e.path).sort()).toEqual([f.wt.closed, f.wt.merged].sort());
   });
+
+  it('주인 모름 자동: 보고 없는 worktree 도 머지·닫힘 + PR head == HEAD + 깨끗 + 오래 손 안 댐이면 넣고 지운다', async () => {
+    const f = await fixture();
+    const owners = createCleanupOwners({ path: join(f.root, 'owners.json') }); // 러너 보고 없음 — 전부 주인 모름
+    const configPath = join(f.root, 'operator.json');
+    await writeFile(configPath, JSON.stringify({ communities: {}, cleanup: { enabled: true, graceDays: 7 } }));
+    const ledgerPath = join(f.root, 'ledger.json');
+    const DAY = 86_400_000;
+    let now = new Date(Date.now() + 3 * DAY); // 방금 만든 worktree 들 — 보존 기간(7일) 안
+    const cleanup = createWorkspaceCleanup({
+      ledgerPath, configPath, owners,
+      agents: async () => [{ agentId: 'agentA', workingDir: f.repo }], // 저장소는 workingDir 로 안다(main worktree 는 후보 아님)
+      forward: async () => { throw new Error('주인 모름은 스레드를 묻지 않는다'); },
+      exec: f.exec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: f.root,
+      now: () => now, log: () => {},
+    });
+    const ledger = async () => JSON.parse(await readFile(ledgerPath, 'utf8')) as CleanupLedger;
+    const states = async () => Object.fromEntries((await ledger()).items.map((i) => [i.path, i.state]));
+
+    await cleanup.sweep();
+    expect(await states()).toEqual({ [f.wt.merged]: 'unowned', [f.wt.closed]: 'unowned', [f.wt.dirty]: 'unowned', [f.wt.reused]: 'unowned' });
+    expect(await lstat(join(f.wt.merged, 'node_modules'))).toBeTruthy();
+
+    now = new Date(Date.now() + 10 * DAY); // 이제 7일보다 오래 손대지 않았다
+    await cleanup.sweep();
+    // 미커밋(dirty)·옛 머지 PR(reused, PR 모름)은 그대로 주인 모름
+    expect(await states()).toEqual({ [f.wt.merged]: 'listed', [f.wt.closed]: 'listed', [f.wt.dirty]: 'unowned', [f.wt.reused]: 'unowned' });
+    for (const i of (await ledger()).items.filter((x) => x.state === 'listed')) expect(i).toMatchObject({ thread: null, actedBy: null });
+    expect(await lstat(join(f.wt.merged, 'node_modules')).catch(() => null)).toBeNull();
+
+    now = new Date(Date.now() + 18 * DAY);
+    await cleanup.sweep();
+    expect(await lstat(f.wt.merged).catch(() => null)).toBeNull();
+    expect(await lstat(f.wt.closed).catch(() => null)).toBeNull();
+    expect(await lstat(join(f.wt.dirty, 'wip.txt'))).toBeTruthy();
+    expect(await states()).toEqual({ [f.wt.dirty]: 'unowned', [f.wt.reused]: 'unowned' });
+  });
 });

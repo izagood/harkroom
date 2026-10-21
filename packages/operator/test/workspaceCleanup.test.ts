@@ -57,6 +57,57 @@ describe('planSweep', () => {
   });
 });
 
+describe('주인 모름 자동(규칙: 머지·닫힘 + PR head == HEAD + 깨끗 + 보존 기간보다 오래 손대지 않음)', () => {
+  // 주인 모름 후보 — 다 맞춘 모양. 시험마다 하나씩 뺀다.
+  const OLD = '2026-09-20T00:00:00.000Z'; // NOW(10-06) 에서 16일 전 — 7일보다 오래
+  const u = (o: Partial<ObservedWorktree> = {}) => wt({ thread: null, clean: true, lastActivityAt: OLD, ...o });
+  const plan = (w: ObservedWorktree, settings = S, now = NOW, prev = emptyLedger()) => planSweep(prev, facts({ worktrees: [w], doneThreads: new Set() }), settings, now);
+  it('다 맞으면 목록에 넣고 의존성 지우기 — 사람 손 없이(actedBy null)', () => {
+    const p = plan(u());
+    expect(p.ledger.items[0]).toMatchObject({ state: 'listed', thread: null, actedBy: null, deleteAfter: '2026-10-13T00:00:00.000Z' });
+    expect(p.actions).toEqual([{ op: 'removeDeps', path: '/tmp/wt-a' }]);
+    // 기한이 지나면 지운다(지우기 직전 검사는 runSweep 이 다시 한다)
+    expect(plan(u(), S, new Date('2026-10-14T00:00:00Z'), p.ledger).actions).toEqual([{ op: 'delete', path: '/tmp/wt-a' }]);
+  });
+  it('닫힘 PR 도 된다', () => {
+    expect(plan(u({ pr: { number: 1, state: 'closed', headSha: 'abc' } })).ledger.items[0]!.state).toBe('listed');
+  });
+  it.each([
+    ['PR 이 열려 있음', { pr: { number: 1, state: 'open' as const, headSha: 'abc' } }],
+    ['PR 없음', { pr: null }],
+    ['PR head 가 HEAD 와 다름(조상이어도)', { pr: { number: 1, state: 'merged' as const, headSha: 'old' } }],
+    ['PR head 모름', { pr: { number: 1, state: 'merged' as const, headSha: null } }],
+    ['HEAD 모름', { headSha: null }],
+    ['커밋 안 된 변경·push 안 된 커밋이 있음', { clean: false }],
+    ['깨끗한지 재지 못함', { clean: null }],
+    ['보존 기간 안에 손댐', { lastActivityAt: '2026-10-01T00:00:00.000Z' }],
+    ['손댄 시각 모름', { lastActivityAt: null }],
+  ])('%s → 주인 모름 그대로, 할 일 없음', (_name, o) => {
+    const p = plan(u(o as Partial<ObservedWorktree>));
+    expect(p.ledger.items[0]!.state).toBe('unowned');
+    expect(p.actions).toEqual([]);
+  });
+  it('꺼져 있으면 넣지 않는다', () => {
+    expect(plan(u(), { ...S, enabled: false }).ledger.items[0]!.state).toBe('unowned');
+  });
+  it('보존 기간은 설정을 따른다 — 30일이면 16일 전 손댄 것은 아직', () => {
+    expect(plan(u(), { ...S, graceDays: 30 }).ledger.items[0]!.state).toBe('unowned');
+  });
+  it('이미 주인 모름으로 보이던 것도 조건이 맞으면 넣는다. 사람이 보존한 것은 건드리지 않는다', () => {
+    const shown = plan(u({ clean: false })).ledger;
+    expect(plan(u(), S, NOW, shown).ledger.items[0]!.state).toBe('listed');
+    const kept = applyHumanAction(shown, '/tmp/wt-a', 'keep', 'acct-1', S, NOW).ledger;
+    expect(plan(u(), S, NOW, kept).ledger.items[0]!.state).toBe('kept');
+  });
+  it('자동으로 넣은 뒤 손댄 흔적이 새로 생기면 되살린다(스레드가 없어 새 턴 대신)', () => {
+    const listed = plan(u()).ledger;
+    const r = plan(u({ lastActivityAt: '2026-10-07T00:00:00.000Z' }), S, new Date('2026-10-08T00:00:00Z'), listed);
+    expect(r.ledger.items).toEqual([]);
+    expect(r.ledger.events.at(-1)!.action).toBe('revived');
+    expect(r.actions).toEqual([]);
+  });
+});
+
 describe('runSweep', () => {
   it('검사에 걸리면 지우지 않고 blocked + 이유', async () => {
     const first = planSweep(emptyLedger(), facts(), S, NOW).ledger;

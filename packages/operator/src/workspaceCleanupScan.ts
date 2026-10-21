@@ -13,7 +13,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { lstat, stat } from 'node:fs/promises';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import { normalizeCleanupPath, type CleanupPr } from '@harkroom/shared/workspaceCleanup';
 import type { Exec } from './turnMerge.js';
@@ -128,6 +128,18 @@ export async function repoOfWorktree(deps: ScanDeps, path: string): Promise<stri
   if (r.code !== 0) return null;
   const common = r.stdout.trim();
   return basename(common) === '.git' ? dirname(common) : null;
+}
+
+/**
+ * 마지막으로 손댄 흔적 — HEAD 커밋 시각과 worktree 를 만든 시각(`<path>/.git` 파일) 중 늦은 것. 폴더 자체의 mtime 은 쓰지 않는다:
+ * 청소기가 `node_modules` 를 지우면 그것이 바뀌어 스스로 「최근에 손댐」을 만든다. 둘 다 못 읽으면 null(자동 대상 아님).
+ */
+export async function lastActivityAt(deps: ScanDeps, path: string): Promise<string | null> {
+  const r = await deps.exec(deps.gitPath, ['-C', path, 'log', '-1', '--format=%cI', 'HEAD'], GIT_ENV(deps.home));
+  const commit = r.code === 0 ? Date.parse(r.stdout.trim()) : Number.NaN;
+  const made = (await lstat(join(path, '.git')).catch(() => null))?.mtimeMs ?? Number.NaN;
+  const t = Math.max(Number.isNaN(commit) ? -Infinity : commit, Number.isNaN(made) ? -Infinity : made);
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
 }
 
 export type Forward = (agentId: string, req: RunnerLinkRequest) => Promise<RunnerLinkResponse>;

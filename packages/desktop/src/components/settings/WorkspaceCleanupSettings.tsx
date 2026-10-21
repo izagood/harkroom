@@ -144,6 +144,8 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
             <span className="mt-0.5 block text-meta text-fg-subtle">
               {row.prNumber !== null ? t(`cleanup.pr.${row.prState ?? 'open'}` as MessageKey, { n: row.prNumber }) : t('cleanup.pr.none')}
               {' · '}{row.parts.map(partLabel).join(' · ')}{' · '}{formatBytes(row.sizeNow)}
+              {/* 주인 모름을 청소기가 넣은 줄 — 사람이 넣은 것(actedBy)과 스레드 줄과 구별한다. */}
+              {!kept && !row.thread && row.actedBy === null ? <>{' · '}<span data-testid="cleanup-unowned-auto">{t('cleanup.part.unownedAuto')}</span></> : null}
               {kept && row.actedAt ? <> {' · '}<span data-testid="cleanup-kept-by">{whoOf(row.actedBy) ? t('cleanup.keptBy', { who: whoOf(row.actedBy)!, date: fmtDay(row.actedAt) }) : t('cleanup.keptAuto', { date: fmtDay(row.actedAt) })}</span></> : null}
             </span>
           </button>
@@ -247,7 +249,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
       {model.unowned.length > 0 && (
         <SettingsGroup title={t('cleanup.unownedTitle', { n: model.unowned.length })}>
           {model.ownersPending && <p className="px-4 pt-2 text-meta text-fg-muted" data-testid="cleanup-owners-pending">{t('cleanup.ownersPending')}</p>}
-          <p className="px-4 py-2 text-meta text-fg-subtle">{t('cleanup.unownedHint')}</p>
+          <p className="px-4 py-2 text-meta text-fg-subtle">{t('cleanup.unownedHint', { days: settings.graceDays })}</p>
           {model.unowned.map((u) => (
             <div key={u.path} className="px-4 py-3" data-testid="cleanup-unowned">
               <div className="flex items-start gap-3">

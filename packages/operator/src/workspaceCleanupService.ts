@@ -34,7 +34,7 @@ import {
   type ObservedWorktree,
 } from './workspaceCleanup.js';
 import type { CleanupOwners } from './workspaceCleanupOwners.js';
-import { isThreadDone, repoOfWorktree, scanRepo, type Forward, type ScanDeps } from './workspaceCleanupScan.js';
+import { isThreadDone, lastActivityAt, repoOfWorktree, scanRepo, type Forward, type ScanDeps } from './workspaceCleanupScan.js';
 
 export interface WorkspaceCleanupView {
   settings: CleanupSettings;
@@ -182,6 +182,17 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: Cleanup
         seen.add(w.path);
         worktrees.push(w);
       }
+    }
+    // 주인 모름 자동 후보(PR 머지·닫힘 + PR head == HEAD)만 더 잰다: 지우기 직전 검사와 같은 판정으로 깨끗한가, 언제 마지막으로 손댔나.
+    for (const w of worktrees) {
+      if (w.thread || !w.pr || w.pr.state === 'open' || !w.headSha || w.pr.headSha !== w.headSha) continue;
+      const probe: CleanupItem = {
+        path: w.path, kind: 'worktree', state: 'unowned', repo: w.repo, branch: w.branch, headSha: w.headSha, thread: null, pr: w.pr,
+        lastModifiedAt: w.lastModifiedAt, listedAt: null, deleteAfter: null, blockReason: null, actedBy: null, actedAt: null,
+        sizeBefore: w.size, sizeNow: w.size,
+      };
+      w.clean = (await base.check(probe, new Set())) === null;
+      w.lastActivityAt = await lastActivityAt(deps, w.path);
     }
     // 스레드 ✅ 는 조건이 될 만한 것(PR 머지·닫힘 + 주인 있음)만 묻는다 — 스레드마다 한 번, 그 스레드를 알린 에이전트로.
     const doneThreads = new Set<string>();
