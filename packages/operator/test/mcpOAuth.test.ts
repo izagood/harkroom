@@ -153,6 +153,9 @@ describe('인증 흐름', () => {
 
     const res = await approve(fake, authUrl);
     expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('content-security-policy')).toContain("default-src 'none'");
+    expect(await res.text()).toContain('<b>jira</b>');
     await until(async () => (await oauth.status('jira', fake.mcpUrl)).state === 'ok');
     expect(fake.calls.register).toBe(1);
     expect(tokens).toEqual([{ name: 'jira', accessToken: 'A1' }]);
@@ -170,7 +173,23 @@ describe('인증 흐름', () => {
     const { authUrl } = await oauth.start('jira', { type: 'http', url: fake.mcpUrl });
     const res = await approve(fake, authUrl, 'C1', { state: 'forged' });
     expect(res.status).toBe(400);
+    expect(await res.text()).toContain('data-kind="expired"');
     expect(await oauth.status('jira', fake.mcpUrl)).toEqual({ state: 'pending' });
+  });
+
+  it('인가 거절(error=)은 사유 코드를 이스케이프해 보이고 Accept-Language 를 따른다', async () => {
+    const { authUrl } = await oauth.start('jira', { type: 'http', url: fake.mcpUrl });
+    const u = new URL(authUrl);
+    const cb = new URL(u.searchParams.get('redirect_uri')!);
+    cb.searchParams.set('state', u.searchParams.get('state')!);
+    cb.searchParams.set('error', '<script>alert(1)</script>');
+    const res = await fetch(cb.toString(), { headers: { 'accept-language': 'ko-KR,ko;q=0.9' } });
+    expect(res.status).toBe(400);
+    const html = await res.text();
+    expect(html).toContain('data-kind="denied"');
+    expect(html).toContain('<html lang="ko">');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).not.toContain('<script>alert');
   });
 
   it('정의의 clientId·callbackPort 를 쓴다 — 등록된 클라이언트만 받는 서버(slack)는 등록하지 않는다', async () => {
