@@ -125,9 +125,12 @@ describe('bg_job (BG1)', () => {
      */
     const thread = async (ch: string, agentId: string, o: { doneAgoMs?: number; status?: string; note?: boolean } = {}) => {
       const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'distill me', 'user') returning id`, [ch, admin.accountId])).rows[0].id as string;
+      // done 시각은 **시험의 시계(`IN_WINDOW`) 기준**으로 박는다. DB `now()` 기준이면 생산자에 넘기는 `IN_WINDOW` 와
+      // 실제 시각의 차이만큼 경계가 밀린다 — 10-21 13시 KST 에 돈 CI 에서 `40-i` 시간 전 스레드 중 셋이 「아직 24h 안 됨」으로
+      // 빠져 10개 대신 8개가 됐다(시각이 늦을수록 더 빠진다).
       await pool.query(
-        `insert into thread_status (root_id, status, emoji, account_id, updated_at) values ($1, $2, '✅', $3, now() - ($4 || ' milliseconds')::interval)`,
-        [root, o.status ?? 'done', agentId, String(o.doneAgoMs ?? 25 * 3600_000)],
+        `insert into thread_status (root_id, status, emoji, account_id, updated_at) values ($1, $2, '✅', $3, $4)`,
+        [root, o.status ?? 'done', agentId, new Date(IN_WINDOW.getTime() - (o.doneAgoMs ?? 25 * 3600_000))],
       );
       if (o.note !== false) await setThreadNote(pool, agentId, root, '진행 메모', undefined, null);
       return root;
