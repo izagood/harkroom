@@ -56,9 +56,20 @@ describe('renderCallbackPage — 브라우저 인증 콜백 페이지', () => {
     expect(/<div class="code">(e+)<\/div>/.exec(p.body)![1]).toHaveLength(120);
   });
 
-  it('이름이 없으면 대신할 말을 쓴다', () => {
-    expect(renderCallbackPage({ kind: 'denied', lang: 'ko' }).body).toContain('<b>서버</b>에서 접근을');
-    expect(renderCallbackPage({ kind: 'denied', name: '  ', lang: 'en' }).body).toContain('<b>the server</b> didn');
+  it.each([
+    ['ok', 'ko', '<p class="d">인증을 마쳤습니다.'],
+    ['denied', 'ko', '<p class="d">인증 서버가 접근을 허용하지 않았습니다.'],
+    ['exchange_failed', 'ko', '<p class="d">인증 서버가 인증을 마무리하지 못했습니다.'],
+    ['ok', 'en', '<p class="d">Signed in.'],
+    ['denied', 'en', "<p class=\"d\">The server didn't grant access."],
+    ['exchange_failed', 'en', "<p class=\"d\">The server couldn't finish the sign-in."],
+  ] as const)('이름이 없으면 따로 둔 문장을 쓴다 — %s·%s', (kind, lang, start) => {
+    for (const name of [undefined, '', '  ']) {
+      const { body } = renderCallbackPage({ kind, lang, ...(name === undefined ? {} : { name }) });
+      expect(body).toContain(start);
+      expect(body).not.toContain('<b>');
+      expect(body).not.toContain('서버 서버');
+    }
   });
 
   it('헤더 — CSP·no-store·no-referrer·nosniff', () => {

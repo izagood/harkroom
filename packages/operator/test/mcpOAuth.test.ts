@@ -192,6 +192,32 @@ describe('인증 흐름', () => {
     expect(html).not.toContain('<script>alert');
   });
 
+  it('onToken 이 던져도 응답을 두 번 쓰지 않는다 — 성공 페이지는 이미 나갔고 rejection 이 새지 않는다', async () => {
+    oauth.close();
+    oauth = createMcpOAuth({
+      storePath: join(dir, 'secrets', 'mcp-oauth.json'),
+      now: () => clock,
+      log: (l) => logs.push(l),
+      onToken: () => { throw new Error('러너 재기동 실패'); },
+    });
+    const leaked: unknown[] = [];
+    const onRejection = (reason: unknown) => { leaked.push(reason); };
+    process.on('unhandledRejection', onRejection);
+    try {
+      const { authUrl } = await oauth.start('jira', { type: 'http', url: fake.mcpUrl });
+      const res = await approve(fake, authUrl);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain('data-kind="ok"');
+      await until(async () => logs.some((l) => l.includes('러너 재기동 실패')));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(leaked).toEqual([]);
+      // 토큰은 저장됐다 — 실패로 바꾸지 않는다.
+      expect((await oauth.status('jira', fake.mcpUrl)).state).toBe('ok');
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
+
   it('정의의 clientId·callbackPort 를 쓴다 — 등록된 클라이언트만 받는 서버(slack)는 등록하지 않는다', async () => {
     const free = await new Promise<number>((r) => { const s = createServer(); s.listen(0, '127.0.0.1', () => { const p = (s.address() as { port: number }).port; s.close(() => r(p)); }); });
     const { authUrl } = await oauth.start('slack', { type: 'http', url: fake.mcpUrl, oauth: { clientId: 'preset-1', callbackPort: free } });
