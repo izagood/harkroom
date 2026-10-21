@@ -24,10 +24,10 @@ async function turn() {
 }
 
 describe('harnessMemory — 스레드에 갇힌 파일 메모리를 알린다', () => {
-  // 2026-09-28 실측: `/Users/jaebin/.harkroom-agent/...` → `-Users-jaebin--harkroom-agent-...`
+  // 2026-09-28 실측: `/Users/alice/.harkroom-agent/...` → `-Users-alice--harkroom-agent-...`
   it('cwd 를 Claude Code 프로젝트 디렉터리 이름으로 바꾼다', () => {
-    expect(claudeProjectDirName('/Users/jaebin/.harkroom-agent/m-1/workspaces/h-2'))
-      .toBe('-Users-jaebin--harkroom-agent-m-1-workspaces-h-2');
+    expect(claudeProjectDirName('/Users/alice/.harkroom-agent/m-1/workspaces/h-2'))
+      .toBe('-Users-alice--harkroom-agent-m-1-workspaces-h-2');
     expect(claudeMemoryDir('/cfg', '/a/b')).toBe(join('/cfg', 'projects', '-a-b', 'memory'));
   });
 
