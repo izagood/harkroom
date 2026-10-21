@@ -79,6 +79,15 @@ export function createTurnSlots(opts: { max: number | null; log?: (line: string)
     }
   };
 
+  const readKeepFree = (req: Extract<RunnerLinkRequest, { type: 'http.forward' }>): number => {
+    try {
+      const v = (JSON.parse(req.body ?? '') as { keepFree?: unknown }).keepFree;
+      return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 4 ? v : 0;
+    } catch {
+      return 0;
+    }
+  };
+
   return {
     max: opts.max,
     inUse: () => count,
@@ -104,7 +113,9 @@ export function createTurnSlots(opts: { max: number | null; log?: (line: string)
 
       // 같은 키를 다시 잡으면 이미 쥔 것이다(재시도) — 두 번 세지 않는다.
       if (mine?.has(key)) return answer(req, 200, { max: opts.max, inUse: count });
-      if (opts.max !== null && count >= opts.max) {
+      // 백그라운드 회차(BG2)는 `keepFree` 만큼 자리를 남겨 둔다 — 사람 턴이 새벽에도 막히지 않게. 옛 러너는 안 싣는다(0).
+      const keepFree = readKeepFree(req);
+      if (opts.max !== null && count >= opts.max - keepFree) {
         const now = Date.now();
         // 붐빌 때 폴마다 찍히지 않게 1분에 한 번만 남긴다.
         if (now - lastFullLogAt > 60_000) {
