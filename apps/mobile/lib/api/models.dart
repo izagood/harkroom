@@ -494,6 +494,7 @@ class ChannelPref {
     required this.channelId,
     required this.starred,
     required this.section,
+    this.sectionId,
     required this.sortOrder,
     required this.hidden,
   });
@@ -506,6 +507,9 @@ class ChannelPref {
   /// 사용자 섹션 이름. null 이면 섹션 없음(맨 아래 「채널」).
   final String? section;
 
+  /// 섹션 id(`channel_section`, 서버 0.4.140~). 옛 서버는 보내지 않는다 — 그때는 [section] 이름으로 묶는다.
+  final String? sectionId;
+
   /// 섹션 안 수동 순서. null 이면 이름순 뒤.
   final int? sortOrder;
 
@@ -516,8 +520,36 @@ class ChannelPref {
         channelId: _str(j['channelId']),
         starred: j['starredAt'] is String,
         section: j['section'] is String && (j['section']! as String).trim().isNotEmpty ? j['section']! as String : null,
+        sectionId: j['sectionId'] is String ? j['sectionId']! as String : null,
         sortOrder: j['sortOrder'] is num ? (j['sortOrder']! as num).toInt() : null,
         hidden: j['hiddenAt'] is String,
+      );
+
+  /// 섹션만 바꾼 사본 — 옮기기를 서버 답 전에 그린다(낙관적).
+  ChannelPref withSection(String? id, String? name) => ChannelPref(
+        channelId: channelId, starred: starred, section: name, sectionId: id, sortOrder: sortOrder, hidden: hidden);
+}
+
+/// 내 사이드바 섹션 하나(`GET /channels/prefs` 의 `sections`, 서버 0.4.140~). 채널이 없어도 선다(빈 섹션).
+class ChannelSection {
+  const ChannelSection({required this.id, required this.name, required this.position, required this.collapsed});
+
+  final String id;
+  final String name;
+
+  /// 손으로 정한 순서(0..n-1).
+  final int position;
+
+  /// 접힘 — 서버에 저장돼 데스크톱과 같다.
+  final bool collapsed;
+
+  ChannelSection withCollapsed(bool v) => ChannelSection(id: id, name: name, position: position, collapsed: v);
+
+  static ChannelSection fromJson(Map<String, Object?> j) => ChannelSection(
+        id: _str(j['id']),
+        name: _str(j['name']),
+        position: j['position'] is num ? (j['position']! as num).toInt() : 0,
+        collapsed: j['collapsed'] == true,
       );
 }
 

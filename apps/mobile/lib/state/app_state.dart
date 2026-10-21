@@ -413,8 +413,26 @@ class AppState extends ChangeNotifier {
   /// 있고, 그때 홈은 지금처럼 이름순 한 묶음이다.
   final Map<String, ChannelPref> channelPrefs = {};
 
-  /// 홈에서 접어 둔 묶음(섹션 키). 이 기기·이 세션만 기억한다.
+  /// 내 섹션(position 순, 빈 섹션 포함). null 이면 옛 서버(0.4.140 전) — 홈은 [ChannelPref.section]
+  /// 이름으로 묶고 섹션 옮기기를 내지 않는다.
+  List<ChannelSection>? sections;
+
+  /// 홈에서 접어 둔 묶음(섹션 키). 이 기기·이 세션만 기억한다 — 즐겨찾기·채널 묶음과 옛 서버의 이름 섹션.
+  /// 서버 섹션의 접힘은 [ChannelSection.collapsed] 가 정본이다(데스크톱과 같게).
   final Set<String> collapsedSections = {};
+
+  /// 이 묶음이 접혀 있는가. 서버 섹션(`sid:<id>`)이면 서버 값, 아니면 이 기기 값.
+  bool isSectionCollapsed(String key) {
+    if (key.startsWith('sid:')) {
+      final id = key.substring(4);
+      return sections?.any((x) => x.id == id && x.collapsed) ?? false;
+    }
+    return collapsedSections.contains(key);
+  }
+
+  /// 이 채널에 아직 안 본 부름(멘션·답글·DM)이 있는가 — 접힌 섹션에도 그 줄은 남는다(D4).
+  /// 모바일에는 채널별 멘션 수가 없어서 인박스의 안 읽은 부름으로 가른다.
+  bool hasUnreadCallIn(String channelId) => inbox.any((e) => e.isUnread && e.channelId == channelId);
 
   /// 홈을 「새로 온 것」(안 읽은 채널)만으로 좁혔는가 — 바로가기 카드(S5c)가 켜고 끈다. 세션 동안만.
   bool homeUnreadOnly = false;
@@ -485,7 +503,67 @@ class AppState extends ChangeNotifier {
   }
 
   void toggleSection(String key) {
+    if (key.startsWith('sid:')) {
+      unawaited(_toggleServerSection(key.substring(4)));
+      return;
+    }
     if (!collapsedSections.remove(key)) collapsedSections.add(key);
+    notifyListeners();
+  }
+
+  /// 서버 섹션 접기 — 먼저 그리고(낙관적) 서버에 적는다. 실패하면 되돌린다.
+  Future<void> _toggleServerSection(String id) async {
+    final list = sections;
+    final i = list?.indexWhere((x) => x.id == id) ?? -1;
+    if (list == null || i < 0) return;
+    final next = !list[i].collapsed;
+    sections = [...list]..[i] = list[i].withCollapsed(next);
+    notifyListeners();
+    try {
+      await _api!.setSectionCollapsed(id, next);
+    } on Object {
+      final now = sections;
+      final j = now?.indexWhere((x) => x.id == id) ?? -1;
+      if (now == null || j < 0) return;
+      sections = [...now]..[j] = now[j].withCollapsed(!next);
+      notifyListeners();
+    }
+  }
+
+  /// 채널을 섹션으로 옮긴다(null 이면 섹션에서 빼기 → 「채널」). 먼저 그리고 서버에 적는다.
+  /// 실패하면 원래 자리로 되돌리고 던진다 — 부른 쪽이 알린다.
+  Future<void> moveChannelToSection(String channelId, String? sectionId) async {
+    final before = channelPrefs[channelId];
+    final name = sectionId == null ? null : sections?.where((x) => x.id == sectionId).firstOrNull?.name;
+    channelPrefs[channelId] = (before ??
+            ChannelPref(channelId: channelId, starred: false, section: null, sortOrder: null, hidden: false))
+        .withSection(sectionId, name);
+    // 접힌 섹션으로 옮기면 펼친다(designer s2) — 아니면 옮긴 채널이 목록에서 말없이 사라진다.
+    if (sectionId != null && (sections?.any((x) => x.id == sectionId && x.collapsed) ?? false)) {
+      unawaited(_toggleServerSection(sectionId));
+    }
+    notifyListeners();
+    try {
+      await _api!.setChannelSection(channelId, sectionId);
+    } on Object {
+      if (before == null) {
+        channelPrefs.remove(channelId);
+      } else {
+        channelPrefs[channelId] = before;
+      }
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// 새 섹션을 만들면서 그 채널을 넣는다(채널 시트의 「새 섹션…」). 같은 이름이 있으면 서버가 409 로 막는다.
+  Future<void> createSectionWith(String name, String channelId) async {
+    final created = await _api!.createSection(name, channelIds: [channelId]);
+    sections = [...?sections, created]..sort((a, b) => a.position.compareTo(b.position));
+    final before = channelPrefs[channelId];
+    channelPrefs[channelId] = (before ??
+            ChannelPref(channelId: channelId, starred: false, section: null, sortOrder: null, hidden: false))
+        .withSection(created.id, created.name);
     notifyListeners();
   }
 
@@ -898,15 +976,20 @@ class AppState extends ChangeNotifier {
         api.accounts(),
         api.reads(),
         // 선호는 **못 받아도 들어간다** — 홈이 묶이지 않을 뿐 채널은 다 보인다(옛 서버·일시 실패).
-        api.channelPrefs().catchError((Object _) => const <ChannelPref>[]),
+        api.channelPrefsAndSections().catchError(
+            (Object _) => (prefs: const <ChannelPref>[], sections: null as List<ChannelSection>?)),
         // DM 도 못 받으면 채널만으로 들어간다 — DM 탭이 빌 뿐이다.
         api.dms().catchError((Object _) => const <ChannelRow>[]),
       ]);
       // 기다리는 사이 로그아웃했거나 다른 계정으로 들어왔다 — 옛 답을 새 세션에 붓지 않는다.
       if (gen != _generation) return;
+      final prefsAndSections = results[3] as ({List<ChannelPref> prefs, List<ChannelSection>? sections});
       channelPrefs
         ..clear()
-        ..addEntries((results[3] as List<ChannelPref>).map((p) => MapEntry(p.channelId, p)));
+        ..addEntries(prefsAndSections.prefs.map((p) => MapEntry(p.channelId, p)));
+      sections = prefsAndSections.sections == null
+          ? null
+          : ([...prefsAndSections.sections!]..sort((a, b) => a.position.compareTo(b.position)));
       me = who;
       unawaited(_loadPasswordResetNotices());
       channels
@@ -2553,6 +2636,7 @@ class AppState extends ChangeNotifier {
     agentsLoad = LoadState.loading;
     reads.clear();
     channelPrefs.clear();
+    sections = null;
     collapsedSections.clear();
     homeUnreadOnly = false;
     threads.clear();

@@ -406,6 +406,22 @@ abstract class Strings {
   String get sectionStarred;
   String get sectionChannels;
 
+  /// 섹션 옮기기 시트·섹션 머리(S4, 서버 섹션 표).
+  String sectionMoveTitle(String channel);
+  String get sectionNew;
+  String get sectionRemove;
+  String get sectionNameHint;
+  String get sectionCreate;
+  String get sectionCancel;
+  String get sectionMoveFailed;
+  String get sectionNameTaken;
+  /// 옮긴 뒤 스낵바(designer s2) — 「#채널 → 섹션」. 빼기면 section 자리에 [sectionChannels].
+  String sectionMoved(String channel, String section);
+  /// 별표 채널의 시트 안내(designer n4) — 별표면 FAVORITES 에만 보인다.
+  String get sectionStarredNote;
+  String get sectionHasUnread;
+  String get sectionEmpty;
+
   /// 바로가기 카드(S5c): 나를 기다리는 것(인박스 안 본 수).
   String get cardMyTurn;
 
@@ -1158,6 +1174,8 @@ const Set<String> i18nAllowSameAsEnglish = {
   'appName',
   // 「라벨 · 이름」 — 조사를 빼려고 기호로만 잇는다(#1288 designer n1). 두 언어 모두 같은 꼴이다.
   'bundleAnswered',
+  // 「#채널 → 섹션」 — 화살표 기호로만 잇는다(designer s2 시안 문구). 두 언어 모두 같은 꼴이다.
+  'sectionMoved',
   // 주소 예시다. 번역할 말이 없다 — `https://example.com` 은 어느 언어에서도 같다.
   'connectServerUrlHint',
   // 파일 형식 이름 `HTML` 과 크기뿐이다. 번역하지 않는 이름이다(데스크톱 `artifact.card.html` 도 두 언어 `HTML`).
@@ -1310,6 +1328,18 @@ Map<String, String> stringsToMap(Strings s) => {
       'dmsEmpty': s.dmsEmpty,
       'sectionStarred': s.sectionStarred,
       'sectionChannels': s.sectionChannels,
+      'sectionMoveTitle': s.sectionMoveTitle('{channel}'),
+      'sectionNew': s.sectionNew,
+      'sectionRemove': s.sectionRemove,
+      'sectionNameHint': s.sectionNameHint,
+      'sectionCreate': s.sectionCreate,
+      'sectionCancel': s.sectionCancel,
+      'sectionMoveFailed': s.sectionMoveFailed,
+      'sectionNameTaken': s.sectionNameTaken,
+      'sectionMoved': s.sectionMoved('{channel}', '{section}'),
+      'sectionStarredNote': s.sectionStarredNote,
+      'sectionHasUnread': s.sectionHasUnread,
+      'sectionEmpty': s.sectionEmpty,
       'cardMyTurn': s.cardMyTurn,
       'cardNew': s.cardNew,
       'cardSaved': s.cardSaved,

@@ -383,6 +383,30 @@ class StringsEn implements Strings {
   @override
   String get sectionChannels => 'Channels';
   @override
+  String sectionMoveTitle(String channel) => 'Move #$channel to a section';
+  @override
+  String get sectionNew => 'New section…';
+  @override
+  String get sectionRemove => 'Remove from section';
+  @override
+  String get sectionNameHint => 'Section name';
+  @override
+  String get sectionCreate => 'Create';
+  @override
+  String get sectionCancel => 'Cancel';
+  @override
+  String get sectionMoveFailed => "Couldn't move the channel.";
+  @override
+  String get sectionNameTaken => 'A section with that name already exists.';
+  @override
+  String sectionMoved(String channel, String section) => '#$channel → $section';
+  @override
+  String get sectionStarredNote => 'Unstar it to see it in this section.';
+  @override
+  String get sectionHasUnread => 'Has unread channels';
+  @override
+  String get sectionEmpty => 'Long-press a channel to move it here';
+  @override
   String get cardMyTurn => 'My turn';
   @override
   String get cardNew => 'New';
