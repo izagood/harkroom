@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { draftsStorage, stickyMentionsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, SavedMessageRow, ServerVersion, ThreadStatusReaction } from '@harkroom/shared';
+import type { AccountStatus, AccountView, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, SavedMessageRow, ServerVersion, ThreadStatusReaction } from '@harkroom/shared';
 import type { ObservedRunner, RunnerState } from '../lib/runnerLauncher';
 import type { NotifiedSummary } from '../lib/notified';
 
@@ -233,6 +233,11 @@ export interface AppState {
   projectionStatusError: string | null;
   /** 계정별 채널 음소거·즐겨찾기. channelId → preference */
   channelPrefs: Record<string, ChannelPrefRow>;
+  /**
+   * 내 사이드바 섹션(136), `position` 순. **null 은 「서버가 섹션 표를 모른다」**(0.4.140 이전) —
+   * 빈 배열(섹션 없음)과 다르다. null 이면 사이드바는 `pref.section` 이름으로 묶는 옛 모양이다.
+   */
+  channelSections: ChannelSectionRow[] | null;
   /**
    * 채널별 고정 메시지(#218). `channelPrefs` 와 나란히 있지만 **성질이 다르다** — 저쪽은
    * 내 취향이고 이쪽은 채널 전역 사실이라 누가 봐도 같은 값이다. 그래서 로그아웃 시
@@ -535,7 +540,7 @@ const initial = {
   messages: {}, typing: {}, hasMore: {}, firstPageLoading: {}, backfilling: {}, unread: [], inboxRevision: 0, inboxMine: 0, inboxBoardRevision: 0, reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, link: 'online' as AppState['link'], offlineSince: null, threadFetch: null as AppState['threadFetch'], serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
-  channelPrefs: {}, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
+  channelPrefs: {}, channelSections: null, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
   history: [], historyIndex: -1, notices: [], gates: [], notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
   ownSendIds: {}, sendsInFlight: {},
   highlightedMessageId: null, channelRevealSeq: 0,

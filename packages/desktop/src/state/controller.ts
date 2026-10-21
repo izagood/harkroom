@@ -1,4 +1,4 @@
-import type { AccountStatus, AvatarSourceMeta, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
+import type { AccountStatus, AvatarSourceMeta, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import { endSession } from '../lib/sessionEnd';
 import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchResult } from '../lib/memoryList';
 import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
@@ -1245,8 +1245,11 @@ export class Controller {
    * 쓴다 — 두 곳에 복제하면 한쪽만 고쳐져 어떤 경로에서는 숨김이 풀린 것이 화면에 안 온다.
    */
   private async refreshChannelPrefs(): Promise<void> {
-    const prefs = await this.api.channelPrefs();
-    this.store.getState().set({ channelPrefs: Object.fromEntries(prefs.map((p) => [p.channelId, p])) });
+    const { prefs, sections } = await this.api.channelPrefsAndSections();
+    this.store.getState().set({
+      channelPrefs: Object.fromEntries(prefs.map((p) => [p.channelId, p])),
+      channelSections: sections,
+    });
   }
 
   // 단조 버전 가드 — 나중에 발행됐지만 먼저 도착한 응답만 반영되도록, stale 응답은 버린다.
@@ -2942,6 +2945,76 @@ export class Controller {
       prefsMap[p.channelId] = p;
     }
     store.set({ channelPrefs: { ...store.channelPrefs, ...prefsMap } });
+  }
+
+  /**
+   * 섹션 만들기(136). `channelIds` 를 주면 만들면서 넣는다(채널 메뉴의 「새 섹션…」).
+   * 다른 섹션의 자리가 밀릴 수 있으므로 응답 하나를 끼워 넣지 않고 섹션·선호를 다시 읽는다.
+   */
+  async createSection(name: string, channelIds?: string[], position?: number): Promise<ChannelSectionRow> {
+    const { section } = await this.api.createChannelSection({ name, channelIds, position });
+    await this.refreshChannelPrefs();
+    return section;
+  }
+
+  /** 섹션 이름 바꾸기(136). 채널 쪽 `section` 거울도 같이 고친다(서버가 한 트랜잭션에서 하는 것과 같다). */
+  async renameSectionById(sectionId: string, name: string): Promise<void> {
+    const { section } = await this.api.updateChannelSection(sectionId, { name });
+    const store = this.store.getState();
+    store.set({
+      channelSections: (store.channelSections ?? []).map((s) => (s.id === section.id ? section : s)),
+      channelPrefs: Object.fromEntries(Object.entries(store.channelPrefs).map(([id, p]) => [
+        id, p.sectionId === section.id ? { ...p, section: section.name } : p,
+      ])),
+    });
+  }
+
+  /**
+   * 접기·펼치기(136). **낙관적이다** — 머리를 누른 손이 왕복(원격 서버 수백 ms)을 기다리면 안 된다.
+   * 실패하면 원래 값으로 되돌린다.
+   */
+  async setSectionCollapsed(sectionId: string, collapsed: boolean): Promise<void> {
+    const patch = (value: boolean) => {
+      const store = this.store.getState();
+      store.set({
+        channelSections: (store.channelSections ?? []).map((s) => (s.id === sectionId ? { ...s, collapsed: value } : s)),
+      });
+    };
+    patch(collapsed);
+    try {
+      await this.api.updateChannelSection(sectionId, { collapsed });
+    } catch (err) {
+      patch(!collapsed);
+      throw err;
+    }
+  }
+
+  /** 섹션 지우기(136). 돌려주는 값을 `restoreSection` 에 그대로 주면 되살아난다(8초 되돌리기). */
+  async deleteSection(sectionId: string): Promise<{ section: ChannelSectionRow; channelIds: string[] }> {
+    const removed = await this.api.deleteChannelSection(sectionId);
+    await this.refreshChannelPrefs();
+    return removed;
+  }
+
+  async restoreSection(removed: { section: ChannelSectionRow; channelIds: string[] }): Promise<void> {
+    const { section } = await this.api.createChannelSection({
+      name: removed.section.name, position: removed.section.position, channelIds: removed.channelIds,
+    });
+    if (removed.section.collapsed) await this.api.updateChannelSection(section.id, { collapsed: true });
+    await this.refreshChannelPrefs();
+  }
+
+  /** 섹션 순서(136). 내 섹션 전부를 새 순서로 보낸다. */
+  async reorderSections(orderedIds: string[]): Promise<void> {
+    const { sections } = await this.api.reorderChannelSections(orderedIds);
+    this.store.getState().set({ channelSections: sections });
+  }
+
+  /** 채널을 섹션에 넣거나(id) 미분류로 뺀다(null) — 136 의 id 길. */
+  async moveChannelToSection(channelId: string, sectionId: string | null): Promise<void> {
+    const updated = await this.api.updateChannelPref(channelId, { sectionId });
+    const store = this.store.getState();
+    store.set({ channelPrefs: { ...store.channelPrefs, [channelId]: updated } });
   }
 
   /**

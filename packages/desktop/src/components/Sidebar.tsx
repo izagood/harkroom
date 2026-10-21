@@ -43,6 +43,7 @@ import type {
   AccountView, AddTeamToChannelResult, AgentTeamRow, ChannelAutoMentionMode, ChannelPrefRow,
   ChannelRow, NotifyLevel,
 } from '@harkroom/shared';
+import type { ChannelSectionRow } from '@harkroom/shared';
 import { CHANNEL_NAME_PATTERN, NOTIFY_LEVELS, PROJECTION_UNCONFIGURED_NOTICE, notifyLevelOf, sortChannelsBySection } from '@harkroom/shared';
 import { Logo } from './Logo';
 import { SidebarToggleIcon } from './SidebarToggleIcon';
@@ -104,6 +105,9 @@ function ChannelUnreadDot({ channelId, name }: { channelId: string; name: string
  * 두고, 같은 값을 두 번 구독하면 두 곳이 갈라질 수 있다. **옵셔널이 아니라 필수 prop 이다** —
  * 기본값을 두면 새 호출자가 이 규칙을 잊어도 타입이 통과해 같은 결함이 다시 생긴다.
  */
+/** 섹션 지우기 되돌리기 창(시안 흐름 ⑥). */
+const SECTION_UNDO_MS = 8000;
+
 function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLevel: NotifyLevel }) {
   const unread = useActiveStore((s) => s.unread);
   const count = unread.filter((e) => e.channelId === channelId && !e.readAt).length;
@@ -251,7 +255,7 @@ export function Sidebar({
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
-  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelMembers, channelAutoMentions, messages, runnerStates, projectionStatus } = useActiveStore();
+  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelSections, channelMembers, channelAutoMentions, messages, runnerStates, projectionStatus } = useActiveStore();
   // 채널이 열리면(사이드바 밖에서 연 것 포함 — 재시작 뒤 복원·검색·링크) 레일의 활성 줄이 보이게 한다
   // (#1223 n2). `nearest` 라 이미 보이면 움직이지 않는다. 접힌 섹션 안이면 줄이 없어 아무 일도 없다.
   const channelRevealSeq = useActiveStore((s) => s.channelRevealSeq);
@@ -362,6 +366,7 @@ export function Sidebar({
 
   const closeCreate = (): void => {
     setCreateChannelOpen(false);
+    setCreateInSection(null);
     setNewChannelName('');
     setNewChannelPrivate(false);
     setCreateError(null);
@@ -415,7 +420,9 @@ export function Sidebar({
       return;
     }
     try {
-      await getController().createChannel(newChannelName, newChannelPrivate ? 'private' : 'public');
+      const created = await getController().createChannel(newChannelName, newChannelPrivate ? 'private' : 'public');
+      // 섹션 머리 ＋ 로 만든 채널만 그 섹션에 들어간다(관계 규칙) — 나머지는 CHANNELS 로.
+      if (createInSection) await getController().moveChannelToSection(created.id, createInSection);
       closeCreate();
     } catch (err) {
       // 실패를 조용히 삼키면 사용자는 눌렀는데 아무 일도 안 난 것으로 본다.
@@ -521,6 +528,25 @@ export function Sidebar({
   // 섹션 이름 바꾸기(#323) 를 위한 입력 상태.
   const [sectionRenameFor, setSectionRenameFor] = useState<string | null>(null);
   const [sectionRenameDraft, setSectionRenameDraft] = useState('');
+  /*
+   * 섹션 표(136) 상태. `channelSections` 가 null 이면(옛 서버) 아래 옛 모양만 쓴다.
+   * - newSectionOpen/Draft: 목록 끝 「+ 섹션 만들기」의 제자리 입력.
+   * - createInSection: 섹션 머리 ＋ 로 연 채널 만들기 — 만든 채널을 그 섹션에 넣는다.
+   * - sectionUndo: 방금 지운 섹션과 8초 되돌리기(시안 흐름 ⑥, 확인창 없이 바로 지운다).
+   */
+  const [newSectionOpen, setNewSectionOpen] = useState(false);
+  const [newSectionDraft, setNewSectionDraft] = useState('');
+  const [sectionError, setSectionError] = useState<string | null>(null);
+  const [createInSection, setCreateInSection] = useState<string | null>(null);
+  const [sectionUndo, setSectionUndo] = useState<{ section: ChannelSectionRow; channelIds: string[] } | null>(null);
+  useEffect(() => {
+    if (!sectionUndo) return;
+    const timer = setTimeout(() => setSectionUndo(null), SECTION_UNDO_MS);
+    return () => clearTimeout(timer);
+  }, [sectionUndo]);
+  // 접힌 섹션(D4)이 무엇을 남기고 머리에 점을 찍을지 정하는 두 값 — 채널 줄의 배지·점과 같은 출처다.
+  const inboxUnread = useActiveStore((s) => s.unread);
+  const reads = useActiveStore((s) => s.reads);
 
   const row = (active: boolean) =>
     `flex w-full items-center gap-1.5 rounded-row px-2 py-1 text-left hover:bg-surface-raised ${active ? 'bg-surface-raised' : ''}`;
@@ -583,19 +609,38 @@ export function Sidebar({
     const withPref = standardChannels.map((ch) => ({ channel: ch, pref: channelPrefs[ch.id] as ChannelPrefRow | null }));
     const sorted = sortChannelsBySection(withPref);
 
+    /*
+     * 섹션 표(136)가 있으면 **표가 묶음을 정한다** — 손으로 정한 순서(position)로, 빈 섹션도
+     * 머리가 선다. 미분류 묶음(row null)은 맨 끝에 늘 있다(CHANNELS). 섹션 안 순서는 위와 같은
+     * 정렬 함수가 정한 순서를 그대로 쓴다(별표 → sortOrder → 이름).
+     */
+    if (channelSections) {
+      const known = new Set(channelSections.map((sec) => sec.id));
+      const groups: { key: string; section: string | null; row: ChannelSectionRow | null; channels: typeof withPref }[] =
+        [...channelSections].sort((a, b) => a.position - b.position).map((row) => ({
+          key: row.id, section: row.name, row,
+          channels: sorted.filter((item) => item.pref?.sectionId === row.id),
+        }));
+      groups.push({
+        key: 'other', section: null, row: null,
+        channels: sorted.filter((item) => !item.pref?.sectionId || !known.has(item.pref.sectionId)),
+      });
+      return groups;
+    }
+
     // 섹션별로 그룹화한다.
-    const groups: { section: string | null; channels: typeof withPref }[] = [];
+    const groups: { key: string; section: string | null; row: ChannelSectionRow | null; channels: typeof withPref }[] = [];
     for (const item of sorted) {
       const section = item.pref?.section ?? null;
       const lastGroup = groups[groups.length - 1];
       if (lastGroup && lastGroup.section === section) {
         lastGroup.channels.push(item);
       } else {
-        groups.push({ section, channels: [item] });
+        groups.push({ key: section ?? 'other', section, row: null, channels: [item] });
       }
     }
     return groups;
-  }, [channels, channelPrefs]);
+  }, [channels, channelPrefs, channelSections]);
 
   /** 내가 이미 쓴 섹션 이름들(#157). 메뉴가 이것을 항목으로 세운다. */
   const knownSections = useMemo(() => {
@@ -866,6 +911,184 @@ export function Sidebar({
     );
   };
 
+  /** 채널 만들기 입력 — CHANNELS 머리 아래와 섹션 머리 ＋(136) 두 자리가 같은 것을 쓴다. */
+  const createChannelForm = () => (
+                <div className="mb-1 rounded-row border border-border bg-surface-raised p-1">
+                <input
+                  type="text"
+                  aria-label={t('chat.newChannelName')}
+                  className="mb-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
+                  placeholder="channel-name"
+                  value={newChannelName}
+                  onChange={(e) => { setNewChannelName(e.target.value); setCreateError(null); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void submitNewChannel();
+                    if (e.key === 'Escape') closeCreate();
+                  }}
+                  autoFocus
+                />
+                {/* 공개 범위는 **만들 때** 고른다. 만든 뒤 admin 이 바꿀 수 있지만, private
+                    으로 시작해야 할 채널을 public 으로 만들면 그 사이에 오간 말은 이미
+                    전원이 봤다 — 나중에 닫아도 되돌릴 수 없다. */}
+                <label className="mb-1 flex items-center gap-1 text-meta text-fg-muted">
+                  <input
+                    type="checkbox"
+                    checked={newChannelPrivate}
+                    onChange={(e) => setNewChannelPrivate(e.target.checked)}
+                  />
+                  {t('sidebar.channel.privateOption')}
+                </label>
+                {createError && <p role="alert" className="mb-1 text-meta text-danger">{createError}</p>}
+                <div className="flex gap-1">
+                  <button
+className="rounded-row bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
+                    onClick={() => void submitNewChannel()}
+                  >
+                    {t('sidebar.channel.createSubmit')}
+                  </button>
+                  <button
+className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
+                    onClick={closeCreate}
+                  >
+                    {t('sidebar.channel.cancel')}
+                  </button>
+                </div>
+              </div>
+  );
+
+  /**
+   * 섹션 하나(136) — 머리(▾/▸·이름·hover 때 ＋·⋯)와 그 안 채널. 시안 v1 흐름 ①④⑤⑥.
+   *
+   * **접힌 섹션(D4)**: 나를 부른 말(인박스 배지)이 있는 채널과 지금 보는 채널은 접혀도 남는다 —
+   * 접는 것은 소음을 줄이려는 것이지 부른 말을 숨기려는 것이 아니다. 점만 있는(안 읽음만 있는)
+   * 채널은 숨기고, 그런 채널이 하나라도 숨었으면 머리에 점을 찍는다.
+   */
+  const sectionBlock = (group: (typeof groupedChannels)[number], index: number, rows: ChannelSectionRow[]) => {
+    const sec = group.row!;
+    const mentions = (id: string) => inboxUnread.some((e) => e.channelId === id && !e.readAt);
+    const visible = sec.collapsed
+      ? group.channels.filter((i) => mentions(i.channel.id) || i.channel.id === activeChannelId)
+      : group.channels;
+    const hiddenUnread = sec.collapsed && group.channels.some(
+      (i) => !visible.includes(i) && (reads[i.channel.id]?.unread ?? 0) > 0,
+    );
+    const toggle = () => { void getController().setSectionCollapsed(sec.id, !sec.collapsed).catch(() => {}); };
+    const startRename = () => { setSectionRenameFor(sec.id); setSectionRenameDraft(sec.name); };
+    const submitRename = () => {
+      const name = sectionRenameDraft.trim();
+      setSectionRenameFor(null);
+      setSectionRenameDraft('');
+      if (!name || name === sec.name) return;
+      void getController().renameSectionById(sec.id, name)
+        .catch((err) => setSectionError(sectionErrorText(err)));
+    };
+    const swap = (to: number) => {
+      const ids = rows.map((r) => r.id);
+      const [moved] = ids.splice(index, 1);
+      ids.splice(to, 0, moved!);
+      void getController().reorderSections(ids).catch((err) => setSectionError(sectionErrorText(err)));
+    };
+    const remove = () => {
+      void getController().deleteSection(sec.id)
+        .then((removed) => setSectionUndo(removed))
+        .catch((err) => setSectionError(sectionErrorText(err)));
+    };
+    const header = sectionRenameFor === sec.id ? (
+      <input
+        type="text"
+        autoFocus
+        data-testid={`section-rename-${sec.id}`}
+        aria-label={t('sidebar.section.renameName')}
+        maxLength={40}
+        className="mx-2 mt-2 w-[calc(100%-1rem)] rounded-row border border-accent bg-field px-2 py-0.5 text-meta text-fg"
+        value={sectionRenameDraft}
+        onChange={(e) => setSectionRenameDraft(e.target.value)}
+        onBlur={submitRename}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') submitRename();
+          if (e.key === 'Escape') { setSectionRenameFor(null); setSectionRenameDraft(''); }
+        }}
+      />
+    ) : (
+      <div className="group mt-1 flex items-center gap-1 rounded-row pl-1 pr-1 hover:bg-surface-raised">
+        <button
+          data-testid={`section-toggle-${sec.id}`}
+          aria-expanded={!sec.collapsed}
+          title={sec.name}
+          className={`flex min-w-0 flex-1 items-center gap-1 py-1 text-left text-meta font-medium ${hiddenUnread ? 'text-fg' : 'text-fg-muted'}`}
+          onClick={toggle}
+          onDoubleClick={startRename}
+        >
+          <span aria-hidden="true" className="w-3 shrink-0 text-center text-fg-subtle">{sec.collapsed ? '▸' : '▾'}</span>
+          <span className="truncate">{sec.name}</span>
+          {hiddenUnread && (
+            <span
+              data-testid={`section-dot-${sec.id}`}
+              role="img"
+              aria-label={t('sidebar.section.unreadHidden')}
+              className="ml-1 h-1.5 w-1.5 shrink-0 rounded-full bg-fg-subtle"
+            />
+          )}
+        </button>
+        <span className="hidden shrink-0 items-center gap-0.5 text-fg-subtle group-hover:flex group-focus-within:flex">
+          {me?.isAdmin && (
+            <button
+              data-testid={`section-add-channel-${sec.id}`}
+              aria-label={t('sidebar.section.addChannel', { name: sec.name })}
+              title={t('sidebar.section.addChannel', { name: sec.name })}
+              className="rounded-sm px-1 hover:bg-surface-hover"
+              onClick={() => { setCreateInSection(sec.id); setCreateChannelOpen(true); }}
+            >＋</button>
+          )}
+          <Menu
+            renderTrigger={(props) => (
+              <button
+                data-testid={`section-menu-${sec.id}`}
+                aria-label={t('sidebar.section.menu', { name: sec.name })}
+                className="rounded-sm px-1 hover:bg-surface-hover"
+                {...props}
+              >⋯</button>
+            )}
+            items={[
+              { label: t('sidebar.section.rename'), onSelect: startRename },
+              ...(index > 0 ? [{ label: t('sidebar.menu.moveUp'), onSelect: () => swap(index - 1), separatorBefore: true }] : []),
+              ...(index < rows.length - 1 ? [{ label: t('sidebar.menu.moveDown'), onSelect: () => swap(index + 1), separatorBefore: index === 0 }] : []),
+              {
+                label: t('sidebar.section.delete', { count: group.channels.length }),
+                onSelect: remove, tone: 'danger' as const, separatorBefore: true,
+              },
+            ]}
+          />
+        </span>
+      </div>
+    );
+    return (
+      <div key={sec.id} data-testid={`section-${sec.id}`}>
+        {header}
+        {createChannelOpen && createInSection === sec.id && createChannelForm()}
+        {!sec.collapsed && group.channels.length === 0 && (
+          <p data-testid={`section-empty-${sec.id}`} className="px-6 py-0.5 text-meta text-fg-subtle">{t('sidebar.section.empty')}</p>
+        )}
+        {visible.map((item) => channelRow(item.channel))}
+      </div>
+    );
+  };
+
+  /** 섹션 조작 실패 문구 — 같은 이름(409)만 따로 말한다. */
+  const sectionErrorText = (err: unknown) =>
+    (err as { code?: string } | null)?.code === 'section_exists'
+      ? t('sidebar.section.nameTaken')
+      : errorText(err, t, t('sidebar.section.failed'));
+
+  const submitNewSection = () => {
+    const name = newSectionDraft.trim();
+    if (!name) { setNewSectionOpen(false); return; }
+    setSectionError(null);
+    void getController().createSection(name)
+      .then(() => { setNewSectionOpen(false); setNewSectionDraft(''); })
+      .catch((err) => setSectionError(sectionErrorText(err)));
+  };
+
   const channelRow = (ch: ChannelRow) => {
     // pref 는 **배지를 그리기 전에** 구한다. 예전에는 이 계산이 배지 아래에 있어서
     // 음소거가 배지에 닿을 수조차 없었다(#229).
@@ -981,7 +1204,22 @@ export function Sidebar({
        * 새 이름은 사이드바 안 인라인 입력으로 받는다 — `prompt()` 는 창을 막고,
        * Electron 에서 꺼져 있으면 아무 일도 일어나지 않는 죽은 항목이 된다.
        */
-      ...(ch.kind === 'standard' ? [
+      ...(ch.kind === 'standard' && channelSections ? [
+        ...[...channelSections].sort((a, b) => a.position - b.position)
+          .filter((sec) => sec.id !== pref?.sectionId)
+          .map((sec) => ({
+            label: t('sidebar.menu.section', { name: sec.name }),
+            onSelect: () => void getController().moveChannelToSection(ch.id, sec.id),
+          })),
+        {
+          label: t('sidebar.menu.sectionNew'),
+          onSelect: () => { setSectionEditFor(ch.id); setSectionDraft(''); },
+        },
+        ...(pref?.sectionId ? [
+          { label: t('sidebar.menu.sectionClear'), onSelect: () => void getController().moveChannelToSection(ch.id, null) },
+        ] : []),
+      ] : []),
+      ...(ch.kind === 'standard' && !channelSections ? [
         ...knownSections
           .filter((name) => name !== pref?.section)
           .map((name) => ({
@@ -1065,6 +1303,14 @@ export function Sidebar({
       setSectionEditFor(null);
       setSectionDraft('');
       // 빈 값은 "섹션에서 빼기"와 같다 — 서버도 빈 문자열을 null 로 저장한다.
+      if (channelSections) {
+        // 136: 같은 이름이 있으면 그 섹션으로 옮기고, 없으면 만들면서 넣는다.
+        const existing = channelSections.find((sec) => sec.name === name);
+        if (name === '') void getController().moveChannelToSection(ch.id, null);
+        else if (existing) void getController().moveChannelToSection(ch.id, existing.id);
+        else void getController().createSection(name, [ch.id]).catch((err) => setSectionError(errorText(err, t, t('sidebar.section.failed'))));
+        return;
+      }
       void getController().setChannelSection(ch.id, name === '' ? null : name);
     };
     return (
@@ -1348,7 +1594,11 @@ export function Sidebar({
             가는 길이 둘이 되고, 그때부터 사람은 어느 쪽이 맞는지 매번 고른다"*)을 찾기에서
             되풀이한다.
           */}
-          <div className="flex items-center gap-1 px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle">
+          {channelSections && (() => {
+            const rows = groupedChannels.filter((g) => g.row).map((g) => g.row!);
+            return groupedChannels.filter((g) => g.row).map((g, i) => sectionBlock(g, i, rows));
+          })()}
+          <div className={`flex items-center gap-1 px-2 pb-1 text-meta uppercase tracking-wide text-fg-subtle ${channelSections?.length ? 'mt-2' : ''}`}>
             {t('sidebar.channel.heading')}
           </div>
           {/*
@@ -1357,52 +1607,46 @@ export function Sidebar({
             자리가 계속 밀렸다. 설정 › 에이전트의 `+` 카드와 같은 규칙이다.
           */}
           {me?.isAdmin && (
-            createChannelOpen ? (
-              <div className="mb-1 rounded-row border border-border bg-surface-raised p-1">
-                <input
-                  type="text"
-                  aria-label={t('chat.newChannelName')}
-                  className="mb-1 w-full rounded-row border border-border bg-field px-2 py-1 text-fg placeholder-fg-subtle"
-                  placeholder="channel-name"
-                  value={newChannelName}
-                  onChange={(e) => { setNewChannelName(e.target.value); setCreateError(null); }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void submitNewChannel();
-                    if (e.key === 'Escape') closeCreate();
-                  }}
-                  autoFocus
-                />
-                {/* 공개 범위는 **만들 때** 고른다. 만든 뒤 admin 이 바꿀 수 있지만, private
-                    으로 시작해야 할 채널을 public 으로 만들면 그 사이에 오간 말은 이미
-                    전원이 봤다 — 나중에 닫아도 되돌릴 수 없다. */}
-                <label className="mb-1 flex items-center gap-1 text-meta text-fg-muted">
-                  <input
-                    type="checkbox"
-                    checked={newChannelPrivate}
-                    onChange={(e) => setNewChannelPrivate(e.target.checked)}
-                  />
-                  {t('sidebar.channel.privateOption')}
-                </label>
-                {createError && <p role="alert" className="mb-1 text-meta text-danger">{createError}</p>}
-                <div className="flex gap-1">
-                  <button
-className="rounded-row bg-accent px-2 py-0.5 text-meta text-fg-on-strong hover:bg-accent-hover"
-                    onClick={() => void submitNewChannel()}
-                  >
-                    {t('sidebar.channel.createSubmit')}
-                  </button>
-                  <button
-className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-raised"
-                    onClick={closeCreate}
-                  >
-                    {t('sidebar.channel.cancel')}
-                  </button>
-                </div>
-              </div>
-            ) : addRow(t('sidebar.channel.create'), () => setCreateChannelOpen(true), 'add-channel')
+            createChannelOpen && createInSection === null ? createChannelForm()
+              : addRow(t('sidebar.channel.create'), () => setCreateChannelOpen(true), 'add-channel')
           )}
           {/* 섹션(#157)으로 묶어 그린다. 섹션 없는 것들은 맨 아래 무제목 묶음이다. */}
-          {groupedChannels.map((group) => {
+          {channelSections && groupedChannels.filter((g) => !g.row).flatMap((g) => g.channels).map((item) => channelRow(item.channel))}
+          {channelSections && (newSectionOpen ? (
+            <input
+              type="text"
+              autoFocus
+              data-testid="new-section-input"
+              aria-label={t('sidebar.section.name')}
+              maxLength={40}
+              placeholder={t('sidebar.section.createPlaceholder')}
+              className="mx-2 mt-1 w-[calc(100%-1rem)] rounded-row border border-accent bg-field px-2 py-0.5 text-meta text-fg placeholder-fg-subtle"
+              value={newSectionDraft}
+              onChange={(e) => { setNewSectionDraft(e.target.value); setSectionError(null); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submitNewSection();
+                if (e.key === 'Escape') { setNewSectionOpen(false); setNewSectionDraft(''); setSectionError(null); }
+              }}
+            />
+          ) : addRow(t('sidebar.section.create'), () => setNewSectionOpen(true), 'add-section'))}
+          {sectionError && <p role="alert" data-testid="section-error" className="px-2 text-meta text-danger">{sectionError}</p>}
+          {sectionUndo && (
+            <div data-testid="section-undo" role="status" className="mx-1 mt-2 flex items-center gap-2 rounded-row bg-fg px-2 py-1.5 text-meta text-surface">
+              <span className="min-w-0 flex-1">
+                {t('sidebar.section.deleted', { name: sectionUndo.section.name, count: sectionUndo.channelIds.length })}
+              </span>
+              <button
+                data-testid="section-undo-button"
+                className="shrink-0 font-medium underline"
+                onClick={() => {
+                  const removed = sectionUndo;
+                  setSectionUndo(null);
+                  void getController().restoreSection(removed).catch((err) => setSectionError(sectionErrorText(err)));
+                }}
+              >{t('sidebar.section.undo')}</button>
+            </div>
+          )}
+          {!channelSections && groupedChannels.map((group) => {
             const sectionName = group.section;
             const isRenaming = sectionRenameFor === sectionName;
             const sectionHeader = isRenaming ? (
@@ -1471,7 +1715,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
               />
             );
             return (
-              <div key={sectionName ?? 'other'}>
+              <div key={group.key}>
                 {sectionName !== null && sectionHeader}
                 {group.channels.map((item) => channelRow(item.channel))}
               </div>
