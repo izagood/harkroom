@@ -648,6 +648,7 @@ Future<void> openSectionMoveSheet(BuildContext context, ChannelRow channel) asyn
   // 고른 것: ('move', id|null) 또는 ('new', null).
   final picked = await showModalBottomSheet<(String, String?)>(
     context: context,
+    useRootNavigator: true,
     isScrollControlled: true,
     showDragHandle: true,
     builder: (sheet) {
