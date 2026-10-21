@@ -30,6 +30,42 @@ import { errorText } from '../../lib/errorText';
 const WAIT_MS = 5 * 60_000;
 const POLL_MS = 1500;
 
+/**
+ * 인증 흐름(브라우저 열기 → 끝날 때까지 상태 묻기)과 해제. 버튼 모양은 부르는 쪽이 정한다 — 연동 화면의
+ * operator 칸(`McpServersSettings`)과 이 컴포넌트가 같이 쓴다.
+ */
+export function useMcpSignIn(name: string, onChanged: () => void, onError: (message: string) => void) {
+  const t = useT();
+  const [waiting, setWaiting] = useState(false);
+
+  useEffect(() => {
+    if (!waiting) return;
+    const until = Date.now() + WAIT_MS;
+    const timer = setInterval(() => {
+      void localMcpAuthStatus(name).then((st) => {
+        if (st.state === 'pending' && Date.now() < until) return;
+        setWaiting(false);
+        onChanged();
+      }).catch(() => { setWaiting(false); onChanged(); });
+    }, POLL_MS);
+    return () => clearInterval(timer);
+  }, [waiting, name, onChanged]);
+
+  const fail = (e: unknown) => onError(t('agents.mcp.auth.failed', { reason: errorText(e, t) }));
+  const signIn = () => void (async () => {
+    try {
+      const { authUrl } = await startLocalMcpAuth(name);
+      setWaiting(true);
+      await getExternalOpener().open(authUrl);
+    } catch (e) {
+      setWaiting(false);
+      fail(e);
+    }
+  })();
+  const signOut = () => void forgetLocalMcpAuth(name).then(onChanged, fail);
+  return { waiting, signIn, signOut };
+}
+
 export function McpLocalAuth({ entry, warn, disabled, onChanged, onError }: {
   entry: OperatorMcpEntry;
   warn?: boolean;
@@ -41,35 +77,9 @@ export function McpLocalAuth({ entry, warn, disabled, onChanged, onError }: {
   const t = useT();
   const locale = useLocale();
   const names = useActiveStore(selectAccountNames);
-  const [waiting, setWaiting] = useState(false);
-
-  useEffect(() => {
-    if (!waiting) return;
-    const until = Date.now() + WAIT_MS;
-    const timer = setInterval(() => {
-      void localMcpAuthStatus(entry.name).then((st) => {
-        if (st.state === 'pending' && Date.now() < until) return;
-        setWaiting(false);
-        onChanged();
-      }).catch(() => { setWaiting(false); onChanged(); });
-    }, POLL_MS);
-    return () => clearInterval(timer);
-  }, [waiting, entry.name, onChanged]);
+  const { waiting, signIn, signOut } = useMcpSignIn(entry.name, onChanged, onError);
 
   if (entry.transport === 'stdio' || !entry.auth) return null;
-
-  const fail = (e: unknown) => onError(t('agents.mcp.auth.failed', { reason: errorText(e, t) }));
-  const signIn = () => void (async () => {
-    try {
-      const { authUrl } = await startLocalMcpAuth(entry.name);
-      setWaiting(true);
-      await getExternalOpener().open(authUrl);
-    } catch (e) {
-      setWaiting(false);
-      fail(e);
-    }
-  })();
-  const signOut = () => void forgetLocalMcpAuth(entry.name).then(onChanged, fail);
 
   const id = entry.name;
   const st = waiting ? { state: 'pending' as const } : entry.auth;

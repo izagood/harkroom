@@ -1,41 +1,168 @@
 /**
- * MCP 레지스트리 — 스펙 2026-09-20 §6. **서버는 이름과 자격증명 종류만 안다.** 정의(명령·인자)와
- * 토큰은 각 오퍼레이터 머신의 `mcp-servers.json`(또는 `~/.claude.json`)에 있고, 여기 적힌 이름이
- * 에이전트의 `mcpServers` 가 고를 수 있는 전부다. 목록은 누구나 보고(에이전트 상세가 이 목록에서
- * 고른다), 넣고 빼는 것은 `agent.privileged` 뿐이다.
+ * MCP 서버 — 설정 › 연동(UX ⑥b-4). 스펙 2026-09-20 §6 + MCP 설정 시안 v2(operator 단위, 2026-10-21).
  *
- * 줄마다 **이 머신의** 정의와 OAuth 인증 상태도 보인다(2026-09-30). 인증은 머신 단위다 — 토큰은 이 머신의
- * 오퍼레이터가 들고, 여기서 한 번 인증하면 이 머신에서 도는 모든 에이전트(계정 풀의 어느 계정이든)가
- * 쓴다. 사람이 인증하러 먼저 찾는 곳이 이 페이지라 여기에 둔다 — 에이전트 상세에만 있던 동안 jaebin 이
- * "인증이 없는데?" 라고 했다. 인증은 권한과 무관하다(내 머신의 토큰이다) — `canEdit` 로 막지 않는다.
+ * 한 줄이 두 단위를 함께 보인다:
+ * - **머리(커뮤니티)**: 이름과 자격증명 종류. 서버 레지스트리의 것이고, 넣고 빼는 것은 `agent.privileged` 뿐이다.
+ * - **operator 칸**: 그 operator 의 정의(URL·Client ID)와 OAuth 인증. 토큰은 그 operator 가 들고, 그 operator 의
+ *   모든 에이전트가(계정 풀의 어느 계정이든) 같이 쓴다. 인증·정의는 **내 기계**의 일이라 권한과 무관하다.
+ *
+ * 지금 데스크톱이 다룰 수 있는 operator 는 이 맥 하나다 — 원격 operator 칸은 박동에 MCP 상태가 실린 뒤
+ * (PR5) 같은 칸 목록에 더해진다. 칸이 하나뿐이면 칸 상자를 그리지 않고 두 줄로 접는다(시안 D9).
+ *
+ * 지우기는 두 갈래다(시안 D2): 「이 맥에서 지우기」(칸의 ⋯, 이 맥의 정의와 토큰)와 「커뮤니티에서 삭제」(머리의 ⋯,
+ * 모든 멤버의 모든 operator 에서 이름이 빠진다). 자리가 범위를 말한다.
  */
 import { useCallback, useEffect, useState } from 'react';
 import type { McpServerRow } from '@harkroom/shared';
 import type { OperatorMcpEntry } from '@harkroom/shared/daemonProtocol';
-import { hasOperatorLocalSurface, listLocalMcpServers } from '../../lib/operatorLocal';
-import { McpLocalAuth } from './McpLocalAuth';
+import { hasOperatorLocalSurface, listLocalMcpServers, removeLocalMcpServer } from '../../lib/operatorLocal';
+import { useMcpSignIn } from './McpLocalAuth';
+import { McpServerDialog, clientIdTail, type McpDialogMode } from './McpServerDialog';
+import { presetForName } from '../../lib/mcpPresets';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { hasCapability } from '../../lib/capabilities';
-import { SettingsGroup } from './primitives';
+import { selectAccountNames } from '../../lib/accountNames';
+import { stampLabel } from '../../lib/day';
 import { ConfirmDialog } from '../ConfirmDialog';
-import { useT } from '../../i18n/useT';
+import { Menu, type MenuItem } from '../Menu';
+import { useLocale, useT } from '../../i18n/useT';
 import { errorText } from '../../lib/errorText';
 
-const NAME_RE = /^[a-z0-9-]{1,32}$/;
+/** operator 칸 하나. 지금은 이 맥(`local`)뿐이다 — 원격 칸은 PR5 에서 상태만 보이는 모양으로 더한다. */
+export interface McpOperatorCell {
+  key: string;
+  label: string;
+  /** 이 맥이면 칸에서 고치고 인증한다. */
+  local: boolean;
+  /** 그 operator 의 정의. 없으면 「정의 없음」. */
+  entry: OperatorMcpEntry | undefined;
+}
 
-/** 연동 페이지(`IntegrationsSettings`)의 **MCP 서버** 묶음이다(UX ⑥b-4). 전에는 페이지 하나였다. */
+/** 인증이 사람 손을 기다리나 — 그때만 칸의 주 버튼이 [인증]/[다시 인증] 이고 색을 쓴다. */
+function needsSignIn(entry: OperatorMcpEntry): boolean {
+  const st = entry.auth;
+  if (!st || entry.transport === 'stdio') return false;
+  return st.state === 'expired' || st.state === 'rejected' || st.state === 'error' || (st.state === 'none' && entry.oauth);
+}
+
+/** 이 화면에서 정의를 고칠 수 있나. `~/.claude.json` 출처와 헤더가 있는 정의(값을 모른다)는 못 고친다. */
+function editable(entry: OperatorMcpEntry): boolean {
+  return entry.source === 'operator' && entry.transport !== 'stdio' && entry.headerKeys.length === 0;
+}
+
+const BTN = 'shrink-0 rounded-row border border-border px-2 py-0.5 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50';
+const BTN_PRI = 'shrink-0 rounded-row border border-accent bg-accent px-2 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50';
+
+function MenuButton({ items, label, testid }: { items: MenuItem[]; label: string; testid: string }) {
+  if (items.length === 0) return null;
+  return (
+    <Menu placement="bottom" items={items} renderTrigger={(props) => (
+      <button type="button" {...props} aria-label={label} data-testid={testid}
+        className="shrink-0 rounded-row px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken">⋯</button>
+    )} />
+  );
+}
+
+function LocalCell({ row, entry, collapsed, onDefine, onEdit, onRemove, onChanged, onError }: {
+  row: McpServerRow;
+  entry: OperatorMcpEntry | undefined;
+  collapsed: boolean;
+  onDefine: () => void;
+  onEdit: (entry: OperatorMcpEntry) => void;
+  onRemove: (entry: OperatorMcpEntry) => void;
+  onChanged: () => void;
+  onError: (message: string) => void;
+}) {
+  const t = useT();
+  const locale = useLocale();
+  const names = useActiveStore(selectAccountNames);
+  const { waiting, signIn, signOut } = useMcpSignIn(row.name, onChanged, onError);
+  const defLabel = collapsed ? t('mcpServers.cell.defHere') : t('mcpServers.cell.def');
+
+  if (!entry) {
+    return (
+      <div className="flex items-start gap-3" data-testid={`mcp-server-local-${row.name}`}>
+        <div className="min-w-0 flex-1 text-meta">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="min-w-16 text-fg-muted">{defLabel}</span>
+            <span className="text-fg-subtle">{t('mcpServers.cell.none')}</span>
+          </div>
+        </div>
+        <button type="button" className={BTN} data-testid={`mcp-cell-primary-${row.name}`} onClick={onDefine}>{t('mcpServers.cell.addHere')}</button>
+      </div>
+    );
+  }
+
+  const remote = entry.transport !== 'stdio';
+  const st = waiting ? { state: 'pending' as const } : entry.auth;
+  const presetId = presetForName(entry.name)?.definition.oauth?.clientId;
+  const ownApp = entry.oauthClientId && entry.oauthClientId !== presetId;
+  const authText = (() => {
+    if (!remote || !st) return null;
+    if (st.state === 'ok') return { tone: 'text-fg-muted', dot: 'bg-success', text: t('agents.mcp.auth.ok') };
+    if (st.state === 'pending') return { tone: 'text-fg-subtle', dot: 'bg-fg-subtle', text: t('agents.mcp.auth.pending') };
+    if (st.state === 'rejected') {
+      const agent = st.agentId ? names[st.agentId] : undefined;
+      const time = stampLabel(new Date(st.at).toISOString(), locale);
+      return {
+        tone: 'text-danger', dot: 'bg-danger',
+        text: agent ? t('mcpServers.cell.rejected', { time, agent: agent.displayName || agent.handle }) : t('mcpServers.cell.rejectedNoAgent', { time }),
+      };
+    }
+    if (st.state === 'expired') return { tone: 'text-danger', dot: 'bg-danger', text: t('mcpServers.cell.expired') };
+    if (st.state === 'error') return { tone: 'text-danger', dot: 'bg-danger', text: t('agents.mcp.auth.error', { reason: st.reason }) };
+    return entry.oauth ? { tone: 'text-warning', dot: 'bg-warning', text: t('mcpServers.cell.needed') } : null;
+  })();
+
+  const signInNeeded = needsSignIn(entry) && !waiting;
+  const canEditHere = editable(entry);
+  const items: MenuItem[] = [];
+  if (remote && st && st.state !== 'pending' && !signInNeeded) items.push({ label: st.state === 'none' ? t('agents.mcp.auth.start') : t('agents.mcp.auth.again'), onSelect: signIn });
+  if (remote && st?.state === 'ok') items.push({ label: t('mcpServers.cell.signOut'), onSelect: signOut });
+  if (canEditHere && signInNeeded) items.push({ label: t('mcpServers.cell.edit'), onSelect: () => onEdit(entry) });
+  if (entry.source === 'operator') items.push({ label: t('mcpServers.cell.removeHere'), onSelect: () => onRemove(entry), separatorBefore: items.length > 0 });
+
+  return (
+    <div className="flex items-start gap-3" data-testid={`mcp-server-local-${row.name}`}>
+      <div className="min-w-0 flex-1 text-meta">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="min-w-16 text-fg-muted">{defLabel}</span>
+          <span className="min-w-0 break-all text-fg">{entry.target.replace(/^https?:\/\//, '')}</span>
+          {ownApp && <span className="rounded-row bg-accent-surface px-1.5 text-accent-text" data-testid={`mcp-cell-own-app-${row.name}`}>
+            {t('mcpServers.cell.ownApp', { tail: clientIdTail(entry.oauthClientId!) })}</span>}
+          {entry.source === 'claude' && <span className="rounded-row border border-border px-1.5 text-fg-muted">{t('mcpServers.cell.claudeJson')}</span>}
+          {entry.source === 'operator' && entry.headerKeys.length > 0 && <span className="rounded-row border border-border px-1.5 text-fg-muted">{t('mcpServers.cell.headers')}</span>}
+        </div>
+        {authText && (
+          <div className="mt-1 flex flex-wrap items-center gap-1.5" data-testid={`agent-mcp-auth-${row.name}`}
+            title={st?.state === 'rejected' ? t('agents.mcp.auth.rejectedNote') : t('agents.mcp.auth.note')}>
+            <span className="min-w-16 text-fg-muted">{t('mcpServers.cell.auth')}</span>
+            <span aria-hidden className={`inline-block h-1.5 w-1.5 rounded-full ${authText.dot}`} />
+            <span className={authText.tone}>{authText.text}</span>
+          </div>
+        )}
+      </div>
+      <span className="flex shrink-0 items-center gap-1">
+        {signInNeeded
+          ? <button type="button" className={BTN_PRI} data-testid={`agent-mcp-auth-start-${row.name}`} onClick={signIn}>
+              {st?.state === 'none' ? t('agents.mcp.auth.start') : t('agents.mcp.auth.again')}</button>
+          : canEditHere && <button type="button" className={BTN} data-testid={`mcp-cell-primary-${row.name}`} onClick={() => onEdit(entry)}>{t('mcpServers.cell.edit')}</button>}
+        <MenuButton items={items} label={t('mcpServers.cell.menu', { name: row.name })} testid={`mcp-cell-menu-${row.name}`} />
+      </span>
+    </div>
+  );
+}
+
 export function McpServersSection() {
   const t = useT();
   const me = useActiveStore((s) => s.me);
   const canEdit = hasCapability(me, 'agent.privileged');
   const [rows, setRows] = useState<McpServerRow[] | 'error' | null>(null);
-  const [name, setName] = useState('');
-  const [kind, setKind] = useState<McpServerRow['credentialKind']>('community');
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [dialog, setDialog] = useState<McpDialogMode | null>(null);
 
-  /** 이 머신의 정의. `null` = 모른다(Tauri 표면 없음·읽기 실패) — 그때는 줄에 아무것도 덧붙이지 않는다. */
+  /** 이 머신의 정의. `null` = 모른다(Tauri 표면 없음·읽기 실패) — 그때는 칸을 그리지 않는다. */
   const [local, setLocal] = useState<OperatorMcpEntry[] | null>(null);
   const reloadLocal = useCallback(() => {
     if (!hasOperatorLocalSurface()) return;
@@ -47,69 +174,107 @@ export function McpServersSection() {
   }, [reloadLocal]);
   useEffect(() => { reload(); }, [reload]);
 
-  const add = async () => {
-    setError(null);
-    if (!NAME_RE.test(name)) { setError(t('mcpServers.badName')); return; }
-    setBusy(true);
-    try { await getController().putMcpServer(name, kind); setName(''); reload(); }
-    catch (e) { setError(t('mcpServers.saveFailed', { reason: errorText(e, t) })); }
-    finally { setBusy(false); }
-  };
-  /**
-   * **지우기 전에 한 번 묻는다**(UX ④c). 전에는 "빼기" 를 누르는 순간 지워졌다 — 이 이름을
-   * 켠 에이전트는 다음 기동부터 그 MCP 없이 돈다. 실패하면 창을 닫지 않고 창 안에 적는다
-   * (`ConfirmDialog` 의 약속).
-   */
+  /** 「커뮤니티에서 삭제」 — 한 번 묻고(UX ④c), 이 맥의 정의·토큰도 함께 지울지 고른다(기본 켬). */
   const [confirming, setConfirming] = useState<McpServerRow | null>(null);
+  const [alsoLocal, setAlsoLocal] = useState(true);
   const [removing, setRemoving] = useState(false);
+  const localEntry = (name: string) => local?.find((d) => d.name === name);
   const remove = async (row: McpServerRow) => {
     setError(null);
     setRemoving(true);
-    try { await getController().deleteMcpServer(row.name); setConfirming(null); reload(); }
-    catch (e) { setError(t('mcpServers.deleteFailed', { reason: errorText(e, t) })); }
+    try {
+      await getController().deleteMcpServer(row.name);
+      if (alsoLocal && localEntry(row.name)?.source === 'operator') await removeLocalMcpServer(row.name);
+      setConfirming(null);
+      reload();
+    } catch (e) { setError(t('mcpServers.deleteFailed', { reason: errorText(e, t) })); }
     finally { setRemoving(false); }
   };
 
+  /** 「이 맥에서 지우기」 — 정의와 토큰(오퍼레이터의 `remove` 가 토큰도 버린다). 커뮤니티 이름은 그대로. */
+  const [removingLocal, setRemovingLocal] = useState<OperatorMcpEntry | null>(null);
+  const [localBusy, setLocalBusy] = useState(false);
+  const removeLocal = async (entry: OperatorMcpEntry) => {
+    setError(null);
+    setLocalBusy(true);
+    try { await removeLocalMcpServer(entry.name); setRemovingLocal(null); reloadLocal(); }
+    catch (e) { setError(t('mcpServers.removeHereFailed', { reason: errorText(e, t) })); }
+    finally { setLocalBusy(false); }
+  };
+
+  const registry = Array.isArray(rows) ? rows : [];
+  const cellsOf = (row: McpServerRow): McpOperatorCell[] =>
+    local ? [{ key: 'local', label: t('mcpServers.cell.thisMac'), local: true, entry: localEntry(row.name) }] : [];
+  const canAdd = canEdit || (hasOperatorLocalSurface() && registry.length > 0);
+
   return (
     <>
-      <SettingsGroup title={t('integrations.mcp')}>
-        <p className="px-4 py-3 text-meta text-fg-subtle" data-testid="mcp-servers-description">{t('mcpServers.description')}</p>
-        {rows === null && <p className="px-4 py-3 text-meta text-fg-muted">{t('mcpServers.loading')}</p>}
-        {rows === 'error' && <p role="alert" className="px-4 py-3 text-meta text-danger">{t('mcpServers.listFailed')}</p>}
-        {Array.isArray(rows) && rows.length === 0 && <p className="px-4 py-3 text-meta text-fg-subtle">{t('mcpServers.none')}</p>}
-        {Array.isArray(rows) && rows.map((row) => (
-          <div key={row.name} className="flex items-center justify-between gap-4 px-4 py-3" data-testid={`mcp-server-${row.name}`}>
-            <span className="min-w-0 flex-1">
-              <span className="block font-mono font-medium text-fg">{row.name}</span>
-              <span className="mt-0.5 block text-meta text-fg-subtle">{t(`mcpServers.kind.${row.credentialKind}`)}</span>
-              {local && (() => {
-                const here = local.find((d) => d.name === row.name);
-                if (!here) return <span className="mt-0.5 block text-meta text-fg-subtle" data-testid={`mcp-server-local-${row.name}`}>{t('agents.mcp.missing')}</span>;
-                return (
-                  <span className="mt-1 flex flex-wrap items-center gap-2 text-meta" data-testid={`mcp-server-local-${row.name}`}>
-                    <McpLocalAuth entry={here} onChanged={reloadLocal} onError={setError} />
+      <section className="mb-8">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h3 className="text-body font-semibold text-fg-subtle">{t('integrations.mcp')}</h3>
+          {canAdd && (
+            <button type="button" className={BTN} data-testid="mcp-server-add-open" onClick={() => { setError(null); setDialog({ kind: 'add' }); }}>
+              {t('mcpServers.addOpen')}
+            </button>
+          )}
+        </div>
+        <div className="divide-y divide-border rounded-compose border border-border bg-surface-raised">
+          <p className="px-4 py-3 text-meta text-fg-subtle" data-testid="mcp-servers-description">{t('mcpServers.descriptionHere')}</p>
+          {rows === null && <p className="px-4 py-3 text-meta text-fg-muted">{t('mcpServers.loading')}</p>}
+          {rows === 'error' && <p role="alert" className="px-4 py-3 text-meta text-danger">{t('mcpServers.listFailed')}</p>}
+          {Array.isArray(rows) && rows.length === 0 && <p className="px-4 py-3 text-meta text-fg-subtle">{t('mcpServers.none')}</p>}
+          {registry.map((row) => {
+            const cells = cellsOf(row);
+            const collapsed = cells.length === 1;
+            const headItems: MenuItem[] = canEdit
+              ? [{ label: t('mcpServers.removeCommunity'), tone: 'danger', onSelect: () => { setError(null); setAlsoLocal(true); setConfirming(row); } }]
+              : [];
+            return (
+              <div key={row.name} className="flex flex-col gap-2 px-4 py-3" data-testid={`mcp-server-${row.name}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0">
+                    <span className="font-mono font-medium text-fg">{row.name}</span>
+                    <span className="text-meta text-fg-subtle"> · {t(`mcpServers.kind.${row.credentialKind}`)}</span>
                   </span>
-                );
-              })()}
-            </span>
-            {canEdit && (
-              <button
-                className="shrink-0 rounded-row border border-border px-2 py-1 text-meta text-fg hover:bg-surface-sunken"
-                aria-label={t('mcpServers.removeAction', { name: row.name })}
-                onClick={() => { setError(null); setConfirming(row); }}
-              >
-                {t('mcpServers.remove')}
-              </button>
-            )}
-          </div>
-        ))}
-      </SettingsGroup>
+                  <MenuButton items={headItems} label={t('mcpServers.removeAction', { name: row.name })} testid={`mcp-server-menu-${row.name}`} />
+                </div>
+                {cells.map((cell) => {
+                  const body = (
+                    <LocalCell row={row} entry={cell.entry} collapsed={collapsed}
+                      onDefine={() => { setError(null); setDialog({ kind: 'define', row }); }}
+                      onEdit={(entry) => { setError(null); setDialog({ kind: 'edit', row, entry }); }}
+                      onRemove={(entry) => { setError(null); setRemovingLocal(entry); }}
+                      onChanged={reloadLocal} onError={setError} />
+                  );
+                  return collapsed ? <div key={cell.key}>{body}</div> : (
+                    <div key={cell.key} className="grid grid-cols-[8.5rem_1fr] gap-2 rounded-row border border-border bg-surface px-2.5 py-2">
+                      <span className="text-meta font-semibold text-fg">{cell.label}</span>
+                      {body}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       {confirming && (
         <ConfirmDialog
           title={t('mcpServers.confirmTitle', { name: confirming.name })}
-          detail={t('mcpServers.confirmDetail')}
-          confirmLabel={t('mcpServers.remove')}
+          detail={(
+            <span className="flex flex-col gap-2">
+              <span>{t('mcpServers.confirmDetailCommunity')}</span>
+              {localEntry(confirming.name)?.source === 'operator' && (
+                <label className="flex items-center gap-1.5 text-fg">
+                  <input type="checkbox" checked={alsoLocal} disabled={removing} data-testid="mcp-confirm-also-local"
+                    onChange={(e) => setAlsoLocal(e.target.checked)} />
+                  {t('mcpServers.confirmAlsoLocal')}
+                </label>
+              )}
+            </span>
+          )}
+          confirmLabel={t('mcpServers.removeCommunity')}
           cancelLabel={t('mcpServers.cancel')}
           detailKind="note"
           danger
@@ -119,43 +284,27 @@ export function McpServersSection() {
           onCancel={() => { setConfirming(null); setError(null); }}
         />
       )}
-      {error && !confirming && (
+      {removingLocal && (
+        <ConfirmDialog
+          title={t('mcpServers.removeHereTitle', { name: removingLocal.name })}
+          detail={t('mcpServers.removeHereDetail')}
+          confirmLabel={t('mcpServers.cell.removeHere')}
+          cancelLabel={t('mcpServers.cancel')}
+          detailKind="note"
+          busy={localBusy}
+          error={error}
+          onConfirm={() => void removeLocal(removingLocal)}
+          onCancel={() => { setRemovingLocal(null); setError(null); }}
+        />
+      )}
+      {dialog && (
+        <McpServerDialog mode={dialog} registry={registry} canEdit={canEdit}
+          onDone={() => { setDialog(null); reload(); }} onCancel={() => setDialog(null)} />
+      )}
+      {error && !confirming && !removingLocal && (
         <div className="mb-4 rounded-row border border-danger-border bg-danger-surface p-3">
           <p role="alert" className="text-meta text-danger">{error}</p>
         </div>
-      )}
-
-      {canEdit && (
-        <SettingsGroup title={t('mcpServers.addTitle')}>
-          <div className="flex flex-wrap items-center gap-2 px-4 py-3">
-            <input
-              aria-label={t('mcpServers.name')}
-              className="rounded-row border border-border bg-surface px-2 py-1 font-mono text-meta text-fg"
-              placeholder="github"
-              value={name}
-              disabled={busy}
-              onChange={(e) => setName(e.target.value)}
-            />
-            <select
-              aria-label={t('mcpServers.kindLabel')}
-              className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
-              value={kind}
-              disabled={busy}
-              onChange={(e) => setKind(e.target.value as McpServerRow['credentialKind'])}
-            >
-              <option value="community">{t('mcpServers.kind.community')}</option>
-              <option value="personal">{t('mcpServers.kind.personal')}</option>
-            </select>
-            <button
-              className="rounded-row bg-accent px-3 py-1 text-meta font-medium text-fg-on-strong disabled:opacity-50"
-              disabled={busy || !name}
-              onClick={() => void add()}
-            >
-              {t('mcpServers.add')}
-            </button>
-          </div>
-          <p className="px-4 pb-3 text-meta text-fg-subtle">{t('mcpServers.addNote')}</p>
-        </SettingsGroup>
       )}
     </>
   );
