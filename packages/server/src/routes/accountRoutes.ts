@@ -20,6 +20,8 @@ import {
   auditMemory, AUDIT_HUMAN_LIST_CAP,
 } from '../services/memory.js';
 import { archiveMemory, unarchiveMemory } from '../services/memoryCurate.js';
+import { bgRunChanges, bgState, listBgRuns, revertBgRun, setBgEnabled } from '../services/bgHistory.js';
+import { backgroundEnabled } from '../services/bgJobs.js';
 import { getHandleGroupByHandle } from '../services/handleGroups.js';
 import { releaseAvatarFiles } from '../services/avatars.js';
 import type { StorageBackend } from '../storage/local.js';
@@ -954,6 +956,50 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       }, req);
     }
     return { results };
+  });
+
+  /**
+   * 백그라운드 회차 히스토리(G1 · BG4, `services/bgHistory.ts`). 소유자·admin 만 — 기억 라우트와 같은 문지기다.
+   * 회차 요약은 에이전트가 쓴 글이라 화면은 평문으로만 그린다(security n3). 되돌리기 대상은 run_id 로만 고른다(n2).
+   */
+  app.get('/accounts/agents/:id/background', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
+    return { ...(await bgState(pool, id)), serverEnabled: backgroundEnabled(), runs: await listBgRuns(pool, id) };
+  });
+
+  app.put('/accounts/agents/:id/background', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body);
+    if (!(await isAgentTarget(id, { live: true }))) return reply.code(404).send(noSuchAgent);
+    await setBgEnabled(pool, id, enabled);
+    await recordAudit(pool, {
+      action: 'agent.background.toggled', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { enabled },
+    }, req);
+    return { ok: true, enabled };
+  });
+
+  app.get('/accounts/agents/:id/background/runs/:runId', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id, runId } = z.object({ id: z.string().uuid(), runId: z.string().uuid() }).parse(req.params);
+    if (!(await isAgentTarget(id))) return reply.code(404).send(noSuchAgent);
+    const changes = await bgRunChanges(pool, id, runId);
+    if (!changes) return reply.code(404).send({ error: { code: 'not_found', message: 'no such run' } });
+    return { changes };
+  });
+
+  app.post('/accounts/agents/:id/background/runs/:runId/revert', { preHandler: app.requireOwnerOrAdmin('id') }, async (req, reply) => {
+    const { id, runId } = z.object({ id: z.string().uuid(), runId: z.string().uuid() }).parse(req.params);
+    if (!(await isAgentTarget(id, { live: true }))) return reply.code(404).send(noSuchAgent);
+    const r = await revertBgRun(pool, id, runId, req.account!.id);
+    if (r === 'not_found') return reply.code(404).send({ error: { code: 'not_found', message: 'no such run' } });
+    if (r === 'already_reverted') return reply.code(409).send({ error: { code: 'already_reverted', message: '이미 되돌린 회차다' } });
+    if (r === 'not_finished') return reply.code(409).send({ error: { code: 'not_finished', message: '아직 도는 회차다' } });
+    await recordAudit(pool, {
+      action: 'agent.background.reverted', actorId: req.account!.id, actorHandle: req.account!.handle,
+      target: id, detail: { runId, reverted: r.reverted, skipped: r.skipped.map((x) => x.slug) },
+    }, req);
+    return r;
   });
 
   /**
