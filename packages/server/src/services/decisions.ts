@@ -33,7 +33,7 @@ export type DecideInput = {
   option: string;
   via: DecisionVia;
   /** 머지 거절 카드의 [이번 한 번 머지] — gh 계정·CI 완화와 카드가 보여 준 값(대조용). */
-  once?: { ghUser: string; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] };
+  once?: { ghUser: string | null; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] };
   /** `via: 'chat'` 일 때 — 승인한 글과 어떻게 가리켰나(감사·카드 meta). */
   chat?: { messageId: string; target?: 'T1' | 'T2' | 'T3' };
 };

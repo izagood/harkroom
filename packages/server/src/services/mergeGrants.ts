@@ -32,7 +32,7 @@ export type MergeCheck =
       /** 위임 사슬로 통과했으면 그 뿌리(소유자 글) — A안. */
       viaChain?: { rootId: string };
       /** 1회 승인(`merge_approval`)으로 통과했으면 그 기록 — 래퍼는 이 계정만 쓰고, `relaxChecks` 일 때만 CI·CLEAN 판정을 GitHub 에 맡긴다. */
-      approval?: { id: string; ghUser: string; relaxChecks: boolean; ciOverride: boolean } }
+      approval?: { id: string; ghUser: string | null; relaxChecks: boolean; ciOverride: boolean } }
   /** `denialId` 는 거절 카드를 세울 수 있는 거절에만 있다(사람이 띄운 턴의 `not_granted`, 그리고 `cause_not_human` — C2·1회 승인). */
   | { ok: false; code: MergeDenial; denialId?: string };
 
@@ -231,7 +231,7 @@ async function checkMergeByChain(
   // F1 임대·F2 저장소 모양은 위에서 이미 봤다. 소모는 `used_at is null` 을 단 한 문장 update — 두 래퍼가 동시에 와도 하나만 쓴다.
   // CI 실패 무시 승인(`ci_override`, 스레드 1fccc9a5 D3)은 **쓰는 턴도 사람이 띄운 것**이어야 한다 — wake·에이전트 위임 턴에서는
   // 고르지 않는다(소모되지 않고 남는다). 그 턴은 아래 grant 판정으로 간다.
-  const approval = (await pool.query<{ id: string; ghUser: string; relaxChecks: boolean; ciOverride: boolean; approvedBy: string; approvedAt: Date }>(
+  const approval = (await pool.query<{ id: string; ghUser: string | null; relaxChecks: boolean; ciOverride: boolean; approvedBy: string; approvedAt: Date }>(
     `update merge_approval set used_at = $8, used_lease_id = $9
       where id = (select id from merge_approval
                    where agent_id = $1 and scope = $2 and pr_number = $3 and head_sha = $4
@@ -244,8 +244,12 @@ async function checkMergeByChain(
   if (approval) {
     await recordAudit(pool, {
       action: 'repo.merge.checked', actorId: args.agentId, target: scope,
-      detail: { number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: lease!.id, grantedBy: approval.approvedBy, approvalId: approval.id, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks, ciOverride: approval.ciOverride, causeByHuman: causeByHuman(lease!) },
+      detail: { number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: lease!.id, grantedBy: approval.approvedBy, approvalId: approval.id, ghUser: approval.ghUser, ...(approval.ghUser ? {} : { ghUserChosenBy: 'operator' }), relaxChecks: approval.relaxChecks, ciOverride: approval.ciOverride, causeByHuman: causeByHuman(lease!) },
     });
+    // 계정을 비운 승인(G1)은 오퍼레이터가 고른다 — 이 줄을 쓰는 지금은 아직 서버가 그 계정을 모른다.
+    // 본문(한국어)에는 「(오퍼레이터가 고름)」, 번역 표지 인자는 언어 중립 값을 그대로 둔다(번역 키는 후속).
+    const ghShown = approval.ghUser ?? '(오퍼레이터가 고름)';
+    const ghArg = approval.ghUser ?? 'operator-chosen';
     const approver = approval.ciOverride
       ? (await pool.query<{ handle: string }>(`select handle from account where id = $1`, [approval.approvedBy])).rows[0]?.handle ?? null
       : null;
@@ -254,18 +258,18 @@ async function checkMergeByChain(
       channelId: lease!.channelId, threadRootId: lease!.threadRootId, authorId: args.agentId, kind: 'system',
       // CI 실패 무시 승인은 누가 승인했는지 본문에 적는다(handle 은 `@` 없이 — 「권한: handle」 과 같다). 표지는 승인자 id 로 싣는다.
       body: approval.ciOverride
-        ? `🔓 ${scope.slice('repo:'.length)}#${args.number} CI 실패 무시 승인으로 머지 시도${approver ? ` · 승인: ${approver}` : ''} · head ${args.headSha.slice(0, 9)} · gh ${approval.ghUser}`
-        : `🔓 ${scope.slice('repo:'.length)}#${args.number} 1회 승인으로 머지 시도 · head ${args.headSha.slice(0, 9)} · gh ${approval.ghUser}${approval.relaxChecks ? ' · CI 판정은 GitHub 에 맡김' : ''}`,
+        ? `🔓 ${scope.slice('repo:'.length)}#${args.number} CI 실패 무시 승인으로 머지 시도${approver ? ` · 승인: ${approver}` : ''} · head ${args.headSha.slice(0, 9)} · gh ${ghShown}`
+        : `🔓 ${scope.slice('repo:'.length)}#${args.number} 1회 승인으로 머지 시도 · head ${args.headSha.slice(0, 9)} · gh ${ghShown}${approval.relaxChecks ? ' · CI 판정은 GitHub 에 맡김' : ''}`,
       meta: {
         mergeApproval: { id: approval.id, repo: scope.slice('repo:'.length), number: args.number, headSha: args.headSha, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks, ciOverride: approval.ciOverride, approvedBy: approval.approvedBy },
         // 번역 표지(i18n P5) — 본문과 같은 값, 같은 갈래(CI 판정을 GitHub 에 맡겼나).
         ...(approval.ciOverride ? (approver ? {
           i18n: systemI18n('system.merge.approvalUsedCiOverride', {
-            repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: approval.ghUser, approverId: approval.approvedBy,
+            repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: ghArg, approverId: approval.approvedBy,
           }),
         } : {}) : {
           i18n: systemI18n(approval.relaxChecks ? 'system.merge.approvalUsedRelaxed' : 'system.merge.approvalUsed', {
-            repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: approval.ghUser,
+            repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: ghArg,
           }),
         }),
       },
@@ -502,7 +506,7 @@ export async function mergeableRepos(pool: Pool, agentId: string): Promise<strin
  * grant 가 하나도 없는 에이전트도 승인이 있으면 래퍼를 부를 수 있어야 한다.
  */
 export interface OpenMergeApproval {
-  id: string; repo: string; number: number; headSha: string; ghUser: string; relaxChecks: boolean;
+  id: string; repo: string; number: number; headSha: string; ghUser: string | null; relaxChecks: boolean;
   channelId: string; threadRootId: string; expiresAt: string;
 }
 
@@ -511,7 +515,7 @@ export interface OpenMergeApproval {
  * `merge-checks` 를 부르지 않아 승인을 남긴다. 이 목록은 판정이 아니다 — 통과 판정은 언제나 `checkMerge` 의 소모다.
  */
 export async function openMergeApprovals(pool: Pool, agentId: string, now = new Date()): Promise<OpenMergeApproval[]> {
-  const res = await pool.query<{ id: string; scope: string; number: number; headSha: string; ghUser: string; relaxChecks: boolean; channelId: string; threadRootId: string; expiresAt: Date }>(
+  const res = await pool.query<{ id: string; scope: string; number: number; headSha: string; ghUser: string | null; relaxChecks: boolean; channelId: string; threadRootId: string; expiresAt: Date }>(
     `select id, scope, pr_number as number, head_sha as "headSha", gh_user as "ghUser", relax_checks as "relaxChecks",
             channel_id as "channelId", thread_root_id as "threadRootId", expires_at as "expiresAt"
        from merge_approval where agent_id = $1 and used_at is null and expires_at > $2 order by approved_at`, [agentId, now]);
@@ -529,14 +533,14 @@ export async function openMergeApprovals(pool: Pool, agentId: string, now = new 
 export async function peekMergeApproval(
   pool: Pool,
   args: { agentId: string; operatorId: string; leaseId: string; token: string; repo: string; number: number; headSha: string; now?: Date },
-): Promise<{ id: string; ghUser: string; relaxChecks: boolean } | null> {
+): Promise<{ id: string; ghUser: string | null; relaxChecks: boolean } | null> {
   const now = args.now ?? new Date();
   const lease = await readLease(pool, { leaseId: args.leaseId, token: args.token, now });
   if (!lease || lease.agentId !== args.agentId || lease.operatorId !== args.operatorId || lease.expired || lease.ended) return null;
   const scope = repoScope(args.repo);
   if (!scope) return null;
   // `checkMerge` 와 같은 조건 — CI 실패 무시 승인은 사람이 띄운 턴에서만 고른다(D3).
-  return (await pool.query<{ id: string; ghUser: string; relaxChecks: boolean }>(
+  return (await pool.query<{ id: string; ghUser: string | null; relaxChecks: boolean }>(
     `select id, gh_user as "ghUser", relax_checks as "relaxChecks" from merge_approval
       where agent_id = $1 and scope = $2 and pr_number = $3 and head_sha = $4
         and channel_id = $5 and thread_root_id = $6 and used_at is null and expires_at > $7

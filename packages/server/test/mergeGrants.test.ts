@@ -554,6 +554,28 @@ describe('repo.merge grant', () => {
       expect((await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asAgent() })).json().approvals).toEqual([]);
     });
 
+    it('G1: 계정을 비운 1회 승인(ghUser 없음·null)도 받고 null 로 저장한다 — 감사에 ghUserChosenBy: operator', async () => {
+      for (const [repo, payload] of [['izagood/once-null-a', {}], ['izagood/once-null-b', { ghUser: null }]] as const) {
+        const cause = await mention(alice.accountId);
+        const thread = await threadOf(cause);
+        const denied = (await check(await lease(cause), repo, { number: 21, headSha: SHA2 })).json();
+        const rid = await requestFor(denied.error.denialId, thread);
+        const ok = await decide(alice.token, rid, payload);
+        expect(ok.statusCode).toBe(200);
+        expect((await pool.query(`select gh_user from merge_approval where denial_id = $1`, [denied.error.denialId])).rows).toEqual([{ gh_user: null }]);
+        const audit = (await pool.query(`select detail from audit_log where action = 'repo.merge.approved_once' and target = $1`, [`repo:${repo}`])).rows;
+        expect(audit).toHaveLength(1);
+        expect(audit[0].detail).toMatchObject({ ghUser: null, ghUserChosenBy: 'operator' });
+        const card = (await pool.query(`select meta->'permissionRequest'->'approvedOnce' as a from message where meta->'permissionRequest'->>'requestId' = $1`, [rid])).rows[0]?.a;
+        if (card) expect(card.ghUser).toBeNull();
+        const pl = await leaseInThread(thread, alice.accountId);
+        const peek = await app.inject({ method: 'POST', url: '/agent/merge-approvals/peek', headers: asAgent(), payload: { leaseId: pl.id, token: pl.token, repo, number: 21, headSha: SHA2 } });
+        expect(peek.json().approval).toMatchObject({ ghUser: null });
+        const res = await check(await leaseInThread(thread, alice.accountId), repo, { number: 21, headSha: SHA2 });
+        expect(res.json()).toMatchObject({ allowed: true, approval: { ghUser: null } });
+      }
+    });
+
     it('승인은 그 PR·head·스레드에만 — head 가 다르거나 다른 스레드면 쓰이지 않는다', async () => {
       const cause = await mention(alice.accountId);
       const thread = await threadOf(cause);
@@ -574,7 +596,8 @@ describe('repo.merge grant', () => {
       expect((await decide(bob.token, rid, { ghUser: 'izagood' })).statusCode).toBe(403);
       expect((await app.inject({ method: 'POST', url: `/agents/${agentId}/permission-requests/${rid}/approve-once`, headers: asAgent(), payload: { ghUser: 'izagood' } })).statusCode).toBe(403);
       expect((await decide(alice.token, rid, { ghUser: 'izagood', confirmRepo: 'izagood/once-c' })).statusCode).toBe(400);
-      expect((await decide(alice.token, rid, {})).statusCode).toBe(400);
+      expect((await decide(alice.token, rid, { ghUser: 42 })).statusCode).toBe(400);
+      expect((await decide(alice.token, rid, { ghUser: '' })).statusCode).toBe(400);
       expect((await decide(alice.token, rid, { ghUser: '-bad' })).json().error.code).toBe('bad_gh_user');
       expect((await decide(alice.token, rid, { ghUser: 'izagood' })).statusCode).toBe(200);
       expect((await decide(alice.token, rid, { ghUser: 'izagood' })).json().error.code).toBe('already_decided');

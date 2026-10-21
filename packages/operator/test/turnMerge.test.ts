@@ -317,6 +317,38 @@ describe('turnMerge', () => {
       expect(results()).toEqual([expect.objectContaining({ result: 'failed' })]);
     });
 
+    describe('계정을 비운 승인(G1) — 오퍼레이터가 그 저장소용 계정을 고른다', () => {
+      beforeEach(() => {
+        approvals = [{ id: 'ap-1', ghUser: null, relaxChecks: false }];
+        checkApproval = { id: 'ap-1', ghUser: null, relaxChecks: false };
+      });
+
+      it('ghUser 가 null 이면 ghUserFor(repo) 의 계정으로 사전 확인·머지한다', async () => {
+        pickByScope = { 'izagood/harkroom': 'repo-account' };
+        const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+        expect(r).toMatchObject({ isError: false, body: { merged: true, viaApproval: true, ghUser: 'repo-account' } });
+        expect(execs.filter((e) => e.args[0] === 'auth').map((e) => e.args[3])).toEqual(['repo-account']);
+        const merge = execs.find((e) => e.args[0] === 'pr' && e.args[1] === 'merge')!;
+        expect(merge.args).toContain('--match-head-commit');
+        expect(merge.env.GH_TOKEN).toBe('tok-repo-account');
+      });
+
+      it('null 인데 이 저장소 계정이 없으면 no_gh_user — 판정(소모)을 부르지 않는다', async () => {
+        ghUser = undefined;
+        const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+        expect(r.body.error.code).toBe('no_gh_user');
+        expect(r.body.error.message).toContain('approval was not used');
+        expect(checksCalled()).toBe(0);
+        expect(ghCalls()).not.toContain('pr merge');
+      });
+
+      it('사전 확인은 비어 있었는데 서버가 계정이 적힌 승인을 썼으면 머지하지 않는다', async () => {
+        checkApproval = { id: 'ap-1', ghUser: 'izagood', relaxChecks: false };
+        expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('approval_mismatch');
+        expect(ghCalls()).not.toContain('pr merge');
+      });
+    });
+
     it('소모 뒤 머지가 실패하면 보고하고, 다시 승인(새 카드)이 필요하다고 답한다', async () => {
       mergeCode = 1; mergeStderr = 'GraphQL: Head branch was modified';
       const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));

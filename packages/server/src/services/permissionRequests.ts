@@ -67,7 +67,7 @@ export interface PermissionRequestMeta {
   /** 정해진 뒤에만. */
   status?: 'granted' | 'denied' | 'approved_once';
   /** 1회 승인으로 정해졌으면 그 계정·CI 완화·승인 기한. */
-  approvedOnce?: { ghUser: string; relaxChecks: boolean; expiresAt: string };
+  approvedOnce?: { ghUser: string | null; relaxChecks: boolean; expiresAt: string };
   /** command 승인 갈래(once·hour). */
   grantMode?: 'once' | 'hour';
   decidedAt?: string;
@@ -341,7 +341,7 @@ export async function decidePermissionRequest(
   args: {
     agentId: string; requestId: string; actorId: string; decision: PermissionDecision; now?: Date;
     /** 머지 거절 카드의 `approve_once` 일 때만 — 머지에 쓸 gh 계정과 CI 완화 여부. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
-    once?: { ghUser: string; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] };
+    once?: { ghUser: string | null; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] };
     /**
      * 어느 길로 정했나(`decisions.decide`). 글 승인(`chatApproval`)은 카드 meta(`decidedVia`)·감사 기록에, 버튼은 감사 기록에만
      * 남는다(카드 meta 는 전과 같다).
@@ -452,7 +452,7 @@ export async function decidePermissionRequest(
   if (approval && args.once) {
     await recordAudit(pool, {
       action: 'repo.merge.approved_once', actorId: args.actorId, target: approval.scope,
-      detail: { agentId: args.agentId, requestId: row.id, approvalId: approval.approvalId, denialId: row.denialId, reason: approval.reason, number: approval.number, headSha: approval.headSha, ghUser: args.once.ghUser, relaxChecks: args.once.relaxChecks, expiresAt: approval.expiresAt.toISOString() },
+      detail: { agentId: args.agentId, requestId: row.id, approvalId: approval.approvalId, denialId: row.denialId, reason: approval.reason, number: approval.number, headSha: approval.headSha, ghUser: args.once.ghUser, ...(args.once.ghUser ? {} : { ghUserChosenBy: 'operator' }), relaxChecks: args.once.relaxChecks, expiresAt: approval.expiresAt.toISOString() },
     });
   }
   await recordAudit(pool, {

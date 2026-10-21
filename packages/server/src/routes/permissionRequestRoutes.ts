@@ -14,7 +14,7 @@ const params = z.object({ id: z.string().uuid(), requestId: z.string().uuid(), d
 /** [이번 한 번 머지](스레드 1b75d7a0) — 받는 것은 gh 계정·CI 완화 둘뿐. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
 // number·headSha 는 카드가 보여 준 값 — 대조에만 쓴다(security F1). 저장소·PR·head 의 출처는 여전히 거절 기록이다.
 const onceBody = z.object({
-  ghUser: z.string().min(1).max(39), relaxChecks: z.boolean().optional(),
+  ghUser: z.string().min(1).max(39).nullable().optional(), relaxChecks: z.boolean().optional(),
   number: z.number().int().positive(), headSha: z.string().regex(/^[0-9a-f]{40}$/),
   // CI 거절 카드(스레드 1fccc9a5 n1): 사람이 본 실패 체크 목록 — 거절 기록과 다르면 card_stale. 대조에만 쓴다.
   failedChecks: z.array(z.string().max(200)).max(20).optional(),
@@ -30,11 +30,11 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
       }
       const owner = await pool.query(`select 1 from agent_config where account_id = $1 and owner_account_id = $2`, [p.data.id, req.account!.id]);
       if (!owner.rowCount) return reply.code(403).send({ error: { code: 'forbidden', message: 'only the owner of this agent can decide its permission requests' } });
-      let once: { ghUser: string; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] } | undefined;
+      let once: { ghUser: string | null; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] } | undefined;
       if (p.data.decision === 'approve-once') {
         const b = onceBody.safeParse(req.body ?? {});
-        if (!b.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'ghUser, number and a 40-hex headSha are required; relaxChecks is a boolean; nothing else' } });
-        once = { ghUser: b.data.ghUser, relaxChecks: b.data.relaxChecks ?? false, number: b.data.number, headSha: b.data.headSha, ...(b.data.failedChecks ? { failedChecks: b.data.failedChecks } : {}) };
+        if (!b.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'number and a 40-hex headSha are required; ghUser is optional (null lets the operator pick); relaxChecks is a boolean; nothing else' } });
+        once = { ghUser: b.data.ghUser ?? null, relaxChecks: b.data.relaxChecks ?? false, number: b.data.number, headSha: b.data.headSha, ...(b.data.failedChecks ? { failedChecks: b.data.failedChecks } : {}) };
       }
       const decision = p.data.decision === 'approve-once' ? 'approve_once' : p.data.decision;
       // 소유자는 위에서 `:id` 로 대조했다 — ref 에 ownerAccountId 를 싣지 않는다(남의 요청 id 는 decidePermissionRequest 가 404 로 닫는다).
