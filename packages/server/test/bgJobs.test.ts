@@ -149,6 +149,16 @@ describe('bg_job (BG1)', () => {
         const rev = (await pool.query(`select run_id, turn_id from agent_memory_revision where account_id = $1 and slug = 'mem/lesson'`, [a.accountId])).rows;
         expect(rev).toEqual([{ run_id: jobId, turn_id: turnId }]);
 
+        // merge 는 into 하나 + from 수만큼 센다(security F1): from 10개 merge 는 11건, 두 번째는 상한을 넘어 거절되고 아무것도 안 센다.
+        const tens = Array.from({ length: 10 }, (_, i) => `mem/m${i}`);
+        for (const sl of [...tens, ...tens.map((t) => `${t}b`)]) await pool.query(`insert into agent_memory (account_id, slug, value, kind) values ($1, $2, 'x', 'topic')`, [a.accountId, sl]);
+        await pool.query(`update bg_job set writes = 0 where id = $1`, [jobId]);
+        expect(await call(c, 'memory.merge', { into: 'mem/merged-a', from: tens, value: 'a', kind: 'topic' })).toMatchObject({ ok: true });
+        expect((await pool.query(`select writes from bg_job where id = $1`, [jobId])).rows[0].writes).toBe(11);
+        expect((await call(c, 'memory.merge', { into: 'mem/merged-b', from: tens.map((t) => `${t}b`), value: 'b', kind: 'topic' })).error.code).toBe('bg_write_limit');
+        expect((await pool.query(`select writes from bg_job where id = $1`, [jobId])).rows[0].writes).toBe(11);
+        expect((await pool.query(`select count(*)::int as n from bg_job_change where run_id = $1 and op = 'archive'`, [jobId])).rows[0].n).toBe(10);
+
         await pool.query(`update bg_job set writes = $2 where id = $1`, [jobId, BG_MAX_WRITES]);
         expect((await call(c, 'memory.set', { slug: 'mem/more', value: 'x', kind: 'topic' })).error.code).toBe('bg_write_limit');
 

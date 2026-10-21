@@ -147,18 +147,21 @@ export async function completeBgJob(pool: Pool, accountId: string, jobId: string
   return exists.rowCount ? 'not_running' : 'not_found';
 }
 
-/** 쓰기 한 건을 예약한다(원자적, 상한 20). running 이 아니거나 상한이면 false. */
-export async function reserveBgWrite(pool: Pool, jobId: string): Promise<boolean> {
+/**
+ * 쓰기 n 건을 한 번에 예약한다(원자적, 상한 20). running 이 아니거나 넘치면 false 이고 아무것도 안 센다.
+ * merge 는 into 하나 + 보관하는 from 수만큼이다(security F1 — 한 건으로 세면 상한이 merge 로 10배 풀린다).
+ */
+export async function reserveBgWrite(pool: Pool, jobId: string, n = 1): Promise<boolean> {
   const r = await pool.query(
-    `update bg_job set writes = writes + 1 where id = $1 and status = 'running' and writes < $2`,
-    [jobId, BG_MAX_WRITES],
+    `update bg_job set writes = writes + $3 where id = $1 and status = 'running' and writes + $3 <= $2`,
+    [jobId, BG_MAX_WRITES, n],
   );
   return (r.rowCount ?? 0) > 0;
 }
 
-/** 실패한 쓰기의 예약을 돌려준다. */
-export async function releaseBgWrite(pool: Pool, jobId: string): Promise<void> {
-  await pool.query(`update bg_job set writes = greatest(writes - 1, 0) where id = $1`, [jobId]);
+/** 실패한 쓰기의 예약(n 건)을 돌려준다. */
+export async function releaseBgWrite(pool: Pool, jobId: string, n = 1): Promise<void> {
+  await pool.query(`update bg_job set writes = greatest(writes - $2, 0) where id = $1`, [jobId, n]);
 }
 
 export async function recordBgChange(

@@ -469,14 +469,21 @@ function buildMcpServer(
         }
         if (toolName === 'memory.set' && args.value === null) return refused('bg_delete_forbidden', '백그라운드 회차는 기억을 지우지 않는다 — memory.archive 로 보관해라');
         const before = await pool.query<{ updated_at: Date }>(`select updated_at from agent_memory where account_id = $1 and slug = $2`, [account.id, slug]);
-        if (!(await reserveBgWrite(pool, bgJobId))) return refused('bg_write_limit', `이 회차의 기억 쓰기 상한(${BG_MAX_WRITES})에 닿았다 — 남은 것은 다음 회차에 맡기고 bg.complete 로 끝내라`);
-        const res = await run(...a) as { content?: { type: string; text?: string }[] };
+        // merge 는 into 하나 + 보관하는 from 수만큼 센다(security F1 — 한 건으로 세면 상한이 10배 풀린다).
+        const cost = toolName === 'memory.merge' && Array.isArray(args.from)
+          ? 1 + new Set(args.from.filter((f): f is string => typeof f === 'string' && f !== slug)).size
+          : 1;
+        if (!(await reserveBgWrite(pool, bgJobId, cost))) return refused('bg_write_limit', `이 회차의 기억 쓰기 상한(${BG_MAX_WRITES})에 닿았다 — 남은 것은 다음 회차에 맡기고 bg.complete 로 끝내라`);
+        // 핸들러가 던져도 예약은 돌려준다(security n1).
+        let res: { content?: { type: string; text?: string }[] } | undefined;
         let failed = true;
-        try { failed = Boolean((JSON.parse(res.content?.[0]?.text ?? '{}') as { error?: unknown }).error); } catch { /* 모양을 모르면 실패로 본다 */ }
-        if (failed) {
-          await releaseBgWrite(pool, bgJobId);
-          return res;
+        try {
+          res = await run(...a) as { content?: { type: string; text?: string }[] };
+          try { failed = Boolean((JSON.parse(res.content?.[0]?.text ?? '{}') as { error?: unknown }).error); } catch { /* 모양을 모르면 실패로 본다 */ }
+        } finally {
+          if (failed) await releaseBgWrite(pool, bgJobId, cost);
         }
+        if (failed) return res;
         const after = await pool.query<{ updated_at: Date }>(`select updated_at from agent_memory where account_id = $1 and slug = $2`, [account.id, slug]);
         const op = toolName === 'memory.archive' ? 'archive' : toolName === 'memory.merge' ? 'merge' : before.rowCount ? 'update' : 'create';
         await recordBgChange(pool, bgJobId, slug, op, after.rows[0]?.updated_at ?? null);
