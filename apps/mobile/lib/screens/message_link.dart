@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/api_error.dart';
@@ -71,11 +73,15 @@ Future<void> _openRow(BuildContext context, NavigatorState navigator, MessageRow
   await app.openChannel(row.channelId);
   if (!context.mounted) return;
   // 탭 안(스레드의 링크)이면 그 탭에, 찾기 화면이면 찾기를 걷고 그 채널의 탭에 민다.
-  await openChannelScreen(context, row.channelId, navigator: navigator, (_) => ThreadScreen(
+  //
+  // **미는 것까지만 기다린다**(스레드 ae5505cc). push 의 Future 는 그 화면이 닫힐 때 끝나는데, 본문 링크는
+  // 이 Future 가 끝날 때까지 「이동 중」을 그린다 — 기다리면 다른 탭에 민 경우 돌아온 탭의 링크가 계속
+  // 눌린 채로 남는다. 닫힌 뒤에 할 일은 부르는 쪽 누구에게도 없다.
+  unawaited(openChannelScreen(context, row.channelId, navigator: navigator, (_) => ThreadScreen(
       channelId: row.channelId,
       rootId: row.threadRootId ?? row.id,
       highlightId: highlight ? row.id : null,
       highlightSeq: highlight ? row.seq : null,
     ),
-  );
+  ));
 }

@@ -36,8 +36,19 @@ class _MarkdownBodyState extends State<MarkdownBody> {
   var _keySeq = 0;
   Key _key(String kind) => ValueKey<(String, int)>((kind, _keySeq++));
 
-  /// 링크마다 하나. **화면이 사라질 때 버린다** — 안 버리면 줄이 스크롤될 때마다 샌다.
+  /// 링크마다 하나, 본문 안 순번으로 잡는다. **다시 그릴 때 버리지 않고 이어 쓴다** — 누르는 동안
+  /// 눌림 표시를 그리려고 다시 그리는데, 그때 손가락이 잡은 인식기를 버리면 그 탭이 사라진다.
+  /// 남는 것과 **화면이 사라질 때** 버린다 — 안 버리면 줄이 스크롤될 때마다 샌다.
   final _recognizers = <TapGestureRecognizer>[];
+  var _linkSeq = 0;
+
+  /// 손가락이 올라가 있는 링크(순번). 누르는 순간부터 바탕을 깐다 — 떼기 전에 "잡혔다"가 보인다.
+  int? _pressed;
+
+  /// 앱 안 이동이 진행 중인 링크(순번). 메시지 조회·채널 열기를 거쳐 1초 넘게 걸릴 수 있는데, 그 사이
+  /// 아무 변화가 없으면 사람은 눌린 줄 모르고 또 누른다(스레드 ae5505cc). 끝날 때까지 바탕을 두고,
+  /// 그 사이 다시 누른 것은 버린다 — 같은 스레드가 두 번 쌓인다.
+  int? _busy;
 
   @override
   void dispose() {
@@ -47,12 +58,22 @@ class _MarkdownBodyState extends State<MarkdownBody> {
     super.dispose();
   }
 
-  Future<void> _open(MdLink link) async {
+  void _setPressed(int? i) {
+    if (mounted && _pressed != i) setState(() => _pressed = i);
+  }
+
+  Future<void> _open(MdLink link, int i) async {
     // 앱 안 링크는 OS 를 거치지 않는다. 확인 시트도 없다 — 가는 곳이 이 앱의, 내가 볼 수 있는
     // 메시지뿐이고(서버가 403 으로 거른다) 밖으로 나가는 것이 없다.
     final messageId = link.messageId;
     if (messageId != null) {
-      await widget.openMessage?.call(messageId);
+      if (_busy != null) return;
+      setState(() => _busy = i);
+      try {
+        await widget.openMessage?.call(messageId);
+      } finally {
+        if (mounted) setState(() => _busy = null);
+      }
       return;
     }
     // 열기 직전에 **한 번 더** 거른다 — 파서가 걸렀어도, 이 함수가 받는 것은 늘 http(s) 여야 한다.
@@ -69,11 +90,8 @@ class _MarkdownBodyState extends State<MarkdownBody> {
 
   @override
   Widget build(BuildContext context) {
-    for (final r in _recognizers) {
-      r.dispose();
-    }
-    _recognizers.clear();
     _keySeq = 0;
+    _linkSeq = 0;
 
     final k = context.tokens;
     final base = TextStyle(fontSize: HarkroomType.body, height: HarkroomType.bodyHeight, color: k.fg);
@@ -82,6 +100,10 @@ class _MarkdownBodyState extends State<MarkdownBody> {
     for (final b in blocks) {
       if (children.isNotEmpty) children.add(const SizedBox(height: 6));
       children.add(_block(context, b, base, k));
+    }
+    // 본문이 바뀌어 링크가 줄었으면 남는 인식기를 버린다(블록은 위에서 모두 그려졌다).
+    while (_recognizers.length > _linkSeq) {
+      _recognizers.removeLast().dispose();
     }
     if (children.length == 1) return children.single;
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
@@ -258,12 +280,24 @@ class _MarkdownBodyState extends State<MarkdownBody> {
             // 열 수 없는 스킴: **글자만** 남긴다. 누를 수 있게 그리면 사람은 열린다고 믿는다.
             spans.add(TextSpan(text: text));
           } else {
-            final r = TapGestureRecognizer()..onTap = () => _open(piece);
-            _recognizers.add(r);
+            final i = _linkSeq++;
+            if (i == _recognizers.length) _recognizers.add(TapGestureRecognizer());
+            final r = _recognizers[i]
+              ..onTapDown = ((_) => _setPressed(i))
+              ..onTapCancel = (() => _setPressed(null))
+              ..onTap = () {
+                _setPressed(null);
+                _open(piece, i);
+              };
+            final lit = _pressed == i || _busy == i;
             spans.add(TextSpan(
               text: text,
               recognizer: r,
-              style: TextStyle(color: k.link, decoration: TextDecoration.underline),
+              style: TextStyle(
+                color: k.link,
+                decoration: TextDecoration.underline,
+                backgroundColor: lit ? linkPressedColor(k, Theme.of(context).brightness) : null,
+              ),
               semanticsLabel: text,
             ));
           }
@@ -272,6 +306,12 @@ class _MarkdownBodyState extends State<MarkdownBody> {
     return Text.rich(TextSpan(style: base, children: spans), textAlign: align);
   }
 }
+
+/// 링크의 눌림·이동 중 바탕 — **링크 색을 옅게 깐 면**이다. 중립 `surfaceHover` 는 줄 꾹 누름 강조
+/// (`message_tile` 의 InkWell)와 같은 색이라, 링크를 누르면 줄 전체와 링크가 한 색이 되어 링크만 눌린 것이
+/// 안 보였다(designer #1415). 멘션 칩(`accentSurface`)과도 다르다. 다크는 링크 색이 밝아 조금 더 진하게 깐다.
+Color linkPressedColor(HarkroomTokens k, Brightness b) =>
+    k.link.withValues(alpha: b == Brightness.dark ? 0.18 : 0.14);
 
 /// 블록 위젯 [key] 의 종류(`md-table`·`md-list`…). 그 밖의 키면 `null`.
 String? mdKind(Key? key) => key is ValueKey<(String, int)> ? key.value.$1 : null;
