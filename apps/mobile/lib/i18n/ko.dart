@@ -398,6 +398,10 @@ class StringsKo implements Strings {
   @override
   String get sectionNameTaken => '같은 이름의 섹션이 이미 있다.';
   @override
+  String sectionMoved(String channel, String section) => '#$channel → $section';
+  @override
+  String get sectionStarredNote => '즐겨찾기를 끄면 이 섹션에 보인다.';
+  @override
   String get sectionHasUnread => '안 읽은 채널 있음';
   @override
   String get sectionEmpty => '채널을 길게 눌러 이 섹션으로 옮긴다';

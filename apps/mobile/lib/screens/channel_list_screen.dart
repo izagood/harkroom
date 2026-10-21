@@ -645,6 +645,7 @@ Future<void> openSectionMoveSheet(BuildContext context, ChannelRow channel) asyn
   final messenger = ScaffoldMessenger.of(context);
   final t = context.t;
   final current = app.channelPrefs[channel.id]?.sectionId;
+  final starred = app.channelPrefs[channel.id]?.starred ?? false;
   // 고른 것: ('move', id|null) 또는 ('new', null).
   final picked = await showModalBottomSheet<(String, String?)>(
     context: context,
@@ -668,6 +669,12 @@ Future<void> openSectionMoveSheet(BuildContext context, ChannelRow channel) asyn
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: k.fgMuted)),
               ),
+              if (starred)
+                Padding(
+                  key: const Key('section-move-starred-note'),
+                  padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 0, HarkroomSize.gutter, 8),
+                  child: Text(t.sectionStarredNote, style: TextStyle(fontSize: 12, color: k.fgMuted)),
+                ),
               for (final sec in secs)
                 ListTile(
                   key: Key('section-move-${sec.id}'),
@@ -697,13 +704,25 @@ Future<void> openSectionMoveSheet(BuildContext context, ChannelRow channel) asyn
     },
   );
   if (picked == null || !context.mounted) return;
+  // 옮긴 뒤 스낵바(designer s2) — 「#채널 → 섹션」. 행동이 없는 토스트라 `persist` 함정(#1392)에 안 걸린다.
+  void moved(String to) => messenger
+    ..removeCurrentSnackBar()
+    ..showSnackBar(SnackBar(
+      key: const Key('section-moved'),
+      content: Text(t.sectionMoved(channel.name, to)),
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 2),
+    ));
   try {
     if (picked.$1 == 'new') {
       final name = await _askSectionName(context);
       if (name == null) return;
       await app.createSectionWith(name, channel.id);
+      moved(name);
     } else if (picked.$2 != current) {
       await app.moveChannelToSection(channel.id, picked.$2);
+      final to = picked.$2 == null ? null : app.sections?.where((x) => x.id == picked.$2).firstOrNull?.name;
+      moved(to ?? t.sectionChannels);
     }
   } on ApiError catch (e) {
     messenger.showSnackBar(SnackBar(

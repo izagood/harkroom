@@ -538,6 +538,10 @@ class AppState extends ChangeNotifier {
     channelPrefs[channelId] = (before ??
             ChannelPref(channelId: channelId, starred: false, section: null, sortOrder: null, hidden: false))
         .withSection(sectionId, name);
+    // 접힌 섹션으로 옮기면 펼친다(designer s2) — 아니면 옮긴 채널이 목록에서 말없이 사라진다.
+    if (sectionId != null && (sections?.any((x) => x.id == sectionId && x.collapsed) ?? false)) {
+      unawaited(_toggleServerSection(sectionId));
+    }
     notifyListeners();
     try {
       await _api!.setChannelSection(channelId, sectionId);

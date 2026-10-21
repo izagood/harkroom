@@ -43,6 +43,7 @@ class _Server {
   final bodies = <Object?>[];
   bool withSections = true;
   bool inboxMentionC2 = false;
+  bool starC4 = false;
 
   MockClient get client => MockClient((req) async {
         final path = req.url.path;
@@ -77,6 +78,7 @@ class _Server {
               {'channelId': 'c1', 'section': '회사', 'sectionId': 's0'},
               {'channelId': 'c2', 'section': '회사', 'sectionId': 's0'},
               {'channelId': 'c3', 'section': '개인', 'sectionId': 's1'},
+              if (starC4) {'channelId': 'c4', 'starredAt': '2026-10-21T00:00:00Z'},
             ],
             if (withSections) 'sections': _sections,
           });
@@ -213,5 +215,57 @@ void main() {
     expect(server.bodies.last, {'name': '실험', 'channelIds': ['c1']});
     expect(app.channelPrefs['c1']?.sectionId, 'snew');
     expect(app.sections!.last.name, '실험');
+  });
+
+  testWidgets('접힌 섹션으로 옮기면 펼치고, 「#채널 → 섹션」 스낵바가 뜬다(designer s2)', (tester) async {
+    // 섹션 12개 아래의 채널까지 한 화면에 들게 키 큰 화면으로 띄운다.
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final server = _Server();
+    final app = await _pump(tester, server);
+    await tester.tap(find.byKey(const Key('section-sid:s1')));
+    await tester.pumpAndSettle();
+    expect(app.isSectionCollapsed('sid:s1'), isTrue);
+
+    await tester.longPress(find.byKey(const Key('channel-c4')));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.byKey(const Key('section-move-s1')), 80,
+        scrollable: find.descendant(of: find.byKey(const Key('section-move-sheet')), matching: find.byType(Scrollable)));
+    await tester.tap(find.byKey(const Key('section-move-s1')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(app.isSectionCollapsed('sid:s1'), isFalse, reason: '접힌 섹션으로 옮기면 펼친다');
+    expect(server.bodies[server.calls.lastIndexOf('PATCH /channel-sections/s1')], {'collapsed': false});
+    expect(find.byKey(const Key('channel-c4')), findsOneWidget, reason: '옮긴 채널이 말없이 사라지지 않는다');
+    expect(find.text('#study → 개인'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('section-moved')), findsNothing, reason: '스낵바는 스스로 내려간다');
+  });
+
+  testWidgets('섹션에서 빼면 「#채널 → 채널」, 별표 채널 시트에는 안내 한 줄(designer n4)', (tester) async {
+    // 섹션 12개 아래의 채널까지 한 화면에 들게 키 큰 화면으로 띄운다.
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final server = _Server()..starC4 = true;
+    await _pump(tester, server);
+    await tester.longPress(find.byKey(const Key('channel-c4')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('section-move-starred-note')), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.byKey(const Key('channel-c3')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('section-move-starred-note')), findsNothing, reason: '별표가 아니면 안내 없음');
+    await tester.scrollUntilVisible(find.byKey(const Key('section-move-remove')), 80,
+        scrollable: find.descendant(of: find.byKey(const Key('section-move-sheet')), matching: find.byType(Scrollable)));
+    await tester.tap(find.byKey(const Key('section-move-remove')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('#harkroom → Channels'), findsOneWidget);
   });
 }

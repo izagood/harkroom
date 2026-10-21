@@ -399,6 +399,10 @@ class StringsEn implements Strings {
   @override
   String get sectionNameTaken => 'A section with that name already exists.';
   @override
+  String sectionMoved(String channel, String section) => '#$channel → $section';
+  @override
+  String get sectionStarredNote => 'Unstar it to see it in this section.';
+  @override
   String get sectionHasUnread => 'Has unread channels';
   @override
   String get sectionEmpty => 'Long-press a channel to move it here';
