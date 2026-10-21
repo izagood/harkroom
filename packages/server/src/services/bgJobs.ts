@@ -248,9 +248,14 @@ export async function produceDistillJobs(pool: Pool, now: Date = new Date(), env
 /** 정리를 백그라운드 회차가 맡는가(BG5) — 전역 스위치 켜짐 + 소유자 토글 켬. 러너가 정리 신호를 뺄지 이것으로 정한다. */
 export async function bgCleanupOn(pool: Pool, accountId: string, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
   if (!backgroundEnabled(env)) return false;
-  const r = await pool.query<{ bg_enabled: boolean }>(`select bg_enabled from agent_config where account_id = $1`, [accountId]);
-  return r.rows[0]?.bg_enabled === true;
+  // 하네스도 본다(security n1) — 실행기(BG2)는 claude 만 집는다. 다른 하네스의 신호를 빼면 정리 일감은 아무도 안 집어
+  // expired 로 닫히고, 그 에이전트는 아무도 정리하지 않게 된다. 그런 에이전트는 지금처럼 신호를 받는다.
+  const r = await pool.query<{ bg_enabled: boolean; harness: string }>(`select bg_enabled, harness from agent_config where account_id = $1`, [accountId]);
+  return r.rows[0]?.bg_enabled === true && r.rows[0].harness === BG_HARNESS;
 }
+
+/** 실행기(agent `bgExecutor.ts`)가 집는 하네스. 생산자·신호 판정이 같은 값을 본다. */
+export const BG_HARNESS = 'claude-code';
 
 /** 주간 정리를 거는 최소 항목 수 — 설계 3절 목표(`mem/*` < 60)를 넘은 에이전트만 주 1회. 신호가 켜지면 수와 상관없이. */
 export const CLEANUP_WEEKLY_MIN_ITEMS = 60;
@@ -275,8 +280,10 @@ export async function produceCleanupJobs(pool: Pool, now: Date = new Date(), env
             exists (select 1 from bg_job j where j.account_id = a.id and j.kind = 'cleanup' and j.created_at > $1) as recent
        from account a
       where a.kind = 'agent' and a.deleted_at is null
+        -- 실행기가 집는 하네스만 — 다른 하네스는 신호로 지금처럼 정리한다(bgCleanupOn 과 같은 판정).
+        and exists (select 1 from agent_config ac where ac.account_id = a.id and ac.harness = $2)
         and exists (select 1 from agent_memory m where m.account_id = a.id)`,
-    [new Date(now.getTime() - CLEANUP_WEEKLY_MS)],
+    [new Date(now.getTime() - CLEANUP_WEEKLY_MS), BG_HARNESS],
   );
   for (const row of r.rows) {
     const reasons: string[] = [];
