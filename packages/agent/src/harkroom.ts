@@ -8,12 +8,12 @@
 // MCP 는 링크 위의 트랜스포트(`mcp.request`)로, 몇 안 되는 REST(`/agent/config` 등)는
 // `http.forward` 로 간다. 인증(오퍼레이터 토큰 + `X-Harkroom-Agent`)은 오퍼레이터가 붙인다 —
 // 그래서 이 파일에 PAT 도 URL 도 없다.
-import { PROVIDER_LANE_MOUNT_PATH } from '@harkroom/shared/providerLane';
+import { PROVIDER_LANE_MOUNT_PATH, type ProviderLaneFailureCode } from '@harkroom/shared/providerLane';
 import type { TurnModel } from './threadModel.js';
 import type { RecallHit, RecallResult } from './memoryPin.js';
 import type { BgJob } from './bgExecutor.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { AccountView, AgentView, InboxEntry, MessageRow } from '@harkroom/shared';
+import type { AccountView, AgentView, FailureCode, InboxEntry, MessageRow } from '@harkroom/shared';
 import type { RelayClient } from './relay.js';
 import { HARKROOM_ERROR_SOURCE } from './policy.js';
 import { VERSION } from './version.js';
@@ -111,7 +111,9 @@ export interface FailOpts {
   retryable: boolean;
   what?: string;
   reason?: string;
-  code?: 'thread_model_rejected' | 'account_gate';
+  code?: FailureCode;
+  /** `code: 'provider_lane'` 때만 — 허용 목록의 까닭 코드. */
+  laneCode?: ProviderLaneFailureCode;
   mentionId?: string;
   account?: string;
 }
@@ -606,6 +608,7 @@ export class HarkroomAgentClient {
       ...(opts.what ? { what: opts.what } : {}),
       ...(opts.reason ? { reason: opts.reason } : {}),
       ...(opts.code ? { code: opts.code } : {}),
+      ...(opts.laneCode ? { laneCode: opts.laneCode } : {}),
       ...(opts.mentionId ? { mentionId: opts.mentionId } : {}),
       ...(opts.account ? { account: opts.account } : {}),
     });

@@ -9,6 +9,7 @@
 // **admit 의 계약 한 줄: 턴 길이의 일을 절대 await 하지 않는다.** 유예 통지와 고아 entry 의
 // markRead 만 await 한다. 이 계약이 깨지면 폴 루프가 다시 턴에 묶여, 이 모듈이 존재하는
 // 이유 자체가 사라진다.
+import { ProviderLaneError } from './providerLane.js';
 import type { FailOpts, InboxBatch } from './harkroom.js';
 import type { WakeReportTo } from '@harkroom/shared';
 import { AccountGateRequeueError, mentionAnchor, type MentionTarget, type MentionTurnDeps, type MentionTurnResult } from './mentionTurn.js';
@@ -19,7 +20,7 @@ import { accountFailureOf, accountTrailOf, withAccountFailover, type ClaudeAccou
 import {
   accountTrailReason, controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
   withAccountTrail,
-  sessionConflictNotice, stallNotice, threadModelRejectedNotice, wakeReportTo,
+  providerLaneNotice, sessionConflictNotice, stallNotice, threadModelRejectedNotice, wakeReportTo,
 } from './prompt.js';
 import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, isThreadModelRejected, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import type { SecretLeases } from './secretLeases.js';
@@ -646,6 +647,26 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
        * **`markRead` 를 여기서 한다.** 안 하면 이 항목이 큐에 남아 다음 폴에서 다시 뜨고,
        * 재시도를 안 하겠다고 한 것이 무의미해진다(한도·충돌 분기와 같은 처리).
        */
+      // API 키 연결 실패(1c) — 정지와 같은 갈래: 재시도해도 같은 설정·같은 임대라 낫지 않는다. 다시 띄우지 않으므로
+      // 계정 로그인으로 떨어질 길도 없다(security ②). 사람에게는 코드만 남긴다(①).
+      if (err instanceof ProviderLaneError) {
+        console.error(`  ${mention.id} API 키 연결 실패 — 재시도하지 않는다: ${err.code}`);
+        const opts = {
+          retryable: false,
+          what: 'API 키 연결을 준비하지 못해 턴을 띄우지 않았다',
+          reason: '데스크톱의 에이전트 설정에서 API 주소·키를 확인해야 한다 — 같은 설정으로는 다시 실패한다',
+        };
+        await deps.harkroom.fail(mention.channelId, providerLaneNotice(err.code), anchor, { ...opts, code: 'provider_lane', laneCode: err.code })
+          // 옛 서버는 이 표지를 입력에서 거절한다 — 표지 없이 한 번 더 올린다(사람에게는 닿아야 한다).
+          .catch(() => deps.harkroom.fail(mention.channelId, providerLaneNotice(err.code), anchor, opts))
+          .catch((e: unknown) => {
+            console.error(`  ${mention.id} API 키 연결 실패 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
+          });
+        await finish(entryId);
+        attempts.delete(entryId);
+        void deps.secretLeases?.release(mention.id);
+        return;
+      }
       // 스레드 지정 모델 거절(결정 6) — 정지와 같은 갈래: 재시도하지 않고 사람이 할 일을 남긴다.
       const rejected = isThreadModelRejected(err);
       if (rejected) {

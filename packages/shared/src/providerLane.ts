@@ -63,3 +63,25 @@ export function readProviderLaneConfig(raw: unknown): ProviderLaneConfig | null 
   if (!baseUrl || typeof r.secretName !== 'string' || !PROVIDER_SECRET_NAME.test(r.secretName)) return null;
   return { baseUrl, secretName: r.secretName };
 }
+
+/**
+ * 턴을 못 띄운 까닭의 **허용 목록**(1c, security 조건 ③). 실패 카드 meta(`FailureMeta.failure.laneCode`)에는 이 값만 실린다 —
+ * 오퍼레이터·서버가 준 문자열을 그대로 흘리지 않고, 모르는 것은 `unknown` 으로 접는다. base URL·비밀 이름·값 경로는
+ * 코드가 아니므로 어디에도 실리지 않는다(조건 ①).
+ *
+ * - 러너가 정하는 것: `harness_unsupported`·`no_turn_secrets_dir`·`operator_unreachable`·`lane_unset`·`bad_base_url`·`bad_path`·`bad_value`·`bg_unsupported`
+ * - 오퍼레이터가 정하는 것: `no_lease`(재기동한 러너)·`forbidden`·`bad_request`·`unavailable`
+ * - 서버 비밀 꺼내기가 정하는 것: `not_granted`·`grant_suspended`·`lease_invalid`·`not_found`·`secret_expired`·`secret_store_disabled`·`rate_limited`
+ */
+export const PROVIDER_LANE_FAILURE_CODES = [
+  'harness_unsupported', 'no_turn_secrets_dir', 'operator_unreachable', 'lane_unset', 'bad_base_url', 'bad_path', 'bad_value', 'bg_unsupported',
+  'no_lease', 'forbidden', 'bad_request', 'unavailable',
+  'not_granted', 'grant_suspended', 'lease_invalid', 'not_found', 'secret_expired', 'secret_store_disabled', 'rate_limited',
+  'unknown',
+] as const;
+export type ProviderLaneFailureCode = (typeof PROVIDER_LANE_FAILURE_CODES)[number];
+
+/** 아무 문자열을 허용 목록의 코드로 접는다. 목록 밖은 `unknown`. */
+export function providerLaneFailureCode(raw: unknown): ProviderLaneFailureCode {
+  return (PROVIDER_LANE_FAILURE_CODES as readonly string[]).includes(raw as string) ? raw as ProviderLaneFailureCode : 'unknown';
+}

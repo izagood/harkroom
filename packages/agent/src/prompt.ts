@@ -327,6 +327,15 @@ export function sessionConflictNotice(): string {
  * 스레드 지정 모델을 하네스가 거절했다는 통지(결정 6). 사람이 할 일(스레드 칩에서 되돌리기)을
  * 말한다 — 앱은 이 실패 카드에 [기본으로 되돌리고 다시 부르기] 를 단다.
  */
+/**
+ * API 키 연결 에이전트가 그 턴의 주소·키를 못 받아 턴을 띄우지 않았다(1c). **코드만** 싣는다 — 주소·비밀 이름·경로는
+ * 사람 화면에도 기록에도 남기지 않는다(security ①). 코드는 이미 허용 목록으로 접힌 값이다(`ProviderLaneError`).
+ */
+export function providerLaneNotice(code: string): string {
+  return `(API 키 연결을 준비하지 못해 이 턴을 띄우지 않았습니다 — 다시 시도하지 않습니다. `
+    + `데스크톱의 에이전트 설정 › 모델 연결에서 API 주소와 API 키(비밀 허락)를 확인한 뒤 다시 불러 주세요. 까닭: ${code})`;
+}
+
 export function threadModelRejectedNotice(model: string | null, effort: string | null, apiError: string): string {
   const value = [model ?? '설정 모델', effort].filter(Boolean).join(' · ');
   const why = apiError.replace(/\s+/g, ' ').trim().slice(0, RETRY_REASON_MAX_CHARS);
