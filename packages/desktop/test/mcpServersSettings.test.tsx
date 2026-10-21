@@ -85,7 +85,7 @@ describe('McpServersSettings — 커뮤니티 이름', () => {
     expect(c.putMcpServer).not.toHaveBeenCalled();
   });
 
-  it('커뮤니티에서 삭제는 (접힌 줄이면) 칸 ⋯ 맨 끝에 있고 한 번 묻는다 — 체크(기본 켬)면 이 맥 정의도 지운다', async () => {
+  it('커뮤니티에서 삭제는 (접힌 줄이면) 칸 ⋯ 맨 끝에 있고 한 번 묻는다 — 체크(기본 꺼짐)를 켜면 이 맥 정의도 지운다', async () => {
     useActiveStore.getState().set({ me: me(['agent.privileged']) as never });
     const calls = local([remote('github', { state: 'ok' }, { oauth: false })]);
     const c = fake([{ name: 'github', credentialKind: 'community' }]);
@@ -94,7 +94,10 @@ describe('McpServersSettings — 커뮤니티 이름', () => {
     fireEvent.click(screen.getByTestId('mcp-cell-menu-github'));
     fireEvent.click(await screen.findByRole('menuitem', { name: '커뮤니티에서 삭제' }));
     expect(c.deleteMcpServer).not.toHaveBeenCalled();
-    expect((screen.getByTestId('mcp-confirm-also-local') as HTMLInputElement).checked).toBe(true);
+    // 기본은 꺼짐 — 이 맥의 정의는 다른 커뮤니티도 같이 쓴다(security #1453 n3). 켜면 이 맥 정의도 지운다.
+    expect((screen.getByTestId('mcp-confirm-also-local') as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByTestId('mcp-confirm-also-local-note').textContent).toContain('다른 커뮤니티');
+    fireEvent.click(screen.getByTestId('mcp-confirm-also-local'));
     fireEvent.click(screen.getByTestId('confirm-ok'));
     await waitFor(() => expect(c.deleteMcpServer).toHaveBeenCalledWith('github'));
     await waitFor(() => expect(calls).toContainEqual({ cmd: 'operator_mcp_remove', args: { name: 'github' } }));
@@ -119,7 +122,7 @@ describe('McpServersSettings — 커뮤니티 이름', () => {
     await waitFor(() => expect(screen.getAllByRole('menuitem').map((x) => x.textContent)).toEqual(['커뮤니티에서 삭제']));
   });
 
-  it('체크를 끄면 커뮤니티 이름만 지우고 이 맥 정의는 둔다', async () => {
+  it('체크를 그대로(꺼짐) 두면 커뮤니티 이름만 지우고 이 맥 정의는 둔다', async () => {
     useActiveStore.getState().set({ me: me(['agent.privileged']) as never });
     const calls = local([remote('github', { state: 'ok' }, { oauth: false })]);
     const c = fake([{ name: 'github', credentialKind: 'community' }]);
@@ -127,7 +130,6 @@ describe('McpServersSettings — 커뮤니티 이름', () => {
     await screen.findByTestId('mcp-cell-primary-github');
     fireEvent.click(screen.getByTestId('mcp-cell-menu-github'));
     fireEvent.click(await screen.findByRole('menuitem', { name: '커뮤니티에서 삭제' }));
-    fireEvent.click(screen.getByTestId('mcp-confirm-also-local'));
     fireEvent.click(screen.getByTestId('confirm-ok'));
     await waitFor(() => expect(c.deleteMcpServer).toHaveBeenCalledWith('github'));
     expect(calls.some((x) => x.cmd === 'operator_mcp_remove')).toBe(false);

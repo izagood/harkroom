@@ -3176,6 +3176,7 @@ export const ko = {
   'mcpServers.removeCommunity': '커뮤니티에서 삭제',
   'mcpServers.confirmDetailCommunity': '모든 멤버의 모든 오퍼레이터에서 이 이름이 빠진다. 켜 둔 에이전트는 다음에 뜰 때부터 이 MCP 없이 돈다.',
   'mcpServers.confirmAlsoLocal': '이 맥의 정의와 토큰도 함께 지운다',
+  'mcpServers.confirmAlsoLocalNote': '다른 커뮤니티의 에이전트도 이 맥의 이 정의를 쓴다.',
   'mcpServers.removeHereTitle': '이 맥에서 {name} 을 지울까?',
   'mcpServers.removeHereDetail': '이 맥의 정의(URL·Client ID)와 로그인 토큰을 지운다. 커뮤니티의 이름은 그대로다. 이 맥에서 이 서버를 켜 둔 에이전트는 다시 추가할 때까지 뜨지 않는다.',
   'mcpServers.removeHereFailed': '이 맥에서 지우지 못했다: {reason}',

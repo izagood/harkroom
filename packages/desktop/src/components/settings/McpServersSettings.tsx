@@ -187,7 +187,9 @@ export function McpServersSection() {
 
   /** 「커뮤니티에서 삭제」 — 한 번 묻고(UX ④c), 이 맥의 정의·토큰도 함께 지울지 고른다(기본 켬). */
   const [confirming, setConfirming] = useState<McpServerRow | null>(null);
-  const [alsoLocal, setAlsoLocal] = useState(true);
+  // 기본은 끈다 — 이 맥의 정의는 이 맥의 **모든 커뮤니티**가 같이 쓴다. 한 커뮤니티에서 이름을 지운다고
+  // 다른 커뮤니티 에이전트가 쓰던 정의·토큰까지 지우면 그쪽이 mcp_server_missing 으로 멈춘다(security #1453 n3).
+  const [alsoLocal, setAlsoLocal] = useState(false);
   const [removing, setRemoving] = useState(false);
   const localEntry = (name: string) => local?.find((d) => d.name === name);
   const remove = async (row: McpServerRow) => {
@@ -238,7 +240,7 @@ export function McpServersSection() {
             const cells = cellsOf(row);
             const collapsed = cells.length === 1;
             const headItems: MenuItem[] = canEdit
-              ? [{ label: t('mcpServers.removeCommunity'), tone: 'danger', onSelect: () => { setError(null); setAlsoLocal(true); setConfirming(row); } }]
+              ? [{ label: t('mcpServers.removeCommunity'), tone: 'danger', onSelect: () => { setError(null); setAlsoLocal(false); setConfirming(row); } }]
               : [];
             return (
               <div key={row.name} className="flex flex-col gap-2 px-4 py-3" data-testid={`mcp-server-${row.name}`}>
@@ -277,11 +279,14 @@ export function McpServersSection() {
             <span className="flex flex-col gap-2">
               <span>{t('mcpServers.confirmDetailCommunity')}</span>
               {localEntry(confirming.name)?.source === 'operator' && (
-                <label className="flex items-center gap-1.5 text-fg">
-                  <input type="checkbox" checked={alsoLocal} disabled={removing} data-testid="mcp-confirm-also-local"
-                    onChange={(e) => setAlsoLocal(e.target.checked)} />
-                  {t('mcpServers.confirmAlsoLocal')}
-                </label>
+                <span className="flex flex-col gap-0.5">
+                  <label className="flex items-center gap-1.5 text-fg">
+                    <input type="checkbox" checked={alsoLocal} disabled={removing} data-testid="mcp-confirm-also-local"
+                      onChange={(e) => setAlsoLocal(e.target.checked)} />
+                    {t('mcpServers.confirmAlsoLocal')}
+                  </label>
+                  <span className="text-fg-subtle" data-testid="mcp-confirm-also-local-note">{t('mcpServers.confirmAlsoLocalNote')}</span>
+                </span>
               )}
             </span>
           )}

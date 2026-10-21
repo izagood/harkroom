@@ -5321,6 +5321,7 @@ export const en = {
   'mcpServers.removeCommunity': 'Delete from community',
   'mcpServers.confirmDetailCommunity': 'The name is removed from every member\'s operators. Agents that had it on run without this MCP from their next start.',
   'mcpServers.confirmAlsoLocal': 'Also delete this Mac\'s definition and token',
+  'mcpServers.confirmAlsoLocalNote': 'Agents in your other communities use this definition on this Mac too.',
   'mcpServers.removeHereTitle': 'Remove {name} from this Mac?',
   'mcpServers.removeHereDetail': 'Deletes this Mac\'s definition (URL · Client ID) and sign-in token. The community name stays. Agents on this Mac that have it on won\'t start until you add it again.',
   'mcpServers.removeHereFailed': 'Couldn\'t remove it from this Mac: {reason}',
