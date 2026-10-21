@@ -111,7 +111,12 @@ function LocalCell({ row, entry, collapsed, tailItems, onDefine, onEdit, onRemov
   const ownApp = entry.oauthClientId && entry.oauthClientId !== presetId;
   const authText = (() => {
     if (!remote || !st) return null;
-    if (st.state === 'ok') return { tone: 'text-fg-muted', dot: 'bg-success', text: t('agents.mcp.auth.ok') };
+    // 받은 때를 같이 적는다(designer #1453 n3). 옛 오퍼레이터는 `at` 을 안 실어 낱말만 보인다.
+    if (st.state === 'ok') {
+      return { tone: 'text-fg-muted', dot: 'bg-success', text: typeof st.at === 'number'
+        ? t('mcpServers.cell.okAt', { time: stampLabel(new Date(st.at).toISOString(), locale) })
+        : t('agents.mcp.auth.ok') };
+    }
     if (st.state === 'pending') return { tone: 'text-fg-subtle', dot: 'bg-fg-subtle', text: t('agents.mcp.auth.pending') };
     if (st.state === 'rejected') {
       const agent = st.agentId ? names[st.agentId] : undefined;

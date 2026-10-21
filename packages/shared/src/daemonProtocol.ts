@@ -730,6 +730,8 @@ export interface OperatorMcpEntry {
   oauth: boolean;
   /** 정의의 `oauth.clientId`(공개 값). 없으면 동적 등록·공용 클라이언트. */
   oauthClientId?: string;
+  /** 정의의 `oauth.callbackPort`(공개 값) — 앱이 편집할 때 손으로 넣은 포트를 지킨다(MCP 설정 v2 PR3). */
+  oauthCallbackPort?: number;
   /** 오퍼레이터가 든 OAuth 토큰의 상태(원격 정의만). 없으면 옛 오퍼레이터 — 모른다. */
   auth?: OperatorMcpAuthState;
 }

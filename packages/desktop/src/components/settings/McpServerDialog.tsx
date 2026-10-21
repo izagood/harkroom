@@ -47,9 +47,16 @@ export function buildMcpDefinition(input: {
   const type: OperatorMcpRemoteDefinition['type'] = input.entry?.transport === 'sse' ? 'sse' : 'http';
   const base: OperatorMcpRemoteDefinition = preset && preset.definition.url === url ? preset.definition : { type, url };
   let oauth = base.oauth ? { ...base.oauth } : input.entry?.oauth ? {} : undefined;
+  // 프리셋이 아닌 정의는 손으로 넣은 callbackPort 를 지킨다(목록이 실어 준다, PR3).
+  if (!base.oauth?.callbackPort && input.entry?.oauthCallbackPort) oauth = { ...(oauth ?? {}), callbackPort: input.entry.oauthCallbackPort };
   const typed = input.clientId.trim();
+  // 칸을 비우면 지금 Client ID 를 유지한다 — 단 **URL 이 그대로일 때만**. 옛 클라이언트는 새 서버의 것이 아니다
+  // (security #1453 n4, 오퍼레이터 `localMcp.set` 과 같은 규칙).
+  const sameUrl = input.entry !== undefined && input.entry.target === url;
   if (typed) oauth = { ...(oauth ?? {}), clientId: typed };
-  else if (!input.revert && input.entry?.oauthClientId) oauth = { ...(oauth ?? {}), clientId: input.entry.oauthClientId };
+  else if (!input.revert && sameUrl && input.entry?.oauthClientId) oauth = { ...(oauth ?? {}), clientId: input.entry.oauthClientId };
+  // 되돌리기는 프리셋 값을 **명시해** 보낸다 — 비워 보내면 오퍼레이터가 지금 값을 유지한다(PR3).
+  else if (input.revert && preset?.definition.oauth?.clientId) oauth = { ...(oauth ?? {}), clientId: preset.definition.oauth.clientId };
   return oauth ? { ...base, oauth } : { type: base.type, url: base.url, ...(base.headers ? { headers: base.headers } : {}) };
 }
 

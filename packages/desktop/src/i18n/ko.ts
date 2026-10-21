@@ -3200,6 +3200,7 @@ export const ko = {
   'mcpServers.cell.expired': '만료 — 다시 인증해야 한다',
   'mcpServers.cell.rejected': '거부됨 · {time} · {agent}',
   'mcpServers.cell.rejectedNoAgent': '거부됨 · {time}',
+  'mcpServers.cell.okAt': '인증됨 · {time}',
   'mcpServers.dialog.addTitle': 'MCP 서버 추가',
   'mcpServers.dialog.defineTitle': '{name} — 이 맥에 정의 추가',
   'mcpServers.dialog.editTitle': '{name} — 이 맥 정의 편집',

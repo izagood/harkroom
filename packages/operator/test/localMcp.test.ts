@@ -23,7 +23,7 @@ describe('localMcp 포트', () => {
     const listed = await port.list();
     expect(JSON.stringify(listed)).not.toContain('SECRET');
     expect(listed.servers).toEqual([
-      { name: 'slack', source: 'operator', transport: 'http', target: 'https://mcp.example.com/mcp', args: [], envKeys: [], headerKeys: ['Authorization'], oauth: true, oauthClientId: 'c' },
+      { name: 'slack', source: 'operator', transport: 'http', target: 'https://mcp.example.com/mcp', args: [], envKeys: [], headerKeys: ['Authorization'], oauth: true, oauthClientId: 'c', oauthCallbackPort: 3118 },
       { name: 'timing', source: 'operator', transport: 'stdio', target: 'timing-mcp', args: ['--x'], envKeys: ['TOKEN'], headerKeys: [], oauth: false },
     ]);
     const onDisk = JSON.parse(await readFile(registryPath, 'utf8'));
@@ -121,13 +121,55 @@ describe('localMcp 포트 — 원격 MCP 인증 (2026-09-30)', () => {
     expect(row).toMatchObject({ oauthClientId: 'NEW' });
   });
 
-  it('정의를 빼면 그 토큰도 지운다', async () => {
+  it('Client ID 를 비워 보내면 같은 URL 일 때만 지금 값을 유지한다 — 토큰도 건드리지 않는다(MCP 설정 v2 PR3)', async () => {
     const { registryPath } = await fresh();
     const f = fakeOAuth();
     const port = createLocalMcpPort({ registryPath, claudeConfigPath: null, oauth: f.oauth });
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'OWN', callbackPort: 3118 } });
+    f.calls.length = 0;
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { callbackPort: 3118 } });
+    expect(f.calls).toEqual([]);
+    expect(JSON.parse(await readFile(registryPath, 'utf8')).slack.oauth).toEqual({ clientId: 'OWN', callbackPort: 3118 });
+    // oauth 블록 자체를 빼고 보내도 같다.
     await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp' });
+    expect(f.calls).toEqual([]);
+    expect(JSON.parse(await readFile(registryPath, 'utf8')).slack.oauth).toEqual({ clientId: 'OWN' });
+    expect((await port.list()).servers.find((x) => x.name === 'slack')).toMatchObject({ oauthClientId: 'OWN' });
+  });
+
+  it('URL 이 바뀌면 비운 Client ID 를 유지하지 않는다 — 옛 클라이언트는 새 서버의 것이 아니다(security #1453 n4)', async () => {
+    const { registryPath } = await fresh();
+    const f = fakeOAuth();
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null, oauth: f.oauth });
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'OWN', callbackPort: 3118 } });
+    f.calls.length = 0;
+    await port.set('slack', { type: 'http', url: 'https://other.example.com/mcp', oauth: { callbackPort: 3118 } });
+    expect(f.calls).toEqual(['forget:slack']);
+    expect(JSON.parse(await readFile(registryPath, 'utf8')).slack).toEqual({ type: 'http', url: 'https://other.example.com/mcp', oauth: { callbackPort: 3118 } });
+  });
+
+  it('목록에 callbackPort 를 싣는다 — 앱이 편집할 때 손으로 넣은 포트를 지킨다', async () => {
+    const { registryPath } = await fresh();
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null, oauth: fakeOAuth().oauth });
+    await port.set('linear', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { callbackPort: 4555 } });
+    await port.set('plain', { type: 'http', url: 'https://plain.example.com/mcp' });
+    const rows = (await port.list()).servers;
+    expect(rows.find((x) => x.name === 'linear')).toMatchObject({ oauthCallbackPort: 4555 });
+    expect(rows.find((x) => x.name === 'plain')).not.toHaveProperty('oauthCallbackPort');
+  });
+
+  it('정의를 빼면(「이 맥에서 지우기」) 그 토큰도 지운다 — 정의가 없으면 아무것도 하지 않는다', async () => {
+    const { registryPath } = await fresh();
+    const f = fakeOAuth();
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null, oauth: f.oauth });
+    await port.set('slack', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'OWN' } });
+    f.calls.length = 0;
     await port.remove('slack');
-    expect(f.calls).toContain('forget:slack');
+    expect(f.calls).toEqual(['forget:slack']);
+    expect(JSON.parse(await readFile(registryPath, 'utf8'))).not.toHaveProperty('slack');
+    f.calls.length = 0;
+    await port.remove('slack');
+    expect(f.calls).toEqual([]);
   });
 });
 
