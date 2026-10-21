@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
-import { EditorState, Prec, RangeSetBuilder, type Extension } from '@codemirror/state';
+import { EditorState, Prec, Transaction, RangeSetBuilder, type Extension } from '@codemirror/state';
 import {
   Decoration, EditorView, ViewPlugin, keymap, placeholder as cmPlaceholder,
   type DecorationSet, type ViewUpdate,
@@ -61,6 +61,11 @@ export interface ComposerPasteEvent {
 
 interface Props {
   value: string;
+  /**
+   * 초안의 자리(채널·스레드). 바뀌면 되돌리기 기록을 버린다 — 편집기는 자리를 옮겨도 다시 만들어지지
+   * 않으므로, 기록을 이어 두면 B 에서 ⌘Z 를 눌렀을 때 A(DM 일 수 있다)의 초안이 돌아와 B 로 나갈 수 있다.
+   */
+  historyKey?: string;
   placeholder?: string;
   autoFocus?: boolean;
   /** 보이는 최소 줄 수. 내용이 늘면 `maxHeight` 까지 자란다(결정 8). */
@@ -78,7 +83,12 @@ interface Props {
 const mdHighlight = HighlightStyle.define([
   { tag: tags.strong, fontWeight: '700' },
   { tag: tags.emphasis, fontStyle: 'italic' },
-  { tag: tags.strikethrough, textDecoration: 'line-through' },
+  /*
+    취소선은 인라인 스타일(`textDecoration`)이 아니라 클래스로 칠한다. WKWebView 에서 `HighlightStyle` 이 만든
+    `text-decoration: line-through` 는 계산값에는 서는데 줄이 그려지지 않았다(탐침, 10-21) — 길이·색·굵기를
+    다 적은 규칙(`.cm-md-strike`, index.css)은 그려진다.
+  */
+  { tag: tags.strikethrough, class: 'cm-md-strike' },
   { tag: tags.link, class: 'cm-md-link' },
   { tag: tags.url, class: 'cm-md-url' },
   { tag: tags.monospace, class: 'cm-md-code' },
@@ -168,6 +178,9 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
   latest.current = props;
   // 바깥에서 값을 넣는 중에는 onChange 를 되돌려 보내지 않는다(제어 값의 메아리).
   const syncing = useRef(false);
+  // 편집기를 만든 확장 묶음. 자리가 바뀌어 상태를 새로 짤 때(`historyKey`) 같은 것을 다시 쓴다.
+  const extRef = useRef<Extension[]>([]);
+  const lastHistoryKey = useRef(props.historyKey);
 
   const box = useRef<ComposerTextBox>({
     get value() { return viewRef.current?.state.doc.toString() ?? ''; },
@@ -229,6 +242,7 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
       extensions.push(cmPlaceholder(props.placeholder));
       extensions.push(EditorView.contentAttributes.of({ 'aria-placeholder': props.placeholder, placeholder: props.placeholder }));
     }
+    extRef.current = extensions;
     const view = new EditorView({
       parent: host.current!,
       state: EditorState.create({ doc: props.value, extensions }),
@@ -238,6 +252,22 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
     return () => { view.destroy(); viewRef.current = null; };
     // 자리표시 글은 처음 한 번만 — 바뀌면 다시 만든다.
   }, [props.placeholder]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /*
+    자리가 바뀌면 상태를 새로 짜서 되돌리기 기록을 버린다(`historyKey` 주석). 아래의 값 맞추기보다 **먼저**
+    돌아야 한다 — 그래야 새 자리의 초안이 기록 없는 새 상태의 첫 글이 되고, 값 맞추기는 할 일이 없다.
+    `setState` 는 갱신 알림(`updateListener`)을 부르지 않으므로 새 초안이 onChange 로 되돌아가지 않는다.
+  */
+  useLayoutEffect(() => {
+    const view = viewRef.current;
+    if (!view || lastHistoryKey.current === props.historyKey) return;
+    lastHistoryKey.current = props.historyKey;
+    view.setState(EditorState.create({
+      doc: props.value,
+      extensions: extRef.current,
+      selection: { anchor: props.value.length },
+    }));
+  }, [props.historyKey, props.value]);
 
   /*
     바깥(보내기·되돌리기·⌘E·멘션 고르기)에서 바뀐 값을 편집기에 옮긴다. **레이아웃 효과**인 것이 요점이다:
@@ -257,6 +287,11 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
       view.dispatch({
         changes: { from: 0, to: cur.length, insert: props.value },
         selection: { anchor: Math.min(sel.anchor, len), head: Math.min(sel.head, len) },
+        /*
+          바깥에서 넣은 값은 되돌리기 기록에 올리지 않는다. 올리면 보낸 뒤 ⌘Z 가 보낸 글을 되살려 다시
+          보내기 쉽고, 기록이 사람이 친 것과 코드가 넣은 것을 섞는다(textarea 도 코드로 넣은 값은 기록을 끊었다).
+        */
+        annotations: Transaction.addToHistory.of(false),
       });
     } finally {
       syncing.current = false;

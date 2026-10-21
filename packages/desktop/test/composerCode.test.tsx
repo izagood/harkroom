@@ -88,6 +88,12 @@ describe('입력 중인 코드에 면이 깔린다', () => {
     expect([...document.querySelectorAll('.cm-md-mark')].map((el) => el.textContent)).toEqual(['**', '**']);
   });
 
+  it('취소선은 클래스(cm-md-strike)로 칠한다 — 인라인 스타일은 WKWebView 에서 줄이 안 그어졌다', () => {
+    render(<Composer onSend={vi.fn()} />);
+    typeInto('~~지운 말~~ 끝');
+    expect([...document.querySelectorAll('.cm-content .cm-md-strike')].map((el) => el.textContent).join('')).toBe('지운 말');
+  });
+
   it('링크는 커서 밖이면 이름만 남는다 — 주소도 기호처럼 숨고, 초안에는 그대로 있다', () => {
     render(<Composer onSend={vi.fn()} />);
     const box = typeInto('[문서](https://example.com) 끝');

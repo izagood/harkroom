@@ -2044,6 +2044,7 @@ export function Composer({
       <div className="relative rounded-compose bg-field shadow-compose">
         <ComposerEditor
           ref={ref}
+          historyKey={scopeKey}
           className={`block w-full border-transparent bg-transparent ${COMPOSER_BOX}`}
           rows={rows}
           autoFocus={autoFocus}
