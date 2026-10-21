@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useT } from '../i18n/useT';
 import type { MessageKey } from '../i18n';
 
@@ -13,21 +14,35 @@ import type { MessageKey } from '../i18n';
  */
 export type FormatKind = 'bold' | 'italic' | 'strike' | 'link' | 'ordered' | 'bullet' | 'quote' | 'code' | 'codeBlock';
 
-const GROUPS: { kind: FormatKind; glyph: string; label: MessageKey; keys: string; cls?: string }[][] = [
+/**
+ * 링크·목록·인용은 단색 선 아이콘이다(#1431 designer 3). 컬러 이모지(🔗)나 글자 기호(`1.`·`•`·`❝`)는 크기·굵기가
+ * 제각각이라 단추들 사이에서 튄다. 16px · `currentColor` · 선 1.6 — 글자 단추(B·I·S)와 같은 색을 따른다.
+ */
+const icon = (d: string) => (
+  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d={d} />
+  </svg>
+);
+const LINK = icon('M6.5 9.5l3-3M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1a2.5 2.5 0 0 1-3.5-3.5l1-1');
+const ORDERED = icon('M6.5 4h7M6.5 8h7M6.5 12h7M2.5 3l1-.5V6M2.3 9.6a.9.9 0 0 1 1.6.6L2.3 12.5h1.8');
+const BULLET = icon('M6.5 4h7M6.5 8h7M6.5 12h7M3 4h.01M3 8h.01M3 12h.01');
+const QUOTE = icon('M3 3.5v9M6.5 5h6.5M6.5 8h6.5M6.5 11h4');
+
+const GROUPS: { kind: FormatKind; glyph: ReactNode; label: MessageKey; keys: string; cls?: string }[][] = [
   [
     { kind: 'bold', glyph: 'B', label: 'composer.fmt.bold', keys: '⌘B', cls: 'font-bold' },
     { kind: 'italic', glyph: 'I', label: 'composer.fmt.italic', keys: '⌘I', cls: 'italic' },
     { kind: 'strike', glyph: 'S', label: 'composer.fmt.strike', keys: '⌘⇧X', cls: 'line-through' },
   ],
-  [{ kind: 'link', glyph: '🔗', label: 'composer.fmt.link', keys: '⌘K' }],
+  [{ kind: 'link', glyph: LINK, label: 'composer.fmt.link', keys: '⌘K' }],
   [
-    { kind: 'ordered', glyph: '1.', label: 'composer.fmt.ordered', keys: '⌘⇧7' },
-    { kind: 'bullet', glyph: '•', label: 'composer.fmt.bullet', keys: '⌘⇧8' },
+    { kind: 'ordered', glyph: ORDERED, label: 'composer.fmt.ordered', keys: '⌘⇧7' },
+    { kind: 'bullet', glyph: BULLET, label: 'composer.fmt.bullet', keys: '⌘⇧8' },
   ],
-  [{ kind: 'quote', glyph: '❝', label: 'composer.fmt.quote', keys: '⌘⇧9' }],
+  [{ kind: 'quote', glyph: QUOTE, label: 'composer.fmt.quote', keys: '⌘⇧9' }],
   [
     { kind: 'code', glyph: '</>', label: 'composer.fmt.code', keys: '⌘E', cls: 'font-mono' },
-    { kind: 'codeBlock', glyph: '{ }', label: 'composer.fmt.codeBlock', keys: '', cls: 'font-mono' },
+    { kind: 'codeBlock', glyph: '{ }', label: 'composer.fmt.codeBlock', keys: '⌘⌥C', cls: 'font-mono' },
   ],
 ];
 
@@ -53,7 +68,7 @@ export function ComposerToolbar({ onFormat }: { onFormat: (kind: FormatKind) => 
                 data-testid={`fmt-${b.kind}`}
                 aria-label={name}
                 title={b.keys ? `${name} (${b.keys})` : name}
-                className={`min-w-7 rounded-row px-1.5 py-0.5 text-fg-muted hover:bg-surface-sunken hover:text-fg ${b.cls ?? ''}`}
+                className={`inline-flex h-7 min-w-7 items-center justify-center rounded-row px-1.5 text-fg-muted hover:bg-surface-sunken hover:text-fg ${b.cls ?? ''}`}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => onFormat(b.kind)}
               >

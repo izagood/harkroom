@@ -1371,6 +1371,12 @@ export function Composer({
       `e.code` 로 가린다 — 한글 입력 상태에서는 `e.key` 가 `ㅠ`·`ㅑ` 로 오고, ⇧ 와 함께면
       숫자 열쇠가 `&`·`*`·`(` 로 온다.
     */
+    // ⌘⌥C: 코드 블록(시안 키보드 표). `formatShortcut` 은 ⌥ 를 받지 않으므로 따로 본다 — `e.code` 인 이유는 같다.
+    if ((e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey && e.code === 'KeyC') {
+      e.preventDefault();
+      applyFormat('codeBlock');
+      return;
+    }
     const fmt = formatShortcut(e);
     if (fmt) {
       e.preventDefault();
@@ -2041,7 +2047,9 @@ export function Composer({
       */}
       {/* 입력창의 선은 `shadow-compose` 가 그린다(A · Paper §7) — 칸의 border 는 자리만 지키고 투명하다.
           둘 다 그리면 1px 선이 두 겹이 된다. */}
-      <div className="relative flex flex-col rounded-compose bg-field shadow-compose">
+      {/* `composer-box`: 포커스 링이 이 바깥 상자에 선다(index.css) — 안쪽 본문 칸에 세우면 상자 안에 상자가 하나 더 생기고
+          도구줄·동작줄이 링 밖으로 떨어져 한 입력창으로 읽히지 않는다(#1431 designer 1). */}
+      <div className="composer-box relative flex flex-col rounded-compose bg-field shadow-compose">
         {toolbarOn && <ComposerToolbar onFormat={applyFormat} />}
         {(autoActive.length > 0 || sticky.length > 0) && (
           <ul className="flex flex-wrap items-center gap-1 px-3 pt-2" aria-label={t('chat.keptMentions')}>
@@ -2136,7 +2144,8 @@ export function Composer({
           <div className="flex items-center gap-0.5">
             {/* aria-label 은 **input** 에 붙인다. label 에 붙이면 그 요소 자신의 이름이
                 될 뿐 input 과 연결되지 않아 입력이 접근 불가가 된다. */}
-            <label className="cursor-pointer rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-sunken">
+            {/* 원형 면: 글자 「+」 하나로는 첨부 입구가 약하다(#1431 designer n3). */}
+            <label className="mr-0.5 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-surface-sunken text-fg-muted hover:bg-surface-hover hover:text-fg">
               ＋
               <input
                 ref={fileRef}
@@ -2230,61 +2239,68 @@ export function Composer({
                   : t('composer.send.remaining', { remaining: numberText(-overBy, locale) })}
               </span>
             )}
-            <button
-              type="button"
-              aria-label={t('chat.send')}
-              className="rounded-full bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border disabled:text-fg-subtle"
-              // 여기는 blur 를 막지 않는다 — 전송에 성공하면 초안이 비므로 커서를 보존할
-              // 이유가 없고, 실패하면 사용자가 다시 textarea 를 눌러 이어 쓴다. 반면 위
-              // @·첨부 버튼은 누른 뒤에도 같은 자리에 계속 써야 하므로 막는다.
-              onMouseDown={(e) => e.preventDefault()}
-              /* **인자 없이 부른다.** `onClick={send}` 로 두면 클릭 이벤트가 `confirmed` 자리에
-                 들어가 항상 참이 되어, 다수 호출 확인이 조용히 건너뛰어진다. */
-              onClick={() => send()}
-              // 상한을 넘긴 채로는 누를 수 없다 — 누를 수 있게 두고 실패를 보여 주는 것보다,
-              // 애초에 못 누르게 하고 얼마나 넘겼는지 옆에 세우는 것이 고칠 길을 준다.
-              disabled={(!draft.trim() && !pending.length) || tooLong || offline}
-            >
-              {t('composer.send.submit')}
-            </button>
-            {/* 예약은 보내기 옆 ⌄ 메뉴다(입력창 개편 결정 5 — 지금까지는 왼쪽 🕐). 채널이 있어야 건다(#222):
-                `channelId` 가 없는 자리(스레드 답장 등 단독 컴포저)에서 그리면 눌러도 아무 일이 없는 죽은 단추가 된다. */}
-            {channelId && (
-              <div className="relative">
-                <button
-                  type="button"
-                  aria-label={t('composer.send.options')}
-                  aria-haspopup="menu"
-                  aria-expanded={sendMenu}
-                  data-testid="composer-send-options"
-                  className="rounded-row px-1.5 py-1 text-fg-muted hover:bg-surface-sunken"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { setEmojiOpen(false); setSendMenu((v) => !v); }}
-                >
-                  ⌄
-                </button>
-                {sendMenu && (
-                  <div
-                    role="menu"
-                    className="absolute bottom-full right-0 z-30 mb-1 min-w-40 rounded-card bg-surface-raised p-1 shadow-float"
-                    onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setSendMenu(false); ref.current?.focus(); } }}
+            {/* 「전송」│⌄ 는 한 덩어리 split 단추다 — 「나중에 보내기…」가 전송에 딸린 동작임이 보인다(#1431 designer 2). */}
+            <div className="flex items-stretch">
+              <button
+                type="button"
+                aria-label={t('chat.send')}
+                className={`bg-accent py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border disabled:text-fg-subtle ${
+                  channelId ? 'rounded-l-full pl-3 pr-2.5' : 'rounded-full px-3'
+                }`}
+                // 여기는 blur 를 막지 않는다 — 전송에 성공하면 초안이 비므로 커서를 보존할
+                // 이유가 없고, 실패하면 사용자가 다시 textarea 를 눌러 이어 쓴다. 반면 위
+                // @·첨부 버튼은 누른 뒤에도 같은 자리에 계속 써야 하므로 막는다.
+                onMouseDown={(e) => e.preventDefault()}
+                /* **인자 없이 부른다.** `onClick={send}` 로 두면 클릭 이벤트가 `confirmed` 자리에
+                   들어가 항상 참이 되어, 다수 호출 확인이 조용히 건너뛰어진다. */
+                onClick={() => send()}
+                // 상한을 넘긴 채로는 누를 수 없다 — 누를 수 있게 두고 실패를 보여 주는 것보다,
+                // 애초에 못 누르게 하고 얼마나 넘겼는지 옆에 세우는 것이 고칠 길을 준다.
+                disabled={(!draft.trim() && !pending.length) || tooLong || offline}
+              >
+                {t('composer.send.submit')}
+              </button>
+              {/* 예약은 보내기 옆 ⌄ 메뉴다(입력창 개편 결정 5 — 지금까지는 왼쪽 🕐). 채널이 있어야 건다(#222):
+                  `channelId` 가 없는 자리(스레드 답장 등 단독 컴포저)에서 그리면 눌러도 아무 일이 없는 죽은 단추가 된다. */}
+              {channelId && (
+                <div className="relative flex">
+                  <button
+                    type="button"
+                    aria-label={t('composer.send.options')}
+                    aria-haspopup="menu"
+                    aria-expanded={sendMenu}
+                    data-testid="composer-send-options"
+                    className="h-full rounded-r-full border-l border-fg-on-strong/30 bg-accent pl-1.5 pr-2.5 text-fg-on-strong hover:bg-accent-hover disabled:border-surface disabled:bg-border disabled:text-fg-subtle"
+                    // 빈 입력이면 전송과 같이 흐리다 — 메뉴의 유일한 항목(나중에 보내기)도 본문이 있어야 한다.
+                    disabled={!draft.trim() || offline}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => { setEmojiOpen(false); setSendMenu((v) => !v); }}
                   >
-                    {/* 본문이 비어 있을 때 막는 것은 전송 단추와 같은 이유다 — 서버가 400 으로 돌려보낼 것을 왕복시키지 않는다. */}
-                    <button
-                      type="button"
-                      role="menuitem"
-                      aria-label={t('composer.schedule.later')}
-                      className="block w-full rounded-row px-2 py-1 text-left hover:bg-surface-sunken disabled:opacity-40"
-                      disabled={!draft.trim()}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => { setSendMenu(false); openScheduleModal(); }}
+                    ⌄
+                  </button>
+                  {sendMenu && (
+                    <div
+                      role="menu"
+                      className="absolute bottom-full right-0 z-30 mb-1 min-w-40 rounded-card bg-surface-raised p-1 shadow-float"
+                      onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setSendMenu(false); ref.current?.focus(); } }}
                     >
-                      {t('composer.schedule.later')}…
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
+                      {/* 본문이 비어 있을 때 막는 것은 전송 단추와 같은 이유다 — 서버가 400 으로 돌려보낼 것을 왕복시키지 않는다. */}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        aria-label={t('composer.schedule.later')}
+                        className="block w-full rounded-row px-2 py-1 text-left hover:bg-surface-sunken disabled:opacity-40"
+                        disabled={!draft.trim()}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => { setSendMenu(false); openScheduleModal(); }}
+                      >
+                        {t('composer.schedule.later')}…
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

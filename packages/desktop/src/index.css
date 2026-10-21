@@ -518,7 +518,7 @@ button:disabled,
   `:focus-within` 이 아니라 `:has(:focus-visible)` 인 것은 전역 규칙과 같은 이유(#511, focusRing.test)다 —
   글 칸(contenteditable)은 마우스로 눌러도 focus-visible 이라 textarea 때와 똑같이 선다.
 */
-.composer-cm:has(:focus-visible) { outline: 2px solid var(--app-accent); outline-offset: -2px; }
+.composer-box:has(.cm-content:focus-visible) { outline: 2px solid var(--app-accent); outline-offset: -2px; }
 .composer-cm .cm-scroller { font-family: inherit; line-height: inherit; max-height: var(--composer-max, 40vh); overflow-y: auto; }
 .composer-cm .cm-content { padding: 0; min-height: calc(var(--composer-rows, 2) * 1lh); caret-color: currentColor; }
 .composer-cm .cm-line { padding: 0; }

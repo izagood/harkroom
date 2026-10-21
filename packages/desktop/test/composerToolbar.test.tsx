@@ -77,6 +77,13 @@ describe('도구줄 단추 = 단축키', () => {
     fireEvent.click(screen.getByTestId('fmt-codeBlock'));
     expect(draft()).toMatch(/^```\nls -la\n```/);
   });
+
+  it('⌘⌥C 는 코드 블록 단추와 같은 글을 남긴다(시안 키보드 표)', () => {
+    render(<Composer onSend={vi.fn()} />);
+    const box = place('ls -la', 0, 6);
+    fireEvent.keyDown(box, { key: 'ç', code: 'KeyC', metaKey: true, altKey: true });
+    expect(draft()).toMatch(/^```\nls -la\n```/);
+  });
 });
 
 describe('Aa — 도구줄 접기', () => {
@@ -113,11 +120,11 @@ describe('☺ 빠른 이모지', () => {
 });
 
 describe('⌄ 보내기 옵션', () => {
-  it('「나중에 보내기」는 본문이 비면 막히고, 있으면 예약 창을 연다', () => {
+  it('「나중에 보내기」는 본문이 비면 막히고(⌄ 가 전송과 같이 흐리다), 있으면 예약 창을 연다', () => {
     render(<Composer onSend={vi.fn()} channelId="c1" />);
-    fireEvent.click(screen.getByTestId('composer-send-options'));
-    expect((screen.getByRole('menuitem', { name: '나중에 보내기' }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByTestId('composer-send-options'));
+    // 「전송」│⌄ 는 한 덩어리(#1431 designer 2) — 빈 입력이면 둘 다 흐리다.
+    expect((screen.getByTestId('composer-send-options') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: '메시지 보내기' }) as HTMLButtonElement).disabled).toBe(true);
 
     place('나중에 보낼 말', 8);
     fireEvent.click(screen.getByTestId('composer-send-options'));
@@ -132,6 +139,7 @@ describe('⌄ 보내기 옵션', () => {
 
   it('한쪽 메뉴를 열면 다른 쪽은 닫힌다', () => {
     render(<Composer onSend={vi.fn()} channelId="c1" />);
+    place('글', 1);
     fireEvent.click(screen.getByTestId('composer-emoji'));
     fireEvent.click(screen.getByTestId('composer-send-options'));
     expect(screen.getAllByRole('menu')).toHaveLength(1);
