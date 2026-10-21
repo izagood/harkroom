@@ -49,26 +49,25 @@ const esc = (s: string) =>
 /** 사유 코드는 사람이 읽을 한 줄이면 된다 — 인가 서버가 긴 본문을 줘도 자른다. */
 const CODE_MAX = 120;
 
-interface Copy { title: string; desc: (name: string) => string }
+/** `name` 은 이스케이프해 굵게 감싼 이름, 이름이 없으면 null — 대신할 낱말을 끼우지 않고 문장을 따로 둔다. */
+interface Copy { title: string; desc: (name: string | null) => string }
 
-const COPY: Record<CallbackPageLang, Record<CallbackPageKind, Copy> & { close: string; fallbackName: string }> = {
+const COPY: Record<CallbackPageLang, Record<CallbackPageKind, Copy> & { close: string }> = {
   ko: {
-    ok: { title: '연결됐습니다', desc: (n) => `${n} 인증을 마쳤습니다.<br>Harkroom 앱으로 돌아가면 바로 쓸 수 있습니다.` },
+    ok: { title: '연결됐습니다', desc: (n) => `${n ? `${n} 인증을` : '인증을'} 마쳤습니다.<br>Harkroom 앱으로 돌아가면 바로 쓸 수 있습니다.` },
     expired: { title: '인증 시간이 지났습니다', desc: () => '이 링크는 더 이상 쓸 수 없습니다.<br>Harkroom 앱에서 인증을 다시 시작하세요.' },
-    denied: { title: '연결하지 못했습니다', desc: (n) => `${n}에서 접근을 허용하지 않았습니다.<br>Harkroom 앱의 설정 › MCP에서 다시 인증하세요.` },
-    exchange_failed: { title: '연결하지 못했습니다', desc: (n) => `${n} 서버가 인증을 마무리하지 못했습니다.<br>앱에서 다시 시도하세요.` },
+    denied: { title: '연결하지 못했습니다', desc: (n) => `${n ? `${n}에서` : '인증 서버가'} 접근을 허용하지 않았습니다.<br>Harkroom 앱의 설정 › MCP에서 다시 인증하세요.` },
+    exchange_failed: { title: '연결하지 못했습니다', desc: (n) => `${n ? `${n} 서버가` : '인증 서버가'} 인증을 마무리하지 못했습니다.<br>앱에서 다시 시도하세요.` },
     save_failed: { title: '연결하지 못했습니다', desc: () => '인증은 받았지만 Harkroom이 저장하지 못했습니다.<br>앱에서 다시 시도하세요.' },
     close: '이 탭은 닫아도 됩니다.',
-    fallbackName: '서버',
   },
   en: {
-    ok: { title: 'Connected', desc: (n) => `Signed in to ${n}.<br>Head back to the Harkroom app — it's ready to use.` },
+    ok: { title: 'Connected', desc: (n) => `${n ? `Signed in to ${n}` : 'Signed in'}.<br>Head back to the Harkroom app — it's ready to use.` },
     expired: { title: 'This sign-in link has expired', desc: () => 'This link can no longer be used.<br>Start the sign-in again from the Harkroom app.' },
-    denied: { title: "Couldn't connect", desc: (n) => `${n} didn't grant access.<br>Sign in again from Settings › MCP in the Harkroom app.` },
-    exchange_failed: { title: "Couldn't connect", desc: (n) => `${n} couldn't finish the sign-in.<br>Try again from the app.` },
+    denied: { title: "Couldn't connect", desc: (n) => `${n ?? 'The server'} didn't grant access.<br>Sign in again from Settings › MCP in the Harkroom app.` },
+    exchange_failed: { title: "Couldn't connect", desc: (n) => `${n ?? 'The server'} couldn't finish the sign-in.<br>Try again from the app.` },
     save_failed: { title: "Couldn't connect", desc: () => 'Sign-in succeeded, but Harkroom couldn\'t save it.<br>Try again from the app.' },
     close: 'You can close this tab.',
-    fallbackName: 'the server',
   },
 };
 
@@ -118,7 +117,8 @@ const ICON_CLOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 export function renderCallbackPage(input: CallbackPageInput): CallbackPage {
   const copy = COPY[input.lang];
   const c = copy[input.kind];
-  const name = `<b>${esc(input.name?.trim() || copy.fallbackName)}</b>`;
+  const trimmed = input.name?.trim();
+  const name = trimmed ? `<b>${esc(trimmed)}</b>` : null;
   const icon = input.kind === 'ok' ? ICON_OK : input.kind === 'expired' ? ICON_CLOCK : ICON_BAD;
   const showCode = (input.kind === 'denied' || input.kind === 'exchange_failed') && input.code;
   const code = showCode ? `<div class="code">${esc(input.code!.slice(0, CODE_MAX))}</div>` : '';
