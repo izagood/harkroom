@@ -9,8 +9,8 @@ import {
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs, renameSection, normalizeSectionName,
 } from '../services/channels.js';
 import {
-  SectionNameTakenError, createChannelSection, deleteChannelSection, getChannelSection, listChannelSections,
-  reorderChannelSections, updateChannelSection,
+  SectionLimitError, SectionNameTakenError, createChannelSection, deleteChannelSection, getChannelSection, listChannelSections,
+  reorderChannelSections, updateChannelSection, MAX_SECTIONS_PER_ACCOUNT,
 } from '../services/channelSections.js';
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
 import {
@@ -534,7 +534,14 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     }
     // 값 가공(앞뒤 공백 제거, 빈 문자열은 null)은 `updateChannelPref` 한 곳에서 한다 —
     // 여기서 한 번 더 다듬으면 같은 뜻이 두 곳에 살고, 한쪽만 고치는 사고가 난다.
-    const pref = await updateChannelPref(pool, req.account!.id, id, patch);
+    let pref;
+    try {
+      pref = await updateChannelPref(pool, req.account!.id, id, patch);
+    } catch (e) {
+      // 옛 길(`section` 이름)이 없는 이름을 주면 섹션 행을 새로 만든다 — 그때도 상한을 지킨다.
+      if (e instanceof SectionLimitError) return reply.code(409).send(tooManySections);
+      throw e;
+    }
     if (!pref) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
@@ -574,6 +581,9 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
   const sectionIdParam = z.object({ id: z.string().uuid() });
   const badName = { error: { code: 'invalid_name', message: 'section name must be 1-40 characters' } };
   const nameTaken = { error: { code: 'section_exists', message: 'a section with that name already exists' } };
+  const tooManySections = {
+    error: { code: 'too_many_sections', message: `at most ${MAX_SECTIONS_PER_ACCOUNT} sections per account` },
+  };
 
   app.get('/channel-sections', { preHandler: app.requireAccount }, async (req) => ({
     sections: await listChannelSections(pool, req.account!.id),
@@ -600,8 +610,13 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       }
     }
     if (channelIds.length) {
-      const dms = await pool.query(`select 1 from channel where id = any($1::uuid[]) and kind = 'dm'`, [channelIds]);
-      if (dms.rowCount) {
+      // 없는 채널 id 는 404 — `/channels/:id/pref` 와 같은 순서(보이는가 → 있는가 → DM 인가)다.
+      // 확인 없이 넣으면 FK 위반이 500 으로 나간다.
+      const found = await pool.query<{ kind: string }>(`select kind from channel where id = any($1::uuid[])`, [channelIds]);
+      if (found.rowCount !== channelIds.length) {
+        return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
+      }
+      if (found.rows.some((r) => r.kind === 'dm')) {
         return reply.code(400).send({ error: { code: 'cannot_section_dm', message: 'DMs cannot have a section' } });
       }
     }
@@ -610,6 +625,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
       return reply.code(201).send({ section, prefs: await listChannelPrefs(pool, req.account!.id) });
     } catch (e) {
       if (e instanceof SectionNameTakenError) return reply.code(409).send(nameTaken);
+      if (e instanceof SectionLimitError) return reply.code(409).send(tooManySections);
       throw e;
     }
   });

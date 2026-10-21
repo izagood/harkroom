@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createMember } from './helpers/fixtures.js';
+import { MAX_SECTIONS_PER_ACCOUNT } from '../src/services/channelSections.js';
 
 /**
  * 사이드바 섹션 표(136). 확인하는 것은 셋이다 —
@@ -17,6 +18,7 @@ let app: FastifyInstance;
 let pool: pg.Pool;
 let stop: () => Promise<void>;
 let meToken: string;
+let meId: string;
 let otherToken: string;
 let otherId: string;
 const channels: string[] = [];
@@ -51,7 +53,7 @@ beforeAll(async () => {
   stop = db.stop;
   pool = db.pool;
   app = await buildServer({ pool: db.pool });
-  ({ token: meToken } = await bootstrapAdmin(app));
+  ({ token: meToken, accountId: meId } = await bootstrapAdmin(app));
   ({ token: otherToken, accountId: otherId } = await createMember(app, meToken, 'sectionother'));
   for (const name of ['sec-a', 'sec-b', 'sec-c']) {
     const res = await app.inject({ method: 'POST', url: '/channels', headers: auth(meToken), payload: { name } });
@@ -227,6 +229,32 @@ describe('channel sections (136)', () => {
     state = await prefsOf(meToken);
     expect(state.sections).toEqual([]);
     expect(state.prefs.filter((p) => channels.includes(p.channelId)).every((p) => p.sectionId === null && p.section === null)).toBe(true);
+  });
+
+  it('없는 채널 id 를 넣어 만들면 404 이고 섹션은 생기지 않는다(500 아님)', async () => {
+    await clearSections(meToken);
+    const res = await create(meToken, { name: '유령', channelIds: [channels[0], '00000000-0000-4000-8000-000000000000'] });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('not_found');
+    expect((await prefsOf(meToken)).sections).toEqual([]);
+  });
+
+  it(`계정당 섹션은 ${MAX_SECTIONS_PER_ACCOUNT}개까지 — 새 길·옛 길 모두 409`, async () => {
+    await clearSections(meToken);
+    await pool.query(
+      `insert into channel_section (account_id, name, position)
+       select $1, 'bulk-' || g, g - 1 from generate_series(1, $2::integer) g`,
+      [meId, MAX_SECTIONS_PER_ACCOUNT],
+    );
+    const over = await create(meToken, { name: '하나 더' });
+    expect(over.statusCode).toBe(409);
+    expect(over.json().error.code).toBe('too_many_sections');
+    const legacy = await setPref(meToken, channels[0]!, { section: '하나 더' });
+    expect(legacy.statusCode).toBe(409);
+    // 이미 있는 이름으로 넣기는 상한과 무관하다.
+    expect((await setPref(meToken, channels[0]!, { section: 'bulk-1' })).statusCode).toBe(200);
+    expect((await prefsOf(meToken)).sections).toHaveLength(MAX_SECTIONS_PER_ACCOUNT);
+    await pool.query(`delete from channel_section where account_id = $1`, [meId]);
   });
 
   it('136 옮겨 담기: 이름 문자열마다 섹션 행 하나, 이름순 자리, 채널이 그 행을 가리킨다', async () => {
