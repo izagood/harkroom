@@ -18,6 +18,7 @@ import type { McpOAuth } from './mcpOAuth.js';
 export interface LocalMcpPort {
   list(): Promise<OperatorMcpListResult>;
   /** http·sse 만 — stdio 는 소켓으로 받지 않는다(`readOperatorMcpSetPayload` 주석, #431). */
+  /** `oauth.clientId` 를 바꾸면 그 이름의 토큰을 버린다 — 새 클라이언트로 다시 인증해야 한다. */
   set(name: string, definition: OperatorMcpRemoteDefinition): Promise<void>;
   remove(name: string): Promise<void>;
   /**
@@ -57,6 +58,7 @@ export function describeMcpDefinition(name: string, source: OperatorMcpEntry['so
     return {
       name, source, transport: def.type === 'sse' ? 'sse' : 'http', target: def.url, args: [],
       envKeys: [], headerKeys: keys(def.headers), oauth: isRecord(def.oauth),
+      ...(isRecord(def.oauth) && typeof def.oauth.clientId === 'string' ? { oauthClientId: def.oauth.clientId } : {}),
     };
   }
   return {
@@ -87,7 +89,10 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
   };
   return {
     async authStart(name) { return oauth().start(name, await remoteDefinition(name)); },
-    async authStatus(name) { return oauth().status(name, (await remoteDefinition(name)).url); },
+    async authStatus(name) {
+      const def = await remoteDefinition(name);
+      return oauth().status(name, def.url, def.oauth?.clientId);
+    },
     async authForget(name) { await oauth().forget(name); },
     async list() {
       const out = new Map<string, OperatorMcpEntry>();
@@ -104,15 +109,23 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
       if (deps.oauth) {
         for (const e of out.values()) {
           if (e.transport === 'stdio') continue;
-          e.auth = await deps.oauth.status(e.name, e.target).catch(() => ({ state: 'error' as const, reason: '상태를 읽지 못했다' }));
+          e.auth = await deps.oauth.status(e.name, e.target, e.oauthClientId).catch(() => ({ state: 'error' as const, reason: '상태를 읽지 못했다' }));
         }
       }
       return { servers: [...out.values()].sort((a, b) => a.name.localeCompare(b.name)) };
     },
     async set(name, definition) {
       const table = await readTable(deps.registryPath);
-      table[name] = definition;
+      const prev = table[name];
+      const prevClientId = isRecord(prev) && isRecord(prev.oauth) && typeof prev.oauth.clientId === 'string' ? prev.oauth.clientId : undefined;
+      const nextClientId = definition.oauth?.clientId;
+      // 정의에는 clientId·callbackPort 만 둔다(소켓 읽기가 이미 걸렀다).
+      const { oauth: o, ...rest } = definition;
+      table[name] = o ? { ...rest, oauth: { ...(o.clientId ? { clientId: o.clientId } : {}), ...(o.callbackPort ? { callbackPort: o.callbackPort } : {}) } } : rest;
       await writeTable(deps.registryPath, table);
+      // 클라이언트를 갈아탔으면 옛 토큰을 버린다 — 남겨 두면 1분 refresh 가 옛 클라이언트로 계속 돌린다
+      // (security F2). 같은 clientId 로 다시 넣으면 토큰을 건드리지 않는다.
+      if (prev !== undefined && prevClientId !== nextClientId) await deps.oauth?.forget(name);
     },
     async remove(name) {
       const table = await readTable(deps.registryPath);

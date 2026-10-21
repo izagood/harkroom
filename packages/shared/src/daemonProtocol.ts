@@ -718,6 +718,8 @@ export interface OperatorMcpEntry {
   envKeys: string[];
   headerKeys: string[];
   oauth: boolean;
+  /** 정의의 `oauth.clientId`(공개 값). 없으면 동적 등록·공용 클라이언트. */
+  oauthClientId?: string;
   /** 오퍼레이터가 든 OAuth 토큰의 상태(원격 정의만). 없으면 옛 오퍼레이터 — 모른다. */
   auth?: OperatorMcpAuthState;
 }
@@ -772,13 +774,17 @@ export function readOperatorMcpSetPayload(payload: unknown): { name: string; def
     const def: OperatorMcpRemoteDefinition = { type: d.type, url: d.url.trim() };
     if (d.headers && Object.keys(d.headers).length) def.headers = d.headers as Record<string, string>;
     if (d.oauth !== undefined) {
-      const o = d.oauth as { clientId?: unknown; callbackPort?: unknown } | null;
+      const o = d.oauth as { clientId?: unknown; callbackPort?: unknown; clientSecret?: unknown } | null;
       if (!o || typeof o !== 'object') return daemonError('bad-payload', 'oauth 는 객체여야 한다');
       if (o.clientId !== undefined && typeof o.clientId !== 'string') return daemonError('bad-payload', 'oauth.clientId 는 문자열이어야 한다');
       if (o.callbackPort !== undefined && !(Number.isInteger(o.callbackPort) && (o.callbackPort as number) > 0 && (o.callbackPort as number) < 65536)) {
         return daemonError('bad-payload', 'oauth.callbackPort 는 1~65535 정수여야 한다');
       }
-      def.oauth = { ...(o.clientId ? { clientId: o.clientId as string } : {}), ...(o.callbackPort ? { callbackPort: o.callbackPort as number } : {}) };
+      // client secret 은 받지 않는다 — 정의 파일·러너 설정에 실리는 값이라 비밀을 둘 자리가 아니다.
+      // 전용 Slack 앱은 PKCE 공개 클라이언트로 쓴다(2026-10-21).
+      if (o.clientSecret !== undefined) return daemonError('bad-payload', 'oauth.clientSecret 은 받지 않는다 — PKCE 공개 클라이언트의 clientId 만 넣는다');
+      const clientId = typeof o.clientId === 'string' ? o.clientId.trim() : '';
+      def.oauth = { ...(clientId ? { clientId } : {}), ...(o.callbackPort ? { callbackPort: o.callbackPort as number } : {}) };
     }
     return { name, definition: def };
   }
