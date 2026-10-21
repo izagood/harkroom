@@ -138,7 +138,7 @@ export function bgPrompt(job: BgJob): string {
   const reasons = (Array.isArray(job.input.reasons) ? job.input.reasons : []).filter((r): r is string => typeof r === 'string' && /^[a-z_]{1,32}$/.test(r));
   const head = [
     `[harkroom 백그라운드 회차 ${job.kind}] 이것은 사람에게 가는 턴이 아니다. 채팅에는 아무것도 쓸 수 없고, 쓰려고 하지 마라.`,
-    '쓸 수 있는 것은 기억 도구(memory.get/list/search/set/archive/merge)와 아래 입력 스레드의 읽기(message.read·thread.note)뿐이다.',
+    '쓸 수 있는 것은 기억 도구(memory.get/list/search/audit/set/archive/merge)와 아래 입력 스레드의 읽기(message.read·thread.note)뿐이다.',
     'core 는 쓰지 못하고, 기억을 지우지 않는다(안 쓰는 것은 memory.archive). 기억 쓰기는 이 회차에 20건까지다.',
     '',
   ];

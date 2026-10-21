@@ -214,6 +214,9 @@ describe('bg_job (BG1)', () => {
       await pool.query(`insert into agent_memory (account_id, slug, value, kind) values ($1, 'core', $2, 'topic')`, [core.accountId, 'x'.repeat(2600)]);
       const journal = await agent('bg-c-journal');
       await fill(journal.accountId, 56, 'journal');
+      const codex = await agent('bg-c-codex');
+      await fill(codex.accountId, 200);
+      await pool.query(`update agent_config set harness = 'codex' where account_id = $1`, [codex.accountId]);
 
       expect((await produceCleanupJobs(pool, new Date('2026-10-20T23:30:00Z'), ON)).queued).toBe(0); // 08:30 KST
       expect((await produceCleanupJobs(pool, IN_WINDOW, {})).queued).toBe(0);
@@ -222,6 +225,7 @@ describe('bg_job (BG1)', () => {
       expect(await cleanupOf(small.accountId)).toEqual([]);
       expect((await cleanupOf(core.accountId))[0]?.input.reasons).toEqual(['core_near_limit']);
       expect((await cleanupOf(journal.accountId))[0]?.input.reasons).toEqual(['journal_expiring']);
+      expect(await cleanupOf(codex.accountId)).toEqual([]); // 실행기가 집지 않는 하네스에는 넣지 않는다
 
       // 다음 날: weekly 는 7일 안에 한 번 돌았으니 안 넣는다. 신호는 그날 다시 넣는다.
       const nextDay = new Date(IN_WINDOW.getTime() + 24 * 3600_000);
@@ -239,6 +243,11 @@ describe('bg_job (BG1)', () => {
         await pool.query(`update agent_config set bg_enabled = false where account_id = $1`, [a.accountId]);
         expect((await call(c, 'memory.list')).bgCleanup).toBeUndefined();
         await pool.query(`update agent_config set bg_enabled = true where account_id = $1`, [a.accountId]);
+        // 실행기가 집지 않는 하네스(codex 등)는 신호를 그대로 받는다(security n1) — 빼면 아무도 정리하지 않는다.
+        await pool.query(`update agent_config set harness = 'codex' where account_id = $1`, [a.accountId]);
+        expect((await call(c, 'memory.list')).bgCleanup).toBeUndefined();
+        await pool.query(`update agent_config set harness = 'claude-code' where account_id = $1`, [a.accountId]);
+        expect((await call(c, 'memory.list')).bgCleanup).toBe(true);
         process.env.HARKROOM_BACKGROUND_ENABLED = '0';
         expect((await call(c, 'memory.list')).bgCleanup).toBeUndefined();
       } finally {
