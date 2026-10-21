@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeProviderBaseUrl, readProviderLaneConfig } from '../src/providerLane.js';
+import { normalizeProviderBaseUrl, providerLaneFailureCode, readProviderLaneConfig } from '../src/providerLane.js';
 import { readOperatorAgentProviderLanePayload } from '../src/daemonProtocol.js';
 
 describe('normalizeProviderBaseUrl', () => {
@@ -26,5 +26,12 @@ describe('readProviderLaneConfig·payload', () => {
   it('lane null 은 빼기, 틀린 lane 은 bad-payload', () => {
     expect(readOperatorAgentProviderLanePayload({ baseUrl: 'https://s.example', agentId: 'a', lane: null })).toEqual({ baseUrl: 'https://s.example', agentId: 'a', lane: null });
     expect(readOperatorAgentProviderLanePayload({ baseUrl: 'https://s.example', agentId: 'a', lane: { baseUrl: 'http://x.example', secretName: 'k' } })).toMatchObject({ code: 'bad-payload' });
+  });
+});
+
+describe('providerLaneFailureCode', () => {
+  it('목록의 코드는 그대로, 나머지는 unknown', () => {
+    expect(providerLaneFailureCode('not_granted')).toBe('not_granted');
+    for (const bad of ['http_502', 'https://gateway.example', '', undefined, 3]) expect(providerLaneFailureCode(bad)).toBe('unknown');
   });
 });

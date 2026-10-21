@@ -50,7 +50,7 @@ const NO_RELAY_REJECTION = '이 스레드에 멘션 턴이 진행 중이지만 �
  * 멘션 턴이 시작되는 중인데(스케줄러 예약) 기다려도 등록되지 않았다. 사람 화면에 그대로 뜬다.
  */
 /** 전용 제공사 경로 에이전트의 터미널 열기 거절(security F1). 사람 화면에 그대로 뜬다 — 코드는 앞에 붙여 앱이 문장을 고를 수 있게. */
-export const PROVIDER_LANE_INTERACTIVE_REJECTION = 'interactive_unsupported: gateway 경로 에이전트는 아직 터미널 열기를 지원하지 않는다';
+export const PROVIDER_LANE_INTERACTIVE_REJECTION = 'interactive_unsupported: API 키로 도는 에이전트는 아직 터미널 열기를 지원하지 않는다';
 
 const MENTION_STARTING_REJECTION = '이 스레드에 멘션 턴이 막 시작되는 중이다 — 잠시 뒤 다시 열어라';
 

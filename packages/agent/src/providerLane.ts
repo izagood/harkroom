@@ -10,7 +10,7 @@
  */
 import { readFile, realpath } from 'node:fs/promises';
 import { relative, isAbsolute } from 'node:path';
-import { normalizeProviderBaseUrl, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
+import { normalizeProviderBaseUrl, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
 import type { AgentHarness } from '@harkroom/shared';
 
 /**
@@ -21,10 +21,17 @@ export const PROVIDER_LANE_ENV_KEYS: Partial<Record<AgentHarness, { baseUrl: str
   'claude-code': { baseUrl: 'ANTHROPIC_BASE_URL', token: 'ANTHROPIC_AUTH_TOKEN' },
 };
 
+/**
+ * 그 턴의 주소·키를 못 받았다. **코드는 허용 목록으로 접어서 든다**(1c, security ③) — 오퍼레이터·서버가 준 문자열을 그대로
+ * 들고 다니면 그것이 실패 카드·로그로 흘러간다. 문장에도 코드만 싣는다(주소·비밀 이름·경로 금지, 조건 ①).
+ */
 export class ProviderLaneError extends Error {
-  constructor(readonly code: string) {
-    super(`전용 제공사 경로(provider lane)를 준비하지 못했다: ${code} — 데스크톱의 에이전트 설정에서 주소·비밀을 확인하라`);
+  readonly code: ProviderLaneFailureCode;
+  constructor(code: string) {
+    const folded = providerLaneFailureCode(code);
+    super(`API 키 연결을 준비하지 못했다(${folded}) — 데스크톱의 에이전트 설정에서 API 주소·키를 확인하라`);
     this.name = 'ProviderLaneError';
+    this.code = folded;
   }
 }
 

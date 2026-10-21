@@ -669,6 +669,30 @@ describe('message.fail — 실패의 계약', () => {
     }
   });
 
+  it('provider_lane — 까닭 코드는 허용 목록만, 그 표지에만 붙는다', async () => {
+    const client = await mcpClient(botPat);
+    try {
+      const posted = text(await client.callTool({
+        name: 'message.fail',
+        arguments: { channelId, body: 'API 키 연결을 준비하지 못했다', retryable: false, code: 'provider_lane', laneCode: 'no_lease' },
+      })) as { message: { meta: Record<string, unknown> } };
+      expect(readFailureMeta(posted.message.meta)).toMatchObject({ code: 'provider_lane', laneCode: 'no_lease' });
+      // 다른 표지에는 따라 올라가지 않는다.
+      const other = text(await client.callTool({
+        name: 'message.fail', arguments: { channelId, body: 'x', retryable: false, laneCode: 'no_lease' },
+      })) as { message: { meta: Record<string, unknown> } };
+      expect(readFailureMeta(other.message.meta)?.laneCode).toBeUndefined();
+      // 목록 밖(주소 같은 것)은 입력에서 거절된다.
+      const bad = await client.callTool({
+        name: 'message.fail',
+        arguments: { channelId, body: 'x', retryable: false, code: 'provider_lane', laneCode: 'https://gateway.example' },
+      });
+      expect(bad.isError).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
   /**
    * 계정 관문(2026-10-02, 관문 대응 안 2). 차례 주인은 **서버가** 정한다 — 그 턴을 띄운 멘션이 이
    * 에이전트를 실제로 깨웠고 작성자가 사람이면 그 사람. 그 사람이 남의 스레드에서 불렀으면 이 글로는

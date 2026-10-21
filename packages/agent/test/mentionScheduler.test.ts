@@ -4,6 +4,7 @@
 // 있었다(main.ts 는 top-level await 로 진짜 서버에 붙어 import 가 불가능하다). 동시성 회계는
 // 이 저장소가 가장 자주 깨뜨린 종류의 코드라, 그것을 가장 약한 검사에 맡기지 않으려고 모듈로
 // 뺐다 — 그 선택이 값을 하는 자리가 여기다.
+import { ProviderLaneError } from '../src/providerLane.js';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -585,6 +586,58 @@ describe('mentionScheduler 승인 관문', () => {
     expect(markedRead).toEqual([7]);
     expect(발화).toEqual([expect.objectContaining({ retryable: false, code: 'thread_model_rejected' })]);
     expect(발화[0]!.body).toContain('bogus');
+  });
+
+  // 1c(security ②): API 키 연결 실패는 재시도·계정 전환 없이 바로 접는다 — 다음 계정(OAuth 로그인)으로 떨어지는 길이 없다.
+  it('API 키 연결 실패는 한 번에 접고 다른 계정으로 옮기지 않는다 — meta 에는 허용 목록 코드만', async () => {
+    const markedRead: number[] = [];
+    const 발화: { body: string; retryable: boolean; code?: string; laneCode?: string }[] = [];
+    const seen: (string | null)[] = [];
+    let 시도 = 0;
+    const scheduler = createMentionScheduler({
+      harkroom: {
+        markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
+        post: async () => 1,
+        fail: async (_c, body, _a, o) => { 발화.push({ body, retryable: o.retryable, code: o.code, laneCode: o.laneCode }); return 1; },
+      },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      // 뒤 칸이 OAuth 계정이어도 거기로 가지 않아야 한다.
+      accountLane: [{ name: 'provider-lane', configDir: '/state/claude-provider-lane' }, { name: 'oauth', configDir: '/pool/oauth' }],
+      runMentionTurn: async () => { 시도 += 1; throw new ProviderLaneError('https://gateway.example/secret-path'); },
+      buildTurnDeps: ({ account }) => { seen.push(account?.name ?? null); return {} as never; },
+      hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
+      startedAtMs: 0,
+    });
+    await scheduler.admit(batchOf([{ entryId: 8, messageId: 'm-lane' }]), ctx);
+    await scheduler.drain();
+    expect(시도).toBe(1);
+    expect(seen).toEqual(['provider-lane']);
+    expect(markedRead).toContain(8);
+    // 오퍼레이터·서버가 준 문자열은 흘리지 않는다 — 목록 밖은 unknown.
+    expect(발화).toEqual([expect.objectContaining({ retryable: false, code: 'provider_lane', laneCode: 'unknown' })]);
+    expect(발화[0]!.body).not.toContain('gateway.example');
+  });
+
+  it('옛 서버가 provider_lane 표지를 거절하면 표지 없이 한 번 더 올린다', async () => {
+    const 발화: { code?: string }[] = [];
+    const scheduler = createMentionScheduler({
+      harkroom: {
+        markRead: async (ids) => ids.length,
+        post: async () => 1,
+        fail: async (_c, _b, _a, o) => { if (o.code) throw new Error('MCP error -32602: Invalid enum value'); 발화.push({ code: o.code }); return 1; },
+      },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [null],
+      runMentionTurn: async () => { throw new ProviderLaneError('no_lease'); },
+      buildTurnDeps: () => ({}) as never,
+      hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
+      startedAtMs: 0,
+    });
+    await scheduler.admit(batchOf([{ entryId: 9, messageId: 'm-lane-old' }]), ctx);
+    await scheduler.drain();
+    expect(발화).toEqual([{ code: undefined }]);
   });
 
   it('정지 분기는 재시도 회계 앞에서 빠진다 — 순서가 계약이다', async () => {

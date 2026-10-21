@@ -63,3 +63,12 @@ describe('providerLane.envFor', () => {
       .envFor('m1', 'claude-code')).rejects.toMatchObject({ code: 'operator_unreachable' });
   });
 });
+
+describe('ProviderLaneError', () => {
+  it('허용 목록 밖 코드는 unknown 으로 접고, 문장에도 코드만 싣는다', () => {
+    const e = new ProviderLaneError('https://gateway.example/x');
+    expect(e.code).toBe('unknown');
+    expect(e.message).not.toContain('gateway.example');
+    expect(new ProviderLaneError('no_lease').code).toBe('no_lease');
+  });
+});

@@ -1,3 +1,4 @@
+import { PROVIDER_LANE_FAILURE_CODES } from '@harkroom/shared/providerLane';
 import { delegateApiGrant, listDelegations, revokeDelegation } from '../services/apiDelegation.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -1186,6 +1187,8 @@ function buildMcpServer(
       retryable: z.boolean(),
       // 기계가 읽는 실패 갈래(FailureMeta 주석). 러너가 스레드 지정 모델 거절·계정 관문 때 싣는다.
       code: z.enum(FAILURE_CODES).optional(),
+      /** `provider_lane` 때만 — 허용 목록의 까닭 코드(`PROVIDER_LANE_FAILURE_CODES`). 목록 밖은 입력에서 거절된다. */
+      laneCode: z.enum(PROVIDER_LANE_FAILURE_CODES).optional(),
       /**
        * `account_gate` 때만: 그 턴을 띄운 멘션(차례 주인을 정할 재료 — 서버가 확인한다)과 관문이 선
        * 계정의 이름표(`풀/계정`). 러너의 자기 호출에는 원인 헤더가 없어서 멘션을 직접 싣는다.
@@ -1194,7 +1197,7 @@ function buildMcpServer(
       account: z.string().regex(ACCOUNT_GATE_LABEL_PATTERN).optional(),
       model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, what, reason, retryable, code, mentionId, account: gateAccount, model }) => {
+  }, async ({ channelId, body, threadRootId, what, reason, retryable, code, laneCode, mentionId, account: gateAccount, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -1223,6 +1226,8 @@ function buildMcpServer(
         retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}), ...(code && keepCode ? { code } : {}),
         ...(awaiting ? { awaitingAccountId: awaiting } : {}),
         ...(gate && gateAccount ? { account: gateAccount } : {}),
+        // 까닭 코드는 그 표지에만 붙는다 — 다른 실패에 lane 사실이 따라 올라가지 않게.
+        ...(code === 'provider_lane' && keepCode && laneCode ? { laneCode } : {}),
       },
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };

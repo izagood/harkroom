@@ -1558,8 +1558,12 @@ export interface FailureMeta {
      *   사람의 선택을 기다린다(2026-10-02, 관문 대응 안 2). 사람이 그 터미널에서 한 번 답하면
      *   풀린다 — 그래서 상태는 🚨 가 아니라 🙋(`awaitingAccountId` 의 차례)다. 턴 **도중**의
      *   권한 확인에는 붙지 않는다(러너가 'startup' 일 때만 싣는다).
+     * - `provider_lane`: API 키 연결(provider lane, `providerLane.ts`) 에이전트가 그 턴의 주소·키를 받지 못해 턴을 띄우지
+     *   않았다. 다시 시도하지 않는다 — 고칠 곳은 데스크톱의 에이전트 설정이다. 까닭은 `laneCode` 에만 있다.
      */
     code?: FailureCode;
+    /** `provider_lane` 때만: 허용 목록의 까닭 코드(`PROVIDER_LANE_FAILURE_CODES`). 주소·비밀 이름·경로는 싣지 않는다. */
+    laneCode?: ProviderLaneFailureCode;
     /**
      * `account_gate` 의 **차례 주인** — 그 턴을 띄운 멘션을 쓴 사람(계정 id). 서버가 정한다:
      * 그 멘션이 이 에이전트를 실제로 깨웠고(inbox) 작성자가 사람일 때만 싣는다. 못 정하면 없다
@@ -1576,7 +1580,7 @@ export interface FailureMeta {
 }
 
 /** `FailureMeta.failure.code` 의 값들. 서버 `message.fail` 입력이 이 목록으로 받는다. */
-export const FAILURE_CODES = ['thread_model_rejected', 'account_gate'] as const;
+export const FAILURE_CODES = ['thread_model_rejected', 'account_gate', 'provider_lane'] as const;
 export type FailureCode = (typeof FAILURE_CODES)[number];
 
 /**
@@ -3832,6 +3836,7 @@ export * from './toolRules.js';
 export * from './threadStatus.js';
 // 시스템 줄의 번역 표지(meta.i18n) 키 표·검사 — 서버가 쓰고 앱이 그린다(i18n P5).
 export * from './systemI18n.js';
+import type { ProviderLaneFailureCode } from './providerLane.js';
 import type { Capability, Role } from './permissions.js';
 import { MAX_AGENT_POOLS } from './claudePools.js';
 
