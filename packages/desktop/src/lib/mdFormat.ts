@@ -1,3 +1,4 @@
+import { toggleCode } from './codeMarks';
 /**
  * 입력창 서식 단축키가 초안 문자열을 어떻게 바꾸는가(입력창 개편 P1 — ⌘B·⌘I·⌘⇧X·⌘⇧7/8/9,
  * 목록 Shift+Enter, 코드 블록 Enter).
@@ -186,4 +187,23 @@ export function formatShortcut(e: KeyLike): FormatShortcut | null {
   if (e.code === 'Digit8') return { kind: 'line', line: 'bullet' };
   if (e.code === 'Digit9') return { kind: 'line', line: 'quote' };
   return null;
+}
+
+/**
+ * 코드 블록(도구줄 `{ }` 단추). 고른 줄들을 펜스로 감싼다 — 한 줄만 골랐거나 아무것도 고르지
+ * 않아도 블록이다(⌘E 는 한 줄이면 인라인 코드로 감싼다, 그 차이가 단추가 따로 있는 이유다).
+ * 이미 펜스 안이면 `toggleCode` 가 벗긴다.
+ */
+export function toggleFence(text: string, from: number, to: number): FormatEdit {
+  if (inFence(text, from)) {
+    const t = toggleCode(text, from, to);
+    return { text: t.text, start: t.start, end: t.end };
+  }
+  const lineStart = text.lastIndexOf('\n', from - 1) + 1;
+  const nl = text.indexOf('\n', to);
+  const lineEnd = nl === -1 ? text.length : nl;
+  const body = text.slice(lineStart, lineEnd);
+  const open = '```\n';
+  const next = text.slice(0, lineStart) + open + body + '\n```' + text.slice(lineEnd);
+  return { text: next, start: lineStart + open.length, end: lineStart + open.length + body.length };
 }

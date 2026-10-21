@@ -20,13 +20,15 @@ import {
   stickyKeyOf, stickyNameOf,
   type MentionQuery,
 } from '../lib/mention';
-import { undoSendStorage } from '../lib/prefs';
+import { composerToolbarStorage, undoSendStorage } from '../lib/prefs';
 // 붙여넣기가 누구를 부르는지 · 인용으로 바꾸는 방법. 판정은 서버가 쓰는 것과 같은
 // 함수 하나(`mentionedHandles`)에 얹혀 있다 — 그 파일의 주석이 근거다.
 import { callsInText, quoteText, MANY_CALLS } from '../lib/pasteCalls';
 // 입력 중인 코드에 면을 깔고(겹판), ⌘E 로 감싸거나 벗긴다. 무엇이 코드인지는 보낸 뒤
 // 메시지를 그리는 것과 **같은 함수**(`splitCode`)가 정한다 — 그 파일의 주석이 근거다.
-import { continueList, formatShortcut, inFence, toggleInline, toggleLinePrefix, type FormatEdit } from '../lib/mdFormat';
+import { continueList, formatShortcut, inFence, toggleFence, toggleInline, toggleLinePrefix, type FormatEdit } from '../lib/mdFormat';
+import { ComposerToolbar, type FormatKind } from './ComposerToolbar';
+import { QUICK_REACTIONS } from './Reactions';
 import { COMPOSER_BOX, ComposerEditor, type ComposerKeyEvent, type ComposerPasteEvent, type ComposerTextBox } from './ComposerEditor';
 import { toggleCode } from '../lib/codeMarks';
 // 하이퍼링크를 **쓰는** 쪽(⌘K · 고른 글 위에 주소 붙여넣기). 그리는 쪽은 #216 부터 있었다 —
@@ -376,6 +378,11 @@ export function Composer({
 
   // 예약 발송 상태(#222)
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  // 서식 도구줄(결정 3 — 기본 켬, Aa 로 끄면 이 기기에서 기억).
+  const [toolbarOn, setToolbarOn] = useState(() => composerToolbarStorage.load());
+  // 동작줄의 두 작은 메뉴. 한쪽을 열면 다른 쪽은 닫는다 — 둘이 겹쳐 뜨면 Escape 가 어디로 갈지 모른다.
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [sendMenu, setSendMenu] = useState(false);
   const [scheduleDateTime, setScheduleDateTime] = useState('');
   const [scheduleMin, setScheduleMin] = useState('');
   const [scheduledMessages, setScheduledMessages] = useState<ScheduledMessageView[]>([]);
@@ -1430,6 +1437,44 @@ export function Composer({
     });
   };
 
+  /**
+   * 도구줄 단추(P2). **단축키와 같은 함수**를 부른다 — 단추와 열쇠가 다른 기호를 넣으면 같은 서식이
+   * 두 모양으로 남는다(`ComposerToolbar` 주석). 링크는 ⌘K 와 같이 여러 줄이면 사유를 말한다.
+   */
+  const applyFormat = (kind: FormatKind) => {
+    const el = ref.current;
+    if (!el) return;
+    const { value, selectionStart: from, selectionEnd: to } = el;
+    switch (kind) {
+      case 'bold': return applyEdit(toggleInline(value, from, to, '**'));
+      case 'italic': return applyEdit(toggleInline(value, from, to, '*'));
+      case 'strike': return applyEdit(toggleInline(value, from, to, '~~'));
+      case 'ordered':
+      case 'bullet':
+      case 'quote': return applyEdit(toggleLinePrefix(value, from, to, kind));
+      case 'code': return applyEdit(toggleCode(value, from, to));
+      case 'codeBlock': return applyEdit(toggleFence(value, from, to));
+      case 'link': {
+        const next = toggleLink(value, from, to);
+        if (!next) {
+          useActiveStore.getState().pushNotice(t('composer.link.oneLine'));
+          el.focus();
+          return;
+        }
+        return applyEdit(next);
+      }
+    }
+  };
+
+  /** ☺ 로 고른 이모지를 커서 자리에(고른 글이 있으면 그 자리에) 넣는다. */
+  const insertAtCaret = (piece: string) => {
+    const el = ref.current;
+    if (!el) return;
+    const { value, selectionStart: from, selectionEnd: to } = el;
+    const at = from + piece.length;
+    applyEdit({ text: value.slice(0, from) + piece + value.slice(to), start: at, end: at });
+  };
+
   // 예약 발송 핸들러(#222)
   const openScheduleModal = () => {
     if (!channelId) return;
@@ -1588,58 +1633,6 @@ export function Composer({
           ))}
         </ul>
       )}
-      {(autoActive.length > 0 || sticky.length > 0) && (
-        <ul className="mb-1 flex flex-wrap items-center gap-1" aria-label={t('chat.keptMentions')}>
-          {/* 자동 멘션 칩(#173). 고정 칩과 같은 줄을 쓰되 '자동' 배지와 색으로 구분한다 —
-              사람이 부른 것과 채널이 부르는 것이 같아 보이면 × 가 무엇을 지우는지 알 수 없다.
-              × 는 이번 메시지에서만 뺀다. 설정을 지우는 자리는 채널의 멤버 패널이다. */}
-          {autoActive.map((h) => (
-            <li
-              key={`auto:${h}`}
-              data-testid="auto-mention"
-              data-handle={h}
-              title={t('composer.mention.autoTitle')}
-              // 멘션 칩은 **아랫단 11px** — 안의 `자동` 배지가 이미 11px 이라 칩 자체를
-              // 본문단으로 두면 칩 하나 안에 두 단이 섰다. 아래 입력칸과 전송·첨부는
-              // 본문단이다: 여기서 사람이 읽고 쓰는 것은 글이고, 칩은 그 글이 누구에게
-              // 가는지 알려 주는 꼬리표다.
-              className="flex items-center gap-1 rounded-row border border-accent bg-accent-surface px-1.5 py-0.5 text-meta font-medium text-accent"
-            >
-              <span>@{h}</span>
-              <span className="rounded-sm bg-accent px-1 text-meta font-normal text-fg-on-strong">{t('composer.mention.autoBadge')}</span>
-              <button
-                type="button"
-                aria-label={`Skip @${h} this time`}
-                className="rounded-sm px-0.5 text-accent hover:bg-surface-hover"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => skipAuto(h)}
-              >
-                ×
-              </button>
-            </li>
-          ))}
-          {sticky.map((h) => (
-            <li
-              key={h}
-              data-testid="sticky-mention"
-              data-handle={h}
-              className="flex items-center gap-1 rounded-row bg-surface-sunken px-1.5 py-0.5 text-meta font-medium text-fg"
-            >
-              <span>@{h}</span>
-              <button
-                type="button"
-                aria-label={`Remove @${h}`}
-                className="rounded-sm px-0.5 text-fg-subtle hover:bg-surface-hover"
-                // 목록의 버튼과 같은 이유로 blur 를 막는다 — 지운 뒤에도 커서는 글 안에 있어야 한다.
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => drop(h)}
-              >
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
       {/*
         부를 상대(#278). 아무도 없으면 **줄 자체를 그리지 않는다** — 빈 자리를 만들면 사람은
         거기에 무엇이 있었는지를 매번 확인해야 한다.
@@ -1746,20 +1739,6 @@ export function Composer({
           첨부 실패 줄과 같은 규칙이다. */}
       {sendError && (
         <p role="alert" data-testid="send-error" className="mb-1 text-meta text-danger">{sendError}</p>
-      )}
-
-      {pending.length > 0 && (
-        /* 붙인 순서대로, 넘치면 줄을 바꾼다. 위·오른쪽 여백은 모서리에 반 걸친 × 자리다. */
-        <div className="mb-2 flex flex-wrap gap-2 pr-2 pt-2">
-          {pending.map((u) => (
-            <PendingAttachmentTile
-              key={u.localId}
-              upload={u}
-              onRemove={() => discardUploads([u.localId])}
-              onRetry={() => retryUpload(u.localId)}
-            />
-          ))}
-        </div>
       )}
 
       {callOffer && (
@@ -2041,7 +2020,74 @@ export function Composer({
       */}
       {/* 입력창의 선은 `shadow-compose` 가 그린다(A · Paper §7) — 칸의 border 는 자리만 지키고 투명하다.
           둘 다 그리면 1px 선이 두 겹이 된다. */}
-      <div className="relative rounded-compose bg-field shadow-compose">
+      <div className="relative flex flex-col rounded-compose bg-field shadow-compose">
+        {toolbarOn && <ComposerToolbar onFormat={applyFormat} />}
+        {(autoActive.length > 0 || sticky.length > 0) && (
+          <ul className="flex flex-wrap items-center gap-1 px-3 pt-2" aria-label={t('chat.keptMentions')}>
+            {/* 자동 멘션 칩(#173). 고정 칩과 같은 줄을 쓰되 '자동' 배지와 색으로 구분한다 —
+                사람이 부른 것과 채널이 부르는 것이 같아 보이면 × 가 무엇을 지우는지 알 수 없다.
+                × 는 이번 메시지에서만 뺀다. 설정을 지우는 자리는 채널의 멤버 패널이다. */}
+            {autoActive.map((h) => (
+              <li
+                key={`auto:${h}`}
+                data-testid="auto-mention"
+                data-handle={h}
+                title={t('composer.mention.autoTitle')}
+                // 멘션 칩은 **아랫단 11px** — 안의 `자동` 배지가 이미 11px 이라 칩 자체를
+                // 본문단으로 두면 칩 하나 안에 두 단이 섰다. 아래 입력칸과 전송·첨부는
+                // 본문단이다: 여기서 사람이 읽고 쓰는 것은 글이고, 칩은 그 글이 누구에게
+                // 가는지 알려 주는 꼬리표다.
+                className="flex items-center gap-1 rounded-row border border-accent bg-accent-surface px-1.5 py-0.5 text-meta font-medium text-accent"
+              >
+                <span>@{h}</span>
+                <span className="rounded-sm bg-accent px-1 text-meta font-normal text-fg-on-strong">{t('composer.mention.autoBadge')}</span>
+                <button
+                  type="button"
+                  aria-label={`Skip @${h} this time`}
+                  className="rounded-sm px-0.5 text-accent hover:bg-surface-hover"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => skipAuto(h)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+            {sticky.map((h) => (
+              <li
+                key={h}
+                data-testid="sticky-mention"
+                data-handle={h}
+                className="flex items-center gap-1 rounded-row bg-surface-sunken px-1.5 py-0.5 text-meta font-medium text-fg"
+              >
+                <span>@{h}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove @${h}`}
+                  className="rounded-sm px-0.5 text-fg-subtle hover:bg-surface-hover"
+                  // 목록의 버튼과 같은 이유로 blur 를 막는다 — 지운 뒤에도 커서는 글 안에 있어야 한다.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => drop(h)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {pending.length > 0 && (
+          /* 붙인 순서대로, 넘치면 줄을 바꾼다. 위·오른쪽 여백은 모서리에 반 걸친 × 자리다. */
+          <div className="flex flex-wrap gap-2 px-3 pt-3">
+            {pending.map((u) => (
+              <PendingAttachmentTile
+                key={u.localId}
+                upload={u}
+                onRemove={() => discardUploads([u.localId])}
+                onRetry={() => retryUpload(u.localId)}
+              />
+            ))}
+          </div>
+        )}
+
         <ComposerEditor
           ref={ref}
           historyKey={scopeKey}
@@ -2064,89 +2110,161 @@ export function Composer({
           onKeyDown={onKeyDown}
           onPaste={onPaste}
         />
-      </div>
-      <div className="mt-1 flex items-center justify-between">
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            aria-label={t('chat.addMention')}
-            aria-pressed={picking}
-            className={`rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-sunken ${
-              picking ? 'bg-surface-hover' : ''
-            }`}
-            // 누르는 동안 textarea 가 blur 되면 커서 자리가 사라진다.
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => {
-              if (picking) return closeLists();
-              // 자동완성이 열려 있었다면 자리를 넘겨받는다 — 두 목록이 겹치면 안 된다.
-              setQuery(null);
-              setPicking(true);
-              setActive(0);
-            }}
-          >
-            @
-          </button>
-          {/* aria-label 은 **input** 에 붙인다. label 에 붙이면 그 요소 자신의 이름이
-              될 뿐 input 과 연결되지 않아 입력이 접근 불가가 된다. */}
-          <label className="cursor-pointer rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-sunken">
-            📎
-            <input
-              ref={fileRef}
-              type="file"
-              multiple
-              aria-label={t('chat.attachFile')}
-              className="hidden"
-              onChange={(e) => void pickFiles(e.target.files)}
-            />
-          </label>
-          {/* 예약은 채널이 있어야 건다(#222). `channelId` 가 없는 자리(스레드 답장 등
-              단독 컴포저)에서 버튼을 그리면 눌러도 아무 일이 없는 죽은 버튼이 된다.
-              본문이 비어 있을 때 막는 것도 전송 버튼과 같은 이유다 — 서버가 400 으로
-              돌려보낼 것을 굳이 왕복시키지 않는다. */}
-          {channelId && (
+        {/* 동작줄(입력창 개편 P2): 왼쪽 ＋첨부 · Aa 도구줄 · ☺ · @ │ 오른쪽 글자 수 · 보내기 · ⌄ 예약. */}
+        <div className="flex items-center justify-between px-2 pb-1.5">
+          <div className="flex items-center gap-0.5">
+            {/* aria-label 은 **input** 에 붙인다. label 에 붙이면 그 요소 자신의 이름이
+                될 뿐 input 과 연결되지 않아 입력이 접근 불가가 된다. */}
+            <label className="cursor-pointer rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-sunken">
+              ＋
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                aria-label={t('chat.attachFile')}
+                className="hidden"
+                onChange={(e) => void pickFiles(e.target.files)}
+              />
+            </label>
             <button
               type="button"
-              aria-label={t('composer.schedule.later')}
-              className="rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-sunken disabled:opacity-40"
-              disabled={!draft.trim()}
+              aria-label={t('composer.fmt.toggle')}
+              aria-pressed={toolbarOn}
+              data-testid="composer-toolbar-toggle"
+              title={t('composer.fmt.toggle')}
+              className={`rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-sunken ${toolbarOn ? 'bg-surface-hover text-fg' : ''}`}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={openScheduleModal}
+              onClick={() => setToolbarOn((on) => { composerToolbarStorage.save(!on); return !on; })}
             >
-              🕐
+              {t('composer.fmt.toggleGlyph')}
             </button>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {/* 남은 글자. **끝에서만 선다**(`BODY_COUNT_FROM`) — 넘긴 뒤에는 넘긴 양을 말한다.
-              `aria-live` 를 안 붙인 이유: 글자마다 바뀌는 값이라 읽어 주면 입력을 덮는다.
-              넘겼다는 사실은 위 `role="alert"` 줄이 전한다. */}
-          {outgoing.length >= BODY_COUNT_FROM && (
-            <span
-              data-testid="body-count"
-              className={`text-meta ${tooLong ? 'text-danger' : 'text-fg-subtle'}`}
+            {/* ☺ 빠른 이모지(결정 6 — 1단계는 리액션과 같은 8개). 고른 것은 커서 자리에 들어간다. */}
+            <div className="relative">
+              <button
+                type="button"
+                aria-label={t('composer.emoji.open')}
+                aria-haspopup="menu"
+                aria-expanded={emojiOpen}
+                data-testid="composer-emoji"
+                className="rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-sunken"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { setSendMenu(false); setEmojiOpen((v) => !v); }}
+              >
+                ☺
+              </button>
+              {emojiOpen && (
+                <div
+                  role="menu"
+                  aria-label={t('composer.emoji.list')}
+                  className="absolute bottom-full left-0 z-30 mb-1 flex gap-0.5 rounded-card bg-surface-raised p-1 shadow-float"
+                  onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setEmojiOpen(false); ref.current?.focus(); } }}
+                >
+                  {QUICK_REACTIONS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      role="menuitem"
+                      aria-label={emoji}
+                      className="rounded-row px-1 py-0.5 text-body hover:bg-surface-sunken"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => { setEmojiOpen(false); insertAtCaret(emoji); }}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              aria-label={t('chat.addMention')}
+              aria-pressed={picking}
+              className={`rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-sunken ${
+                picking ? 'bg-surface-hover' : ''
+              }`}
+              // 누르는 동안 textarea 가 blur 되면 커서 자리가 사라진다.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                if (picking) return closeLists();
+                // 자동완성이 열려 있었다면 자리를 넘겨받는다 — 두 목록이 겹치면 안 된다.
+                setQuery(null);
+                setPicking(true);
+                setActive(0);
+              }}
             >
-              {tooLong
-                ? t('composer.send.over', { over: numberText(overBy, locale) })
-                : t('composer.send.remaining', { remaining: numberText(-overBy, locale) })}
-            </span>
-          )}
-          <button
-            type="button"
-            aria-label={t('chat.send')}
-            className="rounded-full bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border disabled:text-fg-subtle"
-            // 여기는 blur 를 막지 않는다 — 전송에 성공하면 초안이 비므로 커서를 보존할
-            // 이유가 없고, 실패하면 사용자가 다시 textarea 를 눌러 이어 쓴다. 반면 위
-            // @·첨부 버튼은 누른 뒤에도 같은 자리에 계속 써야 하므로 막는다.
-            onMouseDown={(e) => e.preventDefault()}
-            /* **인자 없이 부른다.** `onClick={send}` 로 두면 클릭 이벤트가 `confirmed` 자리에
-               들어가 항상 참이 되어, 다수 호출 확인이 조용히 건너뛰어진다. */
-            onClick={() => send()}
-            // 상한을 넘긴 채로는 누를 수 없다 — 누를 수 있게 두고 실패를 보여 주는 것보다,
-            // 애초에 못 누르게 하고 얼마나 넘겼는지 옆에 세우는 것이 고칠 길을 준다.
-            disabled={(!draft.trim() && !pending.length) || tooLong || offline}
-          >
-            {t('composer.send.submit')}
-          </button>
+              @
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* 남은 글자. **끝에서만 선다**(`BODY_COUNT_FROM`) — 넘긴 뒤에는 넘긴 양을 말한다.
+                `aria-live` 를 안 붙인 이유: 글자마다 바뀌는 값이라 읽어 주면 입력을 덮는다.
+                넘겼다는 사실은 위 `role="alert"` 줄이 전한다. */}
+            {outgoing.length >= BODY_COUNT_FROM && (
+              <span
+                data-testid="body-count"
+                className={`text-meta ${tooLong ? 'text-danger' : 'text-fg-subtle'}`}
+              >
+                {tooLong
+                  ? t('composer.send.over', { over: numberText(overBy, locale) })
+                  : t('composer.send.remaining', { remaining: numberText(-overBy, locale) })}
+              </span>
+            )}
+            <button
+              type="button"
+              aria-label={t('chat.send')}
+              className="rounded-full bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover disabled:bg-border disabled:text-fg-subtle"
+              // 여기는 blur 를 막지 않는다 — 전송에 성공하면 초안이 비므로 커서를 보존할
+              // 이유가 없고, 실패하면 사용자가 다시 textarea 를 눌러 이어 쓴다. 반면 위
+              // @·첨부 버튼은 누른 뒤에도 같은 자리에 계속 써야 하므로 막는다.
+              onMouseDown={(e) => e.preventDefault()}
+              /* **인자 없이 부른다.** `onClick={send}` 로 두면 클릭 이벤트가 `confirmed` 자리에
+                 들어가 항상 참이 되어, 다수 호출 확인이 조용히 건너뛰어진다. */
+              onClick={() => send()}
+              // 상한을 넘긴 채로는 누를 수 없다 — 누를 수 있게 두고 실패를 보여 주는 것보다,
+              // 애초에 못 누르게 하고 얼마나 넘겼는지 옆에 세우는 것이 고칠 길을 준다.
+              disabled={(!draft.trim() && !pending.length) || tooLong || offline}
+            >
+              {t('composer.send.submit')}
+            </button>
+            {/* 예약은 보내기 옆 ⌄ 메뉴다(입력창 개편 결정 5 — 지금까지는 왼쪽 🕐). 채널이 있어야 건다(#222):
+                `channelId` 가 없는 자리(스레드 답장 등 단독 컴포저)에서 그리면 눌러도 아무 일이 없는 죽은 단추가 된다. */}
+            {channelId && (
+              <div className="relative">
+                <button
+                  type="button"
+                  aria-label={t('composer.send.options')}
+                  aria-haspopup="menu"
+                  aria-expanded={sendMenu}
+                  data-testid="composer-send-options"
+                  className="rounded-row px-1.5 py-1 text-fg-muted hover:bg-surface-sunken"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { setEmojiOpen(false); setSendMenu((v) => !v); }}
+                >
+                  ⌄
+                </button>
+                {sendMenu && (
+                  <div
+                    role="menu"
+                    className="absolute bottom-full right-0 z-30 mb-1 min-w-40 rounded-card bg-surface-raised p-1 shadow-float"
+                    onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setSendMenu(false); ref.current?.focus(); } }}
+                  >
+                    {/* 본문이 비어 있을 때 막는 것은 전송 단추와 같은 이유다 — 서버가 400 으로 돌려보낼 것을 왕복시키지 않는다. */}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      aria-label={t('composer.schedule.later')}
+                      className="block w-full rounded-row px-2 py-1 text-left hover:bg-surface-sunken disabled:opacity-40"
+                      disabled={!draft.trim()}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => { setSendMenu(false); openScheduleModal(); }}
+                    >
+                      {t('composer.schedule.later')}…
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
       {offline && (

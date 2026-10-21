@@ -477,3 +477,25 @@ export const projectionBannerStorage = {
     try { localStorage.setItem(PROJECTION_SNOOZE_KEY, testid); } catch { /* 저장 불가 환경 허용 */ }
   },
 };
+
+const COMPOSER_TOOLBAR_KEY = 'harkroom.composerToolbar';
+
+/**
+ * 입력창 서식 도구줄을 켤지(입력창 개편 P2, 결정 3). 기본은 **켬** — Slack 은 기본 끔이지만
+ * 마크다운을 모르는 사람에게 「이 칸은 서식이 된다」를 처음부터 보여 주려는 것이다.
+ * Aa 로 끄면 **이 기기에서** 기억한다(설정은 기기의 속성만 담는다 — `design.md`).
+ */
+export const composerToolbarStorage = {
+  load(): boolean {
+    try {
+      return localStorage.getItem(COMPOSER_TOOLBAR_KEY) !== 'off';
+    } catch {
+      return true;
+    }
+  },
+  save(on: boolean): void {
+    try {
+      localStorage.setItem(COMPOSER_TOOLBAR_KEY, on ? 'on' : 'off');
+    } catch { /* 저장 불가 환경 허용 */ }
+  },
+};
