@@ -30,3 +30,8 @@ export const MCP_PRESETS: readonly McpPreset[] = [
     definition: { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp' },
   },
 ];
+
+/** 이름이 프리셋의 것이면 그 프리셋. 프리셋 이름은 고정이라(토큰 키) 이름으로 찾는다. */
+export function presetForName(name: string): McpPreset | undefined {
+  return MCP_PRESETS.find((p) => p.name === name);
+}
