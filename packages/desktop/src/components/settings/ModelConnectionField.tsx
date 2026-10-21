@@ -197,9 +197,13 @@ function SecretPicker({ lane, value, onChange, onOpenSecrets }: {
           : t('agents.lane.granted');
         return (
           <button key={s.id} type="button" role="radio" aria-checked={on} disabled={!s.granted}
-            className={`flex w-full items-center justify-between gap-2 border-b border-border px-2 py-1.5 text-left last:border-b-0 disabled:opacity-60 ${on ? 'bg-surface-hover' : ''}`}
+            className={`flex w-full items-center justify-between gap-2 border-b border-border px-2 py-1.5 text-left last:border-b-0 disabled:opacity-60 ${on ? 'ring-1 ring-inset ring-border-strong' : 'hover:bg-surface-hover'}`}
             onClick={() => onChange(s.name)}>
-            <span className="min-w-0 truncate font-mono text-body">{s.name}</span>
+            {/* 고른 줄은 점과 테두리로 가린다 — 옅은 면만 쓰면 hover 와 같아져 저장된 키가 어느 것인지 안 보인다. */}
+            <span className="flex min-w-0 items-center gap-2">
+              <span aria-hidden data-testid="lane-secret-dot" className={on ? 'text-accent' : 'text-fg-subtle'}>{on ? '●' : '○'}</span>
+              <span className="min-w-0 truncate font-mono text-body">{s.name}</span>
+            </span>
             <span className={`shrink-0 rounded-full px-2 text-meta ${s.granted && !s.channelLimited ? 'bg-success-surface text-success' : 'bg-warning-surface text-warning'}`}>{chip}</span>
           </button>
         );

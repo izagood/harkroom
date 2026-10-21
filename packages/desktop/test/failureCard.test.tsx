@@ -172,7 +172,7 @@ describe('FailureCard — API 키 연결(designer v3 ④)', () => {
     expect(screen.queryByTestId('failure-retry')).toBeNull();
     expect(screen.getByTestId('lane-failure-code').textContent).toBe('secret_expired');
     fireEvent.click(screen.getByTestId('lane-open-settings'));
-    expect(onOpenSettings).toHaveBeenCalledWith('agents', FORGE);
+    expect(onOpenSettings).toHaveBeenCalledWith('agents', `${FORGE}#run`);
   });
 
   it('모르는 까닭 코드는 unknown 문장으로 접는다', () => {

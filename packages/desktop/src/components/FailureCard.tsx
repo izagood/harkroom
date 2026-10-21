@@ -96,14 +96,15 @@ export function FailureCard({ message, inThread = false, onOpenSettings }: {
       )}
 
       <div className="flex items-center gap-2 p-2 pt-1.5">
-        {/* API 키 연결 에이전트는 아직 터미널을 못 연다 — 눌러도 안 되는 문을 그리지 않는다. */}
+        {/* API 키 연결 에이전트는 아직 터미널을 못 연다 — 눌러도 안 되는 문을 그리지 않는다. 다른 자리(참여자 메뉴·터미널 칩)는
+            「꺼 두고 보이기」지만, 실패 카드는 터미널 진입점이 아니라 고칠 곳([에이전트 설정 열기])을 가리키는 자리라 숨긴다. */}
         {!lane && <TerminalChip account={author} message={message} />}
         {lane && onOpenSettings && (
           <button
             type="button"
             data-testid="lane-open-settings"
             className="rounded-row bg-accent px-2 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
-            onClick={() => onOpenSettings('agents', message.authorId)}
+            onClick={() => onOpenSettings('agents', `${message.authorId}#run`)}
           >
             {t('agents.lane.openSettings')}
           </button>

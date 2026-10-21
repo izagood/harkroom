@@ -66,6 +66,11 @@ describe('ModelConnectionField', () => {
     fireEvent.change(screen.getByTestId('lane-url'), { target: { value: 'https://gateway.example/anthropic/' } });
     expect(save.disabled).toBe(true);
     fireEvent.click(screen.getByRole('radio', { name: /llm-api-key/ }));
+    // 고른 줄은 hover 면이 아니라 점(●)과 테두리로 가린다(designer s1).
+    const picked = screen.getByRole('radio', { name: /llm-api-key/ });
+    expect(picked.getAttribute('aria-checked')).toBe('true');
+    expect(picked.querySelector('[data-testid="lane-secret-dot"]')!.textContent).toBe('●');
+    expect(picked.className).toContain('ring-1');
     expect(save.disabled).toBe(false);
     fireEvent.click(save);
     await waitFor(() => expect(lane.save).toHaveBeenCalledWith({ baseUrl: 'https://gateway.example/anthropic', secretName: 'llm-api-key' }));

@@ -951,7 +951,7 @@ function LaneAgentsGroup({ onOpenAgent }: { onOpenAgent?: (agentId: string) => v
         return (
           <div key={r.id} data-testid={`lane-agent-row-${r.handle}`} className="flex items-center justify-between gap-3 px-4 py-2.5">
             {onOpenAgent ? (
-              <button type="button" className="rounded-row hover:underline" onClick={() => onOpenAgent(r.id)}>{name}</button>
+              <button type="button" className="rounded-row hover:underline" onClick={() => onOpenAgent(`${r.id}#run`)}>{name}</button>
             ) : name}
             <span className="text-meta text-fg-subtle">{t('claudeAccounts.lane.row')}</span>
           </div>
