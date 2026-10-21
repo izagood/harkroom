@@ -298,7 +298,7 @@ function RemoteCell({ row, state, agentsOn }: { row: McpServerRow; state: Remote
           </div>
         )}
       </div>
-      <span className="shrink-0 rounded-row border border-border px-1.5 text-meta text-fg-muted" title={t('mcpServers.remote.viewOnlyNote')}>
+      <span className="shrink-0 px-1.5 text-meta text-fg-subtle" title={t('mcpServers.remote.viewOnlyNote')}>
         {t('mcpServers.remote.viewOnly')}
       </span>
     </div>
@@ -439,13 +439,15 @@ export function McpServersSection() {
           {Array.isArray(rows) && rows.length === 0 && <p className="px-4 py-3 text-meta text-fg-subtle">{t('mcpServers.none')}</p>}
           {registry.map((row) => {
             const cells = cellsOf(row);
+            // operator 칸으로 왔으면 칸만 칠한다 — 줄까지 칠하면 칸 강조가 줄 바탕에 묻힌다.
+            const rowLit = flash === row.name && !flashOp;
             const collapsed = cells.length === 1 && cells[0]!.local;
             const headItems: MenuItem[] = canEdit
               ? [{ label: t('mcpServers.removeCommunity'), tone: 'danger', onSelect: () => { setError(null); setAlsoLocal(false); setConfirming(row); } }]
               : [];
             return (
-              <div key={row.name} className={`flex flex-col gap-2 px-4 py-3 transition-colors ${flash === row.name ? 'bg-accent-surface' : ''}`}
-                data-testid={`mcp-server-${row.name}`} data-flash={flash === row.name ? 'true' : undefined}>
+              <div key={row.name} className={`flex flex-col gap-2 px-4 py-3 transition-colors ${rowLit ? 'bg-accent-surface' : ''}`}
+                data-testid={`mcp-server-${row.name}`} data-flash={rowLit ? 'true' : undefined}>
                 <div className="flex items-center justify-between gap-2">
                   <span className="min-w-0">
                     <span className="font-mono font-medium text-fg">{row.name}</span>
@@ -467,7 +469,7 @@ export function McpServersSection() {
                   const lit = flash === row.name && flashOp === cell.key;
                   return collapsed ? <div key={cell.key}>{body}</div> : (
                     <div key={cell.key} data-testid={`mcp-cell-${row.name}-${cell.key}`} data-flash={lit ? 'true' : undefined}
-                      className={`grid grid-cols-1 gap-2 rounded-row border px-2.5 py-2 sm:grid-cols-[8.5rem_1fr] ${cell.local ? 'border-border bg-surface' : 'border-dashed border-border bg-transparent'} ${lit ? 'bg-accent-surface' : ''}`}>
+                      className={`grid grid-cols-1 gap-2 rounded-row border px-2.5 py-2 sm:grid-cols-[8.5rem_1fr] ${cell.local ? 'border-border' : 'border-dashed border-border'} ${lit ? 'bg-accent-surface' : cell.local ? 'bg-surface' : 'bg-transparent'}`}>
                       <span className="flex min-w-0 flex-col text-meta font-semibold text-fg">
                         <span className="truncate" title={cell.label}>
                           {cell.label}

@@ -20,7 +20,7 @@ import { resetCommunityRegistry, useActiveStore } from '../src/state/communities
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc } from './helpers/fakeApi';
 import { setExternalOpener } from '../src/lib/openExternal';
-import { takeMcpFocus } from '../src/lib/mcpFocus';
+import { requestMcpFocus, takeMcpFocus } from '../src/lib/mcpFocus';
 
 const BASE = 'https://c.example.com';
 const ME = 'me';
@@ -99,6 +99,24 @@ describe('지문 — 오퍼레이터와 같은 값', () => {
 });
 
 describe('연동 — 원격 operator 칸', () => {
+  it('강조 중인 칸은 바탕을 강조색으로 바꿔 넣는다 — 두 바탕 클래스가 겹치지 않는다(designer #1456-1)', async () => {
+    setup({
+      local: [slackLocal({ state: 'ok' })],
+      operators: [op('op-mac', 'mac'), op('op-vm', 'dev-vm-01', { status: { turns: { running: 0, max: null }, mcp: [{ name: 'slack', defined: true, source: 'operator', transport: 'http', oauth: true, auth: 'ok', authAt: '2026-10-20T00:12:00Z' }], receivedAt: '' } })],
+    });
+    requestMcpFocus('slack', 'op-vm');
+    render(<McpServersSection />);
+    const cell = await screen.findByTestId('mcp-cell-slack-op-vm');
+    await waitFor(() => expect(cell.getAttribute('data-flash')).toBe('true'));
+    const cls = cell.className.split(/\s+/);
+    expect(cls).toContain('bg-accent-surface');
+    expect(cls).not.toContain('bg-transparent');
+    expect(cls).not.toContain('bg-surface');
+    expect(screen.getByTestId('mcp-cell-slack-local').className.split(/\s+/)).toContain('bg-surface');
+    // 칸으로 왔으면 줄은 칠하지 않는다 — 칸 강조가 줄 바탕에 묻히지 않게.
+    expect(screen.getByTestId('mcp-server-slack').getAttribute('data-flash')).toBeNull();
+  });
+
   it('내가 주인인 원격 operator 만 칸이 된다 — 남의 것·거둔 것·이 맥은 원격 칸이 아니다', async () => {
     setup({
       local: [slackLocal({ state: 'ok' })],
