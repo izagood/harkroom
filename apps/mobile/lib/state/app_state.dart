@@ -502,30 +502,37 @@ class AppState extends ChangeNotifier {
     if (added) notifyListeners();
   }
 
+  /// 이 기기에서 이번에 만든 섹션 id. 빈 섹션 안내(「채널을 길게 눌러…」)는 여기 든 섹션에만 선다(designer n7) —
+  /// 서버에서 받아 온 빈 섹션마다 안내가 서면 빈 섹션이 많을 때 시끄럽다. 저장하지 않으니 앱을 다시 열면 사라진다.
+  final Set<String> freshSections = {};
+
   void toggleSection(String key) {
     if (key.startsWith('sid:')) {
-      unawaited(_toggleServerSection(key.substring(4)));
+      final id = key.substring(4);
+      final cur = sections?.where((x) => x.id == id).firstOrNull;
+      if (cur != null) unawaited(setServerSectionCollapsed(id, !cur.collapsed));
       return;
     }
     if (!collapsedSections.remove(key)) collapsedSections.add(key);
     notifyListeners();
   }
 
-  /// 서버 섹션 접기 — 먼저 그리고(낙관적) 서버에 적는다. 실패하면 되돌린다.
-  Future<void> _toggleServerSection(String id) async {
+  /// 서버 섹션 접힘을 [collapsed] 로 **정해** 쓴다 — 먼저 그리고(낙관적) 서버에 적는다. 실패하면 되돌린다.
+  /// 이미 그 값이면 아무것도 보내지 않는다. 뒤집기가 아니라 정하기인 이유: 옮기기의 「펼침」 이 뒤집기면
+  /// 그새 펼쳐진 섹션을 도로 접을 수 있다(security 참고).
+  Future<void> setServerSectionCollapsed(String id, bool collapsed) async {
     final list = sections;
     final i = list?.indexWhere((x) => x.id == id) ?? -1;
-    if (list == null || i < 0) return;
-    final next = !list[i].collapsed;
-    sections = [...list]..[i] = list[i].withCollapsed(next);
+    if (list == null || i < 0 || list[i].collapsed == collapsed) return;
+    sections = [...list]..[i] = list[i].withCollapsed(collapsed);
     notifyListeners();
     try {
-      await _api!.setSectionCollapsed(id, next);
+      await _api!.setSectionCollapsed(id, collapsed);
     } on Object {
       final now = sections;
       final j = now?.indexWhere((x) => x.id == id) ?? -1;
       if (now == null || j < 0) return;
-      sections = [...now]..[j] = now[j].withCollapsed(!next);
+      sections = [...now]..[j] = now[j].withCollapsed(!collapsed);
       notifyListeners();
     }
   }
@@ -539,9 +546,7 @@ class AppState extends ChangeNotifier {
             ChannelPref(channelId: channelId, starred: false, section: null, sortOrder: null, hidden: false))
         .withSection(sectionId, name);
     // 접힌 섹션으로 옮기면 펼친다(designer s2) — 아니면 옮긴 채널이 목록에서 말없이 사라진다.
-    if (sectionId != null && (sections?.any((x) => x.id == sectionId && x.collapsed) ?? false)) {
-      unawaited(_toggleServerSection(sectionId));
-    }
+    if (sectionId != null) unawaited(setServerSectionCollapsed(sectionId, false));
     notifyListeners();
     try {
       await _api!.setChannelSection(channelId, sectionId);
@@ -559,6 +564,7 @@ class AppState extends ChangeNotifier {
   /// 새 섹션을 만들면서 그 채널을 넣는다(채널 시트의 「새 섹션…」). 같은 이름이 있으면 서버가 409 로 막는다.
   Future<void> createSectionWith(String name, String channelId) async {
     final created = await _api!.createSection(name, channelIds: [channelId]);
+    freshSections.add(created.id);
     sections = [...?sections, created]..sort((a, b) => a.position.compareTo(b.position));
     final before = channelPrefs[channelId];
     channelPrefs[channelId] = (before ??
@@ -2638,6 +2644,7 @@ class AppState extends ChangeNotifier {
     channelPrefs.clear();
     sections = null;
     collapsedSections.clear();
+    freshSections.clear();
     homeUnreadOnly = false;
     threads.clear();
     threadRoots.clear();
