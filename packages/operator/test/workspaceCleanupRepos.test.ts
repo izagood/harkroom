@@ -137,6 +137,11 @@ describe('저장소는 러너가 보고한 worktree 에서 찾는다(workingDir 
     await writeFile(join(f.wt.closed, '.env'), 'SECRET=1');
     expect(await onlyRebuildableIgnored(deps, f.wt.closed)).toBe(false);
     expect(await onlyRebuildableIgnored(deps, join(f.root, 'gone'))).toBe(false);
+    // n6: 가운데 마디만 다시 만들 수 있는 이름인 손 파일 — `*.key` 규칙의 src/target/secret.key 는 안 된다
+    await writeFile(join(f.repo, '.git', 'info', 'exclude'), '*.key\n');
+    await mkdir(join(f.wt.merged, 'src', 'target'), { recursive: true });
+    await writeFile(join(f.wt.merged, 'src', 'target', 'secret.key'), 'k');
+    expect(await onlyRebuildableIgnored(deps, f.wt.merged)).toBe(false);
   });
 
   it('n3: 저장소가 status.showUntrackedFiles=no 여도 지우기 직전 검사는 untracked 를 본다', async () => {

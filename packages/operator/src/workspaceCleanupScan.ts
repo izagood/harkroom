@@ -148,7 +148,8 @@ export async function lastActivityAt(deps: ScanDeps, path: string): Promise<stri
 }
 
 /**
- * 무시된 파일이 다시 만들 수 있는 폴더(`REBUILDABLE_DIRS`, 어느 깊이든) 안에만 있는가. `.env`·로컬 DB·생성 설정처럼 그 밖의 무시된
+ * 무시된 파일이 다시 만들 수 있는 폴더(`REBUILDABLE_DIRS`, 어느 깊이든) 안에만 있는가. `matching` 은 통째로 무시된 폴더를 `build/`
+ * 한 줄로 내므로 **마지막 마디**가 그 이름이어야 한다 — 가운데 마디만 보면 `*.key` 규칙의 `src/target/secret.key` 가 통과한다(security n6). `.env`·로컬 DB·생성 설정처럼 그 밖의 무시된
  * 것이 하나라도 있으면 false — `git worktree remove` 는 그것까지 지운다. git 이 못 읽으면 false.
  */
 export async function onlyRebuildableIgnored(deps: ScanDeps, path: string): Promise<boolean> {
@@ -157,7 +158,7 @@ export async function onlyRebuildableIgnored(deps: ScanDeps, path: string): Prom
   const r = await deps.exec(deps.gitPath, ['-C', path, 'status', '--porcelain', '-z', '--ignored=matching', '--untracked-files=normal'], GIT_ENV(deps.home));
   if (r.code !== 0) return false;
   const rebuildable = new Set<string>(REBUILDABLE_DIRS);
-  return r.stdout.split('\0').filter((e) => e.startsWith('!! ')).every((e) => e.slice(3).replace(/\/$/, '').split('/').some((s) => rebuildable.has(s)));
+  return r.stdout.split('\0').filter((e) => e.startsWith('!! ')).every((e) => rebuildable.has(e.slice(3).replace(/\/$/, '').split('/').pop()!));
 }
 
 export type Forward = (agentId: string, req: RunnerLinkRequest) => Promise<RunnerLinkResponse>;
