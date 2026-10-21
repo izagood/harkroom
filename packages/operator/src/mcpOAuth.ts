@@ -369,8 +369,12 @@ export function createMcpOAuth(deps: McpOAuthDeps): McpOAuth {
             deps.log(`MCP OAuth: ${name} 인증됨`);
             await deps.onToken?.(name, { url: rec.url, accessToken: rec.accessToken });
           } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            // 성공 페이지가 이미 나갔다(onToken 이 던졌다) — 토큰은 저장됐다. 다시 그리면
+            // ERR_HTTP_HEADERS_SENT 가 이 async 밖으로 새고, 흐름을 실패로 돌릴 일도 아니다.
+            if (res.headersSent) { deps.log(`MCP OAuth: ${name} 인증 뒤 알림 실패 — ${msg}`); return; }
             page('save_failed');
-            fail(err instanceof Error ? err.message : String(err));
+            fail(msg);
           }
         })();
       });
