@@ -59,6 +59,22 @@ const SESSION = { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1', har
 /** ANSI + 잘린 UTF-8. 어디서든 문자열로 뜨면 U+FFFD 로 치환돼 되돌릴 수 없다. */
 const RAW = Buffer.concat([Buffer.from('\x1b[31mERR\x1b[0m', 'binary'), Buffer.from([0xed, 0x95])]);
 
+// C1: 러너는 붙을 때마다 제 API 키 연결 모드를 알린다 — 오퍼레이터가 설정과 다른 러너의 새 턴을 막는 근거다.
+describe('API 키 연결 모드 통지', () => {
+  it('붙을 때마다(재접속 포함) providerLane.mode 를 보낸다 — 옵션이 없으면 안 보낸다', () => {
+    const d = fakeDialer();
+    const client = createRelayClient({ link: LINK, unixDial: d.dial, schedule: () => {}, providerLane: true });
+    client.start();
+    d.open();
+    const modes = () => (d.sent as unknown as { type: string }[]).filter((f) => f.type === 'providerLane.mode');
+    expect(modes()).toEqual([{ type: 'providerLane.mode', on: true }]);
+    const quiet = fakeDialer();
+    createRelayClient({ link: LINK, unixDial: quiet.dial }).start();
+    quiet.open();
+    expect((quiet.sent as unknown as { type: string }[]).some((f) => f.type === 'providerLane.mode')).toBe(false);
+  });
+});
+
 describe('#141 러너 릴레이 — 접속과 announce', () => {
   it('링크(소켓·id·secret)를 dialer 에 넘긴다 — 러너는 서버를 모른다', () => {
     const d = fakeDialer();

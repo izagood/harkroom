@@ -103,6 +103,22 @@ export interface AssignmentReconciler {
    * 되풀이가 아니다). 배정이 없거나 러너가 없으면 false.
    */
   restart(agentId: string): boolean;
+  /**
+   * 이 머신의 로컬 설정이 바뀌었다(앱이 `operator.json` 을 고쳤다). 배정 표의 설정을 새 값으로 바꾼다 — 다음 spawn 이 새 env 를
+   * 쓰게(이 갈래가 없을 때는 처음 받은 설정으로 다시 떠서 재시작해도 옛 env 였다, C1).
+   * **API 키 연결의 켜짐/꺼짐이 바뀌면** 러너를 [재시작]과 같은 길로 다시 띄운다 — 러너가 폴을 놓고 도는 턴을 끝내면 새 env 로 뜬다.
+   * 주소·비밀 이름만 바뀌면 다시 띄우지 않는다(마운트가 턴마다 설정을 다시 읽는다). 다시 띄우기로 했으면 'restarting'.
+   */
+  setLocal(agentId: string, local: LocalAgentConfig | undefined): 'restarting' | 'updated' | 'none';
+  /** 러너가 relay 로 알린 제 API 키 연결 모드(`providerLane.mode`). spawn 때 넣은 값을 덮는다. */
+  noteRunnerLane(runnerId: string, on: boolean): void;
+  /**
+   * 이 러너의 모드가 지금 설정과 다른가 — 그러면 오퍼레이터가 턴 자리를 막는다(security ⓒ: 켰는데 풀로 도는 턴이 서지 않게).
+   * 모드를 모르는 러너(옛 판·앞 세대)는 lane 이 켜져 있는 한 다르다고 본다. 배정이 없으면 false.
+   */
+  laneMismatch(runnerId: string, agentId: string): boolean;
+  /** 에이전트별 지금 러너의 모드(모르면 null). 앱 실행 탭 「적용 대기」의 출처. */
+  laneModes(): Record<string, boolean | null>;
   /** 살아 있는 러너 전부 — hello 의 announce 에 실린다. */
   announce(): RunnerAnnounce[];
 }
@@ -124,6 +140,11 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
   const lastSpawnAt = new Map<string, number>();
   const backoff = new Map<string, number>();
   const respawns = new Map<string, () => void>();
+  /** runnerId → 그 러너의 API 키 연결 모드. spawn 때 env 로 적고 러너 통지로 덮는다. */
+  const runnerLane = new Map<string, boolean>();
+  /** agentId → 지금 러너의 runnerId(이 조정기가 띄운 것). */
+  const currentRunner = new Map<string, string>();
+  const laneOn = (local: LocalAgentConfig | undefined): boolean => readProviderLaneConfig(local?.providerLane) !== null;
 
   const self: AssignmentReconciler = {
     async onAssign(baseUrl, definition, local) {
@@ -195,7 +216,13 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         }, retiringRetryMs));
         return 'retiring';
       }
-      if (result.spawned) lastSpawnAt.set(agentId, now());
+      if (result.spawned) {
+        lastSpawnAt.set(agentId, now());
+        const prev = currentRunner.get(agentId);
+        if (prev && prev !== runnerId) runnerLane.delete(prev);
+        currentRunner.set(agentId, runnerId);
+        runnerLane.set(runnerId, laneOn(local));
+      }
       // 안 띄웠으면 방금 적은 secret 은 아무 러너도 안 쓴다 — 남겨 두면 장부가 자라기만 한다.
       else deps.link.forget(runnerId);
       deps.log(result.spawned
@@ -228,6 +255,41 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
       lastSpawnAt.delete(agentId);
       deps.log(`재시작: agent=${assigned.get(agentId)!.definition.handle} — SIGTERM, 물러나면 다시 띄운다`);
       return deps.signal(agentId, 'SIGTERM');
+    },
+
+    setLocal(agentId, local) {
+      const entry = assigned.get(agentId);
+      if (!entry) return 'none';
+      const was = laneOn(entry.local);
+      // 같은 객체를 고친다 — 예약된 다시 띄우기(onRunnerExit·retiring)가 이 객체의 local 을 그때 읽는다.
+      entry.local = local;
+      if (was === laneOn(local)) return 'updated';
+      deps.log(`API 키 연결 ${laneOn(local) ? '켬' : '끔'}: agent=${entry.definition.handle} — 러너를 다시 띄운다(도는 턴이 끝난 뒤)`);
+      if (!deps.isAlive(agentId)) return 'restarting';
+      backoff.delete(agentId);
+      lastSpawnAt.delete(agentId);
+      deps.signal(agentId, 'SIGTERM');
+      return 'restarting';
+    },
+
+    noteRunnerLane(runnerId, on) {
+      runnerLane.set(runnerId, on);
+    },
+
+    laneMismatch(runnerId, agentId) {
+      const entry = assigned.get(agentId);
+      if (!entry) return false;
+      const mode = runnerLane.get(runnerId);
+      return laneOn(entry.local) ? mode !== true : mode === true;
+    },
+
+    laneModes() {
+      const out: Record<string, boolean | null> = {};
+      for (const agentId of assigned.keys()) {
+        const id = currentRunner.get(agentId);
+        out[agentId] = id === undefined ? null : (runnerLane.get(id) ?? null);
+      }
+      return out;
     },
 
     onRunnerExit(agentId, code, reason) {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PROVIDER_LANE_MOUNT_PATH } from '@harkroom/shared/providerLane';
 import type { RunnerLinkRequest } from '@harkroom/shared/runnerLink';
-import { createProviderLaneMount, createProviderLaneStatusBook } from '../src/providerLaneMount.js';
+import { createLaneTurnGate, createProviderLaneMount, createProviderLaneStatusBook } from '../src/providerLaneMount.js';
 
 const req = (body: unknown, path = PROVIDER_LANE_MOUNT_PATH): RunnerLinkRequest =>
   ({ type: 'http.forward', id: 'r1', method: 'POST', path, body: JSON.stringify(body), contentType: 'application/json' });
@@ -86,5 +86,28 @@ describe('마지막 키 받기 장부(2a)', () => {
     });
     await m.maybeHandle('run-1', 'a-1', req({ cause: 'm1' }), 'relay');
     expect(status.snapshot()['a-1']).toMatchObject({ ok: false, code: 'not_granted' });
+  });
+});
+
+describe('턴 자리 문(C1)', () => {
+  const slot = (path = '/agent/turn-slots'): RunnerLinkRequest =>
+    ({ type: 'http.forward', id: 's1', method: 'POST', path, body: JSON.stringify({ key: 'k' }), contentType: 'application/json' });
+
+  it('러너 모드가 설정과 다르면 새 턴 자리를 409 로 막고, 같으면 넘긴다', () => {
+    let mismatch = true;
+    const lines: string[] = [];
+    const gate = createLaneTurnGate({ mismatch: () => mismatch, log: (l) => lines.push(l) });
+    expect(gate.maybeBlock('r1', 'a-1', slot(), 'relay')).toMatchObject({ status: 409 });
+    expect(gate.maybeBlock('r1', 'a-1', slot(), 'relay')).toMatchObject({ status: 409 });
+    expect(lines).toHaveLength(1); // 폴마다 오는 요청이라 한 번만 적는다
+    mismatch = false;
+    expect(gate.maybeBlock('r1', 'a-1', slot(), 'relay')).toBeNull();
+  });
+
+  it('자리 놓기·다른 경로·relay 아닌 요청은 건드리지 않는다', () => {
+    const gate = createLaneTurnGate({ mismatch: () => true, log: () => {} });
+    expect(gate.maybeBlock('r1', 'a-1', slot('/agent/turn-slots/release'), 'relay')).toBeNull();
+    expect(gate.maybeBlock('r1', 'a-1', slot('/agent/other'), 'relay')).toBeNull();
+    expect(gate.maybeBlock('r1', 'a-1', slot(), 'bridge')).toBeNull();
   });
 });

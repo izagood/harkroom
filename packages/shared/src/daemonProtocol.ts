@@ -664,6 +664,11 @@ export interface OperatorAgentsListResult {
    * 있어 재기동하면 비어 있다. 옛 오퍼레이터는 싣지 않는다.
    */
   laneStatus?: Record<string, ProviderLaneStatus>;
+  /**
+   * 에이전트별 **지금 러너의** API 키 연결 모드(true/false, 모르면 null). 설정(`providerLane`)과 다르면 러너가 아직 다시 뜨지 않은 것이다 —
+   * 앱이 「적용 대기」를 띄운다(C1). 이 머신에 배정된 에이전트만 실린다. 옛 오퍼레이터는 싣지 않는다.
+   */
+  laneModes?: Record<string, boolean | null>;
 }
 export interface OperatorLocalAgent {
   workingDir?: string;

@@ -47,7 +47,7 @@ import { createLocalTerminalHub } from './localTerminal.js';
 import type { CommunityInstance } from './community.js';
 import { createTurnSecrets } from './turnSecrets.js';
 import { communityKey, readConfig } from './config.js';
-import { createProviderLaneMount, createProviderLaneStatusBook } from './providerLaneMount.js';
+import { createLaneTurnGate, createProviderLaneMount, createProviderLaneStatusBook } from './providerLaneMount.js';
 import { createTurnMerge, defaultExec, ghEnv, GH_PATH } from './turnMerge.js';
 import { createTurnCommand, stripLinkOnlyFields } from './turnCommand.js';
 import { createTurnApi } from './turnApi.js';
@@ -255,6 +255,11 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     lookupLease: (runnerId, cause) => turnSecrets.lookup(runnerId, cause),
     log,
   });
+  /** 러너 모드가 설정과 다를 때 새 턴 자리를 막는다(C1, `providerLaneMount.ts::createLaneTurnGate`). */
+  const laneTurnGate = createLaneTurnGate({
+    mismatch: (runnerId, agentId) => communities.find((x) => x.knowsAgent(agentId))?.laneMismatch?.(runnerId, agentId) ?? false,
+    log,
+  });
   // 전용 제공사 경로(`providerLaneMount.ts`) — 러너가 PTY 직전에 relay 로 부른다. 설정은 매번 operator.json 에서 읽는다.
   const providerLaneStatus = createProviderLaneStatusBook();
   const providerLaneMount = createProviderLaneMount({
@@ -315,6 +320,10 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       const req = stripLinkOnlyFields(rawReq);
       const commanded = await turnCommand.maybeHandle(runnerId, agentId, req, kind);
       if (commanded) return commanded;
+      // API 키 연결(C1, security ⓒ): 러너 모드가 지금 설정과 다르면 새 턴 자리를 내주지 않는다 — 켰는데 옛 러너가 풀 계정으로
+      // 새 턴을 세우는 틈을 막는다. 409 는 러너가 「가득 참」으로 읽어 읽음 처리 없이 다음 폴로 미룬다 — 그 사이 러너가 다시 뜬다.
+      const laneBlocked = laneTurnGate.maybeBlock(runnerId, agentId, req, kind);
+      if (laneBlocked) return laneBlocked;
       const slot = turnSlots.maybeHandle(runnerId, req, kind);
       if (slot) return slot;
       const laneMounted = await providerLaneMount.maybeHandle(runnerId, agentId, req, kind);
@@ -349,6 +358,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       if (notice.type === 'secret.lease') { turnSecrets.noteLease(runnerId, agentId, notice); return; }
       if (notice.type === 'secret.leaseEnded') { void turnSecrets.leaseEnded(runnerId, notice.cause); return; }
       // API 키 연결의 그 턴 결과 — 실행 탭 「마지막 시도」 줄의 출처(2a). 코드는 링크가 허용 목록으로 이미 걸렀다.
+      if (notice.type === 'providerLane.mode') { for (const c of communities) if (c.knowsAgent(agentId)) c.noteRunnerLane?.(runnerId, notice.on); return; }
       if (notice.type === 'providerLane.result') { providerLaneStatus.note(agentId, notice.ok, notice.code); return; }
       if (notice.type === 'mcp.authRejected') {
         // 하네스가 우리가 구운 Authorization 헤더를 거절당했다. 보고는 신호일 뿐이라 판단은
@@ -542,6 +552,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     onChanged: (baseUrl, agents) => { for (const c of communities) if (c.baseUrl === baseUrl) c.setAgents(agents); },
     onRegistered: async (baseUrl) => { await startCommunity(baseUrl); },
     laneStatus: () => providerLaneStatus.snapshot(),
+    laneModes: () => Object.assign({}, ...communities.map((c) => c.laneModes?.() ?? {})),
   });
 
   // 이 머신의 MCP 정의(스펙 §6). 러너 config 를 만드는 쪽(`communities.ts::mcpConfig`)과 같은 두 파일을 본다.

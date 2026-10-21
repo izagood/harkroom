@@ -2753,7 +2753,7 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
 
                 </>}
                 secondary={selected && (isAdmin || isOwner) ? (<>
-              {providerLane.lane && <ModelConnectionStatus lane={providerLane} />}
+              {(providerLane.lane || providerLane.pending) && <ModelConnectionStatus lane={providerLane} />}
               {/* 스펙 2026-09-20 §3: **어디서 돌리나.** 앱은 러너를 띄우지 않는다 — 이 고르개가
                   서버에 배정을 쓰면 그 오퍼레이터가 러너를 띄운다. 러너 실행·중지 절 바로 뒤에
                   두는 이유: 그 절의 '실행'이 실제로 무엇을 켜는지가 이 배정으로 정해진다. */}

@@ -187,7 +187,11 @@ export type RunnerLinkNotice =
   | McpAuthRejectedNotice
   | SecretLeaseNotice
   | SecretLeaseEndedNotice
-  | ProviderLaneResultNotice;
+  | ProviderLaneResultNotice
+  | ProviderLaneModeNotice;
+
+/** 러너가 붙을 때 알리는 제 API 키 연결 모드(C1) — 오퍼레이터가 설정과 다른 러너의 턴 자리를 막는다. */
+export type ProviderLaneModeNotice = { type: 'providerLane.mode'; on: boolean };
 
 /** API 키 연결(provider lane)의 그 턴 키 받기 결과(`providerLane.ts::ProviderLaneStatus`). 코드는 허용 목록만 — 밖이면 통지째 버린다. */
 export type ProviderLaneResultNotice = { type: 'providerLane.result'; ok: boolean; code?: ProviderLaneFailureCode };
@@ -250,6 +254,7 @@ export function isRunnerLinkNotice(value: unknown): value is RunnerLinkNotice {
   const str = (v: unknown, max = 200) => typeof v === 'string' && v.length > 0 && v.length <= max;
   if (m.type === 'secret.lease') return str(m.cause) && str(m.leaseId) && str(m.token) && str(m.expiresAt);
   if (m.type === 'secret.leaseEnded') return str(m.cause);
+  if (m.type === 'providerLane.mode') return typeof m.on === 'boolean';
   if (m.type === 'providerLane.result') {
     return typeof m.ok === 'boolean' && (m.code === undefined || (PROVIDER_LANE_FAILURE_CODES as readonly unknown[]).includes(m.code));
   }
