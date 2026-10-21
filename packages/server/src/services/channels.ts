@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import type { ChannelDoc, ChannelMemberRow, ChannelRow, NotifyLevel } from '@harkroom/shared';
+import { compactSectionPositions, findOrCreateSectionByName, setChannelSection } from './channelSections.js';
 
 // #180: `created_at` 도 싣는다. 채널 디렉터리의 "생성순" 정렬을 클라이언트가 하는데,
 // 목록 질의는 `order by name` 이라 순서 자체로는 생성 시각을 알 수 없다. 컬럼은 001 부터
@@ -390,6 +391,11 @@ export interface ChannelPrefRow {
    */
   section: string | null;
   /**
+   * 채널이 속한 섹션의 id(136, `channel_section`). null 이면 미분류. `section` 은 이 섹션의
+   * 이름을 비추는 거울이다 — 쓰는 길은 `services/channelSections.ts` 의 `setChannelSection` 하나다.
+   */
+  sectionId: string | null;
+  /**
    * 섹션 안에서의 수동 순서(#157). null 이면 이름순 뒤에 붙는다.
    */
   sortOrder: number | null;
@@ -403,8 +409,8 @@ export interface ChannelPrefRow {
 export async function updateChannelPref(
   pool: Pool, accountId: string, channelId: string,
   patch: {
-    notifyLevel?: NotifyLevel; starred?: boolean; section?: string | null; sortOrder?: number | null;
-    hidden?: boolean;
+    notifyLevel?: NotifyLevel; starred?: boolean; section?: string | null; sectionId?: string | null;
+    sortOrder?: number | null; hidden?: boolean;
   },
 ): Promise<ChannelPrefRow | null> {
   const channel = await pool.query(`select id, kind from channel where id = $1`, [channelId]);
@@ -441,13 +447,18 @@ export async function updateChannelPref(
    * 이름을 바꾸면 안 되는" 이름이 생긴다. 길이 검증만 라우트의 zod 가 맡는다.
    */
   if (patch.section !== undefined) {
+    // 옛 앱의 길 — 이름으로 가리킨다. 136 이후 섹션은 표의 행이므로 이름을 행으로 바꿔
+    // (없으면 맨 뒤에 만들어) `sectionId` 길과 **같은 함수**로 쓴다.
     const sectionValue = normalizeSectionName(patch.section);
-    await pool.query(
-      `insert into channel_pref (account_id, channel_id, section)
-       values ($1, $2, $3)
-       on conflict (account_id, channel_id) do update set section = $3`,
-      [accountId, channelId, sectionValue],
-    );
+    const sectionId = sectionValue === null ? null : await findOrCreateSectionByName(pool, accountId, sectionValue);
+    await setChannelSection(pool, accountId, channelId, sectionId);
+  }
+  /**
+   * 새 앱의 길 — 섹션 id 로 가리킨다(136). 요청자의 섹션인지는 라우트가 먼저 본다.
+   * `section` 과 함께 보내면 라우트가 400 으로 막는다(어느 쪽이 이기는지 정할 일이 없게).
+   */
+  if (patch.sectionId !== undefined) {
+    await setChannelSection(pool, accountId, channelId, patch.sectionId);
   }
   /**
    * 숨기기(#376). 시각으로 저장한다 — 012 의 관용구다("언제 숨겼나"가 기록으로 남는다).
@@ -479,7 +490,7 @@ export async function getChannelPref(
 ): Promise<ChannelPrefRow | null> {
   const res = await pool.query(
     `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt",
-            notify_level as "notifyLevel", section, sort_order as "sortOrder",
+            notify_level as "notifyLevel", section, section_id as "sectionId", sort_order as "sortOrder",
             hidden_at as "hiddenAt"
      from channel_pref where account_id = $1 and channel_id = $2`,
     [accountId, channelId],
@@ -490,7 +501,7 @@ export async function getChannelPref(
 export async function listChannelPrefs(pool: Pool, accountId: string): Promise<ChannelPrefRow[]> {
   const res = await pool.query(
     `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt",
-            notify_level as "notifyLevel", section, sort_order as "sortOrder",
+            notify_level as "notifyLevel", section, section_id as "sectionId", sort_order as "sortOrder",
             hidden_at as "hiddenAt"
      from channel_pref where account_id = $1`,
     [accountId],
@@ -518,13 +529,13 @@ export function normalizeSectionName(value: string | null): string | null {
  * 쏟아진다. 합치기(#323)가 이 함수를 쓴다.
  */
 async function renumberSection(
-  client: Queryable, accountId: string, section: string | null, orderedChannelIds: string[],
+  client: Queryable, accountId: string, sectionId: string, orderedChannelIds: string[],
 ): Promise<void> {
   for (const [index, channelId] of orderedChannelIds.entries()) {
+    await setChannelSection(client, accountId, channelId, sectionId);
     await client.query(
-      `update channel_pref set section = $3, sort_order = $4
-       where account_id = $1 and channel_id = $2`,
-      [accountId, channelId, section, index],
+      `update channel_pref set sort_order = $3 where account_id = $1 and channel_id = $2`,
+      [accountId, channelId, index],
     );
   }
 }
@@ -566,37 +577,50 @@ export async function renameSection(
      * 정렬 기준은 화면(`sortChannelsBySection`)과 같다: 값이 있는 것이 먼저.
      */
     const ordered = `select channel_id as "channelId" from channel_pref
-       where account_id = $1 and section = $2
+       where account_id = $1 and section_id = $2
        order by sort_order nulls last, channel_id`;
+    // 136 이후 섹션은 `channel_section` 의 행이다. 이름은 그 행의 이름이고, 채널 쪽
+    // `section` 은 거울이다 — 이 함수는 옛 앱의 이름 기반 길을 행 기반으로 옮겨 적은 것이다.
+    const sectionIdOf = async (name: string): Promise<string | null> => (await client.query<{ id: string }>(
+      `select id from channel_section where account_id = $1 and name = $2`, [accountId, name],
+    )).rows[0]?.id ?? null;
 
-    const oldPrefs = await client.query<{ channelId: string }>(ordered, [accountId, oldSection]);
-    if (!oldPrefs.rowCount) {
+    const oldId = await sectionIdOf(oldSection);
+    if (oldId === null) {
       // 그런 섹션이 없으면 바꿀 것도 없다. 아무것도 쓰지 않았으니 그대로 닫는다.
       await client.query('rollback');
       return listChannelPrefs(pool, accountId);
     }
+    const oldPrefs = await client.query<{ channelId: string }>(ordered, [accountId, oldId]);
+    const newId = newSection === null ? null : await sectionIdOf(newSection);
 
     if (newSection === null) {
-      // "섹션에서 빼기"와 같은 뜻이다. `sort_order` 는 건드리지 않는다 — #157 의
-      // 빼기도 순서 값을 남긴다(섹션 안에서만 뜻이 있으니 다시 넣으면 되살아난다).
+      // "섹션에서 빼기"와 같은 뜻이다(옛 앱에는 빈 섹션이 없으니 섹션 행도 지운다).
+      // `sort_order` 는 건드리지 않는다 — #157 의 빼기도 순서 값을 남긴다.
       await client.query(
-        `update channel_pref set section = null where account_id = $1 and section = $2`,
-        [accountId, oldSection],
+        `update channel_pref set section_id = null, section = null where account_id = $1 and section_id = $2`,
+        [accountId, oldId],
       );
+      await client.query(`delete from channel_section where account_id = $1 and id = $2`, [accountId, oldId]);
+      await compactSectionPositions(client, accountId);
+    } else if (newId !== null) {
+      const existing = await client.query<{ channelId: string }>(ordered, [accountId, newId]);
+      await renumberSection(
+        client, accountId, newId,
+        [...existing.rows, ...oldPrefs.rows].map((r) => r.channelId),
+      );
+      await client.query(`delete from channel_section where account_id = $1 and id = $2`, [accountId, oldId]);
+      await compactSectionPositions(client, accountId);
     } else {
-      const existing = await client.query<{ channelId: string }>(ordered, [accountId, newSection]);
-      if (existing.rowCount) {
-        await renumberSection(
-          client, accountId, newSection,
-          [...existing.rows, ...oldPrefs.rows].map((r) => r.channelId),
-        );
-      } else {
-        // 받는 쪽이 없으면 겹칠 `sort_order` 도 없다 — 이름만 갈아 끼우고 순서는 그대로 둔다.
-        await client.query(
-          `update channel_pref set section = $3 where account_id = $1 and section = $2`,
-          [accountId, oldSection, newSection],
-        );
-      }
+      // 받는 쪽이 없으면 겹칠 `sort_order` 도 없다 — 이름만 갈아 끼우고 순서는 그대로 둔다.
+      await client.query(
+        `update channel_section set name = $3 where account_id = $1 and id = $2`,
+        [accountId, oldId, newSection],
+      );
+      await client.query(
+        `update channel_pref set section = $3 where account_id = $1 and section_id = $2`,
+        [accountId, oldId, newSection],
+      );
     }
 
     await client.query('commit');
