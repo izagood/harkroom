@@ -3039,6 +3039,7 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                   agent={selected}
                   agents={agents}
                   disabled={busy}
+                  {...(onOpenSection ? { onOpenSection } : {})}
                   onUpdated={(updated) => {
                     setSelected(updated);
                     setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));

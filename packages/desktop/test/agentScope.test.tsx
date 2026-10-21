@@ -12,7 +12,7 @@ import { resetCommunityRegistry, useActiveStore } from '../src/state/communities
 import { usePrefsStore } from '../src/state/prefsStore';
 import { ApiError } from '../src/lib/api';
 import { acc } from './helpers/fakeApi';
-import { setExternalOpener } from '../src/lib/openExternal';
+import { takeMcpFocus } from '../src/lib/mcpFocus';
 
 const ME_ID = 'owner-1';
 const agent = (overrides: Partial<AgentView> = {}): AgentView => ({
@@ -123,14 +123,20 @@ describe('AgentScopeSection', () => {
   });
 });
 
-/** 이 머신의 오퍼레이터 표면 — Tauri invoke 를 가짜로 건다. */
-function fakeLocal(servers: { name: string; source?: 'operator' | 'claude' }[]) {
+/** 이 머신의 오퍼레이터 표면 — Tauri invoke 를 가짜로 건다. 이 기기 오퍼레이터는 `op-mac`(커뮤니티 BASE). */
+const BASE = 'https://c.test';
+type FakeServer = { name: string; source?: 'operator' | 'claude'; oauth?: boolean; auth?: Record<string, unknown> };
+function fakeLocal(servers: FakeServer[], opts: { operatorId?: string | null } = {}) {
   const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const operatorId = opts.operatorId === undefined ? 'op-mac' : opts.operatorId;
   (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
     invoke: async (cmd: string, args?: Record<string, unknown>) => {
       calls.push({ cmd, args });
       if (cmd === 'operator_mcp_list') {
-        return { servers: servers.map((x) => ({ name: x.name, source: x.source ?? 'operator', transport: 'http', target: 'https://x', args: [], envKeys: [], headerKeys: [], oauth: false })) };
+        return { servers: servers.map((x) => ({ name: x.name, source: x.source ?? 'operator', transport: 'http', target: 'https://x', args: [], envKeys: [], headerKeys: [], oauth: x.oauth ?? false, ...(x.auth ? { auth: x.auth } : {}) })) };
+      }
+      if (cmd === 'operator_agents_list') {
+        return { communities: operatorId ? [{ baseUrl: BASE, registered: true, operatorId, agents: {} }] : [] };
       }
       return {};
     },
@@ -138,23 +144,98 @@ function fakeLocal(servers: { name: string; source?: 'operator' | 'claude' }[]) 
   return calls;
 }
 
-describe('AgentMcpSection — 한 절에서 끝낸다', () => {
-  afterEach(() => { delete (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__; });
+const HERE = { agentId: 'agent-1', operatorId: 'op-mac', assignedBy: ME_ID, assignedAt: '2026-10-21T00:00:00Z' };
+const ON_VM = { ...HERE, operatorId: 'op-vm' };
+/** 컨트롤러에 이 커뮤니티 주소와 오퍼레이터 목록을 더한다 — 「이 맥」 판정과 원격 이름의 재료. */
+function setupOps(over: Partial<Record<string, unknown>> = {}) {
+  return setup({
+    api: { baseUrl: BASE },
+    operators: vi.fn(async () => [{ id: 'op-vm', ownerAccountId: ME_ID, name: 'dev-vm-01', label: null, createdAt: '', lastSeenAt: null, revokedAt: null, online: true, version: null }]),
+    ...over,
+  });
+}
 
-  it('이 머신에 정의가 없는 이름은 켜지 못한다 — 켜면 오퍼레이터가 에이전트를 안 띄운다', async () => {
-    fakeLocal([{ name: 'slack' }]);
-    const c = setup();
+describe('AgentMcpSection — 배정된 오퍼레이터 기준(MCP 설정 시안 v2 §7)', () => {
+  afterEach(() => {
+    delete (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    takeMcpFocus();
+  });
+
+  it('머리에 어디서 도는지 적는다 — 이 맥 / 원격(이름·태그) / 배정 전', async () => {
+    fakeLocal([{ name: 'github' }]);
+    setupOps();
+    render(<AgentScopeSection agent={agent({ assignment: HERE })} onUpdated={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('agent-mcp-where').textContent).toContain('이 맥에서 돈다'));
+    cleanup();
+    fakeLocal([{ name: 'github' }]);
+    setupOps();
+    render(<AgentScopeSection agent={agent({ assignment: ON_VM, mcpServers: ['github'] })} onUpdated={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('agent-mcp-where').textContent).toContain('dev-vm-01 에서 돈다'));
+    expect(screen.getByTestId('agent-mcp-where').textContent).toContain('원격');
+    // 원격은 이 맥 목록으로 판정하지 않는다 — 켠 줄은 「상태 모름」, 정의 없음이라고 단언하지 않는다.
+    expect(screen.getByTestId('agent-mcp-unknown-github').textContent).toBe('상태 모름');
+    expect(screen.queryByTestId('agent-mcp-missing-github')).toBeNull();
+    expect(screen.getByTestId('agent-mcp-remote-hint').textContent).toContain('그 호스트에서 고친다');
+    cleanup();
+    fakeLocal([]);
+    setupOps();
     render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
-    expect(await screen.findByTestId('agent-mcp-missing-github')).toBeTruthy();
+    expect((await screen.findByTestId('agent-mcp-where')).textContent).toContain('아직 오퍼레이터에 배정되지 않았다');
+  });
+
+  it('정의가 없어도 켜기는 막지 않는다 — 켜고 나서 「뜨지 않는다」를 경고한다', async () => {
+    fakeLocal([{ name: 'slack' }]);
+    const c = setupOps();
+    render(<AgentScopeSection agent={agent({ assignment: HERE })} onUpdated={() => {}} />);
+    const missing = await screen.findByTestId('agent-mcp-missing-github');
+    expect(missing.textContent).toBe('이 맥에 정의 없음');
+    expect(missing.className).toContain('text-fg-subtle');
     fireEvent.click(screen.getByLabelText('github'));
-    expect((await screen.findByTestId('agent-mcp-error')).textContent).toContain('github');
-    expect(c.updateAgent).not.toHaveBeenCalled();
+    await waitFor(() => expect(c.updateAgent).toHaveBeenCalledWith('agent-1', { mcpServers: ['github'] }));
+    expect((await screen.findByTestId('agent-mcp-warn')).textContent).toContain('뜨지 않는다');
+    expect(screen.queryByTestId('agent-mcp-error')).toBeNull();
+  });
+
+  it('켜 둔 줄에 정의가 없으면 빨갛게, 「연동에서 추가 →」 는 연동의 그 줄로 간다', async () => {
+    fakeLocal([{ name: 'slack' }]);
+    setupOps();
+    const onOpenSection = vi.fn();
+    render(<AgentScopeSection agent={agent({ assignment: HERE, mcpServers: ['github'] })} onUpdated={() => {}} onOpenSection={onOpenSection} />);
+    const missing = await screen.findByTestId('agent-mcp-missing-github');
+    expect(missing.className).toContain('text-danger');
+    fireEvent.click(screen.getByTestId('agent-mcp-link-github'));
+    expect(onOpenSection).toHaveBeenCalledWith('integrations');
+    expect(takeMcpFocus()).toBe('github');
+  });
+
+  it('인증이 사람 손을 기다리면 한 낱말 + 「연동에서 다시 인증 →」 — 이 화면에는 인증 버튼이 없다', async () => {
+    fakeLocal([{ name: 'slack', oauth: true, auth: { state: 'rejected', at: Date.now(), agentId: 'agent-tm' } }, { name: 'github', auth: { state: 'ok' } }]);
+    setupOps();
+    render(<AgentScopeSection agent={agent({ assignment: HERE, mcpServers: ['slack', 'github'], credentialScope: 'personal', invokeScope: 'owner' })}
+      onUpdated={() => {}} onOpenSection={vi.fn()} />);
+    const word = await screen.findByTestId('agent-mcp-auth-slack');
+    expect(word.textContent).toBe('인증 거부됨');
+    expect(word.className).toContain('text-danger');
+    expect(screen.getByTestId('agent-mcp-link-slack').textContent).toBe('연동에서 다시 인증 →');
+    expect(screen.queryByTestId('agent-mcp-auth-start-slack')).toBeNull();
+    // 정상은 말하지 않는다.
+    expect(screen.queryByTestId('agent-mcp-auth-github')).toBeNull();
+    expect(screen.queryByTestId('agent-mcp-link-github')).toBeNull();
+  });
+
+  it('onOpenSection 이 없으면 링크를 그리지 않는다', async () => {
+    fakeLocal([]);
+    setupOps();
+    render(<AgentScopeSection agent={agent({ assignment: HERE, mcpServers: ['github'] })} onUpdated={() => {}} />);
+    await screen.findByTestId('agent-mcp-missing-github');
+    expect(screen.queryByTestId('agent-mcp-link-github')).toBeNull();
+    expect(screen.queryByTestId('agent-mcp-link-integrations')).toBeNull();
   });
 
   it('personal 서버를 켜면 확인을 받고 scope 를 같은 PATCH 로 바꾼다', async () => {
     fakeLocal([{ name: 'slack' }, { name: 'github' }]);
-    const c = setup();
-    render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
+    const c = setupOps();
+    render(<AgentScopeSection agent={agent({ assignment: HERE })} onUpdated={() => {}} />);
     fireEvent.click(await screen.findByLabelText('slack'));
     expect(await screen.findByTestId('agent-mcp-confirm-personal')).toBeTruthy();
     expect(c.updateAgent).not.toHaveBeenCalled();
@@ -166,108 +247,91 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
 
   it('확인창이 이 에이전트가 든 팀을 말한다 — owner 로 좁히면 남의 팀 부름에서 빠진다(068)', async () => {
     fakeLocal([{ name: 'slack' }, { name: 'github' }]);
-    setup({
+    setupOps({
       listTeams: vi.fn(async () => [{ id: 't1', name: 'ops-team' }, { id: 't2', name: 'other' }]),
       getTeam: vi.fn(async (id: string) => ({
         team: { id },
         members: id === 't1' ? [{ accountId: 'agent-1', handle: 'alpha', disabled: false }] : [],
       })),
     });
-    render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
+    render(<AgentScopeSection agent={agent({ assignment: HERE })} onUpdated={() => {}} />);
     fireEvent.click(await screen.findByLabelText('slack'));
     const line = await screen.findByTestId('agent-mcp-confirm-teams');
     expect(line.textContent).toContain('@ops-team');
     expect(line.textContent).not.toContain('@other');
   });
 
-  it('[추가] 는 레지스트리 이름 → 이 머신 정의 → 붙이기 순서다(프리셋 Jira)', async () => {
+  it('[+ 추가] 는 연동과 같은 창 — 이 맥 배정이면 「켜기」가 켜진 채, 이름 → 이 맥 정의 → 붙이기 순서다', async () => {
     const calls = fakeLocal([]);
     const order: string[] = [];
-    const c = setup({
+    const c = setupOps({
       mcpServers: vi.fn(async () => (order.includes('put')
         ? [{ name: 'jira', credentialKind: 'personal', createdBy: null, createdAt: '' }] : [])),
       putMcpServer: vi.fn(async () => { order.push('put'); return { name: 'jira', credentialKind: 'personal', createdBy: null, createdAt: '' }; }),
     });
-    render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    useActiveStore.getState().set({ me: { ...acc(ME_ID, 'owner'), capabilities: ['agent.privileged'] } as never });
+    render(<AgentScopeSection agent={agent({ assignment: HERE, credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    await screen.findByTestId('agent-mcp-where');
     fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
+    expect(await screen.findByTestId('mcp-server-dialog')).toBeTruthy();
+    expect((screen.getByTestId('mcp-dialog-attach') as HTMLInputElement).checked).toBe(true);
     fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'jira' } });
-    fireEvent.click(screen.getByTestId('agent-mcp-add-submit'));
+    expect(screen.getByTestId('mcp-dialog-submit').textContent).toBe('추가하고 켜기');
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalledWith('agent-1', { mcpServers: ['jira'] }));
     expect(c.putMcpServer).toHaveBeenCalledWith('jira', 'personal');
     const set = calls.find((x) => x.cmd === 'operator_mcp_set');
     expect(set?.args).toEqual({ name: 'jira', definition: { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp' } });
   });
 
-  it('Slack 프리셋은 Client ID 칸을 싣는다 — 바꾼 clientId 를 정의에 넣고, secret 칸은 없다(2026-10-21 전용 앱, PKCE)', async () => {
+  it('원격 배정 에이전트의 [+ 추가] — URL·Client ID 칸 없이 그 호스트 안내, 「켜기」는 꺼진 채 시작하고 이 맥 정의는 넣지 않는다(D12)', async () => {
     const calls = fakeLocal([]);
-    setup({
-      mcpServers: vi.fn(async () => [{ name: 'slack', credentialKind: 'personal', createdBy: null, createdAt: '' }]),
-    });
-    render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
-    fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
-    fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'slack' } });
-    // 공용 값을 미리 채우지 않는다 — 비움 = 기본(designer s1). 보이는 이름표로 찾힌다.
-    expect((screen.getByLabelText(/OAuth Client ID/) as HTMLInputElement).value).toBe('');
-    expect((screen.getByTestId('agent-mcp-client-id') as HTMLInputElement).placeholder).toContain('비우면 기본');
-    expect(screen.queryByTestId('agent-mcp-client-secret')).toBeNull();
-    fireEvent.change(screen.getByTestId('agent-mcp-client-id'), { target: { value: ' 111.222 ' } });
-    fireEvent.click(screen.getByTestId('agent-mcp-add-submit'));
-    await waitFor(() => expect(calls.some((x) => x.cmd === 'operator_mcp_set')).toBe(true));
-    expect(calls.find((x) => x.cmd === 'operator_mcp_set')?.args).toEqual({
-      name: 'slack',
-      definition: { type: 'http', url: 'https://mcp.slack.com/mcp', oauth: { clientId: '111.222', callbackPort: 3118 } },
-    });
-  });
-
-  it('oauth 가 없는 프리셋(Jira)에는 Client ID 칸이 없다 — 직접 URL 을 넣을 땐 있다(designer n1)', async () => {
-    fakeLocal([]);
-    setup({ mcpServers: vi.fn(async () => []) });
-    render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
-    fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
+    const c = setupOps({ mcpServers: vi.fn(async () => []) });
+    useActiveStore.getState().set({ me: { ...acc(ME_ID, 'owner'), capabilities: ['agent.privileged'] } as never });
+    render(<AgentScopeSection agent={agent({ assignment: ON_VM, credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('agent-mcp-where').textContent).toContain('dev-vm-01'));
+    fireEvent.click(screen.getByTestId('agent-mcp-add-open'));
+    await screen.findByTestId('mcp-server-dialog');
+    expect(screen.queryByTestId('mcp-dialog-url')).toBeNull();
+    expect(screen.queryByTestId('mcp-dialog-client-id')).toBeNull();
+    expect(screen.getByTestId('mcp-dialog-remote-note').textContent).toContain('dev-vm-01');
+    expect((screen.getByTestId('mcp-dialog-attach') as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByTestId('mcp-dialog-submit').textContent).toBe('이름 등록');
+    fireEvent.click(screen.getByTestId('mcp-dialog-attach'));
+    expect(screen.getByTestId('mcp-dialog-submit').textContent).toBe('등록하고 켜기');
     fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'jira' } });
-    expect(screen.queryByTestId('agent-mcp-client-id')).toBeNull();
-    fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'custom' } });
-    expect(screen.getByTestId('agent-mcp-client-id')).toBeTruthy();
-  });
-
-  it('Client ID 를 비워 두면 프리셋 정의를 그대로 보낸다', async () => {
-    const calls = fakeLocal([]);
-    setup({ mcpServers: vi.fn(async () => [{ name: 'slack', credentialKind: 'personal', createdBy: null, createdAt: '' }]) });
-    render(<AgentScopeSection agent={agent({ credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
-    fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
-    fireEvent.change(screen.getByLabelText('서버'), { target: { value: 'slack' } });
-    fireEvent.click(screen.getByTestId('agent-mcp-add-submit'));
-    await waitFor(() => expect(calls.some((x) => x.cmd === 'operator_mcp_set')).toBe(true));
-    const def = (calls.find((x) => x.cmd === 'operator_mcp_set')?.args as { definition: { oauth?: Record<string, unknown> } }).definition;
-    expect(def.oauth).toEqual({ clientId: '1601185624273.8899143856786', callbackPort: 3118 });
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    await waitFor(() => expect(c.updateAgent).toHaveBeenCalledWith('agent-1', { mcpServers: ['jira'] }));
+    expect(c.putMcpServer).toHaveBeenCalledWith('jira', 'personal');
+    expect(calls.some((x) => x.cmd === 'operator_mcp_set')).toBe(false);
+    expect((await screen.findByTestId('agent-mcp-warn')).textContent).toContain('dev-vm-01');
   });
 
   it('저장 뒤 [지금 재시작] 이 그 자리에서 agent.restart 를 부른다 — 멈춰 둔 에이전트에는 없다', async () => {
     fakeLocal([{ name: 'github' }, { name: 'slack' }]);
-    const c = setup({ restartAgent: vi.fn(async () => ({ operatorId: 'op-1' })) });
-    render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
+    const c = setupOps({ restartAgent: vi.fn(async () => ({ operatorId: 'op-1' })) });
+    render(<AgentScopeSection agent={agent({ assignment: HERE })} onUpdated={() => {}} />);
     fireEvent.click(await screen.findByLabelText('github'));
     fireEvent.click(await screen.findByTestId('agent-mcp-restart'));
     await waitFor(() => expect(c.restartAgent).toHaveBeenCalledWith('agent-1'));
     expect(screen.queryByTestId('agent-mcp-restart')).toBeNull();
     cleanup();
-    setup();
-    render(<AgentScopeSection agent={agent({ stopRequestedAt: '2026-09-28T00:00:00.000Z' })} onUpdated={() => {}} />);
+    setupOps();
+    render(<AgentScopeSection agent={agent({ assignment: HERE, stopRequestedAt: '2026-09-28T00:00:00.000Z' })} onUpdated={() => {}} />);
     fireEvent.click(await screen.findByLabelText('github'));
     await screen.findByTestId('agent-mcp-notice');
     expect(screen.queryByTestId('agent-mcp-restart')).toBeNull();
   });
 
-  it('레지스트리 등록 권한이 없으면 막는다 — 정의도 붙이기도 하지 않는다', async () => {
+  it('레지스트리 등록 권한이 없으면 새 이름은 막는다 — 정의도 붙이기도 하지 않는다', async () => {
     const calls = fakeLocal([]);
-    const c = setup({
-      mcpServers: vi.fn(async () => []),
-      putMcpServer: vi.fn(async () => { throw new ApiError(403, 'forbidden', 'no'); }),
-    });
-    render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
+    const c = setupOps({ mcpServers: vi.fn(async () => []) });
+    render(<AgentScopeSection agent={agent({ assignment: HERE })} onUpdated={() => {}} />);
     fireEvent.click(await screen.findByTestId('agent-mcp-add-open'));
-    fireEvent.click(screen.getByTestId('agent-mcp-add-submit'));
-    expect((await screen.findByTestId('agent-mcp-error')).textContent).toContain('agent.privileged');
+    await screen.findByTestId('mcp-server-dialog');
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(c.putMcpServer).not.toHaveBeenCalled();
     expect(calls.some((x) => x.cmd === 'operator_mcp_set')).toBe(false);
     expect(c.updateAgent).not.toHaveBeenCalled();
   });
@@ -333,132 +397,5 @@ describe('AgentMcpSection — 한 절에서 끝낸다', () => {
     render(<AgentScopeSection agent={agent({ invokeScope: 'owner' })} agents={[]} onUpdated={vi.fn()} />);
     expect(screen.queryByTestId('agent-trust-siblings')).toBeNull();
     expect(screen.getByTestId('agent-delegates')).toBeTruthy();
-  });
-});
-
-// 원격 MCP 인증(2026-09-30, harkroom 스레드 ebb97c7b). 토큰은 오퍼레이터가 든다 — 앱은 인가 url 을
-// 브라우저로 열고 상태를 물을 뿐이다. 계정 디렉터리마다 따로 인증하던 것을 여기 한 번으로 바꾼 자리다.
-describe('AgentMcpSection — 원격 MCP 인증', () => {
-  afterEach(() => {
-    delete (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-    setExternalOpener(null);
-  });
-
-  function fakeAuth(initial: Record<string, unknown>, opts: { oauth?: boolean; startError?: string } = {}) {
-    const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
-    let auth = initial;
-    (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
-      invoke: async (cmd: string, args?: Record<string, unknown>) => {
-        calls.push({ cmd, args });
-        if (cmd === 'operator_mcp_list') {
-          return { servers: [{ name: 'slack', source: 'operator', transport: 'http', target: 'https://mcp.example.com/mcp', args: [], envKeys: [], headerKeys: [], oauth: opts.oauth ?? true, auth }] };
-        }
-        if (cmd === 'operator_mcp_auth' && args?.action === 'start' && opts.startError) throw new Error(opts.startError);
-        if (cmd === 'operator_mcp_auth' && args?.action === 'start') { auth = { state: 'pending' }; return { authUrl: 'https://auth.example.com/authorize?x=1' }; }
-        if (cmd === 'operator_mcp_auth' && args?.action === 'status') return auth;
-        if (cmd === 'operator_mcp_auth' && args?.action === 'forget') { auth = { state: 'none' }; return {}; }
-        return {};
-      },
-    };
-    return { calls, set: (next: Record<string, unknown>) => { auth = next; } };
-  }
-
-  it('정의에 oauth 가 있고 토큰이 없으면 "인증 필요" — 켠 줄이면 경고다', async () => {
-    fakeAuth({ state: 'none' });
-    setup();
-    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
-    const badge = await screen.findByTestId('agent-mcp-auth-slack');
-    expect(badge.textContent).toContain('인증 필요');
-    expect(badge.querySelector('.text-danger')).toBeTruthy();
-    expect(screen.getByTestId('agent-mcp-auth-start-slack').textContent).toBe('인증');
-  });
-
-  it('[인증] 은 오퍼레이터가 만든 인가 url 을 브라우저로 열고, 끝날 때까지 상태를 묻는다', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      const f = fakeAuth({ state: 'none' });
-      const opened: string[] = [];
-      setExternalOpener({ open: async (u) => { opened.push(u); } });
-      setup();
-      render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
-      fireEvent.click(await screen.findByTestId('agent-mcp-auth-start-slack'));
-      await waitFor(() => expect(opened).toEqual(['https://auth.example.com/authorize?x=1']));
-      expect((await screen.findByTestId('agent-mcp-auth-slack')).textContent).toContain('기다리는 중');
-      // 사람이 브라우저에서 끝냈다 — 오퍼레이터가 콜백을 받아 토큰을 들었다.
-      f.set({ state: 'ok', expiresAt: Date.now() + 3600_000 });
-      await vi.advanceTimersByTimeAsync(1600);
-      await waitFor(() => expect(screen.getByTestId('agent-mcp-auth-slack').textContent).toContain('인증됨'));
-      expect(f.calls.some((c) => c.cmd === 'operator_mcp_auth' && c.args?.action === 'status' && c.args?.name === 'slack')).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('MCP 서버가 거절했으면 "거부됨 · 시각 · 에이전트" 를 빨갛게, [다시 인증] 과 함께 보인다', async () => {
-    const at = new Date(2026, 9, 1, 14, 51).getTime();
-    fakeAuth({ state: 'rejected', at, agentId: 'agent-tm' });
-    setup();
-    const prev = useActiveStore.getState().accounts;
-    useActiveStore.getState().set({ accounts: { ...prev, 'agent-tm': { id: 'agent-tm', handle: 'task_manager', displayName: 'task_manager', kind: 'agent', isAdmin: false, avatarUrl: null, createdAt: '2026-09-01T00:00:00.000Z' } } as never });
-    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
-    const badge = await screen.findByTestId('agent-mcp-auth-slack');
-    expect(badge.textContent).toContain('거부됨');
-    expect(badge.textContent).toContain('task_manager');
-    expect(badge.textContent).toMatch(/2:51/);
-    expect(badge.querySelector('.text-danger')).toBeTruthy();
-    expect(screen.getByTestId('agent-mcp-auth-start-slack').textContent).toBe('다시 인증');
-  });
-
-  it('거부를 본 에이전트를 모르면 이름 없이 시각만 보인다', async () => {
-    fakeAuth({ state: 'rejected', at: Date.now(), agentId: 'unknown-agent' });
-    setup();
-    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
-    const badge = await screen.findByTestId('agent-mcp-auth-slack');
-    expect(badge.textContent).toContain('거부됨');
-    expect(badge.textContent).not.toContain('unknown-agent');
-  });
-
-  it('인증됨에도 [다시 인증] 이 있다 — 화면이 맞다고 해도 실제 실패를 본 사람이 곧바로 다시 인증한다', async () => {
-    const opened: string[] = [];
-    setExternalOpener({ open: async (u) => { opened.push(u); } });
-    fakeAuth({ state: 'ok' });
-    setup();
-    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
-    expect((await screen.findByTestId('agent-mcp-auth-slack')).textContent).toContain('인증됨');
-    expect(screen.getByTestId('agent-mcp-auth-forget-slack').textContent).toBe('인증 해제');
-    fireEvent.click(screen.getByTestId('agent-mcp-auth-start-slack'));
-    await waitFor(() => expect(opened).toEqual(['https://auth.example.com/authorize?x=1']));
-  });
-
-  it('만료면 "다시 인증", 인증됨이면 [인증 해제] 가 forget 에 닿는다', async () => {
-    const f = fakeAuth({ state: 'expired' });
-    setup();
-    const { unmount } = render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
-    expect((await screen.findByTestId('agent-mcp-auth-slack')).textContent).toContain('인증 만료');
-    expect(screen.getByTestId('agent-mcp-auth-start-slack').textContent).toBe('다시 인증');
-    unmount();
-    f.set({ state: 'ok' });
-    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
-    fireEvent.click(await screen.findByTestId('agent-mcp-auth-forget-slack'));
-    await waitFor(() => expect(f.calls.some((c) => c.cmd === 'operator_mcp_auth' && c.args?.action === 'forget')).toBe(true));
-  });
-
-  it('시작이 실패하면 오퍼레이터의 이유를 그대로 보인다 — 포트 3118 이 쓰이고 있다', async () => {
-    fakeAuth({ state: 'none' }, { startError: '콜백 포트 3118 를 다른 프로그램이 쓰고 있다' });
-    const opened: string[] = [];
-    setExternalOpener({ open: async (u) => { opened.push(u); } });
-    setup();
-    render(<AgentScopeSection agent={agent({ mcpServers: ['slack'], credentialScope: 'personal', invokeScope: 'owner' })} onUpdated={() => {}} />);
-    fireEvent.click(await screen.findByTestId('agent-mcp-auth-start-slack'));
-    expect((await screen.findByTestId('agent-mcp-error')).textContent).toContain('3118');
-    expect(opened).toEqual([]);
-  });
-
-  it('옛 오퍼레이터(auth 없음)에는 인증 줄을 그리지 않는다 — 모르는 것을 단언하지 않는다', async () => {
-    fakeLocal([{ name: 'slack' }]);
-    setup();
-    render(<AgentScopeSection agent={agent()} onUpdated={() => {}} />);
-    await screen.findByTestId('agent-mcp-row-slack');
-    expect(screen.queryByTestId('agent-mcp-auth-slack')).toBeNull();
   });
 });

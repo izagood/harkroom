@@ -12,8 +12,8 @@
  * 지우기는 두 갈래다(시안 D2): 「이 맥에서 지우기」(칸의 ⋯, 이 맥의 정의와 토큰)와 「커뮤니티에서 삭제」(머리의 ⋯,
  * 모든 멤버의 모든 operator 에서 이름이 빠진다). 자리가 범위를 말한다.
  */
-import { useCallback, useEffect, useState } from 'react';
-import type { McpServerRow } from '@harkroom/shared';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AgentView, McpServerRow } from '@harkroom/shared';
 import type { OperatorMcpEntry } from '@harkroom/shared/daemonProtocol';
 import { hasOperatorLocalSurface, listLocalMcpServers, removeLocalMcpServer } from '../../lib/operatorLocal';
 import { useMcpSignIn } from './McpLocalAuth';
@@ -28,6 +28,8 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { Menu, type MenuItem } from '../Menu';
 import { useLocale, useT } from '../../i18n/useT';
 import { errorText } from '../../lib/errorText';
+import { useLocalOperatorId } from '../../lib/useLocalOperatorId';
+import { takeMcpFocus } from '../../lib/mcpFocus';
 
 /** operator 칸 하나. 지금은 이 맥(`local`)뿐이다 — 원격 칸은 PR5 에서 상태만 보이는 모양으로 더한다. */
 export interface McpOperatorCell {
@@ -37,6 +39,8 @@ export interface McpOperatorCell {
   local: boolean;
   /** 그 operator 의 정의. 없으면 「정의 없음」. */
   entry: OperatorMcpEntry | undefined;
+  /** 그 operator 에 배정됐고 이 서버를 켠 에이전트 이름. `null` = 모른다(목록을 못 읽음). */
+  agents: string[] | null;
 }
 
 /** 인증이 사람 손을 기다리나 — 그때만 칸의 주 버튼이 [인증]/[다시 인증] 이고 색을 쓴다. */
@@ -70,10 +74,12 @@ function withTail(items: MenuItem[], tail: MenuItem[]): MenuItem[] {
   return [...items, ...tail.map((x, i) => (i === 0 && items.length > 0 ? { ...x, separatorBefore: true } : x))];
 }
 
-function LocalCell({ row, entry, collapsed, tailItems, onDefine, onEdit, onRemove, onChanged, onError }: {
+function LocalCell({ row, entry, collapsed, agentsOn, tailItems, onDefine, onEdit, onRemove, onChanged, onError }: {
   row: McpServerRow;
   entry: OperatorMcpEntry | undefined;
   collapsed: boolean;
+  /** 이 operator 에서 이 서버를 켠 에이전트 — 정의가 없는데 켠 에이전트가 있으면 [이 맥에 추가] 를 채운 색으로(시안 v2 §2). */
+  agentsOn: string[] | null;
   /** 접힌 줄이면 머리 ⋯ 대신 여기 끝에 붙는 항목(커뮤니티에서 삭제). */
   tailItems: MenuItem[];
   onDefine: () => void;
@@ -94,11 +100,13 @@ function LocalCell({ row, entry, collapsed, tailItems, onDefine, onEdit, onRemov
         <div className="min-w-0 flex-1 text-meta">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="min-w-16 text-fg-muted">{defLabel}</span>
-            <span className="text-fg-subtle">{t('mcpServers.cell.none')}</span>
+            {agentsOn && agentsOn.length > 0
+              ? <span className="text-danger" data-testid={`mcp-cell-missing-on-${row.name}`}>{t('mcpServers.cell.noneOn', { agents: agentsOn.join(' · ') })}</span>
+              : <span className="text-fg-subtle">{t('mcpServers.cell.none')}</span>}
           </div>
         </div>
         <span className="flex shrink-0 items-center gap-1">
-          <button type="button" className={BTN} data-testid={`mcp-cell-primary-${row.name}`} onClick={onDefine}>{t('mcpServers.cell.addHere')}</button>
+          <button type="button" className={agentsOn && agentsOn.length > 0 ? BTN_PRI : BTN} data-testid={`mcp-cell-primary-${row.name}`} onClick={onDefine}>{t('mcpServers.cell.addHere')}</button>
           <MenuButton items={tailItems} label={t('mcpServers.cell.menu', { name: row.name })} testid={`mcp-cell-menu-${row.name}`} />
         </span>
       </div>
@@ -190,7 +198,46 @@ export function McpServersSection() {
   }, [reloadLocal]);
   useEffect(() => { reload(); }, [reload]);
 
-  /** 「커뮤니티에서 삭제」 — 한 번 묻고(UX ④c), 이 맥의 정의·토큰도 함께 지울지 고른다(기본 켬). */
+  /**
+   * 이 맥 operator 에 배정된 에이전트 — 칸의 「에이전트 n」, [이 맥에 추가] 의 색, 지우기 확인창의 「영향받는 에이전트」
+   * 재료다. 이 맥 operator 를 모르거나 목록을 못 읽으면 `null`(그 표시만 빠진다).
+   */
+  const localOperatorId = useLocalOperatorId();
+  const [agents, setAgents] = useState<AgentView[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    void Promise.resolve().then(() => getController().listAgents())
+      .then((rows) => { if (live) setAgents(rows); }).catch(() => { if (live) setAgents(null); });
+    return () => { live = false; };
+  }, []);
+  const onHere = (name: string): string[] | null => {
+    if (!agents || typeof localOperatorId !== 'string') return null;
+    return agents
+      .filter((a) => a.assignment?.operatorId === localOperatorId && (a.mcpServers ?? []).includes(name))
+      .map((a) => a.displayName || a.handle);
+  };
+  /** 이름을 켠 에이전트 전부(어느 operator 든) — 커뮤니티 삭제는 모든 operator 에서 이름이 빠진다. */
+  const onAnywhere = (name: string): string[] | null =>
+    agents ? agents.filter((a) => (a.mcpServers ?? []).includes(name)).map((a) => a.displayName || a.handle) : null;
+
+  /**
+   * 에이전트 화면의 「연동에서 … →」 로 왔으면 그 줄로 스크롤하고 잠깐(2초) 강조한다(`mcpFocus`). 목록이 그려진 뒤 한 번.
+   */
+  const [flash, setFlash] = useState<string | null>(null);
+  const focusTaken = useRef(false);
+  useEffect(() => {
+    if (focusTaken.current || !Array.isArray(rows)) return;
+    focusTaken.current = true;
+    const name = takeMcpFocus();
+    if (!name) return;
+    setFlash(name);
+    // 이름은 레지스트리 문법([a-z0-9-])이라 선택자에 그대로 넣어도 된다 — 그래도 문법을 벗어나면 찾지 않는다.
+    if (/^[a-z0-9-]{1,32}$/.test(name)) document.querySelector(`[data-testid="mcp-server-${name}"]`)?.scrollIntoView?.({ block: 'center' });
+    const timer = setTimeout(() => setFlash(null), 2000);
+    return () => clearTimeout(timer);
+  }, [rows]);
+
+  /** 「커뮤니티에서 삭제」 — 한 번 묻고(UX ④c), 이 맥의 정의·토큰도 함께 지울지 고른다(기본 끔). */
   const [confirming, setConfirming] = useState<McpServerRow | null>(null);
   // 기본은 끈다 — 이 맥의 정의는 이 맥의 **모든 커뮤니티**가 같이 쓴다. 한 커뮤니티에서 이름을 지운다고
   // 다른 커뮤니티 에이전트가 쓰던 정의·토큰까지 지우면 그쪽이 mcp_server_missing 으로 멈춘다(security #1453 n3).
@@ -222,7 +269,7 @@ export function McpServersSection() {
 
   const registry = Array.isArray(rows) ? rows : [];
   const cellsOf = (row: McpServerRow): McpOperatorCell[] =>
-    local ? [{ key: 'local', label: t('mcpServers.cell.thisMac'), local: true, entry: localEntry(row.name) }] : [];
+    local ? [{ key: 'local', label: t('mcpServers.cell.thisMac'), local: true, entry: localEntry(row.name), agents: onHere(row.name) }] : [];
   const canAdd = canEdit || (hasOperatorLocalSurface() && registry.length > 0);
 
   return (
@@ -248,7 +295,8 @@ export function McpServersSection() {
               ? [{ label: t('mcpServers.removeCommunity'), tone: 'danger', onSelect: () => { setError(null); setAlsoLocal(false); setConfirming(row); } }]
               : [];
             return (
-              <div key={row.name} className="flex flex-col gap-2 px-4 py-3" data-testid={`mcp-server-${row.name}`}>
+              <div key={row.name} className={`flex flex-col gap-2 px-4 py-3 transition-colors ${flash === row.name ? 'bg-accent-surface' : ''}`}
+                data-testid={`mcp-server-${row.name}`} data-flash={flash === row.name ? 'true' : undefined}>
                 <div className="flex items-center justify-between gap-2">
                   <span className="min-w-0">
                     <span className="font-mono font-medium text-fg">{row.name}</span>
@@ -258,7 +306,7 @@ export function McpServersSection() {
                 </div>
                 {cells.map((cell) => {
                   const body = (
-                    <LocalCell row={row} entry={cell.entry} collapsed={collapsed} tailItems={collapsed ? headItems : []}
+                    <LocalCell row={row} entry={cell.entry} collapsed={collapsed} agentsOn={cell.agents} tailItems={collapsed ? headItems : []}
                       onDefine={() => { setError(null); setDialog({ kind: 'define', row }); }}
                       onEdit={(entry) => { setError(null); setDialog({ kind: 'edit', row, entry }); }}
                       onRemove={(entry) => { setError(null); setRemovingLocal(entry); }}
@@ -266,7 +314,14 @@ export function McpServersSection() {
                   );
                   return collapsed ? <div key={cell.key}>{body}</div> : (
                     <div key={cell.key} className="grid grid-cols-[8.5rem_1fr] gap-2 rounded-row border border-border bg-surface px-2.5 py-2">
-                      <span className="text-meta font-semibold text-fg">{cell.label}</span>
+                      <span className="flex flex-col text-meta font-semibold text-fg">
+                        {cell.label}
+                        {cell.agents && (
+                          <span className="font-normal text-fg-subtle" title={cell.agents.join(', ')} data-testid={`mcp-cell-agents-${row.name}`}>
+                            {t('mcpServers.cell.agentCount', { n: cell.agents.length })}
+                          </span>
+                        )}
+                      </span>
                       {body}
                     </div>
                   );
@@ -283,6 +338,12 @@ export function McpServersSection() {
           detail={(
             <span className="flex flex-col gap-2">
               <span>{t('mcpServers.confirmDetailCommunity')}</span>
+              {(() => {
+                const hit = onAnywhere(confirming.name);
+                return hit && hit.length > 0 && (
+                  <span className="text-danger" data-testid="mcp-confirm-affected">{t('mcpServers.confirmAffected', { n: hit.length, agents: hit.join(' · ') })}</span>
+                );
+              })()}
               {localEntry(confirming.name)?.source === 'operator' && (
                 <span className="flex flex-col gap-0.5">
                   <label className="flex items-center gap-1.5 text-fg">
@@ -308,7 +369,17 @@ export function McpServersSection() {
       {removingLocal && (
         <ConfirmDialog
           title={t('mcpServers.removeHereTitle', { name: removingLocal.name })}
-          detail={t('mcpServers.removeHereDetail')}
+          detail={(
+            <span className="flex flex-col gap-2">
+              <span>{t('mcpServers.removeHereDetail')}</span>
+              {(() => {
+                const hit = onHere(removingLocal.name);
+                return hit && hit.length > 0 && (
+                  <span className="text-warning" data-testid="mcp-remove-here-affected">{t('mcpServers.removeHereAffected', { n: hit.length, agents: hit.join(' · ') })}</span>
+                );
+              })()}
+            </span>
+          )}
           confirmLabel={t('mcpServers.cell.removeHere')}
           cancelLabel={t('mcpServers.cancel')}
           detailKind="note"

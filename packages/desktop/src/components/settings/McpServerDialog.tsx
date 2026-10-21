@@ -12,6 +12,9 @@
  * - 회사 앱 Client ID 같은 값은 화면에 끝 4자리만 보인다. 정의에만 있고 공개 프리셋에는 없다.
  * - 권한(`agent.privileged`)이 없으면 커뮤니티에 새 이름을 등록할 수 없다 — 이미 있는 이름에 이 맥 정의를
  *   넣는 것은 된다(내 맥이다).
+ * - 에이전트 화면의 [+ 추가] 도 이 창을 연다(`attach`, 시안 v2 D4·D12). 「<에이전트> 에 켜기」 칸이 더해지고,
+ *   그 에이전트가 **원격 오퍼레이터**에 배정돼 있으면 URL·Client ID 칸을 빼고(그 호스트에서 넣는다) 켜기를 꺼진 채
+ *   시작한다 — 켜면 그 호스트에 정의가 생길 때까지 에이전트가 뜨지 않기 때문이다.
  */
 import { useState } from 'react';
 import type { McpServerRow } from '@harkroom/shared';
@@ -60,11 +63,21 @@ export function buildMcpDefinition(input: {
   return oauth ? { ...base, oauth } : { type: base.type, url: base.url, ...(base.headers ? { headers: base.headers } : {}) };
 }
 
-export function McpServerDialog({ mode, registry, canEdit, onDone, onCancel }: {
+/** 에이전트 화면에서 열 때 — 그 에이전트에 켜기 칸과, 원격 배정이면 그 호스트 이름. */
+export interface McpDialogAttach {
+  agentName: string;
+  /** 원격 오퍼레이터에 배정돼 있으면 그 이름. `null` 이면 이 맥(또는 배정 전)이라 이 맥 정의를 같이 넣는다. */
+  remoteHost: string | null;
+  /** 이 에이전트가 아직 personal 이 아니다 — personal 서버를 켜면 부를 수 있는 사람이 소유자로 좁혀진다. */
+  narrowsToOwner: boolean;
+}
+
+export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCancel }: {
   mode: McpDialogMode;
   registry: McpServerRow[];
   canEdit: boolean;
-  onDone: () => void;
+  attach?: McpDialogAttach;
+  onDone: (result: { name: string; attach: boolean }) => void;
   onCancel: () => void;
 }) {
   const t = useT();
@@ -78,6 +91,9 @@ export function McpServerDialog({ mode, registry, canEdit, onDone, onCancel }: {
   const [kind, setKind] = useState<McpServerRow['credentialKind']>(fixedRow?.credentialKind ?? first.credentialKind);
   const [clientId, setClientId] = useState('');
   const [revert, setRevert] = useState(false);
+  const remoteOnly = !!attach?.remoteHost;
+  // 이 맥(또는 배정 전)이면 미리 켠다(D4), 원격 배정이면 꺼진 채(D12).
+  const [attachOn, setAttachOn] = useState(!!attach && !remoteOnly);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,13 +119,14 @@ export function McpServerDialog({ mode, registry, canEdit, onDone, onCancel }: {
     setError(null);
     const n = name.trim();
     if (!NAME_RE.test(n)) { setError(t('mcpServers.badName')); return; }
-    if (!/^https?:\/\//.test(url.trim())) { setError(t('agents.mcp.errUrl')); return; }
+    if (!remoteOnly && !/^https?:\/\//.test(url.trim())) { setError(t('agents.mcp.errUrl')); return; }
     if (!registry.some((r) => r.name === n) && !canEdit) { setError(t('mcpServers.dialog.needPrivilege')); return; }
     setBusy(true);
     try {
       if (!registry.some((r) => r.name === n)) await getController().putMcpServer(n, kind);
-      await setLocalMcpServer(n, buildMcpDefinition({ name: n, url, clientId, revert, ...(entry ? { entry } : {}) }));
-      onDone();
+      // 원격 배정 에이전트에서 열었으면 이 맥 정의는 넣지 않는다 — 그 에이전트는 그 호스트의 정의를 쓴다.
+      if (!remoteOnly) await setLocalMcpServer(n, buildMcpDefinition({ name: n, url, clientId, revert, ...(entry ? { entry } : {}) }));
+      onDone({ name: n, attach: !!attach && attachOn });
     } catch (e) {
       setError(t('mcpServers.saveFailed', { reason: errorText(e, t) }));
     } finally {
@@ -128,7 +145,8 @@ export function McpServerDialog({ mode, registry, canEdit, onDone, onCancel }: {
         <h2 className="text-body font-semibold text-fg">{title}</h2>
         <div className="flex flex-wrap gap-1.5 text-meta">
           {mode.kind !== 'edit' && <span className="rounded-row bg-surface-sunken px-1.5 text-fg-muted">{t('mcpServers.dialog.scopeCommunity')}</span>}
-          <span className="rounded-row bg-surface-sunken px-1.5 text-fg-muted">{t('mcpServers.dialog.scopeHere')}</span>
+          {!remoteOnly && <span className="rounded-row bg-surface-sunken px-1.5 text-fg-muted">{t('mcpServers.dialog.scopeHere')}</span>}
+          {attach && <span className="rounded-row bg-surface-sunken px-1.5 text-fg-muted">{t('mcpServers.dialog.scopeAttach', { agent: attach.agentName })}</span>}
         </div>
         {mode.kind === 'add' && (
           <label className="flex flex-col gap-1 text-meta text-fg">
@@ -145,11 +163,13 @@ export function McpServerDialog({ mode, registry, canEdit, onDone, onCancel }: {
             <input className={`${field} font-mono`} value={name} disabled={busy || mode.kind !== 'add'}
               onChange={(e) => setName(e.target.value)} placeholder="github" data-testid="mcp-dialog-name" />
           </label>
-          <label className="flex min-w-0 flex-1 flex-col gap-1 text-meta text-fg">
-            {t('agents.mcp.url')}
-            <input className={field} value={url} disabled={busy} onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://…/mcp" data-testid="mcp-dialog-url" />
-          </label>
+          {!remoteOnly && (
+            <label className="flex min-w-0 flex-1 flex-col gap-1 text-meta text-fg">
+              {t('agents.mcp.url')}
+              <input className={field} value={url} disabled={busy} onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://…/mcp" data-testid="mcp-dialog-url" />
+            </label>
+          )}
           <label className="flex flex-col gap-1 text-meta text-fg">
             {t('mcpServers.kindLabel')}
             <select className={field} value={known?.credentialKind ?? kind} disabled={busy || kindLocked}
@@ -159,7 +179,12 @@ export function McpServerDialog({ mode, registry, canEdit, onDone, onCancel }: {
             </select>
           </label>
         </div>
-        <label className="flex flex-col gap-1 text-meta text-fg">
+        {remoteOnly && (
+          <p className="rounded-row border border-warning-border bg-warning-surface px-2.5 py-2 text-meta text-warning" data-testid="mcp-dialog-remote-note">
+            {t('mcpServers.dialog.remoteNote', { agent: attach!.agentName, host: attach!.remoteHost! })}
+          </p>
+        )}
+        {!remoteOnly && <label className="flex flex-col gap-1 text-meta text-fg">
           {t('agents.mcp.clientId')}
           <input className={`${field} font-mono`} value={clientId} disabled={busy}
             onChange={(e) => { setClientId(e.target.value); setRevert(false); }}
@@ -179,16 +204,32 @@ export function McpServerDialog({ mode, registry, canEdit, onDone, onCancel }: {
           <span className="text-fg-subtle">{t('mcpServers.dialog.notePkce')}</span>
           {mode.kind === 'edit' && <span className="text-fg-subtle">{t('mcpServers.dialog.noteChange')}</span>}
           {mode.kind === 'edit' && <span className="text-fg-subtle">{t('mcpServers.dialog.noteSignInAgain')}</span>}
-        </label>
+        </label>}
+        {attach && (
+          <label className="flex items-start gap-1.5 text-meta text-fg">
+            <input type="checkbox" className="mt-0.5" checked={attachOn} disabled={busy} data-testid="mcp-dialog-attach"
+              onChange={(e) => setAttachOn(e.target.checked)} />
+            <span>
+              {t('mcpServers.dialog.attach', { agent: attach.agentName })}
+              {remoteOnly
+                ? <span className="text-fg-subtle"> — {t('mcpServers.dialog.attachRemoteNote', { host: attach.remoteHost! })}</span>
+                : attach.narrowsToOwner && (known?.credentialKind ?? kind) === 'personal'
+                  && <span className="text-fg-subtle"> — {t('mcpServers.dialog.attachPersonalNote')}</span>}
+            </span>
+          </label>
+        )}
         {error && <p role="alert" className="text-meta text-danger">{error}</p>}
         <div className="flex items-center justify-between gap-2">
-          <span className="text-meta text-fg-subtle">{mode.kind === 'edit' ? '' : t('mcpServers.dialog.afterSave')}</span>
+          <span className="text-meta text-fg-subtle">{mode.kind === 'edit' || remoteOnly ? '' : t('mcpServers.dialog.afterSave')}</span>
           <span className="flex gap-2">
             <button type="button" className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken" disabled={busy}
               onClick={onCancel}>{t('mcpServers.cancel')}</button>
             <button type="button" className="rounded-row bg-accent px-3 py-1 text-meta font-medium text-fg-on-strong disabled:opacity-50"
-              disabled={busy} onClick={submit} data-testid="mcp-dialog-submit">
-              {mode.kind === 'edit' ? t('mcpServers.dialog.save') : t('mcpServers.dialog.add')}
+              disabled={busy || (remoteOnly && !!known && !attachOn)} onClick={submit} data-testid="mcp-dialog-submit">
+              {mode.kind === 'edit' ? t('mcpServers.dialog.save')
+                : remoteOnly
+                  ? (known ? t('mcpServers.dialog.attachOnly') : attachOn ? t('mcpServers.dialog.registerAndAttach') : t('mcpServers.dialog.register'))
+                  : attach && attachOn ? t('mcpServers.dialog.addAndAttach') : t('mcpServers.dialog.add')}
             </button>
           </span>
         </div>
