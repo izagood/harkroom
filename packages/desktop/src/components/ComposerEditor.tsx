@@ -10,6 +10,7 @@ import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/lang
 import { Strikethrough } from '@lezer/markdown';
 import { tags } from '@lezer/highlight';
 import { clean } from '../lib/systemText';
+import { focusKind, recordEnter } from '../lib/enterTrace';
 
 /**
  * 입력창 편집기(입력창 개편 P1, 결정 1 = CodeMirror 6).
@@ -50,6 +51,8 @@ export interface ComposerKeyEvent {
   ctrlKey: boolean;
   altKey: boolean;
   isComposing: boolean;
+  /** CodeMirror 가 조합 중이라고 보는가(`view.composing`) — Enter 기록(`lib/enterTrace`)용. */
+  editorComposing: boolean;
   preventDefault(): void;
   currentTarget: ComposerTextBox;
 }
@@ -247,7 +250,7 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
           if (!handler) return false;
           handler({
             key: e.key, code: e.code, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey,
-            altKey: e.altKey, isComposing: e.isComposing,
+            altKey: e.altKey, isComposing: e.isComposing, editorComposing: viewRef.current?.composing ?? false,
             preventDefault: () => e.preventDefault(),
             currentTarget: box.current,
           });
@@ -279,8 +282,20 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
       state: EditorState.create({ doc: props.value, extensions }),
     });
     viewRef.current = view;
+    /*
+      Enter 가 글 칸에 **도착했는지**를 CodeMirror 보다 먼저(캡처 단계) 적는다(`lib/enterTrace`). CodeMirror 는 조합 중
+      키를 처리기에 넘기지 않고 버리므로, 여기 있고 `Composer` 쪽 기록이 없으면 편집기가 삼킨 것이다. 글자는 안 적는다.
+    */
+    const onRawKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' && e.keyCode !== 13) return;
+      recordEnter({
+        kind: 'raw', key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, meta: e.metaKey || e.ctrlKey,
+        isComposing: e.isComposing, editorComposing: view.composing, docLen: view.state.doc.length, focus: focusKind(view.dom.ownerDocument),
+      });
+    };
+    view.contentDOM.addEventListener('keydown', onRawKey, true);
     if (props.autoFocus) view.focus();
-    return () => { view.destroy(); viewRef.current = null; };
+    return () => { view.contentDOM.removeEventListener('keydown', onRawKey, true); view.destroy(); viewRef.current = null; };
     // 자리표시 글은 처음 한 번만 — 바뀌면 다시 만든다.
   }, [props.placeholder]); // eslint-disable-line react-hooks/exhaustive-deps
 

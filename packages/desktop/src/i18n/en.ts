@@ -2584,6 +2584,8 @@ export const en = {
   'composer.emoji.open': 'Emoji',
   'composer.emoji.list': 'Quick emoji',
   'composer.send.options': 'Send options',
+  'composer.enterTrace.copied': 'Copied {n} Enter records — paste them into the thread',
+  'composer.enterTrace.failed': 'Could not copy the Enter records',
   'composer.schedule.later': 'Send later',
   /** 겹창을 여는 것이 아니라 **거는 것**이다. 눌린 뒤 글자가 바뀐다. */
   'composer.schedule.submit': 'Schedule',

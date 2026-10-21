@@ -1508,6 +1508,8 @@ export const ko = {
   'composer.emoji.open': '이모지',
   'composer.emoji.list': '빠른 이모지',
   'composer.send.options': '보내기 옵션',
+  'composer.enterTrace.copied': 'Enter 기록 {n}개를 복사했습니다 — 스레드에 붙여 주세요',
+  'composer.enterTrace.failed': 'Enter 기록을 복사하지 못했습니다',
   'composer.schedule.later': '나중에 보내기',
   'composer.schedule.submit': '예약',
   'composer.schedule.submitting': '예약 중…',

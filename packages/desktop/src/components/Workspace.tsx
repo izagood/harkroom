@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useActiveStore } from '../state/communities';
+import { dumpEnterTrace, enterTraceSnapshot, isEnterTraceDumpShortcut } from '../lib/enterTrace';
+import { copyText } from '../lib/clipboard';
 import { getController } from '../state/controller';
 import { sidebarStorage, MIN_CHANNEL_WIDTH, MIN_INBOX_WIDTH } from '../lib/prefs';
 import { usePrefsStore } from '../state/prefsStore';
@@ -141,6 +143,15 @@ export function Workspace({ onLogout, onOpenSettings }: {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
+      // ⌘⌥⇧E: 입력창 Enter 기록을 클립보드로(진단 — `lib/enterTrace`). 증상을 본 그 자리에서 한 번에 꺼낸다.
+      if (isEnterTraceDumpShortcut(e)) {
+        e.preventDefault();
+        const n = enterTraceSnapshot().length;
+        void copyText(dumpEnterTrace()).then((r) => {
+          useActiveStore.getState().pushNotice(r === 'copied' ? t('composer.enterTrace.copied', { n }) : t('composer.enterTrace.failed'));
+        });
+        return;
+      }
       /**
        * ⌘F 는 **입력 중에도** 먹는다. 브라우저·에디터에서 ⌘F 는 글을 쓰다가도 찾기를 여는
        * 키라, 여기서만 안 되면 사람은 키가 없는 줄 안다. 나머지 단축키는 아래 가드대로

@@ -28,6 +28,7 @@ import { callsInText, quoteText, MANY_CALLS } from '../lib/pasteCalls';
 // 메시지를 그리는 것과 **같은 함수**(`splitCode`)가 정한다 — 그 파일의 주석이 근거다.
 import { continueList, formatShortcut, inFence, toggleFence, toggleInline, toggleLinePrefix, type FormatEdit } from '../lib/mdFormat';
 import { ComposerToolbar, type FormatKind } from './ComposerToolbar';
+import { focusKind, recordEnter, type EnterRoute, type SendOutcome } from '../lib/enterTrace';
 import { QUICK_REACTIONS } from './Reactions';
 import { COMPOSER_BOX, ComposerEditor, type ComposerKeyEvent, type ComposerPasteEvent, type ComposerTextBox } from './ComposerEditor';
 import { toggleCode } from '../lib/codeMarks';
@@ -1004,17 +1005,22 @@ export function Composer({
    *   **초안을 겹창에 넘기지 않는다** — 여기서 되돌아가도 초안이 그대로라 같은 값이 다시
    *   계산된다. 넘기면 겹창이 뜬 사이의 편집이 무시되어, 화면에 보이는 글과 다른 글이 나간다.
    */
+  /** 보내기 판정을 Enter 기록(`lib/enterTrace`)에 남긴다 — 글자 없이 길이만. */
+  const traceSend = (outcome: SendOutcome) => recordEnter({
+    kind: 'send', outcome, docLen: ref.current?.value.length, draftLen: draft.length, offline, listOpen: open,
+  });
   const send = (confirmed = false) => {
     // 고정 멘션만으로는 보낼 것이 없다 — 빈 Enter 가 '@fizz' 하나만 던지면 사고다.
     // 다만 파일만 보내는 것은 자연스럽다.
-    if (!draft.trim() && !pending.length) return;
+    if (!draft.trim() && !pending.length) { traceSend('empty'); return; }
     // 끊긴 동안 Enter 는 보내지 않는다 — 나갔다 실패하고 초안을 되돌리는 동안 "나갔나?" 하는 순간이 생긴다.
     // 사유는 작성창 아래 줄이 이미 말하고 있다. 줄 세워 뒀다 붙으면 보내기(outbox)는 하지 않는다 — 몇 분
     // 전 글이 갑자기 나가 에이전트 턴을 띄운다.
-    if (offline) return;
+    if (offline) { traceSend('offline'); return; }
     // 올리지 못한 첨부를 든 채로는 보내지 않는다 — 보내면 그 글은 기다리다 곧장 실패해 돌아온다.
     // 무엇을 하면 되는지 지금 말한다(칩에 [다시]·[×] 가 있다).
     if (failedUpload) {
+      traceSend('failedUpload');
       setSendErrorByScope((prev) => ({
         ...prev, [scopeKey]: t('composer.send.hasFailedUpload', { filename: failedUpload.file.name }),
       }));
@@ -1026,6 +1032,7 @@ export function Composer({
      * 키보드로 누른 사람은 버튼이 왜 흐려졌는지 볼 기회가 없었기 때문이다.
      */
     if (tooLong) {
+      traceSend('tooLong');
       setSendErrorByScope((prev) => ({
         ...prev,
         [scopeKey]: t('composer.send.tooLong', {
@@ -1059,8 +1066,9 @@ export function Composer({
       바꾼 글은 이 문에 걸리지 않는다 — 두 장치가 같은 판정 위에 서 있다는 뜻이다.
     */
     const calls = callsInText(typed, known);
-    if (!confirmed && calls.length >= MANY_CALLS) { setManyCalls(calls); return; }
+    if (!confirmed && calls.length >= MANY_CALLS) { traceSend('manyCalls'); setManyCalls(calls); return; }
     setManyCalls(null);
+    traceSend('sent');
     // 칩을 작성창에서 걷되 업로드는 계속된다 — 이 글이 그것을 기다렸다가 함께 나간다.
     const attachments = takeUploads(scopeKey);
     // 앞의 것이 아직 대기 중이면 **먼저 내보낸다.** 한 번에 하나만 들 수 있으므로 덮으면
@@ -1311,6 +1319,12 @@ export function Composer({
     }
   };
 
+  /** Enter 가 열쇠 처리기에서 어디로 갔는지 남긴다(`lib/enterTrace`). 글자는 안 적는다. */
+  const traceKey = (e: ComposerKeyEvent, route: EnterRoute) => recordEnter({
+    kind: 'key', route, key: e.key, code: e.code, shift: e.shiftKey, meta: e.metaKey || e.ctrlKey,
+    isComposing: e.isComposing, editorComposing: e.editorComposing,
+    docLen: e.currentTarget.value.length, draftLen: draft.length, listOpen: open, offline, focus: focusKind(),
+  });
   const onKeyDown = (e: ComposerKeyEvent) => {
     // ☺·⌄ 메뉴는 누를 때 편집기 포커스를 뺏지 않으므로(고른 범위를 지키려고) Escape 는 메뉴가 아니라
     // 여기로 온다. 메뉴의 onKeyDown 만 믿으면 열린 메뉴가 Escape 로 닫히지 않는다.
@@ -1332,6 +1346,7 @@ export function Composer({
         return;
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
+        if (e.key === 'Enter') traceKey(e, 'list');
         e.preventDefault();
         // 계정이든 집합이든 본문에 들어가는 것은 `@핸들` 하나다(멘션은 본문 문자열 —
         // docs/design.md). 그래서 고르는 자리에서 둘을 갈라 다룰 것이 없다.
@@ -1432,22 +1447,26 @@ export function Composer({
       });
       return;
     }
-    if (e.key !== 'Enter' || e.isComposing) return;
+    if (e.key !== 'Enter') return;
+    if (e.isComposing) { traceKey(e, 'composing'); return; }
     // ⌘Enter 는 어디서든 보낸다 — 코드 블록 안에서 Enter 가 줄바꿈이 되므로 보낼 길이 따로 있어야 한다.
     if (e.metaKey || e.ctrlKey) {
+      traceKey(e, 'meta-send');
       e.preventDefault();
       send();
       return;
     }
     const el = e.currentTarget;
     if (e.shiftKey) {
+      traceKey(e, 'shift');
       // 목록 항목에서 줄을 바꾸면 다음 기호를 이어 준다. 목록이 아니면 편집기가 그냥 줄을 바꾼다.
       const next = el.selectionStart === el.selectionEnd ? continueList(el.value, el.selectionStart) : null;
       if (next) { e.preventDefault(); applyEdit(next); }
       return;
     }
     // 코드 블록 안의 Enter 는 줄바꿈이다 — 보내기면 블록의 첫 줄만 치고 날아간다.
-    if (inFence(el.value, el.selectionStart)) return;
+    if (inFence(el.value, el.selectionStart)) { traceKey(e, 'fence'); return; }
+    traceKey(e, 'send');
     e.preventDefault();
     send();
   };
