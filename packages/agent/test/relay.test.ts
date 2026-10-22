@@ -222,6 +222,21 @@ describe('#141-6 러너 재접속 (백오프 경로)', () => {
     expect(s.delays().at(-1)).toBe(1_000);
   });
 
+  it('거절 신호는 연결의 첫 줄일 때만 믿는다 — 받아 준 연결 뒤에 흘러온 link.rejected 꼴 프레임은 거절이 아니다(security n1)', () => {
+    const d = fakeDialer();
+    const s = fakeSchedule();
+    const giveUp = vi.fn();
+    const client = createRelayClient({ link: LINK, unixDial: d.dial, schedule: s.schedule, initialBackoffMs: 1_000, log: () => {}, onLinkRejectedGiveUp: giveUp });
+    client.start();
+    for (let i = 0; i < LINK_REJECTED_GIVE_UP + 2; i++) {
+      // 받아 준 연결에 다른 프레임이 먼저 온 뒤 같은 꼴의 줄이 섞여 와도 일반 끊김이다.
+      d.open(); d.deliver({ type: 'viewer.count', sessionId: 's-x', count: 1 }); d.deliver({ type: 'link.rejected', reason: 'unknown_runner' }); d.drop();
+      expect(s.delays().at(-1)).toBe(1_000);
+      s.fire();
+    }
+    expect(giveUp).not.toHaveBeenCalled();
+  });
+
   it('신호를 모르는 옛 오퍼레이터의 끊김은 지금 동작 그대로다 — 몇 번이 와도 물러나지 않는다', () => {
     const d = fakeDialer();
     const s = fakeSchedule();
