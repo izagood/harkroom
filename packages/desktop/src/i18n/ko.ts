@@ -278,7 +278,10 @@ export const ko = {
   'mention.card.empty': '팀원 없음',
   'mention.card.disabled': '비활성',
 
-  'thread.alsoPostToChannel': '채널에도 올리기',
+  'thread.alsoPostToChannel': '{channel}에도 올리기',
+  'thread.alsoSendToDm': '{conversation}에도 올리기',
+  'thread.alsoDmTarget': '대화',
+  'thread.alsoPostFallback': '채널에도 올리기',
   'thread.resizeHandle': '스레드 너비 조절',
   'thread.title': '스레드',
   'thread.empty': '아직 답글이 없습니다. 첫 답글로 스레드를 시작하세요.',

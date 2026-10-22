@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
 import { useHostDocument } from '../lib/hostDocument';
 import { MAX_MESSAGE_BODY_CHARS, messagePermalink, parseMessagePermalink, type ScheduledMessageView } from '@harkroom/shared';
 import type { AgentModelPick, AttachmentRow } from '@harkroom/shared';
@@ -166,6 +166,11 @@ interface Props {
    * 채널의 사실이라 스레드 안에서도 그 채널의 것을 봐야 한다. 없으면 자동 멘션은 없다.
    */
   autoMentionChannelId?: string;
+  /**
+   * 상자 안, 본문 아래·동작줄 위에 서는 줄(입력창 개편 P3). 스레드의 「# 채널에도 올리기」가 여기 선다 —
+   * 상자 밖 위에 두면 보내는 글에 딸린 선택인지 패널의 설정인지 갈리지 않는다.
+   */
+  belowText?: ReactNode;
 }
 
 /**
@@ -210,7 +215,7 @@ interface HeldMessage {
 }
 
 export function Composer({
-  onSend, placeholder, rows = 2, autoFocus, scopeKey = '', channelId, autoMentionChannelId,
+  onSend, placeholder, rows = 2, autoFocus, scopeKey = '', channelId, autoMentionChannelId, belowText,
 }: Props) {
   // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
   const hostDoc = useHostDocument();
@@ -2133,20 +2138,6 @@ export function Composer({
             ))}
           </ul>
         )}
-        {pending.length > 0 && (
-          /* 붙인 순서대로, 넘치면 줄을 바꾼다. 위·오른쪽 여백은 모서리에 반 걸친 × 자리다. */
-          <div className="flex flex-wrap gap-2 px-3 pt-3">
-            {pending.map((u) => (
-              <PendingAttachmentTile
-                key={u.localId}
-                upload={u}
-                onRemove={() => discardUploads([u.localId])}
-                onRetry={() => retryUpload(u.localId)}
-              />
-            ))}
-          </div>
-        )}
-
         <ComposerEditor
           ref={ref}
           historyKey={scopeKey}
@@ -2169,6 +2160,23 @@ export function Composer({
           onKeyDown={onKeyDown}
           onPaste={onPaste}
         />
+        {pending.length > 0 && (
+          /* 붙인 순서대로, 넘치면 줄을 바꾼다. 위·오른쪽 여백은 모서리에 반 걸친 × 자리다.
+             본문 **아래**·동작줄 위다(입력창 개편 P3, designer n5) — 쓰는 자리가 위에서 밀려 내려가지 않고, ＋ 단추 바로 위에 붙은 것이 선다. */
+          <div className="flex flex-wrap gap-2 px-3 pb-1 pt-2">
+            {pending.map((u) => (
+              <PendingAttachmentTile
+                key={u.localId}
+                upload={u}
+                onRemove={() => discardUploads([u.localId])}
+                onRetry={() => retryUpload(u.localId)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* 시안: 본문 바로 아래·동작줄 위(첨부가 있으면 그 아래). */}
+        {belowText && <div className="px-3 pb-1 pt-1">{belowText}</div>}
         {/* 동작줄(입력창 개편 P2): 왼쪽 ＋첨부 · Aa 도구줄 · ☺ · @ │ 오른쪽 글자 수 · 보내기 · ⌄ 예약. */}
         <div className="flex items-center justify-between px-2 pb-1.5">
           <div className="flex items-center gap-0.5">
@@ -2300,13 +2308,16 @@ export function Composer({
                     aria-haspopup="menu"
                     aria-expanded={sendMenu}
                     data-testid="composer-send-options"
-                    className="h-full rounded-r-full border-l border-fg-on-strong/30 bg-accent pl-1.5 pr-2.5 text-fg-on-strong hover:bg-accent-hover disabled:border-surface disabled:bg-border disabled:text-fg-subtle"
+                    className="flex h-full items-center rounded-r-full border-l border-fg-on-strong/30 bg-accent pl-1.5 pr-2.5 text-fg-on-strong hover:bg-accent-hover disabled:border-surface disabled:bg-border disabled:text-fg-subtle"
                     // 빈 입력이면 전송과 같이 흐리다 — 메뉴의 유일한 항목(나중에 보내기)도 본문이 있어야 한다.
                     disabled={!draft.trim() || offline}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => { setEmojiOpen(false); setSendMenu((v) => !v); }}
                   >
-                    ⌄
+                    {/* 글자 「⌄」는 글꼴의 아래쪽에 앉아 2~3px 내려 보였다(designer n4) — 선 아이콘으로 상자 가운데에 세운다. */}
+                    <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 4.5l3 3 3-3" />
+                    </svg>
                   </button>
                   {sendMenu && (
                     <div
