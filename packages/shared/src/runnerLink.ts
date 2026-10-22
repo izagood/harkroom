@@ -239,6 +239,20 @@ export type McpAuthRejectedNotice = { type: 'mcp.authRejected'; servers: string[
  */
 export type OperatorToRunnerNotice = { type: 'handover.released' };
 
+/**
+ * 오퍼레이터가 이 러너의 hello 를 **거절했다**(모르는 runnerId 이거나 secret 이 다르다). 소켓을 끊기 직전에
+ * 한 줄 보낸다 — 러너가 「끊겼다(곧 다시 붙는다)」와 「받아 주지 않는다」를 가를 수 있게.
+ *
+ * 비밀도 runnerId 도 싣지 않는다: 거절된 쪽은 아직 누구인지 확인되지 않은 상대다. 이 말을 모르는 옛 러너는
+ * 모르는 프레임으로 버린다(릴레이 switch 의 `default`) — 지금 동작 그대로 다시 붙는다.
+ */
+export type RunnerLinkRejectedNotice = { type: 'link.rejected'; reason: 'unknown_runner' };
+
+export function isRunnerLinkRejected(value: unknown): value is RunnerLinkRejectedNotice {
+  return typeof value === 'object' && value !== null
+    && (value as { type?: unknown }).type === 'link.rejected';
+}
+
 export function isOperatorToRunnerNotice(value: unknown): value is OperatorToRunnerNotice {
   return typeof value === 'object' && value !== null
     && (value as { type?: unknown }).type === 'handover.released';

@@ -37,6 +37,7 @@ import { ensureNameLink, resolveAgentStateDir } from './stateDir.js';
 import { assertHarnessContract, buildTurnCommand, readExtraMcpServers, readMcpServers, writeSystemPromptFile, type McpServerEntry } from './turn.js';
 import { BG_POLL_INTERVAL_MS, BG_SYSTEM_PROMPT, BgExecutor, writeBgMcpConfig } from './bgExecutor.js';
 import { createStoppableSleep } from './stoppableSleep.js';
+import { createRetreat, type Retreat } from './retreat.js';
 import type { Exec } from './workspace.js';
 import { isCredentialFailure, nextBackoffMs } from './policy.js';
 import { harnessBinaryName, type AgentHarness } from '@harkroom/shared';
@@ -113,6 +114,8 @@ const handoverDone = new Set<number>(
 );
 if (handoverDone.size) console.log(`[main] 이관: 앞 러너가 끝냈지만 읽음 처리 못 한 entry ${[...handoverDone].join(',')} — 턴 없이 읽음 처리만 한다`);
 
+/** 물러나는 길(`retreat.ts`). 릴레이보다 늦게 만들어지므로 릴레이의 콜백은 이 칸을 통해 부른다. */
+let retreat: Retreat | null = null;
 const relay = createRelayClient({
   link: config.operatorLink,
   // API 키 연결 모드를 붙을 때마다 알린다(C1) — 아래 `providerLaneOn` 과 같은 env 를 읽는다(그 줄은 relay 보다 뒤에 선다).
@@ -122,6 +125,10 @@ const relay = createRelayClient({
   // 스스로 interactive.error 로 답한다(relay.ts 의 훅 부재 처리).
   // 앞 세대가 물러났다는 오퍼레이터의 통지. 이관 보류를 **그 자리에서** 푼다.
   onHandoverReleased: releaseHandoverHold,
+  // 오퍼레이터가 연달아 받아 주지 않았다(장부에서 빠진 고아). 릴레이는 이미 멈췄고 열린 턴마다 중단을 불렀다 —
+  // 여기서는 SIGTERM 과 같은 플래그로 폴 루프를 끝낸다. 중단된 턴이 끝나면 루프가 빠져나가 정상 종료한다.
+  // 그래도 무엇이 붙잡고 있으면(죽지 않는 턴) 유예 뒤 끝낸다 — 턴의 SIGKILL 승격(5초)보다 넉넉히 둔다.
+  onLinkRejectedGiveUp: () => { retreat?.onLinkRejectedGiveUp(); },
   onInteractiveOpen: (req) => {
     if (!interactive) return Promise.reject(new Error('러너가 아직 기동 중이다 — 잠시 뒤 다시 열어라'));
     return interactive.open(req);
@@ -145,14 +152,20 @@ let running = true;
 const stoppable = createStoppableSleep();
 /** 아래에서 늦게 배선된다(릴레이 ↔ 매니저 상호 참조). 시그널 핸들러가 참조하므로 먼저 선언한다. */
 let interactive: InteractiveManager | null = null;
-for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(sig, () => {
+retreat = createRetreat({
+  relay,
+  stopLoop: () => {
     running = false;
     stoppable.wake();
     // #337: 인터랙티브 PTY 는 사람이 닫아 줄 때까지 기다릴 대상이 없다 — 러너가 죽으면
     // 릴레이도 함께 끊긴다. 고아 회수와 같은 경로(SIGTERM→유예→SIGKILL)로 즉시 회수한다.
     interactive?.shutdown();
-  });
+  },
+  exit: (code) => process.exit(code),
+});
+// 신호를 받으면 다시 붙지 않고, 시한 안에 반드시 끝난다(`retreat.ts` 머리 — 10-22 고아가 SIGTERM 뒤에도 살았다).
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => { retreat?.onSignal(sig); });
 }
 
 // 기동 시각. 종료 요청(#129)이 **나를 향한 것인지** 가르는 기준이다 — 내가 뜨기 전에 남은
