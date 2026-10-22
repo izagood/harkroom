@@ -104,6 +104,11 @@ const MARK_NODES = new Set(['EmphasisMark', 'CodeMark', 'StrikethroughMark', 'Li
 /** 기호를 품은 구간 노드. 커서가 이 구간에 닿으면 기호를 보인다. */
 const SPAN_NODES = new Set(['StrongEmphasis', 'Emphasis', 'Strikethrough', 'InlineCode', 'Link', 'Blockquote']);
 
+/**
+ * 조합이 끝난 뒤 Enter 를 우리가 먼저 받는 창(ms). CodeMirror 가 키를 버리는 창(100ms)보다 넉넉하다 — 아래 `onRawKey` 주석.
+ */
+const AFTER_COMPOSITION_MS = 300;
+
 const hiddenMark = Decoration.replace({});
 const faintMark = Decoration.mark({ class: 'cm-md-mark' });
 const codeLine = Decoration.line({ class: 'cm-md-codeblock' });
@@ -230,6 +235,21 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
   });
   useImperativeHandle(ref, () => box.current, []);
 
+  /** `Composer` 의 열쇠 처리기를 부른다. 막았으면(`preventDefault`) 참. */
+  const runKeyHandler = (e: KeyboardEvent): boolean => {
+    const handler = latest.current.onKeyDown;
+    if (!handler) return false;
+    handler({
+      key: e.key, code: e.code, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey,
+      altKey: e.altKey, isComposing: e.isComposing, editorComposing: viewRef.current?.composing ?? false,
+      preventDefault: () => e.preventDefault(),
+      currentTarget: box.current,
+    });
+    return e.defaultPrevented;
+  };
+  /** 캡처 단계에서 먼저 처리한 keydown. CodeMirror 의 처리기 단계가 같은 이벤트를 다시 부르지 않게 한다. */
+  const handledEarly = useRef(new WeakSet<KeyboardEvent>()).current;
+
   useLayoutEffect(() => {
     const extensions: Extension[] = [
       history(),
@@ -245,17 +265,8 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
         Enter 를 줄바꿈으로 먹어 버리므로, 같은 순위면 Enter 가 보내기에 닿지 못한다.
       */
       Prec.highest(EditorView.domEventHandlers({
-        keydown: (e) => {
-          const handler = latest.current.onKeyDown;
-          if (!handler) return false;
-          handler({
-            key: e.key, code: e.code, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey,
-            altKey: e.altKey, isComposing: e.isComposing, editorComposing: viewRef.current?.composing ?? false,
-            preventDefault: () => e.preventDefault(),
-            currentTarget: box.current,
-          });
-          return e.defaultPrevented;
-        },
+        // 조합 직후 Enter 는 아래 캡처 단계에서 이미 처리했다(`handledEarly`) — 두 번 보내지 않는다.
+        keydown: (e) => (handledEarly.has(e) ? e.defaultPrevented : runKeyHandler(e)),
         paste: (e) => {
           const handler = latest.current.onPaste;
           if (!handler || !e.clipboardData) return false;
@@ -286,16 +297,40 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
       Enter 가 글 칸에 **도착했는지**를 CodeMirror 보다 먼저(캡처 단계) 적는다(`lib/enterTrace`). CodeMirror 는 조합 중
       키를 처리기에 넘기지 않고 버리므로, 여기 있고 `Composer` 쪽 기록이 없으면 편집기가 삼킨 것이다. 글자는 안 적는다.
     */
+    /*
+      **조합이 끝난 직후의 Enter 는 CodeMirror 보다 먼저 받는다**(10-22 「글 끝에서 Enter 를 두 번 쳐야 보내진다」).
+
+      CodeMirror 는 Safari 계열(WKWebView 포함)에서 `compositionend` 뒤 100ms 안에 오는 keydown 을 「입력기가 확정에 쓴
+      키」로 보고 **처리기에 넘기지 않는다**(`@codemirror/view` `ignoreDuringComposition` · `compositionPendingKey`).
+      맥 한글 입력기는 마지막 음절을 확정한 뒤 그 Enter 를 따로 보낸다 — 확정은 이미 끝났고 이 Enter 는 보내기다. 그런데
+      버려지면 아무도 막지 않아 브라우저가 줄을 바꾸고, 다음 Enter 가 빈 줄을 단 채 보냈다(진단 덤프: raw 는 있고 key 가
+      없음, isComposing·편집기 조합 상태 둘 다 false).
+
+      그래서 그 창 안의 Enter 만 여기서(캡처 단계) 처리기에 넘기고, 막았으면 CodeMirror 에 내려가지 않게 멈춘다. 창은
+      CodeMirror 의 100ms 보다 넉넉히 잡는다 — 우리가 먼저 처리하면 CodeMirror 단계는 `handledEarly` 로 건너뛰므로 창이
+      겹쳐도 두 번 불리지 않는다. 조합이 **진행 중**(`view.composing`)이면 건드리지 않는다 — 그 Enter 는 입력기의 것이다.
+    */
+    let compositionEndedAt = -Infinity;
+    const onCompositionEnd = () => { compositionEndedAt = Date.now(); };
     const onRawKey = (e: KeyboardEvent) => {
       if (e.key !== 'Enter' && e.keyCode !== 13) return;
       recordEnter({
         kind: 'raw', key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, meta: e.metaKey || e.ctrlKey,
         isComposing: e.isComposing, editorComposing: view.composing, docLen: view.state.doc.length, focus: focusKind(view.dom.ownerDocument),
       });
+      if (view.composing || e.isComposing || Date.now() - compositionEndedAt > AFTER_COMPOSITION_MS) return;
+      handledEarly.add(e);
+      if (runKeyHandler(e)) e.stopImmediatePropagation();
     };
+    view.contentDOM.addEventListener('compositionend', onCompositionEnd, true);
     view.contentDOM.addEventListener('keydown', onRawKey, true);
     if (props.autoFocus) view.focus();
-    return () => { view.contentDOM.removeEventListener('keydown', onRawKey, true); view.destroy(); viewRef.current = null; };
+    return () => {
+      view.contentDOM.removeEventListener('compositionend', onCompositionEnd, true);
+      view.contentDOM.removeEventListener('keydown', onRawKey, true);
+      view.destroy();
+      viewRef.current = null;
+    };
     // 자리표시 글은 처음 한 번만 — 바뀌면 다시 만든다.
   }, [props.placeholder]); // eslint-disable-line react-hooks/exhaustive-deps
 
