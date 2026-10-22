@@ -217,6 +217,9 @@ describe('가로로 잘리면 목록 밖으로 꺼낸다', () => {
     const menu = open();
     expect(menu.style.position).toBe('fixed');
     expect(menu.style.left).toBe('200px');
+    // 꺼낸 메뉴는 본문 쪽 Files·Doc 패널(z-10)·토스트(z-40) 위에 선다(designer #1457).
+    expect(menu.className).toContain('z-50');
+    expect(menu.className).not.toContain('z-10');
   });
 
   it('상자 안에 들어가면 예전처럼 absolute 로 둔다', () => {
@@ -224,5 +227,7 @@ describe('가로로 잘리면 목록 밖으로 꺼낸다', () => {
     const menu = open();
     expect(menu.style.position).toBe('');
     expect(menu.className).toContain('bottom-full');
+    expect(menu.className).toContain('z-10');
+    expect(menu.className).not.toContain('z-50');
   });
 });

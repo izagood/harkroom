@@ -389,7 +389,7 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
           ref={menuRef}
           role="menu"
           onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } }}
-          className={`${openAt || floatAt ? '' : `absolute ${resolvedPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 w-max min-w-32 max-w-[calc(100vw-16px)] rounded-card bg-surface-raised py-1 shadow-float ${className}`}
+          className={`${openAt || floatAt ? '' : `absolute ${resolvedPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} ${floatAt ? 'z-50' : 'z-10'} w-max min-w-32 max-w-[calc(100vw-16px)] rounded-card bg-surface-raised py-1 shadow-float ${className}`}
           style={menuStyle ?? (floatAt ? { position: 'fixed', left: floatAt.left, top: floatAt.top } : undefined)}
         >
           {/*
@@ -399,6 +399,12 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
             29px 밖에 안 됐고, 그래서 글자가 테두리에 눌린 것처럼 왼쪽 위로 쏠려 읽혔다.
             `py-2`(8px) 로 올려 33px 을 준다 — 머리(`pb-2 pt-1`)와 같은 8px 축을 쓰고,
             줄끼리 붙지 않으면서 네 줄짜리 메뉴가 길어지지도 않는 최소치다.
+          */}
+          {/*
+            `z-50`: 목록 밖으로 꺼낸 메뉴(`floatAt`)는 사이드바를 벗어나 본문 위에 서야 한다 — 본문은 DOM 에서 더 뒤라
+            같은 `z-10` 인 Files·Doc 보기 패널(`ChannelPane`)과 토스트 줄(`Notice`, `z-40`) 밑에 깔렸다(designer #1457).
+            업데이트 토스트(`UpdateToast`, `z-50`)와는 같은 층이라 DOM 순서로 갈린다 — 둘이 겹치는 자리(레일 아래 왼쪽)는
+            메뉴가 열려 있는 짧은 동안뿐이라 더 올리지 않는다. 평소(`absolute`) 메뉴는 `z-10` 그대로다.
           */}
           {/*
             `w-max`: 메뉴 폭은 항목 글자가 정한다 — 담는 상자 폭에 눌려 접히지 않는다. 사이드바 오른쪽 끝의 `⋯` 에서
