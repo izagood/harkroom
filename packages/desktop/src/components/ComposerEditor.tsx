@@ -4,7 +4,7 @@ import {
   Decoration, EditorView, ViewPlugin, keymap, placeholder as cmPlaceholder,
   type DecorationSet, type ViewUpdate,
 } from '@codemirror/view';
-import { history, historyKeymap, defaultKeymap } from '@codemirror/commands';
+import { history, historyKeymap, defaultKeymap, insertNewlineAndIndent } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { Strikethrough } from '@lezer/markdown';
@@ -105,9 +105,14 @@ const MARK_NODES = new Set(['EmphasisMark', 'CodeMark', 'StrikethroughMark', 'Li
 const SPAN_NODES = new Set(['StrongEmphasis', 'Emphasis', 'Strikethrough', 'InlineCode', 'Link', 'Blockquote']);
 
 /**
- * 조합이 끝난 뒤 Enter 를 우리가 먼저 받는 창(ms). CodeMirror 가 키를 버리는 창(100ms)보다 넉넉하다 — 아래 `onRawKey` 주석.
+ * 조합이 **진행 중**일 때 친 Enter 를 입력기에 넘긴 뒤, 확정(DOM `compositionend`)이 오지 않아도 보내기로 마무리하는 시한(ms).
+ * Safari 는 compositionend 를 빠뜨리는 일이 있다(`@codemirror/view` 의 주석) — 그때도 Enter 한 번은 보내기여야 한다.
  */
-const AFTER_COMPOSITION_MS = 300;
+const COMPOSING_ENTER_FALLBACK_MS = 300;
+
+/** Enter 열쇠인가. 조합 중에는 keyCode 가 229 이고 key 가 'Process' 일 수 있어 자리(`code`)도 본다. */
+const isEnterKey = (e: KeyboardEvent): boolean =>
+  e.key === 'Enter' || e.keyCode === 13 || e.code === 'Enter' || e.code === 'NumpadEnter';
 
 const hiddenMark = Decoration.replace({});
 const faintMark = Decoration.mark({ class: 'cm-md-mark' });
@@ -247,8 +252,24 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
     });
     return e.defaultPrevented;
   };
-  /** 캡처 단계에서 먼저 처리한 keydown. CodeMirror 의 처리기 단계가 같은 이벤트를 다시 부르지 않게 한다. */
-  const handledEarly = useRef(new WeakSet<KeyboardEvent>()).current;
+
+  /**
+   * Enter 하나를 끝까지 처리한다 — `Composer` 의 처리기(보내기·멘션 고르기·목록 잇기)가 맡으면 그것으로 끝이고, 맡지 않으면
+   * (Shift+Enter 줄바꿈·코드 블록 안 Enter) 편집기에 **우리가** 줄을 넣는다. 브라우저의 기본 줄바꿈에 맡기지 않는다 — 그 길이
+   * 「보내기가 줄바꿈이 되는」 길이었다.
+   */
+  const routeEnter = (k: Pick<KeyboardEvent, 'key' | 'code' | 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey'>) => {
+    const view = viewRef.current;
+    if (!view) return;
+    let taken = false;
+    latest.current.onKeyDown?.({
+      key: 'Enter', code: k.code || 'Enter', shiftKey: k.shiftKey, metaKey: k.metaKey, ctrlKey: k.ctrlKey,
+      altKey: k.altKey, isComposing: false, editorComposing: view.composing,
+      preventDefault: () => { taken = true; },
+      currentTarget: box.current,
+    });
+    if (!taken) insertNewlineAndIndent(view);
+  };
 
   useLayoutEffect(() => {
     const extensions: Extension[] = [
@@ -265,8 +286,8 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
         Enter 를 줄바꿈으로 먹어 버리므로, 같은 순위면 Enter 가 보내기에 닿지 못한다.
       */
       Prec.highest(EditorView.domEventHandlers({
-        // 조합 직후 Enter 는 아래 캡처 단계에서 이미 처리했다(`handledEarly`) — 두 번 보내지 않는다.
-        keydown: (e) => (handledEarly.has(e) ? e.defaultPrevented : runKeyHandler(e)),
+        // Enter 는 여기 오지 않는다 — 아래 글 칸 캡처 단계(`onEnterKey`)가 먼저 받아 멈춘다.
+        keydown: (e) => runKeyHandler(e),
         paste: (e) => {
           const handler = latest.current.onPaste;
           if (!handler || !e.clipboardData) return false;
@@ -298,36 +319,60 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
       키를 처리기에 넘기지 않고 버리므로, 여기 있고 `Composer` 쪽 기록이 없으면 편집기가 삼킨 것이다. 글자는 안 적는다.
     */
     /*
-      **조합이 끝난 직후의 Enter 는 CodeMirror 보다 먼저 받는다**(10-22 「글 끝에서 Enter 를 두 번 쳐야 보내진다」).
+      **Enter·Shift+Enter 는 CodeMirror 보다 먼저, 늘 우리가 받는다**(10-21~22 「글 끝에서 Enter 를 두 번 쳐야 보내진다」).
 
-      CodeMirror 는 Safari 계열(WKWebView 포함)에서 `compositionend` 뒤 100ms 안에 오는 keydown 을 「입력기가 확정에 쓴
-      키」로 보고 **처리기에 넘기지 않는다**(`@codemirror/view` `ignoreDuringComposition` · `compositionPendingKey`).
-      맥 한글 입력기는 마지막 음절을 확정한 뒤 그 Enter 를 따로 보낸다 — 확정은 이미 끝났고 이 Enter 는 보내기다. 그런데
-      버려지면 아무도 막지 않아 브라우저가 줄을 바꾸고, 다음 Enter 가 빈 줄을 단 채 보냈다(진단 덤프: raw 는 있고 key 가
-      없음, isComposing·편집기 조합 상태 둘 다 false).
+      CodeMirror 는 Safari 계열(WKWebView 포함)에서 「입력기가 확정에 쓴 키」로 보이는 keydown 을 처리기에 넘기지 않고 버린다
+      (`@codemirror/view` `ignoreDuringComposition`). 버려진 Enter 는 아무도 막지 않아 브라우저가 줄을 바꿨고, 다음 Enter 가
+      빈 줄을 단 채 보냈다. 버리는 갈래가 여럿이다 — DOM `compositionend` 뒤 100ms(#1461 이 이것만 막았다), 조합 중 `insertText`
+      뒤 CodeMirror 가 **DOM 이벤트 없이** 흉내 낸 조합 끝 뒤 100ms(v0.4.159 덤프의 「친 직후 첫 Enter」 19건·Shift+Enter 10건),
+      조합 진행 중. 그 시간 창을 쫓지 않고 Enter 를 통째로 가져온다:
 
-      그래서 그 창 안의 Enter 만 여기서(캡처 단계) 처리기에 넘기고, 막았으면 CodeMirror 에 내려가지 않게 멈춘다. 창은
-      CodeMirror 의 100ms 보다 넉넉히 잡는다 — 우리가 먼저 처리하면 CodeMirror 단계는 `handledEarly` 로 건너뛰므로 창이
-      겹쳐도 두 번 불리지 않는다. 조합이 **진행 중**(`view.composing`)이면 건드리지 않는다 — 그 Enter 는 입력기의 것이다.
+      1. 조합이 진행 중이 아니면 여기서 처리기에 넘기고(`routeEnter`) 기본 동작과 CodeMirror 단계를 둘 다 멈춘다.
+      2. 조합이 **진행 중**(`isComposing`)이면 그 Enter 는 입력기의 것이다 — 막지 않고 CodeMirror 에도 안 내려보낸 채 「확정 뒤
+         보내기」로 적어 둔다. 확정(DOM `compositionend`)이 오면 다음 틱에, 안 와도 시한 뒤에 한 번 처리한다. 그 사이 입력기가
+         넣으려는 줄바꿈(`beforeinput insertParagraph/insertLineBreak`)은 막는다.
+      3. 그 뒤에 진짜 Enter keydown 이 또 오면(입력기가 확정 뒤 Enter 를 따로 보내는 경우) 같은 Enter 로 보고 한 번만 처리한다.
+
+      Alt+Enter 는 건드리지 않는다. 기록(`lib/enterTrace`)은 여기서 남긴다 — raw 마다 key 가 짝지어 남아야 한다.
     */
-    let compositionEndedAt = -Infinity;
-    const onCompositionEnd = () => { compositionEndedAt = Date.now(); };
-    const onRawKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter' && e.keyCode !== 13) return;
+    let pendingEnter: { k: Pick<KeyboardEvent, 'key' | 'code' | 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey'>; timer: ReturnType<typeof setTimeout> } | null = null;
+    const flushPendingEnter = () => {
+      const p = pendingEnter;
+      if (!p) return;
+      pendingEnter = null;
+      clearTimeout(p.timer);
+      routeEnter(p.k);
+    };
+    const onEnterKey = (e: KeyboardEvent) => {
+      if (!isEnterKey(e) || e.altKey) return;
       recordEnter({
         kind: 'raw', key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, meta: e.metaKey || e.ctrlKey,
         isComposing: e.isComposing, editorComposing: view.composing, docLen: view.state.doc.length, focus: focusKind(view.dom.ownerDocument),
       });
-      if (view.composing || e.isComposing || Date.now() - compositionEndedAt > AFTER_COMPOSITION_MS) return;
-      handledEarly.add(e);
-      if (runKeyHandler(e)) e.stopImmediatePropagation();
+      const k = { key: e.key, code: e.code, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey };
+      e.stopImmediatePropagation();
+      if (e.isComposing || view.composing) {
+        if (pendingEnter) clearTimeout(pendingEnter.timer);
+        pendingEnter = { k, timer: setTimeout(flushPendingEnter, COMPOSING_ENTER_FALLBACK_MS) };
+        return;
+      }
+      e.preventDefault();
+      if (pendingEnter) { clearTimeout(pendingEnter.timer); pendingEnter = null; }
+      routeEnter(k);
     };
+    const onCompositionEnd = () => { if (pendingEnter) setTimeout(flushPendingEnter, 0); };
+    const onBeforeInput = (e: InputEvent) => {
+      if (pendingEnter && (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak')) e.preventDefault();
+    };
+    view.contentDOM.addEventListener('keydown', onEnterKey, true);
     view.contentDOM.addEventListener('compositionend', onCompositionEnd, true);
-    view.contentDOM.addEventListener('keydown', onRawKey, true);
+    view.contentDOM.addEventListener('beforeinput', onBeforeInput, true);
     if (props.autoFocus) view.focus();
     return () => {
+      if (pendingEnter) clearTimeout(pendingEnter.timer);
+      view.contentDOM.removeEventListener('keydown', onEnterKey, true);
       view.contentDOM.removeEventListener('compositionend', onCompositionEnd, true);
-      view.contentDOM.removeEventListener('keydown', onRawKey, true);
+      view.contentDOM.removeEventListener('beforeinput', onBeforeInput, true);
       view.destroy();
       viewRef.current = null;
     };

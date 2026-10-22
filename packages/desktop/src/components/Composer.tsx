@@ -1010,9 +1010,15 @@ export function Composer({
     kind: 'send', outcome, docLen: ref.current?.value.length, draftLen: draft.length, offline, listOpen: open,
   });
   const send = (confirmed = false) => {
+    /*
+      보낼 글은 **그 순간의 편집기 글**이다(「Enter 두 번」 고침). 입력기가 확정한 마지막 음절은 편집기에 먼저 들어가고, React 의
+      `draft` 는 다시 그린 뒤에야 따라온다 — 조합이 끝난 다음 틱에 보내는 길(`ComposerEditor` 의 조합 중 Enter)에서는 그 사이가
+      벌어질 수 있다. 편집기가 없으면(그릴 수 없는 환경) `draft` 를 쓴다.
+    */
+    const current = ref.current?.value ?? draft;
     // 고정 멘션만으로는 보낼 것이 없다 — 빈 Enter 가 '@fizz' 하나만 던지면 사고다.
     // 다만 파일만 보내는 것은 자연스럽다.
-    if (!draft.trim() && !pending.length) { traceSend('empty'); return; }
+    if (!current.trim() && !pending.length) { traceSend('empty'); return; }
     // 끊긴 동안 Enter 는 보내지 않는다 — 나갔다 실패하고 초안을 되돌리는 동안 "나갔나?" 하는 순간이 생긴다.
     // 사유는 작성창 아래 줄이 이미 말하고 있다. 줄 세워 뒀다 붙으면 보내기(outbox)는 하지 않는다 — 몇 분
     // 전 글이 갑자기 나가 에이전트 턴을 띄운다.
@@ -1048,7 +1054,7 @@ export function Composer({
       끝에 있으면 닫는 펜스 뒤만 지워진다. Shift+Enter 로 일부러 남긴 끝 줄도 함께 사라진다(알고 고른 것이다).
       「비었나」 판정(`draft.trim()`)은 위에서 이미 했으므로 여기서 빈 글이 되는 일은 없다.
     */
-    const typed = draft.replace(/\s+$/u, '');
+    const typed = current.trimEnd();
     /**
      * 접두는 **여기, 발송 시점에** 본문에 들어간다(#173, design.md §4 "접두는 실제 본문에
      * 들어간다"). 서버가 저장 직후 본문에 접두하는 방식은 에이전트가 MCP 로 올린 답에도
