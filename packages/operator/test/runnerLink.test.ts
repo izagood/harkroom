@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { encodeLine, NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
-import { createRunnerLinkServer, type LinkSocket } from '../src/runnerLink.js';
+import { createRejectLogThrottle, createRunnerLinkServer, type LinkSocket } from '../src/runnerLink.js';
 import { createTurnSlots, TURN_SLOTS_PATH } from '../src/turnSlots.js';
 
 /** 러너 쪽 끝. `write` 는 오퍼레이터가 러너에게 보낸 줄, `feed` 는 러너가 보낸 줄. */
@@ -346,5 +346,40 @@ describe('runnerLink 줄 상한', () => {
     bridge.raw(tail); // 꼬리는 그 뒤 data 로 온다.
     await new Promise((r) => setTimeout(r, 0));
     expect(seen).toEqual(['split']);
+  });
+});
+
+describe('러너 링크 거절 로그 묶기(2026-10-22)', () => {
+  it('같은 러너는 처음 한 줄, 그 뒤로는 10분마다 「N번 더」 한 줄 — 서로 다른 러너는 따로 센다', () => {
+    const logs: string[] = [];
+    let t = 0;
+    const link = createRunnerLinkServer({ onFrame: () => {}, log: (l) => logs.push(l), now: () => t });
+    const reject = (runnerId: string) => link.accept(fakeSocket().socket, hello(runnerId, 'nope'), []);
+    for (let i = 0; i < 600; i += 1) { reject('r-ghost'); t += 1_000; } // 1초마다 10분
+    reject('r-other');
+    // 첫 줄 + 10분 경계에서 한 줄. 다른 러너는 자기 첫 줄.
+    expect(logs.filter((l) => l.includes('r-ghost'))).toEqual([
+      '러너 링크 거절: runnerId=r-ghost — 모르는 러너이거나 secret 이 다르다',
+    ]);
+    reject('r-ghost'); // 600초 지점 — 창(10분) 이 찼다
+    expect(logs.filter((l) => l.includes('r-ghost')).at(-1)).toBe('러너 링크 거절: runnerId=r-ghost — 지난 10분 동안 600번 더');
+    expect(logs.filter((l) => l.includes('r-other'))).toEqual(['러너 링크 거절: runnerId=r-other — 모르는 러너이거나 secret 이 다르다']);
+    // 다음 묶음은 다시 10분 뒤 — 그 사이엔 줄이 늘지 않는다.
+    const before = logs.length;
+    for (let i = 0; i < 599; i += 1) { t += 1_000; reject('r-ghost'); }
+    expect(logs.length).toBe(before);
+    t += 1_000; reject('r-ghost');
+    expect(logs.at(-1)).toBe('러너 링크 거절: runnerId=r-ghost — 지난 10분 동안 600번 더');
+  });
+
+  it('표는 상한(256)을 넘지 않는다 — 넘치면 가장 오래 조용한 러너를 잊고, 다시 오면 첫 줄부터', () => {
+    const logs: string[] = [];
+    const log = createRejectLogThrottle({ log: (l) => logs.push(l), now: () => 0, maxKeys: 3 });
+    for (const k of ['a', 'b', 'c']) log(k, `first ${k}`);
+    log('a', 'first a'); // a 를 맨 뒤로 — 가장 오래 조용한 것은 b
+    log('d', 'first d'); // b 를 버린다
+    log('b', 'first b'); // 잊었으니 다시 첫 줄
+    log('a', 'first a'); // 기억하고 있으니 줄 없음
+    expect(logs).toEqual(['first a', 'first b', 'first c', 'first d', 'first b']);
   });
 });

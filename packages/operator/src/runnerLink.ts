@@ -58,6 +58,55 @@ export interface RunnerLinkDeps {
   log(line: string): void;
   /** 한 줄 상한. 기본은 `RUNNER_LINK_MAX_LINE_BYTES` 이고, 주입은 회귀선의 몫이다. */
   maxLineBytes?: number;
+  /** 거절 로그 묶기의 시계(`createRejectLogThrottle`). 주입은 회귀선의 몫이다. */
+  now?: () => number;
+}
+
+/** 같은 러너의 거절을 묶는 창. 처음 한 줄 뒤로는 이 간격마다 「N번 더」 한 줄만 남긴다. */
+export const LINK_REJECT_LOG_WINDOW_MS = 10 * 60_000;
+/** 묶음 표의 키 상한. 넘치면 가장 오래 안 쓰인 키부터 버린다 — runnerId 를 지어내 표를 키우지 못한다. */
+export const LINK_REJECT_LOG_MAX_KEYS = 256;
+
+/**
+ * 러너 링크 거절 로그를 러너마다 묶는다(2026-10-22).
+ *
+ * 장부에서 빠진 고아 러너는 거절을 받고도 곧바로 다시 붙는다 — 거절마다 한 줄을 쓰면 오퍼레이터 로그가
+ * 하루 수십만 줄로 불었다(그 줄이 로그의 거의 전부였다). 첫 거절은 그대로 남기고, 그 뒤로는 창(`windowMs`)이
+ * 지난 다음 거절에서 「지난 창 동안 N번 더」 한 줄만 쓴다. 거절이 멈추면 남은 수는 쓰지 않는다 — 타이머를
+ * 두지 않으려는 것이고, 멈춘 뒤의 수는 진단에 필요 없다.
+ */
+export function createRejectLogThrottle(opts: {
+  log: (line: string) => void;
+  now?: () => number;
+  windowMs?: number;
+  maxKeys?: number;
+}): (key: string, firstLine: string) => void {
+  const now = opts.now ?? Date.now;
+  const windowMs = opts.windowMs ?? LINK_REJECT_LOG_WINDOW_MS;
+  const maxKeys = opts.maxKeys ?? LINK_REJECT_LOG_MAX_KEYS;
+  const seen = new Map<string, { since: number; count: number }>();
+  return (key, firstLine) => {
+    const t = now();
+    const hit = seen.get(key);
+    if (!hit) {
+      if (seen.size >= maxKeys) {
+        const oldest = seen.keys().next().value;
+        if (oldest !== undefined) seen.delete(oldest);
+      }
+      seen.set(key, { since: t, count: 0 });
+      opts.log(firstLine);
+      return;
+    }
+    // 쓰일 때마다 맨 뒤로 — 상한에서 버리는 것은 가장 오래 조용한 키다.
+    seen.delete(key);
+    seen.set(key, hit);
+    hit.count += 1;
+    if (t - hit.since >= windowMs) {
+      opts.log(`러너 링크 거절: ${key} — 지난 ${Math.round(windowMs / 60_000)}분 동안 ${hit.count}번 더`);
+      hit.since = t;
+      hit.count = 0;
+    }
+  };
 }
 
 export interface RunnerLinkServer {
@@ -91,6 +140,7 @@ function secretsMatch(expected: string, received: string): boolean {
 
 export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
   const maxLineBytes = deps.maxLineBytes ?? RUNNER_LINK_MAX_LINE_BYTES;
+  const logReject = createRejectLogThrottle({ log: (line) => deps.log(line), ...(deps.now ? { now: deps.now } : {}) });
   const expected = new Map<string, { agentId: string; secret: string }>();
   const linked = new Map<string, LinkSocket>();
   /**
@@ -161,7 +211,8 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
       const claim = checkRunnerHello(hello);
       const entry = claim ? expected.get(claim.runnerId) : undefined;
       if (!claim || !entry || !secretsMatch(entry.secret, claim.secret)) {
-        deps.log(`러너 링크 거절: ${claim ? `runnerId=${claim.runnerId}` : 'hello 형식 아님'} — 모르는 러너이거나 secret 이 다르다`);
+        const who = claim ? `runnerId=${claim.runnerId}` : 'hello 형식 아님';
+        logReject(who, `러너 링크 거절: ${who} — 모르는 러너이거나 secret 이 다르다`);
         // 끊기 전에 「받아 주지 않는다」를 한 줄 알린다 — 러너가 일반 끊김처럼 1초마다 다시 붙지 않고 물러나게
         // (장부에서 빠진 고아 러너가 하루 수십만 줄을 쌓던 일). 쓰기가 실패해도 끊는 것은 그대로다.
         try { socket.write(encodeLine({ type: 'link.rejected', reason: 'unknown_runner' } satisfies RunnerLinkRejectedNotice)); } catch { /* 끊는 길은 그대로 */ }
