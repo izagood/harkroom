@@ -2,7 +2,7 @@
 // 백오프 곡선은 네트워크를 태우면 "느리다"로만 보이고 무엇이 깨졌는지 알려 주지 않는다.
 import { describe, it, expect, vi } from 'vitest';
 import type { RelayRunnerFrame } from '@harkroom/shared';
-import { createRelayClient, RING_CAP_BYTES, type RelayHandlers, type RelayTransport, type RunnerLinkTarget } from '../src/relay.js';
+import { createRelayClient, LINK_REJECTED_GIVE_UP, RING_CAP_BYTES, type RelayHandlers, type RelayTransport, type RunnerLinkTarget } from '../src/relay.js';
 import { nextBackoffMs } from '../src/policy.js';
 
 /**
@@ -170,6 +170,69 @@ describe('#141-2 러너는 바이트를 변형하지 않는다', () => {
 });
 
 describe('#141-6 러너 재접속 (백오프 경로)', () => {
+  it('오퍼레이터가 거절하면(link.rejected) 열렸어도 백오프를 처음으로 되돌리지 않고 늘린다', () => {
+    const d = fakeDialer();
+    const s = fakeSchedule();
+    const client = createRelayClient({ link: LINK, unixDial: d.dial, schedule: s.schedule, initialBackoffMs: 1_000, log: () => {} });
+    client.start();
+    // 소켓은 열린 뒤에 거절된다 — onOpen → 거절 한 줄 → 끊김.
+    for (let i = 0; i < 3; i++) {
+      d.open(); d.deliver({ type: 'link.rejected', reason: 'unknown_runner' }); d.drop();
+      s.fire();
+    }
+    expect(s.delays()).toEqual([1_000, nextBackoffMs(1_000), nextBackoffMs(nextBackoffMs(1_000))]);
+  });
+
+  it('연달아 LINK_REJECTED_GIVE_UP 번 거절되면 더 붙지 않고, 열린 세션을 중단하고, 물러나라고 알린다', () => {
+    const d = fakeDialer();
+    const s = fakeSchedule();
+    const giveUp = vi.fn();
+    const client = createRelayClient({ link: LINK, unixDial: d.dial, schedule: s.schedule, initialBackoffMs: 1_000, log: () => {}, onLinkRejectedGiveUp: giveUp });
+    client.start();
+    const onCancel = vi.fn();
+    client.openSession({ ...SESSION, onCancel });
+    for (let i = 0; i < LINK_REJECTED_GIVE_UP; i++) {
+      d.open(); d.deliver({ type: 'link.rejected', reason: 'unknown_runner' }); d.drop();
+      if (i < LINK_REJECTED_GIVE_UP - 1) s.fire();
+    }
+    expect(giveUp).toHaveBeenCalledTimes(1);
+    expect(onCancel).toHaveBeenCalledWith('operator');
+    // 마지막 거절 뒤에는 다시 걸지 않는다.
+    expect(s.delays()).toHaveLength(LINK_REJECTED_GIVE_UP - 1);
+    expect(d.dials).toHaveLength(LINK_REJECTED_GIVE_UP);
+  });
+
+  it('일반 끊김은 거절이 아니다 — 받아 준 연결이 끊기면 거절 셈이 0 으로 돌아가고 백오프는 지금처럼 처음부터', () => {
+    const d = fakeDialer();
+    const s = fakeSchedule();
+    const giveUp = vi.fn();
+    const client = createRelayClient({ link: LINK, unixDial: d.dial, schedule: s.schedule, initialBackoffMs: 1_000, log: () => {}, onLinkRejectedGiveUp: giveUp });
+    client.start();
+    // 거의 다 거절됐다가…
+    for (let i = 0; i < LINK_REJECTED_GIVE_UP - 1; i++) {
+      d.open(); d.deliver({ type: 'link.rejected', reason: 'unknown_runner' }); d.drop(); s.fire();
+    }
+    // …받아 준 연결이 한 번 붙었다 끊겼다(오퍼레이터 재시작). 일반 백오프 그대로 1초.
+    d.open(); d.drop();
+    expect(s.delays().at(-1)).toBe(1_000);
+    s.fire();
+    // 다시 거절이 와도 셈은 처음부터 — 한 번으로는 물러나지 않고 1초부터 다시 늘린다.
+    d.open(); d.deliver({ type: 'link.rejected', reason: 'unknown_runner' }); d.drop();
+    expect(giveUp).not.toHaveBeenCalled();
+    expect(s.delays().at(-1)).toBe(1_000);
+  });
+
+  it('신호를 모르는 옛 오퍼레이터의 끊김은 지금 동작 그대로다 — 몇 번이 와도 물러나지 않는다', () => {
+    const d = fakeDialer();
+    const s = fakeSchedule();
+    const giveUp = vi.fn();
+    const client = createRelayClient({ link: LINK, unixDial: d.dial, schedule: s.schedule, initialBackoffMs: 1_000, log: () => {}, onLinkRejectedGiveUp: giveUp });
+    client.start();
+    for (let i = 0; i < LINK_REJECTED_GIVE_UP * 2; i++) { d.open(); d.drop(); s.fire(); }
+    expect(giveUp).not.toHaveBeenCalled();
+    expect(new Set(s.delays())).toEqual(new Set([1_000]));
+  });
+
   it('끊기면 백오프로 재접속하고, 붙으면 진행 중인 세션을 다시 announce 한다', () => {
     const d = fakeDialer();
     const s = fakeSchedule();

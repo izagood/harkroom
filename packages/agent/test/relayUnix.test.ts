@@ -101,6 +101,27 @@ describe('unixDialer — 소켓 위의 말', () => {
     expect(reason).toMatch(/ENOENT|nope\.sock/);
   });
 
+  it('오퍼레이터가 거절 한 줄을 쓰고 곧바로 끊어도 그 줄이 끊김보다 먼저 닿는다 — 러너가 거절로 센다', async () => {
+    // 오퍼레이터 runnerLink.accept 의 거절 경로와 같은 모양: write 직후 destroy.
+    await fakeOperator((socket, value) => {
+      if ((value as { type?: string }).type !== 'hello') return;
+      socket.write(encodeLine({ type: 'link.rejected', reason: 'unknown_runner' }));
+      socket.destroy();
+    });
+    const delays: number[] = [];
+    const logs: string[] = [];
+    const client = createRelayClient({
+      link: { socketPath, runnerId: 'r-1', secret: 'sec' }, initialBackoffMs: 1_000,
+      schedule: (_fn, ms) => { delays.push(ms); }, log: (l) => logs.push(l),
+    });
+    client.start();
+    await new Promise<void>((resolve) => { const t = setInterval(() => { if (delays.length >= 1) { clearInterval(t); resolve(); } }, 5); });
+    // 재접속을 예약했다 — 그리고 그것이 「거절」로 셌다는 표시(첫 거절 한 줄)가 남았다.
+    expect(delays).toEqual([1_000]);
+    expect(logs.some((l) => l.includes('받아 주지 않는다'))).toBe(true);
+    client.stop();
+  });
+
   it('오퍼레이터가 끊으면 onClose 가 한 번만 온다', async () => {
     await fakeOperator((socket) => { socket.destroy(); });
     let closes = 0;

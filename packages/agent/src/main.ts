@@ -113,6 +113,8 @@ const handoverDone = new Set<number>(
 );
 if (handoverDone.size) console.log(`[main] 이관: 앞 러너가 끝냈지만 읽음 처리 못 한 entry ${[...handoverDone].join(',')} — 턴 없이 읽음 처리만 한다`);
 
+/** 고아로 물러날 때 턴 정리를 기다리는 최대 시간. 그 뒤에는 남은 것과 상관없이 끝낸다. */
+const LINK_REJECTED_EXIT_GRACE_MS = 60_000;
 const relay = createRelayClient({
   link: config.operatorLink,
   // API 키 연결 모드를 붙을 때마다 알린다(C1) — 아래 `providerLaneOn` 과 같은 env 를 읽는다(그 줄은 relay 보다 뒤에 선다).
@@ -122,6 +124,16 @@ const relay = createRelayClient({
   // 스스로 interactive.error 로 답한다(relay.ts 의 훅 부재 처리).
   // 앞 세대가 물러났다는 오퍼레이터의 통지. 이관 보류를 **그 자리에서** 푼다.
   onHandoverReleased: releaseHandoverHold,
+  // 오퍼레이터가 연달아 받아 주지 않았다(장부에서 빠진 고아). 릴레이는 이미 멈췄고 열린 턴마다 중단을 불렀다 —
+  // 여기서는 SIGTERM 과 같은 플래그로 폴 루프를 끝낸다. 중단된 턴이 끝나면 루프가 빠져나가 정상 종료한다.
+  // 그래도 무엇이 붙잡고 있으면(죽지 않는 턴) 유예 뒤 끝낸다 — 턴의 SIGKILL 승격(5초)보다 넉넉히 둔다.
+  onLinkRejectedGiveUp: () => {
+    console.error('[main] 오퍼레이터가 이 러너를 받아 주지 않는다 — 물러난다');
+    running = false;
+    stoppable.wake();
+    interactive?.shutdown();
+    setTimeout(() => process.exit(0), LINK_REJECTED_EXIT_GRACE_MS);
+  },
   onInteractiveOpen: (req) => {
     if (!interactive) return Promise.reject(new Error('러너가 아직 기동 중이다 — 잠시 뒤 다시 열어라'));
     return interactive.open(req);

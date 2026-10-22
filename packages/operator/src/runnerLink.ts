@@ -23,7 +23,7 @@ import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import { encodeLine, LineTooLongError, NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
   RUNNER_LINK_MAX_LINE_BYTES, checkRunnerHello, isRunnerLinkNotice, isRunnerLinkRequest,
-  type OperatorToRunnerNotice, type RunnerLinkKind, type RunnerLinkNotice, type RunnerLinkRequest, type RunnerLinkResponse,
+  type OperatorToRunnerNotice, type RunnerLinkRejectedNotice, type RunnerLinkKind, type RunnerLinkNotice, type RunnerLinkRequest, type RunnerLinkResponse,
 } from '@harkroom/shared/runnerLink';
 
 /** `net.Socket` 의 최소 표면. 테스트가 가짜를 준다. */
@@ -162,6 +162,9 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
       const entry = claim ? expected.get(claim.runnerId) : undefined;
       if (!claim || !entry || !secretsMatch(entry.secret, claim.secret)) {
         deps.log(`러너 링크 거절: ${claim ? `runnerId=${claim.runnerId}` : 'hello 형식 아님'} — 모르는 러너이거나 secret 이 다르다`);
+        // 끊기 전에 「받아 주지 않는다」를 한 줄 알린다 — 러너가 일반 끊김처럼 1초마다 다시 붙지 않고 물러나게
+        // (장부에서 빠진 고아 러너가 하루 수십만 줄을 쌓던 일). 쓰기가 실패해도 끊는 것은 그대로다.
+        try { socket.write(encodeLine({ type: 'link.rejected', reason: 'unknown_runner' } satisfies RunnerLinkRejectedNotice)); } catch { /* 끊는 길은 그대로 */ }
         socket.destroy();
         return false;
       }

@@ -30,7 +30,7 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { AgentHarness, AgentSessionView, RelayRunnerFrame, RelayServerFrame, RunnerCap } from '@harkroom/shared';
 import { NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
-  RUNNER_LINK_MAX_LINE_BYTES, RUNNER_LINK_PROTOCOL_VERSION, isOperatorToRunnerNotice, isRunnerLinkResponse,
+  RUNNER_LINK_MAX_LINE_BYTES, RUNNER_LINK_PROTOCOL_VERSION, isOperatorToRunnerNotice, isRunnerLinkRejected, isRunnerLinkResponse,
   type RunnerHello, type RunnerLinkRequest, type RunnerLinkResponse,
 } from '@harkroom/shared/runnerLink';
 import { RingBuffer, type PtyWriter } from './pty.js';
@@ -209,6 +209,11 @@ export interface RelayClientOptions {
    * 완전히 물러났다는 뜻이다 — 그가 들고 있던 entry 를 이제 내가 집어도 된다.
    */
   onHandoverReleased?: () => void;
+  /**
+   * 오퍼레이터가 `LINK_REJECTED_GIVE_UP` 번 연달아 받아 주지 않았다 — 이 러너는 고아다. 릴레이는 이미 멈췄고
+   * 열린 세션마다 중단(`onCancel`)을 불렀다. 남은 일(폴 루프를 끝내고 물러나기)은 부른 쪽의 몫이다.
+   */
+  onLinkRejectedGiveUp?: () => void;
   /** 운영 로그 한 줄. 기본은 러너 로그(stdout). */
   log?: (line: string) => void;
 }
@@ -279,6 +284,19 @@ export type LinkHttpRequest = { type: 'http.forward'; method: string; path: stri
 /** 링크가 없거나 끊겼을 때 요청에 붙이는 사유. `status: 0` 은 "서버가 답한 것이 아니다"다. */
 export const LINK_DOWN_MESSAGE = '오퍼레이터 링크가 없다 — 재접속 중이다';
 
+/**
+ * 오퍼레이터가 **연달아 이만큼** 받아 주지 않으면(`link.rejected`) 이 러너는 물러난다.
+ *
+ * 거절은 「모르는 runnerId 이거나 secret 이 다르다」 — 오퍼레이터의 장부(`expect`)에 이 러너가 없다는 뜻이다.
+ * 정상 흐름에서는 생기지 않는다: 오퍼레이터는 기동 때 장부의 러너를 `expect` 한 **뒤에** 소켓 서비스를 연다
+ * (operator `run.ts` 고아 재발견 — 「서비스 전인 이유」). 그래서 오퍼레이터 재시작·앱 업데이트 중의 끊김은
+ * 거절이 아니라 소켓 없음(ENOENT)·EOF 로 온다. 거절이 되풀이되면 장부에서 빠진 고아다 — 다시 받아 줄 길이 없다.
+ *
+ * 10번·지수 백오프(1→2→4→…→60초 상한)면 물러나기까지 약 5분이다. 드문 경합으로 한두 번 거절돼도
+ * 그 사이에 붙으면 셈이 0으로 돌아가고, 고아라면 5분 뒤 스스로 끝나 하루 수십만 줄의 로그를 남기지 않는다.
+ */
+export const LINK_REJECTED_GIVE_UP = 10;
+
 export function createRelayClient(opts: RelayClientOptions): RelayClient {
   const unixDial = opts.unixDial ?? unixDialer;
   const dial = (handlers: RelayHandlers): void => { unixDial(opts.link, handlers); };
@@ -294,6 +312,14 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
   let outageReported = false;
   let stopped = false;
   let backoffMs = initialBackoffMs;
+  /**
+   * 거절(`link.rejected`) 전용 백오프와 연속 횟수. 일반 끊김의 `backoffMs` 와 나누는 이유: 소켓은 **열린 뒤에**
+   * 거절되므로 `onOpen` 이 `backoffMs` 를 처음으로 되돌린다 — 그 값만 쓰면 고아는 1초마다 다시 두드린다.
+   */
+  let rejectBackoffMs = initialBackoffMs;
+  let rejectedInARow = 0;
+  /** 지금 연결이 거절 신호를 받았는가. 다음 `onClose` 가 읽고 지운다. */
+  let rejectedNow = false;
   /** 답을 기다리는 요청들. 링크가 끊기면 전부 거절한다 — 답이 올 소켓이 사라졌다. */
   const pendingRequests = new Map<string, { req: RunnerLinkRequest; resolve: (res: RunnerLinkResponse) => void }>();
   /** MCP 트랜스포트가 살아 있으면 그 `onmessage` 로 서버의 JSON-RPC 메시지가 간다. */
@@ -384,6 +410,8 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
     let parsed: unknown;
     try { parsed = JSON.parse(raw); } catch { return; }
     if (typeof parsed !== 'object' || parsed === null) return;
+    // 오퍼레이터가 이 러너를 받아 주지 않았다 — 곧 끊긴다. 끊김을 「거절」로 셀 표시만 남긴다.
+    if (isRunnerLinkRejected(parsed)) { rejectedNow = true; return; }
     if (isRunnerLinkResponse(parsed)) {
       const pending = pendingRequests.get(parsed.id);
       if (!pending) return;
@@ -469,6 +497,20 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
     }
   };
 
+  /**
+   * 고아로 판정했다 — 더 붙지 않고, 쥐고 있는 턴을 **중단 경로로** 끝낸다. 죽이는 것은 여기가 아니라 각 턴의
+   * `onCancel` 이다(사람의 [중단]과 같은 길: SIGTERM → 유예 → SIGKILL, `pty.ts::terminate`). 새 kill 경로를 두면
+   * 한쪽이 흔적 처리를 건너뛴다(`LiveSession.onCancel` 주석).
+   */
+  const giveUpRejected = (): void => {
+    stopped = true;
+    log(`[relay] 오퍼레이터가 ${LINK_REJECTED_GIVE_UP}번 연달아 받아 주지 않았다 — 장부에서 빠진 러너로 보고 물러난다(열린 세션 ${sessions.size}개 중단)`);
+    for (const live of [...sessions.values()]) {
+      try { live.onCancel?.('operator'); } catch { /* 한 턴의 정리가 다른 턴을 막지 않는다 */ }
+    }
+    try { opts.onLinkRejectedGiveUp?.(); } catch { /* 물러나는 길은 그대로 */ }
+  };
+
   const connect = (): void => {
     if (stopped) return;
     dial({
@@ -502,6 +544,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
          * 애초에 못 붙는 것은 배선이 틀렸다는 뜻이다. 그리고 **장애당 한 줄**이다 —
          * 재시도마다 찍으면 그 줄은 다시 안 읽히는 말이 되고, 삼키는 것과 실질이 같아진다.
          */
+        const wasOpen = opened;
         if (opened) {
           opened = false;
         } else if (!outageReported) {
@@ -535,6 +578,20 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
           pending.resolve(downResponse(pending.req, `${LINK_DOWN_MESSAGE}${reason ? ` (${reason})` : ''}`));
         }
         if (stopped) return;
+        if (rejectedNow) {
+          rejectedNow = false;
+          rejectedInARow += 1;
+          if (rejectedInARow >= LINK_REJECTED_GIVE_UP) { giveUpRejected(); return; }
+          if (rejectedInARow === 1) {
+            log(`[relay] 오퍼레이터가 이 러너를 받아 주지 않는다(모르는 러너) — 물러나며 다시 시도한다, ${LINK_REJECTED_GIVE_UP}번 연달아면 끝낸다`);
+          }
+          schedule(connect, rejectBackoffMs);
+          rejectBackoffMs = nextBackoffMs(rejectBackoffMs);
+          return;
+        }
+        // 거절 없이 끊겼다 — 붙어 있던 연결이면(받아 준 것) 거절 셈을 지운다. 못 붙은 것(ENOENT)은 셈을 그대로 둔다:
+        // 오퍼레이터 교체 중의 소켓 없음은 거절도 수락도 아니다.
+        if (wasOpen) { rejectedInARow = 0; rejectBackoffMs = initialBackoffMs; }
         schedule(connect, backoffMs);
         backoffMs = nextBackoffMs(backoffMs);
       },

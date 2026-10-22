@@ -63,6 +63,30 @@ describe('runnerLink 서버', () => {
     expect(stranger.destroyed()).toBe(true);
   });
 
+  it('거절할 때는 끊기 전에 link.rejected 한 줄을 보낸다 — runnerId·secret 은 싣지 않는다', () => {
+    const link = createRunnerLinkServer({ onFrame: () => {}, log: () => {} });
+    link.expect('r-1', 'agent-a', 'sec');
+    for (const h of [hello('r-1', 'nope'), hello('r-9', 'sec'), { type: 'hello' }]) {
+      const s = fakeSocket();
+      expect(link.accept(s.socket, h, [])).toBe(false);
+      expect(s.lines()).toEqual([{ type: 'link.rejected', reason: 'unknown_runner' }]);
+      expect(s.destroyed()).toBe(true);
+    }
+    const s = fakeSocket();
+    link.accept(s.socket, hello('r-9', 'sekrit-value'), []);
+    const raw = JSON.stringify(s.lines());
+    expect(raw).not.toContain('r-9');
+    expect(raw).not.toContain('sekrit-value');
+  });
+
+  it('받아 준 러너에게는 link.rejected 를 보내지 않는다', () => {
+    const link = createRunnerLinkServer({ onFrame: () => {}, log: () => {} });
+    link.expect('r-1', 'agent-a', 'sec');
+    const s = fakeSocket();
+    expect(link.accept(s.socket, hello('r-1', 'sec'), [])).toBe(true);
+    expect(s.lines()).toEqual([]);
+  });
+
   it('hello 와 같은 청크에 온 뒷줄도 잃지 않는다', () => {
     const got: RelayRunnerFrame[] = [];
     const link = createRunnerLinkServer({ onFrame: (_r, _a, f) => got.push(f), log: () => {} });
