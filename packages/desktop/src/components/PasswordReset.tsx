@@ -62,7 +62,7 @@ export function ResetCodeButton({ account }: { account: AccountView }) {
   );
 }
 
-type Issued = { code: string; expiresAt: string };
+type Issued = { code: string; expiresAt: string; loginId?: string };
 
 export function ResetCodeDialog({ account, onClose }: { account: AccountView; onClose: () => void }) {
   const t = useT();
@@ -160,9 +160,15 @@ export function ResetCodeDialog({ account, onClose }: { account: AccountView; on
               <button type="button" onClick={() => void copy()} data-testid="reset-code-copy"
                 className="rounded-row bg-accent px-3 py-2 font-medium text-fg-on-strong hover:bg-accent-hover">{t('pwreset.issue.copy')}</button>
             </div>
+            {/* 재설정은 handle 이 아니라 **로그인 ID** 로 찾는다 — 둘이 다른 사람이 있다(10-22 jinbin). 코드와 같이 보이고 같이 전하게 한다. */}
+            {issued.loginId && (
+              <p className="mt-2 text-body" data-testid="reset-code-login-id">
+                {t('pwreset.issue.loginIdLabel')} <code className="font-mono font-semibold">{issued.loginId}</code>
+              </p>
+            )}
             <p className="mt-2 text-meta text-fg-muted">{t('pwreset.issue.meta', { time: until })}</p>
             {note && <p className="mt-1 text-meta text-fg-muted" aria-live="polite">{note}</p>}
-            <div className="mt-3 rounded-row border border-warning-border bg-warning-surface p-2 text-meta text-warning">{t('pwreset.issue.onlyNow', { name })}</div>
+            <div className="mt-3 rounded-row border border-warning-border bg-warning-surface p-2 text-meta text-warning">{t(issued.loginId ? 'pwreset.issue.onlyNowWithLogin' : 'pwreset.issue.onlyNow', { name })}</div>
             <div className="mt-2 rounded-row border border-border p-2 text-meta text-fg-muted">{t('pwreset.issue.effect', { name })}</div>
             {error && <p role="alert" className="mt-2 text-meta text-danger">{error}</p>}
             <div className="mt-3 flex justify-end gap-2">
