@@ -223,6 +223,13 @@ export interface RelayClient {
   start(): void;
   /** 더 붙지 않는다. 열린 소켓도 닫는다. */
   stop(): void;
+  /**
+   * 이 뒤로 **다시** 붙지 않는다 — 지금 열린 링크는 그대로 둔다(종료 신호를 받은 러너가 그 위에서 드레인을
+   * 마칠 수 있게). 끊기면 그걸로 끝이다. 고아(장부 밖)는 열린 링크가 없으니 재접속 루프가 여기서 멈춘다.
+   */
+  holdReconnect(): void;
+  /** 열린 세션을 전부 중단 경로(`onCancel('operator')`)로 끝낸다 — 링크 없이 물러날 때. */
+  cancelSessions(): void;
   /** 턴 하나를 세션으로 연다. 릴레이가 끊겨 있어도 성공한다(ring 은 계속 쌓인다). */
   openSession(input: OpenSessionInput): OpenSession;
   /** 지금 붙어 있는가. 로그·테스트가 본다. */
@@ -502,12 +509,15 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
    * `onCancel` 이다(사람의 [중단]과 같은 길: SIGTERM → 유예 → SIGKILL, `pty.ts::terminate`). 새 kill 경로를 두면
    * 한쪽이 흔적 처리를 건너뛴다(`LiveSession.onCancel` 주석).
    */
-  const giveUpRejected = (): void => {
-    stopped = true;
-    log(`[relay] 오퍼레이터가 ${LINK_REJECTED_GIVE_UP}번 연달아 받아 주지 않았다 — 장부에서 빠진 러너로 보고 물러난다(열린 세션 ${sessions.size}개 중단)`);
+  const cancelSessions = (): void => {
     for (const live of [...sessions.values()]) {
       try { live.onCancel?.('operator'); } catch { /* 한 턴의 정리가 다른 턴을 막지 않는다 */ }
     }
+  };
+  const giveUpRejected = (): void => {
+    stopped = true;
+    log(`[relay] 오퍼레이터가 ${LINK_REJECTED_GIVE_UP}번 연달아 받아 주지 않았다 — 장부에서 빠진 러너로 보고 물러난다(열린 세션 ${sessions.size}개 중단)`);
+    cancelSessions();
     try { opts.onLinkRejectedGiveUp?.(); } catch { /* 물러나는 길은 그대로 */ }
   };
 
@@ -634,6 +644,8 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
       transport?.close();
       transport = null;
     },
+    holdReconnect() { stopped = true; },
+    cancelSessions,
 
     openSession(input) {
       const info: AgentSessionView = {
