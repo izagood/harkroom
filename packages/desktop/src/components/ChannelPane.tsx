@@ -26,7 +26,7 @@ import type { SectionId } from './settings/sections';
 /**
  * 채널을 연 직후 **바닥에 붙여 두는 정착 창**(ms).
  *
- * 왜 창이 필요한가(jaebin 보고 2026-09-11: "채널 열면 항상 채널의 가장 최신 채팅이 보이도록"):
+ * 왜 창이 필요한가(사용자 보고 2026-09-11: "채널 열면 항상 채널의 가장 최신 채팅이 보이도록"):
  * 채널을 열 때 바닥으로 내려가는 길은 이미 셋이지만(채널이 바뀔 때 한 번, 줄 수가 바뀔 때,
  * 바닥 표식이 상자를 벗어날 때) 셋 모두 **어떤 사건이 오기를 기다린다.** 여는 순간의 1초는
  * 사건이 가장 많이 몰리는 구간이다 — 첫 페이지가 도착하고, 그림과 링크 카드가 붙고, 글꼴이
@@ -151,6 +151,11 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 없으면 맨 위에 닿는 순간 같은 페이지를 여러 번 요청한다.
    */
   const loadingOlderRef = useRef(false);
+  /**
+   * 과거 받기의 **세대**. 채널을 옮기면 하나 올린다 — 떠난 채널의 받기가 늦게 끝나도 그 `finally` 가
+   * 새 채널의 받는 중 표시·자리표시를 걷지 않게 한다(#1463 security s1).
+   */
+  const olderGenRef = useRef(0);
   /**
    * 과거를 받는 동안 맨 위의 자리표시(스켈레톤)를 세울지(designer 안, 스레드 1a06bdce). 받는 것이
    * `OLDER_SKELETON_DELAY_MS` 안에 끝나면 아예 세우지 않고, 한번 섰으면 `OLDER_SKELETON_MIN_MS` 는
@@ -530,7 +535,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   useLayoutEffect(() => {
     // 대기 중인 앵커는 **떠난 채널의 자리**다 — 들고 가면 새 채널에서 엉뚱한 곳을 잡는다.
     anchorRef.current = null;
-    // 떠난 채널의 자리표시는 들고 가지 않는다.
+    // 떠난 채널의 받기와 자리표시는 들고 가지 않는다 — 세대를 올려 그 받기의 끝맺음이 여기를 건드리지 못하게 한다.
+    olderGenRef.current += 1;
+    loadingOlderRef.current = false;
     clearOlderSkeleton();
     scrollToBottom();
     // 여는 순간부터 짧게 바닥에 붙여 둔다 — 근거는 `OPEN_SETTLE_MS` 의 주석.
@@ -538,7 +545,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   }, [activeChannelId]);
 
   /**
-   * **늦게 자라는 내용까지 따라간다**(jaebin 보고 2026-09-09: "채널에 들어오면 항상 어중간한
+   * **늦게 자라는 내용까지 따라간다**(사용자 보고 2026-09-09: "채널에 들어오면 항상 어중간한
    * 가운데 시점으로 들어와서 항상 밑으로 내려가야 한다").
    *
    * 위의 두 효과는 목록이 **몇 줄인지** 바뀔 때만 돈다. 그런데 줄 수는 그대로인 채 높이가
@@ -559,7 +566,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 정면으로 깬다. 판정을 `atBottomRef` 가 아니라 `stickyRef` 로 하는 이유는 그 ref 의
    * 주석에 있다 — 내용이 자라서 바닥이 멀어진 것은 사람이 한 일이 아니다.
    *
-   * **딸림값이 `[activeChannelId]` 인 것이 이 보정을 살리는 자리다**(jaebin 보고
+   * **딸림값이 `[activeChannelId]` 인 것이 이 보정을 살리는 자리다**(사용자 보고
    * 2026-09-09: "채널간 이동할 때는 기존처럼 애매한 위치에서 열린다"). `[]` 로 두면
    * 관찰자가 영원히 안 붙는다: 앱을 켜면 `activeChannelId` 가 null 이고
    * (`appStore.ts`, 기동은 채널을 열지 않는다) 그 첫 커밋에서 이 컴포넌트는 아래 이른
@@ -588,7 +595,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   }, [activeChannelId]);
 
   /**
-   * **위로 올리면 과거가 이어진다**(jaebin 보고 2026-09-10: "이전 메시지들 다 어디갔어").
+   * **위로 올리면 과거가 이어진다**(사용자 보고 2026-09-10: "이전 메시지들 다 어디갔어").
    *
    * 그전까지 최신 창 밖으로 나간 대화에 닿는 길은 목록 맨 위의 버튼 하나뿐이었다. 버튼은
    * 남겨 둔다(스크롤이 아예 없는 짧은 채널에서는 스크롤 이벤트가 영원히 안 오므로 그때는
@@ -598,16 +605,28 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * `hasMore` 가 거짓이면 요청하지 않는다(컨트롤러도 같은 문을 한 번 더 잠근다).
    */
   const maybeLoadOlder = (el: HTMLElement) => {
-    if (!activeChannelId || !channelHasMore || loadingOlderRef.current) return;
     if (!shouldPrefetchOlder(el)) return;
+    loadOlderPage();
+  };
+
+  /**
+   * 과거 한 페이지를 받는다 — 스크롤로 오든 `Load older` 버튼으로 오든 **이 한 길**이다(#1463 designer d2).
+   * 버튼이 컨트롤러를 바로 부르면 받는 중 문·자리표시를 건너뛰어, 짧은 채널에서 누르면 아무 표시가 없고
+   * 연달아 누를 수 있었다.
+   */
+  const loadOlderPage = () => {
+    if (!activeChannelId || !channelHasMore || loadingOlderRef.current) return;
     loadingOlderRef.current = true;
     const channelId = activeChannelId;
+    const gen = olderGenRef.current;
     skeletonTimerRef.current = setTimeout(() => {
       skeletonTimerRef.current = null;
       skeletonShownAtRef.current = Date.now();
       setOlderSkeleton(true);
     }, OLDER_SKELETON_DELAY_MS);
     void getController().loadOlder(channelId).finally(() => {
+      // 그사이 채널을 옮겼으면 이 받기는 떠난 채널의 것이다 — 지금 채널의 상태에 손대지 않는다.
+      if (gen !== olderGenRef.current) return;
       loadingOlderRef.current = false;
       hideOlderSkeleton();
     });
@@ -702,7 +721,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       return;
     }
     /**
-     * **내용의 높이가 방금 바뀌었으면 이 이벤트는 사람이 낸 것이 아니다**(jaebin 보고
+     * **내용의 높이가 방금 바뀌었으면 이 이벤트는 사람이 낸 것이 아니다**(사용자 보고
      * 2026-09-22, #852 뒤에도 남은 증상: "채널에 들어간 다음에 위쪽으로 스크롤이 쭉 올라간다").
      *
      * 채널에 들어가는 1초는 높이가 가장 많이 흔들리는 구간이다 — 스크롤 상자는 채널이 바뀌어도
@@ -739,7 +758,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
      * **내려갈 길은 늘 세워 둔다.** 예전에는 이 버튼이 `roots.length` 가 바뀔 때만 섰다 —
      * 그런데 에이전트의 답은 **스레드**에 달리므로 뿌리 줄 수는 그대로다(`roots` 필터).
      * 그래서 대화가 한참 이어져도 위를 보는 사람에게는 버튼이 한 번도 안 떴고, 내려갈 길은
-     * 손으로 긁어 내리는 것뿐이었다(jaebin 보고 2026-09-22).
+     * 손으로 긁어 내리는 것뿐이었다(사용자 보고 2026-09-22).
      */
     if (!stickyRef.current) setJumpVisible(true);
   };
@@ -895,11 +914,16 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
         {activeChannelId && channelHasMore && !backfilling && (
           // 서버 히스토리 창(최신 N개) 밖으로 밀려난 대화로 돌아가는 유일한 경로다.
           <div className="px-4 py-2 text-center">
+            {/* 받는 중(자리표시가 선 동안)에는 **숨기지 않고** 비활성 + 「불러오는 중」으로 바꾼다(#1463 designer
+                d1) — 숨기면 줄 상자의 시작 위치가 바뀌어 보던 줄이 튄다. 바뀌는 때를 자리표시와 같게 두는 것은
+                짧은 받기에서 글자가 번쩍이지 않게 하려는 것이다. 연달아 누르기는 `loadOlderPage` 의 문이 막는다. */}
             <button
-              className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted"
-              onClick={() => void getController().loadOlder(activeChannelId ?? undefined)}
+              className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted disabled:cursor-default disabled:opacity-60"
+              disabled={olderSkeleton}
+              data-testid="load-older"
+              onClick={loadOlderPage}
             >
-              {t('chat.loadOlder')}
+              {olderSkeleton ? t('chat.loadingOlder') : t('chat.loadOlder')}
             </button>
           </div>
         )}
@@ -938,7 +962,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             죽을 수 있다. 1px 은 화면에서 보이지 않고 줄 간격도 바꾸지 않는다. */}
         <div ref={bottomRef} data-testid="channel-bottom" className="h-px" />
       </div>
-      {/* 작성창 **조금 위**에 선다(jaebin 의 요청 그대로). 오른쪽에 붙이는 것은 본문 글줄을
+      {/* 작성창 **조금 위**에 선다(사용자 요청 그대로). 오른쪽에 붙이는 것은 본문 글줄을
           가리지 않기 위해서다 — 대화는 왼쪽 정렬이다. */}
       {jumpVisible && (
         <button
