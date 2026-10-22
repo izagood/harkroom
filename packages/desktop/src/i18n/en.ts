@@ -5582,6 +5582,8 @@ export const en = {
   'pwreset.issue.limited': 'Too many attempts. Try again in {minutes} min.',
   'pwreset.issue.failed': 'Couldn’t issue the code.',
   'pwreset.issue.copy': 'Copy',
+  'pwreset.issue.copyBoth': 'Copy login ID and code',
+  'pwreset.issue.copyText': 'Login ID: {loginId}\nReset code: {code}',
   'pwreset.issue.copiedConcealed': 'Copied. The clipboard clears in 60 seconds.',
   'pwreset.issue.copied': 'Copied. Clear the clipboard after you send it.',
   'pwreset.issue.selected': 'Selected — press ⌘C to copy.',

@@ -74,6 +74,7 @@ export function ResetCodeDialog({ account, onClose }: { account: AccountView; on
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const codeRef = useRef<HTMLElement | null>(null);
+  const issuedRef = useRef<HTMLDivElement | null>(null);
   const name = account.displayName || account.handle;
 
   // 코드는 이 창이 닫히면 함께 사라진다 — 상태 밖(스토어·저장소)에 두지 않는다.
@@ -121,8 +122,12 @@ export function ResetCodeDialog({ account, onClose }: { account: AccountView; on
 
   const copy = async () => {
     if (!issued) return;
-    if (await writeConcealed(issued.code)) { setNote(t('pwreset.issue.copiedConcealed')); return; }
-    const outcome = await copyText(issued.code, codeRef.current);
+    // 로그인 ID 가 있으면 둘을 한 덩어리로 담는다 — 관리자가 실제로 전하는 길은 「복사 → DM 붙여넣기」라, 복사본에서 빠지면
+    // 이번에 빠졌던 바로 그 정보가 다시 빠진다(designer #1466 s1). 옛 서버면 코드만.
+    const text = issued.loginId ? t('pwreset.issue.copyText', { loginId: issued.loginId, code: issued.code }) : issued.code;
+    if (await writeConcealed(text)) { setNote(t('pwreset.issue.copiedConcealed')); return; }
+    // 클립보드가 막히면 선택해 둔다 — 둘을 담을 때는 둘이 다 든 칸을, 아니면 코드 칸을.
+    const outcome = await copyText(text, issued.loginId ? issuedRef.current : codeRef.current);
     setNote(outcome === 'copied' ? t('pwreset.issue.copied') : outcome === 'selected' ? t('pwreset.issue.selected') : t('pwreset.issue.copyFailed'));
   };
 
@@ -151,21 +156,24 @@ export function ResetCodeDialog({ account, onClose }: { account: AccountView; on
           </form>
         )}
         {step === 'code' && issued && (
-          <div className="mt-2">
+          <div className="mt-2" ref={issuedRef}>
+            {/* 재설정은 handle 이 아니라 **로그인 ID** 로 찾는다 — 둘이 다른 사람이 있다(10-22 jinbin). 받는 쪽 입력 순서대로
+                로그인 ID → 코드로 보이고, [복사]도 둘을 함께 담는다(designer #1466 s1·n1). */}
+            {issued.loginId && (
+              <p className="mb-2 text-body" data-testid="reset-code-login-id">
+                {t('pwreset.issue.loginIdLabel')} <code className="font-mono font-semibold">{issued.loginId}</code>
+              </p>
+            )}
             <div className="flex items-center gap-2">
               <code ref={codeRef} data-testid="reset-code-value"
                 className="flex-1 rounded-row border border-border bg-surface px-3 py-2 text-center font-mono text-name font-semibold tracking-wider">
                 {issued.code}
               </code>
               <button type="button" onClick={() => void copy()} data-testid="reset-code-copy"
-                className="rounded-row bg-accent px-3 py-2 font-medium text-fg-on-strong hover:bg-accent-hover">{t('pwreset.issue.copy')}</button>
+                className="rounded-row bg-accent px-3 py-2 font-medium text-fg-on-strong hover:bg-accent-hover">
+                {t(issued.loginId ? 'pwreset.issue.copyBoth' : 'pwreset.issue.copy')}
+              </button>
             </div>
-            {/* 재설정은 handle 이 아니라 **로그인 ID** 로 찾는다 — 둘이 다른 사람이 있다(10-22 jinbin). 코드와 같이 보이고 같이 전하게 한다. */}
-            {issued.loginId && (
-              <p className="mt-2 text-body" data-testid="reset-code-login-id">
-                {t('pwreset.issue.loginIdLabel')} <code className="font-mono font-semibold">{issued.loginId}</code>
-              </p>
-            )}
             <p className="mt-2 text-meta text-fg-muted">{t('pwreset.issue.meta', { time: until })}</p>
             {note && <p className="mt-1 text-meta text-fg-muted" aria-live="polite">{note}</p>}
             <div className="mt-3 rounded-row border border-warning-border bg-warning-surface p-2 text-meta text-warning">{t(issued.loginId ? 'pwreset.issue.onlyNowWithLogin' : 'pwreset.issue.onlyNow', { name })}</div>
