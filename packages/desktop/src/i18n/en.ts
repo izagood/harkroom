@@ -4500,6 +4500,7 @@ export const en = {
   'chat.channelEdit.repo': 'Repository',
   'chat.pickChannel': 'Pick a channel to start',
   'chat.loadOlder': 'Load older messages',
+  'chat.loadingOlder': 'Loading earlier messages',
   'chat.directory': 'Directory',
   'chat.adminBadge': 'admin',
   'chat.lease.title': 'Active work',

@@ -3,7 +3,7 @@
  * (컴포넌트 회귀선은 `jumpToBottom.test.tsx`).
  */
 import { describe, it, expect } from 'vitest';
-import { NEAR_BOTTOM_PX, NEAR_TOP_PX, distanceFromBottom, isNearBottom, isNearTop } from '../src/lib/stickyBottom';
+import { NEAR_BOTTOM_PX, NEAR_TOP_PX, OLDER_PREFETCH_SCREENS, distanceFromBottom, isNearBottom, isNearTop, shouldPrefetchOlder } from '../src/lib/stickyBottom';
 
 describe('stickyBottom', () => {
   it('바닥까지 남은 거리를 재고, 고무줄 스크롤은 0 으로 접는다', () => {
@@ -36,5 +36,21 @@ describe('stickyBottom', () => {
     expect(NEAR_TOP_PX).toBeGreaterThan(0);
     expect(at(NEAR_TOP_PX + 1)).toBe(false);
     expect(at(1500)).toBe(false);
+  });
+});
+
+/**
+ * **과거는 맨 위에 닿기 전에 받기 시작한다**(스레드 1a06bdce, 「일찍 받기」). 서버 왕복 동안 사람이 이미
+ * 맨 위에 멈춰 있으면 그 빈 위쪽이 곧 튕김과 자리표시로 보인다.
+ */
+describe('shouldPrefetchOlder', () => {
+  const at = (top: number, clientHeight = 600) => shouldPrefetchOlder({ scrollTop: top, scrollHeight: 20000, clientHeight });
+
+  it('화면 한 장 반 위부터 받는다', () => {
+    expect(at(600 * OLDER_PREFETCH_SCREENS)).toBe(true);
+    expect(at(600 * OLDER_PREFETCH_SCREENS + 1)).toBe(false);
+  });
+  it('화면이 작아도 맨 위 문턱보다 좁히지 않는다', () => {
+    expect(at(NEAR_TOP_PX, 100)).toBe(true);
   });
 });

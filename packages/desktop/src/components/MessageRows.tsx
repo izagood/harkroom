@@ -10,6 +10,7 @@ import type { SectionId } from './settings/sections';
 import type { Locale } from '../i18n';
 import { markFirstMessagePaint } from '../lib/bootTimings';
 import { useT } from '../i18n/useT';
+import { topRowShift, type HeldTopRow } from '../lib/holdTopRow';
 
 /**
  * 채널 대화 줄들 — **화면에 보이는 줄과 그 앞뒤 버퍼만 마운트한다**(대화 불러오기 성능,
@@ -43,6 +44,12 @@ export const ROW_ESTIMATE_PX = 72;
 export const ROW_OVERSCAN = 12;
 
 /**
+ * 과거를 받는 동안 맨 위에 세울 자리표시 줄 수(designer 안, 스레드 1a06bdce). 줄마다 높이는
+ * `ROW_ESTIMATE_PX` 그대로다 — 창의 어림값과 같아야 넣는 순간 아무것도 밀리지 않는다.
+ */
+export const OLDER_SKELETON_ROWS = 3;
+
+/**
  * 창으로 좁힐 수 있는 환경인가. 줄 높이를 재려면 `ResizeObserver` 가 있어야 한다 — jsdom 에는
  * 없고, 거기서는 **모든 줄을 그린다**(예전과 같다). 그래서 글자로 줄을 찾는 기존 화면
  * 테스트는 그대로 돌고, 창 쪽 동작은 `test/virtualRows.test.tsx` 가 관찰자를 세워 지킨다.
@@ -71,6 +78,8 @@ interface RowsProps {
   locale: Locale;
   /** `Load older` 버튼이 줄 상자 위에 서는가 — 서면 줄 상자의 시작 위치가 바뀐다. */
   hasMore: boolean;
+  /** 맨 위에 세울 자리표시 줄 수(과거를 받는 중일 때만, 0 이면 없음). */
+  skeleton?: number;
   /**
    * 강조로 **우리가** 목록을 옮기기 직전에 부른다. 바닥 추종·정착 창을 여기서 꺼야 한다 —
    * 안 끄면 정착 루프가 방금 옮긴 자리를 바닥으로 되끌어 간다.
@@ -88,9 +97,10 @@ export function MessageRows(props: RowsProps) {
   return canVirtualize() ? <VirtualRows {...props} /> : <AllRows {...props} />;
 }
 
-function AllRows({ slots, dividerBeforeId, locale, onOpenDirectory, onOpenSettings }: RowsProps) {
+function AllRows({ slots, skeleton = 0, dividerBeforeId, locale, onOpenDirectory, onOpenSettings }: RowsProps) {
   return (
     <>
+      {skeleton > 0 && <OlderSkeleton rows={skeleton} />}
       {slots.map((slot, i) => (
         <SlotRow
           key={slotHead(slot).id}
@@ -116,7 +126,7 @@ function isNewDay(slots: ExchangeSlot[], i: number): boolean {
   return !prev || localDayKey(slotHead(prev).createdAt) !== localDayKey(slotHead(slots[i]!).createdAt);
 }
 
-function VirtualRows({ slots, scrollRef, dividerBeforeId, locale, hasMore, onJump, onOpenDirectory, onOpenSettings }: RowsProps) {
+function VirtualRows({ slots, scrollRef, dividerBeforeId, locale, hasMore, skeleton = 0, onJump, onOpenDirectory, onOpenSettings }: RowsProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   /**
    * 줄 상자가 스크롤 내용에서 시작하는 위치(px). 상자 위에 여백·`Load older` 버튼이 있어
@@ -161,14 +171,16 @@ function VirtualRows({ slots, scrollRef, dividerBeforeId, locale, hasMore, onJum
     setMargin((m) => (m === top ? m : top));
   }, [hasMore, slots.length === 0]);
 
+  // 자리표시는 창의 **앞쪽 자리**로 둔다 — 창 밖의 덧붙은 상자로 두면 줄 상자의 시작 위치(`margin`)가
+  // 한 렌더 늦게 따라와 그 사이 창이 어긋난 줄을 고른다. 번호 i 의 실제 자리는 `slots[i - skeleton]` 이다.
   const virtualizer = useVirtualizer({
-    count: slots.length,
+    count: skeleton + slots.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_ESTIMATE_PX,
     overscan: ROW_OVERSCAN,
     // 키는 **메시지 id** 다(자리 번호가 아니다). 과거가 앞에 붙으면 번호가 전부 밀리는데,
     // 잰 높이가 번호에 묶여 있으면 모든 줄이 남의 높이를 받는다.
-    getItemKey: (i) => slotHead(slots[i]!).id,
+    getItemKey: (i) => (i < skeleton ? `older-skeleton-${i}` : slotHead(slots[i - skeleton]!).id),
     scrollMargin: margin,
     // 첫 계산부터 바닥 쪽 줄을 고른다 — 위의 layout 효과와 같은 이유다.
     initialOffset: () => Number.MAX_SAFE_INTEGER,
@@ -183,10 +195,10 @@ function VirtualRows({ slots, scrollRef, dividerBeforeId, locale, hasMore, onJum
    * 사람이 그 뒤로 굴린 자리를 빼앗는다.
    */
   const highlightedId = useActiveStore((s) => s.highlightedMessageId);
-  const highlightIndex = useMemo(
-    () => (highlightedId ? slots.findIndex((s) => slotHas(s, highlightedId)) : -1),
-    [slots, highlightedId],
-  );
+  const highlightIndex = useMemo(() => {
+    const i = highlightedId ? slots.findIndex((s) => slotHas(s, highlightedId)) : -1;
+    return i < 0 ? -1 : i + skeleton;
+  }, [slots, highlightedId, skeleton]);
   const jumpedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!highlightedId) { jumpedRef.current = null; return; }
@@ -196,6 +208,53 @@ function VirtualRows({ slots, scrollRef, dividerBeforeId, locale, hasMore, onJum
     virtualizer.scrollToIndex(highlightIndex, { align: 'center' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highlightedId, highlightIndex]);
+
+  /**
+   * **위쪽이 바뀐 렌더에서 보던 줄을 붙잡는다**(`lib/holdTopRow.ts` 의 근거). 창이 마운트할 줄을 고르기
+   * (`getVirtualItems`) **전에** 창의 스크롤 위치를 옮겨야 한다 — 고른 뒤에 옮기면 이미 옛 위치의 새 줄들이
+   * 마운트되어 재측정 연쇄가 시작된 뒤다. DOM 쪽은 아래 layout 효과가 같은 값으로 맞춘다.
+   *
+   * 렌더 안에서 ref 를 고치는 것은 이 한 자리뿐이고 의도다: 창의 위치는 React 상태가 아니라 창이 들고 있는
+   * 값이라, 효과로 미루면 그 렌더의 창이 옛 위치로 계산된다. StrictMode 의 두 번째 렌더에서는 `heldTopRef`
+   * 가 이미 새 첫 줄이라 다시 옮기지 않는다.
+   */
+  const heldTopRef = useRef<HeldTopRow | null>(null);
+  const pendingScrollRef = useRef(false);
+  if (slots.length > 0) {
+    // `getTotalSize` 가 창의 측정표를 지금 목록으로 새로 짠다 — 그 뒤의 `measurementsCache` 가 이 렌더의 값이다.
+    virtualizer.getTotalSize();
+    const measurements = virtualizer.measurementsCache;
+    const shift = topRowShift(heldTopRef.current, (key) => {
+      const i = slots.findIndex((s) => slotHead(s).id === key);
+      return i < 0 ? null : measurements[i + skeleton]?.start ?? null;
+    });
+    if (shift !== 0 && virtualizer.scrollOffset !== null) {
+      virtualizer.scrollOffset = Math.max(0, virtualizer.scrollOffset + shift);
+      pendingScrollRef.current = true;
+    }
+    heldTopRef.current = { key: slotHead(slots[0]!).id, start: measurements[skeleton]!.start };
+  } else {
+    heldTopRef.current = null;
+  }
+  /**
+   * 창이 옮긴 위치를 그리기 **전에** DOM 에도 쓴다.
+   *
+   * 쓰기 전에 이 커밋에 마운트된 줄을 **지금** 잰다. 굴리는 중이면 창은 새로 붙은 줄의 측정을 다음 프레임의
+   * 관찰자로 미루는데, 그 사이 DOM 에는 실제 높이로 서 있고 창은 어림값(72px)으로 알고 있어 둘이 갈린다 —
+   * 그 틈에 읽던 자리 보정(`ChannelPane` 의 `restoreAnchor`)과 창의 첫 측정 보정이 같은 성장을 두 번
+   * 셌다(탐침: 즉시 응답 929px). 여기서 재면 창의 보정이 이 자리에서 한 번만 일어나고, 그 값이 곧 쓸 값이다.
+   */
+  useLayoutEffect(() => {
+    if (!pendingScrollRef.current) return;
+    pendingScrollRef.current = false;
+    const el = scrollRef.current;
+    const box = boxRef.current;
+    if (!el || !box) return;
+    box.querySelectorAll<HTMLElement>('[data-index]').forEach((node) => {
+      virtualizer.resizeItem(Number(node.dataset.index), virtualizer.options.measureElement(node, undefined, virtualizer));
+    });
+    if (virtualizer.scrollOffset !== null) el.scrollTop = virtualizer.scrollOffset;
+  });
 
   const items = virtualizer.getVirtualItems();
   const total = virtualizer.getTotalSize();
@@ -211,14 +270,17 @@ function VirtualRows({ slots, scrollRef, dividerBeforeId, locale, hasMore, onJum
       {/* 창 밖 줄들의 자리. 높이는 잰 값(없으면 어림값)의 합이다. */}
       <div style={{ height: padTop }} aria-hidden="true" />
       {items.map((item) => {
-        const slot = slots[item.index]!;
+        if (item.index < skeleton) {
+          return <SkeletonRow key={item.key} index={item.index} measureRef={virtualizer.measureElement} labelled={item.index === 0} />;
+        }
+        const slot = slots[item.index - skeleton]!;
         return (
           <SlotRow
             key={item.key}
             index={item.index}
             measureRef={virtualizer.measureElement}
             slot={slot}
-            newDay={isNewDay(slots, item.index)}
+            newDay={isNewDay(slots, item.index - skeleton)}
             divider={slotHead(slot).id === dividerBeforeId}
             locale={locale}
             onOpenDirectory={onOpenDirectory}
@@ -281,3 +343,40 @@ const SlotRow = memo(function SlotRow({ slot, newDay, divider, locale, index, me
     </div>
   );
 });
+
+/** 본문 막대의 폭 — 줄마다 달리 해 실제 대화처럼 보이게 한다(designer 안). */
+const SKELETON_BODY_WIDTHS = ['70%', '45%', '60%'];
+
+/**
+ * 과거를 받는 동안의 자리표시 한 줄. **높이는 `ROW_ESTIMATE_PX` 로 고정**이다 — 내용 길이를 흉내 내지
+ * 않는다. 창의 어림값과 같아야 넣고 빼는 순간 위치 계산이 어긋나지 않는다. 모양은 메시지 줄(아바타 +
+ * 이름 + 본문)을 따르고, 칠은 설정의 `ProviderUsageSkeleton` 과 같은 토큰이다.
+ *
+ * `data-anchor-id` 를 주지 않는다 — 읽던 자리를 붙잡을 후보가 아니다(곧 사라진다).
+ */
+function SkeletonRow({ index, measureRef, labelled }: { index: number; measureRef?: (el: HTMLElement | null) => void; labelled: boolean }) {
+  const t = useT();
+  return (
+    <div
+      data-index={index}
+      ref={measureRef}
+      data-testid="older-skeleton"
+      // 화면 읽기에는 한 번만 알린다 — 세 줄 모두 status 면 같은 말을 세 번 읽는다.
+      role={labelled ? 'status' : undefined}
+      aria-label={labelled ? t('chat.loadingOlder') : undefined}
+      className="flex items-start gap-2 overflow-hidden px-4 py-2"
+      style={{ height: ROW_ESTIMATE_PX }}
+    >
+      <div className="h-8 w-8 shrink-0 rounded-avatar bg-border motion-safe:animate-pulse" aria-hidden="true" />
+      <div className="min-w-0 flex-1 space-y-2 pt-1" aria-hidden="true">
+        <div className="h-3 w-24 rounded-row bg-border motion-safe:animate-pulse" />
+        <div className="h-3 rounded-row bg-border motion-safe:animate-pulse" style={{ width: SKELETON_BODY_WIDTHS[index % SKELETON_BODY_WIDTHS.length] }} />
+      </div>
+    </div>
+  );
+}
+
+/** 창이 없는 환경(jsdom)의 자리표시 — 같은 줄을 그대로 쌓는다. */
+function OlderSkeleton({ rows }: { rows: number }) {
+  return <>{Array.from({ length: rows }, (_, i) => <SkeletonRow key={i} index={i} labelled={i === 0} />)}</>;
+}

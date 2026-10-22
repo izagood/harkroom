@@ -5,7 +5,7 @@ import { getCommunityController, useActiveStore, useCommunityRegistry } from '..
 import { useWindowView } from '../state/windowView';
 import { popOutChannel } from '../lib/windowActions';
 import { getController } from '../state/controller';
-import { MessageRows } from './MessageRows';
+import { MessageRows, OLDER_SKELETON_ROWS } from './MessageRows';
 import { groupProgress } from '../lib/progressGroup';
 import { groupAgentExchanges } from '../lib/agentExchange';
 import { Composer } from './Composer';
@@ -14,7 +14,7 @@ import { ChannelFiles } from './ChannelFiles';
 import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { RunnerStatusLine } from './RunnerStatus';
-import { distanceFromBottom, isNearBottom, isNearTop } from '../lib/stickyBottom';
+import { distanceFromBottom, isNearBottom, shouldPrefetchOlder } from '../lib/stickyBottom';
 import { appendedFromHere } from '../lib/ownSends';
 import { anchoredScrollTop, needsAnchorFix, pickAnchor, type ScrollAnchor } from '../lib/scrollAnchor';
 import { useLocale, useT } from '../i18n/useT';
@@ -40,6 +40,14 @@ import type { SectionId } from './settings/sections';
  * (`jumpToBottom.test.tsx`)이 이 창보다 위에 있다.
  */
 const OPEN_SETTLE_MS = 1200;
+
+/**
+ * 과거 받기가 이보다 오래 걸릴 때만 자리표시를 세운다(ms). 서버 왕복은 300~800ms 라 짧은 받기에서
+ * 번쩍이지 않게 하는 문턱이다(designer 안, 스레드 1a06bdce).
+ */
+const OLDER_SKELETON_DELAY_MS = 300;
+/** 한번 선 자리표시를 두는 최소 시간(ms). */
+const OLDER_SKELETON_MIN_MS = 300;
 
 interface ChannelPaneProps {
   /**
@@ -144,12 +152,17 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    */
   const loadingOlderRef = useRef(false);
   /**
-   * 과거를 붙이기 **직전**의 스크롤 자리. 위쪽에 내용이 끼어들면 `scrollTop` 은 그대로인데
-   * 보고 있던 줄은 그만큼 아래로 밀려난다 — 즉 화면이 갑자기 옛 대화의 맨 위로 튄다.
-   * Chromium 은 `overflow-anchor` 로 이것을 알아서 붙잡아 주지만 **WebKit 은 그 기능이
-   * 없다**(macOS 앱은 WKWebView 다). 그래서 자란 높이만큼 우리가 되돌린다.
+   * 과거를 받는 동안 맨 위의 자리표시(스켈레톤)를 세울지(designer 안, 스레드 1a06bdce). 받는 것이
+   * `OLDER_SKELETON_DELAY_MS` 안에 끝나면 아예 세우지 않고, 한번 섰으면 `OLDER_SKELETON_MIN_MS` 는
+   * 둔다 — 잠깐 번쩍이고 사라지는 것이 기다림보다 더 거슬린다.
+   *
+   * 과거가 붙을 때 보던 자리를 붙잡는 일은 여기가 아니라 줄 창(`MessageRows`, `lib/holdTopRow.ts`)이
+   * 한다. 예전에는 여기서 **요청할 때** 잰 `scrollHeight`·`scrollTop` 으로 되돌렸는데, 기다리는 동안
+   * 굴린 만큼 도로 끌려갔고(−222px) 창의 첫 측정 보정과 같은 줄을 두 번 셌다(−2.1k px).
    */
-  const olderAnchorRef = useRef<{ height: number; top: number } | null>(null);
+  const [olderSkeleton, setOlderSkeleton] = useState(false);
+  const skeletonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skeletonShownAtRef = useRef(0);
   /**
    * 줄들을 담은 상자. **스크롤 상자와 따로 두는 이유**는 높이 변화를 지켜볼 대상이 필요해서다 —
    * 스크롤 상자는 창이라 높이가 안 변하고(`ResizeObserver` 가 아무 말도 하지 않는다), 자라는
@@ -161,7 +174,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    * 지금 붙잡고 있는 줄(`lib/scrollAnchor.ts` 의 근거). 바닥에 붙어 있을 때는 null 이다 —
    * 그때 옳은 것은 "읽던 자리"가 아니라 "가장 최신"이다.
    */
-  const anchorRef = useRef<{ node: HTMLElement; anchor: ScrollAnchor } | null>(null);
+  const anchorRef = useRef<{ id: string; anchor: ScrollAnchor } | null>(null);
   /**
    * 정착 창이 **끝나는 시각**(`Date.now()` 기준 ms). 0 이면 창은 닫혀 있다 —
    * 사람이 손을 댔거나, 아직 채널을 열지 않았다는 뜻이다.
@@ -360,8 +373,10 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     if (!el || !rows.length) { anchorRef.current = null; return; }
     const anchor = pickAnchor(rows.map((r) => ({ top: r.offsetTop })), el.scrollTop);
     if (!anchor) { anchorRef.current = null; return; }
-    const node = rows.find((r) => r.offsetTop === anchor.top) ?? null;
-    anchorRef.current = node ? { node, anchor } : null;
+    // 노드가 아니라 **메시지 id** 로 든다 — 줄은 창(`MessageRows`)이 마운트했다 뗐다 하므로, 노드를 들면
+    // 창 밖으로 나갔다 돌아온 같은 줄을 남으로 본다.
+    const id = rows.find((r) => r.offsetTop === anchor.top)?.dataset.anchorId ?? null;
+    anchorRef.current = id ? { id, anchor } : null;
   };
 
   /**
@@ -377,14 +392,16 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     // 여는 중에는 붙잡지 않는다 — 그 1.2초의 주인은 "가장 최신"이고, 여기서 손을 대면
     // 들어오다 잡힌 어중간한 자리에 **사람이 아무것도 안 했는데** 못이 박힌다.
     if (Date.now() < settleUntilRef.current) return;
-    // 사라진 줄(삭제·창 밖으로 밀려남)을 기준으로 삼으면 `offsetTop` 이 0 이라 맨 위로 튄다.
-    if (!held.node.isConnected) { anchorRef.current = null; return; }
-    const next = anchoredScrollTop(held.anchor, held.node.offsetTop);
+    // 지금 마운트된 줄 가운데서 찾는다. 없으면(삭제·창 밖) 건드리지 않는다 — 사라진 줄을 기준으로 삼으면
+    // `offsetTop` 이 0 이라 맨 위로 튄다. 기준은 그대로 두어, 창이 그 줄을 다시 그리면 다시 듣는다.
+    const node = anchorRows().find((r) => r.dataset.anchorId === held.id);
+    if (!node) return;
+    const next = anchoredScrollTop(held.anchor, node.offsetTop);
     if (!needsAnchorFix(el.scrollTop, next)) return;
     el.scrollTop = next;
     // 방금 **우리가** 옮긴 자리다 — 적어 두지 않으면 다음 스크롤을 "사람이 올렸다"로 읽는다.
     lastScrollTopRef.current = el.scrollTop;
-    held.anchor = { top: held.node.offsetTop, offset: held.anchor.offset };
+    held.anchor = { top: node.offsetTop, offset: held.anchor.offset };
   };
 
   /**
@@ -512,8 +529,9 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    */
   useLayoutEffect(() => {
     // 대기 중인 앵커는 **떠난 채널의 자리**다 — 들고 가면 새 채널에서 엉뚱한 곳을 잡는다.
-    olderAnchorRef.current = null;
     anchorRef.current = null;
+    // 떠난 채널의 자리표시는 들고 가지 않는다.
+    clearOlderSkeleton();
     scrollToBottom();
     // 여는 순간부터 짧게 바닥에 붙여 둔다 — 근거는 `OPEN_SETTLE_MS` 의 주석.
     startSettle();
@@ -581,34 +599,42 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
    */
   const maybeLoadOlder = (el: HTMLElement) => {
     if (!activeChannelId || !channelHasMore || loadingOlderRef.current) return;
-    if (!isNearTop(el)) return;
+    if (!shouldPrefetchOlder(el)) return;
     loadingOlderRef.current = true;
-    olderAnchorRef.current = { height: el.scrollHeight, top: el.scrollTop };
-    void getController().loadOlder(activeChannelId ?? undefined).finally(() => { loadingOlderRef.current = false; });
+    const channelId = activeChannelId;
+    skeletonTimerRef.current = setTimeout(() => {
+      skeletonTimerRef.current = null;
+      skeletonShownAtRef.current = Date.now();
+      setOlderSkeleton(true);
+    }, OLDER_SKELETON_DELAY_MS);
+    void getController().loadOlder(channelId).finally(() => {
+      loadingOlderRef.current = false;
+      hideOlderSkeleton();
+    });
   };
 
-  /** 목록의 첫 줄. 위쪽에 뭔가 끼어들었는지를 이 id 하나로 안다. */
-  const firstRootId = roots[0]?.id ?? null;
+  /** 자리표시를 지금 걷는다(채널을 옮겼다·화면이 사라진다). */
+  const clearOlderSkeleton = () => {
+    if (skeletonTimerRef.current !== null) clearTimeout(skeletonTimerRef.current);
+    skeletonTimerRef.current = null;
+    setOlderSkeleton(false);
+  };
 
-  /**
-   * 과거가 붙은 **바로 그 렌더에서** 보던 자리를 되돌린다.
-   *
-   * 딸림값이 목록의 첫 줄 id 인 것이 요점이다 — 위쪽에 뭔가 끼어들었을 때만 정확히 한 번
-   * 돈다(`roots.length` 로 두면 바닥에 새 줄이 생길 때도 돌아 엉뚱한 자리를 잡는다).
-   * `useLayoutEffect` 여야 한다: 그리기 **전에** 되돌려야 튀는 한 프레임이 안 보인다.
-   */
-  useLayoutEffect(() => {
-    const el = listRef.current;
-    const anchor = olderAnchorRef.current;
-    olderAnchorRef.current = null;
-    if (!el || !anchor) return;
-    const grown = el.scrollHeight - anchor.height;
-    // 자라지 않았으면(그려지는 줄이 없는 페이지였다) 건드릴 것이 없다.
-    if (grown <= 0) return;
-    el.scrollTop = anchor.top + grown;
-    // 방금 **우리가** 옮긴 자리다 — 적어 두지 않으면 다음 스크롤을 "사람이 올렸다"로 읽는다.
-    lastScrollTopRef.current = el.scrollTop;
-  }, [firstRootId]);
+  /** 받기가 끝났다. 아직 안 섰으면 세우지 않고, 섰으면 최소 시간을 채운 뒤 걷는다. */
+  const hideOlderSkeleton = () => {
+    if (skeletonTimerRef.current !== null) {
+      clearTimeout(skeletonTimerRef.current);
+      skeletonTimerRef.current = null;
+      return;
+    }
+    const left = skeletonShownAtRef.current + OLDER_SKELETON_MIN_MS - Date.now();
+    if (left <= 0) { setOlderSkeleton(false); return; }
+    skeletonTimerRef.current = setTimeout(() => {
+      skeletonTimerRef.current = null;
+      setOlderSkeleton(false);
+    }, left);
+  };
+  useEffect(() => () => { if (skeletonTimerRef.current !== null) clearTimeout(skeletonTimerRef.current); }, []);
 
   /**
    * **커밋마다 읽던 자리를 되돌린다.** 딸림값이 없는 것이 요점이다 — 목록의 줄 수가 그대로인
@@ -901,6 +927,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           dividerBeforeId={dividerBeforeId}
           locale={locale}
           hasMore={!!channelHasMore}
+          skeleton={olderSkeleton ? OLDER_SKELETON_ROWS : 0}
           onJump={onJump}
           onOpenDirectory={onOpenDirectory}
           onOpenSettings={onOpenSettings}

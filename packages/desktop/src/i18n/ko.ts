@@ -2453,6 +2453,7 @@ export const ko = {
   'chat.channelEdit.repo': '저장소',
   'chat.pickChannel': '채널을 골라 시작한다',
   'chat.loadOlder': '이전 메시지 불러오기',
+  'chat.loadingOlder': '이전 메시지 불러오는 중',
   'chat.directory': '디렉터리',
   'chat.adminBadge': 'admin',
   'chat.lease.title': '진행 중인 작업',
