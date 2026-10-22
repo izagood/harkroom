@@ -12,12 +12,13 @@
 import pg from 'pg';
 import argon2 from 'argon2';
 import { z } from 'zod';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@harkroom/shared';
 import { recordAudit } from '../src/audit.js';
 
 const { Pool } = pg;
 
-/** 서버의 비밀번호 규칙과 **같은 것**을 쓴다 — 여기서 8..128 을 다시 적으면 두 곳이 갈린다. */
-const passwordRule = z.string().min(8).max(128);
+/** 서버의 비밀번호 규칙과 **같은 것**을 쓴다(`@harkroom/shared` 의 passwordRule) — 숫자를 다시 적으면 두 곳이 갈린다. */
+const passwordRule = z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH);
 
 const USAGE = [
   '사용법: HARKROOM_NEW_PASSWORD=<새 비밀번호> DATABASE_URL=<...> tsx packages/server/scripts/reset-password.ts <handle>',
@@ -40,7 +41,7 @@ async function main(): Promise<void> {
 
   const parsed = passwordRule.safeParse(newPassword);
   if (!parsed.success) {
-    console.error('오류: 비밀번호가 서버의 규칙(8~128자)을 만족하지 않는다.');
+    console.error(`오류: 비밀번호가 서버의 규칙(${PASSWORD_MIN_LENGTH}~${PASSWORD_MAX_LENGTH}자)을 만족하지 않는다.`);
     process.exit(1);
   }
 
