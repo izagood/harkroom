@@ -125,6 +125,27 @@ describe('사용', () => {
     expect((await login('redeem1', 'new-pass-1234')).statusCode).toBe(200);
   });
 
+  it('handle 과 로그인 ID 가 다른 사람: handle 로는 실패하고, 발급 응답이 주는 로그인 ID 로는 된다(10-22 jinbin 재현)', async () => {
+    // 그날의 모양: handle `jin`, 로그인 ID 는 다른 값. 사람은 화면에 보이는 handle 을 쳤다.
+    const invite = await app.inject({ method: 'POST', url: '/invites', headers: auth(owner.token) });
+    const reg = await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: { inviteToken: invite.json().token, handle: 'jinx', loginId: 'login-other-7', displayName: 'Jin', password: 'pw123456' },
+    });
+    expect(reg.statusCode).toBe(201);
+    const id = reg.json().id as string;
+    expect((await stepUp(owner.token)).statusCode).toBe(200);
+    const issuedRes = await issue(owner.token, id);
+    expect(issuedRes.statusCode).toBe(201);
+    // 발급 응답에 대상의 로그인 ID 가 실린다 — 관리자가 코드와 함께 전할 수 있게.
+    expect(issuedRes.json().loginId).toBe('login-other-7');
+    const code = issuedRes.json().code as string;
+    const byHandle = await redeem('jinx', code);
+    expect(byHandle.statusCode).toBe(400);
+    expect(byHandle.json().error.code).toBe('invalid_reset_code');
+    expect((await redeem(issuedRes.json().loginId, code)).statusCode).toBe(200);
+  });
+
   it('한 번만 쓴다', async () => {
     const m = await createMember(app, owner.token, 'once');
     const code = await issued(m.accountId);

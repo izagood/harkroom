@@ -146,6 +146,39 @@ describe('발급 창', () => {
     return screen.findByRole('button', { name: 'minji의 비밀번호 재설정 코드' });
   });
 
+  it('발급 응답의 로그인 ID 를 코드와 함께 보이고 「함께 전해라」로 안내한다 — 옛 서버(없음)면 줄을 그리지 않는다', async () => {
+    setup({ issuePasswordResetCode: vi.fn(async () => ({ ...CODE, loginId: 'login-other-7' })) });
+    useActiveStore.getState().set({ me: owner, accounts: { o1: owner, m1: member } });
+    render(<ResetCodeDialog account={member} onClose={() => {}} />);
+    fireEvent.click(screen.getByTestId('reset-code-issue'));
+    const line = await screen.findByTestId('reset-code-login-id');
+    expect(line.textContent).toContain('login-other-7');
+    expect(screen.getByText(/로그인 ID와 코드를 함께/)).toBeTruthy();
+    // 받는 쪽 입력 순서대로 로그인 ID 가 코드보다 위(designer n1).
+    expect(line.compareDocumentPosition(screen.getByTestId('reset-code-value')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // [복사]는 둘을 함께 담는다(designer s1) — 가림 클립보드에 쓴 글에 두 값이 다 있다.
+    const writes: string[] = [];
+    setConcealedClipboardInvoke(async (_cmd: string, args: unknown) => { writes.push((args as { text: string }).text); });
+    const copyBtn = screen.getByTestId('reset-code-copy');
+    expect(copyBtn.textContent).toBe('로그인 ID와 코드 복사');
+    fireEvent.click(copyBtn);
+    await waitFor(() => expect(writes).toEqual(['로그인 ID: login-other-7\n재설정 코드: K7QF-9MXD-2PQR']));
+    cleanup();
+
+    setup({ issuePasswordResetCode: vi.fn(async () => CODE) });
+    useActiveStore.getState().set({ me: owner, accounts: { o1: owner, m1: member } });
+    render(<ResetCodeDialog account={member} onClose={() => {}} />);
+    fireEvent.click(screen.getByTestId('reset-code-issue'));
+    await screen.findByTestId('reset-code-value');
+    expect(screen.queryByTestId('reset-code-login-id')).toBeNull();
+    // 옛 서버면 코드만 복사한다.
+    const only: string[] = [];
+    setConcealedClipboardInvoke(async (_cmd: string, args: unknown) => { only.push((args as { text: string }).text); });
+    expect(screen.getByTestId('reset-code-copy').textContent).toBe('복사');
+    fireEvent.click(screen.getByTestId('reset-code-copy'));
+    await waitFor(() => expect(only).toEqual(['K7QF-9MXD-2PQR']));
+  });
+
   it('거두면 코드가 화면에서 사라진다', async () => {
     const c = setup();
     useActiveStore.getState().set({ me: owner, accounts: { o1: owner, m1: member } });

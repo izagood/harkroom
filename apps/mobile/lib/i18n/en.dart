@@ -66,7 +66,7 @@ class StringsEn implements Strings {
   @override
   String get pwresetGuideBody => 'In this community, passwords are reset with a reset code that an admin issues.';
   @override
-  String get pwresetGuideStep1 => '1. Tell an admin your login ID and ask for a reset code.';
+  String get pwresetGuideStep1 => '1. Ask an admin for a reset code. They’ll give you your login ID with it — it can differ from your @handle.';
   @override
   String get pwresetGuideStep2 => '2. Once you have the code, choose a new password.';
   @override

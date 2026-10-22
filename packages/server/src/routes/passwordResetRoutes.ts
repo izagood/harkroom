@@ -42,11 +42,11 @@ export async function registerPasswordResetRoutes(app: FastifyInstance, pool: Po
 
   /** 발급·거두기 공통 관문: 대상이 사람이고 살아 있고, 이 행위자가 그 대상을 건드릴 수 있는가. */
   async function targetFor(actor: { id: string; role: string }, id: string): Promise<
-    { ok: true; handle: string } | { ok: false; status: 400 | 403 | 404; code: string; message: string }
+    { ok: true; handle: string; loginId: string } | { ok: false; status: 400 | 403 | 404; code: string; message: string }
   > {
     if (id === actor.id) return { ok: false, status: 400, code: 'self', message: 'use POST /auth/password for your own password' };
-    const r = await pool.query<{ handle: string; role: string }>(
-      `select handle, role from account
+    const r = await pool.query<{ handle: string; role: string; loginId: string }>(
+      `select handle, role, login_id as "loginId" from account
         where id = $1 and kind = 'human' and deleted_at is null and disabled_at is null`, [id]);
     const row = r.rows[0];
     if (!row) return { ok: false, status: 404, code: 'not_found', message: 'no such person' };
@@ -54,7 +54,7 @@ export async function registerPasswordResetRoutes(app: FastifyInstance, pool: Po
     if (row.role === 'admin' && actor.role !== 'owner') {
       return { ok: false, status: 403, code: 'forbidden', message: 'only the owner can issue a reset code for an admin' };
     }
-    return { ok: true, handle: row.handle };
+    return { ok: true, handle: row.handle, loginId: row.loginId };
   }
 
   app.post('/accounts/:id/password-reset-code', { preHandler: app.requireCap('member.reset_password') }, async (req, reply) => {
@@ -97,7 +97,10 @@ export async function registerPasswordResetRoutes(app: FastifyInstance, pool: Po
       target: id, detail: { replacedLiveCode: revoked > 0, expiresAt: expiresAt.toISOString() },
     }, req);
     void reply.header('cache-control', 'no-store');
-    return reply.code(201).send({ code: display, expiresAt: expiresAt.toISOString() });
+    // 대상의 **로그인 ID** 를 함께 싣는다(10-22 jinbin 사고: handle 은 `jin`, 로그인 ID 는 달랐다 → 사람이 handle 을
+    // 쳐서 맞는 코드로도 네 번 실패). 재설정은 로그인 ID 로 찾으므로 코드만 전하면 반쪽이다. 발급 권한이 있는 관리자에게만
+    // 가는 응답이고, 그 관리자는 어차피 이 계정의 비밀번호를 바꿀 수 있다.
+    return reply.code(201).send({ code: display, expiresAt: expiresAt.toISOString(), loginId: target.loginId });
   });
 
   /** 잘못 보냈을 때 거둔다. 살아 있는 코드가 없어도 204(멱등) — 있었는지를 응답으로 가르지 않는다. */

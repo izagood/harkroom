@@ -871,7 +871,8 @@ export class ApiClient {
    * 비밀번호 재설정 코드(서버 #1409, 0.4.122~). 코드는 응답에 한 번만 실린다 — 저장하지 않는다.
    * 발급은 세션 + step-up(`unlockSecrets`) 뒤에만 된다(403 `step_up_required`).
    */
-  issuePasswordResetCode(accountId: string): Promise<{ code: string; expiresAt: string }> {
+  /** `loginId` 는 이 필드를 더한 서버부터 싣는다(handle 과 다를 수 있다). 옛 서버는 안 실으니 없을 수 있다 — 화면은 그 줄을 안 그린다. */
+  issuePasswordResetCode(accountId: string): Promise<{ code: string; expiresAt: string; loginId?: string }> {
     return this.req('POST', `/accounts/${encodeURIComponent(accountId)}/password-reset-code`);
   }
   /** 살아 있는 코드를 거둔다 — 멱등. */
