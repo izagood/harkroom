@@ -63,3 +63,16 @@ export const NEAR_TOP_PX = 240;
 export function isNearTop(m: ScrollMetrics, threshold: number = NEAR_TOP_PX): boolean {
   return m.scrollTop <= threshold;
 }
+
+/**
+ * 과거를 **미리** 받기 시작하는 문턱 — 화면 몇 장 위에서부터인가(스레드 1a06bdce, jaebin 선택 「일찍 받기」).
+ *
+ * 맨 위 240px 에서야 요청하면 서버 왕복(300~800ms) 동안 사람은 이미 맨 위에 닿아 멈춰 있고, 그때 비어 있는
+ * 위쪽이 곧 "튕김"과 자리표시로 보인다. 한 화면 반 위에서 시작하면 대개 닿기 전에 도착한다.
+ */
+export const OLDER_PREFETCH_SCREENS = 1.5;
+
+/** 과거를 미리 받을 만큼 위에 왔는가. 화면이 아주 작아도 `NEAR_TOP_PX` 보다 좁히지는 않는다. */
+export function shouldPrefetchOlder(m: ScrollMetrics): boolean {
+  return isNearTop(m, Math.max(NEAR_TOP_PX, m.clientHeight * OLDER_PREFETCH_SCREENS));
+}

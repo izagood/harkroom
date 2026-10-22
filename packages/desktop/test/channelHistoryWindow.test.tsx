@@ -19,7 +19,7 @@
  *    Chromium 의 `overflow-anchor` 가 없다).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import {
@@ -147,11 +147,12 @@ describe('맨 위에 닿으면 과거가 이어진다', () => {
   });
 
   /**
-   * **읽던 자리를 빼앗지 않는다.** 위쪽에 1000px 이 끼어들면 보고 있던 줄도 1000px 아래로
-   * 밀려난다 — 되돌리지 않으면 화면이 옛 대화의 맨 위로 튄다(Chromium 은 `overflow-anchor`
-   * 로 붙잡아 주지만 macOS 앱의 WKWebView 에는 그 기능이 없다).
+   * **받는 동안 굴린 자리를 도로 빼앗지 않는다**(2026-10-22, 스레드 1a06bdce). 예전에는 요청할 때 잰
+   * `scrollTop`·`scrollHeight` 로 되돌려서, 응답을 기다리는 동안 맨 위까지 올린 사람이 요청 때 자리로
+   * 끌려갔다(탐침 −222px). 과거가 붙을 때 보던 줄을 붙잡는 일은 이제 줄 창(`MessageRows`)이 하고, 그쪽은
+   * `virtualRows.test.tsx` 의 앞붙임 시험이 지킨다. 창이 없는 이 환경에서는 화면이 스크롤을 건드리지 않아야 한다.
    */
-  it('위에 붙은 만큼 스크롤을 되돌린다', async () => {
+  it('요청 때 잰 자리로 되돌리지 않는다', async () => {
     seed(true);
     const loadOlder = vi.fn(async () => undefined);
     setController({ send: vi.fn(), openThread: vi.fn(), loadOlder, api: scheduledApiStub() } as unknown as C);
@@ -159,17 +160,22 @@ describe('맨 위에 닿으면 과거가 이어진다', () => {
 
     const box = screen.getByTestId('channel-scroll');
     putAtTop(box, 2000);
+    box.scrollTop = 200;
     fireEvent.scroll(box);
     await waitFor(() => expect(loadOlder).toHaveBeenCalled());
 
-    // 서버가 준 과거가 붙는다 — 상자는 그만큼 자란다.
+    // 기다리는 동안 사람이 맨 위까지 올렸다. 그 뒤 과거가 붙는다.
+    box.scrollTop = 0;
     (box as unknown as { scrollHeight: number }).scrollHeight = 3000;
-    useAppStore.getState().set({
-      messages: {
-        c1: [msg('m1', 'c1', 1, '어제 이야기', 'u2'), msg('m5', 'c1', 5, '창 안의 첫 줄', 'u2')],
-      },
+    act(() => {
+      useAppStore.getState().set({
+        messages: {
+          c1: [msg('m1', 'c1', 1, '어제 이야기', 'u2'), msg('m5', 'c1', 5, '창 안의 첫 줄', 'u2')],
+        },
+      });
     });
 
-    await waitFor(() => expect(box.scrollTop).toBe(1000));
+    // 예전 식이면 200 + 1000 = 1200 으로 끌려갔다.
+    expect(box.scrollTop).toBe(0);
   });
 });
