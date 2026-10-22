@@ -129,6 +129,70 @@ describe('맨 위에 닿으면 과거가 이어진다', () => {
   });
 
   // 스크롤 이벤트는 손짓 한 번에 수십 번 온다 — 문이 없으면 같은 페이지를 여러 번 요청한다.
+  /**
+   * **버튼도 스크롤과 같은 길로 받는다**(#1463 designer d2·d1). 예전 버튼은 컨트롤러를 바로 불러 받는 중 문과
+   * 자리표시를 건너뛰었다 — 연달아 누르면 같은 페이지를 여러 번 묻고, 받는 동안 아무 표시가 없었다.
+   * 받는 것이 길어지면 버튼은 **숨지 않고** 비활성 + 「불러오는 중」이 된다(숨기면 줄 상자 시작이 바뀌어 튄다).
+   */
+  it('버튼을 연달아 눌러도 한 번만 받고, 길어지면 비활성 「불러오는 중」이 된다', async () => {
+    seed(true);
+    let release = () => {};
+    const loadOlder = vi.fn(() => new Promise<void>((resolve) => { release = () => resolve(); }));
+    setController({ send: vi.fn(), openThread: vi.fn(), loadOlder, api: scheduledApiStub() } as unknown as C);
+    render(<ChannelPane />);
+
+    const button = screen.getByTestId('load-older');
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(loadOlder).toHaveBeenCalledTimes(1);
+
+    // 문턱(300ms)을 넘기면 자리표시가 서고, 버튼은 같은 자리에서 비활성으로 바뀐다.
+    await waitFor(() => expect(screen.getAllByTestId('older-skeleton').length).toBeGreaterThan(0), { timeout: 2000 });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.textContent).toBe('이전 메시지 불러오는 중');
+
+    await act(async () => { release(); });
+    await waitFor(() => expect(screen.queryAllByTestId('older-skeleton')).toHaveLength(0), { timeout: 2000 });
+    expect((screen.getByTestId('load-older') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  /**
+   * **떠난 채널의 받기가 지금 채널의 받는 중 상태를 걷지 않는다**(#1463 security s1). 예전에는 c1 의 받기가
+   * c2 로 옮긴 뒤에 끝나면 그 `finally` 가 c2 의 문을 열고 자리표시를 걷었다 — c2 에서 같은 페이지를 또 물었다.
+   */
+  it('받는 중에 채널을 옮겨도 옛 채널의 끝맺음이 새 채널을 건드리지 않는다', async () => {
+    seed(true);
+    useAppStore.getState().set({
+      channels: [chan('c1', 'general'), chan('c2', 'random')],
+      messages: { c1: [msg('m5', 'c1', 5, '창 안의 첫 줄', 'u2')], c2: [msg('n5', 'c2', 5, '둘째 채널', 'u2')] },
+      hasMore: { c1: true, c2: true },
+    });
+    const releases: Record<string, () => void> = {};
+    const loadOlder = vi.fn((channelId: string) => new Promise<void>((resolve) => { releases[channelId] = () => resolve(); }));
+    setController({ send: vi.fn(), openThread: vi.fn(), loadOlder, api: scheduledApiStub() } as unknown as C);
+    render(<ChannelPane />);
+
+    putAtTop(screen.getByTestId('channel-scroll'));
+    fireEvent.scroll(screen.getByTestId('channel-scroll'));
+    expect(loadOlder).toHaveBeenLastCalledWith('c1');
+
+    act(() => { useAppStore.getState().set({ activeChannelId: 'c2' }); });
+    const box = screen.getByTestId('channel-scroll');
+    putAtTop(box);
+    fireEvent.scroll(box);
+    expect(loadOlder).toHaveBeenCalledTimes(2);
+    expect(loadOlder).toHaveBeenLastCalledWith('c2');
+    await waitFor(() => expect(screen.getAllByTestId('older-skeleton').length).toBeGreaterThan(0), { timeout: 2000 });
+
+    // c1 의 받기가 이제야 끝난다 — c2 는 아직 받는 중이어야 한다.
+    await act(async () => { releases.c1!(); });
+    fireEvent.scroll(box);
+    expect(loadOlder).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByTestId('older-skeleton').length).toBeGreaterThan(0);
+
+    await act(async () => { releases.c2!(); });
+  });
+
   it('받는 중에는 같은 페이지를 다시 요청하지 않는다', async () => {
     seed(true);
     let release = () => {};
