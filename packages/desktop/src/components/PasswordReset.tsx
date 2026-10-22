@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { compareRelease, type AccountView } from '@harkroom/shared';
+import { compareRelease, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, type AccountView } from '@harkroom/shared';
 import { getController } from '../state/controller';
 import { useActiveStore } from '../state/communities';
 import { ApiClient, ApiError, type PasswordResetNotice } from '../lib/api';
@@ -230,10 +230,11 @@ export function ResetWithCodeForm({ baseUrl, initialLoginId, onSignedIn, onBack 
   // 「8자 이상」은 칸을 떠난 뒤나 제출을 시도한 뒤에만 말한다(designer n5) — 첫 글자부터 빨갛게 서면 꾸지람처럼 읽힌다.
   const [pwTouched, setPwTouched] = useState(false);
   const [tried, setTried] = useState(false);
-  const short = (pwTouched || tried) && pw !== '' && pw.length < 8;
-  // 서버 규칙은 8~128자다. 넘기면 서버의 400 이 「코드가 틀렸다」로 읽히므로 화면에서 막는다(security #1410 n2).
-  const long = pw.length > 128;
-  const blocked = busy || !loginId.trim() || code.replace(/-/g, '').length !== 12 || pw.length < 8 || long || pw !== pw2;
+  const short = (pwTouched || tried) && pw !== '' && pw.length < PASSWORD_MIN_LENGTH;
+  // 서버 규칙(shared passwordRule)을 넘기면 서버의 400 이 「코드가 틀렸다」로 읽히므로 화면에서 막는다(security #1410 n2).
+  // 칸에 maxLength 는 걸지 않는다 — 붙여 넣은 값이 말없이 잘리면 사람은 자기가 정한 것과 다른 비밀번호를 갖게 된다.
+  const long = pw.length > PASSWORD_MAX_LENGTH;
+  const blocked = busy || !loginId.trim() || code.replace(/-/g, '').length !== 12 || pw.length < PASSWORD_MIN_LENGTH || long || pw !== pw2;
 
   const submit = async () => {
     if (busy) return;
@@ -271,10 +272,10 @@ export function ResetWithCodeForm({ baseUrl, initialLoginId, onSignedIn, onBack 
       </label>
       <label className="block text-meta font-medium">
         {t('pwreset.form.newPassword')}
-        <input className={field} type="password" autoComplete="new-password" value={pw} maxLength={128}
+        <input className={field} type="password" autoComplete="new-password" value={pw}
           onChange={(e) => setPw(e.target.value)} onBlur={() => setPwTouched(true)} data-testid="pwreset-new" />
-        {short && <span className="mt-1 block font-normal text-danger">{t('pwreset.form.tooShort')}</span>}
-        {long && <span className="mt-1 block font-normal text-danger">{t('pwreset.form.tooLong')}</span>}
+        {short && <span className="mt-1 block font-normal text-danger">{t('pwreset.form.tooShort', { min: String(PASSWORD_MIN_LENGTH) })}</span>}
+        {long && <span className="mt-1 block font-normal text-danger">{t('pwreset.form.tooLong', { max: String(PASSWORD_MAX_LENGTH) })}</span>}
       </label>
       <label className="block text-meta font-medium">
         {t('pwreset.form.confirm')}

@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import argon2 from 'argon2';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@harkroom/shared';
 import { notReservedHandle } from '../services/reservedHandles.js';
 import { newToken, hashToken } from '../auth/tokens.js';
 import { effectiveCapabilities } from '../auth/permissions.js';
@@ -29,7 +30,7 @@ const credentials = z.object({
   loginId: z.string().regex(/^[a-zA-Z0-9_-]{2,32}$/),
   handle: z.string().regex(/^[a-z0-9_-]{2,32}$/).refine(...notReservedHandle),
   displayName: z.string().min(1).max(64),
-  password: z.string().min(8).max(128),
+  password: z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH),
 });
 
 /** 비밀번호 규칙 — 가입·변경·재설정 코드가 **같은 것**을 쓴다. 여러 곳에 다시 적으면 갈린다. */

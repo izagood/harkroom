@@ -6,6 +6,7 @@ import { Logo } from '../components/Logo';
 import { RecoveryKeyStep } from '../components/RecoveryKeyStep';
 import { ConnectUpdateBanner } from '../components/ConnectUpdateBanner';
 import { lastWorkspaceUrlStorage } from '../lib/prefs';
+import { PASSWORD_MAX_LENGTH } from '@harkroom/shared';
 import { ForgotPasswordGuide, ResetWithCodeForm } from '../components/PasswordReset';
 import { useT } from '../i18n/useT';
 
@@ -247,6 +248,11 @@ export function ConnectScreen(props: ConnectScreenProps) {
   };
 
   const field = 'w-full rounded-row border border-border bg-field px-3 py-2 text-fg placeholder-fg-subtle';
+  /**
+   * 새 비밀번호를 **정하는** 자리(첫 관리자·초대 가입·호스팅 클레임)에서 서버 상한을 넘었는가. 칸에 maxLength 를
+   * 걸면 붙여 넣은 값이 말없이 잘리므로 문구로 알리고 제출을 막는다. 로그인은 정해 둔 것을 대는 자리라 보지 않는다.
+   */
+  const passwordTooLong = authMode !== 'signin' && password.length > PASSWORD_MAX_LENGTH;
   /** 코드로 비밀번호를 바꾼 뒤의 로그인 — `submit` 의 뒷부분과 같은 길(토큰 싣기 → me → 주소 적기 → 올려 보내기). */
   const signedInWithReset = async (api: ApiClient, token: string) => {
     api.setToken(token);
@@ -456,6 +462,11 @@ export function ConnectScreen(props: ConnectScreenProps) {
         </div>
         </>
         )}
+        {passwordTooLong && (
+          <p className="break-keep text-danger" data-testid="connect-password-too-long">
+            {t('connect.passwordTooLong', { max: String(PASSWORD_MAX_LENGTH) })}
+          </p>
+        )}
         {/* 오류는 본문단이다 — 로그인이 막힌 사람에게 이 한 줄이 유일한 단서다. */}
         {error && <p className="break-keep text-danger">{error}</p>}
         {!recoveryKey && (
@@ -463,6 +474,8 @@ export function ConnectScreen(props: ConnectScreenProps) {
           type="submit"
           disabled={
             busy
+            // 서버 상한을 넘은 새 비밀번호는 보내지 않는다 — 서버의 400 원문이 그대로 뜬다.
+            || passwordTooLong
             // 초대 가입은 토큰 없이 보내면 서버가 400 을낸다 — 보내기 전에 막는다.
             || (authMode === 'register' && inviteToken.trim() === '')
             // 만들기도 같다: 네 칸이 다 있어야 gate 가 받는다.

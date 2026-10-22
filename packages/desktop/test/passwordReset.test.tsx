@@ -15,6 +15,7 @@ import { resetCommunityRegistry, useActiveStore } from '../src/state/communities
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setConcealedClipboardInvoke } from '../src/lib/concealedClipboard';
 import { ApiError } from '../src/lib/api';
+import { PASSWORD_MAX_LENGTH } from '@harkroom/shared';
 import { acc } from './helpers/fakeApi';
 
 const owner = acc('o1', 'boss', 'human', true, { role: 'owner' });
@@ -159,6 +160,22 @@ describe('발급 창', () => {
 });
 
 describe('로그인 화면', () => {
+  it('새 비밀번호를 정하는 자리(초대 가입)는 상한을 넘으면 문구로 막는다 — 로그인은 보지 않는다', () => {
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    const pw = screen.getByTestId('connect-password') as HTMLInputElement;
+    expect(pw.hasAttribute('maxlength')).toBe(false);
+    const long = 'z'.repeat(PASSWORD_MAX_LENGTH + 1);
+    fireEvent.change(pw, { target: { value: long } });
+    // 로그인: 정해 둔 것을 대는 자리라 문구가 없다.
+    expect(screen.queryByTestId('connect-password-too-long')).toBeNull();
+    fireEvent.click(screen.getByText('초대 토큰으로 이 커뮤니티에 들어가기'));
+    expect(screen.getByTestId('connect-password-too-long').textContent).toBe(`비밀번호는 ${PASSWORD_MAX_LENGTH}자를 넘을 수 없다.`);
+    expect((screen.getByRole('button', { name: '초대로 들어가기' }) as HTMLButtonElement).disabled).toBe(true);
+    // 상한 안으로 줄이면 문구가 사라진다.
+    fireEvent.change(screen.getByTestId('connect-password'), { target: { value: 'z'.repeat(PASSWORD_MAX_LENGTH) } });
+    expect(screen.queryByTestId('connect-password-too-long')).toBeNull();
+  });
+
   it('「비밀번호」 라벨은 칸에 붙고, 「잊었다면」은 칸 뒤·로그인 앞이다(designer s1)', () => {
     render(<ConnectScreen onConnected={vi.fn()} />);
     const input = screen.getByTestId('connect-password');
@@ -235,6 +252,15 @@ describe('로그인 화면', () => {
     fireEvent.change(screen.getByTestId('pwreset-confirm'), { target: { value: long } });
     expect(screen.getByText('128자를 넘을 수 없다.')).toBeTruthy();
     expect((screen.getByTestId('pwreset-submit') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('새 비밀번호 칸은 상한으로 자르지 않는다 — 붙여 넣은 값이 그대로 남는다', () => {
+    render(<ResetWithCodeForm baseUrl="https://hk.example.com" initialLoginId="minji" onSignedIn={vi.fn()} onBack={() => {}} />);
+    const input = screen.getByTestId('pwreset-new') as HTMLInputElement;
+    expect(input.hasAttribute('maxlength')).toBe(false);
+    const long = 'y'.repeat(PASSWORD_MAX_LENGTH + 5);
+    fireEvent.change(input, { target: { value: long } });
+    expect(input.value.length).toBe(PASSWORD_MAX_LENGTH + 5);
   });
 
   it('옛 서버면 라우트를 부르지 않고 「지원하지 않는다」를 말한다', async () => {

@@ -3855,6 +3855,7 @@ export const MEMORY_ITEMS_WARN_COUNT = 180;
 export const JOURNAL_EXPIRING_WINDOW = 5;
 
 export * from './permissions.js';
+export * from './passwordRule.js';
 export * from './toolRules.js';
 export * from './threadStatus.js';
 // 시스템 줄의 번역 표지(meta.i18n) 키 표·검사 — 서버가 쓰고 앱이 그린다(i18n P5).
