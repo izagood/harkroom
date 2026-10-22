@@ -1043,7 +1043,12 @@ export function Composer({
     }
     // 다시 누른 순간 앞의 사유는 지난 일이다 — 남겨 두면 성공한 뒤에도 붉은 줄이 남는다.
     if (sendError) setSendErrorByScope((prev) => ({ ...prev, [scopeKey]: '' }));
-    const typed = draft;
+    /*
+      **끝의 빈 줄·공백은 지운다**(jaebin 결정, 10-22 카드 ada56034). 앞과 가운데의 줄·들여쓰기는 그대로 둔다 — 코드 블록이
+      끝에 있으면 닫는 펜스 뒤만 지워진다. Shift+Enter 로 일부러 남긴 끝 줄도 함께 사라진다(알고 고른 것이다).
+      「비었나」 판정(`draft.trim()`)은 위에서 이미 했으므로 여기서 빈 글이 되는 일은 없다.
+    */
+    const typed = draft.replace(/\s+$/u, '');
     /**
      * 접두는 **여기, 발송 시점에** 본문에 들어간다(#173, design.md §4 "접두는 실제 본문에
      * 들어간다"). 서버가 저장 직후 본문에 접두하는 방식은 에이전트가 MCP 로 올린 답에도
