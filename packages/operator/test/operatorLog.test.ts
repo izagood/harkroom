@@ -1,9 +1,9 @@
 // 오퍼레이터 로그 상한·회전(2026-10-22). 앱이 stdout 을 이어 쓰기로 붙인 파일을 copy-truncate 로 민다.
 import { describe, it, expect, afterEach } from 'vitest';
-import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync, writeSync, existsSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync, writeSync, existsSync, symlinkSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createOperatorLog, operatorLogPathFromSocket, nodeOperatorLogFs, type OperatorLogFs } from '../src/operatorLog.js';
+import { createOperatorLog, operatorLogPathFromSocket, nodeOperatorLogFs, openExclusive, type OperatorLogFs } from '../src/operatorLog.js';
 
 const dirs: string[] = [];
 const fds: number[] = [];
@@ -83,6 +83,27 @@ describe('오퍼레이터 로그 회전(copy-truncate)', () => {
     op.log('a');
     op.log('b');
     expect(lines).toEqual(['a', 'b']);
+  });
+});
+
+describe('회전 임시 파일은 O_EXCL 로 연다(security #1459 n1)', () => {
+  it('같은 이름이 남의 파일을 가리키는 심링크여도 따라가 쓰지 않는다 — 링크만 지우고 새로 만든다', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oplog-ex-'));
+    try {
+      const victim = join(dir, 'victim.txt');
+      writeFileSync(victim, 'keep');
+      const tmp = join(dir, 'x.log.1.tmp-1');
+      symlinkSync(victim, tmp);
+      const fd = openExclusive(tmp);
+      writeSync(fd, 'new');
+      closeSync(fd);
+      expect(readFileSync(victim, 'utf8')).toBe('keep');
+      expect(lstatSync(tmp).isSymbolicLink()).toBe(false);
+      expect(readFileSync(tmp, 'utf8')).toBe('new');
+      expect(statSync(tmp).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

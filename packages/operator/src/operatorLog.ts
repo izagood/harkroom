@@ -16,7 +16,7 @@
  *   쓰기 실패는 삼키고 stderr 에 1분에 한 줄만 알린다. 다음 쓰기에서 다시 해 본다.
  */
 import {
-  closeSync, fstatSync, ftruncateSync, openSync, readSync, renameSync, statSync, writeSync,
+  closeSync, fstatSync, ftruncateSync, openSync, readSync, renameSync, statSync, unlinkSync, writeSync,
 } from 'node:fs';
 
 export const OPERATOR_LOG_MAX_BYTES = 50 * 1024 * 1024;
@@ -39,6 +39,20 @@ export interface OperatorLogFs {
   ftruncate(fd: number, len: number): void;
 }
 
+/**
+ * 임시 파일은 O_EXCL(`'wx'`)로만 연다 — 앞 실행이 남긴 같은 이름이 심링크여도 따라가 쓰지 않는다(security #1459 n1).
+ * 이미 있으면(EEXIST) 지우고 한 번 더 연다. 지우는 것은 그 이름이지 링크가 가리키는 곳이 아니다.
+ */
+export function openExclusive(path: string): number {
+  try {
+    return openSync(path, 'wx', 0o600);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    unlinkSync(path);
+    return openSync(path, 'wx', 0o600);
+  }
+}
+
 export const nodeOperatorLogFs: OperatorLogFs = {
   fstat: (fd) => fstatSync(fd),
   stat: (path) => statSync(path),
@@ -48,7 +62,7 @@ export const nodeOperatorLogFs: OperatorLogFs = {
     try {
       const size = fstatSync(from).size;
       let pos = Math.max(0, size - bytes);
-      const to = openSync(tmp, 'w', 0o600);
+      const to = openExclusive(tmp);
       try {
         const buf = Buffer.allocUnsafe(COPY_CHUNK_BYTES);
         while (pos < size) {
