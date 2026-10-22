@@ -184,3 +184,45 @@ describe('자리가 없으면 반대쪽으로 연다', () => {
     expect(screen.getByRole('menu').className).toContain('top-full');
   });
 });
+
+// 사이드바 섹션 `⋯` 메뉴가 사이드바 **오른쪽** 테두리에서 잘려 「섹션 삭제 — 채널 N개는 Ch…」가 안 보이던 결함
+// (2026-10-22). 세로로는 들어가도 가로로 자르는 상자를 넘으면 목록 밖(`position: fixed`)으로 꺼내 창 안에 둔다.
+describe('가로로 잘리면 목록 밖으로 꺼낸다', () => {
+  /** `data-x="left right"` 로 가로 좌표를, `data-rect` 로 세로 좌표를 준다(위 describe 와 같은 스텁 방식). */
+  const stubRects = (menuX: [number, number]) => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const spec = this.dataset.rect ?? this.closest<HTMLElement>('[data-rect]')?.dataset.rect;
+      const [top, bottom] = (spec ?? '0 0').split(' ').map(Number) as [number, number];
+      const xSpec = this.getAttribute('role') === 'menu' ? menuX.join(' ') : (this.dataset.x ?? '0 0');
+      const [left, right] = xSpec.split(' ').map(Number) as [number, number];
+      return { top, bottom, height: bottom - top, left, right, width: right - left, x: left, y: top, toJSON: () => ({}) } as DOMRect;
+    });
+  };
+  const open = () => {
+    render(
+      <div data-rect="0 600" data-x="0 240" style={{ overflowX: 'hidden', overflowY: 'auto' }}>
+        <div data-rect="300 320">
+          <Menu renderTrigger={(props) => <button {...props}>me</button>} items={items} />
+        </div>
+      </div>,
+    );
+    fireEvent.click(screen.getByText('me'));
+    return screen.getByRole('menu');
+  };
+
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('사이드바(0~240) 오른쪽 테두리를 넘는 메뉴(200~360)는 fixed 로 꺼내 그 자리 그대로 연다', () => {
+    stubRects([200, 360]);
+    const menu = open();
+    expect(menu.style.position).toBe('fixed');
+    expect(menu.style.left).toBe('200px');
+  });
+
+  it('상자 안에 들어가면 예전처럼 absolute 로 둔다', () => {
+    stubRects([40, 200]);
+    const menu = open();
+    expect(menu.style.position).toBe('');
+    expect(menu.className).toContain('bottom-full');
+  });
+});

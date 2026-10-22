@@ -127,6 +127,30 @@ export function clipBounds(el: HTMLElement): { top: number; bottom: number } {
 }
 
 /**
+ * `clipBounds` 의 가로판 — **가로로 자르는 조상들**의 교집합.
+ *
+ * 사이드바 섹션의 `⋯` 메뉴가 사이드바 오른쪽 테두리(`overflow-hidden`·`overflow-y-auto` — 세로만 굴려도
+ * 가로가 `auto` 로 계산돼 자른다)에서 잘려 「섹션 삭제 — 채널 N개는 Ch…」가 안 보였다(2026-10-22).
+ * 세로만 재서는 그 사실을 알 방법이 없었다. 세로판과 따로 두는 것은 세로판의 모양(`{top, bottom}`)을
+ * 다른 소비자(`Reactions`)가 그대로 쓰기 때문이다.
+ *
+ * **창 폭은 넣지 않는다** — 조상이 자르지 않는데 창 가장자리에 걸린 메뉴는 예전 동작 그대로 둔다.
+ */
+export function clipBoundsX(el: HTMLElement): { left: number; right: number } {
+  const view = viewOf(el.ownerDocument);
+  let left = -Infinity;
+  let right = Infinity;
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const overflowX = view.getComputedStyle(p).overflowX;
+    if (overflowX === 'visible' || overflowX === '') continue;
+    const r = p.getBoundingClientRect();
+    left = Math.max(left, r.left);
+    right = Math.min(right, r.right);
+  }
+  return { left, right };
+}
+
+/**
  * 항목의 포커스 표시(#488 B3). 정본 문서가 "시스템 파란 포커스 링"을 결함으로 적었고
  * 고친 모습을 **"포커스 링은 앱의 강조색이다"** 라고 못박았다.
  *
@@ -232,17 +256,23 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
     const wantsBelow = placement === 'bottom';
     const room = wantsBelow ? roomBelow : roomAbove;
     const other = wantsBelow ? roomAbove : roomBelow;
-    setResolvedPlacement(height > room && other > room ? (wantsBelow ? 'top' : 'bottom') : placement);
+    const resolved = height > room && other > room ? (wantsBelow ? 'top' : 'bottom') : placement;
+    setResolvedPlacement(resolved);
 
-    // 어느 쪽도 다 안 들어가면 목록 밖으로 꺼낸다(`floatAt` 의 주석). 원하는 쪽에 창 자리가 있으면 그쪽에,
-    // 없으면 반대쪽에 두고, 끝으로 창 안으로 자른다 — 창보다 큰 메뉴는 위를 맞춘다(첫 항목부터 보이게).
-    if (height > roomBelow && height > roomAbove) {
+    // 세로로 어느 쪽도 다 안 들어가거나, **가로로** 자르는 조상을 넘으면(사이드바 오른쪽 테두리 — `clipBoundsX`)
+    // 목록 밖으로 꺼낸다(`floatAt` 의 주석). 세로로 들어가면 고른 쪽(`resolved`) 그대로 두고, 아니면 원하는
+    // 쪽에 창 자리가 있으면 그쪽에, 없으면 반대쪽에 둔다. 끝으로 창 안으로 자른다 — 창보다 큰 메뉴는 위를 맞춘다.
+    const clipX = clipBoundsX(menu);
+    const fitsVertically = height <= roomBelow || height <= roomAbove;
+    const fitsHorizontally = menuRect.left >= clipX.left && menuRect.right <= clipX.right;
+    if (!fitsVertically || !fitsHorizontally) {
       const view = viewOf(hostDoc);
       const below = triggerRect.bottom + PLACEMENT_GAP;
       const above = triggerRect.top - PLACEMENT_GAP - height;
       const fitsBelow = below + height <= view.innerHeight - FLOAT_EDGE_GAP;
       const fitsAbove = above >= FLOAT_EDGE_GAP;
-      const top = wantsBelow ? (fitsBelow || !fitsAbove ? below : above) : (fitsAbove || !fitsBelow ? above : below);
+      const top = fitsVertically ? (resolved === 'bottom' ? below : above)
+        : wantsBelow ? (fitsBelow || !fitsAbove ? below : above) : (fitsAbove || !fitsBelow ? above : below);
       setFloatAt({
         top: Math.max(FLOAT_EDGE_GAP, Math.min(top, view.innerHeight - height - FLOAT_EDGE_GAP)),
         left: Math.max(FLOAT_EDGE_GAP, Math.min(menuRect.left, view.innerWidth - menuRect.width - FLOAT_EDGE_GAP)),
@@ -359,7 +389,7 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
           ref={menuRef}
           role="menu"
           onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } }}
-          className={`${openAt || floatAt ? '' : `absolute ${resolvedPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 min-w-32 rounded-card bg-surface-raised py-1 shadow-float ${className}`}
+          className={`${openAt || floatAt ? '' : `absolute ${resolvedPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1'}`} z-10 w-max min-w-32 max-w-[calc(100vw-16px)] rounded-card bg-surface-raised py-1 shadow-float ${className}`}
           style={menuStyle ?? (floatAt ? { position: 'fixed', left: floatAt.left, top: floatAt.top } : undefined)}
         >
           {/*
@@ -369,6 +399,11 @@ export function Menu({ renderTrigger, items, placement = 'top', openOnContextMen
             29px 밖에 안 됐고, 그래서 글자가 테두리에 눌린 것처럼 왼쪽 위로 쏠려 읽혔다.
             `py-2`(8px) 로 올려 33px 을 준다 — 머리(`pb-2 pt-1`)와 같은 8px 축을 쓰고,
             줄끼리 붙지 않으면서 네 줄짜리 메뉴가 길어지지도 않는 최소치다.
+          */}
+          {/*
+            `w-max`: 메뉴 폭은 항목 글자가 정한다 — 담는 상자 폭에 눌려 접히지 않는다. 사이드바 오른쪽 끝의 `⋯` 에서
+            연 메뉴는 남은 폭에 눌려 「섹션 삭제 — 채널 N개는 Ch…」가 두 줄로 접힌 채 잘렸다. 접히지 않아야 꺼내기
+            전에 잰 크기(`floatAt`)가 꺼낸 뒤 크기와 같다. 창보다 넓어지지는 않게 막는다.
           */}
           {header && (
             <div className="border-b border-border px-3 pb-2 pt-1">{header}</div>
