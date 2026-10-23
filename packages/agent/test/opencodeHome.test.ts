@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  ensureOpencodeHome, opencodeConfigFile, opencodeDirs, opencodeLaneModelMissing, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
+  ensureOpencodeHome, opencodeConfigFile, opencodeDirs, opencodeLaneModelMissing, OPENCODE_LANE_AGENT, OPENCODE_LANE_PERMISSION, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
 } from '../src/opencodeHome.js';
 import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
 
@@ -190,11 +190,34 @@ describe('lane 러너의 opencode 홈', () => {
     expect(cfg.enabled_providers).toEqual(['harkroom-lane']);
     expect(cfg.model).toBe('harkroom-lane/example-model');
     expect(cfg.agent[OPENCODE_READONLY_AGENT].model).toBe('harkroom-lane/example-model');
+    expect(cfg.agent[OPENCODE_LANE_AGENT]).toEqual({ mode: 'primary', permission: OPENCODE_LANE_PERMISSION, model: 'harkroom-lane/example-model' });
     expect(text).not.toContain('gateway.example');
     expect(cfg.mcp).toEqual({ harkroom: expect.objectContaining({ type: 'local' }) });
     expect(cfg.mcp.gmail).toBeUndefined();
     // 사람 로그인을 링크하지 않는다(ⓒ).
     expect(await lstat(join(opencodeDirs(f.home).XDG_DATA_HOME, 'opencode', 'auth.json')).catch(() => null)).toBeNull();
+  });
+
+  // 1.18.32 실측: 규칙은 뒤의 것이 이긴다 · 쓰기 판정 경로는 git 뿌리 기준이라 앞에 무엇이 붙을 수 있다.
+  it('lane 에이전트 권한 표: 맨 앞이 `*` deny 이고 셸·웹·하위 에이전트·밖 폴더는 열지 않는다', () => {
+    const perm = OPENCODE_LANE_PERMISSION as Record<string, unknown>;
+    expect(Object.keys(perm)[0]).toBe('*');
+    expect(perm['*']).toBe('deny');
+    for (const k of ['bash', 'webfetch', 'websearch', 'task', 'external_directory', 'doom_loop', 'question']) expect(perm[k]).toBeUndefined();
+    expect(Object.values(perm).some((v) => v === 'ask' || (typeof v === 'object' && Object.values(v as object).includes('ask')))).toBe(false);
+    const edit = perm.edit as Record<string, string>;
+    expect(Object.keys(edit)[0]).toBe('*');
+    for (const x of ['.claude/*', 'CLAUDE.md', 'AGENTS.md', '.mcp.json', '.opencode/*', 'opencode.json', 'opencode.jsonc']) {
+      expect(edit[x]).toBe('deny');
+      expect(edit[`*/${x}`]).toBe('deny');
+    }
+  });
+
+  it('lane 이 아닌 러너에는 lane 에이전트를 적지 않는다', async () => {
+    const f = await fixture();
+    await ensureOpencodeHome({ opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData });
+    const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    expect(cfg.agent[OPENCODE_LANE_AGENT]).toBeUndefined();
   });
 
   // n6: 설정 파일은 에이전트당 하나다. 동시 턴이 서로 다른 모델이면 나중 턴이 앞 턴의 모델을 지우지 않아야 한다.

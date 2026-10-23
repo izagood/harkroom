@@ -45,6 +45,44 @@ const OPENCODE_APP: XdgApp = {
 /** 읽기 전용 멘션 턴이 고르는 에이전트 이름. `OPENCODE_PRESET.permission.readonly` 와 짝이다. */
 export const OPENCODE_READONLY_AGENT = 'harkroom-readonly';
 
+/**
+ * API 키 연결(provider lane) 멘션 턴이 고르는 에이전트 이름. `OPENCODE_PRESET.lanePermission.auto` 와 짝이다.
+ * lane 턴은 `--auto`(명시적 deny 밖은 모두 자동 허용)를 쓰지 않고 이 에이전트의 권한 표로만 돈다 — claude lane 의
+ * `dontAsk` + `LANE_BASE_ALLOW` 와 같은 기준이다(security, C안).
+ */
+export const OPENCODE_LANE_AGENT = 'harkroom-lane';
+
+/**
+ * lane 에이전트의 권한 표(opencode 1.18.32 실측). 규칙은 **뒤에 적힌 것이 이긴다** — 맨 앞의 `"*": "deny"` 가 기본
+ * 에이전트의 `ask`(작업 폴더 밖·doom_loop 등)까지 덮어서, 사람이 없는 턴이 묻는 창에 서지 않고 거절된다.
+ *
+ * - 읽기·찾기·할 일·스킬·서버가 판정하는 MCP 둘(`harkroom_*`·`avcs_*`)을 연다. `.env` 류 읽기는 닫는다.
+ * - 쓰기는 작업 폴더 안만: `external_directory` 가 deny 라 밖은 못 쓴다. 다음 턴의 도구·지시·MCP 를 바꾸는 파일
+ *   (`.claude/**`·`.opencode/**`·`CLAUDE.md`·`AGENTS.md`·`.mcp.json`·`opencode.json[c]`)은 안이어도 닫는다.
+ * - 셸·웹·하위 에이전트(`task`)는 닫는다 — claude lane 처럼 소유자가 카드로 연 규칙을 잇는 것은 D 계열에서 한다.
+ */
+/** lane 턴이 작업 폴더 안이어도 못 쓰는 자리 — 다음 턴의 도구·지시·MCP 를 바꾼다(claude 의 `LANE_DENY` 와 같은 결). */
+const LANE_PROTECTED_PATHS = ['.claude/*', '.opencode/*', 'CLAUDE.md', 'AGENTS.md', '.mcp.json', 'opencode.json', 'opencode.jsonc'] as const;
+
+export const OPENCODE_LANE_PERMISSION: Readonly<Record<string, unknown>> = {
+  '*': 'deny',
+  read: { '*': 'allow', '*.env': 'deny', '*.env.*': 'deny' },
+  glob: 'allow',
+  grep: 'allow',
+  list: 'allow',
+  todowrite: 'allow',
+  skill: 'allow',
+  // 쓰기 판정의 경로는 작업 폴더가 아니라 **git 뿌리** 기준이다 — 저장소가 아니면 `/` 부터의 경로가 온다(실측: `.claude/*` 만
+  // 적었더니 저장소 밖 작업 폴더의 `.claude/skills/x/SKILL.md` 가 쓰였다). 그래서 앞에 무엇이 붙어도 맞게 `*/` 꼴도 같이 둔다.
+  // `*` 는 `/` 도 넘는다. 하위 폴더의 같은 이름 파일도 닫힌다(하네스가 그것도 읽는다).
+  edit: {
+    '*': 'allow',
+    ...Object.fromEntries(LANE_PROTECTED_PATHS.flatMap((x) => [[x, 'deny'], [`*/${x}`, 'deny']])),
+  },
+  'harkroom_*': 'allow',
+  'avcs_*': 'allow',
+};
+
 /** 사람이 쓰는 opencode 설정 파일(provider 정의가 여기 있다). */
 export function sourceOpencodeConfig(
   env: NodeJS.ProcessEnv = process.env, home = homedir(), app: XdgApp = OPENCODE_APP,
@@ -284,6 +322,14 @@ export async function ensureOpencodeHome(opts: {
         // 모델을 안 적으면 그 에이전트만 기본(무료 티어)으로 떨어진다(실측).
         ...(typeof inherited.model === 'string' ? { model: inherited.model } : {}),
       },
+      // lane 턴만 고른다. lane 이 아닌 러너에는 적지 않는다(사람 provider 로 돌 에이전트가 아니다).
+      ...(opts.providerLane ? {
+        [OPENCODE_LANE_AGENT]: {
+          mode: 'primary',
+          permission: OPENCODE_LANE_PERMISSION,
+          ...(typeof inherited.model === 'string' ? { model: inherited.model } : {}),
+        },
+      } : {}),
     },
   };
   await mkdir(join(dirs.XDG_CONFIG_HOME, app.dir), { recursive: true });
