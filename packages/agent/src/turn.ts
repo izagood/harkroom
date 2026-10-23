@@ -330,12 +330,13 @@ const CLAUDE_PRESET: HarnessPreset = {
       // 권한 요청(스레드 f61af808): 소유자가 카드에서 승인한 규칙. 분류기를 끄지 않고 이 규칙만 정확히 더한다. deny(머지·설정
       // 파일)가 allow 보다 앞서므로 승인된 규칙이 그 둘을 덮지 못한다.
       ...safeToolAllows(toolAllows),
-      // API 키 연결 턴은 `dontAsk` 라 여기 없는 도구는 모두 거절된다(`lanePermission` 주석). 기본으로 여는 것은 도구 찾기·할 일 목록과
-      // 서버가 판정하는 MCP 둘뿐이다(작업 디렉터리 안 읽기는 dontAsk 가 규칙 없이 연다) — Bash·쓰기·웹은 소유자가 권한 요청 카드로 승인한 규칙(`toolAllows`)으로만 열린다.
+      // API 키 연결 턴은 `dontAsk` 라 여기 없는 도구는 모두 거절된다(`lanePermission` 주석). 기본으로 여는 것은 도구 찾기·
+      // 작업 폴더 안 쓰기·스킬과 서버가 판정하는 MCP 둘이다 — Bash·웹은 소유자가 권한 요청 카드로 승인한 규칙(`toolAllows`)으로만 열린다.
       ...(providerLane ? LANE_BASE_ALLOW : []),
     ];
     return [
       '--disallowedTools', ...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(claudeConfigDir),
+      ...(providerLane ? LANE_DENY : []),
       ...(allow.length ? ['--allowedTools', ...allow] : []),
       // 「정확한 명령」 hook(H③b) — **인라인 JSON** 이라 에이전트가 고칠 파일이 없다. 켜졌을 때만.
       ...(commandHook ? ['--settings', commandHookSettings(operatorBin)] : []),
@@ -344,14 +345,35 @@ const CLAUDE_PRESET: HarnessPreset = {
 };
 
 /**
- * API 키 연결(`dontAsk`) 턴에 기본으로 여는 도구. 지연 MCP 도구를 불러오는 `ToolSearch`, 할 일 목록, 그리고 **서버가
- * 판정하는** MCP 두 개(harkroom·avcs) — 각 MCP 호출의 권한은 서버가 계정으로 가른다.
+ * API 키 연결(`dontAsk`) 턴에 기본으로 여는 도구(소유자 결정 C안, 10-23 — 구독형 에이전트와 같은 일을 하게). 지연 MCP 도구를
+ * 불러오는 `ToolSearch`, 할 일 목록, **작업 폴더 안** 쓰기(`Edit(./**)`·`Write(./**)`), 스킬(`Skill`),
+ * 그리고 **서버가 판정하는** MCP 두 개(harkroom·avcs) — 각 MCP 호출의 권한은 서버가 계정으로 가른다.
+ *
+ * **쓰기는 경로 규칙으로만 연다**(2026-10-23 실측 claude 2.1.309, 가짜 gateway): `./**` 는 턴의 작업 폴더 기준이라 그 안의
+ * Write·Edit 는 돌고, 홈·`<작업 폴더>/../` 는 묻지 않고 거절된다. 규칙이 없으면 작업 폴더 안 Write 도 거절이다. 맨 이름
+ * `Edit`·`Write` 는 밖까지 연다 — 넣지 마라. `Skill` 은 이 판에서 규칙 없이도 돌지만 판이 바뀌어도 열려 있게 적어 둔다.
+ * 하위 에이전트는 여기 없다 — `LANE_DENY` 가 닫는다.
+ * Bash·`WebFetch`·`WebSearch` 는 넣지 않는다 — 셸과 밖으로 나가는 길은 소유자가 카드로 승인한 규칙만 연다(security, C안).
  *
  * **읽기 도구는 넣지 않는다**(security F1, 2026-10-23 실측 claude 2.1.309): dontAsk 는 규칙이 없어도 작업 디렉터리
  * 안의 `Read` 를 열고, 밖(같은 uid 의 홈·오퍼레이터 비밀)은 묻지 않고 거절한다. 맨 이름 `Read` 를 넣으면 그 밖까지
  * classifier 없이 열린다. `Glob`·`Grep` 은 이 판에 도구로 없다.
  */
-export const LANE_BASE_ALLOW: readonly string[] = ['ToolSearch', 'TodoWrite', 'mcp__harkroom', 'mcp__avcs'];
+export const LANE_BASE_ALLOW: readonly string[] = ['ToolSearch', 'TodoWrite', 'Edit(./**)', 'Write(./**)', 'Skill', 'mcp__harkroom', 'mcp__avcs'];
+
+/**
+ * API 키 연결 턴에서 막는 것(security, 2026-10-23 실측 claude 2.1.309 dontAsk). deny 는 allow·승인 규칙보다 앞선다.
+ *
+ * - `Agent`: 하위 에이전트는 이 턴의 허용 목록을 물려받지 않는다(실측) — 닫는다. deny 하면 하위 에이전트 안에서도 꺼진다.
+ * - 작업 폴더의 `.claude/**`(스킬·에이전트·명령 정의)·`CLAUDE.md`·`.mcp.json`: 다음 턴의 도구·지시·MCP 를 바꾸는 파일이다.
+ *   `Edit(./**)`·`Write(./**)` 를 열어도 이 셋은 못 쓴다. Edit deny 는 Write 도 막지만 둘 다 적어 둔다.
+ */
+export const LANE_DENY: readonly string[] = [
+  'Agent',
+  'Edit(./.claude/**)', 'Write(./.claude/**)',
+  'Edit(./CLAUDE.md)', 'Write(./CLAUDE.md)',
+  'Edit(./.mcp.json)', 'Write(./.mcp.json)',
+];
 
 /** claude 가 보는 harkroom MCP 의 `grant.delegate` 도구 이름(서버 이름 `harkroom`, 점은 밑줄로). */
 export const GRANT_DELEGATE_TOOL = 'mcp__harkroom__grant_delegate';
