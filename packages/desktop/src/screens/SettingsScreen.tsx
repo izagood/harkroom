@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AgentsSettings } from '../components/settings/AgentsSettings';
 import { ProviderAccountsSettings } from '../components/settings/ProviderAccountsSettings';
 import { AgentDefaultsSettings } from '../components/settings/AgentDefaultsSettings';
@@ -52,6 +52,10 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
   /** 다른 섹션에서 에이전트 하나를 가리켜 연 경우(Provider accounts 의 「계정 풀을 쓰지 않는 에이전트」 줄). */
   const [agentTarget, setAgentTarget] = useState<string | undefined>(undefined);
   const openAgent = (id: string) => { setAgentTarget(id); setSection('agents'); };
+  // 그 대상은 한 번 쓰고 잊는다(designer n1) — 섹션을 떠나거나 밖에서 새 대상(targetId)이 오면 지운다. 남겨 두면
+  // 설정이 열린 채 다른 화면에서 다른 에이전트를 가리켜도 `agentTarget ?? targetId` 가 옛 값을 고른다.
+  useEffect(() => { if (section !== 'agents') setAgentTarget(undefined); }, [section]);
+  useEffect(() => { setAgentTarget(undefined); }, [targetId]);
   const me = useActiveStore((s) => s.me);
   /**
    * 설정이 열린 채 커뮤니티가 바뀌면(알림 클릭은 설정을 닫지 않고 전환한다) 본문을 **새로 띄운다.**

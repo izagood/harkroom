@@ -201,6 +201,11 @@ export interface MentionSchedulerDeps {
    */
   secretLeases?: SecretLeases;
   /**
+   * 턴이 어떻게 끝났나(API 키 연결 n16). 끝까지 돌았으면 `(true)`, 하네스 API 오류로 끝났으면 `(false)`. 그 밖의 실패는 부르지 않는다 —
+   * 「키는 받았는데 그 턴은 API 오류」를 실행 탭이 초록으로 그리지 않게 하려는 것이다. API 키 연결 러너에서만 배선한다.
+   */
+  turnOutcome?(ok: boolean): void;
+  /**
    * (에이전트, 스레드) 턴 임대(서버 095, `threadClaims.ts`). 아래 스레드 잠금이 **이 프로세스 안**의 진실이라면
    * 이것은 같은 에이전트의 **러너들 사이**의 진실이다 — 앱 업데이트로 옛 러너와 새 러너가 겹쳐 도는 동안
    * 같은 스레드에 턴이 둘 뜨지 않게 한다. 못 잡으면 `blocked` 로 세고 다음 폴에서 다시 묻는다.
@@ -541,6 +546,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           `  ${mention.id} 계정 전환: ${from?.name ?? '(기본)'} → ${to?.name ?? '(기본)'} (이유: ${why ?? '알 수 없음'})`,
         ),
       );
+      deps.turnOutcome?.(true);
       await finish(entryId);
       attempts.delete(entryId);
       gateRequeues.delete(entryId);
@@ -549,6 +555,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       if (fence?.aborted) await noticeFenced();
       if (turn.stopRequestedAt) deps.hooks.stopRequested(turn.stopRequestedAt);
     } catch (err) {
+      if (typeof (err as { harnessApiError?: unknown } | null)?.harnessApiError === 'string') deps.turnOutcome?.(false);
       // **임대를 잃어 접혔다**(security L1) — 실패가 아니다. 이 스레드는 이제 넘겨받은 러너의 것이다:
       // 읽음 처리하지 않고(그쪽이 같은 inbox 를 본다), 재시도 회계도 통지도 하지 않는다. 오류 종류가 아니라
       // 신호로 가른다 — 접히는 길(SIGTERM·스폰 전 가드)이 여럿이라 어느 오류로 끝날지 정해져 있지 않다.

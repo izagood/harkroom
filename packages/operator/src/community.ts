@@ -9,6 +9,7 @@
  * 이 객체가 해석하는 프레임은 `assign`·`unassign` 둘뿐이다. 나머지(러너 프레임)는 단계 3 이
  * `onFrame` 으로 릴레이 다중화기에 넘긴다 — 여기서 해석하면 스펙 §8 근거 ②(어휘)가 깨진다.
  */
+import { PROVIDER_LANE_INTERACTIVE_REJECTION } from '@harkroom/shared/providerLane';
 import { createHash, randomUUID } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import type { OperatorCapabilities, OperatorStatus, RunnerExitReason } from '@harkroom/shared';
@@ -144,6 +145,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     send: (frame) => linkRef.current?.send(frame) ?? false,
     log: deps.log,
     ...(deps.localTerminal ? { extraCaps: ['local-terminal'] as const } : {}),
+    refuseInteractive: (runnerId) => (deps.reconciler.laneMismatchOfRunner(runnerId) ? PROVIDER_LANE_INTERACTIVE_REJECTION : null),
   });
 
   /**

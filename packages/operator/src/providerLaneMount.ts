@@ -23,6 +23,8 @@ const CAUSE_MAX = 128;
  */
 export interface ProviderLaneStatusBook {
   note(agentId: string, ok: boolean, code?: ProviderLaneFailureCode): void;
+  /** 그 턴의 끝(n16). 키 받기가 성공한 기록에만 붙는다 — 없으면 버린다. */
+  noteTurn(agentId: string, ok: boolean): void;
   snapshot(): Record<string, ProviderLaneStatus>;
 }
 
@@ -31,6 +33,12 @@ export function createProviderLaneStatusBook(now: () => number = Date.now): Prov
   return {
     note(agentId, ok, code) {
       book.set(agentId, { at: new Date(now()).toISOString(), ok, ...(ok ? {} : { code: providerLaneFailureCode(code) }) });
+    },
+    noteTurn(agentId, ok) {
+      const cur = book.get(agentId);
+      if (!cur?.ok) return;
+      if (ok) { const { apiFailed: _, ...rest } = cur; book.set(agentId, rest); }
+      else book.set(agentId, { ...cur, apiFailed: true });
     },
     snapshot() {
       return Object.fromEntries(book);

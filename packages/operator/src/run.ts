@@ -402,6 +402,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       if (notice.type === 'secret.leaseEnded') { void turnSecrets.leaseEnded(runnerId, notice.cause); return; }
       // API 키 연결의 그 턴 결과 — 실행 탭 「마지막 시도」 줄의 출처(2a). 코드는 링크가 허용 목록으로 이미 걸렀다.
       if (notice.type === 'providerLane.mode') { for (const c of communities) if (c.knowsAgent(agentId)) c.noteRunnerLane?.(runnerId, notice.on); return; }
+      if (notice.type === 'providerLane.turn') { providerLaneStatus.noteTurn(agentId, notice.ok); return; }
       if (notice.type === 'providerLane.result') { providerLaneStatus.note(agentId, notice.ok, notice.code); return; }
       if (notice.type === 'mcp.authRejected') {
         // 하네스가 우리가 구운 Authorization 헤더를 거절당했다. 보고는 신호일 뿐이라 판단은

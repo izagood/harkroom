@@ -7,6 +7,7 @@ import { threadRowFor } from '../lib/threadModels';
 import { AgentModelChip } from './AgentModelChip';
 import { GateTerminalButton } from './GateTerminalButton';
 import { laneCodeName, laneCodeText } from '../lib/laneCodes';
+import { useLocalLane } from '../lib/localLanes';
 import type { SectionId } from './settings/sections';
 
 /**
@@ -44,6 +45,8 @@ export function FailureCard({ message, inThread = false, onOpenSettings }: {
   // 이 스레드에 그 에이전트의 모델 지정이 살아 있나(079). 있으면 실패 원인일 수 있다 — 하네스가
   // 그 모델을 거절했으면 러너가 재시도하지 않고 여기로 온다(결정 6).
   const modelRow = useActiveStore((s) => threadRowFor(s.threadAgentModels[rootId], message.authorId));
+  // 훅은 아래 `return null` 보다 먼저다 — 이 맥에서 API 키로 도는 에이전트인가(n17).
+  const localLane = useLocalLane(message.authorId);
   if (!failure) return null;
   /*
     **표지로 가른다**(designer 검토 1). 러너가 스레드 지정 모델 거절을 알릴 때 `code` 를 싣는다 —
@@ -62,6 +65,11 @@ export function FailureCard({ message, inThread = false, onOpenSettings }: {
     사람 말로 바꾸고, 계정 로그인으로 넘어가지 않는다는 것을 같은 줄에 둔다. 고칠 곳은 이 맥의 에이전트 설정이다.
   */
   const lane = failure.code === 'provider_lane';
+  /*
+    **API 키로 도는 에이전트의 그 밖의 실패**(designer n17) — 키는 받았는데 그 턴이 API 오류 등으로 끝났다. 가장 흔한 원인이 API 주소라
+    그 연결을 가리키는 한 줄과 [에이전트 설정 열기]를 붙인다. 이 맥 설정만 안다(터미널 꺼짐과 같은 한계) — 서버 표지는 바꾸지 않는다.
+  */
+  const laneAgent = localLane !== null && !lane && !gate;
   const scope = inThread ? `thread:${rootId}` : message.channelId;
 
   /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
@@ -94,12 +102,13 @@ export function FailureCard({ message, inThread = false, onOpenSettings }: {
         /* 이유는 **사람이 읽는 말**이다 — 스택트레이스가 아니다. 자세한 것은 터미널이 답한다. */
         failure.reason && <p className="px-3 pt-1 text-body text-fg-muted">{failure.reason}</p>
       )}
+      {laneAgent && <p data-testid="lane-agent-hint" className="px-3 pt-1 text-meta text-fg-muted">{t('agents.lane.failHint')}</p>}
 
       <div className="flex items-center gap-2 p-2 pt-1.5">
         {/* API 키 연결 에이전트는 아직 터미널을 못 연다 — 눌러도 안 되는 문을 그리지 않는다. 다른 자리(참여자 메뉴·터미널 칩)는
             「꺼 두고 보이기」지만, 실패 카드는 터미널 진입점이 아니라 고칠 곳([에이전트 설정 열기])을 가리키는 자리라 숨긴다. */}
         {!lane && <TerminalChip account={author} message={message} />}
-        {lane && onOpenSettings && (
+        {(lane || laneAgent) && onOpenSettings && (
           <button
             type="button"
             data-testid="lane-open-settings"

@@ -1139,33 +1139,37 @@ export function AgentGrid<T extends AgentCardSubject>({
                       (design.md §4). 설정 화면은 `AgentView` 를 넘기므로 늘 있다. */}
                   {a.harness !== undefined && (
                     <InfoRow label={t('grid.card.harness')}>
-                      <span className="block truncate">{a.harness}</span>
+                      {/* API 키 연결(이 맥 설정, designer v3 ③)은 하네스 값 **옆**에 둔다 — 줄 사이에 끼면 표 모양이 끊긴다(n12).
+                          칩은 보라 하나다. 대기 중이면 ⏳(n13), 마지막 키 받기가 실패였으면 빨간 점 칩을 곁에 둔다. */}
+                      <span className="flex min-w-0 flex-wrap items-center gap-1">
+                        <span className="truncate">{a.harness}</span>
+                        {lanes.has(a.id) && (() => {
+                          const lane = lanes.get(a.id)!;
+                          const st = lane.status;
+                          return (
+                            <>
+                              <span data-testid={`agent-lane-chip-${a.handle}`}
+                                className={`rounded-full bg-surface-lane px-1.5 text-meta font-semibold text-fg-lane ${lane.pending ? 'opacity-70' : ''}`}
+                                title={lane.pending ? t('agents.lane.pending') : undefined}>
+                                {lane.pending ? `⏳ ${t('agents.lane.chipPending')}` : t('agents.lane.chip')}
+                              </span>
+                              {st && !st.ok && (
+                                <span data-testid={`agent-lane-fail-${a.handle}`} title={laneCodeText(t, st.code)}
+                                  className="inline-flex items-center gap-1 rounded-full bg-danger-surface px-1.5 text-meta font-semibold text-state-stuck">
+                                  <span aria-hidden="true" className="block h-1.5 w-1.5 rounded-full bg-state-stuck" />
+                                  {t('agents.lane.cantStart')}
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </span>
                       {/* **모델이 `null` 이면 `하네스 기본값`**(`AgentConfig.model` 의 계약).
                           빈 칸으로 두면 "모델을 모른다"로 읽히는데, `null` 은 모르는 것이
                           아니라 **하네스가 고른다는 결정**이다. */}
                       <span className="block truncate text-fg-subtle">
                         {a.model ?? t('grid.card.harnessDefault')}
                       </span>
-                      {/* API 키 연결(이 맥 설정, designer v3 ③). 칩은 보라 하나 — 상태색을 쓰지 않는다. 마지막 키 받기가
-                          실패였으면 빨간 점 칩을 곁에 둔다(실패 카드·실행 탭과 같은 코드→문장 표). */}
-                      {lanes.has(a.id) && (() => {
-                        const st = lanes.get(a.id)!.status;
-                        return (
-                          <span className="mt-0.5 flex flex-wrap items-center gap-1">
-                            <span data-testid={`agent-lane-chip-${a.handle}`}
-                              className="rounded-full bg-surface-lane px-1.5 text-meta font-semibold text-fg-lane">
-                              {t('agents.lane.chip')}
-                            </span>
-                            {st && !st.ok && (
-                              <span data-testid={`agent-lane-fail-${a.handle}`} title={laneCodeText(t, st.code)}
-                                className="inline-flex items-center gap-1 rounded-full bg-danger-surface px-1.5 text-meta font-semibold text-state-stuck">
-                                <span aria-hidden="true" className="block h-1.5 w-1.5 rounded-full bg-state-stuck" />
-                                {t('agents.lane.cantStart')}
-                              </span>
-                            )}
-                          </span>
-                        );
-                      })()}
                     </InfoRow>
                   )}
                   {a.runnerVersion !== undefined && (

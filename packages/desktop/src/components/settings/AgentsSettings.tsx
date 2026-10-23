@@ -2060,8 +2060,10 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                 )}
                 {/* API 키 연결(designer v3 ③): 상세 머리에도 격자 카드와 같은 보라 칩. 이 맥 로컬 설정에서만 안다. */}
                 {providerLane.lane && (
-                  <span data-testid="agent-header-lane" className="rounded-full bg-surface-lane px-1.5 text-meta font-semibold text-fg-lane">
-                    {t('agents.lane.chip')}
+                  <span data-testid="agent-header-lane" title={providerLane.pending ? t('agents.lane.pending') : undefined}
+                    className={`rounded-full bg-surface-lane px-1.5 text-meta font-semibold text-fg-lane ${providerLane.pending ? 'opacity-70' : ''}`}>
+                    {/* 대기 중이면 아직 적용 전이다 — 실행 탭을 열지 않아도 알게(designer n13). */}
+                    {providerLane.pending ? `⏳ ${t('agents.lane.chipPending')}` : t('agents.lane.chip')}
                   </span>
                 )}
                 {runnerStates[selected.id]?.status === 'failed' && (
@@ -2706,6 +2708,7 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                       stdioServers={stdioServers}
                       label={label}
                       onOpenSecrets={onOpenSection ? () => onOpenSection('secrets') : undefined}
+                      onOpenPermissions={() => setDetailTab('permissions')}
                       onSaved={async (next) => {
                         // opencode 는 lane 모델을 `harkroom-lane/<id>` 로만 부른다 — 켤 때 모델 칸을 그 모양으로 채운다.
                         if (!next || draft.harness !== 'opencode') return;
@@ -2753,7 +2756,7 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
 
                 </>}
                 secondary={selected && (isAdmin || isOwner) ? (<>
-              {(providerLane.lane || providerLane.pending) && <ModelConnectionStatus lane={providerLane} />}
+              {(providerLane.lane || providerLane.pending) && <ModelConnectionStatus lane={providerLane} onRestart={() => void restartRunner()} />}
               {/* 스펙 2026-09-20 §3: **어디서 돌리나.** 앱은 러너를 띄우지 않는다 — 이 고르개가
                   서버에 배정을 쓰면 그 오퍼레이터가 러너를 띄운다. 러너 실행·중지 절 바로 뒤에
                   두는 이유: 그 절의 '실행'이 실제로 무엇을 켜는지가 이 배정으로 정해진다. */}

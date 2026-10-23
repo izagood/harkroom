@@ -53,3 +53,10 @@ describe('providerLane.mode 통지(C1)', () => {
     expect(isRunnerLinkNotice({ type: 'providerLane.mode' })).toBe(false);
   });
 });
+
+describe('providerLane.turn 통지(n16)', () => {
+  it('ok 는 boolean 만', () => {
+    expect(isRunnerLinkNotice({ type: 'providerLane.turn', ok: false })).toBe(true);
+    expect(isRunnerLinkNotice({ type: 'providerLane.turn', ok: 'no' })).toBe(false);
+  });
+});

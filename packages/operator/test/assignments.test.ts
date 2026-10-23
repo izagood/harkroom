@@ -383,6 +383,14 @@ describe('API 키 연결 — 로컬 설정이 바뀌면', () => {
     r.noteRunnerLane('r-adopted', true);
     expect(r.laneMismatch('r-adopted', 'a-1')).toBe(false);
     expect(r.laneMismatch('r-any', 'a-unassigned')).toBe(false);
+    // 러너 id 로만 묻는 판정(터미널 열기 문): 이 조정기가 띄운 러너면 그 에이전트로, 모르는 러너면 false.
+    const h3 = harness();
+    const r3 = createAssignmentReconciler(h3.deps);
+    await r3.onAssign('https://example.com', def(), {});
+    const id3 = h3.spawned[0]!.env.HARKROOM_RUNNER_ID!;
+    r3.setLocal('a-1', { providerLane: lane });
+    expect(r3.laneMismatchOfRunner(id3)).toBe(true);
+    expect(r3.laneMismatchOfRunner('r-unknown')).toBe(false);
     // 앱 「적용 대기」도 같은 판정이다(designer s1) — 살아 있는데 모드를 모르는 러너(앞 세대, 이 조정기가 안 띄움)는 대기로 보인다.
     const h2 = harness();
     const r2 = createAssignmentReconciler(h2.deps);

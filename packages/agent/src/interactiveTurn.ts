@@ -17,6 +17,7 @@
 // **exit 을 기다리지 않는다.** 이 함수의 반환은 "떴다"이지 "끝났다"가 아니다 — 서버는
 // 티켓을 발급해야 하고 사람은 그 티켓으로 attach 한다. 턴의 끝은 둘이다(스펙 §5-2 결정 5):
 // 1차 exit(사람이 하네스 안에서 종료), 2차 고아 회수(viewer 0 → 유예 → SIGTERM→SIGKILL).
+import { PROVIDER_LANE_INTERACTIVE_REJECTION } from '@harkroom/shared/providerLane';
 import { resolveTurnModel, rootFromThreadKey, type TurnModel } from './threadModel.js';
 import { randomUUID } from 'node:crypto';
 import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
@@ -52,7 +53,7 @@ const NO_RELAY_REJECTION = '이 스레드에 멘션 턴이 진행 중이지만 �
 const MENTION_STARTING_REJECTION = '이 스레드에 멘션 턴이 막 시작되는 중이다 — 잠시 뒤 다시 열어라';
 
 /** 전용 제공사 경로 에이전트의 터미널 열기 거절(security F1). 사람 화면에 그대로 뜬다 — 코드는 앞에 붙여 앱이 문장을 고를 수 있게. */
-export const PROVIDER_LANE_INTERACTIVE_REJECTION = 'interactive_unsupported: API 키로 도는 에이전트는 아직 터미널 열기를 지원하지 않는다';
+export { PROVIDER_LANE_INTERACTIVE_REJECTION };
 
 /**
  * codex 이어받기 거절(#384 운영자 결정). 이 문구는 relay 의 `interactive.error` 를 지나

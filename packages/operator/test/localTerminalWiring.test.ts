@@ -16,7 +16,7 @@ const W2 = 'b'.repeat(32);
 const view = (sessionId: string): AgentSessionView => ({ sessionId } as unknown as AgentSessionView);
 
 const reconciler: AssignmentReconciler = {
-  onAssign: async () => 'spawned', onUnassign: async () => {}, restart: () => true, onRunnerExit: () => {}, announce: () => [], setLocal: () => 'none' as const, noteRunnerLane: () => {}, laneMismatch: () => false, lanePending: () => ({}),
+  onAssign: async () => 'spawned', onUnassign: async () => {}, restart: () => true, onRunnerExit: () => {}, announce: () => [], setLocal: () => 'none' as const, noteRunnerLane: () => {}, laneMismatch: () => false, laneMismatchOfRunner: () => false, lanePending: () => ({}),
 };
 
 function hubWithClock() {

@@ -41,6 +41,8 @@ export interface ProviderLaneState {
    * 같은 판정을 그대로 받는다(designer s1) — 앱이 따로 셈하지 않는다.
    */
   pending: boolean;
+  /** 「적용 대기」가 처음 보인 시각(ms) — 오래가면 화면이 [재시작]을 낸다(n14). 대기가 아니면 null. */
+  pendingSince: number | null;
   /** null = 아직 안 읽음. */
   secrets: LaneSecretOption[] | null;
   /** 비밀 목록 자체를 못 읽었다(빈 목록과 다르다). */
@@ -57,6 +59,7 @@ export function useProviderLane(agentId: string | null): ProviderLaneState {
   const [lane, setLane] = useState<ProviderLaneConfig | null>(null);
   const [status, setStatus] = useState<ProviderLaneStatus | null>(null);
   const [pending, setPending] = useState(false);
+  const [pendingSince, setPendingSince] = useState<number | null>(null);
   const [secrets, setSecrets] = useState<LaneSecretOption[] | null>(null);
   const [secretsError, setSecretsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +78,9 @@ export function useProviderLane(agentId: string | null): ProviderLaneState {
         setPresent(entry !== undefined);
         setLane(entry?.providerLane ?? null);
         setStatus(r.laneStatus?.[agentId] ?? null);
-        setPending(r.lanePending?.[agentId] === true);
+        const nextPending = r.lanePending?.[agentId] === true;
+        setPending(nextPending);
+        setPendingSince((prev) => (nextPending ? (prev ?? Date.now()) : null));
         setError(null);
       })
       .catch((e: unknown) => { if (live) { setAvailable(false); setError(e instanceof Error ? e.message : String(e)); } });
@@ -125,5 +130,5 @@ export function useProviderLane(agentId: string | null): ProviderLaneState {
     await setLocalAgentProviderLane(baseUrl, agentId, next);
   }, [agentId, baseUrl]);
 
-  return { available, present, lane, status, pending, secrets, secretsError, error, reload, save };
+  return { available, present, lane, status, pending, pendingSince, secrets, secretsError, error, reload, save };
 }
