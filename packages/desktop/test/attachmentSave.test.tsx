@@ -432,6 +432,14 @@ describe('ApiClient.fetchAttachment 진행률', () => {
     expect(seen).toEqual([null]);
   });
 
+  it('404 는 attachment_missing, 그 밖의 실패는 attachment_failed 다', async () => {
+    const api = new ApiClient('http://x', 'tok');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, headers: new Headers() })));
+    await expect(api.fetchAttachment('a1')).rejects.toMatchObject({ status: 404, code: 'attachment_missing' });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, headers: new Headers() })));
+    await expect(api.fetchAttachment('a1')).rejects.toMatchObject({ status: 500, code: 'attachment_failed' });
+  });
+
   it('진행률을 원하지 않으면 예전처럼 blob() 이다', async () => {
     const b = new Blob(['x']);
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, headers: new Headers(), body: null, blob: async () => b })));
