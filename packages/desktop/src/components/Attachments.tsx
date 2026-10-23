@@ -386,7 +386,8 @@ function FileChip({ attachment, failed }: { attachment: AttachmentRow; failed: b
           )}
           <button
             type="button"
-            className="shrink-0 rounded-sm px-1 text-meta text-fg-muted hover:bg-surface-sunken hover:text-fg"
+            // 24×24 — 칩과 4px 떨어진 작은 글자 버튼이면 칩을 누르려다 취소를 누른다(designer #1476, WCAG 2.5.8).
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-meta text-fg-muted hover:bg-surface-sunken hover:text-fg"
             onClick={() => getController().cancelAttachmentSave(attachment.id)}
             aria-label={t('message.attachment.cancelSave', { filename: attachment.filename })}
             title={t('message.attachment.cancelSave', { filename: attachment.filename })}
