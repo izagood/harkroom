@@ -247,6 +247,84 @@ class StringsEn implements Strings {
   String get askReplied => 'Answered in text';
 
   @override
+  String get permMandateChip => 'Mandate';
+
+  @override
+  String permMandateStarted(String date) => 'started $date';
+
+  @override
+  String get permAskAddLine => 'Add a line to the mandate?';
+
+  @override
+  String get permAskNewMandate => 'Start a mandate and add a line?';
+
+  @override
+  String get permApproveMandate => 'For this mandate';
+
+  @override
+  String get permApproveNewMandate => 'Start a mandate from this thread and add';
+
+  @override
+  String get permApproveOnce => 'Just this once';
+
+  @override
+  String get permDeny => 'Deny';
+
+  @override
+  String get permOnceOperatorPicks => 'The operator on the running device picks the account';
+
+  @override
+  String get permStateAdded => 'Added to the mandate';
+
+  @override
+  String get permStateOnce => 'Approved just this once';
+
+  @override
+  String permStateOnceGh(String gh) => 'Approved just this once · gh $gh';
+
+  @override
+  String get permStateDenied => 'Denied';
+
+  @override
+  String get permStateExpired => 'Expired · the agent has to ask again';
+
+  @override
+  String get permStateSuperseded => 'Replaced by a new card';
+
+  @override
+  String get permOpenNewCard => 'Open the new card';
+
+  @override
+  String get permStateMandateEnded => 'The mandate has ended · nothing more to decide';
+
+  @override
+  String get permReadOnly => 'Only the owner can decide';
+
+  @override
+  String get permViaChat => 'answered in chat';
+
+  @override
+  String get permMirrorNeutral => 'Permission request · check and decide in the original card\'s channel';
+
+  @override
+  String get permOpenOriginal => 'Open the original card';
+
+  @override
+  String get permMirrorOf => 'Mirror · from the original card';
+
+  @override
+  String permLimitUses(int n) => n == 1 ? 'once' : '$n uses';
+
+  @override
+  String permLimitDays(int n) => '$n days';
+
+  @override
+  String permLimitHours(int n) => '$n h';
+
+  @override
+  String get permLimitCi => 'CI failure ignored';
+
+  @override
   String get askSuperseded => 'Replaced by a new question';
 
   @override

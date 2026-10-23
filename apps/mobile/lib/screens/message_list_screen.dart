@@ -310,7 +310,7 @@ Widget buildFeedItem(
     final bundle = ask == null ? AskBundleMeta.read(m.meta) : null;
     final report = ask == null && bundle == null ? ReportMeta.read(m.meta) : null;
     final failure = ask == null && bundle == null && report == null ? FailureMeta.read(m.meta) : null;
-    final onceNumber = ask != null ? MergeOnceNote.pendingNumber(m.meta, context.app.me?.id) : null;
+    final onceNumber = ask != null && !m.meta.containsKey('permissionRequest') ? MergeOnceNote.pendingNumber(m.meta, context.app.me?.id) : null;
     final Widget? card = ask != null
         ? (onceNumber == null
             ? AskCard(message: m, ask: ask)

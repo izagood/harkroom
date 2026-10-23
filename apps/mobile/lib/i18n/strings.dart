@@ -274,6 +274,84 @@ abstract class Strings {
   /// 첨부가 올라가는 동안 잠긴 보내기.
   String get sendWaitsForUpload;
 
+  /// 권한 카드(W4 위임장).
+  String get permMandateChip;
+
+  /// 권한 카드(W4 위임장).
+  String permMandateStarted(String date);
+
+  /// 권한 카드(W4 위임장).
+  String get permAskAddLine;
+
+  /// 권한 카드(W4 위임장).
+  String get permAskNewMandate;
+
+  /// 권한 카드(W4 위임장).
+  String get permApproveMandate;
+
+  /// 권한 카드(W4 위임장).
+  String get permApproveNewMandate;
+
+  /// 권한 카드(W4 위임장).
+  String get permApproveOnce;
+
+  /// 권한 카드(W4 위임장).
+  String get permDeny;
+
+  /// 권한 카드(W4 위임장).
+  String get permOnceOperatorPicks;
+
+  /// 권한 카드(W4 위임장).
+  String get permStateAdded;
+
+  /// 권한 카드(W4 위임장).
+  String get permStateOnce;
+
+  /// 권한 카드(W4 위임장).
+  String permStateOnceGh(String gh);
+
+  /// 권한 카드(W4 위임장).
+  String get permStateDenied;
+
+  /// 권한 카드(W4 위임장).
+  String get permStateExpired;
+
+  /// 권한 카드(W4 위임장).
+  String get permStateSuperseded;
+
+  /// 권한 카드(W4 위임장).
+  String get permOpenNewCard;
+
+  /// 권한 카드(W4 위임장).
+  String get permStateMandateEnded;
+
+  /// 권한 카드(W4 위임장).
+  String get permReadOnly;
+
+  /// 권한 카드(W4 위임장).
+  String get permViaChat;
+
+  /// 권한 카드(W4 위임장).
+  String get permMirrorNeutral;
+
+  /// 권한 카드(W4 위임장).
+  String get permOpenOriginal;
+
+  /// 권한 카드(W4 위임장).
+  String get permMirrorOf;
+
+  /// 권한 카드(W4 위임장).
+  String permLimitUses(int n);
+
+  /// 권한 카드(W4 위임장).
+  String permLimitDays(int n);
+
+  /// 권한 카드(W4 위임장).
+  String permLimitHours(int n);
+
+  /// 권한 카드(W4 위임장).
+  String get permLimitCi;
+
   /// ask 답 실패 토스트.
   String get askFailed;
 
@@ -1281,6 +1359,27 @@ Map<String, String> stringsToMap(Strings s) => {
       'discard': s.discard,
       'sendWaitsForUpload': s.sendWaitsForUpload,
       'askFailed': s.askFailed,
+      'permMandateChip': s.permMandateChip,
+      'permAskAddLine': s.permAskAddLine,
+      'permAskNewMandate': s.permAskNewMandate,
+      'permApproveMandate': s.permApproveMandate,
+      'permApproveNewMandate': s.permApproveNewMandate,
+      'permApproveOnce': s.permApproveOnce,
+      'permDeny': s.permDeny,
+      'permOnceOperatorPicks': s.permOnceOperatorPicks,
+      'permStateAdded': s.permStateAdded,
+      'permStateOnce': s.permStateOnce,
+      'permStateDenied': s.permStateDenied,
+      'permStateExpired': s.permStateExpired,
+      'permStateSuperseded': s.permStateSuperseded,
+      'permOpenNewCard': s.permOpenNewCard,
+      'permStateMandateEnded': s.permStateMandateEnded,
+      'permReadOnly': s.permReadOnly,
+      'permViaChat': s.permViaChat,
+      'permMirrorNeutral': s.permMirrorNeutral,
+      'permOpenOriginal': s.permOpenOriginal,
+      'permMirrorOf': s.permMirrorOf,
+      'permLimitCi': s.permLimitCi,
       'mergeOnceButton': s.mergeOnceButton,
       'mergeOnceSheetTitle': s.mergeOnceSheetTitle,
       'mergeOnceSheetBody': s.mergeOnceSheetBody,

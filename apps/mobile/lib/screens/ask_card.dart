@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../api/ask.dart';
 import '../api/models.dart';
+import '../api/permission_card.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../ui/states.dart';
 import '../ui/tokens.dart';
+import 'message_link.dart';
+import 'permission_card_view.dart';
 
 /// 선택 요청을 **누를 수 있는 것**으로 그린다.
 ///
@@ -53,6 +56,8 @@ class _AskCardState extends State<AskCard> {
     final app = context.app;
     final ask = widget.ask;
     final theme = Theme.of(context);
+    final perm = PermissionCardInfo.read(widget.message.meta);
+    if (perm != null) return _permission(context, app, ask, perm);
 
     final mine = switch (ask.to) {
       AskAnyHuman() => true,
@@ -171,6 +176,197 @@ class _AskCardState extends State<AskCard> {
       ),
     );
   }
+
+  /// 권한 카드(W4 위임장, 시안 §5 모바일 375pt) — 칩 · 줄 상자 · 세로로 쌓은 44pt 버튼 · 끝난 상태.
+  /// 원본과 진짜 거울은 같은 카드다. 중립 거울은 중립 한 줄과 원본 링크만 그린다.
+  Widget _permission(BuildContext context, AppState app, AskMeta ask, PermissionCardInfo perm) {
+    final t = context.t;
+    final tok = context.tokens;
+    final theme = Theme.of(context);
+    final id = widget.message.id;
+
+    if (perm.neutral) {
+      return Card(
+        key: Key('ask-$id'),
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(t.permMirrorNeutral, key: Key('perm-neutral-$id'), style: theme.textTheme.bodyMedium),
+              const SizedBox(height: 4),
+              TextButton(
+                key: Key('perm-open-original-$id'),
+                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 44)),
+                onPressed: () => openMessageLink(context, perm.mirrorRootId!),
+                child: Text('↪ ${t.permOpenOriginal}'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final meId = app.me?.id;
+    final owner = perm.ownerId == null || meId == null || perm.ownerId == meId;
+    final ended = perm.mandate?.ended ?? false;
+    final open = ask.isOpen && (perm.status == null || perm.status == 'pending') && !ended;
+    final canPickLate = ask.isReplied && owner && _pickAnyway && !ended;
+    final showOptions = (open || canPickLate) && owner;
+
+    // 선택지 — 서버가 실은 순서대로. 머지 거절 카드의 [이번 한 번]은 서버가 선택지에 싣지 않는다(once 칸으로 그린다).
+    final ids = [for (final o in ask.options) o.id];
+    final hasMandateOpt = ids.contains(permOptApproveMandate) || ids.contains(permOptApproveNewMandate);
+    final order = <String>[
+      if (ids.contains(permOptApproveMandate)) permOptApproveMandate,
+      if (ids.contains(permOptApproveNewMandate)) permOptApproveNewMandate,
+      if (ids.contains(permOptApproveOnce) || perm.once != null) permOptApproveOnce,
+    ];
+    String label(String o) => switch (o) {
+          permOptApproveMandate => t.permApproveMandate,
+          permOptApproveNewMandate => t.permApproveNewMandate,
+          permOptApproveOnce => perm.once == null
+              ? t.permApproveOnce
+              : '${perm.once!.ci ? t.mergeOnceCiButton : t.permApproveOnce} (PR #${perm.once!.number})',
+          _ => o,
+        };
+    final primary = order.isEmpty ? null : order.first;
+    final shownLimits = primary == null ? null : perm.line?.limits[primary];
+
+    final head = open
+        ? '${hasMandateOpt && !ids.contains(permOptApproveMandate) ? t.permAskNewMandate : t.permAskAddLine}${owner ? ' · ${t.askToYou}' : ''}'
+        : null;
+
+    String? endedText;
+    final s = perm.status;
+    final chose = ask.answeredWith;
+    if (ended && (s == null || s == 'pending')) {
+      endedText = t.permStateMandateEnded;
+    } else if (s == 'denied' || chose == permOptDeny) {
+      endedText = t.permStateDenied;
+    } else if (s == 'approved_once' || chose == permOptApproveOnce || (s == 'granted' && perm.kind == 'command')) {
+      endedText = perm.ghUserUsed != null ? t.permStateOnceGh(perm.ghUserUsed!) : t.permStateOnce;
+    } else if (s == 'granted' || chose != null) {
+      endedText = t.permStateAdded;
+    } else if (s == 'superseded' || ask.isSuperseded) {
+      endedText = t.permStateSuperseded;
+    } else if (s == 'expired' || ask.isExpired) {
+      endedText = t.permStateExpired;
+    } else if (ask.isReplied) {
+      endedText = t.askReplied;
+    } else if (!open) {
+      endedText = t.askClosed;
+    }
+    if (endedText != null && perm.decidedViaChat) endedText = '$endedText · ${t.permViaChat}';
+    final ownerAcc = perm.mandate?.ownerId == null ? null : app.accounts[perm.mandate!.ownerId!];
+
+    return Card(
+      key: Key('ask-$id'),
+      margin: EdgeInsets.zero,
+      color: open && owner ? theme.colorScheme.primaryContainer : null,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (perm.isMirror) ...[
+              Row(children: [
+                Flexible(child: Text('↪ ${t.permMirrorOf}', style: theme.textTheme.labelSmall?.copyWith(color: tok.fgMuted))),
+                TextButton(
+                  key: Key('perm-open-original-$id'),
+                  style: TextButton.styleFrom(minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 6)),
+                  onPressed: () => openMessageLink(context, perm.mirrorRootId!),
+                  child: Text(t.permOpenOriginal),
+                ),
+              ]),
+            ],
+            Text(
+              head ?? endedText ?? '',
+              key: Key('ask-head-$id'),
+              style: theme.textTheme.labelSmall?.copyWith(fontWeight: head == null ? FontWeight.w600 : null),
+            ),
+            if (perm.mandate != null) ...[
+              const SizedBox(height: 6),
+              MandateChip(mandate: perm.mandate!, ownerHandle: ownerAcc?.handle),
+            ],
+            if (perm.line != null && s != 'superseded' && !ask.isSuperseded) ...[
+              const SizedBox(height: 8),
+              PermissionLineBox(
+                line: perm.line!,
+                limits: shownLimits,
+                once: primary == permOptApproveOnce ? perm.once : null,
+              ),
+            ],
+            if (ask.prompt != null && open) ...[
+              const SizedBox(height: 6),
+              Text(ask.prompt!, style: theme.textTheme.bodyMedium),
+            ],
+            const SizedBox(height: 10),
+            if (open && !owner)
+              Text(t.permReadOnly, key: Key('perm-readonly-$id'), style: theme.textTheme.bodySmall?.copyWith(color: tok.fgMuted)),
+            if (ask.isReplied && owner && !_pickAnyway && !ended && (s == null || s == 'pending'))
+              TextButton(
+                key: Key('ask-pick-anyway-$id'),
+                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 44)),
+                onPressed: () => setState(() => _pickAnyway = true),
+                child: Text(t.askPickAnyway(order.length + 1)),
+              ),
+            if (showOptions) ...[
+              for (final o in order)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: o == primary
+                        ? FilledButton(
+                            key: Key('ask-option-$id-$o'),
+                            onPressed: _busy ? null : () => _run(() => app.answerAsk(widget.message.channelId, id, o)),
+                            child: Text(label(o)),
+                          )
+                        : OutlinedButton(
+                            key: Key('ask-option-$id-$o'),
+                            style: OutlinedButton.styleFrom(backgroundColor: tok.surface),
+                            onPressed: _busy ? null : () => _run(() => app.answerAsk(widget.message.channelId, id, o)),
+                            child: Text(label(o)),
+                          ),
+                  ),
+                ),
+              if (perm.once != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(t.permOnceOperatorPicks, style: theme.textTheme.bodySmall?.copyWith(color: tok.fgMuted)),
+                ),
+              SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: TextButton(
+                  key: Key('ask-option-$id-$permOptDeny'),
+                  style: TextButton.styleFrom(foregroundColor: tok.danger),
+                  onPressed: _busy ? null : () => _run(() => app.answerAsk(widget.message.channelId, id, permOptDeny)),
+                  child: Text(t.permDeny),
+                ),
+              ),
+            ] else if (head != null && endedText != null || head == null && !open) ...[
+              if (head != null && endedText != null)
+                Text(endedText, key: Key('ask-chosen-$id'), style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+              if (head == null && endedText != null)
+                Text(endedText, key: Key('ask-chosen-$id'), style: theme.textTheme.bodySmall?.copyWith(color: tok.fgMuted)),
+              if ((s == 'superseded' || ask.isSuperseded) && perm.supersededByMessageId != null)
+                TextButton(
+                  key: Key('perm-open-new-$id'),
+                  style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 44)),
+                  onPressed: () => openMessageLink(context, perm.supersededByMessageId!),
+                  child: Text('→ ${t.permOpenNewCard}'),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
 
   /// 카드를 닫은 사람 글의 첫 줄(80자까지, 데스크톱 `quoteLine` 과 같다). 읽어 둔 목록에
   /// 없거나 **다른 스레드의 글**이면 `null` — 인용 줄만 빠진다. 지운 글은 목록에서 빠지므로

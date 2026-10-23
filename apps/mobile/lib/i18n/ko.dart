@@ -246,6 +246,84 @@ class StringsKo implements Strings {
   String get askReplied => '글로 답했다';
 
   @override
+  String get permMandateChip => '위임장';
+
+  @override
+  String permMandateStarted(String date) => '$date 시작';
+
+  @override
+  String get permAskAddLine => '위임장에 줄을 더할까?';
+
+  @override
+  String get permAskNewMandate => '위임장을 만들고 줄을 더할까?';
+
+  @override
+  String get permApproveMandate => '이 위임장 동안';
+
+  @override
+  String get permApproveNewMandate => '이 스레드로 위임장 만들고 더하기';
+
+  @override
+  String get permApproveOnce => '이번 한 번';
+
+  @override
+  String get permDeny => '거절';
+
+  @override
+  String get permOnceOperatorPicks => '계정은 실행 기기의 오퍼레이터가 고름';
+
+  @override
+  String get permStateAdded => '위임장에 더함';
+
+  @override
+  String get permStateOnce => '이번 한 번 승인함';
+
+  @override
+  String permStateOnceGh(String gh) => '이번 한 번 승인함 · gh $gh';
+
+  @override
+  String get permStateDenied => '거절함';
+
+  @override
+  String get permStateExpired => '시한 지남 · 에이전트가 다시 청해야 해요';
+
+  @override
+  String get permStateSuperseded => '새 카드로 바뀜';
+
+  @override
+  String get permOpenNewCard => '새 카드 열기';
+
+  @override
+  String get permStateMandateEnded => '위임장이 끝남 · 더 정할 수 없어요';
+
+  @override
+  String get permReadOnly => '소유자만 정할 수 있어요';
+
+  @override
+  String get permViaChat => '글로 답함';
+
+  @override
+  String get permMirrorNeutral => '권한 요청 · 원래 카드가 있는 채널에서 확인하고 정해 주세요';
+
+  @override
+  String get permOpenOriginal => '원본 카드 열기';
+
+  @override
+  String get permMirrorOf => '거울 · 원본에서 온 카드';
+
+  @override
+  String permLimitUses(int n) => '$n회';
+
+  @override
+  String permLimitDays(int n) => '$n일';
+
+  @override
+  String permLimitHours(int n) => '$n시간';
+
+  @override
+  String get permLimitCi => 'CI 실패 무시';
+
+  @override
   String get askSuperseded => '새 질문으로 바뀜';
 
   @override
