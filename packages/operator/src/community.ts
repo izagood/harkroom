@@ -12,7 +12,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import type { OperatorCapabilities, OperatorStatus, RunnerExitReason } from '@harkroom/shared';
-import type { AgentDefinition, GhReport, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
+import { parseGhLinesSet, type AgentDefinition, type GhLinesRefusal, type GhReport, type ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import type { Forwarder } from './forward.js';
 import type { AssignmentReconciler } from './assignments.js';
@@ -79,6 +79,11 @@ export interface CommunityDeps {
     gh?: (baseUrl: string) => Promise<GhReport | null>;
   };
   heartbeatMs?: number;
+  /**
+   * 다른 기기에서 고친 저장소 줄(D3, `gh.lines.set`). 로컬에서 고를 때와 같은 길(`localMerge.set`)이다 — 그 순간 로그인된
+   * 이름이 아니면 던진다. 없으면 `unsupported` 로 답한다.
+   */
+  ghLines?: (p: { scope: string; ghUser: string | null }) => Promise<void>;
   log: (line: string) => void;
 }
 
@@ -228,6 +233,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       }
       // 로컬 직결 키는 러너까지 가지 않는다 — 이 오퍼레이터의 허브가 받는다(R1 PR-3b).
       if (frame.type === 'local.view' || frame.type === 'local.writer') { applyLocal(frame); return; }
+      if (frame.type === 'gh.lines.set') { applyGhLines(frame); return; }
       // 러너 프레임이면 다중화기가 runnerId 로 러너를 골라 내린다. 아니면(runner.kill) 밖으로.
       if (!mux.onServerFrame(frame)) deps.onFrame?.(frame);
     },
@@ -246,6 +252,30 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       if (key === lastGh) return;
       if (link.send({ type: 'gh.report', report })) lastGh = key;
     }).catch(() => deps.log('박동의 gh 계정 보고를 만들지 못했다'));
+  };
+  /**
+   * 다른 기기의 줄 고치기(D3). 이 커뮤니티에 로컬 에이전트가 없으면 받지 않는다 — gh 보고를 내지 않는 서버가 이 머신의 줄을
+   * 고칠 까닭이 없다(보고와 같은 경계). 범위·이름 모양은 다시 재고, 이름이 지금 로그인돼 있는지는 `ghLines` 가 잰다.
+   * 바뀌었으면 보고를 곧바로 다시 낸다(서버의 저장값이 따라오게).
+   */
+  const applyGhLines = (frame: Extract<ServerToOperatorFrame, { type: 'gh.lines.set' }>): void => {
+    const p = parseGhLinesSet(frame);
+    const reply = (r: { ok: true } | { ok: false; code: GhLinesRefusal }): void => {
+      if (p) link.send({ type: 'gh.lines.result', requestId: p.requestId, ...r });
+    };
+    if (!p) { deps.log('gh 줄 고치기를 버린다 — 모양이 틀렸다'); return; }
+    if (Object.keys(agents).length === 0) { reply({ ok: false, code: 'no_agent' }); return; }
+    if (!deps.ghLines) { reply({ ok: false, code: 'unsupported' }); return; }
+    void deps.ghLines({ scope: p.scope, ghUser: p.ghUser }).then(() => {
+      deps.log(`gh 줄을 다른 기기에서 고쳤다: ${p.scope} → ${p.ghUser ?? '(지움)'}`);
+      reply({ ok: true });
+      lastGh = null;
+      beatGh();
+    }).catch((err: unknown) => {
+      const unknownLogin = err instanceof Error && /is not logged in/.test(err.message);
+      deps.log(`gh 줄 고치기 거절: ${p.scope} — ${unknownLogin ? '이 머신에 로그인된 이름이 아니다' : 'gh 를 읽지 못했다'}`);
+      reply({ ok: false, code: unknownLogin ? 'unknown_login' : 'failed' });
+    });
   };
   const beat = (): void => {
     const hb = deps.heartbeat;

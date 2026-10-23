@@ -71,6 +71,8 @@ export type AuditAction =
   | 'secret.leak.blocked'
   // 오퍼레이터·배정(스펙 2026-09-20 §3).
   | 'operator.registered' | 'operator.revoked' | 'operator.renamed' | 'agent.assigned' | 'agent.unassigned'
+  // D3: 소유자가 다른 기기에서 오퍼레이터의 저장소 줄(gh 계정)을 고쳤다. detail 은 {operatorId, agentId, scope, ghUser, by, outcome}.
+  | 'operator.merge_line.set_remote'
   // 호출 명단(스펙 2026-09-20 §6).
   | 'agent.invoker.added' | 'agent.invoker.removed'
   | 'agent.delegate.added' | 'agent.delegate.removed'

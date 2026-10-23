@@ -780,6 +780,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
         appLaunched: args.launchNonce !== undefined,
         localTerminal: { hub: localTerminal, agentOf: (runnerId) => runnerLink.agentOf(runnerId) },
         turnSecretsDir: join(appDataDir, 'turn-secrets'),
+        // 다른 기기에서 고친 gh 줄(D3) — 로컬 앱이 고를 때와 같은 길이다(그 순간 로그인된 이름만 받는다).
+        ghLines: async ({ scope, ghUser }) => { await localMerge.set({ scope, ghUser }); },
         // 박동(P3a) — 서버가 「호스트」 화면에 보일 이 머신의 지금 상태. 머신 값은 한 번 읽어 둔다.
         heartbeat: {
           status: () => collectStatus({
