@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, Controller } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
@@ -167,6 +167,43 @@ describe('#231 스레드 답을 채널에도 함께 올린다', () => {
     fireEvent.change(box, { target: { value: 'on it' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(c.reply).toHaveBeenCalledWith('on it', [], 'c1', 'm1', true);
+  });
+
+  // 입력창 후속 f1(10-23): 「…에도 올리기」는 이번 글에만 딸린 선택이다 — 보내면 꺼지고, 다음 답글은 스레드에만 간다.
+  it('보내면 체크가 꺼지고, 다음 답글은 스레드에만 간다', () => {
+    const c = fakeController();
+    render(<ThreadPanel />);
+    const check = screen.getByLabelText(ALSO_POST) as HTMLInputElement;
+    fireEvent.click(check);
+    const box = screen.getByPlaceholderText('Reply…') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: 'first' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(c.reply).toHaveBeenLastCalledWith('first', [], 'c1', 'm1', true);
+    expect(check.checked).toBe(false);
+    fireEvent.change(box, { target: { value: 'second' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(c.reply).toHaveBeenLastCalledWith('second', [], 'c1', 'm1', false);
+  });
+
+  it('스레드를 옮기면 체크가 꺼진다', () => {
+    fakeController();
+    render(<ThreadPanel />);
+    fireEvent.click(screen.getByLabelText(ALSO_POST));
+    expect((screen.getByLabelText(ALSO_POST) as HTMLInputElement).checked).toBe(true);
+    act(() => { useAppStore.getState().set({ threadRootId: 'm2', messages: { c1: [...useAppStore.getState().messages.c1!, msg('m2', 'c1', 3, 'other root', 'u1')] } }); });
+    expect((screen.getByLabelText(ALSO_POST) as HTMLInputElement).checked).toBe(false);
+  });
+
+  // f2: 긴 채널 이름은 한 줄로 말줄임하고 전체는 마우스 올림으로, 체크는 강조색·다크 색 체계를 따른다.
+  it('긴 채널 이름은 말줄임하고 전체 문구는 title 로 보인다 · 체크는 강조색', () => {
+    fakeController();
+    render(<ThreadPanel />);
+    const check = screen.getByLabelText(ALSO_POST);
+    const label = check.closest('label')!;
+    expect(label.getAttribute('title')).toBe(ALSO_POST);
+    expect(label.querySelector('span')!.className).toContain('truncate');
+    expect(check.className).toContain('accent-[var(--app-accent)]');
+    expect(check.className).toContain('dark:[color-scheme:dark]');
   });
 
   // 입력창 개편 P3: 체크는 입력 상자 **안**, 본문 아래·동작줄 위에 서고, 어느 채널인지 이름(굵게)으로 말한다.

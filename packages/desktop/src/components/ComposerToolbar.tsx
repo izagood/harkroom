@@ -46,7 +46,7 @@ const GROUPS: { kind: FormatKind; glyph: ReactNode; label: MessageKey; keys: str
   ],
 ];
 
-export function ComposerToolbar({ onFormat }: { onFormat: (kind: FormatKind) => void }) {
+export function ComposerToolbar({ onFormat, active }: { onFormat: (kind: FormatKind) => void; active?: ReadonlySet<FormatKind> }) {
   const t = useT();
   return (
     <div
@@ -54,7 +54,8 @@ export function ComposerToolbar({ onFormat }: { onFormat: (kind: FormatKind) => 
       aria-label={t('composer.fmt.toolbar')}
       data-testid="composer-toolbar"
       // 스레드 칸처럼 좁으면 가로로 밀린다(시안 — 스크롤바 없이). 동작줄은 그대로 둔다.
-      className="flex items-center gap-0.5 overflow-x-auto border-b border-border px-2 py-1 [scrollbar-width:none]"
+      // 좁은 칸(스레드 패널)에서는 묶음째 다음 줄로 넘긴다 — 가로로 밀어 두면 오른쪽 단추가 잘려 보이고, 밀 수 있다는 표시도 없다.
+      className="flex flex-wrap items-center gap-x-0.5 gap-y-0.5 border-b border-border px-2 py-1"
     >
       {GROUPS.map((group, gi) => (
         <div key={gi} className="flex shrink-0 items-center gap-0.5">
@@ -67,8 +68,12 @@ export function ComposerToolbar({ onFormat }: { onFormat: (kind: FormatKind) => 
                 type="button"
                 data-testid={`fmt-${b.kind}`}
                 aria-label={name}
+                // 커서가 그 서식 안에 있으면 켜짐(시안 「서식 적용 중」) — 누르면 벗긴다는 뜻이기도 하다.
+                aria-pressed={active?.has(b.kind) ?? false}
                 title={b.keys ? `${name} (${b.keys})` : name}
-                className={`inline-flex h-7 min-w-7 items-center justify-center rounded-row px-1.5 text-fg-muted hover:bg-surface-sunken hover:text-fg ${b.cls ?? ''}`}
+                className={`inline-flex h-7 min-w-7 items-center justify-center rounded-row px-1.5 hover:bg-surface-sunken hover:text-fg ${
+                  active?.has(b.kind) ? 'bg-accent-surface text-accent' : 'text-fg-muted'
+                } ${b.cls ?? ''}`}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => onFormat(b.kind)}
               >

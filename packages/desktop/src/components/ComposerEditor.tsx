@@ -11,6 +11,7 @@ import { Strikethrough } from '@lezer/markdown';
 import { tags } from '@lezer/highlight';
 import { clean } from '../lib/systemText';
 import { focusKind, recordEnter } from '../lib/enterTrace';
+import { formatShortcut } from '../lib/mdFormat';
 
 /**
  * 입력창 편집기(입력창 개편 P1, 결정 1 = CodeMirror 6).
@@ -82,7 +83,34 @@ interface Props {
   onSelect?(value: string, caret: number): void;
   onKeyDown?(e: ComposerKeyEvent): void;
   onPaste?(e: ComposerPasteEvent): void;
+  /** 커서가 놓인 자리의 서식(도구줄 단추의 켜짐 표시). 커서가 움직이거나 글이 바뀔 때 부른다. */
+  onFormatState?(state: ActiveFormats): void;
 }
+
+/** 커서 자리에서 켜져 있는 서식. 이름은 도구줄 `FormatKind` 와 같다. */
+export type ActiveFormats = ReadonlySet<'bold' | 'italic' | 'strike' | 'link' | 'ordered' | 'bullet' | 'quote' | 'code' | 'codeBlock'>;
+
+/** 마크다운 문법 나무에서 커서를 품은 노드 → 켜진 서식. */
+const FORMAT_OF_NODE: Record<string, ActiveFormats extends ReadonlySet<infer K> ? K : never> = {
+  StrongEmphasis: 'bold', Emphasis: 'italic', Strikethrough: 'strike', Link: 'link',
+  OrderedList: 'ordered', BulletList: 'bullet', Blockquote: 'quote', InlineCode: 'code', FencedCode: 'codeBlock',
+};
+
+function activeFormatsAt(state: EditorState): ActiveFormats {
+  const out = new Set<ActiveFormats extends ReadonlySet<infer K> ? K : never>();
+  const head = state.selection.main.head;
+  // 앞쪽(-1)으로 붙여 본다 — `**굵게|**` 처럼 닫는 기호 바로 앞에 있는 커서도 굵은 글 안이다.
+  for (let n: ReturnType<ReturnType<typeof syntaxTree>['resolveInner']> | null = syntaxTree(state).resolveInner(head, -1); n; n = n.parent) {
+    const f = FORMAT_OF_NODE[n.name];
+    if (f) out.add(f);
+  }
+  return out;
+}
+
+/** 조합 중에 눌러도 확정 뒤에 해 줄 서식 열쇠(⌘B·⌘I·⌘⇧X·⌘⇧7/8/9·⌘E·⌘K·⌘⌥C). */
+const isFormatChord = (e: KeyboardEvent): boolean =>
+  (e.metaKey || e.ctrlKey) && (formatShortcut(e) !== null || (!e.altKey && !e.shiftKey && (e.code === 'KeyE' || e.code === 'KeyK'))
+    || (e.altKey && !e.shiftKey && e.code === 'KeyC'));
 
 const mdHighlight = HighlightStyle.define([
   { tag: tags.strong, fontWeight: '700' },
@@ -301,6 +329,7 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
         const caret = u.state.selection.main.head;
         if (u.docChanged) latest.current.onChange(u.state.doc.toString(), caret);
         else if (u.selectionSet) latest.current.onSelect?.(u.state.doc.toString(), caret);
+        if (u.docChanged || u.selectionSet) latest.current.onFormatState?.(activeFormatsAt(u.state));
       }),
     ];
     if (props.placeholder) {
@@ -335,15 +364,40 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
 
       Alt+Enter 는 건드리지 않는다. 기록(`lib/enterTrace`)은 여기서 남긴다 — raw 마다 key 가 짝지어 남아야 한다.
     */
-    let pendingEnter: { k: Pick<KeyboardEvent, 'key' | 'code' | 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey'>; timer: ReturnType<typeof setTimeout> } | null = null;
+    type KeyParts = Pick<KeyboardEvent, 'key' | 'code' | 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey'>;
+    /*
+      조합이 진행 중일 때 받은 열쇠 하나(Enter 또는 서식 열쇠) — 확정 뒤에 처리한다. `scope` 는 받은 순간의 자리(`historyKey`):
+      대기 중 채널·스레드를 옮겼으면 풀 때 버린다(#1465 security n1 — 안 버리면 옮긴 자리의 초안이 그 자리로 나간다).
+    */
+    let pendingEnter: { k: KeyParts; kind: 'enter' | 'format'; scope: string | undefined; timer: ReturnType<typeof setTimeout> } | null = null;
     const flushPendingEnter = () => {
       const p = pendingEnter;
       if (!p) return;
       pendingEnter = null;
       clearTimeout(p.timer);
-      routeEnter(p.k);
+      if (p.scope !== latest.current.historyKey) return;
+      if (p.kind === 'enter') { routeEnter(p.k); return; }
+      // 서식 열쇠: Slack 처럼 확정한 뒤 굵게 — 처리기에 그 열쇠를 다시 넘긴다(확정된 글·커서 위에서).
+      latest.current.onKeyDown?.({
+        key: p.k.key, code: p.k.code, shiftKey: p.k.shiftKey, metaKey: p.k.metaKey, ctrlKey: p.k.ctrlKey, altKey: p.k.altKey,
+        isComposing: false, editorComposing: view.composing, preventDefault: () => {}, currentTarget: box.current,
+      });
+    };
+    const holdUntilComposed = (k: KeyParts, kind: 'enter' | 'format') => {
+      if (pendingEnter) clearTimeout(pendingEnter.timer);
+      pendingEnter = { k, kind, scope: latest.current.historyKey, timer: setTimeout(flushPendingEnter, COMPOSING_ENTER_FALLBACK_MS) };
     };
     const onEnterKey = (e: KeyboardEvent) => {
+      /*
+        조합 중 서식 열쇠(⌘B 등)도 CodeMirror 가 처리기에 넘기지 않는다 — 여기서 받아 브라우저의 서식 명령(<b>)을 막고, 확정 뒤에
+        처리한다. 입력기는 DOM keydown 보다 먼저 키를 받으므로 막아도 확정은 그대로 일어난다.
+      */
+      if (!isEnterKey(e) && (e.isComposing || view.composing) && isFormatChord(e)) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        holdUntilComposed({ key: e.key, code: e.code, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey }, 'format');
+        return;
+      }
       if (!isEnterKey(e) || e.altKey) return;
       recordEnter({
         kind: 'raw', key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, meta: e.metaKey || e.ctrlKey,
@@ -352,8 +406,7 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
       const k = { key: e.key, code: e.code, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey };
       e.stopImmediatePropagation();
       if (e.isComposing || view.composing) {
-        if (pendingEnter) clearTimeout(pendingEnter.timer);
-        pendingEnter = { k, timer: setTimeout(flushPendingEnter, COMPOSING_ENTER_FALLBACK_MS) };
+        holdUntilComposed(k, 'enter');
         return;
       }
       e.preventDefault();
@@ -362,7 +415,7 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
     };
     const onCompositionEnd = () => { if (pendingEnter) setTimeout(flushPendingEnter, 0); };
     const onBeforeInput = (e: InputEvent) => {
-      if (pendingEnter && (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak')) e.preventDefault();
+      if (pendingEnter?.kind === 'enter' && (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak')) e.preventDefault();
     };
     view.contentDOM.addEventListener('keydown', onEnterKey, true);
     view.contentDOM.addEventListener('compositionend', onCompositionEnd, true);
