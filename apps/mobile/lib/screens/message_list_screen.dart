@@ -16,7 +16,6 @@ import 'ask_bundle_card.dart';
 import 'ask_card.dart';
 import 'composer_attachments.dart';
 import 'mention_button.dart';
-import 'merge_once_note.dart';
 import 'message_feed.dart';
 import 'message_tile.dart';
 import 'search_screen.dart';
@@ -310,14 +309,8 @@ Widget buildFeedItem(
     final bundle = ask == null ? AskBundleMeta.read(m.meta) : null;
     final report = ask == null && bundle == null ? ReportMeta.read(m.meta) : null;
     final failure = ask == null && bundle == null && report == null ? FailureMeta.read(m.meta) : null;
-    final onceNumber = ask != null ? MergeOnceNote.pendingNumber(m.meta, context.app.me?.id) : null;
     final Widget? card = ask != null
-        ? (onceNumber == null
-            ? AskCard(message: m, ask: ask)
-            : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                MergeOnceNote(message: m, number: onceNumber),
-                AskCard(message: m, ask: ask),
-              ]))
+        ? AskCard(message: m, ask: ask)
         : bundle != null
             ? AskBundleCard(message: m, bundle: bundle)
             : report != null

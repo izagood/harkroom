@@ -247,6 +247,84 @@ class StringsEn implements Strings {
   String get askReplied => 'Answered in text';
 
   @override
+  String get permMandateChip => 'Mandate';
+
+  @override
+  String permMandateStarted(String date) => 'started $date';
+
+  @override
+  String get permAskAddLine => 'Add a line to the mandate?';
+
+  @override
+  String get permAskNewMandate => 'Start a mandate and add a line?';
+
+  @override
+  String get permApproveMandate => 'For this mandate';
+
+  @override
+  String get permApproveNewMandate => 'Start a mandate from this thread and add';
+
+  @override
+  String get permApproveOnce => 'Just this once';
+
+  @override
+  String get permDeny => 'Deny';
+
+  @override
+  String get permOnceOperatorPicks => 'The operator on the running device picks the account';
+
+  @override
+  String get permStateAdded => 'Added to the mandate';
+
+  @override
+  String get permStateOnce => 'Approved just this once';
+
+  @override
+  String permStateOnceGh(String gh) => 'Approved just this once · gh $gh';
+
+  @override
+  String get permStateDenied => 'Denied';
+
+  @override
+  String get permStateExpired => 'Expired · the agent has to ask again';
+
+  @override
+  String get permStateSuperseded => 'Replaced by a new card';
+
+  @override
+  String get permOpenNewCard => 'Open the new card';
+
+  @override
+  String get permStateMandateEnded => 'The mandate has ended · nothing more to decide';
+
+  @override
+  String get permReadOnly => 'Only the owner can decide';
+
+  @override
+  String get permViaChat => 'answered in chat';
+
+  @override
+  String get permMirrorNeutral => 'Permission request · check and decide in the original card\'s channel';
+
+  @override
+  String get permOpenOriginal => 'Open the original card';
+
+  @override
+  String get permMirrorOf => 'Mirror · deciding here decides the original';
+
+  @override
+  String permLimitUses(int n) => n == 1 ? 'once' : '$n uses';
+
+  @override
+  String permLimitDays(int n) => '$n days';
+
+  @override
+  String permLimitHours(int n) => '$n h';
+
+  @override
+  String get permLimitCi => 'CI failure ignored';
+
+  @override
   String get askSuperseded => 'Replaced by a new question';
 
   @override
@@ -843,16 +921,7 @@ class StringsEn implements Strings {
   @override
   String get askFailed => 'Could not send your choice';
   @override
-  String get mergeOnceButton => 'Merge just this once';
-  @override
-  String get mergeOnceSheetTitle => 'Approve on desktop';
-  @override
-  String get mergeOnceSheetBody => 'Merging just this once means picking the GitHub account to merge with. The accounts live on the device the agent runs on, so pick it on this card in the desktop app. Allowing 7 days and declining work here too.';
-  @override
   String get mergeOnceCiButton => 'Merge once ignoring CI failures';
-  @override
-  String get mergeOnceCiSheetBody => 'Merging once while ignoring CI failures means picking the GitHub account to merge with, so it happens on this card in the desktop app. This card has no 7-day option. Declining works here too.';
-
   @override
   String get reactionFailed => 'Could not change the reaction';
 

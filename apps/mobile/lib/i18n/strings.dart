@@ -274,23 +274,89 @@ abstract class Strings {
   /// 첨부가 올라가는 동안 잠긴 보내기.
   String get sendWaitsForUpload;
 
+  /// 권한 카드(W4 위임장).
+  String get permMandateChip;
+
+  /// 권한 카드(W4 위임장).
+  String permMandateStarted(String date);
+
+  /// 권한 카드(W4 위임장).
+  String get permAskAddLine;
+
+  /// 권한 카드(W4 위임장).
+  String get permAskNewMandate;
+
+  /// 권한 카드(W4 위임장).
+  String get permApproveMandate;
+
+  /// 권한 카드(W4 위임장).
+  String get permApproveNewMandate;
+
+  /// 권한 카드(W4 위임장).
+  String get permApproveOnce;
+
+  /// 권한 카드(W4 위임장).
+  String get permDeny;
+
+  /// 권한 카드(W4 위임장).
+  String get permOnceOperatorPicks;
+
+  /// 권한 카드(W4 위임장).
+  String get permStateAdded;
+
+  /// 권한 카드(W4 위임장).
+  String get permStateOnce;
+
+  /// 권한 카드(W4 위임장).
+  String permStateOnceGh(String gh);
+
+  /// 권한 카드(W4 위임장).
+  String get permStateDenied;
+
+  /// 권한 카드(W4 위임장).
+  String get permStateExpired;
+
+  /// 권한 카드(W4 위임장).
+  String get permStateSuperseded;
+
+  /// 권한 카드(W4 위임장).
+  String get permOpenNewCard;
+
+  /// 권한 카드(W4 위임장).
+  String get permStateMandateEnded;
+
+  /// 권한 카드(W4 위임장).
+  String get permReadOnly;
+
+  /// 권한 카드(W4 위임장).
+  String get permViaChat;
+
+  /// 권한 카드(W4 위임장).
+  String get permMirrorNeutral;
+
+  /// 권한 카드(W4 위임장).
+  String get permOpenOriginal;
+
+  /// 권한 카드(W4 위임장).
+  String get permMirrorOf;
+
+  /// 권한 카드(W4 위임장).
+  String permLimitUses(int n);
+
+  /// 권한 카드(W4 위임장).
+  String permLimitDays(int n);
+
+  /// 권한 카드(W4 위임장).
+  String permLimitHours(int n);
+
+  /// 권한 카드(W4 위임장).
+  String get permLimitCi;
+
   /// ask 답 실패 토스트.
   String get askFailed;
 
-  /// 머지 거절 권한 카드의 [이번 한 번 머지](스레드 1b75d7a0) — 모바일은 계정을 못 골라 데스크톱으로 보낸다.
-  String get mergeOnceButton;
-
-  /// 위 버튼이 여는 시트의 제목.
-  String get mergeOnceSheetTitle;
-
-  /// 위 시트의 본문 — 왜 데스크톱인지.
-  String get mergeOnceSheetBody;
-
-  /// CI 거절 카드(스레드 1fccc9a5)의 버튼 — 「CI 실패 무시하고 이번 한 번 머지」.
+  /// CI 거절 카드(스레드 1fccc9a5)의 [이번 한 번] 버튼 — 「CI 실패 무시하고 이번 한 번 머지」.
   String get mergeOnceCiButton;
-
-  /// CI 거절 카드의 시트 본문 — 이 카드에는 7일 허락이 없다.
-  String get mergeOnceCiSheetBody;
 
   /// 리액션 실패 토스트.
   String get reactionFailed;
@@ -1281,11 +1347,28 @@ Map<String, String> stringsToMap(Strings s) => {
       'discard': s.discard,
       'sendWaitsForUpload': s.sendWaitsForUpload,
       'askFailed': s.askFailed,
-      'mergeOnceButton': s.mergeOnceButton,
-      'mergeOnceSheetTitle': s.mergeOnceSheetTitle,
-      'mergeOnceSheetBody': s.mergeOnceSheetBody,
+      'permMandateChip': s.permMandateChip,
+      'permAskAddLine': s.permAskAddLine,
+      'permAskNewMandate': s.permAskNewMandate,
+      'permApproveMandate': s.permApproveMandate,
+      'permApproveNewMandate': s.permApproveNewMandate,
+      'permApproveOnce': s.permApproveOnce,
+      'permDeny': s.permDeny,
+      'permOnceOperatorPicks': s.permOnceOperatorPicks,
+      'permStateAdded': s.permStateAdded,
+      'permStateOnce': s.permStateOnce,
+      'permStateDenied': s.permStateDenied,
+      'permStateExpired': s.permStateExpired,
+      'permStateSuperseded': s.permStateSuperseded,
+      'permOpenNewCard': s.permOpenNewCard,
+      'permStateMandateEnded': s.permStateMandateEnded,
+      'permReadOnly': s.permReadOnly,
+      'permViaChat': s.permViaChat,
+      'permMirrorNeutral': s.permMirrorNeutral,
+      'permOpenOriginal': s.permOpenOriginal,
+      'permMirrorOf': s.permMirrorOf,
+      'permLimitCi': s.permLimitCi,
       'mergeOnceCiButton': s.mergeOnceCiButton,
-      'mergeOnceCiSheetBody': s.mergeOnceCiSheetBody,
       'reactionFailed': s.reactionFailed,
       'timeUnderMinute': s.timeUnderMinute,
       'timeMinutes': s.timeMinutes,
