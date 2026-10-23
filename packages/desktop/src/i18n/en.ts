@@ -1502,7 +1502,7 @@ export const en = {
   'agents.lane.pendingOff': 'Pending — the runner restarts after the current turn and goes back to the account pool. New turns wait until then.',
   'agents.lane.failHint': 'This agent runs with an API key — check that the API URL is right.',
   'agents.lane.statusTitleOff': 'Apply status',
-  'agents.lane.lastApiFailed': 'Last turn {time} — got the key, but that turn failed with an API error (see the thread)',
+  'agents.lane.lastApiFailed': 'Last turn {time} — got the key, but that turn failed with an API error. The error is on that thread\'s failure card.',
   'agents.lane.restart': 'Restart',
   'agents.lane.pendingStuck': 'The runner hasn\'t restarted yet — the current turn may be long or the runner may be stuck.',
   'agents.lane.detachInPermissions': 'Detach in the Permissions tab',

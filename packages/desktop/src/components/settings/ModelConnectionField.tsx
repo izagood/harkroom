@@ -227,7 +227,7 @@ export const LANE_PENDING_STUCK_MS = 3 * 60_000;
  * 실행 탭 곁 칸 — 이 API 키 연결의 상태. 맨 위 한 칸을 「적용 대기」와 「마지막 턴」이 **번갈아** 쓴다 — 대기 상자가 사라질 때
  * 아래 줄들이 위로 튀지 않게(designer n18).
  */
-export function ModelConnectionStatus({ lane, now = Date.now(), onRestart }: {
+export function ModelConnectionStatus({ lane, now, onRestart }: {
   lane: ProviderLaneState;
   /** 시험이 시각을 고정한다. */
   now?: number;
@@ -238,8 +238,19 @@ export function ModelConnectionStatus({ lane, now = Date.now(), onRestart }: {
   const locale = useLocale();
   const status = lane.status;
   const time = useMemo(() => (status ? new Date(status.at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false }) : ''), [status, locale]);
+  // 3분이 되는 순간 스스로 다시 그린다(designer n20) — 다른 렌더(5초 다시 읽기)에 기대면 그 읽기가 같은 참조를 돌려줄 때
+  // [재시작]이 끝내 안 뜬다. 시험은 `now` 로 시각을 고정한다.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!lane.pending || lane.pendingSince === null || now !== undefined) return;
+    const left = lane.pendingSince + LANE_PENDING_STUCK_MS - Date.now();
+    if (left <= 0) return;
+    const id = window.setTimeout(() => setTick((n) => n + 1), left + 50);
+    return () => window.clearTimeout(id);
+  }, [lane.pending, lane.pendingSince, now]);
   if (!lane.lane && !lane.pending) return null;
-  const stuck = lane.pending && lane.pendingSince !== null && now - lane.pendingSince >= LANE_PENDING_STUCK_MS;
+  const nowMs = now ?? Date.now();
+  const stuck = lane.pending && lane.pendingSince !== null && nowMs - lane.pendingSince >= LANE_PENDING_STUCK_MS;
   const slot = (() => {
     if (lane.pending) {
       return (
@@ -250,7 +261,8 @@ export function ModelConnectionStatus({ lane, now = Date.now(), onRestart }: {
         </div>
       );
     }
-    if (status === null) return <div className="rounded-row px-3 py-2 text-meta text-fg-subtle">{t('agents.lane.lastNone')}</div>;
+    // 다른 상태와 같은 면(designer s2) — 면 없이 여백만 주면 이 줄만 들여 쓴 것처럼 보인다. n16 회색 줄과 같은 「아직 되지 않음」 무게다.
+    if (status === null) return <div className="rounded-row bg-surface-sunken px-3 py-2 text-meta text-fg-subtle" data-testid="lane-status-none">{t('agents.lane.lastNone')}</div>;
     if (!status.ok) {
       return (
         <div className="rounded-row bg-danger-surface px-3 py-2 text-meta text-danger" data-testid="lane-status-fail">

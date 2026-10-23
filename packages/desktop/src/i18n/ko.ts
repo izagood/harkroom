@@ -983,7 +983,7 @@ export const ko = {
   'agents.lane.pendingOff': '적용 대기 — 도는 턴이 끝나면 러너가 다시 떠서 계정 풀로 돈다. 그동안 새 턴은 기다린다.',
   'agents.lane.failHint': 'API 키로 도는 에이전트다 — API 주소가 맞는지 확인해 보라.',
   'agents.lane.statusTitleOff': '적용 상태',
-  'agents.lane.lastApiFailed': '마지막 턴 {time} — 키는 받았지만 그 턴은 API 오류로 실패했다(스레드 보기)',
+  'agents.lane.lastApiFailed': '마지막 턴 {time} — 키는 받았지만 그 턴은 API 오류로 실패했다. 오류는 그 스레드의 실패 카드에 있다.',
   'agents.lane.restart': '재시작',
   'agents.lane.pendingStuck': '러너가 아직 다시 뜨지 않았다 — 도는 턴이 길거나 러너가 멈췄을 수 있다.',
   'agents.lane.detachInPermissions': '권한 탭에서 떼기',

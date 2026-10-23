@@ -1,6 +1,6 @@
 // 실행 탭 「모델 연결」(API 키 연결, designer v3 ②·입력 상태). 저장은 사람의 클릭에서만, 끄기는 칸을 지운다(security n2).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { ModelConnectionField, ModelConnectionStatus, opencodeLaneModel, urlProblem } from '../src/components/settings/ModelConnectionField';
 import { laneCodeKey, laneCodeName } from '../src/lib/laneCodes';
@@ -200,5 +200,21 @@ describe('상태 칸·stdio 줄(후속)', () => {
     expect(screen.getByTestId('lane-stdio-warn').textContent).toContain('local-files');
     fireEvent.click(screen.getByRole('button', { name: '권한 탭에서 떼기' }));
     expect(onOpenPermissions).toHaveBeenCalled();
+  });
+});
+
+// designer n20: 다시 읽기가 렌더를 안 일으켜도 3분이 되면 [재시작]이 뜬다(스스로 시계를 건다).
+describe('대기 3분 시계(n20)', () => {
+  it('다른 렌더 없이 시간만 흘러도 3분 뒤 [재시작]이 보인다', () => {
+    vi.useFakeTimers({ now: Date.parse('2026-10-23T00:00:00Z') });
+    try {
+      const lane = laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'k' }, pending: true, pendingSince: Date.now() });
+      render(<ModelConnectionStatus lane={lane} onRestart={() => {}} />);
+      expect(screen.queryByTestId('lane-pending-restart')).toBeNull();
+      act(() => { vi.advanceTimersByTime(3 * 60_000 + 100); });
+      expect(screen.getByTestId('lane-pending-restart')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
