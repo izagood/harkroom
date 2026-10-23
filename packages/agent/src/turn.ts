@@ -330,8 +330,8 @@ const CLAUDE_PRESET: HarnessPreset = {
       // 권한 요청(스레드 f61af808): 소유자가 카드에서 승인한 규칙. 분류기를 끄지 않고 이 규칙만 정확히 더한다. deny(머지·설정
       // 파일)가 allow 보다 앞서므로 승인된 규칙이 그 둘을 덮지 못한다.
       ...safeToolAllows(toolAllows),
-      // API 키 연결 턴은 `dontAsk` 라 여기 없는 도구는 모두 거절된다(`lanePermission` 주석). 기본으로 여는 것은 읽기·도구 찾기와
-      // 서버가 판정하는 MCP 둘뿐이다 — Bash·쓰기·웹은 소유자가 권한 요청 카드로 승인한 규칙(`toolAllows`)으로만 열린다.
+      // API 키 연결 턴은 `dontAsk` 라 여기 없는 도구는 모두 거절된다(`lanePermission` 주석). 기본으로 여는 것은 도구 찾기·할 일 목록과
+      // 서버가 판정하는 MCP 둘뿐이다(작업 디렉터리 안 읽기는 dontAsk 가 규칙 없이 연다) — Bash·쓰기·웹은 소유자가 권한 요청 카드로 승인한 규칙(`toolAllows`)으로만 열린다.
       ...(providerLane ? LANE_BASE_ALLOW : []),
     ];
     return [
@@ -344,10 +344,14 @@ const CLAUDE_PRESET: HarnessPreset = {
 };
 
 /**
- * API 키 연결(`dontAsk`) 턴에 기본으로 여는 도구. 읽기(`Read`·`Glob`·`Grep`), 지연 MCP 도구를 불러오는 `ToolSearch`,
- * 할 일 목록, 그리고 **서버가 판정하는** MCP 두 개(harkroom·avcs) — 각 MCP 호출의 권한은 서버가 계정으로 가른다.
+ * API 키 연결(`dontAsk`) 턴에 기본으로 여는 도구. 지연 MCP 도구를 불러오는 `ToolSearch`, 할 일 목록, 그리고 **서버가
+ * 판정하는** MCP 두 개(harkroom·avcs) — 각 MCP 호출의 권한은 서버가 계정으로 가른다.
+ *
+ * **읽기 도구는 넣지 않는다**(security F1, 2026-10-23 실측 claude 2.1.309): dontAsk 는 규칙이 없어도 작업 디렉터리
+ * 안의 `Read` 를 열고, 밖(같은 uid 의 홈·오퍼레이터 비밀)은 묻지 않고 거절한다. 맨 이름 `Read` 를 넣으면 그 밖까지
+ * classifier 없이 열린다. `Glob`·`Grep` 은 이 판에 도구로 없다.
  */
-export const LANE_BASE_ALLOW: readonly string[] = ['Read', 'Glob', 'Grep', 'ToolSearch', 'TodoWrite', 'mcp__harkroom', 'mcp__avcs'];
+export const LANE_BASE_ALLOW: readonly string[] = ['ToolSearch', 'TodoWrite', 'mcp__harkroom', 'mcp__avcs'];
 
 /** claude 가 보는 harkroom MCP 의 `grant.delegate` 도구 이름(서버 이름 `harkroom`, 점은 밑줄로). */
 export const GRANT_DELEGATE_TOOL = 'mcp__harkroom__grant_delegate';

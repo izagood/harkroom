@@ -700,6 +700,8 @@ describe('전용 제공사 경로 env', () => {
     expect(withLane).toContain('--disallowedTools');
     // 셸·쓰기·웹은 기본으로 열지 않는다.
     for (const tool of ['Bash', 'Edit', 'Write', 'WebFetch', 'WebSearch']) expect(withLane).not.toContain(tool);
+    // 맨 이름 Read 는 작업 디렉터리 밖까지 classifier 없이 연다(security F1). cwd 안 읽기는 dontAsk 가 규칙 없이 연다.
+    expect(withLane.filter((a) => /^(Read|Glob|Grep)\b/.test(a))).toEqual([]);
 
     const plain = argv(null);
     expect(after(plain, '--permission-mode')).toBe('auto');
