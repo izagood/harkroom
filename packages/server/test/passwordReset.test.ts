@@ -248,6 +248,34 @@ describe('로그인 ID 목록(멤버와 초대, 관리자만)', () => {
     expect((await loginIds(adm.token)).json().loginIds[id]).toBe('listed-login-9');
   });
 
+  it('보이는 대상은 발급 대상과 같다 — admin 에게 owner·다른 admin·자기 자신은 없고, owner 에게는 admin 이 있다(security F1)', async () => {
+    const a1 = await createMember(app, owner.token, 'scope-adm-1');
+    const a2 = await createMember(app, owner.token, 'scope-adm-2');
+    for (const id of [a1.accountId, a2.accountId]) {
+      await app.inject({ method: 'PUT', url: `/accounts/${id}/role`, headers: auth(owner.token), payload: { role: 'admin' } });
+    }
+    const m = await createMember(app, owner.token, 'scope-mem');
+    const asAdmin = (await loginIds(a1.token)).json().loginIds as Record<string, string>;
+    expect(asAdmin[owner.accountId]).toBeUndefined();
+    expect(asAdmin[a2.accountId]).toBeUndefined();
+    expect(asAdmin[a1.accountId]).toBeUndefined();
+    expect(asAdmin[m.accountId]).toBe('scope-mem');
+    const asOwner = (await loginIds(owner.token)).json().loginIds as Record<string, string>;
+    expect(asOwner[a2.accountId]).toBe('scope-adm-2');
+    expect(asOwner[owner.accountId]).toBeUndefined();
+  });
+
+  it('읽은 사실은 값 없이 건수만, 사람마다 하루 한 줄 감사에 남는다', async () => {
+    const a = await createMember(app, owner.token, 'audit-reader');
+    await app.inject({ method: 'PUT', url: `/accounts/${a.accountId}/role`, headers: auth(owner.token), payload: { role: 'admin' } });
+    await loginIds(a.token);
+    await loginIds(a.token);
+    const rows = await pool.query(`select detail from audit_log where action = 'accounts.login_ids.read' and actor_id = $1`, [a.accountId]);
+    expect(rows.rowCount).toBe(1);
+    expect(typeof rows.rows[0].detail.count).toBe('number');
+    expect(JSON.stringify(rows.rows[0].detail)).not.toMatch(/scope-|listed-login/);
+  });
+
   it('member 는 못 받고(403), 모두가 받는 /accounts 에는 로그인 ID 가 실리지 않는다', async () => {
     const m = await createMember(app, owner.token, 'plain-lister');
     expect((await loginIds(m.token)).statusCode).toBe(403);

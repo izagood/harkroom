@@ -6,6 +6,7 @@ import { hashToken, newToken } from '../auth/tokens.js';
 import { recordAudit } from '../audit.js';
 import type { RateLimiter, RateLimitRule } from '../rateLimit.js';
 import { currentStepUp } from '../services/stepUp.js';
+import { OncePerWindow } from '../services/secretAccess.js';
 import { newResetCode, normalizeResetCode, RESET_CODE_TTL_MS } from '../services/passwordReset.js';
 import { normalizeLoginKey, passwordRule, SESSION_TTL_DAYS } from './authRoutes.js';
 
@@ -39,6 +40,8 @@ const INVALID = { error: { code: 'invalid_reset_code', message: 'the reset code 
 
 export async function registerPasswordResetRoutes(app: FastifyInstance, pool: Pool, opts: PasswordResetRouteOpts): Promise<void> {
   const { limiter, accountRule } = opts;
+  /** 로그인 ID 목록 읽기 감사는 사람마다 하루 한 줄(값 없이 건수만). */
+  const loginIdsReadAudit = new OncePerWindow();
 
   /** 발급·거두기 공통 관문: 대상이 사람이고 살아 있고, 이 행위자가 그 대상을 건드릴 수 있는가. */
   async function targetFor(actor: { id: string; role: string }, id: string): Promise<
@@ -63,15 +66,25 @@ export async function registerPasswordResetRoutes(app: FastifyInstance, pool: Po
    * 모두가 받고 화면이 캐시·이벤트로 퍼뜨린다 — 거기 실으면 권한으로 거르는 자리가 여럿이 된다. 여기는 한 자리다.
    *
    * 보는 사람은 재설정 코드를 발급할 수 있는 사람과 같다(`member.reset_password` = owner·admin, grant 불가)·세션만.
-   * 사람 계정만, 지운 계정은 뺀다(꺼진 계정은 목록에 남아 있으니 같이 준다). 감사·로그에는 싣지 않는다.
+   * **보이는 대상도 발급 대상과 같다**(security #1490 F1, `targetFor` 와 같은 선): 사람·살아 있음·꺼지지 않음, owner 제외,
+   * 부른 사람이 admin 이면 admin 도 제외(owner 는 admin 까지 본다), 자기 자신 제외. 「[재설정 코드] 버튼이 서는 줄 = 로그인 ID 가
+   * 보이는 줄」이다 — owner 의 login_id 는 로그인의 절반인데 코드로 재설정할 수 없는 대상이라 알 까닭이 없다.
+   * 값은 감사·로그에 싣지 않는다. 읽은 사실(누가·건수)만 사람마다 하루 한 줄 남긴다(security 낮은 것).
    */
   app.get('/accounts/login-ids', { preHandler: app.requireCap('member.reset_password') }, async (req, reply) => {
     if (req.account!.kind !== 'human' || req.authVia !== 'session') {
       return reply.code(403).send({ error: { code: 'session_required', message: 'only a signed-in person can read login IDs' } });
     }
+    const actor = req.account!;
     const r = await pool.query<{ id: string; loginId: string }>(
       `select id, login_id as "loginId" from account
-        where kind = 'human' and deleted_at is null and login_id is not null`);
+        where kind = 'human' and deleted_at is null and disabled_at is null and login_id is not null
+          and id <> $1 and role <> 'owner' and ($2::text = 'owner' or role <> 'admin')`, [actor.id, actor.role]);
+    if (loginIdsReadAudit.first(actor.id, Date.now(), 24 * 60 * 60_000)) {
+      await recordAudit(pool, {
+        action: 'accounts.login_ids.read', actorId: actor.id, actorHandle: actor.handle, detail: { count: r.rowCount ?? 0 },
+      }, req);
+    }
     void reply.header('cache-control', 'no-store');
     return { loginIds: Object.fromEntries(r.rows.map((x) => [x.id, x.loginId])) };
   });

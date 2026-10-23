@@ -61,13 +61,14 @@ export function InviteSettings() {
     [accounts],
   );
 
-  // 목록을 다시 읽을 때(다시 시도) 함께 다시 읽는다.
+  // 목록을 다시 읽을 때(다시 시도)·사람이 늘거나 줄 때 함께 다시 읽는다(designer #1490 n2 — 연 채로 새 사람이 가입하면).
+  const peopleKey = useMemo(() => people.map((a) => a.id).join(','), [people]);
   useEffect(() => {
     if (!loginIdsOn) { setLoginIds({}); return; }
     let alive = true;
     getController().loginIds().then((m) => { if (alive) setLoginIds(m); }, () => { if (alive) setLoginIds({}); });
     return () => { alive = false; };
-  }, [loginIdsOn, attempt, me?.id]);
+  }, [loginIdsOn, attempt, me?.id, peopleKey]);
 
   const createInvite = async () => {
     setError(null);
@@ -111,16 +112,16 @@ export function InviteSettings() {
                 {people.length === 0
                   ? <p className="px-2 py-1 text-fg-subtle">{load.kind === 'loading' ? t('directory.loading') : t('members.list.empty')}</p>
                   : <SettingsGrid as="ul" className="gap-y-0">{people.map((a) => <DirectoryRow key={a.id} account={a} showKind={false}
-                    actions={(loginIds[a.id] || (resetOn && canIssueResetCode(me, a))) ? (
-                      <>
-                        {loginIds[a.id] && (
-                          <span className="text-meta text-fg-subtle" data-testid={`member-login-id-${a.id}`}>
-                            {t('members.loginId')} <code className="font-mono">{loginIds[a.id]}</code>
-                          </span>
-                        )}
-                        {resetOn && canIssueResetCode(me, a) && <ResetCodeButton account={a} />}
-                      </>
-                    ) : null} />)}</SettingsGrid>}
+                    // 로그인 ID 는 「누구인가」라 @handle 바로 뒤에 둔다 — 둘이 다른 것을 한눈에 견준다(designer #1490 n1).
+                    // 최대 64자라 좁은 칸에서는 잘리고 title 로 전체를 보인다(s1). 오른쪽 끝에는 버튼만.
+                    detail={loginIds[a.id] ? (
+                      <span className="flex min-w-0 items-baseline gap-1 text-meta text-fg-subtle" data-testid={`member-login-id-${a.id}`}>
+                        <span aria-hidden>·</span>
+                        <span className="shrink-0">{t('members.loginId')}</span>
+                        <code className="min-w-0 max-w-[10rem] truncate font-mono" title={loginIds[a.id]} data-testid={`member-login-id-value-${a.id}`}>{loginIds[a.id]}</code>
+                      </span>
+                    ) : null}
+                    actions={resetOn && canIssueResetCode(me, a) ? <ResetCodeButton account={a} /> : null} />)}</SettingsGrid>}
               </div>
             </SettingsGroup>
           </>

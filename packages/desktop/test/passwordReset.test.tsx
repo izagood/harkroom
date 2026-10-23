@@ -4,7 +4,7 @@
  * 로그인 화면은 안내(서버 호출 없음) → 코드 폼, 실패 문구는 하나, 옛 서버면 「지원하지 않는다」, 알림 띠는 발급자를 이름으로.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within, act } from '@testing-library/react';
 import {
   canIssueResetCode, groupCode, PasswordResetNoticeBanner, ResetCodeDialog, ResetWithCodeForm, ForgotPasswordGuide,
 } from '../src/components/PasswordReset';
@@ -89,6 +89,24 @@ describe('멤버와 초대의 로그인 ID(관리자만)', () => {
     render(<InviteSettings />);
     expect((await screen.findByTestId('member-login-id-m1')).textContent).toContain('member-login-1');
     expect(c.loginIds).toHaveBeenCalled();
+  });
+
+  it('긴 로그인 ID 는 @handle 뒤에서 잘리고 title 로 전체를 보인다(designer s1·n1) — 사람이 늘면 다시 읽는다(n2)', async () => {
+    const long = 'l'.repeat(64);
+    const c = setup({ loginIds: vi.fn(async () => ({ m1: long })) });
+    useActiveStore.getState().set({ me: admin, accounts: { a1: admin, m1: member } });
+    setServer('0.4.181');
+    render(<InviteSettings />);
+    const value = await screen.findByTestId('member-login-id-value-m1');
+    expect(value.className).toContain('truncate');
+    expect(value.getAttribute('title')).toBe(long);
+    // 줄 끝 동작 칸이 아니라 @handle 뒤에 있다.
+    const row = screen.getByTestId('directory-row-m1');
+    const handle = within(row).getByText('@minji');
+    expect(handle.compareDocumentPosition(value) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const calls = c.loginIds.mock.calls.length;
+    act(() => { useActiveStore.getState().set({ accounts: { a1: admin, m1: member, m2: member2 } }); });
+    await waitFor(() => expect(c.loginIds.mock.calls.length).toBeGreaterThan(calls));
   });
 
   it('권한이 없거나 옛 서버면 부르지도 않고, 실패하면 줄을 그리지 않는다', async () => {
