@@ -231,8 +231,12 @@ class _AskCardState extends State<AskCard> {
               : '${perm.once!.ci ? t.mergeOnceCiButton : t.permApproveOnce} (PR #${perm.once!.number})',
           _ => o,
         };
+    // 줄 상자의 한도는 한 선택지의 것만 — 열린 카드는 주 버튼, 끝난 카드는 고른 선택지(데스크톱과 같다).
+    // PR·head 는 [이번 한 번]의 한도라 그 선택지일 때만 보인다 — 늘 보이면 [이 위임장 동안]이 PR 하나에 묶인 것처럼 읽힌다.
     final primary = order.isEmpty ? null : order.first;
-    final shownLimits = primary == null ? null : perm.line?.limits[primary];
+    final shown = open ? primary : (ask.answeredWith ?? (perm.status == 'approved_once' ? permOptApproveOnce : null));
+    final shownLimits = shown == null ? null : perm.line?.limits[shown];
+    final shownOnce = shown == permOptApproveOnce ? perm.once : null;
 
     final head = open
         ? '${hasMandateOpt && !ids.contains(permOptApproveMandate) ? t.permAskNewMandate : t.permAskAddLine}${owner ? ' · ${t.askToYou}' : ''}'
@@ -295,7 +299,7 @@ class _AskCardState extends State<AskCard> {
               PermissionLineBox(
                 line: perm.line!,
                 limits: shownLimits,
-                once: perm.once,
+                once: shownOnce,
               ),
             ],
             if (ask.prompt != null && open) ...[

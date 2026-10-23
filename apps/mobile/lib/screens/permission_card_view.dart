@@ -63,6 +63,7 @@ class PermissionLineBox extends StatelessWidget {
       if (once != null) 'PR #${once!.number}',
       if (once != null) 'head ${once!.headSha.length > 7 ? once!.headSha.substring(0, 7) : once!.headSha}',
       if (once == null && l?.pr != null) 'PR #${l!.pr}',
+      if (once == null && l?.head != null) 'head ${l!.head!.length > 7 ? l.head!.substring(0, 7) : l.head!}',
       if (l?.untilMs != null)
         l!.untilMs! >= 86400000 ? t.permLimitDays((l.untilMs! / 86400000).round()) : t.permLimitHours((l.untilMs! / 3600000).ceil()),
       if (l?.uses != null) t.permLimitUses(l!.uses!),

@@ -150,6 +150,9 @@ void main() {
     expect(find.byKey(const Key('perm-cap')), findsOneWidget);
     expect(find.text('repo:acme/rebelro'), findsOneWidget);
     expect(find.text('7일'), findsOneWidget);
+    // 줄 상자는 주 버튼 [이 위임장 동안]의 한도만 — [이번 한 번]의 PR·head 는 싣지 않는다.
+    expect(find.text('PR #404'), findsNothing);
+    expect(find.text('head 7b7dd25'), findsNothing);
     final primary = find.byKey(const Key('ask-option-m1-approve_mandate'));
     final once = find.byKey(const Key('ask-option-m1-approve_once'));
     final deny = find.byKey(const Key('ask-option-m1-deny'));
@@ -198,16 +201,20 @@ void main() {
 
     await expectState({'status': 'granted'}, '위임장에 더함', ask: {'answeredWith': 'approve_mandate'});
     await expectState({'status': 'approved_once', 'approvedOnce': {'ghUser': 'octo'}}, '이번 한 번 승인함 · gh octo', ask: {'answeredWith': 'approve_once'});
+    // 끝난 카드는 고른 선택지의 한도 — [이번 한 번]이면 PR·head 가 남는다.
+    expect(find.text('PR #404'), findsOneWidget);
+    expect(find.text('head 7b7dd25'), findsOneWidget);
+    expect(find.text('7일'), findsNothing);
     await expectState({'status': 'approved_once'}, '이번 한 번 승인함', ask: {'answeredWith': 'approve_once'});
     await expectState({'status': 'denied'}, '거절함', ask: {'answeredWith': 'deny'});
-    await expectState({'status': 'expired'}, '시한 지남', ask: {'closedAt': '2026-10-21T06:00:00Z', 'closedReason': 'expired'});
+    await expectState({'status': 'expired'}, '만료됨 · 에이전트가 다시 청해야 한다', ask: {'closedAt': '2026-10-21T06:00:00Z', 'closedReason': 'expired'});
     await expectState({'status': 'superseded', 'supersededByMessageId': 'm9'}, '새 카드로 바뀜',
         ask: {'closedAt': '2026-10-21T06:00:00Z', 'closedReason': 'superseded'});
     expect(find.byKey(const Key('perm-open-new-m1')), findsOneWidget);
     await expectState({'mandate': {..._mandate, 'endedAt': '2026-10-22T00:00:00Z'}}, '위임장이 끝남');
     await expectState({'status': 'granted', 'decidedVia': {'kind': 'chat', 'messageId': 'x'}}, '위임장에 더함 · 글로 답함',
         ask: {'answeredWith': 'approve_mandate'});
-    await expectState({'ownerAccountId': 'someone-else'}, '소유자만 정할 수 있어요');
+    await expectState({'ownerAccountId': 'someone-else'}, '소유자만 정할 수 있다');
     expect(find.byKey(const Key('ask-option-m1-deny')), findsNothing);
   });
 

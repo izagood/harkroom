@@ -285,7 +285,7 @@ class StringsKo implements Strings {
   String get permStateDenied => '거절함';
 
   @override
-  String get permStateExpired => '시한 지남 · 에이전트가 다시 청해야 해요';
+  String get permStateExpired => '만료됨 · 에이전트가 다시 청해야 한다';
 
   @override
   String get permStateSuperseded => '새 카드로 바뀜';
@@ -294,22 +294,22 @@ class StringsKo implements Strings {
   String get permOpenNewCard => '새 카드 열기';
 
   @override
-  String get permStateMandateEnded => '위임장이 끝남 · 더 정할 수 없어요';
+  String get permStateMandateEnded => '위임장이 끝남 · 더 정할 수 없다';
 
   @override
-  String get permReadOnly => '소유자만 정할 수 있어요';
+  String get permReadOnly => '소유자만 정할 수 있다';
 
   @override
   String get permViaChat => '글로 답함';
 
   @override
-  String get permMirrorNeutral => '권한 요청 · 원래 카드가 있는 채널에서 확인하고 정해 주세요';
+  String get permMirrorNeutral => '권한 요청 · 원래 카드가 있는 채널에서 확인하고 정한다';
 
   @override
   String get permOpenOriginal => '원본 카드 열기';
 
   @override
-  String get permMirrorOf => '거울 · 원본에서 온 카드';
+  String get permMirrorOf => '거울 · 여기서 정해도 원본이 정해진다';
 
   @override
   String permLimitUses(int n) => '$n회';
@@ -920,16 +920,7 @@ class StringsKo implements Strings {
   @override
   String get askFailed => '고르지 못했다';
   @override
-  String get mergeOnceButton => '이번 한 번 머지';
-  @override
-  String get mergeOnceSheetTitle => '데스크톱에서 승인하세요';
-  @override
-  String get mergeOnceSheetBody => '이번 한 번 머지는 머지할 GitHub 계정을 고르는 승인이다. 계정은 그 에이전트가 도는 기기의 것이라 데스크톱 앱의 이 카드에서 고른다. 7일 허락과 거절은 여기서도 된다.';
-  @override
   String get mergeOnceCiButton => 'CI 실패 무시하고 이번 한 번 머지';
-  @override
-  String get mergeOnceCiSheetBody => 'CI 실패를 무시하는 이번 한 번 머지는 머지할 GitHub 계정을 고르는 승인이라 데스크톱 앱의 이 카드에서 한다. 이 카드에는 7일 허락이 없다. 거절은 여기서도 된다.';
-
   @override
   String get reactionFailed => '리액션을 바꾸지 못했다';
 
