@@ -1011,7 +1011,7 @@ fn main() {
         // 돌고 있는 것이 갈린다.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        // 첨부 저장 창. Rust 의 `save_attachment` 만 쓴다 — `dialog:*` 권한을 열지 않는다.
+        // 첨부 저장 창. Rust 의 `attachment_save::pick_with_dialog` 만 쓴다 — `dialog:*` 권한을 열지 않는다.
         .plugin(tauri_plugin_dialog::init())
         .manage(attachment_save::SavedFiles::default())
         .manage(daemon_client::DaemonState::new())

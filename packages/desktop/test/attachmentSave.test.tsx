@@ -14,8 +14,10 @@ import type { AttachmentRow, MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController } from '../src/state/controller';
-import { ApiError } from '../src/lib/api';
+import { ApiClient, ApiError } from '../src/lib/api';
+import { ImageLightbox } from '../src/components/ImageLightbox';
 import { createTauriFileSaver, setFileSaver, SAVE_TOKEN_HEADER, type FileSaver, type SaveTarget } from '../src/lib/fileSaver';
+import { formatProgressBytes } from '../src/lib/attachmentSaveProgress';
 import { MessageItem } from '../src/components/MessageItem';
 import { SaveToast, SAVE_TOAST_MS } from '../src/components/SaveToast';
 import { acc, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
@@ -115,7 +117,7 @@ describe('controller.saveAttachment', () => {
     const { controller } = mount();
 
     const first = controller.saveAttachment(att());
-    expect(useAppStore.getState().attachmentSaving).toEqual({ a1: 'choosing' });
+    expect(useAppStore.getState().attachmentSaving).toEqual({ a1: { phase: 'choosing' } });
     await controller.saveAttachment(att());
     choose(null);
     await first;
@@ -129,7 +131,7 @@ describe('controller.saveAttachment', () => {
     const { api, controller } = mount(() => new Promise<Blob>((r) => { release = r; }));
 
     const first = controller.saveAttachment(att());
-    await vi.waitFor(() => expect(useAppStore.getState().attachmentSaving).toEqual({ a1: 'fetching' }));
+    await vi.waitFor(() => expect(useAppStore.getState().attachmentSaving.a1?.phase).toBe('fetching'));
     await controller.saveAttachment(att());
     release(new Blob(['x']));
     await first;
@@ -150,7 +152,7 @@ describe('controller.saveAttachment', () => {
 describe('파일 칩', () => {
   const message = (): MessageRow => ({ ...msg('m1', 'c1', 1, '요약'), attachments: [att()] });
 
-  it('누르면 무엇을 하는지 말하고(저장…), 받는 동안에는 받는 중… 이고 눌리지 않는다', async () => {
+  it('누르면 무엇을 하는지 말하고(저장…), 받는 동안에는 진행을 말하고 눌리지 않는다', async () => {
     fakeSaver(picked);
     let release!: (b: Blob) => void;
     mount(() => new Promise<Blob>((r) => { release = r; }));
@@ -160,7 +162,7 @@ describe('파일 칩', () => {
     expect(screen.getByTestId('attachment-file-action').textContent).toBe('저장…');
 
     await act(async () => { fireEvent.click(chip); });
-    expect(screen.getByTestId('attachment-file-action').textContent).toBe('받는 중…');
+    expect(screen.getByTestId('attachment-file-action').textContent).toBe('0% · 0/7.5 KB');
     expect((chip as HTMLButtonElement).disabled).toBe(true);
     expect(chip.getAttribute('aria-busy')).toBe('true');
 
@@ -254,5 +256,161 @@ describe('Tauri 저장 표면', () => {
     const invoke = vi.fn(async () => undefined);
     await createTauriFileSaver(invoke).reveal(9);
     expect(invoke).toHaveBeenCalledWith('reveal_saved_attachment', { token: 9 });
+  });
+});
+
+describe('받는 동안 진행률·취소 (P2)', () => {
+  type Opts = { onProgress?: (loaded: number, total: number | null) => void; signal?: AbortSignal };
+  const message = (): MessageRow => ({ ...msg('m1', 'c1', 1, '요약'), attachments: [att({ sizeBytes: 7_864_320 })] });
+
+  /** 받기를 손으로 몬다: progress(loaded,total) 로 진행을 흘리고, finish/fail 로 끝낸다. 신호가 끊기면 AbortError. */
+  function steeredFetch() {
+    const ctl: { opts?: Opts; finish?: () => void; fail?: (e: Error) => void } = {};
+    const fetchAttachment = vi.fn((_id: string, opts: Opts = {}) => new Promise<Blob>((resolve, reject) => {
+      ctl.opts = opts;
+      ctl.finish = () => resolve(new Blob(['x']));
+      ctl.fail = reject;
+      opts.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    }));
+    const progress = (loaded: number, total: number | null) => ctl.opts?.onProgress?.(loaded, total);
+    return { ctl, fetchAttachment, progress };
+  }
+
+  it('칩 아래 막대와 「42% · 3.1/7.5 MB」를 보이고, 라이트박스 버튼도 같은 %를 말한다', async () => {
+    fakeSaver(picked);
+    const f = steeredFetch();
+    mount(f.fetchAttachment as unknown as () => Promise<Blob>);
+    render(<MessageItem message={message()} />);
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '저장: rc68-SUMMARY.md' })); });
+    await act(async () => { f.progress(3_355_443, 7_864_320); });
+
+    expect(screen.getByTestId('attachment-file-action').textContent).toBe('42% · 3.2/7.5 MB');
+    expect((screen.getByTestId('attachment-file-progress') as HTMLElement).style.width).toBe('42%');
+    expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('42');
+
+    render(<ImageLightbox attachment={att({ sizeBytes: 7_864_320 })} url="blob:x" onClose={() => undefined} />);
+    expect(screen.getByRole('button', { name: '42%' })).toBeTruthy();
+
+    await act(async () => { f.ctl.finish!(); });
+    expect(screen.queryByTestId('attachment-file-progress')).toBeNull();
+    expect(screen.getByTestId('attachment-file-action').textContent).toBe('저장…');
+  });
+
+  it('전체 크기를 모르면 막대 없이 「받는 중…」만 말한다', async () => {
+    fakeSaver(picked);
+    const f = steeredFetch();
+    mount(f.fetchAttachment as unknown as () => Promise<Blob>);
+    render(<MessageItem message={{ ...message(), attachments: [att({ sizeBytes: 0 })] }} />);
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '저장: rc68-SUMMARY.md' })); });
+    await act(async () => { f.progress(1_000_000, null); });
+
+    expect(screen.getByTestId('attachment-file-action').textContent).toBe('받는 중…');
+    expect(screen.queryByTestId('attachment-file-progress')).toBeNull();
+    await act(async () => { f.ctl.finish!(); });
+  });
+
+  it('[✕]를 누르면 받기를 멈추고, 쓰지 않고, 아무 말 없이 원래 칩으로 돌아간다', async () => {
+    const saver = fakeSaver(picked);
+    const f = steeredFetch();
+    mount(f.fetchAttachment as unknown as () => Promise<Blob>);
+    render(<MessageItem message={message()} />);
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '저장: rc68-SUMMARY.md' })); });
+    await act(async () => { f.progress(1_000, 7_864_320); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '받기 취소: rc68-SUMMARY.md' })); });
+
+    expect(f.ctl.opts?.signal?.aborted).toBe(true);
+    expect(saver.write).not.toHaveBeenCalled();
+    expect(noticeTexts()).toEqual([]);
+    expect(useAppStore.getState().saveToast).toBeNull();
+    expect(useAppStore.getState().attachmentSaving).toEqual({});
+    expect(screen.getByTestId('attachment-file-action').textContent).toBe('저장…');
+    expect(screen.queryByRole('button', { name: '받기 취소: rc68-SUMMARY.md' })).toBeNull();
+  });
+
+  it('받기에 실패하면 칩이 「받기 실패 · 다시」를 말하고 다시 누르면 저장 창부터 다시 간다', async () => {
+    const saver = fakeSaver(picked);
+    const f = steeredFetch();
+    mount(f.fetchAttachment as unknown as () => Promise<Blob>);
+    render(<MessageItem message={message()} />);
+    const chip = screen.getByRole('button', { name: '저장: rc68-SUMMARY.md' });
+
+    await act(async () => { fireEvent.click(chip); });
+    await act(async () => { f.ctl.fail!(new ApiError(500, 'attachment_failed', 'HTTP 500')); });
+
+    expect(screen.getByTestId('attachment-file-action').textContent).toBe('받기 실패 · 다시');
+    expect(noticeTexts()).toEqual(['첨부를 불러오지 못했다']);
+    expect(saver.write).not.toHaveBeenCalled();
+    expect((chip as HTMLButtonElement).disabled).toBe(false);
+
+    await act(async () => { fireEvent.click(chip); });
+    expect(saver.pick).toHaveBeenCalledTimes(2);
+    await act(async () => { f.ctl.finish!(); });
+    expect(saver.write).toHaveBeenCalledTimes(1);
+  });
+
+  it('진행은 %가 바뀔 때만 가게에 적는다 — 조각마다 다시 그리지 않는다', async () => {
+    fakeSaver(picked);
+    const f = steeredFetch();
+    const { controller } = mount(f.fetchAttachment as unknown as () => Promise<Blob>);
+    const writes: unknown[] = [];
+    const unsub = useAppStore.subscribe((s, prev) => { if (s.attachmentSaving !== prev.attachmentSaving) writes.push(s.attachmentSaving.a1); });
+
+    const done = controller.saveAttachment(att({ sizeBytes: 1_000_000 }));
+    await vi.waitFor(() => expect(f.ctl.opts).toBeDefined());
+    writes.length = 0;
+    for (let loaded = 1_000; loaded <= 9_000; loaded += 1_000) f.progress(loaded, 1_000_000);
+    f.ctl.finish!();
+    await done;
+    unsub();
+
+    // 1천~9천 바이트(0%)는 한 번도 새로 적지 않는다(앞서 적은 0% 그대로) — 끝에 지우는 한 번만 남는다.
+    expect(writes).toEqual([undefined]);
+  });
+});
+
+describe('ApiClient.fetchAttachment 진행률', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('content-length 로 전체를 알고 조각마다 진행을 알린다, 토큰은 헤더에만 싣는다', async () => {
+    const chunks = [new Uint8Array(3), new Uint8Array(5)];
+    let i = 0;
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-length': '8', 'content-type': 'text/markdown' }),
+      body: { getReader: () => ({ read: async () => (i < chunks.length ? { done: false, value: chunks[i++] } : { done: true, value: undefined }) }) },
+      blob: async () => { throw new Error('스트림으로 읽어야 한다'); },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const seen: [number, number | null][] = [];
+    const signal = new AbortController().signal;
+
+    const blob = await new ApiClient('http://x', 'tok').fetchAttachment('a1', { onProgress: (l, t) => seen.push([l, t]), signal });
+
+    expect(seen).toEqual([[0, 8], [3, 8], [8, 8]]);
+    expect(formatProgressBytes(0, 7_864_320)).toBe('0/7.5 MB');
+    expect(formatProgressBytes(3_355_443, 7_864_320)).toBe('3.2/7.5 MB');
+    expect(formatProgressBytes(500, 900)).toBe('500/900 B');
+    expect(blob.size).toBe(8);
+    expect(fetchMock).toHaveBeenCalledWith('http://x/attachments/a1', { headers: { authorization: 'Bearer tok' }, signal });
+  });
+
+  it('content-length 가 없으면 전체는 null 이다', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200, headers: new Headers(),
+      body: { getReader: () => ({ read: async () => ({ done: true, value: undefined }) }) },
+    })));
+    const seen: (number | null)[] = [];
+    await new ApiClient('http://x', 'tok').fetchAttachment('a1', { onProgress: (_l, t) => seen.push(t) });
+    expect(seen).toEqual([null]);
+  });
+
+  it('진행률을 원하지 않으면 예전처럼 blob() 이다', async () => {
+    const b = new Blob(['x']);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, headers: new Headers(), body: null, blob: async () => b })));
+    expect(await new ApiClient('http://x', null).fetchAttachment('a1')).toBe(b);
   });
 });

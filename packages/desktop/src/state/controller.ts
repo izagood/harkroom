@@ -13,6 +13,7 @@ import { addRange, coversSeq, type SeqRange } from '../lib/seqCoverage';
 import { connectWs, type WsDownReason, type WsHandle } from '../lib/ws';
 import { sessionStore } from '../lib/session';
 import { getFileSaver, type SaveTarget } from '../lib/fileSaver';
+import { isSaveBusy, UNKNOWN_TOTAL_STEP, type AttachmentSaveState } from '../lib/attachmentSaveProgress';
 import { markBoot } from '../lib/bootTimings';
 import { lastChannelScope, lastChannelStorage } from '../lib/prefs';
 import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/notify';
@@ -108,6 +109,8 @@ export class Controller {
   private unreadFetchSeq = 0;
   /** 저장 토스트의 표(`saveToast.id`). 같은 파일을 다시 저장해도 타이머가 다시 돈다. */
   private saveToastSeq = 0;
+  /** 받는 중인 첨부 저장의 멈춤 손잡이(첨부 id → AbortController). [✕]가 이것으로 멈춘다. */
+  private saveAborts = new Map<string, AbortController>();
   /** 도는 중인 보드 조회 · 도는 동안 또 바뀌었나(`loadInboxBoard`). */
   private boardInFlight: Promise<InboxBoardData> | null = null;
   private boardDirty = false;
@@ -2166,22 +2169,25 @@ export class Controller {
    * 첨부를 사용자 디스크에 저장한다 — **저장 창을 먼저 띄우고**, 사람이 고른 자리에 쓴다(2026-10-23, jaebin 결정
    * 92bf2dea). 칩·확대 보기·미리보기 패널이 모두 이 함수를 부른다.
    *
-   * - 순서: 저장 창(`pick`) → [취소]면 조용히 끝(받지도 않는다) → 바이트 받기 → 쓰기(`write`) → 아래쪽 토스트.
+   * - 순서: 저장 창(`pick`) → [취소]면 조용히 끝(받지도 않는다) → 바이트 받기(진행률, P2) → 쓰기(`write`) → 토스트.
    *   바이트를 먼저 받아야 하는 이유는 토큰을 URL 에 넣지 않기 위해서다(`fetchAttachment`).
-   * - 저장 창이 떠 있는 동안·받는 동안 `attachmentSaving` 에 올려 다시 누르지 못하게 한다.
-   * - 실패는 Notice. 브라우저(앵커)는 어디에 썼는지 모르므로 토스트가 없다.
+   * - 진행은 `attachmentSaving` 하나에 적는다(`lib/attachmentSaveProgress.ts`). %가 바뀔 때만 적는다.
+   * - 받는 중 [✕](`cancelAttachmentSave`)는 조용히 원래 칩으로 돌아간다. 받기 실패는 칩 「받기 실패 · 다시」+ Notice.
+   *   취소·실패면 쓰지 않으므로 부분 파일이 남지 않는다(표는 Rust 상한에서 밀려난다).
+   * - 브라우저(앵커)는 어디에 썼는지 모르므로 토스트가 없다.
    */
   async saveAttachment(attachment: AttachmentRow): Promise<void> {
-    if (this.store.getState().attachmentSaving[attachment.id]) return;
-    const mark = (phase: 'choosing' | 'fetching' | null) => {
+    if (isSaveBusy(this.store.getState().attachmentSaving[attachment.id])) return;
+    const mark = (state: AttachmentSaveState | null) => {
       const next = { ...this.store.getState().attachmentSaving };
-      if (phase) next[attachment.id] = phase;
+      if (state) next[attachment.id] = state;
       else delete next[attachment.id];
       this.store.getState().set({ attachmentSaving: next });
     };
     const t = this.t();
     const saver = getFileSaver();
-    mark('choosing');
+    let after: AttachmentSaveState | null = null;
+    mark({ phase: 'choosing' });
     try {
       let target: SaveTarget | null;
       try {
@@ -2191,17 +2197,31 @@ export class Controller {
         return;
       }
       if (!target) return;
-      mark('fetching');
+      const abort = new AbortController();
+      this.saveAborts.set(attachment.id, abort);
+      let written = -1;
+      const onProgress = (loaded: number, total: number | null) => {
+        // %가 바뀔 때만(전체를 모르면 일정 바이트마다) 적는다 — 조각마다 적으면 큰 파일에서 수천 번 다시 그린다.
+        const step = total ? Math.floor((loaded / total) * 100) : Math.floor(loaded / UNKNOWN_TOTAL_STEP);
+        if (step === written) return;
+        written = step;
+        mark({ phase: 'fetching', loaded, total });
+      };
+      onProgress(0, attachment.sizeBytes > 0 ? attachment.sizeBytes : null);
       let blob: Blob;
       try {
-        blob = await this.fetchAttachment(attachment.id);
+        blob = await this.api.fetchAttachment(attachment.id, { onProgress, signal: abort.signal });
       } catch (e) {
+        if (abort.signal.aborted) return;
+        after = { phase: 'failed' };
         this.store.getState().pushNotice(
           t(e instanceof ApiError && e.code === 'attachment_missing'
             ? 'attachment.missing'
             : 'attachment.fetchFailed'),
         );
         return;
+      } finally {
+        this.saveAborts.delete(attachment.id);
       }
       try {
         await saver.write(target, blob);
@@ -2215,8 +2235,13 @@ export class Controller {
         });
       }
     } finally {
-      mark(null);
+      mark(after);
     }
+  }
+
+  /** 받는 중인 첨부 저장을 멈춘다(칩의 [✕]). 아무 말 없이 원래 칩으로 돌아간다. 받는 중이 아니면 아무것도 안 한다. */
+  cancelAttachmentSave(attachmentId: string): void {
+    this.saveAborts.get(attachmentId)?.abort();
   }
 
   /** 저장 토스트의 [Finder에서 보기]. 실패하면 Notice 로 말한다. */

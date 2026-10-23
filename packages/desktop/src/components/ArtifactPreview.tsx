@@ -5,7 +5,7 @@ import { getController } from '../state/controller';
 import { useActiveStore } from '../state/communities';
 import { ApiError } from '../lib/api';
 import { useT } from '../i18n/useT';
-import { formatSize } from './Attachments';
+import { formatSize, useSaveButtonLabel } from './Attachments';
 import { isMacOS, macTopBarMinHeight, macTrafficLightInset } from '../lib/platform';
 import { allowPreviewOnce } from '../lib/previewAllowance';
 import { PaneResizer } from './PaneResizer';
@@ -81,8 +81,8 @@ export function ArtifactPanel({ fill = false, windowed }: {
   const t = useT();
   const fromStore = useActiveStore((s) => s.artifactPreview);
   const attachment = windowed ? windowed.attachment : fromStore;
-  // 저장 중(저장 창·받는 중)이면 [저장…]을 다시 못 누른다 — 카드와 같은 값을 본다.
-  const saving = useActiveStore((s) => (attachment ? s.attachmentSaving[attachment.id] : undefined));
+  // 저장 중(저장 창·받는 중)이면 [저장…]을 다시 못 누르고, 받는 동안은 칩과 같은 %를 말한다(designer #1475 n1).
+  const save = useSaveButtonLabel(attachment?.id);
   const channelId = useActiveStore((s) => s.activeChannelId);
   const [expanded, setExpanded] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
@@ -297,9 +297,10 @@ export function ArtifactPanel({ fill = false, windowed }: {
                 type="button"
                 className="rounded-row border border-border px-2 py-0.5 text-meta hover:bg-surface"
                 onClick={() => void getController().saveAttachment(attachment)}
-                disabled={!!saving}
+                disabled={save.busy}
+                aria-busy={save.busy ? true : undefined}
                 data-testid="artifact-panel-download-body"
-              >{t('artifact.panel.download')}</button>
+              >{save.label}</button>
             )}
             {(phase.kind === 'navigated' || (phase.kind === 'error' && phase.reason === 'failed')) && (
               <button
@@ -327,10 +328,10 @@ export function ArtifactPanel({ fill = false, windowed }: {
           type="button"
           className={`${phase.kind === 'ready' ? '' : 'ml-auto '}rounded-sm px-1 hover:bg-surface-sunken`}
           onClick={() => void getController().saveAttachment(attachment)}
-          disabled={!!saving}
-          aria-busy={saving ? true : undefined}
+          disabled={save.busy}
+          aria-busy={save.busy ? true : undefined}
           data-testid="artifact-panel-download"
-        >{t('artifact.panel.download')}</button>
+        >{save.label}</button>
       </footer>
     </section>
   );

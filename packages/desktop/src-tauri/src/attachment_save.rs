@@ -126,14 +126,23 @@ pub fn ensure_app_window(label: &str) -> Result<(), String> {
 /// BOM 따위다. 남겨 두면 `invoice\u{202E}fdp.command` 가 저장 창에 `invoicednammoc.pdf` 로 **보이면서**
 /// `.command` 로 저장된다(security #1212 n1).
 fn is_format_char(c: char) -> bool {
+    // Unicode 15 의 General_Category=Cf 전체다(security #1475 n1 — 처음 목록에 태그 글자 등이 빠졌었다).
+    // 크레이트를 들이지 않고 표를 적는 이유: 이 함수 하나를 위해 의존을 늘리지 않는다. 새 Cf 가 생기면 여기 더한다.
     matches!(c,
-        '\u{00AD}' | '\u{061C}' | '\u{180E}'
+        '\u{00AD}'
+        | '\u{0600}'..='\u{0605}' | '\u{061C}' | '\u{06DD}' | '\u{070F}'
+        | '\u{0890}'..='\u{0891}' | '\u{08E2}' | '\u{180E}'
         | '\u{200B}'..='\u{200F}'
         | '\u{202A}'..='\u{202E}'
         | '\u{2060}'..='\u{2064}'
         | '\u{2066}'..='\u{206F}'
         | '\u{FEFF}'
-        | '\u{FFF9}'..='\u{FFFB}')
+        | '\u{FFF9}'..='\u{FFFB}'
+        | '\u{110BD}' | '\u{110CD}'
+        | '\u{13430}'..='\u{1343F}'
+        | '\u{1BCA0}'..='\u{1BCA3}'
+        | '\u{1D173}'..='\u{1D17A}'
+        | '\u{E0001}' | '\u{E0020}'..='\u{E007F}')
 }
 
 /// 저장 창의 기본 이름. 마지막 경로 조각만 남기고, 제어 문자·보이지 않는 서식 문자를 지우고, 앞의 점(숨김 파일)을
@@ -304,6 +313,8 @@ mod tests {
         assert_eq!(suggested_name("invoice\u{202E}fdp.command"), "invoicefdp.command");
         assert_eq!(suggested_name("a\u{200B}b\u{200F}c\u{2066}d\u{2069}.txt"), "abcd.txt");
         assert_eq!(suggested_name("\u{FEFF}\u{2067}"), "attachment");
+        // 태그 글자·음악 서식 글자(security #1475 n1).
+        assert_eq!(suggested_name("a\u{E0001}b\u{E0041}c\u{1D173}.txt"), "abc.txt");
         // 보이는 글자는 남는다. (이모지 ZWJ 묶음은 낱 이모지로 갈라진다 — 파일 이름에서는 받아들인다.)
         assert_eq!(suggested_name("요약.md"), "요약.md");
     }
