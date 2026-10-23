@@ -183,6 +183,8 @@ export interface ServerDeps {
   /** WS ping/pong 주기(ms). 기본 30초. 테스트에서 짧게 준다. */
   /** 오퍼레이터 박동을 DB·이벤트로 처리하는 최소 간격(ms). 시험이 줄인다. 기본 `STATUS_MIN_INTERVAL_MS`. */
   operatorStatusMinIntervalMs?: number;
+  /** 다른 기기의 gh 줄 고치기(D3)가 오퍼레이터의 답을 기다리는 시간(ms). 기본 10초. 시험이 줄인다. */
+  ghLinesTimeoutMs?: number;
   wsHeartbeatMs?: number;
   /** '입력 중' 상태의 수명(ms). 기본 6초. */
   typingTtlMs?: number;
@@ -677,7 +679,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   await registerMergeRoutes(app, deps.pool);
   await registerMergeDenialRoutes(app, deps.pool);
-  await registerMergeAccountRoutes(app, deps.pool);
+  await registerMergeAccountRoutes(app, deps.pool, { operatorHub, timeoutMs: deps.ghLinesTimeoutMs });
   await registerPermissionRequestRoutes(app, deps.pool);
   await registerMandateRoutes(app, deps.pool);
   await registerApiCallRoutes(app, deps.pool, { keyring: secretKeyring, keyMismatch: secretKeyMismatch });
