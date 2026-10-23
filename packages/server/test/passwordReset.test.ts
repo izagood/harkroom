@@ -125,12 +125,12 @@ describe('사용', () => {
     expect((await login('redeem1', 'new-pass-1234')).statusCode).toBe(200);
   });
 
-  it('handle 과 로그인 ID 가 다른 사람: handle 로는 실패하고, 발급 응답이 주는 로그인 ID 로는 된다(10-22 jinbin 재현)', async () => {
-    // 그날의 모양: handle `jin`, 로그인 ID 는 다른 값. 사람은 화면에 보이는 handle 을 쳤다.
+  it('handle 과 로그인 ID 가 다른 사람: handle 로는 실패하고, 발급 응답이 주는 로그인 ID 로는 된다(10-22 다른 사용자 재현)', async () => {
+    // 그날의 모양: handle `alice`, 로그인 ID 는 다른 값. 사람은 화면에 보이는 handle 을 쳤다.
     const invite = await app.inject({ method: 'POST', url: '/invites', headers: auth(owner.token) });
     const reg = await app.inject({
       method: 'POST', url: '/auth/register',
-      payload: { inviteToken: invite.json().token, handle: 'jinx', loginId: 'login-other-7', displayName: 'Jin', password: 'pw123456' },
+      payload: { inviteToken: invite.json().token, handle: 'jinx', loginId: 'login-other-7', displayName: 'Alice', password: 'pw123456' },
     });
     expect(reg.statusCode).toBe(201);
     const id = reg.json().id as string;

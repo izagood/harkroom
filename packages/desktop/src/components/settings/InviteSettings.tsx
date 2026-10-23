@@ -33,7 +33,7 @@ export function InviteSettings() {
   const resetOn = resetSupported(serverVersion);
   /**
    * 사람들의 로그인 ID — 재설정 코드를 발급할 수 있는 관리자에게만(소유자 A안, 10-23). handle 과 다른 사람이 있어
-   * (10-22 jinbin) 「이 사람 로그인 ID 가 뭐지」를 여기서 답한다. 서버가 권한으로 거르고, 화면은 그 권한이 있을 때만 부른다.
+   * (10-22 다른 사용자) 「이 사람 로그인 ID 가 뭐지」를 여기서 답한다. 서버가 권한으로 거르고, 화면은 그 권한이 있을 때만 부른다.
    * 못 받으면(옛 서버 404·실패) 줄을 그리지 않을 뿐이다.
    */
   const loginIdsOn = hasCapability(me, 'member.reset_password') && loginIdsSupported(serverVersion);

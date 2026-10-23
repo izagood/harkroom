@@ -164,7 +164,7 @@ export function ResetCodeDialog({ account, onClose }: { account: AccountView; on
         )}
         {step === 'code' && issued && (
           <div className="mt-2" ref={issuedRef}>
-            {/* 재설정은 handle 이 아니라 **로그인 ID** 로 찾는다 — 둘이 다른 사람이 있다(10-22 jinbin). 받는 쪽 입력 순서대로
+            {/* 재설정은 handle 이 아니라 **로그인 ID** 로 찾는다 — 둘이 다른 사람이 있다(10-22 다른 사용자). 받는 쪽 입력 순서대로
                 로그인 ID → 코드로 보이고, [복사]도 둘을 함께 담는다(designer #1466 s1·n1). */}
             {issued.loginId && (
               <p className="mb-2 text-body" data-testid="reset-code-login-id">
