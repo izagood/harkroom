@@ -69,7 +69,10 @@ describe('parseChatApproval — 문장 속 명시적 승인 낱말(G2)·부정·
     ['안 승인해', P([], 'approve', 'negated')],
     ['approve later', P([], 'approve', 'negated')],
     ['approve the other one', P([], 'approve', 'notFinal')],
-    [`거절은 좀 그래 ${link(ID)}`, P([ID], 'deny', 'notFinal')],
+    [`거절은 좀 그래 ${link(ID)}`, P([ID], 'deny', 'denyNotFinal')],
+    // security n14 — 「없이」는 승인이 아니다.
+    ['승인 없이 진행해', P([], 'approve', 'negated')],
+    ['권한 없이 머지해', P([], 'approve', 'negated')],
     ['ok 승인해', P([], 'approve')],
     ['승인 부탁', P([], 'approve')],
     ['좋아 승인 👍', P([], 'approve')],

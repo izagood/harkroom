@@ -1,8 +1,9 @@
 import type { Pool } from 'pg';
-import type { MessageRow } from '@harkroom/shared';
-import { emitPosted } from '../events.js';
+import { readAskMeta, type AskOption, type MessageRow } from '@harkroom/shared';
+import { emitEvent, emitPosted } from '../events.js';
+import { isIrreversible } from './askBundles.js';
 import { assertChannelVisible, audienceFor } from './channels.js';
-import { postMessage } from './messages.js';
+import { postMessage, recordAskAnswer } from './messages.js';
 import { decide, isGenuinePermissionMirror, resolveDecision, type DecideInput } from './decisions.js';
 import type { PermissionKind } from './permissionRequests.js';
 import { systemI18n } from './systemI18n.js';
@@ -22,7 +23,8 @@ import { systemI18n } from './systemI18n.js';
  * - 어느 요청인지는 **구조로만** 정한다: 본문의 `harkroom://message/<카드 id>` 링크(1~5개, 어느 채널이든, 거울은 원본으로 —
  *   `resolveDecision`), 링크가 없으면 같은 스레드에 글보다 먼저 있던, 이 사람이 정할 수 있는 열린 카드가 딱 하나일 때 그 카드
  *   (머지 거절 카드 포함 — head 는 카드가 보여 준 값으로 묶고 CI 실패 카드는 「CI 무시」가 있어야 한다), 그 스레드에 권한 카드가
- *   없으면 소유자의 에이전트들이 글보다 먼저 낸 기다리는 요청이 딱 하나일 때 그것(T3, 카드 077fa790). 선택지 카드는 글로 답하지 않는다.
+ *   없으면 소유자의 에이전트들이 글보다 먼저 낸 기다리는 요청이 딱 하나일 때 그것(T3, 카드 077fa790). 선택지 카드의 글 답은
+ *   `answerAskFromMessage`(P5)가 먼저 본다.
  * - 올린 순간의 본문만 본다(수정은 다시 판정하지 않는다). 승인했으면 글 아래에 요청 행에서 그린 확인 줄을, 승인 낱말인데
  *   어느 요청인지 몰랐으면 그렇다는 안내 줄을 단다 — 조용히 넘기지 않는다(사례 ①).
  */
@@ -44,11 +46,11 @@ const APPROVE_EN = /\b(?:approve|approved|approves)\b/;
 const DENY = /거절|\b(?:deny|denied|denies)\b/;
 const BYPASS = /바이패스|\bbypass/;
 /**
- * 부정·거부·보류·미루기(「말고」·「하지 마」·「보류」·「취소」·「잠깐」·「기다려」·「아니」·「못」·「금지」·「불가」·「거부」·「중지」·
+ * 부정·거부·보류·미루기(「말고」·「없이」(security n14 — 「승인 없이 진행해」)·「하지 마」·「보류」·「취소」·「잠깐」·「기다려」·「아니」·「못」·「금지」·「불가」·「거부」·「중지」·
  * 「멈춰」·「나중」·「이따」·「다음에」) — 「안 해」·「않」 같은 부정 활용도 같이 막는다. 넓게 잡는다 — 잘못 막으면 카드에서 정하면
  * 되지만, 잘못 승인하면 되돌릴 수 없다(fail closed).
  */
-const NEGATION = /말고|말아|하지\s*마|보류|취소|잠깐|기다려|아니|못|금지|불가|거부|중지|멈춰|멈춤|나중|이따|다음에|미뤄|미루|아직|ㄴㄴ|안\s*(?:해|함|돼|할|한|합)|(?:^|\s)안(?=\s)|않|\b(?:don'?t|do not|not|no|wait|hold|cancel|stop|never|later)\b/;
+const NEGATION = /말고|없이|말아|하지\s*마|보류|취소|잠깐|기다려|아니|못|금지|불가|거부|중지|멈춰|멈춤|나중|이따|다음에|미뤄|미루|아직|ㄴㄴ|안\s*(?:해|함|돼|할|한|합)|(?:^|\s)안(?=\s)|않|\b(?:don'?t|do not|not|no|wait|hold|cancel|stop|never|later)\b/;
 const QUESTION = /[?？]/;
 /**
  * 물음표 없는 한국어 물음 — 문장·마디 끝의 「까·나·니·냐·는지」(「될까」·「되나」·「했니」·「하냐」·「됐는지」)와
@@ -66,7 +68,7 @@ const APPROVE_FINAL = new RegExp(String.raw`(?:(?<![미무불])(?:승인|허락)
 const DENY_FINAL = new RegExp(String.raw`(?:거절(?:${KO_END})?|\b(?:deny|denied)(?:\s+(?:it|this|that|them))?)$`);
 const CI_WORD = /ci\s*무시|ignore\s*(?:the\s*)?ci\b/;
 
-export type ChatBlock = 'negated' | 'question' | 'bypass' | 'conflict' | 'notFinal';
+export type ChatBlock = 'negated' | 'question' | 'bypass' | 'conflict' | 'notFinal' | 'denyNotFinal';
 export type ChatApprovalParse = {
   /** 본문에서 뽑은 카드 링크 id(중복 제거, 순서 유지). */
   cardIds: string[];
@@ -81,10 +83,10 @@ export type ChatApprovalParse = {
 export type ChatTarget = 'T1' | 'T2' | 'T3';
 
 /**
- * 글이 결정과 관계있는가를 **순수하게** 읽는다(P4). 승인·거절·바이패스 낱말도 카드 링크도 없으면 null.
- * 인용(`>` 줄)·코드(``` 블록·`인라인`)는 남의 글이거나 지어낼 수 있는 글이라 지우고 본다 — 거기 든 낱말·링크는 세지 않는다.
+ * 판정에 쓸 글자만 남긴다. 인용(`>` 줄)·코드(``` 블록·`인라인`)는 남의 글이거나 지어낼 수 있는 글이라 지우고, 카드 링크는
+ * 뽑아 `ids` 로 돌려주고, 멘션·주소는 지운다. 2,000자가 넘는 글은 결정으로 읽지 않는다(null).
  */
-export function parseChatApproval(body: string): ChatApprovalParse | null {
+function readChatBody(body: string): { ids: string[]; rest: string } | null {
   if (body.length > 2000) return null;
   const stripped = body
     .replace(/```[\s\S]*?(?:```|$)/g, ' ')
@@ -98,6 +100,17 @@ export function parseChatApproval(body: string): ChatApprovalParse | null {
     .replace(MENTION_TOKEN, ' ')
     .replace(/\bhttps?:\/\/\S+/gi, ' ')
     .toLowerCase();
+  return { ids, rest };
+}
+
+/**
+ * 글이 결정과 관계있는가를 **순수하게** 읽는다(P4). 승인·거절·바이패스 낱말도 카드 링크도 없으면 null.
+ * 인용·코드는 지우고 본다 — 거기 든 낱말·링크는 세지 않는다(`readChatBody`).
+ */
+export function parseChatApproval(body: string): ChatApprovalParse | null {
+  const read = readChatBody(body);
+  if (!read) return null;
+  const { ids, rest } = read;
   const approve = APPROVE_KO.test(rest) || APPROVE_EN.test(rest);
   const deny = DENY.test(rest);
   const bypass = BYPASS.test(rest);
@@ -110,9 +123,58 @@ export function parseChatApproval(body: string): ChatApprovalParse | null {
     else if (NEGATION.test(rest)) block = 'negated';
     else if (QUESTION_KO.test(rest)) block = 'question';
     else if (approve && deny) block = 'conflict';
-    else if (!(approve ? APPROVE_FINAL : DENY_FINAL).test(rest.replace(TAIL, ''))) block = 'notFinal';
+    // 거절하려던 글은 거절 문구로 안내한다(designer n2·security n16).
+    else if (!(approve ? APPROVE_FINAL : DENY_FINAL).test(rest.replace(TAIL, ''))) block = approve ? 'notFinal' : 'denyNotFinal';
   }
   return { cardIds, action: approve ? 'approve' : deny ? 'deny' : null, block, ciWord: CI_WORD.test(rest) };
+}
+
+/**
+ * 선택 카드에 글로 답한다(P5, 설계 1판 2절 「선택 카드」 줄). 고르는 꼴은 넷이고, 카드의 선택지 **하나**에 맞아야 한다:
+ * 번호(「1」·「2번」·「(3)」·「1번으로 해」) · 한글 차례(「(가)」·「나안」) · 「추천대로」(물어본 쪽이 `recommended` 를 하나만 달았을 때) ·
+ * 선택지 이름 그대로(「A안」·「「보류」로 해」). 뒤에는 「으로·로」와 「해·해줘·가자·하자·할게·진행해·부탁해」 같은 끝맺음만 붙을 수 있다 —
+ * 그 밖의 말이 섞이면 답으로 읽지 않는다(허용 꼴, P4 F3 과 같은 생각). 부정·물음이 있으면 답이 아니다.
+ */
+export type AskPick = { kind: 'index'; n: number; explicit: true } | { kind: 'recommended'; explicit: true } | { kind: 'label'; text: string; bare: string; explicit: false };
+export type AskPickParse = { cardIds: string[]; pick: AskPick };
+
+const PICK_END = String.raw`(?:\s*(?:으로|로))?(?:\s*(?:해|해\s*줘|해\s*주세요|가자|갈게|하자|할게|합니다|진행해|진행|부탁해|부탁합니다|부탁드립니다|ㄱㄱ|고고))?(?:요)?`;
+const PICK_NUMBER = new RegExp(String.raw`^(?:\(\s*([1-9])\s*\)|([1-9])\s*번?(?:\s*안)?)${PICK_END}$`);
+const PICK_LETTER = new RegExp(String.raw`^(?:\(\s*([가나다라마바])\s*\)|([가나다라마바])\s*안)${PICK_END}$`);
+const PICK_RECOMMENDED = new RegExp(String.raw`^(?:추천(?:대로|안|한\s*(?:것|거|대로|안))|as\s+recommended|recommended|go\s+with\s+(?:the\s+)?recommend(?:ed|ation))${PICK_END}$`);
+const PICK_END_ONLY = new RegExp(`${PICK_END}$`);
+const LETTERS = '가나다라마바';
+const QUOTES = /^[「『"'“‘]+|[」』"'”’]+$/g;
+const normLabel = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').replace(TAIL, '').replace(QUOTES, '').trim();
+
+/** 글을 선택 카드 답으로 **순수하게** 읽는다. 답이 될 수 없는 글(부정·물음·빈 글·2,000자 넘음)은 null. */
+export function parseAskPick(body: string): AskPickParse | null {
+  const read = readChatBody(body);
+  if (!read) return null;
+  const text = read.rest.replace(/\s+/g, ' ').replace(TAIL, '').trim();
+  if (!text || text.length > 200) return null;
+  if (QUESTION.test(text) || NEGATION.test(text) || QUESTION_KO.test(text) || BYPASS.test(text)) return null;
+  const cardIds = [...new Set(read.ids)];
+  const num = PICK_NUMBER.exec(text);
+  if (num) return { cardIds, pick: { kind: 'index', n: Number(num[1] ?? num[2]), explicit: true } };
+  const letter = PICK_LETTER.exec(text);
+  if (letter) return { cardIds, pick: { kind: 'index', n: LETTERS.indexOf((letter[1] ?? letter[2])!) + 1, explicit: true } };
+  if (PICK_RECOMMENDED.test(text)) return { cardIds, pick: { kind: 'recommended', explicit: true } };
+  return { cardIds, pick: { kind: 'label', text: normLabel(text), bare: normLabel(text.replace(PICK_END_ONLY, '')), explicit: false } };
+}
+
+/** 고른 꼴을 카드의 선택지 하나로 바꾼다. 이름은 **정확히 같을 때만**(대소문자·띄어쓰기·따옴표는 무시) — 하나가 아니면 고르지 않는다. */
+export function matchAskPick(options: AskOption[], pick: AskPick): { ok: true; id: string } | { ok: false; why: 'askNoMatch' | 'askNoRecommended' } {
+  if (pick.kind === 'index') {
+    const o = options[pick.n - 1];
+    return o ? { ok: true, id: o.id } : { ok: false, why: 'askNoMatch' };
+  }
+  if (pick.kind === 'recommended') {
+    const recs = options.filter((o) => o.recommended === true);
+    return recs.length === 1 ? { ok: true, id: recs[0]!.id } : { ok: false, why: 'askNoRecommended' };
+  }
+  const hits = options.filter((o) => { const l = normLabel(o.label); return l.length > 0 && (l === pick.text || l === pick.bare); });
+  return hits.length === 1 ? { ok: true, id: hits[0]!.id } : { ok: false, why: 'askNoMatch' };
 }
 
 /** 안내 줄의 까닭(`system.chatApproval.<까닭>` 키와 같다). 본문은 한국어로 남고, 새 앱은 표지로 그린다. */
@@ -121,12 +183,18 @@ const REASON_KO = {
   question: '물음으로 읽혀 정하지 않았다. 승인하려면 「승인해」처럼 끝맺어 다시 쓴다.',
   bypass: '「바이패스」는 글로 승인하지 않는다. 카드에서 정한다.',
   conflict: '승인과 거절 낱말이 함께 있어 정하지 않았다.',
-  notFinal: '승인 낱말 뒤에 다른 말이 이어져 정하지 않았다. 승인하려면 「승인해」처럼 승인 낱말로 끝맺어 다시 쓴다.',
+  notFinal: '승인 낱말 뒤에 말이 더 있어 정하지 않았다. 「승인해」처럼 끝맺어 다시 쓴다.',
+  denyNotFinal: '거절 낱말 뒤에 말이 더 있어 정하지 않았다. 「거절」로 끝맺어 다시 쓴다.',
   denyNeedsLink: '글로 거절하려면 카드 링크를 붙인다.',
   noWord: '카드 링크는 있지만 승인 낱말(승인·허락·머지해·진행해·approve)이 없다.',
   tooMany: '한 글로는 카드를 5장까지만 정한다. 나눠서 다시 쓴다.',
   noCard: '링크한 글 중에 정할 수 있는 카드가 없다.',
-  askCard: '선택지 카드는 아직 글로 답하지 않는다. 카드에서 고른다.',
+  askCard: '선택지 카드는 번호(「1번」)·선택지 이름·「추천대로」로 답한다. 카드에서 골라도 된다.',
+  askMany: '기다리는 선택 카드가 여럿이라 어느 것인지 모른다. 카드 링크 하나를 붙여 다시 쓴다.',
+  askNoMatch: '맞는 선택지가 없다. 번호(「1번」)나 선택지 이름으로 다시 쓴다.',
+  askNoRecommended: '이 카드에는 추천 선택지가 하나로 정해져 있지 않다. 번호나 선택지 이름으로 다시 쓴다.',
+  askIrreversible: '되돌릴 수 없는 일을 묻는 카드라 「추천대로」로는 고르지 않는다. 번호나 선택지 이름으로 쓴다.',
+  askAnswered: '이미 답한 카드다.',
   hidden: '볼 수 없는 채널의 카드다.',
   headChanged: '카드가 선 뒤 PR head 가 바뀌었다. 카드를 다시 확인하고 정한다.',
   ciWord: 'CI 실패를 무시하는 카드는 글에 「CI 무시」(ignore CI)가 있어야 승인한다.',
@@ -139,6 +207,8 @@ const REASON_KO = {
   failed: '결정하지 못했다. 카드에서 다시 시도한다.',
 } as const;
 export type ChatRefusal = keyof typeof REASON_KO;
+/** 선택 카드 답의 까닭 — 안내 줄이 「답 안 됨」으로 시작한다. */
+const ASK_REASONS = new Set<ChatRefusal>(['askCard', 'askMany', 'askNoMatch', 'askNoRecommended', 'askIrreversible', 'askAnswered']);
 
 type Candidate = {
   cardMessageId: string; requestId: string; agentId: string; agentHandle: string; kind: PermissionKind; target: string;
@@ -167,9 +237,12 @@ type Outcome = { c: Candidate; ok: true; grantExpiresAt: string | null; grantMod
 export async function applyChatApproval(pool: Pool, message: MessageRow): Promise<void> {
   if (!message.authorId) return;
   const parsed = parseChatApproval(message.body);
-  if (!parsed) return;
+  const pick = parseAskPick(message.body);
+  if (!parsed && !pick) return;
   try {
-    await approveFromMessage(pool, message, message.authorId, parsed);
+    // 선택 카드 답(P5)을 먼저 본다 — 가리킨 선택 카드가 없으면 권한 승인 판정으로 넘어간다.
+    if (pick && (await answerAskFromMessage(pool, message, message.authorId, pick, parsed))) return;
+    if (parsed) await approveFromMessage(pool, message, message.authorId, parsed);
   } catch (err) {
     console.error('[chat_approval] 글 승인 판정 실패(글은 올라갔다):', err);
   }
@@ -199,7 +272,7 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
     const rows = resolved.length > 0 ? (await pool.query<Candidate>(`${CANDIDATE_SQL} where p.card_message_id = any($1::uuid[])`, [resolved])).rows : [];
     targets = [...new Set(resolved)].map((id) => rows.find((r) => r.cardMessageId === id)).filter((r): r is Candidate => !!r);
     if (targets.length === 0) {
-      // 선택지 카드는 이번엔 글로 답하지 않는다(P5). 결정 낱말이 있을 때만 안내한다 — 링크만 있는 글은 흔하다.
+      // 선택지 카드에 고르는 꼴이 아닌 결정 낱말을 쓴 글(P5 가 넘긴 것)이다. 낱말이 있을 때만 안내한다 — 링크만 있는 글은 흔하다.
       if (askCards > 0 && hasWord) return refuse(pool, message, actorId, 'askCard');
       if (hasWord && (await ownsPendingRequest(pool, actorId))) return refuse(pool, message, actorId, 'noCard');
       return;
@@ -339,6 +412,108 @@ async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Ca
   return { c, ok: true, grantExpiresAt: d.grantExpiresAt, ...(d.grantMode ? { grantMode: d.grantMode } : {}), ...(option === 'deny' ? { denied: true as const } : {}) };
 }
 
+type AskCard = { id: string; meta: Record<string, unknown>; body: string; channelId: string; seq: number; createdAt: Date };
+
+/**
+ * 선택 카드에 글로 답한다(P5). 다룬 글이면 true(답했거나 안내 줄을 달았다), 가리킨 선택 카드가 없으면 false.
+ *
+ * - 어느 카드인지는 권한 승인과 같은 구조로만 정한다: 본문의 카드 링크 **하나**(T1, 거울이면 `recordAskAnswer` 가 원본에 적는다),
+ *   링크가 없으면 같은 스레드에 글보다 먼저 선, 이 사람이 답할 수 있는 열린 선택 카드가 **딱 하나**일 때 그 카드(T2).
+ * - 답할 수 있는가(수신자·사람만·권한 카드 불가·거울 원본 채널)는 `recordAskAnswer` 가 버튼과 같이 본다.
+ * - 이름으로만 맞춘 글(번호·차례·「추천대로」가 아닌 글)은 맞는 선택지가 없으면 조용히 넘긴다 — 보통 대화다.
+ * - 답에는 `answeredVia: 'chat'` 표지를 단다. 서버가 글을 읽어 고른 답이라, 버튼 답처럼 머지·비밀 래퍼의 「사람이 띄운 턴」으로 세지 않는다.
+ * - 물어본 에이전트가 이 글로 이미 깨었으면(같은 스레드의 `thread_reply`·멘션) 다시 깨우지 않는다 — 한 글에 턴이 둘 뜨지 않게.
+ */
+async function answerAskFromMessage(pool: Pool, message: MessageRow, actorId: string, p: AskPickParse, approval: ChatApprovalParse | null): Promise<boolean> {
+  let card: AskCard;
+  if (p.cardIds.length > 0) {
+    const asks: string[] = [];
+    let perms = 0;
+    for (const id of p.cardIds) {
+      const ref = await resolveDecision(pool, id);
+      if (ref?.kind === 'ask') asks.push(id);
+      else if (ref?.kind === 'permission') perms += 1;
+    }
+    if (asks.length === 0) return false;
+    if (perms > 0 || asks.length > 1) {
+      if (p.pick.explicit) await refuse(pool, message, actorId, 'askMany');
+      return p.pick.explicit;
+    }
+    const row = await readAskCard(pool, asks[0]!);
+    if (!row) return false;
+    card = row;
+  } else {
+    if (!message.threadRootId) return false;
+    const rows = (await pool.query<AskCard>(
+      `select id, meta, body, channel_id as "channelId", seq, created_at as "createdAt" from message
+        where channel_id = $1 and (id = $2 or thread_root_id = $2) and seq < $3 and deleted_at is null
+          and meta->>'kind' = 'ask'
+          and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null
+          and not (meta ? 'permissionRequest') and not (meta ? 'mergeDenial')
+          and (meta->'ask'->'to'->>'kind' = 'human' or (meta->'ask'->'to'->>'kind' = 'account' and meta->'ask'->'to'->>'accountId' = $4))
+        order by seq`,
+      [message.channelId, message.threadRootId, message.seq, actorId])).rows;
+    // 권한 카드의 거울은 선택 카드가 아니다 — 권한 판정으로 넘긴다.
+    const open: AskCard[] = [];
+    for (const r of rows) if ((await resolveDecision(pool, r.id))?.kind === 'ask') open.push(r);
+    if (open.length === 0) return false;
+    // 승인 낱말이 든 글인데 이 스레드에 내 권한 카드도 열려 있으면 어느 쪽인지 모른다 — 둘 다 정하지 않는다.
+    if (approval?.action && (await ownsOpenPermissionCardInThread(pool, message, actorId))) {
+      await notice(pool, message, actorId, '답 안 됨: 이 스레드에 선택 카드와 권한 카드가 함께 기다린다. 정할 카드의 링크를 붙여 다시 써라:', [], open.map((r) => r.id));
+      return true;
+    }
+    if (open.length > 1) {
+      if (!p.pick.explicit && !matchesAny(open, p.pick)) return false;
+      await notice(pool, message, actorId, `답 안 됨: 이 스레드에 기다리는 선택 카드가 ${open.length}장이라 어느 것인지 모른다. 답할 카드의 링크를 붙여 다시 써라:`, [], open.map((r) => r.id));
+      return true;
+    }
+    card = open[0]!;
+  }
+  if (!(await assertChannelVisible(pool, card.channelId, actorId))) return true;
+  const ask = readAskMeta(card.meta);
+  if (!ask) return false;
+  // 남에게 간 카드에는 아무 줄도 남기지 않는다 — 그 사람이 답할 카드가 아니다.
+  if (ask.to.kind === 'account' && ask.to.accountId !== actorId) return false;
+  const before = card.channelId === message.channelId ? card.seq < message.seq : new Date(card.createdAt).getTime() <= new Date(message.createdAt).getTime();
+  const matched = matchAskPick(ask.options, p.pick);
+  if (!matched.ok && !p.pick.explicit) return false;
+  if (!before) return refuse(pool, message, actorId, 'notBefore').then(() => true);
+  if (ask.answeredWith) return refuse(pool, message, actorId, 'askAnswered').then(() => true);
+  if (!matched.ok) return refuse(pool, message, actorId, matched.why).then(() => true);
+  // 「추천대로」는 사람이 선택지를 직접 고른 것이 아니다 — 되돌릴 수 없는 카드에는 쓰지 않는다(묶음 카드의 일괄과 같은 판정).
+  if (p.pick.kind === 'recommended' && isIrreversible(card.meta, card.body)) return refuse(pool, message, actorId, 'askIrreversible').then(() => true);
+  const result = await recordAskAnswer(pool, { messageId: card.id, actorId, optionId: matched.id, answeredVia: 'chat', skipWakeIfInboxFor: message.id });
+  if (result === 'already_answered') return refuse(pool, message, actorId, 'askAnswered').then(() => true);
+  if (typeof result === 'string') {
+    // 답할 수 없는 카드(남에게 간 것·권한 카드 거울)는 조용히 둔다. 그 밖의 실패만 알린다.
+    if (result !== 'forbidden' && result !== 'not_found') await refuse(pool, message, actorId, 'failed');
+    return true;
+  }
+  emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(pool, result.channelId) });
+  return true;
+}
+
+function matchesAny(cards: AskCard[], pick: AskPick): boolean {
+  return cards.some((c) => { const a = readAskMeta(c.meta); return !!a && matchAskPick(a.options, pick).ok; });
+}
+
+async function readAskCard(pool: Pool, id: string): Promise<AskCard | null> {
+  const r = await pool.query<AskCard>(
+    `select id, meta, body, channel_id as "channelId", seq, created_at as "createdAt" from message where id = $1 and deleted_at is null`, [id]);
+  return r.rows[0] ?? null;
+}
+
+async function ownsOpenPermissionCardInThread(pool: Pool, message: MessageRow, actorId: string): Promise<boolean> {
+  const r = await pool.query(
+    `select 1 from permission_request p
+       join message m on m.id = p.card_message_id and m.deleted_at is null
+       join agent_config c on c.account_id = p.agent_id
+      where m.channel_id = $1 and (m.id = $2 or m.thread_root_id = $2) and m.seq < $3
+        and c.owner_account_id = $4 and p.status = 'pending' and p.expires_at > now()
+      limit 1`, [message.channelId, message.threadRootId, message.seq, actorId]);
+  return (r.rowCount ?? 0) > 0;
+}
+
 /** 소유자의 에이전트 중 기다리는 권한 요청이 하나라도 있는가 — 없으면 낱말만 있는 글에 안내를 달지 않는다(그 낱말은 흔하다). */
 async function ownsPendingRequest(pool: Pool, actorId: string): Promise<boolean> {
   const r = await pool.query(
@@ -375,19 +550,20 @@ async function confirm(pool: Pool, message: MessageRow, actorId: string, outcome
 /** 「승인 안 됨: <까닭>」 한 줄 — 본문은 한국어, 새 앱은 표지(`system.chatApproval.<까닭>`)로 앱 언어로 그린다. 카드 id·내용은 싣지 않는다. */
 async function refuse(pool: Pool, message: MessageRow, actorId: string, why: ChatRefusal): Promise<void> {
   // 거절하려던 글에는 「거절 안 됨」으로 시작한다(designer n1).
-  const head = why === 'denyNeedsLink' ? '거절 안 됨' : '승인 안 됨';
+  const head = why === 'denyNeedsLink' || why === 'denyNotFinal' ? '거절 안 됨' : ASK_REASONS.has(why) ? '답 안 됨' : '승인 안 됨';
   await post(pool, message, actorId, `⚠️ ${head}: ${REASON_KO[why]}`, {
     chatApproval: { messageId: message.id, results: [], reason: why },
     i18n: systemI18n(`system.chatApproval.${why}`, {}),
   });
 }
 
-async function notice(pool: Pool, message: MessageRow, actorId: string, text: string, candidates: Candidate[] = []): Promise<void> {
+async function notice(pool: Pool, message: MessageRow, actorId: string, text: string, candidates: Candidate[] = [], askCardIds: string[] = []): Promise<void> {
   // 후보 목록은 링크**만** 싣는다(security F2) — 후보에는 글쓴이가 볼 수 없는 채널의 요청도 있을 수 있다.
-  const list = candidates.slice(0, 10).map((c) => `\n- harkroom://message/${c.cardMessageId}`).join('');
-  const more = candidates.length > 10 ? `\n- …그 밖 ${candidates.length - 10}개` : '';
+  const ids = [...candidates.map((c) => c.cardMessageId), ...askCardIds];
+  const list = ids.slice(0, 10).map((id) => `\n- harkroom://message/${id}`).join('');
+  const more = ids.length > 10 ? `\n- …그 밖 ${ids.length - 10}개` : '';
   await post(pool, message, actorId, `⚠️ ${text}${list}${more}`, {
-    chatApproval: { messageId: message.id, results: [], candidates: candidates.slice(0, 10).map((c) => c.cardMessageId) },
+    chatApproval: { messageId: message.id, results: [], candidates: ids.slice(0, 10) },
   });
 }
 

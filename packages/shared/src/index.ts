@@ -1416,9 +1416,9 @@ export interface AskMeta {
     replyNoteBy?: string;
     /**
      * 사람이 이 줄을 **골라 누르지 않은** 답의 표지(security F1, #1280). `bundle_bulk` = 묶음 카드의 「추천대로 일괄」.
-     * 표지가 있는 답은 머지·비밀 래퍼의 "사람이 띄운 턴"에서 빠진다.
+     * `chat` = 사람이 카드를 누르지 않고 글로 답해 서버가 선택지를 골랐다(P5). 표지가 있는 답은 머지·비밀 래퍼의 "사람이 띄운 턴"에서 빠진다.
      */
-    answeredVia?: 'bundle_bulk' | null;
+    answeredVia?: 'bundle_bulk' | 'chat' | null;
   };
 }
 
