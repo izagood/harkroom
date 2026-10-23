@@ -56,6 +56,24 @@ describe('parseChatApproval — 문장 속 명시적 승인 낱말(G2)·부정·
     ['승인했니', P([], 'approve', 'question')],
     ['승인해도 돼', P([], 'approve', 'question')],
     [`이거 머지해도 되는지 ${link(ID)}`, P([ID], 'approve', 'question')],
+    // 허용 꼴(security F3) — 낱말이 맨 끝 서술어가 아니면 정하지 않는다
+    ['승인 좀 미뤄', P([], 'approve', 'negated')],
+    ['승인은 좀 이르다', P([], 'approve', 'notFinal')],
+    ['승인 아직이야', P([], 'approve', 'negated')],
+    ['승인 말아', P([], 'approve', 'negated')],
+    ['승인 노', P([], 'approve', 'notFinal')],
+    ['승인 X', P([], 'approve', 'notFinal')],
+    ['승인 ㄴㄴ', P([], 'approve', 'negated')],
+    ['승인하면 큰일', P([], 'approve', 'notFinal')],
+    ['승인해 줄래', P([], 'approve', 'notFinal')],
+    ['안 승인해', P([], 'approve', 'negated')],
+    ['approve later', P([], 'approve', 'negated')],
+    ['approve the other one', P([], 'approve', 'notFinal')],
+    [`거절은 좀 그래 ${link(ID)}`, P([ID], 'deny', 'notFinal')],
+    ['ok 승인해', P([], 'approve')],
+    ['승인 부탁', P([], 'approve')],
+    ['좋아 승인 👍', P([], 'approve')],
+    ['네, 승인했어요~ ㅎㅎ', P([], 'approve')],
     // 부정·보류·의문 — 낱말은 있지만 정하지 않는다
     ['승인 말고 기다려', P([], 'approve', 'negated')],
     ['승인 안 함', P([], 'approve', 'negated')],
@@ -409,7 +427,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
   it('부정·의문·바이패스 — 정하지 않고 「승인 안 됨」 한 줄', async () => {
     const thread = await root();
     const { requestId } = await ask(thread);
-    for (const [body, key] of [['승인 말고 기다려', 'negated'], ['승인할까?', 'question'], ['바이패스 승인', 'bypass']] as const) {
+    for (const [body, key] of [['승인 말고 기다려', 'negated'], ['승인할까?', 'question'], ['바이패스 승인', 'bypass'], ['승인 노', 'notFinal']] as const) {
       await say(alice.token, body, thread);
       const lines = await systemLines(thread);
       expect(lines.at(-1)!.meta.i18n, body).toEqual({ key: `system.chatApproval.${key}`, args: {} });

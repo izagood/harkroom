@@ -16,8 +16,8 @@ import { systemI18n } from './systemI18n.js';
  *
  * - 글쓴이는 요청한 에이전트의 소유자 본인, 앱에 로그인한 사람 세션(REST)만 — 부르는 쪽(글 올리기 라우트)이 거른다.
  *   에이전트·PAT·MCP·자동화·위임·거울 글은 이 라우트를 타지 않거나 거기서 걸러진다.
- * - 글은 문장이어도 된다(P4). 승인 낱말(G2: 승인·허락·머지해·진행해·approve 와 그 활용)만 승인으로 본다. 인용(`>`)·코드는
- *   지우고 읽는다. 부정·거부·보류(말고·하지 마·보류·취소·잠깐·기다려·아니·못·금지·불가·거부·중지·나중…)나 물음(`?`, 또는 「될까」·「되나」·「해도 돼」 같은 물음 끝)이 있으면 정하지 않고 안내만 단다. 「바이패스」는
+ * - 글은 문장이어도 된다(P4). 승인 낱말(G2: 승인·허락·머지해·진행해·approve 와 그 활용)만 승인으로 본다. 인용(`>`)·코드·링크·멘션은
+ *   지우고 읽는다. 낱말은 글의 맨 끝 서술어여야 한다(허용 꼴, `APPROVE_FINAL`) — 뒤에 무엇이 이어지면 정하지 않는다. 부정·거부·보류(말고·하지 마·보류·취소·잠깐·기다려·아니·못·금지·불가·거부·중지·나중…)나 물음(`?`, 또는 「될까」·「되나」·「해도 돼」 같은 물음 끝)이 있으면 정하지 않고 안내만 단다. 「바이패스」는
  *   승인하지 않는다. 거절(거절·deny)은 카드 링크가 있을 때만(G3).
  * - 어느 요청인지는 **구조로만** 정한다: 본문의 `harkroom://message/<카드 id>` 링크(1~5개, 어느 채널이든, 거울은 원본으로 —
  *   `resolveDecision`), 링크가 없으면 같은 스레드에 글보다 먼저 있던, 이 사람이 정할 수 있는 열린 카드가 딱 하나일 때 그 카드
@@ -48,16 +48,25 @@ const BYPASS = /바이패스|\bbypass/;
  * 「멈춰」·「나중」·「이따」·「다음에」) — 「안 해」·「않」 같은 부정 활용도 같이 막는다. 넓게 잡는다 — 잘못 막으면 카드에서 정하면
  * 되지만, 잘못 승인하면 되돌릴 수 없다(fail closed).
  */
-const NEGATION = /말고|하지\s*마|보류|취소|잠깐|기다려|아니|못|금지|불가|거부|중지|멈춰|멈춤|나중|이따|다음에|안\s*(?:해|함|돼|할|한|합)|않|\b(?:don'?t|do not|not|no|wait|hold|cancel|stop|never|later)\b/;
+const NEGATION = /말고|말아|하지\s*마|보류|취소|잠깐|기다려|아니|못|금지|불가|거부|중지|멈춰|멈춤|나중|이따|다음에|미뤄|미루|아직|ㄴㄴ|안\s*(?:해|함|돼|할|한|합)|(?:^|\s)안(?=\s)|않|\b(?:don'?t|do not|not|no|wait|hold|cancel|stop|never|later)\b/;
 const QUESTION = /[?？]/;
 /**
  * 물음표 없는 한국어 물음 — 문장·마디 끝의 「까·나·니·냐·는지」(「될까」·「되나」·「했니」·「하냐」·「됐는지」)와
  * 「해도 돼/될/되」(허락을 묻는 꼴). 「승인합니다」·「승인해」처럼 「다」·「해」로 끝나는 말은 걸리지 않는다.
  */
 const QUESTION_KO = /(?:까|나|니|냐|는지)(?=\s*(?:$|[.,;:!~…\n]|ㅋ|ㅎ|ㅠ|ㅜ))|해도\s*(?:돼|될|되)/m;
+/**
+ * 허용 꼴(security F3) — 막을 말을 늘어놓는 대신, 승인·거절 낱말이 **글의 맨 끝 서술어**일 때만 정한다. 앞의 말(「ok」·「네」·
+ * 「이 카드」·「CI 무시하고」)은 괜찮지만 낱말 뒤에 무엇이든 이어지면(「승인 노」·「승인하면 큰일」·「승인해 줄래」) 정하지 않는다.
+ * 끝의 문장부호·「ㅎ」·「ㅋ」·👍 는 떼고 본다. 여러 문장이면 마지막 문장이 이 꼴이어야 한다(앞 문장은 부정·물음 거르기만 탄다).
+ */
+const TAIL = /[\s.!~…ㅎㅋ👍]+$/u;
+const KO_END = String.raw`\s*(?:해|했어|했음|했다|했습니다|할게|합니다|한다|함|하자|하세요|해\s*(?:줘|주세요|줄게)|시켜(?:\s*줘)?|부탁(?:해|합니다|드립니다|드려)?)(?:요)?`;
+const APPROVE_FINAL = new RegExp(String.raw`(?:(?<![미무불])(?:승인|허락)(?:${KO_END})?|(?:머지|진행)${KO_END}|\bapproved?(?:\s+(?:it|this|that|them))?)$`);
+const DENY_FINAL = new RegExp(String.raw`(?:거절(?:${KO_END})?|\b(?:deny|denied)(?:\s+(?:it|this|that|them))?)$`);
 const CI_WORD = /ci\s*무시|ignore\s*(?:the\s*)?ci\b/;
 
-export type ChatBlock = 'negated' | 'question' | 'bypass' | 'conflict';
+export type ChatBlock = 'negated' | 'question' | 'bypass' | 'conflict' | 'notFinal';
 export type ChatApprovalParse = {
   /** 본문에서 뽑은 카드 링크 id(중복 제거, 순서 유지). */
   cardIds: string[];
@@ -87,6 +96,7 @@ export function parseChatApproval(body: string): ChatApprovalParse | null {
     .replace(MD_MESSAGE_LINK, take)
     .replace(MESSAGE_LINK, take)
     .replace(MENTION_TOKEN, ' ')
+    .replace(/\bhttps?:\/\/\S+/gi, ' ')
     .toLowerCase();
   const approve = APPROVE_KO.test(rest) || APPROVE_EN.test(rest);
   const deny = DENY.test(rest);
@@ -100,6 +110,7 @@ export function parseChatApproval(body: string): ChatApprovalParse | null {
     else if (NEGATION.test(rest)) block = 'negated';
     else if (QUESTION_KO.test(rest)) block = 'question';
     else if (approve && deny) block = 'conflict';
+    else if (!(approve ? APPROVE_FINAL : DENY_FINAL).test(rest.replace(TAIL, ''))) block = 'notFinal';
   }
   return { cardIds, action: approve ? 'approve' : deny ? 'deny' : null, block, ciWord: CI_WORD.test(rest) };
 }
@@ -107,9 +118,10 @@ export function parseChatApproval(body: string): ChatApprovalParse | null {
 /** 안내 줄의 까닭(`system.chatApproval.<까닭>` 키와 같다). 본문은 한국어로 남고, 새 앱은 표지로 그린다. */
 const REASON_KO = {
   negated: '부정·보류하는 말이 있어 아무것도 정하지 않았다.',
-  question: '물음표가 있어 질문으로 보고 정하지 않았다. 승인하려면 물음표 없이 다시 쓴다.',
+  question: '물음으로 읽혀 정하지 않았다. 승인하려면 「승인해」처럼 끝맺어 다시 쓴다.',
   bypass: '「바이패스」는 글로 승인하지 않는다. 카드에서 정한다.',
   conflict: '승인과 거절 낱말이 함께 있어 정하지 않았다.',
+  notFinal: '승인 낱말 뒤에 다른 말이 이어져 정하지 않았다. 승인하려면 「승인해」처럼 승인 낱말로 끝맺어 다시 쓴다.',
   denyNeedsLink: '글로 거절하려면 카드 링크를 붙인다.',
   noWord: '카드 링크는 있지만 승인 낱말(승인·허락·머지해·진행해·approve)이 없다.',
   tooMany: '한 글로는 카드를 5장까지만 정한다. 나눠서 다시 쓴다.',

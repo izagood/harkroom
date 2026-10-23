@@ -53,6 +53,7 @@ const Map<String, List<String>> systemI18nArgs = {
   'system.chatApproval.conflict': [],
   'system.chatApproval.denyNeedsLink': [],
   'system.chatApproval.noWord': [],
+  'system.chatApproval.notFinal': [],
   'system.chatApproval.tooMany': [],
   'system.chatApproval.noCard': [],
   'system.chatApproval.askCard': [],
