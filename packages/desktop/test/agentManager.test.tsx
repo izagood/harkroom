@@ -454,12 +454,12 @@ describe('에이전트 기억 (#139 3단계)', () => {
   it('기억 목록이 slug 와 값으로 그려진다', async () => {
     useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
     const c = fakeController([agent('rusalka')]);
-    c.agentMemory.mockResolvedValue([mem('core', '앨리스은 러너를 담당한다')]);
+    c.agentMemory.mockResolvedValue([mem('core', '앨리스는 러너를 담당한다')]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));
 
     expect(await screen.findByText('core')).toBeTruthy();
-    expect(screen.getByText('앨리스은 러너를 담당한다')).toBeTruthy();
+    expect(screen.getByText('앨리스는 러너를 담당한다')).toBeTruthy();
   });
 
   // 빈 목록을 그대로 두면 "기억이 없다" 와 "못 읽었다" 가 구분되지 않는다.
