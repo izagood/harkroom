@@ -766,10 +766,23 @@ export async function scrubWorkspaceSettings(workspaceDir: string): Promise<stri
   return removed;
 }
 
+/**
+ * 스킬 본문이 **도구 권한을 여는가**(`allowed-tools` 칸). 줄머리의 그 키만 본다 — frontmatter 를 해석하지 않고 본문 어디든
+ * 맞으면 참이다(닫힌 쪽 실패: 설명 줄이 우연히 맞아도 빼는 쪽으로 틀린다). `allowed_tools` 표기도 잡는다.
+ */
+export function skillGrantsTools(body: string): boolean {
+  return /^\s*allowed[-_]tools\s*:/im.test(body);
+}
+
 export async function syncSkills(
   stateDir: string,
   workspaceDir: string,
   listSkills: () => Promise<{ slug: string; body: string }[]>,
+  /**
+   * API 키 연결 턴(security, 2026-10-23): `allowed-tools` 가 든 스킬은 깔지 않는다. 그 칸은 `dontAsk` 턴에서도 셸을 열어
+   * (실측 claude 2.1.309) 소유자 카드 없이 도구가 열리는 길이 된다. 이미 깔린 것은 「사라진 스킬」과 같이 걷힌다.
+   */
+  opts: { dropToolGrants?: boolean } = {},
 ): Promise<void> {
   const skillsDir = join(stateDir, 'skills');
   // 하네스별 스킬 디렉터리. claude 는 `.claude/skills/<slug>/SKILL.md` 를 읽는다.
@@ -781,7 +794,11 @@ export async function syncSkills(
   const legacyCodexDir = join(workspaceDir, '.codex', 'skills');
 
   try {
-    const skills = await listSkills();
+    const listed = await listSkills();
+    const skills = opts.dropToolGrants ? listed.filter((s) => !skillGrantsTools(s.body)) : listed;
+    if (skills.length < listed.length) {
+      console.warn(`[mentionTurn] API 키 연결 턴 — 도구 권한을 여는 스킬 ${listed.length - skills.length}개를 깔지 않았다`);
+    }
     const wanted = new Set(skills.map((s) => s.slug));
 
     // 사라진 스킬(비활성·삭제): 상태 디렉터리의 파일과 하네스의 링크를 **함께** 지운다.
@@ -1210,7 +1227,7 @@ export async function runMentionTurn(
   // #140: 승인된 스킬 동기화 — 하네스가 뜨기 **전에** 끝나야 한다. await 을 빼면 이 턴의
   // 하네스는 아직 없는 스킬 디렉터리를 읽고, 스킬은 항상 한 턴 늦게 붙는다.
   // 실패는 syncSkills 안에서 삼키고 stderr 로 남긴다 — 그래서 턴은 그대로 진행한다.
-  await syncSkills(deps.stateDir, rec.workspaceDir, () => deps.harkroom.listApprovedSkills());
+  await syncSkills(deps.stateDir, rec.workspaceDir, () => deps.harkroom.listApprovedSkills(), { dropToolGrants: Boolean(deps.providerEnv) });
   // 하네스를 가리지 않는다 — 다른 하네스는 이 파일을 읽지 않으니 지워도 잃을 것이 없고, 이름 비교 예산(adapterParity)도 지킨다.
   await scrubWorkspaceSettings(rec.workspaceDir);
 
