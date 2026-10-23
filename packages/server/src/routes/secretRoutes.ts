@@ -314,12 +314,77 @@ export async function registerSecretRoutes(
     const s = await load(req, reply, true);
     if (!s) return reply;
     const r = await pool.query(
-      `select id, agent_id as "agentId", channel_id as "channelId", operator_id as "operatorId",
-              granted_by as "grantedBy", granted_at as "grantedAt",
-              suspended_at as "suspendedAt", suspend_reason as "suspendReason"
-         from secret_grant where secret_id = $1 order by granted_at`, [s.id]);
+      `select g.id, g.agent_id as "agentId", g.channel_id as "channelId", g.operator_id as "operatorId",
+              g.granted_by as "grantedBy", g.granted_at as "grantedAt",
+              g.suspended_at as "suspendedAt", g.suspend_reason as "suspendReason",
+              -- 정지된 뒤 그 에이전트의 무엇이 바뀌었나(감사 secret.grant.suspended 의 칸 이름만 — 값은 싣지 않는다).
+              -- 소유자가 [다시 허락] 전에 보는 근거다. 정지 시각 이후의 변경을 다 모은다. 이 기록 전에 정지된 줄은 빈 목록.
+              case when g.suspended_at is null then null else coalesce((
+                select array_agg(distinct f order by f) from audit_log al, jsonb_array_elements_text(al.detail->'fields') f
+                 where al.action = 'secret.grant.suspended' and al.target = g.agent_id::text and al.at >= g.suspended_at
+              ), '{}') end as "changedFields"
+         from secret_grant g where g.secret_id = $1 order by g.granted_at`, [s.id]);
     return { grants: r.rows };
   });
+
+  /**
+   * 다시 허락(스레드 6cc6df67): 정지된 줄 **하나**를 소유자가 바뀐 정의를 보고 다시 믿는다. `PUT grants` 와 판정은
+   * 같고(소유자만·사람·만료 아님·자기 에이전트) 범위는 **그 줄 그대로**다 — 채널 한정은 유지하고, 기기에 묶였던
+   * 줄은 **지금 배정된 오퍼레이터**에 다시 묶는다(배정이 없으면 409). 정지되지 않은 줄은 409 로 돌려보낸다 —
+   * 누른 사이 이미 풀렸으면 아무것도 바꾸지 않는다.
+   */
+  app.post<{ Params: { id: string; grantId: string } }>(
+    '/secrets/:id/grants/:grantId/reapprove', { preHandler: app.requireAccount }, async (req, reply) => {
+      if (!human(req, reply)) return reply;
+      const s = await load(req, reply, true);
+      if (!s) return reply;
+      if (s.ownerAccountId !== req.account!.id) {
+        return reply.code(403).send({ error: { code: 'owner_only', message: 'only the secret owner can re-approve a grant' } });
+      }
+      const grantId = z.string().uuid().safeParse(req.params.grantId);
+      if (!grantId.success) return reply.code(404).send({ error: { code: 'not_found', message: 'no such grant' } });
+      const cur = (await pool.query(
+        `select g.agent_id as "agentId", g.channel_id as "channelId", g.operator_id as "operatorId",
+                g.suspended_at as "suspendedAt", g.suspend_reason as "suspendReason",
+                asg.operator_id as "assignedOperatorId", c.owner_account_id as "agentOwnerId", a.deleted_at as "deletedAt"
+           from secret_grant g join account a on a.id = g.agent_id
+           left join agent_assignment asg on asg.agent_id = g.agent_id
+           left join agent_config c on c.account_id = g.agent_id
+          where g.id = $1 and g.secret_id = $2`, [grantId.data, s.id])).rows[0] as {
+        agentId: string; channelId: string | null; operatorId: string | null; suspendedAt: Date | null; suspendReason: string | null;
+        assignedOperatorId: string | null; agentOwnerId: string | null; deletedAt: Date | null;
+      } | undefined;
+      if (!cur || cur.deletedAt) return reply.code(404).send({ error: { code: 'not_found', message: 'no such grant' } });
+      if (!cur.suspendedAt) return reply.code(409).send({ error: { code: 'not_suspended', message: 'the grant is not suspended' } });
+      const expired = await pool.query(`select 1 from secret where id = $1 and expires_at <= now()`, [s.id]);
+      if (expired.rowCount) return reply.code(409).send({ error: { code: 'secret_expired', message: 'the secret has expired; replace its value or extend expiresAt first' } });
+      if (cur.agentOwnerId !== req.account!.id) {
+        return reply.code(403).send({ error: { code: 'not_own_agent', message: 'secrets can only be given to your own agents' } });
+      }
+      // 꺼진 에이전트는 다시 켜기 전에는 풀지 않는다 — 켜는 것이 먼저다.
+      const disabled = await pool.query(`select 1 from account where id = $1 and disabled_at is not null`, [cur.agentId]);
+      if (disabled.rowCount) return reply.code(409).send({ error: { code: 'agent_disabled', message: 'enable the agent before re-approving' } });
+      const bound = cur.operatorId !== null;
+      if (bound && !cur.assignedOperatorId) {
+        return reply.code(409).send({ error: { code: 'not_assigned', message: 'the agent is not assigned to an operator; assign it first or grant again with operator: "any"' } });
+      }
+      const boundOperator = bound ? cur.assignedOperatorId : null;
+      // 조건부 갱신 — 그 사이 다른 요청이 풀었거나 지웠으면 0 줄이다.
+      const r = await pool.query(
+        `update secret_grant set operator_id = $3, granted_by = $4, granted_at = now(), suspended_at = null, suspend_reason = null
+          where id = $1 and secret_id = $2 and suspended_at is not null`,
+        [grantId.data, s.id, boundOperator, req.account!.id]);
+      if (!r.rowCount) return reply.code(409).send({ error: { code: 'not_suspended', message: 'the grant is not suspended' } });
+      await recordAudit(pool, {
+        action: 'secret.grant.reapproved', ...actorOf(req), target: s.id,
+        detail: {
+          name: s.name, grantId: grantId.data, agentId: cur.agentId, channelId: cur.channelId,
+          operatorId: boundOperator, previousOperatorId: cur.operatorId,
+          suspendReason: cur.suspendReason, suspendedAt: cur.suspendedAt.toISOString(),
+        },
+      }, req);
+      return { grantId: grantId.data, operatorId: boundOperator };
+    });
 
   // 부여: **소유자만.** 같은 (에이전트, 채널) 에 다시 주면 갱신이고, 정지도 풀린다 — 소유자가
   // 바뀐 배정·지시문을 보고 다시 믿기로 한 것이다.
