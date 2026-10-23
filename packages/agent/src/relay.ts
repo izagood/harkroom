@@ -327,6 +327,12 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
   let rejectedInARow = 0;
   /** 지금 연결이 거절 신호를 받았는가. 다음 `onClose` 가 읽고 지운다. */
   let rejectedNow = false;
+  /**
+   * 이 연결에서 받은 프레임 수. 거절 신호는 **연결의 첫 줄일 때만** 믿는다(security n1, #1458) — 오퍼레이터는 거절할 때
+   * hello 를 본 직후 그 한 줄만 쓰고 끊는다. 받아 준 연결에서는 서버 프레임도 같은 소켓으로 흘러오므로, 그 뒤에 온
+   * `link.rejected` 꼴 프레임을 거절로 세면 정상 끊김이 「거절」로 잘못 셀 수 있다.
+   */
+  let framesThisLink = 0;
   /** 답을 기다리는 요청들. 링크가 끊기면 전부 거절한다 — 답이 올 소켓이 사라졌다. */
   const pendingRequests = new Map<string, { req: RunnerLinkRequest; resolve: (res: RunnerLinkResponse) => void }>();
   /** MCP 트랜스포트가 살아 있으면 그 `onmessage` 로 서버의 JSON-RPC 메시지가 간다. */
@@ -414,11 +420,14 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
   };
 
   const onServerFrame = (raw: string): void => {
+    const firstFrame = framesThisLink === 0;
+    framesThisLink += 1;
     let parsed: unknown;
     try { parsed = JSON.parse(raw); } catch { return; }
     if (typeof parsed !== 'object' || parsed === null) return;
     // 오퍼레이터가 이 러너를 받아 주지 않았다 — 곧 끊긴다. 끊김을 「거절」로 셀 표시만 남긴다.
-    if (isRunnerLinkRejected(parsed)) { rejectedNow = true; return; }
+    // 연결의 첫 줄이 아니면 거절이 아니다 — 버린다(아래로 흘리지도 않는다).
+    if (isRunnerLinkRejected(parsed)) { if (firstFrame) rejectedNow = true; return; }
     if (isRunnerLinkResponse(parsed)) {
       const pending = pendingRequests.get(parsed.id);
       if (!pending) return;
@@ -525,6 +534,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
     if (stopped) return;
     dial({
       onOpen: (t) => {
+        framesThisLink = 0;
         transport = t;
         opened = true;
         for (const wake of waiters.splice(0)) wake();
