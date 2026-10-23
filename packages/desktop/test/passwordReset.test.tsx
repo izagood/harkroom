@@ -85,7 +85,7 @@ describe('멤버와 초대의 로그인 ID(관리자만)', () => {
   it('관리자·새 서버면 줄마다 로그인 ID 를 보인다', async () => {
     const c = setup({ loginIds: vi.fn(async () => ({ m1: 'member-login-1' })) });
     useActiveStore.getState().set({ me: admin, accounts: { a1: admin, m1: member } });
-    setServer('0.4.181');
+    setServer('0.4.184');
     render(<InviteSettings />);
     expect((await screen.findByTestId('member-login-id-m1')).textContent).toContain('member-login-1');
     expect(c.loginIds).toHaveBeenCalled();
@@ -95,7 +95,7 @@ describe('멤버와 초대의 로그인 ID(관리자만)', () => {
     const long = 'l'.repeat(64);
     const c = setup({ loginIds: vi.fn(async () => ({ m1: long })) });
     useActiveStore.getState().set({ me: admin, accounts: { a1: admin, m1: member } });
-    setServer('0.4.181');
+    setServer('0.4.184');
     render(<InviteSettings />);
     const value = await screen.findByTestId('member-login-id-value-m1');
     expect(value.className).toContain('truncate');
@@ -112,21 +112,21 @@ describe('멤버와 초대의 로그인 ID(관리자만)', () => {
   it('권한이 없거나 옛 서버면 부르지도 않고, 실패하면 줄을 그리지 않는다', async () => {
     const c = setup({ loginIds: vi.fn(async () => ({ m1: 'x' })) });
     useActiveStore.getState().set({ me: member, accounts: { m1: member, m2: member2 } });
-    setServer('0.4.181');
+    setServer('0.4.184');
     const r1 = render(<InviteSettings />);
     await waitFor(() => expect(screen.getByTestId('members-list')).toBeTruthy());
     expect(c.loginIds).not.toHaveBeenCalled();
     r1.unmount();
 
     useActiveStore.getState().set({ me: admin, accounts: { a1: admin, m1: member } });
-    setServer('0.4.180');
+    setServer('0.4.183'); // 0.4.181~0.4.183 에는 이 라우트가 없다
     const r2 = render(<InviteSettings />);
     await waitFor(() => expect(screen.getByTestId('members-list')).toBeTruthy());
     expect(c.loginIds).not.toHaveBeenCalled();
     r2.unmount();
 
     setup({ loginIds: vi.fn(async () => { throw new ApiError(404, 'not_found', 'nope'); }) });
-    setServer('0.4.181');
+    setServer('0.4.184');
     render(<InviteSettings />);
     await waitFor(() => expect(screen.getByTestId('members-list')).toBeTruthy());
     expect(screen.queryByTestId('member-login-id-m1')).toBeNull();
