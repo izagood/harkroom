@@ -48,8 +48,11 @@ export async function stampHumanMandate(client: Q, args: {
 }
 
 /**
- * 에이전트 글이 물려받을 위임 — `causeMessageId` 는 `verifiedCauseLink` 를 지난 값이어야 한다. 그 원인으로 받은 살아 있는 임대의
+ * 에이전트 글이 물려받을 위임 — 그 원인(`causeMessageId`, 오퍼레이터를 거친 요청의 원인 헤더)으로 이 에이전트가 쥔 **살아 있는 턴 임대**의
  * 위임이고, 글쓴 에이전트의 지금 소유자가 위임 소유자와 같을 때만. 채널이 달라도 된다.
+ *
+ * 사슬 고리(`verifiedCauseLink`, inbox 60분)와 **따로** 본다(n4): 임대는 만들 때 원인을 이미 확인했고, 그 임대가 살아 있는 동안(임대 수명)
+ * 턴은 같은 위임 안이다. 60분이 지나 사슬 고리(`cause_message_id`)가 끊겨도 위임은 임대가 끝날 때까지 잇는다. 원인 글이 지워졌으면 잇지 않는다.
  */
 export async function mandateForAgentPost(client: Q, args: { agentId: string; causeMessageId: string; now?: Date }): Promise<string | null> {
   const now = args.now ?? new Date();
@@ -57,6 +60,7 @@ export async function mandateForAgentPost(client: Q, args: { agentId: string; ca
     `select d.id from secret_turn_lease l
        join mandate d on d.id = l.mandate_id
        join agent_config c on c.account_id = l.agent_id
+       join message m on m.id = l.cause_message_id and m.deleted_at is null
       where l.agent_id = $1 and l.cause_message_id = $2 and l.ended_at is null and l.expires_at > $3
         and c.owner_account_id = d.owner_account_id
       order by l.created_at desc limit 1`,

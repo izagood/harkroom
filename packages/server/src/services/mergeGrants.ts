@@ -6,7 +6,7 @@ import { recordAudit } from '../audit.js';
 import { checkNamesForBody, checkNamesText, obsoleteMergeCards, sanitizeCheckNames } from './mergeDenials.js';
 import { postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
-import { validMandateOwner } from './mandates.js';
+import { findLine } from './mandateLines.js';
 
 /**
  * 에이전트 머지 권한 — 서버 쪽 판정과 기록. 설계 스레드 3deac356(채널 a42006a1), security F1~F4.
@@ -178,12 +178,12 @@ export async function checkMerge(
 }
 
 /**
- * 위임 판정을 사슬 판정 옆에서 계산해 감사(`mandate.shadow`)에 남긴다. **결과를 바꾸지 않는다.** 위임 판정: 임대의 위임이 유효하고
- * (끝나지 않음·7일 안), 그 소유자가 에이전트의 지금 소유자이며, 이 저장소에 그 소유자가 준 머지 grant 가 있다.
+ * 위임 판정을 사슬 판정 옆에서 계산해 감사(`mandate.shadow`)에 남긴다. **결과를 바꾸지 않는다.** 위임 판정: 임대의 위임에
+ * 이 저장소를 덮는 merge 줄이 있다(`mandateLines.ts::findLine` — 위임 유효·같은 소유자·H3·회수/until/uses 를 거기서 본다).
  */
 async function shadowMandate(
   pool: Pool,
-  args: { agentId: string; operatorId: string; leaseId: string; token: string; repo: string; now?: Date },
+  args: { agentId: string; operatorId: string; leaseId: string; token: string; repo: string; number?: number; headSha?: string; now?: Date },
   result: MergeCheck,
 ): Promise<void> {
   const now = args.now ?? new Date();
@@ -191,17 +191,15 @@ async function shadowMandate(
   if (!lease || lease.agentId !== args.agentId || lease.operatorId !== args.operatorId) return;
   const scope = repoScope(args.repo);
   if (!scope) return;
-  const owner = await validMandateOwner(pool, lease.mandateId, now);
-  const agentOwner = owner
-    ? (await pool.query<{ owner: string | null }>(`select owner_account_id as owner from agent_config where account_id = $1`, [args.agentId])).rows[0]?.owner ?? null
-    : null;
-  const grant = owner && agentOwner === owner ? await mergeGrantFor(pool, args.agentId, args.repo) : null;
-  const mandateVerdict = !!grant && grant.grantedBy === owner;
+  // 위임 판정 = 위임장의 merge 줄(W2) — 상시 줄(소유자가 준 머지 grant)도 여기서 펼쳐진다.
+  const line = await findLine(pool, { mandateId: lease.mandateId, agentId: args.agentId, cap: 'merge', action: { cap: 'merge', repo: args.repo, pr: args.number, head: args.headSha }, now });
+  const mandateVerdict = !!line;
   await recordAudit(pool, {
     action: 'mandate.shadow', actorId: args.agentId, target: scope,
     detail: {
       chainVerdict: result.ok ? 'allowed' : result.code, mandateVerdict: mandateVerdict ? 'allowed' : 'denied',
       mandateId: lease.mandateId, agentId: args.agentId, repo: scope, leaseId: lease.id,
+      lineId: line?.id ?? null, lineVia: line?.via ?? null,
     },
   });
 }
