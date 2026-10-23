@@ -24,7 +24,8 @@ import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge, writeReadyMarker } from './mcpBridge.js';
 import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
-import { decideHook, HOOK_STDIN_MAX, HOOK_TIMEOUT_MS, readStdinCapped } from './hookCli.js';
+import { decideHook, decideLaneHook, HOOK_STDIN_MAX, HOOK_TIMEOUT_MS, laneDeny, readStdinCapped } from './hookCli.js';
+import { decodeLaneHookRules } from '@harkroom/shared/providerLane';
 import { API_TOOL, parseApiArgs } from './turnApi.js';
 import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
@@ -176,16 +177,23 @@ async function apiMain(argv: string[]): Promise<void> {
  * 판정한다. 그래서 allow 를 낼 때만 stdout 에 쓰고, 그 밖(Bash 아님·판정에 걸림·턴 밖·오퍼레이터 무응답·시간 초과·오류)은 아무것도
  * 쓰지 않고 0 으로 끝낸다. deny 는 내지 않는다. 판정은 오퍼레이터(`turnCommand.ts` command.check)가 hook 소켓에서만 한다.
  */
-async function hookMain(event: string): Promise<void> {
+async function hookMain(event: string, laneRules?: string): Promise<void> {
   const quiet = () => process.exit(0);
   if (event !== 'pretool') return quiet();
-  const timer = setTimeout(quiet, HOOK_TIMEOUT_MS);
+  // API 키 연결 턴(D1)은 닫힌 쪽으로 실패한다 — 시한·오류·규칙을 못 풀면 거절을 낸다. 무출력이면 claude 가 그대로 진행한다.
+  const lane = laneRules !== undefined;
+  const rules = lane ? decodeLaneHookRules(laneRules) : null;
+  const deny = () => { process.stdout.write(`${JSON.stringify(laneDeny())}\n`); process.exit(0); };
+  const timer = setTimeout(lane ? deny : quiet, HOOK_TIMEOUT_MS);
   timer.unref?.();
   try {
+    if (lane && rules === null) return deny();
     const raw = await readStdinCapped(process.stdin, HOOK_STDIN_MAX);
-    const decision = await decideHook(raw, (name, args) => callOperatorTool(name, args, 'hook'));
+    const decision = lane ? decideLaneHook(raw, rules ?? []) : await decideHook(raw, (name, args) => callOperatorTool(name, args, 'hook'));
     if (decision) process.stdout.write(`${JSON.stringify(decision)}\n`);
-  } catch { /* 무출력 */ }
+  } catch {
+    if (lane) return deny();
+  }
   clearTimeout(timer);
   process.exit(0);
 }
@@ -208,7 +216,7 @@ async function main(): Promise<void> {
       await apiMain(cmd.argv);
       return;
     case 'hook':
-      await hookMain(cmd.event);
+      await hookMain(cmd.event, cmd.laneRules);
       return;
     case 'register': {
       const dataDir = resolveDataDir(process.env.HARKROOM_DATA_DIR);
