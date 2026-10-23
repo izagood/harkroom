@@ -40,12 +40,13 @@ export interface AppUpdater {
    */
   check(channel: UpdateChannel): Promise<AvailableUpdate | null>;
   /**
-   * 마지막 `check()` 가 찾은 것을 내려받아 설치하고 앱을 다시 띄운다.
+   * 화면이 본 `(channel, version)` 을 내려받아 설치하고 앱을 다시 띄운다. Rust 가 그 채널에서 쥔 판이
+   * `version` 과 다르면(그 사이 늦은 답이 바꿨으면) 설치하지 않고 던진다 — 사람이 본 그 판만 설치한다.
    *
    * 성공하면 앱이 재시작되므로 **이 호출은 돌아오지 않는다.** 돌아왔다면 무언가
    * 어긋난 것이고, 그때는 던진 예외로 온다.
    */
-  downloadAndInstall(): Promise<void>;
+  downloadAndInstall(channel: UpdateChannel, version: string): Promise<void>;
 }
 
 /** 업데이트 표면이 없는 환경(브라우저 dev·테스트)의 기본값. */
@@ -71,29 +72,22 @@ function invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
  * Tauri 를 쓰는 실제 표면. 확인·설치는 Rust 명령(`update_channel.rs`)이다 — 플러그인의 JS
  * `check()` 는 엔드포인트를 못 바꿔서 채널을 고를 수 없다.
  *
- * 확인이 찾은 판은 **Rust 가 쥐고 있다가** 설치에서 쓴다. 설치 때 다시 물으면 그 사이에
- * 매니페스트가 바뀌었을 때 **사람이 본 것과 다른 것이 설치된다**. 그래서 "사람이 화면에서
- * 본 그 판"을 그대로 설치한다. 여기는 그 판이 **어느 채널의 것인지**만 기억한다.
+ * 확인이 찾은 판은 **Rust 가 채널마다 쥐고 있다가** 설치에서 쓴다. 설치 때 다시 물으면 그 사이에
+ * 매니페스트가 바뀌었을 때 **사람이 본 것과 다른 것이 설치된다**. 그래서 설치는 화면이 본
+ * `(channel, version)` 을 넘기고, Rust 가 쥔 것과 둘 다 맞을 때만 설치한다(`update_channel.rs`).
+ * 여기는 상태를 쥐지 않는다 — 쥐면 채널을 바꾸는 사이 늦게 온 답이 그것을 덮는다.
  */
 export function createAppUpdater(): AppUpdater {
-  let pendingChannel: UpdateChannel | null = null;
-
   return {
     async check(channel) {
       const found = (await invoke('app_update_check', { channel })) as { version: string } | null;
-      pendingChannel = found ? channel : null;
       return found ? { version: found.version } : null;
     },
 
-    async downloadAndInstall() {
-      if (!pendingChannel) {
-        // 확인 없이 설치를 부르는 것은 호출 순서가 틀린 것이다. 조용히 넘기면
-        // 화면이 "설치했다"고 적으면서 아무 일도 안 일어난다.
-        throw new Error('nothing to install — check for updates first');
-      }
-      await invoke('app_update_install');
+    async downloadAndInstall(channel, version) {
+      await invoke('app_update_install', { channel, version });
       // 설치는 끝났다 — 다시 뜨기 전에 **어느 채널에서 받았는지** 적는다(재시작 뒤엔 모른다).
-      updateChannelStorage.saveInstalled(pendingChannel);
+      updateChannelStorage.saveInstalled(channel);
       // 여기서부터는 새 바이너리가 디스크에 있고 돌고 있는 것은 옛것이다. 재시작해야
       // 둘이 다시 같아진다.
       const process = (await import('@tauri-apps/plugin-process')) as unknown as TauriProcessPlugin;

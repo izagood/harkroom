@@ -102,18 +102,48 @@ describe('실제 표면(createAppUpdater)', () => {
     expect(invoke).toHaveBeenCalledWith('app_update_check', { channel: 'ludicrous' });
 
     // relaunch 는 plugin-process 를 부른다 — 여기서는 그 앞까지(설치 성공 → 채널 기록)를 잰다.
-    await updater.downloadAndInstall().catch(() => {});
-    expect(invoke).toHaveBeenCalledWith('app_update_install', undefined);
+    await updater.downloadAndInstall('ludicrous', '0.4.171').catch(() => {});
+    expect(invoke).toHaveBeenCalledWith('app_update_install', { channel: 'ludicrous', version: '0.4.171' });
     expect(updateChannelStorage.loadInstalled()).toBe('ludicrous');
   });
 
-  it('새 판이 없다는 답 뒤에는 설치를 거절한다 — 앞 채널의 판을 설치하지 않는다', async () => {
-    const invoke = vi.fn(async (cmd: string) => (cmd === 'app_update_check' ? null : null));
+  it('Rust 가 설치를 거절하면(쥔 판이 본 판과 다르다) 채널을 기록하지 않는다', async () => {
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === 'app_update_install') throw new Error('the update found for this channel is no longer 0.4.164 — check for updates again');
+      return null;
+    });
     (window as unknown as Win).__TAURI_INTERNALS__ = { invoke };
     const updater = createAppUpdater();
-    await updater.check('stable');
-    await expect(updater.downloadAndInstall()).rejects.toThrow(/check for updates first/);
-    expect(invoke).not.toHaveBeenCalledWith('app_update_install', undefined);
+    await expect(updater.downloadAndInstall('stable', '0.4.164')).rejects.toThrow(/check for updates again/);
     expect(updateChannelStorage.loadInstalled()).toBeNull();
+  });
+});
+
+describe('보안 검토 F1 — 늦은 앞 채널 답 뒤의 설치', () => {
+  it('Stable 로 바꾼 뒤 늦은 Ludicrous 답이 와도, 설치는 화면이 본 Stable 판으로 간다', async () => {
+    let releaseLudicrous!: (v: { version: string }) => void;
+    const u = stub((channel) => channel === 'ludicrous'
+      ? new Promise((r) => { releaseLudicrous = r; })
+      : Promise.resolve({ version: '0.4.164' }));
+    updateChannelStorage.save('ludicrous');
+    setAppUpdater(u);
+    const { result } = renderHook(() => useUpdateCheck());
+    await waitFor(() => expect(u.check).toHaveBeenCalledWith('ludicrous'));
+
+    act(() => { setUpdateChannel('stable'); });
+    await waitFor(() => expect(result.current.status).toEqual({ kind: 'available', version: '0.4.164' }));
+    await act(async () => { releaseLudicrous({ version: '0.4.171' }); await Promise.resolve(); });
+
+    await act(async () => { await result.current.install('0.4.164'); });
+    expect(u.downloadAndInstall).toHaveBeenCalledWith('stable', '0.4.164');
+  });
+
+  it('채널을 막 바꿔 답이 없으면 설치하지 않는다', async () => {
+    const u = stub(() => new Promise(() => {}));
+    setAppUpdater(u);
+    const { result } = renderHook(() => useUpdateCheck());
+    await act(async () => { await result.current.install('0.4.164'); });
+    expect(u.downloadAndInstall).not.toHaveBeenCalled();
+    expect(result.current.status.kind).toBe('failed');
   });
 });

@@ -192,10 +192,16 @@ export function setUpdateChannel(channel: UpdateChannel): boolean {
 
 async function installUpdate(version: string): Promise<void> {
   const u = updater();
+  // 설치는 **지금 화면이 보여 주는 답**의 채널·판이다. 답이 없으면(채널을 막 바꿨다) 설치할 것이 없다.
+  const channel = snap.answeredChannel;
+  if (!channel) {
+    publish({ status: { kind: 'failed', message: 'nothing to install — check for updates first' } });
+    return;
+  }
   installing = true;
   publish({ status: { kind: 'installing', version }, recheckFailure: null });
   try {
-    await u.downloadAndInstall();
+    await u.downloadAndInstall(channel, version);
     // 성공하면 앱이 다시 뜨므로 여기로 돌아오지 않는다. 돌아왔다면 재시작이 일어나지
     // 않은 것이고, 그것은 사람이 알아야 할 이상 상태다 — 조용히 넘기지 않는다.
     installing = false;
