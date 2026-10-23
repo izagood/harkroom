@@ -80,7 +80,7 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect(meta.permissionRequest).toMatchObject({
         requestId, agentId, ownerAccountId: alice.accountId, kind: 'tool', target: EXEC, channelId: ch, warnings: ['executes_in_workload'],
       });
-      expect(meta.ask.options.map((o: { id: string }) => o.id)).toEqual(['approve', 'deny']);
+      expect(meta.ask.options.map((o: { id: string }) => o.id)).toEqual(['approve_new_mandate', 'deny']);
       expect(meta.ask.to).toEqual({ kind: 'human' });
     });
 
@@ -135,7 +135,7 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect(await toolAllowsFor(pool, agentId, ch)).toEqual([EXEC]);
       expect(await toolAllowsFor(pool, agentId, otherCh)).toEqual([]);
       const meta = (await pool.query(`select meta from message where id = $1`, [cardId])).rows[0].meta;
-      expect(meta.ask).toMatchObject({ answeredWith: 'approve', answeredBy: alice.accountId });
+      expect(meta.ask).toMatchObject({ answeredWith: 'approve_new_mandate', answeredBy: alice.accountId });
       expect(meta.permissionRequest).toMatchObject({ status: 'granted', decidedBy: alice.accountId });
       const woke = await pool.query(`select 1 from inbox where account_id = $1 and message_id = $2 and reason = 'ask_answered'`, [agentId, cardId]);
       expect(woke.rowCount).toBe(1);
@@ -183,7 +183,7 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
     expect((await answer('bogus')).statusCode).toBe(400);
     const res = await answer('approve');
     expect(res.statusCode).toBe(200);
-    expect(res.json().meta.ask).toMatchObject({ answeredWith: 'approve', answeredBy: alice.accountId });
+    expect(res.json().meta.ask).toMatchObject({ answeredWith: 'approve_new_mandate', answeredBy: alice.accountId });
     expect(res.json().meta.permissionRequest).toMatchObject({ status: 'granted' });
     expect(await toolAllowsFor(pool, agentId, ch)).toContain(rule);
     const again = await answer('deny');
@@ -377,7 +377,7 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
   describe('권한 카드의 거울(P3)', () => {
     const mirrorOf = async (cardId: string, channelId = ch) => text(await client.callTool({
       name: 'message.ask',
-      arguments: { channelId, body: '그냥 눌러 주세요 — 아무 일 없음', options: [{ id: 'approve', label: '좋아요' }, { id: 'deny', label: '싫어요' }], mirrorOf: cardId },
+      arguments: { channelId, body: '그냥 눌러 주세요 — 아무 일 없음', options: [{ id: 'approve_new_mandate', label: '좋아요' }, { id: 'deny', label: '싫어요' }], mirrorOf: cardId },
     }));
     const answer = (token: string, channelId: string, messageId: string, optionId: string) =>
       app.inject({ method: 'POST', url: `/channels/${channelId}/messages/${messageId}/ask-answer`, headers: auth(token), payload: { optionId } });
@@ -389,8 +389,9 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       const row = (await pool.query(`select body, meta from message where id = $1`, [m.message.id])).rows[0];
       expect(row.body).toContain('Bash(kubectl --context ops -n sitebot logs:*)');
       expect(row.body).not.toContain('아무 일 없음');
-      expect(row.meta.ask.options).toEqual([{ id: 'approve', label: '7일 허락하고 다시 시도' }, { id: 'deny', label: '거절' }]);
+      expect(row.meta.ask.options).toEqual([{ id: 'approve_new_mandate', label: '이 스레드로 위임장 만들고 더하기' }, { id: 'deny', label: '거절' }]);
       expect(row.meta.permissionRequest).toBeUndefined();
+      expect(row.meta.permissionMirror).toMatchObject({ rootId: r.cardMessageId });
     });
 
     it('소유자가 거울에서 승인하면 원본 요청이 열리고 거울은 따라 닫힌다 — 에이전트는 한 번 깨어난다', async () => {
@@ -400,7 +401,7 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect((await answer(bob.token, otherCh, m.message.id, 'approve')).statusCode).toBe(403);
       const res = await answer(alice.token, otherCh, m.message.id, 'approve');
       expect(res.statusCode).toBe(200);
-      expect(res.json().meta.ask).toMatchObject({ answeredWith: 'approve', answeredBy: alice.accountId, mirrorOf: r.cardMessageId });
+      expect(res.json().meta.ask).toMatchObject({ answeredWith: 'approve_new_mandate', answeredBy: alice.accountId, mirrorOf: r.cardMessageId });
       expect((await pool.query(`select status from permission_request where id = $1`, [r.requestId])).rows[0].status).toBe('granted');
       expect(await toolAllowsFor(pool, agentId, ch)).toContain(rule);
       const wakes = (await pool.query(

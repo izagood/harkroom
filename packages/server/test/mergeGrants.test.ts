@@ -481,7 +481,7 @@ describe('repo.merge grant', () => {
         const card = (await pool.query(`select meta from message where id = $1`, [first.cardMessageId])).rows[0].meta;
         expect(card.permissionRequest).toMatchObject({ kind: 'merge', target: 'izagood/p4-mcp-b', agentId, ownerAccountId: alice.accountId });
         expect(card.mergeDenial).toBeUndefined();
-        expect(card.ask.options.map((o: { id: string }) => o.id)).toEqual(['approve', 'deny']);
+        expect(card.ask.options.map((o: { id: string }) => o.id)).toEqual(['approve_new_mandate', 'approve_once', 'deny']);
         const second = await ask({ threadRootId: thread, mergeDenialId: body.error.denialId!, body: 'again' });
         expect(second).toMatchObject({ pending: true, requestId: first.requestId, cardMessageId: first.cardMessageId });
         // 소유자가 일반 ask-answer(모바일 경로)로 승인하면 그 저장소 grant 가 생긴다.

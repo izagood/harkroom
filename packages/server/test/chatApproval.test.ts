@@ -192,7 +192,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect(res.statusCode).toBe(201);
     expect(await status(requestId)).toBe('granted');
     const meta = await card(cardId);
-    expect(meta.ask.answeredWith).toBe('approve');
+    expect(meta.ask.answeredWith).toBe('approve_new_mandate');
     expect(meta.permissionRequest.decidedVia).toEqual({ kind: 'chat', messageId: res.json().id, target: 'T2' });
     // 카드 답이 요청한 에이전트를 깨운다 — 버튼과 같은 `ask_answered`.
     expect((await pool.query(`select 1 from inbox where account_id = $1 and message_id = $2 and reason = 'ask_answered'`, [agentId, cardId])).rowCount).toBe(1);
@@ -227,7 +227,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     const res = await say(alice.token, '승인함', elsewhere, otherCh);
     expect(res.statusCode).toBe(201);
     expect(await status(requestId)).toBe('granted');
-    expect((await card(cardId)).ask.answeredWith).toBe('approve');
+    expect((await card(cardId)).ask.answeredWith).toBe('approve_new_mandate');
     const lines = await systemLines(elsewhere);
     expect(lines).toHaveLength(1);
     expect(lines[0]!.body).toContain('✓ sitebot');

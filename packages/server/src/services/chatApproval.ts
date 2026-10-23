@@ -401,11 +401,16 @@ async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Ca
     once = { ghUser: null, relaxChecks: ci, number: o.number, headSha: o.headSha, ...(ci ? { failedChecks } : {}) };
   } else {
     // 정확한 명령은 가장 좁게 — 이번 한 번만. 1시간은 카드 버튼에서만 준다.
-    option = c.kind === 'command' ? 'approve_once' : 'approve';
+    // W4b: 카드의 주 버튼과 같다 — 위임이 있으면 그 위임에 줄(approve_new_mandate 는 있던 위임을 그대로 쓴다), 없으면 카드 스레드에 위임을 세운다.
+    option = c.kind === 'command' ? 'approve_once' : 'approve_new_mandate';
   }
-  const out = await decide(pool, { kind: 'permission', agentId: c.agentId, requestId: c.requestId, cardMessageId: c.cardMessageId }, actorId, {
-    option, via: 'chat', chat: { messageId: message.id, target }, ...(once ? { once } : {}),
-  });
+  const ref = { kind: 'permission' as const, agentId: c.agentId, requestId: c.requestId, cardMessageId: c.cardMessageId };
+  const input = { via: 'chat' as const, chat: { messageId: message.id, target }, ...(once ? { once } : {}) };
+  let out = await decide(pool, ref, actorId, { option, ...input });
+  // 이 스레드에 위임을 세울 수 없으면(남의 위임 등) 전처럼 7일 승인만 한다.
+  if (option === 'approve_new_mandate' && out.kind === 'permission' && !out.ok && out.code === 'mandate_unavailable') {
+    out = await decide(pool, ref, actorId, { option: 'approve', ...input });
+  }
   if (out.kind !== 'permission') return { c, ok: false, why: 'failed' };
   if (!out.ok) return { c, ok: false, why: REFUSAL_BY_CODE[out.code] ?? 'failed' };
   const d = out.result;
