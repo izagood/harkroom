@@ -5275,6 +5275,7 @@ export const en = {
   'mergeOnce.errExpired': "This request expired — the agent has to try the merge again.",
   'mergeOnce.errForbidden': "Only the owner signed in to the app can approve this.",
   'mergeOnce.errStale': "The card changed (a different PR or head) — check it again before approving.",
+  'mergeOnce.errHeadMoved': "The PR got a new commit after this card was raised — this card is out of date. The agent has to try the merge again.",
   'mergeOnce.errFailed': "Couldn't approve. Try again.",
   'mergeDenial.title': 'Merge by @{handle} was blocked — no permission for this repository',
   'mergeDenial.pr': 'PR',

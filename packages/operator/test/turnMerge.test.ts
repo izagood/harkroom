@@ -147,7 +147,7 @@ describe('turnMerge', () => {
 
   describe('PR CI 가 없는 저장소(C안, 스레드 50324ba9)', () => {
     const BASE = 'c'.repeat(40);
-    const wf = (name: string, text: string, extra: Record<string, unknown> = {}) => ({ name, type: 'blob', object: { __typename: 'Blob', text, isTruncated: false, isBinary: false, ...extra } });
+    const wf = (name: string, text: string, extra: Record<string, unknown> = {}) => ({ name, type: 'blob', mode: 0o100644, object: { __typename: 'Blob', text, isTruncated: false, isBinary: false, ...extra } });
     const noCiRepo = (over: Record<string, unknown> = {}) => ({
       base: null, head: null,
       commit: { checkSuites: { totalCount: 1, nodes: [{ app: { slug: 'github-actions' }, checkRuns: { totalCount: 0 } }] }, status: null },
@@ -170,8 +170,9 @@ describe('turnMerge', () => {
       expect(repoQ.args).toEqual(expect.arrayContaining([`baseExpr=${BASE}:.github/workflows`, `headExpr=${SHA}:.github/workflows`, `base=${BASE}`]));
     });
 
-    it('base 나 head 의 workflow 에 pull_request·pull_request_target·merge_group 낱말이 있으면 거절한다(주석이어도)', async () => {
-      for (const [side, text] of [['base', 'on: [pull_request]'], ['head', 'on:\n  pull_request_target:\n'], ['base', '# merge_group later\non: push']] as const) {
+    it('base 나 head 의 workflow 에 pull_request*·merge_group 낱말이 있으면 거절한다(주석이어도, n1 리뷰 트리거 포함)', async () => {
+      for (const [side, text] of [['base', 'on: [pull_request]'], ['head', 'on:\n  pull_request_target:\n'], ['base', '# merge_group later\non: push'],
+        ['base', 'on:\n  pull_request_review:\n    types: [submitted]\n'], ['head', 'on: [pull_request_review_comment]']] as const) {
         prCiRepo = noCiRepo({ [side]: { __typename: 'Tree', entries: [wf('ci.yaml', text)] } });
         const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
         expect(r.body.error.code, text).toBe('ci_not_green');
@@ -186,6 +187,10 @@ describe('turnMerge', () => {
       expect(prCiVerdict(out(noCiRepo({ head: { __typename: 'Tree', entries: [wf('a.yml', '', { isBinary: true, text: null })] } })))).not.toBeNull();
       expect(prCiVerdict(out(noCiRepo({ base: { __typename: 'Tree', entries: Array.from({ length: 100 }, (_, i) => wf(`w${i}.yml`, 'on: push')) } })))).not.toBeNull();
       expect(prCiVerdict(out(noCiRepo({ base: { __typename: 'Blob' } })))).not.toBeNull();
+      // n2: 심볼릭 링크(120000)·모드 없음은 본문을 못 봤으니 거절, 실행 파일(100755)은 읽는다.
+      expect(prCiVerdict(out(noCiRepo({ base: { __typename: 'Tree', entries: [{ ...wf('ci.yml', 'shared/ci.yml'), mode: 0o120000 }] } })))?.message).toContain('not a regular file');
+      expect(prCiVerdict(out(noCiRepo({ head: { __typename: 'Tree', entries: [{ ...wf('ci.yml', 'on: push'), mode: undefined }] } })))).not.toBeNull();
+      expect(prCiVerdict(out(noCiRepo({ base: { __typename: 'Tree', entries: [{ ...wf('ci.yml', 'on: push'), mode: 0o100755 }] } })))).toBeNull();
       expect(prCiVerdict(out(noCiRepo({ commit: { checkSuites: { totalCount: 1, nodes: [{ app: { slug: 'circleci-checks' }, checkRuns: { totalCount: 2 } }] }, status: null } })))?.message).toContain('circleci-checks');
       expect(prCiVerdict(out(noCiRepo({ commit: { checkSuites: { totalCount: 0, nodes: [] }, status: { contexts: [{ context: 'ci/jenkins' }] } } })))).not.toBeNull();
       expect(prCiVerdict(out(noCiRepo({ commit: { checkSuites: { totalCount: 101, nodes: [] }, status: null } })))).not.toBeNull();
@@ -201,7 +206,8 @@ describe('turnMerge', () => {
       const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
       expect(r.body.error.code).toBe('ci_pending');
       expect(r.body.error.denialId).toBeUndefined();
-      expect(results()[0]).not.toHaveProperty('ciRefusal');
+      // n3: 유예 중은 기다림이다 — 「머지 실패」 보고(시스템 줄)를 남기지 않는다.
+      expect(results()).toEqual([]);
       expect(ghCalls()).not.toContain('pr merge');
     });
 

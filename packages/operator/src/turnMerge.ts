@@ -350,15 +350,20 @@ export function isAlreadyQueuedError(stderr: string): boolean {
  * 체크 0개를 통과로 본다. 읽기 전용이고, 모르면 거절한다(fail-closed).
  */
 export const NO_PR_CI_PR_QUERY = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){baseRefOid headRefOid headRefName isCrossRepository}}}';
-const WORKFLOW_TREE = 'object(expression:$expr){__typename ... on Tree{entries{name type object{__typename ... on Blob{text isTruncated isBinary}}}}}';
+const WORKFLOW_TREE = 'object(expression:$expr){__typename ... on Tree{entries{name type mode object{__typename ... on Blob{text isTruncated isBinary}}}}}';
 export const NO_PR_CI_REPO_QUERY = 'query($owner:String!,$name:String!,$baseExpr:String!,$headExpr:String!,$base:GitObjectID!){repository(owner:$owner,name:$name){'
   + `base:${WORKFLOW_TREE.replace('$expr', '$baseExpr')} head:${WORKFLOW_TREE.replace('$expr', '$headExpr')}`
   + ' commit:object(oid:$base){... on Commit{checkSuites(first:100){totalCount nodes{app{slug} checkRuns(first:1){totalCount}}} status{contexts{context}}}}}}';
 /** 체크가 붙기를 기다리는 시간 — push 뒤 이만큼은 「체크 0개」를 믿지 않는다(GitHub 이 workflow 를 띄우기 전일 수 있다). */
 export const NO_PR_CI_GRACE_MS = 120_000;
 
-/** workflow 본문이 PR 에 돌 수 있나 — 파서를 쓰지 않는다. 낱말이 어디든(주석·필터 안이라도) 있으면 「있음」 쪽으로 본다. */
-const PR_TRIGGER_RE = /\b(?:pull_request|pull_request_target|merge_group)\b/;
+/**
+ * workflow 본문이 PR 에 돌 수 있나 — 파서를 쓰지 않는다. 낱말이 어디든(주석·필터 안이라도) 있으면 「있음」 쪽으로 본다.
+ * `pull_request` 로 시작하는 낱말은 다 센다 — `pull_request_target`·`pull_request_review`·`pull_request_review_comment`(security n1).
+ */
+const PR_TRIGGER_RE = /\b(?:pull_request\w*|merge_group)\b/;
+/** 일반 파일 모드(100644·100755). 심볼릭 링크(120000)는 링크 대상 경로만 읽혀 본문을 못 본다 — 거절한다(security n2). */
+const REGULAR_FILE_MODES = new Set([0o100644, 0o100755]);
 
 export interface NoPrCiPr { baseRefOid: string; headRefOid: string; headRefName: string; isCrossRepository: boolean }
 
@@ -384,9 +389,10 @@ export function prCiVerdict(stdout: string): { code: string; message: string } |
     if (tree === null || tree === undefined) continue; // .github/workflows 가 없다
     if (tree.__typename !== 'Tree' || !Array.isArray(tree.entries)) return refuse(`.github/workflows on the ${side} commit is not a directory`);
     if (tree.entries.length >= 100) return refuse(`too many files in .github/workflows on the ${side} commit — not judged`);
-    for (const e of tree.entries as { name?: unknown; type?: unknown; object?: { __typename?: string; text?: unknown; isTruncated?: unknown; isBinary?: unknown } | null }[]) {
+    for (const e of tree.entries as { name?: unknown; type?: unknown; mode?: unknown; object?: { __typename?: string; text?: unknown; isTruncated?: unknown; isBinary?: unknown } | null }[]) {
       const name = typeof e.name === 'string' ? e.name : '';
       if (e.type !== 'blob' || !/\.ya?ml$/i.test(name)) continue;
+      if (typeof e.mode !== 'number' || !REGULAR_FILE_MODES.has(e.mode)) return refuse(`workflow ${name.slice(0, 80)} on the ${side} commit is not a regular file (symbolic link?) — not judged`);
       const o = e.object;
       if (!o || o.__typename !== 'Blob' || o.isTruncated !== false || o.isBinary === true || typeof o.text !== 'string') return refuse(`could not read workflow ${name.slice(0, 80)} on the ${side} commit`);
       if (PR_TRIGGER_RE.test(o.text)) return refuse(`workflow ${name.slice(0, 80)} on the ${side} commit runs on pull requests — CI has not reported yet`);
@@ -705,6 +711,8 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     let pr: PrView = {};
     try { pr = JSON.parse(view.stdout) as PrView; } catch { await report('failed', null, 'gh pr view: unparseable'); return fail('pr_not_found', 'gh pr view returned no JSON'); }
     const refuse = async (v: Verdict & { why: { code: string; message: string } }) => {
+      // 유예 중(`ci_pending`)은 실패가 아니라 기다림이다 — 「머지 실패」 줄을 남기지 않는다(security n3). 에이전트는 같은 명령을 다시 부른다.
+      if (v.why.code === 'ci_pending') return fail(v.why.code, v.why.message, { pr: { state: pr.state, headRefOid: pr.headRefOid, mergeStateStatus: pr.mergeStateStatus } });
       const ciRefusal = ciRefusalOf(v, pr);
       const { denialId } = await report('failed', null, `${v.why.code}: ${v.why.message}`, { ciRefusal });
       const prInfo = { pr: { state: pr.state, headRefOid: pr.headRefOid, mergeStateStatus: pr.mergeStateStatus } };

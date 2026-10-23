@@ -109,14 +109,15 @@ required checks 판정과 같다. 옛 실패가 새 초록을 막지 않고, 옛
 있을 때만** 통과시키고, 모르면 지금처럼 `ci_not_green`(no checks reported)이다(fail-closed). CI 무시 1회 승인 길은 여기 오지 않는다.
 
 1. GraphQL 로 PR 의 `baseRefOid`·`headRefOid`·`headRefName`·`isCrossRepository` 를 읽는다. `headRefOid` 가 `--head` 와 다르면 `head_moved`.
-2. base·head 두 커밋의 `.github/workflows` 의 `.yml`/`.yaml` 본문에 `pull_request`·`pull_request_target`·`merge_group` 낱말이
-   **어디든**(주석·필터 안이라도) 있으면 거절한다. YAML 을 해석하지 않는다(`on:` 이 `true` 로 읽히는 문제·필터 해석을 피하고, 애매하면
-   거절 쪽이다). 본문이 잘렸거나 바이너리거나, 파일이 100개 이상이거나, 읽지 못하면 거절한다.
+2. base·head 두 커밋의 `.github/workflows` 의 `.yml`/`.yaml` 본문에 `pull_request` 로 시작하는 낱말(`pull_request_target`·
+   `pull_request_review`·`pull_request_review_comment` 포함)이나 `merge_group` 이 **어디든**(주석·필터 안이라도) 있으면 거절한다.
+   YAML 을 해석하지 않는다(`on:` 이 `true` 로 읽히는 문제·필터 해석을 피하고, 애매하면 거절 쪽이다). 본문이 잘렸거나 바이너리거나,
+   일반 파일이 아니거나(심볼릭 링크는 링크 대상 경로만 읽힌다), 파일이 100개 이상이거나, 읽지 못하면 거절한다.
 3. base 커밋에 GitHub Actions 가 아닌 앱의 check suite(실행 1개 이상)나 commit status 가 있으면 거절한다 — 외부 CI 가 PR 에 아직
    보고하지 않았을 수 있다.
 4. 유예: head 가 밀린 뒤 **2분**이 지나야 통과한다. 기준은 `GET repos/{r}/activity?ref=<headRefName>` 에서 `after == head` 인 항목의
    `timestamp`(GitHub 이 받은 push 시각)다. 포크 PR 이거나 찾지 못하면 이 오퍼레이터가 그 (PR, head) 를 처음 본 시각(메모리 — 재기동하면
-   다시 잰다, 늦추기만 한다). 2분 전이면 `ci_pending` 이고 카드는 서지 않는다 — 잠시 뒤 같은 명령을 다시 부른다.
+   다시 잰다, 늦추기만 한다). 2분 전이면 `ci_pending` 이고 카드는 서지 않는다 — 잠시 뒤 같은 명령을 다시 부른다. 기다림이라 「머지 실패」 줄도 남기지 않는다(서버에 보고하지 않는다).
 
 통과하면 결과 JSON 에 `noPrChecks: true` 가 실리고, 서버 보고(`/agent/merge-results`)의 `noPrChecks` 로 시스템 줄 meta·감사
 `repo.merge.merged`/`queued` detail 에 남는다(본문은 그대로다).

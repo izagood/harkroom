@@ -3130,6 +3130,7 @@ export const ko = {
   'mergeOnce.errExpired': "요청 기한이 지났다 — 에이전트가 머지를 다시 시도해야 한다.",
   'mergeOnce.errForbidden': "앱에 로그인한 소유자만 승인할 수 있다.",
   'mergeOnce.errStale': "카드가 바뀌었다(다른 PR 이나 head) — 다시 확인하고 승인한다.",
+  'mergeOnce.errHeadMoved': "카드가 선 뒤 PR 에 새 커밋이 올라와 이 카드는 낡았다 — 에이전트가 머지를 다시 시도해야 한다.",
   'mergeOnce.errFailed': "승인하지 못했다. 다시 시도한다.",
   'mergeDenial.title': '@{handle} 의 머지가 막혔다 — 이 저장소에 권한이 없다',
   'mergeDenial.pr': 'PR',

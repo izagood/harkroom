@@ -331,6 +331,19 @@ describe('PermissionOncePanel', () => {
     expect(err.textContent).toContain('카드가 바뀌었다');
   });
 
+  it('새 커밋으로 낡은 카드(head_moved)는 「PR 닫힘」이 아니라 낡았다고 보인다(security n4)', async () => {
+    tauri(); setup({ approvePermissionOnce: vi.fn(async () => { throw new ApiError(409, 'head_moved', 'new commit'); }) });
+    render(<PermissionOncePanel message={card()} />);
+    fireEvent.click(screen.getByTestId('merge-once-open'));
+    const select = await screen.findByTestId('merge-once-account') as HTMLSelectElement;
+    await waitFor(() => expect([...select.options].some((o) => o.value === 'izagood')).toBe(true));
+    fireEvent.change(select, { target: { value: 'izagood' } });
+    fireEvent.click(screen.getByTestId('merge-once-submit'));
+    const err = await screen.findByTestId('merge-once-error');
+    expect(err.dataset.code).toBe('head_moved');
+    expect(err.textContent).toContain('새 커밋');
+  });
+
   it('서버 거절은 사람에게 하는 말로 — 원문은 title 로만', async () => {
     tauri(); setup({ approvePermissionOnce: vi.fn(async () => { throw new ApiError(409, 'already_decided', 'this request is already granted'); }) });
     render(<PermissionOncePanel message={card()} />);
