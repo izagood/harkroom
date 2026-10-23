@@ -39,6 +39,7 @@ describe('permission card decisions (W4b)', () => {
   let bobAgentId: string;
   let ch: string;
   let privCh: string;
+  let adminToken: string;
   let n = 0;
 
   const rule = () => { n += 1; return `Bash(kubectl --context ops get pods${n}:*)`; };
@@ -77,6 +78,7 @@ describe('permission card decisions (W4b)', () => {
     db = await startTestDb(); pool = db.pool;
     app = await buildServer({ pool });
     const admin = await bootstrapAdmin(app);
+    adminToken = admin.token;
     alice = await createMember(app, admin.token, 'alice');
     bob = await createMember(app, admin.token, 'bob');
     agentId = (await createAgent(app, admin.token, 'cardbot')).accountId;
@@ -128,6 +130,52 @@ describe('permission card decisions (W4b)', () => {
     expect(await linesOf(requestId)).toEqual([]);
   });
 
+  it('approve_new_mandate refuses mandate_unavailable on a thread another person started — root keeps no mandate key (F2)', async () => {
+    const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'bob root', 'user') returning id`, [ch, bob.accountId])).rows[0].id as string;
+    const target = rule();
+    const { requestId, cardId } = await card({ kind: 'tool', target, root, mandateId: null });
+    expect(await decideCard(cardId, 'approve_new_mandate')).toMatchObject({ ok: false, status: 409, code: 'mandate_unavailable' });
+    expect((await pool.query(`select mandate_id from message where id = $1`, [root])).rows[0].mandate_id).toBeNull();
+    expect((await pool.query(`select status, mandate_id from permission_request where id = $1`, [requestId])).rows[0]).toEqual({ status: 'pending', mandate_id: null });
+    expect((await pool.query(`select 1 from account_grant where account_id = $1 and scope like $2`, [agentId, `%${target}`])).rowCount).toBe(0);
+    // 다른 소유자의 에이전트가 쓴 머리도 같다.
+    const botRoot = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'bobbot root', 'user') returning id`, [ch, bobAgentId])).rows[0].id as string;
+    const b = await card({ kind: 'tool', target: rule(), root: botRoot, mandateId: null });
+    expect(await decideCard(b.cardId, 'approve_new_mandate')).toMatchObject({ ok: false, code: 'mandate_unavailable' });
+  });
+
+  it('approve_new_mandate on a thread the owner\'s own agent started → mandate for the owner', async () => {
+    const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'cardbot root', 'user') returning id`, [ch, agentId])).rows[0].id as string;
+    const { requestId, cardId } = await card({ kind: 'tool', target: rule(), root, mandateId: null });
+    expect(await decideCard(cardId, 'approve_new_mandate')).toMatchObject({ ok: true, result: { status: 'granted' } });
+    const made = (await pool.query(`select mandate_id from permission_request where id = $1`, [requestId])).rows[0].mandate_id as string;
+    expect((await pool.query(`select owner_account_id from mandate where id = $1`, [made])).rows[0].owner_account_id).toBe(alice.accountId);
+  });
+
+  it('chip name is withheld on a card whose channel audience cannot see the mandate root channel (F1)', async () => {
+    const { mandateId } = await mandateThread(alice.accountId, '@cardbot 비공개 작업 이름', privCh);
+    expect(mandateId).toBeTruthy();
+    const started = (await pool.query(`select created_at from mandate where id = $1`, [mandateId])).rows[0].created_at as Date;
+    // 위임장은 비공개 채널에서 시작했고, 카드는 공개 채널 스레드에 선다.
+    const pub = await card({ kind: 'tool', target: rule(), root: await plainRoot(), mandateId });
+    expect(pub.meta.mandate).toEqual({ id: mandateId, name: '', ownerId: alice.accountId, startedAt: started.toISOString() });
+    expect(JSON.stringify(pub.meta)).not.toContain('비공개 작업');
+    // 같은 비공개 채널의 카드에는 이름이 실린다.
+    const priv = await card({ kind: 'tool', target: rule(), root: await plainRoot(privCh), mandateId, channelId: privCh });
+    expect(priv.meta.mandate).toMatchObject({ id: mandateId, name: '비공개 작업 이름', ownerId: alice.accountId });
+    // 거울은 원본 카드 이름을 옮기지 않고 거울 채널 기준으로 다시 판정한다 — 거울 청중(alice)이 위임장 뿌리 채널을 다 보므로 이름이 실린다.
+    const privOther = (await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'w4b-priv2' } })).json().id as string;
+    expect(privOther).toBeTruthy();
+    await pool.query(`update channel set visibility = 'private' where id = $1`, [privOther]);
+    await pool.query(`delete from channel_member where channel_id = $1 and account_id <> $2`, [privOther, alice.accountId]);
+    await pool.query(`insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing`, [privOther, alice.accountId]);
+    const m = await renderPermissionMirror(pool, priv.cardId, privOther);
+    expect(m?.mirror).toMatchObject({ neutral: false, mandate: { id: mandateId, name: '비공개 작업 이름' } });
+    // 공개 카드(이름 없음)의 거울은 공개 채널이어도 이름을 되살리지 않는다.
+    const pm = await renderPermissionMirror(pool, pub.cardId, ch);
+    expect(pm?.mirror.mandate).toEqual({ id: mandateId, name: '', ownerId: alice.accountId, startedAt: started.toISOString() });
+  });
+
   it('old option ids are still accepted: approve (7 days, line when a mandate exists) and deny', async () => {
     const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot again');
     const t1 = rule();
@@ -161,9 +209,10 @@ describe('permission card decisions (W4b)', () => {
   it('mirror meta: genuine mirror copies once/line/mandate, neutral mirror carries only the link', async () => {
     const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot mirror');
     const genuine = await card({ kind: 'tool', target: rule(), root, mandateId });
-    const other = (await app.inject({ method: 'POST', url: '/channels', headers: auth(alice.token), payload: { name: 'w4b-other' } })).json().id as string;
+    const other = (await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'w4b-other' } })).json().id as string;
+    expect(other).toBeTruthy();
     const g = await renderPermissionMirror(pool, genuine.cardId, other);
-    expect(g?.mirror).toEqual({ rootId: genuine.cardId, neutral: false, kind: 'tool', line: genuine.meta.line, mandate: { id: mandateId, name: genuine.meta.mandate!.name } });
+    expect(g?.mirror).toEqual({ rootId: genuine.cardId, neutral: false, kind: 'tool', line: genuine.meta.line, mandate: genuine.meta.mandate });
     expect(ids(g!.options)).toEqual(['approve_mandate', 'deny']);
 
     const privRoot = await plainRoot(privCh);

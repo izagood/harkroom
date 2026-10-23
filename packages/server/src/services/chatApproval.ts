@@ -400,7 +400,7 @@ async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Ca
     option = 'approve_once';
     once = { ghUser: null, relaxChecks: ci, number: o.number, headSha: o.headSha, ...(ci ? { failedChecks } : {}) };
   } else {
-    // 정확한 명령은 가장 좁게 — 이번 한 번만. 1시간은 카드 버튼에서만 준다.
+    // 정확한 명령은 가장 좁게 — 이번 한 번만. 1시간은 옛 앱의 카드 버튼에서만 준다.
     // W4b: 카드의 주 버튼과 같다 — 위임이 있으면 그 위임에 줄(approve_new_mandate 는 있던 위임을 그대로 쓴다), 없으면 카드 스레드에 위임을 세운다.
     option = c.kind === 'command' ? 'approve_once' : 'approve_new_mandate';
   }

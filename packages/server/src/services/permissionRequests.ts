@@ -35,7 +35,7 @@ export const PERMISSION_REQUESTS_PER_DAY = 20;
 
 export const PERMISSION_OPTION_APPROVE = 'approve';
 export const PERMISSION_OPTION_DENY = 'deny';
-/** kind=command 카드의 선택지(H②): 「이번 한 번」·「이 스레드 1시간」. 둘 다 이 스레드에만, 쓰지 않으면 1시간 뒤 사라진다. */
+/** kind=command 카드의 선택지(H②): 「이번 한 번」(이 스레드에만, 쓰지 않으면 1시간 뒤 사라진다). `approve_hour`(이 스레드 1시간)는 옛 앱을 위해 라우트만 받는다(W4b ②). */
 export const PERMISSION_OPTION_APPROVE_ONCE = 'approve_once';
 export const PERMISSION_OPTION_APPROVE_HOUR = 'approve_hour';
 /** 정확한 명령 grant 의 기한 — 1회짜리도 이 안에 써야 한다. */
@@ -232,7 +232,7 @@ export async function openPermissionRequest(
         channelId: args.kind === 'tool' ? args.channelId : null,
         warnings, reason: oneLineReason(args.reason),
         ...(args.denial ? { once: onceMeta(args.denial) } : {}), ...(args.mandateId ? { mandateId: args.mandateId } : {}),
-        ...(await cardMandateMeta(pool, args.mandateId ?? null)),
+        ...(await cardMandateMeta(pool, args.mandateId ?? null, args.channelId)),
         line: cardLine(args.kind, target, args.denial ? onceMeta(args.denial) : undefined, !!args.mandateId),
         requestedAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
       },
@@ -299,7 +299,7 @@ async function openCommandRequest(
         channelId: args.channelId, threadRootId: args.threadRootId, warnings: v.warnings,
         ...(files.files.length ? { files: files.files } : {}),
         ...(args.mandateId ? { mandateId: args.mandateId } : {}),
-        ...(await cardMandateMeta(pool, args.mandateId ?? null)),
+        ...(await cardMandateMeta(pool, args.mandateId ?? null, args.channelId)),
         line: cardLine('command', v.command, undefined, !!args.mandateId),
         reason: oneLineReason(args.reason), requestedAt: args.now.toISOString(), expiresAt: expiresAt.toISOString(),
       },
@@ -312,7 +312,7 @@ export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: str
   // n1(jaebin 10-07): 규칙은 그 채널의 **모든** 턴(위임·예약 깨우기로 뜬 턴 포함)에 붙는다 — 카드가 그렇게 말해야 한다.
   const warn = meta.warnings.length ? `\n⚠ ${meta.warnings.join(', ')}` : '';
   if (meta.kind === 'command') {
-    return `권한 요청 · ${agentHandle}\n정확히 이 명령 하나 \`${meta.target}\` — 이 스레드에서만 · 「이번 한 번」 또는 「1시간」${warn}${filesBlock(meta.files ?? [])}\n이유: ${oneLineReason(meta.reason)}`;
+    return `권한 요청 · ${agentHandle}\n정확히 이 명령 하나 \`${meta.target}\` — 이 스레드에서만 · 「이번 한 번」${warn}${filesBlock(meta.files ?? [])}\n이유: ${oneLineReason(meta.reason)}`;
   }
   // CI 거절 카드(스레드 1fccc9a5): 뜻은 「CI 실패 무시하고 이번 한 번 머지」 하나다 — 7일이 아니다. 체크 이름(서버가 거른 값)은
   // 멘션·토큰이 되는 글자를 비슷한 글자로 바꿔 싣는다(본문은 멘션이 풀린다).
@@ -405,10 +405,17 @@ function clip(s: string): string {
   return chars.length > MANDATE_NAME_MAX ? `${chars.slice(0, MANDATE_NAME_MAX).join('')}…` : t;
 }
 
-async function cardMandateMeta(pool: Pick<Pool, 'query'>, mandateId: string | null): Promise<{ mandate?: PermissionCardMandate }> {
+/**
+ * 카드의 위임장 칩. 위임장은 채널을 넘어 이어지므로 이름(뿌리 글 앞부분·작업 항목 제목)은 **위임장 뿌리 채널을 카드 채널의 청중이 다 볼 때만**
+ * 싣는다(security F1 — 거울과 같은 판정). 못 보면 이름을 비우고 소유자·시작 시각만 둔다(화면은 「🔑 위임장 · 소유자 · 시작일」).
+ */
+async function cardMandateMeta(pool: Pool, mandateId: string | null, cardChannelId: string): Promise<{ mandate?: PermissionCardMandate }> {
   if (!mandateId) return {};
-  const name = await mandateChipName(pool, mandateId);
-  return { mandate: { id: mandateId, name: name ?? '' } };
+  const d = (await pool.query<{ channelId: string; ownerId: string; startedAt: Date }>(
+    `select channel_id as "channelId", owner_account_id as "ownerId", created_at as "startedAt" from mandate where id = $1`, [mandateId])).rows[0];
+  if (!d) return { mandate: { id: mandateId, name: '' } };
+  const name = (await mirrorAudienceSeesRoot(pool, d.channelId, cardChannelId)) ? await mandateChipName(pool, mandateId) : null;
+  return { mandate: { id: mandateId, name: name ?? '', ownerId: d.ownerId, startedAt: d.startedAt.toISOString() } };
 }
 
 export async function linkPermissionCard(pool: Pool, requestId: string, cardMessageId: string): Promise<void> {
@@ -681,12 +688,16 @@ async function answerOptionId(pool: Pool, cardMessageId: string, candidates: str
 /**
  * W4-3: 카드의 스레드 머리에 소유자 위임을 세운다(이미 있으면 그것). 머리 글이 이 채널의 지워지지 않은 글이어야 하고,
  * 머리에 다른 위임이 붙어 있거나 그 위임의 소유자가 다르면 세우지 않는다(null).
+ * 머리 글은 **소유자 본인이나 그 소유자의 에이전트**가 쓴 것이어야 한다(security F2) — 위임 키는 그런 글에만 있다는 W1 불변식.
+ * 남의 글에 키를 찍으면 그 글로 뜬 턴이 키를 얻는다(`issueTurnLease` 는 원인 글의 `mandate_id` 를 믿는다).
  */
 async function mandateForCardThread(client: PoolClient, args: { ownerId: string; channelId: string; threadRootId: string; now: Date }): Promise<string | null> {
-  const root = (await client.query<{ mandateId: string | null }>(
-    `select mandate_id as "mandateId" from message where id = $1 and channel_id = $2 and deleted_at is null for update`,
-    [args.threadRootId, args.channelId])).rows[0];
-  if (!root) return null;
+  const root = (await client.query<{ mandateId: string | null; ownAuthor: boolean }>(
+    `select m.mandate_id as "mandateId",
+            (m.author_id = $3 or exists (select 1 from agent_config c where c.account_id = m.author_id and c.owner_account_id = $3)) as "ownAuthor"
+       from message m where m.id = $1 and m.channel_id = $2 and m.deleted_at is null for update of m`,
+    [args.threadRootId, args.channelId, args.ownerId])).rows[0];
+  if (!root || !root.ownAuthor) return null;
   if (root.mandateId) {
     const owner = await validMandateOwner(client, root.mandateId, args.now);
     if (owner !== args.ownerId) return null;
@@ -1072,7 +1083,8 @@ export async function renderPermissionMirror(
       rootId, neutral: false, kind: pr.kind,
       ...(pr.once ? { once: { number: pr.once.number, headSha: pr.once.headSha, reason: pr.once.reason, ...(pr.once.failedChecks ? { failedChecks: [...pr.once.failedChecks] } : {}) } } : {}),
       ...(pr.line ? { line: pr.line } : {}),
-      ...(pr.mandate ? { mandate: { id: pr.mandate.id, name: pr.mandate.name } } : {}),
+      // 칩은 거울 채널을 기준으로 다시 만든다(F1) — 원본 카드의 이름을 그대로 옮기지 않는다.
+      ...(pr.mandate ? await cardMandateMeta(pool, pr.mandate.id, mirrorChannelId) : {}),
     };
     return { body: permissionCardBody(pr, handle), options, ...(prompt ? { prompt } : {}), mirror };
   }
