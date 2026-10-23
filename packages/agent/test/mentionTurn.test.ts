@@ -5,14 +5,14 @@
 // 일어나는 일이라 이 테스트(프로세스 경계 밖)에서 직접 재현할 수 없다 — 그래서 runTurn
 // 스텁이 하네스 대신 fakeHarkroom.post 를 호출해 "턴 도중 에이전트가 답을 올렸다"를
 // 흉내낸다(task-9 브리프 시나리오 1 주석 그대로).
-import { lstat, mkdir, mkdtemp, readFile, readlink, stat, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
-import { AccountGateRequeueError, mentionAnchor, runMentionTurn, syncSkills, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
+import { AccountGateRequeueError, mentionAnchor, runMentionTurn, laneSafeSkill, syncSkills, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
 import { createAttentionLedger } from '../src/attentionLedger.js';
 import { BODY_LIMIT } from '../src/prompt.js';
 
@@ -2819,6 +2819,46 @@ describe('syncSkills 단독(#140)', () => {
 
     expect(await readFile(join(mine, 'SKILL.md'), 'utf8')).toBe('사람이 쓴 것');
     expect((await lstat(join(harness, 'other-tool'))).isSymbolicLink()).toBe(true);
+  });
+
+  // API 키 연결 턴(security, 2026-10-23): `allowed-tools` 는 dontAsk 에서도 셸을 연다 — lane 에는 그런 스킬을 깔지 않는다.
+  it('dropToolGrants 면 허용 목록 밖 스킬을 깔지 않고, 앞서 깔린 것도 걷는다', async () => {
+    const { stateDir, workspaceDir } = await dirs();
+    const grant = { slug: 'opens-shell', body: '---\nname: opens-shell\nallowed-tools: Bash\n---\n본문' };
+    const plain = { slug: 'plain', body: '---\nname: plain\ndescription: x\n---\n본문' };
+    await syncSkills(stateDir, workspaceDir, async () => [grant, plain]);
+    const harness = join(workspaceDir, '.claude', 'skills');
+    expect((await readdir(harness)).sort()).toEqual(['opens-shell', 'plain']);
+
+    await syncSkills(stateDir, workspaceDir, async () => [grant, plain], { dropToolGrants: true });
+    expect(await readdir(harness)).toEqual(['plain']);
+    expect(await readdir(join(stateDir, 'skills'))).toEqual(['plain']);
+  });
+
+  // security F1: 거부 목록은 다른 표기로 샌다 — 아는 모양(frontmatter 없음, 또는 name·description 줄만)만 받는다.
+  it('laneSafeSkill — 허용 목록: 아는 모양만 받고 나머지는 뺀다', () => {
+    const ok = [
+      '# 제목\n본문 — allowed-tools 라는 낱말이 있어도 frontmatter 가 아니다',
+      '---\nname: plain\ndescription: 설명\n---\n본문',
+      '\uFEFF---\r\nname: crlf\r\n---\r\n본문',
+      '---\nname: a\n\ndescription:\n---',
+    ];
+    const bad = [
+      '---\nallowed-tools: Bash\n---',
+      '---\nallowed_tools: Bash\n---',
+      '---\nAllowed-Tools: Bash\n---',
+      '---\n"allowed-tools": Bash\n---',
+      "---\n'allowed-tools': Bash\n---",
+      '---\n{allowed-tools: Bash}\n---',
+      '---\nname: x\n  allowed-tools: Bash\n---',
+      '---\nname: x\n# 주석\n---',
+      '---\nname: x\nmodel: y\n---',
+      '---\nname: x',
+      '  ---\nallowed-tools: Bash\n---',
+      '\n---\nallowed-tools: Bash\n---',
+    ];
+    for (const body of ok) expect(laneSafeSkill(body)).toBe(true);
+    for (const body of bad) expect(laneSafeSkill(body)).toBe(false);
   });
 
   it('본문이 바뀌면 링크는 그대로 두고 파일만 갱신한다', async () => {

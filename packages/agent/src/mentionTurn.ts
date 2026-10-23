@@ -766,10 +766,40 @@ export async function scrubWorkspaceSettings(workspaceDir: string): Promise<stri
   return removed;
 }
 
+/** lane 에 깔아도 되는 frontmatter 키 — 정해진 것만 받는다(허용 목록). 도구·권한을 바꾸는 키는 여기 없다. */
+const LANE_SKILL_KEYS = new Set(['name', 'description']);
+
+/**
+ * API 키 연결 턴에 깔아도 되는 스킬인가(security F1, 허용 목록). 거부 목록(`allowed-tools` 를 찾아 빼기)은 따옴표 친 키·흐름 표기·
+ * 대소문자 같은 다른 표기로 샌다 — 그래서 **아는 모양만** 받는다.
+ *
+ * - frontmatter 가 없다(본문이 `---` 줄로 시작하지 않는다) → 받는다. 하네스는 맨 앞의 `---` 블록만 설정으로 읽는다.
+ * - frontmatter 가 있으면 닫는 `---` 까지의 줄이 전부 빈 줄이거나 들여쓰기 없는 `name: …`·`description: …` 이어야 받는다.
+ *   모르는 키·따옴표 키·이어지는 줄·주석·닫히지 않은 블록은 모두 뺀다(fail-closed).
+ */
+export function laneSafeSkill(body: string): boolean {
+  const text = body.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const lines = text.replace(/^\s*\n/, '').split('\n');
+  // 공백만 앞에 둔 `---` 도 하네스가 읽을 수 있다고 보고 frontmatter 로 다룬다.
+  if (lines[0]?.trim() !== '---') return true;
+  const end = lines.indexOf('---', 1);
+  if (end < 0) return false;
+  return lines.slice(1, end).every((line) => {
+    if (line.trim() === '') return true;
+    const m = /^([a-z]+):(?:[ \t]|$)/.exec(line);
+    return m !== null && LANE_SKILL_KEYS.has(m[1] ?? '');
+  });
+}
+
 export async function syncSkills(
   stateDir: string,
   workspaceDir: string,
   listSkills: () => Promise<{ slug: string; body: string }[]>,
+  /**
+   * API 키 연결 턴(security, 2026-10-23): `laneSafeSkill` 을 지나는 스킬만 깐다. frontmatter 의 `allowed-tools` 는 `dontAsk`
+   * 턴에서도 셸을 열어(실측 claude 2.1.309) 소유자 카드 없이 도구가 열리는 길이 된다. 이미 깔린 것은 「사라진 스킬」과 같이 걷힌다.
+   */
+  opts: { dropToolGrants?: boolean } = {},
 ): Promise<void> {
   const skillsDir = join(stateDir, 'skills');
   // 하네스별 스킬 디렉터리. claude 는 `.claude/skills/<slug>/SKILL.md` 를 읽는다.
@@ -781,7 +811,11 @@ export async function syncSkills(
   const legacyCodexDir = join(workspaceDir, '.codex', 'skills');
 
   try {
-    const skills = await listSkills();
+    const listed = await listSkills();
+    const skills = opts.dropToolGrants ? listed.filter((s) => laneSafeSkill(s.body)) : listed;
+    if (skills.length < listed.length) {
+      console.warn(`[mentionTurn] API 키 연결 턴 — 허용 목록 밖 frontmatter 를 가진 스킬 ${listed.length - skills.length}개를 깔지 않았다`);
+    }
     const wanted = new Set(skills.map((s) => s.slug));
 
     // 사라진 스킬(비활성·삭제): 상태 디렉터리의 파일과 하네스의 링크를 **함께** 지운다.
@@ -1210,7 +1244,7 @@ export async function runMentionTurn(
   // #140: 승인된 스킬 동기화 — 하네스가 뜨기 **전에** 끝나야 한다. await 을 빼면 이 턴의
   // 하네스는 아직 없는 스킬 디렉터리를 읽고, 스킬은 항상 한 턴 늦게 붙는다.
   // 실패는 syncSkills 안에서 삼키고 stderr 로 남긴다 — 그래서 턴은 그대로 진행한다.
-  await syncSkills(deps.stateDir, rec.workspaceDir, () => deps.harkroom.listApprovedSkills());
+  await syncSkills(deps.stateDir, rec.workspaceDir, () => deps.harkroom.listApprovedSkills(), { dropToolGrants: Boolean(deps.providerEnv) });
   // 하네스를 가리지 않는다 — 다른 하네스는 이 파일을 읽지 않으니 지워도 잃을 것이 없고, 이름 비교 예산(adapterParity)도 지킨다.
   await scrubWorkspaceSettings(rec.workspaceDir);
 
