@@ -262,3 +262,27 @@ describe('PR 검증 빌드(ci.yml)는 서명 키를 요구하지 않는다', () 
     expect(ci).toContain('Contents/Resources/node_modules/node-pty');
   });
 });
+
+/**
+ * Stable 채널의 매니페스트는 `promote.yml` 이 돌려 쓰는 `stable` 릴리즈에 둔다. 그 릴리즈가
+ * 보통 릴리즈가 되면 GitHub 의 `releases/latest` 가 그쪽으로 넘어가 **Ludicrous 업데이터가
+ * Stable 판을 읽는다** — 사람 눈에는 아무 일도 없어 보이고, 최신 판을 고른 사람만 조용히 뒤처진다.
+ */
+describe('Stable 승격 워크플로(promote.yml)', () => {
+  const promote = readFileSync(resolve(process.cwd(), '../../.github/workflows/promote.yml'), 'utf8');
+
+  it('stable 릴리즈는 prerelease 이고 latest 가 되지 않는다', () => {
+    expect(promote).toContain('--prerelease --latest=false');
+    expect(promote).toContain('-F prerelease=true -f make_latest=false');
+  });
+
+  it('다시 굽거나 서명하지 않고 원본 판의 latest.json 을 옮긴다', () => {
+    expect(promote).toMatch(/gh release download "\$TAG"[\s\S]*--pattern latest\.json/);
+    expect(promote).toMatch(/gh release upload "\$CHANNEL_TAG" "\$RUNNER_TEMP\/manifest\/latest\.json"/);
+    expect(promote).not.toContain('TAURI_SIGNING_PRIVATE_KEY');
+  });
+
+  it('승격만 바꾼 머지는 앱 릴리즈를 돌리지 않는다', () => {
+    expect(workflow).toContain("- '.github/workflows/promote.yml'");
+  });
+});
