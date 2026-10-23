@@ -15,6 +15,7 @@ import { hasWriteMethod, isConnectorScope, parseLimits } from '../auth/apiGrants
 import { actorOf, recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { decideDelegation } from '../services/apiDelegation.js';
+import { revokeLinesForGrant } from '../services/mandateLines.js';
 
 const grantBody = z.object({
   capability: z.enum(CAPABILITIES),
@@ -225,6 +226,8 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
         `delete from account_grant where account_id = $1 and capability = $2 and scope = $3`,
         [id, req.params.capability, scope]);
       if (!res.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: '그런 grant 가 없다' } });
+      // W4: 그 grant 와 함께 적힌 위임 줄도 닫는다.
+      await revokeLinesForGrant(pool, { agentId: id, capability: req.params.capability, scope });
       await recordAudit(pool, {
         action: 'grant.revoked', ...actorOf(req), target: id,
         detail: { capability: req.params.capability, scope },

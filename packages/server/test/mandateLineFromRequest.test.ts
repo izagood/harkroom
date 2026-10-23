@@ -6,7 +6,8 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { postMessage } from '../src/services/messages.js';
 import { decide, resolveDecision } from '../src/services/decisions.js';
-import { openPermissionRequest } from '../src/services/permissionRequests.js';
+import { openPermissionRequest, releaseGrant } from '../src/services/permissionRequests.js';
+import { findLine } from '../src/services/mandateLines.js';
 
 // 위임(mandate) W4 — 권한 요청 승인이 그 턴의 위임에 줄을 하나 더 적는다. 기존 grant 는 그대로.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -27,7 +28,7 @@ describe('permission request → mandate line (W4)', () => {
       [ch, authorId, JSON.stringify(meta), threadRootId])).rows[0].id as string;
   /** 소유자가 자기 에이전트를 부른 새 머리 — 위임이 하나 생긴다. */
   const mandateThread = async () => {
-    const r = await postMessage(pool, { channelId: ch, authorId: alice.accountId, body: '@w4bot go', threadRootId: null });
+    const r = await postMessage(pool, { channelId: ch, authorId: alice.accountId, body: '@w4bot go', threadRootId: null, authVia: 'session' });
     if (r.failure) throw new Error(String(r.failure));
     const root = r.message.id as string;
     const m = (await pool.query(`select mandate_id from message where id = $1`, [root])).rows[0].mandate_id as string | null;
@@ -80,7 +81,8 @@ describe('permission request → mandate line (W4)', () => {
     expect(await decide(pool, ref, alice.accountId, { option: 'approve', via: 'button' })).toMatchObject({ ok: true, result: { status: 'granted' } });
     expect((await pool.query(`select 1 from account_grant where account_id = $1 and capability = 'tool.allow' and scope like $2`, [agentId, `%${target}`])).rowCount).toBe(1);
     const lines = await linesOf(requestId);
-    expect(lines).toEqual([{ mandateId, cap: 'tool', scope: target, limits: {}, grantedBy: alice.accountId, via: 'button', agentIds: null }]);
+    const grantUntil = (await pool.query(`select expires_at from account_grant where account_id = $1 and capability = 'tool.allow' and scope like $2`, [agentId, `%${target}`])).rows[0].expires_at as Date;
+    expect(lines).toEqual([{ mandateId, cap: 'tool', scope: target, limits: { until: grantUntil.toISOString() }, grantedBy: alice.accountId, via: 'button', agentIds: null }]);
     const [a] = await audits('mandate.line.added', requestId);
     expect(a).toMatchObject({ mandateId, cap: 'tool', scope: target, via: 'button', requestId });
     expect(typeof a.lineId).toBe('string');
@@ -130,6 +132,64 @@ describe('permission request → mandate line (W4)', () => {
     const once = await request({ kind: 'command', target: cmd, root: root2, mandateId: m2 });
     await decide(pool, (await resolveDecision(pool, once.cardId))!, alice.accountId, { option: 'approve_once', via: 'button' });
     expect((await linesOf(once.requestId))[0].limits).toMatchObject({ uses: 1 });
+  });
+
+  it('7-day merge approve → merge line ends with the grant', async () => {
+    const { root, mandateId } = await mandateThread();
+    const { requestId, cardId } = await request({ kind: 'merge', target: 'repo:acme-org/w4-until', root, mandateId });
+    expect(await decide(pool, (await resolveDecision(pool, cardId))!, alice.accountId, { option: 'approve', via: 'button' })).toMatchObject({ ok: true, result: { status: 'granted' } });
+    const g = (await pool.query(`select expires_at from account_grant where account_id = $1 and capability = 'repo.merge' and scope = 'repo:acme-org/w4-until'`, [agentId])).rows[0].expires_at as Date;
+    expect((await linesOf(requestId))[0].limits).toEqual({ until: g.toISOString() });
+  });
+
+  describe('revoking the grant closes its mandate line', () => {
+    const approveTool = async () => {
+      const { root, mandateId } = await mandateThread();
+      const target = rule();
+      const { requestId, cardId } = await request({ kind: 'tool', target, root, mandateId });
+      await decide(pool, (await resolveDecision(pool, cardId))!, alice.accountId, { option: 'approve', via: 'button' });
+      expect(await findLine(pool, { mandateId, agentId, cap: 'tool', action: { cap: 'tool', rule: target } })).not.toBeNull();
+      return { mandateId, target, requestId };
+    };
+    const approveMerge = async (repo: string) => {
+      const { root, mandateId } = await mandateThread();
+      const { cardId } = await request({ kind: 'merge', target: `repo:${repo}`, root, mandateId });
+      await decide(pool, (await resolveDecision(pool, cardId))!, alice.accountId, { option: 'approve', via: 'button' });
+      expect(await findLine(pool, { mandateId, agentId, cap: 'merge', action: { cap: 'merge', repo } })).not.toBeNull();
+      return { mandateId };
+    };
+
+    it('settings DELETE of a tool grant', async () => {
+      const { mandateId, target, requestId } = await approveTool();
+      const res = await app.inject({ method: 'DELETE', url: `/accounts/${agentId}/grants/tool.allow?scope=${encodeURIComponent(`tool:${ch}:${target}`)}`, headers: auth(alice.token) });
+      expect(res.statusCode).toBe(204);
+      expect(await findLine(pool, { mandateId, agentId, cap: 'tool', action: { cap: 'tool', rule: target } })).toBeNull();
+      expect((await pool.query(`select revoked_at from mandate_line where request_id = $1`, [requestId])).rows[0].revoked_at).not.toBeNull();
+    });
+
+    it('settings DELETE of a merge grant', async () => {
+      const { mandateId } = await approveMerge('acme-org/w4-del');
+      const res = await app.inject({ method: 'DELETE', url: `/accounts/${agentId}/grants/repo.merge?scope=acme-org/w4-del`, headers: auth(alice.token) });
+      expect(res.statusCode).toBe(204);
+      expect(await findLine(pool, { mandateId, agentId, cap: 'merge', action: { cap: 'merge', repo: 'acme-org/w4-del' } })).toBeNull();
+    });
+
+    it('permission.revoke (releaseGrant) of a tool grant and a merge grant', async () => {
+      const t = await approveTool();
+      expect(await releaseGrant(pool, { agentId, kind: 'tool', rule: t.target, channelId: ch })).toMatchObject({ ok: true });
+      expect(await findLine(pool, { mandateId: t.mandateId, agentId, cap: 'tool', action: { cap: 'tool', rule: t.target } })).toBeNull();
+      const m = await approveMerge('acme-org/w4-rel');
+      expect(await releaseGrant(pool, { agentId, kind: 'merge', repo: 'acme-org/w4-rel', channelId: ch })).toMatchObject({ ok: true });
+      expect(await findLine(pool, { mandateId: m.mandateId, agentId, cap: 'merge', action: { cap: 'merge', repo: 'acme-org/w4-rel' } })).toBeNull();
+    });
+
+    it('revoking a different grant leaves the line alone', async () => {
+      const t = await approveTool();
+      const other = await approveMerge('acme-org/w4-other');
+      expect(await releaseGrant(pool, { agentId, kind: 'merge', repo: 'acme-org/w4-other', channelId: ch })).toMatchObject({ ok: true });
+      expect(await findLine(pool, { mandateId: other.mandateId, agentId, cap: 'merge', action: { cap: 'merge', repo: 'acme-org/w4-other' } })).toBeNull();
+      expect(await findLine(pool, { mandateId: t.mandateId, agentId, cap: 'tool', action: { cap: 'tool', rule: t.target } })).not.toBeNull();
+    });
   });
 
   it('deny → no line', async () => {

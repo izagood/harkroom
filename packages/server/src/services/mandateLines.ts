@@ -144,3 +144,36 @@ export async function consumeLine(pool: Pool | Q, args: {
   }
   return null;
 }
+
+/**
+ * 7일 grant(account_grant)를 거둘 때 그 grant 와 함께 적힌 위임 줄도 닫는다(W4) — 설정 화면 거두기·`permission.revoke` 가 부른다.
+ * 맞추기: 같은 cap·scope 이고, (그 에이전트가 낸 요청에서 온 줄 — 도구는 같은 채널의 요청만) 이거나 (agent_ids 에 그 에이전트가 있는 줄).
+ * 위임 줄이 없는 능력(api.call 등)이면 아무것도 하지 않는다. 닫은 줄 수를 돌려준다.
+ */
+export async function revokeLinesForGrant(q: Pool | Q, args: {
+  agentId: string; capability: string; scope: string; now?: Date;
+}): Promise<number> {
+  const now = args.now ?? new Date();
+  let cap: Cap; let lineScope: string; let channelId: string | null = null;
+  if (args.capability === 'tool.allow') {
+    const p = parseToolScope(args.scope);
+    if (!p) return 0;
+    cap = 'tool'; channelId = p.channelId;
+    const v = CAPABILITIES.tool.validateScope(p.rule);
+    lineScope = v.ok ? v.scope : p.rule;
+  } else if (args.capability === 'repo.merge') {
+    cap = 'merge';
+    const v = CAPABILITIES.merge.validateScope(args.scope);
+    lineScope = v.ok ? v.scope : args.scope;
+  } else {
+    return 0;
+  }
+  const res = await q.query(
+    `update mandate_line l set revoked_at = $5
+      where l.revoked_at is null and l.cap = $2 and l.scope = $3
+        and ((l.agent_ids is not null and $1::uuid = any(l.agent_ids))
+          or exists (select 1 from permission_request r
+                      where r.id = l.request_id and r.agent_id = $1 and ($4::text is null or r.channel_id::text = $4)))`,
+    [args.agentId, cap, lineScope, channelId, now]);
+  return res.rowCount ?? 0;
+}

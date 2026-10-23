@@ -6,7 +6,7 @@ import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
 import { validateCapScope, type Cap, type LineLimits } from './capabilities.js';
-import { addMandateLine, type LineVia } from './mandateLines.js';
+import { addMandateLine, revokeLinesForGrant, type LineVia } from './mandateLines.js';
 import { validMandateOwner } from './mandates.js';
 import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
 import { getMessageById, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
@@ -503,6 +503,8 @@ export async function decidePermissionRequest(
       lineOutcome = await addLineFromRequest(client, {
         request: r, decision: args.decision, actorId: args.actorId, now,
         via: args.via?.kind ?? 'button',
+        // 7일 승인으로 적힌 줄은 같은 결정에서 쓴 account_grant 의 기한에서 끝난다.
+        ...(args.decision === 'approve' && r.kind !== 'command' && grantExpiresAt ? { until: grantExpiresAt } : {}),
         ...(approval && args.once ? { once: { number: approval.number, headSha: approval.headSha, ghUser: args.once.ghUser, ciOverride: approval.reason === 'ci_not_green' } } : {}),
       });
     }
@@ -603,6 +605,8 @@ export async function addLineFromRequest(
   args: {
     request: { id: string; kind: PermissionKind; target: string; mandateId: string | null };
     decision: PermissionDecision; actorId: string; via: LineVia; now: Date;
+    /** 7일 승인(tool·merge) — 같은 결정에서 쓴 account_grant 의 `expires_at`. 줄의 `limits.until` 이 된다. */
+    until?: Date;
     /** 머지 거절 카드의 1회 승인 — 줄을 그 PR·head 1회로 좁힌다. */
     once?: { number: number; headSha: string; ghUser: string | null; ciOverride: boolean };
   },
@@ -621,6 +625,10 @@ export async function addLineFromRequest(
     // 명령 grant 와 같은 기한(1시간). 「이번 한 번」은 한 번만.
     limits.until = new Date(args.now.getTime() + COMMAND_GRANT_TTL_MS).toISOString();
     if (args.decision === 'approve_once') limits.uses = 1;
+  } else if (args.decision === 'approve') {
+    // 7일 승인: grant 와 같은 기한. 기한을 모르면 줄을 적지 않는다(기한 없는 줄을 만들지 않는다).
+    if (!args.until) return { ok: false, mandateId, cap, code: 'no_until' };
+    limits.until = args.until.toISOString();
   }
   await client.query('savepoint mandate_line_from_request');
   try {
@@ -794,6 +802,8 @@ export async function releaseGrant(
     [args.agentId, capability, scopes]);
   const scope = del.rows[0]?.scope;
   if (!scope) return { ok: false, code: 'not_found', message: 'no such grant on this agent' };
+  // W4: 그 grant 와 함께 적힌 위임 줄도 닫는다 — 거둔 뒤에도 줄이 남아 머지·도구를 허락하지 않게.
+  for (const d of del.rows) await revokeLinesForGrant(pool, { agentId: args.agentId, capability, scope: d.scope });
   await recordAudit(pool, { action: 'grant.revoked', actorId: args.agentId, target: args.agentId, detail: { capability, scope, via: 'permission.revoke' } });
   emitEvent({ type: 'grant.changed', accountId: args.agentId, audience: 'all' });
   return { ok: true, capability, scope };
