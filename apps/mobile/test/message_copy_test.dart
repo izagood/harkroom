@@ -44,10 +44,10 @@ void main() {
   group('bodyAsHandles', () {
     final accounts = {
       _a1: const AccountView(
-          id: _a1, handle: 'jaebin', displayName: 'jaebin', isAgent: false, isDisabled: false, avatarAttachmentId: null),
+          id: _a1, handle: 'alice', displayName: 'alice', isAgent: false, isDisabled: false, avatarAttachmentId: null),
     };
     test('아는 계정은 @handle, 모르는 계정·팀 토큰은 그대로 둔다', () {
-      expect(bodyAsHandles('<@$_a1> 봐 <@$_gone> <@$_team>', accounts), '@jaebin 봐 <@$_gone> <@$_team>');
+      expect(bodyAsHandles('<@$_a1> 봐 <@$_gone> <@$_team>', accounts), '@alice 봐 <@$_gone> <@$_team>');
     });
     test('마크다운 원문은 건드리지 않는다', () {
       const md = '**굵게** [링크](harkroom://message/x)\n```\ncode\n```';
@@ -61,7 +61,7 @@ void main() {
     setUp(() {
       app = AppState(sessions: SessionStore.inMemory());
       app.accounts[_a1] = const AccountView(
-          id: _a1, handle: 'jaebin', displayName: 'jaebin', isAgent: false, isDisabled: false, avatarAttachmentId: null);
+          id: _a1, handle: 'alice', displayName: 'alice', isAgent: false, isDisabled: false, avatarAttachmentId: null);
       copied = [];
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(SystemChannels.platform, (call) async {
@@ -114,7 +114,7 @@ void main() {
       await tester.tap(find.byKey(const Key('message-action-copy-body')));
       await tester.pump();
       await tester.pump();
-      expect(copied, ['@jaebin **확인** `x`']);
+      expect(copied, ['@alice **확인** `x`']);
       expect(find.text('본문을 복사했다'), findsOneWidget);
     });
 
@@ -146,7 +146,7 @@ void main() {
     setUp(() {
       app = AppState(sessions: SessionStore.inMemory());
       app.accounts[_a1] = const AccountView(
-          id: _a1, handle: 'jaebin', displayName: 'jaebin', isAgent: false, isDisabled: false, avatarAttachmentId: null);
+          id: _a1, handle: 'alice', displayName: 'alice', isAgent: false, isDisabled: false, avatarAttachmentId: null);
     });
 
     Future<void> pump(WidgetTester tester, MessageRow m,

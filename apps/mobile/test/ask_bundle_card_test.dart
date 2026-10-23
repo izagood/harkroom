@@ -51,7 +51,7 @@ void main() {
       },
     });
     app.accounts['me'] = const AccountView(
-        id: 'me', handle: 'jaebin', displayName: 'jaebin', isAgent: false, isDisabled: false, avatarAttachmentId: null);
+        id: 'me', handle: 'alice', displayName: 'alice', isAgent: false, isDisabled: false, avatarAttachmentId: null);
     await tester.pumpWidget(MaterialApp(
       theme: harkroomTheme(Brightness.light),
       home: I18n(
@@ -116,6 +116,6 @@ void main() {
   testWidgets('고른 줄은 조사 없이 「라벨 · 이름」(n1)', (tester) async {
     app = _FakeApp({'r1': _root('r1', {'answeredWith': 'b', 'answeredBy': 'me'})}, const []);
     await pump(tester, ['r1']);
-    expect(find.text('그대로 · jaebin'), findsOneWidget);
+    expect(find.text('그대로 · alice'), findsOneWidget);
   });
 }

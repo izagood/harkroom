@@ -293,7 +293,7 @@ describe('Task 12 에이전트 아바타는 사람과 같다', () => {
   });
 
   it('사람과 같은 마크업이라 한 열에 섞여 서도 크기가 같다', () => {
-    const human = render(<Identity account={acc('u1', 'jaebin')} variant="avatar" />);
+    const human = render(<Identity account={acc('u1', 'alice')} variant="avatar" />);
     const box = (c: HTMLElement) => c.querySelector('span')!.className;
     const humanBox = box(human.container);
     cleanup();

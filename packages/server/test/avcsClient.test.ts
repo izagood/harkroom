@@ -42,7 +42,7 @@ function intent(title: string): Record<string, unknown> {
   return {
     type: 'intent',
     title,
-    owner: 'human:jaebin',
+    owner: 'human:alice',
     kind: 'feature',
     priority: 'normal',
     constraints: [],
@@ -97,7 +97,7 @@ describe('httpAvcsClient against a real avcs-server', () => {
         logIndex: 1,
         oid,
         type: 'intent',
-        actorKeyId: 'human:jaebin',
+        actorKeyId: 'human:alice',
         intentOid: oid,
         summary: 'avcs 투영 루프를 붙인다',
       },
@@ -147,7 +147,7 @@ describe('httpAvcsClient against a real avcs-server', () => {
       chosenOps: [opOid],
       rejectedOps: [],
       reason: 'Redis 우선 — 기존 운영 스택과 일치',
-      decidedBy: { kind: 'human', id: 'human:jaebin' },
+      decidedBy: { kind: 'human', id: 'human:alice' },
       createdAt: new Date().toISOString(),
     });
 
@@ -157,7 +157,7 @@ describe('httpAvcsClient against a real avcs-server', () => {
       logIndex: 4,
       oid: decisionOid,
       type: 'decision',
-      actorKeyId: 'human:jaebin',
+      actorKeyId: 'human:alice',
       intentOid,
       summary: 'Redis 우선 — 기존 운영 스택과 일치',
     });
@@ -359,7 +359,7 @@ describe('httpAvcsClient against a real avcs-server', () => {
       sbom: { bomFormat: 'CycloneDX', specVersion: '1.5', components: [] },
       artifacts: [],
       evidence: { unit_test: 'pass' },
-      signedBy: ['human:jaebin'],
+      signedBy: ['human:alice'],
       status: 'released',
       version: '0.2.0',
       createdAt: new Date().toISOString(),
@@ -372,7 +372,7 @@ describe('httpAvcsClient against a real avcs-server', () => {
         logIndex: 1,
         oid,
         type: 'release',
-        actorKeyId: 'human:jaebin',
+        actorKeyId: 'human:alice',
         intentOid: null,
         summary: '0.2.0 released',
       },

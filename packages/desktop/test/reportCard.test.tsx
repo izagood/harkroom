@@ -29,8 +29,8 @@ beforeEach(() => {
   usePrefsStore.getState().setLocale('ko');
   setController({} as unknown as Controller);
   useAppStore.getState().set({
-    me: acc(ME, 'jaebin'),
-    accounts: { [ME]: acc(ME, 'jaebin'), [FORGE]: acc(FORGE, 'forge', 'agent') },
+    me: acc(ME, 'alice'),
+    accounts: { [ME]: acc(ME, 'alice'), [FORGE]: acc(FORGE, 'forge', 'agent') },
   });
 });
 afterEach(() => {

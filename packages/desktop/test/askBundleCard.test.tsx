@@ -39,8 +39,8 @@ beforeEach(() => {
     answerBundleItem, acceptRecommendedBundle, openMessage,
   } as unknown as Controller);
   useAppStore.getState().set({
-    me: acc(ME, 'jaebin'),
-    accounts: { [ME]: acc(ME, 'jaebin'), [PM]: acc(PM, 'task_manager', 'agent'), [SEC]: acc(SEC, 'security', 'agent') },
+    me: acc(ME, 'alice'),
+    accounts: { [ME]: acc(ME, 'alice'), [PM]: acc(PM, 'task_manager', 'agent'), [SEC]: acc(SEC, 'security', 'agent') },
   });
 });
 afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
@@ -52,8 +52,8 @@ describe('AskBundleCard', () => {
     await waitFor(() => expect(screen.getByTestId('ask-bundle-row-r1').dataset.state).toBe('open'));
     expect(screen.getByTestId('ask-bundle-head').textContent).toBe('정할 것 1/2 남음');
     expect(screen.getByTestId('ask-bundle-row-r2').dataset.state).toBe('answered');
-    // 조사 없이 「그대로 · jaebin」 — 2b 카드 머리와 같은 꼴(#1288 designer n1).
-    expect(screen.getByTestId('ask-bundle-row-r2').textContent).toContain('그대로 · jaebin');
+    // 조사 없이 「그대로 · alice」 — 2b 카드 머리와 같은 꼴(#1288 designer n1).
+    expect(screen.getByTestId('ask-bundle-row-r2').textContent).toContain('그대로 · alice');
     expect(screen.getByTestId('ask-bundle-row-r2').textContent).not.toContain('골랐다');
     fireEvent.click(screen.getByTestId('ask-bundle-option-r1-b'));
     expect(answerBundleItem).toHaveBeenCalledWith('m-bundle', 'c-task', 'r1', 'b');

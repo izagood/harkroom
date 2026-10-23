@@ -9,7 +9,7 @@ import { agentPat, bootstrapAdmin, createAgent, createMember, registerOperator }
 import { toolAllowsFor } from '../src/services/permissionRequests.js';
 import { parseChatApproval } from '../src/services/chatApproval.js';
 
-// 소유자가 글로 권한 요청을 승인한다(스레드 795a9663, jaebin B · security 기준 1~20).
+// 소유자가 글로 권한 요청을 승인한다(스레드 795a9663, alice B · security 기준 1~20).
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const link = (id: string) => `harkroom://message/${id}`;
@@ -111,7 +111,7 @@ describe('parseChatApproval — 문장 속 명시적 승인 낱말(G2)·부정·
     ['진행 상황 공유', null],
     ['approval flow docs', null],
     [`> 승인 ${link(ID)}`, null],
-    [`jaebin 이 이렇게 썼다:\n> 승인 ${link(ID)}`, null],
+    [`alice 이 이렇게 썼다:\n> 승인 ${link(ID)}`, null],
     ['`승인`', null],
     ['```\n승인\n```', null],
     [`\`\`\`\n승인 ${link(ID)}\n\`\`\``, null],
@@ -375,7 +375,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     const thread = await root();
     const { cardId, requestId } = await ask(thread);
     await say(alice.token, `> 승인 ${link(cardId)}`, thread);
-    await say(alice.token, `jaebin 이 이렇게 썼다:\n> 승인 ${link(cardId)}`, thread);
+    await say(alice.token, `alice 이 이렇게 썼다:\n> 승인 ${link(cardId)}`, thread);
     expect(await status(requestId)).toBe('pending');
   });
 

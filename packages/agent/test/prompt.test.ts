@@ -8,14 +8,14 @@ const msg = (seq: number, authorId: string, body: string, extra: Record<string, 
   }) as never;
 
 describe('buildTurnPrompt', () => {
-  const handles = { u1: 'jaebin', a1: 'forge', a2: 'scout' };
+  const handles = { u1: 'alice', a1: 'forge', a2: 'scout' };
 
   it('첫 턴(lastFedSeq 0)은 자기 발화 포함 전체를 넘긴다', () => {
     const r = buildTurnPrompt({
       messages: [msg(1, 'u1', '안녕'), msg(2, 'a1', '넵')], lastFedSeq: 0, meId: 'a1', handles,
       channelId: 'c', threadRootId: null,
     });
-    expect(r.prompt).toContain('jaebin: 안녕');
+    expect(r.prompt).toContain('alice: 안녕');
     expect(r.prompt).toContain('forge: 넵'); // 세션 이전 역사는 자기 것도 알려준다
     expect(r.fedSeq).toBe(2);
   });
@@ -151,7 +151,7 @@ describe('countOwnPostsSince', () => {
 });
 
 describe('깨움(wake) — 기다림을 예약한다', () => {
-  const handles = { u1: 'jaebin', a1: 'forge' };
+  const handles = { u1: 'alice', a1: 'forge' };
 
   // 깨움 줄은 결과 발화가 아니다. 세면 "예약만 걸고 답은 없이 끝난 턴"이 발화한 것으로
   // 판정되어 NO_REPLY_NOTICE 가 억제된다 — progress 를 세지 않는 것과 같은 이유(#144)다.
@@ -200,7 +200,7 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
       wake: { reason: 'CI 결과 확인' },
     });
     expect(r.prompt).toContain('예약');
-    expect(r.prompt).not.toContain('jaebin:');
+    expect(r.prompt).not.toContain('alice:');
   });
 
   it('보고처가 있는 깨움은 그 스레드 id 를 싣는다 — 깨어난 턴은 다른 스레드의 약속을 모른다(2026-10-06)', () => {
@@ -219,7 +219,7 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
     const r = buildTurnPrompt({ ...base, messages: [msg(10, 'u1', '이거 먼저')], canceledWakes: cw });
     expect(r.prompt).toContain('예약 1개가 접혔다');
     expect(r.prompt).toContain('- 회수 (원래 2026-10-06T02:00:00.000Z · 보고처 harkroom://message/r9)');
-    expect(r.prompt).toContain('jaebin: 이거 먼저');
+    expect(r.prompt).toContain('alice: 이거 먼저');
   });
 
   it('wakeReportTo 는 모양이 틀린 meta 를 없는 것으로 본다', () => {
@@ -238,7 +238,7 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
       wake: { reason: 'CI 결과 확인' },
     });
     expect(r.prompt).toContain('예약');
-    expect(r.prompt).toContain('jaebin: 아 그거 취소해');
+    expect(r.prompt).toContain('alice: 아 그거 취소해');
   });
 
   // 예약 깨움을 새 세션으로(2026-10-09). 이 세션은 앞 대화를 모른다 — 그 사실과 읽는 길을 말해야 한다.
@@ -255,7 +255,7 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
     expect(r.prompt).toContain('message.read');
     // 새 세션은 앞 대화의 조건(머지 전 검토 등)을 모른다 — 되돌리기 어려운 일 전에는 읽고 하라는 줄.
     expect(r.prompt).toContain('되돌리기 어려운 일을 하기 전에는 `message.read`');
-    expect(r.prompt).toContain('jaebin: 아 그거 취소해');
+    expect(r.prompt).toContain('alice: 아 그거 취소해');
     expect(r.prompt).not.toContain('옛 세션의 내 답');
   });
 
@@ -277,7 +277,7 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
       lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't', unseenOwnAfterSeq: 11,
     });
     expect(r.prompt).toContain('forge: CI 초록 — 머지했다');
-    expect(r.prompt).toContain('jaebin: @forge 다음 거');
+    expect(r.prompt).toContain('alice: @forge 다음 거');
     expect(r.prompt).not.toContain('옛 세션이 쓴 말');
     expect(r.prompt).not.toContain('깨움 진행');
     expect(r.prompt).not.toContain('다음 확인');
@@ -292,7 +292,7 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
  * 여기서 재는 것은 두 가지다 — **누가 있는가**(명단)와 **네가 무엇인가**(창구).
  */
 describe('buildTurnPrompt — 팀 호출(047)', () => {
-  const handles = { u1: 'jaebin', a1: 'forge', a2: 'scout', a3: 'codex' };
+  const handles = { u1: 'alice', a1: 'forge', a2: 'scout', a3: 'codex' };
   const team = {
     id: 't1', name: 'release',
     members: [
@@ -334,9 +334,9 @@ describe('buildTurnPrompt — 팀 호출(047)', () => {
     const { prompt } = call();
     // `wake` 와 다른 점이다: 팀 부름에는 사람의 새 발화가 **있다**. 그것이 사라지면
     // 팀장은 명단만 받고 무슨 일을 하라는 것인지 모른다.
-    expect(prompt).toContain('jaebin: @release 배포 준비해라');
+    expect(prompt).toContain('alice: @release 배포 준비해라');
     // 그리고 블록이 그 발화 **앞**에 선다 — 사람의 말을 팀의 일로 읽어야 한다.
-    expect(prompt.indexOf('팀 호출')).toBeLessThan(prompt.indexOf('jaebin:'));
+    expect(prompt.indexOf('팀 호출')).toBeLessThan(prompt.indexOf('alice:'));
   });
 
   /**
@@ -392,7 +392,7 @@ describe('buildTurnPrompt — 팀 호출(047)', () => {
      
     });
     expect(prompt).not.toContain('팀 호출');
-    expect(prompt).toContain('jaebin: @forge 이거 봐줘');
+    expect(prompt).toContain('alice: @forge 이거 봐줘');
   });
 });
 
@@ -405,7 +405,7 @@ describe('buildTurnPrompt — 팀 호출(047)', () => {
  * 자리와 같은 함정이다).
  */
 describe('buildTurnPrompt — 넘긴 일의 결말(050)', () => {
-  const handles = { u1: 'jaebin', a1: 'forge', a2: 'scout' };
+  const handles = { u1: 'alice', a1: 'forge', a2: 'scout' };
   const call = (delegation: Parameters<typeof buildTurnPrompt>[0]['delegation'], messages = [] as never[]) =>
     buildTurnPrompt({
       messages, lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
@@ -514,7 +514,7 @@ describe('buildTurnPrompt — 넘긴 일의 결말(050)', () => {
  * 그 둘이 화면의 접힘 규칙과 한 쌍이다.
  */
 describe('buildTurnPrompt — 넘겨받은 일(3-2)', () => {
-  const handles = { u1: 'jaebin', a1: 'forge', a2: 'scout' };
+  const handles = { u1: 'alice', a1: 'forge', a2: 'scout' };
   const handed = {
     leadHandle: 'forge', teamName: 'release', deadlineAt: '2026-09-11T09:00:00.000Z',
   };
@@ -700,7 +700,7 @@ describe('buildSystemPrompt', () => {
   /**
    * 2026-09-08 오후에 **뒤집힌 기본값**의 회귀선이다. 같은 날 아침에는 "채널 최상위 요청에는
    * alsoInChannel 을 붙여라"였고, 그 탓에 PR 보고처럼 긴 답이 전부 채널로 올라와 사람이 자기가
-   * 올린 요청을 채널에서 찾을 수 없게 됐다(jaebin 의 요청으로 되돌림). 되돌려도 원래 문제는
+   * 올린 요청을 채널에서 찾을 수 없게 됐다(alice 의 요청으로 되돌림). 되돌려도 원래 문제는
    * 돌아오지 않는다 — 채널 요약 줄이 루트에 답글 수를 그린다(`MessageItem` 의 `hasReplies`).
    *
    * 이 테스트가 지키는 것은 문구가 아니라 **방향**이다: 기본은 스레드, 에코는 명시 요청 시의
@@ -1250,7 +1250,7 @@ describe('앵커 고정 지시 (2026-09-08)', () => {
  * 프롬프트가 비면 안 되고, 글이 델타에 있으면 두 번 싣지 않는다.
  */
 describe('buildTurnPrompt — 수정으로 추가된 멘션(076)', () => {
-  const handles = { u1: 'jaebin', a1: 'forge' };
+  const handles = { u1: 'alice', a1: 'forge' };
   const edited = msg(3, 'u1', '<@a1> 이것도 봐 달라', { editedAt: 'x' });
 
   it('이미 본 구간의 글이 고쳐져 불렀으면 그 글을 싣는다', () => {
@@ -1318,7 +1318,7 @@ describe('발화 셈을 턴으로 가른다 (2026-10-12, #174·#task 32ce2cdf)',
 });
 
 describe('델타를 멘션·최신 우선으로 싣는다 (2026-10-12, 스레드 6eca9cee)', () => {
-  const handles = { u1: 'jaebin', p1: 'peer', a1: 'forge' };
+  const handles = { u1: 'alice', p1: 'peer', a1: 'forge' };
   const many = (from: number, to: number, author = 'p1') =>
     Array.from({ length: to - from + 1 }, (_, i) => msg(from + i, author, `글${from + i}`));
 
@@ -1361,7 +1361,7 @@ describe('델타를 멘션·최신 우선으로 싣는다 (2026-10-12, 스레드
     const { prompt, fedSeq } = buildTurnPrompt({
       messages: msgs, lastFedSeq: 10, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'MENTION',
     });
-    expect(prompt).toContain('jaebin: @forge 지금 질문');
+    expect(prompt).toContain('alice: @forge 지금 질문');
     expect(prompt).toContain(`peer: 글${11 + DELTA_MAX_MESSAGES + 9}`);
     expect(prompt).not.toContain('peer: 글11\n'); // 41개 중 멘션 + 최신 29개만 — 옛 11개는 생략
     expect(prompt).toMatch(/\(앞선 글 11개 생략 — 필요하면 harkroom MCP 의 `message.read`/);
@@ -1395,12 +1395,12 @@ describe('델타를 멘션·최신 우선으로 싣는다 (2026-10-12, 스레드
 describe('macPermissionNotice (security n1·n2, PR #1384)', () => {
   it('앱 이름은 코드 스팬 안에 두어 멘션이 되지 않고, 마운트한 비밀은 가린다', () => {
     const body = macPermissionNotice(
-      [{ state: 'waiting', target: '@jaebin', input: `osascript -e 'tell application "@jaebin" to get s3cr3t-token-value'` }],
+      [{ state: 'waiting', target: '@alice', input: `osascript -e 'tell application "@alice" to get s3cr3t-token-value'` }],
       'hrkp_x', ['s3cr3t-token-value'],
     );
-    expect(body).toContain('Harkroom → `@jaebin` 제어 [허용] 필요');
-    // 코드 스팬 밖에 맨몸 `@jaebin` 이 없다.
-    expect(body.replace(/`[^`]*`/g, '')).not.toContain('@jaebin');
+    expect(body).toContain('Harkroom → `@alice` 제어 [허용] 필요');
+    // 코드 스팬 밖에 맨몸 `@alice` 이 없다.
+    expect(body.replace(/`[^`]*`/g, '')).not.toContain('@alice');
     expect(body).not.toContain('s3cr3t-token-value');
   });
 

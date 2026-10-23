@@ -81,7 +81,7 @@ describe('두 헤더를 읽는다 — 모른다와 없다는 다르다', () => {
 describe('몇 명을 불렀는가 — 집합만 센다', () => {
   const groups = [grp('g1', 'release', 'Release', 3), grp('g2', 'oncall', 'On-call', 2)];
   const called = (body: string) =>
-    calledGroups(bodyRecipients(body, ['forge', 'jaebin'], ['release', 'oncall'], 'jaebin'), groups);
+    calledGroups(bodyRecipients(body, ['forge', 'alice'], ['release', 'oncall'], 'alice'), groups);
 
   it('집합을 부르면 그 구성원 수를 센다', () => {
     expect(expectedWakes(called('@release 훑어 줘'))).toBe(3);
@@ -103,7 +103,7 @@ describe('몇 명을 불렀는가 — 집합만 센다', () => {
    */
   it('@channel 은 세지 않는다 — 수를 모른다', () => {
     const withChannelGroup = [...groups, grp('g3', 'channel', 'Channel', 9)];
-    const recipients = bodyRecipients('@channel 모두 보세요', ['forge', 'jaebin'], ['release', 'oncall'], 'jaebin');
+    const recipients = bodyRecipients('@channel 모두 보세요', ['forge', 'alice'], ['release', 'oncall'], 'alice');
     // `bodyRecipients` 가 이것을 `channel` 로 판정했다는 것부터 확인한다 — 그것이 전제다.
     expect(recipients.map((r) => r.kind)).toEqual(['channel']);
     expect(calledGroups(recipients, withChannelGroup)).toEqual([]);
@@ -134,7 +134,7 @@ describe('몇 명을 불렀는가 — 팀도 센다', () => {
   // 팀 이름도 `groupHandles` 로 넘어간다 — 그 두 함수가 이 목록으로 하는 판정은
   // "한 사람이 아니다" 하나이고, 팀에도 그것이 맞다(`Composer.tsx::groupHandleList`).
   const called = (body: string) => calledGroups(
-    bodyRecipients(body, ['forge', 'jaebin'], ['oncall', 'release', 'infra'], 'jaebin'),
+    bodyRecipients(body, ['forge', 'alice'], ['oncall', 'release', 'infra'], 'alice'),
     groups, teams,
   );
 

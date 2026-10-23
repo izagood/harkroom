@@ -301,7 +301,7 @@ describe('상한 설정 표면(/settings/mention-policy)', () => {
 });
 
 /**
- * **턴의 원인에서 깊이를 물려받는다**(2026-09-29). jaebin 이 #task 의 task_manager 한 곳에만
+ * **턴의 원인에서 깊이를 물려받는다**(2026-09-29). alice 이 #task 의 task_manager 한 곳에만
  * 말하면, task_manager 가 담당을 부르는 작업 스레드에는 사람의 글이 없다. 스레드를 훑는 셈으로는
  * 두 번 왕복하면 반드시 막혔다(#harkroom seq 3336). 러너는 턴을 띄운 메시지를 안다 — 브릿지·
  * 오퍼레이터를 거쳐 `x-harkroom-cause` 로 온다.

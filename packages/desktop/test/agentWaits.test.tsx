@@ -48,8 +48,8 @@ const 대기 = (wakes: AgentWakeView[], onOpenThread = vi.fn(), variant: 'panel'
 };
 
 const 판 = () => ({
-  me: { ...acc('me', 'jaebin'), isAdmin: true },
-  accounts: { me: { ...acc('me', 'jaebin'), isAdmin: true }, [AGENT]: acc(AGENT, 'murmur', 'agent') },
+  me: { ...acc('me', 'alice'), isAdmin: true },
+  accounts: { me: { ...acc('me', 'alice'), isAdmin: true }, [AGENT]: acc(AGENT, 'murmur', 'agent') },
   channels: [chan('c1', 'murmur')],
   dms: [],
   online: [] as string[],

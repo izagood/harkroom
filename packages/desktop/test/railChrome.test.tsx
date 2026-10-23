@@ -60,8 +60,8 @@ beforeEach(() => {
   resetCommunityRegistry();
   useAppStore.getState().reset();
   useAppStore.getState().set({
-    me: acc('u1', 'jaebin'),
-    accounts: { u1: acc('u1', 'jaebin') },
+    me: acc('u1', 'alice'),
+    accounts: { u1: acc('u1', 'alice') },
     channels: [chan('c1', 'general'), chan('c2', 'dev')],
     connected: true,
     activeChannelId: 'c1',

@@ -152,7 +152,7 @@ describe('WaitChainLine — 화면', () => {
     usePrefsStore.getState().setLocale('ko');
     useAppStore.getState().set({
       accounts: {
-        [ME]: acc(ME, 'jaebin'),
+        [ME]: acc(ME, 'alice'),
         [FORGE]: acc(FORGE, 'forge', 'agent'),
         [CODEX]: acc(CODEX, 'codex', 'agent'),
         [LINT]: acc(LINT, 'lint', 'agent'),
@@ -207,7 +207,7 @@ describe('WaitChainLine — 한국어 조사', () => {
     usePrefsStore.getState().setLocale('ko');
     useAppStore.getState().set({
       accounts: {
-        [ME]: acc(ME, 'jaebin'),
+        [ME]: acc(ME, 'alice'),
         [FORGE]: acc(FORGE, 'forge', 'agent'),
         [CODEX]: acc(CODEX, 'codex', 'agent'),
         'a-han': acc('a-han', '민수', 'agent'),

@@ -280,11 +280,11 @@ describe('AgentGrantsSection', () => {
 
   it('#1255 security n2: 정확한 이름 줄이 꺼져 있어도 같은 조직 grant 가 에이전트 턴을 허락하면 그 사실을 그 줄에 적는다', async () => {
     setup({ listGrants: vi.fn(async () => [
-      grant('repo:acme-org/npu'), grant('repo:acme-org/*', { allowAgentCause: true }),
+      grant('repo:acme-org/app'), grant('repo:acme-org/*', { allowAgentCause: true }),
       grant('repo:acme-org-evil/x'), grant('repo:izagood/harkroom'),
     ]) });
     render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
-    const note = await screen.findByTestId('agent-grant-cause-via-org-acme-org/npu');
+    const note = await screen.findByTestId('agent-grant-cause-via-org-acme-org/app');
     expect(note.textContent).toContain('acme-org 조직 전체 권한으로 에이전트가 띄운 턴에서도(허락은 넓은 쪽을 따른다)');
     // 앞부분만 같은 다른 owner·다른 owner 에는 붙지 않는다.
     expect(screen.queryByTestId('agent-grant-cause-via-org-acme-org-evil/x')).toBeNull();

@@ -6,7 +6,7 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 
 /**
- * 스레드 × 에이전트 모델 지정(079) — jaebin 승인 결정 1~13(2026-10-01).
+ * 스레드 × 에이전트 모델 지정(079) — alice 승인 결정 1~13(2026-10-01).
  *
  * 1. 사람이 정하면 행이 생기고 GET 에 나온다. 스레드에 시스템 줄이 남는다(`@` 없이 — 부르지 않는다).
  * 2. 에이전트는 못 바꾼다(결정 3). 스레드 답글을 루트로 주면 404.

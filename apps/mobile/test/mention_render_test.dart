@@ -52,7 +52,7 @@ void main() {
 
   test('모르는 계정이면 표시 문구로, meta.accountId 가 없거나 시스템이 아니면 그대로', () {
     expect(shown(row('{account}님이 나갔습니다.', meta: {'accountId': 'gone'})), '?님이 나갔습니다.');
-    expect(shown(row('jaebin님이 나갔습니다.')), 'jaebin님이 나갔습니다.');
+    expect(shown(row('alice님이 나갔습니다.')), 'alice님이 나갔습니다.');
     expect(shown(row('{account} 는 글자다', kind: MessageKind.user, meta: {'accountId': id})), '{account} 는 글자다');
   });
 

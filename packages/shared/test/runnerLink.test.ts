@@ -54,10 +54,10 @@ describe('runnerLink — 서버 채널 프레임을 러너 프레임으로', () 
   const cases: RelayServerFrame[] = [
     { type: 'replay.request', sessionId: 's1' },
     { type: 'input', sessionId: 's1', data: 'AA==' },
-    { type: 'session.cancel', sessionId: 's1', byHandle: 'jaebin' },
+    { type: 'session.cancel', sessionId: 's1', byHandle: 'alice' },
     { type: 'resize', sessionId: 's1', cols: 80, rows: 24 },
     { type: 'viewer.count', sessionId: 's1', count: 2 },
-    { type: 'interactive.open', requestId: 'q', channelId: 'c1', threadRootId: 'm1', openedByHandle: 'jaebin', cols: 80, rows: 24 },
+    { type: 'interactive.open', requestId: 'q', channelId: 'c1', threadRootId: 'm1', openedByHandle: 'alice', cols: 80, rows: 24 },
   ];
   it.each(cases)('$type 이 왕복한다', (frame) => {
     const wrapped = wrapServerFrame('r-1', frame);

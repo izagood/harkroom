@@ -882,7 +882,7 @@ describe('codex effort 오버라이드 인용 (security #968 ③)', () => {
   });
 });
 
-// pi (실측 2026-10-01). 권한 승인 장치가 없어 **읽기 전용 = 허용 도구 목록**이다(jaebin 결정).
+// pi (실측 2026-10-01). 권한 승인 장치가 없어 **읽기 전용 = 허용 도구 목록**이다(alice 결정).
 describe('pi 의 argv', () => {
   const pi = (over: Record<string, unknown>) => buildTurnCommand({
     ...base, harness: 'pi', mode: 'mention', sessionId: 'b2bc89d1-0000-4000-8000-000000000001', isFirstTurn: true,

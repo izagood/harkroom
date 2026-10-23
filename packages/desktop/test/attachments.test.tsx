@@ -587,7 +587,7 @@ describe('보내기 전 첨부 칩의 미리보기', () => {
     expect(chip?.className).toContain('h-20');
   });
 
-  // 24px 칩은 미리보기 효과가 거의 없었다(jaebin) — 그림은 80px 타일이고 이름은 호버 때만 띠로 뜬다.
+  // 24px 칩은 미리보기 효과가 거의 없었다(alice) — 그림은 80px 타일이고 이름은 호버 때만 띠로 뜬다.
   it('그림은 80px 타일이고 이름·크기 띠는 호버·포커스 때만 보인다', async () => {
     fakeController({ upload: vi.fn(async () => att({ contentType: 'image/png', filename: 'shot.png', sizeBytes: 2048 })) });
     render(<Composer onSend={vi.fn()} />);

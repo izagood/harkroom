@@ -53,7 +53,7 @@ beforeEach(() => {
 afterEach(() => { usePrefsStore.getState().setLocale('system'); cleanup(); });
 
 describe('AgentScopeSection', () => {
-  it('펼친 채 시작한다(jaebin, 설정 폭 승인) — 요약 줄은 그대로 지금 값을 말한다 (UX ⑨b)', () => {
+  it('펼친 채 시작한다(alice, 설정 폭 승인) — 요약 줄은 그대로 지금 값을 말한다 (UX ⑨b)', () => {
     setup();
     render(<AgentScopeSection agent={agent({ invokeScope: 'list', credentialScope: 'community', invokers: ['u-2'], delegates: ['a-9'] })} onUpdated={vi.fn()} />);
     expect(screen.getByTestId('agent-scope-details').hasAttribute('open')).toBe(true);

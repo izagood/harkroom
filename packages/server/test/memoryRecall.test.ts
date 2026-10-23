@@ -13,8 +13,8 @@ describe('searchTerms', () => {
   });
 
   it('recall 모드: @handle·주소·계정 이름·상투어·id 조각을 먼저 거르고 12개를 센다', () => {
-    const exclude = new Set(['jaebin', 'task_manager', 'task', 'manager']);
-    const noise = '@harkroom @qa_manager task_manager: jaebin 결정 #task 경유 지시 harkroom://message/ad09ce28-46e5-4661-8a20-54d502395667 ';
+    const exclude = new Set(['alice', 'task_manager', 'task', 'manager']);
+    const noise = '@harkroom @qa_manager task_manager: alice 결정 #task 경유 지시 harkroom://message/ad09ce28-46e5-4661-8a20-54d502395667 ';
     const words = '하나 둘셋 넷다섯 여섯 일곱 여덟 아홉 열개 열하나 열둘 열셋 열넷';
     const terms = searchTerms(noise + words, { exclude });
     expect(terms).toEqual(['결정', '하나', '둘셋', '넷다섯', '여섯', '일곱', '여덟', '아홉', '열개', '열하나', '열둘', '열셋']);
@@ -26,7 +26,7 @@ describe('searchTerms', () => {
   });
 
   it('exclude 가 없으면(에이전트가 직접 찾을 때) 이름도 찾는다', () => {
-    expect(searchTerms('jaebin 결정')).toEqual(['jaebin', '결정']);
+    expect(searchTerms('alice 결정')).toEqual(['alice', '결정']);
   });
 });
 
@@ -48,7 +48,7 @@ describe('focusTermsOf', () => {
 
   it('주제어는 남는다 — 되받는 말과 섞여도', () => {
     expect(focusTermsOf('다시 배포 되돌림 봐 줘', new Set())).toEqual(['배포', '되돌림']);
-    expect(focusTermsOf('jaebin 캐시 계속 봐 줘', new Set(['jaebin']))).toEqual(['캐시']);
+    expect(focusTermsOf('alice 캐시 계속 봐 줘', new Set(['alice']))).toEqual(['캐시']);
   });
 
   it('첫 턴 질의(searchTerms)에는 걸지 않는다 — "다시 제안 금지" 를 주제로 찾을 수 있다', () => {
@@ -66,12 +66,12 @@ describe('focusTermsOf', () => {
 describe('excludedNamesFrom', () => {
   it('사람만 조각까지 뺀다 — 에이전트·팀 이름(rcms·forge·server)은 주제어라 남긴다', () => {
     const names = excludedNamesFrom([
-      { handle: 'jaebin', display_name: 'Jaebin Lee', kind: 'human' },
+      { handle: 'alice', display_name: 'Alice Lee', kind: 'human' },
       { handle: 'rcms', display_name: 'rcms', kind: 'agent' },
       { handle: 'avcs-server', display_name: 'AVCS Server', kind: 'agent' },
       { handle: 'core-team', display_name: null, kind: 'group' },
     ]);
-    expect([...names].sort()).toEqual(['jaebin', 'jaebin lee', 'lee']);
+    expect([...names].sort()).toEqual(['alice', 'alice lee', 'lee']);
   });
 });
 
@@ -120,7 +120,7 @@ describe('rankRecall', () => {
 
   it('회귀(qa 09-30): 에이전트 이름이 주제어인 질의가 그 에이전트의 기억을 찾는다', () => {
     const exclude = excludedNamesFrom([
-      { handle: 'jaebin', display_name: 'jaebin', kind: 'human' },
+      { handle: 'alice', display_name: 'alice', kind: 'human' },
       { handle: 'rcms', display_name: 'rcms', kind: 'agent' },
       { handle: 'forge', display_name: 'forge', kind: 'agent' },
     ]);

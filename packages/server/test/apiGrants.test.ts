@@ -1,5 +1,5 @@
 // 외부 API 권한(098, C안 P2) — 설계 스레드 07519d86. API 연결 REST · `api.call` grant 의 모양·권한 · 쓰는 순간의
-// 사슬 판정(`apiGrantFor`)의 회귀선. jaebin D3(쓰기는 무기한 금지)·E1(루트 사람의 에이전트만)을 시험으로 고정한다.
+// 사슬 판정(`apiGrantFor`)의 회귀선. alice D3(쓰기는 무기한 금지)·E1(루트 사람의 에이전트만)을 시험으로 고정한다.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';

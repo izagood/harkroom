@@ -41,9 +41,9 @@ const turn = (over: Partial<AgentSessionView> & { sessionId: string }): AgentSes
 const NOW = Date.parse('2026-09-09T00:14:00.000Z');
 
 const 판 = () => ({
-  me: { ...acc('me', 'jaebin'), isAdmin: true },
+  me: { ...acc('me', 'alice'), isAdmin: true },
   accounts: {
-    me: { ...acc('me', 'jaebin'), isAdmin: true },
+    me: { ...acc('me', 'alice'), isAdmin: true },
     [AGENT]: acc(AGENT, 'murmur', 'agent'),
   },
   channels: [chan('c1', 'murmur')],

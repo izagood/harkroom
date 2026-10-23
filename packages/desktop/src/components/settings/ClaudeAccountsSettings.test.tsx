@@ -348,7 +348,7 @@ describe('다시 로그인', () => {
     // 확인 전에는 아무것도 띄우지 않는다.
     expect(starts()).toHaveLength(0);
     const dialog = screen.getByRole('dialog', { name: 'Sign in again to aria?' });
-    // 무엇이 남는가 · 시크릿 창 · 돌던 턴 — 셋을 말한다(jaebin 2026-10-01: 막지 않고 알린다).
+    // 무엇이 남는가 · 시크릿 창 · 돌던 턴 — 셋을 말한다(alice 2026-10-01: 막지 않고 알린다).
     expect(dialog.textContent).toMatch(/only the sign-in changes/);
     expect(dialog.textContent).toMatch(/private browser window/);
     expect(dialog.textContent).toMatch(/not stopped/);

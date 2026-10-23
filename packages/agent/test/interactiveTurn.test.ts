@@ -192,7 +192,7 @@ describe('#337 분기 ③ — 아무 턴도 없으면 새로 연다', () => {
     const h = await makeHarness();
     const manager = createInteractiveManager(h.deps);
 
-    const opened = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', cols: 100, rows: 30 });
+    const opened = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice', cols: 100, rows: 30 });
     // endTurn 을 아직 안 불렀다 — open 이 여기 도달한 것 자체가 "exit 을 기다리지 않는다"다.
     expect(opened.created).toBe(true);
     expect(opened.sessionId).toBe('relay-1');
@@ -212,7 +212,7 @@ describe('#337 분기 ③ — 아무 턴도 없으면 새로 연다', () => {
     expect(h.turnOpts[0]).toMatchObject({ timeoutMs: 0, cols: 100, rows: 30 });
 
     // 레지스트리에 인터랙티브 턴이 등록됐다 — main 루프의 멘션 유예가 이것을 본다.
-    expect(h.registry.get(KEY)).toMatchObject({ kind: 'interactive', openedByHandle: 'jaebin' });
+    expect(h.registry.get(KEY)).toMatchObject({ kind: 'interactive', openedByHandle: 'alice' });
   });
 
   it('디스크에 세션이 있으면 resume(-r)으로 조립한다 — 멘션 턴이 만든 대화를 이어받는다', async () => {
@@ -220,7 +220,7 @@ describe('#337 분기 ③ — 아무 턴도 없으면 새로 연다', () => {
     await h.store.put(KEY, { workspaceDir: '/tmp/ws', sessionId: 'uuid-known', harness: 'claude-code', lastFedSeq: 3, turnsRun: 2 });
     const manager = createInteractiveManager(h.deps);
 
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
     expect(h.plans[0]!.args).toEqual(expect.arrayContaining(['-r', 'uuid-known']));
     expect(h.plans[0]!.args).not.toContain('--session-id');
   });
@@ -229,7 +229,7 @@ describe('#337 분기 ③ — 아무 턴도 없으면 새로 연다', () => {
     const h = await makeHarness({}, defOf({ harness: 'codex' }));
     const manager = createInteractiveManager(h.deps);
 
-    const opened = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    const opened = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
     expect(opened).toEqual({ sessionId: 'relay-1', created: true });
     expect(h.plans).toHaveLength(1);
     expect(h.plans[0]!.args).not.toContain('resume');
@@ -247,7 +247,7 @@ describe('#337 분기 ①·② — 이미 도는 턴에는 합류한다', () => 
     h.registry.register(KEY, { kind: 'mention', sessionId: 'sess-mention' });
     const manager = createInteractiveManager(h.deps);
 
-    const opened = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    const opened = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
     expect(opened).toEqual({ sessionId: 'sess-mention', created: false });
     expect(h.plans).toHaveLength(0);
   });
@@ -256,8 +256,8 @@ describe('#337 분기 ①·② — 이미 도는 턴에는 합류한다', () => 
     const h = await makeHarness();
     const manager = createInteractiveManager(h.deps);
 
-    const first = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
-    const second = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    const first = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
+    const second = await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
     expect(second).toEqual({ sessionId: first.sessionId, created: false });
     expect(h.plans).toHaveLength(1);
   });
@@ -266,7 +266,7 @@ describe('#337 분기 ①·② — 이미 도는 턴에는 합류한다', () => 
     const h = await makeHarness();
     h.registry.register(KEY, { kind: 'mention', sessionId: null });
     const manager = createInteractiveManager(h.deps);
-    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' }))
+    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' }))
       .rejects.toThrow(/관찰 릴레이가 없다/);
   });
 });
@@ -275,7 +275,7 @@ describe('#337 고아 회수 — viewer 0 → 유예 → SIGTERM → SIGKILL (§
   it('spawn 직후(아무도 attach 전) 유예가 흐르고, 만료되면 SIGTERM, 유예 뒤 SIGKILL 로 승격한다', async () => {
     const h = await makeHarness();
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
 
     // spawn 시점에 viewer 는 0 — 유예 타이머 하나가 걸려 있다.
     expect(h.sched.armed().map((p) => p.ms)).toEqual([60_000]);
@@ -292,7 +292,7 @@ describe('#337 고아 회수 — viewer 0 → 유예 → SIGTERM → SIGKILL (§
   it('viewer 가 붙으면(count>0) 유예가 취소되고, 다시 0 이 되면 새로 흐른다', async () => {
     const h = await makeHarness();
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
 
     h.relayLog.viewerCount!(1);
     expect(h.sched.armed()).toEqual([]);
@@ -307,7 +307,7 @@ describe('#337 고아 회수 — viewer 0 → 유예 → SIGTERM → SIGKILL (§
   it('exit 이 먼저 오면 타이머는 취소되고 kill 은 불리지 않는다', async () => {
     const h = await makeHarness();
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
 
     h.endTurn();
     await waitReleased(h.registry);
@@ -318,7 +318,7 @@ describe('#337 고아 회수 — viewer 0 → 유예 → SIGTERM → SIGKILL (§
   it('shutdown(러너 SIGTERM)이 진행 중 인터랙티브 PTY 를 같은 경로로 회수한다', async () => {
     const h = await makeHarness();
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
 
     manager.shutdown();
     expect(h.controls.kill).toHaveBeenCalledWith('SIGTERM');
@@ -333,7 +333,7 @@ describe('#337 고아 회수 — viewer 0 → 유예 → SIGTERM → SIGKILL (§
   it('세션을 열 때 이미 뷰어가 있다고 들었으면 spawn 이 유예를 세우지 않는다', async () => {
     const h = await makeHarness({}, defOf(), 1);
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
 
     expect(h.sched.armed()).toEqual([]);
     // 그 사람이 떠나면 그때부터 흐른다 — 유예가 사라진 것이 아니라 자리를 찾은 것이다.
@@ -351,10 +351,10 @@ describe('조종 끝내기 — session.cancel 이 인터랙티브 턴에 닿는�
   it('onCancel 이 배선되고, 부르면 유예 없이 곧바로 SIGTERM→SIGKILL 로 간다', async () => {
     const h = await makeHarness();
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
     expect(h.relayLog.cancel).toBeTypeOf('function');
 
-    h.relayLog.cancel!('jaebin');
+    h.relayLog.cancel!('alice');
     // **유예가 없다.** 고아 회수의 60초는 "사람이 정말 떠났는지 모른다"에 대한 값이고,
     // 여기서는 사람이 끝내라고 말했다.
     expect(h.controls.kill).toHaveBeenCalledWith('SIGTERM');
@@ -367,9 +367,9 @@ describe('조종 끝내기 — session.cancel 이 인터랙티브 턴에 닿는�
   it('중단 뒤에 온 viewer 프레임이 회수를 되돌리지 않는다', async () => {
     const h = await makeHarness();
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
 
-    h.relayLog.cancel!('jaebin');
+    h.relayLog.cancel!('alice');
     // 중단 직후에도 그 세션 화면을 띄워 둔 창이 있으면 `count > 0` 이 온다. 그것이
     // 승격 타이머를 취소하면 SIGTERM 을 씹는 하네스가 그대로 살아남는다.
     h.relayLog.viewerCount!(1);
@@ -381,10 +381,10 @@ describe('조종 끝내기 — session.cancel 이 인터랙티브 턴에 닿는�
   it('두 번 눌러도 한 번만 회수한다 — SIGTERM 두 발에 유예가 늘어나지 않는다', async () => {
     const h = await makeHarness();
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
 
-    h.relayLog.cancel!('jaebin');
-    h.relayLog.cancel!('jaebin');
+    h.relayLog.cancel!('alice');
+    h.relayLog.cancel!('alice');
     expect(h.controls.kill.mock.calls.filter((c) => c[0] === 'SIGTERM')).toHaveLength(1);
     expect(h.sched.armed()).toHaveLength(1);
   });
@@ -394,7 +394,7 @@ describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2
   it('exit 후 레지스트리가 해제되고 세션이 닫힌다', async () => {
     const h = await makeHarness();
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
     expect(h.registry.get(KEY)).toBeDefined();
 
     h.endTurn();
@@ -407,7 +407,7 @@ describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2
     const h = await makeHarness();
     h.harkroom.readThread.mockResolvedValue([msg(4), msg(5), msg(6)]);
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
 
     h.endTurn();
     await waitReleased(h.registry);
@@ -418,7 +418,7 @@ describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2
     const h = await makeHarness();
     h.harkroom.readThread.mockResolvedValue([msg(4), msg(5), msg(6)]);
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
     // 조종 중에 멘션 둘이 유예됐다(seq 5, 6). min 은 5 — 커서는 4 까지만 간다.
     h.queue.defer(KEY, 10, 5, 0);
     h.queue.defer(KEY, 11, 6, 0);
@@ -435,7 +435,7 @@ describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2
     await h.store.put(KEY, { workspaceDir: '/tmp/ws', sessionId: 'uuid-known', harness: 'claude-code', lastFedSeq: 9, turnsRun: 1 });
     h.harkroom.readThread.mockResolvedValue([]);
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
     // 유예 멘션의 seq(5)가 이미 먹인 구간(lastFedSeq 9)보다 뒤에 있다 — min−1(4)로
     // 되돌리면 그 구간을 다시 먹는다.
     h.queue.defer(KEY, 10, 5, 0);
@@ -448,7 +448,7 @@ describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2
   it('첫 턴에서 사람이 대화했으면(세션 파일 있음) turnsRun 이 1 — 다음 턴이 resume 으로 간다', async () => {
     const h = await makeHarness({ sessionMaterialized: async () => true });
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
     h.endTurn();
     await waitReleased(h.registry);
     expect(h.store.get(KEY)!.turnsRun).toBe(1);
@@ -459,7 +459,7 @@ describe('#337 턴의 끝 — 레지스트리 해제·클램프·turnsRun (§5-2
     // 여기서 turnsRun 을 올리면 다음 멘션 턴이 존재한 적 없는 세션을 -r 로 이어받으려다 죽는다.
     const h = await makeHarness({ sessionMaterialized: async () => false });
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
     h.endTurn();
     await waitReleased(h.registry);
     expect(h.store.get(KEY)!.turnsRun).toBe(0);
@@ -481,7 +481,7 @@ describe('인터랙티브 턴은 세션을 만든 계정을 따른다', () => {
     });
     await h.store.put(KEY, { workspaceDir: '/tmp/ws', sessionId: 'uuid-plum', harness: 'claude-code', lastFedSeq: 0, turnsRun: 2, claudeAccount: 'plum' });
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', cols: 100, rows: 30 });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice', cols: 100, rows: 30 });
     expect(h.plans[0]!.env.CLAUDE_CONFIG_DIR).toBe('/accounts/plum');
     expect(h.plans[0]!.args).toContain('uuid-plum');
   });
@@ -492,7 +492,7 @@ describe('인터랙티브 턴은 세션을 만든 계정을 따른다', () => {
     });
     await h.store.put(KEY, { workspaceDir: '/tmp/ws', sessionId: 'uuid-x', harness: 'claude-code', lastFedSeq: 0, turnsRun: 2, claudeAccount: 'ghost' });
     const manager = createInteractiveManager(h.deps);
-    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin', cols: 100, rows: 30 });
+    await manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice', cols: 100, rows: 30 });
     expect(h.plans[0]!.env.CLAUDE_CONFIG_DIR).toBe('/accounts/lime');
   });
 });
@@ -506,7 +506,7 @@ describe('멘션 턴 예약 — 등록을 기다렸다 붙는다 (2026-10-07)', 
     const h = await makeHarness({ mentionStartPollMs: 5 });
     const manager = createInteractiveManager(h.deps);
     h.registry.reserveMention(KEY);
-    const opening = manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    const opening = manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
     await new Promise((r) => setTimeout(r, 20));
     // 멘션 턴이 세션을 열고 등록했다.
     h.registry.register(KEY, { kind: 'mention', sessionId: 'mention-sess' });
@@ -519,7 +519,7 @@ describe('멘션 턴 예약 — 등록을 기다렸다 붙는다 (2026-10-07)', 
     const h = await makeHarness({ mentionStartPollMs: 5 });
     const manager = createInteractiveManager(h.deps);
     h.registry.reserveMention(KEY);
-    const opening = manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' });
+    const opening = manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
     await new Promise((r) => setTimeout(r, 20));
     h.registry.unreserveMention(KEY);
     await expect(opening).resolves.toEqual({ sessionId: 'relay-1', created: true });
@@ -530,7 +530,7 @@ describe('멘션 턴 예약 — 등록을 기다렸다 붙는다 (2026-10-07)', 
     const h = await makeHarness({ mentionStartPollMs: 5, mentionStartWaitMs: 30 });
     const manager = createInteractiveManager(h.deps);
     h.registry.reserveMention(KEY);
-    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' }))
+    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' }))
       .rejects.toThrow(/멘션 턴이 막 시작되는 중/);
     expect(h.registry.get(KEY)).toBeUndefined();
     expect(h.plans).toHaveLength(0);
@@ -546,7 +546,7 @@ describe('멘션 턴 예약 — 등록을 기다렸다 붙는다 (2026-10-07)', 
       return definition();
     };
     const manager = createInteractiveManager(h.deps);
-    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'jaebin' }))
+    await expect(manager.open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' }))
       .resolves.toEqual({ sessionId: 'late-mention', created: false });
     expect(h.plans).toHaveLength(0);
   });

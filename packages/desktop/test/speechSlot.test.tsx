@@ -32,9 +32,9 @@ const link = (waiter: string, blockedBy: string | null): OpenAskLink =>
 /** 요약 줄 하나. 사람 셋 · 에이전트 셋이 섞인 스레드다(문서의 데모와 같은 구성). */
 function summary(links: OpenAskLink[] | null, over: Record<string, unknown> = {}) {
   useAppStore.getState().set({
-    me: acc(ME, 'jaebin'),
+    me: acc(ME, 'alice'),
     accounts: {
-      [ME]: acc(ME, 'jaebin'),
+      [ME]: acc(ME, 'alice'),
       [MINSU]: acc(MINSU, 'minsu'),
       [SORA]: acc(SORA, 'sora'),
       [ALPHA]: acc(ALPHA, 'alpha', 'agent'),

@@ -17,7 +17,7 @@ import { acc, msg } from './helpers/fakeApi';
 beforeEach(() => {
   usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
-  useAppStore.getState().set({ me: acc('u1', 'jaebin'), accounts: { u1: acc('u1', 'jaebin') } });
+  useAppStore.getState().set({ me: acc('u1', 'alice'), accounts: { u1: acc('u1', 'alice') } });
 });
 afterEach(() => {
   cleanup();
@@ -29,17 +29,17 @@ describe('자동화 메시지 칩', () => {
     render(<MessageItem message={msg('m1', 'c1', 1, '@assistant 정리', 'u1', {
       meta: { automation: { id: 'a1', name: '회사일 정리', trigger: 'schedule', runId: 'r1' } },
     })} />);
-    expect(screen.getByTestId('author-name').textContent).toBe('jaebin');
+    expect(screen.getByTestId('author-name').textContent).toBe('alice');
     const chip = screen.getByTestId('automation-chip');
     expect(chip.getAttribute('title')).toContain('회사일 정리');
   });
 
   it('에이전트가 돌린 회차(082)면 칩 hover 가 실행한 에이전트를 말한다 — 작성자는 그대로 소유자', () => {
-    useAppStore.getState().set({ accounts: { u1: acc('u1', 'jaebin'), g1: acc('g1', 'task_manager', 'agent') } });
+    useAppStore.getState().set({ accounts: { u1: acc('u1', 'alice'), g1: acc('g1', 'task_manager', 'agent') } });
     render(<MessageItem message={msg('m3', 'c1', 3, '주간 보고', 'u1', {
       meta: { automation: { id: 'a1', name: '주간 보고', trigger: 'manual', runId: 'r1', initiatedBy: 'g1' } },
     })} />);
-    expect(screen.getByTestId('author-name').textContent).toBe('jaebin');
+    expect(screen.getByTestId('author-name').textContent).toBe('alice');
     const title = screen.getByTestId('automation-chip').getAttribute('title') ?? '';
     expect(title).toContain('@task_manager');
     expect(title).toContain('주간 보고');
@@ -94,7 +94,7 @@ describe('설정 › Automations 실행 이력의 실행자(082)', () => {
   });
 
   it('에이전트가 돌린 회차에만 "@에이전트 가 실행" 이 서고, 시킨 메시지 링크가 hover 에 있다', async () => {
-    useAppStore.getState().set({ accounts: { u1: acc('u1', 'jaebin'), g1: acc('g1', 'task_manager', 'agent') } });
+    useAppStore.getState().set({ accounts: { u1: acc('u1', 'alice'), g1: acc('g1', 'task_manager', 'agent') } });
     setController({
       api: {
         listAutomations: vi.fn(async () => [automation]),
@@ -128,7 +128,7 @@ describe('설정 › Automations 목록 — 최신이 위, 기본 접힘', () =>
   } as AutomationView);
 
   it('서버가 오래된 것부터 줘도 만든 시각 내림차순으로 선다', async () => {
-    useAppStore.getState().set({ accounts: { u1: acc('u1', 'jaebin') } });
+    useAppStore.getState().set({ accounts: { u1: acc('u1', 'alice') } });
     setController({
       api: {
         listAutomations: vi.fn(async () => [
@@ -145,7 +145,7 @@ describe('설정 › Automations 목록 — 최신이 위, 기본 접힘', () =>
   });
 
   it('카드는 접힌 채 이름·토글·일정만 보이고, 누르면 본문과 버튼이 펼쳐진다', async () => {
-    useAppStore.getState().set({ accounts: { u1: acc('u1', 'jaebin') } });
+    useAppStore.getState().set({ accounts: { u1: acc('u1', 'alice') } });
     setController({
       api: { listAutomations: vi.fn(async () => [make('a1', '주간 보고', '2026-10-01T00:00:00.000Z', '본문-비밀')]) },
     } as unknown as Controller);

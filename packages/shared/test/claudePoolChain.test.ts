@@ -1,4 +1,4 @@
-// 풀 순서 판정(2026-10-15, jaebin D1~D5 전부 A). 러너와 화면이 같이 쓰는 식이다.
+// 풀 순서 판정(2026-10-15, alice D1~D5 전부 A). 러너와 화면이 같이 쓰는 식이다.
 import { describe, expect, it } from 'vitest';
 
 import { poolChainState, type PoolChainInput } from '../src/claudePoolChain.js';

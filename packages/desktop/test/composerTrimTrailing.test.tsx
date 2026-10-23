@@ -9,7 +9,7 @@ import { undoSendStorage } from '../src/lib/prefs';
 import { clearEnterTrace, enterTraceSnapshot } from '../src/lib/enterTrace';
 
 /*
-  보낼 때 **끝의** 빈 줄·공백만 지운다(jaebin 결정, 10-22). 앞과 가운데는 그대로다 — 줄 나눔·들여쓰기는 글의
+  보낼 때 **끝의** 빈 줄·공백만 지운다(alice 결정, 10-22). 앞과 가운데는 그대로다 — 줄 나눔·들여쓰기는 글의
   모양이고, 끝의 빈 줄은 모양이 아니라 흔적이다(「Enter 두 번」 회귀 때 그대로 나갔다).
 */
 

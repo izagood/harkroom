@@ -733,7 +733,7 @@ describe('상세는 세 묶음, 저장은 한 쌍 (Task 15-3)', () => {
     expect(overview.firstElementChild!.compareDocumentPosition(del) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('[멈춤]·[다시 시작]은 상세 머리에 있고, 어느 탭에서든 보인다 (jaebin "멈춤은 머리")', async () => {
+  it('[멈춤]·[다시 시작]은 상세 머리에 있고, 어느 탭에서든 보인다 (alice "멈춤은 머리")', async () => {
     const c = fakeController([agent('rusalka')]);
     render(<AgentsSettings />);
     fireEvent.click(await screen.findByTestId('agent-card-rusalka'));

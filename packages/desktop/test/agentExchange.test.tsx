@@ -71,9 +71,9 @@ beforeEach(() => {
   useAppStore.getState().reset();
   setController({} as unknown as Controller);
   useAppStore.getState().set({
-    me: acc(ME, 'jaebin'),
+    me: acc(ME, 'alice'),
     accounts: {
-      [ME]: acc(ME, 'jaebin'),
+      [ME]: acc(ME, 'alice'),
       [FORGE]: acc(FORGE, 'forge', 'agent'),
       [CODEX]: acc(CODEX, 'codex', 'agent'),
       [SCRIBE]: acc(SCRIBE, 'scribe', 'agent'),
@@ -513,7 +513,7 @@ describe('위임은 사람의 차례를 닫는다 (050)', () => {
 });
 
 /**
- * **접힘 최소 수정안**(2026-10-06, jaebin 카드 55f552b9 · designer 판정 ①~③).
+ * **접힘 최소 수정안**(2026-10-06, alice 카드 55f552b9 · designer 판정 ①~③).
  *
  * 재현 스레드(PAT 칸 검토)는 저자가 전부 에이전트였다 — 사람이 #task 를 거쳐 맡겼다. 그래서
  * 예외 ②가 한 번도 켜지지 않았고, 구간은 진행 줄이 끼는 자리마다 쪼개져 「A ↔ B · 아직
@@ -599,7 +599,7 @@ describe('접힘 최소 수정안 — 재현 스레드 모양', () => {
   });
 
   it('2. 결론이 없으면 마지막 말의 첫 줄을 뽑는다 — 머리 멘션·코드·인용·마크다운을 벗긴다', () => {
-    expect(firstLine('@task_manager @jaebin\n\n```\ncode\n```\n> 인용\n**#1179** 판정: [수정 한 곳](harkroom://message/x) 고치면 `OK`')).
+    expect(firstLine('@task_manager @alice\n\n```\ncode\n```\n> 인용\n**#1179** 판정: [수정 한 곳](harkroom://message/x) 고치면 `OK`')).
       toBe('#1179 판정: 수정 한 곳 고치면 OK');
     expect(firstLine('## 제목 줄\n본문')).toBe('제목 줄');
     expect(firstLine('- 첫   항목\n- 둘')).toBe('첫 항목');

@@ -42,9 +42,9 @@ beforeEach(() => {
   closeAsk = vi.fn().mockResolvedValue(undefined);
   setController({ answerAsk, closeAsk } as unknown as Controller);
   useAppStore.getState().set({
-    me: acc(ME, 'jaebin'),
+    me: acc(ME, 'alice'),
     accounts: {
-      [ME]: acc(ME, 'jaebin'),
+      [ME]: acc(ME, 'alice'),
       [FORGE]: acc(FORGE, 'forge', 'agent'),
     },
   });
@@ -107,8 +107,8 @@ describe('AskCard — 수신자에 따른 두 얼굴', () => {
     expect(screen.getByText('정해졌다')).toBeTruthy();
     // **`이(가)` 가 사라졌다.** 옛 문구는 받침을 몰라 괄호로 둘 다 적었는데, 조사가
     // 번역기 안으로 들어가면서(`{name:이가}`) 이름을 보고 하나를 고른다 —
-    // 영문 이름은 `jaebin 가`, 받침 있는 한글 이름은 `민준이` 가 된다.
-    expect(screen.getByText('jaebin 가 골랐다')).toBeTruthy();
+    // 영문 이름은 `alice 가`, 받침 있는 한글 이름은 `민준이` 가 된다.
+    expect(screen.getByText('alice 가 골랐다')).toBeTruthy();
 
     // 고른 것만 남는다 — 안 고른 선택지를 계속 보이면 무엇으로 정해졌는지가 흐려진다.
     expect((screen.getByTestId('ask-option-new') as HTMLButtonElement).disabled).toBe(true);

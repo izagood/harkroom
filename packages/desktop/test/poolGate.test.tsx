@@ -1,4 +1,4 @@
-// 계정 풀 ↔ 이 맥 배정(2026-10-15, 시안 pool_gate v2, jaebin E1~E4 전부 A). 판정 다섯 가지와 띠가 상태마다
+// 계정 풀 ↔ 이 맥 배정(2026-10-15, 시안 pool_gate v2, alice E1~E4 전부 A). 판정 다섯 가지와 띠가 상태마다
 // 할 일 하나만 내미는지, 잠긴 순서가 고칠 손잡이 없이 「쓰이지 않음」으로 보이는지 잰다.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';

@@ -505,7 +505,7 @@ describe('repo.merge grant', () => {
     });
   });
 
-  // 조직 와일드카드(jaebin 10-09): `owner/*` 는 그 owner 의 저장소 전부 — 다른 owner·`*/*`·부분 패턴·배포 저장소는 아니다.
+  // 조직 와일드카드(alice 10-09): `owner/*` 는 그 owner 의 저장소 전부 — 다른 owner·`*/*`·부분 패턴·배포 저장소는 아니다.
   describe('1회 승인 merge_approval (스레드 1b75d7a0) — 권한 요청 카드의 [이번 한 번 머지]', () => {
     const SHA2 = 'b'.repeat(40);
     // 앞 시험들이 이 에이전트로 거절 기록을 많이 남겼다 — 하루 상한(L2, 20개)에 걸리지 않게 그 기록을 어제로 민다.
@@ -688,7 +688,7 @@ describe('repo.merge grant', () => {
       expect(res.approval.id).toBe(seen.id);
     });
 
-    it('배포 저장소도 같은 규칙이다 — 이름 확인 단계가 없다(jaebin 10-10)', async () => {
+    it('배포 저장소도 같은 규칙이다 — 이름 확인 단계가 없다(alice 10-10)', async () => {
       const before = process.env.HARKROOM_MERGE_DEPLOY_REPOS;
       process.env.HARKROOM_MERGE_DEPLOY_REPOS = 'izagood/once-deploy';
       try {
@@ -917,17 +917,17 @@ describe('repo.merge grant', () => {
     });
 
     it('같은 owner 의 저장소에는 맞고, 다른 owner·저장소 자리의 * 에는 안 맞는다', async () => {
-      expect(await mergeGrantFor(pool, orgAgent, 'acme-org/npu')).toMatchObject({ scope: 'repo:acme-org/*', grantedBy: alice.accountId });
+      expect(await mergeGrantFor(pool, orgAgent, 'acme-org/app')).toMatchObject({ scope: 'repo:acme-org/*', grantedBy: alice.accountId });
       expect(await mergeGrantFor(pool, orgAgent, 'Acme-Org/Other')).toMatchObject({ scope: 'repo:acme-org/*' });
       expect(await mergeGrantFor(pool, orgAgent, 'izagood/harkroom')).toBeNull();
-      expect(await mergeGrantFor(pool, orgAgent, 'acme-org-evil/npu')).toBeNull();
+      expect(await mergeGrantFor(pool, orgAgent, 'acme-org-evil/app')).toBeNull();
       expect(await mergeGrantFor(pool, orgAgent, 'acme-org/*')).toBeNull();
       const l = await orgLease();
-      const ok = await orgCheck(l, 'acme-org/npu');
+      const ok = await orgCheck(l, 'acme-org/app');
       expect(ok.statusCode).toBe(200);
-      expect(ok.json()).toMatchObject({ allowed: true, repo: 'acme-org/npu', grantedBy: alice.accountId });
+      expect(ok.json()).toMatchObject({ allowed: true, repo: 'acme-org/app', grantedBy: alice.accountId });
       // #1255 security n3: 감사에 어느 grant 로 통과했는지 남는다.
-      const audit = await pool.query(`select detail from audit_log where action = 'repo.merge.checked' and target = 'repo:acme-org/npu' order by id desc limit 1`);
+      const audit = await pool.query(`select detail from audit_log where action = 'repo.merge.checked' and target = 'repo:acme-org/app' order by id desc limit 1`);
       expect(audit.rows[0].detail.grantScope).toBe('repo:acme-org/*');
       expect((await orgCheck(l, 'izagood/harkroom')).json().error.code).toBe('not_granted');
       // 래퍼가 `*` 를 저장소로 물어도 grant 문자열과 맞지 않는다 — 실제 저장소 자리는 owner/name 하나다.
@@ -935,7 +935,7 @@ describe('repo.merge grant', () => {
       expect((await app.inject({ method: 'GET', url: '/agent/merge-grants', headers: asOrg() })).json()).toEqual({ repos: ['acme-org/*'], approvals: [] });
     });
 
-    it('배포 저장소도 따로 빼지 않는다 — 조직 grant 가 덮고, 목록에 배포 표시가 없다(jaebin 10-10)', async () => {
+    it('배포 저장소도 따로 빼지 않는다 — 조직 grant 가 덮고, 목록에 배포 표시가 없다(alice 10-10)', async () => {
       const prev = process.env.HARKROOM_MERGE_DEPLOY_REPOS;
       process.env.HARKROOM_MERGE_DEPLOY_REPOS = 'acme-org/deploy';
       try {
@@ -950,12 +950,12 @@ describe('repo.merge grant', () => {
       }
     });
     it('정확 grant 와 조직 grant 가 둘 다 있으면 allow_agent_cause 가 켜진 쪽을 쓴다', async () => {
-      expect((await grant(alice.token, { scope: 'repo:acme-org/npu', allowAgentCause: false }, orgAgent)).statusCode).toBe(200);
+      expect((await grant(alice.token, { scope: 'repo:acme-org/app', allowAgentCause: false }, orgAgent)).statusCode).toBe(200);
       expect((await grant(alice.token, { scope: 'repo:acme-org/*', allowAgentCause: true }, orgAgent)).statusCode).toBe(200);
-      expect(await mergeGrantFor(pool, orgAgent, 'acme-org/npu')).toMatchObject({ scope: 'repo:acme-org/*', allowAgentCause: true });
+      expect(await mergeGrantFor(pool, orgAgent, 'acme-org/app')).toMatchObject({ scope: 'repo:acme-org/*', allowAgentCause: true });
       expect((await grant(alice.token, { scope: 'repo:acme-org/*', allowAgentCause: false }, orgAgent)).statusCode).toBe(200);
-      expect(await mergeGrantFor(pool, orgAgent, 'acme-org/npu')).toMatchObject({ scope: 'repo:acme-org/npu' });
-      expect((await revoke(alice.token, 'repo:acme-org/npu', orgAgent)).statusCode).toBe(204);
+      expect(await mergeGrantFor(pool, orgAgent, 'acme-org/app')).toMatchObject({ scope: 'repo:acme-org/app' });
+      expect((await revoke(alice.token, 'repo:acme-org/app', orgAgent)).statusCode).toBe(204);
     });
 
     it('permission.request 로는 조직 전체를 청하지 못한다(org_wide) — 내려놓기는 된다', async () => {
@@ -966,7 +966,7 @@ describe('repo.merge grant', () => {
         .toMatchObject({ ok: false, refusal: { code: 'bad_repo' } });
       expect(await releaseGrant(pool, { agentId: orgAgent, kind: 'merge', repo: 'Acme-Org/*', channelId: ch }))
         .toMatchObject({ ok: true, scope: 'repo:acme-org/*' });
-      expect(await mergeGrantFor(pool, orgAgent, 'acme-org/npu')).toBeNull();
+      expect(await mergeGrantFor(pool, orgAgent, 'acme-org/app')).toBeNull();
     });
   });
 });

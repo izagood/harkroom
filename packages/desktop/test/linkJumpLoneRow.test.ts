@@ -7,7 +7,7 @@ import type { MessageRow } from '@harkroom/shared';
 beforeEach(() => useAppStore.getState().reset());
 
 /**
- * 메시지 링크(`harkroom://message/<id>`) 이동이 **외톨이 줄**로 가던 결함(jaebin 보고, 2026-10-06).
+ * 메시지 링크(`harkroom://message/<id>`) 이동이 **외톨이 줄**로 가던 결함(alice 보고, 2026-10-06).
  *
  * 스토어의 채널 목록에는 이웃 없이 홀로 선 줄이 생긴다 — 인박스에서 스레드를 열면 `openThread` 가
  * 뿌리를 채널 목록에 넣고(최신 페이지 밖의 옛 뿌리면 앞뒤가 없다), 소켓으로 온 글도 열어 본 적 없는

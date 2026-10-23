@@ -14,7 +14,7 @@
  * ```
  * env -i HOME=$HOME PATH=/usr/bin:/bin claude -p 'say ok'
  *   → Failed to authenticate: OAuth session expired and could not be refreshed
- * env -i HOME=$HOME PATH=/usr/bin:/bin USER=jaebin claude -p 'say ok'
+ * env -i HOME=$HOME PATH=/usr/bin:/bin USER=alice claude -p 'say ok'
  *   → ok
  * ```
  *

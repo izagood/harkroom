@@ -18,7 +18,7 @@ const adapterTrigger: AutomationGithubTrigger = {
 function pushPayload(added: string[], modified: string[] = [], ref = 'refs/heads/main') {
   return {
     ref, after: 'abc123', compare: 'https://github.com/x/y/compare/a...b',
-    repository: { full_name: 'izagood/harkroom' }, pusher: { name: 'jaebin' },
+    repository: { full_name: 'izagood/harkroom' }, pusher: { name: 'alice' },
     head_commit: { message: 'feat: new harness @forge' },
     commits: [{ added, modified, removed: [] }],
   };

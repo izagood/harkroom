@@ -20,7 +20,7 @@ afterEach(cleanup);
 
 const proposal = (over: Partial<CollabProposal> & { intentOid: string }): CollabProposal => ({
   title: '제안',
-  ownerKeyId: 'human:jaebin',
+  ownerKeyId: 'human:alice',
   lastLogIndex: 1,
   ops: [],
   decisions: [],
@@ -48,7 +48,7 @@ function show(v: CollabProposalsView, filter: 'open' | 'accepted' | 'all' = 'ope
       snapshot={{ kind: 'known', view: v }}
       filter={filter}
       onFilterChange={() => {}}
-      handleOf={(id) => (id === 'acct-jaebin' ? 'jaebin' : id)}
+      handleOf={(id) => (id === 'acct-alice' ? 'alice' : id)}
       onOpenChannel={() => {}}
     />,
   );

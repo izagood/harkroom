@@ -164,7 +164,7 @@ describe('작업 폴더 정리 화면', () => {
     expect(rows.map((r) => r.getAttribute('data-tone'))).toEqual(['deferred', 'deleting']);
     expect(screen.getAllByTestId('cleanup-due')[1]!.textContent).toBe('지우는 중 · 30분 안');
     expect(screen.getByTestId('cleanup-deleting-note').textContent).toContain('최대 30분');
-    // 러너 꺼짐은 오른쪽 글이 「러너 꺼짐 · 지우기 대기」(jaebin B2) — 까닭은 이유 줄이 말한다.
+    // 러너 꺼짐은 오른쪽 글이 「러너 꺼짐 · 지우기 대기」(alice B2) — 까닭은 이유 줄이 말한다.
     // 기한이 지났어도 빨강(곧 지워짐)이 아니라 회색 — 지워지지 않는 상태다(designer d2).
     const due0 = screen.getAllByTestId('cleanup-due')[0]!;
     expect(due0.textContent).toBe('러너 꺼짐 · 지우기 대기');

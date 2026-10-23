@@ -20,7 +20,7 @@ function account(over: Partial<AccountView> & Pick<AccountView, 'id' | 'handle' 
   } as AccountView;
 }
 
-const HUMAN = account({ id: 'u1', handle: 'jaebin', kind: 'human' });
+const HUMAN = account({ id: 'u1', handle: 'alice', kind: 'human' });
 const AGENT = account({ id: 'a1', handle: 'murmur', kind: 'agent' });
 const ACCOUNTS = { [HUMAN.id]: HUMAN, [AGENT.id]: AGENT };
 
@@ -107,7 +107,7 @@ describe('callGap — 침묵이 기본값이다', () => {
   it('에이전트를 안 불렀으면 말하지 않는다', () => {
     expect(run({
       runnerStates: { [AGENT.id]: restarting },
-      message: message({ body: '@jaebin 이거 봤어?' }),
+      message: message({ body: '@alice 이거 봤어?' }),
     })).toBeNull();
   });
 
