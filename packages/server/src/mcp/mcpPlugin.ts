@@ -1009,7 +1009,7 @@ function buildMcpServer(
       const d = prepared.meta;
       return raisePermission({
         kind: 'merge', repo: d.repo, channelId, threadRootId: threadRootId!, model,
-        reason: `PR #${d.number} 머지가 ${d.reason === 'cause_not_human' ? '사람이 띄운 턴이 아니라서(cause_not_human)' : d.reason === 'ci_not_green' ? 'CI 가 초록이 아니라서(ci_not_green)' : '권한 없음(not_granted)으로'} 막혔다 — ${body}`,
+        reason: `PR #${d.number} 머지가 ${d.reason === 'cause_not_human' ? '사람이 띄운 턴이 아니라서(cause_not_human)' : d.reason === 'ci_not_green' ? 'CI 가 초록이 아니라서(ci_not_green)' : d.reason === 'no_mandate_line' ? '위임장에 맞는 머지 줄이 없어서(no_mandate_line)' : '권한 없음(not_granted)으로'} 막혔다 — ${body}`,
         denial: { id: d.denialId, number: d.number, headSha: d.headSha ?? '', reason: d.reason ?? 'not_granted', ...(d.failedChecks ? { failedChecks: d.failedChecks } : {}) },
       });
     }

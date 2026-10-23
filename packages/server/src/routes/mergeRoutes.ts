@@ -35,7 +35,8 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
   app.post('/agent/merge-checks', { preHandler: app.requireAccount }, async (req, reply) => {
     const who = viaOperator(req, reply);
     if (!who) return reply;
-    const parsed = z.object(base).safeParse(req.body ?? {});
+    // `ghUser`(선택, W3): 래퍼가 머지에 쓸 gh 계정 — 위임 판정에서 줄의 `limits.ghUser` 와 맞춘다.
+    const parsed = z.object({ ...base, ghUser: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/).optional() }).safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId, token, repo, number and a 40-hex headSha are required' } });
     const r = await checkMerge(pool, { ...who, ...parsed.data });
     void reply.header('cache-control', 'no-store');
@@ -43,7 +44,7 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
       // `denialId`(P3): 에이전트가 이것을 `message.ask` 의 `mergeDenialId` 로 실어 소유자에게 [7일 주기] 카드를 세운다.
       return reply.code(r.code === 'bad_repo' ? 400 : 403).send({ error: { code: r.code, message: `merge not allowed: ${r.code}`, ...(r.denialId ? { denialId: r.denialId } : {}) } });
     }
-    return { allowed: true, repo: r.scope.slice('repo:'.length), grantedBy: r.grantedBy, grantedAt: r.grantedAt, causeByHuman: r.causeByHuman, channelId: r.channelId, threadRootId: r.threadRootId, ...(r.approval ? { approval: r.approval } : {}) };
+    return { allowed: true, repo: r.scope.slice('repo:'.length), grantedBy: r.grantedBy, grantedAt: r.grantedAt, causeByHuman: r.causeByHuman, channelId: r.channelId, threadRootId: r.threadRootId, ...(r.approval ? { approval: r.approval } : {}), ...(r.mandateLine ? { mandateLine: r.mandateLine } : {}) };
   });
 
   /** 래퍼의 사전 확인(security F2) — 이 임대로 판정하면 소모될 승인을 소모 없이 본다. 없으면 `{ approval: null }`. */

@@ -467,9 +467,17 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     }
 
     // ③ 서버 판정. 닿지 않으면 머지하지 않는다(fail-closed).
+    // 머지에 쓸 gh 계정 이름(security n11, W3) — 서버가 위임 줄의 `limits.ghUser` 와 맞춘다(위임 판정이 꺼져 있으면 서버가 무시한다).
+    // 1회 승인이면 사전 확인한 토큰의 계정, 아니면 이 저장소용으로 고를 계정(④ 에서 바로 이 계정의 토큰만 쓴다). 이름뿐이다.
+    let intended: { login: string; why: string } | null = null;
+    if (approvedTok) intended = { login: approvedTok.login, why: 'chosen in the one-time approval' };
+    else {
+      const pick = await deps.ghUserFor(repo);
+      if (pick && /^[A-Za-z0-9-]{1,39}$/.test(pick.login)) intended = { login: pick.login, why: `set for ${pick.scope}` };
+    }
     const check = await deps.forward(agentId, {
       type: 'http.forward', id: randomUUID(), method: 'POST', path: '/agent/merge-checks',
-      body: JSON.stringify({ leaseId: lease.leaseId, token: lease.token, repo, number, headSha }), contentType: 'application/json',
+      body: JSON.stringify({ leaseId: lease.leaseId, token: lease.token, repo, number, headSha, ...(intended ? { ghUser: intended.login } : {}) }), contentType: 'application/json',
     }).catch(() => null);
     if (!check || check.type !== 'http.response' || check.status === 0) return fail('unavailable', 'the server could not be reached — merge refused (fail-closed)');
     if (check.status !== 200) {
@@ -503,7 +511,14 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       }
       return fail(code, `merge not allowed: ${code}`);
     }
-    let granted: { grantedBy?: string; causeByHuman?: boolean; approval?: { id?: string; ghUser?: string | null; relaxChecks?: boolean } } = {};
+    let granted: {
+      grantedBy?: string; causeByHuman?: boolean; approval?: { id?: string; ghUser?: string | null; relaxChecks?: boolean };
+      /**
+       * 위임 줄로 통과했으면 그 줄(W3). `ghUser` 가 박힌 줄이면 그 계정으로만 머지한다 — 다르면 머지하지 않는다.
+       * 줄의 `ciOverride` 는 여기서 CI 를 풀지 않는다(관문은 그대로 엄격하다) — CI 를 건너뛰는 길은 1회 승인의 `relaxChecks` 뿐이다.
+       */
+      mandateLine?: { id?: string; ghUser?: string | null; ciOverride?: boolean };
+    } = {};
     try { granted = JSON.parse(check.body) as typeof granted; } catch { /* 선택 정보 */ }
 
     /**
@@ -534,6 +549,15 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       return {};
     };
 
+    // 줄에 계정이 박혀 있는데 이 래퍼가 쓸 계정과 다르면(또는 쓸 계정이 없으면) 머지하지 않는다(fail-closed, security n11).
+    const lineGhUser = granted.mandateLine?.ghUser;
+    // GitHub 로그인은 대소문자를 가리지 않는다(서버의 줄 맞춤도 그렇다).
+    const usingLogin = approvedTok?.login ?? intended?.login ?? null;
+    if (typeof lineGhUser === 'string' && lineGhUser.toLowerCase() !== usingLogin?.toLowerCase()) {
+      await report('failed', null, 'mandate_gh_user_mismatch: the mandate line names a different GitHub account');
+      return fail('mandate_gh_user_mismatch', `the mandate line allows merging only as ${lineGhUser.slice(0, 39)}, but this device would merge as ${intended?.login ?? '(no account)'} — nothing was merged`);
+    }
+
     // ③′ 승인이 소모됐다 — 곧바로 머지한다. 사전 확인과 지금 사이에 head 가 바뀌면 `--match-head-commit` 으로 **GitHub 이** 거절한다.
     // 서버가 돌려준 계정이 사전 확인한 계정과 다르면(그 사이 다른 승인이 쓰였다) 머지하지 않는다 — 다른 계정으로 내려가지 않는다.
     if (granted.approval) {
@@ -550,7 +574,8 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     }
 
     // ④ 머지 전 확인. gh 는 절대 경로·빈 env 로만 부른다. 토큰이 없으면 여기서 끝 — 활성 계정으로 넘어가지 않는다(P1).
-    const tok = await tokenFor(repo);
+    // 서버에 알린 바로 그 계정의 토큰만 쓴다 — 그 사이 설정이 바뀌어도 다른 계정으로 머지하지 않는다.
+    const tok = intended ? await tokenForLogin(intended.login, intended.why) : await tokenFor(repo);
     if (!tok.ok) { await report('failed', null, `${tok.code}: ${tok.message}`); return fail(tok.code, tok.message); }
     const env = ghEnv(deps.home, tok.token);
     const view = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'state,isDraft,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup'], env);

@@ -63,6 +63,7 @@ describe('turnMerge', () => {
   let lease: { leaseId: string; token: string; agentId: string } | null;
   let approvals: Record<string, unknown>[];
   let checkApproval: Record<string, unknown> | null;
+  let checkMandateLine: Record<string, unknown> | null;
   let peekStatus: number;
   // merge queue — GraphQL 읽기의 답(null 이면 gh 가 실패한다)·뮤테이션의 답.
   let queue: { enabled: boolean; inQueue: boolean; entry: { position: number; state: string } | null } | null;
@@ -78,7 +79,7 @@ describe('turnMerge', () => {
   beforeEach(() => {
     forwards = []; execs = []; checkStatus = 200; mergeCode = 0; mergeStderr = 'GraphQL: Base branch was modified'; viewStderr = null; denialBody = { error: { code: 'not_granted' } }; ghUser = 'izagood'; pickByScope = null;
     lease = { leaseId: 'lease-1', token: 'tok-1', agentId: 'a1' };
-    approvals = []; checkApproval = null; peekStatus = 200;
+    approvals = []; checkApproval = null; checkMandateLine = null; peekStatus = 200;
     queue = { enabled: false, inQueue: false, entry: null }; queueSeq = [];
     required = null;
     resultsBody = '{"messageId":"m1"}';
@@ -100,7 +101,7 @@ describe('turnMerge', () => {
         }
         if (req.path === '/agent/merge-checks') {
           return checkStatus === 200
-            ? { type: 'http.response', id: req.id, status: 200, body: JSON.stringify({ allowed: true, grantedBy: 'owner-1', causeByHuman: true, ...(checkApproval ? { approval: checkApproval } : {}) }) }
+            ? { type: 'http.response', id: req.id, status: 200, body: JSON.stringify({ allowed: true, grantedBy: 'owner-1', causeByHuman: true, ...(checkApproval ? { approval: checkApproval } : {}), ...(checkMandateLine ? { mandateLine: checkMandateLine } : {}) }) }
             : { type: 'http.response', id: req.id, status: checkStatus, body: JSON.stringify(denialBody) };
         }
         return { type: 'http.response', id: req.id, status: 201, body: req.path === '/agent/merge-results' ? resultsBody : '{"messageId":"m1"}' };
@@ -336,6 +337,14 @@ describe('turnMerge', () => {
         expect(JSON.stringify(results())).not.toContain('tok-repo-account');
       });
 
+      it('n11: ghUser 가 null 이면 오퍼레이터가 고른 계정을 merge-checks 에 싣는다', async () => {
+        pickByScope = { 'izagood/harkroom': 'repo-account' };
+        expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body).toMatchObject({ merged: true, ghUser: 'repo-account' });
+        const check = forwards.find((f) => f.type === 'http.forward' && f.path === '/agent/merge-checks') as { body?: string };
+        expect(JSON.parse(check.body ?? '{}')).toMatchObject({ ghUser: 'repo-account' });
+        expect(check.body).not.toContain('tok-repo-account');
+      });
+
       it('null 인데 이 저장소 계정이 없으면 no_gh_user — 판정(소모)을 부르지 않는다', async () => {
         ghUser = undefined;
         const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
@@ -380,6 +389,52 @@ describe('turnMerge', () => {
       expect(JSON.stringify(e.args)).not.toContain('tok-1');
       expect(JSON.stringify(e.env)).not.toContain('tok-1');
     }
+  });
+
+  describe('n11: 머지에 쓸 gh 계정을 merge-checks 에 싣는다', () => {
+    const checkBody = () => JSON.parse(((forwards.find((f) => f.type === 'http.forward' && f.path === '/agent/merge-checks') as { body?: string }).body) ?? '{}');
+
+    it('grant 길: ghUserFor(repo) 의 계정을 싣고, 바로 그 계정의 토큰으로만 머지한다', async () => {
+      pickByScope = { 'izagood/harkroom': 'repo-account' };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body).toMatchObject({ merged: true, ghUser: 'repo-account' });
+      expect(checkBody()).toMatchObject({ ghUser: 'repo-account', repo: 'izagood/harkroom', number: 7, headSha: SHA });
+      expect(execs.filter((e) => e.args[0] === 'auth').map((e) => e.args[3])).toEqual(['repo-account']);
+      expect(execs.find((e) => e.args[0] === 'pr' && e.args[1] === 'merge')!.env.GH_TOKEN).toBe('tok-repo-account');
+    });
+
+    it('1회 승인 길: 승인의 계정을 싣는다', async () => {
+      approvals = [{ id: 'ap-1', ghUser: 'corp-account', relaxChecks: false }];
+      checkApproval = { id: 'ap-1', ghUser: 'corp-account', relaxChecks: false };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body).toMatchObject({ merged: true, ghUser: 'corp-account' });
+      expect(checkBody()).toMatchObject({ ghUser: 'corp-account' });
+    });
+
+    it('이 저장소 계정이 없으면 ghUser 없이 묻고(옛 모양), 통과해도 no_gh_user 로 머지하지 않는다', async () => {
+      ghUser = undefined;
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('no_gh_user');
+      expect(checkBody()).not.toHaveProperty('ghUser');
+      expect(ghCalls()).not.toContain('pr merge');
+    });
+
+    it('줄의 ghUser 가 쓸 계정과 다르면 mandate_gh_user_mismatch — gh 를 부르지 않고 실패를 보고한다', async () => {
+      checkMandateLine = { id: 'l1', via: 'mandate', ghUser: 'other-account', ciOverride: false };
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error.code).toBe('mandate_gh_user_mismatch');
+      expect(execs).toHaveLength(0);
+      expect(results()).toEqual([expect.objectContaining({ result: 'failed' })]);
+    });
+
+    it('줄의 ghUser 가 같으면(대소문자 무관) 그 계정으로 머지한다', async () => {
+      checkMandateLine = { id: 'l1', via: 'mandate', ghUser: 'IzaGood', ciOverride: false };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body).toMatchObject({ merged: true, ghUser: 'izagood' });
+    });
+
+    it('줄의 ciOverride 는 오퍼레이터에서 CI 를 풀지 않는다', async () => {
+      checkMandateLine = { id: 'l1', via: 'mandate', ghUser: null, ciOverride: true };
+      pr = { ...pr, statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'FAILURE', name: 'test' }] };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('ci_not_green');
+      expect(ghCalls()).not.toContain('pr merge');
+    });
   });
 
   it('머지 전 확인: head 가 바뀌었으면 head_moved — merge 는 안 부르고 실패를 보고한다', async () => {

@@ -6,7 +6,7 @@ import { recordAudit } from '../audit.js';
 import { checkNamesForBody, checkNamesText, obsoleteMergeCards, sanitizeCheckNames } from './mergeDenials.js';
 import { postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
-import { findLine } from './mandateLines.js';
+import { consumeLine, findLine, type LineVia } from './mandateLines.js';
 import { GH_LOGIN_RE } from './mergeDenials.js';
 
 /**
@@ -26,16 +26,26 @@ import { GH_LOGIN_RE } from './mergeDenials.js';
 const sha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex');
 
 export type MergeDenial =
-  | 'lease_invalid' | 'bad_repo' | 'not_granted' | 'cause_not_human';
+  | 'lease_invalid' | 'bad_repo' | 'not_granted' | 'cause_not_human' | 'no_mandate_line';
 
 export type MergeCheck =
   | { ok: true; leaseId: string; channelId: string; threadRootId: string; scope: string; grantedBy: string; grantedAt: string; causeByHuman: boolean;
       /** 위임 사슬로 통과했으면 그 뿌리(소유자 글) — A안. */
       viaChain?: { rootId: string };
       /** 1회 승인(`merge_approval`)으로 통과했으면 그 기록 — 래퍼는 이 계정만 쓰고, `relaxChecks` 일 때만 CI·CLEAN 판정을 GitHub 에 맡긴다. */
-      approval?: { id: string; ghUser: string | null; relaxChecks: boolean; ciOverride: boolean } }
+      approval?: { id: string; ghUser: string | null; relaxChecks: boolean; ciOverride: boolean };
+      /** 위임 판정(W3, `HARKROOM_MANDATE_ENFORCE=on`)으로 통과했으면 그 줄. `ghUser` 가 있으면 래퍼가 알려 준 계정과 같았다. */
+      mandateLine?: { id: string; via: LineVia; ghUser: string | null; ciOverride: boolean } }
   /** `denialId` 는 거절 카드를 세울 수 있는 거절에만 있다(사람이 띄운 턴의 `not_granted`, 그리고 `cause_not_human` — C2·1회 승인). */
   | { ok: false; code: MergeDenial; denialId?: string };
+
+/**
+ * 위임 판정 스위치(W3) — `HARKROOM_MANDATE_ENFORCE=on` 이면 머지는 위임장의 merge 줄로 판정한다(사슬·`cause_not_human` 대신).
+ * 기본은 꺼짐(지금 판정 그대로, 그림자만). 부를 때마다 읽는다 — 시험이 켜고 끈다.
+ */
+export function mandateEnforced(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.HARKROOM_MANDATE_ENFORCE ?? '').trim().toLowerCase() === 'on';
+}
 
 /** 거절 기록(`merge_denial`)을 쓸 수 있는 시한 — 카드가 하루 한 장이라 하루. grant 의 기한(7일)과 다르다. */
 export const MERGE_DENIAL_TTL_MS = 24 * 3_600_000;
@@ -170,12 +180,19 @@ export async function causeChainRoot(
  */
 export async function checkMerge(
   pool: Pool,
-  args: { agentId: string; operatorId: string; leaseId: string; token: string; repo: string; number: number; headSha: string; now?: Date },
+  args: MergeCheckArgs,
 ): Promise<MergeCheck> {
-  const result = await checkMergeByChain(pool, args);
-  // 위임(mandate) W1 — 그림자 기록만. 실패해도 판정은 그대로 나간다.
-  try { await shadowMandate(pool, args, result); } catch { /* 그림자는 판정을 바꾸지 않는다 */ }
+  const enforce = mandateEnforced();
+  const result = await checkMergeByChain(pool, args, enforce);
+  // 위임(mandate) 그림자 기록 — 켜든 끄든 남긴다(켜면 어느 판정이 나갔는지도). 실패해도 판정은 그대로 나간다.
+  try { await shadowMandate(pool, args, result, enforce); } catch { /* 그림자는 판정을 바꾸지 않는다 */ }
   return result;
+}
+
+export interface MergeCheckArgs {
+  agentId: string; operatorId: string; leaseId: string; token: string; repo: string; number: number; headSha: string; now?: Date;
+  /** 래퍼가 머지에 쓸 gh 계정(알려 줄 때만). 위임 판정에서 줄의 `limits.ghUser` 와 맞춘다 — 없으면 ghUser 가 박힌 줄은 맞지 않는다. */
+  ghUser?: string | null;
 }
 
 /**
@@ -184,8 +201,9 @@ export async function checkMerge(
  */
 async function shadowMandate(
   pool: Pool,
-  args: { agentId: string; operatorId: string; leaseId: string; token: string; repo: string; number?: number; headSha?: string; now?: Date },
+  args: { agentId: string; operatorId: string; leaseId: string; token: string; repo: string; number?: number; headSha?: string; now?: Date; ghUser?: string | null },
   result: MergeCheck,
+  enforce: boolean,
 ): Promise<void> {
   const now = args.now ?? new Date();
   const lease = await readLease(pool, { leaseId: args.leaseId, token: args.token, now });
@@ -193,12 +211,17 @@ async function shadowMandate(
   const scope = repoScope(args.repo);
   if (!scope) return;
   // 위임 판정 = 위임장의 merge 줄(W2) — 상시 줄(소유자가 준 머지 grant)도 여기서 펼쳐진다.
-  const line = await findLine(pool, { mandateId: lease.mandateId, agentId: args.agentId, cap: 'merge', action: { cap: 'merge', repo: args.repo, pr: args.number, head: args.headSha }, now });
-  const mandateVerdict = !!line;
+  // 켜져 있으면 위임 판정은 이미 줄을 썼다(uses 소모) — 다시 찾지 않고 그 결과를 적는다. 사슬 판정은 돌리지 않는다(거절 카드를 만들므로).
+  const line = enforce
+    ? (result.ok && result.mandateLine ? { id: result.mandateLine.id, via: result.mandateLine.via } : null)
+    : await findLine(pool, { mandateId: lease.mandateId, agentId: args.agentId, cap: 'merge', action: { cap: 'merge', repo: args.repo, pr: args.number, head: args.headSha, ghUser: args.ghUser ?? null }, now });
+  const mandateVerdict = enforce ? (result.ok ? 'allowed' : result.code) : (line ? 'allowed' : 'denied');
   await recordAudit(pool, {
     action: 'mandate.shadow', actorId: args.agentId, target: scope,
     detail: {
-      chainVerdict: result.ok ? 'allowed' : result.code, mandateVerdict: mandateVerdict ? 'allowed' : 'denied',
+      enforced: enforce ? 'mandate' : 'chain',
+      chainVerdict: enforce ? null : (result.ok ? 'allowed' : result.code), mandateVerdict,
+      ...(enforce && result.ok && result.approval ? { viaApproval: result.approval.id } : {}),
       mandateId: lease.mandateId, agentId: args.agentId, repo: scope, leaseId: lease.id,
       lineId: line?.id ?? null, lineVia: line?.via ?? null,
     },
@@ -207,7 +230,8 @@ async function shadowMandate(
 
 async function checkMergeByChain(
   pool: Pool,
-  args: { agentId: string; operatorId: string; leaseId: string; token: string; repo: string; number: number; headSha: string; now?: Date },
+  args: MergeCheckArgs,
+  enforce = false,
 ): Promise<MergeCheck> {
   const now = args.now ?? new Date();
   const lease = await readLease(pool, { leaseId: args.leaseId, token: args.token, now });
@@ -225,6 +249,36 @@ async function checkMergeByChain(
 
   if (!leaseOk) return deny('lease_invalid');
   if (!scope) return deny('bad_repo');
+
+  /**
+   * 거절 기록(`merge_denial`)을 남기고 카드용 id 를 준다. L2(security, #1158): ① (에이전트, 저장소, 채널, 스레드)에 안 쓰고 안 만료된
+   * 기록이 있으면 그것을 다시 쓴다 — PR·head·임대·사유만 지금 것으로 바꾼다(카드는 어차피 그 묶음에 한 장이다). ② 새로 만드는 것은
+   * 에이전트마다 24시간에 `MERGE_DENIAL_DAILY_CAP` 개까지 — 넘으면 거절은 그대로 하되 카드용 id 는 주지 않는다.
+   */
+  const denyWithCard = async (code: 'not_granted' | 'cause_not_human' | 'no_mandate_line'): Promise<MergeCheck> => {
+    const denied = await deny(code);
+    const reused = (await pool.query<{ id: string }>(
+      `update merge_denial set pr_number = $5, head_sha = $6, lease_id = $7, reason = $9
+        where id = (select id from merge_denial
+                     where agent_id = $1 and scope = $2 and channel_id = $3 and thread_root_id = $4
+                       and used_at is null and obsoleted_at is null and expires_at > $8
+                       and reason in ('not_granted', 'cause_not_human', 'no_mandate_line')
+                     order by created_at desc limit 1)
+        returning id`,
+      [args.agentId, scope, lease!.channelId, lease!.threadRootId, args.number, args.headSha, lease!.id, now, code])).rows[0];
+    if (reused) return { ok: false, code, denialId: reused.id };
+    const recent = (await pool.query<{ n: number }>(
+      `select count(*)::int as n from merge_denial where agent_id = $1 and created_at > $2`,
+      [args.agentId, new Date(now.getTime() - 24 * 3_600_000)])).rows[0]!.n;
+    if (recent >= MERGE_DENIAL_DAILY_CAP) return denied;
+    const row = (await pool.query<{ id: string }>(
+      `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at, reason)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
+      [args.agentId, scope, args.number, args.headSha, lease!.channelId, lease!.threadRootId, lease!.id,
+        new Date(now.getTime() + MERGE_DENIAL_TTL_MS), code])).rows[0]!;
+    return { ok: false, code, denialId: row.id };
+  };
+
 
   // 1회 승인(스레드 1b75d7a0): 소유자가 이 (PR, head, 스레드)를 한 번 승인했으면 grant·사람 턴 판정 대신 그것을 인정한다.
   // F1 임대·F2 저장소 모양은 위에서 이미 봤다. 소모는 `used_at is null` 을 단 한 문장 update — 두 래퍼가 동시에 와도 하나만 쓴다.
@@ -281,37 +335,34 @@ async function checkMergeByChain(
     };
   }
 
+  if (enforce) return checkByMandate();
+
+  /*
+    위임 판정(W3) — 사슬·`cause_not_human` 대신 임대의 위임장에 이 저장소를 덮는 merge 줄이 있는지 본다. 줄을 찾는 일과 `uses` 소모는
+    `consumeLine` 의 한 SQL 문장이다. 우회(bypass) 줄은 쓰지 않는다(W5). 줄이 없으면(위임 없음·만료·남의 위임 포함) `no_mandate_line` 카드.
+  */
+  async function checkByMandate(): Promise<MergeCheck> {
+    const line = await consumeLine(pool, {
+      mandateId: lease!.mandateId, agentId: args.agentId, cap: 'merge', now,
+      action: { cap: 'merge', repo: args.repo, pr: args.number, head: args.headSha, ghUser: args.ghUser ?? null },
+    });
+    if (!line) return denyWithCard('no_mandate_line');
+    const byHuman = causeByHuman(lease!);
+    const ghUser = line.limits?.ghUser ?? null;
+    const ciOverride = line.limits?.ciOverride === true;
+    await recordAudit(pool, {
+      action: 'repo.merge.checked', actorId: args.agentId, target: scope!,
+      detail: { number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: lease!.id, grantedBy: line.grantedBy, mandateId: lease!.mandateId, lineId: line.id, lineVia: line.via, ghUser, ciOverride, causeByHuman: byHuman },
+    });
+    return {
+      ok: true, leaseId: lease!.id, channelId: lease!.channelId, threadRootId: lease!.threadRootId, scope: scope!,
+      grantedBy: line.grantedBy, grantedAt: new Date(line.createdAt).toISOString(), causeByHuman: byHuman,
+      mandateLine: { id: line.id, via: line.via, ghUser, ciOverride },
+    };
+  }
+
   const grant = await mergeGrantFor(pool, args.agentId, args.repo);
   const byHuman = causeByHuman(lease!);
-
-  /**
-   * 거절 기록(`merge_denial`)을 남기고 카드용 id 를 준다. L2(security, #1158): ① (에이전트, 저장소, 채널, 스레드)에 안 쓰고 안 만료된
-   * 기록이 있으면 그것을 다시 쓴다 — PR·head·임대·사유만 지금 것으로 바꾼다(카드는 어차피 그 묶음에 한 장이다). ② 새로 만드는 것은
-   * 에이전트마다 24시간에 `MERGE_DENIAL_DAILY_CAP` 개까지 — 넘으면 거절은 그대로 하되 카드용 id 는 주지 않는다.
-   */
-  const denyWithCard = async (code: 'not_granted' | 'cause_not_human'): Promise<MergeCheck> => {
-    const denied = await deny(code);
-    const reused = (await pool.query<{ id: string }>(
-      `update merge_denial set pr_number = $5, head_sha = $6, lease_id = $7, reason = $9
-        where id = (select id from merge_denial
-                     where agent_id = $1 and scope = $2 and channel_id = $3 and thread_root_id = $4
-                       and used_at is null and obsoleted_at is null and expires_at > $8
-                       and reason in ('not_granted', 'cause_not_human')
-                     order by created_at desc limit 1)
-        returning id`,
-      [args.agentId, scope, lease!.channelId, lease!.threadRootId, args.number, args.headSha, lease!.id, now, code])).rows[0];
-    if (reused) return { ok: false, code, denialId: reused.id };
-    const recent = (await pool.query<{ n: number }>(
-      `select count(*)::int as n from merge_denial where agent_id = $1 and created_at > $2`,
-      [args.agentId, new Date(now.getTime() - 24 * 3_600_000)])).rows[0]!.n;
-    if (recent >= MERGE_DENIAL_DAILY_CAP) return denied;
-    const row = (await pool.query<{ id: string }>(
-      `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at, reason)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
-      [args.agentId, scope, args.number, args.headSha, lease!.channelId, lease!.threadRootId, lease!.id,
-        new Date(now.getTime() + MERGE_DENIAL_TTL_MS), code])).rows[0]!;
-    return { ok: false, code, denialId: row.id };
-  };
 
   if (!grant) {
     // C2: `not_granted` 카드는 **나머지 판정을 다 통과한** 거절에만 — 사람이 띄우지 않은 턴(에이전트 위임)이 권한 카드를 만들지 못하게.
