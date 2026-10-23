@@ -1,0 +1,116 @@
+// 다른 기기에서 고친 gh 줄(D3) — `gh.lines.set` 을 받아 localMerge.set 으로 적고, 답하고, 보고를 다시 낸다.
+import { mkdtemp, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { parseGhLinesResult, parseGhLinesSet, parseServerFrame } from '@harkroom/shared/operatorProtocol';
+import { createCommunity, type CommunityDeps } from '../src/community.js';
+import { createLocalMergePort, pickMergeGhUser } from '../src/localMerge.js';
+import { readConfig } from '../src/config.js';
+import type { AssignmentReconciler } from '../src/assignments.js';
+import type { LinkHandlers, LinkDialer } from '../src/serverLink.js';
+import type { Exec } from '../src/turnMerge.js';
+
+const reconciler = {
+  announce: () => [], onAssign: async () => 'started', onUnassign: async () => {}, onRunnerExit: () => {},
+  restart: () => false, setLocal: () => {}, laneMismatch: () => false, noteRunnerLane: () => {}, lanePending: () => [],
+} as unknown as AssignmentReconciler;
+
+const STATUS = JSON.stringify({ hosts: { 'github.com': [{ login: 'work-admin', active: true }, { login: 'me', active: false }] } });
+
+async function setup(opts: { agents?: Record<string, object>; ghLines?: CommunityDeps['ghLines'] | 'none' } = {}) {
+  const dir = await mkdtemp(join(tmpdir(), 'gh-lines-'));
+  const configPath = join(dir, 'operator.json');
+  const exec: Exec = async () => ({ code: 0, stdout: STATUS, stderr: '' });
+  const port = createLocalMergePort({ configPath, ghPath: '/opt/gh', home: '/home/me', exec, host: 'mac-1' });
+  const sent: Record<string, unknown>[] = [];
+  let handlers: LinkHandlers | null = null;
+  const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: (d) => sent.push(JSON.parse(d)), close: () => {} }); };
+  let reports = 0;
+  const ghLines: CommunityDeps['ghLines'] = opts.ghLines === 'none' ? undefined
+    : opts.ghLines ?? (async (p) => { await port.set(p); });
+  const c = createCommunity({
+    baseUrl: 'https://work.example.com', token: 'hkop_x', agents: opts.agents ?? { a: {} }, reconciler, dial, schedule: () => {}, log: () => {},
+    heartbeatMs: 60_000,
+    heartbeat: {
+      status: async () => ({ turns: { running: 0, max: null } }), machine: async () => null,
+      gh: async () => {
+        reports += 1;
+        const merge = (await readConfig(configPath)).merge;
+        return { logins: ['work-admin', 'me'], byScope: (merge?.byScope as Record<string, string> | undefined) ?? {}, defaultGhUser: null, reach: [] };
+      },
+    },
+    ...(ghLines ? { ghLines } : {}),
+  });
+  c.start();
+  await new Promise((r) => setTimeout(r, 10));
+  const deliver = async (frame: object) => {
+    handlers!.onMessage(JSON.stringify(frame));
+    await new Promise((r) => setTimeout(r, 30));
+  };
+  return { c, sent, deliver, configPath, reportsSent: () => sent.filter((f) => f.type === 'gh.report'), results: () => sent.filter((f) => f.type === 'gh.lines.result'), reports: () => reports };
+}
+
+describe('gh.lines.set (D3)', () => {
+  it('파서 — 범위는 소문자로, 틀린 모양·requestId 는 버린다 · 결과의 모르는 code 는 failed', () => {
+    expect(parseServerFrame(JSON.stringify({ type: 'gh.lines.set', requestId: 'r1', scope: 'Acme/App', ghUser: 'me' }))).not.toBeNull();
+    expect(parseGhLinesSet({ requestId: 'r1', scope: 'Acme/App', ghUser: 'me' })).toEqual({ requestId: 'r1', scope: 'acme/app', ghUser: 'me' });
+    expect(parseGhLinesSet({ requestId: 'r1', scope: 'acme/*', ghUser: null })).toEqual({ requestId: 'r1', scope: 'acme/*', ghUser: null });
+    expect(parseGhLinesSet({ requestId: 'r1', scope: '*', ghUser: 'me' })).toBeNull();
+    expect(parseGhLinesSet({ requestId: 'r1', scope: 'acme/ab*', ghUser: 'me' })).toBeNull();
+    expect(parseGhLinesSet({ requestId: 'r1', scope: 'acme/app', ghUser: 'bad name' })).toBeNull();
+    expect(parseGhLinesSet({ requestId: 'r 1', scope: 'acme/app', ghUser: 'me' })).toBeNull();
+    expect(parseGhLinesResult({ requestId: 'r1', ok: false, code: 'weird' })).toEqual({ requestId: 'r1', ok: false, code: 'failed' });
+    expect(parseGhLinesResult({ requestId: 'r1', ok: true })).toEqual({ requestId: 'r1', ok: true });
+  });
+
+  it('로그인된 이름이면 operator.json 의 byScope 에 적고 ok 로 답하고, 바뀐 보고를 다시 낸다 · 머지 계정 고르기가 새 줄을 본다', async () => {
+    const t = await setup();
+    expect(t.reportsSent()).toHaveLength(1);
+    await t.deliver({ type: 'gh.lines.set', requestId: 'r1', scope: 'Acme/App', ghUser: 'work-admin' });
+    expect(t.results()).toEqual([{ type: 'gh.lines.result', requestId: 'r1', ok: true }]);
+    const merge = (await readConfig(t.configPath)).merge;
+    expect(merge?.byScope).toEqual({ 'acme/app': 'work-admin' });
+    expect(pickMergeGhUser(merge, 'acme/app')).toEqual({ login: 'work-admin', scope: 'acme/app' });
+    expect(t.reportsSent().at(-1)).toMatchObject({ report: { byScope: { 'acme/app': 'work-admin' } } });
+    expect(t.reportsSent()).toHaveLength(2);
+
+    await t.deliver({ type: 'gh.lines.set', requestId: 'r2', scope: 'acme/app', ghUser: null });
+    expect(t.results().at(-1)).toEqual({ type: 'gh.lines.result', requestId: 'r2', ok: true });
+    expect((await readConfig(t.configPath)).merge?.byScope).toEqual({});
+    t.c.stop();
+  });
+
+  it('이 머신에 로그인되지 않은 이름은 unknown_login 으로 거절하고 파일을 건드리지 않는다', async () => {
+    const t = await setup();
+    await t.deliver({ type: 'gh.lines.set', requestId: 'r1', scope: 'acme/app', ghUser: 'stranger' });
+    expect(t.results()).toEqual([{ type: 'gh.lines.result', requestId: 'r1', ok: false, code: 'unknown_login' }]);
+    await expect(readFile(t.configPath, 'utf8')).rejects.toThrow();
+    expect(t.reportsSent()).toHaveLength(1);
+    t.c.stop();
+  });
+
+  it('이 커뮤니티에 로컬 에이전트가 없으면 no_agent · ghLines 가 없으면 unsupported · gh 실패는 failed', async () => {
+    const none = await setup({ agents: {} });
+    await none.deliver({ type: 'gh.lines.set', requestId: 'r1', scope: 'acme/app', ghUser: 'me' });
+    expect(none.results()).toEqual([{ type: 'gh.lines.result', requestId: 'r1', ok: false, code: 'no_agent' }]);
+    none.c.stop();
+    const unsupported = await setup({ ghLines: 'none' });
+    await unsupported.deliver({ type: 'gh.lines.set', requestId: 'r2', scope: 'acme/app', ghUser: 'me' });
+    expect(unsupported.results()).toEqual([{ type: 'gh.lines.result', requestId: 'r2', ok: false, code: 'unsupported' }]);
+    unsupported.c.stop();
+    const broken = await setup({ ghLines: async () => { throw new Error('gh auth status failed: boom'); } });
+    await broken.deliver({ type: 'gh.lines.set', requestId: 'r3', scope: 'acme/app', ghUser: 'me' });
+    expect(broken.results()).toEqual([{ type: 'gh.lines.result', requestId: 'r3', ok: false, code: 'failed' }]);
+    broken.c.stop();
+  });
+
+  it('모양이 틀린 프레임에는 답하지 않는다(어느 요청인지 모른다) · 틀린 범위는 적지 않는다', async () => {
+    let called = 0;
+    const t = await setup({ ghLines: async () => { called += 1; } });
+    await t.deliver({ type: 'gh.lines.set', requestId: 'r1', scope: '../etc', ghUser: 'me' });
+    expect(t.results()).toEqual([]);
+    expect(called).toBe(0);
+    t.c.stop();
+  });
+});
