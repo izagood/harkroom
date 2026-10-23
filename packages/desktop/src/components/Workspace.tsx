@@ -14,6 +14,7 @@ import { SidebarToggleIcon } from './SidebarToggleIcon';
 import { ChannelPane } from './ChannelPane';
 import { AgentTower } from './AgentTower';
 import { Notice } from './Notice';
+import { SaveToast } from './SaveToast';
 import { AttentionStack } from './AuthWarningCards';
 import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
 import { PasswordResetNoticeBanner } from './PasswordReset';
@@ -407,6 +408,8 @@ export function Workspace({ onLogout, onOpenSettings }: {
               그대로다 — 채널을 못 연 실패를 보여 줄 자리가 채널 안에는 없다. */}
           <AttentionStack onOpenSettings={onOpenSettings} />
           <Notice />
+          {/* 저장 성공은 아래쪽 토스트로 말한다 — Notice 는 실패 자리다(`SaveToast` 머리 주석). */}
+          <SaveToast />
           {/* 멘션 이동(#279)의 배선은 **여기**다. 초판이 이 두 줄을 빼먹어 앱에서 모든
               멘션이 눌러도 아무 일이 없는 버튼이었다 — 단위 테스트는 props 를 손으로
               넘겨 그 사실을 볼 수 없었다. `test/mentionClick.test.tsx` 가 이 화면을

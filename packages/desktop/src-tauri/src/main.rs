@@ -9,6 +9,7 @@
 //! 조용히 성공한 척하면 프런트가 평문 경로로 내려갈 기회를 잃는다.
 
 mod app_windows;
+mod attachment_save;
 mod daemon_client;
 mod external_link;
 mod login_path;
@@ -932,6 +933,64 @@ fn allow_preview_once(
         .map_err(|e| e.to_string())
 }
 
+/// 첨부 저장 ① — **받기 전에** 저장 창을 띄운다(2026-10-23, jaebin 결정 92bf2dea D2 — `attachment_save.rs` 머리 주석).
+///
+/// 웹뷰가 넘기는 것은 이름 **제안** 문자열 하나다. 경로는 사람이 저장 창에서 고르고 Rust 표에만 남는다.
+/// 돌려주는 것은 표(token)·고른 이름·폴더 이름뿐이다. 취소하면 `None` — 그러면 바이트를 받지도 않는다.
+/// 저장 창이 닫힐 때까지 기다리므로 블로킹 풀에서 돈다(메인 스레드에서 기다리면 창 자신이 굳는다).
+#[tauri::command]
+async fn pick_save_target(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    filename: String,
+) -> Result<Option<attachment_save::Picked>, String> {
+    attachment_save::ensure_app_window(webview.label())?;
+    tauri::async_runtime::spawn_blocking(move || attachment_save::pick_with_dialog(&app, &filename))
+        .await
+        .map_err(|e| format!("저장 창 스레드가 끊겼다: {e}"))?
+}
+
+/// 첨부 저장 ② — ①에서 받은 표의 자리에 바이트를 쓴다. 표마다 **한 번만** 쓴다.
+///
+/// 바이트는 raw 본문(`InvokeBody::Raw`), 표는 헤더(`x-harkroom-save-token`)다 — JSON 숫자 배열로 받으면 수 MB
+/// 첨부가 수십 MB JSON 이 된다. 웹뷰는 경로를 줄 자리가 없다.
+/// 디스크 쓰기는 블로킹 풀에서 한다 — 동기 명령은 메인 스레드에서 돌아 큰 파일을 쓰는 동안 창이 굳는다.
+#[tauri::command]
+async fn write_saved_attachment(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    request: tauri::ipc::Request<'_>,
+) -> Result<(), String> {
+    attachment_save::ensure_app_window(webview.label())?;
+    let token = request
+        .headers()
+        .get(attachment_save::TOKEN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .ok_or_else(|| "저장 표가 없다".to_string())?;
+    let bytes = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
+        tauri::ipc::InvokeBody::Json(_) => return Err("저장할 바이트는 raw 본문으로 보내야 한다".into()),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<attachment_save::SavedFiles>();
+        attachment_save::write(&state, token, &bytes)
+    })
+    .await
+    .map_err(|e| format!("저장 스레드가 끊겼다: {e}"))?
+}
+
+/// 방금 저장한 파일을 Finder 에서 집어 보여 준다. 웹뷰는 **쓴 표**만 줄 수 있다 — 경로를 줄 자리가 없다.
+#[tauri::command]
+fn reveal_saved_attachment(
+    webview: tauri::Webview,
+    state: tauri::State<'_, attachment_save::SavedFiles>,
+    token: u64,
+) -> Result<(), String> {
+    attachment_save::ensure_app_window(webview.label())?;
+    attachment_save::reveal(&state, token)
+}
+
 fn main() {
     tauri::Builder::default()
         // 알림 표면. **발신은 `notification::notification_send` 가 한다** — 이 플러그인의
@@ -952,6 +1011,9 @@ fn main() {
         // 돌고 있는 것이 갈린다.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // 첨부 저장 창. Rust 의 `save_attachment` 만 쓴다 — `dialog:*` 권한을 열지 않는다.
+        .plugin(tauri_plugin_dialog::init())
+        .manage(attachment_save::SavedFiles::default())
         .manage(daemon_client::DaemonState::new())
         // 알림 클릭을 받는 델리게이트를 세운다(`notification::install`). **기동 때 한 번**
         // 이어야 한다 — 첫 알림을 보낼 때 세우면 그 알림의 클릭을 놓칠 수 있다.
@@ -988,6 +1050,9 @@ fn main() {
             notification::notification_send,
             app_version,
             concealed_clipboard::clipboard_write_concealed,
+            pick_save_target,
+            write_saved_attachment,
+            reveal_saved_attachment,
             claude_accounts_list,
             claude_accounts_configure,
             claude_account_login_start,

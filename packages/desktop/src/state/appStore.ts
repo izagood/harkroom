@@ -330,6 +330,16 @@ export interface AppState {
    */
   notices: NoticeItem[];
   /**
+   * 저장 중인 첨부(키는 첨부 id). `choosing` 은 저장 창이 떠 있는 중, `fetching` 은 고른 뒤 바이트를 받는 중이다.
+   * 칩·확대 보기·미리보기 패널이 같은 값을 보고 다시 누르지 못하게 막는다 — 두 번 누르면 창이 둘 뜨고 두 번 받는다.
+   */
+  attachmentSaving: Record<string, 'choosing' | 'fetching'>;
+  /**
+   * 저장이 끝났다는 아래쪽 토스트(`SaveToast`). **성공만** 싣는다 — 실패는 `notices` 다.
+   * `id` 는 같은 파일을 두 번 저장해도 타이머가 다시 돌게 하는 표다.
+   */
+  saveToast: { id: number; name: string; folder: string; token: number | null } | null;
+  /**
    * 터미널에서 사람을 기다리는 세션들(2026-10-09 A안). 실패와 **다른 칸**이다 — 실패는
    * 방금 한 동작의 결과이고, 이것은 사람이 할 일이다. 섞어 두면 한쪽이 다른 쪽을 덮는다.
    */
@@ -541,7 +551,7 @@ const initial = {
   online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, link: 'online' as AppState['link'], offlineSince: null, threadFetch: null as AppState['threadFetch'], serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, channelSections: null, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
-  history: [], historyIndex: -1, notices: [], gates: [], notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
+  history: [], historyIndex: -1, notices: [], attachmentSaving: {}, saveToast: null, gates: [], notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
   ownSendIds: {}, sendsInFlight: {},
   highlightedMessageId: null, channelRevealSeq: 0,
   runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0, savedChange: null,
