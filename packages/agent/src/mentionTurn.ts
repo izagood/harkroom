@@ -31,7 +31,7 @@ import type { ReviewFork } from './reviewFork.js';
 import { readLastAssistantText, readMacPermissionWaits, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type MacPermissionWait, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
-import { opencodeDirs } from './opencodeHome.js';
+import { opencodeDirs, opencodeLaneModelMissing } from './opencodeHome.js';
 import { listPiMcpTools, piSessionFile, readonlyToolList } from './piHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
@@ -40,6 +40,7 @@ import type { MemoryCache } from './memoryCache.js';
 import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { planThreadNote, type ThreadNoteState } from './threadNotePin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
+import { ProviderLaneError } from './providerLane.js';
 
 /** 정지 직전 "제출 대기" 판정에 쓰는 화면 꼬리 길이(글자). 입력줄과 바닥줄 몇 개면 된다. */
 const SCREEN_TAIL_CHARS = 4_000;
@@ -1271,6 +1272,11 @@ export async function runMentionTurn(
       console.warn(`[mentionTurn] ${key}: ${def.harness} 읽기 전용 — MCP 도구 이름을 못 받아 내장 읽기 도구만 연다 (${JSON.stringify(discovered)})`);
     }
     turnReadonlyTools = readonlyToolList(allowlist, discovered);
+  }
+  // opencode lane 턴의 모델이 `harkroom-lane/<id>` 꼴이 아니면 lane 목록이 비고, opencode 는 「Connect a provider」 창을 띄운 채
+  // 선다(2026-10-23 watcher, 10분 정지로만 접혔다). 키를 받기 전에 까닭 코드로 바로 실패한다.
+  if (opencodeLaneModelMissing(Boolean(deps.providerEnv), usesXdgHome(def.harness), turnModel.model)) {
+    throw new ProviderLaneError('bad_model');
   }
   // lane 이면 그 턴의 값을 지금 받는다 — 임대는 스케줄러가 이 멘션의 첫 시도 전에 받아 두었다.
   const providerEnv = deps.providerEnv ? await deps.providerEnv(mentionId, def.harness) : null;

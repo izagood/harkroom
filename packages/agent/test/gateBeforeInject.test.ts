@@ -36,6 +36,16 @@ describe('auto 모드 classifier 과금 안내', () => {
   });
 });
 
+// 2026-10-23 watcher(opencode 1.18.32): lane 목록이 비면 「Connect a provider」 창이 뜬다. 뒤 배경의 `Ask anything`·`ctrl+p` 가
+// 준비 패턴에 맞아 러너가 그 위에 프롬프트를 붙여넣었고, 글은 창의 검색칸으로 들어갔다. 창은 관문이다 — 그 위에 쓰지 않는다.
+describe('opencode 「Connect a provider」 창', () => {
+  it('관문으로 보인다 — 준비 표시가 앞에 있어도 창이 이긴다', () => {
+    const modal = screen('opencode-connect-provider-modal.txt');
+    expect(looksReadyForPrompt(modal, /Ask anything|ctrl\+p/)).toBe(true);
+    expect(looksLikeGate(modal, undefined, /Ask anything|ctrl\+p/)).toBe(true);
+  });
+});
+
 describe('codex 업데이트 선택 화면', () => {
   const update = screen('codex-tui-update-prompt.txt');
 

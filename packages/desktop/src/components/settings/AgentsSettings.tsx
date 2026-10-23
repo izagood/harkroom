@@ -2573,7 +2573,13 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                     className={field}
                     aria-label={t('agents.run.harness')}
                     value={draft.harness}
-                    onChange={(e) => setDraft({ ...draft, harness: e.target.value as AgentConfig['harness'] })}
+                    onChange={(e) => {
+                      const harness = e.target.value as AgentConfig['harness'];
+                      // API 키 연결이 켜진 채 opencode 로 바꾸면 모델 칸도 lane 모양으로 바꾼다 — 연결 저장 때만 바꾸던 탓에
+                      // claude-code 로 켠 뒤 하네스만 바꾼 에이전트가 opencode 에서 「Connect a provider」 창에 섰다(2026-10-23).
+                      const laneModel = harness === 'opencode' && providerLane.lane ? opencodeLaneModel(draft.model ?? null) : null;
+                      setDraft({ ...draft, harness, ...(laneModel ? { model: laneModel } : {}) });
+                    }}
                   >
                     {AGENT_HARNESSES.map((h) =>
                       (RUNNABLE_HARNESSES as readonly string[]).includes(h)

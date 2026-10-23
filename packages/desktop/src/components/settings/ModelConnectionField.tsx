@@ -23,7 +23,8 @@ export const OPENCODE_LANE_PREFIX = 'harkroom-lane/';
 export function opencodeLaneModel(model: string | null): string | null {
   const m = model?.trim() ?? '';
   if (!m || m.startsWith(OPENCODE_LANE_PREFIX)) return null;
-  return `${OPENCODE_LANE_PREFIX}${m.includes('/') ? m.slice(m.lastIndexOf('/') + 1) : m}`;
+  // 조직 이름(`ExampleOrg/`)을 자르지 않는다 — gateway 는 원문 id 를 받는다(2026-10-23, 잘린 `example-model` 은 다른 이름이다).
+  return `${OPENCODE_LANE_PREFIX}${m}`;
 }
 
 type UrlProblem = 'badScheme' | 'badParts' | null;

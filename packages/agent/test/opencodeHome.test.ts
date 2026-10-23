@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  ensureOpencodeHome, opencodeConfigFile, opencodeDirs, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
+  ensureOpencodeHome, opencodeConfigFile, opencodeDirs, opencodeLaneModelMissing, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
 } from '../src/opencodeHome.js';
 import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
 
@@ -242,8 +242,28 @@ describe('lane 러너의 opencode 홈', () => {
   it('모델 이름에 `{env:}`·`{file:}` 가 섞이면 받지 않는다 — opencode 가 본문 전체에서 바꿔 넣는다', () => {
     expect(providerLaneModelId('harkroom-lane/example-model')).toBe('example-model');
     expect(providerLaneModelId('harkroom-lane/{env:HARKROOM_PROVIDER_TOKEN}')).toBeNull();
+    // 2026-10-23: gateway 모델 id 는 조직 이름을 앞에 단다. `/` 를 막아 lane 목록이 비었고 opencode 가 「Connect a provider」 창에 섰다.
+    expect(providerLaneModelId('harkroom-lane/ExampleOrg/example-model-2.7')).toBe('ExampleOrg/example-model-2.7');
+    // `/` 는 마디 사이에만 — 빈 마디·끝 `/`·중괄호는 여전히 거절이다.
+    for (const bad of ['harkroom-lane/a//b', 'harkroom-lane/a/', 'harkroom-lane//a', 'harkroom-lane/a/{file:/etc/passwd}', `harkroom-lane/${'a'.repeat(129)}`]) {
+      expect(providerLaneModelId(bad)).toBeNull();
+    }
     expect(providerLaneModelId('harkroom-lane/{file:/etc/passwd}')).toBeNull();
     expect(providerLaneModelId('harkroom-lane/')).toBeNull();
     expect(providerLaneModelId(null)).toBeNull();
+  });
+});
+
+// 2026-10-23 watcher: lane 을 claude-code 로 켠 뒤 하네스만 opencode 로 바꿔 모델이 `ExampleOrg/…` 로 남았다. 띄우면 「Connect a
+// provider」 창에서 10분 서 있다가 정지로 접혔다 — 러너는 띄우기 전에 까닭 코드로 실패해야 한다.
+describe('opencode lane 모델이 lane 모양이 아니면 띄우지 않는다', () => {
+  it('lane·opencode·lane 모양 아님 → 참', () => {
+    expect(opencodeLaneModelMissing(true, true, 'ExampleOrg/example-model')).toBe(true);
+    expect(opencodeLaneModelMissing(true, true, null)).toBe(true);
+  });
+  it('lane 모양이거나, lane 이 아니거나, 설정 파일로 모델을 고르지 않는 하네스(claude)면 거짓', () => {
+    expect(opencodeLaneModelMissing(true, true, 'harkroom-lane/ExampleOrg/example-model')).toBe(false);
+    expect(opencodeLaneModelMissing(false, true, 'ExampleOrg/example-model')).toBe(false);
+    expect(opencodeLaneModelMissing(true, false, 'ExampleOrg/example-model')).toBe(false);
   });
 });

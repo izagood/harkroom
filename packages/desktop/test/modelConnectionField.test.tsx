@@ -40,7 +40,8 @@ describe('주소 검사·모델 이름', () => {
 
   it('opencode 모델 칸은 harkroom-lane/<id> 로 — 이미 그 모양이거나 비었으면 안 고친다', () => {
     expect(opencodeLaneModel('example-model')).toBe('harkroom-lane/example-model');
-    expect(opencodeLaneModel('anthropic/example-model')).toBe('harkroom-lane/example-model');
+    // 조직·provider 이름을 자르지 않는다(2026-10-23): gateway 는 `ExampleOrg/example-model` 원문을 받는다.
+    expect(opencodeLaneModel('ExampleOrg/example-model')).toBe('harkroom-lane/ExampleOrg/example-model');
     expect(opencodeLaneModel('harkroom-lane/example-model')).toBeNull();
     expect(opencodeLaneModel(null)).toBeNull();
   });
