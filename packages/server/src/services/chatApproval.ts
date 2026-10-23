@@ -3,7 +3,7 @@ import type { MessageRow } from '@harkroom/shared';
 import { emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor } from './channels.js';
 import { postMessage } from './messages.js';
-import { decide, resolveDecision, type DecideInput } from './decisions.js';
+import { decide, isGenuinePermissionMirror, resolveDecision, type DecideInput } from './decisions.js';
 import type { PermissionKind } from './permissionRequests.js';
 import { systemI18n } from './systemI18n.js';
 
@@ -17,7 +17,7 @@ import { systemI18n } from './systemI18n.js';
  * - 글쓴이는 요청한 에이전트의 소유자 본인, 앱에 로그인한 사람 세션(REST)만 — 부르는 쪽(글 올리기 라우트)이 거른다.
  *   에이전트·PAT·MCP·자동화·위임·거울 글은 이 라우트를 타지 않거나 거기서 걸러진다.
  * - 글은 문장이어도 된다(P4). 승인 낱말(G2: 승인·허락·머지해·진행해·approve 와 그 활용)만 승인으로 본다. 인용(`>`)·코드는
- *   지우고 읽는다. 부정·보류(말고·하지 마·보류·취소·잠깐·기다려·아니)나 `?` 가 있으면 정하지 않고 안내만 단다. 「바이패스」는
+ *   지우고 읽는다. 부정·거부·보류(말고·하지 마·보류·취소·잠깐·기다려·아니·못·금지·불가·거부·중지·나중…)나 물음(`?`, 또는 「될까」·「되나」·「해도 돼」 같은 물음 끝)이 있으면 정하지 않고 안내만 단다. 「바이패스」는
  *   승인하지 않는다. 거절(거절·deny)은 카드 링크가 있을 때만(G3).
  * - 어느 요청인지는 **구조로만** 정한다: 본문의 `harkroom://message/<카드 id>` 링크(1~5개, 어느 채널이든, 거울은 원본으로 —
  *   `resolveDecision`), 링크가 없으면 같은 스레드에 글보다 먼저 있던, 이 사람이 정할 수 있는 열린 카드가 딱 하나일 때 그 카드
@@ -43,9 +43,18 @@ const APPROVE_KO = /(?<![미무불])(?:승인|허락)(?!\s*(?:요청|대기|받|
 const APPROVE_EN = /\b(?:approve|approved|approves)\b/;
 const DENY = /거절|\b(?:deny|denied|denies)\b/;
 const BYPASS = /바이패스|\bbypass/;
-/** 부정·보류(「말고」·「하지 마」·「보류」·「취소」·「잠깐」·「기다려」·「아니」) — 「안 해」·「않」 같은 부정 활용도 같이 막는다. */
-const NEGATION = /말고|하지\s*마|보류|취소|잠깐|기다려|아니|안\s*(?:해|함|돼|할|한|합)|않|\b(?:don'?t|do not|not|no|wait|hold|cancel|stop|never)\b/;
+/**
+ * 부정·거부·보류·미루기(「말고」·「하지 마」·「보류」·「취소」·「잠깐」·「기다려」·「아니」·「못」·「금지」·「불가」·「거부」·「중지」·
+ * 「멈춰」·「나중」·「이따」·「다음에」) — 「안 해」·「않」 같은 부정 활용도 같이 막는다. 넓게 잡는다 — 잘못 막으면 카드에서 정하면
+ * 되지만, 잘못 승인하면 되돌릴 수 없다(fail closed).
+ */
+const NEGATION = /말고|하지\s*마|보류|취소|잠깐|기다려|아니|못|금지|불가|거부|중지|멈춰|멈춤|나중|이따|다음에|안\s*(?:해|함|돼|할|한|합)|않|\b(?:don'?t|do not|not|no|wait|hold|cancel|stop|never|later)\b/;
 const QUESTION = /[?？]/;
+/**
+ * 물음표 없는 한국어 물음 — 문장·마디 끝의 「까·나·니·냐·는지」(「될까」·「되나」·「했니」·「하냐」·「됐는지」)와
+ * 「해도 돼/될/되」(허락을 묻는 꼴). 「승인합니다」·「승인해」처럼 「다」·「해」로 끝나는 말은 걸리지 않는다.
+ */
+const QUESTION_KO = /(?:까|나|니|냐|는지)(?=\s*(?:$|[.,;:!~…\n]|ㅋ|ㅎ|ㅠ|ㅜ))|해도\s*(?:돼|될|되)/m;
 const CI_WORD = /ci\s*무시|ignore\s*(?:the\s*)?ci\b/;
 
 export type ChatBlock = 'negated' | 'question' | 'bypass' | 'conflict';
@@ -89,6 +98,7 @@ export function parseChatApproval(body: string): ChatApprovalParse | null {
     if (bypass) block = 'bypass';
     else if (QUESTION.test(rest)) block = 'question';
     else if (NEGATION.test(rest)) block = 'negated';
+    else if (QUESTION_KO.test(rest)) block = 'question';
     else if (approve && deny) block = 'conflict';
   }
   return { cardIds, action: approve ? 'approve' : deny ? 'deny' : null, block, ciWord: CI_WORD.test(rest) };
@@ -162,12 +172,16 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
   let target: ChatTarget = 'T1';
   if (parsed.cardIds.length > 0) {
     if (parsed.cardIds.length > CHAT_APPROVAL_MAX_CARDS) return refuse(pool, message, actorId, 'tooMany');
-    // 링크마다 `resolveDecision` 으로 푼다 — 거울은 원본으로 센다.
+    // 링크마다 `resolveDecision` 으로 푼다 — 거울은 **서버가 세운 진짜 거울**(`isGenuinePermissionMirror`)일 때만 원본으로 센다.
+    // 아니면 그 링크는 아무 요청도 가리키지 않는다(fail closed).
     const resolved: string[] = [];
     let askCards = 0;
     for (const id of parsed.cardIds) {
       const ref = await resolveDecision(pool, id);
-      if (ref?.kind === 'permission' && ref.cardMessageId) resolved.push(ref.cardMessageId);
+      if (ref?.kind === 'permission' && ref.cardMessageId) {
+        if (ref.mirrorMessageId && !(await isGenuinePermissionMirror(pool, ref.mirrorMessageId, ref.cardMessageId, ref.agentId))) continue;
+        resolved.push(ref.cardMessageId);
+      }
       else if (ref?.kind === 'ask') askCards += 1;
     }
     const rows = resolved.length > 0 ? (await pool.query<Candidate>(`${CANDIDATE_SQL} where p.card_message_id = any($1::uuid[])`, [resolved])).rows : [];
@@ -193,17 +207,34 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
       if (await ownsPendingRequest(pool, actorId)) return refuse(pool, message, actorId, parsed.block ?? 'denyNeedsLink');
       return;
     }
-    // T2 — 글이 카드 스레드 안이면 그 스레드만 본다. 이 스레드의 거울 카드는 원본으로 센다.
+    // T2 — 글이 카드 스레드 안이면 그 스레드만 본다. 이 스레드의 거울 카드는 **진짜 거울**일 때만 원본으로 센다.
     // 상태와 관계없이 이 스레드의 권한 카드를 다 읽는다 — 하나라도 있으면 T3 로 넘기지 않는다(security F3).
-    const inThread = dedupe((await pool.query<Candidate>(
+    const direct = (await pool.query<Candidate>(
       `${CANDIDATE_SQL}
-        where (m.channel_id = $1 and (m.id = $2 or m.thread_root_id = $2) and m.seq < $3)
-           or p.card_message_id::text in (
-             select mm.meta->'ask'->>'mirrorOf' from message mm
-              where mm.channel_id = $1 and (mm.id = $2 or mm.thread_root_id = $2) and mm.seq < $3 and mm.deleted_at is null
-                and mm.meta->'ask' ? 'mirrorOf')
+        where m.channel_id = $1 and (m.id = $2 or m.thread_root_id = $2) and m.seq < $3
         order by m.created_at`,
-      [message.channelId, threadRootId, message.seq])).rows);
+      [message.channelId, threadRootId, message.seq])).rows;
+    const mirrors = (await pool.query<{ id: string; rootId: string }>(
+      `select mm.id, mm.meta->'ask'->>'mirrorOf' as "rootId" from message mm
+        where mm.channel_id = $1 and (mm.id = $2 or mm.thread_root_id = $2) and mm.seq < $3 and mm.deleted_at is null
+          and mm.meta->'ask' ? 'mirrorOf'`,
+      [message.channelId, threadRootId, message.seq])).rows;
+    const mirrored = mirrors.length > 0
+      ? (await pool.query<Candidate>(`${CANDIDATE_SQL} where p.card_message_id::text = any($1::text[]) order by m.created_at`,
+        [mirrors.map((x) => x.rootId)])).rows
+      : [];
+    const genuine: Candidate[] = [];
+    let fakeMirror = false;
+    for (const c of mirrored) {
+      let ok = false;
+      for (const x of mirrors.filter((y) => y.rootId === c.cardMessageId)) {
+        if (await isGenuinePermissionMirror(pool, x.id, c.cardMessageId, c.agentId)) { ok = true; break; }
+      }
+      if (ok) genuine.push(c); else fakeMirror = true;
+    }
+    const inThread = dedupe([...direct, ...genuine].sort((a, b) => a.cardCreatedAt.getTime() - b.cardCreatedAt.getTime()));
+    // 권한 카드를 가리키는 가짜 거울만 있는 스레드는 T3(소유자의 하나뿐인 요청)로 넘기지 않는다 — 그 글은 그 거울에 대한 답이다.
+    if (inThread.length === 0 && fakeMirror) return;
     const mineInThread = inThread.filter((c) => c.ownerAccountId === actorId);
     const open = mineInThread.filter(isOpen);
     if (inThread.length > 0) {

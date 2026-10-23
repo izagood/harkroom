@@ -34,6 +34,28 @@ describe('parseChatApproval — 문장 속 명시적 승인 낱말(G2)·부정·
     [`승인 [sriov 카드](${link(ID)}) ${link(ID)}`, P([ID], 'approve')],
     [`CI 무시하고 머지해 ${link(ID)}`, P([ID], 'approve', null, true)],
     ['ignore CI and approve', P([], 'approve', null, true)],
+    // 「다」·「요」·「줘」로 끝나는 보통 승인 — 물음 끝(까·나·니·냐·는지)으로 보지 않는다
+    ['승인할게', P([], 'approve')],
+    ['승인해 주세요', P([], 'approve')],
+    ['승인했어요.', P([], 'approve')],
+    ['머지해줘', P([], 'approve')],
+    ['진행하세요!', P([], 'approve')],
+    ['네 승인합니다. 진행해', P([], 'approve')],
+    // 거부·금지·미루기·물음표 없는 물음 — 승인하지 않는다(fail closed)
+    ['승인 못 해', P([], 'approve', 'negated')],
+    ['허락 못 함', P([], 'approve', 'negated')],
+    ['승인 금지', P([], 'approve', 'negated')],
+    ['승인 불가', P([], 'approve', 'negated')],
+    ['승인 거부할게', P([], 'approve', 'negated')],
+    ['승인은 나중에 할게', P([], 'approve', 'negated')],
+    ['승인 중지', P([], 'approve', 'negated')],
+    ['머지해 이따가', P([], 'approve', 'negated')],
+    ['머지해도 될까', P([], 'approve', 'question')],
+    ['머지해도 되나', P([], 'approve', 'question')],
+    ['진행해도 괜찮을까', P([], 'approve', 'question')],
+    ['승인했니', P([], 'approve', 'question')],
+    ['승인해도 돼', P([], 'approve', 'question')],
+    [`이거 머지해도 되는지 ${link(ID)}`, P([ID], 'approve', 'question')],
     // 부정·보류·의문 — 낱말은 있지만 정하지 않는다
     ['승인 말고 기다려', P([], 'approve', 'negated')],
     ['승인 안 함', P([], 'approve', 'negated')],
@@ -425,5 +447,51 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
       [requestId, 'kubectl --kubeconfig /etc/k/ops.yaml --context ops -n sitebot rollout restart deploy/web']);
     await say(alice.token, '승인', thread);
     expect((await pool.query(`select status, grant_mode from permission_request where id = $1`, [requestId])).rows[0]).toEqual({ status: 'granted', grant_mode: 'once' });
+  });
+
+  describe('거울 카드 — 서버가 인정하는 진짜 거울만 원본으로 센다(F2)', () => {
+    let otherBot: string;
+    beforeAll(async () => {
+      otherBot = (await createAgent(app, admin.token, 'otherbot')).accountId;
+      await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [otherBot, bob.accountId]);
+    });
+    /** 다른 채널 스레드에 원본 카드를 가리키는 거울 하나 — 선택지는 원본과 같게. */
+    const mirrorIn = async (cardId: string, authorId: string) => {
+      const thread = await root(otherCh);
+      const options = (await card(cardId)).ask.options;
+      const mirrorId = (await pool.query(
+        `insert into message (channel_id, author_id, body, kind, thread_root_id, meta) values ($1, $2, '거울', 'user', $3, $4) returning id`,
+        [otherCh, authorId, thread, JSON.stringify({ kind: 'ask', ask: { prompt: '권한', options, to: { kind: 'human' }, mirrorOf: cardId } })])).rows[0].id as string;
+      return { thread, mirrorId };
+    };
+
+    it('남의 에이전트가 세운 거울 스레드의 「진행해」·그 거울 링크는 원본을 정하지 않는다', async () => {
+      await expireAll();
+      const { requestId, cardId } = await ask(await root());
+      const fake = await mirrorIn(cardId, otherBot);
+      expect((await say(alice.token, '진행해', fake.thread, otherCh)).statusCode).toBe(201);
+      expect(await status(requestId)).toBe('pending');
+      expect((await say(alice.token, `${link(fake.mirrorId)} 승인해`, fake.thread, otherCh)).statusCode).toBe(201);
+      expect(await status(requestId)).toBe('pending');
+      expect((await card(cardId)).ask.answeredWith).toBeUndefined();
+    });
+
+    it('소유자 에이전트가 세운 진짜 거울은 스레드의 「진행해」로 원본을 정한다', async () => {
+      await expireAll();
+      const { requestId, cardId } = await ask(await root());
+      const real = await mirrorIn(cardId, agentId);
+      expect((await say(alice.token, '진행해', real.thread, otherCh)).statusCode).toBe(201);
+      expect(await status(requestId)).toBe('granted');
+      expect((await card(cardId)).permissionRequest.decidedVia).toMatchObject({ kind: 'chat', target: 'T2' });
+    });
+
+    it('진짜 거울 링크로도 원본을 정한다', async () => {
+      await expireAll();
+      const { requestId, cardId } = await ask(await root());
+      const real = await mirrorIn(cardId, agentId);
+      const elsewhere = await root(otherCh);
+      expect((await say(alice.token, `${link(real.mirrorId)} 승인해`, elsewhere, otherCh)).statusCode).toBe(201);
+      expect(await status(requestId)).toBe('granted');
+    });
   });
 });
