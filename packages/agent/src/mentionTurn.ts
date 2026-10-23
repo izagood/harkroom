@@ -766,12 +766,29 @@ export async function scrubWorkspaceSettings(workspaceDir: string): Promise<stri
   return removed;
 }
 
+/** lane 에 깔아도 되는 frontmatter 키 — 정해진 것만 받는다(허용 목록). 도구·권한을 바꾸는 키는 여기 없다. */
+const LANE_SKILL_KEYS = new Set(['name', 'description']);
+
 /**
- * 스킬 본문이 **도구 권한을 여는가**(`allowed-tools` 칸). 줄머리의 그 키만 본다 — frontmatter 를 해석하지 않고 본문 어디든
- * 맞으면 참이다(닫힌 쪽 실패: 설명 줄이 우연히 맞아도 빼는 쪽으로 틀린다). `allowed_tools` 표기도 잡는다.
+ * API 키 연결 턴에 깔아도 되는 스킬인가(security F1, 허용 목록). 거부 목록(`allowed-tools` 를 찾아 빼기)은 따옴표 친 키·흐름 표기·
+ * 대소문자 같은 다른 표기로 샌다 — 그래서 **아는 모양만** 받는다.
+ *
+ * - frontmatter 가 없다(본문이 `---` 줄로 시작하지 않는다) → 받는다. 하네스는 맨 앞의 `---` 블록만 설정으로 읽는다.
+ * - frontmatter 가 있으면 닫는 `---` 까지의 줄이 전부 빈 줄이거나 들여쓰기 없는 `name: …`·`description: …` 이어야 받는다.
+ *   모르는 키·따옴표 키·이어지는 줄·주석·닫히지 않은 블록은 모두 뺀다(fail-closed).
  */
-export function skillGrantsTools(body: string): boolean {
-  return /^\s*allowed[-_]tools\s*:/im.test(body);
+export function laneSafeSkill(body: string): boolean {
+  const text = body.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const lines = text.replace(/^\s*\n/, '').split('\n');
+  // 공백만 앞에 둔 `---` 도 하네스가 읽을 수 있다고 보고 frontmatter 로 다룬다.
+  if (lines[0]?.trim() !== '---') return true;
+  const end = lines.indexOf('---', 1);
+  if (end < 0) return false;
+  return lines.slice(1, end).every((line) => {
+    if (line.trim() === '') return true;
+    const m = /^([a-z]+):(?:[ \t]|$)/.exec(line);
+    return m !== null && LANE_SKILL_KEYS.has(m[1] ?? '');
+  });
 }
 
 export async function syncSkills(
@@ -779,8 +796,8 @@ export async function syncSkills(
   workspaceDir: string,
   listSkills: () => Promise<{ slug: string; body: string }[]>,
   /**
-   * API 키 연결 턴(security, 2026-10-23): `allowed-tools` 가 든 스킬은 깔지 않는다. 그 칸은 `dontAsk` 턴에서도 셸을 열어
-   * (실측 claude 2.1.309) 소유자 카드 없이 도구가 열리는 길이 된다. 이미 깔린 것은 「사라진 스킬」과 같이 걷힌다.
+   * API 키 연결 턴(security, 2026-10-23): `laneSafeSkill` 을 지나는 스킬만 깐다. frontmatter 의 `allowed-tools` 는 `dontAsk`
+   * 턴에서도 셸을 열어(실측 claude 2.1.309) 소유자 카드 없이 도구가 열리는 길이 된다. 이미 깔린 것은 「사라진 스킬」과 같이 걷힌다.
    */
   opts: { dropToolGrants?: boolean } = {},
 ): Promise<void> {
@@ -795,9 +812,9 @@ export async function syncSkills(
 
   try {
     const listed = await listSkills();
-    const skills = opts.dropToolGrants ? listed.filter((s) => !skillGrantsTools(s.body)) : listed;
+    const skills = opts.dropToolGrants ? listed.filter((s) => laneSafeSkill(s.body)) : listed;
     if (skills.length < listed.length) {
-      console.warn(`[mentionTurn] API 키 연결 턴 — 도구 권한을 여는 스킬 ${listed.length - skills.length}개를 깔지 않았다`);
+      console.warn(`[mentionTurn] API 키 연결 턴 — 허용 목록 밖 frontmatter 를 가진 스킬 ${listed.length - skills.length}개를 깔지 않았다`);
     }
     const wanted = new Set(skills.map((s) => s.slug));
 

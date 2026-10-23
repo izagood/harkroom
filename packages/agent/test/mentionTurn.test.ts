@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
-import { AccountGateRequeueError, mentionAnchor, runMentionTurn, skillGrantsTools, syncSkills, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
+import { AccountGateRequeueError, mentionAnchor, runMentionTurn, laneSafeSkill, syncSkills, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
 import { createAttentionLedger } from '../src/attentionLedger.js';
 import { BODY_LIMIT } from '../src/prompt.js';
 
@@ -2822,7 +2822,7 @@ describe('syncSkills 단독(#140)', () => {
   });
 
   // API 키 연결 턴(security, 2026-10-23): `allowed-tools` 는 dontAsk 에서도 셸을 연다 — lane 에는 그런 스킬을 깔지 않는다.
-  it('dropToolGrants 면 allowed-tools 가 든 스킬을 깔지 않고, 앞서 깔린 것도 걷는다', async () => {
+  it('dropToolGrants 면 허용 목록 밖 스킬을 깔지 않고, 앞서 깔린 것도 걷는다', async () => {
     const { stateDir, workspaceDir } = await dirs();
     const grant = { slug: 'opens-shell', body: '---\nname: opens-shell\nallowed-tools: Bash\n---\n본문' };
     const plain = { slug: 'plain', body: '---\nname: plain\ndescription: x\n---\n본문' };
@@ -2835,10 +2835,30 @@ describe('syncSkills 단독(#140)', () => {
     expect(await readdir(join(stateDir, 'skills'))).toEqual(['plain']);
   });
 
-  it('skillGrantsTools — 줄머리 키만, 두 표기 모두, 없으면 거짓', () => {
-    expect(skillGrantsTools('---\nallowed-tools: Bash\n---')).toBe(true);
-    expect(skillGrantsTools('---\n  Allowed_Tools: [Read]\n---')).toBe(true);
-    expect(skillGrantsTools('---\nname: x\n---\n이 스킬은 allowed-tools 를 쓰지 않는다')).toBe(false);
+  // security F1: 거부 목록은 다른 표기로 샌다 — 아는 모양(frontmatter 없음, 또는 name·description 줄만)만 받는다.
+  it('laneSafeSkill — 허용 목록: 아는 모양만 받고 나머지는 뺀다', () => {
+    const ok = [
+      '# 제목\n본문 — allowed-tools 라는 낱말이 있어도 frontmatter 가 아니다',
+      '---\nname: plain\ndescription: 설명\n---\n본문',
+      '\uFEFF---\r\nname: crlf\r\n---\r\n본문',
+      '---\nname: a\n\ndescription:\n---',
+    ];
+    const bad = [
+      '---\nallowed-tools: Bash\n---',
+      '---\nallowed_tools: Bash\n---',
+      '---\nAllowed-Tools: Bash\n---',
+      '---\n"allowed-tools": Bash\n---',
+      "---\n'allowed-tools': Bash\n---",
+      '---\n{allowed-tools: Bash}\n---',
+      '---\nname: x\n  allowed-tools: Bash\n---',
+      '---\nname: x\n# 주석\n---',
+      '---\nname: x\nmodel: y\n---',
+      '---\nname: x',
+      '  ---\nallowed-tools: Bash\n---',
+      '\n---\nallowed-tools: Bash\n---',
+    ];
+    for (const body of ok) expect(laneSafeSkill(body)).toBe(true);
+    for (const body of bad) expect(laneSafeSkill(body)).toBe(false);
   });
 
   it('본문이 바뀌면 링크는 그대로 두고 파일만 갱신한다', async () => {
