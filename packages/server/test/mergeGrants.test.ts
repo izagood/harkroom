@@ -399,17 +399,24 @@ describe('repo.merge grant', () => {
       await revoke(alice.token, 'repo:izagood/p3-e');
     });
 
-    it('L2: 같은 (에이전트, 저장소, 스레드)의 안 쓴 기록은 다시 쓴다 — PR 번호만 지금 것으로', async () => {
+    it('L2·D1: 같은 (에이전트, 저장소, 스레드, PR, head)의 안 쓴 기록만 다시 쓴다 — 다른 PR 은 새 기록, 기록의 PR·head 는 안 바뀐다', async () => {
       const { cause, body } = await refused('izagood/p4-reuse');
       const thread = await threadOf(cause);
-      const reply = (await pool.query(
-        `insert into message (channel_id, thread_root_id, author_id, body, kind) values ($1, $2, $3, 'again', 'user') returning id`,
-        [ch, thread, alice.accountId])).rows[0].id as string;
-      await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agentId, reply]);
-      const again = (await check(await lease(reply), 'izagood/p4-reuse', { number: 99 })).json().error;
-      expect(again).toMatchObject({ code: 'not_granted', denialId: body.error.denialId });
-      const rows = (await pool.query(`select pr_number from merge_denial where agent_id = $1 and scope = 'repo:izagood/p4-reuse'`, [agentId])).rows;
-      expect(rows).toEqual([{ pr_number: 99 }]);
+      const again = async (opts: { number?: number; headSha?: string }) => {
+        const reply = (await pool.query(
+          `insert into message (channel_id, thread_root_id, author_id, body, kind) values ($1, $2, $3, 'again', 'user') returning id`,
+          [ch, thread, alice.accountId])).rows[0].id as string;
+        await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agentId, reply]);
+        return (await check(await lease(reply), 'izagood/p4-reuse', opts)).json().error;
+      };
+      expect(await again({ number: 42 })).toMatchObject({ code: 'not_granted', denialId: body.error.denialId });
+      const other = await again({ number: 99 });
+      expect(other.code).toBe('not_granted');
+      expect(other.denialId).not.toBe(body.error.denialId);
+      const rows = (await pool.query(
+        `select id, pr_number, obsoleted_at is not null as obsolete from merge_denial where agent_id = $1 and scope = 'repo:izagood/p4-reuse'`, [agentId])).rows;
+      expect(rows.find((r) => r.id === body.error.denialId)).toMatchObject({ pr_number: 42, obsolete: false });
+      expect(rows.find((r) => r.id === other.denialId)).toMatchObject({ pr_number: 99, obsolete: false });
     });
 
     it('L2: 에이전트마다 24시간 새 기록 상한 — 넘으면 not_granted 는 그대로, denialId 는 없다', async () => {
@@ -630,23 +637,39 @@ describe('repo.merge grant', () => {
       expect((await decide(alice.token, plain.created.requestId, { ghUser: 'izagood', number: 1, headSha: SHA })).json().error.code).toBe('not_once');
     });
 
-    it('F1: 카드가 선 뒤 다른 PR·head 로 다시 거절되면 옛 카드 값으로는 승인되지 않는다(card_stale) — 새 값이면 된다', async () => {
+    it('D1: 카드가 선 뒤 다른 PR 로 다시 거절되면 새 기록·새 카드 — 옛 카드는 그대로 옛 PR 에만 쓰인다', async () => {
       const cause = await mention(alice.accountId);
       const thread = await threadOf(cause);
       const first = (await check(await lease(cause), 'izagood/once-stale', { number: 11, headSha: SHA2 })).json();
       const rid = await requestFor(first.error.denialId, thread);
-      // 같은 스레드에서 다른 PR 로 다시 막힘 — 거절 행이 재사용되어 PR·head 가 덮인다.
       const again = (await check(await leaseInThread(thread, alice.accountId), 'izagood/once-stale', { number: 12, headSha: SHA })).json();
-      expect(again.error.denialId).toBe(first.error.denialId);
-      const stale = await decide(alice.token, rid, { ghUser: 'izagood' });
-      expect(stale.statusCode).toBe(409);
-      expect(stale.json().error.code).toBe('card_stale');
-      expect((await pool.query(`select count(*)::int as n from merge_approval where denial_id = $1`, [first.error.denialId])).rows[0].n).toBe(0);
-      expect((await pool.query(`select status from permission_request where id = $1`, [rid])).rows[0].status).toBe('pending');
-      // 다시 본 카드의 값(12·SHA)이면 승인된다.
-      const ok = await decide(alice.token, rid, { ghUser: 'izagood', number: 12, headSha: SHA });
+      expect(again.error.denialId).not.toBe(first.error.denialId);
+      const rid2 = await requestFor(again.error.denialId, thread);
+      expect(rid2).not.toBe(rid);
+      // 두 카드 다 기다린다 — 옛 카드의 기록은 옛 PR·head 그대로다.
+      expect((await pool.query(`select status from permission_request where id = any($1::uuid[]) order by created_at`, [[rid, rid2]])).rows.map((r) => r.status)).toEqual(['pending', 'pending']);
+      expect((await pool.query(`select pr_number, head_sha from merge_denial where id = $1`, [first.error.denialId])).rows[0]).toEqual({ pr_number: 11, head_sha: SHA2 });
+      // 옛 카드를 새 PR 값으로 승인하려 해도 card_stale — 기록이 바뀌지 않았으니 본 값(11) 그대로만 된다.
+      expect((await decide(alice.token, rid, { ghUser: 'izagood', number: 12, headSha: SHA })).json().error.code).toBe('card_stale');
+      const ok = await decide(alice.token, rid, { ghUser: 'izagood', number: 11, headSha: SHA2 });
       expect(ok.statusCode).toBe(200);
-      expect((await pool.query(`select pr_number, head_sha from merge_approval where denial_id = $1`, [first.error.denialId])).rows[0]).toEqual({ pr_number: 12, head_sha: SHA });
+      expect((await pool.query(`select pr_number, head_sha from merge_approval where denial_id = $1`, [first.error.denialId])).rows[0]).toEqual({ pr_number: 11, head_sha: SHA2 });
+      expect((await pool.query(`select count(*)::int as n from merge_approval where denial_id = $1`, [again.error.denialId])).rows[0].n).toBe(0);
+    });
+
+    it('D1: 같은 PR 이 새 head 로 다시 거절되면 옛 기록은 닫히고 새 카드가 옛 카드를 대체한다 · 같은 (PR, head)면 그 기록·카드 그대로', async () => {
+      const cause = await mention(alice.accountId);
+      const thread = await threadOf(cause);
+      const first = (await check(await lease(cause), 'izagood/once-head', { number: 13, headSha: SHA2 })).json();
+      const rid = await requestFor(first.error.denialId, thread);
+      const same = (await check(await leaseInThread(thread, alice.accountId), 'izagood/once-head', { number: 13, headSha: SHA2 })).json();
+      expect(same.error.denialId).toBe(first.error.denialId);
+      const moved = (await check(await leaseInThread(thread, alice.accountId), 'izagood/once-head', { number: 13, headSha: SHA })).json();
+      expect(moved.error.denialId).not.toBe(first.error.denialId);
+      expect((await pool.query(`select obsoleted_at is not null as obsolete, head_sha from merge_denial where id = $1`, [first.error.denialId])).rows[0]).toEqual({ obsolete: true, head_sha: SHA2 });
+      expect((await decide(alice.token, rid, { ghUser: 'izagood', number: 13, headSha: SHA2 })).statusCode).toBe(409);
+      const rid2 = await requestFor(moved.error.denialId, thread);
+      expect((await pool.query(`select status, superseded_by from permission_request where id = $1`, [rid])).rows[0]).toEqual({ status: 'superseded', superseded_by: rid2 });
     });
 
     it('F2: peek 은 이 임대의 스레드에서 판정이 소모할 바로 그 승인을 소모 없이 보여 준다', async () => {
@@ -797,7 +820,7 @@ describe('repo.merge grant', () => {
       expect((await check(await leaseInThread(thread, alice.accountId), 'izagood/ci-b', { number: 32, headSha: SHA3 })).json().approval).toBeUndefined();
     });
 
-    it('카드는 CI 거절에서만 — BLOCKED·판정 없는 보고는 기록을 만들지 않는다 · 같은 스레드는 CI 기록 하나를 다시 쓴다', async () => {
+    it('카드는 CI 거절에서만 — BLOCKED·판정 없는 보고는 기록을 만들지 않는다 · 같은 (PR, head)면 CI 기록을 다시 쓰고 다른 PR 이면 새로', async () => {
       expect((await grant(alice.token, { scope: 'repo:izagood/ci-c' })).statusCode).toBe(200);
       const before = (await pool.query(`select count(*)::int as n from merge_denial where agent_id = $1`, [agentId])).rows[0].n;
       const l = await lease(await mention(alice.accountId));
@@ -812,9 +835,14 @@ describe('repo.merge grant', () => {
 
       const a = await ciRefused('izagood/ci-c', 34, ['test']);
       const thread = (await pool.query(`select thread_root_id from secret_turn_lease where id = $1`, [a.l.id])).rows[0].thread_root_id as string;
+      // 같은 PR·head 로 다시 막히면 그 기록을 다시 쓴다(체크만 지금 것으로).
+      const a2 = await ciRefused('izagood/ci-c', 34, ['lint'], thread);
+      expect(a2.denialId).toBe(a.denialId);
+      expect((await pool.query(`select pr_number, failed_checks from merge_denial where id = $1`, [a.denialId])).rows[0]).toEqual({ pr_number: 34, failed_checks: ['lint'] });
+      // 다른 PR 이면 새 기록이고 옛 기록의 PR 은 그대로다(D1).
       const b = await ciRefused('izagood/ci-c', 35, ['lint'], thread);
-      expect(b.denialId).toBe(a.denialId);
-      expect((await pool.query(`select pr_number, failed_checks from merge_denial where id = $1`, [a.denialId])).rows[0]).toEqual({ pr_number: 35, failed_checks: ['lint'] });
+      expect(b.denialId).not.toBe(a.denialId);
+      expect((await pool.query(`select pr_number from merge_denial where id = $1`, [a.denialId])).rows[0]).toEqual({ pr_number: 34 });
     });
 
     it('CI 거절 카드는 선택지가 [거절] 하나(이번 한 번은 PermissionOncePanel, 7일 없음) · 본문은 「CI 실패 무시하고 이번 한 번 머지」와 거른 체크 이름(멘션 글자는 바꿔서)', () => {

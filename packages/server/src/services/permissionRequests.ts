@@ -183,27 +183,15 @@ export async function openPermissionRequest(
   // 그때 소유자가 할 수 있는 것은 [이번 한 번 머지]다.
   if (live && !args.denial) return { ok: true, alreadyGranted: { expiresAt: live.expiresAt } };
 
+  // 거절에서 온 카드는 그 거절 기록(= 그 PR·head) 하나에 묶인다(D1) — 같은 기록이면 있던 카드를 가리키고, 다른 PR·head 면 새 카드를 세운다.
+  // 기다리는 카드가 가리키는 PR·head 는 바꾸지 않는다: 사람이 본 카드와 승인이 쓰이는 PR 이 어긋나면 안 된다.
   const pending = (await pool.query<{ id: string; cardMessageId: string | null }>(
     `select id, card_message_id as "cardMessageId" from permission_request
       where agent_id = $1 and kind = $2 and target = $3 and thread_root_id = $4 and channel_id = $5
-        and status = 'pending' and expires_at > $6
+        and status = 'pending' and expires_at > $6 and ($7::uuid is null or denial_id = $7)
       order by created_at desc limit 1`,
-    [args.agentId, args.kind, target, args.threadRootId, args.channelId, now])).rows[0];
-  if (pending) {
-    // 같은 스레드에서 다시 막혔다 — 카드는 그대로 두고 1회 승인이 쓸 거절 기록만 새 것으로 바꾼다(PR·head 가 바뀌었을 수 있다).
-    if (args.denial) {
-      await pool.query(`update permission_request set denial_id = $2 where id = $1`, [pending.id, args.denial.id]);
-      if (pending.cardMessageId) {
-        await pool.query(
-          `update message set meta = jsonb_set(meta, '{permissionRequest,once}', $2::jsonb) where id = $1 and meta ? 'permissionRequest'`,
-          [pending.cardMessageId, JSON.stringify(onceMeta(args.denial))]);
-        // 열린 화면이 옛 PR·head 를 계속 보이지 않게 알린다(security F1). 승인 쪽은 그래도 대조값으로 한 번 더 막는다.
-        const card = await getMessageById(pool, pending.cardMessageId);
-        if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
-      }
-    }
-    return { ok: true, existing: { requestId: pending.id, cardMessageId: pending.cardMessageId } };
-  }
+    [args.agentId, args.kind, target, args.threadRootId, args.channelId, now, args.denial?.id ?? null])).rows[0];
+  if (pending) return { ok: true, existing: { requestId: pending.id, cardMessageId: pending.cardMessageId } };
 
   const count = (await pool.query<{ n: number }>(
     `select count(*)::int as n from permission_request where agent_id = $1 and created_at > $2`,
@@ -217,7 +205,7 @@ export async function openPermissionRequest(
     `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, denial_id, mandate_id)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning id`,
     [args.agentId, args.kind, target, args.reason, warnings, args.channelId, args.threadRootId, now, expiresAt, args.denial?.id ?? null, args.mandateId ?? null])).rows[0]!.id;
-  await supersedeOlderRequests(pool, { newId: id, agentId: args.agentId, kind: args.kind, target, channelId: args.channelId, threadRootId: args.threadRootId, now });
+  await supersedeOlderRequests(pool, { newId: id, agentId: args.agentId, kind: args.kind, target, channelId: args.channelId, threadRootId: args.threadRootId, now, denialPr: args.denial ? args.denial.number : null });
   await recordAudit(pool, {
     action: 'permission.requested', actorId: args.agentId, target: args.agentId,
     detail: { requestId: id, kind: args.kind, target, warnings, channelId: args.channelId, threadRootId: args.threadRootId },
@@ -432,8 +420,10 @@ export async function linkPermissionCard(pool: Pool, requestId: string, cardMess
  */
 async function supersedeOlderRequests(
   pool: Pool,
-  args: { newId: string; agentId: string; kind: PermissionKind; target: string; channelId: string; threadRootId: string; now: Date },
+  args: { newId: string; agentId: string; kind: PermissionKind; target: string; channelId: string; threadRootId: string; now: Date; denialPr?: number | null },
 ): Promise<void> {
+  // 거절 카드(`denialPr`)는 **같은 PR** 의 카드만 잇는다(D1) — 다른 PR 의 카드는 따로 살아 있다. 같은 PR 의 살아 있는 카드는 다른
+  // head 의 것이고(같은 기록이면 위에서 있던 카드를 돌려줬다) 그 기록은 래퍼 판정 때 이미 닫혔다 — 새 카드로 대체한다.
   await pool.query(
     `update permission_request
         set superseded_by = $6,
@@ -441,9 +431,10 @@ async function supersedeOlderRequests(
             decided_at = coalesce(decided_at, $7)
       where agent_id = $1 and kind = $2 and target = $3 and channel_id = $4 and thread_root_id = $5
         and id <> $6 and superseded_by is null
-        -- 살아 있는 pending 은 대체하지 않는다(같은 요청이 동시에 들어와도 열린 카드가 바뀌지 않게) — 기한이 지난 것만.
-        and (status = 'expired' or (status = 'pending' and expires_at <= $7))`,
-    [args.agentId, args.kind, args.target, args.channelId, args.threadRootId, args.newId, args.now]);
+        and ($8::int is null or denial_id in (select d.id from merge_denial d where d.scope = $3 and d.pr_number = $8))
+        -- 살아 있는 pending 은 대체하지 않는다(같은 요청이 동시에 들어와도 열린 카드가 바뀌지 않게) — 기한이 지난 것만. 거절 카드는 위대로.
+        and (status = 'expired' or (status = 'pending' and (expires_at <= $7 or $8::int is not null)))`,
+    [args.agentId, args.kind, args.target, args.channelId, args.threadRootId, args.newId, args.now, args.denialPr ?? null]);
 }
 
 /**
