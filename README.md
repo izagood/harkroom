@@ -251,6 +251,7 @@ The server reads these environment variables:
 | `APNS_TOPIC` | Bundle ID of the mobile app that receives the pushes | - | No |
 | `HARKROOM_NEW_PASSWORD` | New password read by `packages/server/scripts/reset-password.ts`; only set for that one command | - | No |
 | `HARKROOM_COMMIT` | Commit sha stamped at image build time; served by `GET /healthz` so operators can tell which build is running. Pass it as a Docker build arg (`HARKROOM_COMMIT=$(git rev-parse --short HEAD) docker compose build server`). Reported as `null` when unset | - | No |
+| `HARKROOM_MANDATE_ENFORCE` | `on` makes the server decide agent merges by the turn's mandate lines (a matching merge line, including standing lines from the owner's merge grants) instead of the cause chain; no matching line refuses with `no_mandate_line` and a permission card. One-time merge approvals work as before. Any other value keeps today's decision (the mandate verdict is only logged) | `off` | No |
 | `HARKROOM_VERSION` | Overrides the release number `GET /healthz` reports. Normally unset — the server reads `packages/desktop/src-tauri/tauri.conf.json`, which is this repo's version source of truth. Set it only when building outside this repo's layout | from `tauri.conf.json` | No |
 
 The desktop app has no environment variables; it asks for the server URL on first launch.

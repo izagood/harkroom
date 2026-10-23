@@ -21,7 +21,11 @@ export interface LineFacts {
 }
 
 export type CapAction =
-  | { cap: 'merge'; repo: string; pr?: number; head?: string }
+  /**
+   * `ghUser`: 머지에 쓸 gh 계정(래퍼가 알려 줄 때만). 줄에 `ghUser` 가 있으면 같은 계정이어야 맞는다 — 모르면(없으면) 맞지 않는다(W3, 보수).
+   * `ciOverride`: CI 실패를 무시하려는 머지. 줄이 `ciOverride: true` 일 때만 맞는다.
+   */
+  | { cap: 'merge'; repo: string; pr?: number; head?: string; ghUser?: string | null; ciOverride?: boolean }
   | { cap: 'tool'; rule: string }
   | { cap: 'command'; command: string }
   | { cap: 'bypass'; command: string };
@@ -75,6 +79,8 @@ const merge: CapEntry<Extract<CapAction, { cap: 'merge' }>> = {
     const l = line.limits ?? {};
     if (l.pr !== undefined && l.pr !== action.pr) return false;
     if (l.head !== undefined && l.head !== action.head) return false;
+    if (l.ghUser && (action.ghUser ?? '').toLowerCase() !== l.ghUser.toLowerCase()) return false;
+    if (action.ciOverride && l.ciOverride !== true) return false;
     return true;
   },
   cardKey: 'mandate.line.merge',

@@ -79,6 +79,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       channelId: id, authorId: req.account!.id, body: body.body,
       threadRootId: body.threadRootId ?? null, idempotencyKey,
       attachmentIds: body.attachmentIds ?? [], alsoInChannel: body.alsoInChannel,
+      authVia: req.authVia,
     });
     if (posted.failure === 'bad_thread') {
       return reply.code(400).send({ error: { code: 'bad_thread', message: BAD_THREAD_MESSAGE } });

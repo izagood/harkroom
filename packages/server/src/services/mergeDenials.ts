@@ -46,7 +46,7 @@ export interface MergeDenialMeta {
   headSha?: string;
 }
 
-export type MergeDenialReason = 'not_granted' | 'cause_not_human' | 'ci_not_green';
+export type MergeDenialReason = 'not_granted' | 'cause_not_human' | 'ci_not_green' | 'no_mandate_line';
 
 interface DenialRow {
   id: string; agentId: string; scope: string; number: number; headSha: string; channelId: string; threadRootId: string;

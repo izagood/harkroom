@@ -123,6 +123,11 @@ export interface PostMessageInput {
    */
   chainCause?: string | null;
   /**
+   * 이 글이 들어온 인증 경로(위임 W3, security n5) — HTTP 글 경로가 `req.authVia` 를 넘긴다. 위임(mandate)은 **사람 세션**(`'session'`)
+   * 글에서만 만들고 잇는다. PAT·오퍼레이터·서버 안쪽 호출(값 없음)은 위임을 만들지 않는다.
+   */
+  authVia?: 'session' | 'pat' | 'operator' | null;
+  /**
    * 이 발화를 낸 **턴의 id**(러너 → 브릿지 → 오퍼레이터 → MCP `TURN_ID_HEADER`, 2026-10-12). 에이전트 글의 `meta.turnId` 로 남긴다 —
    * 러너가 「이 턴이 무엇을 썼나」를 계정이 아니라 턴으로 센다(`agent/src/prompt.ts::ownedByTurn`). 부르는 쪽은 오퍼레이터를 거친
    * 요청일 때만 넘긴다(`chainCause` 와 같은 규칙). 판정이 아니라 관측에만 쓰는 값이라 확인하지 않는다 — 틀린 값의 해는 그 턴의 침묵 통지 문구뿐이다.
@@ -1499,7 +1504,7 @@ export async function postMessage(
     await fanOutCalls(client, { channelId: input.channelId, authorId: input.authorId, messageId: message.id }, calls, notified);
     // 위임 키(133, W1) — 서버만 적는다. 사람 글: 자기 에이전트를 깨운 새 머리면 만들고, 위임 머리의 답글이면 잇는다.
     // 에이전트 글: 그 원인으로 받은 살아 있는 임대의 위임(같은 소유자일 때만, 사슬 고리의 60분과 무관). 판정은 아직 이 값을 쓰지 않는다(그림자).
-    if (authorKind === 'human' && (input.kind ?? 'user') === 'user' && !(input.meta && 'automation' in input.meta)) {
+    if (authorKind === 'human' && input.authVia === 'session' && (input.kind ?? 'user') === 'user' && !(input.meta && 'automation' in input.meta)) {
       await stampHumanMandate(client, {
         messageId: message.id, authorId: input.authorId, channelId: input.channelId,
         threadRootId: input.threadRootId ?? null, notifiedIds: [...notified],

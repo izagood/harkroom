@@ -102,13 +102,45 @@ export async function listMandateLines(client: Q, mandateId: string, now = new D
 export async function findLine(pool: Pool | Q, args: {
   mandateId: string | null; agentId: string; cap: Cap; action: CapAction; now?: Date;
 }): Promise<MandateLine | null> {
+  return (await candidateLines(pool, args))[0] ?? null;
+}
+
+/** `findLine` 의 후보 전부(순서 그대로). 위임·소유자 조건이 안 맞으면 빈 목록. */
+async function candidateLines(pool: Pool | Q, args: {
+  mandateId: string | null; agentId: string; cap: Cap; action: CapAction; now?: Date;
+}): Promise<MandateLine[]> {
   const now = args.now ?? new Date();
-  if (args.action.cap !== args.cap) return null;
+  if (args.action.cap !== args.cap) return [];
+  // 우회(bypass) 줄은 W3 판정에 쓰지 않는다 — W5 의 자리(그 명령 한 번, G5). 여기서 막아 두면 어느 판정도 bypass 줄을 집지 못한다.
+  if (args.cap === 'bypass') return [];
   const owner = await validMandateOwner(pool, args.mandateId, now);
-  if (!owner) return null;
+  if (!owner) return [];
   const agentOwner = (await pool.query<{ owner: string | null }>(
     `select owner_account_id as owner from agent_config where account_id = $1`, [args.agentId])).rows[0]?.owner ?? null;
-  if (agentOwner !== owner) return null;
+  if (agentOwner !== owner) return [];
   const lines = await listMandateLines(pool, args.mandateId!, now);
-  return lines.find((l) => (l.agentIds === null || l.agentIds.includes(args.agentId)) && lineMatches(l, args.action, now)) ?? null;
+  return lines.filter((l) => l.cap !== 'bypass' && (l.agentIds === null || l.agentIds.includes(args.agentId)) && lineMatches(l, args.action, now));
+}
+
+/**
+ * 판정용(W3) — 맞는 줄을 찾고 **같은 SQL 문장에서** 한 번 쓴 것으로 센다. 저장된 줄은 `update ... where 회수 안 됨 and until 전 and
+ * (uses 없음 or used_count < uses) returning` 한 문장이라, 두 판정이 동시에 와도 `uses` 를 넘겨 쓰지 못한다(읽고-쓰기 경합 없음).
+ * 그 문장이 0줄이면(방금 다 썼다) 다음 후보로 간다. 상시 줄(grant 에서 펼친 것)은 `uses` 가 없어 세지 않는다.
+ */
+export async function consumeLine(pool: Pool | Q, args: {
+  mandateId: string | null; agentId: string; cap: Exclude<Cap, 'bypass'>; action: CapAction; now?: Date;
+}): Promise<MandateLine | null> {
+  const now = args.now ?? new Date();
+  for (const l of await candidateLines(pool, { ...args, now })) {
+    if (l.readOnly) return l;
+    const row = (await pool.query<MandateLine>(
+      `update mandate_line set used_count = used_count + 1
+        where id = $1 and revoked_at is null
+          and (limits->>'until' is null or (limits->>'until')::timestamptz > $2)
+          and (limits->>'uses' is null or used_count < (limits->>'uses')::int)
+        returning ${LINE_COLS}`,
+      [l.id, now])).rows[0];
+    if (row) return { ...row, readOnly: false };
+  }
+  return null;
 }
