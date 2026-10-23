@@ -28,6 +28,14 @@ const fake = new URL('./helpers/fake-harness.mjs', import.meta.url).pathname;
 
 const screen = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 
+// 2026-10-23 실측(claude 2.1.309): Anthropic 이 아닌 gateway 로 도는 auto 턴의 첫 도구 호출에 뜨는 안내. 사람을 기다리는
+// 화면인데 관문으로 못 읽어 주의 통지 없이 조용히 섰다(API 키 연결 에이전트). gateway 주소는 예시로 바꿨다.
+describe('auto 모드 classifier 과금 안내', () => {
+  it('관문으로 보인다 — "Enter to continue" 를 읽는다', () => {
+    expect(looksLikeGate(screen('claude-auto-mode-billing-notice.txt'))).toBe(true);
+  });
+});
+
 describe('codex 업데이트 선택 화면', () => {
   const update = screen('codex-tui-update-prompt.txt');
 

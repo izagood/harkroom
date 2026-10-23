@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { GRANT_DELEGATE_TOOL, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { GRANT_DELEGATE_TOOL, LANE_BASE_ALLOW, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -680,6 +680,40 @@ describe('전용 제공사 경로 env', () => {
       ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true,
       claudeConfigDir: null, providerEnv: { ...lane, ANTHROPIC_API_KEY: 'x' },
     })).toThrow(/ANTHROPIC_API_KEY/);
+  });
+
+  // 2026-10-23 실측(claude 2.1.309, 가짜 gateway): auto 는 첫 도구 호출에서 안내 화면으로 서고, 지나도 classifier 가
+  // gateway 에 없는 Claude 모델을 불러 Bash·MCP 를 모두 거절한다. lane 턴은 dontAsk + 허용 목록이어야 한다.
+  it('auto 멘션 턴은 dontAsk 로 뜨고 기본 허용 목록을 받는다 — lane 이 아니면 그대로 auto', () => {
+    const argv = (providerEnv: Record<string, string> | null) => buildTurnCommand({
+      ...base, harness: 'claude-code', mode: 'mention', mentionPermission: 'auto', sessionId: 'uuid-1', isFirstTurn: true,
+      claudeConfigDir: '/state/claude-provider-lane', providerEnv, toolAllows: ['Bash(kubectl get pods:*)'],
+    }).args;
+    const after = (args: string[], flag: string) => args[args.indexOf(flag) + 1];
+    const withLane = argv(lane);
+    expect(after(withLane, '--permission-mode')).toBe('dontAsk');
+    expect(withLane).not.toContain('auto');
+    for (const tool of LANE_BASE_ALLOW) expect(withLane).toContain(tool);
+    // 소유자가 승인한 규칙·래퍼·권한 요청 도구는 lane 에서도 그대로 열린다. deny 도 그대로다.
+    expect(withLane).toContain('Bash(kubectl get pods:*)');
+    expect(withLane).toContain(PERMISSION_REQUEST_TOOL);
+    expect(withLane).toContain('--disallowedTools');
+    // 셸·쓰기·웹은 기본으로 열지 않는다.
+    for (const tool of ['Bash', 'Edit', 'Write', 'WebFetch', 'WebSearch']) expect(withLane).not.toContain(tool);
+    // 맨 이름 Read 는 작업 디렉터리 밖까지 classifier 없이 연다(security F1). cwd 안 읽기는 dontAsk 가 규칙 없이 연다.
+    expect(withLane.filter((a) => /^(Read|Glob|Grep)\b/.test(a))).toEqual([]);
+
+    const plain = argv(null);
+    expect(after(plain, '--permission-mode')).toBe('auto');
+    for (const tool of LANE_BASE_ALLOW) expect(plain).not.toContain(tool);
+  });
+
+  it('읽기 전용 lane 턴은 plan 그대로다', () => {
+    const args = buildTurnCommand({
+      ...base, harness: 'claude-code', mode: 'mention', mentionPermission: 'readonly', sessionId: 'uuid-1', isFirstTurn: true,
+      claudeConfigDir: '/state/claude-provider-lane', providerEnv: lane,
+    }).args;
+    expect(args[args.indexOf('--permission-mode') + 1]).toBe('plan');
   });
 
   it('lane 키를 모르는 하네스에는 넣지 않는다(거절)', () => {
