@@ -1531,6 +1531,7 @@ export const en = {
   'lane.code.no_lease': 'Runner restarted; retry the turn',
   'lane.code.bg_unsupported': 'Background turns can\'t use an API key yet',
   'lane.code.harness_unsupported': 'This harness can\'t use an API key',
+  'lane.code.workspace_protected': 'The work folder has files that change the next turn\'s instructions or tools — remove things like .claude, .opencode, CLAUDE.md, AGENTS.md and call again',
   'lane.code.bad_model': 'opencode model isn\'t set for the API key — under [Customize for this agent], set it to harkroom-lane/<model name>',
   'lane.code.interactive_unsupported': 'Agents using an API key can\'t open a terminal yet',
   'lane.code.unknown': 'Couldn\'t prepare the API key',

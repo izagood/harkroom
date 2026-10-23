@@ -41,6 +41,7 @@ import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult
 import { planThreadNote, type ThreadNoteState } from './threadNotePin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
 import { ProviderLaneError } from './providerLane.js';
+import { laneWorkspaceViolations } from './laneWorkspaceGuard.js';
 
 /** 정지 직전 "제출 대기" 판정에 쓰는 화면 꼬리 길이(글자). 입력줄과 바닥줄 몇 개면 된다. */
 const SCREEN_TAIL_CHARS = 4_000;
@@ -1311,6 +1312,15 @@ export async function runMentionTurn(
   // 선다(2026-10-23 watcher, 10분 정지로만 접혔다). 키를 받기 전에 까닭 코드로 바로 실패한다.
   if (opencodeLaneModelMissing(Boolean(deps.providerEnv), usesXdgHome(def.harness), turnModel.model)) {
     throw new ProviderLaneError('bad_model');
+  }
+  // 작업 폴더에 다음 턴의 지시·도구·플러그인을 바꾸는 이름이 우리 것이 아닌 꼴로 있으면 띄우지 않는다(security, `laneWorkspaceGuard.ts`).
+  // 스킬 동기화·설정 걷기 **뒤**라 우리 링크와 걷힌 설정은 걸리지 않는다. 지우지 않는다 — 사람의 파일일 수 있다.
+  if (deps.providerEnv) {
+    const found = await laneWorkspaceViolations(rec.workspaceDir, join(deps.stateDir, 'skills'));
+    if (found.length) {
+      console.warn(`[mentionTurn] ${key}: API 키 연결 턴 — 작업 폴더에 보호 이름이 있어 띄우지 않는다: ${found.join(', ')}`);
+      throw new ProviderLaneError('workspace_protected');
+    }
   }
   // lane 이면 그 턴의 값을 지금 받는다 — 임대는 스케줄러가 이 멘션의 첫 시도 전에 받아 두었다.
   const providerEnv = deps.providerEnv ? await deps.providerEnv(mentionId, def.harness) : null;
