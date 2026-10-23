@@ -503,7 +503,7 @@ export async function decidePermissionRequest(
       lineOutcome = await addLineFromRequest(client, {
         request: r, decision: args.decision, actorId: args.actorId, now,
         via: args.via?.kind ?? 'button',
-        ...(approval && args.once ? { once: { number: approval.number, headSha: approval.headSha, ghUser: args.once.ghUser, ciOverride: args.once.relaxChecks } } : {}),
+        ...(approval && args.once ? { once: { number: approval.number, headSha: approval.headSha, ghUser: args.once.ghUser, ciOverride: approval.reason === 'ci_not_green' } } : {}),
       });
     }
     const status = args.decision === 'deny' ? 'denied' : r.kind === 'command' || args.decision === 'approve' ? 'granted' : 'approved_once';
