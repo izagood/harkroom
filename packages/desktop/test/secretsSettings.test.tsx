@@ -212,6 +212,23 @@ describe('SecretsSettings', () => {
     expect(screen.queryByTestId('secret-grant-confirm')).toBeNull();
   });
 
+  // 10-23 「My agents · 0」: 다른 경로(다른 기기·에이전트)에서 만든 에이전트는 이벤트가 없어 스토어에 늦게 든다 —
+  // 고르기를 열 때 디렉터리를 다시 읽어 새 에이전트가 후보에 나온다.
+  it('고르기를 열면 계정 디렉터리를 다시 읽고, 새로 생긴 내 에이전트가 후보에 나온다', async () => {
+    const refreshAccounts = vi.fn(async () => {
+      const st = useActiveStore.getState();
+      st.set({ accounts: { ...st.accounts, 'agent-new': acc('agent-new', 'watcher', 'agent', false, { ownerAccountId: ME }) } });
+    });
+    setup({ refreshAccounts });
+    render(<SecretsSettings />);
+    await expand('api-token');
+    await screen.findByTestId('secret-grant-alpha');
+    fireEvent.click(screen.getByTestId('secret-agent-add'));
+    await waitFor(() => expect(refreshAccounts).toHaveBeenCalled());
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '@watch' } });
+    expect(await screen.findByTestId('secret-agent-option-watcher')).toBeTruthy();
+  });
+
   it('고르기 팝오버: 내 에이전트만, 이미 받는 에이전트는 「받는 중」으로 못 고르고, 검색·↑↓·Enter·Esc', async () => {
     setup();
     render(<SecretsSettings />);

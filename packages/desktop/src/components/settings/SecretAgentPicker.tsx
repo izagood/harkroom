@@ -15,13 +15,15 @@ import { useT } from '../../i18n/useT';
  *
  * 후보를 거르는 판정(내 에이전트만)은 호출부가 한다 — 서버도 남의 에이전트는 `not_own_agent` 로 거절한다.
  */
-export function SecretAgentPicker({ candidates, granted, disabled, onPick }: {
+export function SecretAgentPicker({ candidates, granted, disabled, onPick, onOpen }: {
   /** 고를 수 있는 에이전트(가나다로 세워서 넘긴다). */
   candidates: AccountView[];
   /** 이미 받는 에이전트 id — 흐리게 「받는 중」. */
   granted: ReadonlySet<string>;
   disabled?: boolean;
   onPick(agentId: string): void;
+  /** 열 때 — 호출부가 후보(계정 디렉터리)를 다시 읽는다. 다른 기기·다른 경로에서 만든 에이전트도 보이게. */
+  onOpen?(): void;
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -45,6 +47,7 @@ export function SecretAgentPicker({ candidates, granted, disabled, onPick }: {
     if (refocus) triggerRef.current?.focus();
   };
   const openPicker = () => {
+    onOpen?.();
     setQuery('');
     setActive(Math.max(0, candidates.findIndex((a) => !granted.has(a.id))));
     setOpen(true);

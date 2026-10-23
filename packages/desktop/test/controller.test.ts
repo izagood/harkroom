@@ -113,6 +113,23 @@ describe('Controller', () => {
     expect(useAppStore.getState().accounts.sys!.handle).toBe('murmur');
   });
 
+  // 비밀 허락 고르기(SecretAgentPicker)는 스토어의 accounts 에서 「내 에이전트」를 고른다. 방금 만든 에이전트가 거기
+  // 없어서 「My agents · 0」이 떴다(10-23, watcher). 만들기가 디렉터리를 다시 읽어야 한다.
+  it('createAgent 는 만든 뒤 계정 디렉터리를 다시 읽는다 — 새 에이전트가 스토어 accounts 에 든다', async () => {
+    const api = fakeApi();
+    const { makeWs } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    expect(useAppStore.getState().accounts['a-new']).toBeUndefined();
+    const made = { ...acc('a-new', 'watcher', 'agent'), ownerAccountId: 'u1' };
+    (api as unknown as { createAgent: unknown }).createAgent = vi.fn(async () => made);
+    (api.accounts as ReturnType<typeof vi.fn>).mockResolvedValue(accountsResult([
+      acc('u1', 'admin'), acc('u2', 'bot', 'agent'), made,
+    ]));
+    await c.createAgent({ handle: 'watcher', displayName: 'watcher' });
+    expect(useAppStore.getState().accounts['a-new']?.handle).toBe('watcher');
+  });
+
   it('does not refetch the directory for a message from a known author', async () => {
     const api = fakeApi();
     const { makeWs, callbacks } = fakeWsFactory();

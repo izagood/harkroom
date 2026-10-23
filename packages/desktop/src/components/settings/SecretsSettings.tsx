@@ -628,7 +628,10 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
       )}
       {canGrant ? (
         <div className="mt-2">
+          {/* 열 때 계정 디렉터리를 다시 읽는다(5초 간격 제한) — 다른 기기·에이전트가 만든 에이전트는 이벤트가 없어 스토어에
+              늦게 든다(10-23 「My agents · 0」). 이 앱에서 만든 것은 `createAgent` 가 이미 다시 읽었다. */}
           <SecretAgentPicker candidates={mineAgents} granted={grantedIds} disabled={busy}
+            onOpen={() => { void Promise.resolve().then(() => getController().refreshAccounts()).catch(() => undefined); }}
             onPick={(id) => { setAgentId(id); setOperator('current'); setError(null); }} />
           {agentId && (
             <GrantConfirm

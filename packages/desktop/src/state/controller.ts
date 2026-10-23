@@ -2483,6 +2483,12 @@ export class Controller {
   ): Promise<{ agent: import('@harkroom/shared').AgentView; poolError: string | null; attachError: string | null }> {
     const agent = await this.api.createAgent(input);
     /**
+     * **계정 디렉터리를 다시 읽는다**(10-23). 스토어의 `accounts` 는 기동 때와 「모르는 계정이 이벤트에 나올 때」만 채워지는데,
+     * 서버는 에이전트를 만들어도 이벤트를 내지 않는다 — 그래서 방금 만든 에이전트가 스토어에 없어 비밀 허락 고르기
+     * (`SecretAgentPicker`, 스토어에서 「내 에이전트」를 고른다)에 「My agents · 0」으로 빠졌다. 실패는 생성을 되돌리지 않는다.
+     */
+    await this.refreshAccounts({ force: true }).catch(() => undefined);
+    /**
      * 계정 풀 배정은 이 기기의 로컬 값이다(`useAgentPool` 머리말) — 서버로 가지 않으므로
      * `input` 에 실을 수 없고, 별도 인자로 받는다. 러너는 오퍼레이터가 배정을 받아 띄우며
      * 풀은 그때 읽힌다(단계 2 뒤로 `HARKROOM_CLAUDE_POOL` 은 오퍼레이터의 로컬 설정이다).
