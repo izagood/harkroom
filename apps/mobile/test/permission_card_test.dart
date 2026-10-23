@@ -96,7 +96,7 @@ Map<String, Object?> permMeta({
           'once': {'number': 404, 'headSha': '7b7dd25aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'reason': 'not_granted'},
           ...pr,
         },
-      if (mirror != null) 'permissionMirror': mirror,
+      'permissionMirror': ?mirror,
     };
 
 MessageRow msg(Map<String, Object?> meta, {String id = 'm1'}) => MessageRow.fromJson({
