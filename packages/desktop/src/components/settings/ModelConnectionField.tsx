@@ -27,6 +27,12 @@ export function opencodeLaneModel(model: string | null): string | null {
   return `${OPENCODE_LANE_PREFIX}${m}`;
 }
 
+/** opencode 를 떠날 때 모델 칸에서 lane 머리를 뗀 원문 id — lane 모양이 아니면 null(고칠 것 없음). `opencodeLaneModel` 의 반대다. */
+export function opencodeLaneModelUndo(model: string | null): string | null {
+  const m = model?.trim() ?? '';
+  return m.startsWith(OPENCODE_LANE_PREFIX) && m.length > OPENCODE_LANE_PREFIX.length ? m.slice(OPENCODE_LANE_PREFIX.length) : null;
+}
+
 type UrlProblem = 'badScheme' | 'badParts' | null;
 /** 화면이 말할 까닭을 가른다. 판정 자체는 shared `normalizeProviderBaseUrl` 이 한다(오퍼레이터가 다시 잰다). */
 export function urlProblem(raw: string): UrlProblem {

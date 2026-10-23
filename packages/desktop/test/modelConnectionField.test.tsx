@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import { usePrefsStore } from '../src/state/prefsStore';
-import { ModelConnectionField, ModelConnectionStatus, opencodeLaneModel, urlProblem } from '../src/components/settings/ModelConnectionField';
+import { ModelConnectionField, ModelConnectionStatus, opencodeLaneModel, opencodeLaneModelUndo, urlProblem } from '../src/components/settings/ModelConnectionField';
 import { laneCodeKey, laneCodeName } from '../src/lib/laneCodes';
 import type { LaneSecretOption, ProviderLaneState } from '../src/lib/useProviderLane';
 
@@ -44,6 +44,10 @@ describe('주소 검사·모델 이름', () => {
     expect(opencodeLaneModel('ExampleOrg/example-model')).toBe('harkroom-lane/ExampleOrg/example-model');
     expect(opencodeLaneModel('harkroom-lane/example-model')).toBeNull();
     expect(opencodeLaneModel(null)).toBeNull();
+    // designer s1: opencode 를 떠나면 머리를 뗀다 — 왕복하면 원래 값이다.
+    expect(opencodeLaneModelUndo(opencodeLaneModel('ExampleOrg/example-model'))).toBe('ExampleOrg/example-model');
+    expect(opencodeLaneModelUndo('ExampleOrg/example-model')).toBeNull();
+    expect(opencodeLaneModelUndo('harkroom-lane/')).toBeNull();
   });
 });
 
