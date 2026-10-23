@@ -73,8 +73,9 @@ export interface CommunityDeps {
      */
     mcp?: (names: string[], baseUrl: string) => Promise<OperatorStatus['mcp']>;
     /**
-     * gh 계정 보고(D1). 이 커뮤니티에 맞게 거른 값을 준다(`ghReport.ts`). 이 커뮤니티에 로컬 에이전트가 없으면 부르지 않는다 —
-     * 로그인 목록은 머신 값이라, 에이전트가 없는 서버에는 보낼 까닭이 없다. 바뀌었을 때만 낸다.
+     * gh 계정 보고(D1). 이 커뮤니티에 맞게 거른 값을 준다(`ghReport.ts`). 이 커뮤니티에 로컬 에이전트가 없으면 부르지 않는다.
+     * 로그인 목록·옛 기본값은 머신 값이라, 이 오퍼레이터 주인의 에이전트가 이 커뮤니티에 붙어 있을 때만 싣는다(`ownAgentAttached`).
+     * 바뀌었을 때만 낸다.
      */
     gh?: (baseUrl: string) => Promise<GhReport | null>;
   };
@@ -215,6 +216,8 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
           return;
         }
         assignments.set(frame.agentId, frame.definition);
+        // 주인이 같은 에이전트가 붙으면 로그인 목록을 다음 박동까지 기다리지 않고 낸다(같은 값이면 보내지 않는다).
+        beatGh();
         void deps.reconciler.onAssign(deps.baseUrl, frame.definition, local)
           .then((outcome) => {
             if (typeof outcome !== 'object') return;
@@ -248,11 +251,24 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
   let beatTimer: ReturnType<typeof setInterval> | null = null;
   // 마지막으로 보낸 gh 보고 — 같은 값이면 다시 보내지 않는다. 다시 붙으면 잊는다(서버가 첫 값을 받게).
   let lastGh: string | null = null;
+  /**
+   * 머신 값(로그인 목록·옛 기본값)을 실어도 되나(n7 결정 A) — 이 커뮤니티에 붙은 에이전트 중 하나라도 주인이 이 오퍼레이터의
+   * 주인(`/operators/self`)과 같을 때만. 남의 에이전트만 붙어 있으면 그 커뮤니티에는 이 머신의 gh 이름을 보내지 않는다.
+   * 주인을 못 읽으면(null) 싣지 않는다.
+   */
+  const ownAgentAttached = async (): Promise<boolean> => {
+    const defs = [...assignments.values()];
+    if (defs.length === 0) return false;
+    const me = await (selfOwner ?? (selfOwner = readSelf()));
+    return me !== null && defs.some((d) => d.ownerAccountId === me);
+  };
   const beatGh = (): void => {
     const gh = deps.heartbeat?.gh;
     if (!gh || Object.keys(agents).length === 0) return;
-    void gh(deps.baseUrl).then((report) => {
-      if (!report) return;
+    void Promise.all([gh(deps.baseUrl), ownAgentAttached()]).then(([built, own]) => {
+      if (!built) return;
+      // 줄(byScope)·닿음(reach)은 이 커뮤니티의 머지로 이미 걸러져 있다 — 그대로 둔다. 머신 값만 뺀다.
+      const report: GhReport = own ? built : { ...built, logins: [], defaultGhUser: null };
       const key = JSON.stringify(report);
       if (key === lastGh) return;
       if (link.send({ type: 'gh.report', report })) lastGh = key;

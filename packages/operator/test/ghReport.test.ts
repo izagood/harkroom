@@ -70,6 +70,52 @@ describe('community gh.report', () => {
 
   it('이 커뮤니티에 에이전트가 붙어 있을 때만 보낸다', async () => {
     expect(await run({})).toEqual([]);
-    expect(await run({ a: {} })).toEqual([{ type: 'gh.report', report: { logins: ['me'], byScope: {}, defaultGhUser: null, reach: [] } }]);
+    // 배정이 아직 없으면 주인이 같은 에이전트도 없다 — 머신 값(로그인 목록)은 빼고 보낸다(아래 n7).
+    expect(await run({ a: {} })).toEqual([{ type: 'gh.report', report: { logins: [], byScope: {}, defaultGhUser: null, reach: [] } }]);
+  });
+
+  // n7 결정 A — 로그인 목록·옛 기본값(머신 값)은 이 오퍼레이터 주인의 에이전트가 이 커뮤니티에 붙어 있을 때만 싣는다.
+  const runOwned = async (selfOwner: string | null, agentOwners: (string | null)[]) => {
+    const sent: string[] = [];
+    let open: ((frame: string) => void) | null = null;
+    const dial: LinkDialer = (_u, _t, h) => {
+      h.onOpen({ send: (d) => sent.push(d), close: () => {} });
+      open = (d) => h.onMessage(d);
+    };
+    const report = {
+      logins: ['me', 'work-bot'], byScope: { 'work-org/app': 'work-bot' }, defaultGhUser: 'legacy-user',
+      reach: [{ scope: 'work-org/app', login: 'work-bot', reachable: true as const }],
+    };
+    const fetchImpl = (async () => new Response(JSON.stringify({ id: 'op1', ownerAccountId: selfOwner }), { status: 200 })) as typeof fetch;
+    const agents = { local: {}, ...Object.fromEntries(agentOwners.map((_, i) => [`a${i}`, {}])) };
+    const c = createCommunity({
+      baseUrl: 'https://work.example.com', token: 'hkop_x', agents, reconciler, dial, schedule: () => {}, log: () => {},
+      fetchImpl, heartbeatMs: 60_000,
+      heartbeat: { status: async () => ({ turns: { running: 0, max: null } }), machine: async () => null, gh: async () => report },
+    });
+    c.start();
+    await new Promise((r) => setTimeout(r, 0));
+    agentOwners.forEach((owner, i) => open!(JSON.stringify({ type: 'assign', agentId: `a${i}`, definition: { agentId: `a${i}`, ownerAccountId: owner, mcpServers: [] } })));
+    await new Promise((r) => setTimeout(r, 10));
+    c.stop();
+    const frames = sent.map((d) => JSON.parse(d)).filter((f) => f.type === 'gh.report');
+    return frames.at(-1)?.report;
+  };
+  const machineless = { byScope: { 'work-org/app': 'work-bot' }, reach: [{ scope: 'work-org/app', login: 'work-bot', reachable: true }] };
+
+  it('주인이 같은 에이전트가 붙어 있으면 로그인 목록·옛 기본값을 싣는다', async () => {
+    expect(await runOwned('acc-me', ['acc-me'])).toEqual({ ...machineless, logins: ['me', 'work-bot'], defaultGhUser: 'legacy-user' });
+    // 남의 에이전트와 함께 붙어 있어도 하나가 주인 것이면 싣는다.
+    expect(await runOwned('acc-me', ['acc-other', 'acc-me'])).toEqual({ ...machineless, logins: ['me', 'work-bot'], defaultGhUser: 'legacy-user' });
+  });
+
+  it('주인이 다른 에이전트만 붙어 있으면 로그인 목록·옛 기본값은 빼고 줄·닿음은 그대로 보낸다', async () => {
+    expect(await runOwned('acc-me', ['acc-other'])).toEqual({ ...machineless, logins: [], defaultGhUser: null });
+    expect(await runOwned('acc-me', [null])).toEqual({ ...machineless, logins: [], defaultGhUser: null });
+  });
+
+  it('오퍼레이터 주인을 못 읽거나 배정이 없으면 로그인 목록을 싣지 않는다', async () => {
+    expect(await runOwned(null, ['acc-me'])).toEqual({ ...machineless, logins: [], defaultGhUser: null });
+    expect(await runOwned('acc-me', [])).toEqual({ ...machineless, logins: [], defaultGhUser: null });
   });
 });

@@ -5,7 +5,8 @@
  * 경계(security #1203 F1): 재료(`operator.json` 의 `merge`·gh 로그인)는 머신 전역이다. 그래서
  * - 줄(byScope)은 **이 커뮤니티에서 머지로 쓴 저장소**(`/agent/merge-checks` 를 이 커뮤니티로 보낸 저장소)에 맞는 줄만 싣는다.
  *   다른 커뮤니티의 저장소 이름이 이 서버로 가지 않는다. 오퍼레이터가 다시 뜨면 기록은 비고, 다음 머지 때 다시 찬다.
- * - 로그인 목록·옛 기본값은 머신 값이라 거를 길이 없다 — 이 커뮤니티에 에이전트가 붙어 있을 때만 싣는다(`community.ts`).
+ * - 로그인 목록·옛 기본값은 머신 값이라 거를 길이 없다 — 이 커뮤니티에 이 오퍼레이터 주인의 에이전트가 붙어 있을 때만
+ *   싣는다(`community.ts` 의 `ownAgentAttached`). 아니면 빈 목록·null 로 보낸다.
  * - 닿음은 이미 아는 것만(이 커뮤니티의 머지가 그 계정으로 머지·큐에 넣었으면 true, 접근 거절이면 false). 따로 재지 않는다.
  */
 import type { GhReach, GhReport } from '@harkroom/shared/operatorProtocol';
