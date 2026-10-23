@@ -30,7 +30,7 @@ import { continueList, formatShortcut, inFence, toggleFence, toggleInline, toggl
 import { ComposerToolbar, type FormatKind } from './ComposerToolbar';
 import { focusKind, recordEnter, type EnterRoute, type SendOutcome } from '../lib/enterTrace';
 import { QUICK_REACTIONS } from './Reactions';
-import { COMPOSER_BOX, ComposerEditor, type ComposerKeyEvent, type ComposerPasteEvent, type ComposerTextBox } from './ComposerEditor';
+import { COMPOSER_BOX, ComposerEditor, type ActiveFormats, type ComposerKeyEvent, type ComposerPasteEvent, type ComposerTextBox } from './ComposerEditor';
 import { toggleCode } from '../lib/codeMarks';
 // 하이퍼링크를 **쓰는** 쪽(⌘K · 고른 글 위에 주소 붙여넣기). 그리는 쪽은 #216 부터 있었다 —
 // 무엇이 링크 문법인지는 렌더러가 쓰는 함수(`linkAt`)가 정한다. 그 파일의 주석이 근거다.
@@ -141,6 +141,11 @@ interface Props {
    * 두 번째 인자는 이미 업로드된 첨부의 id 들이다(업로드는 파일을 고른 순간 끝나 있다).
    */
   onSend: (body: string, attachmentIds: string[], agentModels?: AgentModelPick[]) => void | Promise<unknown>;
+  /**
+   * 보내기를 **누른 순간** 부른다(보냄 취소 창이 끝나 실제로 나가기 전). 이번 글에만 딸린 선택(스레드의 「…에도 올리기」)을
+   * 끄는 자리다 — `onSend` 는 창이 끝난 뒤에 불려서, 그 사이 친 다음 글까지 같은 선택으로 나간다.
+   */
+  onSubmitted?: () => void;
   placeholder?: string;
   rows?: number;
   autoFocus?: boolean;
@@ -215,7 +220,7 @@ interface HeldMessage {
 }
 
 export function Composer({
-  onSend, placeholder, rows = 2, autoFocus, scopeKey = '', channelId, autoMentionChannelId, belowText,
+  onSend, onSubmitted, placeholder, rows = 2, autoFocus, scopeKey = '', channelId, autoMentionChannelId, belowText,
 }: Props) {
   // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
   const hostDoc = useHostDocument();
@@ -386,6 +391,8 @@ export function Composer({
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   // 서식 도구줄(결정 3 — 기본 켬, Aa 로 끄면 이 기기에서 기억).
   const [toolbarOn, setToolbarOn] = useState(() => composerToolbarStorage.load());
+  // 커서 자리에 켜진 서식 — 도구줄 단추의 켜짐 표시(시안 「서식 적용 중」). 편집기가 커서·글이 바뀔 때 알려 준다.
+  const [activeFormats, setActiveFormats] = useState<ActiveFormats>(() => new Set());
   // 동작줄의 두 작은 메뉴. 한쪽을 열면 다른 쪽은 닫는다 — 둘이 겹쳐 뜨면 Escape 가 어디로 갈지 모른다.
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [sendMenu, setSendMenu] = useState(false);
@@ -1085,6 +1092,7 @@ export function Composer({
     if (!confirmed && calls.length >= MANY_CALLS) { traceSend('manyCalls'); setManyCalls(calls); return; }
     setManyCalls(null);
     traceSend('sent');
+    onSubmitted?.();
     // 칩을 작성창에서 걷되 업로드는 계속된다 — 이 글이 그것을 기다렸다가 함께 나간다.
     const attachments = takeUploads(scopeKey);
     // 앞의 것이 아직 대기 중이면 **먼저 내보낸다.** 한 번에 하나만 들 수 있으므로 덮으면
@@ -2085,7 +2093,7 @@ export function Composer({
       {/* `composer-box`: 포커스 링이 이 바깥 상자에 선다(index.css) — 안쪽 본문 칸에 세우면 상자 안에 상자가 하나 더 생기고
           도구줄·동작줄이 링 밖으로 떨어져 한 입력창으로 읽히지 않는다(#1431 designer 1). */}
       <div className="composer-box relative flex flex-col rounded-compose bg-field shadow-compose">
-        {toolbarOn && <ComposerToolbar onFormat={applyFormat} />}
+        {toolbarOn && <ComposerToolbar onFormat={applyFormat} active={activeFormats} />}
         {(autoActive.length > 0 || sticky.length > 0) && (
           <ul className="flex flex-wrap items-center gap-1 px-3 pt-2" aria-label={t('chat.keptMentions')}>
             {/* 자동 멘션 칩(#173). 고정 칩과 같은 줄을 쓰되 '자동' 배지와 색으로 구분한다 —
@@ -2159,6 +2167,7 @@ export function Composer({
           onSelect={(value, caret) => recompute(value, caret)}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
+          onFormatState={setActiveFormats}
         />
         {pending.length > 0 && (
           /* 붙인 순서대로, 넘치면 줄을 바꾼다. 위·오른쪽 여백은 모서리에 반 걸친 × 자리다.

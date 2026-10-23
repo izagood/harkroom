@@ -49,6 +49,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   /** 채널과 같은 판정을 쓴다 — 모르는 계정은 에이전트로 치지 않는다(`lib/agentExchange`). */
   const isAgent = (id: string): boolean => accounts[id]?.kind === 'agent';
   const [alsoInChannel, setAlsoInChannel] = useState(false);
+  // 스레드를 옮기면 끈다 — 앞 스레드에서 켠 선택이 다른 스레드의 답글에 따라가면 안 된다.
+  useEffect(() => { setAlsoInChannel(false); }, [threadRootId]);
   /*
     「…에도 올리기」의 대상. `ChannelPane` 머리글과 같은 갈래다: 채널이면 「# 이름」, DM 이면 낱말 「대화」(DM 에 '#' 을
     붙이면 없는 채널 이름이 된다 — 상대 핸들은 길어서 넣지 않는다), 어느 쪽도 못 찾으면 이름 없는 옛 문구.
@@ -495,24 +497,32 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
           // 읽고 정하는 자리라 본문단이다(앱 기본값 13px 이라 크기를 안 적는다).
           // 어느 채널인지 이름으로 말한다: 「채널에도」만으로는 스레드 창에서 어디로 가는지 안 보인다.
           belowText={(
-            <label className="flex items-center gap-2 text-fg-muted">
+            /*
+              한 줄로 둔다 — 긴 채널 이름이 두 줄로 꺾이면 체크가 두 줄 가운데에 떠서 첫 줄과 어긋났다(#1441 designer n8).
+              이름은 말줄임하고 전체는 마우스 올림으로 보인다. 체크는 강조색·다크 색 체계를 따른다(n9 — 다크에서 흰 네모로 튀었다).
+            */
+            <label className="flex min-w-0 items-center gap-2 text-fg-muted" title={alsoPost ? alsoPost.parts.join(alsoPost.target) : undefined}>
               <input
                 type="checkbox"
                 checked={alsoInChannel}
                 onChange={(e) => setAlsoInChannel(e.target.checked)}
-                className="rounded-row border-border"
+                className="shrink-0 rounded-row border-border accent-[var(--app-accent)] dark:[color-scheme:dark]"
               />
+              {/* 채널 이름만 말줄임한다 — 「에도 올리기」/「Also post to」가 잘리면 무엇을 켜는 체크인지 사라진다(#1491 designer 1). */}
               {alsoPost ? (
-                <span>
-                  {alsoPost.parts[0]}
-                  <strong className="font-semibold text-fg">{alsoPost.target}</strong>
-                  {alsoPost.parts[1]}
+                <span className="flex min-w-0">
+                  {alsoPost.parts[0] ? <span className="shrink-0 whitespace-pre">{alsoPost.parts[0]}</span> : null}
+                  <strong className="min-w-0 truncate font-semibold text-fg">{alsoPost.target}</strong>
+                  {alsoPost.parts[1] ? <span className="shrink-0 whitespace-pre">{alsoPost.parts[1]}</span> : null}
                 </span>
               ) : (
-                <span>{t('thread.alsoPostFallback')}</span>
+                <span className="min-w-0 truncate">{t('thread.alsoPostFallback')}</span>
               )}
             </label>
           )}
+          // 「…에도 올리기」는 **이번 글에만** 딸린 선택이다 — 보내면 끈다(Slack 과 같다). 켠 채 남으면 다음 답글들이 모르는 사이
+          // 채널에도 나갔다(#1441 security n1). 보낸 글은 누른 순간의 값으로 이미 붙잡혀 있다(`onSend` 클로저).
+          onSubmitted={() => setAlsoInChannel(false)}
           // 채널과 스레드 뿌리를 지금 것으로 붙인다(#223) — 창이 도는 동안 패널을 닫으면
           // 스토어의 `threadRootId` 는 null 이 되어 답글이 조용히 사라진다.
           onSend={(body, attachmentIds, agentModels) =>
