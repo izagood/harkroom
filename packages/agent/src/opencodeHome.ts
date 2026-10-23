@@ -122,7 +122,9 @@ export const PROVIDER_LANE_OPENCODE_ENV = { baseUrl: 'HARKROOM_PROVIDER_BASE_URL
  * 모델 id 문법. opencode 는 설정 **본문 전체**에서 `{env:…}`·`{file:…}` 를 바꿔 넣으므로, 서버에서 온 모델 이름에
  * 중괄호가 섞이면 키나 아무 파일이 모델 이름 자리로 gateway 에 실려 간다. 그래서 글자를 좁힌다.
  */
-const LANE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const LANE_MODEL_ID = /^(?=.{1,128}$)[A-Za-z0-9][A-Za-z0-9._:-]*(?:\/[A-Za-z0-9._:-]+)*$/;
+// `/` 는 마디 사이에만 받는다(2026-10-23): gateway 모델 id 는 `ExampleOrg/example-model` 처럼 조직 이름을 앞에 단다. `/` 를
+// 막으면 그런 모델은 lane 목록이 비어 opencode 가 「Connect a provider」 창을 띄우고 선다. 중괄호는 여전히 못 들어온다.
 
 /** `harkroom-lane/<id>` 에서 id 를 꺼낸다. 아니면 null — 그 턴은 모델을 못 찾고 실패한다(다른 provider 로 안 떨어진다). */
 export function providerLaneModelId(model: string | null | undefined): string | null {
@@ -130,6 +132,15 @@ export function providerLaneModelId(model: string | null | undefined): string | 
   if (!model?.startsWith(prefix)) return null;
   const id = model.slice(prefix.length);
   return LANE_MODEL_ID.test(id) ? id : null;
+}
+
+/**
+ * opencode lane 턴의 모델이 lane 모양(`harkroom-lane/<id>`)이 아니어서 **띄워 봐야 서는가**. 참이면 러너는 키를 받기 전에
+ * `bad_model` 로 실패한다 — 띄우면 lane 목록이 비어 opencode 가 「Connect a provider」 창에서 선다(2026-10-23 watcher).
+ */
+export function opencodeLaneModelMissing(lane: boolean, xdgHome: boolean, model: string | null | undefined): boolean {
+  // 하네스 이름이 아니라 표의 성질(`usesXdgHome` — 이 설정 파일로 모델을 고르는 하네스)로 가른다.
+  return lane && xdgHome && providerLaneModelId(model) === null;
 }
 
 /**

@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import { usePrefsStore } from '../src/state/prefsStore';
-import { ModelConnectionField, ModelConnectionStatus, opencodeLaneModel, urlProblem } from '../src/components/settings/ModelConnectionField';
+import { ModelConnectionField, ModelConnectionStatus, opencodeLaneModel, opencodeLaneModelUndo, urlProblem } from '../src/components/settings/ModelConnectionField';
 import { laneCodeKey, laneCodeName } from '../src/lib/laneCodes';
 import type { LaneSecretOption, ProviderLaneState } from '../src/lib/useProviderLane';
 
@@ -40,9 +40,14 @@ describe('주소 검사·모델 이름', () => {
 
   it('opencode 모델 칸은 harkroom-lane/<id> 로 — 이미 그 모양이거나 비었으면 안 고친다', () => {
     expect(opencodeLaneModel('example-model')).toBe('harkroom-lane/example-model');
-    expect(opencodeLaneModel('anthropic/example-model')).toBe('harkroom-lane/example-model');
+    // 조직·provider 이름을 자르지 않는다(2026-10-23): gateway 는 `ExampleOrg/example-model` 원문을 받는다.
+    expect(opencodeLaneModel('ExampleOrg/example-model')).toBe('harkroom-lane/ExampleOrg/example-model');
     expect(opencodeLaneModel('harkroom-lane/example-model')).toBeNull();
     expect(opencodeLaneModel(null)).toBeNull();
+    // designer s1: opencode 를 떠나면 머리를 뗀다 — 왕복하면 원래 값이다.
+    expect(opencodeLaneModelUndo(opencodeLaneModel('ExampleOrg/example-model'))).toBe('ExampleOrg/example-model');
+    expect(opencodeLaneModelUndo('ExampleOrg/example-model')).toBeNull();
+    expect(opencodeLaneModelUndo('harkroom-lane/')).toBeNull();
   });
 });
 

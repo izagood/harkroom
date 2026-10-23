@@ -70,7 +70,7 @@ import { operatorNameOf, operatorPickerLabels } from '../../lib/operatorName';
 import { ImmediateBadge, PendingEditsContext, setLeaveGuard, type PendingHandlers, type RegisterPending } from './pendingEdits';
 import { errorText } from '../../lib/errorText';
 import { useProviderLane } from '../../lib/useProviderLane';
-import { LANE_HARNESSES, ModelConnectionField, ModelConnectionStatus, opencodeLaneModel } from './ModelConnectionField';
+import { LANE_HARNESSES, ModelConnectionField, ModelConnectionStatus, opencodeLaneModel, opencodeLaneModelUndo } from './ModelConnectionField';
 
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 harkroom 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
@@ -2573,7 +2573,17 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                     className={field}
                     aria-label={t('agents.run.harness')}
                     value={draft.harness}
-                    onChange={(e) => setDraft({ ...draft, harness: e.target.value as AgentConfig['harness'] })}
+                    onChange={(e) => {
+                      const harness = e.target.value as AgentConfig['harness'];
+                      // API 키 연결이 켜진 채 opencode 로 바꾸면 모델 칸도 lane 모양으로 바꾼다 — 연결 저장 때만 바꾸던 탓에
+                      // claude-code 로 켠 뒤 하네스만 바꾼 에이전트가 opencode 에서 「Connect a provider」 창에 섰다(2026-10-23).
+                      // 떠날 때는 반대로 머리를 뗀다(designer s1) — 남기면 다른 하네스가 `harkroom-lane/…` 을 gateway 에 그대로 보내 400 이 난다.
+                      const laneModel = !providerLane.lane ? null
+                        : harness === 'opencode' ? opencodeLaneModel(draft.model ?? null)
+                        : draft.harness === 'opencode' ? opencodeLaneModelUndo(draft.model ?? null)
+                        : null;
+                      setDraft({ ...draft, harness, ...(laneModel ? { model: laneModel } : {}) });
+                    }}
                   >
                     {AGENT_HARNESSES.map((h) =>
                       (RUNNABLE_HARNESSES as readonly string[]).includes(h)
