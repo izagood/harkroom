@@ -42,7 +42,7 @@ function tauri(opts: { here?: boolean; byScope?: Record<string, string>; reach?:
   });
   (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
 }
-function setup(over: Record<string, unknown> = {}) {
+function setup<O extends Record<string, unknown>>(over: O = {} as O) {
   const c = { approvePermissionOnce: vi.fn(async () => ({ status: 'approved_once', approvalExpiresAt: '2026-10-11T05:14:00Z', cardMessageId: 'm1' })), ...over };
   setController(c as unknown as Controller);
   return c;
@@ -173,6 +173,109 @@ describe('PermissionOncePanel', () => {
     expect((await screen.findByTestId('merge-once-operator-picks')).textContent).toContain('오퍼레이터가 이 저장소용 계정을 고른다');
     fireEvent.click(screen.getByTestId('merge-once-submit'));
     await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { relaxChecks: true, number: 42, headSha: HEAD, failedChecks: ['test'] }));
+  });
+
+  describe('[계정 바꾸기] — 다른 기기에서 도는 에이전트(D4)', () => {
+    const report = (over: Record<string, unknown> = {}) => ({
+      operatorId: 'op-remote',
+      report: {
+        logins: ['remote-a', 'remote-b', 'remote-x'], defaultGhUser: null, byScope: { 'example-org/*': 'remote-a' },
+        reach: [
+          { scope: 'example-org/*', login: 'remote-a', reachable: true },
+          { scope: 'example-org/service-api', login: 'remote-x', reachable: false },
+          { scope: 'other-org/thing', login: 'remote-b', reachable: true },
+        ],
+        reportedAt: '2026-10-23T00:00:00Z', ...over,
+      },
+    });
+    const withVersion = (v: string) => useActiveStore.getState().set({ serverVersion: { version: v } as never });
+
+    it('서버 보고의 로그인을 고를 수 있고, 고른 계정을 ghUser 로 보낸다 · ✕ 는 못 고른다', async () => {
+      tauri({ here: false }); withVersion('0.4.170');
+      const c = setup({ getMergeAccounts: vi.fn(async () => report()) });
+      render(<PermissionOncePanel message={card()} />);
+      fireEvent.click(screen.getByTestId('merge-once-open'));
+      const btn = await screen.findByTestId('merge-once-change-account');
+      expect(btn.textContent).toBe('계정 바꾸기…');
+      await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false));
+      expect(c.getMergeAccounts).toHaveBeenCalledWith('agent-1');
+      fireEvent.click(btn);
+      const sel = screen.getByTestId('merge-once-remote-account') as HTMLSelectElement;
+      expect(sel.value).toBe('');
+      const opts = [...sel.options].map((o) => [o.value, o.textContent, o.disabled]);
+      expect(opts).toEqual([['', '오퍼레이터가 고름 (기본)', false], ['remote-a', 'remote-a ✓', false], ['remote-b', 'remote-b', false], ['remote-x', 'remote-x ✕', true]]);
+      fireEvent.change(sel, { target: { value: 'remote-a' } });
+      fireEvent.click(screen.getByTestId('merge-once-submit'));
+      await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { ghUser: 'remote-a', relaxChecks: false, number: 42, headSha: HEAD }));
+    });
+
+    it('목록을 펼쳐도 비워 두면 ghUser 없이 보낸다(G1)', async () => {
+      tauri({ here: false }); withVersion('0.4.171');
+      const c = setup({ getMergeAccounts: vi.fn(async () => report()) });
+      render(<PermissionOncePanel message={card()} />);
+      fireEvent.click(screen.getByTestId('merge-once-open'));
+      const btn = await screen.findByTestId('merge-once-change-account');
+      await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(btn);
+      fireEvent.click(screen.getByTestId('merge-once-submit'));
+      await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { relaxChecks: false, number: 42, headSha: HEAD }));
+    });
+
+    it('logins 가 없으면(기기 주인이 아니다) 버튼을 끄고 까닭 한 줄 — 승인은 그대로 된다', async () => {
+      withVersion('0.4.170');
+      const { logins: _l, defaultGhUser: _d, ...rest } = report().report;
+      const c = setup({ getMergeAccounts: vi.fn(async () => ({ operatorId: 'op-remote', report: rest })) });
+      render(<PermissionOncePanel message={card()} />);
+      fireEvent.click(screen.getByTestId('merge-once-open'));
+      const reason = await screen.findByText('그 기기 주인만 계정을 고를 수 있다');
+      expect(reason.getAttribute('data-reason')).toBe('mergeOnce.changeNotOwner');
+      expect((screen.getByTestId('merge-once-change-account') as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.queryByTestId('merge-once-remote-account')).toBeNull();
+      fireEvent.click(screen.getByTestId('merge-once-submit'));
+      await waitFor(() => expect(c.approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'req-1', { relaxChecks: false, number: 42, headSha: HEAD }));
+    });
+
+    it('en: 기기 주인이 아니라는 까닭', async () => {
+      usePrefsStore.getState().setLocale('en'); withVersion('0.4.170');
+      setup({ getMergeAccounts: vi.fn(async () => ({ operatorId: 'op-remote', report: { byScope: {}, reach: [], reportedAt: '2026-10-23T00:00:00Z' } })) });
+      render(<PermissionOncePanel message={card()} />);
+      fireEvent.click(screen.getByTestId('merge-once-open'));
+      expect(await screen.findByText('Only the device owner can pick an account')).toBeTruthy();
+    });
+
+    it('서버가 그 라우트보다 옛것이면 버튼을 그리지 않고 묻지도 않는다', async () => {
+      tauri({ here: false }); withVersion('0.4.169');
+      const c = setup({ getMergeAccounts: vi.fn(async () => report()) });
+      render(<PermissionOncePanel message={card()} />);
+      fireEvent.click(screen.getByTestId('merge-once-open'));
+      await screen.findByTestId('merge-once-elsewhere');
+      expect(screen.queryByTestId('merge-once-change-account')).toBeNull();
+      expect(c.getMergeAccounts).not.toHaveBeenCalled();
+    });
+
+    it('에이전트가 이 기기에서 돌면 로컬 목록 그대로 — 서버에 묻지 않는다', async () => {
+      tauri(); withVersion('0.4.170');
+      const c = setup({ getMergeAccounts: vi.fn(async () => report()) });
+      render(<PermissionOncePanel message={card()} />);
+      fireEvent.click(screen.getByTestId('merge-once-open'));
+      await screen.findByTestId('merge-once-account');
+      expect(screen.queryByTestId('merge-once-change-account')).toBeNull();
+      expect(c.getMergeAccounts).not.toHaveBeenCalled();
+    });
+
+    it('보고가 없거나 읽기에 실패하면 버튼을 끄고 그 까닭', async () => {
+      tauri({ here: false }); withVersion('0.4.170');
+      setup({ getMergeAccounts: vi.fn(async () => ({ operatorId: 'op-remote', report: null })) });
+      render(<PermissionOncePanel message={card()} />);
+      fireEvent.click(screen.getByTestId('merge-once-open'));
+      expect(await screen.findByText('그 기기의 오퍼레이터가 아직 계정을 알리지 않았다')).toBeTruthy();
+      cleanup();
+      setup({ getMergeAccounts: vi.fn(async () => { throw new ApiError(404, 'not_found', 'x'); }) });
+      render(<PermissionOncePanel message={card()} />);
+      fireEvent.click(screen.getByTestId('merge-once-open'));
+      expect(await screen.findByText('그 기기의 계정을 읽지 못했다')).toBeTruthy();
+      expect((screen.getByTestId('merge-once-change-account') as HTMLButtonElement).disabled).toBe(true);
+    });
   });
 
   it('readPermissionOnce — 계정을 비운 승인(ghUser null)도 읽는다', () => {

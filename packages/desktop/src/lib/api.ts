@@ -970,6 +970,13 @@ export class ApiClient {
     return this.req('POST', `/agents/${agentId}/merge-denials/${denialId}/grant`);
   }
   /**
+   * 에이전트의 머지 계정 보고(D1, #1472) — 한 번 머지 카드의 [계정 바꾸기]가 다른 기기에서 도는 에이전트의 계정을 고를 때 쓴다.
+   * 소유자 사람 세션만. `logins` 는 그 기기 주인에게만 온다.
+   */
+  getMergeAccounts(agentId: string): Promise<import('@harkroom/shared/operatorProtocol').MergeAccountsView> {
+    return this.req('GET', `/agents/${encodeURIComponent(agentId)}/merge-accounts`);
+  }
+  /**
    * 권한 요청 카드의 [이번 한 번 머지](스레드 1b75d7a0). 소유자 사람 세션만. 저장소·PR·head 는 서버가 요청에 묶인 거절 기록에서
    * 가져온다 — 보내는 것은 gh 계정과 CI 완화 여부뿐이다.
    */

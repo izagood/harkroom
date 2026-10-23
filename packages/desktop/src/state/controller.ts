@@ -3283,6 +3283,7 @@ export class Controller {
     return this.api.deleteGrant(accountId, capability, scope);
   }
   approveDelegation(grantId: string): Promise<void> { return this.api.approveDelegation(grantId); }
+  getMergeAccounts(agentId: string) { return this.api.getMergeAccounts(agentId); }
   approvePermissionOnce(agentId: string, requestId: string, body: { ghUser?: string; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] }) {
     return this.api.approvePermissionOnce(agentId, requestId, body);
   }
