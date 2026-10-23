@@ -14,20 +14,71 @@ const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const link = (id: string) => `harkroom://message/${id}`;
 
-describe('parseChatApproval — 글 전체가 승인 낱말 + 멘션·카드 링크뿐일 때만', () => {
-  it('맞는 꼴', () => {
-    expect(parseChatApproval('승인')).toEqual({ cardIds: [] });
-    expect(parseChatApproval('  승인함. ')).toEqual({ cardIds: [] });
-    expect(parseChatApproval('Approve!')).toEqual({ cardIds: [] });
-    expect(parseChatApproval(`<@${ID}> 승인 ${link(ID)}`)).toEqual({ cardIds: [ID] });
-    expect(parseChatApproval(`승인 [sriov 카드](${link(ID)}) ${link(ID)}`)).toEqual({ cardIds: [ID] });
+describe('parseChatApproval — 문장 속 명시적 승인 낱말(G2)·부정·의문·인용·코드', () => {
+  const P = (cardIds: string[], action: 'approve' | 'deny' | null, block: string | null = null, ciWord = false) => ({ cardIds, action, block, ciWord });
+  const cases: [string, ReturnType<typeof P> | null][] = [
+    ['승인', P([], 'approve')],
+    ['  승인함. ', P([], 'approve')],
+    ['Approve!', P([], 'approve')],
+    ['approved', P([], 'approve')],
+    ['승인해', P([], 'approve')],
+    ['승인했어', P([], 'approve')],
+    ['승인합니다', P([], 'approve')],
+    ['머지 승인했어', P([], 'approve')],
+    ['허락해 줄게', P([], 'approve')],
+    ['그거 머지해', P([], 'approve')],
+    ['진행해', P([], 'approve')],
+    ['ok go ahead and approve it', P([], 'approve')],
+    [`${link(ID)} 이 카드 승인해`, P([ID], 'approve')],
+    [`<@${ID}> 승인 ${link(ID)}`, P([ID], 'approve')],
+    [`승인 [sriov 카드](${link(ID)}) ${link(ID)}`, P([ID], 'approve')],
+    [`CI 무시하고 머지해 ${link(ID)}`, P([ID], 'approve', null, true)],
+    ['ignore CI and approve', P([], 'approve', null, true)],
+    // 부정·보류·의문 — 낱말은 있지만 정하지 않는다
+    ['승인 말고 기다려', P([], 'approve', 'negated')],
+    ['승인 안 함', P([], 'approve', 'negated')],
+    ['아직 승인하지 마', P([], 'approve', 'negated')],
+    ['승인 보류', P([], 'approve', 'negated')],
+    ['승인 취소', P([], 'approve', 'negated')],
+    ['잠깐, 승인은 나중에', P([], 'approve', 'negated')],
+    ['아니 승인 아니야', P([], 'approve', 'negated')],
+    ["don't approve", P([], 'approve', 'negated')],
+    ['승인할까?', P([], 'approve', 'question')],
+    ['승인?', P([], 'approve', 'question')],
+    [`이거 승인해도 돼？ ${link(ID)}`, P([ID], 'approve', 'question')],
+    // 바이패스는 승인이 아니다
+    ['바이패스 승인', P([], 'approve', 'bypass')],
+    ['bypass it', P([], null, 'bypass')],
+    // 거절
+    ['거절', P([], 'deny')],
+    ['deny', P([], 'deny')],
+    [`거절해 ${link(ID)}`, P([ID], 'deny')],
+    ['승인 아니고 거절', P([], 'approve', 'negated')],
+    ['승인 거절', P([], 'approve', 'conflict')],
+    // 링크만 — 낱말은 없다
+    [`이 카드 봐줘 ${link(ID)}`, P([ID], null)],
+    // 결정과 관계없는 글
+    ['좋아', null],
+    ['', null],
+    ['승인 요청 왔네', null],
+    ['승인 대기 중', null],
+    ['승인받았어', null],
+    ['미승인 상태', null],
+    ['머지 충돌 났다', null],
+    ['진행 상황 공유', null],
+    ['approval flow docs', null],
+    [`> 승인 ${link(ID)}`, null],
+    [`jaebin 이 이렇게 썼다:\n> 승인 ${link(ID)}`, null],
+    ['`승인`', null],
+    ['```\n승인\n```', null],
+    [`\`\`\`\n승인 ${link(ID)}\n\`\`\``, null],
+    [`승인 https://example.com/${ID}`, P([], 'approve')],
+  ];
+  it.each(cases)('%j', (body, want) => {
+    expect(parseChatApproval(body)).toEqual(want);
   });
-
-  it('문장·부정·의문·거절·인용·코드·다른 링크는 승인이 아니다', () => {
-    for (const body of [
-      '승인 말고 기다려', '승인 안 함', '승인할까?', '승인?', '거절', 'deny', '좋아', '승인 승인', '',
-      `> 승인 ${link(ID)}`, '`승인`', '```\n승인\n```', `승인 https://example.com/${ID}`, '#rcms 권한 카드 2장 승인 <- 승인함',
-    ]) expect(parseChatApproval(body), body).toBeNull();
+  it('2000자 넘는 글은 보지 않는다', () => {
+    expect(parseChatApproval(`승인 ${'x'.repeat(2000)}`)).toBeNull();
   });
 });
 
@@ -52,6 +103,8 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
   /** 새 규칙으로 권한 요청 하나 — 카드 id·요청 id. */
   const ask = async (threadRootId: string, channelId = ch, extra: Record<string, unknown> = {}) => {
     n += 1;
+    // 하루 상한(20)에 걸리지 않게 앞 시험의 요청을 하루 전으로 민다.
+    await pool.query(`update permission_request set created_at = created_at - interval '2 days' where agent_id = $1`, [agentId]);
     const r = text(await client.callTool({ name: 'permission.request', arguments: {
       channelId, threadRootId, reason: '확인', kind: 'tool', rule: `Bash(kubectl --context ops -n sitebot get pods${n}:*)`, ...extra,
     } }));
@@ -163,7 +216,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     const elsewhere = await root(otherCh);
     await say(alice.token, '승인', elsewhere, otherCh);
     expect(await status(requestId)).toBe('pending');
-    expect((await systemLines(elsewhere))[0]!.body).toContain('먼저 온 권한 요청이 없어');
+    expect((await systemLines(elsewhere))[0]!.body).toContain('먼저 온 기다리는 요청이 없다');
   });
 
   it('T3 — 남의 에이전트 요청은 대상이 아니다', async () => {
@@ -236,7 +289,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     const other = await ask(await root());
     await say(alice.token, '승인', thread);
     expect(await status(other.requestId)).toBe('pending');
-    expect((await systemLines(thread))[0]!.body).toContain('이미 정해졌거나 만료돼');
+    expect((await systemLines(thread))[0]!.body).toContain('이미 정해졌거나 만료됐다');
   });
 
   it('맨 글을 고쳐 링크를 덧붙여도 다시 판정하지 않는다', async () => {
@@ -260,18 +313,108 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect(await status(requestId)).toBe('pending');
   });
 
-  it('머지 거절에서 온 카드는 글로 승인하지 않는다', async () => {
-    const thread = await root();
-    const r = text(await client.callTool({ name: 'permission.request', arguments: { channelId: ch, threadRootId: thread, reason: 'merge', kind: 'merge', repo: 'acme-org/chat-approval' } }));
-    expect(r.error).toBeUndefined();
+  /** 머지 거절 카드 — 거절 기록(head·사유)을 카드에 묶는다. */
+  const mergeCard = async (thread: string, opts: { head?: string; cardHead?: string; ci?: boolean } = {}) => {
+    n += 1;
+    await pool.query(`update permission_request set created_at = created_at - interval '2 days' where agent_id = $1`, [agentId]);
+    const r = text(await client.callTool({ name: 'permission.request', arguments: { channelId: ch, threadRootId: thread, reason: 'merge', kind: 'merge', repo: `acme-org/chat-approval${n}` } }));
+    expect(r.error, JSON.stringify(r)).toBeUndefined();
+    const head = opts.head ?? 'a'.repeat(40);
     const denial = (await pool.query(
-      `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at)
-       values ($1, 'repo:acme-org/chat-approval', 7, $2, $3, $4, gen_random_uuid(), now() + interval '1 hour') returning id`,
-      [agentId, 'a'.repeat(40), ch, thread])).rows[0].id;
+      `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at, reason, failed_checks)
+       values ($1, $2, 7, $3, $4, $5, gen_random_uuid(), now() + interval '1 hour', $6, $7) returning id`,
+      [agentId, `repo:acme-org/chat-approval${n}`, head, ch, thread, opts.ci ? 'ci_not_green' : 'not_granted', opts.ci ? ['build'] : []])).rows[0].id;
     await pool.query(`update permission_request set denial_id = $2 where id = $1`, [r.requestId, denial]);
-    await say(alice.token, `승인 ${link(r.cardMessageId)}`, thread);
-    expect(await status(r.requestId)).toBe('pending');
-    expect((await systemLines(thread))[0]!.body).toContain('머지 거절 카드');
+    const once = { number: 7, headSha: opts.cardHead ?? head, reason: opts.ci ? 'ci_not_green' : 'not_granted', ...(opts.ci ? { failedChecks: ['build'] } : {}) };
+    await pool.query(`update message set meta = jsonb_set(meta, '{permissionRequest,once}', $2::jsonb) where id = $1`, [r.cardMessageId, JSON.stringify(once)]);
+    return { cardId: r.cardMessageId as string, requestId: r.requestId as string };
+  };
+
+  it('머지 거절 카드 — 글로 이번 한 번 머지(head 는 카드 값, gh 계정은 비워 오퍼레이터가 고른다)', async () => {
+    const thread = await root();
+    const m = await mergeCard(thread);
+    await say(alice.token, `머지 승인했어 ${link(m.cardId)}`, thread);
+    expect(await status(m.requestId)).toBe('approved_once');
+    const ap = (await pool.query(`select head_sha, gh_user, relax_checks from merge_approval where agent_id = $1 order by approved_at desc limit 1`, [agentId])).rows[0];
+    expect(ap).toEqual({ head_sha: 'a'.repeat(40), gh_user: null, relax_checks: false });
+  });
+
+  it('머지 거절 카드 — 카드 스레드의 맨 「머지해」도 그 카드 하나면 정한다', async () => {
+    const thread = await root();
+    const m = await mergeCard(thread);
+    await say(alice.token, '응 머지해', thread);
+    expect(await status(m.requestId)).toBe('approved_once');
+  });
+
+  it('머지 거절 카드 — head 가 카드와 다르면 승인하지 않고 안내한다', async () => {
+    const thread = await root();
+    const m = await mergeCard(thread, { head: 'b'.repeat(40), cardHead: 'a'.repeat(40) });
+    await say(alice.token, `승인 ${link(m.cardId)}`, thread);
+    expect(await status(m.requestId)).toBe('pending');
+    const line = (await systemLines(thread))[0]!;
+    expect(line.body).toContain('승인 안 됨');
+    expect(line.body).toContain('head');
+    expect(line.meta.i18n).toEqual({ key: 'system.chatApproval.headChanged', args: {} });
+  });
+
+  it('CI 실패 카드 — 「CI 무시」가 없으면 안내, 있으면 CI 무시하고 한 번', async () => {
+    const thread = await root();
+    const m = await mergeCard(thread, { ci: true });
+    await say(alice.token, `승인 ${link(m.cardId)}`, thread);
+    expect(await status(m.requestId)).toBe('pending');
+    expect((await systemLines(thread))[0]!.meta.i18n.key).toBe('system.chatApproval.ciWord');
+    await say(alice.token, `CI 무시하고 승인 ${link(m.cardId)}`, thread);
+    expect(await status(m.requestId)).toBe('approved_once');
+    const ap = (await pool.query(`select relax_checks, ci_override from merge_approval where agent_id = $1 order by approved_at desc limit 1`, [agentId])).rows[0];
+    expect(ap).toEqual({ relax_checks: true, ci_override: true });
+  });
+
+  it('문장 속 승인 — 링크한 권한 카드를 승인한다', async () => {
+    const thread = await root();
+    const { cardId, requestId } = await ask(thread);
+    const elsewhere = await root(otherCh);
+    await say(alice.token, `${link(cardId)} 이 카드 승인해`, elsewhere, otherCh);
+    expect(await status(requestId)).toBe('granted');
+  });
+
+  it('링크 없는 문장 승인 — 이 스레드에 정할 카드가 하나면 그것', async () => {
+    const thread = await root();
+    const { requestId } = await ask(thread);
+    await say(alice.token, '확인했어, 승인합니다', thread);
+    expect(await status(requestId)).toBe('granted');
+  });
+
+  it('부정·의문·바이패스 — 정하지 않고 「승인 안 됨」 한 줄', async () => {
+    const thread = await root();
+    const { requestId } = await ask(thread);
+    for (const [body, key] of [['승인 말고 기다려', 'negated'], ['승인할까?', 'question'], ['바이패스 승인', 'bypass']] as const) {
+      await say(alice.token, body, thread);
+      const lines = await systemLines(thread);
+      expect(lines.at(-1)!.meta.i18n, body).toEqual({ key: `system.chatApproval.${key}`, args: {} });
+      expect(lines.at(-1)!.body.startsWith('⚠️ 승인 안 됨:')).toBe(true);
+    }
+    expect(await status(requestId)).toBe('pending');
+  });
+
+  it('거절 — 링크가 있으면 거절하고, 없으면 안내만', async () => {
+    const thread = await root();
+    const { cardId, requestId } = await ask(thread);
+    await say(alice.token, '거절', thread);
+    expect(await status(requestId)).toBe('pending');
+    expect((await systemLines(thread)).at(-1)!.meta.i18n.key).toBe('system.chatApproval.denyNeedsLink');
+    await say(alice.token, `거절해 ${link(cardId)}`, thread);
+    expect(await status(requestId)).toBe('denied');
+  });
+
+  it('조용히 넘기지 않는다 — 링크만 있고 낱말이 없으면 안내 한 줄', async () => {
+    const thread = await root();
+    const { cardId, requestId } = await ask(thread);
+    const elsewhere = await root(otherCh);
+    await say(alice.token, `이 카드 봐줘 ${link(cardId)}`, elsewhere, otherCh);
+    expect(await status(requestId)).toBe('pending');
+    const lines = await systemLines(elsewhere);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.meta.i18n.key).toBe('system.chatApproval.noWord');
   });
 
   it('정확한 명령 요청은 글로는 이번 한 번만 연다(1시간은 버튼에서만)', async () => {
