@@ -70,6 +70,8 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
         code: z.string().max(40), mergeState: z.string().max(40).nullable().optional(), checks: z.array(z.string().max(1000)).max(100),
       }).nullable().optional(),
       ignoredChecks: z.array(z.string().max(1000)).max(100).optional(),
+      // 체크 0개를 「PR CI 없음」으로 읽어 통과했다(스레드 50324ba9 C안) — 래퍼 보고다. 감사·meta 에만 남긴다.
+      noPrChecks: z.boolean().optional(),
       // 래퍼가 머지에 실제로 쓴 gh 이름(security n6). 모양은 서비스가 다시 본다 — 틀리면 버리고 보고는 받는다.
       ghUserUsed: z.string().max(100).nullable().optional(),
     }).safeParse(req.body ?? {});

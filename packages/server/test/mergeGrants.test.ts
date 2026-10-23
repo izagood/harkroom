@@ -837,6 +837,24 @@ describe('repo.merge grant', () => {
       expect(line.meta.merge.ciOverride).toBeUndefined();
       expect(line.meta.i18n).toMatchObject({ key: 'system.merge.queuedIgnoring', args: { checks: 'review / review' } });
     });
+
+    it('C안(스레드 50324ba9): 체크 0개를 「PR CI 없음」으로 통과한 머지는 meta·감사에 noPrChecks 가 남고 본문은 그대로다 · 실패 보고에는 안 남는다', async () => {
+      expect((await grant(alice.token, { scope: 'repo:izagood/no-ci' })).statusCode).toBe(200);
+      const l = await lease(await mention(alice.accountId));
+      expect((await check(l, 'izagood/no-ci', { number: 37, headSha: SHA3 })).statusCode).toBe(200);
+      const res = await report(l, 'izagood/no-ci', 37, SHA3, { result: 'merged', mergeSha: 'd'.repeat(40), noPrChecks: true });
+      expect(res.statusCode).toBe(201);
+      const line = (await pool.query(`select body, meta from message where id = $1`, [res.json().messageId])).rows[0];
+      expect(line.body).toBe('🔀 izagood/no-ci#37 머지됨 · ddddddddd · 권한: alice (래퍼 보고)');
+      expect(line.meta.merge.noPrChecks).toBe(true);
+      const audit = (await pool.query(`select detail from audit_log where action = 'repo.merge.merged' and target = 'repo:izagood/no-ci'`)).rows[0].detail;
+      expect(audit.noPrChecks).toBe(true);
+      const l2 = await lease(await mention(alice.accountId));
+      expect((await check(l2, 'izagood/no-ci', { number: 38, headSha: SHA3 })).statusCode).toBe(200);
+      const failed = await report(l2, 'izagood/no-ci', 38, SHA3, { result: 'failed', error: 'x', noPrChecks: true });
+      const fl = (await pool.query(`select meta from message where id = $1`, [failed.json().messageId])).rows[0];
+      expect(fl.meta.merge.noPrChecks).toBeUndefined();
+    });
   });
 
   describe('조직 grant owner/*', () => {

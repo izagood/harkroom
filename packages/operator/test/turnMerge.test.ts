@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
-import { createTurnMerge, ghEnv, isAlreadyQueuedError, notGreenChecks, parseMergeArgs, parseQueueInfo, parseRequiredChecks, unstableVerdict, ENQUEUE_MUTATION, QUEUE_QUERY, REQUIRED_QUERY, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
+import { createTurnMerge, ghEnv, isAlreadyQueuedError, notGreenChecks, parseMergeArgs, parseQueueInfo, parseRequiredChecks, unstableVerdict, prCiVerdict, pushedAtOf, ENQUEUE_MUTATION, NO_PR_CI_PR_QUERY, NO_PR_CI_REPO_QUERY, QUEUE_QUERY, REQUIRED_QUERY, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
 import { pickMergeGhUser } from '../src/localMerge.js';
 
 // 에이전트 머지 래퍼(PR 2/3) — 오퍼레이터 쪽 판정·gh 호출. 설계·security F3 는 스레드 3deac356.
@@ -74,6 +74,11 @@ describe('turnMerge', () => {
   let required: { oid: string; hasNextPage?: boolean; nodes: Record<string, unknown>[] } | null;
   // merge-results 의 201 본문 — CI 거절이면 서버가 카드용 denialId 를 싣는다.
   let resultsBody: string;
+  // PR CI 없음 판정(C안)의 GraphQL·activity 답. null 이면 gh 가 실패한다.
+  let prCiPr: Record<string, unknown> | null;
+  let prCiRepo: Record<string, unknown> | null;
+  let activity: Record<string, unknown>[] | null;
+  let clock: number;
   let tm: TurnMerge;
 
   beforeEach(() => {
@@ -83,10 +88,11 @@ describe('turnMerge', () => {
     queue = { enabled: false, inQueue: false, entry: null }; queueSeq = [];
     required = null;
     resultsBody = '{"messageId":"m1"}';
+    prCiPr = null; prCiRepo = null; activity = null; clock = Date.parse('2026-10-23T12:00:00Z');
     enqueueResult = { code: 0, stdout: JSON.stringify({ data: { enqueuePullRequest: { mergeQueueEntry: { position: 3, state: 'QUEUED' } } } }), stderr: '' };
     pr = { state: 'OPEN', isDraft: false, headRefOid: SHA, baseRefName: 'main', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }] };
     tm = createTurnMerge({
-      ghPath: GH, home: '/Users/x', log: () => {},
+      ghPath: GH, home: '/Users/x', log: () => {}, now: () => clock,
       ghUserFor: async (repo) => (pickByScope
         ? pickMergeGhUser({ byScope: pickByScope }, repo)
         : ghUser ? { login: ghUser, scope: '(device default)' } : null),
@@ -125,10 +131,96 @@ describe('turnMerge', () => {
           if (!required) return { code: 1, stdout: '', stderr: 'HTTP 502' };
           return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { commits: { nodes: [{ commit: { oid: required.oid, statusCheckRollup: { contexts: { pageInfo: { hasNextPage: required.hasNextPage ?? false }, nodes: required.nodes } } } }] } } } } }), stderr: '' };
         }
+        if (args[0] === 'api' && args[1] === 'graphql' && args[3] === `query=${NO_PR_CI_PR_QUERY}`) {
+          return prCiPr ? { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: prCiPr } } }), stderr: '' } : { code: 1, stdout: '', stderr: 'HTTP 502' };
+        }
+        if (args[0] === 'api' && args[1] === 'graphql' && args[3] === `query=${NO_PR_CI_REPO_QUERY}`) {
+          return prCiRepo ? { code: 0, stdout: JSON.stringify({ data: { repository: prCiRepo } }), stderr: '' } : { code: 1, stdout: '', stderr: 'HTTP 502' };
+        }
+        if (args[0] === 'api' && args[2] === 'GET' && args[3] === 'repos/izagood/harkroom/activity') {
+          return activity ? { code: 0, stdout: JSON.stringify(activity), stderr: '' } : { code: 1, stdout: '', stderr: 'HTTP 404' };
+        }
         return { code: 1, stdout: '', stderr: 'unexpected' };
       },
     });
   });
+
+  describe('PR CI 가 없는 저장소(C안, 스레드 50324ba9)', () => {
+    const BASE = 'c'.repeat(40);
+    const wf = (name: string, text: string, extra: Record<string, unknown> = {}) => ({ name, type: 'blob', object: { __typename: 'Blob', text, isTruncated: false, isBinary: false, ...extra } });
+    const noCiRepo = (over: Record<string, unknown> = {}) => ({
+      base: null, head: null,
+      commit: { checkSuites: { totalCount: 1, nodes: [{ app: { slug: 'github-actions' }, checkRuns: { totalCount: 0 } }] }, status: null },
+      ...over,
+    });
+    beforeEach(() => {
+      pr = { ...pr, statusCheckRollup: [] };
+      prCiPr = { baseRefOid: BASE, headRefOid: SHA, headRefName: 'feat/x', isCrossRepository: false };
+      prCiRepo = noCiRepo();
+      activity = [{ after: 'd'.repeat(40), timestamp: '2026-10-23T11:00:00Z' }, { after: SHA, timestamp: '2026-10-23T11:57:00Z' }];
+    });
+
+    it('workflow 가 PR 에 돌지 않고 외부 CI 도 없으며 push 뒤 2분이 지났으면 체크 0개로 머지하고 noPrChecks 를 남긴다', async () => {
+      prCiRepo = noCiRepo({ base: { __typename: 'Tree', entries: [wf('release.yml', 'on:\n  push:\n    branches: [main]\n'), { name: 'notes.md', type: 'blob', object: null }] } });
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.isError).toBe(false);
+      expect(r.body).toMatchObject({ merged: true, noPrChecks: true });
+      expect(results()).toEqual([expect.objectContaining({ result: 'merged', noPrChecks: true })]);
+      const repoQ = execs.find((e) => e.args[3] === `query=${NO_PR_CI_REPO_QUERY}`)!;
+      expect(repoQ.args).toEqual(expect.arrayContaining([`baseExpr=${BASE}:.github/workflows`, `headExpr=${SHA}:.github/workflows`, `base=${BASE}`]));
+    });
+
+    it('base 나 head 의 workflow 에 pull_request·pull_request_target·merge_group 낱말이 있으면 거절한다(주석이어도)', async () => {
+      for (const [side, text] of [['base', 'on: [pull_request]'], ['head', 'on:\n  pull_request_target:\n'], ['base', '# merge_group later\non: push']] as const) {
+        prCiRepo = noCiRepo({ [side]: { __typename: 'Tree', entries: [wf('ci.yaml', text)] } });
+        const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+        expect(r.body.error.code, text).toBe('ci_not_green');
+      }
+      expect(ghCalls()).not.toContain('pr merge');
+    });
+
+    it('잘린·바이너리 workflow, 100개 이상, 외부 CI suite·commit status, 조회 실패는 모두 거절한다(fail-closed)', () => {
+      const out = (repo: unknown) => JSON.stringify({ data: { repository: repo } });
+      expect(prCiVerdict(out(noCiRepo()))).toBeNull();
+      expect(prCiVerdict(out(noCiRepo({ base: { __typename: 'Tree', entries: [wf('a.yml', 'on: push', { isTruncated: true })] } })))).not.toBeNull();
+      expect(prCiVerdict(out(noCiRepo({ head: { __typename: 'Tree', entries: [wf('a.yml', '', { isBinary: true, text: null })] } })))).not.toBeNull();
+      expect(prCiVerdict(out(noCiRepo({ base: { __typename: 'Tree', entries: Array.from({ length: 100 }, (_, i) => wf(`w${i}.yml`, 'on: push')) } })))).not.toBeNull();
+      expect(prCiVerdict(out(noCiRepo({ base: { __typename: 'Blob' } })))).not.toBeNull();
+      expect(prCiVerdict(out(noCiRepo({ commit: { checkSuites: { totalCount: 1, nodes: [{ app: { slug: 'circleci-checks' }, checkRuns: { totalCount: 2 } }] }, status: null } })))?.message).toContain('circleci-checks');
+      expect(prCiVerdict(out(noCiRepo({ commit: { checkSuites: { totalCount: 0, nodes: [] }, status: { contexts: [{ context: 'ci/jenkins' }] } } })))).not.toBeNull();
+      expect(prCiVerdict(out(noCiRepo({ commit: { checkSuites: { totalCount: 101, nodes: [] }, status: null } })))).not.toBeNull();
+      expect(prCiVerdict(out(null))).not.toBeNull();
+      expect(prCiVerdict('not json')).not.toBeNull();
+      expect(pushedAtOf(JSON.stringify([{ after: SHA, timestamp: '2026-10-23T11:57:00Z' }]), SHA)).toBe(Date.parse('2026-10-23T11:57:00Z'));
+      expect(pushedAtOf('[]', SHA)).toBeNull();
+    });
+
+    it('push 뒤 2분이 안 됐으면 ci_pending — 카드(denialId)도 머지도 없다', async () => {
+      activity = [{ after: SHA, timestamp: '2026-10-23T11:59:30Z' }];
+      resultsBody = JSON.stringify({ messageId: 'm1', denialId: '11111111-2222-4333-8444-555555555555' });
+      const r = resultOf(await tm.maybeHandle('r1', 'a1', ok()));
+      expect(r.body.error.code).toBe('ci_pending');
+      expect(r.body.error.denialId).toBeUndefined();
+      expect(results()[0]).not.toHaveProperty('ciRefusal');
+      expect(ghCalls()).not.toContain('pr merge');
+    });
+
+    it('포크 PR·activity 에 없는 head 는 이 오퍼레이터가 처음 본 시각부터 2분을 잰다', async () => {
+      prCiPr = { ...prCiPr, isCrossRepository: true };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('ci_pending');
+      expect(execs.some((e) => e.args[3] === 'repos/izagood/harkroom/activity')).toBe(false);
+      clock += 60_000;
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('ci_pending');
+      clock += 61_000;
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body).toMatchObject({ merged: true, noPrChecks: true });
+    });
+
+    it('판정 조회의 head 가 --head 와 다르면 head_moved', async () => {
+      prCiPr = { ...prCiPr, headRefOid: 'e'.repeat(40) };
+      expect(resultOf(await tm.maybeHandle('r1', 'a1', ok())).body.error.code).toBe('head_moved');
+    });
+  });
+
   const ok = () => mergeCall({ repo: 'izagood/harkroom', number: 7, headSha: SHA });
   const results = () => forwards.filter((f) => f.type === 'http.forward' && f.path === '/agent/merge-results').map((f) => JSON.parse((f as { body?: string }).body ?? '{}'));
   const closedReports = () => forwards.filter((f) => f.type === 'http.forward' && f.path === '/agent/merge-closed').map((f) => JSON.parse((f as { body?: string }).body ?? '{}'));

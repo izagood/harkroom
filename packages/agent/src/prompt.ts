@@ -1135,6 +1135,10 @@ function mergeSection(merge: { operatorBin: string; repos: readonly string[]; ap
     // 10-16 UNSTABLE(스레드 1fccc9a5): 필수 체크만 초록이면 래퍼가 통과시키고 무시한 체크를 싣는다 — 숨기지 않고 보고에 적게 한다.
     '필수가 아닌 체크만 실패했으면(GitHub `UNSTABLE`) 필수 체크가 전부 초록일 때 통과하고 결과에 `ignoredChecks` 가 실린다 —',
     '보고에 그 이름을 적는다. 필수 체크가 하나도 없는 저장소는 모든 체크가 초록이어야 한다(`ci_not_green`).',
+    // 10-23 C안(스레드 50324ba9): PR 에 도는 CI 가 없는 저장소는 체크 0개로 머지된다 — 유예 중 거절은 카드가 아니라 다시 부르기다.
+    '체크가 하나도 없는 PR 은 저장소에 PR CI 가 **없다고 읽힐 때만**(workflow 에 `pull_request`·`pull_request_target`·`merge_group` 이',
+    '없고 외부 CI 흔적도 없음) push 2분 뒤부터 머지되고 결과에 `noPrChecks: true` 가 실린다 — 보고에 「체크 없이 머지」라고 적는다.',
+    '그 2분 안이면 `ci_pending`(카드 없음)이다 — `turn.wake` 로 2분쯤 뒤를 예약해 같은 명령을 다시 부른다.',
     // 10-16 merge queue(rcms): 큐를 쓰는 브랜치는 래퍼가 머지 대신 큐에 넣는다 — 「머지됨」이라고 보고하지 않게 한다.
     '대상 브랜치가 merge queue 를 쓰면 래퍼는 머지하지 않고 **큐에 넣는다**(`queued: true`·`merged: false`·`queue.position`).',
     '그때는 「큐에 넣음」이라고 보고하고 「머지됨」이라고 쓰지 않는다. 머지됐는지 확인하려면 **같은 명령을 다시 부른다** —',
