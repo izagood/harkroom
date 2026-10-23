@@ -130,7 +130,7 @@ describe('사용', () => {
     const invite = await app.inject({ method: 'POST', url: '/invites', headers: auth(owner.token) });
     const reg = await app.inject({
       method: 'POST', url: '/auth/register',
-      payload: { inviteToken: invite.json().token, handle: 'jinx', loginId: 'login-other-7', displayName: 'Alice', password: 'pw123456' },
+      payload: { inviteToken: invite.json().token, handle: 'alice', loginId: 'login-other-7', displayName: 'Alice', password: 'pw123456' },
     });
     expect(reg.statusCode).toBe(201);
     const id = reg.json().id as string;
@@ -140,7 +140,7 @@ describe('사용', () => {
     // 발급 응답에 대상의 로그인 ID 가 실린다 — 관리자가 코드와 함께 전할 수 있게.
     expect(issuedRes.json().loginId).toBe('login-other-7');
     const code = issuedRes.json().code as string;
-    const byHandle = await redeem('jinx', code);
+    const byHandle = await redeem('alice', code);
     expect(byHandle.statusCode).toBe(400);
     expect(byHandle.json().error.code).toBe('invalid_reset_code');
     expect((await redeem(issuedRes.json().loginId, code)).statusCode).toBe(200);
