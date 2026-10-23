@@ -57,6 +57,25 @@ export async function registerPasswordResetRoutes(app: FastifyInstance, pool: Po
     return { ok: true, handle: row.handle, loginId: row.loginId };
   }
 
+  /**
+   * 사람들의 **로그인 ID** — 설정 › 멤버와 초대에서 관리자가 「이 사람 로그인 ID 가 뭐지」에 답하게(jaebin A안, 10-23).
+   * handle 과 로그인 ID 가 다른 사람이 있다(10-22 jinbin). `/accounts` 에 칸을 더하지 않고 **따로** 두는 이유: 그 목록은
+   * 모두가 받고 화면이 캐시·이벤트로 퍼뜨린다 — 거기 실으면 권한으로 거르는 자리가 여럿이 된다. 여기는 한 자리다.
+   *
+   * 보는 사람은 재설정 코드를 발급할 수 있는 사람과 같다(`member.reset_password` = owner·admin, grant 불가)·세션만.
+   * 사람 계정만, 지운 계정은 뺀다(꺼진 계정은 목록에 남아 있으니 같이 준다). 감사·로그에는 싣지 않는다.
+   */
+  app.get('/accounts/login-ids', { preHandler: app.requireCap('member.reset_password') }, async (req, reply) => {
+    if (req.account!.kind !== 'human' || req.authVia !== 'session') {
+      return reply.code(403).send({ error: { code: 'session_required', message: 'only a signed-in person can read login IDs' } });
+    }
+    const r = await pool.query<{ id: string; loginId: string }>(
+      `select id, login_id as "loginId" from account
+        where kind = 'human' and deleted_at is null and login_id is not null`);
+    void reply.header('cache-control', 'no-store');
+    return { loginIds: Object.fromEntries(r.rows.map((x) => [x.id, x.loginId])) };
+  });
+
   app.post('/accounts/:id/password-reset-code', { preHandler: app.requireCap('member.reset_password') }, async (req, reply) => {
     const { id } = idParam.parse(req.params);
     const actor = req.account!;

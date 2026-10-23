@@ -228,6 +228,37 @@ describe('사용', () => {
   });
 });
 
+describe('로그인 ID 목록(멤버와 초대, 관리자만)', () => {
+  const loginIds = (token: string) => app.inject({ method: 'GET', url: '/accounts/login-ids', headers: auth(token) });
+
+  it('owner·admin 은 사람들의 로그인 ID 를 받는다 — handle 과 다른 값도 그대로', async () => {
+    const invite = await app.inject({ method: 'POST', url: '/invites', headers: auth(owner.token) });
+    const reg = await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: { inviteToken: invite.json().token, handle: 'listed', loginId: 'listed-login-9', displayName: 'Listed', password: 'pw123456' },
+    });
+    const id = reg.json().id as string;
+    const res = await loginIds(owner.token);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.json().loginIds[id]).toBe('listed-login-9');
+
+    const adm = await createMember(app, owner.token, 'lister-adm');
+    await app.inject({ method: 'PUT', url: `/accounts/${adm.accountId}/role`, headers: auth(owner.token), payload: { role: 'admin' } });
+    expect((await loginIds(adm.token)).json().loginIds[id]).toBe('listed-login-9');
+  });
+
+  it('member 는 못 받고(403), 모두가 받는 /accounts 에는 로그인 ID 가 실리지 않는다', async () => {
+    const m = await createMember(app, owner.token, 'plain-lister');
+    expect((await loginIds(m.token)).statusCode).toBe(403);
+    const dir = await app.inject({ method: 'GET', url: '/accounts', headers: auth(m.token) });
+    expect(dir.statusCode).toBe(200);
+    expect(dir.body).not.toMatch(/login_?id/i);
+    // 관리자가 받아도 /accounts 자체에는 없다 — 거르는 자리는 이 라우트 하나다.
+    expect((await app.inject({ method: 'GET', url: '/accounts', headers: auth(owner.token) })).body).not.toMatch(/login_?id/i);
+  });
+});
+
 describe('본인 알림(R7)', () => {
   it('발급되면 대상에게 알림이 서고, 확인하면 내려간다 — 남의 알림은 못 내린다', async () => {
     const m = await createMember(app, owner.token, 'notice1');

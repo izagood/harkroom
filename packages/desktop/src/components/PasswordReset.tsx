@@ -26,6 +26,13 @@ import { Overlay } from './Overlay';
 /** 재설정 코드가 들어간 서버 릴리스(#1409). */
 export const PASSWORD_RESET_SINCE = '0.4.122';
 
+/** 관리자용 로그인 ID 목록(`GET /accounts/login-ids`)이 들어간 서버 릴리스. 이보다 낮으면 부르지 않는다. */
+export const LOGIN_IDS_SINCE = '0.4.181';
+
+export function loginIdsSupported(version: string | null | undefined): boolean {
+  return !!version && (compareRelease(version, LOGIN_IDS_SINCE) ?? -1) >= 0;
+}
+
 export function resetSupported(version: string | null | undefined): boolean {
   return !!version && (compareRelease(version, PASSWORD_RESET_SINCE) ?? -1) >= 0;
 }

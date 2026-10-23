@@ -3263,6 +3263,7 @@ export class Controller {
   unlockSecrets(password: string) { return this.api.unlockSecrets(password); }
   // 비밀번호 재설정 코드(#1409) — 발급·거두기는 관리자, 알림은 본인.
   issuePasswordResetCode(accountId: string) { return this.api.issuePasswordResetCode(accountId); }
+  loginIds() { return this.api.loginIds(); }
   revokePasswordResetCode(accountId: string) { return this.api.revokePasswordResetCode(accountId); }
   passwordResetNotices() { return this.api.passwordResetNotices(); }
   ackPasswordResetNotices(ids: string[]) { return this.api.ackPasswordResetNotices(ids); }
