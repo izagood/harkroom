@@ -313,7 +313,7 @@ describe('which panes stay beside the preview', () => {
   });
 });
 
-// jaebin 신고(2026-10-05): 패널이 좁고 넓힐 수 없다 · 시안 카드인지 안 보인다 · 닫아도 주황 테두리가 남는다.
+// alice 신고(2026-10-05): 패널이 좁고 넓힐 수 없다 · 시안 카드인지 안 보인다 · 닫아도 주황 테두리가 남는다.
 // 사양은 designer 답(같은 날, 스레드 39b9c322).
 describe('preview panel width and leaving the card', () => {
   beforeEach(() => { localStorage.removeItem('harkroom.previewWidth'); });

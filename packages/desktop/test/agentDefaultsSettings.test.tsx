@@ -30,7 +30,7 @@ const fakeController = () => {
 
 const asAdmin = (isAdmin = true) => {
   useAppStore.getState().reset();
-  useAppStore.getState().set({ me: acc('u1', 'jaebin', 'human', isAdmin) });
+  useAppStore.getState().set({ me: acc('u1', 'alice', 'human', isAdmin) });
 };
 
 // **언어를 고정한다.** 이 파일이 재는 것은 화면이 무엇을 보내고 무엇을 막는가이지
@@ -126,7 +126,7 @@ describe('AgentDefaultsSettings', () => {
 });
 
 /**
- * **멘션 연쇄 상한 칸**(#932 서버 표면). jaebin 지시(2026-09-29): "한도 숫자 설정에서 UI로
+ * **멘션 연쇄 상한 칸**(#932 서버 표면). alice 지시(2026-09-29): "한도 숫자 설정에서 UI로
  * 수정할 수 있도록 해". 누구나 값을 보고 admin 만 바꾼다 · 범위 밖·같은 값이면 저장이 잠긴다.
  */
 describe('AgentDefaultsSettings — 멘션 연쇄 상한', () => {

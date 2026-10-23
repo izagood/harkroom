@@ -51,14 +51,14 @@ beforeAll(async () => {
   );
   // avcs 의 actor 키가 harkroom 계정으로 되짚어지는 자리(줄이 말하는 넷 중 "누가").
   await pool.query(
-    `insert into account_key (key_id, account_id, public_key_pem) values ('human:jaebin', $1, 'pem')`,
+    `insert into account_key (key_id, account_id, public_key_pem) values ('human:alice', $1, 'pem')`,
     [adminId],
   );
 
   const intentOid = await put({
     type: 'intent',
     title: '008 마이그레이션을 되돌린다',
-    owner: 'human:jaebin',
+    owner: 'human:alice',
     kind: 'bugfix',
     priority: 'high',
     constraints: [],
@@ -117,7 +117,7 @@ describe('GET /collab/proposals', () => {
 
     const p = repo.proposals[0];
     expect(p.title).toBe('008 마이그레이션을 되돌린다');
-    expect(p.ownerKeyId).toBe('human:jaebin');
+    expect(p.ownerKeyId).toBe('human:alice');
     expect(p.ops).toHaveLength(1);
     expect(p.ops[0].purpose).toBe('008 을 지운다');
     // 줄이 말하는 넷 중 "무엇을 건드리나".
@@ -132,7 +132,7 @@ describe('GET /collab/proposals', () => {
     const res = await app.inject({ method: 'GET', url: '/collab/proposals', headers: auth(adminToken) });
     const { actors } = res.json();
 
-    expect(actors['human:jaebin']).toBe(adminId);
+    expect(actors['human:alice']).toBe(adminId);
     // alpha 는 이 워크스페이스에 계정이 없다. 지어내지 않는다 — 그것이 "외부 작업자" 다.
     expect(actors['ai:alpha']).toBeUndefined();
   });

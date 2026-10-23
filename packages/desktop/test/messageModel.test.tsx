@@ -25,8 +25,8 @@ beforeEach(() => {
   usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().reset();
   useAppStore.getState().set({
-    me: acc('u1', 'jaebin'),
-    accounts: { u1: acc('u1', 'jaebin'), a1: acc('a1', 'murmur', 'agent') },
+    me: acc('u1', 'alice'),
+    accounts: { u1: acc('u1', 'alice'), a1: acc('a1', 'murmur', 'agent') },
   });
 });
 // **언어를 고정한다**(이 묶음의 문구가 사전을 지나면서 기본이 영어가 됐다). 이 파일이

@@ -24,9 +24,9 @@ beforeEach(() => {
   useAppStore.getState().reset();
   setController({} as unknown as Controller);
   useAppStore.getState().set({
-    me: acc(ME, 'jaebin'),
+    me: acc(ME, 'alice'),
     accounts: {
-      [ME]: acc(ME, 'jaebin'),
+      [ME]: acc(ME, 'alice'),
       [A1]: acc(A1, 'forge', 'agent', false, { ownerAccountId: ME }),
       [A2]: acc(A2, 'codex', 'agent'),
     },
@@ -95,7 +95,7 @@ describe('컴포넌트 갤러리', () => {
    * ```
    * 0개  세 카드가 전부 `for-me=true` — 규칙 04 를 가르치는 칸이 규칙을 위반했다
    *      두 사슬이 전부 `end=me` — 교착 칸이 교착을 안 그렸다
-   *      두 줄이 `jaebin 가 사람의 답을 기다린다` — 내가 나를 기다리는 문장
+   *      두 줄이 `alice 가 사람의 답을 기다린다` — 내가 나를 기다리는 문장
    * 1개  교착이 `forge 가 서로를 기다린다` — 혼자 교착하는 문장
    * ```
    *
@@ -117,7 +117,7 @@ describe('컴포넌트 갤러리', () => {
 
     for (const [label, accounts] of counts) {
       it(`에이전트 ${label} — 수신자와 사슬이 규칙대로 갈린다`, () => {
-        useAppStore.getState().set({ accounts: { [ME]: acc(ME, 'jaebin'), ...accounts } });
+        useAppStore.getState().set({ accounts: { [ME]: acc(ME, 'alice'), ...accounts } });
         render(<GallerySettings />);
 
         // 규칙 04: 나에게 온 것 · **남에게 간 것** · 이미 답한 것.
@@ -137,7 +137,7 @@ describe('컴포넌트 갤러리', () => {
      * 접혀 한 마디가 됐고, 그러면 `— 답하면 N개가 풀린다` 가 아예 사라졌다(실측).
      */
     it('내 차례 사슬은 두 마디가 이어진다 — 풀리는 수를 말할 수 있어야 한다', () => {
-      useAppStore.getState().set({ accounts: { [ME]: acc(ME, 'jaebin') } });
+      useAppStore.getState().set({ accounts: { [ME]: acc(ME, 'alice') } });
       render(<GallerySettings />);
       expect(screen.getAllByTestId('wait-chain')[0]!.dataset.unblocks).toBe('2');
     });
@@ -148,17 +148,17 @@ describe('컴포넌트 갤러리', () => {
      * 주고받기 칸이 나 혼자 떠드는 줄이 되고, 그 칸이 가르치는 것이 거짓이 된다.
      */
     it('에이전트가 없어도 갤러리가 나를 화자로 만들지 않는다', () => {
-      useAppStore.getState().set({ accounts: { [ME]: acc(ME, 'jaebin') } });
+      useAppStore.getState().set({ accounts: { [ME]: acc(ME, 'alice') } });
       render(<GallerySettings />);
       // 사슬 줄에 내 이름이 없다 — 이름을 모르면 `…` 이고, 그것이 이 저장소의 규약이다.
       for (const chain of screen.getAllByTestId('wait-chain')) {
-        expect(chain.textContent).not.toContain('jaebin');
+        expect(chain.textContent).not.toContain('alice');
       }
     });
   });
 
   it('에이전트가 둘 미만이면 이름이 빈다고 말한다 — 색이 아니라 이름만', () => {
-    useAppStore.getState().set({ accounts: { [ME]: acc(ME, 'jaebin') } });
+    useAppStore.getState().set({ accounts: { [ME]: acc(ME, 'alice') } });
     render(<GallerySettings />);
     expect(screen.getByText(/이름 자리가/)).toBeTruthy();
     // 그래도 화면 자체는 선다 — 빈 화면이면 무엇이 잘못됐는지 알 수 없다.

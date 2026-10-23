@@ -23,9 +23,9 @@ const thread = [
 const setup = (isAdmin = false) => {
   useAppStore.getState().reset();
   useAppStore.getState().set({
-    me: acc(ME, 'jaebin', 'human', isAdmin),
+    me: acc(ME, 'alice', 'human', isAdmin),
     accounts: {
-      [ME]: acc(ME, 'jaebin'),
+      [ME]: acc(ME, 'alice'),
       [MINE]: acc(MINE, 'mine', 'agent', false, { ownerAccountId: ME }),
       [THEIRS]: acc(THEIRS, 'theirs', 'agent', false, { ownerAccountId: 'someone-else' }),
     },
@@ -40,7 +40,7 @@ describe('ThreadParticipants — 참여자 줄', () => {
     render(<ThreadParticipants messages={thread} live={new Set([MINE, THEIRS])} />);
     expect(screen.getByTestId('participant-mine')).toBeTruthy();
     expect(screen.getByTestId('participant-theirs')).toBeTruthy();
-    expect(screen.queryByTestId('participant-jaebin')).toBeNull();
+    expect(screen.queryByTestId('participant-alice')).toBeNull();
   });
 
   it('응답 없는 에이전트는 흐리다', () => {

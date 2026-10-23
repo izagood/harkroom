@@ -8,7 +8,7 @@ import { acc, fakeApi } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
 
 /*
-  입력창 후속(10-23 jaebin 「f1~f5 한 PR」). 여기서는 입력창(Composer·편집기·도구줄) 몫 — f3 서식 켜짐 표시·조합 중 ⌘B,
+  입력창 후속(10-23 alice 「f1~f5 한 PR」). 여기서는 입력창(Composer·편집기·도구줄) 몫 — f3 서식 켜짐 표시·조합 중 ⌘B,
   f4 조합 대기 중 자리를 옮기면 대기를 버림, f5 좁은 칸 도구줄. f1·f2(스레드 「…에도 올리기」)는 alsoInChannel.test.
 */
 

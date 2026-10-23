@@ -56,19 +56,19 @@ afterEach(() => cleanup());
 
 describe('에이전트 배정', () => {
   it('배정이 없으면 오퍼레이터 고르개가 뜨고, 고르면 assignAgent 에 닿는다', async () => {
-    const c = setup(agent(), [op('op-1', 'jaebin-mbp'), op('op-2', 'gpu-box')]);
+    const c = setup(agent(), [op('op-1', 'alice-mbp'), op('op-2', 'gpu-box')]);
     render(<AgentsSettings />);
     (await screen.findByRole('button', { name: /alpha/ })).click();
     const select = await screen.findByLabelText('오퍼레이터 배정');
     fireEvent.change(select, { target: { value: 'op-1' } });
     await waitFor(() => expect(c.assignAgent).toHaveBeenCalledWith(AGENT_ID, 'op-1'));
     // 응답의 배정이 화면에 선다 — 목록을 다시 읽지 않아도.
-    await waitFor(() => expect(screen.getByTestId('agent-assignment-current').textContent).toContain('jaebin-mbp'));
+    await waitFor(() => expect(screen.getByTestId('agent-assignment-current').textContent).toContain('alice-mbp'));
   });
 
   it('배정이 있으면 어느 오퍼레이터인지 보이고, 해제는 unassignAgent 에 닿는다', async () => {
     const a = agent({ assignment: { agentId: AGENT_ID, operatorId: 'op-2', assignedBy: ME_ID, assignedAt: '2026-09-21T00:00:00Z' } });
-    const c = setup(a, [op('op-1', 'jaebin-mbp'), op('op-2', 'gpu-box')]);
+    const c = setup(a, [op('op-1', 'alice-mbp'), op('op-2', 'gpu-box')]);
     render(<AgentsSettings />);
     (await screen.findByRole('button', { name: /alpha/ })).click();
     fireEvent.click(await screen.findByTestId('agent-tab-run'));
@@ -89,7 +89,7 @@ describe('에이전트 배정', () => {
 describe('오퍼레이터의 배정 거절 사유', () => {
   it('서버가 붙여 준 runnerRefusal 을 배정 절에 사람 말로 보인다', async () => {
     setup(agent({ assignment: { agentId: AGENT_ID, operatorId: 'op-1', assignedBy: ME_ID, assignedAt: '2026-09-21T00:00:00Z' },
-      runnerRefusal: { reason: 'mcp_server_missing:ghost', at: '2026-09-21T00:00:00Z' } }), [op('op-1', 'jaebin-mbp')]);
+      runnerRefusal: { reason: 'mcp_server_missing:ghost', at: '2026-09-21T00:00:00Z' } }), [op('op-1', 'alice-mbp')]);
     render(<AgentsSettings />);
     (await screen.findByRole('button', { name: /alpha/ })).click();
     const line = await screen.findByTestId('agent-assignment-refused');

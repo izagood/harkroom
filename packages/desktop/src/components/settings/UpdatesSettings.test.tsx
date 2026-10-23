@@ -303,7 +303,7 @@ describe('useUpdateCheck — 창이 돌아오면 밀린 주기를 따라잡는�
 
 /**
  * 화면 글이 **한 언어로** 선다 — 제목·부제는 한국어인데 칸 이름·버튼·곁 문단은 영어로 박혀 있던
- * 섞임(jaebin 보고, 2026-10-10)의 회귀선. 시각도 OS 가 아니라 **앱 언어**를 따른다.
+ * 섞임(alice 보고, 2026-10-10)의 회귀선. 시각도 OS 가 아니라 **앱 언어**를 따른다.
  */
 describe('UpdatesSettings — 앱 언어를 따른다', () => {
   afterEach(() => usePrefsStore.getState().setLocale('system'));

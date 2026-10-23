@@ -31,9 +31,9 @@ beforeEach(() => {
   useAppStore.getState().reset();
   setController({} as unknown as Controller);
   useAppStore.getState().set({
-    me: acc(ME, 'jaebin'),
+    me: acc(ME, 'alice'),
     accounts: {
-      [ME]: acc(ME, 'jaebin'),
+      [ME]: acc(ME, 'alice'),
       // 소유자가 나인 에이전트 — 터미널 진입점이 뜬다.
       [FORGE]: acc(FORGE, 'forge', 'agent', false, { ownerAccountId: ME }),
       [CODEX]: acc(CODEX, 'codex', 'agent'),

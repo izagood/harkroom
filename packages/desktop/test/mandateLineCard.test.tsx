@@ -28,7 +28,7 @@ beforeEach(() => {
   usePrefsStore.getState().setLocale('ko');
   resetCommunityRegistry();
   useActiveStore.getState().reset();
-  useActiveStore.getState().set({ me: acc(ME, 'jaebin'), accounts: { [ME]: acc(ME, 'jaebin'), 'agent-1': acc('agent-1', 'rcms', 'agent', false, { ownerAccountId: ME }), other: acc('other', 'carol') } });
+  useActiveStore.getState().set({ me: acc(ME, 'alice'), accounts: { [ME]: acc(ME, 'alice'), 'agent-1': acc('agent-1', 'rcms', 'agent', false, { ownerAccountId: ME }), other: acc('other', 'carol') } });
   answerAsk = vi.fn(async () => {});
   setController({ answerAsk, closeAsk: vi.fn() } as unknown as Controller);
 });
@@ -37,7 +37,7 @@ afterEach(cleanup);
 describe('W4 mandate line card', () => {
   it('open tool card: chip, line box, primary + underlined deny, no option list', () => {
     render(<AskCard message={card()} />);
-    expect(screen.getByTestId('mandate-chip').textContent).toContain('M2.7 전환 · jaebin · 10-21 시작');
+    expect(screen.getByTestId('mandate-chip').textContent).toContain('M2.7 전환 · alice · 10-21 시작');
     expect(screen.getByTestId('mandate-line-cap').textContent).toBe('tool');
     expect(screen.getByTestId('mandate-line-scope').textContent).toBe('Bash(psql:*)');
     expect(screen.getByTestId('mandate-line-limits').textContent).toContain('7일');
@@ -55,7 +55,7 @@ describe('W4 mandate line card', () => {
   });
   it('nameless chip falls back to 위임장 · owner · MM-DD 시작', () => {
     render(<AskCard message={card({ pr: { mandate: { ...MANDATE, name: '' } } })} />);
-    expect(screen.getByTestId('mandate-chip').textContent).toBe('🔑 위임장 · jaebin · 10-21 시작');
+    expect(screen.getByTestId('mandate-chip').textContent).toBe('🔑 위임장 · alice · 10-21 시작');
     expect(screen.getByTestId('mandate-chip').dataset.nameless).toBe('true');
   });
   it('command card: [이번 한 번] is the primary and answers approve_once', () => {
@@ -99,7 +99,7 @@ describe('W4 mandate line card', () => {
   it('viewer not owner: read-only, no chip', () => {
     useActiveStore.getState().set({ me: acc('other', 'carol') });
     render(<AskCard message={card()} />);
-    expect(screen.getByTestId('mandate-owner-only').textContent).toContain('jaebin');
+    expect(screen.getByTestId('mandate-owner-only').textContent).toContain('alice');
     expect(screen.queryByTestId('mandate-chip')).toBeNull();
     expect(screen.queryByTestId('ask-option-approve_mandate')).toBeNull();
   });

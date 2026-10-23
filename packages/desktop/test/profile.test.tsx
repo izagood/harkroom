@@ -46,14 +46,14 @@ const fakeController = (agents: AgentView[] = [], operatorVersion: string | null
 const setup = (isAdmin = false) => {
   useAppStore.getState().reset();
   useAppStore.getState().set({
-    me: acc(ME, 'jaebin', 'human', isAdmin),
+    me: acc(ME, 'alice', 'human', isAdmin),
     connected: true,
     online: [MINE],
     // 보는 앱의 버전. **판정 기준이 아니다** — 기준은 오퍼레이터다. 일부러 러너보다 낡은 값을
     // 둔다: 이 값이 판정에 새어 들면 아래 "앱보다 새 러너" 시험이 빨개진다.
     appVersion: '0.1.0',
     accounts: {
-      [ME]: acc(ME, 'jaebin', 'human', isAdmin),
+      [ME]: acc(ME, 'alice', 'human', isAdmin),
       [MINE]: acc(MINE, 'mine', 'agent', false, { ownerAccountId: ME }),
       [THEIRS]: acc(THEIRS, 'theirs', 'agent', false, { ownerAccountId: 'someone-else' }),
     },
@@ -71,7 +71,7 @@ describe('Profile — 사람과 에이전트가 같은 틀', () => {
   it('사람은 사람이라고 말한다', () => {
     fakeController();
     render(<Profile accountId={ME} onClose={vi.fn()} />);
-    const dialog = screen.getByRole('dialog', { name: 'jaebin 프로필' });
+    const dialog = screen.getByRole('dialog', { name: 'alice 프로필' });
     expect(dialog.textContent).toContain('사람');
     // 사람에게는 연결·하네스 행이 없다 — 없는 것에 자리를 주지 않는다.
     expect(dialog.textContent).not.toContain('하네스');
@@ -83,7 +83,7 @@ describe('Profile — 사람과 에이전트가 같은 틀', () => {
     const dialog = screen.getByRole('dialog', { name: 'mine 프로필' });
     expect(dialog.textContent).toContain('에이전트');
     expect(dialog.textContent).toContain('온라인');
-    expect(dialog.textContent).toContain('@jaebin'); // 소유자
+    expect(dialog.textContent).toContain('@alice'); // 소유자
   });
 
   it('생존을 모르면 모른다고 말한다 — 소켓이 끊긴 것과 죽은 것은 다르다', () => {

@@ -60,9 +60,9 @@ const runner = (
 
 /** 사람 하나 · 에이전트 하나. 목록에 섞여 서는 최소 구성이다. */
 const 사람과에이전트 = {
-  me: acc('me', 'jaebin'),
+  me: acc('me', 'alice'),
   accounts: {
-    me: acc('me', 'jaebin'),
+    me: acc('me', 'alice'),
     nari: acc('nari', 'nari'),
     forge: acc('forge', 'forge', 'agent'),
   },

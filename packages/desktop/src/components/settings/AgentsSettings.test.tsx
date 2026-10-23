@@ -575,7 +575,7 @@ describe('AgentsSettings — 만들 때 계정 풀을 고른다', () => {
 
 
 /**
- * 계정 풀 ↔ 이 맥 배정(2026-10-15, 시안 pool_gate v2, jaebin E1~E4 전부 A).
+ * 계정 풀 ↔ 이 맥 배정(2026-10-15, 시안 pool_gate v2, alice E1~E4 전부 A).
  *
  * 풀 순서는 이 맥 오퍼레이터가 띄운 러너만 읽는다. 서버 배정이 이 맥이 아니거나 이 맥 설정에 없으면 고친 순서가
  * 아무 데도 쓰이지 않으므로 **잠그고 이유를 띠로** 보인다. 띠의 버튼을 누르면 새로고침 없이 잠금이 풀리는지까지
@@ -627,7 +627,7 @@ describe('AgentsSettings — 계정 풀 ↔ 이 맥 배정', () => {
       agentMemory: vi.fn(async () => ({ profile: null, entries: [] })),
       agentDefaults: vi.fn(async () => ({ harness: 'claude-code', model: null, effort: null })),
       operators: vi.fn(async () => [
-        { id: 'op-mac', ownerAccountId: ME_ID, name: 'jaebin-mbp', label: null, createdAt: '', lastSeenAt: null, revokedAt: null, online: true, version: null },
+        { id: 'op-mac', ownerAccountId: ME_ID, name: 'alice-mbp', label: null, createdAt: '', lastSeenAt: null, revokedAt: null, online: true, version: null },
         { id: 'op-vm', ownerAccountId: ME_ID, name: 'homelab-vm', label: null, createdAt: '', lastSeenAt: null, revokedAt: null, online: true, version: null },
       ]),
       assignAgentHere,

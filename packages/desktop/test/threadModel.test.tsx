@@ -1,4 +1,4 @@
-// 스레드 × 에이전트 모델 지정(서버 079, jaebin 승인 결정 1~13) — 데스크톱 화면 회귀선.
+// 스레드 × 에이전트 모델 지정(서버 079, alice 승인 결정 1~13) — 데스크톱 화면 회귀선.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { AgentPickableModel, ThreadAgentModelView } from '@harkroom/shared';

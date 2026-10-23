@@ -46,10 +46,10 @@ function reduced(over: Partial<AvcsReduced> = {}): AvcsReduced {
 describe('buildProposals', () => {
   it('intent 를 뿌리로 op·evidence·decision 을 접고, 어느 시점의 판정인지 함께 싣는다', () => {
     const entries = [
-      entry({ oid: 'intent_1', type: 'intent', intentOid: 'intent_1', summary: '008 을 되돌린다', actorKeyId: 'human:jaebin' }),
+      entry({ oid: 'intent_1', type: 'intent', intentOid: 'intent_1', summary: '008 을 되돌린다', actorKeyId: 'human:alice' }),
       entry({ oid: 'op_1', type: 'operation', intentOid: 'intent_1', summary: '마이그레이션을 지운다', actorKeyId: 'ai:alpha' }),
       entry({ oid: 'ev_1', type: 'evidence', intentOid: 'intent_1', summary: 'test pass' }),
-      entry({ oid: 'dec_1', type: 'decision', intentOid: 'intent_1', summary: '되돌리는 쪽을 고른다', actorKeyId: 'human:jaebin' }),
+      entry({ oid: 'dec_1', type: 'decision', intentOid: 'intent_1', summary: '되돌리는 쪽을 고른다', actorKeyId: 'human:alice' }),
     ];
 
     const view = buildProposals(entries, reduced({ statuses: { op_1: 'accepted' } }));
@@ -57,7 +57,7 @@ describe('buildProposals', () => {
     expect(view.proposals).toHaveLength(1);
     const p = view.proposals[0]!;
     expect(p.title).toBe('008 을 되돌린다');
-    expect(p.ownerKeyId).toBe('human:jaebin');
+    expect(p.ownerKeyId).toBe('human:alice');
     expect(p.ops.map((o) => o.oid)).toEqual(['op_1']);
     expect(p.ops[0]!.status).toBe('accepted');
     expect(p.ops[0]!.evidence.map((e) => e.summary)).toEqual(['test pass']);
@@ -180,7 +180,7 @@ describe('fetchReduced against a real avcs-server', () => {
     const intentOid = await put(repo, {
       type: 'intent',
       title: '제안 트리를 조립한다',
-      owner: 'human:jaebin',
+      owner: 'human:alice',
       kind: 'feature',
       priority: 'normal',
       constraints: [],
@@ -229,7 +229,7 @@ describe('fetchReduced against a real avcs-server', () => {
     await put(repo, {
       type: 'intent',
       title: 'etag',
-      owner: 'human:jaebin',
+      owner: 'human:alice',
       kind: 'feature',
       priority: 'normal',
       constraints: [],

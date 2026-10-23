@@ -75,9 +75,9 @@ const runner = (
  * 재려면 두 조건이 한 화면에 함께 있어야 한다.
  */
 const 두에이전트 = (over: Partial<AppState> = {}): Partial<AppState> => ({
-  me: { ...acc('me', 'jaebin'), isAdmin: true },
+  me: { ...acc('me', 'alice'), isAdmin: true },
   accounts: {
-    me: { ...acc('me', 'jaebin'), isAdmin: true },
+    me: { ...acc('me', 'alice'), isAdmin: true },
     forge: acc('forge', 'forge', 'agent'),
     codex: acc('codex', 'codex', 'agent'),
   },
@@ -176,7 +176,7 @@ describe('세 콜백이 이 자리에서 뜻하는 것', () => {
   /**
    * **카드를 누르면 그 에이전트의 설정이 열린다 — DM 이 아니다.**
    *
-   * 이 단언이 **뒤집혔다**(jaebin, 2026-09-08): *"여기서 에이전트를 눌렀을 때 DM 이 아니라
+   * 이 단언이 **뒤집혔다**(alice, 2026-09-08): *"여기서 에이전트를 눌렀을 때 DM 이 아니라
    * 설정이 열려야 해. 이미 메시지를 보내는 건 DM 으로 보낼 수 있잖아."*
    *
    * 앞 판본은 근거로 *"옛 목록이 이미 `startDm` 이었다"* 와 문서의 *"인력"* 을 들었다.
@@ -400,7 +400,7 @@ describe('칸을 눌러 온 사람에게 빈 화면을 주지 않는다', () => 
    */
   it('에이전트가 하나도 없으면 격자가 그 사실을 말한다', () => {
     fakeController();
-    const me = acc('me', 'jaebin', 'human', true);
+    const me = acc('me', 'alice', 'human', true);
     useAppStore.getState().set({
       me, accounts: { me },
       channels: [chan('c1', 'general')],

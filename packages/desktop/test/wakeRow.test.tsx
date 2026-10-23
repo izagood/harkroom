@@ -76,7 +76,7 @@ describe('WakeRow', () => {
 describe('MessageItem 라우팅', () => {
   it("kind='wake' 는 말풍선이 아니라 대기 줄로 그린다", () => {
     useAppStore.getState().reset();
-    useAppStore.getState().set({ me: acc('u1', 'jaebin'), accounts: { u1: acc('u1', 'jaebin'), a1: acc('a1', 'mumur') } });
+    useAppStore.getState().set({ me: acc('u1', 'alice'), accounts: { u1: acc('u1', 'alice'), a1: acc('a1', 'mumur') } });
 
     render(<MessageItem message={fakeMsg('w9', 'c1', 10, 'CI 결과 확인', 'a1', {
       kind: 'wake', threadRootId: 't1',

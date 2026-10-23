@@ -34,8 +34,8 @@ const column = () => screen.getByTestId('message-body-column');
 
 const renderMessage = (meta: Record<string, unknown> = {}) => {
   useAppStore.getState().set({
-    me: acc(ME, 'jaebin'),
-    accounts: { [ME]: acc(ME, 'jaebin'), [BOT]: acc(BOT, 'bot', 'agent') },
+    me: acc(ME, 'alice'),
+    accounts: { [ME]: acc(ME, 'alice'), [BOT]: acc(BOT, 'bot', 'agent') },
   });
   setController({ toggleReaction: vi.fn(), openThread: vi.fn() } as unknown as Controller);
   return render(<MessageItem message={msg('m1', 'c1', 1, '긴 보고문이 여기 산다', BOT, { meta })} />);

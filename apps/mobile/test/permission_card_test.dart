@@ -30,7 +30,7 @@ MockClient _client() => MockClient((req) async {
       if (path == '/accounts') {
         return _json({
           'accounts': [
-            {'id': 'me-1', 'handle': 'jaebin', 'displayName': '', 'isAgent': false, 'isDisabled': false},
+            {'id': 'me-1', 'handle': 'alice', 'displayName': '', 'isAgent': false, 'isDisabled': false},
           ],
         });
       }
@@ -189,7 +189,7 @@ void main() {
 
   testWidgets('이름 없는 칩: 🔑 위임장 · @소유자 · MM-DD 시작', (tester) async {
     await tester.pumpWidget(wrap(app, card(permMeta(pr: {'mandate': {..._mandate, 'name': ''}}))));
-    expect(find.text('🔑 위임장 · @jaebin · 10-21 시작'), findsOneWidget);
+    expect(find.text('🔑 위임장 · @alice · 10-21 시작'), findsOneWidget);
   });
 
   testWidgets('끝난 상태들', (tester) async {

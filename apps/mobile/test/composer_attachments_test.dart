@@ -13,7 +13,7 @@ import 'package:harkroom/theme.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-/// 작성칸 첨부 미리보기 — designer 시안 24878e97, jaebin D4(캡션 없음, 탭하면 전체 화면).
+/// 작성칸 첨부 미리보기 — designer 시안 24878e97, alice D4(캡션 없음, 탭하면 전체 화면).
 
 final _png = base64Decode(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==');

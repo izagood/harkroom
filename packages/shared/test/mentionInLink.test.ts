@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mentionedHandles, normalizeMentions, splitMentionCalls } from '../src/index.js';
 
 /**
- * **주소 안의 이름은 부름이 아니다**(2026-09-10, jaebin 신고: "내가 호출하지 않은 에이전트가
+ * **주소 안의 이름은 부름이 아니다**(2026-09-10, alice 신고: "내가 호출하지 않은 에이전트가
  * 링크에 포함된 `@` 를 기반으로 호출된 것 같아").
  *
  * 고치기 전 실측: `https://x.com/@forge/status/1` 한 줄에 두 가지가 일어났다 —

@@ -268,7 +268,7 @@ describe('mention autocomplete', () => {
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
 
-    // 고른 뒤 붙는 띄어쓰기는 보낼 때 끝 다듬기로 빠진다(10-22 jaebin 결정 — 끝의 빈 줄·공백은 지운다).
+    // 고른 뒤 붙는 띄어쓰기는 보낼 때 끝 다듬기로 빠진다(10-22 alice 결정 — 끝의 빈 줄·공백은 지운다).
     expect(onSend).toHaveBeenCalledWith(`@${first}`, []);
   });
 

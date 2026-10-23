@@ -9,7 +9,7 @@ import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js
 import { applyAgentPicks } from '../src/services/agentModelPicks.js';
 
 /**
- * 에이전트가 다른 에이전트를 부르며 그 스레드의 모델을 고른다(087, jaebin 승인 결정 1~9).
+ * 에이전트가 다른 에이전트를 부르며 그 스레드의 모델을 고른다(087, alice 승인 결정 1~9).
  *
  * - 대상 소유자가 켠 목록(opt-in) 안에서만, 이 글이 실제로 깨우는 **다른** 에이전트에게만.
  * - 사람이 정한 행은 덮지도 풀지도 못한다(409). 한 스레드에 에이전트 변경 3번까지(429).

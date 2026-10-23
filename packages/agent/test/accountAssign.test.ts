@@ -1,4 +1,4 @@
-// 스레드별 계정 배정(C ②) 회귀선. 숫자는 jaebin 이 고른 값(85/97, 95/98)이다.
+// 스레드별 계정 배정(C ②) 회귀선. 숫자는 alice 이 고른 값(85/97, 95/98)이다.
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

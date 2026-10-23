@@ -11,7 +11,7 @@ const snap = (pools: Record<string, string[]>, extra: Partial<ClaudeAccountsSnap
 });
 const facts = (o: Partial<GateTerminalFacts>): GateTerminalFacts => ({
   label: 'acct-1', agentId: 'ag', hasLocalSurface: true, agentIsLocal: true, operatorName: null,
-  snapshot: snap({ work: ['acct-1', 'plum'], jaebin: ['max'] }), ...o,
+  snapshot: snap({ work: ['acct-1', 'plum'], alice: ['max'] }), ...o,
 });
 
 describe('resolveGateTerminalTarget', () => {

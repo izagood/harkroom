@@ -90,8 +90,8 @@ beforeEach(() => {
   resetCommunityRegistry();
   useAppStore.getState().reset();
   useAppStore.getState().set({
-    me: { ...acc('u1', 'jaebin'), isAdmin: true },
-    accounts: { u1: acc('u1', 'jaebin'), u2: acc('u2', 'nari') },
+    me: { ...acc('u1', 'alice'), isAdmin: true },
+    accounts: { u1: acc('u1', 'alice'), u2: acc('u2', 'nari') },
     channels: [chan('c1', 'general')],
     dms: [],
     connected: true,
@@ -118,10 +118,10 @@ describe('A1 · 내 자리가 얼굴을 갖고 눌린다', () => {
     const meRow = screen.getByTestId('me-row');
     expect(meRow.textContent).not.toContain('@');
     // 얼굴이 실제로 선다 — `Identity` 의 avatar 자리가 이니셜을 그린다.
-    expect(within(meRow).getByText('J')).toBeTruthy();
+    expect(within(meRow).getByText('A')).toBeTruthy();
     // 접근성 이름은 여전히 누구인지 말한다. 글자를 뗀 대가를 여기서 갚는다 —
     // 스크린리더 사용자에게 "버튼" 하나만 남기지 않는다.
-    expect(meRow.getAttribute('aria-label')).toContain('jaebin');
+    expect(meRow.getAttribute('aria-label')).toContain('alice');
   });
 
   it('행 전체가 하나의 트리거다 — 미니 톱니도 `⌄` 화살표도 없다', () => {
@@ -161,7 +161,7 @@ describe('A1 · 내 자리가 얼굴을 갖고 눌린다', () => {
     // 정상에서 사라졌다고 해서 비정상에서도 사라지면 상태를 아예 말하지 못하게 된다.
     fakeController();
     useAppStore.getState().set({
-      me: { ...acc('u1', 'jaebin'), isAdmin: true, status: 'away', statusText: '점심' },
+      me: { ...acc('u1', 'alice'), isAdmin: true, status: 'away', statusText: '점심' },
     });
     mount();
 
@@ -183,7 +183,7 @@ describe('A1 · 내 자리가 얼굴을 갖고 눌린다', () => {
 
     fireEvent.click(screen.getByTestId('me-row'));
     const menu = screen.getByRole('menu');
-    expect(menu.textContent).toContain('@jaebin');
+    expect(menu.textContent).toContain('@alice');
     expect(menu.textContent).toContain('Acme');
   });
 
@@ -253,7 +253,7 @@ describe('A1 · 내 자리가 얼굴을 갖고 눌린다', () => {
     const onOpenSettings = vi.fn();
     mount({ onOpenSettings });
 
-    const avatar = within(screen.getByTestId('me-row')).getByText('J');
+    const avatar = within(screen.getByTestId('me-row')).getByText('A');
     fireEvent.click(avatar);
     expect(screen.getByRole('menu')).toBeTruthy();
 
@@ -373,7 +373,7 @@ describe('A2 · `+` 는 그 목록의 첫 칸에 산다', () => {
     // POST /channels 는 admin 전용이라 없는 것을 있다고 표시하지 않는다(#97). DM 은
     // 누구나 열 수 있으므로 그 `+` 는 자리를 지킨다 — 자리를 옮겼다고 권한이 바뀌지 않는다.
     fakeController();
-    useAppStore.getState().set({ me: { ...acc('u1', 'jaebin'), isAdmin: false } });
+    useAppStore.getState().set({ me: { ...acc('u1', 'alice'), isAdmin: false } });
     mountBothPanels();
 
     expect(screen.queryByTestId('add-channel')).toBeNull();

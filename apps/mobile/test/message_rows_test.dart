@@ -226,7 +226,7 @@ void main() {
     // A′(2026-10-09): 글로 답한 카드는 「글로 답했다 · 이름」 + 인용 한 줄 + 「그래도 고르기」로 접힌다.
     testWidgets('글로 답해 닫힌 카드는 인용 한 줄과 그래도 고르기를 그린다', (tester) async {
       app.accounts['h1'] = const AccountView(
-        id: 'h1', handle: 'jaebin', displayName: 'jaebin', isAgent: false, isDisabled: false, avatarAttachmentId: null,
+        id: 'h1', handle: 'alice', displayName: 'alice', isAgent: false, isDisabled: false, avatarAttachmentId: null,
       );
       // 다른 스레드의 같은 id 글은 인용하지 않는다 — 같은 스레드 글만(#1259 security).
       app.messages['c1'] = [_m('r1', 2, author: 'h1', body: '이건 다르게 해 줘\n둘째 줄', threadRoot: '1')];
@@ -246,7 +246,7 @@ void main() {
               'replyMessageId': 'r1',
             },
           }));
-      expect(find.text('글로 답했다 · jaebin'), findsOneWidget);
+      expect(find.text('글로 답했다 · alice'), findsOneWidget);
       expect(find.text('이건 다르게 해 줘'), findsOneWidget);
       expect(find.text('—'), findsNothing);
       expect(find.byKey(const Key('ask-option-1-a')), findsNothing);

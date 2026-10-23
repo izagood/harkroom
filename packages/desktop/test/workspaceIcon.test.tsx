@@ -7,14 +7,14 @@ import type { ApiClient } from '../src/lib/api';
 import { createAppStore } from '../src/state/appStore';
 
 /**
- * 워크스페이스 아이콘 — 커뮤니티 레일의 사진(2026-09-29). `jaebin.`·`beta-team.` 이 둘 다 "J" 로
+ * 워크스페이스 아이콘 — 커뮤니티 레일의 사진(2026-09-29). `alice.`·`beta-team.` 이 둘 다 "A" 로
  * 서던 문제다. 사진이 있으면 그것을, 없으면 **이니셜을 폴백**으로 그린다.
  */
 afterEach(() => { cleanup(); resetCommunityRegistry(); });
 
 function twoCommunities() {
   const reg = useCommunityRegistry.getState();
-  const a = reg.claimActive({ baseUrl: 'https://jaebin.example.com', accountId: 'a1' });
+  const a = reg.claimActive({ baseUrl: 'https://alice.example.com', accountId: 'a1' });
   const b = reg.register({ baseUrl: 'https://beta-team.example.com', accountId: 'b1' });
   return { a, b };
 }
@@ -26,11 +26,11 @@ describe('커뮤니티 전환기 아이콘', () => {
     render(<CommunitySwitcher onManage={() => {}} />);
 
     // 레일 타일은 지금 커뮤니티(a)다 — 사진이 없으니 이니셜.
-    expect(screen.getByTestId('rail-community-mark').textContent).toBe('J');
+    expect(screen.getByTestId('rail-community-mark').textContent).toBe('A');
     expect(screen.queryByTestId(`community-icon-${a.id}`)).toBeNull();
 
     fireEvent.click(screen.getByTestId('rail-community-mark'));
-    expect(screen.getByTestId(`community-tile-${a.id}`).textContent).toContain('J');
+    expect(screen.getByTestId(`community-tile-${a.id}`).textContent).toContain('A');
     expect(screen.queryByTestId(`community-row-icon-${a.id}`)).toBeNull();
     const img = screen.getByTestId(`community-row-icon-${b.id}`) as HTMLImageElement;
     expect(img.getAttribute('src')).toBe('blob:beta-team');
@@ -41,9 +41,9 @@ describe('커뮤니티 전환기 아이콘', () => {
 
   it('지금 커뮤니티에 사진이 있으면 레일 타일이 그 사진이다', () => {
     const { a } = twoCommunities();
-    a.store.getState().set({ workspaceIconUrl: 'blob:jaebin' });
+    a.store.getState().set({ workspaceIconUrl: 'blob:alice' });
     render(<CommunitySwitcher onManage={() => {}} />);
-    expect((screen.getByTestId(`community-icon-${a.id}`) as HTMLImageElement).getAttribute('src')).toBe('blob:jaebin');
+    expect((screen.getByTestId(`community-icon-${a.id}`) as HTMLImageElement).getAttribute('src')).toBe('blob:alice');
   });
 });
 

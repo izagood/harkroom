@@ -14,7 +14,7 @@ import { acc, msg } from './helpers/fakeApi';
 /**
  * 서버 시스템 줄의 번역 표지(`meta.i18n`)를 앱 언어로 그린다(i18n P5 ②). security C2·C3·C4·n2, designer 규칙 1.
  */
-const accounts = { a1: { handle: 'mira' }, g1: { handle: 'jaebin' } };
+const accounts = { a1: { handle: 'mira' }, g1: { handle: 'alice' } };
 const sys = (i18n: unknown, kind: MessageRow['kind'] = 'system') =>
   ({ kind, meta: { i18n } }) as Pick<MessageRow, 'kind' | 'meta'>;
 const tEn = translator('en');
@@ -44,7 +44,7 @@ describe('systemText', () => {
     expect(systemText(m, accounts, tKo)).toBe('🔓 o/r#7 1회 승인으로 머지 시도 · head abc123456 · gh (오퍼레이터가 고름)');
     expect(systemText(m, accounts, tEn)).toBe("🔓 o/r#7 merge attempted with a one-time approval · head abc123456 · gh (operator's pick)");
     const ci = sys({ key: 'system.merge.approvalUsedCiOverrideOperatorPick', args: { repo: 'o/r', number: 7, head: 'abc123456', approverId: 'g1' } });
-    expect(systemText(ci, accounts, tEn)).toBe("🔓 o/r#7 merge attempted with a CI-failure override · approved by jaebin · head abc123456 · gh (operator's pick)");
+    expect(systemText(ci, accounts, tEn)).toBe("🔓 o/r#7 merge attempted with a CI-failure override · approved by alice · head abc123456 · gh (operator's pick)");
     expect(systemText(ci, accounts, tKo)).toContain('gh (오퍼레이터가 고름)');
   });
 

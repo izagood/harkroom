@@ -511,7 +511,7 @@ describe('#337 viewer.count — 인터랙티브 고아 회수의 신호', () => 
 describe('#337 interactive.open 왕복', () => {
   const OPEN = {
     type: 'interactive.open', requestId: 'req-1',
-    channelId: 'c1', threadRootId: 'm1', openedByHandle: 'jaebin', cols: 100, rows: 30,
+    channelId: 'c1', threadRootId: 'm1', openedByHandle: 'alice', cols: 100, rows: 30,
   };
 
   const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -521,7 +521,7 @@ describe('#337 interactive.open 왕복', () => {
     const client = createRelayClient({
       link: LINK, unixDial: d.dial,
       onInteractiveOpen: async (req) => {
-        expect(req).toEqual({ channelId: 'c1', threadRootId: 'm1', openedByHandle: 'jaebin', cols: 100, rows: 30 });
+        expect(req).toEqual({ channelId: 'c1', threadRootId: 'm1', openedByHandle: 'alice', cols: 100, rows: 30 });
         return { sessionId: 'sess-i', created: true };
       },
     });

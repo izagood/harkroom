@@ -8,8 +8,8 @@ afterEach(() => cleanup());
 
 describe('ConfirmDialog 줄바꿈', () => {
   it('제목·본문을 담은 칸이 낱말 단위로만 접고, 긴 글은 상자 안에서 접는다', () => {
-    render(<ConfirmDialog title="'작업용 맥북 (jaebin-mbp)' 오퍼레이터를 삭제할까?" detail="되돌릴 수 없다." detailKind="note" confirmLabel="삭제" onConfirm={() => {}} onCancel={() => {}} />);
-    const box = screen.getByText("'작업용 맥북 (jaebin-mbp)' 오퍼레이터를 삭제할까?").parentElement!;
+    render(<ConfirmDialog title="'작업용 맥북 (alice-mbp)' 오퍼레이터를 삭제할까?" detail="되돌릴 수 없다." detailKind="note" confirmLabel="삭제" onConfirm={() => {}} onCancel={() => {}} />);
+    const box = screen.getByText("'작업용 맥북 (alice-mbp)' 오퍼레이터를 삭제할까?").parentElement!;
     expect(box.className).toContain('break-keep');
     expect(box.className).toContain('[overflow-wrap:anywhere]');
     expect(box.contains(screen.getByText('되돌릴 수 없다.'))).toBe(true);

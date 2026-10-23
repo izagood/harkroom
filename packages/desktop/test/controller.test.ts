@@ -105,7 +105,7 @@ describe('Controller', () => {
 
     callbacks.current!.onEvent({
       type: 'message.created',
-      message: msg('m20', 'c1', 20, '@jaebin intent: 무언가', 'sys', { kind: 'system' }),
+      message: msg('m20', 'c1', 20, '@alice intent: 무언가', 'sys', { kind: 'system' }),
       audience: 'all',
     });
     await vi.waitFor(() => expect(useAppStore.getState().accounts.sys).toBeDefined());
@@ -220,7 +220,7 @@ describe('Controller', () => {
     expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/more than 24 hours old/);
   });
 
-  // 수정으로 멘션을 불렀다는 것은 상단 띠로 알리지 않는다(jaebin, 10-06) — 부르지 못한 때만 말한다.
+  // 수정으로 멘션을 불렀다는 것은 상단 띠로 알리지 않는다(alice, 10-06) — 부르지 못한 때만 말한다.
   it('edit that called someone shows no notice', async () => {
     const api = fakeApi({
       editMessage: vi.fn(async () => ({ message: msg('m1', 'c1', 1, '@forge 봐 달라'), mentionSkipped: null })),

@@ -50,9 +50,9 @@ afterEach(() => cleanup());
 
 describe('OperatorsSettings', () => {
   it('등록된 오퍼레이터를 이름·연결 상태와 함께 나열한다', async () => {
-    fakeController([op('op-1', 'jaebin-mbp', { online: true }), op('op-2', 'gpu-box')]);
+    fakeController([op('op-1', 'alice-mbp', { online: true }), op('op-2', 'gpu-box')]);
     render(<OperatorsSettings />);
-    await screen.findByText('jaebin-mbp');
+    await screen.findByText('alice-mbp');
     expect(screen.getByText('gpu-box')).toBeTruthy();
     expect(screen.getByTestId('operator-online-op-1').textContent).toContain('연결됨');
     expect(screen.getByTestId('operator-online-op-2').textContent).toContain('끊김');
@@ -104,7 +104,7 @@ describe('OperatorsSettings', () => {
 
 describe('오퍼레이터 능력(스펙 §3)', () => {
   it('붙어 있는 오퍼레이터는 로컬 설정의 에이전트 수와 하네스를 보이고, 끊긴 것은 능력 줄이 없다', async () => {
-    fakeController([op('op-1', 'jaebin-mbp', { online: true }), op('op-2', 'gpu-box')]);
+    fakeController([op('op-1', 'alice-mbp', { online: true }), op('op-2', 'gpu-box')]);
     render(<OperatorsSettings />);
     const caps = await screen.findByTestId('operator-caps-op-1');
     expect(caps.textContent).toContain('에이전트 2개');
@@ -230,10 +230,10 @@ describe('오퍼레이터 이름 바꾸기', () => {
   });
 
   it('이름을 바꾼 줄을 지울 때 확인창 제목에 호스트명이 함께 선다 — 바꾸지 않은 줄은 호스트명 하나', async () => {
-    fakeController([op('op-1', 'jaebin-mbp', { label: '작업용 맥북' }), op('op-2', 'ops-vm')]);
+    fakeController([op('op-1', 'alice-mbp', { label: '작업용 맥북' }), op('op-2', 'ops-vm')]);
     render(<OperatorsSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: '작업용 맥북 (jaebin-mbp) 삭제' }));
-    expect(screen.getByText("'작업용 맥북 (jaebin-mbp)' 오퍼레이터를 삭제할까?")).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: '작업용 맥북 (alice-mbp) 삭제' }));
+    expect(screen.getByText("'작업용 맥북 (alice-mbp)' 오퍼레이터를 삭제할까?")).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '취소' }));
     fireEvent.click(screen.getByRole('button', { name: 'ops-vm 삭제' }));
     expect(screen.getByText("'ops-vm' 오퍼레이터를 삭제할까?")).toBeTruthy();

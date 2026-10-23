@@ -51,7 +51,7 @@ void main() {
   });
 
   // Flutter 는 action 이 있으면 persist 를 기본 true 로 잡아 duration 이 지나도 안 내린다 — 「완료로 옮겼다 ·
-  // 되돌리기」 띠가 쓸어내려야만 사라졌다(iOS, jaebin 캡처).
+  // 되돌리기」 띠가 쓸어내려야만 사라졌다(iOS, alice 캡처).
   testWidgets('다시 시도를 단 실패 토스트도 시간이 되면 저절로 내린다', (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: I18n(

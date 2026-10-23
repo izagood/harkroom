@@ -17,7 +17,7 @@ describe('#337 TurnRegistry', () => {
 
   it('해제하면 사라진다 — 턴의 finally 가 부르는 경로', () => {
     const reg = new TurnRegistry();
-    reg.register('c1/m1', { kind: 'interactive', sessionId: 's', openedByHandle: 'jaebin' });
+    reg.register('c1/m1', { kind: 'interactive', sessionId: 's', openedByHandle: 'alice' });
     reg.release('c1/m1');
     expect(reg.get('c1/m1')).toBeUndefined();
   });
@@ -41,8 +41,8 @@ describe('#337 TurnRegistry', () => {
   it('인터랙티브 턴 전부를 순회할 수 있다 — 러너 SIGTERM 회수 경로', () => {
     const reg = new TurnRegistry();
     reg.register('c1/m1', { kind: 'mention', sessionId: 'a' });
-    reg.register('c1/m2', { kind: 'interactive', sessionId: 'b', openedByHandle: 'jaebin' });
-    reg.register('c2/m3', { kind: 'interactive', sessionId: 'c', openedByHandle: 'jaebin' });
+    reg.register('c1/m2', { kind: 'interactive', sessionId: 'b', openedByHandle: 'alice' });
+    reg.register('c2/m3', { kind: 'interactive', sessionId: 'c', openedByHandle: 'alice' });
     expect([...reg.keysOf('interactive')].sort()).toEqual(['c1/m2', 'c2/m3']);
   });
 });

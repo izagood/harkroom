@@ -330,7 +330,7 @@ describe('mentionScheduler 승인 관문', () => {
       runTurn: async () => { calls += 1; return { stopRequestedAt: null }; },
     });
     // 사람이 이 스레드를 조종 중이다.
-    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'jaebin' });
+    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'alice' });
 
     const first = await scheduler.admit(batchOf([
       { entryId: 1, messageId: 'm1', threadRootId: 'root-1' },
@@ -346,7 +346,7 @@ describe('mentionScheduler 승인 관문', () => {
     expect(markedRead).toEqual([]);
     // 재폴링마다 올리면 조종이 길수록 스레드가 도배된다.
     expect(posted).toHaveLength(1);
-    expect(posted[0]!.body).toContain('jaebin');
+    expect(posted[0]!.body).toContain('alice');
   });
 
   /**
@@ -362,7 +362,7 @@ describe('mentionScheduler 승인 관문', () => {
       runTurn: async () => { calls += 1; return { stopRequestedAt: null }; },
       now: () => clock,
     });
-    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'jaebin' });
+    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'alice' });
 
     const batch = () => batchOf([{ entryId: 1, messageId: 'm1', threadRootId: 'root-1' }]);
     await scheduler.admit(batch(), ctx);
@@ -372,7 +372,7 @@ describe('mentionScheduler 승인 관문', () => {
     clock += 10 * 60_000;
     await scheduler.admit(batch(), ctx);
     expect(failed).toHaveLength(1);
-    expect(failed[0]!.body).toContain('jaebin');
+    expect(failed[0]!.body).toContain('alice');
     // 재시도로 낫는 실패가 아니다 — 사람이 조종을 끝내야 풀린다.
     expect(failed[0]!.retryable).toBe(false);
 
@@ -392,7 +392,7 @@ describe('mentionScheduler 승인 관문', () => {
       runTurn: async () => ({ stopRequestedAt: null }),
       now: () => 1_000,
     });
-    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'jaebin' });
+    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'alice' });
 
     await scheduler.admit(batchOf([{ entryId: 1, messageId: 'm1', threadRootId: 'root-1' }]), ctx);
     await scheduler.admit(batchOf([{ entryId: 2, messageId: 'm1', threadRootId: 'root-1' }]), ctx);
@@ -421,7 +421,7 @@ describe('mentionScheduler 승인 관문', () => {
       },
       startedAtMs: 0,
     });
-    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'jaebin' });
+    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'alice' });
 
     const out = await scheduler.admit(batchOf([
       { entryId: 1, messageId: 'm1', threadRootId: 'root-1' },

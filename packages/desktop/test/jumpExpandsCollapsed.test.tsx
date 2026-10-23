@@ -32,9 +32,9 @@ beforeEach(() => {
   useAppStore.getState().reset();
   setController({} as unknown as Controller);
   useAppStore.getState().set({
-    me: acc(ME, 'jaebin'),
+    me: acc(ME, 'alice'),
     accounts: {
-      [ME]: acc(ME, 'jaebin'),
+      [ME]: acc(ME, 'alice'),
       [FORGE]: acc(FORGE, 'forge', 'agent'),
       [CODEX]: acc(CODEX, 'codex', 'agent'),
     },

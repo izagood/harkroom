@@ -99,7 +99,7 @@ class _Server {
         if (path == '/accounts') {
           return _json({
             'accounts': [
-              {'id': 'o1', 'handle': 'jaebin', 'displayName': '재빈'},
+              {'id': 'o1', 'handle': 'alice', 'displayName': '앨리스'},
             ],
           });
         }
@@ -521,7 +521,7 @@ void main() {
       expect(find.text('할 것 2'), findsOneWidget);
       expect(find.byKey(const Key('saved-row-m1')), findsOneWidget);
       expect(find.text('#task'), findsWidgets);
-      expect(find.textContaining('@jaebin'), findsOneWidget);
+      expect(find.textContaining('@alice'), findsOneWidget);
       expect(find.text('첫 말'), findsOneWidget);
       expect(find.text('삭제된 메시지'), findsOneWidget);
       expect(tester.widget<InkWell>(find.byKey(const Key('saved-row-gone'))).onTap, isNull);

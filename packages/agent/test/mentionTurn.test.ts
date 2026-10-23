@@ -1552,13 +1552,13 @@ describe('runMentionTurn', () => {
   it('handles 맵에 있는 다른 계정의 메시지는 handle 로 렌더된다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 이 스레드 좀 봐줘');
-    const { deps, plans, turnOpts } = await makeDeps(fake, { handles: { [ME.id]: ME.handle, 'human-1': 'jaebin' } });
+    const { deps, plans, turnOpts } = await makeDeps(fake, { handles: { [ME.id]: ME.handle, 'human-1': 'alice' } });
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     // #117: 프롬프트가 stdin 파일로 이동했다.
     const planContent = await getPlanContent(plans, turnOpts);
-    expect(planContent[0]).toContain('jaebin: @forge 이 스레드 좀 봐줘');
+    expect(planContent[0]).toContain('alice: @forge 이 스레드 좀 봐줘');
     expect(planContent[0]).not.toContain('알 수 없는 사용자');
   });
 
@@ -1871,7 +1871,7 @@ describe('runMentionTurn', () => {
       }
     });
 
-    // 2026-10-12(스레드 6eca9cee, jaebin 「최신 글·멘션 우선 싣기」): 위 시험의 「유실 없음」은 **창 안**에서만 지킨다.
+    // 2026-10-12(스레드 6eca9cee, alice 「최신 글·멘션 우선 싣기」): 위 시험의 「유실 없음」은 **창 안**에서만 지킨다.
     // 커서 뒤가 한 페이지를 넘게 쌓이면 옛 페이지부터 먹이던 방식은 이 턴을 띄운 멘션을 빼먹었다(#task d63b9aa7 — 5일 전
     // 요청에 답하고 방금 온 질문은 못 봤다). 이제 멘션 + 최신부터 싣고, 못 실은 앞쪽은 생략 줄로 알린다.
     it('커서 뒤에 남의 글이 한 페이지를 넘게 쌓이면 멘션과 최신 글을 싣고 앞쪽은 생략 줄로 센다', async () => {
@@ -3434,7 +3434,7 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
     fake.seedFrom('human-1', '@forge 안녕');
     const h = cancelHarness();
     const { deps, runTurn } = await makeDeps(fake, { relay: h.relay });
-    runTurn.script = h.script(() => { h.cancelBy('jaebin'); });
+    runTurn.script = h.script(() => { h.cancelBy('alice'); });
     await expect(
       runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
     ).rejects.toThrow(/중단/);
@@ -3446,10 +3446,10 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
     fake.seedFrom('human-1', '@forge 안녕');
     const h = cancelHarness();
     const { deps, runTurn } = await makeDeps(fake, { relay: h.relay });
-    runTurn.script = h.script(() => { h.cancelBy('jaebin'); });
+    runTurn.script = h.script(() => { h.cancelBy('alice'); });
     await expect(
       runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
-    ).rejects.toThrow(/@jaebin 가 이 턴을 중단했다/);
+    ).rejects.toThrow(/@alice 가 이 턴을 중단했다/);
   });
 
   /**
@@ -3469,7 +3469,7 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
     const relay = {
       openSession(input: { onCancel?: (byHandle: string) => void }) {
         // PTY 가 없는 바로 그 창에서 누른다.
-        input.onCancel?.('jaebin');
+        input.onCancel?.('alice');
         return { sessionId: 'cancel-2', push: () => {}, bindInput: () => {}, needsAttention: () => {}, close: () => {} };
       },
     };
@@ -3478,7 +3478,7 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
     runTurn.script = async () => { spawned = true; return { exitCode: 0, timedOut: false, tail: '' }; };
     await expect(
       runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
-    ).rejects.toThrow(/@jaebin 가 이 턴을 중단했다/);
+    ).rejects.toThrow(/@alice 가 이 턴을 중단했다/);
     // 띄웠다가 죽이는 것이 아니라 **안 띄운다** — 이 창의 하네스는 정리할 것이 없고,
     // 띄우면 프롬프트가 주입돼 모델 호출 한 번이 그냥 버려진다.
     expect(spawned).toBe(false);
@@ -3494,13 +3494,13 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
       onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
     }) => {
       // 위 가드와 `onSpawn` 사이의 창(실행 파일 해석·forkpty)에서 눌렀다.
-      h.cancelBy('jaebin');
+      h.cancelBy('alice');
       opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
       return { exitCode: 143, timedOut: false, tail: '' };
     };
     await expect(
       runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
-    ).rejects.toThrow(/@jaebin 가 이 턴을 중단했다/);
+    ).rejects.toThrow(/@alice 가 이 턴을 중단했다/);
     expect(killed).toBe('SIGTERM');
   });
 
@@ -4658,7 +4658,7 @@ describe('유령 세션 — 등록 경합과 PTY 없는 [중단] (2026-10-07)', 
     const h = closeRelay();
     const registry = new TurnRegistry();
     const key = SessionStore.threadKey(CHANNEL, null);
-    registry.register(key, { kind: 'interactive', sessionId: 'human-term', openedByHandle: 'jaebin' });
+    registry.register(key, { kind: 'interactive', sessionId: 'human-term', openedByHandle: 'alice' });
     const { deps, runTurn } = await makeDeps(fake, { relay: h.relay, registry });
     let spawned = false;
     runTurn.script = async () => { spawned = true; return { exitCode: 0, timedOut: false, tail: '' }; };
@@ -4670,7 +4670,7 @@ describe('유령 세션 — 등록 경합과 PTY 없는 [중단] (2026-10-07)', 
     expect(h.events).toEqual(['open', 'close']);
     expect(spawned).toBe(false);
     // 등록이 던졌다면 그 자리는 먼저 온 인터랙티브 턴의 것이다 — 지우면 그 터미널이 "없는 턴"이 된다.
-    expect(registry.get(key)).toEqual({ kind: 'interactive', sessionId: 'human-term', openedByHandle: 'jaebin' });
+    expect(registry.get(key)).toEqual({ kind: 'interactive', sessionId: 'human-term', openedByHandle: 'alice' });
     // 💬 도 거둔다 — 턴이 접혔는데 "작업 중" 이 남지 않게.
     expect(fake.reactions.filter((r) => r.emoji === '💬').map((r) => r.action)).toEqual(['add', 'remove']);
   });
@@ -4684,7 +4684,7 @@ describe('유령 세션 — 등록 경합과 PTY 없는 [중단] (2026-10-07)', 
       relay: h.relay,
       // 세션은 열렸고 PTY 는 아직 없는 창 — 화면엔 [중단] 이 달린 「running」 줄이 서 있다.
       syncCodexAuth: async () => {
-        h.cancelBy('jaebin');
+        h.cancelBy('alice');
         closedAtCancel = [...h.events];
         return { account: null };
       },
@@ -4694,7 +4694,7 @@ describe('유령 세션 — 등록 경합과 PTY 없는 [중단] (2026-10-07)', 
 
     await expect(
       runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
-    ).rejects.toThrow(/@jaebin 가 이 턴을 중단했다/);
+    ).rejects.toThrow(/@alice 가 이 턴을 중단했다/);
     expect(closedAtCancel).toEqual(['open', 'close']);
     expect(spawned).toBe(false);
   });
@@ -4709,7 +4709,7 @@ describe('유령 세션 — 등록 경합과 PTY 없는 [중단] (2026-10-07)', 
       onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
     }) => {
       opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: () => {} });
-      h.cancelBy('jaebin');
+      h.cancelBy('alice');
       atCancel = [...h.events];
       return { exitCode: 143, timedOut: false, tail: '' };
     };

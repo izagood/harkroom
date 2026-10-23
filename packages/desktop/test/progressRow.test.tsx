@@ -29,9 +29,9 @@ beforeEach(() => {
   // 진행이 상태 한 줄로 접히는가이지 그 문구의 언어가 아니다.
   usePrefsStore.getState().setLocale('ko');
   useAppStore.getState().set({
-    me: acc(ME, 'jaebin'),
+    me: acc(ME, 'alice'),
     accounts: {
-      [ME]: acc(ME, 'jaebin'),
+      [ME]: acc(ME, 'alice'),
       // 소유자가 나인 에이전트 — 터미널 링크가 뜬다.
       [FORGE]: acc(FORGE, 'forge', 'agent', false, { ownerAccountId: ME }),
       // 소유자가 남인 에이전트 — 링크가 **없어야** 한다.

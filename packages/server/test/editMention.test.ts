@@ -7,7 +7,7 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 
 /**
- * 수정으로 넣은 멘션도 부른다(jaebin 승인 D1~D5, `editMessage` 머리 주석).
+ * 수정으로 넣은 멘션도 부른다(alice 승인 D1~D5, `editMessage` 머리 주석).
  * 처음엔 멘션 없이 쓰고 나중에 고쳐 `@handle` 을 넣으면 그 대상의 턴이 떠야 한다.
  */
 let app: FastifyInstance;
