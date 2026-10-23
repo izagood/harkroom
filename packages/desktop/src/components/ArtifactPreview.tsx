@@ -243,14 +243,19 @@ export function ArtifactPanel({ fill = false, windowed }: {
           >{expanded ? '⤡' : '⤢'}</button>
         )}
         {/* ⧉ 새 창으로 떼어 낸다 — 스레드 패널 머리의 ⧉ 와 같은 글리프·자리(× 왼쪽). **옮긴다**(W1): 창이 열리면
-            이 패널은 닫는다. 창은 **이 판**에 머문다(`AppWindowTarget` 의 artifact 주석). */}
+            이 패널은 닫는다. 창은 **이 판**에 머문다(`AppWindowTarget` 의 artifact 주석).
+            닫기는 **다음 프레임**이다(jaebin 신고 2026-10-22·23): 패널을 닫으면 곁의 스레드가 넓어져 글 높이가 줄고
+            scrollTop 이 새 최대값으로 잘린다. 같은 작업 안에서 `window.open` 이 새 웹뷰를 만들면 WKWebView 의 화면 쪽
+            스크롤 위치가 그 잘림을 받지 못하고 옛 값에 남는다 — 글이 위로 밀리고 아래가 비거나(차이가 작을 때),
+            목록이 통째로 빈다(클 때). 스크롤하면 다시 맞는다. WKWebView 탐침에서 같은 작업이면 3/3 어긋났고 한 프레임
+            미루면 3/3 맞았다(웹 3610 · 화면 3821 → 3610). */}
         {!windowed && channelId && (
           <button
             type="button"
             className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-row text-body text-fg-muted hover:bg-surface-sunken"
             onClick={() => {
               const r = openWindow({ kind: 'artifact', channelId, attachmentId: attachment.id }, { attachment });
-              if (r.kind === 'opened' || r.kind === 'focused') getController().closeArtifactPreview();
+              if (r.kind === 'opened' || r.kind === 'focused') requestAnimationFrame(() => getController().closeArtifactPreview());
             }}
             title={t('window.openArtifact')}
             aria-label={t('window.openArtifact')}
