@@ -25,7 +25,7 @@ describe('mandate W1', () => {
 
   const asAgent = (id: string) => ({ ...auth(op.token), 'x-harkroom-agent': id });
   const post = async (authorId: string, body: string, o: { threadRootId?: string; chainCause?: string } = {}) => {
-    const r = await postMessage(pool, { channelId: ch, authorId, body, threadRootId: o.threadRootId ?? null, chainCause: o.chainCause ?? null });
+    const r = await postMessage(pool, { channelId: ch, authorId, body, threadRootId: o.threadRootId ?? null, chainCause: o.chainCause ?? null, authVia: 'session' });
     if (r.failure) throw new Error(String(r.failure));
     return r.message.id as string;
   };
