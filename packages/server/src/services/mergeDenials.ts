@@ -174,7 +174,7 @@ export async function grantFromDenial(
 }
 
 export const PR_CLOSED_MESSAGE = 'that pull request was already merged or closed — this card is closed';
-export const HEAD_MOVED_MESSAGE = 'that pull request got a new commit after this card was raised — this card is out of date; the agent has to try again';
+export const HEAD_MOVED_MESSAGE = 'that pull request got a new commit after this card was raised, so this card cannot approve it — approve on the newer card, or if there is none, ask the agent to try the merge again';
 
 /** 닫힌 거절 기록을 누른 사람에게 줄 거절 — 새 head 로 낡았으면 `head_moved`, 아니면 PR 이 머지·닫혔다(security n4). */
 function obsoleteRefusal(d: DenialRow): { code: 'head_moved' | 'pr_closed'; message: string } {

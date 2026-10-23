@@ -341,7 +341,7 @@ describe('PermissionOncePanel', () => {
     fireEvent.click(screen.getByTestId('merge-once-submit'));
     const err = await screen.findByTestId('merge-once-error');
     expect(err.dataset.code).toBe('head_moved');
-    expect(err.textContent).toContain('새 커밋');
+    expect(err.textContent).toContain('새 커밋의 카드에서 승인한다');
   });
 
   it('서버 거절은 사람에게 하는 말로 — 원문은 title 로만', async () => {
