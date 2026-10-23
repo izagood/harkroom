@@ -9,7 +9,7 @@ import type { PermissionKind } from './permissionRequests.js';
 import { systemI18n } from './systemI18n.js';
 
 /**
- * 소유자가 **글로** 권한 요청을 승인한다(스레드 795a9663, jaebin B 「명시적으로 승인하면 승인이 되어야 해」, 10-14).
+ * 소유자가 **글로** 권한 요청을 승인한다(스레드 795a9663, 소유자 B 「명시적으로 승인하면 승인이 되어야 해」, 10-14).
  *
  * 카드 버튼과 같은 결정이다 — 요청마다 `decidePermissionRequest` 를 그대로 부르므로 7일·`allow_agent_cause=false`·
  * 요청 행의 소유자 대조·만료/이미 결정됨 판정·카드에 답을 달아 에이전트를 깨우는 것까지 버튼과 같다. 다른 점은 무엇을

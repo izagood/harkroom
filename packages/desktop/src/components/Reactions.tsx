@@ -241,9 +241,9 @@ export function Reactions({ message }: { message: MessageRow }) {
 }
 
 /**
- * 이 칩이 **서버가 단 상태 리액션**인가(2026-10-06, jaebin) — 상태 이모지이고 그 주인 에이전트가 들어 있다.
+ * 이 칩이 **서버가 단 상태 리액션**인가(2026-10-06, 소유자) — 상태 이모지이고 그 주인 에이전트가 들어 있다.
  * 서버는 상태를 진짜 리액션으로 단다(server 108, `services/threadStatus.ts`) — 주인 에이전트 이름으로,
- * 끝남 ✅ 까지(jaebin B1). 그래서 상태는 데스크톱·모바일·웹 모두 같은 리액션으로 보이고, 화면은 그 칩을 알아보기만 한다.
+ * 끝남 ✅ 까지(소유자 B1). 그래서 상태는 데스크톱·모바일·웹 모두 같은 리액션으로 보이고, 화면은 그 칩을 알아보기만 한다.
  */
 export function isStatusChip(r: MessageRow['reactions'][number], status: ThreadStatusReaction | null): boolean {
   if (!status?.accountId) return false;
@@ -334,7 +334,7 @@ function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle, status }: {
    * - 누르면 보통 칩처럼 **내 리액션**을 달고 뗀다(designer, B1) — 사람이 끝남 ✅ 를 누르는 칩이 이것이다.
    *   내 행은 `source=user` 로 따로 저장되고, 상태 행은 사람이 못 지운다(서버 `status_kept`).
    * - 말풍선 첫 줄은 **상태 문장**(`statusSentence`: 상태 · 누구 · 이유), 둘째 줄은 주인 말고 같이 단 사람
-   *   (`reactionSentence`) — jaebin 이 B1 을 받아들인 조건이 "hover 하면 누가 남겼는지 보인다"다.
+   *   (`reactionSentence`) — 소유자가 B1 을 받아들인 조건이 "hover 하면 누가 남겼는지 보인다"다.
    * - 🙋·🚨 만 색 테두리(사람을 부르는 둘 — 앞판의 강조 예산 그대로).
    */
   status?: ThreadStatusReaction | null;
@@ -394,7 +394,7 @@ function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle, status }: {
           : `${emoji} — ${who}`}
         aria-pressed={mine}
         /*
-          **내가 단 것은 선으로도 구별한다**(2026-09-09, 요청자 jaebin).
+          **내가 단 것은 선으로도 구별한다**(2026-09-09, 소유자 요청).
 
           앞판은 면과 굵기만 갈랐다(#488 B2: *"테두리는 양쪽이 같다 — 선까지 갈라
           두면 칩이 셋만 붙어도 줄이 시끄러워진다"*). 실사용에서 그 구별이 안 읽혔다:
@@ -429,7 +429,7 @@ function ReactionChip({ emoji, accountIds, nameOf, myId, onToggle, status }: {
 }
 
 /**
- * 폭·이모지·여백은 첫 판(240 · 64px · h-24)에서 한 단씩 줄였다(2026-09-29 jaebin: "좋은데 너무
+ * 폭·이모지·여백은 첫 판(240 · 64px · h-24)에서 한 단씩 줄였다(2026-09-29 소유자: "좋은데 너무
  * 크다 … 전체적으로 조금만 축소"). 실앱에서 말풍선이 칩에 비해 너무 넓고 높았고, 이모지 위아래
  * 빈 자리가 컸다.
  */

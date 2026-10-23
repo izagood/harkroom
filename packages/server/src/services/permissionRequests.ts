@@ -12,7 +12,7 @@ import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial,
 import { getMessageById, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
 
 /**
- * 에이전트 권한 요청 → 소유자 승인 → 적용(스레드 f61af808, jaebin D1~D4 10-07).
+ * 에이전트 권한 요청 → 소유자 승인 → 적용(스레드 f61af808, 소유자 D1~D4 10-07).
  *
  * 흐름: 에이전트가 `permission.request` MCP 로 권한 하나와 이유를 올린다(`openPermissionRequest`) → MCP 가 소유자 앞 ask 카드를
  * 세운다(선택지는 서버가 정한 [7일 허락하고 다시 시도]·[거절] 둘, meta.permissionRequest 는 이 줄의 값만) → 소유자 **사람 세션**이
@@ -164,7 +164,7 @@ export async function openPermissionRequest(
     grantCapability = 'tool.allow';
     grantScope = toolScope(args.channelId, v.rule);
   } else {
-    // 조직 전체(`owner/*`)는 카드로 청하지 못한다 — 승인 한 번에 그 조직이 통째로 열린다. 소유자가 설정 화면에서만 준다(jaebin 10-09).
+    // 조직 전체(`owner/*`)는 카드로 청하지 못한다 — 승인 한 번에 그 조직이 통째로 열린다. 소유자가 설정 화면에서만 준다(소유자 10-09).
     if (repoGrantScope(args.repo ?? '') && !repoScope(args.repo ?? '')) {
       return { ok: false, refusal: { code: 'org_wide', message: 'an organization-wide grant (owner/*) is not requested from a card — ask for the one repository, or ask the owner to grant owner/* in settings' } };
     }
@@ -297,7 +297,7 @@ async function openCommandRequest(
 
 /** 카드 본문(옛 앱이 meta 를 모를 때 읽는 글). 권한 칸은 서버 값뿐이고, 에이전트가 쓴 것은 이유 한 줄이다. */
 export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: string): string {
-  // n1(jaebin 10-07): 규칙은 그 채널의 **모든** 턴(위임·예약 깨우기로 뜬 턴 포함)에 붙는다 — 카드가 그렇게 말해야 한다.
+  // n1(소유자 10-07): 규칙은 그 채널의 **모든** 턴(위임·예약 깨우기로 뜬 턴 포함)에 붙는다 — 카드가 그렇게 말해야 한다.
   const warn = meta.warnings.length ? `\n⚠ ${meta.warnings.join(', ')}` : '';
   if (meta.kind === 'command') {
     return `권한 요청 · ${agentHandle}\n정확히 이 명령 하나 \`${meta.target}\` — 이 스레드에서만 · 「이번 한 번」${warn}${filesBlock(meta.files ?? [])}\n이유: ${oneLineReason(meta.reason)}`;

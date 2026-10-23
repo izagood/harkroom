@@ -62,7 +62,7 @@ export function SettingsPage({ section, description, width = 'default', layout, 
 }
 
 /**
- * 설정 화면의 꼴 셋(설정 폭 시안 v1, designer · jaebin 승인).
+ * 설정 화면의 꼴 셋(설정 폭 시안 v1, designer · 소유자 승인).
  *
  * - `form` — 한 줄에 한 필드를 쌓는 짧은 폼. 상한 880px.
  * - `cards` — 카드 여러 장. 상한 1680px, 칸은 `SettingsColumns` 가 본문 폭으로 나눈다.
@@ -70,7 +70,7 @@ export function SettingsPage({ section, description, width = 'default', layout, 
  *
  * 640px 을 고른 근거(라벨과 값이 멀어진다)는 그대로 맞다. 그래서 폭을 늘려 한 줄을 길게 하지 않고
  * **칸 수**를 늘린다 — 라벨과 값 사이는 `KvRow` 가 지킨다. 상한을 넘는 창에서는 **가운데**에
- * 선다(남는 폭이 오른쪽에 몰리면 덜 그려진 화면으로 읽힌다 — jaebin 이 첨부한 개요 탭이 그랬다).
+ * 선다(남는 폭이 오른쪽에 몰리면 덜 그려진 화면으로 읽힌다 — 소유자가 첨부한 개요 탭이 그랬다).
  */
 export type SettingsLayout = 'form' | 'cards' | 'list';
 

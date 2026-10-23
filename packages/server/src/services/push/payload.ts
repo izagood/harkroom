@@ -25,7 +25,7 @@ export type PushKind =
 
 export const PUSH_PREVIEW_MAX = 120;
 
-/** 같은 스레드의 에이전트 보통 답은 이 간격 안에 한 번만 울린다(jaebin D1). */
+/** 같은 스레드의 에이전트 보통 답은 이 간격 안에 한 번만 울린다(소유자 D1). */
 export const PUSH_REPLY_SOUND_WINDOW_MS = 10 * 60_000;
 
 /**

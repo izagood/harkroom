@@ -542,8 +542,8 @@
     ['alpha','forge'].forEach(h=>item(h, false, faceOf(h,18,'off')));
     sec('기다리는 것'); item('<span style="color:#B8431F;font-size:11px">forge 가 나에게 묻는다</span>');
     const f=el('div','sb__i','border-top:1px solid #EAE8E4;margin-top:6px;min-height:40px');
-    f.appendChild(faceOf('jaebin',22,'on'));
-    const n=el('span',null,'font-weight:600'); n.textContent='Jaebin'; f.appendChild(n); sb.appendChild(f);
+    f.appendChild(faceOf('alice',22,'on'));
+    const n=el('span',null,'font-weight:600'); n.textContent='Alice'; f.appendChild(n); sb.appendChild(f);
     if(cut){
       sb.style.height='430px'; sb.style.overflow='hidden';
       const c=el('div','sb__cut'); c.innerHTML='<span>여기부터 화면 밖 — DM · 에이전트 · 기다리는 것 · 나</span>';
@@ -586,7 +586,7 @@
       r.appendChild(d);
     });
     r.appendChild(el('div','rail__sp'));
-    const me=el('div','rail__me'); me.appendChild(faceOf('jaebin',26,'on')); r.appendChild(me);
+    const me=el('div','rail__me'); me.appendChild(faceOf('alice',26,'on')); r.appendChild(me);
     return r;
   }
   function head(p,title,action){

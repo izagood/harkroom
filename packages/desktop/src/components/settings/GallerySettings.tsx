@@ -130,7 +130,7 @@ export function GallerySettings() {
   const base = (id: string, over: Partial<MessageRow> = {}): MessageRow => ({
     // 낸 사람의 기본값은 **에이전트**다. 앞 판본은 에이전트가 없으면 `myId` 로 떨어뜨렸는데,
     // 그러면 "에이전트가 말한 것"이 "내가 말한 것"으로 바뀐다 — 사슬 줄이
-    // `jaebin 가 사람의 답을 기다린다` 로 그려져 내가 나를 기다리는 문장이 나왔다(실측).
+    // `alice 가 사람의 답을 기다린다` 로 그려져 내가 나를 기다리는 문장이 나왔다(실측).
     // 진짜가 없으면 견본으로 간다: 이름은 `…` 가 되지만 **말한 것이 에이전트라는 사실**은
     // 지켜진다. 그 사실이 뒤집히는 것이 이름이 비는 것보다 큰 거짓이다.
     id, seq: 1, channelId: 'gallery', threadRootId: null,
@@ -271,7 +271,7 @@ export function GallerySettings() {
         <Row title={t('gallery.thread.chainMine')} note={t('gallery.thread.chainMineNote')}>
           {/* 두 마디가 이어져야 `— 답하면 2개가 풀린다` 가 나온다: 견본 B 가 A 를 기다리고,
               A 가 사람을 기다린다. 앞 판본은 에이전트가 없으면 두 마디가 **같은 계정**(나)이
-              되어 사슬이 한 마디로 접혔다 — `jaebin 가 사람의 답을 기다린다` 하나만 남고
+              되어 사슬이 한 마디로 접혔다 — `alice 가 사람의 답을 기다린다` 하나만 남고
               이 칸의 요점인 "몇 개가 풀리는가"가 사라졌다(실측). */}
           <WaitChainLine chain={waitChain({
             messages: [

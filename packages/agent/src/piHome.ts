@@ -10,7 +10,7 @@
 // - `mcp.json` 은 **물려받지 않고 새로 쓴다** — 오퍼레이터의 표(harkroom 브릿지 등)만 들어간다.
 //
 // ## 읽기 전용 허용 목록 (`readonlyTools`)
-// pi 에는 권한 승인 장치가 없다. 읽기 전용은 `--tools <닫힌 목록>` 으로 건다(jaebin 결정 10-01).
+// pi 에는 권한 승인 장치가 없다. 읽기 전용은 `--tools <닫힌 목록>` 으로 건다(소유자 결정 10-01).
 // MCP 도구에는 `*` 가 안 먹으므로(실측) 턴 직전에 `pi mcp list --json` 으로 이름을 받아 적는다.
 import { execFile } from 'node:child_process';
 import { chmod, lstat, mkdir, readFile, readdir, readlink, symlink, writeFile } from 'node:fs/promises';

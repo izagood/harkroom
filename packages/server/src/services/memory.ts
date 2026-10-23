@@ -358,7 +358,7 @@ const ENDINGS = [
  * 러너 recall 에서만 거르는 상투어. 요청문마다 붙어 다니는 말이라 본문 1점이 쌓여 아무 기억이나
  * 끌어올렸다(감사 ⑤ (b)). 사람 이름은 여기 적지 않는다 — 계정 표에서 읽는다
  * (`recallExcludedNames`). 에이전트가 직접 부르는 `memory.search` 에는 걸지 않는다: 거기서
- * "jaebin" 을 찾으면 찾아져야 한다.
+ * "alice" 를 찾으면 찾아져야 한다.
  */
 export const RECALL_STOPWORDS: ReadonlySet<string> = new Set([
   // 요청의 틀
@@ -454,7 +454,7 @@ export function searchTerms(query: string, opts: { exclude?: ReadonlySet<string>
 
 /**
  * recall 에서 뺄 이름 — **사람 계정만**(지워지지 않은 것), handle·표시 이름 통째와 낱말로 편 조각까지.
- * 요청문의 "jaebin 결정" 같은 사람 이름이 기억 본문에 흔해서 recall 을 오염시켰다(감사 ⑤ (a)).
+ * 요청문의 "소유자 결정" 같은 사람 이름이 기억 본문에 흔해서 recall 을 오염시켰다(감사 ⑤ (a)).
  * 이름은 바뀌므로 표에서 읽는다.
  *
  * 에이전트·팀 이름은 빼지 않는다(qa 리뷰 ①, 09-30). `forge`·`rcms`·`homelab` 처럼 에이전트 이름이

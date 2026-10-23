@@ -1,7 +1,7 @@
 import { isAskOpen, readAskMeta, readFailureMeta, type InboxEntry, type InboxThreadState, type MessageRow } from '@harkroom/shared';
 
 /**
- * Inbox **상태 보드**(C안, 2026-10-01 jaebin 선택 · designer 정정 1~5 반영).
+ * Inbox **상태 보드**(C안, 2026-10-01 소유자 선택 · designer 정정 1~5 반영).
  *
  * ## 단위는 메시지가 아니라 일(스레드)이다
  *
@@ -175,7 +175,7 @@ function viewerColumn(head: MessageRow, input: BoardInput, scope: Scope): BoardC
 }
 
 /**
- * 서버 상태 → 열(「내 작업」 S2, 2026-10-05 jaebin 승인: **판정 원본은 서버 ✅**). 채널 머리에 붙은
+ * 서버 상태 → 열(「내 작업」 S2, 2026-10-05 소유자 승인: **판정 원본은 서버 ✅**). 채널 머리에 붙은
  * 상태 리액션과 보드의 열이 같은 말을 하게 한다 — 보드가 따로 "끝"을 판정하면 둘이 갈린다.
  *
  * - 💬 도는 중 · 👀 받음 → 진행
@@ -267,7 +267,7 @@ function effectiveState(s: InboxThreadState | undefined, latestEntryAt: string, 
 
 /**
  * **내 차례 수** — 보드 머리글의 "나를 기다리는 일 N" 이자 사이드바·레일·독 배지의 숫자다(배지 A,
- * 2026-10-02 jaebin). 접힌 것(나중에·7일 넘은 것)은 세지 않는다 — 미룬 일·한 주 넘게 묵은 일은 지금
+ * 2026-10-02 소유자). 접힌 것(나중에·7일 넘은 것)은 세지 않는다 — 미룬 일·한 주 넘게 묵은 일은 지금
  * 나를 기다리는 일이 아니다(R2). 치운 것은 끝남으로 옮겨 가므로 여기 오지 않는다.
  *
  * 한 함수로 두는 이유: 보드와 배지가 각자 세면 "배지 3, 보드 2" 가 되고, 그때 사람이 믿을 숫자가 없다

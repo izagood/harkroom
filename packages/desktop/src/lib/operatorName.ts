@@ -13,7 +13,7 @@ export function operatorDisplayName(op: Pick<OperatorView, 'name' | 'label'>): s
 }
 
 /**
- * 이름과 호스트명을 함께 — 「작업용 맥북 (jaebin-mbp)」. 지우기처럼 **어느 기계인지 틀리면 안 되는** 자리에 쓴다.
+ * 이름과 호스트명을 함께 — 「작업용 맥북 (alice-mbp)」. 지우기처럼 **어느 기계인지 틀리면 안 되는** 자리에 쓴다.
  * 이름을 바꾸지 않았으면 호스트명 하나만.
  */
 export function operatorFullName(op: Pick<OperatorView, 'name' | 'label'>): string {

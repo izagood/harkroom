@@ -87,7 +87,7 @@ export function reactionSentence(
   const names = reactorNames(accountIds, nameOf, myId, t);
   const raw = t('reactions.tooltip.reacted', { names, emoji });
   // 영어는 `you` 가 문장 맨 앞에 올 수 있다 — 그때만 첫 글자를 올린다(한글에는 대소문자가 없다).
-  // 남의 이름은 건드리지 않는다: `jaebin` 을 `Jaebin` 으로 적으면 그 사람의 이름이 아니다.
+  // 남의 이름은 건드리지 않는다: `alice` 를 `Alice` 로 적으면 그 사람의 이름이 아니다.
   const sentence = accountIds[0] === myId ? raw.charAt(0).toUpperCase() + raw.slice(1) : raw;
   const mine = myId !== null && accountIds.includes(myId);
   return { hint: mine ? t('reactions.tooltip.clickToRemove') : null, sentence };

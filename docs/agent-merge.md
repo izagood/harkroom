@@ -58,7 +58,7 @@
   (`POST /agents/:id/permission-requests/:rid/approve-once`, 본문 `ghUser`·`relaxChecks` 뿐)를 고른다. 1회 승인은 거절 기록의
   (PR, head, 스레드)에 묶이고 24시간 안에 한 번만 쓰인다 — `checkMerge` 가 임대·저장소 모양을 본 뒤 grant·사람 턴 판정 대신 이것을
   소모한다. `cause_not_human` 거절도 카드가 선다. 래퍼는 소모 전에 기록의 계정·head 로 읽기 전용 사전 확인을 하고, 승인 계정만 쓴다.
-- 배포 저장소라고 따로 막지 않는다(jaebin 10-10) — 모든 저장소가 같은 규칙이다. 배포 저장소의 안전장치는 GitHub 쪽에 둔다.
+- 배포 저장소라고 따로 막지 않는다(소유자 10-10) — 모든 저장소가 같은 규칙이다. 배포 저장소의 안전장치는 GitHub 쪽에 둔다.
 - **조직 grant `owner/*`**(10-09): 설정 화면에서 소유자가 `owner/*` 로 주면 그 owner 의 저장소 전부(앞으로 생길 것 포함)에 맞는다.
   `*` 는 저장소 자리 전체에만 온다 — `*`·`*/*`·owner 자리의 `*`·`owner/ab*` 는 400. `permission.request` 로는 청하지 못한다(`org_wide`) — 승인 한 번에 조직이 통째로 열리지 않게.
   래퍼·판정의 **실제 저장소** 자리는 여전히 `owner/name` 하나다(`repoScope`), grant 를 주고 거두는 자리만 `repoGrantScope`.

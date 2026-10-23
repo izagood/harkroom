@@ -76,7 +76,7 @@ export interface ClaudeAssignThresholds {
   moveWeeklyPct: number;
 }
 
-/** jaebin 이 고른 숫자(2026-09-29 12:09Z). */
+/** 소유자가 고른 숫자(2026-09-29 12:09Z). */
 export const DEFAULT_ASSIGN_THRESHOLDS: ClaudeAssignThresholds = {
   newSessionPct: 85,
   newWeeklyPct: 97,

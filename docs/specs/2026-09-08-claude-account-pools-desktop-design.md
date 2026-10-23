@@ -414,7 +414,7 @@ Tauri 표면이 없는 환경(웹·테스트)에서는 **섹션이 "이 빌드�
 
 ## 13. 자동 전환 검증 (2026-09-08, 사용자의 실제 풀)
 
-사용자가 등록한 풀(`work`: aria·basil·cedar / `jaebin`: max)로 확인했다.
+사용자가 등록한 풀(`work`: aria·basil·cedar / `alice`: max)로 확인했다.
 
 - 방아쇠 판정: 사용량 한도·OAuth 만료·미로그인 세 실측 문구 전부 `switchesAccount=true`.
 - 첫 계정 한도 → `aria→basil` 전환 후 basil 가 답했다.

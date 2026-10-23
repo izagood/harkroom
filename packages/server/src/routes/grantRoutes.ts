@@ -34,7 +34,7 @@ const grantBody = z.object({
 });
 
 /**
- * `api.call` grant 의 모양·권한(C안 P2, jaebin D3·E1). `repo.merge` 와 같은 틀이고 다른 점은:
+ * `api.call` grant 의 모양·권한(C안 P2, 소유자 D3·E1). `repo.merge` 와 같은 틀이고 다른 점은:
  * - scope 는 `connector:<uuid>` 하나뿐이다. 연결은 **주는 사람의 것**이어야 한다(키는 그 사람의 비밀이다).
  * - limits 가 필수다: 메서드는 연결이 허용한 것의 부분집합, 경로 접두.
  * - **쓰기 메서드가 하나라도 있으면 만료가 필수다**(D3 — 읽기+쓰기의 무기한 금지). 과거 시각도 받지 않는다.
@@ -68,7 +68,7 @@ async function checkApiGrant(
 
 /**
  * `repo.merge` grant 의 모양·권한(security F1·F2). 일반 grant 와 다른 점 둘:
- * - scope 는 `repo:<owner>/<name>` 또는 조직 전체 `repo:<owner>/*`(jaebin 10-09) 하나이고 소문자로 정규화한다. 빈 scope·
+ * - scope 는 `repo:<owner>/<name>` 또는 조직 전체 `repo:<owner>/*`(소유자 10-09) 하나이고 소문자로 정규화한다. 빈 scope·
  *   `*` 하나·부분 패턴은 400 — 전역 머지 권한은 없다.
  * - **주는 사람은 그 에이전트의 소유자인 사람**이다. admin 역할은 여기서 아무 힘이 없다(거두기만 한다).
  *   에이전트 PAT·오퍼레이터 토큰은 사람이 아니므로 403.
@@ -146,7 +146,7 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
     if (capability !== 'api.call' && (parsed.data.limits !== undefined || parsed.data.delegateDepth !== undefined || parsed.data.writeNeedsHumanCause !== undefined)) {
       return reply.code(400).send({ error: { code: 'bad_request', message: 'limits·delegateDepth·writeNeedsHumanCause 는 api.call 전용이다' } });
     }
-    // 역할로만 갖는 것(jaebin D3 「관리자만」) — 줄로 넓히지 않는다. `can()` 도 grant 를 보지 않는다.
+    // 역할로만 갖는 것(소유자 D3 「관리자만」) — 줄로 넓히지 않는다. `can()` 도 grant 를 보지 않는다.
     if (capability === 'member.reset_password') {
       return reply.code(400).send({ error: { code: 'not_grantable', message: 'member.reset_password 는 owner·admin 역할로만 갖는다' } });
     }

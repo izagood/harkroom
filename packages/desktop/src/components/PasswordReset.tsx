@@ -12,7 +12,7 @@ import { Button } from './settings/primitives';
 import { Overlay } from './Overlay';
 
 /**
- * 비밀번호 재설정 코드 — 화면 쪽(스레드 a6017542, jaebin B안, designer 시안 R1~R8). 서버는 #1409.
+ * 비밀번호 재설정 코드 — 화면 쪽(스레드 a6017542, 소유자 B안, designer 시안 R1~R8). 서버는 #1409.
  *
  * - 관리자: 설정 › 멤버와 초대의 사람 줄 끝 [재설정 코드] → 비밀번호 재확인(step-up) → 코드를 **한 번만** 보인다.
  *   코드는 이 창의 상태에만 있고 닫으면 사라진다. 복사는 가림 클립보드(60초 뒤 비움)를 먼저 쓴다.
@@ -164,7 +164,7 @@ export function ResetCodeDialog({ account, onClose }: { account: AccountView; on
         )}
         {step === 'code' && issued && (
           <div className="mt-2" ref={issuedRef}>
-            {/* 재설정은 handle 이 아니라 **로그인 ID** 로 찾는다 — 둘이 다른 사람이 있다(10-22 jinbin). 받는 쪽 입력 순서대로
+            {/* 재설정은 handle 이 아니라 **로그인 ID** 로 찾는다 — 둘이 다른 사람이 있다(10-22 다른 사용자). 받는 쪽 입력 순서대로
                 로그인 ID → 코드로 보이고, [복사]도 둘을 함께 담는다(designer #1466 s1·n1). */}
             {issued.loginId && (
               <p className="mb-2 text-body" data-testid="reset-code-login-id">

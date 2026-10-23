@@ -11,7 +11,7 @@ import { newResetCode, normalizeResetCode, RESET_CODE_TTL_MS } from '../services
 import { normalizeLoginKey, passwordRule, SESSION_TTL_DAYS } from './authRoutes.js';
 
 /**
- * 비밀번호 재설정 코드(스레드 a6017542, jaebin B안 — 관리자 발급·30분·코드만·관리자만).
+ * 비밀번호 재설정 코드(스레드 a6017542, 소유자 B안 — 관리자 발급·30분·코드만·관리자만).
  *
  * account 에 이메일이 없어(#110) 메일 링크로 되찾는 길이 없다. 대신 관리자가 멤버 하나에게 1회용 코드를
  * 발급하고, 그 사람이 로그인 화면에서 로그인 ID·코드·새 비밀번호를 대면 바뀐다. 관리자는 새 비밀번호를
@@ -61,8 +61,8 @@ export async function registerPasswordResetRoutes(app: FastifyInstance, pool: Po
   }
 
   /**
-   * 사람들의 **로그인 ID** — 설정 › 멤버와 초대에서 관리자가 「이 사람 로그인 ID 가 뭐지」에 답하게(jaebin A안, 10-23).
-   * handle 과 로그인 ID 가 다른 사람이 있다(10-22 jinbin). `/accounts` 에 칸을 더하지 않고 **따로** 두는 이유: 그 목록은
+   * 사람들의 **로그인 ID** — 설정 › 멤버와 초대에서 관리자가 「이 사람 로그인 ID 가 뭐지」에 답하게(소유자 A안, 10-23).
+   * handle 과 로그인 ID 가 다른 사람이 있다(10-22 다른 사용자). `/accounts` 에 칸을 더하지 않고 **따로** 두는 이유: 그 목록은
    * 모두가 받고 화면이 캐시·이벤트로 퍼뜨린다 — 거기 실으면 권한으로 거르는 자리가 여럿이 된다. 여기는 한 자리다.
    *
    * 보는 사람은 재설정 코드를 발급할 수 있는 사람과 같다(`member.reset_password` = owner·admin, grant 불가)·세션만.
@@ -129,7 +129,7 @@ export async function registerPasswordResetRoutes(app: FastifyInstance, pool: Po
       target: id, detail: { replacedLiveCode: revoked > 0, expiresAt: expiresAt.toISOString() },
     }, req);
     void reply.header('cache-control', 'no-store');
-    // 대상의 **로그인 ID** 를 함께 싣는다(10-22 jinbin 사고: handle 은 `jin`, 로그인 ID 는 달랐다 → 사람이 handle 을
+    // 대상의 **로그인 ID** 를 함께 싣는다(10-22 다른 사용자 사고: handle 은 `alice`, 로그인 ID 는 달랐다 → 사람이 handle 을
     // 쳐서 맞는 코드로도 네 번 실패). 재설정은 로그인 ID 로 찾으므로 코드만 전하면 반쪽이다. 발급 권한이 있는 관리자에게만
     // 가는 응답이고, 그 관리자는 어차피 이 계정의 비밀번호를 바꿀 수 있다.
     return reply.code(201).send({ code: display, expiresAt: expiresAt.toISOString(), loginId: target.loginId });

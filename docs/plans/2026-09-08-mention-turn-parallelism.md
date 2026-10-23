@@ -439,7 +439,7 @@ git commit -m "feat(agent): 멘션 턴 스케줄러 — 스레드별 동시 실�
       runTurn: async () => { calls += 1; return { stopRequestedAt: null }; },
     });
     // 사람이 이 스레드를 조종 중이다.
-    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'jaebin' });
+    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'alice' });
 
     const first = await scheduler.admit(batchOf([
       { entryId: 1, messageId: 'm1', threadRootId: 'root-1' },
@@ -455,7 +455,7 @@ git commit -m "feat(agent): 멘션 턴 스케줄러 — 스레드별 동시 실�
     expect(markedRead).toEqual([]);
     // 재폴링마다 올리면 조종이 길수록 스레드가 도배된다.
     expect(posted).toHaveLength(1);
-    expect(posted[0]!.body).toContain('jaebin');
+    expect(posted[0]!.body).toContain('alice');
   });
 
   it('유예 통지가 실패해도 유예는 유지된다', async () => {
@@ -477,7 +477,7 @@ git commit -m "feat(agent): 멘션 턴 스케줄러 — 스레드별 동시 실�
       },
       startedAtMs: 0,
     });
-    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'jaebin' });
+    registry.register(`${CH}/root-1`, { kind: 'interactive', sessionId: 's1', openedByHandle: 'alice' });
 
     const out = await scheduler.admit(batchOf([
       { entryId: 1, messageId: 'm1', threadRootId: 'root-1' },
@@ -1108,7 +1108,7 @@ v1 은 이랬다:
 사람 인터랙티브 턴은 예외로 동시에 존재할 수 있다(사람이 자기 눈으로 본다).
 
 사람이 조종 중인 스레드에 멘션이 오면: 큐에 두고 스레드에 메시지 —
-*"@fizz 는 지금 jaebin 이 직접 조종 중 — 대기 1건"*. 사람이 닫으면 러너가 처리한다.
+*"@fizz 는 지금 alice 가 직접 조종 중 — 대기 1건"*. 사람이 닫으면 러너가 처리한다.
 ```
 
 그 아래 "에이전트가 여럿이면…" 문단은 **그대로 둔다** — 여전히 참이다(러너가 서로 다른

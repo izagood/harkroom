@@ -42,7 +42,7 @@ import type { ClaudeAccount, ClaudePoolLane } from './claudeAccounts.js';
 import { claudeSessionFileExists } from './claudeSessions.js';
 
 /**
- * 기준 % 넷은 `pools.json` 의 풀별 `assign` 에서 온다(설정 › Claude 계정, 비면 jaebin 이 고른
+ * 기준 % 넷은 `pools.json` 의 풀별 `assign` 에서 온다(설정 › Claude 계정, 비면 소유자가 고른
  * 85/97·95/98). 나머지 둘은 사람이 만질 값이 아니라 상수다.
  */
 export interface AssignPolicy extends ClaudeAssignThresholds {
@@ -392,7 +392,7 @@ export function createAccountAssigner(deps: AccountAssignerDeps): AccountAssigne
   let lastActivePool: string | null = null;
 
   /**
-   * **풀 여러 개**(2026-10-15, jaebin D1~D5 전부 A). 새 스레드는 소진되지 않은 첫 풀에서 고르고,
+   * **풀 여러 개**(2026-10-15, 소유자 D1~D5 전부 A). 새 스레드는 소진되지 않은 첫 풀에서 고르고,
    * 이미 붙은 스레드는 그 계정이 옮기기 기준을 넘기 전까지 그 풀에 둔다(D3) — 앞 풀이 풀려도 세션을
    * 잃지 않게. 옮겨야 하면 새 스레드처럼 지금 쓸 풀로 간다. 모두 소진이면 가장 먼저 풀리는 풀(D4).
    * 판정 식은 화면과 같은 `poolChainState` 다. 페일오버 꼬리에는 다른 풀의 계정을 순서대로 붙인다 —

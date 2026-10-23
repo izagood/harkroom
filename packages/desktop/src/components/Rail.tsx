@@ -12,7 +12,7 @@ import { useT } from '../i18n/useT';
 import type { MessageKey, Translate } from '../i18n';
 
 /**
- * 레일이 고른 칸. **북마크도 칸이다**(jaebin, 2026-10-15) — 예전에는 오버레이를 열고 곧 원래
+ * 레일이 고른 칸. **북마크도 칸이다**(소유자, 2026-10-15) — 예전에는 오버레이를 열고 곧 원래
  * 칸으로 돌아왔는데, 줄을 누르면 오버레이가 닫혀 다음 것을 보려면 다시 열어야 했다. 이제
  * DM 칸처럼 사이드바에 목록(`SavedMessages`)이 서고 본문만 바뀐다.
  */
@@ -350,9 +350,9 @@ function MeMenuHeader() {
       <div className="min-w-0">
         {/*
           **굵은 줄은 `displayName` 이다**(실측 2026-09-07, 사용자가 화면에서 발견).
-          두 줄이 **똑같이 `handle` 을 쓰고 있어** `jaebin / @jaebin` 처럼 같은 값이 두 번
+          두 줄이 **똑같이 `handle` 을 쓰고 있어** `alice / @alice` 처럼 같은 값이 두 번
           섰다. 필드는 이미 있었고(`AccountView.displayName`) 화면이 안 쓴 것이다 —
-          이름을 `재빈` 으로 바꿔 두면 `재빈 / @jaebin` 으로 갈린다.
+          이름을 `앨리스` 로 바꿔 두면 `앨리스 / @alice` 로 갈린다.
 
           `displayName` 이 비어 있으면 `handle` 로 떨어진다: 서버가 기본값으로 `handle` 을
           넣지만(빈 문자열이 오는 경로가 있다) 그때 굵은 줄이 사라지면 메뉴 머리가

@@ -19,7 +19,7 @@ tauri-plugin-updater = "2"
 # 설치 직후 새 버전으로 다시 뜨는 표면. updater 와 한 벌이다 — 설치만 하고 재시작이
 # 없으면 디스크의 앱과 돌고 있는 앱이 갈린 채로 남는다.
 tauri-plugin-process = "2"
-# 첨부 저장 창(2026-10-06, jaebin 결정 95ab9c9b). **Rust 에서만 쓴다** — `attachment_save.rs` 가
+# 첨부 저장 창(2026-10-06, 소유자 결정 95ab9c9b). **Rust 에서만 쓴다** — `attachment_save.rs` 가
 # `app.dialog()` 로 macOS 저장 창을 띄우고 고른 경로에 직접 쓴다. capabilities 에 `dialog:*` 를 열지 않으므로
 # 웹뷰는 이 플러그인의 명령을 부를 수 없다. 의존으로 따라오는 `tauri-plugin-fs` 는 등록하지 않는다.
 tauri-plugin-dialog = "2.7"

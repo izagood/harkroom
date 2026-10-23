@@ -2114,7 +2114,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
           파일은 이미 충분히 길고, 새 칸을 여기서 펼치면 다음 칸도 여기로 온다.
         */}
         {/*
-          북마크 칸(jaebin, 2026-10-15 — 모달에서 옮겨 왔다). DM 칸과 같은 자리·같은 규칙이다:
+          북마크 칸(소유자, 2026-10-15 — 모달에서 옮겨 왔다). DM 칸과 같은 자리·같은 규칙이다:
           이 칸일 때만 그리므로 목록 조회도 칸을 열 때 돈다.
         */}
         {panel === 'saved' && <SavedMessages />}
@@ -2165,7 +2165,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
               **카드를 누르면 그 에이전트의 설정이 열린다.**
 
               전 판본은 `startDm` 이었고 근거로 *"옛 목록이 이미 `startDm` 이었다"* 와
-              문서의 *"인력"* 을 들었다. **그 근거가 뒤집혔다**(jaebin, 2026-09-08):
+              문서의 *"인력"* 을 들었다. **그 근거가 뒤집혔다**(소유자, 2026-09-08):
               *"이미 메시지를 보내는 건 DM 으로 보낼 수 있잖아."*
 
               이 칸이 DM 을 열면 **같은 것으로 가는 길이 둘**이 된다 — 바로 위 DM 칸이

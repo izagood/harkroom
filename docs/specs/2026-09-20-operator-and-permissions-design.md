@@ -1,7 +1,7 @@
 # 오퍼레이터와 권한 — 데스크탑을 프론트로 되돌리고 데몬을 실행의 유일한 접점으로 세운다
 
 2026-09-20. 대상: `packages/daemon`(→ `packages/operator`), `packages/server`, `packages/agent`,
-`packages/desktop`. 검토는 그림 6장짜리 별도 페이지(jaebin 의 아티팩트, 저장소 밖)로 했고
+`packages/desktop`. 검토는 그림 6장짜리 별도 페이지(소유자의 아티팩트, 저장소 밖)로 했고
 이 문서가 그 확정본이다. 2026-09-21 승인 — §11 의 결정 9개는 전부 제안대로.
 
 `design.md` §2 「daemon 과 server 의 경계 — 두 층은 붙지 않는다」를 **뒤집는다.** 그 결정의

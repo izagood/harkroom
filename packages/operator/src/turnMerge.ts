@@ -29,7 +29,7 @@
  *
  * F5(권한 준 사람 ≠ 오퍼레이터 주인)는 **여기서 판정하지 않는다** — 오퍼레이터는 서버의 소유 사실을 모른다.
  * 서버가 둘 다 알므로 `checkMerge` 에 넣는 것이 맞고, 그 한 줄은 서버 후속 PR 로 둔다. 지금 영향은 없다
- * (사람이 jaebin 하나라 "grant 를 준 사람"과 "오퍼레이터 주인"이 같다). 문서 `docs/agent-merge.md`.
+ * (사람이 소유자 하나라 "grant 를 준 사람"과 "오퍼레이터 주인"이 같다). 문서 `docs/agent-merge.md`.
  *
  * gh 계정: 머지는 `operator.json` 의 `merge.byScope` 에서 **그 저장소의 권한 줄**에 고른 gh 계정 토큰으로만 한다
  * (`gh auth token -u`, 정확한 `owner/name` → `owner/*`, 스레드 e085b6a7). **없으면 거절한다**(`no_gh_user`, security P1) —

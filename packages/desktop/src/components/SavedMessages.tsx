@@ -10,7 +10,7 @@ import { errorText } from '../lib/errorText';
 /**
  * 담아 둔 메시지 목록(#219). **세 상태**다 — loading / ready / error.
  *
- * **사이드바 칸이다 — 모달이 아니다**(jaebin, 2026-10-15). 레일의 북마크 칸을 누르면 DM 칸이
+ * **사이드바 칸이다 — 모달이 아니다**(소유자, 2026-10-15). 레일의 북마크 칸을 누르면 DM 칸이
  * DM 목록을 세우듯 이 목록이 사이드바 자리에 선다. 모달일 때는 줄을 누르면 모달이 닫혀서
  * 다음 것을 보려면 다시 열어야 했다 — 칸이면 목록이 왼쪽에 남은 채 본문만 바뀐다. 그래서
  * 이 컴포넌트에는 `open`·`onClose` 가 없다: 그려지면 열린 것이고, 닫는 것은 다른 칸을 고르는 것이다.
@@ -62,7 +62,7 @@ export function SavedMessages() {
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
   const [tab, setTab] = useState<Tab>('open');
   // 목록을 다시 받게 하는 방아쇠 — [다시 시도] 만 당긴다. 체크(✓·↺)는 당기지 않는다:
-  // 누를 때마다 목록 전체가 '불러오는 중' 으로 깜빡였다(10-13 jaebin). 체크는 그 행만
+  // 누를 때마다 목록 전체가 '불러오는 중' 으로 깜빡였다(10-13 소유자). 체크는 그 행만
   // 낙관적으로 옮기고 요청은 뒤에서 보낸다(`toggleState`).
   const [reloadSeq, setReloadSeq] = useState(0);
   // 답을 기다리는 옮기기(messageId → 무엇을 어디로). 탭을 바꿔 목록을 새로 받아도 이 표를
