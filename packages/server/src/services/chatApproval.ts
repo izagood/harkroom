@@ -97,24 +97,24 @@ export function parseChatApproval(body: string): ChatApprovalParse | null {
 /** 안내 줄의 까닭(`system.chatApproval.<까닭>` 키와 같다). 본문은 한국어로 남고, 새 앱은 표지로 그린다. */
 const REASON_KO = {
   negated: '부정·보류하는 말이 있어 아무것도 정하지 않았다.',
-  question: '물음표가 있어 질문으로 보고 정하지 않았다. 승인하려면 물음표 없이 다시 써라.',
-  bypass: '「바이패스」는 글로 승인하지 않는다. 카드에서 정하라.',
+  question: '물음표가 있어 질문으로 보고 정하지 않았다. 승인하려면 물음표 없이 다시 쓴다.',
+  bypass: '「바이패스」는 글로 승인하지 않는다. 카드에서 정한다.',
   conflict: '승인과 거절 낱말이 함께 있어 정하지 않았다.',
-  denyNeedsLink: '글로 거절하려면 카드 링크를 붙여라.',
+  denyNeedsLink: '글로 거절하려면 카드 링크를 붙인다.',
   noWord: '카드 링크는 있지만 승인 낱말(승인·허락·머지해·진행해·approve)이 없다.',
-  tooMany: '한 글로는 카드를 5장까지만 정한다. 나눠서 다시 써라.',
+  tooMany: '한 글로는 카드를 5장까지만 정한다. 나눠서 다시 쓴다.',
   noCard: '링크한 글 중에 정할 수 있는 카드가 없다.',
-  askCard: '선택지 카드는 아직 글로 답하지 않는다. 카드에서 골라라.',
+  askCard: '선택지 카드는 아직 글로 답하지 않는다. 카드에서 고른다.',
   hidden: '볼 수 없는 채널의 카드다.',
-  headChanged: '카드가 선 뒤 PR head 가 바뀌었다. 카드를 다시 확인하라.',
+  headChanged: '카드가 선 뒤 PR head 가 바뀌었다. 카드를 다시 확인하고 정한다.',
   ciWord: 'CI 실패를 무시하는 카드는 글에 「CI 무시」(ignore CI)가 있어야 승인한다.',
-  settled: '이 스레드의 카드는 이미 정해졌거나 만료됐다. 다른 카드는 링크를 붙여 다시 써라.',
-  noRequest: '이 글보다 먼저 온 기다리는 요청이 없다. 카드 링크를 붙여 다시 써라.',
-  notBefore: '카드가 이 글보다 나중에 섰다.',
+  settled: '이 스레드의 카드는 이미 정해졌거나 만료됐다. 다른 카드는 링크를 붙여 다시 쓴다.',
+  noRequest: '이 글보다 먼저 온 기다리는 요청이 없다. 카드 링크를 붙여 다시 쓴다.',
+  notBefore: '카드가 이 글보다 나중에 섰다. 카드에서 정하거나 링크를 붙여 다시 쓴다.',
   decided: '이미 정해진 카드다.',
   expired: '만료된 카드다.',
-  onceOnCard: '이 머지 카드는 카드 스레드에서 쓰거나 링크를 붙여 정하라.',
-  failed: '결정하지 못했다. 카드에서 다시 해 보라.',
+  onceOnCard: '이 머지 카드는 카드 스레드에서 쓰거나 링크를 붙여 정한다.',
+  failed: '결정하지 못했다. 카드에서 다시 시도한다.',
 } as const;
 export type ChatRefusal = keyof typeof REASON_KO;
 
@@ -331,7 +331,9 @@ async function confirm(pool: Pool, message: MessageRow, actorId: string, outcome
 
 /** 「승인 안 됨: <까닭>」 한 줄 — 본문은 한국어, 새 앱은 표지(`system.chatApproval.<까닭>`)로 앱 언어로 그린다. 카드 id·내용은 싣지 않는다. */
 async function refuse(pool: Pool, message: MessageRow, actorId: string, why: ChatRefusal): Promise<void> {
-  await post(pool, message, actorId, `⚠️ 승인 안 됨: ${REASON_KO[why]}`, {
+  // 거절하려던 글에는 「거절 안 됨」으로 시작한다(designer n1).
+  const head = why === 'denyNeedsLink' ? '거절 안 됨' : '승인 안 됨';
+  await post(pool, message, actorId, `⚠️ ${head}: ${REASON_KO[why]}`, {
     chatApproval: { messageId: message.id, results: [], reason: why },
     i18n: systemI18n(`system.chatApproval.${why}`, {}),
   });
