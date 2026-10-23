@@ -46,14 +46,14 @@ const admin = () => ({ authorization: `Bearer ${adminToken}` });
 
 describe('에이전트 기억 관리 REST (#139 3단계)', () => {
   it('GET 이 slug 와 값을 함께 준다 — 목록만 주면 사람이 무엇을 지우는지 모른다', async () => {
-    await setMemory(pool, agentId, 'core', '재빈은 러너를 담당한다');
+    await setMemory(pool, agentId, 'core', '앨리스은 러너를 담당한다');
 
     const res = await app.inject({ method: 'GET', url: `/accounts/agents/${agentId}/memory`, headers: admin() });
 
     expect(res.statusCode).toBe(200);
     const body = res.json() as { memories: { slug: string; value: string; updatedAt: string }[] };
     const core = body.memories.find((m) => m.slug === 'core');
-    expect(core?.value).toBe('재빈은 러너를 담당한다');
+    expect(core?.value).toBe('앨리스은 러너를 담당한다');
   });
 
   it('DELETE 가 그 항목만 지운다', async () => {

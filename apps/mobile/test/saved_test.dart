@@ -99,7 +99,7 @@ class _Server {
         if (path == '/accounts') {
           return _json({
             'accounts': [
-              {'id': 'o1', 'handle': 'alice', 'displayName': '재빈'},
+              {'id': 'o1', 'handle': 'alice', 'displayName': '앨리스'},
             ],
           });
         }

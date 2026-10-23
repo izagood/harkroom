@@ -820,7 +820,7 @@ describe('메모리 주입 (#139)', () => {
     buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory });
 
   it('core 본문이 프롬프트에 들어간다', () => {
-    expect(build({ core: '재빈은 러너를 담당한다', slugs: [] })).toContain('재빈은 러너를 담당한다');
+    expect(build({ core: '앨리스은 러너를 담당한다', slugs: [] })).toContain('앨리스은 러너를 담당한다');
   });
 
   // 전부 주입하면 축적이 곧 컨텍스트 고갈이 된다 — 이슈가 그렇게 확정했다.
@@ -853,7 +853,7 @@ describe('메모리 주입 (#139)', () => {
    * 뒤에도 옛 이름을 싣고 다녔다. 비었을 때만 가르치면 아무도 고치지 않는다.
    */
   it('기억이 이미 있어도 쓰는 법과 갱신 지시가 매 턴 실린다', () => {
-    const s = build({ core: '재빈은 러너를 담당한다', slugs: [] });
+    const s = build({ core: '앨리스은 러너를 담당한다', slugs: [] });
     expect(s).toContain('memory.set');
     expect(s).toContain('고쳐');
   });

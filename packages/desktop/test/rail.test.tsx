@@ -586,14 +586,14 @@ describe('Inbox 는 홈 맨 위, 북마크는 레일에만', () => {
 describe('계정 메뉴 머리가 이름과 핸들을 가른다', () => {
   it('굵은 줄은 이름, 아래 줄은 핸들이다', async () => {
     useAppStore.getState().set({
-      me: { ...acc('u1', 'alice', 'human', true), displayName: '재빈' },
-      accounts: { u1: { ...acc('u1', 'alice', 'human', true), displayName: '재빈' } },
+      me: { ...acc('u1', 'alice', 'human', true), displayName: '앨리스' },
+      accounts: { u1: { ...acc('u1', 'alice', 'human', true), displayName: '앨리스' } },
     });
     mountRail({ panel: 'home' });
     fireEvent.click(screen.getByRole('button', { name: /내 계정 메뉴/ }));
 
     // 이름이 굵은 줄에 선다.
-    expect(await screen.findByText('재빈')).toBeTruthy();
+    expect(await screen.findByText('앨리스')).toBeTruthy();
     // 핸들은 아래 줄에 `@` 와 워크스페이스와 함께 선다 — 이름을 되풀이하지 않는다.
     expect(screen.getByText(/@alice/)).toBeTruthy();
   });

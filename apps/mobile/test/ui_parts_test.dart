@@ -47,7 +47,7 @@ void main() {
     test('첫 글자 — 기호는 건너뛰고 영문은 대문자', () {
       expect(HarkroomAvatar.initialOf('forge'), 'F');
       expect(HarkroomAvatar.initialOf('@_task'), 'T');
-      expect(HarkroomAvatar.initialOf('재빈'), '재');
+      expect(HarkroomAvatar.initialOf('앨리스'), '앨');
       expect(HarkroomAvatar.initialOf('—'), '?');
     });
 
