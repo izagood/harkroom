@@ -718,7 +718,7 @@ describe('전용 제공사 경로 env', () => {
     const settings = JSON.parse(withLane[withLane.indexOf('--settings') + 1] as string) as { hooks: { PreToolUse: { matcher: string; hooks: { command: string }[] }[] } };
     const hook = settings.hooks.PreToolUse[0];
     expect(hook?.matcher).toBe('*');
-    const laneArg = /hook pretool --lane ([A-Za-z0-9_-]+)$/.exec(hook?.hooks[0]?.command ?? '');
+    const laneArg = /hook pretool --lane ([A-Za-z0-9_-]+) \|\| exit 2$/.exec(hook?.hooks[0]?.command ?? '');
     // hook 이 받는 목록 = 이 턴의 --allowedTools 칸 그대로(기본 허용 목록·승인 규칙·래퍼).
     expect(decodeLaneHookRules(laneArg?.[1] ?? '!')).toEqual(withLane.slice(withLane.indexOf('--allowedTools') + 1, withLane.indexOf('--settings')));
     // `--disallowedTools` 의 deny 규칙(설정 파일 자기 수정)도 Edit·Write 꼴이라 allow 칸만 떼어 본다.

@@ -402,7 +402,8 @@ export function commandHookSettings(operatorBin: string): string {
  * 실패하거나 시한을 넘겨도 dontAsk 판정은 그대로라 넓어지지 않는다(실측). 규칙은 base64url 로 실어 셸 글자가 섞이지 않는다.
  */
 export function laneHookSettings(operatorBin: string, allowRules: readonly string[]): string {
-  const command = `${JSON.stringify(operatorBin)} hook pretool --lane ${encodeLaneHookRules(allowRules)}`;
+  // hook 이 죽으면(0 이 아닌 종료) 차단 종료 코드 2 로 끝낸다 — 그냥 두면 하네스가 비차단 오류로 넘기고 읽기 명령은 하네스 판정으로 돈다(실측).
+  const command = `${JSON.stringify(operatorBin)} hook pretool --lane ${encodeLaneHookRules(allowRules)} || exit 2`;
   return JSON.stringify({ hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command, timeout: 15 }] }] } });
 }
 
