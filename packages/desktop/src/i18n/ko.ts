@@ -3103,7 +3103,7 @@ export const ko = {
   'mergeOnce.pick': "오퍼레이터가 고름 (기본)",
   'mergeOnce.changeAccount': "계정 바꾸기…",
   'mergeOnce.changeLoading': "이 에이전트가 도는 기기의 계정을 읽는 중…",
-  'mergeOnce.changeNotOwner': "이 기기 주인만 계정을 고를 수 있다",
+  'mergeOnce.changeNotOwner': "그 기기 주인만 계정을 고를 수 있다",
   'mergeOnce.changeNoReport': "그 기기의 오퍼레이터가 아직 계정을 알리지 않았다",
   'mergeOnce.changeFailed': "그 기기의 계정을 읽지 못했다",
   'mergeOnce.remoteAccount': "계정 (그 기기)",

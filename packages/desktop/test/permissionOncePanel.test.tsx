@@ -227,7 +227,7 @@ describe('PermissionOncePanel', () => {
       const c = setup({ getMergeAccounts: vi.fn(async () => ({ operatorId: 'op-remote', report: rest })) });
       render(<PermissionOncePanel message={card()} />);
       fireEvent.click(screen.getByTestId('merge-once-open'));
-      const reason = await screen.findByText('이 기기 주인만 계정을 고를 수 있다');
+      const reason = await screen.findByText('그 기기 주인만 계정을 고를 수 있다');
       expect(reason.getAttribute('data-reason')).toBe('mergeOnce.changeNotOwner');
       expect((screen.getByTestId('merge-once-change-account') as HTMLButtonElement).disabled).toBe(true);
       expect(screen.queryByTestId('merge-once-remote-account')).toBeNull();
