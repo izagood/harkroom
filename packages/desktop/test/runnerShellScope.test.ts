@@ -635,8 +635,10 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'codex_account_remove', 'codex_accounts_provider_usage',
           'daemon_kill_runner', 'daemon_spawn_runner',
           'operator_agent_provider_lane_set', 'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_merge_check', 'operator_merge_set', 'operator_register',
+          'pick_save_target', 'reveal_saved_attachment',
           'secret_delete', 'secret_get', 'secret_set',
           'workspace_cleanup_act', 'workspace_cleanup_settings_set',
+          'write_saved_attachment',
         ]);
       // 사용량 새로고침(2026-10-09): [Refresh usage] 여부와 계정 **이름**뿐이다 — 이름은 디렉터리를 고르지 않고
       // 오퍼레이터가 디스크에서 읽은 목록과 같은지만 본다(`readUsageRequest`). 정확한 목록은 위 스위트가 고정한다.
@@ -682,6 +684,15 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(mergeSet.webviewParams.sort()).toEqual(['gh_user: Option<String>', 'migrate: Option<Vec<String>>', 'scope: Option<String>']);
       // 닿음 확인: 범위 문자열 목록뿐이다. 토큰·계정은 웹뷰가 고르지 않는다(오퍼레이터가 그 순간의 gh 목록으로 잰다).
       expect(commands.find((c) => c.fn === 'operator_merge_check')!.webviewParams).toEqual(['scopes: Vec<String>']);
+      // 첨부 저장(2026-10-23, #1212 대체): 웹뷰가 주는 것은 ① 이름 **제안** 문자열, ② raw 본문(바이트)과 헤더의 표,
+      // ③ 표(u64)뿐이다 — 경로는 사람이 저장 창에서 고르고 Rust 표에만 있다(`attachment_save.rs`). 셋 다 부른 창의
+      // label(`webview`)을 받아 우리 앱 창만 받는다.
+      const pick = commands.find((c) => c.fn === 'pick_save_target')!;
+      expect(pick.webviewParams.sort()).toEqual(['filename: String', 'webview: tauri::Webview']);
+      const write = commands.find((c) => c.fn === 'write_saved_attachment')!;
+      expect(write.webviewParams.sort()).toEqual(["request: tauri::ipc::Request<'_>", 'webview: tauri::Webview']);
+      const reveal = commands.find((c) => c.fn === 'reveal_saved_attachment')!;
+      expect(reveal.webviewParams.sort()).toEqual(['token: u64', 'webview: tauri::Webview']);
       // `daemon_kill_runner` 가 받는 것은 **누구를·어느 세대를** 뿐이다 — 프로그램·인자·경로를
       // 다시 고를 수 있는 자리가 아니다.
       const kill = commands.find((c) => c.fn === 'daemon_kill_runner')!;
