@@ -372,4 +372,61 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect(res.statusCode).toBe(400);
     });
   });
+
+  // P3: 권한 카드의 거울 — 본문은 서버가 원본 요청으로 쓰고, 거울에서 누르면 원본 요청이 정해진다.
+  describe('권한 카드의 거울(P3)', () => {
+    const mirrorOf = async (cardId: string, channelId = ch) => text(await client.callTool({
+      name: 'message.ask',
+      arguments: { channelId, body: '그냥 눌러 주세요 — 아무 일 없음', options: [{ id: 'approve', label: '좋아요' }, { id: 'deny', label: '싫어요' }], mirrorOf: cardId },
+    }));
+    const answer = (token: string, channelId: string, messageId: string, optionId: string) =>
+      app.inject({ method: 'POST', url: `/channels/${channelId}/messages/${messageId}/ask-answer`, headers: auth(token), payload: { optionId } });
+
+    it('거울 본문·선택지는 원본 요청에서 서버가 다시 쓴다', async () => {
+      const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context ops -n sitebot logs:*)', threadRootId: await root() });
+      const m = await mirrorOf(r.cardMessageId, otherCh);
+      expect(m.error).toBeUndefined();
+      const row = (await pool.query(`select body, meta from message where id = $1`, [m.message.id])).rows[0];
+      expect(row.body).toContain('Bash(kubectl --context ops -n sitebot logs:*)');
+      expect(row.body).not.toContain('아무 일 없음');
+      expect(row.meta.ask.options).toEqual([{ id: 'approve', label: '7일 허락하고 다시 시도' }, { id: 'deny', label: '거절' }]);
+      expect(row.meta.permissionRequest).toBeUndefined();
+    });
+
+    it('소유자가 거울에서 승인하면 원본 요청이 열리고 거울은 따라 닫힌다 — 에이전트는 한 번 깨어난다', async () => {
+      const rule = 'Bash(kubectl --context ops -n sitebot top:*)';
+      const r = await request({ kind: 'tool', rule, threadRootId: await root() });
+      const m = await mirrorOf(r.cardMessageId, otherCh);
+      expect((await answer(bob.token, otherCh, m.message.id, 'approve')).statusCode).toBe(403);
+      const res = await answer(alice.token, otherCh, m.message.id, 'approve');
+      expect(res.statusCode).toBe(200);
+      expect(res.json().meta.ask).toMatchObject({ answeredWith: 'approve', answeredBy: alice.accountId, mirrorOf: r.cardMessageId });
+      expect((await pool.query(`select status from permission_request where id = $1`, [r.requestId])).rows[0].status).toBe('granted');
+      expect(await toolAllowsFor(pool, agentId, ch)).toContain(rule);
+      const wakes = (await pool.query(
+        `select count(*)::int as n from inbox where account_id = $1 and message_id = $2 and reason = 'ask_answered'`, [agentId, r.cardMessageId])).rows[0].n;
+      expect(wakes).toBe(1);
+      // 다시 누르면 이미 정해졌다.
+      expect((await answer(alice.token, otherCh, m.message.id, 'deny')).statusCode).toBe(409);
+    });
+
+    it('만료된 원본은 거울에서도 409 request_expired', async () => {
+      const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context ops -n sitebot get events)', threadRootId: await root() });
+      const m = await mirrorOf(r.cardMessageId, otherCh);
+      await pool.query(`update permission_request set expires_at = now() - interval '1 minute' where id = $1`, [r.requestId]);
+      const res = await answer(alice.token, otherCh, m.message.id, 'approve');
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('request_expired');
+    });
+
+    it('사람이 직접 세운 가짜 거울로는 정하지 않는다(403)', async () => {
+      const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context ops -n sitebot get svc)', threadRootId: await root() });
+      const fake = (await pool.query(
+        `insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, '거울', 'user', $3) returning id`,
+        [otherCh, admin.accountId, JSON.stringify({ kind: 'ask', ask: { to: { kind: 'human' }, options: [{ id: 'approve', label: '승인' }, { id: 'deny', label: '거절' }], mirrorOf: r.cardMessageId } })],
+      )).rows[0].id as string;
+      expect((await answer(alice.token, otherCh, fake, 'approve')).statusCode).toBe(403);
+      expect((await pool.query(`select status from permission_request where id = $1`, [r.requestId])).rows[0].status).toBe('pending');
+    });
+  });
 });

@@ -404,7 +404,7 @@ export async function decidePermissionRequest(
      * 어느 길로 정했나(`decisions.decide`). 글 승인(`chatApproval`)은 카드 meta(`decidedVia`)·감사 기록에, 버튼은 감사 기록에만
      * 남는다(카드 meta 는 전과 같다).
      */
-    via?: { kind: 'chat'; messageId: string; target?: 'T1' | 'T2' | 'T3' } | { kind: 'button' };
+    via?: { kind: 'chat'; messageId: string; target?: 'T1' | 'T2' | 'T3' } | { kind: 'button' } | { kind: 'mirror'; mirrorMessageId: string };
   },
 ): Promise<({ ok: true; status: 'granted' | 'denied' | 'approved_once'; grantExpiresAt: string | null; approvalExpiresAt?: string; cardMessageId: string | null; grantMode?: 'once' | 'hour' }) | ({ ok: false } & DecideRefusal)> {
   const now = args.now ?? new Date();
@@ -501,7 +501,7 @@ export async function decidePermissionRequest(
           ...(grantExpiresAt ? { grantExpiresAt: grantExpiresAt.toISOString() } : {}),
           ...(approval && args.once ? { approvedOnce: { ghUser: args.once.ghUser, relaxChecks: args.once.relaxChecks, expiresAt: approval.expiresAt.toISOString() } } : {}),
           ...(grantMode ? { grantMode } : {}),
-          ...(args.via?.kind === 'chat' ? { decidedVia: args.via } : {}),
+          ...(args.via?.kind === 'chat' || args.via?.kind === 'mirror' ? { decidedVia: args.via } : {}),
         })]);
     }
     await client.query('commit');
@@ -528,6 +528,7 @@ export async function decidePermissionRequest(
       ...(grantExpiresAt ? { grantExpiresAt: grantExpiresAt.toISOString() } : {}),
       ...(grantMode ? { grantMode, commandGrantId } : {}),
       ...(args.via?.kind === 'chat' ? { via: args.via.kind, messageId: args.via.messageId, ...(args.via.target ? { chatTarget: args.via.target } : {}) }
+        : args.via?.kind === 'mirror' ? { via: 'mirror', mirrorMessageId: args.via.mirrorMessageId }
         : args.via ? { via: args.via.kind } : {}),
     },
   });
@@ -820,4 +821,40 @@ function filesBlock(files: readonly NonNullable<PermissionRequestMeta['files']>[
 /** 카드 미리 보기 글자 — 멘션·펜스 탈출·서식 문자를 무력화한다(security n1). */
 export function neutralizePreview(text: string): string {
   return text.replace(/\p{Cf}/gu, '').replace(/`{3,}|~{3,}/g, (m) => '‵'.repeat(m.length)).replace(/@/g, '＠').replace(/harkroom:\/\//gi, 'harkroom∶//');
+}
+
+/**
+ * 권한 카드 거울(P3)의 본문·선택지 — 에이전트가 쓴 거울 본문이 아니라 **원본 요청**으로 서버가 다시 쓴다. 원본이 권한 카드가
+ * 아니면 null(일반 거울은 전과 같다). 거울 채널을 보는 사람 중 원본 채널을 못 보는 사람이 있을 수 있으면 대상·이유 없이
+ * 중립 한 줄만 싣는다 — 정하는 것은 어차피 원본을 볼 수 있는 소유자다.
+ */
+export async function renderPermissionMirror(
+  pool: Pool, rootId: string, mirrorChannelId: string,
+): Promise<{ body: string; options: { id: string; label: string }[]; prompt?: string } | null> {
+  const r = (await pool.query<{ meta: Record<string, unknown>; channelId: string; handle: string | null }>(
+    `select m.meta, m.channel_id as "channelId", a.handle
+       from message m left join account a on a.id = m.author_id
+      where m.id = $1 and m.deleted_at is null and m.meta ? 'permissionRequest'`, [rootId])).rows[0];
+  if (!r) return null;
+  const pr = r.meta.permissionRequest as PermissionRequestMeta;
+  const ask = r.meta.ask as { options?: { id: string; label: string }[]; prompt?: string } | undefined;
+  const ciOnce = pr.kind === 'merge' && pr.once?.reason === 'ci_not_green';
+  const options = ask?.options?.map((o) => ({ id: o.id, label: o.label })) ?? permissionCardOptions(pr.kind, ciOnce);
+  const handle = `@${r.handle ?? 'agent'}`;
+  const prompt = typeof ask?.prompt === 'string' ? ask.prompt : undefined;
+  if (await mirrorAudienceSeesRoot(pool, r.channelId, mirrorChannelId)) {
+    return { body: permissionCardBody(pr, handle), options, ...(prompt ? { prompt } : {}) };
+  }
+  return { body: `권한 요청 · ${handle}\n원래 카드가 있는 채널에서 내용을 확인하고 정해 주세요.`, options, ...(prompt ? { prompt } : {}) };
+}
+
+/** 거울 채널의 이벤트를 받는 사람이 모두 원본 채널도 보는가. 같은 채널이거나 원본이 모두에게 열려 있으면 참. */
+async function mirrorAudienceSeesRoot(pool: Pool, rootChannelId: string, mirrorChannelId: string): Promise<boolean> {
+  if (rootChannelId === mirrorChannelId) return true;
+  const rootAudience = await audienceFor(pool, rootChannelId);
+  if (rootAudience === 'all') return true;
+  const mirrorAudience = await audienceFor(pool, mirrorChannelId);
+  if (mirrorAudience === 'all') return false;
+  const seen = new Set(rootAudience);
+  return mirrorAudience.every((id) => seen.has(id));
 }

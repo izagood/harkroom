@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { readAskMeta, type MessageRow } from '@harkroom/shared';
-import { getMessageById, recordAskAnswer } from './messages.js';
+import { getMessageById, readAskRow, recordAskAnswer } from './messages.js';
+import { assertChannelVisible } from './channels.js';
 import {
   decidePermissionRequest, PERMISSION_OPTION_APPROVE, PERMISSION_OPTION_APPROVE_HOUR, PERMISSION_OPTION_APPROVE_ONCE, PERMISSION_OPTION_DENY,
   type DecideRefusal, type PermissionDecision,
@@ -86,25 +87,81 @@ const OPTION_DECISION: Record<string, PermissionDecision> = {
 /**
  * 해석한 결정을 정한다. 사람 세션 판정은 부른 쪽(라우트·글 올리기)이 먼저 한다.
  *
- * 거울 카드는 지금 **물음 길**로 간다 — `recordAskAnswer` 가 권한 카드의 거울을 거절한다(111). 거울에서 권한을 정하게 하려면
- * 여기 `mirrorMessageId` 갈래만 바꾸면 된다.
+ * 거울 카드(P3): 권한 카드의 거울이면 **서버가 세운 거울인지**(`isGenuinePermissionMirror`) 본 뒤 원본 요청으로 넘긴다 —
+ * 답은 원본 카드에 한 번 적히고 거울은 `syncAskMirrors` 가 따라 닫는다. 진짜 거울이 아니면 전처럼 물음 길로 가서 거절된다.
+ * 권한 요청은 **언제나** 요청 줄의 소유자를 DB 에서 다시 읽어 대조한다(부른 쪽이 넘긴 `ownerAccountId` 에 기대지 않는다).
  */
 export async function decide(pool: Pool, ref: DecisionRef, actorId: string, input: DecideInput): Promise<DecideOutcome> {
-  const askMessageId = ref.mirrorMessageId ?? (ref.kind === 'ask' ? ref.cardMessageId : null);
-  if (askMessageId) return { kind: 'ask', result: await recordAskAnswer(pool, { messageId: askMessageId, actorId, optionId: input.option }) };
-  if (ref.kind !== 'permission') throw new Error('unreachable');
-  if (ref.ownerAccountId !== undefined && ref.ownerAccountId !== actorId) {
-    return { kind: 'permission', ok: false, status: 403, code: 'forbidden', message: 'only the owner of this agent can decide its permission requests' };
+  if (ref.kind === 'permission' && ref.mirrorMessageId && ref.cardMessageId) {
+    if (!(await isGenuinePermissionMirror(pool, ref.mirrorMessageId, ref.cardMessageId, ref.agentId))) {
+      return { kind: 'ask', result: await recordAskAnswer(pool, { messageId: ref.mirrorMessageId, actorId, optionId: input.option }) };
+    }
+  } else {
+    const askMessageId = ref.mirrorMessageId ?? (ref.kind === 'ask' ? ref.cardMessageId : null);
+    if (askMessageId) return { kind: 'ask', result: await recordAskAnswer(pool, { messageId: askMessageId, actorId, optionId: input.option }) };
   }
+  if (ref.kind !== 'permission') throw new Error('unreachable');
+  const forbidden = { kind: 'permission', ok: false, status: 403, code: 'forbidden', message: 'only the owner of this agent can decide its permission requests' } as const;
+  if (ref.ownerAccountId !== undefined && ref.ownerAccountId !== actorId) return forbidden;
+  // security n1: 부른 쪽이 소유자를 넘겼든 아니든 요청의 에이전트 소유자를 DB 에서 읽는다.
+  const owner = (await pool.query<{ ownerAccountId: string | null }>(
+    `select owner_account_id as "ownerAccountId" from agent_config where account_id = $1`, [ref.agentId])).rows[0]?.ownerAccountId ?? null;
+  if (owner !== actorId) return forbidden;
   const decision = Object.hasOwn(OPTION_DECISION, input.option) ? OPTION_DECISION[input.option] : undefined;
   if (!decision) return { kind: 'permission', ok: false, status: 400, code: 'unknown_option', message: 'a permission card takes approve, approve_once, approve_hour or deny' };
+  let once = input.once;
+  if (ref.mirrorMessageId && ref.cardMessageId) {
+    // 거울로 정하는 사람도 원본 채널을 볼 수 있어야 한다 — 그 이름으로 원본에 적는다.
+    const root = await readAskRow(pool, ref.cardMessageId);
+    if (!root || !(await assertChannelVisible(pool, root.channelId, actorId))) return forbidden;
+    // [이번 한 번]을 거울에서 누르면 PR·head 는 원본 카드가 보인 값이다. gh 계정은 비워 오퍼레이터가 고른다(G1).
+    if (decision === 'approve_once' && !once) once = await onceFromCard(pool, ref.cardMessageId);
+  }
+  const via: { kind: 'chat'; messageId: string; target?: 'T1' | 'T2' | 'T3' } | { kind: 'button' } | { kind: 'mirror'; mirrorMessageId: string } =
+    input.via === 'chat' && input.chat ? { kind: 'chat', ...input.chat }
+    : ref.mirrorMessageId ? { kind: 'mirror', mirrorMessageId: ref.mirrorMessageId }
+    : { kind: 'button' };
   const d = await decidePermissionRequest(pool, {
     agentId: ref.agentId, requestId: ref.requestId, actorId, decision,
-    ...(input.once ? { once: input.once } : {}),
-    via: input.via === 'chat' && input.chat ? { kind: 'chat', ...input.chat } : { kind: 'button' },
+    ...(once ? { once } : {}),
+    via,
   });
   if (!d.ok) return { kind: 'permission', ...d };
   return { kind: 'permission', ok: true, result: d };
+}
+
+/** 원본 권한 카드의 `permissionRequest.once`(서버가 거절 기록으로 채운 값)로 1회 머지 입력을 만든다. */
+async function onceFromCard(pool: Pool, cardMessageId: string): Promise<DecideInput['once']> {
+  const meta = await readMeta(pool, cardMessageId);
+  const o = (meta?.permissionRequest as { once?: { number?: unknown; headSha?: unknown; reason?: unknown; failedChecks?: unknown } } | undefined)?.once;
+  if (!o || typeof o.number !== 'number' || typeof o.headSha !== 'string') return undefined;
+  const failed = Array.isArray(o.failedChecks) ? o.failedChecks.filter((x): x is string => typeof x === 'string') : undefined;
+  return { ghUser: null, relaxChecks: o.reason === 'ci_not_green', number: o.number, headSha: o.headSha, ...(failed ? { failedChecks: failed } : {}) };
+}
+
+/**
+ * 서버가 받아 세운 거울인가(security n2) — `checkAskMirror` 가 거울을 만들 때 본 조건을 지금 다시 본다:
+ * 거울은 에이전트가 쓴 사람 앞 물음이고, 원본을 가리키며, 자기는 권한 카드가 아니고, 선택지 id 가 원본과 같고,
+ * 쓴 에이전트가 원본 채널을 볼 수 있으며, 요청 에이전트와 **같은 소유자**의 에이전트다.
+ */
+export async function isGenuinePermissionMirror(pool: Pool, mirrorId: string, rootId: string, requestAgentId: string): Promise<boolean> {
+  const m = (await pool.query<{ meta: Record<string, unknown>; authorId: string | null; authorKind: string | null; ownerAccountId: string | null }>(
+    `select m.meta, m.author_id as "authorId", a.kind as "authorKind", c.owner_account_id as "ownerAccountId"
+       from message m left join account a on a.id = m.author_id left join agent_config c on c.account_id = m.author_id
+      where m.id = $1 and m.deleted_at is null`, [mirrorId])).rows[0];
+  if (!m || !m.authorId || m.authorKind !== 'agent' || !m.ownerAccountId) return false;
+  if (m.meta.kind !== 'ask' || m.meta.permissionRequest !== undefined) return false;
+  const ask = readAskMeta(m.meta);
+  if (!ask || ask.mirrorOf !== rootId || ask.to.kind !== 'human') return false;
+  const root = await readAskRow(pool, rootId);
+  if (!root || root.ask.mirrorOf || root.ask.to.kind !== 'human') return false;
+  const a = ask.options.map((o) => o.id).sort();
+  const b = root.ask.options.map((o) => o.id).sort();
+  if (a.length !== b.length || a.some((id, i) => id !== b[i])) return false;
+  if (!(await assertChannelVisible(pool, root.channelId, m.authorId))) return false;
+  const owner = (await pool.query<{ ownerAccountId: string | null }>(
+    `select owner_account_id as "ownerAccountId" from agent_config where account_id = $1`, [requestAgentId])).rows[0]?.ownerAccountId ?? null;
+  return owner !== null && owner === m.ownerAccountId;
 }
 
 /** 카드에서 정한 뒤 화면에 돌려줄 카드(답이 적힌 원본). */

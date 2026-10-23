@@ -379,10 +379,23 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     }
     // 권한 카드가 아니면 물음 길이다. 거울은 `decide` 가 거울 글로 답한다(원본에 먼저 적는 것·권한 카드 거울 거절은 `recordAskAnswer`).
     const ref = await resolveDecision(pool, messageId);
+    // 권한 카드의 거울(P3)도 원본과 같이 소유자 **사람 세션**만 정한다. 서버가 세운 거울이 아니면 `decide` 가 물음 길로 돌려 거절한다.
+    if (ref?.kind === 'permission' && ref.mirrorMessageId && (req.account!.kind !== 'human' || req.authVia !== 'session')) {
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'only the owner signed in to the app can decide a permission request' } });
+    }
     const decided = await decide(pool, ref?.mirrorMessageId ? ref : { kind: 'ask', cardMessageId: messageId }, req.account!.id, {
       option: optionId, via: ref?.mirrorMessageId ? 'mirror' : 'button',
     });
-    if (decided.kind !== 'ask') throw new Error('ask path resolved to a permission decision');
+    if (decided.kind === 'permission') {
+      if (!decided.ok) {
+        const code = decided.code === 'already_decided' ? 'already_answered' : decided.code;
+        return reply.code(decided.status).send({ error: { code, message: decided.message } });
+      }
+      // 답은 원본에 적혔고 거울은 `syncAskMirrors` 가 따라 닫았다 — 누른 거울을 돌려준다.
+      const mirror = await getMessageById(pool, messageId);
+      if (!mirror) return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
+      return mirror;
+    }
     const result = decided.result;
     if (result === 'not_found') {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
