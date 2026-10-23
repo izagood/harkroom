@@ -219,6 +219,70 @@ describe('비밀 보관소 REST (085)', () => {
     expect(res.json().error.code).toBe('not_assigned');
   });
 
+  it('지시문이 바뀌어 정지된 줄은 소유자가 [다시 허락]으로 그 범위 그대로 푼다 — 바뀐 칸 이름이 목록에 보인다', async () => {
+    const created = await create(alice.token, { name: 'reapprove-me', kind: 'text', value: 'x' });
+    const id = created.json().secret.id as string;
+    const given = await app.inject({ method: 'PUT', url: `/secrets/${id}/grants`, headers: auth(alice.token), payload: { agentId, channelId } });
+    expect(given.json().operatorId).toBe(operatorId);
+    const grantId = given.json().grantId as string;
+    const reapprove = (token: string, gid = grantId) =>
+      app.inject({ method: 'POST', url: `/secrets/${id}/grants/${gid}/reapprove`, headers: auth(token) });
+
+    // 정지 안 된 줄은 409 — 아무것도 바꾸지 않는다.
+    expect((await reapprove(alice.token)).json().error.code).toBe('not_suspended');
+
+    const patch = await app.inject({ method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(alice.token), payload: { instructions: `new rules ${randomUUID()}` } });
+    expect(patch.statusCode).toBe(200);
+    const listed = (await app.inject({ method: 'GET', url: `/secrets/${id}/grants`, headers: auth(alice.token) })).json().grants;
+    expect(listed[0]).toMatchObject({ suspendReason: 'definition_changed', changedFields: ['instructions'] });
+    // 정지된 뒤 또 바뀐 것도 모인다.
+    await app.inject({ method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(alice.token), payload: { workingDir: '/tmp/elsewhere' } });
+    const again = (await app.inject({ method: 'GET', url: `/secrets/${id}/grants`, headers: auth(alice.token) })).json().grants;
+    expect(again[0].changedFields).toEqual(['instructions', 'workingDir']);
+
+    // 소유자만 — admin 은 403, 남은 404.
+    expect((await reapprove(admin.token)).json().error.code).toBe('owner_only');
+    expect((await reapprove(bob.token)).statusCode).toBe(404);
+    expect((await reapprove(alice.token, randomUUID())).statusCode).toBe(404);
+
+    const ok = await reapprove(alice.token);
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toEqual({ grantId, operatorId });
+    const row = (await pool.query(`select channel_id, operator_id, suspended_at, suspend_reason from secret_grant where id = $1`, [grantId])).rows[0];
+    expect(row).toEqual({ channel_id: channelId, operator_id: operatorId, suspended_at: null, suspend_reason: null });
+    const audit = (await pool.query(`select detail from audit_log where action = 'secret.grant.reapproved' and target = $1`, [id])).rows;
+    expect(audit).toHaveLength(1);
+    expect(audit[0].detail).toMatchObject({ grantId, agentId, channelId, suspendReason: 'definition_changed' });
+    const after = (await app.inject({ method: 'GET', url: `/secrets/${id}/grants`, headers: auth(alice.token) })).json().grants;
+    expect(after[0].changedFields).toBeNull();
+    // 두 번 누르면 409.
+    expect((await reapprove(alice.token)).json().error.code).toBe('not_suspended');
+  });
+
+  it('[다시 허락]: 기기에 묶인 줄은 배정이 없으면 409, 꺼진 에이전트는 409, 만료된 비밀은 409', async () => {
+    const id = (await create(alice.token, { name: 'reapprove-edge', kind: 'text', value: 'x' })).json().secret.id as string;
+    const grantId = (await app.inject({ method: 'PUT', url: `/secrets/${id}/grants`, headers: auth(alice.token), payload: { agentId, channelId } })).json().grantId as string;
+    const reapprove = () => app.inject({ method: 'POST', url: `/secrets/${id}/grants/${grantId}/reapprove`, headers: auth(alice.token) });
+    await pool.query(`update secret_grant set suspended_at = now(), suspend_reason = 'definition_changed' where id = $1`, [grantId]);
+
+    await pool.query(`delete from agent_assignment where agent_id = $1`, [agentId]);
+    try {
+      expect((await reapprove()).json().error.code).toBe('not_assigned');
+    } finally {
+      await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [agentId, operatorId, admin.accountId]);
+    }
+    await pool.query(`update account set disabled_at = now() where id = $1`, [agentId]);
+    try {
+      expect((await reapprove()).json().error.code).toBe('agent_disabled');
+    } finally {
+      await pool.query(`update account set disabled_at = null where id = $1`, [agentId]);
+    }
+    await pool.query(`update secret set expires_at = now() - interval '1 minute' where id = $1`, [id]);
+    expect((await reapprove()).json().error.code).toBe('secret_expired');
+    await pool.query(`update secret set expires_at = null where id = $1`, [id]);
+    expect((await reapprove()).statusCode).toBe(200);
+  });
+
   it('값을 바꾸면 새 판이 생기고 옛 판의 암호문은 지워진다', async () => {
     const id = (await pool.query(`select id from secret where name = 'gh-token'`)).rows[0].id as string;
     const res = await app.inject({ method: 'PUT', url: `/secrets/${id}/value`, headers: auth(alice.token), payload: { value: 'new-value-123' } });

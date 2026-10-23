@@ -534,10 +534,23 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
      */
     // MCP 목록(S2): 붙인 stdio MCP 는 그 에이전트의 프로세스 트리에서 돌며 턴 마운트 파일을 읽을 수 있다.
     // 작업 디렉터리(S2): 어느 코드 위에서 셸이 도는지가 바뀐다. 목록은 이름순으로 오므로 이어 붙여 비교한다.
-    if (updated.instructions !== before.instructions || updated.harness !== before.harness
-      || updated.ownerAccountId !== before.ownerAccountId || updated.workingDir !== before.workingDir
-      || [...updated.mcpServers].sort().join('\n') !== [...before.mcpServers].sort().join('\n')) {
-      await suspendSecretGrants(pool, { agentId: id }, 'definition_changed');
+    const definitionChanged = [
+      updated.instructions !== before.instructions && 'instructions',
+      updated.harness !== before.harness && 'harness',
+      updated.ownerAccountId !== before.ownerAccountId && 'ownerAccountId',
+      updated.workingDir !== before.workingDir && 'workingDir',
+      [...updated.mcpServers].sort().join('\n') !== [...before.mcpServers].sort().join('\n') && 'mcpServers',
+    ].filter((f): f is string => typeof f === 'string');
+    if (definitionChanged.length > 0) {
+      const n = await suspendSecretGrants(pool, { agentId: id }, 'definition_changed');
+      // 무엇이 바뀌어 정지됐나를 칸 이름으로만 남긴다 — 소유자가 [다시 허락] 앞에서 본다(`GET /secrets/:id/grants`
+      // 의 changedFields). 이미 정지된 뒤에 또 바뀐 것도 남긴다(그때는 n 이 0 이다).
+      if (n > 0 || (await pool.query(`select 1 from secret_grant where agent_id = $1 and suspended_at is not null limit 1`, [id])).rowCount) {
+        await recordAudit(pool, {
+          action: 'secret.grant.suspended', actorId: req.account!.id, actorHandle: req.account!.handle,
+          target: id, detail: { reason: 'definition_changed', fields: definitionChanged, suspended: n },
+        }, req);
+      }
     }
     if (patch.disabled === true && !before.disabled) await suspendSecretGrants(pool, { agentId: id }, 'agent_disabled');
     const changes = diffAudited(before, updated);
