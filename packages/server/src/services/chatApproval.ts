@@ -371,7 +371,7 @@ function dedupe(rows: Candidate[]): Candidate[] {
 
 const REFUSAL_BY_CODE: Record<string, ChatRefusal> = {
   card_stale: 'headChanged', already_decided: 'decided', superseded: 'decided', request_expired: 'expired', denial_expired: 'expired',
-  denial_used: 'decided', pr_closed: 'decided', relax_required: 'ciWord',
+  denial_used: 'decided', pr_closed: 'decided', head_moved: 'headChanged', relax_required: 'ciWord',
 };
 
 async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Candidate, target: ChatTarget, parsed: ChatApprovalParse): Promise<Outcome> {

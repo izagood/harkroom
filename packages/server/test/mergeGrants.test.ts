@@ -667,7 +667,11 @@ describe('repo.merge grant', () => {
       const moved = (await check(await leaseInThread(thread, alice.accountId), 'izagood/once-head', { number: 13, headSha: SHA })).json();
       expect(moved.error.denialId).not.toBe(first.error.denialId);
       expect((await pool.query(`select obsoleted_at is not null as obsolete, head_sha from merge_denial where id = $1`, [first.error.denialId])).rows[0]).toEqual({ obsolete: true, head_sha: SHA2 });
-      expect((await decide(alice.token, rid, { ghUser: 'izagood', number: 13, headSha: SHA2 })).statusCode).toBe(409);
+      const stale = await decide(alice.token, rid, { ghUser: 'izagood', number: 13, headSha: SHA2 });
+      expect(stale.statusCode).toBe(409);
+      // n4: 새 head 로 낡은 카드는 「PR 닫힘」이 아니라 head_moved 로 알린다 — 에이전트가 옛 id 로 카드를 세우려 해도 같다.
+      expect(stale.json().error.code).toBe('head_moved');
+      expect(await prepareDenialCard(pool, { agentId, denialId: first.error.denialId, channelId: ch, threadRootId: thread })).toEqual({ ok: false, code: 'head_moved' });
       const rid2 = await requestFor(moved.error.denialId, thread);
       expect((await pool.query(`select status, superseded_by from permission_request where id = $1`, [rid])).rows[0]).toEqual({ status: 'superseded', superseded_by: rid2 });
     });

@@ -330,6 +330,7 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
           {error.code === 'denial_used' || error.code === 'already_decided' ? t('mergeOnce.errUsed')
             : error.code === 'denial_expired' || error.code === 'request_expired' ? t('mergeOnce.errExpired')
             : error.code === 'card_stale' ? t('mergeOnce.errStale')
+            : error.code === 'head_moved' ? t('mergeOnce.errHeadMoved')
             : error.code === 'forbidden' ? t('mergeOnce.errForbidden')
             : t('mergeOnce.errFailed')}
         </p>

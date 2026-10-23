@@ -53,17 +53,26 @@ interface DenialRow {
   expired: boolean; used: boolean; cardMessageId: string | null; reason: MergeDenialReason; failedChecks: string[];
   /** 그 PR 이 머지되거나 닫혀 카드가 닫혔다(118, Q3) — 7일 허락·1회 승인·새 카드 모두 받지 않는다. */
   obsolete: boolean;
+  /**
+   * 닫힌 까닭이 「같은 PR 에 새 head 로 다시 거절됨」이다(#1492 D1, security n4) — 같은 (에이전트, 저장소, 스레드, PR)에 다른 head 의
+   * 더 늦은 기록이 있다. 닫힌 사실은 같고, 사람·에이전트에게 「PR 닫힘」 대신 「새 커밋으로 낡음」을 알리는 데만 쓴다.
+   */
+  headMoved: boolean;
 }
 
 async function readDenial(db: Pool | PoolClient, id: string, now: Date, lock = false): Promise<DenialRow | undefined> {
   return (await db.query<DenialRow>(
     `select id, agent_id as "agentId", scope, pr_number as number, head_sha as "headSha", channel_id as "channelId", thread_root_id as "threadRootId",
             expires_at <= $2 as expired, used_at is not null as used, card_message_id as "cardMessageId", reason,
-            failed_checks as "failedChecks", obsoleted_at is not null as obsolete
-       from merge_denial where id = $1${lock ? ' for update' : ''}`, [id, now])).rows[0];
+            failed_checks as "failedChecks", obsoleted_at is not null as obsolete,
+            (obsoleted_at is not null and exists (
+              select 1 from merge_denial n
+               where n.agent_id = d.agent_id and n.scope = d.scope and n.channel_id = d.channel_id and n.thread_root_id = d.thread_root_id
+                 and n.pr_number = d.pr_number and n.head_sha <> d.head_sha and n.created_at > d.created_at)) as "headMoved"
+       from merge_denial d where id = $1${lock ? ' for update of d' : ''}`, [id, now])).rows[0];
 }
 
-export type DenialCardRefusal = 'denial_not_found' | 'denial_other_agent' | 'denial_other_thread' | 'denial_used' | 'denial_expired' | 'pr_closed';
+export type DenialCardRefusal = 'denial_not_found' | 'denial_other_agent' | 'denial_other_thread' | 'denial_used' | 'denial_expired' | 'pr_closed' | 'head_moved';
 
 export const DENIAL_CARD_REFUSAL_MESSAGE: Record<DenialCardRefusal, string> = {
   denial_not_found: 'no such merge denial — use the denialId the merge wrapper returned',
@@ -72,6 +81,7 @@ export const DENIAL_CARD_REFUSAL_MESSAGE: Record<DenialCardRefusal, string> = {
   denial_used: 'that merge denial was already used to grant permission',
   denial_expired: 'that merge denial expired; ask the wrapper again',
   pr_closed: 'that pull request was already merged or closed — no card is needed',
+  head_moved: 'that pull request got a new head after this refusal — call the merge wrapper again and use the new denialId',
 };
 
 /**
@@ -89,7 +99,7 @@ export async function prepareDenialCard(
   if (d.channelId !== args.channelId || d.threadRootId !== (args.threadRootId ?? '')) return { ok: false, code: 'denial_other_thread' };
   if (d.used) return { ok: false, code: 'denial_used' };
   if (d.expired) return { ok: false, code: 'denial_expired' };
-  if (d.obsolete) return { ok: false, code: 'pr_closed' };
+  if (d.obsolete) return { ok: false, code: d.headMoved ? 'head_moved' : 'pr_closed' };
 
   const day = now.toISOString().slice(0, 10);
   const key = `merge:${d.agentId}:${d.scope}:${d.threadRootId}:${day}`;
@@ -128,7 +138,7 @@ export async function grantFromDenial(
     if (!d || d.agentId !== args.agentId) { await client.query('rollback'); return { ok: false, status: 404, code: 'not_found', message: 'no such merge denial for this agent' }; }
     if (d.used) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_used', message: 'this denial was already used' }; }
     if (d.expired) { await client.query('rollback'); return { ok: false, status: 409, code: 'denial_expired', message: 'this denial expired' }; }
-    if (d.obsolete) { await client.query('rollback'); return { ok: false, status: 409, code: 'pr_closed', message: PR_CLOSED_MESSAGE }; }
+    if (d.obsolete) { await client.query('rollback'); return { ok: false, status: 409, ...obsoleteRefusal(d) }; }
     // CI 거절 카드는 7일 허락을 주지 않는다 — 권한은 이미 있고, 이 카드의 뜻은 「이번 한 번 CI 무시」뿐이다(security D4: 버튼만 숨기지 않고 서버가 막는다).
     if (d.reason === 'ci_not_green') { await client.query('rollback'); return { ok: false, status: 400, code: 'ci_card_once_only', message: CI_CARD_ONCE_ONLY_MESSAGE }; }
     const used = await client.query(
@@ -164,6 +174,12 @@ export async function grantFromDenial(
 }
 
 export const PR_CLOSED_MESSAGE = 'that pull request was already merged or closed — this card is closed';
+export const HEAD_MOVED_MESSAGE = 'that pull request got a new commit after this card was raised, so this card cannot approve it — approve on the newer card, or if there is none, ask the agent to try the merge again';
+
+/** 닫힌 거절 기록을 누른 사람에게 줄 거절 — 새 head 로 낡았으면 `head_moved`, 아니면 PR 이 머지·닫혔다(security n4). */
+function obsoleteRefusal(d: DenialRow): { code: 'head_moved' | 'pr_closed'; message: string } {
+  return d.headMoved ? { code: 'head_moved', message: HEAD_MOVED_MESSAGE } : { code: 'pr_closed', message: PR_CLOSED_MESSAGE };
+}
 export const CI_CARD_ONCE_ONLY_MESSAGE = 'a CI-failure card only approves one merge with the CI check skipped — it never grants 7 days';
 
 /** 거절 기록·승인에 담는 체크 이름의 상한(security: 사람이 이 문구를 보고 판단한다). */
@@ -304,7 +320,7 @@ export async function insertApprovalFromDenial(
   const d = await readDenial(client, args.denialId, args.now, true);
   if (!d || d.agentId !== args.agentId) return { ok: false, status: 404, code: 'not_found', message: 'no such merge denial for this agent' };
   if (d.expired) return { ok: false, status: 409, code: 'denial_expired', message: 'the merge refusal behind this card expired — the agent has to try again' };
-  if (d.obsolete) return { ok: false, status: 409, code: 'pr_closed', message: PR_CLOSED_MESSAGE };
+  if (d.obsolete) return { ok: false, status: 409, ...obsoleteRefusal(d) };
   // 카드가 선 뒤 같은 스레드에서 다른 PR·head 로 다시 거절되면 이 기록이 덮인다 — 소유자가 본 것과 다르면 승인하지 않는다.
   if (d.number !== args.expect.number || d.headSha !== args.expect.headSha) {
     return { ok: false, status: 409, code: 'card_stale', message: 'the card changed since it was shown (a different PR or head) — look at it again' };
