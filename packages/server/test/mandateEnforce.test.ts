@@ -131,6 +131,21 @@ describe('mandate enforcement (db)', () => {
     expect((await pool.query(`select used_count from mandate_line where id = $1`, [added.ok && added.line.id])).rows[0].used_count).toBe(1);
   });
 
+  it('n11: a ghUser line matches the login the operator states in merge-checks; off ignores ghUser', async () => {
+    const root = await post(alice.accountId, '@tm stated login');
+    const m = (await mandateOf(root))!;
+    await addMandateLine(pool, { mandateId: m, cap: 'merge', scope: 'repo:izagood/stated', grantedBy: alice.accountId, via: 'button', limits: { ghUser: 'repo-account' } });
+    const l = await lease(root, tm);
+    // off: the stated login changes nothing — the chain verdict stands, no 400.
+    const off = await check(l, 'izagood/stated', { ghUser: 'repo-account' });
+    expect(off.statusCode).toBe(403);
+    expect(off.json().error.code).toBe('not_granted');
+    process.env.HARKROOM_MANDATE_ENFORCE = 'on';
+    const on = await check(l, 'izagood/stated', { ghUser: 'repo-account' });
+    expect(on.statusCode).toBe(200);
+    expect(on.json().mandateLine).toMatchObject({ ghUser: 'repo-account', ciOverride: false });
+  });
+
   it('on: ghUser and ciOverride are part of matching; bypass lines never allow a merge', async () => {
     process.env.HARKROOM_MANDATE_ENFORCE = 'on';
     const root = await post(alice.accountId, '@tm gh');
