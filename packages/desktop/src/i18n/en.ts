@@ -4650,7 +4650,7 @@ export const en = {
   'system.chatApproval.askMany': '⚠️ Not answered: several choice cards are waiting, so it is unclear which one. Write again with one card link.',
   'system.chatApproval.askNoMatch': '⚠️ Not answered: no option matches. Write again with a number ("1") or an option name.',
   'system.chatApproval.askNoRecommended': '⚠️ Not answered: this card has no single recommended option. Write again with a number or an option name.',
-  'system.chatApproval.askIrreversible': '⚠️ Not answered: this card asks about something that cannot be undone, so "as recommended" does not pick on it. Write a number or an option name.',
+  'system.chatApproval.askIrreversible': '⚠️ Not answered: this card asks about something that cannot be undone, so "as recommended" or a number without a card link does not pick on it. Write again with the exact option name, or with the card link and a number.',
   'system.chatApproval.askAnswered': '⚠️ Not answered: this card is already answered.',
   'system.chatApproval.hidden': '⚠️ Not approved: that card is in a channel you cannot see.',
   'system.chatApproval.headChanged': '⚠️ Not approved: the PR head changed since the card was shown. Look at the card again.',

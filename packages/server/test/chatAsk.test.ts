@@ -141,16 +141,50 @@ describe('글 답 → 선택 카드(버튼과 같은 답)', () => {
     expect(line.meta.i18n).toEqual({ key: 'system.chatApproval.askNoMatch', args: {} });
   });
 
-  it('되돌릴 수 없는 카드에는 「추천대로」가 고르지 않는다 — 번호는 된다', async () => {
+  it('되돌릴 수 없는 카드에는 「추천대로」가 고르지 않는다', async () => {
     const thread = await root();
     const cardId = await askCard(thread, { body: '이 PR 머지할까' });
     await say(alice.token, '추천대로', thread);
     expect((await askOf(cardId)).answeredWith).toBeUndefined();
     expect((await systemLines(thread)).at(-1)!.meta.i18n.key).toBe('system.chatApproval.askIrreversible');
-    const t2 = await root();
-    const c2 = await askCard(t2, { irreversible: true });
-    await say(alice.token, '1번', t2);
-    expect((await askOf(c2)).answeredWith).toBe('a');
+  });
+
+  // 되돌릴 수 없는 카드: 링크 없이(T2) 번호·차례만 쓴 글은 고르지 않는다. 링크(T1)가 있거나 이름 그대로면 된다(security n19).
+  it.each([
+    ['T2 번호', '1', false, null],
+    ['T2 「2번」', '2번', false, null],
+    ['T2 「(3)」', '(3)', false, null],
+    ['T2 한글 차례', '(가)', false, null],
+    ['T2 「1번으로 해」', '1번으로 해', false, null],
+    ['T2 이름 그대로', 'Ship it', false, 'c'],
+    ['T2 이름 그대로(따옴표)', '「A안」으로 해', false, 'a'],
+    ['T1 링크와 번호', '1번', true, 'a'],
+    ['T1 링크와 한글 차례', '(다)', true, 'c'],
+    ['T1 링크와 이름', 'A안', true, 'a'],
+  ] as const)('되돌릴 수 없는 카드 — %s', async (_name, body, withLink, want) => {
+    const thread = await root();
+    const cardId = await askCard(thread, { irreversible: true });
+    await say(alice.token, withLink ? `${link(cardId)} ${body}` : body, thread);
+    const ask = await askOf(cardId);
+    if (want) {
+      expect(ask.answeredWith).toBe(want);
+      expect(await systemLines(thread)).toHaveLength(0);
+    } else {
+      expect(ask.answeredWith).toBeUndefined();
+      const line = (await systemLines(thread)).at(-1)!;
+      expect(line.body.startsWith('⚠️ 답 안 됨:')).toBe(true);
+      expect(line.body).toContain('링크');
+      expect(line.meta.i18n).toEqual({ key: 'system.chatApproval.askIrreversible', args: {} });
+    }
+  });
+
+  it('스레드 카드가 여럿일 때 안내는 「다시 쓴다」로 끝맺는다(security n20)', async () => {
+    const thread = await root();
+    await askCard(thread); await askCard(thread);
+    await say(alice.token, '2번', thread);
+    const line = (await systemLines(thread)).at(-1)!;
+    expect(line.body).toContain('링크를 붙여 다시 쓴다:');
+    expect(line.body).not.toContain('써라');
   });
 
   it('스레드에 열린 선택 카드가 둘이면 고르지 않고 링크를 단다', async () => {

@@ -55,6 +55,22 @@ void main() {
     expect(systemText(m, accounts, en), "🔓 o/r#7 merge attempted with a one-time approval · head abc123456 · gh (operator's pick)");
   });
 
+  test('글 답 안내 줄 — ko 는 「선택 카드」, 시키는 끝맺음 없음, 되돌릴 수 없는 카드는 이름·링크(P5 후속)', () {
+    String line(Strings t, String key) => systemText(row({'key': key, 'args': {}}), accounts, t)!;
+    for (final key in systemI18nArgs.keys.where((k) => k.startsWith('system.chatApproval.'))) {
+      final k = line(ko, key);
+      expect(k.contains('선택지 카드'), isFalse, reason: key);
+      expect(RegExp(r'써라|하라').hasMatch(k), isFalse, reason: key);
+      expect(k.startsWith('⚠️ '), isTrue, reason: key);
+    }
+    final irr = line(ko, 'system.chatApproval.askIrreversible');
+    expect(irr.startsWith('⚠️ 답 안 됨: '), isTrue);
+    expect(irr, contains('선택지 이름 그대로'));
+    expect(irr, contains('링크'));
+    expect(irr.endsWith('다시 쓴다.'), isTrue);
+    expect(line(en, 'system.chatApproval.askIrreversible'), allOf(contains('exact option name'), contains('card link')));
+  });
+
   test('모르는 id 는 「알 수 없음」(designer 규칙 1)', () {
     final m = row({'key': 'system.member.left', 'args': {'accountId': 'zzz'}});
     expect(systemText(m, accounts, ko), contains('알 수 없음'));
