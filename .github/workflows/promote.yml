@@ -1,0 +1,234 @@
+# 릴리즈 하나를 **Stable 채널로 승격**한다.
+#
+# ## 채널 둘
+#
+# - **Ludicrous** = 지금까지의 자동 업데이트 그대로. main 머지마다 `release.yml` 이 릴리즈를
+#   내고 `make_latest` 로 못박으며, 업데이터는 `releases/latest/download/latest.json` 을 읽는다.
+# - **Stable** = 이 워크플로가 고른 판. 돌려 쓰는 prerelease 하나(태그 `stable`)에
+#   `latest.json` 만 두고, 업데이터는 `releases/download/stable/latest.json` 을 읽는다.
+#
+# ## 승격이 하는 일은 **매니페스트를 옮기는 것뿐**이다
+#
+# `vX` 릴리즈의 `latest.json` 은 이미 `vX` 의 `.app.tar.gz` URL 과 그 서명(`.sig` 내용)을
+# 담고 있다. 그 파일을 그대로 `stable` 릴리즈에 올리면 된다 — **다시 굽지도, 다시 서명하지도
+# 않는다.** 앱은 받은 tarball 을 `tauri.conf.json` 의 공개키로 검증하므로, 매니페스트가 어느
+# 릴리즈에 놓였는지는 신뢰에 영향이 없다.
+#
+# 서버 이미지도 같다: `:X` 가 가리키는 매니페스트 리스트에 `:stable` 을 덧붙인다(다시 굽지 않는다).
+# 운영 테넌트는 homelab 이 판 번호로 고정하므로 `:stable` 을 읽지 않는다 — 직접 운영하는
+# 사람을 위한 이름표다.
+#
+# ## 왜 `stable` 릴리즈는 **prerelease** 인가
+#
+# GitHub 의 `releases/latest` 는 draft·prerelease 를 뺀 릴리즈다. `stable` 이 보통 릴리즈면
+# 그것이 "Latest" 가 되어 Ludicrous 업데이터가 Stable 매니페스트를 읽게 된다. `release.yml`
+# finalize 의 semver 최고 판정도 prerelease 를 뺀다 — 그래서 이 릴리즈는 그 판정에 끼지 않는다.
+#
+# ## 순서 (설계 합의)
+#
+# 같은 판 X 를 **서버 먼저**(homelab 판올림) → 그다음 이 워크플로로 데스크톱 Stable.
+# 앱 vX 의 `MIN_SERVER_VERSION` 은 X 이하이므로, 서버가 X 이상이면 Stable 앱은 늘 붙는다.
+#
+# ## 실행
+#
+#   gh workflow run promote.yml -R izagood/harkroom -f version=0.4.164
+#
+# 지금 Stable 보다 낮은 판은 거절한다(업데이터는 낮은 판으로 내려가지 않으므로 의미가 없고,
+# 실수로 되돌린 것일 가능성이 높다). 정말 되돌려야 하면 `allow_older=true` 를 준다.
+name: Stable 승격
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable 로 올릴 판(`0.4.164` — 앞의 v 없이)
+        type: string
+        required: true
+      allow_older:
+        description: 지금 Stable 보다 낮은 판도 허용한다(되돌릴 때만)
+        type: boolean
+        default: false
+
+permissions:
+  # `stable` 태그·릴리즈를 만들고 자산을 바꾼다.
+  contents: write
+  # ghcr 에 `:stable` 을 덧붙인다. `GITHUB_TOKEN` 으로 충분하다.
+  packages: write
+
+# 승격 둘이 겹치면 매니페스트가 어느 쪽인지 알 수 없다 — 하나씩만 돈다.
+concurrency:
+  group: promote-stable
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/harkroom-server
+  CHANNEL_TAG: stable
+
+jobs:
+  promote:
+    name: v${{ inputs.version }} → Stable
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 입력과 원본 릴리즈를 확인한다
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          ALLOW_OLDER: ${{ inputs.allow_older }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::판은 0.4.164 꼴이어야 한다(앞의 v 없이): $VERSION"
+            exit 1
+          fi
+          tag="v$VERSION"
+
+          # 공개된 보통 릴리즈만 승격한다. draft 는 finalize 를 못 넘은 것(검증 실패·기동 확인
+          # 실패)이고, get-by-tag 는 draft 를 404 로 돌려주므로 여기서 함께 걸러진다.
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" 2>/dev/null) || {
+            echo "::error::공개된 릴리즈가 없다: $tag (draft 이거나 없는 판)"
+            exit 1
+          }
+          if [ "$(jq -r .prerelease <<< "$release")" = "true" ]; then
+            echo "::error::$tag 는 prerelease 다 — 승격 대상이 아니다"
+            exit 1
+          fi
+          if ! jq -e '.assets[] | select(.name == "latest.json")' <<< "$release" >/dev/null; then
+            echo "::error::$tag 에 latest.json 이 없다"
+            exit 1
+          fi
+
+          # 지금 Stable 판(없으면 첫 승격).
+          current=""
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$CHANNEL_TAG" >/dev/null 2>&1; then
+            current=$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/download/$CHANNEL_TAG/latest.json" \
+              | jq -r .version) || current=""
+          fi
+          echo "지금 Stable: ${current:-(없음)} → 올릴 판: $VERSION"
+          if [ -n "$current" ] && [ "$ALLOW_OLDER" != "true" ]; then
+            lowest=$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | head -1)
+            if [ "$lowest" = "$VERSION" ] && [ "$current" != "$VERSION" ]; then
+              echo "::error::$VERSION 은 지금 Stable($current)보다 낮다. 되돌리려면 allow_older=true"
+              exit 1
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+
+      - name: 매니페스트를 받아 판을 대조한다
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.check.outputs.tag }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # checkout 이 없어 git 저장소가 없다 — `gh release` 는 `--repo` 를 꼭 준다(release.yml finalize 와 같은 이유).
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern latest.json --dir "$RUNNER_TEMP/manifest" --clobber
+          manifest="$RUNNER_TEMP/manifest/latest.json"
+          # 매니페스트가 그 판을 가리키는지, 그 릴리즈의 tarball 을 가리키는지 본다. 어긋나면
+          # Stable 이 엉뚱한 판을 받는다 — 옮기기 전에 선다.
+          got=$(jq -r .version "$manifest")
+          if [ "$got" != "$VERSION" ]; then
+            echo "::error::latest.json 의 version($got)이 $VERSION 이 아니다"
+            exit 1
+          fi
+          jq -e --arg prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/" \
+            '.platforms | length > 0 and all(.[]; (.url | startswith($prefix)) and (.signature | length > 0))' \
+            "$manifest" >/dev/null || {
+              echo "::error::latest.json 의 플랫폼 항목이 $TAG 자산을 가리키지 않거나 서명이 비었다"
+              jq . "$manifest"
+              exit 1
+            }
+
+      # 액션은 40자 커밋 SHA 로 핀한다(image.yml 과 같은 판).
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 서버 이미지에 :stable 을 덧붙인다
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # 원본 판 이미지가 없으면 서지 않는다 — 데스크톱만 Stable 로 가고 서버 이름표는 낡는다.
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}" >/dev/null
+          docker buildx imagetools create --tag "${IMAGE}:${CHANNEL_TAG}" "${IMAGE}:${VERSION}"
+          docker buildx imagetools inspect "${IMAGE}:${CHANNEL_TAG}"
+
+      - name: stable 릴리즈에 매니페스트를 옮긴다
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.check.outputs.tag }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)
+          # 주석 달린 태그면 커밋까지 내려간다(release.yml 의 태그는 가벼운 태그지만 가정하지 않는다).
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.type)" = "tag" ]; then
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq .object.sha)
+          fi
+
+          notes="Harkroom **Stable** 채널 — 지금 판: [v$VERSION](https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG).
+
+          앱의 자동 업데이트가 이 릴리즈의 \`latest.json\` 을 읽는다. 설치 파일은 위 판 릴리즈에서 받는다.
+          이 릴리즈는 \`Stable 승격\` 워크플로가 판마다 덮어쓴다."
+
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CHANNEL_TAG" >/dev/null 2>&1; then
+            # 태그를 새 판 커밋으로 옮긴다(이 태그는 다른 워크플로를 깨우지 않는다 — testflight 는 mobile-v* 만 본다).
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$CHANNEL_TAG" \
+              -f sha="$sha" -F force=true >/dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$CHANNEL_TAG" -f sha="$sha" >/dev/null
+          fi
+
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$CHANNEL_TAG" >/dev/null 2>&1; then
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$CHANNEL_TAG" --jq .id)
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" \
+              -f name="Harkroom Stable (v$VERSION)" -f body="$notes" \
+              -F prerelease=true -f make_latest=false >/dev/null
+          else
+            gh release create "$CHANNEL_TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Harkroom Stable (v$VERSION)" --notes "$notes" \
+              --prerelease --latest=false --verify-tag
+          fi
+
+          # `--clobber` 는 지운 뒤 올린다 — 그 사이 몇 초 동안 Stable 확인이 404(「확인 실패」)일 수 있다.
+          # 앱은 다음 확인에서 회복한다.
+          gh release upload "$CHANNEL_TAG" "$RUNNER_TEMP/manifest/latest.json" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: 공개 경로에서 다시 읽어 확인한다
+        env:
+          VERSION: ${{ inputs.version }}
+          PREV: ${{ steps.check.outputs.current }}
+        run: |
+          set -euo pipefail
+          # 앱이 실제로 읽는 URL 을 그대로 읽는다. CDN 반영이 늦을 수 있어 몇 번 기다린다.
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$CHANNEL_TAG/latest.json"
+          for _ in 1 2 3 4 5 6; do
+            got=$(curl -fsSL "$url" | jq -r .version) || got=""
+            [ "$got" = "$VERSION" ] && break
+            sleep 10
+          done
+          if [ "$got" != "$VERSION" ]; then
+            echo "::error::$url 가 $VERSION 이 아니라 '${got}' 을 돌려준다"
+            exit 1
+          fi
+          # 업데이터가 읽는 Ludicrous 쪽이 그대로인지도 본다 — stable 이 Latest 를 빼앗지 않았는지.
+          latest=$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json" | jq -r .version)
+          {
+            echo "## Stable 승격"
+            echo
+            echo "| 채널 | 판 |"
+            echo "|---|---|"
+            echo "| Stable | ${PREV:-(없음)} → **$VERSION** |"
+            echo "| Ludicrous (latest) | $latest |"
+            echo "| 이미지 | \`${IMAGE}:${CHANNEL_TAG}\` = \`:$VERSION\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
