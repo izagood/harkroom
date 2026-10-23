@@ -4,6 +4,8 @@ export * from './compat.js';
 export * from './memoryCleanup.js';
 // 오퍼레이터 이름 정리 — 서버와 앱이 같은 함수를 쓴다.
 export * from './operatorLabel.js';
+// 권한 카드 계약(W4b) — 위임장·줄 칸과 선택지 id.
+export * from './permissionCard.js';
 
 /**
  * 사람이 **직접 고르는** 상태(#186). 소켓 연결에서 파생되는 presence 와 나란히 산다 —

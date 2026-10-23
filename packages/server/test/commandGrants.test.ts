@@ -105,7 +105,7 @@ describe('permission.request kind=command → once/hour → command-grants', () 
     const r = await request({ kind: 'command', command: `  ${PATCH.replace(/ /g, '   ')}  `, threadRootId: thread });
     expect(r.error).toBeUndefined();
     const card = (await pool.query(`select body, meta from message where id = $1`, [r.cardMessageId])).rows[0];
-    expect(card.meta.ask.options.map((o: { id: string }) => o.id)).toEqual(['approve_once', 'approve_hour', 'deny']);
+    expect(card.meta.ask.options.map((o: { id: string }) => o.id)).toEqual(['approve_once', 'deny']);
     expect(card.meta.permissionRequest).toMatchObject({ kind: 'command', target: PATCH, channelId: ch, threadRootId: thread, warnings: ['mutates_remote', 'reads_file'] });
     expect(card.body).toContain('이 스레드에서만');
 

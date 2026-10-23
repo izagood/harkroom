@@ -874,7 +874,7 @@ function buildMcpServer(
     }
     const { requestId, meta: permissionRequest } = opened.created;
     const meta: AskMeta & Partial<ModelMeta> & { permissionRequest: typeof permissionRequest } = {
-      kind: 'ask', ask: { options: permissionCardOptions(kind, denial?.reason === 'ci_not_green'), to: { kind: 'human' }, prompt: denial?.reason === 'ci_not_green' ? 'CI 실패를 무시하고 이번 한 번 머지할까?' : '권한을 줄까?' },
+      kind: 'ask', ask: { options: permissionCardOptions(kind, { ciOnce: denial?.reason === 'ci_not_green', once: !!permissionRequest.once, mandate: !!permissionRequest.mandateId }), to: { kind: 'human' }, prompt: denial?.reason === 'ci_not_green' ? 'CI 실패를 무시하고 이번 한 번 머지할까?' : '권한을 줄까?' },
       permissionRequest,
       ...(await reportedModelMeta(pool, account.id, model, threadRootId)),
     };
@@ -978,7 +978,7 @@ function buildMcpServer(
       audience = { kind: 'account', accountId: found[0]!.id };
     }
     // 권한 카드의 거울(P3)은 본문·선택지를 서버가 원본 요청으로 다시 쓴다 — 거울에서 누르는 사람이 진짜 요청을 본다.
-    let mirrorRender: { body: string; options: { id: string; label: string }[]; prompt?: string } | null = null;
+    let mirrorRender: Awaited<ReturnType<typeof renderPermissionMirror>> = null;
     if (mirrorOf) {
       // 거울은 사람이 누를 자리다 — 원본이 사람 앞이므로 거울도 사람 앞이어야 옮겨 적을 수 있다.
       if (audience.kind !== 'human') {
@@ -1024,6 +1024,8 @@ function buildMcpServer(
         ...(mirrorOf ? { mirrorOf } : {}), ...(irreversible ? { irreversible: true } : {}),
       },
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
+      // W4-2: 서버 전용 칸 — 원본 카드의 once·line·mandate(중립 거울이면 링크만). 에이전트가 쓴 값이 아니다.
+      ...(mirrorRender ? { permissionMirror: mirrorRender.mirror } : {}),
     };
     const posted = await postMessage(pool, {
       causeMessageId: cause, chainCause, turnId: storedTurnId,
@@ -1140,7 +1142,7 @@ function buildMcpServer(
    * (`validateToolRule`). 카드의 권한 칸은 서버 값뿐이고 에이전트가 쓴 것은 이유 한 줄이다.
    */
   server.registerTool('permission.request', {
-    description: '막힌 권한 하나를 소유자에게 청한다(이 도구로는 열리지 않는다 — 소유자가 승인해야 열린다). kind=command 면 command 에 막힌 명령 하나 그대로(셸 이어 붙이기·따옴표 없이, 이 스레드에서만, 소유자가 「이번 한 번」/「1시간」 중 고름, 승인되면 같은 턴에서 다시 시도해도 된다). kind=tool 이면 rule 에 Claude Code allow 규칙 하나(Bash(<고정 낱말 둘 이상> …:*)·Bash(<명령 전체>)·mcp__<서버>__<도구>, 이 채널에서 7일, 다음 턴부터), kind=merge 면 repo 에 owner/name',
+    description: '막힌 권한 하나를 소유자에게 청한다(이 도구로는 열리지 않는다 — 소유자가 승인해야 열린다). kind=command 면 command 에 막힌 명령 하나 그대로(셸 이어 붙이기·따옴표 없이, 이 스레드에서만, 소유자가 「이번 한 번」으로 승인, 승인되면 같은 턴에서 다시 시도해도 된다). kind=tool 이면 rule 에 Claude Code allow 규칙 하나(Bash(<고정 낱말 둘 이상> …:*)·Bash(<명령 전체>)·mcp__<서버>__<도구>, 이 채널에서 7일, 다음 턴부터), kind=merge 면 repo 에 owner/name',
     inputSchema: {
       kind: z.enum(['tool', 'merge', 'command']),
       rule: z.string().min(1).max(300).optional(),

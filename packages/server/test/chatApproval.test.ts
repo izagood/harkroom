@@ -192,7 +192,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect(res.statusCode).toBe(201);
     expect(await status(requestId)).toBe('granted');
     const meta = await card(cardId);
-    expect(meta.ask.answeredWith).toBe('approve');
+    expect(meta.ask.answeredWith).toBe('approve_new_mandate');
     expect(meta.permissionRequest.decidedVia).toEqual({ kind: 'chat', messageId: res.json().id, target: 'T2' });
     // 카드 답이 요청한 에이전트를 깨운다 — 버튼과 같은 `ask_answered`.
     expect((await pool.query(`select 1 from inbox where account_id = $1 and message_id = $2 and reason = 'ask_answered'`, [agentId, cardId])).rowCount).toBe(1);
@@ -202,6 +202,29 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect(lines[0]!.meta.chatApproval.results).toEqual([{ requestId, cardMessageId: cardId, ok: true }]);
     const audit = (await pool.query(`select detail from audit_log where action = 'permission.approved' and detail->>'requestId' = $1`, [requestId])).rows[0].detail;
     expect(audit).toMatchObject({ via: 'chat', messageId: res.json().id });
+  });
+
+  it('W4b — 글 승인은 카드의 주 버튼과 같다: 위임 없는 턴이면 카드 스레드에 위임을 세워 줄을 더하고, 세울 수 없으면 7일 승인만', async () => {
+    const thread = await root();
+    const a = await ask(thread);
+    expect((await say(alice.token, '승인', thread)).statusCode).toBe(201);
+    expect(await status(a.requestId)).toBe('granted');
+    const made = (await pool.query(`select mandate_id from permission_request where id = $1`, [a.requestId])).rows[0].mandate_id as string;
+    expect(made).toBeTruthy();
+    expect((await pool.query(`select owner_account_id from mandate where id = $1`, [made])).rows[0].owner_account_id).toBe(alice.accountId);
+    expect((await pool.query(`select count(*)::int as n from mandate_line where request_id = $1 and mandate_id = $2`, [a.requestId, made])).rows[0].n).toBe(1);
+
+    // 남(bob)의 위임이 붙은 스레드 — 위임을 세울 수 없으니 전처럼 7일 승인만 한다(줄 없음).
+    const foreign = await root();
+    const bobMandate = (await pool.query(
+      `insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at) values ($1, $2, $3, $2, now(), now()) returning id`,
+      [bob.accountId, foreign, ch])).rows[0].id as string;
+    await pool.query(`update message set mandate_id = $2 where id = $1`, [foreign, bobMandate]);
+    const b = await ask(foreign);
+    expect((await say(alice.token, '승인', foreign)).statusCode).toBe(201);
+    expect(await status(b.requestId)).toBe('granted');
+    expect((await pool.query(`select mandate_id from permission_request where id = $1`, [b.requestId])).rows[0].mandate_id).toBeNull();
+    expect((await pool.query(`select count(*)::int as n from mandate_line where request_id = $1`, [b.requestId])).rows[0].n).toBe(0);
   });
 
   it('소유자가 아닌 사람·소유자의 PAT·에이전트 글은 승인하지 않는다', async () => {
@@ -227,7 +250,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     const res = await say(alice.token, '승인함', elsewhere, otherCh);
     expect(res.statusCode).toBe(201);
     expect(await status(requestId)).toBe('granted');
-    expect((await card(cardId)).ask.answeredWith).toBe('approve');
+    expect((await card(cardId)).ask.answeredWith).toBe('approve_new_mandate');
     const lines = await systemLines(elsewhere);
     expect(lines).toHaveLength(1);
     expect(lines[0]!.body).toContain('✓ sitebot');

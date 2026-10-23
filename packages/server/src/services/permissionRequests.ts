@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { createHash } from 'node:crypto';
 import type { CommandFileDigest } from '@harkroom/shared/runnerLink';
-import { repoGrantScope, repoScope, toolScope, validateExactCommand, validateToolRule, type CommandFileArg, type MessageRow, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
+import { PERMISSION_CARD_OPTION, repoGrantScope, repoScope, toolScope, validateExactCommand, validateToolRule, type CommandFileArg, type MessageRow, type PermissionCardLine, type PermissionCardMandate, type PermissionMirrorMeta, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
@@ -35,13 +35,21 @@ export const PERMISSION_REQUESTS_PER_DAY = 20;
 
 export const PERMISSION_OPTION_APPROVE = 'approve';
 export const PERMISSION_OPTION_DENY = 'deny';
-/** kind=command 카드의 선택지(H②): 「이번 한 번」·「이 스레드 1시간」. 둘 다 이 스레드에만, 쓰지 않으면 1시간 뒤 사라진다. */
+/** kind=command 카드의 선택지(H②): 「이번 한 번」(이 스레드에만, 쓰지 않으면 1시간 뒤 사라진다). `approve_hour`(이 스레드 1시간)는 옛 앱을 위해 라우트만 받는다(W4b ②). */
 export const PERMISSION_OPTION_APPROVE_ONCE = 'approve_once';
 export const PERMISSION_OPTION_APPROVE_HOUR = 'approve_hour';
 /** 정확한 명령 grant 의 기한 — 1회짜리도 이 안에 써야 한다. */
 export const COMMAND_GRANT_TTL_MS = 3_600_000;
+/** W4b: [이 위임장 동안](tool·merge 주 버튼) · [이 스레드로 위임장 만들고 더하기](위임 없는 턴). 둘 다 7일 grant + 위임 줄. */
+export const PERMISSION_OPTION_APPROVE_MANDATE = PERMISSION_CARD_OPTION.approveMandate;
+export const PERMISSION_OPTION_APPROVE_NEW_MANDATE = PERMISSION_CARD_OPTION.approveNewMandate;
 
-export type PermissionDecision = 'approve' | 'approve_once' | 'approve_hour' | 'deny';
+export type PermissionDecision = 'approve' | 'approve_mandate' | 'approve_new_mandate' | 'approve_once' | 'approve_hour' | 'deny';
+
+/** 7일 grant 를 쓰는 결정 — 옛 `approve` 와 W4b 의 두 갈래. */
+function isStandingApprove(d: PermissionDecision): boolean {
+  return d === 'approve' || d === 'approve_mandate' || d === 'approve_new_mandate';
+}
 
 export type PermissionKind = 'tool' | 'merge' | 'command';
 
@@ -67,6 +75,10 @@ export interface PermissionRequestMeta {
   reason: string;
   /** 요청을 낸 턴의 위임(W4) — 서버가 턴 임대에서 읽어 적는다. 위임 없는 턴이면 칸이 없다. */
   mandateId?: string;
+  /** W4b: 위임장 칩(이름은 작업 항목 제목, 없으면 소유자 첫 글 앞부분). 위임 없는 턴이면 없다. */
+  mandate?: PermissionCardMandate;
+  /** W4b: 선택지마다 더할 줄(미리 보기). */
+  line?: PermissionCardLine;
   requestedAt: string;
   expiresAt: string;
   /** 정해진 뒤에만. */
@@ -220,6 +232,8 @@ export async function openPermissionRequest(
         channelId: args.kind === 'tool' ? args.channelId : null,
         warnings, reason: oneLineReason(args.reason),
         ...(args.denial ? { once: onceMeta(args.denial) } : {}), ...(args.mandateId ? { mandateId: args.mandateId } : {}),
+        ...(await cardMandateMeta(pool, args.mandateId ?? null, args.channelId)),
+        line: cardLine(args.kind, target, args.denial ? onceMeta(args.denial) : undefined, !!args.mandateId),
         requestedAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
       },
     },
@@ -285,6 +299,8 @@ async function openCommandRequest(
         channelId: args.channelId, threadRootId: args.threadRootId, warnings: v.warnings,
         ...(files.files.length ? { files: files.files } : {}),
         ...(args.mandateId ? { mandateId: args.mandateId } : {}),
+        ...(await cardMandateMeta(pool, args.mandateId ?? null, args.channelId)),
+        line: cardLine('command', v.command, undefined, !!args.mandateId),
         reason: oneLineReason(args.reason), requestedAt: args.now.toISOString(), expiresAt: expiresAt.toISOString(),
       },
     },
@@ -296,7 +312,7 @@ export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: str
   // n1(jaebin 10-07): 규칙은 그 채널의 **모든** 턴(위임·예약 깨우기로 뜬 턴 포함)에 붙는다 — 카드가 그렇게 말해야 한다.
   const warn = meta.warnings.length ? `\n⚠ ${meta.warnings.join(', ')}` : '';
   if (meta.kind === 'command') {
-    return `권한 요청 · ${agentHandle}\n정확히 이 명령 하나 \`${meta.target}\` — 이 스레드에서만 · 「이번 한 번」 또는 「1시간」${warn}${filesBlock(meta.files ?? [])}\n이유: ${oneLineReason(meta.reason)}`;
+    return `권한 요청 · ${agentHandle}\n정확히 이 명령 하나 \`${meta.target}\` — 이 스레드에서만 · 「이번 한 번」${warn}${filesBlock(meta.files ?? [])}\n이유: ${oneLineReason(meta.reason)}`;
   }
   // CI 거절 카드(스레드 1fccc9a5): 뜻은 「CI 실패 무시하고 이번 한 번 머지」 하나다 — 7일이 아니다. 체크 이름(서버가 거른 값)은
   // 멘션·토큰이 되는 글자를 비슷한 글자로 바꿔 싣는다(본문은 멘션이 풀린다).
@@ -320,21 +336,86 @@ export function oneLineReason(reason: string): string {
   return reason.replace(/\p{Cf}/gu, '').replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/[`*_#>|[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
-export function permissionCardOptions(kind: PermissionKind = 'tool', ciOnce = false): { id: string; label: string }[] {
-  // CI 거절 카드에는 7일 허락이 없다 — 승인은 카드 안의 [CI 실패 무시하고 이번 한 번 머지] 하나다(서버도 400 으로 막는다).
-  if (ciOnce) return [{ id: PERMISSION_OPTION_DENY, label: '거절' }];
+/**
+ * 카드 선택지(W4b, 디자인 목업). 주 버튼이 앞이다.
+ * - tool: [이 위임장 동안] · 거절. ([이 턴만]은 서버가 턴 단위로 셀 수 없어 싣지 않는다 — 러너가 `--allowedTools` 를 받을 때 턴 임대 id 를 넘기지 않는다.)
+ * - merge: [이 위임장 동안] · 거절. 거절 카드의 [이번 한 번]은 PermissionOncePanel 이 그린다(선택지에 없음). CI 거절 카드: 거절만(7일 허락 없음, security D4).
+ * - command: [이번 한 번] · 거절.
+ * 위임 없는 턴(W4-3)이면 [이 위임장 동안] 자리에 [이 스레드로 위임장 만들고 더하기].
+ */
+export function permissionCardOptions(
+  kind: PermissionKind = 'tool',
+  opts: { ciOnce?: boolean; once?: boolean; mandate?: boolean } = {},
+): { id: string; label: string }[] {
+  const deny = { id: PERMISSION_OPTION_DENY, label: '거절' };
+  if (kind === 'command') return [{ id: PERMISSION_OPTION_APPROVE_ONCE, label: '이번 한 번' }, deny];
+  // 머지 거절 카드의 [이번 한 번]은 선택지에 싣지 않는다 — 화면의 PermissionOncePanel 이 PR·head·gh 계정과 함께 그린다
+  // (옛 화면에 버튼이 둘 서지 않게). 서버는 approve_once 를 계속 받는다(패널·글 승인·거울). 한도는 meta `line.limits.approve_once`.
+  // CI 거절 카드에는 위임 줄이 없다 — 승인은 [CI 실패 무시하고 이번 한 번] 하나다(서버도 400 으로 막는다).
+  if (kind === 'merge' && opts.ciOnce) return [deny];
+  const standing = opts.mandate
+    ? { id: PERMISSION_OPTION_APPROVE_MANDATE, label: '이 위임장 동안', recommended: true }
+    : { id: PERMISSION_OPTION_APPROVE_NEW_MANDATE, label: '이 스레드로 위임장 만들고 더하기', recommended: true };
+  return [standing, deny];
+}
+
+/** 카드 meta 의 `line`(W4b) — 선택지마다 더할 줄의 한도 미리 보기. 실제 기한은 정할 때 정한다. */
+export function cardLine(kind: PermissionKind, target: string, once: PermissionRequestMeta['once'] | undefined, hasMandate: boolean): PermissionCardLine {
+  const cap = CAP_FOR_KIND[kind];
+  // merge 는 저장한 꼴(`repo:owner/name`) 그대로 — 줄의 scope 와 같다.
+  const scope = target;
+  const limits: PermissionCardLine['limits'] = {};
   if (kind === 'command') {
-    return [
-      { id: PERMISSION_OPTION_APPROVE_ONCE, label: '이번 한 번 승인' },
-      { id: PERMISSION_OPTION_APPROVE_HOUR, label: '이 스레드에서 1시간 승인' },
-      { id: PERMISSION_OPTION_DENY, label: '거절' },
-    ];
+    limits.approve_once = { untilMs: COMMAND_GRANT_TTL_MS, uses: 1 };
+  } else {
+    if (!(kind === 'merge' && once?.reason === 'ci_not_green')) {
+      limits[hasMandate ? 'approve_mandate' : 'approve_new_mandate'] = { untilMs: PERMISSION_GRANT_TTL_MS };
+    }
+    if (kind === 'merge' && once) {
+      limits.approve_once = { pr: once.number, head: once.headSha, uses: 1, ...(once.reason === 'ci_not_green' ? { ciOverride: true } : {}) };
+    }
   }
-  return [
-    // 「7일」을 이름에 넣는다(designer s1) — 머지 거절 카드에서는 그 위의 [이번 한 번 머지]와 갈려 읽혀야 한다. tool·merge 둘 다 7일이다.
-    { id: PERMISSION_OPTION_APPROVE, label: '7일 허락하고 다시 시도' },
-    { id: PERMISSION_OPTION_DENY, label: '거절' },
-  ];
+  return { cap, scope, limits };
+}
+
+/** 위임장 칩 이름의 길이. */
+const MANDATE_NAME_MAX = 40;
+
+/** 칩 이름 — 그 스레드 머리의 작업 항목 제목(위임 소유자 것), 없으면 위임 머리 글의 앞부분(멘션 뺀 40자). */
+export async function mandateChipName(pool: Pick<Pool, 'query'>, mandateId: string): Promise<string | null> {
+  const r = (await pool.query<{ title: string | null; body: string | null }>(
+    `select (select w.title from work_item w
+              where w.thread_root_id = d.thread_root_id and w.owner_account_id = d.owner_account_id
+              order by w.updated_at desc limit 1) as title,
+            m.body
+       from mandate d left join message m on m.id = d.root_message_id and m.deleted_at is null
+      where d.id = $1`, [mandateId])).rows[0];
+  if (!r) return null;
+  if (r.title && r.title.trim()) return clip(oneLineReason(r.title));
+  return clip(stripMentions(r.body ?? '')) || null;
+}
+
+function stripMentions(body: string): string {
+  return oneLineReason(body.replace(/<@[0-9a-f-]{36}>/gi, ' ').replace(/(^|\s)@[\w.-]+/g, ' '));
+}
+
+function clip(s: string): string {
+  const t = s.trim();
+  const chars = [...t];
+  return chars.length > MANDATE_NAME_MAX ? `${chars.slice(0, MANDATE_NAME_MAX).join('')}…` : t;
+}
+
+/**
+ * 카드의 위임장 칩. 위임장은 채널을 넘어 이어지므로 이름(뿌리 글 앞부분·작업 항목 제목)은 **위임장 뿌리 채널을 카드 채널의 청중이 다 볼 때만**
+ * 싣는다(security F1 — 거울과 같은 판정). 못 보면 이름을 비우고 소유자·시작 시각만 둔다(화면은 「🔑 위임장 · 소유자 · 시작일」).
+ */
+async function cardMandateMeta(pool: Pool, mandateId: string | null, cardChannelId: string): Promise<{ mandate?: PermissionCardMandate }> {
+  if (!mandateId) return {};
+  const d = (await pool.query<{ channelId: string; ownerId: string; startedAt: Date }>(
+    `select channel_id as "channelId", owner_account_id as "ownerId", created_at as "startedAt" from mandate where id = $1`, [mandateId])).rows[0];
+  if (!d) return { mandate: { id: mandateId, name: '' } };
+  const name = (await mirrorAudienceSeesRoot(pool, d.channelId, cardChannelId)) ? await mandateChipName(pool, mandateId) : null;
+  return { mandate: { id: mandateId, name: name ?? '', ownerId: d.ownerId, startedAt: d.startedAt.toISOString() } };
 }
 
 export async function linkPermissionCard(pool: Pool, requestId: string, cardMessageId: string): Promise<void> {
@@ -461,6 +542,20 @@ export async function decidePermissionRequest(
       await client.query('rollback');
       return { ok: false, status: 409, code: 'not_once', message: 'only a card raised from a merge refusal can approve one merge' };
     }
+    if (r.kind === 'command' && (args.decision === 'approve_mandate' || args.decision === 'approve_new_mandate')) {
+      await client.query('rollback');
+      return { ok: false, status: 409, code: 'bad_decision', message: 'an exact-command request is approved once (or for an hour) — not for a mandate' };
+    }
+    // W4-3: 위임 없는 턴의 요청 — 카드의 스레드에 정하는 사람(=에이전트 소유자, 사람 세션은 부른 쪽이 봤다) 위임을 세우고 거기에 줄을 더한다.
+    if (args.decision === 'approve_new_mandate' && !r.mandateId) {
+      const made = await mandateForCardThread(client, { ownerId: args.actorId, channelId: r.channelId, threadRootId: r.threadRootId, now });
+      if (!made) {
+        await client.query('rollback');
+        return { ok: false, status: 409, code: 'mandate_unavailable', message: 'a mandate cannot be started on this thread — approve from a thread you started' };
+      }
+      r.mandateId = made;
+      await client.query(`update permission_request set mandate_id = $2 where id = $1`, [r.id, made]);
+    }
     if (r.kind !== 'command' && args.decision === 'approve_hour') {
       await client.query('rollback');
       return { ok: false, status: 409, code: 'bad_decision', message: 'once/hour is only for an exact-command request' };
@@ -478,7 +573,7 @@ export async function decidePermissionRequest(
         `insert into command_grant (agent_id, channel_id, thread_root_id, command, single_use, expires_at, granted_by, request_id, created_at, file_digests)
          select $1, $2, $3, $4, $5, $6, $7, $8, $9, r.file_digests from permission_request r where r.id = $8 returning id`,
         [args.agentId, r.channelId, r.threadRootId, r.target, grantMode === 'once', grantExpiresAt, args.actorId, r.id, now])).rows[0]!.id;
-    } else if (args.decision === 'approve') {
+    } else if (isStandingApprove(args.decision)) {
       // CI 거절 카드는 7일 허락을 주지 않는다(security D4 — 화면 버튼만 숨기지 않고 서버가 막는다). 권한은 이미 있다.
       if (r.kind === 'merge' && r.denialId) {
         const reason = (await client.query<{ reason: string }>(`select reason from merge_denial where id = $1`, [r.denialId])).rows[0]?.reason;
@@ -504,11 +599,11 @@ export async function decidePermissionRequest(
         request: r, decision: args.decision, actorId: args.actorId, now,
         via: args.via?.kind ?? 'button',
         // 7일 승인으로 적힌 줄은 같은 결정에서 쓴 account_grant 의 기한에서 끝난다.
-        ...(args.decision === 'approve' && r.kind !== 'command' && grantExpiresAt ? { until: grantExpiresAt } : {}),
+        ...(isStandingApprove(args.decision) && r.kind !== 'command' && grantExpiresAt ? { until: grantExpiresAt } : {}),
         ...(approval && args.once ? { once: { number: approval.number, headSha: approval.headSha, ghUser: args.once.ghUser, ciOverride: approval.reason === 'ci_not_green' } } : {}),
       });
     }
-    const status = args.decision === 'deny' ? 'denied' : r.kind === 'command' || args.decision === 'approve' ? 'granted' : 'approved_once';
+    const status = args.decision === 'deny' ? 'denied' : r.kind === 'command' || isStandingApprove(args.decision) ? 'granted' : 'approved_once';
     await client.query(
       `update permission_request set status = $2, decided_at = $3, decided_by = $4, grant_expires_at = $5, grant_mode = $6 where id = $1`,
       [r.id, status, now, args.actorId, grantExpiresAt, grantMode ?? null]);
@@ -533,7 +628,7 @@ export async function decidePermissionRequest(
     client.release();
   }
 
-  const status = args.decision === 'deny' ? 'denied' : row.kind === 'command' || args.decision === 'approve' ? 'granted' : 'approved_once';
+  const status = args.decision === 'deny' ? 'denied' : row.kind === 'command' || isStandingApprove(args.decision) ? 'granted' : 'approved_once';
   if (approval && args.once) {
     await recordAudit(pool, {
       action: 'repo.merge.approved_once', actorId: args.actorId, target: approval.scope,
@@ -571,15 +666,53 @@ export async function decidePermissionRequest(
     const answered = await recordAskAnswer(pool, {
       messageId: row.cardMessageId, actorId: args.actorId,
       // 1회 머지 승인도 「승인」으로 답한다 — 에이전트가 깨어나 같은 명령을 한 번 더 부른다(그 턴에서 래퍼가 승인을 쓴다).
-      optionId: args.decision === 'deny' ? PERMISSION_OPTION_DENY
-        : row.kind !== 'command' ? PERMISSION_OPTION_APPROVE
-        : grantMode === 'hour' ? PERMISSION_OPTION_APPROVE_HOUR : PERMISSION_OPTION_APPROVE_ONCE,
+      optionId: await answerOptionId(pool, row.cardMessageId, args.decision === 'deny' ? [PERMISSION_OPTION_DENY]
+        : row.kind === 'command' ? [grantMode === 'hour' ? PERMISSION_OPTION_APPROVE_HOUR : PERMISSION_OPTION_APPROVE_ONCE, PERMISSION_OPTION_APPROVE_ONCE]
+        // 옛 카드는 `approve` 하나다. 새 카드는 고른 갈래 → 주 버튼 순으로 카드에 있는 것을 적는다.
+        : [args.decision, PERMISSION_OPTION_APPROVE_MANDATE, PERMISSION_OPTION_APPROVE_NEW_MANDATE, PERMISSION_OPTION_APPROVE, PERMISSION_OPTION_APPROVE_ONCE]),
       viaPermissionDecision: true,
     });
     const card = typeof answered === 'object' ? answered : await getMessageById(pool, row.cardMessageId);
     if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
   }
   return { ok: true, status, grantExpiresAt: grantExpiresAt?.toISOString() ?? null, ...(approval ? { approvalExpiresAt: approval.expiresAt.toISOString() } : {}), cardMessageId: row.cardMessageId, ...(grantMode ? { grantMode } : {}) };
+}
+
+/** 카드에 적을 답 — 후보 중 카드 선택지에 있는 첫 것(옛 카드·새 카드 둘 다). 없으면 첫 후보(전과 같다: `unknown_option` 이면 깨우지 못할 뿐). */
+async function answerOptionId(pool: Pool, cardMessageId: string, candidates: string[]): Promise<string> {
+  const ids = (await pool.query<{ ids: string[] | null }>(
+    `select array(select jsonb_array_elements(meta->'ask'->'options')->>'id') as ids from message where id = $1`, [cardMessageId])).rows[0]?.ids ?? [];
+  return candidates.find((c) => ids.includes(c)) ?? candidates[0]!;
+}
+
+/**
+ * W4-3: 카드의 스레드 머리에 소유자 위임을 세운다(이미 있으면 그것). 머리 글이 이 채널의 지워지지 않은 글이어야 하고,
+ * 머리에 다른 위임이 붙어 있거나 그 위임의 소유자가 다르면 세우지 않는다(null).
+ * 머리 글은 **소유자 본인이나 그 소유자의 에이전트**가 쓴 것이어야 한다(security F2) — 위임 키는 그런 글에만 있다는 W1 불변식.
+ * 남의 글에 키를 찍으면 그 글로 뜬 턴이 키를 얻는다(`issueTurnLease` 는 원인 글의 `mandate_id` 를 믿는다).
+ */
+async function mandateForCardThread(client: PoolClient, args: { ownerId: string; channelId: string; threadRootId: string; now: Date }): Promise<string | null> {
+  const root = (await client.query<{ mandateId: string | null; ownAuthor: boolean }>(
+    `select m.mandate_id as "mandateId",
+            (m.author_id = $3 or exists (select 1 from agent_config c where c.account_id = m.author_id and c.owner_account_id = $3)) as "ownAuthor"
+       from message m where m.id = $1 and m.channel_id = $2 and m.deleted_at is null for update of m`,
+    [args.threadRootId, args.channelId, args.ownerId])).rows[0];
+  if (!root || !root.ownAuthor) return null;
+  if (root.mandateId) {
+    const owner = await validMandateOwner(client, root.mandateId, args.now);
+    if (owner !== args.ownerId) return null;
+    await client.query(`update mandate set last_activity_at = greatest(last_activity_at, $2) where id = $1`, [root.mandateId, args.now]);
+    return root.mandateId;
+  }
+  const id = (await client.query<{ id: string; owner: string; ended: boolean }>(
+    `insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
+     values ($1, $2, $3, $2, $4, $4)
+     on conflict (root_message_id) do update set last_activity_at = greatest(mandate.last_activity_at, excluded.last_activity_at)
+     returning id, owner_account_id as owner, ended_at is not null as ended`,
+    [args.ownerId, args.threadRootId, args.channelId, args.now])).rows[0]!;
+  if (id.owner !== args.ownerId || id.ended) return null;
+  await client.query(`update message set mandate_id = $2 where id = $1 and mandate_id is null`, [args.threadRootId, id.id]);
+  return id.id;
 }
 
 type MandateLineOutcome =
@@ -625,7 +758,7 @@ export async function addLineFromRequest(
     // 명령 grant 와 같은 기한(1시간). 「이번 한 번」은 한 번만.
     limits.until = new Date(args.now.getTime() + COMMAND_GRANT_TTL_MS).toISOString();
     if (args.decision === 'approve_once') limits.uses = 1;
-  } else if (args.decision === 'approve') {
+  } else if (isStandingApprove(args.decision)) {
     // 7일 승인: grant 와 같은 기한. 기한을 모르면 줄을 적지 않는다(기한 없는 줄을 만들지 않는다).
     if (!args.until) return { ok: false, mandateId, cap, code: 'no_until' };
     limits.until = args.until.toISOString();
@@ -947,7 +1080,7 @@ export function neutralizePreview(text: string): string {
  */
 export async function renderPermissionMirror(
   pool: Pool, rootId: string, mirrorChannelId: string,
-): Promise<{ body: string; options: { id: string; label: string }[]; prompt?: string } | null> {
+): Promise<{ body: string; options: { id: string; label: string }[]; prompt?: string; mirror: PermissionMirrorMeta } | null> {
   const r = (await pool.query<{ meta: Record<string, unknown>; channelId: string; handle: string | null }>(
     `select m.meta, m.channel_id as "channelId", a.handle
        from message m left join account a on a.id = m.author_id
@@ -956,14 +1089,22 @@ export async function renderPermissionMirror(
   const pr = r.meta.permissionRequest as PermissionRequestMeta;
   const ask = r.meta.ask as { options?: { id: string; label: string }[]; prompt?: string } | undefined;
   const ciOnce = pr.kind === 'merge' && pr.once?.reason === 'ci_not_green';
-  const options = ask?.options?.map((o) => ({ id: o.id, label: o.label })) ?? permissionCardOptions(pr.kind, ciOnce);
+  const options = ask?.options?.map((o) => ({ id: o.id, label: o.label })) ?? permissionCardOptions(pr.kind, { ciOnce, once: !!pr.once, mandate: !!pr.mandateId });
   const handle = `@${r.handle ?? 'agent'}`;
   const prompt = typeof ask?.prompt === 'string' ? ask.prompt : undefined;
   if (await mirrorAudienceSeesRoot(pool, r.channelId, mirrorChannelId)) {
-    return { body: permissionCardBody(pr, handle), options, ...(prompt ? { prompt } : {}) };
+    // W4-2: 원본을 볼 수 있는 거울은 같은 카드를 그리도록 once(gh 계정 고르기 빼고)·line·mandate 를 싣는다.
+    const mirror: PermissionMirrorMeta = {
+      rootId, neutral: false, kind: pr.kind,
+      ...(pr.once ? { once: { number: pr.once.number, headSha: pr.once.headSha, reason: pr.once.reason, ...(pr.once.failedChecks ? { failedChecks: [...pr.once.failedChecks] } : {}) } } : {}),
+      ...(pr.line ? { line: pr.line } : {}),
+      // 칩은 거울 채널을 기준으로 다시 만든다(F1) — 원본 카드의 이름을 그대로 옮기지 않는다.
+      ...(pr.mandate ? await cardMandateMeta(pool, pr.mandate.id, mirrorChannelId) : {}),
+    };
+    return { body: permissionCardBody(pr, handle), options, ...(prompt ? { prompt } : {}), mirror };
   }
   // 원본 카드 링크(id 만)를 붙인다 — 볼 수 있는 사람은 눌러 원본을 연다. 내용은 싣지 않는다(n9).
-  return { body: `권한 요청 · ${handle}\n원래 카드가 있는 채널에서 내용을 확인하고 정해 주세요.\nharkroom://message/${rootId}`, options, ...(prompt ? { prompt } : {}) };
+  return { body: `권한 요청 · ${handle}\n원래 카드가 있는 채널에서 내용을 확인하고 정해 주세요.\nharkroom://message/${rootId}`, options, ...(prompt ? { prompt } : {}), mirror: { rootId, neutral: true } };
 }
 
 /** 거울 채널의 이벤트를 받는 사람이 모두 원본 채널도 보는가. 같은 채널이거나 원본이 모두에게 열려 있으면 참. */

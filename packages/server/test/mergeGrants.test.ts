@@ -481,7 +481,7 @@ describe('repo.merge grant', () => {
         const card = (await pool.query(`select meta from message where id = $1`, [first.cardMessageId])).rows[0].meta;
         expect(card.permissionRequest).toMatchObject({ kind: 'merge', target: 'izagood/p4-mcp-b', agentId, ownerAccountId: alice.accountId });
         expect(card.mergeDenial).toBeUndefined();
-        expect(card.ask.options.map((o: { id: string }) => o.id)).toEqual(['approve', 'deny']);
+        expect(card.ask.options.map((o: { id: string }) => o.id)).toEqual(['approve_new_mandate', 'deny']);
         const second = await ask({ threadRootId: thread, mergeDenialId: body.error.denialId!, body: 'again' });
         expect(second).toMatchObject({ pending: true, requestId: first.requestId, cardMessageId: first.cardMessageId });
         // 소유자가 일반 ask-answer(모바일 경로)로 승인하면 그 저장소 grant 가 생긴다.
@@ -817,9 +817,9 @@ describe('repo.merge grant', () => {
       expect((await pool.query(`select pr_number, failed_checks from merge_denial where id = $1`, [a.denialId])).rows[0]).toEqual({ pr_number: 35, failed_checks: ['lint'] });
     });
 
-    it('CI 거절 카드는 선택지가 [거절] 하나 · 본문은 「CI 실패 무시하고 이번 한 번 머지」와 거른 체크 이름(멘션 글자는 바꿔서)', () => {
-      expect(permissionCardOptions('merge', true).map((o) => o.id)).toEqual(['deny']);
-      expect(permissionCardOptions('merge').map((o) => o.id)).toEqual(['approve', 'deny']);
+    it('CI 거절 카드는 선택지가 [거절] 하나(이번 한 번은 PermissionOncePanel, 7일 없음) · 본문은 「CI 실패 무시하고 이번 한 번 머지」와 거른 체크 이름(멘션 글자는 바꿔서)', () => {
+      expect(permissionCardOptions('merge', { ciOnce: true, once: true }).map((o) => o.id)).toEqual(['deny']);
+      expect(permissionCardOptions('merge', { mandate: true }).map((o) => o.id)).toEqual(['approve_mandate', 'deny']);
       const body = permissionCardBody({
         requestId: 'r', agentId, ownerAccountId: alice.accountId, kind: 'merge', target: 'izagood/ci-x', channelId: null, warnings: [], reason: 'fix ci',
         once: { number: 9, headSha: SHA3, reason: 'ci_not_green', failedChecks: ['test', '@channel <@x>'] }, requestedAt: '', expiresAt: '',
