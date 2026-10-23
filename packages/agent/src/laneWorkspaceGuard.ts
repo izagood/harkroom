@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 /** 다음 턴을 바꾸는 이름(소문자). 대소문자를 가리지 않고 맞춘다. */
 const PROTECTED_NAMES = new Set([
-  '.claude', '.opencode', '.agents', 'claude.md', 'agents.md', '.mcp.json', 'opencode.json', 'opencode.jsonc',
+  '.claude', '.opencode', '.agents', 'claude.md', 'claude.local.md', 'agents.md', 'context.md', '.mcp.json', 'opencode.json', 'opencode.jsonc',
 ]);
 
 /** 러너가 스스로 까는 자리(`syncSkills`): `<이름>/skills/<slug>` 링크만 들어 있으면 우리 것이다. 이름은 글자 그대로 맞춘다. */
@@ -27,8 +27,9 @@ async function onlyRunnerSkillLinks(dir: string, skillsDir: string): Promise<boo
     const p = join(skills, name);
     const lst = await lstat(p).catch(() => null);
     if (!lst?.isSymbolicLink()) return false;
+    // `syncSkills` 가 만드는 꼴(`<skillsDir>/<slug>`) 그대로일 때만 우리 것이다 — 앞머리 비교는 형제 폴더·`..` 를 통과시킨다.
     const target = await readlink(p).catch(() => null);
-    if (!target || !target.startsWith(skillsDir)) return false;
+    if (target !== join(skillsDir, name)) return false;
   }
   return true;
 }
@@ -39,7 +40,10 @@ async function onlyRunnerSkillLinks(dir: string, skillsDir: string): Promise<boo
  */
 export async function laneWorkspaceViolations(workspaceDir: string, skillsDir: string): Promise<string[]> {
   const out: string[] = [];
-  for (const name of await readdir(workspaceDir).catch(() => [] as string[])) {
+  // 못 읽으면 걸린 것으로 본다(fail-closed) — 빈 목록으로 두면 검사 없이 턴이 뜬다.
+  const names = await readdir(workspaceDir).catch(() => null);
+  if (names === null) return ['(unreadable)'];
+  for (const name of names) {
     if (!PROTECTED_NAMES.has(name.toLowerCase())) continue;
     if (RUNNER_SKILL_DIRS.has(name) && await onlyRunnerSkillLinks(join(workspaceDir, name), skillsDir)) continue;
     out.push(name);

@@ -707,7 +707,7 @@ describe('전용 제공사 경로 env', () => {
     const denyNext = withLane.findIndex((a, i) => i >= denyFrom && a.startsWith('--'));
     const denied = withLane.slice(denyFrom, denyNext < 0 ? undefined : denyNext);
     for (const rule of LANE_DENY) expect(denied).toContain(rule);
-    expect(denied).toEqual(expect.arrayContaining(['Agent', 'Write(./.claude/**)', 'Write(./CLAUDE.md)', 'Write(./.mcp.json)']));
+    expect(denied).toEqual(expect.arrayContaining(['Agent', 'Write(./.claude/**)', 'Write(./CLAUDE.md)', 'Write(./CLAUDE.local.md)', 'Write(./.mcp.json)']));
     // `--disallowedTools` 의 deny 규칙(설정 파일 자기 수정)도 Edit·Write 꼴이라 allow 칸만 떼어 본다.
     const from = withLane.indexOf('--allowedTools') + 1;
     const next = withLane.findIndex((a, i) => i >= from && a.startsWith('--'));
