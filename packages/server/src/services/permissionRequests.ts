@@ -845,7 +845,8 @@ export async function renderPermissionMirror(
   if (await mirrorAudienceSeesRoot(pool, r.channelId, mirrorChannelId)) {
     return { body: permissionCardBody(pr, handle), options, ...(prompt ? { prompt } : {}) };
   }
-  return { body: `권한 요청 · ${handle}\n원래 카드가 있는 채널에서 내용을 확인하고 정해 주세요.`, options, ...(prompt ? { prompt } : {}) };
+  // 원본 카드 링크(id 만)를 붙인다 — 볼 수 있는 사람은 눌러 원본을 연다. 내용은 싣지 않는다(n9).
+  return { body: `권한 요청 · ${handle}\n원래 카드가 있는 채널에서 내용을 확인하고 정해 주세요.\nharkroom://message/${rootId}`, options, ...(prompt ? { prompt } : {}) };
 }
 
 /** 거울 채널의 이벤트를 받는 사람이 모두 원본 채널도 보는가. 같은 채널이거나 원본이 모두에게 열려 있으면 참. */

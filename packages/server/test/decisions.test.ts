@@ -174,6 +174,8 @@ describe('resolveDecision · decide', () => {
       const neutral = (await renderPermissionMirror(pool, cardId, other))!;
       expect(neutral.body).not.toContain('kubectl');
       expect(neutral.body).not.toContain('파드 확인');
+      // 원본 카드 링크(id 만)는 싣는다(n9).
+      expect(neutral.body).toContain(`harkroom://message/${cardId}`);
     } finally {
       await pool.query(`update channel set visibility = 'public' where id = $1`, [ch]);
     }
