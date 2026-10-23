@@ -339,7 +339,7 @@ export function oneLineReason(reason: string): string {
 /**
  * 카드 선택지(W4b, 디자인 목업). 주 버튼이 앞이다.
  * - tool: [이 위임장 동안] · 거절. ([이 턴만]은 서버가 턴 단위로 셀 수 없어 싣지 않는다 — 러너가 `--allowedTools` 를 받을 때 턴 임대 id 를 넘기지 않는다.)
- * - merge: [이 위임장 동안] · [이번 한 번](거절 카드일 때) · 거절. CI 거절 카드: [이번 한 번] · 거절(7일 허락 없음, security D4).
+ * - merge: [이 위임장 동안] · 거절. 거절 카드의 [이번 한 번]은 PermissionOncePanel 이 그린다(선택지에 없음). CI 거절 카드: 거절만(7일 허락 없음, security D4).
  * - command: [이번 한 번] · 거절.
  * 위임 없는 턴(W4-3)이면 [이 위임장 동안] 자리에 [이 스레드로 위임장 만들고 더하기].
  */
@@ -349,12 +349,14 @@ export function permissionCardOptions(
 ): { id: string; label: string }[] {
   const deny = { id: PERMISSION_OPTION_DENY, label: '거절' };
   if (kind === 'command') return [{ id: PERMISSION_OPTION_APPROVE_ONCE, label: '이번 한 번' }, deny];
-  const once = { id: PERMISSION_OPTION_APPROVE_ONCE, label: opts.ciOnce ? 'CI 실패 무시하고 이번 한 번' : '이번 한 번' };
-  if (kind === 'merge' && opts.ciOnce) return [once, deny];
+  // 머지 거절 카드의 [이번 한 번]은 선택지에 싣지 않는다 — 화면의 PermissionOncePanel 이 PR·head·gh 계정과 함께 그린다
+  // (옛 화면에 버튼이 둘 서지 않게). 서버는 approve_once 를 계속 받는다(패널·글 승인·거울). 한도는 meta `line.limits.approve_once`.
+  // CI 거절 카드에는 위임 줄이 없다 — 승인은 [CI 실패 무시하고 이번 한 번] 하나다(서버도 400 으로 막는다).
+  if (kind === 'merge' && opts.ciOnce) return [deny];
   const standing = opts.mandate
     ? { id: PERMISSION_OPTION_APPROVE_MANDATE, label: '이 위임장 동안', recommended: true }
     : { id: PERMISSION_OPTION_APPROVE_NEW_MANDATE, label: '이 스레드로 위임장 만들고 더하기', recommended: true };
-  return [standing, ...(kind === 'merge' && opts.once ? [once] : []), deny];
+  return [standing, deny];
 }
 
 /** 카드 meta 의 `line`(W4b) — 선택지마다 더할 줄의 한도 미리 보기. 실제 기한은 정할 때 정한다. */
