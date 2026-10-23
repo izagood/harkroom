@@ -23,7 +23,7 @@ import { systemI18n } from './systemI18n.js';
  * - 어느 요청인지는 **구조로만** 정한다: 본문의 `harkroom://message/<카드 id>` 링크(1~5개, 어느 채널이든, 거울은 원본으로 —
  *   `resolveDecision`), 링크가 없으면 같은 스레드에 글보다 먼저 있던, 이 사람이 정할 수 있는 열린 카드가 딱 하나일 때 그 카드
  *   (머지 거절 카드 포함 — head 는 카드가 보여 준 값으로 묶고 CI 실패 카드는 「CI 무시」가 있어야 한다), 그 스레드에 권한 카드가
- *   없으면 소유자의 에이전트들이 글보다 먼저 낸 기다리는 요청이 딱 하나일 때 그것(T3, 카드 077fa790). 선택지 카드의 글 답은
+ *   없으면 소유자의 에이전트들이 글보다 먼저 낸 기다리는 요청이 딱 하나일 때 그것(T3, 카드 077fa790). 선택 카드의 글 답은
  *   `answerAskFromMessage`(P5)가 먼저 본다.
  * - 올린 순간의 본문만 본다(수정은 다시 판정하지 않는다). 승인했으면 글 아래에 요청 행에서 그린 확인 줄을, 승인 낱말인데
  *   어느 요청인지 몰랐으면 그렇다는 안내 줄을 단다 — 조용히 넘기지 않는다(사례 ①).
@@ -189,11 +189,11 @@ const REASON_KO = {
   noWord: '카드 링크는 있지만 승인 낱말(승인·허락·머지해·진행해·approve)이 없다.',
   tooMany: '한 글로는 카드를 5장까지만 정한다. 나눠서 다시 쓴다.',
   noCard: '링크한 글 중에 정할 수 있는 카드가 없다.',
-  askCard: '선택지 카드는 번호(「1번」)·선택지 이름·「추천대로」로 답한다. 카드에서 골라도 된다.',
+  askCard: '선택 카드는 번호(「1번」)·선택지 이름·「추천대로」로 답한다. 카드에서 골라도 된다.',
   askMany: '기다리는 선택 카드가 여럿이라 어느 것인지 모른다. 카드 링크 하나를 붙여 다시 쓴다.',
   askNoMatch: '맞는 선택지가 없다. 번호(「1번」)나 선택지 이름으로 다시 쓴다.',
   askNoRecommended: '이 카드에는 추천 선택지가 하나로 정해져 있지 않다. 번호나 선택지 이름으로 다시 쓴다.',
-  askIrreversible: '되돌릴 수 없는 일을 묻는 카드라 「추천대로」로는 고르지 않는다. 번호나 선택지 이름으로 쓴다.',
+  askIrreversible: '되돌릴 수 없는 일을 묻는 카드라 「추천대로」나 링크 없는 번호로는 고르지 않는다. 선택지 이름 그대로나 카드 링크와 번호로 다시 쓴다.',
   askAnswered: '이미 답한 카드다.',
   hidden: '볼 수 없는 채널의 카드다.',
   headChanged: '카드가 선 뒤 PR head 가 바뀌었다. 카드를 다시 확인하고 정한다.',
@@ -272,7 +272,7 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
     const rows = resolved.length > 0 ? (await pool.query<Candidate>(`${CANDIDATE_SQL} where p.card_message_id = any($1::uuid[])`, [resolved])).rows : [];
     targets = [...new Set(resolved)].map((id) => rows.find((r) => r.cardMessageId === id)).filter((r): r is Candidate => !!r);
     if (targets.length === 0) {
-      // 선택지 카드에 고르는 꼴이 아닌 결정 낱말을 쓴 글(P5 가 넘긴 것)이다. 낱말이 있을 때만 안내한다 — 링크만 있는 글은 흔하다.
+      // 선택 카드에 고르는 꼴이 아닌 결정 낱말을 쓴 글(P5 가 넘긴 것)이다. 낱말이 있을 때만 안내한다 — 링크만 있는 글은 흔하다.
       if (askCards > 0 && hasWord) return refuse(pool, message, actorId, 'askCard');
       if (hasWord && (await ownsPendingRequest(pool, actorId))) return refuse(pool, message, actorId, 'noCard');
       return;
@@ -327,7 +327,7 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
       if (mineInThread.length === 0) return;
       if (parsed.block) return refuse(pool, message, actorId, parsed.block);
       if (open.length > 1) {
-        await notice(pool, message, actorId, `승인 안 됨: 이 스레드에 기다리는 카드가 ${open.length}장이라 어느 것인지 모른다. 정할 카드의 링크를 붙여 다시 써라:`, open);
+        await notice(pool, message, actorId, `승인 안 됨: 이 스레드에 기다리는 카드가 ${open.length}장이라 어느 것인지 모른다. 정할 카드의 링크를 붙여 다시 쓴다:`, open);
         return;
       }
       if (open.length === 0) return refuse(pool, message, actorId, 'settled');
@@ -347,7 +347,7 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
       }
       if (parsed.block) return refuse(pool, message, actorId, parsed.block);
       if (mine.length > 1) {
-        await notice(pool, message, actorId, `승인 안 됨: 기다리는 권한 요청이 ${mine.length}개라 어느 것인지 모른다. 정할 카드의 링크를 붙여 다시 써라:`, mine);
+        await notice(pool, message, actorId, `승인 안 됨: 기다리는 권한 요청이 ${mine.length}개라 어느 것인지 모른다. 정할 카드의 링크를 붙여 다시 쓴다:`, mine);
         return;
       }
       targets = mine;
@@ -426,7 +426,9 @@ type AskCard = { id: string; meta: Record<string, unknown>; body: string; channe
  */
 async function answerAskFromMessage(pool: Pool, message: MessageRow, actorId: string, p: AskPickParse, approval: ChatApprovalParse | null): Promise<boolean> {
   let card: AskCard;
-  if (p.cardIds.length > 0) {
+  // 카드 링크로 고른 글인가(T1) — 되돌릴 수 없는 카드에 번호·차례로 답하려면 링크가 있어야 한다(security n19).
+  const viaLink = p.cardIds.length > 0;
+  if (viaLink) {
     const asks: string[] = [];
     let perms = 0;
     for (const id of p.cardIds) {
@@ -459,12 +461,12 @@ async function answerAskFromMessage(pool: Pool, message: MessageRow, actorId: st
     if (open.length === 0) return false;
     // 승인 낱말이 든 글인데 이 스레드에 내 권한 카드도 열려 있으면 어느 쪽인지 모른다 — 둘 다 정하지 않는다.
     if (approval?.action && (await ownsOpenPermissionCardInThread(pool, message, actorId))) {
-      await notice(pool, message, actorId, '답 안 됨: 이 스레드에 선택 카드와 권한 카드가 함께 기다린다. 정할 카드의 링크를 붙여 다시 써라:', [], open.map((r) => r.id));
+      await notice(pool, message, actorId, '답 안 됨: 이 스레드에 선택 카드와 권한 카드가 함께 기다린다. 정할 카드의 링크를 붙여 다시 쓴다:', [], open.map((r) => r.id));
       return true;
     }
     if (open.length > 1) {
       if (!p.pick.explicit && !matchesAny(open, p.pick)) return false;
-      await notice(pool, message, actorId, `답 안 됨: 이 스레드에 기다리는 선택 카드가 ${open.length}장이라 어느 것인지 모른다. 답할 카드의 링크를 붙여 다시 써라:`, [], open.map((r) => r.id));
+      await notice(pool, message, actorId, `답 안 됨: 이 스레드에 기다리는 선택 카드가 ${open.length}장이라 어느 것인지 모른다. 답할 카드의 링크를 붙여 다시 쓴다:`, [], open.map((r) => r.id));
       return true;
     }
     card = open[0]!;
@@ -481,7 +483,8 @@ async function answerAskFromMessage(pool: Pool, message: MessageRow, actorId: st
   if (ask.answeredWith) return refuse(pool, message, actorId, 'askAnswered').then(() => true);
   if (!matched.ok) return refuse(pool, message, actorId, matched.why).then(() => true);
   // 「추천대로」는 사람이 선택지를 직접 고른 것이 아니다 — 되돌릴 수 없는 카드에는 쓰지 않는다(묶음 카드의 일괄과 같은 판정).
-  if (p.pick.kind === 'recommended' && isIrreversible(card.meta, card.body)) return refuse(pool, message, actorId, 'askIrreversible').then(() => true);
+  // 링크 없이(T2) 번호·차례만 쓴 글도 같다 — 어느 카드에 무엇을 고르는지 이름이나 링크로 드러나야 한다(security n19).
+  if ((p.pick.kind === 'recommended' || (p.pick.kind === 'index' && !viaLink)) && isIrreversible(card.meta, card.body)) return refuse(pool, message, actorId, 'askIrreversible').then(() => true);
   const result = await recordAskAnswer(pool, { messageId: card.id, actorId, optionId: matched.id, answeredVia: 'chat', skipWakeIfInboxFor: message.id });
   if (result === 'already_answered') return refuse(pool, message, actorId, 'askAnswered').then(() => true);
   if (typeof result === 'string') {

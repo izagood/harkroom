@@ -111,3 +111,19 @@ describe('MessageItem — 시스템 줄은 글로만 그린다(C4)', () => {
     expect(line.querySelector('a, strong')).toBeNull();
   });
 });
+
+describe('글 답 안내 줄 문구(P5 후속)', () => {
+  const chatKeys = Object.keys(SYSTEM_I18N_ARGS).filter((k) => k.startsWith('system.chatApproval.')) as (keyof typeof ko)[];
+  it('ko 는 「선택 카드」로 부르고 「다시 써라」 같은 시키는 끝맺음이 없다(designer n1·security n20)', () => {
+    for (const k of chatKeys) {
+      expect(ko[k], k).not.toContain('선택지 카드');
+      expect(ko[k], k).not.toMatch(/써라|하라/);
+      expect(ko[k].startsWith('⚠️ '), k).toBe(true);
+    }
+  });
+  it('되돌릴 수 없는 카드 안내는 이름·링크를 말하고 「다시 쓴다」로 끝난다(security n19·designer n2)', () => {
+    expect(ko['system.chatApproval.askIrreversible']).toMatch(/^⚠️ 답 안 됨: .*링크.*다시 쓴다\.$/);
+    expect(ko['system.chatApproval.askIrreversible']).toContain('선택지 이름 그대로');
+    expect(en['system.chatApproval.askIrreversible']).toMatch(/^⚠️ Not answered: .*card link.*exact option name|^⚠️ Not answered: .*exact option name.*card link/);
+  });
+});
