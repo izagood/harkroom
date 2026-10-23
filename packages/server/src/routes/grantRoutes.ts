@@ -222,12 +222,25 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
       } else if (!req.account!.isAdmin) {
         return reply.code(403).send({ error: { code: 'forbidden', message: 'grant 는 admin 만 거둔다' } });
       }
-      const res = await pool.query(
-        `delete from account_grant where account_id = $1 and capability = $2 and scope = $3`,
-        [id, req.params.capability, scope]);
-      if (!res.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: '그런 grant 가 없다' } });
-      // W4: 그 grant 와 함께 적힌 위임 줄도 닫는다.
-      await revokeLinesForGrant(pool, { agentId: id, capability: req.params.capability, scope });
+      // W4: grant 를 지우는 일과 그 grant 와 함께 적힌 위임 줄을 닫는 일은 한 트랜잭션 — 줄 닫기가 실패하면 grant 도 남는다.
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const res = await client.query(
+          `delete from account_grant where account_id = $1 and capability = $2 and scope = $3`,
+          [id, req.params.capability, scope]);
+        if (!res.rowCount) {
+          await client.query('rollback');
+          return reply.code(404).send({ error: { code: 'not_found', message: '그런 grant 가 없다' } });
+        }
+        await revokeLinesForGrant(client, { agentId: id, capability: req.params.capability, scope });
+        await client.query('commit');
+      } catch (err) {
+        await client.query('rollback').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
       await recordAudit(pool, {
         action: 'grant.revoked', ...actorOf(req), target: id,
         detail: { capability: req.params.capability, scope },

@@ -797,13 +797,28 @@ export async function releaseGrant(
     capability = 'repo.merge';
     scopes = [scope];
   }
-  const del = await pool.query<{ scope: string }>(
-    `delete from account_grant where account_id = $1 and capability = $2 and scope = any($3::text[]) returning scope`,
-    [args.agentId, capability, scopes]);
-  const scope = del.rows[0]?.scope;
-  if (!scope) return { ok: false, code: 'not_found', message: 'no such grant on this agent' };
-  // W4: 그 grant 와 함께 적힌 위임 줄도 닫는다 — 거둔 뒤에도 줄이 남아 머지·도구를 허락하지 않게.
-  for (const d of del.rows) await revokeLinesForGrant(pool, { agentId: args.agentId, capability, scope: d.scope });
+  // W4: grant 를 지우는 일과 그 grant 와 함께 적힌 위임 줄을 닫는 일은 한 트랜잭션 — 거둔 뒤에도 줄이 남아 머지·도구를
+  // 허락하지 않게, 그리고 줄 닫기가 실패하면 grant 도 지워지지 않게.
+  const client = await pool.connect();
+  let scope = '';
+  try {
+    await client.query('begin');
+    const del = await client.query<{ scope: string }>(
+      `delete from account_grant where account_id = $1 and capability = $2 and scope = any($3::text[]) returning scope`,
+      [args.agentId, capability, scopes]);
+    scope = del.rows[0]?.scope ?? '';
+    if (!scope) {
+      await client.query('rollback');
+      return { ok: false, code: 'not_found', message: 'no such grant on this agent' };
+    }
+    for (const d of del.rows) await revokeLinesForGrant(client, { agentId: args.agentId, capability, scope: d.scope });
+    await client.query('commit');
+  } catch (err) {
+    await client.query('rollback').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
   await recordAudit(pool, { action: 'grant.revoked', actorId: args.agentId, target: args.agentId, detail: { capability, scope, via: 'permission.revoke' } });
   emitEvent({ type: 'grant.changed', accountId: args.agentId, audience: 'all' });
   return { ok: true, capability, scope };

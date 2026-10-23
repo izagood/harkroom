@@ -183,6 +183,48 @@ describe('permission request → mandate line (W4)', () => {
       expect(await findLine(pool, { mandateId: m.mandateId, agentId, cap: 'merge', action: { cap: 'merge', repo: 'acme-org/w4-rel' } })).toBeNull();
     });
 
+    /** 위임 줄 닫기(`update mandate_line`)를 실패시킨다 — 문장 단위 트리거라 맞는 줄이 없어도 터진다. */
+    const withLineUpdateFailing = async (fn: () => Promise<void>) => {
+      await pool.query(`create or replace function test_fail_line_update() returns trigger language plpgsql as $$ begin raise exception 'line update failed (test)'; end $$`);
+      await pool.query(`create trigger test_fail_line_update before update on mandate_line for each statement execute function test_fail_line_update()`);
+      try { await fn(); } finally {
+        await pool.query(`drop trigger if exists test_fail_line_update on mandate_line`);
+        await pool.query(`drop function if exists test_fail_line_update()`);
+      }
+    };
+    const grantRows = async (capability: string, scope: string) =>
+      (await pool.query(`select 1 from account_grant where account_id = $1 and capability = $2 and scope = $3`, [agentId, capability, scope])).rowCount;
+    const revokedAudits = async () => (await pool.query(`select count(*)::int as n from audit_log where action = 'grant.revoked'`)).rows[0].n as number;
+
+    it('settings DELETE: if closing the lines fails, the grant stays and an error comes back', async () => {
+      const { mandateId, target } = await approveTool();
+      const scope = `tool:${ch}:${target}`;
+      const before = await revokedAudits();
+      await withLineUpdateFailing(async () => {
+        const res = await app.inject({ method: 'DELETE', url: `/accounts/${agentId}/grants/tool.allow?scope=${encodeURIComponent(scope)}`, headers: auth(alice.token) });
+        expect(res.statusCode).toBe(500);
+      });
+      expect(await grantRows('tool.allow', scope)).toBe(1);
+      expect(await findLine(pool, { mandateId, agentId, cap: 'tool', action: { cap: 'tool', rule: target } })).not.toBeNull();
+      expect(await revokedAudits()).toBe(before);
+      // 다시 거두면 된다.
+      expect((await app.inject({ method: 'DELETE', url: `/accounts/${agentId}/grants/tool.allow?scope=${encodeURIComponent(scope)}`, headers: auth(alice.token) })).statusCode).toBe(204);
+      expect(await grantRows('tool.allow', scope)).toBe(0);
+    });
+
+    it('permission.revoke (releaseGrant): if closing the lines fails, the grant stays and it throws', async () => {
+      const { mandateId } = await approveMerge('acme-org/w4-fail');
+      const before = await revokedAudits();
+      await withLineUpdateFailing(async () => {
+        await expect(releaseGrant(pool, { agentId, kind: 'merge', repo: 'acme-org/w4-fail', channelId: ch })).rejects.toThrow(/line update failed/);
+      });
+      expect(await grantRows('repo.merge', 'repo:acme-org/w4-fail')).toBe(1);
+      expect(await findLine(pool, { mandateId, agentId, cap: 'merge', action: { cap: 'merge', repo: 'acme-org/w4-fail' } })).not.toBeNull();
+      expect(await revokedAudits()).toBe(before);
+      expect(await releaseGrant(pool, { agentId, kind: 'merge', repo: 'acme-org/w4-fail', channelId: ch })).toMatchObject({ ok: true });
+      expect(await grantRows('repo.merge', 'repo:acme-org/w4-fail')).toBe(0);
+    });
+
     it('revoking a different grant leaves the line alone', async () => {
       const t = await approveTool();
       const other = await approveMerge('acme-org/w4-other');
