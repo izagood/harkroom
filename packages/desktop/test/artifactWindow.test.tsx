@@ -77,7 +77,10 @@ describe('미리보기 새 창', () => {
     expect(pop.nextElementSibling?.getAttribute('data-testid')).toBe('artifact-panel-close');
     fireEvent.click(pop);
 
-    expect(c.closeArtifactPreview).toHaveBeenCalled();
+    // 닫기는 창을 연 작업이 아니라 다음 프레임이다 — 같은 작업이면 WKWebView 가 곁 스레드의 스크롤 위치를 놓친다
+    // (`ArtifactPreview.tsx` ⧉ 주석).
+    expect(c.closeArtifactPreview).not.toHaveBeenCalled();
+    await waitFor(() => expect(c.closeArtifactPreview).toHaveBeenCalled());
     expect(screen.queryByTestId('artifact-panel')).toBeNull();
     expect(screen.getByTestId('artifact-card').getAttribute('data-selected')).toBe('false');
 
