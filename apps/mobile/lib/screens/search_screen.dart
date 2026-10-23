@@ -714,7 +714,7 @@ class SearchResultTile extends StatelessWidget {
     return Semantics(
       button: true,
       excludeSemantics: true,
-      // VoiceOver 는 한 문장으로 읽는다: "# task, jaebin, 어제, 서버 최신버전 배포해".
+      // VoiceOver 는 한 문장으로 읽는다: "# task, alice, 어제, 서버 최신버전 배포해".
       label: [where, who, when, body].where((s) => s.isNotEmpty).join(', '),
       child: InkWell(
         key: Key('search-result-${message.id}'),

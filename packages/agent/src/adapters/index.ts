@@ -123,7 +123,7 @@ export function prefixesSystemPrompt(harness: AgentHarness): boolean {
  */
 export function executionModelFor(harness: AgentHarness, mode: 'mention' | 'interactive'): ExecutionModel {
   /**
-   * **스위치를 보지 않는다(2026-09-11, jaebin 의 순서).**
+   * **스위치를 보지 않는다(2026-09-11, 소유자의 순서).**
    *
    * 두 가지를 한 커밋에 겹치지 않기 위해서다:
    *   ① 기존 경로에서 codex 를 headless → TUI 로 올린다  ← 이 커밋

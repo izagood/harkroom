@@ -302,7 +302,7 @@ class AppState extends ChangeNotifier {
     return c.isDm ? c.name : '#${c.name}';
   }
 
-  /// **나를 기다리는 일 수** — 인박스 탭 배지와 머리 숫자(G1 (b), 2026-10-13 jaebin). 데스크톱 보드·배지와 같은
+  /// **나를 기다리는 일 수** — 인박스 탭 배지와 머리 숫자(G1 (b), 2026-10-13 소유자). 데스크톱 보드·배지와 같은
   /// 함수(`mineCount`)다 — 같은 계정에서 두 기기가 다른 숫자를 말하지 않게. 7일 넘은 것·미룬 것·치운 것은 빠진다.
   int get inboxMine => mineCount(boardCards);
 
@@ -1222,7 +1222,7 @@ class AppState extends ChangeNotifier {
         _applySavedChanged(event);
       case 'inbox.updated':
         // 서버는 "바뀌었다"만 알린다. 전에는 그때마다 inbox **전체**(읽은 것까지 수천 줄)를 다시 읽었다.
-        // 이제 마지막 줄 **뒤에 생긴 것만** 받아 합친다(2026-10-12 inbox 호출 설계 A, jaebin 승인).
+        // 이제 마지막 줄 **뒤에 생긴 것만** 받아 합친다(2026-10-12 inbox 호출 설계 A, 소유자 승인).
         // 대가: 다른 기기에서 읽은 옛 줄의 읽음 표시는 다음 전체 읽기(시작·따라잡기·당겨서 새로고침)
         // 때 맞춰진다.
         unawaited(loadInboxNew());

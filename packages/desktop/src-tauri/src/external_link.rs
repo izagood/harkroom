@@ -59,7 +59,7 @@ pub fn judge(url: &Url) -> Verdict {
     }
 }
 
-/// 미리보기(아티팩트) 서명 URL 의 **한 번짜리 허용**(#1069 A′, jaebin 결정 1c3401f3).
+/// 미리보기(아티팩트) 서명 URL 의 **한 번짜리 허용**(#1069 A′, 소유자 결정 1c3401f3).
 ///
 /// 왜 필요한가: wry 는 하위 프레임(iframe)의 이동까지 이 훅으로 보내고, URL 말고는 아무것도 주지 않는다
 /// (wry 0.55 `navigation_policy` — `isMainFrame` 을 보지 않는다). 그래서 미리보기 패널의 iframe 첫 로드

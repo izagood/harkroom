@@ -230,7 +230,7 @@ export function createPushSweeper(pool: Pool, deps: {
   }
 
   /**
-   * 이번에 울려도 되나 — 보통 답은 스레드마다 10분에 첫 한 번(jaebin D1, 키 = 스레드), 결정·실패·관문은
+   * 이번에 울려도 되나 — 보통 답은 스레드마다 10분에 첫 한 번(소유자 D1, 키 = 스레드), 결정·실패·관문은
    * 1분에 한 번(security L1, 키 = `urgent:<스레드>`). 울리는 쪽이 시각을 적는다 — 한 문장(upsert … where)이라
    * worker 가 둘이어도 둘 다 울리지 않는다.
    */

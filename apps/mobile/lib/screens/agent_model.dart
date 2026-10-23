@@ -7,7 +7,7 @@ import '../mention/mention_suggest.dart';
 import '../state/app_scope.dart';
 import '../ui/tokens.dart';
 
-/// 스레드 × 에이전트 모델 지정(서버 079 · jaebin 승인 결정 1~13)의 모바일 화면.
+/// 스레드 × 에이전트 모델 지정(서버 079 · 소유자 승인 결정 1~13)의 모바일 화면.
 ///
 /// 데스크톱과 같은 순서를 따른다(designer 목업 v2 6절):
 /// 1. `@` 후보 줄에서 에이전트를 고른다 — 지금처럼 부르기만 된다.

@@ -2,7 +2,7 @@ import type { Pool } from 'pg';
 import type { SweepHost } from './delegations.js';
 
 /**
- * 자라기만 하던 표의 보존 기간 정리(2026-10-13 쿼리 개선 Q5-c, jaebin 결정 #task 9cb9fdcd 「데이터 정리만(추천대로)」).
+ * 자라기만 하던 표의 보존 기간 정리(2026-10-13 쿼리 개선 Q5-c, 소유자 결정 #task 9cb9fdcd 「데이터 정리만(추천대로)」).
  *
  * **지우는 것은 둘뿐이다** — 표와 조건은 아래 상수로만 정하고 요청 값을 받지 않는다(security):
  * - `idempotency_key`: 만든 지 7일 지난 것. 같은 요청이 두 번 실행되지 않게 막는 재시도 창(분~시간)보다 훨씬 길다.
@@ -14,7 +14,7 @@ import type { SweepHost } from './delegations.js';
  * **지우지 않는 것**(같은 결정): `secret_turn_lease`(「(에이전트, cause) 당 평생 하나」 약속이 행에 기댄다 — security),
  * 읽은 `inbox`(보드·모바일 기록), `audit_log`·`secret_access_log`(감사 기록, audit_log 는 append-only 트리거).
  *
- * **지우기는 스위치 뒤에 있고 기본은 꺼짐이다**(`HARKROOM_RETENTION_DELETE=1` 일 때만, task_manager·jaebin 조건). 꺼져 있으면
+ * **지우기는 스위치 뒤에 있고 기본은 꺼짐이다**(`HARKROOM_RETENTION_DELETE=1` 일 때만, task_manager·소유자 조건). 꺼져 있으면
  * sweep 은 **세기만** 한다 — 한 시간마다 표마다 `retention: <표> eligible=N (dry-run)` 을 남기고 아무것도 지우지 않는다.
  * 운영 순서: 판올림 → 그 로그의 숫자를 사람이 보고 → 괜찮으면 스위치를 켠다. 켜면 첫 sweep 이 지우기 전에 대상 수를 한 번 더
  * 남기고(`eligible=N (before deleting)`), 그 뒤 한 시간마다 표마다 `RETENTION_BATCH` 줄까지만 지운다 — 쌓인 것이 많아도 한 번에

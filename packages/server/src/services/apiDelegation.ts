@@ -8,7 +8,7 @@ import { getMessageById, postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
 
 /**
- * 위임(외부 API 권한 C안 P5, 설계 스레드 07519d86 · jaebin E1·E2). 권한(`api.call`)을 받은 에이전트가 **사람이 정해 둔 단계 안에서**
+ * 위임(외부 API 권한 C안 P5, 설계 스레드 07519d86 · 소유자 E1·E2). 권한(`api.call`)을 받은 에이전트가 **사람이 정해 둔 단계 안에서**
  * 다른 에이전트에게 다시 준다. 길은 MCP 도구(`grant.delegate`) 하나이고, 판정은 전부 서버가 한다 — 셸·파일이 아니라서
  * auto mode 분류기의 Bypass 판정에 걸리지 않는다.
  *

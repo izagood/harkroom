@@ -505,7 +505,7 @@ export const DELEGATION_SWEEP_BATCH = 20;
  *
  * **기한이 지나면 의무를 닫는다**(열어 두지 않는다). 열어 두면 **늦게 도착한 답이 이미 끝난
  * 라운드를 다시 깨운다** — 사람에게 넘긴 일이 되살아나고, 사람과 에이전트가 같은 일을
- * 동시에 잡는다(jaebin 결정: 늦은 답으로는 깨우지 않는다).
+ * 동시에 잡는다(소유자 결정: 늦은 답으로는 깨우지 않는다).
  */
 export function createDelegationDeadlineSweeper(pool: Pool, opts: {
   onWake?: (accountId: string) => void;

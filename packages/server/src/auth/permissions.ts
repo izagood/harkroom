@@ -56,7 +56,7 @@ export async function isOwnerOf(pool: Pool, accountId: string, target: Permissio
  * `repo.merge` 는 `can()` 을 타지 않는다(security F1·F2). 세 층 중 어느 것도 이 capability 를 열지 못한다:
  * 소유(에이전트가 저장소를 "소유"하지 않는다) · 전역 grant('' — 전 저장소가 열리는 구멍) · admin 역할.
  * 오직 (에이전트, 'repo.merge', 'repo:<owner>/<name>') 정확 일치 grant, 또는 그 owner 의 조직 grant `repo:<owner>/*`
- * (jaebin 10-09) 둘뿐이다. 조직 grant 는 그 owner 의 저장소를 **전부** 덮는다 — 배포 저장소라고 따로 빼지 않는다(jaebin 10-10,
+ * (소유자 10-09) 둘뿐이다. 조직 grant 는 그 owner 의 저장소를 **전부** 덮는다 — 배포 저장소라고 따로 빼지 않는다(소유자 10-10,
  * 「하네스가 안 막는 것을 harkroom 만 막지 않는다」. 배포 저장소의 안전장치는 GitHub 쪽 branch protection 에 둔다).
  *
  * 둘 다 있으면 `allow_agent_cause` 가 켜진 쪽, 그다음 정확 일치를 고른다 — 어느 grant 든 허락하면 허락이다.
@@ -92,7 +92,7 @@ export async function can(
   if (cap === 'api.call') return false;
   // `tool.allow` 도 같다 — 채널·규칙 정확 일치만 보는 `permissionRequests.ts::toolAllowsFor` 가 판정한다(스레드 f61af808).
   if (cap === 'tool.allow') return false;
-  // `member.reset_password` 는 역할로만 — grant 를 보지 않는다(jaebin D3 「관리자만」). 줄 수도 없다(grantRoutes).
+  // `member.reset_password` 는 역할로만 — grant 를 보지 않는다(소유자 D3 「관리자만」). 줄 수도 없다(grantRoutes).
   if (cap === 'member.reset_password') return actor.role === 'owner' || actor.role === 'admin';
   if (target && await isOwnerOf(pool, actor.id, target)) return true;
   // guest 는 기본 capability 가 없다 — 외부인을 채널 하나에만 들이는 자리다(스펙 §6, v2).

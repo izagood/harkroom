@@ -147,7 +147,7 @@ function qualifies(w: ObservedWorktree, facts: SweepFacts): boolean {
 }
 
 /**
- * 주인 모름 자동(jaebin 10-19 #task c77dcd20): 스레드를 모르는 worktree 도 아래를 **모두** 만족하면 목록에 넣는다.
+ * 주인 모름 자동(소유자 10-19 #task c77dcd20): 스레드를 모르는 worktree 도 아래를 **모두** 만족하면 목록에 넣는다.
  * - PR 이 머지·닫힘이고 그 PR head 가 worktree HEAD 와 **같다**(조상은 안 된다 — 주인이 없으니 더 좁게).
  * - 커밋 안 된 변경·push 안 된 커밋이 없다(`clean`). 무시된 파일도 다시 만들 수 있는 폴더 안에만 있다(`onlyRebuildableIgnored`) —
  *   주인 모름엔 사람이 손으로 만든 worktree 도 들어가고, `worktree remove` 는 무시된 `.env`·로컬 DB 도 함께 지운다.

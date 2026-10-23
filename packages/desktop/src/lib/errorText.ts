@@ -4,7 +4,7 @@ import { detectLocale, isLocale, translator, type MessageKey, type Translate } f
 import { usePrefsStore } from '../state/prefsStore';
 
 /**
- * 서버 오류를 **앱 언어로** 적는다(i18n P5 ②b, jaebin 결정 D5-A, security C7).
+ * 서버 오류를 **앱 언어로** 적는다(i18n P5 ②b, 소유자 결정 D5-A, security C7).
  *
  * 서버 오류는 이미 `{ error: { code, message } }` 꼴이다(`ApiError.code`). 뜻이 code 하나로 정해지는
  * 오류(이름이 이미 있다·보관된 채널·너무 잦다·비밀번호가 틀렸다 …)는 사전 `apiError.<code>` 로 옮긴다.

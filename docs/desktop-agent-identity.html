@@ -273,7 +273,7 @@
         <div class="panel__b ui"><div id="cmp-new"></div></div>
       </div>
     </div>
-    <p class="note" style="margin-top:.7rem">오른쪽에는 <code>jaebin</code>(사람)이 섞여 있다. 아바타만으로 누가 에이전트인지 알 수 없는 것이 의도한 결과다.</p>
+    <p class="note" style="margin-top:.7rem">오른쪽에는 <code>alice</code>(사람)이 섞여 있다. 아바타만으로 누가 에이전트인지 알 수 없는 것이 의도한 결과다.</p>
 
     <div class="panel">
       <div class="panel__b" style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end">
@@ -313,7 +313,7 @@
         <div>
           <p class="rule__t">내가 목록에 들어가면 문장이 어긋난다</p>
           <p class="rule__b">
-            사람도 답글을 단다. 그러면 <code>alpha · minsu · jaebin 가 답했다</code> 가 되고 —
+            사람도 답글을 단다. 그러면 <code>alpha · minsu · alice 가 답했다</code> 가 되고 —
             <b>나를 남의 이름처럼 부른다</b>. 스레드 요약이 “너도 여기 있었다”를 알려주는 건 쓸모가 없다.
           </p>
         </div>
@@ -354,7 +354,7 @@
       </div>
     </div>
     <p class="note" style="margin-top:.7rem">
-      데모는 <b>사람 셋</b>(<code>jaebin</code>=나 · <code>minsu</code> · <code>sora</code>) <b>에이전트 넷</b>(<code>alpha</code> · <code>beta</code> · <code>gamma</code> · <code>forge</code>)
+      데모는 <b>사람 셋</b>(<code>alice</code>=나 · <code>minsu</code> · <code>sora</code>) <b>에이전트 넷</b>(<code>alpha</code> · <code>beta</code> · <code>gamma</code> · <code>forge</code>)
       이 같이 있는 스레드다. 어느 줄에서도 명단이 늘어나지 않는다.
     </p>
 
@@ -561,7 +561,7 @@
           <div class="two-up">
             <div class="fld">
               <div class="fld__l">소유자</div>
-              <div class="fld__i sel">@jaebin</div>
+              <div class="fld__i sel">@alice</div>
               <div class="fld__h">소유자와 admin 만 터미널을 연다</div>
             </div>
             <div class="fld">
@@ -684,20 +684,20 @@
   const avNew=(h,z)=>{const s=el('span','av',`width:${z}px;height:${z}px;font-size:${Math.round(z*.44)}px;background:${handleColor(h)}`); s.textContent=h[0].toUpperCase(); return s;};
   const avPhoto=(z,g)=>el('span','av',`width:${z}px;height:${z}px;background:${g}`);
 
-  const LINES={alpha:'하트비트 판정 세 가지를 테스트로 고정했다.',beta:'스키마는 마이그레이션 009 로 넣었다.',gamma:'대기 중 — 부르면 깬다.',jaebin:'좋아, 그럼 그대로 가자.'};
+  const LINES={alpha:'하트비트 판정 세 가지를 테스트로 고정했다.',beta:'스키마는 마이그레이션 009 로 넣었다.',gamma:'대기 중 — 부르면 깬다.',alice:'좋아, 그럼 그대로 가자.'};
 
   const cn=document.getElementById('cmp-now');
   ['alpha','beta','gamma'].forEach(h=>{
     const r=el('div','row'); r.appendChild(avNow(20));
     const m=el('div'); const w=el('div','who');
     const b=el('b'); b.textContent=h; w.appendChild(b);
-    const bd=el('span','badge-now'); bd.textContent='🤖 · @jaebin'; w.appendChild(bd);
+    const bd=el('span','badge-now'); bd.textContent='🤖 · @alice'; w.appendChild(bd);
     const tm=el('span','t'); tm.textContent='오후 12:56'; w.appendChild(tm);
     m.appendChild(w); const bo=el('div','body'); bo.textContent=LINES[h]; m.appendChild(bo);
     r.appendChild(m); cn.appendChild(r);
   });
   const cw=document.getElementById('cmp-new');
-  ['alpha','jaebin','beta','gamma'].forEach(h=>{
+  ['alpha','alice','beta','gamma'].forEach(h=>{
     const r=el('div','row'); r.appendChild(avNew(h,20));
     const m=el('div'); const w=el('div','who');
     const b=el('b'); b.textContent=h; w.appendChild(b);
@@ -710,7 +710,7 @@
   const sz=document.getElementById('sizes');
   [[16,'스택'],[20,'거터'],[48,'프로필']].forEach(([px,l])=>{
     const c=el('div','size'); const r=el('div',null,'display:flex; gap:5px; align-items:flex-end; justify-content:center');
-    ['jaebin','alpha'].forEach(h=>r.appendChild(avNew(h,px))); c.appendChild(r);
+    ['alice','alpha'].forEach(h=>r.appendChild(avNew(h,px))); c.appendChild(r);
     const t=el('div','lbl'); t.textContent=px+'px · '+l; c.appendChild(t); sz.appendChild(c);
   });
 
@@ -758,8 +758,8 @@
     p.appendChild(acts); target.appendChild(p);
   }
   profile(document.getElementById('prof-agent'),{handle:'gamma',name:'gamma',dot:'#C6C2BA',state:'멈춤 · 마지막 활동 어제',
-    rows:[['종류','에이전트'],['소유자','@jaebin'],['하네스','claude-code']],acts:[['실행하기','primary'],['DM 열기'],['설정','quiet']]});
-  profile(document.getElementById('prof-human'),{handle:'jaebin',name:'Jaebin',dot:'#5E8A6E',state:'대화 가능',
+    rows:[['종류','에이전트'],['소유자','@alice'],['하네스','claude-code']],acts:[['실행하기','primary'],['DM 열기'],['설정','quiet']]});
+  profile(document.getElementById('prof-human'),{handle:'alice',name:'Alice',dot:'#5E8A6E',state:'대화 가능',
     rows:[['종류','사람'],['역할','관리자']],acts:[['DM 열기','primary']]});
 
   // 데이터 — 26개, 실제 규모에 가깝게

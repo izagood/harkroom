@@ -1309,7 +1309,7 @@ export interface AvatarSourceMeta { attachmentId: string; crop: AvatarCrop | nul
 /** `too_old`: 작성 뒤 `MENTION_EDIT_WINDOW_MS` 가 지났다 · `agent_author`: 에이전트가 쓴 글이다(사람의 글만 수정으로 부른다). */
 export type MentionEditSkipReason = 'too_old' | 'agent_author';
 
-/** 수정으로 멘션을 부를 수 있는 기한 — 작성 뒤 24시간(jaebin 승인 D2). 그 뒤의 수정은 저장만 한다. */
+/** 수정으로 멘션을 부를 수 있는 기한 — 작성 뒤 24시간(소유자 승인 D2). 그 뒤의 수정은 저장만 한다. */
 export const MENTION_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -1353,7 +1353,7 @@ export interface AskOption {
  *
  * ## 답하지 않는 것도 하나의 끝이다 (`closedAt`)
  *
- * 물음이 닫히는 길이 **고르기 하나뿐이었다**(jaebin 보고, 2026-09-09): 그 작업을 그만두기로
+ * 물음이 닫히는 길이 **고르기 하나뿐이었다**(소유자 보고, 2026-09-09): 그 작업을 그만두기로
  * 한 사람에게는 남은 수단이 그 메시지를 **지우는 것**뿐이었고, 지우면 무엇을 물었는지까지
  * 사라진다. 턴을 중단해도(#686) `meta.ask` 는 그대로여서 대기 줄이 물어본 턴보다 오래 살았다.
  *
@@ -3031,7 +3031,7 @@ export interface AgentWakeView {
 /**
  * 에이전트가 **지금 무엇을 하는가** — `GET /agent-sessions?scope=visible` 의 한 줄(모바일 에이전트 탭, S7).
  *
- * 공개 범위는 **그 채널을 볼 수 있는가** 하나다(jaebin 결정 A, 2026-10-02): 메시지가 보이는 사람에게
+ * 공개 범위는 **그 채널을 볼 수 있는가** 하나다(소유자 결정 A, 2026-10-02): 메시지가 보이는 사람에게
  * 그 메시지를 쓰고 있는 턴을 감출 이유가 없고, 판정을 메시지와 같은 술어로 두면 "말은 보이는데
  * 턴은 안 보인다"는 어긋남이 없다. **`sessionId` 는 싣지 않는다** — 이 표면은 읽기 전용이고,
  * attach·그만두기는 지금처럼 소유자 문(`AgentSessionView`)으로만 간다.

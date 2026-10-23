@@ -62,7 +62,7 @@ class MessageTile extends StatelessWidget {
 
   /// [lit] — 누르는 중이거나 그 줄의 시트가 떠 있다. 칠하는 것은 **말 부분**(이름·본문)뿐이다:
   /// 줄 전체를 사각으로 덮으면 아바타·그림·리액션·답글 줄까지 회색 판 하나로 뭉개져, 어느
-  /// 말을 집었는지가 오히려 흐려진다(jaebin, TestFlight IMG_4971). 본문 없는 글(첨부만)은
+  /// 말을 집었는지가 오히려 흐려진다(소유자, TestFlight IMG_4971). 본문 없는 글(첨부만)은
   /// 첨부가 곧 말이라 첨부까지 감싼다(카드가 없을 때만 — 순서는 언제나 카드 → 첨부).
   Widget _row(BuildContext context, bool lit) {
     final app = context.app;

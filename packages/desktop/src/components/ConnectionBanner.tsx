@@ -3,7 +3,7 @@ import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 
 /**
- * **끊긴 동안·다시 붙는 동안**을 본문 맨 위 띠로 말한다(A3, designer 시안 ①·③, jaebin D1·D2).
+ * **끊긴 동안·다시 붙는 동안**을 본문 맨 위 띠로 말한다(A3, designer 시안 ①·③, 소유자 D1·D2).
  *
  * 전에는 끊긴 것을 알리는 것이 사이드바 왼쪽 위 빨간 점 하나뿐이었다 — 사람은 받아 둔 글을
  * 보면서 그것이 최신이 아닐 수 있다는 것을 몰랐다.

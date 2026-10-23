@@ -11,7 +11,7 @@ import { hashToken } from '../auth/tokens.js';
  */
 export const RESET_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const RESET_CODE_LENGTH = 12;
-/** 수명 30분(jaebin D2). */
+/** 수명 30분(소유자 D2). */
 export const RESET_CODE_TTL_MS = 30 * 60_000;
 
 export function newResetCode(): { code: string; display: string; hash: string } {

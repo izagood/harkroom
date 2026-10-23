@@ -393,11 +393,11 @@ const msg = (seq: number, authorId: string, body: string) =>
      meta: {}, createdAt: '', editedAt: null, reactions: [], attachments: [] }) as never;
 
 describe('buildTurnPrompt', () => {
-  const handles = { u1: 'jaebin', a1: 'forge', a2: 'scout' };
+  const handles = { u1: 'alice', a1: 'forge', a2: 'scout' };
 
   it('첫 턴(lastFedSeq 0)은 자기 발화 포함 전체를 넘긴다', () => {
     const r = buildTurnPrompt({ messages: [msg(1, 'u1', '안녕'), msg(2, 'a1', '넵')], lastFedSeq: 0, meId: 'a1', handles });
-    expect(r.prompt).toContain('jaebin: 안녕');
+    expect(r.prompt).toContain('alice: 안녕');
     expect(r.prompt).toContain('forge: 넵');   // 세션 이전 역사는 자기 것도 알려준다
     expect(r.fedSeq).toBe(2);
   });

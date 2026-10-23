@@ -79,7 +79,7 @@ export function AgentScopeSection({ agent, agents = [], disabled, onUpdated, onO
         고르는 칸이 넷(부르는 사람·자격증명·명단·대리 호출자)에 MCP 까지 서서 가장 길었다 — 대부분은 읽기만
         한다. 지금 값은 접혀 있어도 요약 줄이 말하고, 고칠 때만 편다. 오류는 접힘 밖에 둔다(아래).
       */}
-      {/* **펼친 채 시작한다**(jaebin, 설정 폭 승인 때). 접혀 있으면 누가 부를 수 있는지가 화면에서 사라진다 —
+      {/* **펼친 채 시작한다**(소유자, 설정 폭 승인 때). 접혀 있으면 누가 부를 수 있는지가 화면에서 사라진다 —
           권한 탭에서 가장 먼저 읽혀야 할 것이다. 접는 손잡이는 그대로 둔다. 안의 값은 전부터 DOM 에 있었다. */}
       <details key={agent.id} open data-testid="agent-scope-details" className="group">
       <summary className="cursor-pointer list-none">

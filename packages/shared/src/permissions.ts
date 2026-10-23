@@ -15,7 +15,7 @@ export const CAPABILITIES = [
   'team.create', 'team.manage',
   'agent.create', 'agent.manage', 'agent.privileged',
   'member.invite', 'audit.read',
-  // 멤버의 비밀번호 재설정 코드 발급(130, 스레드 a6017542). owner·admin 만 — grant 로 넓히지 않는다(jaebin D3).
+  // 멤버의 비밀번호 재설정 코드 발급(130, 스레드 a6017542). owner·admin 만 — grant 로 넓히지 않는다(소유자 D3).
   // 판정은 `can()` 의 역할 분기다. owner 계정은 대상이 될 수 없다(`passwordResetRoutes.ts`).
   'member.reset_password',
   'operator.register', 'operator.manage',
@@ -99,7 +99,7 @@ export function repoScope(repo: string): string | null {
 }
 
 /**
- * 조직 와일드카드 grant 의 scope — `repo:<owner>/*`, 그 owner 의 저장소 전부(jaebin 10-09). `*` 는 **저장소 자리 전체에만** 온다:
+ * 조직 와일드카드 grant 의 scope — `repo:<owner>/*`, 그 owner 의 저장소 전부(소유자 10-09). `*` 는 **저장소 자리 전체에만** 온다:
  * `*` 하나·owner 자리의 `*`·`owner/ab*` 같은 부분 패턴은 없다(전역·부분 패턴은 이름 하나 잘못 쳐서 넓게 열리는 길이다).
  */
 export const REPO_ORG_SCOPE_RE = /^repo:[a-z0-9][a-z0-9._-]{0,99}\/\*$/;

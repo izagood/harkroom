@@ -3,7 +3,7 @@ import { EFFORT_MAX, MODEL_ID_MAX, type ThreadAgentModelView } from '@harkroom/s
 import { axisValid, cleanAxis, clearThreadAgentModel, getThreadAgentModel, setThreadAgentModel } from './threadAgentModels.js';
 
 /**
- * 에이전트가 다른 에이전트를 부르며 그 스레드의 모델을 고른다(087, jaebin 승인 결정 1~9).
+ * 에이전트가 다른 에이전트를 부르며 그 스레드의 모델을 고른다(087, 소유자 승인 결정 1~9).
  *
  * 판정은 **이 함수 하나**다(`invokeGate` 와 같은 원칙 — 인가 판정이 두 곳에 살면 한쪽만 고치는 날
  * 조용히 열린다). 게시 트랜잭션 **안에서**, 팬아웃이 끝나 실제로 깨운 계정(`notified`)이 정해진 뒤에

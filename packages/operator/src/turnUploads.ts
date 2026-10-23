@@ -1,6 +1,6 @@
 /**
  * 턴 파일 올리기(미리보기 PR ③) — 하네스의 `attachment.upload{path}` 를 오퍼레이터가 받는다.
- * 설계: harkroom 스레드 31121b84(jaebin 승인 "브릿지 로컬 attachment.upload{path} + message.post.attachmentIds").
+ * 설계: harkroom 스레드 31121b84(소유자 승인 "브릿지 로컬 attachment.upload{path} + message.post.attachmentIds").
  *
  * 왜 경로로 받는가: 스크린샷·PNG 같은 바이너리는 모델이 base64 를 **출력 토큰으로** 써야 인자로 실을 수
  * 있다 — 사실상 못 올린다. 파일은 이미 디스크에 있으니 경로를 받아 오퍼레이터가 읽어 `/uploads` 에 올리고

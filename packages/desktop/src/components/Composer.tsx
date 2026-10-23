@@ -236,7 +236,7 @@ export function Composer({
    */
   const teams = useActiveStore((s) => s.teams) ?? NO_TEAMS;
   const myId = useActiveStore((s) => s.me?.id);
-  // 끊긴 동안은 **보내기만** 잠근다(A3 시안 ⑤, jaebin D4). 쓰기는 막지 않는다 — 초안은 자리별로 남는다.
+  // 끊긴 동안은 **보내기만** 잠근다(A3 시안 ⑤, 소유자 D4). 쓰기는 막지 않는다 — 초안은 자리별로 남는다.
   // 국면(`link`)을 보는 이유는 끊김 띠와 같다: 1~2초 끊김마다 버튼이 깜빡이지 않게.
   const offline = useActiveStore((s) => s.link === 'offline');
   // 채널이 자동으로 멘션하는 에이전트(#173). 키가 없으면 아직 못 받은 것이고 그때는 칩도 접두도 없다.
@@ -1062,7 +1062,7 @@ export function Composer({
     // 다시 누른 순간 앞의 사유는 지난 일이다 — 남겨 두면 성공한 뒤에도 붉은 줄이 남는다.
     if (sendError) setSendErrorByScope((prev) => ({ ...prev, [scopeKey]: '' }));
     /*
-      **끝의 빈 줄·공백은 지운다**(jaebin 결정, 10-22 카드 ada56034). 앞과 가운데의 줄·들여쓰기는 그대로 둔다 — 코드 블록이
+      **끝의 빈 줄·공백은 지운다**(소유자 결정, 10-22 카드 ada56034). 앞과 가운데의 줄·들여쓰기는 그대로 둔다 — 코드 블록이
       끝에 있으면 닫는 펜스 뒤만 지워진다. Shift+Enter 로 일부러 남긴 끝 줄도 함께 사라진다(알고 고른 것이다).
       「비었나」 판정(`draft.trim()`)은 위에서 이미 했으므로 여기서 빈 글이 되는 일은 없다.
     */

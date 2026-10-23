@@ -210,7 +210,7 @@ export function Identity({ account, className = '', variant = 'badge' }: Identit
   // 넘친 것은 에이전트 쪽 배지였고, 그 배지는 이제 없다. 곡률(`rounded-avatar`)·`overflow-hidden`
   // 은 #277 회귀선이 계속 지킨다.
   //
-  // **모양은 원이 아니라 둥근 사각형이다(10-14 jaebin).** 모바일(`HarkroomAvatar`: 36px 에 반지름 10px)과
+  // **모양은 원이 아니라 둥근 사각형이다(10-14 소유자).** 모바일(`HarkroomAvatar`: 36px 에 반지름 10px)과
   // 같은 비율 10/36 = 27.78% 를 토큰 `rounded-avatar`(index.css `--radius-avatar`)로, 크기마다 px 이 아니라 비율로 준다 — 데스크톱에서 맞춘 사진이 모바일에서도
   // 같은 모양으로 잘린다. 겹친 아바타의 링 래퍼(#471)도 같은 곡률이어야 링이 아바타를 따라 그려진다.
   //

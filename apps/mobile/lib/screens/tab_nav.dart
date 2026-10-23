@@ -5,7 +5,7 @@ import '../state/app_scope.dart';
 import '../state/app_state.dart';
 
 /// 탭마다 자기 화면 쌓기(Navigator)를 둔다 — 하단 탭 바가 채널·스레드 안에서도 남게
-/// (하단 네비 고정 D1·D2, 2026-10-14 jaebin 「전부 A」).
+/// (하단 네비 고정 D1·D2, 2026-10-14 소유자 「전부 A」).
 ///
 /// 전에는 채널·스레드·인박스 상세가 **루트** Navigator 에 밀려 들어가 탭 바를 덮었다. 이제 탭 안에서
 /// `Navigator.of(context)` 는 그 탭의 쌓기를 집는다 — 목록 → 채널 → 스레드는 그대로 두면 된다.

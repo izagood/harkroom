@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { AttachmentRow } from '@harkroom/shared';
 
 /**
- * 채널·스레드 **새 창**의 장부(designer 판 3, jaebin 결정 W1~W4).
+ * 채널·스레드 **새 창**의 장부(designer 판 3, 소유자 결정 W1~W4).
  *
  * ## 창은 그리기만 한다
  *

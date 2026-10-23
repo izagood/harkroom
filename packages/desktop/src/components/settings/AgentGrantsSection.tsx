@@ -7,7 +7,7 @@
  * 소유자나 admin). 이 화면은 입력을 그대로 보내고 서버의 거절을 사람 말로 옮길 뿐이다 — 판정을 여기 복사하면 한쪽만
  * 고쳐지는 날 조용히 열리는 쪽으로 어긋난다(`AgentScopeSection` 머리 주석과 같은 이유).
  *
- * 카드는 없다. **부여 자체가 승인**이다(jaebin: "내가 권한을 준 에이전트만"). 결과는 서버가 그 스레드에 시스템 줄로
+ * 카드는 없다. **부여 자체가 승인**이다(소유자: "내가 권한을 준 에이전트만"). 결과는 서버가 그 스레드에 시스템 줄로
  * 남긴다. 거절 카드의 [권한 주기] 버튼(designer 안)은 1판에서 뺐다 — 서버의 거절 기록·별도 REST 가 먼저다.
  */
 import { useCallback, useEffect, useState } from 'react';
@@ -34,7 +34,7 @@ type Expiry = 'none' | '7d' | '30d';
 
 /** `repo:<owner>/<name>` → `owner/name`. 서버가 소문자로 정규화해 돌려준다. */
 const repoOf = (scope: string): string => scope.replace(/^repo:/, '');
-/** `repo:<owner>/*` 의 owner — 조직 전체 grant 가 아니면 null(jaebin 10-09). */
+/** `repo:<owner>/*` 의 owner — 조직 전체 grant 가 아니면 null(소유자 10-09). */
 const orgOf = (scope: string): string | null => isOrgRepoScope(scope) ? scope.slice('repo:'.length, -2) : null;
 
 /** 살아 있는 `repo.merge` grant 수 — 목록 카드의 「머지 N」(P1)과 이 절이 같은 셈을 쓴다. */
@@ -144,7 +144,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   };
 
   // 저장소 이름은 **정확한 이름 여러 개**(designer 안) — 쉼표·공백·줄바꿈으로 나눈다. 와일드카드는 조직 전체 `owner/*` 하나뿐이다
-  // (jaebin 10-09) — `*`·owner 자리의 `*`·`owner/ab*` 는 서버가 거절한다(F1). 모양 판정은 서버와 같은 `repoGrantScope` 다.
+  // (소유자 10-09) — `*`·owner 자리의 `*`·`owner/ab*` 는 서버가 거절한다(F1). 모양 판정은 서버와 같은 `repoGrantScope` 다.
   const repos = [...new Set(reposText.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean))];
   const badRepos = repos.filter((r) => repoGrantScope(r) === null);
   const orgRepos = repos.map((r) => repoGrantScope(r)).filter((s): s is string => !!s && isOrgRepoScope(s)).map((s) => orgOf(s)!);

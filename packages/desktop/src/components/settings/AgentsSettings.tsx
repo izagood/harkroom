@@ -1294,7 +1294,7 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
       const avatarAttachmentId = await getController().setAgentAvatar(selectedId, save, onProgress);
       // 이 화면은 고른 에이전트(`selected`)와 목록(`agents`)을 **자기 상태로** 들고 있다 — 스토어의 계정 표만
       // 고치면 사이드바·메시지는 바뀌는데 바로 여기 설정 화면과 그리드의 사진은 옛 첨부 id 에 머물러, 다른 화면에
-      // 다녀와야(목록을 다시 받아야) 바뀌었다(jaebin 신고 10-14). 그래서 서버가 받은 id 로 두 상태도 함께 고친다.
+      // 다녀와야(목록을 다시 받아야) 바뀌었다(소유자 신고 10-14). 그래서 서버가 받은 id 로 두 상태도 함께 고친다.
       const patch = (a: AgentView) => (a.id === selectedId ? { ...a, avatarAttachmentId } : a);
       setSelected((prev) => (prev ? patch(prev) : prev));
       setAgents((prev) => prev.map(patch));
@@ -1436,7 +1436,7 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
       );
       setCreatedAgentId(agent.id);
       setCreatedToast(agent.handle ?? draft.handle);
-      // **목록으로 간다**(jaebin 지시, 스레드 fe5505ea). 다시 읽기가 오기 전에도 카드가 서도록
+      // **목록으로 간다**(소유자 지시, 스레드 fe5505ea). 다시 읽기가 오기 전에도 카드가 서도록
       // 응답의 정의를 먼저 끼운다 — 그래야 강조·스크롤이 빈 자리를 가리키지 않는다.
       setAgents((prev) => (prev.some((a) => a.id === agent.id) ? prev : [...prev, agent]));
       setGroup('agents');
@@ -2081,7 +2081,7 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
               </span>
             )}
             {selected && isAdmin && (<>
-              {/* 머리로 올린 자리(jaebin "멈춤은 머리"). admin 만 — 전과 같은 조건이다.
+              {/* 머리로 올린 자리(소유자 "멈춤은 머리"). admin 만 — 전과 같은 조건이다.
 
                   #493: 켜는 길과 끄는 길을 **한 자리**에 겹쳐 둔다. `#427` 이 "되돌리는 길을
                   요청과 같은 자리에 둔다"고 한 것을 한 걸음 더 민 것이다 — 다른 자리로 보내면
@@ -2311,7 +2311,7 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                       </span>
                     )}
                   </div>
-                  {/* [멈춤]/[실행]·[다시 시작] 버튼은 **상세 머리**로 올라갔다(jaebin "멈춤은 머리", designer 시안 c1ae17e6).
+                  {/* [멈춤]/[실행]·[다시 시작] 버튼은 **상세 머리**로 올라갔다(소유자 "멈춤은 머리", designer 시안 c1ae17e6).
                       어느 탭에서든 누를 수 있어야 한다. 이 절에는 그 버튼이 무엇을 하는지(위 문단)와 지금 상태(삼분)만 남는다. */}
                 </div>
               )}

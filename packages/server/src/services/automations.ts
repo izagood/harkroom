@@ -405,7 +405,7 @@ export type AgentRunRefusal =
 const AGENT_RUN_CHAIN_DEPTH = 1;
 
 /**
- * 이 턴을 **소유자가 시켰나.** 권한의 전부가 이 판정이다(jaebin 결정 2026-10-01):
+ * 이 턴을 **소유자가 시켰나.** 권한의 전부가 이 판정이다(소유자 결정 2026-10-01):
  * 원인 메시지(`CAUSE_HEADER`)를 쓴 사람의 자동화만 돌릴 수 있다.
  *
  * - 헤더는 에이전트 쪽에서 오는 값이라 **그대로 믿지 않는다** — `causeDepth`(messages.ts)와 같이,

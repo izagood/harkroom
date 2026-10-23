@@ -4,7 +4,7 @@ import { detectLocale, isLocale, translator, type MessageKey, type Translate } f
 import { usePrefsStore } from '../state/prefsStore';
 
 /**
- * 시스템 줄을 **앱 언어로** 적는다(i18n P5 ②, jaebin 결정 D1-B).
+ * 시스템 줄을 **앱 언어로** 적는다(i18n P5 ②, 소유자 결정 D1-B).
  *
  * 서버는 시스템 줄에 한국어 본문과 함께 `meta.i18n = { key, args }` 를 싣는다(`shared/src/systemI18n.ts`).
  * 이 함수는 그 표지를 사전 문장으로 바꾼다. 못 바꾸면 `null` — 부르는 쪽은 본문으로 물러난다(옛 줄·옛 서버).
