@@ -88,6 +88,7 @@ import type { AgentPresence } from './presence.js';
 import { enqueueAskPush, enqueueBundlePush } from '../services/push/pushJobs.js';
 import { DENIAL_CARD_REFUSAL_MESSAGE, prepareDenialCard, type MergeDenialReason } from '../services/mergeDenials.js';
 import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant, renderPermissionMirror } from '../services/permissionRequests.js';
+import { mandateForAgentPost } from '../services/mandates.js';
 
 /**
  * 발화 도구가 공통으로 받는 `model` — 에이전트가 신고하는 **자기 모델 ID**(#600).
@@ -858,7 +859,9 @@ function buildMcpServer(
       { kind: 'tool' | 'merge' | 'command'; rule?: string; repo?: string; command?: string; reason: string; channelId: string; threadRootId: string; model?: string;
         denial?: { id: string; number: number; headSha: string; reason: MergeDenialReason; failedChecks?: string[] }; commandFiles?: CommandFileDigest[] | null },
   ) => {
-    const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, command, reason, channelId, threadRootId, denial, commandFiles: files ?? null });
+    // W4: 요청을 낸 턴의 위임 — 그 원인으로 받은 살아 있는 턴 임대의 것(서버 값). 오퍼레이터를 거치지 않은 부름이면 없다.
+    const mandateId = chainCause ? await mandateForAgentPost(pool, { agentId: account.id, causeMessageId: chainCause }) : null;
+    const opened = await openPermissionRequest(pool, { agentId: account.id, kind, rule, repo, command, reason, channelId, threadRootId, denial, commandFiles: files ?? null, mandateId });
     if (!opened.ok) return jsonResult({ error: opened.refusal });
     if ('alreadyGranted' in opened) {
       return jsonResult({

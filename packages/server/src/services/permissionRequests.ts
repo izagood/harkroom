@@ -1,10 +1,13 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { createHash } from 'node:crypto';
 import type { CommandFileDigest } from '@harkroom/shared/runnerLink';
 import { repoGrantScope, repoScope, toolScope, validateExactCommand, validateToolRule, type CommandFileArg, type MessageRow, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
+import { validateCapScope, type Cap, type LineLimits } from './capabilities.js';
+import { addMandateLine, type LineVia } from './mandateLines.js';
+import { validMandateOwner } from './mandates.js';
 import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
 import { getMessageById, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
 
@@ -62,6 +65,8 @@ export interface PermissionRequestMeta {
    */
   once?: { number: number; headSha: string; reason: MergeDenialReason; failedChecks?: string[] };
   reason: string;
+  /** 요청을 낸 턴의 위임(W4) — 서버가 턴 임대에서 읽어 적는다. 위임 없는 턴이면 칸이 없다. */
+  mandateId?: string;
   requestedAt: string;
   expiresAt: string;
   /** 정해진 뒤에만. */
@@ -123,6 +128,8 @@ export async function openPermissionRequest(
     channelId: string; threadRootId: string; now?: Date;
     /** 머지 거절 기록에서 온 요청(`message.ask` 의 `mergeDenialId`). 거절 기록 검증(`prepareDenialCard`)은 부르는 쪽이 먼저 한다. */
     denial?: { id: string; number: number; headSha: string; reason: MergeDenialReason; failedChecks?: string[] };
+    /** 요청을 낸 턴의 위임(W4, 턴 임대의 `mandate_id`) — 부르는 쪽(MCP)이 서버 값으로 넘긴다. 없으면 줄을 더하지 않는다. */
+    mandateId?: string | null;
   },
 ): Promise<OpenResult> {
   const now = args.now ?? new Date();
@@ -195,9 +202,9 @@ export async function openPermissionRequest(
 
   const expiresAt = new Date(now.getTime() + PERMISSION_REQUEST_TTL_MS);
   const id = (await pool.query<{ id: string }>(
-    `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, denial_id)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
-    [args.agentId, args.kind, target, args.reason, warnings, args.channelId, args.threadRootId, now, expiresAt, args.denial?.id ?? null])).rows[0]!.id;
+    `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, denial_id, mandate_id)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning id`,
+    [args.agentId, args.kind, target, args.reason, warnings, args.channelId, args.threadRootId, now, expiresAt, args.denial?.id ?? null, args.mandateId ?? null])).rows[0]!.id;
   await supersedeOlderRequests(pool, { newId: id, agentId: args.agentId, kind: args.kind, target, channelId: args.channelId, threadRootId: args.threadRootId, now });
   await recordAudit(pool, {
     action: 'permission.requested', actorId: args.agentId, target: args.agentId,
@@ -212,7 +219,8 @@ export async function openPermissionRequest(
         target: args.kind === 'merge' ? target.slice('repo:'.length) : target,
         channelId: args.kind === 'tool' ? args.channelId : null,
         warnings, reason: oneLineReason(args.reason),
-        ...(args.denial ? { once: onceMeta(args.denial) } : {}), requestedAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
+        ...(args.denial ? { once: onceMeta(args.denial) } : {}), ...(args.mandateId ? { mandateId: args.mandateId } : {}),
+        requestedAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
       },
     },
   };
@@ -226,7 +234,7 @@ async function openCommandRequest(
   pool: Pool,
   args: {
     agentId: string; command?: string; reason: string; channelId: string; threadRootId: string; now: Date; ownerAccountId: string | null;
-    commandFiles?: CommandFileDigest[] | null;
+    commandFiles?: CommandFileDigest[] | null; mandateId?: string | null;
   },
 ): Promise<OpenResult> {
   const v = validateExactCommand(args.command ?? '');
@@ -259,9 +267,9 @@ async function openCommandRequest(
   }
   const expiresAt = new Date(args.now.getTime() + PERMISSION_REQUEST_TTL_MS);
   const id = (await pool.query<{ id: string }>(
-    `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at)
-     values ($1, 'command', $2, $3, $4, $5, $6, $7, $8) returning id`,
-    [args.agentId, v.command, args.reason, v.warnings, args.channelId, args.threadRootId, args.now, expiresAt])).rows[0]!.id;
+    `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, mandate_id)
+     values ($1, 'command', $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
+    [args.agentId, v.command, args.reason, v.warnings, args.channelId, args.threadRootId, args.now, expiresAt, args.mandateId ?? null])).rows[0]!.id;
   await supersedeOlderRequests(pool, { newId: id, agentId: args.agentId, kind: 'command', target: v.command, channelId: args.channelId, threadRootId: args.threadRootId, now: args.now });
   await pool.query(`update permission_request set file_digests = $2::jsonb where id = $1`, [id, JSON.stringify(canonicalDigests(files.files))]);
   await recordAudit(pool, {
@@ -276,6 +284,7 @@ async function openCommandRequest(
         requestId: id, agentId: args.agentId, ownerAccountId: args.ownerAccountId, kind: 'command', target: v.command,
         channelId: args.channelId, threadRootId: args.threadRootId, warnings: v.warnings,
         ...(files.files.length ? { files: files.files } : {}),
+        ...(args.mandateId ? { mandateId: args.mandateId } : {}),
         reason: oneLineReason(args.reason), requestedAt: args.now.toISOString(), expiresAt: expiresAt.toISOString(),
       },
     },
@@ -409,7 +418,8 @@ export async function decidePermissionRequest(
 ): Promise<({ ok: true; status: 'granted' | 'denied' | 'approved_once'; grantExpiresAt: string | null; approvalExpiresAt?: string; cardMessageId: string | null; grantMode?: 'once' | 'hour' }) | ({ ok: false } & DecideRefusal)> {
   const now = args.now ?? new Date();
   const client = await pool.connect();
-  let row: { id: string; kind: PermissionKind; target: string; channelId: string; threadRootId: string; cardMessageId: string | null; denialId: string | null } | undefined;
+  let row: { id: string; kind: PermissionKind; target: string; channelId: string; threadRootId: string; cardMessageId: string | null; denialId: string | null; mandateId: string | null } | undefined;
+  let lineOutcome: MandateLineOutcome | null = null;
   let grantExpiresAt: Date | null = null;
   let grantMode: 'once' | 'hour' | undefined;
   let commandGrantId: string | undefined;
@@ -419,10 +429,10 @@ export async function decidePermissionRequest(
     await client.query('begin');
     const r = (await client.query<{
       id: string; agentId: string; kind: PermissionKind; target: string; channelId: string; threadRootId: string; status: string; expired: boolean; cardMessageId: string | null;
-      denialId: string | null;
+      denialId: string | null; mandateId: string | null;
     }>(
       `select id, agent_id as "agentId", kind, target, channel_id as "channelId", thread_root_id as "threadRootId", status, expires_at <= $2 as expired,
-              card_message_id as "cardMessageId", denial_id as "denialId"
+              card_message_id as "cardMessageId", denial_id as "denialId", mandate_id as "mandateId"
          from permission_request where id = $1 for update`, [args.requestId, now])).rows[0];
     // `:id` 가 요청의 에이전트와 다르면 없는 것과 같다 — 남의 요청 id 를 내 에이전트 경로에 꽂는 길을 닫는다.
     if (!r || r.agentId !== args.agentId) { await client.query('rollback'); return { ok: false, status: 404, code: 'not_found', message: 'no such permission request for this agent' }; }
@@ -488,6 +498,14 @@ export async function decidePermissionRequest(
            set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, allow_agent_cause = false`,
         [args.agentId, capability, scope, args.actorId, grantExpiresAt]);
     }
+    // W4: 위임이 있는 요청의 승인은 그 위임에 줄을 하나 **더** 적는다 — 위의 grant 는 그대로다. 줄이 실패해도 결정은 깨지 않는다(savepoint).
+    if (approving && r.mandateId) {
+      lineOutcome = await addLineFromRequest(client, {
+        request: r, decision: args.decision, actorId: args.actorId, now,
+        via: args.via?.kind ?? 'button',
+        ...(approval && args.once ? { once: { number: approval.number, headSha: approval.headSha, ghUser: args.once.ghUser, ciOverride: args.once.relaxChecks } } : {}),
+      });
+    }
     const status = args.decision === 'deny' ? 'denied' : r.kind === 'command' || args.decision === 'approve' ? 'granted' : 'approved_once';
     await client.query(
       `update permission_request set status = $2, decided_at = $3, decided_by = $4, grant_expires_at = $5, grant_mode = $6 where id = $1`,
@@ -532,6 +550,7 @@ export async function decidePermissionRequest(
         : args.via ? { via: args.via.kind } : {}),
     },
   });
+  if (lineOutcome) await auditLineOutcome(pool, { actorId: args.actorId, agentId: args.agentId, requestId: row.id, outcome: lineOutcome });
   if (grantExpiresAt && row.kind === 'command') {
     emitEvent({ type: 'grant.changed', accountId: args.agentId, audience: 'all' });
   } else if (grantExpiresAt) {
@@ -559,6 +578,79 @@ export async function decidePermissionRequest(
     if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
   }
   return { ok: true, status, grantExpiresAt: grantExpiresAt?.toISOString() ?? null, ...(approval ? { approvalExpiresAt: approval.expiresAt.toISOString() } : {}), cardMessageId: row.cardMessageId, ...(grantMode ? { grantMode } : {}) };
+}
+
+type MandateLineOutcome =
+  | { ok: true; mandateId: string; lineId: string; cap: Cap; scope: string; via: LineVia }
+  | { ok: false; mandateId: string; cap: Cap; code: string; detail?: string };
+
+/** 요청 종류 → 위임 줄의 능력(W4). */
+const CAP_FOR_KIND: Record<PermissionKind, Cap> = { tool: 'tool', command: 'command', merge: 'merge' };
+
+/**
+ * 승인된 권한 요청을 그 요청의 위임에 줄 하나로 적는다(W4). 위의 grant(account_grant·command_grant·merge_approval)와 **따로**,
+ * 그 위에 더할 뿐이다 — 판정은 아직 grant 가 한다(위임 판정 스위치가 꺼져 있으면 사용자에게 바뀌는 것이 없다).
+ *
+ * - scope 는 능력 등록부(`validateCapScope`)로 다시 판정한다 — 정규형이 아니면 줄을 적지 않는다(`bad_scope`).
+ * - 위임이 끝났거나 7일 넘게 쉬었으면 적지 않는다(`mandate_invalid`).
+ * - 줄 쓰기가 던지면 savepoint 로 그 부분만 되돌린다 — 결정·grant 는 그대로 커밋된다.
+ *
+ * 위임 없는 턴의 요청은 여기 오지 않는다(부르는 쪽이 `mandateId` 를 본다). 나중에 「이 스레드에 위임장 만들고 줄 더하기」가
+ * 오면 그 자리에서 위임을 만든 뒤 이 함수를 부르면 된다.
+ */
+export async function addLineFromRequest(
+  client: PoolClient,
+  args: {
+    request: { id: string; kind: PermissionKind; target: string; mandateId: string | null };
+    decision: PermissionDecision; actorId: string; via: LineVia; now: Date;
+    /** 머지 거절 카드의 1회 승인 — 줄을 그 PR·head 1회로 좁힌다. */
+    once?: { number: number; headSha: string; ghUser: string | null; ciOverride: boolean };
+  },
+): Promise<MandateLineOutcome | null> {
+  const mandateId = args.request.mandateId;
+  if (!mandateId || args.decision === 'deny') return null;
+  const cap = CAP_FOR_KIND[args.request.kind];
+  const v = validateCapScope(cap, args.request.target);
+  if (!v.ok) return { ok: false, mandateId, cap, code: 'bad_scope', detail: v.code };
+  if (!(await validMandateOwner(client, mandateId, args.now))) return { ok: false, mandateId, cap, code: 'mandate_invalid' };
+  const limits: LineLimits = {};
+  if (args.request.kind === 'merge' && args.decision === 'approve_once') {
+    if (!args.once) return { ok: false, mandateId, cap, code: 'no_once' };
+    Object.assign(limits, { pr: args.once.number, head: args.once.headSha, uses: 1, ghUser: args.once.ghUser, ciOverride: args.once.ciOverride });
+  } else if (args.request.kind === 'command') {
+    // 명령 grant 와 같은 기한(1시간). 「이번 한 번」은 한 번만.
+    limits.until = new Date(args.now.getTime() + COMMAND_GRANT_TTL_MS).toISOString();
+    if (args.decision === 'approve_once') limits.uses = 1;
+  }
+  await client.query('savepoint mandate_line_from_request');
+  try {
+    const added = await addMandateLine(client, {
+      mandateId, cap, scope: v.scope, limits, grantedBy: args.actorId, via: args.via, requestId: args.request.id, now: args.now,
+    });
+    if (!added.ok) {
+      await client.query('rollback to savepoint mandate_line_from_request');
+      return { ok: false, mandateId, cap, code: added.code, ...(added.detail ? { detail: added.detail } : {}) };
+    }
+    await client.query('release savepoint mandate_line_from_request');
+    return { ok: true, mandateId, lineId: added.line.id, cap, scope: added.line.scope, via: args.via };
+  } catch (err) {
+    await client.query('rollback to savepoint mandate_line_from_request');
+    console.warn('[permission] mandate line add failed', err);
+    return { ok: false, mandateId, cap, code: 'error', detail: err instanceof Error ? err.message.slice(0, 200) : 'unknown' };
+  }
+}
+
+async function auditLineOutcome(pool: Pool, args: { actorId: string; agentId: string; requestId: string; outcome: MandateLineOutcome }): Promise<void> {
+  const o = args.outcome;
+  try {
+    await recordAudit(pool, o.ok
+      ? { action: 'mandate.line.added', actorId: args.actorId, target: args.agentId,
+          detail: { mandateId: o.mandateId, lineId: o.lineId, cap: o.cap, scope: o.scope, via: o.via, requestId: args.requestId } }
+      : { action: 'mandate.line.add_failed', actorId: args.actorId, target: args.agentId,
+          detail: { mandateId: o.mandateId, cap: o.cap, code: o.code, ...(o.detail ? { detail: o.detail } : {}), requestId: args.requestId } });
+  } catch (err) {
+    console.warn('[permission] mandate line audit failed', err);
+  }
 }
 
 /** 만료 스윕 주기. 요청 시한은 하루라 1분이면 화면이 늦어도 1분이다(누르면 그 자리에서 닫힌다). */
