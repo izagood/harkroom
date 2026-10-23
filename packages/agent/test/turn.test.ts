@@ -700,6 +700,14 @@ describe('전용 제공사 경로 env', () => {
     expect(withLane).toContain('--disallowedTools');
     // 셸·쓰기·웹은 기본으로 열지 않는다.
     for (const tool of ['Bash', 'Edit', 'Write', 'WebFetch', 'WebSearch']) expect(withLane).not.toContain(tool);
+    // C안(10-23): 쓰기는 작업 폴더 안 경로 규칙으로만, 하위 에이전트·스킬은 연다. 셸·웹 규칙은 승인된 것 말고는 없다.
+    expect(withLane).toEqual(expect.arrayContaining(['Edit(./**)', 'Write(./**)', 'Agent', 'Skill']));
+    // `--disallowedTools` 의 deny 규칙(설정 파일 자기 수정)도 Edit·Write 꼴이라 allow 칸만 떼어 본다.
+    const from = withLane.indexOf('--allowedTools') + 1;
+    const next = withLane.findIndex((a, i) => i >= from && a.startsWith('--'));
+    const allowed = withLane.slice(from, next < 0 ? undefined : next);
+    expect(allowed.filter((a) => /^(Edit|Write|NotebookEdit)\b/.test(a))).toEqual(['Edit(./**)', 'Write(./**)']);
+    expect(allowed.filter((a) => /^(Bash|WebFetch|WebSearch)\b/.test(a) && !a.includes(' merge:') && !a.includes(' api:'))).toEqual(['Bash(kubectl get pods:*)']);
     // 맨 이름 Read 는 작업 디렉터리 밖까지 classifier 없이 연다(security F1). cwd 안 읽기는 dontAsk 가 규칙 없이 연다.
     expect(withLane.filter((a) => /^(Read|Glob|Grep)\b/.test(a))).toEqual([]);
 
