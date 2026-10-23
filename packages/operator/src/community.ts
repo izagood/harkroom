@@ -81,9 +81,14 @@ export interface CommunityDeps {
   heartbeatMs?: number;
   /**
    * 다른 기기에서 고친 저장소 줄(D3, `gh.lines.set`). 로컬에서 고를 때와 같은 길(`localMerge.set`)이다 — 그 순간 로그인된
-   * 이름이 아니면 던진다. 없으면 `unsupported` 로 답한다.
+   * 이름이 아니면 던진다. 없으면 `unsupported` 로 답한다. 덮어쓴 이전 값이 있으면 `previous` 로 돌려준다.
    */
-  ghLines?: (p: { scope: string; ghUser: string | null }) => Promise<void>;
+  ghLines?: (p: { scope: string; ghUser: string | null }) => Promise<{ previous: string | null } | void>;
+  /**
+   * 이 커뮤니티가 머지로 물은 저장소(`ghLedger.repos(baseUrl)`). `gh.lines.set` 은 이 안의 저장소나, 이 안에 있는 owner 의
+   * `owner/*` 만 받는다 — 아니면 `out_of_community`. 없으면 빈 장부로 본다(아무 범위도 받지 않는다).
+   */
+  ghRepos?: (baseUrl: string) => Set<string>;
   log: (line: string) => void;
 }
 
@@ -260,15 +265,26 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
    */
   const applyGhLines = (frame: Extract<ServerToOperatorFrame, { type: 'gh.lines.set' }>): void => {
     const p = parseGhLinesSet(frame);
-    const reply = (r: { ok: true } | { ok: false; code: GhLinesRefusal }): void => {
+    const reply = (r: { ok: true; previous?: string } | { ok: false; code: GhLinesRefusal }): void => {
       if (p) link.send({ type: 'gh.lines.result', requestId: p.requestId, ...r });
     };
     if (!p) { deps.log('gh 줄 고치기를 버린다 — 모양이 틀렸다'); return; }
     if (Object.keys(agents).length === 0) { reply({ ok: false, code: 'no_agent' }); return; }
     if (!deps.ghLines) { reply({ ok: false, code: 'unsupported' }); return; }
-    void deps.ghLines({ scope: p.scope, ghUser: p.ghUser }).then(() => {
+    // 이 커뮤니티의 장부 안의 범위만 — 다른 커뮤니티가 쓰는 저장소의 줄을 이 서버가 고치지 못하게.
+    const ledger = deps.ghRepos?.(deps.baseUrl) ?? new Set<string>();
+    const inCommunity = p.scope.endsWith('/*')
+      ? [...ledger].some((r) => r.split('/')[0] === p.scope.slice(0, -2))
+      : ledger.has(p.scope);
+    if (!inCommunity) {
+      deps.log(`gh 줄 고치기 거절: ${p.scope} — 이 커뮤니티가 머지한 저장소가 아니다`);
+      reply({ ok: false, code: 'out_of_community' });
+      return;
+    }
+    void deps.ghLines({ scope: p.scope, ghUser: p.ghUser }).then((res) => {
       deps.log(`gh 줄을 다른 기기에서 고쳤다: ${p.scope} → ${p.ghUser ?? '(지움)'}`);
-      reply({ ok: true });
+      const previous = res ? res.previous : null;
+      reply(previous ? { ok: true, previous } : { ok: true });
       lastGh = null;
       beatGh();
     }).catch((err: unknown) => {

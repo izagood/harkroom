@@ -18,7 +18,7 @@ const reconciler = {
 
 const STATUS = JSON.stringify({ hosts: { 'github.com': [{ login: 'work-admin', active: true }, { login: 'me', active: false }] } });
 
-async function setup(opts: { agents?: Record<string, object>; ghLines?: CommunityDeps['ghLines'] | 'none' } = {}) {
+async function setup(opts: { agents?: Record<string, object>; ghLines?: CommunityDeps['ghLines'] | 'none'; ledger?: string[] } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'gh-lines-'));
   const configPath = join(dir, 'operator.json');
   const exec: Exec = async () => ({ code: 0, stdout: STATUS, stderr: '' });
@@ -28,7 +28,12 @@ async function setup(opts: { agents?: Record<string, object>; ghLines?: Communit
   const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: (d) => sent.push(JSON.parse(d)), close: () => {} }); };
   let reports = 0;
   const ghLines: CommunityDeps['ghLines'] = opts.ghLines === 'none' ? undefined
-    : opts.ghLines ?? (async (p) => { await port.set(p); });
+    : opts.ghLines ?? (async (p) => {
+      const r = await port.set(p);
+      const change = r.changes.find((x) => x.scope === p.scope);
+      return { previous: change ? change.from : p.ghUser };
+    });
+  const ledgers: string[] = [];
   const c = createCommunity({
     baseUrl: 'https://work.example.com', token: 'hkop_x', agents: opts.agents ?? { a: {} }, reconciler, dial, schedule: () => {}, log: () => {},
     heartbeatMs: 60_000,
@@ -41,6 +46,7 @@ async function setup(opts: { agents?: Record<string, object>; ghLines?: Communit
       },
     },
     ...(ghLines ? { ghLines } : {}),
+    ghRepos: (baseUrl) => { ledgers.push(baseUrl); return new Set(opts.ledger ?? ['acme/app']); },
   });
   c.start();
   await new Promise((r) => setTimeout(r, 10));
@@ -48,7 +54,7 @@ async function setup(opts: { agents?: Record<string, object>; ghLines?: Communit
     handlers!.onMessage(JSON.stringify(frame));
     await new Promise((r) => setTimeout(r, 30));
   };
-  return { c, sent, deliver, configPath, reportsSent: () => sent.filter((f) => f.type === 'gh.report'), results: () => sent.filter((f) => f.type === 'gh.lines.result'), reports: () => reports };
+  return { c, sent, deliver, configPath, reportsSent: () => sent.filter((f) => f.type === 'gh.report'), results: () => sent.filter((f) => f.type === 'gh.lines.result'), reports: () => reports, ledgers };
 }
 
 describe('gh.lines.set (D3)', () => {
@@ -76,7 +82,7 @@ describe('gh.lines.set (D3)', () => {
     expect(t.reportsSent()).toHaveLength(2);
 
     await t.deliver({ type: 'gh.lines.set', requestId: 'r2', scope: 'acme/app', ghUser: null });
-    expect(t.results().at(-1)).toEqual({ type: 'gh.lines.result', requestId: 'r2', ok: true });
+    expect(t.results().at(-1)).toEqual({ type: 'gh.lines.result', requestId: 'r2', ok: true, previous: 'work-admin' });
     expect((await readConfig(t.configPath)).merge?.byScope).toEqual({});
     t.c.stop();
   });
@@ -103,6 +109,40 @@ describe('gh.lines.set (D3)', () => {
     await broken.deliver({ type: 'gh.lines.set', requestId: 'r3', scope: 'acme/app', ghUser: 'me' });
     expect(broken.results()).toEqual([{ type: 'gh.lines.result', requestId: 'r3', ok: false, code: 'failed' }]);
     broken.c.stop();
+  });
+
+  it('이 커뮤니티 장부 밖의 범위는 out_of_community — 장부의 저장소와 그 owner 의 owner/* 만 받는다', async () => {
+    let called = 0;
+    const t = await setup({ ledger: ['acme/app'], ghLines: async () => { called += 1; return { previous: null }; } });
+    await t.deliver({ type: 'gh.lines.set', requestId: 'r1', scope: 'other/app', ghUser: 'me' });
+    await t.deliver({ type: 'gh.lines.set', requestId: 'r2', scope: 'other/*', ghUser: 'me' });
+    await t.deliver({ type: 'gh.lines.set', requestId: 'r3', scope: 'acme/other', ghUser: 'me' });
+    expect(t.results()).toEqual(['r1', 'r2', 'r3'].map((requestId) => ({ type: 'gh.lines.result', requestId, ok: false, code: 'out_of_community' })));
+    expect(called).toBe(0);
+    await t.deliver({ type: 'gh.lines.set', requestId: 'r4', scope: 'acme/app', ghUser: 'me' });
+    await t.deliver({ type: 'gh.lines.set', requestId: 'r5', scope: 'acme/*', ghUser: 'me' });
+    expect(t.results().slice(3)).toEqual([{ type: 'gh.lines.result', requestId: 'r4', ok: true }, { type: 'gh.lines.result', requestId: 'r5', ok: true }]);
+    expect(called).toBe(2);
+    expect(new Set(t.ledgers)).toEqual(new Set(['https://work.example.com']));
+    t.c.stop();
+    // 장부가 비면(이 커뮤니티가 아직 머지하지 않았다) 아무 범위도 받지 않는다.
+    const empty = await setup({ ledger: [] });
+    await empty.deliver({ type: 'gh.lines.set', requestId: 'r6', scope: 'acme/*', ghUser: 'me' });
+    expect(empty.results()).toEqual([{ type: 'gh.lines.result', requestId: 'r6', ok: false, code: 'out_of_community' }]);
+    empty.c.stop();
+  });
+
+  it('로컬 값을 덮어쓰면 previous 로 이전 값을 알린다', async () => {
+    const t = await setup();
+    await t.deliver({ type: 'gh.lines.set', requestId: 'r1', scope: 'acme/app', ghUser: 'me' });
+    await t.deliver({ type: 'gh.lines.set', requestId: 'r2', scope: 'acme/app', ghUser: 'work-admin' });
+    expect(t.results()).toEqual([
+      { type: 'gh.lines.result', requestId: 'r1', ok: true },
+      { type: 'gh.lines.result', requestId: 'r2', ok: true, previous: 'me' },
+    ]);
+    expect(parseGhLinesResult(t.results()[1]!)).toEqual({ requestId: 'r2', ok: true, previous: 'me' });
+    expect(parseGhLinesResult({ requestId: 'r', ok: true, previous: 'bad name' })).toEqual({ requestId: 'r', ok: true });
+    t.c.stop();
   });
 
   it('모양이 틀린 프레임에는 답하지 않는다(어느 요청인지 모른다) · 틀린 범위는 적지 않는다', async () => {

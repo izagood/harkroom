@@ -781,7 +781,13 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
         localTerminal: { hub: localTerminal, agentOf: (runnerId) => runnerLink.agentOf(runnerId) },
         turnSecretsDir: join(appDataDir, 'turn-secrets'),
         // 다른 기기에서 고친 gh 줄(D3) — 로컬 앱이 고를 때와 같은 길이다(그 순간 로그인된 이름만 받는다).
-        ghLines: async ({ scope, ghUser }) => { await localMerge.set({ scope, ghUser }); },
+        // 덮어쓴 로컬 값은 `previous` 로 돌려준다(서버 감사에 남는다). 값이 같았으면 그 값이 곧 이전 값이다.
+        ghLines: async ({ scope, ghUser }) => {
+          const r = await localMerge.set({ scope, ghUser });
+          const change = r.changes.find((c) => c.scope === scope);
+          return { previous: change ? change.from : ghUser };
+        },
+        ghRepos: (baseUrl) => ghLedger.repos(baseUrl),
         // 박동(P3a) — 서버가 「호스트」 화면에 보일 이 머신의 지금 상태. 머신 값은 한 번 읽어 둔다.
         heartbeat: {
           status: () => collectStatus({

@@ -84,9 +84,9 @@ export type OperatorToServerFrame =
   | { type: 'gh.report'; report: unknown }
   /**
    * `gh.lines.set` 의 답(D3). `ok: false` 면 `code` 가 까닭이다(`GhLinesRefusal`). 줄이 바뀌었으면 오퍼레이터가 곧이어
-   * `gh.report` 를 다시 낸다. 검증은 `parseGhLinesResult` 하나다.
+   * `gh.report` 를 다시 낸다. `previous` 는 원격 설정이 덮어쓴 로컬의 이전 값(있을 때만). 검증은 `parseGhLinesResult` 하나다.
    */
-  | { type: 'gh.lines.result'; requestId: unknown; ok: unknown; code?: unknown }
+  | { type: 'gh.lines.result'; requestId: unknown; ok: unknown; code?: unknown; previous?: unknown }
   /**
    * 러너가 링크에 붙을 때마다(재접속 포함) 자기 세션·능력을 다시 선언한다 — 옛 릴레이의
    * `announce` 그대로다(`runnerLink.ts`). 서버는 이 목록으로 그 러너의 세션을 **교체**한다.
@@ -354,8 +354,8 @@ export function parseGhReport(value: unknown): GhReport | null {
 }
 
 /** `gh.lines.set` 을 거절한 까닭(D3). 모르는 값은 `failed` 로 읽는다. */
-export type GhLinesRefusal = 'bad_request' | 'unknown_login' | 'no_agent' | 'unsupported' | 'failed';
-const GH_LINES_REFUSALS = new Set<string>(['bad_request', 'unknown_login', 'no_agent', 'unsupported', 'failed']);
+export type GhLinesRefusal = 'bad_request' | 'unknown_login' | 'no_agent' | 'unsupported' | 'out_of_community' | 'failed';
+const GH_LINES_REFUSALS = new Set<string>(['bad_request', 'unknown_login', 'no_agent', 'unsupported', 'out_of_community', 'failed']);
 const GH_LINES_REQUEST_ID = /^[A-Za-z0-9-]{1,64}$/;
 
 /** `gh.lines.set` 의 몸을 받을 모양으로 — 범위는 소문자로 맞추고 `owner/name`·`owner/*` 만, 이름은 gh 로그인 모양만. */
@@ -368,10 +368,16 @@ export function parseGhLinesSet(frame: { requestId?: unknown; scope?: unknown; g
   return { requestId: frame.requestId, scope, ghUser: frame.ghUser };
 }
 
-/** `gh.lines.result` 를 받을 모양으로. requestId 가 틀리면 null(어느 요청의 답인지 모른다). */
-export function parseGhLinesResult(frame: { requestId?: unknown; ok?: unknown; code?: unknown }): { requestId: string; ok: true } | { requestId: string; ok: false; code: GhLinesRefusal } | null {
+/**
+ * `gh.lines.result` 를 받을 모양으로. requestId 가 틀리면 null(어느 요청의 답인지 모른다). `previous` 는 gh 로그인 모양일
+ * 때만 싣는다(아니면 버린다).
+ */
+export function parseGhLinesResult(frame: { requestId?: unknown; ok?: unknown; code?: unknown; previous?: unknown }): { requestId: string; ok: true; previous?: string } | { requestId: string; ok: false; code: GhLinesRefusal } | null {
   if (typeof frame.requestId !== 'string' || !GH_LINES_REQUEST_ID.test(frame.requestId)) return null;
-  if (frame.ok === true) return { requestId: frame.requestId, ok: true };
+  if (frame.ok === true) {
+    const previous = typeof frame.previous === 'string' && GH_REPORT_LOGIN.test(frame.previous) ? frame.previous : null;
+    return previous ? { requestId: frame.requestId, ok: true, previous } : { requestId: frame.requestId, ok: true };
+  }
   const code = typeof frame.code === 'string' && GH_LINES_REFUSALS.has(frame.code) ? frame.code as GhLinesRefusal : 'failed';
   return { requestId: frame.requestId, ok: false, code };
 }

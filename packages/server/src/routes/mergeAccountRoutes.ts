@@ -22,7 +22,7 @@ const lineBody = z.object({ scope: z.string().max(220), ghUser: z.string().nulla
 /** 오퍼레이터의 답을 기다리는 기본 시간 — 사람이 화면에서 누르고 기다리는 자리다. */
 const GH_LINES_TIMEOUT_MS = 10_000;
 
-type LineOutcome = { ok: true } | { ok: false; code: GhLinesRefusal | 'operator_unreachable' };
+type LineOutcome = { ok: true; previous?: string } | { ok: false; code: GhLinesRefusal | 'operator_unreachable' };
 
 export async function registerMergeAccountRoutes(
   app: FastifyInstance, pool: Pool,
@@ -38,7 +38,7 @@ export async function registerMergeAccountRoutes(
     const wait = pending.get(r.requestId);
     if (!wait || wait.operatorId !== operatorId) return;
     pending.delete(r.requestId);
-    wait.resolve(r.ok ? { ok: true } : { ok: false, code: r.code });
+    wait.resolve(r.ok ? (r.previous ? { ok: true, previous: r.previous } : { ok: true }) : { ok: false, code: r.code });
   });
   app.addHook('onClose', async () => {
     offResult();
@@ -52,13 +52,24 @@ export async function registerMergeAccountRoutes(
     const owner = await pool.query(`select 1 from agent_config where account_id = $1 and owner_account_id = $2`, [agentId, req.account.id]);
     return (owner.rowCount ?? 0) > 0;
   };
+  /** 그 오퍼레이터(머신)의 주인이 요청한 사람인가 — 에이전트 소유자와 머신 주인이 다를 수 있다. */
+  const operatorOwnerOk = async (operatorId: string, accountId: string): Promise<boolean> => {
+    const r = await pool.query(`select 1 from operator where id = $1 and owner_account_id = $2 and revoked_at is null`, [operatorId, accountId]);
+    return (r.rowCount ?? 0) > 0;
+  };
 
   app.get<{ Params: { id: string } }>('/agents/:id/merge-accounts', { preHandler: app.requireAccount }, async (req, reply) => {
     const p = params.safeParse(req.params);
     if (!p.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'agent id must be a uuid' } });
     if (!(await ownerOk(req, p.data.id))) return reply.code(404).send({ error: { code: 'not_found', message: 'agent not found' } });
     void reply.header('cache-control', 'no-store');
-    return mergeAccountsOf(pool, p.data.id);
+    const accounts = await mergeAccountsOf(pool, p.data.id);
+    // 그 머신의 로그인 이름(과 기본값)은 머신 주인에게만 보인다 — 줄(byScope)·닿음(reach)은 그대로.
+    if (accounts.report && accounts.operatorId && !(await operatorOwnerOk(accounts.operatorId, req.account!.id))) {
+      const { logins: _l, defaultGhUser: _d, ...rest } = accounts.report;
+      return { operatorId: accounts.operatorId, report: rest };
+    }
+    return accounts;
   });
 
   app.put<{ Params: { id: string } }>('/agents/:id/merge-accounts/lines', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -77,6 +88,9 @@ export async function registerMergeAccountRoutes(
     const accounts = await mergeAccountsOf(pool, p.data.id);
     const operatorId = accounts.operatorId;
     if (!operatorId) return reply.code(409).send({ error: { code: 'no_operator', message: '이 에이전트를 도는 오퍼레이터가 없다' } });
+    if (!(await operatorOwnerOk(operatorId, req.account!.id))) {
+      return reply.code(403).send({ error: { code: 'not_operator_owner', message: '그 오퍼레이터의 주인만 줄을 고칠 수 있다' } });
+    }
     if (ghUser !== null && !(accounts.report?.logins ?? []).includes(ghUser)) {
       return reply.code(409).send({ error: { code: 'unknown_login', message: '그 오퍼레이터가 알린 gh 로그인이 아니다' } });
     }
@@ -94,7 +108,10 @@ export async function registerMergeAccountRoutes(
 
     await recordAudit(pool, {
       action: 'operator.merge_line.set_remote', ...actorOf(req), target: operatorId,
-      detail: { operatorId, agentId: p.data.id, scope, ghUser, by: req.account!.id, outcome: outcome.ok ? 'ok' : outcome.code },
+      detail: {
+        operatorId, agentId: p.data.id, scope, ghUser, by: req.account!.id, outcome: outcome.ok ? 'ok' : outcome.code,
+        ...(outcome.ok && outcome.previous ? { previous: outcome.previous } : {}),
+      },
     }, req);
     if (!outcome.ok) {
       if (outcome.code === 'operator_unreachable') {

@@ -47,6 +47,8 @@ export interface StartCommunitiesDeps {
   heartbeat?: CommunityDeps['heartbeat'];
   /** 다른 기기에서 고친 gh 줄(D3) — 커뮤니티마다 같은 `localMerge.set` 으로 간다. */
   ghLines?: CommunityDeps['ghLines'];
+  /** 커뮤니티마다의 머지 장부(D3) — `gh.lines.set` 이 받는 범위의 경계. */
+  ghRepos?: CommunityDeps['ghRepos'];
   /** 같은 머신의 터미널 직결 허브(R1 PR-3b). 커뮤니티마다 그대로 넘긴다. */
   localTerminal?: CommunityDeps['localTerminal'];
   /**
@@ -191,6 +193,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
       version: operatorVersion(deps.appVersion),
       heartbeat: deps.heartbeat,
       ghLines: deps.ghLines,
+      ghRepos: deps.ghRepos,
       runnerLink: deps.runnerLink, forwarder, fetchImpl: deps.fetchImpl,
       ...(deps.localTerminal ? { localTerminal: deps.localTerminal } : {}),
       harnesses: () => { refreshHarnesses(); return withModels(); },

@@ -94,7 +94,8 @@ describe('PUT /agents/:id/merge-accounts/lines (D3)', () => {
       if (f.type !== 'gh.lines.set') return;
       if (mode === 'impostor') { otherWs.send(JSON.stringify({ type: 'gh.lines.result', requestId: f.requestId, ok: true })); return; }
       if (mode === 'refuse') { sock.send(JSON.stringify({ type: 'gh.lines.result', requestId: f.requestId, ok: false, code: 'unknown_login' })); return; }
-      sock.send(JSON.stringify({ type: 'gh.lines.result', requestId: f.requestId, ok: true }));
+      // 지우는 줄은 덮어쓴 로컬 값을 previous 로 알린다.
+      sock.send(JSON.stringify({ type: 'gh.lines.result', requestId: f.requestId, ok: true, ...(f.scope === 'acme/*' ? { previous: 'me' } : {}) }));
     });
     ws.send(JSON.stringify({ type: 'gh.report', report: { logins: ['work-admin', 'me'], byScope: { 'acme/*': 'me' }, defaultGhUser: null, reach: [] } }));
     await waitFor(async () => (await read(alice.token)).json().report?.byScope?.['acme/*'] === 'me');
@@ -119,7 +120,34 @@ describe('PUT /agents/:id/merge-accounts/lines (D3)', () => {
 
     const last = (await audits()).slice(-4);
     expect(last[0]).toEqual({ operatorId: op.operatorId, agentId, scope: 'acme/app', ghUser: 'work-admin', by: alice.accountId, outcome: 'ok' });
+    expect(last[1]).toEqual({ operatorId: op.operatorId, agentId, scope: 'acme/*', ghUser: null, by: alice.accountId, outcome: 'ok', previous: 'me' });
     expect(last.map((d) => d.outcome)).toEqual(['ok', 'ok', 'unknown_login', 'operator_unreachable']);
     ws.close(); otherWs.close();
+  });
+
+  it('에이전트 소유자라도 오퍼레이터 주인이 아니면 PUT 은 403 not_operator_owner(보내지 않는다) · GET 은 logins·defaultGhUser 를 뺀다', async () => {
+    const agent2 = (await createAgent(app, admin.token, 'ghl-2')).accountId;
+    await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agent2, alice.accountId]);
+    const bobOp = await registerOperator(app, bob.token, 'bob-mac');
+    await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [agent2, bobOp.operatorId, bob.accountId]);
+    const got: Frame[] = [];
+    const ws = await connect(bobOp.token, (_ws, f) => { got.push(f); });
+    ws.send(JSON.stringify({ type: 'gh.report', report: { logins: ['bob-work'], byScope: { 'acme/*': 'bob-work' }, defaultGhUser: 'bob-work', reach: [] } }));
+    const read2 = () => app.inject({ method: 'GET', url: `/agents/${agent2}/merge-accounts`, headers: auth(alice.token) });
+    await waitFor(async () => (await read2()).json().report !== null);
+    const report = (await read2()).json().report;
+    expect(report.byScope).toEqual({ 'acme/*': 'bob-work' });
+    expect(report.reach).toEqual([]);
+    expect(report).not.toHaveProperty('logins');
+    expect(report).not.toHaveProperty('defaultGhUser');
+    const before = (await audits()).length;
+    const denied = await put(alice.token, { scope: 'acme/app', ghUser: 'bob-work' }, agent2);
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.code).toBe('not_operator_owner');
+    expect(got.filter((f) => f.type === 'gh.lines.set')).toEqual([]);
+    expect((await audits()).length).toBe(before);
+    // 머신 주인인 alice 의 에이전트는 logins 를 그대로 본다.
+    expect((await read(alice.token)).json().report).toHaveProperty('logins');
+    ws.close();
   });
 });
