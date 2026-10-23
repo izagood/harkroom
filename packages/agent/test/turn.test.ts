@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { GRANT_DELEGATE_TOOL, LANE_BASE_ALLOW, LANE_DENY, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { GRANT_DELEGATE_TOOL, laneEnvAllowed, LANE_BASE_ALLOW, LANE_DENY, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 import { decodeLaneHookRules } from '@harkroom/shared/providerLane';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
@@ -676,6 +676,35 @@ describe('전용 제공사 경로 env', () => {
       expect(without.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe(process.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB);
     } finally {
       if (prev === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN; else process.env.ANTHROPIC_AUTH_TOKEN = prev;
+    }
+  });
+
+  // L1b(security W2): lane 하네스 env 는 허용 목록으로 짓는다 — 사람 셸의 자격 정보가 새 이름으로 와도 기본이 닫힌 쪽이다.
+  it('lane 턴은 부모 env 를 허용 목록으로 걸러 짓는다 — 구독형 턴은 그대로 물려받는다', () => {
+    const planted = { GITHUB_TOKEN: 'gh-x', AWS_SECRET_ACCESS_KEY: 'aws-x', OPENAI_API_KEY: 'oa-x', HARKROOM_PAT: 'pat-x', HARKROOM_MCP_BEARER_SLACK: 'b-x', SOME_RANDOM: 'r', LC_ALL: 'C', XDG_CACHE_HOME: '/c', HARKROOM_RUNNER_SECRET: 'sec', HTTPS_PROXY: 'http://proxy.example:3128' };
+    const prev: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(planted)) { prev[k] = process.env[k]; process.env[k] = v; }
+    try {
+      const lanePlan = buildTurnCommand({
+        ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true,
+        claudeConfigDir: '/state/claude-provider-lane', providerEnv: lane,
+      });
+      for (const k of ['GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'OPENAI_API_KEY', 'HARKROOM_PAT', 'HARKROOM_MCP_BEARER_SLACK', 'SOME_RANDOM']) {
+        expect(k in lanePlan.env).toBe(false);
+      }
+      for (const k of ['LC_ALL', 'XDG_CACHE_HOME', 'HARKROOM_RUNNER_SECRET', 'HTTPS_PROXY', 'PATH']) expect(k in lanePlan.env).toBe(true);
+      // 그 턴이 얹는 값은 목록과 상관없이 든다.
+      expect(lanePlan.env.ANTHROPIC_AUTH_TOKEN).toBe('tok-lane');
+      expect(lanePlan.env.CLAUDE_CONFIG_DIR).toBe('/state/claude-provider-lane');
+      expect(lanePlan.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('1');
+      // 남은 이름은 모두 허용 목록이거나 러너가 그 턴에 얹은 것이다.
+      const runnerSet = new Set(['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'HARKROOM_TURN_CAUSE', 'HARKROOM_TURN_ID']);
+      expect(Object.keys(lanePlan.env).filter((k) => !laneEnvAllowed(k) && !runnerSet.has(k))).toEqual([]);
+
+      const plain = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true, claudeConfigDir: null });
+      expect(plain.env.SOME_RANDOM).toBe('r');
+    } finally {
+      for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     }
   });
 
