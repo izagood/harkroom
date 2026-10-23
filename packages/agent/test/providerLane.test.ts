@@ -1,8 +1,8 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createProviderLane, ProviderLaneError } from '../src/providerLane.js';
+import { createProviderLane, laneScrubsSubprocessEnv, LANE_MCP_CONFIG_FILE, ProviderLaneError, writeLaneMcpConfig } from '../src/providerLane.js';
 
 async function setup(value = 'tok-123\n') {
   const root = await mkdtemp(join(tmpdir(), 'lane-'));
@@ -92,5 +92,40 @@ describe('providerLane 결과 통지(2a)', () => {
     const bad = createProviderLane({ mount: async () => ({ status: 502, body: JSON.stringify({ error: { code: 'https://x' } }) }), turnSecretsDir: t.secretsDir, report: (o, c) => seen.push([o, c]) });
     await expect(bad.envFor('m1', 'claude-code')).rejects.toBeInstanceOf(ProviderLaneError);
     expect(seen).toEqual([[true, undefined], [false, 'unknown']]);
+  });
+});
+
+// L1(2026-10-24 실측 claude 2.1.309): lane 턴은 하위 프로세스 env 를 걷는다 — 그러면 harkroom 브릿지가 러너 secret 을 잃으므로
+// lane 전용 MCP 설정의 harkroom `env` 칸으로 준다. 브릿지가 쓰는 이름만, 0600, 러너 상태 폴더에(security X1·X2).
+describe('writeLaneMcpConfig', () => {
+  async function source(servers: Record<string, unknown>) {
+    const dir = await mkdtemp(join(tmpdir(), 'lane-mcp-'));
+    const path = join(dir, 'operator-mcp.json');
+    await writeFile(path, JSON.stringify({ mcpServers: servers }));
+    return { dir, path };
+  }
+  const harkroom = { command: '/x/harkroom-operator', args: ['mcp-bridge'] };
+
+  it('harkroom 항목 env 에 러너 secret 만 싣고, 0600 으로 상태 폴더에 쓴다 — lane 키·다른 항목은 건드리지 않는다', async () => {
+    const { dir, path } = await source({ harkroom, avcs: { command: 'avcs', args: ['mcp'] } });
+    const out = await writeLaneMcpConfig(dir, path, { HARKROOM_RUNNER_SECRET: 'sec-1', ANTHROPIC_AUTH_TOKEN: 'lane-key', HARKROOM_RUNNER_ID: 'r1' });
+    expect(out).toBe(join(dir, LANE_MCP_CONFIG_FILE));
+    expect((await stat(out)).mode & 0o777).toBe(0o600);
+    const doc = JSON.parse(await readFile(out, 'utf8')) as { mcpServers: Record<string, { env?: Record<string, string> }> };
+    expect(doc.mcpServers.harkroom?.env).toEqual({ HARKROOM_RUNNER_SECRET: 'sec-1' });
+    expect(JSON.stringify(doc)).not.toContain('lane-key');
+    expect(doc.mcpServers.avcs).toEqual({ command: 'avcs', args: ['mcp'] });
+  });
+
+  it('러너 secret 이 없거나 harkroom 항목이 없으면 던진다 — 조용히 브릿지가 끊긴 채 띄우지 않는다', async () => {
+    const a = await source({ harkroom });
+    await expect(writeLaneMcpConfig(a.dir, a.path, {})).rejects.toThrow(/HARKROOM_RUNNER_SECRET/);
+    const b = await source({ avcs: { command: 'avcs' } });
+    await expect(writeLaneMcpConfig(b.dir, b.path, { HARKROOM_RUNNER_SECRET: 's' })).rejects.toThrow(/harkroom/);
+  });
+
+  it('env 를 걷는 하네스만 이 길을 탄다', () => {
+    expect(laneScrubsSubprocessEnv('claude-code')).toBe(true);
+    expect(laneScrubsSubprocessEnv('opencode')).toBe(false);
   });
 });

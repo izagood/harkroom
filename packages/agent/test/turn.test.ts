@@ -666,10 +666,13 @@ describe('전용 제공사 경로 env', () => {
       });
       expect(withLane.env.ANTHROPIC_AUTH_TOKEN).toBe('tok-lane');
       expect(withLane.env.ANTHROPIC_BASE_URL).toBe('https://gateway.example');
+      // 셸·하위 프로세스는 키를 보지 못한다 — 하네스가 자식 env 에서 자격 정보를 걷는다(lane 턴만).
+      expect(withLane.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('1');
       const without = buildTurnCommand({
         ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: true, claudeConfigDir: null,
       });
       expect('ANTHROPIC_AUTH_TOKEN' in without.env).toBe(false);
+      expect(without.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe(process.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB);
     } finally {
       if (prev === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN; else process.env.ANTHROPIC_AUTH_TOKEN = prev;
     }

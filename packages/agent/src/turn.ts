@@ -8,7 +8,7 @@
 // 옮긴 것이다 — 스파이크(task-1)가 실측으로 확정했고, 초판의 추정 네 곳을 여기서 뒤집는다:
 // codex 에 `-a` 가 없다(sandbox 단독), codex MCP 는 파일이 아니라 턴별 `-c` 오버라이드,
 // claude 는 `--strict-mcp-config` 를 항상 받는다, gemini 는 이번 범위에서 미지원.
-import { providerLaneKeys } from './providerLane.js';
+import { PROVIDER_LANE_FIXED_ENV, providerLaneKeys } from './providerLane.js';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -959,6 +959,8 @@ function childEnv(
       if (!allowed.has(key)) throw new Error(`buildTurnCommand: 전용 제공사 경로가 ${homes.harness} 에 허용되지 않은 env 를 넣으려 했다: ${key}`);
       env[key] = value;
     }
+    // 고정 스위치는 그 턴이 받은 값 **뒤에** 얹는다 — 부모 env 의 같은 이름이 남아 있어도 이 값이 이긴다.
+    Object.assign(env, PROVIDER_LANE_FIXED_ENV[homes.harness] ?? {});
   }
   // PAT 을 덮어쓰던 자리였다. 이제 하네스가 서버에 닿는 길은 `mcp-bridge` 뿐이고, 브릿지가 읽는
   // 것은 러너 env 의 오퍼레이터 소켓·러너 id·secret 이다 — 여기서는 전체 상속으로 하네스까지 간다.
