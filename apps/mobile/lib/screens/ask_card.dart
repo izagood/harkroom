@@ -295,7 +295,7 @@ class _AskCardState extends State<AskCard> {
               PermissionLineBox(
                 line: perm.line!,
                 limits: shownLimits,
-                once: primary == permOptApproveOnce ? perm.once : null,
+                once: perm.once,
               ),
             ],
             if (ask.prompt != null && open) ...[
@@ -348,11 +348,7 @@ class _AskCardState extends State<AskCard> {
                   child: Text(t.permDeny),
                 ),
               ),
-            ] else if (head != null && endedText != null || head == null && !open) ...[
-              if (head != null && endedText != null)
-                Text(endedText, key: Key('ask-chosen-$id'), style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-              if (head == null && endedText != null)
-                Text(endedText, key: Key('ask-chosen-$id'), style: theme.textTheme.bodySmall?.copyWith(color: tok.fgMuted)),
+            ] else if (!open) ...[
               if ((s == 'superseded' || ask.isSuperseded) && perm.supersededByMessageId != null)
                 TextButton(
                   key: Key('perm-open-new-$id'),

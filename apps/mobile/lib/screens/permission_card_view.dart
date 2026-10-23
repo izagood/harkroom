@@ -91,7 +91,7 @@ class PermissionLineBox extends StatelessWidget {
                 decoration: BoxDecoration(color: tok.surfaceInverse, borderRadius: BorderRadius.circular(4)),
                 child: Text(line.cap, style: theme.textTheme.labelSmall?.copyWith(color: tok.fgOnInverse, fontWeight: FontWeight.w700)),
               ),
-              Text(line.scope, key: const Key('perm-scope'), style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace', color: tok.fg)),
+              Text(line.scope, key: const Key('perm-scope'), style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'Menlo', fontFamilyFallback: const ['Courier'], color: tok.fg)),
             ],
           ),
           if (chips.isNotEmpty) ...[
