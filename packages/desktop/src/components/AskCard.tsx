@@ -5,6 +5,7 @@ import { selectAccountNames } from '../lib/accountNames';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
+import { MandateLineBody, readCardSource } from './MandateLineBody';
 
 /**
  * 선택 요청 카드 — 이 디자인 언어에서 **대화 안의 유일한 "상자"**다(상자 예산 1개).
@@ -44,6 +45,11 @@ export function AskCard({ message }: { message: MessageRow }) {
   });
   const [pickAnyway, setPickAnyway] = useState(false);
   if (!ask) return null;
+  // W4: 위임장 줄 카드(또는 권한 카드 거울)는 선택지 목록 대신 줄 상자와 버튼을 그린다.
+  const lined = readCardSource(message.meta);
+  const decidedVia = (message.meta?.permissionRequest as { decidedVia?: { kind?: unknown; messageId?: unknown } } | undefined)?.decidedVia;
+  const chatVia = decidedVia?.kind === 'chat' ? { messageId: typeof decidedVia.messageId === 'string' ? decidedVia.messageId : null }
+    : ask.answeredVia === 'chat' ? { messageId: null } : null;
 
   const answered = ask.answeredWith != null;
   /**
@@ -114,6 +120,15 @@ export function AskCard({ message }: { message: MessageRow }) {
         {answered && answeredByName && (
           <span className="text-meta text-fg-subtle">{t('speech.ask.answeredBy', { name: answeredByName })}</span>
         )}
+        {/* designer n3 — 글로 정한 카드는 답한 사람 뒤에 「· 글로 답함」(그 글로 가는 링크). */}
+        {answered && chatVia && (
+          <span className="text-meta text-fg-subtle" data-testid="ask-answered-via-chat">
+            {'· '}
+            {chatVia.messageId
+              ? <a className="underline decoration-dotted underline-offset-2" href={`harkroom://message/${chatVia.messageId}`}>{t('speech.ask.viaChat')}</a>
+              : t('speech.ask.viaChat')}
+          </span>
+        )}
         {expired && <span className="text-meta text-fg-subtle">{t('speech.ask.expiredHint')}</span>}
         {!answered && closed && !replied && !superseded && !expired && closedByName && (
           <span className="text-meta text-fg-subtle">{t('speech.ask.declinedBy', { name: closedByName })}</span>
@@ -130,7 +145,12 @@ export function AskCard({ message }: { message: MessageRow }) {
         </p>
       )}
 
-      {replied && !pickAnyway && forMe && (
+      {lined && (
+        <MandateLineBody message={message} src={lined} canChoose={canChoose} optionIds={ask.options.map((o) => o.id)}
+          answeredWith={ask.answeredWith ?? null} closedReason={closed && !answered ? (closedReason ?? 'declined') : null}
+          supersededBy={ask.supersededBy ?? null} />
+      )}
+      {!lined && replied && !pickAnyway && forMe && (
         <div className="px-2 pb-2 pt-1">
           <button
             type="button"
@@ -143,7 +163,7 @@ export function AskCard({ message }: { message: MessageRow }) {
           </button>
         </div>
       )}
-      <div className={`flex flex-col gap-1 ${closed && !canPickLate ? 'px-2 pb-1' : 'p-2'}`}>
+      {!lined && <div className={`flex flex-col gap-1 ${closed && !canPickLate ? 'px-2 pb-1' : 'p-2'}`}>
         {ask.options.map((o) => {
           const isChosen = chosen?.id === o.id;
           // 답이 끝나면 고른 것만 남긴다 — 안 고른 선택지를 계속 보여 주면 무엇으로
@@ -172,7 +192,7 @@ export function AskCard({ message }: { message: MessageRow }) {
             </button>
           );
         })}
-      </div>
+      </div>}
       {/*
         **답하지 않는 길**(2026-09-09). 이것이 없으면 그 작업을 그만두기로 한 사람에게 남는
         수단이 **물음을 지우는 것**뿐이었고, 지우면 무엇을 물었는지까지 사라졌다. 턴을
@@ -181,7 +201,7 @@ export function AskCard({ message }: { message: MessageRow }) {
         **선택지와 같은 무게로 그리지 않는다** — 이것은 여섯째 선택지가 아니라 이 물음을
         끝내는 다른 종류의 행동이다. 그래서 카드 바닥에 한 줄로, 밑줄만 두고 앉는다.
       */}
-      {canChoose && (
+      {canChoose && !lined && (
         <div className="px-2 pb-2">
           <button
             type="button"
