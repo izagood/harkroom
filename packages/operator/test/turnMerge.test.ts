@@ -331,6 +331,9 @@ describe('turnMerge', () => {
         const merge = execs.find((e) => e.args[0] === 'pr' && e.args[1] === 'merge')!;
         expect(merge.args).toContain('--match-head-commit');
         expect(merge.env.GH_TOKEN).toBe('tok-repo-account');
+        // n6: 고른 계정 이름을 결과 보고에 싣는다(이름뿐 — 토큰은 아니다).
+        expect(results()).toEqual([expect.objectContaining({ result: 'merged', ghUserUsed: 'repo-account' })]);
+        expect(JSON.stringify(results())).not.toContain('tok-repo-account');
       });
 
       it('null 인데 이 저장소 계정이 없으면 no_gh_user — 판정(소모)을 부르지 않는다', async () => {

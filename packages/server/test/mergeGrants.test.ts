@@ -571,8 +571,21 @@ describe('repo.merge grant', () => {
         const pl = await leaseInThread(thread, alice.accountId);
         const peek = await app.inject({ method: 'POST', url: '/agent/merge-approvals/peek', headers: asAgent(), payload: { leaseId: pl.id, token: pl.token, repo, number: 21, headSha: SHA2 } });
         expect(peek.json().approval).toMatchObject({ ghUser: null });
-        const res = await check(await leaseInThread(thread, alice.accountId), repo, { number: 21, headSha: SHA2 });
+        const ml = await leaseInThread(thread, alice.accountId);
+        const res = await check(ml, repo, { number: 21, headSha: SHA2 });
         expect(res.json()).toMatchObject({ allowed: true, approval: { ghUser: null } });
+        // designer n3: 번역 표지는 OperatorPick 키 — 「operator-chosen」 같은 값이 계정 칸에 서지 않는다.
+        const used = (await pool.query(`select body, meta from message where thread_root_id = $1 and kind = 'system' and meta ? 'mergeApproval'`, [thread])).rows;
+        expect(used).toHaveLength(1);
+        expect(used[0].body).toContain('gh (오퍼레이터가 고름)');
+        expect(used[0].meta.i18n.key).toBe('system.merge.approvalUsedOperatorPick');
+        expect(used[0].meta.i18n.args).not.toHaveProperty('ghUser');
+        // security n6: 래퍼가 실제로 쓴 계정을 보고하면 감사에 남는다.
+        const rep = await app.inject({ method: 'POST', url: '/agent/merge-results', headers: asAgent(), payload: { leaseId: ml.id, token: ml.token, repo, number: 21, headSha: SHA2, result: 'merged', mergeSha: SHA, ghUserUsed: 'picked-account' } });
+        expect(rep.statusCode).toBe(201);
+        const merged = (await pool.query(`select detail from audit_log where action = 'repo.merge.merged' and target = $1`, [`repo:${repo}`])).rows;
+        expect(merged).toHaveLength(1);
+        expect(merged[0].detail).toMatchObject({ ghUserUsed: 'picked-account', ghUserChosenBy: 'operator' });
       }
     });
 
@@ -584,8 +597,16 @@ describe('repo.merge grant', () => {
       expect((await decide(alice.token, await requestFor(denied.error.denialId, thread), { ghUser: 'izagood' })).statusCode).toBe(200);
       expect((await check(await leaseInThread(thread, alice.accountId), 'izagood/once-b', { number: 9, headSha: SHA })).json().error.code).toBe('not_granted');
       expect((await check(await lease(await mention(alice.accountId)), 'izagood/once-b', { number: 9, headSha: SHA2 })).json().error.code).toBe('not_granted');
-      const res = await check(await leaseInThread(thread, alice.accountId), 'izagood/once-b', { number: 9, headSha: SHA2 });
+      const ml = await leaseInThread(thread, alice.accountId);
+      const res = await check(ml, 'izagood/once-b', { number: 9, headSha: SHA2 });
       expect(res.json()).toMatchObject({ allowed: true, approval: { ghUser: 'izagood', relaxChecks: false } });
+      // 계정이 적힌 승인이면 i18n 은 그 계정을 싣고, 래퍼가 보낸 ghUserUsed 는 감사에 따로 남기지 않는다(승인에 이미 있다).
+      const used = (await pool.query(`select meta from message where thread_root_id = $1 and kind = 'system' and meta ? 'mergeApproval'`, [thread])).rows;
+      expect(used[0].meta.i18n).toMatchObject({ key: 'system.merge.approvalUsed', args: { ghUser: 'izagood' } });
+      await app.inject({ method: 'POST', url: '/agent/merge-results', headers: asAgent(), payload: { leaseId: ml.id, token: ml.token, repo: 'izagood/once-b', number: 9, headSha: SHA2, result: 'merged', mergeSha: SHA, ghUserUsed: 'izagood' } });
+      const merged = (await pool.query(`select detail from audit_log where action = 'repo.merge.merged' and target = 'repo:izagood/once-b'`)).rows;
+      expect(merged).toHaveLength(1);
+      expect(merged[0].detail).not.toHaveProperty('ghUserUsed');
     });
 
     it('소유자 사람 세션만 · 본문은 ghUser·relaxChecks 둘뿐 · 거절에서 온 카드만 · 한 번만', async () => {

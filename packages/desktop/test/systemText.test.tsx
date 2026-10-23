@@ -39,6 +39,15 @@ describe('systemText', () => {
     expect(systemText(m, accounts, tKo)).toBe('mira님이 채널에 추가됐다.');
   });
 
+  it('계정을 비운 1회 승인 줄은 「오퍼레이터가 고름」 — operator-chosen 같은 값을 그리지 않는다(designer n3)', () => {
+    const m = sys({ key: 'system.merge.approvalUsedOperatorPick', args: { repo: 'o/r', number: 7, head: 'abc123456' } });
+    expect(systemText(m, accounts, tKo)).toBe('🔓 o/r#7 1회 승인으로 머지 시도 · head abc123456 · gh (오퍼레이터가 고름)');
+    expect(systemText(m, accounts, tEn)).toBe("🔓 o/r#7 merge attempted with a one-time approval · head abc123456 · gh (operator's pick)");
+    const ci = sys({ key: 'system.merge.approvalUsedCiOverrideOperatorPick', args: { repo: 'o/r', number: 7, head: 'abc123456', approverId: 'g1' } });
+    expect(systemText(ci, accounts, tEn)).toBe("🔓 o/r#7 merge attempted with a CI-failure override · approved by jaebin · head abc123456 · gh (operator's pick)");
+    expect(systemText(ci, accounts, tKo)).toContain('gh (오퍼레이터가 고름)');
+  });
+
   it('모르는 id 는 「알 수 없음」 — id 를 그대로 보이지 않는다(designer 규칙 1)', () => {
     const out = systemText(sys({ key: 'system.member.left', args: { accountId: 'zzz-uuid' } }), accounts, tEn)!;
     expect(out).toContain(UNKNOWN_ACCOUNT_LABEL);

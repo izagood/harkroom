@@ -49,6 +49,12 @@ void main() {
     expect(displayBody(m, accounts, unknownMention: '@?', unknownAccount: '?', t: ko), 'mira님이 채널에 추가됐다.');
   });
 
+  test('계정을 비운 1회 승인 줄은 「오퍼레이터가 고름」(designer n3)', () {
+    final m = row({'key': 'system.merge.approvalUsedOperatorPick', 'args': {'repo': 'o/r', 'number': 7, 'head': 'abc123456'}});
+    expect(systemText(m, accounts, ko), '🔓 o/r#7 1회 승인으로 머지 시도 · head abc123456 · gh (오퍼레이터가 고름)');
+    expect(systemText(m, accounts, en), "🔓 o/r#7 merge attempted with a one-time approval · head abc123456 · gh (operator's pick)");
+  });
+
   test('모르는 id 는 「알 수 없음」(designer 규칙 1)', () {
     final m = row({'key': 'system.member.left', 'args': {'accountId': 'zzz'}});
     expect(systemText(m, accounts, ko), contains('알 수 없음'));

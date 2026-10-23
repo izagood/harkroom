@@ -510,12 +510,15 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
      * 결과 보고. `extra` 는 CI 거절(`ciRefusal`)·무시한 체크(`ignoredChecks`) — 옛 서버는 모르는 키를 버린다(카드만 안 선다).
      * CI 거절이면 서버가 카드용 거절 기록 id(`denialId`)를 돌려준다 — uuid 모양일 때만 넘긴다.
      */
+    // 머지에 실제로 쓴 gh 이름(security n6) — 결과 보고에 싣는다. 승인에 계정이 비었으면(G1) 서버는 이 값으로만 안다. 이름뿐이다.
+    let usedLogin: string | null = null;
     const report = async (result: 'merged' | 'queued' | 'failed', mergeSha: string | null, error: string | null,
       extra: { ciRefusal?: ReturnType<typeof ciRefusalOf>; ignoredChecks?: string[] } = {}): Promise<{ denialId?: string }> => {
       const res = await deps.forward(agentId, {
         type: 'http.forward', id: randomUUID(), method: 'POST', path: '/agent/merge-results',
         body: JSON.stringify({
           leaseId: lease.leaseId, token: lease.token, repo, number, headSha, result, mergeSha, error,
+          ...(usedLogin ? { ghUserUsed: usedLogin } : {}),
           ...(extra.ciRefusal ? { ciRefusal: extra.ciRefusal } : {}),
           ...(extra.ignoredChecks?.length ? { ignoredChecks: extra.ignoredChecks.slice(0, 20).map((n) => n.slice(0, 80)) } : {}),
         }), contentType: 'application/json',
@@ -589,6 +592,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
      */
     async function mergeNow(t: { token: string; login: string }, viaApproval: boolean, known: QueueInfo | null, prHead: string | undefined, ignored: string[]): Promise<{ ok: boolean; value: unknown }> {
       const menv = ghEnv(deps.home, t.token);
+      usedLogin = t.login;
       // 여기까지 왔으면 1회 승인은 이미 소모됐다 — 경합으로 「이미 큐」가 되면 그 사실을 note 에 남긴다(security n3).
       const usedNote = viaApproval ? ' (the one-time approval was used)' : '';
       const q = known ?? await queueInfo(repo, number, menv);

@@ -42,6 +42,10 @@ export const SYSTEM_I18N_ARGS = Object.freeze({
   'system.merge.queued': ['repo', 'number', 'head'],
   'system.merge.queuedGranted': ['repo', 'number', 'head', 'granterId'],
   'system.merge.approvalUsedCiOverride': ['repo', 'number', 'head', 'ghUser', 'approverId'],
+  // 계정을 비운 1회 승인(G1) — 오퍼레이터가 고른다. 계정 인자 없이 「gh (오퍼레이터가 고름)」(designer n3).
+  'system.merge.approvalUsedOperatorPick': ['repo', 'number', 'head'],
+  'system.merge.approvalUsedRelaxedOperatorPick': ['repo', 'number', 'head'],
+  'system.merge.approvalUsedCiOverrideOperatorPick': ['repo', 'number', 'head', 'approverId'],
   'system.merge.mergedIgnoring': ['repo', 'number', 'sha', 'granterId', 'checks'],
   'system.merge.mergedCiOverride': ['repo', 'number', 'sha', 'granterId', 'checks'],
   'system.merge.mergedCiOverrideGrew': ['repo', 'number', 'sha', 'granterId', 'checks'],

@@ -7,6 +7,7 @@ import { checkNamesForBody, checkNamesText, obsoleteMergeCards, sanitizeCheckNam
 import { postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
 import { findLine } from './mandateLines.js';
+import { GH_LOGIN_RE } from './mergeDenials.js';
 
 /**
  * 에이전트 머지 권한 — 서버 쪽 판정과 기록. 설계 스레드 3deac356(채널 a42006a1), security F1~F4.
@@ -245,9 +246,10 @@ async function checkMergeByChain(
       detail: { number: args.number, headSha: args.headSha, operatorId: args.operatorId, leaseId: lease!.id, grantedBy: approval.approvedBy, approvalId: approval.id, ghUser: approval.ghUser, ...(approval.ghUser ? {} : { ghUserChosenBy: 'operator' }), relaxChecks: approval.relaxChecks, ciOverride: approval.ciOverride, causeByHuman: causeByHuman(lease!) },
     });
     // 계정을 비운 승인(G1)은 오퍼레이터가 고른다 — 이 줄을 쓰는 지금은 아직 서버가 그 계정을 모른다.
-    // 본문(한국어)에는 「(오퍼레이터가 고름)」, 번역 표지 인자는 언어 중립 값을 그대로 둔다(번역 키는 후속).
+    // 본문(한국어)에는 「(오퍼레이터가 고름)」. 번역 표지는 그 갈래의 키(`…OperatorPick`)로 — 계정 인자 없이 언어마다 그 말을 쓴다(designer n3).
     const ghShown = approval.ghUser ?? '(오퍼레이터가 고름)';
-    const ghArg = approval.ghUser ?? 'operator-chosen';
+    const ghUser = approval.ghUser;
+    const i18nBase = { repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9) };
     const approver = approval.ciOverride
       ? (await pool.query<{ handle: string }>(`select handle from account where id = $1`, [approval.approvedBy])).rows[0]?.handle ?? null
       : null;
@@ -262,13 +264,13 @@ async function checkMergeByChain(
         mergeApproval: { id: approval.id, repo: scope.slice('repo:'.length), number: args.number, headSha: args.headSha, ghUser: approval.ghUser, relaxChecks: approval.relaxChecks, ciOverride: approval.ciOverride, approvedBy: approval.approvedBy },
         // 번역 표지(i18n P5) — 본문과 같은 값, 같은 갈래(CI 판정을 GitHub 에 맡겼나).
         ...(approval.ciOverride ? (approver ? {
-          i18n: systemI18n('system.merge.approvalUsedCiOverride', {
-            repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: ghArg, approverId: approval.approvedBy,
-          }),
+          i18n: ghUser
+            ? systemI18n('system.merge.approvalUsedCiOverride', { ...i18nBase, ghUser, approverId: approval.approvedBy })
+            : systemI18n('system.merge.approvalUsedCiOverrideOperatorPick', { ...i18nBase, approverId: approval.approvedBy }),
         } : {}) : {
-          i18n: systemI18n(approval.relaxChecks ? 'system.merge.approvalUsedRelaxed' : 'system.merge.approvalUsed', {
-            repo: scope.slice('repo:'.length), number: args.number, head: args.headSha.slice(0, 9), ghUser: ghArg,
-          }),
+          i18n: approval.relaxChecks
+            ? (ghUser ? systemI18n('system.merge.approvalUsedRelaxed', { ...i18nBase, ghUser }) : systemI18n('system.merge.approvalUsedRelaxedOperatorPick', i18nBase))
+            : (ghUser ? systemI18n('system.merge.approvalUsed', { ...i18nBase, ghUser }) : systemI18n('system.merge.approvalUsedOperatorPick', i18nBase)),
         }),
       },
     });
@@ -351,6 +353,11 @@ export type MergeReport = {
   ciRefusal?: { code: string; mergeState?: string | null; checks?: unknown } | null;
   /** `merged`·`queued` 일 때 래퍼가 머지 직전에 다시 읽은 초록 아닌 체크 이름(무시하고 넘어간 것). 시스템 줄·감사에 남긴다. */
   ignoredChecks?: unknown;
+  /**
+   * 래퍼가 머지에 실제로 쓴 gh 이름(security n6). 계정을 비운 1회 승인(G1)이면 오퍼레이터가 골랐다 — 서버는 이 보고로만 그 이름을
+   * 안다. 래퍼 보고라 감사에 `ghUserUsed` 로만 남기고(본문에는 싣지 않는다) gh 이름 모양이 아니면 버린다.
+   */
+  ghUserUsed?: unknown;
 };
 
 
@@ -385,8 +392,8 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   const chainRootId = trail.rows.find((x) => x.action === 'repo.merge.checked' && x.viaChain)?.viaChain?.rootId;
   const grant = await mergeGrantFor(pool, r.agentId, repo);
   // 1회 승인으로 통과한 판정이면 승인한 사람이 「권한」이다(grant 가 없을 수 있다).
-  const usedApproval = (await pool.query<{ id: string; approvedBy: string; ciOverride: boolean; approvedChecks: string[] }>(
-    `select id, approved_by as "approvedBy", ci_override as "ciOverride", approved_checks as "approvedChecks"
+  const usedApproval = (await pool.query<{ id: string; approvedBy: string; ciOverride: boolean; approvedChecks: string[]; ghUser: string | null }>(
+    `select id, approved_by as "approvedBy", ci_override as "ciOverride", approved_checks as "approvedChecks", gh_user as "ghUser"
        from merge_approval where used_lease_id = $1 and scope = $2 and pr_number = $3 and head_sha = $4`,
     [lease.id, scope, r.number, r.headSha])).rows[0] ?? null;
   const approvedBy = usedApproval?.approvedBy ?? null;
@@ -397,6 +404,9 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   const ignoredTail = (ciOverride ? ' · CI 실패 무시 승인' : '')
     + (ignored.length ? ` · 무시: ${checkNamesForBody(ignored)}` : '') + (grewAfterApproval ? ' (승인 뒤 늘어남)' : '');
   const granterId = approvedBy ?? grant?.grantedBy ?? null;
+  // n6: 계정을 비운 승인으로 머지했으면 오퍼레이터가 고른 이름을 감사에 남긴다. 실패 보고에는 의미가 없다(머지에 쓰지 않았다).
+  const ghUserUsed = typeof r.ghUserUsed === 'string' && GH_LOGIN_RE.test(r.ghUserUsed) && r.result !== 'failed' ? r.ghUserUsed : null;
+  const ghUserUsedDetail = usedApproval && usedApproval.ghUser === null && ghUserUsed ? { ghUserUsed, ghUserChosenBy: 'operator' } : {};
   const granter = granterId
     ? (await pool.query<{ handle: string }>(`select handle from account where id = $1`, [granterId])).rows[0]?.handle ?? null
     : null;
@@ -419,6 +429,7 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
       merge: {
         repo, number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, result: r.result, grantedBy: granterId, viaApproval: approvedBy !== null, error: r.error?.slice(0, 1000) ?? null,
         ...(ciOverride ? { ciOverride: true } : {}),
+        ...ghUserUsedDetail,
         ...(ignored.length ? { ignoredChecks: ignored } : {}),
         ...(grewAfterApproval ? { grewAfterApproval: true } : {}),
         // 위임 사슬로 통과했으면 그 뿌리(소유자 글) — **meta 에만** 둔다(C5). 본문은 위의 고정 문구 그대로다(N2).
@@ -449,6 +460,7 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
     detail: {
       number: r.number, headSha: r.headSha, mergeSha: r.mergeSha ?? null, operatorId: r.operatorId, leaseId: lease.id, messageId: msg.id,
       ...(usedApproval ? { approvalId: usedApproval.id, approvedBy: usedApproval.approvedBy, ciOverride } : {}),
+      ...ghUserUsedDetail,
       ...(ignored.length ? { ignoredChecks: ignored } : {}),
       ...(grewAfterApproval ? { grewAfterApproval: true } : {}),
       ...(ciChecks ? { ciRefusal: { code: r.ciRefusal!.code, mergeState: r.ciRefusal!.mergeState ?? null, checks: ciChecks }, denialId } : {}),

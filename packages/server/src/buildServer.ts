@@ -58,6 +58,7 @@ import { verifySecretKeys } from './services/secretKeyCheck.js';
 import { registerSecretRoutes } from './routes/secretRoutes.js';
 import { registerMergeRoutes } from './routes/mergeRoutes.js';
 import { registerMergeDenialRoutes } from './routes/mergeDenialRoutes.js';
+import { registerMergeAccountRoutes } from './routes/mergeAccountRoutes.js';
 import { registerPermissionRequestRoutes } from './routes/permissionRequestRoutes.js';
 import { registerMandateRoutes } from './routes/mandateRoutes.js';
 import { registerApiCallRoutes } from './routes/apiCallRoutes.js';
@@ -676,6 +677,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   await registerMergeRoutes(app, deps.pool);
   await registerMergeDenialRoutes(app, deps.pool);
+  await registerMergeAccountRoutes(app, deps.pool);
   await registerPermissionRequestRoutes(app, deps.pool);
   await registerMandateRoutes(app, deps.pool);
   await registerApiCallRoutes(app, deps.pool, { keyring: secretKeyring, keyMismatch: secretKeyMismatch });
