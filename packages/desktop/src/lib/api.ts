@@ -789,12 +789,32 @@ export class ApiClient {
    * 쿼리 파라미터로 넘기면 자격증명이 평문으로 로그에 남는다. `<img src>` 와 `<a href>` 는
    * 헤더를 붙일 수 없으니, 호출부가 이 blob 으로 objectURL 을 만들어 쓴다.
    */
-  async fetchAttachment(id: string): Promise<Blob> {
+  async fetchAttachment(
+    id: string,
+    opts: { onProgress?: (loaded: number, total: number | null) => void; signal?: AbortSignal } = {},
+  ): Promise<Blob> {
     const res = await fetch(`${this.baseUrl}/attachments/${id}`, {
       headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+      signal: opts.signal,
     });
     if (!res.ok) throw new ApiError(res.status, 'attachment_failed', `HTTP ${res.status}`);
-    return res.blob();
+    // 진행률을 원할 때만 몸을 조각으로 읽는다(저장 P2). 그림 미리보기 같은 다른 호출은 예전대로 `blob()` 이다.
+    // 전체는 서버의 `content-length`(`attachmentRoutes`)다 — 없거나 0 이면 null 이고 부르는 쪽은 %를 지어내지 않는다.
+    if (!opts.onProgress || !res.body) return res.blob();
+    const header = Number(res.headers.get('content-length'));
+    const total = Number.isFinite(header) && header > 0 ? header : null;
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let loaded = 0;
+    opts.onProgress(0, total);
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.byteLength;
+      opts.onProgress(loaded, total);
+    }
+    return new Blob(chunks as BlobPart[], { type: res.headers.get('content-type') ?? '' });
   }
 
   /**

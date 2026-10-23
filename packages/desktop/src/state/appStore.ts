@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { AttachmentSaveState } from '../lib/attachmentSaveProgress';
 import { draftsStorage, stickyMentionsStorage } from '../lib/prefs';
 import type { AccountStatus, AccountView, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, SavedMessageRow, ServerVersion, ThreadStatusReaction } from '@harkroom/shared';
 import type { ObservedRunner, RunnerState } from '../lib/runnerLauncher';
@@ -330,10 +331,10 @@ export interface AppState {
    */
   notices: NoticeItem[];
   /**
-   * 저장 중인 첨부(키는 첨부 id). `choosing` 은 저장 창이 떠 있는 중, `fetching` 은 고른 뒤 바이트를 받는 중이다.
-   * 칩·확대 보기·미리보기 패널이 같은 값을 보고 다시 누르지 못하게 막는다 — 두 번 누르면 창이 둘 뜨고 두 번 받는다.
+   * 저장 중인 첨부(키는 첨부 id) — 모양과 뜻은 `lib/attachmentSaveProgress.ts`. 칩·확대 보기·미리보기 패널이 같은
+   * 값을 보고 같은 %를 말하고, 저장 창·받는 중에는 다시 누르지 못하게 막는다(두 번 누르면 창이 둘 뜨고 두 번 받는다).
    */
-  attachmentSaving: Record<string, 'choosing' | 'fetching'>;
+  attachmentSaving: Record<string, AttachmentSaveState>;
   /**
    * 저장이 끝났다는 아래쪽 토스트(`SaveToast`). **성공만** 싣는다 — 실패는 `notices` 다.
    * `id` 는 같은 파일을 두 번 저장해도 타이머가 다시 돌게 하는 표다.

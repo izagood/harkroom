@@ -2,10 +2,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { useHostDocument } from '../lib/hostDocument';
 import type { AttachmentRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
-import { useActiveStore } from '../state/communities';
 import { Overlay } from './Overlay';
 import { useT } from '../i18n/useT';
-import { formatSize } from './Attachments';
+import { formatSize, useSaveButtonLabel } from './Attachments';
 import { clampScale, fitScale, percent, pinchFactor, scrollToKeep, stepDown, stepUp } from '../lib/imageZoom';
 import { SWIPE_IDLE_MS, SWIPE_THRESHOLD } from '../lib/imageGallery';
 
@@ -53,8 +52,8 @@ export function ImageLightbox({ attachment, url, failed = false, onRetry, onClos
   // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
   const hostDoc = useHostDocument();
   const t = useT();
-  // 저장 중(저장 창·받는 중)이면 [저장…]을 다시 못 누른다 — 카드와 같은 값을 본다.
-  const saving = useActiveStore((s) => s.attachmentSaving[attachment.id]);
+  // 저장 중(저장 창·받는 중)이면 [저장…]을 다시 못 누르고, 받는 동안은 칩과 같은 %를 말한다.
+  const save = useSaveButtonLabel(attachment.id);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const [fit, setFit] = useState(1);
@@ -271,9 +270,9 @@ export function ImageLightbox({ attachment, url, failed = false, onRetry, onClos
           <button
             className="ml-auto shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken disabled:cursor-progress"
             onClick={() => void getController().saveAttachment(attachment)}
-            disabled={!!saving}
-            aria-busy={saving ? true : undefined}
-          >{saving === 'fetching' ? t('message.attachment.saving') : t('message.attachment.save')}</button>
+            disabled={save.busy}
+            aria-busy={save.busy ? true : undefined}
+          >{save.label}</button>
         )}
         <button
           className={`${saveable ? '' : 'ml-auto '}shrink-0 rounded-row px-2 text-fg-subtle hover:bg-surface-sunken`}

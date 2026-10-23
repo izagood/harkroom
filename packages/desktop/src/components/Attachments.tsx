@@ -4,6 +4,7 @@ import { acquireAttachmentUrl, peekAttachmentUrl } from '../lib/attachmentUrlCac
 import type { AttachmentRow, MessageRow } from '@harkroom/shared';
 import type { PendingUpload } from '../state/appStore';
 import { getController } from '../state/controller';
+import { formatProgressBytes, isSaveBusy, savePercent } from '../lib/attachmentSaveProgress';
 import { useActiveStore } from '../state/communities';
 import { collectGallery, type GalleryItem, type GalleryScope } from '../lib/imageGallery';
 import { stampLabel } from '../lib/day';
@@ -306,34 +307,95 @@ function Attachment({ attachment, message }: { attachment: AttachmentRow; messag
 }
 
 /**
+ * 저장 버튼 하나의 문구 — 확대 보기·미리보기 패널이 칩과 **같은 값**(`attachmentSaving`)으로 같은 말을 한다.
+ * 받는 중이면 `42%`(전체를 모르면 「받는 중…」), 그 밖에는 `저장…`.
+ */
+export function useSaveButtonLabel(attachmentId: string | undefined): { label: string; busy: boolean } {
+  const t = useT();
+  const state = useActiveStore((s) => (attachmentId ? s.attachmentSaving[attachmentId] : undefined));
+  const percent = savePercent(state);
+  const label = state?.phase === 'fetching'
+    ? (percent === null ? t('message.attachment.saving') : t('message.attachment.savePercent', { percent }))
+    : t('message.attachment.save');
+  return { label, busy: isSaveBusy(state) };
+}
+
+/**
  * 그림이 아닌 첨부의 카드. **누르면 무엇을 하는지 카드가 말한다**(designer 흐름 시안 b9e52c00): 오른쪽 끝의
  * `저장…` — 말줄임표는 "저장할 곳을 묻는다"는 뜻이다(macOS 관례). 누르면 저장 창이 먼저 뜨고, [취소]하면 아무 일도
  * 없다. 전에는 📎·이름·크기뿐이라 눌렀을 때 파일이 바로 생길 줄 몰랐다.
  *
- * 저장 창이 떠 있는 동안과 받는 동안(`받는 중…`)에는 `disabled`·`aria-busy` 다 — 두 번 누르면 창이 둘 뜬다.
+ * 받는 동안(P2, jaebin 결정 92bf2dea D3 · designer 기준):
+ * - 칩 아래 2px 막대(`bg-link` — 주황은 「나에게 온 막는 말」 전용이라 쓰지 않는다)와 `42% · 3.1/7.5 MB`.
+ *   전체를 모르면 막대 없이 「받는 중…」만.
+ * - 옆의 [✕]가 받기를 멈춘다. 아무 말 없이 원래 칩으로 돌아간다. 칩 안에 넣지 않는 것은 버튼 안에 버튼을 둘 수 없어서다.
+ * - 실패하면 칩이 「받기 실패 · 다시」를 말하고(Notice 도 함께) 다시 누를 수 있다 — 다시 누르면 저장 창부터.
+ * 저장 창이 떠 있는 동안과 받는 동안에는 칩이 `disabled`·`aria-busy` 다 — 두 번 누르면 창이 둘 뜬다.
  */
 function FileChip({ attachment, failed }: { attachment: AttachmentRow; failed: boolean }) {
   const t = useT();
   const saving = useActiveStore((s) => s.attachmentSaving[attachment.id]);
+  const busy = isSaveBusy(saving);
+  const percent = savePercent(saving);
+  let action: string;
+  if (saving?.phase === 'fetching') {
+    action = percent === null || saving.total === null
+      ? t('message.attachment.saving')
+      : t('message.attachment.saveProgress', { percent, bytes: formatProgressBytes(saving.loaded, saving.total) });
+  } else if (saving?.phase === 'failed') {
+    action = t('message.attachment.saveRetry');
+  } else {
+    action = t('message.attachment.save');
+  }
   return (
-    <button
-      type="button"
-      className="inline-flex max-w-full items-center gap-2 rounded-row border border-border bg-surface px-2 py-1 text-body text-fg hover:bg-surface-sunken disabled:cursor-progress disabled:hover:bg-surface"
-      onClick={() => void getController().saveAttachment(attachment)}
-      disabled={!!saving}
-      aria-busy={saving ? true : undefined}
-      aria-label={t('message.attachment.saveNamed', { filename: attachment.filename })}
-      title={t('message.attachment.saveNamed', { filename: attachment.filename })}
-      data-testid="attachment-file-chip"
-    >
-      <span aria-hidden>📎</span>
-      <span className="min-w-0 truncate font-medium">{attachment.filename}</span>
-      <span className="shrink-0 text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
-      {failed && <span className="text-danger">{t('message.attachment.loadFailed')}</span>}
-      <span className="ml-1 shrink-0 text-meta text-fg-muted" aria-hidden data-testid="attachment-file-action">
-        {saving === 'fetching' ? t('message.attachment.saving') : t('message.attachment.save')}
-      </span>
-    </button>
+    <span className="relative inline-flex max-w-full items-center gap-1" data-testid="attachment-file">
+      <button
+        type="button"
+        className="relative inline-flex min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-row border border-border bg-surface px-2 py-1 text-body text-fg hover:bg-surface-sunken disabled:cursor-progress disabled:hover:bg-surface"
+        onClick={() => void getController().saveAttachment(attachment)}
+        disabled={busy}
+        aria-busy={busy ? true : undefined}
+        aria-label={t('message.attachment.saveNamed', { filename: attachment.filename })}
+        title={t('message.attachment.saveNamed', { filename: attachment.filename })}
+        data-testid="attachment-file-chip"
+      >
+        <span aria-hidden>📎</span>
+        <span className="min-w-0 truncate font-medium">{attachment.filename}</span>
+        <span className="shrink-0 text-fg-subtle">{formatSize(attachment.sizeBytes)}</span>
+        {failed && <span className="text-danger">{t('message.attachment.loadFailed')}</span>}
+        <span
+          className={`ml-1 shrink-0 text-meta tabular-nums ${saving?.phase === 'failed' ? 'text-danger' : 'text-fg-muted'}`}
+          aria-hidden
+          data-testid="attachment-file-action"
+        >{action}</span>
+        {percent !== null && (
+          <span
+            aria-hidden
+            data-testid="attachment-file-progress"
+            className="absolute bottom-0 left-0 h-[2px] bg-link transition-[width] duration-150"
+            style={{ width: `${percent}%` }}
+          />
+        )}
+      </button>
+      {saving?.phase === 'fetching' && (
+        <>
+          {/* 스크린리더에는 % 를 진행 막대로 말한다 — 칩 문구는 aria-hidden 이다. */}
+          {percent !== null && (
+            <span className="sr-only" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}
+              aria-label={attachment.filename} />
+          )}
+          <button
+            type="button"
+            // 24×24 — 칩과 4px 떨어진 작은 글자 버튼이면 칩을 누르려다 취소를 누른다(designer #1476, WCAG 2.5.8).
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-meta text-fg-muted hover:bg-surface-sunken hover:text-fg"
+            onClick={() => getController().cancelAttachmentSave(attachment.id)}
+            aria-label={t('message.attachment.cancelSave', { filename: attachment.filename })}
+            title={t('message.attachment.cancelSave', { filename: attachment.filename })}
+            data-testid="attachment-file-cancel"
+          >✕</button>
+        </>
+      )}
+    </span>
   );
 }
 
