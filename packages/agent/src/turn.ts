@@ -162,6 +162,11 @@ interface HarnessPreset {
   allowsNullSessionOnFirstTurn: boolean;
   /** mentionPermission → 멘션 턴 전용 권한 플래그. 인터랙티브에선 아예 쓰지 않는다. */
   permission: Record<MentionPermission, string[]>;
+  /**
+   * 전용 제공사 경로(`providerEnv` 가 있는 턴)에서 `permission` 대신 쓸 값. 없는 칸은 `permission` 을 그대로 쓴다.
+   * claude 만 채운다 — 이유는 CLAUDE_PRESET 의 `lanePermission` 주석.
+   */
+  lanePermission?: Partial<Record<MentionPermission, string[]>>;
   mcp(args: { mcpConfigPath: string; operatorBin: string; extraMcpServers: Record<string, McpServerEntry> }): string[];
   /**
    * `mcp` 가 이름만 적은 비밀값을 자식 env 로 준다(2026-09-30). argv 는 `ps` 에 뜨므로 토큰은 여기로만.
@@ -199,7 +204,7 @@ interface HarnessPreset {
    * CLAUDE_PRESET 주석.
    */
   chrome?(enabled: boolean): string[];
-  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[]; apiConnectors?: readonly string[]; apiDelegatable?: readonly string[]; toolAllows?: readonly string[]; claudeConfigDir?: string | null; commandHook?: boolean }): string[];
+  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[]; apiConnectors?: readonly string[]; apiDelegatable?: readonly string[]; toolAllows?: readonly string[]; claudeConfigDir?: string | null; commandHook?: boolean; providerLane?: boolean }): string[];
 }
 
 const CLAUDE_PRESET: HarnessPreset = {
@@ -244,6 +249,19 @@ const CLAUDE_PRESET: HarnessPreset = {
     auto: ['--permission-mode', 'auto'],
     readonly: ['--permission-mode', 'plan'],
   },
+  /**
+   * **API 키 연결(전용 제공사 경로) 턴은 auto 를 못 쓴다**(2026-10-23 실측, claude 2.1.309, 가짜 gateway).
+   *
+   * - Anthropic 이 아닌 gateway 로 도는 auto 턴은 첫 도구 호출에서 「auto mode classifier billing」 안내
+   *   (`Enter to continue · Esc to cancel`)를 띄우고 사람을 기다린다. lane 러너는 터미널을 열지 않으므로(security F1)
+   *   누를 사람이 없다.
+   * - 그 화면을 지나도 classifier 는 Claude 모델을 **같은 gateway** 로 부른다. gateway 에 그 모델이 없으면
+   *   Bash·MCP 도구가 모두 「denied by auto mode · Classifier unavailable」로 거절된다.
+   *
+   * 그래서 `dontAsk` 로 띄운다 — 미리 허락한 도구(`LANE_BASE_ALLOW` + 소유자가 승인한 규칙)만 돌고 나머지는
+   * 묻지 않고 거절된다. classifier 요청도, 안내 화면도 없다(실측).
+   */
+  lanePermission: { auto: ['--permission-mode', 'dontAsk'] },
   // `--strict-mcp-config` 를 항상 함께 준다 — 없으면 운영자의 전역 MCP 목록(Slack·Gmail·
   // Drive 등, task-1 스파이크 실측)을 그대로 상속해, 채널에서 멘션할 수 있는 사람이면
   // 누구나 운영자 개인 계정에 도달한다(spec §7). 멘션·인터랙티브 어느 쪽도 예외가 아니다.
@@ -292,7 +310,7 @@ const CLAUDE_PRESET: HarnessPreset = {
    * - 래퍼 allow 는 auto 멘션 턴마다, 래퍼의 **절대 경로 + 서브커맨드** 접두로(T1c). grant 유무와 상관없다(스레드 1b75d7a0 —
    *   거절 기록을 받아야 1회 승인 카드가 선다). 저장소 범위는 규칙이 아니라 서버·래퍼가 가른다.
    */
-  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [], apiDelegatable = [], toolAllows = [], claudeConfigDir = null, commandHook = false }) => {
+  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [], apiDelegatable = [], toolAllows = [], claudeConfigDir = null, commandHook = false, providerLane = false }) => {
     if (mode !== 'mention' || mentionPermission !== 'auto') return [];
     // api 래퍼(C안 P3)도 머지와 같은 모양이다: 절대 경로 + 서브커맨드 접두. 연결·메서드·경로 범위는 규칙이 아니라 서버가 가른다.
     // `;`·`&&` 로 묶은 명령은 claude 가 조각마다 따로 판정하므로 이 규칙 하나로는 통과하지 않는다(프롬프트가 금지한다).
@@ -312,6 +330,9 @@ const CLAUDE_PRESET: HarnessPreset = {
       // 권한 요청(스레드 f61af808): 소유자가 카드에서 승인한 규칙. 분류기를 끄지 않고 이 규칙만 정확히 더한다. deny(머지·설정
       // 파일)가 allow 보다 앞서므로 승인된 규칙이 그 둘을 덮지 못한다.
       ...safeToolAllows(toolAllows),
+      // API 키 연결 턴은 `dontAsk` 라 여기 없는 도구는 모두 거절된다(`lanePermission` 주석). 기본으로 여는 것은 읽기·도구 찾기와
+      // 서버가 판정하는 MCP 둘뿐이다 — Bash·쓰기·웹은 소유자가 권한 요청 카드로 승인한 규칙(`toolAllows`)으로만 열린다.
+      ...(providerLane ? LANE_BASE_ALLOW : []),
     ];
     return [
       '--disallowedTools', ...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(claudeConfigDir),
@@ -321,6 +342,12 @@ const CLAUDE_PRESET: HarnessPreset = {
     ];
   },
 };
+
+/**
+ * API 키 연결(`dontAsk`) 턴에 기본으로 여는 도구. 읽기(`Read`·`Glob`·`Grep`), 지연 MCP 도구를 불러오는 `ToolSearch`,
+ * 할 일 목록, 그리고 **서버가 판정하는** MCP 두 개(harkroom·avcs) — 각 MCP 호출의 권한은 서버가 계정으로 가른다.
+ */
+export const LANE_BASE_ALLOW: readonly string[] = ['Read', 'Glob', 'Grep', 'ToolSearch', 'TodoWrite', 'mcp__harkroom', 'mcp__avcs'];
 
 /** claude 가 보는 harkroom MCP 의 `grant.delegate` 도구 이름(서버 이름 `harkroom`, 점은 밑줄로). */
 export const GRANT_DELEGATE_TOOL = 'mcp__harkroom__grant_delegate';
@@ -749,11 +776,13 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     throw new Error('buildTurnCommand: codexHome 이 비어 있다 — 개인 Codex 설정을 격리할 수 없다');
   }
 
+  // 전용 제공사 경로의 턴인가 — env 를 받는 것과 같은 조건(`providerEnv`)으로 가른다. 권한 플래그가 다르다(`lanePermission`).
+  const providerLane = opts.providerEnv != null;
   const args: string[] = [
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
     ...preset.alwaysArgs(opts.mode),
-    ...(opts.mode === 'mention' ? preset.permission[opts.mentionPermission] : []),
-    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [], apiDelegatable: opts.apiDelegatable ?? [], toolAllows: opts.toolAllows ?? [], claudeConfigDir: opts.claudeConfigDir ?? null, commandHook: opts.commandHook === true }) ?? []),
+    ...(opts.mode === 'mention' ? (providerLane ? preset.lanePermission?.[opts.mentionPermission] : undefined) ?? preset.permission[opts.mentionPermission] : []),
+    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [], apiDelegatable: opts.apiDelegatable ?? [], toolAllows: opts.toolAllows ?? [], claudeConfigDir: opts.claudeConfigDir ?? null, commandHook: opts.commandHook === true, providerLane }) ?? []),
     ...(readonlyByList ? ['--tools', opts.readonlyToolList as string] : []),
     ...(preset.chrome?.(opts.chrome === true) ?? []),
     // pi 의 세션 자리는 **저장소가 정할 수 있다**(`.pi/settings.json` 의 `sessionDir`, 신뢰 판정 전) —

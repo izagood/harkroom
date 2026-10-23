@@ -12,4 +12,4 @@
 // 그때까지의 fixture 로는 판정이 갈리지 않아 패리티가 초록이었다). 첫 실행 테마 선택(`❯ ✔`)·
 // `Enter to confirm` 를 더하면서 fixture 로 갈리게 되어 프로덕션 값과 맞췄다.
 export const GATE_PATTERN =
-  /Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Enter\s*to\s*confirm|[❯›](?!\u00a0)[^\n]*✔|^\s*[❯›]\s*\d+\.\s/m;
+  /Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Enter\s*to\s*(?:confirm|continue)|[❯›](?!\u00a0)[^\n]*✔|^\s*[❯›]\s*\d+\.\s/m;
