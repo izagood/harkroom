@@ -121,6 +121,8 @@ export interface TurnMergeDeps {
    */
   ghUserFor(repo: string): Promise<{ login: string; scope: string } | null>;
   exec?: Exec;
+  /** 지금 시각(ms) — 시험용. */
+  now?: () => number;
 }
 
 export interface TurnMerge {
@@ -342,8 +344,84 @@ export function isAlreadyQueuedError(stderr: string): boolean {
   return /already (?:been )?(?:added to|in|queued in) (?:the )?(?:merge )?queue|is already queued/i.test(stderr);
 }
 
+/**
+ * PR CI 가 없는 저장소(스레드 50324ba9, C안). `CLEAN` 인데 체크가 0개면 지금은 `ci_not_green`(no checks reported)이다 — CI 가 아직
+ * 안 붙은 것과 애초에 없는 것을 가르지 못한다. 저장소가 **PR 에 도는 CI 를 하나도 정의하지 않았다**는 것을 읽을 수 있을 때만
+ * 체크 0개를 통과로 본다. 읽기 전용이고, 모르면 거절한다(fail-closed).
+ */
+export const NO_PR_CI_PR_QUERY = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){baseRefOid headRefOid headRefName isCrossRepository}}}';
+const WORKFLOW_TREE = 'object(expression:$expr){__typename ... on Tree{entries{name type object{__typename ... on Blob{text isTruncated isBinary}}}}}';
+export const NO_PR_CI_REPO_QUERY = 'query($owner:String!,$name:String!,$baseExpr:String!,$headExpr:String!,$base:GitObjectID!){repository(owner:$owner,name:$name){'
+  + `base:${WORKFLOW_TREE.replace('$expr', '$baseExpr')} head:${WORKFLOW_TREE.replace('$expr', '$headExpr')}`
+  + ' commit:object(oid:$base){... on Commit{checkSuites(first:100){totalCount nodes{app{slug} checkRuns(first:1){totalCount}}} status{contexts{context}}}}}}';
+/** 체크가 붙기를 기다리는 시간 — push 뒤 이만큼은 「체크 0개」를 믿지 않는다(GitHub 이 workflow 를 띄우기 전일 수 있다). */
+export const NO_PR_CI_GRACE_MS = 120_000;
+
+/** workflow 본문이 PR 에 돌 수 있나 — 파서를 쓰지 않는다. 낱말이 어디든(주석·필터 안이라도) 있으면 「있음」 쪽으로 본다. */
+const PR_TRIGGER_RE = /\b(?:pull_request|pull_request_target|merge_group)\b/;
+
+export interface NoPrCiPr { baseRefOid: string; headRefOid: string; headRefName: string; isCrossRepository: boolean }
+
+export function parseNoPrCiPr(stdout: string): NoPrCiPr | null {
+  try {
+    const p = (JSON.parse(stdout) as { data?: { repository?: { pullRequest?: Record<string, unknown> | null } | null } }).data?.repository?.pullRequest;
+    if (!p || typeof p.baseRefOid !== 'string' || !SHA_RE.test(p.baseRefOid) || typeof p.headRefOid !== 'string' || typeof p.headRefName !== 'string') return null;
+    return { baseRefOid: p.baseRefOid, headRefOid: p.headRefOid, headRefName: p.headRefName, isCrossRepository: p.isCrossRepository === true };
+  } catch { return null; }
+}
+
+/**
+ * base·head 두 커밋의 `.github/workflows` 와 base 커밋의 외부 CI 흔적으로 판정한다. 통과(null)는 「PR 에 도는 CI 가 없다」를
+ * 읽어서 안 때뿐이다. 잘림·바이너리·100개 초과·모양 틀림은 거절이다.
+ */
+export function prCiVerdict(stdout: string): { code: string; message: string } | null {
+  const refuse = (why: string) => ({ code: 'ci_not_green', message: `no checks reported — ${why}` });
+  let repo: Record<string, unknown> | null | undefined;
+  try { repo = (JSON.parse(stdout) as { data?: { repository?: Record<string, unknown> | null } }).data?.repository; } catch { return refuse('could not read whether this repository runs CI on pull requests'); }
+  if (!repo) return refuse('could not read whether this repository runs CI on pull requests');
+  for (const side of ['base', 'head'] as const) {
+    const tree = repo[side] as { __typename?: string; entries?: unknown } | null | undefined;
+    if (tree === null || tree === undefined) continue; // .github/workflows 가 없다
+    if (tree.__typename !== 'Tree' || !Array.isArray(tree.entries)) return refuse(`.github/workflows on the ${side} commit is not a directory`);
+    if (tree.entries.length >= 100) return refuse(`too many files in .github/workflows on the ${side} commit — not judged`);
+    for (const e of tree.entries as { name?: unknown; type?: unknown; object?: { __typename?: string; text?: unknown; isTruncated?: unknown; isBinary?: unknown } | null }[]) {
+      const name = typeof e.name === 'string' ? e.name : '';
+      if (e.type !== 'blob' || !/\.ya?ml$/i.test(name)) continue;
+      const o = e.object;
+      if (!o || o.__typename !== 'Blob' || o.isTruncated !== false || o.isBinary === true || typeof o.text !== 'string') return refuse(`could not read workflow ${name.slice(0, 80)} on the ${side} commit`);
+      if (PR_TRIGGER_RE.test(o.text)) return refuse(`workflow ${name.slice(0, 80)} on the ${side} commit runs on pull requests — CI has not reported yet`);
+    }
+  }
+  const commit = repo.commit as { checkSuites?: { totalCount?: unknown; nodes?: unknown }; status?: { contexts?: unknown } | null } | null | undefined;
+  const suites = commit?.checkSuites;
+  if (!commit || !suites || typeof suites.totalCount !== 'number' || !Array.isArray(suites.nodes)) return refuse('could not read the base commit checks');
+  if (suites.totalCount > suites.nodes.length) return refuse('the base commit has more than 100 check suites — not judged');
+  const external = (suites.nodes as { app?: { slug?: unknown } | null; checkRuns?: { totalCount?: unknown } | null }[])
+    .find((s) => s.app?.slug !== 'github-actions' && (typeof s.checkRuns?.totalCount !== 'number' || s.checkRuns.totalCount > 0));
+  if (external) return refuse(`the base commit has checks from ${String(external.app?.slug ?? 'an unknown app').slice(0, 40)} — an external CI may not have reported yet`);
+  if (commit.status && (!Array.isArray(commit.status.contexts) || commit.status.contexts.length)) return refuse('the base commit has commit statuses — an external CI may not have reported yet');
+  return null;
+}
+
+/** `GET repos/{r}/activity?ref=` 에서 그 head 로 밀린 시각(GitHub 이 받은 push 시각). 없으면 null. */
+export function pushedAtOf(stdout: string, headSha: string): number | null {
+  try {
+    const items = JSON.parse(stdout) as { after?: unknown; timestamp?: unknown }[];
+    if (!Array.isArray(items)) return null;
+    const hit = items.find((i) => i.after === headSha && typeof i.timestamp === 'string');
+    const t = hit ? Date.parse(hit.timestamp as string) : NaN;
+    return Number.isFinite(t) ? t : null;
+  } catch { return null; }
+}
+
 export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
   const exec = deps.exec ?? defaultExec;
+  const now = deps.now ?? Date.now;
+  /**
+   * PR CI 없음 판정의 유예 기준을 GitHub 에서 못 읽을 때(포크 PR·activity 에 없음) 이 오퍼레이터가 그 (PR, head) 를 처음 본 시각.
+   * 메모리뿐이라 재기동하면 다시 처음부터 잰다 — 늦추기만 하고 앞당기지 않는다.
+   */
+  const firstSeen = new Map<string, number>();
 
   /**
    * 머지에 쓸 gh 토큰. **`merge.ghUser` 가 없으면 머지하지 않는다**(security P1, fail-closed). 활성 계정으로 넘어가면
@@ -426,8 +504,17 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
      * `ignored` 로 싣는다. 필수 조회가 안 되면 원래 거절 그대로다(fail-closed).
      */
     type Verdict = { why: { code: string; message: string } | null; ignored: string[]; failing: string[] };
+    /** 체크 0개를 「PR CI 없음」으로 읽어 통과시켰나 — 결과 JSON·서버 보고(감사)에 남긴다. 마지막 판정의 값이다. */
+    let noPrChecks = false;
     const judge = async (pr: PrView, env: Record<string, string>, relaxChecks: boolean): Promise<Verdict> => {
       const why = refusalOf(pr, headSha, relaxChecks);
+      noPrChecks = false;
+      // CLEAN 인데 체크가 하나도 없다 — 저장소가 PR CI 를 정의하지 않았다고 읽히면 통과(C안). 1회 승인의 CI 무시 길은 여기 오지 않는다.
+      if (why?.code === 'ci_not_green' && !relaxChecks && pr.mergeStateStatus === 'CLEAN' && !(pr.statusCheckRollup ?? []).length) {
+        const v = await noPrCi(env);
+        noPrChecks = !v;
+        return { why: v, ignored: [], failing: [] };
+      }
       // CI 를 건너뛰는 승인으로 지나가면 건너뛴 체크(지금 다시 읽은 초록 아닌 이름)를 남긴다.
       if (!why) return { why, ignored: relaxChecks ? notGreenChecks(pr) : [], failing: [] };
       if (why.code !== 'not_mergeable' || pr.mergeStateStatus !== 'UNSTABLE') return { why, ignored: [], failing: why.code === 'ci_not_green' ? notGreenChecks(pr) : [] };
@@ -437,6 +524,36 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       if (!rc) return { why: { code: why.code, message: `${why.message} — could not read which checks are required` }, ignored: [], failing: notGreenChecks(pr) };
       const v = unstableVerdict(rc, headSha);
       return 'code' in v ? { why: v, ignored: [], failing: notGreen(checksByName(rc.checks)) } : { why: null, ignored: v.ignored, failing: [] };
+    };
+    /**
+     * PR CI 없음 판정(C안). null 이면 통과. ① PR 의 base·head oid ② 두 커밋의 workflow·base 커밋의 외부 CI ③ head 가 밀린 지
+     * {@link NO_PR_CI_GRACE_MS} 이 지났나 — 지나지 않았으면 `ci_pending`(카드 없음, 잠시 뒤 같은 명령을 다시 부른다).
+     */
+    const noPrCi = async (env: Record<string, string>): Promise<{ code: string; message: string } | null> => {
+      const [owner, name] = repo.split('/') as [string, string];
+      const cant = { code: 'ci_not_green', message: 'no checks reported — could not read whether this repository runs CI on pull requests' };
+      const p = await gh(['api', 'graphql', '-f', `query=${NO_PR_CI_PR_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`], env);
+      const info = p.code === 0 ? parseNoPrCiPr(p.stdout) : null;
+      if (!info) return cant;
+      if (info.headRefOid !== headSha) return { code: 'head_moved', message: `PR head is ${info.headRefOid}, not ${headSha}` };
+      const r = await gh(['api', 'graphql', '-f', `query=${NO_PR_CI_REPO_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`,
+        '-f', `baseExpr=${info.baseRefOid}:.github/workflows`, '-f', `headExpr=${headSha}:.github/workflows`, '-f', `base=${info.baseRefOid}`], env);
+      if (r.code !== 0) return cant;
+      const v = prCiVerdict(r.stdout);
+      if (v) return v;
+      let pushedAt: number | null = null;
+      if (!info.isCrossRepository) {
+        const a = await gh(['api', '-X', 'GET', `repos/${repo}/activity`, '-f', `ref=${info.headRefName}`, '-F', 'per_page=100'], env);
+        pushedAt = a.code === 0 ? pushedAtOf(a.stdout, headSha) : null;
+      }
+      const key = `${repo}#${number}@${headSha}`;
+      if (pushedAt === null) {
+        if (!firstSeen.has(key)) firstSeen.set(key, now());
+        pushedAt = firstSeen.get(key)!;
+      }
+      const wait = pushedAt + NO_PR_CI_GRACE_MS - now();
+      if (wait > 0) return { code: 'ci_pending', message: `no checks reported yet and this repository defines no CI for pull requests — waiting ${Math.ceil(wait / 1000)}s more in case checks start; call the same command again after that` };
+      return null;
     };
     /** CI 때문에 막혔나(스레드 1fccc9a5 D1) — 서버가 이 거절로 「CI 실패 무시하고 이번 한 번 머지」 카드를 세운다. BLOCKED 는 아니다. */
     const ciRefusalOf = (v: Verdict, pr: PrView) => (v.why && (v.why.code === 'ci_not_green' || (v.why.code === 'not_mergeable' && pr.mergeStateStatus === 'UNSTABLE'))
@@ -528,7 +645,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     // 머지에 실제로 쓴 gh 이름(security n6) — 결과 보고에 싣는다. 승인에 계정이 비었으면(G1) 서버는 이 값으로만 안다. 이름뿐이다.
     let usedLogin: string | null = null;
     const report = async (result: 'merged' | 'queued' | 'failed', mergeSha: string | null, error: string | null,
-      extra: { ciRefusal?: ReturnType<typeof ciRefusalOf>; ignoredChecks?: string[] } = {}): Promise<{ denialId?: string }> => {
+      extra: { ciRefusal?: ReturnType<typeof ciRefusalOf>; ignoredChecks?: string[]; noPrChecks?: boolean } = {}): Promise<{ denialId?: string }> => {
       const res = await deps.forward(agentId, {
         type: 'http.forward', id: randomUUID(), method: 'POST', path: '/agent/merge-results',
         body: JSON.stringify({
@@ -536,6 +653,7 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
           ...(usedLogin ? { ghUserUsed: usedLogin } : {}),
           ...(extra.ciRefusal ? { ciRefusal: extra.ciRefusal } : {}),
           ...(extra.ignoredChecks?.length ? { ignoredChecks: extra.ignoredChecks.slice(0, 20).map((n) => n.slice(0, 80)) } : {}),
+          ...(extra.noPrChecks ? { noPrChecks: true } : {}),
         }), contentType: 'application/json',
       }).catch(() => null);
       if (!res || res.type !== 'http.response' || res.status !== 201) {
@@ -591,7 +709,8 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       const { denialId } = await report('failed', null, `${v.why.code}: ${v.why.message}`, { ciRefusal });
       const prInfo = { pr: { state: pr.state, headRefOid: pr.headRefOid, mergeStateStatus: pr.mergeStateStatus } };
       // CI 거절에 카드용 id 가 오면 넘긴다 — 에이전트가 `message.ask` 의 `mergeDenialId` 로 「CI 실패 무시하고 이번 한 번 머지」 카드를 세운다.
-      if (denialId) {
+      // CI 거절로 보고한 것에만 카드를 건넨다 — `ci_pending`(유예 중)처럼 카드를 세울 일이 아닌 거절에 id 가 와도 쓰지 않는다.
+      if (denialId && ciRefusal) {
         return { ok: false, value: { error: { code: v.why.code, message: `${v.why.message} — the owner can approve this one merge ignoring CI: post message.ask with mergeDenialId`, denialId }, ...prInfo } };
       }
       return fail(v.why.code, v.why.message, prInfo);
@@ -634,9 +753,9 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       let mergeSha: string | null = null;
       const after = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'mergeCommit'], menv);
       try { const oid = (JSON.parse(after.stdout) as PrView).mergeCommit?.oid; if (oid && SHA_RE.test(oid)) mergeSha = oid; } catch { /* 없어도 된다 */ }
-      await report('merged', mergeSha, null, { ignoredChecks: ignored });
+      await report('merged', mergeSha, null, { ignoredChecks: ignored, noPrChecks });
       deps.log(`merge: ${repo}#${number} 머지됨 ${mergeSha ?? '(sha 모름)'} agent=${agentId}${viaApproval ? ' (1회 승인)' : ''}${ignored.length ? ` 비필수 체크 무시: ${namesOf(ignored)}` : ''}`);
-      return { ok: true, value: { merged: true, queued: false, repo, number, headSha, mergeSha, grantedBy: granted.grantedBy ?? null, viaApproval, ghUser: t.login, ...ignoredOf(ignored), note: 'reported to the thread as a system line' } };
+      return { ok: true, value: { merged: true, queued: false, repo, number, headSha, mergeSha, grantedBy: granted.grantedBy ?? null, viaApproval, ghUser: t.login, ...ignoredOf(ignored), ...(noPrChecks ? { noPrChecks: true } : {}), note: noPrChecks ? 'merged with no checks: this repository defines no CI for pull requests — reported to the thread as a system line' : 'reported to the thread as a system line' } };
     }
 
     /** ⑤′ merge queue — 큐에 넣고 끝낸다. 큐가 머지할 때까지 기다리지 않는다(요구 4). */
@@ -664,12 +783,12 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
         if (isRepoAccessError(err)) return fail('no_repo_access', noRepoAccess(t.login) + used);
         return fail('enqueue_failed', `enqueuePullRequest failed: ${err}${used}`);
       }
-      await report('queued', null, null, { ignoredChecks: ignored });
+      await report('queued', null, null, { ignoredChecks: ignored, noPrChecks });
       deps.log(`merge: ${repo}#${number} 머지 큐에 넣음 위치=${entry?.position ?? '?'} agent=${agentId}${viaApproval ? ' (1회 승인)' : ''}${ignored.length ? ` 비필수 체크 무시: ${namesOf(ignored)}` : ''}`);
       return {
         ok: true, value: {
           merged: false, queued: true, alreadyQueued: false, repo, number, headSha, queue: entry,
-          grantedBy: granted.grantedBy ?? null, viaApproval, ghUser: t.login, ...ignoredOf(ignored),
+          grantedBy: granted.grantedBy ?? null, viaApproval, ghUser: t.login, ...ignoredOf(ignored), ...(noPrChecks ? { noPrChecks: true } : {}),
           note: 'added to the merge queue and reported to the thread as a system line — the queue merges it later. Call the same command again to check: already_queued while it waits, not_open with pr.state MERGED once merged.',
         },
       };

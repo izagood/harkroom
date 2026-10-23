@@ -406,6 +406,8 @@ export type MergeReport = {
   ciRefusal?: { code: string; mergeState?: string | null; checks?: unknown } | null;
   /** `merged`·`queued` 일 때 래퍼가 머지 직전에 다시 읽은 초록 아닌 체크 이름(무시하고 넘어간 것). 시스템 줄·감사에 남긴다. */
   ignoredChecks?: unknown;
+  /** `merged`·`queued` 일 때 래퍼가 체크 0개를 「저장소에 PR CI 가 없다」로 읽어 통과시켰다(스레드 50324ba9). 래퍼 보고라 감사·meta 에만 둔다. */
+  noPrChecks?: boolean;
   /**
    * 래퍼가 머지에 실제로 쓴 gh 이름(security n6). 계정을 비운 1회 승인(G1)이면 오퍼레이터가 골랐다 — 서버는 이 보고로만 그 이름을
    * 안다. 래퍼 보고라 감사에 `ghUserUsed` 로만 남기고(본문에는 싣지 않는다) gh 이름 모양이 아니면 버린다.
@@ -453,6 +455,7 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   // 무시한 체크(#1396 n1·CI 무시 승인): 래퍼가 머지 때 다시 읽은 값이다 — 거절 기록을 복사하지 않는다. 승인 때 본 것보다 늘었으면 표시한다.
   const ignored = r.result !== 'failed' ? sanitizeCheckNames(r.ignoredChecks) : [];
   const ciOverride = usedApproval?.ciOverride === true;
+  const noPrChecks = r.result !== 'failed' && r.noPrChecks === true;
   const grewAfterApproval = ciOverride && ignored.some((n) => !usedApproval!.approvedChecks.includes(n));
   const ignoredTail = (ciOverride ? ' · CI 실패 무시 승인' : '')
     + (ignored.length ? ` · 무시: ${checkNamesForBody(ignored)}` : '') + (grewAfterApproval ? ' (승인 뒤 늘어남)' : '');
@@ -485,6 +488,7 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
         ...ghUserUsedDetail,
         ...(ignored.length ? { ignoredChecks: ignored } : {}),
         ...(grewAfterApproval ? { grewAfterApproval: true } : {}),
+        ...(noPrChecks ? { noPrChecks: true } : {}),
         // 위임 사슬로 통과했으면 그 뿌리(소유자 글) — **meta 에만** 둔다(C5). 본문은 위의 고정 문구 그대로다(N2).
         ...(typeof chainRootId === 'string' ? { chainRootId } : {}),
       },
@@ -516,6 +520,7 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
       ...ghUserUsedDetail,
       ...(ignored.length ? { ignoredChecks: ignored } : {}),
       ...(grewAfterApproval ? { grewAfterApproval: true } : {}),
+      ...(noPrChecks ? { noPrChecks: true } : {}),
       ...(ciChecks ? { ciRefusal: { code: r.ciRefusal!.code, mergeState: r.ciRefusal!.mergeState ?? null, checks: ciChecks }, denialId } : {}),
     },
   });
