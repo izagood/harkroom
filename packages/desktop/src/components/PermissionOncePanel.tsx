@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { MessageRow } from '@harkroom/shared';
+import { compareRelease, type MessageRow } from '@harkroom/shared';
 import type { OperatorMergeState } from '@harkroom/shared/daemonProtocol';
+import type { MergeAccountsView } from '@harkroom/shared/operatorProtocol';
 import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
 import { useActiveStore } from '../state/communities';
@@ -18,6 +19,8 @@ import { errorText } from '../lib/errorText';
  * - 계정은 비워 두는 것이 기본이다(G1) — 에이전트가 도는 오퍼레이터가 그 저장소용 계정을 고른다. 기기와 상관없이 승인할 수 있다.
  *   에이전트가 이 기기에서 돌고 계정 목록이 있을 때만 계정을 골라 고정할 수 있다(선택).
  * - 닿지 않는(✕) 계정은 고를 수 없다(사전 확인에서 반드시 막힌다). 「확인 못 함」은 고를 수 있고 한 줄 경고를 붙인다.
+ * - [계정 바꾸기](D4): 에이전트가 이 기기에서 돌지 않으면 서버의 계정 보고(`GET /agents/:id/merge-accounts`, D1)에서 고른다.
+ *   로그인 이름은 그 기기 주인에게만 온다 — 없으면 버튼을 끄고 까닭 한 줄. 서버가 그 라우트보다 옛것이면 버튼을 그리지 않는다.
  * - 고른 계정은 저장하지 않는다(`byScope` 는 7일 grant 줄의 것) — 이 PR 한 번만의 선택이다.
  * - 보내는 것은 계정·CI 완화뿐이고 저장소·PR·head 는 서버가 거절 기록에서 가져온다.
  */
@@ -71,6 +74,22 @@ export function readPermissionOnce(meta: Record<string, unknown>): PermissionOnc
   };
 }
 
+/** 머지 계정 보고 라우트가 들어간 서버 릴리스(#1472). 이보다 낮으면 [계정 바꾸기]를 그리지 않는다. */
+export const MERGE_ACCOUNTS_SINCE = '0.4.170';
+
+/** 서버 보고의 닿음 가운데 이 저장소에 맞는 줄(`owner/name`, 없으면 `owner/*`)의 것만 이름별로. */
+export function reachFromReport(report: NonNullable<MergeAccountsView['report']>, repoKey: string): Record<string, 'ok' | 'no' | 'unknown'> {
+  const wild = `${repoKey.split('/')[0]}/*`;
+  const out: Record<string, 'ok' | 'no' | 'unknown'> = {};
+  for (const scope of [wild, repoKey]) {
+    for (const r of report.reach ?? []) {
+      if (r.scope !== scope) continue;
+      out[r.login] = r.reachable === true ? 'ok' : r.reachable === false ? 'no' : 'unknown';
+    }
+  }
+  return out;
+}
+
 type Device = 'checking' | 'here' | 'elsewhere' | 'no-surface';
 type Reach = Record<string, 'ok' | 'no' | 'unknown'>;
 
@@ -89,6 +108,10 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code: string; raw: string } | null>(null);
   const [done, setDone] = useState<PermissionOnceMeta['approvedOnce']>(null);
+  const [remote, setRemote] = useState<MergeAccountsView | 'loading' | 'error' | null>(null);
+  const [remoteOpen, setRemoteOpen] = useState(false);
+  const serverVersion = useActiveStore((s) => s.serverVersion?.version ?? null);
+  const remoteSupported = serverVersion !== null && (compareRelease(serverVersion, MERGE_ACCOUNTS_SINCE) ?? -1) >= 0;
   const isOwner = !!d && !!me && d.ownerAccountId === me.id && me.kind === 'human';
   const repoKey = d?.repo.toLowerCase() ?? '';
 
@@ -122,6 +145,20 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
     return () => { alive = false; };
   }, [open, d?.agentId, repoKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 이 기기에서 돌지 않으면(또는 로컬 창구가 없으면) 서버 보고에서 고른다 — 펼쳤을 때만 묻는다.
+  const remoteEligible = open && remoteSupported && (device === 'elsewhere' || device === 'no-surface');
+  useEffect(() => {
+    if (!remoteEligible || !d) return;
+    let alive = true;
+    setRemote('loading');
+    getController().getMergeAccounts(d.agentId).then((r) => {
+      if (!alive) return;
+      setRemote(r);
+      if (r.report) setReach(reachFromReport(r.report, repoKey));
+    }, () => { if (alive) setRemote('error'); });
+    return () => { alive = false; };
+  }, [remoteEligible, d?.agentId, repoKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!d) return null;
   const ci = d.reason === 'ci_not_green';
   const owner = d.ownerAccountId ? accounts[d.ownerAccountId]?.handle ?? '?' : '?';
@@ -149,6 +186,12 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
   const list = merge && merge !== 'error' ? merge.accounts ?? [] : [];
   const rank = (login: string) => ({ ok: 0, unknown: 1, no: 2 } as const)[reach[login] ?? 'unknown'];
   const sorted = [...list].sort((a, b) => rank(a.login) - rank(b.login));
+  const remoteLogins = remote && remote !== 'loading' && remote !== 'error' ? remote.report?.logins ?? null : null;
+  const remoteSorted = [...(remoteLogins ?? [])].sort((a, b) => rank(a) - rank(b));
+  const remoteBlocked = remote === null || remote === 'loading' ? 'mergeOnce.changeLoading'
+    : remote === 'error' ? 'mergeOnce.changeFailed'
+    : !remote.report ? 'mergeOnce.changeNoReport'
+    : !remote.report.logins ? 'mergeOnce.changeNotOwner' : null;
   const mark = (login: string) => (reach[login] === 'ok' ? ' ✓' : reach[login] === 'no' ? ' ✕' : '');
 
   return (
@@ -233,6 +276,28 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
                   </label>
                   )}
                   {device === 'here' && !ghUser && list.length > 0 && <p className="text-fg-subtle" data-testid="merge-once-operator-picks">{t('mergeOnce.operatorPicks')}</p>}
+                  {remoteEligible && !remoteOpen && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" data-testid="merge-once-change-account" disabled={busy || remoteBlocked !== null}
+                        onClick={() => setRemoteOpen(true)} className="text-accent underline disabled:text-fg-subtle disabled:no-underline">
+                        {t('mergeOnce.changeAccount')}
+                      </button>
+                      {remoteBlocked && <span className="text-fg-subtle" data-testid="merge-once-change-reason" data-reason={remoteBlocked}>{t(remoteBlocked)}</span>}
+                    </div>
+                  )}
+                  {remoteEligible && remoteOpen && remoteLogins && (
+                    <label className="flex flex-wrap items-center gap-2">
+                      <span className="text-fg-muted">{t('mergeOnce.remoteAccount')}</span>
+                      <select data-testid="merge-once-remote-account" value={ghUser} disabled={busy}
+                        onChange={(e) => setGhUser(e.target.value)}
+                        className="rounded-row border border-border bg-surface-sunken px-1.5 py-0.5 font-mono text-meta text-fg">
+                        <option value="">{t('mergeOnce.pick')}</option>
+                        {remoteSorted.map((login) => (
+                          <option key={login} value={login} disabled={reach[login] === 'no'}>{login + mark(login)}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   {device === 'here' && merge === 'error' && <p role="alert" className="text-danger">{t('mergeOnce.accountsFailed')}</p>}
                   {ghUser && reach[ghUser] !== 'ok' && (
                     <p className="text-warning" data-testid="merge-once-unknown">{t('mergeOnce.reachUnknown', { login: ghUser })}</p>

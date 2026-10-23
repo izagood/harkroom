@@ -323,6 +323,15 @@ export interface GhReport {
   reach: { scope: string; login: string; reachable: GhReach }[];
 }
 
+/**
+ * `GET /agents/:id/merge-accounts`(D1) 의 답. 그 에이전트 소유자만 받는다. `logins`·`defaultGhUser` 는 **그 오퍼레이터(머신)의
+ * 주인**에게만 실린다 — 없으면 보는 사람이 그 기기 주인이 아니다. 배정·보고가 없으면 `report: null`.
+ */
+export interface MergeAccountsView {
+  operatorId: string | null;
+  report: (Omit<GhReport, 'logins' | 'defaultGhUser'> & { logins?: string[]; defaultGhUser?: string | null; reportedAt: string }) | null;
+}
+
 const GH_REPORT_LOGIN = /^[A-Za-z0-9-]{1,39}$/;
 const GH_REPORT_SCOPE = /^[a-z0-9][a-z0-9._-]{0,99}\/(?:\*|[a-z0-9._-]{1,100})$/;
 const GH_REPORT_MAX = 64;
