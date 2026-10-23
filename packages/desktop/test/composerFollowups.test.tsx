@@ -99,7 +99,9 @@ describe('f5 좁은 칸 도구줄', () => {
   it('도구줄은 넘치면 다음 줄로 넘긴다 — 가로로 밀어 잘라 두지 않는다', () => {
     render(<Composer onSend={vi.fn()} />);
     const bar = screen.getByTestId('composer-toolbar');
-    expect(bar.className).toContain('flex-wrap');
-    expect(bar.className).not.toContain('overflow-x-auto');
+    expect(bar.querySelector('.flex-wrap')).not.toBeNull();
+    expect(bar.innerHTML).not.toContain('overflow-x-auto');
+    // 묶음 사이 세로줄은 따로 떠 있는 요소가 아니라 묶음 왼쪽에 붙어 있어, 줄 첫머리에서는 잘린다(#1491 designer 2).
+    expect(bar.querySelectorAll('span[aria-hidden="true"]')).toHaveLength(0);
   });
 });

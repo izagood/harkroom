@@ -508,11 +508,12 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
                 onChange={(e) => setAlsoInChannel(e.target.checked)}
                 className="shrink-0 rounded-row border-border accent-[var(--app-accent)] dark:[color-scheme:dark]"
               />
+              {/* 채널 이름만 말줄임한다 — 「에도 올리기」/「Also post to」가 잘리면 무엇을 켜는 체크인지 사라진다(#1491 designer 1). */}
               {alsoPost ? (
-                <span className="min-w-0 truncate">
-                  {alsoPost.parts[0]}
-                  <strong className="font-semibold text-fg">{alsoPost.target}</strong>
-                  {alsoPost.parts[1]}
+                <span className="flex min-w-0">
+                  {alsoPost.parts[0] ? <span className="shrink-0 whitespace-pre">{alsoPost.parts[0]}</span> : null}
+                  <strong className="min-w-0 truncate font-semibold text-fg">{alsoPost.target}</strong>
+                  {alsoPost.parts[1] ? <span className="shrink-0 whitespace-pre">{alsoPost.parts[1]}</span> : null}
                 </span>
               ) : (
                 <span className="min-w-0 truncate">{t('thread.alsoPostFallback')}</span>

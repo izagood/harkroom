@@ -201,7 +201,11 @@ describe('#231 스레드 답을 채널에도 함께 올린다', () => {
     const check = screen.getByLabelText(ALSO_POST);
     const label = check.closest('label')!;
     expect(label.getAttribute('title')).toBe(ALSO_POST);
-    expect(label.querySelector('span')!.className).toContain('truncate');
+    // 이름만 말줄임하고 나머지 문구는 늘 남긴다(#1491 designer 1).
+    expect(label.querySelector('strong')!.className).toContain('truncate');
+    const rest = [...label.querySelectorAll('span span')];
+    expect(rest.length).toBeGreaterThan(0);
+    for (const r of rest) expect(r.className).toContain('shrink-0');
     expect(check.className).toContain('accent-[var(--app-accent)]');
     expect(check.className).toContain('dark:[color-scheme:dark]');
   });

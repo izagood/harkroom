@@ -53,13 +53,17 @@ export function ComposerToolbar({ onFormat, active }: { onFormat: (kind: FormatK
       role="toolbar"
       aria-label={t('composer.fmt.toolbar')}
       data-testid="composer-toolbar"
-      // 스레드 칸처럼 좁으면 가로로 밀린다(시안 — 스크롤바 없이). 동작줄은 그대로 둔다.
       // 좁은 칸(스레드 패널)에서는 묶음째 다음 줄로 넘긴다 — 가로로 밀어 두면 오른쪽 단추가 잘려 보이고, 밀 수 있다는 표시도 없다.
-      className="flex flex-wrap items-center gap-x-0.5 gap-y-0.5 border-b border-border px-2 py-1"
+      className="border-b border-border px-2 py-1"
     >
+      {/*
+        묶음 사이 세로줄은 **각 묶음 왼쪽**에 붙인다(`before:`). 줄을 이은 줄 맨 앞에 홀로 남지 않게(#1491 designer 2), 줄 전체를
+        세로줄 자리만큼 왼쪽으로 당기고(`-ml-[9px]`) 그 바깥을 자른다(`overflow-hidden`) — 어느 줄이든 첫 묶음의 세로줄은 잘린다.
+      */}
+      <div className="overflow-hidden">
+        <div className="-ml-[9px] flex flex-wrap items-center gap-y-0.5">
       {GROUPS.map((group, gi) => (
-        <div key={gi} className="flex shrink-0 items-center gap-0.5">
-          {gi > 0 && <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />}
+        <div key={gi} className="relative flex shrink-0 items-center gap-0.5 pl-[9px] before:absolute before:left-1 before:top-1/2 before:h-4 before:w-px before:-translate-y-1/2 before:bg-border">
           {group.map((b) => {
             const name = t(b.label);
             return (
@@ -83,6 +87,8 @@ export function ComposerToolbar({ onFormat, active }: { onFormat: (kind: FormatK
           })}
         </div>
       ))}
+        </div>
+      </div>
     </div>
   );
 }
