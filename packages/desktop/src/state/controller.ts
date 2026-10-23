@@ -2200,9 +2200,11 @@ export class Controller {
       const abort = new AbortController();
       this.saveAborts.set(attachment.id, abort);
       let written = -1;
+      let lastTotal: number | null = null;
       const onProgress = (loaded: number, total: number | null) => {
         // %가 바뀔 때만(전체를 모르면 일정 바이트마다) 적는다 — 조각마다 적으면 큰 파일에서 수천 번 다시 그린다.
         const step = total ? Math.floor((loaded / total) * 100) : Math.floor(loaded / UNKNOWN_TOTAL_STEP);
+        lastTotal = total;
         if (step === written) return;
         written = step;
         mark({ phase: 'fetching', loaded, total });
@@ -2223,6 +2225,8 @@ export class Controller {
       } finally {
         this.saveAborts.delete(attachment.id);
       }
+      // 다 받았다 — 쓰는 동안은 멈출 수 없으므로 [✕]를 감춘다(security #1476 n1).
+      mark({ phase: 'writing', loaded: lastTotal ?? blob.size, total: lastTotal });
       try {
         await saver.write(target, blob);
       } catch {
