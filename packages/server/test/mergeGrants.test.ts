@@ -817,9 +817,9 @@ describe('repo.merge grant', () => {
       expect((await pool.query(`select pr_number, failed_checks from merge_denial where id = $1`, [a.denialId])).rows[0]).toEqual({ pr_number: 35, failed_checks: ['lint'] });
     });
 
-    it('CI 거절 카드는 선택지가 [거절] 하나 · 본문은 「CI 실패 무시하고 이번 한 번 머지」와 거른 체크 이름(멘션 글자는 바꿔서)', () => {
-      expect(permissionCardOptions('merge', true).map((o) => o.id)).toEqual(['deny']);
-      expect(permissionCardOptions('merge').map((o) => o.id)).toEqual(['approve', 'deny']);
+    it('CI 거절 카드는 선택지가 [이번 한 번]·[거절](7일 없음) · 본문은 「CI 실패 무시하고 이번 한 번 머지」와 거른 체크 이름(멘션 글자는 바꿔서)', () => {
+      expect(permissionCardOptions('merge', { ciOnce: true, once: true }).map((o) => o.id)).toEqual(['approve_once', 'deny']);
+      expect(permissionCardOptions('merge', { mandate: true }).map((o) => o.id)).toEqual(['approve_mandate', 'deny']);
       const body = permissionCardBody({
         requestId: 'r', agentId, ownerAccountId: alice.accountId, kind: 'merge', target: 'izagood/ci-x', channelId: null, warnings: [], reason: 'fix ci',
         once: { number: 9, headSha: SHA3, reason: 'ci_not_green', failedChecks: ['test', '@channel <@x>'] }, requestedAt: '', expiresAt: '',
