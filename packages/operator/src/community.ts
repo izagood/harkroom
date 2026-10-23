@@ -11,7 +11,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
-import type { OperatorCapabilities, OperatorStatus, RunnerExitReason } from '@harkroom/shared';
+import type { ChromeHostState, OperatorCapabilities, OperatorStatus, RunnerExitReason } from '@harkroom/shared';
 import type { AgentDefinition, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import type { Forwarder } from './forward.js';
@@ -53,6 +53,8 @@ export interface CommunityDeps {
   fetchImpl?: typeof fetch;
   /** 이 머신의 하네스 능력(`harnesses.ts`). hello 마다 읽는다 — 없으면 빈 표(옛 오퍼레이터와 같다). */
   harnesses?: () => OperatorCapabilities['harnesses'];
+  /** 이 머신의 Claude in Chrome 상태(`chromeHost.ts`). 없으면 능력에 싣지 않는다(옛 오퍼레이터와 같다). */
+  chrome?: () => ChromeHostState;
   /**
    * `/operators/self` 가 알려 준 **이 머신의 오퍼레이터 id**. 붙을 때마다 부른다 — 앱이
    * 자기 기기를 고르려면 이 값이 로컬 설정에 있어야 하고, CLI 로 등록한 옛 설정에는 없다.
@@ -119,7 +121,10 @@ export interface CommunityInstance {
 export function createCommunity(deps: CommunityDeps): CommunityInstance {
   const assignments = new Map<string, AgentDefinition>();
   let agents = deps.agents;
-  const capabilities = (): OperatorCapabilities => ({ agentIds: Object.keys(agents), harnesses: deps.harnesses?.() ?? {} });
+  const capabilities = (): OperatorCapabilities => ({
+    agentIds: Object.keys(agents), harnesses: deps.harnesses?.() ?? {},
+    ...(deps.chrome ? { chrome: deps.chrome() } : {}),
+  });
   const noLink = { send: () => false, isLinked: () => false };
   // 링크가 서버 링크를 필요로 하고 서버 링크의 훅이 다중화기를 필요로 한다 — 늦게 묶는다.
   const linkRef: { current: ServerLink | null } = { current: null };

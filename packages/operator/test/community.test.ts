@@ -3,6 +3,7 @@
 // 와 같은 패턴): 커뮤니티마다 링크·배정·로컬 설정을 따로 든 객체 하나.
 import { describe, it, expect } from 'vitest';
 import type { ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
+import type { ChromeHostState } from '@harkroom/shared';
 import { createCommunity } from '../src/community.js';
 import type { AssignmentReconciler } from '../src/assignments.js';
 import type { LinkDialer } from '../src/serverLink.js';
@@ -34,6 +35,23 @@ describe('community', () => {
     expect(hello.type).toBe('hello');
     expect(hello.capabilities.agentIds.sort()).toEqual(['a-1', 'a-2']);
     expect(hello.runners).toEqual([{ agentId: 'a-1', runnerId: 'r-1', pid: 7 }]);
+  });
+
+  it('hello 에 Claude in Chrome 머신 값을 싣는다 — 배선이 없으면(옛 오퍼레이터) 칸이 없다', () => {
+    const helloWith = (chrome?: () => ChromeHostState) => {
+      const sent: string[] = [];
+      const dial: LinkDialer = (_u, _t, h) => { h.onOpen({ send: (d) => sent.push(d), close: () => {} }); };
+      const c = createCommunity({
+        baseUrl: 'https://example.com', token: 'hkop_x', agents: {},
+        reconciler: fakeReconciler().reconciler, dial, schedule: () => {}, log: () => {},
+        ...(chrome ? { chrome } : {}),
+      });
+      c.start();
+      return JSON.parse(sent[0]!).capabilities;
+    };
+    expect(helloWith(() => 'available').chrome).toBe('available');
+    expect(helloWith(() => 'remote').chrome).toBe('remote');
+    expect('chrome' in helloWith()).toBe(false);
   });
 
   it('hello 에 자기 버전을 싣는다 — 모르면(null·빈 값) 싣지 않는다', () => {

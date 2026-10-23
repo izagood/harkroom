@@ -303,7 +303,7 @@ export function Switch({ checked, disabled, onChange, ariaLabel, testId, classNa
       className={`${className} h-5 w-9 shrink-0 cursor-pointer appearance-none rounded-full bg-fg-subtle
                  transition before:block before:h-4 before:w-4 before:translate-x-0.5
                  before:translate-y-0.5 before:rounded-full before:bg-white before:transition
-                 checked:bg-accent checked:before:translate-x-4 disabled:cursor-default`}
+                 checked:bg-accent checked:before:translate-x-4 disabled:cursor-default disabled:opacity-50`}
     />
   );
 }
