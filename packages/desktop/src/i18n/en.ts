@@ -5639,6 +5639,7 @@ export const en = {
   'pwreset.issue.meta': 'Expires at {time} · one-time',
   'pwreset.issue.onlyNow': 'You can only see this code now — closing this window hides it for good. Give it to {name} directly; don’t post it in a public channel.',
   'pwreset.issue.onlyNowWithLogin': 'You can only see this code now — closing this window hides it for good. Give {name} the login ID and the code together, directly — the login ID can differ from their @handle. Don’t post it in a public channel.',
+  'members.loginId': 'Login ID',
   'pwreset.issue.loginIdLabel': 'Login ID',
   'pwreset.issue.effect': 'When {name} uses the code, they are signed out everywhere. Their current password keeps working until then.',
   'pwreset.issue.revoke': 'Revoke code',

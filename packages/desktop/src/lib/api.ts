@@ -892,6 +892,13 @@ export class ApiClient {
    * 발급은 세션 + step-up(`unlockSecrets`) 뒤에만 된다(403 `step_up_required`).
    */
   /** `loginId` 는 이 필드를 더한 서버부터 싣는다(handle 과 다를 수 있다). 옛 서버는 안 실으니 없을 수 있다 — 화면은 그 줄을 안 그린다. */
+  /**
+   * 사람들의 로그인 ID(id → 로그인 ID) — `member.reset_password`(owner·admin)·세션만(서버가 거른다). `/accounts` 에는
+   * 없다. 이 라우트가 없는 옛 서버는 404 다 — 부르는 쪽이 빈 표로 본다.
+   */
+  async loginIds(): Promise<Record<string, string>> {
+    return (await this.req<{ loginIds: Record<string, string> }>('GET', '/accounts/login-ids')).loginIds ?? {};
+  }
   issuePasswordResetCode(accountId: string): Promise<{ code: string; expiresAt: string; loginId?: string }> {
     return this.req('POST', `/accounts/${encodeURIComponent(accountId)}/password-reset-code`);
   }

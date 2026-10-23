@@ -228,6 +228,65 @@ describe('사용', () => {
   });
 });
 
+describe('로그인 ID 목록(멤버와 초대, 관리자만)', () => {
+  const loginIds = (token: string) => app.inject({ method: 'GET', url: '/accounts/login-ids', headers: auth(token) });
+
+  it('owner·admin 은 사람들의 로그인 ID 를 받는다 — handle 과 다른 값도 그대로', async () => {
+    const invite = await app.inject({ method: 'POST', url: '/invites', headers: auth(owner.token) });
+    const reg = await app.inject({
+      method: 'POST', url: '/auth/register',
+      payload: { inviteToken: invite.json().token, handle: 'listed', loginId: 'listed-login-9', displayName: 'Listed', password: 'pw123456' },
+    });
+    const id = reg.json().id as string;
+    const res = await loginIds(owner.token);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.json().loginIds[id]).toBe('listed-login-9');
+
+    const adm = await createMember(app, owner.token, 'lister-adm');
+    await app.inject({ method: 'PUT', url: `/accounts/${adm.accountId}/role`, headers: auth(owner.token), payload: { role: 'admin' } });
+    expect((await loginIds(adm.token)).json().loginIds[id]).toBe('listed-login-9');
+  });
+
+  it('보이는 대상은 발급 대상과 같다 — admin 에게 owner·다른 admin·자기 자신은 없고, owner 에게는 admin 이 있다(security F1)', async () => {
+    const a1 = await createMember(app, owner.token, 'scope-adm-1');
+    const a2 = await createMember(app, owner.token, 'scope-adm-2');
+    for (const id of [a1.accountId, a2.accountId]) {
+      await app.inject({ method: 'PUT', url: `/accounts/${id}/role`, headers: auth(owner.token), payload: { role: 'admin' } });
+    }
+    const m = await createMember(app, owner.token, 'scope-mem');
+    const asAdmin = (await loginIds(a1.token)).json().loginIds as Record<string, string>;
+    expect(asAdmin[owner.accountId]).toBeUndefined();
+    expect(asAdmin[a2.accountId]).toBeUndefined();
+    expect(asAdmin[a1.accountId]).toBeUndefined();
+    expect(asAdmin[m.accountId]).toBe('scope-mem');
+    const asOwner = (await loginIds(owner.token)).json().loginIds as Record<string, string>;
+    expect(asOwner[a2.accountId]).toBe('scope-adm-2');
+    expect(asOwner[owner.accountId]).toBeUndefined();
+  });
+
+  it('읽은 사실은 값 없이 건수만, 사람마다 하루 한 줄 감사에 남는다', async () => {
+    const a = await createMember(app, owner.token, 'audit-reader');
+    await app.inject({ method: 'PUT', url: `/accounts/${a.accountId}/role`, headers: auth(owner.token), payload: { role: 'admin' } });
+    await loginIds(a.token);
+    await loginIds(a.token);
+    const rows = await pool.query(`select detail from audit_log where action = 'accounts.login_ids.read' and actor_id = $1`, [a.accountId]);
+    expect(rows.rowCount).toBe(1);
+    expect(typeof rows.rows[0].detail.count).toBe('number');
+    expect(JSON.stringify(rows.rows[0].detail)).not.toMatch(/scope-|listed-login/);
+  });
+
+  it('member 는 못 받고(403), 모두가 받는 /accounts 에는 로그인 ID 가 실리지 않는다', async () => {
+    const m = await createMember(app, owner.token, 'plain-lister');
+    expect((await loginIds(m.token)).statusCode).toBe(403);
+    const dir = await app.inject({ method: 'GET', url: '/accounts', headers: auth(m.token) });
+    expect(dir.statusCode).toBe(200);
+    expect(dir.body).not.toMatch(/login_?id/i);
+    // 관리자가 받아도 /accounts 자체에는 없다 — 거르는 자리는 이 라우트 하나다.
+    expect((await app.inject({ method: 'GET', url: '/accounts', headers: auth(owner.token) })).body).not.toMatch(/login_?id/i);
+  });
+});
+
 describe('본인 알림(R7)', () => {
   it('발급되면 대상에게 알림이 서고, 확인하면 내려간다 — 남의 알림은 못 내린다', async () => {
     const m = await createMember(app, owner.token, 'notice1');

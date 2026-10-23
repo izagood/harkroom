@@ -82,6 +82,8 @@ export type AuditAction =
   | 'password.changed'
   // 비밀번호 재설정 코드(130) — 관리자 발급·거둠, 본인 사용·실패. 코드는 싣지 않는다.
   | 'password_reset_code.issued' | 'password_reset_code.revoked' | 'password_reset_code.used' | 'password_reset_code.failed'
+  // 관리자가 멤버들의 로그인 ID 목록을 읽었다(#1490) — 값 없이 건수만, 사람마다 하루 한 줄.
+  | 'accounts.login_ids.read'
   // 보관소 잠금 해제(114) — 비밀 보관소 소유자 보기 앞에서 비밀번호를 한 번 더 댄다. ended = 잠그기.
   | 'step_up.succeeded' | 'step_up.failed' | 'step_up.ended'
   | 'channel.created' | 'channel.updated' | 'channel.archived' | 'channel.unarchived' | 'channel.deleted' | 'message.deleted'

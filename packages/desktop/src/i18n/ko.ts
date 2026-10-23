@@ -3426,6 +3426,7 @@ export const ko = {
   'pwreset.issue.meta': '{time}까지 · 1회용',
   'pwreset.issue.onlyNow': '이 코드는 지금만 보인다. 창을 닫으면 다시 볼 수 없다. {name}에게 직접 전해라. 공개 채널에는 올리지 마라.',
   'pwreset.issue.onlyNowWithLogin': '이 코드는 지금만 보인다. 창을 닫으면 다시 볼 수 없다. {name}에게 로그인 ID와 코드를 함께 직접 전해라 — 로그인 ID는 이름(@핸들)과 다를 수 있다. 공개 채널에는 올리지 마라.',
+  'members.loginId': '로그인 ID',
   'pwreset.issue.loginIdLabel': '로그인 ID',
   'pwreset.issue.effect': '{name}이(가) 코드를 쓰면 모든 기기의 로그인이 끊긴다. 지금 비밀번호는 코드를 쓰기 전까지 그대로 살아 있다.',
   'pwreset.issue.revoke': '코드 거두기',
