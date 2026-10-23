@@ -251,22 +251,24 @@ async function checkMergeByChain(
   if (!scope) return deny('bad_repo');
 
   /**
-   * 거절 기록(`merge_denial`)을 남기고 카드용 id 를 준다. L2(security, #1158): ① (에이전트, 저장소, 채널, 스레드)에 안 쓰고 안 만료된
-   * 기록이 있으면 그것을 다시 쓴다 — PR·head·임대·사유만 지금 것으로 바꾼다(카드는 어차피 그 묶음에 한 장이다). ② 새로 만드는 것은
-   * 에이전트마다 24시간에 `MERGE_DENIAL_DAILY_CAP` 개까지 — 넘으면 거절은 그대로 하되 카드용 id 는 주지 않는다.
+   * 거절 기록(`merge_denial`)을 남기고 카드용 id 를 준다. L2(security, #1158): ① (에이전트, 저장소, 채널, 스레드, **PR, head**)에 안 쓰고
+   * 안 만료된 기록이 있으면 그것을 다시 쓴다 — 임대·사유만 지금 것으로 바꾼다. 기록이 가리키는 PR·head 는 바꾸지 않는다(D1): 사람이
+   * 카드에서 본 PR 과 승인이 쓰이는 PR 이 어긋나면 안 된다. 같은 PR 의 다른 head 기록은 낡았으니 닫는다(`obsoleteOtherHeads`).
+   * ② 새로 만드는 것은 에이전트마다 24시간에 `MERGE_DENIAL_DAILY_CAP` 개까지 — 넘으면 거절은 그대로 하되 카드용 id 는 주지 않는다.
    */
   const denyWithCard = async (code: 'not_granted' | 'cause_not_human' | 'no_mandate_line'): Promise<MergeCheck> => {
     const denied = await deny(code);
     const reused = (await pool.query<{ id: string }>(
-      `update merge_denial set pr_number = $5, head_sha = $6, lease_id = $7, reason = $9
+      `update merge_denial set lease_id = $7, reason = $9
         where id = (select id from merge_denial
-                     where agent_id = $1 and scope = $2 and channel_id = $3 and thread_root_id = $4
+                     where agent_id = $1 and scope = $2 and channel_id = $3 and thread_root_id = $4 and pr_number = $5 and head_sha = $6
                        and used_at is null and obsoleted_at is null and expires_at > $8
                        and reason in ('not_granted', 'cause_not_human', 'no_mandate_line')
                      order by created_at desc limit 1)
         returning id`,
       [args.agentId, scope, lease!.channelId, lease!.threadRootId, args.number, args.headSha, lease!.id, now, code])).rows[0];
     if (reused) return { ok: false, code, denialId: reused.id };
+    await obsoleteOtherHeads(pool, { agentId: args.agentId, scope, lease: lease!, number: args.number, headSha: args.headSha, ci: false, now });
     const recent = (await pool.query<{ n: number }>(
       `select count(*)::int as n from merge_denial where agent_id = $1 and created_at > $2`,
       [args.agentId, new Date(now.getTime() - 24 * 3_600_000)])).rows[0]!.n;
@@ -525,9 +527,27 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
 }
 
 /**
- * CI 거절 카드의 거절 기록(reason `ci_not_green`). L2(security #1158)는 다른 거절과 같다: 같은 (에이전트, 저장소, 채널, 스레드)의
- * 안 쓰고 안 만료된 **CI 거절** 기록이 있으면 그것을 다시 쓰고(PR·head·임대·체크만 지금 것으로), 새로 만드는 것은 에이전트마다
- * 24시간에 `MERGE_DENIAL_DAILY_CAP` 개까지 — 넘으면 null(거절은 그대로, 카드만 없다). 기록은 아무 권한도 열지 않는다.
+ * 같은 (에이전트, 저장소, 채널, 스레드, PR)에서 **다른 head** 로 남은 안 쓴 거절 기록을 닫는다(D1) — head 가 바뀌면 그 기록의
+ * 1회 승인은 어차피 머지되지 않는다. 닫힌 기록은 승인·새 카드를 받지 않는다. 다른 PR 의 기록은 건드리지 않는다 — PR 마다 카드가 따로다.
+ * CI 거절과 그 밖의 거절은 따로 센다(서로의 카드를 닫지 않는다).
+ */
+async function obsoleteOtherHeads(
+  pool: Pool,
+  args: { agentId: string; scope: string; lease: LeaseRow; number: number; headSha: string; ci: boolean; now: Date },
+): Promise<void> {
+  await pool.query(
+    `update merge_denial set obsoleted_at = $7
+      where agent_id = $1 and scope = $2 and channel_id = $3 and thread_root_id = $4 and pr_number = $5 and head_sha <> $6
+        and used_at is null and obsoleted_at is null
+        and (reason = 'ci_not_green') = $8`,
+    [args.agentId, args.scope, args.lease.channelId, args.lease.threadRootId, args.number, args.headSha, args.now, args.ci]);
+}
+
+/**
+ * CI 거절 카드의 거절 기록(reason `ci_not_green`). L2(security #1158)는 다른 거절과 같다: 같은 (에이전트, 저장소, 채널, 스레드, PR,
+ * head)의 안 쓰고 안 만료된 **CI 거절** 기록이 있으면 그것을 다시 쓰고(임대·체크만 지금 것으로 — PR·head 는 바꾸지 않는다, D1),
+ * 새로 만드는 것은 에이전트마다 24시간에 `MERGE_DENIAL_DAILY_CAP` 개까지 — 넘으면 null(거절은 그대로, 카드만 없다). 기록은 아무
+ * 권한도 열지 않는다.
  */
 export async function recordCiDenial(
   pool: Pool,
@@ -535,14 +555,15 @@ export async function recordCiDenial(
 ): Promise<string | null> {
   const { lease } = args;
   const reused = (await pool.query<{ id: string }>(
-    `update merge_denial set pr_number = $5, head_sha = $6, lease_id = $7, failed_checks = $9
+    `update merge_denial set lease_id = $7, failed_checks = $9
       where id = (select id from merge_denial
-                   where agent_id = $1 and scope = $2 and channel_id = $3 and thread_root_id = $4
+                   where agent_id = $1 and scope = $2 and channel_id = $3 and thread_root_id = $4 and pr_number = $5 and head_sha = $6
                      and used_at is null and obsoleted_at is null and expires_at > $8 and reason = 'ci_not_green'
                    order by created_at desc limit 1)
       returning id`,
     [args.agentId, args.scope, lease.channelId, lease.threadRootId, args.number, args.headSha, lease.id, args.now, args.failedChecks])).rows[0];
   if (reused) return reused.id;
+  await obsoleteOtherHeads(pool, { agentId: args.agentId, scope: args.scope, lease, number: args.number, headSha: args.headSha, ci: true, now: args.now });
   const recent = (await pool.query<{ n: number }>(
     `select count(*)::int as n from merge_denial where agent_id = $1 and created_at > $2`,
     [args.agentId, new Date(args.now.getTime() - 24 * 3_600_000)])).rows[0]!.n;
