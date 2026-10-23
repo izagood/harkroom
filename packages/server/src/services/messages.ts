@@ -1896,7 +1896,7 @@ export async function editMessage(
  */
 export async function recordAskAnswer(
   pool: Pool,
-  args: { messageId: string; actorId: string; optionId: string; viaPermissionDecision?: boolean; answeredVia?: AskAnsweredVia },
+  args: { messageId: string; actorId: string; optionId: string; viaPermissionDecision?: boolean; answeredVia?: AskAnsweredVia; skipWakeIfInboxFor?: string },
 ): Promise<MessageRow | MutationRefusal | 'already_answered' | 'unknown_option'> {
   const found = await pool.query(
     `select meta from message where id = $1 and deleted_at is null`, [args.messageId],
@@ -1946,7 +1946,7 @@ export async function recordAskAnswer(
       if (!root.ask.options.some((o) => o.id === args.optionId)) return 'unknown_option';
       if (!(await assertChannelVisible(pool, root.channelId, args.actorId))) return 'forbidden';
 
-      const rootRow = await answerAskRow(pool, ask.mirrorOf, args.optionId, args.actorId);
+      const rootRow = await answerAskRow(pool, ask.mirrorOf, args.optionId, args.actorId, args.answeredVia, args.skipWakeIfInboxFor);
       if (rootRow) {
         emitEvent({ type: 'message.updated', message: rootRow, audience: await audienceFor(pool, rootRow.channelId) });
       }
@@ -1957,7 +1957,7 @@ export async function recordAskAnswer(
     }
   }
 
-  const row = await answerAskRow(pool, args.messageId, args.optionId, args.actorId, args.answeredVia);
+  const row = await answerAskRow(pool, args.messageId, args.optionId, args.actorId, args.answeredVia, args.skipWakeIfInboxFor);
   if (!row) return 'already_answered';
   // 원본이면 거울들도 같은 답으로 닫는다. 거울이 없으면 갱신되는 행이 없을 뿐이다.
   if (!ask.mirrorOf) await syncAskMirrors(pool, args.messageId);
@@ -2033,10 +2033,10 @@ export async function wakeAsker(
  * **`superseded` 로 닫힌 카드는 답을 받지 않는다**(security n1, 2026-10-09). 새 질문이 떠 있는데 옛 질문의
  * 답으로 물어본 쪽을 깨우면 두 질문이 엇갈린다. 다른 닫힘(`replied`·`declined`)은 지금처럼 늦은 답을 받는다.
  */
-export type AskAnsweredVia = 'bundle_bulk';
+export type AskAnsweredVia = 'bundle_bulk' | 'chat';
 
 async function answerAskRow(
-  pool: Pool, messageId: string, optionId: string, actorId: string, answeredVia?: AskAnsweredVia,
+  pool: Pool, messageId: string, optionId: string, actorId: string, answeredVia?: AskAnsweredVia, skipWakeIfInboxFor?: string,
 ): Promise<MessageRow | null> {
   /*
     `answeredVia` — 사람이 그 줄을 **골라 누르지 않은** 답의 표지(security F1, #1280). 묶음 카드의 「추천대로 일괄」은 한 번
@@ -2062,7 +2062,11 @@ async function answerAskRow(
   );
   const row = updated.rows[0] as MessageRow | undefined;
   if (!row) return null;
-  await wakeAsker(pool, row.authorId, actorId, messageId, 'ask_answered');
+  // 글로 답했을 때(P5) 물어본 쪽이 그 글로 이미 깨었으면(`thread_reply`·멘션) 다시 깨우지 않는다 — 한 글에 턴이 둘 뜨지 않게.
+  const woken = skipWakeIfInboxFor && row.authorId
+    ? ((await pool.query(`select 1 from inbox where account_id = $1 and message_id = $2 limit 1`, [row.authorId, skipWakeIfInboxFor])).rowCount ?? 0) > 0
+    : false;
+  if (!woken) await wakeAsker(pool, row.authorId, actorId, messageId, 'ask_answered');
   return row;
 }
 
