@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { GRANT_DELEGATE_TOOL, LANE_BASE_ALLOW, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { GRANT_DELEGATE_TOOL, LANE_BASE_ALLOW, LANE_DENY, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -701,7 +701,13 @@ describe('전용 제공사 경로 env', () => {
     // 셸·쓰기·웹은 기본으로 열지 않는다.
     for (const tool of ['Bash', 'Edit', 'Write', 'WebFetch', 'WebSearch']) expect(withLane).not.toContain(tool);
     // C안(10-23): 쓰기는 작업 폴더 안 경로 규칙으로만, 하위 에이전트·스킬은 연다. 셸·웹 규칙은 승인된 것 말고는 없다.
-    expect(withLane).toEqual(expect.arrayContaining(['Edit(./**)', 'Write(./**)', 'Agent', 'Skill']));
+    expect(withLane).toEqual(expect.arrayContaining(['Edit(./**)', 'Write(./**)', 'Skill']));
+    // 하위 에이전트·다음 턴을 바꾸는 파일은 deny 칸에 있다(allow 보다 앞선다).
+    const denyFrom = withLane.indexOf('--disallowedTools') + 1;
+    const denyNext = withLane.findIndex((a, i) => i >= denyFrom && a.startsWith('--'));
+    const denied = withLane.slice(denyFrom, denyNext < 0 ? undefined : denyNext);
+    for (const rule of LANE_DENY) expect(denied).toContain(rule);
+    expect(denied).toEqual(expect.arrayContaining(['Agent', 'Write(./.claude/**)', 'Write(./CLAUDE.md)', 'Write(./.mcp.json)']));
     // `--disallowedTools` 의 deny 규칙(설정 파일 자기 수정)도 Edit·Write 꼴이라 allow 칸만 떼어 본다.
     const from = withLane.indexOf('--allowedTools') + 1;
     const next = withLane.findIndex((a, i) => i >= from && a.startsWith('--'));
@@ -714,6 +720,7 @@ describe('전용 제공사 경로 env', () => {
     const plain = argv(null);
     expect(after(plain, '--permission-mode')).toBe('auto');
     for (const tool of LANE_BASE_ALLOW) expect(plain).not.toContain(tool);
+    for (const rule of LANE_DENY) expect(plain).not.toContain(rule);
   });
 
   it('읽기 전용 lane 턴은 plan 그대로다', () => {
