@@ -5,6 +5,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { decide, resolveDecision } from '../src/services/decisions.js';
+import { renderPermissionMirror } from '../src/services/permissionRequests.js';
 
 // 결정 해석(M2) — 카드 글 id 하나가 무엇을 정하는 카드인지, 거울은 원본으로 따라가는지.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -18,6 +19,7 @@ describe('resolveDecision · decide', () => {
   let bob: { token: string; accountId: string };
   let agentId: string;
   let ch: string;
+  let adminToken: string;
 
   const message = async (meta: Record<string, unknown>, authorId = agentId): Promise<string> =>
     (await pool.query(`insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, '카드', 'user', $3) returning id`,
@@ -40,6 +42,7 @@ describe('resolveDecision · decide', () => {
     db = await startTestDb(); pool = db.pool;
     app = await buildServer({ pool });
     const admin = await bootstrapAdmin(app);
+    adminToken = admin.token;
     alice = await createMember(app, admin.token, 'alice');
     bob = await createMember(app, admin.token, 'bob');
     agentId = (await createAgent(app, admin.token, 'sitebot')).accountId;
@@ -82,12 +85,99 @@ describe('resolveDecision · decide', () => {
     expect(await resolveDecision(pool, gone)).toBeNull();
   });
 
-  it('권한 카드의 거울에서는 정하지 않는다 — 지금처럼 거절(forbidden), 요청은 그대로', async () => {
+  it('권한 카드의 거울에서 정하면 원본 요청이 정해지고 거울은 따라 닫힌다(via mirror)', async () => {
     const { requestId, cardId } = await permissionCard();
     const mirror = await message(askMeta({ mirrorOf: cardId }));
     const ref = (await resolveDecision(pool, mirror))!;
-    expect(await decide(pool, ref, alice.accountId, { option: 'approve', via: 'mirror' })).toEqual({ kind: 'ask', result: 'forbidden' });
+    expect(await decide(pool, ref, alice.accountId, { option: 'approve', via: 'mirror' })).toMatchObject({ kind: 'permission', ok: true, result: { status: 'granted', cardMessageId: cardId } });
+    expect(await status(requestId)).toBe('granted');
+    const card = (await pool.query(`select meta from message where id = $1`, [cardId])).rows[0].meta;
+    expect(card.permissionRequest.decidedVia).toEqual({ kind: 'mirror', mirrorMessageId: mirror });
+    expect(card.ask).toMatchObject({ answeredWith: 'approve', answeredBy: alice.accountId });
+    const m = (await pool.query(`select meta from message where id = $1`, [mirror])).rows[0].meta;
+    expect(m.ask).toMatchObject({ answeredWith: 'approve', answeredBy: alice.accountId });
+    const audit = (await pool.query(`select detail from audit_log where action = 'permission.approved' and detail->>'requestId' = $1`, [requestId])).rows;
+    expect(audit).toHaveLength(1);
+    expect(audit[0].detail).toMatchObject({ via: 'mirror', mirrorMessageId: mirror });
+  });
+
+  it('거울로도 소유자가 아니면 403 — 요청은 그대로', async () => {
+    const { requestId, cardId } = await permissionCard();
+    const mirror = await message(askMeta({ mirrorOf: cardId }));
+    const ref = (await resolveDecision(pool, mirror))!;
+    expect(await decide(pool, ref, bob.accountId, { option: 'approve', via: 'mirror' })).toMatchObject({ kind: 'permission', ok: false, status: 403, code: 'forbidden' });
     expect(await status(requestId)).toBe('pending');
+  });
+
+  it('부른 쪽이 소유자를 넘기지 않아도 DB 의 소유자로 대조한다(security n1)', async () => {
+    const { requestId } = await permissionCard();
+    expect(await decide(pool, { kind: 'permission', requestId, agentId, cardMessageId: null }, bob.accountId, { option: 'approve', via: 'button' }))
+      .toMatchObject({ ok: false, status: 403, code: 'forbidden' });
+    expect(await status(requestId)).toBe('pending');
+  });
+
+  it('서버가 세운 거울이 아니면 정하지 않는다 — 사람이 쓴 것·다른 소유자 에이전트가 쓴 것·선택지가 다른 것', async () => {
+    const { requestId, cardId } = await permissionCard();
+    const other = (await createAgent(app, adminToken, `otherbot${Date.now() % 100000}`)).accountId;
+    const fakes = [
+      await message(askMeta({ mirrorOf: cardId }), alice.accountId),
+      await message(askMeta({ mirrorOf: cardId }), other),
+      await message({ kind: 'ask', ask: { options: [{ id: 'approve', label: '네' }, { id: 'later', label: '나중에' }], to: { kind: 'human' }, mirrorOf: cardId } }),
+    ];
+    for (const fake of fakes) {
+      const ref = (await resolveDecision(pool, fake))!;
+      expect(await decide(pool, ref, alice.accountId, { option: 'approve', via: 'mirror' })).toEqual({ kind: 'ask', result: 'forbidden' });
+    }
+    expect(await status(requestId)).toBe('pending');
+  });
+
+  it('만료된 원본은 거울에서도 409 request_expired', async () => {
+    const { requestId, cardId } = await permissionCard();
+    await pool.query(`update permission_request set expires_at = now() - interval '1 minute' where id = $1`, [requestId]);
+    const mirror = await message(askMeta({ mirrorOf: cardId }));
+    const ref = (await resolveDecision(pool, mirror))!;
+    expect(await decide(pool, ref, alice.accountId, { option: 'approve', via: 'mirror' })).toMatchObject({ ok: false, status: 409, code: 'request_expired' });
+  });
+
+  it('머지 거절 카드의 거울에서 [이번 한 번] — 원본 카드의 PR·head 로, gh 계정은 오퍼레이터가 고른다', async () => {
+    const { requestId, cardId } = await permissionCard();
+    const head = 'b'.repeat(40);
+    const root = (await pool.query(`select thread_root_id from permission_request where id = $1`, [requestId])).rows[0].thread_root_id;
+    const denial = (await pool.query(
+      `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at)
+       values ($1, 'repo:acme-org/mirror-once', 9, $2, $3, $4, gen_random_uuid(), now() + interval '1 hour') returning id`,
+      [agentId, head, ch, root])).rows[0].id;
+    await pool.query(`update permission_request set kind = 'merge', target = 'acme-org/mirror-once', denial_id = $2 where id = $1`, [requestId, denial]);
+    await pool.query(`update message set meta = jsonb_set(meta, '{permissionRequest,once}', $2::jsonb) where id = $1`,
+      [cardId, JSON.stringify({ number: 9, headSha: head, reason: 'not_granted' })]);
+    const mirror = await message(askMeta({ mirrorOf: cardId }));
+    const ref = (await resolveDecision(pool, mirror))!;
+    const out = await decide(pool, ref, alice.accountId, { option: 'approve_once', via: 'mirror' });
+    expect(out).toMatchObject({ kind: 'permission', ok: true, result: { status: 'approved_once' } });
+    const audit = (await pool.query(`select detail from audit_log where action = 'repo.merge.approved_once' and detail->>'requestId' = $1`, [requestId])).rows[0].detail;
+    expect(audit).toMatchObject({ ghUser: null, ghUserChosenBy: 'operator', number: 9, headSha: head });
+  });
+
+  it('권한 카드 거울의 본문·선택지는 원본 요청으로 서버가 쓴다 — 원본을 못 보는 채널이면 중립 한 줄', async () => {
+    const { cardId } = await permissionCard();
+    await pool.query(`update message set meta = meta || $2::jsonb where id = $1`, [cardId, JSON.stringify({
+      permissionRequest: { requestId: 'x', agentId, ownerAccountId: alice.accountId, kind: 'tool', target: 'Bash(kubectl get pods:*)', channelId: ch, threadRootId: ch, warnings: [], reason: '파드 확인', requestedAt: '', expiresAt: '' },
+    })]);
+    const same = (await renderPermissionMirror(pool, cardId, ch))!;
+    expect(same.body).toContain('Bash(kubectl get pods:*)');
+    expect(same.body).toContain('파드 확인');
+    expect(same.options.map((o) => o.id)).toEqual(['approve', 'deny']);
+    // 원본이 비공개 채널이고 거울 채널에 그 채널을 못 보는 사람이 있으면 대상·이유를 싣지 않는다.
+    await pool.query(`update channel set visibility = 'private' where id = $1`, [ch]);
+    try {
+      const other = (await app.inject({ method: 'POST', url: '/channels', headers: auth(bob.token), payload: { name: `mirror-${Date.now() % 100000}` } })).json().id as string;
+      const neutral = (await renderPermissionMirror(pool, cardId, other))!;
+      expect(neutral.body).not.toContain('kubectl');
+      expect(neutral.body).not.toContain('파드 확인');
+    } finally {
+      await pool.query(`update channel set visibility = 'public' where id = $1`, [ch]);
+    }
+    expect(await renderPermissionMirror(pool, await message(askMeta()), ch)).toBeNull();
   });
 
   it('소유자가 아니면 403, 모르는 선택지는 400, 소유자 버튼은 정하고 감사에 via 가 남는다', async () => {

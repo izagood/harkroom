@@ -87,7 +87,7 @@ import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../service
 import type { AgentPresence } from './presence.js';
 import { enqueueAskPush, enqueueBundlePush } from '../services/push/pushJobs.js';
 import { DENIAL_CARD_REFUSAL_MESSAGE, prepareDenialCard, type MergeDenialReason } from '../services/mergeDenials.js';
-import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant } from '../services/permissionRequests.js';
+import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant, renderPermissionMirror } from '../services/permissionRequests.js';
 
 /**
  * 발화 도구가 공통으로 받는 `model` — 에이전트가 신고하는 **자기 모델 ID**(#600).
@@ -974,6 +974,8 @@ function buildMcpServer(
       }
       audience = { kind: 'account', accountId: found[0]!.id };
     }
+    // 권한 카드의 거울(P3)은 본문·선택지를 서버가 원본 요청으로 다시 쓴다 — 거울에서 누르는 사람이 진짜 요청을 본다.
+    let mirrorRender: { body: string; options: { id: string; label: string }[]; prompt?: string } | null = null;
     if (mirrorOf) {
       // 거울은 사람이 누를 자리다 — 원본이 사람 앞이므로 거울도 사람 앞이어야 옮겨 적을 수 있다.
       if (audience.kind !== 'human') {
@@ -983,6 +985,7 @@ function buildMcpServer(
       if (refusal) {
         return jsonResult({ error: { code: refusal, message: MIRROR_REFUSAL_MESSAGE[refusal] } });
       }
+      mirrorRender = await renderPermissionMirror(pool, mirrorOf, channelId);
     }
     if (supersedes) {
       const refusal = await checkAskSupersede(pool, { oldId: supersedes, callerId: account.id, channelId, threadRootId: threadRootId ?? null });
@@ -1012,14 +1015,16 @@ function buildMcpServer(
     }
     const meta: AskMeta & Partial<ModelMeta> = {
       kind: 'ask', ask: {
-        options: options.map((o) => ({ id: o.id, label: o.label, ...(o.hint ? { hint: o.hint } : {}), ...(o.recommended ? { recommended: true } : {}) })),
-        to: audience, ...(prompt ? { prompt } : {}), ...(mirrorOf ? { mirrorOf } : {}), ...(irreversible ? { irreversible: true } : {}),
+        options: mirrorRender ? mirrorRender.options
+          : options.map((o) => ({ id: o.id, label: o.label, ...(o.hint ? { hint: o.hint } : {}), ...(o.recommended ? { recommended: true } : {}) })),
+        to: audience, ...(mirrorRender ? (mirrorRender.prompt ? { prompt: mirrorRender.prompt } : {}) : prompt ? { prompt } : {}),
+        ...(mirrorOf ? { mirrorOf } : {}), ...(irreversible ? { irreversible: true } : {}),
       },
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
     };
     const posted = await postMessage(pool, {
       causeMessageId: cause, chainCause, turnId: storedTurnId,
-      channelId, authorId: account.id, body, threadRootId: threadRootId ?? null,
+      channelId, authorId: account.id, body: mirrorRender ? mirrorRender.body : body, threadRootId: threadRootId ?? null,
       meta: meta as unknown as Record<string, unknown>,
     });
     if (posted.failure) return postFailureResult(posted.failure);
