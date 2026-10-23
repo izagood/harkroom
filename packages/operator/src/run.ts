@@ -37,7 +37,8 @@ import { createCodexAccountsPort } from './codexAccounts.js';
 import { startCommunities } from './communities.js';
 import { createLocalAgentsPort } from './localAgents.js';
 import { createLocalMcpPort } from './localMcp.js';
-import { createLocalMergePort, pickMergeGhUser } from './localMerge.js';
+import { createLocalMergePort, parseGhAccounts, pickMergeGhUser } from './localMerge.js';
+import { buildGhReport, createGhLedger } from './ghReport.js';
 import { createMcpOAuth } from './mcpOAuth.js';
 import { rewriteMcpConfigTokens } from './mcpConfig.js';
 import { claudeConfigPath, readLocalMcpDefinitions, readLocalMcpSources } from './mcpConfig.js';
@@ -241,9 +242,33 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     return mcpSources;
   };
   if (turnSlots.max !== null) log(`동시 턴 상한: ${turnSlots.max}`);
+  // gh 계정 보고(D1, `ghReport.ts`) — 어느 커뮤니티가 어느 저장소로 머지했고, 어느 계정이 닿았나. 메모리에만 든다.
+  const ghLedger = createGhLedger();
+  const noteGhUse = (baseUrl: string, req: { type: string; path?: string; body?: string }): void => {
+    if (req.type !== 'http.forward' || typeof req.body !== 'string') return;
+    if (req.path !== '/agent/merge-checks' && req.path !== '/agent/merge-results') return;
+    try {
+      const b = JSON.parse(req.body) as { repo?: unknown; result?: unknown; ghUserUsed?: unknown };
+      if (typeof b.repo !== 'string') return;
+      ghLedger.noteRepo(baseUrl, b.repo);
+      if (req.path === '/agent/merge-results' && typeof b.ghUserUsed === 'string' && (b.result === 'merged' || b.result === 'queued')) {
+        ghLedger.noteReach(baseUrl, b.repo, b.ghUserUsed, true);
+      }
+    } catch { /* 선택 정보 */ }
+  };
+  // 로그인 목록은 박동마다 gh 를 부르지 않게 짧게 캐시한다(이름뿐 — 토큰 칸은 읽지 않는다).
+  let ghLogins: { at: number; logins: string[] } | null = null;
+  const ghLoginsCached = async (): Promise<string[]> => {
+    if (ghLogins && Date.now() - ghLogins.at < 5 * 60_000) return ghLogins.logins;
+    const r = await defaultExec(GH_PATH, ['auth', 'status', '--json', 'hosts'], ghEnv(homedir(), null));
+    const logins = (parseGhAccounts(r.stdout) ?? []).map((a) => a.login);
+    ghLogins = { at: Date.now(), logins };
+    return logins;
+  };
   const turnMerge = createTurnMerge({
     forward: async (agentId, req) => {
       const c = communities.find((x) => x.knowsAgent(agentId));
+      if (c) noteGhUse(c.baseUrl, req);
       return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
     },
     lookupLease: (runnerId, cause) => turnSecrets.lookup(runnerId, cause),
@@ -766,6 +791,11 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
           }),
           machine: () => (machineDigest ??= readMachineDigest()),
           // MCP 상태(PR4). 정의 파일은 박동마다 커뮤니티 수만큼 읽히므로 짧게 캐시한다.
+          gh: async (baseUrl) => buildGhReport({
+            merge: (await readConfig(join(appDataDir, 'operator', 'operator.json'))).merge,
+            logins: await ghLoginsCached().catch(() => []),
+            repos: ghLedger.repos(baseUrl), reach: ghLedger.reach(baseUrl),
+          }),
           mcp: (names, baseUrl) => collectMcpStatus(names, baseUrl, {
             definitions: () => mcpSourcesCached(),
             auth: (name, url, clientId) => mcpOAuth.status(name, url, clientId),

@@ -69,6 +69,8 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
         code: z.string().max(40), mergeState: z.string().max(40).nullable().optional(), checks: z.array(z.string().max(1000)).max(100),
       }).nullable().optional(),
       ignoredChecks: z.array(z.string().max(1000)).max(100).optional(),
+      // 래퍼가 머지에 실제로 쓴 gh 이름(security n6). 모양은 서비스가 다시 본다 — 틀리면 버리고 보고는 받는다.
+      ghUserUsed: z.string().max(100).nullable().optional(),
     }).safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId, token, repo, number, headSha and result are required' } });
     const r = await reportMerge(pool, { ...who, ...parsed.data });

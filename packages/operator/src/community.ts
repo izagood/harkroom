@@ -12,7 +12,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import type { OperatorCapabilities, OperatorStatus, RunnerExitReason } from '@harkroom/shared';
-import type { AgentDefinition, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
+import type { AgentDefinition, GhReport, ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import type { Forwarder } from './forward.js';
 import type { AssignmentReconciler } from './assignments.js';
@@ -72,6 +72,11 @@ export interface CommunityDeps {
      * 이름·이 머신의 다른 정의는 싣지 않는다(#1203 F1 과 같은 경계). 없으면 싣지 않는다(옛 동작).
      */
     mcp?: (names: string[], baseUrl: string) => Promise<OperatorStatus['mcp']>;
+    /**
+     * gh 계정 보고(D1). 이 커뮤니티에 맞게 거른 값을 준다(`ghReport.ts`). 이 커뮤니티에 로컬 에이전트가 없으면 부르지 않는다 —
+     * 로그인 목록은 머신 값이라, 에이전트가 없는 서버에는 보낼 까닭이 없다. 바뀌었을 때만 낸다.
+     */
+    gh?: (baseUrl: string) => Promise<GhReport | null>;
   };
   heartbeatMs?: number;
   log: (line: string) => void;
@@ -183,6 +188,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     onOpen: () => {
       deps.log(`서버에 붙었다: ${deps.baseUrl}`);
       selfOwner = readSelf();
+      lastGh = null;
       // 서버는 소켓이 끊기면 러너의 세션을 버린다 — hello 의 목록 뒤에 러너별 announce 로 능력까지 다시 낸다.
       mux.resync();
       // hello 다음에 박동 하나 — 서버는 끊길 때 박동을 버리므로 붙자마자 채워 둔다.
@@ -229,9 +235,22 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
   linkRef.current = link;
 
   let beatTimer: ReturnType<typeof setInterval> | null = null;
+  // 마지막으로 보낸 gh 보고 — 같은 값이면 다시 보내지 않는다. 다시 붙으면 잊는다(서버가 첫 값을 받게).
+  let lastGh: string | null = null;
+  const beatGh = (): void => {
+    const gh = deps.heartbeat?.gh;
+    if (!gh || Object.keys(agents).length === 0) return;
+    void gh(deps.baseUrl).then((report) => {
+      if (!report) return;
+      const key = JSON.stringify(report);
+      if (key === lastGh) return;
+      if (link.send({ type: 'gh.report', report })) lastGh = key;
+    }).catch(() => deps.log('박동의 gh 계정 보고를 만들지 못했다'));
+  };
   const beat = (): void => {
     const hb = deps.heartbeat;
     if (!hb) return;
+    beatGh();
     // 이 커뮤니티가 이 오퍼레이터에 배정한 에이전트가 켠 MCP 이름 — 서버가 보낸 이름이라 새는 것이 없다.
     const mcpNames = [...new Set([...assignments.values()].filter((d) => d.agentId in agents).flatMap((d) => d.mcpServers ?? []))].sort();
     const mcpOf = hb.mcp && mcpNames.length > 0 ? hb.mcp(mcpNames, deps.baseUrl) : Promise.resolve(undefined);

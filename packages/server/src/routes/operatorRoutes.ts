@@ -12,7 +12,8 @@ import type { Pool } from 'pg';
 import { createHash, createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { normalizeOperatorLabel, OPERATOR_LABEL_MAX, type OperatorStatus, type OperatorUpgradeEvent, type OperatorView } from '@harkroom/shared';
-import { isMachineDigest, parseUpgradeProgress } from '@harkroom/shared/operatorProtocol';
+import { isMachineDigest, parseGhReport, parseUpgradeProgress } from '@harkroom/shared/operatorProtocol';
+import { upsertGhReport } from '../services/operatorGhReport.js';
 import { newToken } from '../auth/tokens.js';
 import { can } from '../auth/permissions.js';
 import { actorOf, recordAudit } from '../audit.js';
@@ -219,6 +220,16 @@ export async function registerOperatorRoutes(app: FastifyInstance, pool: Pool, d
     lastSignature.delete(operatorId); lastProcessedAt.delete(operatorId); lastMachine.delete(operatorId);
   });
   app.addHook('onClose', async () => { offStatus(); offStatusClose(); });
+
+  // gh 계정 보고(D1). 오퍼레이터가 바뀌었을 때만 보낸다 — 받은 대로 한 줄을 덮는다. 틀린 모양은 버린다.
+  const offGh = deps.hub.onFrame((operatorId, frame) => {
+    if (frame.type !== 'gh.report') return;
+    const report = parseGhReport(frame.report);
+    if (!report) return;
+    void upsertGhReport(pool, operatorId, report)
+      .catch((err: unknown) => app.log.warn({ err, operatorId }, 'operator gh 계정 보고 기록 실패'));
+  });
+  app.addHook('onClose', async () => { offGh(); });
 
   /**
    * 업그레이드 단계(P2b·H3). 한 줄씩 적고 오퍼레이터마다 최근 `UPGRADE_HISTORY_MAX` 줄만 남긴다.

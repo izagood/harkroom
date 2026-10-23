@@ -78,6 +78,11 @@ export type OperatorToServerFrame =
    */
   | { type: 'upgrade.progress'; stage: unknown; from?: unknown; to?: unknown; error?: unknown }
   /**
+   * gh 계정 보고(D1) — 이 머신에 로그인된 gh 이름과 저장소별 계정 줄. **토큰·이메일은 없다.** 오퍼레이터가 이 커뮤니티에
+   * 에이전트가 붙어 있을 때만, 이 커뮤니티에서 머지로 쓴 저장소에 맞는 줄만 싣는다(F1). 검증은 `parseGhReport` 하나다.
+   */
+  | { type: 'gh.report'; report: unknown }
+  /**
    * 러너가 링크에 붙을 때마다(재접속 포함) 자기 세션·능력을 다시 선언한다 — 옛 릴레이의
    * `announce` 그대로다(`runnerLink.ts`). 서버는 이 목록으로 그 러너의 세션을 **교체**한다.
    */
@@ -119,7 +124,7 @@ export type ServerToOperatorFrame =
 const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
   'hello', 'capabilities', 'runner.started', 'runner.exited', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
   'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required', 'status', 'upgrade.progress',
-  'local.input',
+  'local.input', 'gh.report',
 ]);
 const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
   'assign', 'unassign', 'agent.restart', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
@@ -127,7 +132,7 @@ const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
 ]);
 
 /** `hello` 와 배정 셋(`assign`·`unassign`·`agent.restart`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
-const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'assign', 'unassign', 'agent.restart']);
+const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'gh.report', 'assign', 'unassign', 'agent.restart']);
 
 function parse(raw: string, known: Set<string>): Record<string, unknown> | null {
   let value: unknown;
@@ -290,4 +295,49 @@ export function parseUpgradeProgress(frame: { stage?: unknown; from?: unknown; t
     to: isVersionString(frame.to) ? frame.to : null,
     error,
   };
+}
+
+/** 닿음(D1) — 오퍼레이터가 이미 알던 것만이다(머지 성공·접근 거절). 따로 GitHub 을 두드려 재지 않는다. */
+export type GhReach = true | false | 'unknown';
+
+/** 오퍼레이터의 gh 계정 보고(D1). 이름·줄뿐 — 토큰·이메일 칸은 모양에 없고, 파서가 모르는 칸은 버린다. */
+export interface GhReport {
+  /** 이 머신에 로그인된 gh 이름(github.com). */
+  logins: string[];
+  /** 저장소 줄(`owner/name`·`owner/*`) → gh 이름. 이 커뮤니티에서 머지로 쓴 저장소에 맞는 줄만. */
+  byScope: Record<string, string>;
+  /** 옛 기기 기본값(`merge.ghUser`) — byScope 로 옮기기 전에만 쓰이는 값. 없으면 null. */
+  defaultGhUser: string | null;
+  /** (줄, 이름) 의 닿음 — 아는 것만. */
+  reach: { scope: string; login: string; reachable: GhReach }[];
+}
+
+const GH_REPORT_LOGIN = /^[A-Za-z0-9-]{1,39}$/;
+const GH_REPORT_SCOPE = /^[a-z0-9][a-z0-9._-]{0,99}\/(?:\*|[a-z0-9._-]{1,100})$/;
+const GH_REPORT_MAX = 64;
+
+/** `gh.report` 의 `report` 를 받을 모양으로만 다시 짓는다. 틀린 항목은 버리고, 바깥 모양이 틀리면 null. */
+export function parseGhReport(value: unknown): GhReport | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (!Array.isArray(v.logins)) return null;
+  const logins = [...new Set(v.logins.filter((l): l is string => typeof l === 'string' && GH_REPORT_LOGIN.test(l)))].slice(0, GH_REPORT_MAX);
+  const byScope: Record<string, string> = {};
+  if (typeof v.byScope === 'object' && v.byScope !== null && !Array.isArray(v.byScope)) {
+    for (const [k, l] of Object.entries(v.byScope as Record<string, unknown>).slice(0, GH_REPORT_MAX)) {
+      if (GH_REPORT_SCOPE.test(k) && typeof l === 'string' && GH_REPORT_LOGIN.test(l)) byScope[k] = l;
+    }
+  }
+  const defaultGhUser = typeof v.defaultGhUser === 'string' && GH_REPORT_LOGIN.test(v.defaultGhUser) ? v.defaultGhUser : null;
+  const reach: GhReport['reach'] = [];
+  if (Array.isArray(v.reach)) {
+    for (const r of v.reach.slice(0, GH_REPORT_MAX) as Record<string, unknown>[]) {
+      if (typeof r !== 'object' || r === null) continue;
+      if (typeof r.scope !== 'string' || !GH_REPORT_SCOPE.test(r.scope)) continue;
+      if (typeof r.login !== 'string' || !GH_REPORT_LOGIN.test(r.login)) continue;
+      if (r.reachable !== true && r.reachable !== false && r.reachable !== 'unknown') continue;
+      reach.push({ scope: r.scope, login: r.login, reachable: r.reachable as GhReach });
+    }
+  }
+  return { logins, byScope, defaultGhUser, reach };
 }

@@ -184,7 +184,7 @@ export function createLocalMergePort(deps: {
 type Merge = NonNullable<OperatorConfig['merge']>;
 
 /** 옛 기기 기본값 — 모양이 아니면 없는 것으로 본다. */
-function legacyOf(merge: Merge | undefined): string | null {
+export function legacyOf(merge: Merge | undefined): string | null {
   const v = merge?.ghUser;
   return typeof v === 'string' && GH_LOGIN_RE.test(v) ? v : null;
 }
