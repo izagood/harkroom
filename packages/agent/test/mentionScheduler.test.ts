@@ -682,6 +682,54 @@ describe('mentionScheduler 승인 관문', () => {
     expect(발화).toEqual([{ code: undefined }]);
   });
 
+  it('서버가 모르는 laneCode 는 표지에서만 unknown 으로 접어 다시 올린다(본문은 원래 코드)', async () => {
+    const 발화: { code?: string; laneCode?: string; body: string }[] = [];
+    const 서버가_아는 = new Set(['no_lease', 'unknown']);
+    const scheduler = createMentionScheduler({
+      harkroom: {
+        markRead: async (ids) => ids.length,
+        post: async () => 1,
+        fail: async (_c, body, _a, o) => {
+          if (o.laneCode && !서버가_아는.has(o.laneCode)) throw new Error('message.fail: MCP error -32602: Input validation error: Invalid enum value');
+          발화.push({ code: o.code, laneCode: o.laneCode, body });
+          return 1;
+        },
+      },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [null],
+      runMentionTurn: async () => { throw new ProviderLaneError('bad_model'); },
+      buildTurnDeps: () => ({}) as never,
+      hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
+      startedAtMs: 0,
+    });
+    await scheduler.admit(batchOf([{ entryId: 10, messageId: 'm-lane-unknown' }]), ctx);
+    await scheduler.drain();
+    expect(발화.map(({ code, laneCode }) => ({ code, laneCode }))).toEqual([{ code: 'provider_lane', laneCode: 'unknown' }]);
+    expect(발화[0]!.body).toContain('bad_model');
+  });
+
+  it('입력 거절이 아닌 실패(네트워크 등)는 unknown 으로도 다시 올리지 않는다', async () => {
+    let calls = 0;
+    const scheduler = createMentionScheduler({
+      harkroom: {
+        markRead: async (ids) => ids.length,
+        post: async () => 1,
+        fail: async () => { calls++; throw new Error('fetch failed'); },
+      },
+      registry: new TurnRegistry(),
+      queue: new MentionQueue(),
+      accountLane: [null],
+      runMentionTurn: async () => { throw new ProviderLaneError('bad_model'); },
+      buildTurnDeps: () => ({}) as never,
+      hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
+      startedAtMs: 0,
+    });
+    await scheduler.admit(batchOf([{ entryId: 11, messageId: 'm-lane-net' }]), ctx);
+    await scheduler.drain();
+    expect(calls).toBe(1);
+  });
+
   it('정지 분기는 재시도 회계 앞에서 빠진다 — 순서가 계약이다', async () => {
     // `credentialNoticeWiring` 의 한도 회귀선과 같은 판례다: 분기가 `답변 실패 (n/MAX)`
     // 줄 **앞**에서 `return` 해야 3회를 태우지 않는다. 뒤로 밀리면 통지 문구는 그대로인데
