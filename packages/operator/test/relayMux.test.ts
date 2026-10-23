@@ -35,6 +35,24 @@ describe('relayMux', () => {
     expect(mux.onServerFrame({ type: 'unassign', agentId: 'a', drain: true })).toBe(false);
   });
 
+  // C1 후속(security n1): API 키 연결을 켰는데 아직 옛 모드로 도는 러너로 가는 터미널 열기는 오퍼레이터가 거절한다.
+  it('거절할 까닭이 있으면 interactive.open 을 러너에게 넘기지 않고 interactive.error 로 돌려준다', () => {
+    const out: OperatorToServerFrame[] = [];
+    const link = fakeLink(); link.linked.add('r-1'); link.linked.add('r-2');
+    const mux = createRelayMux({
+      link, send: (f) => { out.push(f); return true; }, log: () => {},
+      refuseInteractive: (runnerId) => (runnerId === 'r-1' ? 'interactive_unsupported: 거절' : null),
+    });
+    const open = (runnerId: string) => ({
+      type: 'interactive.open', runnerId, requestId: 'q1', channelId: 'c1', threadRootId: null, openedByHandle: 'alice', cols: 80, rows: 24,
+    }) as unknown as ServerToOperatorFrame;
+    expect(mux.onServerFrame(open('r-1'))).toBe(true);
+    expect(link.sent).toEqual([]);
+    expect(out).toEqual([{ type: 'interactive.error', runnerId: 'r-1', requestId: 'q1', message: 'interactive_unsupported: 거절' }]);
+    expect(mux.onServerFrame(open('r-2'))).toBe(true);
+    expect(link.sent.map((x) => x.frame.type)).toEqual(['interactive.open']);
+  });
+
   it('붙어 있지 않은 러너에게 온 프레임은 버리고 false 다 — 큐에 담지 않는다', () => {
     const link = fakeLink();
     const mux = createRelayMux({ link, send: () => true, log: () => {} });

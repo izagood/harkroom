@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import type { AccountView, MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { useT } from '../i18n/useT';
@@ -33,6 +34,7 @@ export function TerminalChip({ account, message }: {
   const t = useT();
   // API 키로 도는 에이전트(이 맥 설정)는 아직 터미널을 못 연다(designer v3 ⑥) — 문은 그리되 꺼 두고 까닭을 단다.
   const lane = useLocalLane(account?.id);
+  const reasonId = useId();
 
   if (!account || account.kind !== 'agent' || !me) return null;
   // `ownerAccountId === null` 은 `me.id` 와 결코 같아지지 않으므로 이 비교만으로도
@@ -42,16 +44,23 @@ export function TerminalChip({ account, message }: {
   if (!me.isAdmin && !isOwner) return null;
 
   if (lane) {
+    // `disabled` 가 아니라 `aria-disabled` 다(designer n2) — `disabled` 는 키보드 포커스를 빼서 까닭(title)에 닿을 길이 없다.
+    // 포커스는 받되 누르면 아무것도 안 하고, 까닭은 `aria-describedby` 로 스크린리더에 읽힌다.
     return (
-      <button
-        type="button"
-        disabled
-        data-testid="terminal-chip-lane-blocked"
-        className="cursor-not-allowed rounded-row bg-surface-raised px-1.5 py-0.5 text-meta text-fg-subtle opacity-60"
-        title={t('agents.lane.terminalBlocked')}
-      >
-        {t('terminal.chip.label')}
-      </button>
+      <>
+        <button
+          type="button"
+          aria-disabled="true"
+          aria-describedby={reasonId}
+          data-testid="terminal-chip-lane-blocked"
+          className="cursor-not-allowed rounded-row bg-surface-raised px-1.5 py-0.5 text-meta text-fg-subtle opacity-60"
+          title={t('agents.lane.terminalBlocked')}
+          onClick={(e) => e.preventDefault()}
+        >
+          {t('terminal.chip.label')}
+        </button>
+        <span id={reasonId} className="sr-only">{t('agents.lane.terminalBlocked')}</span>
+      </>
     );
   }
 

@@ -96,4 +96,12 @@ export interface ProviderLaneStatus {
   at: string;
   ok: boolean;
   code?: ProviderLaneFailureCode;
+  /** 키는 받았는데 그 턴이 하네스 API 오류로 끝났다(n16) — 화면은 초록으로 그리지 않는다. 키 받기 결과가 새로 오면 지워진다. */
+  apiFailed?: boolean;
 }
+
+/**
+ * API 키로 도는 에이전트의 터미널 열기 거절 문장(security F1). 코드를 앞에 붙여 앱이 문장을 고른다(`interactive_unsupported:`).
+ * 러너(`interactiveTurn.ts`)와 오퍼레이터(`relayMux` — 설정과 모드가 다른 러너로 가는 열기, C1 후속)가 같은 문장을 쓴다.
+ */
+export const PROVIDER_LANE_INTERACTIVE_REJECTION = 'interactive_unsupported: API 키로 도는 에이전트는 아직 터미널 열기를 지원하지 않는다';

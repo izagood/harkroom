@@ -12,7 +12,7 @@ const secret = (name: string, over: Partial<LaneSecretOption> = {}): LaneSecretO
 
 function laneState(over: Partial<ProviderLaneState> = {}): ProviderLaneState {
   return {
-    available: true, present: true, lane: null, status: null, pending: false, secrets: [secret('llm-api-key')], secretsError: null, error: null,
+    available: true, present: true, lane: null, status: null, pending: false, pendingSince: null, secrets: [secret('llm-api-key')], secretsError: null, error: null,
     reload: vi.fn(), save: vi.fn(async () => {}), ...over,
   };
 }
@@ -158,5 +158,47 @@ describe('적용 시점(C1)', () => {
     cleanup();
     render(<ModelConnectionStatus lane={laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'k' }, pending: false })} />);
     expect(screen.queryByTestId('lane-pending')).toBeNull();
+  });
+});
+
+// API 키 연결 후속(designer 실물 3차 n11·n14·n15·n16·n18).
+describe('상태 칸·stdio 줄(후속)', () => {
+  const on = { baseUrl: 'https://gateway.example', secretName: 'k' };
+  it('키는 받았는데 그 턴이 API 오류면 초록이 아니라 회색 줄(n16)', () => {
+    render(<ModelConnectionStatus lane={laneState({ lane: on, status: { at: '2026-10-23T00:00:00Z', ok: true, apiFailed: true } })} />);
+    expect(screen.getByTestId('lane-status-apifail').textContent).toContain('API 오류로 실패');
+    expect(screen.queryByTestId('lane-status-ok')).toBeNull();
+  });
+  it('대기 상자와 마지막 턴 줄은 한 자리를 번갈아 쓴다(n18)', () => {
+    render(<ModelConnectionStatus lane={laneState({ lane: on, pending: true, pendingSince: 0, status: { at: '2026-10-23T00:00:00Z', ok: true } })} now={1000} />);
+    expect(screen.getByTestId('lane-pending')).toBeTruthy();
+    expect(screen.queryByTestId('lane-status-ok')).toBeNull();
+  });
+  it('대기가 3분을 넘으면 「다시 뜨지 않았다」와 [재시작](n14)', () => {
+    const onRestart = vi.fn();
+    render(<ModelConnectionStatus lane={laneState({ lane: on, pending: true, pendingSince: 0 })} now={3 * 60_000} onRestart={onRestart} />);
+    expect(screen.getByTestId('lane-pending').textContent).toContain('다시 뜨지 않았다');
+    fireEvent.click(screen.getByTestId('lane-pending-restart'));
+    expect(onRestart).toHaveBeenCalled();
+    cleanup();
+    render(<ModelConnectionStatus lane={laneState({ lane: on, pending: true, pendingSince: 0 })} now={60_000} onRestart={onRestart} />);
+    expect(screen.queryByTestId('lane-pending-restart')).toBeNull();
+  });
+  it('끈 직후 제목은 「적용 상태」(n15)', () => {
+    render(<ModelConnectionStatus lane={laneState({ lane: null, pending: true, pendingSince: 0 })} now={0} />);
+    expect(screen.getByText('적용 상태')).toBeTruthy();
+  });
+  it('붙은 stdio 서버가 없으면 회색 한 줄, 있으면 노란 상자와 [권한 탭에서 떼기](n11·n3)', () => {
+    renderField(laneState());
+    fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));
+    expect(screen.getByTestId('lane-stdio-hint')).toBeTruthy();
+    expect(screen.queryByTestId('lane-stdio-warn')).toBeNull();
+    cleanup();
+    const onOpenPermissions = vi.fn();
+    render(<ModelConnectionField harness="claude-code" lane={laneState()} pool={<div />} stdioServers={['local-files']} label="" onOpenPermissions={onOpenPermissions} />);
+    fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));
+    expect(screen.getByTestId('lane-stdio-warn').textContent).toContain('local-files');
+    fireEvent.click(screen.getByRole('button', { name: '권한 탭에서 떼기' }));
+    expect(onOpenPermissions).toHaveBeenCalled();
   });
 });

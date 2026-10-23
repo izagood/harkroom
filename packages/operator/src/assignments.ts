@@ -117,6 +117,8 @@ export interface AssignmentReconciler {
    * 모드를 모르는 러너(옛 판·앞 세대)는 lane 이 켜져 있는 한 다르다고 본다. 배정이 없으면 false.
    */
   laneMismatch(runnerId: string, agentId: string): boolean;
+  /** 이 조정기가 띄운 러너면 그 에이전트로 `laneMismatch`. 모르는 러너는 false(그 러너가 lane 이면 러너 스스로 거절한다). */
+  laneMismatchOfRunner(runnerId: string): boolean;
   /**
    * 에이전트별 「적용 대기」 — 지금 러너가 턴 자리 문에 막히는가(`laneMismatch` 와 **같은 판정**, designer s1). 러너가 없으면 false
    * (다음 spawn 이 새 env 로 뜬다). 살아 있는데 모드를 모르는 러너(앞 세대)는 lane 이 켜져 있는 한 true. 앱 실행 탭은 이 값만 쓴다.
@@ -277,6 +279,11 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
 
     noteRunnerLane(runnerId, on) {
       runnerLane.set(runnerId, on);
+    },
+
+    laneMismatchOfRunner(runnerId) {
+      for (const [agentId, id] of currentRunner) if (id === runnerId) return self.laneMismatch(runnerId, agentId);
+      return false;
     },
 
     laneMismatch(runnerId, agentId) {

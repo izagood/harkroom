@@ -640,6 +640,27 @@ describe('mentionScheduler 승인 관문', () => {
     expect(calls).toBe(1);
   });
 
+  // n16: 하네스 API 오류로 끝난 턴은 실행 탭이 초록으로 그리지 않게 알린다. 끝까지 돈 턴은 true.
+  it('turnOutcome — 끝까지 돌면 true, 하네스 API 오류면 false, 그 밖의 실패는 부르지 않는다', async () => {
+    const seen: boolean[] = [];
+    const run = async (runTurn: () => Promise<unknown>, entryId: number) => {
+      const scheduler = createMentionScheduler({
+        harkroom: { markRead: async (ids) => ids.length, post: async () => 1, fail: async () => 1 },
+        registry: new TurnRegistry(), queue: new MentionQueue(), accountLane: [null],
+        runMentionTurn: runTurn as never, buildTurnDeps: () => ({}) as never,
+        hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
+        startedAtMs: 0, turnOutcome: (ok) => seen.push(ok),
+      });
+      await scheduler.admit(batchOf([{ entryId, messageId: `m-out-${entryId}` }]), ctx);
+      await scheduler.drain();
+    };
+    await run(async () => ({}), 21);
+    await run(async () => { throw Object.assign(new Error('api'), { harnessApiError: 'ENOTFOUND' }); }, 22);
+    await run(async () => { throw new ProviderLaneError('no_lease'); }, 23);
+    // ProviderLaneError(키를 못 받음)는 부르지 않는다 — 그건 키 받기 결과가 따로 말한다.
+    expect(seen).toEqual([true, false]);
+  });
+
   it('옛 서버가 provider_lane 표지를 거절하면 표지 없이 한 번 더 올린다', async () => {
     const 발화: { code?: string }[] = [];
     const scheduler = createMentionScheduler({

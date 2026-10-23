@@ -23,6 +23,11 @@ export interface RelayMuxDeps {
    * 허브가 서버의 `local.view`·`local.writer` 를 알아듣는다는 `'local-terminal'` 하나다. 없으면 그대로 올린다.
    */
   extraCaps?: readonly RunnerCap[];
+  /**
+   * 이 러너로 가는 터미널 열기(`interactive.open`)를 거절할 까닭(C1 후속, security n1). 문장을 주면 러너에게 넘기지 않고 그 문장으로
+   * `interactive.error` 를 서버에 돌려준다 — API 키 연결을 켰는데 아직 옛 모드(계정 풀)로 도는 러너가 풀 계정 터미널을 여는 틈을 막는다.
+   */
+  refuseInteractive?(runnerId: string): string | null;
 }
 
 export interface RelayMux {
@@ -80,6 +85,14 @@ export function createRelayMux(deps: RelayMuxDeps): RelayMux {
       const inner = unwrapServerFrame(frame);
       if (!inner) return false;
       const runnerId = (frame as { runnerId: string }).runnerId;
+      if (inner.type === 'interactive.open') {
+        const why = deps.refuseInteractive?.(runnerId) ?? null;
+        if (why !== null) {
+          const refused = wrapRunnerFrame(runnerId, { type: 'interactive.error', requestId: inner.requestId, message: why });
+          if (refused) deps.send(refused);
+          return true;
+        }
+      }
       if (!deps.link.isLinked(runnerId)) {
         // 큐에 담지 않는다 — 입력은 안 보이는 화면에 친 것이고, 재생 요청은 뷰어가 다시 붙으며 다시 온다.
         deps.log(`러너가 없어 버린 서버 프레임: ${frame.type} runnerId=${runnerId}`);

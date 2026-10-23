@@ -15,6 +15,8 @@ import { hasOperatorLocalSurface, listLocalAgents, onLocalAgentsChanged } from '
 
 export interface LocalLane {
   status: ProviderLaneStatus | null;
+  /** 「적용 대기」 — 오퍼레이터가 새 턴을 막고 있다(C1). 칩에 ⏳ 를 붙인다(designer n13). */
+  pending: boolean;
 }
 
 type Snapshot = ReadonlyMap<string, LocalLane>;
@@ -49,7 +51,7 @@ function refresh() {
     const agents = r.communities.find((c) => c.baseUrl === base)?.agents ?? {};
     const next = new Map<string, LocalLane>();
     for (const [id, a] of Object.entries(agents)) {
-      if (a.providerLane) next.set(id, { status: r.laneStatus?.[id] ?? null });
+      if (a.providerLane) next.set(id, { status: r.laneStatus?.[id] ?? null, pending: r.lanePending?.[id] === true });
     }
     publish(next, base);
   }).catch(() => {

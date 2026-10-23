@@ -276,6 +276,8 @@ export interface RelayClient {
   notifySecretLeaseEnded(cause: string): void;
   /** API 키 연결의 그 턴 키 받기 결과(2a) — 실행 탭 「마지막 시도」 줄의 출처. 링크가 없으면 버린다(표시일 뿐이다). */
   notifyProviderLaneResult(ok: boolean, code?: ProviderLaneFailureCode): void;
+  /** API 키 연결 턴이 끝까지 돌았나(true) 하네스 API 오류로 끝났나(false) — 실행 탭이 초록으로 그리지 않게(n16). */
+  notifyProviderLaneTurn(ok: boolean): void;
   /**
    * 링크가 붙을 때까지 기다린다(기동 경로용). 이미 붙어 있으면 즉시, `timeoutMs` 안에 못 붙으면
    * false — 던지지 않는다: 기동은 계속되고, 그 뒤의 호출이 status 0 으로 거절되며 poll 루프가
@@ -638,6 +640,11 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
       catch { /* 끊겼다 — 이 턴은 비밀 없이 돈다 */ }
     },
 
+    notifyProviderLaneTurn(ok) {
+      if (!transport) return;
+      try { transport.send(JSON.stringify({ type: 'providerLane.turn', ok })); }
+      catch { /* 끊겼다 — 표시만 늦는다 */ }
+    },
     notifyProviderLaneResult(ok, code) {
       if (!transport) return;
       try { transport.send(JSON.stringify({ type: 'providerLane.result', ok, ...(ok || !code ? {} : { code }) })); }

@@ -111,3 +111,22 @@ describe('턴 자리 문(C1)', () => {
     expect(gate.maybeBlock('r1', 'a-1', slot(), 'bridge')).toBeNull();
   });
 });
+
+describe('턴 끝 기록(n16)', () => {
+  it('키를 받은 기록에만 API 오류를 붙이고, 다음 성공 턴·새 키 받기가 지운다', () => {
+    const book = createProviderLaneStatusBook(() => Date.parse('2026-10-23T00:00:00Z'));
+    book.noteTurn('a-1', false);
+    expect(book.snapshot()['a-1']).toBeUndefined(); // 키 받기 기록이 없으면 버린다
+    book.note('a-1', true);
+    book.noteTurn('a-1', false);
+    expect(book.snapshot()['a-1']).toMatchObject({ ok: true, apiFailed: true });
+    book.noteTurn('a-1', true);
+    expect(book.snapshot()['a-1']!.apiFailed).toBeUndefined();
+    book.noteTurn('a-1', false);
+    book.note('a-1', true);
+    expect(book.snapshot()['a-1']!.apiFailed).toBeUndefined();
+    book.note('a-1', false, 'no_lease');
+    book.noteTurn('a-1', false);
+    expect(book.snapshot()['a-1']!.apiFailed).toBeUndefined(); // 키를 못 받은 기록에는 안 붙는다
+  });
+});

@@ -37,7 +37,7 @@ export function urlProblem(raw: string): UrlProblem {
   return 'badScheme';
 }
 
-export function ModelConnectionField({ harness, lane, pool, stdioServers, label, onOpenSecrets, onSaved }: {
+export function ModelConnectionField({ harness, lane, pool, stdioServers, label, onOpenSecrets, onOpenPermissions, onSaved }: {
   harness: string;
   lane: ProviderLaneState;
   /** [계정 풀]일 때 그릴 지금 화면. */
@@ -47,6 +47,8 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
   /** 칸 이름 글자 모양(부모 폼과 맞춘다). */
   label: string;
   onOpenSecrets?: () => void;
+  /** 권한 탭으로(붙은 stdio MCP 를 떼러, designer n3). */
+  onOpenPermissions?: () => void;
   /** 저장이 끝났다(켬/끔) — opencode 모델 칸 채우기 등은 부모가 한다. */
   onSaved?: (next: ProviderLaneConfig | null) => Promise<void> | void;
 }) {
@@ -118,7 +120,7 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
           <label className="block">
             {t('agents.lane.baseUrl')}
             <input
-              className={`mt-1 block w-full rounded-row border bg-surface px-2 py-1.5 font-mono text-body text-fg ${problem ? 'border-danger' : 'border-border'}`}
+              className={`mt-1 block w-full rounded-row border bg-surface px-2 py-1.5 font-mono text-meta text-fg ${problem ? 'border-danger' : 'border-border'}`}
               value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://gateway.example" spellCheck={false}
               aria-invalid={problem !== null} data-testid="lane-url"
             />
@@ -136,14 +138,18 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
           <div className="flex gap-2 rounded-row bg-surface-sunken px-3 py-2 text-meta text-fg-subtle" data-testid="lane-desktop-only">
             <span aria-hidden>🔒</span><span>{t('agents.lane.desktopOnly')}</span>
           </div>
-          <div className="rounded-row bg-warning-surface px-3 py-2 text-meta text-warning">
-            {t('agents.lane.stdioWarn')}
-            {stdioServers.length > 0 && (
+          {/* 붙은 stdio 서버가 없으면 회색 한 줄로 줄인다(designer n11) — 붙어 있을 때만 노란 상자와 [권한 탭에서 떼기](n3). */}
+          {stdioServers.length === 0 ? (
+            <span className="text-meta text-fg-subtle" data-testid="lane-stdio-hint">{t('agents.lane.stdioHint')}</span>
+          ) : (
+            <div className="rounded-row bg-warning-surface px-3 py-2 text-meta text-warning" data-testid="lane-stdio-warn">
+              {t('agents.lane.stdioWarn')}
               <span className="mt-1 block font-medium" data-testid="lane-stdio-attached">
                 {t('agents.lane.stdioAttached', { n: stdioServers.length, names: stdioServers.join(', ') })}
+                {onOpenPermissions && <>{' '}<button type="button" className="underline" onClick={onOpenPermissions}>{t('agents.lane.detachInPermissions')}</button></>}
               </span>
-            )}
-          </div>
+            </div>
+          )}
           {harness === 'opencode' && <span className="text-meta text-fg-subtle">{t('agents.lane.opencodeModel')}</span>}
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className="rounded-row bg-accent px-3 py-1 text-fg-on-strong disabled:opacity-50"
@@ -214,35 +220,60 @@ function SecretPicker({ lane, value, onChange, onOpenSecrets }: {
   );
 }
 
-/** 실행 탭 곁 칸 — 이 API 키 연결의 마지막 키 받기 결과(오퍼레이터가 본 것, `laneStatus`). */
-export function ModelConnectionStatus({ lane }: { lane: ProviderLaneState }) {
+/** 대기가 이만큼 길면 「러너가 다시 뜨지 않았다」로 바꾼다(designer n14). 보통은 10초 안에 다시 뜬다(실물 3차). */
+export const LANE_PENDING_STUCK_MS = 3 * 60_000;
+
+/**
+ * 실행 탭 곁 칸 — 이 API 키 연결의 상태. 맨 위 한 칸을 「적용 대기」와 「마지막 턴」이 **번갈아** 쓴다 — 대기 상자가 사라질 때
+ * 아래 줄들이 위로 튀지 않게(designer n18).
+ */
+export function ModelConnectionStatus({ lane, now = Date.now(), onRestart }: {
+  lane: ProviderLaneState;
+  /** 시험이 시각을 고정한다. */
+  now?: number;
+  /** [재시작] — 대기가 오래가면 보인다(n14). 없으면 버튼을 그리지 않는다. */
+  onRestart?: () => void;
+}) {
   const t = useT();
   const locale = useLocale();
   const status = lane.status;
   const time = useMemo(() => (status ? new Date(status.at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false }) : ''), [status, locale]);
   if (!lane.lane && !lane.pending) return null;
-  return (
-    <section className="flex flex-col gap-2" data-testid="lane-status">
-      <h3 className="text-meta font-medium text-fg-muted">{t('agents.lane.statusTitle')}</h3>
-      {/* C1: 설정과 러너 모드가 다르다 — 러너가 도는 턴을 끝내고 다시 뜨기 전이다. 그동안 오퍼레이터가 새 턴을 막는다. */}
-      {lane.pending && (
+  const stuck = lane.pending && lane.pendingSince !== null && now - lane.pendingSince >= LANE_PENDING_STUCK_MS;
+  const slot = (() => {
+    if (lane.pending) {
+      return (
         <div className="rounded-row bg-warning-surface px-3 py-2 text-meta text-warning" data-testid="lane-pending" role="status">
-          {/* 끈 직후면 방향(계정 풀로 돌아감)을 밝힌다 — 지운 연결을 설명하는 줄은 아래에서 숨긴다(designer s2). */}
-          {t(lane.lane ? 'agents.lane.pending' : 'agents.lane.pendingOff')}
+          {/* 끈 직후면 방향(계정 풀로 돌아감)을 밝힌다(designer s2). 오래가면 다시 뜨지 않은 것이다(n14). */}
+          {stuck ? t('agents.lane.pendingStuck') : t(lane.lane ? 'agents.lane.pending' : 'agents.lane.pendingOff')}
+          {stuck && onRestart && <>{' '}<button type="button" className="underline" data-testid="lane-pending-restart" onClick={onRestart}>{t('agents.lane.restart')}</button></>}
         </div>
-      )}
-      {lane.lane && <>
-      {status === null && <div className="text-meta text-fg-subtle">{t('agents.lane.lastNone')}</div>}
-      {status?.ok && <div className="rounded-row bg-success-surface px-3 py-2 text-meta text-success">✓ {t('agents.lane.lastOk', { time })}</div>}
-      {status && !status.ok && (
+      );
+    }
+    if (status === null) return <div className="rounded-row px-3 py-2 text-meta text-fg-subtle">{t('agents.lane.lastNone')}</div>;
+    if (!status.ok) {
+      return (
         <div className="rounded-row bg-danger-surface px-3 py-2 text-meta text-danger" data-testid="lane-status-fail">
           ✕ {t('agents.lane.lastFail', { time, reason: laneCodeText(t, status.code) })} <span className="font-mono">{status.code ?? 'unknown'}</span>
         </div>
-      )}
-      <span className="text-meta text-fg-subtle">{t('agents.lane.statusScope')}</span>
-      <span className="text-meta text-fg-subtle">{t('agents.lane.noPool')}</span>
-      <span className="text-meta text-fg-subtle">{t('agents.lane.terminalBlocked')}</span>
-      <span className="text-meta text-fg-subtle">{t('agents.lane.moveNote')}</span>
+      );
+    }
+    // 키는 받았는데 그 턴은 API 오류로 끝났다 — 초록으로 그리면 「됐다」로 읽힌다(n16).
+    if (status.apiFailed) {
+      return <div className="rounded-row bg-surface-sunken px-3 py-2 text-meta text-fg-muted" data-testid="lane-status-apifail">{t('agents.lane.lastApiFailed', { time })}</div>;
+    }
+    return <div className="rounded-row bg-success-surface px-3 py-2 text-meta text-success" data-testid="lane-status-ok">✓ {t('agents.lane.lastOk', { time })}</div>;
+  })();
+  return (
+    <section className="flex flex-col gap-2" data-testid="lane-status">
+      {/* 끈 직후에는 「이 API 키 연결」이 아니다 — 「적용 상태」(n15). */}
+      <h3 className="text-meta font-medium text-fg-muted">{t(lane.lane ? 'agents.lane.statusTitle' : 'agents.lane.statusTitleOff')}</h3>
+      {slot}
+      {lane.lane && <>
+        <span className="text-meta text-fg-subtle">{t('agents.lane.statusScope')}</span>
+        <span className="text-meta text-fg-subtle">{t('agents.lane.noPool')}</span>
+        <span className="text-meta text-fg-subtle">{t('agents.lane.terminalBlocked')}</span>
+        <span className="text-meta text-fg-subtle">{t('agents.lane.moveNote')}</span>
       </>}
     </section>
   );

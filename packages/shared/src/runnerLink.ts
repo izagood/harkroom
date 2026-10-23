@@ -188,7 +188,11 @@ export type RunnerLinkNotice =
   | SecretLeaseNotice
   | SecretLeaseEndedNotice
   | ProviderLaneResultNotice
-  | ProviderLaneModeNotice;
+  | ProviderLaneModeNotice
+  | ProviderLaneTurnNotice;
+
+/** API 키 연결 턴의 끝(n16) — 끝까지 돌았나(true), 하네스 API 오류로 끝났나(false). */
+export type ProviderLaneTurnNotice = { type: 'providerLane.turn'; ok: boolean };
 
 /** 러너가 붙을 때 알리는 제 API 키 연결 모드(C1) — 오퍼레이터가 설정과 다른 러너의 턴 자리를 막는다. */
 export type ProviderLaneModeNotice = { type: 'providerLane.mode'; on: boolean };
@@ -269,6 +273,7 @@ export function isRunnerLinkNotice(value: unknown): value is RunnerLinkNotice {
   if (m.type === 'secret.lease') return str(m.cause) && str(m.leaseId) && str(m.token) && str(m.expiresAt);
   if (m.type === 'secret.leaseEnded') return str(m.cause);
   if (m.type === 'providerLane.mode') return typeof m.on === 'boolean';
+  if (m.type === 'providerLane.turn') return typeof m.ok === 'boolean';
   if (m.type === 'providerLane.result') {
     return typeof m.ok === 'boolean' && (m.code === undefined || (PROVIDER_LANE_FAILURE_CODES as readonly unknown[]).includes(m.code));
   }

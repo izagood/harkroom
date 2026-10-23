@@ -625,6 +625,7 @@ cleanupTick.unref?.();
 
 const scheduler = createMentionScheduler({
   harkroom, registry, queue: mentionQueue, heldEntryIds, handoverDone, secretLeases, threadClaims,
+  ...(providerLaneOn ? { turnOutcome: (ok: boolean) => relay.notifyProviderLaneTurn(ok) } : {}),
   turnSlots: { acquire: (key) => harkroom.acquireTurnSlot(key), release: (key) => harkroom.releaseTurnSlot(key) },
   turnWatch: {
     // 정의를 기다리기 **전에** 부른다 — 리포터가 이 스레드를 "도는 중"으로 먼저 올린다(security F2).
