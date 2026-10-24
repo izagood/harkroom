@@ -539,7 +539,7 @@ async function confirm(pool: Pool, message: MessageRow, actorId: string, outcome
     if (!o.ok && o.hidden) return `- ✗ ${REASON_KO[o.why]}`;
     const what = `${plain(o.c.agentHandle)} · ${o.c.kind === 'merge' ? '머지' : '명령'} \`${plain(o.c.target)}\` · #${plain(o.c.channelName ?? '?')}`;
     if (!o.ok) return `- ✗ ${what} — ${REASON_KO[o.why]}`;
-    if (o.denied) return `- ✓ ${what} — 거절`;
+    if (o.denied) return `- ✕ ${what} — 거절`; // r6: 표지가 결과와 맞게 — 허락 ✓, 거절 ✕.
     const until = o.grantMode === 'once' || o.c.denialId ? '이번 한 번' : o.grantExpiresAt ? `${o.grantExpiresAt.slice(0, 16).replace('T', ' ')} UTC 까지` : '';
     return `- ✓ ${what} — ${until}`;
   });

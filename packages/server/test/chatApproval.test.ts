@@ -470,6 +470,10 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect((await systemLines(thread)).at(-1)!.meta.i18n.key).toBe('system.chatApproval.denyNeedsLink');
     await say(alice.token, `거절해 ${link(cardId)}`, thread);
     expect(await status(requestId)).toBe('denied');
+    // r6: 확인 줄의 표지가 결과와 맞다 — 거절은 ✕(✓ 가 아니다).
+    const confirmLine = (await systemLines(thread)).at(-1)!.body;
+    expect(confirmLine).toMatch(/^- ✕ .* — 거절$/m);
+    expect(confirmLine).not.toContain('- ✓');
   });
 
   it('조용히 넘기지 않는다 — 링크만 있고 낱말이 없으면 안내 한 줄', async () => {
