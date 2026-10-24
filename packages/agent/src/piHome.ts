@@ -13,7 +13,8 @@
 // pi 에는 권한 승인 장치가 없다. 읽기 전용은 `--tools <닫힌 목록>` 으로 건다(소유자 결정 10-01).
 // MCP 도구에는 `*` 가 안 먹으므로(실측) 턴 직전에 `pi mcp list --json` 으로 이름을 받아 적는다.
 import { execFile } from 'node:child_process';
-import { chmod, lstat, mkdir, readFile, readdir, readlink, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { chmod, lstat, mkdir, readFile, readdir, readlink, symlink, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -144,6 +145,11 @@ export async function ensurePiHome(opts: {
   piHome: string;
   mcpServers: Record<string, ClaudeStyleServer>;
   sourceDir?: string;
+  /**
+   * API 키 연결 턴의 홈(`piLaneThreadHome`)이면 참. 사람 설정·로그인·제공자를 하나도 물려받지 않는다 — 모델은 그 턴의
+   * `models.json`(`writePiLaneModels`) 하나다. 전에 링크해 둔 것이 있으면 **링크만** 뗀다(사람 파일은 안 건드린다).
+   */
+  lane?: boolean;
 }): Promise<string> {
   const { piHome } = opts;
   const source = opts.sourceDir ?? sourcePiDir();
@@ -151,7 +157,7 @@ export async function ensurePiHome(opts: {
   await chmod(piHome, 0o700);
   await mkdir(piSessionsDir(piHome), { recursive: true, mode: 0o700 });
 
-  const user = await readJson(join(source, 'settings.json'));
+  const user = opts.lane ? {} : await readJson(join(source, 'settings.json'));
   const settings: Record<string, unknown> = {};
   for (const key of INHERITED_SETTINGS) if (user[key] !== undefined) settings[key] = user[key];
   await writeFile(join(piHome, 'settings.json'), `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
@@ -160,6 +166,14 @@ export async function ensurePiHome(opts: {
     `${JSON.stringify({ mcpServers: toPiMcp(opts.mcpServers) }, null, 2)}\n`,
     { mode: 0o600 },
   );
+
+  if (opts.lane) {
+    for (const file of LINKED_FILES) {
+      const to = join(piHome, file);
+      if ((await lstat(to).catch(() => null))?.isSymbolicLink()) await unlink(to);
+    }
+    return piHome;
+  }
 
   for (const file of LINKED_FILES) {
     const from = join(source, file);
@@ -180,4 +194,86 @@ export async function ensurePiHome(opts: {
     }
   }
   return piHome;
+}
+
+/** API 키 연결 턴의 provider 이름(`models.json`). 모델은 `harkroom-lane/<gateway 모델 id>` 로 부른다. */
+export const PI_LANE_PROVIDER = 'harkroom-lane';
+
+/**
+ * API 키 연결 턴의 pi 홈(`PI_CODING_AGENT_DIR`) — **스레드마다** 가른다. `models.json` 이 그 턴의 키 파일 경로를 담으므로
+ * 한 파일을 여러 스레드가 같이 쓰면 동시에 도는 턴이 서로의 경로를 덮는다(omp 와 같은 이유). 세션도 이 아래에 쌓인다.
+ */
+export function piLaneThreadHome(laneRoot: string, threadKey: string): string {
+  return join(laneRoot, 'threads', createHash('sha256').update(threadKey).digest('hex').slice(0, 24));
+}
+
+/**
+ * lane 홈에 로그인이 들어 있는가. 같은 provider 이름의 로그인은 `models.json` 의 키를 이긴다(1.4.0 실측) — 있으면 띄우지 않는다
+ * (`harness_login_present`). pi 는 첫 기동 때 빈 `{}` 를 스스로 만든다 — 그것은 로그인이 아니다. 못 읽거나 JSON 이 아니면 있다고 본다.
+ */
+export async function piLaneLoginPresent(piHome: string): Promise<boolean> {
+  const path = join(piHome, 'auth.json');
+  const st = await lstat(path).catch(() => null);
+  if (!st) return false;
+  if (st.isSymbolicLink()) return true;
+  try {
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
+    return !(typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) && Object.keys(parsed).length === 0);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * lane 의 `models.json`. 주소는 https 이거나 루프백이어야 하고, 키는 파일 경로만 `!cat` 으로 가리킨다 — `!` 로 시작하는 값은 pi 가
+ * **명령으로 실행**한다(문서 models-configuration) — 경로에 셸 특수 문자가 섞이면 거절한다. 키 값은 이 파일에 들지 않는다.
+ */
+export function piLaneModelsJson(lane: { baseUrl: string; keyPath: string; models: readonly string[] }): string {
+  const url = new URL(lane.baseUrl);
+  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) throw new Error('piLaneModelsJson: https 또는 로컬 주소만 받는다');
+  if (/[^A-Za-z0-9/._-]/.test(lane.keyPath) || !lane.keyPath.startsWith('/')) throw new Error('piLaneModelsJson: 키 파일 경로가 이상하다');
+  for (const m of lane.models) if (!/^[A-Za-z0-9._:/-]{1,128}$/.test(m)) throw new Error('piLaneModelsJson: 모델 이름이 이상하다');
+  const doc = {
+    providers: {
+      [PI_LANE_PROVIDER]: {
+        // gateway 의 OpenAI 꼴 경로는 `/v1/chat/completions` 다 — lane 주소는 claude·opencode 와 같은 뿌리라 `/v1` 을 붙인다.
+        baseUrl: `${lane.baseUrl}/v1`,
+        api: 'openai-completions',
+        apiKey: `!cat ${lane.keyPath}`,
+        models: lane.models.map((id) => ({ id })),
+      },
+    },
+  };
+  return `${JSON.stringify(doc, null, 2)}\n`;
+}
+
+export async function writePiLaneModels(piHome: string, lane: { baseUrl: string; keyPath: string; models: readonly string[] }): Promise<string> {
+  const path = join(piHome, 'models.json');
+  // 링크였으면(지난 비-lane 홈) 사람 파일을 덮지 않게 링크부터 뗀다.
+  if ((await lstat(path).catch(() => null))?.isSymbolicLink()) await unlink(path);
+  await writeFile(path, piLaneModelsJson(lane), { mode: 0o600 });
+  await chmod(path, 0o600);
+  return path;
+}
+
+/**
+ * lane 스레드 홈을 마련한다(멱등) — 루트(`ensurePiHome({ lane: true })` 가 쓴 것)의 `settings.json`·`mcp.json` 을 턴마다 다시 베낀다
+ * (오퍼레이터의 표가 바뀔 수 있다). 링크로 남은 로그인·제공자는 뗀다. `models.json` 은 그 턴이 쓴다(`writePiLaneModels`).
+ */
+export async function ensurePiLaneThread(laneRoot: string, threadKey: string): Promise<string> {
+  const home = piLaneThreadHome(laneRoot, threadKey);
+  for (const dir of [join(laneRoot, 'threads'), home, piSessionsDir(home)]) {
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await chmod(dir, 0o700);
+  }
+  for (const name of ['settings.json', 'mcp.json']) {
+    await writeFile(join(home, name), await readFile(join(laneRoot, name), 'utf8'), { mode: 0o600 });
+    await chmod(join(home, name), 0o600);
+  }
+  for (const file of LINKED_FILES) {
+    const to = join(home, file);
+    if ((await lstat(to).catch(() => null))?.isSymbolicLink()) await unlink(to);
+  }
+  return home;
 }
