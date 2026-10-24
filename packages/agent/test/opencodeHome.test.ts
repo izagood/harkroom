@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  ensureOpencodeHome, opencodeConfigFile, opencodeDirs, opencodeLaneModelMissing, OPENCODE_LANE_AGENT, OPENCODE_LANE_PERMISSION, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
+  ensureOpencodeHome, opencodeConfigFile, opencodeDirs, opencodeLaneModelMissing, laneRunModel, OPENCODE_LANE_AGENT, OPENCODE_LANE_PERMISSION, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
   opencodeLaneHome, laneSkillPermission,
 } from '../src/opencodeHome.js';
 import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
@@ -292,10 +292,10 @@ describe('lane 러너의 opencode 홈', () => {
     expect(await readFile(join(f.sourceData, 'auth.json'), 'utf8')).toContain('rro');
   });
 
-  it('모델을 모르거나 lane 모델이 아니면 목록을 비운다 — 그 턴은 실패하고 다른 provider 로 안 떨어진다', async () => {
+  it('모델을 모르거나 쓸 수 없는 글자면 목록을 비운다 — 그 턴은 실패하고 다른 provider 로 안 떨어진다', async () => {
     const f = await fixture();
     await ensureOpencodeHome({
-      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData, providerLane: { model: 'rro/some/model' },
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData, providerLane: { model: 'rro/{env:HOME}' },
     });
     const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
     expect(cfg.provider['harkroom-lane'].models).toEqual({});
@@ -315,19 +315,39 @@ describe('lane 러너의 opencode 홈', () => {
     expect(providerLaneModelId('harkroom-lane/{file:/etc/passwd}')).toBeNull();
     expect(providerLaneModelId('harkroom-lane/')).toBeNull();
     expect(providerLaneModelId(null)).toBeNull();
+    // 원문도 같은 문법으로 잰다.
+    expect(providerLaneModelId('ExampleOrg/example-model')).toBe('ExampleOrg/example-model');
+    expect(providerLaneModelId('{env:HARKROOM_PROVIDER_TOKEN}')).toBeNull();
   });
 });
 
-// 2026-10-23 watcher: lane 을 claude-code 로 켠 뒤 하네스만 opencode 로 바꿔 모델이 `ExampleOrg/…` 로 남았다. 띄우면 「Connect a
-// provider」 창에서 10분 서 있다가 정지로 접혔다 — 러너는 띄우기 전에 까닭 코드로 실패해야 한다.
-describe('opencode lane 모델이 lane 모양이 아니면 띄우지 않는다', () => {
-  it('lane·opencode·lane 모양 아님 → 참', () => {
-    expect(opencodeLaneModelMissing(true, true, 'ExampleOrg/example-model')).toBe(true);
-    expect(opencodeLaneModelMissing(true, true, null)).toBe(true);
-  });
-  it('lane 모양이거나, lane 이 아니거나, 설정 파일로 모델을 고르지 않는 하네스(claude)면 거짓', () => {
+// 2026-10-24 jaebin: 모델 칸에는 gateway 가 받는 원문(`ExampleOrg/example-model`)을 적는다. `harkroom-lane/` 머리는 러너가 opencode 를
+// 띄울 때만 안에서 붙인다. 머리가 붙은 옛 값도 그대로 돈다. 비었거나 쓸 수 없는 글자일 때만 띄우기 전에 `bad_model` 로 실패한다.
+describe('opencode lane 모델 — 원문을 받고 머리는 러너가 붙인다', () => {
+  it('원문·옛 머리 붙은 값 모두 받는다 — 비었거나 문법에 안 맞을 때만 참', () => {
+    expect(opencodeLaneModelMissing(true, true, 'ExampleOrg/example-model')).toBe(false);
     expect(opencodeLaneModelMissing(true, true, 'harkroom-lane/ExampleOrg/example-model')).toBe(false);
-    expect(opencodeLaneModelMissing(false, true, 'ExampleOrg/example-model')).toBe(false);
-    expect(opencodeLaneModelMissing(true, false, 'ExampleOrg/example-model')).toBe(false);
+    expect(opencodeLaneModelMissing(true, true, null)).toBe(true);
+    expect(opencodeLaneModelMissing(true, true, '  ')).toBe(true);
+    expect(opencodeLaneModelMissing(true, true, 'ExampleOrg/{env:HOME}')).toBe(true);
+    expect(opencodeLaneModelMissing(false, true, null)).toBe(false);
+    expect(opencodeLaneModelMissing(true, false, null)).toBe(false);
+  });
+  it('laneRunModel: opencode 는 안에서만 `harkroom-lane/<원문>`, claude 는 원문, lane 이 아니면 그대로', () => {
+    expect(laneRunModel(true, true, 'ExampleOrg/example-model')).toBe('harkroom-lane/ExampleOrg/example-model');
+    expect(laneRunModel(true, true, 'harkroom-lane/ExampleOrg/example-model')).toBe('harkroom-lane/ExampleOrg/example-model');
+    expect(laneRunModel(true, true, 'ExampleOrg/{file:/etc/passwd}')).toBeNull();
+    expect(laneRunModel(true, false, 'ExampleOrg/example-model')).toBe('ExampleOrg/example-model');
+    expect(laneRunModel(true, false, 'harkroom-lane/ExampleOrg/example-model')).toBe('ExampleOrg/example-model');
+    expect(laneRunModel(false, true, 'harkroom-lane/x')).toBe('harkroom-lane/x');
+  });
+  it('lane 설정의 모델 목록에는 원문 id 가 든다(원문·옛 값 같은 결과)', async () => {
+    for (const model of ['ExampleOrg/example-model', 'harkroom-lane/ExampleOrg/example-model']) {
+      const f = await fixture();
+      await ensureOpencodeHome({ opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData, providerLane: { model } });
+      const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+      expect(cfg.provider['harkroom-lane'].models).toEqual({ 'ExampleOrg/example-model': { name: 'ExampleOrg/example-model' } });
+      expect(cfg.model).toBe('harkroom-lane/ExampleOrg/example-model');
+    }
   });
 });
