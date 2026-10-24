@@ -365,13 +365,14 @@ export const LANE_BASE_ALLOW: readonly string[] = ['ToolSearch', 'TodoWrite', 'E
  * API 키 연결 턴에서 막는 것(security, 2026-10-23 실측 claude 2.1.309 dontAsk). deny 는 allow·승인 규칙보다 앞선다.
  *
  * - `Agent`: 하위 에이전트는 이 턴의 허용 목록을 물려받지 않는다(실측) — 닫는다. deny 하면 하위 에이전트 안에서도 꺼진다.
- * - 작업 폴더의 `.claude/**`(스킬·에이전트·명령 정의)·`CLAUDE.md`·`.mcp.json`: 다음 턴의 도구·지시·MCP 를 바꾸는 파일이다.
+ * - 작업 폴더의 `.claude/**`(스킬·에이전트·명령 정의)·`CLAUDE.md`·`CLAUDE.local.md`·`.mcp.json`: 다음 턴의 도구·지시·MCP 를 바꾸는 파일이다.
  *   `Edit(./**)`·`Write(./**)` 를 열어도 이 셋은 못 쓴다. Edit deny 는 Write 도 막지만 둘 다 적어 둔다.
  */
 export const LANE_DENY: readonly string[] = [
   'Agent',
   'Edit(./.claude/**)', 'Write(./.claude/**)',
   'Edit(./CLAUDE.md)', 'Write(./CLAUDE.md)',
+  'Edit(./CLAUDE.local.md)', 'Write(./CLAUDE.local.md)',
   'Edit(./.mcp.json)', 'Write(./.mcp.json)',
 ];
 
