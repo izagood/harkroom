@@ -808,7 +808,8 @@ function ReapproveDialog({ secret, grant, again, error, busy, handle, channelNam
       if (!live) return;
       const nowId = agents.find((a) => a.id === grant.agentId)?.assignment?.operatorId ?? null;
       setMachine({ now: ops.find((o) => o.id === nowId) ?? null, before: ops.find((o) => o.id === grant.operatorId) ?? null });
-    }).catch(() => undefined);
+    // 읽기가 실패하면 「…」에 멈추지 말고 「지금 배정된 머신」으로 떨어진다(security n3) — 모르는 채 묶는다는 것을 숨기지 않는다.
+    }).catch(() => { if (live) setMachine({ now: null, before: null }); });
     return () => { live = false; };
   }, [grant.agentId, grant.operatorId]);
   const fields = grant.changedFields ?? [];

@@ -405,6 +405,16 @@ describe('정지된 부여 다시 허락', () => {
     await waitFor(() => expect(within(dlg).getByTestId('secret-reapprove-scope').textContent).toBe('모든 채널 · 지금 머신만 → old-mbp new-mini 에 옮겨 묶는다'));
   });
 
+  it('머신을 못 읽으면 「…」에 멈추지 않고 「지금 배정된 머신」으로 보인다(security n3)', async () => {
+    setup({ operators: vi.fn(async () => { throw new Error('offline'); }), listAgents: vi.fn(async () => []),
+      listSecretGrants: vi.fn(async () => [paused()]) });
+    render(<SecretsSettings />);
+    await expand('api-token');
+    fireEvent.click(await screen.findByTestId('secret-grant-reapprove-alpha'));
+    const dlg = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dlg).getByTestId('secret-reapprove-scope').textContent).toBe('모든 채널 · 지금 머신만 → 지금 배정된 머신 에 묶는다'));
+  });
+
   it('바뀐 칸 기록이 없는 옛 줄은 「에이전트 설정이 바뀜」·「기록 없음」으로 보이고 null 을 보낸다(n3)', async () => {
     const c = setup({ ...machines, listSecretGrants: vi.fn(async () => [paused({ changedFields: [], lastChangedAt: null, operatorId: null })]), reapproveSecretGrant: vi.fn(async () => ({ grantId: 'g1', operatorId: null })) });
     render(<SecretsSettings />);
