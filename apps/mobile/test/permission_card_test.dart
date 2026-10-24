@@ -192,6 +192,12 @@ void main() {
     expect(find.text('🔑 위임장 · @alice · 10-21 시작'), findsOneWidget);
   });
 
+  test('ghUserUsed: 카드와 원본을 보는 거울에서 읽는다', () {
+    expect(PermissionCardInfo.read({'permissionRequest': {'status': 'approved_once', 'ghUserUsed': 'picked'}})!.ghUserUsed, 'picked');
+    expect(PermissionCardInfo.read({'permissionMirror': {'rootId': 'r', 'neutral': false, 'ghUserUsed': 'picked'}})!.ghUserUsed, 'picked');
+    expect(PermissionCardInfo.read({'permissionMirror': {'rootId': 'r', 'neutral': true, 'ghUserUsed': 'picked'}})!.ghUserUsed, isNull);
+  });
+
   testWidgets('끝난 상태들', (tester) async {
     Future<void> expectState(Map<String, Object?> pr, String text, {Map<String, Object?> ask = const {}}) async {
       await tester.pumpWidget(wrap(app, card(permMeta(pr: pr, ask: ask))));
