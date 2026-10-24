@@ -10,7 +10,7 @@
  */
 import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { relative, isAbsolute, join } from 'node:path';
-import { normalizeProviderBaseUrl, OPENCODE_LANE_VERSION, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
+import { normalizeProviderBaseUrl, OPENCODE_LANE_VERSIONS, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
 import type { AgentHarness } from '@harkroom/shared';
 import { PROVIDER_LANE_OPENCODE_PROVIDER } from './opencodeHome.js';
 
@@ -39,18 +39,18 @@ export const PROVIDER_LANE_FIXED_ENV: Partial<Record<AgentHarness, Readonly<Reco
   'claude-code': { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1' },
   // opencode 는 사람 홈의 `~/.claude`(지시·스킬)·`~/.agents` 스킬을 싣는다 — 이 둘이 끈다(1.18.32 실측). `~/.opencode` 는 이것으로
   // 안 막혀서 홈 표지 자리(`OPENCODE_TEST_HOME`, 에이전트마다 다른 값이라 `childEnv` 가 얹는다)를 같이 준다.
-  opencode: { OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_DISABLE_EXTERNAL_SKILLS: '1' },
+  // 자동 업데이트도 끈다 — 턴 사이에 판이 바뀌면 관문을 지난 판과 도는 판이 갈린다(security F1, 1.18.32 코드에서 이 이름을 확인).
+  opencode: { OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_AUTOUPDATE: '1' },
 };
 
 /**
- * opencode lane 의 격리를 잰 판(1.18.32). 홈 표지 자리가 시험용 이름이라 판이 바뀌면 조용히 풀릴 수 있다 — 이 줄 밖이면
- * 띄우지 않고 `harness_version` 으로 실패한다. 새 판을 재면 여기를 넓힌다.
+ * opencode lane 의 격리를 잰 판(`OPENCODE_LANE_VERSIONS`). 홈 표지 자리가 시험용 이름이라 판이 바뀌면 조용히 풀릴 수 있다 — 목록 밖이면
+ * 띄우지 않고 `harness_version` 으로 실패한다. 판은 **턴마다** 묻는다 — opencode 는 스스로 업데이트할 수 있다.
  */
 export function opencodeLaneVersionOk(raw: string | null | undefined): boolean {
-  const m = /(\d+)\.(\d+)\.(\d+)/.exec(raw ?? '');
-  if (!m) return false;
-  const { major, minor, minPatch } = OPENCODE_LANE_VERSION;
-  return Number(m[1]) === major && Number(m[2]) === minor && Number(m[3]) >= minPatch;
+  // 잰 판과 **정확히** 같을 때만 받는다(security F1) — 패치 판도 격리를 다시 재고 목록에 더한다. 출력은 숫자 판 한 줄이어야 한다.
+  const version = (raw ?? '').trim();
+  return /^\d+\.\d+\.\d+$/.test(version) && (OPENCODE_LANE_VERSIONS as readonly string[]).includes(version);
 }
 
 /** 하네스별 판 관문 — 격리를 잰 판 밖이면 `harness_version`. 없는 하네스는 판을 묻지 않는다. */

@@ -590,26 +590,25 @@ const providerLane = providerLaneOn
     turnSecretsDir: process.env.HARKROOM_TURN_SECRETS_DIR ?? null,
     report: (ok, code) => relay.notifyProviderLaneResult(ok, code),
     stateDir: agentStateDir,
-    harnessVersion: (harness) => harnessVersionOnce(harness),
+    harnessVersion: (harness) => harnessVersion(harness),
   })
   : null;
 // 지난 러너가 남긴 턴 파일을 걷는다(키 값은 없고 키 파일 경로만 있다).
 if (providerLane) await sweepLaneTurnDir(agentStateDir);
 
-/** 하네스 `--version` 출력. 읽은 값만 기억한다 — 못 읽은 것은 다음 턴에 다시 묻는다(판을 바꾸면 러너를 다시 띄운다). */
-const harnessVersions = new Map<AgentHarness, string>();
-function harnessVersionOnce(harness: AgentHarness): Promise<string | null> {
-  const known = harnessVersions.get(harness);
-  if (known) return Promise.resolve(known);
+/**
+ * 하네스 `--version` 출력. **기억하지 않고 턴마다 묻는다**(security F1) — opencode 는 러너 모르게 스스로 업데이트할 수 있다.
+ * env 는 PATH·HOME 만 준다 — 판을 묻는 데 러너의 나머지 env 는 필요 없다.
+ */
+function harnessVersion(harness: AgentHarness): Promise<string | null> {
   return new Promise((resolve) => {
     const bin = harnessBinaryName(harness);
     if (!bin) return resolve(null);
     execFile(bin, ['--version'], {
-      env: { ...process.env, PATH: harnessPath(harness, process.env.PATH) }, timeout: 15_000,
+      env: { PATH: harnessPath(harness, process.env.PATH), ...(process.env.HOME ? { HOME: process.env.HOME } : {}) }, timeout: 15_000,
     }, (err, stdout) => {
       const out = String(stdout ?? '').trim();
       if (err || !out) return resolve(null);
-      harnessVersions.set(harness, out);
       resolve(out);
     });
   });

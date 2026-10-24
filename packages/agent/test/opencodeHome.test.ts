@@ -188,6 +188,7 @@ describe('lane 러너의 opencode 홈', () => {
     });
     // 다른 provider(무료 티어·사람 로그인)로 돌지 않는다.
     expect(cfg.enabled_providers).toEqual(['harkroom-lane']);
+    expect(cfg.autoupdate).toBe(false);
     expect(cfg.model).toBe('harkroom-lane/example-model');
     expect(cfg.agent[OPENCODE_READONLY_AGENT].model).toBe('harkroom-lane/example-model');
     expect(cfg.agent[OPENCODE_LANE_AGENT]).toEqual({ mode: 'primary', permission: OPENCODE_LANE_PERMISSION, model: 'harkroom-lane/example-model' });

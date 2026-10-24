@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/prom
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createProviderLane, laneScrubsSubprocessEnv, LANE_MCP_CONFIG_FILE, opencodeLaneVersionOk, ProviderLaneError, sweepLaneTurnDir, writeLaneMcpConfig, writeOpencodeLaneTurnConfig } from '../src/providerLane.js';
+import { createProviderLane, laneScrubsSubprocessEnv, PROVIDER_LANE_FIXED_ENV, LANE_MCP_CONFIG_FILE, opencodeLaneVersionOk, ProviderLaneError, sweepLaneTurnDir, writeLaneMcpConfig, writeOpencodeLaneTurnConfig } from '../src/providerLane.js';
 
 async function setup(value = 'tok-123\n') {
   const root = await mkdtemp(join(tmpdir(), 'lane-'));
@@ -46,10 +46,10 @@ describe('providerLane.envFor', () => {
     await expect(lane.envFor('m1', 'kilo')).rejects.toMatchObject({ code: 'harness_unsupported' });
   });
 
-  it('opencode 판이 잰 줄(1.18.32 이상 1.19 미만) 밖이거나 못 읽으면 `harness_version` — 키를 받지 않는다', async () => {
+  it('opencode 판이 잰 목록과 정확히 같지 않거나 못 읽으면 `harness_version` — 키를 받지 않는다(security F1)', async () => {
     const t = await setup();
     let mounted = 0;
-    for (const v of ['1.19.0', '1.18.31', '2.0.0', null, 'garbage']) {
+    for (const v of ['1.18.33', '1.19.0', '1.18.31', '2.0.0', null, 'garbage', 'opencode 1.18.32', '1.18.32-beta']) {
       const lane = createProviderLane({
         mount: async () => { mounted++; return { status: 200, body: JSON.stringify({ lane: { baseUrl: 'https://gateway.example', path: t.path } }) }; },
         turnSecretsDir: t.secretsDir, stateDir: join(t.root, 'st'), harnessVersion: async () => v,
@@ -57,8 +57,25 @@ describe('providerLane.envFor', () => {
       await expect(lane.envFor('m1', 'opencode')).rejects.toMatchObject({ code: 'harness_version' });
     }
     expect(mounted).toBe(0);
-    expect(opencodeLaneVersionOk('opencode 1.18.40')).toBe(true);
-    expect(opencodeLaneVersionOk('1.18.32')).toBe(true);
+    expect(opencodeLaneVersionOk('1.18.32\n')).toBe(true);
+  });
+
+  it('판은 턴마다 묻는다 — 러너가 사는 사이 opencode 가 스스로 바뀌면 다음 턴이 막힌다', async () => {
+    const t = await setup();
+    let current = '1.18.32';
+    let asked = 0;
+    const lane = createProviderLane({
+      mount: ok({ baseUrl: 'https://gateway.example', path: t.path }), turnSecretsDir: t.secretsDir, stateDir: join(t.root, 'st'),
+      harnessVersion: async () => { asked++; return current; },
+    });
+    await lane.envFor('m1', 'opencode');
+    current = '1.18.33';
+    await expect(lane.envFor('m2', 'opencode')).rejects.toMatchObject({ code: 'harness_version' });
+    expect(asked).toBe(2);
+  });
+
+  it('lane opencode 고정 env 는 자동 업데이트를 끈다', () => {
+    expect(PROVIDER_LANE_FIXED_ENV.opencode).toMatchObject({ OPENCODE_DISABLE_AUTOUPDATE: '1' });
   });
 
   it('턴 파일 자리가 없으면 opencode lane 은 실패한다', async () => {

@@ -224,6 +224,8 @@ function providerLaneConfig(model: string | null, previous: readonly string[] = 
       },
     },
     enabled_providers: [name],
+    // 자동 업데이트를 끈다(고정 env `OPENCODE_DISABLE_AUTOUPDATE` 와 같은 뜻, 둘 중 하나만 있어도 꺼진다 — 1.18.32 코드).
+    autoupdate: false,
     ...(id ? { model: `${name}/${id}`, small_model: `${name}/${id}` } : {}),
   };
 }

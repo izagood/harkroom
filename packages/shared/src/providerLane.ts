@@ -76,7 +76,7 @@ export function readProviderLaneConfig(raw: unknown): ProviderLaneConfig | null 
 /**
  * opencode lane 의 격리를 잰 판(러너 판 관문 `opencodeLaneVersionOk` 와 데스크톱 `harness_version` 문장이 같이 쓴다). 넓히면 둘이 같이 바뀐다.
  */
-export const OPENCODE_LANE_VERSION = { major: 1, minor: 18, minPatch: 32 } as const;
+export const OPENCODE_LANE_VERSIONS = ['1.18.32'] as const;
 
 export const PROVIDER_LANE_FAILURE_CODES = [
   'harness_unsupported', 'no_turn_secrets_dir', 'operator_unreachable', 'lane_unset', 'bad_base_url', 'bad_path', 'bad_value', 'bg_unsupported', 'bad_model', 'workspace_protected', 'harness_version',
