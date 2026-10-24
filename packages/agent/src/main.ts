@@ -17,7 +17,7 @@
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
 // 진짜 서버에 붙으려 든다.
 import { PROVIDER_LANE_ENV } from '@harkroom/shared/providerLane';
-import { createProviderLane, ProviderLaneError } from './providerLane.js';
+import { createProviderLane, ProviderLaneError, sweepLaneTurnDir } from './providerLane.js';
 import { resolveTurnModel } from './threadModel.js';
 import { idleStopRequestedAt } from './idleStop.js';
 import { execFile } from 'node:child_process';
@@ -34,7 +34,7 @@ import { runPtyTurn } from './pty.js';
 import { avcsGuideFlag } from './avcsGuideFlag.js';
 import { SessionStore } from './sessions.js';
 import { ensureNameLink, resolveAgentStateDir } from './stateDir.js';
-import { assertHarnessContract, buildTurnCommand, readExtraMcpServers, readMcpServers, writeSystemPromptFile, type McpServerEntry } from './turn.js';
+import { assertHarnessContract, buildTurnCommand, harnessPath, readExtraMcpServers, readMcpServers, writeSystemPromptFile, type McpServerEntry } from './turn.js';
 import { BG_POLL_INTERVAL_MS, BG_SYSTEM_PROMPT, BgExecutor, writeBgMcpConfig } from './bgExecutor.js';
 import { createStoppableSleep } from './stoppableSleep.js';
 import { createRetreat, type Retreat } from './retreat.js';
@@ -589,8 +589,31 @@ const providerLane = providerLaneOn
     mount: (cause) => harkroom.mountProviderLane(cause),
     turnSecretsDir: process.env.HARKROOM_TURN_SECRETS_DIR ?? null,
     report: (ok, code) => relay.notifyProviderLaneResult(ok, code),
+    stateDir: agentStateDir,
+    harnessVersion: (harness) => harnessVersionOnce(harness),
   })
   : null;
+// 지난 러너가 남긴 턴 파일을 걷는다(키 값은 없고 키 파일 경로만 있다).
+if (providerLane) await sweepLaneTurnDir(agentStateDir);
+
+/** 하네스 `--version` 출력. 읽은 값만 기억한다 — 못 읽은 것은 다음 턴에 다시 묻는다(판을 바꾸면 러너를 다시 띄운다). */
+const harnessVersions = new Map<AgentHarness, string>();
+function harnessVersionOnce(harness: AgentHarness): Promise<string | null> {
+  const known = harnessVersions.get(harness);
+  if (known) return Promise.resolve(known);
+  return new Promise((resolve) => {
+    const bin = harnessBinaryName(harness);
+    if (!bin) return resolve(null);
+    execFile(bin, ['--version'], {
+      env: { ...process.env, PATH: harnessPath(harness, process.env.PATH) }, timeout: 15_000,
+    }, (err, stdout) => {
+      const out = String(stdout ?? '').trim();
+      if (err || !out) return resolve(null);
+      harnessVersions.set(harness, out);
+      resolve(out);
+    });
+  });
+}
 
 // 스레드 임대(서버 095). holder 는 **이 프로세스**다 — 앱 업데이트로 같은 에이전트의 옛 러너와 겹쳐 도는 동안
 // 둘을 가르는 값이라 기동마다 새로 짓는다(같은 에이전트 자격이라 계정 id 로는 못 가른다).

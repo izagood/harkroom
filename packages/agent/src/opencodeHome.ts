@@ -154,8 +154,13 @@ const INHERITED_KEYS = ['provider', 'model', 'small_model'] as const;
  * 내장 `anthropic` 이 아니라 새 이름이어야 한다 — 내장 provider 는 지운 `ANTHROPIC_API_KEY` 를 찾는다.
  */
 export const PROVIDER_LANE_OPENCODE_PROVIDER = 'harkroom-lane';
-/** lane 값이 들어오는 자식 env 이름(`PROVIDER_LANE_ENV_KEYS.opencode`). 설정 파일에는 값이 아니라 이 참조만 적는다. */
-export const PROVIDER_LANE_OPENCODE_ENV = { baseUrl: 'HARKROOM_PROVIDER_BASE_URL', token: 'HARKROOM_PROVIDER_TOKEN' } as const;
+/**
+ * lane 턴의 홈 표지 자리(`OPENCODE_TEST_HOME`). opencode 는 `~/.claude`·`~/.agents`·`~/.opencode` 의 지시·스킬·설정을 싣는데,
+ * 이 이름이 그 `~` 를 바꾼다 — 비워 둔 이 폴더를 주면 사람 홈의 것이 lane 턴에 안 실린다(1.18.32 실측). 셸의 `HOME` 은 그대로다.
+ */
+export function opencodeLaneHome(opencodeHome: string): string {
+  return join(opencodeHome, 'lane-home');
+}
 /**
  * 모델 id 문법. opencode 는 설정 **본문 전체**에서 `{env:…}`·`{file:…}` 를 바꿔 넣으므로, 서버에서 온 모델 이름에
  * 중괄호가 섞이면 키나 아무 파일이 모델 이름 자리로 gateway 에 실려 간다. 그래서 글자를 좁힌다.
@@ -183,7 +188,7 @@ export function opencodeLaneModelMissing(lane: boolean, xdgHome: boolean, model:
 
 /**
  * lane 에이전트의 provider 블록(security ⓕ). 사람 설정의 provider 는 **물리지 않고** 이 블록 하나만 연다.
- * 주소·키는 값이 아니라 `{env:…}` 참조다 — 값은 그 턴의 자식 env 에만 있다(ⓐ).
+ * 주소·키는 이 공유 파일에 없다 — 그 턴의 파일(`OPENCODE_CONFIG`)이 키 파일 경로를 `{file:…}` 로 가리킨다(ⓐ).
  * `enabled_providers` 로 다른 provider(무료 티어·사람 로그인)를 닫아, 값을 못 받으면 다른 길로 돌지 않고 실패한다.
  */
 /** lane 블록에 남겨 둘 모델 수(n6). 넘치면 오래된 것부터 뺀다 — 이번 턴 모델은 늘 남는다. */
@@ -213,11 +218,7 @@ function providerLaneConfig(model: string | null, previous: readonly string[] = 
       [name]: {
         npm: '@ai-sdk/anthropic',
         name: 'Harkroom provider lane',
-        options: {
-          // @ai-sdk/anthropic 의 baseURL 은 `/v1` 까지다. lane 의 base URL 은 claude-code(`ANTHROPIC_BASE_URL`)와 같은 뿌리다.
-          baseURL: `{env:${PROVIDER_LANE_OPENCODE_ENV.baseUrl}}/v1`,
-          apiKey: `{env:${PROVIDER_LANE_OPENCODE_ENV.token}}`,
-        },
+        // 주소·키(`options`)는 여기 두지 않는다 — 턴마다 `OPENCODE_CONFIG` 의 턴 파일이 준다(`writeOpencodeLaneTurnConfig`).
         // 목록에 없는 모델은 opencode 가 거절한다(1.18.32 실측 `Model not found`) — 이 턴의 모델에 지난 턴들의 모델을 더해 둔다(n6).
         models: Object.fromEntries(ids.map((x) => [x, { name: x }])),
       },
@@ -340,6 +341,8 @@ export async function ensureOpencodeHome(opts: {
   const targetDir = join(dirs.XDG_DATA_HOME, app.dir);
   const targetAuth = join(targetDir, 'auth.json');
   if (opts.providerLane) {
+    // 홈 표지 자리는 비워 둔 채로 있어야 한다 — 만들기만 하고 안을 채우지 않는다.
+    await mkdir(opencodeLaneHome(opencodeHome), { recursive: true, mode: 0o700 });
     // lane 에는 사람 로그인을 붙이지 않는다 — 한 자식에 로그인과 lane 키가 같이 들면 #374 가 막던 상황이다(ⓒ).
     // 전에 lane 이 아니던 에이전트라 링크가 남아 있으면 **링크만** 뗀다(사람 파일은 안 건드린다).
     const stat = await lstat(targetAuth).catch(() => null);

@@ -1532,6 +1532,7 @@ export const en = {
   'lane.code.bg_unsupported': 'Background turns can\'t use an API key yet',
   'lane.code.harness_unsupported': 'This harness can\'t use an API key',
   'lane.code.workspace_protected': 'Stopped: the work folder has files or folders that change the agent\'s instructions or tools (.claude, .opencode, CLAUDE.md, AGENTS.md, …) — remove them and call again',
+  'lane.code.harness_version': 'Stopped: this computer\'s opencode version differs from the one API key connections were checked with — update Harkroom or install a matching opencode version',
   'lane.code.bad_model': 'opencode model isn\'t set for the API key — under [Customize for this agent], set it to harkroom-lane/<model name>',
   'lane.code.interactive_unsupported': 'Agents using an API key can\'t open a terminal yet',
   'lane.code.unknown': 'Couldn\'t prepare the API key',
