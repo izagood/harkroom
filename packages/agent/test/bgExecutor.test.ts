@@ -27,7 +27,7 @@ function fakeChild(stdoutJson: unknown, code: number | null = 0, hang = false): 
   return child;
 }
 
-async function make(opts: { harness?: string; slot?: 'granted' | 'full' | 'unsupported'; now?: Date; child?: () => BgChild; job?: BgJob | null; timeoutMs?: number }) {
+async function make(opts: { release?: () => Promise<void>; harness?: string; slot?: 'granted' | 'full' | 'unsupported'; now?: Date; child?: () => BgChild; job?: BgJob | null; timeoutMs?: number }) {
   const stateDir = await mkdtemp(join(tmpdir(), 'bg-'));
   const completed: { jobId: string; r: Record<string, unknown> }[] = [];
   const spawned: { args: string[]; cwd: string; env: Record<string, string> }[] = [];
@@ -44,6 +44,7 @@ async function make(opts: { harness?: string; slot?: 'granted' | 'full' | 'unsup
       args: ['--session-id', 'old', '--permission-mode', 'plan', '--mcp-config', '/bg-mcp.json', '--strict-mcp-config', '--model', 'sonnet', '--append-system-prompt-file', '/s.md', '--no-chrome'],
       env: { HARKROOM_TURN_CAUSE: `bg:${job.id}`, SESSION: sessionId },
       stdinFile: null,
+      ...(opts.release ? { release: opts.release } : {}),
     }),
     slots: { acquire: async (_k, o) => { acquired.push(o.keepFree); return opts.slot ?? 'granted'; }, release: async () => { released += 1; } },
     stateDir,
@@ -164,5 +165,19 @@ describe('bgExecutor (BG2)', () => {
     const f = await make({ child: () => fakeChild({ is_error: true, result: 'boom' }, 1) });
     await f.ex.tick();
     expect(f.completed[0]!.r).toMatchObject({ status: 'failed', error: 'exit 1' });
+  });
+
+  it('plan 의 release(턴 열쇠·턴 MCP 설정)는 정상 끝·시한 초과·띄우기 실패 모두에서 한 번 부른다', async () => {
+    let n = 0;
+    const ok = await make({ release: async () => { n += 1; } });
+    await ok.ex.tick();
+    expect(n).toBe(1);
+    const t = await make({ release: async () => { n += 1; }, child: () => fakeChild(null, 0, true), timeoutMs: 20 });
+    await t.ex.tick();
+    expect(n).toBe(2);
+    const boom = await make({ release: async () => { n += 1; throw new Error('x'); }, child: () => { throw new Error('spawn'); } });
+    await boom.ex.tick();
+    expect(n).toBe(3);
+    expect(boom.completed[0]!.r).toMatchObject({ status: 'failed', error: 'runner' });
   });
 });

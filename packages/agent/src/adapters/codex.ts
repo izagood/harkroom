@@ -5,6 +5,8 @@ import type { HarnessAdapter } from './contract.js';
 
 export const CODEX_ADAPTER: HarnessAdapter = {
   harness: 'codex',
+  // 다리 열쇠는 `env_vars` 이름 + 셸 거르기(계약 주석). 셸에서 빠지는지는 P2 실측 관문 ⓐ.
+  turnKeyDelivery: 'env-vars',
   command: 'codex',
 
   /**

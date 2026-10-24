@@ -100,6 +100,8 @@ export const OPENCODE_ADAPTER: HarnessAdapter = {
     pooled: false,
   },
   readonlyTools: null,
+  // 다리 열쇠는 턴 설정 파일(`OPENCODE_CONFIG`)의 harkroom 항목 `environment` 칸으로만 준다(계약 주석).
+  turnKeyDelivery: 'turn-config-env',
   xdgApp: {
     dir: 'opencode',
     configFile: 'opencode.jsonc',

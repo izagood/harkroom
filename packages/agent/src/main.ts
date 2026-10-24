@@ -17,12 +17,12 @@
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
 // 진짜 서버에 붙으려 든다.
 import { PROVIDER_LANE_ENV } from '@harkroom/shared/providerLane';
-import { createProviderLane, ProviderLaneError, sweepLaneTurnDir } from './providerLane.js';
+import { createProviderLane, ProviderLaneError, sweepLaneTurnDir, sweepTurnMcpDir, writeTurnMcpConfig } from './providerLane.js';
 import { resolveTurnModel } from './threadModel.js';
 import { idleStopRequestedAt } from './idleStop.js';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { access, mkdir, readdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { loadConfig, runnerLabel } from './config.js';
@@ -54,7 +54,8 @@ import { claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, prese
 import { createAccountAssigner } from './accountAssign.js';
 import { clearAccountAttention, clearAccountCredentialFailure, isAttentionActive, markAccountCredentialFailed, markAccountNeedsAttention, readAccountAttention } from '@harkroom/shared/claudeGates';
 import { syncCodexAuth } from './codexHome.js';
-import { allXdgApps, usesOmpHome, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
+import { allXdgApps, turnKeyDeliveryOf, usesOmpHome, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
+import { issueTurnKeys } from './turnKeys.js';
 import { ensurePiHome } from './piHome.js';
 import { ensureOmpHome, ompDirs } from './ompHome.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
@@ -511,18 +512,36 @@ const bgExecutor = new BgExecutor({
     if (providerLaneOn) throw new ProviderLaneError('bg_unsupported');
     const def = await harkroom.definition();
     const head = (await liveLane.current()).lane[0] ?? null;
-    return buildTurnCommand({
-      harness: def.harness, mode: 'mention', sessionId, isFirstTurn: true,
-      systemPrompt: BG_SYSTEM_PROMPT, systemPromptFile: await writeSystemPromptFile(cwd, BG_SYSTEM_PROMPT),
-      promptCtx: '', stdinFile: null, model: def.model, effort: def.effort,
-      // argv 의 권한 인자는 bgExecutorArgs 가 dontAsk + 허용 목록으로 바꾼다. 여기 값은 쓰이지 않는다.
-      mentionPermission: 'readonly',
-      // harkroom 하나만 담은 전용 설정(security F1) — avcs·사람이 붙인 MCP 는 서버 허용 목록이 덮지 못한다.
-      mcpConfigPath: await writeBgMcpConfig(cwd, await readMcpServers(mcpConfigPath)),
-      extraMcpServers: {}, operatorBin: config.operatorBin, codexHome, opencodeHome, piHome,
-      claudeConfigDir: head?.configDir ?? null, chrome: false,
-      causeMessageId: `bg:${job.id}`, turnId: randomUUID(),
-    });
+    const turnId = randomUUID();
+    const causeMessageId = `bg:${job.id}`;
+    // harkroom 하나만 담은 전용 설정(security F1) — avcs·사람이 붙인 MCP 는 서버 허용 목록이 덮지 못한다.
+    const bgMcpConfig = await writeBgMcpConfig(cwd, await readMcpServers(mcpConfigPath));
+    // 턴 열쇠(`turnKeys.ts`). 백그라운드는 claude 만 돈다 — 다리 열쇠는 작업 폴더 밖 턴 MCP 설정의 `env` 칸으로만 준다.
+    const turnKeys = turnKeyDeliveryOf(def.harness) === 'mcp-config-env' ? issueTurnKeys() : null;
+    const turnMcpConfig = turnKeys ? await writeTurnMcpConfig(agentStateDir, bgMcpConfig, turnId, turnKeys.bridge) : null;
+    const release = async (): Promise<void> => {
+      if (turnKeys) await harkroom.endTurnKeys(turnId);
+      if (turnMcpConfig) await rm(turnMcpConfig, { force: true }).catch(() => undefined);
+    };
+    try {
+      if (turnKeys) await harkroom.registerTurnKeys({ turnId, cause: causeMessageId, keys: turnKeys });
+      const plan = buildTurnCommand({
+        harness: def.harness, mode: 'mention', sessionId, isFirstTurn: true,
+        systemPrompt: BG_SYSTEM_PROMPT, systemPromptFile: await writeSystemPromptFile(cwd, BG_SYSTEM_PROMPT),
+        promptCtx: '', stdinFile: null, model: def.model, effort: def.effort,
+        // argv 의 권한 인자는 bgExecutorArgs 가 dontAsk + 허용 목록으로 바꾼다. 여기 값은 쓰이지 않는다.
+        mentionPermission: 'readonly',
+        mcpConfigPath: turnMcpConfig ?? bgMcpConfig,
+        extraMcpServers: {}, operatorBin: config.operatorBin, codexHome, opencodeHome, piHome,
+        claudeConfigDir: head?.configDir ?? null, chrome: false,
+        causeMessageId, turnId, turnKeys,
+      });
+      return { ...plan, release };
+    } catch (err) {
+      // 맡기기·조립이 실패하면 열쇠를 바로 놓는다 — 열쇠 없이 띄우지 않는다(회차는 runner 실패로 닫힌다).
+      await release();
+      throw err;
+    }
   },
 });
 setInterval(() => { void bgExecutor.tick().catch((err: unknown) => console.error(`[bg] tick 오류: ${err instanceof Error ? err.message : String(err)}`)); }, BG_POLL_INTERVAL_MS).unref();
@@ -609,6 +628,8 @@ const providerLane = providerLaneOn
   : null;
 // 지난 러너가 남긴 턴 파일을 걷는다(키 값은 없고 키 파일 경로만 있다).
 if (providerLane) await sweepLaneTurnDir(agentStateDir);
+// 지난 러너가 남긴 턴 MCP 설정(끝난 턴의 다리 열쇠)을 걷는다.
+await sweepTurnMcpDir(agentStateDir);
 
 /**
  * 하네스 `--version` 출력. **기억하지 않고 턴마다 묻는다**(security F1) — opencode 는 러너 모르게 스스로 업데이트할 수 있다.
