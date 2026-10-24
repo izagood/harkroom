@@ -1529,6 +1529,15 @@ export async function postMessage(
 
 
     /**
+     * **시스템 줄은 누구의 말도 아니다.** `author_id` 는 그 줄을 일으킨 계정(글 승인을 쓴 사람·
+     * 채널에 넣은 admin·알림을 받는 에이전트)을 가리킬 뿐이라, 그것을 그 계정의 발화로 세면 서버가
+     * 쓴 글이 사람 이름으로 남의 턴을 깨우고(`thread_reply`·`dm`), 그 사람의 말처럼 기다림을 접는다.
+     * 그래서 시스템 줄은 **에이전트**에게 `thread_reply`·`dm` 을 넣지 않는다(턴이 곧 그 항목이다).
+     * 사람에게는 그대로 간다 — 스레드 주인이 모델 변경 같은 알림을 받는 것은 의도다.
+     */
+    const isSystemLine = input.kind === 'system';
+
+    /**
      * 이 말이 **답글로 세어지는가**. `thread_reply`·`dm` 두 자리가 함께 본다.
      * 부름(`mention`)은 이 판정 위에 있다 — 아래 주석의 마지막 문단이 그 이유다.
      */
@@ -1581,7 +1590,9 @@ export async function postMessage(
           그대로 받는다. 막힌 답글은 meta 에 남기지 않는다 — 답글은 부르려던 것이 아니다.
         */
         const rootFact = (await invokeFactsFor(client, [rootAuthor])).get(rootAuthor);
-        if (!rootFact || (await mayInvoke(client, rootFact, {
+        if (rootFact && isSystemLine) {
+          // 에이전트 머리 — 시스템 줄로는 깨우지 않는다(위 `isSystemLine`).
+        } else if (!rootFact || (await mayInvoke(client, rootFact, {
           // 이 자리는 `isReply` 안이다 — 결과 발화만 온다.
           callerId: input.authorId, channelId: input.channelId, via: 'mention', replyGrantThreadId: input.threadRootId,
         }))) {
@@ -1605,6 +1616,7 @@ export async function postMessage(
       for (const row of members.rows) {
         if (notified.has(row.account_id)) continue;
         const fact = dmFacts.get(row.account_id);
+        if (fact && isSystemLine) continue;
         if (fact && !(await mayInvoke(client, fact, {
           callerId: input.authorId, channelId: input.channelId, via: 'mention', replyGrantThreadId: input.threadRootId ?? null,
         }))) continue;
@@ -1621,7 +1633,7 @@ export async function postMessage(
      * 앵커 없는 채널 최상위 발화에는 하지 않는다: 깨움은 반드시 스레드에 걸린다(040).
      */
     const reportTouched: WakeReportTo[] = [];
-    const wokeByPost = input.threadRootId
+    const wokeByPost = input.threadRootId && !isSystemLine
       ? await preemptWakesForThread(client, {
         threadRootId: input.threadRootId, authorId: input.authorId, notified, messageId: message.id,
         reportTouched,

@@ -60,6 +60,17 @@ describe('buildTurnPrompt', () => {
     expect(r.prompt).toContain('알 수 없는 사용자: 누구세요');
   });
 
+  // 2026-10-24 회귀선: 글 승인 결과 줄(kind system)이 사람 authorId 로 저장돼 `jaebin: ⚠️ 승인 안 됨…` 으로
+  // 실렸다 — 에이전트가 서버 알림을 그 사람의 말로 읽는다.
+  it('시스템 줄은 작성자 이름 대신 시스템 이름표로 싣는다', () => {
+    const r = buildTurnPrompt({
+      messages: [msg(1, 'u1', '⚠️ 승인 안 됨: 카드 없음', { kind: 'system' })],
+      lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null,
+    });
+    expect(r.prompt).toContain('[시스템 알림 — 사람·에이전트의 말이 아님]: ⚠️ 승인 안 됨');
+    expect(r.prompt).not.toContain('alice: ⚠️');
+  });
+
   // 2026-09-08 실측 회귀선: 파일명만 실려 있던 동안, 스크린샷을 받은 에이전트가 "첨부를
   // 열지 못했습니다"라고 답한 뒤 코드만 보고 어느 화면인지 **추측해서** 고쳤다. 바이트는
   // 그때도 `GET /attachments/:id` 로 닿을 수 있었고(하네스 env 에 HARKROOM_PAT 이 있다),

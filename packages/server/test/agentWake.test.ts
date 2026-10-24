@@ -9,6 +9,7 @@ import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js
 import { onEvent, type WorkspaceEvent } from '../src/events.js';
 import { refreshThreadStatus } from '../src/services/threadStatus.js';
 import { createAgentWakeSweeper } from '../src/services/agentWakes.js';
+import { postMessage } from '../src/services/messages.js';
 
 /**
  * 깨움(wake) — 에이전트가 **자기를 나중에 깨우는** 예약.
@@ -27,6 +28,7 @@ let app: FastifyInstance;
 let stop: () => Promise<void>;
 let pool: Pool;
 let adminToken: string;
+let adminId: string;
 let botPat: string;
 let botAccountId: string;
 let channelId: string;
@@ -37,7 +39,7 @@ beforeAll(async () => {
   stop = db.stop;
   pool = db.pool;
   app = await buildServer({ pool: db.pool });
-  ({ token: adminToken } = await bootstrapAdmin(app));
+  ({ token: adminToken, accountId: adminId } = await bootstrapAdmin(app));
   ({ pat: botPat, accountId: botAccountId } = await createAgent(app, adminToken, 'wakebot'));
   const ch = await app.inject({
     method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
@@ -231,6 +233,18 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
         [botAccountId, wakeMessageId],
       );
       expect(after.rowCount).toBe(1);
+    });
+
+    // 시스템 줄의 author 는 그 줄을 일으킨 사람일 뿐 그 사람의 말이 아니다(2026-10-24 글 승인 결과 줄).
+    it('사람 author 의 시스템 줄로는 기다림이 끝나지 않는다', async () => {
+      const threadRootId = await newThread();
+      const wakeMessageId = await schedule(threadRootId, '한 시간 뒤 CI');
+
+      await postMessage(pool, {
+        channelId, authorId: adminId, threadRootId, body: '⚠️ 승인 안 됨', kind: 'system', serverNotice: true,
+      });
+
+      expect(await wakeRow(wakeMessageId)).toEqual({ fired: false, canceled: false });
     });
 
     it('부름이 함께 오면 예약은 접힌다 — 같은 스레드에 턴이 두 번 열리지 않는다', async () => {
