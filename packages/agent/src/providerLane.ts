@@ -265,6 +265,12 @@ export function createProviderLane(deps: ProviderLaneDeps): {
       const version = await (deps.harnessVersion?.(harness) ?? Promise.resolve(null)).catch(() => null);
       if (!versionOk(version)) throw new ProviderLaneError('harness_version');
     }
+    // codex lane 홈 검사는 키를 꺼내기(mount) **전에** 한다 — 띄우지 않을 턴이 임대를 받지 않게(security n1).
+    const usesCodexKey = providerLaneKeys(harness)?.includes(CODEX_LANE_KEY_ENV) ?? false;
+    if (usesCodexKey) {
+      if (!deps.codexHome) throw new ProviderLaneError('no_turn_secrets_dir');
+      if (await lstat(join(deps.codexHome, 'auth.json')).then(() => true, () => false)) throw new ProviderLaneError('harness_login_present');
+    }
     let res: { status: number; body: string };
     try { res = await deps.mount(cause); } catch { throw new ProviderLaneError('operator_unreachable'); }
     let body: Partial<ProviderLaneMountResult> & { error?: { code?: unknown } } = {};
@@ -283,9 +289,7 @@ export function createProviderLane(deps: ProviderLaneDeps): {
     if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new ProviderLaneError('bad_path');
     const value = (await readFile(real!, 'utf8').catch(() => '')).replace(/\r?\n$/, '');
     if (!value || /[\r\n\0]/.test(value)) throw new ProviderLaneError('bad_value');
-    if (providerLaneKeys(harness)?.includes(CODEX_LANE_KEY_ENV)) {
-      if (!deps.codexHome) throw new ProviderLaneError('no_turn_secrets_dir');
-      if (await lstat(join(deps.codexHome, 'auth.json')).then(() => true, () => false)) throw new ProviderLaneError('harness_login_present');
+    if (usesCodexKey) {
       return { [CODEX_LANE_KEY_ENV]: value, [CODEX_LANE_BASE_URL_ENV]: baseUrl };
     }
     if (viaTurnFile) {

@@ -47,11 +47,14 @@ describe('codex lane envFor', () => {
   it('lane 홈에 auth.json 이 있으면 `harness_login_present` — 계정 로그인으로 돌 길을 남기지 않는다', async () => {
     const t = await setup();
     await writeFile(join(t.codexHome, 'auth.json'), '{}');
+    let mounted = 0;
     const lane = createProviderLane({
-      mount: ok({ baseUrl: 'https://gateway.example', path: t.path }), turnSecretsDir: t.secretsDir,
+      mount: async () => { mounted++; return ok({ baseUrl: 'https://gateway.example', path: t.path })(); }, turnSecretsDir: t.secretsDir,
       harnessVersion: async () => 'codex-cli 0.154.0', codexHome: t.codexHome,
     });
     await expect(lane.envFor('m1', 'codex')).rejects.toMatchObject({ code: 'harness_login_present' });
+    // 띄우지 않을 턴은 임대를 받지 않는다(security n1).
+    expect(mounted).toBe(0);
   });
 
   it('lane 홈을 모르면 띄우지 않는다', async () => {
