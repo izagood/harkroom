@@ -62,6 +62,12 @@ export const FIRST_PAGE_LIMIT = 50;
  * 넷째 자리에 채널이 오는 호출은 읽는 사람이 무엇을 주는지 셀 수 없다. 이름으로 주면
  * `{ channelId }` 하나만 주는 흔한 경우가 짧아진다.
  */
+/**
+ * 메시지 페이지. `asOf` 는 그 조회를 **보내기 직전**의 실시간 갱신 차례다(`appStore.liveMark`) — 넣을 때
+ * `upsertMessages` 에 같이 주면, 보낸 뒤에 실시간으로 바뀐 행을 늦게 온 페이지가 옛것으로 덮지 않는다.
+ */
+export type MessagePage = { messages: MessageRow[]; hasMore: boolean; asOf?: number };
+
 export interface OpenThreadOpts {
   /** 그 뿌리가 사는 채널. 활성 채널과 다르면 **먼저 옮긴다**. 없으면 활성 채널이다. */
   channelId?: string;
@@ -73,7 +79,7 @@ export interface OpenThreadOpts {
    * 이미 띄워 둔 스레드 조회. `openMessage` 가 채널 열기와 **동시에** 보낸 것을 넘긴다 —
    * 주지 않으면 지금까지처럼 여기서 묻는다(채널을 옮긴 **뒤에**).
    */
-  prefetched?: Promise<{ messages: MessageRow[]; hasMore: boolean }>;
+  prefetched?: Promise<MessagePage>;
 }
 
 /** 같은 계정의 관문 알림을 다시 울리기까지의 간격(`announceAccountGate`). */
@@ -137,7 +143,7 @@ export class Controller {
    */
   /** 소켓이 열릴 때(`reconcile`) 첫 페이지를 기다리던 채널. 첫 페이지를 넣은 뒤 증분을 한 번 받는다. */
   private reconcileAfterFirstPage = new Set<string>();
-  private prefetchedPages = new Map<string, Promise<{ messages: MessageRow[]; hasMore: boolean } | null>>();
+  private prefetchedPages = new Map<string, Promise<MessagePage | null>>();
   /**
    * 채널마다 **받아 온 seq 구간**(`lib/seqCoverage`). `loadedChannels` 가 "한 번이라도 열었는가"라면
    * 이것은 "어느 자리의 이웃이 실려 있는가"다 — 점프가 창을 받을지는 이것으로 정한다(`openMessage`).
@@ -152,6 +158,16 @@ export class Controller {
   /** 그 seq 의 이웃을 받아 온 적이 있는가 — 스토어에 그 줄이 있다는 것과 다르다. */
   private covers(channelId: string, seq: number): boolean {
     return coversSeq(this.coverage.get(channelId) ?? [], seq);
+  }
+
+  /**
+   * 메시지 페이지를 묻는다 — 보내기 **직전**의 실시간 갱신 차례를 `asOf` 로 붙여 돌려준다. 페이지를 넣는 자리는
+   * 모두 `upsertMessages(…, page.asOf)` 로 넣는다. 미리 띄워 두었다 나중에 넣는 조회(점프·첫 페이지)일수록
+   * 그 사이 소켓·내 동작으로 바뀐 행이 많다 — `asOf` 가 그 행들을 지킨다.
+   */
+  private messagesPage(channelId: string, opts?: Parameters<ApiClient['messages']>[1]): Promise<MessagePage> {
+    const asOf = this.store.getState().liveMark();
+    return this.api.messages(channelId, opts).then((page) => ({ ...page, asOf }));
   }
 
   /** 증분 한 페이지의 상한 — 서버 기본(200)과 같은 값을 **명시해** 보내야 "꽉 찬 페이지"를 셀 수 있다. */
@@ -169,8 +185,8 @@ export class Controller {
   private async pullSince(channelId: string, since: number): Promise<void> {
     let cursor = since;
     for (let pages = 0; pages < 10; pages++) {
-      const page = await this.api.messages(channelId, { since: cursor, limit: Controller.SINCE_PAGE_LIMIT });
-      this.store.getState().upsertMessages(channelId, page.messages);
+      const page = await this.messagesPage(channelId, { since: cursor, limit: Controller.SINCE_PAGE_LIMIT });
+      this.store.getState().upsertMessages(channelId, page.messages, page.asOf);
       if (page.messages.length < Controller.SINCE_PAGE_LIMIT) return;
       cursor = Math.max(cursor, ...page.messages.map((m) => m.seq));
     }
@@ -409,7 +425,7 @@ export class Controller {
   /** 첫 페이지를 미리 띄워 `prefetchedPages` 에 둔다. 실패는 `null` 로 접는다. */
   private prefetchPage(channelId: string): void {
     markBoot('messages:request');
-    const page = this.api.messages(channelId, { since: 0, limit: FIRST_PAGE_LIMIT })
+    const page = this.messagesPage(channelId, { since: 0, limit: FIRST_PAGE_LIMIT })
       .then((p) => { markBoot('messages:response'); return p; })
       .catch(() => null);
     this.prefetchedPages.set(channelId, page);
@@ -419,7 +435,7 @@ export class Controller {
    * 채널의 **첫** 페이지(since=0)를 받는다. 미리 받은 것이 있으면 그것에 합류하고(응답이 오면
    * 버린다), 없거나 실패했으면 새로 묻는다.
    */
-  private async firstPage(channelId: string): Promise<{ messages: MessageRow[]; hasMore: boolean }> {
+  private async firstPage(channelId: string): Promise<MessagePage> {
     this.setFirstPageLoading(channelId, true);
     try {
       return await this.fetchFirstPage(channelId);
@@ -440,7 +456,7 @@ export class Controller {
     this.store.getState().set({ [key]: next });
   }
 
-  private async fetchFirstPage(channelId: string): Promise<{ messages: MessageRow[]; hasMore: boolean }> {
+  private async fetchFirstPage(channelId: string): Promise<MessagePage> {
     const prefetched = this.prefetchedPages.get(channelId);
     if (prefetched) {
       // 응답이 올 때까지 **지우지 않는다** — 기동의 복원과 사람의 클릭이 같은 응답에 합류해야
@@ -450,7 +466,7 @@ export class Controller {
       if (page) return page;
     }
     markBoot('messages:request');
-    const page = await this.api.messages(channelId, { since: 0, limit: FIRST_PAGE_LIMIT });
+    const page = await this.messagesPage(channelId, { since: 0, limit: FIRST_PAGE_LIMIT });
     markBoot('messages:response');
     return page;
   }
@@ -464,16 +480,16 @@ export class Controller {
    * 과거의 끝을 말한다. 실패하면 조용히 그친다: `hasMore` 가 참으로 남아 사람이 위로 올리면
    * `loadOlder` 가 같은 자리를 다시 묻는다.
    */
-  private startBackfill(channelId: string, first: { messages: MessageRow[]; hasMore: boolean }): void {
+  private startBackfill(channelId: string, first: MessagePage): void {
     if (!first.hasMore || !first.messages.length || this.backfills.has(channelId)) return;
     const oldest = Math.min(...first.messages.map((m) => m.seq));
     const run = (async () => {
       // 본문에 서는 줄만 센다(`feed`, `api.messages` 의 근거) — 답글로 채운 450 행은 화면에 몇 줄 못 세운다.
-      const page = await this.api.messages(channelId, { before: oldest, limit: INITIAL_HISTORY_LIMIT - FIRST_PAGE_LIMIT, feed: true });
+      const page = await this.messagesPage(channelId, { before: oldest, limit: INITIAL_HISTORY_LIMIT - FIRST_PAGE_LIMIT, feed: true });
       if (this.stopped) return;
       if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), oldest - 1);
       const store = this.store.getState();
-      store.upsertMessages(channelId, page.messages);
+      store.upsertMessages(channelId, page.messages, page.asOf);
       store.set({ hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore } });
     })().catch(() => {}).finally(() => {
       this.backfills.delete(channelId);
@@ -967,7 +983,7 @@ export class Controller {
     };
     let page;
     try {
-      page = await this.api.messages(channelId, { thread: rootId });
+      page = await this.messagesPage(channelId, { thread: rootId });
     } catch (e) {
       if (!here()) throw e;
       const status = e instanceof ApiError ? e.status : 0;
@@ -982,7 +998,7 @@ export class Controller {
       throw e;
     }
     if (!here()) return;
-    this.store.getState().upsertMessages(channelId, page.messages);
+    this.store.getState().upsertMessages(channelId, page.messages, page.asOf);
     if (this.store.getState().threadFetch?.rootId === rootId) this.store.getState().set({ threadFetch: null });
   }
 
@@ -1427,7 +1443,7 @@ export class Controller {
     // 첫 페이지는 "가장 오래된 줄부터 최신까지"를 말한다 — 그 뒤 소켓으로 오는 새 글도 이 안이다.
     // 빈 페이지는 아무것도 말하지 않는다.
     if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
-    this.store.getState().upsertMessages(channelId, page.messages);
+    this.store.getState().upsertMessages(channelId, page.messages, page.asOf);
     // **증분 응답으로 `hasMore` 를 덮지 않는다.** 서버는 그 값을 `messages.length > 0 &&
     // hasOlderMessages(첫 행)` 로 계산하므로, 새 메시지가 없는 증분 페이지는 0 행이 되어
     // `hasMore: false` 로 돌아온다 — "과거가 없다"는 뜻이 아니라 "새 것이 없다"는 뜻인데
@@ -1558,7 +1574,7 @@ export class Controller {
     // 스레드 조회는 채널 열기를 **기다리지 않고 같이 낸다** — 예전에는 채널 조회가 끝난 뒤에야 물어
     // 다른 채널의 스레드(인박스에서 답글 열기)가 왕복 둘이었다. 두 응답은 같은 채널 목록에 upsert
     // 로 합쳐지므로 어느 쪽이 먼저 와도 결과가 같다. 패널은 채널 열기가 끝난 뒤에 세운다(위 이유).
-    const pagePromise = opts.prefetched ?? this.api.messages(channelId, { thread: rootId, around: opts.aroundSeq });
+    const pagePromise = opts.prefetched ?? this.messagesPage(channelId, { thread: rootId, around: opts.aroundSeq });
     pagePromise.catch(() => undefined);
     // 「받아 둔 것」은 **답글**이다 — 뿌리만으로는 치지 않는다(designer s1). 같은 채널이면 뿌리는 거의
     // 늘 채널 목록에 있어서, 뿌리 한 줄로 패널을 세우면 `threadState` 가 `[뿌리]` 를 `done` 으로 읽어
@@ -1615,7 +1631,7 @@ export class Controller {
       );
       return;
     }
-    this.store.getState().upsertMessages(channelId, page.messages);
+    this.store.getState().upsertMessages(channelId, page.messages, page.asOf);
     if (stillOpen() && this.store.getState().threadFetch?.rootId === rootId) this.store.getState().set({ threadFetch: null });
     // 머리 줄의 모델 칩(079). 열기를 막지 않는다 — 못 받으면 키가 없어 칩이 서지 않을 뿐이다.
     this.swallow(this.loadThreadAgentModels(channelId, rootId));
@@ -1732,10 +1748,10 @@ export class Controller {
      */
     const wantsChannelWindow = !target.threadRootId || target.alsoInChannel;
     const earlyAround = wantsChannelWindow && !covered() && this.loadedChannels.has(target.channelId)
-      ? this.api.messages(target.channelId, { around: target.seq })
+      ? this.messagesPage(target.channelId, { around: target.seq })
       : null;
     const earlyThread = target.threadRootId
-      ? this.api.messages(target.channelId, { thread: target.threadRootId, around: target.seq })
+      ? this.messagesPage(target.channelId, { thread: target.threadRootId, around: target.seq })
       : null;
     // 미리 띄운 것이 실패하면 **기다리는 자리에서** 다룬다. 여기서 잡아 두지 않으면 채널을
     // 여는 동안 거절된 promise 가 처리되지 않은 거절로 떠오른다.
@@ -1755,8 +1771,8 @@ export class Controller {
      */
     if (wantsChannelWindow && !covered()) {
       try {
-        const page = await (earlyAround ?? this.api.messages(target.channelId, { around: target.seq }));
-        this.store.getState().upsertMessages(target.channelId, page.messages);
+        const page = await (earlyAround ?? this.messagesPage(target.channelId, { around: target.seq }));
+        this.store.getState().upsertMessages(target.channelId, page.messages, page.asOf);
         // 창이 말한 구간을 적는다 — 같은 자리로 다시 점프하면 창을 또 받지 않는다. 비어 왔으면
         // (지워진 자리) 그 seq 하나만 적어 둔다.
         const seqs = page.messages.map((m) => m.seq);
@@ -1808,10 +1824,10 @@ export class Controller {
     // **본문에 서는 줄만** 받는다(`feed`). 답글이 섞인 페이지가 답글뿐이면 화면에 늘어나는 줄이 없고, 다음
     // 페이지를 부르는 계기는 스크롤 이벤트뿐이라 맨 위에서 멈췄다(`ChannelPane.maybeLoadOlder`, 스레드 36caac7a).
     // 피드 페이지는 받은 것이 있으면 곧 본문 줄이다 — 그 줄이 높이를 늘려 다음 손짓이 다시 닿는다.
-    const page = await this.api.messages(activeChannelId, { before: oldest, feed: true });
+    const page = await this.messagesPage(activeChannelId, { before: oldest, feed: true });
     // `before: X` 는 X 아래 전부를 물은 것이다 — 받은 줄의 seq 가 아니라 물은 범위를 적는다.
     if (page.messages.length) this.addCoverage(activeChannelId, Math.min(...page.messages.map((m) => m.seq)), oldest - 1);
-    this.store.getState().upsertMessages(activeChannelId, page.messages);
+    this.store.getState().upsertMessages(activeChannelId, page.messages, page.asOf);
     this.store.getState().set({
       hasMore: { ...this.store.getState().hasMore, [activeChannelId]: page.hasMore },
     });
@@ -1831,9 +1847,9 @@ export class Controller {
       : 0;
     this.swallow(this.loadPins(channelId));
     this.swallow(this.loadChannelAutoMentions(channelId));
-    const page = await this.api.messages(channelId, { since, limit: since === 0 ? INITIAL_HISTORY_LIMIT : undefined });
+    const page = await this.messagesPage(channelId, { since, limit: since === 0 ? INITIAL_HISTORY_LIMIT : undefined });
     this.loadedChannels.add(channelId);
-    this.store.getState().upsertMessages(channelId, page.messages);
+    this.store.getState().upsertMessages(channelId, page.messages, page.asOf);
     // 증분 응답은 `hasMore` 를 말할 자격이 없다 — 근거는 `openChannel` 의 같은 자리.
     if (since === 0) {
       this.store.getState().set({ hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore } });
@@ -1845,8 +1861,8 @@ export class Controller {
    * 그대로 둔다. 한 줄도 없으면 `false`(그 스레드는 없다 — 창이 빈 상태로 알린다, 판 3 3b).
    */
   async loadThreadForWindow(channelId: string, rootId: string): Promise<boolean> {
-    const page = await this.api.messages(channelId, { thread: rootId });
-    this.store.getState().upsertMessages(channelId, page.messages);
+    const page = await this.messagesPage(channelId, { thread: rootId });
+    this.store.getState().upsertMessages(channelId, page.messages, page.asOf);
     this.swallow(this.loadThreadAgentModels(channelId, rootId));
     return page.messages.length > 0;
   }
@@ -2015,8 +2031,24 @@ export class Controller {
     try {
       const m = await this.api.answerAsk(target, messageId, optionId);
       this.store.getState().upsertMessages(target, [m]);
+    } catch (e) {
+      // 진 경합·권한 없음 — 서버가 참이다. 이미 정해졌으면(409) 그 카드를 다시 받아 맞춘다.
+      await this.resyncAfterConflict(e, target, messageId);
+    }
+  }
+
+  /**
+   * 카드가 409(이미 정해짐)를 받았으면 그 한 줄을 서버에서 다시 받는다(2026-10-24). 화면이 열린 카드를 그리는데
+   * 서버는 이미 닫혔다고 하면 화면이 틀린 것이다 — 이벤트를 놓쳤거나 옛 페이지가 덮었다. 다시 받지 않으면 몇 번을
+   * 눌러도 409 만 돌아오고 카드는 열린 채 남는다(그날 세 번 더 눌렀다). 다른 오류는 전처럼 삼킨다.
+   */
+  private async resyncAfterConflict(e: unknown, channelId: string, messageId: string): Promise<void> {
+    if (!(e instanceof ApiError) || e.status !== 409) return;
+    try {
+      const fresh = await this.api.message(messageId);
+      this.store.getState().upsertMessages(channelId, [fresh]);
     } catch {
-      // 진 경합·권한 없음 — 서버가 참이고, 화면은 이벤트로 따라온다.
+      // 다시 받기도 실패하면 이벤트·다음 조회가 맞춘다.
     }
   }
 
@@ -2061,8 +2093,9 @@ export class Controller {
     try {
       const m = await this.api.closeAsk(target, messageId);
       this.store.getState().upsertMessages(target, [m]);
-    } catch {
-      // 진 경합(이미 답이 있다)·권한 없음 — 서버가 참이고, 화면은 이벤트로 따라온다.
+    } catch (e) {
+      // 진 경합(이미 답이 있다)·권한 없음 — 서버가 참이다. 409 면 그 카드를 다시 받아 맞춘다.
+      await this.resyncAfterConflict(e, target, messageId);
     }
   }
 
@@ -3198,7 +3231,7 @@ export class Controller {
     const page = await this.firstPage(channelId);
     this.loadedChannels.add(channelId);
     if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
-    store.upsertMessages(channelId, page.messages);
+    store.upsertMessages(channelId, page.messages, page.asOf);
     // 증분 응답은 `hasMore` 를 말할 자격이 없다 — 근거는 `openChannel` 의 같은 자리.
     if (since === 0) {
       store.set({

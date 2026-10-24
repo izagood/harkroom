@@ -490,7 +490,16 @@ export interface AppState {
   raiseGate(gate: Omit<GateItem, 'dismissed'>): void;
   clearGate(sessionId: string): void;
   dismissGate(sessionId: string): void;
-  upsertMessages(channelId: string, rows: MessageRow[]): void;
+  /**
+   * 행을 넣거나 같은 id 를 바꾼다. `asOf` 는 **페이지 조회**가 줄 때만 쓴다 — 그 조회를 보낸 순간의
+   * `liveMark()` 다. 그 뒤에 실시간으로 바뀐 행(소켓 이벤트·내 동작의 응답·리액션·삭제)은 그 페이지로
+   * 덮지 않는다. 페이지는 보낸 순간의 스냅숏이라, 늦게 도착하면 더 새것을 옛것으로 되돌린다
+   * (2026-10-24 답한 선택 카드가 다시 열린 사고 — 5.3초 걸린 스레드 페이지가 답 1초 뒤에 도착했다).
+   * `asOf` 가 없으면 실시간 쓰기다 — 그 행의 갱신 차례를 올린다.
+   */
+  upsertMessages(channelId: string, rows: MessageRow[], asOf?: number): void;
+  /** 지금까지의 실시간 갱신 차례. 페이지 조회를 보내기 **직전**에 읽어 `upsertMessages` 의 `asOf` 로 준다. */
+  liveMark(): number;
   /**
    * 스레드 루트의 두 집계를 함께 움직인다(2026-09-09). 예전 이름은 `incrementReplyCount`
    * 였고 **더하기만** 있었다 — 답글을 지워도 그 수가 줄지 않아, 다시 받아오기 전까지
@@ -599,6 +608,13 @@ export function keepThreadFacts(prev: MessageRow | undefined, next: MessageRow):
  * 활성 커뮤니티의 것을 읽는 자리는 `state/communities.ts` 의 `useActiveStore` 다.
  */
 export function createAppStore() {
+  /*
+    행마다 마지막 실시간 갱신 차례(`upsertMessages` 의 `asOf`). 화면이 그리는 값이 아니라서 상태에 두지 않는다 —
+    두면 쓸 때마다 구독자가 다시 돈다. 커뮤니티마다 스토어가 따로라 이것도 따로다.
+  */
+  let liveSeq = 0;
+  const liveTouched = new Map<string, number>();
+  const touch = (id: string) => { liveTouched.set(id, ++liveSeq); };
   return create<AppState>((set, get) => ({
     ...initial,
     set: (partial) => {
@@ -623,9 +639,20 @@ export function createAppStore() {
     dismissGate: (sessionId) => set({
       gates: get().gates.map((g) => (g.sessionId === sessionId ? { ...g, dismissed: true } : g)),
     }),
-    upsertMessages: (channelId, rows) => {
+    liveMark: () => liveSeq,
+    upsertMessages: (channelId, rows, asOf) => {
       const byId = new Map((get().messages[channelId] ?? []).map((m) => [m.id, m]));
-      for (const r of rows) byId.set(r.id, keepThreadFacts(byId.get(r.id), r));
+      for (const r of rows) {
+        if (asOf === undefined) touch(r.id);
+        // 페이지를 보낸 뒤에 실시간으로 바뀐(또는 지워진) 행은 그 페이지로 덮지 않는다 — 그 뒤의 변화는 이벤트로
+        // 온다. 실시간 행에 비어 오는 스레드 재료(`keepThreadFacts`)만 페이지 것으로 채운다.
+        else if ((liveTouched.get(r.id) ?? 0) > asOf) {
+          const cur = byId.get(r.id);
+          if (cur) byId.set(r.id, keepThreadFacts(r, cur));
+          continue;
+        }
+        byId.set(r.id, keepThreadFacts(byId.get(r.id), r));
+      }
       const merged = [...byId.values()].sort((a, b) => a.seq - b.seq);
       set({ messages: { ...get().messages, [channelId]: merged } });
     },
@@ -653,12 +680,14 @@ export function createAppStore() {
     applyThreadStatus: (channelId, rootId, statusReaction) => {
       const rows = get().messages[channelId];
       if (!rows || !rows.some((m) => m.id === rootId)) return;
+      touch(rootId);
       const next = rows.map((m) => (m.id === rootId ? { ...m, statusReaction } : m));
       set({ messages: { ...get().messages, [channelId]: next } });
     },
     applyReaction: (channelId, messageId, emoji, accountId, on) => {
       const rows = get().messages[channelId];
       if (!rows) return;
+      touch(messageId);
       const next = rows.map((m) => {
         if (m.id !== messageId) return m;
         const others = m.reactions.filter((r) => r.emoji !== emoji);
@@ -677,6 +706,8 @@ export function createAppStore() {
       set({ messages: { ...get().messages, [channelId]: next } });
     },
     removeMessage: (channelId, messageId) => {
+      // 지운 줄도 차례를 올린다 — 지우기 전에 보낸 페이지가 늦게 와서 그 줄을 되살리지 않게.
+      touch(messageId);
       const rows = get().messages[channelId];
       if (!rows) return;
       set({ messages: { ...get().messages, [channelId]: rows.filter((m) => m.id !== messageId) } });
@@ -722,7 +753,7 @@ export function createAppStore() {
         ...(me?.id === accountId ? { me: { ...me, handle } } : {}),
       });
     },
-    reset: () => set({ ...initial }),
+    reset: () => { liveTouched.clear(); set({ ...initial }); },
     patchUpload: (localId, patch) => {
       const cur = get().uploads;
       if (patch === null) {
