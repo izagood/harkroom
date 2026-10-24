@@ -17,6 +17,9 @@ describe('harness_version 문장', () => {
 describe('harness_login_present 문장', () => {
   it.each(['ko', 'en'] as const)('%s: 자기 문장이 있다(알 수 없음으로 접지 않는다)', (locale) => {
     expect(laneCodeKey('harness_login_present')).toBe('lane.code.harness_login_present');
-    expect(laneCodeText(translator(locale), 'harness_login_present')).toContain('auth.json');
+    // 사람이 치울 자리를 알게 상태 폴더 안 상대 경로를 싣는다 — 절대 경로·사용자명은 싣지 않는다.
+    const text = laneCodeText(translator(locale), 'harness_login_present');
+    expect(text).toContain('codex-provider-lane/auth.json');
+    expect(text).not.toMatch(/\/Users\/|~\//);
   });
 });

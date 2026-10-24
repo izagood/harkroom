@@ -1013,7 +1013,7 @@ export const ko = {
   'lane.code.harness_unsupported': '이 하네스는 API 키로 돌 수 없다',
   'lane.code.workspace_protected': '작업 폴더에 에이전트의 지시·도구를 바꾸는 파일·폴더(.claude·.opencode·CLAUDE.md·AGENTS.md 등)가 있어 멈췄다 — 치운 뒤 다시 불러라',
   'lane.code.harness_version': '이 컴퓨터의 하네스 버전이 API 키 연결에서 확인한 버전({versions})이 아니거나 읽을 수 없어 멈췄다 — 그 버전으로 맞추거나, 더 새 버전이면 Harkroom 업데이트를 기다려라',
-  'lane.code.harness_login_present': 'API 키 연결용 codex 홈에 계정 로그인 파일(auth.json)이 있어 멈췄다 — 계정 로그인으로 돌 수 있어 띄우지 않는다. 그 파일을 치운 뒤 다시 불러라',
+  'lane.code.harness_login_present': '이 에이전트 상태 폴더의 codex-provider-lane/auth.json 에 계정 로그인 파일이 있어 멈췄다 — 그 로그인으로 돌 수 있어 띄우지 않는다. 그 파일을 치운 뒤 다시 불러라',
   'lane.code.harness_version.join': '·',
   'lane.code.bad_model': 'opencode 모델 이름이 비었거나 쓸 수 없는 글자가 있다 — [이 에이전트만 따로]에서 gateway 가 받는 모델 이름을 그대로 넣어라(예: ExampleOrg/example-model)',
   'lane.code.interactive_unsupported': 'API 키로 도는 에이전트는 아직 터미널 열기를 지원하지 않는다',
