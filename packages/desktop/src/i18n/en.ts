@@ -5699,7 +5699,7 @@ export const en = {
   'mandateCard.revokeAria': "Remove this line from the mandate",
   'mandateCard.revokeTitle': "Remove this line from the mandate?",
   'mandateCard.revokeDetail': "The agent will have to ask again to do this within the mandate. 7-day grants (Settings) are revoked separately.",
-  'mandateCard.revokeDetailGrantLive': "The line leaves the mandate. The 7-day grant from the same decision stays until {date}, so this keeps working until then.",
+  'mandateCard.revokeDetailGrantLive': "The line leaves the mandate. The 7-day grant from the same decision stays until {date}, so the agent can keep doing this until then.",
   'mandateCard.revokeOpenGrants': "Revoke in Settings",
   'mandateCard.revokeConfirm': "Remove line",
   'mandateCard.revokeCancel': "Cancel",

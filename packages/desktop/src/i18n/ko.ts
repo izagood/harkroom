@@ -3486,7 +3486,7 @@ export const ko = {
   'mandateCard.revokeAria': "위임장에서 이 줄을 뺀다",
   'mandateCard.revokeTitle': "이 줄을 위임장에서 뺀다",
   'mandateCard.revokeDetail': "이 위임장 안에서 이 일을 다시 하려면 에이전트가 다시 묻는다. 7일 허락(설정)은 따로 거둔다.",
-  'mandateCard.revokeDetailGrantLive': "위임장에서 이 줄은 빠진다. 같은 결정으로 준 7일 허락이 {date}까지 남아 그때까지는 계속 된다.",
+  'mandateCard.revokeDetailGrantLive': "위임장에서 이 줄은 빠진다. 같은 결정으로 준 7일 허락이 {date}까지 남아 그때까지는 에이전트가 이 일을 계속 할 수 있다.",
   'mandateCard.revokeOpenGrants': "설정에서 거두기",
   'mandateCard.revokeConfirm': "줄 빼기",
   'mandateCard.revokeCancel': "취소",

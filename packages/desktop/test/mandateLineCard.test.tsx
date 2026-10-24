@@ -233,7 +233,7 @@ describe('W4 mandate line card', () => {
       fireEvent.click(screen.getByTestId('mandate-line-revoke'));
       const detail = screen.getByTestId('mandate-revoke-grant-live').textContent ?? '';
       expect(detail).toContain('같은 결정으로 준 7일 허락이 ');
-      expect(detail).toContain('까지 남아 그때까지는 계속 된다');
+      expect(detail).toContain('까지 남아 그때까지는 에이전트가 이 일을 계속 할 수 있다');
       expect(detail).not.toContain('다시 묻는다');
       fireEvent.click(screen.getByTestId('mandate-revoke-open-grants'));
       expect(onOpenSettings).toHaveBeenCalledWith('agents', 'agent-1#permissions');
