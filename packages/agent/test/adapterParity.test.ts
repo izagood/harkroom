@@ -53,6 +53,9 @@ function plan(harness: AgentHarness, over: Partial<BuildTurnCommandOptions> = {}
     codexHome: join(dir, 'codex-home'),
     opencodeHome: join(dir, 'opencode-home'),
     piHome: join(dir, 'pi-home'),
+    ompHome: join(dir, 'omp-home'),
+    ompThread: { cwd: join(dir, 'omp-home', 'cwd', 't', 'cwd'), agentDir: join(dir, 'omp-home', 'cwd', 't', 'agent') },
+    workspaceDir: join(dir, 'ws'),
     // 허용 목록으로 읽기 전용을 거는 하네스(pi)는 이 값이 없으면 조립을 거절한다 — 다른 하네스는 안 본다.
     readonlyToolList: 'read,grep,find,ls',
     claudeConfigDir: null,

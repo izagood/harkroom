@@ -46,6 +46,9 @@ function 계획(harness: (typeof RUNNABLE_HARNESSES)[number]): string {
     codexHome: '/tmp/codex-home',
     opencodeHome: '/tmp/opencode-home',
     piHome: '/tmp/pi-home',
+    ompHome: '/tmp/omp-home',
+    ompThread: { cwd: '/tmp/omp-home/cwd/t/cwd', agentDir: '/tmp/omp-home/cwd/t/agent' },
+    workspaceDir: '/tmp/ws',
     readonlyToolList: 'read,grep,find,ls',
     claudeConfigDir: null,
   }).command;

@@ -19,6 +19,7 @@ describe('detectHarnesses', () => {
       opencode: { installed: false, loggedIn: false },
       kilo: { installed: false, loggedIn: false },
       pi: { installed: false, loggedIn: false },
+      omp: { installed: false, loggedIn: false },
     });
   });
   it('PATH 를 못 읽었으면(null) 아무것도 installed 가 아니다 — 모르는 것을 있다고 하지 않는다', async () => {
@@ -36,6 +37,7 @@ describe('detectHarnesses', () => {
       opencode: { installed: false, loggedIn: false },
       kilo: { installed: false, loggedIn: false },
       pi: { installed: false, loggedIn: false },
+      omp: { installed: false, loggedIn: false },
     });
   });
 
