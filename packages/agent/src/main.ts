@@ -698,7 +698,10 @@ const scheduler = createMentionScheduler({
       turnTranscripts.set(cause, list);
     },
     secretNeedles: (cause: string) => secretLeases.needles(cause),
-    ...(providerLane ? { providerEnv: (cause: string, harness: AgentHarness) => providerLane.envFor(cause, harness) } : {}),
+    ...(providerLane ? {
+      providerEnv: (cause: string, harness: AgentHarness) => providerLane.envFor(cause, harness),
+      providerEnvDone: (env: Record<string, string>) => providerLane.release(env),
+    } : {}),
     harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),
     handles: ctx.handles, agentIds: ctx.agentIds, workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp,

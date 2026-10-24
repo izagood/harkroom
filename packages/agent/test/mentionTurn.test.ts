@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
-import { AccountGateRequeueError, mentionAnchor, runMentionTurn, laneSafeSkill, syncSkills, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
+import { AccountGateRequeueError, mentionAnchor, runMentionTurn, laneSafeSkill, syncSkills, withLaneSkillHeader, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
 import { createAttentionLedger } from '../src/attentionLedger.js';
 import { BODY_LIMIT } from '../src/prompt.js';
 
@@ -2833,6 +2833,22 @@ describe('syncSkills 단독(#140)', () => {
     await syncSkills(stateDir, workspaceDir, async () => [grant, plain], { dropToolGrants: true });
     expect(await readdir(harness)).toEqual(['plain']);
     expect(await readdir(join(stateDir, 'skills'))).toEqual(['plain']);
+  });
+
+  // security L2 n1: opencode 는 frontmatter `name` 이 없으면 스킬로 싣지 않는다 — lane 에 깔 때 slug 를 이름으로 붙인다.
+  it('dropToolGrants 면 frontmatter 없는 스킬에 name(slug)·description(첫 줄)을 붙이고, 있는 것은 그대로 둔다', async () => {
+    const { stateDir, workspaceDir } = await dirs();
+    const bare = { slug: 'deploy-check', body: '# 배포 확인: 단계 #1\n본문' };
+    const withFm = { slug: 'plain', body: '---\nname: plain\ndescription: x\n---\n본문' };
+    await syncSkills(stateDir, workspaceDir, async () => [bare, withFm], { dropToolGrants: true });
+    const written = await readFile(join(stateDir, 'skills', 'deploy-check', 'SKILL.md'), 'utf8');
+    expect(written).toBe('---\nname: deploy-check\ndescription: "배포 확인: 단계 #1"\n---\n# 배포 확인: 단계 #1\n본문');
+    expect(laneSafeSkill(written)).toBe(true);
+    expect(await readFile(join(stateDir, 'skills', 'plain', 'SKILL.md'), 'utf8')).toBe(withFm.body);
+    // 구독형 턴은 본문 그대로다.
+    await syncSkills(stateDir, workspaceDir, async () => [bare]);
+    expect(await readFile(join(stateDir, 'skills', 'deploy-check', 'SKILL.md'), 'utf8')).toBe(bare.body);
+    expect(withLaneSkillHeader('x', '')).toBe('---\nname: x\ndescription: "x"\n---\n');
   });
 
   // security F1: 거부 목록은 다른 표기로 샌다 — 아는 모양(frontmatter 없음, 또는 name·description 줄만)만 받는다.
