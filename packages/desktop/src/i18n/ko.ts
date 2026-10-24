@@ -1010,7 +1010,7 @@ export const ko = {
   'agents.lane.createSecretsFailed': '내 비밀 목록을 읽지 못했다 — 잠시 뒤 다시 열어 본다.',
   'agents.lane.createNeedsRunHere': 'API 키를 쓰려면 「이 기기에서 돌린다」를 켠다 — API 키 설정은 이 맥에 둔다.',
   'agents.lane.createNoSecrets': '아직 줄 수 있는 내 비밀이 없다',
-  'agents.lane.createNoSecretsLink': '비밀과 API',
+  'agents.lane.createNoSecretsWhere': '설정 › 비밀과 API 에서 비밀을 만든 뒤 돌아온다',
   'agents.lane.createOnlyYours': '내 비밀만 보인다',
   'agents.lane.createSecretYours': '내 비밀 · 줄 것',
   'agents.lane.createSecretExpired': '만료',

@@ -1529,7 +1529,7 @@ export const en = {
   'agents.lane.createSecretsFailed': 'Couldn\'t read your secrets — open this again in a moment.',
   'agents.lane.createNeedsRunHere': 'Turn on “Run it on this machine” to use an API key — API key settings live on this Mac.',
   'agents.lane.createNoSecrets': 'You have no secrets to give yet',
-  'agents.lane.createNoSecretsLink': 'Secrets & APIs',
+  'agents.lane.createNoSecretsWhere': 'create one in Settings › Secrets & APIs, then come back',
   'agents.lane.createOnlyYours': 'Only your own secrets are listed',
   'agents.lane.createSecretYours': 'Yours · will give',
   'agents.lane.createSecretExpired': 'Expired',

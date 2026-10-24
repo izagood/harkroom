@@ -2787,7 +2787,6 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                         label={label}
                         secrets={myLaneSecrets}
                         handle={draft.handle}
-                        {...(onOpenSection ? { onOpenSecrets: () => onOpenSection('secrets') } : {})}
                       />
                     );
                   }

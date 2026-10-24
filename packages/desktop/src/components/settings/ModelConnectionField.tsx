@@ -344,7 +344,7 @@ export function createLaneSelection(d: CreateLaneDraft, secrets: readonly Create
  * - API 키를 못 쓰는 하네스는 숨기지 않고 상세처럼 잠근다(jaebin 승인 카드 57c97470).
  * - 비밀은 내 것만 보인다. 고르면 무엇을 누구에게 주는지 상자로 미리 보인다(security G4).
  */
-export function CreateModelConnectionField({ harness, runHere, value, onChange, pool, label, secrets, handle, onOpenSecrets }: {
+export function CreateModelConnectionField({ harness, runHere, value, onChange, pool, label, secrets, handle }: {
   harness: string;
   /** 「이 맥에서 돌리기」가 켜져 있고 이 맥 오퍼레이터가 있다. */
   runHere: boolean;
@@ -356,7 +356,6 @@ export function CreateModelConnectionField({ harness, runHere, value, onChange, 
   secrets: readonly CreateLaneSecret[] | null | undefined;
   /** 이름 칸의 handle(비었으면 「새 에이전트」). */
   handle: string;
-  onOpenSecrets?: () => void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -406,8 +405,8 @@ export function CreateModelConnectionField({ harness, runHere, value, onChange, 
               <span className="mt-1 block text-meta text-danger" role="alert">{t('agents.lane.createSecretsFailed')}</span>
             ) : secrets.length === 0 ? (
               <div className="mt-1 rounded-row border border-dashed border-border px-2 py-2 text-meta text-fg-subtle" data-testid="create-lane-no-secrets">
-                {t('agents.lane.createNoSecrets')}
-                {onOpenSecrets && <>{' · '}<button type="button" className="underline" onClick={onOpenSecrets}>{t('agents.lane.createNoSecretsLink')}</button></>}
+                {/* 링크가 아니라 글이다 — 설정의 다른 칸으로 가면 이 만들기 초안이 사라진다(designer 미확인 a, 확인함). */}
+                {t('agents.lane.createNoSecrets')} · {t('agents.lane.createNoSecretsWhere')}
               </div>
             ) : (
               <div className="mt-1 overflow-hidden rounded-row border border-border" role="radiogroup" aria-label={t('agents.lane.secret')} data-testid="create-lane-secrets">
@@ -425,7 +424,6 @@ export function CreateModelConnectionField({ harness, runHere, value, onChange, 
                 ))}
                 <div className="px-2 py-1.5 text-meta text-fg-subtle">
                   {t('agents.lane.createOnlyYours')}
-                  {onOpenSecrets && <>{' · '}<button type="button" className="underline" onClick={onOpenSecrets}>{t('agents.lane.createNoSecretsLink')}</button></>}
                 </div>
               </div>
             )}
