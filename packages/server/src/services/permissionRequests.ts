@@ -85,6 +85,8 @@ export interface PermissionRequestMeta {
   status?: 'granted' | 'denied' | 'approved_once';
   /** 1회 승인으로 정해졌으면 그 계정·CI 완화·승인 기한. */
   approvedOnce?: { ghUser: string | null; relaxChecks: boolean; expiresAt: string };
+  /** 계정을 비운 1회 승인으로 머지했을 때 오퍼레이터가 실제로 쓴 gh 이름(래퍼 보고). 머지 보고 뒤에만. */
+  ghUserUsed?: string;
   /** command 승인 갈래(once·hour). */
   grantMode?: 'once' | 'hour';
   decidedAt?: string;
@@ -1107,4 +1109,33 @@ async function mirrorAudienceSeesRoot(pool: Pool, rootChannelId: string, mirrorC
   if (mirrorAudience === 'all') return false;
   const seen = new Set(rootAudience);
   return mirrorAudience.every((id) => seen.has(id));
+}
+
+/**
+ * 계정을 비운 1회 머지 승인(G1)으로 머지했을 때 오퍼레이터가 고른 gh 이름(래퍼 보고, n6)을 그 승인을 낸 권한 카드에 적는다 —
+ * 끝난 카드가 「한 번 씀 · gh 이름」을 보이게. 원본을 볼 수 있는 거울(중립이 아닌 것)에도 같은 이름을 옮긴다. 중립 거울은 내용을 싣지 않는다(n9).
+ * 이름 모양 확인·실패 보고 거르기는 부르는 쪽(`reportMerge`)이 이미 했다. 카드가 없으면 아무것도 하지 않는다.
+ */
+export async function noteOnceGhUserUsed(pool: Pool, args: { approvalId: string; ghUserUsed: string }): Promise<void> {
+  const cards = (await pool.query(
+    `update message m
+        set meta = jsonb_set(m.meta, '{permissionRequest}', (m.meta->'permissionRequest') || jsonb_build_object('ghUserUsed', $2::text))
+       from permission_request r join merge_approval a on a.denial_id = r.denial_id
+      where a.id = $1 and a.gh_user is null and r.status = 'approved_once' and m.id = r.card_message_id
+        and m.deleted_at is null and m.meta ? 'permissionRequest'
+      returning m.id`,
+    [args.approvalId, args.ghUserUsed])).rows as { id: string }[];
+  for (const card of cards) {
+    const mirrors = (await pool.query<{ id: string }>(
+      `update message
+          set meta = jsonb_set(meta, '{permissionMirror}', (meta->'permissionMirror') || jsonb_build_object('ghUserUsed', $2::text))
+        where meta->'ask'->>'mirrorOf' = $1 and deleted_at is null and meta ? 'permissionMirror'
+          and coalesce((meta->'permissionMirror'->>'neutral')::boolean, false) = false
+        returning id`,
+      [card.id, args.ghUserUsed])).rows;
+    for (const id of [card.id, ...mirrors.map((x) => x.id)]) {
+      const msg = await getMessageById(pool, id);
+      if (msg) emitEvent({ type: 'message.updated', message: msg, audience: await audienceFor(pool, msg.channelId) });
+    }
+  }
 }

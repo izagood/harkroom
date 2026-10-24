@@ -154,6 +154,7 @@ class PermissionCardInfo {
         line: PermissionCardLine.read(mi['line']),
         once: PermissionCardOnce.read(mi['once']),
         ownerId: mandate?.ownerId,
+        ghUserUsed: mi['ghUserUsed'] is String ? mi['ghUserUsed'] as String : null,
         mirrorRootId: mi['rootId'] as String,
       );
     }

@@ -160,7 +160,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
     }
     if (status === 'denied' || answeredWith === 'deny') return <p className="text-fg-muted" data-testid="mandate-ended" data-state="denied">✕ {t('mandateCard.ended.denied')}</p>;
     if (status === 'approved_once' || answeredWith === 'approve_once' || answeredWith === 'approve_hour') {
-      const used = typeof src.request?.ghUserUsed === 'string' ? src.request.ghUserUsed : null;
+      const used = typeof src.request?.ghUserUsed === 'string' ? src.request.ghUserUsed : typeof src.mirror?.ghUserUsed === 'string' ? src.mirror.ghUserUsed : null;
       return <p className="text-fg" data-testid="mandate-ended" data-state="once">✓ {t('mandateCard.ended.once')}{used ? ` · gh ${used}` : ''}</p>;
     }
     if (status === 'obsolete') return null; // PermissionOncePanel 이 머지·닫힘 줄을 그린다.
