@@ -267,7 +267,7 @@ export const en = {
   'cleanup.select.all': "Select all",
   'cleanup.select.row': "Select {path}",
   'cleanup.bulkList': "Schedule {n} selected",
-  'cleanup.now': "Clean up now",
+  'cleanup.now': "Delete now",
   'cleanup.now.title': "Delete {n} scheduled items now?",
   'cleanup.now.detail': "Deletes the {n} scheduled items ({size}) now instead of waiting for their date. Anything with uncommitted changes, unpushed commits or a running turn is left in place. Deleted items can't be restored.",
   'cleanup.now.confirm': "Delete now",

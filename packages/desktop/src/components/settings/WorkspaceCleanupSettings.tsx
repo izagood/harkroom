@@ -76,15 +76,18 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
   /** `from` = 누른 버튼. 그 줄(`data-anchor-key`)의 바로 아래 줄이 누른 줄 자리로 오게 붙잡는다. */
   const act = (path: string, action: 'keep' | 'unkeep' | 'list', from?: Element | null) => {
     if (!me) return;
+    setNowResult(null); // 다른 손을 대면 지난 「지금 지우기」 결과는 옛 것이다(designer n4)
     anchor.current = captureRowAnchor(from?.closest(`[${ROW_ANCHOR_ATTR}]`) ?? null);
     void run(() => actWorkspaceCleanup(path, action, me.id));
   };
 
   // 주인 모름 골라 넣기 — 넣는 길은 하나씩 넣기와 같다(같은 act 'list', 누른 사람 id). 차례로 보내 원장 쓰기가 겹치지 않는다.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const lastPick = useRef<number | null>(null);
   const listSelected = (from: Element | null) => {
     if (!me || selected.size === 0) return;
     const paths = [...selected];
+    setNowResult(null);
     anchor.current = captureRowAnchor(from, 'self');
     void run(async () => {
       let v: WorkspaceCleanupView | null = null;
@@ -273,7 +276,16 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
   const unownedPaths = model.unowned.map((u) => u.path);
   const picked = unownedPaths.filter((p) => selected.has(p));
   const allPicked = picked.length > 0 && picked.length === unownedPaths.length;
-  const toggle = (p: string) => setSelected((s) => { const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n; });
+  /** i 번째 주인 모름을 고르거나 푼다. shift 면 앞서 누른 줄부터 여기까지를 누른 줄이 될 상태로 맞춘다. */
+  const pick = (i: number, shift: boolean) => {
+    const p = unownedPaths[i];
+    if (!p) return;
+    const on = !selected.has(p);
+    const from = shift && lastPick.current !== null && lastPick.current < unownedPaths.length ? lastPick.current : i;
+    const range = unownedPaths.slice(Math.min(from, i), Math.max(from, i) + 1);
+    setSelected((s) => { const n = new Set(s); for (const r of range) { if (on) n.add(r); else n.delete(r); } return n; });
+    lastPick.current = i;
+  };
   const nowItems = ledger.items.filter((i) => i.state === 'listed' || i.state === 'blocked');
   const nowBytes = nowItems.reduce((a, i) => a + (i.sizeNow ?? 0), 0);
 
@@ -295,22 +307,6 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
         testId="cleanup-columns"
         main={(
           <>
-      {/* 지금 정리 — 꺼져 있으면 아무것도 지우지 않는다는 약속을 지켜 숨긴다(오퍼레이터도 거절한다). */}
-      {(!off && nowItems.length > 0) || nowResult ? (
-        <div className="mb-2 flex flex-wrap items-center justify-end gap-3">
-          {nowResult && (
-            <p className="text-meta text-fg-muted" role="status" data-testid="cleanup-now-result">
-              {t('cleanup.now.result', { deleted: nowResult.deleted, blocked: nowResult.blocked })}
-              {nowResult.handed > 0 ? t('cleanup.now.handed', { n: nowResult.handed }) : ''}
-              {nowResult.failed > 0 ? t('cleanup.now.failed', { n: nowResult.failed }) : ''}
-            </p>
-          )}
-          {!off && nowItems.length > 0 && (
-            <button className="shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50"
-              disabled={busy || !me} data-testid="cleanup-now" onClick={() => { setNowResult(null); setNowConfirm(true); }}>{t('cleanup.now')}</button>
-          )}
-        </div>
-      ) : null}
       {nowConfirm && (
         <ConfirmDialog
           title={t('cleanup.now.title', { n: nowItems.length })}
@@ -319,7 +315,23 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
           confirmLabel={t('cleanup.now.confirm')} cancelLabel={t('cleanup.now.cancel')} danger busy={busy} error={error}
           onConfirm={cleanNow} onCancel={() => setNowConfirm(false)} />
       )}
-      <SettingsGroup title={t('cleanup.listedTitle', { n: model.totals.listedCount, warn: model.warnCount })}>
+      {/* 「지금 지우기」는 이 칸(삭제 예정)만 지운다 — 칸 제목 줄에 둬 무엇을 지우는지 보이게(designer s1). 0개·꺼짐이면 없다. */}
+      <SettingsGroup title={t('cleanup.listedTitle', { n: model.totals.listedCount, warn: model.warnCount })}
+        action={(!off && nowItems.length > 0) || nowResult ? (
+          <span className="flex shrink-0 items-center gap-3">
+            {nowResult && (
+              <span className="text-meta text-fg-muted" role="status" data-testid="cleanup-now-result">
+                {t('cleanup.now.result', { deleted: nowResult.deleted, blocked: nowResult.blocked })}
+                {nowResult.handed > 0 ? t('cleanup.now.handed', { n: nowResult.handed }) : ''}
+                {nowResult.failed > 0 ? t('cleanup.now.failed', { n: nowResult.failed }) : ''}
+              </span>
+            )}
+            {!off && nowItems.length > 0 && (
+              <button className="shrink-0 rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50"
+                disabled={busy || !me} data-testid="cleanup-now" onClick={() => { setNowResult(null); setNowConfirm(true); }}>{t('cleanup.now')}</button>
+            )}
+          </span>
+        ) : undefined}>
         {model.listed.length === 0
           ? <p className="px-4 py-6 text-center text-fg-subtle" data-testid="cleanup-empty">{t('cleanup.empty')}</p>
           : model.listed.map((r) => <Row key={r.key} row={r} />)}
@@ -335,9 +347,10 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
         <SettingsGroup title={t('cleanup.unownedTitle', { n: model.unowned.length })}>
           {model.ownersPending && <p className="px-4 pt-2 text-meta text-fg-muted" data-testid="cleanup-owners-pending">{t('cleanup.ownersPending')}</p>}
           <p className="px-4 py-2 text-meta text-fg-subtle">{t('cleanup.unownedHint', { days: settings.graceDays })}</p>
-          <div className="flex items-center gap-3 border-b border-border px-4 py-2" data-testid="cleanup-unowned-bulk" data-anchor-key="unowned-bulk">
+          {/* 38개를 굴리며 고른 뒤 다시 맨 위로 올라가지 않게 칸 안에서 붙는다(designer s2). */}
+          <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-surface-raised px-4 py-2" data-testid="cleanup-unowned-bulk" data-anchor-key="unowned-bulk">
             <label className="flex min-w-0 flex-1 items-center gap-2 text-meta text-fg-muted">
-              <input type="checkbox" data-testid="cleanup-unowned-select-all" checked={allPicked}
+              <input type="checkbox" className="accent-accent" data-testid="cleanup-unowned-select-all" checked={allPicked}
                 ref={(el) => { if (el) el.indeterminate = picked.length > 0 && !allPicked; }}
                 disabled={busy} onChange={() => setSelected(allPicked ? new Set() : new Set(unownedPaths))} />
               {t('cleanup.select.all')}
@@ -346,12 +359,14 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
               disabled={busy || !me || picked.length === 0} data-testid="cleanup-unowned-list-selected"
               onClick={(e) => listSelected(e.currentTarget.closest(`[${ROW_ANCHOR_ATTR}]`))}>{t('cleanup.bulkList', { n: picked.length })}</button>
           </div>
-          {model.unowned.map((u) => (
+          {model.unowned.map((u, i) => (
             <div key={u.path} className="px-4 py-3" data-testid="cleanup-unowned" data-anchor-key={u.path}>
               <div className="flex items-start gap-3">
-                <input type="checkbox" className="mt-1 shrink-0" data-testid="cleanup-unowned-select" aria-label={t('cleanup.select.row', { path: shortPath(u.path) })}
-                  checked={selected.has(u.path)} disabled={busy} onChange={() => toggle(u.path)} />
-                <span className="min-w-0 flex-1">
+                {/* shift 를 누른 채 누르면 앞서 누른 줄부터 여기까지(designer n2). onChange 는 shift 를 모른다 — onClick 으로 받는다. */}
+                <input type="checkbox" className="mt-1 shrink-0 accent-accent" data-testid="cleanup-unowned-select" aria-label={t('cleanup.select.row', { path: shortPath(u.path) })}
+                  checked={selected.has(u.path)} disabled={busy} onChange={() => {}} onClick={(e) => pick(i, e.shiftKey)} />
+                {/* 경로·메타를 눌러도 고른다 — 체크박스만 노리지 않게. 버튼(보존·넣기)은 따로다. */}
+                <span className={`min-w-0 flex-1 select-none ${busy ? '' : 'cursor-pointer'}`} data-testid="cleanup-unowned-pick" onClick={(e) => { if (!busy) pick(i, e.shiftKey); }}>
                   <span className="block truncate font-mono text-fg">{shortPath(u.path)}</span>
                   <span className="mt-0.5 block text-meta text-fg-subtle">
                     {u.branch ? t('cleanup.branch', { name: u.branch }) : t('cleanup.detached', { sha: (u.headSha ?? '').slice(0, 7) })}

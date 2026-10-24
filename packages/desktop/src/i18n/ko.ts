@@ -118,7 +118,7 @@ export const ko = {
   'cleanup.select.all': "전체 선택",
   'cleanup.select.row': "{path} 고르기",
   'cleanup.bulkList': "선택한 {n}개 삭제 예정에 넣기",
-  'cleanup.now': "지금 정리",
+  'cleanup.now': "지금 지우기",
   'cleanup.now.title': "삭제 예정 {n}개를 지금 지울까?",
   'cleanup.now.detail': "삭제 예정 {n}개({size})를 기한을 기다리지 않고 지금 지운다. 커밋하지 않은 변경·push 하지 않은 커밋·도는 턴이 있는 것은 지우지 않고 남긴다. 지운 것은 되돌릴 수 없다.",
   'cleanup.now.confirm': "지금 지우기",

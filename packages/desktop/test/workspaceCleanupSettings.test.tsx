@@ -4,7 +4,7 @@
  * 보이는가, N 을 줄이면 오늘 기한 경고가 뜨는가, **바로 지우는 버튼이 없는가**.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import type { CleanupItem, CleanupLedger } from '@harkroom/shared/workspaceCleanup';
 import { WorkspaceCleanupSettings } from '../src/components/settings/WorkspaceCleanupSettings';
 import { setController, type Controller } from '../src/state/controller';
@@ -91,12 +91,15 @@ describe('작업 폴더 정리 화면', () => {
     // 스위치 설명(켤 때 동의하는 범위)에도 주인 모름 자동이 적혀 있다(designer s1).
     expect(screen.getByText(/주인 모름 worktree는 PR이 머지·닫혔고 변경이 다 올라가 있으면 넣는다/)).toBeTruthy();
   });
-  it('주인 모름: 「삭제 예정에 넣기」와 「보존」만 — 바로 지우는 버튼은 어디에도 없다', async () => {
+  it('주인 모름: 「삭제 예정에 넣기」와 「보존」만 — 주인 모름 줄에는 바로 지우는 버튼이 없다(지금 지우기는 삭제 예정 칸에만)', async () => {
     const invoke = tauri();
     render(<WorkspaceCleanupSettings now={NOW} />);
     fireEvent.click(await screen.findByTestId('cleanup-unowned-list'));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('workspace_cleanup_act', { path: '/tmp/orphan', action: 'list', by: ME }));
-    expect(screen.queryByRole('button', { name: /^삭제$|지우기|delete now/i })).toBeNull();
+    for (const row of screen.getAllByTestId('cleanup-unowned')) {
+      expect(within(row).queryByRole('button', { name: /^삭제$|지우기|delete now/i })).toBeNull();
+    }
+    expect(within(screen.getByTestId('cleanup-unowned-bulk')).queryByRole('button', { name: /지우기|delete now/i })).toBeNull();
     expect(invoke.mock.calls.map((c) => c[0])).not.toContain('workspace_cleanup_delete');
   });
   it('주인 모름 골라 넣기: 체크·전체 선택 → 「선택한 n개」 가 하나씩 넣기와 같은 act(list, 누른 사람 id)를 차례로', async () => {
@@ -143,11 +146,47 @@ describe('작업 폴더 정리 화면', () => {
     expect(dialog.textContent).toContain('삭제 예정 3개를 지금 지울까?');
     expect(dialog.textContent).toContain('54 MB'); // 18MB × 3
     expect(invoke.mock.calls.some((c) => (c[1] as { action?: string } | undefined)?.action === 'deleteNow')).toBe(false); // 확인 전엔 안 보낸다
-    fireEvent.click(screen.getByRole('button', { name: '지금 지우기' }));
+    // 칸 제목 줄의 버튼과 확인 창 버튼은 같은 이름(「지금 지우기」, designer s1) — 확인 창 안의 것을 누른다
+    expect(screen.getByTestId('cleanup-now').textContent).toBe('지금 지우기');
+    expect(screen.getByTestId('cleanup-now').closest('section')!.querySelector('h3')!.textContent).toContain('삭제 예정');
+    fireEvent.click(within(dialog).getByRole('button', { name: '지금 지우기' }));
     await waitFor(() => expect(screen.getByTestId('cleanup-now-result').textContent).toBe('지금 정리: 지움 1 · 막힘 1 · 실패 1'));
+    // 다음 손(보존·넣기)을 대면 결과 줄은 지운다(designer n4)
+    fireEvent.click(screen.getAllByTestId('cleanup-keep')[0]!);
+    await waitFor(() => expect(screen.queryByTestId('cleanup-now-result')).toBeNull());
     const sent = invoke.mock.calls.filter((c) => (c[1] as { action?: string } | undefined)?.action === 'deleteNow').map((c) => (c[1] as { path: string }).path);
     expect(sent.sort()).toEqual(['/wt/a', '/wt/run', '/wt/warn']);
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('주인 모름 고르기: shift 로 범위, 경로·메타를 눌러도 토글', async () => {
+    const extra = Array.from({ length: 5 }, (_, i) => item({ path: `/tmp/o${i}`, thread: null, state: 'unowned', pr: null, branch: null, lastModifiedAt: `2026-09-0${i + 1}T00:00:00Z` }));
+    const ledger: CleanupLedger = { ...LEDGER, items: [...LEDGER.items.filter((i) => i.state !== 'unowned'), ...extra] };
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      invoke: vi.fn(async () => ({ settings: { enabled: true, graceDays: 7 }, ledger, running: false })),
+    };
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    const boxes = await screen.findAllByTestId('cleanup-unowned-select');
+    const checked = () => screen.getAllByTestId('cleanup-unowned-select').map((b) => (b as HTMLInputElement).checked);
+    fireEvent.click(boxes[1]!);
+    fireEvent.click(boxes[3]!, { shiftKey: true });
+    expect(checked()).toEqual([false, true, true, true, false]);
+    // 메타 영역을 눌러도 토글, shift 면 범위를 풀기 쪽으로
+    fireEvent.click(screen.getAllByTestId('cleanup-unowned-pick')[4]!);
+    expect(checked()).toEqual([false, true, true, true, true]);
+    fireEvent.click(screen.getAllByTestId('cleanup-unowned-pick')[2]!, { shiftKey: true });
+    expect(checked()).toEqual([false, true, false, false, false]);
+    expect(screen.getByTestId('cleanup-unowned-list-selected').textContent).toBe('선택한 1개 삭제 예정에 넣기');
+    // 묶음 막대는 칸 안에서 붙는다(designer s2)
+    expect(screen.getByTestId('cleanup-unowned-bulk').className).toContain('sticky');
+  });
+  it('삭제 예정이 0개면 「지금 지우기」가 없다', async () => {
+    const ledger: CleanupLedger = { ...LEDGER, items: LEDGER.items.filter((i) => i.state === 'unowned' || i.state === 'kept') };
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      invoke: vi.fn(async () => ({ settings: { enabled: true, graceDays: 7 }, ledger, running: false })),
+    };
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    await screen.findByTestId('cleanup-empty');
+    expect(screen.queryByTestId('cleanup-now')).toBeNull();
   });
   it('지금 정리는 자동 정리가 꺼져 있으면 없다', async () => {
     (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {
