@@ -3961,6 +3961,47 @@ describe('정지 직전 제출 대기 화면이면 Enter 를 한 번 친다 (202
   });
 });
 
+describe('opencode 의 차례 끝을 export 로 안다 (2026-10-25)', () => {
+  // 모델이 말 없이 stop 한 opencode 턴: 화면은 그대로이고 기록은 우리가 못 읽는다. 끝을 모르면 정지 시계가
+  // 「하네스 정지 — 사람이 터미널을 봐야 한다」로 접었다(e2e 실측). 끝을 알면 정지가 아니다.
+  async function opencodeTurn(state: 'ended' | 'working' | null) {
+    const fake = new FakeHarkroom(defOf({ harness: 'opencode' }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const asked: (string | null)[] = [];
+    const { deps, runTurn } = await makeDeps(fake, {
+      opencodeHome: '/state/opencode-home',
+      utteranceProbeMs: 5, harnessStallMs: 150, orphanMs: 5, opencodeQuietMs: 10,
+      readOpencodeTurnState: async (sessionId) => { asked.push(sessionId); return state; },
+    });
+    runTurn.script = async (_plan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      onData?: (chunk: Buffer) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      opts.onData?.(Buffer.from('Ask anything…', 'utf8'));
+      for (let i = 0; i < 200 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 5));
+      return { exitCode: killed ? 143 : 0, timedOut: false, tail: '' };
+    };
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })
+      .then(() => null, (e: unknown) => (e instanceof Error ? e.message : String(e)));
+    return { fake, killed: () => killed, asked, err };
+  }
+
+  it('export 가 끝났다고 하면 정지가 아니라 끝난 턴으로 거둔다 — 정지 통지가 없다', async () => {
+    const { killed, asked, err } = await opencodeTurn('ended');
+    expect(asked.length).toBeGreaterThan(0);
+    expect(killed()).toBe('SIGTERM');
+    expect(err).toBeNull();
+  });
+
+  it('대조군: 아직 일하는 중이면 지금처럼 정지 시계가 접는다', async () => {
+    const { killed, err } = await opencodeTurn('working');
+    expect(killed()).toBe('SIGTERM');
+    expect(err).toContain('harness 정지');
+  });
+});
+
 describe('타임아웃이 무발화 경과를 잰다 (2026-09-08)', () => {
   it('답 없이 한도를 넘기면 회수하고 실패로 끝난다', async () => {
     const fake = new FakeHarkroom(defOf());
