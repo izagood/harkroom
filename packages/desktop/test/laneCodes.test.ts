@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CODEX_LANE_VERSIONS, OPENCODE_LANE_VERSIONS } from '@harkroom/shared/providerLane';
+import { CODEX_LANE_VERSIONS, KILO_LANE_VERSIONS, OMP_LANE_VERSIONS, OPENCODE_LANE_VERSIONS, PI_LANE_VERSIONS } from '@harkroom/shared/providerLane';
 import { translator } from '../src/i18n';
 import { laneCodeKey, laneCodeText } from '../src/lib/laneCodes';
 
@@ -10,6 +10,10 @@ describe('harness_version 문장', () => {
     expect(laneCodeKey('harness_version')).toBe('lane.code.harness_version');
     for (const v of OPENCODE_LANE_VERSIONS) expect(text).toContain(`opencode ${v}`);
     for (const v of CODEX_LANE_VERSIONS) expect(text).toContain(`codex ${v}`);
+    // 판 관문이 있는 하네스는 모두 싣는다(designer C 4 — omp 가 빠져 있었다).
+    for (const v of OMP_LANE_VERSIONS) expect(text).toContain(`omp ${v}`);
+    for (const v of KILO_LANE_VERSIONS) expect(text).toContain(`kilo ${v}`);
+    for (const v of PI_LANE_VERSIONS) expect(text).toContain(`pi ${v}`);
     expect(text).not.toMatch(/\{versions?\}/);
   });
 });
@@ -45,6 +49,20 @@ describe('harness_login_present 문장', () => {
     const text = laneCodeText(translator(locale), 'harness_login_present');
     expect(text).toContain('codex-provider-lane/auth.json');
     expect(text).not.toMatch(/\/Users\/|~\//);
+  });
+
+  // designer C D2: 하네스를 알면 그 자리만, 모르면(실패 카드) 아는 자리를 모두 「또는」으로 잇는다.
+  it.each([['ko', '<스레드>', ' 또는 '], ['en', '<thread>', ' or ']] as const)('%s: pi 면 pi 자리만, 모르면 codex·pi 둘 다', (locale, thread, join) => {
+    const t = translator(locale);
+    const pi = laneCodeText(t, 'harness_login_present', 'pi');
+    expect(pi).toContain(`pi-provider-lane/threads/${thread}/auth.json`);
+    expect(pi).not.toContain('codex-provider-lane');
+    const codex = laneCodeText(t, 'harness_login_present', 'codex');
+    expect(codex).toContain('codex-provider-lane/auth.json');
+    expect(codex).not.toContain('pi-provider-lane');
+    const any = laneCodeText(t, 'harness_login_present');
+    expect(any).toContain(`codex-provider-lane/auth.json${join}pi-provider-lane/threads/${thread}/auth.json`);
+    expect(any).not.toMatch(/\{home\}|\{thread\}/);
   });
 });
 

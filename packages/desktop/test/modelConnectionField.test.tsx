@@ -118,10 +118,10 @@ describe('ModelConnectionField', () => {
   });
 
   it('API 키를 못 쓰는 하네스는 [API 키]로 못 바꾸고 까닭을 적는다', () => {
-    renderField(laneState(), 'pi');
+    renderField(laneState(), 'gemini');
     fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));
     expect(screen.queryByTestId('lane-form')).toBeNull();
-    expect(screen.getByText(/claude-code·opencode·codex·omp에서만/)).toBeTruthy();
+    expect(screen.getByText(/claude-code·opencode·codex·omp·kilo·pi에서만/)).toBeTruthy();
   });
 
   // designer #1540 c1·②: omp 는 계정 풀이 없다 — 처음부터 [API 키]로 열고, 주소 칸은 OpenAI chat-completions 이름이다.
@@ -156,8 +156,8 @@ describe('ModelConnectionField', () => {
 
   it('영어에서는 하네스 목록을 쉼표로 잇는다', () => {
     usePrefsStore.getState().setLocale('en');
-    renderField(laneState(), 'pi');
-    expect(screen.getByText('Available for claude-code, opencode, codex, and omp only.')).toBeTruthy();
+    renderField(laneState(), 'gemini');
+    expect(screen.getByText('Available for claude-code, opencode, codex, omp, kilo, and pi only.')).toBeTruthy();
   });
 
   it('마지막 시도 줄의 판 문장은 그 하네스 판만 싣는다(designer n1)', () => {
@@ -171,6 +171,41 @@ describe('ModelConnectionField', () => {
   // designer n4 A: 주소 칸 이름이 하네스가 gateway 를 부르는 꼴을 말한다.
   it('주소 칸 이름 — codex 는 OpenAI Responses, claude-code·opencode 는 Anthropic', () => {
     for (const [harness, label] of [['codex', /OpenAI Responses 호환/], ['claude-code', /Anthropic 호환/], ['opencode', /Anthropic 호환/]] as const) {
+      renderField(laneState(), harness);
+      fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));
+      expect(screen.getByText(label)).toBeTruthy();
+      cleanup();
+    }
+  });
+
+  // designer C 시안 3: 풀이 없는 하네스는 왼쪽 탭이 「이 맥 로그인」이고 빈 칸 대신 무엇으로 도는지 한 줄을 쓴다.
+  it('kilo·pi·opencode 는 [이 맥 로그인]이 기본이고 그 하네스 설정으로 돈다고 쓴다 — 풀 칸은 안 그린다', () => {
+    for (const harness of ['kilo', 'pi', 'opencode']) {
+      renderField(laneState(), harness);
+      expect(screen.getByRole('radio', { name: '이 맥 로그인' }).getAttribute('aria-checked')).toBe('true');
+      expect(screen.queryByRole('radio', { name: '계정 풀' })).toBeNull();
+      expect(screen.getByTestId('lane-local-login').textContent).toBe(`이 맥에 로그인된 ${harness} 설정으로 돈다. API 키로 바꾸면 그 로그인은 쓰지 않는다.`);
+      expect(screen.queryByTestId('pool-slot')).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('codex 의 [이 맥 로그인]은 활성 codex 계정으로 돈다고 쓴다', () => {
+    renderField(laneState(), 'codex');
+    expect(screen.getByTestId('lane-local-login').textContent).toBe('설정 › Provider accounts의 활성 codex 계정으로 돈다.');
+  });
+
+  // designer C D1: 풀 없는 하네스의 끄기 확인은 「계정 풀로」가 아니라 이 맥 로그인으로 돈다.
+  it('pi 에 저장된 연결이 있을 때 [이 맥 로그인]을 누르면 「이 맥에 로그인된 pi 설정으로 돈다」', () => {
+    renderField(laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'llm-api-key' } }), 'pi');
+    fireEvent.click(screen.getByRole('radio', { name: '이 맥 로그인' }));
+    const text = screen.getByTestId('lane-off-confirm').textContent ?? '';
+    expect(text).toContain('이 맥에 로그인된 pi 설정으로 돈다');
+    expect(text).not.toContain('계정 풀');
+  });
+
+  it('주소 칸 이름 — kilo 는 Anthropic, pi·omp 는 chat-completions', () => {
+    for (const [harness, label] of [['kilo', /Anthropic 호환/], ['pi', /chat-completions 호환/], ['omp', /chat-completions 호환/]] as const) {
       renderField(laneState(), harness);
       fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));
       expect(screen.getByText(label)).toBeTruthy();
@@ -219,6 +254,18 @@ describe('적용 시점(C1)', () => {
     cleanup();
     render(<ModelConnectionStatus lane={laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'k' }, pending: false })} />);
     expect(screen.queryByTestId('lane-pending')).toBeNull();
+  });
+
+  // designer C D1·n1: 풀 없는 하네스는 끈 직후 「이 맥 로그인으로」, 연결 중엔 「계정 풀을 쓰지 않는다」 군말이 없다.
+  it('kilo 는 끈 직후 「이 맥 로그인으로 돈다」, 연결 중 「계정 풀을 쓰지 않는다」 줄이 없다', () => {
+    render(<ModelConnectionStatus harness="kilo" lane={laneState({ lane: null, pending: true })} />);
+    expect(screen.getByTestId('lane-pending').textContent).toContain('이 맥 로그인으로 돈다');
+    cleanup();
+    render(<ModelConnectionStatus harness="kilo" lane={laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'k' } })} />);
+    expect(screen.queryByText(/계정 풀을 쓰지 않는다/)).toBeNull();
+    cleanup();
+    render(<ModelConnectionStatus harness="claude-code" lane={laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'k' } })} />);
+    expect(screen.getByText(/계정 풀을 쓰지 않는다/)).toBeTruthy();
   });
 });
 
