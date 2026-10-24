@@ -247,11 +247,14 @@ export function planSweep(prev: CleanupLedger, facts: SweepFacts, settings: Clea
 
 // ── 사람의 손 ────────────────────────────────────────────────────────────────
 
-export type HumanAction = 'keep' | 'unkeep' | 'list';
+export type HumanAction = 'keep' | 'unkeep' | 'list' | 'deleteNow';
 
 /**
- * 「보존」(→kept)·「목록으로 되돌리기」(kept→listed, 기한을 오늘부터 다시)·「삭제 예정에 넣기」(unowned→listed).
+ * 「보존」(→kept)·「목록으로 되돌리기」(kept→listed, 기한을 오늘부터 다시)·「삭제 예정에 넣기」(unowned→listed)·
+ * 「지금 정리」(listed/blocked 를 기한 전에 지우기).
  * 넣기면 의존성 폴더 지우기를 돌려준다 — 넣는 순간 지우는 것은 사람이 넣어도 같다.
+ * 지금 정리는 기한을 지금으로 당기고 delete 를 돌려줄 뿐이다 — 지우기는 runSweep 이 지우기 직전 검사(`check`)를 거쳐서만 한다.
+ * 삭제 예정이 아닌 것(주인 모름·보존)은 거절한다 — 사람이 넣고 기한을 보는 단계를 건너뛰지 않는다.
  */
 export function applyHumanAction(
   prev: CleanupLedger, path: string, action: HumanAction, by: string, settings: CleanupSettings, now: Date,
@@ -263,6 +266,12 @@ export function applyHumanAction(
   let next: CleanupItem;
   let ev: CleanupEvent['action'];
   const actions: SweepAction[] = [];
+  if (action === 'deleteNow') {
+    if (item.state !== 'listed' && item.state !== 'blocked') throw new Error(`cannot deleteNow from ${item.state}`);
+    const items = prev.items.slice();
+    items[idx] = { ...item, deleteAfter: at, actedBy: by, actedAt: at };
+    return { ledger: { ...prev, items }, actions: [{ op: 'delete', path }] };
+  }
   if (action === 'keep') {
     if (item.state === 'deleted') throw new Error('already deleted');
     next = { ...item, state: 'kept', deleteAfter: null, blockReason: null };

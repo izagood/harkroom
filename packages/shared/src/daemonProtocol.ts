@@ -926,10 +926,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * `workspaceCleanupAct` — 항목은 원장의 경로로 가리키고(원장에 없는 경로는 오퍼레이터가 거절한다), `by` 는 누른 사람의
  * 계정 id 다(화면의 「누가 보존」). 이름이 아니라 id 다 — 이름은 바뀐다.
  */
-export function readWorkspaceCleanupActPayload(payload: unknown): { path: string; action: 'keep' | 'unkeep' | 'list'; by: string } | DaemonError {
+/** 사람의 손: 보존·되돌리기·삭제 예정에 넣기·「지금 정리」(삭제 예정인 것을 기한 전에 — 지우기 직전 검사는 그대로). */
+export type WorkspaceCleanupAction = 'keep' | 'unkeep' | 'list' | 'deleteNow';
+
+export function readWorkspaceCleanupActPayload(payload: unknown): { path: string; action: WorkspaceCleanupAction; by: string } | DaemonError {
   const p = payload as { path?: unknown; action?: unknown; by?: unknown } | null;
   if (!p || typeof p.path !== 'string' || !p.path.startsWith('/')) return daemonError('bad-payload', 'path 는 원장의 절대 경로여야 한다');
-  if (p.action !== 'keep' && p.action !== 'unkeep' && p.action !== 'list') return daemonError('bad-payload', 'action 은 keep·unkeep·list 중 하나다');
+  if (p.action !== 'keep' && p.action !== 'unkeep' && p.action !== 'list' && p.action !== 'deleteNow') return daemonError('bad-payload', 'action 은 keep·unkeep·list·deleteNow 중 하나다');
   if (typeof p.by !== 'string' || !UUID_RE.test(p.by)) return daemonError('bad-payload', 'by 는 계정 id 여야 한다');
   return { path: p.path, action: p.action, by: p.by };
 }

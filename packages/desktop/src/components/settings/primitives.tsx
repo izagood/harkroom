@@ -243,11 +243,17 @@ export function SettingsHeader({ section, description, className = '', measure =
   );
 }
 
-/** 카드 하나. 행 사이 구분선은 여기서만 긋는다. */
-export function SettingsGroup({ title, children }: { title?: string; children: ReactNode }) {
+/** 카드 하나. 행 사이 구분선은 여기서만 긋는다. `action` 은 제목 줄 오른쪽(그 칸 전체에 대한 버튼 — 정리 화면의 「지금 지우기」). */
+export function SettingsGroup({ title, action, children }: { title?: string; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="mb-8">
-      {title && <h3 className="mb-2 text-body font-semibold text-fg-subtle">{title}</h3>}
+      {title && !action && <h3 className="mb-2 text-body font-semibold text-fg-subtle">{title}</h3>}
+      {title && action && (
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <h3 className="min-w-0 flex-1 text-body font-semibold text-fg-subtle">{title}</h3>
+          {action}
+        </div>
+      )}
       <div className="divide-y divide-border rounded-compose border border-border bg-surface-raised">
         {children}
       </div>
