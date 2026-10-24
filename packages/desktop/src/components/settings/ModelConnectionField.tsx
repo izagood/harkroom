@@ -15,7 +15,7 @@ import { laneCodeText } from '../../lib/laneCodes';
 import { Segmented } from './primitives';
 
 /** API 키 연결을 쓸 수 있는 하네스(러너 `PROVIDER_LANE_ENV_KEYS` 와 같은 둘). */
-export const LANE_HARNESSES: readonly string[] = ['claude-code', 'opencode'];
+export const LANE_HARNESSES: readonly string[] = ['claude-code', 'opencode', 'codex'];
 /**
  * 예전에 opencode lane 모델 칸에 붙이던 머리(러너 `PROVIDER_LANE_OPENCODE_PROVIDER`). 이제 모델 칸에는 gateway 가 받는 이름을 그대로 적고,
  * 머리는 러너가 opencode 를 띄울 때만 안에서 붙인다(2026-10-24). 남은 옛 값은 이 함수로 원문으로 되돌린다.

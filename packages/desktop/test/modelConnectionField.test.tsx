@@ -118,10 +118,16 @@ describe('ModelConnectionField', () => {
   });
 
   it('API 키를 못 쓰는 하네스는 [API 키]로 못 바꾸고 까닭을 적는다', () => {
-    renderField(laneState(), 'codex');
+    renderField(laneState(), 'pi');
     fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));
     expect(screen.queryByTestId('lane-form')).toBeNull();
-    expect(screen.getByText(/claude-code·opencode에서만/)).toBeTruthy();
+    expect(screen.getByText(/claude-code·opencode·codex에서만/)).toBeTruthy();
+  });
+
+  it('codex 도 [API 키]로 바꿀 수 있다', () => {
+    renderField(laneState(), 'codex');
+    fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));
+    expect(screen.getByTestId('lane-form')).toBeTruthy();
   });
 });
 
