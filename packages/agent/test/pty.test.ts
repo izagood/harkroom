@@ -891,6 +891,22 @@ describe('주입 확인 창 — 준비 신호만으로는 부족하다', () => {
     await turn.catch(() => {});
   }, 20_000);
 
+  /**
+   * **`onAttention` 이 없는 턴도 턴 도중 관문은 부른다**(2026-10-25, e2e R2). 풀의 마지막이 아닌 계정의 턴은
+   * `onAttention` 을 받지 않는다(턴 시작 관문은 계정 전환이 맡는다). 그런데 대화가 시작된 뒤 뜬 확인 창은 계정을
+   * 바꿔도 안 풀린다 — 그 턴이 통지 없이 30분 섰다. 턴 도중 관문만 `onTurnGate` 로 받는다.
+   */
+  it('onAttention 없이 onTurnGate 만 있어도 턴 도중 관문을 부른다', async () => {
+    const 부름: string[] = [];
+    const turn = runPtyTurn(plan('ready-then-gate'), {
+      cwd: process.cwd(), timeoutMs: 5_000,
+      injectPrompt: { text: '안녕', gateProbeMs: 100, onTurnGate: (s) => 부름.push(s) },
+    });
+    await vi.waitFor(() => expect(부름).toHaveLength(1), { timeout: 4_000 });
+    expect(부름[0]).toContain('Do you want to proceed?');
+    await turn.catch(() => {});
+  }, 20_000);
+
   it('한 관문에 한 번만 부른다 — 주기마다 부르면 통지가 쌓인다', async () => {
     const 부름: string[] = [];
     const turn = runPtyTurn(plan('ready-then-gate'), {

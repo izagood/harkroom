@@ -37,6 +37,7 @@ import { ensurePiLaneThread, listPiMcpTools, PI_LANE_PROVIDER, piLaneLoginPresen
 import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompUnverifiedBinaryNotice, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { readOpencodeTurnState } from './opencodeTurnState.js';
+import { screenShowsProgress } from './screenLife.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MemoryCache } from './memoryCache.js';
@@ -2104,6 +2105,106 @@ export async function runMentionTurn(
     try { deps.reportMcpAuthRejected(fresh, turnStartedAtMs); } catch { /* 알리지 못했다고 턴을 죽이지 않는다 */ }
   };
 
+  /**
+   * 사람 손을 부른다(관문). 턴 시작 관문은 풀의 마지막 계정에서만, 턴 도중 관문은 모든 계정에서(`onTurnGate`).
+   *
+   * **사람 부르기는 마지막 수단이다.** 여기까지 왔다는 것은 `withAccountFailover`
+   * 가 풀을 다 태웠다는 뜻이다 — 준비 실패는 계정 전환 방아쇠이므로
+   * (`claudeAccounts.ts::switchesAccount`), 마지막 계정이 아니면 이 콜백이 아니라
+   * 그 전환이 먼저 일어난다.
+   *
+   * 이 턴은 여기서 끝나지 않는다: PTY 가 살아 있고, 사람이 관문을 지나면 그
+   * 자리에서 프롬프트가 주입된다. 끝은 exit 이거나 무발화 시계다 — 그 시계는
+   * 사람이 붙어 있으면(`end.viewers > 0`) 지나가므로, 사람이 오면 살아남는다.
+   */
+  const callHuman = (screen: string, kind: AttentionKind) => {
+    // 이 턴은 이제 **사람을 기다린다** — 기록이 안 자라는 것이 정상이다.
+    // 정지 시계를 계속 재면 사람이 오기 전에 접힌다(위 `awaitingHuman` 주석).
+    end.awaitingHuman = true;
+    const label = deps.accountLabel ?? '(기본)';
+    // 턴 시작 관문이면 그 계정에 표식을 세운다 — 다음 배정부터 맨 뒤로 간다(`accountAssign.ts`).
+    if (kind === 'startup') deps.markAccountGate?.();
+
+    /**
+     * **스레드에 남기는 것은 원장보다 앞이다**(2026-09-09).
+     *
+     * 지금까지 이 부름의 표면은 `agent.attention` **WS 이벤트 하나**였다. 그것은
+     * 그때 거기 있던 사람에게만 닿는다 — 앱이 닫혀 있었거나 다른 스레드의 터미널을
+     * 보고 있었으면(`controller.ts` 의 `if (지금) break`) 부름은 **흔적 없이
+     * 사라진다.** 그 자리가 이번 사건에서 사람이 "앱이 알려주지 않아 알 수가
+     * 없었다"고 말한 자리다.
+     *
+     * 원장 뒤에 두면 안 되는 이유가 여기서 갈린다: 원장은 **화면을 빼앗는 것**을
+     * 묶는 장부다(같은 계정 승인 하나에 창 7개를 띄우지 않는다). 그런데 막힌
+     * 스레드는 그 7개가 다 막힌 것이 사실이므로, 기록은 스레드마다 남아야 한다.
+     * 묶는 것과 남기는 것은 다른 일이다.
+     */
+    if (!end.gateNoticed) {
+      end.gateNoticed = true;
+      // 이 콜백은 `void` 다(pty.ts) — 던지면 PTY 쪽으로 새어 나가므로 삼킨다.
+      // 말하지 못한 것으로 턴을 죽이지 않는다: 사람은 여전히 터미널로 닿을 수 있다.
+      void deps.harkroom.fail(channelId, gateNotice(label), anchor, {
+        retryable: false,
+        what: '하네스가 사람의 확인을 기다린다',
+        reason: '그 터미널에서 화면의 물음에 답하면 이 턴이 그 자리에서 이어진다',
+        ...gateFailExtras(kind, mentionId, deps.claudeAccount ?? null),
+      }).catch((e: unknown) => {
+        console.error(`[mentionTurn] ${key}: 관문 통지 발화 실패(턴은 그대로 기다린다):`,
+          e instanceof Error ? e.message : e);
+      });
+    }
+
+    /**
+     * **원장은 `'startup'` 만 묶는다**(2026-09-09).
+     *
+     * 그 관문의 승인은 계정 설정에 기록되므로 한 번 지나면 그 계정의 모든 스레드가
+     * 함께 풀린다 — 스레드마다 부르면 사람이 같은 승인을 반복한다.
+     *
+     * `'gate'` 는 그렇지 않다: `--permission-mode auto` 의 확인은 **명령 하나에
+     * 대한 물음**이라, 지나도 다음 명령은 다시 묻고 다른 스레드는 전혀 풀리지
+     * 않는다. 그것을 계정으로 묶으면 먼저 걸린 스레드가 장부를 쥐고, 나머지 턴은
+     * 화면도 통지도 없이 서 있다가 정지 시계에 접힌다 — 이 커밋이 고치려는 실패를
+     * 원장으로 다시 만드는 셈이다.
+     */
+    if (kind === 'startup' && deps.attentionLedger) {
+      if (end.gateHeld === null && !deps.attentionLedger.claim(label, sessionIdForProbe ?? key)) {
+        /*
+          **기다리는 PTY 는 계정당 하나다**(2026-10-02, 관문 대응 안 2). 그 계정의 관문에서 이미
+          다른 턴이 사람을 기다린다 — 이 PTY 는 접고, 표식이 지워지면 같은 멘션을 다시 띄운다.
+          관문 통지는 위에서 이미 남겼다(스레드마다 남는 것이 맞다 — 그 스레드도 막혔다).
+        */
+        end.gateRequeue = 'queued';
+        reclaim();
+        return;
+      }
+      end.gateHeld = label;
+      /*
+        **표식이 지워지면 다시 띄운다.** 관문에 선 claude 는 설정을 다시 읽지 않는다(2026-10-02
+        실측) — 사람이 데몬 터미널에서 지나도 이 PTY 는 그대로 서 있다. 그래서 접고 다시 띄운다.
+        사람이 **이 터미널에서** 직접 답하면 주입이 일어나고 턴이 그 자리에서 이어진다(그때는
+        `injected` 가 참이라 아래 주기는 아무것도 하지 않는다 — 표식은 성공 뒤 스케줄러가 지운다).
+      */
+      const cleared = deps.accountGateCleared;
+      if (cleared && !end.cancelGateWatch) {
+        const t = setInterval(() => {
+          if (end.exited || end.spoke || end.gateRequeue) return;
+          void cleared().then((yes) => {
+            if (!yes || end.exited || end.spoke || end.gateRequeue) return;
+            end.gateRequeue = 'passed';
+            console.error(`[mentionTurn] ${key}: 계정 관문 표식이 지워졌다 — PTY 를 접고 다시 띄운다(계정=${label})`);
+            reclaim();
+          }, () => undefined);
+        }, deps.gateWatchMs ?? 5_000);
+        t.unref?.();
+        end.cancelGateWatch = () => clearInterval(t);
+      }
+    }
+    session?.needsAttention(screen, label);
+    console.error(
+      `[mentionTurn] ${key}: 사람 손이 필요하다(${kind}, 계정=${label}) — 앱이 이 세션의 터미널을 연다`,
+    );
+  };
+
   const probeUtterance = (): void => {
     if (end.exited) return;
     const again = (): void => { if (!end.exited) end.cancelProbe = schedule(probeUtterance, probeMs); };
@@ -2266,113 +2367,21 @@ export async function runMentionTurn(
           },
           // `onAttention` 은 축의 마지막에서만 열린다. 앞 계정에서는 준비 실패가 그대로 던져져
           // 계정 전환을 태운다 — 그것이 이 턴이 아직 쓸 수 있는 더 싼 수단이다.
-          ...(deps.callsForHuman === false ? {} : {
-            /**
-             * **사람 부르기는 마지막 수단이다.** 여기까지 왔다는 것은 `withAccountFailover`
-             * 가 풀을 다 태웠다는 뜻이다 — 준비 실패는 계정 전환 방아쇠이므로
-             * (`claudeAccounts.ts::switchesAccount`), 마지막 계정이 아니면 이 콜백이 아니라
-             * 그 전환이 먼저 일어난다.
-             *
-             * 이 턴은 여기서 끝나지 않는다: PTY 가 살아 있고, 사람이 관문을 지나면 그
-             * 자리에서 프롬프트가 주입된다. 끝은 exit 이거나 무발화 시계다 — 그 시계는
-             * 사람이 붙어 있으면(`end.viewers > 0`) 지나가므로, 사람이 오면 살아남는다.
-             */
-            onAttention: (screen: string, kind: AttentionKind) => {
-              // 이 턴은 이제 **사람을 기다린다** — 기록이 안 자라는 것이 정상이다.
-              // 정지 시계를 계속 재면 사람이 오기 전에 접힌다(위 `awaitingHuman` 주석).
-              end.awaitingHuman = true;
-              const label = deps.accountLabel ?? '(기본)';
-              // 턴 시작 관문이면 그 계정에 표식을 세운다 — 다음 배정부터 맨 뒤로 간다(`accountAssign.ts`).
-              if (kind === 'startup') deps.markAccountGate?.();
-
-              /**
-               * **스레드에 남기는 것은 원장보다 앞이다**(2026-09-09).
-               *
-               * 지금까지 이 부름의 표면은 `agent.attention` **WS 이벤트 하나**였다. 그것은
-               * 그때 거기 있던 사람에게만 닿는다 — 앱이 닫혀 있었거나 다른 스레드의 터미널을
-               * 보고 있었으면(`controller.ts` 의 `if (지금) break`) 부름은 **흔적 없이
-               * 사라진다.** 그 자리가 이번 사건에서 사람이 "앱이 알려주지 않아 알 수가
-               * 없었다"고 말한 자리다.
-               *
-               * 원장 뒤에 두면 안 되는 이유가 여기서 갈린다: 원장은 **화면을 빼앗는 것**을
-               * 묶는 장부다(같은 계정 승인 하나에 창 7개를 띄우지 않는다). 그런데 막힌
-               * 스레드는 그 7개가 다 막힌 것이 사실이므로, 기록은 스레드마다 남아야 한다.
-               * 묶는 것과 남기는 것은 다른 일이다.
-               */
-              if (!end.gateNoticed) {
-                end.gateNoticed = true;
-                // 이 콜백은 `void` 다(pty.ts) — 던지면 PTY 쪽으로 새어 나가므로 삼킨다.
-                // 말하지 못한 것으로 턴을 죽이지 않는다: 사람은 여전히 터미널로 닿을 수 있다.
-                void deps.harkroom.fail(channelId, gateNotice(label), anchor, {
-                  retryable: false,
-                  what: '하네스가 사람의 확인을 기다린다',
-                  reason: '그 터미널에서 화면의 물음에 답하면 이 턴이 그 자리에서 이어진다',
-                  ...gateFailExtras(kind, mentionId, deps.claudeAccount ?? null),
-                }).catch((e: unknown) => {
-                  console.error(`[mentionTurn] ${key}: 관문 통지 발화 실패(턴은 그대로 기다린다):`,
-                    e instanceof Error ? e.message : e);
-                });
-              }
-
-              /**
-               * **원장은 `'startup'` 만 묶는다**(2026-09-09).
-               *
-               * 그 관문의 승인은 계정 설정에 기록되므로 한 번 지나면 그 계정의 모든 스레드가
-               * 함께 풀린다 — 스레드마다 부르면 사람이 같은 승인을 반복한다.
-               *
-               * `'gate'` 는 그렇지 않다: `--permission-mode auto` 의 확인은 **명령 하나에
-               * 대한 물음**이라, 지나도 다음 명령은 다시 묻고 다른 스레드는 전혀 풀리지
-               * 않는다. 그것을 계정으로 묶으면 먼저 걸린 스레드가 장부를 쥐고, 나머지 턴은
-               * 화면도 통지도 없이 서 있다가 정지 시계에 접힌다 — 이 커밋이 고치려는 실패를
-               * 원장으로 다시 만드는 셈이다.
-               */
-              if (kind === 'startup' && deps.attentionLedger) {
-                if (end.gateHeld === null && !deps.attentionLedger.claim(label, sessionIdForProbe ?? key)) {
-                  /*
-                    **기다리는 PTY 는 계정당 하나다**(2026-10-02, 관문 대응 안 2). 그 계정의 관문에서 이미
-                    다른 턴이 사람을 기다린다 — 이 PTY 는 접고, 표식이 지워지면 같은 멘션을 다시 띄운다.
-                    관문 통지는 위에서 이미 남겼다(스레드마다 남는 것이 맞다 — 그 스레드도 막혔다).
-                  */
-                  end.gateRequeue = 'queued';
-                  reclaim();
-                  return;
-                }
-                end.gateHeld = label;
-                /*
-                  **표식이 지워지면 다시 띄운다.** 관문에 선 claude 는 설정을 다시 읽지 않는다(2026-10-02
-                  실측) — 사람이 데몬 터미널에서 지나도 이 PTY 는 그대로 서 있다. 그래서 접고 다시 띄운다.
-                  사람이 **이 터미널에서** 직접 답하면 주입이 일어나고 턴이 그 자리에서 이어진다(그때는
-                  `injected` 가 참이라 아래 주기는 아무것도 하지 않는다 — 표식은 성공 뒤 스케줄러가 지운다).
-                */
-                const cleared = deps.accountGateCleared;
-                if (cleared && !end.cancelGateWatch) {
-                  const t = setInterval(() => {
-                    if (end.exited || end.spoke || end.gateRequeue) return;
-                    void cleared().then((yes) => {
-                      if (!yes || end.exited || end.spoke || end.gateRequeue) return;
-                      end.gateRequeue = 'passed';
-                      console.error(`[mentionTurn] ${key}: 계정 관문 표식이 지워졌다 — PTY 를 접고 다시 띄운다(계정=${label})`);
-                      reclaim();
-                    }, () => undefined);
-                  }, deps.gateWatchMs ?? 5_000);
-                  t.unref?.();
-                  end.cancelGateWatch = () => clearInterval(t);
-                }
-              }
-              session?.needsAttention(screen, label);
-              console.error(
-                `[mentionTurn] ${key}: 사람 손이 필요하다(${kind}, 계정=${label}) — 앱이 이 세션의 터미널을 연다`,
-              );
-            },
-          }),
+          // **사람 부르기**는 `callsForHuman` 이 가르는 것은 턴 시작 관문뿐이다. 턴 도중 확인 창은 계정을 바꿔도 안 풀리므로
+          // 모든 계정에서 부른다(2026-10-25, e2e R2: 풀의 첫 계정 턴이 확인 창 앞에서 통지 없이 30분 섰다).
+          ...(deps.callsForHuman === false
+            ? { onTurnGate: (screen: string) => callHuman(screen, 'gate') }
+            : { onAttention: callHuman }),
         },
       } : {}),
       // 릴레이가 없으면 탭도 없다 — `undefined` 를 넘겨 pty 쪽 호출을 아예 안 만든다.
       onData: (chunk) => {
         // **화면이 흐른다 = 하네스가 살아 있다.** 기록을 못 읽는 하네스는 이것 말고
-        // 생존을 말해 주는 것이 없다(`probeStall` 의 갈림길).
-        end.lastDataAtMs = deps.now?.() ?? Date.now();
-        end.screenTail = (end.screenTail + screenDecoder.write(chunk)).slice(-SCREEN_TAIL_CHARS);
+        // 생존을 말해 주는 것이 없다(`probeStall` 의 갈림길). 다만 **글자가 생긴 바이트만** 센다 —
+        // 확인 창의 대기 표시 깜빡임은 사람을 기다리는 화면이지 진행이 아니다(`screenLife.ts`, e2e R2).
+        const text = screenDecoder.write(chunk);
+        if (screenShowsProgress(text)) end.lastDataAtMs = deps.now?.() ?? Date.now();
+        end.screenTail = (end.screenTail + text).slice(-SCREEN_TAIL_CHARS);
         session?.push(chunk);
       },
       // 반대 방향(#315): 사람이 attach 해서 친 바이트가 이 PTY 로 들어온다. 릴레이가
