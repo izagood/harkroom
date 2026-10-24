@@ -67,6 +67,7 @@ import { createSecretLeakGuard, leakGuardHook } from './services/secretLeakGuard
 import type { RevealLimiter } from './services/secretAccess.js';
 import { createAgentWakeSweeper } from './services/agentWakes.js';
 import { createPermissionExpirySweeper } from './services/permissionRequests.js';
+import { createMandateIdleSweeper } from './services/mandateEnd.js';
 import { emitEvent } from './events.js';
 import { createStaleRequestSweeper } from './services/staleRequests.js';
 import { createDelegationDeadlineSweeper } from './services/delegations.js';
@@ -579,6 +580,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // 권한 요청 만료(129) — 시한이 지난 요청의 카드를 「만료됨」으로 닫는다. 이것이 없으면 카드가 열린 채 버튼이 눌리지 않는다.
   createPermissionExpirySweeper(deps.pool).startSweep(app);
+
+  // 위임 끝(3판) — 7일 활동이 없던 위임을 idle 로 끝내고 줄을 회수한다(판정은 이미 계산으로 막는다 — 이것은 기록과 카드 갱신).
+  createMandateIdleSweeper(deps.pool).startSweep(app);
 
   /**
    * 아무도 집지 않은 요청을 스레드에 말하는 스위퍼(049).
