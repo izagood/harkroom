@@ -1,4 +1,4 @@
-import { LINK_SCHEMES, parseMessagePermalink, trimTrailingPunctuation, urlCandidateRegex } from '@harkroom/shared';
+import { LINK_SCHEMES, messagePermalink, parseMessagePermalink, trimTrailingPunctuation, urlCandidateRegex } from '@harkroom/shared';
 import type { MessagePart } from './mention';
 
 /**
@@ -73,4 +73,15 @@ export function splitLinks(parts: MessagePart[]): BodyPart[] {
     if (cursor < part.text.length) out.push({ kind: 'text', text: part.text.slice(cursor) });
   }
   return out.length ? out : parts;
+}
+
+/**
+ * 메타 값(카드의 원본·새 카드·글로 답한 메시지 id)으로 `harkroom://message/<id>` 를 만든다.
+ * id 가 uuid 모양이 아니면 **null** — 그 링크는 그리지 않는다. 판정은 본문 링크와 같은
+ * `parseMessagePermalink` 라 두 곳의 기준이 갈라지지 않는다.
+ */
+export function messageLinkFromMeta(id: unknown): string | null {
+  if (typeof id !== 'string') return null;
+  const parsed = parseMessagePermalink(messagePermalink(id));
+  return parsed && parsed === id ? messagePermalink(parsed) : null;
 }

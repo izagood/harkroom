@@ -209,7 +209,8 @@ class _AskCardState extends State<AskCard> {
     }
 
     final meId = app.me?.id;
-    final owner = perm.ownerId == null || meId == null || perm.ownerId == meId;
+    // 소유자나 나를 모르면 **소유자가 아니라고 본다** — 버튼 없이 읽기 전용 줄만.
+    final owner = perm.ownerId != null && meId != null && perm.ownerId == meId;
     final ended = perm.mandate?.ended ?? false;
     final open = ask.isOpen && (perm.status == null || perm.status == 'pending') && !ended;
     final canPickLate = ask.isReplied && owner && _pickAnyway && !ended;

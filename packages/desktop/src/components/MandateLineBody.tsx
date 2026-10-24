@@ -3,6 +3,7 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
+import { messageLinkFromMeta } from '../lib/link';
 
 /**
  * W4 「위임장에 줄 더하기」 카드의 몸(designer 시안 v1, i1). `AskCard` 가 선택지 목록 대신 이것을 그린다.
@@ -121,13 +122,15 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
   const t = useT();
   const me = useActiveStore((s) => s.me);
   const ownerOf = src.request && typeof src.request.ownerAccountId === 'string' ? src.request.ownerAccountId : src.mandate?.ownerId ?? null;
+  const mirrorHref = messageLinkFromMeta(src.mirror?.rootId);
+  const supersededHref = messageLinkFromMeta(supersededBy);
   const ownerHandle = useActiveStore((s) => (ownerOf ? s.accounts[ownerOf]?.handle ?? null : null));
 
   if (src.mirror?.neutral) {
     return (
       <div className="px-3 pb-2 pt-1 text-meta" data-testid="mandate-mirror-neutral">
         <p className="text-fg-muted">{t('mandateCard.mirrorNeutral')}</p>
-        <a className="text-accent underline" href={`harkroom://message/${src.mirror.rootId}`} data-testid="mandate-mirror-link">{t('mandateCard.openOriginal')}</a>
+        {mirrorHref && <a className="text-accent underline" href={mirrorHref} data-testid="mandate-mirror-link">{t('mandateCard.openOriginal')}</a>}
       </div>
     );
   }
@@ -136,7 +139,8 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
   const onceAvailable = !!line?.limits.approve_once;
   const onceByPanel = !!src.request && src.request.kind === 'merge' && !!src.request.once;
   const standing = optionIds.find((id) => STANDING.includes(id)) ?? null;
-  const viewerIsOwner = !ownerOf || (!!me && me.id === ownerOf);
+  // 소유자를 모르면 **소유자가 아니라고 본다** — 버튼 없이 읽기 전용(「소유자만」 줄)으로 그린다.
+  const viewerIsOwner = !!ownerOf && !!me && me.id === ownerOf;
   const pending = answeredWith == null && closedReason == null && (status == null || status === 'pending');
   const ended = !pending;
   // 끝난 카드는 고른 선택지의 한도만, 열린 카드는 주 버튼(없으면 한 번)의 한도를 보인다.
@@ -151,7 +155,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       return (
         <p className="text-fg-subtle" data-testid="mandate-ended" data-state="superseded">
           {t('mandateCard.ended.superseded')}{' '}
-          {supersededBy ? <a className="text-accent underline" href={`harkroom://message/${supersededBy}`} data-testid="mandate-new-card">{t('mandateCard.openNewCard')}</a> : t('mandateCard.askAgain')}
+          {supersededHref ? <a className="text-accent underline" href={supersededHref} data-testid="mandate-new-card">{t('mandateCard.openNewCard')}</a> : t('mandateCard.askAgain')}
         </p>
       );
     }
@@ -178,7 +182,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       {src.mirror && (
         <p className="mb-1 text-meta text-fg-subtle" data-testid="mandate-mirror-genuine">
           ↪ {t('mandateCard.mirror')}{' '}
-          <a className="text-accent underline" href={`harkroom://message/${src.mirror.rootId}`} data-testid="mandate-mirror-link">{t('mandateCard.openOriginal')}</a>
+          {mirrorHref && <a className="text-accent underline" href={mirrorHref} data-testid="mandate-mirror-link">{t('mandateCard.openOriginal')}</a>}
         </p>
       )}
       {/* 칩은 소유자에게만 보인다(시안 「남이 볼 때」 — 다른 채널의 위임장이 드러나지 않게). */}
