@@ -27,6 +27,15 @@ export function systemLineShape(message: Pick<MessageRow, 'kind' | 'meta'>): Sys
   return RECORD_KEY.test(parsed.key) ? 'record' : 'response';
 }
 
+/** 기록 줄의 아이콘(시안 C) — 들어옴 ＋ · 나감/내보냄 − · 모델 ⚙ · 그 밖(옛 줄) •. */
+export function systemRecordIcon(message: Pick<MessageRow, 'meta'>): string {
+  const key = parseSystemI18n((message.meta as Record<string, unknown> | undefined)?.i18n)?.key ?? '';
+  if (key.startsWith('system.member.added')) return '＋';
+  if (key.startsWith('system.member.')) return '−';
+  if (key.startsWith('system.threadModel.')) return '⚙';
+  return '•';
+}
+
 /**
  * 응답 줄 칩의 재료 — 누구의(`accountId`) 무엇에(`what`) 대한 응답인가. 채팅 승인 결과는 그 글로 가는
  * 링크를 함께 준다(`meta.chatApproval.messageId`). 그 밖의 카드는 author(카드를 일으킨 에이전트)의 요청이다.

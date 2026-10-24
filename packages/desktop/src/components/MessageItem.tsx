@@ -36,7 +36,7 @@ import { stampLabel } from '../lib/day';
 import type { SectionId } from './settings/sections';
 import { useT, useLocale } from '../i18n/useT';
 import { systemText } from '../lib/systemText';
-import { systemLineShape, systemLineTarget } from '../lib/systemLine';
+import { systemLineShape, systemLineTarget, systemRecordIcon } from '../lib/systemLine';
 
 /**
  * 얼굴 슬롯의 칸 수. **폭이 고정되는 것이 이 숫자의 일**이다 — 참여자가 늘어도 요약 줄이
@@ -632,7 +632,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           className={systemShape === 'record'
             ? 'flex w-8 shrink-0 justify-center text-meta text-fg-subtle'
             : 'flex h-8 w-8 shrink-0 items-center justify-center rounded-avatar border border-dashed border-border-strong bg-surface-sunken text-fg-muted'}
-        >{systemShape === 'record' ? '•' : '⚙'}</div>
+        >{systemShape === 'record' ? systemRecordIcon(message) : '⚙'}</div>
       ) : authorOpen ? (
         <button
           type="button"

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { MessageItem } from '../src/components/MessageItem';
-import { systemLineShape } from '../src/lib/systemLine';
+import { systemLineShape, systemRecordIcon } from '../src/lib/systemLine';
 import { acc, msg } from './helpers/fakeApi';
 
 /**
@@ -57,5 +57,8 @@ describe('시스템 줄 두 겹', () => {
     expect(systemLineShape({ kind: 'system', meta: {} })).toBe('record');
     expect(systemLineShape({ kind: 'system', meta: { i18n: { key: 'system.member.addedBy', args: { actorId: 'u1', accountId: 'a1' } } } })).toBe('record');
     expect(systemLineShape({ kind: 'system', meta: { i18n: { key: 'system.merge.merged', args: { repo: 'o/r', number: 1, sha: 'abc' } } } })).toBe('response');
+    expect(systemRecordIcon({ meta: { i18n: { key: 'system.member.added', args: { accountId: 'a1' } } } })).toBe('＋');
+    expect(systemRecordIcon({ meta: { i18n: { key: 'system.member.left', args: { accountId: 'a1' } } } })).toBe('−');
+    expect(systemRecordIcon({ meta: {} })).toBe('•');
   });
 });
