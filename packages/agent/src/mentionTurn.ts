@@ -32,9 +32,9 @@ import type { ReviewFork } from './reviewFork.js';
 import { readLastAssistantText, readMacPermissionWaits, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type MacPermissionWait, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
-import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneModelMissing } from './opencodeHome.js';
+import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneModelMissing, providerLaneModelId } from './opencodeHome.js';
 import { listPiMcpTools, piSessionFile, readonlyToolList } from './piHome.js';
-import { ensureOmpThread, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
+import { ensureOmpThread, OMP_LANE_PROVIDER, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -42,7 +42,7 @@ import type { MemoryCache } from './memoryCache.js';
 import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { planThreadNote, type ThreadNoteState } from './threadNotePin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
-import { laneModelMissing, laneScrubsSubprocessEnv, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
+import { laneModelMissing, laneScrubsSubprocessEnv, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
 import { laneWorkspaceViolations } from './laneWorkspaceGuard.js';
 
 /** 정지 직전 "제출 대기" 판정에 쓰는 화면 꼬리 길이(글자). 입력줄과 바닥줄 몇 개면 된다. */
@@ -1372,6 +1372,13 @@ export async function runMentionTurn(
     const bad = await ompCwdViolations(ompThread.cwd, deps.stateDir);
     if (bad.length) throw new Error(`mentionTurn: omp 의 빈 cwd 나 그 위 폴더에 설정 이름이 있어 띄우지 않는다: ${bad.join(', ')}`);
     await writeOmpSessionHeader(ompDirs(deps.ompHome).sessionsDir, rec.sessionId as string, ompThread.cwd);
+    // omp 는 lane 으로만 돈다 — 러너는 사람 로그인을 물려받지 않아 lane 이 없으면 돌 모델이 없다(`ompHome.ts` 머리말).
+    const baseUrl = providerEnv?.[OMP_LANE_BASE_URL_ENV];
+    const keyPath = providerEnv?.[OMP_LANE_KEY_FILE_ENV];
+    if (!baseUrl || !keyPath) throw new ProviderLaneError('lane_unset');
+    const id = providerLaneModelId(turnModel.model);
+    if (!id) throw new ProviderLaneError('bad_model');
+    await writeOmpLaneModels(ompThread.agentDir, { baseUrl, keyPath, models: [id] });
   }
   const plan = buildTurnCommand({
     harness: def.harness,
@@ -1383,7 +1390,9 @@ export async function runMentionTurn(
     promptCtx: turnPrompt,
     stdinFile,
     // 모델 칸에는 gateway 가 받는 원문을 적는다 — opencode lane 은 여기서만 lane provider 안의 이름으로 부른다(`laneRunModel`).
-    model: laneRunModel(Boolean(providerEnv), usesXdgHome(def.harness), turnModel.model),
+    model: ompThread
+      ? `${OMP_LANE_PROVIDER}/${providerLaneModelId(turnModel.model) as string}`
+      : laneRunModel(Boolean(providerEnv), usesXdgHome(def.harness), turnModel.model),
     effort: turnModel.effort,
     mentionPermission: def.mentionPermission,
     // lane 턴은 하위 프로세스 env 를 걷는다(`PROVIDER_LANE_FIXED_ENV`) — 브릿지에 줄 값은 lane 전용 MCP 설정의 `env` 칸으로 준다.

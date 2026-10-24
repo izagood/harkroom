@@ -56,7 +56,7 @@ import { clearAccountAttention, clearAccountCredentialFailure, isAttentionActive
 import { syncCodexAuth } from './codexHome.js';
 import { allXdgApps, usesOmpHome, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
 import { ensurePiHome } from './piHome.js';
-import { ensureOmpHome } from './ompHome.js';
+import { ensureOmpHome, ompDirs } from './ompHome.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
 import { createSecretLeases } from './secretLeases.js';
@@ -616,7 +616,8 @@ function harnessVersion(harness: AgentHarness): Promise<string | null> {
     const bin = harnessBinaryName(harness);
     if (!bin) return resolve(null);
     execFile(bin, ['--version'], {
-      env: { PATH: harnessPath(harness, process.env.PATH), ...(process.env.HOME ? { HOME: process.env.HOME } : {}) }, timeout: 15_000,
+      // omp 는 natives 캐시를 `$HOME/.omp` 에서 실행 코드로 싣는다(security C3) — 판을 물을 때도 러너 홈을 준다.
+      env: { PATH: harnessPath(harness, process.env.PATH), ...(usesOmpHome(harness) ? { HOME: ompDirs(ompHomeDir).home } : process.env.HOME ? { HOME: process.env.HOME } : {}) }, timeout: 15_000,
     }, (err, stdout) => {
       const out = String(stdout ?? '').trim();
       if (err || !out) return resolve(null);
