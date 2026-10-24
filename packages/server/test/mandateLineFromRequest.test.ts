@@ -88,6 +88,20 @@ describe('permission request → mandate line (W4)', () => {
     expect(typeof a.lineId).toBe('string');
   });
 
+  it('g1: the card carries lineId; removing the line by the owner marks the card lineRevokedAt', async () => {
+    const { root, mandateId } = await mandateThread();
+    const { cardId } = await request({ kind: 'tool', target: rule(), root, mandateId });
+    const ref = (await resolveDecision(pool, cardId))!;
+    expect(await decide(pool, ref, alice.accountId, { option: 'approve', via: 'button' })).toMatchObject({ ok: true });
+    const metaOf = async () => (await pool.query(`select meta->'permissionRequest' as pr from message where id = $1`, [cardId])).rows[0].pr;
+    const lineId = (await metaOf()).lineId as string;
+    expect(typeof lineId).toBe('string');
+    const res = await app.inject({ method: 'DELETE', url: `/mandates/${mandateId}/lines/${lineId}`, headers: auth(alice.token) });
+    expect(res.statusCode).toBe(200);
+    expect((await metaOf()).lineRevokedAt).toBe(res.json().revokedAt);
+    expect((await pool.query(`select revoked_at from mandate_line where id = $1`, [lineId])).rows[0].revoked_at).not.toBeNull();
+  });
+
   it('merge-once (refusal card) decided via chat → merge_approval and a merge line pinned to pr/head, uses 1', async () => {
     const { root, mandateId } = await mandateThread();
     const denialId = (await pool.query(

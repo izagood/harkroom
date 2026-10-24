@@ -1,6 +1,6 @@
 /** W4 위임장 줄 카드(designer 시안 v1) — 선택지 묶음·거울(진짜/중립)·이름 없는 칩·끝난 상태·글로 답함 표시. */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import type { MessageRow } from '@harkroom/shared';
 import { AskCard } from '../src/components/AskCard';
 import { setController, type Controller } from '../src/state/controller';
@@ -203,5 +203,71 @@ describe('W4 mandate line card', () => {
     const m = screen.getByTestId('ask-answered-via-chat');
     expect(m.textContent).toContain('글로 답함');
     expect(m.querySelector('a')).toBeNull();
+  });
+
+  describe('g1 줄 빼기', () => {
+    const added = (pr: Record<string, unknown> = {}) => card({ pr: { status: 'granted', lineId: 'ln1', ...pr }, ask: { answeredWith: 'approve_mandate', answeredBy: ME } });
+
+    it('owner sees [줄 빼기] only when the card carries lineId; confirm calls the route and shows 「줄을 뺐다」', async () => {
+      const revokeMandateLine = vi.fn(async () => ({ ok: true as const, lineId: 'ln1', revokedAt: '2026-10-24T01:05:00Z' }));
+      setController({ answerAsk, closeAsk: vi.fn(), api: { revokeMandateLine } } as unknown as Controller);
+      render(<AskCard message={card({ pr: { status: 'granted' }, ask: { answeredWith: 'approve_mandate', answeredBy: ME } })} />);
+      expect(screen.queryByTestId('mandate-line-revoke')).toBeNull();
+      cleanup();
+      render(<AskCard message={added()} />);
+      fireEvent.click(screen.getByTestId('mandate-line-revoke'));
+      expect(revokeMandateLine).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: '줄 빼기' }));
+      await waitFor(() => expect(screen.getByTestId('mandate-ended').getAttribute('data-state')).toBe('revoked'));
+      expect(revokeMandateLine).toHaveBeenCalledWith('md1', 'ln1');
+      expect(screen.getByTestId('mandate-ended').textContent).toContain('줄을 뺐다 · ');
+      expect(screen.queryByTestId('mandate-line-revoke')).toBeNull();
+    });
+
+    it('7-day grant still live: dialog says the grant stays until its date, links to grant settings, state notes the grant', async () => {
+      const revokeMandateLine = vi.fn(async () => ({ ok: true as const, lineId: 'ln1', revokedAt: '2026-10-24T01:05:00Z' }));
+      setController({ answerAsk, closeAsk: vi.fn(), api: { revokeMandateLine } } as unknown as Controller);
+      const future = new Date(Date.now() + 3 * 86_400_000).toISOString();
+      const onOpenSettings = vi.fn();
+      render(<AskCard message={added({ grantExpiresAt: future })} onOpenSettings={onOpenSettings} />);
+      fireEvent.click(screen.getByTestId('mandate-line-revoke'));
+      const detail = screen.getByTestId('mandate-revoke-grant-live').textContent ?? '';
+      expect(detail).toContain('같은 결정으로 준 7일 허락이 ');
+      expect(detail).toContain('까지 남아 그때까지는 에이전트가 이 일을 계속 할 수 있다');
+      expect(detail).not.toContain('다시 묻는다');
+      fireEvent.click(screen.getByTestId('mandate-revoke-open-grants'));
+      expect(onOpenSettings).toHaveBeenCalledWith('agents', 'agent-1#permissions');
+      expect(screen.queryByTestId('mandate-revoke-grant-live')).toBeNull();
+      fireEvent.click(screen.getByTestId('mandate-line-revoke'));
+      fireEvent.click(screen.getByRole('button', { name: '줄 빼기' }));
+      await waitFor(() => expect(screen.getByTestId('mandate-ended').getAttribute('data-state')).toBe('revoked'));
+      expect(screen.getByTestId('mandate-ended').textContent).toContain('줄을 뺐다 · 7일 허락은 남음');
+    });
+
+    it('expired grant or command card: dialog keeps the ask-again sentence, state is plain 「줄을 뺐다」', () => {
+      const past = new Date(Date.now() - 60_000).toISOString();
+      render(<AskCard message={added({ grantExpiresAt: past })} onOpenSettings={vi.fn()} />);
+      fireEvent.click(screen.getByTestId('mandate-line-revoke'));
+      expect(screen.queryByTestId('mandate-revoke-grant-live')).toBeNull();
+      expect(screen.getByRole('dialog').textContent).toContain('에이전트가 다시 묻는다');
+      expect(screen.queryByTestId('mandate-revoke-open-grants')).toBeNull();
+      cleanup();
+      render(<AskCard message={added({ kind: 'command', grantExpiresAt: new Date(Date.now() + 3_600_000).toISOString() })} />);
+      fireEvent.click(screen.getByTestId('mandate-line-revoke'));
+      expect(screen.queryByTestId('mandate-revoke-grant-live')).toBeNull();
+      cleanup();
+      render(<AskCard message={added({ lineRevokedAt: '2026-10-24T01:05:00Z', grantExpiresAt: past })} />);
+      expect(screen.getByTestId('mandate-ended').textContent).not.toContain('7일 허락은 남음');
+      expect(screen.getByTestId('mandate-ended').textContent).toContain('줄을 뺐다 · ');
+    });
+
+    it('card already marked lineRevokedAt shows the removed state; non-owner never sees the button', () => {
+      render(<AskCard message={added({ lineRevokedAt: '2026-10-24T01:05:00Z' })} />);
+      expect(screen.getByTestId('mandate-ended').getAttribute('data-state')).toBe('revoked');
+      cleanup();
+      useActiveStore.getState().set({ me: acc('other', 'carol') });
+      render(<AskCard message={added()} />);
+      expect(screen.queryByTestId('mandate-line-revoke')).toBeNull();
+    });
   });
 });

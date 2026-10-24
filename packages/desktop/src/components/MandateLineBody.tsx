@@ -1,10 +1,14 @@
 import type { MessageRow, PermissionCardLine, PermissionCardLineLimits, PermissionCardMandate, PermissionMirrorMeta } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
-import { useT } from '../i18n/useT';
+import { useState } from 'react';
+import { useLocale, useT } from '../i18n/useT';
+import { ApiError } from '../lib/api';
+import { ConfirmDialog } from './ConfirmDialog';
 import type { Translate } from '../i18n';
 import { messageLinkFromMeta } from '../lib/link';
 import { OnceCardRows, useOnceApproval } from './PermissionOncePanel';
+import type { SectionId } from './settings/sections';
 
 /**
  * W4 「위임장에 줄 더하기」 카드의 몸(designer 시안 v1, i1). `AskCard` 가 선택지 목록 대신 이것을 그린다.
@@ -119,12 +123,18 @@ const SECONDARY = 'rounded border border-border bg-surface-raised px-2.5 py-1 te
  * 줄 상자와 버튼. `canChoose` 는 `AskCard` 가 정한다(내 차례이고 열려 있음).
  * `onceByPanel` — 원본 머지 거절 카드라 [이번 한 번]은 계정을 실어 `approvePermissionOnce` 로 보낸다(선택지 답이 아니다).
  */
-export function MandateLineBody({ message, src, canChoose, optionIds, answeredWith, closedReason, supersededBy }: {
+export function MandateLineBody({ message, src, canChoose, optionIds, answeredWith, closedReason, supersededBy, onOpenSettings }: {
   message: MessageRow; src: CardSource; canChoose: boolean; optionIds: string[];
   answeredWith: string | null; closedReason: string | null; supersededBy: string | null;
+  onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
   const t = useT();
+  const locale = useLocale();
   const me = useActiveStore((s) => s.me);
+  const [confirmingRevoke, setConfirmingRevoke] = useState(false);
+  const [revokeBusy, setRevokeBusy] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+  const [revokedLocal, setRevokedLocal] = useState<string | null>(null);
   const ownerOf = src.request && typeof src.request.ownerAccountId === 'string' ? src.request.ownerAccountId : src.mandate?.ownerId ?? null;
   const mirrorHref = messageLinkFromMeta(src.mirror?.rootId);
   const supersededHref = messageLinkFromMeta(supersededBy);
@@ -154,6 +164,40 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
     : standing ? [standing] : onceAvailable ? ['approve_once'] : [];
   const answer = (id: string) => { void getController().answerAsk(message.id, id, message.channelId); };
 
+  // 줄 빼기(g1) — 카드가 자기 줄 id(`lineId`, 새 서버만 싣는다)를 가질 때만. 원본 카드에서 소유자에게만(거울에는 없다).
+  const lineId = typeof src.request?.lineId === 'string' ? src.request.lineId : null;
+  const revokedAt = revokedLocal ?? (typeof src.request?.lineRevokedAt === 'string' ? src.request.lineRevokedAt : null);
+  const canRevoke = !!lineId && !!src.mandate?.id && !src.mirror && !!me && me.id === ownerOf;
+  const revokedTime = (iso: string) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  };
+  // 같은 결정으로 준 7일 허락(account_grant)이 아직 살아 있는가(designer s1, G1-b). 카드 meta 의 `grantExpiresAt` 은
+  // 7일 승인이면 그 grant 의 기한이다(줄의 `limits.until` 과 같은 값). 명령 카드의 기한은 command_grant(한 번·한 시간)라 뺀다.
+  // 설정에서 따로 거둔 뒤인지는 카드가 모른다 — 기한만 본다.
+  const grantExpiresAt = typeof src.request?.grantExpiresAt === 'string' ? src.request.grantExpiresAt : null;
+  const grantLive = !!grantExpiresAt && src.request?.kind !== 'command' && status === 'granted'
+    && !(answeredWith && !STANDING.includes(answeredWith)) && new Date(grantExpiresAt).getTime() > Date.now();
+  const grantAgentId = typeof src.request?.agentId === 'string' ? src.request.agentId : null;
+  const grantDate = (iso: string) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
+  const revoke = async () => {
+    if (!lineId || !src.mandate?.id) return;
+    setRevokeBusy(true); setRevokeError(null);
+    try {
+      const r = await getController().api.revokeMandateLine(src.mandate.id, lineId);
+      setRevokedLocal(r.revokedAt);
+      setConfirmingRevoke(false);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'already_revoked') { setRevokedLocal(new Date().toISOString()); setConfirmingRevoke(false); }
+      else setRevokeError(err instanceof ApiError && err.code === 'standing_line' ? t('mandateCard.revokeStanding') : t('mandateCard.revokeFailed'));
+    } finally {
+      setRevokeBusy(false);
+    }
+  };
+
   const endedLine = (() => {
     if (!ended) return null;
     if (closedReason === 'superseded' || status === 'superseded') {
@@ -178,7 +222,25 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       const mandateEnded = typeof (src.mandate as { endedAt?: unknown } | null)?.endedAt === 'string';
       return mandateEnded
         ? <p className="text-fg-subtle" data-testid="mandate-ended" data-state="mandate-ended">{t('mandateCard.ended.mandateEnded')}</p>
-        : <p className="text-fg" data-testid="mandate-ended" data-state="added">✓ {t('mandateCard.ended.added')}</p>;
+        : revokedAt
+          ? <p className="text-fg-subtle" data-testid="mandate-ended" data-state="revoked" data-grant-live={grantLive ? true : undefined}>
+              {t(grantLive ? 'mandateCard.ended.revokedGrantLive' : 'mandateCard.ended.revoked', { time: revokedTime(revokedAt) })}
+            </p>
+          : (
+            <p className="text-fg" data-testid="mandate-ended" data-state="added">
+              ✓ {t('mandateCard.ended.added')}
+              {canRevoke && (
+                <>
+                  {' '}
+                  <button type="button" data-testid="mandate-line-revoke" aria-label={t('mandateCard.revokeAria')}
+                    onClick={() => { setRevokeError(null); setConfirmingRevoke(true); }}
+                    className="rounded-sm px-1 py-0.5 text-meta text-fg-subtle underline underline-offset-2 hover:bg-surface-hover hover:text-fg-muted">
+                    {t('mandateCard.revoke')}
+                  </button>
+                </>
+              )}
+            </p>
+          );
     }
     return null;
   })();
@@ -233,6 +295,36 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
         </div>
       )}
       {endedLine && <div className="mt-1.5 text-meta">{endedLine}</div>}
+      {confirmingRevoke && (
+        <ConfirmDialog
+          title={t('mandateCard.revokeTitle')}
+          detail={grantLive && grantExpiresAt
+            ? (
+              <span data-testid="mandate-revoke-grant-live">
+                {t('mandateCard.revokeDetailGrantLive', { date: grantDate(grantExpiresAt) })}
+                {onOpenSettings && grantAgentId && (
+                  <>
+                    {' '}
+                    <button type="button" data-testid="mandate-revoke-open-grants"
+                      onClick={() => { setConfirmingRevoke(false); onOpenSettings('agents', `${grantAgentId}#permissions`); }}
+                      className="text-accent underline underline-offset-2">
+                      {t('mandateCard.revokeOpenGrants')}
+                    </button>
+                  </>
+                )}
+              </span>
+            )
+            : t('mandateCard.revokeDetail')}
+          detailKind="note"
+          confirmLabel={t('mandateCard.revokeConfirm')}
+          cancelLabel={t('mandateCard.revokeCancel')}
+          danger
+          busy={revokeBusy}
+          error={revokeError}
+          onConfirm={() => { void revoke(); }}
+          onCancel={() => setConfirmingRevoke(false)}
+        />
+      )}
     </div>
   );
 }

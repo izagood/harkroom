@@ -7,6 +7,7 @@ import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
 import { MandateLineBody, readCardSource } from './MandateLineBody';
 import { messageLinkFromMeta } from '../lib/link';
+import type { SectionId } from './settings/sections';
 
 /**
  * 선택 요청 카드 — 이 디자인 언어에서 **대화 안의 유일한 "상자"**다(상자 예산 1개).
@@ -27,7 +28,7 @@ import { messageLinkFromMeta } from '../lib/link';
  * 컴포넌트는 아무것도 그리지 않는다 — `MessageItem` 이 본문을 이미 그렸으므로 사람은
  * 평문으로 읽는다. **빈 상자는 "여기 뭔가 있다"는 거짓 신호다.**
  */
-export function AskCard({ message }: { message: MessageRow }) {
+export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOpenSettings?: (section?: SectionId, targetId?: string) => void }) {
   const t = useT();
   const myId = useActiveStore((s) => s.me?.id ?? null);
   // 이름 쪽만 구독한다 — 상태·아바타 이벤트에 행마다 다시 그려지지 않도록(`lib/accountNames`).
@@ -150,7 +151,7 @@ export function AskCard({ message }: { message: MessageRow }) {
       {lined && (
         <MandateLineBody message={message} src={lined} canChoose={canChoose} optionIds={ask.options.map((o) => o.id)}
           answeredWith={ask.answeredWith ?? null} closedReason={closed && !answered ? (closedReason ?? 'declined') : null}
-          supersededBy={ask.supersededBy ?? null} />
+          supersededBy={ask.supersededBy ?? null} onOpenSettings={onOpenSettings} />
       )}
       {!lined && replied && !pickAnyway && forMe && (
         <div className="px-2 pb-2 pt-1">

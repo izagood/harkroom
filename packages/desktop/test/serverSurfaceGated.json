@@ -1,6 +1,7 @@
 {
   "DELETE /accounts/:p/password-reset-code": "0.4.122",
   "DELETE /channel-sections/:p": "0.4.140",
+  "DELETE /mandates/:p/lines/:p": "0.4.200",
   "GET /accounts/login-ids": "0.4.184",
   "GET /agents/:p/merge-accounts": "0.4.170",
   "GET /auth/password-reset-notices": "0.4.122",

@@ -824,7 +824,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
             {message.meta.mergeDenial !== undefined && <MergeDenialPanel message={message} onOpenSettings={onOpenSettings} />}
             {/* 머지 거절에서 온 권한 카드의 [이번 한 번 머지](스레드 1b75d7a0) — 줄 없는 옛 카드만. 줄 카드는 AskCard 안에서 한 카드로 그린다(g5). */}
             {message.meta.permissionRequest !== undefined && !readCardSource(message.meta) && <PermissionOncePanel message={message} />}
-            <AskCard message={message} />
+            <AskCard message={message} onOpenSettings={onOpenSettings} />
             {/* 묶음 카드(선택 카드 P1) — 여러 에이전트의 사람 앞 카드를 줄로 모은 것. 형식을 못 알아보면 그리지 않는다. */}
             <AskBundleCard message={message} />
             {/* 실패도 본문 바로 아래다 — 고치는 경로가 말 옆에 있어야 한다(규칙 05). */}

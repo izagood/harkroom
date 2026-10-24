@@ -595,6 +595,14 @@ export class ApiClient {
   }
 
   /**
+   * 줄 빼기(g1) — 위임의 저장된 줄 하나를 거둔다. 소유자 사람 세션만(다른 사람은 404). 상시 줄은 409 `standing_line`.
+   * 카드 meta `permissionRequest.lineId` 가 있을 때만 부른다(그 값을 싣는 서버에만 이 라우트가 있다).
+   */
+  async revokeMandateLine(mandateId: string, lineId: string): Promise<{ ok: true; lineId: string; revokedAt: string }> {
+    return this.req('DELETE', `/mandates/${mandateId}/lines/${lineId}`);
+  }
+
+  /**
    * 에이전트를 **명부에서 내린다**(#836). 되돌리는 길이 없다 — 비활성화(`setAgentDisabled`)와
    * 다른 조작이라 라우트도 다르다.
    *

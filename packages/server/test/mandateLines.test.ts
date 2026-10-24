@@ -230,4 +230,33 @@ describe('mandate lines (db)', () => {
     expect((await app.inject({ method: 'GET', url: `/mandates/not-a-uuid/lines`, headers: auth(alice.token) })).statusCode).toBe(404);
     expect((await app.inject({ method: 'GET', url: `/mandates/${m}/lines` })).statusCode).toBe(401);
   });
+  it('DELETE /mandates/:id/lines/:lineId: owner session only, own lines only, standing 409, card marked, audited', async () => {
+    const root = await post(alice.accountId, '@tm revoke');
+    const m = (await mandateOf(root))!;
+    const added = await addMandateLine(pool, { mandateId: m, cap: 'merge', scope: 'repo:izagood/revoke', grantedBy: alice.accountId, via: 'button' });
+    if (!added.ok) throw new Error('add');
+    const url = `/mandates/${m}/lines/${added.line.id}`;
+    expect((await app.inject({ method: 'DELETE', url, headers: auth(bob.token) })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'DELETE', url, headers: auth(admin.token) })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'DELETE', url, headers: asAgent(tm) })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'DELETE', url })).statusCode).toBe(401);
+    // 다른 위임의 줄 id 는 이 위임에서 404.
+    const other = (await mandateOf(await post(alice.accountId, '@tm revoke other')))!;
+    expect((await app.inject({ method: 'DELETE', url: `/mandates/${other}/lines/${added.line.id}`, headers: auth(alice.token) })).statusCode).toBe(404);
+    const ok = await app.inject({ method: 'DELETE', url, headers: auth(alice.token) });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ ok: true, lineId: added.line.id });
+    expect((await listMandateLines(pool, m)).some((l) => l.id === added.line.id)).toBe(false);
+    expect((await app.inject({ method: 'DELETE', url, headers: auth(alice.token) })).json().error.code).toBe('already_revoked');
+    const audit = await pool.query(`select actor_id as "actorId", detail from audit_log where action = 'mandate.line.revoked' and detail->>'lineId' = $1`, [added.line.id]);
+    expect(audit.rowCount).toBe(1);
+    expect(audit.rows[0].actorId).toBe(alice.accountId);
+    // 상시 줄(grant 에서 펼친 것)은 뺄 수 없다.
+    const g = await pool.query<{ id: string }>(
+      `insert into account_grant (account_id, capability, scope, granted_by, expires_at) values ($1, 'repo.merge', 'repo:izagood/revoke-standing', $2, $3) returning id`,
+      [tm, alice.accountId, new Date(Date.now() + 86_400_000)]);
+    const st = await app.inject({ method: 'DELETE', url: `/mandates/${m}/lines/${g.rows[0]!.id}`, headers: auth(alice.token) });
+    expect(st.statusCode).toBe(409);
+    expect(st.json().error.code).toBe('standing_line');
+  });
 });
