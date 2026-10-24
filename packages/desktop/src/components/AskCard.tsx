@@ -58,9 +58,12 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
   const ciOnce = (lined?.mirror?.once ?? (lined?.request?.once as { reason?: unknown } | undefined))?.reason === 'ci_not_green';
   const lineHeadOwnerId = typeof lined?.request?.ownerAccountId === 'string' ? lined.request.ownerAccountId : lined?.mandate?.ownerId ?? null;
   const lineHead = lined?.line && !ciOnce
-    ? (lined.mandate
-      ? t('mandateCard.head', { owner: (lineHeadOwnerId ? accounts[lineHeadOwnerId]?.handle : null) ?? t('common.someone') })
-      : t('mandateCard.headNew'))
+    ? (() => {
+      // r5(designer s1): 소유자 이름을 모르면 「· {owner} 차례」 꼬리 없이(모바일과 같다).
+      const owner = lineHeadOwnerId ? accounts[lineHeadOwnerId]?.handle ?? null : null;
+      if (lined.mandate) return owner ? t('mandateCard.head', { owner }) : t('mandateCard.headNoOwner');
+      return owner ? t('mandateCard.headNewOwner', { owner }) : t('mandateCard.headNew');
+    })()
     : null;
 
   const answered = ask.answeredWith != null;

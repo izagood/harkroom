@@ -11,6 +11,23 @@ import '../ui/tokens.dart';
 import 'message_link.dart';
 import 'permission_card_view.dart';
 
+/// r5(designer F1): 권한 카드가 줄 상자를 그리면(`_permission` 의 [PermissionLineBox] 조건과 같다) 본문에서 서버가 쓴
+/// 대상 줄(meta `bodyTargetLine`) **하나만** 뺀다 — 줄 상자가 같은 것을 말한다. 줄 상자를 안 그리면 본문 그대로.
+String permissionCardBody(String body, Map<String, Object?> meta) {
+  final ask = AskMeta.read(meta);
+  if (ask == null) return body;
+  final perm = PermissionCardInfo.read(meta);
+  if (perm == null || perm.neutral || perm.line == null) return body;
+  if (perm.status == 'superseded' || ask.isSuperseded) return body;
+  final target = perm.bodyTargetLine;
+  if (target == null || target.isEmpty) return body;
+  final lines = body.split('\n');
+  final i = lines.indexOf(target);
+  if (i < 0) return body;
+  lines.removeAt(i);
+  return lines.join('\n');
+}
+
 /// 선택 요청을 **누를 수 있는 것**으로 그린다.
 ///
 /// 이것이 P1 인 이유는 `api/ask.dart` 머리에 적혀 있다 — 답이 없으면 그 턴은 멈추고,
@@ -242,11 +259,9 @@ class _AskCardState extends State<AskCard> {
     // r3: 머리는 i18n 키뿐 — 서버의 `ask.prompt`(한국어 고정 「권한을 줄까?」)는 줄 카드에 다시 그리지 않는다(데스크톱과 같은 말).
     final newMandate = hasMandateOpt && !ids.contains(permOptApproveMandate);
     final ownerHandle = perm.ownerId == null ? null : app.accounts[perm.ownerId!]?.handle;
-    final head = open
-        ? (newMandate
-            ? t.permAskNewMandate
-            : '${t.permAskAddLine}${ownerHandle != null ? ' · ${t.permAskOwnerTurn(ownerHandle)}' : owner ? ' · ${t.askToYou}' : ''}')
-        : null;
+    // r5(designer nit): 새 위임장 머리도 소유자를 알면 「· {owner} 차례」 꼬리를 단다.
+    final turnTail = ownerHandle != null ? ' · ${t.permAskOwnerTurn(ownerHandle)}' : owner ? ' · ${t.askToYou}' : '';
+    final head = open ? '${newMandate ? t.permAskNewMandate : t.permAskAddLine}$turnTail' : null;
 
     String? endedText;
     final s = perm.status;

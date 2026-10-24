@@ -12,6 +12,7 @@ import '../ui/tokens.dart';
 import '../ui/states.dart';
 import '../mention/render.dart';
 import '../markdown/markdown_view.dart';
+import 'ask_card.dart' show permissionCardBody;
 import 'attachments.dart';
 import 'message_link.dart';
 import 'saved_screen.dart';
@@ -69,7 +70,7 @@ class MessageTile extends StatelessWidget {
     final t = context.t;
     final k = context.tokens;
     final author = app.accounts[message.authorId];
-    final body = displayBody(message, app.accounts, unknownMention: t.mentionUnknown, unknownAccount: t.systemAccountUnknown, t: t).trim();
+    final body = permissionCardBody(displayBody(message, app.accounts, unknownMention: t.mentionUnknown, unknownAccount: t.systemAccountUnknown, t: t), message.meta).trim();
     final denied = _deniedHandles(message.meta);
     // 본문 없는 글은 첨부가 곧 말이라 강조 안에 넣는다. 카드가 있으면 넣지 않는다 — 넣으면
     // 카드 → 첨부 순서가 뒤집힌다(security n2).

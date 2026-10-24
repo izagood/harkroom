@@ -5678,6 +5678,8 @@ export const en = {
   'speech.ask.viaChat': "answered in chat",
   'mandateCard.head': "Add a line to the mandate? · {owner}'s turn",
   'mandateCard.headNew': "Start a mandate and add this line?",
+  'mandateCard.headNoOwner': "Add a line to the mandate?",
+  'mandateCard.headNewOwner': "Start a mandate and add this line? · {owner}'s turn",
   'mandateCard.mandate': "Mandate",
   'mandateCard.started': "started {date}",
   'mandateCard.noMandate': "No mandate",

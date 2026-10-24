@@ -3465,6 +3465,8 @@ export const ko = {
   'speech.ask.viaChat': "글로 답함",
   'mandateCard.head': "위임장에 줄을 더할까? · {owner} 차례",
   'mandateCard.headNew': "위임장을 만들고 줄을 더할까?",
+  'mandateCard.headNoOwner': "위임장에 줄을 더할까?",
+  'mandateCard.headNewOwner': "위임장을 만들고 줄을 더할까? · {owner} 차례",
   'mandateCard.mandate': "위임장",
   'mandateCard.started': "{date} 시작",
   'mandateCard.noMandate': "위임장 없음",

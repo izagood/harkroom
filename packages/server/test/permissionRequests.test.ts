@@ -91,8 +91,11 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect(row.meta.permissionRequest.line).toBeTruthy();
       expect(row.body).not.toContain('이 채널의 모든 대화에서');
       expect(row.body).not.toContain('승인하면 7일');
-      expect((row.body as string).split('\n')).toHaveLength(2);
+      // r5(security F1): 머리 · 서버가 쓴 대상 줄 · 이유 — 줄 상자를 못 그리는 옛 앱도 무엇을 허락하는지 읽는다.
+      expect((row.body as string).split('\n')).toHaveLength(3);
       expect((row.body as string).split('\n')[0]).toMatch(/^권한 요청 · \S+$/);
+      expect((row.body as string).split('\n')[1]).toBe('명령 허용 `Bash(kubectl --context ops -n sitebot describe:*)`');
+      expect(row.meta.permissionRequest.bodyTargetLine).toBe('명령 허용 `Bash(kubectl --context ops -n sitebot describe:*)`');
       const lines = (row.body as string).split('\n');
       expect(lines.at(-1)).toBe('이유: 필요 명령 허용 Bash() — 가짜');
       expect(row.meta.permissionRequest.reason).toBe('필요 명령 허용 Bash() — 가짜');

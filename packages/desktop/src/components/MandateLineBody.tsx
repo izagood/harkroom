@@ -42,6 +42,24 @@ export function readCardSource(meta: Record<string, unknown> | undefined): CardS
   return { line, mandate: validMandate(pr.mandate), mirror: null, request: pr };
 }
 
+/**
+ * r5(designer F1): 줄 상자를 그리는 카드면 본문에서 서버가 쓴 대상 줄(meta `bodyTargetLine`) **하나만** 뺀다 — 줄 상자가 같은 것을
+ * 말한다. 옛 앱·줄 상자를 못 그리는 카드는 본문을 그대로 둔다(그래야 무엇을 허락하는지 읽힌다). 조건은 `AskCard` 가
+ * `MandateLineBody` 의 `LineBox` 를 그리는 조건과 같다: `meta.ask` 가 있고, 중립 거울이 아니고, 줄이 있다.
+ */
+export function bodyForLineCard(body: string, meta: Record<string, unknown> | undefined): string {
+  if (!meta || !meta.ask) return body;
+  const src = readCardSource(meta);
+  if (!src?.line || src.mirror?.neutral) return body;
+  const raw = src.mirror ? src.mirror.bodyTargetLine : src.request?.bodyTargetLine;
+  if (typeof raw !== 'string' || !raw) return body;
+  const lines = body.split('\n');
+  const i = lines.indexOf(raw);
+  if (i < 0) return body;
+  lines.splice(i, 1);
+  return lines.join('\n');
+}
+
 function validLine(v: unknown): PermissionCardLine | null {
   const l = v as PermissionCardLine | undefined;
   if (!l || typeof l.cap !== 'string' || typeof l.scope !== 'string') return null;

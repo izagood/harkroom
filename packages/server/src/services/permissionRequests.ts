@@ -79,6 +79,8 @@ export interface PermissionRequestMeta {
   mandate?: PermissionCardMandate;
   /** W4b: 선택지마다 더할 줄(미리 보기). */
   line?: PermissionCardLine;
+  /** r5: 본문 속 서버가 쓴 대상 줄(줄 카드만) — 줄 상자를 그리는 화면이 본문에서 이 줄 하나만 뺀다. */
+  bodyTargetLine?: string;
   requestedAt: string;
   expiresAt: string;
   /** 정해진 뒤에만. */
@@ -224,6 +226,7 @@ export async function openPermissionRequest(
         ...(args.denial ? { once: onceMeta(args.denial) } : {}), ...(args.mandateId ? { mandateId: args.mandateId } : {}),
         ...(await cardMandateMeta(pool, args.mandateId ?? null, args.channelId)),
         line: cardLine(args.kind, target, args.denial ? onceMeta(args.denial) : undefined, !!args.mandateId),
+        ...bodyTargetLineMeta({ kind: args.kind, target: args.kind === 'merge' ? target.slice('repo:'.length) : target, once: args.denial ? onceMeta(args.denial) : undefined }),
         requestedAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
       },
     },
@@ -313,11 +316,29 @@ export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: str
   }
   // r2(designer W4): 줄(`line`)이 있는 새 카드는 범위·기한을 줄 상자가 그린다 — 본문이 「이 채널의 모든 대화에서 · 7일」을 따로 말하면
   // [이 위임장 동안] 버튼과 어긋난다. 본문은 머리 한 줄과 이유뿐(서버 경고는 남긴다). 줄 없는 옛 카드는 아래 글 그대로.
-  if (meta.line) return `권한 요청 · ${agentHandle}${warn}\n이유: ${oneLineReason(meta.reason)}`;
+  // r5(security F1): 대상 줄은 서버가 쓴다 — 줄 상자를 못 그리는 옛 앱도 무엇을 허락하는지 본문에서 읽는다. 새 앱은 줄 상자를 그릴 때
+  // meta `bodyTargetLine` 과 똑같은 줄 하나만 숨긴다(designer F1).
+  const targetLine = permissionBodyTargetLine(meta);
+  if (meta.line && targetLine) return `권한 요청 · ${agentHandle}\n${targetLine}${warn}\n이유: ${oneLineReason(meta.reason)}`;
   const what = meta.kind === 'tool'
     ? `명령 허용 \`${meta.target}\` — 이 채널의 모든 대화에서`
     : `머지 권한 \`${meta.target}\``;
   return `권한 요청 · ${agentHandle}\n${what} · 승인하면 7일${warn}\n이유: ${oneLineReason(meta.reason)}`;
+}
+
+/**
+ * 줄 카드(tool·merge, CI 거절 아님) 본문의 대상 줄 — 서버가 정규화한 대상으로만 만든다. 그 밖의 카드는 null.
+ * 화면은 줄 상자를 그릴 때 본문에서 이 줄과 똑같은 줄 하나를 뺀다(meta `bodyTargetLine`).
+ */
+function bodyTargetLineMeta(meta: Pick<PermissionRequestMeta, 'kind' | 'target' | 'once'>): { bodyTargetLine?: string } {
+  const l = permissionBodyTargetLine(meta);
+  return l ? { bodyTargetLine: l } : {};
+}
+
+export function permissionBodyTargetLine(meta: Pick<PermissionRequestMeta, 'kind' | 'target' | 'once'>): string | null {
+  if (meta.kind === 'tool') return `명령 허용 \`${meta.target}\``;
+  if (meta.kind === 'merge' && meta.once?.reason !== 'ci_not_green') return `머지 ${meta.target}`;
+  return null;
 }
 
 /**
@@ -1098,6 +1119,7 @@ export async function renderPermissionMirror(
       rootId, neutral: false, kind: pr.kind,
       ...(pr.once ? { once: { number: pr.once.number, headSha: pr.once.headSha, reason: pr.once.reason, ...(pr.once.failedChecks ? { failedChecks: [...pr.once.failedChecks] } : {}) } } : {}),
       ...(pr.line ? { line: pr.line } : {}),
+      ...(pr.line ? bodyTargetLineMeta(pr) : {}),
       // 칩은 거울 채널을 기준으로 다시 만든다(F1) — 원본 카드의 이름을 그대로 옮기지 않는다.
       ...(pr.mandate ? await cardMandateMeta(pool, pr.mandate.id, mirrorChannelId) : {}),
     };

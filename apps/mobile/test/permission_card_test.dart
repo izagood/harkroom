@@ -278,7 +278,25 @@ void main() {
         ])),
         lang: 'en'));
     await tester.pump();
-    expect(find.text('Start a mandate and add this line?'), findsOneWidget);
+    // r5(designer nit): 새 위임장 머리도 소유자를 알면 「· {owner} 차례」.
+    expect(find.text("Start a mandate and add this line? · alice's turn"), findsOneWidget);
     expect(find.text('권한을 줄까?'), findsNothing);
+  });
+
+  test('r5(designer F1): 줄 상자를 그리면 본문에서 서버가 쓴 대상 줄(bodyTargetLine) 하나만 뺀다', () {
+    const tl = '머지 acme/rebelro';
+    const body = '권한 요청 · @ag\n$tl\n이유: 확인';
+    expect(permissionCardBody(body, permMeta(pr: {'bodyTargetLine': tl})), '권한 요청 · @ag\n이유: 확인');
+    // 옛 카드(칸 없음)·줄 없음·중립 거울·밀려난 카드(줄 상자 안 그림)·ask 없음은 그대로.
+    expect(permissionCardBody(body, permMeta()), body);
+    expect(permissionCardBody(body, permMeta(pr: {'bodyTargetLine': tl, 'line': null})), body);
+    expect(permissionCardBody(body, permMeta(mirror: {'rootId': 'root1', 'neutral': true, 'bodyTargetLine': tl})), body);
+    expect(permissionCardBody(body, permMeta(pr: {'bodyTargetLine': tl, 'status': 'superseded'})), body);
+    final noAsk = Map<String, Object?>.of(permMeta(pr: {'bodyTargetLine': tl}))..remove('ask');
+    expect(permissionCardBody(body, noAsk), body);
+    // 진짜 거울도 같은 칸을 읽는다.
+    expect(
+        permissionCardBody(body, permMeta(mirror: {'rootId': 'root1', 'neutral': false, 'kind': 'merge', 'line': _line, 'bodyTargetLine': tl})),
+        '권한 요청 · @ag\n이유: 확인');
   });
 }
