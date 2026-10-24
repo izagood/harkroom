@@ -70,7 +70,8 @@ import { operatorNameOf, operatorPickerLabels } from '../../lib/operatorName';
 import { ImmediateBadge, PendingEditsContext, setLeaveGuard, type PendingHandlers, type RegisterPending } from './pendingEdits';
 import { errorText } from '../../lib/errorText';
 import { useProviderLane } from '../../lib/useProviderLane';
-import { LANE_HARNESSES, laneModelRaw, ModelConnectionField, ModelConnectionStatus } from './ModelConnectionField';
+import { CreateLaneFailure, CreateModelConnectionField, createLaneFailed, createLaneSelection, LANE_HARNESSES, LANE_ONLY_HARNESSES, laneModelRaw, ModelConnectionField, ModelConnectionStatus, type CreateLaneDraft, type CreateLaneSecret } from './ModelConnectionField';
+import type { CreateLaneResult } from '../../state/controller';
 
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 harkroom 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
@@ -436,6 +437,12 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
   const [modelCaps, setModelCaps] = useState<OperatorCapabilities['harnesses'] | 'unknown' | null>(null);
   /** 만들기 화면의 '이 기기에서 돌린다'. 기본이 켜짐이다 — 그것이 흔한 답이다. */
   const [runHere, setRunHere] = useState(true);
+  /** 만들기 화면의 API 키 연결 초안(n19). 상세에서는 쓰지 않는다(상세는 `ModelConnectionField`). */
+  const [createLane, setCreateLane] = useState<CreateLaneDraft>({ mode: 'pool', url: '', secretId: '' });
+  /** 만들기 고르개의 내 비밀(이름만, security G2). null = 못 읽음, undefined = 읽는 중. */
+  const [myLaneSecrets, setMyLaneSecrets] = useState<CreateLaneSecret[] | null | undefined>(undefined);
+  /** 만들기 중간 실패 상자(n19 ③). 만든 뒤 격자로 가도 남는다. */
+  const [createLaneFailure, setCreateLaneFailure] = useState<{ agentId: string; handle: string; secretName: string; result: CreateLaneResult } | null>(null);
   const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
   /**
    * **접힌 줄이 기본이다** — 펼친 것만 센다(#139 4단계).
@@ -496,6 +503,25 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
   const [busy, setBusy] = useState(false);
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
   const myId = useActiveStore((s) => s.me?.id);
+  const creating = draft !== null && !selected;
+  // [API key] 를 고를 때만 읽는다(API 키만 되는 하네스는 처음부터) — 계정 풀로 만드는 대부분은 비밀 목록을 부르지 않는다.
+  const needsLaneSecrets = creating && (createLane.mode === 'apiKey' || LANE_ONLY_HARNESSES.includes(draft?.harness ?? ''));
+  useEffect(() => {
+    if (!needsLaneSecrets || myId === undefined) return;
+    let live = true;
+    setMyLaneSecrets(undefined);
+    void Promise.resolve()
+      .then(() => getController().listSecrets())
+      .then((r) => {
+        if (!live) return;
+        const now = Date.now();
+        // 내 비밀만, 이름만 — 값·reveal 은 부르지 않는다(security G2). 남의 비밀은 줄 수 없으니 싣지 않는다.
+        setMyLaneSecrets(r.secrets.filter((s) => s.ownerAccountId === myId)
+          .map((s) => ({ id: s.id, name: s.name, expired: s.expiresAt !== null && Date.parse(s.expiresAt) <= now })));
+      })
+      .catch(() => { if (live) setMyLaneSecrets(null); });
+    return () => { live = false; };
+  }, [needsLaneSecrets, myId]);
   // #250: 이 앱이 띄운 러너의 상태. 실행기가 스토어에 밀어 넣고 화면은 읽기만 한다.
   const runnerStates = useActiveStore((s) => s.runnerStates);
   /**
@@ -1417,9 +1443,18 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
       setError(t('agents.create.invalidName'));
       return;
     }
+    const attachTo = runHere && typeof localOperator === 'object' && localOperator !== null ? localOperator : null;
+    // API 키 연결(n19): [API key] 를 골랐으면 주소·내 비밀이 다 차야 만든다. API 키만 되는 하네스(omp)는 늘 이 길이다.
+    const wantsLane = attachTo !== null && LANE_HARNESSES.includes(draft.harness)
+      && (createLane.mode === 'apiKey' || LANE_ONLY_HARNESSES.includes(draft.harness));
+    const laneSel = wantsLane ? createLaneSelection({ ...createLane, mode: 'apiKey' }, myLaneSecrets) : null;
+    if (wantsLane && !laneSel) {
+      setError(t('agents.lane.createIncomplete'));
+      return;
+    }
+    setCreateLaneFailure(null);
     setBusy(true);
     try {
-      const attachTo = runHere && typeof localOperator === 'object' && localOperator !== null ? localOperator : null;
       const opts = {
         // 고른 풀을 **여기서** 넘긴다 — 러너가 뜨기 전에 쓰여야 첫 러너가 그 풀로 돈다
         // (`controller.createAgent` 의 근거). `''` 은 배정 없음이라 넘길 것이 없다.
@@ -1427,8 +1462,10 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
         // 이 기기에서 돌린다 — 로컬 설정에 넣고 배정까지 쓴다. 이것이 없으면 만든
         // 에이전트는 계정만 있고 아무도 안 띄우는, 멈춘 상태로 선다.
         ...(attachTo ? { localOperator: { ...attachTo, ...(draft.workingDir ? { workingDir: draft.workingDir } : {}) } } : {}),
+        // 만들기·설정 저장·띄우기·비밀 주기를 한 번에(`controller.createWithLane`, security G1~G5).
+        ...(laneSel ? { providerLane: laneSel } : {}),
       };
-      const { agent, poolError, attachError } = await getController().createAgent(
+      const { agent, poolError, attachError, lane } = await getController().createAgent(
         { handle: draft.handle, displayName: draft.handle, ...configPatch(draft) },
         // 넘길 것이 없으면 인자 자체를 넘기지 않는다 — 빈 객체는 "아무것도 고르지 않았다"와
         // 같은 뜻이지만, 부르는 쪽이 그것을 구분해 읽을 이유를 만들지 않는다.
@@ -1447,6 +1484,10 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
       // 하는지가 흐려진다. 나머지는 상세 화면의 같은 절이 다시 말한다.
       if (poolError) setError(t('agents.create.poolFailed', { reason: poolError }));
       else if (attachError) setError(t('agents.create.attachFailed', { reason: attachError }));
+      if (lane && laneSel && createLaneFailed(lane)) {
+        setCreateLaneFailure({ agentId: agent.id, handle: agent.handle ?? draft.handle, secretName: laneSel.config.secretName, result: lane });
+      }
+      setCreateLane({ mode: 'pool', url: '', secretId: '' });
       reload();
     } catch {
       setError(t('agents.create.failed'));
@@ -1849,6 +1890,18 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
           <p className="text-meta text-fg-subtle">{t('agents.grid.note')}</p>
         </div>
         {error && <p role="alert" className="mb-2 text-meta text-danger">{error}</p>}
+        {createLaneFailure && (
+          <CreateLaneFailure
+            handle={createLaneFailure.handle}
+            secretName={createLaneFailure.secretName}
+            result={createLaneFailure.result}
+            {...(onOpenSection ? { onOpenSecrets: () => onOpenSection('secrets') } : {})}
+            onOpenAgent={() => {
+              const a = agents.find((x) => x.id === createLaneFailure.agentId);
+              if (a) pick(a, 'overview');
+            }}
+          />
+        )}
         <StaleRunnerBar
           agents={agents}
           runnerStates={runnerStates}
@@ -2614,6 +2667,26 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                 )}
                 {/* 만들기 화면은 「이 맥에서 돌리기」를 끄면 풀 칸을 감춘다 — 이 맥에서 돌지 않을 에이전트의 순서는 아무 데도
                     쓰이지 않는다(풀 ↔ 이 맥 배정). 이 기기 오퍼레이터를 못 읽었으면(error) 감추지 않는다. */}
+                {/* 만들기: 「이 맥에서 돌리기」를 모델 연결 **위로** 둔다(n19 designer ①) — 모델 연결이 이 체크에 달려 있다. */}
+                {!selected && localOperator !== 'none' && (
+                  <label className="flex items-start gap-2 text-meta text-fg">
+                    <input
+                      type="checkbox"
+                      aria-label={t('agents.create.runHere')}
+                      checked={runHere && localOperator !== 'error'}
+                      disabled={localOperator === 'error' || localOperator === null}
+                      onChange={(e) => setRunHere(e.target.checked)}
+                    />
+                    <span>
+                      {t('agents.create.runHere')}
+                      <span className="mt-1 block text-meta text-fg-subtle">
+                        {localOperator === 'error'
+                          ? t('agents.local.listFailed')
+                          : t('agents.create.runHereNote')}
+                      </span>
+                    </span>
+                  </label>
+                )}
                 {(() => {
                   const poolBlock = agentPool.available && harnessHasAccountPool(draft.harness)
                   && (selected || createdAgentId || (runHere && localOperator !== 'none')) && (
@@ -2702,7 +2775,23 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                 );
                   // API 키 연결(designer v3 안 A): 상세 화면에서 이 맥 로컬 설정에 이 에이전트가 있으면 풀 칸이 「모델 연결」의
                   // [계정 풀] 자리로 들어간다. 이 맥에 없으면 고를 수 없다(설정이 이 기기에 산다 — `useProviderLane`).
-                  if (!selected || !providerLane.available || !LANE_HARNESSES.includes(draft.harness)) return poolBlock || null;
+                  // 만들기(n19): [계정 풀 | API 키]를 만들 때 고른다. API 키를 고르면 만들기가 내 비밀을 새 에이전트에게 준다.
+                  if (!selected) {
+                    return (
+                      <CreateModelConnectionField
+                        harness={draft.harness}
+                        runHere={runHere && typeof localOperator === 'object' && localOperator !== null}
+                        value={createLane}
+                        onChange={setCreateLane}
+                        pool={poolBlock || null}
+                        label={label}
+                        secrets={myLaneSecrets}
+                        handle={draft.handle}
+                        {...(onOpenSection ? { onOpenSecrets: () => onOpenSection('secrets') } : {})}
+                      />
+                    );
+                  }
+                  if (!providerLane.available || !LANE_HARNESSES.includes(draft.harness)) return poolBlock || null;
                   if (!providerLane.present) {
                     return <>{poolBlock || null}<span className="mt-1 block text-meta text-fg-subtle">{t('agents.lane.notHere')}</span></>;
                   }
@@ -2737,25 +2826,6 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
 
                     **끄는 자리를 남긴다.** 다른 기기에서 돌릴 에이전트가 있고, 그때 이 기기에
                     먼저 배정해 두면 러너가 떴다가 다시 옮겨지는 왕복이 생긴다. */}
-                {!selected && localOperator !== 'none' && (
-                  <label className="flex items-start gap-2 text-meta text-fg">
-                    <input
-                      type="checkbox"
-                      aria-label={t('agents.create.runHere')}
-                      checked={runHere && localOperator !== 'error'}
-                      disabled={localOperator === 'error' || localOperator === null}
-                      onChange={(e) => setRunHere(e.target.checked)}
-                    />
-                    <span>
-                      {t('agents.create.runHere')}
-                      <span className="mt-1 block text-meta text-fg-subtle">
-                        {localOperator === 'error'
-                          ? t('agents.local.listFailed')
-                          : t('agents.create.runHereNote')}
-                      </span>
-                    </span>
-                  </label>
-                )}
 
                 </FieldGroup>
               )}
@@ -3586,6 +3656,13 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
               >
                 {selected ? t('agents.detail.save') : t('agents.detail.submitNew')}
               </Button>
+              {/* 만들기 단추가 하는 일이 늘었다 — API 키로 만들 때만 네 단계를 미리 보인다(n19 designer ④). */}
+              {!selected && draft !== null && runHere && typeof localOperator === 'object' && localOperator !== null
+                && LANE_HARNESSES.includes(draft.harness) && (createLane.mode === 'apiKey' || LANE_ONLY_HARNESSES.includes(draft.harness)) && (
+                <span className="text-meta text-fg-subtle" data-testid="create-lane-steps">
+                  {createLaneSelection({ ...createLane, mode: 'apiKey' }, myLaneSecrets) ? t('agents.lane.createSteps') : t('agents.lane.createIncomplete')}
+                </span>
+              )}
             </SettingsWrap>
             </footer>
           )}

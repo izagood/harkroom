@@ -24,7 +24,7 @@ import { beginSend, endSend, markOwnSend, type OwnSendMarks } from '../lib/ownSe
 import { RunnerLauncher, tauriDaemonObserver, tauriAppVersionReader, type AppVersionReader, type DaemonObserver } from '../lib/runnerLauncher';
 // 만들기 흐름이 러너를 띄우기 **전에** 풀 배정을 쓴다 — 근거는 `createAgent` 안에 있다.
 import { assignAgentPools } from '../lib/claudeAccounts';
-import { listLocalAgents, setLocalAgent } from '../lib/operatorLocal';
+import { listLocalAgents, setLocalAgent, setLocalAgentProviderLane } from '../lib/operatorLocal';
 import type { AppState, AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { usePrefsStore } from './prefsStore';
@@ -94,6 +94,14 @@ export const BADGE_REFRESH_MS = 30_000;
  * 내 동작의 결과일 가능성이 크고, 처리했는데 배지가 안 줄면 사람은 처리가 안 된 줄 안다(#1333 designer d1).
  */
 export const OWN_ACTION_WINDOW_MS = 10_000;
+
+/** 만들기의 API 키 연결 단계 결과(n19). 화면이 ✓/✕/– 상자로 그린다. `reason` 은 사람 말로 접은 오류다(값·경로 없음). */
+export interface CreateLaneResult {
+  saved: 'ok' | 'fail' | 'skip';
+  given: 'ok' | 'fail' | 'skip';
+  running: 'ok' | 'fail' | 'skip';
+  reason: string | null;
+}
 
 export class Controller {
 
@@ -2519,8 +2527,13 @@ export class Controller {
 
   async createAgent(
     input: { handle: string; displayName: string } & Partial<import('@harkroom/shared').AgentConfig>,
-    opts?: { claudePools?: string[]; localOperator?: { baseUrl: string; operatorId: string; workingDir?: string } },
-  ): Promise<{ agent: import('@harkroom/shared').AgentView; poolError: string | null; attachError: string | null }> {
+    opts?: {
+      claudePools?: string[];
+      localOperator?: { baseUrl: string; operatorId: string; workingDir?: string };
+      /** 만들기 화면의 API 키 연결(n19). 이 맥에서 돌릴 때만 쓴다(`localOperator` 가 있어야 한다). 비밀은 내 것이어야 한다(서버가 다시 판정). */
+      providerLane?: { config: import('@harkroom/shared/providerLane').ProviderLaneConfig; secretId: string };
+    },
+  ): Promise<{ agent: import('@harkroom/shared').AgentView; poolError: string | null; attachError: string | null; lane?: CreateLaneResult }> {
     const agent = await this.api.createAgent(input);
     /**
      * **계정 디렉터리를 다시 읽는다**(10-23). 스토어의 `accounts` 는 기동 때와 「모르는 계정이 이벤트에 나올 때」만 채워지는데,
@@ -2552,6 +2565,9 @@ export class Controller {
      * 풀과 같은 규율로 **실패가 생성을 되돌리지 않는다**: 계정은 이미 있고, 사람은 상세
      * 화면에서 손으로 배정할 수 있다. 사유만 돌려준다.
      */
+    if (opts?.providerLane && opts.localOperator) {
+      return { agent, poolError, attachError: null, lane: await this.createWithLane(agent.id, opts.localOperator, opts.providerLane) };
+    }
     let attachError: string | null = null;
     if (opts?.localOperator) {
       try {
@@ -2561,6 +2577,42 @@ export class Controller {
       }
     }
     return { agent, poolError, attachError };
+  }
+
+  /**
+   * 만들기의 API 키 연결 단계(n19, security G1~G5). 순서가 핵심이다:
+   * 1. **lane 설정을 배정보다 먼저** 이 맥에 쓴다 — 배정을 쓰는 순간 러너가 뜨고, 그때 lane 이 있어야 처음부터 API 키로 뜬다(계정 풀로 안 돈다).
+   * 2. 배정(이 맥에서 띄우기).
+   * 3. 비밀 주기 — 비밀 화면의 Give 와 **같은 호출**이다(`putSecretGrant`, 이 맥에 묶는 `operator: 'current'`). 서버는 배정된 에이전트에게만
+   *    이 꼴을 받으므로(배정 없음이면 409) 배정 뒤에 한다. 그 사이에 턴이 오면 「허락 없음」으로 실패한다(닫힌 쪽).
+   * 앞 단계가 실패하면 뒤 단계는 하지 않는다. 주기가 실패하면 **배정을 되돌린다** — 「API 키로」 고른 에이전트가 허락 없이 붙어 있지 않게.
+   */
+  private async createWithLane(
+    agentId: string,
+    target: { baseUrl: string; operatorId: string; workingDir?: string },
+    lane: { config: import('@harkroom/shared/providerLane').ProviderLaneConfig; secretId: string },
+  ): Promise<CreateLaneResult> {
+    const out: CreateLaneResult = { saved: 'skip', given: 'skip', running: 'skip', reason: null };
+    try {
+      await setLocalAgentProviderLane(target.baseUrl, agentId, lane.config);
+      out.saved = 'ok';
+    } catch (err) {
+      return { ...out, saved: 'fail', reason: errorText(err, this.t()) };
+    }
+    try {
+      await this.attachToLocalOperator(agentId, target);
+    } catch (err) {
+      return { ...out, running: 'fail', reason: errorText(err, this.t()) };
+    }
+    try {
+      await this.putSecretGrant(lane.secretId, { agentId, channelId: null, operator: 'current' });
+      return { ...out, given: 'ok', running: 'ok' };
+    } catch (err) {
+      const reason = errorText(err, this.t());
+      // 되돌리기도 실패하면 붙은 채로 남는다 — 그 턴들은 「허락 없음」으로 실패하고 계정 풀로 돌지 않는다. 그 사실을 그대로 알린다.
+      const undone = await this.api.unassignAgent(agentId).then(() => true, () => false);
+      return { ...out, given: 'fail', running: undone ? 'skip' : 'ok', reason };
+    }
   }
 
   updateAgent(

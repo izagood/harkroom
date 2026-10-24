@@ -322,3 +322,168 @@ export function ModelConnectionStatus({ lane, harness, now, onRestart }: {
     </section>
   );
 }
+
+/** 만들기 화면의 API 키 연결 초안(n19). 비밀은 **내 비밀** 하나를 id 로 고른다 — 만들기가 그 비밀을 새 에이전트에게 준다. */
+export interface CreateLaneDraft { mode: 'pool' | 'apiKey'; url: string; secretId: string }
+/** 만들기 고르개의 한 줄 — 이름만 싣는다(값·reveal 은 부르지 않는다, security G2). */
+export interface CreateLaneSecret { id: string; name: string; expired: boolean }
+
+/** 만들 때 쓸 lane — 다 차지 않았으면 null. 만료된 비밀·목록에 없는 비밀은 받지 않는다. */
+export function createLaneSelection(d: CreateLaneDraft, secrets: readonly CreateLaneSecret[] | null | undefined): { config: ProviderLaneConfig; secretId: string } | null {
+  if (d.mode !== 'apiKey') return null;
+  const baseUrl = normalizeProviderBaseUrl(d.url);
+  const secret = (secrets ?? []).find((s) => s.id === d.secretId && !s.expired);
+  if (!baseUrl || !secret || !PROVIDER_SECRET_NAME.test(secret.name)) return null;
+  return { config: { baseUrl, secretName: secret.name }, secretId: secret.id };
+}
+
+/**
+ * **만들기 화면의 「모델 연결」**(n19, designer 시안 v1). 상세의 [계정 풀 | API 키]와 같은 고르기를 만들 때 한다.
+ * [Save]·[Revert]·재시작 안내는 없다 — 하단 [Create agent] 하나가 만들기·설정 저장·띄우기·비밀 주기를 한다(`controller.createAgent`).
+ * - 「이 맥에서 돌리기」가 꺼져 있으면 [API key] 를 잠그고 까닭을 쓴다(설정이 이 맥에 산다).
+ * - API 키를 못 쓰는 하네스는 숨기지 않고 상세처럼 잠근다(jaebin 승인 카드 57c97470).
+ * - 비밀은 내 것만 보인다. 고르면 무엇을 누구에게 주는지 상자로 미리 보인다(security G4).
+ */
+export function CreateModelConnectionField({ harness, runHere, value, onChange, pool, label, secrets, handle, onOpenSecrets }: {
+  harness: string;
+  /** 「이 맥에서 돌리기」가 켜져 있고 이 맥 오퍼레이터가 있다. */
+  runHere: boolean;
+  value: CreateLaneDraft;
+  onChange(next: CreateLaneDraft): void;
+  pool: ReactNode;
+  label: string;
+  /** 내 비밀(null = 못 읽음, undefined = 읽는 중). */
+  secrets: readonly CreateLaneSecret[] | null | undefined;
+  /** 이름 칸의 handle(비었으면 「새 에이전트」). */
+  handle: string;
+  onOpenSecrets?: () => void;
+}) {
+  const t = useT();
+  const locale = useLocale();
+  const harnessOk = LANE_HARNESSES.includes(harness);
+  const laneOnly = LANE_ONLY_HARNESSES.includes(harness);
+  const blocked = !harnessOk ? t('agents.lane.harnessOnly', { harnesses: harnessList(LANE_HARNESSES, locale) })
+    : !runHere ? t('agents.lane.createNeedsRunHere') : null;
+  const mode: 'pool' | 'apiKey' = blocked ? (laneOnly ? 'apiKey' : 'pool') : laneOnly ? 'apiKey' : value.mode;
+  const problem = urlProblem(value.url);
+  const picked = (secrets ?? []).find((s) => s.id === value.secretId && !s.expired) ?? null;
+  const who = handle.trim() ? `@${handle.trim()}` : t('agents.lane.createGiveNewAgent');
+  return (
+    <div className={label} data-testid="create-model-connection">
+      <span>{t('agents.run.modelConnection')} <span className="text-fg-subtle">· {t('agents.run.modelConnection.thisDevice')}</span></span>
+      <div className="mt-1">
+        <Segmented
+          label={t('agents.run.modelConnection')}
+          value={mode}
+          onChange={(v) => { if (!blocked && !laneOnly) onChange({ ...value, mode: v as 'pool' | 'apiKey' }); }}
+          options={[
+            { value: 'pool', label: t('agents.run.loginPool') },
+            { value: 'apiKey', label: t('agents.run.loginApiKey') },
+          ]}
+        />
+      </div>
+      {blocked && <span className="mt-1 block text-meta text-fg-subtle" data-testid="create-lane-blocked">{blocked}</span>}
+      {mode === 'pool' && <div className="mt-2">{pool}</div>}
+      {mode === 'apiKey' && laneOnly && !blocked && <span className="mt-1 block text-meta text-fg-subtle">{t('agents.lane.noPoolHarness', { harness })}</span>}
+      {mode === 'apiKey' && !blocked && (
+        <div className="mt-2 flex flex-col gap-3" data-testid="create-lane-form">
+          <label className="block">
+            {t(laneBaseUrlLabel(harness))}
+            <input
+              className={`mt-1 block w-full rounded-row border bg-surface px-2 py-1.5 font-mono text-meta text-fg ${problem ? 'border-danger' : 'border-border'}`}
+              value={value.url} onChange={(e) => onChange({ ...value, url: e.target.value })} placeholder="https://gateway.example" spellCheck={false}
+              aria-invalid={problem !== null} data-testid="create-lane-url"
+            />
+            <span className={`mt-1 block text-meta ${problem ? 'text-danger' : 'text-fg-subtle'}`}>
+              {problem === 'badParts' ? t('agents.lane.badParts') : problem === 'badScheme' ? t('agents.lane.badScheme') : t('agents.lane.baseUrlHint')}
+            </span>
+          </label>
+          <div>
+            {t('agents.lane.secret')}
+            {secrets === undefined ? (
+              <span className="mt-1 block text-meta text-fg-subtle">{t('agents.lane.secretsLoading')}</span>
+            ) : secrets === null ? (
+              <span className="mt-1 block text-meta text-danger" role="alert">{t('agents.lane.createSecretsFailed')}</span>
+            ) : secrets.length === 0 ? (
+              <div className="mt-1 rounded-row border border-dashed border-border px-2 py-2 text-meta text-fg-subtle" data-testid="create-lane-no-secrets">
+                {t('agents.lane.createNoSecrets')}
+                {onOpenSecrets && <>{' · '}<button type="button" className="underline" onClick={onOpenSecrets}>{t('agents.lane.createNoSecretsLink')}</button></>}
+              </div>
+            ) : (
+              <div className="mt-1 overflow-hidden rounded-row border border-border" role="radiogroup" aria-label={t('agents.lane.secret')} data-testid="create-lane-secrets">
+                {secrets.map((s) => (
+                  <label key={s.id} className={`flex items-center justify-between gap-2 border-b border-border px-2 py-1.5 text-meta last:border-b-0 ${s.expired ? 'opacity-55' : ''}`}>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <input type="radio" name="create-lane-secret" disabled={s.expired} checked={value.secretId === s.id}
+                        onChange={() => onChange({ ...value, secretId: s.id })} />
+                      <span className="truncate font-mono">{s.name}</span>
+                    </span>
+                    <span className={`shrink-0 rounded-full px-2 text-meta ${s.expired ? 'bg-surface-sunken text-fg-muted' : 'bg-info-surface text-info'}`}>
+                      {s.expired ? t('agents.lane.createSecretExpired') : t('agents.lane.createSecretYours')}
+                    </span>
+                  </label>
+                ))}
+                <div className="px-2 py-1.5 text-meta text-fg-subtle">
+                  {t('agents.lane.createOnlyYours')}
+                  {onOpenSecrets && <>{' · '}<button type="button" className="underline" onClick={onOpenSecrets}>{t('agents.lane.createNoSecretsLink')}</button></>}
+                </div>
+              </div>
+            )}
+            {picked && (
+              <div className="mt-2 flex gap-2 rounded-row bg-info-surface px-3 py-2 text-meta text-info" data-testid="create-lane-give">
+                <span aria-hidden>🔑</span><span>{t('agents.lane.createGive', { who })}</span>
+              </div>
+            )}
+            <span className="mt-1 block text-meta text-fg-subtle">{t('agents.lane.secretNote')}</span>
+          </div>
+          <div className="flex gap-2 rounded-row bg-surface-sunken px-3 py-2 text-meta text-fg-subtle">
+            <span aria-hidden>🔒</span><span>{t('agents.lane.desktopOnly')}</span>
+          </div>
+          <span className="text-meta text-fg-subtle">{t('agents.lane.stdioHint')}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 만들기의 API 키 연결 단계 중 하나라도 실패했나(n19). */
+export function createLaneFailed(r: { saved: string; given: string; running: string }): boolean {
+  return r.saved === 'fail' || r.given === 'fail' || r.running === 'fail';
+}
+
+/**
+ * 만들기 중간 실패 상자(n19 ③). 만든 에이전트는 남는다. 어느 단계까지 됐는지 ✓/✕/– 로 보이고, 비밀을 이미 줬으면 거두는 곳을 쓴다(security G5).
+ */
+export function CreateLaneFailure({ handle, secretName, result, onOpenSecrets, onOpenAgent }: {
+  handle: string;
+  secretName: string;
+  result: { saved: 'ok' | 'fail' | 'skip'; given: 'ok' | 'fail' | 'skip'; running: 'ok' | 'fail' | 'skip'; reason: string | null };
+  onOpenSecrets?: () => void;
+  onOpenAgent?: () => void;
+}) {
+  const t = useT();
+  const mark = (s: 'ok' | 'fail' | 'skip') => (s === 'ok' ? '✓' : s === 'fail' ? '✕' : '–');
+  const tone = (s: 'ok' | 'fail' | 'skip') => (s === 'ok' ? 'text-success' : s === 'fail' ? 'text-danger' : 'text-fg-subtle');
+  const reason = result.reason ?? '';
+  const rows: { state: 'ok' | 'fail' | 'skip'; text: string }[] = [
+    { state: 'ok', text: t('agents.lane.createStepCreated') },
+    { state: result.saved, text: result.saved === 'fail' ? t('agents.lane.createStepSavedFail', { reason }) : result.saved === 'ok' ? t('agents.lane.createStepSaved') : t('agents.lane.createStepSavedSkip') },
+    { state: result.given, text: result.given === 'fail' ? t('agents.lane.createStepGivenFail', { secret: secretName, reason }) : result.given === 'ok' ? t('agents.lane.createStepGiven', { secret: secretName }) : t('agents.lane.createStepGivenSkip') },
+    { state: result.running, text: result.running === 'fail' ? t('agents.lane.createStepRunningFail', { reason }) : result.running === 'ok' ? t('agents.lane.createStepRunning') : t('agents.lane.createStepRunningSkip') },
+  ];
+  return (
+    <div role="alert" className="mb-2 rounded-row bg-danger-surface px-3 py-2 text-meta text-danger" data-testid="create-lane-failure">
+      <b>{result.running === 'ok' ? t('agents.lane.createFailHeadRunning', { handle }) : t('agents.lane.createFailHead', { handle })}</b>
+      <ol className="my-1.5">
+        {rows.map((r, i) => (
+          <li key={i} className="flex gap-1.5"><span className={tone(r.state)} aria-hidden>{mark(r.state)}</span><span>{r.text}</span></li>
+        ))}
+      </ol>
+      {result.given === 'ok' && <span className="block" data-testid="create-lane-given-note">{t('agents.lane.createGivenNote')}</span>}
+      <div className="mt-1 flex flex-wrap gap-3">
+        {onOpenSecrets && <button type="button" className="underline" onClick={onOpenSecrets}>{t('agents.lane.createOpenSecrets')}</button>}
+        {onOpenAgent && <button type="button" className="underline" onClick={onOpenAgent}>{t('agents.lane.createOpenAgent', { handle })}</button>}
+      </div>
+    </div>
+  );
+}
