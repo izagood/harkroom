@@ -48,6 +48,25 @@ describe('시스템 줄 두 겹', () => {
     expect(chip.querySelector('[aria-hidden="true"]')?.textContent).toContain('↳');
   });
 
+  // designer ④ — 지워진 계정·모르는 id 는 칩에 「알 수 없음」. id 를 날것으로 그리지 않는다.
+  it('칩의 사람을 모르면 「알 수 없음」 으로', () => {
+    render(<MessageItem message={msg('s4', 'c1', 1, '막힘', 'gone-id', {
+      kind: 'system', meta: { blocked: { code: 'cause_not_human' } },
+    })} />);
+    const chip = screen.getByTestId('system-target-chip');
+    expect(chip.textContent).toContain('알 수 없음');
+    expect(chip.textContent).not.toContain('gone-id');
+  });
+
+  // designer s2 — 긴 handle 은 말줄임으로. inline-flex 면 text-overflow 가 안 먹는다.
+  it('칩은 inline-block·truncate 라 말줄임이 선다', () => {
+    render(<MessageItem message={msg('s5', 'c1', 1, '막힘', 'a1', { kind: 'system', meta: { blocked: { code: 'x' } } })} />);
+    const cls = screen.getByTestId('system-target-chip').className;
+    expect(cls).toContain('inline-block');
+    expect(cls).toContain('truncate');
+    expect(cls).not.toContain('inline-flex');
+  });
+
   it('스레드 모델 지정은 기록 줄 — 이름줄 없이 한 줄, 스크린리더에는 「시스템 알림」(c2)', () => {
     render(<MessageItem message={msg('s3', 'c1', 1, 'x', 'u1', {
       kind: 'system', meta: { accountId: 'u1', i18n: { key: 'system.threadModel.cleared', args: { accountId: 'u1', agentId: 'a1' } } },

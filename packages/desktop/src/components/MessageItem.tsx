@@ -1223,7 +1223,9 @@ function SystemTargetChip({ message, accounts }: { message: MessageRow; accounts
   const target = systemLineTarget(message);
   const name = (Object.hasOwn(accounts, target.accountId) ? accounts[target.accountId]?.handle : undefined) ?? UNKNOWN_ACCOUNT_LABEL;
   const label = t(target.what === 'post' ? 'message.system.re.post' : 'message.system.re.request', { name });
-  const cls = 'mb-0.5 inline-flex max-w-full items-center truncate rounded-full border border-border bg-surface-sunken px-2 text-meta text-fg-muted';
+  // `inline-block` 이어야 말줄임이 선다 — `inline-flex` 면 글자가 익명 flex 항목이 돼 `text-overflow` 가 안 먹고,
+  // 긴 handle 에서 「…」 없이 끝(「's message」)만 잘렸다(designer s2).
+  const cls = 'mb-0.5 inline-block max-w-full truncate align-top rounded-full border border-border bg-surface-sunken px-2 text-meta text-fg-muted';
   // 「↳」는 보이는 글자에만 — 화면 읽기에는 「아래쪽 화살표」로 읽히므로 접근 이름에서 뺀다.
   const arrow = <span aria-hidden="true">↳ </span>;
   return target.href
