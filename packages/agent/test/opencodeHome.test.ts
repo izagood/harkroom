@@ -223,6 +223,22 @@ describe('lane 러너의 opencode 홈', () => {
     expect(laneSkillPermission([])).toEqual({ '*': 'deny' });
   });
 
+  // W4(사람 홈 표지 회귀선): 1.18.32 실측에서 막힌 길(홈 지시·스킬·opencode.json·플러그인·작업 폴더 스킬 링크)을 설정 쪽에서 다시 열지 않는다.
+  it('lane 설정은 홈 표지 자리를 비워 두고, 지시·플러그인 칸을 쓰지 않으며, 스킬 자리는 러너 것 하나다', async () => {
+    const f = await fixture();
+    const skillsDir = join(f.home, '..', 'runner-skills');
+    await ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: 'harkroom-lane/example-model', skillsDir },
+    });
+    const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    for (const k of ['instructions', 'plugin', 'plugins']) expect(cfg[k]).toBeUndefined();
+    expect(cfg.skills).toEqual({ paths: [skillsDir] });
+    expect(cfg.agent[OPENCODE_LANE_AGENT].permission.skill['*']).toBe('deny');
+    expect(await readdir(opencodeLaneHome(f.home))).toEqual([]);
+    expect(cfg.autoupdate).toBe(false);
+  });
+
   // 1.18.32 실측: 규칙은 뒤의 것이 이긴다 · 쓰기 판정 경로는 git 뿌리 기준이라 앞에 무엇이 붙을 수 있다.
   it('lane 에이전트 권한 표: 맨 앞이 `*` deny 이고 셸·웹·하위 에이전트·밖 폴더는 열지 않는다', () => {
     const perm = OPENCODE_LANE_PERMISSION as Record<string, unknown>;

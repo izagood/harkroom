@@ -1699,6 +1699,26 @@ describe('runMentionTurn', () => {
     expect(plans.map((p) => p.env.HARKROOM_MCP_BEARER_SLACK)).toEqual(['OLD', 'NEW']);
   });
 
+  // security L2 n2: opencode 설정의 lane 스킬 이름은 `readTurnMcp` 때 읽는다 — 그 턴의 스킬 동기화 **뒤**여야 같은 턴에 따라온다.
+  it('readTurnMcp 는 그 턴의 스킬 동기화 뒤에 불린다', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 질문');
+    fake.skills = [{ slug: 'fresh', body: '# fresh' }];
+    let seenAtRead: string[] | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      readTurnMcp: async () => {
+        seenAtRead = await readdir(join(deps.stateDir, 'skills')).catch(() => []);
+        return {};
+      },
+    });
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '답변', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(seenAtRead).toEqual(['fresh']);
+  });
+
   it('다시 읽기가 실패하면 기동 때 읽은 표로 돈다 — 도구 없이 뜨지 않는다', async () => {
     const fake = new FakeHarkroom(defOf({ harness: 'codex' }));
     fake.seedFrom('human-1', '@forge 질문');
