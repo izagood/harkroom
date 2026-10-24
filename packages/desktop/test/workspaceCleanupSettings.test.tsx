@@ -179,6 +179,17 @@ describe('작업 폴더 정리 화면', () => {
     // 묶음 막대는 칸 안에서 붙는다(designer s2)
     expect(screen.getByTestId('cleanup-unowned-bulk').className).toContain('sticky');
   });
+  it('고르기(체크박스·전체 선택·shift)는 삭제 예정·보존 줄을 다시 붙이지 않는다 — 다시 붙이면 WKWebView 가 scrollTop 을 잘라 화면이 튄다', async () => {
+    tauri();
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    const before = await screen.findAllByTestId('cleanup-row');
+    fireEvent.click(screen.getAllByTestId('cleanup-unowned-select')[0]!);
+    fireEvent.click(screen.getByTestId('cleanup-unowned-select-all'));
+    fireEvent.click(screen.getAllByTestId('cleanup-unowned-pick')[0]!, { shiftKey: true });
+    const after = screen.getAllByTestId('cleanup-row');
+    expect(after).toHaveLength(before.length);
+    after.forEach((el, i) => expect(el).toBe(before[i])); // 같은 DOM 노드 그대로
+  });
   it('삭제 예정이 0개면 「지금 지우기」가 없다', async () => {
     const ledger: CleanupLedger = { ...LEDGER, items: LEDGER.items.filter((i) => i.state === 'unowned' || i.state === 'kept') };
     (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {

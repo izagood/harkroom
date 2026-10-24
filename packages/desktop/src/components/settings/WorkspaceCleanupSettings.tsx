@@ -182,7 +182,10 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
 
   const partLabel = (p: CleanupItem) => t(p.kind === 'worktree' ? 'cleanup.part.worktree' : 'cleanup.part.threadDir');
 
-  const Row = ({ row, kept }: { row: ThreadRow; kept?: boolean }) => {
+  // 줄을 그리는 함수다 — 컴포넌트(<Row/>)로 두면 안 된다. 이 함수는 렌더마다 새로 만들어지므로, 컴포넌트로 쓰면 React 는 렌더마다
+  // 다른 형(type)으로 보고 삭제 예정·보존 줄을 **전부 지웠다 다시 붙인다**. 체크박스 하나만 눌러도 위쪽 줄 백여 개가 문서에서
+  // 빠졌다 들어오고, WKWebView 는 그 사이 짧아진 문서에 맞춰 scrollTop 을 잘라 화면이 위로 튀었다(10-25 실물, 탐침 재현).
+  const renderRow = (row: ThreadRow, kept?: boolean) => {
     const isOpen = open.has(row.key);
     const first = row.parts[0]!;
     const due = daysLeft(row.deleteAfter);
@@ -190,7 +193,7 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
     // 제목은 스레드 첫 줄이다 — 사람은 경로로 일을 기억하지 않는다. 못 읽었으면(지워진 글·권한) 짧은 id 로.
     const title = row.thread ? threadTitle(row.thread.threadRootId) : shortPath(first.path);
     return (
-      <div className={`px-4 py-3 ${row.tone === 'warn' ? 'bg-warning-surface first:rounded-t-compose last:rounded-b-compose' : ''}`} data-testid="cleanup-row" data-tone={row.tone} data-anchor-key={row.key}>
+      <div key={row.key} className={`px-4 py-3 ${row.tone === 'warn' ? 'bg-warning-surface first:rounded-t-compose last:rounded-b-compose' : ''}`} data-testid="cleanup-row" data-tone={row.tone} data-anchor-key={row.key}>
         <div className="flex items-start gap-3">
           <button className="min-w-0 flex-1 text-left" aria-expanded={isOpen}
             onClick={() => setOpen((s) => { const n = new Set(s); if (n.has(row.key)) n.delete(row.key); else n.add(row.key); return n; })}>
@@ -334,12 +337,12 @@ export function WorkspaceCleanupSettings({ onGoToThread, now: nowProp }: {
         ) : undefined}>
         {model.listed.length === 0
           ? <p className="px-4 py-6 text-center text-fg-subtle" data-testid="cleanup-empty">{t('cleanup.empty')}</p>
-          : model.listed.map((r) => <Row key={r.key} row={r} />)}
+          : model.listed.map((r) => renderRow(r))}
       </SettingsGroup>
 
       {model.kept.length > 0 && (
         <SettingsGroup title={t('cleanup.keptTitle', { n: model.kept.length })}>
-          {model.kept.map((r) => <Row key={r.key} row={r} kept />)}
+          {model.kept.map((r) => renderRow(r, true))}
         </SettingsGroup>
       )}
 
