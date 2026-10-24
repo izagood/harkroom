@@ -197,6 +197,12 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
 
   const handleLine = (runnerId: string, agentId: string, socket: LinkSocket, kind: RunnerLinkKind, value: unknown, turn: KeyedTurn | null = null): void => {
     if (isRunnerLinkRequest(value)) {
+      // 턴 열쇠로 붙은 소켓은 MCP 요청만 받는다 — REST 전달(`http.forward`)은 cause 를 본문에 실어 서버로 나가므로
+      // 장부 값으로 묶을 수 없다. 다리·hook·래퍼 누구도 그 길을 쓰지 않는다. 서버로 넘기지 않고 여기서 거절한다.
+      if (turn && value.type !== 'mcp.request') {
+        writeAnswer(socket, value, { type: 'http.response', id: value.id, status: 403, body: 'a turn-key link only carries mcp.request' });
+        return;
+      }
       const req = pinTurn(value, turn);
       const answer = deps.onRequest
         ? deps.onRequest(runnerId, agentId, req, kind).catch((err: unknown) => refuse(value, err instanceof Error ? err.message : String(err)))

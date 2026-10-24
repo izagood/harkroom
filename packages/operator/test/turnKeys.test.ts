@@ -129,6 +129,18 @@ describe('턴 열쇠로 링크에 붙기', () => {
     await flush();
     expect(seen[1]?.req).toMatchObject({ cause: 'm-env' });
   });
+
+  it('열쇠로 붙은 소켓의 http.forward 는 403 — 서버로 나가지 않는다(다리·hook·래퍼 모두)', async () => {
+    const { link, seen } = setup();
+    for (const [key, kind] of [[BRIDGE, 'bridge'], [SHELL, 'hook'], [SHELL, 'wrapper']] as const) {
+      const s = fakeSocket();
+      expect(link.accept(s.socket, keyHello('r-1', key, kind), [])).toBe(true);
+      s.feed({ type: 'http.forward', id: `f-${kind}`, method: 'POST', path: '/agent/anything', body: JSON.stringify({ cause: 'm-forged' }) });
+      await flush();
+      expect(s.lines()).toEqual([{ type: 'http.response', id: `f-${kind}`, status: 403, body: 'a turn-key link only carries mcp.request' }]);
+    }
+    expect(seen).toHaveLength(0);
+  });
 });
 
 describe('래퍼 소켓이 받는 것', () => {
