@@ -156,6 +156,21 @@ describe('thread metadata', () => {
     expect(found.participantIds).toEqual([adminAccountId, botAccountId]);
   });
 
+  // 시스템 줄의 author 는 말한 사람이 아니다(시스템 줄 C안 c3, 2026-10-24) — 참여자·마지막 말에서 뺀다.
+  it('시스템 줄의 author 는 참여자도 마지막 말도 아니다', async () => {
+    const root = await post(botPat, 'bot root');
+    const rootId = root.json().id as string;
+    await post(botPat, 'bot 답', { threadRootId: rootId });
+    await postMessage(pool, {
+      channelId, authorId: adminAccountId, threadRootId: rootId, body: '⚠️ 승인 안 됨', kind: 'system', serverNotice: true,
+    });
+
+    const found = (await listMessages(pool, channelId, { limit: 10 })).find((m) => m.id === rootId)!;
+    expect(found.participantIds).toEqual([botAccountId]);
+    expect(found.lastAuthorId).toBe(botAccountId);
+    expect(found.lastKind).toBe('user');
+  });
+
   it('reply rows have null metadata', async () => {
     const root = await post(adminToken, 'root');
     const rootId = root.json().id as string;

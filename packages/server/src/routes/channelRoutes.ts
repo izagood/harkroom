@@ -58,8 +58,8 @@ const sectionName = z.string().max(40).nullable();
  * 구분을 지우는 것이 아니라 있는 구분을 뭉갠다.
  */
 function memberSystemMessage(
-  event: 'added' | 'left' | 'removed', accountId: string,
-): { body: string; kind: 'system'; meta: { accountId: string; i18n: SystemI18n } } {
+  event: 'added' | 'left' | 'removed', accountId: string, actorId: string,
+): { body: string; kind: 'system'; meta: { accountId: string; actorId: string; i18n: SystemI18n } } {
   const body = {
     added: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`,
     left: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 나갔습니다.`,
@@ -67,7 +67,14 @@ function memberSystemMessage(
   }[event];
   // 본문과 번역 표지를 한 자리에서 만든다(i18n P5, security C8). 표지의 키는 위 세 꼴과 일대일이다 —
   // 옛 줄 백필(116 마이그레이션)도 이 세 본문을 그대로 대조한다(C6).
-  return { body, kind: 'system', meta: { accountId, i18n: systemI18n(`system.member.${event}`, { accountId }) } };
+  //
+  // 남이 넣고 내보낸 줄은 **누가** 했는지를 문구에 싣는다(시스템 줄 C안 c6, 2026-10-24). 그 사람은 author 칸에도
+  // 있지만 화면은 시스템 줄의 author 를 그리지 않으므로, 본문에서 빠지면 아무 데서도 안 보인다. 본문은 옛 꼴
+  // 그대로 둔다 — 새 키를 모르는 옛 앱은 본문으로 물러나고, 백필 대조도 깨지지 않는다.
+  const i18n = actorId !== accountId && event !== 'left'
+    ? systemI18n(event === 'added' ? 'system.member.addedBy' : 'system.member.removedBy', { actorId, accountId })
+    : systemI18n(`system.member.${event}`, { accountId });
+  return { body, kind: 'system', meta: { accountId, actorId, i18n } };
 }
 
 export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, storage?: StorageBackend): Promise<void> {
@@ -323,7 +330,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     const added = await postMessage(pool, {
       channelId: id,
       authorId: req.account!.id,
-      ...memberSystemMessage('added', accountId),
+      ...memberSystemMessage('added', accountId, req.account!.id),
     });
     // 메시지 이벤트의 수신자는 메시지 층의 `audienceFor` 다 — 위 목록 이벤트의
     // `channelListAudience` 를 여기 쓰면 private 채널의 본문이 비멤버 admin 에게 흘러간다.
@@ -430,7 +437,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
         const posted = await postMessage(pool, {
           channelId: id,
           authorId: req.account!.id,
-          ...memberSystemMessage(isSelf ? 'left' : 'removed', accountId),
+          ...memberSystemMessage(isSelf ? 'left' : 'removed', accountId, req.account!.id),
         });
         // 초대 쪽과 같이 메시지 층의 `audienceFor` 를 쓴다.
         if (posted.message) emitPosted(posted, await audienceFor(pool, id));

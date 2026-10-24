@@ -378,6 +378,8 @@ LEFT JOIN LATERAL (
     (SELECT t.kind, t.author_id::text as author_id, t.seq
        FROM message t
       WHERE t.thread_root_id = m.id AND t.deleted_at IS NULL
+        -- 시스템 줄은 누구의 말도 아니다 — 「마지막 말」에서 뺀다(시스템 줄 C안 c3).
+        AND t.kind <> 'system'
         -- 루트에서만 계산한다 — 근거는 THREAD_STATS 위 주석.
         AND m.thread_root_id IS NULL
       ORDER BY t.seq DESC LIMIT 1)
@@ -444,6 +446,8 @@ const THREAD_STATS = `LEFT JOIN LATERAL (
         SELECT author_id, MAX(created_at) as last_at
         FROM message
         WHERE thread_root_id = m.id AND deleted_at IS NULL AND author_id IS NOT NULL
+          -- 시스템 줄의 author 는 참여자가 아니다(시스템 줄 C안 c3) — 승인 글을 쓴 사람·알림 대상 에이전트일 뿐이다.
+          AND kind <> 'system'
           AND m.thread_root_id IS NULL
         GROUP BY author_id
       ) recent
@@ -2950,6 +2954,8 @@ export async function listInbox(
             -- 이미 message 를 join 하고 있었으므로 컬럼만 더한다 — 새 왕복이 없다.
             -- 시스템 메시지의 자리표시자는 여기서 채운다 — 인박스 항목에는 kind 가 없어 화면이 못 채운다.
             m.author_id as "authorId", ${bodySql}, m.meta,
+            -- 시스템 줄인가(시스템 줄 C안 c4) — 화면이 author 이름을 앞에 달지 않게 한다.
+            m.kind,
             m.created_at as "createdAt", m.thread_root_id as "threadRootId",
             -- 팀 부름의 팀(047). 명단은 아래에서 한 번에 채운다 — 여기서 join 하면
             -- 팀원 수만큼 행이 불어나 항목이 여러 번 나온다.

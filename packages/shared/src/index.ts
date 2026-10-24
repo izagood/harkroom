@@ -1974,6 +1974,11 @@ export interface InboxEntry {
   body: string;
   /** 말의 종류를 담은 그 `meta`. 모르는 `meta` 는 평문으로 흐른다(불변 규약). */
   meta: Record<string, unknown>;
+  /**
+   * 그 메시지의 종류(시스템 줄 C안 c4, 2026-10-24). `system` 이면 `authorId` 는 그 줄을 일으킨 계정일 뿐
+   * 말한 사람이 아니다 — 화면은 이름을 앞에 달지 않는다. 옛 서버는 싣지 않는다(없으면 일반 글로 본다).
+   */
+  kind?: MessageRow['kind'];
   /** 언제. 인박스 항목이 아니라 **그 말이 오간** 시각이다. */
   createdAt: string;
   /** 어디 — 스레드 안이면 그 뿌리. 채널 바로 밑이면 null 이다. */
