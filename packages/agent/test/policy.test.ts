@@ -3,6 +3,7 @@ import { ExecutableNotFoundError, isCredentialFailure, isExecutableNotFound, isQ
 import { HARKROOM_ERROR_SOURCE } from '../src/policy.js';
 import { HarkroomAgentClient } from '../src/harkroom.js';
 import { fakeLink } from './helpers/fakeLink.js';
+import { isInvalidToolInput } from '../src/mentionScheduler.js';
 
 /**
  * 하네스가 **자기 세션 파일에** 남긴 에러를 흉내낸다(2026-09-08 실행 모델 교체).
@@ -468,5 +469,20 @@ describe('quotaFromText — 문구 끝에 무엇이 붙어도 시각을 읽는�
 
   it('뒤에 다른 줄이 더 있어도 읽는다', () => {
     expect(quotaFromText(`${LIMIT}\n프롬프트가 돌아왔다\n`)).toEqual({ resetsAt: '10:50pm (Asia/Seoul)' });
+  });
+});
+
+describe('HarkroomAgentClient — 도구 입력 거절(isError 글)', () => {
+  // 실측(2026-10-23): 옛 서버가 모르는 laneCode 를 받으면 `MCP error -32602: …` 글을 isError 로 돌려줬고,
+  // 러너는 그것을 JSON 으로 풀다 「not valid JSON」 으로 죽어 옛 서버 호환 분기를 못 탔다.
+  it('JSON 이 아닌 isError 결과는 -32602 를 살린 채 던지고 isInvalidToolInput 이 알아본다', async () => {
+    const client = new HarkroomAgentClient(fakeLink({}));
+    (client as unknown as { mcp: unknown }).mcp = {
+      callTool: async () => ({ isError: true, content: [{ type: 'text', text: 'MCP error -32602: Input validation error: Invalid enum value' }] }),
+    };
+    const err = await client.fail('c', 'b', null, { retryable: false, code: 'provider_lane', laneCode: 'bad_model' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain('-32602');
+    expect(isInvalidToolInput(err)).toBe(true);
   });
 });

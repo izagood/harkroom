@@ -168,6 +168,11 @@ export class HarkroomAgentClient {
     if (!first || first.type !== 'text' || !first.text) {
       throw harkroomError(`${name}: 텍스트 결과가 없다`);
     }
+    // 서버가 도구 입력을 검증에서 거절하면 JSON 이 아니라 `MCP error -32602: …` 글이 `isError` 로 온다. JSON 으로 풀면
+    // 「not valid JSON」 SyntaxError 가 되어 `-32602` 가 사라지고, 옛 서버 호환 분기(`isInvalidToolInput`)가 못 알아본다.
+    if (res.isError && !first.text.trimStart().startsWith('{')) {
+      throw harkroomError(`${name}: ${first.text.slice(0, 300)}`);
+    }
     const parsed = JSON.parse(first.text) as T & { error?: { code: string; message: string } };
     if (parsed.error) {
       // 도구 **결과**의 에러에는 HTTP status 가 없다 — code 로만 온다. HTTP status 로 오는

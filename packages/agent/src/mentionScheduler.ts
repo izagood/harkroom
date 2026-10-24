@@ -680,8 +680,14 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           reason: '데스크톱의 에이전트 설정에서 API 주소·키를 확인해야 한다 — 같은 설정으로는 다시 실패한다',
         };
         await deps.harkroom.fail(mention.channelId, providerLaneNotice(err.code), anchor, { ...opts, code: 'provider_lane', laneCode: err.code })
-          // 옛 서버는 이 표지를 입력 검증에서 거절한다 — 그때만 표지 없이 한 번 더 올린다(사람에게는 닿아야 한다).
+          // 옛 서버는 이 표지를 입력 검증에서 거절한다 — 그때만 한 번 더 올린다(사람에게는 닿아야 한다).
+          // 먼저 서버가 모르는 코드(뒤에 더한 `bad_model` 등)를 표지에서만 `unknown` 으로 접어 보낸다(본문은 원래 코드) — 1c 서버부터 아는 값이라 실패 카드는 선다.
+          // 그것도 거절되면(1c 앞 서버) 표지 없이 보낸다.
           // 네트워크 실패 등은 다시 올리지 않는다: 첫 글이 실제로는 올라갔을 수 있어 두 번 간다(security n8).
+          .catch((e: unknown) => {
+            if (!isInvalidToolInput(e) || err.code === 'unknown') throw e;
+            return deps.harkroom.fail(mention.channelId, providerLaneNotice(err.code), anchor, { ...opts, code: 'provider_lane', laneCode: 'unknown' });
+          })
           .catch((e: unknown) => {
             if (!isInvalidToolInput(e)) throw e;
             return deps.harkroom.fail(mention.channelId, providerLaneNotice(err.code), anchor, opts);
