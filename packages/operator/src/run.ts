@@ -53,6 +53,7 @@ import { createLaneTurnGate, createProviderLaneMount, createProviderLaneStatusBo
 import { createTurnMerge, defaultExec, ghEnv, GH_PATH } from './turnMerge.js';
 import { createTurnCommand, stripLinkOnlyFields } from './turnCommand.js';
 import { createTurnApi } from './turnApi.js';
+import { createTurnKeyLedger, isWrapperCall } from './turnKeys.js';
 import { createTurnSlots, MAX_TURNS_ENV, parseMaxTurns } from './turnSlots.js';
 import { collectMcpStatus, collectStatus, readMachineDigest } from './heartbeat.js';
 import { announceOf } from './communities.js';
@@ -225,6 +226,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 결과 보고를 한다. 임대는 `turnSecrets` 의 것을 그대로 쓴다(`lookup`).
   // 동시 턴 상한(R1) — 이 오퍼레이터가 띄운 러너 전부를 합쳐 센다(`turnSlots.ts`).
   const turnSlots = createTurnSlots({ max: parseMaxTurns(process.env[MAX_TURNS_ENV], log), log });
+  // 턴 열쇠(좁은 턴 자격) — 러너가 relay 로 맡기고, 하네스 아래의 다리·셸이 그 열쇠로 붙는다(`turnKeys.ts`).
+  const turnKeys = createTurnKeyLedger({ log });
   const daemonStartedAt = new Date();
   let machineDigest: Promise<string | null> | null = null;
   /** 박동의 MCP 정의 읽기 캐시(PR4) — 커뮤니티마다 30초에 한 번 박동이 나가므로 20초면 한 번 읽어 나눠 쓴다. */
@@ -334,7 +337,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   });
   // 앞 오퍼레이터가 남긴 턴 디렉터리는 이 프로세스가 모르는 임대의 것이다 — 기동 때 지운다.
   void turnSecrets.sweepAll().then((n) => { if (n) log(`turn-secrets: 앞 오퍼레이터가 남긴 턴 디렉터리 ${n}개를 지웠다`); });
-  const turnSecretsTimer = setInterval(() => { void turnSecrets.sweepExpired(); }, 60_000);
+  const turnSecretsTimer = setInterval(() => { void turnSecrets.sweepExpired(); turnKeys.sweep(); }, 60_000);
   turnSecretsTimer.unref?.();
 
   // 러너 링크(스펙 2026-09-20 §5). 러너 프레임은 그 에이전트를 아는 커뮤니티로 간다 — 에이전트
@@ -361,6 +364,14 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     onRequest: async (runnerId, agentId, rawReq, kind) => {
       // 오퍼레이터만 쓰는 칸(commandFiles)은 링크에서 들어온 것을 믿지 않는다 — 무엇보다 먼저 지운다(H③b, security 사전 2).
       const req = stripLinkOnlyFields(rawReq);
+      // 래퍼 소켓은 머지·api 두 도구만 받는다 — 셸이 그 자격으로 다른 MCP 도구를 부르지 못하게(턴 열쇠의 힘은 셸이 하던 일까지다).
+      if (kind === 'wrapper' && !isWrapperCall(req)) {
+        return req.type === 'mcp.request'
+          ? { type: 'mcp.error', id: req.id, status: 403, message: 'the wrapper link only answers repo.merge and api.call' }
+          : { type: 'http.response', id: req.id, status: 403, body: 'the wrapper link only answers repo.merge and api.call' };
+      }
+      const keyed = turnKeys.maybeHandle(runnerId, req, kind);
+      if (keyed) return keyed;
       const commanded = await turnCommand.maybeHandle(runnerId, agentId, req, kind);
       if (commanded) return commanded;
       // API 키 연결(C1, security ⓒ): 러너 모드가 지금 설정과 다르면 새 턴 자리를 내주지 않는다 — 켰는데 옛 러너가 풀 계정으로
@@ -395,6 +406,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // relay 링크가 끊겼다 = 러너가 죽었거나 오퍼레이터를 놓았다 — 그 러너가 쥔 턴 자리를 돌려받는다.
     onClose: (runnerId) => { turnSlots.releaseRunner(runnerId); cleanupOwners.releaseRunner(runnerId); localTerminal.forgetRunner(runnerId); },
     // relay 가 다시 붙었다 — 끊긴 사이 잃은 놓기 요청이 자리를 묶어 두지 않게 그 러너의 자리를 털어 낸다(L1).
+    turnKeys,
     onRelayAttach: (runnerId) => { turnSlots.releaseRunner(runnerId); cleanupOwners.releaseRunner(runnerId); },
     onNotice: (runnerId, agentId, notice) => {
       // 턴 임대를 맡긴다·놓는다(비밀 보관소). relay 소켓에서만 온다 — 브릿지의 통지는 링크가 버린다.
@@ -875,3 +887,4 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   };
   return { kind: 'running', daemon };
 }
+

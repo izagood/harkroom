@@ -22,9 +22,10 @@ import { timingSafeEqual } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import { encodeLine, LineTooLongError, NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
-  RUNNER_LINK_MAX_LINE_BYTES, checkRunnerHello, isRunnerLinkNotice, isRunnerLinkRequest,
+  RUNNER_LINK_MAX_LINE_BYTES, TURN_KEY_SCOPE_KINDS, checkRunnerHello, isRunnerLinkNotice, isRunnerLinkRequest,
   type OperatorToRunnerNotice, type RunnerLinkRejectedNotice, type RunnerLinkKind, type RunnerLinkNotice, type RunnerLinkRequest, type RunnerLinkResponse,
 } from '@harkroom/shared/runnerLink';
+import type { TurnKeyLedger } from './turnKeys.js';
 
 /** `net.Socket` 의 최소 표면. 테스트가 가짜를 준다. */
 export interface LinkSocket {
@@ -56,6 +57,11 @@ export interface RunnerLinkDeps {
    */
   onRelayAttach?(runnerId: string): void;
   log(line: string): void;
+  /**
+   * 턴 열쇠 장부(`turnKeys.ts`). 있으면 hello 의 `turnKey` 를 받는다 — 그 열쇠를 맡긴 러너·범위(kind)에서만, relay 는 못 연다.
+   * 열쇠로 붙은 소켓의 요청은 cause·턴 id 를 장부 값으로 바꿔 싣는다. 러너를 잊을 때 그 러너의 열쇠도 지운다.
+   */
+  turnKeys?: Pick<TurnKeyLedger, 'lookup' | 'forgetRunner'>;
   /** 한 줄 상한. 기본은 `RUNNER_LINK_MAX_LINE_BYTES` 이고, 주입은 회귀선의 몫이다. */
   maxLineBytes?: number;
   /** 거절 로그 묶기의 시계(`createRejectLogThrottle`). 주입은 회귀선의 몫이다. */
@@ -181,12 +187,27 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
     try { socket.write(line); } catch { /* 끊긴 소켓 — 답할 곳이 없다 */ }
   };
 
-  const handleLine = (runnerId: string, agentId: string, socket: LinkSocket, kind: RunnerLinkKind, value: unknown): void => {
+  /** 턴 열쇠로 붙은 소켓의 턴 — 요청의 cause·턴 id 를 이 값으로 덮는다(셸 env 가 지어 넣은 값을 믿지 않는다). */
+  type KeyedTurn = { turnId: string; cause: string | null };
+  const pinTurn = (req: RunnerLinkRequest, turn: KeyedTurn | null): RunnerLinkRequest => {
+    if (!turn || req.type !== 'mcp.request') return req;
+    const { cause: _cause, turnId: _turnId, ...rest } = req;
+    return { ...rest, turnId: turn.turnId, ...(turn.cause ? { cause: turn.cause } : {}) };
+  };
+
+  const handleLine = (runnerId: string, agentId: string, socket: LinkSocket, kind: RunnerLinkKind, value: unknown, turn: KeyedTurn | null = null): void => {
     if (isRunnerLinkRequest(value)) {
+      // 턴 열쇠로 붙은 소켓은 MCP 요청만 받는다 — REST 전달(`http.forward`)은 cause 를 본문에 실어 서버로 나가므로
+      // 장부 값으로 묶을 수 없다. 다리·hook·래퍼 누구도 그 길을 쓰지 않는다. 서버로 넘기지 않고 여기서 거절한다.
+      if (turn && value.type !== 'mcp.request') {
+        writeAnswer(socket, value, { type: 'http.response', id: value.id, status: 403, body: 'a turn-key link only carries mcp.request' });
+        return;
+      }
+      const req = pinTurn(value, turn);
       const answer = deps.onRequest
-        ? deps.onRequest(runnerId, agentId, value, kind).catch((err: unknown) => refuse(value, err instanceof Error ? err.message : String(err)))
+        ? deps.onRequest(runnerId, agentId, req, kind).catch((err: unknown) => refuse(value, err instanceof Error ? err.message : String(err)))
         : Promise.resolve(refuse(value, '이 오퍼레이터에는 전달이 배선되지 않았다'));
-      void answer.then((res) => { writeAnswer(socket, value, res); });
+      void answer.then((res) => { writeAnswer(socket, req, res); });
       return;
     }
     // 브릿지는 PTY 를 모른다 — 요청이 아닌 것은 버린다.
@@ -203,6 +224,7 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
     expect(runnerId, agentId, secret) { expected.set(runnerId, { agentId, secret }); },
     forget(runnerId) {
       expected.delete(runnerId);
+      deps.turnKeys?.forgetRunner(runnerId);
       const socket = linked.get(runnerId);
       if (socket) { linked.delete(runnerId); socket.destroy(); }
     },
@@ -210,7 +232,12 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
     accept(socket, hello, pending, buffered) {
       const claim = checkRunnerHello(hello);
       const entry = claim ? expected.get(claim.runnerId) : undefined;
-      if (!claim || !entry || !secretsMatch(entry.secret, claim.secret)) {
+      // 턴 열쇠: 그 러너가 맡긴 열쇠이고, 열쇠 범위가 이 kind 를 열 수 있어야 한다. relay 는 어떤 열쇠로도 못 연다.
+      const keyed = claim?.turnKey != null ? deps.turnKeys?.lookup(claim.turnKey) ?? null : null;
+      const keyOk = keyed !== null && claim !== null && keyed.runnerId === claim.runnerId
+        && TURN_KEY_SCOPE_KINDS[keyed.scope].includes(claim.kind);
+      const secretOk = claim?.secret != null && entry !== undefined && secretsMatch(entry.secret, claim.secret);
+      if (!claim || !entry || !(secretOk || keyOk)) {
         const who = claim ? `runnerId=${claim.runnerId}` : 'hello 형식 아님';
         logReject(who, `러너 링크 거절: ${who} — 모르는 러너이거나 secret 이 다르다`);
         // 끊기 전에 「받아 주지 않는다」를 한 줄 알린다 — 러너가 일반 끊김처럼 1초마다 다시 붙지 않고 물러나게
@@ -220,6 +247,7 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
         return false;
       }
       const { runnerId, kind } = claim;
+      const turn: KeyedTurn | null = keyOk && keyed ? { turnId: keyed.turnId, cause: keyed.cause } : null;
       if (kind === 'relay') {
         // 같은 러너가 다시 붙으면 앞 소켓을 놓는다 — 러너 재접속이 앞 소켓의 close 보다 먼저 올 수 있다.
         const previous = linked.get(runnerId);
@@ -241,7 +269,7 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
             }
             continue;
           }
-          handleLine(runnerId, entry.agentId, socket, kind, line.value);
+          handleLine(runnerId, entry.agentId, socket, kind, line.value, turn);
         }
       };
       socket.removeAllListeners('data');
@@ -254,9 +282,9 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
       } else {
         socket.on('error', () => socket.destroy());
       }
-      for (const value of pending) handleLine(runnerId, entry.agentId, socket, kind, value);
+      for (const value of pending) handleLine(runnerId, entry.agentId, socket, kind, value, turn);
       if (buffered !== undefined && buffered.length > 0) onChunk(buffered);
-      deps.log(`러너 링크 연결(${kind}): runnerId=${runnerId} agent=${entry.agentId}`);
+      deps.log(`러너 링크 연결(${kind}${turn ? ', 턴 열쇠' : ''}): runnerId=${runnerId} agent=${entry.agentId}`);
       return true;
     },
 
