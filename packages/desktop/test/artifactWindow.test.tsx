@@ -118,7 +118,25 @@ describe('미리보기 새 창', () => {
     expect(c.openArtifactPreview).not.toHaveBeenCalled();
   });
 
-  it('× 는 창을 닫고, 「메인 창으로 되돌리기」는 같은 판을 메인 패널에 연다', async () => {
+  it('머리줄은 한 줄 — 제목·판 오른쪽에 📌·↩ 가 서고 × 는 없다(닫기는 OS 몫, designer C안)', async () => {
+    fakeController();
+    const v1 = page('p1', 1);
+    render(<AppWindowsHost />);
+    act(() => { openAppWindow({ kind: 'artifact', channelId: 'c1', attachmentId: 'p1' }, { attachment: v1 }); });
+    const popup = wins[0]!.document;
+    await waitFor(() => expect(popup.querySelector('[data-testid="window-back-to-main"]')).toBeTruthy());
+    const header = popup.querySelector('[data-testid="artifact-panel-header"]')!;
+    expect(header.querySelector('[data-testid="artifact-panel-title"]')).toBeTruthy();
+    expect(header.querySelector('[data-testid="window-pin"]')).toBeTruthy();
+    expect(header.querySelector('[data-testid="window-back-to-main"]')).toBeTruthy();
+    expect(popup.querySelectorAll('[data-testid="window-back-to-main"]')).toHaveLength(1);
+    expect(popup.querySelector('[data-testid="artifact-panel-close"]')).toBeNull();
+    // 머리줄 위에 따로 선 창 줄이 없다 — 창 뿌리의 첫 칸 맨 위가 곧 미리보기 패널이다.
+    const column = popup.getElementById('hk-window-root')!.firstElementChild!;
+    expect(column.firstElementChild?.getAttribute('data-testid')).toBe('artifact-panel');
+  });
+
+  it('「메인 창으로 되돌리기」는 창을 닫고 같은 판을 메인 패널에 연다', async () => {
     const c = fakeController();
     const v1 = page('p1', 1);
     render(<AppWindowsHost />);
@@ -128,12 +146,6 @@ describe('미리보기 새 창', () => {
     act(() => { (popup.querySelector('[data-testid="window-back-to-main"]') as HTMLElement).click(); });
     expect(wins[0]!.closed).toBe(true);
     expect(c.openArtifactPreview).toHaveBeenCalledWith(v1);
-
-    act(() => { openAppWindow({ kind: 'artifact', channelId: 'c1', attachmentId: 'p1' }, { attachment: v1 }); });
-    const again = wins[1]!.document;
-    await waitFor(() => expect(again.querySelector('[data-testid="artifact-panel-close"]')).toBeTruthy());
-    act(() => { (again.querySelector('[data-testid="artifact-panel-close"]') as HTMLElement).click(); });
-    expect(wins[1]!.closed).toBe(true);
     expect(useAppWindows.getState().entries).toHaveLength(0);
   });
 
