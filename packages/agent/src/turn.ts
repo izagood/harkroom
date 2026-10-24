@@ -923,6 +923,25 @@ export const HARNESS_ENV_DENYLIST = [
 ] as const;
 
 /**
+ * API 키 연결 턴의 하네스 env 는 **물려받지 않고 허용 목록으로 짓는다**(security W2, L1b). 사람 셸에서 온 자격 정보(`GITHUB_TOKEN`·
+ * 클라우드 키·다른 제공사 키 등)가 새 이름으로 생겨도 기본이 닫힌 쪽이다. lane 하네스는 사람 로그인(Keychain)을 쓰지 않으므로
+ * 구독형 턴이 전체를 물려받는 까닭(아래 `buildChildEnv` 주석)이 여기에는 없다. 그 턴의 키·하네스 홈·턴 id 는 이 목록 **뒤에** 얹는다.
+ */
+export const LANE_ENV_ALLOW: ReadonlySet<string> = new Set([
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TERM', 'COLORTERM', 'LANG', 'TMPDIR', 'TZ',
+  // 회사망 프록시·사설 인증서 — gateway 에 닿는 데 필요할 수 있다(값은 비밀이 아니다).
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy',
+  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
+  // harkroom 브릿지(`mcp-bridge`)가 오퍼레이터에 붙는 데 쓰는 이름 — 하네스가 MCP 자식에 물려준다.
+  'HARKROOM_OPERATOR_SOCKET', 'HARKROOM_RUNNER_ID', 'HARKROOM_RUNNER_SECRET', 'HARKROOM_MCP_READY_FILE', 'HARKROOM_OPERATOR_VERSION',
+]);
+const LANE_ENV_ALLOW_PREFIXES = ['LC_', 'XDG_'] as const;
+
+export function laneEnvAllowed(key: string): boolean {
+  return LANE_ENV_ALLOW.has(key) || LANE_ENV_ALLOW_PREFIXES.some((p) => key.startsWith(p));
+}
+
+/**
  * PTY 자식에 넘길 env. 부모(러너) 전체를 물려주고 `HARKROOM_PAT` 만 덮어쓴다.
  *
  * **실물 검증에서 발견된 회귀다.** `pty.spawn` 은 `env` 를 넘기면 부모 env 와 **병합하지
@@ -965,6 +984,10 @@ function childEnv(
   // 부모에 있어도 자식에는 없어야 하는 키를 뺀다(#374). 복사 뒤에 지우는 이유: 복사 루프에
   // 조건을 섞으면 '전체 상속'이라는 규칙과 그 예외가 한 줄에 엉켜 둘 다 읽기 어려워진다.
   for (const key of HARNESS_ENV_DENYLIST) delete env[key];
+  // API 키 연결 턴은 허용 목록 밖을 걷는다(`LANE_ENV_ALLOW`) — 그 턴의 값은 아래에서 얹는다.
+  if (homes.providerEnv) {
+    for (const key of Object.keys(env)) if (!laneEnvAllowed(key)) delete env[key];
+  }
   // 전용 제공사 경로(security ⓑ): 지운 **뒤에** 이 턴이 받은 값만 얹는다. 허용 목록 밖 키는 조립을 거절한다 —
   // 조용히 버리면 lane 에이전트가 계정 로그인으로 돈다.
   if (homes.providerEnv) {
