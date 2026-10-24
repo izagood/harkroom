@@ -285,6 +285,7 @@ abstract class Strings {
 
   /// 권한 카드(W4 위임장).
   String get permAskNewMandate;
+  String permAskOwnerTurn(String owner);
 
   /// 권한 카드(W4 위임장).
   String get permApproveMandate;

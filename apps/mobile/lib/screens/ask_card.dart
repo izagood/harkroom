@@ -239,8 +239,13 @@ class _AskCardState extends State<AskCard> {
     final shownLimits = shown == null ? null : perm.line?.limits[shown];
     final shownOnce = shown == permOptApproveOnce ? perm.once : null;
 
+    // r3: 머리는 i18n 키뿐 — 서버의 `ask.prompt`(한국어 고정 「권한을 줄까?」)는 줄 카드에 다시 그리지 않는다(데스크톱과 같은 말).
+    final newMandate = hasMandateOpt && !ids.contains(permOptApproveMandate);
+    final ownerHandle = perm.ownerId == null ? null : app.accounts[perm.ownerId!]?.handle;
     final head = open
-        ? '${hasMandateOpt && !ids.contains(permOptApproveMandate) ? t.permAskNewMandate : t.permAskAddLine}${owner ? ' · ${t.askToYou}' : ''}'
+        ? (newMandate
+            ? t.permAskNewMandate
+            : '${t.permAskAddLine}${ownerHandle != null ? ' · ${t.permAskOwnerTurn(ownerHandle)}' : owner ? ' · ${t.askToYou}' : ''}')
         : null;
 
     String? endedText;
@@ -303,7 +308,7 @@ class _AskCardState extends State<AskCard> {
                 once: shownOnce,
               ),
             ],
-            if (ask.prompt != null && open) ...[
+            if (ask.prompt != null && open && (perm.line == null || (perm.once?.ci ?? false))) ...[
               const SizedBox(height: 6),
               Text(ask.prompt!, style: theme.textTheme.bodyMedium),
             ],

@@ -260,4 +260,25 @@ void main() {
     expect(find.byKey(const Key('ask-option-m1-approve_mandate')), findsNothing);
     expect(find.byKey(const Key('ask-option-m1-deny')), findsNothing);
   });
+
+  testWidgets('r3: 줄 카드 머리는 i18n 키 — 서버의 ask.prompt 는 다시 그리지 않는다(ko·en·위임 없음)', (tester) async {
+    final meta = permMeta(ask: {'prompt': '권한을 줄까?'});
+    await tester.pumpWidget(wrap(app, card(meta)));
+    expect(find.text('위임장에 줄을 더할까? · alice 차례'), findsOneWidget);
+    expect(find.text('권한을 줄까?'), findsNothing);
+    await tester.pumpWidget(wrap(app, card(meta), lang: 'en'));
+    await tester.pump();
+    expect(find.text("Add a line to the mandate? · alice's turn"), findsOneWidget);
+    expect(find.text('권한을 줄까?'), findsNothing);
+    await tester.pumpWidget(wrap(
+        app,
+        card(permMeta(pr: {'mandate': null, 'once': null}, ask: {'prompt': '권한을 줄까?'}, options: [
+          {'id': 'approve_new_mandate', 'label': 'x'},
+          {'id': 'deny', 'label': '거절'},
+        ])),
+        lang: 'en'));
+    await tester.pump();
+    expect(find.text('Start a mandate and add this line?'), findsOneWidget);
+    expect(find.text('권한을 줄까?'), findsNothing);
+  });
 }

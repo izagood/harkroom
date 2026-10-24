@@ -256,7 +256,10 @@ class StringsEn implements Strings {
   String get permAskAddLine => 'Add a line to the mandate?';
 
   @override
-  String get permAskNewMandate => 'Start a mandate and add a line?';
+  String get permAskNewMandate => 'Start a mandate and add this line?';
+
+  @override
+  String permAskOwnerTurn(String owner) => "$owner's turn";
 
   @override
   String get permApproveMandate => 'For this mandate';

@@ -258,6 +258,9 @@ class StringsKo implements Strings {
   String get permAskNewMandate => '위임장을 만들고 줄을 더할까?';
 
   @override
+  String permAskOwnerTurn(String owner) => '$owner 차례';
+
+  @override
   String get permApproveMandate => '이 위임장 동안';
 
   @override
