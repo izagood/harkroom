@@ -701,20 +701,23 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged, onOpenAgent }: 
               {accounts[g.agentId] && accounts[g.agentId]!.ownerAccountId !== secret.ownerAccountId && (
                 <span className="rounded bg-danger-surface px-1 text-danger" data-testid={`secret-grant-not-own-${handle(g.agentId)}`}>{t('secrets.notOwnBlocked')}</span>
               )}
-              <span className="ml-auto text-fg-subtle">{t('secrets.grantedOn', { when: new Date(g.grantedAt).toLocaleDateString(locale) })}</span>
-              {/* [다시 허락]: 정지 행에서는 늘 보인다(designer 시안 v1 ①) — 그 행에서 할 일이 이것이라서. 소유자만, 그리고
-                  lastChangedAt 을 싣는 서버(#1521)일 때만 — 옛 서버 앞에서는 「본 것만 승인」을 지킬 수 없다. 꺼진 에이전트는 서버가
-                  409 를 주므로 끄고 아래에 안내한다. */}
-              {g.suspendedAt && owner && g.lastChangedAt !== undefined && !notOwn(g) && (
-                <button type="button" disabled={busy || agentOff(g)} aria-label={t('secrets.reapproveAria', { handle: handle(g.agentId) })}
-                  title={agentOff(g) ? t('secrets.reapproveDisabledHint') : undefined}
-                  data-testid={`secret-grant-reapprove-${handle(g.agentId)}`}
-                  className="whitespace-nowrap rounded-row border border-warning px-2 py-0.5 font-medium text-warning hover:bg-warning-surface disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={() => { setError(null); setReapproving({ grant: g, again: false, error: null }); }}>{t('secrets.reapprove')}</button>
-              )}
-              <button type="button" disabled={busy} aria-label={t('secrets.revokeAria', { handle: handle(g.agentId) })}
-                className="rounded-row px-1.5 py-0.5 text-fg-subtle opacity-0 transition-opacity hover:bg-danger-surface hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 disabled:group-hover:opacity-50 [@media(hover:none)]:opacity-100"
-                onClick={() => setRevoking(g)}>{t('secrets.revoke')}</button>
+              {/* 날짜·[다시 허락]·[거두기]는 한 묶음으로 오른쪽에 붙는다 — 좁은 폭에서 버튼만 다음 줄 왼쪽으로 떨어지지 않게(designer n4). */}
+              <span className="ml-auto flex items-center gap-x-2.5">
+                <span className="whitespace-nowrap text-fg-subtle">{t('secrets.grantedOn', { when: new Date(g.grantedAt).toLocaleDateString(locale) })}</span>
+                {/* [다시 허락]: 정지 행에서는 늘 보인다(designer 시안 v1 ①) — 그 행에서 할 일이 이것이라서. 소유자만, 그리고
+                    lastChangedAt 을 싣는 서버(#1521)일 때만 — 옛 서버 앞에서는 「본 것만 승인」을 지킬 수 없다. 꺼진 에이전트는 서버가
+                    409 를 주므로 끄고 아래에 안내한다. */}
+                {g.suspendedAt && owner && g.lastChangedAt !== undefined && !notOwn(g) && (
+                  <button type="button" disabled={busy || agentOff(g)} aria-label={t('secrets.reapproveAria', { handle: handle(g.agentId) })}
+                    title={agentOff(g) ? t('secrets.reapproveDisabledHint') : undefined}
+                    data-testid={`secret-grant-reapprove-${handle(g.agentId)}`}
+                    className="whitespace-nowrap rounded-row border border-warning px-2 py-0.5 font-medium text-warning hover:bg-warning-surface disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => { setError(null); setReapproving({ grant: g, again: false, error: null }); }}>{t('secrets.reapprove')}</button>
+                )}
+                <button type="button" disabled={busy} aria-label={t('secrets.revokeAria', { handle: handle(g.agentId) })}
+                  className="rounded-row px-1.5 py-0.5 text-fg-subtle opacity-0 transition-opacity hover:bg-danger-surface hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 disabled:group-hover:opacity-50 [@media(hover:none)]:opacity-100"
+                  onClick={() => setRevoking(g)}>{t('secrets.revoke')}</button>
+              </span>
               {g.suspendedAt && owner && g.lastChangedAt !== undefined && !notOwn(g) && agentOff(g) && (
                 <span className="basis-full pl-[30px] text-fg-muted" data-testid="secret-grant-off-hint">
                   {t('secrets.reapproveDisabledHint')}
