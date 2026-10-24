@@ -8,6 +8,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import type { Translate } from '../i18n';
 import { messageLinkFromMeta } from '../lib/link';
 import { OnceCardRows, useOnceApproval } from './PermissionOncePanel';
+import type { SectionId } from './settings/sections';
 
 /**
  * W4 「위임장에 줄 더하기」 카드의 몸(designer 시안 v1, i1). `AskCard` 가 선택지 목록 대신 이것을 그린다.
@@ -122,9 +123,10 @@ const SECONDARY = 'rounded border border-border bg-surface-raised px-2.5 py-1 te
  * 줄 상자와 버튼. `canChoose` 는 `AskCard` 가 정한다(내 차례이고 열려 있음).
  * `onceByPanel` — 원본 머지 거절 카드라 [이번 한 번]은 계정을 실어 `approvePermissionOnce` 로 보낸다(선택지 답이 아니다).
  */
-export function MandateLineBody({ message, src, canChoose, optionIds, answeredWith, closedReason, supersededBy }: {
+export function MandateLineBody({ message, src, canChoose, optionIds, answeredWith, closedReason, supersededBy, onOpenSettings }: {
   message: MessageRow; src: CardSource; canChoose: boolean; optionIds: string[];
   answeredWith: string | null; closedReason: string | null; supersededBy: string | null;
+  onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -170,6 +172,17 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
   };
+  // 같은 결정으로 준 7일 허락(account_grant)이 아직 살아 있는가(designer s1, G1-b). 카드 meta 의 `grantExpiresAt` 은
+  // 7일 승인이면 그 grant 의 기한이다(줄의 `limits.until` 과 같은 값). 명령 카드의 기한은 command_grant(한 번·한 시간)라 뺀다.
+  // 설정에서 따로 거둔 뒤인지는 카드가 모른다 — 기한만 본다.
+  const grantExpiresAt = typeof src.request?.grantExpiresAt === 'string' ? src.request.grantExpiresAt : null;
+  const grantLive = !!grantExpiresAt && src.request?.kind !== 'command' && status === 'granted'
+    && !(answeredWith && !STANDING.includes(answeredWith)) && new Date(grantExpiresAt).getTime() > Date.now();
+  const grantAgentId = typeof src.request?.agentId === 'string' ? src.request.agentId : null;
+  const grantDate = (iso: string) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
   const revoke = async () => {
     if (!lineId || !src.mandate?.id) return;
     setRevokeBusy(true); setRevokeError(null);
@@ -210,7 +223,9 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       return mandateEnded
         ? <p className="text-fg-subtle" data-testid="mandate-ended" data-state="mandate-ended">{t('mandateCard.ended.mandateEnded')}</p>
         : revokedAt
-          ? <p className="text-fg-subtle" data-testid="mandate-ended" data-state="revoked">{t('mandateCard.ended.revoked', { time: revokedTime(revokedAt) })}</p>
+          ? <p className="text-fg-subtle" data-testid="mandate-ended" data-state="revoked" data-grant-live={grantLive ? true : undefined}>
+              {t(grantLive ? 'mandateCard.ended.revokedGrantLive' : 'mandateCard.ended.revoked', { time: revokedTime(revokedAt) })}
+            </p>
           : (
             <p className="text-fg" data-testid="mandate-ended" data-state="added">
               ✓ {t('mandateCard.ended.added')}
@@ -283,7 +298,23 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       {confirmingRevoke && (
         <ConfirmDialog
           title={t('mandateCard.revokeTitle')}
-          detail={t('mandateCard.revokeDetail')}
+          detail={grantLive && grantExpiresAt
+            ? (
+              <span data-testid="mandate-revoke-grant-live">
+                {t('mandateCard.revokeDetailGrantLive', { date: grantDate(grantExpiresAt) })}
+                {onOpenSettings && grantAgentId && (
+                  <>
+                    {' '}
+                    <button type="button" data-testid="mandate-revoke-open-grants"
+                      onClick={() => { setConfirmingRevoke(false); onOpenSettings('agents', `${grantAgentId}#permissions`); }}
+                      className="text-accent underline underline-offset-2">
+                      {t('mandateCard.revokeOpenGrants')}
+                    </button>
+                  </>
+                )}
+              </span>
+            )
+            : t('mandateCard.revokeDetail')}
           detailKind="note"
           confirmLabel={t('mandateCard.revokeConfirm')}
           cancelLabel={t('mandateCard.revokeCancel')}
