@@ -150,10 +150,10 @@ describe('W4 mandate line card', () => {
   });
   // r5: 답한 줄 카드는 머리가 결과를 말하고, 같은 말만 하는 상태 줄은 빠진다.
   it.each([
-    ['alice 가 이 위임장에 더함', { pr: { status: 'granted' }, ask: { answeredWith: 'approve_mandate', answeredBy: ME } }],
-    ['alice 가 위임장을 만들고 더함', { options: ['approve_new_mandate', 'deny'], pr: { status: 'granted', mandate: undefined }, ask: { answeredWith: 'approve_new_mandate', answeredBy: ME } }],
-    ['alice 가 이번 한 번 허락함', { options: ['approve_once', 'deny'], pr: { status: 'approved_once', kind: 'command', line: { cap: 'command', scope: 'x', limits: { approve_once: { uses: 1 } } } }, ask: { answeredWith: 'approve_once', answeredBy: ME } }],
-    ['alice 가 거절함', { pr: { status: 'denied' }, ask: { answeredWith: 'deny', answeredBy: ME } }],
+    ['이 위임장에 더함 · alice', { pr: { status: 'granted' }, ask: { answeredWith: 'approve_mandate', answeredBy: ME } }],
+    ['위임장을 만들고 더함 · alice', { options: ['approve_new_mandate', 'deny'], pr: { status: 'granted', mandate: undefined }, ask: { answeredWith: 'approve_new_mandate', answeredBy: ME } }],
+    ['이번 한 번 허락함 · alice', { options: ['approve_once', 'deny'], pr: { status: 'approved_once', kind: 'command', line: { cap: 'command', scope: 'x', limits: { approve_once: { uses: 1 } } } }, ask: { answeredWith: 'approve_once', answeredBy: ME } }],
+    ['거절함 · alice', { pr: { status: 'denied' }, ask: { answeredWith: 'deny', answeredBy: ME } }],
   ])('answered line card head says the result: %s', (head, opts) => {
     render(<AskCard message={card(opts as Parameters<typeof card>[0])} />);
     expect(screen.getByTestId('ask-card').textContent).toContain(head);

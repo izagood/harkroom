@@ -881,7 +881,7 @@ describe('repo.merge grant', () => {
       expect(lined).toBe('권한 요청 · @tm\n명령 허용 `Bash(ls:*)`\n이유: 거절 <이 카드 링크>');
       // r5(security F1): 머지 줄 카드도 서버가 쓴 대상 줄을 싣는다(「7일」 없이). 경고 줄은 대상 줄 뒤.
       const merge = permissionCardBody({ ...base, kind: 'merge', target: 'izagood/x', warnings: ['executes_in_workload'], line: { cap: 'merge', scope: 'repo:izagood/x', limits: {} } } as Parameters<typeof permissionCardBody>[0], '@tm');
-      expect(merge).toBe('권한 요청 · @tm\n머지 izagood/x\n⚠ executes_in_workload\n이유: 거절 <이 카드 링크>');
+      expect(merge).toBe('권한 요청 · @tm\n머지 `izagood/x`\n⚠ executes_in_workload\n이유: 거절 <이 카드 링크>');
       expect(oneLineReason('> 인용 <a>b> c<')).toBe('인용 <a>b> c<');
       expect(oneLineReason('x\n> y `z`')).toBe('x > y z');
     });

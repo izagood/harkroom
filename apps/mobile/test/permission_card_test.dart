@@ -231,17 +231,17 @@ void main() {
       expect(shown, text);
     }
 
-    await head({'status': 'denied'}, 'deny', 'alice이(가) 거절함');
-    await head({'status': 'granted'}, 'approve_mandate', 'alice이(가) 이 위임장에 더함');
-    await head({'status': 'granted'}, 'approve_new_mandate', 'alice이(가) 위임장을 만들고 더함');
-    await head({'status': 'approved_once', 'approvedOnce': {'ghUser': 'octo'}}, 'approve_once', 'alice이(가) 이번 한 번 허락함 · gh octo');
-    await head({'status': 'denied', 'decidedVia': {'kind': 'chat', 'messageId': 'x'}}, 'deny', 'alice이(가) 거절함 · 글로 답함');
+    await head({'status': 'denied'}, 'deny', '거절함 · alice');
+    await head({'status': 'granted'}, 'approve_mandate', '이 위임장에 더함 · alice');
+    await head({'status': 'granted'}, 'approve_new_mandate', '위임장을 만들고 더함 · alice');
+    await head({'status': 'approved_once', 'approvedOnce': {'ghUser': 'octo'}}, 'approve_once', '이번 한 번 허락함 · alice · gh octo');
+    await head({'status': 'denied', 'decidedVia': {'kind': 'chat', 'messageId': 'x'}}, 'deny', '거절함 · alice · 글로 답함');
     await head({'status': 'denied'}, 'deny', 'alice denied', lang: 'en');
     await head({'status': 'granted'}, 'approve_mandate', 'alice added this to the mandate', lang: 'en');
     await head({'status': 'approved_once'}, 'approve_once', 'alice allowed it once', lang: 'en');
     await head({'status': 'granted'}, 'approve_new_mandate', 'alice started a mandate and added this', lang: 'en');
-    expect(stringsFor('ko').permResultDenied('재빈'), '재빈이 거절함');
-    expect(stringsFor('ko').permResultDenied('나비'), '나비가 거절함');
+    expect(stringsFor('ko').permResultDenied('재빈'), '거절함 · 재빈');
+    expect(stringsFor('ko').permResultDenied('나비'), '거절함 · 나비');
   });
 
   testWidgets('진짜 거울은 같은 카드, 중립 거울은 중립 한 줄 + 원본 링크', (tester) async {
@@ -304,7 +304,7 @@ void main() {
   });
 
   test('r5(designer F1): 줄 상자를 그리면 본문에서 서버가 쓴 대상 줄(bodyTargetLine) 하나만 뺀다', () {
-    const tl = '머지 acme/rebelro';
+    const tl = '머지 `acme/rebelro`';
     const body = '권한 요청 · @ag\n$tl\n이유: 확인';
     expect(permissionCardBody(body, permMeta(pr: {'bodyTargetLine': tl})), '권한 요청 · @ag\n이유: 확인');
     // 옛 카드(칸 없음)·줄 없음·중립 거울·밀려난 카드(줄 상자 안 그림)·ask 없음은 그대로.

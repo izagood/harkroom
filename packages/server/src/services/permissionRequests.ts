@@ -337,7 +337,7 @@ function bodyTargetLineMeta(meta: Pick<PermissionRequestMeta, 'kind' | 'target' 
 
 export function permissionBodyTargetLine(meta: Pick<PermissionRequestMeta, 'kind' | 'target' | 'once'>): string | null {
   if (meta.kind === 'tool') return `명령 허용 \`${meta.target}\``;
-  if (meta.kind === 'merge' && meta.once?.reason !== 'ci_not_green') return `머지 ${meta.target}`;
+  if (meta.kind === 'merge' && meta.once?.reason !== 'ci_not_green') return `머지 \`${meta.target}\``;
   return null;
 }
 
