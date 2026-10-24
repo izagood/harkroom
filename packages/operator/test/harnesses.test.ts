@@ -54,6 +54,17 @@ describe('detectHarnesses', () => {
     expect(out.opencode).toEqual({ installed: true, loggedIn: false });
   });
 
+  // kilo·pi·omp 의 공식 설치 스크립트도 PATH 를 사람 셸 rc 에만 넣는다(2026-10-25) — 같은 표로 그 자리를 본다.
+  it('kilo·pi·omp 도 PATH 에 없으면 설치 관례 자리를 본다', async () => {
+    const out = await detectHarnesses({
+      path: '/usr/bin', env: {}, home: '/home/u',
+      exists: existsIn(['/home/u/.kilo/bin/kilo', '/home/u/.pi/agent/bin/pi', '/home/u/.local/bin/omp']),
+    });
+    expect(out.kilo?.installed).toBe(true);
+    expect(out.pi?.installed).toBe(true);
+    expect(out.omp?.installed).toBe(true);
+  });
+
   it('opencode 의 자격증명은 XDG 자리다 — `<data>/opencode/auth.json` 로 한 단계 깊다', async () => {
     const byDefault = await detectHarnesses({
       path: '/usr/bin', env: {}, home: '/home/u',
