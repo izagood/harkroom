@@ -84,6 +84,33 @@ export const OPENCODE_LANE_PERMISSION: Readonly<Record<string, unknown>> = {
   'avcs_*': 'allow',
 };
 
+/**
+ * opencode API 키 연결 턴의 채널별 에이전트 이름(`harkroom-lane-<채널 id>`). 채널 id 는 uuid 모양만 받는다 — 이름은 바뀌고(워크스페이스 규칙)
+ * 설정 키에 이상한 글자가 들어가면 안 된다(security U3). 아니면 null — 그 턴은 셸 없는 기본 lane 에이전트로 뜬다.
+ */
+export function opencodeLaneAgentName(channelId: string): string | null {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(channelId) ? `${OPENCODE_LANE_AGENT}-${channelId}` : null;
+}
+
+/** 셸이 명령을 이어 붙이거나 바꿔 넣는 글자(operator `hookCli.ts` 의 `SHELL_META` 와 같은 줄). 있으면 옮기지 않는다. */
+const LANE_SHELL_META = /[;&|`$<>(){}\\\n\r]/;
+
+/**
+ * 그 채널의 승인 규칙을 opencode `bash` 권한 표로 옮긴다. **명령 전체 규칙 `Bash(<명령>)` 만** 그 명령 그대로 allow 로 옮긴다(D).
+ * opencode 의 접두 패턴(`"p *"`)은 claude 쪽 판정보다 넓게 맞는다(1.18.32 실측) — 그래서 `Bash(p:*)` 는 옮기지 않는다.
+ * 본문에 `*`·`?`(opencode 에서는 와일드카드, T1)나 셸 글자가 있는 규칙도 옮기지 않는다. 맨 앞은 `"*": "deny"` 다(T2, 뒤가 이긴다).
+ */
+export function laneOpencodeBashTable(toolAllows: readonly string[]): Record<string, 'allow' | 'deny'> {
+  const table: Record<string, 'allow' | 'deny'> = { '*': 'deny' };
+  for (const rule of toolAllows) {
+    const m = /^Bash\((.+)\)$/s.exec(rule);
+    const cmd = m?.[1]?.trim() ?? '';
+    if (!cmd || cmd.endsWith(':*') || /[*?]/.test(cmd) || LANE_SHELL_META.test(cmd)) continue;
+    table[cmd] = 'allow';
+  }
+  return table;
+}
+
 /** 스킬 이름으로 받는 글자(권한 표의 열쇠가 된다 — `*`·`?` 같은 패턴 글자가 들면 다른 스킬까지 연다). */
 const LANE_SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
@@ -246,6 +273,44 @@ async function previousLaneModels(file: string): Promise<string[]> {
   }
 }
 
+/**
+ * 지난 파일의 채널 칸들의 `bash` 표. 이름 꼴(`opencodeLaneAgentName`)과 표 모양(값이 allow/deny, 맨 앞 `*` deny)을 다시 잰다 —
+ * 손으로 고친 칸이나 이상한 값은 버린다(그 채널의 다음 턴이 다시 쓴다).
+ */
+async function previousLaneChannelAgents(file: string): Promise<Record<string, Record<string, 'allow' | 'deny'>>> {
+  const out: Record<string, Record<string, 'allow' | 'deny'>> = {};
+  try {
+    const doc = JSON.parse(await readFile(file, 'utf8')) as { agent?: Record<string, { permission?: { bash?: unknown } }> };
+    for (const [name, def] of Object.entries(doc.agent ?? {})) {
+      const id = name.startsWith(`${OPENCODE_LANE_AGENT}-`) ? name.slice(OPENCODE_LANE_AGENT.length + 1) : '';
+      if (!id || opencodeLaneAgentName(id) !== name) continue;
+      const bash = def?.permission?.bash;
+      if (!bash || typeof bash !== 'object') continue;
+      const entries = Object.entries(bash as Record<string, unknown>);
+      if (entries[0]?.[0] !== '*' || entries[0]?.[1] !== 'deny') continue;
+      if (!entries.every(([k, v]) => (v === 'allow' || v === 'deny') && (k === '*' || (!/[*?]/.test(k) && !LANE_SHELL_META.test(k))))) continue;
+      out[name] = Object.fromEntries(entries) as Record<string, 'allow' | 'deny'>;
+    }
+  } catch { /* 없거나 깨졌으면 지난 칸 없음 */ }
+  return out;
+}
+
+/**
+ * 쓴 뒤 확인(U2): 설정 파일의 그 채널 칸이 지금 규칙으로 계산한 표와 같은가, `mode` 가 primary 인가. 다르면 그 턴은 띄우지 않는다 —
+ * 거둔 규칙이 남은 칸으로 도는 일을 막는다.
+ */
+export async function opencodeLaneAgentMatches(opencodeHome: string, channelId: string, toolAllows: readonly string[], app: XdgApp = OPENCODE_APP): Promise<boolean> {
+  const name = opencodeLaneAgentName(channelId);
+  if (!name) return false;
+  try {
+    const doc = JSON.parse(await readFile(opencodeConfigFile(opencodeHome, app), 'utf8')) as { agent?: Record<string, { mode?: unknown; permission?: { bash?: unknown } }> };
+    const def = doc.agent?.[name];
+    return def?.mode === 'primary' && JSON.stringify(def.permission?.bash) === JSON.stringify(laneOpencodeBashTable(toolAllows));
+  } catch {
+    return false;
+  }
+}
+
 function providerLaneConfig(model: string | null, previous: readonly string[] = []): Record<string, unknown> {
   const id = providerLaneModelId(model);
   const name = PROVIDER_LANE_OPENCODE_PROVIDER;
@@ -329,7 +394,12 @@ export async function ensureOpencodeHome(opts: {
    * 전용 제공사 경로로 뜬 러너면 그 턴의 모델(모델 칸 값 — 원문 또는 옛 `harkroom-lane/<id>`, 모르면 null). 주면 사람 설정의 provider·모델을
    * 물리지 않고 lane 블록만 쓰며, 사람 로그인(`auth.json`)도 링크하지 않는다(security ⓒ·ⓕ).
    */
-  providerLane?: { model: string | null; skillsDir?: string };
+  providerLane?: {
+    model: string | null;
+    skillsDir?: string;
+    /** 이 턴의 채널과 그 채널의 승인 규칙. 주면 그 채널 칸(`opencodeLaneAgentName`)을 지금 규칙으로 다시 쓴다(U2). */
+    channel?: { id: string; toolAllows: readonly string[] };
+  };
 }): Promise<string> {
   const { opencodeHome } = opts;
   const app = opts.app ?? OPENCODE_APP;
@@ -349,6 +419,23 @@ export async function ensureOpencodeHome(opts: {
     for (const key of INHERITED_KEYS) if (user[key] !== undefined) inherited[key] = user[key];
   }
 
+  // lane 에이전트들. 기본(셸 없음) 하나 + 채널 칸들. 다른 채널 칸은 지난 파일 그대로 두고(그 채널 턴이 자기 칸을 다시 맞춘다, U2)
+  // 이 턴의 채널 칸만 지금 규칙으로 바꾼다. 채널 칸도 `mode: "primary"` 만이다(U1 — 하위 에이전트로 부를 수 없다).
+  let laneAgents: Record<string, unknown> | null = null;
+  if (opts.providerLane) {
+    const lanePermission = { ...OPENCODE_LANE_PERMISSION, skill: laneSkillPermission(await runnerSkillNames(opts.providerLane.skillsDir)) };
+    const agentOf = (permission: Record<string, unknown>) => ({
+      mode: 'primary', permission, ...(typeof inherited.model === 'string' ? { model: inherited.model } : {}),
+    });
+    laneAgents = { [OPENCODE_LANE_AGENT]: agentOf(lanePermission) };
+    for (const [name, prev] of Object.entries(await previousLaneChannelAgents(opencodeConfigFile(opencodeHome, app)))) {
+      laneAgents[name] = agentOf({ ...lanePermission, bash: prev });
+    }
+    const ch = opts.providerLane.channel;
+    const name = ch ? opencodeLaneAgentName(ch.id) : null;
+    if (ch && name) laneAgents[name] = agentOf({ ...lanePermission, bash: laneOpencodeBashTable(ch.toolAllows) });
+  }
+
   const config = {
     $schema: app.schema,
     ...inherited,
@@ -366,13 +453,7 @@ export async function ensureOpencodeHome(opts: {
         ...(typeof inherited.model === 'string' ? { model: inherited.model } : {}),
       },
       // lane 턴만 고른다. lane 이 아닌 러너에는 적지 않는다(사람 provider 로 돌 에이전트가 아니다).
-      ...(opts.providerLane ? {
-        [OPENCODE_LANE_AGENT]: {
-          mode: 'primary',
-          permission: { ...OPENCODE_LANE_PERMISSION, skill: laneSkillPermission(await runnerSkillNames(opts.providerLane.skillsDir)) },
-          ...(typeof inherited.model === 'string' ? { model: inherited.model } : {}),
-        },
-      } : {}),
+      ...(laneAgents ?? {}),
     },
   };
   await mkdir(join(dirs.XDG_CONFIG_HOME, app.dir), { recursive: true });

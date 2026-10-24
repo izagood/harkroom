@@ -964,6 +964,13 @@ describe('opencode lane 턴의 권한', () => {
     expect(p.args).not.toContain('--auto');
   });
 
+  it('채널 칸이 있으면 auto lane 턴은 그 칸을 고른다 — readonly 는 그대로 읽기 전용 에이전트', () => {
+    const name = 'harkroom-lane-309886fb-1c00-4084-bf9d-fb3d14ae647d';
+    expect(oc({ mentionPermission: 'auto', providerEnv: lane, laneAgent: name }).args.join(' ')).toContain(`--agent ${name}`);
+    expect(oc({ mentionPermission: 'readonly', providerEnv: lane, laneAgent: name }).args.join(' ')).toContain('--agent harkroom-readonly');
+    expect(oc({ mentionPermission: 'auto', laneAgent: name }).args).toContain('--auto');
+  });
+
   it('readonly lane 턴은 읽기 전용 에이전트 단독이다', () => {
     const p = oc({ mentionPermission: 'readonly', providerEnv: lane });
     expect(p.args.join(' ')).toContain('--agent harkroom-readonly');

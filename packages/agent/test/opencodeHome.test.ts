@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ensureOpencodeHome, opencodeConfigFile, opencodeDirs, opencodeLaneModelMissing, laneRunModel, OPENCODE_LANE_AGENT, OPENCODE_LANE_PERMISSION, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
-  opencodeLaneHome, laneSkillPermission,
+  opencodeLaneHome, laneSkillPermission, laneOpencodeBashTable, opencodeLaneAgentName, opencodeLaneAgentMatches,
 } from '../src/opencodeHome.js';
 import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
 
@@ -349,5 +349,61 @@ describe('opencode lane 모델 — 원문을 받고 머리는 러너가 붙인�
       expect(cfg.provider['harkroom-lane'].models).toEqual({ 'ExampleOrg/example-model': { name: 'ExampleOrg/example-model' } });
       expect(cfg.model).toBe('harkroom-lane/ExampleOrg/example-model');
     }
+  });
+});
+
+// D2(채널별 lane 정의): 명령 전체 규칙만 옮긴다 — opencode 접두 패턴은 claude 쪽 판정보다 넓게 맞는다.
+describe('opencode lane 채널 칸', () => {
+  const CH = '309886fb-1c00-4084-bf9d-fb3d14ae647d';
+  const OTHER = 'a42006a1-72c4-4375-ae8b-cfb5a4f06c7e';
+
+  it('명령 전체 규칙만 allow 로 — 접두·와일드카드·셸 글자 규칙은 빼고, 맨 앞은 * deny(T1·T2)', () => {
+    const table = laneOpencodeBashTable([
+      'Bash(gh pr list -R example/repo --limit 5)', 'Bash(gh run list -R example/repo:*)', 'Bash(ls *.txt)', 'Bash(echo a?)',
+      'Bash(gh pr list | sh)', 'Bash(echo ok > f)', 'Bash(echo $(id))', 'WebFetch', 'Bash()', 'Bash(  git status  )',
+    ]);
+    expect(Object.keys(table)[0]).toBe('*');
+    expect(table).toEqual({ '*': 'deny', 'gh pr list -R example/repo --limit 5': 'allow', 'git status': 'allow' });
+  });
+
+  it('이름의 채널 부분은 uuid 모양만(U3)', () => {
+    expect(opencodeLaneAgentName(CH)).toBe(`harkroom-lane-${CH}`);
+    for (const bad of ['general', `${CH}x`, '../x', CH.toUpperCase()]) expect(opencodeLaneAgentName(bad)).toBeNull();
+  });
+
+  it('이 채널 칸만 지금 규칙으로 다시 쓰고(줄어든 것 포함), 다른 채널 칸은 남긴다 — 모두 primary 만(U1·U2)', async () => {
+    const f = await fixture();
+    const write = (id: string, toolAllows: string[]) => ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: 'ExampleOrg/example-model', channel: { id, toolAllows } },
+    });
+    await write(CH, ['Bash(git status)', 'Bash(git log -1)']);
+    await write(OTHER, ['Bash(git diff)']);
+    let cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    expect(cfg.agent[`harkroom-lane-${CH}`].permission.bash).toEqual({ '*': 'deny', 'git status': 'allow', 'git log -1': 'allow' });
+    expect(cfg.agent[`harkroom-lane-${OTHER}`].permission.bash).toEqual({ '*': 'deny', 'git diff': 'allow' });
+    for (const name of Object.keys(cfg.agent).filter((n) => n.startsWith('harkroom-lane'))) expect(cfg.agent[name].mode).toBe('primary');
+    expect(cfg.agent['harkroom-lane'].permission.bash).toBeUndefined();
+    // 거둠: 이 채널 규칙이 줄면 칸도 준다.
+    await write(CH, ['Bash(git status)']);
+    cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    expect(cfg.agent[`harkroom-lane-${CH}`].permission.bash).toEqual({ '*': 'deny', 'git status': 'allow' });
+    expect(await opencodeLaneAgentMatches(f.home, CH, ['Bash(git status)'])).toBe(true);
+    expect(await opencodeLaneAgentMatches(f.home, CH, ['Bash(git status)', 'Bash(git log -1)'])).toBe(false);
+    expect(await opencodeLaneAgentMatches(f.home, 'general', [])).toBe(false);
+  });
+
+  it('손으로 넓힌 다른 채널 칸(와일드카드·맨 앞 deny 아님)은 다시 쓸 때 버린다', async () => {
+    const f = await fixture();
+    await ensureOpencodeHome({ opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData, providerLane: { model: null } });
+    const file = opencodeConfigFile(f.home);
+    const cfg = JSON.parse(await readFile(file, 'utf8'));
+    cfg.agent[`harkroom-lane-${OTHER}`] = { mode: 'primary', permission: { bash: { '*': 'deny', 'gh *': 'allow' } } };
+    cfg.agent[`harkroom-lane-${CH}`] = { mode: 'primary', permission: { bash: { 'git status': 'allow' } } };
+    await writeFile(file, JSON.stringify(cfg));
+    await ensureOpencodeHome({ opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData, providerLane: { model: null } });
+    const after = JSON.parse(await readFile(file, 'utf8'));
+    expect(after.agent[`harkroom-lane-${OTHER}`]).toBeUndefined();
+    expect(after.agent[`harkroom-lane-${CH}`]).toBeUndefined();
   });
 });

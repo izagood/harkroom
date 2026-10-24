@@ -19,7 +19,7 @@ import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mer
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
-import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome, waitsForMcpBeforePrompt } from './adapters/index.js';
+import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
 import { RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
 import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
@@ -32,7 +32,7 @@ import type { ReviewFork } from './reviewFork.js';
 import { readLastAssistantText, readMacPermissionWaits, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type MacPermissionWait, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
-import { laneRunModel, opencodeDirs, opencodeLaneModelMissing } from './opencodeHome.js';
+import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneModelMissing } from './opencodeHome.js';
 import { listPiMcpTools, piSessionFile, readonlyToolList } from './piHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
@@ -234,7 +234,7 @@ export interface MentionTurnDeps {
    * `--mcp-config` 를 읽어 저절로 받지만, codex(`-c`)·opencode(설정 파일)는 러너가 뜰 때 한 번 읽은
    * 표로 돌아 만료된 토큰을 계속 들고 있었다. 없거나 실패하면 `extraMcpServers` 그대로다.
    */
-  readTurnMcp?: (harness: AgentHarness, model?: string | null) => Promise<Record<string, McpServerEntry>>;
+  readTurnMcp?: (harness: AgentHarness, model?: string | null, laneChannel?: { id: string; toolAllows: readonly string[] }) => Promise<Record<string, McpServerEntry>>;
   /**
    * 러너의 상태 디렉터리(config.ts::stateDir). 지시문 파일을 여기 쓴다 —
    * **에이전트의 워크스페이스 안에 두면 안 된다**: `mentionPermission: 'auto'`
@@ -1241,7 +1241,11 @@ export async function runMentionTurn(
     secretCreate,
     merge: { operatorBin: deps.operatorBin, repos: grantedRepos, approved: approvedHere.map((a) => ({ repo: a.repo, number: a.number })) },
     // hook 이 실제로 붙는 턴(turn.ts permissionRules 가 --settings 를 낼 때)에만 kind command 를 권한다.
-    permissions: { toolAllows, commandHook: attachesCommandHook(def.harness, def.mentionPermission, deps.commandHook === true) },
+    permissions: {
+      toolAllows, commandHook: attachesCommandHook(def.harness, def.mentionPermission, deps.commandHook === true),
+      // opencode API 키 연결 턴은 명령 전체 규칙만 셸이 열린다(`laneOpencodeBashTable`).
+      exactShellOnly: Boolean(deps.providerEnv) && usesXdgHome(def.harness),
+    },
     api: { operatorBin: deps.operatorBin, connectors: apiConnectors, delegatable: apiInfo.delegatable },
     channelName: deps.channelName,
     instructions: def.instructions,
@@ -1298,9 +1302,16 @@ export async function runMentionTurn(
   // **턴마다** 읽는다 — 사람이 스레드 칩을 바꾸면 다음 턴부터 먹는다(결정 11). 도는 턴의 argv 는
   // 여기서 정해지므로 도중에 바꾼 값은 이 턴에 닿지 않는다. 채널 최상위 멘션이면 그 글이 루트다.
   const turnModel = await resolveTurnModel(deps.harkroom, def, anchor ?? mentionId);
+  // opencode API 키 연결 auto 턴은 채널별 lane 에이전트로 뜬다 — 그 채널의 승인 규칙 중 명령 전체 규칙만 셸이 열린 칸이다(D2).
+  const laneAgent = deps.providerEnv && usesXdgHome(def.harness) && def.mentionPermission === 'auto' ? opencodeLaneAgentName(channelId) : null;
+  const laneChannel = laneAgent ? { id: channelId, toolAllows } : null;
   const extraMcpServers = deps.readTurnMcp
-    ? await deps.readTurnMcp(def.harness, turnModel.model).catch(() => deps.extraMcpServers)
+    ? await deps.readTurnMcp(def.harness, turnModel.model, laneChannel ?? undefined).catch(() => deps.extraMcpServers)
     : deps.extraMcpServers;
+  // 쓴 뒤 확인(security U2): 그 채널 칸이 지금 규칙과 같아야 띄운다. 거둔 규칙이 남은 칸으로 돌지 않게 — 못 맞추면 띄우지 않는다.
+  if (laneChannel && !(await opencodeLaneAgentMatches(deps.opencodeHome, laneChannel.id, laneChannel.toolAllows, xdgAppFor(def.harness) ?? undefined))) {
+    throw new ProviderLaneError('lane_setup');
+  }
   // **허용 도구 목록으로 읽기 전용을 거는 하네스(pi)** — 턴 직전에 그 하네스에게 MCP 도구 이름을
   // 묻는다. MCP 이름에 `*` 가 안 먹어서(실측) 이름을 다 적어야 한다. 못 받으면 내장 읽기 도구만
   // 남긴다(`readonlyToolList`) — 답할 길을 잃는 쪽이 쓰기가 열리는 쪽보다 낫다. 로그엔 남긴다.
@@ -1374,6 +1385,7 @@ export async function runMentionTurn(
     causeMessageId: mentionId,
     turnId,
     providerEnv,
+    laneAgent,
   });
 
   /**

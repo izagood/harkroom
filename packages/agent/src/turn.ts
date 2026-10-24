@@ -141,6 +141,8 @@ export interface BuildTurnCommandOptions {
    * (`PROVIDER_LANE_ENV_KEYS`, security ⓑ). 목록 밖 키가 오면 조립을 거절한다. 부모 env 의 denylist 는 그대로 지운 **뒤에**
    * 얹는다 — 부모에서 오는 키는 여전히 막히고, 이 턴이 받은 값만 든다.
    */
+  /** opencode API 키 연결 턴이 고를 채널별 lane 에이전트(`opencodeLaneAgentName`). 없으면 셸 없는 기본 lane 에이전트다. */
+  laneAgent?: string | null;
   providerEnv?: Record<string, string> | null;
 }
 
@@ -173,6 +175,8 @@ interface HarnessPreset {
    * 값을 argv 에 싣지 않는다 — 키는 env 이름만, 주소는 비밀이 아니라 싣는다.
    */
   laneArgs?(providerEnv: Record<string, string>): string[];
+  /** API 키 연결 auto 턴이 채널별 lane 에이전트를 고르는 argv(opencode). 있으면 `lanePermission.auto` 대신 쓴다. */
+  laneAgentArgs?: (agent: string) => string[];
   mcp(args: { mcpConfigPath: string; operatorBin: string; extraMcpServers: Record<string, McpServerEntry> }): string[];
   /**
    * `mcp` 가 이름만 적은 비밀값을 자식 env 로 준다(2026-09-30). argv 는 `ps` 에 뜨므로 토큰은 여기로만.
@@ -598,6 +602,8 @@ const OPENCODE_PRESET: HarnessPreset = {
   // API 키 연결 턴은 `--auto` 를 쓰지 않는다 — 권한 표를 박은 lane 에이전트만 고른다(`OPENCODE_LANE_PERMISSION`).
   // 읽기 전용 lane 턴은 위 `readonly` 를 그대로 쓴다.
   lanePermission: { auto: ['--agent', OPENCODE_LANE_AGENT] },
+  // 채널별 lane 에이전트(그 채널의 승인된 명령 전체 규칙만 셸이 열린 칸, `opencodeHome.ts`). 러너가 그 턴의 채널 id 로 이름을 정한다(U3).
+  laneAgentArgs: (agent) => ['--agent', agent],
   mcp: () => [],
   model: (model) => (model ? ['-m', model] : []),
   // `--variant`(provider-specific reasoning effort). harkroom 의 값과 어떻게 맞물리는지는
@@ -837,7 +843,10 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   const args: string[] = [
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
     ...preset.alwaysArgs(opts.mode),
-    ...(opts.mode === 'mention' ? (providerLane ? preset.lanePermission?.[opts.mentionPermission] : undefined) ?? preset.permission[opts.mentionPermission] : []),
+    ...(opts.mode === 'mention'
+      ? (providerLane && opts.mentionPermission === 'auto' && opts.laneAgent && preset.laneAgentArgs ? preset.laneAgentArgs(opts.laneAgent) : undefined)
+        ?? (providerLane ? preset.lanePermission?.[opts.mentionPermission] : undefined) ?? preset.permission[opts.mentionPermission]
+      : []),
     ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [], apiDelegatable: opts.apiDelegatable ?? [], toolAllows: opts.toolAllows ?? [], claudeConfigDir: opts.claudeConfigDir ?? null, commandHook: opts.commandHook === true, providerLane }) ?? []),
     ...(readonlyByList ? ['--tools', opts.readonlyToolList as string] : []),
     ...(preset.chrome?.(opts.chrome === true) ?? []),
