@@ -16,21 +16,16 @@ import { Segmented } from './primitives';
 
 /** API 키 연결을 쓸 수 있는 하네스(러너 `PROVIDER_LANE_ENV_KEYS` 와 같은 둘). */
 export const LANE_HARNESSES: readonly string[] = ['claude-code', 'opencode'];
-/** opencode 가 lane 모델을 부르는 이름(러너 `PROVIDER_LANE_OPENCODE_PROVIDER`). */
-export const OPENCODE_LANE_PREFIX = 'harkroom-lane/';
+/**
+ * 예전에 opencode lane 모델 칸에 붙이던 머리(러너 `PROVIDER_LANE_OPENCODE_PROVIDER`). 이제 모델 칸에는 gateway 가 받는 이름을 그대로 적고,
+ * 머리는 러너가 opencode 를 띄울 때만 안에서 붙인다(2026-10-24). 남은 옛 값은 이 함수로 원문으로 되돌린다.
+ */
+export const LEGACY_LANE_MODEL_PREFIX = 'harkroom-lane/';
 
-/** opencode 모델 칸에 넣을 값 — 이미 lane 모양이거나 모델이 비었으면 null(고칠 것 없음). */
-export function opencodeLaneModel(model: string | null): string | null {
+/** 모델 칸 값에 옛 머리가 붙어 있으면 뗀 원문 — 붙어 있지 않으면 null(고칠 것 없음). */
+export function laneModelRaw(model: string | null): string | null {
   const m = model?.trim() ?? '';
-  if (!m || m.startsWith(OPENCODE_LANE_PREFIX)) return null;
-  // 조직 이름(`ExampleOrg/`)을 자르지 않는다 — gateway 는 원문 id 를 받는다(2026-10-23, 잘린 `example-model` 은 다른 이름이다).
-  return `${OPENCODE_LANE_PREFIX}${m}`;
-}
-
-/** opencode 를 떠날 때 모델 칸에서 lane 머리를 뗀 원문 id — lane 모양이 아니면 null(고칠 것 없음). `opencodeLaneModel` 의 반대다. */
-export function opencodeLaneModelUndo(model: string | null): string | null {
-  const m = model?.trim() ?? '';
-  return m.startsWith(OPENCODE_LANE_PREFIX) && m.length > OPENCODE_LANE_PREFIX.length ? m.slice(OPENCODE_LANE_PREFIX.length) : null;
+  return m.startsWith(LEGACY_LANE_MODEL_PREFIX) && m.length > LEGACY_LANE_MODEL_PREFIX.length ? m.slice(LEGACY_LANE_MODEL_PREFIX.length) : null;
 }
 
 type UrlProblem = 'badScheme' | 'badParts' | null;
@@ -157,7 +152,6 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
               </span>
             </div>
           )}
-          {harness === 'opencode' && <span className="text-meta text-fg-subtle">{t('agents.lane.opencodeModel')}</span>}
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className="rounded-row bg-accent px-3 py-1 text-fg-on-strong disabled:opacity-50"
               disabled={!canSave || !dirty} data-testid="lane-save"

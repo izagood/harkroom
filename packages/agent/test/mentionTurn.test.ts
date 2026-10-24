@@ -1262,6 +1262,33 @@ describe('runMentionTurn', () => {
     expect(plans[0]!.args).toEqual(expect.arrayContaining(['-s', 'ses_keepme']));
   });
 
+  // 2026-10-24 jaebin: 모델 칸에는 gateway 가 받는 원문을 적는다. opencode lane 은 러너가 띄울 때만 `harkroom-lane/<원문>` 으로 부른다.
+  it.each([
+    ['원문', 'ExampleOrg/example-model'],
+    ['옛 머리 붙은 값', 'harkroom-lane/ExampleOrg/example-model'],
+  ])('opencode lane 턴: 모델 칸이 %s 이면 뜨고, -m 은 lane provider 안의 이름이다', async (_label, model) => {
+    const fake = new FakeHarkroom(defOf({ harness: 'opencode', model }));
+    fake.seedFrom('human-1', '@forge 질문');
+    const { deps, plans, runTurn } = await makeDeps(fake, {
+      opencodeHome: '/state/opencode-home',
+      providerEnv: async () => ({ OPENCODE_CONFIG: '/state/lane-turn/m.json' }),
+    });
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '답변', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    // lane 턴은 작업 폴더를 읽어 보호 이름을 잰다 — 빈 작업 폴더를 미리 둔다.
+    const workspaceDir = join(deps.workspaceBaseDir, 'oc-lane');
+    await mkdir(workspaceDir, { recursive: true });
+    await deps.store.put(SessionStore.threadKey(CHANNEL, null), {
+      workspaceDir, sessionId: null, harness: 'opencode', lastFedSeq: 0, turnsRun: 0,
+    });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(plans).toHaveLength(1);
+    const i = plans[0]!.args.indexOf('-m');
+    expect(plans[0]!.args[i + 1]).toBe('harkroom-lane/ExampleOrg/example-model');
+  });
+
   it('옛 레코드(계정 필드 없음)를 계정 지정 없는 러너가 읽어도 세션을 버리지 않는다', async () => {
     const fake = new FakeHarkroom(defOf({ harness: 'claude-code' }));
     fake.seedFrom('human-1', '첫 질문');

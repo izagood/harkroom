@@ -32,7 +32,7 @@ import type { ReviewFork } from './reviewFork.js';
 import { readLastAssistantText, readMacPermissionWaits, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type MacPermissionWait, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
-import { opencodeDirs, opencodeLaneModelMissing } from './opencodeHome.js';
+import { laneRunModel, opencodeDirs, opencodeLaneModelMissing } from './opencodeHome.js';
 import { listPiMcpTools, piSessionFile, readonlyToolList } from './piHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
@@ -1324,7 +1324,7 @@ export async function runMentionTurn(
     }
     turnReadonlyTools = readonlyToolList(allowlist, discovered);
   }
-  // opencode lane 턴의 모델이 `harkroom-lane/<id>` 꼴이 아니면 lane 목록이 비고, opencode 는 「Connect a provider」 창을 띄운 채
+  // opencode lane 턴의 모델이 비었거나 쓸 수 없는 글자면 lane 목록이 비고, opencode 는 「Connect a provider」 창을 띄운 채
   // 선다(2026-10-23 watcher, 10분 정지로만 접혔다). 키를 받기 전에 까닭 코드로 바로 실패한다.
   if (opencodeLaneModelMissing(Boolean(deps.providerEnv), usesXdgHome(def.harness), turnModel.model)) {
     throw new ProviderLaneError('bad_model');
@@ -1349,7 +1349,8 @@ export async function runMentionTurn(
     systemPromptFile,
     promptCtx: turnPrompt,
     stdinFile,
-    model: turnModel.model,
+    // 모델 칸에는 gateway 가 받는 원문을 적는다 — opencode lane 은 여기서만 lane provider 안의 이름으로 부른다(`laneRunModel`).
+    model: laneRunModel(Boolean(providerEnv), usesXdgHome(def.harness), turnModel.model),
     effort: turnModel.effort,
     mentionPermission: def.mentionPermission,
     // lane 턴은 하위 프로세스 env 를 걷는다(`PROVIDER_LANE_FIXED_ENV`) — 브릿지에 줄 값은 lane 전용 MCP 설정의 `env` 칸으로 준다.

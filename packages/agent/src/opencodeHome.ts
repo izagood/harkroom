@@ -171,7 +171,8 @@ export function toOpencodeMcp(
 const INHERITED_KEYS = ['provider', 'model', 'small_model'] as const;
 
 /**
- * 전용 제공사 경로(provider lane, `providerLane.ts`)의 provider 이름. 에이전트 모델은 `harkroom-lane/<모델 id>` 로 적는다.
+ * 전용 제공사 경로(provider lane, `providerLane.ts`)의 provider 이름. 에이전트 모델 칸에는 gateway 가 받는 이름 그대로 적고,
+ * 러너가 opencode 를 띄울 때만 안에서 `harkroom-lane/<모델 id>` 로 부른다(`laneRunModel`).
  * 내장 `anthropic` 이 아니라 새 이름이어야 한다 — 내장 provider 는 지운 `ANTHROPIC_API_KEY` 를 찾는다.
  */
 export const PROVIDER_LANE_OPENCODE_PROVIDER = 'harkroom-lane';
@@ -190,16 +191,31 @@ const LANE_MODEL_ID = /^(?=.{1,128}$)[A-Za-z0-9][A-Za-z0-9._:-]*(?:\/[A-Za-z0-9.
 // `/` 는 마디 사이에만 받는다(2026-10-23): gateway 모델 id 는 `ExampleOrg/example-model` 처럼 조직 이름을 앞에 단다. `/` 를
 // 막으면 그런 모델은 lane 목록이 비어 opencode 가 「Connect a provider」 창을 띄우고 선다. 중괄호는 여전히 못 들어온다.
 
-/** `harkroom-lane/<id>` 에서 id 를 꺼낸다. 아니면 null — 그 턴은 모델을 못 찾고 실패한다(다른 provider 로 안 떨어진다). */
+/**
+ * lane 모델 칸의 값에서 gateway 가 받는 id 를 꺼낸다. 칸에는 원문(`ExampleOrg/example-model`)을 적는다. 예전에 붙이던
+ * `harkroom-lane/` 머리가 남아 있으면 뗀다(하위 호환). 비었거나 문법에 안 맞으면 null — 그 턴은 실패한다(다른 provider 로 안 떨어진다).
+ */
 export function providerLaneModelId(model: string | null | undefined): string | null {
   const prefix = `${PROVIDER_LANE_OPENCODE_PROVIDER}/`;
-  if (!model?.startsWith(prefix)) return null;
-  const id = model.slice(prefix.length);
+  const raw = model?.trim() ?? '';
+  const id = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
   return LANE_MODEL_ID.test(id) ? id : null;
 }
 
 /**
- * opencode lane 턴의 모델이 lane 모양(`harkroom-lane/<id>`)이 아니어서 **띄워 봐야 서는가**. 참이면 러너는 키를 받기 전에
+ * lane 턴이 하네스에 넘길 모델 이름. opencode(설정 파일로 모델을 고르는 하네스)는 lane provider 안의 이름 `harkroom-lane/<id>` 로,
+ * 나머지(claude-code)는 gateway 가 받는 원문으로 부른다. 옛 머리가 붙은 값도 원문으로 읽는다. lane 이 아니면 그대로다.
+ */
+export function laneRunModel(lane: boolean, xdgHome: boolean, model: string | null): string | null {
+  if (!lane) return model;
+  const id = providerLaneModelId(model);
+  if (xdgHome) return id ? `${PROVIDER_LANE_OPENCODE_PROVIDER}/${id}` : null;
+  const prefix = `${PROVIDER_LANE_OPENCODE_PROVIDER}/`;
+  return model?.startsWith(prefix) ? model.slice(prefix.length) : model;
+}
+
+/**
+ * opencode lane 턴의 모델이 비었거나 문법(`LANE_MODEL_ID`)에 안 맞아 **띄워 봐야 서는가**. 참이면 러너는 키를 받기 전에
  * `bad_model` 로 실패한다 — 띄우면 lane 목록이 비어 opencode 가 「Connect a provider」 창에서 선다(2026-10-23 watcher).
  */
 export function opencodeLaneModelMissing(lane: boolean, xdgHome: boolean, model: string | null | undefined): boolean {
@@ -310,7 +326,7 @@ export async function ensureOpencodeHome(opts: {
   /** 어느 하네스의 이름표로 쓰나(어댑터의 `xdgApp`). 없으면 opencode. */
   app?: XdgApp;
   /**
-   * 전용 제공사 경로로 뜬 러너면 그 턴의 모델(`harkroom-lane/<id>`, 모르면 null). 주면 사람 설정의 provider·모델을
+   * 전용 제공사 경로로 뜬 러너면 그 턴의 모델(모델 칸 값 — 원문 또는 옛 `harkroom-lane/<id>`, 모르면 null). 주면 사람 설정의 provider·모델을
    * 물리지 않고 lane 블록만 쓰며, 사람 로그인(`auth.json`)도 링크하지 않는다(security ⓒ·ⓕ).
    */
   providerLane?: { model: string | null; skillsDir?: string };

@@ -70,7 +70,7 @@ import { operatorNameOf, operatorPickerLabels } from '../../lib/operatorName';
 import { ImmediateBadge, PendingEditsContext, setLeaveGuard, type PendingHandlers, type RegisterPending } from './pendingEdits';
 import { errorText } from '../../lib/errorText';
 import { useProviderLane } from '../../lib/useProviderLane';
-import { LANE_HARNESSES, ModelConnectionField, ModelConnectionStatus, opencodeLaneModel, opencodeLaneModelUndo } from './ModelConnectionField';
+import { LANE_HARNESSES, laneModelRaw, ModelConnectionField, ModelConnectionStatus } from './ModelConnectionField';
 
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 harkroom 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
@@ -2575,13 +2575,9 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                     value={draft.harness}
                     onChange={(e) => {
                       const harness = e.target.value as AgentConfig['harness'];
-                      // API 키 연결이 켜진 채 opencode 로 바꾸면 모델 칸도 lane 모양으로 바꾼다 — 연결 저장 때만 바꾸던 탓에
-                      // claude-code 로 켠 뒤 하네스만 바꾼 에이전트가 opencode 에서 「Connect a provider」 창에 섰다(2026-10-23).
-                      // 떠날 때는 반대로 머리를 뗀다(designer s1) — 남기면 다른 하네스가 `harkroom-lane/…` 을 gateway 에 그대로 보내 400 이 난다.
-                      const laneModel = !providerLane.lane ? null
-                        : harness === 'opencode' ? opencodeLaneModel(draft.model ?? null)
-                        : draft.harness === 'opencode' ? opencodeLaneModelUndo(draft.model ?? null)
-                        : null;
+                      // API 키 연결의 모델 칸은 하네스와 상관없이 gateway 가 받는 이름 그대로다 — opencode 의 lane 머리는 러너가 안에서
+                      // 붙인다(2026-10-24). 예전에 붙여 둔 머리가 남아 있으면 하네스를 바꿀 때 뗀다.
+                      const laneModel = providerLane.lane ? laneModelRaw(draft.model ?? null) : null;
                       setDraft({ ...draft, harness, ...(laneModel ? { model: laneModel } : {}) });
                     }}
                   >
@@ -2720,9 +2716,9 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                       onOpenSecrets={onOpenSection ? () => onOpenSection('secrets') : undefined}
                       onOpenPermissions={() => setDetailTab('permissions')}
                       onSaved={async (next) => {
-                        // opencode 는 lane 모델을 `harkroom-lane/<id>` 로만 부른다 — 켤 때 모델 칸을 그 모양으로 채운다.
-                        if (!next || draft.harness !== 'opencode') return;
-                        const model = opencodeLaneModel(selected.model ?? null);
+                        // 예전에 opencode lane 모델 칸에 붙이던 `harkroom-lane/` 머리가 남아 있으면 원문으로 고쳐 쓴다(2026-10-24).
+                        if (!next) return;
+                        const model = laneModelRaw(selected.model ?? null);
                         if (!model) return;
                         const updated = await getController().updateAgent(selected.id, { model });
                         setSelected(updated);
