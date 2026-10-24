@@ -247,21 +247,6 @@ export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root
  */
 const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
   SELECT
-    -- 사람 아무나에게 간 미답 물음의 수. 누구인지 물을 수 없으므로 수로만 낸다.
-    -- **closedAt 도 닫는다**(2026-09-09). 답하지 않기로 한 물음은 열려 있지 않다 — 이
-    -- 조건이 없으면 사람이 그만두기로 한 뒤에도 대기 줄과 '내 차례' 배지가 남는다. 같은
-    -- 판정이 shared::isAskOpen 에 있다(SQL 은 그 함수를 부를 수 없어 다시 적는다) —
-    -- **필드가 늘면 두 자리를 함께 고친다.**
-    -- **묶음 카드는 묶음 하나에 한 번 센다**(선택 카드 P1 3c, 2026-10-11). 묶음에 담긴 원본은 원 스레드에서 세지
-    -- 않고, 열린 줄을 가진 묶음 카드가 그 묶음 스레드에서 하나로 선다 — 같은 결정이 🙋·Inbox 에 두 번 서지 않게.
-    -- 판정은 askBundleSql.ts 하나(threadStatus 의 FACTS_SQL 과 같은 조각).
-    (COUNT(*) FILTER (
-      WHERE t.meta->>'kind' = 'ask'
-        AND t.meta->'ask'->>'answeredWith' IS NULL
-        AND t.meta->'ask'->>'closedAt' IS NULL
-        AND t.meta->'ask'->'to'->>'kind' = 'human'
-        AND NOT ${bundledRootSql('t')}
-    ) + COUNT(*) FILTER (WHERE ${openBundleSql('t')}))::int as open_ask_human_count,
     -- 특정 계정에게 간 미답 물음의 수신자들. 화면이 "이것이 내 차례인가"를 여기서 가른다.
     COALESCE(ARRAY_AGG(DISTINCT t.meta->'ask'->'to'->>'accountId') FILTER (
       WHERE t.meta->>'kind' = 'ask'
@@ -271,50 +256,6 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
         AND t.meta->'ask'->'to'->>'accountId' IS NOT NULL
     ), '{}'::text[]) as open_ask_account_ids,
     COUNT(*) FILTER (WHERE t.meta->>'kind' = 'failure')::int as failure_count,
-    -- **안 풀린** 실패만 따로 센다. 위의 누적 개수로 '막힘'을 칠하면 한 번 실패한 스레드는
-    -- 그 뒤에 에이전트가 다시 붙어 진행 설명을 올리고 있어도 영원히 붉게 남는다 — 사람이
-    -- 보는 화면에서 "작업 중"이 계속 "막힘"으로 뒤집히던 것이 이것이다.
-    --
-    -- 해소의 정의: **그 실패보다 뒤에 에이전트의 말이 있으면 풀린 것이다.** 에이전트의
-    -- 말이란 (a) 진행 설명·대기 줄(kind), (b) 완료 보고(meta.kind), (c) **그 실패를 낸
-    -- 계정 자신의 아무 말**이다. (c) 가 필요한 이유는 마지막 답을 평범한 글로 내는 러너가
-    -- 있어서고, 그때 그 계정이 에이전트라는 것은 실패를 낸 자가 그 계정이라는 사실이
-    -- 이미 말해 준다 — account 를 조인하지 않고도 안다.
-    --
-    -- 사람이 되묻는 말은 풀지 않는다. 그때는 정말로 막혀 있는 것이고, 그것을 '끝남'으로
-    -- 칠하는 것이 이 필드가 막으려는 반대쪽 거짓말이다.
-    --
-    -- **CASE 로 감싼다**(2026-10-13 쿼리 개선 Q1). 집계의 FILTER 안 AND 는 적힌 순서대로 끊기지 않아, 이 하위 질의가
-    -- 실패가 아닌 행에서도 돌았다 — 보드 머리 한 번에 스레드의 모든 행만큼(로컬 17,543번·11.5만 블록). CASE 는 평가 순서를
-    -- 약속한다. 아래 open_gate_account_ids 도 같다.
-    COUNT(*) FILTER (
-      WHERE CASE WHEN t.meta->>'kind' = 'failure' THEN NOT EXISTS (
-          SELECT 1 FROM message r
-          WHERE (r.id = m.id OR r.thread_root_id = m.id)
-            AND r.deleted_at IS NULL
-            AND r.seq > t.seq
-            AND (r.kind IN ('progress', 'wake')
-              OR r.meta->>'kind' = 'report'
-              OR r.author_id = t.author_id)
-        ) ELSE false END
-    )::int as unresolved_failure_count,
-    -- 안 풀린 account_gate 실패의 차례 주인들(2026-10-02). 해소 규칙은 바로 위와 **같다** —
-    -- 갈라지면 🙋 가 풀린 뒤에도 Inbox 의 내 차례에 남는다. 차례 주인을 못 정한 실패
-    -- (awaitingAccountId 없음)는 넣지 않는다: 아무 계정 id 로 채우면 그 사람만 강조를 받는다.
-    COALESCE(ARRAY_AGG(DISTINCT t.meta->'failure'->>'awaitingAccountId') FILTER (
-      WHERE CASE WHEN t.meta->>'kind' = 'failure'
-        AND t.meta->'failure'->>'code' = 'account_gate'
-        AND t.meta->'failure'->>'awaitingAccountId' IS NOT NULL
-        THEN NOT EXISTS (
-          SELECT 1 FROM message r
-          WHERE (r.id = m.id OR r.thread_root_id = m.id)
-            AND r.deleted_at IS NULL
-            AND r.seq > t.seq
-            AND (r.kind IN ('progress', 'wake')
-              OR r.meta->>'kind' = 'report'
-              OR r.author_id = t.author_id)
-        ) ELSE false END
-    ), '{}'::text[]) as open_gate_account_ids,
     -- 마디들: 누가 → 누구를 기다리는가(#488 A3-b). 위의 두 집계로는 부족하다 —
     -- open_ask_account_ids 는 '답해야 하는 쪽'만 모은 집합이라 누가 물었는지가
     -- 지워지고, 사슬을 이으려면 짝이 필요하다.
@@ -365,6 +306,78 @@ const THREAD_STATE_FACTS = `LEFT JOIN LATERAL (
     -- 루트에서만 계산한다 — 근거는 THREAD_STATS 위 주석.
     AND m.thread_root_id IS NULL
 ) thread_state ON true
+LEFT JOIN LATERAL (
+  -- **묶음·실패 판정은 후보 행에서만 센다**(2026-10-24, JIT 문턱). 아래 셋은 행마다 하위 질의(묶음 색인·뒤에 말이 있는가)를
+  -- 부른다. 위 집계의 FILTER 안에 두면 CASE 덕에 실제로는 후보 행에서만 돌지만, 플래너는 그 비용을 스레드의 **모든 행**에
+  -- 매긴다 — 머리 한 행이 수천~수만이 되어 목록 쿼리 하나가 jit_above_cost 를 몇십 배 넘었고, 실행 6ms 쿼리가 JIT 컴파일로
+  -- 5초를 썼다(운영 측정, 스레드 답글 339). 종류 조건을 스캔의 WHERE 로 내리면 그 하위 질의는 걸러진 행 수만큼만 매겨진다.
+  -- 뜻은 같다: 셋 다 kind 가 ask·askBundle·failure 가 아닌 행에서는 원래 FILTER 가 거짓이었다.
+  SELECT
+    -- 사람 아무나에게 간 미답 물음의 수. 누구인지 물을 수 없으므로 수로만 낸다.
+    -- **closedAt 도 닫는다**(2026-09-09). 답하지 않기로 한 물음은 열려 있지 않다 — 이
+    -- 조건이 없으면 사람이 그만두기로 한 뒤에도 대기 줄과 '내 차례' 배지가 남는다. 같은
+    -- 판정이 shared::isAskOpen 에 있다(SQL 은 그 함수를 부를 수 없어 다시 적는다) —
+    -- **필드가 늘면 두 자리를 함께 고친다.**
+    -- **묶음 카드는 묶음 하나에 한 번 센다**(선택 카드 P1 3c, 2026-10-11). 묶음에 담긴 원본은 원 스레드에서 세지
+    -- 않고, 열린 줄을 가진 묶음 카드가 그 묶음 스레드에서 하나로 선다 — 같은 결정이 🙋·Inbox 에 두 번 서지 않게.
+    -- 판정은 askBundleSql.ts 하나(threadStatus 의 FACTS_SQL 과 같은 조각).
+    (COUNT(*) FILTER (
+      WHERE t.meta->>'kind' = 'ask'
+        AND t.meta->'ask'->>'answeredWith' IS NULL
+        AND t.meta->'ask'->>'closedAt' IS NULL
+        AND t.meta->'ask'->'to'->>'kind' = 'human'
+        AND NOT ${bundledRootSql('t')}
+    ) + COUNT(*) FILTER (WHERE ${openBundleSql('t')}))::int as open_ask_human_count,
+    -- **안 풀린** 실패만 따로 센다. 위의 누적 개수로 '막힘'을 칠하면 한 번 실패한 스레드는
+    -- 그 뒤에 에이전트가 다시 붙어 진행 설명을 올리고 있어도 영원히 붉게 남는다 — 사람이
+    -- 보는 화면에서 "작업 중"이 계속 "막힘"으로 뒤집히던 것이 이것이다.
+    --
+    -- 해소의 정의: **그 실패보다 뒤에 에이전트의 말이 있으면 풀린 것이다.** 에이전트의
+    -- 말이란 (a) 진행 설명·대기 줄(kind), (b) 완료 보고(meta.kind), (c) **그 실패를 낸
+    -- 계정 자신의 아무 말**이다. (c) 가 필요한 이유는 마지막 답을 평범한 글로 내는 러너가
+    -- 있어서고, 그때 그 계정이 에이전트라는 것은 실패를 낸 자가 그 계정이라는 사실이
+    -- 이미 말해 준다 — account 를 조인하지 않고도 안다.
+    --
+    -- 사람이 되묻는 말은 풀지 않는다. 그때는 정말로 막혀 있는 것이고, 그것을 '끝남'으로
+    -- 칠하는 것이 이 필드가 막으려는 반대쪽 거짓말이다.
+    --
+    -- **CASE 로 감싼다**(2026-10-13 쿼리 개선 Q1). 집계의 FILTER 안 AND 는 적힌 순서대로 끊기지 않아, 이 하위 질의가
+    -- 실패가 아닌 행에서도 돌았다 — 보드 머리 한 번에 스레드의 모든 행만큼(로컬 17,543번·11.5만 블록). CASE 는 평가 순서를
+    -- 약속한다. 아래 open_gate_account_ids 도 같다.
+    COUNT(*) FILTER (
+      WHERE CASE WHEN t.meta->>'kind' = 'failure' THEN NOT EXISTS (
+          SELECT 1 FROM message r
+          WHERE (r.id = m.id OR r.thread_root_id = m.id)
+            AND r.deleted_at IS NULL
+            AND r.seq > t.seq
+            AND (r.kind IN ('progress', 'wake')
+              OR r.meta->>'kind' = 'report'
+              OR r.author_id = t.author_id)
+        ) ELSE false END
+    )::int as unresolved_failure_count,
+    -- 안 풀린 account_gate 실패의 차례 주인들(2026-10-02). 해소 규칙은 바로 위와 **같다** —
+    -- 갈라지면 🙋 가 풀린 뒤에도 Inbox 의 내 차례에 남는다. 차례 주인을 못 정한 실패
+    -- (awaitingAccountId 없음)는 넣지 않는다: 아무 계정 id 로 채우면 그 사람만 강조를 받는다.
+    COALESCE(ARRAY_AGG(DISTINCT t.meta->'failure'->>'awaitingAccountId') FILTER (
+      WHERE CASE WHEN t.meta->>'kind' = 'failure'
+        AND t.meta->'failure'->>'code' = 'account_gate'
+        AND t.meta->'failure'->>'awaitingAccountId' IS NOT NULL
+        THEN NOT EXISTS (
+          SELECT 1 FROM message r
+          WHERE (r.id = m.id OR r.thread_root_id = m.id)
+            AND r.deleted_at IS NULL
+            AND r.seq > t.seq
+            AND (r.kind IN ('progress', 'wake')
+              OR r.meta->>'kind' = 'report'
+              OR r.author_id = t.author_id)
+        ) ELSE false END
+    ), '{}'::text[]) as open_gate_account_ids
+  FROM message t
+  WHERE (t.id = m.id OR t.thread_root_id = m.id) AND t.deleted_at IS NULL
+    AND t.meta->>'kind' IN ('ask', 'askBundle', 'failure')
+    -- 루트에서만 계산한다 — 근거는 THREAD_STATS 위 주석.
+    AND m.thread_root_id IS NULL
+) thread_open ON true
 LEFT JOIN LATERAL (
   -- 마지막 말 하나. 그것이 진행이고 저자가 살아 있는 에이전트일 때만 '도는 중'이므로,
   -- 화면은 이 둘(kind·저자)에 자기가 아는 생존을 곱해 판정한다.
@@ -468,7 +481,17 @@ ${THREAD_STATE_FACTS}`;
 //
 // `meta` 를 비우는 것이 특히 중요하다 — 지운 머리에 미답 물음(`ask`)이 실려 있으면
 // 그 스레드는 영원히 "누군가를 기다리는" 것으로 보인다.
-const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
+/**
+ * 머리 집계 열이 어느 자리에서 오는가. 보통은 `THREAD_STATS` 의 네 lateral 이고, 채널 페이지는 머리만 모은 `heads`
+ * 하나다(`pageWithHeads`). `null` 이면 **답글 전용** — lateral 없이 집계 열을 null 로 채운다(`REPLY_COLS`).
+ */
+type ThreadAgg = { stats: string; state: string; open: string; last: string } | null;
+
+function listCols(agg: ThreadAgg): string {
+  // 답글 행에서 원래 `CASE` 가 내던 값이 null 이다 — 타입까지 맞춰 둬야 머리 갈래와 `union all` 로 붙는다.
+  const head = (alias: 'stats' | 'state' | 'open' | 'last', col: string, type: string) =>
+    agg ? `case when m.thread_root_id is null then ${agg[alias]}.${col} end` : `null::${type}`;
+  return `m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
   m.author_id as "authorId",
   case when m.deleted_at is null then m.body else '' end as body,
   m.kind, case when m.deleted_at is null then m.meta else '{}'::jsonb end as meta,
@@ -476,20 +499,59 @@ const LIST_COLS = `m.id, m.seq::int as seq, m.channel_id as "channelId", m.threa
   m.edited_at as "editedAt",
   case when m.deleted_at is null then (${REACTIONS.replace(/message\./g, 'm.').replace(/ as reactions$/, '')}) else '[]'::json end as reactions,
   case when m.deleted_at is null then (${ATTACHMENTS.replace(/message\./g, 'm.').replace(/ as attachments$/, '')}) else '[]'::json end as attachments,
-  case when m.thread_root_id is null then thread_stats.reply_count end as "replyCount",
-  case when m.thread_root_id is null then thread_stats.activity_count end as "activityCount",
-  case when m.thread_root_id is null then thread_stats.last_reply_at end as "lastReplyAt",
-  case when m.thread_root_id is null then thread_stats.participant_ids end as "participantIds",
-  case when m.thread_root_id is null then thread_state.open_ask_human_count end as "openAskHumanCount",
-  case when m.thread_root_id is null then thread_state.open_ask_account_ids end as "openAskAccountIds",
-  case when m.thread_root_id is null then thread_state.open_gate_account_ids end as "openGateAccountIds",
-  case when m.thread_root_id is null then thread_state.failure_count end as "failureCount",
-  case when m.thread_root_id is null then thread_state.unresolved_failure_count end as "unresolvedFailureCount",
-  case when m.thread_root_id is null then thread_state.open_ask_links end as "openAskLinks",
-  case when m.thread_root_id is null then thread_last.last_kind end as "lastKind",
-  case when m.thread_root_id is null then thread_last.last_author_id end as "lastAuthorId",
+  ${head('stats', 'reply_count', 'int')} as "replyCount",
+  ${head('stats', 'activity_count', 'int')} as "activityCount",
+  ${head('stats', 'last_reply_at', 'text')} as "lastReplyAt",
+  ${head('stats', 'participant_ids', 'uuid[]')} as "participantIds",
+  ${head('open', 'open_ask_human_count', 'int')} as "openAskHumanCount",
+  ${head('state', 'open_ask_account_ids', 'text[]')} as "openAskAccountIds",
+  ${head('open', 'open_gate_account_ids', 'text[]')} as "openGateAccountIds",
+  ${head('state', 'failure_count', 'int')} as "failureCount",
+  ${head('open', 'unresolved_failure_count', 'int')} as "unresolvedFailureCount",
+  ${head('state', 'open_ask_links', 'jsonb')} as "openAskLinks",
+  ${head('last', 'last_kind', 'text')} as "lastKind",
+  ${head('last', 'last_author_id', 'text')} as "lastAuthorId",
   case when m.deleted_at is null then ${statusReactionOf('m')} end as "statusReaction",
   m.also_in_channel as "alsoInChannel", m.deleted_at as "deletedAt"`;
+}
+
+const LIST_COLS = listCols({ stats: 'thread_stats', state: 'thread_state', open: 'thread_open', last: 'thread_last' });
+
+/**
+ * **답글만 고르는 갈래**의 열(2026-10-24, JIT 문턱). 응답 모양은 `LIST_COLS` 와 한 글자도 다르지 않다 — 답글의 머리
+ * 집계는 원래 null 이다. 다른 것은 `THREAD_STATS` 를 붙이지 않는다는 것 하나다.
+ *
+ * 왜 따로 두는가: lateral 안의 `m.thread_root_id IS NULL` 덕에 답글 행에서는 안쪽이 실제로 돌지 않지만(`One-Time Filter`),
+ * 플래너는 그것을 실행할 때에야 안다 — **답글 한 행마다 머리 한 행의 비용을 매긴다.** 답글 339개 스레드의 around 하나가
+ * 추정 133만이 되어 jit_above_cost(10만)를 넘었고, 실행 6ms 쿼리가 매번 JIT 컴파일에 5초를 썼다(운영 측정).
+ */
+const REPLY_COLS = listCols(null);
+
+/** `pageWithHeads` 의 페이지가 들고 다니는 열 — `listCols` 와 `THREAD_STATS` 가 `m.` 으로 읽는 것만. */
+const PAGE_COLS = `m.id, m.seq, m.channel_id, m.thread_root_id, m.author_id, m.body, m.kind, m.meta,
+  m.created_at, m.edited_at, m.deleted_at, m.also_in_channel`;
+
+/**
+ * **머리와 답글이 섞인 채널 페이지**(2026-10-24, JIT 문턱). 페이지(`pageSql` — `PAGE_COLS` 를 고르는 질의)를 먼저 자르고,
+ * 머리 집계는 **그중 머리에만** 붙여 되돌린다. 순서는 `seq` 오름차순이다.
+ *
+ * 왜: 행마다 `THREAD_STATS` 를 붙이면 플래너는 페이지의 **모든 행**에 머리 한 행의 비용을 매긴다(위 `REPLY_COLS` 와 같은
+ * 까닭) — limit 500 페이지가 추정 수백만이 되어 매번 JIT 가 돌았다. 머리를 `thread_root_id is null` 로 먼저 거르면 그 비용은
+ * 머리 수만큼만 매겨진다. 응답은 같다: 답글 행의 집계는 left join 이 null 로 채우고, 그것이 원래 `CASE` 가 내던 값이다.
+ *
+ * `materialized` 인 이유: 페이지를 두 번 읽는다(행 + 머리). 펼쳐지면 limit 질의가 두 번 돈다.
+ */
+function pageWithHeads(pageSql: string): string {
+  return `with page as materialized (${pageSql}),
+  heads as (
+    select m.id, thread_stats.*, thread_state.*, thread_open.*, thread_last.*
+      from page m ${THREAD_STATS}
+     where m.thread_root_id is null
+  )
+  select ${listCols({ stats: 'h', state: 'h', open: 'h', last: 'h' })}
+    from page m left join heads h on h.id = m.id
+   order by m.seq`;
+}
 
 /**
  * 목록에 들어오는 조건. `deleted_at is null` **하나가 아니다** — 예외가 정확히 하나 있다:
@@ -2583,8 +2645,11 @@ export async function promoteToChannel(
  * `deleteMessage` 가 이것을 쓰는 이유: 지운 뒤 그 자리가 목록에서 아예 사라졌는지
  * 자리표시자로 남았는지를 **판정 규칙을 다시 쓰지 않고** 알아내려면, 목록이 쓰는 조건에
  * 그대로 물어보는 것이 유일한 방법이다. 여기서 `null` 이면 사라진 것이다.
+ *
+ * 한 행을 `THREAD_STATS` 로 곧장 읽으므로 페이지 갈래(`REPLY_COLS`·`pageWithHeads`)의 **기준값**이기도 하다 —
+ * `listMessagesPlanCost.test.ts` 가 페이지의 행마다 이것과 견준다.
  */
-async function readListRow(pool: Pool, channelId: string, messageId: string): Promise<MessageRow | null> {
+export async function readListRow(pool: Pool, channelId: string, messageId: string): Promise<MessageRow | null> {
   const res = await pool.query(
     `select ${LIST_COLS} from message m ${THREAD_STATS}
      where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE}`,
@@ -2675,11 +2740,11 @@ export async function listMessages(
            -- union(중복 제거)은 json 컬럼에 등호가 없어 터진다 — union all 이어야 한다.
            union all
            (select * from (
-              (select ${LIST_COLS} from message m ${THREAD_STATS}
+              (select ${REPLY_COLS} from message m
                where m.channel_id = $1 and m.thread_root_id = $2 and m.seq <= $3 and ${LIST_VISIBLE}
                order by m.seq desc limit $4)
               union all
-              (select ${LIST_COLS} from message m ${THREAD_STATS}
+              (select ${REPLY_COLS} from message m
                where m.channel_id = $1 and m.thread_root_id = $2 and m.seq > $3 and ${LIST_VISIBLE}
                order by m.seq limit $4)
             ) thread_window)
@@ -2698,7 +2763,7 @@ export async function listMessages(
     if (opts.before !== undefined) {
       const res = await pool.query(
         `select * from (
-           select ${LIST_COLS} from message m ${THREAD_STATS}
+           select ${REPLY_COLS} from message m
            where m.channel_id = $1 and m.thread_root_id = $2 and m.seq < $3 and ${LIST_VISIBLE}
            order by m.seq desc limit $4
          ) older
@@ -2708,11 +2773,19 @@ export async function listMessages(
       return res.rows;
     }
     // 스레드 조회에서는 루트를 항상 포함한다 — limit 와 관계없이.
+    // 루트와 답글을 두 갈래로 읽는다 — 답글 갈래에 머리 집계를 붙이지 않으려고(`REPLY_COLS`). 루트의 seq 는 모든 답글보다
+    // 작으므로 바깥 `order by seq limit` 은 예전 한 갈래(`m.id = $2 or m.thread_root_id = $2`)와 같은 행을 고른다.
     if (opts.since !== undefined && opts.since > 0) {
       const res = await pool.query(
-        `select ${LIST_COLS} from message m ${THREAD_STATS}
-         where m.channel_id = $1 and (m.id = $2 or m.thread_root_id = $2) and m.seq > $3 and ${LIST_VISIBLE}
-         order by m.seq limit $4`,
+        `select * from (
+           (select ${LIST_COLS} from message m ${THREAD_STATS}
+            where m.channel_id = $1 and m.id = $2 and m.seq > $3 and ${LIST_VISIBLE})
+           union all
+           (select ${REPLY_COLS} from message m
+            where m.channel_id = $1 and m.thread_root_id = $2 and m.seq > $3 and ${LIST_VISIBLE}
+            order by m.seq limit $4)
+         ) newer
+         order by seq limit $4`,
         [channelId, opts.threadRootId, opts.since, limit],
       );
       return res.rows;
@@ -2724,7 +2797,7 @@ export async function listMessages(
         (select ${LIST_COLS} from message m ${THREAD_STATS}
          where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE})
         union all
-        (select ${LIST_COLS} from message m ${THREAD_STATS}
+        (select ${REPLY_COLS} from message m
          where m.channel_id = $1 and m.thread_root_id = $2 and ${LIST_VISIBLE}
          order by m.seq desc limit $3)
       ) latest
@@ -2744,16 +2817,14 @@ export async function listMessages(
   if (opts.around !== undefined) {
     const half = Math.max(1, Math.ceil(limit / 2));
     const res = await pool.query(
-      `select * from (
-         (select ${LIST_COLS} from message m ${THREAD_STATS}
+      pageWithHeads(`
+         (select ${PAGE_COLS} from message m
           where m.channel_id = $1 and m.seq <= $2 and ${LIST_VISIBLE}
           order by m.seq desc limit $3)
          union all
-         (select ${LIST_COLS} from message m ${THREAD_STATS}
+         (select ${PAGE_COLS} from message m
           where m.channel_id = $1 and m.seq > $2 and ${LIST_VISIBLE}
-          order by m.seq limit $3)
-       ) window_rows
-       order by seq`,
+          order by m.seq limit $3)`),
       [channelId, opts.around, half],
     );
     return res.rows;
@@ -2767,12 +2838,10 @@ export async function listMessages(
   // 옛 서버는 이 인자를 모르고 버린다(zod strip) — 그러면 지금 갈래 그대로라 부르는 쪽이 나눌 필요가 없다.
   if (opts.before !== undefined) {
     const res = await pool.query(
-      `select * from (
-         select ${LIST_COLS} from message m ${THREAD_STATS}
+      pageWithHeads(`
+         select ${PAGE_COLS} from message m
          where m.channel_id = $1 and m.seq < $2 and ${LIST_VISIBLE}${opts.feed ? ` and ${FEED_ROW}` : ''}
-         order by m.seq desc limit $3
-       ) older
-       order by seq`,
+         order by m.seq desc limit $3`),
       [channelId, opts.before, limit],
     );
     return res.rows;
@@ -2780,21 +2849,20 @@ export async function listMessages(
   const since = opts.since ?? 0;
   if (since > 0) {
     const res = await pool.query(
-      `select ${LIST_COLS} from message m ${THREAD_STATS}
+      pageWithHeads(`
+       select ${PAGE_COLS} from message m
        where m.channel_id = $1 and m.seq > $2 and ${LIST_VISIBLE}
-       order by m.seq limit $3`,
+       order by m.seq limit $3`),
       [channelId, since, limit],
     );
     return res.rows;
   }
   // since 미지정(0): 오래된 200개가 아니라 최신 N개를 반환한다 (반환 순서는 seq 오름차순 유지)
   const res = await pool.query(
-    `select * from (
-       select ${LIST_COLS} from message m ${THREAD_STATS}
+    pageWithHeads(`
+       select ${PAGE_COLS} from message m
        where m.channel_id = $1 and ${LIST_VISIBLE}
-       order by m.seq desc limit $2
-     ) latest
-     order by seq`,
+       order by m.seq desc limit $2`),
     [channelId, limit],
   );
   return res.rows;

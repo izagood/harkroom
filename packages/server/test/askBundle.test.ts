@@ -318,7 +318,9 @@ describe('🙋·Inbox 는 묶음 하나에 한 줄(3c)', () => {
       walk((res.rows[0]['QUERY PLAN'] as { Plan: Plan }[])[0]!.Plan);
       const br = nodes.filter((n) => n.Alias === 'br');
       expect(br.length).toBeGreaterThan(0);
-      for (const n of br) {
+      for (const scan of br) {
+        // 원본 id 들을 배열로 한 번에 넘기므로(`id = ANY(…)`, 2026-10-24) 플래너가 비트맵으로 집기도 한다 — 그때 키는 아래 마디에 있다.
+        const n = scan['Node Type'] === 'Bitmap Heap Scan' ? scan.Plans!.find((c) => c['Node Type'] === 'Bitmap Index Scan')! : scan;
         expect(n['Node Type']).toMatch(/Index/);
         expect(n['Index Name']).toBe('message_pkey');
         // 원본 하나를 키로 집는다 — 색인을 처음부터 끝까지 훑는 것(조건 없는 Index Scan)이 아니다.
