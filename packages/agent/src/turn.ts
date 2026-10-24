@@ -24,7 +24,7 @@ import { validateToolRule } from '@harkroom/shared';
 
 import { executionModelFor, readonlyToolsFor, usesPiHome, usesXdgHome } from './adapters/index.js';
 import { piSessionsDir } from './piHome.js';
-import { OPENCODE_LANE_AGENT, OPENCODE_READONLY_AGENT, opencodeDirs } from './opencodeHome.js';
+import { OPENCODE_LANE_AGENT, OPENCODE_READONLY_AGENT, opencodeDirs, opencodeLaneHome } from './opencodeHome.js';
 
 /**
  * 하네스가 harkroom MCP 에 닿는 길은 `harkroom-operator mcp-bridge` 하나다(스펙 2026-09-20 §5).
@@ -991,8 +991,7 @@ function childEnv(
   // 전용 제공사 경로(security ⓑ): 지운 **뒤에** 이 턴이 받은 값만 얹는다. 허용 목록 밖 키는 조립을 거절한다 —
   // 조용히 버리면 lane 에이전트가 계정 로그인으로 돈다.
   if (homes.providerEnv) {
-    const keys = providerLaneKeys(homes.harness);
-    const allowed = keys ? new Set([keys.baseUrl, keys.token]) : new Set<string>();
+    const allowed = new Set(providerLaneKeys(homes.harness) ?? []);
     for (const [key, value] of Object.entries(homes.providerEnv)) {
       if (!allowed.has(key)) throw new Error(`buildTurnCommand: 전용 제공사 경로가 ${homes.harness} 에 허용되지 않은 env 를 넣으려 했다: ${key}`);
       env[key] = value;
@@ -1009,6 +1008,8 @@ function childEnv(
   // opencode 는 한 변수가 아니라 **XDG 셋**이다. 하나라도 빼면 자격증명만 갈리고 세션은
   // 사람 것과 공유되는 반쪽 격리가 된다(`opencodeHome.ts` 머리말).
   if (homes.opencodeHome !== null) Object.assign(env, opencodeDirs(homes.opencodeHome));
+  // lane 턴은 사람 홈의 `~/.opencode` 를 싣지 않게 비워 둔 홈 표지 자리를 준다(`opencodeLaneHome`). 셸의 `HOME` 은 그대로다.
+  if (homes.opencodeHome !== null && homes.providerEnv) env.OPENCODE_TEST_HOME = opencodeLaneHome(homes.opencodeHome);
   // pi 는 한 변수지만 세션 자리는 따로 바꿀 수 있다(`PI_CODING_AGENT_SESSION_DIR`). 부모 env 의 그
   // 값은 지운다 — 세션 자리는 argv 의 `--session-dir` 하나가 정한다(위 buildTurnCommand, security U1).
   if (homes.piHome) {

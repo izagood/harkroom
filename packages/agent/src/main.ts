@@ -17,7 +17,7 @@
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
 // 진짜 서버에 붙으려 든다.
 import { PROVIDER_LANE_ENV } from '@harkroom/shared/providerLane';
-import { createProviderLane, ProviderLaneError } from './providerLane.js';
+import { createProviderLane, ProviderLaneError, sweepLaneTurnDir } from './providerLane.js';
 import { resolveTurnModel } from './threadModel.js';
 import { idleStopRequestedAt } from './idleStop.js';
 import { execFile } from 'node:child_process';
@@ -33,8 +33,8 @@ import { createMemoryCache } from './memoryCache.js';
 import { runPtyTurn } from './pty.js';
 import { avcsGuideFlag } from './avcsGuideFlag.js';
 import { SessionStore } from './sessions.js';
-import { ensureNameLink, resolveAgentStateDir } from './stateDir.js';
-import { assertHarnessContract, buildTurnCommand, readExtraMcpServers, readMcpServers, writeSystemPromptFile, type McpServerEntry } from './turn.js';
+import { ensureNameLink, resolveAgentStateDir, runnerSkillsDir } from './stateDir.js';
+import { assertHarnessContract, buildTurnCommand, harnessPath, readExtraMcpServers, readMcpServers, writeSystemPromptFile, type McpServerEntry } from './turn.js';
 import { BG_POLL_INTERVAL_MS, BG_SYSTEM_PROMPT, BgExecutor, writeBgMcpConfig } from './bgExecutor.js';
 import { createStoppableSleep } from './stoppableSleep.js';
 import { createRetreat, type Retreat } from './retreat.js';
@@ -438,7 +438,8 @@ const readTurnMcp = async (harness: AgentHarness, model?: string | null): Promis
   const app = xdgAppFor(harness);
   if (usesXdgHome(harness) && app) {
     await ensureOpencodeHome({
-      opencodeHome: opencodeHomeDir, mcpServers: all, app, ...(providerLaneOn ? { providerLane: { model: model ?? null } } : {}),
+      opencodeHome: opencodeHomeDir, mcpServers: all, app,
+      ...(providerLaneOn ? { providerLane: { model: model ?? null, skillsDir: runnerSkillsDir(agentStateDir) } } : {}),
     });
   }
   if (usesPiHome(harness)) await ensurePiHome({ piHome: piHomeDir, mcpServers: all });
@@ -589,8 +590,30 @@ const providerLane = providerLaneOn
     mount: (cause) => harkroom.mountProviderLane(cause),
     turnSecretsDir: process.env.HARKROOM_TURN_SECRETS_DIR ?? null,
     report: (ok, code) => relay.notifyProviderLaneResult(ok, code),
+    stateDir: agentStateDir,
+    harnessVersion: (harness) => harnessVersion(harness),
   })
   : null;
+// 지난 러너가 남긴 턴 파일을 걷는다(키 값은 없고 키 파일 경로만 있다).
+if (providerLane) await sweepLaneTurnDir(agentStateDir);
+
+/**
+ * 하네스 `--version` 출력. **기억하지 않고 턴마다 묻는다**(security F1) — opencode 는 러너 모르게 스스로 업데이트할 수 있다.
+ * env 는 PATH·HOME 만 준다 — 판을 묻는 데 러너의 나머지 env 는 필요 없다.
+ */
+function harnessVersion(harness: AgentHarness): Promise<string | null> {
+  return new Promise((resolve) => {
+    const bin = harnessBinaryName(harness);
+    if (!bin) return resolve(null);
+    execFile(bin, ['--version'], {
+      env: { PATH: harnessPath(harness, process.env.PATH), ...(process.env.HOME ? { HOME: process.env.HOME } : {}) }, timeout: 15_000,
+    }, (err, stdout) => {
+      const out = String(stdout ?? '').trim();
+      if (err || !out) return resolve(null);
+      resolve(out);
+    });
+  });
+}
 
 // 스레드 임대(서버 095). holder 는 **이 프로세스**다 — 앱 업데이트로 같은 에이전트의 옛 러너와 겹쳐 도는 동안
 // 둘을 가르는 값이라 기동마다 새로 짓는다(같은 에이전트 자격이라 계정 id 로는 못 가른다).

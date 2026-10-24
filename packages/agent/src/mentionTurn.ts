@@ -7,6 +7,7 @@
 // 여기 있는 것은 조립뿐이다: Task 3~8 이 만든 부품(sessions, workspace, prompt, turn, pty,
 // codexSessions) 을 순서대로 부르고, 그 결과로 무엇을 저장·발화·실패 처리할지 판단한다.
 // 하네스 출력은 파싱하지 않는다 — 에이전트가 스스로 harkroom MCP 로 답을 올린다(spec §4).
+import { runnerSkillsDir } from './stateDir.js';
 import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { existsSync } from 'node:fs';
@@ -802,7 +803,7 @@ export async function syncSkills(
    */
   opts: { dropToolGrants?: boolean } = {},
 ): Promise<void> {
-  const skillsDir = join(stateDir, 'skills');
+  const skillsDir = runnerSkillsDir(stateDir);
   // 하네스별 스킬 디렉터리. claude 는 `.claude/skills/<slug>/SKILL.md` 를 읽는다.
   const harnessDirs = [
     join(workspaceDir, '.claude', 'skills'),
@@ -1316,7 +1317,7 @@ export async function runMentionTurn(
   // 작업 폴더에 다음 턴의 지시·도구·플러그인을 바꾸는 이름이 우리 것이 아닌 꼴로 있으면 띄우지 않는다(security, `laneWorkspaceGuard.ts`).
   // 스킬 동기화·설정 걷기 **뒤**라 우리 링크와 걷힌 설정은 걸리지 않는다. 지우지 않는다 — 사람의 파일일 수 있다.
   if (deps.providerEnv) {
-    const found = await laneWorkspaceViolations(rec.workspaceDir, join(deps.stateDir, 'skills'));
+    const found = await laneWorkspaceViolations(rec.workspaceDir, runnerSkillsDir(deps.stateDir));
     if (found.length) {
       console.warn(`[mentionTurn] ${key}: API 키 연결 턴 — 작업 폴더에 보호 이름이 있어 띄우지 않는다: ${found.join(', ')}`);
       throw new ProviderLaneError('workspace_protected');

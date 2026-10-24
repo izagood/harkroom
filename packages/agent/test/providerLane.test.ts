@@ -1,8 +1,8 @@
-import { mkdtemp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createProviderLane, laneScrubsSubprocessEnv, LANE_MCP_CONFIG_FILE, ProviderLaneError, writeLaneMcpConfig } from '../src/providerLane.js';
+import { createProviderLane, laneScrubsSubprocessEnv, PROVIDER_LANE_FIXED_ENV, LANE_MCP_CONFIG_FILE, opencodeLaneVersionOk, ProviderLaneError, sweepLaneTurnDir, writeLaneMcpConfig, writeOpencodeLaneTurnConfig } from '../src/providerLane.js';
 
 async function setup(value = 'tok-123\n') {
   const root = await mkdtemp(join(tmpdir(), 'lane-'));
@@ -24,14 +24,64 @@ describe('providerLane.envFor', () => {
     });
   });
 
-  it('opencode 에는 lane provider 블록이 `{env:}` 로 읽는 두 이름만 — 키는 `ANTHROPIC_*` 로 가지 않는다(ⓕ)', async () => {
+  // Y1~Y3: opencode 에는 키 값을 env 로 주지 않는다 — 턴 파일 경로 하나만 주고, 그 파일은 키 파일을 `{file:…}` 로 가리킨다.
+  it('opencode 에는 턴 파일 경로(`OPENCODE_CONFIG`) 하나만 — 키 값은 env 에도 턴 파일에도 없다', async () => {
     const t = await setup();
-    const lane = createProviderLane({ mount: ok({ baseUrl: 'https://gateway.example', path: t.path }), turnSecretsDir: t.secretsDir });
-    expect(await lane.envFor('m1', 'opencode')).toEqual({
-      HARKROOM_PROVIDER_BASE_URL: 'https://gateway.example', HARKROOM_PROVIDER_TOKEN: 'tok-123',
+    const laneTurnDir = join(t.root, 'state', 'lane-turn');
+    const lane = createProviderLane({
+      mount: ok({ baseUrl: 'https://gateway.example/', path: t.path }), turnSecretsDir: t.secretsDir,
+      stateDir: join(t.root, 'state'), harnessVersion: async () => '1.18.32',
     });
+    const env = await lane.envFor('m-1', 'opencode');
+    expect(Object.keys(env)).toEqual(['OPENCODE_CONFIG']);
+    expect(env.OPENCODE_CONFIG).toBe(join(laneTurnDir, 'm-1.json'));
+    const text = await readFile(env.OPENCODE_CONFIG!, 'utf8');
+    expect(text).not.toContain('tok-123');
+    expect(JSON.parse(text)).toEqual({
+      provider: { 'harkroom-lane': { options: { baseURL: 'https://gateway.example/v1', apiKey: `{file:${await realpathOf(t.path)}}` } } },
+    });
+    expect((await stat(env.OPENCODE_CONFIG!)).mode & 0o777).toBe(0o600);
+    expect((await stat(laneTurnDir)).mode & 0o777).toBe(0o700);
     // 포크(Kilo)는 아직 표에 없다 — 넣을 자리를 모르면 던진다.
     await expect(lane.envFor('m1', 'kilo')).rejects.toMatchObject({ code: 'harness_unsupported' });
+  });
+
+  it('opencode 판이 잰 목록과 정확히 같지 않거나 못 읽으면 `harness_version` — 키를 받지 않는다(security F1)', async () => {
+    const t = await setup();
+    let mounted = 0;
+    for (const v of ['1.18.33', '1.19.0', '1.18.31', '2.0.0', null, 'garbage', 'opencode 1.18.32', '1.18.32-beta']) {
+      const lane = createProviderLane({
+        mount: async () => { mounted++; return { status: 200, body: JSON.stringify({ lane: { baseUrl: 'https://gateway.example', path: t.path } }) }; },
+        turnSecretsDir: t.secretsDir, stateDir: join(t.root, 'st'), harnessVersion: async () => v,
+      });
+      await expect(lane.envFor('m1', 'opencode')).rejects.toMatchObject({ code: 'harness_version' });
+    }
+    expect(mounted).toBe(0);
+    expect(opencodeLaneVersionOk('1.18.32\n')).toBe(true);
+  });
+
+  it('판은 턴마다 묻는다 — 러너가 사는 사이 opencode 가 스스로 바뀌면 다음 턴이 막힌다', async () => {
+    const t = await setup();
+    let current = '1.18.32';
+    let asked = 0;
+    const lane = createProviderLane({
+      mount: ok({ baseUrl: 'https://gateway.example', path: t.path }), turnSecretsDir: t.secretsDir, stateDir: join(t.root, 'st'),
+      harnessVersion: async () => { asked++; return current; },
+    });
+    await lane.envFor('m1', 'opencode');
+    current = '1.18.33';
+    await expect(lane.envFor('m2', 'opencode')).rejects.toMatchObject({ code: 'harness_version' });
+    expect(asked).toBe(2);
+  });
+
+  it('lane opencode 고정 env 는 자동 업데이트를 끈다', () => {
+    expect(PROVIDER_LANE_FIXED_ENV.opencode).toMatchObject({ OPENCODE_DISABLE_AUTOUPDATE: '1' });
+  });
+
+  it('턴 파일 자리가 없으면 opencode lane 은 실패한다', async () => {
+    const t = await setup();
+    const lane = createProviderLane({ mount: ok({ baseUrl: 'https://gateway.example', path: t.path }), turnSecretsDir: t.secretsDir, harnessVersion: async () => '1.18.32' });
+    await expect(lane.envFor('m1', 'opencode')).rejects.toMatchObject({ code: 'no_turn_secrets_dir' });
   });
 
   it('설정이 없다는 답(lane null)은 던진다 — 계정 로그인으로 떨어지지 않는다', async () => {
@@ -127,5 +177,42 @@ describe('writeLaneMcpConfig', () => {
   it('env 를 걷는 하네스만 이 길을 탄다', () => {
     expect(laneScrubsSubprocessEnv('claude-code')).toBe(true);
     expect(laneScrubsSubprocessEnv('opencode')).toBe(false);
+  });
+});
+
+async function realpathOf(p: string): Promise<string> {
+  const { realpath } = await import('node:fs/promises');
+  return realpath(p);
+}
+
+// Z2: 턴 파일은 공유 설정 **뒤에** 합쳐진다 — 여기 권한·에이전트·MCP 칸이 있으면 lane 권한을 덮는다.
+describe('writeOpencodeLaneTurnConfig', () => {
+  it('provider 주소·키 파일 참조 말고는 아무 칸도 쓰지 않는다(권한 칸 없음)', async () => {
+    const dir = join(await mkdtemp(join(tmpdir(), 'lt-')), 'lane-turn');
+    const path = await writeOpencodeLaneTurnConfig(dir, 'm1', { baseUrl: 'https://gateway.example', keyPath: '/secrets/k' });
+    const doc = JSON.parse(await readFile(path, 'utf8'));
+    expect(Object.keys(doc)).toEqual(['provider']);
+    expect(Object.keys(doc.provider)).toEqual(['harkroom-lane']);
+    expect(Object.keys(doc.provider['harkroom-lane'])).toEqual(['options']);
+    expect(doc.provider['harkroom-lane'].options).toEqual({ baseURL: 'https://gateway.example/v1', apiKey: '{file:/secrets/k}' });
+    // 받는 칸이 주소·키 경로 둘뿐이다 — 다른 것을 넣을 길이 없다.
+    expect(writeOpencodeLaneTurnConfig.length).toBe(3);
+  });
+
+  it('중괄호·줄바꿈이 섞인 값·상대 경로는 거절한다(opencode 가 본문의 `{env:}`·`{file:}` 를 바꿔 넣는다)', async () => {
+    const dir = join(await mkdtemp(join(tmpdir(), 'lt-')), 'lane-turn');
+    await expect(writeOpencodeLaneTurnConfig(dir, 'm1', { baseUrl: 'https://g.example/{env:HOME}', keyPath: '/k' })).rejects.toMatchObject({ code: 'bad_base_url' });
+    await expect(writeOpencodeLaneTurnConfig(dir, 'm1', { baseUrl: 'https://g.example', keyPath: '/k}{file:/etc/passwd' })).rejects.toMatchObject({ code: 'bad_path' });
+    await expect(writeOpencodeLaneTurnConfig(dir, 'm1', { baseUrl: 'https://g.example', keyPath: 'rel/k' })).rejects.toMatchObject({ code: 'bad_path' });
+    expect(await readdir(dir).catch(() => [])).toEqual([]);
+  });
+
+  it('기동 때 남은 턴 파일을 걷는다', async () => {
+    const state = await mkdtemp(join(tmpdir(), 'lt-'));
+    const dir = join(state, 'lane-turn');
+    await writeOpencodeLaneTurnConfig(dir, 'old', { baseUrl: 'https://g.example', keyPath: '/k' });
+    await sweepLaneTurnDir(state);
+    expect(await readdir(dir)).toEqual([]);
+    await sweepLaneTurnDir(join(state, 'missing'));
   });
 });

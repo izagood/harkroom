@@ -8,13 +8,14 @@
 //    `--strict-mcp-config` 를 붙이는 것과 같은 자리(스펙 §7). opencode 에는 그 플래그가
 //    없으므로 **격리 홈을 우리가 쓰는 것**이 그 역할을 한다.
 // 3. 로그인 자리는 `<data>/**opencode**/auth.json` 으로 한 단계 깊다.
-import { mkdtemp, mkdir, readFile, writeFile, lstat, readlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, writeFile, lstat, readlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
   ensureOpencodeHome, opencodeConfigFile, opencodeDirs, opencodeLaneModelMissing, OPENCODE_LANE_AGENT, OPENCODE_LANE_PERMISSION, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
+  opencodeLaneHome, laneSkillPermission,
 } from '../src/opencodeHome.js';
 import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
 
@@ -171,7 +172,7 @@ describe('Kilo(opencode 포크) — 같은 루트, 다른 이름표', () => {
 
 // 전용 제공사 경로(security ⓕ): provider 블록은 그 에이전트 홈에만, 키는 자식 env 로만.
 describe('lane 러너의 opencode 홈', () => {
-  it('사람의 provider·모델·로그인을 물리지 않고 lane 블록 하나만 연다 — 값은 `{env:}` 참조뿐이다', async () => {
+  it('사람의 provider·모델·로그인을 물리지 않고 lane 블록 하나만 연다 — 주소·키 칸은 공유 설정에 없다', async () => {
     const f = await fixture();
     await ensureOpencodeHome({
       opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
@@ -183,19 +184,43 @@ describe('lane 러너의 opencode 홈', () => {
     expect(cfg.provider['harkroom-lane']).toEqual({
       npm: '@ai-sdk/anthropic',
       name: 'Harkroom provider lane',
-      options: { baseURL: '{env:HARKROOM_PROVIDER_BASE_URL}/v1', apiKey: '{env:HARKROOM_PROVIDER_TOKEN}' },
       models: { 'example-model': { name: 'example-model' } },
     });
     // 다른 provider(무료 티어·사람 로그인)로 돌지 않는다.
     expect(cfg.enabled_providers).toEqual(['harkroom-lane']);
+    expect(cfg.autoupdate).toBe(false);
     expect(cfg.model).toBe('harkroom-lane/example-model');
     expect(cfg.agent[OPENCODE_READONLY_AGENT].model).toBe('harkroom-lane/example-model');
     expect(cfg.agent[OPENCODE_LANE_AGENT]).toEqual({ mode: 'primary', permission: OPENCODE_LANE_PERMISSION, model: 'harkroom-lane/example-model' });
     expect(text).not.toContain('gateway.example');
+    expect(text).not.toContain('apiKey');
+    expect(text).not.toContain('{env:');
+    // 홈 표지 자리(`OPENCODE_TEST_HOME`)는 비어 있다.
+    expect(await readdir(opencodeLaneHome(f.home))).toEqual([]);
     expect(cfg.mcp).toEqual({ harkroom: expect.objectContaining({ type: 'local' }) });
     expect(cfg.mcp.gmail).toBeUndefined();
     // 사람 로그인을 링크하지 않는다(ⓒ).
     expect(await lstat(join(opencodeDirs(f.home).XDG_DATA_HOME, 'opencode', 'auth.json')).catch(() => null)).toBeNull();
+  });
+
+  // 홈 스위치는 작업 폴더의 `.claude/skills`·`.agents/skills` 도 끈다 — 러너가 깐 스킬은 원본 자리를 `skills.paths` 로 열고, 그 이름만 허락한다(security c).
+  it('lane 은 러너 스킬 자리만 `skills.paths` 로 열고, 권한은 그 이름만 allow 다', async () => {
+    const f = await fixture();
+    const skillsDir = join(f.home, '..', 'runner-skills');
+    for (const [slug, name] of [['a', 'deploy-check'], ['b', '"quoted-name"'], ['c', 'bad*name']]) {
+      await mkdir(join(skillsDir, slug!), { recursive: true });
+      await writeFile(join(skillsDir, slug!, 'SKILL.md'), `---\nname: ${name}\ndescription: x\n---\nbody\n`);
+    }
+    await ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: 'harkroom-lane/example-model', skillsDir },
+    });
+    const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    expect(cfg.skills).toEqual({ paths: [skillsDir] });
+    expect(cfg.agent[OPENCODE_LANE_AGENT].permission.skill).toEqual({ '*': 'deny', 'deploy-check': 'allow', 'quoted-name': 'allow' });
+    // 다른 권한 칸은 그대로다.
+    expect({ ...cfg.agent[OPENCODE_LANE_AGENT].permission, skill: undefined }).toEqual({ ...OPENCODE_LANE_PERMISSION, skill: undefined });
+    expect(laneSkillPermission([])).toEqual({ '*': 'deny' });
   });
 
   // 1.18.32 실측: 규칙은 뒤의 것이 이긴다 · 쓰기 판정 경로는 git 뿌리 기준이라 앞에 무엇이 붙을 수 있다.

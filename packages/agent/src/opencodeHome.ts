@@ -26,7 +26,7 @@
 // 만들어 준 표(claude 형식 `mcpServers`)를 opencode 모양으로 **번역해** 이 루트에 적는다.
 // harkroom 항목은 stdio 브릿지(`harkroom-operator mcp-bridge`)이고, 실측으로 그대로 붙는다
 // (`opencode mcp list` → `✓ connected`).
-import { chmod, lstat, mkdir, readFile, readlink, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, readFile, readlink, symlink, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { XdgApp } from './adapters/contract.js';
@@ -71,7 +71,8 @@ export const OPENCODE_LANE_PERMISSION: Readonly<Record<string, unknown>> = {
   grep: 'allow',
   list: 'allow',
   todowrite: 'allow',
-  skill: 'allow',
+  // 러너가 깐 이름만 연다 — 에이전트 정의를 쓸 때 `laneSkillPermission` 으로 덮는다(security c).
+  skill: { '*': 'deny' },
   // 쓰기 판정의 경로는 작업 폴더가 아니라 **git 뿌리** 기준이다 — 저장소가 아니면 `/` 부터의 경로가 온다(실측: `.claude/*` 만
   // 적었더니 저장소 밖 작업 폴더의 `.claude/skills/x/SKILL.md` 가 쓰였다). 그래서 앞에 무엇이 붙어도 맞게 `*/` 꼴도 같이 둔다.
   // `*` 는 `/` 도 넘는다. 하위 폴더의 같은 이름 파일도 닫힌다(하네스가 그것도 읽는다).
@@ -82,6 +83,26 @@ export const OPENCODE_LANE_PERMISSION: Readonly<Record<string, unknown>> = {
   'harkroom_*': 'allow',
   'avcs_*': 'allow',
 };
+
+/** 스킬 이름으로 받는 글자(권한 표의 열쇠가 된다 — `*`·`?` 같은 패턴 글자가 들면 다른 스킬까지 연다). */
+const LANE_SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/** lane 에이전트의 스킬 권한: 러너가 깐 이름만 연다(security c). */
+export function laneSkillPermission(names: readonly string[]): Record<string, 'allow' | 'deny'> {
+  return { '*': 'deny', ...Object.fromEntries(names.filter((n) => LANE_SKILL_NAME.test(n)).map((n) => [n, 'allow' as const])) };
+}
+
+/** 러너 스킬 자리의 `<slug>/SKILL.md` frontmatter `name`(opencode 가 스킬을 부르는 이름). 못 읽으면 빈 목록이다. */
+export async function runnerSkillNames(dir: string | undefined): Promise<string[]> {
+  if (!dir) return [];
+  const slugs = await readdir(dir).catch(() => [] as string[]);
+  const names = await Promise.all(slugs.map(async (slug) => {
+    const body = await readFile(join(dir, slug, 'SKILL.md'), 'utf8').catch(() => '');
+    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(body)?.[1] ?? '';
+    return /^name:\s*["']?([^"'\r\n]+?)["']?\s*$/m.exec(fm)?.[1] ?? null;
+  }));
+  return [...new Set(names.filter((n): n is string => n !== null))].sort();
+}
 
 /** 사람이 쓰는 opencode 설정 파일(provider 정의가 여기 있다). */
 export function sourceOpencodeConfig(
@@ -154,8 +175,13 @@ const INHERITED_KEYS = ['provider', 'model', 'small_model'] as const;
  * 내장 `anthropic` 이 아니라 새 이름이어야 한다 — 내장 provider 는 지운 `ANTHROPIC_API_KEY` 를 찾는다.
  */
 export const PROVIDER_LANE_OPENCODE_PROVIDER = 'harkroom-lane';
-/** lane 값이 들어오는 자식 env 이름(`PROVIDER_LANE_ENV_KEYS.opencode`). 설정 파일에는 값이 아니라 이 참조만 적는다. */
-export const PROVIDER_LANE_OPENCODE_ENV = { baseUrl: 'HARKROOM_PROVIDER_BASE_URL', token: 'HARKROOM_PROVIDER_TOKEN' } as const;
+/**
+ * lane 턴의 홈 표지 자리(`OPENCODE_TEST_HOME`). opencode 는 `~/.claude`·`~/.agents`·`~/.opencode` 의 지시·스킬·설정을 싣는데,
+ * 이 이름이 그 `~` 를 바꾼다 — 비워 둔 이 폴더를 주면 사람 홈의 것이 lane 턴에 안 실린다(1.18.32 실측). 셸의 `HOME` 은 그대로다.
+ */
+export function opencodeLaneHome(opencodeHome: string): string {
+  return join(opencodeHome, 'lane-home');
+}
 /**
  * 모델 id 문법. opencode 는 설정 **본문 전체**에서 `{env:…}`·`{file:…}` 를 바꿔 넣으므로, 서버에서 온 모델 이름에
  * 중괄호가 섞이면 키나 아무 파일이 모델 이름 자리로 gateway 에 실려 간다. 그래서 글자를 좁힌다.
@@ -183,7 +209,7 @@ export function opencodeLaneModelMissing(lane: boolean, xdgHome: boolean, model:
 
 /**
  * lane 에이전트의 provider 블록(security ⓕ). 사람 설정의 provider 는 **물리지 않고** 이 블록 하나만 연다.
- * 주소·키는 값이 아니라 `{env:…}` 참조다 — 값은 그 턴의 자식 env 에만 있다(ⓐ).
+ * 주소·키는 이 공유 파일에 없다 — 그 턴의 파일(`OPENCODE_CONFIG`)이 키 파일 경로를 `{file:…}` 로 가리킨다(ⓐ).
  * `enabled_providers` 로 다른 provider(무료 티어·사람 로그인)를 닫아, 값을 못 받으면 다른 길로 돌지 않고 실패한다.
  */
 /** lane 블록에 남겨 둘 모델 수(n6). 넘치면 오래된 것부터 뺀다 — 이번 턴 모델은 늘 남는다. */
@@ -213,16 +239,14 @@ function providerLaneConfig(model: string | null, previous: readonly string[] = 
       [name]: {
         npm: '@ai-sdk/anthropic',
         name: 'Harkroom provider lane',
-        options: {
-          // @ai-sdk/anthropic 의 baseURL 은 `/v1` 까지다. lane 의 base URL 은 claude-code(`ANTHROPIC_BASE_URL`)와 같은 뿌리다.
-          baseURL: `{env:${PROVIDER_LANE_OPENCODE_ENV.baseUrl}}/v1`,
-          apiKey: `{env:${PROVIDER_LANE_OPENCODE_ENV.token}}`,
-        },
+        // 주소·키(`options`)는 여기 두지 않는다 — 턴마다 `OPENCODE_CONFIG` 의 턴 파일이 준다(`writeOpencodeLaneTurnConfig`).
         // 목록에 없는 모델은 opencode 가 거절한다(1.18.32 실측 `Model not found`) — 이 턴의 모델에 지난 턴들의 모델을 더해 둔다(n6).
         models: Object.fromEntries(ids.map((x) => [x, { name: x }])),
       },
     },
     enabled_providers: [name],
+    // 자동 업데이트를 끈다(고정 env `OPENCODE_DISABLE_AUTOUPDATE` 와 같은 뜻, 둘 중 하나만 있어도 꺼진다 — 1.18.32 코드).
+    autoupdate: false,
     ...(id ? { model: `${name}/${id}`, small_model: `${name}/${id}` } : {}),
   };
 }
@@ -289,7 +313,7 @@ export async function ensureOpencodeHome(opts: {
    * 전용 제공사 경로로 뜬 러너면 그 턴의 모델(`harkroom-lane/<id>`, 모르면 null). 주면 사람 설정의 provider·모델을
    * 물리지 않고 lane 블록만 쓰며, 사람 로그인(`auth.json`)도 링크하지 않는다(security ⓒ·ⓕ).
    */
-  providerLane?: { model: string | null };
+  providerLane?: { model: string | null; skillsDir?: string };
 }): Promise<string> {
   const { opencodeHome } = opts;
   const app = opts.app ?? OPENCODE_APP;
@@ -301,6 +325,9 @@ export async function ensureOpencodeHome(opts: {
   const inherited: Record<string, unknown> = {};
   if (opts.providerLane) {
     Object.assign(inherited, providerLaneConfig(opts.providerLane.model, await previousLaneModels(opencodeConfigFile(opencodeHome, app))));
+    // 홈 스위치(`PROVIDER_LANE_FIXED_ENV`)는 작업 폴더의 `.claude/skills`·`.agents/skills` 도 끈다 — 러너가 깐 스킬은 그 링크가 아니라
+    // 원본 자리를 `skills.paths` 로 연다(1.18.32 실측: 스위치를 켠 채로 이 자리만 실린다).
+    if (opts.providerLane.skillsDir) inherited.skills = { paths: [opts.providerLane.skillsDir] };
   } else {
     const user = await readUserConfig(app, opts.sourceConfig);
     for (const key of INHERITED_KEYS) if (user[key] !== undefined) inherited[key] = user[key];
@@ -326,7 +353,7 @@ export async function ensureOpencodeHome(opts: {
       ...(opts.providerLane ? {
         [OPENCODE_LANE_AGENT]: {
           mode: 'primary',
-          permission: OPENCODE_LANE_PERMISSION,
+          permission: { ...OPENCODE_LANE_PERMISSION, skill: laneSkillPermission(await runnerSkillNames(opts.providerLane.skillsDir)) },
           ...(typeof inherited.model === 'string' ? { model: inherited.model } : {}),
         },
       } : {}),
@@ -340,6 +367,8 @@ export async function ensureOpencodeHome(opts: {
   const targetDir = join(dirs.XDG_DATA_HOME, app.dir);
   const targetAuth = join(targetDir, 'auth.json');
   if (opts.providerLane) {
+    // 홈 표지 자리는 비워 둔 채로 있어야 한다 — 만들기만 하고 안을 채우지 않는다.
+    await mkdir(opencodeLaneHome(opencodeHome), { recursive: true, mode: 0o700 });
     // lane 에는 사람 로그인을 붙이지 않는다 — 한 자식에 로그인과 lane 키가 같이 들면 #374 가 막던 상황이다(ⓒ).
     // 전에 lane 이 아니던 에이전트라 링크가 남아 있으면 **링크만** 뗀다(사람 파일은 안 건드린다).
     const stat = await lstat(targetAuth).catch(() => null);
