@@ -280,12 +280,15 @@ export const TURN_MCP_DIR = 'turn-mcp';
  * 오퍼레이터가 쓴 MCP 설정을 바탕으로 **그 턴만의** 설정을 쓴다: harkroom 항목의 `env` 칸에 다리 열쇠를 싣는다(`turnKeys.ts`).
  * claude 는 이 칸을 브릿지에만 얹으므로 셸 env 에는 안 보인다. 다른 턴과 열쇠가 달라 파일을 나눠 쓴다.
  */
-export async function writeTurnMcpConfig(stateDir: string, sourcePath: string, turnId: string, bridgeKey: string): Promise<string> {
+export async function writeTurnMcpConfig(
+  stateDir: string, sourcePath: string, turnId: string, bridgeKey: string, opts: { alwaysLoad?: boolean } = {},
+): Promise<string> {
   if (!/^[A-Za-z0-9-]{1,64}$/.test(turnId)) throw new Error(`writeTurnMcpConfig: 턴 id 가 이상하다: ${turnId}`);
   const doc = JSON.parse(await readFile(sourcePath, 'utf8')) as { mcpServers?: Record<string, { env?: Record<string, string> } & Record<string, unknown>> };
   const harkroom = doc.mcpServers?.harkroom;
   if (!harkroom) throw new Error('writeTurnMcpConfig: MCP 설정에 harkroom 이 없다');
-  const out = { ...doc, mcpServers: { ...doc.mcpServers, harkroom: { ...harkroom, env: { ...(harkroom.env ?? {}), [RUNNER_TURN_KEY_ENV.bridge]: bridgeKey } } } };
+  // API 키 연결 턴은 lane MCP 설정과 같이 harkroom 도구를 처음부터 싣는다(`writeLaneMcpConfig` 의 `alwaysLoad` 주석).
+  const out = { ...doc, mcpServers: { ...doc.mcpServers, harkroom: { ...harkroom, ...(opts.alwaysLoad ? { alwaysLoad: true } : {}), env: { ...(harkroom.env ?? {}), [RUNNER_TURN_KEY_ENV.bridge]: bridgeKey } } } };
   const dir = join(stateDir, TURN_MCP_DIR);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, `${turnId}.json`);

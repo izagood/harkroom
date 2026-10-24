@@ -1466,7 +1466,7 @@ export async function runMentionTurn(
   // 열쇠 값의 바늘(K3) — PTY 꼬리·통지·턴 기록에서 가린다. 턴이 끝나면 열쇠는 죽지만 디스크·채팅에 남길 이유는 없다.
   const turnKeyNeedles = turnKeyValues(turnKeys).flatMap((v) => scrubNeedles(Buffer.from(v, 'utf8')));
   const turnMcpConfig = turnKeys && turnKeyDeliveryOf(def.harness) === 'mcp-config-env'
-    ? await writeTurnMcpConfig(deps.stateDir, deps.mcpConfigPath, turnId, turnKeys.bridge)
+    ? await writeTurnMcpConfig(deps.stateDir, deps.mcpConfigPath, turnId, turnKeys.bridge, { alwaysLoad: Boolean(providerEnv) && laneScrubsSubprocessEnv(def.harness) })
     : null;
   // opencode: 다리 열쇠를 턴 설정 파일에 싣는다. API 키 연결 턴은 lane 턴 파일에 더해 쓰고(그 파일은 lane 이 치운다), 그 밖은 새 파일이다.
   const laneTurnFile = providerEnv?.OPENCODE_CONFIG ?? null;
