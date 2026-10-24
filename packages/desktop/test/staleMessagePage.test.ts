@@ -35,7 +35,7 @@ async function app(over: Parameters<typeof fakeApi>[0] = {}) {
   const { makeWs, callbacks } = fakeWsFactory();
   const c = new Controller(api, makeWs);
   await c.start();
-  useAppStore.getState().set({ me: acc('u1', 'jaebin'), messages: { c1: [root, openCard] }, activeChannelId: 'c1' });
+  useAppStore.getState().set({ me: acc('u1', 'alice'), messages: { c1: [root, openCard] }, activeChannelId: 'c1' });
   return { api, c, callbacks };
 }
 

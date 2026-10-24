@@ -2033,20 +2033,21 @@ export class Controller {
       this.store.getState().upsertMessages(target, [m]);
     } catch (e) {
       // 진 경합·권한 없음 — 서버가 참이다. 이미 정해졌으면(409) 그 카드를 다시 받아 맞춘다.
-      await this.resyncAfterConflict(e, target, messageId);
+      await this.resyncAfterConflict(e, messageId);
     }
   }
 
   /**
    * 카드가 409(이미 정해짐)를 받았으면 그 한 줄을 서버에서 다시 받는다(2026-10-24). 화면이 열린 카드를 그리는데
    * 서버는 이미 닫혔다고 하면 화면이 틀린 것이다 — 이벤트를 놓쳤거나 옛 페이지가 덮었다. 다시 받지 않으면 몇 번을
-   * 눌러도 409 만 돌아오고 카드는 열린 채 남는다(그날 세 번 더 눌렀다). 다른 오류는 전처럼 삼킨다.
+   * 눌러도 409 만 돌아오고 카드는 열린 채 남는다(그날 세 번 더 눌렀다). 다른 오류는 전처럼 삼킨다. 넣는 채널은 받은
+   * 행의 것이다 — 부른 쪽 채널이 어긋나도 다른 채널 목록에 섞이지 않는다.
    */
-  private async resyncAfterConflict(e: unknown, channelId: string, messageId: string): Promise<void> {
+  private async resyncAfterConflict(e: unknown, messageId: string): Promise<void> {
     if (!(e instanceof ApiError) || e.status !== 409) return;
     try {
       const fresh = await this.api.message(messageId);
-      this.store.getState().upsertMessages(channelId, [fresh]);
+      this.store.getState().upsertMessages(fresh.channelId, [fresh]);
     } catch {
       // 다시 받기도 실패하면 이벤트·다음 조회가 맞춘다.
     }
@@ -2095,7 +2096,7 @@ export class Controller {
       this.store.getState().upsertMessages(target, [m]);
     } catch (e) {
       // 진 경합(이미 답이 있다)·권한 없음 — 서버가 참이다. 409 면 그 카드를 다시 받아 맞춘다.
-      await this.resyncAfterConflict(e, target, messageId);
+      await this.resyncAfterConflict(e, messageId);
     }
   }
 
