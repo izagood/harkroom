@@ -246,7 +246,7 @@ function TeamFaces({ team, accounts, runnerStates, online, connected }: {
                   ? 'block grayscale brightness-[1.7] contrast-[0.55] opacity-90'
                   : 'block'}
               >
-                <Identity account={accounts[m.accountId]} className={FACE} variant="avatar" />
+                <Identity account={accounts[m.accountId]} className={`${FACE} align-top`} variant="avatar" />
               </span>
             </span>
           </span>
