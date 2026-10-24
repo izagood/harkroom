@@ -36,6 +36,7 @@ import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgent
 import { ensurePiLaneThread, listPiMcpTools, PI_LANE_PROVIDER, piLaneLoginPresent, piSessionFile, readonlyToolList, writePiLaneModels } from './piHome.js';
 import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
+import { readOpencodeTurnState } from './opencodeTurnState.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
 import type { MemoryCache } from './memoryCache.js';
@@ -47,6 +48,11 @@ import { laneWorkspaceViolations } from './laneWorkspaceGuard.js';
 
 /** 정지 직전 "제출 대기" 판정에 쓰는 화면 꼬리 길이(글자). 입력줄과 바닥줄 몇 개면 된다. */
 const SCREEN_TAIL_CHARS = 4_000;
+/**
+ * opencode 에 차례 끝을 묻기 전 화면이 조용해야 하는 시간이자 묻는 간격(`probeOpencodeTurnState`).
+ * 묻는 것이 명령 실행(~0.4초)이라 매 주기 부르지 않는다. 끝난 턴은 이만큼 + 회수 유예 뒤에 접힌다.
+ */
+const OPENCODE_QUIET_MS = 20_000;
 
 /** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
@@ -337,6 +343,13 @@ export interface MentionTurnDeps {
   readTurnState?: typeof readTranscriptTurnState;
   /** 끝낸 턴에 남은 자식 작업 수(기본 `readTranscriptPendingBackground`). 주입 이유는 위와 같다. */
   readPendingBackground?: typeof readTranscriptPendingBackground;
+  /**
+   * opencode 턴의 끝 판정(시험용 주입점, 2026-10-25). 기본은 `opencode export` 에 묻는다
+   * (`opencodeTurnState.ts`). 기록을 읽는 하네스(claude)는 `readTurnState` 를 쓴다.
+   */
+  readOpencodeTurnState?: (sessionId: string | null, sinceMs: number) => Promise<'ended' | 'working' | null>;
+  /** opencode 에 끝을 묻기 전 화면이 조용해야 하는 시간(시험용). 기본 `OPENCODE_QUIET_MS`. */
+  opencodeQuietMs?: number;
   /**
    * **끝났고 자식 작업도 없는** 턴을 거두기까지의 유예(기본 0 — 바로 거둔다, 2026-10-02).
    * `orphanMs` 는 그 밖의 끝(자식이 남았거나 모름·꼬리를 못 읽어 발화로만 판정)에 남는다.
@@ -1552,6 +1565,8 @@ export async function runMentionTurn(
      * (2026-09-14). 0 은 아직 한 바이트도 안 왔다는 뜻이고, 그때는 재지 않는다.
      */
     lastDataAtMs: number;
+    /** opencode 에 끝을 마지막으로 물은 시각(ms). 명령을 띄우는 조회라 주기를 늦춘다(`probeTurnState`). */
+    opencodeAskedAtMs: number;
     /**
      * 화면 꼬리(사람이 읽는 글자, 끝 `SCREEN_TAIL_CHARS` 자). 정지로 접기 직전에 "제출 대기"
      * 화면인지 읽는 데만 쓴다(2026-10-07) — 기록·로그로 내보내지 않는다.
@@ -1614,7 +1629,7 @@ export async function runMentionTurn(
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     apiError: null, canceledBy: null, fencedOut: false, stalled: false, awaitingHuman: false, gateNoticed: false,
-    lastLifeMs: 0, lastDataAtMs: 0, screenTail: '', unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, backgroundSinceMs: null, backgroundCut: null, reclaimGraceMs: 0, tail: null,
+    lastLifeMs: 0, lastDataAtMs: 0, opencodeAskedAtMs: 0, screenTail: '', unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, backgroundSinceMs: null, backgroundCut: null, reclaimGraceMs: 0, tail: null,
     threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, macSeen: new Set(), macNotices: 0, mcpRejectedSeen: new Set(),
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
     gateHeld: null, gateRequeue: null, cancelGateWatch: null,
@@ -1914,6 +1929,44 @@ export async function runMentionTurn(
   };
 
   /**
+   * **opencode 의 차례 끝**(2026-10-25, e2e R1). opencode 는 기록을 우리가 읽지 않아(`transcript.parsed:
+   * false`) 끝 판정이 없었다 — 모델이 말 없이 `stop` 한 턴은 화면이 10분 멈춘 뒤 「하네스 정지 — 사람이
+   * 터미널을 봐야 한다」로 접혔다(실측: opencode 는 13:00:33 에 끝났는데 13:10:35 에 정지 카드). 끝을 알면
+   * claude 와 같은 길을 탄다 — 말한 턴은 회수, 말없이 끝난 턴은 「답 없이 끝났다」.
+   *
+   * `opencode export` 를 띄우는 조회라 3초마다 부르지 않는다: **화면이 `OPENCODE_QUIET_MS` 동안 조용할
+   * 때만**, 그리고 그 간격으로만 묻는다. 일하는 중이면 화면이 흐르므로 거의 묻지 않는다.
+   */
+  // 닫힘 안에서는 `let rec` 의 좁힘이 풀린다 — 이 턴의 워크스페이스를 지금 잡아 둔다.
+  const opencodeCwd = rec.workspaceDir;
+  const probeOpencodeTurnState = async (): Promise<void> => {
+    const now = deps.now?.() ?? Date.now();
+    const quiet = deps.opencodeQuietMs ?? OPENCODE_QUIET_MS;
+    if (end.lastDataAtMs === 0 || now - end.lastDataAtMs < quiet) return;
+    if (now - end.opencodeAskedAtMs < quiet) return;
+    end.opencodeAskedAtMs = now;
+    const read = deps.readOpencodeTurnState ?? ((sessionId: string | null, sinceMs: number) => readOpencodeTurnState({
+      command: harnessCommand(def.harness),
+      // 세션 발견과 같은 env 다 — PATH 도 하네스의 것이어야 명령이 ENOENT 로 죽지 않는다(#864).
+      env: {
+        ...process.env,
+        ...opencodeDirs(deps.opencodeHome),
+        PATH: harnessPath(def.harness, process.env.PATH),
+      } as Record<string, string>,
+      cwd: opencodeCwd,
+      sessionId,
+      sinceMs,
+    }));
+    const state = await read(sessionIdForProbe, turnStartedAtMs).catch(() => null);
+    if (end.exited) return;
+    end.tail = state;
+    end.finished = state === 'ended';
+    // opencode 의 `stop` 은 루프 전체의 끝이다 — 남은 자식 작업을 셀 표면이 없고, 모를 때는 유예한다.
+    end.pending = null;
+    if (end.finished) console.error(`[mentionTurn] ${key}: opencode 가 차례를 끝냈다(export 의 마지막 assistant 완료)`);
+  };
+
+  /**
    * 기록 꼬리를 읽어 `end.finished` 를 갱신한다(2026-09-30). **발화한 뒤에도 계속 본다** —
    * 답을 올린 턴이 아직 도구를 돌리는 중인지가 회수 여부를 정한다.
    *
@@ -1922,6 +1975,7 @@ export async function runMentionTurn(
    * 답한 턴이 영원히 살지 않게 하는 바닥이다.
    */
   const probeTurnState = async (): Promise<void> => {
+    if (usesXdgHome(def.harness)) { await probeOpencodeTurnState(); return; }
     const read = deps.readTurnState ?? readTranscriptTurnState;
     const tail = await read(def.harness, sessionIdForProbe, {
       configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
