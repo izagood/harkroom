@@ -10,6 +10,12 @@ import { defaultDataDir, parseCliArgs, register, runArgs } from '../src/cli.js';
 import { fileSecrets } from '../src/secrets.js';
 
 describe('parseCliArgs', () => {
+  it('hook pretool 의 판정 모드 — --lane(API 키 연결)·--tail(구독형 codex 꼬리 막기)·없음', () => {
+    expect(parseCliArgs(['hook', 'pretool'])).toEqual({ command: 'hook', event: 'pretool' });
+    expect(parseCliArgs(['hook', 'pretool', '--lane', 'W10'])).toEqual({ command: 'hook', event: 'pretool', laneRules: 'W10', laneMode: 'lane' });
+    expect(parseCliArgs(['hook', 'pretool', '--tail', 'W10'])).toEqual({ command: 'hook', event: 'pretool', laneRules: 'W10', laneMode: 'tail' });
+  });
+
   it('register <baseUrl> <code> [--name n] / run [--data-dir d] / mcp-bridge / 나머지는 앱의 daemon 인자', () => {
     expect(parseCliArgs(['register', 'https://example.com/', 'ABCD-1234', '--name', 'lab'])).toEqual({ command: 'register', baseUrl: 'https://example.com', code: 'ABCD-1234', name: 'lab' });
     expect(parseCliArgs(['run', '--data-dir', '/data'])).toEqual({ command: 'run', dataDir: '/data' });

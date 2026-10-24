@@ -34,7 +34,7 @@ export type CliCommand =
   /** `api <연결> <METHOD> <경로> [--data …]` — 인자 검증은 `turnApi.parseApiArgs`. */
   | { command: 'api'; argv: string[] }
   /** `hook pretool` — claude 가 띄운다. stdin 의 hook 입력을 읽는다. */
-  | { command: 'hook'; event: string; laneRules?: string }
+  | { command: 'hook'; event: string; laneRules?: string; laneMode?: 'lane' | 'tail' }
   | { command: 'daemon'; argv: string[] };
 
 function flagValue(argv: readonly string[], flag: string): string | undefined {
@@ -65,7 +65,11 @@ export function parseCliArgs(argv: readonly string[]): CliCommand {
       return { command: 'api', argv: argv.slice(1) };
     case 'hook':
       // `hook pretool --lane <규칙>` — API 키 연결 턴(D1). 값은 러너가 싣는 base64url 이다(`encodeLaneHookRules`).
-      return { command: 'hook', event: argv[1] ?? '', ...(argv[2] === '--lane' ? { laneRules: argv[3] ?? '' } : {}) };
+      // `hook pretool --tail <규칙>` — 구독형 codex 턴의 꼬리 막기(`decideTailHook`). 값은 같은 꼴이다.
+      if (argv[2] === '--lane' || argv[2] === '--tail') {
+        return { command: 'hook', event: argv[1] ?? '', laneRules: argv[3] ?? '', laneMode: argv[2] === '--tail' ? 'tail' : 'lane' };
+      }
+      return { command: 'hook', event: argv[1] ?? '' };
     default:
       return { command: 'daemon', argv: [...argv] };
   }

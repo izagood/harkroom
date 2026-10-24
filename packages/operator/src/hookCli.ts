@@ -121,3 +121,59 @@ export function decideLaneHook(raw: string, rules: readonly string[]): LaneDenyD
   }
   return laneToolListed(rules, tool) ? null : laneDeny();
 }
+
+/** 꼬리 막기 거절 이유 — 승인된 명령의 앞부분만 맞는 꼴이다. 규칙을 넓히지 말고 승인된 그대로 치거나 그 명령 전체를 청하라고 말한다. */
+export const LANE_HOOK_TAIL_REASON =
+  'harkroom: this command contains an owner-approved command but is not exactly it (extra arguments, a wrapper or quoting). Run the approved command exactly as approved, or ask with the harkroom permission.request tool (kind "tool") for this exact full command; once approved it opens from the next turn.';
+
+/** 승인된 셸 규칙의 낱말(정확 규칙은 명령 전체, `:*` 규칙은 접두). */
+function ruleWords(rules: readonly string[]): string[][] {
+  const out: string[][] = [];
+  for (const rule of rules) {
+    const m = /^Bash\((.+)\)$/s.exec(rule);
+    if (!m) continue;
+    let inner = (m[1] ?? '').trim();
+    if (inner.endsWith(':*')) inner = inner.slice(0, -2).trim();
+    const words = inner.split(/\s+/).filter(Boolean);
+    if (words.length) out.push(words);
+  }
+  return out;
+}
+
+/**
+ * 명령 어딘가에 승인 규칙의 낱말이 **이어서** 나오는가 — codex 의 규칙 맞춤보다 **넓게** 본다. 따옴표·역슬래시를 걷고, 셸 글자로
+ * 조각을 나눈 뒤, 조각마다 낱말 열에서 규칙 낱말 열을 찾는다. 그래서 `"gh" pr …`·`FOO=1 gh pr …`·`bash -lc '…'`·`a && <규칙> x` 를
+ * 모두 「규칙을 건드린다」로 본다(codex 가 그 꼴을 어떻게 풀어 맞추는지와 상관없이).
+ */
+export function touchesApprovedRule(rules: readonly string[], command: unknown): boolean {
+  const cmd = typeof command === 'string' ? command : '';
+  if (!cmd.trim()) return false;
+  const patterns = ruleWords(rules);
+  if (!patterns.length) return false;
+  const segments = cmd.replace(/["'\\]/g, '').split(SHELL_META).map((s) => s.split(/\s+/).filter(Boolean));
+  return segments.some((words) => patterns.some((p) => {
+    for (let i = 0; i + p.length <= words.length; i++) {
+      if (p.every((w, j) => words[i + j] === w)) return true;
+    }
+    return false;
+  }));
+}
+
+/**
+ * 구독형 codex 턴의 hook(「꼬리 막기」, codex 권한 동등화 1안). 러너가 승인 규칙을 codex 명령 규칙(`codexRulesFile`)으로 꺼내 두면
+ * 그 규칙의 **앞부분**에 맞는 명령은 codex 가 샌드박스 밖에서 돌린다. 그래서 hook 은:
+ * - 승인 규칙에 (좁게) 맞으면 결정 없음 — 규칙대로 밖에서 돈다
+ * - 승인 규칙의 낱말을 건드리는데 맞지 않으면 deny — 꼬리·감싸기·셸 글자로 밖에 나가는 길을 막는다
+ * - 그 밖(셸이 아닌 도구 포함)은 결정 없음 — 지금처럼 codex 샌드박스 안에서 돈다
+ * 입력을 못 읽으면 deny 다(lane 과 같은 fail-closed).
+ */
+export function decideTailHook(raw: string, rules: readonly string[]): LaneDenyDecision | null {
+  let input: { tool_name?: unknown; tool_input?: { command?: unknown } };
+  try { input = JSON.parse(raw) as typeof input; } catch { return laneDeny(); }
+  if (typeof input.tool_name !== 'string' || !input.tool_name) return laneDeny();
+  if (input.tool_name !== 'Bash') return null;
+  const command = input.tool_input?.command;
+  if (laneBashAllowed(rules, command)) return null;
+  if (!touchesApprovedRule(rules, command)) return null;
+  return laneDeny(typeof command === 'string' && SHELL_META.test(command.trim()) ? LANE_HOOK_SHELL_REASON : LANE_HOOK_TAIL_REASON);
+}
