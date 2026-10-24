@@ -120,6 +120,17 @@ describe('omp 턴 조립', () => {
     workspaceDir: '/work/repo',
   };
 
+  // #1536(opencode lane 채널별 셸 규칙 D2)은 xdg 하네스에만 건다 — omp lane 턴에 `--agent` 가 붙거나 env 에 lane 값이 새면 안 된다.
+  it('lane 턴에 채널 lane 에이전트를 줘도 omp 는 `--agent` 를 안 붙이고, 주소·키 경로는 자식 env 에 없다', () => {
+    const plan = buildTurnCommand({
+      ...base, laneAgent: 'harkroom-lane-ch', providerEnv: { HARKROOM_OMP_LANE_BASE_URL: 'https://gateway.example/v1', HARKROOM_OMP_LANE_KEY_FILE: '/state/lane-turn/k' },
+    } as Parameters<typeof buildTurnCommand>[0]);
+    expect(plan.args).not.toContain('--agent');
+    expect(plan.args).not.toContain('harkroom-lane-ch');
+    expect(JSON.stringify(plan.env)).not.toContain('gateway.example');
+    expect(JSON.stringify(plan.env)).not.toContain('/state/lane-turn/k');
+  });
+
   it('빈 cwd·오버레이·세션 자리·작업 폴더를 argv 로 못박고 첫 턴부터 --resume 이다', () => {
     const plan = buildTurnCommand(base);
     expect(plan.command).toBe('omp');
