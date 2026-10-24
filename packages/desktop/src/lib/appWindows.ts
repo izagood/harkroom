@@ -49,6 +49,11 @@ export function appWindowKey(target: AppWindowTarget): string {
   return `${target.kind}-${id.toLowerCase().replace(/[^a-z0-9-]/g, '')}`;
 }
 
+/** 새 창의 Tauri 창·웹뷰 라벨. Rust `popup_label` 이 키 앞에 `win-` 을 붙여 짓는다(`src-tauri/src/app_windows.rs`). */
+export function appWindowLabel(key: string): string {
+  return `win-${key}`;
+}
+
 /** 열린 창 하나. `win` 은 포털이 그릴 문서를 쥔 같은 출처 `Window` 다. */
 export interface AppWindowEntry {
   key: string;
@@ -179,7 +184,7 @@ function closeNativeWindow(entry: Pick<AppWindowEntry, 'key' | 'win'>): void {
   const fallback = () => { try { entry.win.close(); } catch { /* 이미 닫힘 */ } };
   const invoke = tauriInvoke();
   if (!invoke) { fallback(); return; }
-  invoke('plugin:window|close', { label: `win-${entry.key}` }).catch(fallback);
+  invoke('plugin:window|close', { label: appWindowLabel(entry.key) }).catch(fallback);
 }
 
 // ── 채널 창의 스레드 패널 폭(designer #1174) ────────────────────────────────
@@ -259,7 +264,7 @@ export async function setAppWindowPinned(key: string, pinned: boolean): Promise<
   const invoke = tauriInvoke();
   if (invoke) {
     try {
-      await invoke('plugin:window|set_always_on_top', { label: `win-${key}`, value: pinned });
+      await invoke('plugin:window|set_always_on_top', { label: appWindowLabel(key), value: pinned });
     } catch {
       return; // 창이 사라졌거나 권한이 없다 — 표시를 바꾸지 않는다(된 것처럼 보이면 안 된다).
     }
