@@ -99,6 +99,64 @@ describe('작업 폴더 정리 화면', () => {
     expect(screen.queryByRole('button', { name: /^삭제$|지우기|delete now/i })).toBeNull();
     expect(invoke.mock.calls.map((c) => c[0])).not.toContain('workspace_cleanup_delete');
   });
+  it('주인 모름 골라 넣기: 체크·전체 선택 → 「선택한 n개」 가 하나씩 넣기와 같은 act(list, 누른 사람 id)를 차례로', async () => {
+    const ledger: CleanupLedger = { ...LEDGER, items: [...LEDGER.items,
+      item({ path: '/tmp/orphan2', thread: null, state: 'unowned', pr: null, branch: null }),
+      item({ path: '/tmp/orphan3', thread: null, state: 'unowned', pr: null, branch: null })] };
+    const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+      void args;
+      if (cmd.startsWith('workspace_cleanup_')) return { settings: { enabled: true, graceDays: 7 }, ledger, running: false };
+      throw new Error(`unexpected ${cmd}`);
+    });
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke };
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    const bulk = await screen.findByTestId('cleanup-unowned-list-selected');
+    expect(bulk.textContent).toBe('선택한 0개 삭제 예정에 넣기');
+    expect((bulk as HTMLButtonElement).disabled).toBe(true);
+    const boxes = screen.getAllByTestId('cleanup-unowned-select');
+    fireEvent.click(boxes[0]!); fireEvent.click(boxes[2]!);
+    expect(bulk.textContent).toBe('선택한 2개 삭제 예정에 넣기');
+    fireEvent.click(bulk);
+    await waitFor(() => expect(invoke.mock.calls.filter((c) => c[0] === 'workspace_cleanup_act').map((c) => c[1]))
+      .toEqual([{ path: '/tmp/orphan', action: 'list', by: ME }, { path: '/tmp/orphan3', action: 'list', by: ME }]));
+    // 전체 선택은 주인 모름 전부, 다시 누르면 풀린다
+    fireEvent.click(screen.getByTestId('cleanup-unowned-select-all'));
+    await waitFor(() => expect(screen.getByTestId('cleanup-unowned-list-selected').textContent).toBe('선택한 3개 삭제 예정에 넣기'));
+    fireEvent.click(screen.getByTestId('cleanup-unowned-select-all'));
+    expect(screen.getByTestId('cleanup-unowned-list-selected').textContent).toBe('선택한 0개 삭제 예정에 넣기');
+  });
+  it('지금 정리: 확인 창에 개수·용량, 확인하면 삭제 예정인 것만 deleteNow 로 하나씩 → 「지움 n · 막힘 m」, 주인 모름·보존은 안 보낸다', async () => {
+    let ledger: CleanupLedger = LEDGER;
+    const invoke = vi.fn(async (cmd: string, args?: { path?: string; action?: string }) => {
+      if (cmd === 'workspace_cleanup_act' && args?.action === 'deleteNow') {
+        // /wt/a 는 지워지고(원장에서 빠짐), /wt/run 은 막힌다(그대로 blocked), /wt/warn 은 실패
+        if (args.path === '/wt/warn') throw new Error('boom');
+        ledger = { ...ledger, items: ledger.items.filter((i) => i.path !== '/wt/a') };
+      }
+      if (cmd.startsWith('workspace_cleanup_')) return { settings: { enabled: true, graceDays: 7 }, ledger, running: false };
+      throw new Error(`unexpected ${cmd}`);
+    });
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke };
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    fireEvent.click(await screen.findByTestId('cleanup-now'));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toContain('삭제 예정 3개를 지금 지울까?');
+    expect(dialog.textContent).toContain('54 MB'); // 18MB × 3
+    expect(invoke.mock.calls.some((c) => (c[1] as { action?: string } | undefined)?.action === 'deleteNow')).toBe(false); // 확인 전엔 안 보낸다
+    fireEvent.click(screen.getByRole('button', { name: '지금 지우기' }));
+    await waitFor(() => expect(screen.getByTestId('cleanup-now-result').textContent).toBe('지금 정리: 지움 1 · 막힘 1 · 실패 1'));
+    const sent = invoke.mock.calls.filter((c) => (c[1] as { action?: string } | undefined)?.action === 'deleteNow').map((c) => (c[1] as { path: string }).path);
+    expect(sent.sort()).toEqual(['/wt/a', '/wt/run', '/wt/warn']);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('지금 정리는 자동 정리가 꺼져 있으면 없다', async () => {
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      invoke: vi.fn(async () => ({ settings: { enabled: false, graceDays: 7 }, ledger: LEDGER, running: false })),
+    };
+    render(<WorkspaceCleanupSettings now={NOW} />);
+    await screen.findAllByTestId('cleanup-row');
+    expect(screen.queryByTestId('cleanup-now')).toBeNull();
+  });
   it('보존 묶음에 누가·언제 보존했는지', async () => {
     tauri();
     render(<WorkspaceCleanupSettings now={NOW} />);

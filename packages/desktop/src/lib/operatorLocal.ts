@@ -151,7 +151,7 @@ export function setWorkspaceCleanupSettings(next: { enabled?: boolean; graceDays
 }
 
 /** `by` 는 누른 사람의 계정 id 다(화면의 「누가 보존」). */
-export function actWorkspaceCleanup(path: string, action: 'keep' | 'unkeep' | 'list', by: string): Promise<WorkspaceCleanupView> {
+export function actWorkspaceCleanup(path: string, action: 'keep' | 'unkeep' | 'list' | 'deleteNow', by: string): Promise<WorkspaceCleanupView> {
   return call('workspace_cleanup_act', { path, action, by }) as Promise<WorkspaceCleanupView>;
 }
 
