@@ -166,3 +166,8 @@ export async function ensureNameLink(
     // 위 주석: 없어도 러너는 돈다.
   }
 }
+
+/** 러너가 승인된 스킬을 까는 자리(`syncSkills`). 하네스의 스킬 폴더는 이 아래를 가리키는 링크다. */
+export function runnerSkillsDir(stateDir: string): string {
+  return join(stateDir, 'skills');
+}

@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ensureOpencodeHome, opencodeConfigFile, opencodeDirs, opencodeLaneModelMissing, OPENCODE_LANE_AGENT, OPENCODE_LANE_PERMISSION, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
-  opencodeLaneHome,
+  opencodeLaneHome, laneSkillPermission,
 } from '../src/opencodeHome.js';
 import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
 
@@ -201,6 +201,26 @@ describe('lane 러너의 opencode 홈', () => {
     expect(cfg.mcp.gmail).toBeUndefined();
     // 사람 로그인을 링크하지 않는다(ⓒ).
     expect(await lstat(join(opencodeDirs(f.home).XDG_DATA_HOME, 'opencode', 'auth.json')).catch(() => null)).toBeNull();
+  });
+
+  // 홈 스위치는 작업 폴더의 `.claude/skills`·`.agents/skills` 도 끈다 — 러너가 깐 스킬은 원본 자리를 `skills.paths` 로 열고, 그 이름만 허락한다(security c).
+  it('lane 은 러너 스킬 자리만 `skills.paths` 로 열고, 권한은 그 이름만 allow 다', async () => {
+    const f = await fixture();
+    const skillsDir = join(f.home, '..', 'runner-skills');
+    for (const [slug, name] of [['a', 'deploy-check'], ['b', '"quoted-name"'], ['c', 'bad*name']]) {
+      await mkdir(join(skillsDir, slug!), { recursive: true });
+      await writeFile(join(skillsDir, slug!, 'SKILL.md'), `---\nname: ${name}\ndescription: x\n---\nbody\n`);
+    }
+    await ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: 'harkroom-lane/example-model', skillsDir },
+    });
+    const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    expect(cfg.skills).toEqual({ paths: [skillsDir] });
+    expect(cfg.agent[OPENCODE_LANE_AGENT].permission.skill).toEqual({ '*': 'deny', 'deploy-check': 'allow', 'quoted-name': 'allow' });
+    // 다른 권한 칸은 그대로다.
+    expect({ ...cfg.agent[OPENCODE_LANE_AGENT].permission, skill: undefined }).toEqual({ ...OPENCODE_LANE_PERMISSION, skill: undefined });
+    expect(laneSkillPermission([])).toEqual({ '*': 'deny' });
   });
 
   // 1.18.32 실측: 규칙은 뒤의 것이 이긴다 · 쓰기 판정 경로는 git 뿌리 기준이라 앞에 무엇이 붙을 수 있다.

@@ -33,7 +33,7 @@ import { createMemoryCache } from './memoryCache.js';
 import { runPtyTurn } from './pty.js';
 import { avcsGuideFlag } from './avcsGuideFlag.js';
 import { SessionStore } from './sessions.js';
-import { ensureNameLink, resolveAgentStateDir } from './stateDir.js';
+import { ensureNameLink, resolveAgentStateDir, runnerSkillsDir } from './stateDir.js';
 import { assertHarnessContract, buildTurnCommand, harnessPath, readExtraMcpServers, readMcpServers, writeSystemPromptFile, type McpServerEntry } from './turn.js';
 import { BG_POLL_INTERVAL_MS, BG_SYSTEM_PROMPT, BgExecutor, writeBgMcpConfig } from './bgExecutor.js';
 import { createStoppableSleep } from './stoppableSleep.js';
@@ -438,7 +438,8 @@ const readTurnMcp = async (harness: AgentHarness, model?: string | null): Promis
   const app = xdgAppFor(harness);
   if (usesXdgHome(harness) && app) {
     await ensureOpencodeHome({
-      opencodeHome: opencodeHomeDir, mcpServers: all, app, ...(providerLaneOn ? { providerLane: { model: model ?? null } } : {}),
+      opencodeHome: opencodeHomeDir, mcpServers: all, app,
+      ...(providerLaneOn ? { providerLane: { model: model ?? null, skillsDir: runnerSkillsDir(agentStateDir) } } : {}),
     });
   }
   if (usesPiHome(harness)) await ensurePiHome({ piHome: piHomeDir, mcpServers: all });
