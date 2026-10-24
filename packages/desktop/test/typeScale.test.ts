@@ -274,8 +274,8 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
   //   때문이다 — 근거는 `TeamGrid.tsx` 의 `FACE` 주석에 길게 적혀 있다.
   {
     file: 'components/settings/TeamGrid.tsx',
-    contains: "const FACE = 'h-11 w-11 text-[15px]';",
-    why: '팀 카드의 겹친 얼굴(h-11) 안 머리글자 — 44px 원의 지름에서 따라 나온 값이다',
+    contains: "const FACE = 'h-[40px] w-[40px] text-[15px]';",
+    why: '팀 카드의 겹친 얼굴(40px 고정) 안 머리글자 — 원의 지름에서 따라 나온 값이다',
   },
   {
     file: 'components/settings/TeamGrid.tsx',

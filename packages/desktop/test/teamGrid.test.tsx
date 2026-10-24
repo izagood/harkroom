@@ -120,15 +120,15 @@ describe('팀 카드 — 겹침 순서가 고장난 것부터다', () => {
    */
   it('실패 → 멈춤 → 물러남 → 도는 중 순으로 왼쪽에 선다', () => {
     grid({ teams: [five()], runnerStates: states, online: ['ok1'] });
-    // 넷까지만 서고 다섯째는 `+1` 이다 — 그래서 **잘리는 것이 `ok` 여야 한다.**
-    expect(facesOf('release').map((f) => f.face)).toEqual(['failed', 'stopped', 'stopped', 'retiring']);
+    // 칸은 넷이고 `+N` 도 한 칸이다 — 얼굴 셋 + `+2`. **잘리는 것은 덜 나쁜 쪽이어야 한다.**
+    expect(facesOf('release').map((f) => f.face)).toEqual(['failed', 'stopped', 'stopped']);
     /*
       `e-unknown` 은 `connected: true` 라 `stopped` 이고, `c-stopped` 와 같은 등급이다.
       같은 등급 안에서는 **이름순**이므로 `c-stopped` 가 `e-unknown` 보다 왼쪽이다
       (`sortTeamFaces` 의 그 절: 격자의 가나다 고정이 두 번째 키로 남는다).
     */
     expect(facesOf('release').map((f) => f.handle))
-      .toEqual(['b-broken', 'c-stopped', 'e-unknown', 'd-retiring']);
+      .toEqual(['b-broken', 'c-stopped', 'e-unknown']);
   });
 
   /**
@@ -139,7 +139,7 @@ describe('팀 카드 — 겹침 순서가 고장난 것부터다', () => {
     grid({ teams: [five()], runnerStates: states, online: ['ok1'] });
     // 유일한 `ok`(`a-fine`)가 잘렸다.
     expect(screen.queryByTestId('team-face-release-a-fine')).toBeNull();
-    expect(screen.getByTestId('team-overflow-release').textContent).toBe('+1');
+    expect(screen.getByTestId('team-overflow-release').textContent).toBe('+2');
     // 실패는 남았다 — 이름순이면 `a-fine` 이 첫 칸이고 `b-broken` 이 둘째라 둘 다 남지만,
     // 여섯째부터는 실패가 잘린다. 그 경우를 아래에서 잰다.
   });
@@ -158,7 +158,7 @@ describe('팀 카드 — 겹침 순서가 고장난 것부터다', () => {
     });
     expect(screen.getByTestId('team-face-big-zz-broken')).toBeTruthy();
     expect(facesOf('big')[0]!.face).toBe('failed');
-    expect(screen.getByTestId('team-overflow-big').textContent).toBe('+2');
+    expect(screen.getByTestId('team-overflow-big').textContent).toBe('+3');
   });
 
   /**
@@ -173,7 +173,8 @@ describe('팀 카드 — 겹침 순서가 고장난 것부터다', () => {
   it('왼쪽 얼굴이 위로 겹친다 — z 가 왼쪽부터 크다', () => {
     grid({ teams: [five()], runnerStates: states, online: ['ok1'] });
     const z = facesOf('release').map((f) => f.z);
-    expect(z).toEqual([4, 3, 2, 1]);
+    // 넘치는 팀이라 얼굴은 셋이다(`+N` 이 넷째 칸).
+    expect(z).toEqual([4, 3, 2]);
     // 쌓임이 실제로 서려면 `relative` 가 함께 있어야 한다 — `static` 에서 `z-index` 는
     // 아무 일도 하지 않는다.
     expect(screen.getByTestId('team-face-release-b-broken').className).toContain('relative');
@@ -421,7 +422,7 @@ describe('팀 카드 — 틀이 에이전트 카드와 같다', () => {
    * **얼굴이 88px 자리의 절반이다.** 44px 이 문서의 값이고(*"44px 얼굴 넷까지"*), 그것이
    * 에이전트 카드의 얼굴(88px)의 정확히 절반인 것이 두 카드가 나란히 서는 근거다.
    */
-  it('겹친 얼굴이 44px 이고 넷까지 선다', () => {
+  it('겹친 얼굴이 40px 고정이고 +N 까지 넷 칸이다', () => {
     grid({
       teams: [team('release', [
         member('a1', 'a'), member('a2', 'b'), member('a3', 'c'),
@@ -430,14 +431,40 @@ describe('팀 카드 — 틀이 에이전트 카드와 같다', () => {
       online: ['a1', 'a2', 'a3', 'a4', 'a5'],
     });
     const faces = screen.getByTestId('team-faces-release');
-    expect(faces.querySelectorAll('[data-face]').length).toBe(4);
-    // `h-11` = 44px. 에이전트 카드의 `h-[88px]` 이 새면 카드가 트랙을 넘친다.
-    expect(faces.querySelector('.h-11')).toBeTruthy();
+    expect(faces.querySelectorAll('[data-face]').length).toBe(3);
+    expect(screen.getByTestId('team-overflow-release').textContent).toBe('+2');
+    // 고정 px — `h-11` 은 `--spacing` 을 따라 49px 가 되어 고정 폭 카드를 넘쳤다(10-25).
+    expect(faces.querySelector('.h-\\[40px\\]')).toBeTruthy();
+    expect(faces.querySelector('.h-11')).toBeNull();
     expect(faces.querySelector('.h-\\[88px\\]')).toBeNull();
     // 겹침과 링은 **선례의 그것**이다(`ThreadParticipants`·`MessageItem`) — `#471`.
-    expect(faces.className).toContain('-space-x-1');
+    expect(faces.className).toContain('-space-x-[10px]');
     expect(screen.getByTestId('team-face-release-a').className).toContain('rounded-avatar');
     expect(screen.getByTestId('team-face-release-a').className).toContain('ring-1');
+  });
+
+  /** 넷이면 `+N` 없이 넷이 다 선다 — 칸이 넷이므로 접을 까닭이 없다. */
+  it('넷짜리 팀은 얼굴 넷, +N 없음', () => {
+    grid({
+      teams: [team('four', [member('a1', 'a'), member('a2', 'b'), member('a3', 'c'), member('a4', 'd')], 4)],
+      online: ['a1', 'a2', 'a3', 'a4'],
+    });
+    expect(screen.getByTestId('team-faces-four').querySelectorAll('[data-face]').length).toBe(4);
+    expect(screen.queryByTestId('team-overflow-four')).toBeNull();
+  });
+
+  /** 얼굴 수 + `+N` = 카드 아래 `팀 · N명` 의 N. 명단이 수보다 짧게 와도 `+N` 이 차이를 받는다. */
+  it('얼굴 수와 +N 의 합이 memberCount 와 같다', () => {
+    grid({
+      teams: [team('nine', [
+        member('a1', 'a'), member('a2', 'b'), member('a3', 'c'), member('a4', 'd'),
+        member('a5', 'e'), member('a6', 'f'), member('a7', 'g'), member('a8', 'h'),
+      ], 9)],
+      online: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8'],
+    });
+    const faces = screen.getByTestId('team-faces-nine').querySelectorAll('[data-face]').length;
+    const rest = Number(screen.getByTestId('team-overflow-nine').textContent!.slice(1));
+    expect(faces + rest).toBe(9);
   });
 
   /** 검색·`+`·빈 상태의 어휘도 같다 — 탭으로 갈린 형제이므로 여기서 갈리면 화면이 흔들린다. */
