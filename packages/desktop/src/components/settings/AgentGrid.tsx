@@ -1050,7 +1050,9 @@ export function AgentGrid<T extends AgentCardSubject>({
                         ? 'block grayscale-[0.5] brightness-[1.35] contrast-[0.78] opacity-95'
                         : 'block'}
                   >
-                    <Identity account={a} className={`${s.face} ${s.faceText}`} variant="avatar" />
+                    {/* `align-top`: 사진 얼굴은 기준선이 아래 끝이라 inline-flex 가 줄 상자에 글자 아래 여백을
+                        더 받는다 — 사진 카드만 몇 px 아래로 처져 이웃 카드와 줄이 어긋났다(10-25). */}
+                    <Identity account={a} className={`${s.face} ${s.faceText} align-top`} variant="avatar" />
                   </span>
                 </span>
                 {/*

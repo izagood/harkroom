@@ -1,20 +1,42 @@
 import type { FaceState } from './faceState';
 
 /**
- * 팀 카드의 얼굴 자리에 **몇 개를 세우는가**. 나머지는 `+N` 으로 접는다
- * (`docs/desktop-agent-cards.html` 4단계: *"44px 얼굴 넷까지 겹쳐 세우고 나머지는 `+N`"*).
+ * 팀 카드의 얼굴 줄이 차지하는 **칸 수 — `+N` 칸까지 포함한다**
+ * (`docs/desktop-agent-cards.html` 4단계: *"얼굴 넷까지 겹쳐 세우고 나머지는 `+N`"*).
  *
- * 넷인 것은 목업이 넷이어서가 아니라 **88px 자리에 44px 얼굴이 들어가는 수**다. 겹침이
- * `-space-x-1`(4px)이므로 넷이면 44 + 40×3 = 164px 이고, 그것이 설정 격자의 트랙 폭
- * (`PLACE.settings.card` = 164px)에서 상자 여백 26px 을 뺀 138px 을 이미 넘는다 — 즉
- * 넷은 상한이 아니라 **이미 카드가 감당하는 최대치**다. 다섯을 세우면 마지막 얼굴이
- * 상자를 넘고, `+N` 칸까지 더하면 그 줄이 잘린다.
+ * 앞 판은 얼굴 넷을 세우고 그 뒤에 `+N` 을 **다섯째 칸**으로 붙였다. 그리고 얼굴 크기가
+ * `h-11` 이라 `--spacing`(×1.111)을 따라 49px 로 커졌다 — 고정 164px 카드(안쪽 ≈135px)에
+ * 다섯 칸 ≈227px 가 들어가 줄이 좌우로 45px 씩 옆 카드 위로 넘쳤다(10-25 신고).
+ *
+ * 그래서 이제 칸은 **넷이 상한이고 `+N` 도 한 칸**이다: 넷 이하면 전부 얼굴, 넘으면 얼굴
+ * 셋 + `+N`. 칸 크기·겹침은 `TEAM_FACE_PX`·`TEAM_FACE_OVERLAP_PX` 고정 px 라 척도와 무관하다.
+ * 넷 칸 폭 = 40 + 30×3 = 130px(+링 2px) ≤ 카드 안쪽이다 — `teamFaces.test.ts` 가 그 산수를 잰다.
  *
  * `MessageItem` 의 `FACE_SLOTS`(셋)와 값이 다른 것은 자리가 다르기 때문이다 — 그쪽은
  * 답장 줄의 16px 얼굴이고 이쪽은 카드의 얼굴 자리다. 같은 이름을 공유하지 않는 이유가
  * 그것이다: 한 상수로 묶으면 한쪽 자리의 폭이 바뀔 때 다른 쪽이 함께 끌려간다.
  */
 export const TEAM_FACE_SLOTS = 4;
+
+/** 겹친 얼굴 한 칸의 지름(px). `--spacing` 배수가 아니라 고정값이다 — 카드 폭이 고정이라서다. */
+export const TEAM_FACE_PX = 40;
+
+/** 이웃 칸과 겹치는 폭(px). */
+export const TEAM_FACE_OVERLAP_PX = 10;
+
+/**
+ * 얼굴 줄을 **몇 개 세우고 몇을 `+N` 으로 접는가**.
+ *
+ * `total` 은 팀의 `memberCount` 다 — 카드 아래 `팀 · N명` 과 같은 출처라, 세운 얼굴 수와
+ * `+N` 을 더하면 언제나 그 줄의 수와 맞는다. 명단이 수보다 짧게 와도(왕복 사이 변경)
+ * `+N` 이 차이를 받는다.
+ */
+export function splitTeamFaces<T>(ordered: T[], total = ordered.length): { shown: T[]; rest: number } {
+  const count = Math.max(total, ordered.length);
+  const room = count > TEAM_FACE_SLOTS ? TEAM_FACE_SLOTS - 1 : TEAM_FACE_SLOTS;
+  const shown = ordered.slice(0, room);
+  return { shown, rest: count - shown.length };
+}
 
 /**
  * **겹치는 순서 — 고장난 것부터**(`docs/desktop-agent-cards.html` 4단계).

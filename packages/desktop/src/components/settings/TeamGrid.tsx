@@ -8,7 +8,7 @@ import type { RunnerState } from '../../lib/runnerLauncher';
 import { faceState, isFaceGreyed } from '../../lib/faceState';
 // 겹침 순서는 순수 판정이라 컴포넌트 밖이다. 왜 그것이 함수여야 하는지(그리고 왜 이름순이
 // 아닌지)가 그 모듈 주석에 있다.
-import { TEAM_FACE_SLOTS, sortTeamFaces } from '../../lib/teamFaces';
+import { TEAM_FACE_SLOTS, sortTeamFaces, splitTeamFaces } from '../../lib/teamFaces';
 // 번역기를 `t` 로 안 받는다 — 아래 격자가 팀 하나를 `t` 로 순회한다(`shown.map((t) => …)`).
 // 같은 이름을 쓰면 그 안에서 번역기가 가려지고, 가려진 채로 컴파일이 통과할 수 있다.
 import { useT } from '../../i18n/useT';
@@ -103,6 +103,8 @@ const FRAME = {
 
 /**
  * 겹친 얼굴 하나의 크기. **44px 이고 그 값이 문서에서 온다**(4단계: *"44px 얼굴 넷까지"*).
+ * (10-25: 지금은 **40px 고정**이다 — 칸 넷이 카드 안에 들어가는 크기. 근거는 `TEAM_FACE_SLOTS` 주석.
+ *  아래 44px 산수는 그 앞 판의 것이다.)
  *
  * 88px 얼굴 자리의 **절반**인 것이 요점이다 — 에이전트 카드의 얼굴 한 개가 88px 이고
  * (`PLACE.settings.face`), 팀 카드는 같은 자리에 절반 크기를 겹쳐 세운다. 그래서 두 카드가
@@ -126,7 +128,9 @@ const FRAME = {
  * 된 지금은 임의값 자체가 위반이라, 이 줄은 `test/typeScale.test.ts` 의 `ALLOWED` 에
  * 상자 글리프로 등록돼 있다.
  */
-const FACE = 'h-11 w-11 text-[15px]';
+// `h-11` 이던 것을 고정 px 로 바꿨다 — `h-11` 은 `--spacing` 을 따라 49px 가 되어 고정 폭 카드를
+// 넘쳤다(`TEAM_FACE_SLOTS` 주석). 값은 `TEAM_FACE_PX`(40)와 같다.
+const FACE = 'h-[40px] w-[40px] text-[15px]';
 
 /**
  * 팀 카드 하나의 얼굴 묶음. 넷까지 겹치고 나머지는 `+N` 이다.
@@ -186,8 +190,7 @@ function TeamFaces({ team, accounts, runnerStates, online, connected }: {
     team.members,
     (m) => faceState(m.accountId, runnerStates, online, connected),
   );
-  const shown = ordered.slice(0, TEAM_FACE_SLOTS);
-  const rest = ordered.length - shown.length;
+  const { shown, rest } = splitTeamFaces(ordered, team.memberCount);
 
   return (
     /*
@@ -200,7 +203,7 @@ function TeamFaces({ team, accounts, runnerStates, online, connected }: {
     <span
       data-testid={`team-faces-${team.name}`}
       data-members={String(team.members.length)}
-      className={`flex ${team.members.length === 0 ? FACE : ''} -space-x-1 items-center`}
+      className={`flex ${team.members.length === 0 ? FACE : ''} -space-x-[10px] max-w-full items-center`}
       aria-hidden="true"
     >
       {shown.map((m, i) => {
@@ -243,7 +246,7 @@ function TeamFaces({ team, accounts, runnerStates, online, connected }: {
                   ? 'block grayscale brightness-[1.7] contrast-[0.55] opacity-90'
                   : 'block'}
               >
-                <Identity account={accounts[m.accountId]} className={FACE} variant="avatar" />
+                <Identity account={accounts[m.accountId]} className={`${FACE} align-top`} variant="avatar" />
               </span>
             </span>
           </span>

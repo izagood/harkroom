@@ -6,7 +6,9 @@
 // 떼어 두면 이 파일이 순서를 직접 잰다 — 특히 화면에 안 서는 다섯째·여섯째의 상대 순서까지.
 import { describe, it, expect } from 'vitest';
 import type { FaceState } from '../src/lib/faceState';
-import { TEAM_FACE_SLOTS, sortTeamFaces } from '../src/lib/teamFaces';
+import {
+  TEAM_FACE_OVERLAP_PX, TEAM_FACE_PX, TEAM_FACE_SLOTS, sortTeamFaces, splitTeamFaces,
+} from '../src/lib/teamFaces';
 
 /** 얼굴 상태를 `handle` 에 실어 넘긴다 — 시험이 러너 상태를 흉내낼 필요가 없다. */
 const m = (handle: string, face: FaceState) => ({ handle, face });
@@ -68,15 +70,35 @@ describe('sortTeamFaces — 고장난 것부터 왼쪽이다', () => {
       m('a1', 'ok'), m('a2', 'ok'), m('a3', 'ok'), m('a4', 'ok'), m('a5', 'ok'),
       m('zz', 'failed'),
     ];
-    const shown = sortTeamFaces(six, (x) => x.face).slice(0, TEAM_FACE_SLOTS);
+    const { shown } = splitTeamFaces(sortTeamFaces(six, (x) => x.face));
     // 이름이 마지막인 유일한 고장이 **살아남는다.** 이름순이면 `+2` 안으로 사라졌다.
     expect(shown.map((x) => x.handle)).toContain('zz');
     expect(shown[0]!.handle).toBe('zz');
-    expect(shown.length).toBe(TEAM_FACE_SLOTS);
+    // `+N` 도 한 칸이므로 넘치는 팀은 얼굴이 하나 적다.
+    expect(shown.length).toBe(TEAM_FACE_SLOTS - 1);
   });
 
   it('빈 명단과 하나짜리도 그대로 통과한다', () => {
     expect(sorted([])).toEqual([]);
     expect(sorted([m('solo', 'stopped')])).toEqual(['solo']);
+  });
+});
+
+describe('splitTeamFaces — 칸 넷(+N 포함)', () => {
+  it('넷 이하는 전부, 넘으면 셋 + 나머지', () => {
+    expect(splitTeamFaces([1, 2, 3, 4])).toEqual({ shown: [1, 2, 3, 4], rest: 0 });
+    expect(splitTeamFaces([1, 2, 3, 4, 5])).toEqual({ shown: [1, 2, 3], rest: 2 });
+    // 명단이 memberCount 보다 짧아도 합은 memberCount 다.
+    expect(splitTeamFaces([1, 2, 3, 4], 9)).toEqual({ shown: [1, 2, 3], rest: 6 });
+  });
+
+  /**
+   * 카드는 `w-[164px]`·`p-3`·테두리 1px 이고 `p-3` 은 `--spacing`(0.278rem ≈ 4.45px)×3 이다 →
+   * 안쪽 ≈ 164 − 26.7 − 2 = 135.3px. 칸 넷 + 양끝 링(1px×2)이 그 안에 들어가야 한다.
+   */
+  it('칸 넷의 폭이 카드 안쪽에 들어간다', () => {
+    const inner = 164 - 2 * 3 * 0.278 * 16 - 2;
+    const row = TEAM_FACE_PX + (TEAM_FACE_SLOTS - 1) * (TEAM_FACE_PX - TEAM_FACE_OVERLAP_PX) + 2;
+    expect(row).toBeLessThanOrEqual(inner);
   });
 });
