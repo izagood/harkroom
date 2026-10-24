@@ -355,6 +355,14 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
       expect(text.indexOf('정리 신호')).toBeLessThan(text.indexOf('- mem/m0'));
     });
 
+    it('BG5: 서버가 정리를 백그라운드 회차로 맡았으면(bgCleanup) 정리 신호를 싣지 않는다 — 아니면 그대로', async () => {
+      const off = await turn({ core: 'x'.repeat(2600), slugs: many(179) }, true);
+      expect(off.turn).toContain('정리 신호');
+      const on = await turn({ core: 'x'.repeat(2600), slugs: many(179), bgCleanup: true }, true);
+      expect(on.turn).not.toContain('정리 신호');
+      expect(on.turn).toContain('- mem/m0'); // 목록은 그대로다
+    });
+
     it('core 2,600자부터, journal 56개부터', async () => {
       const core = await turn({ core: 'x'.repeat(2600), slugs: ['mem/a'] }, true);
       expect(core.turn).toContain('- core 2,600/3,000자');

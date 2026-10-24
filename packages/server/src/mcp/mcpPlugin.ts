@@ -79,7 +79,7 @@ import { downscaleImage, DOWNSCALE_READ_MAX_BYTES, tryAcquireDownscaleSlot } fro
 import { isValidSlug, kindRefusal, looksLikeThreadState, MEMORY_SLUG_HINT, THREAD_NOTE_HINT } from '../services/memory.js';
 import { getThreadNote, MAX_THREAD_NOTE_LENGTH, setThreadNote, threadRootChannel } from '../services/threadNote.js';
 import {
-  BG_MAX_WRITES, claimBgJob, completeBgJob, getBgJob, recordBgChange, releaseBgWrite, reserveBgWrite,
+  BG_MAX_WRITES, bgCleanupOn, claimBgJob, completeBgJob, getBgJob, recordBgChange, releaseBgWrite, reserveBgWrite,
 } from '../services/bgJobs.js';
 import { withWriteOrigin } from '../services/writeOrigin.js';
 import { listGrantedSecrets } from '../services/secretAccess.js';
@@ -103,7 +103,7 @@ const MODEL_ARG = z.string().min(1).max(MODEL_ID_MAX).optional();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** 백그라운드 회차가 쓸 수 있는 도구(설계 5절). 이 밖은 서버가 거절한다. */
 const BG_ALLOWED_TOOLS = new Set([
-  'memory.get', 'memory.list', 'memory.search', 'memory.set', 'memory.archive', 'memory.merge',
+  'memory.get', 'memory.list', 'memory.search', 'memory.audit', 'memory.set', 'memory.archive', 'memory.merge',
   'thread.note', 'message.read', 'bg.complete',
 ]);
 /** 그중 기억을 바꾸는 것 — 회차당 상한(20)을 센다. */
@@ -1713,8 +1713,10 @@ function buildMcpServer(
     // rev 를 함께 준다 — 러너가 이 값을 자기 사본과 대 보고, 같으면 core 를 다시 받지 않는다
     // (services/memory.ts::memoryRev). 옛 러너는 모르는 필드를 무시한다.
     // entries 는 slug 와 한 줄 요약(069) — 러너가 목록에 같이 싣는다. slugs 는 옛 러너용으로 둔다.
-    const [entries, rev] = await Promise.all([listMemoryIndex(pool, account.id), memoryRev(pool, account.id)]);
-    return jsonResult({ slugs: entries.map((e) => e.slug), entries, rev });
+    // bgCleanup(BG5): 정리를 백그라운드 회차가 맡는가(전역 스위치 켜짐 + 소유자 토글 켬). 러너는 참일 때만 턴 프롬프트의
+    // 정리 신호를 뺀다 — 스위치가 꺼져 있으면 지금처럼 신호가 남아 누군가는 정리한다.
+    const [entries, rev, bgCleanup] = await Promise.all([listMemoryIndex(pool, account.id), memoryRev(pool, account.id), bgCleanupOn(pool, account.id)]);
+    return jsonResult({ slugs: entries.map((e) => e.slug), entries, rev, ...(bgCleanup ? { bgCleanup: true } : {}) });
   });
 
   server.registerTool('memory.get', {

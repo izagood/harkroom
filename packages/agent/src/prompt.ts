@@ -532,6 +532,8 @@ export type MemoryContext =
     descriptions?: Record<string, string>;
     /** slug → 종류(서버 070). topic 이 아닌 것만 담긴다. journal 은 목록에서 빠진다. */
     kinds?: Record<string, string>;
+    /** 서버가 정리를 백그라운드 회차로 맡았다(BG5) — 참이면 턴 프롬프트의 정리 신호를 뺀다. 옛 서버·스위치 꺼짐이면 없다. */
+    bgCleanup?: boolean;
     /**
      * 서버를 못 읽어 러너 사본(`memoryCache.ts`)으로 돈다 — 그 사본을 받은 시각. 없는 것이
      * 기억 없이 도는 것보다 낫지만, 에이전트가 **그 사실을 알아야** 낡은 값을 새것처럼
