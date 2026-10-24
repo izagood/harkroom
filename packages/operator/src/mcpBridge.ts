@@ -80,7 +80,8 @@ import {
 
 /** `cause` — 이 브릿지를 띄운 턴의 원인 메시지(`RUNNER_TURN_CAUSE_ENV`). 모든 요청에 싣는다. */
 export interface BridgeLink {
-  socketPath: string; runnerId: string; secret: string; cause?: string | null;
+  /** 자격은 둘 중 하나다 — 러너 링크 `secret`, 또는 그 턴의 `turnKey`(턴 열쇠, `turnKeys.ts`). 둘 다 있으면 턴 열쇠로 붙는다. */
+  socketPath: string; runnerId: string; secret?: string | null; turnKey?: string | null; cause?: string | null;
   /** 이 브릿지를 띄운 턴의 id(`RUNNER_TURN_ID_ENV`). 모든 요청에 싣는다 — 서버가 발화에 적는다. */
   turnId?: string | null;
   /** 하네스가 이 브릿지를 띄운 작업 디렉터리 — `attachment.upload` 의 경로 기준(`turnUploads.ts`). */
@@ -92,7 +93,7 @@ export interface BridgeLink {
    */
   onToolsListed?: () => void;
   /** hello 의 kind — 하네스의 MCP 브릿지는 `bridge`, PreToolUse hook 은 `hook`(H③b). */
-  kind?: 'bridge' | 'hook';
+  kind?: 'bridge' | 'hook' | 'wrapper';
 }
 
 export interface BridgeStdio { stdin: Readable; stdout: Writable; stderr: Writable }
@@ -244,7 +245,7 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
         // hello 가 **첫 줄**이어야 한다. 그 뒤에 큐에 쌓인 줄을 순서대로 흘린다.
         const hello: RunnerHello = {
           type: 'hello', version: RUNNER_LINK_PROTOCOL_VERSION, role: 'runner',
-          runnerId: link.runnerId, secret: link.secret, kind: link.kind ?? 'bridge',
+          runnerId: link.runnerId, ...(link.turnKey ? { turnKey: link.turnKey } : { secret: link.secret ?? '' }), kind: link.kind ?? 'bridge',
         };
         s.write(`${JSON.stringify(hello)}\n`);
         for (const entry of queued.splice(0)) s.write(entry.line);

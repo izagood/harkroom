@@ -17,10 +17,17 @@ const session = {
 describe('runnerLink — hello', () => {
   it('runner 역할·runnerId·secret 이 있어야 hello 다', () => {
     expect(checkRunnerHello({ type: 'hello', version: RUNNER_LINK_PROTOCOL_VERSION, role: 'runner', runnerId: 'r', secret: 's' }))
-      .toEqual({ runnerId: 'r', secret: 's', kind: 'relay' });
+      .toEqual({ runnerId: 'r', secret: 's', turnKey: null, kind: 'relay' });
     expect(checkRunnerHello({ type: 'hello', version: 1, role: 'app', token: 't' })).toBeNull();
     expect(checkRunnerHello({ type: 'hello', version: 99, role: 'runner', runnerId: 'r', secret: 's' })).toBeNull();
     expect(checkRunnerHello({ type: 'hello', version: 1, role: 'runner', runnerId: 'r' })).toBeNull();
+  });
+
+  it('턴 열쇠로도 hello 가 된다 — 자격은 secret·turnKey 중 하나만, 모르는 kind 는 거절', () => {
+    const base = { type: 'hello', version: RUNNER_LINK_PROTOCOL_VERSION, role: 'runner', runnerId: 'r' };
+    expect(checkRunnerHello({ ...base, turnKey: 'k', kind: 'wrapper' })).toEqual({ runnerId: 'r', secret: null, turnKey: 'k', kind: 'wrapper' });
+    expect(checkRunnerHello({ ...base, secret: 's', turnKey: 'k' })).toBeNull();
+    expect(checkRunnerHello({ ...base, turnKey: 'k', kind: 'shell' })).toBeNull();
   });
 });
 

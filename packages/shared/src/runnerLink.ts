@@ -106,26 +106,56 @@ export const RUNNER_LINK_ENV_KEYS = [
  * 링크 소켓의 종류. `hook` 은 PreToolUse hook(`harkroom-operator hook pretool`)이 여는 소켓이다(H③b) — 요청/응답만 하고, 받는 것은
  * `command.check` 하나뿐이다. 거꾸로 `command.check` 는 hook 소켓에서만 받는다(에이전트가 MCP 로 불러 1회 grant 를 미리 써 버리지 않게).
  */
-export type RunnerLinkKind = 'relay' | 'bridge' | 'hook';
+export type RunnerLinkKind = 'relay' | 'bridge' | 'hook' | 'wrapper';
 
+/**
+ * `wrapper` — 셸에서 도는 `harkroom-operator merge`·`api` 래퍼가 여는 소켓. 요청/응답만 하고, 받는 것은 그 두 도구뿐이다.
+ *
+ * 자격은 둘 중 하나다: `secret`(러너 링크 비밀) 또는 `turnKey`(그 턴에만 사는 턴 열쇠, `RUNNER_TURN_KEY_ENV`).
+ * 턴 열쇠는 relay 를 열지 못하고, 열쇠마다 열 수 있는 kind 가 정해져 있다(`TURN_KEY_SCOPE_KINDS`).
+ */
 export interface RunnerHello {
   type: 'hello';
   version: typeof RUNNER_LINK_PROTOCOL_VERSION;
   role: 'runner';
   runnerId: string;
-  secret: string;
+  secret?: string;
+  turnKey?: string;
   kind?: RunnerLinkKind;
 }
 
-/** 모양만 본다 — secret 이 맞는지는 오퍼레이터가 자기 장부로 판정한다. */
-export function checkRunnerHello(value: unknown): { runnerId: string; secret: string; kind: RunnerLinkKind } | null {
+const LINK_KINDS: readonly RunnerLinkKind[] = ['relay', 'bridge', 'hook', 'wrapper'];
+
+/** 모양만 본다 — 자격이 맞는지는 오퍼레이터가 자기 장부로 판정한다. 자격은 `secret`·`turnKey` 중 **하나만** 싣는다. */
+export function checkRunnerHello(value: unknown): { runnerId: string; secret: string | null; turnKey: string | null; kind: RunnerLinkKind } | null {
   if (typeof value !== 'object' || value === null) return null;
   const m = value as Record<string, unknown>;
   if (m.type !== 'hello' || m.role !== 'runner' || m.version !== RUNNER_LINK_PROTOCOL_VERSION) return null;
-  if (typeof m.runnerId !== 'string' || typeof m.secret !== 'string') return null;
-  if (m.kind !== undefined && m.kind !== 'relay' && m.kind !== 'bridge' && m.kind !== 'hook') return null;
-  return { runnerId: m.runnerId, secret: m.secret, kind: m.kind === 'bridge' || m.kind === 'hook' ? m.kind : 'relay' };
+  if (typeof m.runnerId !== 'string') return null;
+  const secret = typeof m.secret === 'string' ? m.secret : null;
+  const turnKey = typeof m.turnKey === 'string' ? m.turnKey : null;
+  if ((secret === null) === (turnKey === null)) return null;
+  if (m.kind !== undefined && !LINK_KINDS.includes(m.kind as RunnerLinkKind)) return null;
+  return { runnerId: m.runnerId, secret, turnKey, kind: (m.kind as RunnerLinkKind | undefined) ?? 'relay' };
 }
+
+/**
+ * 턴 열쇠(좁은 턴 자격). 러너가 하네스를 띄울 때마다 둘을 만들어 relay 로 오퍼레이터에 맡긴다(`TURN_KEYS_PATH`).
+ * - `bridge`: harkroom MCP 다리만 받는다(하네스의 MCP 설정으로 준다).
+ * - `shell`: 하네스 env 로 셸·hook·래퍼가 본다.
+ * 값은 32바이트 난수의 hex 64자다.
+ */
+export type TurnKeyScope = 'bridge' | 'shell';
+export const TURN_KEY_SCOPE_KINDS: Readonly<Record<TurnKeyScope, readonly RunnerLinkKind[]>> = {
+  bridge: ['bridge'],
+  shell: ['hook', 'wrapper'],
+};
+export const TURN_KEY_PATTERN = /^[0-9a-f]{64}$/;
+/** 하네스 env 로 주는 셸 열쇠의 이름. 다리 열쇠 이름은 셸 env 에 두지 않는다(MCP 설정의 `env` 칸으로만 간다). */
+export const RUNNER_TURN_KEY_ENV = { shell: 'HARKROOM_TURN_GRANT', bridge: 'HARKROOM_TURN_BRIDGE_KEY' } as const;
+/** 러너 → 오퍼레이터(relay 만): 턴 열쇠 맡기기·끝내기. 서버로 나가지 않는다. */
+export const TURN_KEYS_PATH = '/agent/turn-keys';
+export const TURN_KEYS_END_PATH = '/agent/turn-keys/end';
 
 // ---------------------------------------------------------------------------
 // 요청/응답 — 러너가 서버에 하던 말을 오퍼레이터가 대신 한다(스펙 §5 MCP 행).

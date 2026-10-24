@@ -19,7 +19,7 @@
 // 닿지 않는다. 즉 이 핸들러가 아예 안 불려도(SIGKILL) 러너는 산다 — 이 핸들러가 하는
 // 일은 러너를 살리는 것이 아니라 **잔해를 남기지 않는 것**이다.
 import { resolve } from 'node:path';
-import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_MCP_READY_FILE_ENV, RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV } from '@harkroom/shared/runnerLink';
+import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_MCP_READY_FILE_ENV, RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV, RUNNER_TURN_KEY_ENV } from '@harkroom/shared/runnerLink';
 import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge, writeReadyMarker } from './mcpBridge.js';
@@ -39,8 +39,10 @@ import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
 async function mcpBridgeMain(): Promise<void> {
   const socketPath = process.env[RUNNER_LINK_ENV.socketPath];
   const runnerId = process.env[RUNNER_LINK_ENV.runnerId];
-  const secret = process.env[RUNNER_LINK_ENV.secret];
-  if (!socketPath || !runnerId || !secret) {
+  const secret = process.env[RUNNER_LINK_ENV.secret] || null;
+  // 다리 열쇠(턴 자격)가 있으면 그것으로 붙는다 — 러너가 하네스의 MCP 설정으로 준다.
+  const turnKey = process.env[RUNNER_TURN_KEY_ENV.bridge] || null;
+  if (!socketPath || !runnerId || !(secret || turnKey)) {
     console.error(`mcp-bridge: ${RUNNER_LINK_ENV_KEYS.join('·')} 이 필요하다 — 러너가 띄운 하네스 안에서만 돈다`);
     process.exit(2);
   }
@@ -52,7 +54,7 @@ async function mcpBridgeMain(): Promise<void> {
   const readyFile = process.env[RUNNER_MCP_READY_FILE_ENV] || null;
   const onToolsListed = readyFile ? () => writeReadyMarker(readyFile) : undefined;
   await runMcpBridge(
-    { socketPath, runnerId, secret, cause, turnId, cwd: process.cwd(), ...(onToolsListed ? { onToolsListed } : {}) },
+    { socketPath, runnerId, secret, turnKey, cause, turnId, cwd: process.cwd(), ...(onToolsListed ? { onToolsListed } : {}) },
     { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr },
   );
 }
@@ -69,40 +71,11 @@ async function mergeMain(argv: string[]): Promise<void> {
     console.log(JSON.stringify({ error: { code: 'bad_request', message: parsed.error }, merged: false, exit: 2 }));
     process.exit(2);
   }
-  const socketPath = process.env[RUNNER_LINK_ENV.socketPath];
-  const runnerId = process.env[RUNNER_LINK_ENV.runnerId];
-  const secret = process.env[RUNNER_LINK_ENV.secret];
-  const cause = process.env[RUNNER_TURN_CAUSE_ENV] || null;
-  if (!socketPath || !runnerId || !secret || !cause) {
+  const r = await callOperatorTool(MERGE_TOOL, { repo: parsed.repo, number: parsed.number, headSha: parsed.headSha });
+  if ('notInTurn' in r) {
     console.log(JSON.stringify({ error: { code: 'not_in_turn', message: `${RUNNER_LINK_ENV_KEYS.join('·')}·${RUNNER_TURN_CAUSE_ENV} are required — the wrapper only runs inside a runner-launched mention turn` }, merged: false, exit: 2 }));
     process.exit(2);
   }
-  const stdin = new PassThrough();
-  const stdout = new PassThrough();
-  const done = new Promise<{ ok: boolean; text: string }>((resolve) => {
-    let buf = '';
-    stdout.on('data', (chunk: Buffer) => {
-      buf += chunk.toString('utf8');
-      const nl = buf.indexOf('\n');
-      if (nl < 0) return;
-      const line = buf.slice(0, nl);
-      try {
-        const msg = JSON.parse(line) as { result?: { content?: { text?: string }[]; isError?: boolean }; error?: { message?: string } };
-        if (msg.error) resolve({ ok: false, text: JSON.stringify({ error: { code: 'link_error', message: msg.error.message ?? 'link error' } }) });
-        else resolve({ ok: msg.result?.isError !== true, text: msg.result?.content?.[0]?.text ?? '{}' });
-      } catch {
-        resolve({ ok: false, text: JSON.stringify({ error: { code: 'bad_reply', message: 'unparseable reply from operator' } }) });
-      }
-      stdin.end();
-    });
-  });
-  const bridge = runMcpBridge({ socketPath, runnerId, secret, cause, cwd: process.cwd() }, { stdin, stdout, stderr: process.stderr });
-  stdin.write(`${JSON.stringify({
-    jsonrpc: '2.0', id: 1, method: 'tools/call',
-    params: { name: MERGE_TOOL, arguments: { repo: parsed.repo, number: parsed.number, headSha: parsed.headSha } },
-  })}\n`);
-  const r = await done;
-  await bridge;
   // 결과 JSON 에 종료 코드와 머지 여부를 함께 싣는다(qa ②) — 에이전트가 `; echo $?` 를 붙일 이유를 없앤다. 그 꼬리는
   // allow 규칙을 깨뜨려 분류기로 간다(2026-10-03 #1130 사고).
   let out: Record<string, unknown> = {};
@@ -115,12 +88,16 @@ async function mergeMain(argv: string[]): Promise<void> {
 /**
  * 브릿지와 같은 소켓·같은 자격으로 `tools/call` 한 줄을 보내고 답 한 줄을 받는다(머지·api 래퍼 공용 꼴).
  */
-async function callOperatorTool(name: string, args: Record<string, unknown>, kind: 'bridge' | 'hook' = 'bridge'): Promise<{ ok: boolean; text: string } | { ok: false; notInTurn: true }> {
+async function callOperatorTool(name: string, args: Record<string, unknown>, kind: 'wrapper' | 'hook' = 'wrapper'): Promise<{ ok: boolean; text: string } | { ok: false; notInTurn: true }> {
   const socketPath = process.env[RUNNER_LINK_ENV.socketPath];
   const runnerId = process.env[RUNNER_LINK_ENV.runnerId];
-  const secret = process.env[RUNNER_LINK_ENV.secret];
+  const secret = process.env[RUNNER_LINK_ENV.secret] || null;
+  // 셸 열쇠(턴 자격)가 있으면 그것으로 붙는다 — 그 턴의 cause 는 오퍼레이터가 장부에서 쓴다(env 의 값을 믿지 않는다).
+  const turnKey = process.env[RUNNER_TURN_KEY_ENV.shell] || null;
   const cause = process.env[RUNNER_TURN_CAUSE_ENV] || null;
-  if (!socketPath || !runnerId || !secret || !cause) return { ok: false, notInTurn: true };
+  if (!socketPath || !runnerId || !(turnKey || (secret && cause))) return { ok: false, notInTurn: true };
+  // 옛 자격(링크 secret)으로 붙는 래퍼는 옛 kind 그대로 — 이 판을 모르는 오퍼레이터도 받는다.
+  const linkKind = turnKey ? kind : kind === 'wrapper' ? 'bridge' : kind;
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   const done = new Promise<{ ok: boolean; text: string }>((resolve) => {
@@ -140,7 +117,7 @@ async function callOperatorTool(name: string, args: Record<string, unknown>, kin
       stdin.end();
     });
   });
-  const bridge = runMcpBridge({ socketPath, runnerId, secret, cause, cwd: process.cwd(), kind }, { stdin, stdout, stderr: process.stderr });
+  const bridge = runMcpBridge({ socketPath, runnerId, secret, turnKey, cause, cwd: process.cwd(), kind: linkKind }, { stdin, stdout, stderr: process.stderr });
   stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })}\n`);
   const r = await done;
   await bridge;
