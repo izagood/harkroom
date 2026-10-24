@@ -34,7 +34,7 @@ import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspace
 import { codexSessionsDir } from './codexHome.js';
 import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneModelMissing, providerLaneModelId } from './opencodeHome.js';
 import { listPiMcpTools, piSessionFile, readonlyToolList } from './piHome.js';
-import { ensureOmpThread, OMP_LANE_PROVIDER, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
+import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -1368,6 +1368,9 @@ export async function runMentionTurn(
   let ompThread: OmpThreadDirs | undefined;
   if (usesOmpHome(def.harness)) {
     if (!deps.ompHome) throw new Error('mentionTurn: omp 턴인데 ompHome 이 없다');
+    // 판 고정(C1): PTY 가 띄울 실행 파일이 고정한 판의 공식 바이너리여야 한다 — 저장소 설정 차단이 판마다 바뀔 수 있다.
+    const ompBin = await findOmpBinary(harnessPath(def.harness, process.env.PATH));
+    if (!ompBin || !(await ompBinaryOk(ompBin))) throw new ProviderLaneError('harness_version');
     ompThread = await ensureOmpThread(deps.ompHome, key);
     const bad = await ompCwdViolations(ompThread.cwd, deps.stateDir);
     if (bad.length) throw new Error(`mentionTurn: omp 의 빈 cwd 나 그 위 폴더에 설정 이름이 있어 띄우지 않는다: ${bad.join(', ')}`);

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { buildTurnCommand } from '../src/turn.js';
 import { OMP_ADAPTER } from '../src/adapters/omp.js';
 import {
-  ensureOmpHome, ensureOmpThread, OMP_OVERLAY, ompCwdViolations, ompDirs, ompLaneModelsYml, ompReadonlyToolList,
+  ensureOmpHome, ensureOmpThread, findOmpBinary, ompBinaryOk, OMP_OVERLAY, ompCwdViolations, ompDirs, ompLaneModelsYml, ompReadonlyToolList,
   ompSessionFile, ompThreadDirs, toOmpMcp, writeOmpLaneModels, writeOmpSessionHeader,
 } from '../src/ompHome.js';
 import { ompLaneVersionOk, providerLaneKeys, PROVIDER_LANE_ARGV_ONLY_KEYS } from '../src/providerLane.js';
@@ -148,5 +148,16 @@ describe('omp 턴 조립', () => {
     expect(() => buildTurnCommand({ ...base, ompThread: undefined })).toThrow(/B4/);
     expect(() => buildTurnCommand({ ...base, ompThread: { cwd: '/work/repo/x', agentDir: '/a' } })).toThrow(/작업 폴더 안/);
     expect(() => buildTurnCommand({ ...base, ompThread: { cwd: '/work/repo', agentDir: '/a' } })).toThrow(/작업 폴더 안/);
+  });
+});
+
+describe('omp 판 고정(C1)', () => {
+  it('고정한 해시가 아닌 실행 파일·표에 없는 플랫폼은 거절한다', async () => {
+    const dir = await tmp();
+    await writeFile(join(dir, 'omp'), '#!/bin/sh\necho omp/18.12.6\n', { mode: 0o755 });
+    expect(await findOmpBinary(`/nonexistent:${dir}`)).toMatch(/\/omp$/);
+    expect(await ompBinaryOk(join(dir, 'omp'), 'darwin-arm64')).toBe(false);
+    expect(await ompBinaryOk(join(dir, 'omp'), 'plan9-mips')).toBe(false);
+    expect(await findOmpBinary('/nonexistent')).toBeNull();
   });
 });

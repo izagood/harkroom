@@ -16,7 +16,8 @@
 // `apiKey: "!cat <턴 키 파일>"` 로 그 턴의 임대 파일을 가리킨다(K1·K3·K3a).
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { chmod, lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { chmod, lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { ReadonlyTools } from './adapters/contract.js';
@@ -25,10 +26,50 @@ const run = promisify(execFile);
 
 /** omp 가 받는 판(security C1). 넓히려면 심은 파일 회귀 시험(`test/ompPlanted.real.test.ts`)을 그 판으로 다시 돌린다. */
 export const OMP_VERSIONS = ['18.12.6'] as const;
-/** 공식 릴리스 바이너리의 SHA256(C1). `omp-darwin-arm64` v18.12.6 — researcher·harkroom 둘이 따로 받아 대조했다. */
-export const OMP_BINARY_SHA256: Record<string, Record<string, string>> = {
-  '18.12.6': {},
+/**
+ * 공식 릴리스 바이너리의 SHA256(C1) — 릴리스의 `SHA256SUMS.txt` 를 옮겼다. 키는 `${process.platform}-${process.arch}`.
+ * darwin-arm64 는 researcher·harkroom 이 따로 받아 그 목록과 대조했다(2026-10-24). npm 판(bun 위에서 도는 스크립트)은 받지 않는다.
+ */
+export const OMP_BINARY_SHA256: Record<string, Readonly<Record<string, string>>> = {
+  '18.12.6': {
+    'darwin-arm64': 'cfbb5e38cd8f8a3be55e710700be587d287deaacdc58c9b0a661c5086bccfe58',
+    'darwin-x64': '62d6e6fd88b6fa5de2ca82842906f152bf1aa227559b1d0bb386f25f6d606123',
+    'linux-arm64': 'eee8e586274cef2e725c218b2b28b48ca9965d46dd58f60998cb347eca4ad0cf',
+    'linux-x64': '85d9daf3a05fc76e8cd425ae1904eb576af8d21cc85fcf4690742626e07ccfa4',
+  },
 };
+
+/** PATH 에서 `omp` 실행 파일을 찾는다(앞의 것이 이긴다 — PTY 가 띄울 것과 같은 규칙). 없으면 `null`. */
+export async function findOmpBinary(path: string | undefined): Promise<string | null> {
+  for (const dir of (path ?? '').split(':').filter(Boolean)) {
+    const candidate = join(dir, 'omp');
+    const st = await stat(candidate).catch(() => null);
+    if (st?.isFile()) return realpath(candidate);
+  }
+  return null;
+}
+
+const hashCache = new Map<string, string>();
+
+/**
+ * 그 실행 파일이 고정한 판의 공식 바이너리인가(C1). 해시는 (경로·크기·mtime)이 같으면 다시 재지 않는다 — 200MB 라 턴마다 재면 느리다.
+ * 표에 없는 판·플랫폼은 거절한다(fail-closed).
+ */
+export async function ompBinaryOk(binary: string, platformKey = `${process.platform}-${process.arch}`): Promise<boolean> {
+  const want = OMP_VERSIONS.map((v) => OMP_BINARY_SHA256[v]?.[platformKey]).filter((h): h is string => Boolean(h));
+  if (!want.length) return false;
+  const st = await stat(binary).catch(() => null);
+  if (!st?.isFile()) return false;
+  const key = `${binary}:${st.size}:${st.mtimeMs}`;
+  let got = hashCache.get(key);
+  if (!got) {
+    const h = createHash('sha256');
+    for await (const chunk of createReadStream(binary)) h.update(chunk as Buffer);
+    got = h.digest('hex');
+    hashCache.set(key, got);
+  }
+  return want.includes(got);
+}
 
 /** 러너가 쓰는 omp 제공자 이름(`models.yml` `providers.<이름>`). */
 export const OMP_LANE_PROVIDER = 'harkroom-lane';
