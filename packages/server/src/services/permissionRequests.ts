@@ -311,6 +311,9 @@ export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: str
     return `권한 요청 · ${agentHandle}\nCI 실패 무시하고 이번 한 번 머지 \`${meta.target}\` PR #${meta.once.number} · head ${meta.once.headSha.slice(0, 9)}`
       + `${names ? `\n실패한 체크: ${names}` : ''}\n이유: ${oneLineReason(meta.reason)}`;
   }
+  // r2(designer W4): 줄(`line`)이 있는 새 카드는 범위·기한을 줄 상자가 그린다 — 본문이 「이 채널의 모든 대화에서 · 7일」을 따로 말하면
+  // [이 위임장 동안] 버튼과 어긋난다. 본문은 머리 한 줄과 이유뿐(서버 경고는 남긴다). 줄 없는 옛 카드는 아래 글 그대로.
+  if (meta.line) return `권한 요청 · ${agentHandle}${warn}\n이유: ${oneLineReason(meta.reason)}`;
   const what = meta.kind === 'tool'
     ? `명령 허용 \`${meta.target}\` — 이 채널의 모든 대화에서`
     : `머지 권한 \`${meta.target}\``;
@@ -323,7 +326,9 @@ export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: str
  */
 export function oneLineReason(reason: string): string {
   // bidi·서식 문자(U+202E 등, \p{Cf})도 지운다 — 옛 앱에서 이유 줄을 거꾸로 보이게 해 서버 줄처럼 꾸미지 못하게(security 후속).
-  return reason.replace(/\p{Cf}/gu, '').replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/[`*_#>|[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  // r4: `>` 는 줄 머리에서만 인용 표시가 된다 — 글 속 `<이 카드 링크>` 의 닫는 꺾쇠는 남기고, 맨 앞 `>` 만 지운다.
+  return reason.replace(/\p{Cf}/gu, '').replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/[`*_#|[\]]/g, '').replace(/\s+/g, ' ').trim()
+    .replace(/^[>\s]+/, '').slice(0, 300);
 }
 
 /**

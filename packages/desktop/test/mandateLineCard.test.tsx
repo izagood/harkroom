@@ -269,5 +269,26 @@ describe('W4 mandate line card', () => {
       render(<AskCard message={added()} />);
       expect(screen.queryByTestId('mandate-line-revoke')).toBeNull();
     });
+  it('r3: line card head comes from i18n, not the server ask.prompt (ko/en, with and without mandate)', () => {
+    const { unmount } = render(<AskCard message={card({ ask: { prompt: '권한을 줄까?' } })} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain('위임장에 줄을 더할까? · alice 차례');
+    expect(screen.getByTestId('ask-card').textContent).not.toContain('권한을 줄까?');
+    expect(screen.getByTestId('ask-card').textContent).not.toContain('골라 줘');
+    unmount();
+    usePrefsStore.getState().setLocale('en');
+    const a = render(<AskCard message={card({ ask: { prompt: '권한을 줄까?' } })} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain("Add a line to the mandate? · alice's turn");
+    expect(screen.getByTestId('ask-card').textContent).not.toContain('Pick one');
+    expect(screen.getByTestId('ask-card').textContent).not.toContain('권한을 줄까?');
+    a.unmount();
+    render(<AskCard message={card({ options: ['approve_new_mandate', 'deny'], ask: { prompt: '권한을 줄까?' }, pr: { mandate: undefined, line: { cap: 'tool', scope: 'x', limits: { approve_new_mandate: { untilMs: 1 } } } } })} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain('Start a mandate and add this line?');
+  });
+  it('r3: a plain ask (no permission line) keeps its generic head and prompt', () => {
+    usePrefsStore.getState().setLocale('en');
+    const plain = { ...card({ ask: { prompt: 'Which one?' } }), meta: { kind: 'ask', ask: { options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], to: { kind: 'human' }, prompt: 'Which one?' } } } as unknown as MessageRow;
+    render(<AskCard message={plain} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain('Pick one');
+    expect(screen.getByTestId('ask-card').textContent).toContain('Which one?');
   });
 });

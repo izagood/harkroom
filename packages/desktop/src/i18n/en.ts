@@ -5676,6 +5676,8 @@ export const en = {
   'pwreset.notice.unknownAdmin': 'An admin',
   'pwreset.notice.ack': 'Got it',
   'speech.ask.viaChat': "answered in chat",
+  'mandateCard.head': "Add a line to the mandate? · {owner}'s turn",
+  'mandateCard.headNew': "Start a mandate and add this line?",
   'mandateCard.mandate': "Mandate",
   'mandateCard.started': "started {date}",
   'mandateCard.noMandate': "No mandate",

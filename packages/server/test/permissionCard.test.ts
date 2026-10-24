@@ -214,6 +214,9 @@ describe('permission card decisions (W4b)', () => {
     const g = await renderPermissionMirror(pool, genuine.cardId, other);
     expect(g?.mirror).toEqual({ rootId: genuine.cardId, neutral: false, kind: 'tool', line: genuine.meta.line, mandate: genuine.meta.mandate });
     expect(ids(g!.options)).toEqual(['approve_mandate', 'deny']);
+    // r2: 거울 본문도 줄 카드 꼴(머리 + 이유) — 「이 채널의 모든 대화에서 · 7일」을 다시 말하지 않는다.
+    expect(g!.body.split('\n')).toHaveLength(2);
+    expect(g!.body).not.toContain('승인하면 7일');
 
     const privRoot = await plainRoot(privCh);
     const hidden = await card({ kind: 'tool', target: rule(), root: privRoot, mandateId: null, channelId: privCh });

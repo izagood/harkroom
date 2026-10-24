@@ -54,6 +54,15 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
     : ask.answeredVia === 'chat' ? { messageId: null } : null;
   const chatViaHref = messageLinkFromMeta(chatVia?.messageId);
 
+  // r3: 줄 있는 권한 카드의 머리는 서버의 `ask.prompt`(한국어 고정) 대신 i18n 키로 그린다 — CI 거절 카드(줄 더하기 아님)는 그대로.
+  const ciOnce = (lined?.mirror?.once ?? (lined?.request?.once as { reason?: unknown } | undefined))?.reason === 'ci_not_green';
+  const lineHeadOwnerId = typeof lined?.request?.ownerAccountId === 'string' ? lined.request.ownerAccountId : lined?.mandate?.ownerId ?? null;
+  const lineHead = lined?.line && !ciOnce
+    ? (lined.mandate
+      ? t('mandateCard.head', { owner: (lineHeadOwnerId ? accounts[lineHeadOwnerId]?.handle : null) ?? t('common.someone') })
+      : t('mandateCard.headNew'))
+    : null;
+
   const answered = ask.answeredWith != null;
   /**
    * **답하지 않기로 했다**(2026-09-09). 고른 것이 없는 끝이다 — 답과 갈라 두는 이유는
@@ -118,7 +127,7 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
         <span
           className={`text-meta font-semibold ${canChoose ? 'text-state-turn' : 'text-fg-agent'}`}
         >
-          {headline(ask.to, myId, accounts, answered, closed, t, closedReason)}
+          {lineHead && !answered && !closed ? lineHead : headline(ask.to, myId, accounts, answered, closed, t, closedReason)}
         </span>
         {answered && answeredByName && (
           <span className="text-meta text-fg-subtle">{t('speech.ask.answeredBy', { name: answeredByName })}</span>
@@ -138,7 +147,7 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
         )}
         {replied && closedByName && <span className="text-meta text-fg-subtle">{closedByName}</span>}
       </div>
-      {ask.prompt && !superseded && <p className="px-3 pt-1 text-body text-fg-muted">{ask.prompt}</p>}
+      {ask.prompt && !superseded && !lineHead && <p className="px-3 pt-1 text-body text-fg-muted">{ask.prompt}</p>}
       {replied && replyBody && (
         <p
           data-testid="ask-reply-quote"

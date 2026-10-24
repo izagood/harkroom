@@ -3463,6 +3463,8 @@ export const ko = {
   'pwreset.notice.unknownAdmin': '관리자',
   'pwreset.notice.ack': '확인',
   'speech.ask.viaChat': "글로 답함",
+  'mandateCard.head': "위임장에 줄을 더할까? · {owner} 차례",
+  'mandateCard.headNew': "위임장을 만들고 줄을 더할까?",
   'mandateCard.mandate': "위임장",
   'mandateCard.started': "{date} 시작",
   'mandateCard.noMandate': "위임장 없음",
