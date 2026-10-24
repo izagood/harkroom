@@ -609,6 +609,8 @@ export async function decidePermissionRequest(
           ...(grantExpiresAt ? { grantExpiresAt: grantExpiresAt.toISOString() } : {}),
           ...(approval && args.once ? { approvedOnce: { ghUser: args.once.ghUser, relaxChecks: args.once.relaxChecks, expiresAt: approval.expiresAt.toISOString() } } : {}),
           ...(grantMode ? { grantMode } : {}),
+          // 줄 빼기(g1) — 카드가 자기가 적은 줄을 가리킨다. 이 값이 있는 카드만 [줄 빼기]를 그린다(새 서버만 싣는 값).
+          ...(lineOutcome?.ok ? { lineId: lineOutcome.lineId } : {}),
           ...(args.via?.kind === 'chat' || args.via?.kind === 'mirror' ? { decidedVia: args.via } : {}),
         })]);
     }

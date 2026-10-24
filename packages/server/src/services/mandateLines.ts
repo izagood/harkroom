@@ -181,3 +181,24 @@ export async function revokeLinesForGrant(q: Pool | Q, args: {
     [args.agentId, cap, lineScope, channelId, now]);
   return res.rowCount ?? 0;
 }
+
+export type RevokeLineResult =
+  | { ok: true; line: MandateLine; revokedAt: Date }
+  | { ok: false; code: 'not_found' | 'standing_line' | 'already_revoked' };
+
+/**
+ * 줄 빼기(g1) — 위임의 저장된 줄 하나를 거둔다(`revoked_at`). 라우트가 소유자 사람 세션인지 먼저 본다.
+ * 그 위임의 줄만 — 다른 위임의 줄 id 는 `not_found`. 상시 줄(grant 에서 펼친 것)은 여기서 뺄 수 없다(`standing_line`: 설정에서 grant 를 거둔다).
+ * 이미 거둔 줄은 `already_revoked`(두 번 눌러도 한 번만 적힌다 — 한 문장 `update ... where revoked_at is null`).
+ */
+export async function revokeMandateLine(q: Pool | Q, args: { mandateId: string; lineId: string; now?: Date }): Promise<RevokeLineResult> {
+  const now = args.now ?? new Date();
+  const row = (await q.query<MandateLine>(
+    `update mandate_line set revoked_at = $3 where id = $1 and mandate_id = $2 and revoked_at is null returning ${LINE_COLS}`,
+    [args.lineId, args.mandateId, now])).rows[0];
+  if (row) return { ok: true, line: { ...row, readOnly: false }, revokedAt: now };
+  const had = (await q.query(`select 1 from mandate_line where id = $1 and mandate_id = $2`, [args.lineId, args.mandateId])).rowCount ?? 0;
+  if (had) return { ok: false, code: 'already_revoked' };
+  const standing = (await listMandateLines(q, args.mandateId, now)).some((l) => l.readOnly && l.id === args.lineId);
+  return { ok: false, code: standing ? 'standing_line' : 'not_found' };
+}

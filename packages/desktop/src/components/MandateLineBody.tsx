@@ -1,7 +1,10 @@
 import type { MessageRow, PermissionCardLine, PermissionCardLineLimits, PermissionCardMandate, PermissionMirrorMeta } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
-import { useT } from '../i18n/useT';
+import { useState } from 'react';
+import { useLocale, useT } from '../i18n/useT';
+import { ApiError } from '../lib/api';
+import { ConfirmDialog } from './ConfirmDialog';
 import type { Translate } from '../i18n';
 import { messageLinkFromMeta } from '../lib/link';
 import { OnceCardRows, useOnceApproval } from './PermissionOncePanel';
@@ -124,7 +127,12 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
   answeredWith: string | null; closedReason: string | null; supersededBy: string | null;
 }) {
   const t = useT();
+  const locale = useLocale();
   const me = useActiveStore((s) => s.me);
+  const [confirmingRevoke, setConfirmingRevoke] = useState(false);
+  const [revokeBusy, setRevokeBusy] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+  const [revokedLocal, setRevokedLocal] = useState<string | null>(null);
   const ownerOf = src.request && typeof src.request.ownerAccountId === 'string' ? src.request.ownerAccountId : src.mandate?.ownerId ?? null;
   const mirrorHref = messageLinkFromMeta(src.mirror?.rootId);
   const supersededHref = messageLinkFromMeta(supersededBy);
@@ -154,6 +162,29 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
     : standing ? [standing] : onceAvailable ? ['approve_once'] : [];
   const answer = (id: string) => { void getController().answerAsk(message.id, id, message.channelId); };
 
+  // 줄 빼기(g1) — 카드가 자기 줄 id(`lineId`, 새 서버만 싣는다)를 가질 때만. 원본 카드에서 소유자에게만(거울에는 없다).
+  const lineId = typeof src.request?.lineId === 'string' ? src.request.lineId : null;
+  const revokedAt = revokedLocal ?? (typeof src.request?.lineRevokedAt === 'string' ? src.request.lineRevokedAt : null);
+  const canRevoke = !!lineId && !!src.mandate?.id && !src.mirror && !!me && me.id === ownerOf;
+  const revokedTime = (iso: string) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  };
+  const revoke = async () => {
+    if (!lineId || !src.mandate?.id) return;
+    setRevokeBusy(true); setRevokeError(null);
+    try {
+      const r = await getController().api.revokeMandateLine(src.mandate.id, lineId);
+      setRevokedLocal(r.revokedAt);
+      setConfirmingRevoke(false);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'already_revoked') { setRevokedLocal(new Date().toISOString()); setConfirmingRevoke(false); }
+      else setRevokeError(err instanceof ApiError && err.code === 'standing_line' ? t('mandateCard.revokeStanding') : t('mandateCard.revokeFailed'));
+    } finally {
+      setRevokeBusy(false);
+    }
+  };
+
   const endedLine = (() => {
     if (!ended) return null;
     if (closedReason === 'superseded' || status === 'superseded') {
@@ -178,7 +209,23 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       const mandateEnded = typeof (src.mandate as { endedAt?: unknown } | null)?.endedAt === 'string';
       return mandateEnded
         ? <p className="text-fg-subtle" data-testid="mandate-ended" data-state="mandate-ended">{t('mandateCard.ended.mandateEnded')}</p>
-        : <p className="text-fg" data-testid="mandate-ended" data-state="added">✓ {t('mandateCard.ended.added')}</p>;
+        : revokedAt
+          ? <p className="text-fg-subtle" data-testid="mandate-ended" data-state="revoked">{t('mandateCard.ended.revoked', { time: revokedTime(revokedAt) })}</p>
+          : (
+            <p className="text-fg" data-testid="mandate-ended" data-state="added">
+              ✓ {t('mandateCard.ended.added')}
+              {canRevoke && (
+                <>
+                  {' '}
+                  <button type="button" data-testid="mandate-line-revoke" aria-label={t('mandateCard.revokeAria')}
+                    onClick={() => { setRevokeError(null); setConfirmingRevoke(true); }}
+                    className="rounded-sm px-1 py-0.5 text-meta text-fg-subtle underline underline-offset-2 hover:bg-surface-hover hover:text-fg-muted">
+                    {t('mandateCard.revoke')}
+                  </button>
+                </>
+              )}
+            </p>
+          );
     }
     return null;
   })();
@@ -233,6 +280,20 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
         </div>
       )}
       {endedLine && <div className="mt-1.5 text-meta">{endedLine}</div>}
+      {confirmingRevoke && (
+        <ConfirmDialog
+          title={t('mandateCard.revokeTitle')}
+          detail={t('mandateCard.revokeDetail')}
+          detailKind="note"
+          confirmLabel={t('mandateCard.revokeConfirm')}
+          cancelLabel={t('mandateCard.revokeCancel')}
+          danger
+          busy={revokeBusy}
+          error={revokeError}
+          onConfirm={() => { void revoke(); }}
+          onCancel={() => setConfirmingRevoke(false)}
+        />
+      )}
     </div>
   );
 }
