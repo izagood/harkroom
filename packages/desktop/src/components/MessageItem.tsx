@@ -31,6 +31,7 @@ import { Attachments } from './Attachments';
 import { ConfirmDialog } from './ConfirmDialog';
 import { MessageEditBox } from './MessageEditBox';
 import { bodyAsHandles, displayBody } from '../lib/mention';
+import { bodyForLineCard } from './MandateLineBody';
 import { selectAccountNames } from '../lib/accountNames';
 import { accountOpen } from '../lib/accountOpen';
 import { stampLabel } from '../lib/day';
@@ -186,7 +187,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
    * 그린다. 거기에 대상의 이름을 넣으면 admin 이 내보낸 메시지가 내보내진 사람의 말처럼
    * 보이고, 한 줄 안에서 이름과 아바타가 서로 다른 사람을 가리킨다.
    */
-  const shownBody = displayBody(message, accounts, groups, teams);
+  const shownBody = bodyForLineCard(displayBody(message, accounts, groups, teams), message.meta);
   /**
    * 번역 표지가 있는 시스템 줄(i18n P5 ②)은 **글로만** 그린다 — 마크다운·링크·멘션 렌더(`MessageBody`)를
    * 지나지 않는다(security C4). 인자에는 경로·저장소 이름처럼 바깥에서 온 글자가 들어간다.

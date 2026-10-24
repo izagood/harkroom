@@ -59,6 +59,8 @@ export interface PermissionMirrorMeta {
   kind?: 'tool' | 'merge' | 'command';
   once?: { number: number; headSha: string; reason: string; failedChecks?: string[] };
   line?: PermissionCardLine;
+  /** r5: 본문 속 서버가 쓴 대상 줄 — 줄 상자를 그리는 화면이 본문에서 이 줄 하나만 뺀다. */
+  bodyTargetLine?: string;
   mandate?: PermissionCardMandate;
   /** 원본의 1회 승인(계정 비움)으로 머지했을 때 오퍼레이터가 쓴 gh 이름(래퍼 보고) — 머지 보고 뒤 원본과 함께 적힌다. */
   ghUserUsed?: string;

@@ -42,6 +42,24 @@ export function readCardSource(meta: Record<string, unknown> | undefined): CardS
   return { line, mandate: validMandate(pr.mandate), mirror: null, request: pr };
 }
 
+/**
+ * r5(designer F1): 줄 상자를 그리는 카드면 본문에서 서버가 쓴 대상 줄(meta `bodyTargetLine`) **하나만** 뺀다 — 줄 상자가 같은 것을
+ * 말한다. 옛 앱·줄 상자를 못 그리는 카드는 본문을 그대로 둔다(그래야 무엇을 허락하는지 읽힌다). 조건은 `AskCard` 가
+ * `MandateLineBody` 의 `LineBox` 를 그리는 조건과 같다: `meta.ask` 가 있고, 중립 거울이 아니고, 줄이 있다.
+ */
+export function bodyForLineCard(body: string, meta: Record<string, unknown> | undefined): string {
+  if (!meta || !meta.ask) return body;
+  const src = readCardSource(meta);
+  if (!src?.line || src.mirror?.neutral) return body;
+  const raw = src.mirror ? src.mirror.bodyTargetLine : src.request?.bodyTargetLine;
+  if (typeof raw !== 'string' || !raw) return body;
+  const lines = body.split('\n');
+  const i = lines.indexOf(raw);
+  if (i < 0) return body;
+  lines.splice(i, 1);
+  return lines.join('\n');
+}
+
 function validLine(v: unknown): PermissionCardLine | null {
   const l = v as PermissionCardLine | undefined;
   if (!l || typeof l.cap !== 'string' || typeof l.scope !== 'string') return null;
@@ -71,11 +89,12 @@ function untilText(ms: number, t: Translate): string {
   return ms >= 86_400_000 ? t('mandateCard.limit.days', { n: String(Math.round(ms / 86_400_000)) }) : t('mandateCard.limit.hours', { n: String(Math.max(1, Math.round(ms / 3_600_000))) });
 }
 
-export function limitChips(l: PermissionCardLineLimits | undefined, t: Translate): string[] {
+/** `omitPr` — 카드 안에 PR 줄(`OnceCardRows`)이 따로 서면 PR·head 칩은 같은 말이라 뺀다(g-n1). head 는 어디서나 7자(g-n2). */
+export function limitChips(l: PermissionCardLineLimits | undefined, t: Translate, omitPr = false): string[] {
   if (!l) return [];
   const out: string[] = [];
-  if (l.pr != null) out.push(`PR #${l.pr}`);
-  if (l.head) out.push(`head ${l.head.slice(0, 7)}`);
+  if (l.pr != null && !omitPr) out.push(`PR #${l.pr}`);
+  if (l.head && !omitPr) out.push(`head ${l.head.slice(0, 7)}`);
   if (l.ciOverride) out.push(t('mandateCard.limit.ci'));
   if (l.uses != null) out.push(t('mandateCard.limit.uses', { n: String(l.uses) }));
   if (l.untilMs != null) out.push(untilText(l.untilMs, t));
@@ -97,9 +116,9 @@ export function MandateChip({ mandate }: { mandate: PermissionCardMandate | null
   );
 }
 
-export function LineBox({ line, show }: { line: PermissionCardLine; show: string[] }) {
+export function LineBox({ line, show, omitPr = false }: { line: PermissionCardLine; show: string[]; omitPr?: boolean }) {
   const t = useT();
-  const chips = show.flatMap((id) => limitChips(line.limits[id as keyof PermissionCardLine['limits']], t));
+  const chips = show.flatMap((id) => limitChips(line.limits[id as keyof PermissionCardLine['limits']], t, omitPr));
   return (
     <div className="mt-1 rounded-row border border-border bg-surface-raised px-2 py-1.5" data-testid="mandate-line" data-cap={line.cap}>
       <div className="flex flex-wrap items-baseline gap-2">
@@ -123,10 +142,12 @@ const SECONDARY = 'rounded border border-border bg-surface-raised px-2.5 py-1 te
  * 줄 상자와 버튼. `canChoose` 는 `AskCard` 가 정한다(내 차례이고 열려 있음).
  * `onceByPanel` — 원본 머지 거절 카드라 [이번 한 번]은 계정을 실어 `approvePermissionOnce` 로 보낸다(선택지 답이 아니다).
  */
-export function MandateLineBody({ message, src, canChoose, optionIds, answeredWith, closedReason, supersededBy, onOpenSettings }: {
+export function MandateLineBody({ message, src, canChoose, optionIds, answeredWith, closedReason, supersededBy, onOpenSettings, headSaysResult = false }: {
   message: MessageRow; src: CardSource; canChoose: boolean; optionIds: string[];
   answeredWith: string | null; closedReason: string | null; supersededBy: string | null;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
+  /** r5: 머리가 이미 결과(「거절함 · X」 등)를 말한다 — 같은 말만 하는 상태 줄은 뺀다(시각·계정·줄 끝·[줄 빼기] 같은 덧말은 남긴다). */
+  headSaysResult?: boolean;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -211,10 +232,11 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
     if (closedReason === 'expired' || status === 'expired') {
       return <p className="text-fg-subtle" data-testid="mandate-ended" data-state="expired">{t('mandateCard.ended.expired')} · {t('mandateCard.askAgain')}</p>;
     }
-    if (status === 'denied' || answeredWith === 'deny') return <p className="text-fg-muted" data-testid="mandate-ended" data-state="denied">✕ {t('mandateCard.ended.denied')}</p>;
+    if (status === 'denied' || answeredWith === 'deny') return headSaysResult ? null : <p className="text-fg-muted" data-testid="mandate-ended" data-state="denied">✕ {t('mandateCard.ended.denied')}</p>;
     if (onceByPanel && (status === 'approved_once' || once.done)) return null; // OnceCardRows 가 계정·기한과 함께 그린다.
     if (status === 'approved_once' || answeredWith === 'approve_once' || answeredWith === 'approve_hour') {
       const used = typeof src.request?.ghUserUsed === 'string' ? src.request.ghUserUsed : typeof src.mirror?.ghUserUsed === 'string' ? src.mirror.ghUserUsed : null;
+      if (headSaysResult) return used ? <p className="text-fg" data-testid="mandate-ended" data-state="once">gh {used}</p> : null;
       return <p className="text-fg" data-testid="mandate-ended" data-state="once">✓ {t('mandateCard.ended.once')}{used ? ` · gh ${used}` : ''}</p>;
     }
     if (status === 'obsolete') return null; // PermissionOncePanel 이 머지·닫힘 줄을 그린다.
@@ -227,8 +249,8 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
               {t(grantLive ? 'mandateCard.ended.revokedGrantLive' : 'mandateCard.ended.revoked', { time: revokedTime(revokedAt) })}
             </p>
           : (
-            <p className="text-fg" data-testid="mandate-ended" data-state="added">
-              ✓ {t('mandateCard.ended.added')}
+            headSaysResult && !canRevoke ? null : <p className="text-fg" data-testid="mandate-ended" data-state="added">
+              {!headSaysResult && <>✓ {t('mandateCard.ended.added')}</>}
               {canRevoke && (
                 <>
                   {' '}
@@ -255,10 +277,10 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       )}
       {/* 칩은 소유자에게만 보인다(시안 「남이 볼 때」 — 다른 채널의 위임장이 드러나지 않게). */}
       {viewerIsOwner && <MandateChip mandate={src.mandate} />}
-      {line && <LineBox line={line} show={shownLimits} />}
+      {line && <LineBox line={line} show={shownLimits} omitPr={onceByPanel && !!once.d} />}
       {onceByPanel && <OnceCardRows s={once} canAct={canChoose && viewerIsOwner && once.isOwner} />}
       {pending && !viewerIsOwner && (
-        <p className="mt-1 text-meta text-fg-subtle" data-testid="mandate-owner-only">{t('mandateCard.ownerOnly', { owner: ownerHandle ?? t('common.someone') })}</p>
+        <p className="mt-1 text-meta text-fg-subtle" data-testid="mandate-owner-only">{ownerHandle ? t('mandateCard.ownerOnly', { owner: ownerHandle }) : t('mandateCard.ownerOnlyUnknown')}</p>
       )}
       {pending && canChoose && viewerIsOwner && (
         <div className="mt-2 flex flex-wrap items-center gap-2">

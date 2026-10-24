@@ -8,7 +8,7 @@ import { can, mergeGrantFor } from '../src/auth/permissions.js';
 import { mintPat } from '../src/services/pats.js';
 import { prepareDenialCard } from '../src/services/mergeDenials.js';
 import { MERGE_DENIAL_DAILY_CAP } from '../src/services/mergeGrants.js';
-import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant } from '../src/services/permissionRequests.js';
+import { linkPermissionCard, oneLineReason, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant } from '../src/services/permissionRequests.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
@@ -871,6 +871,19 @@ describe('repo.merge grant', () => {
         once: { number: 9, headSha: SHA3, reason: 'ci_not_green', failedChecks: ['test', '@channel <@x>'] }, requestedAt: '', expiresAt: '',
       } as Parameters<typeof permissionCardBody>[0], '@tm');
       expect(body).toBe("권한 요청 · @tm\nCI 실패 무시하고 이번 한 번 머지 `izagood/ci-x` PR #9 · head ccccccccc\n실패한 체크: `test`, `＠channel ‹＠x›`\n이유: fix ci");
+    });
+
+    it('r2: 줄 없는 옛 카드 본문은 그대로, 줄 있는 카드는 머리+이유 · r4: 이유의 꺾쇠는 글자로 남는다', () => {
+      const base = { requestId: 'r', agentId, ownerAccountId: alice.accountId, kind: 'tool', target: 'Bash(ls:*)', channelId: null, warnings: [], reason: '거절 <이 카드 링크>', requestedAt: '', expiresAt: '' };
+      const legacy = permissionCardBody(base as Parameters<typeof permissionCardBody>[0], '@tm');
+      expect(legacy).toBe('권한 요청 · @tm\n명령 허용 `Bash(ls:*)` — 이 채널의 모든 대화에서 · 승인하면 7일\n이유: 거절 <이 카드 링크>');
+      const lined = permissionCardBody({ ...base, line: { cap: 'tool', scope: 'Bash(ls:*)', limits: {} } } as Parameters<typeof permissionCardBody>[0], '@tm');
+      expect(lined).toBe('권한 요청 · @tm\n명령 허용 `Bash(ls:*)`\n이유: 거절 <이 카드 링크>');
+      // r5(security F1): 머지 줄 카드도 서버가 쓴 대상 줄을 싣는다(「7일」 없이). 경고 줄은 대상 줄 뒤.
+      const merge = permissionCardBody({ ...base, kind: 'merge', target: 'izagood/x', warnings: ['executes_in_workload'], line: { cap: 'merge', scope: 'repo:izagood/x', limits: {} } } as Parameters<typeof permissionCardBody>[0], '@tm');
+      expect(merge).toBe('권한 요청 · @tm\n머지 `izagood/x`\n⚠ executes_in_workload\n이유: 거절 <이 카드 링크>');
+      expect(oneLineReason('> 인용 <a>b> c<')).toBe('인용 <a>b> c<');
+      expect(oneLineReason('x\n> y `z`')).toBe('x > y z');
     });
 
     it('#1396 n1: 승인 없이 비필수 체크를 무시하고 머지했으면 줄·감사에 이름이 남는다', async () => {

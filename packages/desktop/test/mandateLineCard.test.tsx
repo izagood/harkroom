@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import type { MessageRow } from '@harkroom/shared';
 import { AskCard } from '../src/components/AskCard';
+import { bodyForLineCard } from '../src/components/MandateLineBody';
 import { setController, type Controller } from '../src/state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -92,6 +93,12 @@ describe('W4 mandate line card', () => {
     const onceBtn = btns[0]!;
     expect(onceBtn.textContent).toBe('CI 실패 무시하고 이번 한 번');
     expect(screen.getByTestId('merge-once-checks').textContent).toContain('tflint');
+    // g-n1/g-n2: PR 줄이 서면 줄 상자에 PR·head 칩이 없고, head 는 7자다.
+    const limits = screen.getByTestId('mandate-line-limits').textContent ?? '';
+    expect(limits).not.toContain('PR #61');
+    expect(limits).not.toContain('head');
+    expect(limits).toContain('CI 무시');
+    expect(screen.getByTestId('merge-once-head').textContent).toBe('3c9e0a1');
     fireEvent.click(onceBtn);
     await vi.waitFor(() => expect(approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'r1', { relaxChecks: true, number: 61, headSha: '3c9e0a1ff', failedChecks: ['tflint'] }));
     expect(answerAsk).not.toHaveBeenCalled();
@@ -141,10 +148,34 @@ describe('W4 mandate line card', () => {
     expect(screen.queryByTestId('mandate-line')).toBeNull();
     expect(screen.queryByTestId('ask-option-deny')).toBeNull();
   });
+  // r5: 답한 줄 카드는 머리가 결과를 말하고, 같은 말만 하는 상태 줄은 빠진다.
   it.each([
-    ['added', { pr: { status: 'granted' }, ask: { answeredWith: 'approve_mandate', answeredBy: ME } }],
-    ['once', { options: ['approve_once', 'deny'], pr: { status: 'approved_once', kind: 'command', line: { cap: 'command', scope: 'x', limits: { approve_once: { uses: 1 } } } }, ask: { answeredWith: 'approve_once', answeredBy: ME } }],
-    ['denied', { pr: { status: 'denied' }, ask: { answeredWith: 'deny', answeredBy: ME } }],
+    ['이 위임장에 더함 · alice', { pr: { status: 'granted' }, ask: { answeredWith: 'approve_mandate', answeredBy: ME } }],
+    ['위임장을 만들고 더함 · alice', { options: ['approve_new_mandate', 'deny'], pr: { status: 'granted', mandate: undefined }, ask: { answeredWith: 'approve_new_mandate', answeredBy: ME } }],
+    ['이번 한 번 허락함 · alice', { options: ['approve_once', 'deny'], pr: { status: 'approved_once', kind: 'command', line: { cap: 'command', scope: 'x', limits: { approve_once: { uses: 1 } } } }, ask: { answeredWith: 'approve_once', answeredBy: ME } }],
+    ['거절함 · alice', { pr: { status: 'denied' }, ask: { answeredWith: 'deny', answeredBy: ME } }],
+  ])('answered line card head says the result: %s', (head, opts) => {
+    render(<AskCard message={card(opts as Parameters<typeof card>[0])} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain(head);
+    expect(screen.getByTestId('ask-card').textContent).not.toContain('정해졌다');
+    expect(screen.getByTestId('ask-card').textContent).not.toContain('골랐다');
+    expect(screen.queryByTestId('mandate-ended')).toBeNull();
+    expect(screen.getByTestId('mandate-line')).toBeTruthy();
+  });
+  it('result head in English, chat marker kept after it', () => {
+    usePrefsStore.getState().setLocale('en');
+    render(<AskCard message={card({ pr: { status: 'denied', decidedVia: { kind: 'chat', messageId: CHAT } }, ask: { answeredWith: 'deny', answeredBy: ME } })} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain('alice denied');
+    expect(screen.getByTestId('ask-answered-via-chat')).toBeTruthy();
+  });
+  it('unknown owner: read-only line waits for "the owner", not a someone placeholder', () => {
+    useActiveStore.getState().set({ me: acc('other', 'carol') });
+    render(<AskCard message={card({ pr: { ownerAccountId: 'ghost' } })} />);
+    expect(screen.getByTestId('mandate-owner-only').textContent).toBe('소유자의 결정을 기다린다');
+  });
+  it.each([
+    ['denied', { pr: { status: 'denied' } }],
+    ['added', { pr: { status: 'granted' } }],
     ['expired', { pr: { status: 'expired' }, ask: { closedAt: '2026-10-22T00:00:00Z', closedReason: 'expired' } }],
     ['superseded', { pr: { status: 'superseded' }, ask: { closedAt: '2026-10-22T00:00:00Z', closedReason: 'superseded', supersededBy: M2 } }],
   ])('ended state %s', (state, opts) => {
@@ -269,5 +300,62 @@ describe('W4 mandate line card', () => {
       render(<AskCard message={added()} />);
       expect(screen.queryByTestId('mandate-line-revoke')).toBeNull();
     });
+  });
+
+  it('r3: line card head comes from i18n, not the server ask.prompt (ko/en, with and without mandate)', () => {
+    const { unmount } = render(<AskCard message={card({ ask: { prompt: '권한을 줄까?' } })} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain('위임장에 줄을 더할까? · alice 차례');
+    expect(screen.getByTestId('ask-card').textContent).not.toContain('권한을 줄까?');
+    expect(screen.getByTestId('ask-card').textContent).not.toContain('골라 줘');
+    unmount();
+    usePrefsStore.getState().setLocale('en');
+    const a = render(<AskCard message={card({ ask: { prompt: '권한을 줄까?' } })} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain("Add a line to the mandate? · alice's turn");
+    expect(screen.getByTestId('ask-card').textContent).not.toContain('Pick one');
+    expect(screen.getByTestId('ask-card').textContent).not.toContain('권한을 줄까?');
+    a.unmount();
+    render(<AskCard message={card({ options: ['approve_new_mandate', 'deny'], ask: { prompt: '권한을 줄까?' }, pr: { mandate: undefined, line: { cap: 'tool', scope: 'x', limits: { approve_new_mandate: { untilMs: 1 } } } } })} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain("Start a mandate and add this line? · alice's turn");
+  });
+  it("r5(designer s1): owner handle unknown → head without the 「· owner 차례」 tail (ko/en, mandate and new)", () => {
+    const { unmount } = render(<AskCard message={card({ pr: { ownerAccountId: 'ghost', mandate: { ...MANDATE, ownerId: 'ghost' } } })} />);
+    const head = () => screen.getByTestId('ask-card').textContent ?? '';
+    expect(head()).toContain('위임장에 줄을 더할까?');
+    expect(head()).not.toContain('차례');
+    expect(head()).not.toContain('누군가');
+    unmount();
+    const b = render(<AskCard message={card({ options: ['approve_new_mandate', 'deny'], pr: { mandate: undefined } })} />);
+    expect(head()).toContain('위임장을 만들고 줄을 더할까? · alice 차례');
+    b.unmount();
+    usePrefsStore.getState().setLocale('en');
+    const c = render(<AskCard message={card({ pr: { ownerAccountId: 'ghost', mandate: { ...MANDATE, ownerId: 'ghost' } } })} />);
+    expect(head()).toContain('Add a line to the mandate?');
+    expect(head()).not.toContain('turn');
+    c.unmount();
+    render(<AskCard message={card({ options: ['approve_new_mandate', 'deny'], pr: { ownerAccountId: 'ghost', mandate: undefined } })} />);
+    expect(head()).toContain('Start a mandate and add this line?');
+    expect(head()).not.toContain('turn');
+  });
+  it('r5(designer F1): when the line box is drawn, only the server target line (meta bodyTargetLine) leaves the body', () => {
+    const TL = '명령 허용 `Bash(psql:*)`';
+    const body = `권한 요청 · @rcms\n${TL}\n이유: 확인`;
+    const m = card({ pr: { bodyTargetLine: TL } });
+    expect(bodyForLineCard(body, m.meta as Record<string, unknown>)).toBe('권한 요청 · @rcms\n이유: 확인');
+    // 대상 줄이 없거나(옛 카드) 줄 상자를 안 그리면(줄 없음·중립 거울·ask 없음) 본문 그대로.
+    expect(bodyForLineCard(body, card().meta as Record<string, unknown>)).toBe(body);
+    expect(bodyForLineCard(body, card({ pr: { bodyTargetLine: TL, line: undefined } }).meta as Record<string, unknown>)).toBe(body);
+    expect(bodyForLineCard(body, card({ mirror: { rootId: ROOT, neutral: true, bodyTargetLine: TL } }).meta as Record<string, unknown>)).toBe(body);
+    const { ask: _ask, ...noAsk } = m.meta as Record<string, unknown>;
+    expect(bodyForLineCard(body, noAsk)).toBe(body);
+    // 거울도 같은 칸으로 — 같은 글이 이유 줄에 있어도 하나만 뺀다(이유는 「이유: 」로 시작해 겹치지 않는다).
+    const mirror = card({ mirror: { rootId: ROOT, neutral: false, kind: 'tool', line: LINE, bodyTargetLine: TL } });
+    expect(bodyForLineCard(`${body}\n${TL}`, mirror.meta as Record<string, unknown>)).toBe(`권한 요청 · @rcms\n이유: 확인\n${TL}`);
+  });
+  it('r3: a plain ask (no permission line) keeps its generic head and prompt', () => {
+    usePrefsStore.getState().setLocale('en');
+    const plain = { ...card({ ask: { prompt: 'Which one?' } }), meta: { kind: 'ask', ask: { options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], to: { kind: 'human' }, prompt: 'Which one?' } } } as unknown as MessageRow;
+    render(<AskCard message={plain} />);
+    expect(screen.getByTestId('ask-card').textContent).toContain('Pick one');
+    expect(screen.getByTestId('ask-card').textContent).toContain('Which one?');
   });
 });

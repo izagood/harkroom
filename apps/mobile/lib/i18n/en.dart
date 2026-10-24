@@ -256,7 +256,10 @@ class StringsEn implements Strings {
   String get permAskAddLine => 'Add a line to the mandate?';
 
   @override
-  String get permAskNewMandate => 'Start a mandate and add a line?';
+  String get permAskNewMandate => 'Start a mandate and add this line?';
+
+  @override
+  String permAskOwnerTurn(String owner) => "$owner's turn";
 
   @override
   String get permApproveMandate => 'For this mandate';
@@ -284,6 +287,18 @@ class StringsEn implements Strings {
 
   @override
   String get permStateDenied => 'Denied';
+
+  @override
+  String permResultDenied(String who) => '$who denied';
+
+  @override
+  String permResultAdded(String who) => '$who added this to the mandate';
+
+  @override
+  String permResultOnce(String who) => '$who allowed it once';
+
+  @override
+  String permResultNewAdded(String who) => '$who started a mandate and added this';
 
   @override
   String get permStateExpired => 'Expired · the agent has to ask again';

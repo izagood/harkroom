@@ -54,6 +54,18 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
     : ask.answeredVia === 'chat' ? { messageId: null } : null;
   const chatViaHref = messageLinkFromMeta(chatVia?.messageId);
 
+  // r3: 줄 있는 권한 카드의 머리는 서버의 `ask.prompt`(한국어 고정) 대신 i18n 키로 그린다 — CI 거절 카드(줄 더하기 아님)는 그대로.
+  const ciOnce = (lined?.mirror?.once ?? (lined?.request?.once as { reason?: unknown } | undefined))?.reason === 'ci_not_green';
+  const lineHeadOwnerId = typeof lined?.request?.ownerAccountId === 'string' ? lined.request.ownerAccountId : lined?.mandate?.ownerId ?? null;
+  const lineHead = lined?.line && !ciOnce
+    ? (() => {
+      // r5(designer s1): 소유자 이름을 모르면 「· {owner} 차례」 꼬리 없이(모바일과 같다).
+      const owner = lineHeadOwnerId ? accounts[lineHeadOwnerId]?.handle ?? null : null;
+      if (lined.mandate) return owner ? t('mandateCard.head', { owner }) : t('mandateCard.headNoOwner');
+      return owner ? t('mandateCard.headNewOwner', { owner }) : t('mandateCard.headNew');
+    })()
+    : null;
+
   const answered = ask.answeredWith != null;
   /**
    * **답하지 않기로 했다**(2026-09-09). 고른 것이 없는 끝이다 — 답과 갈라 두는 이유는
@@ -98,6 +110,10 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
     ? (accounts[ask.closedBy]?.handle ?? t('common.someone'))
     : null;
 
+  // r5: 끝난 줄 카드의 머리는 「정해졌다 · X 골랐다」(선택지가 접혀 빈말) 대신 결과를 쓴다.
+  const resultKey = lined?.line && answered ? lineResultKey(ask.answeredWith ?? null) : null;
+  const resultHead = resultKey ? t(resultKey, { who: answeredByName ?? t('common.someone') }) : null;
+
   /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
      있고, 여기 `max-w-prose`(65ch)를 남기면 열을 넓혀도 이 카드만 옛 폭에 남아 한 화면에
      폭이 둘 선다(`messageWidth.test.tsx`). */
@@ -118,9 +134,9 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
         <span
           className={`text-meta font-semibold ${canChoose ? 'text-state-turn' : 'text-fg-agent'}`}
         >
-          {headline(ask.to, myId, accounts, answered, closed, t, closedReason)}
+          {resultHead ?? (lineHead && !answered && !closed ? lineHead : headline(ask.to, myId, accounts, answered, closed, t, closedReason))}
         </span>
-        {answered && answeredByName && (
+        {answered && answeredByName && !resultHead && (
           <span className="text-meta text-fg-subtle">{t('speech.ask.answeredBy', { name: answeredByName })}</span>
         )}
         {/* designer n3 — 글로 정한 카드는 답한 사람 뒤에 「· 글로 답함」(그 글로 가는 링크). */}
@@ -138,7 +154,7 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
         )}
         {replied && closedByName && <span className="text-meta text-fg-subtle">{closedByName}</span>}
       </div>
-      {ask.prompt && !superseded && <p className="px-3 pt-1 text-body text-fg-muted">{ask.prompt}</p>}
+      {ask.prompt && !superseded && !lineHead && <p className="px-3 pt-1 text-body text-fg-muted">{ask.prompt}</p>}
       {replied && replyBody && (
         <p
           data-testid="ask-reply-quote"
@@ -151,7 +167,7 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
       {lined && (
         <MandateLineBody message={message} src={lined} canChoose={canChoose} optionIds={ask.options.map((o) => o.id)}
           answeredWith={ask.answeredWith ?? null} closedReason={closed && !answered ? (closedReason ?? 'declined') : null}
-          supersededBy={ask.supersededBy ?? null} onOpenSettings={onOpenSettings} />
+          supersededBy={ask.supersededBy ?? null} onOpenSettings={onOpenSettings} headSaysResult={resultHead != null} />
       )}
       {!lined && replied && !pickAnyway && forMe && (
         <div className="px-2 pb-2 pt-1">
@@ -219,6 +235,15 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
       )}
     </div>
   );
+}
+
+/** r5: 줄 카드에서 고른 선택지 → 결과 머리 키. 모르는 선택지면 null(옛 머리). */
+export function lineResultKey(id: string | null): 'mandateCard.result.denied' | 'mandateCard.result.added' | 'mandateCard.result.once' | 'mandateCard.result.newAdded' | null {
+  if (id === 'deny') return 'mandateCard.result.denied';
+  if (id === 'approve_new_mandate') return 'mandateCard.result.newAdded';
+  if (id === 'approve_mandate' || id === 'approve') return 'mandateCard.result.added';
+  if (id === 'approve_once' || id === 'approve_hour') return 'mandateCard.result.once';
+  return null;
 }
 
 /**

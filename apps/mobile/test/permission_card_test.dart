@@ -224,6 +224,26 @@ void main() {
     expect(find.byKey(const Key('ask-option-m1-deny')), findsNothing);
   });
 
+  testWidgets('r5: 답한 카드 머리는 결과 — 누가 무엇을 했나(ko·en), 글로 답함·gh 덧말은 남는다', (tester) async {
+    Future<void> head(Map<String, Object?> pr, String chose, String text, {String lang = 'ko'}) async {
+      await tester.pumpWidget(wrap(app, card(permMeta(pr: pr, ask: {'answeredWith': chose, 'answeredBy': 'me-1'})), lang: lang));
+      final shown = tester.widget<Text>(find.byKey(const Key('ask-head-m1'))).data;
+      expect(shown, text);
+    }
+
+    await head({'status': 'denied'}, 'deny', '거절함 · alice');
+    await head({'status': 'granted'}, 'approve_mandate', '이 위임장에 더함 · alice');
+    await head({'status': 'granted'}, 'approve_new_mandate', '위임장을 만들고 더함 · alice');
+    await head({'status': 'approved_once', 'approvedOnce': {'ghUser': 'octo'}}, 'approve_once', '이번 한 번 허락함 · alice · gh octo');
+    await head({'status': 'denied', 'decidedVia': {'kind': 'chat', 'messageId': 'x'}}, 'deny', '거절함 · alice · 글로 답함');
+    await head({'status': 'denied'}, 'deny', 'alice denied', lang: 'en');
+    await head({'status': 'granted'}, 'approve_mandate', 'alice added this to the mandate', lang: 'en');
+    await head({'status': 'approved_once'}, 'approve_once', 'alice allowed it once', lang: 'en');
+    await head({'status': 'granted'}, 'approve_new_mandate', 'alice started a mandate and added this', lang: 'en');
+    expect(stringsFor('ko').permResultDenied('재빈'), '거절함 · 재빈');
+    expect(stringsFor('ko').permResultDenied('나비'), '거절함 · 나비');
+  });
+
   testWidgets('진짜 거울은 같은 카드, 중립 거울은 중립 한 줄 + 원본 링크', (tester) async {
     await tester.pumpWidget(wrap(
         app,
@@ -259,5 +279,44 @@ void main() {
     expect(find.byKey(const Key('perm-readonly-m1')), findsOneWidget);
     expect(find.byKey(const Key('ask-option-m1-approve_mandate')), findsNothing);
     expect(find.byKey(const Key('ask-option-m1-deny')), findsNothing);
+  });
+
+  testWidgets('r3: 줄 카드 머리는 i18n 키 — 서버의 ask.prompt 는 다시 그리지 않는다(ko·en·위임 없음)', (tester) async {
+    final meta = permMeta(ask: {'prompt': '권한을 줄까?'});
+    await tester.pumpWidget(wrap(app, card(meta)));
+    expect(find.text('위임장에 줄을 더할까? · alice 차례'), findsOneWidget);
+    expect(find.text('권한을 줄까?'), findsNothing);
+    await tester.pumpWidget(wrap(app, card(meta), lang: 'en'));
+    await tester.pump();
+    expect(find.text("Add a line to the mandate? · alice's turn"), findsOneWidget);
+    expect(find.text('권한을 줄까?'), findsNothing);
+    await tester.pumpWidget(wrap(
+        app,
+        card(permMeta(pr: {'mandate': null, 'once': null}, ask: {'prompt': '권한을 줄까?'}, options: [
+          {'id': 'approve_new_mandate', 'label': 'x'},
+          {'id': 'deny', 'label': '거절'},
+        ])),
+        lang: 'en'));
+    await tester.pump();
+    // r5(designer nit): 새 위임장 머리도 소유자를 알면 「· {owner} 차례」.
+    expect(find.text("Start a mandate and add this line? · alice's turn"), findsOneWidget);
+    expect(find.text('권한을 줄까?'), findsNothing);
+  });
+
+  test('r5(designer F1): 줄 상자를 그리면 본문에서 서버가 쓴 대상 줄(bodyTargetLine) 하나만 뺀다', () {
+    const tl = '머지 `acme/rebelro`';
+    const body = '권한 요청 · @ag\n$tl\n이유: 확인';
+    expect(permissionCardBody(body, permMeta(pr: {'bodyTargetLine': tl})), '권한 요청 · @ag\n이유: 확인');
+    // 옛 카드(칸 없음)·줄 없음·중립 거울·밀려난 카드(줄 상자 안 그림)·ask 없음은 그대로.
+    expect(permissionCardBody(body, permMeta()), body);
+    expect(permissionCardBody(body, permMeta(pr: {'bodyTargetLine': tl, 'line': null})), body);
+    expect(permissionCardBody(body, permMeta(mirror: {'rootId': 'root1', 'neutral': true, 'bodyTargetLine': tl})), body);
+    expect(permissionCardBody(body, permMeta(pr: {'bodyTargetLine': tl, 'status': 'superseded'})), body);
+    final noAsk = Map<String, Object?>.of(permMeta(pr: {'bodyTargetLine': tl}))..remove('ask');
+    expect(permissionCardBody(body, noAsk), body);
+    // 진짜 거울도 같은 칸을 읽는다.
+    expect(
+        permissionCardBody(body, permMeta(mirror: {'rootId': 'root1', 'neutral': false, 'kind': 'merge', 'line': _line, 'bodyTargetLine': tl})),
+        '권한 요청 · @ag\n이유: 확인');
   });
 }

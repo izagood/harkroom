@@ -5678,6 +5678,10 @@ export const en = {
   'pwreset.notice.unknownAdmin': 'An admin',
   'pwreset.notice.ack': 'Got it',
   'speech.ask.viaChat': "answered in chat",
+  'mandateCard.head': "Add a line to the mandate? · {owner}'s turn",
+  'mandateCard.headNew': "Start a mandate and add this line?",
+  'mandateCard.headNoOwner': "Add a line to the mandate?",
+  'mandateCard.headNewOwner': "Start a mandate and add this line? · {owner}'s turn",
   'mandateCard.mandate': "Mandate",
   'mandateCard.started': "started {date}",
   'mandateCard.noMandate': "No mandate",
@@ -5716,6 +5720,11 @@ export const en = {
   'mandateCard.ended.expired': "Expired",
   'mandateCard.ended.superseded': "Replaced by a new request →",
   'mandateCard.ended.mandateEnded': "Mandate ended · this line ended too",
+  'mandateCard.result.denied': "{who} denied",
+  'mandateCard.result.added': "{who} added this to the mandate",
+  'mandateCard.result.once': "{who} allowed it once",
+  'mandateCard.result.newAdded': "{who} started a mandate and added this",
+  'mandateCard.ownerOnlyUnknown': "Waiting for the owner's decision",
 } satisfies Record<string, Message>;
 
 /**

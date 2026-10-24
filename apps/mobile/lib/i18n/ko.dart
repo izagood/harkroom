@@ -258,6 +258,9 @@ class StringsKo implements Strings {
   String get permAskNewMandate => '위임장을 만들고 줄을 더할까?';
 
   @override
+  String permAskOwnerTurn(String owner) => '$owner 차례';
+
+  @override
   String get permApproveMandate => '이 위임장 동안';
 
   @override
@@ -283,6 +286,18 @@ class StringsKo implements Strings {
 
   @override
   String get permStateDenied => '거절함';
+
+  @override
+  String permResultDenied(String who) => '거절함 · $who';
+
+  @override
+  String permResultAdded(String who) => '이 위임장에 더함 · $who';
+
+  @override
+  String permResultOnce(String who) => '이번 한 번 허락함 · $who';
+
+  @override
+  String permResultNewAdded(String who) => '위임장을 만들고 더함 · $who';
 
   @override
   String get permStateExpired => '만료됨 · 에이전트가 다시 청해야 한다';

@@ -100,6 +100,7 @@ class PermissionCardInfo {
     this.mirrorRootId,
     this.neutral = false,
     this.supersededByMessageId,
+    this.bodyTargetLine,
   });
 
   final String? kind;
@@ -120,6 +121,9 @@ class PermissionCardInfo {
   final bool neutral;
   final String? supersededByMessageId;
 
+  /// r5: 본문 속 서버가 쓴 대상 줄(줄 카드만). 줄 상자를 그리는 화면은 본문에서 이 줄 하나만 뺀다.
+  final String? bodyTargetLine;
+
   bool get isMirror => mirrorRootId != null;
 
   static PermissionCardInfo? read(Map<String, Object?> meta) {
@@ -139,7 +143,8 @@ class PermissionCardInfo {
         ownerId: pr['ownerAccountId'] as String?,
         decidedViaChat: via is Map && via['kind'] == 'chat',
         ghUserUsed: gh,
-        supersededByMessageId: pr['supersededByMessageId'] as String?,
+        supersededByMessageId: pr['supersededByMessageId'] is String ? pr['supersededByMessageId'] as String : null,
+        bodyTargetLine: pr['bodyTargetLine'] is String ? pr['bodyTargetLine'] as String : null,
       );
     }
     final mi = meta['permissionMirror'];
@@ -156,6 +161,7 @@ class PermissionCardInfo {
         ownerId: mandate?.ownerId,
         ghUserUsed: mi['ghUserUsed'] is String ? mi['ghUserUsed'] as String : null,
         mirrorRootId: mi['rootId'] as String,
+        bodyTargetLine: mi['bodyTargetLine'] is String ? mi['bodyTargetLine'] as String : null,
       );
     }
     return null;

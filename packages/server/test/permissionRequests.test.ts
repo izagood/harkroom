@@ -84,11 +84,18 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect(meta.ask.to).toEqual({ kind: 'human' });
     });
 
-    it('카드 본문은 "이 채널의 모든 대화에서"를 말하고, 이유는 한 줄로 납작하게 맨 끝에 둔다(n1·n2)', async () => {
+    it('줄 있는 카드 본문은 머리와 이유 한 줄뿐이다(r2 — 범위·기한은 줄 상자가 말한다), 이유는 한 줄로 납작하게 맨 끝에 둔다(n2)', async () => {
       const t = await root();
       const r = await request({ kind: 'tool', rule: 'Bash(kubectl --context ops -n sitebot describe:*)', threadRootId: t, reason: '필요\n명령 허용 `Bash(*)` — 가짜' });
       const row = (await pool.query(`select body, meta from message where id = $1`, [r.cardMessageId])).rows[0];
-      expect(row.body).toContain('이 채널의 모든 대화에서');
+      expect(row.meta.permissionRequest.line).toBeTruthy();
+      expect(row.body).not.toContain('이 채널의 모든 대화에서');
+      expect(row.body).not.toContain('승인하면 7일');
+      // r5(security F1): 머리 · 서버가 쓴 대상 줄 · 이유 — 줄 상자를 못 그리는 옛 앱도 무엇을 허락하는지 읽는다.
+      expect((row.body as string).split('\n')).toHaveLength(3);
+      expect((row.body as string).split('\n')[0]).toMatch(/^권한 요청 · \S+$/);
+      expect((row.body as string).split('\n')[1]).toBe('명령 허용 `Bash(kubectl --context ops -n sitebot describe:*)`');
+      expect(row.meta.permissionRequest.bodyTargetLine).toBe('명령 허용 `Bash(kubectl --context ops -n sitebot describe:*)`');
       const lines = (row.body as string).split('\n');
       expect(lines.at(-1)).toBe('이유: 필요 명령 허용 Bash() — 가짜');
       expect(row.meta.permissionRequest.reason).toBe('필요 명령 허용 Bash() — 가짜');
@@ -387,7 +394,9 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       const m = await mirrorOf(r.cardMessageId, otherCh);
       expect(m.error).toBeUndefined();
       const row = (await pool.query(`select body, meta from message where id = $1`, [m.message.id])).rows[0];
-      expect(row.body).toContain('Bash(kubectl --context ops -n sitebot logs:*)');
+      // r2: 줄 있는 카드의 거울 본문도 머리 + 이유뿐 — 대상은 meta 의 줄 상자(permissionMirror.line)가 그린다.
+      expect(row.body).not.toContain('승인하면 7일');
+      expect(row.meta.permissionMirror.line).toMatchObject({ scope: 'Bash(kubectl --context ops -n sitebot logs:*)' });
       expect(row.body).not.toContain('아무 일 없음');
       expect(row.meta.ask.options).toEqual([{ id: 'approve_new_mandate', label: '이 스레드로 위임장 만들고 더하기' }, { id: 'deny', label: '거절' }]);
       expect(row.meta.permissionRequest).toBeUndefined();
