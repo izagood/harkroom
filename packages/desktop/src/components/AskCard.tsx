@@ -110,6 +110,10 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
     ? (accounts[ask.closedBy]?.handle ?? t('common.someone'))
     : null;
 
+  // r5: 끝난 줄 카드의 머리는 「정해졌다 · X 골랐다」(선택지가 접혀 빈말) 대신 결과를 쓴다.
+  const resultKey = lined?.line && answered ? lineResultKey(ask.answeredWith ?? null) : null;
+  const resultHead = resultKey ? t(resultKey, { who: answeredByName ?? t('common.someone') }) : null;
+
   /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
      있고, 여기 `max-w-prose`(65ch)를 남기면 열을 넓혀도 이 카드만 옛 폭에 남아 한 화면에
      폭이 둘 선다(`messageWidth.test.tsx`). */
@@ -130,9 +134,9 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
         <span
           className={`text-meta font-semibold ${canChoose ? 'text-state-turn' : 'text-fg-agent'}`}
         >
-          {lineHead && !answered && !closed ? lineHead : headline(ask.to, myId, accounts, answered, closed, t, closedReason)}
+          {resultHead ?? (lineHead && !answered && !closed ? lineHead : headline(ask.to, myId, accounts, answered, closed, t, closedReason))}
         </span>
-        {answered && answeredByName && (
+        {answered && answeredByName && !resultHead && (
           <span className="text-meta text-fg-subtle">{t('speech.ask.answeredBy', { name: answeredByName })}</span>
         )}
         {/* designer n3 — 글로 정한 카드는 답한 사람 뒤에 「· 글로 답함」(그 글로 가는 링크). */}
@@ -163,7 +167,7 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
       {lined && (
         <MandateLineBody message={message} src={lined} canChoose={canChoose} optionIds={ask.options.map((o) => o.id)}
           answeredWith={ask.answeredWith ?? null} closedReason={closed && !answered ? (closedReason ?? 'declined') : null}
-          supersededBy={ask.supersededBy ?? null} onOpenSettings={onOpenSettings} />
+          supersededBy={ask.supersededBy ?? null} onOpenSettings={onOpenSettings} headSaysResult={resultHead != null} />
       )}
       {!lined && replied && !pickAnyway && forMe && (
         <div className="px-2 pb-2 pt-1">
@@ -231,6 +235,15 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
       )}
     </div>
   );
+}
+
+/** r5: 줄 카드에서 고른 선택지 → 결과 머리 키. 모르는 선택지면 null(옛 머리). */
+export function lineResultKey(id: string | null): 'mandateCard.result.denied' | 'mandateCard.result.added' | 'mandateCard.result.once' | 'mandateCard.result.newAdded' | null {
+  if (id === 'deny') return 'mandateCard.result.denied';
+  if (id === 'approve_new_mandate') return 'mandateCard.result.newAdded';
+  if (id === 'approve_mandate' || id === 'approve') return 'mandateCard.result.added';
+  if (id === 'approve_once' || id === 'approve_hour') return 'mandateCard.result.once';
+  return null;
 }
 
 /**

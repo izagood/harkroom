@@ -5718,6 +5718,11 @@ export const en = {
   'mandateCard.ended.expired': "Expired",
   'mandateCard.ended.superseded': "Replaced by a new request →",
   'mandateCard.ended.mandateEnded': "Mandate ended · this line ended too",
+  'mandateCard.result.denied': "{who} denied",
+  'mandateCard.result.added': "{who} added this to the mandate",
+  'mandateCard.result.once': "{who} allowed it once",
+  'mandateCard.result.newAdded': "{who} started a mandate and added this",
+  'mandateCard.ownerOnlyUnknown': "Waiting for the owner's decision",
 } satisfies Record<string, Message>;
 
 /**

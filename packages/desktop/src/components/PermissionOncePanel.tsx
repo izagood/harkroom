@@ -225,7 +225,7 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
         <dt className="text-fg-subtle">{t('mergeOnce.pr')}</dt>
         <dd>
           {url ? <a href={url} target="_blank" rel="noreferrer noopener" className="text-accent underline" data-testid="merge-once-pr">#{d.number}</a> : <span>#{d.number}</span>}
-          <span className="ml-2 font-mono text-fg-muted" data-testid="merge-once-head">{d.headSha.slice(0, 9)}</span>
+          <span className="ml-2 font-mono text-fg-muted" data-testid="merge-once-head">{d.headSha.slice(0, 7)}</span>
         </dd>
         <dt className="text-fg-subtle">{t('mergeOnce.why')}</dt>
         <dd data-testid="merge-once-reason" data-reason={d.reason}>
@@ -397,7 +397,7 @@ export function OnceCardRows({ s, canAct }: { s: OnceApproval; canAct: boolean }
         <dt className="text-fg-subtle">{t('mergeOnce.pr')}</dt>
         <dd>
           {url ? <a href={url} target="_blank" rel="noreferrer noopener" className="text-accent underline" data-testid="merge-once-pr">#{d.number}</a> : <span>#{d.number}</span>}
-          <span className="ml-2 font-mono text-fg-muted" data-testid="merge-once-head">{d.headSha.slice(0, 9)}</span>
+          <span className="ml-2 font-mono text-fg-muted" data-testid="merge-once-head">{d.headSha.slice(0, 7)}</span>
         </dd>
         <dt className="text-fg-subtle">{t('mergeOnce.why')}</dt>
         <dd data-testid="merge-once-reason" data-reason={d.reason}>

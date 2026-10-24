@@ -3505,4 +3505,9 @@ export const ko = {
   'mandateCard.ended.expired': "만료됨",
   'mandateCard.ended.superseded': "새 요청으로 바뀜 →",
   'mandateCard.ended.mandateEnded': "위임 끝 · 이 줄도 끝났다",
+  'mandateCard.result.denied': "{who:이가} 거절함",
+  'mandateCard.result.added': "{who:이가} 이 위임장에 더함",
+  'mandateCard.result.once': "{who:이가} 이번 한 번 허락함",
+  'mandateCard.result.newAdded': "{who:이가} 위임장을 만들고 더함",
+  'mandateCard.ownerOnlyUnknown': "소유자의 결정을 기다린다",
 } satisfies Catalog;

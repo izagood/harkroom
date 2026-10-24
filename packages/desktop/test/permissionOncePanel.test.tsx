@@ -104,12 +104,12 @@ describe('PermissionOncePanel', () => {
     expect(readPermissionOnce(card({}, { reason: 'ci_not_green', failedChecks: 'nope' }).meta)).toMatchObject({ reason: 'ci_not_green', failedChecks: [] });
   });
 
-  it('위층에 저장소·PR·head 9자리·이유, 펼치기 전엔 계정·CI 칸이 없고 오퍼레이터에도 묻지 않는다', () => {
+  it('위층에 저장소·PR·head 7자리·이유, 펼치기 전엔 계정·CI 칸이 없고 오퍼레이터에도 묻지 않는다', () => {
     tauri(); setup();
     render(<PermissionOncePanel message={card()} />);
     expect(screen.getByTestId('merge-once-repo').textContent).toBe('example-org/service-api');
     expect(screen.getByTestId('merge-once-pr').getAttribute('href')).toBe('https://github.com/example-org/service-api/pull/42');
-    expect(screen.getByTestId('merge-once-head').textContent).toBe(HEAD.slice(0, 9));
+    expect(screen.getByTestId('merge-once-head').textContent).toBe(HEAD.slice(0, 7));
     expect(screen.getByTestId('merge-once-reason').dataset.reason).toBe('not_granted');
     expect(screen.queryByTestId('merge-once-form')).toBeNull();
     expect(invoke).not.toHaveBeenCalled();
