@@ -106,6 +106,51 @@ describe('웹뷰에 거는 쪽', () => {
   });
 
   /** 신호등(네이티브 pt)을 비우는 여백이 이 변수로 나눈다 — `lib/platform.ts` 의 `macTrafficLightInset`. */
+  it('열린 새 창에도 같은 배율을 건다 — 새 창은 자기 JS 가 없어 스스로 걸 수 없다', async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke, metadata: { currentWindow: { label: 'main' } } };
+    await createZoomer().apply(125, ['win-thread-a', 'win-channel-b']);
+    const labels = invoke.mock.calls.map(([, args]) => (args as { label: string; value: number }));
+    expect(labels).toEqual([
+      { label: 'main', value: zoomFactor(125) },
+      { label: 'win-thread-a', value: zoomFactor(125) },
+      { label: 'win-channel-b', value: zoomFactor(125) },
+    ]);
+  });
+
+  it('나중에 연 창은 지금 배율로 뜬다 — 이미 건 창에는 다시 보내지 않는다', async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke };
+    const zoomer = createZoomer();
+    await zoomer.apply(150);
+    invoke.mockClear();
+    await zoomer.apply(150, ['win-thread-a']);
+    expect(invoke.mock.calls).toEqual([['plugin:webview|set_webview_zoom', { label: 'win-thread-a', value: zoomFactor(150) }]]);
+  });
+
+  it('닫았다 다시 연 창(같은 라벨)에도 다시 건다 — 새 웹뷰는 1.0 으로 태어난다', async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke };
+    const zoomer = createZoomer();
+    await zoomer.apply(110, ['win-thread-a']);
+    await zoomer.apply(110, []);
+    invoke.mockClear();
+    await zoomer.apply(110, ['win-thread-a']);
+    expect(invoke).toHaveBeenCalledWith('plugin:webview|set_webview_zoom', { label: 'win-thread-a', value: zoomFactor(110) });
+  });
+
+  it('새 창 하나가 거절해도 메인의 변수는 적고, 그 창은 다음에 다시 시도한다', async () => {
+    const invoke = vi.fn((_cmd: string, args?: Record<string, unknown>) =>
+      args?.label === 'win-thread-a' ? Promise.reject(new Error('webview not found')) : Promise.resolve(undefined));
+    (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke };
+    const zoomer = createZoomer();
+    await zoomer.apply(80, ['win-thread-a']);
+    expect(document.documentElement.style.getPropertyValue(WEBVIEW_ZOOM_VAR)).toBe(String(zoomFactor(80)));
+    invoke.mockClear();
+    await zoomer.apply(80, ['win-thread-a']);
+    expect(invoke.mock.calls.map(([, a]) => (a as { label: string }).label)).toEqual(['win-thread-a']);
+  });
+
   it('웹뷰가 받아들인 배율을 CSS 변수로 적는다', async () => {
     const invoke = vi.fn().mockResolvedValue(undefined);
     (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke };

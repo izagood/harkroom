@@ -122,28 +122,40 @@ function windowLabel(): string {
  * 빠진 구버전 번들에서도 거부된다. 배율은 부가 표시라 앱을 막으면 안 된다 — `badge.ts`
  * 가 같은 판단이다.
  *
+ * **새 창(`win-<key>`)도 여기서 건다.** 웹뷰 배율은 웹뷰마다 따로이고, 새 창은 메인 React 의 포털이라
+ * 자기 자바스크립트가 돌지 않는다(`lib/appWindows.ts`) — 메인이 그 라벨로 걸어 주지 않으면 새 창은
+ * 언제까지나 1.0 이다(새 창만 배율이 다르고 ⌘+/- 를 따라오지 않던 신고, 2026-10-25). `popups` 는 지금
+ * 열린 새 창의 웹뷰 라벨이고, 목록에서 빠진 라벨은 기억도 지운다 — 같은 스레드를 닫았다 다시 열면
+ * 라벨이 같은데, 기억이 남으면 새 웹뷰에 배율을 걸지 않는다.
+ *
  * **같은 값을 두 번 걸지 않는다.** 부르는 쪽이 스토어 구독이라 배율과 무관한 변화에도
  * 깨어나는데, 그때마다 IPC 를 왕복하면 설정을 한 번 만질 때마다 수십 번이 된다.
  */
-export function createZoomer(): { apply(step: number): Promise<void> } {
-  let applied: number | null = null;
+export function createZoomer(): { apply(step: number, popups?: readonly string[]): Promise<void> } {
+  const applied = new Map<string, number>();
 
   return {
-    async apply(step) {
+    async apply(step, popups = []) {
       const normalized = normalizeZoom(step);
-      if (applied === normalized) return;
       const invoke = internals()?.invoke;
       if (typeof invoke !== 'function') return;
-      applied = normalized;
-      try {
-        await invoke(ZOOM_COMMAND, { label: windowLabel(), value: zoomFactor(normalized) });
-        // 신호등(네이티브 pt)을 비우는 여백이 이 값으로 나눈다(`lib/platform.ts` 의 `WEBVIEW_ZOOM_VAR`).
-        // 웹뷰가 배율을 받아들인 **뒤에만** 적는다 — 거절됐는데 적으면 여백이 없는 배율을 되돌린다.
-        document.documentElement.style.setProperty(WEBVIEW_ZOOM_VAR, String(zoomFactor(normalized)));
-      } catch {
-        // 다음 변화에서 다시 시도할 수 있게 기억을 지운다.
-        applied = null;
-      }
+      const own = windowLabel();
+      const wanted = new Set([own, ...popups]);
+      for (const label of applied.keys()) if (!wanted.has(label)) applied.delete(label);
+      await Promise.all([...wanted].map(async (label) => {
+        if (applied.get(label) === normalized) return;
+        applied.set(label, normalized);
+        try {
+          await invoke(ZOOM_COMMAND, { label, value: zoomFactor(normalized) });
+          // 신호등(네이티브 pt)을 비우는 여백이 이 값으로 나눈다(`lib/platform.ts` 의 `WEBVIEW_ZOOM_VAR`).
+          // 웹뷰가 배율을 받아들인 **뒤에만** 적는다 — 거절됐는데 적으면 여백이 없는 배율을 되돌린다.
+          // 새 창 문서는 메인 `<html>` 의 style 을 그대로 옮겨 받는다(`syncRootAttributes`) — 모든 창이 같은 배율이라 맞는다.
+          if (label === own) document.documentElement.style.setProperty(WEBVIEW_ZOOM_VAR, String(zoomFactor(normalized)));
+        } catch {
+          // 다음 변화에서 다시 시도할 수 있게 기억을 지운다.
+          if (applied.get(label) === normalized) applied.delete(label);
+        }
+      }));
     },
   };
 }
