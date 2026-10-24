@@ -161,3 +161,14 @@ describe('omp 판 고정(C1)', () => {
     expect(await findOmpBinary('/nonexistent')).toBeNull();
   });
 });
+
+describe('omp 준비 표시(실측 fixture, 18.12.6)', () => {
+  it('첫 화면과 되살린 화면 둘 다 상태줄의 `%`·`K` 칸에서 준비로 읽힌다', async () => {
+    for (const name of ['omp-tui-ready.txt', 'omp-tui-resumed.txt']) {
+      const screen = await readFile(join(import.meta.dirname, 'fixtures', name), 'utf8');
+      expect(OMP_ADAPTER.screen.ready.test(screen)).toBe(true);
+    }
+    // 배너만 그려진 화면(상태줄 전)은 준비가 아니다.
+    expect(OMP_ADAPTER.screen.ready.test('▄▀▀▄ █▀▄▀▄ █▀▀▄\n v18.12.6\n Tip: You can /btw')).toBe(false);
+  });
+});
