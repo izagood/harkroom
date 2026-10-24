@@ -36,7 +36,10 @@ describe('발견 호출도 하네스의 PATH 로 부른다', () => {
     const call = src.slice(src.indexOf('findOpencodeSessionId({'));
     const 인자 = call.slice(0, call.indexOf('})'));
 
-    expect(인자).toContain('PATH: harnessPath(');
+    // 발견·export 두 조회가 같은 env 함수를 탄다(`opencodeQueryEnv`) — 그 함수가 PATH 를 하네스의 것으로 만든다.
+    expect(인자).toContain('env: opencodeQueryEnv(');
+    const fn = src.slice(src.indexOf('export function opencodeQueryEnv('));
+    expect(fn.slice(0, fn.indexOf('\n}\n'))).toContain('PATH: harnessPath(');
   });
 });
 
