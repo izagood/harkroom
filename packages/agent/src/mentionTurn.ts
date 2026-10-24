@@ -34,7 +34,7 @@ import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspace
 import { codexSessionsDir } from './codexHome.js';
 import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneModelMissing, providerLaneModelId } from './opencodeHome.js';
 import { ensurePiLaneThread, listPiMcpTools, PI_LANE_PROVIDER, piLaneLoginPresent, piSessionFile, readonlyToolList, writePiLaneModels } from './piHome.js';
-import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
+import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompUnverifiedBinaryNotice, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { readOpencodeTurnState } from './opencodeTurnState.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
@@ -44,7 +44,11 @@ import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult
 import { planThreadNote, type ThreadNoteState } from './threadNotePin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
 import { laneModelMissing, laneScrubsSubprocessEnv, PROVIDER_LANE_FIXED_ENV, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
-import { laneWorkspaceViolations } from './laneWorkspaceGuard.js';
+import { laneParentViolations, laneWorkspaceViolations } from './laneWorkspaceGuard.js';
+import { homedir } from 'node:os';
+
+/** omp 실행 파일 경고(`ompUnverifiedBinaryNotice`)는 러너마다 스레드에 한 번만 싣는다 — 로그에는 매 턴. */
+let ompNoticeShown = false;
 
 /** 정지 직전 "제출 대기" 판정에 쓰는 화면 꼬리 길이(글자). 입력줄과 바닥줄 몇 개면 된다. */
 const SCREEN_TAIL_CHARS = 4_000;
@@ -342,6 +346,8 @@ export interface MentionTurnDeps {
   providerEnv?: (cause: string, harness: AgentHarness) => Promise<Record<string, string>>;
   /** 그 턴이 끝나면 `providerEnv` 가 남긴 턴 파일을 거둔다(security L2 n1). 기동 때 걷기는 거두지 못한 것의 바닥이다. */
   providerEnvDone?: (env: Record<string, string>) => Promise<void>;
+  /** 그 멘션의 `providerEnv` 가 남긴 경고 한 줄(잰 판 밖 하네스 — 막지 않는다). 있으면 스레드에 progress 로 싣는다. */
+  providerNotice?: (cause: string) => string | null;
   /**
    * 이 턴의 하네스 기록 파일을 알린다(비밀 보관소 D7). 멘션이 끝날 때 러너가 그 파일에서 마운트한 값을 가린다
    * (`secretLeases.ts`). claude 는 세션 jsonl, codex 는 rollout. 세션이 sqlite 인 하네스(opencode 계열)는 없다.
@@ -1389,7 +1395,11 @@ export async function runMentionTurn(
   // 작업 폴더에 다음 턴의 지시·도구·플러그인을 바꾸는 이름이 우리 것이 아닌 꼴로 있으면 띄우지 않는다(security, `laneWorkspaceGuard.ts`).
   // 스킬 동기화·설정 걷기 **뒤**라 우리 링크와 걷힌 설정은 걸리지 않는다. 지우지 않는다 — 사람의 파일일 수 있다.
   if (deps.providerEnv) {
-    const found = await laneWorkspaceViolations(rec.workspaceDir, runnerSkillsDir(deps.stateDir));
+    // 부모 사슬(작업 폴더 위 ~ 까지)도 본다(security G3) — 하네스 판과 무관하게, 프로젝트 설정 끄기가 새 판에서 안 먹어도 심을 파일이 없게.
+    const found = [
+      ...await laneWorkspaceViolations(rec.workspaceDir, runnerSkillsDir(deps.stateDir)),
+      ...await laneParentViolations(rec.workspaceDir, homedir()),
+    ];
     if (found.length) {
       console.warn(`[mentionTurn] ${key}: API 키 연결 턴 — 작업 폴더에 보호 이름이 있어 띄우지 않는다: ${found.join(', ')}`);
       throw new ProviderLaneError('workspace_protected');
@@ -1401,14 +1411,22 @@ export async function runMentionTurn(
   }
   // lane 이면 그 턴의 값을 지금 받는다 — 임대는 스케줄러가 이 멘션의 첫 시도 전에 받아 두었다.
   const providerEnv = deps.providerEnv ? await deps.providerEnv(mentionId, def.harness) : null;
+  // 잰 판 밖이면 막지 않고 스레드에 경고 한 줄(2026-10-25 jaebin, security G1·G2). 경고를 못 남겨도 턴은 간다.
+  const laneNotices: string[] = [];
+  const versionNotice = deps.providerNotice?.(mentionId) ?? null;
+  if (versionNotice) laneNotices.push(versionNotice);
   // omp: 스레드마다 고정한 `git init` 빈 cwd(B4·G1) — 그 폴더와 위 폴더에 저장소 설정 이름이 있으면 띄우지 않는다(C2).
   // 세션 헤더는 그 cwd 로 미리 쓴다 — `--resume` 은 헤더의 cwd 가 실제 cwd 와 같아야 이어 간다(실측).
   let ompThread: OmpThreadDirs | undefined;
   if (usesOmpHome(def.harness)) {
     if (!deps.ompHome) throw new Error('mentionTurn: omp 턴인데 ompHome 이 없다');
-    // 판 고정(C1): PTY 가 띄울 실행 파일이 고정한 판의 공식 바이너리여야 한다 — 저장소 설정 차단이 판마다 바뀔 수 있다.
+    // 판 확인(C1): PTY 가 띄울 실행 파일이 확인한 판의 공식 바이너리인지 본다 — 아니어도 막지 않고 경고한다(2026-10-25, security G2).
     const ompBin = await findOmpBinary(harnessPath(def.harness, process.env.PATH));
-    if (!ompBin || !(await ompBinaryOk(ompBin))) throw new ProviderLaneError('harness_version');
+    if (ompBin && !(await ompBinaryOk(ompBin))) {
+      const notice = ompUnverifiedBinaryNotice();
+      console.warn(`[mentionTurn] ${key}: ${notice}`);
+      if (!ompNoticeShown) { ompNoticeShown = true; laneNotices.push(notice); }
+    }
     ompThread = await ensureOmpThread(deps.ompHome, key);
     const bad = await ompCwdViolations(ompThread.cwd, deps.stateDir);
     if (bad.length) throw new Error(`mentionTurn: omp 의 빈 cwd 나 그 위 폴더에 설정 이름이 있어 띄우지 않는다: ${bad.join(', ')}`);
@@ -1431,6 +1449,11 @@ export async function runMentionTurn(
     if (!id) throw new ProviderLaneError('bad_model');
     await writePiLaneModels(turnPiHome, { baseUrl, keyPath, models: [id] });
     piLaneModel = `${PI_LANE_PROVIDER}/${id}`;
+  }
+  for (const notice of laneNotices) {
+    await deps.harkroom.progress(channelId, notice.slice(0, BODY_LIMIT), anchor).catch((err: unknown) => {
+      console.warn(`[mentionTurn] ${key}: 하네스 판 경고를 못 남겼다 — ${(err as Error).message}`);
+    });
   }
   const plan = buildTurnCommand({
     harness: def.harness,

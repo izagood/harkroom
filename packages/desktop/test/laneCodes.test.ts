@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CODEX_LANE_VERSIONS, KILO_LANE_VERSIONS, OMP_LANE_VERSIONS, OPENCODE_LANE_VERSIONS, PI_LANE_VERSIONS } from '@harkroom/shared/providerLane';
+import { CODEX_LANE_MEASURED_VERSIONS, KILO_LANE_MEASURED_VERSIONS, OMP_LANE_MEASURED_VERSIONS, OPENCODE_LANE_MEASURED_VERSIONS, PI_LANE_MEASURED_VERSIONS } from '@harkroom/shared/providerLane';
 import { translator } from '../src/i18n';
 import { laneCodeKey, laneCodeText } from '../src/lib/laneCodes';
 
@@ -8,12 +8,12 @@ describe('harness_version 문장', () => {
   it.each(['ko', 'en'] as const)('%s: 받는 버전을 상수(목록)에서 끼워 넣는다', (locale) => {
     const text = laneCodeText(translator(locale), 'harness_version');
     expect(laneCodeKey('harness_version')).toBe('lane.code.harness_version');
-    for (const v of OPENCODE_LANE_VERSIONS) expect(text).toContain(`opencode ${v}`);
-    for (const v of CODEX_LANE_VERSIONS) expect(text).toContain(`codex ${v}`);
+    for (const v of OPENCODE_LANE_MEASURED_VERSIONS) expect(text).toContain(`opencode ${v}`);
+    for (const v of CODEX_LANE_MEASURED_VERSIONS) expect(text).toContain(`codex ${v}`);
     // 판 관문이 있는 하네스는 모두 싣는다(designer C 4 — omp 가 빠져 있었다).
-    for (const v of OMP_LANE_VERSIONS) expect(text).toContain(`omp ${v}`);
-    for (const v of KILO_LANE_VERSIONS) expect(text).toContain(`kilo ${v}`);
-    for (const v of PI_LANE_VERSIONS) expect(text).toContain(`pi ${v}`);
+    for (const v of OMP_LANE_MEASURED_VERSIONS) expect(text).toContain(`omp ${v}`);
+    for (const v of KILO_LANE_MEASURED_VERSIONS) expect(text).toContain(`kilo ${v}`);
+    for (const v of PI_LANE_MEASURED_VERSIONS) expect(text).toContain(`pi ${v}`);
     expect(text).not.toMatch(/\{versions?\}/);
   });
 });
@@ -23,13 +23,13 @@ describe('harness_version 문장 — 하네스를 알 때', () => {
   it.each(['ko', 'en'] as const)('%s: codex 면 codex 판만, opencode 면 opencode 판만', (locale) => {
     const t = translator(locale);
     const codex = laneCodeText(t, 'harness_version', 'codex');
-    for (const v of CODEX_LANE_VERSIONS) expect(codex).toContain(`codex ${v}`);
+    for (const v of CODEX_LANE_MEASURED_VERSIONS) expect(codex).toContain(`codex ${v}`);
     expect(codex).not.toContain('opencode');
     const opencode = laneCodeText(t, 'harness_version', 'opencode');
-    for (const v of OPENCODE_LANE_VERSIONS) expect(opencode).toContain(`opencode ${v}`);
+    for (const v of OPENCODE_LANE_MEASURED_VERSIONS) expect(opencode).toContain(`opencode ${v}`);
     expect(opencode).not.toContain('codex');
     // 판 관문이 없는 하네스·모름은 모두 늘어놓는다.
-    for (const h of ['claude-code', null, undefined]) expect(laneCodeText(t, 'harness_version', h)).toContain(`codex ${CODEX_LANE_VERSIONS[0]}`);
+    for (const h of ['claude-code', null, undefined]) expect(laneCodeText(t, 'harness_version', h)).toContain(`codex ${CODEX_LANE_MEASURED_VERSIONS[0]}`);
   });
 });
 

@@ -30,17 +30,21 @@ describe('codex lane envFor', () => {
     expect(await lane.envFor('m1', 'codex')).toEqual({ [CODEX_LANE_KEY_ENV]: 'tok-codex', [CODEX_LANE_BASE_URL_ENV]: 'https://gateway.example' });
   });
 
-  it('잰 판과 정확히 같지 않거나 못 읽으면 `harness_version` — 키를 받지 않는다', async () => {
+  // 2026-10-25 jaebin: 판으로 막지 않는다 — 잰 판 밖이면 키 받기까지 가고 경고 한 줄을 남긴다(security G1).
+  it('잰 판 밖이거나 못 읽어도 판으로 막지 않는다 — 경고를 남긴다', async () => {
     const t = await setup();
     let mounted = 0;
-    for (const v of ['codex-cli 0.154.1', 'codex-cli 0.153.0', '0.154.0', 'codex-cli 0.154.0-alpha', null, 'garbage']) {
+    const versions = ['codex-cli 0.154.1', 'codex-cli 0.153.0', '0.154.0', 'codex-cli 0.154.0-alpha', null, 'garbage'];
+    for (const v of versions) {
       const lane = createProviderLane({
         mount: async () => { mounted++; return { status: 200, body: '{}' }; },
         turnSecretsDir: t.secretsDir, harnessVersion: async () => v, codexHome: t.codexHome,
       });
-      await expect(lane.envFor('m1', 'codex')).rejects.toMatchObject({ code: 'harness_version' });
+      // 시험 서버는 lane 을 주지 않는다 — 판 다음 단계(키 받기)까지 갔다는 표지가 `lane_unset` 이다.
+      await expect(lane.envFor('m1', 'codex')).rejects.toMatchObject({ code: 'lane_unset' });
+      expect(lane.takeNotice('m1')).toContain('0.154.0');
     }
-    expect(mounted).toBe(0);
+    expect(mounted).toBe(versions.length);
     expect(codexLaneVersionOk('codex-cli 0.154.0')).toBe(true);
   });
 

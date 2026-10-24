@@ -3,8 +3,8 @@
 // 작업 폴더의 몇몇 이름은 **다음 턴**의 지시·도구·플러그인을 바꾼다(`.claude/`·`.opencode/`·`.codex/`·`CLAUDE.md`·`AGENTS.md`·`.mcp.json`·
 // `opencode.json[c]`·`kilo.json[c]`·`.kilo/`·`.kilocoderules`). 권한 표의 이름 맞추기만으로는 다 닫히지 않는다 — 그래서 하네스를 띄우기 **전에** 폴더를 훑어, 그런 이름이
 // (대소문자를 가리지 않고) 우리 것이 아닌 꼴로 있으면 그 턴을 띄우지 않는다. 사람의 파일일 수 있으니 지우지 않는다(fail-closed).
-import { lstat, readdir, readlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { lstat, readdir, readlink, realpath } from 'node:fs/promises';
+import { dirname, join, relative, sep } from 'node:path';
 
 /** 다음 턴을 바꾸는 이름(소문자). 대소문자를 가리지 않고 맞춘다. */
 const PROTECTED_NAMES = new Set([
@@ -50,6 +50,51 @@ export async function laneWorkspaceViolations(workspaceDir: string, skillsDir: s
     if (!PROTECTED_NAMES.has(name.toLowerCase())) continue;
     if (RUNNER_SKILL_DIRS.has(name) && await onlyRunnerSkillLinks(join(workspaceDir, name), skillsDir)) continue;
     out.push(name);
+  }
+  return out.sort();
+}
+
+/**
+ * 사람 홈 바로 그 자리에서 보는 이름 — 하네스가 위로 거슬러 읽는 **프로젝트** 설정 파일만이다. `~/.claude`·`~/.agents`·`~/.codex` 같은 전역
+ * 자리는 늘 있어서(사람의 것) 걸면 모든 턴이 서고, 그쪽은 홈 표지 자리·스위치가 맡는다.
+ */
+const HOME_PROJECT_NAMES = new Set(['opencode.json', 'opencode.jsonc', 'kilo.json', 'kilo.jsonc', '.kilocoderules']);
+
+/** 홈의 하네스 설치 폴더 — 설치 파일만 허용한다(그 밖의 이름이 있으면 걸린다). */
+const HOME_INSTALL_DIRS = new Set(['.opencode', '.kilo', '.kilocode']);
+const HOME_INSTALL_ALLOWED = new Set(['bin', 'node_modules', 'package.json', 'package-lock.json', 'bun.lock', '.gitignore']);
+
+/**
+ * 작업 폴더의 **부모 사슬**(바로 위부터 `home` 까지)에서 다음 턴을 바꾸는 이름을 찾는다(security G3, 2026-10-25). 하네스 판과 무관한 검사다 —
+ * 프로젝트 설정 끄기 스위치가 새 판에서 조용히 안 먹어도 위 폴더에 심은 것이 없으면 구멍이 열리지 않는다. 하네스는 실제 경로로 거슬러
+ * 오르므로 두 경로 다 `realpath` 로 풀고 시작한다. `home` 밖의 작업 폴더는 보지 않는다. 못 읽은 것은 걸린 것으로 본다(fail-closed).
+ * 찾은 것은 `home` 기준 상대 경로로 돌려준다.
+ */
+export async function laneParentViolations(workspaceDir: string, home: string): Promise<string[]> {
+  const realWs = await realpath(workspaceDir).catch(() => null);
+  const realHome = await realpath(home).catch(() => null);
+  if (!realWs || !realHome) return ['(unreadable)'];
+  const out: string[] = [];
+  if (!realWs.startsWith(realHome + sep)) return out;
+  for (let dir = dirname(realWs); ; dir = dirname(dir)) {
+    const atHome = dir === realHome;
+    const label = relative(realHome, dir) || '~';
+    const names = await readdir(dir).catch(() => null);
+    if (names === null) { out.push(`${label}/(unreadable)`); break; }
+    for (const name of names) {
+      const lower = name.toLowerCase();
+      if (!atHome) {
+        if (PROTECTED_NAMES.has(lower)) out.push(join(label, name));
+      } else if (HOME_PROJECT_NAMES.has(lower)) {
+        out.push(join(label, name));
+      } else if (HOME_INSTALL_DIRS.has(lower)) {
+        // 홈의 하네스 설치 폴더는 설치 파일만 허용한다.
+        const inside = await readdir(join(dir, name)).catch(() => null);
+        if (inside === null) out.push(join(label, name));
+        else for (const n of inside) if (!HOME_INSTALL_ALLOWED.has(n)) out.push(join(label, name, n));
+      }
+    }
+    if (atHome || !dir.startsWith(realHome + sep)) break;
   }
   return out.sort();
 }

@@ -715,6 +715,7 @@ const scheduler = createMentionScheduler({
     ...(providerLane ? {
       providerEnv: (cause: string, harness: AgentHarness) => providerLane.envFor(cause, harness),
       providerEnvDone: (env: Record<string, string>) => providerLane.release(env),
+      providerNotice: (cause: string) => providerLane.takeNotice(cause),
     } : {}),
     harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide,
     channelName: ctx.channelName(mention.channelId),

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { laneWorkspaceViolations } from '../src/laneWorkspaceGuard.js';
+import { laneParentViolations, laneWorkspaceViolations } from '../src/laneWorkspaceGuard.js';
 
 // API 키 연결 턴의 작업 폴더 검사(security, 2026-10-23) — 다음 턴을 바꾸는 이름이 대소문자를 가리지 않고 우리 것이 아닌 꼴로
 // 있으면 그 턴을 띄우지 않는다.
@@ -117,5 +117,66 @@ describe('laneWorkspaceViolations', () => {
       await writeFile(join(ws, d, 'rules', 'x.md'), 'x');
       expect(await laneWorkspaceViolations(ws, skills)).toEqual([d]);
     }
+  });
+});
+
+// security G3(2026-10-25): 하네스 판과 무관하게 부모 사슬도 본다 — 사람 홈 자리에서는 프로젝트 설정 파일 이름만.
+describe('laneParentViolations', () => {
+  async function tree() {
+    const home = await realpath(await mkdtemp(join(tmpdir(), 'lane-parent-')));
+    const ws = join(home, '.harkroom-agent', 'agent-1', 'workspaces', 'w');
+    await mkdir(ws, { recursive: true });
+    return { home, ws };
+  }
+
+  it('평소(부모가 비었음)에는 아무것도 없다 — 사람 홈의 전역 자리(.claude·.agents·.codex)는 걸지 않는다', async () => {
+    const { home, ws } = await tree();
+    for (const d of ['.claude', '.agents', '.codex', '.opencode']) await mkdir(join(home, d));
+    expect(await laneParentViolations(ws, home)).toEqual([]);
+  });
+
+  it('작업 폴더 위 폴더의 보호 이름과 사람 홈의 프로젝트 설정 파일을 잡는다(대소문자 무시)', async () => {
+    const { home, ws } = await tree();
+    await mkdir(join(home, '.harkroom-agent', 'agent-1', '.opencode'));
+    await writeFile(join(home, '.harkroom-agent', 'Kilo.JSON'), '{}');
+    await writeFile(join(home, 'opencode.json'), '{}');
+    expect(await laneParentViolations(ws, home)).toEqual([
+      join('.harkroom-agent', 'Kilo.JSON'), join('.harkroom-agent', 'agent-1', '.opencode'), join('~', 'opencode.json'),
+    ].sort());
+  });
+
+  it('홈 밖 작업 폴더는 보지 않고, 못 푸는 경로는 걸린 것으로 본다', async () => {
+    const { home } = await tree();
+    const outside = await realpath(await mkdtemp(join(tmpdir(), 'lane-outside-')));
+    expect(await laneParentViolations(outside, home)).toEqual([]);
+    expect(await laneParentViolations(join(home, 'no-such', 'ws'), home)).toEqual(['(unreadable)']);
+  });
+
+  // security n1: 링크에서 멈추면 남은 부모를 안 보고 통과한다 — 하네스처럼 실제 경로 사슬을 본다.
+  it('링크를 거친 작업 폴더도 실제 경로의 부모 사슬을 끝까지 본다', async () => {
+    const { home } = await tree();
+    const real = join(home, 'real');
+    await mkdir(join(real, 'inner', 'ws'), { recursive: true });
+    await writeFile(join(home, 'kilo.jsonc'), '{}');
+    await symlink(real, join(home, 'link'));
+    expect(await laneParentViolations(join(home, 'link', 'inner', 'ws'), home)).toEqual([join('~', 'kilo.jsonc')]);
+  });
+
+  // security F1: 홈의 하네스 설치 폴더는 설치 파일만 허용한다.
+  it('홈의 .opencode·.kilo·.kilocode 는 설치 파일만 있으면 통과하고, 그 밖의 이름은 잡는다', async () => {
+    const { home, ws } = await tree();
+    for (const d of ['.opencode', '.kilo']) {
+      await mkdir(join(home, d, 'bin'), { recursive: true });
+      await mkdir(join(home, d, 'node_modules'), { recursive: true });
+    }
+    for (const f of ['package.json', 'package-lock.json', 'bun.lock', '.gitignore']) await writeFile(join(home, '.opencode', f), '');
+    expect(await laneParentViolations(ws, home)).toEqual([]);
+    await writeFile(join(home, '.opencode', 'opencode.json'), '{}');
+    await mkdir(join(home, '.kilo', 'plugin'), { recursive: true });
+    await writeFile(join(home, '.kilo', 'plugin', 'x.js'), '');
+    await mkdir(join(home, '.kilocode', 'rules'), { recursive: true });
+    expect(await laneParentViolations(ws, home)).toEqual([
+      join('~', '.opencode', 'opencode.json'), join('~', '.kilo', 'plugin'), join('~', '.kilocode', 'rules'),
+    ].sort());
   });
 });

@@ -51,6 +51,11 @@ export async function findOmpBinary(path: string | undefined): Promise<string | 
 
 const hashCache = new Map<string, string>();
 
+/** 고정한 판의 공식 바이너리가 아닐 때 스레드에 남기는 한 줄(security G2 — 막지 않는다). 경로는 싣지 않는다. */
+export function ompUnverifiedBinaryNotice(): string {
+  return `⚠ omp — 실행 파일이 확인한 공식 바이너리가 아니다(확인한 판: ${OMP_VERSIONS.join(' · ')}). 턴은 그대로 진행한다.`;
+}
+
 /**
  * 그 실행 파일이 고정한 판의 공식 바이너리인가(C1). 해시는 (경로·크기·mtime)이 같으면 다시 재지 않는다 — 200MB 라 턴마다 재면 느리다.
  * 표에 없는 판·플랫폼은 거절한다(fail-closed).
