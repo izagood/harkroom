@@ -3719,6 +3719,15 @@ export function harnessFallbackBinDirs(harness: string | undefined | null): stri
   switch (harness) {
     case 'opencode':
       return ['.opencode/bin'];
+    // kilo 공식 설치 스크립트는 `~/.kilo/bin` 에 놓는다(`INSTALL_DIR=$HOME/.kilo/bin`, 2026-10-25 확인).
+    case 'kilo':
+      return ['.kilo/bin'];
+    // pi 설치 스크립트는 PATH 에 있는 쓸 수 있는 자리를 고르고, 없으면 `~/.pi/agent/bin` 에 실행기를 둔다(2026-10-25 확인).
+    case 'pi':
+      return ['.pi/agent/bin'];
+    // omp 설치 스크립트의 기본 자리는 `~/.local/bin` 이다(`PI_INSTALL_DIR` 로 바꿀 수 있다, 2026-10-25 확인).
+    case 'omp':
+      return ['.local/bin'];
     // claude·codex 는 npm 전역이라 이미 PATH 에 있다 — 지어내지 않는다.
     default:
       return [];

@@ -813,6 +813,14 @@ describe('PATH 밖에 설치되는 하네스', () => {
     expect(dirs[0]).not.toBe(대비자리);
   });
 
+  it('kilo 는 `~/.kilo/bin` 을 자식 PATH 뒤에 붙인다', () => {
+    const p = buildTurnCommand({
+      ...base, harness: 'kilo', mode: 'mention', sessionId: null, isFirstTurn: true,
+      opencodeHome: '/state/opencode-home',
+    });
+    expect((p.env.PATH ?? '').split(delimiter).at(-1)).toBe(join(homedir(), '.kilo', 'bin'));
+  });
+
   it('그런 자리가 없는 하네스의 PATH 는 건드리지 않는다', () => {
     const p = buildTurnCommand({
       ...base, harness: 'codex', mode: 'mention', sessionId: null, isFirstTurn: true,
