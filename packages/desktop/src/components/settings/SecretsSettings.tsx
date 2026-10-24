@@ -588,7 +588,8 @@ export function pausedReason(t: ReturnType<typeof useT>, locale: string, g: Pick
     case 'definition_changed': {
       const fields = (g.changedFields ?? []).map((f) => fieldLabel(t, f));
       if (fields.length === 0) return t('secrets.pausedDefinition');
-      const text = fields.length <= 2 ? fields.join('·') : t('secrets.pausedFieldsMore', { first: fields[0]!, n: String(fields.length - 1) });
+      // 둘은 한국어는 「·」, 그 밖은 「 and 」로 잇는다(designer n1).
+      const text = fields.length <= 2 ? fields.join(locale === 'ko' ? '·' : ' and ') : t('secrets.pausedFieldsMore', { first: fields[0]!, n: String(fields.length - 1) });
       // 조사는 한국어만 붙인다 — 다른 사전도 같은 자리표시자를 써야 해서(i18n 시험) 빈 값으로 넘긴다.
       return t('secrets.pausedFields', { fields: text, josa: locale === 'ko' ? josa(text) : '' });
     }
@@ -809,7 +810,8 @@ function ReapproveDialog({ secret, grant, again, error, busy, handle, channelNam
   }, [grant.agentId, grant.operatorId]);
   const fields = grant.changedFields ?? [];
   const channels = grant.channelId ? `#${channelName(grant.channelId)}` : t('secrets.allChannels');
-  const nowName = machine?.now?.name ?? t('secrets.reapproveMachineUnknown');
+  // 읽는 동안은 「…」 — 「지금 배정된 머신」이 먼저 보였다가 이름으로 바뀌지 않게(designer n2). 못 찾으면 그 말로.
+  const nowName = machine === null ? '…' : machine.now?.name ?? t('secrets.reapproveMachineUnknown');
   const moved = !!machine?.now && !!machine.before && machine.now.id !== machine.before.id;
   const [pre, post] = (grant.operatorId
     ? t(moved ? 'secrets.reapproveMove' : 'secrets.reapproveBind', { channels, machine: '\u0001' })

@@ -386,6 +386,8 @@ describe('정지된 부여 다시 허락', () => {
     fireEvent.click(screen.getByTestId('secret-grant-reapprove-alpha'));
     const dlg = await screen.findByRole('dialog');
     expect(within(dlg).getByTestId('secret-reapprove-fields').textContent).toBe('지시문작업 디렉터리');
+    // 이름에 조사를 붙이지 않는다(designer 1) — 「api-token 을」 같은 틀린 조사가 안 나온다.
+    expect(within(dlg).getByText('@alpha 에게 api-token 다시 줄까?')).toBeTruthy();
     await waitFor(() => expect(within(dlg).getByTestId('secret-reapprove-scope').textContent).toBe('모든 채널 · 지금 머신만 → old-mbp 에 묶는다'));
     fireEvent.click(within(dlg).getByRole('button', { name: '다시 허락' }));
     await waitFor(() => expect(c.reapproveSecretGrant).toHaveBeenCalledWith('id-api-token', 'g1', LAST));
@@ -451,7 +453,7 @@ describe('정지된 부여 다시 허락', () => {
     fireEvent.click(await screen.findByTestId('secret-grant-reapprove-alpha'));
     const dlg = await screen.findByRole('dialog');
     fireEvent.click(within(dlg).getByRole('button', { name: '다시 허락' }));
-    expect(await within(dlg).findByText(/@alpha 이 어느 머신에도 배정돼 있지 않다/)).toBeTruthy();
+    expect(await within(dlg).findByText(/@alpha — 어느 머신에도 배정돼 있지 않다/)).toBeTruthy();
   });
 
   it('lastChangedAt 을 싣지 않는 옛 서버에는 [다시 허락] 이 없다', async () => {
