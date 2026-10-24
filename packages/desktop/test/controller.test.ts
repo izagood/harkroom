@@ -290,6 +290,8 @@ describe('Controller', () => {
     await c.start();
     await c.openChannel('c1');
     await vi.waitFor(() => expect(useAppStore.getState().messages.c1!.map((m) => m.id)).toEqual(['m5', 'm9']));
+    // 뒤채움이 **끝난 뒤**에 과거를 묻는다 — 도는 중이면 `loadOlder` 는 그것에 합류하고 새로 묻지 않는다.
+    await vi.waitFor(() => expect(useAppStore.getState().backfilling.c1).toBeFalsy());
     expect(useAppStore.getState().hasMore.c1).toBe(true);
 
     await c.loadOlder();
