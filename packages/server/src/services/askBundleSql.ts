@@ -54,12 +54,17 @@ export const bundledRootSql = (alias: string) => `(CASE WHEN ${alias}.meta->>'ki
  * `::uuid` 하면 jsonb 에 이상한 값이 하나만 들어가도 이 조각을 쓰는 쿼리 전체가 터진다 — 채널 목록이
  * 통째로 500 이 된다. WHERE 의 AND 는 평가 순서를 약속하지 않으므로 거르기는 반드시 CASE 안에서 한다.
  * 지금 쓰는 길(`upsertAskBundle`)은 원본 행을 읽어 확인한 id 만 넣으므로 걸리는 값은 없어야 한다.
+ *
+ * **줄들을 배열로 모아 `id = ANY(…)` 한 번으로 집는다**(2026-10-24, JIT 문턱). 예전 꼴(`jsonb_array_elements … JOIN message`)은
+ * 플래너가 줄 수를 모르는 함수라 100줄로 치고 원본 찾기를 100번 매겨, 이 조각 하나가 머리 한 행 비용의 대부분(로컬 724)이었다.
+ * 뜻은 같다 — 원본 중 하나라도 열려 있으면 참이고, uuid 꼴이 아닌 줄(null)은 어떤 id 와도 같지 않다.
  */
 export const openBundleSql = (alias: string) => `(CASE WHEN ${alias}.meta->>'kind' = 'askBundle' THEN EXISTS (
-        SELECT 1 FROM jsonb_array_elements(${alias}.meta->'askBundle'->'items') bi
-          JOIN message br ON br.id = CASE
+        SELECT 1 FROM message br
+         WHERE br.id = ANY (ARRAY(SELECT CASE
             WHEN bi->>'rootId' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
             THEN (bi->>'rootId')::uuid END
-         WHERE br.deleted_at IS NULL
+            FROM jsonb_array_elements(${alias}.meta->'askBundle'->'items') bi))
+           AND br.deleted_at IS NULL
            AND br.meta->'ask'->>'answeredWith' IS NULL
            AND br.meta->'ask'->>'closedAt' IS NULL) ELSE false END)`;
