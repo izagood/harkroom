@@ -74,6 +74,8 @@ export interface AgentStatePaths {
   piHomeDir: string;
   /** 전용 제공사 경로(`providerLane.ts`)의 claude config 디렉터리 — 계정 풀 밖, 이 에이전트 전용(security ⓒ). */
   providerLaneClaudeDir: string;
+  /** 전용 제공사 경로의 codex `CODEX_HOME` — 계정 로그인(`auth.json`)을 링크하지 않는 이 에이전트 전용 홈(`providerLane.ts`). */
+  providerLaneCodexDir: string;
   /** 작업 폴더 정리의 기동 보고(세션 기록 훑기)를 이미 했다는 표지(`cleanupReport.ts`). */
   cleanupBackfillPath: string;
   /** 서버별로 갈리기 **전** 경로(handle 만으로 스코프). 존재 확인용이고 자동 이전은 하지 않는다. */
@@ -104,6 +106,7 @@ export function resolveAgentStateDir(
     opencodeHomeDir: join(agentStateDir, 'opencode-home'),
     piHomeDir: join(agentStateDir, 'pi-home'),
     providerLaneClaudeDir: join(agentStateDir, 'claude-provider-lane'),
+    providerLaneCodexDir: join(agentStateDir, 'codex-provider-lane'),
     cleanupBackfillPath: join(agentStateDir, 'cleanup-backfill.json'),
     legacyPath: join(baseDir, handle),
   };

@@ -8,11 +8,16 @@
  *   돌려준다. 못 받으면 **던진다** — 계정 로그인으로 떨어지지 않는다(fail-closed).
  * - 값은 이 프로세스의 env 에 두지 않는다. 받은 맵은 그 턴의 plan 에만 실린다.
  */
-import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { relative, isAbsolute, join } from 'node:path';
-import { normalizeProviderBaseUrl, OPENCODE_LANE_VERSIONS, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
+import { CODEX_LANE_VERSIONS, normalizeProviderBaseUrl, OPENCODE_LANE_VERSIONS, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
 import type { AgentHarness } from '@harkroom/shared';
 import { PROVIDER_LANE_OPENCODE_PROVIDER } from './opencodeHome.js';
+
+/** codex lane 의 키를 담는 env 이름 — provider `env_key` 가 이 이름을 읽는다. */
+export const CODEX_LANE_KEY_ENV = 'HARKROOM_LANE_API_KEY';
+/** codex lane 의 주소를 조립(`buildTurnCommand`)까지 실어 나르는 이름. 자식 env 에는 넣지 않는다. */
+export const CODEX_LANE_BASE_URL_ENV = 'HARKROOM_LANE_BASE_URL';
 
 /**
  * 하네스별로 lane 이 넣을 수 있는 키(security ⓑ). 여기 없는 하네스는 lane 을 못 쓴다 — 넣을 자리를 모르면
@@ -22,7 +27,44 @@ export const PROVIDER_LANE_ENV_KEYS: Partial<Record<AgentHarness, readonly strin
   'claude-code': ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN'],
   // opencode 는 키를 env 로 받지 않는다 — 턴 파일 경로 하나만 받고, 그 파일이 키 파일을 `{file:…}` 로 가리킨다(Y1~Y3).
   opencode: ['OPENCODE_CONFIG'],
+  // codex 는 provider 의 `env_key` 로 키를 읽는다(`codexLaneArgs`). 주소는 env 로 받지 않는다 — 설정 키 `base_url` 은 env 를 못 읽어
+  // argv 로만 간다. 그래서 주소는 `CODEX_LANE_BASE_URL_ENV` 로 조립까지만 실어 나르고 자식 env 에서는 뺀다(`PROVIDER_LANE_ARGV_ONLY_KEYS`).
+  codex: [CODEX_LANE_KEY_ENV, CODEX_LANE_BASE_URL_ENV],
 };
+
+/** 허용 목록에 있지만 하네스 env 에는 넣지 않는 이름 — argv 조립에만 쓴다. */
+export const PROVIDER_LANE_ARGV_ONLY_KEYS: Partial<Record<AgentHarness, readonly string[]>> = {
+  codex: [CODEX_LANE_BASE_URL_ENV],
+};
+
+/** codex lane 의 provider 이름(`model_providers.<이름>`). */
+export const CODEX_LANE_PROVIDER = 'harkroom-lane';
+
+/**
+ * codex lane 턴의 `-c` 덮어쓰기(codex-cli 0.154.0 실측, 2026-10-24, 가짜 Responses 서버·가짜 키). `-c` 는 `CODEX_HOME/config.toml` 보다 이긴다.
+ *
+ * - provider: `env_key` 로 키를 env 에서 읽는다 — argv 에는 이름만 있다. 그 env 가 없으면 codex 는 요청 없이 `Missing environment
+ *   variable` 로 끝난다 — 홈에 `auth.json` 이 있어도 그쪽으로 떨어지지 않았다(실측).
+ * - 셸 env 걷기 셋: 기본값의 codex 는 **키를 셸에 그대로 넘겼다**. `shell_environment_policy` 만 고치면 exec 는 막히지만 TUI(멘션 턴의
+ *   모드)는 셸 스냅숏이 로그인 셸 env 를 되살려 **여전히 보였다** — 스냅숏·로그인 셸을 같이 끈다(둘 다 끈 뒤 셸 env 에 키 없음, 실측).
+ * - 자동 업데이트 확인을 끈다 — 턴 사이에 판이 바뀌면 관문을 지난 판과 도는 판이 갈린다(opencode 와 같은 이유).
+ */
+export function codexLaneArgs(baseUrl: string): string[] {
+  const p = `model_providers.${CODEX_LANE_PROVIDER}`;
+  return [
+    '-c', `model_provider=${JSON.stringify(CODEX_LANE_PROVIDER)}`,
+    '-c', `${p}.name=${JSON.stringify(CODEX_LANE_PROVIDER)}`,
+    // gateway 가 받는 OpenAI 꼴 경로는 `/v1/responses` 다 — lane 주소는 claude·opencode 와 같은 뿌리라 `/v1` 을 붙인다.
+    '-c', `${p}.base_url=${JSON.stringify(`${baseUrl}/v1`)}`,
+    '-c', `${p}.env_key=${JSON.stringify(CODEX_LANE_KEY_ENV)}`,
+    '-c', `${p}.wire_api="responses"`,
+    '-c', 'check_for_update_on_startup=false',
+    '-c', 'features.shell_snapshot=false',
+    '-c', 'allow_login_shell=false',
+    '-c', 'shell_environment_policy.ignore_default_excludes=false',
+    '-c', `shell_environment_policy.exclude=${JSON.stringify([CODEX_LANE_KEY_ENV, CODEX_LANE_BASE_URL_ENV])}`,
+  ];
+}
 
 /** 키 대신 턴 파일 경로를 받는 env 이름. 이 이름을 받는 하네스는 키 값을 env 로 받지 않는다. */
 export const LANE_TURN_FILE_ENV = 'OPENCODE_CONFIG';
@@ -53,9 +95,19 @@ export function opencodeLaneVersionOk(raw: string | null | undefined): boolean {
   return /^\d+\.\d+\.\d+$/.test(version) && (OPENCODE_LANE_VERSIONS as readonly string[]).includes(version);
 }
 
+/**
+ * codex lane 의 판 관문(`CODEX_LANE_VERSIONS`). 출력은 `codex-cli <판>` 한 줄이다(0.154.0 실측). 셸 env 걷기가 설정 키 셋에 걸려 있어
+ * 판이 바뀌면 조용히 풀릴 수 있다 — 잰 판과 **정확히** 같을 때만 받는다.
+ */
+export function codexLaneVersionOk(raw: string | null | undefined): boolean {
+  const m = /^codex-cli (\d+\.\d+\.\d+)$/.exec((raw ?? '').trim());
+  return m !== null && (CODEX_LANE_VERSIONS as readonly string[]).includes(m[1]!);
+}
+
 /** 하네스별 판 관문 — 격리를 잰 판 밖이면 `harness_version`. 없는 하네스는 판을 묻지 않는다. */
 const PROVIDER_LANE_VERSION_GATE: Partial<Record<AgentHarness, (raw: string | null) => boolean>> = {
   opencode: opencodeLaneVersionOk,
+  codex: codexLaneVersionOk,
 };
 
 /** lane 턴 파일 자리(러너 상태 폴더, 작업 폴더 밖, 0700). 파일은 멘션마다 하나, 기동 때 남은 것을 걷는다. */
@@ -166,6 +218,11 @@ export interface ProviderLaneDeps {
   stateDir?: string;
   /** 하네스 판(`opencode --version` 출력). 못 읽으면 null — opencode lane 은 `harness_version` 으로 실패한다. */
   harnessVersion?(harness: AgentHarness): Promise<string | null>;
+  /**
+   * codex lane 전용 `CODEX_HOME`(`providerLaneCodexDir`). 여기에 `auth.json` 이 있으면 띄우지 않는다(`harness_login_present`) —
+   * 러너는 이 홈에 로그인을 링크하지 않으므로, 있으면 누가 넣은 것이고 provider 덮어쓰기가 빠지는 순간 그 로그인으로 돈다.
+   */
+  codexHome?: string;
 }
 
 /** 이 하네스의 lane 턴이 자식 env 에 넣을 수 있는 이름. 없으면 null. */
@@ -226,6 +283,11 @@ export function createProviderLane(deps: ProviderLaneDeps): {
     if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new ProviderLaneError('bad_path');
     const value = (await readFile(real!, 'utf8').catch(() => '')).replace(/\r?\n$/, '');
     if (!value || /[\r\n\0]/.test(value)) throw new ProviderLaneError('bad_value');
+    if (providerLaneKeys(harness)?.includes(CODEX_LANE_KEY_ENV)) {
+      if (!deps.codexHome) throw new ProviderLaneError('no_turn_secrets_dir');
+      if (await lstat(join(deps.codexHome, 'auth.json')).then(() => true, () => false)) throw new ProviderLaneError('harness_login_present');
+      return { [CODEX_LANE_KEY_ENV]: value, [CODEX_LANE_BASE_URL_ENV]: baseUrl };
+    }
     if (viaTurnFile) {
       // 값은 읽어 검사만 한다 — opencode 에는 키 파일 경로만 간다.
       const name = cause.replace(/[^A-Za-z0-9-]/g, '').slice(0, 64) || 'turn';

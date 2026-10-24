@@ -70,16 +70,22 @@ export function readProviderLaneConfig(raw: unknown): ProviderLaneConfig | null 
 export const OPENCODE_LANE_VERSIONS = ['1.18.32'] as const;
 
 /**
+ * codex lane 의 격리를 잰 판(러너 판 관문 `codexLaneVersionOk`). 셸 env 걷기가 설정 셋(정책·셸 스냅숏·로그인 셸)에 걸려 있고
+ * 판마다 기본값이 달랐다(0.154.0 실측: 기본은 키를 셸에 넘기고, TUI 는 스냅숏이 정책을 우회한다) — 판이 바뀌면 다시 잰다.
+ */
+export const CODEX_LANE_VERSIONS = ['0.154.0'] as const;
+
+/**
  * 턴을 못 띄운 까닭의 **허용 목록**(1c, security 조건 ③). 실패 카드 meta(`FailureMeta.failure.laneCode`)에는 이 값만 실린다 —
  * 오퍼레이터·서버가 준 문자열을 그대로 흘리지 않고, 모르는 것은 `unknown` 으로 접는다. base URL·비밀 이름·값 경로는
  * 코드가 아니므로 어디에도 실리지 않는다(조건 ①).
  *
- * - 러너가 정하는 것: `harness_unsupported`·`no_turn_secrets_dir`·`operator_unreachable`·`lane_unset`·`bad_base_url`·`bad_path`·`bad_value`·`bg_unsupported`·`bad_model`(opencode 모델이 `harkroom-lane/<id>` 꼴이 아님)·`workspace_protected`(작업 폴더에 다음 턴을 바꾸는 이름이 있음)·`harness_version`(하네스 판이 lane 격리를 잰 판 밖)
+ * - 러너가 정하는 것: `harness_unsupported`·`no_turn_secrets_dir`·`operator_unreachable`·`lane_unset`·`bad_base_url`·`bad_path`·`bad_value`·`bg_unsupported`·`bad_model`(opencode 모델이 `harkroom-lane/<id>` 꼴이 아님)·`workspace_protected`(작업 폴더에 다음 턴을 바꾸는 이름이 있음)·`harness_version`(하네스 판이 lane 격리를 잰 판 밖)·`harness_login_present`(codex lane 전용 홈에 계정 로그인 파일이 있음)
  * - 오퍼레이터가 정하는 것: `no_lease`(재기동한 러너)·`forbidden`·`bad_request`·`unavailable`
  * - 서버 비밀 꺼내기가 정하는 것: `not_granted`·`grant_suspended`·`lease_invalid`·`not_found`·`secret_expired`·`secret_store_disabled`·`rate_limited`
  */
 export const PROVIDER_LANE_FAILURE_CODES = [
-  'harness_unsupported', 'no_turn_secrets_dir', 'operator_unreachable', 'lane_unset', 'bad_base_url', 'bad_path', 'bad_value', 'bg_unsupported', 'bad_model', 'workspace_protected', 'harness_version',
+  'harness_unsupported', 'no_turn_secrets_dir', 'operator_unreachable', 'lane_unset', 'bad_base_url', 'bad_path', 'bad_value', 'bg_unsupported', 'bad_model', 'workspace_protected', 'harness_version', 'harness_login_present',
   'no_lease', 'forbidden', 'bad_request', 'unavailable',
   'not_granted', 'grant_suspended', 'lease_invalid', 'not_found', 'secret_expired', 'secret_store_disabled', 'rate_limited',
   'unknown',

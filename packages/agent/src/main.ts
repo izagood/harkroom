@@ -314,7 +314,7 @@ const [me, guide] = await (async () => {
 // 뿌리가 아직 없는 첫 기동이면 읽을 것이 없다 — 그때는 빈 목록이고 새 이름으로 만든다.
 const stateDirNames = await readdir(config.stateDir).catch(() => [] as string[]);
 const {
-  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir, cleanupBackfillPath, providerLaneClaudeDir,
+  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir, cleanupBackfillPath, providerLaneClaudeDir, providerLaneCodexDir,
 } = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance, stateDirNames);
 
 // 뿌리 이름이 id 하나라(#850) 사람이 눈으로 찾을 길을 따로 낸다: `by-name/<handle> -> ../<뿌리>`.
@@ -325,15 +325,20 @@ await ensureNameLink(config.stateDir, me.handle, basename(config.agentInstance ?
 // 대화형 `codex resume` 은 --ignore-user-config 를 받지 않는다. 개인 config.toml/MCP 를
 // 물려주지 않으면서 기존 로그인은 재사용하도록 Harkroom 전용 CODEX_HOME 을 준비한다.
 // 로그인은 설정 화면에서 고른 **활성 codex 계정**의 것이다(없으면 시스템 기본 `~/.codex`).
-const { codexHome } = await syncCodexAuth(codexHomeDir);
+// 전용 제공사 경로로 뜬 러너인가(`providerLane.ts`). opencode 홈도 이것으로 lane 블록을 고른다(ⓕ).
+const providerLaneOn = process.env[PROVIDER_LANE_ENV] === '1';
+// API 키 연결 러너의 codex 는 **로그인을 링크하지 않는 전용 홈**으로 돈다(security ⓒ) — 계정 홈을 쓰면 provider 덮어쓰기가 빠지는 순간
+// 그 로그인으로 조용히 돈다. 링크 돌리기(`syncCodexAuth`)도 부르지 않는다 — 부르면 이 홈에 `auth.json` 링크를 건다.
+const { codexHome } = providerLaneOn
+  ? { codexHome: await mkdir(providerLaneCodexDir, { recursive: true, mode: 0o700 }).then(() => providerLaneCodexDir) }
+  : await syncCodexAuth(codexHomeDir);
+const syncCodexLink = providerLaneOn ? undefined : () => syncCodexAuth(codexHome);
 
 // opencode 도 같은 이유로 격리한다 — 다만 한 변수가 아니라 XDG 셋이고, MCP 는 argv 가 아니라
 // **설정 파일**로만 등록되므로 오퍼레이터가 쓴 표를 그 파일로 번역해 둔다(`opencodeHome.ts`).
 // 사람 설정에서 물려받는 것은 `provider`·`model` 뿐이다 — `mcp` 를 물려받으면 운영자 개인
 // MCP 가 에이전트 턴에 붙는다(claude 의 `--strict-mcp-config` 와 같은 자리).
 // 루트 하나에 opencode 와 Kilo(포크)가 **하위 디렉터리만 달리해** 함께 산다(`xdgApp`) — 둘 다 적는다.
-// 전용 제공사 경로로 뜬 러너인가(`providerLane.ts`). opencode 홈도 이것으로 lane 블록을 고른다(ⓕ).
-const providerLaneOn = process.env[PROVIDER_LANE_ENV] === '1';
 const startupMcp = await readMcpServers(config.mcpConfigPath);
 let opencodeHome = opencodeHomeDir;
 for (const app of allXdgApps()) {
@@ -517,7 +522,7 @@ setInterval(() => { void bgExecutor.tick().catch((err: unknown) => console.error
 interactive = createInteractiveManager({
   harkroom, store, exec, runTurn: runPtyTurn, me,
   workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp, codexHome, opencodeHome, piHome,
-  syncCodexAuth: () => syncCodexAuth(codexHome),
+  ...(syncCodexLink ? { syncCodexAuth: syncCodexLink } : {}),
   // **인터랙티브 턴은 페일오버하지 않는다.** 사람이 앉아 있고, 계정을 바꾸면 그 사람이
   // 보던 세션이 사라진다(세션 파일이 계정 디렉터리 안에 있다) — 관찰 도중에 화면을 갈아
   // 치우는 것보다 그 계정의 한도를 그대로 보여 주는 편이 낫다. 그래서 첫 계정에 고정한다.
@@ -592,6 +597,7 @@ const providerLane = providerLaneOn
     report: (ok, code) => relay.notifyProviderLaneResult(ok, code),
     stateDir: agentStateDir,
     harnessVersion: (harness) => harnessVersion(harness),
+    codexHome,
   })
   : null;
 // 지난 러너가 남긴 턴 파일을 걷는다(키 값은 없고 키 파일 경로만 있다).
@@ -709,7 +715,7 @@ const scheduler = createMentionScheduler({
     // 디렉터리다. 워크스페이스 안에 두면 에이전트가 자기 지시문을 고칠 수 있다.
     stateDir: agentStateDir,
     codexHome,
-    syncCodexAuth: () => syncCodexAuth(codexHome),
+    ...(syncCodexLink ? { syncCodexAuth: syncCodexLink } : {}),
     opencodeHome,
     piHome,
     claudeAccount: account?.name ?? null,
