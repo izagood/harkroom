@@ -1133,7 +1133,8 @@ export class Controller {
       : dm
         ? dm.memberIds.filter((id) => id !== store.me?.id).map((id) => store.accounts[id]?.handle ?? '…').join(', ')
         : 'Harkroom';
-    const author = store.accounts[message.authorId]?.handle;
+    // 시스템 줄의 author 는 말한 사람이 아니다(시스템 줄 C안 c4) — 알림 제목에 그 이름을 달지 않는다.
+    const author = message.kind === 'system' ? null : store.accounts[message.authorId]?.handle;
 
     this.notifiedMessages.add(message.id);
     await this.notifier.notify({
@@ -1221,7 +1222,8 @@ export class Controller {
       if (row && await this.announceAccountGate(row)) continue;
       if (!prefs.enabled || !wanted[e.reason]) continue;
 
-      const author = row ? accounts[row.authorId]?.handle : null;
+      // 시스템 줄은 누구의 말도 아니다(C안 c4) — 「@jaebin 답글」 처럼 보이지 않게 이름을 빼고 Harkroom 으로.
+      const author = row && row.kind !== 'system' ? accounts[row.authorId]?.handle : null;
       const channel = channels.find((c) => c.id === e.channelId);
       const dm = dms.find((d) => d.id === e.channelId);
       const where = channel

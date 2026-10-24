@@ -280,7 +280,8 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
     // 맥락 줄 — 나에게 온 말 중 가장 최근 것, 단 제목과 같은 문장은 건너뛴다(물음 자신을 되풀이하지 않게).
     const latest = card.entries.find((e) => { const line = oneSentence(e.body); return line !== '' && line !== card.summary; });
     const latestLine = latest ? oneSentence(latest.body) : '';
-    const latestWho = latest?.authorId ? accounts[latest.authorId] : undefined;
+    // 시스템 줄의 author 는 말한 사람이 아니다(C안 c4) — 이름을 앞에 달지 않는다. `kind` 는 새 서버만 싣는다.
+    const latestWho = latest?.authorId && (latest as { kind?: unknown }).kind !== 'system' ? accounts[latest.authorId] : undefined;
     const folded = card.fold === 'later' || card.fold === 'cleared';
     return (
       <div data-testid="inbox-detail" data-root={card.rootId} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">

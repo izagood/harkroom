@@ -3517,6 +3517,12 @@ export const en = {
    * 되어 스크린리더 사용자가 둘을 못 가른다. 그 사실이 언어를 건너 살아남아야 한다.
    */
   'message.authorLabel': 'Author {name}',
+  'message.system.author': 'Harkroom',
+  'message.system.badge': 'System',
+  'message.system.srLabel': 'System notice',
+  'message.system.re.post': '↳ About {name}’s message',
+  'message.system.re.request': '↳ About {name}’s request',
+  'message.system.re.open': '{label} — open the message',
 
   /**
    * 수신자 배지. **강조는 나에게 온 것에만 간다**(규칙 04) — 그 색 판정은 화면이 하고,

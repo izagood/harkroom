@@ -1893,6 +1893,12 @@ export const ko = {
   'message.openSkillApproval': '스킬 승인 화면 열기',
 
   'message.authorLabel': '작성자 {name}',
+  'message.system.author': 'Harkroom',
+  'message.system.badge': '시스템',
+  'message.system.srLabel': '시스템 알림',
+  'message.system.re.post': '↳ {name} 의 글에 대해',
+  'message.system.re.request': '↳ {name} 의 요청에 대해',
+  'message.system.re.open': '{label} — 원 글 열기',
 
   // `→ 나` 는 **원래 화면 그대로다**. 한국어는 화면이 사람을 `나` 로 부르는 것이
   // 자연스럽고(영어는 `you` 가 자연스럽다), 그 차이가 이 두 줄이 낱말 대치가 아닌 자리다.

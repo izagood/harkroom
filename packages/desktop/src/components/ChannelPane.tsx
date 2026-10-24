@@ -877,7 +877,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
                     className="flex w-full gap-2 px-6 py-0.5 text-left text-body text-fg hover:bg-surface-sunken"
                     onClick={() => void getController().openMessage(p.messageId)}
                   >
-                    <span className="shrink-0 font-semibold">{accounts[p.message.authorId]?.handle ?? '…'}</span>
+                    <span className="shrink-0 font-semibold">{p.message.kind === 'system' ? t('message.system.author') : accounts[p.message.authorId]?.handle ?? '…'}</span>
                     {/* 본문은 한 줄만 미리 보여 준다 — 목록이 대화를 두 번 그리는 자리가 되면
                         접어 둔 이유가 사라진다. 첨부만 있는 메시지는 본문이 빈 문자열이라
                         그대로 두면 누를 곳이 handle 뿐인 줄이 된다.

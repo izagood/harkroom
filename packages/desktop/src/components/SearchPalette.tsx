@@ -313,7 +313,8 @@ export function SearchPalette({ open, onClose, initialScope = 'all' }: Props) {
                   말했나**(본문단). 찾는 사람이 눈으로 훑는 것은 본문이고, 출처는 그
                   본문을 고른 뒤 확인하는 꼬리표다. */}
               <div className="flex items-center gap-2 text-meta text-fg-muted">
-                <span className="font-medium text-fg-muted">{getAuthorName(msg.authorId)}</span>
+                {/* 시스템 줄은 author 이름 대신 시스템(C안 c4) — 그 사람의 말로 검색 결과에 서지 않게. */}
+                <span className="font-medium text-fg-muted">{msg.kind === 'system' ? t('message.system.author') : getAuthorName(msg.authorId)}</span>
                 <span>·</span>
                 <span>{getChannelName(msg.channelId)}</span>
                 {msg.threadRootId && msg.threadRootId !== msg.id && (
