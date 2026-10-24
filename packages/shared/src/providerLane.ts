@@ -65,6 +65,11 @@ export function readProviderLaneConfig(raw: unknown): ProviderLaneConfig | null 
 }
 
 /**
+ * opencode lane 의 격리를 잰 판(러너 판 관문 `opencodeLaneVersionOk` 와 데스크톱 `harness_version` 문장이 같이 쓴다). 넓히면 둘이 같이 바뀐다.
+ */
+export const OPENCODE_LANE_VERSIONS = ['1.18.32'] as const;
+
+/**
  * 턴을 못 띄운 까닭의 **허용 목록**(1c, security 조건 ③). 실패 카드 meta(`FailureMeta.failure.laneCode`)에는 이 값만 실린다 —
  * 오퍼레이터·서버가 준 문자열을 그대로 흘리지 않고, 모르는 것은 `unknown` 으로 접는다. base URL·비밀 이름·값 경로는
  * 코드가 아니므로 어디에도 실리지 않는다(조건 ①).
@@ -73,11 +78,6 @@ export function readProviderLaneConfig(raw: unknown): ProviderLaneConfig | null 
  * - 오퍼레이터가 정하는 것: `no_lease`(재기동한 러너)·`forbidden`·`bad_request`·`unavailable`
  * - 서버 비밀 꺼내기가 정하는 것: `not_granted`·`grant_suspended`·`lease_invalid`·`not_found`·`secret_expired`·`secret_store_disabled`·`rate_limited`
  */
-/**
- * opencode lane 의 격리를 잰 판(러너 판 관문 `opencodeLaneVersionOk` 와 데스크톱 `harness_version` 문장이 같이 쓴다). 넓히면 둘이 같이 바뀐다.
- */
-export const OPENCODE_LANE_VERSIONS = ['1.18.32'] as const;
-
 export const PROVIDER_LANE_FAILURE_CODES = [
   'harness_unsupported', 'no_turn_secrets_dir', 'operator_unreachable', 'lane_unset', 'bad_base_url', 'bad_path', 'bad_value', 'bg_unsupported', 'bad_model', 'workspace_protected', 'harness_version',
   'no_lease', 'forbidden', 'bad_request', 'unavailable',

@@ -10,6 +10,6 @@ describe('harness_version 문장', () => {
     expect(laneCodeKey('harness_version')).toBe('lane.code.harness_version');
     for (const v of OPENCODE_LANE_VERSIONS) expect(text).toContain(v);
     expect(text).toContain(`opencode ${locale === 'en' ? "isn't" : '버전이'}`);
-    expect(text).not.toMatch(/\{version\}/);
+    expect(text).not.toMatch(/\{versions?\}/);
   });
 });

@@ -36,7 +36,7 @@ export function laneCodeText(t: Translate, raw: unknown): string {
   const key = laneCodeKey(raw);
   // 받는 줄은 러너 판 관문과 같은 상수에서 끼워 넣는다 — 관문을 넓히면 문장도 같이 바뀐다.
   if (key === 'lane.code.harness_version') {
-    return t(key, { version: OPENCODE_LANE_VERSIONS.join(', ') });
+    return t(key, { versions: OPENCODE_LANE_VERSIONS.join(t('lane.code.harness_version.join')) });
   }
   return t(key);
 }
