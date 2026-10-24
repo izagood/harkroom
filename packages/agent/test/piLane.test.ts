@@ -95,7 +95,7 @@ describe('pi lane 홈', () => {
     expect(piLaneVersionOk(null)).toBe(false);
   });
 
-  it('createProviderLane: pi 는 주소와 키 파일 경로만 돌려준다 — 판이 다르면 키를 받기 전에 멈춘다', async () => {
+  it('createProviderLane: pi 는 주소와 키 파일 경로만 돌려준다 — 판이 달라도 막지 않고 경고한다', async () => {
     const secrets = await tmp();
     await mkdir(join(secrets, 'lease'), { recursive: true });
     const keyPath = join(secrets, 'lease', 'k');
@@ -111,9 +111,11 @@ describe('pi lane 홈', () => {
     expect(Object.keys(env).sort()).toEqual([...(providerLaneKeys('pi') ?? [])].sort());
     expect(JSON.stringify(env)).not.toContain('sk-fake');
     expect(Object.values(env)).toContain('https://gateway.example');
+    expect(lane.takeNotice('m1')).toBeNull();
     version = '1.5.0';
-    await expect(lane.envFor('m2', 'pi')).rejects.toBeInstanceOf(ProviderLaneError);
-    expect(mounted).toBe(1);
+    await lane.envFor('m2', 'pi');
+    expect(lane.takeNotice('m2')).toContain('1.4.0');
+    expect(mounted).toBe(2);
   });
 });
 

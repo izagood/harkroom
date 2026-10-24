@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { laneWorkspaceViolations } from '../src/laneWorkspaceGuard.js';
+import { laneParentViolations, laneWorkspaceViolations } from '../src/laneWorkspaceGuard.js';
 
 // API 키 연결 턴의 작업 폴더 검사(security, 2026-10-23) — 다음 턴을 바꾸는 이름이 대소문자를 가리지 않고 우리 것이 아닌 꼴로
 // 있으면 그 턴을 띄우지 않는다.
@@ -117,5 +117,44 @@ describe('laneWorkspaceViolations', () => {
       await writeFile(join(ws, d, 'rules', 'x.md'), 'x');
       expect(await laneWorkspaceViolations(ws, skills)).toEqual([d]);
     }
+  });
+});
+
+// security G3(2026-10-25): 하네스 판과 무관하게 부모 사슬도 본다 — 사람 홈 자리에서는 프로젝트 설정 파일 이름만.
+describe('laneParentViolations', () => {
+  async function tree() {
+    const home = await realpath(await mkdtemp(join(tmpdir(), 'lane-parent-')));
+    const ws = join(home, '.harkroom-agent', 'agent-1', 'workspaces', 'w');
+    await mkdir(ws, { recursive: true });
+    return { home, ws };
+  }
+
+  it('평소(부모가 비었음)에는 아무것도 없다 — 사람 홈의 전역 자리(.claude·.agents·.codex)는 걸지 않는다', async () => {
+    const { home, ws } = await tree();
+    for (const d of ['.claude', '.agents', '.codex', '.opencode']) await mkdir(join(home, d));
+    expect(await laneParentViolations(ws, home)).toEqual([]);
+  });
+
+  it('작업 폴더 위 폴더의 보호 이름과 사람 홈의 프로젝트 설정 파일을 잡는다(대소문자 무시)', async () => {
+    const { home, ws } = await tree();
+    await mkdir(join(home, '.harkroom-agent', 'agent-1', '.opencode'));
+    await writeFile(join(home, '.harkroom-agent', 'Kilo.JSON'), '{}');
+    await writeFile(join(home, 'opencode.json'), '{}');
+    expect(await laneParentViolations(ws, home)).toEqual([
+      join('.harkroom-agent', 'Kilo.JSON'), join('.harkroom-agent', 'agent-1', '.opencode'), join('~', 'opencode.json'),
+    ].sort());
+  });
+
+  it('홈 밖 작업 폴더는 보지 않고, 심볼릭 링크 폴더를 만나면 멈춘다', async () => {
+    const { home, ws } = await tree();
+    expect(await laneParentViolations('/somewhere/else/ws', home)).toEqual([]);
+    const real = join(home, 'real');
+    await mkdir(join(real, 'inner'), { recursive: true });
+    await mkdir(join(home, '.opencode-planted'), { recursive: true });
+    await writeFile(join(home, 'kilo.jsonc'), '{}');
+    await symlink(real, join(home, 'link'));
+    // 링크 폴더(home/link)에서 멈추므로 위의 홈 파일까지 가지 않는다.
+    expect(await laneParentViolations(join(home, 'link', 'inner', 'ws'), home)).toEqual([]);
+    expect(await laneParentViolations(ws, home)).toEqual([join('~', 'kilo.jsonc')]);
   });
 });

@@ -2,7 +2,7 @@
  * API 키 연결 실패 코드 → 사람 말(designer v3 ④ 표). 실패 카드·격자·실행 탭 「마지막 시도」 세 곳이 **이 표 하나**를 쓴다.
  * 코드는 허용 목록(`PROVIDER_LANE_FAILURE_CODES`)으로 접혀 오고, 여기 없는 코드는 `unknown` 문장으로 접는다(security ③).
  */
-import { CODEX_LANE_VERSIONS, KILO_LANE_VERSIONS, OMP_LANE_VERSIONS, OPENCODE_LANE_VERSIONS, PI_LANE_VERSIONS, providerLaneFailureCode } from '@harkroom/shared/providerLane';
+import { CODEX_LANE_MEASURED_VERSIONS, KILO_LANE_MEASURED_VERSIONS, OMP_LANE_MEASURED_VERSIONS, OPENCODE_LANE_MEASURED_VERSIONS, PI_LANE_MEASURED_VERSIONS, providerLaneFailureCode } from '@harkroom/shared/providerLane';
 import type { Translate } from '../i18n';
 
 export type LaneCodeKey =
@@ -36,11 +36,11 @@ export function laneCodeKey(raw: unknown): LaneCodeKey {
 
 /** 하네스별로 API 키 연결 격리를 잰 판(러너 판 관문과 같은 상수). 판 관문이 없는 하네스는 여기 없다. */
 const LANE_VERSIONS: Readonly<Record<string, readonly string[]>> = {
-  opencode: OPENCODE_LANE_VERSIONS,
-  codex: CODEX_LANE_VERSIONS,
-  omp: OMP_LANE_VERSIONS,
-  kilo: KILO_LANE_VERSIONS,
-  pi: PI_LANE_VERSIONS,
+  opencode: OPENCODE_LANE_MEASURED_VERSIONS,
+  codex: CODEX_LANE_MEASURED_VERSIONS,
+  omp: OMP_LANE_MEASURED_VERSIONS,
+  kilo: KILO_LANE_MEASURED_VERSIONS,
+  pi: PI_LANE_MEASURED_VERSIONS,
 };
 
 /**

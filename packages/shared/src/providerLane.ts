@@ -64,40 +64,44 @@ export function readProviderLaneConfig(raw: unknown): ProviderLaneConfig | null 
   return { baseUrl, secretName: r.secretName };
 }
 
-/**
- * opencode lane 의 격리를 잰 판(러너 판 관문 `opencodeLaneVersionOk` 와 데스크톱 `harness_version` 문장이 같이 쓴다). 넓히면 둘이 같이 바뀐다. 판을 더할 때는 홈 표지·플러그인·정확 규칙·턴 파일 격리를 그 판으로 다시 잰다(1.19.4: 2026-10-25).
+/*
+ * 하네스별로 API 키 연결 격리를 **잰** 판(2026-10-25 — 관문이 아니다). 판이 이 목록 밖이어도 턴은 돈다. 러너는 그 (하네스, 판)을
+ * 처음 볼 때 스레드에 경고 한 줄을 남긴다(`providerLane.ts::laneUnmeasuredNotice`). 판을 올리면 실물 시험(`*.real.test.ts`)으로 다시 재고
+ * 목록에 더한다. 데스크톱 상태 칸 문장도 이 목록을 쓴다.
  */
-export const OPENCODE_LANE_VERSIONS = ['1.18.32', '1.19.4'] as const;
+
+/** opencode. 판을 더할 때는 홈 표지·플러그인·정확 규칙·턴 파일 격리를 그 판으로 다시 잰다(1.19.4: 2026-10-25). */
+export const OPENCODE_LANE_MEASURED_VERSIONS = ['1.18.32', '1.19.4'] as const;
 
 /**
- * codex lane 의 격리를 잰 판(러너 판 관문 `codexLaneVersionOk`). 셸 env 걷기가 설정 셋(정책·셸 스냅숏·로그인 셸)에 걸려 있고
+ * codex. 셸 env 걷기가 설정 셋(정책·셸 스냅숏·로그인 셸)에 걸려 있고
  * 판마다 기본값이 달랐다(0.154.0 실측: 기본은 키를 셸에 넘기고, TUI 는 스냅숏이 정책을 우회한다) — 판이 바뀌면 다시 잰다.
  */
-export const CODEX_LANE_VERSIONS = ['0.154.0'] as const;
+export const CODEX_LANE_MEASURED_VERSIONS = ['0.154.0'] as const;
 
 /**
- * omp lane 의 격리를 잰 판(러너 판 관문 `ompLaneVersionOk`). 저장소 설정 차단(빈 cwd·`--add-dir`)·프로젝트 `models.yml` 미독·
+ * omp. 저장소 설정 차단(빈 cwd·`--add-dir`)·프로젝트 `models.yml` 미독·
  * 세션 헤더 꼴이 모두 문서에 없는 동작이라 판마다 심은 파일 회귀 시험으로 다시 잰다(security C1).
  */
-export const OMP_LANE_VERSIONS = ['18.12.6'] as const;
+export const OMP_LANE_MEASURED_VERSIONS = ['18.12.6'] as const;
 /**
- * kilo lane 의 격리를 잰 판(러너 판 관문 `kiloLaneVersionOk`). 저장소 설정 차단(`KILO_DISABLE_PROJECT_CONFIG`)·홈 표지 자리(`KILO_TEST_HOME`)가
+ * kilo. 저장소 설정 차단(`KILO_DISABLE_PROJECT_CONFIG`)·홈 표지 자리(`KILO_TEST_HOME`)가
  * opencode 와 이름이 달라 판이 바뀌면 조용히 풀릴 수 있다 — 넓히면 그 판으로 다시 잰다.
  */
-export const KILO_LANE_VERSIONS = ['7.8.17'] as const;
+export const KILO_LANE_MEASURED_VERSIONS = ['7.8.17'] as const;
 
 /**
- * pi lane 의 격리를 잰 판(러너 판 관문 `piLaneVersionOk`). lane 홈의 로그인·`models.json` 우선순위와 저장소 설정 무시(`--no-approve`)를
+ * pi. lane 홈의 로그인·`models.json` 우선순위와 저장소 설정 무시(`--no-approve`)를
  * 이 판에서 쟀다 — 판이 바뀌면 실물 시험으로 다시 잰다.
  */
-export const PI_LANE_VERSIONS = ['1.4.0'] as const;
+export const PI_LANE_MEASURED_VERSIONS = ['1.4.0'] as const;
 
 /**
  * 턴을 못 띄운 까닭의 **허용 목록**(1c, security 조건 ③). 실패 카드 meta(`FailureMeta.failure.laneCode`)에는 이 값만 실린다 —
  * 오퍼레이터·서버가 준 문자열을 그대로 흘리지 않고, 모르는 것은 `unknown` 으로 접는다. base URL·비밀 이름·값 경로는
  * 코드가 아니므로 어디에도 실리지 않는다(조건 ①).
  *
- * - 러너가 정하는 것: `harness_unsupported`·`no_turn_secrets_dir`·`operator_unreachable`·`lane_unset`·`bad_base_url`·`bad_path`·`bad_value`·`bg_unsupported`·`bad_model`(opencode 모델이 `harkroom-lane/<id>` 꼴이 아님)·`workspace_protected`(작업 폴더에 다음 턴을 바꾸는 이름이 있음)·`harness_version`(하네스 판이 lane 격리를 잰 판 밖)·`harness_login_present`(codex lane 전용 홈에 계정 로그인 파일이 있음)·`lane_setup`(그 채널의 lane 권한 표를 쓰거나 확인하지 못함)
+ * - 러너가 정하는 것: `harness_unsupported`·`no_turn_secrets_dir`·`operator_unreachable`·`lane_unset`·`bad_base_url`·`bad_path`·`bad_value`·`bg_unsupported`·`bad_model`(opencode 모델이 `harkroom-lane/<id>` 꼴이 아님)·`workspace_protected`(작업 폴더에 다음 턴을 바꾸는 이름이 있음)·`harness_version`(옛 러너만 낸다 — 2026-10-25 부터 판으로 막지 않는다)·`harness_login_present`(codex lane 전용 홈에 계정 로그인 파일이 있음)·`lane_setup`(그 채널의 lane 권한 표를 쓰거나 확인하지 못함)
  * - 오퍼레이터가 정하는 것: `no_lease`(재기동한 러너)·`forbidden`·`bad_request`·`unavailable`
  * - 서버 비밀 꺼내기가 정하는 것: `not_granted`·`grant_suspended`·`lease_invalid`·`not_found`·`secret_expired`·`secret_store_disabled`·`rate_limited`
  */

@@ -64,17 +64,24 @@ describe('providerLane.envFor', () => {
     expect(await readdir(join(state, 'lane-turn'))).toEqual([]);
   });
 
-  it('kilo 판이 잰 목록(7.8.17)과 정확히 같지 않거나 못 읽으면 `harness_version` — 키를 받지 않는다', async () => {
+  // 2026-10-25 jaebin: 판으로 막지 않는다 — 잰 판 밖이면 키를 받고 경고 한 줄만 남긴다(security G1).
+  it('kilo 판이 잰 목록(7.8.17) 밖이거나 못 읽어도 막지 않고 경고를 남긴다', async () => {
     const t = await setup();
     let mounted = 0;
-    for (const v of ['7.8.18', '7.8.1', '7.9.0', null, 'kilo 7.8.17', '7.8.17-beta', '1.18.32']) {
+    const versions = ['7.8.18', '7.8.1', '7.9.0', null, 'kilo 7.8.17', '7.8.17-beta', '1.18.32'];
+    for (const v of versions) {
       const lane = createProviderLane({
         mount: async () => { mounted++; return { status: 200, body: JSON.stringify({ lane: { baseUrl: 'https://gateway.example', path: t.path } }) }; },
         turnSecretsDir: t.secretsDir, stateDir: join(t.root, 'st'), harnessVersion: async () => v,
       });
-      await expect(lane.envFor('m1', 'kilo')).rejects.toMatchObject({ code: 'harness_version' });
+      expect(Object.keys(await lane.envFor('m1', 'kilo'))).toEqual(['KILO_CONFIG']);
+      const notice = lane.takeNotice('m1');
+      expect(notice).toContain('kilo');
+      expect(notice).toContain('7.8.17');
+      expect(notice).not.toContain(t.path);
+      expect(lane.takeNotice('m1')).toBeNull();
     }
-    expect(mounted).toBe(0);
+    expect(mounted).toBe(versions.length);
     expect(kiloLaneVersionOk('7.8.17\n')).toBe(true);
   });
 
@@ -99,22 +106,24 @@ describe('providerLane.envFor', () => {
     await lane.release({ ANTHROPIC_AUTH_TOKEN: 'x' });
   });
 
-  it('opencode 판이 잰 목록과 정확히 같지 않거나 못 읽으면 `harness_version` — 키를 받지 않는다(security F1)', async () => {
+  it('opencode 판이 잰 목록 밖이거나 못 읽어도 막지 않는다 — 경고에는 판과 잰 판만, 하네스가 낸 글자는 한 줄로 자른다', async () => {
     const t = await setup();
-    let mounted = 0;
-    for (const v of ['1.18.33', '1.19.0', '1.19.3', '1.19.5', '1.18.31', '2.0.0', null, 'garbage', 'opencode 1.18.32', '1.18.32-beta']) {
+    for (const v of ['1.18.33', '1.19.5', '2.0.0', null, 'garbage\nsecond line', '1.18.32-beta']) {
       const lane = createProviderLane({
-        mount: async () => { mounted++; return { status: 200, body: JSON.stringify({ lane: { baseUrl: 'https://gateway.example', path: t.path } }) }; },
-        turnSecretsDir: t.secretsDir, stateDir: join(t.root, 'st'), harnessVersion: async () => v,
+        mount: ok({ baseUrl: 'https://gateway.example', path: t.path }), turnSecretsDir: t.secretsDir, stateDir: join(t.root, 'st'), harnessVersion: async () => v,
       });
-      await expect(lane.envFor('m1', 'opencode')).rejects.toMatchObject({ code: 'harness_version' });
+      expect(Object.keys(await lane.envFor('m1', 'opencode'))).toEqual(['OPENCODE_CONFIG']);
+      const notice = lane.takeNotice('m1') ?? '';
+      expect(notice).toContain('opencode');
+      expect(notice).toContain('1.18.32');
+      expect(notice).not.toContain('second line');
+      expect(notice).not.toContain('gateway.example');
     }
-    expect(mounted).toBe(0);
     expect(opencodeLaneVersionOk('1.18.32\n')).toBe(true);
     expect(opencodeLaneVersionOk('1.19.4')).toBe(true);
   });
 
-  it('판은 턴마다 묻는다 — 러너가 사는 사이 opencode 가 스스로 바뀌면 다음 턴이 막힌다', async () => {
+  it('판은 턴마다 묻고, 같은 (하네스, 판) 경고는 러너마다 한 번만 스레드로 간다', async () => {
     const t = await setup();
     let current = '1.18.32';
     let asked = 0;
@@ -123,9 +132,16 @@ describe('providerLane.envFor', () => {
       harnessVersion: async () => { asked++; return current; },
     });
     await lane.envFor('m1', 'opencode');
-    current = '1.18.33';
-    await expect(lane.envFor('m2', 'opencode')).rejects.toMatchObject({ code: 'harness_version' });
-    expect(asked).toBe(2);
+    expect(lane.takeNotice('m1')).toBeNull();
+    current = '1.19.5';
+    await lane.envFor('m2', 'opencode');
+    expect(lane.takeNotice('m2')).toContain('1.19.5');
+    await lane.envFor('m3', 'opencode');
+    expect(lane.takeNotice('m3')).toBeNull();
+    current = '1.19.6';
+    await lane.envFor('m4', 'opencode');
+    expect(lane.takeNotice('m4')).toContain('1.19.6');
+    expect(asked).toBe(4);
   });
 
   it('lane opencode 고정 env 는 자동 업데이트를 끈다', () => {

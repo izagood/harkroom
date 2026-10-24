@@ -10,7 +10,7 @@
  */
 import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { relative, isAbsolute, join } from 'node:path';
-import { CODEX_LANE_VERSIONS, KILO_LANE_VERSIONS, normalizeProviderBaseUrl, OMP_LANE_VERSIONS, OPENCODE_LANE_VERSIONS, PI_LANE_VERSIONS, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
+import { CODEX_LANE_MEASURED_VERSIONS, KILO_LANE_MEASURED_VERSIONS, normalizeProviderBaseUrl, OMP_LANE_MEASURED_VERSIONS, OPENCODE_LANE_MEASURED_VERSIONS, PI_LANE_MEASURED_VERSIONS, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
 import type { AgentHarness } from '@harkroom/shared';
 import { PROVIDER_LANE_OPENCODE_PROVIDER, providerLaneModelId } from './opencodeHome.js';
 
@@ -127,55 +127,63 @@ export const PROVIDER_LANE_FIXED_ENV: Partial<Record<AgentHarness, Readonly<Reco
   // kilo 7.8.17 실측(가짜 서버·가짜 키, 2026-10-24) — 이름은 `KILO_*` 다.
   // - `KILO_DISABLE_PROJECT_CONFIG`: lane 턴은 프로젝트 설정을 읽지 않는다(회귀 시험 `kiloLaneProjectConfig.real.test.ts`).
   // - `KILO_DISABLE_CLAUDE_CODE`·`KILO_DISABLE_EXTERNAL_SKILLS`: 사람 홈의 `~/.claude`(CLAUDE.md·스킬)·`~/.agents` 스킬이 요청 본문에서 빠졌다.
-  // - `KILO_DISABLE_AUTOUPDATE`: 이름만 opencode 규칙으로 맞췄다(효과는 못 쟀다) — 판은 턴마다 판 관문이 다시 본다.
+  // - `KILO_DISABLE_AUTOUPDATE`: 이름만 opencode 규칙으로 맞췄다(효과는 못 쟀다) — 판이 바뀌면 턴마다 잰 판과 견줘 경고한다.
   kilo: { KILO_DISABLE_PROJECT_CONFIG: '1', KILO_DISABLE_CLAUDE_CODE: '1', KILO_DISABLE_EXTERNAL_SKILLS: '1', KILO_DISABLE_AUTOUPDATE: '1' },
 };
 
-/**
- * opencode lane 의 격리를 잰 판(`OPENCODE_LANE_VERSIONS`). 홈 표지 자리가 시험용 이름이라 판이 바뀌면 조용히 풀릴 수 있다 — 목록 밖이면
- * 띄우지 않고 `harness_version` 으로 실패한다. 판은 **턴마다** 묻는다 — opencode 는 스스로 업데이트할 수 있다.
+/*
+ * 하네스 판이 API 키 연결 격리를 **잰 판**인가(2026-10-25 — 관문이 아니다, jaebin). 아니어도 턴은 돈다 — 러너는 그 (하네스, 판)을 처음 볼 때
+ * 스레드에 경고 한 줄을 남기고(`laneUnmeasuredNotice`) 러너 로그에는 매 턴 남긴다. 판은 **턴마다** 묻는다 — 하네스가 스스로 업데이트할 수 있다.
+ * 잰 판과 **정확히** 같을 때만 「잰 판」이다 — 패치 판도 실물 시험으로 다시 재고 목록에 더한다.
  */
+
+/** opencode — 출력은 숫자 판 한 줄. */
 export function opencodeLaneVersionOk(raw: string | null | undefined): boolean {
-  // 잰 판과 **정확히** 같을 때만 받는다(security F1) — 패치 판도 격리를 다시 재고 목록에 더한다. 출력은 숫자 판 한 줄이어야 한다.
   const version = (raw ?? '').trim();
-  return /^\d+\.\d+\.\d+$/.test(version) && (OPENCODE_LANE_VERSIONS as readonly string[]).includes(version);
+  return /^\d+\.\d+\.\d+$/.test(version) && (OPENCODE_LANE_MEASURED_VERSIONS as readonly string[]).includes(version);
 }
 
-/**
- * codex lane 의 판 관문(`CODEX_LANE_VERSIONS`). 출력은 `codex-cli <판>` 한 줄이다(0.154.0 실측). 셸 env 걷기가 설정 키 셋에 걸려 있어
- * 판이 바뀌면 조용히 풀릴 수 있다 — 잰 판과 **정확히** 같을 때만 받는다.
- */
+/** codex — 출력은 `codex-cli <판>` 한 줄(0.154.0 실측). */
 export function codexLaneVersionOk(raw: string | null | undefined): boolean {
   const m = /^codex-cli (\d+\.\d+\.\d+)$/.exec((raw ?? '').trim());
-  return m !== null && (CODEX_LANE_VERSIONS as readonly string[]).includes(m[1]!);
+  return m !== null && (CODEX_LANE_MEASURED_VERSIONS as readonly string[]).includes(m[1]!);
 }
 
-/** omp lane 의 판 관문(`OMP_LANE_VERSIONS`). 출력은 `omp/<판>` 한 줄이다(18.12.6 실측). 잰 판과 **정확히** 같을 때만 받는다. */
+/** omp — 출력은 `omp/<판>` 한 줄(18.12.6 실측). */
 export function ompLaneVersionOk(raw: string | null | undefined): boolean {
   const m = /^omp\/(\d+\.\d+\.\d+)$/.exec((raw ?? '').trim());
-  return m !== null && (OMP_LANE_VERSIONS as readonly string[]).includes(m[1]!);
+  return m !== null && (OMP_LANE_MEASURED_VERSIONS as readonly string[]).includes(m[1]!);
 }
 
-/** kilo lane 의 판 관문(`KILO_LANE_VERSIONS`). 출력은 숫자 판 한 줄이다(7.8.17 실측). 잰 판과 **정확히** 같을 때만 받는다. */
+/** kilo — 출력은 숫자 판 한 줄(7.8.17 실측). */
 export function kiloLaneVersionOk(raw: string | null | undefined): boolean {
   const version = (raw ?? '').trim();
-  return /^\d+\.\d+\.\d+$/.test(version) && (KILO_LANE_VERSIONS as readonly string[]).includes(version);
+  return /^\d+\.\d+\.\d+$/.test(version) && (KILO_LANE_MEASURED_VERSIONS as readonly string[]).includes(version);
 }
 
-/** pi lane 의 판 관문(`PI_LANE_VERSIONS`). 출력은 숫자 판 한 줄이다(1.4.0 실측). 잰 판과 **정확히** 같을 때만 받는다. */
+/** pi — 출력은 숫자 판 한 줄(1.4.0 실측). */
 export function piLaneVersionOk(raw: string | null | undefined): boolean {
   const version = (raw ?? '').trim();
-  return /^\d+\.\d+\.\d+$/.test(version) && (PI_LANE_VERSIONS as readonly string[]).includes(version);
+  return /^\d+\.\d+\.\d+$/.test(version) && (PI_LANE_MEASURED_VERSIONS as readonly string[]).includes(version);
 }
 
-/** 하네스별 판 관문 — 격리를 잰 판 밖이면 `harness_version`. 없는 하네스는 판을 묻지 않는다. */
-const PROVIDER_LANE_VERSION_GATE: Partial<Record<AgentHarness, (raw: string | null) => boolean>> = {
-  opencode: opencodeLaneVersionOk,
-  kilo: kiloLaneVersionOk,
-  codex: codexLaneVersionOk,
-  omp: ompLaneVersionOk,
-  pi: piLaneVersionOk,
+/** 하네스별 잰 판 — 판을 묻는 하네스만 있다. 판 판정과 경고 문장에 쓰는 목록을 한 줄에 둔다. */
+const PROVIDER_LANE_MEASURED: Partial<Record<AgentHarness, { ok: (raw: string | null) => boolean; versions: readonly string[] }>> = {
+  opencode: { ok: opencodeLaneVersionOk, versions: OPENCODE_LANE_MEASURED_VERSIONS },
+  kilo: { ok: kiloLaneVersionOk, versions: KILO_LANE_MEASURED_VERSIONS },
+  codex: { ok: codexLaneVersionOk, versions: CODEX_LANE_MEASURED_VERSIONS },
+  omp: { ok: ompLaneVersionOk, versions: OMP_LANE_MEASURED_VERSIONS },
+  pi: { ok: piLaneVersionOk, versions: PI_LANE_MEASURED_VERSIONS },
 };
+
+/**
+ * 잰 판 밖(또는 판을 못 읽음)일 때 스레드에 남기는 한 줄. 무엇이 풀릴 수 있는지는 적지 않는다(공개 코드 문구, security G1).
+ * 판 출력은 한 줄 64자까지만 싣는다 — 하네스가 낸 글자를 그대로 흘리지 않게.
+ */
+export function laneUnmeasuredNotice(harness: AgentHarness, raw: string | null, measured: readonly string[]): string {
+  const seen = (raw ?? '').trim().split(/\r?\n/)[0]!.slice(0, 64).replace(/[^\x20-\x7e]/g, '') || '판을 읽지 못함';
+  return `⚠ ${harness} ${seen} — 이 판에서 API 키 연결 격리를 확인하지 않았다(확인한 판: ${measured.join(' · ')}). 턴은 그대로 진행한다.`;
+}
 
 /** lane 턴 파일 자리(러너 상태 폴더, 작업 폴더 밖, 0700). 파일은 멘션마다 하나, 기동 때 남은 것을 걷는다. */
 export const LANE_TURN_DIR = 'lane-turn';
@@ -283,7 +291,7 @@ export interface ProviderLaneDeps {
   report?(ok: boolean, code?: ProviderLaneFailureCode): void;
   /** 러너 상태 폴더. 턴 파일은 그 아래 `LANE_TURN_DIR` 에 둔다 — 없으면 턴 파일을 쓰는 하네스(opencode·kilo)는 `no_turn_secrets_dir` 로 실패한다. */
   stateDir?: string;
-  /** 하네스 판(`opencode --version` 출력). 못 읽으면 null — opencode lane 은 `harness_version` 으로 실패한다. */
+  /** 하네스 판(`<하네스> --version` 출력). 못 읽으면 null — 막지 않고 경고한다(`laneUnmeasuredNotice`). */
   harnessVersion?(harness: AgentHarness): Promise<string | null>;
   /**
    * codex lane 전용 `CODEX_HOME`(`providerLaneCodexDir`). 여기에 `auth.json` 이 있으면 띄우지 않는다(`harness_login_present`) —
@@ -300,6 +308,8 @@ export function providerLaneKeys(harness: AgentHarness): readonly string[] | nul
 export function createProviderLane(deps: ProviderLaneDeps): {
   envFor(cause: string, harness: AgentHarness): Promise<Record<string, string>>;
   release(env: Record<string, string>): Promise<void>;
+  /** 그 멘션의 `envFor` 가 남긴 잰 판 밖 경고(있으면 한 번만 돌려주고 지운다). */
+  takeNotice(cause: string): string | null;
 } {
   // 결과를 알린다(2a). 성공·실패 모두 — 다음 성공이 「마지막 시도」 빨간 줄을 지운다.
   const envFor = async (cause: string, harness: AgentHarness): Promise<Record<string, string>> => {
@@ -320,17 +330,34 @@ export function createProviderLane(deps: ProviderLaneDeps): {
     if (!rel || rel.startsWith('..') || isAbsolute(rel) || rel.includes('/')) return;
     await rm(path, { force: true });
   };
-  return { envFor, release };
+  // 잰 판 밖 경고 — (하네스, 판) 을 이 러너가 처음 볼 때 한 번만 스레드에 싣는다(에이전트마다 러너가 하나라 에이전트 단위다).
+  const noticed = new Set<string>();
+  const pendingNotice = new Map<string, string>();
+  const takeNotice = (cause: string): string | null => {
+    const text = pendingNotice.get(cause) ?? null;
+    pendingNotice.delete(cause);
+    return text;
+  };
+  return { envFor, release, takeNotice };
 
   async function prepare(cause: string, harness: AgentHarness): Promise<Record<string, string>> {
     if (!providerLaneKeys(harness)) throw new ProviderLaneError('harness_unsupported');
     if (!deps.turnSecretsDir) throw new ProviderLaneError('no_turn_secrets_dir');
     const viaTurnFile = laneTurnFileEnv(harness);
     if (viaTurnFile && !deps.stateDir) throw new ProviderLaneError('no_turn_secrets_dir');
-    const versionOk = PROVIDER_LANE_VERSION_GATE[harness];
-    if (versionOk) {
+    // 판으로 막지 않는다(2026-10-25 jaebin). 잰 판 밖이면 러너 로그에 매 턴, 스레드에는 처음 볼 때 한 번 경고한다.
+    const measured = PROVIDER_LANE_MEASURED[harness];
+    if (measured) {
       const version = await (deps.harnessVersion?.(harness) ?? Promise.resolve(null)).catch(() => null);
-      if (!versionOk(version)) throw new ProviderLaneError('harness_version');
+      if (!measured.ok(version)) {
+        const notice = laneUnmeasuredNotice(harness, version, measured.versions);
+        console.warn(`[providerLane] ${notice}`);
+        const key = `${harness}\0${(version ?? '').trim()}`;
+        if (!noticed.has(key)) {
+          noticed.add(key);
+          pendingNotice.set(cause, notice);
+        }
+      }
     }
     // codex lane 홈 검사는 키를 꺼내기(mount) **전에** 한다 — 띄우지 않을 턴이 임대를 받지 않게(security n1).
     const usesCodexKey = providerLaneKeys(harness)?.includes(CODEX_LANE_KEY_ENV) ?? false;
