@@ -5,6 +5,7 @@ import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { GRANT_DELEGATE_TOOL, LANE_BASE_ALLOW, LANE_DENY, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { decodeLaneHookRules } from '@harkroom/shared/providerLane';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
 // 실제로 주는 값(`http://localhost:3400` 류, `/mcp` 없음)과 맞춘다. 예전엔 여기 이미
@@ -710,7 +711,16 @@ describe('전용 제공사 경로 env', () => {
     const denyNext = withLane.findIndex((a, i) => i >= denyFrom && a.startsWith('--'));
     const denied = withLane.slice(denyFrom, denyNext < 0 ? undefined : denyNext);
     for (const rule of LANE_DENY) expect(denied).toContain(rule);
-    expect(denied).toEqual(expect.arrayContaining(['Agent', 'Write(./.claude/**)', 'Write(./CLAUDE.md)', 'Write(./CLAUDE.local.md)', 'Write(./.mcp.json)']));
+    expect(denied).toEqual(expect.arrayContaining(['Write(./.claude/**)', 'Write(./CLAUDE.md)', 'Write(./CLAUDE.local.md)', 'Write(./.mcp.json)']));
+    // D1: 하위 에이전트는 다시 연다 — 셸·웹은 hook 이 하위 에이전트에서도 판정한다.
+    expect(denied).not.toContain('Agent');
+    expect(withLane.slice(withLane.indexOf('--allowedTools') + 1)).toContain('Agent');
+    const settings = JSON.parse(withLane[withLane.indexOf('--settings') + 1] as string) as { hooks: { PreToolUse: { matcher: string; hooks: { command: string }[] }[] } };
+    const hook = settings.hooks.PreToolUse[0];
+    expect(hook?.matcher).toBe('*');
+    const laneArg = /hook pretool --lane ([A-Za-z0-9_-]+) \|\| exit 2$/.exec(hook?.hooks[0]?.command ?? '');
+    // hook 이 받는 목록 = 이 턴의 --allowedTools 칸 그대로(기본 허용 목록·승인 규칙·래퍼).
+    expect(decodeLaneHookRules(laneArg?.[1] ?? '!')).toEqual(withLane.slice(withLane.indexOf('--allowedTools') + 1, withLane.indexOf('--settings')));
     // `--disallowedTools` 의 deny 규칙(설정 파일 자기 수정)도 Edit·Write 꼴이라 allow 칸만 떼어 본다.
     const from = withLane.indexOf('--allowedTools') + 1;
     const next = withLane.findIndex((a, i) => i >= from && a.startsWith('--'));

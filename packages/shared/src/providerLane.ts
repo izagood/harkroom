@@ -105,3 +105,27 @@ export interface ProviderLaneStatus {
  * 러너(`interactiveTurn.ts`)와 오퍼레이터(`relayMux` — 설정과 모드가 다른 러너로 가는 열기, C1 후속)가 같은 문장을 쓴다.
  */
 export const PROVIDER_LANE_INTERACTIVE_REJECTION = 'interactive_unsupported: API 키로 도는 에이전트는 아직 터미널 열기를 지원하지 않는다';
+
+/**
+ * API 키 연결 턴의 PreToolUse hook(D1)이 받는 「소유자가 승인한 규칙」. 러너가 hook 명령 인자에 싣고(`--lane <값>`) 오퍼레이터의
+ * `hook pretool` 이 푼다. 그 턴의 기본 허용 목록과 승인 규칙을 다 싣는다 — hook 은 모든 도구를 보고(matcher `*`), 목록에 없는 도구는
+ * 거절한다. 값은 base64url(JSON 배열)이라 셸 글자가 섞이지 않는다.
+ */
+export const LANE_HOOK_TOOLS = ['Bash', 'WebFetch', 'WebSearch'] as const;
+const LANE_HOOK_RULE = /^[A-Za-z_][A-Za-z0-9_]*(\(.*\))?$/s;
+
+export function encodeLaneHookRules(rules: readonly string[]): string {
+  const kept = rules.filter((r) => LANE_HOOK_RULE.test(r));
+  return Buffer.from(JSON.stringify(kept), 'utf8').toString('base64url');
+}
+
+/** 풀지 못하면 null — 부르는 쪽은 그때 거절한다(fail-closed). */
+export function decodeLaneHookRules(value: string): string[] | null {
+  if (!/^[A-Za-z0-9_-]*$/.test(value)) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown;
+    return Array.isArray(parsed) && parsed.every((r) => typeof r === 'string' && LANE_HOOK_RULE.test(r)) ? parsed as string[] : null;
+  } catch {
+    return null;
+  }
+}

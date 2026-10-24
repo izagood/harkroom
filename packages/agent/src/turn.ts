@@ -9,6 +9,7 @@
 // codex 에 `-a` 가 없다(sandbox 단독), codex MCP 는 파일이 아니라 턴별 `-c` 오버라이드,
 // claude 는 `--strict-mcp-config` 를 항상 받는다, gemini 는 이번 범위에서 미지원.
 import { PROVIDER_LANE_FIXED_ENV, providerLaneKeys } from './providerLane.js';
+import { encodeLaneHookRules } from '@harkroom/shared/providerLane';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -339,37 +340,39 @@ const CLAUDE_PRESET: HarnessPreset = {
       ...(providerLane ? LANE_DENY : []),
       ...(allow.length ? ['--allowedTools', ...allow] : []),
       // 「정확한 명령」 hook(H③b) — **인라인 JSON** 이라 에이전트가 고칠 파일이 없다. 켜졌을 때만.
-      ...(commandHook ? ['--settings', commandHookSettings(operatorBin)] : []),
+      // API 키 연결 턴은 셸·웹을 hook 으로 판정한다(D1, `laneHookSettings`) — 「정확한 명령」 판정도 그 안에서 한다.
+      ...(providerLane ? ['--settings', laneHookSettings(operatorBin, allow)]
+        : commandHook ? ['--settings', commandHookSettings(operatorBin)] : []),
     ];
   },
 };
 
 /**
  * API 키 연결(`dontAsk`) 턴에 기본으로 여는 도구(소유자 결정 C안, 10-23 — 구독형 에이전트와 같은 일을 하게). 지연 MCP 도구를
- * 불러오는 `ToolSearch`, 할 일 목록, **작업 폴더 안** 쓰기(`Edit(./**)`·`Write(./**)`), 스킬(`Skill`),
+ * 불러오는 `ToolSearch`, 할 일 목록, **작업 폴더 안** 쓰기(`Edit(./**)`·`Write(./**)`), 하위 에이전트(`Agent`)·스킬(`Skill`),
  * 그리고 **서버가 판정하는** MCP 두 개(harkroom·avcs) — 각 MCP 호출의 권한은 서버가 계정으로 가른다.
  *
  * **쓰기는 경로 규칙으로만 연다**(2026-10-23 실측 claude 2.1.309, 가짜 gateway): `./**` 는 턴의 작업 폴더 기준이라 그 안의
  * Write·Edit 는 돌고, 홈·`<작업 폴더>/../` 는 묻지 않고 거절된다. 규칙이 없으면 작업 폴더 안 Write 도 거절이다. 맨 이름
- * `Edit`·`Write` 는 밖까지 연다 — 넣지 마라. `Skill` 은 이 판에서 규칙 없이도 돌지만 판이 바뀌어도 열려 있게 적어 둔다.
- * 하위 에이전트는 여기 없다 — `LANE_DENY` 가 닫는다.
+ * `Edit`·`Write` 는 밖까지 연다 — 넣지 마라. `Agent`·`Skill` 은 이 판에서 규칙 없이도 돌지만 판이 바뀌어도 열려 있게 적어 둔다.
+ * 하위 에이전트의 셸·웹은 `laneHookSettings` 가 판정한다(D1).
  * Bash·`WebFetch`·`WebSearch` 는 넣지 않는다 — 셸과 밖으로 나가는 길은 소유자가 카드로 승인한 규칙만 연다(security, C안).
  *
  * **읽기 도구는 넣지 않는다**(security F1, 2026-10-23 실측 claude 2.1.309): dontAsk 는 규칙이 없어도 작업 디렉터리
  * 안의 `Read` 를 열고, 밖(같은 uid 의 홈·오퍼레이터 비밀)은 묻지 않고 거절한다. 맨 이름 `Read` 를 넣으면 그 밖까지
  * classifier 없이 열린다. `Glob`·`Grep` 은 이 판에 도구로 없다.
  */
-export const LANE_BASE_ALLOW: readonly string[] = ['ToolSearch', 'TodoWrite', 'Edit(./**)', 'Write(./**)', 'Skill', 'mcp__harkroom', 'mcp__avcs'];
+export const LANE_BASE_ALLOW: readonly string[] = ['ToolSearch', 'TodoWrite', 'Edit(./**)', 'Write(./**)', 'Agent', 'Skill', 'mcp__harkroom', 'mcp__avcs'];
 
 /**
  * API 키 연결 턴에서 막는 것(security, 2026-10-23 실측 claude 2.1.309 dontAsk). deny 는 allow·승인 규칙보다 앞선다.
  *
- * - `Agent`: 하위 에이전트는 이 턴의 허용 목록을 물려받지 않는다(실측) — 닫는다. deny 하면 하위 에이전트 안에서도 꺼진다.
+ * - 하위 에이전트(`Agent`)는 여기 없다(D1): 하위 에이전트도 이 턴의 dontAsk·허용 목록을 따르고, PreToolUse hook
+ *   (`laneHookSettings`)과 이 deny 도 하위 에이전트에 걸린다(실측, 쓰기 명령으로 잼).
  * - 작업 폴더의 `.claude/**`(스킬·에이전트·명령 정의)·`CLAUDE.md`·`CLAUDE.local.md`·`.mcp.json`: 다음 턴의 도구·지시·MCP 를 바꾸는 파일이다.
  *   `Edit(./**)`·`Write(./**)` 를 열어도 이 셋은 못 쓴다. Edit deny 는 Write 도 막지만 둘 다 적어 둔다.
  */
 export const LANE_DENY: readonly string[] = [
-  'Agent',
   'Edit(./.claude/**)', 'Write(./.claude/**)',
   'Edit(./CLAUDE.md)', 'Write(./CLAUDE.md)',
   'Edit(./CLAUDE.local.md)', 'Write(./CLAUDE.local.md)',
@@ -390,6 +393,18 @@ export const PERMISSION_REQUEST_TOOL = 'mcp__harkroom__permission_request';
 export function commandHookSettings(operatorBin: string): string {
   const command = `${JSON.stringify(operatorBin)} hook pretool`;
   return JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command, timeout: 15 }] }] } });
+}
+
+/**
+ * API 키 연결 턴의 PreToolUse hook(D1, security S1·S2, 2026-10-23 실측 claude 2.1.309 dontAsk): **모든 도구**(matcher `*`)를
+ * 오퍼레이터 `hook pretool --lane` 이 본다. hook 은 allow 를 내지 않는다 — 기본 허용 목록·승인 규칙에 맞으면 결정 없음(하네스가
+ * 판정), 아니면 **deny**(이유는 모델에 간다 — 무엇을 청하면 열리는지 알려 준다). hook 은 하위 에이전트에도 걸린다(실측). hook 이
+ * 실패하거나 시한을 넘겨도 dontAsk 판정은 그대로라 넓어지지 않는다(실측). 규칙은 base64url 로 실어 셸 글자가 섞이지 않는다.
+ */
+export function laneHookSettings(operatorBin: string, allowRules: readonly string[]): string {
+  // hook 이 죽으면(0 이 아닌 종료) 차단 종료 코드 2 로 끝낸다 — 그냥 두면 하네스가 비차단 오류로 넘기고 읽기 명령은 하네스 판정으로 돈다(실측).
+  const command = `${JSON.stringify(operatorBin)} hook pretool --lane ${encodeLaneHookRules(allowRules)} || exit 2`;
+  return JSON.stringify({ hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command, timeout: 15 }] }] } });
 }
 
 const CODEX_PRESET: HarnessPreset = {
