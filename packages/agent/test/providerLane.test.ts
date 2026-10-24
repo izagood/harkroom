@@ -102,7 +102,7 @@ describe('providerLane.envFor', () => {
   it('opencode 판이 잰 목록과 정확히 같지 않거나 못 읽으면 `harness_version` — 키를 받지 않는다(security F1)', async () => {
     const t = await setup();
     let mounted = 0;
-    for (const v of ['1.18.33', '1.19.0', '1.18.31', '2.0.0', null, 'garbage', 'opencode 1.18.32', '1.18.32-beta']) {
+    for (const v of ['1.18.33', '1.19.0', '1.19.3', '1.19.5', '1.18.31', '2.0.0', null, 'garbage', 'opencode 1.18.32', '1.18.32-beta']) {
       const lane = createProviderLane({
         mount: async () => { mounted++; return { status: 200, body: JSON.stringify({ lane: { baseUrl: 'https://gateway.example', path: t.path } }) }; },
         turnSecretsDir: t.secretsDir, stateDir: join(t.root, 'st'), harnessVersion: async () => v,
@@ -111,6 +111,7 @@ describe('providerLane.envFor', () => {
     }
     expect(mounted).toBe(0);
     expect(opencodeLaneVersionOk('1.18.32\n')).toBe(true);
+    expect(opencodeLaneVersionOk('1.19.4')).toBe(true);
   });
 
   it('판은 턴마다 묻는다 — 러너가 사는 사이 opencode 가 스스로 바뀌면 다음 턴이 막힌다', async () => {

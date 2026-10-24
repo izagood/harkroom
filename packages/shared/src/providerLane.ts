@@ -65,9 +65,9 @@ export function readProviderLaneConfig(raw: unknown): ProviderLaneConfig | null 
 }
 
 /**
- * opencode lane 의 격리를 잰 판(러너 판 관문 `opencodeLaneVersionOk` 와 데스크톱 `harness_version` 문장이 같이 쓴다). 넓히면 둘이 같이 바뀐다.
+ * opencode lane 의 격리를 잰 판(러너 판 관문 `opencodeLaneVersionOk` 와 데스크톱 `harness_version` 문장이 같이 쓴다). 넓히면 둘이 같이 바뀐다. 판을 더할 때는 홈 표지·플러그인·정확 규칙·턴 파일 격리를 그 판으로 다시 잰다(1.19.4: 2026-10-25).
  */
-export const OPENCODE_LANE_VERSIONS = ['1.18.32'] as const;
+export const OPENCODE_LANE_VERSIONS = ['1.18.32', '1.19.4'] as const;
 
 /**
  * codex lane 의 격리를 잰 판(러너 판 관문 `codexLaneVersionOk`). 셸 env 걷기가 설정 셋(정책·셸 스냅숏·로그인 셸)에 걸려 있고
