@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeProviderBaseUrl, providerLaneFailureCode, readProviderLaneConfig } from '../src/providerLane.js';
+import { codexRulesFile, normalizeProviderBaseUrl, providerLaneFailureCode, readProviderLaneConfig } from '../src/providerLane.js';
 import { readOperatorAgentProviderLanePayload } from '../src/daemonProtocol.js';
 import { isRunnerLinkNotice } from '../src/runnerLink.js';
 
@@ -58,5 +58,35 @@ describe('providerLane.turn 통지(n16)', () => {
   it('ok 는 boolean 만', () => {
     expect(isRunnerLinkNotice({ type: 'providerLane.turn', ok: false })).toBe(true);
     expect(isRunnerLinkNotice({ type: 'providerLane.turn', ok: 'no' })).toBe(false);
+  });
+});
+
+describe('codexRulesFile', () => {
+  it('셸 규칙만 prefix_rule 로 옮긴다 — 접두 규칙은 :* 를 떼고, MCP·웹 도구는 뺀다', () => {
+    const out = codexRulesFile(['Bash(gh pr list -R cli/cli --limit 3)', 'Bash(kubectl --context lab get:*)', 'mcp__github__get_issue', 'WebFetch']);
+    expect(out.split('\n').filter((l) => l.startsWith('prefix_rule'))).toEqual([
+      'prefix_rule(pattern = ["gh", "pr", "list", "-R", "cli/cli", "--limit", "3"], decision = "allow")',
+      'prefix_rule(pattern = ["kubectl", "--context", "lab", "get"], decision = "allow")',
+    ]);
+    expect(out.startsWith('# harkroom')).toBe(true);
+    expect(out.endsWith('\n')).toBe(true);
+  });
+
+  it('판정을 못 지나는 규칙은 조용히 뺀다 — 셸 문법·따옴표·인터프리터·래퍼·와일드카드', () => {
+    const out = codexRulesFile([
+      'Bash(gh pr list; rm -rf /)', 'Bash(echo "x" foo)', 'Bash(bash -lc id)', 'Bash(harkroom-operator merge o/r 1)',
+      'Bash(*)', 'Bash(git:*)', 'Bash(gh pr view 1\\ 2)',
+    ]);
+    expect(out).not.toContain('prefix_rule');
+  });
+
+  it('낱말 사이 공백은 하나로, 같은 꼴은 한 줄로', () => {
+    const out = codexRulesFile(['Bash(gh  pr view 1)', 'Bash(gh pr view 1)']);
+    expect(out.match(/prefix_rule/g)).toHaveLength(1);
+    expect(out).toContain('["gh", "pr", "view", "1"]');
+  });
+
+  it('규칙이 없으면 머리 줄 하나뿐이다(빈 정책)', () => {
+    expect(codexRulesFile([])).toBe('# harkroom: owner-approved commands (written by the runner each turn; do not edit)\n');
   });
 });

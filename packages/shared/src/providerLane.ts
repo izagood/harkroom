@@ -13,6 +13,8 @@
  *   키가 같이 있으면 #374 가 막던 상황이 그대로 생긴다.
  */
 
+import { validateToolRule } from './toolRules.js';
+
 /** 러너 → 오퍼레이터(relay 전용). 서버로는 나가지 않는다. */
 export const PROVIDER_LANE_MOUNT_PATH = '/agent/provider-lane/mount';
 /** 오퍼레이터가 러너 env 에 **늘** 싣는다('0'/'1') — 빼면 오퍼레이터를 띄운 셸의 값이 샌다(`HARKROOM_CHROME_HOST` 와 같은 이유). */
@@ -161,3 +163,35 @@ export function decodeLaneHookRules(value: string): string[] | null {
     return null;
   }
 }
+
+/**
+ * codex 명령 규칙 파일(`<codexHome>/rules/harkroom.rules`, codex 0.154 execpolicy)의 본문 — 승인된 셸 규칙만 `prefix_rule` 로 옮긴다.
+ * 이 파일에 맞는 명령은 codex 가 **샌드박스 밖**에서 돌린다. 그래서:
+ * - 받는 것은 `Bash(<명령>)`·`Bash(<접두>:*)` 둘뿐이다. 그 밖(MCP·웹 도구)은 codex 규칙과 상관없어 뺀다.
+ * - 본문은 `validateToolRule` 의 글자 허용 목록을 다시 지나야 한다(따옴표·역슬래시가 없으니 Starlark 문자열이 깨지지 않는다).
+ *   지나지 못한 규칙은 조용히 뺀다 — 덜 꺼내는 쪽으로 틀린다.
+ * - codex 의 `prefix_rule` 은 **앞부분 맞춤**이다(실측: 정확 규칙에 인자를 하나 더 붙여도 allow). 정확 규칙의 꼬리는 턴 hook 이
+ *   막는다(`hook pretool --lane`·`--tail`).
+ */
+export function codexRulesFile(rules: readonly string[]): string {
+  const seen = new Set<string>();
+  const lines: string[] = ['# harkroom: owner-approved commands (written by the runner each turn; do not edit)'];
+  for (const raw of rules) {
+    const v = validateToolRule(raw);
+    if (!v.ok || v.kind === 'mcp_tool') continue;
+    const m = /^Bash\((.+)\)$/s.exec(v.rule);
+    if (!m) continue;
+    let body = m[1]!.trim();
+    if (body.endsWith(':*')) body = body.slice(0, -2).trim();
+    const words = body.split(/\s+/).filter(Boolean);
+    if (!words.length || words.some((w) => !CODEX_RULE_WORD.test(w))) continue;
+    const pattern = `[${words.map((w) => JSON.stringify(w)).join(', ')}]`;
+    if (seen.has(pattern)) continue;
+    seen.add(pattern);
+    lines.push(`prefix_rule(pattern = ${pattern}, decision = "allow")`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/** `validateToolRule` 의 본문 글자와 같다 — 한 번 더 걸러 Starlark 문자열 밖으로 나갈 글자가 없게 한다. */
+const CODEX_RULE_WORD = /^[A-Za-z0-9_./@=:+%-]+$/;
