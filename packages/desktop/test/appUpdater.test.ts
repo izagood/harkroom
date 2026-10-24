@@ -282,6 +282,27 @@ describe('Stable 승격 워크플로(promote.yml)', () => {
     expect(promote).not.toContain('TAURI_SIGNING_PRIVATE_KEY');
   });
 
+  /**
+   * `stable` 릴리즈가 있는데 매니페스트를 못 읽으면 "첫 승격"처럼 보여 되돌림 막기를 건너뛰었다
+   * (#1468 security n1). 판을 못 읽으면 서고, `allow_older=true` 로만 지나간다.
+   */
+  it('stable 릴리즈의 판을 못 읽으면 allow_older 없이는 선다', () => {
+    expect(promote).toMatch(/if ! \[\[ "\$current" =~ \^\[0-9\]\+/);
+    expect(promote).toMatch(/if \[ "\$ALLOW_OLDER" != "true" \]; then\n\s+echo "::error::\$CHANNEL_TAG 릴리즈는 있는데/);
+  });
+
+  /** 404 가 아닌 실패(5xx·속도 제한)를 "릴리즈 없음 = 첫 승격"으로 읽지 않는다(#1529 security n2). */
+  it('stable 릴리즈 조회가 404 가 아닌 이유로 실패하면 선다', () => {
+    expect(promote).toMatch(/elif ! grep -q "HTTP 404" "\$RUNNER_TEMP\/stable-lookup\.err"; then\n[^\n]*\n[^\n]*\n\s+exit 1/);
+  });
+
+  /** 매니페스트 원문을 워크플로 명령 줄에 그대로 싣지 않는다(#1529 security n1). */
+  it('오류 줄에 싣는 판 원문은 줄바꿈을 없애고 40자로 자른다', () => {
+    expect(promote).toContain('shown="${shown:0:40}"');
+    expect(promote).toContain("('${shown}')");
+    expect(promote).not.toContain("('${current}')");
+  });
+
   it('승격만 바꾼 머지는 앱 릴리즈를 돌리지 않는다', () => {
     expect(workflow).toContain("- '.github/workflows/promote.yml'");
   });
