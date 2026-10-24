@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { CodexLoginEvent } from '@harkroom/shared/daemonProtocol';
 
@@ -127,7 +127,8 @@ describe('createCodexAccountsPort', () => {
 
     await writeAuth(join(root, 'work'), 'work@example.com');
     child.emit('exit', 0, null);
-    await new Promise((r) => setTimeout(r, 20));
+    // 끝난 뒤의 상태는 auth.json 을 다시 읽어 만든다 — 정한 ms 대신 그 이벤트가 나올 때까지 기다린다(느린 CI).
+    await vi.waitFor(() => expect(events).toHaveLength(2));
     expect(events[1]).toMatchObject({ loginId, done: true, status: { loggedIn: true, email: 'work@example.com' } });
   });
 
@@ -139,7 +140,7 @@ describe('createCodexAccountsPort', () => {
     await port.loginCancel(loginId);
     expect(children[0]!.killed).toEqual(['SIGTERM']);
     children[0]!.emit('exit', null, 'SIGTERM');
-    await new Promise((r) => setTimeout(r, 20));
+    await vi.waitFor(() => expect(events.at(-1)?.done).toBe(true));
     expect(events.at(-1)).toMatchObject({ loginId, done: true, status: { loggedIn: false } });
     expect(events.at(-1)!.error).toBeTruthy();
   });

@@ -74,7 +74,10 @@ describe('Enter 기록', () => {
     fireEvent.keyDown(box, { key: 'Enter', code: 'Enter', keyCode: 13 });
     const dump = dumpEnterTrace();
     expect(dump).toMatch(/^harkroom enter-trace v1\n/);
-    for (const word of ['절대', '새면', 'secret', '123']) expect(dump).not.toContain(word);
+    // `t` 는 performance.now() 라 긴 실행에서는 12345 처럼 '123' 을 품는다 — 글자가 아니니 빼고 본다.
+    expect(dump).toMatch(/"t":\d+/);
+    const withoutTime = dump.replace(/"t":\d+/g, '"t":0');
+    for (const word of ['절대', '새면', 'secret', '123']) expect(withoutTime).not.toContain(word);
   });
 
   it('200개를 넘으면 오래된 것부터 버린다', () => {
