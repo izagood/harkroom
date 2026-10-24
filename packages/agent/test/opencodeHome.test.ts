@@ -8,7 +8,7 @@
 //    `--strict-mcp-config` 를 붙이는 것과 같은 자리(스펙 §7). opencode 에는 그 플래그가
 //    없으므로 **격리 홈을 우리가 쓰는 것**이 그 역할을 한다.
 // 3. 로그인 자리는 `<data>/**opencode**/auth.json` 으로 한 단계 깊다.
-import { mkdtemp, mkdir, readdir, readFile, writeFile, lstat, readlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, writeFile, lstat, readlink, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ensureOpencodeHome, opencodeConfigFile, opencodeDirs, opencodeLaneModelMissing, laneRunModel, OPENCODE_LANE_AGENT, OPENCODE_LANE_PERMISSION, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
   opencodeLaneHome, laneSkillPermission, laneOpencodeBashTable, opencodeLaneAgentName, opencodeLaneAgentMatches,
+  opencodeConfigLockPath, withConfigLock,
 } from '../src/opencodeHome.js';
 import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
 
@@ -405,5 +406,51 @@ describe('opencode lane 채널 칸', () => {
     const after = JSON.parse(await readFile(file, 'utf8'));
     expect(after.agent[`harkroom-lane-${OTHER}`]).toBeUndefined();
     expect(after.agent[`harkroom-lane-${CH}`]).toBeUndefined();
+  });
+});
+
+// security F1: 채널 칸은 한 파일에 여럿이다 — 읽기-고치기-쓰기를 잠금으로 감싸, 겹친 턴이 남의 옛 칸(거둔 규칙)을 되쓰지 않게 한다.
+describe('opencode lane 설정 잠금', () => {
+  const A = '309886fb-1c00-4084-bf9d-fb3d14ae647d';
+  const B = 'a42006a1-72c4-4375-ae8b-cfb5a4f06c7e';
+
+  it('겹친 두 채널 쓰기 뒤에도 A 에서 거둔 규칙이 되살아나지 않는다(여러 번, 순서를 바꿔)', async () => {
+    const f = await fixture();
+    const write = (id: string, toolAllows: string[]) => ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: 'ExampleOrg/example-model', channel: { id, toolAllows } },
+    });
+    for (let i = 0; i < 12; i++) {
+      await write(A, ['Bash(git status)', 'Bash(git log -1)']);
+      const narrow = write(A, ['Bash(git status)']);
+      const other = write(B, [`Bash(git diff --stat ${i})`]);
+      await Promise.all(i % 2 ? [other, narrow] : [narrow, other]);
+      const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+      expect(cfg.agent[`harkroom-lane-${A}`].permission.bash).toEqual({ '*': 'deny', 'git status': 'allow' });
+      expect(cfg.agent[`harkroom-lane-${B}`].permission.bash).toEqual({ '*': 'deny', [`git diff --stat ${i}`]: 'allow' });
+    }
+    // 잠금 파일은 남지 않는다.
+    expect(await lstat(opencodeConfigLockPath(f.home)).catch(() => null)).toBeNull();
+  });
+
+  it('살아 있는 주인이 잡은 잠금은 시한까지 기다리다 던진다 — 쓰지 않는다', async () => {
+    const f = await fixture();
+    await mkdir(f.home, { recursive: true });
+    await writeFile(opencodeConfigLockPath(f.home), `${process.pid} ${Date.now()}\n`);
+    await expect(ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: null, channel: { id: A, toolAllows: ['Bash(git status)'] } }, lockTimeoutMs: 100,
+    })).rejects.toThrow(/잠금/);
+    expect(await opencodeLaneAgentMatches(f.home, A, ['Bash(git status)'])).toBe(false);
+  });
+
+  it('주인이 죽었거나 시한이 지난 잠금은 걷는다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'lock-'));
+    const lock = join(dir, '.config.lock');
+    await writeFile(lock, '999999 0\n');
+    expect(await withConfigLock(lock, async () => 'ok', { timeoutMs: 200 })).toBe('ok');
+    await writeFile(lock, `${process.pid} 0\n`);
+    await utimes(lock, new Date(0), new Date(0));
+    expect(await withConfigLock(lock, async () => 'ok2', { timeoutMs: 200, staleMs: 1_000 })).toBe('ok2');
   });
 });

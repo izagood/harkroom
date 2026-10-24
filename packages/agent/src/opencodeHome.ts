@@ -26,7 +26,7 @@
 // 만들어 준 표(claude 형식 `mcpServers`)를 opencode 모양으로 **번역해** 이 루트에 적는다.
 // harkroom 항목은 stdio 브릿지(`harkroom-operator mcp-bridge`)이고, 실측으로 그대로 붙는다
 // (`opencode mcp list` → `✓ connected`).
-import { chmod, lstat, mkdir, readdir, readFile, readlink, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readdir, readFile, readlink, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { XdgApp } from './adapters/contract.js';
@@ -382,7 +382,57 @@ async function readUserConfig(app: XdgApp, sourceConfig?: string): Promise<Recor
  * 매 턴 불러도 되게 **멱등**이다 — 설정은 늘 새로 쓰고(오퍼레이터의 표가 바뀔 수 있다),
  * 링크는 이미 맞으면 두고, 엉뚱한 곳을 가리키면 크게 실패한다.
  */
-export async function ensureOpencodeHome(opts: {
+/**
+ * 공유 opencode 설정 파일의 읽기-고치기-쓰기를 감싸는 잠금(security F1). lane 채널 칸은 한 파일에 여럿이라, 두 채널 턴이 겹치면 늦게 쓰는
+ * 쪽이 먼저 읽어 둔 **남의 옛 칸**(거둔 규칙 포함)을 되쓴다. 잠금 파일은 `O_EXCL` 로 만들고, 시한이 지난 것이나 주인 프로세스가 죽은
+ * 것은 걷는다. 못 잡으면 던진다 — 그 턴은 쓴 뒤 확인에서 걸려 `lane_setup` 으로 뜨지 않는다.
+ */
+export async function withConfigLock<T>(lockPath: string, fn: () => Promise<T>, opts: { timeoutMs?: number; staleMs?: number } = {}): Promise<T> {
+  const deadline = Date.now() + (opts.timeoutMs ?? 5_000);
+  const staleMs = opts.staleMs ?? 30_000;
+  for (;;) {
+    try {
+      const fh = await open(lockPath, 'wx', 0o600);
+      try { await fh.writeFile(`${process.pid} ${Date.now()}\n`); } finally { await fh.close(); }
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      const [st, body] = await Promise.all([stat(lockPath).catch(() => null), readFile(lockPath, 'utf8').catch(() => '')]);
+      const pid = Number(body.split(' ')[0]);
+      const ownerGone = Number.isInteger(pid) && pid > 0 && !processAlive(pid);
+      if (st && (ownerGone || Date.now() - st.mtimeMs > staleMs)) { await rm(lockPath, { force: true }); continue; }
+      if (Date.now() > deadline) throw new Error('opencode 설정 잠금을 잡지 못했다');
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    await rm(lockPath, { force: true }).catch(() => undefined);
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
+/** 공유 설정 잠금 파일 자리(러너 전용 opencode 홈 안, 작업 폴더 밖). */
+export function opencodeConfigLockPath(opencodeHome: string): string {
+  return join(opencodeHome, '.config.lock');
+}
+
+type EnsureOpencodeHomeOpts = Parameters<typeof ensureOpencodeHomeUnlocked>[0] & { lockTimeoutMs?: number };
+
+/**
+ * opencode 러너 홈을 마련한다. API 키 연결 러너는 lane 채널 칸을 다른 턴과 같은 파일에 쓰므로 그 일을 잠금 안에서 한다(security F1).
+ */
+export async function ensureOpencodeHome(opts: EnsureOpencodeHomeOpts): Promise<string> {
+  if (!opts.providerLane) return ensureOpencodeHomeUnlocked(opts);
+  await mkdir(opts.opencodeHome, { recursive: true, mode: 0o700 });
+  return withConfigLock(opencodeConfigLockPath(opts.opencodeHome), () => ensureOpencodeHomeUnlocked(opts), { timeoutMs: opts.lockTimeoutMs });
+}
+
+async function ensureOpencodeHomeUnlocked(opts: {
   opencodeHome: string;
   /** 오퍼레이터가 만든 claude 형식 MCP 표. `harkroom` 브릿지가 여기 들어 있다. */
   mcpServers: Record<string, ClaudeStyleServer>;

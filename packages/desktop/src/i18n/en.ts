@@ -1533,7 +1533,7 @@ export const en = {
   'lane.code.workspace_protected': 'Stopped: the work folder has files or folders that change the agent\'s instructions or tools (.claude, .opencode, CLAUDE.md, AGENTS.md, …) — remove them and call again',
   'lane.code.harness_version': 'Stopped: this computer\'s harness isn\'t a version API key connections were checked with ({versions}), or its version couldn\'t be read — install that version, or if yours is newer, wait for a Harkroom update',
   'lane.code.harness_login_present': 'Stopped: there\'s an account login file at codex-provider-lane/auth.json in this agent\'s state folder, so the agent could run on that login — remove the file and call again',
-  'lane.code.lane_setup': 'Stopped: couldn\'t write or check this channel\'s shell permission settings — call again, and restart the app if it stops again',
+  'lane.code.lane_setup': 'Stopped: couldn\'t prepare this channel\'s opencode permission settings — call again, and if it stops again, use [{action}] in agent settings',
   'lane.code.harness_version.join': ' or ',
   'lane.code.bad_model': 'opencode model name is empty or has characters it can\'t use — under [Customize for this agent], enter the model name exactly as the gateway takes it (e.g. ExampleOrg/example-model)',
   'lane.code.interactive_unsupported': 'Agents using an API key can\'t open a terminal yet',

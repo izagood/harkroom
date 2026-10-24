@@ -46,6 +46,8 @@ export function laneCodeText(t: Translate, raw: unknown): string {
     ].join(join);
     return t(key, { versions });
   }
+  // 할 일은 있는 버튼 이름을 끼워 넣는다 — 버튼 이름이 바뀌어도 문장이 따라간다(designer).
+  if (key === 'lane.code.lane_setup') return t(key, { action: t('agents.restart.action') });
   return t(key);
 }
 
