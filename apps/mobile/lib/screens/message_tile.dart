@@ -1104,19 +1104,34 @@ class _SystemChip extends StatelessWidget {
         border: Border.all(color: k.border),
         borderRadius: BorderRadius.circular(99),
       ),
-      child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+      // 「↳」는 보이는 글자에만 — 화면 읽기에는 「아래쪽 화살표」로 읽히므로 접근 이름에서 뺀다.
+      child: Text('↳ $label', maxLines: 1, overflow: TextOverflow.ellipsis,
           style: TextStyle(fontSize: 11, color: k.fgMuted)),
     );
     final id = target.messageId;
     return Align(
       alignment: Alignment.centerLeft,
       child: id == null
-          ? KeyedSubtree(key: Key('system-chip-${message.id}'), child: chip)
-          : InkWell(
+          ? Semantics(
               key: Key('system-chip-${message.id}'),
-              borderRadius: BorderRadius.circular(99),
-              onTap: () => openMessageLink(context, id),
+              container: true,
+              label: label,
+              excludeSemantics: true,
               child: chip,
+            )
+          : Semantics(
+              key: Key('system-chip-${message.id}'),
+              // 줄 전체(길게 눌러 메뉴)에 섞이지 않고 혼자 눌리는 단추로 선다.
+              container: true,
+              button: true,
+              label: '$label, ${t.systemOpenOriginal}',
+              onTap: () => openMessageLink(context, id),
+              excludeSemantics: true,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(99),
+                onTap: () => openMessageLink(context, id),
+                child: chip,
+              ),
             ),
     );
   }

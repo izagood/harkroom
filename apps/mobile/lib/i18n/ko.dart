@@ -431,9 +431,11 @@ class StringsKo implements Strings {
   @override
   String get systemNotice => '시스템 알림';
   @override
-  String get systemAboutPost => '↳ {name} 의 글에 대해';
+  String get systemAboutPost => '{name} 의 글에 대해';
   @override
-  String get systemAboutRequest => '↳ {name} 의 요청에 대해';
+  String get systemAboutRequest => '{name} 의 요청에 대해';
+  @override
+  String get systemOpenOriginal => '원 글 열기';
 
   @override
   String get tabChannels => '채널';

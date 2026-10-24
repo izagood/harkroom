@@ -963,6 +963,9 @@ abstract class Strings {
   String get systemAboutPost;
   String get systemAboutRequest;
 
+  /// 대상 칩이 링크일 때 접근 이름 뒤에 붙는 말 — 「jaebin 의 글에 대해, 원 글 열기」.
+  String get systemOpenOriginal;
+
   // ── P0 ───────────────────────────────────────────────────────────────
   /// 로그인 화면 제목.
   String get loginTitle;
@@ -1590,6 +1593,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'systemNotice': s.systemNotice,
       'systemAboutPost': s.systemAboutPost,
       'systemAboutRequest': s.systemAboutRequest,
+      'systemOpenOriginal': s.systemOpenOriginal,
       'loginTitle': s.loginTitle,
       'loginIdLabel': s.loginIdLabel,
       'loginPasswordLabel': s.loginPasswordLabel,

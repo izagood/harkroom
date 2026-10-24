@@ -1,3 +1,5 @@
+import 'dart:ui' show SemanticsAction;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/api/models.dart';
@@ -175,6 +177,11 @@ void main() {
       expect(find.text('Harkroom'), findsOneWidget);
       expect(find.text('↳ task_manager 의 글에 대해'), findsOneWidget);
       expect(find.byKey(const Key('system-chip-1')), findsOneWidget);
+      // 접근 이름에는 「↳」가 없고, 링크 칩은 버튼으로 어디로 가는지 읽힌다.
+      expect(find.bySemanticsLabel('task_manager 의 글에 대해, 원 글 열기'), findsOneWidget);
+      final chip = tester.getSemantics(find.byKey(const Key('system-chip-1')));
+      expect(chip.getSemanticsData().flagsCollection.isButton, isTrue);
+      expect(chip.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
     });
 
     testWidgets('멤버 줄은 기록 줄 — 이름줄·얼굴 없이 한 줄, 화면 읽기에는 「시스템 알림」', (tester) async {
