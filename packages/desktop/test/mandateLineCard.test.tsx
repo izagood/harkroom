@@ -96,6 +96,15 @@ describe('W4 mandate line card', () => {
     expect(screen.queryByTestId('ask-option-deny')).toBeNull();
     if (state === 'superseded') expect(screen.getByTestId('mandate-new-card').getAttribute('href')).toBe('harkroom://message/m2');
   });
+  it('used-once card and seeing mirror show the operator-picked gh account', () => {
+    const line = { cap: 'command', scope: 'x', limits: { approve_once: { uses: 1 } } };
+    render(<AskCard message={card({ options: ['approve_once', 'deny'], pr: { status: 'approved_once', kind: 'command', line, ghUserUsed: 'picked-account' }, ask: { answeredWith: 'approve_once', answeredBy: ME } })} />);
+    expect(screen.getByTestId('mandate-ended').textContent).toContain('gh picked-account');
+    cleanup();
+    render(<AskCard message={card({ options: ['approve_once', 'deny'], mirror: { rootId: 'root-1', neutral: false, kind: 'command', line, mandate: MANDATE, ghUserUsed: 'picked-account' }, ask: { answeredWith: 'approve_once', answeredBy: ME } })} />);
+    expect(screen.getByTestId('mandate-ended').dataset.state).toBe('once');
+    expect(screen.getByTestId('mandate-ended').textContent).toContain('gh picked-account');
+  });
   it('viewer not owner: read-only, no chip', () => {
     useActiveStore.getState().set({ me: acc('other', 'carol') });
     render(<AskCard message={card()} />);

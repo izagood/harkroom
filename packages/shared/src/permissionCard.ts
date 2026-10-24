@@ -59,4 +59,6 @@ export interface PermissionMirrorMeta {
   once?: { number: number; headSha: string; reason: string; failedChecks?: string[] };
   line?: PermissionCardLine;
   mandate?: PermissionCardMandate;
+  /** 원본의 1회 승인(계정 비움)으로 머지했을 때 오퍼레이터가 쓴 gh 이름(래퍼 보고) — 머지 보고 뒤 원본과 함께 적힌다. */
+  ghUserUsed?: string;
 }

@@ -8,7 +8,7 @@ import { can, mergeGrantFor } from '../src/auth/permissions.js';
 import { mintPat } from '../src/services/pats.js';
 import { prepareDenialCard } from '../src/services/mergeDenials.js';
 import { MERGE_DENIAL_DAILY_CAP } from '../src/services/mergeGrants.js';
-import { openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant } from '../src/services/permissionRequests.js';
+import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant } from '../src/services/permissionRequests.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
@@ -567,14 +567,24 @@ describe('repo.merge grant', () => {
         const thread = await threadOf(cause);
         const denied = (await check(await lease(cause), repo, { number: 21, headSha: SHA2 })).json();
         const rid = await requestFor(denied.error.denialId, thread);
+        // 카드와 거울 둘(원본을 보는 것·중립)을 세워 둔다 — 머지 보고 뒤 오퍼레이터가 고른 이름이 카드·보는 거울에만 적혀야 한다.
+        const card = (await pool.query<{ id: string }>(
+          `insert into message (channel_id, author_id, kind, body, meta) values ($1, $2, 'user', 'card', jsonb_build_object('permissionRequest', jsonb_build_object('requestId', $3::text, 'kind', 'merge'))) returning id`,
+          [ch, agentId, rid])).rows[0]!.id;
+        await linkPermissionCard(pool, rid, card);
+        const mirrorOf = async (neutral: boolean) => (await pool.query<{ id: string }>(
+          `insert into message (channel_id, author_id, kind, body, meta) values ($1, $2, 'user', 'mirror', jsonb_build_object('ask', jsonb_build_object('mirrorOf', $3::text), 'permissionMirror', jsonb_build_object('rootId', $3::text, 'neutral', $4::boolean))) returning id`,
+          [ch, agentId, card, neutral])).rows[0]!.id;
+        const seeing = await mirrorOf(false);
+        const neutralMirror = await mirrorOf(true);
         const ok = await decide(alice.token, rid, payload);
         expect(ok.statusCode).toBe(200);
         expect((await pool.query(`select gh_user from merge_approval where denial_id = $1`, [denied.error.denialId])).rows).toEqual([{ gh_user: null }]);
         const audit = (await pool.query(`select detail from audit_log where action = 'repo.merge.approved_once' and target = $1`, [`repo:${repo}`])).rows;
         expect(audit).toHaveLength(1);
         expect(audit[0].detail).toMatchObject({ ghUser: null, ghUserChosenBy: 'operator' });
-        const card = (await pool.query(`select meta->'permissionRequest'->'approvedOnce' as a from message where meta->'permissionRequest'->>'requestId' = $1`, [rid])).rows[0]?.a;
-        if (card) expect(card.ghUser).toBeNull();
+        const once = (await pool.query(`select meta->'permissionRequest'->'approvedOnce' as a from message where id = $1`, [card])).rows[0]?.a;
+        expect(once.ghUser).toBeNull();
         const pl = await leaseInThread(thread, alice.accountId);
         const peek = await app.inject({ method: 'POST', url: '/agent/merge-approvals/peek', headers: asAgent(), payload: { leaseId: pl.id, token: pl.token, repo, number: 21, headSha: SHA2 } });
         expect(peek.json().approval).toMatchObject({ ghUser: null });
@@ -593,6 +603,10 @@ describe('repo.merge grant', () => {
         const merged = (await pool.query(`select detail from audit_log where action = 'repo.merge.merged' and target = $1`, [`repo:${repo}`])).rows;
         expect(merged).toHaveLength(1);
         expect(merged[0].detail).toMatchObject({ ghUserUsed: 'picked-account', ghUserChosenBy: 'operator' });
+        const metaOf = async (id: string) => (await pool.query(`select meta from message where id = $1`, [id])).rows[0]!.meta;
+        expect((await metaOf(card)).permissionRequest).toMatchObject({ status: 'approved_once', ghUserUsed: 'picked-account' });
+        expect((await metaOf(seeing)).permissionMirror).toMatchObject({ ghUserUsed: 'picked-account' });
+        expect((await metaOf(neutralMirror)).permissionMirror).not.toHaveProperty('ghUserUsed');
       }
     });
 
