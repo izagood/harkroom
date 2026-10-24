@@ -322,7 +322,13 @@ export async function registerSecretRoutes(
               case when g.suspended_at is null then null else coalesce((
                 select array_agg(distinct f order by f) from audit_log al, jsonb_array_elements_text(al.detail->'fields') f
                  where al.action = 'secret.grant.suspended' and al.target = g.agent_id::text and al.at >= g.suspended_at
-              ), '{}') end as "changedFields"
+              ), '{}') end as "changedFields",
+              -- 그 목록의 마지막 기록 시각(ms) — [다시 허락] 이 seenChangedAt 으로 되돌려 보내 「본 것만」 승인한다(security n1).
+              -- 기록이 없으면 null. jsonb 의 ms 와 맞추려고 잘라서 준다.
+              case when g.suspended_at is null then null else (
+                select date_trunc('milliseconds', max(al.at)) from audit_log al
+                 where al.action = 'secret.grant.suspended' and al.target = g.agent_id::text and al.at >= g.suspended_at
+              ) end as "lastChangedAt"
          from secret_grant g where g.secret_id = $1 order by g.granted_at`, [s.id]);
     return { grants: r.rows };
   });
@@ -332,6 +338,11 @@ export async function registerSecretRoutes(
    * 같고(소유자만·사람·만료 아님·자기 에이전트) 범위는 **그 줄 그대로**다 — 채널 한정은 유지하고, 기기에 묶였던
    * 줄은 **지금 배정된 오퍼레이터**에 다시 묶는다(배정이 없으면 409). 정지되지 않은 줄은 409 로 돌려보낸다 —
    * 누른 사이 이미 풀렸으면 아무것도 바꾸지 않는다.
+   *
+   * 몸통의 `seenChangedAt` 은 소유자가 확인창에서 본 목록의 `lastChangedAt` 이다(기록이 없었으면 null). 그 뒤에 정의가
+   * 또 바뀌었으면 409 `changed_since` — 보지 못한 변경까지 같이 믿지 않는다(security n1). 판정(정지·소유·꺼짐·배정·
+   * 만료·새 변경)은 앞에서 사람 말 코드를 고르려고 한 번 보고, update 의 WHERE 에서 **다시** 본다(n2) — 그 사이 바뀌면
+   * 0 줄이고 409 `state_changed`(화면은 목록을 다시 읽는다).
    */
   app.post<{ Params: { id: string; grantId: string } }>(
     '/secrets/:id/grants/:grantId/reapprove', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -343,6 +354,9 @@ export async function registerSecretRoutes(
       }
       const grantId = z.string().uuid().safeParse(req.params.grantId);
       if (!grantId.success) return reply.code(404).send({ error: { code: 'not_found', message: 'no such grant' } });
+      const body = z.object({ seenChangedAt: z.string().datetime({ offset: true }).nullable() }).strict().safeParse(req.body ?? {});
+      if (!body.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'seenChangedAt (the lastChangedAt you reviewed, or null) is required' } });
+      const seen = body.data.seenChangedAt;
       const cur = (await pool.query(
         `select g.agent_id as "agentId", g.channel_id as "channelId", g.operator_id as "operatorId",
                 g.suspended_at as "suspendedAt", g.suspend_reason as "suspendReason",
@@ -369,12 +383,24 @@ export async function registerSecretRoutes(
         return reply.code(409).send({ error: { code: 'not_assigned', message: 'the agent is not assigned to an operator; assign it first or grant again with operator: "any"' } });
       }
       const boundOperator = bound ? cur.assignedOperatorId : null;
-      // 조건부 갱신 — 그 사이 다른 요청이 풀었거나 지웠으면 0 줄이다.
+      // 본 뒤에 또 바뀐 정의가 있나. 없는 기록(null)을 봤으면 정지 뒤의 기록이 하나라도 있으면 바뀐 것이다.
+      const newer = (seenParam: string) => `select 1 from audit_log al
+          where al.action = 'secret.grant.suspended' and al.target = g.agent_id::text and al.at >= g.suspended_at
+            and (${seenParam}::timestamptz is null or date_trunc('milliseconds', al.at) > ${seenParam}::timestamptz)`;
+      const changed = await pool.query(`select 1 from secret_grant g where g.id = $1 and exists (${newer('$2')})`, [grantId.data, seen]);
+      if (changed.rowCount) return reply.code(409).send({ error: { code: 'changed_since', message: 'the agent definition changed after you reviewed it; reload and review again' } });
+      // 조건부 갱신(n2) — 앞의 판정을 WHERE 에서 다시 본다. 그 사이 풀렸거나·꺼졌거나·주인이 바뀌었거나·배정이 바뀌었거나·
+      // 만료됐거나·정의가 또 바뀌었으면 0 줄이다.
       const r = await pool.query(
-        `update secret_grant set operator_id = $3, granted_by = $4, granted_at = now(), suspended_at = null, suspend_reason = null
-          where id = $1 and secret_id = $2 and suspended_at is not null`,
-        [grantId.data, s.id, boundOperator, req.account!.id]);
-      if (!r.rowCount) return reply.code(409).send({ error: { code: 'not_suspended', message: 'the grant is not suspended' } });
+        `update secret_grant g set operator_id = $3, granted_by = $4, granted_at = now(), suspended_at = null, suspend_reason = null
+          where g.id = $1 and g.secret_id = $2 and g.suspended_at is not null
+            and exists (select 1 from account a join agent_config c on c.account_id = a.id
+                         where a.id = g.agent_id and a.deleted_at is null and a.disabled_at is null and c.owner_account_id = $4)
+            and not exists (select 1 from secret x where x.id = g.secret_id and x.expires_at <= now())
+            and ($3::uuid is null or exists (select 1 from agent_assignment asg where asg.agent_id = g.agent_id and asg.operator_id = $3::uuid))
+            and not exists (${newer('$5')})`,
+        [grantId.data, s.id, boundOperator, req.account!.id, seen]);
+      if (!r.rowCount) return reply.code(409).send({ error: { code: 'state_changed', message: 'the grant or agent changed while re-approving; reload and try again' } });
       await recordAudit(pool, {
         action: 'secret.grant.reapproved', ...actorOf(req), target: s.id,
         detail: {
