@@ -15,6 +15,7 @@ mod external_link;
 mod login_path;
 mod notification;
 mod concealed_clipboard;
+mod update_channel;
 
 use std::collections::HashMap;
 
@@ -1014,6 +1015,8 @@ fn main() {
         // 첨부 저장 창. Rust 의 `attachment_save::pick_with_dialog` 만 쓴다 — `dialog:*` 권한을 열지 않는다.
         .plugin(tauri_plugin_dialog::init())
         .manage(attachment_save::SavedFiles::default())
+        // 채널(Stable/Ludicrous)을 고르는 확인·설치. 엔드포인트는 JS 가 못 바꿔서 Rust 명령이다(`update_channel.rs`).
+        .manage(update_channel::PendingUpdate::default())
         .manage(daemon_client::DaemonState::new())
         // 알림 클릭을 받는 델리게이트를 세운다(`notification::install`). **기동 때 한 번**
         // 이어야 한다 — 첫 알림을 보낼 때 세우면 그 알림의 클릭을 놓칠 수 있다.
@@ -1022,6 +1025,7 @@ fn main() {
             // 빌더에 걸어야 해서다.
             app_windows::build_main(app)?;
             notification::install(app.handle());
+            update_channel::spawn_probe(app.handle());
             // 기동 확인(`scripts/launch-smoke.sh`)이 "setup 을 지났다"를 읽는 표지. 켜지 않으면 아무것도 안 한다.
             if std::env::var_os("HARKROOM_LAUNCH_SMOKE").is_some() {
                 eprintln!("harkroom-launch-smoke: setup done");
@@ -1049,6 +1053,8 @@ fn main() {
             login_path,
             notification::notification_send,
             app_version,
+            update_channel::app_update_check,
+            update_channel::app_update_install,
             concealed_clipboard::clipboard_write_concealed,
             pick_save_target,
             write_saved_attachment,

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getAppUpdater } from './appUpdater';
+import { updateChannelStorage, type UpdateChannel } from './updateChannel';
 
 /**
  * 업데이트 확인·설치의 **한 곳**. 두 자리가 이것을 쓴다:
@@ -68,6 +69,12 @@ export interface UseUpdateCheck {
    * 다음 확인이 답을 받으면 지운다.
    */
   recheckFailure: { message: string; at: number } | null;
+  /** 지금 고른 채널(기기 로컬, 기본 Stable). */
+  channel: UpdateChannel;
+  /** 지금 `status`(있다·최신)를 **어느 채널이** 답했나. 아직 답이 없으면 null. */
+  answeredChannel: UpdateChannel | null;
+  /** 지금 판을 받은 채널(`updateChannel.ts` 의 `installedChannel`). 채널을 아는 판으로 설치한 적 없으면 null. */
+  installedChannel: UpdateChannel | null;
   check(): Promise<void>;
   install(version: string): Promise<void>;
   dismiss(version: string): void;
@@ -91,9 +98,23 @@ interface Snapshot {
   checking: boolean;
   dismissedVersion: string | null;
   recheckFailure: { message: string; at: number } | null;
+  channel: UpdateChannel;
+  answeredChannel: UpdateChannel | null;
+  installedChannel: UpdateChannel | null;
 }
-const INITIAL: Snapshot = { status: { kind: 'idle' }, checkedAt: null, checking: false, dismissedVersion: null, recheckFailure: null };
-let snap: Snapshot = INITIAL;
+/** 채널은 저장본에서 읽는다 — 표면이 새로 설 때마다 다시 읽어야 테스트·다른 창이 같은 값을 본다. */
+function initial(): Snapshot {
+  return {
+    status: { kind: 'idle' }, checkedAt: null, checking: false, dismissedVersion: null, recheckFailure: null,
+    channel: updateChannelStorage.load(), answeredChannel: null, installedChannel: updateChannelStorage.loadInstalled(),
+  };
+}
+let snap: Snapshot = initial();
+/**
+ * 채널을 바꿀 때마다 오른다. 바꾸기 **전에** 나간 물음의 답은 앞 채널의 말이라 버린다 —
+ * 늦게 온 Ludicrous 의 "0.4.171 이 있다" 가 Stable 화면에 서면 안 된다.
+ */
+let generation = 0;
 let owner: ReturnType<typeof getAppUpdater> | null = null;
 let inflight: Promise<void> | null = null;
 let installing = false;
@@ -111,7 +132,7 @@ function updater(): ReturnType<typeof getAppUpdater> {
   const u = getAppUpdater();
   if (u !== owner) {
     owner = u;
-    snap = INITIAL;
+    snap = initial();
     inflight = null;
     installing = false;
     lastAttemptAt = null;
@@ -126,35 +147,61 @@ export function checkForUpdate(): Promise<void> {
   if (inflight) return inflight;
   lastAttemptAt = Date.now();
   publish({ checking: true });
+  const gen = generation;
+  const channel = snap.channel;
   const run = (async () => {
     try {
-      const found = await u.check();
-      if (u !== owner || installing) return;
+      const found = await u.check(channel);
+      if (u !== owner || installing || gen !== generation) return;
       publish({
         status: found ? { kind: 'available', version: found.version } : { kind: 'uptodate' },
         checkedAt: Date.now(),
         recheckFailure: null,
+        answeredChannel: channel,
       });
     } catch (err) {
-      if (u !== owner || installing) return;
+      if (u !== owner || installing || gen !== generation) return;
       const message = describeError(err);
       // 이미 새 버전을 알고 있으면 그 답을 지키고 실패는 곁에 적는다(`recheckFailure` 의 주석).
       if (snap.status.kind === 'available') publish({ recheckFailure: { message, at: Date.now() } });
       else publish({ status: { kind: 'failed', message }, recheckFailure: null });
     } finally {
-      if (u === owner) { inflight = null; publish({ checking: false }); }
+      if (u === owner && gen === generation) { inflight = null; publish({ checking: false }); }
     }
   })();
   inflight = run;
   return run;
 }
 
+/**
+ * 채널을 바꾼다. 저장하고, 들고 있던 답(「새 버전」·설치 버튼)을 버리고, 바로 다시 묻는다(시안 v1
+ * 구현 메모). **설치하는 중에는 바꾸지 않는다** — 받는 중인 판의 채널이 바뀌면 `installedChannel`
+ * 이 거짓이 된다. 바꿨으면 true.
+ */
+export function setUpdateChannel(channel: UpdateChannel): boolean {
+  updater();
+  if (installing) return false;
+  if (channel === snap.channel) return true;
+  updateChannelStorage.save(channel);
+  generation += 1;
+  inflight = null;
+  publish({ channel, status: { kind: 'idle' }, checkedAt: null, checking: false, recheckFailure: null, answeredChannel: null });
+  if (hasUpdateSurface()) void checkForUpdate();
+  return true;
+}
+
 async function installUpdate(version: string): Promise<void> {
   const u = updater();
+  // 설치는 **지금 화면이 보여 주는 답**의 채널·판이다. 답이 없으면(채널을 막 바꿨다) 설치할 것이 없다.
+  const channel = snap.answeredChannel;
+  if (!channel) {
+    publish({ status: { kind: 'failed', message: 'nothing to install — check for updates first' } });
+    return;
+  }
   installing = true;
   publish({ status: { kind: 'installing', version }, recheckFailure: null });
   try {
-    await u.downloadAndInstall();
+    await u.downloadAndInstall(channel, version);
     // 성공하면 앱이 다시 뜨므로 여기로 돌아오지 않는다. 돌아왔다면 재시작이 일어나지
     // 않은 것이고, 그것은 사람이 알아야 할 이상 상태다 — 조용히 넘기지 않는다.
     installing = false;
