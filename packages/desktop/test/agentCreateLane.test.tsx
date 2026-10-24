@@ -109,9 +109,9 @@ describe('만들기 화면 — 모델 연결', () => {
   it('내 비밀만 이름으로 보이고, 만료된 것은 못 고른다 — 값 칸은 없다(G2)', () => {
     field();
     expect(screen.getByText('example-key')).toBeTruthy();
-    const radios = [...screen.getByTestId('create-lane-secrets').querySelectorAll('input[type=radio]')] as HTMLInputElement[];
+    const radios = [...screen.getByTestId('create-lane-secrets').querySelectorAll('[role=radio]')] as HTMLButtonElement[];
     expect(radios.map((r) => r.disabled)).toEqual([false, true]);
-    expect(screen.getByTestId('create-lane-secrets').querySelector('input:not([type=radio])')).toBeNull();
+    expect(screen.getByTestId('create-lane-secrets').querySelector('input')).toBeNull();
     expect(screen.queryByTestId('create-lane-give')).toBeNull();
   });
 
@@ -161,5 +161,20 @@ describe('만들기 화면 — 모델 연결', () => {
     render(<CreateLaneFailure handle="newbie" secretName="example-key" result={{ saved: 'ok', given: 'fail', running: 'skip', reason: 'expired' }} />);
     expect(screen.queryByTestId('create-lane-given-note')).toBeNull();
     expect(screen.getByTestId('create-lane-failure').textContent).toContain('아직 돌지 않는다');
+  });
+
+  it('실패 상자 줄 순서는 단계 줄과 같다: 만듦 → 저장 → 띄우기 → 주기(designer 1)', () => {
+    render(<CreateLaneFailure handle="newbie" secretName="example-key" result={{ saved: 'ok', given: 'fail', running: 'skip', reason: 'expired' }} />);
+    const rows = [...screen.getByTestId('create-lane-failure').querySelectorAll('li')].map((li) => li.textContent ?? '');
+    expect(rows[0]).toContain('만듦');
+    expect(rows[1]).toContain('저장');
+    expect(rows[2]).toContain('이 맥');
+    expect(rows[3]).toContain('example-key');
+    expect(rows.map((r) => r[0])).toEqual(['✓', '✓', '–', '✕']);
+  });
+
+  it('주기 실패 + 배정 되돌리기 실패면 붙은 채라는 줄이 뜬다(designer n3)', () => {
+    render(<CreateLaneFailure handle="newbie" secretName="example-key" result={{ saved: 'ok', given: 'fail', running: 'ok', reason: 'expired' }} />);
+    expect(screen.getByTestId('create-lane-stuck-note')).toBeTruthy();
   });
 });

@@ -1548,6 +1548,8 @@ export const en = {
   'agents.lane.createStepGivenSkip': 'Secret not given',
   'agents.lane.createStepRunning': 'Started on this Mac',
   'agents.lane.createStepRunningFail': 'Couldn\'t start it on this Mac — {reason}',
+  'agents.lane.createStepRunningUndone': 'Took it back off this Mac — not running yet',
+  'agents.lane.createStuckNote': 'Couldn\'t take the assignment back, so it stays on this Mac — its turns stop with "not granted". Give the secret again in Secrets & APIs, or unassign it in agent settings.',
   'agents.lane.createStepRunningSkip': 'Not started on this Mac',
   'agents.lane.createGivenNote': 'The secret was already given — you can take it back in Secrets & APIs.',
   'agents.lane.createOpenSecrets': 'Open Secrets & APIs',

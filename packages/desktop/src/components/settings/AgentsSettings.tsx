@@ -3658,9 +3658,10 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
               {/* 만들기 단추가 하는 일이 늘었다 — API 키로 만들 때만 네 단계를 미리 보인다(n19 designer ④). */}
               {!selected && draft !== null && runHere && typeof localOperator === 'object' && localOperator !== null
                 && LANE_HARNESSES.includes(draft.harness) && (createLane.mode === 'apiKey' || LANE_ONLY_HARNESSES.includes(draft.harness)) && (
-                <span className="text-meta text-fg-subtle" data-testid="create-lane-steps">
-                  {createLaneSelection({ ...createLane, mode: 'apiKey' }, myLaneSecrets) ? t('agents.lane.createSteps') : t('agents.lane.createIncomplete')}
-                </span>
+                createLaneSelection({ ...createLane, mode: 'apiKey' }, myLaneSecrets)
+                  ? <span className="text-meta text-fg-subtle" data-testid="create-lane-steps">{t('agents.lane.createSteps')}</span>
+                  // 다 차지 않았으면 무엇이 빠졌는지 경고색으로(designer n2). 단추를 눌러도 같은 말로 막는다(`submit`).
+                  : <span className="text-meta text-warning" data-testid="create-lane-steps">{t('agents.lane.createIncomplete')}</span>
               )}
             </SettingsWrap>
             </footer>

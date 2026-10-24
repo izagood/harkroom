@@ -341,7 +341,7 @@ export function createLaneSelection(d: CreateLaneDraft, secrets: readonly Create
  * **만들기 화면의 「모델 연결」**(n19, designer 시안 v1). 상세의 [계정 풀 | API 키]와 같은 고르기를 만들 때 한다.
  * [Save]·[Revert]·재시작 안내는 없다 — 하단 [Create agent] 하나가 만들기·설정 저장·띄우기·비밀 주기를 한다(`controller.createAgent`).
  * - 「이 맥에서 돌리기」가 꺼져 있으면 [API key] 를 잠그고 까닭을 쓴다(설정이 이 맥에 산다).
- * - API 키를 못 쓰는 하네스는 숨기지 않고 상세처럼 잠근다(jaebin 승인 카드 57c97470).
+ * - API 키를 못 쓰는 하네스는 숨기지 않고 상세처럼 잠근다(소유자 승인 카드 57c97470).
  * - 비밀은 내 것만 보인다. 고르면 무엇을 누구에게 주는지 상자로 미리 보인다(security G4).
  */
 export function CreateModelConnectionField({ harness, runHere, value, onChange, pool, label, secrets, handle }: {
@@ -410,18 +410,23 @@ export function CreateModelConnectionField({ harness, runHere, value, onChange, 
               </div>
             ) : (
               <div className="mt-1 overflow-hidden rounded-row border border-border" role="radiogroup" aria-label={t('agents.lane.secret')} data-testid="create-lane-secrets">
-                {secrets.map((s) => (
-                  <label key={s.id} className={`flex items-center justify-between gap-2 border-b border-border px-2 py-1.5 text-meta last:border-b-0 ${s.expired ? 'opacity-55' : ''}`}>
-                    <span className="flex min-w-0 items-center gap-2">
-                      <input type="radio" name="create-lane-secret" disabled={s.expired} checked={value.secretId === s.id}
-                        onChange={() => onChange({ ...value, secretId: s.id })} />
-                      <span className="truncate font-mono">{s.name}</span>
-                    </span>
-                    <span className={`shrink-0 rounded-full px-2 text-meta ${s.expired ? 'bg-surface-sunken text-fg-muted' : 'bg-info-surface text-info'}`}>
-                      {s.expired ? t('agents.lane.createSecretExpired') : t('agents.lane.createSecretYours')}
-                    </span>
-                  </label>
-                ))}
+                {/* 상세 `SecretPicker` 와 같은 모양(●/○ 와 고른 줄 테두리, designer n1). */}
+                {secrets.map((s) => {
+                  const on = value.secretId === s.id;
+                  return (
+                    <button key={s.id} type="button" role="radio" aria-checked={on} disabled={s.expired}
+                      className={`flex w-full items-center justify-between gap-2 border-b border-border px-2 py-1.5 text-left last:border-b-0 disabled:opacity-60 ${on ? 'ring-1 ring-inset ring-border-strong' : 'hover:bg-surface-hover'}`}
+                      onClick={() => onChange({ ...value, secretId: s.id })}>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span aria-hidden className={on ? 'text-accent' : 'text-fg-subtle'}>{on ? '●' : '○'}</span>
+                        <span className="min-w-0 truncate font-mono text-body">{s.name}</span>
+                      </span>
+                      <span className={`shrink-0 rounded-full px-2 text-meta ${s.expired ? 'bg-surface-sunken text-fg-muted' : 'bg-info-surface text-info'}`}>
+                        {s.expired ? t('agents.lane.createSecretExpired') : t('agents.lane.createSecretYours')}
+                      </span>
+                    </button>
+                  );
+                })}
                 <div className="px-2 py-1.5 text-meta text-fg-subtle">
                   {t('agents.lane.createOnlyYours')}
                 </div>
@@ -466,8 +471,9 @@ export function CreateLaneFailure({ handle, secretName, result, onOpenSecrets, o
   const rows: { state: 'ok' | 'fail' | 'skip'; text: string }[] = [
     { state: 'ok', text: t('agents.lane.createStepCreated') },
     { state: result.saved, text: result.saved === 'fail' ? t('agents.lane.createStepSavedFail', { reason }) : result.saved === 'ok' ? t('agents.lane.createStepSaved') : t('agents.lane.createStepSavedSkip') },
+    // 실제 순서·단계 줄(`createSteps`)과 같은 순서다: 만듦 → 저장 → 띄우기 → 주기(designer 1).
+    { state: result.running, text: result.running === 'fail' ? t('agents.lane.createStepRunningFail', { reason }) : result.running === 'ok' ? t('agents.lane.createStepRunning') : result.given === 'fail' ? t('agents.lane.createStepRunningUndone') : t('agents.lane.createStepRunningSkip') },
     { state: result.given, text: result.given === 'fail' ? t('agents.lane.createStepGivenFail', { secret: secretName, reason }) : result.given === 'ok' ? t('agents.lane.createStepGiven', { secret: secretName }) : t('agents.lane.createStepGivenSkip') },
-    { state: result.running, text: result.running === 'fail' ? t('agents.lane.createStepRunningFail', { reason }) : result.running === 'ok' ? t('agents.lane.createStepRunning') : t('agents.lane.createStepRunningSkip') },
   ];
   return (
     <div role="alert" className="mb-2 rounded-row bg-danger-surface px-3 py-2 text-meta text-danger" data-testid="create-lane-failure">
@@ -478,6 +484,8 @@ export function CreateLaneFailure({ handle, secretName, result, onOpenSecrets, o
         ))}
       </ol>
       {result.given === 'ok' && <span className="block" data-testid="create-lane-given-note">{t('agents.lane.createGivenNote')}</span>}
+      {/* 주기는 실패했는데 배정 되돌리기도 실패했다 — 붙은 채 허락 없이 멈춘다(designer n3). */}
+      {result.given === 'fail' && result.running === 'ok' && <span className="block" data-testid="create-lane-stuck-note">{t('agents.lane.createStuckNote')}</span>}
       <div className="mt-1 flex flex-wrap gap-3">
         {onOpenSecrets && <button type="button" className="underline" onClick={onOpenSecrets}>{t('agents.lane.createOpenSecrets')}</button>}
         {onOpenAgent && <button type="button" className="underline" onClick={onOpenAgent}>{t('agents.lane.createOpenAgent', { handle })}</button>}
