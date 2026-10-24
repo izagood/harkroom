@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { decideHook, decideLaneHook, laneBashAllowed, laneToolListed, readStdinCapped } from '../src/hookCli.js';
+import { decideHook, decideLaneHook, LANE_HOOK_DENY_REASON, LANE_HOOK_SHELL_REASON, laneBashAllowed, laneToolListed, readStdinCapped, type LaneDenyDecision } from '../src/hookCli.js';
 import { decodeLaneHookRules, encodeLaneHookRules } from '@harkroom/shared/providerLane';
 
 // H③b: hook 은 승인된 정확한 명령에만 allow 를 내고, 그 밖·오류는 무출력(null) — fail-closed.
@@ -69,6 +69,19 @@ describe('decideLaneHook', () => {
     const d = JSON.stringify(decideLaneHook(input({}), BASE));
     expect(d).toContain('permission.request');
     expect(d).toContain('Bash(<the exact full command>)');
+  });
+
+  // 2026-10-24 실측: `gh run list … 2>&1` 이 승인된 `:*` 규칙 안인데 거절되자 모델이 더 좁은 규칙을 또 청했다 — 셸 글자 때문이면 그렇게 말한다.
+  it('셸 글자 때문에 거절하면 이유가 「맨 명령으로」를 말하고, 규칙이 없을 때는 지금 문구다 — 둘 다 deny 다', () => {
+    const rules = [...BASE, 'Bash(gh run list -R example/repo:*)'];
+    const reason = (cmd: string) => (decideLaneHook(tool('Bash', { command: cmd }), rules) as LaneDenyDecision).hookSpecificOutput.permissionDecisionReason;
+    for (const cmd of ['gh run list -R example/repo --limit 5 2>&1', "gh pr list -R example/repo --jq '.[] | .number'", 'gh run list -R example/repo; id']) {
+      expect(reason(cmd)).toBe(LANE_HOOK_SHELL_REASON);
+    }
+    expect(LANE_HOOK_SHELL_REASON).toContain('2>&1');
+    expect(LANE_HOOK_SHELL_REASON).toContain('permission.request');
+    expect(reason('gh issue list -R example/repo --limit 3')).toBe(LANE_HOOK_DENY_REASON);
+    expect(decideLaneHook(tool('Bash', { command: 'gh run list -R example/repo --limit 5' }), rules)).toBeNull();
   });
 
   it('입력이 깨지거나 도구 이름이 없으면 deny', () => {
