@@ -26,7 +26,8 @@ import { systemI18n } from './systemI18n.js';
  *   없으면 소유자의 에이전트들이 글보다 먼저 낸 기다리는 요청이 딱 하나일 때 그것(T3, 카드 077fa790). 선택 카드의 글 답은
  *   `answerAskFromMessage`(P5)가 먼저 본다.
  * - 올린 순간의 본문만 본다(수정은 다시 판정하지 않는다). 승인했으면 글 아래에 요청 행에서 그린 확인 줄을, 승인 낱말인데
- *   어느 요청인지 몰랐으면 그렇다는 안내 줄을 단다 — 조용히 넘기지 않는다(사례 ①).
+ *   어느 요청인지 몰랐으면 그렇다는 안내 줄을 단다 — 조용히 넘기지 않는다(사례 ①). 다만 카드 없는 스레드의 맨 글(T3)이 부정·물음·
+ *   끝맺지 않은 꼴이면 승인하려던 글인지 알 수 없어 아무 줄도 달지 않는다.
  */
 
 export const CHAT_APPROVAL_MAX_CARDS = 5;
@@ -336,16 +337,19 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
     } else {
       // T3 — 권한 카드가 하나도 없는 스레드의 맨 글(카드 077fa790). 이 소유자의 에이전트들이 낸 요청 가운데 글보다 먼저 생기고
       // 아직 기다리는 것이 **정확히 하나**일 때만. 머지 거절 카드·볼 수 없는 채널의 요청도 후보로 세고 결정 단계에서 거절한다.
+      // 부정·물음·끝맺지 않은 글은 여기서 조용히 넘긴다 — 이 스레드에는 정할 카드가 없어 그 글이 승인하려던 글인지 알 수 없고,
+      // 「진행해야해」·「승인 하라고 한 것도 없는데」 같은 보통 글에 소유자의 다른 채널 요청을 근거로 경고가 붙었다(A안).
+      // 안내는 카드 링크(T1)·카드 스레드(T2)에서만 한다.
+      if (parsed.block) return;
       const mine = (await pool.query<Candidate>(
         `${CANDIDATE_SQL}
           where c.owner_account_id = $1 and p.status = 'pending' and p.expires_at > now() and m.created_at < $2
           order by m.created_at`,
         [actorId, message.createdAt])).rows;
       if (mine.length === 0) {
-        if (await ownsPendingRequest(pool, actorId)) return refuse(pool, message, actorId, parsed.block ?? 'noRequest');
+        if (await ownsPendingRequest(pool, actorId)) return refuse(pool, message, actorId, 'noRequest');
         return;
       }
-      if (parsed.block) return refuse(pool, message, actorId, parsed.block);
       if (mine.length > 1) {
         await notice(pool, message, actorId, `승인 안 됨: 기다리는 권한 요청이 ${mine.length}개라 어느 것인지 모른다. 정할 카드의 링크를 붙여 다시 쓴다:`, mine);
         return;
