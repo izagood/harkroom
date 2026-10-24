@@ -134,6 +134,8 @@ describe('시스템 메시지의 자리표시자 (2026-10-02 TestFlight 실측)'
     const rows = await inboxOf();
     expect(rows.find((e) => e.messageId === known)?.body).toBe('inboxbot님이 이 스레드에서 모델을 정했습니다.');
     expect(rows.find((e) => e.messageId === gone)?.body).toBe('알 수 없음님이 이 스레드에서 모델을 정했습니다.');
+    // 화면이 author 이름을 앞에 달지 않게 종류를 함께 싣는다(시스템 줄 C안 c4).
+    expect(rows.find((e) => e.messageId === known)?.kind).toBe('system');
     // 저장된 본문은 그대로다 — 이름이 바뀌면 지난 줄도 새 이름으로 나가야 한다.
     const stored = await pool.query(`select body from message where id = $1`, [known]);
     expect(stored.rows[0].body).toContain('{account}');

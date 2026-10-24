@@ -385,5 +385,9 @@ describe('시스템 메시지의 자리표시자 (2026-10-02 TestFlight 실측)'
     const bodies = sent.map((x) => (x.payload as { aps: { alert: { body?: string } } }).aps.alert.body);
     expect(bodies).toContain('pm님이 이 스레드에서 pushbot 의 모델을 fable 로 정했습니다.');
     expect(JSON.stringify(sent)).not.toContain('{account}');
+    // 시스템 줄은 누구의 말도 아니다(시스템 줄 C안 n3) — 부제에 그 줄을 일으킨 사람(pm) 이름이 실리지 않는다.
+    const alert = sent.map((x) => (x.payload as { aps: { alert: Record<string, unknown> } }).aps.alert)
+      .find((a) => typeof a.body === 'string' && a.body.startsWith('pm님이 이 스레드에서'))!;
+    expect(alert['subtitle-loc-args']).toEqual(['Harkroom']);
   });
 });

@@ -71,7 +71,8 @@ describe('C1 — 표지는 서버가 만든 시스템 줄에만 남는다', () =
 });
 
 describe('멤버 들고남 줄은 본문과 표지를 함께 남긴다(C8)', () => {
-  it('초대하면 「추가」 본문과 system.member.added 표지가 같은 대상을 가리킨다', async () => {
+  // 남이 넣은 줄은 넣은 사람을 문구에 싣는다(시스템 줄 C안 c6) — 화면은 시스템 줄의 author 를 그리지 않는다.
+  it('초대하면 「추가」 본문과 system.member.addedBy 표지가 넣은 사람·대상을 가리킨다', async () => {
     const { accountId } = await createMember(app, adminToken, 'mira');
     const res = await app.inject({
       method: 'POST', url: `/channels/${channelId}/members`, headers: { authorization: `Bearer ${adminToken}` },
@@ -81,7 +82,17 @@ describe('멤버 들고남 줄은 본문과 표지를 함께 남긴다(C8)', () 
     const row = (await pool.query<{ body: string; meta: Record<string, unknown> }>(
       `select body, meta from message where channel_id = $1 and kind = 'system' order by seq desc limit 1`, [channelId])).rows[0]!;
     expect(row.body).toBe('{account}님이 채널에 추가되었습니다.');
-    expect(row.meta).toMatchObject({ accountId, i18n: { key: 'system.member.added', args: { accountId } } });
+    expect(row.meta).toMatchObject({ accountId, actorId: adminId, i18n: { key: 'system.member.addedBy', args: { actorId: adminId, accountId } } });
+
+    // 내보내면 removedBy — 넣은 사람과 같은 규칙이다.
+    const del = await app.inject({
+      method: 'DELETE', url: `/channels/${channelId}/members/${accountId}`, headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(del.statusCode).toBeLessThan(300);
+    const gone = (await pool.query<{ body: string; meta: Record<string, unknown> }>(
+      `select body, meta from message where channel_id = $1 and kind = 'system' order by seq desc limit 1`, [channelId])).rows[0]!;
+    expect(gone.body).toBe('{account}님이 채널에서 제거되었습니다.');
+    expect(gone.meta).toMatchObject({ i18n: { key: 'system.member.removedBy', args: { actorId: adminId, accountId } } });
   });
 });
 

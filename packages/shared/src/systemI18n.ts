@@ -31,6 +31,9 @@ export const SYSTEM_I18N_ARGS = Object.freeze({
   'system.member.added': ['accountId'],
   'system.member.left': ['accountId'],
   'system.member.removed': ['accountId'],
+  // 누가 넣었나·내보냈나(2026-10-24 시스템 줄 C안 c6). 그 사람은 author 칸이 아니라 본문에만 나온다.
+  'system.member.addedBy': ['actorId', 'accountId'],
+  'system.member.removedBy': ['actorId', 'accountId'],
   'system.threadModel.set': ['accountId', 'agentId', 'value'],
   'system.threadModel.setByAgent': ['accountId', 'agentId', 'value'],
   'system.threadModel.cleared': ['accountId', 'agentId'],

@@ -1160,6 +1160,8 @@ class StringsKo implements Strings {
         'system.member.added': '{accountId}님이 채널에 추가됐다.',
         'system.member.left': '{accountId}님이 채널에서 나갔다.',
         'system.member.removed': '{accountId}님이 채널에서 제거됐다.',
+        'system.member.addedBy': '{actorId}님이 {accountId}님을 채널에 추가했다.',
+        'system.member.removedBy': '{actorId}님이 {accountId}님을 채널에서 내보냈다.',
         'system.threadModel.set': '{accountId}님이 이 스레드에서 {agentId} 의 모델을 {value} 로 정했다. 다음 턴부터 적용된다.',
         'system.threadModel.setByAgent': '{accountId}님이 이 스레드에서 {agentId} 의 모델을 {value} 로 정했다(에이전트 지정). 다음 턴부터 적용된다.',
         'system.threadModel.cleared': '{accountId}님이 이 스레드에서 {agentId} 의 모델 지정을 풀었다. 다음 턴부터 기본값으로 돈다.',

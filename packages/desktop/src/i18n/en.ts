@@ -4611,6 +4611,8 @@ export const en = {
   'system.member.added': '{accountId} was added to the channel.',
   'system.member.left': '{accountId} left the channel.',
   'system.member.removed': '{accountId} was removed from the channel.',
+  'system.member.addedBy': '{actorId} added {accountId} to the channel.',
+  'system.member.removedBy': '{actorId} removed {accountId} from the channel.',
   'system.threadModel.set': '{accountId} set {agentId}\'s model in this thread to {value}. It applies from the next turn.',
   'system.threadModel.setByAgent': '{accountId} set {agentId}\'s model in this thread to {value} (set by an agent). It applies from the next turn.',
   'system.threadModel.cleared': '{accountId} cleared {agentId}\'s model in this thread. It runs on its default from the next turn.',

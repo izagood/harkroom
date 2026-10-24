@@ -140,7 +140,7 @@ interface JobRow {
 
 interface LiveRow {
   channelId: string; threadRootId: string | null; body: string; authorId: string;
-  authorHandle: string; authorKind: 'human' | 'agent'; channelKind: 'standard' | 'dm'; channelName: string;
+  authorHandle: string | null; authorKind: 'human' | 'agent'; channelKind: 'standard' | 'dm'; channelName: string;
   metaKind: string | null; failureCode: string | null; optionCount: number; mineThread: boolean;
 }
 
@@ -167,7 +167,9 @@ export function createPushSweeper(pool: Pool, deps: {
   async function liveCheck(client: PoolClient, job: JobRow): Promise<LiveRow | null> {
     const res = await client.query<LiveRow>(
       `select m.channel_id as "channelId", m.thread_root_id as "threadRootId", ${displayBodySql('m')} as body,
-              m.author_id as "authorId", au.handle as "authorHandle", au.kind as "authorKind",
+              m.author_id as "authorId",
+              -- 시스템 줄은 누구의 말도 아니다 — 알림에 author 이름을 달지 않는다(제목·부제가 Harkroom 으로 물러난다).
+              case when m.kind = 'system' then null else au.handle end as "authorHandle", au.kind as "authorKind",
               c.kind as "channelKind", c.name as "channelName",
               m.meta->>'kind' as "metaKind", m.meta->'failure'->>'code' as "failureCode",
               coalesce(jsonb_array_length(case when jsonb_typeof(m.meta->'ask'->'options') = 'array'

@@ -15,6 +15,8 @@ const Map<String, List<String>> systemI18nArgs = {
   'system.member.added': ['accountId'],
   'system.member.left': ['accountId'],
   'system.member.removed': ['accountId'],
+  'system.member.addedBy': ['actorId', 'accountId'],
+  'system.member.removedBy': ['actorId', 'accountId'],
   'system.threadModel.set': ['accountId', 'agentId', 'value'],
   'system.threadModel.setByAgent': ['accountId', 'agentId', 'value'],
   'system.threadModel.cleared': ['accountId', 'agentId'],
