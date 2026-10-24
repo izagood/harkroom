@@ -1114,6 +1114,14 @@ fn runner_exit_emitter(
             "codexLoginOutput" => {
                 let _ = emitter.emit(crate::CODEX_LOGIN_EVENT, payload);
             }
+            // 같은 머신 터미널 직결(R1 PR-4)의 PTY 바이트·끝. 이 접속이 구독한 세션 것만 온다(오퍼레이터가 접속에
+            // 묶어 보낸다). 모양은 화면이 판단한다 — 로그인 출력과 같은 규율.
+            "terminalOutput" => {
+                let _ = emitter.emit(crate::TERMINAL_OUTPUT_EVENT, payload);
+            }
+            "terminalEnded" => {
+                let _ = emitter.emit(crate::TERMINAL_ENDED_EVENT, payload);
+            }
             // 모르는 이벤트는 버린다 — 데몬이 우리보다 새 판본일 수 있다.
             _ => {}
         }
@@ -2182,6 +2190,28 @@ impl DaemonConnection {
 
     pub fn workspace_cleanup_sweep(&self) -> Result<Value, String> {
         self.request("workspaceCleanupSweep", json!({}))
+    }
+
+    // 같은 머신 터미널 직결(R1 PR-4, 스레드 8d233406). 오퍼레이터의 터미널 허브(`operator/src/localTerminal.ts`)에
+    // 넘기기만 한다 — 판정(열람 키·writer 키 대조)은 오퍼레이터가 하고, 키는 서버가 그 창에만 내린 것이다.
+    pub fn terminal_is_local(&self, session_id: &str) -> Result<Value, String> {
+        self.request("terminalIsLocal", json!({ "sessionId": session_id }))
+    }
+
+    pub fn terminal_subscribe(&self, session_id: &str, view_key: &str) -> Result<Value, String> {
+        self.request("terminalSubscribe", json!({ "sessionId": session_id, "viewKey": view_key }))
+    }
+
+    pub fn terminal_unsubscribe(&self, session_id: &str) -> Result<Value, String> {
+        self.request("terminalUnsubscribe", json!({ "sessionId": session_id }))
+    }
+
+    pub fn terminal_input(&self, session_id: &str, writer_key: &str, data: &str) -> Result<Value, String> {
+        self.request("terminalInput", json!({ "sessionId": session_id, "writerKey": writer_key, "data": data }))
+    }
+
+    pub fn terminal_resize(&self, session_id: &str, writer_key: &str, cols: u32, rows: u32) -> Result<Value, String> {
+        self.request("terminalResize", json!({ "sessionId": session_id, "writerKey": writer_key, "cols": cols, "rows": rows }))
     }
 
     // 원격 MCP 의 OAuth(2026-09-30). 토큰은 오퍼레이터가 든다 — 소켓으로는 인가 url 과 상태만 온다.

@@ -637,9 +637,17 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'operator_agent_provider_lane_set', 'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_merge_check', 'operator_merge_set', 'operator_register',
           'pick_save_target', 'reveal_saved_attachment',
           'secret_delete', 'secret_get', 'secret_set',
+          'terminal_input', 'terminal_is_local', 'terminal_resize', 'terminal_subscribe', 'terminal_unsubscribe',
           'workspace_cleanup_act', 'workspace_cleanup_settings_set',
           'write_saved_attachment',
         ]);
+      // 같은 머신 터미널 직결(R1 PR-4): 세션 id·서버가 그 창에 내린 키·base64 바이트·크기뿐이다. 프로그램·경로를 고를
+      // 자리가 없고, 키 대조는 오퍼레이터가 상수 시간으로 한다(`operator/src/localTerminal.ts`).
+      expect(commands.find((c) => c.fn === 'terminal_is_local')!.webviewParams).toEqual(['session_id: String']);
+      expect(commands.find((c) => c.fn === 'terminal_unsubscribe')!.webviewParams).toEqual(['session_id: String']);
+      expect(commands.find((c) => c.fn === 'terminal_subscribe')!.webviewParams.sort()).toEqual(['session_id: String', 'view_key: String']);
+      expect(commands.find((c) => c.fn === 'terminal_input')!.webviewParams.sort()).toEqual(['data: String', 'session_id: String', 'writer_key: String']);
+      expect(commands.find((c) => c.fn === 'terminal_resize')!.webviewParams.sort()).toEqual(['cols: u32', 'rows: u32', 'session_id: String', 'writer_key: String']);
       // 사용량 새로고침(2026-10-09): [Refresh usage] 여부와 계정 **이름**뿐이다 — 이름은 디렉터리를 고르지 않고
       // 오퍼레이터가 디스크에서 읽은 목록과 같은지만 본다(`readUsageRequest`). 정확한 목록은 위 스위트가 고정한다.
       // 작업 폴더 정리(스레드 9e909150): 켜기·N일 값, 그리고 원장 경로·동작 이름·누른 사람 id 문자열뿐이다. 경로가 원장에
