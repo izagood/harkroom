@@ -225,8 +225,8 @@ describe('비밀 보관소 REST (085)', () => {
     const given = await app.inject({ method: 'PUT', url: `/secrets/${id}/grants`, headers: auth(alice.token), payload: { agentId, channelId } });
     expect(given.json().operatorId).toBe(operatorId);
     const grantId = given.json().grantId as string;
-    const reapprove = (token: string, gid = grantId) =>
-      app.inject({ method: 'POST', url: `/secrets/${id}/grants/${gid}/reapprove`, headers: auth(token) });
+    const reapprove = (token: string, gid = grantId, seenChangedAt: string | null = null) =>
+      app.inject({ method: 'POST', url: `/secrets/${id}/grants/${gid}/reapprove`, headers: auth(token), payload: { seenChangedAt } });
 
     // 정지 안 된 줄은 409 — 아무것도 바꾸지 않는다.
     expect((await reapprove(alice.token)).json().error.code).toBe('not_suspended');
@@ -239,13 +239,20 @@ describe('비밀 보관소 REST (085)', () => {
     await app.inject({ method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(alice.token), payload: { workingDir: '/tmp/elsewhere' } });
     const again = (await app.inject({ method: 'GET', url: `/secrets/${id}/grants`, headers: auth(alice.token) })).json().grants;
     expect(again[0].changedFields).toEqual(['instructions', 'workingDir']);
+    expect(typeof again[0].lastChangedAt).toBe('string');
+    // 본 것(seenChangedAt)보다 새 변경이 있으면 409 changed_since — 처음 목록(instructions 만)을 보고 누른 경우다(security n1).
+    expect(Date.parse(listed[0].lastChangedAt)).toBeLessThan(Date.parse(again[0].lastChangedAt));
+    expect((await reapprove(alice.token, grantId, listed[0].lastChangedAt)).json().error.code).toBe('changed_since');
+    // 아무 기록도 못 봤다(null)고 하면 정지 뒤 기록이 있으니 역시 409. 몸통이 없으면 400.
+    expect((await reapprove(alice.token, grantId, null)).json().error.code).toBe('changed_since');
+    expect((await app.inject({ method: 'POST', url: `/secrets/${id}/grants/${grantId}/reapprove`, headers: auth(alice.token) })).statusCode).toBe(400);
 
     // 소유자만 — admin 은 403, 남은 404.
     expect((await reapprove(admin.token)).json().error.code).toBe('owner_only');
     expect((await reapprove(bob.token)).statusCode).toBe(404);
     expect((await reapprove(alice.token, randomUUID())).statusCode).toBe(404);
 
-    const ok = await reapprove(alice.token);
+    const ok = await reapprove(alice.token, grantId, again[0].lastChangedAt);
     expect(ok.statusCode).toBe(200);
     expect(ok.json()).toEqual({ grantId, operatorId });
     const row = (await pool.query(`select channel_id, operator_id, suspended_at, suspend_reason from secret_grant where id = $1`, [grantId])).rows[0];
@@ -255,14 +262,16 @@ describe('비밀 보관소 REST (085)', () => {
     expect(audit[0].detail).toMatchObject({ grantId, agentId, channelId, suspendReason: 'definition_changed' });
     const after = (await app.inject({ method: 'GET', url: `/secrets/${id}/grants`, headers: auth(alice.token) })).json().grants;
     expect(after[0].changedFields).toBeNull();
+    expect(after[0].lastChangedAt).toBeNull();
     // 두 번 누르면 409.
-    expect((await reapprove(alice.token)).json().error.code).toBe('not_suspended');
+    expect((await reapprove(alice.token, grantId, again[0].lastChangedAt)).json().error.code).toBe('not_suspended');
   });
 
   it('[다시 허락]: 기기에 묶인 줄은 배정이 없으면 409, 꺼진 에이전트는 409, 만료된 비밀은 409', async () => {
     const id = (await create(alice.token, { name: 'reapprove-edge', kind: 'text', value: 'x' })).json().secret.id as string;
     const grantId = (await app.inject({ method: 'PUT', url: `/secrets/${id}/grants`, headers: auth(alice.token), payload: { agentId, channelId } })).json().grantId as string;
-    const reapprove = () => app.inject({ method: 'POST', url: `/secrets/${id}/grants/${grantId}/reapprove`, headers: auth(alice.token) });
+    // 이 줄은 DB 로 바로 세워서 정지 뒤 기록이 없다 — 본 것은 null(「기록 없음」).
+    const reapprove = () => app.inject({ method: 'POST', url: `/secrets/${id}/grants/${grantId}/reapprove`, headers: auth(alice.token), payload: { seenChangedAt: null } });
     await pool.query(`update secret_grant set suspended_at = now(), suspend_reason = 'definition_changed' where id = $1`, [grantId]);
 
     await pool.query(`delete from agent_assignment where agent_id = $1`, [agentId]);
