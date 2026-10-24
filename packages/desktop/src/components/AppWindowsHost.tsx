@@ -84,7 +84,8 @@ function AppWindowPortal({ entry }: { entry: AppWindowEntry }) {
   return createPortal(
     <HostDocumentContext.Provider value={doc}>
     <div className="flex min-w-0 flex-1 flex-col">
-      <WindowBar entry={entry} />
+      {/* 미리보기 창은 패널 머리줄이 곧 창 머리줄이다 — 단추를 그 줄 오른쪽에 싣는다(designer C안). */}
+      {entry.target.kind !== 'artifact' && <WindowBar entry={entry} />}
       {entry.target.kind === 'thread'
         ? <ThreadWindow entry={entry} channelId={entry.target.channelId} rootId={entry.target.rootId} />
         : entry.target.kind === 'artifact'
@@ -112,7 +113,7 @@ function ArtifactWindow({ entry }: { entry: AppWindowEntry }) {
     entry.win.document.title = ref ? `${title} · ${t('artifact.card.version', { version: ref.version })}` : title;
   }, [entry, attachment, t]);
   if (!attachment) return null;
-  return <ArtifactPanel windowed={{ attachment, onClose: () => closeAppWindow(entry.target) }} />;
+  return <ArtifactPanel windowed={{ attachment, actions: <WindowActions entry={entry} /> }} />;
 }
 
 /** 스레드 창(420×680): 패널과 같은 화면·입력창이 창을 채운다(판 3). */
@@ -195,9 +196,18 @@ function useReadWhenFocused(entry: AppWindowEntry, channelId: string, rootId?: s
 
 /**
  * 창 머리의 얇은 줄 — 「메인 창으로 되돌리기」(판 3 C4). 누르면 이 창을 닫고 메인이 같은 자리를 연다
- * (채널 창이면 그 채널, 스레드 창이면 그 채널의 그 스레드). 📌 항상 위는 다음 단계에서 이 줄에 선다.
+ * (채널 창이면 그 채널, 스레드 창이면 그 채널의 그 스레드). 미리보기 창은 이 줄 없이 패널 머리줄에 단추만 싣는다.
  */
 function WindowBar({ entry }: { entry: AppWindowEntry }) {
+  return (
+    <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border bg-surface px-2 py-1 text-meta">
+      <WindowActions entry={entry} />
+    </div>
+  );
+}
+
+/** 창 단추 둘 — 📌 항상 위 · ↩ 메인 창으로 되돌리기. */
+function WindowActions({ entry }: { entry: AppWindowEntry }) {
   const t = useT();
   const back = () => {
     const target = entry.target;
@@ -210,7 +220,7 @@ function WindowBar({ entry }: { entry: AppWindowEntry }) {
     } else void c.openChannel(target.channelId);
   };
   return (
-    <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border bg-surface px-2 py-1 text-meta">
+    <>
       {/* 📌 항상 위(W3): 기본 끔, 창마다 켠다. 켜진 것이 눈에 보여야 한다 — 눌린 모양과 aria-pressed. */}
       <button
         data-testid="window-pin"
@@ -229,7 +239,7 @@ function WindowBar({ entry }: { entry: AppWindowEntry }) {
       >
         ↩ {t('window.backToMain')}
       </button>
-    </div>
+    </>
   );
 }
 

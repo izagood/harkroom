@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useHostDocument } from '../lib/hostDocument';
 import type { AttachmentRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
@@ -71,10 +71,11 @@ export function ArtifactPanel({ fill = false, windowed }: {
   /** 곁의 내용 칸이 고정 폭(스레드)일 때 남는 폭을 미리보기가 채운다(`Workspace.tsx` 수정 1). */
   fill?: boolean;
   /**
-   * 미리보기 **새 창** 안이다(`AppWindowsHost`). 그 창이 쥔 판 하나를 그리고 창을 채운다 — 손잡이·⤢·⧉ 가 없고,
-   * × 는 창을 닫는다. 메인 패널의 가게 값(`artifactPreview`)·칸 바뀜 닫기·Esc 는 보지 않는다.
+   * 미리보기 **새 창** 안이다(`AppWindowsHost`). 그 창이 쥔 판 하나를 그리고 창을 채운다 — 손잡이·⤢·⧉·× 가 없고,
+   * × 자리에 창의 단추(`actions` — 📌·↩ 메인 창으로)가 선다. 머리줄이 곧 창 머리줄 하나다(designer C안, 2026-10-24):
+   * 닫기는 OS(빨간 단추·⌘W)가 맡는다. 메인 패널의 가게 값(`artifactPreview`)·칸 바뀜 닫기·Esc 는 보지 않는다.
    */
-  windowed?: { attachment: AttachmentRow; onClose: () => void };
+  windowed?: { attachment: AttachmentRow; actions: ReactNode };
 } = {}) {
   // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
   const hostDoc = useHostDocument();
@@ -230,7 +231,7 @@ export function ArtifactPanel({ fill = false, windowed }: {
         {...(expanded ? { 'data-tauri-drag-region': true } : {})}
         data-testid="artifact-panel-header"
       >
-        <span className="truncate font-medium" data-testid="artifact-panel-title">{title}</span>
+        <span className="min-w-0 truncate font-medium" data-testid="artifact-panel-title">{title}</span>
         {ref && <span className="shrink-0 text-meta text-fg-subtle">{t('artifact.card.version', { version: ref.version })}</span>}
         <span className="ml-auto" />
         {!windowed && (
@@ -262,13 +263,17 @@ export function ArtifactPanel({ fill = false, windowed }: {
             data-testid="artifact-pop-out"
           >⧉</button>
         )}
-        <button
-          type="button"
-          className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-row text-name leading-none text-fg-muted hover:bg-surface-sunken"
-          onClick={() => (windowed ? windowed.onClose() : getController().closeArtifactPreview())}
-          aria-label={t('artifact.panel.close')}
-          data-testid="artifact-panel-close"
-        >×</button>
+        {windowed ? (
+          <div className="flex shrink-0 items-center gap-1 text-meta" data-testid="artifact-window-actions">{windowed.actions}</div>
+        ) : (
+          <button
+            type="button"
+            className="inline-flex h-7 min-w-7 shrink-0 items-center justify-center rounded-row text-name leading-none text-fg-muted hover:bg-surface-sunken"
+            onClick={() => getController().closeArtifactPreview()}
+            aria-label={t('artifact.panel.close')}
+            data-testid="artifact-panel-close"
+          >×</button>
+        )}
       </header>
       <div className="relative min-h-0 flex-1 bg-surface-sunken">
         {phase.kind === 'ready' ? (
