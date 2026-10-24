@@ -791,7 +791,7 @@ export function withLaneSkillHeader(slug: string, body: string): string {
   if (text.replace(/^\s*\n/, '').split(/\r?\n/)[0]?.trim() === '---') return body;
   const first = text.split(/\r?\n/).map((l) => l.replace(/^#+\s*/, '').trim()).find((l) => l !== '') ?? slug;
   // 큰따옴표 문자열(JSON 꼴은 YAML 로도 읽힌다)로 써서 `:`·`#` 이 섞여도 값 하나로 읽힌다.
-  return `---\nname: ${slug}\ndescription: ${JSON.stringify(first.slice(0, 200))}\n---\n${text}`;
+  return `---\nname: ${slug}\ndescription: ${JSON.stringify(Array.from(first).slice(0, 200).join(""))}\n---\n${text}`;
 }
 
 export function laneSafeSkill(body: string): boolean {
