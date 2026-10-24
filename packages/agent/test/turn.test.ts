@@ -884,6 +884,33 @@ describe('상태 디렉터리가 도는 중에 사라졌을 때 (2026-09-14)', (
 // Kilo(opencode 포크, 실측 2026-10-01). **`--auto` 와 읽기 전용 에이전트를 같이 주면 Kilo 는
 // deny 된 bash 를 그대로 실행했다** — 화면엔 "denied" 가 뜨는데 파일이 생겼다. 그래서 이
 // 둘이 한 argv 에 같이 오르지 않는 것이 이 하네스의 읽기 전용 보증 그 자체다.
+// API 키 연결 opencode 턴(security, C안): `--auto` 는 명시적 deny 밖을 모두 연다 — lane 턴은 권한 표를 박은 lane 에이전트만 고른다.
+describe('opencode lane 턴의 권한', () => {
+  const oc = (over: Record<string, unknown>) => buildTurnCommand({
+    ...base, harness: 'opencode', mode: 'mention', sessionId: null, isFirstTurn: true,
+    opencodeHome: '/state/opencode-home', ...over,
+  } as Parameters<typeof buildTurnCommand>[0]);
+  const lane = { HARKROOM_PROVIDER_BASE_URL: 'https://gateway.example.com', HARKROOM_PROVIDER_TOKEN: 'x' };
+
+  it('auto lane 턴은 `--auto` 없이 lane 에이전트를 고른다', () => {
+    const p = oc({ mentionPermission: 'auto', providerEnv: lane });
+    expect(p.args.join(' ')).toContain('--agent harkroom-lane');
+    expect(p.args).not.toContain('--auto');
+  });
+
+  it('readonly lane 턴은 읽기 전용 에이전트 단독이다', () => {
+    const p = oc({ mentionPermission: 'readonly', providerEnv: lane });
+    expect(p.args.join(' ')).toContain('--agent harkroom-readonly');
+    expect(p.args).not.toContain('--auto');
+  });
+
+  it('lane 이 아닌 턴은 그대로 `--auto` 다', () => {
+    const p = oc({ mentionPermission: 'auto' });
+    expect(p.args).toContain('--auto');
+    expect(p.args).not.toContain('harkroom-lane');
+  });
+});
+
 describe('kilo 의 argv', () => {
   const kilo = (over: Record<string, unknown>) => buildTurnCommand({
     ...base, harness: 'kilo', mode: 'mention', sessionId: null, isFirstTurn: true,

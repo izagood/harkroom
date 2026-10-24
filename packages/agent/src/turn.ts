@@ -23,7 +23,7 @@ import { validateToolRule } from '@harkroom/shared';
 
 import { executionModelFor, readonlyToolsFor, usesPiHome, usesXdgHome } from './adapters/index.js';
 import { piSessionsDir } from './piHome.js';
-import { OPENCODE_READONLY_AGENT, opencodeDirs } from './opencodeHome.js';
+import { OPENCODE_LANE_AGENT, OPENCODE_READONLY_AGENT, opencodeDirs } from './opencodeHome.js';
 
 /**
  * 하네스가 harkroom MCP 에 닿는 길은 `harkroom-operator mcp-bridge` 하나다(스펙 2026-09-20 §5).
@@ -164,7 +164,7 @@ interface HarnessPreset {
   permission: Record<MentionPermission, string[]>;
   /**
    * 전용 제공사 경로(`providerEnv` 가 있는 턴)에서 `permission` 대신 쓸 값. 없는 칸은 `permission` 을 그대로 쓴다.
-   * claude 만 채운다 — 이유는 CLAUDE_PRESET 의 `lanePermission` 주석.
+   * claude 와 opencode(kilo)가 채운다 — 이유는 CLAUDE_PRESET·OPENCODE_PRESET 의 `lanePermission` 주석.
    */
   lanePermission?: Partial<Record<MentionPermission, string[]>>;
   mcp(args: { mcpConfigPath: string; operatorBin: string; extraMcpServers: Record<string, McpServerEntry> }): string[];
@@ -569,6 +569,9 @@ const OPENCODE_PRESET: HarnessPreset = {
     // `--auto` 를 함께 주지 않는다 — 자동 승인과 읽기 전용은 같이 갈 수 없다.
     readonly: ['--agent', OPENCODE_READONLY_AGENT],
   },
+  // API 키 연결 턴은 `--auto` 를 쓰지 않는다 — 권한 표를 박은 lane 에이전트만 고른다(`OPENCODE_LANE_PERMISSION`).
+  // 읽기 전용 lane 턴은 위 `readonly` 를 그대로 쓴다.
+  lanePermission: { auto: ['--agent', OPENCODE_LANE_AGENT] },
   mcp: () => [],
   model: (model) => (model ? ['-m', model] : []),
   // `--variant`(provider-specific reasoning effort). harkroom 의 값과 어떻게 맞물리는지는
