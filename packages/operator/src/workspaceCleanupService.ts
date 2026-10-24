@@ -274,11 +274,19 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: Cleanup
     }),
     act: (path, action, by) => serial(async () => {
       const settings = await readCleanupSettings(deps.configPath);
-      const r = applyHumanAction(await readLedger(deps.ledgerPath), path, action, by, settings, now());
+      // 꺼져 있으면 청소기는 아무것도 지우지 않는다는 약속(스위치 설명·security F1)을 「지금 정리」도 지킨다.
+      if (action === 'deleteNow' && !settings.enabled) throw new Error('자동 정리가 꺼져 있다 — 켠 뒤에 지금 정리할 수 있다');
+      const at = now();
+      const r = applyHumanAction(await readLedger(deps.ledgerPath), path, action, by, settings, at);
       // 「보존」은 이미 러너에게 나간 요청도 거둔다(security F1).
       const target = r.ledger.items.find((i) => i.path === path);
       if (action === 'keep' && target?.thread && target.kind !== 'worktree') deps.owners.cancelDelete(target.thread);
-      const next = await runSweep({ ledger: r.ledger, actions: r.actions }, ports, deps.owners.running(), now());
+      const swept = await runSweep({ ledger: r.ledger, actions: r.actions }, ports, deps.owners.running(), at);
+      // 「지금 정리」로 지웠거나 막힌 기록에는 누른 사람을 남긴다(회차가 지운 것은 by null). 이 손이 쓴 기록 = 같은 시각·같은 경로.
+      const stamp = at.toISOString();
+      const next = action === 'deleteNow'
+        ? { ...swept, events: swept.events.map((e) => (e.at === stamp && e.path === path && e.by === null ? { ...e, by } : e)) }
+        : swept;
       await writeLedger(deps.ledgerPath, next);
       return view();
     }),

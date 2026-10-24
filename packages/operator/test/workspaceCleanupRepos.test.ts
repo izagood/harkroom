@@ -187,6 +187,46 @@ describe('저장소는 러너가 보고한 worktree 에서 찾는다(workingDir 
     expect(l.events.some((e) => e.path === f.wt.merged && e.action === 'deleted')).toBe(false);
   });
 
+  it('지금 정리(deleteNow): 삭제 예정만, 켜져 있을 때만, 지우기 직전 검사 그대로 — 깨끗한 것은 지우고 미커밋은 막고 누른 사람을 남긴다', async () => {
+    const f = await fixture();
+    const owners = createCleanupOwners({ path: join(f.root, 'owners.json') });
+    const configPath = join(f.root, 'operator.json');
+    const ledgerPath = join(f.root, 'ledger.json');
+    const ME = '22222222-2222-2222-2222-222222222222';
+    const now = new Date(); // 방금 만든 worktree — 자동 조건(7일)에는 안 걸리고 주인 모름으로만 보인다
+    const cleanup = createWorkspaceCleanup({
+      ledgerPath, configPath, owners,
+      agents: async () => [{ agentId: 'agentA', workingDir: f.repo }],
+      forward: async () => { throw new Error('묻지 않는다'); },
+      exec: f.exec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: f.root,
+      now: () => now, log: () => {},
+    });
+    await writeFile(configPath, JSON.stringify({ communities: {}, cleanup: { enabled: true, graceDays: 7 } }));
+    await cleanup.sweep();
+    const state = async (p: string) => (await cleanup.get()).ledger.items.find((i) => i.path === p)?.state ?? 'gone';
+    expect(await state(f.wt.merged)).toBe('unowned');
+    // 주인 모름·보존은 지금 정리할 수 없다 — 사람이 넣는 단계를 건너뛰지 않는다
+    await expect(cleanup.act(f.wt.merged, 'deleteNow', ME)).rejects.toThrow(/cannot deleteNow from unowned/);
+    await cleanup.act(f.wt.merged, 'list', ME);
+    await cleanup.act(f.wt.dirty, 'list', ME);
+    expect(await state(f.wt.merged)).toBe('listed');
+    // 꺼져 있으면 거절
+    await writeFile(configPath, JSON.stringify({ communities: {}, cleanup: { enabled: false, graceDays: 7 } }));
+    await expect(cleanup.act(f.wt.merged, 'deleteNow', ME)).rejects.toThrow(/꺼져/);
+    expect(await lstat(f.wt.merged)).toBeTruthy();
+    await writeFile(configPath, JSON.stringify({ communities: {}, cleanup: { enabled: true, graceDays: 7 } }));
+    // 깨끗한 것은 기한 전이어도 지운다 / 미커밋은 check() 가 막는다
+    await cleanup.act(f.wt.merged, 'deleteNow', ME);
+    await cleanup.act(f.wt.dirty, 'deleteNow', ME);
+    expect(await lstat(f.wt.merged).catch(() => null)).toBeNull();
+    expect(await state(f.wt.merged)).toBe('gone');
+    expect(await lstat(join(f.wt.dirty, 'wip.txt'))).toBeTruthy();
+    const v = await cleanup.get();
+    expect(v.ledger.items.find((i) => i.path === f.wt.dirty)).toMatchObject({ state: 'blocked', blockReason: 'uncommitted', actedBy: ME });
+    expect(v.ledger.events.filter((e) => e.action === 'deleted' || e.action === 'blocked').map((e) => [e.path, e.action, e.by]))
+      .toEqual([[f.wt.merged, 'deleted', ME], [f.wt.dirty, 'blocked', ME]]);
+  });
+
   it('주인 모름 자동: 보고 없는 worktree 도 머지·닫힘 + PR head == HEAD + 깨끗 + 오래 손 안 댐이면 넣고 지운다', async () => {
     const f = await fixture();
     const owners = createCleanupOwners({ path: join(f.root, 'owners.json') }); // 러너 보고 없음 — 전부 주인 모름
