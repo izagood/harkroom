@@ -100,7 +100,7 @@ describe('codex lane 조립', () => {
     expect(overrides).toContain('model_providers.harkroom-lane.wire_api="responses"');
     // TUI 는 셸 스냅숏이 정책을 우회했다(실측) — 정책·스냅숏·로그인 셸 셋이 다 있어야 한다.
     expect(overrides).toContain('shell_environment_policy.ignore_default_excludes=false');
-    expect(overrides).toContain('shell_environment_policy.exclude=["HARKROOM_LANE_API_KEY","HARKROOM_LANE_BASE_URL"]');
+    expect(overrides).toContain('shell_environment_policy.exclude=["HARKROOM_LANE_API_KEY","HARKROOM_LANE_BASE_URL","HARKROOM_TURN_BRIDGE_KEY"]');
     expect(overrides).toContain('features.shell_snapshot=false');
     expect(overrides).toContain('allow_login_shell=false');
     expect(overrides).toContain('check_for_update_on_startup=false');

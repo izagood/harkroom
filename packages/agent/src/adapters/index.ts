@@ -214,6 +214,11 @@ export function injectionFactsFor(
 }
 
 /** 프롬프트를 넣기 전에 harkroom 브릿지의 `tools/list` 답을 기다리는가(계약 `waitsForMcpBeforePrompt`). */
+/** 다리 열쇠를 셸 밖으로 주는 길(`AdapterContract.turnKeyDelivery`). 없으면 null — 그 하네스는 턴 열쇠를 받지 않는다. */
+export function turnKeyDeliveryOf(harness: AgentHarness): 'mcp-config-env' | 'env-vars' | 'turn-config-env' | null {
+  return ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).turnKeyDelivery ?? null;
+}
+
 export function waitsForMcpBeforePrompt(harness: AgentHarness): boolean {
   return adapterFor(harness).waitsForMcpBeforePrompt === true;
 }

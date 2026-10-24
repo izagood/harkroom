@@ -8,11 +8,12 @@
  *   돌려준다. 못 받으면 **던진다** — 계정 로그인으로 떨어지지 않는다(fail-closed).
  * - 값은 이 프로세스의 env 에 두지 않는다. 받은 맵은 그 턴의 plan 에만 실린다.
  */
+import { RUNNER_TURN_KEY_ENV } from '@harkroom/shared/runnerLink';
 import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { relative, isAbsolute, join } from 'node:path';
 import { CODEX_LANE_MEASURED_VERSIONS, KILO_LANE_MEASURED_VERSIONS, normalizeProviderBaseUrl, OMP_LANE_MEASURED_VERSIONS, OPENCODE_LANE_MEASURED_VERSIONS, PI_LANE_MEASURED_VERSIONS, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
 import type { AgentHarness } from '@harkroom/shared';
-import { PROVIDER_LANE_OPENCODE_PROVIDER, providerLaneModelId } from './opencodeHome.js';
+import { PROVIDER_LANE_OPENCODE_PROVIDER, providerLaneModelId, toOpencodeMcp } from './opencodeHome.js';
 
 /** codex lane 의 키를 담는 env 이름 — provider `env_key` 가 이 이름을 읽는다. */
 export const CODEX_LANE_KEY_ENV = 'HARKROOM_LANE_API_KEY';
@@ -92,7 +93,8 @@ export function codexLaneArgs(baseUrl: string): string[] {
     '-c', 'features.shell_snapshot=false',
     '-c', 'allow_login_shell=false',
     '-c', 'shell_environment_policy.ignore_default_excludes=false',
-    '-c', `shell_environment_policy.exclude=${JSON.stringify([CODEX_LANE_KEY_ENV, CODEX_LANE_BASE_URL_ENV])}`,
+    // 다리 열쇠 이름도 함께 거른다 — 이 칸은 프리셋 MCP 조각의 같은 칸을 덮는다(`turn.ts` codex `mcp`).
+    '-c', `shell_environment_policy.exclude=${JSON.stringify([CODEX_LANE_KEY_ENV, CODEX_LANE_BASE_URL_ENV, RUNNER_TURN_KEY_ENV.bridge])}`,
   ];
 }
 
@@ -269,6 +271,61 @@ export async function writeLaneMcpConfig(stateDir: string, sourcePath: string, e
   if ((await readFile(path, 'utf8').catch(() => null)) === body) return path;
   await writeAtomic(path, body);
   return path;
+}
+
+/** 턴 MCP 설정 자리(러너 상태 폴더, 작업 폴더 밖, 0700). 파일은 턴마다 하나(0600), 턴이 끝나면 지우고 기동 때 남은 것을 걷는다. */
+export const TURN_MCP_DIR = 'turn-mcp';
+
+/**
+ * 오퍼레이터가 쓴 MCP 설정을 바탕으로 **그 턴만의** 설정을 쓴다: harkroom 항목의 `env` 칸에 다리 열쇠를 싣는다(`turnKeys.ts`).
+ * claude 는 이 칸을 브릿지에만 얹으므로 셸 env 에는 안 보인다. 다른 턴과 열쇠가 달라 파일을 나눠 쓴다.
+ */
+export async function writeTurnMcpConfig(stateDir: string, sourcePath: string, turnId: string, bridgeKey: string): Promise<string> {
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(turnId)) throw new Error(`writeTurnMcpConfig: 턴 id 가 이상하다: ${turnId}`);
+  const doc = JSON.parse(await readFile(sourcePath, 'utf8')) as { mcpServers?: Record<string, { env?: Record<string, string> } & Record<string, unknown>> };
+  const harkroom = doc.mcpServers?.harkroom;
+  if (!harkroom) throw new Error('writeTurnMcpConfig: MCP 설정에 harkroom 이 없다');
+  const out = { ...doc, mcpServers: { ...doc.mcpServers, harkroom: { ...harkroom, env: { ...(harkroom.env ?? {}), [RUNNER_TURN_KEY_ENV.bridge]: bridgeKey } } } };
+  const dir = join(stateDir, TURN_MCP_DIR);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const path = join(dir, `${turnId}.json`);
+  await writeAtomic(path, JSON.stringify(out));
+  return path;
+}
+
+/**
+ * opencode 턴의 다리 열쇠 자리(`turnKeyDelivery: 'turn-config-env'`). harkroom 항목을 **통째로**(type·command 포함) 턴 설정 파일의 `mcp` 칸에
+ * 쓰고 `environment` 에 다리 열쇠를 싣는다 — opencode 는 파일마다 항목이 온전해야 받는다(일부 칸만 적으면 설정 오류, 1.19.4 실측).
+ * API 키 연결 턴은 이미 쓴 lane 턴 파일(`laneTurnFile`)에 더해 쓰고, 그 밖의 턴은 턴 MCP 자리에 새 파일을 쓴다. 돌려주는 경로가
+ * 그 턴의 `OPENCODE_CONFIG` 다.
+ */
+export async function writeOpencodeTurnMcpConfig(
+  stateDir: string, sourcePath: string, turnId: string, bridgeKey: string, laneTurnFile: string | null,
+): Promise<string> {
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(turnId)) throw new Error(`writeOpencodeTurnMcpConfig: 턴 id 가 이상하다: ${turnId}`);
+  const doc = JSON.parse(await readFile(sourcePath, 'utf8')) as { mcpServers?: Parameters<typeof toOpencodeMcp>[0] };
+  const source = doc.mcpServers?.harkroom;
+  if (!source) throw new Error('writeOpencodeTurnMcpConfig: MCP 설정에 harkroom 이 없다');
+  const entry = toOpencodeMcp({ harkroom: source }).harkroom;
+  if (!entry || entry.type !== 'local') throw new Error('writeOpencodeTurnMcpConfig: harkroom 항목이 stdio 가 아니다');
+  const harkroom = { ...entry, environment: { ...(entry.environment as Record<string, string> | undefined ?? {}), [RUNNER_TURN_KEY_ENV.bridge]: bridgeKey } };
+  if (laneTurnFile) {
+    const lane = JSON.parse(await readFile(laneTurnFile, 'utf8')) as Record<string, unknown>;
+    await writeAtomic(laneTurnFile, JSON.stringify({ ...lane, mcp: { ...(lane.mcp as Record<string, unknown> | undefined ?? {}), harkroom } }));
+    return laneTurnFile;
+  }
+  const dir = join(stateDir, TURN_MCP_DIR);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const path = join(dir, `${turnId}.opencode.json`);
+  await writeAtomic(path, JSON.stringify({ mcp: { harkroom } }));
+  return path;
+}
+
+/** 기동 때 지난 러너가 남긴 턴 MCP 설정을 걷는다(끝난 턴의 열쇠라 오퍼레이터가 이미 받지 않는다). 실패는 삼킨다. */
+export async function sweepTurnMcpDir(stateDir: string): Promise<void> {
+  const dir = join(stateDir, TURN_MCP_DIR);
+  const names = await readdir(dir).catch(() => [] as string[]);
+  await Promise.all(names.map((n) => rm(join(dir, n), { force: true }).catch(() => undefined)));
 }
 
 /**
