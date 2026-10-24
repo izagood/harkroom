@@ -154,12 +154,6 @@ describe('ModelConnectionField', () => {
     expect(screen.getByTestId('lane-off-confirm').textContent).toContain('계정 풀로 돈다');
   });
 
-  it('다른 하네스는 주소 칸 이름이 그대로다(codex 는 후속 n4 몫)', () => {
-    renderField(laneState(), 'codex');
-    fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));
-    expect(screen.getByText('API 주소 (Anthropic 호환 base URL)')).toBeTruthy();
-  });
-
   it('영어에서는 하네스 목록을 쉼표로 잇는다', () => {
     usePrefsStore.getState().setLocale('en');
     renderField(laneState(), 'pi');
