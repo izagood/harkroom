@@ -80,6 +80,11 @@ export const CODEX_LANE_VERSIONS = ['0.154.0'] as const;
  * 세션 헤더 꼴이 모두 문서에 없는 동작이라 판마다 심은 파일 회귀 시험으로 다시 잰다(security C1).
  */
 export const OMP_LANE_VERSIONS = ['18.12.6'] as const;
+/**
+ * kilo lane 의 격리를 잰 판(러너 판 관문 `kiloLaneVersionOk`). 저장소 설정 차단(`KILO_DISABLE_PROJECT_CONFIG`)·홈 표지 자리(`KILO_TEST_HOME`)가
+ * opencode 와 이름이 달라 판이 바뀌면 조용히 풀릴 수 있다 — 넓히면 그 판으로 다시 잰다.
+ */
+export const KILO_LANE_VERSIONS = ['7.8.17'] as const;
 
 /**
  * 턴을 못 띄운 까닭의 **허용 목록**(1c, security 조건 ③). 실패 카드 meta(`FailureMeta.failure.laneCode`)에는 이 값만 실린다 —

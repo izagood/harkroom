@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/prom
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createProviderLane, laneScrubsSubprocessEnv, PROVIDER_LANE_FIXED_ENV, LANE_MCP_CONFIG_FILE, opencodeLaneVersionOk, ProviderLaneError, sweepLaneTurnDir, writeLaneMcpConfig, writeOpencodeLaneTurnConfig } from '../src/providerLane.js';
+import { createProviderLane, kiloLaneVersionOk, laneScrubsSubprocessEnv, PROVIDER_LANE_FIXED_ENV, LANE_MCP_CONFIG_FILE, opencodeLaneVersionOk, ProviderLaneError, sweepLaneTurnDir, writeLaneMcpConfig, writeOpencodeLaneTurnConfig } from '../src/providerLane.js';
 
 async function setup(value = 'tok-123\n') {
   const root = await mkdtemp(join(tmpdir(), 'lane-'));
@@ -42,8 +42,47 @@ describe('providerLane.envFor', () => {
     });
     expect((await stat(env.OPENCODE_CONFIG!)).mode & 0o777).toBe(0o600);
     expect((await stat(laneTurnDir)).mode & 0o777).toBe(0o700);
-    // 포크(Kilo)는 아직 표에 없다 — 넣을 자리를 모르면 던진다.
-    await expect(lane.envFor('m1', 'kilo')).rejects.toMatchObject({ code: 'harness_unsupported' });
+    // 표에 없는 하네스는 넣을 자리를 모르니 던진다.
+    await expect(lane.envFor('m1', 'gemini')).rejects.toMatchObject({ code: 'harness_unsupported' });
+  });
+
+  // kilo: 턴 파일을 `KILO_CONFIG` 로 받는다(7.8.17 실측).
+  it('kilo 에는 턴 파일 경로(`KILO_CONFIG`) 하나만 — 키 값은 env 에도 턴 파일에도 없고, 끝나면 거둔다', async () => {
+    const t = await setup();
+    const state = join(t.root, 'state');
+    const lane = createProviderLane({
+      mount: ok({ baseUrl: 'https://gateway.example/', path: t.path }), turnSecretsDir: t.secretsDir, stateDir: state, harnessVersion: async () => '7.8.17',
+    });
+    const env = await lane.envFor('m-2', 'kilo');
+    expect(Object.keys(env)).toEqual(['KILO_CONFIG']);
+    const text = await readFile(env.KILO_CONFIG!, 'utf8');
+    expect(text).not.toContain('tok-123');
+    expect(JSON.parse(text)).toEqual({
+      provider: { 'harkroom-lane': { options: { baseURL: 'https://gateway.example/v1', apiKey: `{file:${await realpathOf(t.path)}}` } } },
+    });
+    await lane.release(env);
+    expect(await readdir(join(state, 'lane-turn'))).toEqual([]);
+  });
+
+  it('kilo 판이 잰 목록(7.8.17)과 정확히 같지 않거나 못 읽으면 `harness_version` — 키를 받지 않는다', async () => {
+    const t = await setup();
+    let mounted = 0;
+    for (const v of ['7.8.18', '7.8.1', '7.9.0', null, 'kilo 7.8.17', '7.8.17-beta', '1.18.32']) {
+      const lane = createProviderLane({
+        mount: async () => { mounted++; return { status: 200, body: JSON.stringify({ lane: { baseUrl: 'https://gateway.example', path: t.path } }) }; },
+        turnSecretsDir: t.secretsDir, stateDir: join(t.root, 'st'), harnessVersion: async () => v,
+      });
+      await expect(lane.envFor('m1', 'kilo')).rejects.toMatchObject({ code: 'harness_version' });
+    }
+    expect(mounted).toBe(0);
+    expect(kiloLaneVersionOk('7.8.17\n')).toBe(true);
+  });
+
+  // lane 턴은 프로젝트 설정을 읽지 않는다 — 실물 회귀는 `kiloLaneProjectConfig.real.test.ts`.
+  it('lane kilo 고정 env 는 프로젝트 설정·사람 홈 지시·스킬을 끈다(이름은 KILO_*)', () => {
+    expect(PROVIDER_LANE_FIXED_ENV.kilo).toEqual({
+      KILO_DISABLE_PROJECT_CONFIG: '1', KILO_DISABLE_CLAUDE_CODE: '1', KILO_DISABLE_EXTERNAL_SKILLS: '1', KILO_DISABLE_AUTOUPDATE: '1',
+    });
   });
 
   it('턴이 끝나면 그 턴 파일을 거두고, 턴 파일 자리 밖 경로는 건드리지 않는다(security L2 n1)', async () => {

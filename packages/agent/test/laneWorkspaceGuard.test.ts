@@ -101,4 +101,21 @@ describe('laneWorkspaceViolations', () => {
       expect((await laneWorkspaceViolations(ws, skills)).map((n) => n.toLowerCase())).toEqual(['.codex']);
     }
   });
+
+  it('kilo 프로젝트 설정·지시 이름도 잡는다', async () => {
+    for (const [name, dir] of [['kilo.json', false], ['kilo.jsonc', false], ['Kilo.JSON', false], ['.kilo', true], ['.kilocode', true], ['.kilocoderules', false], ['.KiloCodeRules', false]] as const) {
+      const { ws, skills } = await dirs();
+      if (dir) await mkdir(join(ws, name), { recursive: true }); else await writeFile(join(ws, name), '{}');
+      expect(await laneWorkspaceViolations(ws, skills)).toEqual([name]);
+    }
+  });
+
+  it('kilo 지시 폴더(`.kilo/rules`·`.kilocode/rules`)가 있으면 잡는다', async () => {
+    for (const d of ['.kilo', '.kilocode']) {
+      const { ws, skills } = await dirs();
+      await mkdir(join(ws, d, 'rules'), { recursive: true });
+      await writeFile(join(ws, d, 'rules', 'x.md'), 'x');
+      expect(await laneWorkspaceViolations(ws, skills)).toEqual([d]);
+    }
+  });
 });

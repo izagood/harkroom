@@ -10,7 +10,7 @@
  */
 import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { relative, isAbsolute, join } from 'node:path';
-import { CODEX_LANE_VERSIONS, normalizeProviderBaseUrl, OMP_LANE_VERSIONS, OPENCODE_LANE_VERSIONS, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
+import { CODEX_LANE_VERSIONS, KILO_LANE_VERSIONS, normalizeProviderBaseUrl, OMP_LANE_VERSIONS, OPENCODE_LANE_VERSIONS, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
 import type { AgentHarness } from '@harkroom/shared';
 import { PROVIDER_LANE_OPENCODE_PROVIDER, providerLaneModelId } from './opencodeHome.js';
 
@@ -34,6 +34,8 @@ export const PROVIDER_LANE_ENV_KEYS: Partial<Record<AgentHarness, readonly strin
   'claude-code': ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN'],
   // opencode 는 키를 env 로 받지 않는다 — 턴 파일 경로 하나만 받고, 그 파일이 키 파일을 `{file:…}` 로 가리킨다(Y1~Y3).
   opencode: ['OPENCODE_CONFIG'],
+  // kilo 도 턴 파일 경로 하나만 받는다 — 이름은 `KILO_CONFIG` 다(7.8.17 실측).
+  kilo: ['KILO_CONFIG'],
   // codex 는 provider 의 `env_key` 로 키를 읽는다(`codexLaneArgs`). 주소는 env 로 받지 않는다 — 설정 키 `base_url` 은 env 를 못 읽어
   // argv 로만 간다. 그래서 주소는 `CODEX_LANE_BASE_URL_ENV` 로 조립까지만 실어 나르고 자식 env 에서는 뺀다(`PROVIDER_LANE_ARGV_ONLY_KEYS`).
   codex: [CODEX_LANE_KEY_ENV, CODEX_LANE_BASE_URL_ENV],
@@ -87,12 +89,19 @@ export function codexLaneArgs(baseUrl: string): string[] {
   ];
 }
 
-/** 키 대신 턴 파일 경로를 받는 env 이름. 이 이름을 받는 하네스는 키 값을 env 로 받지 않는다. */
-export const LANE_TURN_FILE_ENV = 'OPENCODE_CONFIG';
+/** 키 대신 턴 파일 경로를 받는 env 이름(하네스별). 이 이름을 받는 하네스는 키 값을 env 로 받지 않는다. */
+export const LANE_TURN_FILE_ENV: Partial<Record<AgentHarness, string>> = { opencode: 'OPENCODE_CONFIG', kilo: 'KILO_CONFIG' };
 
-function laneUsesTurnFile(harness: AgentHarness): boolean {
-  return PROVIDER_LANE_ENV_KEYS[harness]?.includes(LANE_TURN_FILE_ENV) ?? false;
+function laneTurnFileEnv(harness: AgentHarness): string | null {
+  const name = LANE_TURN_FILE_ENV[harness];
+  return name && (PROVIDER_LANE_ENV_KEYS[harness]?.includes(name) ?? false) ? name : null;
 }
+
+/**
+ * lane 턴의 홈 표지 자리 이름(`opencodeLaneHome` 을 가리킨다, `childEnv` 가 얹는다). 이 이름이 하네스가 보는 `~` 를 바꿔
+ * 사람 홈의 `~/.opencode`·`~/.kilo` 설정이 lane 턴에 안 실린다. opencode 이름은 kilo 에서 안 먹는다(7.8.17 실측).
+ */
+export const LANE_TEST_HOME_ENV: Partial<Record<AgentHarness, string>> = { opencode: 'OPENCODE_TEST_HOME', kilo: 'KILO_TEST_HOME' };
 
 /**
  * lane 턴에 늘 얹는 고정 env(값이 아니라 하네스 동작 스위치). claude 는 하네스가 띄우는 셸·하위 프로세스의 env 에서 자격 정보를
@@ -108,6 +117,11 @@ export const PROVIDER_LANE_FIXED_ENV: Partial<Record<AgentHarness, Readonly<Reco
   opencode: {
     OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_PROJECT_CONFIG: '1',
   },
+  // kilo 7.8.17 실측(가짜 서버·가짜 키, 2026-10-24) — 이름은 `KILO_*` 다.
+  // - `KILO_DISABLE_PROJECT_CONFIG`: lane 턴은 프로젝트 설정을 읽지 않는다(회귀 시험 `kiloLaneProjectConfig.real.test.ts`).
+  // - `KILO_DISABLE_CLAUDE_CODE`·`KILO_DISABLE_EXTERNAL_SKILLS`: 사람 홈의 `~/.claude`(CLAUDE.md·스킬)·`~/.agents` 스킬이 요청 본문에서 빠졌다.
+  // - `KILO_DISABLE_AUTOUPDATE`: 이름만 opencode 규칙으로 맞췄다(효과는 못 쟀다) — 판은 턴마다 판 관문이 다시 본다.
+  kilo: { KILO_DISABLE_PROJECT_CONFIG: '1', KILO_DISABLE_CLAUDE_CODE: '1', KILO_DISABLE_EXTERNAL_SKILLS: '1', KILO_DISABLE_AUTOUPDATE: '1' },
 };
 
 /**
@@ -135,9 +149,16 @@ export function ompLaneVersionOk(raw: string | null | undefined): boolean {
   return m !== null && (OMP_LANE_VERSIONS as readonly string[]).includes(m[1]!);
 }
 
+/** kilo lane 의 판 관문(`KILO_LANE_VERSIONS`). 출력은 숫자 판 한 줄이다(7.8.17 실측). 잰 판과 **정확히** 같을 때만 받는다. */
+export function kiloLaneVersionOk(raw: string | null | undefined): boolean {
+  const version = (raw ?? '').trim();
+  return /^\d+\.\d+\.\d+$/.test(version) && (KILO_LANE_VERSIONS as readonly string[]).includes(version);
+}
+
 /** 하네스별 판 관문 — 격리를 잰 판 밖이면 `harness_version`. 없는 하네스는 판을 묻지 않는다. */
 const PROVIDER_LANE_VERSION_GATE: Partial<Record<AgentHarness, (raw: string | null) => boolean>> = {
   opencode: opencodeLaneVersionOk,
+  kilo: kiloLaneVersionOk,
   codex: codexLaneVersionOk,
   omp: ompLaneVersionOk,
 };
@@ -246,7 +267,7 @@ export interface ProviderLaneDeps {
   turnSecretsDir: string | null;
   /** 그 턴 결과를 오퍼레이터에 알린다(relay 통지, `notifyProviderLaneResult`). 없으면 안 알린다. */
   report?(ok: boolean, code?: ProviderLaneFailureCode): void;
-  /** 러너 상태 폴더. 턴 파일은 그 아래 `LANE_TURN_DIR` 에 둔다 — 없으면 턴 파일을 쓰는 하네스(opencode)는 `no_turn_secrets_dir` 로 실패한다. */
+  /** 러너 상태 폴더. 턴 파일은 그 아래 `LANE_TURN_DIR` 에 둔다 — 없으면 턴 파일을 쓰는 하네스(opencode·kilo)는 `no_turn_secrets_dir` 로 실패한다. */
   stateDir?: string;
   /** 하네스 판(`opencode --version` 출력). 못 읽으면 null — opencode lane 은 `harness_version` 으로 실패한다. */
   harnessVersion?(harness: AgentHarness): Promise<string | null>;
@@ -279,7 +300,7 @@ export function createProviderLane(deps: ProviderLaneDeps): {
   };
   // 턴 파일은 이 러너의 턴 파일 자리 안의 것만 지운다 — env 에 실린 다른 경로는 건드리지 않는다.
   const release = async (env: Record<string, string>): Promise<void> => {
-    const path = env[LANE_TURN_FILE_ENV];
+    const path = Object.values(LANE_TURN_FILE_ENV).map((name) => env[name]).find(Boolean);
     if (!path || !deps.stateDir) return;
     const rel = relative(join(deps.stateDir, LANE_TURN_DIR), path);
     if (!rel || rel.startsWith('..') || isAbsolute(rel) || rel.includes('/')) return;
@@ -290,7 +311,7 @@ export function createProviderLane(deps: ProviderLaneDeps): {
   async function prepare(cause: string, harness: AgentHarness): Promise<Record<string, string>> {
     if (!providerLaneKeys(harness)) throw new ProviderLaneError('harness_unsupported');
     if (!deps.turnSecretsDir) throw new ProviderLaneError('no_turn_secrets_dir');
-    const viaTurnFile = laneUsesTurnFile(harness);
+    const viaTurnFile = laneTurnFileEnv(harness);
     if (viaTurnFile && !deps.stateDir) throw new ProviderLaneError('no_turn_secrets_dir');
     const versionOk = PROVIDER_LANE_VERSION_GATE[harness];
     if (versionOk) {
@@ -331,7 +352,7 @@ export function createProviderLane(deps: ProviderLaneDeps): {
     if (viaTurnFile) {
       // 값은 읽어 검사만 한다 — opencode 에는 키 파일 경로만 간다.
       const name = cause.replace(/[^A-Za-z0-9-]/g, '').slice(0, 64) || 'turn';
-      return { [LANE_TURN_FILE_ENV]: await writeOpencodeLaneTurnConfig(join(deps.stateDir!, LANE_TURN_DIR), name, { baseUrl, keyPath: real! }) };
+      return { [viaTurnFile]: await writeOpencodeLaneTurnConfig(join(deps.stateDir!, LANE_TURN_DIR), name, { baseUrl, keyPath: real! }) };
     }
     return { ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: value };
   }
