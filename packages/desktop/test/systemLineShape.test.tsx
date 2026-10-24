@@ -31,6 +31,10 @@ describe('시스템 줄 두 겹', () => {
     const chip = screen.getByTestId('system-target-chip');
     expect(chip.textContent).toContain('jaebin');
     expect(chip.getAttribute('href')).toBe(`harkroom://message/${POST_ID}`);
+    // 접근 이름에는 「↳」가 없다 — 보이는 글자에만 있고 aria-hidden 이다.
+    expect(screen.getByRole('link', { name: 'About jaebin’s message, open the message' })).toBe(chip);
+    expect(chip.textContent).toContain('↳');
+    expect(chip.querySelector('[aria-hidden="true"]')?.textContent).toContain('↳');
   });
 
   it('에이전트가 일으킨 막힘 카드도 응답 줄 — 칩은 그 에이전트의 요청, 링크 없음', () => {
@@ -41,6 +45,7 @@ describe('시스템 줄 두 겹', () => {
     const chip = screen.getByTestId('system-target-chip');
     expect(chip.textContent).toContain('forge');
     expect(chip.tagName).toBe('SPAN');
+    expect(chip.querySelector('[aria-hidden="true"]')?.textContent).toContain('↳');
   });
 
   it('스레드 모델 지정은 기록 줄 — 이름줄 없이 한 줄, 스크린리더에는 「시스템 알림」(c2)', () => {

@@ -1224,8 +1224,10 @@ function SystemTargetChip({ message, accounts }: { message: MessageRow; accounts
   const name = (Object.hasOwn(accounts, target.accountId) ? accounts[target.accountId]?.handle : undefined) ?? UNKNOWN_ACCOUNT_LABEL;
   const label = t(target.what === 'post' ? 'message.system.re.post' : 'message.system.re.request', { name });
   const cls = 'mb-0.5 inline-flex max-w-full items-center truncate rounded-full border border-border bg-surface-sunken px-2 text-meta text-fg-muted';
+  // 「↳」는 보이는 글자에만 — 화면 읽기에는 「아래쪽 화살표」로 읽히므로 접근 이름에서 뺀다.
+  const arrow = <span aria-hidden="true">↳ </span>;
   return target.href
     ? <a data-testid="system-target-chip" className={`${cls} hover:bg-surface-hover`} href={target.href}
-        aria-label={t('message.system.re.open', { label })}>{label}</a>
-    : <span data-testid="system-target-chip" className={cls}>{label}</span>;
+        aria-label={t('message.system.re.open', { label })}>{arrow}{label}</a>
+    : <span data-testid="system-target-chip" className={cls}>{arrow}{label}</span>;
 }

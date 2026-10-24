@@ -3520,9 +3520,9 @@ export const en = {
   'message.system.author': 'Harkroom',
   'message.system.badge': 'System',
   'message.system.srLabel': 'System notice',
-  'message.system.re.post': '↳ About {name}’s message',
-  'message.system.re.request': '↳ About {name}’s request',
-  'message.system.re.open': '{label} — open the message',
+  'message.system.re.post': 'About {name}’s message',
+  'message.system.re.request': 'About {name}’s request',
+  'message.system.re.open': '{label}, open the message',
 
   /**
    * 수신자 배지. **강조는 나에게 온 것에만 간다**(규칙 04) — 그 색 판정은 화면이 하고,
