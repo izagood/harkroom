@@ -145,16 +145,38 @@ describe('laneParentViolations', () => {
     ].sort());
   });
 
-  it('홈 밖 작업 폴더는 보지 않고, 심볼릭 링크 폴더를 만나면 멈춘다', async () => {
-    const { home, ws } = await tree();
-    expect(await laneParentViolations('/somewhere/else/ws', home)).toEqual([]);
+  it('홈 밖 작업 폴더는 보지 않고, 못 푸는 경로는 걸린 것으로 본다', async () => {
+    const { home } = await tree();
+    const outside = await realpath(await mkdtemp(join(tmpdir(), 'lane-outside-')));
+    expect(await laneParentViolations(outside, home)).toEqual([]);
+    expect(await laneParentViolations(join(home, 'no-such', 'ws'), home)).toEqual(['(unreadable)']);
+  });
+
+  // security n1: 링크에서 멈추면 남은 부모를 안 보고 통과한다 — 하네스처럼 실제 경로 사슬을 본다.
+  it('링크를 거친 작업 폴더도 실제 경로의 부모 사슬을 끝까지 본다', async () => {
+    const { home } = await tree();
     const real = join(home, 'real');
-    await mkdir(join(real, 'inner'), { recursive: true });
-    await mkdir(join(home, '.opencode-planted'), { recursive: true });
+    await mkdir(join(real, 'inner', 'ws'), { recursive: true });
     await writeFile(join(home, 'kilo.jsonc'), '{}');
     await symlink(real, join(home, 'link'));
-    // 링크 폴더(home/link)에서 멈추므로 위의 홈 파일까지 가지 않는다.
-    expect(await laneParentViolations(join(home, 'link', 'inner', 'ws'), home)).toEqual([]);
-    expect(await laneParentViolations(ws, home)).toEqual([join('~', 'kilo.jsonc')]);
+    expect(await laneParentViolations(join(home, 'link', 'inner', 'ws'), home)).toEqual([join('~', 'kilo.jsonc')]);
+  });
+
+  // security F1: 홈의 하네스 설치 폴더는 설치 파일만 허용한다.
+  it('홈의 .opencode·.kilo·.kilocode 는 설치 파일만 있으면 통과하고, 그 밖의 이름은 잡는다', async () => {
+    const { home, ws } = await tree();
+    for (const d of ['.opencode', '.kilo']) {
+      await mkdir(join(home, d, 'bin'), { recursive: true });
+      await mkdir(join(home, d, 'node_modules'), { recursive: true });
+    }
+    for (const f of ['package.json', 'package-lock.json', 'bun.lock', '.gitignore']) await writeFile(join(home, '.opencode', f), '');
+    expect(await laneParentViolations(ws, home)).toEqual([]);
+    await writeFile(join(home, '.opencode', 'opencode.json'), '{}');
+    await mkdir(join(home, '.kilo', 'plugin'), { recursive: true });
+    await writeFile(join(home, '.kilo', 'plugin', 'x.js'), '');
+    await mkdir(join(home, '.kilocode', 'rules'), { recursive: true });
+    expect(await laneParentViolations(ws, home)).toEqual([
+      join('~', '.opencode', 'opencode.json'), join('~', '.kilo', 'plugin'), join('~', '.kilocode', 'rules'),
+    ].sort());
   });
 });
