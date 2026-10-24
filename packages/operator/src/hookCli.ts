@@ -161,19 +161,21 @@ export function touchesApprovedRule(rules: readonly string[], command: unknown):
 
 /**
  * 구독형 codex 턴의 hook(「꼬리 막기」, codex 권한 동등화 1안). 러너가 승인 규칙을 codex 명령 규칙(`codexRulesFile`)으로 꺼내 두면
- * 그 규칙의 **앞부분**에 맞는 명령은 codex 가 샌드박스 밖에서 돌린다. 그래서 hook 은:
- * - 승인 규칙에 (좁게) 맞으면 결정 없음 — 규칙대로 밖에서 돈다
- * - 승인 규칙의 낱말을 건드리는데 맞지 않으면 deny — 꼬리·감싸기·셸 글자로 밖에 나가는 길을 막는다
+ * 그 규칙의 **앞부분**에 맞는 명령은 codex 가 샌드박스 밖에서 돌린다. 규칙 파일은 에이전트의 **모든 채널 합**이므로 규칙을 두 벌 받는다:
+ * - `rules`(이 턴 채널의 규칙)에 (좁게) 맞으면 결정 없음 — 규칙대로 밖에서 돈다
+ * - `reach`(규칙 파일과 같은 합집합)의 낱말을 건드리는데 이 채널 규칙에 맞지 않으면 deny — 다른 채널의 승인 명령·꼬리·감싸기·
+ *   셸 글자로 밖에 나가는 길을 막는다
  * - 그 밖(셸이 아닌 도구 포함)은 결정 없음 — 지금처럼 codex 샌드박스 안에서 돈다
  * 입력을 못 읽으면 deny 다(lane 과 같은 fail-closed).
  */
-export function decideTailHook(raw: string, rules: readonly string[]): LaneDenyDecision | null {
+export function decideTailHook(raw: string, rules: readonly string[], reach: readonly string[]): LaneDenyDecision | null {
   let input: { tool_name?: unknown; tool_input?: { command?: unknown } };
   try { input = JSON.parse(raw) as typeof input; } catch { return laneDeny(); }
   if (typeof input.tool_name !== 'string' || !input.tool_name) return laneDeny();
   if (input.tool_name !== 'Bash') return null;
   const command = input.tool_input?.command;
   if (laneBashAllowed(rules, command)) return null;
-  if (!touchesApprovedRule(rules, command)) return null;
+  // 이 채널 규칙도 닿음 판정에 넣는다 — 합집합을 빠뜨리고 넘겨도 이 채널 규칙의 꼬리는 막힌다.
+  if (!touchesApprovedRule([...reach, ...rules], command)) return null;
   return laneDeny(typeof command === 'string' && SHELL_META.test(command.trim()) ? LANE_HOOK_SHELL_REASON : LANE_HOOK_TAIL_REASON);
 }

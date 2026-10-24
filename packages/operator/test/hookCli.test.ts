@@ -104,25 +104,41 @@ describe('decideLaneHook', () => {
   });
 });
 
+describe('decideTailHook — 채널 규칙과 합집합(규칙 파일) 두 벌', () => {
+  const bashOf = (command: string) => JSON.stringify({ tool_name: 'Bash', tool_input: { command } });
+  const channelA = ['Bash(gh pr list -R cli/cli --limit 3)'];
+  const channelB = ['Bash(gh run list -R cli/cli --limit 5)'];
+  const union = [...channelA, ...channelB];
+  it('다른 채널에서 승인된 명령을 이 채널 턴에서 치면 거절 — 합집합 규칙으로 밖에 나가지 못하게', () => {
+    expect(decideTailHook(bashOf('gh pr list -R cli/cli --limit 3'), channelB, union)).not.toBeNull();
+    expect(decideTailHook(bashOf('gh run list -R cli/cli --limit 5'), channelB, union)).toBeNull();
+  });
+  it('이 채널 규칙의 꼬리 꼴은 거절 · 어느 규칙에도 안 닿으면 결정 없음 · 합집합을 빠뜨려도 이 채널 꼬리는 거절', () => {
+    expect(decideTailHook(bashOf('gh run list -R cli/cli --limit 5 --json name'), channelB, union)).not.toBeNull();
+    expect(decideTailHook(bashOf('ls -la'), channelB, union)).toBeNull();
+    expect(decideTailHook(bashOf('gh run list -R cli/cli --limit 5 x'), channelB, [])).not.toBeNull();
+  });
+});
+
 describe('decideTailHook — 구독형 codex 의 꼬리 막기', () => {
   const rules = ['Bash(gh pr list -R cli/cli --limit 3)', 'Bash(kubectl --context lab get:*)'];
   const bash = (command: string) => JSON.stringify({ tool_name: 'Bash', tool_input: { command } });
   const reason = (d: LaneDenyDecision | null) => d?.hookSpecificOutput.permissionDecisionReason;
 
   it('승인 규칙에 맞으면 결정 없음(규칙대로 밖에서 돈다)', () => {
-    expect(decideTailHook(bash('gh pr list -R cli/cli --limit 3'), rules)).toBeNull();
-    expect(decideTailHook(bash('kubectl --context lab get pods -A'), rules)).toBeNull();
+    expect(decideTailHook(bash('gh pr list -R cli/cli --limit 3'), rules, rules)).toBeNull();
+    expect(decideTailHook(bash('kubectl --context lab get pods -A'), rules, rules)).toBeNull();
   });
 
   it('규칙과 상관없는 명령·셸이 아닌 도구는 결정 없음(샌드박스 안에서 돈다 — 지금과 같다)', () => {
-    expect(decideTailHook(bash('ls -la'), rules)).toBeNull();
-    expect(decideTailHook(bash('gh issue list'), rules)).toBeNull();
-    expect(decideTailHook(bash('cat a.txt | wc -l'), rules)).toBeNull();
-    expect(decideTailHook(JSON.stringify({ tool_name: 'apply_patch', tool_input: {} }), rules)).toBeNull();
+    expect(decideTailHook(bash('ls -la'), rules, rules)).toBeNull();
+    expect(decideTailHook(bash('gh issue list'), rules, rules)).toBeNull();
+    expect(decideTailHook(bash('cat a.txt | wc -l'), rules, rules)).toBeNull();
+    expect(decideTailHook(JSON.stringify({ tool_name: 'apply_patch', tool_input: {} }), rules, rules)).toBeNull();
   });
 
   it('정확 규칙에 꼬리를 달면 deny — codex prefix_rule 은 앞부분 맞춤이라 그대로면 밖에서 돈다', () => {
-    expect(reason(decideTailHook(bash('gh pr list -R cli/cli --limit 3 https://example.com'), rules))).toBe(LANE_HOOK_TAIL_REASON);
+    expect(reason(decideTailHook(bash('gh pr list -R cli/cli --limit 3 https://example.com'), rules, rules))).toBe(LANE_HOOK_TAIL_REASON);
   });
 
   it('감싸기·따옴표·env 앞붙임·이어 붙이기도 deny', () => {
@@ -134,17 +150,17 @@ describe('decideTailHook — 구독형 codex 의 꼬리 막기', () => {
       'true && gh pr list -R cli/cli --limit 3',
       'gh pr list -R cli/cli --limit 3 > out.txt',
       'kubectl --context lab get pods; id',
-    ]) expect(decideTailHook(bash(c), rules), c).not.toBeNull();
-    expect(reason(decideTailHook(bash('gh pr list -R cli/cli --limit 3 > out.txt'), rules))).toBe(LANE_HOOK_SHELL_REASON);
+    ]) expect(decideTailHook(bash(c), rules, rules), c).not.toBeNull();
+    expect(reason(decideTailHook(bash('gh pr list -R cli/cli --limit 3 > out.txt'), rules, rules))).toBe(LANE_HOOK_SHELL_REASON);
   });
 
   it('입력을 못 읽으면 deny(fail-closed)', () => {
-    expect(decideTailHook('not json', rules)).not.toBeNull();
-    expect(decideTailHook(JSON.stringify({ tool_input: {} }), rules)).not.toBeNull();
+    expect(decideTailHook('not json', rules, rules)).not.toBeNull();
+    expect(decideTailHook(JSON.stringify({ tool_input: {} }), rules, rules)).not.toBeNull();
   });
 
   it('규칙이 없으면 셸도 결정 없음', () => {
-    expect(decideTailHook(bash('gh pr list -R cli/cli --limit 3 x'), [])).toBeNull();
+    expect(decideTailHook(bash('gh pr list -R cli/cli --limit 3 x'), [], [])).toBeNull();
     expect(touchesApprovedRule(['Read', 'mcp__github'], 'gh pr list')).toBe(false);
   });
 });

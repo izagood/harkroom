@@ -13,7 +13,8 @@ describe('parseCliArgs', () => {
   it('hook pretool 의 판정 모드 — --lane(API 키 연결)·--tail(구독형 codex 꼬리 막기)·없음', () => {
     expect(parseCliArgs(['hook', 'pretool'])).toEqual({ command: 'hook', event: 'pretool' });
     expect(parseCliArgs(['hook', 'pretool', '--lane', 'W10'])).toEqual({ command: 'hook', event: 'pretool', laneRules: 'W10', laneMode: 'lane' });
-    expect(parseCliArgs(['hook', 'pretool', '--tail', 'W10'])).toEqual({ command: 'hook', event: 'pretool', laneRules: 'W10', laneMode: 'tail' });
+    expect(parseCliArgs(['hook', 'pretool', '--tail', 'W10', 'W20'])).toEqual({ command: 'hook', event: 'pretool', laneRules: 'W10', laneMode: 'tail', tailReach: 'W20' });
+    expect(parseCliArgs(['hook', 'pretool', '--tail', 'W10'])).toEqual({ command: 'hook', event: 'pretool', laneRules: 'W10', laneMode: 'tail', tailReach: '' });
   });
 
   it('register <baseUrl> <code> [--name n] / run [--data-dir d] / mcp-bridge / 나머지는 앱의 daemon 인자', () => {
