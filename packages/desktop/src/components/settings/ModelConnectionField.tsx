@@ -14,17 +14,24 @@ import type { ProviderLaneState } from '../../lib/useProviderLane';
 import { laneCodeText } from '../../lib/laneCodes';
 import { Segmented } from './primitives';
 
-/** API 키 연결을 쓸 수 있는 하네스(러너 `PROVIDER_LANE_ENV_KEYS` 와 같은 둘). */
-export const LANE_HARNESSES: readonly string[] = ['claude-code', 'opencode', 'codex'];
+/** API 키 연결을 쓸 수 있는 하네스(러너 `PROVIDER_LANE_ENV_KEYS` 와 같은 목록). */
+export const LANE_HARNESSES: readonly string[] = ['claude-code', 'opencode', 'codex', 'omp'];
+/**
+ * 계정 풀이 없어 API 키로만 도는 하네스(omp — 사람 홈에 로그인·제공자가 없으면 돌 모델이 없다, designer #1540 c1·4).
+ * [계정 풀]을 누르면 빈자리 대신 그렇다고 한 줄을 쓰고, 저장된 연결이 없으면 처음부터 [API 키]로 연다.
+ */
+export const LANE_ONLY_HARNESSES: readonly string[] = ['omp'];
 
+type LaneBaseUrlLabel = 'agents.lane.baseUrl' | 'agents.lane.baseUrl.responses' | 'agents.lane.baseUrl.omp';
 /**
  * 주소 칸 이름 — 하네스가 gateway 를 부르는 꼴을 적는다(designer n4 A). claude-code·opencode 는 Anthropic 꼴(`/v1/messages`),
- * codex 는 OpenAI Responses 꼴(`/v1/responses`)이다. 표에 없으면 Anthropic 이름이다.
+ * codex 는 OpenAI Responses 꼴(`/v1/responses`), omp 는 OpenAI chat-completions 꼴이다. 표에 없으면 Anthropic 이름이다.
  */
-const LANE_BASE_URL_LABEL: Readonly<Record<string, 'agents.lane.baseUrl' | 'agents.lane.baseUrl.responses'>> = {
+const LANE_BASE_URL_LABEL: Readonly<Record<string, LaneBaseUrlLabel>> = {
   codex: 'agents.lane.baseUrl.responses',
+  omp: 'agents.lane.baseUrl.omp',
 };
-export function laneBaseUrlLabel(harness: string): 'agents.lane.baseUrl' | 'agents.lane.baseUrl.responses' {
+export function laneBaseUrlLabel(harness: string): LaneBaseUrlLabel {
   return LANE_BASE_URL_LABEL[harness] ?? 'agents.lane.baseUrl';
 }
 /**
@@ -66,17 +73,19 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
   onSaved?: (next: ProviderLaneConfig | null) => Promise<void> | void;
 }) {
   const t = useT();
+  const locale = useLocale();
   const saved = lane.lane;
-  const [mode, setMode] = useState<'pool' | 'apiKey'>(saved ? 'apiKey' : 'pool');
+  const laneOnly = LANE_ONLY_HARNESSES.includes(harness);
+  const [mode, setMode] = useState<'pool' | 'apiKey'>(saved || laneOnly ? 'apiKey' : 'pool');
   const [url, setUrl] = useState(saved?.baseUrl ?? '');
   const [secretName, setSecretName] = useState(saved?.secretName ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    setMode(saved ? 'apiKey' : 'pool');
+    setMode(saved || laneOnly ? 'apiKey' : 'pool');
     setUrl(saved?.baseUrl ?? '');
     setSecretName(saved?.secretName ?? '');
-  }, [saved?.baseUrl, saved?.secretName]);
+  }, [saved?.baseUrl, saved?.secretName, laneOnly]);
 
   const harnessOk = LANE_HARNESSES.includes(harness);
   const problem = urlProblem(url);
@@ -112,9 +121,12 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
           ]}
         />
       </div>
-      {!harnessOk && <span className="mt-1 block text-meta text-fg-subtle">{t('agents.lane.harnessOnly')}</span>}
+      {!harnessOk && <span className="mt-1 block text-meta text-fg-subtle">{t('agents.lane.harnessOnly', { harnesses: LANE_HARNESSES.join(locale === 'ko' ? '·' : ', ') })}</span>}
 
-      {mode === 'pool' && saved === null && <div className="mt-2">{pool}</div>}
+      {mode === 'pool' && saved === null && !laneOnly && <div className="mt-2">{pool}</div>}
+      {mode === 'pool' && saved === null && laneOnly && (
+        <span className="mt-2 block text-meta text-fg-subtle" data-testid="lane-only-pool">{t('agents.lane.noPoolHarness', { harness })}</span>
+      )}
 
       {mode === 'pool' && saved !== null && (
         <div className="mt-2 rounded-row bg-warning-surface px-3 py-2 text-meta text-warning" data-testid="lane-off-confirm">
@@ -168,7 +180,7 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
               disabled={!canSave || !dirty} data-testid="lane-save"
               onClick={() => save({ baseUrl: normalized!, secretName })}>{t('agents.lane.save')}</button>
             <button type="button" className="rounded-row border border-border px-3 py-1 text-fg disabled:opacity-50" disabled={!dirty || busy}
-              onClick={() => { setUrl(saved?.baseUrl ?? ''); setSecretName(saved?.secretName ?? ''); if (!saved) setMode('pool'); }}>
+              onClick={() => { setUrl(saved?.baseUrl ?? ''); setSecretName(saved?.secretName ?? ''); if (!saved && !laneOnly) setMode('pool'); }}>
               {t('agents.lane.revert')}
             </button>
             {/* 켜기는 러너가 다시 떠야 들고, 이미 켠 연결의 주소·비밀 바꾸기는 다음 턴에 든다(C1). */}
