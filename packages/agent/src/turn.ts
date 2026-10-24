@@ -22,8 +22,9 @@ import {
 import { RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV } from '@harkroom/shared/runnerLink';
 import { validateToolRule } from '@harkroom/shared';
 
-import { executionModelFor, readonlyToolsFor, usesPiHome, usesXdgHome } from './adapters/index.js';
+import { executionModelFor, readonlyToolsFor, usesOmpHome, usesPiHome, usesXdgHome } from './adapters/index.js';
 import { piSessionsDir } from './piHome.js';
+import { ompDirs } from './ompHome.js';
 import { OPENCODE_LANE_AGENT, OPENCODE_READONLY_AGENT, opencodeDirs, opencodeLaneHome } from './opencodeHome.js';
 
 /**
@@ -43,6 +44,11 @@ export interface TurnPlan {
   env: Record<string, string>;
   /** stdin 리다이렉션용 파일 경로. null 이면 PTY stdin 을 그대로 쓴다(인터랙티브·resume). */
   stdinFile: string | null;
+  /**
+   * 하네스를 띄울 cwd 가 작업 폴더가 아닐 때만 채운다(omp — 저장소 밖 빈 폴더, security B4). 부르는 쪽은
+   * `plan.cwd ?? <작업 폴더>` 로 띄운다.
+   */
+  cwd?: string;
 }
 
 export interface BuildTurnCommandOptions {
@@ -113,6 +119,12 @@ export interface BuildTurnCommandOptions {
    * pi 에는 다른 권한 장치가 없어, 목록 없이 뜨면 쓰기·셸이 다 열린 채 돈다.
    */
   readonlyToolList?: string | null;
+  /** omp 의 러너 전용 상태 루트(`ompHome.ts`). */
+  ompHome?: string;
+  /** omp 턴의 cwd·agentDir — 스레드마다 고정한 자리(`ompHome.ts::ompThreadDirs`, B4·G1). */
+  ompThread?: { cwd: string; agentDir: string };
+  /** omp 가 `--add-dir` 로 붙일 작업 폴더. omp 는 cwd 가 작업 폴더가 아니라서 따로 받는다. */
+  workspaceDir?: string;
   /**
    * 이 턴을 돌릴 claude 계정의 `CLAUDE_CONFIG_DIR`(`claudeAccounts.ts`). **`null` 은 '계정
    * 지정 없음'** 이고, 그때 자식은 시스템 기본(`~/.claude`)을 쓴다 — 계정 풀을 안 만든
@@ -656,6 +668,34 @@ const PI_PRESET: HarnessPreset = {
   },
 };
 
+/**
+ * omp (oh-my-pi 18.12.6 실측, 2026-10-24) — pi 포크. pi 와 다른 점:
+ *
+ * 1. **`--session-id` 가 없다.** 러너가 첫 턴 전에 헤더 한 줄 파일을 `--session-dir` 에 써 두고
+ *    (`ompHome.ts::writeOmpSessionHeader`) 첫 턴부터 `--resume <uuid>` 로 띄운다 — 첫 턴과 이후 턴이 같은 인자다.
+ * 2. **cwd 가 작업 폴더가 아니다.** 저장소의 `.omp/`·`.mcp.json`·`.env` 를 신뢰를 묻지 않고 읽어서, cwd 는
+ *    빈 폴더로 옮기고 작업 폴더는 `--add-dir` 로 붙인다(security B4). 그 인자·`--config` 오버레이(C4)·
+ *    `--session-dir` 은 `buildTurnCommand` 가 상태 루트로 짓는다 — 이 표에는 정적인 것만 둔다.
+ * 3. **`--no-extensions`** — 확장은 omp 프로세스 안에서 도는 코드다. 홈을 격리했지만 발견 자체를 끈다.
+ *    `--no-title` — 제목을 짓는 모델 호출 한 번을 아낀다.
+ */
+const OMP_PRESET: HarnessPreset = {
+  command: 'omp',
+  session: (sessionId) => ['--resume', sessionId as string],
+  allowsNullSessionOnFirstTurn: false,
+  permission: { auto: [], readonly: [] },
+  mcp: () => [],
+  model: (model) => (model ? ['--model', model] : []),
+  effort: (effort) => (effort ? ['--thinking', effort] : []),
+  alwaysArgs: () => ['--no-extensions', '--no-title'],
+  prompt: (systemPrompt, _promptCtx, _mode, systemPromptFile) => {
+    if (systemPrompt && !systemPromptFile) {
+      throw new Error('buildTurnCommand: omp 는 지시문을 파일로만 받는다 — systemPromptFile 이 비어 있다(#92)');
+    }
+    return systemPromptFile ? ['--append-system-prompt', systemPromptFile] : [];
+  },
+};
+
 const PRESETS: Record<AgentHarness, HarnessPreset | 'unsupported'> = {
   'claude-code': CLAUDE_PRESET,
   codex: CODEX_PRESET,
@@ -663,6 +703,7 @@ const PRESETS: Record<AgentHarness, HarnessPreset | 'unsupported'> = {
   opencode: OPENCODE_PRESET,
   kilo: KILO_PRESET,
   pi: PI_PRESET,
+  omp: OMP_PRESET,
   gemini: 'unsupported',
 };
 
@@ -827,6 +868,13 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   if (usesPiHome(opts.harness) && !opts.piHome) {
     throw new Error('buildTurnCommand: piHome 이 비어 있다 — 개인 pi 설정·확장·MCP 를 격리할 수 없다');
   }
+  const omp = usesOmpHome(opts.harness);
+  if (omp && (!opts.ompHome || !opts.ompThread?.cwd || !opts.ompThread.agentDir || !opts.workspaceDir)) {
+    throw new Error('buildTurnCommand: omp 의 ompHome·ompThread·workspaceDir 중 빈 것이 있다 — 저장소 설정을 막을 수 없다(security B4)');
+  }
+  if (omp && `${opts.ompThread!.cwd}/`.startsWith(`${opts.workspaceDir as string}/`)) {
+    throw new Error('buildTurnCommand: omp 의 cwd 가 작업 폴더 안에 있다 — 저장소 설정이 실린다(security B4·C2)');
+  }
   const allowlist = readonlyToolsFor(opts.harness);
   const readonlyByList = allowlist !== null && opts.mode === 'mention' && opts.mentionPermission === 'readonly';
   if (readonlyByList && !opts.readonlyToolList) {
@@ -853,6 +901,13 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     // pi 의 세션 자리는 **저장소가 정할 수 있다**(`.pi/settings.json` 의 `sessionDir`, 신뢰 판정 전) —
     // CLI 인자로 러너 루트에 못박는다(`piHome.ts::piSessionsDir`, security U1).
     ...(usesPiHome(opts.harness) ? ['--session-dir', piSessionsDir(opts.piHome as string)] : []),
+    // omp: 세션 자리·오버레이·작업 폴더를 상태 루트로 못박는다(`ompHome.ts`, security B4·C4).
+    ...(omp ? [
+      '--session-dir', ompDirs(opts.ompHome as string).sessionsDir,
+      '--config', ompDirs(opts.ompHome as string).overlay,
+      '--cwd', opts.ompThread!.cwd,
+      '--add-dir', opts.workspaceDir as string,
+    ] : []),
     ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, operatorBin: opts.operatorBin, extraMcpServers: opts.extraMcpServers ?? {} }),
     ...(opts.providerEnv ? preset.laneArgs?.(opts.providerEnv) ?? [] : []),
     ...preset.model(opts.model),
@@ -872,6 +927,8 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
       codexHome: opts.harness === 'codex' ? opts.codexHome : null,
       opencodeHome: usesXdgHome(opts.harness) ? (opts.opencodeHome ?? null) : null,
       piHome: usesPiHome(opts.harness) ? (opts.piHome ?? null) : null,
+      ompHome: omp ? (opts.ompHome ?? null) : null,
+      ompAgentDir: omp ? opts.ompThread!.agentDir : null,
       claudeConfigDir: opts.harness === 'claude-code' ? opts.claudeConfigDir : null,
       causeMessageId: opts.causeMessageId ?? null,
       turnId: opts.turnId ?? null,
@@ -880,6 +937,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
       ...(preset.mcpEnv?.(opts.extraMcpServers ?? {}) ?? {}),
     },
     stdinFile: opts.stdinFile ?? null,
+    ...(omp ? { cwd: opts.ompThread!.cwd } : {}),
   };
 }
 
@@ -993,6 +1051,8 @@ function childEnv(
     claudeConfigDir: string | null;
     opencodeHome: string | null;
     piHome?: string | null;
+    ompHome?: string | null;
+    ompAgentDir?: string | null;
     causeMessageId: string | null;
     turnId?: string | null;
     providerEnv?: Record<string, string> | null;
@@ -1038,6 +1098,14 @@ function childEnv(
   if (homes.piHome) {
     env.PI_CODING_AGENT_DIR = homes.piHome;
     delete env.PI_CODING_AGENT_SESSION_DIR;
+  }
+  // omp 는 `HOME` 까지 옮긴다(C3) — 로그·natives 캐시가 `$HOME/.omp` 에 남고 natives 는 실행 코드로 실린다.
+  // 프로필(`OMP_PROFILE`)은 홈 안의 다른 자리를 고르므로 지운다.
+  if (homes.ompHome) {
+    env.HOME = ompDirs(homes.ompHome).home;
+    env.PI_CODING_AGENT_DIR = homes.ompAgentDir ?? ompDirs(homes.ompHome).agentDir;
+    delete env.PI_CODING_AGENT_SESSION_DIR;
+    delete env.OMP_PROFILE;
   }
   // **`null` 이면 키 자체를 넣지 않는다.** 빈 문자열을 넣으면 claude 가 그것을 경로로 읽어
   // 엉뚱한 자리에 설정을 만든다 — "계정 지정 없음"은 부재로 표현해야 시스템 기본으로 떨어진다.

@@ -10,7 +10,7 @@
  */
 import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { relative, isAbsolute, join } from 'node:path';
-import { CODEX_LANE_VERSIONS, normalizeProviderBaseUrl, OPENCODE_LANE_VERSIONS, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
+import { CODEX_LANE_VERSIONS, normalizeProviderBaseUrl, OMP_LANE_VERSIONS, OPENCODE_LANE_VERSIONS, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
 import type { AgentHarness } from '@harkroom/shared';
 import { PROVIDER_LANE_OPENCODE_PROVIDER, providerLaneModelId } from './opencodeHome.js';
 
@@ -18,6 +18,13 @@ import { PROVIDER_LANE_OPENCODE_PROVIDER, providerLaneModelId } from './opencode
 export const CODEX_LANE_KEY_ENV = 'HARKROOM_LANE_API_KEY';
 /** codex lane 의 주소를 조립(`buildTurnCommand`)까지 실어 나르는 이름. 자식 env 에는 넣지 않는다. */
 export const CODEX_LANE_BASE_URL_ENV = 'HARKROOM_LANE_BASE_URL';
+
+/**
+ * omp lane 의 주소·키 파일 경로를 조립까지 실어 나르는 이름(둘 다 자식 env 에는 넣지 않는다). 러너가 그 스레드의
+ * `models.yml` 에 주소와 `apiKey: "!cat <키 파일>"` 을 쓴다(`ompHome.ts::writeOmpLaneModels`, security K1~K3a).
+ */
+export const OMP_LANE_BASE_URL_ENV = 'HARKROOM_OMP_LANE_BASE_URL';
+export const OMP_LANE_KEY_FILE_ENV = 'HARKROOM_OMP_LANE_KEY_FILE';
 
 /**
  * 하네스별로 lane 이 넣을 수 있는 키(security ⓑ). 여기 없는 하네스는 lane 을 못 쓴다 — 넣을 자리를 모르면
@@ -30,6 +37,8 @@ export const PROVIDER_LANE_ENV_KEYS: Partial<Record<AgentHarness, readonly strin
   // codex 는 provider 의 `env_key` 로 키를 읽는다(`codexLaneArgs`). 주소는 env 로 받지 않는다 — 설정 키 `base_url` 은 env 를 못 읽어
   // argv 로만 간다. 그래서 주소는 `CODEX_LANE_BASE_URL_ENV` 로 조립까지만 실어 나르고 자식 env 에서는 뺀다(`PROVIDER_LANE_ARGV_ONLY_KEYS`).
   codex: [CODEX_LANE_KEY_ENV, CODEX_LANE_BASE_URL_ENV],
+  // omp 는 키를 env 로 받지 않는다 — env 에 두면 bash·MCP 자식이 그대로 본다(실측 K3). 둘 다 조립에만 쓴다.
+  omp: [OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV],
 };
 
 /**
@@ -46,6 +55,7 @@ export function laneModelMissing(lane: boolean, harness: AgentHarness, model: st
 /** 허용 목록에 있지만 하네스 env 에는 넣지 않는 이름 — argv 조립에만 쓴다. */
 export const PROVIDER_LANE_ARGV_ONLY_KEYS: Partial<Record<AgentHarness, readonly string[]>> = {
   codex: [CODEX_LANE_BASE_URL_ENV],
+  omp: [OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV],
 };
 
 /** codex lane 의 provider 이름(`model_providers.<이름>`). */
@@ -115,10 +125,17 @@ export function codexLaneVersionOk(raw: string | null | undefined): boolean {
   return m !== null && (CODEX_LANE_VERSIONS as readonly string[]).includes(m[1]!);
 }
 
+/** omp lane 의 판 관문(`OMP_LANE_VERSIONS`). 출력은 `omp/<판>` 한 줄이다(18.12.6 실측). 잰 판과 **정확히** 같을 때만 받는다. */
+export function ompLaneVersionOk(raw: string | null | undefined): boolean {
+  const m = /^omp\/(\d+\.\d+\.\d+)$/.exec((raw ?? '').trim());
+  return m !== null && (OMP_LANE_VERSIONS as readonly string[]).includes(m[1]!);
+}
+
 /** 하네스별 판 관문 — 격리를 잰 판 밖이면 `harness_version`. 없는 하네스는 판을 묻지 않는다. */
 const PROVIDER_LANE_VERSION_GATE: Partial<Record<AgentHarness, (raw: string | null) => boolean>> = {
   opencode: opencodeLaneVersionOk,
   codex: codexLaneVersionOk,
+  omp: ompLaneVersionOk,
 };
 
 /** lane 턴 파일 자리(러너 상태 폴더, 작업 폴더 밖, 0700). 파일은 멘션마다 하나, 기동 때 남은 것을 걷는다. */
@@ -302,6 +319,10 @@ export function createProviderLane(deps: ProviderLaneDeps): {
     if (!value || /[\r\n\0]/.test(value)) throw new ProviderLaneError('bad_value');
     if (usesCodexKey) {
       return { [CODEX_LANE_KEY_ENV]: value, [CODEX_LANE_BASE_URL_ENV]: baseUrl };
+    }
+    // omp: 값은 읽어 검사만 한다 — `models.yml` 에는 키 파일 경로만 간다(K1·K3a). 파일은 오퍼레이터의 턴 임대 자리라 턴 끝에 걷힌다.
+    if (providerLaneKeys(harness)?.includes(OMP_LANE_KEY_FILE_ENV)) {
+      return { [OMP_LANE_BASE_URL_ENV]: baseUrl, [OMP_LANE_KEY_FILE_ENV]: real! };
     }
     if (viaTurnFile) {
       // 값은 읽어 검사만 한다 — opencode 에는 키 파일 경로만 간다.

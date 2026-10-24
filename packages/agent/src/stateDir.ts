@@ -72,6 +72,8 @@ export interface AgentStatePaths {
   opencodeHomeDir: string;
   /** pi 의 러너 전용 `PI_CODING_AGENT_DIR`(`piHome.ts`). */
   piHomeDir: string;
+  /** omp 의 러너 전용 상태 루트(`ompHome.ts`) — HOME·PI_CODING_AGENT_DIR·오버레이·빈 cwd 가 그 아래 선다. */
+  ompHomeDir: string;
   /** 전용 제공사 경로(`providerLane.ts`)의 claude config 디렉터리 — 계정 풀 밖, 이 에이전트 전용(security ⓒ). */
   providerLaneClaudeDir: string;
   /** 전용 제공사 경로의 codex `CODEX_HOME` — 계정 로그인(`auth.json`)을 링크하지 않는 이 에이전트 전용 홈(`providerLane.ts`). */
@@ -105,6 +107,7 @@ export function resolveAgentStateDir(
     codexHomeDir: join(agentStateDir, 'codex-home'),
     opencodeHomeDir: join(agentStateDir, 'opencode-home'),
     piHomeDir: join(agentStateDir, 'pi-home'),
+    ompHomeDir: join(agentStateDir, 'omp-home'),
     providerLaneClaudeDir: join(agentStateDir, 'claude-provider-lane'),
     providerLaneCodexDir: join(agentStateDir, 'codex-provider-lane'),
     cleanupBackfillPath: join(agentStateDir, 'cleanup-backfill.json'),

@@ -20,6 +20,7 @@ import { CODEX_ADAPTER } from './codex.js';
 import { OPENCODE_ADAPTER } from './opencode.js';
 import { KILO_ADAPTER } from './kilo.js';
 import { PI_ADAPTER } from './pi.js';
+import { OMP_ADAPTER } from './omp.js';
 import type { ExecutionModel, HarnessAdapter, ReadonlyTools, XdgApp } from './contract.js';
 
 export type { HarnessAdapter, ExecutionModel, TrustLedger, TranscriptSource, AccountAxis, XdgApp, ReadonlyTools } from './contract.js';
@@ -38,6 +39,8 @@ export const ADAPTERS: Record<AgentHarness, HarnessAdapter | 'unsupported'> = {
   kilo: KILO_ADAPTER,
   // 권한 승인 장치가 없는 첫 하네스(실측 2026-10-01). 읽기 전용은 `readonlyTools` 로 건다.
   pi: PI_ADAPTER,
+  // pi 포크(실측 2026-10-24). 저장소 설정을 묻지 않고 읽어 cwd 를 빈 폴더로 옮긴다(`ompHome.ts`).
+  omp: OMP_ADAPTER,
   // `-r` 이 UUID 를 받지 못해 `--session-id` 와 짝을 이루지 못한다(실측, task-1).
   gemini: 'unsupported',
 };
@@ -243,8 +246,22 @@ export function readonlyToolsFor(harness: AgentHarness): ReadonlyTools | null {
  * 이름이 아니라 표에 묻는다.
  */
 export function usesPiHome(harness: AgentHarness): boolean {
+  const env = configDirEnvOf(harness);
+  return env.includes('PI_CODING_AGENT_DIR') && !env.includes('HOME');
+}
+
+/**
+ * 이 하네스가 **`PI_CODING_AGENT_DIR` 와 `HOME` 을 함께** 옮기는가(omp — 로그·natives 캐시가 `$HOME/.omp` 에
+ * 남는다, security C3). pi 와 같은 변수를 쓰지만 홈·cwd·세션의 모양이 달라 `usesPiHome` 과 갈라 둔다.
+ */
+export function usesOmpHome(harness: AgentHarness): boolean {
+  const env = configDirEnvOf(harness);
+  return env.includes('PI_CODING_AGENT_DIR') && env.includes('HOME');
+}
+
+function configDirEnvOf(harness: AgentHarness): readonly string[] {
   const adapter = ADAPTERS[harness];
-  return adapter !== 'unsupported' && adapter.account?.configDirEnv.includes('PI_CODING_AGENT_DIR') === true;
+  return adapter === 'unsupported' ? [] : adapter.account?.configDirEnv ?? [];
 }
 
 /** XDG 하네스의 이름표(`xdgApp`). XDG 하네스가 아니거나 어댑터가 없으면 `null`. */

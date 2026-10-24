@@ -19,7 +19,7 @@ import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mer
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
-import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesPiHome, usesTuiForMention, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
+import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
 import { RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
 import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
@@ -32,8 +32,9 @@ import type { ReviewFork } from './reviewFork.js';
 import { readLastAssistantText, readMacPermissionWaits, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type MacPermissionWait, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
-import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneModelMissing } from './opencodeHome.js';
+import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneModelMissing, providerLaneModelId } from './opencodeHome.js';
 import { listPiMcpTools, piSessionFile, readonlyToolList } from './piHome.js';
+import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -41,7 +42,7 @@ import type { MemoryCache } from './memoryCache.js';
 import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { planThreadNote, type ThreadNoteState } from './threadNotePin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
-import { laneModelMissing, laneScrubsSubprocessEnv, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
+import { laneModelMissing, laneScrubsSubprocessEnv, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
 import { laneWorkspaceViolations } from './laneWorkspaceGuard.js';
 
 /** 정지 직전 "제출 대기" 판정에 쓰는 화면 꼬리 길이(글자). 입력줄과 바닥줄 몇 개면 된다. */
@@ -252,6 +253,8 @@ export interface MentionTurnDeps {
   opencodeHome: string;
   /** pi 의 러너 전용 상태 루트(`piHome.ts`). pi 를 안 돌리는 테스트는 비워 둔다. */
   piHome?: string;
+  /** omp 의 러너 전용 상태 루트(`ompHome.ts`). omp 를 안 돌리는 테스트는 비워 둔다. */
+  ompHome?: string;
   /**
    * 이 턴을 돌릴 claude 계정 이름(`claudeAccounts.ts`). `null` 은 계정 지정 없음(시스템
    * 기본)이다. **세션 무효화 판정이 이 값을 쓴다** — 계정이 바뀌면 그 스레드의 claude
@@ -1291,9 +1294,13 @@ export async function runMentionTurn(
    * UI 로 지시문을 바꾸면 다음 턴부터 반영돼야 하고, 기억·채널 이름이 턴마다 다르다.
    * 되살린 세션이 앞 턴의 지시문을 들고 있다고 해서 **그 내용이 지금 것이라는 보장은 없다.**
    */
+  // omp 는 저장소 밖 빈 폴더에서 뜬다(security B4) — 셸이 거기서 시작하므로 작업 폴더를 본문 맨 앞에 알린다.
+  const ompWorkspaceNote = usesOmpHome(def.harness)
+    ? `(작업 폴더는 ${rec.workspaceDir} 이다. 셸은 빈 폴더에서 시작하니 파일·명령은 그 경로에서 다뤄라.)`
+    : '';
   const promptForHarness = guardInjectedPrompt(prefixesSystemPrompt(def.harness)
-    ? [systemPrompt, turnPrompt].filter((s) => s.length > 0).join('\n\n')
-    : turnPrompt);
+    ? [systemPrompt, ompWorkspaceNote, turnPrompt].filter((s) => s.length > 0).join('\n\n')
+    : [ompWorkspaceNote, turnPrompt].filter((s) => s.length > 0).join('\n\n'));
   let stdinFile: string | null = null;
   if (!usesTui) {
     stdinFile = await writePromptFile(deps.stateDir, promptForHarness);
@@ -1317,7 +1324,10 @@ export async function runMentionTurn(
   // 남긴다(`readonlyToolList`) — 답할 길을 잃는 쪽이 쓰기가 열리는 쪽보다 낫다. 로그엔 남긴다.
   const allowlist = readonlyToolsFor(def.harness);
   let turnReadonlyTools: string | null = null;
-  if (allowlist && def.mentionPermission === 'readonly') {
+  if (allowlist && def.mentionPermission === 'readonly' && allowlist.list === null) {
+    // 글롭이 먹는 하네스(omp)는 묻지 않는다 — 서버 이름으로 좁힌 글롭이 곧 목록이다(security R).
+    turnReadonlyTools = ompReadonlyToolList(allowlist);
+  } else if (allowlist && allowlist.list && def.mentionPermission === 'readonly') {
     const discovered = await listPiMcpTools({
       command: harnessCommand(def.harness),
       args: allowlist.list,
@@ -1353,6 +1363,26 @@ export async function runMentionTurn(
   }
   // lane 이면 그 턴의 값을 지금 받는다 — 임대는 스케줄러가 이 멘션의 첫 시도 전에 받아 두었다.
   const providerEnv = deps.providerEnv ? await deps.providerEnv(mentionId, def.harness) : null;
+  // omp: 스레드마다 고정한 `git init` 빈 cwd(B4·G1) — 그 폴더와 위 폴더에 저장소 설정 이름이 있으면 띄우지 않는다(C2).
+  // 세션 헤더는 그 cwd 로 미리 쓴다 — `--resume` 은 헤더의 cwd 가 실제 cwd 와 같아야 이어 간다(실측).
+  let ompThread: OmpThreadDirs | undefined;
+  if (usesOmpHome(def.harness)) {
+    if (!deps.ompHome) throw new Error('mentionTurn: omp 턴인데 ompHome 이 없다');
+    // 판 고정(C1): PTY 가 띄울 실행 파일이 고정한 판의 공식 바이너리여야 한다 — 저장소 설정 차단이 판마다 바뀔 수 있다.
+    const ompBin = await findOmpBinary(harnessPath(def.harness, process.env.PATH));
+    if (!ompBin || !(await ompBinaryOk(ompBin))) throw new ProviderLaneError('harness_version');
+    ompThread = await ensureOmpThread(deps.ompHome, key);
+    const bad = await ompCwdViolations(ompThread.cwd, deps.stateDir);
+    if (bad.length) throw new Error(`mentionTurn: omp 의 빈 cwd 나 그 위 폴더에 설정 이름이 있어 띄우지 않는다: ${bad.join(', ')}`);
+    await writeOmpSessionHeader(ompDirs(deps.ompHome).sessionsDir, rec.sessionId as string, ompThread.cwd);
+    // omp 는 lane 으로만 돈다 — 러너는 사람 로그인을 물려받지 않아 lane 이 없으면 돌 모델이 없다(`ompHome.ts` 머리말).
+    const baseUrl = providerEnv?.[OMP_LANE_BASE_URL_ENV];
+    const keyPath = providerEnv?.[OMP_LANE_KEY_FILE_ENV];
+    if (!baseUrl || !keyPath) throw new ProviderLaneError('lane_unset');
+    const id = providerLaneModelId(turnModel.model);
+    if (!id) throw new ProviderLaneError('bad_model');
+    await writeOmpLaneModels(ompThread.agentDir, { baseUrl, keyPath, models: [id] });
+  }
   const plan = buildTurnCommand({
     harness: def.harness,
     mode: 'mention',
@@ -1363,7 +1393,9 @@ export async function runMentionTurn(
     promptCtx: turnPrompt,
     stdinFile,
     // 모델 칸에는 gateway 가 받는 원문을 적는다 — opencode lane 은 여기서만 lane provider 안의 이름으로 부른다(`laneRunModel`).
-    model: laneRunModel(Boolean(providerEnv), usesXdgHome(def.harness), turnModel.model),
+    model: ompThread
+      ? `${OMP_LANE_PROVIDER}/${providerLaneModelId(turnModel.model) as string}`
+      : laneRunModel(Boolean(providerEnv), usesXdgHome(def.harness), turnModel.model),
     effort: turnModel.effort,
     mentionPermission: def.mentionPermission,
     // lane 턴은 하위 프로세스 env 를 걷는다(`PROVIDER_LANE_FIXED_ENV`) — 브릿지에 줄 값은 lane 전용 MCP 설정의 `env` 칸으로 준다.
@@ -1381,6 +1413,9 @@ export async function runMentionTurn(
     codexHome: deps.codexHome,
     opencodeHome: deps.opencodeHome,
     piHome: deps.piHome,
+    ompHome: deps.ompHome,
+    ompThread,
+    workspaceDir: rec.workspaceDir,
     readonlyToolList: turnReadonlyTools,
     claudeConfigDir: deps.claudeConfigDir,
     // 연쇄 깊이의 앞 고리 — 이 턴을 띄운 멘션이다(앵커가 아니다: 앵커는 스레드 루트일 수 있다).
@@ -2073,7 +2108,7 @@ export async function runMentionTurn(
   let result: TurnResult;
   try {
     result = canceledBeforeSpawn() ?? await deps.runTurn(plan, {
-      cwd: rec.workspaceDir,
+      cwd: plan.cwd ?? rec.workspaceDir,
       // **0 = 무기한**(pty.ts 옵션 주석). TUI 턴의 시간 한도는 러너가 무발화로 잰다 —
       // PTY 쪽 시계는 프로세스 수명을 재는데, TUI 에서는 그 둘이 다른 사실이다.
       // codex 는 `exec` 이라 두 사실이 같으므로 그대로 PTY 시계를 쓴다.
@@ -2366,6 +2401,8 @@ export async function runMentionTurn(
     // pi 도 세션 id 를 미리 주지만 기록은 claude 의 `projects/` 가 아니라 자기 루트에 있다(security U2).
     const transcript = usesPiHome(def.harness) && deps.piHome
       ? await piSessionFile(deps.piHome, rec.sessionId).catch(() => null)
+      : usesOmpHome(def.harness) && deps.ompHome
+      ? await ompSessionFile(deps.ompHome, rec.sessionId).catch(() => null)
       : preassignsSessionId(def.harness)
       ? await claudeSessionFilePath(rec.sessionId, { configDir: deps.claudeConfigDir }).catch(() => null)
       : discoversSessionIdAfterTurn(def.harness) && !usesXdgHome(def.harness)
@@ -2375,7 +2412,7 @@ export async function runMentionTurn(
       deps.noteTranscript(mentionId, transcript);
       // claude 는 jsonl 옆 `<sessionId>/` 에 큰 도구 출력(tool-results)·서브에이전트 전사(subagents)를 따로
       // 남긴다(security T1, 실측). 그 디렉터리도 가린다 — 없으면 가리기가 그냥 지나간다.
-      if (preassignsSessionId(def.harness) && !usesPiHome(def.harness)) deps.noteTranscript(mentionId, join(dirname(transcript), rec.sessionId));
+      if (preassignsSessionId(def.harness) && !usesPiHome(def.harness) && !usesOmpHome(def.harness)) deps.noteTranscript(mentionId, join(dirname(transcript), rec.sessionId));
     }
   }
 
