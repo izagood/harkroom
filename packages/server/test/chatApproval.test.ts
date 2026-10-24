@@ -358,6 +358,35 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect((await systemLines(thread))[0]!.body).toContain('이미 정해졌거나 만료됐다');
   });
 
+  it('T3 — 카드 없는 스레드의 맨 글이 부정·물음·끝맺지 않은 꼴이면 다른 채널에 기다리는 요청이 있어도 아무 줄도 달지 않는다(A안)', async () => {
+    await expireAll();
+    const { requestId } = await ask(await root());
+    // 실제로 경고가 붙었던 두 글(10-24) — 채널 맨 글, 소유자의 다른 채널에 기다리는 요청이 하나 있었다.
+    const cases = [
+      ['이제 API 키로 하네스들 테스트 진행할 수 있으니까\n구독 있는 것들은 매일 주기적으로 기능 qa 진행할 수 있도록 계획해\n그리고 기존에 API 키가 없어서 하네스 추가할때 테스트 못 했던 것도 이제 모두 진행해야해', 'negated'],
+      ['내가 뭐 승인 하라고 한 것도 없는데 저건 무슨 경고야 원인 분석해줘', 'notFinal'],
+      ['승인할까?', 'question'],
+      ['바이패스 승인', 'bypass'],
+    ] as const;
+    for (const [body, block] of cases) {
+      expect(parseChatApproval(body)?.block, body).toBe(block);
+      const res = await say(alice.token, body, undefined, otherCh);
+      expect(res.statusCode).toBe(201);
+      expect(await systemLines(res.json().id as string), body).toHaveLength(0);
+    }
+    expect(await status(requestId)).toBe('pending');
+  });
+
+  it('카드 스레드(T2)에서는 같은 글에 지금처럼 「승인 안 됨」 안내를 단다', async () => {
+    const thread = await root();
+    const { requestId } = await ask(thread);
+    await say(alice.token, '내가 뭐 승인 하라고 한 것도 없는데 저건 무슨 경고야 원인 분석해줘', thread);
+    const lines = await systemLines(thread);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.meta.chatApproval.reason).toBe('notFinal');
+    expect(await status(requestId)).toBe('pending');
+  });
+
   it('맨 글을 고쳐 링크를 덧붙여도 다시 판정하지 않는다', async () => {
     const thread = await root();
     const { cardId, requestId } = await ask(thread);
