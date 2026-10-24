@@ -61,6 +61,12 @@ export interface SecretView {
 export interface SecretGrantView {
   id: string; agentId: string; channelId: string | null; operatorId: string | null;
   grantedBy: string; grantedAt: string; suspendedAt: string | null; suspendReason: string | null;
+  /**
+   * 정지된 줄이면 멈춘 뒤 바뀐 에이전트 설정 칸 **이름**(값 없음, 서버 #1499). 기록 전에 멈춘 줄은 `[]`.
+   * `lastChangedAt` 은 그 기록의 마지막 시각(#1521) — [다시 허락] 이 **가공 없이** `seenChangedAt` 으로 되돌려 보낸다.
+   * 옛 서버는 칸이 없다(undefined) — 그때는 [다시 허락] 을 그리지 않는다.
+   */
+  changedFields?: string[] | null; lastChangedAt?: string | null;
 }
 /** 접근 기록 한 줄. 값·해시는 없다. */
 export interface SecretAccessView {
@@ -1050,6 +1056,10 @@ export class ApiClient {
   }
   putSecretGrant(id: string, body: { agentId: string; channelId: string | null; operator: 'current' | 'any' }): Promise<void> {
     return this.req<unknown>('PUT', `/secrets/${id}/grants`, body).then(() => undefined);
+  }
+  /** 정지된 부여를 범위 그대로 다시 허락한다. `seenChangedAt` 은 확인창에 보인 줄의 `lastChangedAt` 그대로(#1521 n1). */
+  reapproveSecretGrant(id: string, grantId: string, seenChangedAt: string | null): Promise<{ grantId: string; operatorId: string | null }> {
+    return this.req('POST', `/secrets/${id}/grants/${grantId}/reapprove`, { seenChangedAt });
   }
   deleteSecretGrant(id: string, grantId: string): Promise<void> {
     return this.req('DELETE', `/secrets/${id}/grants/${grantId}`);

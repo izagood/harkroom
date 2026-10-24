@@ -3,6 +3,7 @@ import type { AccountView } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { ApiError, type SecretAccessView, type SecretGrantView, type SecretView } from '../../lib/api';
+import type { OperatorView } from '@harkroom/shared';
 import { useLocale, useT } from '../../i18n/useT';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { Menu, type MenuItem } from '../Menu';
@@ -54,7 +55,7 @@ async function fileToBase64(f: File): Promise<string> {
   return btoa(bin);
 }
 
-export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
+export function SecretsSettings({ targetId, onOpenAgent }: { targetId?: string; onOpenAgent?: (agentId: string) => void } = {}) {
   const t = useT();
   const locale = useLocale();
   const me = useActiveStore((s) => s.me);
@@ -285,7 +286,7 @@ export function SecretsSettings({ targetId }: { targetId?: string } = {}) {
                               </button>
                             ))}
                           </div>
-                          {tab === 'grants' && <GrantsPanel secret={s} canGrant={mine && !expired} expiredMine={mine && expired} onChanged={load} />}
+                          {tab === 'grants' && <GrantsPanel secret={s} canGrant={mine && !expired} expiredMine={mine && expired} onChanged={load} onOpenAgent={onOpenAgent} />}
                           {tab === 'access' && <AccessPanel secret={s} />}
                         </>
                       )}
@@ -565,7 +566,42 @@ export function AgentMadeBadge({ secret }: { secret: Pick<SecretView, 'createdBy
   return null;
 }
 
-function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: SecretView; canGrant: boolean; expiredMine: boolean; onChanged(): Promise<void> }) {
+/** 한국어 주격 조사 — 받침이 있으면 「이」, 없으면 「가」(「지시문이」·「작업 디렉터리가」). 한글이 아니면 「가」. */
+function josa(word: string): string {
+  const c = word.charCodeAt(word.length - 1);
+  return c >= 0xac00 && c <= 0xd7a3 && (c - 0xac00) % 28 !== 0 ? '이' : '가';
+}
+
+/** 바뀐 칸 이름을 사람 말로. 모르는 칸은 이름 그대로 둔다. */
+function fieldLabel(t: ReturnType<typeof useT>, f: string): string {
+  const key = `secrets.field.${f}`;
+  const v = t(key as Parameters<typeof t>[0]);
+  return v === key ? f : v;
+}
+
+/**
+ * 정지 사유를 사람 말로(designer 시안 v1 ②). 바뀐 칸은 둘까지 잇고 셋부터는 「지시문 외 2개」. 바뀐 칸 기록이 없는 줄
+ * (#1499 앞에 멈춘 줄)은 「에이전트 설정이 바뀜」. 모르는 사유는 원문 그대로.
+ */
+export function pausedReason(t: ReturnType<typeof useT>, locale: string, g: Pick<SecretGrantView, 'suspendReason' | 'changedFields'>): string {
+  switch (g.suspendReason) {
+    case 'definition_changed': {
+      const fields = (g.changedFields ?? []).map((f) => fieldLabel(t, f));
+      if (fields.length === 0) return t('secrets.pausedDefinition');
+      // 둘은 한국어는 「·」, 그 밖은 「 and 」로 잇는다(designer n1).
+      const text = fields.length <= 2 ? fields.join(locale === 'ko' ? '·' : ' and ') : t('secrets.pausedFieldsMore', { first: fields[0]!, n: String(fields.length - 1) });
+      // 조사는 한국어만 붙인다 — 다른 사전도 같은 자리표시자를 써야 해서(i18n 시험) 빈 값으로 넘긴다.
+      return t('secrets.pausedFields', { fields: text, josa: locale === 'ko' ? josa(text) : '' });
+    }
+    case 'assignment_changed': return t('secrets.pausedAssignment');
+    case 'agent_disabled': return t('secrets.pausedDisabled');
+    default: return g.suspendReason ?? '';
+  }
+}
+
+function GrantsPanel({ secret, canGrant, expiredMine, onChanged, onOpenAgent }: {
+  secret: SecretView; canGrant: boolean; expiredMine: boolean; onChanged(): Promise<void>; onOpenAgent?: (agentId: string) => void;
+}) {
   const t = useT();
   const locale = useLocale();
   const accounts = useActiveStore((s) => s.accounts);
@@ -576,6 +612,9 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<SecretGrantView | null>(null);
+  // [다시 허락] 확인창. `again` 은 창을 연 사이 또 바뀌어 서버가 409 changed_since·state_changed 를 준 뒤 새 목록으로 다시 연 것.
+  const [reapproving, setReapproving] = useState<{ grant: SecretGrantView; again: boolean; error: string | null } | null>(null);
+  const [reapproved, setReapproved] = useState<string | null>(null);
   const explain = useExplain();
 
   const load = useCallback(async () => {
@@ -589,10 +628,46 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
   };
   const handle = (id: string) => accounts[id]?.handle ?? id.slice(0, 8);
   const me = useActiveStore((s) => s.me);
+  const owner = canGrant || expiredMine;
+  useEffect(() => {
+    if (!reapproved) return;
+    const h = setTimeout(() => setReapproved(null), 2000);
+    return () => clearTimeout(h);
+  }, [reapproved]);
+
+  const reapprove = async (g: SecretGrantView) => {
+    setBusy(true);
+    setReapproving((r) => r && { ...r, error: null });
+    try {
+      // 서버가 준 lastChangedAt 을 **가공 없이** 돌려보낸다 — 확인창에 보인 것까지만 승인된다(#1521 n1, security r2).
+      await getController().reapproveSecretGrant(secret.id, g.id, g.lastChangedAt ?? null);
+      setReapproving(null);
+      setReapproved(g.id);
+      await load(); await onChanged();
+    } catch (e) {
+      const code = e instanceof ApiError ? e.code : undefined;
+      if (code === 'changed_since' || code === 'state_changed' || code === 'not_suspended') {
+        // 목록을 다시 읽고, 아직 멈춰 있으면 새 내용으로 확인창을 다시 띄운다. 이미 풀렸으면(not_suspended) 조용히 닫는다.
+        let fresh: SecretGrantView[] | null = null;
+        try { fresh = await getController().listSecretGrants(secret.id); setRows(fresh); } catch { setRows('error'); }
+        const next = fresh?.find((x) => x.id === g.id && x.suspendedAt);
+        setReapproving(code !== 'not_suspended' && next ? { grant: next, again: true, error: null } : null);
+        void onChanged();
+      } else {
+        const msg = code === 'secret_expired' ? t('secrets.reapproveErrExpired')
+          : code === 'not_assigned' ? t('secrets.reapproveErrNotAssigned', { handle: handle(g.agentId) })
+          : code === 'agent_disabled' ? t('secrets.reapproveErrDisabled')
+          : explain(e);
+        setReapproving((r) => r && { ...r, error: msg });
+      }
+    } finally { setBusy(false); }
+  };
   // 비밀은 **내 에이전트**에게만 준다 — 서버도 남의 에이전트는 not_own_agent 로 거절한다(#1135 security M1).
   const agents = Object.values(accounts).filter((a) => a.kind === 'agent').sort((a, b) => a.handle.localeCompare(b.handle));
   const mineAgents = agents.filter((a) => a.ownerAccountId === me?.id);
   const grantedIds = new Set(Array.isArray(rows) ? rows.map((g) => g.agentId) : []);
+  const notOwn = (g: SecretGrantView) => !!accounts[g.agentId] && accounts[g.agentId]!.ownerAccountId !== secret.ownerAccountId;
+  const agentOff = (g: SecretGrantView) => !!accounts[g.agentId]?.disabled;
 
   return (
     <div className="mt-2" data-testid="secret-grants">
@@ -613,15 +688,42 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
                 title={g.operatorId ? t('secrets.boundOperatorTitle', { handle: handle(g.agentId) }) : t('secrets.anyOperatorWarn')}>
                 {g.operatorId ? t('secrets.boundOperator') : t('secrets.anyOperator')}
               </span>
-              {g.suspendedAt && <span className="rounded bg-warning-surface px-1 text-warning">{t('secrets.suspended', { reason: g.suspendReason ?? '' })}</span>}
+              {g.suspendedAt && (
+                <span className="rounded bg-warning-surface px-1 text-warning" data-testid="secret-grant-paused"
+                  title={t('secrets.pausedAt', { when: new Date(g.suspendedAt).toLocaleString(locale) })}>
+                  {t('secrets.suspended', { reason: pausedReason(t, locale, g) })}
+                </span>
+              )}
+              {!g.suspendedAt && reapproved === g.id && (
+                <span className="rounded bg-success-surface px-1 text-success" data-testid="secret-grant-reapproved">{t('secrets.reapproved')}</span>
+              )}
               {/* #1156 앞에 생긴 옛 줄: 받는 에이전트의 소유자가 비밀 주인과 다르면 서버가 reveal 을 not_own_agent 로 막는다. */}
               {accounts[g.agentId] && accounts[g.agentId]!.ownerAccountId !== secret.ownerAccountId && (
                 <span className="rounded bg-danger-surface px-1 text-danger" data-testid={`secret-grant-not-own-${handle(g.agentId)}`}>{t('secrets.notOwnBlocked')}</span>
               )}
-              <span className="ml-auto text-fg-subtle">{t('secrets.grantedOn', { when: new Date(g.grantedAt).toLocaleDateString(locale) })}</span>
-              <button type="button" disabled={busy} aria-label={t('secrets.revokeAria', { handle: handle(g.agentId) })}
-                className="rounded-row px-1.5 py-0.5 text-fg-subtle opacity-0 transition-opacity hover:bg-danger-surface hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 disabled:group-hover:opacity-50 [@media(hover:none)]:opacity-100"
-                onClick={() => setRevoking(g)}>{t('secrets.revoke')}</button>
+              {/* 날짜·[다시 허락]·[거두기]는 한 묶음으로 오른쪽에 붙는다 — 좁은 폭에서 버튼만 다음 줄 왼쪽으로 떨어지지 않게(designer n4). */}
+              <span className="ml-auto flex items-center gap-x-2.5">
+                <span className="whitespace-nowrap text-fg-subtle">{t('secrets.grantedOn', { when: new Date(g.grantedAt).toLocaleDateString(locale) })}</span>
+                {/* [다시 허락]: 정지 행에서는 늘 보인다(designer 시안 v1 ①) — 그 행에서 할 일이 이것이라서. 소유자만, 그리고
+                    lastChangedAt 을 싣는 서버(#1521)일 때만 — 옛 서버 앞에서는 「본 것만 승인」을 지킬 수 없다. 꺼진 에이전트는 서버가
+                    409 를 주므로 끄고 아래에 안내한다. */}
+                {g.suspendedAt && owner && g.lastChangedAt !== undefined && !notOwn(g) && (
+                  <button type="button" disabled={busy || agentOff(g)} aria-label={t('secrets.reapproveAria', { handle: handle(g.agentId) })}
+                    title={agentOff(g) ? t('secrets.reapproveDisabledHint') : undefined}
+                    data-testid={`secret-grant-reapprove-${handle(g.agentId)}`}
+                    className="whitespace-nowrap rounded-row border border-warning px-2 py-0.5 font-medium text-warning hover:bg-warning-surface disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => { setError(null); setReapproving({ grant: g, again: false, error: null }); }}>{t('secrets.reapprove')}</button>
+                )}
+                <button type="button" disabled={busy} aria-label={t('secrets.revokeAria', { handle: handle(g.agentId) })}
+                  className="rounded-row px-1.5 py-0.5 text-fg-subtle opacity-0 transition-opacity hover:bg-danger-surface hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 disabled:group-hover:opacity-50 [@media(hover:none)]:opacity-100"
+                  onClick={() => setRevoking(g)}>{t('secrets.revoke')}</button>
+              </span>
+              {g.suspendedAt && owner && g.lastChangedAt !== undefined && !notOwn(g) && agentOff(g) && (
+                <span className="basis-full pl-[30px] text-fg-muted" data-testid="secret-grant-off-hint">
+                  {t('secrets.reapproveDisabledHint')}
+                  {onOpenAgent && <> <button type="button" className="text-accent hover:underline" onClick={() => onOpenAgent(g.agentId)}>{t('secrets.openAgentSettings')}</button></>}
+                </span>
+              )}
             </li>
           ))}
         </ul>
@@ -654,6 +756,20 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
         <p className="mt-2 text-meta text-fg-subtle">{expiredMine ? t('secrets.grantExpiredMine') : t('secrets.grantOwnerOnly')}</p>
       )}
       {error && <p role="alert" className="mt-1 text-meta text-danger" data-testid="secret-grants-error">{error}</p>}
+      {reapproving && (
+        <ReapproveDialog
+          secret={secret}
+          grant={reapproving.grant}
+          again={reapproving.again}
+          error={reapproving.error}
+          busy={busy}
+          handle={handle}
+          channelName={(id) => channels.find((c) => c.id === id)?.name ?? id.slice(0, 8)}
+          onOpenAgent={onOpenAgent}
+          onCancel={() => setReapproving(null)}
+          onConfirm={() => void reapprove(reapproving.grant)}
+        />
+      )}
       {revoking && (
         <ConfirmDialog
           title={t('secrets.revokeTitle', { handle: handle(revoking.agentId), name: secret.name })}
@@ -668,6 +784,91 @@ function GrantsPanel({ secret, canGrant, expiredMine, onChanged }: { secret: Sec
         />
       )}
     </div>
+  );
+}
+
+/**
+ * [다시 허락] 확인창(designer 시안 v1 ③). 「바뀐 에이전트를 다시 믿는다」는 판단이라 한 번 멈춰 보여 준다 — 위험 조작이
+ * 아니라 주 버튼. 멈춘 뒤 바뀐 칸(이름만 — 지시문 본문 같은 값은 서버도 주지 않는다), 범위 그대로 한 줄, 기기에 묶인 줄이면
+ * **어느 머신에 묶이는지 이름**(배정이 바뀌었으면 옛 머신은 취소선). 머신 이름은 `GET /operators` 와 에이전트 배정에서 찾고,
+ * 못 찾으면 「지금 배정된 머신」으로 쓴다.
+ */
+function ReapproveDialog({ secret, grant, again, error, busy, handle, channelName, onOpenAgent, onCancel, onConfirm }: {
+  secret: SecretView; grant: SecretGrantView; again: boolean; error: string | null; busy: boolean;
+  handle(id: string): string; channelName(id: string): string; onOpenAgent?: (agentId: string) => void;
+  onCancel(): void; onConfirm(): void;
+}) {
+  const t = useT();
+  const locale = useLocale();
+  const [machine, setMachine] = useState<{ now: OperatorView | null; before: OperatorView | null } | null>(null);
+  useEffect(() => {
+    if (!grant.operatorId) return;
+    let live = true;
+    void Promise.all([getController().operators(), getController().listAgents()]).then(([ops, agents]) => {
+      if (!live) return;
+      const nowId = agents.find((a) => a.id === grant.agentId)?.assignment?.operatorId ?? null;
+      setMachine({ now: ops.find((o) => o.id === nowId) ?? null, before: ops.find((o) => o.id === grant.operatorId) ?? null });
+    // 읽기가 실패하면 「…」에 멈추지 말고 「지금 배정된 머신」으로 떨어진다(security n3) — 모르는 채 묶는다는 것을 숨기지 않는다.
+    }).catch(() => { if (live) setMachine({ now: null, before: null }); });
+    return () => { live = false; };
+  }, [grant.agentId, grant.operatorId]);
+  const fields = grant.changedFields ?? [];
+  const channels = grant.channelId ? `#${channelName(grant.channelId)}` : t('secrets.allChannels');
+  // 읽는 동안은 「…」 — 「지금 배정된 머신」이 먼저 보였다가 이름으로 바뀌지 않게(designer n2). 못 찾으면 그 말로.
+  const nowName = machine === null ? '…' : machine.now?.name ?? t('secrets.reapproveMachineUnknown');
+  const moved = !!machine?.now && !!machine.before && machine.now.id !== machine.before.id;
+  const [pre, post] = (grant.operatorId
+    ? t(moved ? 'secrets.reapproveMove' : 'secrets.reapproveBind', { channels, machine: '\u0001' })
+    : t('secrets.reapproveAny', { channels })).split('\u0001');
+  const detail = (
+    <div className="flex flex-col gap-2.5 text-meta" data-testid="secret-reapprove-detail">
+      {again && <p role="alert" className="text-warning" data-testid="secret-reapprove-again">{t('secrets.reapproveChangedAgain')}</p>}
+      <div>
+        <div className="mb-1 text-fg-subtle">
+          {grant.lastChangedAt ? t('secrets.reapproveChangedAt', { when: new Date(grant.lastChangedAt).toLocaleString(locale) }) : t('secrets.reapproveChanged')}
+        </div>
+        {fields.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5" data-testid="secret-reapprove-fields">
+            {fields.map((f) => <span key={f} className="rounded-full border border-warning px-2 text-warning">{fieldLabel(t, f)}</span>)}
+          </div>
+        ) : (
+          <p className="text-fg-muted" data-testid="secret-reapprove-norecord">
+            {grant.suspendReason === 'definition_changed' ? t('secrets.reapproveNoRecord') : pausedReason(t, locale, grant)}
+          </p>
+        )}
+      </div>
+      <div>
+        <div className="mb-1 text-fg-subtle">{t('secrets.reapproveScope')}</div>
+        <p className="text-fg" data-testid="secret-reapprove-scope">
+          {pre}
+          {post !== undefined && (
+            <>
+              {moved && <><s className="font-mono text-fg-subtle">{machine!.before!.name}</s> </>}
+              <span className="font-mono font-medium">{nowName}</span>
+              {post}
+            </>
+          )}
+        </p>
+      </div>
+      <p className="rounded-row bg-surface-sunken px-2.5 py-2 text-fg-muted">{t('secrets.reapproveNote')}</p>
+      {onOpenAgent && (
+        <button type="button" className="self-start text-accent hover:underline" data-testid="secret-reapprove-open-agent"
+          onClick={() => { onCancel(); onOpenAgent(grant.agentId); }}>{t('secrets.openAgentSettings')} ↗</button>
+      )}
+    </div>
+  );
+  return (
+    <ConfirmDialog
+      title={t('secrets.reapproveTitle', { handle: handle(grant.agentId), name: secret.name })}
+      detail={detail}
+      detailKind="note"
+      confirmLabel={t('secrets.reapprove')}
+      cancelLabel={t('secrets.cancel')}
+      busy={busy}
+      error={error}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />
   );
 }
 

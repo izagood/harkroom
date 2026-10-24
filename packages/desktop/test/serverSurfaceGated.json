@@ -11,5 +11,6 @@
   "POST /auth/password-reset": "0.4.122",
   "POST /auth/password-reset-notices/ack": "0.4.122",
   "POST /channel-sections": "0.4.140",
+  "POST /secrets/:p/grants/:p/reapprove": "0.4.202",
   "PUT /channel-sections/order": "0.4.140"
 }
