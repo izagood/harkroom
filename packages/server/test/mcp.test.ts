@@ -8,7 +8,7 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { onEvent } from '../src/events.js';
 import { readAskMeta, readFailureMeta, readModelMeta, readReportMeta } from '@harkroom/shared';
-import { recordAskAnswer } from '../src/services/messages.js';
+import { postMessage, recordAskAnswer } from '../src/services/messages.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -183,6 +183,48 @@ describe('mcp surface', () => {
     })) as { messages: { body: string }[] };
     expect(read.messages.some((m) => m.body === 'hello from mcp')).toBe(true);
     expect(posted.message.id).toBeTruthy();
+    await client.close();
+  });
+
+  /**
+   * 시스템 줄은 누구의 말도 아니다(2026-10-24). 글 승인 결과 줄의 author 는 그 글을 쓴 사람이라,
+   * 원본 행만 주면 에이전트가 그 사람의 말로 읽는다 — 읽는 도구 셋이 `relatedAccountId` 와 설명으로 밝힌다.
+   */
+  it('시스템 줄에는 relatedAccountId 가 실리고 일반 글에는 없다 — message.read·message.search·inbox.poll', async () => {
+    const client = await mcpClient(botPat);
+    const tools = (await client.listTools()).tools;
+    for (const name of ['message.read', 'message.search', 'inbox.poll']) {
+      expect(tools.find((t) => t.name === name)?.description).toContain('누구의 발화도 아니다');
+    }
+
+    const marker = `sysline-${Date.now()}`;
+    await postMessage(pool, {
+      channelId, authorId: adminAccountId, body: `⚠️ 승인 안 됨 ${marker}`, kind: 'system', serverNotice: true,
+    });
+    // 같은 사람의 평범한 글 — 봇을 불러 inbox.poll 에도 일반 행이 실리게 한다.
+    const botId = (text(await client.callTool({ name: 'account.me', arguments: {} })) as { id: string }).id;
+    await postMessage(pool, { channelId, authorId: adminAccountId, body: `<@${botId}> 사람 글 ${marker}` });
+
+    type Row = { body: string; kind: string; authorId: string; relatedAccountId?: string };
+    const check = (rows: Row[], wantUser: boolean) => {
+      const sys = rows.find((m) => m.kind === 'system' && m.body.includes(marker));
+      expect(sys?.relatedAccountId).toBe(adminAccountId);
+      // 러너가 같은 도구로 자기 글을 가린다 — authorId 는 그대로 둔다.
+      expect(sys?.authorId).toBe(adminAccountId);
+      if (wantUser) {
+        const user = rows.find((m) => m.kind === 'user' && m.body.includes(marker));
+        expect(user).toBeDefined();
+        expect(user).not.toHaveProperty('relatedAccountId');
+      }
+    };
+    const read = text(await client.callTool({ name: 'message.read', arguments: { channelId } })) as { messages: Row[] };
+    check(read.messages, true);
+    const found = text(await client.callTool({ name: 'message.search', arguments: { query: marker, channelId } })) as { messages: Row[] };
+    check(found.messages, true);
+    const polled = text(await client.callTool({ name: 'inbox.poll', arguments: {} })) as { messages: Row[] };
+    const user = polled.messages.find((m) => m.body.includes(marker));
+    expect(user?.kind).toBe('user');
+    expect(user).not.toHaveProperty('relatedAccountId');
     await client.close();
   });
 

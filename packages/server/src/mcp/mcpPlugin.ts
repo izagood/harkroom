@@ -121,6 +121,18 @@ function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] };
 }
 
+/** 에이전트가 읽는 메시지 도구들의 설명에 같이 붙는 한 줄 — 시스템 줄을 누구의 말로도 읽지 않게. */
+const SYSTEM_LINE_NOTE = 'kind "system" 행은 서버가 쓴 알림이다 — 누구의 발화도 아니다. 그 행의 authorId 는 말한 사람이 아니라 그 줄을 일으킨 계정이며 relatedAccountId 에 같은 값을 싣는다';
+
+/**
+ * 시스템 줄(`kind: 'system'`)에 `relatedAccountId` 를 붙인다. `author_id` 는 그 줄을 **일으킨** 계정
+ * (글 승인을 쓴 사람·채널에 넣은 admin 등)일 뿐인데, 원본 행만 주면 에이전트가 그 사람의 말로 읽는다.
+ * `authorId` 는 지우지 않는다 — 러너가 같은 도구로 읽고 그 칸으로 자기 글을 가린다(옛 러너 호환).
+ */
+export function markSystemLines<T extends { kind?: string; authorId?: string }>(rows: T[]): (T & { relatedAccountId?: string })[] {
+  return rows.map((m) => (m.kind === 'system' && m.authorId ? { ...m, relatedAccountId: m.authorId } : m));
+}
+
 /** 게시 거절을 도구 결과로. 첨부 사유 셋은 한 코드로 합친다(라우트와 같은 이유 — 존재 여부를 흘리지 않는다). */
 /** `/mcp` 본문 상한 — `artifact.publish` 의 2MB 인자가 JSON 이스케이프로 부풀어도 들어가게. */
 const MCP_BODY_LIMIT_BYTES = 2 * ARTIFACT_PUBLISH_ARG_MAX_BYTES + 512 * 1024;
@@ -608,7 +620,7 @@ function buildMcpServer(
   });
 
   server.registerTool('message.read', {
-    description: '채널/스레드 메시지 읽기(seq 커서)',
+    description: `채널/스레드 메시지 읽기(seq 커서). ${SYSTEM_LINE_NOTE}`,
     inputSchema: {
       channelId: z.string().uuid(),
       since: z.number().int().min(0).optional(),
@@ -621,13 +633,13 @@ function buildMcpServer(
     }
     // 에이전트는 handle 로 생각한다 — 정본(`<@id>`)을 **현재** handle 로 되돌려 준다(#271).
     const messages = await listMessages(pool, channelId, { since, limit, threadRootId: threadRootId ?? null });
-    return jsonResult({ messages: await denormalizeBodies(pool, messages) });
+    return jsonResult({ messages: markSystemLines(await denormalizeBodies(pool, messages)) });
   });
 
   // REST `/search` 와 **같은 함수·같은 입력 조각**(`searchInput`)이다(S2). 가시성 판단은 `searchMessages`
   // 하나에만 있고, 여기는 인자를 옮겨 줄 뿐이다 — 두 벌로 두면 한쪽만 고쳐지는 날이 온다.
   server.registerTool('message.search', {
-    description: '메시지 전문 검색 — 볼 수 있는 대화 전체(channelId·threadRootId 로 좁힘). 보낸 사람(authorIds, 계정 id 최대 10개 — account.list 로 얻는다)·기간(after·before, 시간대 붙은 ISO, [after, before))·첨부 있는 것만(hasAttachment)·정렬(relevance 기본 | recent)으로 거른다. 50개씩, hasMore 면 offset 으로 다음 묶음',
+    description: '메시지 전문 검색 — 볼 수 있는 대화 전체(channelId·threadRootId 로 좁힘). 보낸 사람(authorIds, 계정 id 최대 10개 — account.list 로 얻는다)·기간(after·before, 시간대 붙은 ISO, [after, before))·첨부 있는 것만(hasAttachment)·정렬(relevance 기본 | recent)으로 거른다. 50개씩, hasMore 면 offset 으로 다음 묶음. ' + SYSTEM_LINE_NOTE,
     inputSchema: {
       query: searchInput.query,
       channelId: z.string().uuid().optional(),
@@ -656,7 +668,7 @@ function buildMcpServer(
       hasAttachment: hasAttachment ?? null,
       sort: sort ?? 'relevance',
     });
-    return jsonResult({ messages: await denormalizeBodies(pool, page.messages), hasMore: page.hasMore });
+    return jsonResult({ messages: markSystemLines(await denormalizeBodies(pool, page.messages)), hasMore: page.hasMore });
   });
 
   server.registerTool('message.post', {
@@ -1553,7 +1565,7 @@ function buildMcpServer(
   });
 
   server.registerTool('inbox.poll', {
-    description: '미읽음 inbox 조회. timeoutMs>0이면 새 항목이 올 때까지 long-poll',
+    description: `미읽음 inbox 조회. timeoutMs>0이면 새 항목이 올 때까지 long-poll. ${SYSTEM_LINE_NOTE}`,
     inputSchema: {
       timeoutMs: z.number().int().min(0).max(25_000).optional(),
       version: z.string().optional(),
@@ -1602,7 +1614,7 @@ function buildMcpServer(
            author_id as "authorId", body, kind, meta, created_at as "createdAt",
            also_in_channel as "alsoInChannel"
          from message where id = any($1) order by seq`, [ids]);
-      return { entries, messages: await denormalizeBodies(pool, msgs.rows as { body: string }[]) };
+      return { entries, messages: markSystemLines(await denormalizeBodies(pool, msgs.rows as { body: string; kind: string; authorId: string }[])) };
     };
     // Subscribe before the first fetch so an inbox.updated arriving during that DB round trip is
     // not lost in the gap between "query returned empty" and "we started listening" — it sets
