@@ -33,7 +33,7 @@ import { readLastAssistantText, readMacPermissionWaits, readMcpAuthRejections, r
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneModelMissing, providerLaneModelId } from './opencodeHome.js';
-import { listPiMcpTools, piSessionFile, readonlyToolList } from './piHome.js';
+import { ensurePiLaneThread, listPiMcpTools, PI_LANE_PROVIDER, piLaneLoginPresent, piSessionFile, readonlyToolList, writePiLaneModels } from './piHome.js';
 import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
@@ -42,7 +42,7 @@ import type { MemoryCache } from './memoryCache.js';
 import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { planThreadNote, type ThreadNoteState } from './threadNotePin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
-import { laneModelMissing, laneScrubsSubprocessEnv, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
+import { laneModelMissing, laneScrubsSubprocessEnv, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
 import { laneWorkspaceViolations } from './laneWorkspaceGuard.js';
 
 /** 정지 직전 "제출 대기" 판정에 쓰는 화면 꼬리 길이(글자). 입력줄과 바닥줄 몇 개면 된다. */
@@ -1322,6 +1322,9 @@ export async function runMentionTurn(
   // **허용 도구 목록으로 읽기 전용을 거는 하네스(pi)** — 턴 직전에 그 하네스에게 MCP 도구 이름을
   // 묻는다. MCP 이름에 `*` 가 안 먹어서(실측) 이름을 다 적어야 한다. 못 받으면 내장 읽기 도구만
   // 남긴다(`readonlyToolList`) — 답할 길을 잃는 쪽이 쓰기가 열리는 쪽보다 낫다. 로그엔 남긴다.
+  // pi API 키 연결 턴은 스레드마다 따로 쓰는 홈에서 돈다(`piHome.ts::ensurePiLaneThread`) — 그 턴의 `models.json` 이 키 파일 경로를
+  // 담으므로 동시에 도는 턴끼리 덮지 않게. 루트는 사람 로그인을 링크하지 않는 lane 루트다(`main.ts`).
+  const turnPiHome = deps.providerEnv && usesPiHome(def.harness) && deps.piHome ? await ensurePiLaneThread(deps.piHome, key) : deps.piHome;
   const allowlist = readonlyToolsFor(def.harness);
   let turnReadonlyTools: string | null = null;
   if (allowlist && def.mentionPermission === 'readonly' && allowlist.list === null) {
@@ -1333,12 +1336,12 @@ export async function runMentionTurn(
       args: allowlist.list,
       env: {
         ...process.env,
-        ...(deps.piHome ? { PI_CODING_AGENT_DIR: deps.piHome } : {}),
+        ...(turnPiHome ? { PI_CODING_AGENT_DIR: turnPiHome } : {}),
         PATH: harnessPath(def.harness, process.env.PATH),
       } as Record<string, string>,
       // 워크스페이스가 아니라 러너 루트에서 묻는다 — 저장소의 `.pi/` 를 아예 안 보게(security 낮음).
       // 이 명령은 `--no-approve` 를 받지 않는다(실측 `Unknown option`).
-      cwd: deps.piHome ?? rec.workspaceDir,
+      cwd: turnPiHome ?? rec.workspaceDir,
     });
     if (discovered === null || allowlist.mcpServers.some((s) => !(discovered[s]?.length))) {
       console.warn(`[mentionTurn] ${key}: ${def.harness} 읽기 전용 — MCP 도구 이름을 못 받아 내장 읽기 도구만 연다 (${JSON.stringify(discovered)})`);
@@ -1360,6 +1363,10 @@ export async function runMentionTurn(
       console.warn(`[mentionTurn] ${key}: API 키 연결 턴 — 작업 폴더에 보호 이름이 있어 띄우지 않는다: ${found.join(', ')}`);
       throw new ProviderLaneError('workspace_protected');
     }
+  }
+  // pi lane 홈에 로그인이 있으면 키를 받기 **전에** 멈춘다 — 같은 provider 이름의 로그인이 `models.json` 의 키를 이긴다(1.4.0 실측).
+  if (deps.providerEnv && usesPiHome(def.harness) && turnPiHome && await piLaneLoginPresent(turnPiHome)) {
+    throw new ProviderLaneError('harness_login_present');
   }
   // lane 이면 그 턴의 값을 지금 받는다 — 임대는 스케줄러가 이 멘션의 첫 시도 전에 받아 두었다.
   const providerEnv = deps.providerEnv ? await deps.providerEnv(mentionId, def.harness) : null;
@@ -1383,6 +1390,17 @@ export async function runMentionTurn(
     if (!id) throw new ProviderLaneError('bad_model');
     await writeOmpLaneModels(ompThread.agentDir, { baseUrl, keyPath, models: [id] });
   }
+  // pi lane: 그 스레드 홈의 `models.json` 에 주소와 키 파일 경로만 쓴다(키 값은 들지 않는다).
+  let piLaneModel: string | null = null;
+  if (providerEnv && usesPiHome(def.harness)) {
+    const baseUrl = providerEnv[PI_LANE_BASE_URL_ENV];
+    const keyPath = providerEnv[PI_LANE_KEY_FILE_ENV];
+    if (!baseUrl || !keyPath || !turnPiHome) throw new ProviderLaneError('lane_unset');
+    const id = providerLaneModelId(turnModel.model);
+    if (!id) throw new ProviderLaneError('bad_model');
+    await writePiLaneModels(turnPiHome, { baseUrl, keyPath, models: [id] });
+    piLaneModel = `${PI_LANE_PROVIDER}/${id}`;
+  }
   const plan = buildTurnCommand({
     harness: def.harness,
     mode: 'mention',
@@ -1395,7 +1413,7 @@ export async function runMentionTurn(
     // 모델 칸에는 gateway 가 받는 원문을 적는다 — opencode lane 은 여기서만 lane provider 안의 이름으로 부른다(`laneRunModel`).
     model: ompThread
       ? `${OMP_LANE_PROVIDER}/${providerLaneModelId(turnModel.model) as string}`
-      : laneRunModel(Boolean(providerEnv), usesXdgHome(def.harness), turnModel.model),
+      : piLaneModel ?? laneRunModel(Boolean(providerEnv), usesXdgHome(def.harness), turnModel.model),
     effort: turnModel.effort,
     mentionPermission: def.mentionPermission,
     // lane 턴은 하위 프로세스 env 를 걷는다(`PROVIDER_LANE_FIXED_ENV`) — 브릿지에 줄 값은 lane 전용 MCP 설정의 `env` 칸으로 준다.
@@ -1412,7 +1430,7 @@ export async function runMentionTurn(
     apiDelegatable: apiInfo.delegatable,
     codexHome: deps.codexHome,
     opencodeHome: deps.opencodeHome,
-    piHome: deps.piHome,
+    piHome: turnPiHome,
     ompHome: deps.ompHome,
     ompThread,
     workspaceDir: rec.workspaceDir,
@@ -2399,8 +2417,8 @@ export async function runMentionTurn(
   // 표(세션 id 를 미리 주는가·뒤에 찾는가·XDG 인가)로 가른다. 못 찾으면 적지 않는다(가릴 파일이 없다).
   if (deps.noteTranscript && rec.sessionId) {
     // pi 도 세션 id 를 미리 주지만 기록은 claude 의 `projects/` 가 아니라 자기 루트에 있다(security U2).
-    const transcript = usesPiHome(def.harness) && deps.piHome
-      ? await piSessionFile(deps.piHome, rec.sessionId).catch(() => null)
+    const transcript = usesPiHome(def.harness) && turnPiHome
+      ? await piSessionFile(turnPiHome, rec.sessionId).catch(() => null)
       : usesOmpHome(def.harness) && deps.ompHome
       ? await ompSessionFile(deps.ompHome, rec.sessionId).catch(() => null)
       : preassignsSessionId(def.harness)

@@ -87,6 +87,12 @@ export const OMP_LANE_VERSIONS = ['18.12.6'] as const;
 export const KILO_LANE_VERSIONS = ['7.8.17'] as const;
 
 /**
+ * pi lane 의 격리를 잰 판(러너 판 관문 `piLaneVersionOk`). lane 홈의 로그인·`models.json` 우선순위와 저장소 설정 무시(`--no-approve`)를
+ * 이 판에서 쟀다 — 판이 바뀌면 실물 시험으로 다시 잰다.
+ */
+export const PI_LANE_VERSIONS = ['1.4.0'] as const;
+
+/**
  * 턴을 못 띄운 까닭의 **허용 목록**(1c, security 조건 ③). 실패 카드 meta(`FailureMeta.failure.laneCode`)에는 이 값만 실린다 —
  * 오퍼레이터·서버가 준 문자열을 그대로 흘리지 않고, 모르는 것은 `unknown` 으로 접는다. base URL·비밀 이름·값 경로는
  * 코드가 아니므로 어디에도 실리지 않는다(조건 ①).

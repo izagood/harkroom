@@ -16,6 +16,9 @@
 //   `--tools read,grep,find,ls` 에서 쓰기·셸이 실제로 막혔고(파일 안 생김), MCP 는 **정확한 이름**을
 //   적었을 때만 살았다(`mcp__harkroom__*` 는 안 먹는다) → `readonlyTools`.
 //
+// API 키 연결(lane, 1.4.0 실측): 스레드마다 따로 쓰는 lane 홈의 `models.json` 하나로 돈다 — 키는 파일 경로만 가리키고 env 에 없다.
+// lane 홈에 로그인이 있으면 띄우지 않는다(`piHome.ts::piLaneLoginPresent`). 회귀선 `test/piLaneProjectConfig.real.test.ts`.
+//
 // 못 잰 것: 신뢰 관문(프로젝트에 `.pi/` 가 있을 때 — `--no-approve` 로 아예 안 묻게 한다),
 // 첫 기동의 fd·rg 내려받기가 막힌 망에서 어떻게 되는지, 스킬 링크 자리.
 import { GATE_PATTERN } from './gate.js';

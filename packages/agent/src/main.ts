@@ -315,7 +315,7 @@ const [me, guide] = await (async () => {
 // 뿌리가 아직 없는 첫 기동이면 읽을 것이 없다 — 그때는 빈 목록이고 새 이름으로 만든다.
 const stateDirNames = await readdir(config.stateDir).catch(() => [] as string[]);
 const {
-  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir, ompHomeDir, cleanupBackfillPath, providerLaneClaudeDir, providerLaneCodexDir,
+  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir, ompHomeDir, cleanupBackfillPath, providerLaneClaudeDir, providerLaneCodexDir, providerLanePiDir,
 } = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance, stateDirNames);
 
 // 뿌리 이름이 id 하나라(#850) 사람이 눈으로 찾을 길을 따로 낸다: `by-name/<handle> -> ../<뿌리>`.
@@ -348,7 +348,10 @@ for (const app of allXdgApps()) {
   });
 }
 // pi 도 같은 이유로 격리한다 — 한 변수(`PI_CODING_AGENT_DIR`)이고 MCP 는 그 안의 `mcp.json` 뿐이다(`piHome.ts`).
-const piHome = await ensurePiHome({ piHome: piHomeDir, mcpServers: startupMcp });
+// lane 러너는 사람 로그인·제공자를 링크하지 않는 따로 둔 루트를 쓴다 — 턴은 그 아래 스레드 홈에서 돈다(`ensurePiLaneThread`).
+const piHome = providerLaneOn
+  ? await ensurePiHome({ piHome: providerLanePiDir, mcpServers: startupMcp, lane: true })
+  : await ensurePiHome({ piHome: piHomeDir, mcpServers: startupMcp });
 // omp 는 HOME·agentdir·오버레이·빈 cwd 를 한 루트에 둔다 — 저장소 설정을 신뢰를 묻지 않고 읽기 때문이다(`ompHome.ts`).
 const ompHome = await ensureOmpHome({ ompHome: ompHomeDir, mcpServers: startupMcp });
 
@@ -450,7 +453,7 @@ const readTurnMcp = async (harness: AgentHarness, model?: string | null, laneCha
       ...(providerLaneOn ? { providerLane: { model: model ?? null, skillsDir: runnerSkillsDir(agentStateDir), ...(laneChannel ? { channel: laneChannel } : {}) } } : {}),
     });
   }
-  if (usesPiHome(harness)) await ensurePiHome({ piHome: piHomeDir, mcpServers: all });
+  if (usesPiHome(harness)) await ensurePiHome({ piHome, mcpServers: all, ...(providerLaneOn ? { lane: true } : {}) });
   if (usesOmpHome(harness)) await ensureOmpHome({ ompHome: ompHomeDir, mcpServers: all });
   const { harkroom: _harkroom, avcs: _avcs, ...extra } = all;
   return extra;
