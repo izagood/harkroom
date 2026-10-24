@@ -122,7 +122,8 @@ export function UpdatesSettings() {
         {/* 켜는 것만으로는 바뀌는 것이 없다 — 되돌릴 수 없는 순간은 설치다. 그래서 모달 없이 켜져 있는 동안 한 줄(#3). */}
         {ludicrous && (
           <p data-testid="updates-ludicrous-warn" className="bg-warning-surface px-4 py-2.5 text-meta text-warning last:rounded-b-compose">
-            ⚠ {t('settings.updates.ludicrousWarn')}
+            {/* 표지는 눈으로만 본다 — 스크린리더가 「경고 표지」부터 읽지 않게(designer n1). */}
+            <span aria-hidden>⚠</span> {t('settings.updates.ludicrousWarn')}
           </p>
         )}
         {aheadOfStable && (

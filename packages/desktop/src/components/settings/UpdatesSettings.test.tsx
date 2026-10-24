@@ -358,7 +358,7 @@ describe('UpdatesSettings — 앱 언어를 따른다', () => {
 });
 
 /**
- * 받을 판(Stable / Ludicrous) — 시안 v1(jaebin 승인, 추천 5개 그대로).
+ * 받을 판(Stable / Ludicrous) — 시안 v1(승인됨, 추천 5개 그대로).
  */
 describe('UpdatesSettings — 받을 판', () => {
   // 채널을 바꾼 뒤의 재확인은 업데이트 표면이 있는 빌드에서만 돈다(`useUpdateCheck` 의 `hasUpdateSurface`).
