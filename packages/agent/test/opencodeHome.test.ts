@@ -8,7 +8,7 @@
 //    `--strict-mcp-config` 를 붙이는 것과 같은 자리(스펙 §7). opencode 에는 그 플래그가
 //    없으므로 **격리 홈을 우리가 쓰는 것**이 그 역할을 한다.
 // 3. 로그인 자리는 `<data>/**opencode**/auth.json` 으로 한 단계 깊다.
-import { mkdtemp, mkdir, readdir, readFile, writeFile, lstat, readlink, utimes } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, writeFile, lstat, readlink, stat, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -442,6 +442,21 @@ describe('opencode lane 설정 잠금', () => {
       providerLane: { model: null, channel: { id: A, toolAllows: ['Bash(git status)'] } }, lockTimeoutMs: 100,
     })).rejects.toThrow(/잠금/);
     expect(await opencodeLaneAgentMatches(f.home, A, ['Bash(git status)'])).toBe(false);
+  });
+
+  it('설정은 바꿔 끼워 쓴다 — 쓸 때마다 다른 inode, 임시 파일은 남지 않는다(security F2)', async () => {
+    const f = await fixture();
+    const write = () => ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: null, channel: { id: A, toolAllows: ['Bash(git status)'] } },
+    });
+    await write();
+    const before = (await stat(opencodeConfigFile(f.home))).ino;
+    await write();
+    expect((await stat(opencodeConfigFile(f.home))).ino).not.toBe(before);
+    const dir = join(opencodeConfigFile(f.home), '..');
+    expect((await readdir(dir)).filter((n) => n.endsWith('.tmp'))).toEqual([]);
+    expect((await stat(opencodeConfigFile(f.home))).mode & 0o777).toBe(0o600);
   });
 
   it('주인이 죽었거나 시한이 지난 잠금은 걷는다', async () => {

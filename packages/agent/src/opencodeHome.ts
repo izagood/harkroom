@@ -26,7 +26,7 @@
 // 만들어 준 표(claude 형식 `mcpServers`)를 opencode 모양으로 **번역해** 이 루트에 적는다.
 // harkroom 항목은 stdio 브릿지(`harkroom-operator mcp-bridge`)이고, 실측으로 그대로 붙는다
 // (`opencode mcp list` → `✓ connected`).
-import { chmod, lstat, mkdir, open, readdir, readFile, readlink, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readdir, readFile, readlink, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { XdgApp } from './adapters/contract.js';
@@ -400,7 +400,11 @@ export async function withConfigLock<T>(lockPath: string, fn: () => Promise<T>, 
       const [st, body] = await Promise.all([stat(lockPath).catch(() => null), readFile(lockPath, 'utf8').catch(() => '')]);
       const pid = Number(body.split(' ')[0]);
       const ownerGone = Number.isInteger(pid) && pid > 0 && !processAlive(pid);
-      if (st && (ownerGone || Date.now() - st.mtimeMs > staleMs)) { await rm(lockPath, { force: true }); continue; }
+      if (st && (ownerGone || Date.now() - st.mtimeMs > staleMs)) {
+        // 걷기 직전에 다시 읽어 같은 잠금일 때만 지운다(security n1) — 다른 기다리던 쪽이 먼저 걷고 새로 잡았으면 그 잠금은 건드리지 않는다.
+        if ((await readFile(lockPath, 'utf8').catch(() => null)) === body) await rm(lockPath, { force: true });
+        continue;
+      }
       if (Date.now() > deadline) throw new Error('opencode 설정 잠금을 잡지 못했다');
       await new Promise((r) => setTimeout(r, 25));
     }
@@ -507,7 +511,17 @@ async function ensureOpencodeHomeUnlocked(opts: {
     },
   };
   await mkdir(join(dirs.XDG_CONFIG_HOME, app.dir), { recursive: true });
-  await writeFile(opencodeConfigFile(opencodeHome, app), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  // 임시 파일 → rename 으로 바꿔 끼운다(security F2) — opencode 는 잠금 없이 읽으므로, 제자리 덮어쓰기면 다른 턴의 opencode 가
+  // 잘린 파일·반쪽 JSON 을 읽을 수 있다. 바꿔 끼우면 읽는 쪽은 늘 옛 파일 아니면 새 파일 전체를 본다.
+  const configFile = opencodeConfigFile(opencodeHome, app);
+  const tmp = `${configFile}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+    await rename(tmp, configFile);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw err;
+  }
 
   // 로그인은 링크로 재사용한다. **자리가 한 단계 깊다** — `<data>/opencode/auth.json` 이다.
   const sourceAuth = join(opts.sourceData ?? sourceOpencodeData(process.env, homedir(), app), 'auth.json');
