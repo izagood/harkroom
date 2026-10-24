@@ -145,6 +145,32 @@ describe('messages', () => {
     expect(await unreadCount()).toBe(before + 1);
   });
 
+  /**
+   * 시스템 줄은 **누구의 말도 아니다**(2026-10-24). 글 승인 결과 줄은 그 글을 쓴 사람을 author 로
+   * 남기는데, 답글로 세면 그 사람 이름으로 스레드 머리의 에이전트 턴을 띄웠다.
+   */
+  it('does not notify the thread root author for a system line', async () => {
+    const unreadCount = async () => {
+      const inbox = await app.inject({
+        method: 'GET', url: '/inbox?unread=1', headers: { authorization: `Bearer ${botPat}` },
+      });
+      return inbox.json().entries.length as number;
+    };
+
+    const root = await post(botPat, 'system root');
+    const rootId = root.json().id as string;
+    const before = await unreadCount();
+
+    const line = await postMessage(pool, {
+      channelId, authorId: adminId, body: '⚠️ 승인 안 됨', threadRootId: rootId, kind: 'system', serverNotice: true,
+    });
+    expect('message' in line ? line.message?.kind : null).toBe('system');
+    expect(await unreadCount()).toBe(before);
+
+    await post(adminToken, '다 됐다', { threadRootId: rootId });
+    expect(await unreadCount()).toBe(before + 1);
+  });
+
   it('since=0 (initial load) returns the latest N messages, not the oldest', async () => {
     const ch = await app.inject({
       method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },

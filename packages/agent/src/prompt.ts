@@ -1330,10 +1330,15 @@ function handedSection(handed: InboxDelegatedBy): string[] {
   ];
 }
 
+/** 시스템 줄 이름표 — 어느 계정의 발화도 아니라는 것을 글자로 밝힌다. */
+export const SYSTEM_LINE_LABEL = '[시스템 알림 — 사람·에이전트의 말이 아님]';
+
 /** 한 줄로 렌더링한다. handles 에 없는 작성자는 알 수 없는 사용자로 표시한다(reply.ts 의 기존 정책 계승) —
  * avcs 투영이 만드는 system 메시지 등, 호출 시점에 handles 맵이 못 따라온 작성자가 있을 수 있다. */
 function renderLine(m: MessageRow, handles: Record<string, string>): string {
-  const handle = handles[m.authorId] ?? '알 수 없는 사용자';
+  // **시스템 줄은 작성자 이름을 달지 않는다.** 서버가 쓴 알림인데 `authorId` 는 그 줄을 일으킨 계정
+  // (글 승인을 쓴 사람 등)이라, `jaebin: ⚠️ 승인 안 됨…` 으로 실으면 에이전트는 그 사람의 말로 읽는다.
+  const handle = m.kind === 'system' ? SYSTEM_LINE_LABEL : (handles[m.authorId] ?? '알 수 없는 사용자');
   // **id 를 함께 싣는다.** 파일명만 있으면 에이전트는 그 첨부를 열 방법이 없어 내용을
   // 짐작하거나 못 봤다고 답한다(2026-09-08 실측 — 아래 attachmentHowTo 주석). id 는
   // `GET /attachments/:id` 의 유일한 열쇠이고, AttachmentRow 는 그것을 이미 들고 있었다.
