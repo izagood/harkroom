@@ -728,6 +728,13 @@ export interface RunPtyTurnOptions {
      */
     onAttention?: (screen: string, kind: AttentionKind) => void;
     /**
+     * **턴 도중** 관문만 받는 콜백(2026-10-25, e2e R2). `onAttention` 이 없는 턴(풀의 마지막이 아닌 계정)도 대화가
+     * 시작된 뒤 뜬 확인 창은 계정 전환으로 풀리지 않는다 — 그 물음은 명령 하나에 대한 것이라 사람만 답한다. 그래서
+     * 턴 도중 관문은 이 콜백으로 따로 받는다. 둘 다 있으면 이것이 먼저다. 턴 시작 관문(`'startup'`)에는 쓰지 않는다 —
+     * 그 실패는 지금처럼 계정 전환 방아쇠다.
+     */
+    onTurnGate?: (screen: string) => void;
+    /**
      * 턴 도중 관문을 확인하는 주기(기본 3초). **두 번 연속** 관문으로 보여야 부른다 —
      * 판정 하나로 재면 스크롤을 지나가는 글자에 걸린다(모델이 관문 문장을 그대로 인용해
      * 출력할 수 있다). `onAttention` 이 없으면 이 창도 돌지 않는다.
@@ -1251,7 +1258,9 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         //
         // **끝을 정하지 않는다.** 위 두 창과 같은 규율이다 — PTY 는 그대로 살아 있고, 사람이
         // 관문을 지나면 하네스가 그 자리에서 일을 이어 간다. 이 창이 하는 일은 부르는 것뿐이다.
-        if (onAttention) {
+        const onTurnGate = opts.injectPrompt?.onTurnGate
+          ?? (onAttention ? (screen: string) => onAttention(screen, 'gate') : undefined);
+        if (onTurnGate) {
           const gateMs = opts.injectPrompt?.gateProbeMs ?? 3_000;
           // 지난 주기에도 관문으로 보였나 / 이 관문으로 이미 불렀나. 둘을 갈라야 한 관문에
           // 한 번만 부르면서도 **다음 관문은 다시** 부를 수 있다 — 한 턴에 관문이 여럿 뜨고
@@ -1270,7 +1279,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
             if (!seenOnce) { seenOnce = true; return; }
             if (called) return;
             called = true;
-            onAttention(decodeTailText(tail.snapshot()), 'gate');
+            onTurnGate(decodeTailText(tail.snapshot()));
           }, gateMs);
           gateProbe.unref?.();
         }

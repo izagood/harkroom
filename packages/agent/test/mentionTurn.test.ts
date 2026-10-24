@@ -4002,6 +4002,45 @@ describe('opencode 의 차례 끝을 export 로 안다 (2026-10-25)', () => {
   });
 });
 
+describe('확인 창의 깜빡임은 생존이 아니다 (2026-10-25)', () => {
+  // claude 의 도구 확인 창은 사람을 기다리는 동안 대기 표시 ⏺ 를 그렸다 지웠다 한다(실측 2.1.310). 그 바이트를 생존으로
+  // 세면 정지 시계가 영영 안 서고 턴이 30분 무발화 한도까지 갔다(e2e R2).
+  async function blinkingTurn(frame: (i: number) => string) {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, harnessStallMs: 80, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = async (_plan, opts: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      onData?: (chunk: Buffer) => void;
+    }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      opts.onData?.(Buffer.from('Do you want to proceed?\n❯ 1. Yes', 'utf8'));
+      for (let i = 0; i < 60 && killed === null; i += 1) {
+        opts.onData?.(Buffer.from(frame(i), 'utf8'));
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      return { exitCode: killed ? 143 : 0, timedOut: false, tail: '' };
+    };
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })
+      .then(() => null, (e: unknown) => (e instanceof Error ? e.message : String(e)));
+    return { killed: () => killed, err };
+  }
+
+  it('⏺ 만 깜빡이는 화면은 정지로 접힌다', async () => {
+    const { killed, err } = await blinkingTurn((i) => `\x1b[H\r\x1b[9B\x1b[38;5;246m${i % 2 ? ' ' : '⏺'}\x1b[39m\x1b[40;1H`);
+    expect(killed()).toBe('SIGTERM');
+    expect(err).toContain('harness 정지');
+  });
+
+  it('대조군: 글자가 바뀌는 화면(진행 문구)은 접지 않는다', async () => {
+    const { killed } = await blinkingTurn((i) => `\x1b[H✢ Working… (${i}s)`);
+    expect(killed()).toBeNull();
+  });
+});
+
 describe('타임아웃이 무발화 경과를 잰다 (2026-09-08)', () => {
   it('답 없이 한도를 넘기면 회수하고 실패로 끝난다', async () => {
     const fake = new FakeHarkroom(defOf());

@@ -101,7 +101,8 @@ describe('사람 부르기는 축의 마지막에서만 열린다', () => {
   it('마지막 계정이 아니면 injectPrompt 에서 통째로 뺀다', () => {
     // `pty.ts` 는 콜백의 **유무로** 두 정책을 가른다 — 넘겨 놓고 안 부르는 방식으로는
     // 안 된다. 넘기는 순간 그 턴은 던지지 않게 되고, 계정 전환이 사라진다.
-    expect(source).toContain('deps.callsForHuman === false ? {} : {');
+    // 턴 도중 확인 창만은 모든 계정에서 부른다(`onTurnGate`) — 그 물음은 계정 전환으로 안 풀린다(2026-10-25).
+    expect(source).toMatch(/deps\.callsForHuman === false\s*\? \{ onTurnGate: [^}]*\}\s*: \{ onAttention: callHuman \}/);
   });
 
   it('스케줄러가 마지막 여부를 축에서 받아 넘긴다', () => {
