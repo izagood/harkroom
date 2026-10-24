@@ -969,6 +969,16 @@ abstract class Strings {
   /// 시스템 줄은 부르는 말이 아니다(`fillSystemAccount`).
   String get systemAccountUnknown;
 
+  /// 시스템 줄 C안 — 응답 줄의 작성자 이름·배지, 기록 줄의 화면 읽기 머리말, 대상 칩(`{name}`).
+  String get systemAuthor;
+  String get systemBadge;
+  String get systemNotice;
+  String get systemAboutPost;
+  String get systemAboutRequest;
+
+  /// 대상 칩이 링크일 때 접근 이름 뒤에 붙는 말 — 「jaebin 의 글에 대해, 원 글 열기」.
+  String get systemOpenOriginal;
+
   // ── P0 ───────────────────────────────────────────────────────────────
   /// 로그인 화면 제목.
   String get loginTitle;
@@ -1247,6 +1257,8 @@ abstract class Strings {
 /// 무조건 빨개지고, 그 시험을 끄면 진짜로 번역이 빠진 키도 함께 통과한다. 예외를
 /// **값으로** 적어 두는 것이 시험을 끄는 것보다 낫다 — 늘어나면 눈에 보인다.
 const Set<String> i18nAllowSameAsEnglish = {
+  // 시스템 줄의 작성자 이름 — 앱 이름이라 번역하지 않는다(appName 과 같은 고유명사).
+  'systemAuthor',
   // 버전 표기 `v3` — 기호라 두 언어가 같다(데스크톱 `artifact.card.version` 과 같다).
   'artifactVersion',
   // 고유명사.
@@ -1589,6 +1601,12 @@ Map<String, String> stringsToMap(Strings s) => {
       'mentionPickerEmpty': s.mentionPickerEmpty,
       'mentionUnknown': s.mentionUnknown,
       'systemAccountUnknown': s.systemAccountUnknown,
+      'systemAuthor': s.systemAuthor,
+      'systemBadge': s.systemBadge,
+      'systemNotice': s.systemNotice,
+      'systemAboutPost': s.systemAboutPost,
+      'systemAboutRequest': s.systemAboutRequest,
+      'systemOpenOriginal': s.systemOpenOriginal,
       'loginTitle': s.loginTitle,
       'loginIdLabel': s.loginIdLabel,
       'loginPasswordLabel': s.loginPasswordLabel,

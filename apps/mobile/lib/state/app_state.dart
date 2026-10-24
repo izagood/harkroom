@@ -1589,6 +1589,7 @@ class AppState extends ChangeNotifier {
         threadRootId: e.threadRootId,
         readAt: now,
         meta: e.meta,
+        system: e.system,
       );
     }
     notifyListeners();
