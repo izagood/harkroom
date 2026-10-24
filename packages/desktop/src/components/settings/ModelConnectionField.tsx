@@ -8,6 +8,7 @@
  * - 키 값은 이 화면에 없다. 허락된 비밀의 **이름**만 고른다(`useProviderLane`).
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { harnessHasAccountPool, type AgentHarness } from '@harkroom/shared';
 import { normalizeProviderBaseUrl, PROVIDER_SECRET_NAME, type ProviderLaneConfig } from '@harkroom/shared/providerLane';
 import { useLocale, useT } from '../../i18n/useT';
 import type { ProviderLaneState } from '../../lib/useProviderLane';
@@ -15,24 +16,33 @@ import { laneCodeText } from '../../lib/laneCodes';
 import { Segmented } from './primitives';
 
 /** API 키 연결을 쓸 수 있는 하네스(러너 `PROVIDER_LANE_ENV_KEYS` 와 같은 목록). */
-export const LANE_HARNESSES: readonly string[] = ['claude-code', 'opencode', 'codex', 'omp'];
+export const LANE_HARNESSES: readonly string[] = ['claude-code', 'opencode', 'codex', 'omp', 'kilo', 'pi'];
 /**
  * 계정 풀이 없어 API 키로만 도는 하네스(omp — 사람 홈에 로그인·제공자가 없으면 돌 모델이 없다, designer #1540 c1·4).
  * [계정 풀]을 누르면 빈자리 대신 그렇다고 한 줄을 쓰고, 저장된 연결이 없으면 처음부터 [API 키]로 연다.
  */
 export const LANE_ONLY_HARNESSES: readonly string[] = ['omp'];
 
-type LaneBaseUrlLabel = 'agents.lane.baseUrl' | 'agents.lane.baseUrl.responses' | 'agents.lane.baseUrl.omp';
+type LaneBaseUrlLabel = 'agents.lane.baseUrl' | 'agents.lane.baseUrl.responses' | 'agents.lane.baseUrl.chat';
 /**
  * 주소 칸 이름 — 하네스가 gateway 를 부르는 꼴을 적는다(designer n4 A). claude-code·opencode 는 Anthropic 꼴(`/v1/messages`),
- * codex 는 OpenAI Responses 꼴(`/v1/responses`), omp 는 OpenAI chat-completions 꼴이다. 표에 없으면 Anthropic 이름이다.
+ * codex 는 OpenAI Responses 꼴(`/v1/responses`), omp·pi 는 OpenAI chat-completions 꼴이다. 표에 없으면(kilo 포함) Anthropic 이름이다.
  */
 const LANE_BASE_URL_LABEL: Readonly<Record<string, LaneBaseUrlLabel>> = {
   codex: 'agents.lane.baseUrl.responses',
-  omp: 'agents.lane.baseUrl.omp',
+  omp: 'agents.lane.baseUrl.chat',
+  pi: 'agents.lane.baseUrl.chat',
 };
 export function laneBaseUrlLabel(harness: string): LaneBaseUrlLabel {
   return LANE_BASE_URL_LABEL[harness] ?? 'agents.lane.baseUrl';
+}
+
+/**
+ * 계정 풀이 있는 하네스인가(claude-code 만, `harnessHasAccountPool`). 없으면 왼쪽 탭은 「이 맥 로그인」이고, 끄기·적용 대기 문장도
+ * 「계정 풀로」 대신 그 맥의 로그인으로 돈다고 쓴다(designer C 시안 3·D1) — 풀 칸이 비어 무엇으로 도는지 말이 없던 자리다.
+ */
+export function laneHasPool(harness: string): boolean {
+  return harnessHasAccountPool(harness as AgentHarness);
 }
 /**
  * 예전에 opencode lane 모델 칸에 붙이던 머리(러너 `PROVIDER_LANE_OPENCODE_PROVIDER`). 이제 모델 칸에는 gateway 가 받는 이름을 그대로 적고,
@@ -82,6 +92,7 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
   const locale = useLocale();
   const saved = lane.lane;
   const laneOnly = LANE_ONLY_HARNESSES.includes(harness);
+  const hasPool = laneHasPool(harness);
   const [mode, setMode] = useState<'pool' | 'apiKey'>(saved || laneOnly ? 'apiKey' : 'pool');
   const [url, setUrl] = useState(saved?.baseUrl ?? '');
   const [secretName, setSecretName] = useState(saved?.secretName ?? '');
@@ -122,21 +133,26 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
           value={mode}
           onChange={(v) => { if (v === 'pool' || harnessOk) setMode(v as 'pool' | 'apiKey'); }}
           options={[
-            { value: 'pool', label: t('agents.run.loginPool') },
+            { value: 'pool', label: t(hasPool || laneOnly ? 'agents.run.loginPool' : 'agents.run.loginLocal') },
             { value: 'apiKey', label: t('agents.run.loginApiKey') },
           ]}
         />
       </div>
       {!harnessOk && <span className="mt-1 block text-meta text-fg-subtle">{t('agents.lane.harnessOnly', { harnesses: harnessList(LANE_HARNESSES, locale) })}</span>}
 
-      {mode === 'pool' && saved === null && !laneOnly && <div className="mt-2">{pool}</div>}
+      {mode === 'pool' && saved === null && !laneOnly && hasPool && <div className="mt-2">{pool}</div>}
+      {mode === 'pool' && saved === null && !laneOnly && !hasPool && (
+        <span className="mt-2 block text-meta text-fg-subtle" data-testid="lane-local-login">
+          {harness === 'codex' ? t('agents.lane.localCodex') : t('agents.lane.localHarness', { harness })}
+        </span>
+      )}
       {mode === 'pool' && saved === null && laneOnly && (
         <span className="mt-2 block text-meta text-fg-subtle" data-testid="lane-only-pool">{t('agents.lane.noPoolHarness', { harness })}</span>
       )}
 
       {mode === 'pool' && saved !== null && (
         <div className="mt-2 rounded-row bg-warning-surface px-3 py-2 text-meta text-warning" data-testid="lane-off-confirm">
-          {laneOnly ? t('agents.lane.offConfirmNoPool', { harness }) : t('agents.lane.offConfirm')}
+          {laneOnly ? t('agents.lane.offConfirmNoPool', { harness }) : hasPool ? t('agents.lane.offConfirm') : t('agents.lane.offConfirmLocal', { harness })}
           <div className="mt-2 flex gap-2">
             <button type="button" className="rounded-row bg-accent px-3 py-1 text-fg-on-strong disabled:opacity-50" disabled={busy}
               onClick={() => save(null)}>{t('agents.lane.offSave')}</button>
@@ -288,7 +304,7 @@ export function ModelConnectionStatus({ lane, harness, now, onRestart }: {
       return (
         <div className="rounded-row bg-warning-surface px-3 py-2 text-meta text-warning" data-testid="lane-pending" role="status">
           {/* 끈 직후면 방향(계정 풀로 돌아감)을 밝힌다(designer s2). 오래가면 다시 뜨지 않은 것이다(n14). */}
-          {stuck ? t('agents.lane.pendingStuck') : t(lane.lane ? 'agents.lane.pending' : 'agents.lane.pendingOff')}
+          {stuck ? t('agents.lane.pendingStuck') : t(lane.lane ? 'agents.lane.pending' : harness && !laneHasPool(harness) && !LANE_ONLY_HARNESSES.includes(harness) ? 'agents.lane.pendingOffLocal' : 'agents.lane.pendingOff')}
           {stuck && onRestart && <>{' '}<button type="button" className="underline" data-testid="lane-pending-restart" onClick={onRestart}>{t('agents.lane.restart')}</button></>}
         </div>
       );
@@ -315,7 +331,8 @@ export function ModelConnectionStatus({ lane, harness, now, onRestart }: {
       {slot}
       {lane.lane && <>
         <span className="text-meta text-fg-subtle">{t('agents.lane.statusScope')}</span>
-        <span className="text-meta text-fg-subtle">{t('agents.lane.noPool')}</span>
+        {/* 풀이 처음부터 없는 하네스엔 군말이다(designer C n1). 하네스를 모르면 지금처럼 쓴다. */}
+        {(!harness || laneHasPool(harness)) && <span className="text-meta text-fg-subtle">{t('agents.lane.noPool')}</span>}
         <span className="text-meta text-fg-subtle">{t('agents.lane.terminalBlocked')}</span>
         <span className="text-meta text-fg-subtle">{t('agents.lane.moveNote')}</span>
       </>}

@@ -2,7 +2,7 @@
  * API 키 연결 실패 코드 → 사람 말(designer v3 ④ 표). 실패 카드·격자·실행 탭 「마지막 시도」 세 곳이 **이 표 하나**를 쓴다.
  * 코드는 허용 목록(`PROVIDER_LANE_FAILURE_CODES`)으로 접혀 오고, 여기 없는 코드는 `unknown` 문장으로 접는다(security ③).
  */
-import { CODEX_LANE_VERSIONS, OPENCODE_LANE_VERSIONS, providerLaneFailureCode } from '@harkroom/shared/providerLane';
+import { CODEX_LANE_VERSIONS, KILO_LANE_VERSIONS, OMP_LANE_VERSIONS, OPENCODE_LANE_VERSIONS, PI_LANE_VERSIONS, providerLaneFailureCode } from '@harkroom/shared/providerLane';
 import type { Translate } from '../i18n';
 
 export type LaneCodeKey =
@@ -38,6 +38,18 @@ export function laneCodeKey(raw: unknown): LaneCodeKey {
 const LANE_VERSIONS: Readonly<Record<string, readonly string[]>> = {
   opencode: OPENCODE_LANE_VERSIONS,
   codex: CODEX_LANE_VERSIONS,
+  omp: OMP_LANE_VERSIONS,
+  kilo: KILO_LANE_VERSIONS,
+  pi: PI_LANE_VERSIONS,
+};
+
+/**
+ * 하네스별로 API 키 전용 홈의 로그인 파일 자리(러너 `harness_login_present`, 에이전트 상태 폴더 기준). codex 는 lane 홈 하나,
+ * pi 는 스레드마다 폴더가 따로 있다(`piHome.ts` threads/<해시>). `{thread}` 는 그 말로 바꿔 끼운다.
+ */
+const LANE_LOGIN_HOMES: Readonly<Record<string, string>> = {
+  codex: 'codex-provider-lane/auth.json',
+  pi: 'pi-provider-lane/threads/{thread}/auth.json',
 };
 
 /**
@@ -55,6 +67,14 @@ export function laneCodeText(t: Translate, raw: unknown, harness?: string | null
     return t(key, { versions });
   }
   // 할 일은 있는 버튼 이름을 끼워 넣는다 — 버튼 이름이 바뀌어도 문장이 따라간다(designer).
+  // 지울 파일 자리 — 하네스를 알면 그 자리, 모르면 아는 자리를 모두 「또는」으로 잇는다(designer C D2, 판 문장과 같은 꼴).
+  if (key === 'lane.code.harness_login_present') {
+    const known = harness ? LANE_LOGIN_HOMES[harness] : undefined;
+    const homes = (known ? [known] : Object.values(LANE_LOGIN_HOMES))
+      .map((p) => p.replace('{thread}', t('lane.code.harness_login_present.thread')))
+      .join(t('lane.code.harness_login_present.join'));
+    return t(key, { home: homes });
+  }
   if (key === 'lane.code.lane_setup') return t(key, { action: t('agents.restart.action') });
   return t(key);
 }
