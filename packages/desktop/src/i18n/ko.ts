@@ -1013,7 +1013,7 @@ export const ko = {
   'lane.code.bg_unsupported': '백그라운드 턴은 아직 API 키로 돌 수 없다',
   'lane.code.harness_unsupported': '이 하네스는 API 키로 돌 수 없다',
   'lane.code.workspace_protected': '작업 폴더에 에이전트의 지시·도구를 바꾸는 파일·폴더(.claude·.opencode·CLAUDE.md·AGENTS.md 등)가 있어 멈췄다 — 치운 뒤 다시 불러라',
-  'lane.code.harness_version': '이 컴퓨터의 opencode 판이 API 키 연결에서 확인한 판과 달라 멈췄다 — Harkroom 을 업데이트하거나 opencode 를 맞는 판으로 깔아라',
+  'lane.code.harness_version': '이 컴퓨터의 opencode 버전이 API 키 연결에서 확인한 {line}({min} 이상)이 아니거나 읽을 수 없어 멈췄다 — opencode 를 {line} 로 맞추거나, 더 새 버전이면 Harkroom 업데이트를 기다려라',
   'lane.code.bad_model': 'opencode 모델 이름이 API 키 연결용이 아니다 — [이 에이전트만 따로]에서 harkroom-lane/<모델 이름> 으로 고쳐라',
   'lane.code.interactive_unsupported': 'API 키로 도는 에이전트는 아직 터미널 열기를 지원하지 않는다',
   'lane.code.unknown': 'API 키를 준비하지 못했다',

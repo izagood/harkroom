@@ -10,7 +10,7 @@
  */
 import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { relative, isAbsolute, join } from 'node:path';
-import { normalizeProviderBaseUrl, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
+import { normalizeProviderBaseUrl, OPENCODE_LANE_VERSION, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
 import type { AgentHarness } from '@harkroom/shared';
 import { PROVIDER_LANE_OPENCODE_PROVIDER } from './opencodeHome.js';
 
@@ -46,8 +46,6 @@ export const PROVIDER_LANE_FIXED_ENV: Partial<Record<AgentHarness, Readonly<Reco
  * opencode lane 의 격리를 잰 판(1.18.32). 홈 표지 자리가 시험용 이름이라 판이 바뀌면 조용히 풀릴 수 있다 — 이 줄 밖이면
  * 띄우지 않고 `harness_version` 으로 실패한다. 새 판을 재면 여기를 넓힌다.
  */
-export const OPENCODE_LANE_VERSION = { major: 1, minor: 18, minPatch: 32 } as const;
-
 export function opencodeLaneVersionOk(raw: string | null | undefined): boolean {
   const m = /(\d+)\.(\d+)\.(\d+)/.exec(raw ?? '');
   if (!m) return false;

@@ -2,7 +2,7 @@
  * API 키 연결 실패 코드 → 사람 말(designer v3 ④ 표). 실패 카드·격자·실행 탭 「마지막 시도」 세 곳이 **이 표 하나**를 쓴다.
  * 코드는 허용 목록(`PROVIDER_LANE_FAILURE_CODES`)으로 접혀 오고, 여기 없는 코드는 `unknown` 문장으로 접는다(security ③).
  */
-import { providerLaneFailureCode } from '@harkroom/shared/providerLane';
+import { OPENCODE_LANE_VERSION, providerLaneFailureCode } from '@harkroom/shared/providerLane';
 import type { Translate } from '../i18n';
 
 export type LaneCodeKey =
@@ -33,7 +33,13 @@ export function laneCodeKey(raw: unknown): LaneCodeKey {
 }
 
 export function laneCodeText(t: Translate, raw: unknown): string {
-  return t(laneCodeKey(raw));
+  const key = laneCodeKey(raw);
+  // 받는 줄은 러너 판 관문과 같은 상수에서 끼워 넣는다 — 관문을 넓히면 문장도 같이 바뀐다.
+  if (key === 'lane.code.harness_version') {
+    const { major, minor, minPatch } = OPENCODE_LANE_VERSION;
+    return t(key, { line: `${major}.${minor}`, min: `${major}.${minor}.${minPatch}` });
+  }
+  return t(key);
 }
 
 /** 터미널 열기 오류 문장이 러너의 API 키 거절인가(`interactive_unsupported: …`). 서버가 문장을 그대로 실어 온다. */

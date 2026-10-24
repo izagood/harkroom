@@ -73,6 +73,11 @@ export function readProviderLaneConfig(raw: unknown): ProviderLaneConfig | null 
  * - 오퍼레이터가 정하는 것: `no_lease`(재기동한 러너)·`forbidden`·`bad_request`·`unavailable`
  * - 서버 비밀 꺼내기가 정하는 것: `not_granted`·`grant_suspended`·`lease_invalid`·`not_found`·`secret_expired`·`secret_store_disabled`·`rate_limited`
  */
+/**
+ * opencode lane 의 격리를 잰 판(러너 판 관문 `opencodeLaneVersionOk` 와 데스크톱 `harness_version` 문장이 같이 쓴다). 넓히면 둘이 같이 바뀐다.
+ */
+export const OPENCODE_LANE_VERSION = { major: 1, minor: 18, minPatch: 32 } as const;
+
 export const PROVIDER_LANE_FAILURE_CODES = [
   'harness_unsupported', 'no_turn_secrets_dir', 'operator_unreachable', 'lane_unset', 'bad_base_url', 'bad_path', 'bad_value', 'bg_unsupported', 'bad_model', 'workspace_protected', 'harness_version',
   'no_lease', 'forbidden', 'bad_request', 'unavailable',
