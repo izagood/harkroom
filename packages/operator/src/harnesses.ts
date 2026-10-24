@@ -12,12 +12,13 @@ import { join } from 'node:path';
 import { harnessFallbackBinDirs, type OperatorCapabilities, type AgentHarness } from '@harkroom/shared';
 
 /** 러너가 실제로 부르는 실행 파일 이름(`turn.ts::PRESETS.command`). */
-export const HARNESS_BINARIES: Record<Extract<AgentHarness, 'claude-code' | 'codex' | 'opencode' | 'kilo' | 'pi'>, string> = {
+export const HARNESS_BINARIES: Record<Extract<AgentHarness, 'claude-code' | 'codex' | 'opencode' | 'kilo' | 'pi' | 'omp'>, string> = {
   'claude-code': 'claude',
   codex: 'codex',
   opencode: 'opencode',
   kilo: 'kilo',
   pi: 'pi',
+  omp: 'omp',
 };
 
 /**
@@ -62,6 +63,10 @@ function credentialFile(harness: keyof typeof HARNESS_BINARIES, env: NodeJS.Proc
     // `models.json` 의 `apiKey` 나 환경변수로만 주는 사람은 이 파일이 없다 — 그 경우는 아래에서 함께 본다.
     case 'pi':
       return join(env.PI_CODING_AGENT_DIR || join(home, '.pi', 'agent'), 'auth.json');
+    // omp 는 제공자를 `<agentdir>/models.yml` 에 둔다(기본 `~/.omp/agent`). 러너는 사람 로그인을 물려받지 않고
+    // API 키 연결로만 돌리므로(`ompHome.ts`) 이 칸은 「사람이 쓰는 omp 에 제공자가 있다」는 참고일 뿐이다.
+    case 'omp':
+      return join(env.PI_CODING_AGENT_DIR || join(home, '.omp', 'agent'), 'models.yml');
   }
 }
 

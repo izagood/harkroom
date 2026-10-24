@@ -54,8 +54,9 @@ import { claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, prese
 import { createAccountAssigner } from './accountAssign.js';
 import { clearAccountAttention, clearAccountCredentialFailure, isAttentionActive, markAccountCredentialFailed, markAccountNeedsAttention, readAccountAttention } from '@harkroom/shared/claudeGates';
 import { syncCodexAuth } from './codexHome.js';
-import { allXdgApps, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
+import { allXdgApps, usesOmpHome, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
 import { ensurePiHome } from './piHome.js';
+import { ensureOmpHome } from './ompHome.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
 import { createSecretLeases } from './secretLeases.js';
@@ -314,7 +315,7 @@ const [me, guide] = await (async () => {
 // 뿌리가 아직 없는 첫 기동이면 읽을 것이 없다 — 그때는 빈 목록이고 새 이름으로 만든다.
 const stateDirNames = await readdir(config.stateDir).catch(() => [] as string[]);
 const {
-  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir, cleanupBackfillPath, providerLaneClaudeDir, providerLaneCodexDir,
+  agentStateDir, legacyPath, sessionsPath, workspaceBaseDir, codexHomeDir, opencodeHomeDir, piHomeDir, ompHomeDir, cleanupBackfillPath, providerLaneClaudeDir, providerLaneCodexDir,
 } = resolveAgentStateDir(config.stateDir, me.handle, me.id, config.agentInstance, stateDirNames);
 
 // 뿌리 이름이 id 하나라(#850) 사람이 눈으로 찾을 길을 따로 낸다: `by-name/<handle> -> ../<뿌리>`.
@@ -348,6 +349,8 @@ for (const app of allXdgApps()) {
 }
 // pi 도 같은 이유로 격리한다 — 한 변수(`PI_CODING_AGENT_DIR`)이고 MCP 는 그 안의 `mcp.json` 뿐이다(`piHome.ts`).
 const piHome = await ensurePiHome({ piHome: piHomeDir, mcpServers: startupMcp });
+// omp 는 HOME·agentdir·오버레이·빈 cwd 를 한 루트에 둔다 — 저장소 설정을 신뢰를 묻지 않고 읽기 때문이다(`ompHome.ts`).
+const ompHome = await ensureOmpHome({ ompHome: ompHomeDir, mcpServers: startupMcp });
 
 // claude 계정 풀. **비어 있는 것이 정상이다** — 그때는 `CLAUDE_CONFIG_DIR` 를 주입하지 않아
 // 자식이 시스템 기본(`~/.claude`)을 쓴다(기존 동작).
@@ -448,6 +451,7 @@ const readTurnMcp = async (harness: AgentHarness, model?: string | null, laneCha
     });
   }
   if (usesPiHome(harness)) await ensurePiHome({ piHome: piHomeDir, mcpServers: all });
+  if (usesOmpHome(harness)) await ensureOmpHome({ ompHome: ompHomeDir, mcpServers: all });
   const { harkroom: _harkroom, avcs: _avcs, ...extra } = all;
   return extra;
 };
@@ -718,6 +722,7 @@ const scheduler = createMentionScheduler({
     ...(syncCodexLink ? { syncCodexAuth: syncCodexLink } : {}),
     opencodeHome,
     piHome,
+    ompHome,
     claudeAccount: account?.name ?? null,
     claudeConfigDir: account?.configDir ?? null,
     // 풀은 그 계정이 든 풀이다 — 풀 순서(2026-10-15)면 축이 풀 여러 개에 걸친다. 계정이 풀을

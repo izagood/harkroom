@@ -128,8 +128,11 @@ export interface ReadonlyTools {
   readonly builtins: readonly string[];
   /** 도구를 전부 켜 둘 MCP 서버 이름. 답하는 길(harkroom)이 여기 있어야 한다. */
   readonly mcpServers: readonly string[];
-  /** MCP 서버·도구 이름을 JSON 으로 내는 하네스 명령(인자). */
-  readonly list: readonly string[];
+  /**
+   * MCP 서버·도구 이름을 JSON 으로 내는 하네스 명령(인자). `null` 이면 묻지 않는다 — 서버 글롭이 먹는
+   * 하네스(omp, 실측 2026-10-24: `mcp__harkroom_*`)는 이름을 몰라도 목록을 닫을 수 있다.
+   */
+  readonly list: readonly string[] | null;
 }
 
 export interface XdgApp {
