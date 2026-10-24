@@ -971,6 +971,7 @@ export const ko = {
   'agents.lane.suspended': '허락 멈춤',
   'agents.lane.channelLimited': '일부 채널에만 허락됨',
   'agents.lane.unreadable': '못 읽었다',
+  'agents.lane.offConfirmNoPool': '저장하면 이 기기의 API 키 설정을 지운다. {harness}는 계정 풀이 없어서 다시 연결하기 전까지 턴마다 멈춘다. 비밀 자체는 남는다.',
   'agents.lane.offConfirm': '저장하면 이 기기의 API 키 설정(주소·비밀 이름)을 지운다. 러너가 다시 뜬 뒤(도는 턴이 끝난 뒤) 계정 풀로 돈다. 비밀 자체는 남는다.',
   'agents.lane.offSave': '지우고 저장',
   'agents.lane.save': '저장',

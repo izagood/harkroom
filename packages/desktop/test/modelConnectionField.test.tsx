@@ -140,6 +140,20 @@ describe('ModelConnectionField', () => {
     expect(screen.queryByTestId('lane-form')).toBeNull();
   });
 
+  // designer #1541 s1: omp 는 풀이 없다 — 끄기 확인이 「계정 풀로 돈다」고 하면 사실과 반대다.
+  it('omp 에 저장된 연결이 있을 때 [계정 풀]을 누르면 「턴마다 멈춘다」 확인 문장이 선다', () => {
+    renderField(laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'llm-api-key' } }), 'omp');
+    fireEvent.click(screen.getByRole('radio', { name: '계정 풀' }));
+    expect(screen.getByTestId('lane-off-confirm').textContent).toContain('omp는 계정 풀이 없어서 다시 연결하기 전까지 턴마다 멈춘다');
+    expect(screen.getByTestId('lane-off-confirm').textContent).not.toContain('계정 풀로 돈다');
+  });
+
+  it('풀이 있는 하네스의 끄기 확인은 그대로 「계정 풀로 돈다」', () => {
+    renderField(laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'llm-api-key' } }), 'claude-code');
+    fireEvent.click(screen.getByRole('radio', { name: '계정 풀' }));
+    expect(screen.getByTestId('lane-off-confirm').textContent).toContain('계정 풀로 돈다');
+  });
+
   it('다른 하네스는 주소 칸 이름이 그대로다(codex 는 후속 n4 몫)', () => {
     renderField(laneState(), 'codex');
     fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));
@@ -149,7 +163,7 @@ describe('ModelConnectionField', () => {
   it('영어에서는 하네스 목록을 쉼표로 잇는다', () => {
     usePrefsStore.getState().setLocale('en');
     renderField(laneState(), 'pi');
-    expect(screen.getByText('Available for claude-code, opencode, codex, omp only.')).toBeTruthy();
+    expect(screen.getByText('Available for claude-code, opencode, codex, and omp only.')).toBeTruthy();
   });
 
   it('마지막 시도 줄의 판 문장은 그 하네스 판만 싣는다(designer n1)', () => {

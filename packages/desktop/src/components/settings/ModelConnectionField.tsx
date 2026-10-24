@@ -48,6 +48,12 @@ export function laneModelRaw(model: string | null): string | null {
 
 type UrlProblem = 'badScheme' | 'badParts' | null;
 /** 화면이 말할 까닭을 가른다. 판정 자체는 shared `normalizeProviderBaseUrl` 이 한다(오퍼레이터가 다시 잰다). */
+/** 하네스 이름 목록 — ko 는 「·」, 그 밖은 그 언어의 「A, B and C」(designer #1541 n3). */
+export function harnessList(names: readonly string[], locale: string): string {
+  if (locale === 'ko') return names.join('·');
+  return new Intl.ListFormat(locale, { type: 'conjunction' }).format(names);
+}
+
 export function urlProblem(raw: string): UrlProblem {
   if (!raw.trim() || normalizeProviderBaseUrl(raw)) return null;
   try {
@@ -121,7 +127,7 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
           ]}
         />
       </div>
-      {!harnessOk && <span className="mt-1 block text-meta text-fg-subtle">{t('agents.lane.harnessOnly', { harnesses: LANE_HARNESSES.join(locale === 'ko' ? '·' : ', ') })}</span>}
+      {!harnessOk && <span className="mt-1 block text-meta text-fg-subtle">{t('agents.lane.harnessOnly', { harnesses: harnessList(LANE_HARNESSES, locale) })}</span>}
 
       {mode === 'pool' && saved === null && !laneOnly && <div className="mt-2">{pool}</div>}
       {mode === 'pool' && saved === null && laneOnly && (
@@ -130,7 +136,7 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
 
       {mode === 'pool' && saved !== null && (
         <div className="mt-2 rounded-row bg-warning-surface px-3 py-2 text-meta text-warning" data-testid="lane-off-confirm">
-          {t('agents.lane.offConfirm')}
+          {laneOnly ? t('agents.lane.offConfirmNoPool', { harness }) : t('agents.lane.offConfirm')}
           <div className="mt-2 flex gap-2">
             <button type="button" className="rounded-row bg-accent px-3 py-1 text-fg-on-strong disabled:opacity-50" disabled={busy}
               onClick={() => save(null)}>{t('agents.lane.offSave')}</button>

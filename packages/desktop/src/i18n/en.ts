@@ -1490,6 +1490,7 @@ export const en = {
   'agents.lane.suspended': 'Grant suspended',
   'agents.lane.channelLimited': 'Granted for some channels only',
   'agents.lane.unreadable': 'Couldn\'t read',
+  'agents.lane.offConfirmNoPool': 'Saving removes this device\'s API key settings. {harness} has no account pool, so every turn stops until you connect it again. The secret itself is kept.',
   'agents.lane.offConfirm': 'Saving removes this device\'s API key settings (URL and secret name). Turns use the account pool once the runner restarts (after the current turn). The secret itself is kept.',
   'agents.lane.offSave': 'Remove and save',
   'agents.lane.save': 'Save',
