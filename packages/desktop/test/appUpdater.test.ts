@@ -282,6 +282,15 @@ describe('Stable 승격 워크플로(promote.yml)', () => {
     expect(promote).not.toContain('TAURI_SIGNING_PRIVATE_KEY');
   });
 
+  /**
+   * `stable` 릴리즈가 있는데 매니페스트를 못 읽으면 "첫 승격"처럼 보여 되돌림 막기를 건너뛰었다
+   * (#1468 security n1). 판을 못 읽으면 서고, `allow_older=true` 로만 지나간다.
+   */
+  it('stable 릴리즈의 판을 못 읽으면 allow_older 없이는 선다', () => {
+    expect(promote).toMatch(/if ! \[\[ "\$current" =~ \^\[0-9\]\+/);
+    expect(promote).toMatch(/if \[ "\$ALLOW_OLDER" != "true" \]; then\n\s+echo "::error::\$CHANNEL_TAG 릴리즈는 있는데/);
+  });
+
   it('승격만 바꾼 머지는 앱 릴리즈를 돌리지 않는다', () => {
     expect(workflow).toContain("- '.github/workflows/promote.yml'");
   });

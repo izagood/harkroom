@@ -104,6 +104,17 @@ jobs:
           if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$CHANNEL_TAG" >/dev/null 2>&1; then
             current=$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/download/$CHANNEL_TAG/latest.json" \
               | jq -r .version) || current=""
+            # **릴리즈는 있는데 판을 못 읽으면 선다.** 그대로 두면 "첫 승격"으로 보고 되돌림 막기를
+            # 건너뛴다(404·깨진 json·version 없음 모두 같은 모양이다). 사람이 지금 Stable 을 직접 보고
+            # 그래도 올리겠다면 `allow_older=true` 로만 지나간다.
+            if ! [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              if [ "$ALLOW_OLDER" != "true" ]; then
+                echo "::error::$CHANNEL_TAG 릴리즈는 있는데 그 latest.json 에서 판을 읽지 못했다('${current}'). 지금 Stable 과 견줄 수 없어 선다 — 확인한 뒤 진행하려면 allow_older=true"
+                exit 1
+              fi
+              echo "::warning::$CHANNEL_TAG 의 판을 읽지 못했지만 allow_older=true 라 견주지 않고 진행한다"
+              current=""
+            fi
           fi
           echo "지금 Stable: ${current:-(없음)} → 올릴 판: $VERSION"
           if [ -n "$current" ] && [ "$ALLOW_OLDER" != "true" ]; then
