@@ -2,7 +2,7 @@
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseGhLinesResult, parseGhLinesSet, parseServerFrame } from '@harkroom/shared/operatorProtocol';
 import { createCommunity, type CommunityDeps } from '../src/community.js';
 import { createLocalMergePort, pickMergeGhUser } from '../src/localMerge.js';
@@ -49,10 +49,14 @@ async function setup(opts: { agents?: Record<string, object>; ghLines?: Communit
     ghRepos: (baseUrl) => { ledgers.push(baseUrl); return new Set(opts.ledger ?? ['acme/app']); },
   });
   c.start();
-  await new Promise((r) => setTimeout(r, 10));
-  const deliver = async (frame: object) => {
+  // 정해 둔 ms 만큼 자고 보면 느린 CI 에서 프레임이 아직 안 나갔다 — 그 프레임이 나갈 때까지 기다린다.
+  if (Object.keys(opts.agents ?? { a: {} }).length > 0) await vi.waitFor(() => expect(sent.some((f) => f.type === 'gh.report')).toBe(true));
+  else await new Promise((r) => setTimeout(r, 10));
+  /** 답(`gh.lines.result`)이 올 프레임이면 그 requestId 의 답이 나갈 때까지, 답이 없을 프레임(`answered: false`)이면 잠깐 기다린다. */
+  const deliver = async (frame: { type: string; requestId?: string; [k: string]: unknown }, o: { answered?: boolean } = {}) => {
     handlers!.onMessage(JSON.stringify(frame));
-    await new Promise((r) => setTimeout(r, 30));
+    if (o.answered === false) { await new Promise((r) => setTimeout(r, 30)); return; }
+    await vi.waitFor(() => expect(sent.some((f) => f.type === 'gh.lines.result' && f.requestId === frame.requestId)).toBe(true));
   };
   return { c, sent, deliver, configPath, reportsSent: () => sent.filter((f) => f.type === 'gh.report'), results: () => sent.filter((f) => f.type === 'gh.lines.result'), reports: () => reports, ledgers };
 }
@@ -78,8 +82,9 @@ describe('gh.lines.set (D3)', () => {
     const merge = (await readConfig(t.configPath)).merge;
     expect(merge?.byScope).toEqual({ 'acme/app': 'work-admin' });
     expect(pickMergeGhUser(merge, 'acme/app')).toEqual({ login: 'work-admin', scope: 'acme/app' });
+    // 다시 내는 보고는 답 뒤에 따로 읽어 만든다 — 그것도 나갈 때까지 기다린다.
+    await vi.waitFor(() => expect(t.reportsSent()).toHaveLength(2));
     expect(t.reportsSent().at(-1)).toMatchObject({ report: { byScope: { 'acme/app': 'work-admin' } } });
-    expect(t.reportsSent()).toHaveLength(2);
 
     await t.deliver({ type: 'gh.lines.set', requestId: 'r2', scope: 'acme/app', ghUser: null });
     expect(t.results().at(-1)).toEqual({ type: 'gh.lines.result', requestId: 'r2', ok: true, previous: 'work-admin' });
@@ -148,7 +153,7 @@ describe('gh.lines.set (D3)', () => {
   it('모양이 틀린 프레임에는 답하지 않는다(어느 요청인지 모른다) · 틀린 범위는 적지 않는다', async () => {
     let called = 0;
     const t = await setup({ ghLines: async () => { called += 1; } });
-    await t.deliver({ type: 'gh.lines.set', requestId: 'r1', scope: '../etc', ghUser: 'me' });
+    await t.deliver({ type: 'gh.lines.set', requestId: 'r1', scope: '../etc', ghUser: 'me' }, { answered: false });
     expect(t.results()).toEqual([]);
     expect(called).toBe(0);
     t.c.stop();
