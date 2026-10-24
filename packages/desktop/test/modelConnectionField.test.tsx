@@ -124,6 +124,24 @@ describe('ModelConnectionField', () => {
     expect(screen.getByText(/claude-code·opencode·codex에서만/)).toBeTruthy();
   });
 
+  it('마지막 시도 줄의 판 문장은 그 하네스 판만 싣는다(designer n1)', () => {
+    render(<ModelConnectionStatus harness="codex" now={Date.parse('2026-10-24T10:00:00Z')}
+      lane={laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'llm-api-key' }, status: { at: '2026-10-24T09:59:00Z', ok: false, code: 'harness_version' } })} />);
+    const line = screen.getByTestId('lane-status-fail').textContent ?? '';
+    expect(line).toContain('codex 0.154.0');
+    expect(line).not.toContain('opencode');
+  });
+
+  // designer n4 A: 주소 칸 이름이 하네스가 gateway 를 부르는 꼴을 말한다.
+  it('주소 칸 이름 — codex 는 OpenAI Responses, claude-code·opencode 는 Anthropic', () => {
+    for (const [harness, label] of [['codex', /OpenAI Responses 호환/], ['claude-code', /Anthropic 호환/], ['opencode', /Anthropic 호환/]] as const) {
+      renderField(laneState(), harness);
+      fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));
+      expect(screen.getByText(label)).toBeTruthy();
+      cleanup();
+    }
+  });
+
   it('codex 도 [API 키]로 바꿀 수 있다', () => {
     renderField(laneState(), 'codex');
     fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));

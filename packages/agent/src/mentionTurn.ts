@@ -41,7 +41,7 @@ import type { MemoryCache } from './memoryCache.js';
 import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { planThreadNote, type ThreadNoteState } from './threadNotePin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
-import { laneScrubsSubprocessEnv, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
+import { laneModelMissing, laneScrubsSubprocessEnv, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
 import { laneWorkspaceViolations } from './laneWorkspaceGuard.js';
 
 /** 정지 직전 "제출 대기" 판정에 쓰는 화면 꼬리 길이(글자). 입력줄과 바닥줄 몇 개면 된다. */
@@ -1337,7 +1337,9 @@ export async function runMentionTurn(
   }
   // opencode lane 턴의 모델이 비었거나 쓸 수 없는 글자면 lane 목록이 비고, opencode 는 「Connect a provider」 창을 띄운 채
   // 선다(2026-10-23 watcher, 10분 정지로만 접혔다). 키를 받기 전에 까닭 코드로 바로 실패한다.
-  if (opencodeLaneModelMissing(Boolean(deps.providerEnv), usesXdgHome(def.harness), turnModel.model)) {
+  // codex lane 도 같다 — 비면 자기 기본 모델 이름을 gateway 에 보내 API 오류로 끝난다(`laneModelMissing`).
+  if (opencodeLaneModelMissing(Boolean(deps.providerEnv), usesXdgHome(def.harness), turnModel.model)
+    || laneModelMissing(Boolean(deps.providerEnv), def.harness, turnModel.model)) {
     throw new ProviderLaneError('bad_model');
   }
   // 작업 폴더에 다음 턴의 지시·도구·플러그인을 바꾸는 이름이 우리 것이 아닌 꼴로 있으면 띄우지 않는다(security, `laneWorkspaceGuard.ts`).

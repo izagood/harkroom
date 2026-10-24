@@ -34,16 +34,24 @@ export function laneCodeKey(raw: unknown): LaneCodeKey {
   }
 }
 
-export function laneCodeText(t: Translate, raw: unknown): string {
+/** 하네스별로 API 키 연결 격리를 잰 판(러너 판 관문과 같은 상수). 판 관문이 없는 하네스는 여기 없다. */
+const LANE_VERSIONS: Readonly<Record<string, readonly string[]>> = {
+  opencode: OPENCODE_LANE_VERSIONS,
+  codex: CODEX_LANE_VERSIONS,
+};
+
+/**
+ * 까닭 코드를 사람 말로. `harness` 를 알면(설정 화면) 판 문장에 **그 하네스의 판만** 싣는다(designer n1). 모르면(실패 카드 — meta 에
+ * 하네스가 없다) 판 관문이 있는 하네스를 모두 「opencode 1.18.32 · codex 0.154.0」 꼴로 늘어놓는다.
+ */
+export function laneCodeText(t: Translate, raw: unknown, harness?: string | null): string {
   const key = laneCodeKey(raw);
   // 받는 줄은 러너 판 관문과 같은 상수에서 끼워 넣는다 — 관문을 넓히면 문장도 같이 바뀐다.
   if (key === 'lane.code.harness_version') {
-    // 하네스마다 잰 판이 다르다 — 「opencode 1.18.32 · codex 0.154.0」 꼴로 하네스 이름을 붙여 늘어놓는다.
     const join = t('lane.code.harness_version.join');
-    const versions = [
-      ...OPENCODE_LANE_VERSIONS.map((v) => `opencode ${v}`),
-      ...CODEX_LANE_VERSIONS.map((v) => `codex ${v}`),
-    ].join(join);
+    const known = harness ? LANE_VERSIONS[harness] : undefined;
+    const pairs = known ? [[harness!, known] as const] : Object.entries(LANE_VERSIONS);
+    const versions = pairs.flatMap(([h, vs]) => vs.map((v) => `${h} ${v}`)).join(join);
     return t(key, { versions });
   }
   // 할 일은 있는 버튼 이름을 끼워 넣는다 — 버튼 이름이 바뀌어도 문장이 따라간다(designer).

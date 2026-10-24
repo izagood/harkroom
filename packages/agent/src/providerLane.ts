@@ -12,7 +12,7 @@ import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from
 import { relative, isAbsolute, join } from 'node:path';
 import { CODEX_LANE_VERSIONS, normalizeProviderBaseUrl, OPENCODE_LANE_VERSIONS, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
 import type { AgentHarness } from '@harkroom/shared';
-import { PROVIDER_LANE_OPENCODE_PROVIDER } from './opencodeHome.js';
+import { PROVIDER_LANE_OPENCODE_PROVIDER, providerLaneModelId } from './opencodeHome.js';
 
 /** codex lane 의 키를 담는 env 이름 — provider `env_key` 가 이 이름을 읽는다. */
 export const CODEX_LANE_KEY_ENV = 'HARKROOM_LANE_API_KEY';
@@ -31,6 +31,17 @@ export const PROVIDER_LANE_ENV_KEYS: Partial<Record<AgentHarness, readonly strin
   // argv 로만 간다. 그래서 주소는 `CODEX_LANE_BASE_URL_ENV` 로 조립까지만 실어 나르고 자식 env 에서는 뺀다(`PROVIDER_LANE_ARGV_ONLY_KEYS`).
   codex: [CODEX_LANE_KEY_ENV, CODEX_LANE_BASE_URL_ENV],
 };
+
+/**
+ * lane 턴에 모델 이름이 꼭 있어야 하는 하네스(opencode 는 `opencodeLaneModelMissing` 이 따로 본다). codex 는 비면 자기 기본 모델 이름을
+ * gateway 에 보내 API 오류로 끝난다 — 키를 받기 전에 `bad_model` 로 멈춘다. 모델은 `--model` 로 argv 에 가므로 문법도 같이 본다.
+ */
+const PROVIDER_LANE_NEEDS_MODEL: Partial<Record<AgentHarness, true>> = { codex: true };
+
+/** lane 턴인데 이 하네스가 모델 이름을 꼭 받아야 하고, 그 값이 비었거나 문법(`providerLaneModelId`)에 안 맞는가. */
+export function laneModelMissing(lane: boolean, harness: AgentHarness, model: string | null | undefined): boolean {
+  return lane && PROVIDER_LANE_NEEDS_MODEL[harness] === true && providerLaneModelId(model) === null;
+}
 
 /** 허용 목록에 있지만 하네스 env 에는 넣지 않는 이름 — argv 조립에만 쓴다. */
 export const PROVIDER_LANE_ARGV_ONLY_KEYS: Partial<Record<AgentHarness, readonly string[]>> = {
