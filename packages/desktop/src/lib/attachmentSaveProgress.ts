@@ -5,21 +5,31 @@
  * - `choosing`: 저장 창이 떠 있다.
  * - `fetching`: 고른 뒤 바이트를 받는 중. `total` 은 서버의 `content-length` — 모르거나 0 이면 `null` 이고, 화면은
  *   %를 지어내지 않고 「받는 중…」만 말한다.
+ * - `writing`: 다 받았고 Rust 가 디스크에 쓰는 중. 이때는 멈출 수 없으므로 [✕]를 감춘다(security #1476 n1 — 보이는
+ *   [✕]를 눌러도 아무 일 없이 저장됐다). 문구·막대는 받기 끝 값 그대로 둔다.
  * - `failed`: 받기에 실패했다. 칩이 「받기 실패 · 다시」를 말하고 다시 누를 수 있다(다시 누르면 저장 창부터).
  */
 export type AttachmentSaveState =
   | { phase: 'choosing' }
   | { phase: 'fetching'; loaded: number; total: number | null }
+  | { phase: 'writing'; loaded: number; total: number | null }
   | { phase: 'failed' };
 
-/** 저장 창이 떠 있거나 받는 중이면 참 — 그동안은 다시 누르지 못한다. */
+/** 저장 창이 떠 있거나 받는·쓰는 중이면 참 — 그동안은 다시 누르지 못한다. */
 export function isSaveBusy(s: AttachmentSaveState | undefined): boolean {
-  return s?.phase === 'choosing' || s?.phase === 'fetching';
+  return s?.phase === 'choosing' || s?.phase === 'fetching' || s?.phase === 'writing';
+}
+
+/** 받은 양을 말할 단계인가(받는 중·쓰는 중). [✕]는 이 중 `fetching` 에만 있다. */
+export function isTransferring(
+  s: AttachmentSaveState | undefined,
+): s is Extract<AttachmentSaveState, { phase: 'fetching' | 'writing' }> {
+  return s?.phase === 'fetching' || s?.phase === 'writing';
 }
 
 /** 받은 비율(0~100 정수). 전체를 모르면 `null`. */
 export function savePercent(s: AttachmentSaveState | undefined): number | null {
-  if (s?.phase !== 'fetching' || !s.total) return null;
+  if (!isTransferring(s) || !s.total) return null;
   return Math.min(100, Math.floor((s.loaded / s.total) * 100));
 }
 

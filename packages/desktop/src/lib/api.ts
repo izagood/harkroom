@@ -797,6 +797,9 @@ export class ApiClient {
       headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
       signal: opts.signal,
     });
+    // 404 는 「서버에 없다」로 따로 말한다(controller 의 `attachment.missing` 문구, security #1476 n3 — 전에는 모든 실패가
+    // `attachment_failed` 라 그 문구가 한 번도 나오지 않았다). 그 밖은 「불러오지 못했다」.
+    if (res.status === 404) throw new ApiError(404, 'attachment_missing', 'HTTP 404');
     if (!res.ok) throw new ApiError(res.status, 'attachment_failed', `HTTP ${res.status}`);
     // 진행률을 원할 때만 몸을 조각으로 읽는다(저장 P2). 그림 미리보기 같은 다른 호출은 예전대로 `blob()` 이다.
     // 전체는 서버의 `content-length`(`attachmentRoutes`)다 — 없거나 0 이면 null 이고 부르는 쪽은 %를 지어내지 않는다.

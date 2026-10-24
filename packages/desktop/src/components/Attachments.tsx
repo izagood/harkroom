@@ -4,7 +4,7 @@ import { acquireAttachmentUrl, peekAttachmentUrl } from '../lib/attachmentUrlCac
 import type { AttachmentRow, MessageRow } from '@harkroom/shared';
 import type { PendingUpload } from '../state/appStore';
 import { getController } from '../state/controller';
-import { formatProgressBytes, isSaveBusy, savePercent } from '../lib/attachmentSaveProgress';
+import { formatProgressBytes, isSaveBusy, isTransferring, savePercent } from '../lib/attachmentSaveProgress';
 import { useActiveStore } from '../state/communities';
 import { collectGallery, type GalleryItem, type GalleryScope } from '../lib/imageGallery';
 import { stampLabel } from '../lib/day';
@@ -314,7 +314,7 @@ export function useSaveButtonLabel(attachmentId: string | undefined): { label: s
   const t = useT();
   const state = useActiveStore((s) => (attachmentId ? s.attachmentSaving[attachmentId] : undefined));
   const percent = savePercent(state);
-  const label = state?.phase === 'fetching'
+  const label = isTransferring(state)
     ? (percent === null ? t('message.attachment.saving') : t('message.attachment.savePercent', { percent }))
     : t('message.attachment.save');
   return { label, busy: isSaveBusy(state) };
@@ -338,7 +338,7 @@ function FileChip({ attachment, failed }: { attachment: AttachmentRow; failed: b
   const busy = isSaveBusy(saving);
   const percent = savePercent(saving);
   let action: string;
-  if (saving?.phase === 'fetching') {
+  if (isTransferring(saving)) {
     action = percent === null || saving.total === null
       ? t('message.attachment.saving')
       : t('message.attachment.saveProgress', { percent, bytes: formatProgressBytes(saving.loaded, saving.total) });

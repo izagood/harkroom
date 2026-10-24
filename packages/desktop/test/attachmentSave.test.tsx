@@ -330,6 +330,30 @@ describe('받는 동안 진행률·취소 (P2)', () => {
     expect(screen.queryByRole('button', { name: '받기 취소: rc68-SUMMARY.md' })).toBeNull();
   });
 
+  it('다 받고 쓰는 동안에는 [✕]를 감추고 다시 누를 수 없다 — 그때는 멈출 수 없다', async () => {
+    const saver = fakeSaver(picked);
+    let finishWrite!: () => void;
+    saver.write.mockImplementationOnce(() => new Promise<undefined>((r) => { finishWrite = () => r(undefined); }));
+    const f = steeredFetch();
+    mount(f.fetchAttachment as unknown as () => Promise<Blob>);
+    render(<MessageItem message={message()} />);
+    const chip = screen.getByRole('button', { name: '저장: rc68-SUMMARY.md' });
+
+    await act(async () => { fireEvent.click(chip); });
+    await act(async () => { f.progress(7_864_320, 7_864_320); });
+    expect(screen.getByRole('button', { name: '받기 취소: rc68-SUMMARY.md' })).toBeTruthy();
+    await act(async () => { f.ctl.finish!(); });
+
+    expect(useAppStore.getState().attachmentSaving.a1?.phase).toBe('writing');
+    expect(screen.queryByRole('button', { name: '받기 취소: rc68-SUMMARY.md' })).toBeNull();
+    expect((chip as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('attachment-file-action').textContent).toBe('100% · 7.5/7.5 MB');
+
+    await act(async () => { finishWrite(); });
+    expect(useAppStore.getState().attachmentSaving).toEqual({});
+    expect(useAppStore.getState().saveToast).toMatchObject({ name: 'rc68-SUMMARY.md' });
+  });
+
   it('받기에 실패하면 칩이 「받기 실패 · 다시」를 말하고 다시 누르면 저장 창부터 다시 간다', async () => {
     const saver = fakeSaver(picked);
     const f = steeredFetch();
@@ -366,8 +390,8 @@ describe('받는 동안 진행률·취소 (P2)', () => {
     await done;
     unsub();
 
-    // 1천~9천 바이트(0%)는 한 번도 새로 적지 않는다(앞서 적은 0% 그대로) — 끝에 지우는 한 번만 남는다.
-    expect(writes).toEqual([undefined]);
+    // 1천~9천 바이트(0%)는 한 번도 새로 적지 않는다(앞서 적은 0% 그대로) — 쓰는 중 한 번과 끝에 지우는 한 번만 남는다.
+    expect(writes.map((w) => (w as { phase?: string } | undefined)?.phase)).toEqual(['writing', undefined]);
   });
 });
 
@@ -406,6 +430,14 @@ describe('ApiClient.fetchAttachment 진행률', () => {
     const seen: (number | null)[] = [];
     await new ApiClient('http://x', 'tok').fetchAttachment('a1', { onProgress: (_l, t) => seen.push(t) });
     expect(seen).toEqual([null]);
+  });
+
+  it('404 는 attachment_missing, 그 밖의 실패는 attachment_failed 다', async () => {
+    const api = new ApiClient('http://x', 'tok');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, headers: new Headers() })));
+    await expect(api.fetchAttachment('a1')).rejects.toMatchObject({ status: 404, code: 'attachment_missing' });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, headers: new Headers() })));
+    await expect(api.fetchAttachment('a1')).rejects.toMatchObject({ status: 500, code: 'attachment_failed' });
   });
 
   it('진행률을 원하지 않으면 예전처럼 blob() 이다', async () => {
