@@ -959,6 +959,29 @@ describe('opencode lane 턴의 권한', () => {
     }
   });
 
+  // kilo lane: 부모의 같은 이름은 걷고 그 턴 파일·홈 표지·스위치만 든다(lane 턴은 프로젝트 설정을 읽지 않는다).
+  it('kilo lane 턴 env: KILO_CONFIG·KILO_TEST_HOME·KILO_DISABLE_PROJECT_CONFIG 를 그 턴 값으로 든다', () => {
+    const planted = { KILO_CONFIG: '/home/x/k.json', KILO_TEST_HOME: '/home/x', KILO_DISABLE_PROJECT_CONFIG: '0', KILO_CONFIG_CONTENT: '{}' };
+    const prev: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(planted)) { prev[k] = process.env[k]; process.env[k] = v; }
+    try {
+      const p = oc({ harness: 'kilo', mentionPermission: 'auto', providerEnv: { KILO_CONFIG: '/state/lane-turn/m1.json' } });
+      expect(p.env.KILO_CONFIG).toBe('/state/lane-turn/m1.json');
+      expect(p.env.KILO_TEST_HOME).toBe('/state/opencode-home/lane-home');
+      expect(p.env.KILO_DISABLE_PROJECT_CONFIG).toBe('1');
+      expect(p.env.KILO_DISABLE_CLAUDE_CODE).toBe('1');
+      expect(p.env.KILO_DISABLE_EXTERNAL_SKILLS).toBe('1');
+      expect('KILO_CONFIG_CONTENT' in p.env).toBe(false);
+      expect('OPENCODE_CONFIG' in p.env).toBe(false);
+      expect(p.args.join(' ')).toContain('--agent harkroom-lane');
+      expect(p.args).not.toContain('--auto');
+      // opencode 의 턴 파일 이름으로는 kilo 에 키를 넣을 수 없다.
+      expect(() => oc({ harness: 'kilo', mentionPermission: 'auto', providerEnv: lane })).toThrow(/허용되지 않은 env/);
+    } finally {
+      for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  });
+
   it('auto lane 턴은 `--auto` 없이 lane 에이전트를 고른다', () => {
     const p = oc({ mentionPermission: 'auto', providerEnv: lane });
     expect(p.args.join(' ')).toContain('--agent harkroom-lane');

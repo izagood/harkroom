@@ -8,7 +8,7 @@
 // 옮긴 것이다 — 스파이크(task-1)가 실측으로 확정했고, 초판의 추정 네 곳을 여기서 뒤집는다:
 // codex 에 `-a` 가 없다(sandbox 단독), codex MCP 는 파일이 아니라 턴별 `-c` 오버라이드,
 // claude 는 `--strict-mcp-config` 를 항상 받는다, gemini 는 이번 범위에서 미지원.
-import { CODEX_LANE_BASE_URL_ENV, codexLaneArgs, PROVIDER_LANE_ARGV_ONLY_KEYS, PROVIDER_LANE_FIXED_ENV, providerLaneKeys } from './providerLane.js';
+import { CODEX_LANE_BASE_URL_ENV, codexLaneArgs, LANE_TEST_HOME_ENV, PROVIDER_LANE_ARGV_ONLY_KEYS, PROVIDER_LANE_FIXED_ENV, providerLaneKeys } from './providerLane.js';
 import { encodeLaneHookRules } from '@harkroom/shared/providerLane';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -1092,7 +1092,11 @@ function childEnv(
   // 사람 것과 공유되는 반쪽 격리가 된다(`opencodeHome.ts` 머리말).
   if (homes.opencodeHome !== null) Object.assign(env, opencodeDirs(homes.opencodeHome));
   // lane 턴은 사람 홈의 `~/.opencode` 를 싣지 않게 비워 둔 홈 표지 자리를 준다(`opencodeLaneHome`). 셸의 `HOME` 은 그대로다.
-  if (homes.opencodeHome !== null && homes.providerEnv) env.OPENCODE_TEST_HOME = opencodeLaneHome(homes.opencodeHome);
+  if (homes.opencodeHome !== null && homes.providerEnv) {
+    const testHome = LANE_TEST_HOME_ENV[homes.harness];
+    if (!testHome) throw new Error(`buildTurnCommand: ${homes.harness} lane 턴의 홈 표지 이름을 모른다 — 사람 홈 설정이 실린다`);
+    env[testHome] = opencodeLaneHome(homes.opencodeHome);
+  }
   // pi 는 한 변수지만 세션 자리는 따로 바꿀 수 있다(`PI_CODING_AGENT_SESSION_DIR`). 부모 env 의 그
   // 값은 지운다 — 세션 자리는 argv 의 `--session-dir` 하나가 정한다(위 buildTurnCommand, security U1).
   if (homes.piHome) {

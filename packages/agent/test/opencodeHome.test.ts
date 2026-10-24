@@ -249,7 +249,7 @@ describe('lane 러너의 opencode 홈', () => {
     expect(Object.values(perm).some((v) => v === 'ask' || (typeof v === 'object' && Object.values(v as object).includes('ask')))).toBe(false);
     const edit = perm.edit as Record<string, string>;
     expect(Object.keys(edit)[0]).toBe('*');
-    for (const x of ['.claude/*', 'CLAUDE.md', 'AGENTS.md', '.mcp.json', '.opencode/*', 'opencode.json', 'opencode.jsonc']) {
+    for (const x of ['.claude/*', 'CLAUDE.md', 'AGENTS.md', '.mcp.json', '.opencode/*', 'opencode.json', 'opencode.jsonc', '.kilo/*', '.kilocode/*', '.kilocoderules', 'kilo.json', 'kilo.jsonc']) {
       expect(edit[x]).toBe('deny');
       expect(edit[`*/${x}`]).toBe('deny');
     }

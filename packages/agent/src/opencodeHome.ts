@@ -62,7 +62,11 @@ export const OPENCODE_LANE_AGENT = 'harkroom-lane';
  * - 셸·웹·하위 에이전트(`task`)는 닫는다 — claude lane 처럼 소유자가 카드로 연 규칙을 잇는 것은 D 계열에서 한다.
  */
 /** lane 턴이 작업 폴더 안이어도 못 쓰는 자리 — 다음 턴의 도구·지시·MCP 를 바꾼다(claude 의 `LANE_DENY` 와 같은 결). */
-const LANE_PROTECTED_PATHS = ['.claude/*', '.opencode/*', 'CLAUDE.md', 'AGENTS.md', '.mcp.json', 'opencode.json', 'opencode.jsonc'] as const;
+const LANE_PROTECTED_PATHS = [
+  '.claude/*', '.opencode/*', 'CLAUDE.md', 'AGENTS.md', '.mcp.json', 'opencode.json', 'opencode.jsonc',
+  // kilo lane 도 이 표를 쓴다 — kilo 가 읽는 설정·지시 이름(7.8.17 실측).
+  '.kilo/*', '.kilocode/*', '.kilocoderules', 'kilo.json', 'kilo.jsonc',
+] as const;
 
 export const OPENCODE_LANE_PERMISSION: Readonly<Record<string, unknown>> = {
   '*': 'deny',
