@@ -938,7 +938,7 @@ describe('opencode lane 턴의 권한', () => {
   it('lane 턴 env: 부모의 OPENCODE_CONFIG*·OPENCODE_TEST_HOME 은 걷고, 그 턴 파일·홈 표지·두 스위치만 든다', () => {
     const planted = {
       OPENCODE_CONFIG: '/home/x/oc.json', OPENCODE_CONFIG_CONTENT: '{"permission":"allow"}', OPENCODE_CONFIG_DIR: '/home/x/.oc',
-      OPENCODE_TEST_HOME: '/home/x', OPENCODE_DISABLE_CLAUDE_CODE: '0', HARKROOM_PROVIDER_TOKEN: 'old-x',
+      OPENCODE_TEST_HOME: '/home/x', OPENCODE_DISABLE_CLAUDE_CODE: '0', OPENCODE_DISABLE_PROJECT_CONFIG: '0', HARKROOM_PROVIDER_TOKEN: 'old-x',
     };
     const prev: Record<string, string | undefined> = {};
     for (const [k, v] of Object.entries(planted)) { prev[k] = process.env[k]; process.env[k] = v; }
@@ -948,6 +948,7 @@ describe('opencode lane 턴의 권한', () => {
       expect(p.env.OPENCODE_TEST_HOME).toBe('/state/opencode-home/lane-home');
       expect(p.env.OPENCODE_DISABLE_CLAUDE_CODE).toBe('1');
       expect(p.env.OPENCODE_DISABLE_EXTERNAL_SKILLS).toBe('1');
+      expect(p.env.OPENCODE_DISABLE_PROJECT_CONFIG).toBe('1');
       for (const k of ['OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR', 'HARKROOM_PROVIDER_TOKEN']) expect(k in p.env).toBe(false);
       // 키 값을 env 로 넣으려 하면 조립을 거절한다.
       expect(() => oc({ mentionPermission: 'auto', providerEnv: { HARKROOM_PROVIDER_TOKEN: 'x' } })).toThrow(/허용되지 않은 env/);

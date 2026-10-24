@@ -103,7 +103,11 @@ export const PROVIDER_LANE_FIXED_ENV: Partial<Record<AgentHarness, Readonly<Reco
   // opencode 는 사람 홈의 `~/.claude`(지시·스킬)·`~/.agents` 스킬을 싣는다 — 이 둘이 끈다(1.18.32 실측). `~/.opencode` 는 이것으로
   // 안 막혀서 홈 표지 자리(`OPENCODE_TEST_HOME`, 에이전트마다 다른 값이라 `childEnv` 가 얹는다)를 같이 준다.
   // 자동 업데이트도 끈다 — 턴 사이에 판이 바뀌면 관문을 지난 판과 도는 판이 갈린다(security F1, 1.18.32 코드에서 이 이름을 확인).
-  opencode: { OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_AUTOUPDATE: '1' },
+  // 프로젝트 설정도 끈다 — lane 턴의 설정은 러너가 쓴 홈 설정과 턴 파일만이다. 작업 폴더 검사(`laneWorkspaceGuard`)와 두 겹이다
+  // (회귀선 `test/opencodeLaneProjectConfig.real.test.ts`).
+  opencode: {
+    OPENCODE_DISABLE_CLAUDE_CODE: '1', OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_PROJECT_CONFIG: '1',
+  },
 };
 
 /**

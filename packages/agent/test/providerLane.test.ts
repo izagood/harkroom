@@ -89,7 +89,7 @@ describe('providerLane.envFor', () => {
   });
 
   it('lane opencode 고정 env 는 자동 업데이트를 끈다', () => {
-    expect(PROVIDER_LANE_FIXED_ENV.opencode).toMatchObject({ OPENCODE_DISABLE_AUTOUPDATE: '1' });
+    expect(PROVIDER_LANE_FIXED_ENV.opencode).toMatchObject({ OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_PROJECT_CONFIG: '1' });
   });
 
   it('턴 파일 자리가 없으면 opencode lane 은 실패한다', async () => {
