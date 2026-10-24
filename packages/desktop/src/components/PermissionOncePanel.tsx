@@ -6,9 +6,11 @@ import { getController } from '../state/controller';
 import { ApiError } from '../lib/api';
 import { useActiveStore } from '../state/communities';
 import { useLocale, useT } from '../i18n/useT';
+import type { MessageKey } from '../i18n';
 import { checkLocalMerge, getLocalMerge, hasOperatorLocalSurface, listLocalAgents } from '../lib/operatorLocal';
 import { prUrlOf } from './MergeDenialPanel';
 import { errorText } from '../lib/errorText';
+import { agoLabel } from '../lib/time';
 
 /**
  * 머지 거절에서 온 권한 카드의 [이번 한 번 머지](스레드 1b75d7a0 ③, designer 시안 merge-once-card).
@@ -93,10 +95,13 @@ export function reachFromReport(report: NonNullable<MergeAccountsView['report']>
 type Device = 'checking' | 'here' | 'elsewhere' | 'no-surface';
 type Reach = Record<string, 'ok' | 'no' | 'unknown'>;
 
-export function PermissionOncePanel({ message }: { message: MessageRow }) {
+/**
+ * 한 번 승인의 상태·계정 고르기·보내기 — 따로 선 패널(줄 없는 옛 카드)과 줄 카드 안(`OnceCardRows`)이 같이 쓴다.
+ * `eagerRemote` — 카드 안의 계정 줄은 서버 보고(D1, 서버 조회뿐이라 gh 를 깨우지 않는다)를 펼치기 전에도 읽는다.
+ */
+export function useOnceApproval(message: MessageRow | null, eagerRemote = false) {
   const t = useT();
-  const locale = useLocale();
-  const d = readPermissionOnce(message.meta);
+  const d = message ? readPermissionOnce(message.meta) : null;
   const me = useActiveStore((s) => s.me);
   const accounts = useActiveStore((s) => s.accounts);
   const [open, setOpen] = useState(false);
@@ -147,27 +152,23 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
 
   // 이 기기에서 돌지 않으면(또는 로컬 창구가 없으면) 서버 보고에서 고른다 — 펼쳤을 때만 묻는다.
   const remoteEligible = open && remoteSupported && (device === 'elsewhere' || device === 'no-surface');
+  const remoteWanted = remoteEligible || (eagerRemote && remoteSupported && isOwner && d?.status === 'pending');
   useEffect(() => {
-    if (!remoteEligible || !d) return;
+    if (!remoteWanted || !d) return;
     let alive = true;
     setRemote('loading');
     getController().getMergeAccounts(d.agentId).then((r) => {
       if (!alive) return;
       setRemote(r);
-      if (r.report) setReach(reachFromReport(r.report, repoKey));
+      // 이 기기에서 잰 닿음이 있으면 그것을 둔다.
+      if (r.report) { const rep = r.report; setReach((prev) => (Object.keys(prev).length ? prev : reachFromReport(rep, repoKey))); }
     }, () => { if (alive) setRemote('error'); });
     return () => { alive = false; };
-  }, [remoteEligible, d?.agentId, repoKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [remoteWanted, d?.agentId, repoKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!d) return null;
-  const ci = d.reason === 'ci_not_green';
-  const owner = d.ownerAccountId ? accounts[d.ownerAccountId]?.handle ?? '?' : '?';
-  const url = prUrlOf({ repo: d.repo, number: d.number });
-  const approved = done ?? (d.status === 'approved_once' ? d.approvedOnce : null);
-  // 날짜를 붙인 절대 시각 — 「오늘」은 다음 날 틀린다(#1163 n2).
-  const when = (iso: string) => new Date(iso).toLocaleString(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-
+  const ci = d?.reason === 'ci_not_green';
   const submit = async () => {
+    if (!d) return;
     setBusy(true); setError(null);
     try {
       // number·headSha 는 이 카드가 보여 준 값 — 서버가 거절 기록과 대조해 다르면 card_stale 로 거절한다(security F1).
@@ -188,11 +189,34 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
   const sorted = [...list].sort((a, b) => rank(a.login) - rank(b.login));
   const remoteLogins = remote && remote !== 'loading' && remote !== 'error' ? remote.report?.logins ?? null : null;
   const remoteSorted = [...(remoteLogins ?? [])].sort((a, b) => rank(a) - rank(b));
-  const remoteBlocked = remote === null || remote === 'loading' ? 'mergeOnce.changeLoading'
+  const remoteBlocked: MessageKey | null = remote === null || remote === 'loading' ? 'mergeOnce.changeLoading'
     : remote === 'error' ? 'mergeOnce.changeFailed'
     : !remote.report ? 'mergeOnce.changeNoReport'
     : !remote.report.logins ? 'mergeOnce.changeNotOwner' : null;
   const mark = (login: string) => (reach[login] === 'ok' ? ' ✓' : reach[login] === 'no' ? ' ✕' : '');
+
+  const reset = () => { setOpen(false); setGhUser(''); setRelax(false); setRemoteOpen(false); };
+  return {
+    d, ci, isOwner, repoKey, open, setOpen, device, merge, reach, ghUser, setGhUser, relax, setRelax, busy, error, done,
+    remote, remoteOpen, setRemoteOpen, remoteSupported, remoteEligible, submit, list, sorted, remoteLogins, remoteSorted, remoteBlocked, mark, reset,
+  };
+}
+export type OnceApproval = ReturnType<typeof useOnceApproval>;
+
+export function PermissionOncePanel({ message }: { message: MessageRow }) {
+  const t = useT();
+  const locale = useLocale();
+  const accounts = useActiveStore((s) => s.accounts);
+  const {
+    d, ci, isOwner, open, setOpen, device, merge, reach, ghUser, setGhUser, relax, setRelax, busy, error, done,
+    remoteOpen, setRemoteOpen, remoteEligible, submit, list, sorted, remoteLogins, remoteSorted, remoteBlocked, mark,
+  } = useOnceApproval(message);
+  if (!d) return null;
+  const owner = d.ownerAccountId ? accounts[d.ownerAccountId]?.handle ?? '?' : '?';
+  const url = prUrlOf({ repo: d.repo, number: d.number });
+  const approved = done ?? (d.status === 'approved_once' ? d.approvedOnce : null);
+  // 날짜를 붙인 절대 시각 — 「오늘」은 다음 날 틀린다(#1163 n2).
+  const when = (iso: string) => new Date(iso).toLocaleString(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 
   return (
     <div className="mt-1 rounded border border-border border-l-4 border-warning-border bg-surface-raised p-2 text-meta" data-testid="merge-once-card">
@@ -325,16 +349,148 @@ export function PermissionOncePanel({ message }: { message: MessageRow }) {
         </div>
       )}
 
-      {error && !approved && (
-        <p role="alert" className="mt-1 text-danger" data-testid="merge-once-error" data-code={error.code} title={error.raw}>
-          {error.code === 'denial_used' || error.code === 'already_decided' ? t('mergeOnce.errUsed')
-            : error.code === 'denial_expired' || error.code === 'request_expired' ? t('mergeOnce.errExpired')
-            : error.code === 'card_stale' ? t('mergeOnce.errStale')
-            : error.code === 'head_moved' ? t('mergeOnce.errHeadMoved')
-            : error.code === 'forbidden' ? t('mergeOnce.errForbidden')
-            : t('mergeOnce.errFailed')}
+      {error && !approved && <OnceError code={error.code} raw={error.raw} />}
+    </div>
+  );
+}
+
+/** 서버 보고에서 이 저장소에 지금 걸린 줄(`owner/name` 이 먼저, 없으면 `owner/*`)과 그 계정. */
+export function currentLineOf(report: NonNullable<MergeAccountsView['report']>, repoKey: string): { scope: string; login: string } | null {
+  const byScope = report.byScope ?? {};
+  for (const scope of [repoKey, `${repoKey.split('/')[0]}/*`]) {
+    if (typeof byScope[scope] === 'string') return { scope, login: byScope[scope] };
+  }
+  return null;
+}
+
+/**
+ * 줄 카드(`MandateLineBody`) 안의 머지 한 번 칸 — PR·head·사유·실패 체크, 계정 줄, [계정 바꾸기…]를 펼친 고르기, 결과·오류.
+ * 버튼([이번 한 번] / [CI 실패 무시하고 이번 한 번])은 카드가 그린다 — 한 카드에 한 번 버튼은 하나다.
+ */
+export function OnceCardRows({ s, canAct }: { s: OnceApproval; canAct: boolean }) {
+  const t = useT();
+  const locale = useLocale();
+  const accounts = useActiveStore((st) => st.accounts);
+  const d = s.d;
+  if (!d) return null;
+  const url = prUrlOf({ repo: d.repo, number: d.number });
+  const owner = d.ownerAccountId ? accounts[d.ownerAccountId]?.handle ?? '?' : '?';
+  const approved = s.done ?? (d.status === 'approved_once' ? d.approvedOnce : null);
+  const when = (iso: string) => new Date(iso).toLocaleString(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const report = s.remote && s.remote !== 'loading' && s.remote !== 'error' ? s.remote.report : null;
+  const cur = report ? currentLineOf(report, s.repoKey) : null;
+  const reportedMs = report?.reportedAt ? Date.parse(report.reportedAt) : NaN;
+  const showAccount = canAct && !approved && d.status === 'pending';
+  const sel = (testId: string, logins: string[]) => (
+    <label className="flex flex-wrap items-center gap-2">
+      <span className="text-fg-muted">{t('mergeOnce.account')}</span>
+      <select data-testid={testId} value={s.ghUser} disabled={s.busy} onChange={(e) => s.setGhUser(e.target.value)}
+        className="rounded-row border border-border bg-surface-sunken px-1.5 py-0.5 font-mono text-meta text-fg">
+        <option value="">{t('mergeOnce.pick')}</option>
+        {logins.map((login) => <option key={login} value={login} disabled={s.reach[login] === 'no'}>{login + s.mark(login)}</option>)}
+      </select>
+    </label>
+  );
+  return (
+    <div className="mt-1.5 text-meta" data-testid="merge-once-card" data-embedded>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+        <dt className="text-fg-subtle">{t('mergeOnce.pr')}</dt>
+        <dd>
+          {url ? <a href={url} target="_blank" rel="noreferrer noopener" className="text-accent underline" data-testid="merge-once-pr">#{d.number}</a> : <span>#{d.number}</span>}
+          <span className="ml-2 font-mono text-fg-muted" data-testid="merge-once-head">{d.headSha.slice(0, 9)}</span>
+        </dd>
+        <dt className="text-fg-subtle">{t('mergeOnce.why')}</dt>
+        <dd data-testid="merge-once-reason" data-reason={d.reason}>
+          {d.reason === 'cause_not_human' ? t('mergeOnce.reasonNotHuman') : s.ci ? t('mergeOnce.reasonCi') : t('mergeOnce.reasonNotGranted')}
+        </dd>
+        {s.ci && (
+          <>
+            <dt className="text-fg-subtle">{t('mergeOnce.failedChecks')}</dt>
+            {d.failedChecks.length > 0 ? (
+              <dd data-testid="merge-once-checks">
+                <ul className="flex flex-wrap gap-1">
+                  {d.failedChecks.map((n) => <li key={n} className="break-all rounded-row bg-surface-sunken px-1 font-mono text-danger">✕ {n}</li>)}
+                </ul>
+              </dd>
+            ) : (
+              <dd className="text-warning" data-testid="merge-once-no-checks">{t('mergeOnce.noChecksYet')}</dd>
+            )}
+          </>
+        )}
+        {showAccount && (
+          <>
+            <dt className="text-fg-subtle">{t('mergeOnce.rowAccount')}</dt>
+            <dd data-testid="merge-once-account-row" className="text-fg">
+              {s.ghUser
+                ? <span data-testid="merge-once-account-pinned">{t('mergeOnce.rowPinned', { login: s.ghUser })}</span>
+                : <span>{t('mergeOnce.rowOperatorPicks')}</span>}
+              {!s.ghUser && cur && (
+                <span data-testid="merge-once-account-current"> · {t('mergeOnce.rowCurrentLine', { scope: cur.scope, login: cur.login })}</span>
+              )}
+              {!s.ghUser && report && Number.isFinite(reportedMs) && (
+                <span className="text-fg-subtle" data-testid="merge-once-reported"> · {t('mergeOnce.rowReported', { ago: agoLabel(reportedMs, Date.now(), locale, t) })}</span>
+              )}
+            </dd>
+          </>
+        )}
+      </dl>
+      {showAccount && d.reason === 'cause_not_human' && <p className="mt-1 text-fg-muted" data-testid="merge-once-7day-note">{t('mergeOnce.sevenDayNoHelp')}</p>}
+      {showAccount && s.open && (
+        <div className="mt-1.5 space-y-1.5 rounded-row border border-border p-2" data-testid="merge-once-form">
+          {s.device === 'checking' && <p className="text-fg-subtle">{t('mergeOnce.checking')}</p>}
+          {s.device === 'here' && (s.merge === null || s.merge === 'error' || s.list.length > 0) && sel('merge-once-account', s.sorted.map((a) => a.login))}
+          {s.device === 'here' && s.merge === 'error' && <p role="alert" className="text-danger">{t('mergeOnce.accountsFailed')}</p>}
+          {s.device === 'here' && s.merge !== null && s.merge !== 'error' && s.list.length === 0 && (
+            <p className="text-fg" data-testid="merge-once-operator-picks">{t('mergeOnce.operatorPicks')}</p>
+          )}
+          {(s.device === 'elsewhere' || s.device === 'no-surface') && (
+            s.remoteSupported && s.remoteLogins
+              ? sel('merge-once-remote-account', s.remoteSorted)
+              : s.remoteSupported && s.remoteBlocked
+                ? <p className="text-fg-subtle" data-testid="merge-once-change-reason" data-reason={s.remoteBlocked}>{t(s.remoteBlocked)}</p>
+                : <p className="text-fg" data-testid="merge-once-operator-picks">{t('mergeOnce.operatorPicks')}</p>
+          )}
+          {s.ghUser && s.reach[s.ghUser] !== 'ok' && <p className="text-warning" data-testid="merge-once-unknown">{t('mergeOnce.reachUnknown', { login: s.ghUser })}</p>}
+          {!s.ci && (
+            <label className="flex items-start gap-2">
+              <input type="checkbox" data-testid="merge-once-relax" checked={s.relax} disabled={s.busy} onChange={(e) => s.setRelax(e.target.checked)} className="mt-0.5" />
+              <span>{t('mergeOnce.relax')}<span className="block text-fg-subtle">{t('mergeOnce.relaxHint')}</span></span>
+            </label>
+          )}
+          <button type="button" data-testid="merge-once-cancel" onClick={s.reset} className="text-fg-muted underline">{t('mergeOnce.cancel')}</button>
+        </div>
+      )}
+      {showAccount && s.ci && <p className="mt-1 text-fg-subtle" data-testid="merge-once-ci-fixed">{t('mergeOnce.ciFixed')}</p>}
+      {approved && (
+        <p className={`mt-1.5 ${Date.parse(approved.expiresAt) <= Date.now() ? 'text-fg-subtle' : 'text-fg'}`} data-testid="merge-once-approved"
+          data-expired={Date.parse(approved.expiresAt) <= Date.now() || undefined}>
+          {Date.parse(approved.expiresAt) <= Date.now()
+            ? t('mergeOnce.approvedExpired', { login: approved.ghUser ?? t('mergeOnce.operatorAccount') })
+            : t(approved.relaxChecks ? 'mergeOnce.approvedRelaxed' : 'mergeOnce.approved', {
+              by: d.decidedBy ? accounts[d.decidedBy]?.handle ?? owner : owner, login: approved.ghUser ?? t('mergeOnce.operatorAccount'), until: when(approved.expiresAt),
+            })}
         </p>
       )}
+      {d.status === 'obsolete' && (
+        <p className="mt-1.5 text-fg-subtle" data-testid="merge-once-obsolete" data-reason={d.obsoleteReason ?? 'merged'}>
+          {t(d.obsoleteReason === 'closed' ? 'mergeCard.obsoleteClosed' : 'mergeCard.obsoleteMerged')}
+        </p>
+      )}
+      {s.error && !approved && <OnceError code={s.error.code} raw={s.error.raw} />}
     </div>
+  );
+}
+
+function OnceError({ code, raw }: { code: string; raw: string }) {
+  const t = useT();
+  return (
+    <p role="alert" className="mt-1 text-danger" data-testid="merge-once-error" data-code={code} title={raw}>
+      {code === 'denial_used' || code === 'already_decided' ? t('mergeOnce.errUsed')
+        : code === 'denial_expired' || code === 'request_expired' ? t('mergeOnce.errExpired')
+        : code === 'card_stale' ? t('mergeOnce.errStale')
+        : code === 'head_moved' ? t('mergeOnce.errHeadMoved')
+        : code === 'forbidden' ? t('mergeOnce.errForbidden')
+        : t('mergeOnce.errFailed')}
+    </p>
   );
 }

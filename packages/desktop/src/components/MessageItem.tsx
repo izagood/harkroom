@@ -2,6 +2,7 @@ import { BlockedCard } from './BlockedCard';
 import { SecretNoticeAction } from './SecretNoticeAction';
 import { MergeDenialPanel } from './MergeDenialPanel';
 import { PermissionOncePanel } from './PermissionOncePanel';
+import { readCardSource } from './MandateLineBody';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { isAskOpen, messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
 import { readAutomationMeta } from '../lib/automation';
@@ -821,8 +822,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 형식을 못 알아보면 `AskCard` 가 스스로 아무것도 그리지 않는다. */}
             {/* 머지 거절 카드(P5) — 권한 칸은 서버 기록(meta.mergeDenial), 선택지는 그 아래 AskCard. */}
             {message.meta.mergeDenial !== undefined && <MergeDenialPanel message={message} onOpenSettings={onOpenSettings} />}
-            {/* 머지 거절에서 온 권한 카드의 [이번 한 번 머지](스레드 1b75d7a0) — [승인](7일)·[거절]은 그 아래 AskCard. */}
-            {message.meta.permissionRequest !== undefined && <PermissionOncePanel message={message} />}
+            {/* 머지 거절에서 온 권한 카드의 [이번 한 번 머지](스레드 1b75d7a0) — 줄 없는 옛 카드만. 줄 카드는 AskCard 안에서 한 카드로 그린다(g5). */}
+            {message.meta.permissionRequest !== undefined && !readCardSource(message.meta) && <PermissionOncePanel message={message} />}
             <AskCard message={message} />
             {/* 묶음 카드(선택 카드 P1) — 여러 에이전트의 사람 앞 카드를 줄로 모은 것. 형식을 못 알아보면 그리지 않는다. */}
             <AskBundleCard message={message} />

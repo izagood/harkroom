@@ -4,6 +4,7 @@ import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
 import { messageLinkFromMeta } from '../lib/link';
+import { OnceCardRows, useOnceApproval } from './PermissionOncePanel';
 
 /**
  * W4 「위임장에 줄 더하기」 카드의 몸(designer 시안 v1, i1). `AskCard` 가 선택지 목록 대신 이것을 그린다.
@@ -11,7 +12,8 @@ import { messageLinkFromMeta } from '../lib/link';
  * - 🔑 위임장 칩 — 이름이 비면(청중이 위임장 뿌리 채널을 다 못 봄) 「위임장 · 소유자 · MM-DD 시작」.
  * - 줄 상자 — cap 표시(색과 글자 함께) · scope(고정폭) · 선택지별 한도 칩.
  * - 버튼 — 주 버튼 [이 위임장 동안] 또는 [이 스레드로 위임장 만들고 더하기], 보조 [이번 한 번], [거절]은 밑줄 글자.
- *   원본 머지 거절 카드의 [이번 한 번]은 계정을 고를 수 있는 `PermissionOncePanel` 이 그린다(거울에는 계정 고르기가 없다, W4-2).
+ *   원본 머지 거절 카드는 한 카드다(g5): PR·head·실패 체크·계정 줄은 `OnceCardRows` 가 카드 안에 그리고, [이번 한 번] 버튼은 여기 하나뿐이다.
+ *   그 버튼은 고른 계정(없으면 비움 — 오퍼레이터가 고름)으로 `approvePermissionOnce` 를 보낸다. 거울에는 계정 고르기가 없다(W4-2).
  * - 거울 — 진짜 거울은 `permissionMirror` 의 once·line·mandate 로 같은 카드를, 중립 거울은 원본 링크 한 줄만.
  * - 끝난 카드 — 줄 상자는 남기고 상태 줄 하나.
  */
@@ -110,10 +112,12 @@ export function LineBox({ line, show }: { line: PermissionCardLine; show: string
 }
 
 const STANDING = ['approve_mandate', 'approve_new_mandate', 'approve'];
+const PRIMARY = 'rounded bg-accent px-2.5 py-1 text-body font-medium text-fg-on-strong';
+const SECONDARY = 'rounded border border-border bg-surface-raised px-2.5 py-1 text-body text-fg hover:bg-surface-hover';
 
 /**
  * 줄 상자와 버튼. `canChoose` 는 `AskCard` 가 정한다(내 차례이고 열려 있음).
- * `onceByPanel` — 원본 머지 거절 카드라 [이번 한 번]은 `PermissionOncePanel` 이 계정 칸과 함께 그린다.
+ * `onceByPanel` — 원본 머지 거절 카드라 [이번 한 번]은 계정을 실어 `approvePermissionOnce` 로 보낸다(선택지 답이 아니다).
  */
 export function MandateLineBody({ message, src, canChoose, optionIds, answeredWith, closedReason, supersededBy }: {
   message: MessageRow; src: CardSource; canChoose: boolean; optionIds: string[];
@@ -125,6 +129,8 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
   const mirrorHref = messageLinkFromMeta(src.mirror?.rootId);
   const supersededHref = messageLinkFromMeta(supersededBy);
   const ownerHandle = useActiveStore((s) => (ownerOf ? s.accounts[ownerOf]?.handle ?? null : null));
+  const onceByPanel = !!src.request && src.request.kind === 'merge' && !!src.request.once;
+  const once = useOnceApproval(onceByPanel ? message : null, true);
 
   if (src.mirror?.neutral) {
     return (
@@ -137,11 +143,10 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
   const line = src.line;
   const status = typeof src.request?.status === 'string' ? src.request.status : null;
   const onceAvailable = !!line?.limits.approve_once;
-  const onceByPanel = !!src.request && src.request.kind === 'merge' && !!src.request.once;
   const standing = optionIds.find((id) => STANDING.includes(id)) ?? null;
   // 소유자를 모르면 **소유자가 아니라고 본다** — 버튼 없이 읽기 전용(「소유자만」 줄)으로 그린다.
   const viewerIsOwner = !!ownerOf && !!me && me.id === ownerOf;
-  const pending = answeredWith == null && closedReason == null && (status == null || status === 'pending');
+  const pending = answeredWith == null && closedReason == null && (status == null || status === 'pending') && !(onceByPanel && once.done);
   const ended = !pending;
   // 끝난 카드는 고른 선택지의 한도만, 열린 카드는 주 버튼(없으면 한 번)의 한도를 보인다.
   const shownLimits = ended
@@ -163,6 +168,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       return <p className="text-fg-subtle" data-testid="mandate-ended" data-state="expired">{t('mandateCard.ended.expired')} · {t('mandateCard.askAgain')}</p>;
     }
     if (status === 'denied' || answeredWith === 'deny') return <p className="text-fg-muted" data-testid="mandate-ended" data-state="denied">✕ {t('mandateCard.ended.denied')}</p>;
+    if (onceByPanel && (status === 'approved_once' || once.done)) return null; // OnceCardRows 가 계정·기한과 함께 그린다.
     if (status === 'approved_once' || answeredWith === 'approve_once' || answeredWith === 'approve_hour') {
       const used = typeof src.request?.ghUserUsed === 'string' ? src.request.ghUserUsed : typeof src.mirror?.ghUserUsed === 'string' ? src.mirror.ghUserUsed : null;
       return <p className="text-fg" data-testid="mandate-ended" data-state="once">✓ {t('mandateCard.ended.once')}{used ? ` · gh ${used}` : ''}</p>;
@@ -188,6 +194,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       {/* 칩은 소유자에게만 보인다(시안 「남이 볼 때」 — 다른 채널의 위임장이 드러나지 않게). */}
       {viewerIsOwner && <MandateChip mandate={src.mandate} />}
       {line && <LineBox line={line} show={shownLimits} />}
+      {onceByPanel && <OnceCardRows s={once} canAct={canChoose && viewerIsOwner && once.isOwner} />}
       {pending && !viewerIsOwner && (
         <p className="mt-1 text-meta text-fg-subtle" data-testid="mandate-owner-only">{t('mandateCard.ownerOnly', { owner: ownerHandle ?? t('common.someone') })}</p>
       )}
@@ -201,14 +208,26 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
           )}
           {onceAvailable && !onceByPanel && (
             <button type="button" data-testid="ask-option-approve_once" onClick={() => answer('approve_once')}
-              className={standing ? 'rounded border border-border bg-surface-raised px-2.5 py-1 text-body text-fg hover:bg-surface-hover' : 'rounded bg-accent px-2.5 py-1 text-body font-medium text-fg-on-strong'}>
+              className={standing ? SECONDARY : PRIMARY}>
               {line?.limits.approve_once?.ciOverride ? t('mandateCard.onceCi') : t('mandateCard.once')}
+            </button>
+          )}
+          {onceByPanel && once.isOwner && (
+            <button type="button" data-testid="ask-option-approve_once" data-once-panel disabled={once.busy} onClick={() => void once.submit()}
+              className={`${standing ? SECONDARY : PRIMARY} disabled:opacity-60`}>
+              {once.ci || line?.limits.approve_once?.ciOverride ? t('mandateCard.onceCi') : t('mandateCard.once')}
             </button>
           )}
           {optionIds.includes('deny') && (
             <button type="button" data-testid="ask-option-deny" aria-label={t('mandateCard.denyAria')} onClick={() => answer('deny')}
               className="rounded-sm px-1 py-0.5 text-meta text-fg-subtle underline underline-offset-2 hover:bg-surface-hover hover:text-fg-muted">
               {t('mandateCard.deny')}
+            </button>
+          )}
+          {onceByPanel && once.isOwner && !once.open && (
+            <button type="button" data-testid="merge-once-change-account" onClick={() => once.setOpen(true)}
+              className="ml-auto rounded-sm px-1 py-0.5 text-meta text-fg-subtle underline decoration-dotted underline-offset-2 hover:text-fg-muted">
+              {t('mergeOnce.changeAccount')}
             </button>
           )}
         </div>

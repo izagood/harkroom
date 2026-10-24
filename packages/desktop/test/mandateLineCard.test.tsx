@@ -67,10 +67,62 @@ describe('W4 mandate line card', () => {
     fireEvent.click(screen.getByTestId('ask-option-approve_once'));
     expect(answerAsk).toHaveBeenCalledWith('m1', 'approve_once', 'c1');
   });
-  it('original merge-refusal card leaves [이번 한 번] to the once panel', () => {
+  it('original merge-refusal card: one card — PR/head inside, [이번 한 번] secondary once, account row inside the card', () => {
+    setController({ answerAsk, closeAsk: vi.fn(), approvePermissionOnce: vi.fn(), getMergeAccounts: vi.fn(async () => ({ operatorId: null, report: null })) } as unknown as Controller);
     render(<AskCard message={card({ pr: { kind: 'merge', line: LINE, once: { number: 404, headSha: '7b7dd25abc', reason: 'not_granted' } } })} />);
     expect(screen.getByTestId('ask-option-approve_mandate')).toBeTruthy();
+    expect(screen.getAllByTestId('ask-option-approve_once')).toHaveLength(1);
+    const body = screen.getByTestId('mandate-body');
+    expect(body.contains(screen.getByTestId('merge-once-card'))).toBe(true);
+    expect(body.contains(screen.getByTestId('merge-once-head'))).toBe(true);
+    expect(body.contains(screen.getByTestId('merge-once-account-row'))).toBe(true);
+    expect(screen.getByTestId('merge-once-account-row').textContent).toContain('실행 기기가 고름');
+    expect(screen.queryByTestId('merge-once-open')).toBeNull();
+    const change = screen.getByTestId('merge-once-change-account');
+    expect(change.className).toContain('text-fg-subtle');
+    expect(change.className).toContain('decoration-dotted');
+  });
+  it('CI-override card shows the once button exactly once, labelled 「CI 실패 무시하고 이번 한 번」', async () => {
+    const approvePermissionOnce = vi.fn(async () => ({ status: 'approved_once', approvalExpiresAt: '2099-10-11T05:14:00Z', cardMessageId: 'm1' }));
+    setController({ answerAsk, closeAsk: vi.fn(), approvePermissionOnce, getMergeAccounts: vi.fn() } as unknown as Controller);
+    const ciLine = { cap: 'merge', scope: 'repo:example-org/svc', limits: { approve_once: { pr: 61, head: '3c9e0a1', uses: 1, ciOverride: true } } };
+    render(<AskCard message={card({ options: ['approve_once', 'deny'], pr: { kind: 'merge', line: ciLine, once: { number: 61, headSha: '3c9e0a1ff', reason: 'ci_not_green', failedChecks: ['tflint'] } } })} />);
+    const btns = screen.getAllByRole('button').filter((b) => /이번 한 번/.test(b.textContent ?? ''));
+    expect(btns).toHaveLength(1);
+    const onceBtn = btns[0]!;
+    expect(onceBtn.textContent).toBe('CI 실패 무시하고 이번 한 번');
+    expect(screen.getByTestId('merge-once-checks').textContent).toContain('tflint');
+    fireEvent.click(onceBtn);
+    await vi.waitFor(() => expect(approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'r1', { relaxChecks: true, number: 61, headSha: '3c9e0a1ff', failedChecks: ['tflint'] }));
+    expect(answerAsk).not.toHaveBeenCalled();
+    await screen.findByTestId('merge-once-approved');
     expect(screen.queryByTestId('ask-option-approve_once')).toBeNull();
+  });
+  it('picking an account under [계정 바꾸기…] then [이번 한 번] sends that ghUser; [취소] collapses back to default', async () => {
+    useActiveStore.getState().set({ serverVersion: { version: '0.4.199' } as never });
+    const approvePermissionOnce = vi.fn(async () => ({ status: 'approved_once', approvalExpiresAt: '2099-10-11T05:14:00Z', cardMessageId: 'm1' }));
+    const getMergeAccounts = vi.fn(async () => ({ operatorId: 'op', report: {
+      logins: ['remote-a', 'remote-b'], defaultGhUser: null, byScope: { 'example-org/*': 'remote-a' },
+      reach: [{ scope: 'example-org/*', login: 'remote-a', reachable: true }], reportedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+    } }));
+    setController({ answerAsk, closeAsk: vi.fn(), approvePermissionOnce, getMergeAccounts } as unknown as Controller);
+    render(<AskCard message={card({ pr: { kind: 'merge', target: 'example-org/svc', line: LINE, once: { number: 404, headSha: '7b7dd25abc', reason: 'not_granted' } } })} />);
+    await screen.findByTestId('merge-once-reported');
+    expect(screen.getByTestId('merge-once-account-current').textContent).toContain('example-org/* → remote-a');
+    expect(screen.getByTestId('merge-once-reported').textContent).toContain('2분 전 보고');
+    fireEvent.click(screen.getByTestId('merge-once-change-account'));
+    const sel = await screen.findByTestId('merge-once-remote-account') as HTMLSelectElement;
+    expect(screen.getByText('머지 계정 (그 기기)')).toBeTruthy();
+    fireEvent.change(sel, { target: { value: 'remote-b' } });
+    expect(screen.getByTestId('merge-once-account-pinned').textContent).toContain('remote-b');
+    fireEvent.click(screen.getByTestId('merge-once-cancel'));
+    expect(screen.queryByTestId('merge-once-form')).toBeNull();
+    expect(screen.queryByTestId('merge-once-account-pinned')).toBeNull();
+    fireEvent.click(screen.getByTestId('merge-once-change-account'));
+    fireEvent.change(await screen.findByTestId('merge-once-remote-account'), { target: { value: 'remote-b' } });
+    fireEvent.click(screen.getByTestId('ask-option-approve_once'));
+    await vi.waitFor(() => expect(approvePermissionOnce).toHaveBeenCalledWith('agent-1', 'r1', { ghUser: 'remote-b', relaxChecks: false, number: 404, headSha: '7b7dd25abc' }));
+    expect(answerAsk).not.toHaveBeenCalled();
   });
   it('genuine mirror renders the same card incl. [이번 한 번]', () => {
     render(<AskCard message={card({ mirror: { rootId: ROOT, neutral: false, kind: 'merge', line: LINE, mandate: MANDATE, once: { number: 404, headSha: '7b7dd25abc', reason: 'not_granted' } } })} />);
@@ -79,6 +131,9 @@ describe('W4 mandate line card', () => {
     fireEvent.click(screen.getByTestId('ask-option-approve_once'));
     expect(answerAsk).toHaveBeenCalledWith('m1', 'approve_once', 'c1');
     expect(screen.queryByTestId('merge-once-account')).toBeNull();
+    expect(screen.queryByTestId('merge-once-account-row')).toBeNull();
+    expect(screen.queryByTestId('merge-once-change-account')).toBeNull();
+    expect(screen.getAllByTestId('ask-option-approve_once')).toHaveLength(1);
   });
   it('neutral mirror shows only a line + link', () => {
     render(<AskCard message={card({ mirror: { rootId: ROOT, neutral: true } })} />);
