@@ -224,6 +224,26 @@ void main() {
     expect(find.byKey(const Key('ask-option-m1-deny')), findsNothing);
   });
 
+  testWidgets('r5: 답한 카드 머리는 결과 — 누가 무엇을 했나(ko·en), 글로 답함·gh 덧말은 남는다', (tester) async {
+    Future<void> head(Map<String, Object?> pr, String chose, String text, {String lang = 'ko'}) async {
+      await tester.pumpWidget(wrap(app, card(permMeta(pr: pr, ask: {'answeredWith': chose, 'answeredBy': 'me-1'})), lang: lang));
+      final shown = tester.widget<Text>(find.byKey(const Key('ask-head-m1'))).data;
+      expect(shown, text);
+    }
+
+    await head({'status': 'denied'}, 'deny', 'alice이(가) 거절함');
+    await head({'status': 'granted'}, 'approve_mandate', 'alice이(가) 이 위임장에 더함');
+    await head({'status': 'granted'}, 'approve_new_mandate', 'alice이(가) 위임장을 만들고 더함');
+    await head({'status': 'approved_once', 'approvedOnce': {'ghUser': 'octo'}}, 'approve_once', 'alice이(가) 이번 한 번 허락함 · gh octo');
+    await head({'status': 'denied', 'decidedVia': {'kind': 'chat', 'messageId': 'x'}}, 'deny', 'alice이(가) 거절함 · 글로 답함');
+    await head({'status': 'denied'}, 'deny', 'alice denied', lang: 'en');
+    await head({'status': 'granted'}, 'approve_mandate', 'alice added this to the mandate', lang: 'en');
+    await head({'status': 'approved_once'}, 'approve_once', 'alice allowed it once', lang: 'en');
+    await head({'status': 'granted'}, 'approve_new_mandate', 'alice started a mandate and added this', lang: 'en');
+    expect(stringsFor('ko').permResultDenied('재빈'), '재빈이 거절함');
+    expect(stringsFor('ko').permResultDenied('나비'), '나비가 거절함');
+  });
+
   testWidgets('진짜 거울은 같은 카드, 중립 거울은 중립 한 줄 + 원본 링크', (tester) async {
     await tester.pumpWidget(wrap(
         app,

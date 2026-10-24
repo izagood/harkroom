@@ -283,6 +283,20 @@ class _AskCardState extends State<AskCard> {
     } else if (!open) {
       endedText = t.askClosed;
     }
+    // r5: 답한 카드의 머리는 결과를 쓴다(「alice가 거절함」) — 상태 낱말만으로는 누가 했는지가 빠진다. 계정(gh)은 덧말로 남긴다.
+    final who = ask.answeredBy == null ? null : app.accounts[ask.answeredBy!]?.handle;
+    if (who != null && !(ended && (s == null || s == 'pending'))) {
+      final result = switch (chose) {
+        permOptDeny => t.permResultDenied(who),
+        permOptApproveNewMandate => t.permResultNewAdded(who),
+        permOptApproveMandate || 'approve' => t.permResultAdded(who),
+        permOptApproveOnce || 'approve_hour' => t.permResultOnce(who),
+        _ => null,
+      };
+      if (result != null) {
+        endedText = chose == permOptApproveOnce && perm.ghUserUsed != null ? '$result · gh ${perm.ghUserUsed}' : result;
+      }
+    }
     if (endedText != null && perm.decidedViaChat) endedText = '$endedText · ${t.permViaChat}';
     final ownerAcc = perm.mandate?.ownerId == null ? null : app.accounts[perm.mandate!.ownerId!];
 

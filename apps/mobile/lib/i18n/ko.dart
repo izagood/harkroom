@@ -287,6 +287,26 @@ class StringsKo implements Strings {
   @override
   String get permStateDenied => '거절함';
 
+  /// 받침이 있으면 「이」, 없으면 「가」. 한글로 끝나지 않는 이름은 「이(가)」.
+  static String _iga(String who) {
+    if (who.isEmpty) return '이(가)';
+    final c = who.codeUnitAt(who.length - 1);
+    if (c < 0xAC00 || c > 0xD7A3) return '이(가)';
+    return (c - 0xAC00) % 28 == 0 ? '가' : '이';
+  }
+
+  @override
+  String permResultDenied(String who) => '$who${_iga(who)} 거절함';
+
+  @override
+  String permResultAdded(String who) => '$who${_iga(who)} 이 위임장에 더함';
+
+  @override
+  String permResultOnce(String who) => '$who${_iga(who)} 이번 한 번 허락함';
+
+  @override
+  String permResultNewAdded(String who) => '$who${_iga(who)} 위임장을 만들고 더함';
+
   @override
   String get permStateExpired => '만료됨 · 에이전트가 다시 청해야 한다';
 
