@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { GRANT_DELEGATE_TOOL, laneEnvAllowed, LANE_BASE_ALLOW, LANE_DENY, READONLY_ALLOW, READONLY_RULES, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { GRANT_DELEGATE_TOOL, laneEnvAllowed, LANE_BASE_ALLOW, LANE_DENY, READONLY_ALLOW, READONLY_RULES, READONLY_TOOLS, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 import { decodeLaneHookRules } from '@harkroom/shared/providerLane';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
@@ -1230,6 +1230,7 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     expect(ro.slice(at, at + READONLY_RULES.length)).toEqual([...READONLY_RULES]);
     expect(ro.filter((a) => a === '--allowedTools' || a === '--disallowedTools')).toHaveLength(2);
     expect(ro.filter((a) => a === '--permission-mode')).toHaveLength(1);
+    expect(ro.filter((a) => a === '--tools')).toHaveLength(1);
     expect(ro).toEqual(expect.arrayContaining(['--permission-mode', 'dontAsk']));
     expect(ro.join(' ')).not.toContain('harkroom-operator');
     const it_ = buildTurnCommand({ ...common, mode: 'interactive', mergeRepos: ['izagood/harkroom'] }).args;
@@ -1245,7 +1246,12 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     for (const bad of ['mcp__harkroom', 'mcp__avcs', 'Bash', 'WebFetch', 'WebSearch', 'Agent', 'Edit', 'Write', 'Read']) expect(READONLY_ALLOW).not.toContain(bad);
     expect(READONLY_ALLOW.filter((t) => /secret_|grant_|permission_|automation_|skill_|delegate|memory_set|memory_merge|memory_archive|workitem_/.test(t))).toEqual([]);
     // 셸·웹은 deny 로 막는다 — dontAsk 도 claude 가 읽기로 판정한 셸은 규칙 없이 돌린다(실측 2.1.310).
-    expect(READONLY_RULES).toEqual(['--disallowedTools', 'Bash,WebFetch,WebSearch', '--allowedTools', READONLY_ALLOW.join(',')]);
+    expect(READONLY_RULES).toEqual(['--disallowedTools', 'Bash,WebFetch,WebSearch', '--allowedTools', READONLY_ALLOW.join(','), '--tools', 'ToolSearch,Read,Grep,Glob']);
+  });
+
+  it('readonly 내장 도구는 목록으로 못박는다 — 설정 층 allow 가 생겨도 쓰기·셸·하위 에이전트는 도구로 없다(security F1)', () => {
+    expect(READONLY_TOOLS).toEqual(['ToolSearch', 'Read', 'Grep', 'Glob']);
+    for (const bad of ['Edit', 'Write', 'NotebookEdit', 'Bash', 'Agent', 'WebFetch', 'WebSearch', 'Skill']) expect(READONLY_TOOLS).not.toContain(bad);
   });
 
   it('deny 는 실제로 맞는 모양만 — 접두(:*) 아니면 정확 일치. 가운데 와일드카드는 아무것도 안 맞춘다(실측 P2)', () => {

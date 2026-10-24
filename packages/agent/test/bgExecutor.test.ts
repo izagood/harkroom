@@ -88,8 +88,11 @@ describe('bgExecutor (BG2)', () => {
     // 같은 토큰을 실어도 readonly 모드가 아니면 거절 — 떼어 낸 뒤 모드 검사가 막는다.
     expect(() => bgExecutorArgs(['--permission-mode', 'auto', ...READONLY_RULES, ...tail], 'n')).toThrow(/readonly/);
     // 값이 한 글자라도 다르거나(덧붙임), 두 번 실리면 거절.
-    const widened = [...READONLY_RULES.slice(0, 3), `${READONLY_RULES[3]},Bash`];
+    const widened = [...READONLY_RULES.slice(0, 3), `${READONLY_RULES[3]},Bash`, ...READONLY_RULES.slice(4)];
     expect(() => bgExecutorArgs(['--permission-mode', 'dontAsk', ...widened, ...tail], 'n')).toThrow(/--disallowedTools|--allowedTools/);
+    // 내장 도구 목록(`--tools`)을 넓혀도 정확 일치가 아니다(security F1).
+    const toolsWidened = [...READONLY_RULES.slice(0, 5), `${READONLY_RULES[5]},Write`];
+    expect(() => bgExecutorArgs(['--permission-mode', 'dontAsk', ...toolsWidened, ...tail], 'n')).toThrow(/--disallowedTools|--allowedTools/);
     expect(() => bgExecutorArgs(['--permission-mode', 'dontAsk', ...READONLY_RULES, ...READONLY_RULES, ...tail], 'n')).toThrow(/--disallowedTools|--allowedTools/);
     // 순서가 바뀐 것도 정확 일치가 아니다.
     const swapped = [...READONLY_RULES.slice(2), ...READONLY_RULES.slice(0, 2)];

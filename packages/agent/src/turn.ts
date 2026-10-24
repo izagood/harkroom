@@ -399,12 +399,21 @@ export const READONLY_ALLOW: readonly string[] = [
 export const READONLY_DENY: readonly string[] = ['Bash', 'WebFetch', 'WebSearch'];
 
 /**
+ * 읽기 전용 턴이 **볼 수 있는** 내장 도구(security F1, 2026-10-25). `dontAsk` 는 「미리 허락된 것」을 돌리는데, 거기에는
+ * `--allowedTools` 말고도 설정 층의 allow 규칙(계정 config 의 settings.json — 같은 풀이 공유 — 와 cwd 의 `.claude/settings*.json`)이
+ * 든다. 거기 `Write` 한 줄이 생기면 readonly 가 조용히 쓰기를 얻는다. 그래서 목록 자체를 못박는다 — Edit·Write·NotebookEdit·
+ * Bash·Agent 는 도구로 없다. 백그라운드 조립의 `--tools ToolSearch` 와 같은 이유다(`bgExecutor.ts`).
+ */
+export const READONLY_TOOLS: readonly string[] = ['ToolSearch', 'Read', 'Grep', 'Glob'];
+
+/**
  * 읽기 전용 턴의 규칙 argv. 값은 **쉼표로 이은 한 토큰**이다 — `--allowedTools`·`--disallowedTools` 는 가변 인자라, 한 토큰이어야
  * 백그라운드 조립(`bgExecutor.ts`)이 정확히 떼어 낼 수 있다(실측: claude 는 쉼표 목록을 받는다).
  */
 export const READONLY_RULES: readonly string[] = [
   '--disallowedTools', READONLY_DENY.join(','),
   '--allowedTools', READONLY_ALLOW.join(','),
+  '--tools', READONLY_TOOLS.join(','),
 ];
 
 /**
