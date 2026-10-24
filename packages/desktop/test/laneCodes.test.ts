@@ -14,6 +14,30 @@ describe('harness_version 문장', () => {
   });
 });
 
+// designer n1: 하네스를 알면(설정 화면) 그 하네스의 판만 — 다른 하네스 판은 싣지 않는다.
+describe('harness_version 문장 — 하네스를 알 때', () => {
+  it.each(['ko', 'en'] as const)('%s: codex 면 codex 판만, opencode 면 opencode 판만', (locale) => {
+    const t = translator(locale);
+    const codex = laneCodeText(t, 'harness_version', 'codex');
+    for (const v of CODEX_LANE_VERSIONS) expect(codex).toContain(`codex ${v}`);
+    expect(codex).not.toContain('opencode');
+    const opencode = laneCodeText(t, 'harness_version', 'opencode');
+    for (const v of OPENCODE_LANE_VERSIONS) expect(opencode).toContain(`opencode ${v}`);
+    expect(opencode).not.toContain('codex');
+    // 판 관문이 없는 하네스·모름은 모두 늘어놓는다.
+    for (const h of ['claude-code', null, undefined]) expect(laneCodeText(t, 'harness_version', h)).toContain(`codex ${CODEX_LANE_VERSIONS[0]}`);
+  });
+});
+
+// designer n3·n5: 하네스 이름을 박지 않은 모델 문장, 보호 이름 목록에 `.codex`.
+describe('bad_model·workspace_protected 문장', () => {
+  it.each(['ko', 'en'] as const)('%s', (locale) => {
+    const t = translator(locale);
+    expect(laneCodeText(t, 'bad_model')).not.toMatch(/opencode/i);
+    expect(laneCodeText(t, 'workspace_protected')).toContain('.codex');
+  });
+});
+
 describe('harness_login_present 문장', () => {
   it.each(['ko', 'en'] as const)('%s: 자기 문장이 있다(알 수 없음으로 접지 않는다)', (locale) => {
     expect(laneCodeKey('harness_login_present')).toBe('lane.code.harness_login_present');

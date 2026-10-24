@@ -1154,7 +1154,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                                 {lane.pending ? `⏳ ${t('agents.lane.chipPending')}` : t('agents.lane.chip')}
                               </span>
                               {st && !st.ok && (
-                                <span data-testid={`agent-lane-fail-${a.handle}`} title={laneCodeText(t, st.code)}
+                                <span data-testid={`agent-lane-fail-${a.handle}`} title={laneCodeText(t, st.code, a.harness)}
                                   className="inline-flex items-center gap-1 rounded-full bg-danger-surface px-1.5 text-meta font-semibold text-state-stuck">
                                   <span aria-hidden="true" className="block h-1.5 w-1.5 rounded-full bg-state-stuck" />
                                   {t('agents.lane.cantStart')}

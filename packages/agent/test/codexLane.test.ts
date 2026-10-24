@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CODEX_LANE_BASE_URL_ENV, CODEX_LANE_KEY_ENV, codexLaneArgs, codexLaneVersionOk, createProviderLane } from '../src/providerLane.js';
+import { CODEX_LANE_BASE_URL_ENV, CODEX_LANE_KEY_ENV, codexLaneArgs, codexLaneVersionOk, createProviderLane, laneModelMissing } from '../src/providerLane.js';
 import { buildTurnCommand, laneEnvAllowed } from '../src/turn.js';
 
 async function setup() {
@@ -111,5 +111,15 @@ describe('codex lane 조립', () => {
 
   it('주소가 없으면 조립을 거절한다 — 기본 provider 로 뜨지 않는다', () => {
     expect(() => buildTurnCommand({ ...base, providerEnv: { [CODEX_LANE_KEY_ENV]: 'tok-codex' } })).toThrow(/주소가 없다/);
+  });
+});
+
+describe('codex lane 모델', () => {
+  it('lane codex 는 모델이 비었거나 문법에 안 맞으면 `bad_model` 로 멈춘다 — 기본 모델 이름이 gateway 로 가지 않게', () => {
+    for (const m of [null, undefined, '', '   ', 'a b', 'x{y}']) expect(laneModelMissing(true, 'codex', m)).toBe(true);
+    expect(laneModelMissing(true, 'codex', 'ExampleOrg/example-model')).toBe(false);
+    // lane 이 아니거나 다른 하네스면 보지 않는다(opencode 는 `opencodeLaneModelMissing` 이 따로 본다).
+    expect(laneModelMissing(false, 'codex', null)).toBe(false);
+    expect(laneModelMissing(true, 'claude-code', null)).toBe(false);
   });
 });

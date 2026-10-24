@@ -16,6 +16,17 @@ import { Segmented } from './primitives';
 
 /** API 키 연결을 쓸 수 있는 하네스(러너 `PROVIDER_LANE_ENV_KEYS` 와 같은 둘). */
 export const LANE_HARNESSES: readonly string[] = ['claude-code', 'opencode', 'codex'];
+
+/**
+ * 주소 칸 이름 — 하네스가 gateway 를 부르는 꼴을 적는다(designer n4 A). claude-code·opencode 는 Anthropic 꼴(`/v1/messages`),
+ * codex 는 OpenAI Responses 꼴(`/v1/responses`)이다. 표에 없으면 Anthropic 이름이다.
+ */
+const LANE_BASE_URL_LABEL: Readonly<Record<string, 'agents.lane.baseUrl' | 'agents.lane.baseUrl.responses'>> = {
+  codex: 'agents.lane.baseUrl.responses',
+};
+export function laneBaseUrlLabel(harness: string): 'agents.lane.baseUrl' | 'agents.lane.baseUrl.responses' {
+  return LANE_BASE_URL_LABEL[harness] ?? 'agents.lane.baseUrl';
+}
 /**
  * 예전에 opencode lane 모델 칸에 붙이던 머리(러너 `PROVIDER_LANE_OPENCODE_PROVIDER`). 이제 모델 칸에는 gateway 가 받는 이름을 그대로 적고,
  * 머리는 러너가 opencode 를 띄울 때만 안에서 붙인다(2026-10-24). 남은 옛 값은 이 함수로 원문으로 되돌린다.
@@ -120,7 +131,7 @@ export function ModelConnectionField({ harness, lane, pool, stdioServers, label,
       {mode === 'apiKey' && harnessOk && (
         <div className="mt-2 flex flex-col gap-3" data-testid="lane-form">
           <label className="block">
-            {t('agents.lane.baseUrl')}
+            {t(laneBaseUrlLabel(harness))}
             <input
               className={`mt-1 block w-full rounded-row border bg-surface px-2 py-1.5 font-mono text-meta text-fg ${problem ? 'border-danger' : 'border-border'}`}
               value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://gateway.example" spellCheck={false}
@@ -228,8 +239,10 @@ export const LANE_PENDING_STUCK_MS = 3 * 60_000;
  * 실행 탭 곁 칸 — 이 API 키 연결의 상태. 맨 위 한 칸을 「적용 대기」와 「마지막 턴」이 **번갈아** 쓴다 — 대기 상자가 사라질 때
  * 아래 줄들이 위로 튀지 않게(designer n18).
  */
-export function ModelConnectionStatus({ lane, now, onRestart }: {
+export function ModelConnectionStatus({ lane, harness, now, onRestart }: {
   lane: ProviderLaneState;
+  /** 이 에이전트의 하네스 — 판 문장에 그 하네스의 판만 싣는다(designer n1). 모르면 모두. */
+  harness?: string;
   /** 시험이 시각을 고정한다. */
   now?: number;
   /** [재시작] — 대기가 오래가면 보인다(n14). 없으면 버튼을 그리지 않는다. */
@@ -267,7 +280,7 @@ export function ModelConnectionStatus({ lane, now, onRestart }: {
     if (!status.ok) {
       return (
         <div className="rounded-row bg-danger-surface px-3 py-2 text-meta text-danger" data-testid="lane-status-fail">
-          ✕ {t('agents.lane.lastFail', { time, reason: laneCodeText(t, status.code) })} <span className="font-mono">{status.code ?? 'unknown'}</span>
+          ✕ {t('agents.lane.lastFail', { time, reason: laneCodeText(t, status.code, harness) })} <span className="font-mono">{status.code ?? 'unknown'}</span>
         </div>
       );
     }
