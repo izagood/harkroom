@@ -145,7 +145,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
           )}
           {section === 'skills' && <SkillsSettings targetId={targetId} />}
           {section === 'automations' && <AutomationsSettings />}
-          {section === 'secrets' && <SecretsSettings targetId={targetId} />}
+          {section === 'secrets' && <SecretsSettings targetId={targetId} onOpenAgent={openAgent} />}
           {section === 'gallery' && <GallerySettings />}
         </main>
       </div>

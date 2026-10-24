@@ -28,6 +28,7 @@ function setup(over: Partial<Record<string, unknown>> = {}, initial: SecretView[
     listSecretGrants: vi.fn(async () => [{ id: 'g1', agentId: 'agent-1', channelId: null, operatorId: 'op-1', grantedBy: ME, grantedAt: '2026-10-02T00:00:00Z', suspendedAt: null, suspendReason: null }]),
     putSecretGrant: vi.fn(async () => undefined),
     deleteSecretGrant: vi.fn(async () => undefined),
+    reapproveSecretGrant: vi.fn(async (): Promise<unknown> => ({ grantId: 'g1', operatorId: null })),
     listSecretAccess: vi.fn(async () => []),
     ...over,
   };
@@ -358,5 +359,116 @@ describe('SecretsSettings', () => {
     render(<SecretsSettings />);
     await screen.findByTestId('secrets-disabled');
     expect(screen.queryByRole('button', { name: '+ 비밀 넣기' })).toBeNull();
+  });
+});
+
+/**
+ * 다시 허락(스레드 6cc6df67, designer 시안 v1 + security n1·n3). 서버 판정은 서버 시험이 지킨다. 여기서 재는 것:
+ * 사유가 사람 말로 보이는가, 확인창이 바뀐 칸·범위·머신 이름을 보이는가, `seenChangedAt` 을 **가공 없이** 보내는가,
+ * 창을 연 사이 또 바뀌면(409 changed_since) 목록을 다시 읽고 새 내용으로 창을 다시 띄우는가, 옛 서버·꺼진 에이전트.
+ */
+describe('정지된 부여 다시 허락', () => {
+  const LAST = '2026-10-23T12:02:03.456Z';
+  const paused = (over: Record<string, unknown> = {}) => ({
+    id: 'g1', agentId: 'agent-1', channelId: null, operatorId: 'op-1', grantedBy: ME, grantedAt: '2026-10-02T00:00:00Z',
+    suspendedAt: '2026-10-23T12:00:00Z', suspendReason: 'definition_changed', changedFields: ['instructions', 'workingDir'], lastChangedAt: LAST, ...over,
+  });
+  const machines = {
+    operators: vi.fn(async () => [{ id: 'op-1', name: 'old-mbp' }, { id: 'op-2', name: 'new-mini' }]),
+    listAgents: vi.fn(async () => [{ id: 'agent-1', assignment: { agentId: 'agent-1', operatorId: 'op-1' } }]),
+  };
+
+  it('사유를 사람 말로 보이고, 확인창에 바뀐 칸·머신 이름을 보인 뒤 lastChangedAt 을 그대로 보낸다', async () => {
+    const c = setup({ ...machines, listSecretGrants: vi.fn(async () => [paused()]), reapproveSecretGrant: vi.fn(async () => ({ grantId: 'g1', operatorId: 'op-1' })) });
+    render(<SecretsSettings />);
+    await expand('api-token');
+    expect((await screen.findByTestId('secret-grant-paused')).textContent).toBe('멈춤 · 지시문·작업 디렉터리가 바뀜');
+    fireEvent.click(screen.getByTestId('secret-grant-reapprove-alpha'));
+    const dlg = await screen.findByRole('dialog');
+    expect(within(dlg).getByTestId('secret-reapprove-fields').textContent).toBe('지시문작업 디렉터리');
+    await waitFor(() => expect(within(dlg).getByTestId('secret-reapprove-scope').textContent).toBe('모든 채널 · 지금 머신만 → old-mbp 에 묶는다'));
+    fireEvent.click(within(dlg).getByRole('button', { name: '다시 허락' }));
+    await waitFor(() => expect(c.reapproveSecretGrant).toHaveBeenCalledWith('id-api-token', 'g1', LAST));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('배정이 바뀌었으면 새 머신으로 옮겨 묶인다고 말하고 옛 머신은 지운 줄로 보인다', async () => {
+    setup({ ...machines, listAgents: vi.fn(async () => [{ id: 'agent-1', assignment: { agentId: 'agent-1', operatorId: 'op-2' } }]),
+      listSecretGrants: vi.fn(async () => [paused({ suspendReason: 'assignment_changed', changedFields: [], lastChangedAt: null })]) });
+    render(<SecretsSettings />);
+    await expand('api-token');
+    expect((await screen.findByTestId('secret-grant-paused')).textContent).toBe('멈춤 · 배정된 머신이 바뀜');
+    fireEvent.click(screen.getByTestId('secret-grant-reapprove-alpha'));
+    const dlg = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dlg).getByTestId('secret-reapprove-scope').textContent).toBe('모든 채널 · 지금 머신만 → old-mbp new-mini 에 옮겨 묶는다'));
+  });
+
+  it('바뀐 칸 기록이 없는 옛 줄은 「에이전트 설정이 바뀜」·「기록 없음」으로 보이고 null 을 보낸다(n3)', async () => {
+    const c = setup({ ...machines, listSecretGrants: vi.fn(async () => [paused({ changedFields: [], lastChangedAt: null, operatorId: null })]), reapproveSecretGrant: vi.fn(async () => ({ grantId: 'g1', operatorId: null })) });
+    render(<SecretsSettings />);
+    await expand('api-token');
+    expect((await screen.findByTestId('secret-grant-paused')).textContent).toBe('멈춤 · 에이전트 설정이 바뀜');
+    fireEvent.click(screen.getByTestId('secret-grant-reapprove-alpha'));
+    const dlg = await screen.findByRole('dialog');
+    expect(within(dlg).getByTestId('secret-reapprove-norecord').textContent).toMatch(/^기록이 없다/);
+    expect(within(dlg).getByTestId('secret-reapprove-scope').textContent).toBe('모든 채널 · 어느 머신이든');
+    fireEvent.click(within(dlg).getByRole('button', { name: '다시 허락' }));
+    await waitFor(() => expect(c.reapproveSecretGrant).toHaveBeenCalledWith('id-api-token', 'g1', null));
+  });
+
+  it('셋 이상 바뀌었으면 「지시문 외 2개가 바뀜」', async () => {
+    setup({ ...machines, listSecretGrants: vi.fn(async () => [paused({ changedFields: ['instructions', 'harness', 'mcpServers'] })]) });
+    render(<SecretsSettings />);
+    await expand('api-token');
+    expect((await screen.findByTestId('secret-grant-paused')).textContent).toBe('멈춤 · 지시문 외 2개가 바뀜');
+  });
+
+  it('창을 연 사이 또 바뀌면(409 changed_since) 목록을 다시 읽고 새 내용으로 창을 다시 띄운다', async () => {
+    const LATER = '2026-10-23T12:30:00.000Z';
+    const list = vi.fn()
+      .mockResolvedValueOnce([paused()])
+      .mockResolvedValue([paused({ changedFields: ['harness', 'instructions', 'workingDir'], lastChangedAt: LATER })]);
+    const reapproveSecretGrant = vi.fn()
+      .mockRejectedValueOnce(new ApiError(409, 'changed_since', 'x'))
+      .mockResolvedValue({ grantId: 'g1', operatorId: 'op-1' });
+    const c = setup({ ...machines, listSecretGrants: list, reapproveSecretGrant });
+    render(<SecretsSettings />);
+    await expand('api-token');
+    fireEvent.click(await screen.findByTestId('secret-grant-reapprove-alpha'));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '다시 허락' }));
+    const again = await screen.findByTestId('secret-reapprove-again');
+    expect(again.textContent).toMatch(/또 바뀌었다/);
+    const dlg = screen.getByRole('dialog');
+    expect(within(dlg).getByTestId('secret-reapprove-fields').textContent).toBe('하네스지시문작업 디렉터리');
+    fireEvent.click(within(dlg).getByRole('button', { name: '다시 허락' }));
+    await waitFor(() => expect(c.reapproveSecretGrant).toHaveBeenLastCalledWith('id-api-token', 'g1', LATER));
+  });
+
+  it('막히면(not_assigned) 창 안에 사람 말로 보이고 창은 닫지 않는다', async () => {
+    setup({ ...machines, listSecretGrants: vi.fn(async () => [paused()]), reapproveSecretGrant: vi.fn(async () => { throw new ApiError(409, 'not_assigned', 'x'); }) });
+    render(<SecretsSettings />);
+    await expand('api-token');
+    fireEvent.click(await screen.findByTestId('secret-grant-reapprove-alpha'));
+    const dlg = await screen.findByRole('dialog');
+    fireEvent.click(within(dlg).getByRole('button', { name: '다시 허락' }));
+    expect(await within(dlg).findByText(/@alpha 이 어느 머신에도 배정돼 있지 않다/)).toBeTruthy();
+  });
+
+  it('lastChangedAt 을 싣지 않는 옛 서버에는 [다시 허락] 이 없다', async () => {
+    const old = paused(); delete (old as Record<string, unknown>).lastChangedAt;
+    setup({ listSecretGrants: vi.fn(async () => [old]) });
+    render(<SecretsSettings />);
+    await expand('api-token');
+    await screen.findByTestId('secret-grant-paused');
+    expect(screen.queryByTestId('secret-grant-reapprove-alpha')).toBeNull();
+  });
+
+  it('꺼진 에이전트는 버튼을 끄고 켠 뒤 다시 허락하라고 안내한다', async () => {
+    useActiveStore.getState().set({ accounts: { ...useActiveStore.getState().accounts, 'agent-1': acc('agent-1', 'alpha', 'agent', false, { ownerAccountId: ME, disabled: true }) } });
+    setup({ listSecretGrants: vi.fn(async () => [paused({ suspendReason: 'agent_disabled', changedFields: [] })]) });
+    render(<SecretsSettings />);
+    await expand('api-token');
+    expect((await screen.findByTestId('secret-grant-reapprove-alpha') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('secret-grant-off-hint').textContent).toMatch(/에이전트를 켠 뒤 다시 허락할 수 있다/);
   });
 });

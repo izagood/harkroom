@@ -3268,6 +3268,7 @@ export class Controller {
   deleteSecret(id: string) { return this.api.deleteSecret(id); }
   listSecretGrants(id: string) { return this.api.listSecretGrants(id); }
   putSecretGrant(id: string, body: Parameters<ApiClient['putSecretGrant']>[1]) { return this.api.putSecretGrant(id, body); }
+  reapproveSecretGrant(id: string, grantId: string, seenChangedAt: string | null) { return this.api.reapproveSecretGrant(id, grantId, seenChangedAt); }
   deleteSecretGrant(id: string, grantId: string) { return this.api.deleteSecretGrant(id, grantId); }
   listSecretAccess(id: string) { return this.api.listSecretAccess(id); }
   unlockSecrets(password: string) { return this.api.unlockSecrets(password); }
