@@ -46,6 +46,20 @@ describe('providerLane.envFor', () => {
     await expect(lane.envFor('m1', 'kilo')).rejects.toMatchObject({ code: 'harness_unsupported' });
   });
 
+  it('턴이 끝나면 그 턴 파일을 거두고, 턴 파일 자리 밖 경로는 건드리지 않는다(security L2 n1)', async () => {
+    const t = await setup();
+    const state = join(t.root, 'state');
+    const lane = createProviderLane({
+      mount: ok({ baseUrl: 'https://gateway.example', path: t.path }), turnSecretsDir: t.secretsDir, stateDir: state, harnessVersion: async () => '1.18.32',
+    });
+    const env = await lane.envFor('m-9', 'opencode');
+    await lane.release(env);
+    expect(await readdir(join(state, 'lane-turn'))).toEqual([]);
+    await lane.release({ OPENCODE_CONFIG: t.path });
+    expect(await readFile(t.path, 'utf8')).toBe('tok-123\n');
+    await lane.release({ ANTHROPIC_AUTH_TOKEN: 'x' });
+  });
+
   it('opencode 판이 잰 목록과 정확히 같지 않거나 못 읽으면 `harness_version` — 키를 받지 않는다(security F1)', async () => {
     const t = await setup();
     let mounted = 0;

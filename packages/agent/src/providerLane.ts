@@ -173,7 +173,10 @@ export function providerLaneKeys(harness: AgentHarness): readonly string[] | nul
   return PROVIDER_LANE_ENV_KEYS[harness] ?? null;
 }
 
-export function createProviderLane(deps: ProviderLaneDeps): { envFor(cause: string, harness: AgentHarness): Promise<Record<string, string>> } {
+export function createProviderLane(deps: ProviderLaneDeps): {
+  envFor(cause: string, harness: AgentHarness): Promise<Record<string, string>>;
+  release(env: Record<string, string>): Promise<void>;
+} {
   // 결과를 알린다(2a). 성공·실패 모두 — 다음 성공이 「마지막 시도」 빨간 줄을 지운다.
   const envFor = async (cause: string, harness: AgentHarness): Promise<Record<string, string>> => {
     try {
@@ -185,7 +188,15 @@ export function createProviderLane(deps: ProviderLaneDeps): { envFor(cause: stri
       throw err;
     }
   };
-  return { envFor };
+  // 턴 파일은 이 러너의 턴 파일 자리 안의 것만 지운다 — env 에 실린 다른 경로는 건드리지 않는다.
+  const release = async (env: Record<string, string>): Promise<void> => {
+    const path = env[LANE_TURN_FILE_ENV];
+    if (!path || !deps.stateDir) return;
+    const rel = relative(join(deps.stateDir, LANE_TURN_DIR), path);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel) || rel.includes('/')) return;
+    await rm(path, { force: true });
+  };
+  return { envFor, release };
 
   async function prepare(cause: string, harness: AgentHarness): Promise<Record<string, string>> {
     if (!providerLaneKeys(harness)) throw new ProviderLaneError('harness_unsupported');

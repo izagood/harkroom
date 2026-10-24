@@ -313,6 +313,8 @@ export interface MentionTurnDeps {
    * 던지면 턴을 띄우지 않는다(fail-closed: 계정 로그인으로 떨어지지 않는다). 없으면 lane 이 아닌 러너다.
    */
   providerEnv?: (cause: string, harness: AgentHarness) => Promise<Record<string, string>>;
+  /** 그 턴이 끝나면 `providerEnv` 가 남긴 턴 파일을 거둔다(security L2 n1). 기동 때 걷기는 거두지 못한 것의 바닥이다. */
+  providerEnvDone?: (env: Record<string, string>) => Promise<void>;
   /**
    * 이 턴의 하네스 기록 파일을 알린다(비밀 보관소 D7). 멘션이 끝날 때 러너가 그 파일에서 마운트한 값을 가린다
    * (`secretLeases.ts`). claude 는 세션 jsonl, codex 는 rollout. 세션이 sqlite 인 하네스(opencode 계열)는 없다.
@@ -779,6 +781,19 @@ const LANE_SKILL_KEYS = new Set(['name', 'description']);
  * - frontmatter 가 있으면 닫는 `---` 까지의 줄이 전부 빈 줄이거나 들여쓰기 없는 `name: …`·`description: …` 이어야 받는다.
  *   모르는 키·따옴표 키·이어지는 줄·주석·닫히지 않은 블록은 모두 뺀다(fail-closed).
  */
+/**
+ * API 키 연결 턴에 까는 스킬에 frontmatter 가 없으면 `name`(slug)·`description`(본문 첫 줄)을 붙인다(security L2 n1). opencode 는
+ * frontmatter `name` 이 없는 SKILL.md 를 스킬로 싣지 않고, lane 권한(`laneSkillPermission`)도 그 이름으로 연다. 이미 frontmatter 가
+ * 있으면 그대로 둔다 — `laneSafeSkill` 을 지난 것이라 `name`·`description` 말고는 없다. 붙이는 두 값은 `laneSafeSkill` 을 다시 지난다.
+ */
+export function withLaneSkillHeader(slug: string, body: string): string {
+  const text = body.replace(/^\uFEFF/, '');
+  if (text.replace(/^\s*\n/, '').split(/\r?\n/)[0]?.trim() === '---') return body;
+  const first = text.split(/\r?\n/).map((l) => l.replace(/^#+\s*/, '').trim()).find((l) => l !== '') ?? slug;
+  // 큰따옴표 문자열(JSON 꼴은 YAML 로도 읽힌다)로 써서 `:`·`#` 이 섞여도 값 하나로 읽힌다.
+  return `---\nname: ${slug}\ndescription: ${JSON.stringify(Array.from(first).slice(0, 200).join(""))}\n---\n${text}`;
+}
+
 export function laneSafeSkill(body: string): boolean {
   const text = body.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   const lines = text.replace(/^\s*\n/, '').split('\n');
@@ -840,7 +855,7 @@ export async function syncSkills(
     for (const skill of skills) {
       const skillPath = join(skillsDir, skill.slug);
       await mkdir(skillPath, { recursive: true });
-      await writeFile(join(skillPath, 'SKILL.md'), skill.body, 'utf8');
+      await writeFile(join(skillPath, 'SKILL.md'), opts.dropToolGrants ? withLaneSkillHeader(skill.slug, skill.body) : skill.body, 'utf8');
       for (const dir of harnessDirs) {
         await mkdir(dir, { recursive: true });
         await linkSkill(skillPath, join(dir, skill.slug));
@@ -1682,6 +1697,7 @@ export async function runMentionTurn(
     // open 이 죽은 PTY 에 사람을 붙인다. **내 등록만** 푼다: 등록이 던졌다면 그 자리는
     // 먼저 온 인터랙티브 턴의 것이다.
     if (registered) deps.registry?.release(key);
+    if (providerEnv) await deps.providerEnvDone?.(providerEnv).catch(() => undefined);
     // 턴이 어떻게 끝나든(정상·타임아웃·예외) 세션은 닫는다. 안 닫으면 서버의 세션
     // 목록에 끝난 턴이 영구히 남아, 사람이 attach 해도 아무 바이트도 오지 않는다.
     session?.close();
