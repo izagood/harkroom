@@ -878,7 +878,10 @@ function buildMcpServer(
     if ('alreadyGranted' in opened) {
       return jsonResult({
         alreadyGranted: true, expiresAt: opened.alreadyGranted.expiresAt,
-        message: kind === 'command' ? 'already granted in this thread — run exactly that command now' : 'already granted — it applies from the next turn in this channel',
+        message: kind === 'command'
+          ? 'already granted in this thread — run exactly that command now'
+          // 2026-10-24: 승인된 셸 규칙인데 `2>&1` 같은 셸 글자 때문에 거절된 모델이 같은 규칙을 다시 청했다 — 무엇을 고칠지 말한다.
+          : 'already granted — it applies from the next turn in this channel. If a shell command was refused anyway, run it plain: no redirection (such as 2>&1), pipes, chaining or substitution',
       });
     }
     if ('existing' in opened) {

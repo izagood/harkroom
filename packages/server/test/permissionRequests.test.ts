@@ -165,7 +165,10 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
     });
 
     it('이미 있으면 다시 청할 때 alreadyGranted 다', async () => {
-      expect(await request({ kind: 'tool', rule: EXEC, threadRootId: await root() })).toMatchObject({ alreadyGranted: true });
+      const again = await request({ kind: 'tool', rule: EXEC, threadRootId: await root() });
+      expect(again).toMatchObject({ alreadyGranted: true });
+      // 셸 글자 때문에 거절된 모델이 같은 규칙을 다시 청한다(2026-10-24) — 무엇을 고칠지 답에 싣는다.
+      expect(String((again as { message?: unknown }).message)).toContain('2>&1');
     });
 
     it('나중에 넓은 규칙으로 판정이 바뀐 옛 grant 는 러너에게 나가지 않는다', async () => {

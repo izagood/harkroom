@@ -52,6 +52,13 @@ export type LaneDenyDecision = { hookSpecificOutput: { hookEventName: 'PreToolUs
 export const LANE_HOOK_DENY_REASON =
   'harkroom: this API-key agent may only use owner-approved tools. Ask with the harkroom permission.request tool (kind "tool") for this exact use, e.g. Bash(<the exact full command>); once approved it opens from the next turn.';
 
+/**
+ * 셸 글자 때문에 거절할 때의 이유(2026-10-24 실측: `gh run list … 2>&1` 이 승인된 `:*` 규칙 안인데도 거절되자 모델이 더 좁은 규칙을
+ * 또 청해 카드가 겹쳤다). 규칙을 넓히지 않고, 맨 명령으로 치라고 말한다.
+ */
+export const LANE_HOOK_SHELL_REASON =
+  'harkroom: this command has shell characters (> | & ; $ ` ( ) { } \\ or a line break), and approved rules never cover those, even inside quotes. Run the plain command without redirection (such as 2>&1), pipes, chaining or substitution. If no approved rule covers the plain command, ask with the harkroom permission.request tool (kind "tool") for it.';
+
 export function laneDeny(reason = LANE_HOOK_DENY_REASON): LaneDenyDecision {
   return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } };
 }
@@ -107,6 +114,10 @@ export function decideLaneHook(raw: string, rules: readonly string[]): LaneDenyD
   try { input = JSON.parse(raw) as typeof input; } catch { return laneDeny(); }
   const tool = typeof input.tool_name === 'string' ? input.tool_name : '';
   if (!tool) return laneDeny();
-  if (tool === 'Bash') return laneBashAllowed(rules, input.tool_input?.command) ? null : laneDeny();
+  if (tool === 'Bash') {
+    const command = input.tool_input?.command;
+    if (laneBashAllowed(rules, command)) return null;
+    return laneDeny(typeof command === 'string' && SHELL_META.test(command.trim()) ? LANE_HOOK_SHELL_REASON : LANE_HOOK_DENY_REASON);
+  }
   return laneToolListed(rules, tool) ? null : laneDeny();
 }
