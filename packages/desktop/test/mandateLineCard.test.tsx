@@ -9,6 +9,9 @@ import { usePrefsStore } from '../src/state/prefsStore';
 import { acc } from './helpers/fakeApi';
 
 const ME = 'owner-1';
+const ROOT = '11111111-2222-4333-8444-555555555555';
+const M2 = '22222222-3333-4444-8555-666666666666';
+const CHAT = '33333333-4444-4555-8666-777777777777';
 const MANDATE = { id: 'md1', name: 'M2.7 전환', ownerId: ME, startedAt: '2026-10-21T03:00:00Z' };
 const LINE = { cap: 'merge', scope: 'repo:example-org/svc', limits: { approve_mandate: { untilMs: 7 * 86_400_000 }, approve_once: { pr: 404, head: '7b7dd25abc', uses: 1 } } };
 function card(opts: { options?: string[]; pr?: Record<string, unknown>; ask?: Record<string, unknown>; mirror?: Record<string, unknown> } = {}): MessageRow {
@@ -70,15 +73,15 @@ describe('W4 mandate line card', () => {
     expect(screen.queryByTestId('ask-option-approve_once')).toBeNull();
   });
   it('genuine mirror renders the same card incl. [이번 한 번]', () => {
-    render(<AskCard message={card({ mirror: { rootId: 'root-1', neutral: false, kind: 'merge', line: LINE, mandate: MANDATE, once: { number: 404, headSha: '7b7dd25abc', reason: 'not_granted' } } })} />);
+    render(<AskCard message={card({ mirror: { rootId: ROOT, neutral: false, kind: 'merge', line: LINE, mandate: MANDATE, once: { number: 404, headSha: '7b7dd25abc', reason: 'not_granted' } } })} />);
     expect(screen.getByTestId('mandate-mirror-genuine')).toBeTruthy();
-    expect(screen.getByTestId('mandate-mirror-link').getAttribute('href')).toBe('harkroom://message/root-1');
+    expect(screen.getByTestId('mandate-mirror-link').getAttribute('href')).toBe(`harkroom://message/${ROOT}`);
     fireEvent.click(screen.getByTestId('ask-option-approve_once'));
     expect(answerAsk).toHaveBeenCalledWith('m1', 'approve_once', 'c1');
     expect(screen.queryByTestId('merge-once-account')).toBeNull();
   });
   it('neutral mirror shows only a line + link', () => {
-    render(<AskCard message={card({ mirror: { rootId: 'root-1', neutral: true } })} />);
+    render(<AskCard message={card({ mirror: { rootId: ROOT, neutral: true } })} />);
     expect(screen.getByTestId('mandate-mirror-neutral')).toBeTruthy();
     expect(screen.queryByTestId('mandate-line')).toBeNull();
     expect(screen.queryByTestId('ask-option-deny')).toBeNull();
@@ -88,13 +91,13 @@ describe('W4 mandate line card', () => {
     ['once', { options: ['approve_once', 'deny'], pr: { status: 'approved_once', kind: 'command', line: { cap: 'command', scope: 'x', limits: { approve_once: { uses: 1 } } } }, ask: { answeredWith: 'approve_once', answeredBy: ME } }],
     ['denied', { pr: { status: 'denied' }, ask: { answeredWith: 'deny', answeredBy: ME } }],
     ['expired', { pr: { status: 'expired' }, ask: { closedAt: '2026-10-22T00:00:00Z', closedReason: 'expired' } }],
-    ['superseded', { pr: { status: 'superseded' }, ask: { closedAt: '2026-10-22T00:00:00Z', closedReason: 'superseded', supersededBy: 'm2' } }],
+    ['superseded', { pr: { status: 'superseded' }, ask: { closedAt: '2026-10-22T00:00:00Z', closedReason: 'superseded', supersededBy: M2 } }],
   ])('ended state %s', (state, opts) => {
     render(<AskCard message={card(opts as Parameters<typeof card>[0])} />);
     expect(screen.getByTestId('mandate-ended').dataset.state).toBe(state);
     expect(screen.getByTestId('mandate-line')).toBeTruthy();
     expect(screen.queryByTestId('ask-option-deny')).toBeNull();
-    if (state === 'superseded') expect(screen.getByTestId('mandate-new-card').getAttribute('href')).toBe('harkroom://message/m2');
+    if (state === 'superseded') expect(screen.getByTestId('mandate-new-card').getAttribute('href')).toBe(`harkroom://message/${M2}`);
   });
   it('used-once card and seeing mirror show the operator-picked gh account', () => {
     const line = { cap: 'command', scope: 'x', limits: { approve_once: { uses: 1 } } };
@@ -113,9 +116,37 @@ describe('W4 mandate line card', () => {
     expect(screen.queryByTestId('ask-option-approve_mandate')).toBeNull();
   });
   it('chat-answered marker links to the message', () => {
+    render(<AskCard message={card({ pr: { status: 'granted', decidedVia: { kind: 'chat', messageId: CHAT } }, ask: { answeredWith: 'approve_mandate', answeredBy: ME } })} />);
+    const m = screen.getByTestId('ask-answered-via-chat');
+    expect(m.textContent).toContain('글로 답함');
+    expect(m.querySelector('a')!.getAttribute('href')).toBe(`harkroom://message/${CHAT}`);
+  });
+  it('owner unknown: read-only, no buttons, no chip', () => {
+    render(<AskCard message={card({ pr: { ownerAccountId: undefined, mandate: undefined } })} />);
+    expect(screen.getByTestId('mandate-owner-only')).toBeTruthy();
+    expect(screen.queryByTestId('mandate-chip')).toBeNull();
+    expect(screen.queryByTestId('ask-option-approve_mandate')).toBeNull();
+    expect(screen.queryByTestId('ask-option-deny')).toBeNull();
+  });
+  it('viewer unknown (me not loaded): read-only', () => {
+    useActiveStore.getState().set({ me: null });
+    render(<AskCard message={card()} />);
+    expect(screen.getByTestId('mandate-owner-only').textContent).toContain('alice');
+    expect(screen.queryByTestId('ask-option-approve_mandate')).toBeNull();
+  });
+  it('non-uuid meta ids render no link', () => {
+    const bad = 'x" onclick="y';
+    render(<AskCard message={card({ mirror: { rootId: bad, neutral: true } })} />);
+    expect(screen.getByTestId('mandate-mirror-neutral')).toBeTruthy();
+    expect(screen.queryByTestId('mandate-mirror-link')).toBeNull();
+    cleanup();
+    render(<AskCard message={card({ pr: { status: 'superseded' }, ask: { closedAt: '2026-10-22T00:00:00Z', closedReason: 'superseded', supersededBy: 'm2/../x' } })} />);
+    expect(screen.queryByTestId('mandate-new-card')).toBeNull();
+    expect(screen.getByTestId('mandate-ended').textContent).toContain('다시');
+    cleanup();
     render(<AskCard message={card({ pr: { status: 'granted', decidedVia: { kind: 'chat', messageId: 'chat-1' } }, ask: { answeredWith: 'approve_mandate', answeredBy: ME } })} />);
     const m = screen.getByTestId('ask-answered-via-chat');
     expect(m.textContent).toContain('글로 답함');
-    expect(m.querySelector('a')!.getAttribute('href')).toBe('harkroom://message/chat-1');
+    expect(m.querySelector('a')).toBeNull();
   });
 });

@@ -6,6 +6,7 @@ import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
 import { MandateLineBody, readCardSource } from './MandateLineBody';
+import { messageLinkFromMeta } from '../lib/link';
 
 /**
  * 선택 요청 카드 — 이 디자인 언어에서 **대화 안의 유일한 "상자"**다(상자 예산 1개).
@@ -50,6 +51,7 @@ export function AskCard({ message }: { message: MessageRow }) {
   const decidedVia = (message.meta?.permissionRequest as { decidedVia?: { kind?: unknown; messageId?: unknown } } | undefined)?.decidedVia;
   const chatVia = decidedVia?.kind === 'chat' ? { messageId: typeof decidedVia.messageId === 'string' ? decidedVia.messageId : null }
     : ask.answeredVia === 'chat' ? { messageId: null } : null;
+  const chatViaHref = messageLinkFromMeta(chatVia?.messageId);
 
   const answered = ask.answeredWith != null;
   /**
@@ -124,8 +126,8 @@ export function AskCard({ message }: { message: MessageRow }) {
         {answered && chatVia && (
           <span className="text-meta text-fg-subtle" data-testid="ask-answered-via-chat">
             {'· '}
-            {chatVia.messageId
-              ? <a className="underline decoration-dotted underline-offset-2" href={`harkroom://message/${chatVia.messageId}`}>{t('speech.ask.viaChat')}</a>
+            {chatViaHref
+              ? <a className="underline decoration-dotted underline-offset-2" href={chatViaHref}>{t('speech.ask.viaChat')}</a>
               : t('speech.ask.viaChat')}
           </span>
         )}

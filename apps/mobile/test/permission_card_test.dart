@@ -253,4 +253,11 @@ void main() {
     expect(find.text('Just this once (PR #404)'), findsOneWidget);
     expect(find.text('Deny'), findsOneWidget);
   });
+
+  testWidgets('소유자를 모르면 버튼 없이 읽기 전용', (tester) async {
+    await tester.pumpWidget(wrap(app, card(permMeta(pr: {'ownerAccountId': null, 'mandate': null}))));
+    expect(find.byKey(const Key('perm-readonly-m1')), findsOneWidget);
+    expect(find.byKey(const Key('ask-option-m1-approve_mandate')), findsNothing);
+    expect(find.byKey(const Key('ask-option-m1-deny')), findsNothing);
+  });
 }
