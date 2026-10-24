@@ -1,7 +1,8 @@
-import { useUpdateCheck } from '../../lib/useUpdateCheck';
+import { setUpdateChannel, useUpdateCheck } from '../../lib/useUpdateCheck';
+import type { UpdateChannel } from '../../lib/updateChannel';
 import { useLocale, useT } from '../../i18n/useT';
 import type { Locale } from '../../i18n';
-import { Button, ReadonlyRow, SettingsColumns, SettingsGroup, SettingsPage } from './primitives';
+import { Button, ReadonlyRow, SettingsColumns, SettingsGroup, SettingsPage, Toggle } from './primitives';
 
 /**
  * 앱 내부 업데이트 화면.
@@ -28,6 +29,9 @@ import { Button, ReadonlyRow, SettingsColumns, SettingsGroup, SettingsPage } fro
  * 이제 `useUpdateCheck` 의 공용 답을 읽고, "아직 확인 안 함" 은 **정말 한 번도 답을 못 받았을
  * 때만** 쓴다. [지금 확인] 은 같은 물음에 합류한다(두 자리가 동시에 물어도 한 번만 묻는다).
  */
+/** 채널 이름은 고유명이라 번역하지 않는다(시안 v1 구현 메모). */
+const CHANNEL_NAME: Record<UpdateChannel, string> = { stable: 'Stable', ludicrous: 'Ludicrous' };
+
 function checkedLabel(at: number, locale: Locale): string {
   // 앱 언어로 적는다 — `[]` 로 두면 OS 언어를 따라가 영어 화면에 「오후 09:07」 이 섞인다.
   return new Date(at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
@@ -36,8 +40,15 @@ function checkedLabel(at: number, locale: Locale): string {
 export function UpdatesSettings() {
   const t = useT();
   const locale = useLocale();
-  const { status, checkedAt, checking, recheckFailure, check, install } = useUpdateCheck();
+  const { status, checkedAt, checking, recheckFailure, channel, answeredChannel, installedChannel, check, install } = useUpdateCheck();
   const busy = checking || status.kind === 'installing';
+  const ludicrous = channel === 'ludicrous';
+  /**
+   * Ludicrous 에서 받은 판을 쓰다가 끈 사람에게만 선다(시안 v1 #5). 업데이터는 낮은 판으로 내려가지
+   * 않으므로 Stable 이 이 판을 넘을 때까지 "새 판 없음" 이 이어진다 — 그 이유를 그 자리에서 말한다.
+   * Stable 에서 한 번 설치하면 `installedChannel` 이 stable 이 되어 사라진다.
+   */
+  const aheadOfStable = !ludicrous && installedChannel === 'ludicrous';
 
   let newVersion: string;
   /**
@@ -51,7 +62,8 @@ export function UpdatesSettings() {
     if (recheckFailure) failureLine = t('settings.updates.recheckFailed', { time: checkedLabel(recheckFailure.at, locale), message: recheckFailure.message });
   }
   else if (status.kind === 'installing') newVersion = t('settings.updates.installingVersion', { version: status.version });
-  else if (status.kind === 'uptodate') newVersion = t('settings.updates.upToDate', { time: checkedLabel(checkedAt ?? Date.now(), locale) });
+  // 「최신」이 아니라 「그 채널에 더 새 판 없음」 이다 — Stable 보다 앞선 판을 쓸 때도 참인 말이다(시안 v1 #5).
+  else if (status.kind === 'uptodate') newVersion = t('settings.updates.upToDate', { channel: CHANNEL_NAME[answeredChannel ?? channel], time: checkedLabel(checkedAt ?? Date.now(), locale) });
   // 실패는 실패라고 적는다. 원문을 붙여 사람이 원인을 직접 볼 수 있게 한다.
   else if (status.kind === 'failed') { newVersion = t('settings.updates.failed'); failureLine = status.reason === 'notRestarted' ? t('update.notRestarted') : status.message; }
   else newVersion = checking ? t('settings.updates.checking') : t('settings.updates.notChecked');
@@ -61,13 +73,13 @@ export function UpdatesSettings() {
       {/* 버전·설치가 주 칸, 「재시작이 무엇을 건드리나」 설명이 곁 칸(설정 폭 시안 v1 cards). */}
       <SettingsColumns
         testId="updates-columns"
-        main={(
+        main={(<>
       <SettingsGroup>
         {/* 순서가 사양이다(UX ③): 지금 버전 → 새 버전(확인 시각) → 설치. 사이드바 칸의
             "0.3.59 → 0.3.63" 을 세로로 편 모양이다. */}
         <ReadonlyRow label={t('settings.updates.current')} value={__APP_VERSION__} />
         <ReadonlyRow
-          label={t('settings.updates.new')}
+          label={t('settings.updates.newOn', { channel: CHANNEL_NAME[channel] })}
           value={
             <span role="status" data-testid="updates-new-version" className="block text-right">
               <span className="block truncate">{newVersion}</span>
@@ -97,7 +109,30 @@ export function UpdatesSettings() {
           )}
         </div>
       </SettingsGroup>
+      {/* 받을 판(시안 v1 #1) — 버전 카드 **아래**. 지금 → 새 → 설치 순서(UX ③)를 깨지 않는다. */}
+      <SettingsGroup title={t('settings.updates.channelGroup')}>
+        {/* 설치하는 중에는 잠근다 — 받는 중인 판의 채널이 바뀌면 `installedChannel` 이 거짓이 된다. */}
+        <Toggle
+          label={t('settings.updates.ludicrous')}
+          description={t('settings.updates.ludicrousNote')}
+          checked={ludicrous}
+          disabled={status.kind === 'installing'}
+          onChange={(on) => { setUpdateChannel(on ? 'ludicrous' : 'stable'); }}
+        />
+        {/* 켜는 것만으로는 바뀌는 것이 없다 — 되돌릴 수 없는 순간은 설치다. 그래서 모달 없이 켜져 있는 동안 한 줄(#3). */}
+        {ludicrous && (
+          <p data-testid="updates-ludicrous-warn" className="bg-warning-surface px-4 py-2.5 text-meta text-warning last:rounded-b-compose">
+            {/* 표지는 눈으로만 본다 — 스크린리더가 「경고 표지」부터 읽지 않게(designer n1). */}
+            <span aria-hidden>⚠</span> {t('settings.updates.ludicrousWarn')}
+          </p>
         )}
+        {aheadOfStable && (
+          <p data-testid="updates-ahead-note" className="bg-accent-surface px-4 py-2.5 text-meta text-fg last:rounded-b-compose">
+            {t('settings.updates.aheadNote', { version: __APP_VERSION__ })}
+          </p>
+        )}
+      </SettingsGroup>
+        </>)}
         side={(<>
       {/*
         재시작이 무엇을 건드리고 무엇을 안 건드리는지.

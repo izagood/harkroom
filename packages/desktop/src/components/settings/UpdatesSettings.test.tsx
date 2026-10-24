@@ -21,6 +21,8 @@ import { usePrefsStore } from '../../state/prefsStore';
 afterEach(() => {
   cleanup();
   setAppUpdater(null);
+  // 채널·installedChannel 은 기기 로컬 저장본이다 — 시험끼리 새지 않게 비운다.
+  localStorage.clear();
 });
 
 /** 테스트가 갈아끼우는 업데이트 표면. */
@@ -67,7 +69,7 @@ describe('UpdatesSettings — 사유를 지어내지 않는다', () => {
     expect(screen.getByRole('status').textContent).toContain('network unreachable');
     // 원문은 아랫줄에 따로 선다 — 처음부터 실패한 경우도 다시 묻기 실패와 같은 모양이다.
     expect(screen.getByTestId('updates-failure').textContent).toBe('network unreachable');
-    expect(screen.getByRole('status').textContent).not.toMatch(/up to date/i);
+    expect(screen.getByRole('status').textContent).not.toMatch(/nothing newer/i);
   });
 
   it('최신이면 최신이라고 적는다', async () => {
@@ -76,7 +78,8 @@ describe('UpdatesSettings — 사유를 지어내지 않는다', () => {
     fireEvent.click(screen.getByRole('button', { name: /check now/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('status').textContent).toMatch(/up to date/i);
+      // 「최신」이 아니라 「그 채널에 더 새 판 없음」 — Stable 보다 앞서 있어도 참인 말이다(시안 v1 #5).
+      expect(screen.getByRole('status').textContent).toMatch(/nothing newer on Stable/);
     });
   });
 });
@@ -316,12 +319,12 @@ describe('UpdatesSettings — 앱 언어를 따른다', () => {
       setAppUpdater(stub({ check: vi.fn(async () => null) }));
       render(<UpdatesSettings />);
       expect(screen.getByText('지금 버전')).toBeTruthy();
-      expect(screen.getByText('새 버전')).toBeTruthy();
+      expect(screen.getByText('새 버전 · Stable')).toBeTruthy();
       expect(document.body.textContent).toContain('업데이트를 설치하면 harkroom 이 다시 시작한다');
       fireEvent.click(screen.getByRole('button', { name: '지금 확인' }));
       const label = new Date(at).toLocaleTimeString('ko', { hour: '2-digit', minute: '2-digit' });
-      await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toBe(`없음 — 최신 버전 · ${label} 확인`));
-      expect(document.body.textContent).not.toMatch(/Current version|Check now|up to date|Installing an update/);
+      await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toBe(`없음 — Stable에 더 새 판 없음 · ${label} 확인`));
+      expect(document.body.textContent).not.toMatch(/Current version|Check now|nothing newer|Installing an update|Release channel/);
     } finally {
       now.mockRestore();
     }
@@ -346,10 +349,94 @@ describe('UpdatesSettings — 앱 언어를 따른다', () => {
       setAppUpdater(stub({ check: vi.fn(async () => null) }));
       render(<UpdatesSettings />);
       fireEvent.click(screen.getByRole('button', { name: 'Check now' }));
-      await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toMatch(/up to date · checked/));
+      await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toMatch(/nothing newer on Stable · checked/));
       expect(screen.getByTestId('updates-new-version').textContent).not.toMatch(/[오전후]/);
     } finally {
       now.mockRestore();
     }
+  });
+});
+
+/**
+ * 받을 판(Stable / Ludicrous) — 시안 v1(승인됨, 추천 5개 그대로).
+ */
+describe('UpdatesSettings — 받을 판', () => {
+  // 채널을 바꾼 뒤의 재확인은 업데이트 표면이 있는 빌드에서만 돈다(`useUpdateCheck` 의 `hasUpdateSurface`).
+  const withSurface = () => { (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}; };
+  afterEach(() => { delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__; });
+
+  it('기본은 꺼짐(Stable)이고, 새 버전 줄은 Stable 에 묻는다고 적는다', async () => {
+    const updater = stub();
+    setAppUpdater(updater);
+    render(<UpdatesSettings />);
+    const sw = screen.getByRole('switch', { name: 'Get Ludicrous builds' }) as HTMLInputElement;
+    expect(sw.checked).toBe(false);
+    expect(screen.getByText('New version · Stable')).toBeTruthy();
+    expect(screen.queryByTestId('updates-ludicrous-warn')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /check now/i }));
+    await waitFor(() => expect(updater.check).toHaveBeenCalledWith('stable'));
+  });
+
+  it('켜면 저장하고 Ludicrous 로 바로 다시 묻고, 켜져 있는 동안 경고 한 줄이 선다', async () => {
+    withSurface();
+    const updater = stub({ check: vi.fn(async (channel: string) => (channel === 'ludicrous' ? { version: '9.9.11' } : null)) });
+    setAppUpdater(updater);
+    render(<UpdatesSettings />);
+    fireEvent.click(screen.getByRole('switch', { name: 'Get Ludicrous builds' }));
+    await waitFor(() => expect(updater.check).toHaveBeenCalledWith('ludicrous'));
+    expect(localStorage.getItem('harkroom.updateChannel')).toBe('ludicrous');
+    await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toContain('9.9.11'));
+    expect(screen.getByText('New version · Ludicrous')).toBeTruthy();
+    expect(screen.getByTestId('updates-ludicrous-warn').textContent).toContain('stay installed after you turn it off');
+    expect(screen.getByRole('button', { name: /restart to install/i })).toBeTruthy();
+  });
+
+  it('끄면 들고 있던 Ludicrous 판과 설치 버튼을 버린다', async () => {
+    withSurface();
+    localStorage.setItem('harkroom.updateChannel', 'ludicrous');
+    const updater = stub({ check: vi.fn(async (channel: string) => (channel === 'ludicrous' ? { version: '9.9.11' } : null)) });
+    setAppUpdater(updater);
+    // 표면이 있으면 화면이 서자마자 한 번 묻는다.
+    render(<UpdatesSettings />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /restart to install/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('switch', { name: 'Get Ludicrous builds' }));
+    expect(screen.queryByRole('button', { name: /restart to install/i })).toBeNull();
+    await waitFor(() => expect(updater.check).toHaveBeenLastCalledWith('stable'));
+    await waitFor(() => expect(screen.getByTestId('updates-new-version').textContent).toMatch(/nothing newer on Stable/));
+  });
+
+  it('Ludicrous 에서 받은 판을 쓰다가 끄면 낮은 판으로 내려가지 않는다고 그 판 번호로 알린다', () => {
+    localStorage.setItem('harkroom.updateInstalledChannel', 'ludicrous');
+    setAppUpdater(stub());
+    render(<UpdatesSettings />);
+    const note = screen.getByTestId('updates-ahead-note').textContent ?? '';
+    expect(note).toContain(`${__APP_VERSION__} came from Ludicrous`);
+    expect(note).toContain(`newer than ${__APP_VERSION__}`);
+  });
+
+  it('그 안내는 Stable 에서 받은 판이거나 Ludicrous 를 켜 둔 동안에는 서지 않는다', () => {
+    localStorage.setItem('harkroom.updateInstalledChannel', 'stable');
+    setAppUpdater(stub());
+    const { unmount } = render(<UpdatesSettings />);
+    expect(screen.queryByTestId('updates-ahead-note')).toBeNull();
+    unmount();
+    setAppUpdater(null);
+    localStorage.setItem('harkroom.updateInstalledChannel', 'ludicrous');
+    localStorage.setItem('harkroom.updateChannel', 'ludicrous');
+    setAppUpdater(stub());
+    render(<UpdatesSettings />);
+    expect(screen.queryByTestId('updates-ahead-note')).toBeNull();
+  });
+
+  it('설치하는 중에는 스위치를 잠근다', async () => {
+    setAppUpdater(stub({
+      check: vi.fn(async () => ({ version: '9.9.12' })),
+      downloadAndInstall: vi.fn(() => new Promise<void>(() => {})),
+    }));
+    render(<UpdatesSettings />);
+    fireEvent.click(screen.getByRole('button', { name: /check now/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /restart to install/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /restart to install/i }));
+    await waitFor(() => expect((screen.getByRole('switch', { name: 'Get Ludicrous builds' }) as HTMLInputElement).disabled).toBe(true));
   });
 });

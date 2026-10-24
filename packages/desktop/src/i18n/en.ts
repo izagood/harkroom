@@ -2920,16 +2920,23 @@ export const en = {
    * `{time}` 은 화면이 앱 언어로 낸 시각이다 — 이 사전은 시각을 제 손으로 적지 않는다.
    */
   'settings.updates.current': 'Current version',
-  'settings.updates.new': 'New version',
+  /** 「새 버전」 줄의 라벨 — 어느 채널에서 찾는지를 붙인다. `{channel}` 은 Stable·Ludicrous(고유명, 번역 안 함). */
+  'settings.updates.newOn': 'New version · {channel}',
   'settings.updates.availableChecked': '{version} · checked {time}',
   'settings.updates.installingVersion': '{version} · downloading and installing…',
-  'settings.updates.upToDate': 'None — up to date · checked {time}',
+  'settings.updates.upToDate': 'None — nothing newer on {channel} · checked {time}',
   /** 「최신」 과 절대 합치지 않는다 — 원문은 아랫줄에 따로 선다(`UpdatesSettings.tsx` 머리말). */
   'settings.updates.failed': 'Could not complete',
   'settings.updates.recheckFailed': 'Re-check failed {time}: {message}',
   'settings.updates.checking': 'Checking…',
   'settings.updates.notChecked': 'Not checked yet',
   'settings.updates.checkNow': 'Check now',
+  /** 받을 판(Stable / Ludicrous) 카드 — 시안 v1. */
+  'settings.updates.channelGroup': 'Release channel',
+  'settings.updates.ludicrous': 'Get Ludicrous builds',
+  'settings.updates.ludicrousNote': 'Get the newest build as soon as it ships. Less tested than Stable. When off, you only get Stable (tested) builds.',
+  'settings.updates.ludicrousWarn': 'Builds installed while this is on stay installed after you turn it off.',
+  'settings.updates.aheadNote': '{version} came from Ludicrous. harkroom won’t downgrade: it stays on this build and picks up Stable again once Stable ships something newer than {version}.',
   'settings.updates.restartNote': 'Installing an update restarts harkroom. That does not disturb your agents: they are owned by a background daemon that outlives the app, and harkroom re-attaches to it on launch. Unsent drafts are kept across a restart; which thread you had open is not.',
 
   'projection.banner.stalled': 'Projection has been stalled for {ago}',
