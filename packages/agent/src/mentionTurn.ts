@@ -43,7 +43,7 @@ import type { MemoryCache } from './memoryCache.js';
 import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { planThreadNote, type ThreadNoteState } from './threadNotePin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
-import { laneModelMissing, laneScrubsSubprocessEnv, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
+import { laneModelMissing, laneScrubsSubprocessEnv, PROVIDER_LANE_FIXED_ENV, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
 import { laneWorkspaceViolations } from './laneWorkspaceGuard.js';
 
 /** 정지 직전 "제출 대기" 판정에 쓰는 화면 꼬리 길이(글자). 입력줄과 바닥줄 몇 개면 된다. */
@@ -53,6 +53,24 @@ const SCREEN_TAIL_CHARS = 4_000;
  * 묻는 것이 명령 실행(~0.4초)이라 매 주기 부르지 않는다. 끝난 턴은 이만큼 + 회수 유예 뒤에 접힌다.
  */
 const OPENCODE_QUIET_MS = 20_000;
+
+/**
+ * 러너가 턴 밖에서 opencode(·kilo)에 묻는 조회(`session list`·`export`)의 env.
+ *
+ * - **PATH 도 하네스의 것**이어야 명령이 ENOENT 로 죽지 않는다(#864).
+ * - **프로젝트 설정을 끈다**(lane 턴과 같은 스위치, `PROVIDER_LANE_FIXED_ENV`). 조회는 cwd 가 턴 작업 폴더라
+ *   거기 프로젝트 설정을 읽는데, 러너가 그것을 읽을 까닭이 없다 — 조회에 필요한 것은 격리 홈뿐이다.
+ */
+export function opencodeQueryEnv(
+  harness: AgentHarness, dirs: Record<string, string>, base: NodeJS.ProcessEnv,
+): Record<string, string> {
+  return {
+    ...base,
+    ...dirs,
+    ...(PROVIDER_LANE_FIXED_ENV[harness] ?? {}),
+    PATH: harnessPath(harness, base.PATH),
+  } as Record<string, string>;
+}
 
 /** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
@@ -1947,12 +1965,8 @@ export async function runMentionTurn(
     end.opencodeAskedAtMs = now;
     const read = deps.readOpencodeTurnState ?? ((sessionId: string | null, sinceMs: number) => readOpencodeTurnState({
       command: harnessCommand(def.harness),
-      // 세션 발견과 같은 env 다 — PATH 도 하네스의 것이어야 명령이 ENOENT 로 죽지 않는다(#864).
-      env: {
-        ...process.env,
-        ...opencodeDirs(deps.opencodeHome),
-        PATH: harnessPath(def.harness, process.env.PATH),
-      } as Record<string, string>,
+      // 세션 발견과 같은 env 다(`opencodeQueryEnv`).
+      env: opencodeQueryEnv(def.harness, opencodeDirs(deps.opencodeHome), process.env),
       cwd: opencodeCwd,
       sessionId,
       sinceMs,
@@ -2450,11 +2464,7 @@ export async function runMentionTurn(
         // **PATH 도 하네스의 것으로 만든다**(`harnessPath`). 러너의 `process.env` 에는
         // `~/.opencode/bin` 이 없어, 여기서 그대로 쓰면 목록 명령이 ENOENT 로 죽고 그것이
         // "세션 없음"으로 둔갑한다 — 턴은 성공하는데 다음 턴이 늘 새 세션으로 시작했다.
-        env: {
-          ...process.env,
-          ...opencodeDirs(deps.opencodeHome),
-          PATH: harnessPath(def.harness, process.env.PATH),
-        } as Record<string, string>,
+        env: opencodeQueryEnv(def.harness, opencodeDirs(deps.opencodeHome), process.env),
         cwd: rec.workspaceDir,
         sinceMs,
       })

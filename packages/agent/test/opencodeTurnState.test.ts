@@ -30,3 +30,13 @@ describe('opencodeTurnStateFromExport', () => {
     expect(opencodeTurnStateFromExport(JSON.stringify([]), SINCE)).toBeNull();
   });
 });
+
+describe('opencodeQueryEnv', () => {
+  // 러너의 조회는 턴 작업 폴더에서 돈다 — 그 자리의 프로젝트 설정을 읽지 않게 lane 턴과 같은 스위치를 준다.
+  it('opencode·kilo 조회 env 에 프로젝트 설정 끄기가 실린다', async () => {
+    const { opencodeQueryEnv } = await import('../src/mentionTurn.js');
+    expect(opencodeQueryEnv('opencode', { XDG_DATA_HOME: '/h/data' }, { PATH: '/usr/bin' }).OPENCODE_DISABLE_PROJECT_CONFIG).toBe('1');
+    expect(opencodeQueryEnv('kilo', {}, { PATH: '/usr/bin' }).KILO_DISABLE_PROJECT_CONFIG).toBe('1');
+    expect(opencodeQueryEnv('opencode', { XDG_DATA_HOME: '/h/data' }, {}).XDG_DATA_HOME).toBe('/h/data');
+  });
+});
