@@ -29,7 +29,8 @@ export type PermissionCardCap = 'tool' | 'merge' | 'command' | 'bypass';
  * 위임장 뿌리 채널을 카드 채널의 청중이 다 보지 못하면 `name` 은 빈 문자열이다 — 화면은 이름 없이 「🔑 위임장 · 소유자 · 시작일」로 그린다.
  * `ownerId`·`startedAt` 은 W4b 이전 카드에는 없다.
  */
-export interface PermissionCardMandate { id: string; name: string; ownerId?: string; startedAt?: string }
+/** `endedAt` — 위임이 끝났으면 그 시각(서버가 열린 카드에 적는다, 3판). */
+export interface PermissionCardMandate { id: string; name: string; ownerId?: string; startedAt?: string; endedAt?: string }
 
 /** 선택지 하나가 더할 줄의 한도(미리 보기). 실제 기한은 정할 때 서버가 정한다. */
 export interface PermissionCardLineLimits {

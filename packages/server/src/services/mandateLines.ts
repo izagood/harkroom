@@ -26,7 +26,7 @@ export interface MandateLine extends LineFacts {
 const LINE_COLS = `id, mandate_id as "mandateId", cap, scope, limits, agent_ids as "agentIds", granted_by as "grantedBy", via,
   request_id as "requestId", used_count as "usedCount", created_at as "createdAt", revoked_at as "revokedAt"`;
 
-export type AddLineResult = { ok: true; line: MandateLine } | { ok: false; code: 'no_mandate' | 'not_owner' | 'bad_cap' | 'bad_via' | 'bad_scope' | 'bad_agent'; detail?: string };
+export type AddLineResult = { ok: true; line: MandateLine } | { ok: false; code: 'no_mandate' | 'mandate_ended' | 'not_owner' | 'bad_cap' | 'bad_via' | 'bad_scope' | 'bad_agent'; detail?: string };
 
 /**
  * 줄 하나를 적는다. 주는 사람은 위임 소유자여야 하고(`system` 은 서버가 소유자 대신 적는 자리라 소유자 이름으로 적는다),
@@ -38,8 +38,12 @@ export async function addMandateLine(client: Q, args: {
 }): Promise<AddLineResult> {
   if (!isCap(args.cap)) return { ok: false, code: 'bad_cap' };
   if (args.via === 'standing') return { ok: false, code: 'bad_via' };
-  const owner = (await client.query<{ owner: string }>(`select owner_account_id as owner from mandate where id = $1`, [args.mandateId])).rows[0]?.owner;
-  if (!owner) return { ok: false, code: 'no_mandate' };
+  const m = (await client.query<{ owner: string; ended: boolean }>(
+    `select owner_account_id as owner, ended_at is not null as ended from mandate where id = $1`, [args.mandateId])).rows[0];
+  if (!m) return { ok: false, code: 'no_mandate' };
+  // 끝난 위임(3판)에는 줄을 더하지 않는다 — 끝낼 때 줄을 회수했는데 뒤늦은 승인이 다시 열면 끝이 끝이 아니다.
+  if (m.ended) return { ok: false, code: 'mandate_ended' };
+  const owner = m.owner;
   if (args.grantedBy !== owner) return { ok: false, code: 'not_owner' };
   const v = CAPABILITIES[args.cap].validateScope(args.scope);
   if (!v.ok) return { ok: false, code: 'bad_scope', detail: v.code };

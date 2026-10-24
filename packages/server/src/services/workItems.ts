@@ -1,5 +1,7 @@
 import type { Pool } from 'pg';
 import { channelVisibleSql } from './channels.js';
+import { recordAudit } from '../audit.js';
+import { endMandatesForDoneThreadTx, refreshMandateCards } from './mandateEnd.js';
 
 /**
  * 작업 항목(110) — 한 사람의 「내 작업」 보드에 서는 **밖의 일**. 협업 통합 설계 ① 이다.
@@ -167,7 +169,15 @@ export async function upsertWorkItem(
        returning ${COLUMNS}`,
       [ownerId, source, externalKey, url, title, state, threadRootId, actorId],
     );
+    // 3판: 그 스레드 머리의 일감이 done 이 되면 그 머리의 위임(일감 주인 소유)을 끝낸다 — 같은 트랜잭션에서 줄까지 회수.
+    const endedMandates = state === 'done' && threadRootId !== null
+      ? await endMandatesForDoneThreadTx(client, { ownerId, threadRootId })
+      : [];
     await client.query('commit');
+    if (endedMandates.length) {
+      await refreshMandateCards(pool, endedMandates);
+      for (const id of endedMandates) await recordAudit(pool, { action: 'mandate.ended', actorId, target: id, detail: { reason: 'work_done' } });
+    }
     return { item: toItem(res.rows[0]) };
   } catch (err) {
     await client.query('rollback').catch(() => {});
