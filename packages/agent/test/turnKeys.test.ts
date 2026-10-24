@@ -97,6 +97,15 @@ describe('턴 MCP 설정', () => {
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     await expect(writeTurnMcpConfig(join(dir, 'state'), src, '../x', keys.bridge)).rejects.toThrow();
   });
+  it('API 키 연결 턴만 harkroom 항목에 alwaysLoad — 구독형 턴은 미뤄 둔 그대로', async () => {
+    const src = join(dir, 'mcp.json');
+    await writeFile(src, JSON.stringify({ mcpServers: { harkroom: { command: '/op', args: ['mcp-bridge'] }, avcs: { command: 'avcs' } } }));
+    const lane = JSON.parse(await readFile(await writeTurnMcpConfig(join(dir, 'state'), src, 't-lane', keys.bridge, { alwaysLoad: true }), 'utf8'));
+    expect(lane.mcpServers.harkroom.alwaysLoad).toBe(true);
+    expect(lane.mcpServers.avcs.alwaysLoad).toBeUndefined();
+    const sub = JSON.parse(await readFile(await writeTurnMcpConfig(join(dir, 'state'), src, 't-sub', keys.bridge), 'utf8'));
+    expect(sub.mcpServers.harkroom.alwaysLoad).toBeUndefined();
+  });
 });
 
 describe('턴 열쇠 — opencode 전달(턴 설정 파일)', () => {
