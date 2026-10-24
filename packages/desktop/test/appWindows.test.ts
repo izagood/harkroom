@@ -110,6 +110,28 @@ describe('appWindows', () => {
     expect(useAppWindows.getState().entries[0]!.pinned).toBe(true);
   });
 
+  it('창 닫기는 win.close() 가 아니라 Tauri 창 닫기(라벨 win-<키>)로 한다 — WKWebView 는 스크립트 close 를 버린다', async () => {
+    const invoke = vi.fn(async () => undefined);
+    setAppWindowInvoke(invoke);
+    const w = fakeWin();
+    setWindowOpener({ open: () => w as unknown as Window });
+    openAppWindow(thread(ROOT));
+    closeAppWindow(thread(ROOT));
+    expect(invoke).toHaveBeenCalledWith('plugin:window|close', { label: 'win-thread-0b7e2c1a-1111-4a4a-9c9c-123456789abc' });
+    expect(useAppWindows.getState().entries).toHaveLength(0);
+    await Promise.resolve();
+    expect(w.close).not.toHaveBeenCalled();
+  });
+
+  it('Tauri 창 닫기가 실패하면 win.close() 로 물러난다', async () => {
+    setAppWindowInvoke(vi.fn(async () => { throw new Error('denied'); }));
+    const w = fakeWin();
+    setWindowOpener({ open: () => w as unknown as Window });
+    openAppWindow(thread(ROOT));
+    closeAppWindow(thread(ROOT));
+    await vi.waitFor(() => expect(w.close).toHaveBeenCalled());
+  });
+
   it('📌 가 실패하면 켜진 것처럼 보이지 않는다', async () => {
     setAppWindowInvoke(vi.fn(async () => { throw new Error('denied'); }));
     setWindowOpener({ open: () => fakeWin() as unknown as Window });

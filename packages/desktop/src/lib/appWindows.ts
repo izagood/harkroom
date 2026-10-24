@@ -165,8 +165,21 @@ export function closeAppWindow(target: AppWindowTarget): void {
   const found = findAppWindow(target);
   if (!found) return;
   closeAppWindowEntry(found.key);
-  found.win.close();
+  closeNativeWindow(found);
   persistAppWindows();
+}
+
+/**
+ * 창 자체를 닫는다. **`win.close()` 만으로는 닫히지 않는다** — WKWebView 는 스크립트의 `close()` 를 UI delegate 의
+ * `webViewDidClose:` 로 넘기는데 wry 0.55 가 그것을 구현하지 않아 요청이 버려진다(내용만 비고 창이 남던 신고,
+ * 2026-10-24). 그래서 빨간 단추와 같은 길인 Tauri 창 닫기(`plugin:window|close`, 라벨 `win-<key>`)를 부른다.
+ * Tauri 밖(브라우저·시험)이거나 그 호출이 실패하면 `win.close()` 로 물러난다.
+ */
+function closeNativeWindow(entry: Pick<AppWindowEntry, 'key' | 'win'>): void {
+  const fallback = () => { try { entry.win.close(); } catch { /* 이미 닫힘 */ } };
+  const invoke = tauriInvoke();
+  if (!invoke) { fallback(); return; }
+  invoke('plugin:window|close', { label: `win-${entry.key}` }).catch(fallback);
 }
 
 // ── 채널 창의 스레드 패널 폭(designer #1174) ────────────────────────────────
@@ -188,6 +201,9 @@ export function channelWindowPaneClamp(width: number, windowWidth: number): numb
   return Math.max(CHANNEL_WINDOW_MIN_THREAD, Math.min(width, windowWidth - CHANNEL_WINDOW_MIN_CHANNEL));
 }
 
+/** 장부에서 빼지 않고 창만 닫는다 — 커뮤니티를 옮길 때(창의 `pagehide` 가 장부를 정리한다). */
+export function closeAppWindowOnly(entry: AppWindowEntry): void { closeNativeWindow(entry); }
+
 export function setAppWindowPaneWidth(key: string, paneWidth: number): void {
   const { entries } = useAppWindows.getState();
   useAppWindows.setState({ entries: entries.map((e) => (e.key === key ? { ...e, paneWidth } : e)) });
@@ -202,7 +218,7 @@ export function closeAllAppWindows(): void {
   frozen = true;
   const { entries } = useAppWindows.getState();
   useAppWindows.setState({ entries: [] });
-  for (const e of entries) { try { e.win.close(); } catch { /* 이미 닫힘 */ } }
+  for (const e of entries) closeNativeWindow(e);
 }
 
 /** 사람이 로그아웃했다 — 그 커뮤니티의 복원 목록을 지운다. 다른 커뮤니티의 목록은 남긴다. */

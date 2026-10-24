@@ -335,6 +335,12 @@ describe('#353 드래그 권한', () => {
     expect(names).toContain('core:window:allow-start-dragging');
   });
 
+  it('새 창을 메인 웹뷰가 닫을 수 있게 core:window:allow-close 를 준다(appWindows closeNativeWindow)', () => {
+    const caps = JSON.parse(capabilitiesRaw) as { permissions: (string | { identifier: string })[] };
+    const names = caps.permissions.map((p) => (typeof p === 'string' ? p : p.identifier));
+    expect(names).toContain('core:window:allow-close');
+  });
+
   it('그 권한이 창 손잡이가 붙는 창(main)에 걸려 있다', () => {
     const caps = JSON.parse(capabilitiesRaw) as { windows: string[] };
     // 창 라벨을 따로 적지 않으므로 Tauri 기본값 `main` 이다. 이 목록에서 빠지면 권한을

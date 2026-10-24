@@ -4,7 +4,7 @@ import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { WindowViewProvider, type WindowView } from '../state/windowView';
 import {
-  closeAllAppWindows, closeAppWindow, markAppWindowGone, persistAppWindows, restoreAppWindows, setAppWindowPinned, setAppWindowScope, setAppWindowPaneWidth,
+  closeAllAppWindows, closeAppWindow, closeAppWindowOnly, markAppWindowGone, persistAppWindows, restoreAppWindows, setAppWindowPinned, setAppWindowScope, setAppWindowPaneWidth,
   channelWindowPaneClamp, channelWindowPaneDefault, CHANNEL_WINDOW_MIN_CHANNEL, CHANNEL_WINDOW_MIN_THREAD, syncRootAttributes,
   useAppWindows, type AppWindowEntry,
 } from '../lib/appWindows';
@@ -37,7 +37,7 @@ export function AppWindowsHost() {
     // 범위를 **먼저** 옮긴다 — 아래에서 닫는 옛 창들의 늦은 저장이 옛 커뮤니티 목록을 지우지 않게.
     setAppWindowScope(communityId);
     for (const e of useAppWindows.getState().entries) {
-      if (e.communityId !== communityId) { e.win.close(); }
+      if (e.communityId !== communityId) closeAppWindowOnly(e);
     }
     restoreAppWindows(communityId);
   }, [communityId]);
