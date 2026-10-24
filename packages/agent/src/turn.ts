@@ -658,6 +658,9 @@ const PI_PRESET: HarnessPreset = {
   model: (model) => (model ? ['--model', model] : []),
   effort: (effort) => (effort ? ['--thinking', effort] : []),
   alwaysArgs: () => ['--no-approve'],
+  // API 키 연결 턴은 context 파일(`AGENTS.md`·`CLAUDE.md`)을 읽지 않는다 — 지시는 러너가 준 `--append-system-prompt` 하나다.
+  // 회귀선 `test/piLaneProjectConfig.real.test.ts`.
+  laneArgs: () => ['--no-context-files'],
   // 지시문은 파일 경로로 — `--append-system-prompt` 는 경로를 받으면 **파일 내용을** 붙인다(실측).
   // 본문은 PTY 주입으로 간다(argv 로 넘기면 `ps` 에 샌다, #117).
   prompt: (systemPrompt, _promptCtx, _mode, systemPromptFile) => {

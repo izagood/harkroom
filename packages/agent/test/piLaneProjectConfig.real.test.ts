@@ -2,22 +2,26 @@
 //
 //   HARKROOM_PI_BIN=<pi 실행 파일> npx vitest run test/piLaneProjectConfig.real.test.ts
 //
-// 가짜 OpenAI chat-completions 서버를 띄우고, 러너와 같은 lane 스레드 홈·`models.json`·`--no-approve` 로 `pi -p` 한 턴을 돌린다.
-// 요청은 lane 주소로, lane 키로만 가야 한다. 비교 칸 둘이 이빨이다: 스위치(`--no-approve`)를 빼면 무엇이 달라지는지, lane 홈에 로그인이
-// 있으면 키가 바뀌는지(그래서 러너가 `harness_login_present` 로 멈춘다).
+// 가짜 OpenAI chat-completions 서버를 띄우고, 러너와 같은 lane 스레드 홈·`models.json`·`buildTurnCommand` 의 인자로 `pi -p` 한 턴을 돌린다.
+// 요청은 lane 주소로, lane 키로만 가야 하고, 지시는 러너가 준 것만 실려야 한다. 비교 칸이 이빨이다: 저장소를 믿게 하면, context 파일
+// 끄기를 빼면 무엇이 달라지는지, lane 홈에 로그인이 있으면 키가 바뀌는지(그래서 러너가 `harness_login_present` 로 멈춘다).
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ensurePiHome, ensurePiLaneThread, PI_LANE_PROVIDER, piLaneLoginPresent, piSessionsDir, writePiLaneModels } from '../src/piHome.js';
+import { ensurePiHome, ensurePiLaneThread, PI_LANE_PROVIDER, piLaneLoginPresent, writePiLaneModels } from '../src/piHome.js';
+import { PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV } from '../src/providerLane.js';
+import { buildTurnCommand } from '../src/turn.js';
 
 const BIN = process.env.HARKROOM_PI_BIN;
 const MODEL = 'lane-model';
 const LANE_KEY = 'fake-lane-key';
+const RUNNER_WORD = 'RUNNER_INSTRUCTION_MARK';
 
-interface Req { path: string; auth: string | undefined }
+interface Req { path: string; auth: string | undefined; body: string }
 
 function sse(res: import('node:http').ServerResponse): void {
   res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -37,9 +41,10 @@ describe.skipIf(!BIN)('pi lane 실물 — 저장소 설정·사람 로그인 무
 
   beforeAll(async () => {
     server = createServer((req, res) => {
-      req.resume();
+      let body = '';
+      req.on('data', (d) => { body += d; });
       req.on('end', () => {
-        reqs.push({ path: req.url ?? '', auth: req.headers.authorization });
+        reqs.push({ path: req.url ?? '', auth: req.headers.authorization, body });
         if (req.method === 'POST' && req.url?.endsWith('/chat/completions')) return sse(res);
         res.writeHead(404).end();
       });
@@ -71,6 +76,9 @@ describe.skipIf(!BIN)('pi lane 실물 — 저장소 설정·사람 로그인 무
       [join(ws, '..', '.pi', 'models.json')]: models('parent'),
       [join(home, '.pi', 'agent', 'models.json')]: models('home'),
       [join(home, '.pi', 'agent', 'auth.json')]: JSON.stringify({ [PI_LANE_PROVIDER]: { type: 'api_key', key: 'HUMAN_LOGIN' } }),
+      [join(ws, '..', 'CLAUDE.md')]: 'PLANTED_PARENT_CLAUDE\n',
+      [join(ws, '..', 'AGENTS.md')]: 'PLANTED_PARENT_AGENTS\n',
+      [join(base, '..', 'CLAUDE.md')]: 'PLANTED_FAR_CLAUDE\n',
     };
     for (const [p, body] of Object.entries(files)) {
       await mkdir(join(p, '..'), { recursive: true });
@@ -79,7 +87,7 @@ describe.skipIf(!BIN)('pi lane 실물 — 저장소 설정·사람 로그인 무
     return { ws, home, mark };
   }
 
-  async function runTurn(name: string, opts: { approve?: boolean; laneLogin?: boolean } = {}): Promise<{ got: Req[]; executed: string[]; loginSeen: boolean }> {
+  async function runTurn(name: string, opts: { approve?: boolean; laneLogin?: boolean; contextFiles?: boolean } = {}): Promise<{ got: Req[]; executed: string[]; loginSeen: boolean }> {
     const { ws, home, mark } = await plant(name);
     const laneRoot = join(root, `lane-${name}`);
     await ensurePiHome({ piHome: laneRoot, mcpServers: {}, lane: true });
@@ -90,7 +98,18 @@ describe.skipIf(!BIN)('pi lane 실물 — 저장소 설정·사람 로그인 무
     if (opts.laneLogin) await writeFile(join(piHome, 'auth.json'), JSON.stringify({ [PI_LANE_PROVIDER]: { type: 'api_key', key: 'LANE_HOME_LOGIN' } }));
     const loginSeen = await piLaneLoginPresent(piHome);
     const before = reqs.length;
-    const args = ['-p', ...(opts.approve ? ['--approve'] : ['--no-approve']), '--session-dir', piSessionsDir(piHome), '--model', `${PI_LANE_PROVIDER}/${MODEL}`, 'say ok'];
+    const systemPromptFile = join(root, `sys-${name}.txt`);
+    await writeFile(systemPromptFile, `${RUNNER_WORD}\n`);
+    // 러너가 멘션 턴에 붙이는 인자 그대로(TUI 대신 -p). 비교 칸만 그 인자를 바꾼다.
+    const plan = buildTurnCommand({
+      harness: 'pi', mode: 'mention', sessionId: randomUUID(), isFirstTurn: true, systemPrompt: 'SYS', systemPromptFile, promptCtx: '',
+      model: `${PI_LANE_PROVIDER}/${MODEL}`, effort: null, mentionPermission: 'auto', mcpConfigPath: join(root, 'none.json'), operatorBin: '/bin/false',
+      codexHome: join(root, 'codex'), claudeConfigDir: null, piHome, workspaceDir: ws,
+      providerEnv: { [PI_LANE_BASE_URL_ENV]: `http://127.0.0.1:${port}/lane`, [PI_LANE_KEY_FILE_ENV]: keyPath },
+    } as Parameters<typeof buildTurnCommand>[0]);
+    let args = plan.args.filter((a) => !(opts.contextFiles && a === '--no-context-files'));
+    if (opts.approve) args = args.map((a) => (a === '--no-approve' ? '--approve' : a));
+    args = ['-p', ...args, 'say ok'];
     await new Promise<void>((resolve, reject) => {
       const child = spawn(BIN!, args, {
         cwd: ws,
@@ -104,15 +123,24 @@ describe.skipIf(!BIN)('pi lane 실물 — 저장소 설정·사람 로그인 무
     return { got: reqs.slice(before).filter((r) => r.path.endsWith('/chat/completions')), executed: await readdir(mark), loginSeen };
   }
 
-  it('요청은 lane 주소·lane 키로만 가고, 저장소 확장은 실행되지 않는다', async () => {
+  it('요청은 lane 주소·lane 키로만 가고, 저장소 확장은 실행되지 않고, 지시는 러너 것만 실린다', async () => {
     const { got, executed, loginSeen } = await runTurn('lane');
     expect(loginSeen).toBe(false);
     expect(got.length).toBeGreaterThan(0);
     for (const r of got) {
       expect(r.path).toBe('/lane/v1/chat/completions');
       expect(r.auth).toBe(`Bearer ${LANE_KEY}`);
+      expect(r.body).toContain(RUNNER_WORD);
+      for (const w of ['PLANTED_PARENT_CLAUDE', 'PLANTED_PARENT_AGENTS', 'PLANTED_FAR_CLAUDE']) expect(r.body).not.toContain(w);
     }
     expect(executed).toEqual([]);
+  }, 120_000);
+
+  // 이빨: context 파일 끄기를 빼면 위 폴더의 지시가 실린다. 이 칸이 비면 위 시험의 「안 실린다」는 아무것도 재지 않는 것이다.
+  it('비교 칸 — context 파일 끄기를 빼면 위 폴더 지시가 실린다', async () => {
+    const { got } = await runTurn('context', { contextFiles: true });
+    // 한 폴더에서는 한 파일만 싣는다(1.4.0 실측: `AGENTS.md` 가 `CLAUDE.md` 를 이긴다).
+    expect(got.some((r) => r.body.includes('PLANTED_PARENT_AGENTS') && r.body.includes('PLANTED_FAR_CLAUDE'))).toBe(true);
   }, 120_000);
 
   // 이빨: 저장소를 믿게 하면 확장이 실행된다. 이 칸이 비면 위 시험의 「실행되지 않는다」는 아무것도 재지 않는 것이다.

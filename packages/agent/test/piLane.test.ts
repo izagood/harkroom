@@ -118,6 +118,15 @@ describe('pi lane 홈', () => {
 });
 
 describe('pi lane 턴 조립', () => {
+  it('lane 이 아닌 pi 턴에는 --no-context-files 를 붙이지 않는다', () => {
+    const plan = buildTurnCommand({
+      harness: 'pi', mode: 'mention', sessionId: 'sid', isFirstTurn: true, systemPrompt: 'SYS', systemPromptFile: '/state/sys.txt',
+      promptCtx: '', model: 'm', effort: 'high', mentionPermission: 'auto', mcpConfigPath: '/state/mcp.json',
+      operatorBin: '/bin/op', codexHome: '/state/codex', claudeConfigDir: null, piHome: '/state/pi-home', workspaceDir: '/work/repo',
+    } as Parameters<typeof buildTurnCommand>[0]);
+    expect(plan.args).not.toContain('--no-context-files');
+  });
+
   it('주소·키 경로는 자식 env 에 없고, 홈은 그 스레드 홈이다', () => {
     const plan = buildTurnCommand({
       harness: 'pi', mode: 'mention', sessionId: 'sid', isFirstTurn: true, systemPrompt: 'SYS', systemPromptFile: '/state/sys.txt',
@@ -130,6 +139,7 @@ describe('pi lane 턴 조립', () => {
     expect(JSON.stringify(plan.env)).not.toContain('/state/lease/k');
     expect(plan.env.PI_CODING_AGENT_DIR).toBe('/state/pi-provider-lane/threads/h');
     expect(plan.args).toContain('--no-approve');
+    expect(plan.args).toContain('--no-context-files');
     expect(plan.args).toContain(`${PI_LANE_PROVIDER}/m`);
     expect(plan.args.join(' ')).toContain('/state/pi-provider-lane/threads/h/sessions');
   });
