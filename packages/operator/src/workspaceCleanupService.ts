@@ -277,7 +277,15 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: Cleanup
       // 꺼져 있으면 청소기는 아무것도 지우지 않는다는 약속(스위치 설명·security F1)을 「지금 정리」도 지킨다.
       if (action === 'deleteNow' && !settings.enabled) throw new Error('자동 정리가 꺼져 있다 — 켠 뒤에 지금 정리할 수 있다');
       const at = now();
-      const r = applyHumanAction(await readLedger(deps.ledgerPath), path, action, by, settings, at);
+      const prev = await readLedger(deps.ledgerPath);
+      if (action === 'deleteNow') {
+        // 규칙 4(새 턴이면 되살리기)는 회차의 planSweep 에서만 일어난다. 회차 사이에 그 스레드에 턴이 왔다 갔으면 원장은 아직
+        // listed 지만 되살릴 차례다 — 지금 지우면 그 턴이 쓴 폴더·세션 기록·worktree 를 지운다(security F1). 다음 회차가 뺀다.
+        const item = prev.items.find((i) => i.path === path);
+        const last = item?.thread ? (await deps.owners.lastTurnAt()).get(threadKey(item.thread)) : undefined;
+        if (item?.listedAt && last && last > item.listedAt) throw new Error('넣은 뒤 그 스레드에 새 턴이 왔다 — 다음 정리 때 목록에서 빠진다');
+      }
+      const r = applyHumanAction(prev, path, action, by, settings, at);
       // 「보존」은 이미 러너에게 나간 요청도 거둔다(security F1).
       const target = r.ledger.items.find((i) => i.path === path);
       if (action === 'keep' && target?.thread && target.kind !== 'worktree') deps.owners.cancelDelete(target.thread);

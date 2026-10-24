@@ -227,6 +227,33 @@ describe('저장소는 러너가 보고한 worktree 에서 찾는다(workingDir 
       .toEqual([[f.wt.merged, 'deleted', ME], [f.wt.dirty, 'blocked', ME]]);
   });
 
+  it('F1 지금 정리: 넣은 뒤 그 스레드에 새 턴이 왔으면(지금은 안 돎) 거절 — 회차가 되살릴 차례다, 파일은 남는다', async () => {
+    const f = await fixture();
+    const owners = createCleanupOwners({ path: join(f.root, 'owners.json') });
+    const report = (lastTurnAt: string) => owners.maybeHandle('run1', 'agentA', req({ threads: [
+      { channelId: C, threadRootId: R(1), worktrees: [f.wt.merged], lastTurnAt, running: false },
+    ] }), 'relay');
+    const H = 3_600_000;
+    await report(new Date(Date.now() - 3 * H).toISOString());
+    const configPath = join(f.root, 'operator.json');
+    await writeFile(configPath, JSON.stringify({ communities: {}, cleanup: { enabled: true, graceDays: 7 } }));
+    const ledgerPath = join(f.root, 'ledger.json');
+    const ME = '22222222-2222-2222-2222-222222222222';
+    const cleanup = createWorkspaceCleanup({
+      ledgerPath, configPath, owners,
+      agents: async () => [{ agentId: 'agentA', workingDir: null }],
+      forward: async (_a, r) => ({ type: 'http.response', id: r.id, status: 200, body: JSON.stringify({ statusReaction: { status: 'done' } }) }),
+      exec: f.exec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: f.root,
+      now: () => new Date(Date.now() - 2 * H), log: () => {},
+    });
+    await cleanup.sweep(); // 2시간 전에 넣었다
+    expect((await cleanup.get()).ledger.items.find((i) => i.path === f.wt.merged)).toMatchObject({ state: 'listed' });
+    await report(new Date(Date.now() - H).toISOString()); // 그 뒤 턴이 왔다 갔다(회차는 아직 안 돎)
+    await expect(cleanup.act(f.wt.merged, 'deleteNow', ME)).rejects.toThrow(/새 턴/);
+    expect(await lstat(join(f.wt.merged, '.git'))).toBeTruthy();
+    expect((await cleanup.get()).ledger.items.find((i) => i.path === f.wt.merged)).toMatchObject({ state: 'listed' });
+  });
+
   it('주인 모름 자동: 보고 없는 worktree 도 머지·닫힘 + PR head == HEAD + 깨끗 + 오래 손 안 댐이면 넣고 지운다', async () => {
     const f = await fixture();
     const owners = createCleanupOwners({ path: join(f.root, 'owners.json') }); // 러너 보고 없음 — 전부 주인 모름
