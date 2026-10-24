@@ -29,6 +29,16 @@ MessageRow _m(String id, int seq, {String author = 'a1', Duration at = Duration.
 
 void main() {
   group('묶기', () {
+    // 시스템 줄 C안 c1 — 시스템 줄을 사람 글에 묶으면 그 사람이 한 줄 더 쓴 것처럼 보였다.
+    test('시스템 줄은 같은 author 의 글과도 묶지 않는다(앞뒤 모두)', () {
+      final feed = buildFeed([
+        _m('1', 1),
+        _m('2', 2, at: const Duration(seconds: 10), kind: 'system', body: '⚠️ 승인 안 됨'),
+        _m('3', 3, at: const Duration(seconds: 20)),
+      ]);
+      expect(feed.whereType<FeedMessage>().map((f) => f.continued), [false, false, false]);
+    });
+
     test('같은 사람이 5분 안에 이어 말하면 묶는다', () {
       final feed = buildFeed([
         _m('1', 1),
@@ -151,6 +161,28 @@ void main() {
           }));
       expect(find.byKey(const Key('mention-denied')), findsOneWidget);
       expect(find.textContaining('@harkroom 를 부르지 않았다'), findsOneWidget);
+    });
+
+    // 시스템 줄 C안(2026-10-24) — 시스템 줄의 author 는 말한 사람이 아니다.
+    testWidgets('채팅 승인 결과는 응답 줄 — 작성자는 Harkroom·시스템, 사람은 칩에만', (tester) async {
+      await pump(
+          tester,
+          _m('1', 1, kind: 'system', body: '⚠️ 승인 안 됨: 카드 없음', meta: {
+            'chatApproval': {'messageId': '44444444-4444-4444-8444-444444444444', 'results': <Object?>[]},
+          }));
+      expect(find.text('task_manager'), findsNothing);
+      expect(find.byKey(const Key('system-face')), findsOneWidget);
+      expect(find.text('Harkroom'), findsOneWidget);
+      expect(find.text('↳ task_manager 의 글에 대해'), findsOneWidget);
+      expect(find.byKey(const Key('system-chip-1')), findsOneWidget);
+    });
+
+    testWidgets('멤버 줄은 기록 줄 — 이름줄·얼굴 없이 한 줄, 화면 읽기에는 「시스템 알림」', (tester) async {
+      await pump(tester, _m('1', 1, kind: 'system', body: '{account}님이 채널에 추가되었습니다.', meta: {'accountId': 'a1'}));
+      expect(find.byKey(const Key('system-record-1')), findsOneWidget);
+      expect(find.byKey(const Key('system-face')), findsNothing);
+      expect(find.byKey(const Key('time-1')), findsNothing);
+      expect(find.bySemanticsLabel(RegExp(r'^시스템 알림: ')), findsOneWidget);
     });
 
     testWidgets('거절이 없으면 줄도 없다', (tester) async {

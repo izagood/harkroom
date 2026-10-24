@@ -597,6 +597,7 @@ class InboxEntry {
     required this.threadRootId,
     required this.readAt,
     this.meta = const {},
+    this.system = false,
   });
 
   /// 읽음 처리에 쓰는 열쇠. **메시지 id 가 아니다** — 같은 메시지로 두 번 불릴 수 있다.
@@ -616,6 +617,10 @@ class InboxEntry {
   /// 옛 서버나 간추린 판에서 빠질 수 있다 — 그때는 빈 맵이다.
   final Map<String, Object?> meta;
 
+  /// 시스템 줄인가(시스템 줄 C안 c4) — 그러면 [authorId] 는 그 줄을 일으킨 계정일 뿐 말한 사람이 아니라,
+  /// 화면이 이름을 앞에 달지 않는다. 옛 서버는 `kind` 를 싣지 않는다(그때 false).
+  final bool system;
+
   bool get isUnread => readAt == null;
 
   /// 읽음 시각만 바꾼 사본(카드를 열었을 때 화면에서 먼저 고친다).
@@ -630,6 +635,7 @@ class InboxEntry {
         threadRootId: threadRootId,
         readAt: at,
         meta: meta,
+        system: system,
       );
 
   /// 본문만 바꾼 사본(간추린 판의 잘린 멘션 떼기).
@@ -644,6 +650,7 @@ class InboxEntry {
         threadRootId: threadRootId,
         readAt: readAt,
         meta: meta,
+        system: system,
       );
 
   static InboxEntry fromJson(Map<String, Object?> j) => InboxEntry(
@@ -658,6 +665,7 @@ class InboxEntry {
         threadRootId: j['threadRootId'] as String?,
         readAt: j['readAt'] as String?,
         meta: j['meta'] is Map ? Map<String, Object?>.from(j['meta']! as Map) : const {},
+        system: j['kind'] == 'system',
       );
 }
 

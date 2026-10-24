@@ -704,7 +704,8 @@ class SearchResultTile extends StatelessWidget {
       channelLabel(channel),
       if (message.threadRootId != null) t.searchInThread,
     ].where((s) => s.isNotEmpty).join(' · ');
-    final who = app.displayNameOf(message.authorId);
+    // 시스템 줄은 author 이름 대신 시스템(C안 c4) — 그 사람의 말로 검색 결과에 서지 않게.
+    final who = message.kind == MessageKind.system ? t.systemAuthor : app.displayNameOf(message.authorId);
     final when = timeOnly ? clockLabel(message.createdAt) : dayLabel(t, message.createdAt);
     // 본문은 한 덩어리로 — 줄바꿈이 두 줄 칸을 첫 줄에서 다 먹지 않게.
     final full = displayBody(message, app.accounts, unknownMention: t.mentionUnknown, unknownAccount: t.systemAccountUnknown, t: t).replaceAll(RegExp(r'\s+'), ' ').trim();

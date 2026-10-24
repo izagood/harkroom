@@ -424,6 +424,16 @@ class StringsKo implements Strings {
 
   @override
   String get systemAccountUnknown => '알 수 없음';
+  @override
+  String get systemAuthor => 'Harkroom';
+  @override
+  String get systemBadge => '시스템';
+  @override
+  String get systemNotice => '시스템 알림';
+  @override
+  String get systemAboutPost => '↳ {name} 의 글에 대해';
+  @override
+  String get systemAboutRequest => '↳ {name} 의 요청에 대해';
 
   @override
   String get tabChannels => '채널';

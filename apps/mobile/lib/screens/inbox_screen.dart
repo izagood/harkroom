@@ -724,7 +724,8 @@ class _InboxDetailScreenState extends State<InboxDetailScreen> {
       final line = oneSentence(e.body);
       return line.isNotEmpty && line != card.summary;
     }).firstOrNull;
-    final latestAuthor = latest?.authorId;
+    // 시스템 줄의 author 는 말한 사람이 아니다(C안 c4) — 이름을 앞에 달지 않는다.
+    final latestAuthor = latest == null || latest.system ? null : latest.authorId;
     final latestWho = latestAuthor == null ? null : app.accounts[latestAuthor]?.handle;
     final meta = TextStyle(color: k.fgSubtle, fontSize: 13);
 

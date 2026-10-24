@@ -16,6 +16,7 @@ import 'attachments.dart';
 import 'message_link.dart';
 import 'saved_screen.dart';
 import '../i18n/system_text.dart';
+import 'system_line.dart';
 
 /// 말풍선 한 줄. **채널 화면과 스레드 화면이 같은 것을 쓴다.**
 ///
@@ -79,6 +80,40 @@ class MessageTile extends StatelessWidget {
     // 에 서니 훑을 때 잡히고, 이어 말한 줄(머리 없음)에도 같은 규칙이 선다. 띠는 DecoratedBox 의
     // 선이라 자식을 밀지 않는다(데스크톱의 안쪽 그림자와 같다) — 담고 풀 때 아바타·본문이 그대로다.
     final saved = app.isSaved(message.id);
+    final shape = systemLineShape(message);
+    // 기록 줄(시스템 줄 C안) — 이름줄·얼굴 없이 아이콘 + 작은 한 줄. 화면 읽기에는 「시스템 알림」 이 먼저 간다(c2).
+    if (shape == SystemLineShape.record) {
+      return Padding(
+        key: Key('message-${message.id}'),
+        padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 6, HarkroomSize.gutter, 6),
+        child: Semantics(
+          label: '${t.systemNotice}: $body',
+          excludeSemantics: true,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: HarkroomSize.avatar,
+                child: Text(systemRecordIcon(message), key: Key('system-icon-${message.id}'),
+                    textAlign: TextAlign.center, style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text.rich(
+                  key: Key('system-record-${message.id}'),
+                  TextSpan(children: [
+                    TextSpan(text: body),
+                    TextSpan(text: '  ${agoLabel(message.createdAt, DateTime.now().toUtc(), t)}',
+                        style: TextStyle(color: k.fgMuted.withValues(alpha: 0.8))),
+                  ]),
+                  style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     final row = Padding(
       key: Key('message-${message.id}'),
       padding: EdgeInsets.fromLTRB(
@@ -91,7 +126,10 @@ class MessageTile extends StatelessWidget {
           if (continued)
             const SizedBox(width: HarkroomSize.avatar)
           else
-            HarkroomAvatar(id: message.authorId, name: author?.handle ?? app.displayNameOf(message.authorId)),
+            // 응답 줄의 얼굴은 누구의 것도 아니다 — 점선 ⚙ 타일(C안).
+            shape == SystemLineShape.response
+                ? const _SystemFace()
+                : HarkroomAvatar(id: message.authorId, name: author?.handle ?? app.displayNameOf(message.authorId)),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -105,7 +143,11 @@ class MessageTile extends StatelessWidget {
                     children: [
                       // 담아 둔 글의 「저장됨」은 이름줄 끝에 선다(_Header) — 위에 줄을 따로 세우면 그 줄의
                       // 세로 위치가 앞 글 길이를 따라 흔들린다. 이어 말한 줄은 머리가 없으니 띠만 말한다.
-                      if (!continued) _Header(message: message, isAgent: author?.isAgent == true, saved: saved),
+                      if (shape == SystemLineShape.response) ...[
+                        _SystemHeader(message: message),
+                        _SystemChip(message: message),
+                      ] else if (!continued)
+                        _Header(message: message, isAgent: author?.isAgent == true, saved: saved),
                       // 작은 마크다운(코드·목록·인용·굵게·링크). 모르는 것은 글자 그대로 둔다.
                       // 번역된 시스템 줄은 **글로만** 그린다 — 인자에 바깥 글자(경로·저장소 이름)가 들어가므로
                       // 마크다운·링크를 지나지 않는다(security C4, i18n P5 ③).
@@ -974,4 +1016,108 @@ String threadStatusSentence(ThreadStatusMark s, Strings t, String? Function(Stri
     }
   }
   return parts.join(' · ');
+}
+
+/// 응답 줄의 얼굴(시스템 줄 C안) — 점선 테두리 ⚙. 누구의 아바타도 아니다.
+class _SystemFace extends StatelessWidget {
+  const _SystemFace();
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    return ExcludeSemantics(
+      child: Container(
+        key: const Key('system-face'),
+        width: HarkroomSize.avatar,
+        height: HarkroomSize.avatar,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: k.surfaceSunken,
+          border: Border.all(color: k.border),
+          borderRadius: BorderRadius.circular(9),
+        ),
+        child: Text('⚙', style: TextStyle(fontSize: 15, color: k.fgMuted)),
+      ),
+    );
+  }
+}
+
+/// 응답 줄의 이름줄 — 「Harkroom」 + 「시스템」 배지 + 시각. 눌러도 아무 데도 가지 않는다(c5).
+class _SystemHeader extends StatelessWidget {
+  const _SystemHeader({required this.message});
+
+  final MessageRow message;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
+        children: [
+          Text(t.systemAuthor, key: Key('system-author-${message.id}'),
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: k.fgMuted)),
+          const SizedBox(width: 5),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+              border: Border.all(color: k.border),
+              borderRadius: BorderRadius.circular(HarkroomRadius.sm),
+            ),
+            child: Text(t.systemBadge, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: k.fgMuted)),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            agoLabel(message.createdAt, DateTime.now().toUtc(), t),
+            key: Key('time-${message.id}'),
+            style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 응답 줄의 대상 칩 — 「↳ jaebin 의 글에 대해」. 그 사람은 말한 사람이 아니라 **대상**이다.
+/// 채팅 승인 결과는 탭하면 원 글로 간다. 이름은 지금 handle, 모르면 「알 수 없음」.
+class _SystemChip extends StatelessWidget {
+  const _SystemChip({required this.message});
+
+  final MessageRow message;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.app;
+    final t = context.t;
+    final k = context.tokens;
+    final target = systemLineTarget(message);
+    final name = app.accounts[target.accountId]?.handle ?? t.systemAccountUnknown;
+    final label = (target.post ? t.systemAboutPost : t.systemAboutRequest).replaceFirst('{name}', name);
+    final chip = Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+      decoration: BoxDecoration(
+        color: k.surfaceSunken,
+        border: Border.all(color: k.border),
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 11, color: k.fgMuted)),
+    );
+    final id = target.messageId;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: id == null
+          ? KeyedSubtree(key: Key('system-chip-${message.id}'), child: chip)
+          : InkWell(
+              key: Key('system-chip-${message.id}'),
+              borderRadius: BorderRadius.circular(99),
+              onTap: () => openMessageLink(context, id),
+              child: chip,
+            ),
+    );
+  }
 }

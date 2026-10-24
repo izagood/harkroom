@@ -425,6 +425,16 @@ class StringsEn implements Strings {
 
   @override
   String get systemAccountUnknown => 'unknown';
+  @override
+  String get systemAuthor => 'Harkroom';
+  @override
+  String get systemBadge => 'System';
+  @override
+  String get systemNotice => 'System notice';
+  @override
+  String get systemAboutPost => '↳ About {name}’s message';
+  @override
+  String get systemAboutRequest => '↳ About {name}’s request';
 
   @override
   String get tabChannels => 'Channels';

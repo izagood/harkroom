@@ -72,6 +72,10 @@ List<FeedItem> buildFeed(List<MessageRow> messages) {
         prev.authorId == m.authorId &&
         prev.isSpeech &&
         m.isSpeech &&
+        // 시스템 줄은 누구의 말도 아니다(시스템 줄 C안 c1) — 앞뒤 어느 글과도 묶지 않는다. 묶으면 사람 글 밑에
+        // 머리 없이 붙어 그 사람이 한 줄 더 쓴 것처럼 보였다.
+        m.kind != MessageKind.system &&
+        prev.kind != MessageKind.system &&
         m.meta['kind'] == null &&
         prev.meta['kind'] == null &&
         m.createdAt.difference(prev.createdAt) < continuationWindow;
