@@ -23,3 +23,12 @@ describe('harness_login_present 문장', () => {
     expect(text).not.toMatch(/\/Users\/|~\//);
   });
 });
+
+describe('lane_setup 문장', () => {
+  it.each(['ko', 'en'] as const)('%s: 러너 재시작 버튼 이름을 끼워 넣고 「셸」 낱말을 쓰지 않는다', (locale) => {
+    const t = translator(locale);
+    const text = laneCodeText(t, 'lane_setup');
+    expect(text).toContain(t('agents.restart.action'));
+    expect(text).not.toMatch(/\{action\}|셸|shell/i);
+  });
+});

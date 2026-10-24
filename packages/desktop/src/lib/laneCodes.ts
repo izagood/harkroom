@@ -8,7 +8,7 @@ import type { Translate } from '../i18n';
 export type LaneCodeKey =
   | 'lane.code.lane_unset' | 'lane.code.not_granted' | 'lane.code.not_found' | 'lane.code.grant_suspended'
   | 'lane.code.secret_expired' | 'lane.code.no_lease' | 'lane.code.bg_unsupported' | 'lane.code.harness_unsupported'
-  | 'lane.code.bad_model' | 'lane.code.workspace_protected' | 'lane.code.harness_version' | 'lane.code.harness_login_present' | 'lane.code.interactive_unsupported' | 'lane.code.unknown';
+  | 'lane.code.bad_model' | 'lane.code.workspace_protected' | 'lane.code.harness_version' | 'lane.code.harness_login_present' | 'lane.code.lane_setup' | 'lane.code.interactive_unsupported' | 'lane.code.unknown';
 
 /** 터미널 거절(러너 `interactive_unsupported`)은 실패 카드 코드가 아니라 거절 문장의 머리다 — 같은 표에서 문장을 고른다. */
 export const INTERACTIVE_UNSUPPORTED_PREFIX = 'interactive_unsupported';
@@ -29,6 +29,7 @@ export function laneCodeKey(raw: unknown): LaneCodeKey {
     case 'workspace_protected': return 'lane.code.workspace_protected';
     case 'harness_version': return 'lane.code.harness_version';
     case 'harness_login_present': return 'lane.code.harness_login_present';
+    case 'lane_setup': return 'lane.code.lane_setup';
     default: return 'lane.code.unknown';
   }
 }
@@ -45,6 +46,8 @@ export function laneCodeText(t: Translate, raw: unknown): string {
     ].join(join);
     return t(key, { versions });
   }
+  // 할 일은 있는 버튼 이름을 끼워 넣는다 — 버튼 이름이 바뀌어도 문장이 따라간다(designer).
+  if (key === 'lane.code.lane_setup') return t(key, { action: t('agents.restart.action') });
   return t(key);
 }
 

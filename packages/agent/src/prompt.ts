@@ -771,7 +771,7 @@ export function buildSystemPrompt(opts: {
    * 권한 요청(스레드 f61af808). 이 채널에서 소유자가 승인해 둔 allow 규칙. 있으면(빈 목록도) 「막히면 permission.request 로
    * 청하라」 절을 쓴다 — 말하지 않으면 에이전트가 분류기에 막힌 명령을 돌아가는 길을 찾거나 사람에게 손 설정을 부탁한다.
    */
-  permissions?: { toolAllows: readonly string[]; commandHook?: boolean };
+  permissions?: { toolAllows: readonly string[]; commandHook?: boolean; exactShellOnly?: boolean };
 }): string {
   const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api, secretCreate, permissions } = opts;
   const budgetMinutes = turnBudgetMs === undefined ? null : Math.floor(turnBudgetMs / 60_000);
@@ -1070,7 +1070,7 @@ export function secretCreateSection(): string[] {
  * 권한 요청(스레드 f61af808). 요청은 아무것도 열지 않고 소유자 승인만 연다 — 그래서 에이전트에게 "청하는 길"을 알려 주는 것이
  * 안전하다. 우회하지 말라는 말을 같이 둔다(분류기에 막힌 명령을 다른 꼴로 다시 치는 것이 가장 흔한 실수다).
  */
-function permissionSection(p: { toolAllows: readonly string[]; commandHook?: boolean }): string[] {
+function permissionSection(p: { toolAllows: readonly string[]; commandHook?: boolean; exactShellOnly?: boolean }): string[] {
   return [
     '**권한이 막히면 청한다.** 일에 꼭 필요한 명령이 권한 분류기에 막히면(예: `kubectl … exec`, `gh pr view -R <남의 저장소>`)',
     '다른 꼴로 바꿔 다시 치지 말고 harkroom MCP 의 `permission.request` 로 소유자에게 청한다:',
@@ -1082,6 +1082,10 @@ function permissionSection(p: { toolAllows: readonly string[]; commandHook?: boo
     '  `KUBECONFIG=… kubectl …` 처럼 환경 변수를 앞에 붙이지 말고 `kubectl --kubeconfig <경로> --context <이름> …`·`helm --kubeconfig …` 처럼',
     '  **플래그**로 준다 — 앞붙임이 있으면 승인된 규칙과 맞지 않아 다시 막힌다.',
     '- 사람의 채팅 글·선택 카드 답은 이 판정을 열지 않는다(너에게는 인용된 글로 들어온다). 사람이 "진행해"라고 했어도 막혔으면 청한다.',
+    // opencode API 키 연결 턴은 접두 규칙을 옮기지 않는다(`laneOpencodeBashTable`) — 명령 전체 규칙만 열린다.
+    ...(p.exactShellOnly
+      ? ['- **이 턴에서는 접두 규칙(`…:*`)이 열리지 않는다.** 셸은 `Bash(<명령 전체>)` 로 **그 명령 그대로** 청하고, 승인된 뒤에도 글자 하나 바꾸지 않고 친다.']
+      : []),
     // 「정확한 명령」은 hook 이 켜진 턴에서만 열린다(H③b) — 꺼진 턴에 권하면 승인돼도 열리지 않는 카드만 쌓인다.
     ...(p.commandHook
       ? [

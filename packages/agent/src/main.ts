@@ -438,13 +438,13 @@ const extraMcpServers = await readExtraMcpServers(mcpConfigPath);
 // 넣는다. 위의 한 번 읽은 값은 읽기가 실패할 때의 바닥이다. opencode 는 표를 제 설정 파일로 번역해
 // 두므로 그 파일도 다시 쓴다(`ensureOpencodeHome` 은 같은 입력이면 같은 파일을 쓴다).
 // lane 러너(`providerLane.ts`)면 그 턴의 모델을 lane provider 블록에 적는다 — opencode 는 목록에 없는 모델을 거절한다.
-const readTurnMcp = async (harness: AgentHarness, model?: string | null): Promise<Record<string, McpServerEntry>> => {
+const readTurnMcp = async (harness: AgentHarness, model?: string | null, laneChannel?: { id: string; toolAllows: readonly string[] }): Promise<Record<string, McpServerEntry>> => {
   const all = await readMcpServers(mcpConfigPath);
   const app = xdgAppFor(harness);
   if (usesXdgHome(harness) && app) {
     await ensureOpencodeHome({
       opencodeHome: opencodeHomeDir, mcpServers: all, app,
-      ...(providerLaneOn ? { providerLane: { model: model ?? null, skillsDir: runnerSkillsDir(agentStateDir) } } : {}),
+      ...(providerLaneOn ? { providerLane: { model: model ?? null, skillsDir: runnerSkillsDir(agentStateDir), ...(laneChannel ? { channel: laneChannel } : {}) } } : {}),
     });
   }
   if (usesPiHome(harness)) await ensurePiHome({ piHome: piHomeDir, mcpServers: all });

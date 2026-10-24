@@ -8,14 +8,15 @@
 //    `--strict-mcp-config` 를 붙이는 것과 같은 자리(스펙 §7). opencode 에는 그 플래그가
 //    없으므로 **격리 홈을 우리가 쓰는 것**이 그 역할을 한다.
 // 3. 로그인 자리는 `<data>/**opencode**/auth.json` 으로 한 단계 깊다.
-import { mkdtemp, mkdir, readdir, readFile, writeFile, lstat, readlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, writeFile, lstat, readlink, stat, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
   ensureOpencodeHome, opencodeConfigFile, opencodeDirs, opencodeLaneModelMissing, laneRunModel, OPENCODE_LANE_AGENT, OPENCODE_LANE_PERMISSION, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
-  opencodeLaneHome, laneSkillPermission,
+  opencodeLaneHome, laneSkillPermission, laneOpencodeBashTable, opencodeLaneAgentName, opencodeLaneAgentMatches,
+  opencodeConfigLockPath, withConfigLock,
 } from '../src/opencodeHome.js';
 import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
 
@@ -349,5 +350,122 @@ describe('opencode lane 모델 — 원문을 받고 머리는 러너가 붙인�
       expect(cfg.provider['harkroom-lane'].models).toEqual({ 'ExampleOrg/example-model': { name: 'ExampleOrg/example-model' } });
       expect(cfg.model).toBe('harkroom-lane/ExampleOrg/example-model');
     }
+  });
+});
+
+// D2(채널별 lane 정의): 명령 전체 규칙만 옮긴다 — opencode 접두 패턴은 claude 쪽 판정보다 넓게 맞는다.
+describe('opencode lane 채널 칸', () => {
+  const CH = '309886fb-1c00-4084-bf9d-fb3d14ae647d';
+  const OTHER = 'a42006a1-72c4-4375-ae8b-cfb5a4f06c7e';
+
+  it('명령 전체 규칙만 allow 로 — 접두·와일드카드·셸 글자 규칙은 빼고, 맨 앞은 * deny(T1·T2)', () => {
+    const table = laneOpencodeBashTable([
+      'Bash(gh pr list -R example/repo --limit 5)', 'Bash(gh run list -R example/repo:*)', 'Bash(ls *.txt)', 'Bash(echo a?)',
+      'Bash(gh pr list | sh)', 'Bash(echo ok > f)', 'Bash(echo $(id))', 'WebFetch', 'Bash()', 'Bash(  git status  )',
+    ]);
+    expect(Object.keys(table)[0]).toBe('*');
+    expect(table).toEqual({ '*': 'deny', 'gh pr list -R example/repo --limit 5': 'allow', 'git status': 'allow' });
+  });
+
+  it('이름의 채널 부분은 uuid 모양만(U3)', () => {
+    expect(opencodeLaneAgentName(CH)).toBe(`harkroom-lane-${CH}`);
+    for (const bad of ['general', `${CH}x`, '../x', CH.toUpperCase()]) expect(opencodeLaneAgentName(bad)).toBeNull();
+  });
+
+  it('이 채널 칸만 지금 규칙으로 다시 쓰고(줄어든 것 포함), 다른 채널 칸은 남긴다 — 모두 primary 만(U1·U2)', async () => {
+    const f = await fixture();
+    const write = (id: string, toolAllows: string[]) => ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: 'ExampleOrg/example-model', channel: { id, toolAllows } },
+    });
+    await write(CH, ['Bash(git status)', 'Bash(git log -1)']);
+    await write(OTHER, ['Bash(git diff)']);
+    let cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    expect(cfg.agent[`harkroom-lane-${CH}`].permission.bash).toEqual({ '*': 'deny', 'git status': 'allow', 'git log -1': 'allow' });
+    expect(cfg.agent[`harkroom-lane-${OTHER}`].permission.bash).toEqual({ '*': 'deny', 'git diff': 'allow' });
+    for (const name of Object.keys(cfg.agent).filter((n) => n.startsWith('harkroom-lane'))) expect(cfg.agent[name].mode).toBe('primary');
+    expect(cfg.agent['harkroom-lane'].permission.bash).toBeUndefined();
+    // 거둠: 이 채널 규칙이 줄면 칸도 준다.
+    await write(CH, ['Bash(git status)']);
+    cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    expect(cfg.agent[`harkroom-lane-${CH}`].permission.bash).toEqual({ '*': 'deny', 'git status': 'allow' });
+    expect(await opencodeLaneAgentMatches(f.home, CH, ['Bash(git status)'])).toBe(true);
+    expect(await opencodeLaneAgentMatches(f.home, CH, ['Bash(git status)', 'Bash(git log -1)'])).toBe(false);
+    expect(await opencodeLaneAgentMatches(f.home, 'general', [])).toBe(false);
+  });
+
+  it('손으로 넓힌 다른 채널 칸(와일드카드·맨 앞 deny 아님)은 다시 쓸 때 버린다', async () => {
+    const f = await fixture();
+    await ensureOpencodeHome({ opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData, providerLane: { model: null } });
+    const file = opencodeConfigFile(f.home);
+    const cfg = JSON.parse(await readFile(file, 'utf8'));
+    cfg.agent[`harkroom-lane-${OTHER}`] = { mode: 'primary', permission: { bash: { '*': 'deny', 'gh *': 'allow' } } };
+    cfg.agent[`harkroom-lane-${CH}`] = { mode: 'primary', permission: { bash: { 'git status': 'allow' } } };
+    await writeFile(file, JSON.stringify(cfg));
+    await ensureOpencodeHome({ opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData, providerLane: { model: null } });
+    const after = JSON.parse(await readFile(file, 'utf8'));
+    expect(after.agent[`harkroom-lane-${OTHER}`]).toBeUndefined();
+    expect(after.agent[`harkroom-lane-${CH}`]).toBeUndefined();
+  });
+});
+
+// security F1: 채널 칸은 한 파일에 여럿이다 — 읽기-고치기-쓰기를 잠금으로 감싸, 겹친 턴이 남의 옛 칸(거둔 규칙)을 되쓰지 않게 한다.
+describe('opencode lane 설정 잠금', () => {
+  const A = '309886fb-1c00-4084-bf9d-fb3d14ae647d';
+  const B = 'a42006a1-72c4-4375-ae8b-cfb5a4f06c7e';
+
+  it('겹친 두 채널 쓰기 뒤에도 A 에서 거둔 규칙이 되살아나지 않는다(여러 번, 순서를 바꿔)', async () => {
+    const f = await fixture();
+    const write = (id: string, toolAllows: string[]) => ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: 'ExampleOrg/example-model', channel: { id, toolAllows } },
+    });
+    for (let i = 0; i < 12; i++) {
+      await write(A, ['Bash(git status)', 'Bash(git log -1)']);
+      const narrow = write(A, ['Bash(git status)']);
+      const other = write(B, [`Bash(git diff --stat ${i})`]);
+      await Promise.all(i % 2 ? [other, narrow] : [narrow, other]);
+      const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+      expect(cfg.agent[`harkroom-lane-${A}`].permission.bash).toEqual({ '*': 'deny', 'git status': 'allow' });
+      expect(cfg.agent[`harkroom-lane-${B}`].permission.bash).toEqual({ '*': 'deny', [`git diff --stat ${i}`]: 'allow' });
+    }
+    // 잠금 파일은 남지 않는다.
+    expect(await lstat(opencodeConfigLockPath(f.home)).catch(() => null)).toBeNull();
+  });
+
+  it('살아 있는 주인이 잡은 잠금은 시한까지 기다리다 던진다 — 쓰지 않는다', async () => {
+    const f = await fixture();
+    await mkdir(f.home, { recursive: true });
+    await writeFile(opencodeConfigLockPath(f.home), `${process.pid} ${Date.now()}\n`);
+    await expect(ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: null, channel: { id: A, toolAllows: ['Bash(git status)'] } }, lockTimeoutMs: 100,
+    })).rejects.toThrow(/잠금/);
+    expect(await opencodeLaneAgentMatches(f.home, A, ['Bash(git status)'])).toBe(false);
+  });
+
+  it('설정은 바꿔 끼워 쓴다 — 쓸 때마다 다른 inode, 임시 파일은 남지 않는다(security F2)', async () => {
+    const f = await fixture();
+    const write = () => ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: null, channel: { id: A, toolAllows: ['Bash(git status)'] } },
+    });
+    await write();
+    const before = (await stat(opencodeConfigFile(f.home))).ino;
+    await write();
+    expect((await stat(opencodeConfigFile(f.home))).ino).not.toBe(before);
+    const dir = join(opencodeConfigFile(f.home), '..');
+    expect((await readdir(dir)).filter((n) => n.endsWith('.tmp'))).toEqual([]);
+    expect((await stat(opencodeConfigFile(f.home))).mode & 0o777).toBe(0o600);
+  });
+
+  it('주인이 죽었거나 시한이 지난 잠금은 걷는다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'lock-'));
+    const lock = join(dir, '.config.lock');
+    await writeFile(lock, '999999 0\n');
+    expect(await withConfigLock(lock, async () => 'ok', { timeoutMs: 200 })).toBe('ok');
+    await writeFile(lock, `${process.pid} 0\n`);
+    await utimes(lock, new Date(0), new Date(0));
+    expect(await withConfigLock(lock, async () => 'ok2', { timeoutMs: 200, staleMs: 1_000 })).toBe('ok2');
   });
 });
