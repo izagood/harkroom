@@ -249,6 +249,8 @@ export const LANE_MCP_CONFIG_FILE = 'lane-mcp.json';
  * 오퍼레이터가 쓴 MCP 설정을 바탕으로 lane 턴 전용 설정을 쓴다: harkroom 항목의 `env` 칸에 `LANE_BRIDGE_ENV_KEYS` 값을 싣는다.
  * 하네스는 이 칸을 env 걷기 **뒤에** 브릿지에 얹는다(실측). 임시 파일 → rename 으로 바꿔 끼운다(동시 lane 턴이 반쯤 쓴 파일을 읽지 않게).
  * harkroom 항목이 없거나 값이 없으면 던진다 — 그대로 띄우면 브릿지가 조용히 끊긴다.
+ * harkroom 항목에는 `alwaysLoad` 를 단다 — 그 도구들이 처음부터 도구 목록에 오른다(도구 찾기를 거치지 않아도 답을 올릴 수 있게,
+ * claude 2.1.310 실측). 다른 항목은 그대로 둔다.
  */
 export async function writeLaneMcpConfig(stateDir: string, sourcePath: string, env: NodeJS.ProcessEnv = process.env): Promise<string> {
   const doc = JSON.parse(await readFile(sourcePath, 'utf8')) as { mcpServers?: Record<string, { env?: Record<string, string> } & Record<string, unknown>> };
@@ -260,7 +262,7 @@ export async function writeLaneMcpConfig(stateDir: string, sourcePath: string, e
     if (!value) throw new Error(`writeLaneMcpConfig: ${key} 가 러너 env 에 없다`);
     extra[key] = value;
   }
-  const out = { ...doc, mcpServers: { ...doc.mcpServers, harkroom: { ...harkroom, env: { ...(harkroom.env ?? {}), ...extra } } } };
+  const out = { ...doc, mcpServers: { ...doc.mcpServers, harkroom: { ...harkroom, alwaysLoad: true, env: { ...(harkroom.env ?? {}), ...extra } } } };
   const path = join(stateDir, LANE_MCP_CONFIG_FILE);
   const body = JSON.stringify(out);
   // 같으면 쓰지 않는다(n2) — 동시 lane 턴마다 같은 내용으로 바꿔 끼울 까닭이 없다.

@@ -233,6 +233,8 @@ describe('writeLaneMcpConfig', () => {
     expect((await stat(out)).mode & 0o777).toBe(0o600);
     const doc = JSON.parse(await readFile(out, 'utf8')) as { mcpServers: Record<string, { env?: Record<string, string> }> };
     expect(doc.mcpServers.harkroom?.env).toEqual({ HARKROOM_RUNNER_SECRET: 'sec-1' });
+    // harkroom 도구는 처음부터 도구 목록에 — 다른 항목에는 달지 않는다.
+    expect((doc.mcpServers.harkroom as { alwaysLoad?: boolean }).alwaysLoad).toBe(true);
     expect(JSON.stringify(doc)).not.toContain('lane-key');
     expect(doc.mcpServers.avcs).toEqual({ command: 'avcs', args: ['mcp'] });
   });
