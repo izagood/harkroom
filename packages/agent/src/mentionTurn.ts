@@ -40,7 +40,7 @@ import type { MemoryCache } from './memoryCache.js';
 import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { planThreadNote, type ThreadNoteState } from './threadNotePin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
-import { ProviderLaneError } from './providerLane.js';
+import { laneScrubsSubprocessEnv, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
 import { laneWorkspaceViolations } from './laneWorkspaceGuard.js';
 
 /** 정지 직전 "제출 대기" 판정에 쓰는 화면 꼬리 길이(글자). 입력줄과 바닥줄 몇 개면 된다. */
@@ -1336,7 +1336,10 @@ export async function runMentionTurn(
     model: turnModel.model,
     effort: turnModel.effort,
     mentionPermission: def.mentionPermission,
-    mcpConfigPath: deps.mcpConfigPath,
+    // lane 턴은 하위 프로세스 env 를 걷는다(`PROVIDER_LANE_FIXED_ENV`) — 브릿지에 줄 값은 lane 전용 MCP 설정의 `env` 칸으로 준다.
+    mcpConfigPath: providerEnv && laneScrubsSubprocessEnv(def.harness)
+      ? await writeLaneMcpConfig(deps.stateDir, deps.mcpConfigPath)
+      : deps.mcpConfigPath,
     extraMcpServers,
     operatorBin: deps.operatorBin,
     mergeRepos,

@@ -8,8 +8,8 @@
  *   돌려준다. 못 받으면 **던진다** — 계정 로그인으로 떨어지지 않는다(fail-closed).
  * - 값은 이 프로세스의 env 에 두지 않는다. 받은 맵은 그 턴의 plan 에만 실린다.
  */
-import { readFile, realpath } from 'node:fs/promises';
-import { relative, isAbsolute } from 'node:path';
+import { readFile, realpath, rename, writeFile } from 'node:fs/promises';
+import { relative, isAbsolute, join } from 'node:path';
 import { normalizeProviderBaseUrl, providerLaneFailureCode, type ProviderLaneFailureCode, type ProviderLaneMountResult } from '@harkroom/shared/providerLane';
 import type { AgentHarness } from '@harkroom/shared';
 import { PROVIDER_LANE_OPENCODE_ENV } from './opencodeHome.js';
@@ -23,6 +23,52 @@ export const PROVIDER_LANE_ENV_KEYS: Partial<Record<AgentHarness, { baseUrl: str
   // opencode 는 설정 파일의 lane provider 블록이 `{env:…}` 로 이 둘을 읽는다(`opencodeHome.ts`, ⓕ).
   opencode: PROVIDER_LANE_OPENCODE_ENV,
 };
+
+/**
+ * lane 턴에 늘 얹는 고정 env(값이 아니라 하네스 동작 스위치). claude 는 하네스가 띄우는 셸·하위 프로세스의 env 에서 자격 정보를
+ * 걷게 한다 — 하네스 자신은 그 턴의 키로 gateway 에 닿고, 셸은 키를 보지 못한다(2026-10-24 실측 claude 2.1.309).
+ */
+export const PROVIDER_LANE_FIXED_ENV: Partial<Record<AgentHarness, Readonly<Record<string, string>>>> = {
+  'claude-code': { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1' },
+};
+
+/** 이 하네스가 lane 턴에서 하위 프로세스 env 를 걷는가 — 걷으면 harkroom 브릿지에 줄 값을 MCP 설정 `env` 칸으로 따로 준다. */
+export function laneScrubsSubprocessEnv(harness: AgentHarness): boolean {
+  return PROVIDER_LANE_FIXED_ENV[harness]?.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB === '1';
+}
+
+/**
+ * 하위 프로세스 env 걷기가 harkroom 브릿지(`mcp-bridge`)에서 빼는 이름(2026-10-24 실측 claude 2.1.309). 브릿지는 이것으로 오퍼레이터에
+ * 러너임을 밝힌다 — 빠지면 lane 턴이 harkroom MCP 를 못 쓴다. 다른 `HARKROOM_*` 은 걷기 뒤에도 남는다(실측). 브릿지가 쓰는 이름만
+ * 싣는다 — lane 키는 싣지 않는다(security X2).
+ */
+export const LANE_BRIDGE_ENV_KEYS = ['HARKROOM_RUNNER_SECRET'] as const;
+
+/** lane 턴 전용 MCP 설정 파일 이름(러너 상태 폴더, 작업 폴더 밖, 0600 — security X1). */
+export const LANE_MCP_CONFIG_FILE = 'lane-mcp.json';
+
+/**
+ * 오퍼레이터가 쓴 MCP 설정을 바탕으로 lane 턴 전용 설정을 쓴다: harkroom 항목의 `env` 칸에 `LANE_BRIDGE_ENV_KEYS` 값을 싣는다.
+ * 하네스는 이 칸을 env 걷기 **뒤에** 브릿지에 얹는다(실측). 임시 파일 → rename 으로 바꿔 끼운다(동시 lane 턴이 반쯤 쓴 파일을 읽지 않게).
+ * harkroom 항목이 없거나 값이 없으면 던진다 — 그대로 띄우면 브릿지가 조용히 끊긴다.
+ */
+export async function writeLaneMcpConfig(stateDir: string, sourcePath: string, env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  const doc = JSON.parse(await readFile(sourcePath, 'utf8')) as { mcpServers?: Record<string, { env?: Record<string, string> } & Record<string, unknown>> };
+  const harkroom = doc.mcpServers?.harkroom;
+  if (!harkroom) throw new Error('writeLaneMcpConfig: MCP 설정에 harkroom 이 없다');
+  const extra: Record<string, string> = {};
+  for (const key of LANE_BRIDGE_ENV_KEYS) {
+    const value = env[key];
+    if (!value) throw new Error(`writeLaneMcpConfig: ${key} 가 러너 env 에 없다`);
+    extra[key] = value;
+  }
+  const out = { ...doc, mcpServers: { ...doc.mcpServers, harkroom: { ...harkroom, env: { ...(harkroom.env ?? {}), ...extra } } } };
+  const path = join(stateDir, LANE_MCP_CONFIG_FILE);
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tmp, JSON.stringify(out), { mode: 0o600 });
+  await rename(tmp, path);
+  return path;
+}
 
 /**
  * 그 턴의 주소·키를 못 받았다. **코드는 허용 목록으로 접어서 든다**(1c, security ③) — 오퍼레이터·서버가 준 문자열을 그대로
