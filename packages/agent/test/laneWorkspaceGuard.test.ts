@@ -88,4 +88,17 @@ describe('laneWorkspaceViolations', () => {
     await writeFile(join(ws, 'CLAUDE.md'), 'x');
     expect(await laneWorkspaceViolations(ws, skills)).toEqual(['CLAUDE.md']);
   });
+
+  // security F1: codex 프로젝트 설정 폴더도 보호 이름이다.
+  it('.codex 는 무엇이 들었든 잡는다 — 러너는 거기 아무것도 깔지 않는다', async () => {
+    for (const make of [
+      async (ws: string) => { await mkdir(join(ws, '.codex'), { recursive: true }); await writeFile(join(ws, '.codex', 'config.toml'), '[mcp_servers.x]\n'); },
+      async (ws: string) => { await mkdir(join(ws, '.Codex'), { recursive: true }); },
+      async (ws: string) => { await mkdir(join(ws, '.codex', 'skills'), { recursive: true }); },
+    ]) {
+      const { ws, skills } = await dirs();
+      await make(ws);
+      expect((await laneWorkspaceViolations(ws, skills)).map((n) => n.toLowerCase())).toEqual(['.codex']);
+    }
+  });
 });

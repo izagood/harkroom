@@ -8,7 +8,7 @@
 // 옮긴 것이다 — 스파이크(task-1)가 실측으로 확정했고, 초판의 추정 네 곳을 여기서 뒤집는다:
 // codex 에 `-a` 가 없다(sandbox 단독), codex MCP 는 파일이 아니라 턴별 `-c` 오버라이드,
 // claude 는 `--strict-mcp-config` 를 항상 받는다, gemini 는 이번 범위에서 미지원.
-import { PROVIDER_LANE_FIXED_ENV, providerLaneKeys } from './providerLane.js';
+import { CODEX_LANE_BASE_URL_ENV, codexLaneArgs, PROVIDER_LANE_ARGV_ONLY_KEYS, PROVIDER_LANE_FIXED_ENV, providerLaneKeys } from './providerLane.js';
 import { encodeLaneHookRules } from '@harkroom/shared/providerLane';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -168,6 +168,11 @@ interface HarnessPreset {
    * claude 와 opencode(kilo)가 채운다 — 이유는 CLAUDE_PRESET·OPENCODE_PRESET 의 `lanePermission` 주석.
    */
   lanePermission?: Partial<Record<MentionPermission, string[]>>;
+  /**
+   * API 키 연결 턴에만 붙는 인자 — 그 턴이 받은 값(`providerEnv`)으로 짓는다. codex 가 채운다(provider·셸 env 걷기, `codexLaneArgs`).
+   * 값을 argv 에 싣지 않는다 — 키는 env 이름만, 주소는 비밀이 아니라 싣는다.
+   */
+  laneArgs?(providerEnv: Record<string, string>): string[];
   mcp(args: { mcpConfigPath: string; operatorBin: string; extraMcpServers: Record<string, McpServerEntry> }): string[];
   /**
    * `mcp` 가 이름만 적은 비밀값을 자식 env 로 준다(2026-09-30). argv 는 `ps` 에 뜨므로 토큰은 여기로만.
@@ -492,6 +497,12 @@ const CODEX_PRESET: HarnessPreset = {
     ...Object.entries(extraMcpServers).flatMap(([name, entry]) => codexMcpFlags(name, entry)),
   ],
   model: (model) => (model ? ['--model', model] : []),
+  // 주소가 없으면 조립을 거절한다 — provider 덮어쓰기 없이 뜨면 이 홈의 기본 provider 로 돈다.
+  laneArgs: (env) => {
+    const baseUrl = env[CODEX_LANE_BASE_URL_ENV];
+    if (!baseUrl) throw new Error('buildTurnCommand: codex API 키 연결 턴에 주소가 없다');
+    return codexLaneArgs(baseUrl);
+  },
   // codex 에 `--effort` 플래그는 없다 — spec §4 표에도 이 항목은 없다(측정 대상 밖). 키
   // `model_reasoning_effort` 자체는 **실재를 확인했다**: 이 머신의 실제
   // `~/.codex/config.toml:2` 에 `model_reasoning_effort = "xhigh"` 가 그대로 들어있다(사용자가
@@ -834,6 +845,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
     // CLI 인자로 러너 루트에 못박는다(`piHome.ts::piSessionsDir`, security U1).
     ...(usesPiHome(opts.harness) ? ['--session-dir', piSessionsDir(opts.piHome as string)] : []),
     ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, operatorBin: opts.operatorBin, extraMcpServers: opts.extraMcpServers ?? {} }),
+    ...(opts.providerEnv ? preset.laneArgs?.(opts.providerEnv) ?? [] : []),
     ...preset.model(opts.model),
     ...preset.effort(opts.effort),
     ...preset.prompt(opts.systemPrompt, opts.mode === 'mention' ? opts.promptCtx : '', opts.mode, opts.systemPromptFile ?? null),
@@ -996,6 +1008,8 @@ function childEnv(
       if (!allowed.has(key)) throw new Error(`buildTurnCommand: 전용 제공사 경로가 ${homes.harness} 에 허용되지 않은 env 를 넣으려 했다: ${key}`);
       env[key] = value;
     }
+    // argv 조립에만 쓰는 이름은 하네스 env 에서 뺀다(`PROVIDER_LANE_ARGV_ONLY_KEYS`).
+    for (const key of PROVIDER_LANE_ARGV_ONLY_KEYS[homes.harness] ?? []) delete env[key];
     // 고정 스위치는 그 턴이 받은 값 **뒤에** 얹는다 — 부모 env 의 같은 이름이 남아 있어도 이 값이 이긴다.
     Object.assign(env, PROVIDER_LANE_FIXED_ENV[homes.harness] ?? {});
   }
