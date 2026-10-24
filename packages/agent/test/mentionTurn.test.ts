@@ -3216,12 +3216,12 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
 
     // 이 턴이 정말 readonly 프리셋으로 돌았다 — 그 사실이 없으면 이 테스트는 아무것도
     // 지키지 않는다(auto 턴에 입력이 가는 것은 애초에 논쟁거리가 아니었다).
-    expect(plans[0]!.args[plans[0]!.args.indexOf('--permission-mode') + 1]).toBe('plan');
+    expect(plans[0]!.args[plans[0]!.args.indexOf('--permission-mode') + 1]).toBe('dontAsk');
     expect(arrived).toHaveLength(1);
     expect(arrived[0]!.equals(typed)).toBe(true);
   });
 
-  it('#315-3 (구 #141-7) 사람이 실제로 타이핑해도 plan 이 그대로다 — 모드도 권한 프리셋도 바뀌지 않는다', async () => {
+  it('#315-3 (구 #141-7) 사람이 실제로 타이핑해도 readonly(dontAsk) 그대로다 — 모드도 권한 프리셋도 바뀌지 않는다', async () => {
     // **회귀선의 뜻을 다시 쓴 것이다.** #141 은 "attach 가 `TurnMode`·프리셋에 닿지
     // 않는다"를 고정했고, 그때는 붙기만 하고 칠 수 없었으므로 릴레이의 유무만 비교했다.
     // 입력이 열린 지금 그 비교는 **아무것도 지키지 않는다** — 승격은 붙는 순간이 아니라
@@ -3262,7 +3262,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     expect(normalize(withRelay.args)).toEqual(normalize(without.args));
     // 정규화가 프리셋 플래그를 삼키지 않았음을 직접 확인한다 — 'readonly' 프리셋의 증거다.
     expect(normalize(withRelay.args)).toContain('--permission-mode');
-    expect(normalize(withRelay.args)[normalize(withRelay.args).indexOf('--permission-mode') + 1]).toBe('plan');
+    expect(normalize(withRelay.args)[normalize(withRelay.args).indexOf('--permission-mode') + 1]).toBe('dontAsk');
     // 세션이 열렸고 **사람이 실제로 쳤다** — 치지도 않았는데 "그대로다"로 초록이 되면
     // 이 회귀선은 다시 뜻을 잃는다.
     expect(r.sessionId()).not.toBeNull();
