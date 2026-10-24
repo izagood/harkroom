@@ -6,7 +6,7 @@
 // **따라갈 것**을 만든다.
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import { Button, Field, Segmented, Select, TextInput } from '../src/components/settings/primitives';
+import { Button, Field, Segmented, Select, TextInput, Toggle } from '../src/components/settings/primitives';
 
 afterEach(() => cleanup());
 
@@ -116,5 +116,33 @@ describe('Button', () => {
     render(<Button disabled onClick={onClick}>저장</Button>);
     fireEvent.click(screen.getByRole('button', { name: '저장' }));
     expect(onClick).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `Toggle` 은 설명을 스위치에 잇는다(#1470 designer n2) — 다른 설정 화면의 Toggle 도 함께 고쳐진다.
+ */
+describe('Toggle — 설명이 스위치에 이어진다', () => {
+  const describedIds = () => (screen.getByRole('switch').getAttribute('aria-describedby') ?? '').split(' ').filter(Boolean);
+
+  it('설명이 있으면 그 줄을 가리킨다', () => {
+    render(<Toggle label="알림" description="멘션이 오면 알린다" checked={false} onChange={() => {}} />);
+    const ids = describedIds();
+    expect(ids).toHaveLength(1);
+    expect(document.getElementById(ids[0] ?? '')?.textContent).toBe('멘션이 오면 알린다');
+  });
+
+  it('설명이 없으면 aria-describedby 를 달지 않는다', () => {
+    render(<Toggle label="알림" checked={false} onChange={() => {}} />);
+    expect(screen.getByRole('switch').hasAttribute('aria-describedby')).toBe(false);
+  });
+
+  it('밖의 설명 id 를 설명 뒤에 잇는다', () => {
+    render(<>
+      <Toggle label="알림" description="설명" describedBy={['extra']} checked onChange={() => {}} />
+      <p id="extra">경고</p>
+    </>);
+    const ids = describedIds();
+    expect(ids.map((id) => document.getElementById(id)?.textContent)).toEqual(['설명', '경고']);
   });
 });

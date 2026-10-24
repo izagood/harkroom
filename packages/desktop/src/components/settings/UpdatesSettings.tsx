@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { setUpdateChannel, useUpdateCheck } from '../../lib/useUpdateCheck';
 import type { UpdateChannel } from '../../lib/updateChannel';
 import { useLocale, useT } from '../../i18n/useT';
@@ -49,6 +50,8 @@ export function UpdatesSettings() {
    * Stable 에서 한 번 설치하면 `installedChannel` 이 stable 이 되어 사라진다.
    */
   const aheadOfStable = !ludicrous && installedChannel === 'ludicrous';
+  const warnId = useId();
+  const aheadId = useId();
 
   let newVersion: string;
   /**
@@ -115,19 +118,21 @@ export function UpdatesSettings() {
         <Toggle
           label={t('settings.updates.ludicrous')}
           description={t('settings.updates.ludicrousNote')}
+          // 켜져 있는 동안의 경고·끈 뒤의 안내도 스위치에서 읽히게 잇는다 — 둘은 동시에 서지 않는다.
+          describedBy={ludicrous ? [warnId] : aheadOfStable ? [aheadId] : undefined}
           checked={ludicrous}
           disabled={status.kind === 'installing'}
           onChange={(on) => { setUpdateChannel(on ? 'ludicrous' : 'stable'); }}
         />
         {/* 켜는 것만으로는 바뀌는 것이 없다 — 되돌릴 수 없는 순간은 설치다. 그래서 모달 없이 켜져 있는 동안 한 줄(#3). */}
         {ludicrous && (
-          <p data-testid="updates-ludicrous-warn" className="bg-warning-surface px-4 py-2.5 text-meta text-warning last:rounded-b-compose">
+          <p id={warnId} data-testid="updates-ludicrous-warn" className="bg-warning-surface px-4 py-2.5 text-meta text-warning last:rounded-b-compose">
             {/* 표지는 눈으로만 본다 — 스크린리더가 「경고 표지」부터 읽지 않게(designer n1). */}
-            <span aria-hidden>⚠</span> {t('settings.updates.ludicrousWarn')}
+            <span aria-hidden="true">⚠</span> {t('settings.updates.ludicrousWarn')}
           </p>
         )}
         {aheadOfStable && (
-          <p data-testid="updates-ahead-note" className="bg-accent-surface px-4 py-2.5 text-meta text-fg last:rounded-b-compose">
+          <p id={aheadId} data-testid="updates-ahead-note" className="bg-accent-surface px-4 py-2.5 text-meta text-fg last:rounded-b-compose">
             {t('settings.updates.aheadNote', { version: __APP_VERSION__ })}
           </p>
         )}

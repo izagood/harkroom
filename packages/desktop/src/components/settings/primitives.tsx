@@ -266,18 +266,34 @@ export function ReadonlyRow({ label, value }: { label: string; value: ReactNode 
   );
 }
 
-/** 스위치 한 줄. role="switch" 를 단 checkbox 라 키보드·스크린리더 동작이 그대로 산다. */
-export function Toggle({ label, description, checked, disabled, onChange }: {
-  label: string; description?: string; checked: boolean; disabled?: boolean;
+/**
+ * 스위치 한 줄. role="switch" 를 단 checkbox 라 키보드·스크린리더 동작이 그대로 산다.
+ *
+ * **설명은 스위치에 이어 둔다**(`aria-describedby`). 눈으로는 이름 밑 회색 줄이 같은 줄의 설명인 것이
+ * 보이지만, 스크린리더는 스위치에 닿을 때 이름(`aria-label`)만 읽고 설명은 건너뛴다(#1470 designer n2).
+ * `describedBy` 는 이 줄 **밖**에 서는 설명(예: 켜져 있는 동안만 서는 경고 줄)의 id 들이다 — 그 요소가
+ * 화면에 있을 때만 넘긴다(없는 id 를 가리키면 읽을 것이 없다).
+ */
+export function Toggle({ label, description, describedBy, checked, disabled, onChange }: {
+  label: string; description?: string; describedBy?: string[]; checked: boolean; disabled?: boolean;
   onChange(next: boolean): void;
 }) {
+  const descriptionId = useId();
+  const ids = [...(description ? [descriptionId] : []), ...(describedBy ?? [])];
   return (
     <label className={`flex items-start gap-4 px-4 py-3 ${disabled ? 'opacity-50' : ''}`}>
       <span className="min-w-0 flex-1">
         <span className="block font-medium text-fg">{label}</span>
-        {description && <span className="mt-0.5 block text-fg-subtle">{description}</span>}
+        {description && <span id={descriptionId} className="mt-0.5 block text-fg-subtle">{description}</span>}
       </span>
-      <Switch ariaLabel={label} checked={checked} disabled={disabled} onChange={onChange} className="mt-0.5" />
+      <Switch
+        ariaLabel={label}
+        ariaDescribedBy={ids.length > 0 ? ids.join(' ') : undefined}
+        checked={checked}
+        disabled={disabled}
+        onChange={onChange}
+        className="mt-0.5"
+      />
     </label>
   );
 }
@@ -287,15 +303,16 @@ export function Toggle({ label, description, checked, disabled, onChange }: {
  * 스위치**다 — 자동화 줄의 "켜짐" 이 맨 체크박스(파란 네모)였고, 같은 일을 하는 것이 화면마다
  * 다른 컨트롤로 보였다(M9). 이제 켜기/끄기는 모두 이 모양 하나다.
  */
-export function Switch({ checked, disabled, onChange, ariaLabel, testId, className = '' }: {
+export function Switch({ checked, disabled, onChange, ariaLabel, ariaDescribedBy, testId, className = '' }: {
   checked: boolean; disabled?: boolean; onChange(next: boolean): void;
-  ariaLabel?: string; testId?: string; className?: string;
+  ariaLabel?: string; ariaDescribedBy?: string; testId?: string; className?: string;
 }) {
   return (
     <input
       type="checkbox"
       role="switch"
       aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
       data-testid={testId}
       checked={checked}
       disabled={disabled}

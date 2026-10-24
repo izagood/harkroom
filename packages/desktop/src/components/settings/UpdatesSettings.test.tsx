@@ -440,3 +440,40 @@ describe('UpdatesSettings — 받을 판', () => {
     await waitFor(() => expect((screen.getByRole('switch', { name: 'Get Ludicrous builds' }) as HTMLInputElement).disabled).toBe(true));
   });
 });
+
+/**
+ * 스위치에 설명이 이어져 있다(#1470 designer n2). 스크린리더는 스위치에 닿을 때 이름만 읽으므로,
+ * 설명·켜져 있는 동안의 경고·끈 뒤의 안내를 `aria-describedby` 로 잇는다.
+ */
+describe('UpdatesSettings — 스위치가 설명을 읽어 준다', () => {
+  const describedText = (el: HTMLElement) =>
+    (el.getAttribute('aria-describedby') ?? '').split(' ').filter(Boolean)
+      .map((id) => document.getElementById(id)?.textContent ?? `<없는 id ${id}>`).join(' | ');
+
+  it('꺼져 있으면 설명 한 줄만', () => {
+    setAppUpdater(stub());
+    render(<UpdatesSettings />);
+    const text = describedText(screen.getByRole('switch', { name: 'Get Ludicrous builds' }));
+    expect(text).toBe('Get the newest build as soon as it ships. Less tested than Stable. When off, you only get Stable (tested) builds.');
+  });
+
+  it('켜져 있으면 설명 + 경고 줄(표지 ⚠ 는 빼고 읽는다)', () => {
+    localStorage.setItem('harkroom.updateChannel', 'ludicrous');
+    setAppUpdater(stub());
+    render(<UpdatesSettings />);
+    const sw = screen.getByRole('switch', { name: 'Get Ludicrous builds' });
+    const ids = (sw.getAttribute('aria-describedby') ?? '').split(' ');
+    expect(ids).toHaveLength(2);
+    expect(document.getElementById(ids[1] ?? "")?.getAttribute('data-testid')).toBe('updates-ludicrous-warn');
+    expect(screen.getByTestId('updates-ludicrous-warn').querySelector('[aria-hidden="true"]')?.textContent).toBe('⚠');
+  });
+
+  it('Ludicrous 판을 쓰다 끄면 설명 + 안내 상자', () => {
+    localStorage.setItem('harkroom.updateInstalledChannel', 'ludicrous');
+    setAppUpdater(stub());
+    render(<UpdatesSettings />);
+    const text = describedText(screen.getByRole('switch', { name: 'Get Ludicrous builds' }));
+    expect(text).toContain(`${__APP_VERSION__} came from Ludicrous`);
+    expect(text).not.toContain('<없는 id');
+  });
+});
