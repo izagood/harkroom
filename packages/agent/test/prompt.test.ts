@@ -655,6 +655,11 @@ describe('buildSystemPrompt', () => {
     expect(hook).toContain('비밀이 낀 명령은 청하지 마라');
     expect(on).toContain('`Bash(gh pr view -R a/b:*)`');
     expect(buildSystemPrompt({ ...common, permissions: { toolAllows: [] } })).not.toContain('지금 허락된 규칙');
+    // opencode API 키 연결 턴: 명령 전체 규칙만 열리고, 규칙이 없으면 셸 도구가 안 보인다 — 그때 바로 청하라고 말한다(10-25 실측).
+    const exact = buildSystemPrompt({ ...common, permissions: { toolAllows: [], exactShellOnly: true } });
+    expect(exact).toContain('접두 규칙(`…:*`)이 열리지 않는다');
+    expect(exact).toContain('셸 도구가 안 보이면 그 자체가 거절이다');
+    expect(on).not.toContain('셸 도구가 안 보이면');
     expect(buildSystemPrompt(common)).not.toContain('permission.request');
     // 머지 권한이 없으면 사람에게 넘기되, 앞으로를 위해 청하는 길도 알려 준다.
     expect(buildSystemPrompt({ ...common, merge: { operatorBin: '/x', repos: [] } })).toContain('`permission.request`(kind: "merge"');
