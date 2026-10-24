@@ -18,8 +18,8 @@ import type { FailOpts, Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
-import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
-import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
+import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
+import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, turnKeyDeliveryOf, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
 import { RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
 import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
@@ -44,7 +44,9 @@ import type { MemoryCache } from './memoryCache.js';
 import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { planThreadNote, type ThreadNoteState } from './threadNotePin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
-import { laneModelMissing, laneScrubsSubprocessEnv, PROVIDER_LANE_FIXED_ENV, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
+import { issueTurnKeys, turnKeyValues, type TurnKeys } from './turnKeys.js';
+import { scrubNeedles, scrubPath, scrubText } from './secretScrub.js';
+import { laneModelMissing, laneScrubsSubprocessEnv, writeOpencodeTurnMcpConfig, writeTurnMcpConfig, PROVIDER_LANE_FIXED_ENV, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
 import { laneParentViolations, laneWorkspaceViolations } from './laneWorkspaceGuard.js';
 import { homedir } from 'node:os';
 
@@ -81,6 +83,9 @@ export function opencodeQueryEnv(
  * 그대로 넘겨도 되고, 테스트는 인메모리 fake 를 넘긴다(프로세스 경계·네트워크 없이 검증). */
 export interface MentionTurnHarkroom {
   definition(): Promise<AgentView>;
+  /** 턴 열쇠 맡기기·끝내기(`turnKeys.ts`). 없는 표면(시험 더블·옛 조립)은 턴 열쇠 없이 옛 자격으로 띄운다. */
+  registerTurnKeys?(turn: { turnId: string; cause: string | null; keys: TurnKeys }): Promise<void>;
+  endTurnKeys?(turnId: string): Promise<void>;
   /** 머지를 허락한 저장소(스레드 3deac356). 옵셔널 — 없는 표면(시험 더블)은 빈 목록과 같다. */
   mergeGrants?(): Promise<string[]>;
   mergeApprovals?(): Promise<{ repo: string; number: number; channelId: string; threadRootId: string }[]>;
@@ -1456,6 +1461,19 @@ export async function runMentionTurn(
       console.warn(`[mentionTurn] ${key}: 하네스 판 경고를 못 남겼다 — ${(err as Error).message}`);
     });
   }
+  // 턴 열쇠(좁은 턴 자격). 맡기는 길이 있고 그 하네스에 다리 열쇠를 셸 밖으로 줄 길이 있을 때만 쓴다 — 맡기기는 띄우기 바로 앞에서 한다.
+  const turnKeys = deps.harkroom.registerTurnKeys && turnKeyDelivery(def.harness) ? issueTurnKeys() : null;
+  // 열쇠 값의 바늘(K3) — PTY 꼬리·통지·턴 기록에서 가린다. 턴이 끝나면 열쇠는 죽지만 디스크·채팅에 남길 이유는 없다.
+  const turnKeyNeedles = turnKeyValues(turnKeys).flatMap((v) => scrubNeedles(Buffer.from(v, 'utf8')));
+  const turnMcpConfig = turnKeys && turnKeyDeliveryOf(def.harness) === 'mcp-config-env'
+    ? await writeTurnMcpConfig(deps.stateDir, deps.mcpConfigPath, turnId, turnKeys.bridge, { alwaysLoad: Boolean(providerEnv) && laneScrubsSubprocessEnv(def.harness) })
+    : null;
+  // opencode: 다리 열쇠를 턴 설정 파일에 싣는다. API 키 연결 턴은 lane 턴 파일에 더해 쓰고(그 파일은 lane 이 치운다), 그 밖은 새 파일이다.
+  const laneTurnFile = providerEnv?.OPENCODE_CONFIG ?? null;
+  const opencodeTurnConfig = turnKeys && turnKeyDeliveryOf(def.harness) === 'turn-config-env'
+    ? await writeOpencodeTurnMcpConfig(deps.stateDir, deps.mcpConfigPath, turnId, turnKeys.bridge, laneTurnFile)
+    : null;
+  const ownedTurnConfig = opencodeTurnConfig !== null && opencodeTurnConfig !== laneTurnFile ? opencodeTurnConfig : null;
   const plan = buildTurnCommand({
     harness: def.harness,
     mode: 'mention',
@@ -1471,10 +1489,12 @@ export async function runMentionTurn(
       : piLaneModel ?? laneRunModel(Boolean(providerEnv), usesXdgHome(def.harness), turnModel.model),
     effort: turnModel.effort,
     mentionPermission: def.mentionPermission,
-    // lane 턴은 하위 프로세스 env 를 걷는다(`PROVIDER_LANE_FIXED_ENV`) — 브릿지에 줄 값은 lane 전용 MCP 설정의 `env` 칸으로 준다.
-    mcpConfigPath: providerEnv && laneScrubsSubprocessEnv(def.harness)
-      ? await writeLaneMcpConfig(deps.stateDir, deps.mcpConfigPath)
-      : deps.mcpConfigPath,
+    // 턴 열쇠 턴(claude)은 그 턴만의 MCP 설정에 다리 열쇠를 싣는다 — lane 의 env 걷기 뒤에도 브릿지는 이 칸으로 붙는다.
+    // 턴 열쇠가 없는 lane 턴은 하위 프로세스 env 를 걷으므로(`PROVIDER_LANE_FIXED_ENV`) 브릿지에 줄 값을 lane 전용 MCP 설정의 `env` 칸으로 준다.
+    mcpConfigPath: turnMcpConfig
+      ?? (providerEnv && laneScrubsSubprocessEnv(def.harness)
+        ? await writeLaneMcpConfig(deps.stateDir, deps.mcpConfigPath)
+        : deps.mcpConfigPath),
     extraMcpServers,
     operatorBin: deps.operatorBin,
     mergeRepos,
@@ -1496,6 +1516,8 @@ export async function runMentionTurn(
     turnId,
     providerEnv,
     laneAgent,
+    turnKeys,
+    opencodeTurnConfig,
   });
 
   /**
@@ -2080,7 +2102,7 @@ export async function runMentionTurn(
     end.macNotices += 1;
     for (const w of fresh) console.error(`[mentionTurn] ${key}: macOS 권한 창 ${w.state}`);
     // 마운트한 비밀이 명령에 펼쳐져 실려도 가린다(security n1).
-    const secrets = deps.secretNeedles ? await deps.secretNeedles(mentionId).catch(() => [] as string[]) : [];
+    const secrets = [...turnKeyNeedles, ...(deps.secretNeedles ? await deps.secretNeedles(mentionId).catch(() => [] as string[]) : [])];
     await deps.harkroom.progress(channelId, macPermissionNotice(fresh, deps.runnerSecret, secrets).slice(0, BODY_LIMIT), anchor)
       .catch((err: unknown) => {
         console.error(`[mentionTurn] ${key}: macOS 권한 통지 실패 — ${err instanceof Error ? err.message : String(err)}`);
@@ -2316,7 +2338,13 @@ export async function runMentionTurn(
     (end.canceledBy || end.fencedOut ? { exitCode: 143, timedOut: false, tail: '' } : null);
 
   let result: TurnResult;
+  let turnKeysRegistered = false;
   try {
+    // 턴 열쇠를 맡긴 뒤에 띄운다. 못 맡기면 열쇠 없이 띄우지 않는다(닫히는 쪽) — 실패 카드로 간다.
+    if (turnKeys && !canceledBeforeSpawn()) {
+      await deps.harkroom.registerTurnKeys!({ turnId, cause: mentionId, keys: turnKeys });
+      turnKeysRegistered = true;
+    }
     result = canceledBeforeSpawn() ?? await deps.runTurn(plan, {
       cwd: plan.cwd ?? rec.workspaceDir,
       // **0 = 무기한**(pty.ts 옵션 주석). TUI 턴의 시간 한도는 러너가 무발화로 잰다 —
@@ -2436,7 +2464,12 @@ export async function runMentionTurn(
   } finally {
     await settle();
     if (mcpReadyFile !== null) await rm(mcpReadyFile, { force: true }).catch(() => undefined);
+    if (turnKeysRegistered) await deps.harkroom.endTurnKeys?.(turnId);
+    if (turnMcpConfig !== null) await rm(turnMcpConfig, { force: true }).catch(() => undefined);
+    if (ownedTurnConfig !== null) await rm(ownedTurnConfig, { force: true }).catch(() => undefined);
   }
+  // 꼬리는 실패 문장·로그로 흘러간다 — 열쇠 값을 여기서 한 번에 지운다(K3).
+  if (turnKeyNeedles.length) result = { ...result, tail: scrubText(result.tail, turnKeyNeedles).text };
 
   // #144: 에이전트가 직접 message.progress 로 진행 설명을 올리므로, 더 이상 ack seq 를 추적할 필요가 없다.
   // progress 메시지는 kind='progress' 로 저장되어 countOwnPostsSince 에서 자동으로 제외된다.
@@ -2471,10 +2504,20 @@ export async function runMentionTurn(
   // 턴이 끝난 뒤에 재면 방금 만들어진 rollout 파일이 그보다 오래돼 보여 발견이 조용히
   // 실패하고, codex 스레드가 매 턴 새 세션으로 시작한다(에러 없이) — 브리프가 짚은 함정.
   const sinceMs = turnStartMs;
+  const scrubTurnKeys = async (paths: string[]): Promise<void> => {
+    for (const path of paths) {
+      const n = await scrubPath(path, turnKeyNeedles).catch((e: unknown) => {
+        console.error(`[mentionTurn] ${key}: 턴 열쇠 가리기 실패(${path}) — ${e instanceof Error ? e.message : String(e)}`);
+        return 0;
+      });
+      if (n) console.error(`[mentionTurn] ${key}: ${path}: 턴 열쇠 ${n}곳을 가렸다`);
+    }
+  };
   // 실패 통지·로그에 PTY 꼬리를 실을 때 마운트한 비밀 값을 가린다(D7 후속). 한 번만 읽는다.
   let tailSecretsMemo: Promise<string[]> | null = null;
   const tailSecrets = (): Promise<string[]> =>
-    (tailSecretsMemo ??= deps.secretNeedles ? deps.secretNeedles(mentionId).catch(() => []) : Promise.resolve([]));
+    (tailSecretsMemo ??= (deps.secretNeedles ? deps.secretNeedles(mentionId).catch(() => [] as string[]) : Promise.resolve([] as string[]))
+      .then((xs) => [...turnKeyNeedles, ...xs]));
 
   if (discoversSessionIdAfterTurn(def.harness) && rec.sessionId === null) {
     // codex 는 세션 id 를 사전 할당할 수 없다 — 방금 끝난 턴이 만든 rollout 파일에서
@@ -2511,7 +2554,7 @@ export async function runMentionTurn(
 
   // 비밀 보관소 D7: 이 턴의 기록 파일을 적어 둔다 — 멘션이 끝날 때 마운트한 값을 가린다. 하네스 이름이 아니라
   // 표(세션 id 를 미리 주는가·뒤에 찾는가·XDG 인가)로 가른다. 못 찾으면 적지 않는다(가릴 파일이 없다).
-  if (deps.noteTranscript && rec.sessionId) {
+  if ((deps.noteTranscript || turnKeyNeedles.length) && rec.sessionId) {
     // pi 도 세션 id 를 미리 주지만 기록은 claude 의 `projects/` 가 아니라 자기 루트에 있다(security U2).
     const transcript = usesPiHome(def.harness) && turnPiHome
       ? await piSessionFile(turnPiHome, rec.sessionId).catch(() => null)
@@ -2523,10 +2566,12 @@ export async function runMentionTurn(
         ? await codexRolloutFileFor(codexSessionsDir(deps.codexHome), rec.sessionId).catch(() => null)
         : null;
     if (transcript) {
-      deps.noteTranscript(mentionId, transcript);
+      deps.noteTranscript?.(mentionId, transcript);
+      // 턴 열쇠 값은 이 턴의 기록에서 곧바로 가린다(K3) — 임대 가림은 비밀을 마운트한 멘션에서만 돈다.
+      if (turnKeyNeedles.length) await scrubTurnKeys([transcript, ...(preassignsSessionId(def.harness) && !usesPiHome(def.harness) && !usesOmpHome(def.harness) ? [join(dirname(transcript), rec.sessionId)] : [])]);
       // claude 는 jsonl 옆 `<sessionId>/` 에 큰 도구 출력(tool-results)·서브에이전트 전사(subagents)를 따로
       // 남긴다(security T1, 실측). 그 디렉터리도 가린다 — 없으면 가리기가 그냥 지나간다.
-      if (preassignsSessionId(def.harness) && !usesPiHome(def.harness) && !usesOmpHome(def.harness)) deps.noteTranscript(mentionId, join(dirname(transcript), rec.sessionId));
+      if (preassignsSessionId(def.harness) && !usesPiHome(def.harness) && !usesOmpHome(def.harness)) deps.noteTranscript?.(mentionId, join(dirname(transcript), rec.sessionId));
     }
   }
 

@@ -25,6 +25,8 @@ import { OPENCODE_ADAPTER } from './opencode.js';
 
 export const KILO_ADAPTER: HarnessAdapter = {
   ...OPENCODE_ADAPTER,
+  // 턴 열쇠는 opencode 의 턴 설정 이름(`OPENCODE_CONFIG`)으로 준다 — kilo 는 그 이름을 안 읽으니 물려받지 않는다(옛 자격으로 돈다).
+  turnKeyDelivery: undefined,
   harness: 'kilo',
   command: 'kilo',
   screen: {

@@ -4978,3 +4978,58 @@ describe('Claude in Chrome — 멘션 턴 배선', () => {
     });
   }
 });
+
+describe('턴 열쇠(C안 P2) — 멘션 턴', () => {
+  class KeyedHarkroom extends FakeHarkroom {
+    calls: string[] = [];
+    registered: { turnId: string; cause: string | null; keys: { bridge: string; shell: string } }[] = [];
+    failRegister = false;
+    async registerTurnKeys(turn: { turnId: string; cause: string | null; keys: { bridge: string; shell: string } }): Promise<void> {
+      this.calls.push('register');
+      if (this.failRegister) throw new Error('turn keys 503');
+      this.registered.push(turn);
+    }
+    async endTurnKeys(turnId: string): Promise<void> {
+      this.calls.push(`end:${turnId}`);
+    }
+  }
+
+  it('codex: 맡긴 뒤 띄우고 끝나면 지운다 · 하네스 env 에 runner secret 이 없다', async () => {
+    const fake = new KeyedHarkroom(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, plans, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => { fake.calls.push('spawn'); return { exitCode: 0, timedOut: false, tail: '' }; };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    const turnId = fake.registered[0]!.turnId;
+    expect(fake.calls).toEqual(['register', 'spawn', `end:${turnId}`]);
+    expect(fake.registered[0]!.cause).toBe(MENTION);
+    expect(plans[0]!.env.HARKROOM_RUNNER_SECRET).toBeUndefined();
+    expect(plans[0]!.env.HARKROOM_TURN_GRANT).toBe(fake.registered[0]!.keys.shell);
+  });
+
+  it('맡기기가 실패하면 하네스를 띄우지 않는다', async () => {
+    const fake = new KeyedHarkroom(defOf({ harness: 'codex' }));
+    fake.failRegister = true;
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, plans } = await makeDeps(fake);
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch(() => undefined);
+    expect(plans).toHaveLength(0);
+    expect(fake.calls).toEqual(['register']);
+  });
+
+  it('PTY 꼬리에 열쇠 값이 찍혀도 실패 통지에는 실리지 않는다(K3)', async () => {
+    const fake = new KeyedHarkroom(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, runTurn } = await makeDeps(fake);
+    runTurn.script = async (plan) => ({
+      exitCode: 1, timedOut: false,
+      tail: `boom bridge=${plan.env.HARKROOM_TURN_BRIDGE_KEY ?? ''} shell=${plan.env.HARKROOM_TURN_GRANT ?? ''}`,
+    });
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).then(() => null, (e: unknown) => e as Error);
+    const keys = fake.registered[0]!.keys;
+    expect(err?.message ?? '').toContain('boom bridge=');
+    const said = [err?.message ?? '', ...fake.posts.map((p) => p.body), ...fake.messages.map((m) => m.body)].join('\n');
+    expect(said).not.toContain(keys.bridge);
+    expect(said).not.toContain(keys.shell);
+  });
+});
