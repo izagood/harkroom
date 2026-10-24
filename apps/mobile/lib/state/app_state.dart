@@ -1149,20 +1149,22 @@ class AppState extends ChangeNotifier {
       for (final entry in messages.entries.toList())
         if (entry.value.isNotEmpty)
           () async {
+            final mark = _liveSeq;
             final page = await api.messages(entry.key, since: entry.value.last.seq, limit: 200);
             if (gen != _generation) return;
             for (final m in page.messages) {
-              _upsertMessage(m);
+              _upsertMessage(m, asOf: mark);
             }
           },
       for (final rootId in threads.keys.toList())
         if (_channelOfThread(rootId) case final channelId?)
           () async {
+            final mark = _liveSeq;
             final page = await api.messages(channelId, thread: rootId, limit: 100);
             if (gen != _generation) return;
             // 최신 페이지로 **통째로 간다**. 밀어 올려 받아 둔 옛 답글은 버리고 `hasMore` 를 다시 세워
             // 다시 밀면 받게 한다 — 남겨 두면 끊긴 사이 지워진 옛 답글이 화면에 남는다(security #1051).
-            _storeThreadPage(rootId, page.messages);
+            _storeThreadPage(rootId, page.messages, mark);
             threadHasMore[rootId] = page.hasMore;
           },
       () async {
@@ -1287,6 +1289,7 @@ class AppState extends ChangeNotifier {
 
   /// 루트의 스레드 상태를 갈아 끼운다. 모르는 루트는 버린다(다음에 읽을 때 서버가 함께 준다).
   void _applyThreadStatus(String channelId, String rootId, ThreadStatusMark? status) {
+    _touch(rootId);
     for (final list in [messages[channelId], ...threads.values]) {
       if (list == null) continue;
       final idx = list.indexWhere((m) => m.id == rootId);
@@ -1343,6 +1346,7 @@ class AppState extends ChangeNotifier {
       return;
     }
     final added = event['type'] == 'reaction.added';
+    _touch(messageId);
 
     for (final list in [messages[channelId], ...threads.values]) {
       if (list == null) continue;
@@ -1358,12 +1362,62 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /*
+    페이지는 **보낸 순간의 스냅숏**이다. 늦게 도착하면 그 사이 실시간으로 바뀐 행을 옛것으로 되돌린다
+    (2026-10-24 답한 선택 카드가 다시 열린 사고 — 5.3초 걸린 스레드 페이지가 답 1초 뒤에 도착해 카드를 덮었고,
+    다시 누르면 409 만 돌아왔다). 그래서 행마다 마지막 실시간 갱신 차례를 적어 두고, 페이지는 보내기 **직전**의
+    차례([_liveSeq])를 들고 가서 그 뒤에 바뀐 행은 덮지 않는다. 데스크톱 `appStore.upsertMessages(asOf)` 와 같은 규칙.
+  */
+  int _liveSeq = 0;
+  final Map<String, int> _liveTouched = {};
+
+  /// 실시간으로 마지막에 받은 행. 그 행을 담을 목록이 아직 없을 때(채널을 읽는 중·인박스에서 답함) 늦은 페이지
+  /// 대신 이것을 쓴다. 값이 `null` 이면 지워졌다.
+  final Map<String, MessageRow?> _liveRows = {};
+
+  void _touch(String id) => _liveTouched[id] = ++_liveSeq;
+
+  /// 페이지 행 하나를 무엇으로 담을지. 페이지를 보낸 뒤([asOf]) 실시간으로 바뀐 행이면 지금 손에 든 것을
+  /// 쓰고, 그 사이 지워졌으면 `null`(되살리지 않는다). 그 뒤의 변화는 이벤트로 온다.
+  MessageRow? _fromPage(MessageRow row, int asOf) {
+    if ((_liveTouched[row.id] ?? 0) <= asOf) return row;
+    final held = _findMessage(row.channelId, row.id);
+    if (held != null) return held;
+    if (_liveRows.containsKey(row.id)) return _liveRows[row.id];
+    return row;
+  }
+
+  List<MessageRow> _pageRows(Iterable<MessageRow> page, int asOf) => [
+        for (final m in page) ?_fromPage(m, asOf),
+      ];
+
+  /// 페이지를 보낸 뒤([asOf]) 실시간으로 들어와 그 페이지에는 없는 행. 페이지로 목록을 **갈아 끼울 때** 같이
+  /// 담는다 — 안 담으면 받는 사이 온 새 글이 사라진다.
+  Iterable<MessageRow> _liveAfter(int asOf, Set<String> pageIds, bool Function(MessageRow) where) sync* {
+    for (final e in _liveRows.entries) {
+      final row = e.value;
+      if (row == null || pageIds.contains(e.key)) continue;
+      if ((_liveTouched[e.key] ?? 0) > asOf && where(row)) yield _findMessage(row.channelId, row.id) ?? row;
+    }
+  }
+
   /// 같은 메시지가 두 번 와도 한 줄로 남는다.
   ///
   /// 두 번 오는 것은 **정상 경로**다: 내가 올린 메시지는 POST 응답으로 한 번, 소켓으로 또
   /// 한 번 온다. 재연결 직후에도 겹칠 수 있다. `seq` 가 채널 안에서 유일하므로 그것으로
   /// 가려내고, 이미 있으면 **덮어쓴다**(수정·리액션이 그 경로로 온다).
-  void _upsertMessage(MessageRow message) {
+  ///
+  /// [asOf] 는 **페이지 조회**가 줄 때만 쓴다 — 그 조회를 보낸 순간의 [_liveSeq] 다([_fromPage]).
+  /// 없으면 실시간 쓰기(소켓·내 동작의 응답)다 — 그 행의 갱신 차례를 올린다.
+  void _upsertMessage(MessageRow message, {int? asOf}) {
+    if (asOf == null) {
+      _touch(message.id);
+      _liveRows[message.id] = message;
+    } else {
+      final row = _fromPage(message, asOf);
+      if (row == null) return;
+      message = row;
+    }
     // 스레드 답글이면 그 스레드에도 넣는다. **둘 다 갱신해야 한다** — 채널 화면의
     // 요약(답글 수)과 열려 있는 스레드가 같은 사실을 봐야 하기 때문이다.
     final rootId = message.threadRootId;
@@ -1754,9 +1808,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     final gen = _generation;
     try {
+      final mark = _liveSeq;
       final page = await _api!.messages(channelId, limit: channelPageSize);
       if (gen != _generation) return;
-      messages[channelId] = [...page.messages]..sort((a, b) => a.seq.compareTo(b.seq));
+      final rows = _pageRows(page.messages, mark);
+      final ids = {for (final m in page.messages) m.id};
+      rows.addAll(_liveAfter(mark, ids, (m) => m.channelId == channelId));
+      messages[channelId] = rows..sort((a, b) => a.seq.compareTo(b.seq));
       channelHasMore[channelId] = page.hasMore;
       channelLoad[channelId] = LoadState.loaded;
     } on Object catch (e) {
@@ -1807,13 +1865,14 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     final gen = _generation;
     try {
+      final mark = _liveSeq;
       final page = await _api!.messages(channelId, before: list.first.seq, limit: channelPageSize);
       if (gen != _generation) return false;
       channelHasMore[channelId] = page.hasMore;
       final current = messages[channelId];
       if (current == null) return false;
       final seen = current.map((m) => m.seq).toSet();
-      final older = page.messages.where((m) => !seen.contains(m.seq)).toList();
+      final older = _pageRows(page.messages.where((m) => !seen.contains(m.seq)), mark);
       if (older.isEmpty) return false;
       messages[channelId] = [...older, ...current]..sort((a, b) => a.seq.compareTo(b.seq));
       return true;
@@ -1899,6 +1958,9 @@ class AppState extends ChangeNotifier {
 
   /// 채널 목록·열린 스레드·받아 둔 루트에서 한 메시지를 뺀다. 소켓 `message.deleted` 와 내 삭제가 같이 쓴다.
   void _removeMessage(String channelId, String messageId) {
+    // 지운 줄도 차례를 올린다 — 지우기 전에 보낸 페이지가 늦게 와서 그 줄을 되살리지 않게.
+    _touch(messageId);
+    _liveRows[messageId] = null;
     messages[channelId]?.removeWhere((m) => m.id == messageId);
     for (final list in threads.values) {
       list.removeWhere((m) => m.id == messageId && m.channelId == channelId);
@@ -2256,8 +2318,11 @@ class AppState extends ChangeNotifier {
     super.notifyListeners();
   }
 
-  /// 스레드 응답 한 페이지를 루트([threadRoots])와 답글([threads])로 나눠 담는다.
-  void _storeThreadPage(String rootId, List<MessageRow> page) {
+  /// 스레드 응답 한 페이지를 루트([threadRoots])와 답글([threads])로 나눠 담는다. [asOf] 는 그 조회를
+  /// 보내기 직전의 [_liveSeq] — 그 뒤에 실시간으로 바뀐 줄은 덮지 않는다([_fromPage]).
+  void _storeThreadPage(String rootId, List<MessageRow> fetched, int asOf) {
+    final page = _pageRows(fetched, asOf)
+      ..addAll(_liveAfter(asOf, {for (final m in fetched) m.id}, (m) => m.threadRootId == rootId));
     // 최신 페이지를 통째로 받았다 — 꼬리가 비어 있던 사실은 여기서 끝난다.
     threadTailMissing.remove(rootId);
     latestJumpFailed.remove(rootId);
@@ -2275,9 +2340,9 @@ class AppState extends ChangeNotifier {
   }
 
   /// 스레드 응답 한 페이지를 이미 있는 답글에 **합친다**(id 로 겹침 제거, seq 순). 점프 창용이다.
-  void _mergeThreadPage(String rootId, List<MessageRow> page) {
+  void _mergeThreadPage(String rootId, List<MessageRow> page, int asOf) {
     final byId = <String, MessageRow>{for (final m in threads[rootId] ?? const <MessageRow>[]) m.id: m};
-    for (final m in page) {
+    for (final m in _pageRows(page, asOf)) {
       if (m.id == rootId) {
         threadRoots[rootId] = m;
       } else {
@@ -2314,6 +2379,7 @@ class AppState extends ChangeNotifier {
         // 루트로 가는 길: 스레드를 처음부터 다 받았으면 루트는 이미 맨 위다.
         !(threadRoots[rootId]?.seq == aroundSeq && threadLoad[rootId] == LoadState.loaded && threadHasMore[rootId] == false);
     try {
+      final mark = _liveSeq;
       final page = needsWindow
           ? await _api!.messages(channelId, thread: rootId, around: aroundSeq, limit: _threadPageLimit)
           : await _api!.messages(channelId, thread: rootId, limit: _threadPageLimit);
@@ -2333,12 +2399,12 @@ class AppState extends ChangeNotifier {
         } else {
           threadTailMissing.remove(rootId);
         }
-        _mergeThreadPage(rootId, page.messages);
+        _mergeThreadPage(rootId, page.messages, mark);
         // 창 응답의 `hasMore` 는 서버가 늘 `false` 로 준다(과거를 말할 자격이 없는 조회). 답글이 하나라도
         // 왔으면 "더 있을 수 있다"로 두고 위로 밀 때 `before` 로 확인한다 — 끝이면 그 답이 `false` 를 준다.
         threadHasMore[rootId] = page.messages.any((m) => m.id != rootId);
       } else {
-        _storeThreadPage(rootId, page.messages);
+        _storeThreadPage(rootId, page.messages, mark);
         threadHasMore[rootId] = page.hasMore;
       }
       olderThreadFailed.remove(rootId);
@@ -2368,13 +2434,14 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     final gen = _generation;
     try {
+      final mark = _liveSeq;
       final page = await _api!.messages(channelId, thread: rootId, before: list.first.seq, limit: 100);
       if (gen != _generation) return false;
       threadHasMore[rootId] = page.hasMore;
       final current = threads[rootId] ?? const <MessageRow>[];
       final seen = current.map((m) => m.seq).toSet();
       // 루트는 옛 페이지에 실리지 않지만, 실려도 답글로 넣지 않는다.
-      final older = page.messages.where((m) => m.id != rootId && !seen.contains(m.seq)).toList();
+      final older = _pageRows(page.messages.where((m) => m.id != rootId && !seen.contains(m.seq)), mark);
       if (older.isEmpty) return false;
       threads[rootId] = [...older, ...current]..sort((a, b) => a.seq.compareTo(b.seq));
       return true;
@@ -2409,9 +2476,10 @@ class AppState extends ChangeNotifier {
     final gen = _generation;
     var ok = false;
     try {
+      final mark = _liveSeq;
       final page = await _api!.messages(channelId, thread: rootId, limit: _threadPageLimit);
       if (gen != _generation) return false;
-      _storeThreadPage(rootId, page.messages);
+      _storeThreadPage(rootId, page.messages, mark);
       threadHasMore[rootId] = page.hasMore;
       olderThreadFailed.remove(rootId);
       threadLoad[rootId] = LoadState.loaded;
@@ -2463,12 +2531,33 @@ class AppState extends ChangeNotifier {
   /// 선택지를 고른다. 돌아온 메시지로 **그 자리를 덮어쓴다** — 버튼이 사라지고 고른
   /// 것이 남는다. 누른 뒤에도 버튼이 있으면 사람은 자기가 누른 것을 의심한다.
   Future<void> answerAsk(String channelId, String messageId, String optionId) async {
-    _upsertMessage(await _api!.answerAsk(channelId, messageId, optionId));
+    try {
+      _upsertMessage(await _api!.answerAsk(channelId, messageId, optionId));
+    } on ApiError catch (e) {
+      if (!await _settleAsk(e, messageId)) rethrow;
+    }
   }
 
   /// 답하지 않기로 한다.
   Future<void> closeAsk(String channelId, String messageId) async {
-    _upsertMessage(await _api!.closeAsk(channelId, messageId));
+    try {
+      _upsertMessage(await _api!.closeAsk(channelId, messageId));
+    } on ApiError catch (e) {
+      if (!await _settleAsk(e, messageId)) rethrow;
+    }
+  }
+
+  /// 카드가 409(이미 정해짐)를 받았으면 그 한 줄을 서버에서 다시 받아 맞춘다(2026-10-24). 화면이 열린 카드를
+  /// 그리는데 눌러도 409 만 돌아오고 카드는 열린 채 남았다. 맞췄으면 `true` — 카드가 정해진 답을 보이므로
+  /// 실패 토스트를 띄우지 않는다. 다른 오류·다시 받기 실패는 `false`(부르는 쪽이 전처럼 알린다).
+  Future<bool> _settleAsk(ApiError e, String messageId) async {
+    if (e.status != 409) return false;
+    try {
+      _upsertMessage(await _api!.message(messageId));
+      return true;
+    } on Object {
+      return false;
+    }
   }
 
   /// 묶음 카드의 줄 하나를 원본에서 새로 읽는다 — 캐시를 쓰지 않는다(원본이 다른 채널이면 이 기기에 새 판이 안 온다).
@@ -2648,6 +2737,8 @@ class AppState extends ChangeNotifier {
     homeUnreadOnly = false;
     threads.clear();
     threadRoots.clear();
+    _liveTouched.clear();
+    _liveRows.clear();
     threadHasMore.clear();
     loadingOlderThread.clear();
     olderThreadFailed.clear();
