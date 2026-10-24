@@ -36,7 +36,8 @@ export function ThreadParticipants({ messages, live }: { messages: MessageRow[];
   // 등장 순서를 지킨다 — 먼저 말한 쪽이 먼저 선다.
   const seen: string[] = [];
   for (const m of messages) {
-    if (!seen.includes(m.authorId) && accounts[m.authorId]?.kind === 'agent') seen.push(m.authorId);
+    // 시스템 줄의 author 는 참여자가 아니다(C안 c3) — 알림 대상 에이전트일 뿐 그 스레드에서 말하지 않았다.
+    if (m.kind !== 'system' && !seen.includes(m.authorId) && accounts[m.authorId]?.kind === 'agent') seen.push(m.authorId);
   }
   const agents = seen.map((id) => accounts[id]).filter((a): a is AccountView => a != null);
   if (agents.length === 0) return null;

@@ -64,13 +64,13 @@ describe('#329 시스템 메시지가 현재 handle 로 그려진다', () => {
     expect(screen.queryByText(/targetuser/)).toBeNull();
   });
 
-  it('3. 이름줄은 **작성자**를 그린다 — 대상의 이름이 그 자리를 뺏지 않는다', () => {
-    // 이름줄 옆의 아바타·배지·상태 표시는 전부 author 를 그린다. 이름만 대상으로 바꾸면
-    // admin 이 내보낸 메시지가 내보내진 사람의 말처럼 보이고, 한 줄 안에서 이름과 아바타가
-    // 서로 다른 사람을 가리킨다. 초판이 실제로 그랬다.
+  it('3. 기록 줄은 이름줄이 없다 — author(admin)도 대상도 그 자리를 갖지 않는다', () => {
+    // 시스템 줄의 author 는 그 줄을 일으킨 계정일 뿐 말한 사람이 아니다(시스템 줄 C안, 2026-10-24).
+    // 예전엔 이름줄에 admin 을 그려 admin 의 말처럼 보였다 — 이제 이름줄·얼굴을 아예 그리지 않는다.
     show(REMOVED, TARGET_ID);
 
-    expect(screen.getByTestId('author-name').textContent).toBe('admin');
+    expect(screen.queryByTestId('author-name')).toBeNull();
+    expect(screen.getByTestId('author-gutter').getAttribute('data-system')).toBe('record');
     // 대상의 이름은 **본문에만** 있다.
     expect(screen.getByText('targetuser님이 채널에서 제거되었습니다.')).toBeTruthy();
   });
@@ -93,7 +93,8 @@ describe('#329 시스템 메시지가 현재 handle 로 그려진다', () => {
     show('olduser님이 채널에 추가되었습니다.', null);
 
     expect(screen.getByText('olduser님이 채널에 추가되었습니다.')).toBeTruthy();
-    expect(screen.getByTestId('author-name').textContent).toBe('admin');
+    // 옛 줄도 kind 로 갈린다 — admin 이름으로 그리지 않는다.
+    expect(screen.queryByTestId('author-name')).toBeNull();
   });
 
   it('6. 대상 계정을 스토어가 모르면 라벨로 대신한다 — 자리표시자가 새지 않는다', () => {

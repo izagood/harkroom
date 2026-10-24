@@ -4,7 +4,7 @@ import { MergeDenialPanel } from './MergeDenialPanel';
 import { PermissionOncePanel } from './PermissionOncePanel';
 import { readCardSource } from './MandateLineBody';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { isAskOpen, messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
+import { UNKNOWN_ACCOUNT_LABEL, isAskOpen, messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
 import { readAutomationMeta } from '../lib/automation';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -38,6 +38,7 @@ import { stampLabel } from '../lib/day';
 import type { SectionId } from './settings/sections';
 import { useT, useLocale } from '../i18n/useT';
 import { systemText } from '../lib/systemText';
+import { systemLineShape, systemLineTarget, systemRecordIcon } from '../lib/systemLine';
 
 /**
  * 얼굴 슬롯의 칸 수. **폭이 고정되는 것이 이 숫자의 일**이다 — 참여자가 늘어도 요약 줄이
@@ -127,7 +128,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
    * 신호(`onOpenDirectory`·`onOpenSettings`)가 없는 자리에서는 `null` 이라 **버튼이 아니다**
    * — 눌러도 아무 일이 없는 컨트롤을 남기지 않는다(`MessageBody` 의 같은 규칙).
    */
-  const authorOpen = accountOpen(author, { id: myId, isAdmin }, { onOpenDirectory, onOpenSettings }, t);
+  // 시스템 줄의 author 는 말한 사람이 아니다 — 이름·얼굴을 누를 자리도 없다(시스템 줄 C안 c5).
+  const authorOpen = message.kind === 'system' ? null : accountOpen(author, { id: myId, isAdmin }, { onOpenDirectory, onOpenSettings }, t);
   // 생존 판정의 두 축 — `connected` 가 false 면 `online` 은 '아무도 없다'가 아니라 '모른다'다.
   //
   // `online` 은 **이 행의 판정에 드는 계정만** 구독한다. 목록 전체를 구독하면 누가 접속하거나
@@ -177,6 +179,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
   }, [highlighted, message.id]);
 
   const isSystem = message.kind === 'system';
+  /** 시스템 줄의 두 겹(C안) — `record` 는 이름줄 없는 한 줄, `response` 는 「Harkroom · 시스템」 + 대상 칩. */
+  const systemShape = systemLineShape(message);
   /**
    * 그릴 본문(#329). 시스템 메시지는 본문에 이름이 없고 자리표시자만 있으므로,
    * `displayBody` 가 `meta.accountId` 로 지금의 handle 을 찾아 채운다 — 본문을 보여 주는
@@ -600,7 +604,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
       // 이 아니라 **안쪽 그림자**로 긋는다: 테두리는 폭을 먹어 담고 풀 때마다 본문이 3px
       // 옆으로 뛴다. 담긴 줄은 hover 면을 바꾸지 않는다 — `bg-surface` 로 덮으면 마우스를
       // 올린 줄만 담김 면이 사라져 "풀렸다"로 읽힌다.
-      className={`group relative flex gap-2 px-4 py-1.5 ${savedBand ? '' : 'hover:bg-surface'} ${isSystem ? 'border-l-2 border-warning-border' : ''} ${highlighted ? 'bg-warning-surface-strong ring-1 ring-warning-border' : isSystem ? 'bg-warning-surface' : savedBand ? 'bg-saved-surface shadow-[inset_3px_0_0_var(--color-saved)]' : ''}`}
+      // 기록 줄(C안)은 띠·면 없이 낮게 — 사람 글과 높이부터 다르다. 응답 줄만 경고 띠를 이어 받는다.
+      className={`group relative flex gap-2 px-4 ${systemShape === 'record' ? 'py-0.5' : 'py-1.5'} ${savedBand ? '' : 'hover:bg-surface'} ${systemShape === 'response' ? 'border-l-2 border-warning-border' : ''} ${highlighted ? 'bg-warning-surface-strong ring-1 ring-warning-border' : systemShape === 'response' ? 'bg-warning-surface' : savedBand ? 'bg-saved-surface shadow-[inset_3px_0_0_var(--color-saved)]' : ''}`}
       data-highlighted={highlighted ? 'true' : undefined}
       data-saved={isSaved ? 'true' : undefined}
       onPointerEnter={liveToolbar}
@@ -623,7 +628,14 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           버튼이 **같은 곳**으로 가므로, 둘 다 내면 메시지마다 같은 이름의 버튼이 둘씩
           서서 목록과 탭 순서가 두 배가 된다. 잃는 것은 없다 — 키보드·스크린리더는
           이름줄로 가고, 여기는 얼굴을 눌러 여는 마우스 길이다. */}
-      {authorOpen ? (
+      {systemShape ? (
+        /* 시스템 줄의 거터는 **누구의 얼굴도 아니다**(C안). 기록 줄은 작은 아이콘, 응답 줄은 점선 ⚙ 타일. */
+        <div data-testid="author-gutter" data-system={systemShape} aria-hidden="true"
+          className={systemShape === 'record'
+            ? 'flex w-8 shrink-0 justify-center text-meta text-fg-subtle'
+            : 'flex h-8 w-8 shrink-0 items-center justify-center rounded-avatar border border-dashed border-border-strong bg-surface-sunken text-fg-muted'}
+        >{systemShape === 'record' ? systemRecordIcon(message) : '⚙'}</div>
+      ) : authorOpen ? (
         <button
           type="button"
           data-testid="author-gutter"
@@ -662,7 +674,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
         최대폭과는 다른 문제다.
       */}
       <div data-testid="message-body-column" className="min-w-0 max-w-[1422px] flex-1">
-        <div className="flex items-baseline gap-2">
+        {systemShape !== 'record' && (<div className="flex items-baseline gap-2">
           {/* `data-testid` 를 두는 이유는 위 `author-gutter` 와 같다: 이 자리가 **작성자**의
               것이라는 사실을 회귀선이 클래스 문자열로 더듬지 않게 한다. 아바타(`Identity`)도
               handle 을 sr-only 로 내보내므로 글자로 찾으면 두 곳이 걸려, 이름줄이 다른
@@ -676,7 +688,15 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
               글자 크기·굵기는 위 문단이 정한 그대로이고(15px 이름줄), 누를 수 있다는
               것은 hover 밑줄과 커서로만 말한다: 여기에 색을 칠하면 이름마다 강조가
               하나씩 서서 정작 나를 막는 말의 색이 죽는다(규칙 04, #488 B2). */}
-          {authorOpen ? (
+          {systemShape ? (
+            /* 응답 줄의 작성자는 시스템이다(C안) — 누를 수 없고, 그 사람은 아래 칩에 **대상**으로만 나온다. */
+            <span data-testid="author-name" data-system="true" className="text-body font-semibold text-fg-muted">
+              {t('message.system.author')}
+              <span className="ml-1.5 rounded-sm border border-border-strong px-1 align-[2px] text-meta font-bold text-fg-muted">
+                {t('message.system.badge')}
+              </span>
+            </span>
+          ) : authorOpen ? (
             <button
               type="button"
               data-testid="author-name"
@@ -735,7 +755,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           */}
           {/* 작성 시점이 아니라 **지금**의 상태다 — 이 줄이 답하는 질문은 "이 사람에게
               지금 물어봐도 되는가"이지 "그때 무슨 상태였나"가 아니다(#186). */}
-          <AuthorStatus id={message.authorId} />
+          {!isSystem && <AuthorStatus id={message.authorId} />}
           {/* 수신자 배지(규칙 04) — 이 말이 **누구에게 갔는지**. `→ 나` 만 강조색을 받고
               남에게 간 것은 무채색이다. 지금은 선택 요청만 수신자를 싣지만 배지 자체는
               되물음·실패도 쓸 것이므로 `AskCard` 밖(이름줄)에 둔다. */}
@@ -743,7 +763,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
           {/* #141: 진행 중인 터미널 진입점. 소유자·admin 이 아니면 렌더 자체가 없다
               (TerminalChip 이 판정한다) — 이름줄에 두는 이유는 소유자 배지와 같다:
               32px 거터에 넣으면 넘친다(#277). */}
-          <AuthorTerminal id={message.authorId} message={message} />
+          {!isSystem && <AuthorTerminal id={message.authorId} message={message} />}
           {/* #624 요구 1: 스레드에서 **채널에도** 함께 보낸 답. 스레드 안에서 이 사실이
               보여야 한다 — 안 보이면 "우리끼리 한 말"로 읽고 다음 말을 고르게 된다.
               채널 쪽 사본에는 이 표시를 달지 않는다: 거기서 필요한 것은 반대 사실
@@ -788,7 +808,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
               {t('message.savedMark')}
             </span>
           )}
-        </div>
+        </div>)}
+        {systemShape === 'response' && <SystemTargetChip message={message} accounts={accounts} />}
 
         {draft === null ? (
           <>
@@ -816,7 +837,15 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 )}
               </button>
             )}
-            {systemLine !== null
+            {systemShape === 'record'
+              /* 기록 줄(C안) — 이름줄 없이 작은 한 줄, 시각은 끝에. 보조기술에는 「시스템 알림」 이 먼저 간다(c2). */
+              ? <p className="whitespace-pre-wrap break-words text-meta text-fg-muted" data-testid="system-record-line">
+                  <span className="sr-only">{t('message.system.srLabel')}: </span>
+                  {avcsType && <span className="mr-1.5 rounded-sm bg-warning-surface-strong px-1 text-warning">{avcsType}</span>}
+                  {systemLine ?? shownBody}
+                  <span className="ml-1.5 text-fg-subtle">{time}</span>
+                </p>
+              : systemLine !== null
               ? <p className="whitespace-pre-wrap break-words" data-testid="system-i18n-line">{systemLine}</p>
               : shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} refIds={mentionRefs} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
             {/* 선택지는 본문 **바로 아래**에 붙는다 — 답할 자리가 말 옆에 있어야 한다(규칙 05).
@@ -1186,3 +1215,23 @@ const AuthorTerminal = memo(function AuthorTerminal({ id, message }: { id: strin
   const account = useActiveStore((s) => s.accounts[id]);
   return <TerminalChip account={account} message={message} />;
 });
+
+/**
+ * 응답 줄의 대상 칩(시스템 줄 C안) — 「↳ jaebin 의 글에 대해」. 이 줄을 일으킨 사람은 **말한 사람이 아니라 대상**이다.
+ * 채팅 승인 결과는 그 글로 가는 링크다. 이름은 지금 handle 로, 모르면 「알 수 없음」.
+ */
+function SystemTargetChip({ message, accounts }: { message: MessageRow; accounts: Record<string, { handle: string }> }) {
+  const t = useT();
+  const target = systemLineTarget(message);
+  const name = (Object.hasOwn(accounts, target.accountId) ? accounts[target.accountId]?.handle : undefined) ?? UNKNOWN_ACCOUNT_LABEL;
+  const label = t(target.what === 'post' ? 'message.system.re.post' : 'message.system.re.request', { name });
+  // `inline-block` 이어야 말줄임이 선다 — `inline-flex` 면 글자가 익명 flex 항목이 돼 `text-overflow` 가 안 먹고,
+  // 긴 handle 에서 「…」 없이 끝(「's message」)만 잘렸다(designer s2).
+  const cls = 'mb-0.5 inline-block max-w-full truncate align-top rounded-full border border-border bg-surface-sunken px-2 text-meta text-fg-muted';
+  // 「↳」는 보이는 글자에만 — 화면 읽기에는 「아래쪽 화살표」로 읽히므로 접근 이름에서 뺀다.
+  const arrow = <span aria-hidden="true">↳ </span>;
+  return target.href
+    ? <a data-testid="system-target-chip" className={`${cls} hover:bg-surface-hover`} href={target.href}
+        aria-label={t('message.system.re.open', { label })}>{arrow}{label}</a>
+    : <span data-testid="system-target-chip" className={cls}>{arrow}{label}</span>;
+}

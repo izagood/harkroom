@@ -98,7 +98,8 @@ export function threadState(input: ThreadStateInput): ThreadState | null {
     }
   }
 
-  const last = messages[messages.length - 1]!;
+  // 「마지막 말」은 시스템 줄을 건너뛴다(C안 c3 — 서버 `thread_last` 와 같은 기준). 다 시스템 줄이면 마지막 줄.
+  const last = [...messages].reverse().find((m) => m.kind !== 'system') ?? messages[messages.length - 1]!;
   return decide({
     myTurn: myTurn || gateMine,
     othersTurn,
