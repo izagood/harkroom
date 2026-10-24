@@ -269,7 +269,13 @@ const CLAUDE_PRESET: HarnessPreset = {
      * 1초 만에 죽었다(2026-09-08 프로덕션 사고). `auto` 에는 그 화면이 없다(실측).
      */
     auto: ['--permission-mode', 'auto'],
-    readonly: ['--permission-mode', 'plan'],
+    /**
+     * **`readonly` 는 `dontAsk` + 허용 목록이다**(2026-10-25, e2e R2 — 옛 값 `plan`). `plan` 은 「계획을 세우고 사람 승인을
+     * 받는」 모드라 harkroom 의 읽기 전용 턴과 맞지 않았다: 발화(`message_post`)마다 확인 창이 떴고, 허용 규칙을 줘도
+     * 모델이 계획서를 쓰고 ExitPlanMode 창에서 멈췄다(실측 claude 2.1.310). 그 턴은 아무도 답하지 않은 채 30분을 썼다.
+     * `dontAsk` 는 묻지 않는다 — 허용 목록(`READONLY_ALLOW`)만 돌고 나머지는 거절된다. 셸·웹은 deny 로 막는다(`READONLY_DENY`).
+     */
+    readonly: ['--permission-mode', 'dontAsk'],
   },
   /**
    * **API 키 연결(전용 제공사 경로) 턴은 auto 를 못 쓴다**(2026-10-23 실측, claude 2.1.309, 가짜 gateway).
@@ -333,6 +339,8 @@ const CLAUDE_PRESET: HarnessPreset = {
    *   거절 기록을 받아야 1회 승인 카드가 선다). 저장소 범위는 규칙이 아니라 서버·래퍼가 가른다.
    */
   permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [], apiDelegatable = [], toolAllows = [], claudeConfigDir = null, commandHook = false, providerLane = false }) => {
+    // 읽기 전용 멘션 턴(`dontAsk`)의 규칙은 고정이다 — 소유자 승인 규칙(`toolAllows`)·머지 래퍼도 싣지 않는다.
+    if (mode === 'mention' && mentionPermission === 'readonly') return [...READONLY_RULES];
     if (mode !== 'mention' || mentionPermission !== 'auto') return [];
     // api 래퍼(C안 P3)도 머지와 같은 모양이다: 절대 경로 + 서브커맨드 접두. 연결·메서드·경로 범위는 규칙이 아니라 서버가 가른다.
     // `;`·`&&` 로 묶은 명령은 claude 가 조각마다 따로 판정하므로 이 규칙 하나로는 통과하지 않는다(프롬프트가 금지한다).
@@ -367,6 +375,46 @@ const CLAUDE_PRESET: HarnessPreset = {
     ];
   },
 };
+
+/**
+ * 읽기 전용(`dontAsk`) 멘션 턴에 여는 도구(security 판단, 2026-10-25). 지연 MCP 도구를 불러오는 `ToolSearch` 와 **이름으로 고른**
+ * harkroom 도구 — 발화·읽기·기억 읽기·예약·첨부뿐이다. 비밀·권한 위임·권한 요청·자동화·스킬 제안·위임은 열지 않는다(상태를
+ * 바꾸는 도구다). avcs 는 넣지 않는다.
+ *
+ * 읽기 내장 도구(`Read`·`Grep`·`Glob`)는 넣지 않는다 — `dontAsk` 는 규칙 없이도 작업 폴더 안 읽기를 열고, 맨 이름을 넣으면
+ * 그 밖까지 열린다(`LANE_BASE_ALLOW` 주석, security F1).
+ */
+export const READONLY_ALLOW: readonly string[] = [
+  'ToolSearch',
+  ...['message_post', 'message_report', 'message_fail', 'message_ask', 'message_progress', 'message_react', 'message_unreact',
+    'message_read', 'message_search', 'thread_note', 'memory_get', 'memory_list', 'memory_search', 'turn_wake',
+    'attachment_fetch', 'attachment_upload', 'account_me', 'account_list', 'channel_list', 'channel_doc', 'workspace_guide',
+  ].map((t) => `mcp__harkroom__${t}`),
+];
+
+/**
+ * 읽기 전용 멘션 턴에서 막는 것. **셸은 통째로 막는다**: `dontAsk` 도 claude 가 읽기 전용으로 판정한 셸 명령(`ls` 등)은
+ * 규칙 없이 돌린다(실측 2.1.310) — 그 판정은 판마다 바뀌고, 같은 uid 의 자격으로 읽는 명령이 열릴 수 있다. 웹도 막는다.
+ */
+export const READONLY_DENY: readonly string[] = ['Bash', 'WebFetch', 'WebSearch'];
+
+/**
+ * 읽기 전용 턴이 **볼 수 있는** 내장 도구(security F1, 2026-10-25). `dontAsk` 는 「미리 허락된 것」을 돌리는데, 거기에는
+ * `--allowedTools` 말고도 설정 층의 allow 규칙(계정 config 의 settings.json — 같은 풀이 공유 — 와 cwd 의 `.claude/settings*.json`)이
+ * 든다. 거기 `Write` 한 줄이 생기면 readonly 가 조용히 쓰기를 얻는다. 그래서 목록 자체를 못박는다 — Edit·Write·NotebookEdit·
+ * Bash·Agent 는 도구로 없다. 백그라운드 조립의 `--tools ToolSearch` 와 같은 이유다(`bgExecutor.ts`).
+ */
+export const READONLY_TOOLS: readonly string[] = ['ToolSearch', 'Read', 'Grep', 'Glob'];
+
+/**
+ * 읽기 전용 턴의 규칙 argv. 값은 **쉼표로 이은 한 토큰**이다 — `--allowedTools`·`--disallowedTools` 는 가변 인자라, 한 토큰이어야
+ * 백그라운드 조립(`bgExecutor.ts`)이 정확히 떼어 낼 수 있다(실측: claude 는 쉼표 목록을 받는다).
+ */
+export const READONLY_RULES: readonly string[] = [
+  '--disallowedTools', READONLY_DENY.join(','),
+  '--allowedTools', READONLY_ALLOW.join(','),
+  '--tools', READONLY_TOOLS.join(','),
+];
 
 /**
  * API 키 연결(`dontAsk`) 턴에 기본으로 여는 도구(소유자 결정 C안, 10-23 — 구독형 에이전트와 같은 일을 하게). 지연 MCP 도구를

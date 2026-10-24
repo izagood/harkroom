@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import type { AgentHarness } from '@harkroom/shared';
 
 import { parseForkResult } from './reviewFork.js';
-import type { McpServerEntry, TurnPlan } from './turn.js';
+import { READONLY_RULES, type McpServerEntry, type TurnPlan } from './turn.js';
 
 /** 하드 시한(설계 3절). 넘으면 죽이고 failed(timeout). */
 export const BG_TIMEOUT_MS = 10 * 60_000;
@@ -74,14 +74,26 @@ export interface BgJob {
  * 남기는 것: MCP 설정·모델·effort·지시문 파일·크롬 끔. claude 는 대화 본문을 argv 에 싣지 않는다(turn.ts `prompt`). 프롬프트는 stdin 으로 준다(`--disallowedTools` 가 가변 인자라
  * 뒤의 위치 인자를 도구 이름으로 먹는다 — reviewFork 와 같은 이유).
  */
+/** `READONLY_RULES` 가 그 순서·그 값 그대로 있으면 뺀 argv, 없으면 그대로. 다르게 섞였으면 그대로 둬서 아래 검사가 거절한다. */
+function stripReadonlyRules(args: readonly string[]): readonly string[] {
+  const n = READONLY_RULES.length;
+  for (let i = 0; i + n <= args.length; i++) {
+    if (READONLY_RULES.every((r, k) => args[i + k] === r)) return [...args.slice(0, i), ...args.slice(i + n)];
+  }
+  return args;
+}
+
 export function bgExecutorArgs(planArgs: readonly string[], sessionId: string): string[] {
-  // 조립은 readonly(`--permission-mode plan`)로만 한다(security n1) — auto 로 조립하면 가변 인자 `--allowedTools <규칙...>` 이
+  // 조립은 readonly(`--permission-mode dontAsk`, 옛 `plan`)로만 한다(security n1) — auto 로 조립하면 가변 인자 `--allowedTools <규칙...>` 이
   // 실리는데, 아래는 값을 하나만 떼므로 남은 규칙 토큰이 다른 인자로 먹힌다. 그런 plan 은 받지 않는다(닫힌 쪽으로 실패).
+  // readonly 의 고정 규칙(`READONLY_RULES`, 한 토큰씩)은 **정확히 그 모양일 때만** 떼어 낸다 — 다른 규칙이 섞이면 받지 않는다.
+  planArgs = stripReadonlyRules(planArgs);
   for (const f of ['--allowedTools', '--allowed-tools', '--disallowedTools', '--disallowed-tools', '--dangerously-skip-permissions']) {
     if (planArgs.some((a) => a === f || a.startsWith(`${f}=`))) throw new Error(`bgExecutorArgs: plan 에 ${f} 가 있다 — 백그라운드는 readonly 로만 조립한다`);
   }
   const mode = planArgs.indexOf('--permission-mode');
-  if (mode >= 0 && planArgs[mode + 1] !== 'plan') throw new Error('bgExecutorArgs: plan 의 권한 모드가 plan(readonly)이 아니다');
+  // readonly 는 `dontAsk` 다(2026-10-25, 옛 값 `plan`) — 둘 다 받는다(옛 값은 시험·이행 중 조립용).
+  if (mode >= 0 && planArgs[mode + 1] !== 'dontAsk' && planArgs[mode + 1] !== 'plan') throw new Error('bgExecutorArgs: plan 의 권한 모드가 readonly 가 아니다');
   if (planArgs.filter((a) => a === '--mcp-config').length !== 1) throw new Error('bgExecutorArgs: --mcp-config 는 정확히 하나(백그라운드 전용 파일)여야 한다');
   const dropWithValue = new Set(['--session-id', '-r', '--resume', '--permission-mode', '--allowedTools', '--allowed-tools',
     '--disallowedTools', '--disallowed-tools', '--settings', '--tools', '--max-turns', '--output-format']);

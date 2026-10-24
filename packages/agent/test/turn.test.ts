@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { GRANT_DELEGATE_TOOL, laneEnvAllowed, LANE_BASE_ALLOW, LANE_DENY, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { GRANT_DELEGATE_TOOL, laneEnvAllowed, LANE_BASE_ALLOW, LANE_DENY, READONLY_ALLOW, READONLY_RULES, READONLY_TOOLS, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 import { decodeLaneHookRules } from '@harkroom/shared/providerLane';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
@@ -88,9 +88,9 @@ describe('buildTurnCommand — claude', () => {
     expect(p.args.join(' ')).not.toContain('SYS');
   });
 
-  it('resume 멘션 턴: -r <id>, readonly 는 plan 모드', () => {
+  it('resume 멘션 턴: -r <id>, readonly 는 dontAsk 모드', () => {
     const p = buildTurnCommand({ ...base, harness: 'claude-code', mode: 'mention', sessionId: 'uuid-1', isFirstTurn: false, mentionPermission: 'readonly' });
-    expect(p.args).toEqual(expect.arrayContaining(['-r', 'uuid-1', '--permission-mode', 'plan']));
+    expect(p.args).toEqual(expect.arrayContaining(['-r', 'uuid-1', '--permission-mode', 'dontAsk']));
     expect(p.args).not.toContain('--session-id');
   });
 
@@ -765,12 +765,15 @@ describe('전용 제공사 경로 env', () => {
     for (const rule of LANE_DENY) expect(plain).not.toContain(rule);
   });
 
-  it('읽기 전용 lane 턴은 plan 그대로다', () => {
+  it('읽기 전용 lane 턴은 readonly 규칙 그대로다 — lane 기본 허용(쓰기·Agent·avcs)이 섞이지 않는다', () => {
     const args = buildTurnCommand({
       ...base, harness: 'claude-code', mode: 'mention', mentionPermission: 'readonly', sessionId: 'uuid-1', isFirstTurn: true,
       claudeConfigDir: '/state/claude-provider-lane', providerEnv: lane,
     }).args;
-    expect(args[args.indexOf('--permission-mode') + 1]).toBe('plan');
+    expect(args[args.indexOf('--permission-mode') + 1]).toBe('dontAsk');
+    expect(args[args.indexOf('--allowedTools') + 1]).toBe(READONLY_ALLOW.join(','));
+    expect(args.filter((a) => a === '--allowedTools' || a === '--disallowedTools')).toHaveLength(2);
+    for (const tool of LANE_BASE_ALLOW.filter((t) => !READONLY_ALLOW.includes(t))) expect(args).not.toContain(tool);
   });
 
   it('lane 키를 모르는 하네스에는 넣지 않는다(거절)', () => {
@@ -1167,8 +1170,10 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     expect(after(args, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)', PERMISSION_REQUEST_TOOL, ...ok]);
     // deny 는 그대로 앞서 있다 — 승인 규칙이 머지·설정 deny 를 지우지 않는다.
     expect(after(args, '--disallowedTools')).toEqual([...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(common.claudeConfigDir ?? null)]);
-    // 읽기 전용 턴에는 붙지 않는다.
-    expect(buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', toolAllows: ok }).args).not.toContain('--allowedTools');
+    // 읽기 전용 턴에는 붙지 않는다 — 고정 규칙(READONLY_RULES)만 실린다.
+    const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', toolAllows: ok }).args;
+    expect(after(ro, '--allowedTools')).toEqual([READONLY_ALLOW.join(',')]);
+    for (const rule of ok) expect(ro.join(' ')).not.toContain(rule);
   });
 
   it('「정확한 명령」 hook(H③b): 기본 꺼짐 — 켜면 auto 멘션 턴에만 인라인 --settings PreToolUse(Bash) 하나', () => {
@@ -1200,7 +1205,8 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     const both = buildTurnCommand({ ...common, mode: 'mention', mergeRepos: ['izagood/harkroom'], apiConnectors: ['lab-api'] }).args;
     expect(after(both, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)', 'Bash(/opt/harkroom/harkroom-operator api:*)', PERMISSION_REQUEST_TOOL]);
     const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', apiConnectors: ['lab-api'] }).args;
-    expect(ro).not.toContain('--allowedTools');
+    expect(after(ro, '--allowedTools')).toEqual([READONLY_ALLOW.join(',')]);
+    expect(ro.join(' ')).not.toContain('harkroom-operator');
   });
 
   it('다시 줄 수 있는 연결이 있을 때만 grant.delegate MCP 도구를 allow 한다(실측: 분류기가 [Permission Grant] 로 막는다)', () => {
@@ -1211,19 +1217,41 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     expect(deleg.join(' ')).not.toContain('lab-api');
     expect(deleg.join(' ')).not.toContain('grant_revoke');
     const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', apiConnectors: ['lab-api'], apiDelegatable: ['lab-api'] }).args;
-    expect(ro).not.toContain('--allowedTools');
+    expect(after(ro, '--allowedTools')).toEqual([READONLY_ALLOW.join(',')]);
+    expect(ro.join(' ')).not.toContain(GRANT_DELEGATE_TOOL);
     const inter = buildTurnCommand({ ...common, mode: 'interactive', apiConnectors: ['lab-api'], apiDelegatable: ['lab-api'] }).args;
     expect(inter).not.toContain('--allowedTools');
   });
 
-  it('readonly(plan) 턴과 인터랙티브 턴은 argv 를 그대로 둔다 — --permission-mode 도 바뀌지 않는다', () => {
+  it('readonly 턴은 dontAsk + 고정 규칙(READONLY_RULES) 뿐이고, 인터랙티브 턴은 argv 를 그대로 둔다', () => {
     const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', mergeRepos: ['izagood/harkroom'] }).args;
-    expect(ro).not.toContain('--disallowedTools');
-    expect(ro).not.toContain('--allowedTools');
-    expect(ro).toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+    // 규칙은 그 순서·그 값 그대로 한 번만 — auto 갈래의 머지 allow·deny 가 덮거나 섞이지 않는다(e2e R2).
+    const at = ro.indexOf(READONLY_RULES[0]!);
+    expect(ro.slice(at, at + READONLY_RULES.length)).toEqual([...READONLY_RULES]);
+    expect(ro.filter((a) => a === '--allowedTools' || a === '--disallowedTools')).toHaveLength(2);
+    expect(ro.filter((a) => a === '--permission-mode')).toHaveLength(1);
+    expect(ro.filter((a) => a === '--tools')).toHaveLength(1);
+    expect(ro).toEqual(expect.arrayContaining(['--permission-mode', 'dontAsk']));
+    expect(ro.join(' ')).not.toContain('harkroom-operator');
     const it_ = buildTurnCommand({ ...common, mode: 'interactive', mergeRepos: ['izagood/harkroom'] }).args;
     expect(it_).not.toContain('--disallowedTools');
     expect(it_).not.toContain('--allowedTools');
+  });
+
+  it('readonly 허용 목록은 이름으로 고른 harkroom 도구뿐이다 — 상태를 바꾸는 도구·avcs·셸·웹은 없다(security 판단, e2e R2)', () => {
+    expect(READONLY_ALLOW).toContain('ToolSearch');
+    expect(READONLY_ALLOW).toContain('mcp__harkroom__message_post');
+    // prefix 전체(`mcp__harkroom`)를 열지 않는다 — 열면 비밀·권한·위임 도구가 따라 열린다.
+    for (const t of READONLY_ALLOW.slice(1)) expect(t).toMatch(/^mcp__harkroom__[a-z]+_[a-zA-Z]+$/);
+    for (const bad of ['mcp__harkroom', 'mcp__avcs', 'Bash', 'WebFetch', 'WebSearch', 'Agent', 'Edit', 'Write', 'Read']) expect(READONLY_ALLOW).not.toContain(bad);
+    expect(READONLY_ALLOW.filter((t) => /secret_|grant_|permission_|automation_|skill_|delegate|memory_set|memory_merge|memory_archive|workitem_/.test(t))).toEqual([]);
+    // 셸·웹은 deny 로 막는다 — dontAsk 도 claude 가 읽기로 판정한 셸은 규칙 없이 돌린다(실측 2.1.310).
+    expect(READONLY_RULES).toEqual(['--disallowedTools', 'Bash,WebFetch,WebSearch', '--allowedTools', READONLY_ALLOW.join(','), '--tools', 'ToolSearch,Read,Grep,Glob']);
+  });
+
+  it('readonly 내장 도구는 목록으로 못박는다 — 설정 층 allow 가 생겨도 쓰기·셸·하위 에이전트는 도구로 없다(security F1)', () => {
+    expect(READONLY_TOOLS).toEqual(['ToolSearch', 'Read', 'Grep', 'Glob']);
+    for (const bad of ['Edit', 'Write', 'NotebookEdit', 'Bash', 'Agent', 'WebFetch', 'WebSearch', 'Skill']) expect(READONLY_TOOLS).not.toContain(bad);
   });
 
   it('deny 는 실제로 맞는 모양만 — 접두(:*) 아니면 정확 일치. 가운데 와일드카드는 아무것도 안 맞춘다(실측 P2)', () => {

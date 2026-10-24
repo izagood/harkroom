@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { readFile } from 'node:fs/promises';
+import { READONLY_RULES } from '../src/turn.js';
 import { BG_ALLOWED_TOOLS, BG_SYSTEM_PROMPT, BgExecutor, bgExecutorArgs, bgPrompt, inBgWindow, writeBgMcpConfig, type BgChild, type BgJob } from '../src/bgExecutor.js';
 import { buildTurnCommand } from '../src/turn.js';
 
@@ -76,6 +77,26 @@ describe('bgExecutor (BG2)', () => {
     expect(() => bgExecutorArgs(['--permission-mode', 'plan', '--allowedTools', 'Bash(git:*)', 'Read', '--mcp-config', '/m.json'], 'n')).toThrow(/--allowedTools/);
     expect(() => bgExecutorArgs(['--dangerously-skip-permissions', '--mcp-config', '/m.json'], 'n')).toThrow();
     expect(() => bgExecutorArgs(['--permission-mode', 'plan'], 'n')).toThrow(/mcp-config/);
+  });
+
+  it('argv: readonly 고정 규칙(READONLY_RULES)은 그 모양 그대로일 때만 떼고, 흉내·섞임은 받지 않는다(e2e R2)', () => {
+    const tail = ['--mcp-config', '/m.json'];
+    const ok = bgExecutorArgs(['--permission-mode', 'dontAsk', ...READONLY_RULES, ...tail], 'n');
+    expect(ok.filter((a) => a === '--permission-mode')).toHaveLength(1);
+    expect(ok.join(' ')).not.toContain(READONLY_RULES[1]!);
+    expect(ok.join(' ')).not.toContain(READONLY_RULES[3]!);
+    // 같은 토큰을 실어도 readonly 모드가 아니면 거절 — 떼어 낸 뒤 모드 검사가 막는다.
+    expect(() => bgExecutorArgs(['--permission-mode', 'auto', ...READONLY_RULES, ...tail], 'n')).toThrow(/readonly/);
+    // 값이 한 글자라도 다르거나(덧붙임), 두 번 실리면 거절.
+    const widened = [...READONLY_RULES.slice(0, 3), `${READONLY_RULES[3]},Bash`, ...READONLY_RULES.slice(4)];
+    expect(() => bgExecutorArgs(['--permission-mode', 'dontAsk', ...widened, ...tail], 'n')).toThrow(/--disallowedTools|--allowedTools/);
+    // 내장 도구 목록(`--tools`)을 넓혀도 정확 일치가 아니다(security F1).
+    const toolsWidened = [...READONLY_RULES.slice(0, 5), `${READONLY_RULES[5]},Write`];
+    expect(() => bgExecutorArgs(['--permission-mode', 'dontAsk', ...toolsWidened, ...tail], 'n')).toThrow(/--disallowedTools|--allowedTools/);
+    expect(() => bgExecutorArgs(['--permission-mode', 'dontAsk', ...READONLY_RULES, ...READONLY_RULES, ...tail], 'n')).toThrow(/--disallowedTools|--allowedTools/);
+    // 순서가 바뀐 것도 정확 일치가 아니다.
+    const swapped = [...READONLY_RULES.slice(2), ...READONLY_RULES.slice(0, 2)];
+    expect(() => bgExecutorArgs(['--permission-mode', 'dontAsk', ...swapped, ...tail], 'n')).toThrow(/--disallowedTools|--allowedTools/);
   });
 
   it('실제 claude 조립(readonly)을 그대로 받고, MCP 설정은 harkroom 하나만 담은 전용 파일이다(security F1)', async () => {
