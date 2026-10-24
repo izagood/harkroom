@@ -121,7 +121,43 @@ describe('ModelConnectionField', () => {
     renderField(laneState(), 'pi');
     fireEvent.click(screen.getByRole('radio', { name: 'API 키' }));
     expect(screen.queryByTestId('lane-form')).toBeNull();
-    expect(screen.getByText(/claude-code·opencode·codex에서만/)).toBeTruthy();
+    expect(screen.getByText(/claude-code·opencode·codex·omp에서만/)).toBeTruthy();
+  });
+
+  // designer #1540 c1·②: omp 는 계정 풀이 없다 — 처음부터 [API 키]로 열고, 주소 칸은 OpenAI chat-completions 이름이다.
+  it('omp 는 저장된 연결이 없어도 처음부터 [API 키]로 열고 주소 칸 이름이 omp 것이다', () => {
+    renderField(laneState(), 'omp');
+    expect(screen.getByTestId('lane-form')).toBeTruthy();
+    expect(screen.getByText('API 주소 (OpenAI chat-completions 호환 base URL)')).toBeTruthy();
+    expect(screen.queryByText('API 주소 (Anthropic 호환 base URL)')).toBeNull();
+  });
+
+  it('omp 에서 [계정 풀]을 누르면 빈자리 대신 「계정 풀이 없다」 한 줄이 서고 풀 칸은 안 그린다', () => {
+    renderField(laneState(), 'omp');
+    fireEvent.click(screen.getByRole('radio', { name: '계정 풀' }));
+    expect(screen.getByTestId('lane-only-pool').textContent).toBe('omp는 계정 풀이 없다 — [API 키]로 연결한다.');
+    expect(screen.queryByTestId('pool-slot')).toBeNull();
+    expect(screen.queryByTestId('lane-form')).toBeNull();
+  });
+
+  // designer #1541 s1: omp 는 풀이 없다 — 끄기 확인이 「계정 풀로 돈다」고 하면 사실과 반대다.
+  it('omp 에 저장된 연결이 있을 때 [계정 풀]을 누르면 「턴마다 멈춘다」 확인 문장이 선다', () => {
+    renderField(laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'llm-api-key' } }), 'omp');
+    fireEvent.click(screen.getByRole('radio', { name: '계정 풀' }));
+    expect(screen.getByTestId('lane-off-confirm').textContent).toContain('omp는 계정 풀이 없어서 다시 연결하기 전까지 턴마다 멈춘다');
+    expect(screen.getByTestId('lane-off-confirm').textContent).not.toContain('계정 풀로 돈다');
+  });
+
+  it('풀이 있는 하네스의 끄기 확인은 그대로 「계정 풀로 돈다」', () => {
+    renderField(laneState({ lane: { baseUrl: 'https://gateway.example', secretName: 'llm-api-key' } }), 'claude-code');
+    fireEvent.click(screen.getByRole('radio', { name: '계정 풀' }));
+    expect(screen.getByTestId('lane-off-confirm').textContent).toContain('계정 풀로 돈다');
+  });
+
+  it('영어에서는 하네스 목록을 쉼표로 잇는다', () => {
+    usePrefsStore.getState().setLocale('en');
+    renderField(laneState(), 'pi');
+    expect(screen.getByText('Available for claude-code, opencode, codex, and omp only.')).toBeTruthy();
   });
 
   it('마지막 시도 줄의 판 문장은 그 하네스 판만 싣는다(designer n1)', () => {
