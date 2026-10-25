@@ -46,8 +46,9 @@ export function codexHooksJson(operatorBin: string): string {
 export type CodexHookListEntry = { key: string; sourcePath: string; eventName: string; command?: string; currentHash: string; trustStatus: string };
 
 /** codex 샌드박스(workspace-write)가 쓰기를 여는 자리 — 작업 폴더와 임시 폴더들. */
-export function sandboxWritableRoots(workspaceDir: string, env: NodeJS.ProcessEnv = process.env): (string | undefined)[] {
-  return [workspaceDir, '/tmp', '/private/tmp', '/var/tmp', tmpdir(), env.TMPDIR];
+export function sandboxWritableRoots(workspaceDir: string): (string | undefined)[] {
+  // `tmpdir()` 가 `TMPDIR` 을 읽는다(없으면 OS 기본) — codex 는 러너 env 를 물려받으므로 같은 값이다.
+  return [workspaceDir, '/tmp', '/private/tmp', '/var/tmp', tmpdir()];
 }
 
 /** realpath 가 `root` 와 같거나 그 아래인가. */
