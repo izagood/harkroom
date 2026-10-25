@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, PROXY_ANSWER_MAX_CHARS, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -1616,15 +1616,15 @@ describe('silentTurnNotice — 에이전트가 부른 말없는 턴 (2026-10-25 
     expect(mentionOutsideQuote(body)).toBe(false);
   });
 
-  it('화면으로 끝을 알았는데 화면 답이 없거나 가림에 걸리면 「답을 남기지 못하고 끝났습니다」 — 멘션 없음', () => {
+  it('화면으로 끝을 알았는데 화면 답이 없거나 가림에 걸리면 progress 한 줄 — 답글이 아니라 부른 에이전트를 깨우지 않고, 다시 부르라고 권하지 않는다', () => {
     for (const screenAnswer of [null, '   ']) {
-      const n = silentTurnNotice({ ...base, screenEnded: true, screenAnswer });
-      expect(n).toEqual({ kind: 'post', body: '답을 남기지 못하고 끝났습니다 — 다시 부르면 이어서 합니다.' });
+      expect(silentTurnNotice({ ...base, screenEnded: true, screenAnswer })).toEqual({ kind: 'progress', body: AGENT_CALL_NO_ANSWER });
     }
     const secret = 'S3CRET-VALUE-0123456789';
     const n = silentTurnNotice({ ...base, screenEnded: true, screenAnswer: `값 ${secret.slice(0, 14)}`, secrets: [secret] });
-    expect((n as { body: string }).body).toBe('답을 남기지 못하고 끝났습니다 — 다시 부르면 이어서 합니다.');
-    expect(mentionOutsideQuote((n as { body: string }).body)).toBe(false);
+    expect(n).toEqual({ kind: 'progress', body: AGENT_CALL_NO_ANSWER });
+    expect(AGENT_CALL_NO_ANSWER).not.toMatch(/다시 부르/);
+    expect(mentionOutsideQuote(AGENT_CALL_NO_ANSWER)).toBe(false);
   });
 
   it('기록으로 끝을 아는 턴(FYI)은 ✅ 그대로다 — 10-01 의 FYI 카드 더미로 돌아가지 않는다', () => {
