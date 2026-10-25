@@ -1469,7 +1469,7 @@ describe('stallNotice — 정지 화면 갈래 (2026-10-25, 스레드 db4ab174)'
     const idle = stallNotice(600_000, null, 'idle');
     const stuck = stallNotice(600_000, null, 'stuck');
     expect(gate).toContain('확인 물음');
-    expect(idle).toContain('차례를 끝낸');
+    expect(idle).toContain('답을 남기지 못하고 끝났습니다');
     expect(stuck).toContain('아무것도 하지 않아');
     expect(new Set([gate, idle, stuck]).size).toBe(3);
     // 물음이 서 있을 수 있다는 헛짚는 말은 갈래를 아는 문장에 없다

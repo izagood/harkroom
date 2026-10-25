@@ -2496,7 +2496,12 @@ export async function runMentionTurn(
       onSpawn: (controls: PtyControls) => {
         // 릴레이에는 입력·크기만 넘긴다(`PtyWriter`) — 종료는 러너의 몫이고, 관찰하는
         // 쪽에 그 손잡이를 주면 뷰어가 턴을 죽일 수 있게 된다.
-        session?.bindInput(controls);
+        // 사람이 붙어 창 크기를 바꾸면 화면 판정(`idleWatch`)도 같은 크기로 그린다 — 다른 크기로 그리면 줄이 엇갈려
+        // 일하는 중 표지를 놓칠 수 있다(security #1581 n2).
+        session?.bindInput(idleWatch ? {
+          ...controls,
+          resize: (cols: number, rows: number) => { idleWatch.resize(cols, rows); controls.resize(cols, rows); },
+        } : controls);
         // 회수 손잡이. 릴레이가 없어도 잡아야 한다 — 관찰이 없다고 턴이 안 끝나면 안 된다.
         end.controls = controls;
         // 위 가드와 이 콜백 사이에도 창이 있다(실행 파일 해석·forkpty). 그 창에 들어온
