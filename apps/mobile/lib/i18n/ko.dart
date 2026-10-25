@@ -246,6 +246,46 @@ class StringsKo implements Strings {
   String get askReplied => '글로 답했다';
 
   @override
+  String permWarnHead(String code) {
+    switch (code) {
+      case 'runs_arbitrary':
+        return '무엇이든 돌릴 수 있다';
+      case 'executes_in_workload':
+        return '돌고 있는 서버 안에서 실행한다';
+      case 'mutates_remote':
+        return '원격 상태를 바꾼다';
+      case 'reads_file':
+        return '파일을 읽는다';
+      case 'short_prefix':
+        return '접두가 짧다';
+      case 'uses_github_account':
+        return 'GitHub 계정으로 돈다';
+      default:
+        return code;
+    }
+  }
+
+  @override
+  String permWarnWhy(String code) {
+    switch (code) {
+      case 'runs_arbitrary':
+        return '이 명령은 다른 명령을 대신 돌린다';
+      case 'executes_in_workload':
+        return '컨테이너·파드 안에서 명령이 돈다';
+      case 'mutates_remote':
+        return '되돌리기 어려울 수 있다';
+      case 'reads_file':
+        return '승인은 지금 내용에 묶이고, 파일이 바뀌면 다시 묻는다';
+      case 'short_prefix':
+        return '이 뒤에 붙는 하위 명령이 모두 열린다';
+      case 'uses_github_account':
+        return '이 에이전트가 도는 맥의 gh 로그인 계정이 쓰인다. 그 계정이 닿는 저장소에 닿는다';
+      default:
+        return '';
+    }
+  }
+
+  @override
   String get permMandateChip => '위임장';
 
   @override

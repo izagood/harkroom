@@ -247,6 +247,46 @@ class StringsEn implements Strings {
   String get askReplied => 'Answered in text';
 
   @override
+  String permWarnHead(String code) {
+    switch (code) {
+      case 'runs_arbitrary':
+        return 'Can run anything';
+      case 'executes_in_workload':
+        return 'Runs inside a live workload';
+      case 'mutates_remote':
+        return 'Changes remote state';
+      case 'reads_file':
+        return 'Reads a file';
+      case 'short_prefix':
+        return 'Short prefix';
+      case 'uses_github_account':
+        return 'Runs as a GitHub account';
+      default:
+        return code;
+    }
+  }
+
+  @override
+  String permWarnWhy(String code) {
+    switch (code) {
+      case 'runs_arbitrary':
+        return 'this command runs other commands';
+      case 'executes_in_workload':
+        return 'the command runs in a container or pod';
+      case 'mutates_remote':
+        return 'may be hard to undo';
+      case 'reads_file':
+        return 'approval is tied to its current contents and asks again if it changes';
+      case 'short_prefix':
+        return 'every subcommand after it is opened';
+      case 'uses_github_account':
+        return 'the gh account signed in on the Mac running this agent is used, with everything it can reach';
+      default:
+        return '';
+    }
+  }
+
+  @override
   String get permMandateChip => 'Mandate';
 
   @override

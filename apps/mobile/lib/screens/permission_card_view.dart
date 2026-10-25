@@ -47,11 +47,14 @@ class MandateChip extends StatelessWidget {
 
 /// 더할 줄 — cap 알약 · 고정폭 scope · 한도 칩.
 class PermissionLineBox extends StatelessWidget {
-  const PermissionLineBox({super.key, required this.line, this.limits, this.once});
+  const PermissionLineBox({super.key, required this.line, this.limits, this.once, this.warnings = const []});
 
   final PermissionCardLine line;
   final PermissionCardLimits? limits;
   final PermissionCardOnce? once;
+
+  /// H4: 그릴 경고 코드(이미 순서대로). 한도 칩 아래 줄을 갈라 「⚠ 머리 — 까닭」 문장으로 그린다.
+  final List<String> warnings;
 
   @override
   Widget build(BuildContext context) {
@@ -109,6 +112,31 @@ class PermissionLineBox extends StatelessWidget {
                   ),
               ],
             ),
+          ],
+          if (warnings.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Divider(height: 1, thickness: 1, color: tok.border),
+            const SizedBox(height: 4),
+            for (final w in warnings)
+              Padding(
+                key: Key('perm-warning-$w'),
+                padding: const EdgeInsets.only(top: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('⚠ ', style: theme.textTheme.labelSmall?.copyWith(color: tok.warning)),
+                    Expanded(
+                      child: Text.rich(
+                        TextSpan(children: [
+                          TextSpan(text: t.permWarnHead(w), style: const TextStyle(fontWeight: FontWeight.w600)),
+                          TextSpan(text: ' — ${t.permWarnWhy(w)}'),
+                        ]),
+                        style: theme.textTheme.labelSmall?.copyWith(color: tok.warning),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ],
       ),

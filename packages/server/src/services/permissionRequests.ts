@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { createHash } from 'node:crypto';
 import type { CommandFileDigest } from '@harkroom/shared/runnerLink';
-import { PERMISSION_CARD_OPTION, repoGrantScope, repoScope, toolScope, validateExactCommand, validateToolRule, type CommandFileArg, type MessageRow, type PermissionCardLine, type PermissionCardMandate, type PermissionMirrorMeta, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
+import { orderToolRuleWarnings, PERMISSION_CARD_OPTION, repoGrantScope, TOOL_RULE_WARNING_HEAD_KO, repoScope, toolScope, validateExactCommand, validateToolRule, type CommandFileArg, type MessageRow, type PermissionCardLine, type PermissionCardMandate, type PermissionMirrorMeta, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
@@ -81,6 +81,8 @@ export interface PermissionRequestMeta {
   line?: PermissionCardLine;
   /** r5: 본문 속 서버가 쓴 대상 줄(줄 카드만) — 줄 상자를 그리는 화면이 본문에서 이 줄 하나만 뺀다. */
   bodyTargetLine?: string;
+  /** H4: 본문 속 서버가 쓴 경고 줄(`⚠ …`) — 경고를 줄 상자에 그리는 화면이 본문에서 이 줄 하나만 뺀다. 경고가 없으면 없다. */
+  bodyWarningLine?: string;
   requestedAt: string;
   expiresAt: string;
   /** 정해진 뒤에만. */
@@ -222,7 +224,7 @@ export async function openPermissionRequest(
         requestId: id, agentId: args.agentId, ownerAccountId: agent.ownerAccountId, kind: args.kind,
         target: args.kind === 'merge' ? target.slice('repo:'.length) : target,
         channelId: args.kind === 'tool' ? args.channelId : null,
-        warnings, reason: oneLineReason(args.reason),
+        warnings, ...bodyWarningLineMeta(warnings), reason: oneLineReason(args.reason),
         ...(args.denial ? { once: onceMeta(args.denial) } : {}), ...(args.mandateId ? { mandateId: args.mandateId } : {}),
         ...(await cardMandateMeta(pool, args.mandateId ?? null, args.channelId)),
         line: cardLine(args.kind, target, args.denial ? onceMeta(args.denial) : undefined, !!args.mandateId),
@@ -289,7 +291,7 @@ async function openCommandRequest(
       requestId: id,
       meta: {
         requestId: id, agentId: args.agentId, ownerAccountId: args.ownerAccountId, kind: 'command', target: v.command,
-        channelId: args.channelId, threadRootId: args.threadRootId, warnings: v.warnings,
+        channelId: args.channelId, threadRootId: args.threadRootId, warnings: v.warnings, ...bodyWarningLineMeta(v.warnings),
         ...(files.files.length ? { files: files.files } : {}),
         ...(args.mandateId ? { mandateId: args.mandateId } : {}),
         ...(await cardMandateMeta(pool, args.mandateId ?? null, args.channelId)),
@@ -303,7 +305,9 @@ async function openCommandRequest(
 /** 카드 본문(옛 앱이 meta 를 모를 때 읽는 글). 권한 칸은 서버 값뿐이고, 에이전트가 쓴 것은 이유 한 줄이다. */
 export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: string): string {
   // n1(소유자 10-07): 규칙은 그 채널의 **모든** 턴(위임·예약 깨우기로 뜬 턴 포함)에 붙는다 — 카드가 그렇게 말해야 한다.
-  const warn = meta.warnings.length ? `\n⚠ ${meta.warnings.join(', ')}` : '';
+  // H4: 코드 이름이 아니라 사람 말(머리 낱말)로 쓴다. 새 앱은 meta `bodyWarningLine` 과 같은 이 줄을 감추고 줄 상자에 문장으로 그린다.
+  const warnLine = permissionBodyWarningLine(meta.warnings);
+  const warn = warnLine ? `\n${warnLine}` : '';
   if (meta.kind === 'command') {
     return `권한 요청 · ${agentHandle}\n정확히 이 명령 하나 \`${meta.target}\` — 이 스레드에서만 · 「이번 한 번」${warn}${filesBlock(meta.files ?? [])}\n이유: ${oneLineReason(meta.reason)}`;
   }
@@ -330,6 +334,17 @@ export function permissionCardBody(meta: PermissionRequestMeta, agentHandle: str
  * 줄 카드(tool·merge, CI 거절 아님) 본문의 대상 줄 — 서버가 정규화한 대상으로만 만든다. 그 밖의 카드는 null.
  * 화면은 줄 상자를 그릴 때 본문에서 이 줄과 똑같은 줄 하나를 뺀다(meta `bodyTargetLine`).
  */
+/** 카드 본문의 경고 줄 — 알려진 경고를 그리는 순서대로 ko 머리 낱말로 잇는다. 없으면 null. */
+export function permissionBodyWarningLine(warnings: readonly unknown[]): string | null {
+  const ordered = orderToolRuleWarnings(warnings);
+  return ordered.length ? `⚠ ${ordered.map((w) => TOOL_RULE_WARNING_HEAD_KO[w]).join(' · ')}` : null;
+}
+
+function bodyWarningLineMeta(warnings: readonly unknown[]): { bodyWarningLine?: string } {
+  const l = permissionBodyWarningLine(warnings);
+  return l ? { bodyWarningLine: l } : {};
+}
+
 function bodyTargetLineMeta(meta: Pick<PermissionRequestMeta, 'kind' | 'target' | 'once'>): { bodyTargetLine?: string } {
   const l = permissionBodyTargetLine(meta);
   return l ? { bodyTargetLine: l } : {};
@@ -1120,6 +1135,9 @@ export async function renderPermissionMirror(
       ...(pr.once ? { once: { number: pr.once.number, headSha: pr.once.headSha, reason: pr.once.reason, ...(pr.once.failedChecks ? { failedChecks: [...pr.once.failedChecks] } : {}) } } : {}),
       ...(pr.line ? { line: pr.line } : {}),
       ...(pr.line ? bodyTargetLineMeta(pr) : {}),
+      // H4: 같은 카드를 그리도록 경고 코드와 본문 경고 줄도 옮긴다.
+      ...(pr.warnings?.length ? { warnings: orderToolRuleWarnings(pr.warnings) } : {}),
+      ...bodyWarningLineMeta(pr.warnings ?? []),
       // 칩은 거울 채널을 기준으로 다시 만든다(F1) — 원본 카드의 이름을 그대로 옮기지 않는다.
       ...(pr.mandate ? await cardMandateMeta(pool, pr.mandate.id, mirrorChannelId) : {}),
     };

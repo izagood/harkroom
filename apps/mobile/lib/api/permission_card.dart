@@ -101,6 +101,8 @@ class PermissionCardInfo {
     this.neutral = false,
     this.supersededByMessageId,
     this.bodyTargetLine,
+    this.warnings = const [],
+    this.bodyWarningLine,
   });
 
   final String? kind;
@@ -124,6 +126,12 @@ class PermissionCardInfo {
   /// r5: 본문 속 서버가 쓴 대상 줄(줄 카드만). 줄 상자를 그리는 화면은 본문에서 이 줄 하나만 뺀다.
   final String? bodyTargetLine;
 
+  /// H4: 경고 코드 — 알려진 것만, 위험한 것부터(`permissionWarningOrder`).
+  final List<String> warnings;
+
+  /// H4: 본문 속 서버가 쓴 경고 줄(`⚠ …`). 경고를 줄 상자에 그리는 화면은 본문에서 이 줄 하나만 뺀다.
+  final String? bodyWarningLine;
+
   bool get isMirror => mirrorRootId != null;
 
   static PermissionCardInfo? read(Map<String, Object?> meta) {
@@ -145,6 +153,8 @@ class PermissionCardInfo {
         ghUserUsed: gh,
         supersededByMessageId: pr['supersededByMessageId'] is String ? pr['supersededByMessageId'] as String : null,
         bodyTargetLine: pr['bodyTargetLine'] is String ? pr['bodyTargetLine'] as String : null,
+        warnings: orderedPermissionWarnings(pr['warnings']),
+        bodyWarningLine: pr['bodyWarningLine'] is String ? pr['bodyWarningLine'] as String : null,
       );
     }
     final mi = meta['permissionMirror'];
@@ -162,8 +172,22 @@ class PermissionCardInfo {
         ghUserUsed: mi['ghUserUsed'] is String ? mi['ghUserUsed'] as String : null,
         mirrorRootId: mi['rootId'] as String,
         bodyTargetLine: mi['bodyTargetLine'] is String ? mi['bodyTargetLine'] as String : null,
+        warnings: orderedPermissionWarnings(mi['warnings']),
+        bodyWarningLine: mi['bodyWarningLine'] is String ? mi['bodyWarningLine'] as String : null,
       );
     }
     return null;
   }
+}
+
+/// H4(designer 시안 v1): 카드가 경고를 그리는 순서 — 위험한 것부터. shared `TOOL_RULE_WARNING_ORDER` 와 같다.
+const permissionWarningOrder = [
+  'runs_arbitrary', 'executes_in_workload', 'mutates_remote', 'reads_file', 'short_prefix', 'uses_github_account',
+];
+
+/// 알려진 경고만, 그리는 순서대로.
+List<String> orderedPermissionWarnings(Object? raw) {
+  if (raw is! List) return const [];
+  final seen = raw.whereType<String>().toSet();
+  return [for (final w in permissionWarningOrder) if (seen.contains(w)) w];
 }

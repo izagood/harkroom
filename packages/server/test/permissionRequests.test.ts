@@ -79,6 +79,8 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       const meta = (await pool.query(`select meta from message where id = $1`, [cardId])).rows[0].meta;
       expect(meta.permissionRequest).toMatchObject({
         requestId, agentId, ownerAccountId: alice.accountId, kind: 'tool', target: EXEC, channelId: ch, warnings: ['executes_in_workload'],
+        // H4: 본문의 경고 줄은 사람 말이고, 같은 줄이 meta 에도 있어 새 앱이 감춘다.
+        bodyWarningLine: '⚠ 돌고 있는 서버 안에서 실행한다',
       });
       expect(meta.ask.options.map((o: { id: string }) => o.id)).toEqual(['approve_new_mandate', 'deny']);
       expect(meta.ask.to).toEqual({ kind: 'human' });
