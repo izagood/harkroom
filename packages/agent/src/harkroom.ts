@@ -10,6 +10,7 @@
 // 그래서 이 파일에 PAT 도 URL 도 없다.
 import { PROVIDER_LANE_MOUNT_PATH, type ProviderLaneFailureCode } from '@harkroom/shared/providerLane';
 import type { TurnModel } from './threadModel.js';
+import { endTurnKeys, registerTurnKeys, type TurnKeys } from './turnKeys.js';
 import type { RecallHit, RecallResult } from './memoryPin.js';
 import type { BgJob } from './bgExecutor.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -348,6 +349,15 @@ export class HarkroomAgentClient {
       body: JSON.stringify({ cause }), contentType: 'application/json',
     });
     return { status: res.status, body: res.body };
+  }
+
+  /** 턴 열쇠를 오퍼레이터에 맡긴다(`turnKeys.ts`). 200 이 아니면 던진다 — 그 턴은 띄우지 않는다. */
+  async registerTurnKeys(turn: { turnId: string; cause: string | null; keys: TurnKeys }): Promise<void> {
+    await registerTurnKeys(this.link, turn);
+  }
+
+  async endTurnKeys(turnId: string): Promise<void> {
+    await endTurnKeys(this.link, turnId);
   }
 
   async releaseTurnSlot(key: string): Promise<void> {

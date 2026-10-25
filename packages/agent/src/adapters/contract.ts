@@ -241,6 +241,13 @@ export interface HarnessAdapter {
    */
   readonly waitsForMcpBeforePrompt?: boolean;
   /**
+   * 턴 열쇠의 다리 열쇠(`turnKeys.ts`)를 셸 밖으로 주는 길. 없으면 그 하네스는 턴 열쇠 없이 옛 자격으로 돈다.
+   * - `'mcp-config-env'`: 러너가 턴마다 쓴 MCP 설정 파일의 harkroom 항목 `env` 칸(claude — MCP 자식에 env 를 통째로 물려주므로 하네스 env 에 두면 셸에도 보인다).
+   * - `'env-vars'`: 하네스 env 에 두고 MCP 항목 `env_vars` 에 이름만 대며 셸 거르기(`shell_environment_policy.exclude`)로 뺀다(codex).
+   * - `'turn-config-env'`: 턴 설정 파일(`OPENCODE_CONFIG`)의 harkroom 항목 `environment` 칸(opencode — 그 칸은 MCP 자식에만 가고 셸에는 안 간다, 1.19.4 실측).
+   */
+  readonly turnKeyDelivery?: 'mcp-config-env' | 'env-vars' | 'turn-config-env';
+  /**
    * 지시문 전달 수단. `'flag-file'` 은 전용 플래그로 파일을 준다(claude 의
    * `--append-system-prompt-file`), `'prompt-prefix'` 는 그런 플래그가 없어 프롬프트 앞에
    * 접두하는 것뿐이다(codex, 실측).

@@ -185,12 +185,17 @@ export interface BgHarkroom {
   completeBg(jobId: string, r: { status: 'done' | 'failed' | 'skipped'; summary?: string; error?: string; tokens?: number; durationMs?: number }): Promise<void>;
 }
 
+/** plan 이 턴 동안 붙든 것(턴 열쇠·턴 MCP 설정)을 놓는다. 띄우기 실패·시한 초과에도 부른다. 던지지 않아야 한다. */
+export interface BgPlanRelease {
+  release?: () => Promise<void>;
+}
+
 export interface BgExecutorDeps {
   /** 지금 이 에이전트의 하네스(정의는 바뀔 수 있어 매번 읽는다). */
   harness: () => Promise<AgentHarness>;
   harkroom: BgHarkroom;
   /** 일반 턴과 같은 조립(MCP 설정·모델·계정)으로 plan 을 만든다 — 원인 `bg:<jobId>`, 새 세션 id. */
-  buildPlan: (job: BgJob, sessionId: string, cwd: string) => Promise<TurnPlan>;
+  buildPlan: (job: BgJob, sessionId: string, cwd: string) => Promise<TurnPlan & BgPlanRelease>;
   /** 동시 턴 자리(오퍼레이터 `HARKROOM_MAX_TURNS`). `keepFree: 1` — 한 칸은 사람 턴 몫으로 남긴다. */
   slots: {
     acquire(key: string, opts: { keepFree: number }): Promise<'granted' | 'full' | 'unsupported'>;
@@ -261,9 +266,11 @@ export class BgExecutor {
     const sessionId = randomUUID();
     const cwd = join(this.deps.stateDir, 'bg', job.id);
     let outcome: Parameters<BgHarkroom['completeBg']>[1];
+    let release: (() => Promise<void>) | undefined;
     try {
       await mkdir(cwd, { recursive: true, mode: 0o700 });
       const plan = await this.deps.buildPlan(job, sessionId, cwd);
+      release = plan.release;
       const args = bgExecutorArgs(plan.args, sessionId);
       const child = (this.deps.spawn ?? defaultSpawn)(plan.command, args, { cwd, env: plan.env });
       let stdout = '';
@@ -291,6 +298,7 @@ export class BgExecutor {
       outcome = { status: 'failed', error: 'runner', durationMs: Date.now() - started };
       this.log(`[bg] job ${job.id} 러너 오류: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
+      await release?.().catch(() => undefined);
       await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
     }
     // 채팅이 아니라 행에만 남긴다. 보고가 실패하면 서버 sweep 이 시한 뒤 timeout 으로 닫는다.

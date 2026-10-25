@@ -19,10 +19,11 @@ import {
   type AgentHarness,
   type MentionPermission,
 } from '@harkroom/shared';
-import { RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV } from '@harkroom/shared/runnerLink';
+import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV, RUNNER_TURN_KEY_ENV } from '@harkroom/shared/runnerLink';
+import type { TurnKeys } from './turnKeys.js';
 import { validateToolRule } from '@harkroom/shared';
 
-import { executionModelFor, readonlyToolsFor, usesOmpHome, usesPiHome, usesXdgHome } from './adapters/index.js';
+import { executionModelFor, readonlyToolsFor, turnKeyDeliveryOf, usesOmpHome, usesPiHome, usesXdgHome } from './adapters/index.js';
 import { piSessionsDir } from './piHome.js';
 import { ompDirs } from './ompHome.js';
 import { OPENCODE_LANE_AGENT, OPENCODE_READONLY_AGENT, opencodeDirs, opencodeLaneHome } from './opencodeHome.js';
@@ -156,6 +157,23 @@ export interface BuildTurnCommandOptions {
   /** opencode API 키 연결 턴이 고를 채널별 lane 에이전트(`opencodeLaneAgentName`). 없으면 셸 없는 기본 lane 에이전트다. */
   laneAgent?: string | null;
   providerEnv?: Record<string, string> | null;
+  /**
+   * 이 턴의 턴 열쇠(`turnKeys.ts`). 있으면 하네스 env 에서 러너 링크 secret 을 빼고 셸 열쇠를 넣는다. 다리 열쇠는 셸에 안 보이는
+   * 자리로만 간다 — claude 는 호출자가 쓴 턴 MCP 설정(`mcpConfigPath`)의 `env` 칸, codex 는 `env_vars` 이름 + 셸 거르기.
+   * `turnKeyDelivery` 가 false 인 하네스에는 주지 않는다(옛 자격 그대로).
+   */
+  turnKeys?: TurnKeys | null;
+  /** opencode 턴 열쇠 턴의 턴 설정 파일(`writeOpencodeTurnMcpConfig`) — 하네스 env 의 `OPENCODE_CONFIG` 가 된다. */
+  opencodeTurnConfig?: string | null;
+}
+
+/**
+ * 이 하네스에 다리 열쇠를 셸 밖으로 줄 길이 있는가. 없는 하네스는 턴 열쇠 없이 옛 자격(러너 링크 secret)으로 돈다.
+ * - claude-code: MCP 설정 파일 항목의 `env` 칸(호출자가 턴마다 쓴다, `writeTurnMcpConfig`).
+ * - codex: `mcp_servers.harkroom.env_vars` 에 이름만 + `shell_environment_policy.exclude`.
+ */
+export function turnKeyDelivery(harness: AgentHarness): boolean {
+  return turnKeyDeliveryOf(harness) !== null;
 }
 
 /** 멘션 턴(화면 앞에 사람이 없다)의 권한 매핑. 인터랙티브 턴은 아예 플래그를 안 준다(spec §6). */
@@ -189,7 +207,7 @@ interface HarnessPreset {
   laneArgs?(providerEnv: Record<string, string>): string[];
   /** API 키 연결 auto 턴이 채널별 lane 에이전트를 고르는 argv(opencode). 있으면 `lanePermission.auto` 대신 쓴다. */
   laneAgentArgs?: (agent: string) => string[];
-  mcp(args: { mcpConfigPath: string; operatorBin: string; extraMcpServers: Record<string, McpServerEntry> }): string[];
+  mcp(args: { mcpConfigPath: string; operatorBin: string; extraMcpServers: Record<string, McpServerEntry>; turnKeys: boolean }): string[];
   /**
    * `mcp` 가 이름만 적은 비밀값을 자식 env 로 준다(2026-09-30). argv 는 `ps` 에 뜨므로 토큰은 여기로만.
    * 파일로 MCP 를 받는 하네스(claude·opencode)는 없다.
@@ -520,7 +538,7 @@ const CODEX_PRESET: HarnessPreset = {
     readonly: ['-c', 'sandbox_mode="read-only"'],
   },
   mcpEnv: (extraMcpServers) => codexBearerEnv(extraMcpServers),
-  mcp: ({ operatorBin, extraMcpServers }) => [
+  mcp: ({ operatorBin, extraMcpServers, turnKeys }) => [
     // avcs 는 항상 등록한다(실측 shape: stdio, command 'avcs', args ['mcp'], env 없음).
     //
     // **`transport` 를 반드시 적는다(2026-09-15 실측).** codex 0.154 는 이 갈래 표시가 없는
@@ -556,7 +574,14 @@ const CODEX_PRESET: HarnessPreset = {
     // **`env` 가 아니라 `env_vars` 다.** `env` 는 값을 argv 에 굽는다 — secret 이 `ps` 에 뜬다.
     // `env_vars` 는 이름만 적고 값은 codex 가 자기 env 에서 꺼내 넘긴다.
     // 턴의 원인(`RUNNER_TURN_CAUSE_ENV`)·턴 id(`RUNNER_TURN_ID_ENV`)도 같은 이유로 이름을 댄다 — 빠지면 codex 턴만 옛 셈으로 간다.
-    '-c', `mcp_servers.harkroom.env_vars=${JSON.stringify([...RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV])}`,
+    '-c', `mcp_servers.harkroom.env_vars=${JSON.stringify([...RUNNER_LINK_ENV_KEYS, RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV, ...(turnKeys ? [RUNNER_TURN_KEY_ENV.bridge] : [])])}`,
+    // 턴 열쇠 턴: 다리 열쇠는 브릿지에만 가고 셸에는 안 가게 거른다. lane 턴은 `codexLaneArgs` 가 같은 칸을 뒤에서 다시 쓰므로
+    // 거기에도 이 이름이 들어 있다(`-c` 는 같은 칸이면 뒤의 것이 이긴다).
+    ...(turnKeys ? ['-c', `shell_environment_policy.exclude=${JSON.stringify([RUNNER_TURN_KEY_ENV.bridge])}`] : []),
+    // 셸 스냅숏·로그인 셸은 이 거르기를 지나 하네스 env 를 셸에 되살린다(실물 회귀 G2, codex 0.154 구독형 턴) — 열쇠 턴은 둘 다 끈다.
+    // lane 턴은 `codexLaneArgs` 가 같은 칸을 이미 끈다.
+    // 코드 모드 호스트는 codex 본체 env(다리 열쇠 포함)를 물려받는다 — 기본값이 바뀌어도 모델 코드가 그 자리에서 돌지 않게 끈 채로 고정한다.
+    ...(turnKeys ? ['-c', 'features.shell_snapshot=false', '-c', 'allow_login_shell=false', '-c', 'features.code_mode=false'] : []),
     // 에이전트의 mcpServers(스펙 §6) — 오퍼레이터가 이 머신의 정의로 합쳐 파일에 넣은 것을 codex 문법으로.
     ...Object.entries(extraMcpServers).flatMap(([name, entry]) => codexMcpFlags(name, entry)),
   ],
@@ -939,6 +964,14 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
 
   // 전용 제공사 경로의 턴인가 — env 를 받는 것과 같은 조건(`providerEnv`)으로 가른다. 권한 플래그가 다르다(`lanePermission`).
   const providerLane = opts.providerEnv != null;
+  if (opts.turnKeys && !turnKeyDelivery(opts.harness)) {
+    throw new Error(`buildTurnCommand: ${opts.harness} 에는 다리 열쇠를 셸 밖으로 줄 길이 없다 — 턴 열쇠를 주지 마라`);
+  }
+  // opencode 는 다리 열쇠가 턴 설정 파일에만 있다 — 그 파일 없이 열쇠를 주면 셸 열쇠만 있고 다리는 붙지 못한다.
+  if (opts.turnKeys && turnKeyDeliveryOf(opts.harness) === 'turn-config-env' && !opts.opencodeTurnConfig) {
+    throw new Error(`buildTurnCommand: ${opts.harness} 턴 열쇠에는 턴 설정 파일이 있어야 한다`);
+  }
+  const turnKeys = opts.turnKeys ?? null;
   const args: string[] = [
     ...preset.session(opts.sessionId, opts.isFirstTurn, opts.mode),
     ...preset.alwaysArgs(opts.mode),
@@ -959,7 +992,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
       '--cwd', opts.ompThread!.cwd,
       '--add-dir', opts.workspaceDir as string,
     ] : []),
-    ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, operatorBin: opts.operatorBin, extraMcpServers: opts.extraMcpServers ?? {} }),
+    ...preset.mcp({ mcpConfigPath: opts.mcpConfigPath, operatorBin: opts.operatorBin, extraMcpServers: opts.extraMcpServers ?? {}, turnKeys: turnKeys !== null }),
     ...(opts.providerEnv ? preset.laneArgs?.(opts.providerEnv) ?? [] : []),
     ...preset.model(opts.model),
     ...preset.effort(opts.effort),
@@ -985,6 +1018,8 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
       turnId: opts.turnId ?? null,
       providerEnv: opts.providerEnv ?? null,
       ghConfigDir: laneGhConfigDir(opts.harness, opts.providerEnv != null, opts.toolAllows ?? []),
+      turnKeys,
+      opencodeTurnConfig: opts.opencodeTurnConfig ?? null,
       }),
       ...(preset.mcpEnv?.(opts.extraMcpServers ?? {}) ?? {}),
     },
@@ -1126,6 +1161,8 @@ function childEnv(
     turnId?: string | null;
     providerEnv?: Record<string, string> | null;
     ghConfigDir?: string | null;
+    turnKeys?: TurnKeys | null;
+    opencodeTurnConfig?: string | null;
   },
 ): Record<string, string> {
   const env: Record<string, string> = {};
@@ -1191,6 +1228,19 @@ function childEnv(
   env[RUNNER_TURN_CAUSE_ENV] = homes.causeMessageId ?? '';
   // 턴 id 도 같은 규칙 — 러너 env 의 옛 값을 물려받으면 남의 턴 id 로 글이 적힌다.
   env[RUNNER_TURN_ID_ENV] = homes.turnId ?? '';
+  // 턴 자격(`turnKeys.ts`). 러너 env 에 남은 같은 이름은 먼저 지운다 — 남의 턴 열쇠를 물려주지 않게.
+  delete env[RUNNER_TURN_KEY_ENV.shell];
+  delete env[RUNNER_TURN_KEY_ENV.bridge];
+  if (homes.turnKeys) {
+    // 턴 자격을 받은 턴은 러너 링크 secret 을 하네스에 넘기지 않는다 — 다리·셸 모두 턴 열쇠로 붙는다.
+    delete env[RUNNER_LINK_ENV.secret];
+    env[RUNNER_TURN_KEY_ENV.shell] = homes.turnKeys.shell;
+    // codex 는 MCP 자식에 `env_vars` 로 이름 댄 것만 넘기므로 다리 열쇠도 하네스 env 에 둔다(셸에서는 `shell_environment_policy` 로 거른다).
+    // claude 는 MCP 자식에 env 를 통째로 물려주므로 여기 두면 셸에도 보인다 — 턴 MCP 설정의 `env` 칸으로만 준다.
+    if (turnKeyDeliveryOf(homes.harness) === 'env-vars') env[RUNNER_TURN_KEY_ENV.bridge] = homes.turnKeys.bridge;
+    // opencode 는 턴 설정 파일의 harkroom 항목 `environment` 로 다리에만 준다 — 그 파일을 이 턴의 설정으로 얹는다.
+    if (turnKeyDeliveryOf(homes.harness) === 'turn-config-env' && homes.opencodeTurnConfig) env.OPENCODE_CONFIG = homes.opencodeTurnConfig;
+  }
   // **PATH 밖에 설치되는 하네스의 자리를 뒤에 붙인다**(`harnessFallbackBinDirs`).
   // opencode 는 `~/.opencode/bin` 에 깔리고 PATH 는 사람의 셸 rc 에만 들어간다 — 러너는
   // 그 rc 를 안 거치므로 PTY 가 `opencode` 를 못 찾고 죽었다(실측 2026-09-22, 앱 0.3.3).
