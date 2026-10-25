@@ -557,7 +557,7 @@ export function AutomationsSettings({ onOpenMessage }: {
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button disabled={runState[a.id]?.phase === 'pending'} ariaBusy={runState[a.id]?.phase === 'pending'} onClick={() => startRun(a)}>
                   {runState[a.id]?.phase === 'pending'
-                    ? <span className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-full border-2 border-current border-r-transparent motion-safe:animate-spin" />{t('automations.row.running')}</span>
+                    ? <span className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-full border-2 border-current border-r-transparent animate-spin motion-reduce:hidden" /><span aria-hidden="true" className="hidden motion-reduce:inline">⋯</span>{t('automations.row.running')}</span>
                     : t('automations.row.runNow')}
                 </Button>
                 <Button onClick={() => { setEditingId(a.id); setDraft(triggerToDraft(a)); }}>{t('automations.row.edit')}</Button>
