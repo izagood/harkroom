@@ -1,0 +1,40 @@
+
+ ▀▀█  v1.4.0                                                                                                            
+ █▀ █ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more                                   
+ Press ctrl+o to show full startup help and loaded resources.                                                           
+                                                                                                                        
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.                                  
+
+
+[Context]                                                                                                               
+  /tmp/ws                                 
+
+
+ Warning: fd not found. Offline mode enabled, skipping download.                                                        
+ Warning: ripgrep not found. Offline mode enabled, skipping download.                                                   
+
+                                                                                                                        
+ run the probe                                                                                                          
+                                                                                                                        
+
+                                                                                                                        
+ $ sleep 20; echo probe-done                                                                                            
+                                                                                                                        
+ Elapsed 10.0s                                                                                                          
+                                                                                                                        
+
+
+
+
+
+
+
+
+
+
+
+── ⠦ Working ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/ws
+1.2%/128k (auto)                                                                                              lane-model

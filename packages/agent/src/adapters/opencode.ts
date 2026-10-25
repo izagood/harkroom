@@ -36,6 +36,8 @@ export const OPENCODE_ADAPTER: HarnessAdapter = {
     ready: /Ask anything|ctrl\+p/,
     gate: GATE_PATTERN,
     gateMeasured: false,
+    // 바닥줄 `⬝⬝⬝  esc interrupt` — 일하는 동안만 선다(1.19.4). `test/fixtures/opencode-tui-busy.txt`·`-ended.txt`.
+    busy: /esc interrupt/,
   },
 
   // **신뢰 관문이 없다**(실측): `git init` 한 빈 임시 디렉터리에서 묻지 않고 바로 입력창까지

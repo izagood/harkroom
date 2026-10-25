@@ -446,8 +446,31 @@ export function gateNotice(accountLabel: string): string {
  * `awaitingHuman` 이라 정지 시계를 재지 않는다). 여기 오는 것은 **알아보지 못한** 관문이거나
  * 진짜로 멈춘 하네스다 — 어느 쪽이든 볼 곳은 그 터미널이므로 말은 하나로 족하다.
  */
-export function stallNotice(stallMs: number, screenLine?: string | null): string {
+/**
+ * 정지 순간 화면의 갈래(`mentionTurn.ts` 가 어댑터 화면 계약으로 잰다). `gate` 확인 물음 · `idle` 입력창만 있고 일하는 중
+ * 표지가 없다(답 없이 끝남) · `stuck` 둘 다 아니다(하네스가 멈췄다).
+ */
+export type StallScreen = 'gate' | 'idle' | 'stuck';
+
+/** 갈래마다 다시 불러 풀리는가. 답 없이 끝난 턴은 다시 부르면 답할 수 있고, 물음·멈춤은 같은 자리에 다시 선다. */
+export function stallRetryable(screen: StallScreen | null): boolean {
+  return screen === 'idle';
+}
+
+export function stallNotice(stallMs: number, screenLine?: string | null, screen?: StallScreen | null): string {
   const 분 = Math.round(stallMs / 60_000);
+  const 오류줄 = screenLine ? ` 화면의 마지막 오류 줄: "${screenLine}"` : '';
+  // **정지 순간의 화면이 무엇을 말하는가로 가른다**(2026-10-25, 스레드 db4ab174). 모르면(`null`) 아래 옛 문장이다.
+  if (screen === 'gate') {
+    return `(하네스가 ${분}분 동안 확인 물음 앞에 서 있어 접었습니다 — 이 스레드의 터미널을 열어 무엇을 묻는지 확인한 뒤 다시 불러 주세요.${오류줄})`;
+  }
+  if (screen === 'idle') {
+    return `(답을 남기지 못하고 끝났습니다 — ${분}분 뒤에 알아채 접었습니다. 다시 부르면 이어서 합니다.${오류줄})`;
+  }
+  if (screen === 'stuck') {
+    return `(하네스가 ${분}분 동안 아무것도 하지 않아 접었습니다 — 다시 불러도 같은 곳에서 멈출 수 있어 자동으로 다시 시도하지 않습니다. `
+      + `이 스레드의 터미널을 열어 화면을 확인해 주세요.${오류줄})`;
+  }
   return `(하네스가 ${분}분 동안 아무것도 하지 않아 접었습니다 — 다시 시도하지 않습니다: `
     + `같은 자리에 다시 서기 때문입니다. 이 스레드의 터미널을 열어 화면을 확인해 주세요 — `
     + `확인을 기다리는 물음이 서 있을 수 있습니다.`

@@ -11,8 +11,9 @@
     "certify": "tsx scripts/certify.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
     "@harkroom/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@xterm/headless": "6.0.0",
     "node-pty": "1.2.0-beta.15",
     "ws": "^8.18.0"
   },

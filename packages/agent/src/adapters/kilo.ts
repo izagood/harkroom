@@ -34,6 +34,8 @@ export const KILO_ADAPTER: HarnessAdapter = {
     ready: /Ask anything|ctrl\+p/,
     gate: GATE_PATTERN,
     gateMeasured: false,
+    // 바닥줄 `esc interrupt` — opencode 와 같은 자리(7.8.17). `test/fixtures/kilo-tui-busy.txt`·`-ended.txt`.
+    busy: /esc interrupt/,
   },
   // 세션은 `<data>/kilo/kilo.db`. 목록 명령의 모양이 opencode 와 같다(실측).
   transcript: {
