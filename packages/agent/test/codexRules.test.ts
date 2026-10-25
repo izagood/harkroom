@@ -132,10 +132,11 @@ describe('hook 명령·신뢰 절', () => {
 describe('codex 턴 argv', () => {
   const base = {
     harness: 'codex' as const, mode: 'mention' as const, mentionPermission: 'auto' as const, sessionId: 's', isFirstTurn: false,
-    systemPrompt: '', promptCtx: '', operatorBin: BIN, codexHome: '/h', mcpConfigPath: '/m.json',
+    systemPrompt: '', promptCtx: '', model: null, effort: null, operatorBin: BIN, codexHome: '/h', mcpConfigPath: '/m.json',
+    systemPromptFile: '/state/system-prompt.txt', stdinFile: null, claudeConfigDir: null,
   };
   it('열쇠 턴은 tty 실행을 끄고, 신뢰를 건너뛰는 플래그는 어디에도 없다 · 규칙 env 를 하네스 env 에 싣는다', () => {
-    const plan = buildTurnCommand({ ...base, turnKeys: { bridge: 'a'.repeat(64), shell: 'b'.repeat(64) }, commandRuleEnv: { [CODEX_HOOK_SPEC_ENV]: 'v' } } as Parameters<typeof buildTurnCommand>[0]);
+    const plan = buildTurnCommand({ ...base, turnKeys: { bridge: 'a'.repeat(64), shell: 'b'.repeat(64) }, commandRuleEnv: { [CODEX_HOOK_SPEC_ENV]: 'v' } });
     expect(plan.args.join(' ')).toContain('features.unified_exec_tty=false');
     expect(plan.args.join(' ')).not.toContain('bypass-hook-trust');
     expect(plan.env[CODEX_HOOK_SPEC_ENV]).toBe('v');
