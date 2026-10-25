@@ -78,6 +78,11 @@ describe('checkCodexWorkdir — 승인 명령의 실행 위치', () => {
     expect(await checkCodexWorkdir(input(), CMD, home)).not.toBeNull();
   });
 
+  it('결과가 이미 적힌 호출 id(옛 id 를 다시 씀)면 거절한다', async () => {
+    await writeTranscript(callLine('call_7', { cmd: CMD }), outputLine('call_7', 'done'));
+    expect(await checkCodexWorkdir(input(), CMD, home)).not.toBeNull();
+  });
+
   it('출력 글 속에 든 가짜 줄은 호출 줄로 세지 않는다', async () => {
     const fake = callLine('call_7', { cmd: CMD });
     await writeTranscript(outputLine('call_6', fake), callLine('call_7', { cmd: CMD, workdir: other }));

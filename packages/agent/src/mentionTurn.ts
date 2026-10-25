@@ -323,6 +323,8 @@ export interface MentionTurnDeps {
    * 쓰지 않는다(승인 명령도 샌드박스 안).
    */
   prepareCodexRules?: (opts: { workspaceDir: string; rules: readonly string[]; reach: readonly string[] | null }) => Promise<Record<string, string>>;
+  /** 규칙 파일을 쓰지 않는 codex 턴 앞에서 — 잰 판 밖이면 남은 규칙 파일을 지운다(`codexRules.ts::sweepCodexRules`). */
+  sweepCodexRules?: () => Promise<void>;
   /** 이 머신이 Claude in Chrome 을 열 수 있는가(`RunnerConfig.chromeHost`). 생략은 거짓이다. */
   chromeHost?: boolean;
   /**
@@ -1486,6 +1488,8 @@ export async function runMentionTurn(
   const commandRuleEnv = turnKeys && def.mentionPermission === 'auto' && commandRulesOf(def.harness) === 'codex-execpolicy' && deps.prepareCodexRules
     ? await deps.prepareCodexRules({ workspaceDir: rec.workspaceDir, rules: toolAllows, reach: ruleSets.reach === null ? null : safeToolAllows(ruleSets.reach) })
     : null;
+  // 규칙 파일을 쓰지 않는 codex 턴(읽기 전용·열쇠 없음)도 잰 판 밖이면 남은 규칙 파일을 지우고 뜬다(security F1).
+  if (!commandRuleEnv && commandRulesOf(def.harness) === 'codex-execpolicy') await deps.sweepCodexRules?.();
   const turnMcpConfig = turnKeys && turnKeyDeliveryOf(def.harness) === 'mcp-config-env'
     ? await writeTurnMcpConfig(deps.stateDir, deps.mcpConfigPath, turnId, turnKeys.bridge, { alwaysLoad: Boolean(providerEnv) && laneScrubsSubprocessEnv(def.harness) })
     : null;

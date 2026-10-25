@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CODEX_HOOK_SPEC_ENV, decodeCodexHookSpec, parseCodexRulesFile } from '@harkroom/shared/providerLane';
 import {
   codexHomeOutsideWritable, codexHookCommand, codexHooksPath, codexRulesPath, codexRulesVersionOk, CodexRulesError,
-  prepareCodexRules, withHookTrust, type CodexHookListEntry, type CodexRulesDeps,
+  prepareCodexRules, sweepCodexRules, withHookTrust, type CodexHookListEntry, type CodexRulesDeps,
 } from '../src/codexRules.js';
 import { buildTurnCommand } from '../src/turn.js';
 
@@ -91,6 +91,17 @@ describe('prepareCodexRules', () => {
     const inside: CodexRulesDeps = { ...fakeCodex().deps, writableRoots: () => [root] };
     expect(await prepare(inside)).toEqual({});
     await expect(stat(codexRulesPath(home))).rejects.toThrow();
+  });
+});
+
+describe('sweepCodexRules — 규칙 파일을 쓰지 않는 길(security F1)', () => {
+  it('잰 판 밖·판을 못 읽음이면 남은 규칙 파일을 지우고, 잰 판이면 둔다', async () => {
+    await mkdir(join(home, 'rules'), { recursive: true });
+    for (const [v, kept] of [['codex-cli 0.154.0', true], ['codex-cli 0.155.0', false], [null, false]] as const) {
+      await writeFile(codexRulesPath(home), 'prefix_rule(pattern = ["ls"], decision = "allow")\n');
+      await sweepCodexRules(home, async () => v);
+      expect(await stat(codexRulesPath(home)).then(() => true, () => false)).toBe(kept);
+    }
   });
 });
 

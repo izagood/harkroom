@@ -140,6 +140,17 @@ export function listCodexHooks(opts: { codexBin: string; codexHome: string; cwd:
   });
 }
 
+/**
+ * 규칙 파일을 **쓰지 않는** codex 길(읽기 전용·열쇠 없는 멘션 턴, 대화형 턴, 백그라운드)에서 띄우기 전에 부른다(security F1). codex 는
+ * 이 홈으로 뜨는 모든 턴에 규칙 파일을 싣는데, 판이 바뀌면 hook 신뢰가 풀려 hook 없이 규칙만 실릴 수 있다 — 잰 판 밖이거나 판을
+ * 못 읽으면 남은 규칙 파일을 지운다. 잰 판이면 그대로 둔다(그 턴의 hook 은 판정 값이 없어 규칙 파일의 명령을 막는다).
+ */
+export async function sweepCodexRules(codexHome: string, version: () => Promise<string | null>, log: (line: string) => void = () => {}): Promise<void> {
+  if (codexRulesVersionOk(await version().catch(() => null))) return;
+  log('[codexRules] 잰 판 밖의 codex — 남은 규칙 파일을 지운다');
+  await rm(codexRulesPath(codexHome), { force: true });
+}
+
 export class CodexRulesError extends Error {
   constructor(readonly code: 'codex_hook_untrusted') {
     super('codex 가 러너의 명령 hook 을 신뢰하는지 확인하지 못해 턴을 띄우지 않았다(codex_hook_untrusted) — 러너 로그를 보라');

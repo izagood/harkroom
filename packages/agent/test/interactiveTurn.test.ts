@@ -225,6 +225,21 @@ describe('#337 분기 ③ — 아무 턴도 없으면 새로 연다', () => {
     expect(h.plans[0]!.args).not.toContain('--session-id');
   });
 
+  it('codex 대화형 턴은 띄우기 전에 판 확인(남은 규칙 파일 지우기)을 한다 · claude 는 하지 않는다(security F1)', async () => {
+    let swept = 0;
+    const h = await makeHarness({ sweepCodexRules: async () => { swept += 1; } }, defOf({ harness: 'codex' }));
+    await createInteractiveManager(h.deps).open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
+    expect(swept).toBe(1);
+    expect(h.plans).toHaveLength(1);
+    h.endTurn();
+    await waitReleased(h.registry);
+    const c = await makeHarness({ sweepCodexRules: async () => { swept += 1; } });
+    await createInteractiveManager(c.deps).open({ channelId: CHANNEL, threadRootId: ROOT, openedByHandle: 'alice' });
+    expect(swept).toBe(1);
+    c.endTurn();
+    await waitReleased(c.registry);
+  });
+
   it('codex 에이전트도 첫 인터랙티브 턴을 열고 격리 CODEX_HOME 을 사용한다', async () => {
     const h = await makeHarness({}, defOf({ harness: 'codex' }));
     const manager = createInteractiveManager(h.deps);

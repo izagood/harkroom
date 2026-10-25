@@ -41,7 +41,7 @@ import { createRetreat, type Retreat } from './retreat.js';
 import type { Exec } from './workspace.js';
 import { isCredentialFailure, nextBackoffMs } from './policy.js';
 import { harnessBinaryName, type AgentHarness } from '@harkroom/shared';
-import { listCodexHooks, prepareCodexRules } from './codexRules.js';
+import { listCodexHooks, prepareCodexRules, sweepCodexRules } from './codexRules.js';
 import { runnerExitPlan } from './exit.js';
 import { stopRequestedForRunner } from './stop.js';
 import { harnessLoginNotice } from './prompt.js';
@@ -55,7 +55,7 @@ import { claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, prese
 import { createAccountAssigner } from './accountAssign.js';
 import { clearAccountAttention, clearAccountCredentialFailure, isAttentionActive, markAccountCredentialFailed, markAccountNeedsAttention, readAccountAttention } from '@harkroom/shared/claudeGates';
 import { syncCodexAuth } from './codexHome.js';
-import { allXdgApps, turnKeyDeliveryOf, usesOmpHome, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
+import { allXdgApps, commandRulesOf, turnKeyDeliveryOf, usesOmpHome, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
 import { issueTurnKeys } from './turnKeys.js';
 import { ensurePiHome } from './piHome.js';
 import { ensureOmpHome, ompDirs } from './ompHome.js';
@@ -336,6 +336,8 @@ const { codexHome } = providerLaneOn
   ? { codexHome: await mkdir(providerLaneCodexDir, { recursive: true, mode: 0o700 }).then(() => providerLaneCodexDir) }
   : await syncCodexAuth(codexHomeDir);
 const syncCodexLink = providerLaneOn ? undefined : () => syncCodexAuth(codexHome);
+// 규칙 파일을 쓰지 않는 codex 길(읽기 전용·열쇠 없는 멘션, 대화형, 백그라운드) 앞에서 — 잰 판 밖이면 남은 규칙 파일을 지운다(security F1).
+const sweepRules = (): Promise<void> => sweepCodexRules(codexHome, () => harnessVersion('codex'), (line) => console.warn(line));
 
 // opencode 도 같은 이유로 격리한다 — 다만 한 변수가 아니라 XDG 셋이고, MCP 는 argv 가 아니라
 // **설정 파일**로만 등록되므로 오퍼레이터가 쓴 표를 그 파일로 번역해 둔다(`opencodeHome.ts`).
@@ -526,6 +528,7 @@ const bgExecutor = new BgExecutor({
     };
     try {
       if (turnKeys) await harkroom.registerTurnKeys({ turnId, cause: causeMessageId, keys: turnKeys });
+      if (commandRulesOf(def.harness) === 'codex-execpolicy') await sweepRules();
       const plan = buildTurnCommand({
         harness: def.harness, mode: 'mention', sessionId, isFirstTurn: true,
         systemPrompt: BG_SYSTEM_PROMPT, systemPromptFile: await writeSystemPromptFile(cwd, BG_SYSTEM_PROMPT),
@@ -550,6 +553,7 @@ interactive = createInteractiveManager({
   harkroom, store, exec, runTurn: runPtyTurn, me,
   workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp, codexHome, opencodeHome, piHome,
   ...(syncCodexLink ? { syncCodexAuth: syncCodexLink } : {}),
+  sweepCodexRules: sweepRules,
   // **인터랙티브 턴은 페일오버하지 않는다.** 사람이 앉아 있고, 계정을 바꾸면 그 사람이
   // 보던 세션이 사라진다(세션 파일이 계정 디렉터리 안에 있다) — 관찰 도중에 화면을 갈아
   // 치우는 것보다 그 계정의 한도를 그대로 보여 주는 편이 낫다. 그래서 첫 계정에 고정한다.
@@ -783,6 +787,7 @@ const scheduler = createMentionScheduler({
       listHooks: (home, cwd) => listCodexHooks({ codexBin: harnessBinaryName('codex') ?? 'codex', codexHome: home, cwd, path: harnessPath('codex', process.env.PATH), home: process.env.HOME }),
       log: (line) => console.warn(line),
     }),
+    sweepCodexRules: sweepRules,
     turnTimeoutMs: config.turnTimeoutMs,
     harnessStallMs: config.harnessStallMs,
     relay,

@@ -57,7 +57,8 @@ async function readTail(path: string, max: number): Promise<string> {
 /**
  * 이 호출의 실행 폴더가 턴의 작업 폴더인가(security W1~W3). 통과면 null, 아니면 거절.
  * - 기록 파일은 이 턴 codex 홈 아래여야 한다(샌드박스 쓰기 자리 밖 — 모델이 고쳐 쓸 수 없다).
- * - `tool_use_id` 의 function_call 줄이 꼬리 안에 **정확히 한 줄**이고, 그 인자의 명령이 hook 이 받은 명령과 같아야 한다.
+ * - `tool_use_id` 의 function_call 줄이 꼬리 안에 **정확히 한 줄**이고(결과 줄이 이미 있으면 지금 호출이 아니다), 그 인자의 명령이
+ *   hook 이 받은 명령과 같아야 한다.
  * - 인자에 `workdir` 가 있으면 실제 경로가 작업 폴더의 실제 경로와 같아야 한다.
  */
 export async function checkCodexWorkdir(input: HookInput, command: string, codexHome: string, tailBytes = CODEX_TRANSCRIPT_TAIL_BYTES): Promise<LaneDenyDecision | null> {
@@ -73,7 +74,10 @@ export async function checkCodexWorkdir(input: HookInput, command: string, codex
       if (!line.includes(input.tool_use_id)) continue;
       let rec: { type?: unknown; payload?: { type?: unknown; call_id?: unknown; arguments?: unknown } };
       try { rec = JSON.parse(line) as typeof rec; } catch { continue; }
-      if (rec.type !== 'response_item' || rec.payload?.type !== 'function_call' || rec.payload.call_id !== input.tool_use_id) continue;
+      if (rec.type !== 'response_item' || rec.payload?.call_id !== input.tool_use_id) continue;
+      // 이미 결과가 적힌 호출 id 는 지금 호출이 아니다 — 옛 id 를 다시 쓴 호출을 옛 줄로 통과시키지 않는다.
+      if (rec.payload.type === 'function_call_output') return deny();
+      if (rec.payload.type !== 'function_call') continue;
       if (typeof rec.payload.arguments !== 'string') return deny();
       let args: unknown;
       try { args = JSON.parse(rec.payload.arguments); } catch { return deny(); }

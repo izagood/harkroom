@@ -5025,6 +5025,37 @@ describe('턴 열쇠(C안 P2) — 멘션 턴', () => {
     expect(plans[0]!.env.HARKROOM_TURN_GRANT).toBe(fake.registered[0]!.keys.shell);
   });
 
+  it('codex 승인 명령 규칙: 열쇠 auto 턴만 갖추고 그 env 를 싣는다 · 읽기 전용 턴은 갖추지 않고 판 확인(지우기)만 한다(security F1)', async () => {
+    const run = async (mentionPermission: 'auto' | 'readonly') => {
+      const fake = new KeyedHarkroom(defOf({ harness: 'codex', mentionPermission }));
+      fake.seedFrom('human-1', '@forge 안녕');
+      const prepared: unknown[] = [];
+      let swept = 0;
+      const { deps, plans } = await makeDeps(fake, {
+        prepareCodexRules: async (o) => { prepared.push(o); return { HARKROOM_CODEX_HOOK: 'spec' }; },
+        sweepCodexRules: async () => { swept += 1; },
+      });
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+      return { prepared, swept, plans };
+    };
+    const auto = await run('auto');
+    expect(auto.prepared).toHaveLength(1);
+    expect(auto.swept).toBe(0);
+    expect(auto.plans[0]!.env.HARKROOM_CODEX_HOOK).toBe('spec');
+    const ro = await run('readonly');
+    expect(ro.prepared).toHaveLength(0);
+    expect(ro.swept).toBe(1);
+    expect(ro.plans[0]!.env.HARKROOM_CODEX_HOOK).toBeUndefined();
+  });
+
+  it('codex 승인 명령 규칙을 갖추지 못하면(hook 신뢰 확인 실패) 하네스를 띄우지 않는다', async () => {
+    const fake = new KeyedHarkroom(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, plans } = await makeDeps(fake, { prepareCodexRules: async () => { throw new Error('codex_hook_untrusted'); } });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch(() => undefined);
+    expect(plans).toHaveLength(0);
+  });
+
   it('맡기기가 실패하면 하네스를 띄우지 않는다', async () => {
     const fake = new KeyedHarkroom(defOf({ harness: 'codex' }));
     fake.failRegister = true;
