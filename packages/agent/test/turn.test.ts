@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { GRANT_DELEGATE_TOOL, laneEnvAllowed, LANE_BASE_ALLOW, LANE_DENY, READONLY_ALLOW, READONLY_RULES, READONLY_TOOLS, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { GRANT_DELEGATE_TOOL, laneEnvAllowed, laneGhConfigDir, LANE_BASE_ALLOW, LANE_DENY, READONLY_ALLOW, READONLY_RULES, READONLY_TOOLS, PERMISSION_REQUEST_TOOL, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 import { decodeLaneHookRules } from '@harkroom/shared/providerLane';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
@@ -965,6 +965,31 @@ describe('opencode lane 턴의 권한', () => {
       expect(() => oc({ mentionPermission: 'auto', providerEnv: { HARKROOM_PROVIDER_TOKEN: 'x' } })).toThrow(/허용되지 않은 env/);
       // 구독형 opencode 턴에는 홈 표지를 주지 않는다(사람 설정을 그대로 쓴다).
       expect(oc({ mentionPermission: 'auto' }).env.OPENCODE_TEST_HOME).toBe('/home/x');
+    } finally {
+      for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  });
+
+  // gh 설정 자리(security H1~H3·H5): lane opencode 턴에서 승인 규칙에 gh 명령이 있을 때만, 경로 하나만.
+  it('lane opencode 턴: gh 규칙이 있을 때만 GH_CONFIG_DIR(원래 XDG/gh) · 부모 값·토큰 env 는 안 감 · 구독형·kilo·claude 는 안 줌', () => {
+    const planted = { GH_CONFIG_DIR: '/home/x/evil-gh', GH_TOKEN: 'tok-gh', GITHUB_TOKEN: 'tok-ghub', XDG_CONFIG_HOME: '/home/x/.cfg' };
+    const prev: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(planted)) { prev[k] = process.env[k]; process.env[k] = v; }
+    try {
+      const withGh = oc({ mentionPermission: 'auto', providerEnv: lane, toolAllows: ['Bash(gh pr list -R cli/cli --limit 3)'] });
+      expect(withGh.env.GH_CONFIG_DIR).toBe('/home/x/.cfg/gh');
+      expect('GH_TOKEN' in withGh.env).toBe(false);
+      expect('GITHUB_TOKEN' in withGh.env).toBe(false);
+      // gh 로 시작하지 않는 규칙만 있으면 주지 않는다(부모 값도 허용 목록이 걷는다).
+      const noGh = oc({ mentionPermission: 'auto', providerEnv: lane, toolAllows: ['Bash(kubectl --context lab get pods)', 'Bash(echo gh)'] });
+      expect('GH_CONFIG_DIR' in noGh.env).toBe(false);
+      expect(laneGhConfigDir('opencode', true, ['Bash(gh:*)'], { XDG_CONFIG_HOME: '/c' })).toBe('/c/gh');
+      expect(laneGhConfigDir('opencode', true, ['Bash(ghx run)'])).toBeNull();
+      expect(laneGhConfigDir('opencode', false, ['Bash(gh pr list)'])).toBeNull();
+      expect(laneGhConfigDir('kilo', true, ['Bash(gh pr list)'])).toBeNull();
+      expect(laneGhConfigDir('claude-code', true, ['Bash(gh pr list)'])).toBeNull();
+      // XDG 가 없거나 절대 경로가 아니면 홈 기본 자리다.
+      expect(laneGhConfigDir('opencode', true, ['Bash(gh pr list)'], { XDG_CONFIG_HOME: 'rel' })).toMatch(/\/\.config\/gh$/);
     } finally {
       for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     }
