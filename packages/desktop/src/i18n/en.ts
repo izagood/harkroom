@@ -1621,7 +1621,7 @@ export const en = {
   'lane.code.not_found': 'The selected secret no longer exists',
   'lane.code.grant_suspended': 'This agent\'s secret grant is suspended',
   'lane.code.secret_expired': 'The key secret has expired',
-  'lane.code.no_lease': 'Runner restarted; retry the turn',
+  'lane.code.no_lease': 'Runner restarted, so this turn has no lease — call the agent again',
   'lane.code.bg_unsupported': 'Background turns can\'t use an API key yet',
   'lane.code.harness_unsupported': 'This harness can\'t use an API key',
   'lane.code.workspace_protected': 'Stopped: the work folder has files or folders that change the agent\'s instructions or tools (.claude, .opencode, .codex, CLAUDE.md, AGENTS.md, …) — remove them and call again',

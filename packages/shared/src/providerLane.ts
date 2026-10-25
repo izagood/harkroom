@@ -253,3 +253,15 @@ export function decodeCodexHookSpec(value: string | undefined): CodexHookSpec | 
     return null;
   }
 }
+
+/**
+ * **다시 부르면 풀리는** API 키 연결 실패 코드(2026-10-25). 턴 임대는 멘션마다 한 번만 나오고(서버 S1) 그 장부는 러너·오퍼레이터
+ * 메모리에만 있다 — 러너가 다시 뜬 뒤 옛 멘션을 다시 집으면 임대가 없다(`no_lease`)·맞지 않는다(`lease_invalid`). 같은 멘션은
+ * 다시 받을 수 없지만 **새 멘션**은 새 임대를 받는다. 러너는 이 둘에 [다시 부르기]를 열고(`retryable`), 화면은 고칠 설정이
+ * 없으니 [에이전트 설정 열기]를 감춘다. 가로챔 신호(`lease_used`)는 넣지 않는다.
+ */
+export const PROVIDER_LANE_RECALLABLE_CODES = ['no_lease', 'lease_invalid'] as const;
+
+export function providerLaneRecallable(code: string | null | undefined): boolean {
+  return (PROVIDER_LANE_RECALLABLE_CODES as readonly string[]).includes(code ?? '');
+}

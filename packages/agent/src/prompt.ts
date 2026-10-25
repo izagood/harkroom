@@ -6,6 +6,7 @@
 // 세션이 이미 아는 것까지 다시 넘길 필요가 없다 — 그 경계가 `lastFedSeq` 다. 그리고 예전엔
 // 러너가 모델 응답을 파싱해 대신 올렸지만, 이제 에이전트가 harkroom MCP `message.post` 로
 // 스스로 올린다 — 그래서 시스템 프롬프트가 "어디에 쓸지"까지 알려줘야 한다.
+import { providerLaneRecallable } from '@harkroom/shared/providerLane';
 import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome, type InboxDelegatedBy, type InboxCanceledWake, type WakeReportTo } from '@harkroom/shared';
 
 import type { AccountFailure } from './claudeAccounts.js';
@@ -339,9 +340,16 @@ export function sessionConflictNotice(): string {
  * 사람 화면에도 기록에도 남기지 않는다(security ①). 코드는 이미 허용 목록으로 접힌 값이다(`ProviderLaneError`).
  */
 export function providerLaneNotice(code: string): string {
+  if (providerLaneRecallable(code)) {
+    return `(이 멘션의 턴 임대가 없어 턴을 띄우지 않았습니다 — 러너가 다시 뜨면서 앞서 받은 임대를 잃었습니다. `
+      + `설정은 고칠 것이 없습니다. 다시 불러 주시면 새 임대로 뜹니다. 까닭: ${code})`;
+  }
   return `(API 키 연결을 준비하지 못해 이 턴을 띄우지 않았습니다 — 다시 시도하지 않습니다. `
     + `데스크톱의 에이전트 설정 › 모델 연결에서 API 주소와 API 키(비밀 허락)를 확인한 뒤 다시 불러 주세요. 까닭: ${code})`;
 }
+
+/** 다시 부르면 풀리는 실패 코드 — 정본은 shared 다(화면도 같은 목록으로 [에이전트 설정 열기]를 감춘다). */
+export { providerLaneRecallable };
 
 /**
  * 스레드 지정 모델을 하네스가 거절했다는 통지(결정 6). 사람이 할 일(스레드 칩에서 되돌리기)을

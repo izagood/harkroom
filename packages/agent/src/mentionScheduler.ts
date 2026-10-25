@@ -20,7 +20,7 @@ import { accountFailureOf, accountTrailOf, withAccountFailover, type ClaudeAccou
 import {
   accountTrailReason, controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
   withAccountTrail,
-  providerLaneNotice, sessionConflictNotice, stallNotice, stallRetryable, threadModelRejectedNotice, wakeReportTo,
+  providerLaneNotice, providerLaneRecallable, sessionConflictNotice, stallNotice, stallRetryable, threadModelRejectedNotice, wakeReportTo,
 } from './prompt.js';
 import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, isThreadModelRejected, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import type { SecretLeases } from './secretLeases.js';
@@ -674,11 +674,19 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       // 계정 로그인으로 떨어질 길도 없다(security ②). 사람에게는 코드만 남긴다(①).
       if (err instanceof ProviderLaneError) {
         console.error(`  ${mention.id} API 키 연결 실패 — 재시도하지 않는다: ${err.code}`);
-        const opts = {
-          retryable: false,
-          what: 'API 키 연결을 준비하지 못해 턴을 띄우지 않았다',
-          reason: '데스크톱의 에이전트 설정에서 API 주소·키를 확인해야 한다 — 같은 설정으로는 다시 실패한다',
-        };
+        // 임대를 잃은 것(러너 재기동)은 설정 탓이 아니다 — 새로 부르면 새 임대로 뜬다(`providerLaneRecallable`). 이 멘션은 그대로 접는다.
+        const recallable = providerLaneRecallable(err.code);
+        const opts = recallable
+          ? {
+            retryable: true,
+            what: '턴 임대가 없어 턴을 띄우지 않았다',
+            reason: '러너가 다시 뜨면서 이 멘션의 임대를 잃었다 — 다시 부르면 새 임대로 뜬다',
+          }
+          : {
+            retryable: false,
+            what: 'API 키 연결을 준비하지 못해 턴을 띄우지 않았다',
+            reason: '데스크톱의 에이전트 설정에서 API 주소·키를 확인해야 한다 — 같은 설정으로는 다시 실패한다',
+          };
         await deps.harkroom.fail(mention.channelId, providerLaneNotice(err.code), anchor, { ...opts, code: 'provider_lane', laneCode: err.code })
           // 옛 서버는 이 표지를 입력 검증에서 거절한다 — 그때만 한 번 더 올린다(사람에게는 닿아야 한다).
           // 먼저 서버가 모르는 코드(뒤에 더한 `bad_model` 등)를 표지에서만 `unknown` 으로 접어 보낸다(본문은 원래 코드) — 1c 서버부터 아는 값이라 실패 카드는 선다.

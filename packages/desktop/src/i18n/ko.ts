@@ -1102,7 +1102,7 @@ export const ko = {
   'lane.code.not_found': '고른 비밀이 없다(지워졌을 수 있다)',
   'lane.code.grant_suspended': '이 에이전트의 비밀 허락이 멈춰 있다',
   'lane.code.secret_expired': '키 비밀이 만료됐다',
-  'lane.code.no_lease': '러너가 다시 떠서 이번 턴 임대가 없다 — 다시 시도',
+  'lane.code.no_lease': '러너가 다시 떠서 이번 턴 임대가 없다 — 다시 불러 달라',
   'lane.code.bg_unsupported': '백그라운드 턴은 아직 API 키로 돌 수 없다',
   'lane.code.harness_unsupported': '이 하네스는 API 키로 돌 수 없다',
   'lane.code.workspace_protected': '작업 폴더에 에이전트의 지시·도구를 바꾸는 파일·폴더(.claude·.opencode·.codex·CLAUDE.md·AGENTS.md 등)가 있어 멈췄다 — 치운 뒤 다시 불러라',
