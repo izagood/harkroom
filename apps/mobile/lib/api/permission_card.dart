@@ -168,7 +168,8 @@ class PermissionCardInfo {
         mandate: mandate,
         line: PermissionCardLine.read(mi['line']),
         once: PermissionCardOnce.read(mi['once']),
-        ownerId: mandate?.ownerId,
+        // 정할 사람 — 서버가 원본 요청 행에서 채운 칸이 먼저, 없으면(옛 서버) 위임장 칩.
+        ownerId: mi['ownerAccountId'] is String ? mi['ownerAccountId'] as String : mandate?.ownerId,
         ghUserUsed: mi['ghUserUsed'] is String ? mi['ghUserUsed'] as String : null,
         mirrorRootId: mi['rootId'] as String,
         bodyTargetLine: mi['bodyTargetLine'] is String ? mi['bodyTargetLine'] as String : null,

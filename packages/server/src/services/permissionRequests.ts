@@ -1130,8 +1130,14 @@ export async function renderPermissionMirror(
   const prompt = typeof ask?.prompt === 'string' ? ask.prompt : undefined;
   if (await mirrorAudienceSeesRoot(pool, r.channelId, mirrorChannelId)) {
     // W4-2: 원본을 볼 수 있는 거울은 같은 카드를 그리도록 once(gh 계정 고르기 빼고)·line·mandate 를 싣는다.
+    // 거울에서 정할 사람(표시용) — 원본 요청 행의 에이전트 소유자를 DB 에서 읽는다(원본 meta·거울을 세운 쪽의 인자가 아니다).
+    // 답할 자격은 `decisions.decide` 가 다시 판정한다.
+    const owner = (await pool.query<{ ownerAccountId: string | null }>(
+      `select c.owner_account_id as "ownerAccountId" from permission_request p join agent_config c on c.account_id = p.agent_id
+        where p.card_message_id = $1`, [rootId])).rows[0]?.ownerAccountId ?? null;
     const mirror: PermissionMirrorMeta = {
       rootId, neutral: false, kind: pr.kind,
+      ...(owner ? { ownerAccountId: owner } : {}),
       ...(pr.once ? { once: { number: pr.once.number, headSha: pr.once.headSha, reason: pr.once.reason, ...(pr.once.failedChecks ? { failedChecks: [...pr.once.failedChecks] } : {}) } } : {}),
       ...(pr.line ? { line: pr.line } : {}),
       ...(pr.line ? bodyTargetLineMeta(pr) : {}),

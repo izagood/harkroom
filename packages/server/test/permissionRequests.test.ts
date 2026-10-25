@@ -405,7 +405,8 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect(row.body).not.toContain('아무 일 없음');
       expect(row.meta.ask.options).toEqual([{ id: 'approve_new_mandate', label: '이 스레드로 위임장 만들고 더하기' }, { id: 'deny', label: '거절' }]);
       expect(row.meta.permissionRequest).toBeUndefined();
-      expect(row.meta.permissionMirror).toMatchObject({ rootId: r.cardMessageId });
+      // 정할 사람(표시용)은 서버가 원본 요청 행의 에이전트 소유자로 채운다 — 위임장 칩이 없어도 소유자에게 버튼이 선다.
+      expect(row.meta.permissionMirror).toMatchObject({ rootId: r.cardMessageId, ownerAccountId: alice.accountId });
     });
 
     it('소유자가 거울에서 승인하면 원본 요청이 열리고 거울은 따라 닫힌다 — 에이전트는 한 번 깨어난다', async () => {
