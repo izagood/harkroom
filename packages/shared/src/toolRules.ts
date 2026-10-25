@@ -173,6 +173,27 @@ function subcommandOf(words: readonly string[]): string | null {
   return null;
 }
 
+/** gh 하위 명령의 읽기 동작 — 원격을 바꾸지 않는다. */
+const GH_READ_ACTIONS = new Set(['list', 'view', 'status', 'diff', 'checks']);
+
+/**
+ * gh 규칙이 원격 상태를 바꾸는가(`mutates_remote`). `MUTATE_SUBCOMMANDS.gh` 는 하위 명령(issue·repo…)까지만 보므로 읽기도 걸렸다
+ * (2026-10-25 실물: `gh issue list`·`gh api …/pulls` 카드에 「원격 상태를 바꾼다」). 경고를 **빼는** 쪽이라 좁게 뺀다:
+ * - `gh api`: 이 규칙까지 온 것은 쓰기 꼴(`-X`·`-f`·`--input`·graphql)과 접두 규칙이 이미 거절된(`checkGh`) GET 정확 규칙뿐이다 → 바꾸지 않는다.
+ *   같은 판정을 여기서도 한 번 더 본다(거절 표가 바뀌어도 경고가 조용히 빠지지 않게).
+ * - 그 밖: **정확 규칙**이고 둘째 낱말이 읽기 동작(`GH_READ_ACTIONS`)일 때만 뺀다. 접두 규칙(`gh issue:*`)은 뒤에 무엇이든 붙으니 그대로 둔다.
+ */
+function ghMutates(words: readonly string[], prefix: boolean): boolean {
+  const pos = positionals(words);
+  if (!hits(MUTATE_SUBCOMMANDS, 'gh', pos[0] ?? null)) return false;
+  if (pos[0] === 'api') {
+    if (prefix) return true;
+    return words.some((w) => /^(-X|--method)/.test(w) || /^-[fF]/.test(w) || /^--(field|raw-field|input)/.test(w))
+      || pos.some((w) => w.toLowerCase() === 'graphql');
+  }
+  return prefix || !GH_READ_ACTIONS.has(pos[1] ?? '');
+}
+
 function hits(table: Record<string, readonly string[]>, head: string, sub: string | null): boolean {
   const subs = table[head];
   if (!subs) return false;
@@ -220,7 +241,7 @@ export function validateToolRule(input: string): ToolRuleVerdict {
 
   const warnings: ToolRuleWarning[] = [];
   if (hits(EXEC_SUBCOMMANDS, head, sub)) warnings.push('executes_in_workload');
-  if (hits(MUTATE_SUBCOMMANDS, head, sub)) warnings.push('mutates_remote');
+  if (head === 'gh' ? ghMutates(words, prefix) : hits(MUTATE_SUBCOMMANDS, head, sub)) warnings.push('mutates_remote');
   if (runsArbitrary(head, sub, words)) warnings.push('runs_arbitrary');
   if (prefix && words.length < 3) warnings.push('short_prefix');
   if (head === 'gh') warnings.push('uses_github_account');

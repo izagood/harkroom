@@ -45,6 +45,19 @@ describe('validateToolRule — 받는 것', () => {
     }
   });
 
+  it('gh 읽기(정확 규칙의 list·view·status·diff·checks, GET api)에는 mutates_remote 를 달지 않는다 · 접두·쓰기는 그대로', () => {
+    for (const r of ['Bash(gh issue list -R cli/cli --limit 3)', 'Bash(gh issue view 1 -R cli/cli)', 'Bash(gh release view v1 -R o/r)',
+      'Bash(gh repo view o/r)', 'Bash(gh workflow list -R o/r)', 'Bash(gh api repos/o/r/pulls)', 'Bash(gh api repos/o/r/pulls --jq .)']) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings, r).toEqual(['uses_github_account']);
+    }
+    for (const r of ['Bash(gh issue list:*)', 'Bash(gh issue create --title x)', 'Bash(gh issue close 1 -R o/r)',
+      'Bash(gh -R o/r issue comment 1 --body x)', 'Bash(gh label create bug)', 'Bash(gh secret list -R o/r:*)']) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings.includes('mutates_remote'), r).toBe(true);
+    }
+  });
+
   it('첫 실사용 규칙(sitebot)은 통과한다', () => {
     expect(validateToolRule('Bash(kubectl --context prod-main-admin@prod-main -n app-cluster exec:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
     expect(validateToolRule('Bash(gh pr view -R acme-org/infra-k8s:*)')).toMatchObject({ ok: true, warnings: ['uses_github_account'] });
