@@ -7,6 +7,7 @@ import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
 import { MandateLineBody, readCardSource } from './MandateLineBody';
 import { messageLinkFromMeta } from '../lib/link';
+import { CardMessageLink } from './CardMessageLink';
 import type { SectionId } from './settings/sections';
 
 /**
@@ -144,7 +145,7 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
           <span className="text-meta text-fg-subtle" data-testid="ask-answered-via-chat">
             {'· '}
             {chatViaHref
-              ? <a className="underline decoration-dotted underline-offset-2" href={chatViaHref}>{t('speech.ask.viaChat')}</a>
+              ? <CardMessageLink messageId={chatVia?.messageId} className="underline decoration-dotted underline-offset-2" testId="ask-via-chat-link">{t('speech.ask.viaChat')}</CardMessageLink>
               : t('speech.ask.viaChat')}
           </span>
         )}

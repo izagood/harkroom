@@ -212,7 +212,7 @@ describe('permission card decisions (W4b)', () => {
     const other = (await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'w4b-other' } })).json().id as string;
     expect(other).toBeTruthy();
     const g = await renderPermissionMirror(pool, genuine.cardId, other);
-    expect(g?.mirror).toEqual({ rootId: genuine.cardId, neutral: false, kind: 'tool', line: genuine.meta.line, bodyTargetLine: `명령 허용 \`${genuine.meta.target}\``, mandate: genuine.meta.mandate });
+    expect(g?.mirror).toEqual({ rootId: genuine.cardId, neutral: false, kind: 'tool', line: genuine.meta.line, bodyTargetLine: `명령 허용 \`${genuine.meta.target}\``, mandate: genuine.meta.mandate, ownerAccountId: alice.accountId });
     expect(ids(g!.options)).toEqual(['approve_mandate', 'deny']);
     // r2: 거울 본문도 줄 카드 꼴(머리 + 이유) — 「이 채널의 모든 대화에서 · 7일」을 다시 말하지 않는다.
     // r5: 대상 줄(서버가 쓴 것)이 머리와 이유 사이에 선다.

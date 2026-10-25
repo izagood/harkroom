@@ -8,6 +8,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import type { Translate } from '../i18n';
 import { messageLinkFromMeta } from '../lib/link';
 import { OnceCardRows, useOnceApproval } from './PermissionOncePanel';
+import { CardMessageLink } from './CardMessageLink';
 import type { SectionId } from './settings/sections';
 
 /**
@@ -175,7 +176,10 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
   const [revokeBusy, setRevokeBusy] = useState(false);
   const [revokeError, setRevokeError] = useState<string | null>(null);
   const [revokedLocal, setRevokedLocal] = useState<string | null>(null);
-  const ownerOf = src.request && typeof src.request.ownerAccountId === 'string' ? src.request.ownerAccountId : src.mandate?.ownerId ?? null;
+  // 정할 사람: 원본 카드는 요청의 소유자, 거울은 서버가 원본 요청 행에서 채운 소유자(위임장 없는 카드도 서도록), 그다음 위임장 칩.
+  const ownerOf = src.request && typeof src.request.ownerAccountId === 'string' ? src.request.ownerAccountId
+    : typeof src.mirror?.ownerAccountId === 'string' ? src.mirror.ownerAccountId
+      : src.mandate?.ownerId ?? null;
   const mirrorHref = messageLinkFromMeta(src.mirror?.rootId);
   const supersededHref = messageLinkFromMeta(supersededBy);
   const ownerHandle = useActiveStore((s) => (ownerOf ? s.accounts[ownerOf]?.handle ?? null : null));
@@ -186,7 +190,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
     return (
       <div className="px-3 pb-2 pt-1 text-meta" data-testid="mandate-mirror-neutral">
         <p className="text-fg-muted">{t('mandateCard.mirrorNeutral')}</p>
-        {mirrorHref && <a className="text-accent underline" href={mirrorHref} data-testid="mandate-mirror-link">{t('mandateCard.openOriginal')}</a>}
+        {mirrorHref && <CardMessageLink messageId={src.mirror?.rootId} className="text-accent underline" testId="mandate-mirror-link">{t('mandateCard.openOriginal')}</CardMessageLink>}
       </div>
     );
   }
@@ -244,7 +248,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       return (
         <p className="text-fg-subtle" data-testid="mandate-ended" data-state="superseded">
           {t('mandateCard.ended.superseded')}{' '}
-          {supersededHref ? <a className="text-accent underline" href={supersededHref} data-testid="mandate-new-card">{t('mandateCard.openNewCard')}</a> : t('mandateCard.askAgain')}
+          {supersededHref ? <CardMessageLink messageId={supersededBy} className="text-accent underline" testId="mandate-new-card">{t('mandateCard.openNewCard')}</CardMessageLink> : t('mandateCard.askAgain')}
         </p>
       );
     }
@@ -291,7 +295,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       {src.mirror && (
         <p className="mb-1 text-meta text-fg-subtle" data-testid="mandate-mirror-genuine">
           ↪ {t('mandateCard.mirror')}{' '}
-          {mirrorHref && <a className="text-accent underline" href={mirrorHref} data-testid="mandate-mirror-link">{t('mandateCard.openOriginal')}</a>}
+          {mirrorHref && <CardMessageLink messageId={src.mirror?.rootId} className="text-accent underline" testId="mandate-mirror-link">{t('mandateCard.openOriginal')}</CardMessageLink>}
         </p>
       )}
       {/* 칩은 소유자에게만 보인다(시안 「남이 볼 때」 — 다른 채널의 위임장이 드러나지 않게). */}

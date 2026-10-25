@@ -57,6 +57,8 @@ export interface PermissionMirrorMeta {
   rootId: string;
   neutral: boolean;
   kind?: 'tool' | 'merge' | 'command';
+  /** 원본 요청을 정할 사람(에이전트 소유자) — 서버가 원본 요청 행에서 채운 표시용 칸. 답할 자격은 서버가 다시 판정한다. */
+  ownerAccountId?: string;
   once?: { number: number; headSha: string; reason: string; failedChecks?: string[] };
   line?: PermissionCardLine;
   /** r5: 본문 속 서버가 쓴 대상 줄 — 줄 상자를 그리는 화면이 본문에서 이 줄 하나만 뺀다. */

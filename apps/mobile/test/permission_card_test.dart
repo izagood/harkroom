@@ -144,6 +144,13 @@ void main() {
     expect(PermissionCardInfo.read(const {'kind': 'ask'}), isNull);
   });
 
+  test('거울: 위임장이 없어도 서버가 채운 ownerAccountId 로 정할 사람을 안다', () {
+    final g = PermissionCardInfo.read(permMeta(mirror: {'rootId': 'root1', 'neutral': false, 'kind': 'command', 'line': _line, 'ownerAccountId': 'owner-x'}))!;
+    expect(g.ownerId, 'owner-x');
+    final old = PermissionCardInfo.read(permMeta(mirror: {'rootId': 'root1', 'neutral': false, 'kind': 'command', 'line': _line}))!;
+    expect(old.ownerId, isNull);
+  });
+
   testWidgets('H4: 경고는 줄 상자 안에 문장으로 — 위험한 것부터, 모르는 코드는 버린다', (tester) async {
     await tester.pumpWidget(wrap(app, card(permMeta(pr: {'warnings': ['uses_github_account', 'short_prefix', 'bogus']}))));
     expect(find.byKey(const Key('perm-warning-short_prefix')), findsOneWidget);

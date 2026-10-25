@@ -381,3 +381,27 @@ describe('H4 card warnings (designer v1)', () => {
     expect(bodyForLineCard(body, card({ pr: { bodyTargetLine: TL, bodyWarningLine: WL } }).meta as Record<string, unknown>)).toBe('권한 요청 · @rcms\n이유: 확인');
   });
 });
+
+describe('permission mirror owner + in-app links', () => {
+  const MIRROR_LINE = { cap: 'command', scope: 'kubectl get pods', limits: { approve_once: { uses: 1, untilMs: 3_600_000 } } };
+  it('a mirror without a mandate still draws the owner buttons when the server filled ownerAccountId', () => {
+    render(<AskCard message={card({ options: ['approve_once', 'deny'], mirror: { rootId: ROOT, neutral: false, kind: 'command', line: MIRROR_LINE, ownerAccountId: ME } })} />);
+    expect(screen.getByTestId('ask-option-approve_once')).toBeTruthy();
+    expect(screen.queryByTestId('mandate-owner-only')).toBeNull();
+  });
+  it('someone else is the owner → no buttons, owner-only line', () => {
+    render(<AskCard message={card({ options: ['approve_once', 'deny'], mirror: { rootId: ROOT, neutral: false, kind: 'command', line: MIRROR_LINE, ownerAccountId: 'other' } })} />);
+    expect(screen.queryByTestId('ask-option-approve_once')).toBeNull();
+    expect(screen.getByTestId('mandate-owner-only').textContent).toContain('carol');
+  });
+  it('「원본 열기」 moves inside the app (openMessage), not via the webview', () => {
+    const openMessage = vi.fn(async () => {});
+    setController({ answerAsk, closeAsk: vi.fn(), openMessage } as unknown as Controller);
+    render(<AskCard message={card({ options: ['approve_once', 'deny'], mirror: { rootId: ROOT, neutral: false, kind: 'command', line: MIRROR_LINE, ownerAccountId: ME } })} />);
+    const link = screen.getByTestId('mandate-mirror-link');
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true });
+    link.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(openMessage).toHaveBeenCalledWith(ROOT);
+  });
+});
