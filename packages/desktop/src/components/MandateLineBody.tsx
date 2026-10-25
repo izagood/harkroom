@@ -1,4 +1,4 @@
-import type { MessageRow, PermissionCardLine, PermissionCardLineLimits, PermissionCardMandate, PermissionMirrorMeta } from '@harkroom/shared';
+import { orderToolRuleWarnings, type MessageRow, type PermissionCardLine, type PermissionCardLineLimits, type PermissionCardMandate, type PermissionMirrorMeta, type ToolRuleWarning } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useState } from 'react';
@@ -51,13 +51,21 @@ export function bodyForLineCard(body: string, meta: Record<string, unknown> | un
   if (!meta || !meta.ask) return body;
   const src = readCardSource(meta);
   if (!src?.line || src.mirror?.neutral) return body;
-  const raw = src.mirror ? src.mirror.bodyTargetLine : src.request?.bodyTargetLine;
-  if (typeof raw !== 'string' || !raw) return body;
   const lines = body.split('\n');
-  const i = lines.indexOf(raw);
-  if (i < 0) return body;
-  lines.splice(i, 1);
+  // H4: 서버가 쓴 경고 줄(meta `bodyWarningLine`)도 하나만 뺀다 — 줄 상자 안에 문장으로 그린다.
+  const hidden = src.mirror ? [src.mirror.bodyTargetLine, src.mirror.bodyWarningLine] : [src.request?.bodyTargetLine, src.request?.bodyWarningLine];
+  for (const raw of hidden) {
+    if (typeof raw !== 'string' || !raw) continue;
+    const i = lines.indexOf(raw);
+    if (i >= 0) lines.splice(i, 1);
+  }
   return lines.join('\n');
+}
+
+/** 카드가 그릴 경고 — 원본 요청(거울이면 거울에 옮긴 값)의 코드를 그리는 순서대로. 모르는 코드는 버린다. */
+export function cardWarnings(src: CardSource): ToolRuleWarning[] {
+  const raw = src.mirror ? src.mirror.warnings : src.request?.warnings;
+  return Array.isArray(raw) ? orderToolRuleWarnings(raw) : [];
 }
 
 function validLine(v: unknown): PermissionCardLine | null {
@@ -116,7 +124,7 @@ export function MandateChip({ mandate }: { mandate: PermissionCardMandate | null
   );
 }
 
-export function LineBox({ line, show, omitPr = false }: { line: PermissionCardLine; show: string[]; omitPr?: boolean }) {
+export function LineBox({ line, show, omitPr = false, warnings = [] }: { line: PermissionCardLine; show: string[]; omitPr?: boolean; warnings?: readonly ToolRuleWarning[] }) {
   const t = useT();
   const chips = show.flatMap((id) => limitChips(line.limits[id as keyof PermissionCardLine['limits']], t, omitPr));
   return (
@@ -128,6 +136,17 @@ export function LineBox({ line, show, omitPr = false }: { line: PermissionCardLi
       {chips.length > 0 && (
         <ul className="mt-1 flex flex-wrap gap-1" data-testid="mandate-line-limits">
           {[...new Set(chips)].map((c) => <li key={c} className="rounded-row bg-surface-sunken px-1.5 text-meta text-fg-muted">{c}</li>)}
+        </ul>
+      )}
+      {/* H4(designer 시안 v1): 한계 칩 아래 점선 뒤, 「⚠ 머리 — 까닭」 문장 목록. 위험한 것부터, 색은 경고색 하나. */}
+      {warnings.length > 0 && (
+        <ul className="mt-1.5 border-t border-dashed border-border pt-1.5" data-testid="mandate-line-warnings">
+          {warnings.map((w) => (
+            <li key={w} className="mt-0.5 flex gap-1.5 text-meta text-warning" data-warning={w}>
+              <span aria-hidden>⚠</span>
+              <span><b className="font-semibold">{t(`mandateCard.warn.${w}.head`)}</b> — {t(`mandateCard.warn.${w}.why`)}</span>
+            </li>
+          ))}
         </ul>
       )}
     </div>
@@ -277,7 +296,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       )}
       {/* 칩은 소유자에게만 보인다(시안 「남이 볼 때」 — 다른 채널의 위임장이 드러나지 않게). */}
       {viewerIsOwner && <MandateChip mandate={src.mandate} />}
-      {line && <LineBox line={line} show={shownLimits} omitPr={onceByPanel && !!once.d} />}
+      {line && <LineBox line={line} show={shownLimits} omitPr={onceByPanel && !!once.d} warnings={cardWarnings(src)} />}
       {onceByPanel && <OnceCardRows s={once} canAct={canChoose && viewerIsOwner && once.isOwner} />}
       {pending && !viewerIsOwner && (
         <p className="mt-1 text-meta text-fg-subtle" data-testid="mandate-owner-only">{ownerHandle ? t('mandateCard.ownerOnly', { owner: ownerHandle }) : t('mandateCard.ownerOnlyUnknown')}</p>

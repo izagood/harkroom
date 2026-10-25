@@ -23,7 +23,30 @@ export type ToolRuleRefusal =
 
 export type ToolRuleWarning = 'executes_in_workload' | 'mutates_remote' | 'runs_arbitrary' | 'short_prefix'
   /** 정확한 명령만(H②, security F1): 파일을 읽어 그 내용대로 움직인다 — 승인은 글자에 묶이고 파일 내용은 범위 밖이다. */
-  | 'reads_file';
+  | 'reads_file'
+  /** 머리가 `gh` 다 — 러너가 도는 맥의 gh 로그인 계정으로 돈다(하네스와 상관없이, 시안 H4). */
+  | 'uses_github_account';
+
+/** 카드가 경고를 그리는 순서 — 위험한 것부터(designer H4 시안). 목록 밖 값은 그리지 않는다. */
+export const TOOL_RULE_WARNING_ORDER: readonly ToolRuleWarning[] = [
+  'runs_arbitrary', 'executes_in_workload', 'mutates_remote', 'reads_file', 'short_prefix', 'uses_github_account',
+];
+
+/** 서버가 카드 본문(옛 앱이 읽는 글)에 쓰는 경고 머리 낱말(ko). 새 앱은 meta `bodyWarningLine` 과 같은 줄을 감추고 문장으로 그린다. */
+export const TOOL_RULE_WARNING_HEAD_KO: Readonly<Record<ToolRuleWarning, string>> = {
+  runs_arbitrary: '무엇이든 돌릴 수 있다',
+  executes_in_workload: '돌고 있는 서버 안에서 실행한다',
+  mutates_remote: '원격 상태를 바꾼다',
+  reads_file: '파일을 읽는다',
+  short_prefix: '접두가 짧다',
+  uses_github_account: 'GitHub 계정으로 돈다',
+};
+
+/** 알려진 경고만, 그리는 순서대로 · 같은 것은 하나로. */
+export function orderToolRuleWarnings(warnings: readonly unknown[]): ToolRuleWarning[] {
+  const set = new Set(warnings);
+  return TOOL_RULE_WARNING_ORDER.filter((w) => set.has(w));
+}
 
 export type ToolRuleVerdict =
   | { ok: true; rule: string; kind: 'bash_prefix' | 'bash_exact' | 'mcp_tool'; warnings: ToolRuleWarning[] }
@@ -200,6 +223,7 @@ export function validateToolRule(input: string): ToolRuleVerdict {
   if (hits(MUTATE_SUBCOMMANDS, head, sub)) warnings.push('mutates_remote');
   if (runsArbitrary(head, sub, words)) warnings.push('runs_arbitrary');
   if (prefix && words.length < 3) warnings.push('short_prefix');
+  if (head === 'gh') warnings.push('uses_github_account');
   const normalized = `Bash(${words.join(' ')}${prefix ? ':*' : ''})`;
   return { ok: true, rule: normalized, kind: prefix ? 'bash_prefix' : 'bash_exact', warnings };
 }

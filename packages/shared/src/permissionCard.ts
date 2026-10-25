@@ -61,6 +61,10 @@ export interface PermissionMirrorMeta {
   line?: PermissionCardLine;
   /** r5: 본문 속 서버가 쓴 대상 줄 — 줄 상자를 그리는 화면이 본문에서 이 줄 하나만 뺀다. */
   bodyTargetLine?: string;
+  /** H4: 원본 요청의 경고 코드(`ToolRuleWarning`) — 줄 상자 안에 문장으로 그린다. */
+  warnings?: string[];
+  /** H4: 본문 속 서버가 쓴 경고 줄(`⚠ …`) — 경고를 줄 상자에 그리는 화면이 본문에서 이 줄 하나만 뺀다. */
+  bodyWarningLine?: string;
   mandate?: PermissionCardMandate;
   /** 원본의 1회 승인(계정 비움)으로 머지했을 때 오퍼레이터가 쓴 gh 이름(래퍼 보고) — 머지 보고 뒤 원본과 함께 적힌다. */
   ghUserUsed?: string;

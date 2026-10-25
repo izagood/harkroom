@@ -359,3 +359,25 @@ describe('W4 mandate line card', () => {
     expect(screen.getByTestId('ask-card').textContent).toContain('Which one?');
   });
 });
+
+describe('H4 card warnings (designer v1)', () => {
+  it('draws known warnings as sentences under the limit chips, most dangerous first; unknown codes dropped', () => {
+    render(<AskCard message={card({ pr: { warnings: ['uses_github_account', 'short_prefix', 'bogus'] } })} />);
+    const items = [...screen.getByTestId('mandate-line-warnings').querySelectorAll('li')];
+    expect(items.map((li) => li.getAttribute('data-warning'))).toEqual(['short_prefix', 'uses_github_account']);
+    expect(items[1]!.textContent).toContain('GitHub 계정으로 돈다 — 이 에이전트가 도는 맥의 gh 로그인 계정이 쓰인다');
+  });
+  it('no warnings → no list; genuine mirror draws the copied warnings', () => {
+    const c = render(<AskCard message={card()} />);
+    expect(screen.queryByTestId('mandate-line-warnings')).toBeNull();
+    c.unmount();
+    render(<AskCard message={card({ mirror: { rootId: ROOT, neutral: false, kind: 'tool', line: { cap: 'tool', scope: 'Bash(gh pr list)', limits: {} }, warnings: ['uses_github_account'] } })} />);
+    expect(screen.getByTestId('mandate-line-warnings').textContent).toContain('GitHub 계정으로 돈다');
+  });
+  it('the server warning line (meta bodyWarningLine) leaves the body too', () => {
+    const TL = '명령 허용 `Bash(gh pr list)`';
+    const WL = '⚠ GitHub 계정으로 돈다';
+    const body = `권한 요청 · @rcms\n${TL}\n${WL}\n이유: 확인`;
+    expect(bodyForLineCard(body, card({ pr: { bodyTargetLine: TL, bodyWarningLine: WL } }).meta as Record<string, unknown>)).toBe('권한 요청 · @rcms\n이유: 확인');
+  });
+});

@@ -144,6 +144,23 @@ void main() {
     expect(PermissionCardInfo.read(const {'kind': 'ask'}), isNull);
   });
 
+  testWidgets('H4: 경고는 줄 상자 안에 문장으로 — 위험한 것부터, 모르는 코드는 버린다', (tester) async {
+    await tester.pumpWidget(wrap(app, card(permMeta(pr: {'warnings': ['uses_github_account', 'short_prefix', 'bogus']}))));
+    expect(find.byKey(const Key('perm-warning-short_prefix')), findsOneWidget);
+    expect(find.byKey(const Key('perm-warning-uses_github_account')), findsOneWidget);
+    expect(find.byKey(const Key('perm-warning-bogus')), findsNothing);
+    double dy(String k) => tester.getTopLeft(find.byKey(Key('perm-warning-$k'))).dy;
+    expect(dy('short_prefix') < dy('uses_github_account'), isTrue);
+    expect(find.textContaining('GitHub 계정으로 돈다', findRichText: true), findsOneWidget);
+  });
+
+  test('H4: 본문에서 서버 경고 줄(bodyWarningLine)도 뺀다', () {
+    const tl = '명령 허용 `Bash(gh pr list)`';
+    const wl = '⚠ GitHub 계정으로 돈다';
+    const body = '권한 요청 · @ag\n$tl\n$wl\n이유: 확인';
+    expect(permissionCardBody(body, permMeta(pr: {'bodyTargetLine': tl, 'bodyWarningLine': wl})), '권한 요청 · @ag\n이유: 확인');
+  });
+
   testWidgets('열린 카드: 칩 · 줄 · 세로 44pt 선택지 · 거절은 글자 버튼', (tester) async {
     await tester.pumpWidget(wrap(app, card(permMeta())));
     expect(find.text('🔑 M2.7 전환 · 10-21'), findsOneWidget);

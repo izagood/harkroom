@@ -19,12 +19,13 @@ String permissionCardBody(String body, Map<String, Object?> meta) {
   final perm = PermissionCardInfo.read(meta);
   if (perm == null || perm.neutral || perm.line == null) return body;
   if (perm.status == 'superseded' || ask.isSuperseded) return body;
-  final target = perm.bodyTargetLine;
-  if (target == null || target.isEmpty) return body;
   final lines = body.split('\n');
-  final i = lines.indexOf(target);
-  if (i < 0) return body;
-  lines.removeAt(i);
+  // H4: 서버가 쓴 경고 줄(meta `bodyWarningLine`)도 하나만 뺀다 — 줄 상자 안에 문장으로 그린다.
+  for (final raw in [perm.bodyTargetLine, perm.bodyWarningLine]) {
+    if (raw == null || raw.isEmpty) continue;
+    final i = lines.indexOf(raw);
+    if (i >= 0) lines.removeAt(i);
+  }
   return lines.join('\n');
 }
 
@@ -335,6 +336,7 @@ class _AskCardState extends State<AskCard> {
                 line: perm.line!,
                 limits: shownLimits,
                 once: shownOnce,
+                warnings: perm.warnings,
               ),
             ],
             if (ask.prompt != null && open && (perm.line == null || (perm.once?.ci ?? false))) ...[

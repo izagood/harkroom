@@ -275,6 +275,9 @@ abstract class Strings {
   String get sendWaitsForUpload;
 
   /// 권한 카드(W4 위임장).
+  /// H4: 권한 카드 경고(서버 경고 코드) — 굵은 머리와 까닭.
+  String permWarnHead(String code);
+  String permWarnWhy(String code);
   String get permMandateChip;
 
   /// 권한 카드(W4 위임장).

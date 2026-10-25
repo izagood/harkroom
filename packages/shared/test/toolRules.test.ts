@@ -4,7 +4,7 @@ import { parseToolScope, toolScope, validateExactCommand, validateToolRule } fro
 describe('validateToolRule — 받는 것', () => {
   it('읽기 접두는 경고 없이 받는다', () => {
     expect(validateToolRule('Bash(gh pr view -R acme-org/infra-k8s:*)')).toEqual({
-      ok: true, rule: 'Bash(gh pr view -R acme-org/infra-k8s:*)', kind: 'bash_prefix', warnings: [],
+      ok: true, rule: 'Bash(gh pr view -R acme-org/infra-k8s:*)', kind: 'bash_prefix', warnings: ['uses_github_account'],
     });
     expect(validateToolRule('Bash(kubectl --context ops -n sitebot get:*)')).toMatchObject({ ok: true, warnings: [] });
   });
@@ -47,7 +47,7 @@ describe('validateToolRule — 받는 것', () => {
 
   it('첫 실사용 규칙(sitebot)은 통과한다', () => {
     expect(validateToolRule('Bash(kubectl --context prod-main-admin@prod-main -n app-cluster exec:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
-    expect(validateToolRule('Bash(gh pr view -R acme-org/infra-k8s:*)')).toMatchObject({ ok: true, warnings: [] });
+    expect(validateToolRule('Bash(gh pr view -R acme-org/infra-k8s:*)')).toMatchObject({ ok: true, warnings: ['uses_github_account'] });
   });
 
   it('임의 명령을 돌릴 수 있는 도구는 runs_arbitrary 경고(n5)', () => {
@@ -222,5 +222,15 @@ describe('validateExactCommand', () => {
     for (const c of [`kubectl ${KC} apply -f/tmp/x.yaml`, `kubectl ${KC} apply -f=/tmp/x.yaml`]) expect(validateExactCommand(c), c).toEqual({ ok: false, code: 'glued_flag' });
     expect(validateExactCommand(`kubectl ${KC} logs -f pod-0`)).toMatchObject({ ok: true });
     expect(validateExactCommand('kubectl --kubeconfig /x --context rc apply -f /x')).toMatchObject({ ok: true, files: [{ path: '/x', flag: '--kubeconfig', secret: true }] });
+  });
+});
+
+describe('경고 — GitHub 계정·순서·본문 머리(H4)', () => {
+  it('머리가 gh 면 uses_github_account(정확·접두 모두), gh 가 아니면 없다', async () => {
+    const { validateToolRule, orderToolRuleWarnings, TOOL_RULE_WARNING_HEAD_KO } = await import('../src/toolRules.js');
+    expect(validateToolRule('Bash(gh pr list -R cli/cli --limit 3)')).toMatchObject({ ok: true, warnings: ['uses_github_account'] });
+    expect(validateToolRule('Bash(kubectl get:*)')).toMatchObject({ ok: true, warnings: ['short_prefix'] });
+    expect(orderToolRuleWarnings(['uses_github_account', 'short_prefix', 'bogus', 'runs_arbitrary', 'short_prefix'])).toEqual(['runs_arbitrary', 'short_prefix', 'uses_github_account']);
+    expect(Object.keys(TOOL_RULE_WARNING_HEAD_KO)).toHaveLength(6);
   });
 });
