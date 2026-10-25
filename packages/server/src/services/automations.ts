@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import type { AutomationRunView, AutomationSchedule, AutomationTrigger, AutomationView } from '@harkroom/shared';
+import type { AutomationLastRun, AutomationRunView, AutomationSchedule, AutomationTrigger, AutomationView } from '@harkroom/shared';
 import { postMessage } from './messages.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { channelPostGate } from './channels.js';
@@ -182,6 +182,38 @@ const COLS = `id, owner_id as "ownerId", channel_id as "channelId", name, body, 
   consecutive_failures as "consecutiveFailures", ingress_enabled_at as "ingressEnabledAt",
   debounce_sec as "debounceSec", proposed_by as "proposedBy", approved_at as "approvedAt", created_at as "createdAt", updated_at as "updatedAt"`;
 
+// 목록·조회가 「마지막 실행」을 함께 싣는다. 이름을 따로 붙여 `COLS` 의 맨 이름과 겹치지 않게 한다.
+// `automation_run_recent (automation_id, created_at desc)` 인덱스로 한 건만 읽는다.
+const LAST_RUN_JOIN = `left join lateral (
+  select id as "lrId", status as "lrStatus", trigger_kind as "lrTriggerKind", created_at as "lrCreatedAt",
+         message_id as "lrMessageId", error as "lrError"
+    from automation_run where automation_id = a.id order by created_at desc limit 1) lr on true`;
+
+type ViewRow = Omit<AutomationView, 'lastRun'> & {
+  lrId: string | null; lrStatus: AutomationLastRun['status'] | null; lrTriggerKind: string | null;
+  lrCreatedAt: Date | null; lrMessageId: string | null; lrError: string | null;
+};
+
+function toView(row: ViewRow): AutomationView {
+  const { lrId, lrStatus, lrTriggerKind, lrCreatedAt, lrMessageId, lrError, ...view } = row;
+  return {
+    ...view,
+    lastRun: lrId && lrStatus && lrCreatedAt
+      ? { id: lrId, status: lrStatus, triggerKind: lrTriggerKind ?? 'manual', createdAt: new Date(lrCreatedAt).toISOString(),
+        messageId: lrMessageId, error: lrError }
+      : null,
+  };
+}
+
+/** 쓰기 문(`... returning *`)의 결과에 마지막 실행을 붙여 읽는다. */
+async function writeReturningView(pool: Pool, sql: string, params: unknown[]): Promise<AutomationView | null> {
+  const res = await pool.query<ViewRow>(
+    `with w as (${sql} returning *) select ${COLS}, lr.* from w a ${LAST_RUN_JOIN}`,
+    params,
+  );
+  return res.rows[0] ? toView(res.rows[0]) : null;
+}
+
 const RUN_COLS = `id, automation_id as "automationId", event_key as "eventKey",
   trigger_kind as "triggerKind", status, message_id as "messageId", error,
   created_at as "createdAt", finished_at as "finishedAt",
@@ -202,7 +234,7 @@ export async function createAutomation(pool: Pool, input: {
     [input.ownerId, input.channelId, input.name, input.body, JSON.stringify(input.trigger), nextAt?.toISOString() ?? null,
       input.debounceSec ?? null],
   );
-  return res.rows[0];
+  return { ...res.rows[0], lastRun: null };
 }
 
 /**
@@ -219,7 +251,7 @@ export async function proposeAutomation(pool: Pool, input: {
     [input.ownerId, input.proposedBy, input.channelId, input.name, input.body, JSON.stringify(input.trigger),
       input.debounceSec ?? null],
   );
-  return res.rows[0];
+  return { ...res.rows[0], lastRun: null };
 }
 
 /** 제안 승인. 켜고 다음 회차를 잡는다. 이미 승인된 것은 false. */
@@ -227,29 +259,30 @@ export async function approveAutomation(pool: Pool, id: string, ownerId: string,
   const cur = await getAutomation(pool, id, ownerId);
   if (!cur || cur.approvedAt) return null;
   const nextAt = initialNextAt(cur.trigger, now);
-  const res = await pool.query(
+  return writeReturningView(pool,
     `update automation set approved_at = now(), enabled = true, next_at = $3, updated_at = now()
-     where id = $1 and owner_id = $2 and approved_at is null and deleted_at is null returning ${COLS}`,
+     where id = $1 and owner_id = $2 and approved_at is null and deleted_at is null`,
     [id, ownerId, nextAt?.toISOString() ?? null],
   );
-  return res.rows[0] ?? null;
 }
 
 /** 만든 사람 것만 보인다 — 예약 메시지(#222)와 같은 이유로, 소유자 조건을 호출부로 올리지 않는다. */
 export async function listAutomations(pool: Pool, ownerId: string): Promise<AutomationView[]> {
-  const res = await pool.query(
-    `select ${COLS} from automation where owner_id = $1 and deleted_at is null order by created_at`,
+  const res = await pool.query<ViewRow>(
+    `select ${COLS}, lr.* from automation a ${LAST_RUN_JOIN}
+      where owner_id = $1 and deleted_at is null order by created_at`,
     [ownerId],
   );
-  return res.rows;
+  return res.rows.map(toView);
 }
 
 export async function getAutomation(pool: Pool, id: string, ownerId: string): Promise<AutomationView | null> {
-  const res = await pool.query(
-    `select ${COLS} from automation where id = $1 and owner_id = $2 and deleted_at is null`,
+  const res = await pool.query<ViewRow>(
+    `select ${COLS}, lr.* from automation a ${LAST_RUN_JOIN}
+      where a.id = $1 and owner_id = $2 and deleted_at is null`,
     [id, ownerId],
   );
-  return res.rows[0] ?? null;
+  return res.rows[0] ? toView(res.rows[0]) : null;
 }
 
 /**
@@ -268,7 +301,7 @@ export async function updateAutomation(pool: Pool, id: string, ownerId: string, 
   const enabled = patch.enabled ?? cur.enabled;
   const reschedule = patch.trigger !== undefined || (patch.enabled === true && !cur.enabled);
   const nextAt = reschedule ? initialNextAt(trigger, patch.now ?? new Date()) : null;
-  const res = await pool.query(
+  return writeReturningView(pool,
     `update automation set
        name = coalesce($3, name), body = coalesce($4, body), channel_id = coalesce($5, channel_id),
        trigger = $6, enabled = $7,
@@ -281,13 +314,11 @@ export async function updateAutomation(pool: Pool, id: string, ownerId: string, 
        ingress_secret_enc = case when $6::jsonb->>'kind' = 'schedule' then null else ingress_secret_enc end,
        debounce_sec = case when $11 then $12::int else debounce_sec end,
        updated_at = now()
-     where id = $1 and owner_id = $2 and deleted_at is null
-     returning ${COLS}`,
+     where id = $1 and owner_id = $2 and deleted_at is null`,
     [id, ownerId, patch.name ?? null, patch.body ?? null, patch.channelId ?? null,
       JSON.stringify(trigger), enabled, reschedule, nextAt?.toISOString() ?? null,
       patch.enabled === true, patch.debounceSec !== undefined, patch.debounceSec ?? null],
   );
-  return res.rows[0] ?? null;
 }
 
 /** 지우지 않고 `deleted_at` 을 찍는다 — 회차 기록(무엇이 언제 나갔나)은 남긴다. */

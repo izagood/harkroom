@@ -143,6 +143,24 @@ describe('자동화 API · sweeper (064)', () => {
     expect(msgs[0]!.meta.automation.trigger).toBe('manual');
   });
 
+  it('목록·조회·수정 응답에 마지막 실행(lastRun)이 실린다 — 대기에서 글 올림으로', async () => {
+    const a = await create('마지막 실행');
+    expect((a as { lastRun?: unknown }).lastRun).toBeNull();
+    const run = await app.inject({ method: 'POST', url: `/automations/${a.id}/run`, headers: auth() });
+    const runId = run.json().run.id as string;
+    const pending = await app.inject({ method: 'GET', url: '/automations', headers: auth() });
+    const listed = pending.json().automations.find((x: { id: string }) => x.id === a.id);
+    expect(listed.lastRun).toMatchObject({ id: runId, status: 'pending', triggerKind: 'manual', messageId: null, error: null });
+
+    await createAutomationSweeper(pool).sweep();
+    const msg = (await userMessages()).find((m) => m.meta?.automation?.runId === runId) as { id?: string } | undefined;
+    const detail = await app.inject({ method: 'GET', url: `/automations/${a.id}`, headers: auth() });
+    expect(detail.json().automation.lastRun).toMatchObject({ id: runId, status: 'sent', messageId: msg?.id });
+    const patched = await app.inject({ method: 'PATCH', url: `/automations/${a.id}`, headers: auth(), payload: { name: '이름만' } });
+    expect(patched.json().automation.lastRun).toMatchObject({ id: runId, status: 'sent' });
+    expect(patched.json().automation).not.toHaveProperty('lrId');
+  });
+
   it('게시가 거부되면(보관된 채널) 실패로 적고 일시정지한다', async () => {
     const ch = await app.inject({
       method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` }, payload: { name: 'auto-archive' },
@@ -163,6 +181,7 @@ describe('자동화 API · sweeper (064)', () => {
     const detail = await app.inject({ method: 'GET', url: `/automations/${id}`, headers: auth() });
     expect(detail.json().automation).toMatchObject({ enabled: false, pausedReason: 'post_refused:channel_archived' });
     expect(detail.json().runs[0]).toMatchObject({ status: 'failed', error: 'channel_archived' });
+    expect(detail.json().automation.lastRun).toMatchObject({ status: 'failed', error: 'channel_archived' });
 
     // 다시 켜면 사유가 비고 다음 회차가 새로 잡힌다.
     const re = await app.inject({ method: 'PATCH', url: `/automations/${id}`, headers: auth(), payload: { enabled: true } });
