@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, stallNotice, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -1460,5 +1460,27 @@ describe('stallScreenErrorLine·stallNotice — 정지 화면의 오류 줄 (202
     expect(plain).not.toContain('화면의 마지막 오류 줄');
     expect(stallNotice(600_000, null)).toBe(plain);
     expect(stallNotice(600_000, '✘ 404 Not Found')).toBe(`${plain.slice(0, -1)} 화면의 마지막 오류 줄: "✘ 404 Not Found")`);
+  });
+});
+
+describe('stallNotice — 정지 화면 갈래 (2026-10-25, 스레드 db4ab174)', () => {
+  it('물음·답 없이 끝남·멈춤이 서로 다른 문장이고, 다시 부를 수 있는 것은 답 없이 끝난 턴뿐이다', () => {
+    const gate = stallNotice(600_000, null, 'gate');
+    const idle = stallNotice(600_000, null, 'idle');
+    const stuck = stallNotice(600_000, null, 'stuck');
+    expect(gate).toContain('확인 물음');
+    expect(idle).toContain('차례를 끝낸');
+    expect(stuck).toContain('아무것도 하지 않아');
+    expect(new Set([gate, idle, stuck]).size).toBe(3);
+    // 물음이 서 있을 수 있다는 헛짚는 말은 갈래를 아는 문장에 없다
+    for (const s of [idle, stuck]) expect(s).not.toContain('물음이 서 있을 수');
+    expect(stallRetryable('idle')).toBe(true);
+    expect(stallRetryable('gate')).toBe(false);
+    expect(stallRetryable('stuck')).toBe(false);
+    expect(stallRetryable(null)).toBe(false);
+  });
+
+  it('갈래를 모르면 옛 문장 그대로다', () => {
+    expect(stallNotice(600_000, null, null)).toBe(stallNotice(600_000));
   });
 });

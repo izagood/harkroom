@@ -1,4 +1,4 @@
-// pi 코딩 에이전트 어댑터 (`pi 0.99.2`, npm `@earendil-works/pi-coding-agent` 실측, 2026-10-01).
+// pi 코딩 에이전트 어댑터 (`pi 0.99.2`, npm `@earendil-works/pi-coding-agent` 실측, 2026-10-01; 화면 `ready`·`busy` 는 1.4.0 에서 다시 쟀다, 2026-10-25).
 //
 // 측정(PTY 프로브 · 격리 `PI_CODING_AGENT_DIR` · 탐침 stdio MCP · BYOK 제공자):
 // - **TUI 가 기본**이다(`pi`). 준비 표시는 상태줄의 컨텍스트 칸 `0.0%/197k`(0.2~0.4초). 되살린
@@ -34,6 +34,8 @@ export const PI_ADAPTER: HarnessAdapter = {
     ready: /\d+(?:\.\d+)?%\/\d+(?:\.\d+)?[kM]\b/,
     gate: GATE_PATTERN,
     gateMeasured: false,
+    // 입력창 위 `── ⠧ Working ──` 줄(1.4.0). 본문의 낱말 `Working` 과 섞이지 않게 선·스피너까지 맞춘다.
+    busy: /─+ [\u2800-\u28ff] Working/,
     readyMinMs: 1000,
   },
 

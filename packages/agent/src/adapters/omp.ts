@@ -33,6 +33,8 @@ export const OMP_ADAPTER: HarnessAdapter = {
     ready: /\d+(?:\.\d+)?%[^\n]*?\b\d+(?:\.\d+)?[KM]\b/,
     gate: GATE_PATTERN,
     gateMeasured: false,
+    // `⎋ Working…` 또는 스피너+경과 `⠏ 38s >`(18.12.6). 도구가 끝나는 순간 한 프레임 꺼진다 — 끝 판정의 지속 시간이 견딘다.
+    busy: /Working…|[\u2800-\u28ff] \d+s >/,
     readyMinMs: 1000,
   },
 

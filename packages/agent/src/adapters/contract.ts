@@ -181,6 +181,12 @@ export interface HarnessAdapter {
      */
     readonly gateMeasured: boolean;
     /**
+     * **일하는 중 표지**(그린 화면에서 잰다, `screenIdle.ts`). 이 하네스는 입력창(`ready`)이 일하는 중에도 떠 있으므로
+     * 「입력창이 보인다」만으로는 끝을 모른다 — 「입력창 + 이 표지 없음」이 이어지면 차례가 끝났다고 본다. 생략하면
+     * 화면으로 끝을 읽지 않는다(claude 는 기록 `end_turn` 으로 읽으므로 두지 않는다). 실측 2026-10-25, 스레드 db4ab174.
+     */
+    readonly busy?: RegExp;
+    /**
      * **준비 표시를 본 뒤에도 이만큼은 기다린다**(스폰 기준, ms). `0`·생략은 "기다리지
      * 않는다"다.
      *

@@ -19,6 +19,8 @@ import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mer
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
+import { screenGateFor, screenIdleFactsFor } from './adapters/index.js';
+import { SCREEN_IDLE_END_MS, ScreenIdleWatch, screenAnswerLines } from './screenIdle.js';
 import { commandRulesOf, fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, turnKeyDeliveryOf, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
 import { RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
 import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
@@ -1352,6 +1354,12 @@ export async function runMentionTurn(
   // - codex: TUI 로 뜨지만 지시문을 받을 플래그가 없어, 주입 텍스트 앞에 지시문을 접두한다.
   const usesTui = usesTuiForMention(def.harness);
   /**
+   * **화면으로 차례 끝을 읽는다**(2026-10-25, 스레드 db4ab174). 기록을 해석하지 않는 하네스는 끝을 발화(MCP)로만
+   * 알아, 말없이 끝난 턴이 10분 정지 시계로 접혔다. 어댑터에 `screen.busy` 가 있는 하네스만 화면을 그려 잰다(`screenIdle.ts`).
+   */
+  const idleFacts = usesTui ? screenIdleFactsFor(def.harness) : null;
+  const idleWatch = idleFacts ? new ScreenIdleWatch(idleFacts) : null;
+  /**
    * **지시문이 이 하네스에 닿는 길은 둘뿐이다**(2026-09-14 실측으로 다시 배웠다).
    *
    * 전용 플래그(`--append-system-prompt-file`)가 있는 하네스는 그 길로 받고, 없는 하네스는
@@ -1669,6 +1677,8 @@ export async function runMentionTurn(
      * 화면인지 읽는 데만 쓴다(2026-10-07) — 기록·로그로 내보내지 않는다.
      */
     screenTail: string;
+    /** 화면으로 끝을 읽은 턴에서 입력창 위에 남은 답 줄(`screenAnswerLines`). 기록의 마지막 말을 못 읽을 때 대신 싣는다. */
+    screenSaid: string | null;
     /** 정지 직전 Enter 를 이미 한 번 쳤다 — 한 턴에 한 번만 친다(되풀이하면 정지가 영영 안 선다). */
     unsentNudged: boolean;
     /**
@@ -1726,7 +1736,7 @@ export async function runMentionTurn(
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     apiError: null, recordedApiError: null, canceledBy: null, fencedOut: false, stalled: false, awaitingHuman: false, gateNoticed: false,
-    lastLifeMs: 0, lastDataAtMs: 0, opencodeAskedAtMs: 0, screenTail: '', unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, backgroundSinceMs: null, backgroundCut: null, reclaimGraceMs: 0, tail: null,
+    lastLifeMs: 0, lastDataAtMs: 0, opencodeAskedAtMs: 0, screenTail: '', screenSaid: null, unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, backgroundSinceMs: null, backgroundCut: null, reclaimGraceMs: 0, tail: null,
     threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, macSeen: new Set(), macNotices: 0, mcpRejectedSeen: new Set(),
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
     gateHeld: null, gateRequeue: null, cancelGateWatch: null,
@@ -2314,6 +2324,14 @@ export async function runMentionTurn(
           if (await probeApiError()) return;
         }
         await probeTurnState();
+        // 화면이 「입력창 + 일하는 중 표지 없음」을 `SCREEN_IDLE_END_MS` 이어 말하면 차례가 끝났다(하네스 기록을 보지 않는다).
+        // 자식 작업 수는 화면이 말하지 않는다 — 표지가 꺼졌다는 것은 하네스가 더 기다리는 일이 없다는 뜻이라 0 으로 둔다.
+        if (idleWatch && !end.finished && !end.awaitingHuman && idleWatch.ended(deps.now?.() ?? Date.now())) {
+          end.finished = true;
+          end.pending = 0;
+          end.screenSaid = screenAnswerLines(idleWatch.text(), idleFacts!, idleWatch.busyText()).join(' ') || null;
+          console.log(`[mentionTurn] ${key}: 화면이 차례 끝을 말한다(입력창·일하는 중 표지 없음 ${SCREEN_IDLE_END_MS}ms)`);
+        }
         if (end.exited) return;
         reconsiderEnd();
         // 끝나지 않았고 말도 없다 — 일하는 중인가, 서 있는가. 그것도 디스크가 말해 준다.
@@ -2462,6 +2480,7 @@ export async function runMentionTurn(
         // 확인 창의 대기 표시 깜빡임은 사람을 기다리는 화면이지 진행이 아니다(`screenLife.ts`, e2e R2).
         const text = screenDecoder.write(chunk);
         if (screenShowsProgress(text)) end.lastDataAtMs = deps.now?.() ?? Date.now();
+        if (idleWatch) void idleWatch.feed(text, deps.now?.() ?? Date.now());
         end.screenTail = (end.screenTail + text).slice(-SCREEN_TAIL_CHARS);
         session?.push(chunk);
       },
@@ -2750,7 +2769,7 @@ export async function runMentionTurn(
               : end.silenced
               ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
               : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
-    ) as Error & { harnessApiError?: string; harnessStalledMs?: number; harnessStalledScreenLine?: string; threadModel?: TurnModel; fencedOut?: boolean };
+    ) as Error & { harnessApiError?: string; harnessStalledMs?: number; harnessStalledScreenLine?: string; harnessStalledScreen?: 'gate' | 'idle' | 'stuck'; threadModel?: TurnModel; fencedOut?: boolean };
     if (end.fencedOut) failure.fencedOut = true;
     /*
       **정지의 마지막 화면은 러너 로그에 남긴다**(2026-09-09).
@@ -2785,6 +2804,8 @@ export async function runMentionTurn(
      * 정지로 못 읽어 재시도가 되살아난다) 한도를 바닥값으로 쓴다.
      */
     if (end.stalled) failure.harnessStalledMs = end.stalledIdleMs || (deps.harnessStallMs ?? 10 * 60_000);
+    // 정지 순간 화면의 갈래(2026-10-25) — 물음·답 없이 끝남·멈춤. 그린 화면이 있는 하네스만 셋으로 가르고, 없으면 물음만 가린다.
+    if (end.stalled) failure.harnessStalledScreen = stallScreenOf(idleWatch, end.screenTail, def.harness);
     // 정지 통지에 마지막 화면의 오류처럼 보이는 줄 하나를 싣는다(2026-10-25) — 「터미널을 봐라」만으로는 원인을 몰랐다.
     // 가린 화면에서 뽑고 한 줄 상한·비밀 가림(`quotedLine`)을 한 번 더 거친다. 보이는 글로만 쓴다.
     if (end.stalled) {
@@ -2898,7 +2919,7 @@ export async function runMentionTurn(
       if (evidence !== null) console.log(`[mentionTurn] ${key}: 발화 없이 끝났다 — 하네스가 마지막에 남긴 출력:\n${evidence}`);
       const lastSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
         configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
-      }).catch(() => null);
+      }).catch(() => null) ?? end.screenSaid;
       // **침묵의 이유가 옆 스레드에 있을 수 있다**(2026-09-08 실측, `offAnchorPosts` 주석).
       // 여기서만 채널 전체를 훑는 이유는 값이 싸지 않아서다: 이 경로는 드물게 도는 침묵
       // 경로이고, 그때는 사람에게 어차피 통지가 나가므로 한 왕복을 더 쓸 값어치가 있다.
@@ -2944,4 +2965,16 @@ export async function runMentionTurn(
   // 종료 요청은 **여기서** 돌려준다 — 정의를 읽은 직후가 아니다. 그 자리에서 돌아서면
   // 이 멘션은 답 없이 사라지고, 부른 사람은 왜 답이 없는지 알 방법이 없다.
   return { stopRequestedAt: def.stopRequestedAt };
+}
+
+/**
+ * 정지 순간 화면의 갈래(`prompt.ts::StallScreen`). 그린 화면(`ScreenIdleWatch`)이 있으면 그것으로, 없으면 원 꼬리에서 물음만 본다 —
+ * 일하는 중 표지가 없는 하네스(claude)는 입력창이 일하는 중에도 떠 있어 「답 없이 끝났다」를 화면으로 말할 수 없다.
+ */
+function stallScreenOf(watch: ScreenIdleWatch | null, rawTail: string, harness: Parameters<typeof screenGateFor>[0]): 'gate' | 'idle' | 'stuck' {
+  if (watch) {
+    const now = watch.current();
+    return now === 'gate' ? 'gate' : now === 'idle' ? 'idle' : 'stuck';
+  }
+  return screenGateFor(harness).test(rawTail.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, ' ')) ? 'gate' : 'stuck';
 }

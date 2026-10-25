@@ -213,6 +213,22 @@ export function injectionFactsFor(
   };
 }
 
+/**
+ * 화면으로 차례 끝을 읽을 재료(`screenIdle.ts`) — 표에 `screen.busy` 가 있는 하네스만. 없으면 null 이고 그 하네스는
+ * 화면으로 끝을 읽지 않는다(claude 는 기록 `end_turn` 으로 읽는다).
+ */
+export function screenIdleFactsFor(harness: AgentHarness): { ready: RegExp; busy: RegExp; gate: RegExp } | null {
+  if (ADAPTERS[harness] === 'unsupported') return null;
+  const { ready, busy, gate } = adapterFor(harness).screen;
+  return busy ? { ready, busy, gate } : null;
+}
+
+/** 이 하네스의 확인 물음 화면 패턴(계약 `screen.gate`). 정지 갈래를 가를 때 쓴다. */
+export function screenGateFor(harness: AgentHarness): RegExp {
+  // 어댑터가 없는 하네스는 TUI 로 안 뜨므로 정지 갈래를 물을 일이 없다 — 아무것도 안 맞는 패턴으로 둔다.
+  return ADAPTERS[harness] === 'unsupported' ? /(?!)/ : adapterFor(harness).screen.gate;
+}
+
 /** 승인 명령을 하네스 명령 규칙으로 꺼내는 길(`HarnessAdapter.commandRules`). 없으면 null. */
 export function commandRulesOf(harness: AgentHarness): 'codex-execpolicy' | null {
   return ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).commandRules ?? null;

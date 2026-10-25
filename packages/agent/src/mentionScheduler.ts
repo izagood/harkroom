@@ -20,7 +20,7 @@ import { accountFailureOf, accountTrailOf, withAccountFailover, type ClaudeAccou
 import {
   accountTrailReason, controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
   withAccountTrail,
-  providerLaneNotice, sessionConflictNotice, stallNotice, threadModelRejectedNotice, wakeReportTo,
+  providerLaneNotice, sessionConflictNotice, stallNotice, stallRetryable, threadModelRejectedNotice, wakeReportTo,
 } from './prompt.js';
 import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, isThreadModelRejected, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import type { SecretLeases } from './secretLeases.js';
@@ -724,10 +724,17 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         console.error(`  ${mention.id} 하네스 정지 — 재시도하지 않는다 (사람이 그 터미널을 봐야 한다): ${err instanceof Error ? err.message : String(err)}`);
         // **평문이 아니라 실패로 남긴다**(`harkroom.ts::fail`). 이 스레드는 사람이 손을 대야
         // 풀리므로 화면에 `막힘` 으로 서 있어야 한다 — 평문으로 올리면 배지는 `끝남` 이다.
-        await deps.harkroom.fail(mention.channelId, stallNotice(stall.stallMs, stall.screenLine), anchor, {
-          retryable: false,
-          what: '하네스가 서 있어 답하지 못했다',
-          reason: '그 터미널을 열어 화면을 확인해야 한다 — 확인을 기다리는 물음이 서 있을 수 있다',
+        // 갈래(`stall.screen`)마다 문장·다시 부를 수 있는지가 다르다(2026-10-25). 모르면 옛 문장 그대로.
+        await deps.harkroom.fail(mention.channelId, stallNotice(stall.stallMs, stall.screenLine, stall.screen), anchor, {
+          retryable: stallRetryable(stall.screen),
+          what: stall.screen === 'idle' ? '하네스가 답을 올리지 않고 차례를 끝냈다' : '하네스가 서 있어 답하지 못했다',
+          reason: stall.screen === 'gate'
+            ? '그 터미널을 열어 화면의 확인 물음에 답해야 한다'
+            : stall.screen === 'idle'
+              ? '다시 부르면 이어서 한다'
+              : stall.screen === 'stuck'
+                ? '그 터미널을 열어 화면을 확인해야 한다'
+                : '그 터미널을 열어 화면을 확인해야 한다 — 확인을 기다리는 물음이 서 있을 수 있다',
         }).catch((e: unknown) => {
           console.error(`  ${mention.id} 정지 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
         });
