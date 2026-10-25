@@ -887,7 +887,9 @@ export function buildSystemPrompt(opts: {
     '이름을 다듬거나 추측하지 말고, 모르면 생략한다. 사람이 이름줄에 hover 할 때만 보이므로',
     '화면을 어지럽히지 않는다.',
     '',
-    '누구에게 답하는지를 잊지 마라 — **이 스레드를 연 사람에게 답하는 것**이 목적이다.',
+    // 2026-10-25: 「이 스레드를 연 사람에게」였다 — 스레드 머리가 남에게 간 지시면 그 지시를 제 일로 읽었다(`lineNote`).
+    '누구에게 답하는지를 잊지 마라 — **너를 부른 글의 작성자에게 답하는 것**이 목적이다(스레드를 연 글이 너를 불렀으면 같은 사람이다).',
+    '위 대화에서 다른 계정에게 간 지시는 네 일이 아니다 — 너를 부른 글(대화 줄의 「← 너를 부른 글」)이 시킨 것만 한다. 예약·위임으로 뜬 턴은 그 사유가 할 일이다.',
     '동료 에이전트에게만 말하고 끝내지 말고, 최종 답은 요청자를 `@handle` 로 부르며 쓴다.',
     '',
     // 2026-09-09 실측: harkroom 가 보고 한가운데 "구현은 `@forge` 것이고" 라고 **지칭**했더니
@@ -1378,10 +1380,12 @@ export const SYSTEM_LINE_LABEL = '[시스템 알림 — 사람·에이전트의 
 
 /** 한 줄로 렌더링한다. handles 에 없는 작성자는 알 수 없는 사용자로 표시한다(reply.ts 의 기존 정책 계승) —
  * avcs 투영이 만드는 system 메시지 등, 호출 시점에 handles 맵이 못 따라온 작성자가 있을 수 있다. */
-function renderLine(m: MessageRow, handles: Record<string, string>): string {
+function renderLine(m: MessageRow, handles: Record<string, string>, note?: string): string {
   // **시스템 줄은 작성자 이름을 달지 않는다.** 서버가 쓴 알림인데 `authorId` 는 그 줄을 일으킨 계정
   // (글 승인을 쓴 사람 등)이라, `jaebin: ⚠️ 승인 안 됨…` 으로 실으면 에이전트는 그 사람의 말로 읽는다.
-  const handle = m.kind === 'system' ? SYSTEM_LINE_LABEL : (handles[m.authorId] ?? '알 수 없는 사용자');
+  const author = m.kind === 'system' ? SYSTEM_LINE_LABEL : (handles[m.authorId] ?? '알 수 없는 사용자');
+  // 이 줄이 이 턴에서 무엇인지(`lineNote`) — 작성자 이름 바로 뒤에 붙인다. 본문이 여러 줄이어도 머리에서 읽힌다.
+  const handle = note ? `${author} (${note})` : author;
   // **id 를 함께 싣는다.** 파일명만 있으면 에이전트는 그 첨부를 열 방법이 없어 내용을
   // 짐작하거나 못 봤다고 답한다(2026-09-08 실측 — 아래 attachmentHowTo 주석). id 는
   // `GET /attachments/:id` 의 유일한 열쇠이고, AttachmentRow 는 그것을 이미 들고 있었다.
@@ -1393,6 +1397,33 @@ function renderLine(m: MessageRow, handles: Record<string, string>): string {
         .join(', ')}]`
     : '';
   return `${handle}: ${m.body}${attachmentNote}`;
+}
+
+/** 이 턴을 띄운 글에 붙는 표시(`lineNote`). */
+export const ANCHOR_LINE_NOTE = '← 너를 부른 글';
+
+/** 글 머리에 이어 붙은 `@handle` 들(본문 맨 앞의 부름). 없으면 빈 목록. */
+function leadingHandles(body: string): string[] {
+  const head = /^(?:\s*@[A-Za-z0-9][\w.-]*)+/.exec(body);
+  return head ? [...head[0].matchAll(/@([A-Za-z0-9][\w.-]*)/g)].map((x) => x[1]!) : [];
+}
+
+/**
+ * 델타의 한 줄이 이 턴에서 무엇인지 — 모델이 앵커를 스스로 추론하게 두지 않는다(2026-10-25 실측: 스레드 머리가 다른 에이전트에게 준
+ * 점검 지시였고, 그 에이전트가 여럿을 부른 글로 턴이 떴다 — 불린 에이전트 셋이 머리 지시를 자기 일로 읽고 부른 쪽을 흉내 냈다.
+ * 프롬프트는 글자까지 같았고 이 턴을 띄운 글이 어느 것인지 표시가 없었다).
+ * - 이 턴을 띄운 글: `ANCHOR_LINE_NOTE`
+ * - 스레드 머리가 **다른 계정을** 머리에서 부르고 나는 부르지 않았다: 「너에게 온 글 아님」
+ */
+export function lineNote(
+  m: MessageRow,
+  ctx: { mentionId?: string; threadRootId: string | null; meHandle?: string },
+): string | undefined {
+  if (ctx.mentionId !== undefined && m.id === ctx.mentionId) return ANCHOR_LINE_NOTE;
+  if (ctx.threadRootId === null || m.id !== ctx.threadRootId || !ctx.meHandle) return undefined;
+  const called = leadingHandles(m.body);
+  if (!called.length || called.includes(ctx.meHandle)) return undefined;
+  return `너에게 온 글 아님 — ${called.map((h) => `@${h}`).join(' ')} 에게 간 글이다`;
 }
 
 /**
@@ -1635,7 +1666,8 @@ export function buildTurnPrompt(opts: {
   if (mentionId !== undefined && editedMention?.id !== mentionId && !messages.some((m) => m.id === mentionId)) {
     omittedLines.push(`(이 턴을 띄운 글 harkroom://message/${mentionId} 은 위 범위 밖이라 싣지 못했다 — \`message.read\` 로 먼저 읽어라)`);
   }
-  const lines = [...omittedLines, ...shown.map((m) => renderLine(m, handles))];
+  const noteCtx = { mentionId, threadRootId, meHandle: handles[meId] };
+  const lines = [...omittedLines, ...shown.map((m) => renderLine(m, handles, lineNote(m, noteCtx)))];
   // 깨움 줄을 **사람의 발화처럼 렌더하지 않는다**(`renderLine` 을 쓰지 않는 이유다).
   // "forge: CI 결과 확인" 으로 보이면 에이전트가 자기 옛 말을 새 요청으로 읽는다.
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.

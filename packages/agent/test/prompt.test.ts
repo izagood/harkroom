@@ -10,6 +10,34 @@ const msg = (seq: number, authorId: string, body: string, extra: Record<string, 
 describe('buildTurnPrompt', () => {
   const handles = { u1: 'alice', a1: 'forge', a2: 'scout' };
 
+  /**
+   * 2026-10-25 재현(여러 에이전트 점검): 스레드 머리는 lead 가 **checker 에게** 준 지시이고, 이 턴을 띄운 글은 checker 가
+   * 8명을 부른 글이다. 표시가 없던 동안 세 에이전트가 머리 지시를 제 일로 읽고 checker 를 흉내 냈다.
+   */
+  it('이 턴을 띄운 글에 「← 너를 부른 글」, 남에게 간 스레드 머리에 「너에게 온 글 아님」을 단다', () => {
+    const h = { tm: 'lead', qa: 'checker', me: 'collector', a2: 'sorter' };
+    const root = msg(1, 'tm', '@checker 8명을 점검해라. 끝나면 @lead 에게 표로 알려라', { id: 'root' });
+    const call = msg(3, 'qa', '@collector @sorter 한 줄로 답해라', { id: 'call', threadRootId: 'root' });
+    const r = buildTurnPrompt({
+      messages: [root, msg(2, 'qa', '점검을 시작한다', { threadRootId: 'root' }), call],
+      lastFedSeq: 0, meId: 'me', handles: h, channelId: 'c', threadRootId: 'root', mentionId: 'call',
+    });
+    expect(r.prompt).toContain('lead (너에게 온 글 아님 — @checker 에게 간 글이다): @checker 8명을 점검해라');
+    expect(r.prompt).toContain('checker (← 너를 부른 글): @collector @sorter 한 줄로 답해라');
+    expect(r.prompt).toContain('checker: 점검을 시작한다');
+  });
+
+  it('스레드 머리가 나를 불렀거나 머리 부름이 없으면 「너에게 온 글 아님」을 달지 않는다 · 앵커가 머리면 「← 너를 부른 글」 하나', () => {
+    const h = { tm: 'lead', me: 'collector' };
+    const run = (body: string, mentionId?: string) => buildTurnPrompt({
+      messages: [msg(1, 'tm', body, { id: 'root' })], lastFedSeq: 0, meId: 'me', handles: h,
+      channelId: 'c', threadRootId: 'root', ...(mentionId ? { mentionId } : {}),
+    }).prompt;
+    expect(run('@collector @sorter 표를 모아라')).not.toContain('너에게 온 글 아님');
+    expect(run('표를 모아라 @checker 는 쉬어라')).not.toContain('너에게 온 글 아님');
+    expect(run('@collector 표를 모아라', 'root')).toContain('lead (← 너를 부른 글): @collector 표를 모아라');
+  });
+
   it('첫 턴(lastFedSeq 0)은 자기 발화 포함 전체를 넘긴다', () => {
     const r = buildTurnPrompt({
       messages: [msg(1, 'u1', '안녕'), msg(2, 'a1', '넵')], lastFedSeq: 0, meId: 'a1', handles,
@@ -720,7 +748,8 @@ describe('buildSystemPrompt', () => {
    */
   it('요청자에게 답하고 이름으로 부르라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
-    expect(s).toContain('이 스레드를 연 사람에게 답하는 것');
+    expect(s).toContain('너를 부른 글의 작성자에게 답하는 것');
+    expect(s).not.toContain('이 스레드를 연 사람에게 답하는 것');
     expect(s).toContain('@handle');
   });
 
@@ -1397,7 +1426,7 @@ describe('델타를 멘션·최신 우선으로 싣는다 (2026-10-12, 스레드
     const { prompt, fedSeq } = buildTurnPrompt({
       messages: msgs, lastFedSeq: 10, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'MENTION',
     });
-    expect(prompt).toContain('alice: @forge 지금 질문');
+    expect(prompt).toContain('alice (← 너를 부른 글): @forge 지금 질문');
     expect(prompt).toContain(`peer: 글${11 + DELTA_MAX_MESSAGES + 9}`);
     expect(prompt).not.toContain('peer: 글11\n'); // 41개 중 멘션 + 최신 29개만 — 옛 11개는 생략
     expect(prompt).toMatch(/\(앞선 글 11개 생략 — 필요하면 harkroom MCP 의 `message.read`/);
