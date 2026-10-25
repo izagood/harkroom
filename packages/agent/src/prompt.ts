@@ -339,8 +339,21 @@ export function sessionConflictNotice(): string {
  * 사람 화면에도 기록에도 남기지 않는다(security ①). 코드는 이미 허용 목록으로 접힌 값이다(`ProviderLaneError`).
  */
 export function providerLaneNotice(code: string): string {
+  if (providerLaneRecallable(code)) {
+    return `(이 멘션의 턴 임대가 없어 턴을 띄우지 않았습니다 — 러너가 다시 뜨면서 앞서 받은 임대를 잃었습니다. `
+      + `설정은 고칠 것이 없습니다. 다시 불러 주시면 새 임대로 뜹니다. 까닭: ${code})`;
+  }
   return `(API 키 연결을 준비하지 못해 이 턴을 띄우지 않았습니다 — 다시 시도하지 않습니다. `
     + `데스크톱의 에이전트 설정 › 모델 연결에서 API 주소와 API 키(비밀 허락)를 확인한 뒤 다시 불러 주세요. 까닭: ${code})`;
+}
+
+/**
+ * **다시 부르면 풀리는** API 키 연결 실패 코드(2026-10-25). 턴 임대는 멘션마다 한 번만 나오고(서버 S1) 그 장부는 러너·오퍼레이터
+ * 메모리에만 있다 — 러너가 다시 뜬 뒤 옛 멘션을 다시 집으면 임대가 없다(`no_lease`)·맞지 않는다(`lease_invalid`). 같은 멘션은
+ * 다시 받을 수 없지만 **새 멘션**은 새 임대를 받는다. 그래서 이 둘만 [다시 부르기]를 열고 설정을 고치라고 하지 않는다.
+ */
+export function providerLaneRecallable(code: string): boolean {
+  return code === 'no_lease' || code === 'lease_invalid';
 }
 
 /**

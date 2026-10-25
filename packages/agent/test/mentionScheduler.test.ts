@@ -619,6 +619,36 @@ describe('mentionScheduler 승인 관문', () => {
     expect(발화[0]!.body).not.toContain('gateway.example');
   });
 
+  // 러너 재기동 뒤 옛 멘션: 임대가 없다. 설정 탓이 아니므로 [다시 부르기]를 열고(새 멘션은 새 임대를 받는다), 이 멘션은 접는다.
+  it('임대를 잃은 실패(no_lease·lease_invalid)는 다시 부를 수 있다고 남기고 접는다 — 그 밖은 지금처럼 설정을 가리킨다', async () => {
+    for (const [code, retryable] of [['no_lease', true], ['lease_invalid', true], ['grant_suspended', false]] as const) {
+      const markedRead: number[] = [];
+      const 발화: { body: string; retryable: boolean; laneCode?: string }[] = [];
+      let 시도 = 0;
+      const scheduler = createMentionScheduler({
+        harkroom: {
+          markRead: async (ids) => { markedRead.push(...ids); return ids.length; },
+          post: async () => 1,
+          fail: async (_c, body, _a, o) => { 발화.push({ body, retryable: o.retryable, laneCode: o.laneCode }); return 1; },
+        },
+        registry: new TurnRegistry(),
+        queue: new MentionQueue(),
+        accountLane: [{ name: 'provider-lane', configDir: '/state/claude-provider-lane' }],
+        runMentionTurn: async () => { 시도 += 1; throw new ProviderLaneError(code); },
+        buildTurnDeps: () => ({}) as never,
+        hooks: { stopRequested: () => {}, exitIfUnrecoverable: () => {}, noticeHarnessLogin: async () => {} },
+        startedAtMs: 0,
+      });
+      await scheduler.admit(batchOf([{ entryId: 9, messageId: `m-${code}` }]), ctx);
+      await scheduler.drain();
+      expect(시도, code).toBe(1);
+      expect(markedRead, code).toContain(9);
+      expect(발화, code).toEqual([expect.objectContaining({ retryable, laneCode: code })]);
+      expect(발화[0]!.body.includes('다시 불러 주시면 새 임대로 뜹니다'), code).toBe(retryable);
+      expect(발화[0]!.body.includes('API 주소와 API 키'), code).toBe(!retryable);
+    }
+  });
+
   it('provider_lane 첫 통지가 네트워크로 실패하면 다시 올리지 않는다 — 두 번 가지 않게(n8)', async () => {
     let calls = 0;
     const scheduler = createMentionScheduler({
