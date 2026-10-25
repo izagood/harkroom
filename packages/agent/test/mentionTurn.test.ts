@@ -5082,3 +5082,44 @@ describe('턴 열쇠(C안 P2) — 멘션 턴', () => {
     expect(said).not.toContain(keys.shell);
   });
 });
+
+/**
+ * 하네스가 기록에 남긴 API 오류로 곧바로 접는다(2026-10-25 qa: omp 가 `✘ 404 …` 띠를 띄우고 입력을 기다려 10분 정지로만 접혔다).
+ * 판정은 하네스 **기록**으로만 한다 — 화면 꼬리에는 사람 말(스레드 글)이 섞인다(security F1). 실패 글로만 쓰고
+ * 한도·자격증명 판정 재료(`harnessApiError`)로는 넘기지 않는다.
+ */
+describe('하네스 기록의 API 오류로 곧바로 접는다 (2026-10-25)', () => {
+  // 화면에 omp 오류 띠와 똑같은 두 줄이 그려져 있다 — 사람이 스레드에 쓴 글이 그려진 것일 수도 있다.
+  const BANNER_SCREEN = '──────\n\n ✘ 404 {"detail":"Not Found"}          \n\n Dismissed when you send your next message.     \n──────\n π > model > 21%──205K';
+  async function turn(recorded: string | null) {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, harnessStallMs: 60_000, readTranscriptMtime: async () => null,
+      readRecordedApiError: async () => recorded,
+    });
+    runTurn.script = async (_plan: TurnPlan, opts: { onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void; onData?: (chunk: Buffer) => void }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      opts.onData?.(Buffer.from(BANNER_SCREEN, 'utf8'));
+      for (let i = 0; i < 60 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 5));
+      return { exitCode: killed ? 143 : 0, timedOut: false, tail: BANNER_SCREEN };
+    };
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch((e: unknown) => e) as (Error & { harnessApiError?: string; harnessStalledMs?: number }) | undefined;
+    return { killed: () => killed, err };
+  }
+
+  it('기록에 오류가 있으면 정지 시계를 기다리지 않고 접고, 실패 문구에 싣되 harnessApiError 로는 넘기지 않는다', async () => {
+    const t = await turn('404 {"detail":"Not Found"}');
+    expect(t.killed()).toBe('SIGTERM');
+    expect(t.err?.message).toBe('harness API 오류(하네스 기록): 404 {"detail":"Not Found"}');
+    expect(t.err?.harnessApiError).toBeUndefined();
+    expect(t.err?.harnessStalledMs).toBeUndefined();
+  });
+
+  it('화면에 오류 띠와 같은 두 줄이 있어도 기록에 오류가 없으면 접지 않는다(security F1)', async () => {
+    const t = await turn(null);
+    expect(t.killed()).toBeNull();
+    expect(t.err instanceof Error).toBe(false); // 실패로 던지지 않는다
+  });
+});

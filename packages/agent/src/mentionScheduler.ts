@@ -724,7 +724,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         console.error(`  ${mention.id} 하네스 정지 — 재시도하지 않는다 (사람이 그 터미널을 봐야 한다): ${err instanceof Error ? err.message : String(err)}`);
         // **평문이 아니라 실패로 남긴다**(`harkroom.ts::fail`). 이 스레드는 사람이 손을 대야
         // 풀리므로 화면에 `막힘` 으로 서 있어야 한다 — 평문으로 올리면 배지는 `끝남` 이다.
-        await deps.harkroom.fail(mention.channelId, stallNotice(stall.stallMs), anchor, {
+        await deps.harkroom.fail(mention.channelId, stallNotice(stall.stallMs, stall.screenLine), anchor, {
           retryable: false,
           what: '하네스가 서 있어 답하지 못했다',
           reason: '그 터미널을 열어 화면을 확인해야 한다 — 확인을 기다리는 물음이 서 있을 수 있다',
