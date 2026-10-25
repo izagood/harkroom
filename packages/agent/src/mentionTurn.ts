@@ -1277,8 +1277,13 @@ export async function runMentionTurn(
   const secretCreate = (await deps.harkroom.secretCreateGranted?.().catch(() => false)) ?? false;
   // 권한 요청(스레드 f61af808): 소유자가 이 채널에 승인한 allow 규칙. 서버가 판정해 주지만 러너도 모양을 한 번 더 거른다.
   const toolAllows = safeToolAllows((await deps.harkroom.toolAllows?.(channelId).catch(() => [] as string[])) ?? []);
+  // **턴마다** 읽는다 — 사람이 스레드 칩을 바꾸면 다음 턴부터 먹는다(결정 11). 도는 턴의 argv 는
+  // 여기서 정해지므로 도중에 바꾼 값은 이 턴에 닿지 않는다. 채널 최상위 멘션이면 그 글이 루트다.
+  const turnModel = await resolveTurnModel(deps.harkroom, def, anchor ?? mentionId);
   const systemPrompt = buildSystemPrompt({
     handle: deps.me.handle,
+    // API 키 연결 턴은 하네스의 환경 설명에 실제 모델이 없다 — 발화 `model` 인자에 실을 값을 알려 준다.
+    laneModel: deps.providerEnv ? providerLaneModelId(turnModel.model) : null,
     secretCreate,
     merge: { operatorBin: deps.operatorBin, repos: grantedRepos, approved: approvedHere.map((a) => ({ repo: a.repo, number: a.number })) },
     // hook 이 실제로 붙는 턴(turn.ts permissionRules 가 --settings 를 낼 때)에만 kind command 를 권한다.
@@ -1344,9 +1349,6 @@ export async function runMentionTurn(
     stdinFile = await writePromptFile(deps.stateDir, promptForHarness);
   }
 
-  // **턴마다** 읽는다 — 사람이 스레드 칩을 바꾸면 다음 턴부터 먹는다(결정 11). 도는 턴의 argv 는
-  // 여기서 정해지므로 도중에 바꾼 값은 이 턴에 닿지 않는다. 채널 최상위 멘션이면 그 글이 루트다.
-  const turnModel = await resolveTurnModel(deps.harkroom, def, anchor ?? mentionId);
   // opencode API 키 연결 auto 턴은 채널별 lane 에이전트로 뜬다 — 그 채널의 승인 규칙 중 명령 전체 규칙만 셸이 열린 칸이다(D2).
   const laneAgent = deps.providerEnv && usesXdgHome(def.harness) && def.mentionPermission === 'auto' ? opencodeLaneAgentName(channelId) : null;
   const laneChannel = laneAgent ? { id: channelId, toolAllows } : null;

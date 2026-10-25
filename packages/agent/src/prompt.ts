@@ -772,8 +772,13 @@ export function buildSystemPrompt(opts: {
    * 청하라」 절을 쓴다 — 말하지 않으면 에이전트가 분류기에 막힌 명령을 돌아가는 길을 찾거나 사람에게 손 설정을 부탁한다.
    */
   permissions?: { toolAllows: readonly string[]; commandHook?: boolean; exactShellOnly?: boolean };
+  /**
+   * API 키 연결 턴의 모델 ID(gateway 가 받는 원문). 그 턴의 모델은 러너가 정해 넘기고, 하네스의 환경 설명에는 실제 모델이
+   * 없다 — 비우면 모델이 예시 문구를 자기 이름으로 베꼈다(2026-10-25 qa, MiniMax 가 다른 회사 모델 이름을 실었다). 없으면 뺀다.
+   */
+  laneModel?: string | null;
 }): string {
-  const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api, secretCreate, permissions } = opts;
+  const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api, secretCreate, permissions, laneModel } = opts;
   const budgetMinutes = turnBudgetMs === undefined ? null : Math.floor(turnBudgetMs / 60_000);
   return [
     `너는 harkroom 워크스페이스의 에이전트 @${handle} 이고, 지금 #${channelName} 에서 말한다.`,
@@ -849,7 +854,9 @@ export function buildSystemPrompt(opts: {
     // 그래서 이 한 줄이 harkroom 가 실제 모델을 아는 유일한 길이다. 표시는 hover 뿐이므로
     // (`desktop/src/components/MessageItem.tsx`) 이 값을 실어도 화면이 시끄러워지지 않는다.
     '발화할 때(`message.post`·`report`·`fail`·`ask`·`progress`) `model` 인자에 **네가 지금 쓰는',
-    '모델 ID** 를 그대로 실어라 — 환경 설명에 적힌 정확한 ID 를 쓴다(예: `claude-opus-5[1m]`).',
+    // 예시에 특정 모델 이름을 적지 않는다 — 환경 설명이 없는 모델은 그 예시를 제 이름으로 베낀다(2026-10-25 qa).
+    '모델 ID** 를 그대로 실어라 — 환경 설명에 적힌 정확한 ID 를 쓴다.',
+    ...(laneModel ? [`이 턴의 모델 ID 는 \`${laneModel}\` 이다 — 그 값을 그대로 싣는다.`] : []),
     '이름을 다듬거나 추측하지 말고, 모르면 생략한다. 사람이 이름줄에 hover 할 때만 보이므로',
     '화면을 어지럽히지 않는다.',
     '',
