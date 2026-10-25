@@ -375,6 +375,9 @@ const CLAUDE_PRESET: HarnessPreset = {
       // 권한 요청 도구는 **늘** 연다(H①, 스레드 8769dbf7): 요청은 아무것도 열지 않고 소유자 사람 세션의 승인만 연다 — 그런데
       // `grant.delegate` 처럼 분류기가 `[Permission Grant]` 로 호출 자체를 막으면 막힌 에이전트가 청할 길이 없다.
       PERMISSION_REQUEST_TOOL,
+      // 발화 도구 넷은 분류기를 거치지 않는다(2026-10-25 security 조건부 OK): 분류기가 일시 장애로 판정을 못 내면(「no verdict
+      // (error)」) 턴이 답을 하나도 못 올렸다(qa 재점검). 본문 비밀 검사·채널 권한은 서버가 한다. 그 밖의 harkroom 쓰기 도구는 분류기에 남긴다.
+      ...POST_TOOLS,
       // 권한 요청(스레드 f61af808): 소유자가 카드에서 승인한 규칙. 분류기를 끄지 않고 이 규칙만 정확히 더한다. deny(머지·설정
       // 파일)가 allow 보다 앞서므로 승인된 규칙이 그 둘을 덮지 못한다.
       ...safeToolAllows(toolAllows),
@@ -471,6 +474,13 @@ export const GRANT_DELEGATE_TOOL = 'mcp__harkroom__grant_delegate';
 
 /** claude 가 보는 harkroom MCP 의 `permission.request` 도구 이름. 서버가 판정하고 소유자 승인 전에는 아무것도 열지 않는다. */
 export const PERMISSION_REQUEST_TOOL = 'mcp__harkroom__permission_request';
+
+/**
+ * 구독형 auto 멘션 턴에서 분류기 없이 여는 harkroom 발화 도구 — **정확한 이름 넷만**(security 조건 ①, 2026-10-25).
+ * `mcp__harkroom` 통째·ask·delegate·react·첨부·아티팩트·비밀·자동화는 분류기에 남긴다.
+ */
+export const POST_TOOLS: readonly string[] = ['message_post', 'message_report', 'message_fail', 'message_progress']
+  .map((t) => `mcp__harkroom__${t}`);
 
 /**
  * 「정확한 명령」 PreToolUse hook 설정(H③b, 실측 2026-10-07 claude 2.1.292: hook 의 `permissionDecision: "allow"` 는 auto 분류기를
