@@ -984,6 +984,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
       causeMessageId: opts.causeMessageId ?? null,
       turnId: opts.turnId ?? null,
       providerEnv: opts.providerEnv ?? null,
+      ghConfigDir: laneGhConfigDir(opts.harness, opts.providerEnv != null, opts.toolAllows ?? []),
       }),
       ...(preset.mcpEnv?.(opts.extraMcpServers ?? {}) ?? {}),
     },
@@ -1071,6 +1072,23 @@ export function laneEnvAllowed(key: string): boolean {
   return LANE_ENV_ALLOW.has(key) || LANE_ENV_ALLOW_PREFIXES.some((p) => key.startsWith(p));
 }
 
+export const GH_CONFIG_DIR_ENV = 'GH_CONFIG_DIR';
+
+/**
+ * API 키 연결 opencode 턴의 gh 설정 자리. 격리 홈이 `XDG_CONFIG_HOME` 을 바꾸므로 gh 가 이 맥의 로그인을 찾게 원래 자리를 준다.
+ * 그 턴의 승인 규칙에 `gh` 로 시작하는 셸 명령이 있을 때만 준다 — 없으면 null(gh 는 로그인 없이 돈다). 값은 경로 하나이고
+ * 토큰은 싣지 않는다(gh 가 그 자리의 설정대로 자격을 꺼낸다). 자리는 러너 env 의 원래 `XDG_CONFIG_HOME`(없으면 홈 기본)/gh 다.
+ */
+/** gh 설정 자리를 돌려줄 하네스(격리 홈이 `XDG_CONFIG_HOME` 을 바꾸는 lane 하네스 중 잰 것, security H5). */
+const LANE_GH_CONFIG_HARNESSES: Partial<Record<AgentHarness, true>> = { opencode: true };
+
+export function laneGhConfigDir(harness: AgentHarness, providerLane: boolean, toolAllows: readonly string[], env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!LANE_GH_CONFIG_HARNESSES[harness] || !providerLane) return null;
+  if (!toolAllows.some((rule) => /^Bash\(gh(\s|:\*\)$|\)$)/.test(rule))) return null;
+  const base = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.startsWith('/') ? env.XDG_CONFIG_HOME : join(homedir(), '.config');
+  return join(base, 'gh');
+}
+
 /**
  * PTY 자식에 넘길 env. 부모(러너) 전체를 물려주고 `HARKROOM_PAT` 만 덮어쓴다.
  *
@@ -1107,6 +1125,7 @@ function childEnv(
     causeMessageId: string | null;
     turnId?: string | null;
     providerEnv?: Record<string, string> | null;
+    ghConfigDir?: string | null;
   },
 ): Record<string, string> {
   const env: Record<string, string> = {};
@@ -1148,6 +1167,8 @@ function childEnv(
     if (!testHome) throw new Error(`buildTurnCommand: ${homes.harness} lane 턴의 홈 표지 이름을 모른다 — 사람 홈 설정이 실린다`);
     env[testHome] = opencodeLaneHome(homes.opencodeHome);
   }
+  // gh 설정 자리(`laneGhConfigDir`, API 키 연결 턴만). 부모 env 의 같은 이름은 위 허용 목록이 이미 걷었다 — 러너가 정한 경로 하나만 얹는다.
+  if (homes.ghConfigDir) env[GH_CONFIG_DIR_ENV] = homes.ghConfigDir;
   // pi 는 한 변수지만 세션 자리는 따로 바꿀 수 있다(`PI_CODING_AGENT_SESSION_DIR`). 부모 env 의 그
   // 값은 지운다 — 세션 자리는 argv 의 `--session-dir` 하나가 정한다(위 buildTurnCommand, security U1).
   if (homes.piHome) {
