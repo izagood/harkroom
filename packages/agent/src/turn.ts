@@ -578,6 +578,9 @@ const CODEX_PRESET: HarnessPreset = {
     // 턴 열쇠 턴: 다리 열쇠는 브릿지에만 가고 셸에는 안 가게 거른다. lane 턴은 `codexLaneArgs` 가 같은 칸을 뒤에서 다시 쓰므로
     // 거기에도 이 이름이 들어 있다(`-c` 는 같은 칸이면 뒤의 것이 이긴다).
     ...(turnKeys ? ['-c', `shell_environment_policy.exclude=${JSON.stringify([RUNNER_TURN_KEY_ENV.bridge])}`] : []),
+    // 셸 스냅숏·로그인 셸은 이 거르기를 지나 하네스 env 를 셸에 되살린다(실물 회귀 G2, codex 0.154 구독형 턴) — 열쇠 턴은 둘 다 끈다.
+    // lane 턴은 `codexLaneArgs` 가 같은 칸을 이미 끈다.
+    ...(turnKeys ? ['-c', 'features.shell_snapshot=false', '-c', 'allow_login_shell=false'] : []),
     // 에이전트의 mcpServers(스펙 §6) — 오퍼레이터가 이 머신의 정의로 합쳐 파일에 넣은 것을 codex 문법으로.
     ...Object.entries(extraMcpServers).flatMap(([name, entry]) => codexMcpFlags(name, entry)),
   ],
