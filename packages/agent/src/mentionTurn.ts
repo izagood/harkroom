@@ -19,7 +19,7 @@ import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mer
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
-import { apiErrorBannerFor, commandRulesOf, fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, turnKeyDeliveryOf, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
+import { commandRulesOf, fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, turnKeyDeliveryOf, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
 import { RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
 import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
@@ -34,7 +34,7 @@ import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspace
 import { codexSessionsDir } from './codexHome.js';
 import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneModelMissing, providerLaneModelId } from './opencodeHome.js';
 import { ensurePiLaneThread, listPiMcpTools, PI_LANE_PROVIDER, piLaneLoginPresent, piSessionFile, readonlyToolList, writePiLaneModels } from './piHome.js';
-import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompUnverifiedBinaryNotice, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
+import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompUnverifiedBinaryNotice, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, readOmpRecordedApiError, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { readOpencodeTurnState } from './opencodeTurnState.js';
 import { screenShowsProgress } from './screenLife.js';
@@ -473,8 +473,11 @@ export interface MentionTurnDeps {
    * 주입 가능한 이유는 `sessionMaterialized` 와 같다 — 테스트가 디스크를 세우지 않고
    * 두 세계(에러 있음/없음)를 태울 수 있어야 한다.
    */
-  /** 하네스 화면의 API 오류 띠 패턴(`adapters/index.ts::apiErrorBannerFor`). 시험이 다른 하네스로도 그 갈래를 태우게 연다. */
-  apiErrorBannerFor?: (harness: AgentHarness) => RegExp | null;
+  /**
+   * 기록을 우리가 해석하지 않는 하네스가 **자기 기록에 남긴** API 오류(omp: `ompHome.ts::readOmpRecordedApiError`). 없으면 null.
+   * 시험이 다른 하네스로도 그 갈래를 태우게 연다.
+   */
+  readRecordedApiError?: (harness: AgentHarness, sessionId: string | null, sinceMs: number) => Promise<string | null>;
   readApiError?: (
     harness: AgentHarness, sessionId: string | null,
     opts: { configDir?: string | null; sinceMs?: number },
@@ -1621,8 +1624,8 @@ export async function runMentionTurn(
     reclaimed: boolean;
     /** 턴이 도는 동안 관측한 하네스 API 에러(한도·자격증명). 있으면 이 턴은 실패다. */
     apiError: string | null;
-    /** 화면의 API 오류 띠에서 읽은 줄(`apiErrorBannerFor`, 가림 뒤). 보이는 글로만 쓴다 — `harnessApiError` 로 넘기지 않는다. */
-    screenApiError: string | null;
+    /** 하네스가 자기 기록에 남긴 API 오류(`readRecordedApiError`, 가림 뒤). 실패 글로만 쓴다 — `harnessApiError`(한도·자격증명 판정)로는 넘기지 않는다. */
+    recordedApiError: string | null;
     /**
      * 사람이 이 턴을 그만두게 했으면 그 사람의 handle(3단계). **`reclaimed` 로 대신할 수
      * 없다**: 그 값은 "러너가 죽였다"이고 고아 회수·무발화 회수도 참으로 만든다 — 사람이
@@ -1722,7 +1725,7 @@ export async function runMentionTurn(
     cancelGateWatch: (() => void) | null;
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
-    apiError: null, screenApiError: null, canceledBy: null, fencedOut: false, stalled: false, awaitingHuman: false, gateNoticed: false,
+    apiError: null, recordedApiError: null, canceledBy: null, fencedOut: false, stalled: false, awaitingHuman: false, gateNoticed: false,
     lastLifeMs: 0, lastDataAtMs: 0, opencodeAskedAtMs: 0, screenTail: '', unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, backgroundSinceMs: null, backgroundCut: null, reclaimGraceMs: 0, tail: null,
     threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, macSeen: new Set(), macNotices: 0, mcpRejectedSeen: new Set(),
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
@@ -1926,14 +1929,17 @@ export async function runMentionTurn(
    * 만나는 경우가 있고, 그 턴을 실패로 읽으면 재시도가 같은 질문에 두 번 답한다.
    */
   const probeApiError = async (): Promise<boolean> => {
-    // 기록을 못 읽는 하네스는 화면의 오류 띠로 본다(계약 `apiErrorBanner`). 가린 화면에서만 맞추고, 맞은 줄은 보이는 글로만 쓴다.
-    const banner = (deps.apiErrorBannerFor ?? apiErrorBannerFor)(def.harness);
-    if (banner && end.screenTail) {
-      const shown = harnessTailNotice(end.screenTail, deps.runnerSecret, await tailSecrets());
-      const hit = shown ? banner.exec(shown) : null;
-      if (hit && !end.exited && !end.spoke) {
-        end.screenApiError = quotedLine(hit[1] ?? hit[0], deps.runnerSecret, await tailSecrets()) || '(화면의 오류 줄은 가려졌다)';
-        console.error(`[mentionTurn] ${key}: 하네스 화면에 API 오류 띠가 섰다 — ${end.screenApiError}`);
+    // omp 는 API 오류를 받으면 오류 띠를 띄운 채 입력을 기다려 10분 정지로만 접혔다(2026-10-25 qa). 그 오류는 omp 가 **자기 기록**에
+    // 남기므로 그것으로 곧바로 접는다 — 화면 꼬리는 사람 말이 섞여 판정에 쓰지 않는다(security F1). 실패 글로만 쓴다.
+    const readRecorded = deps.readRecordedApiError
+      ?? (usesOmpHome(def.harness) && deps.ompHome
+        ? (_h: AgentHarness, sid: string | null, since: number) => readOmpRecordedApiError(deps.ompHome!, sid, since)
+        : null);
+    if (readRecorded) {
+      const recorded = await readRecorded(def.harness, sessionIdForProbe, turnStartedAtMs).catch(() => null);
+      if (recorded && !end.exited && !end.spoke) {
+        end.recordedApiError = quotedLine(recorded, deps.runnerSecret, await tailSecrets()) || '(오류 줄은 가려졌다)';
+        console.error(`[mentionTurn] ${key}: 하네스가 기록에 API 오류를 남겼다 — ${end.recordedApiError}`);
         reclaim();
         return true;
       }
@@ -2629,9 +2635,9 @@ export async function runMentionTurn(
   // 무발화 회수는 `spoke` 가 거짓이므로 아래 실패 경로에 그대로 남는다.
   // **말없이 `end_turn` 한 턴도 회수로 끝난 정상 턴이다**(2026-09-30, c0853e6f). 깨움만 걸고
   // 끝난 턴이 그렇다 — 아래 성공 경로가 깨움 여부를 보고 침묵 통지(`silentTurnNotice`) 를 정한다.
-  const 회수로끝났다 = end.reclaimed && (end.spoke || end.finished) && !end.silenced && !end.stalled && !end.apiError && !end.screenApiError;
+  const 회수로끝났다 = end.reclaimed && (end.spoke || end.finished) && !end.silenced && !end.stalled && !end.apiError && !end.recordedApiError;
 
-  if (!회수로끝났다 && (result.exitCode !== 0 || result.timedOut || end.silenced || end.stalled || end.apiError || end.screenApiError)) {
+  if (!회수로끝났다 && (result.exitCode !== 0 || result.timedOut || end.silenced || end.stalled || end.apiError || end.recordedApiError)) {
     // #81: 실패한 턴은 turnsRun 을 올리지 않는다. claude 의 세션 uuid 는 러너가 발급만 했을
     // 뿐 하네스에 등록됐다는 증거가 아니다 — 올리면 다음 턴이 isFirstTurn=false 로 판단해
     // `-r`(resume)로 조립하고, 존재한 적 없는 세션을 이어받으려다 또 실패한다. 0 으로 둬야
@@ -2729,8 +2735,8 @@ export async function runMentionTurn(
           // 턴 도중에 관측한 에러가 있으면 그것이 원인이다(2026-09-09). tail 을 담지 않는
           // 이유는 무발화와 같다 — TUI 에서는 주입한 프롬프트가 에코돼 tail 에 섞인다.
           ? `harness API 에러: ${end.apiError}`
-        : end.screenApiError
-          ? `harness API 오류(하네스 화면): ${end.screenApiError}`
+        : end.recordedApiError
+          ? `harness API 오류(하네스 기록): ${end.recordedApiError}`
           // 정지를 무발화보다 **먼저** 본다: 접는 수단이 같은 SIGTERM 이라 무발화 시계가
           // 뒤따라 설 수 있는데, 사람이 알아야 할 사실은 "서 있었다" 쪽이다.
           : end.stalled

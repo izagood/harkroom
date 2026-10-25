@@ -1,21 +1,20 @@
-// omp 실물 — API 오류를 받으면 서는 화면이 어댑터의 `apiErrorBanner` 에 맞는다(2026-10-25 qa: 404 띠 뒤 10분 정지).
-// 가짜 gateway 가 404 를 돌려주고, 러너 경로(buildTurnCommand·runPtyTurn)로 띄운 화면을 러너와 같은 가림(`harnessTailNotice`)
-// 뒤에 맞춘다. `HARKROOM_OMP_BIN` 이 있을 때만 돈다.
+// omp 실물 — API 오류를 받으면 omp 가 자기 기록에 남기는 오류를 러너가 읽는다(2026-10-25 qa: 404 띠 뒤 10분 정지).
+// 가짜 gateway 가 404 를 돌려주고, 러너 경로(buildTurnCommand·runPtyTurn)로 띄운 턴의 기록을 `readOmpRecordedApiError` 로 본다.
+// 판정을 화면이 아니라 기록으로 하는 이유는 그 함수 주석(security F1). `HARKROOM_OMP_BIN` 이 있을 때만 돈다.
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { apiErrorBannerFor, injectionFactsFor } from '../src/adapters/index.js';
-import { ensureOmpHome, ensureOmpThread, newOmpSessionId, ompDirs, writeOmpLaneModels, writeOmpSessionHeader } from '../src/ompHome.js';
-import { harnessTailNotice } from '../src/prompt.js';
+import { injectionFactsFor } from '../src/adapters/index.js';
+import { ensureOmpHome, ensureOmpThread, newOmpSessionId, ompDirs, readOmpRecordedApiError, writeOmpLaneModels, writeOmpSessionHeader } from '../src/ompHome.js';
 import { runPtyTurn } from '../src/pty.js';
 import { buildTurnCommand } from '../src/turn.js';
 
 const BIN = process.env.HARKROOM_OMP_BIN;
 
-describe.skipIf(!BIN)('omp 실물 — API 오류 띠', () => {
-  it('404 를 받은 화면이 apiErrorBanner 에 맞고, 첫 묶음이 그 오류 줄이다', async () => {
+describe.skipIf(!BIN)('omp 실물 — 기록의 API 오류', () => {
+  it('404 를 받으면 그 턴의 기록에 오류가 남고 러너가 그 줄을 읽는다', async () => {
     const root = await mkdtemp(join(tmpdir(), 'omp-404-'));
     const srv = createServer((req, res) => {
       req.resume();
@@ -42,19 +41,18 @@ describe.skipIf(!BIN)('omp 실물 — API 오류 띠', () => {
         codexHome: join(root, 'codex'), claudeConfigDir: null, ompHome, ompThread: thread, workspaceDir: repo, stdinFile: null,
       } as Parameters<typeof buildTurnCommand>[0]);
       const env = { PATH: `${dirname(BIN as string)}:/usr/bin:/bin`, TERM: 'xterm-256color', HOME: built.env.HOME as string, PI_CODING_AGENT_DIR: built.env.PI_CODING_AGENT_DIR as string };
-      let screen = '';
-      const decoder = new TextDecoder();
+      const startedAt = Date.now();
+      expect(await readOmpRecordedApiError(ompHome, sessionId, startedAt)).toBeNull(); // 턴 전에는 없다
       void runPtyTurn({ command: BIN as string, args: built.args, env, stdinFile: null }, {
         cwd: built.cwd ?? thread.cwd, timeoutMs: 20_000, injectPrompt: { text: 'hello', ...injectionFactsFor('omp') },
-        onData: (chunk: Buffer) => { screen = (screen + decoder.decode(chunk, { stream: true })).slice(-4_000); },
       } as Parameters<typeof runPtyTurn>[1]);
-      const banner = apiErrorBannerFor('omp')!;
-      let hit: RegExpExecArray | null = null;
-      for (let i = 0; i < 150 && !hit; i++) {
+      let got: string | null = null;
+      for (let i = 0; i < 150 && got === null; i++) {
         await new Promise((r) => setTimeout(r, 100));
-        hit = banner.exec(harnessTailNotice(screen, '') ?? '');
+        got = await readOmpRecordedApiError(ompHome, sessionId, startedAt);
       }
-      expect(hit?.[1]?.trim()).toBe('404 {"detail":"Not Found"}');
+      expect(got).toBe('404 {"detail":"Not Found"}');
+      expect(await readOmpRecordedApiError(ompHome, sessionId, Date.now() + 60_000)).toBeNull(); // 앞 턴의 오류는 안 본다(sinceMs)
     } finally {
       srv.close();
       await rm(root, { recursive: true, force: true });

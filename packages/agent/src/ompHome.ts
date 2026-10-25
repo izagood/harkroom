@@ -223,6 +223,32 @@ export async function writeOmpSessionHeader(sessionsDir: string, sessionId: stri
   return path;
 }
 
+/**
+ * 이 턴에 omp 가 **자기 기록에 남긴** API 오류(2026-10-25 실측 18.12.6: 404 를 받으면 assistant 줄에 `stopReason: "error"`·
+ * `errorMessage: "404 {…}"` 가 남고, 화면에는 오류 띠를 띄운 채 입력을 기다린다). `sinceMs` 뒤의 마지막 것만 본다. 없으면 `null`.
+ *
+ * 화면이 아니라 기록으로 보는 이유(security F1): 화면 꼬리에는 하네스가 그린 사용자 메시지(스레드 글)·모델 출력이 섞여, 같은 꼴의
+ * 글이 그려지면 오류 없이도 턴이 접힌다. 기록의 이 칸은 omp 가 요청 결과로만 쓴다.
+ */
+export async function readOmpRecordedApiError(ompHome: string, sessionId: string | null, sinceMs: number): Promise<string | null> {
+  if (!sessionId) return null;
+  const path = await ompSessionFile(ompHome, sessionId);
+  if (!path) return null;
+  const text = await readFile(path, 'utf8').catch(() => '');
+  let found: string | null = null;
+  for (const line of text.split('\n')) {
+    if (!line.includes('"stopReason":"error"')) continue;
+    let row: { type?: unknown; timestamp?: unknown; message?: { role?: unknown; stopReason?: unknown; errorMessage?: unknown } };
+    try { row = JSON.parse(line) as typeof row; } catch { continue; }
+    const m = row.message;
+    if (row.type !== 'message' || m?.role !== 'assistant' || m.stopReason !== 'error' || typeof m.errorMessage !== 'string') continue;
+    const at = typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN;
+    if (!(at >= sinceMs)) continue;
+    found = m.errorMessage;
+  }
+  return found;
+}
+
 /** 이 세션 id 의 기록 파일. 비밀 보관소 D7 의 가리기 대상이다. 없으면 `null`. */
 export async function ompSessionFile(ompHome: string, sessionId: string): Promise<string | null> {
   const dir = ompDirs(ompHome).sessionsDir;
