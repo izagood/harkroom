@@ -573,7 +573,7 @@ describe('buildTurnPrompt — 넘겨받은 일(3-2)', () => {
 
 describe('buildSystemPrompt', () => {
   it('발화 model 안내의 예시에 특정 모델 이름이 없고, API 키 연결 턴에는 그 턴의 모델 ID 를 적는다(10-25 qa)', () => {
-    const base = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } } as const;
+    const base = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } };
     const plain = buildSystemPrompt(base);
     expect(plain).not.toMatch(/claude-|gpt-|MiniMax/);
     expect(plain).not.toContain('이 턴의 모델 ID 는');
