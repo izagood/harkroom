@@ -71,6 +71,7 @@ describe('턴 열쇠 — 하네스 env', () => {
     // 셸 스냅숏·로그인 셸이 하네스 env 를 셸에 되살리지 못하게 둘 다 끈다(G2 실물 회귀).
     expect(p.args).toContain('features.shell_snapshot=false');
     expect(p.args).toContain('allow_login_shell=false');
+    expect(p.args).toContain('features.code_mode=false');
     const envVars = p.args.find((a) => a.startsWith('mcp_servers.harkroom.env_vars='))!;
     expect(envVars).toContain(RUNNER_TURN_KEY_ENV.bridge);
   });
