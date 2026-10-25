@@ -926,6 +926,7 @@ export const en = {
   'automations.run.sentSub': 'Follow the work in that post’s thread.',
   'automations.run.failed': 'Could not post — {reason}',
   'automations.run.failedSub': 'Change the target in [Edit], or run it again.',
+  'automations.run.failedPausedSub': 'This automation was turned off. Fix the cause, then switch it back on.',
   'automations.run.retry': 'Run again',
   'automations.run.slow': 'The run is queued but nothing has been posted yet',
   'automations.run.slowSub': 'A busy server can delay it. Don’t press again — check the history.',

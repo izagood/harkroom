@@ -57,6 +57,7 @@ describe('지금 한 번 돌리기 — 잠금과 결과 줄', () => {
     await waitFor(() => expect(runAutomation).toHaveBeenCalledTimes(1));
     const busyBtn = (await screen.findByText(ko('automations.row.running'))).closest('button')!;
     expect(busyBtn.disabled).toBe(true);
+    expect(busyBtn.getAttribute('aria-busy')).toBe('true');
     expect(screen.getByTestId('automation-run-result').getAttribute('data-phase')).toBe('pending');
 
     // 잠긴 동안 또 눌러도 두 번 가지 않는다
@@ -83,6 +84,21 @@ describe('지금 한 번 돌리기 — 잠금과 결과 줄', () => {
     await waitFor(() => expect(row.getAttribute('data-phase')).toBe('failed'));
     expect(row.textContent).toContain(ko('automations.err.forbidden'));
     expect(row.textContent).not.toContain('forbidden');
+    // 게시 거부는 서버가 자동화를 끈다 — 다시 돌리기 대신 꺼졌다고 말한다
+    expect(row.textContent).toContain(ko('automations.run.failedPausedSub'));
+    expect(screen.queryByText(ko('automations.run.retry'))).toBeNull();
+  });
+
+  it('끄지 않는 실패(expired)는 [다시 돌리기]를 준다', async () => {
+    const getAutomation = vi.fn(async () => ({ automation: base(), runs: [run('failed', { error: 'expired' })] }));
+    setController({ api: { listAutomations: vi.fn(async () => [base()]), runAutomation: vi.fn(async () => run('pending')), getAutomation } } as unknown as Controller);
+    render(<AutomationsSettings />);
+    await openCard();
+    fireEvent.click(screen.getByText(ko('automations.row.runNow')));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
+    const row = await screen.findByTestId('automation-run-result');
+    await waitFor(() => expect(row.getAttribute('data-phase')).toBe('failed'));
+    expect(row.textContent).toContain(ko('automations.run.failedSub'));
     expect(screen.getByText(ko('automations.run.retry'))).toBeTruthy();
   });
 
@@ -123,6 +139,21 @@ describe('지금 한 번 돌리기 — 확인', () => {
     fireEvent.click(screen.getByText(ko('automations.row.runNow')));
     fireEvent.click(screen.getByText(ko('automations.confirm.again')));
     await waitFor(() => expect(runAutomation).toHaveBeenCalledTimes(1));
+  });
+
+  it('옛 서버(lastRun 없음)라도 이 화면에서 방금 돌렸으면 다시 누를 때 묻는다', async () => {
+    const legacy = base({ lastRun: undefined });
+    const runAutomation = vi.fn(async () => run('pending'));
+    const getAutomation = vi.fn(async () => ({ automation: legacy, runs: [run('sent', { messageId: 'm7' })] }));
+    setController({ api: { listAutomations: vi.fn(async () => [legacy]), runAutomation, getAutomation } } as unknown as Controller);
+    render(<AutomationsSettings />);
+    await openCard();
+    fireEvent.click(screen.getByText(ko('automations.row.runNow')));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
+    await waitFor(() => expect(screen.getByTestId('automation-run-result').getAttribute('data-phase')).toBe('sent'));
+    fireEvent.click(screen.getByText(ko('automations.row.runNow')));
+    expect(screen.getByTestId('automation-run-confirm')).toBeTruthy();
+    expect(runAutomation).toHaveBeenCalledTimes(1);
   });
 
   it('11분 전이면 묻지 않고 바로 보낸다', async () => {

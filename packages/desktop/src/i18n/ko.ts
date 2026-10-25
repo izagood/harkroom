@@ -565,6 +565,7 @@ export const ko = {
   'automations.run.sentSub': '일의 결과는 그 글의 스레드에서 본다.',
   'automations.run.failed': '글을 올리지 못했다 — {reason}',
   'automations.run.failedSub': '[고치기]에서 보낼 곳을 바꾸거나 다시 돌린다.',
+  'automations.run.failedPausedSub': '이 자동화는 꺼졌다. 원인을 고친 뒤 [켜짐]을 다시 켠다.',
   'automations.run.retry': '다시 돌리기',
   'automations.run.slow': '실행은 넣었는데 아직 글이 안 올라갔다',
   'automations.run.slowSub': '서버가 바쁘면 늦어진다. 다시 누르지 말고 [이력]에서 확인한다.',

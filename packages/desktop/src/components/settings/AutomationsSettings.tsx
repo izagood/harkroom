@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AutomationGithubTrigger, AutomationIngressIssued, AutomationLastRun, AutomationRunView, AutomationTrigger, AutomationView } from '@harkroom/shared';
-import { getController } from '../../state/controller';
+import { getController, type Controller } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { Button, Field, Segmented, Select, SettingsGrid, SettingsPage, Switch, TextInput } from './primitives';
 import { useLocale, useT } from '../../i18n/useT';
@@ -36,6 +36,9 @@ type RunState =
   | { phase: 'sent'; runId: string; at: string; messageId: string | null }
   | { phase: 'failed'; runId: string | null; code: string }
   | { phase: 'slow'; runId: string };
+
+/** 서버가 자동화를 끄지 않는 실패 — 이것만 [다시 돌리기]를 준다. 나머지(게시 거부)는 꺼진다. */
+const RETRYABLE_RUN_ERRORS = new Set(['expired', 'automation_deleted']);
 
 const POLL_MS = 2_000;
 const POLL_LIMIT_MS = 30_000;
@@ -169,6 +172,18 @@ export function AutomationsSettings({ onOpenMessage }: {
     } catch (e) { setError(reason(e, t('automations.runs.loadFailed'))); }
   };
 
+  /**
+   * 이 화면에서 넣은 회차의 시각. 10분 확인의 기준을 `lastRun` 에만 두면 옛 서버(lastRun 없음)에서
+   * 확인이 아예 안 떠 「4분 뒤 또 누름」이 그대로 난다 — 그래서 여기서 넣은 것도 기억한다.
+   */
+  const localRuns = useRef<Record<string, { createdAt: string; messageId: string | null }>>({});
+  const recentRun = (a: AutomationView): { createdAt: string; messageId: string | null } | null => {
+    const mine = localRuns.current[a.id];
+    const server = a.lastRun ? { createdAt: a.lastRun.createdAt, messageId: a.lastRun.messageId } : null;
+    const last = mine && (!server || mine.createdAt > server.createdAt) ? mine : server;
+    return last && Date.now() - Date.parse(last.createdAt) < RERUN_CONFIRM_MS ? last : null;
+  };
+
   const setRun = (id: string, st: RunState | null) => setRunState((prev) => {
     const next = { ...prev };
     if (st) next[id] = st; else delete next[id];
@@ -176,15 +191,17 @@ export function AutomationsSettings({ onOpenMessage }: {
   });
 
   /** 회차 id 로 2초마다 다시 읽는다(최대 30초). 옛 서버(lastRun 없음)에도 runs 로 듣는다. */
-  const waitForRun = async (id: string, runId: string) => {
+  const waitForRun = async (ctl: Controller, id: string, runId: string) => {
     const started = Date.now();
     while (alive.current && Date.now() - started < POLL_LIMIT_MS) {
       await new Promise((r) => setTimeout(r, POLL_MS));
       if (!alive.current) return;
       try {
-        const { runs } = await getController().api.getAutomation(id);
+        // 누를 때의 컨트롤러로 묻는다 — 기다리는 사이 커뮤니티를 바꾸면 다른 서버에 묻게 된다.
+        const { runs } = await ctl.api.getAutomation(id);
         const r = runs.find((x) => x.id === runId);
         if (r && r.status !== 'pending') {
+          if (r.status === 'sent' && localRuns.current[id]) localRuns.current[id] = { ...localRuns.current[id]!, messageId: r.messageId };
           setRun(id, r.status === 'sent'
             ? { phase: 'sent', runId, at: r.finishedAt ?? r.createdAt, messageId: r.messageId }
             : { phase: 'failed', runId, code: r.error ?? r.status });
@@ -202,8 +219,9 @@ export function AutomationsSettings({ onOpenMessage }: {
     setError(null);
     setRun(a.id, { phase: 'pending', runId: null });
     let run: AutomationRunView;
+    const ctl = getController();
     try {
-      run = await getController().api.runAutomation(a.id);
+      run = await ctl.api.runAutomation(a.id);
     } catch (e) {
       // 429 는 서버가 자동화를 껐다는 뜻이다 — 사유 코드로 말하고 목록을 다시 읽어 꺼진 것을 보인다.
       if (e instanceof ApiError && e.code === 'rate_limited') { setRun(a.id, { phase: 'failed', runId: null, code: 'rate_limited' }); reload(); return; }
@@ -211,15 +229,15 @@ export function AutomationsSettings({ onOpenMessage }: {
       setError(reason(e, t('automations.row.runFailed')));
       return;
     }
+    localRuns.current[a.id] = { createdAt: run.createdAt, messageId: null };
     if (!alive.current) return;
     setRun(a.id, { phase: 'pending', runId: run.id });
     reload();
-    await waitForRun(a.id, run.id);
+    await waitForRun(ctl, a.id, run.id);
   };
 
   const startRun = (a: AutomationView) => {
-    const recent = a.lastRun && Date.now() - Date.parse(a.lastRun.createdAt) < RERUN_CONFIRM_MS;
-    if (recent || unfilledManualVars(a.body, a.trigger).length > 0) { setConfirmRun(a.id); return; }
+    if (recentRun(a) || unfilledManualVars(a.body, a.trigger).length > 0) { setConfirmRun(a.id); return; }
     void doRun(a);
   };
 
@@ -302,12 +320,14 @@ export function AutomationsSettings({ onOpenMessage }: {
     }
     if (st.phase === 'failed') {
       const limited = st.code === 'rate_limited';
+      // 게시 거부는 서버가 그 자리에서 자동화를 끈다(`pauseForRefusal`) — 다시 돌려도 같은 데서 막힌다.
+      const paused = !limited && !RETRYABLE_RUN_ERRORS.has(st.code);
       return (
         <div role="alert" data-testid="automation-run-result" data-phase="failed" className={`${box} bg-danger-surface`}>
           <span aria-hidden className="font-bold text-danger">!</span>
           <span className="min-w-0 flex-1">{limited ? runErrorText(st.code, t) : t('automations.run.failed', { reason: runErrorText(st.code, t) })}
-            {!limited && <span className="block text-meta text-fg-muted">{t('automations.run.failedSub')}</span>}</span>
-          {!limited && <button type="button" className="text-accent hover:underline" onClick={() => void doRun(a)}>{t('automations.run.retry')}</button>}
+            {!limited && <span className="block text-meta text-fg-muted">{t(paused ? 'automations.run.failedPausedSub' : 'automations.run.failedSub')}</span>}</span>
+          {!limited && !paused && <button type="button" className="text-accent hover:underline" onClick={() => void doRun(a)}>{t('automations.run.retry')}</button>}
           {dismiss}
         </div>
       );
@@ -327,8 +347,7 @@ export function AutomationsSettings({ onOpenMessage }: {
   /** 10분 안 재실행·채울 수 없는 트리거 변수 — 둘 다면 한 장에 두 문장. */
   const runConfirm = (a: AutomationView) => {
     if (confirmRun !== a.id) return null;
-    const last = a.lastRun;
-    const recent = last && Date.now() - Date.parse(last.createdAt) < RERUN_CONFIRM_MS ? last : null;
+    const recent = recentRun(a);
     const vars = unfilledManualVars(a.body, a.trigger);
     return (
       <div role="dialog" aria-modal="false" data-testid="automation-run-confirm"
@@ -536,9 +555,9 @@ export function AutomationsSettings({ onOpenMessage }: {
             {expanded.has(a.id) && <div id={`automation-details-${a.id}`} data-testid="automation-details">
               <pre className="mt-3 whitespace-pre-wrap rounded-row bg-surface p-2 text-meta text-fg-muted">{a.body}</pre>
               <div className="mt-2 flex flex-wrap gap-2">
-                <Button disabled={runState[a.id]?.phase === 'pending'} onClick={() => startRun(a)}>
+                <Button disabled={runState[a.id]?.phase === 'pending'} ariaBusy={runState[a.id]?.phase === 'pending'} onClick={() => startRun(a)}>
                   {runState[a.id]?.phase === 'pending'
-                    ? <span aria-busy="true" className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full border-2 border-current border-r-transparent motion-safe:animate-spin" />{t('automations.row.running')}</span>
+                    ? <span className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-full border-2 border-current border-r-transparent motion-safe:animate-spin" />{t('automations.row.running')}</span>
                     : t('automations.row.runNow')}
                 </Button>
                 <Button onClick={() => { setEditingId(a.id); setDraft(triggerToDraft(a)); }}>{t('automations.row.edit')}</Button>
@@ -598,7 +617,7 @@ export function AutomationsSettings({ onOpenMessage }: {
                     {runsFor.runs.map((r) => (
                       <tr key={r.id} data-testid="automation-run-row"
                         className={`border-t border-border${runState[a.id]?.runId === r.id ? ' bg-surface-sunken' : ''}`}>
-                        <td className="py-1 pr-3 text-fg-muted">{fmt(r.createdAt)}</td>
+                        <td className="py-1 pr-3 text-fg-muted">{runTime(r.createdAt, locale)}</td>
                         <td className="py-1 pr-3">
                           {runTriggerText(r.triggerKind, t)}
                           {r.initiatedBy && (

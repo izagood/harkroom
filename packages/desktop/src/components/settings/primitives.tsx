@@ -458,7 +458,7 @@ export function Segmented({ value, onChange, options, label }: {
  * 버튼 한 벌. **`danger` 를 따로 두는 것이 요점**이다 — 되돌릴 수 없는 조작이 보통 버튼과
  * 같게 생기면 사람이 그것을 구별할 수단이 색밖에 없고, 색은 테마에 따라 흐려진다.
  */
-export function Button({ children, onClick, variant = 'secondary', disabled, type = 'button', ariaLabel }: {
+export function Button({ children, onClick, variant = 'secondary', disabled, type = 'button', ariaLabel, ariaBusy }: {
   children: ReactNode;
   onClick?(): void;
   variant?: 'primary' | 'secondary' | 'danger';
@@ -471,6 +471,8 @@ export function Button({ children, onClick, variant = 'secondary', disabled, typ
    * 넣어 해결하던 것을(`Add account to work`) 이름으로 옮긴 자리다.
    */
   ariaLabel?: string;
+  /** 누른 일이 끝나기를 기다리는 동안(잠금과 함께) 켠다. */
+  ariaBusy?: boolean;
 }) {
   const tone = {
     primary: 'bg-accent text-fg-on-strong hover:bg-accent-hover',
@@ -483,6 +485,7 @@ export function Button({ children, onClick, variant = 'secondary', disabled, typ
       disabled={disabled}
       onClick={onClick}
       aria-label={ariaLabel}
+      aria-busy={ariaBusy || undefined}
       className={`rounded-row px-3 py-1.5 text-body font-medium disabled:opacity-50 ${tone}`}
     >
       {children}
