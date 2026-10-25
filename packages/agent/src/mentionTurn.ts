@@ -19,7 +19,7 @@ import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mer
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
-import { fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, turnKeyDeliveryOf, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
+import { commandRulesOf, fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, turnKeyDeliveryOf, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
 import { RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
 import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
@@ -91,6 +91,8 @@ export interface MentionTurnHarkroom {
   mergeApprovals?(): Promise<{ repo: string; number: number; channelId: string; threadRootId: string }[]>;
   /** 이 채널의 allow 규칙(권한 요청 스레드 f61af808). 옵셔널 — 없는 표면은 빈 목록과 같다. */
   toolAllows?(channelId: string): Promise<string[]>;
+  /** 이 채널의 규칙 + 모든 채널의 합(`reach`, 옛 서버는 null). 있으면 `toolAllows` 대신 쓴다. */
+  toolRuleSets?(channelId: string): Promise<{ rules: string[]; reach: string[] | null }>;
   secretCreateGranted?(): Promise<boolean>;
   apiGrants?(): Promise<string[]>;
   apiGrantInfo?(): Promise<{ connectors: string[]; delegatable: string[] }>;
@@ -316,6 +318,13 @@ export interface MentionTurnDeps {
   operatorBin: string;
   /** 「정확한 명령」 hook(H③b). 오퍼레이터 설정이 켰을 때만 true. */
   commandHook?: boolean;
+  /**
+   * codex 승인 명령 규칙·턴 hook 을 갖춘다(`codexRules.ts::prepareCodexRules`). 돌려주는 env 를 그 턴에 얹는다. 없으면 규칙 파일을
+   * 쓰지 않는다(승인 명령도 샌드박스 안).
+   */
+  prepareCodexRules?: (opts: { workspaceDir: string; rules: readonly string[]; reach: readonly string[] | null }) => Promise<Record<string, string>>;
+  /** 규칙 파일을 쓰지 않는 codex 턴 앞에서 — 잰 판 밖이면 남은 규칙 파일을 지운다(`codexRules.ts::sweepCodexRules`). */
+  sweepCodexRules?: () => Promise<void>;
   /** 이 머신이 Claude in Chrome 을 열 수 있는가(`RunnerConfig.chromeHost`). 생략은 거짓이다. */
   chromeHost?: boolean;
   /**
@@ -1284,7 +1293,11 @@ export async function runMentionTurn(
   // 비밀 만들기(스레드 1a08d0cf): 소유자가 켠 에이전트에게만 절을 쓴다. 판정은 서버가 매 호출 한다 — 이것은 안내다.
   const secretCreate = (await deps.harkroom.secretCreateGranted?.().catch(() => false)) ?? false;
   // 권한 요청(스레드 f61af808): 소유자가 이 채널에 승인한 allow 규칙. 서버가 판정해 주지만 러너도 모양을 한 번 더 거른다.
-  const toolAllows = safeToolAllows((await deps.harkroom.toolAllows?.(channelId).catch(() => [] as string[])) ?? []);
+  // `reach` 는 이 에이전트의 모든 채널 규칙의 합 — codex 명령 규칙 파일에 쓴다(`codexRules.ts`). 옛 서버는 null 이다.
+  const ruleSets = deps.harkroom.toolRuleSets
+    ? await deps.harkroom.toolRuleSets(channelId).catch(() => ({ rules: [] as string[], reach: null }))
+    : { rules: (await deps.harkroom.toolAllows?.(channelId).catch(() => [] as string[])) ?? [], reach: null };
+  const toolAllows = safeToolAllows(ruleSets.rules);
   // **턴마다** 읽는다 — 사람이 스레드 칩을 바꾸면 다음 턴부터 먹는다(결정 11). 도는 턴의 argv 는
   // 여기서 정해지므로 도중에 바꾼 값은 이 턴에 닿지 않는다. 채널 최상위 멘션이면 그 글이 루트다.
   const turnModel = await resolveTurnModel(deps.harkroom, def, anchor ?? mentionId);
@@ -1470,6 +1483,13 @@ export async function runMentionTurn(
   const turnKeys = deps.harkroom.registerTurnKeys && turnKeyDelivery(def.harness) ? issueTurnKeys() : null;
   // 열쇠 값의 바늘(K3) — PTY 꼬리·통지·턴 기록에서 가린다. 턴이 끝나면 열쇠는 죽지만 디스크·채팅에 남길 이유는 없다.
   const turnKeyNeedles = turnKeyValues(turnKeys).flatMap((v) => scrubNeedles(Buffer.from(v, 'utf8')));
+  // 승인 명령을 하네스 명령 규칙으로 연다(codex) — 턴 열쇠가 있는 auto 턴에만(셸 거르기·tty 끄기가 전제다). hook 신뢰를 확인하지
+  // 못하면 던진다 — 규칙 파일만 실린 채 hook 이 안 도는 턴을 띄우지 않는다.
+  const commandRuleEnv = turnKeys && def.mentionPermission === 'auto' && commandRulesOf(def.harness) === 'codex-execpolicy' && deps.prepareCodexRules
+    ? await deps.prepareCodexRules({ workspaceDir: rec.workspaceDir, rules: toolAllows, reach: ruleSets.reach === null ? null : safeToolAllows(ruleSets.reach) })
+    : null;
+  // 규칙 파일을 쓰지 않는 codex 턴(읽기 전용·열쇠 없음)도 잰 판 밖이면 남은 규칙 파일을 지우고 뜬다(security F1).
+  if (!commandRuleEnv && commandRulesOf(def.harness) === 'codex-execpolicy') await deps.sweepCodexRules?.();
   const turnMcpConfig = turnKeys && turnKeyDeliveryOf(def.harness) === 'mcp-config-env'
     ? await writeTurnMcpConfig(deps.stateDir, deps.mcpConfigPath, turnId, turnKeys.bridge, { alwaysLoad: Boolean(providerEnv) && laneScrubsSubprocessEnv(def.harness) })
     : null;
@@ -1523,6 +1543,7 @@ export async function runMentionTurn(
     laneAgent,
     turnKeys,
     opencodeTurnConfig,
+    commandRuleEnv,
   });
 
   /**

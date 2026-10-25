@@ -8,7 +8,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { readLease } from '../services/mergeGrants.js';
 import { decide } from '../services/decisions.js';
-import { commandGrantsFor, matchCommandGrant, toolAllowsFor } from '../services/permissionRequests.js';
+import { commandGrantsFor, matchCommandGrant, toolAllowsFor, toolReachFor } from '../services/permissionRequests.js';
 
 const params = z.object({ id: z.string().uuid(), requestId: z.string().uuid(), decision: z.enum(['approve', 'deny', 'approve-once', 'approve_once', 'approve_hour']) });
 /** [이번 한 번 머지](스레드 1b75d7a0) — 받는 것은 gh 계정·CI 완화 둘뿐. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
@@ -54,7 +54,8 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
     const q = z.object({ channelId: z.string().uuid() }).safeParse(req.query ?? {});
     if (!q.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'channelId (uuid) is required' } });
     void reply.header('cache-control', 'no-store');
-    return { rules: await toolAllowsFor(pool, req.account!.id, q.data.channelId) };
+    // `reach` 는 모든 채널의 합 — codex 턴의 명령 규칙 파일이 채널을 가리지 않아서다(`toolReachFor`).
+    return { rules: await toolAllowsFor(pool, req.account!.id, q.data.channelId), reach: await toolReachFor(pool, req.account!.id) };
   });
 
   // 정확한 명령 grant(H②, 112). 오퍼레이터를 거친 에이전트만, 자기 것만. 목록은 읽기만, match 는 맞으면 그 grant 하나를 쓴다.

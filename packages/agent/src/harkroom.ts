@@ -263,11 +263,20 @@ export class HarkroomAgentClient {
 
   /** 이 채널에서 소유자가 승인한 Claude Code allow 규칙(권한 요청 스레드 f61af808). 옛 서버(404)·끊김은 빈 목록. */
   async toolAllows(channelId: string): Promise<string[]> {
+    return (await this.toolRuleSets(channelId)).rules;
+  }
+
+  /**
+   * 이 채널의 규칙과 이 에이전트의 **모든 채널** 규칙의 합(`reach`, codex 명령 규칙 파일에 쓴다). 합을 안 주는 옛 서버·끊김은
+   * `reach: null` — 부르는 쪽은 그때 규칙 파일을 쓰지 않는다.
+   */
+  async toolRuleSets(channelId: string): Promise<{ rules: string[]; reach: string[] | null }> {
+    const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : null);
     try {
-      const r = await this.rest<{ rules?: unknown }>('GET', `/agent/tool-allows?channelId=${encodeURIComponent(channelId)}`, 'tool-allows');
-      return Array.isArray(r?.rules) ? r.rules.filter((x): x is string => typeof x === 'string') : [];
+      const r = await this.rest<{ rules?: unknown; reach?: unknown }>('GET', `/agent/tool-allows?channelId=${encodeURIComponent(channelId)}`, 'tool-allows');
+      return { rules: strings(r?.rules) ?? [], reach: strings(r?.reach) };
     } catch {
-      return [];
+      return { rules: [], reach: null };
     }
   }
 

@@ -14,7 +14,7 @@
 // `mentionPermission: 'auto'` 에이전트는 이미 그 안에서 무엇이든 실행할 수 있다(스펙 §6 이
 // 그렇게 정했다). 즉 훅을 심어 실행하는 길은 이미 있는 길보다 넓지 않다. 신뢰가 정하는
 // 것은 "이 디렉터리를 작업 대상으로 인정하는가"이고, 러너가 그것을 만들었다는 사실이 곧 답이다.
-import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -67,18 +67,37 @@ async function trustForClaude(workspaceDir: string, path: string): Promise<void>
  * 있으면 codex 가 나중 것을 읽는다. 파서를 넣으면 그 의존이 러너 전체로 번진다.
  */
 async function trustForCodex(workspaceDir: string, path: string): Promise<void> {
-  const codexHome = dirname(path);
-  let text = '';
-  try {
-    text = await readFile(path, 'utf8');
-  } catch { /* 없으면 새로 만든다 */ }
-
   const header = `[projects."${workspaceDir}"]`;
-  if (text.includes(header)) return;
+  await editCodexConfig(path, (text) => {
+    if (text.includes(header)) return null;
+    return `${text}${text.endsWith('\n') || text === '' ? '' : '\n'}\n${header}\ntrust_level = "trusted"\n`;
+  });
+}
 
-  const block = `${text.endsWith('\n') || text === '' ? '' : '\n'}\n${header}\ntrust_level = "trusted"\n`;
-  await mkdir(codexHome, { recursive: true });
-  await writeFile(path, text + block, { mode: 0o600 });
+const codexConfigLocks = new Map<string, Promise<unknown>>();
+
+/**
+ * codex 홈 `config.toml` 고치기 — 이 러너 안에서 **한 줄로 세운다**(같은 에이전트의 턴들이 동시에 신뢰·hook 신뢰를 적는다). 읽고 고쳐
+ * 쓰는 사이에 다른 턴의 쓰기가 끼면 앞 턴이 적은 절이 사라진다 — hook 신뢰 절이 사라지면 그 hook 이 돌지 않는다. 쓰기는 임시 파일 +
+ * rename 이라 codex 가 반쯤 쓴 파일을 읽지 않는다. `edit` 가 null 이면 쓰지 않는다.
+ */
+export function editCodexConfig(path: string, edit: (text: string) => string | null): Promise<void> {
+  const prev = codexConfigLocks.get(path) ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(async () => {
+    let text = '';
+    try {
+      text = await readFile(path, 'utf8');
+    } catch { /* 없으면 새로 만든다 */ }
+    const out = edit(text);
+    if (out === null || out === text) return;
+    await mkdir(dirname(path), { recursive: true });
+    const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(tmp, out, { mode: 0o600 });
+    await rename(tmp, path);
+  });
+  codexConfigLocks.set(path, next);
+  void next.finally(() => { if (codexConfigLocks.get(path) === next) codexConfigLocks.delete(path); }).catch(() => undefined);
+  return next;
 }
 
 /**

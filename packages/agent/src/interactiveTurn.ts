@@ -24,7 +24,7 @@ import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
 import type { Me } from './harkroom.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { buildTurnCommand, chromeTurnFor, preassignsSessionId, type McpServerEntry, type TurnPlan } from './turn.js';
-import { discoversSessionIdAfterTurn, hasAccountPool } from './adapters/index.js';
+import { commandRulesOf, discoversSessionIdAfterTurn, hasAccountPool } from './adapters/index.js';
 import { acceptsPtyInput } from './pty.js';
 import type { PtyControls, TurnResult } from './pty.js';
 import type { Exec } from './workspace.js';
@@ -124,6 +124,8 @@ export interface InteractiveTurnDeps {
     threadModel?(messageId: string): Promise<TurnModel>;
     readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]>;
   };
+  /** codex 를 띄우기 전 — 잰 판 밖이면 남은 규칙 파일을 지운다(`codexRules.ts::sweepCodexRules`). */
+  sweepCodexRules?: () => Promise<void>;
   store: SessionStore;
   exec: Exec;
   runTurn: RunInteractiveTurn;
@@ -466,6 +468,8 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       claudeConfigDir,
       codexHome: deps.codexHome,
     });
+    // 대화형 codex 도 이 홈의 규칙 파일을 싣는다 — 잰 판 밖이면 지우고 뜬다(security F1, `codexRules.ts::sweepCodexRules`).
+    if (commandRulesOf(def.harness) === 'codex-execpolicy') await deps.sweepCodexRules?.();
     // 계정 단위 관문도 같은 이유로 미리 지난다. 여기서도 부르는 이유는 인터랙티브 턴이
     // 그 계정의 **첫 턴일 수 있기** 때문이다 — 멘션 턴에만 두면 사람이 [터미널 열기]로
     // 먼저 연 계정은 경고 화면부터 만난다.

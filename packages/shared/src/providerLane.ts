@@ -195,3 +195,61 @@ export function codexRulesFile(rules: readonly string[]): string {
 
 /** `validateToolRule` 의 본문 글자와 같다 — 한 번 더 걸러 Starlark 문자열 밖으로 나갈 글자가 없게 한다. */
 const CODEX_RULE_WORD = /^[A-Za-z0-9_./@=:+%-]+$/;
+
+/**
+ * `codexRulesFile` 가 쓴 글을 다시 `Bash(<명령>)` 규칙으로 읽는다 — codex 턴 hook 이 「밖으로 나갈 수 있는 명령」을 규칙 파일과
+ * **같은 출처**로 보려고 쓴다. 이 함수가 쓴 꼴(머리 주석·`prefix_rule(… decision = "allow")`·빈 줄) 말고 다른 줄이 하나라도 있으면
+ * null 이다 — 부르는 쪽은 그때 막는다(fail-closed).
+ */
+export function parseCodexRulesFile(text: string): string[] | null {
+  const out: string[] = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = /^prefix_rule\(pattern = \[(.*)\], decision = "allow"\)$/.exec(line);
+    if (!m) return null;
+    const words: string[] = [];
+    for (const part of (m[1] ?? '').split(', ')) {
+      let w: unknown;
+      try { w = JSON.parse(part); } catch { return null; }
+      if (typeof w !== 'string' || !CODEX_RULE_WORD.test(w)) return null;
+      words.push(w);
+    }
+    if (!words.length) return null;
+    out.push(`Bash(${words.join(' ')})`);
+  }
+  return out;
+}
+
+/**
+ * codex 턴 hook(`hook pretool --codex`)이 읽는 턴 env 이름. 값은 `encodeCodexHookSpec` 의 base64url 이다. hooks.json 의 명령은
+ * 고정이고(신뢰 hash 가 바뀌지 않게) 턴마다 다른 것(채널 규칙·합집합·codex 홈)은 이 env 로 간다 — codex 본체의 env 라 모델의 셸이
+ * 바꿀 수 없다.
+ */
+export const CODEX_HOOK_SPEC_ENV = 'HARKROOM_CODEX_HOOK';
+
+/**
+ * `rules` 는 그 턴 채널의 승인 규칙, `reach` 는 러너가 규칙 파일에 쓴 합집합(`decideTailHook`). `codexHome` 은 그 턴의 codex 홈
+ * (기록 파일·규칙 파일이 이 아래에 있어야 한다).
+ */
+export type CodexHookSpec = { rules: string[]; reach: string[]; codexHome: string };
+
+export function encodeCodexHookSpec(spec: CodexHookSpec): string {
+  const keep = (rs: readonly string[]) => rs.filter((r) => LANE_HOOK_RULE.test(r));
+  return Buffer.from(JSON.stringify({ rules: keep(spec.rules), reach: keep(spec.reach), codexHome: spec.codexHome }), 'utf8').toString('base64url');
+}
+
+/** 풀지 못하면 null — 부르는 쪽은 그때 거절한다(fail-closed). */
+export function decodeCodexHookSpec(value: string | undefined): CodexHookSpec | null {
+  if (!value || !/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  try {
+    const p = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Record<string, unknown>;
+    const list = (v: unknown) => (Array.isArray(v) && v.every((r) => typeof r === 'string' && LANE_HOOK_RULE.test(r)) ? v as string[] : null);
+    const rules = list(p.rules);
+    const reach = list(p.reach);
+    if (!rules || !reach || typeof p.codexHome !== 'string' || !p.codexHome.startsWith('/')) return null;
+    return { rules, reach, codexHome: p.codexHome };
+  } catch {
+    return null;
+  }
+}
