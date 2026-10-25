@@ -175,6 +175,16 @@ describe('FailureCard — API 키 연결(designer v3 ④)', () => {
     expect(onOpenSettings).toHaveBeenCalledWith('agents', `${FORGE}#run`);
   });
 
+  it('임대를 잃은 실패(no_lease·lease_invalid)는 [에이전트 설정 열기]를 감추고 [다시 부르기]를 주 버튼으로 세운다(designer #1584)', () => {
+    for (const laneCode of ['no_lease', 'lease_invalid'] as const) {
+      const { unmount } = render(<MessageItem message={failMsg(failMeta({ retryable: true, code: 'provider_lane', laneCode }))} onOpenSettings={vi.fn()} />);
+      expect(screen.queryByTestId('lane-open-settings'), laneCode).toBeNull();
+      expect(screen.getByTestId('failure-retry').className, laneCode).toContain('bg-accent');
+      expect(screen.getByTestId('lane-failure-line').textContent, laneCode).toContain('다시 불러 달라');
+      unmount();
+    }
+  });
+
   it('모르는 까닭 코드는 unknown 문장으로 접는다', () => {
     const m = failMsg(failMeta({ retryable: false, code: 'provider_lane', laneCode: 'https://x.example' as never }));
     render(<MessageItem message={m} />);

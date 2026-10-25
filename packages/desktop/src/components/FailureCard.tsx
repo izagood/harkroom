@@ -7,6 +7,7 @@ import { threadRowFor } from '../lib/threadModels';
 import { AgentModelChip } from './AgentModelChip';
 import { GateTerminalButton } from './GateTerminalButton';
 import { laneCodeName, laneCodeText } from '../lib/laneCodes';
+import { providerLaneRecallable } from '@harkroom/shared/providerLane';
 import { useLocalLane } from '../lib/localLanes';
 import type { SectionId } from './settings/sections';
 
@@ -66,6 +67,11 @@ export function FailureCard({ message, inThread = false, onOpenSettings }: {
   */
   const lane = failure.code === 'provider_lane';
   /*
+    **고칠 설정이 없는 lane 실패**(designer #1584): 러너가 다시 떠서 그 멘션의 임대를 잃었다. 할 일은 다시 부르는 것뿐이라
+    [에이전트 설정 열기]를 감추고 [다시 부르기]를 주 버튼으로 세운다 — 설정을 열게 두면 사람은 고칠 것 없는 칸을 뒤진다.
+  */
+  const recallable = lane && providerLaneRecallable(failure.laneCode);
+  /*
     **API 키로 도는 에이전트의 그 밖의 실패**(designer n17) — 키는 받았는데 그 턴이 API 오류 등으로 끝났다. 가장 흔한 원인이 API 주소라
     그 연결을 가리키는 한 줄과 [에이전트 설정 열기]를 붙인다. 이 맥 설정만 안다(터미널 꺼짐과 같은 한계) — 서버 표지는 바꾸지 않는다.
   */
@@ -108,7 +114,7 @@ export function FailureCard({ message, inThread = false, onOpenSettings }: {
         {/* API 키 연결 에이전트는 아직 터미널을 못 연다 — 눌러도 안 되는 문을 그리지 않는다. 다른 자리(참여자 메뉴·터미널 칩)는
             「꺼 두고 보이기」지만, 실패 카드는 터미널 진입점이 아니라 고칠 곳([에이전트 설정 열기])을 가리키는 자리라 숨긴다. */}
         {!lane && <TerminalChip account={author} message={message} />}
-        {(lane || laneAgent) && onOpenSettings && (
+        {(lane || laneAgent) && !recallable && onOpenSettings && (
           <button
             type="button"
             data-testid="lane-open-settings"
@@ -135,8 +141,10 @@ export function FailureCard({ message, inThread = false, onOpenSettings }: {
         {failure.retryable && author && !modelRejected && (
           <button
             data-testid="failure-retry"
-            className="rounded-row border border-border bg-surface-raised px-2 py-0.5 text-meta
-                       font-medium text-fg hover:bg-surface-hover"
+            className={recallable
+              ? 'rounded-row bg-accent px-2 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover'
+              : `rounded-row border border-border bg-surface-raised px-2 py-0.5 text-meta
+                       font-medium text-fg hover:bg-surface-hover`}
             onClick={() => setDraft(
               // 작성창의 scope 는 채널이면 채널 id, 스레드면 `thread:<rootId>` 다
               // (`ChannelPane`·`ThreadPanel` 의 `scopeKey`). 여기서 다른 식을 쓰면 채운 초안이

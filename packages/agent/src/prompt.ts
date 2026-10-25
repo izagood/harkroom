@@ -6,6 +6,7 @@
 // 세션이 이미 아는 것까지 다시 넘길 필요가 없다 — 그 경계가 `lastFedSeq` 다. 그리고 예전엔
 // 러너가 모델 응답을 파싱해 대신 올렸지만, 이제 에이전트가 harkroom MCP `message.post` 로
 // 스스로 올린다 — 그래서 시스템 프롬프트가 "어디에 쓸지"까지 알려줘야 한다.
+import { providerLaneRecallable } from '@harkroom/shared/providerLane';
 import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome, type InboxDelegatedBy, type InboxCanceledWake, type WakeReportTo } from '@harkroom/shared';
 
 import type { AccountFailure } from './claudeAccounts.js';
@@ -347,14 +348,8 @@ export function providerLaneNotice(code: string): string {
     + `데스크톱의 에이전트 설정 › 모델 연결에서 API 주소와 API 키(비밀 허락)를 확인한 뒤 다시 불러 주세요. 까닭: ${code})`;
 }
 
-/**
- * **다시 부르면 풀리는** API 키 연결 실패 코드(2026-10-25). 턴 임대는 멘션마다 한 번만 나오고(서버 S1) 그 장부는 러너·오퍼레이터
- * 메모리에만 있다 — 러너가 다시 뜬 뒤 옛 멘션을 다시 집으면 임대가 없다(`no_lease`)·맞지 않는다(`lease_invalid`). 같은 멘션은
- * 다시 받을 수 없지만 **새 멘션**은 새 임대를 받는다. 그래서 이 둘만 [다시 부르기]를 열고 설정을 고치라고 하지 않는다.
- */
-export function providerLaneRecallable(code: string): boolean {
-  return code === 'no_lease' || code === 'lease_invalid';
-}
+/** 다시 부르면 풀리는 실패 코드 — 정본은 shared 다(화면도 같은 목록으로 [에이전트 설정 열기]를 감춘다). */
+export { providerLaneRecallable };
 
 /**
  * 스레드 지정 모델을 하네스가 거절했다는 통지(결정 6). 사람이 할 일(스레드 칩에서 되돌리기)을
