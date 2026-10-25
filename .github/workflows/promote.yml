@@ -29,6 +29,12 @@
 # 같은 판 X 를 **서버 먼저**(homelab 판올림) → 그다음 이 워크플로로 데스크톱 Stable.
 # 앱 vX 의 `MIN_SERVER_VERSION` 은 X 이하이므로, 서버가 X 이상이면 Stable 앱은 늘 붙는다.
 #
+# ## 판정 이슈
+#
+# 시험(docs/release-stable.md)을 통과한 판만 올린다. 이슈 `Stable 판정 vX` 에 `stable-verdict-pass` 이름표가
+# 있어야 하고, 그 이름표를 마지막으로 붙인 사람이 지금 쓰기 권한 이상이어야 하며, 본문에 ❌ 가 없어야 한다.
+# `allow_older` 로도 건너뛰지 않는다.
+#
 # ## 실행
 #
 #   gh workflow run promote.yml -R izagood/harkroom -f version=0.4.164
@@ -54,6 +60,8 @@ permissions:
   contents: write
   # ghcr 에 `:stable` 을 덧붙인다. `GITHUB_TOKEN` 으로 충분하다.
   packages: write
+  # 판정 이슈(`Stable 판정 vX`)와 그 이름표를 붙인 사람을 읽는다.
+  issues: read
 
 # 승격 둘이 겹치면 매니페스트가 어느 쪽인지 알 수 없다 — 하나씩만 돈다.
 concurrency:
@@ -138,6 +146,58 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "current=$current" >> "$GITHUB_OUTPUT"
+
+      # 시험 없이 승격되는 것을 막는다(docs/release-stable.md 「판정 이슈」). 판정은 이 저장소의 이슈
+      # `Stable 판정 vX` 에 `stable-verdict-pass` 이름표로 남긴다 — 이름표는 쓰기 권한이 있어야 붙일 수
+      # 있지만, 권한이 나중에 줄었을 수도 있으니 **마지막으로 붙인 사람의 지금 권한**을 다시 본다.
+      # `allow_older` 로도 건너뛰지 못한다: 되돌리기도 고친 판 X+1 의 승격이고, 그 판도 판정이 있어야 한다.
+      - name: 판정 이슈를 확인한다
+        id: verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          LABEL: stable-verdict-pass
+        run: |
+          set -euo pipefail
+          title="Stable 판정 v$VERSION"
+          # 검색 색인은 늦을 수 있다 — 이름표로 목록을 받아 제목을 정확히 맞춘다.
+          issues=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues?labels=$LABEL&state=all&per_page=100" \
+            --jq "[.[] | select(.pull_request == null and .title == \"$title\") | .number]" | jq -s 'add // []')
+          count=$(jq length <<< "$issues")
+          if [ "$count" = 0 ]; then
+            echo "::error::'$title' 이슈에 $LABEL 이름표가 없다 — 판정(docs/release-stable.md 3 단계) 뒤에 승격한다"
+            exit 1
+          fi
+          if [ "$count" != 1 ]; then
+            echo "::error::'$title' 이면서 $LABEL 인 이슈가 $count 개다 — 하나만 남긴다: $(jq -c . <<< "$issues")"
+            exit 1
+          fi
+          number=$(jq -r '.[0]' <<< "$issues")
+
+          # 마지막으로 그 이름표를 붙인 사람. 지금도 쓰기 이상이어야 한다.
+          actor=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$number/events?per_page=100" \
+            --jq ".[] | select(.event == \"labeled\" and .label.name == \"$LABEL\") | .actor.login" | tail -1)
+          if [ -z "$actor" ]; then
+            echo "::error::#$number 에서 $LABEL 을 붙인 기록을 찾지 못했다"
+            exit 1
+          fi
+          permission=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$actor/permission" --jq .permission)
+          case "$permission" in
+            admin|maintain|write) ;;
+            *)
+              echo "::error::#$number 의 $LABEL 을 붙인 $actor 의 권한이 '$permission' 이다 — 쓰기 이상만 판정한다"
+              exit 1
+              ;;
+          esac
+
+          # 이름표가 있어도 본문에 ❌ 가 남아 있으면 판정이 끝나지 않은 것이다.
+          body=$(gh api "repos/$GITHUB_REPOSITORY/issues/$number" --jq '.body // ""')
+          if grep -q '❌' <<< "$body"; then
+            echo "::error::#$number 본문에 ❌ 항목이 남아 있다 — 고친 판으로 다시 시험하거나 표를 고친 뒤 승격한다"
+            exit 1
+          fi
+          echo "판정: #$number ($LABEL, $actor · $permission)"
+          echo "verdict=$number" >> "$GITHUB_OUTPUT"
 
       - name: 매니페스트를 받아 판을 대조한다
         env:
@@ -231,6 +291,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           PREV: ${{ steps.check.outputs.current }}
+          VERDICT: ${{ steps.verdict.outputs.verdict }}
         run: |
           set -euo pipefail
           # 앱이 실제로 읽는 URL 을 그대로 읽는다. CDN 반영이 늦을 수 있어 몇 번 기다린다.
@@ -254,4 +315,5 @@ jobs:
             echo "| Stable | ${PREV:-(없음)} → **$VERSION** |"
             echo "| Ludicrous (latest) | $latest |"
             echo "| 이미지 | \`${IMAGE}:${CHANNEL_TAG}\` = \`:$VERSION\` |"
+            echo "| 판정 | #$VERDICT |"
           } >> "$GITHUB_STEP_SUMMARY"
