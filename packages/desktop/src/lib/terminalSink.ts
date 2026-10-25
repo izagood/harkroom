@@ -475,6 +475,44 @@ function attachCompositionBridge(el: HTMLElement, io: {
 }
 
 /**
+ * **못 치는 창에서도 휠로 스크롤백을 올린다**(2026-10-25, 권한 확인 창 사고).
+ *
+ * TUI(claude 등)가 마우스 추적(`?1000h`·`?1006h` …)을 켜면 xterm 은 휠을 스크롤이 아니라 **마우스 보고로 PTY 에
+ * 보낸다**(`CoreBrowserTerminal` 의 wheel 리스너가 보고를 보내고 이벤트를 취소한다). 읽기 전용 창은 그 보고를
+ * `disableStdin` 이 버리므로 휠이 아무 일도 하지 않았고, 위로 밀려난 줄을 볼 길이 없었다. 못 치는 창에서는 보낼 곳이
+ * 어차피 없으니 xterm 보다 먼저(캡처 단계) 휠을 받아 화면만 스크롤한다. 칠 수 있는 창은 그대로 TUI 에 맡긴다.
+ * 마우스 추적이 꺼져 있으면 xterm 이 스스로 스크롤하므로 손대지 않는다.
+ */
+export function attachReadOnlyWheel(
+  el: HTMLElement,
+  deps: {
+    /** 지금 못 치는 창인가. */
+    blocked(): boolean;
+    /** TUI 가 마우스 추적을 켰고, 스크롤백이 있는 보통 화면인가(대체 화면에는 올릴 줄이 없다). */
+    eatsWheel(): boolean;
+    /** 한 줄 높이(px). 픽셀 단위 휠을 줄로 바꾼다. */
+    lineHeight(): number;
+    scrollLines(lines: number): void;
+  },
+): () => void {
+  let carry = 0;
+  const onWheel = (ev: WheelEvent): void => {
+    if (!deps.blocked() || !deps.eatsWheel() || ev.deltaY === 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const unit = ev.deltaMode === 1 ? 1 : ev.deltaMode === 2 ? 0 : Math.max(1, deps.lineHeight());
+    // 쪽 단위(deltaMode 2)는 드물다 — 한 번에 한 화면 대신 세 줄로 둔다.
+    carry += unit === 0 ? Math.sign(ev.deltaY) * 3 : ev.deltaY / unit;
+    const lines = carry < 0 ? Math.ceil(carry) : Math.floor(carry);
+    if (lines === 0) return;
+    carry -= lines;
+    deps.scrollLines(lines);
+  };
+  el.addEventListener('wheel', onWheel, { capture: true, passive: false });
+  return () => el.removeEventListener('wheel', onWheel, true);
+}
+
+/**
  * xterm 을 붙이는 실제 구현. `import()` 가 끝나기 전에 도착한 바이트는 **큐에 담고
  * 도착 순서 그대로** 쓴다.
  *
@@ -493,6 +531,8 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     options: { disableStdin?: boolean; fontSize?: number };
     dispose(): void;
   } | null = null;
+  /** 읽기 전용 휠 해제(`attachReadOnlyWheel`). */
+  let detachWheel: (() => void) | null = null;
   /**
    * 얹힌 WebGL 애드온. **dispose 순서 때문에** 들고 있는다(아래 `dispose` 주석).
    */
@@ -673,6 +713,12 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
     // 조합이 **시작될 수 있게** 숨은 입력칸을 화면 안으로 끌어온다(위 주석).
     detachHelper = trackHelperTextarea(el, t);
     // 조합은 xterm 에 맡기지 않는다(위 `attachCompositionBridge` 주석).
+    detachWheel = attachReadOnlyWheel(el, {
+      blocked: () => readOnly || !opts?.onInput,
+      eatsWheel: () => t.modes.mouseTrackingMode !== 'none' && t.buffer.active.type === 'normal',
+      lineHeight: () => fontSize * LINE_HEIGHT,
+      scrollLines: (lines) => t.scrollLines(lines),
+    });
     detachComposition = attachCompositionBridge(el, {
       send: sendInput,
       blocked: () => readOnly || !opts?.onInput,
@@ -783,6 +829,8 @@ const xtermSink: TerminalSinkFactory = (el, opts) => {
       detachComposition = null;
       detachHelper?.();
       detachHelper = null;
+      detachWheel?.();
+      detachWheel = null;
       try { webgl?.dispose(); } catch { /* 렌더러 해체 실패가 화면을 끄지 않는다 */ }
       webgl = null;
       try { term?.dispose(); } catch { /* 같은 규율 — 여기서 새면 패널이 아니라 앱이 죽는다 */ }
