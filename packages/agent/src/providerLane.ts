@@ -76,10 +76,13 @@ export const PROVIDER_LANE_ARGV_ONLY_KEYS: Partial<Record<AgentHarness, readonly
  * 구독형 gpt 기본 모델은 그 문장이 없어 5/5). harkroom 지시는 codex 에서 사용자 글 앞에 붙어(prompt-prefix) 그 문장을 못 이긴다.
  * `developer_instructions` 는 기본 지시문을 **그대로 두고** developer 메시지 앞에 덧붙인다(가짜 서버로 요청 본문 실측, 적용 시
  * 잡담 3/5·일 턴 정상). `instructions`·`model_instructions_file` 은 기본 지시문(도구·셸 지침)을 통째로 **대체**하므로 쓰지 않는다.
+ *
+ * threadRootId 구절(2026-10-25 E13 회차): 덧붙인 뒤 모델이 post 는 했지만 threadRootId 를 빼 채널 최상위에 올린 턴이 있었다.
  */
 export const CODEX_LANE_DEVELOPER_INSTRUCTIONS =
   '이 대화의 답은 화면(최종 메시지)에 쓰는 것으로 끝나지 않는다. 사람은 harkroom 스레드만 본다 — 인사·잡담을 포함한 모든 답을 '
-  + '반드시 harkroom MCP 의 message_post 도구로 그 스레드(프롬프트 맨 위의 channelId·threadRootId)에 올려라.';
+  + '반드시 harkroom MCP 의 message_post 도구로 그 스레드(프롬프트 맨 위의 channelId·threadRootId)에 올려라. '
+  + 'message_post 에는 threadRootId 를 꼭 넣는다 — 빼면 채널 최상위에 올라가 그 스레드에서 답이 안 보인다.';
 
 /** codex lane 의 provider 이름(`model_providers.<이름>`). */
 export const CODEX_LANE_PROVIDER = 'harkroom-lane';

@@ -106,6 +106,8 @@ describe('codex lane 조립', () => {
     expect(overrides).toContain('check_for_update_on_startup=false');
     // 잡담에도 MCP 로 답하게 developer 자리에 덧붙인다 — 기본 지시문을 지우는 두 칸은 쓰지 않는다.
     expect(overrides).toContain(`developer_instructions=${JSON.stringify(CODEX_LANE_DEVELOPER_INSTRUCTIONS)}`);
+    // 답을 채널 최상위가 아니라 그 스레드에 — threadRootId 를 빼지 말라는 구절이 있어야 한다(E13 회차에서 뺀 턴이 있었다).
+    expect(CODEX_LANE_DEVELOPER_INSTRUCTIONS).toMatch(/threadRootId 를 꼭 넣는다/);
     expect(overrides.some((o) => /^(instructions|model_instructions_file)=/.test(o))).toBe(false);
     expect(args.slice(args.indexOf('--model'), args.indexOf('--model') + 2)).toEqual(['--model', 'ExampleOrg/example-model']);
   });
