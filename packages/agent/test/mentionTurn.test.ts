@@ -5082,3 +5082,50 @@ describe('턴 열쇠(C안 P2) — 멘션 턴', () => {
     expect(said).not.toContain(keys.shell);
   });
 });
+
+/**
+ * 하네스 화면의 API 오류 띠(2026-10-25 qa: omp 가 `✘ 404 …` 띠를 띄우고 입력을 기다려 10분 정지로만 접혔다).
+ * 띠가 서면 곧바로 접고 그 줄을 실패 글에 싣는다. 화면 글자라 한도·자격증명 판정 재료(`harnessApiError`)로는 넘기지 않는다.
+ */
+describe('화면의 API 오류 띠를 보면 곧바로 접는다 (2026-10-25)', () => {
+  const BANNER = /✘\s+(\d{3}\b[^\n]{0,200})\n[\s\S]{0,300}?Dismissed when you send your next message\./;
+  const SCREEN = '──────\n\n ✘ 404 {"detail":"Not Found"}          \n\n Dismissed when you send your next message.     \n──────\n π > model > 21%──205K';
+
+  it('띠가 서면 정지 시계를 기다리지 않고 접고, 실패 문구에 오류 줄을 싣되 harnessApiError 로는 넘기지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, harnessStallMs: 60_000, readTranscriptMtime: async () => null, apiErrorBannerFor: () => BANNER,
+    });
+    runTurn.script = async (_plan: TurnPlan, opts: { onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void; onData?: (chunk: Buffer) => void }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      opts.onData?.(Buffer.from(SCREEN, 'utf8'));
+      for (let i = 0; i < 400 && killed === null; i += 1) await new Promise((r) => setTimeout(r, 5));
+      return { exitCode: killed ? 143 : 0, timedOut: false, tail: SCREEN };
+    };
+
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch((e: unknown) => e) as Error & { harnessApiError?: string; harnessStalledMs?: number };
+    expect(killed).toBe('SIGTERM');
+    expect(err.message).toBe('harness API 오류(하네스 화면): 404 {"detail":"Not Found"}');
+    expect(err.harnessApiError).toBeUndefined();
+    expect(err.harnessStalledMs).toBeUndefined();
+  });
+
+  it('대조군: 띠 패턴이 없는 하네스는 같은 화면이어도 접지 않는다(정지 시계 몫)', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let killed: string | null = null;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, harnessStallMs: 60_000, readTranscriptMtime: async () => null, apiErrorBannerFor: () => null,
+    });
+    runTurn.script = async (_plan: TurnPlan, opts: { onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void; onData?: (chunk: Buffer) => void }) => {
+      opts.onSpawn?.({ write: () => {}, resize: () => {}, kill: (sig) => { killed = sig ?? 'SIGTERM'; } });
+      opts.onData?.(Buffer.from(SCREEN, 'utf8'));
+      await new Promise((r) => setTimeout(r, 200));
+      return { exitCode: 0, timedOut: false, tail: SCREEN };
+    };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch(() => null);
+    expect(killed).toBeNull();
+  });
+});

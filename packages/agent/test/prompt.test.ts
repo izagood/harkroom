@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, stallNotice, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -1443,5 +1443,22 @@ describe('macPermissionNotice (security n1·n2, PR #1384)', () => {
   it('거부면 시스템 설정 › 자동화 길을 준다', () => {
     const body = macPermissionNotice([{ state: 'denied', target: 'Google Chrome', input: 'osascript x' }], 'hrkp_x');
     expect(body).toContain('시스템 설정 › 개인정보 보호 및 보안 › 자동화 › Harkroom');
+  });
+});
+
+describe('stallScreenErrorLine·stallNotice — 정지 화면의 오류 줄 (2026-10-25)', () => {
+  it('정지 화면에서 오류처럼 보이는 마지막 줄을 고르고, 없으면 null 이다', () => {
+    expect(stallScreenErrorLine('Connected\n✘ 404 {"detail":"Not Found"}\nDismissed when you send your next message.\n π > model > 21%')).toBe('✘ 404 {"detail":"Not Found"}');
+    expect(stallScreenErrorLine('Error: request failed\nok\nAPI Error: 429 rate limited')).toBe('API Error: 429 rate limited');
+    expect(stallScreenErrorLine('Ran 1 shell command\n❯ ')).toBeNull();
+    expect(stallScreenErrorLine('토큰 128K · 21%')).toBeNull();
+    expect(stallScreenErrorLine(null)).toBeNull();
+  });
+
+  it('통지는 줄이 있을 때만 그것을 덧붙인다 — 없으면 지금 문장 그대로', () => {
+    const plain = stallNotice(600_000);
+    expect(plain).not.toContain('화면의 마지막 오류 줄');
+    expect(stallNotice(600_000, null)).toBe(plain);
+    expect(stallNotice(600_000, '✘ 404 Not Found')).toBe(`${plain.slice(0, -1)} 화면의 마지막 오류 줄: "✘ 404 Not Found")`);
   });
 });

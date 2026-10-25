@@ -34,6 +34,9 @@ export const OMP_ADAPTER: HarnessAdapter = {
     gate: GATE_PATTERN,
     gateMeasured: false,
     readyMinMs: 1000,
+    // API 오류 띠(실측 18.12.6, 10-25 qa: 주소에 `/v1` 이 빠져 404): `✘ 404 {"detail":"Not Found"}` 다음 줄에
+    // `Dismissed when you send your next message.` 가 서고 입력을 기다린다. 두 줄이 함께 있어야 맞는다.
+    apiErrorBanner: /✘\s+(\d{3}\b[^\n]{0,200})\n[\s\S]{0,300}?Dismissed when you send your next message\./,
   },
 
   // 저장소 설정을 아예 안 보게 cwd 를 빈 폴더로 옮긴다(B4) — 들일지 묻는 화면도, 적어 둘 장부도 없다.

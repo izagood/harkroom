@@ -446,11 +446,27 @@ export function gateNotice(accountLabel: string): string {
  * `awaitingHuman` 이라 정지 시계를 재지 않는다). 여기 오는 것은 **알아보지 못한** 관문이거나
  * 진짜로 멈춘 하네스다 — 어느 쪽이든 볼 곳은 그 터미널이므로 말은 하나로 족하다.
  */
-export function stallNotice(stallMs: number): string {
+export function stallNotice(stallMs: number, screenLine?: string | null): string {
   const 분 = Math.round(stallMs / 60_000);
   return `(하네스가 ${분}분 동안 아무것도 하지 않아 접었습니다 — 다시 시도하지 않습니다: `
     + `같은 자리에 다시 서기 때문입니다. 이 스레드의 터미널을 열어 화면을 확인해 주세요 — `
-    + `확인을 기다리는 물음이 서 있을 수 있습니다.)`;
+    + `확인을 기다리는 물음이 서 있을 수 있습니다.`
+    // 화면 끝의 오류처럼 보이는 줄(`stallScreenErrorLine`, 가림 뒤). 원인이 화면에만 있을 때 사람이 터미널을 열기 전에 안다.
+    + (screenLine ? ` 화면의 마지막 오류 줄: "${screenLine}"` : '')
+    + `)`;
+}
+
+/**
+ * 정지 화면(ANSI 를 걷고 가린 꼬리)에서 **오류처럼 보이는 마지막 줄**을 고른다(2026-10-25). 하네스와 상관없다 — omp 의 `✘ 404 …`
+ * 띠처럼 원인이 화면에만 있는 정지가 「터미널을 봐라」로만 남았다. 고르지 못하면 null(통지는 지금 문장 그대로). 사람 말이 섞일 수
+ * 있는 화면 글자라 판정에는 쓰지 않는다 — 보이는 글로만 쓴다.
+ */
+export function stallScreenErrorLine(screen: string | null): string | null {
+  if (!screen) return null;
+  const looksLikeError = /✘|✗|\b(?:error|failed|failure|unauthorized|forbidden|not found|bad request|too many requests|rate limit(?:ed)?|timed out)\b|\b[45]\d\d\b(?=[^\n]*(?:\{|"|error|not found|unauthorized|forbidden))/i;
+  const lines = screen.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+  for (let i = lines.length - 1; i >= 0; i--) if (looksLikeError.test(lines[i]!)) return lines[i]!;
+  return null;
 }
 
 /**

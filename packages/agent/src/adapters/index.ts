@@ -218,12 +218,17 @@ export function commandRulesOf(harness: AgentHarness): 'codex-execpolicy' | null
   return ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).commandRules ?? null;
 }
 
-/** 프롬프트를 넣기 전에 harkroom 브릿지의 `tools/list` 답을 기다리는가(계약 `waitsForMcpBeforePrompt`). */
 /** 다리 열쇠를 셸 밖으로 주는 길(`AdapterContract.turnKeyDelivery`). 없으면 null — 그 하네스는 턴 열쇠를 받지 않는다. */
 export function turnKeyDeliveryOf(harness: AgentHarness): 'mcp-config-env' | 'env-vars' | 'turn-config-env' | null {
   return ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).turnKeyDelivery ?? null;
 }
 
+/** 하네스가 API 오류를 받고 입력을 기다리는 화면 패턴(계약 `screen.apiErrorBanner`). 없으면 null. */
+export function apiErrorBannerFor(harness: AgentHarness): RegExp | null {
+  return adapterFor(harness).screen.apiErrorBanner ?? null;
+}
+
+/** 프롬프트를 넣기 전에 harkroom 브릿지의 `tools/list` 답을 기다리는가(계약 `waitsForMcpBeforePrompt`). */
 export function waitsForMcpBeforePrompt(harness: AgentHarness): boolean {
   return adapterFor(harness).waitsForMcpBeforePrompt === true;
 }

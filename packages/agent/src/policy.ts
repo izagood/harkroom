@@ -214,12 +214,13 @@ export function isSessionIdConflict(err: unknown): boolean {
  * 모른다.** 위의 두 판정이 문구를 보는 것은 그 문구가 하네스의 것이어서 어쩔 수 없는
  * 것이고, 이 사실은 우리가 아는 것이므로 우리가 표시로 넘긴다.
  */
-export function isHarnessStall(err: unknown): { stallMs: number } | null {
+export function isHarnessStall(err: unknown): { stallMs: number; screenLine: string | null } | null {
   if (!(err instanceof Error)) return null;
   const ms = (err as Error & { harnessStalledMs?: number }).harnessStalledMs;
+  const line = (err as Error & { harnessStalledScreenLine?: unknown }).harnessStalledScreenLine;
   // 값까지 함께 돌려준다 — 스레드에 남길 문장이 "몇 분 동안" 을 말해야 하고, 그 값을
   // 스케줄러가 따로 들고 있으면 실제로 잰 것과 화면이 갈라진다.
-  return typeof ms === 'number' && ms > 0 ? { stallMs: ms } : null;
+  return typeof ms === 'number' && ms > 0 ? { stallMs: ms, screenLine: typeof line === 'string' && line ? line : null } : null;
 }
 
 /**
