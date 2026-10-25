@@ -10,7 +10,12 @@ import { chan, fakeApi, fakeWsFactory } from './helpers/fakeApi';
  * 뿐이다. 사람은 [터미널 열기]를 누를 이유조차 모른다. 개입 UI 는 이미 완성돼 있고,
  * 빠진 것은 그것을 **언제 띄울지 말해 주는 한 마디**뿐이었다.
  */
-beforeEach(() => useAppStore.getState().reset());
+beforeEach(() => {
+  useAppStore.getState().reset();
+  // 사람이 앱을 보고 있다(기본). jsdom 의 `hasFocus()` 는 false 다.
+  vi.restoreAllMocks();
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+});
 
 async function 앱() {
   const api = fakeApi({ channels: vi.fn(async () => [chan('c1', 'general')]) });
@@ -31,6 +36,17 @@ const 부름 = {
 };
 
 describe('agent.attention 을 받은 데스크탑', () => {
+  it('앱에 포커스가 없으면 터미널을 열지 않고 관문 카드만 세운다 — 안 보는 앱이 입력 차례를 가져가지 않게', async () => {
+    // 같은 사람의 앱이 둘(오퍼레이터 기기 + 원격 기기)일 때 서버는 마지막 attach 에 차례를 준다(2026-10-25).
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const { callbacks } = await 앱();
+    callbacks.current!.onEvent(부름);
+
+    const s = useAppStore.getState();
+    expect(s.terminalTarget).toBeNull();
+    expect(s.gates.map((g) => g.sessionId)).toEqual(['s1']);
+  });
+
   it('그 스레드의 터미널 패널을 연다', async () => {
     const { callbacks } = await 앱();
     callbacks.current!.onEvent(부름);
