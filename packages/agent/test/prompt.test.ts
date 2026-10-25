@@ -572,6 +572,15 @@ describe('buildTurnPrompt — 넘겨받은 일(3-2)', () => {
 });
 
 describe('buildSystemPrompt', () => {
+  it('발화 model 안내의 예시에 특정 모델 이름이 없고, API 키 연결 턴에는 그 턴의 모델 ID 를 적는다(10-25 qa)', () => {
+    const base = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } };
+    const plain = buildSystemPrompt(base);
+    expect(plain).not.toMatch(/claude-|gpt-|MiniMax/);
+    expect(plain).not.toContain('이 턴의 모델 ID 는');
+    const lane = buildSystemPrompt({ ...base, laneModel: 'Org/Model-M2.7' });
+    expect(lane).toContain('이 턴의 모델 ID 는 `Org/Model-M2.7` 이다');
+  });
+
   it('지시문과 guide 를 싣고 8000자 규칙을 명시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '친절하게', guide: 'G규칙', memory: { core: null, slugs: [] } });
     expect(s).toContain('@forge');
