@@ -144,7 +144,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
             <WorkspaceCleanupSettings onGoToThread={(channelId, rootId) => { onBack(); void getController().openThread(rootId, { channelId }); }} />
           )}
           {section === 'skills' && <SkillsSettings targetId={targetId} />}
-          {section === 'automations' && <AutomationsSettings />}
+          {section === 'automations' && <AutomationsSettings onOpenMessage={(messageId) => { onBack(); void getController().openMessage(messageId); }} />}
           {section === 'secrets' && <SecretsSettings targetId={targetId} onOpenAgent={openAgent} />}
           {section === 'gallery' && <GallerySettings />}
         </main>
