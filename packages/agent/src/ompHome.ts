@@ -249,7 +249,9 @@ export function ompLaneModelsYml(lane: { baseUrl: string; keyPath: string; model
   return [
     'providers:',
     `  ${OMP_LANE_PROVIDER}:`,
-    `    baseUrl: ${JSON.stringify(lane.baseUrl)}`,
+    // gateway 의 OpenAI 꼴 경로는 `/v1/chat/completions` 다. lane 주소는 claude·opencode 와 같은 뿌리라 `/v1` 을 붙인다(pi 와 같다).
+    // 빠지면 omp 는 `<뿌리>/chat/completions` 를 불러 404 로 서고 10분 정지로만 접혔다(2026-10-25 qa 재점검).
+    `    baseUrl: ${JSON.stringify(`${lane.baseUrl}/v1`)}`,
     '    api: openai-completions',
     '    auth: apiKey',
     `    apiKey: ${JSON.stringify(`!cat '${lane.keyPath}'`)}`,

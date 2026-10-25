@@ -17,11 +17,13 @@ describe.skipIf(!BIN)('omp 실물 — 큰 붙여넣기 제출', () => {
   it.each([1, 150, 400])('%i줄 프롬프트가 모델에 전문으로 간다', async (lines) => {
     const root = await mkdtemp(join(tmpdir(), 'omp-paste-'));
     const bodies: string[] = [];
+    const paths: string[] = [];
     const srv = createServer((req, res) => {
       let b = '';
       req.on('data', (d) => (b += d));
       req.on('end', () => {
         bodies.push(b);
+        paths.push(req.url ?? '');
         const c = (d: unknown, f: string | null) => `data: ${JSON.stringify({ id: 'c', object: 'chat.completion.chunk', created: 1, model: 'm', choices: [{ index: 0, delta: d, finish_reason: f }] })}\n\n`;
         res.writeHead(200, { 'content-type': 'text/event-stream' });
         res.end(`${c({ role: 'assistant', content: 'DONE' }, null)}${c({}, 'stop')}data: [DONE]\n\n`);
@@ -41,7 +43,7 @@ describe.skipIf(!BIN)('omp 실물 — 큰 붙여넣기 제출', () => {
       await writeFile(sys, 'You are a test agent.');
       const keyPath = join(root, 'key');
       await writeFile(keyPath, 'sk-test', { mode: 0o600 });
-      await writeOmpLaneModels(thread.agentDir, { baseUrl: `http://127.0.0.1:${port}/v1`, keyPath, models: ['Org/m'] });
+      await writeOmpLaneModels(thread.agentDir, { baseUrl: `http://127.0.0.1:${port}`, keyPath, models: ['Org/m'] });
       const built = buildTurnCommand({
         harness: 'omp', mode: 'mention', sessionId, isFirstTurn: true, systemPrompt: 'SYS', systemPromptFile: sys, promptCtx: '',
         model: 'harkroom-lane/Org/m', effort: null, mentionPermission: 'auto', mcpConfigPath: join(root, 'mcp.json'), operatorBin: '/bin/false',
@@ -58,6 +60,8 @@ describe.skipIf(!BIN)('omp 실물 — 큰 붙여넣기 제출', () => {
       const record = await readFile(join(ompDirs(ompHome).sessionsDir, sessions[0]!), 'utf8');
       expect(bodies.some((b) => b.includes(`줄 ${lines - 1} —`))).toBe(true); // 마지막 줄까지 모델에 갔다
       expect(record).toContain('"role":"user"'); // 입력창에 남지 않고 제출됐다
+      // 러너가 넘기는 lane 주소는 뿌리다 — omp 는 그 위 `/v1/chat/completions` 를 불러야 한다(2026-10-25 404).
+      expect(new Set(paths)).toEqual(new Set(['/v1/chat/completions']));
     } finally {
       srv.close();
       await rm(root, { recursive: true, force: true });

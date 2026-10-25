@@ -19,7 +19,7 @@ import {
 
 const BIN = process.env.HARKROOM_OMP_BIN;
 
-interface Req { auth: string | undefined; body: { model?: string; tools?: Array<{ function?: { name?: string } }> } & Record<string, unknown> }
+interface Req { path?: string; auth: string | undefined; body: { model?: string; tools?: Array<{ function?: { name?: string } }> } & Record<string, unknown> }
 
 const PROBE_MCP = `import { appendFileSync } from 'node:fs';
 let buf = '';
@@ -101,7 +101,7 @@ describe.skipIf(!BIN)('omp 실물 — 심은 파일(C1·G1b·G1c·K3b)', () => {
       req.on('end', () => {
         let body = {} as Req['body'];
         try { body = JSON.parse(b); } catch { /* 빈 몸 */ }
-        reqs.push({ auth: req.headers.authorization, body });
+        reqs.push({ path: req.url, auth: req.headers.authorization, body });
         const what = plan.shift() ?? 'text';
         const call = (name: string, args: unknown) => ({ role: 'assistant', tool_calls: [{ index: 0, id: `call_${name}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
         if (what === 'bash') sse(res, call('bash', { command: 'echo BASH_OK; echo PLANTED_ENV=${PLANTED_ENV:-none}' }), 'tool_calls');
@@ -160,7 +160,7 @@ describe.skipIf(!BIN)('omp 실물 — 심은 파일(C1·G1b·G1c·K3b)', () => {
     const turns = [];
     for (const turn of opts.turns) {
       await writeFile(keyPath, turn.key, { mode: 0o600 });
-      await writeOmpLaneModels(thread.agentDir, { baseUrl: `http://127.0.0.1:${port}/v1`, keyPath, models: ['Org/m'] });
+      await writeOmpLaneModels(thread.agentDir, { baseUrl: `http://127.0.0.1:${port}`, keyPath, models: ['Org/m'] });
       plan = [...turn.plan];
       const from = reqs.length;
       const env = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', TERM: 'xterm-256color', HOME: built.env.HOME as string, PI_CODING_AGENT_DIR: built.env.PI_CODING_AGENT_DIR as string };
@@ -173,7 +173,7 @@ describe.skipIf(!BIN)('omp 실물 — 심은 파일(C1·G1b·G1c·K3b)', () => {
       const mine = reqs.slice(from);
       const all = JSON.stringify(mine);
       turns.push({
-        code, n: mine.length, auth: mine.map((r) => r.auth), model: mine.map((r) => r.body.model),
+        code, n: mine.length, paths: mine.map((r) => r.path), auth: mine.map((r) => r.auth), model: mine.map((r) => r.body.model),
         tools: (mine[0]?.body.tools ?? []).map((t) => t.function?.name),
         planted: PLANTED_WORDS.filter((w) => all.includes(w)),
         bash: /BASH_OK/.test(all), dotenvInShell: /PLANTED_ENV=1/.test(all), pong: all.includes('PONG_FROM_BRIDGE'),
@@ -197,6 +197,7 @@ describe.skipIf(!BIN)('omp 실물 — 심은 파일(C1·G1b·G1c·K3b)', () => {
     expect(one!.dotenvInShell).toBe(false); // `.env` 안 읽힘
     expect(one!.pong).toBe(true);
     expect(new Set(one!.auth)).toEqual(new Set(['Bearer sk-ONE'])); // K3: `!cat <키 파일>`
+    expect(new Set(one!.paths)).toEqual(new Set(['/v1/chat/completions'])); // lane 주소(뿌리) 위 `/v1` — 빠지면 실물 gateway 가 404
     expect(new Set(one!.model)).toEqual(new Set(['Org/m'])); // K2: 러너가 쓴 models.yml 의 lane 제공자
     expect(new Set(two!.auth)).toEqual(new Set(['Bearer sk-TWO'])); // 키를 캐시하지 않는다 — 회전이 다음 턴에 닿는다
     expect(r.sessions).toHaveLength(1); // 미리 쓴 헤더 하나로 두 턴이 이어졌다
