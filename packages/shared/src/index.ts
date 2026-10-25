@@ -2690,6 +2690,22 @@ export interface AutomationView {
   approvedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * 가장 최근 회차 한 건. 카드 머리 「마지막 실행」 줄과 [지금 한 번 돌리기] 결과 줄이 읽는다.
+   * 한 번도 안 돌았으면 null. 옛 서버는 안 준다(undefined).
+   */
+  lastRun?: AutomationLastRun | null;
+}
+
+export interface AutomationLastRun {
+  id: string;
+  status: AutomationRunView['status'];
+  triggerKind: AutomationTriggerKind | string;
+  createdAt: string;
+  /** 글이 올라갔으면 그 메시지. */
+  messageId: string | null;
+  /** 실패·건너뜀 사유 코드(`expired`·`channel_archived` 등). */
+  error: string | null;
 }
 
 /** 수신을 켜거나 키를 다시 받을 때 **한 번만** 오는 값. */
