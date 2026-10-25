@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { createHash } from 'node:crypto';
 import type { CommandFileDigest } from '@harkroom/shared/runnerLink';
-import { orderToolRuleWarnings, PERMISSION_CARD_OPTION, repoGrantScope, TOOL_RULE_WARNING_HEAD_KO, repoScope, toolScope, validateExactCommand, validateToolRule, type CommandFileArg, type MessageRow, type PermissionCardLine, type PermissionCardMandate, type PermissionMirrorMeta, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
+import { orderToolRuleWarnings, PERMISSION_CARD_OPTION, repoGrantScope, TOOL_RULE_WARNING_HEAD_KO, repoScope, parseToolScope, toolScope, validateExactCommand, validateToolRule, type CommandFileArg, type MessageRow, type PermissionCardLine, type PermissionCardMandate, type PermissionMirrorMeta, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
@@ -943,6 +943,25 @@ export async function toolAllowsFor(pool: Pool, agentId: string, channelId: stri
     const v = validateToolRule(rule);
     return v.ok && v.rule === rule;
   });
+}
+
+/**
+ * 이 에이전트가 **모든 채널**에서 받은 셸·도구 규칙의 합(중복 없음). codex 턴은 명령 규칙 파일을 에이전트 홈 하나에 두므로 그 파일은
+ * 채널을 가리지 않는다 — 러너는 이 합을 파일에 쓰고, 턴 hook 이 그 턴 채널의 규칙(`toolAllowsFor`)으로 다시 거른다.
+ */
+export async function toolReachFor(pool: Pool, agentId: string, now = new Date()): Promise<string[]> {
+  const rows = (await pool.query<{ scope: string }>(
+    `select scope from account_grant
+      where account_id = $1 and capability = 'tool.allow' and left(scope, 5) = 'tool:'
+        and (expires_at is null or expires_at > $2)`, [agentId, now])).rows;
+  const out = new Set<string>();
+  for (const r of rows) {
+    const rule = parseToolScope(r.scope)?.rule;
+    if (!rule) continue;
+    const v = validateToolRule(rule);
+    if (v.ok && v.rule === rule) out.add(rule);
+  }
+  return [...out].sort();
 }
 
 /**

@@ -25,7 +25,8 @@ import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, run
 import { runMcpBridge, writeReadyMarker } from './mcpBridge.js';
 import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
 import { decideHook, decideLaneHook, decideTailHook, HOOK_STDIN_MAX, HOOK_TIMEOUT_MS, laneDeny, readStdinCapped, type LaneDenyDecision } from './hookCli.js';
-import { decodeLaneHookRules } from '@harkroom/shared/providerLane';
+import { CODEX_HOOK_SPEC_ENV, decodeCodexHookSpec, decodeLaneHookRules } from '@harkroom/shared/providerLane';
+import { decideCodexHook } from './codexHook.js';
 import { API_TOOL, parseApiArgs } from './turnApi.js';
 import { readFileSync, writeSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
@@ -154,9 +155,17 @@ async function apiMain(argv: string[]): Promise<void> {
  * 판정한다. 그래서 allow 를 낼 때만 stdout 에 쓰고, 그 밖(Bash 아님·판정에 걸림·턴 밖·오퍼레이터 무응답·시간 초과·오류)은 아무것도
  * 쓰지 않고 0 으로 끝낸다. deny 는 내지 않는다. 판정은 오퍼레이터(`turnCommand.ts` command.check)가 hook 소켓에서만 한다.
  */
-async function hookMain(event: string, laneRules?: string, laneMode: 'lane' | 'tail' = 'lane', tailReach?: string): Promise<void> {
+async function hookMain(event: string, laneRules?: string, laneMode: 'lane' | 'tail' = 'lane', tailReach?: string, codex = false): Promise<void> {
   const quiet = () => process.exit(0);
   if (event !== 'pretool') return quiet();
+  // codex 턴: 판정할 것은 턴 env 로 온다. 값이 없는 codex(대화형 턴 등 — 같은 홈의 규칙 파일·hook 을 싣는다)는 그 채널 규칙이 없는
+  // 것으로 본다: 규칙 파일의 명령에 닿으면 막고 그 밖은 판단하지 않는다. 값이 있는데 못 읽으면 막는다(fail-closed).
+  if (codex) {
+    const raw = process.env[CODEX_HOOK_SPEC_ENV];
+    const home = process.env.CODEX_HOME;
+    const spec = raw ? decodeCodexHookSpec(raw) : home?.startsWith('/') ? { rules: [], reach: [], codexHome: home } : null;
+    return blockingHookMain((raw) => (spec ? decideCodexHook(raw, spec) : laneDeny()));
+  }
   if (laneRules !== undefined) {
     if (laneMode !== 'tail') return laneHookMain(laneRules, decideLaneHook);
     // 꼬리 막기는 합집합 규칙이 있어야 판정한다 — 못 읽으면 막는다(fail-closed).
@@ -180,6 +189,12 @@ async function hookMain(event: string, laneRules?: string, laneMode: 'lane' | 't
  * (파이프 쓰기가 잘린 채 끝나면 「결정 없음」이 된다). 판정은 로컬이다 — 오퍼레이터에 묻지 않는다.
  */
 function laneHookMain(laneRules: string, decide: (raw: string, rules: readonly string[]) => LaneDenyDecision | null): Promise<void> {
+  const rules = decodeLaneHookRules(laneRules);
+  return blockingHookMain((raw) => (rules === null ? laneDeny() : decide(raw, rules)));
+}
+
+/** 거절은 차단 종료 코드 2 로, 결정 없음만 0 으로 끝낸다(`laneHookMain` 주석). 판정은 로컬이다 — 오퍼레이터에 묻지 않는다. */
+function blockingHookMain(decide: (raw: string) => LaneDenyDecision | null | Promise<LaneDenyDecision | null>): Promise<void> {
   // 판정이 낸 거절(이유 포함)을 그대로 쓴다 — 셸 글자·꼬리 거절의 이유가 모델에 가야 한다(#1533 의 이유가 여기서 버려지고 있었다).
   const block = (decision?: LaneDenyDecision): never => {
     try {
@@ -195,10 +210,8 @@ function laneHookMain(laneRules: string, decide: (raw: string, rules: readonly s
   timer.unref?.();
   return (async () => {
     try {
-      const rules = decodeLaneHookRules(laneRules);
-      if (rules === null) return block();
       const raw = await readStdinCapped(process.stdin, HOOK_STDIN_MAX);
-      const denied = decide(raw, rules);
+      const denied = await decide(raw);
       if (denied !== null) return block(denied);
       clearTimeout(timer);
       process.exit(0);
@@ -226,7 +239,7 @@ async function main(): Promise<void> {
       await apiMain(cmd.argv);
       return;
     case 'hook':
-      await hookMain(cmd.event, cmd.laneRules, cmd.laneMode, cmd.tailReach);
+      await hookMain(cmd.event, cmd.laneRules, cmd.laneMode, cmd.tailReach, cmd.codex === true);
       return;
     case 'register': {
       const dataDir = resolveDataDir(process.env.HARKROOM_DATA_DIR);

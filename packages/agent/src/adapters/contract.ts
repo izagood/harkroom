@@ -248,6 +248,11 @@ export interface HarnessAdapter {
    */
   readonly turnKeyDelivery?: 'mcp-config-env' | 'env-vars' | 'turn-config-env';
   /**
+   * 소유자가 승인한 명령을 하네스의 명령 규칙 파일로 꺼내 샌드박스 밖에서 돌리는 길(`codexRules.ts`). `'codex-execpolicy'` 는
+   * `<CODEX_HOME>/rules/*.rules` + 턴 hook(codex). 없으면 승인 명령도 하네스의 기본 경계 안에서 돈다.
+   */
+  readonly commandRules?: 'codex-execpolicy';
+  /**
    * 지시문 전달 수단. `'flag-file'` 은 전용 플래그로 파일을 준다(claude 의
    * `--append-system-prompt-file`), `'prompt-prefix'` 는 그런 플래그가 없어 프롬프트 앞에
    * 접두하는 것뿐이다(codex, 실측).

@@ -92,6 +92,8 @@ export function codexLaneArgs(baseUrl: string): string[] {
     '-c', 'check_for_update_on_startup=false',
     '-c', 'features.shell_snapshot=false',
     '-c', 'allow_login_shell=false',
+    // tty 실행 세션을 끈다 — 셸 명령은 한 번에 하나씩 턴 hook 판정을 지나게 한다(codex 0.154).
+    '-c', 'features.unified_exec_tty=false',
     '-c', 'shell_environment_policy.ignore_default_excludes=false',
     // 다리 열쇠 이름도 함께 거른다 — 이 칸은 프리셋 MCP 조각의 같은 칸을 덮는다(`turn.ts` codex `mcp`).
     '-c', `shell_environment_policy.exclude=${JSON.stringify([CODEX_LANE_KEY_ENV, CODEX_LANE_BASE_URL_ENV, RUNNER_TURN_KEY_ENV.bridge])}`,

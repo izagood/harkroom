@@ -7,6 +7,8 @@ export const CODEX_ADAPTER: HarnessAdapter = {
   harness: 'codex',
   // 다리 열쇠는 `env_vars` 이름 + 셸 거르기(계약 주석). 셸에서 빠지는지는 P2 실측 관문 ⓐ.
   turnKeyDelivery: 'env-vars',
+  // 승인 명령은 codex 명령 규칙 + 턴 hook 으로 연다(`codexRules.ts`). 턴 열쇠 턴에만 — hook 이 열쇠 턴의 셸 거르기를 전제한다.
+  commandRules: 'codex-execpolicy',
   command: 'codex',
 
   /**

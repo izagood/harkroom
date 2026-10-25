@@ -159,8 +159,9 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
     it('러너는 오퍼레이터를 거쳐 그 채널의 규칙만 받고, can() 은 tool.allow 를 열지 않는다', async () => {
       const res = await app.inject({ method: 'GET', url: `/agent/tool-allows?channelId=${ch}`, headers: asAgent() });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ rules: [EXEC] });
-      expect((await app.inject({ method: 'GET', url: `/agent/tool-allows?channelId=${otherCh}`, headers: asAgent() })).json()).toEqual({ rules: [] });
+      expect(res.json()).toEqual({ rules: [EXEC], reach: [EXEC] });
+      // 다른 채널: 그 채널 규칙은 없고, 합(`reach`)에는 이 에이전트의 모든 채널 규칙이 든다.
+      expect((await app.inject({ method: 'GET', url: `/agent/tool-allows?channelId=${otherCh}`, headers: asAgent() })).json()).toEqual({ rules: [], reach: [EXEC] });
       expect((await app.inject({ method: 'GET', url: `/agent/tool-allows?channelId=${ch}`, headers: auth(agentPat) })).statusCode).toBe(403);
       const me = (await app.inject({ method: 'GET', url: '/auth/me', headers: auth(admin.token) })).json();
       expect(await can(pool, { ...me, role: 'owner' }, 'tool.allow')).toBe(false);

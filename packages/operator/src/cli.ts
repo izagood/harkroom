@@ -34,7 +34,7 @@ export type CliCommand =
   /** `api <연결> <METHOD> <경로> [--data …]` — 인자 검증은 `turnApi.parseApiArgs`. */
   | { command: 'api'; argv: string[] }
   /** `hook pretool` — claude 가 띄운다. stdin 의 hook 입력을 읽는다. */
-  | { command: 'hook'; event: string; laneRules?: string; laneMode?: 'lane' | 'tail'; tailReach?: string }
+  | { command: 'hook'; event: string; laneRules?: string; laneMode?: 'lane' | 'tail'; tailReach?: string; codex?: true }
   | { command: 'daemon'; argv: string[] };
 
 function flagValue(argv: readonly string[], flag: string): string | undefined {
@@ -69,6 +69,9 @@ export function parseCliArgs(argv: readonly string[]): CliCommand {
       if (argv[2] === '--lane') {
         return { command: 'hook', event: argv[1] ?? '', laneRules: argv[3] ?? '', laneMode: 'lane' };
       }
+      // `hook pretool --codex` — codex 턴. 판정할 것은 인자가 아니라 턴 env(`CODEX_HOOK_SPEC_ENV`)로 온다(hooks.json 명령이 고정이어야
+      // 신뢰 hash 가 턴마다 바뀌지 않는다).
+      if (argv[2] === '--codex') return { command: 'hook', event: argv[1] ?? '', codex: true };
       if (argv[2] === '--tail') {
         return { command: 'hook', event: argv[1] ?? '', laneRules: argv[3] ?? '', laneMode: 'tail', tailReach: argv[4] ?? '' };
       }

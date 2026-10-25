@@ -165,6 +165,8 @@ export interface BuildTurnCommandOptions {
   turnKeys?: TurnKeys | null;
   /** opencode 턴 열쇠 턴의 턴 설정 파일(`writeOpencodeTurnMcpConfig`) — 하네스 env 의 `OPENCODE_CONFIG` 가 된다. */
   opencodeTurnConfig?: string | null;
+  /** 승인 명령 규칙의 턴 hook 이 읽는 env(`codexRules.ts::prepareCodexRules`). 값은 규칙뿐이라 비밀이 아니다. */
+  commandRuleEnv?: Record<string, string> | null;
 }
 
 /**
@@ -581,7 +583,8 @@ const CODEX_PRESET: HarnessPreset = {
     // 셸 스냅숏·로그인 셸은 이 거르기를 지나 하네스 env 를 셸에 되살린다(실물 회귀 G2, codex 0.154 구독형 턴) — 열쇠 턴은 둘 다 끈다.
     // lane 턴은 `codexLaneArgs` 가 같은 칸을 이미 끈다.
     // 코드 모드 호스트는 codex 본체 env(다리 열쇠 포함)를 물려받는다 — 기본값이 바뀌어도 모델 코드가 그 자리에서 돌지 않게 끈 채로 고정한다.
-    ...(turnKeys ? ['-c', 'features.shell_snapshot=false', '-c', 'allow_login_shell=false', '-c', 'features.code_mode=false'] : []),
+    // tty 실행 세션도 끈다 — 셸 명령은 한 번에 하나씩 턴 hook 판정을 지나게 한다(codex 0.154).
+    ...(turnKeys ? ['-c', 'features.shell_snapshot=false', '-c', 'allow_login_shell=false', '-c', 'features.code_mode=false', '-c', 'features.unified_exec_tty=false'] : []),
     // 에이전트의 mcpServers(스펙 §6) — 오퍼레이터가 이 머신의 정의로 합쳐 파일에 넣은 것을 codex 문법으로.
     ...Object.entries(extraMcpServers).flatMap(([name, entry]) => codexMcpFlags(name, entry)),
   ],
@@ -1022,6 +1025,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
       opencodeTurnConfig: opts.opencodeTurnConfig ?? null,
       }),
       ...(preset.mcpEnv?.(opts.extraMcpServers ?? {}) ?? {}),
+      ...(opts.commandRuleEnv ?? {}),
     },
     stdinFile: opts.stdinFile ?? null,
     ...(omp ? { cwd: opts.ompThread!.cwd } : {}),
