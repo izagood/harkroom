@@ -18,6 +18,8 @@ describe('ompHome — 저장소 설정 차단(security B4·C2·C4·G1)', () => {
     expect(OMP_OVERLAY).not.toMatch(/^\s+- native$/m);
     expect(OMP_OVERLAY).toMatch(/tools:\n {2}xdev: false/);
     expect(OMP_OVERLAY).toMatch(/startup:\n {2}setupWizard: false\n {2}checkUpdate: false/);
+    // 100줄 넘는 붙여넣기 메뉴가 러너의 Enter 를 먹는다(2026-10-25 qa-omp-lane 10분 정지) — 끈다.
+    expect(OMP_OVERLAY).toMatch(/paste:\n {2}largeMenuThreshold: 0/);
   });
 
   it('스레드 자리는 키마다 고정이고 서로 다르다 — 세션 헤더 cwd 와 같아야 재개된다', () => {
