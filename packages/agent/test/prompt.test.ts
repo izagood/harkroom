@@ -1595,8 +1595,40 @@ describe('silentTurnNotice — 화면 답 대리 게시 (2026-10-25, 스레드 d
 
   it('넘겨받은 일·에이전트 호출·화면 답 없음은 지금 그대로다', () => {
     expect(silentTurnNotice({ ...base, caller: 'delegated', screenAnswer: '답' }).kind).toBe('fail');
+    // 에이전트 호출은 화면으로 끝을 안 턴에서만 달라진다(아래 describe) — 기록으로 끝을 아는 턴은 ✅ 그대로.
     expect(silentTurnNotice({ ...base, caller: 'agent', screenAnswer: '답' }).kind).toBe('react');
     expect(silentTurnNotice({ ...base, caller: 'human', screenAnswer: null })).toEqual(silentTurnNotice({ ...base, caller: 'human' }));
     expect(silentTurnNotice({ ...base, caller: 'human', screenAnswer: '   ' })).toEqual(silentTurnNotice({ ...base, caller: 'human' }));
+  });
+});
+
+describe('silentTurnNotice — 에이전트가 부른 말없는 턴 (2026-10-25 E13, 스레드 db4ab174)', () => {
+  const base = { lastSaid: null, offAnchor: null, pat: 'hrkp_secretpat', caller: 'agent' } as const;
+  /** 인용 줄 밖에 멘션 꼴(`@이름`)이 있나 — 있으면 부른 에이전트를 다시 깨워 핑퐁이 난다. */
+  const mentionOutsideQuote = (body: string) => body.split('\n').some((l) => !l.startsWith('>') && /@[\w-]/.test(l));
+
+  it('화면으로 끝을 알았고 화면 답이 있으면 ✅ 대신 대신 올린다 — 멘션은 인용 줄 안에만 있다', () => {
+    const n = silentTurnNotice({ ...base, screenEnded: true, screenAnswer: '@qa_manager 안녕하세요, 무엇을 도와드릴까요?' });
+    expect(n.kind).toBe('post');
+    const body = (n as { body: string }).body;
+    expect(body.startsWith('> @qa_manager 안녕하세요')).toBe(true);
+    expect(body).toContain('러너가 화면에서 옮겨 올렸습니다');
+    expect(mentionOutsideQuote(body)).toBe(false);
+  });
+
+  it('화면으로 끝을 알았는데 화면 답이 없거나 가림에 걸리면 「답을 남기지 못하고 끝났습니다」 — 멘션 없음', () => {
+    for (const screenAnswer of [null, '   ']) {
+      const n = silentTurnNotice({ ...base, screenEnded: true, screenAnswer });
+      expect(n).toEqual({ kind: 'post', body: '답을 남기지 못하고 끝났습니다 — 다시 부르면 이어서 합니다.' });
+    }
+    const secret = 'S3CRET-VALUE-0123456789';
+    const n = silentTurnNotice({ ...base, screenEnded: true, screenAnswer: `값 ${secret.slice(0, 14)}`, secrets: [secret] });
+    expect((n as { body: string }).body).toBe('답을 남기지 못하고 끝났습니다 — 다시 부르면 이어서 합니다.');
+    expect(mentionOutsideQuote((n as { body: string }).body)).toBe(false);
+  });
+
+  it('기록으로 끝을 아는 턴(FYI)은 ✅ 그대로다 — 10-01 의 FYI 카드 더미로 돌아가지 않는다', () => {
+    expect(silentTurnNotice({ ...base, screenEnded: false, screenAnswer: '답' })).toEqual({ kind: 'react', emoji: '✅' });
+    expect(silentTurnNotice({ ...base })).toEqual({ kind: 'react', emoji: '✅' });
   });
 });

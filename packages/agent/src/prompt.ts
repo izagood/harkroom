@@ -59,10 +59,21 @@ export function silentTurnNotice(opts: {
    * 호출자가 싣는다. 있으면 사람이 부른 턴은 「답 없음」 통지 대신 **그 답을 대신 올린다**(`proxyAnswerBody`).
    */
   screenAnswer?: string | null;
+  /**
+   * 이 턴의 끝을 **화면**으로 알았는가(`screenIdle.ts`, 하네스 기록은 마지막 말을 말해 주지 않았다). 그런 하네스는 말없이 끝난 것이
+   * 「덧붙일 말이 없는 FYI」인지 「답을 빼먹은 것」인지 모른다(E13 회차: codex·opencode·pi × API 키 모델이 잡담 답을 화면에만 썼다).
+   */
+  screenEnded?: boolean;
 }): SilentTurnNotice {
   if (opts.offAnchor !== null) return { kind: 'post', body: opts.offAnchor };
-  // 에이전트 쪽은 글이 없으니 마지막 말을 실을 자리도 없다 — 호출자가 러너 로그에 남긴다.
-  if (opts.caller === 'agent') return { kind: 'react', emoji: SILENT_ACK_EMOJI };
+  if (opts.caller === 'agent') {
+    // **에이전트가 부른 턴**(2026-10-25 E13 회차, 스레드 db4ab174). ✅ 만 달면 부른 쪽은 답을 받은 줄 안다 — 화면으로 끝을 안 턴은
+    // 화면 답이 있으면 대신 올리고, 없으면 답이 없었다고 남긴다. 둘 다 멘션 없는 보통 글이라 부른 에이전트를 다시 깨우지 않는다
+    // (화면 글 속 `@handle` 은 인용 줄 안이라 멘션이 아니다). 기록으로 끝을 아는 하네스(claude)의 FYI 는 지금처럼 ✅ 다.
+    if (!opts.screenEnded) return { kind: 'react', emoji: SILENT_ACK_EMOJI };
+    const proxied = proxyAnswerBody(opts.screenAnswer ?? null, opts.pat, opts.secrets);
+    return { kind: 'post', body: proxied || '답을 남기지 못하고 끝났습니다 — 다시 부르면 이어서 합니다.' };
+  }
   // **대리 게시**(2026-10-25, 스레드 db4ab174). codex × API 키 연결 모델은 인사·잡담에 답을 화면에만 쓰고 끝냈다 — 사람에게 보여야 할
   // 답이 터미널에 있다. 사람이 부른 턴만 그 답을 옮겨 올린다(넘겨받은 일은 위임을 「실패」로 닫아야 하므로 아래 그대로).
   if (opts.caller === 'human') {
