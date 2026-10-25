@@ -804,6 +804,11 @@ export class Controller {
         // 사람은 지금 다른 것을 하는 중이고, 카드가 그것을 알린다.
         // 스레드 루트가 없으면 열 자리 자체가 없다(`terminalTarget` 은 스레드를 가리킨다).
         if (지금 || !e.threadRootId) break;
+        // **사람이 안 보는 앱은 열지 않는다**(2026-10-25). 터미널을 연다는 것은 attach 이고, 서버는 마지막 attach 에게
+        // 입력 차례를 준다. 같은 사람의 앱이 둘(오퍼레이터가 도는 기기 + 원격으로 보는 기기)이면 아무도 안 보는 쪽이
+        // 자동으로 붙어 차례를 가져가고, 사람이 보는 쪽은 「읽기 전용 — 다른 창이 입력 중」이 되어 권한 확인에 답하지
+        // 못했다(러너 로그: 그 세션 뷰어 0→1→2). 포커스가 없으면 위의 관문 카드만 남긴다 — 돌아오면 카드에서 연다.
+        if (!anyAppWindowFocused()) break;
         store.set({
           terminalTarget: {
             agentAccountId: e.agentAccountId,
