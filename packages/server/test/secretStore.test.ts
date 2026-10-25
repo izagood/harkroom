@@ -292,6 +292,33 @@ describe('비밀 보관소 REST (085)', () => {
     expect((await reapprove()).statusCode).toBe(200);
   });
 
+  it('만료는 소유자만 고친다 — 늘리기·만료 없음, 감사에 앞뒤 값이 남는다', async () => {
+    const id = (await pool.query(`select id from secret where name = 'gh-token'`)).rows[0].id as string;
+    const patch = (token: string, payload: Record<string, unknown>) =>
+      app.inject({ method: 'PATCH', url: `/secrets/${id}`, headers: auth(token), payload });
+    const later = new Date(Date.now() + 400 * 86_400_000).toISOString();
+    const res = await patch(alice.token, { expiresAt: later });
+    expect(res.statusCode).toBe(200);
+    expect(Date.parse(res.json().secret.expiresAt)).toBe(Date.parse(later));
+    const cleared = await patch(alice.token, { expiresAt: null });
+    expect(cleared.json().secret.expiresAt).toBeNull();
+    // admin 은 메타를 보지만 고치지는 못한다(소유자의 것), 남은 아예 못 본다.
+    expect((await patch(admin.token, { expiresAt: later })).statusCode).toBe(404);
+    expect((await patch(bob.token, { expiresAt: later })).statusCode).toBe(404);
+    expect((await pool.query(`select expires_at from secret where id = $1`, [id])).rows[0].expires_at).toBeNull();
+    // 설명만 고치면 만료는 그대로고 감사에도 만료 칸이 없다.
+    await patch(alice.token, { description: 'GitHub' });
+    const rows = (await pool.query(
+      `select detail from audit_log where action = 'secret.updated' and target = $1 order by id`, [id])).rows as { detail: Record<string, unknown> }[];
+    expect(rows).toHaveLength(3);
+    const [first, second, third] = rows.map((r) => (r.detail as { expiresAt?: { from: string | null; to: string | null } }).expiresAt);
+    expect(first?.from).toBeNull();
+    expect(Date.parse(first?.to as string)).toBe(Date.parse(later));
+    expect(Date.parse(second?.from as string)).toBe(Date.parse(later));
+    expect(second?.to).toBeNull();
+    expect(third).toBeUndefined();
+  });
+
   it('값을 바꾸면 새 판이 생기고 옛 판의 암호문은 지워진다', async () => {
     const id = (await pool.query(`select id from secret where name = 'gh-token'`)).rows[0].id as string;
     const res = await app.inject({ method: 'PUT', url: `/secrets/${id}/value`, headers: auth(alice.token), payload: { value: 'new-value-123' } });

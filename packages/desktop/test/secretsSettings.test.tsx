@@ -24,6 +24,7 @@ function setup(over: Partial<Record<string, unknown>> = {}, initial: SecretView[
     listSecrets: vi.fn(async () => ({ enabled, secrets: rows })),
     createSecret: vi.fn(async (b: { name: string }) => { const s = secret(b.name); rows = [...rows, s]; return s; }),
     replaceSecretValue: vi.fn(async () => rows[0]),
+    patchSecret: vi.fn(async (): Promise<unknown> => rows[0]),
     deleteSecret: vi.fn(async (id: string) => { rows = rows.filter((s) => s.id !== id); }),
     listSecretGrants: vi.fn(async () => [{ id: 'g1', agentId: 'agent-1', channelId: null, operatorId: 'op-1', grantedBy: ME, grantedAt: '2026-10-02T00:00:00Z', suspendedAt: null, suspendReason: null }]),
     putSecretGrant: vi.fn(async () => undefined),
@@ -339,6 +340,7 @@ describe('SecretsSettings', () => {
     const row = await screen.findByTestId('secret-theirs');
     fireEvent.click(within(row).getByTestId('secret-more-theirs'));
     expect(screen.queryByRole('menuitem', { name: '값 바꾸기' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: '만료 바꾸기' })).toBeNull();
     expect(screen.getByRole('menuitem', { name: '접근 기록' })).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
     await expand('theirs');
@@ -482,5 +484,69 @@ describe('정지된 부여 다시 허락', () => {
     await expand('api-token');
     expect((await screen.findByTestId('secret-grant-reapprove-alpha') as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId('secret-grant-off-hint').textContent).toMatch(/에이전트를 켠 뒤 다시 허락할 수 있다/);
+  });
+  describe('만료 바꾸기', () => {
+    it('만료 없는 비밀은 「없음」에서 시작하고, 그대로면 저장이 꺼져 있다 — 90일을 고르면 그 날짜로 PATCH', async () => {
+      const c = setup();
+      render(<SecretsSettings />);
+      await menu('api-token', '만료 바꾸기');
+      const form = await screen.findByTestId('secret-expiry-form');
+      const save = within(form).getByRole('button', { name: '저장' }) as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      expect(form.textContent).toContain('30·90일은 오늘부터 센다');
+      fireEvent.click(within(form).getByRole('radio', { name: '90일' }));
+      expect(save.disabled).toBe(false);
+      const before = Date.now();
+      fireEvent.click(save);
+      await waitFor(() => expect(c.patchSecret).toHaveBeenCalledTimes(1));
+      const [id, body] = c.patchSecret.mock.calls[0] as unknown as [string, { expiresAt: string }];
+      expect(id).toBe('id-api-token');
+      expect(Object.keys(body)).toEqual(['expiresAt']);
+      const days = (Date.parse(body.expiresAt) - before) / 86_400_000;
+      expect(days).toBeGreaterThan(89.9);
+      expect(days).toBeLessThan(90.1);
+      await waitFor(() => expect(screen.queryByTestId('secret-expiry-form')).toBeNull());
+    });
+
+    it('만료가 있으면 그 날짜에서 시작하고, 「없음」을 고르면 null 로 PATCH', async () => {
+      const c = setup({}, [secret('api-token', { expiresAt: '2099-01-13T14:59:59Z' })]);
+      render(<SecretsSettings />);
+      await menu('api-token', '만료 바꾸기');
+      const form = await screen.findByTestId('secret-expiry-form');
+      const input = within(form).getByTestId('secret-expiry-date') as HTMLInputElement;
+      expect(input.value).toMatch(/^2099-01-1[34]$/);
+      const save = within(form).getByRole('button', { name: '저장' }) as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      fireEvent.change(input, { target: { value: '2099-06-30' } });
+      expect(save.disabled).toBe(false);
+      fireEvent.click(within(form).getByRole('radio', { name: '없음' }));
+      fireEvent.click(save);
+      await waitFor(() => expect(c.patchSecret).toHaveBeenCalledWith('id-api-token', { expiresAt: null }));
+    });
+
+    it('이미 만료됐으면 날짜 칸이 비어 있고 다시 받는다는 안내를 보인다 — 지난 날짜는 저장 못 한다', async () => {
+      setup({}, [secret('api-token', { expiresAt: '2020-01-01T00:00:00Z' })]);
+      render(<SecretsSettings />);
+      await menu('api-token', '만료 바꾸기');
+      const form = await screen.findByTestId('secret-expiry-form');
+      expect(form.textContent).toContain('만료된 비밀이다');
+      const input = within(form).getByTestId('secret-expiry-date') as HTMLInputElement;
+      expect(input.value).toBe('');
+      const save = within(form).getByRole('button', { name: '저장' }) as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      fireEvent.change(input, { target: { value: '2020-02-01' } });
+      expect(save.disabled).toBe(true);
+    });
+
+    it('서버가 거절하면 창을 닫지 않고 사람 말로 보인다', async () => {
+      setup({ patchSecret: vi.fn(async () => { throw new ApiError(404, 'not_found', 'no such secret'); }) });
+      render(<SecretsSettings />);
+      await menu('api-token', '만료 바꾸기');
+      const form = await screen.findByTestId('secret-expiry-form');
+      fireEvent.click(within(form).getByRole('radio', { name: '30일' }));
+      fireEvent.click(within(form).getByRole('button', { name: '저장' }));
+      await waitFor(() => expect(screen.getByTestId('secret-expiry-form')).toBeTruthy());
+      expect((await screen.findByTestId('secrets-error')).textContent).not.toBe('');
+    });
   });
 });

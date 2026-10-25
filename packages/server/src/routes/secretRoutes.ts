@@ -253,7 +253,9 @@ export async function registerSecretRoutes(
       [s.id, p.description ?? null, p.expiresAt !== undefined, p.expiresAt ?? null]);
     await recordAudit(pool, {
       action: 'secret.updated', ...actorOf(req), target: s.id,
-      detail: { name: s.name, fields: Object.keys(p) },
+      // 만료를 바꿨으면 앞뒤 값을 남긴다 — 「누가 언제 얼마나 늘렸나」를 감사 기록만으로 답하게(null = 만료 없음).
+      detail: { name: s.name, fields: Object.keys(p),
+        ...(p.expiresAt !== undefined ? { expiresAt: { from: s.expiresAt, to: p.expiresAt } } : {}) },
     }, req);
     return { secret: await getSecret(pool, s.id) };
   });
