@@ -226,13 +226,13 @@ export async function piLaneLoginPresent(piHome: string): Promise<boolean> {
 
 /**
  * lane 의 `models.json`. 주소는 https 이거나 루프백이어야 하고, 키는 파일 경로만 `!cat` 으로 가리킨다 — `!` 로 시작하는 값은 pi 가
- * **명령으로 실행**한다(문서 models-configuration) — 경로에 셸 특수 문자가 섞이면 거절한다. 키 값은 이 파일에 들지 않는다.
+ * **명령으로 실행**한다(문서 models-configuration) — `/bin/sh -c` 로 돈다(실측). 경로는 작은따옴표로 감싸고, 빈칸 밖의 셸 특수 문자·작은따옴표는 거절한다 — macOS 앱 데이터 폴더(`Application Support`)에 빈칸이 있다. 키 값은 이 파일에 들지 않는다.
  */
 export function piLaneModelsJson(lane: { baseUrl: string; keyPath: string; models: readonly string[] }): string {
   const url = new URL(lane.baseUrl);
   const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) throw new Error('piLaneModelsJson: https 또는 로컬 주소만 받는다');
-  if (/[^A-Za-z0-9/._-]/.test(lane.keyPath) || !lane.keyPath.startsWith('/')) throw new Error('piLaneModelsJson: 키 파일 경로가 이상하다');
+  if (/[^A-Za-z0-9/._ -]/.test(lane.keyPath) || !lane.keyPath.startsWith('/')) throw new Error('piLaneModelsJson: 키 파일 경로가 이상하다');
   for (const m of lane.models) if (!/^[A-Za-z0-9._:/-]{1,128}$/.test(m)) throw new Error('piLaneModelsJson: 모델 이름이 이상하다');
   const doc = {
     providers: {
@@ -240,7 +240,7 @@ export function piLaneModelsJson(lane: { baseUrl: string; keyPath: string; model
         // gateway 의 OpenAI 꼴 경로는 `/v1/chat/completions` 다 — lane 주소는 claude·opencode 와 같은 뿌리라 `/v1` 을 붙인다.
         baseUrl: `${lane.baseUrl}/v1`,
         api: 'openai-completions',
-        apiKey: `!cat ${lane.keyPath}`,
+        apiKey: `!cat '${lane.keyPath}'`,
         models: lane.models.map((id) => ({ id })),
       },
     },

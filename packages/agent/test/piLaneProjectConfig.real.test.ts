@@ -92,7 +92,9 @@ describe.skipIf(!BIN)('pi lane 실물 — 저장소 설정·사람 로그인 무
     const laneRoot = join(root, `lane-${name}`);
     await ensurePiHome({ piHome: laneRoot, mcpServers: {}, lane: true });
     const piHome = await ensurePiLaneThread(laneRoot, `thread-${name}`);
-    const keyPath = join(root, `key-${name}`);
+    // 실물 오퍼레이터의 턴 비밀 폴더는 macOS `Application Support` 아래라 빈칸이 든다 — 같은 꼴로 잰다.
+    await mkdir(join(root, 'Application Support'), { recursive: true });
+    const keyPath = join(root, 'Application Support', `key-${name}`);
     await writeFile(keyPath, `${LANE_KEY}\n`, { mode: 0o600 });
     await writePiLaneModels(piHome, { baseUrl: `http://127.0.0.1:${port}/lane`, keyPath, models: [MODEL] });
     if (opts.laneLogin) await writeFile(join(piHome, 'auth.json'), JSON.stringify({ [PI_LANE_PROVIDER]: { type: 'api_key', key: 'LANE_HOME_LOGIN' } }));

@@ -233,13 +233,13 @@ export function newOmpSessionId(): string {
 
 /**
  * lane 의 `models.yml`(K1·K2·K3). 주소는 https 이거나 로컬이어야 하고, 키는 파일 경로만 `!cat` 으로 가리킨다.
- * `!` 로 시작하는 값은 omp 가 **명령으로 실행**한다(문서 models.md) — 경로에 셸 특수 문자가 섞이면 거절한다.
+ * `!` 로 시작하는 값은 omp 가 **명령으로 실행**한다(문서 models.md) — `/bin/sh -c` 로 돈다(실측). 경로는 작은따옴표로 감싸고, 빈칸 밖의 셸 특수 문자·작은따옴표는 거절한다 — macOS 앱 데이터 폴더(`Application Support`)에 빈칸이 있다.
  */
 export function ompLaneModelsYml(lane: { baseUrl: string; keyPath: string; models: readonly string[] }): string {
   const url = new URL(lane.baseUrl);
   const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1' || url.hostname === '[::1]';
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) throw new Error('ompLaneModelsYml: https 또는 로컬 주소만 받는다');
-  if (/[^A-Za-z0-9/._-]/.test(lane.keyPath) || !lane.keyPath.startsWith('/')) throw new Error('ompLaneModelsYml: 키 파일 경로가 이상하다');
+  if (/[^A-Za-z0-9/._ -]/.test(lane.keyPath) || !lane.keyPath.startsWith('/')) throw new Error('ompLaneModelsYml: 키 파일 경로가 이상하다');
   for (const m of lane.models) if (!/^[A-Za-z0-9._:/-]{1,128}$/.test(m)) throw new Error('ompLaneModelsYml: 모델 이름이 이상하다');
   return [
     'providers:',
@@ -247,7 +247,7 @@ export function ompLaneModelsYml(lane: { baseUrl: string; keyPath: string; model
     `    baseUrl: ${JSON.stringify(lane.baseUrl)}`,
     '    api: openai-completions',
     '    auth: apiKey',
-    `    apiKey: ${JSON.stringify(`!cat ${lane.keyPath}`)}`,
+    `    apiKey: ${JSON.stringify(`!cat '${lane.keyPath}'`)}`,
     '    models:',
     ...lane.models.flatMap((m) => [`      - id: ${JSON.stringify(m)}`]),
     '',

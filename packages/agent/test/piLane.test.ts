@@ -70,11 +70,14 @@ describe('pi lane 홈', () => {
     const doc = JSON.parse(piLaneModelsJson({ baseUrl: 'https://gateway.example', keyPath: '/secrets/turn/k', models: ['Org/model-1'] }));
     expect(doc).toEqual({
       providers: {
-        [PI_LANE_PROVIDER]: { baseUrl: 'https://gateway.example/v1', api: 'openai-completions', apiKey: '!cat /secrets/turn/k', models: [{ id: 'Org/model-1' }] },
+        [PI_LANE_PROVIDER]: { baseUrl: 'https://gateway.example/v1', api: 'openai-completions', apiKey: "!cat '/secrets/turn/k'", models: [{ id: 'Org/model-1' }] },
       },
     });
     expect(() => piLaneModelsJson({ baseUrl: 'http://gateway.example', keyPath: '/k', models: ['m'] })).toThrow();
     expect(() => piLaneModelsJson({ baseUrl: 'http://127.0.0.1:9', keyPath: '/k', models: ['m'] })).not.toThrow();
+    // macOS 앱 데이터 폴더(`Application Support`)의 빈칸은 받는다 — 작은따옴표 안이라 낱말로 안 갈린다.
+    const spaced = JSON.parse(piLaneModelsJson({ baseUrl: 'https://g.example', keyPath: '/Users/u/Library/Application Support/app/turn-secrets/k', models: ['m'] }));
+    expect(spaced.providers[PI_LANE_PROVIDER].apiKey).toBe("!cat '/Users/u/Library/Application Support/app/turn-secrets/k'");
     for (const keyPath of ['/k; rm -rf ~', '/k $(id)', 'relative/k', "/k'x"]) {
       expect(() => piLaneModelsJson({ baseUrl: 'https://g.example', keyPath, models: ['m'] })).toThrow();
     }

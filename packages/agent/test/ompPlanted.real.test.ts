@@ -142,7 +142,9 @@ describe.skipIf(!BIN)('omp 실물 — 심은 파일(C1·G1b·G1c·K3b)', () => {
     await writeOmpSessionHeader(dirs.sessionsDir, sessionId, cwd);
     const sys = join(cellRoot, 'sys.md');
     await writeFile(sys, 'You are a test agent.');
-    const keyPath = join(cellRoot, 'key');
+    // 실물 오퍼레이터의 턴 비밀 폴더는 macOS `Application Support` 아래라 빈칸이 든다 — 같은 꼴로 잰다.
+    const keyPath = join(cellRoot, 'Application Support', 'key');
+    await mkdir(join(cellRoot, 'Application Support'), { recursive: true });
     const built = buildTurnCommand({
       harness: 'omp', mode: 'mention', sessionId, isFirstTurn: true, systemPrompt: 'SYS', systemPromptFile: sys, promptCtx: '',
       model: 'harkroom-lane/Org/m', effort: null, mentionPermission: 'auto', mcpConfigPath: join(cellRoot, 'mcp.json'), operatorBin: '/bin/false',
