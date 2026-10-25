@@ -99,6 +99,9 @@ export function ompDirs(ompHome: string): OmpDirs {
  * - `tools.xdev: false`: MCP 도구를 모델에 바로 선언한다(기본은 `xd://` 뒤에 숨어 `message.post` 를 못 부른다).
  * - `startup.setupWizard: false`: 첫 기동의 로그인 마법사가 주입을 삼킨다(실측).
  * - `startup.checkUpdate: false`: 판 고정(C1). 이름은 바이너리 문자열로만 확인했다 — 효과는 미측정.
+ * - `paste.largeMenuThreshold: 0`: 100줄(기본값)이 넘는 붙여넣기에 「어떻게 붙일까」 메뉴를 띄우지 않는다. 메뉴가 뜨면 러너의
+ *   Enter 한 번이 메뉴 고르기로 쓰이고 프롬프트는 입력창에 남는다(2026-10-25 실측: 150줄 0/1 → 끄면 150·400줄 제출,
+ *   `ompLargePaste.real.test.ts`). 0 이면 메뉴 없이 같은 덩어리 표시로 들어가고 모델에는 전문이 간다.
  */
 export const OMP_OVERLAY = [
   'disabledProviders:',
@@ -110,6 +113,8 @@ export const OMP_OVERLAY = [
   'startup:',
   '  setupWizard: false',
   '  checkUpdate: false',
+  'paste:',
+  '  largeMenuThreshold: 0',
   '',
 ].join('\n');
 
