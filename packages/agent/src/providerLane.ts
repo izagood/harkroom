@@ -68,6 +68,19 @@ export const PROVIDER_LANE_ARGV_ONLY_KEYS: Partial<Record<AgentHarness, readonly
   pi: [PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV],
 };
 
+/**
+ * codex lane 턴의 developer 자리 지시(2026-10-25, 스레드 db4ab174).
+ *
+ * codex 는 모델마다 다른 기본 지시문(`base_instructions`)을 싣는다. 메타데이터가 없는 lane 모델(MiniMax-M2.7 실측)에는 「가벼운
+ * 대화는 최종 메시지로 친근하게 답하라」가 들어 있어, 인사·잡담에 MCP 로 답하지 않고 화면에만 쓰고 끝냈다(잡담 5문구 post 0/5 ·
+ * 구독형 gpt 기본 모델은 그 문장이 없어 5/5). harkroom 지시는 codex 에서 사용자 글 앞에 붙어(prompt-prefix) 그 문장을 못 이긴다.
+ * `developer_instructions` 는 기본 지시문을 **그대로 두고** developer 메시지 앞에 덧붙인다(가짜 서버로 요청 본문 실측, 적용 시
+ * 잡담 3/5·일 턴 정상). `instructions`·`model_instructions_file` 은 기본 지시문(도구·셸 지침)을 통째로 **대체**하므로 쓰지 않는다.
+ */
+export const CODEX_LANE_DEVELOPER_INSTRUCTIONS =
+  '이 대화의 답은 화면(최종 메시지)에 쓰는 것으로 끝나지 않는다. 사람은 harkroom 스레드만 본다 — 인사·잡담을 포함한 모든 답을 '
+  + '반드시 harkroom MCP 의 message_post 도구로 그 스레드(프롬프트 맨 위의 channelId·threadRootId)에 올려라.';
+
 /** codex lane 의 provider 이름(`model_providers.<이름>`). */
 export const CODEX_LANE_PROVIDER = 'harkroom-lane';
 
@@ -90,6 +103,8 @@ export function codexLaneArgs(baseUrl: string): string[] {
     '-c', `${p}.env_key=${JSON.stringify(CODEX_LANE_KEY_ENV)}`,
     '-c', `${p}.wire_api="responses"`,
     '-c', 'check_for_update_on_startup=false',
+    // 답은 MCP 로(`CODEX_LANE_DEVELOPER_INSTRUCTIONS`) — 기본 지시문을 대체하지 않고 developer 자리에 덧붙인다.
+    '-c', `developer_instructions=${JSON.stringify(CODEX_LANE_DEVELOPER_INSTRUCTIONS)}`,
     '-c', 'features.shell_snapshot=false',
     '-c', 'allow_login_shell=false',
     // tty 실행 세션을 끈다 — 셸 명령은 한 번에 하나씩 턴 hook 판정을 지나게 한다(codex 0.154).

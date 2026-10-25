@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CODEX_LANE_BASE_URL_ENV, CODEX_LANE_KEY_ENV, codexLaneArgs, codexLaneVersionOk, createProviderLane, laneModelMissing } from '../src/providerLane.js';
+import { CODEX_LANE_BASE_URL_ENV, CODEX_LANE_DEVELOPER_INSTRUCTIONS, CODEX_LANE_KEY_ENV, codexLaneArgs, codexLaneVersionOk, createProviderLane, laneModelMissing } from '../src/providerLane.js';
 import { buildTurnCommand, laneEnvAllowed } from '../src/turn.js';
 
 async function setup() {
@@ -104,12 +104,17 @@ describe('codex lane 조립', () => {
     expect(overrides).toContain('features.shell_snapshot=false');
     expect(overrides).toContain('allow_login_shell=false');
     expect(overrides).toContain('check_for_update_on_startup=false');
+    // 잡담에도 MCP 로 답하게 developer 자리에 덧붙인다 — 기본 지시문을 지우는 두 칸은 쓰지 않는다.
+    expect(overrides).toContain(`developer_instructions=${JSON.stringify(CODEX_LANE_DEVELOPER_INSTRUCTIONS)}`);
+    expect(overrides.some((o) => /^(instructions|model_instructions_file)=/.test(o))).toBe(false);
     expect(args.slice(args.indexOf('--model'), args.indexOf('--model') + 2)).toEqual(['--model', 'ExampleOrg/example-model']);
   });
 
   it('lane 이 아니면 provider 덮어쓰기가 없다', () => {
     const { args, env } = buildTurnCommand({ ...base });
     expect(args.some((a) => a.startsWith('model_provider'))).toBe(false);
+    // 구독형 codex 는 기본 지시문에 그 문장이 없어 잡담에도 MCP 로 답했다(5/5) — lane 턴에만 싣는다.
+    expect(args.some((a) => a.startsWith('developer_instructions'))).toBe(false);
     expect(CODEX_LANE_KEY_ENV in env).toBe(false);
   });
 
