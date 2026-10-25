@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, PROXY_ANSWER_MAX_CHARS, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -1511,5 +1511,40 @@ describe('stallNotice — 정지 화면 갈래 (2026-10-25, 스레드 db4ab174)'
 
   it('갈래를 모르면 옛 문장 그대로다', () => {
     expect(stallNotice(600_000, null, null)).toBe(stallNotice(600_000));
+  });
+});
+
+describe('silentTurnNotice — 화면 답 대리 게시 (2026-10-25, 스레드 db4ab174)', () => {
+  const base = { lastSaid: null, offAnchor: null, pat: 'hrkp_secretpat' } as const;
+
+  it('사람이 부른 턴은 화면 답을 인용 줄로 대신 올리고, 러너가 옮겼다고 밝힌다', () => {
+    const n = silentTurnNotice({ ...base, caller: 'human', screenAnswer: '안녕하세요 @jaebin 👋 준비됐습니다.' });
+    expect(n.kind).toBe('post');
+    const body = (n as { body: string }).body;
+    // 인용 줄 안의 멘션은 멘션이 되지 않는다 — 화면 글로 남을 깨우지 않는다.
+    expect(body.startsWith('> 안녕하세요 @jaebin 👋 준비됐습니다.')).toBe(true);
+    expect(body).toContain('러너가 화면에서 옮겨 올렸습니다');
+    expect(body).not.toContain('답을 남기지 못하고');
+  });
+
+  it('PAT·마운트 비밀은 가리고, 비밀 조각이 보이면 대리 게시를 접고 「답 없음」 통지로 돌아간다', () => {
+    const masked = proxyAnswerBody('키는 hrkp_secretpat 이고 `코드` 다', 'hrkp_secretpat');
+    expect(masked).not.toContain('hrkp_secretpat');
+    expect(masked).not.toContain('`');
+    const secret = 'S3CRET-VALUE-0123456789';
+    const n = silentTurnNotice({ ...base, caller: 'human', screenAnswer: `값 ${secret.slice(0, 14)}`, secrets: [secret] });
+    expect((n as { body: string }).body).toContain('답을 남기지 못하고 끝났습니다');
+  });
+
+  it(`상한(${PROXY_ANSWER_MAX_CHARS}자)을 넘기면 자른다`, () => {
+    const body = proxyAnswerBody('가'.repeat(PROXY_ANSWER_MAX_CHARS + 50), '');
+    expect(body.split('\n')[0]!.length).toBeLessThanOrEqual(PROXY_ANSWER_MAX_CHARS + 3);
+  });
+
+  it('넘겨받은 일·에이전트 호출·화면 답 없음은 지금 그대로다', () => {
+    expect(silentTurnNotice({ ...base, caller: 'delegated', screenAnswer: '답' }).kind).toBe('fail');
+    expect(silentTurnNotice({ ...base, caller: 'agent', screenAnswer: '답' }).kind).toBe('react');
+    expect(silentTurnNotice({ ...base, caller: 'human', screenAnswer: null })).toEqual(silentTurnNotice({ ...base, caller: 'human' }));
+    expect(silentTurnNotice({ ...base, caller: 'human', screenAnswer: '   ' })).toEqual(silentTurnNotice({ ...base, caller: 'human' }));
   });
 });

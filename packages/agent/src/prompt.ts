@@ -52,10 +52,21 @@ export function silentTurnNotice(opts: {
   pat: string;
   /** 이 턴에 마운트한 비밀 값(`secretLeases.needles`). 마지막 말 인용에서 가린다(`quotedLine`). */
   secrets?: readonly string[];
+  /**
+   * 화면으로 끝을 안 턴에서 입력창 위에 남은 답(`screenIdle.ts::screenAnswerLines`). 하네스 기록이 마지막 말을 말해 주지 않을 때만
+   * 호출자가 싣는다. 있으면 사람이 부른 턴은 「답 없음」 통지 대신 **그 답을 대신 올린다**(`proxyAnswerBody`).
+   */
+  screenAnswer?: string | null;
 }): SilentTurnNotice {
   if (opts.offAnchor !== null) return { kind: 'post', body: opts.offAnchor };
   // 에이전트 쪽은 글이 없으니 마지막 말을 실을 자리도 없다 — 호출자가 러너 로그에 남긴다.
   if (opts.caller === 'agent') return { kind: 'react', emoji: SILENT_ACK_EMOJI };
+  // **대리 게시**(2026-10-25, 스레드 db4ab174). codex × API 키 연결 모델은 인사·잡담에 답을 화면에만 쓰고 끝냈다 — 사람에게 보여야 할
+  // 답이 터미널에 있다. 사람이 부른 턴만 그 답을 옮겨 올린다(넘겨받은 일은 위임을 「실패」로 닫아야 하므로 아래 그대로).
+  if (opts.caller === 'human') {
+    const proxied = proxyAnswerBody(opts.screenAnswer ?? null, opts.pat, opts.secrets);
+    if (proxied) return { kind: 'post', body: proxied };
+  }
   const said = quotedLine(opts.lastSaid, opts.pat, opts.secrets);
   if (opts.caller === 'delegated') {
     return {
@@ -212,6 +223,25 @@ function maskWhole(text: string, secrets: readonly string[]): string {
   let t = text;
   for (const n of secrets) if (n && t.includes(n)) t = t.split(n).join('(가림)');
   return t;
+}
+
+/** 대리 게시로 옮길 화면 답의 상한(자). 화면에서 뽑는 줄은 많아야 몇 줄이라(`screenAnswerLines`) 넉넉하다. */
+export const PROXY_ANSWER_MAX_CHARS = 1_000;
+
+/**
+ * **화면의 답을 대신 올리는 글**(`silentTurnNotice`). 없거나 가림에 걸리면 빈 문자열이고, 그때 호출자는 「답 없음」 통지로 돌아간다.
+ *
+ * - 가림은 마지막 말 인용과 같다(`quotedLine` — 통째 가림, 12자 조각이 보이면 통째로 뺌, PAT·`Bearer` 가림). 상한만 넓다.
+ * - 본문은 **인용 줄(`> `)** 로 싼다 — 인용 안의 `@handle`·채널 토큰은 멘션이 되지 않는다(shared 멘션 파서 #592). 화면 글은 모델이
+ *   확정해 올린 글이 아니므로 그 글로 남을 깨우거나 채팅 승인 낱말로 읽히게 두지 않는다.
+ * - 꼬리 한 줄로 러너가 옮겼다는 사실을 밝힌다 — 에이전트가 직접 쓴 글처럼 보이지 않게.
+ */
+export function proxyAnswerBody(screenAnswer: string | null, pat: string, secrets: readonly string[] = []): string {
+  if (screenAnswer === null) return '';
+  if (secrets.length > 0 && tailHasSecretFragment(maskWhole(screenAnswer, secrets), secrets)) return '';
+  const answer = oneLine(screenAnswer, pat, PROXY_ANSWER_MAX_CHARS, secrets);
+  if (!answer) return '';
+  return `> ${answer}\n\n(에이전트가 이 답을 터미널에만 쓰고 스레드에 올리지 않아, 러너가 화면에서 옮겨 올렸습니다.)`;
 }
 
 /**

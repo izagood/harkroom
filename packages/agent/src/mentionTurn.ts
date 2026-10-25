@@ -2922,9 +2922,10 @@ export async function runMentionTurn(
       // 로그에도 가린 사본을 쓴다: 로그 파일도 디스크에 남는 자리다.
       const evidence = harnessTailNotice(result.tail, deps.runnerSecret, await tailSecrets());
       if (evidence !== null) console.log(`[mentionTurn] ${key}: 발화 없이 끝났다 — 하네스가 마지막에 남긴 출력:\n${evidence}`);
-      const lastSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
+      const recordSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
         configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
-      }).catch(() => null) ?? end.screenSaid;
+      }).catch(() => null);
+      const lastSaid = recordSaid ?? end.screenSaid;
       // **침묵의 이유가 옆 스레드에 있을 수 있다**(2026-09-08 실측, `offAnchorPosts` 주석).
       // 여기서만 채널 전체를 훑는 이유는 값이 싸지 않아서다: 이 경로는 드물게 도는 침묵
       // 경로이고, 그때는 사람에게 어차피 통지가 나가므로 한 왕복을 더 쓸 값어치가 있다.
@@ -2933,6 +2934,8 @@ export async function runMentionTurn(
       const notice = silentTurnNotice({
         caller: silentTurnCaller(deps, target, thread), lastSaid, offAnchor,
         pat: deps.runnerSecret, secrets: await tailSecrets(),
+        // 기록이 말해 주지 않을 때만 화면 답을 대신 올린다 — 기록을 읽는 하네스(claude)의 마지막 말은 지금처럼 인용만 한다.
+        screenAnswer: recordSaid === null ? end.screenSaid : null,
       });
       if (notice.kind === 'react') {
         // 에이전트가 부른 FYI — 글 없이 멘션에 ✅ 만 단다(`silentTurnNotice` 주석). 마지막 말은 로그에만.
