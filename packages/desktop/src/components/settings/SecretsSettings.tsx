@@ -31,8 +31,8 @@ import { errorText } from '../../lib/errorText';
  */
 
 type Expiry = 'none' | '30d' | '90d' | 'date';
-/** 줄 위에 여는 것(값 보기·값 바꾸기). 펼침 탭(받는 에이전트·접근 기록)과는 따로 연다. */
-type Panel = { id: string; kind: 'reveal' | 'replace' } | null;
+/** 줄 위에 여는 것(값 보기·값 바꾸기·만료 바꾸기). 펼침 탭(받는 에이전트·접근 기록)과는 따로 연다. */
+type Panel = { id: string; kind: 'reveal' | 'replace' | 'expiry' } | null;
 type Tab = 'grants' | 'access';
 /** 만료가 이만큼 안으로 들어오면 경고색(designer 시안 v1 #3). */
 const SOON_MS = 14 * 86_400_000;
@@ -45,6 +45,12 @@ function expiryIso(e: Expiry, date: string): string | null {
   if (e === 'none') return null;
   if (e === 'date') return date ? new Date(`${date}T23:59:59`).toISOString() : null;
   return new Date(Date.now() + (e === '30d' ? 30 : 90) * DAY).toISOString();
+}
+
+/** 이 기기 시간대의 날짜(`<input type="date">` 값). 만료는 그날 끝(23:59:59)으로 저장하므로 날짜로 돌려 읽는다. */
+function localDay(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /** 파일을 base64 로. 64KB 상한은 서버도 잰다 — 여기서는 보내기 전에 사람에게 먼저 말한다. */
@@ -209,6 +215,8 @@ export function SecretsSettings({ targetId, onOpenAgent }: { targetId?: string; 
               };
               const menu: MenuItem[] = [
                 ...(mine && state.enabled ? [{ label: t('secrets.replace'), onSelect: () => { setError(null); setPanel({ id: s.id, kind: 'replace' }); } }] : []),
+                // 만료는 메타라 보관소 키 없이도 고친다 — 소유자만(서버도 소유자 아니면 404).
+                ...(mine ? [{ label: t('secrets.changeExpiry'), onSelect: () => { setError(null); setPanel({ id: s.id, kind: 'expiry' }); } }] : []),
                 { label: t('secrets.access'), onSelect: () => setTab('access') },
                 { label: t('secrets.deleteMenu'), onSelect: () => setDeleting(s), tone: 'danger', separatorBefore: true },
               ];
@@ -273,6 +281,10 @@ export function SecretsSettings({ targetId, onOpenAgent }: { targetId?: string; 
                       {shown === 'replace' && (
                         <ReplaceForm secret={s} busy={busy} onCancel={() => setPanel(null)}
                           onSubmit={async (body) => { if (await run(async () => { await getController().replaceSecretValue(s.id, body); })) setPanel(null); }} />
+                      )}
+                      {shown === 'expiry' && (
+                        <ExpiryForm secret={s} busy={busy} onCancel={() => setPanel(null)}
+                          onSubmit={async (expiresAt) => { if (await run(async () => { await getController().patchSecret(s.id, { expiresAt }); })) setPanel(null); }} />
                       )}
                       {tab && (
                         <>
@@ -537,6 +549,47 @@ function ReplaceForm({ secret, busy, onSubmit, onCancel }: {
       </Field>
       <div className="flex gap-2">
         <Button variant="primary" onClick={() => void submit()} disabled={busy || !ready}>{t('secrets.confirmReplace')}</Button>
+        <Button onClick={onCancel} disabled={busy}>{t('secrets.cancel')}</Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 만료 바꾸기 — 늘리기·줄이기·만료 없음. 만든 때와 같은 고르개를 쓰되 지금 값에서 시작한다(만료 없음이면 「없음」,
+ * 있으면 그 날짜). 30·90일은 오늘부터 센다. 지난 날짜는 고르지 못한다 — 바로 끊으려면 지우기가 있다.
+ * 만료는 읽을 때마다 서버가 재므로 늘리면 다음 턴부터 다시 받는다(부여를 다시 허락할 필요 없음).
+ */
+function ExpiryForm({ secret, busy, onSubmit, onCancel }: {
+  secret: SecretView; busy: boolean; onSubmit(expiresAt: string | null): Promise<void>; onCancel(): void;
+}) {
+  const t = useT();
+  const currentMs = secret.expiresAt === null ? null : Date.parse(secret.expiresAt);
+  const expired = currentMs !== null && currentMs <= Date.now();
+  const today = localDay(Date.now());
+  const [expiry, setExpiry] = useState<Expiry>(currentMs === null ? 'none' : 'date');
+  // 이미 지났으면 날짜 칸을 비워 둔다 — 지난 날짜를 그대로 저장하는 일이 없게.
+  const [date, setDate] = useState(currentMs === null || expired ? '' : localDay(currentMs));
+  const next = expiryIso(expiry, date);
+  const unchanged = expiry === 'none' ? currentMs === null
+    : expiry === 'date' && currentMs !== null && date === localDay(currentMs);
+  const ready = !(expiry === 'date' && (!date || date < today)) && !unchanged;
+  return (
+    <div className="mt-2 space-y-2 rounded border border-border bg-surface-sunken p-2" data-testid="secret-expiry-form">
+      <div>
+        <span className="text-meta text-fg">{t('secrets.expiry')}</span>
+        <Segmented label={t('secrets.expiry')} value={expiry} onChange={(v) => setExpiry(v as Expiry)} options={[
+          { value: 'none', label: t('secrets.expiryNone') }, { value: '30d', label: t('secrets.expiry30d') },
+          { value: '90d', label: t('secrets.expiry90d') }, { value: 'date', label: t('secrets.expiryDate') },
+        ]} />
+        {expiry === 'date' && (
+          <input type="date" aria-label={t('secrets.expiryDate')} className="mt-1 rounded border border-border bg-field px-2 py-1 text-meta text-fg"
+            value={date} min={today} onChange={(e) => setDate(e.target.value)} disabled={busy} data-testid="secret-expiry-date" />
+        )}
+        <p className="mt-1 text-meta text-fg-subtle">{t(expired ? 'secrets.changeExpiryHintExpired' : 'secrets.changeExpiryHint')}</p>
+      </div>
+      <div className="flex gap-2">
+        <Button variant="primary" onClick={() => void onSubmit(next)} disabled={busy || !ready}>{t('secrets.confirmExpiry')}</Button>
         <Button onClick={onCancel} disabled={busy}>{t('secrets.cancel')}</Button>
       </div>
     </div>
