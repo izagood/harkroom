@@ -90,7 +90,9 @@ describe('ompHome — 읽기 전용·MCP·lane(security R·K1~K3)', () => {
   });
 
   it('models.yml 에는 키 값이 아니라 `!cat <경로>` 만 간다. https 또는 로컬만, 경로·모델에 특수 문자를 거절한다', async () => {
-    const yml = ompLaneModelsYml({ baseUrl: 'https://gw.example/v1', keyPath: '/s/lease/key', models: ['Org/model-1'] });
+    const yml = ompLaneModelsYml({ baseUrl: 'https://gw.example', keyPath: '/s/lease/key', models: ['Org/model-1'] });
+    // lane 주소는 뿌리다(providerLane 이 정규화) — OpenAI 꼴 경로 `/v1` 은 여기서 붙인다(pi 와 같다).
+    expect(yml).toContain('baseUrl: "https://gw.example/v1"');
     expect(yml).toContain(`apiKey: "!cat '/s/lease/key'"`);
     // macOS 앱 데이터 폴더(`Application Support`)의 빈칸은 받는다 — 작은따옴표 안이라 낱말로 안 갈린다.
     expect(ompLaneModelsYml({ baseUrl: 'https://g', keyPath: '/Users/u/Library/Application Support/app/turn-secrets/k', models: ['m'] }))
