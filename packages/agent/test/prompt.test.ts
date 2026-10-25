@@ -1071,15 +1071,24 @@ describe('sessionConflictNotice', () => {
  */
 describe('silentTurnNotice — 부른 쪽으로 가르는 침묵 통지', () => {
   const base = { lastSaid: null, offAnchor: null, pat: 'murp_secret' } as const;
-  const post = (n: ReturnType<typeof silentTurnNotice>) => (n.kind === 'post' ? n.body : `(react ${n.emoji})`);
+  const post = (n: ReturnType<typeof silentTurnNotice>) => (n.kind === 'react' ? `(react ${n.emoji})` : n.body);
 
   it('에이전트가 불렀고 다른 스레드 답도 없으면 글 없이 ✅ 리액션이다 — progress 는 스레드를 작업 중에 묶는다', () => {
     expect(silentTurnNotice({ ...base, caller: 'agent', lastSaid: '할 말 없음' })).toEqual({ kind: 'react', emoji: '✅' });
   });
 
+  it('넘겨받은 일에 답이 없으면 실패다 — ✅ 는 위임을 안 닫고, 보통 답글은 「끝남」으로 닫는다', () => {
+    expect(silentTurnNotice({ ...base, caller: 'delegated', lastSaid: '팀장에게 답해야겠다' })).toEqual({
+      kind: 'fail', body: '넘겨받은 일에 답을 남기지 못하고 끝났습니다. 마지막 말: "팀장에게 답해야겠다" — 다시 넘기면 이어서 합니다.',
+    });
+    expect(silentTurnNotice({ ...base, caller: 'delegated' })).toEqual({
+      kind: 'fail', body: '넘겨받은 일에 답을 남기지 못하고 끝났습니다 — 다시 넘기면 이어서 합니다.',
+    });
+  });
+
   it('다른 스레드에 답했으면 부른 쪽과 무관하게 그 링크를 보통 답글로 준다', () => {
     const offAnchor = '이 요청의 답은 다른 스레드에 올렸습니다: harkroom://message/T2';
-    for (const caller of ['agent', 'human'] as const) {
+    for (const caller of ['agent', 'human', 'delegated'] as const) {
       expect(silentTurnNotice({ ...base, caller, offAnchor, lastSaid: '무시됨' })).toEqual({ kind: 'post', body: offAnchor });
     }
   });

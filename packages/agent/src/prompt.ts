@@ -28,19 +28,22 @@ export const BODY_LIMIT = 8000;
  *   글이 와야 닫힌다(`progressGroup.ts`) — FYI 스레드가 끝나지 않는 '작업 중'으로 남는다(designer 재검토).
  * - 다른 스레드에 답했다 → 부른 쪽과 무관하게 보통 답글로 그 링크를 준다(드물고, 링크는 사람에게도 쓸모 있다).
  * - 부른 쪽이 **사람**이고 정말 답이 없다 → 보통 답글로 그 사실과 마지막 말 한 줄.
+ * - **넘겨받은 일**(`message.delegate`, `delegatedBy`)인데 답이 없다 → 실패(`message.fail`)로 남긴다(2026-10-25).
+ *   ✅ 는 위임을 닫지 않아 팀장이 기한까지 기다리다 「무응답」으로 끝났고(qa 응답 점검), 보통 답글은 위임을
+ *   「끝남」으로 닫아 일을 한 것처럼 보인다. 실패는 결과라 위임을 「실패」로 바로 닫고 팀장을 깨운다.
  *
  * TUI 꼬리 원문은 본문에 싣지 않는다 — 화면 찌꺼기(상태줄·입력창·이스케이프 잔여)가 대부분이라 사람이
  * 읽을 수 없었다. 대신 하네스 기록의 **마지막 말 한 줄**(`readLastAssistantText`, `silentWakeNotice` 와
  * 같은 방식)을 싣고, 원문 꼬리는 러너 로그에만 남긴다(호출자).
  */
-export type SilentTurnNotice = { kind: 'react'; emoji: string } | { kind: 'post'; body: string };
+export type SilentTurnNotice = { kind: 'react'; emoji: string } | { kind: 'post'; body: string } | { kind: 'fail'; body: string };
 
 /** 에이전트가 부른 턴이 덧붙일 말 없이 끝났다는 표시 — 멘션 메시지에 단다(👀 받았음·💬 도는 중의 끝). */
 export const SILENT_ACK_EMOJI = '✅';
 
 export function silentTurnNotice(opts: {
-  /** 이 턴을 부른 쪽. 모르면 `'human'` — 사람에게 안 보이는 쪽으로 틀리는 것이 더 나쁘다. */
-  caller: 'agent' | 'human';
+  /** 이 턴을 부른 쪽. 모르면 `'human'` — 사람에게 안 보이는 쪽으로 틀리는 것이 더 나쁘다. `'delegated'` 는 넘겨받은 일이다. */
+  caller: 'agent' | 'human' | 'delegated';
   /** 하네스가 끝내며 남긴 말(`readLastAssistantText`). 못 읽었으면 `null`. */
   lastSaid: string | null;
   /** `offAnchorNotice` 의 결과 — 이 턴이 다른 스레드에 답했으면 그 링크 문장. */
@@ -53,6 +56,14 @@ export function silentTurnNotice(opts: {
   // 에이전트 쪽은 글이 없으니 마지막 말을 실을 자리도 없다 — 호출자가 러너 로그에 남긴다.
   if (opts.caller === 'agent') return { kind: 'react', emoji: SILENT_ACK_EMOJI };
   const said = quotedLine(opts.lastSaid, opts.pat, opts.secrets);
+  if (opts.caller === 'delegated') {
+    return {
+      kind: 'fail',
+      body: said
+        ? `넘겨받은 일에 답을 남기지 못하고 끝났습니다. 마지막 말: "${said}" — 다시 넘기면 이어서 합니다.`
+        : '넘겨받은 일에 답을 남기지 못하고 끝났습니다 — 다시 넘기면 이어서 합니다.',
+    };
+  }
   return {
     kind: 'post',
     body: said

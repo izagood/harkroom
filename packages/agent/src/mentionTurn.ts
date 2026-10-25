@@ -723,8 +723,11 @@ async function offAnchorEvidence(
  */
 function silentTurnCaller(
   deps: Pick<MentionTurnDeps, 'agentIds'>, target: MentionTarget, thread: MessageRow[],
-): 'agent' | 'human' {
-  if (target.wake || target.delegation || !deps.agentIds) return 'human';
+): 'agent' | 'human' | 'delegated' {
+  if (target.wake || target.delegation) return 'human';
+  // 넘겨받은 일은 부른 쪽이 에이전트여도 FYI 가 아니다 — 답이 없으면 위임을 실패로 닫아야 한다(`silentTurnNotice`).
+  if (target.delegatedBy) return 'delegated';
+  if (!deps.agentIds) return 'human';
   const author = thread.find((m) => m.id === target.mentionId)?.authorId;
   return author !== undefined && deps.agentIds.has(author) ? 'agent' : 'human';
 }
@@ -2812,6 +2815,9 @@ export async function runMentionTurn(
         const said = quotedLine(lastSaid, deps.runnerSecret, await tailSecrets());
         console.log(`[mentionTurn] ${key}: 에이전트 호출에 덧붙일 말 없이 끝났다 — ✅ 만 단다${said ? ` (마지막 말: ${said})` : ''}`);
         await deps.harkroom.addReaction(channelId, mentionId, notice.emoji);
+      } else if (notice.kind === 'fail') {
+        // 넘겨받은 일 — 실패로 남겨 위임을 「실패」로 닫는다(서버 `closeDelegationsForReply`). 다시 넘기면 이어진다.
+        await deps.harkroom.fail(channelId, notice.body.slice(0, BODY_LIMIT), anchor, { retryable: true, mentionId });
       } else {
         // 상한을 넘기면 서버가 거절해 **통지 자체가 사라진다**. 본문은 이제 한 줄 요약뿐이지만
         // 상한 판정을 그 함수의 상수에 맡기지 않는다: 여기가 서버 계약을 아는 자리다.

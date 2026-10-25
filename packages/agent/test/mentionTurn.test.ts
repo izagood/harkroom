@@ -914,6 +914,24 @@ describe('runMentionTurn', () => {
     ]);
   });
 
+  it('넘겨받은 일(delegatedBy)이 답 없이 끝나면 ✅ 가 아니라 실패다 — 위임을 「실패」로 닫아 팀장을 깨운다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('agent-peer', '@forge 응답 점검이다').id = MENTION;
+    const { deps } = await makeDeps(fake, { agentIds: new Set(['agent-peer']), readLastSaid: async () => null });
+
+    await runMentionTurn(deps, {
+      channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+      delegatedBy: { leadHandle: 'lead', teamName: 'qa', deadlineAt: '2026-10-25T04:00:00.000Z' },
+    });
+
+    expect(fake.posts.filter((p) => p.body !== fake.fails[0]?.body)).toEqual([]);
+    expect(fake.fails).toEqual([expect.objectContaining({
+      channelId: CHANNEL, threadRootId: null, retryable: true, mentionId: MENTION,
+      body: '넘겨받은 일에 답을 남기지 못하고 끝났습니다 — 다시 넘기면 이어서 합니다.',
+    })]);
+    expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([]);
+  });
+
   it('에이전트가 불렀어도 다른 스레드에 답했으면 보통 답글로 링크를 준다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('agent-peer', '@forge 이 일 해줘').id = MENTION;
