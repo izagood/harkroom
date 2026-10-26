@@ -305,7 +305,9 @@ function CommunityTile({ ref, entry, others, open, onClick }: {
       onClick={onClick}
       // `text-sm` 은 4단이 아니라 **h-9 원에 묶인 머리글자**다 — `initial` 하나가 이 버튼의
       // 내용 전부이고 크기가 원의 지름에서 따라 나온다(`Identity.tsx` 와 같은 근거).
-      className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-compose bg-accent text-sm font-semibold text-fg-on-strong ${FOCUS_RING}
+      // 로고가 있으면 면을 깔지 않는다 — 배경 없는 SVG·PNG 뒤로 레일 색이 그대로 비쳐야 한다.
+      // 주황 면(bg-accent)은 로고가 없을 때 머리글자를 얹는 자리다.
+      className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-compose text-sm font-semibold ${iconUrl ? '' : 'bg-accent text-fg-on-strong'} ${FOCUS_RING}
         ${open ? 'ring-2 ring-accent ring-offset-2 ring-offset-surface-rail' : ''}
         ${connected ? '' : 'border-2 border-danger'}`}
     >
@@ -371,7 +373,7 @@ function CommunityRow({ entry, current, shortcut, onSelect }: {
       <span
         aria-hidden="true"
         className={`flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-card text-meta font-semibold
-          ${current ? 'bg-accent text-fg-on-strong' : 'bg-surface-sunken text-fg-muted'}`}
+          ${iconUrl ? '' : current ? 'bg-accent text-fg-on-strong' : 'bg-surface-sunken text-fg-muted'}`}
       >
         {iconUrl
           ? <img src={iconUrl} alt="" data-testid={`community-row-icon-${entry.id}`} className="h-full w-full object-cover" />

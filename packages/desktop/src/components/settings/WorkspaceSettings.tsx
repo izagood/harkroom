@@ -37,7 +37,7 @@ export function WorkspaceSettings() {
             <span className="ml-auto flex items-center gap-3">
               <span
                 data-testid="workspace-icon-preview"
-                className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-compose bg-surface-raised text-meta text-fg-subtle"
+                className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-compose text-meta text-fg-subtle ${iconUrl ? '' : 'bg-surface-raised'}`}
               >
                 {iconUrl ? <img src={iconUrl} alt="" className="h-full w-full object-cover" /> : '—'}
               </span>

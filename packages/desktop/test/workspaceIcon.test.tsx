@@ -45,6 +45,26 @@ describe('커뮤니티 전환기 아이콘', () => {
     render(<CommunitySwitcher onManage={() => {}} />);
     expect((screen.getByTestId(`community-icon-${a.id}`) as HTMLImageElement).getAttribute('src')).toBe('blob:alice');
   });
+
+  it('사진이 있으면 타일·행에 면을 깔지 않는다 — 배경 없는 로고 뒤로 테마 색이 비친다', () => {
+    const { a, b } = twoCommunities();
+    a.store.getState().set({ workspaceIconUrl: 'blob:alice' });
+    render(<CommunitySwitcher onManage={() => {}} />);
+    const mark = screen.getByTestId('rail-community-mark');
+    expect(mark.className).not.toMatch(/\bbg-accent\b/);
+
+    fireEvent.click(mark);
+    const iconBox = (id: string) => screen.getByTestId(`community-tile-${id}`).querySelector('span')!;
+    expect(iconBox(a.id).className).not.toMatch(/\bbg-/);
+    // 사진이 없는 b 는 머리글자를 얹는 면 그대로다.
+    expect(iconBox(b.id).className).toMatch(/\bbg-surface-sunken\b/);
+  });
+
+  it('사진이 없으면 레일 타일은 주황 면 위 머리글자 그대로다', () => {
+    twoCommunities();
+    render(<CommunitySwitcher onManage={() => {}} />);
+    expect(screen.getByTestId('rail-community-mark').className).toMatch(/\bbg-accent\b/);
+  });
 });
 
 describe('Controller 의 아이콘 조회', () => {
