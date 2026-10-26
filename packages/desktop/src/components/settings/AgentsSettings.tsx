@@ -1489,8 +1489,12 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
       }
       setCreateLane({ mode: 'pool', url: '', secretId: '' });
       reload();
-    } catch {
-      setError(t('agents.create.failed'));
+    } catch (e) {
+      // 이름 겹침은 **고칠 수 있는 실패**다(상세 화면의 `agents.detail.handleTaken` 과 같은 규율) —
+      // 무엇을 고칠지(이름)를 바로 말한다. 서버 원문은 싣지 않는다.
+      setError(e instanceof ApiError && e.code === 'handle_taken'
+        ? t('agents.create.handleTaken', { handle: draft.handle })
+        : t('agents.create.failed'));
     } finally { setBusy(false); }
   };
 

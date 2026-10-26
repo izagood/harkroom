@@ -13,6 +13,7 @@ import { setController, type Controller as ControllerType } from '../src/state/c
 import { resetCommunityRegistry, useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc } from './helpers/fakeApi';
+import { ApiError } from '../src/lib/api';
 
 vi.mock('../src/lib/operatorLocal', () => ({
   hasOperatorLocalSurface: () => false,
@@ -113,6 +114,15 @@ describe('만들기 성공 팝업', () => {
     await screen.findByText(/was not created/, {}, { timeout: 5000 });
     expect(screen.queryByTestId('agent-created-toast')).toBeNull();
     // 만들기 화면에 그대로 남는다 — 고쳐서 다시 누를 자리다.
+    expect(screen.getByTestId('agent-back')).toBeTruthy();
+  });
+
+  it('이름이 겹치면(409 handle_taken) 그 이름을 짚어 말하고, 서버 원문은 싣지 않는다', async () => {
+    setupUi(async () => { throw new ApiError(409, 'handle_taken', 'this handle is already taken'); });
+    await create('newbie');
+    const alert = await screen.findByText(/@newbie is already taken/, {}, { timeout: 5000 });
+    expect(alert.textContent).not.toContain('this handle is already taken');
+    expect(screen.queryByText(/was not created/)).toBeNull();
     expect(screen.getByTestId('agent-back')).toBeTruthy();
   });
 });

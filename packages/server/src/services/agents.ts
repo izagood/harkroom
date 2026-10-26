@@ -288,11 +288,26 @@ export async function createAgentAccount(
     if (group) {
       throw Object.assign(new Error('a group with this handle already exists'), { code: 'handle_taken' });
     }
+    // 계정끼리의 겹침도 먼저 본다 — 이름 바꾸기 라우트와 같은 `lower(handle)` 판정이다. 이것이 없으면
+    // 겹침이 insert 의 유일 제약 위반(23505)으로 터져 500 과 PG 원문이 화면까지 나갔다.
+    const taken = await client.query(`select 1 from account where lower(handle) = lower($1)`, [input.handle]);
+    if (taken.rowCount) {
+      throw Object.assign(new Error('this handle is already taken'), { code: 'handle_taken' });
+    }
 
-    const created = await client.query(
-      `insert into account (handle, display_name, kind) values ($1, $2, 'agent') returning id`,
-      [input.handle, input.displayName],
-    );
+    let created;
+    try {
+      created = await client.query(
+        `insert into account (handle, display_name, kind) values ($1, $2, 'agent') returning id`,
+        [input.handle, input.displayName],
+      );
+    } catch (err) {
+      // 위 조회와 insert 사이에 같은 이름이 먼저 들어온 경우(동시 생성). 같은 거절로 바꾼다.
+      if ((err as { code?: string }).code === '23505') {
+        throw Object.assign(new Error('this handle is already taken'), { code: 'handle_taken' });
+      }
+      throw err;
+    }
     const id = created.rows[0].id as string;
     await upsertConfig(client, id, { ...await withDefaults(client, input), ownerAccountId: ownerId });
     await client.query('commit');

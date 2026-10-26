@@ -433,7 +433,29 @@ describe('에이전트 생성 시 집합 이름 충돌 검사', () => {
       method: 'POST', url: '/accounts/agents',
       headers: auth(adminToken), payload: { handle: 'myteam', displayName: 'Conflict Agent' },
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('handle_taken');
     expect(res.json().error.message).toContain('already exists');
+  });
+
+  /**
+   * 살아 있는 계정과 겹치면 409 `handle_taken` 이다 — 예전에는 insert 의 유일 제약 위반이 그대로 터져
+   * 500 `internal` 과 PG 원문(`duplicate key … account_handle_key`)이 나갔고, 화면은 이유를 말하지 못했다.
+   */
+  it('살아 있는 에이전트·사람과 같은 이름이면 409 handle_taken 이고 PG 원문은 나가지 않는다', async () => {
+    const first = await app.inject({
+      method: 'POST', url: '/accounts/agents',
+      headers: auth(adminToken), payload: { handle: 'twinbot', displayName: 'Twin' },
+    });
+    expect(first.statusCode).toBe(201);
+    for (const handle of ['twinbot', 'admin']) {
+      const res = await app.inject({
+        method: 'POST', url: '/accounts/agents',
+        headers: auth(adminToken), payload: { handle, displayName: 'Again' },
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('handle_taken');
+      expect(res.body).not.toMatch(/duplicate key|account_handle_key/);
+    }
   });
 });
