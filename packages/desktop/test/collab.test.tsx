@@ -163,6 +163,77 @@ describe('협업 탭', () => {
     expect(matchesFilter(p, 'accepted')).toBe(false);
   });
 
+  it('줄을 누르면 트리가 펼쳐지고, 다시 누르면 접힌다', () => {
+    show(view({
+      repos: [repo({
+        repo: 'r',
+        proposals: [proposal({
+          intentOid: 'i1',
+          ops: [{
+            oid: 'op_1', purpose: '008 을 지운다', actorKeyId: 'ai:alpha',
+            status: 'accepted', blockedReason: null,
+            evidence: [{ oid: 'ev_1', summary: 'test pass', actorKeyId: null }],
+          }],
+        })],
+      })],
+    }));
+
+    // 접혀 있을 때는 트리가 없다 — 목록은 "무엇을 막고 있나" 에만 답한다.
+    expect(screen.queryByTestId('collab-detail-i1')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('collab-toggle-i1'));
+    expect(screen.getByTestId('collab-op-op_1')).toBeTruthy();
+    expect(screen.getByTestId('collab-evidence-ev_1').textContent).toBe('test pass');
+
+    fireEvent.click(screen.getByTestId('collab-toggle-i1'));
+    expect(screen.queryByTestId('collab-detail-i1')).toBeNull();
+  });
+
+  it('모르는 op 상태는 avcs 가 쓴 말 그대로 보인다 — 빈칸을 그리지 않는다', () => {
+    show(view({
+      repos: [repo({
+        repo: 'r',
+        proposals: [proposal({
+          intentOid: 'i1',
+          ops: [{
+            oid: 'op_x', purpose: 'x', actorKeyId: null,
+            status: 'teleported', blockedReason: null, evidence: [],
+          }],
+        })],
+      })],
+    }));
+
+    fireEvent.click(screen.getByTestId('collab-toggle-i1'));
+    expect(screen.getByTestId('collab-op-status-op_x').textContent).toBe('teleported');
+  });
+
+  it('op 이 없는 제안은 그 사실을 적는다 — 빈 상세가 아니다', () => {
+    show(view({ repos: [repo({ repo: 'r', proposals: [proposal({ intentOid: 'i_empty' })] })] }));
+
+    fireEvent.click(screen.getByTestId('collab-toggle-i_empty'));
+    expect(screen.getByTestId('collab-detail-noops-i_empty')).toBeTruthy();
+  });
+
+  it('충돌은 무엇이 다투는지까지 말하고, 고르는 문은 아직 그리지 않는다', () => {
+    show(view({
+      repos: [repo({
+        repo: 'r',
+        proposals: [proposal({
+          intentOid: 'i1',
+          state: 'needs_decision',
+          conflicts: [{ id: 'c1', key: 'file:src/a.ts', reason: '같은 파일을 동시에 고쳤다' }],
+        })],
+      })],
+    }));
+
+    fireEvent.click(screen.getByTestId('collab-toggle-i1'));
+    const row = screen.getByTestId('collab-detail-conflict-c1');
+    expect(row.textContent).toContain('file:src/a.ts');
+    expect(row.textContent).toContain('같은 파일을 동시에 고쳤다');
+    // 선택지는 서버가 아직 안 준다 — 없는 문을 그리지 않는다(승인과 함께 오는 2단계다).
+    expect(screen.queryByTestId(/^collab-choose-/)).toBeNull();
+  });
+
   it('거르개를 누르면 그 값을 위로 올린다', () => {
     const picked: string[] = [];
     render(
