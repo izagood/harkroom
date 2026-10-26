@@ -226,11 +226,17 @@ const clip = (t: string, n: number) => (t.length <= n ? t : `${t.slice(0, n - 1)
  * 증류 입력 요약(P1) — 한 스레드에서 그 에이전트가 배울 재료를 3,000자 안으로 모은다: 그 에이전트의 **마지막 보고**,
  * 그 에이전트가 낸 **실패**(message.fail, meta.kind = failure), 그 스레드의 **사람 글**(최근 것부터). 조각마다 길이를 자르고
  * 합계가 넘치면 뒤 조각을 버린다. 지운 글은 뺀다. 본문은 데이터로만 쓰인다 — 러너가 escape 하고 「참고 데이터」 표지를 단다.
+ * **저장하지 않는다**(security F1): 일감에는 threadIds 만 두고, 러너가 집을 때(`bgClaimPayload`) 그때 만든다 — 사본이 남으면
+ * 채널을 지우거나 글을 지워도·에이전트가 채널에서 빠져도 옛 본문이 회차에 실린다.
  */
 export async function buildDistillDigest(pool: Pool, accountId: string, rootId: string): Promise<string> {
+  // 가시성·삭제는 **만드는 그때** 다시 판정한다(security F1) — 루트가 살아 있고 그 에이전트가 지금 볼 수 있는 채널이어야 한다.
   const r = await pool.query<{ role: 'report' | 'failure' | 'human'; body: string; created_at: Date }>(
-    `with t as (
-       select m.* from message m where (m.id = $2 or m.thread_root_id = $2) and m.deleted_at is null
+    `with root as (
+       select rm.id from message rm join channel c on c.id = rm.channel_id
+        where rm.id = $2 and rm.thread_root_id is null and rm.deleted_at is null and ${channelVisibleSql('c', '$1')}
+     ), t as (
+       select m.* from message m join root on (m.id = root.id or m.thread_root_id = root.id) where m.deleted_at is null
      )
      (select 'report' as role, t.body, t.created_at from t
        where t.author_id = $1 and t.kind = 'user' and coalesce(t.meta->>'kind', '') not in ('failure', 'ask', 'wake')
@@ -261,7 +267,7 @@ export async function buildDistillDigest(pool: Pool, accountId: string, rootId: 
  * 증류 생산자(BG3 + P1). done 으로 24h 넘게 머문 스레드 가운데, 에이전트마다
  * - 스레드 메모가 있는 것(보관·쓰기 검사 걸림 제외), 또는
  * - 메모가 없어도 **그 에이전트가 발화했고**(최근 30일) 사람 글이 하나 이상 있거나 그 에이전트의 실패가 있는 것
- * 을 오래된 것부터 10개 묶어 하루 1회 넣는다. 입력에는 스레드마다 요약(`buildDistillDigest`, 3,000자)을 싣는다.
+ * 을 오래된 것부터 10개 묶어 하루 1회 넣는다. 입력은 threadIds 만 — 요약은 집을 때 만든다(`bgClaimPayload`).
  * - **그 에이전트가 지금 볼 수 있는 채널의 스레드만**(channelVisibleSql) — 허용 목록이 이 입력으로 묶인다.
  * - **실행기가 집는 하네스(BG_HARNESS)만** — 다른 하네스에 넣으면 아무도 안 집어 expired 로만 쌓인다(security 참고 nit).
  * - 같은 스레드를 다시 고르지 않는다: 그 에이전트의 done 증류 회차가 그 스레드의 마지막 done 뒤에 이미 다뤘으면 뺀다
@@ -308,13 +314,29 @@ export async function produceDistillJobs(pool: Pool, now: Date = new Date(), env
     [new Date(now.getTime() - DISTILL_DONE_AGE_MS), DISTILL_MAX_THREADS, BG_HARNESS],
   );
   for (const row of r.rows) {
-    const digests: Record<string, string> = {};
-    for (const t of row.threads) digests[t] = await buildDistillDigest(pool, row.account_id, t);
-    const res = await enqueueBgJob(pool, { accountId: row.account_id, kind: 'distill', input: { threadIds: row.threads, digests }, now }, env);
+    const res = await enqueueBgJob(pool, { accountId: row.account_id, kind: 'distill', input: { threadIds: row.threads }, now }, env);
     if ('job' in res) out.queued += 1;
     else out.refused[res.refused] = (out.refused[res.refused] ?? 0) + 1;
   }
   return out;
+}
+
+/**
+ * `bg.claim` 응답에 싣는 일감(P1 · security F1). distill 이면 입력 스레드마다 요약을 **지금** 만들어 `digests` 로 붙인다 —
+ * 볼 수 없게 된 채널·지운 루트의 스레드는 요약이 없고(빈 문자열은 싣지 않는다), 지운 글은 빠진다. 저장된 input 은 그대로 둔다.
+ */
+export async function bgClaimPayload(pool: Pool, accountId: string, job: BgJobRow): Promise<{ id: string; kind: string; day: string; input: Record<string, unknown> }> {
+  const input: Record<string, unknown> = { ...job.input };
+  delete input.digests; // 옛 일감에 남은 사본이 있어도 싣지 않는다
+  if (job.kind === 'distill') {
+    const digests: Record<string, string> = {};
+    for (const t of job.input.threadIds ?? []) {
+      const d = await buildDistillDigest(pool, accountId, t);
+      if (d) digests[t] = d;
+    }
+    input.digests = digests;
+  }
+  return { id: job.id, kind: job.kind, day: job.day, input };
 }
 
 /** 정리를 백그라운드 회차가 맡는가(BG5) — 전역 스위치 켜짐 + 소유자 토글 켬. 러너가 정리 신호를 뺄지 이것으로 정한다. */

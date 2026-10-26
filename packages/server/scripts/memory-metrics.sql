@@ -125,6 +125,7 @@ from m;
 -- 백그라운드 회차(bg_job, BG1~) 에이전트·종류별, 최근 28일: 회차 수·상태별 · 증류 수율(끝난 회차 중 기억 쓰기 ≥1 인 비율,
 -- 목표 30~60%) · 되돌리기 비율(쓰기가 있던 끝난 회차 중 사람이 [이 회차 되돌리기]를 누른 비율, 목표 <5%) · 토큰 합·주 평균.
 -- 회차 행 하나가 히스토리 한 줄이다. 토큰은 러너가 보고한 값(없으면 null — 합에서 빠진다).
+-- 지운 에이전트(account.deleted_at)도 일부러 센다 — 기간 동안 실제로 든 회차·토큰의 합이라서다.
 select a.handle, j.account_id, j.kind,
   count(*) as runs,
   count(*) filter (where j.status = 'done') as done,
@@ -144,6 +145,7 @@ order by a.handle, j.kind;
 
 -- name: bg_tokens_weekly
 -- 백그라운드 회차 토큰을 에이전트·주(KST 월요일 시작)별로 — 첫 주 실측 뒤 상한을 정하는 재료(설계 5절).
+-- 지운 에이전트도 센다(위와 같은 까닭).
 select a.handle, j.account_id,
   date_trunc('week', j.created_at at time zone 'Asia/Seoul')::date as week_kst,
   count(*) as runs,

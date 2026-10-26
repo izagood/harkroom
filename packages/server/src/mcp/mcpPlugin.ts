@@ -79,7 +79,7 @@ import { downscaleImage, DOWNSCALE_READ_MAX_BYTES, tryAcquireDownscaleSlot } fro
 import { isValidSlug, kindRefusal, looksLikeThreadState, MEMORY_SLUG_HINT, THREAD_NOTE_HINT } from '../services/memory.js';
 import { getThreadNote, MAX_THREAD_NOTE_LENGTH, setThreadNote, threadRootChannel } from '../services/threadNote.js';
 import {
-  BG_MAX_WRITES, bgCleanupOn, claimBgJob, completeBgJob, getBgJob, recordBgChange, releaseBgWrite, reserveBgWrite,
+  BG_MAX_WRITES, bgClaimPayload, bgCleanupOn, claimBgJob, completeBgJob, getBgJob, recordBgChange, releaseBgWrite, reserveBgWrite,
 } from '../services/bgJobs.js';
 import { withWriteOrigin } from '../services/writeOrigin.js';
 import { listGrantedSecrets } from '../services/secretAccess.js';
@@ -1899,7 +1899,7 @@ function buildMcpServer(
     }
     const r = await claimBgJob(pool, account.id);
     if (!r.job) return jsonResult({ job: null, reason: r.reason });
-    return jsonResult({ job: { id: r.job.id, kind: r.job.kind, day: r.job.day, input: r.job.input } });
+    return jsonResult({ job: await bgClaimPayload(pool, account.id, r.job) });
   });
 
   server.registerTool('bg.complete', {

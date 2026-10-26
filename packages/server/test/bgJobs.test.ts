@@ -9,7 +9,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, registerOperator } from './helpers/fixtures.js';
 import {
-  BG_MAX_WRITES, claimBgJob, completeBgJob, createBgJobSweeper, CLEANUP_WEEKLY_MIN_ITEMS, DISTILL_DIGEST_MAX_CHARS, DISTILL_MAX_THREADS, buildDistillDigest, enqueueBgJob, inBgWindow, kstDay, produceCleanupJobs, produceDistillJobs,
+  BG_MAX_WRITES, claimBgJob, completeBgJob, createBgJobSweeper, CLEANUP_WEEKLY_MIN_ITEMS, DISTILL_DIGEST_MAX_CHARS, DISTILL_MAX_THREADS, bgClaimPayload, buildDistillDigest, enqueueBgJob, getBgJob, inBgWindow, kstDay, produceCleanupJobs, produceDistillJobs,
 } from '../src/services/bgJobs.js';
 import { getThreadNote, setThreadNote } from '../src/services/threadNote.js';
 
@@ -216,9 +216,17 @@ describe('bg_job (BG1)', () => {
       await pool.query(`insert into agent_config (account_id, harness, bg_enabled) values ($1, $2, true)`, [id, harness]);
       return { accountId: id };
     };
-    const inputOf = async (accountId: string) => (await pool.query(
-      `select input from bg_job where account_id = $1 and kind = 'distill' and day = '2026-10-21'`, [accountId],
-    )).rows[0]?.input as { threadIds: string[]; digests: Record<string, string> } | undefined;
+    const jobOf = async (accountId: string) => (await pool.query(
+      `select id, input from bg_job where account_id = $1 and kind = 'distill' and day = '2026-10-21'`, [accountId],
+    )).rows[0] as { id: string; input: Record<string, unknown> & { threadIds: string[] } } | undefined;
+    /** 저장된 input(threadIds 만)과 집을 때 응답(digests 를 그때 만든다)을 함께 돌려준다. */
+    const inputOf = async (accountId: string) => {
+      const j = await jobOf(accountId);
+      if (!j) return undefined;
+      expect(Object.keys(j.input)).not.toContain('digests'); // 사본을 저장하지 않는다(security F1)
+      const payload = await bgClaimPayload(pool, accountId, (await getBgJob(pool, j.id))!);
+      return payload.input as { threadIds: string[]; digests: Record<string, string> };
+    };
 
     it('메모가 없어도 내가 발화했고 사람 글이나 내 실패가 있으면 고르고, 요약(사람 글·실패·마지막 보고)을 싣는다 — 내 말뿐·codex·이미 다룬 스레드는 뺀다', async () => {
       const a = await rawAgent('bg-wide-one');
@@ -250,6 +258,32 @@ describe('bg_job (BG1)', () => {
       expect(input?.digests[corrected]).not.toContain('첫 시도 보고'); // 마지막 보고 하나만
       expect(input?.digests[failed]).toContain('[실패] CI 를 못 돌렸다');
       expect(await inputOf(cx.accountId)).toBeUndefined();
+    });
+
+    it('요약은 집을 때 만든다 — 넣은 뒤 채널에서 빠지면 그 스레드 요약이 없고, 넣은 뒤 지운 글은 없다(security F1)', async () => {
+      const a = await rawAgent('bg-wide-f1');
+      const mk = async (name: string, visibility: string) => (await pool.query(
+        `insert into channel (name, kind, visibility) values ($1, 'standard', $2) returning id`, [name, visibility],
+      )).rows[0].id as string;
+      const priv = await mk('bg-f1-private', 'private');
+      const pub = await mk('bg-f1-public', 'public');
+      await pool.query(`insert into channel_member (channel_id, account_id) values ($1, $2)`, [priv, a.accountId]);
+      const left = await bare(priv, admin.accountId, a.accountId, [{ author: a.accountId, body: '보고' }, { author: admin.accountId, body: '비공개 정정' }]);
+      const edited = await bare(pub, admin.accountId, a.accountId, [{ author: a.accountId, body: '보고' }, { author: admin.accountId, body: '지울 정정' }, { author: admin.accountId, body: '남는 정정' }]);
+      await produceDistillJobs(pool, IN_WINDOW, ON);
+      const j = await jobOf(a.accountId);
+      expect(j?.input.threadIds.sort()).toEqual([left, edited].sort());
+      expect(Object.keys(j!.input)).toEqual(['threadIds']);
+      // 넣은 뒤: 비공개 채널에서 빠지고, 사람 글 하나를 지운다.
+      await pool.query(`delete from channel_member where channel_id = $1 and account_id = $2`, [priv, a.accountId]);
+      await pool.query(`update message set deleted_at = now() where thread_root_id = $1 and body = '지울 정정'`, [edited]);
+      const payload = await bgClaimPayload(pool, a.accountId, (await getBgJob(pool, j!.id))!);
+      const digests = payload.input.digests as Record<string, string>;
+      expect(digests[left]).toBeUndefined();
+      expect(JSON.stringify(digests)).not.toContain('비공개 정정');
+      expect(digests[edited]).toContain('남는 정정');
+      expect(digests[edited]).not.toContain('지울 정정');
+      expect(payload.input.threadIds).toEqual(j!.input.threadIds); // 입력 스레드 목록은 그대로(허용 목록이 이것을 본다)
     });
 
     it('요약은 스레드당 3,000자를 넘지 않고, 지운 글은 싣지 않는다', async () => {
