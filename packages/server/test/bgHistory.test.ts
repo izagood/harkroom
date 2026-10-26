@@ -74,7 +74,8 @@ describe('background history (BG4)', () => {
     // 소유자만 본다.
     expect((await app.inject({ method: 'GET', url: base(), headers: auth(bob.token) })).statusCode).toBe(403);
     const list = (await app.inject({ method: 'GET', url: base(), headers: auth(alice.token) })).json();
-    expect(list).toMatchObject({ enabled: true, paused: [] });
+    // 토글은 기본 끔(144) — 회차 기록은 토글과 상관없이 보인다.
+    expect(list).toMatchObject({ enabled: false, paused: [] });
     expect(list.runs[0]).toMatchObject({ id: runId, status: 'done', summary: '<b>mem/old</b> 갱신', writes: 5, changes: 5, revertedAt: null });
 
     const details = (await app.inject({ method: 'GET', url: `${base()}/runs/${runId}`, headers: auth(alice.token) })).json().changes as
