@@ -214,31 +214,103 @@ export const DISTILL_DONE_AGE_MS = 24 * 60 * 60 * 1000;
 /** 생산자를 도는 간격. sweep 은 1분마다 돌지만 생산은 한 시간에 한 번이면 된다. */
 export const DISTILL_PRODUCE_INTERVAL_MS = 60 * 60 * 1000;
 
+/** 증류 입력 요약(P1)의 스레드당 상한(설계 dfad81b8 4절) — 사람 글·실패·마지막 보고를 합친 글자 수. */
+export const DISTILL_DIGEST_MAX_CHARS = 3000;
+const DIGEST_PIECE = { report: 800, failure: 500, human: 600 } as const;
+/** 메모 없는 스레드를 고를 때 그 에이전트의 발화를 찾는 기간 — 오래된 스레드를 통째로 훑지 않게. */
+const DISTILL_LOOKBACK = '30 days';
+
+const clip = (t: string, n: number) => (t.length <= n ? t : `${t.slice(0, n - 1)}…`);
+
 /**
- * 증류 생산자(BG3). 스레드 메모가 있고(보관·쓰기 검사 걸림 제외) 그 스레드가 done 으로 24h 넘게 머문 (에이전트, 스레드)를
- * 에이전트마다 오래된 것부터 10개 묶어 하루 1회 넣는다. **그 에이전트가 지금 볼 수 있는 채널의 스레드만** — 회차의
- * message.read·thread.note 허용 목록이 이 입력으로 묶이므로, 못 보는 스레드가 섞이면 허용 목록이 그것을 열어 준다.
- * 창(03~07 KST)이 끝나기 전에만 넣는다 — 그 뒤에 넣으면 집지 못하고 다음 날 expired 로 닫힌다.
+ * 증류 입력 요약(P1) — 한 스레드에서 그 에이전트가 배울 재료를 3,000자 안으로 모은다: 그 에이전트의 **마지막 보고**,
+ * 그 에이전트가 낸 **실패**(message.fail, meta.kind = failure), 그 스레드의 **사람 글**(최근 것부터). 조각마다 길이를 자르고
+ * 합계가 넘치면 뒤 조각을 버린다. 지운 글은 뺀다. 본문은 데이터로만 쓰인다 — 러너가 escape 하고 「참고 데이터」 표지를 단다.
+ */
+export async function buildDistillDigest(pool: Pool, accountId: string, rootId: string): Promise<string> {
+  const r = await pool.query<{ role: 'report' | 'failure' | 'human'; body: string; created_at: Date }>(
+    `with t as (
+       select m.* from message m where (m.id = $2 or m.thread_root_id = $2) and m.deleted_at is null
+     )
+     (select 'report' as role, t.body, t.created_at from t
+       where t.author_id = $1 and t.kind = 'user' and coalesce(t.meta->>'kind', '') not in ('failure', 'ask', 'wake')
+       order by t.seq desc limit 1)
+     union all
+     (select 'failure', t.body, t.created_at from t where t.author_id = $1 and t.meta->>'kind' = 'failure' order by t.seq desc limit 3)
+     union all
+     (select 'human', t.body, t.created_at from t join account a on a.id = t.author_id and a.kind = 'human'
+       where t.kind = 'user' order by t.seq desc limit 10)`,
+    [accountId, rootId],
+  );
+  const label = { report: '마지막 보고', failure: '실패', human: '사람 글' } as const;
+  const order = { report: 0, failure: 1, human: 2 } as const;
+  const pieces = r.rows
+    .sort((a, b) => order[a.role] - order[b.role])
+    .map((x) => `[${label[x.role]}] ${clip(x.body.replace(/\s+/g, ' ').trim(), DIGEST_PIECE[x.role])}`);
+  const out: string[] = [];
+  let used = 0;
+  for (const p of pieces) {
+    if (used + p.length + 1 > DISTILL_DIGEST_MAX_CHARS) break;
+    out.push(p);
+    used += p.length + 1;
+  }
+  return out.join('\n');
+}
+
+/**
+ * 증류 생산자(BG3 + P1). done 으로 24h 넘게 머문 스레드 가운데, 에이전트마다
+ * - 스레드 메모가 있는 것(보관·쓰기 검사 걸림 제외), 또는
+ * - 메모가 없어도 **그 에이전트가 발화했고**(최근 30일) 사람 글이 하나 이상 있거나 그 에이전트의 실패가 있는 것
+ * 을 오래된 것부터 10개 묶어 하루 1회 넣는다. 입력에는 스레드마다 요약(`buildDistillDigest`, 3,000자)을 싣는다.
+ * - **그 에이전트가 지금 볼 수 있는 채널의 스레드만**(channelVisibleSql) — 허용 목록이 이 입력으로 묶인다.
+ * - **실행기가 집는 하네스(BG_HARNESS)만** — 다른 하네스에 넣으면 아무도 안 집어 expired 로만 쌓인다(security 참고 nit).
+ * - 같은 스레드를 다시 고르지 않는다: 그 에이전트의 done 증류 회차가 그 스레드의 마지막 done 뒤에 이미 다뤘으면 뺀다
+ *   (메모 없는 스레드는 보관할 메모가 없어 이것이 없으면 매일 다시 뽑힌다). 그 뒤 스레드가 다시 움직여 done 이 되면 다시 대상.
+ * 창(03~07 KST)이 끝난 뒤엔 넣지 않는다.
  */
 export async function produceDistillJobs(pool: Pool, now: Date = new Date(), env: NodeJS.ProcessEnv = process.env): Promise<{ queued: number; refused: Record<string, number> }> {
   const out = { queued: 0, refused: {} as Record<string, number> };
   if (!backgroundEnabled(env)) return out;
   if (new Date(now.getTime() + KST_OFFSET_MS).getUTCHours() >= BG_WINDOW_KST[1]) return out;
   const r = await pool.query<{ account_id: string; threads: string[] }>(
-    `select n.account_id, (array_agg(n.thread_root_id order by s.updated_at, n.thread_root_id))[1:$2] as threads
-       from thread_note n
-       join account a on a.id = n.account_id and a.kind = 'agent' and a.deleted_at is null
-       join thread_status s on s.root_id = n.thread_root_id
-       join message m on m.id = n.thread_root_id and m.deleted_at is null
-       join channel c on c.id = m.channel_id
-      where s.status = 'done' and s.updated_at < $1
-        and n.archived_at is null and n.flag_reason is null
-        and ${channelVisibleSql('c', 'n.account_id')}
-      group by n.account_id`,
-    [new Date(now.getTime() - DISTILL_DONE_AGE_MS), DISTILL_MAX_THREADS],
+    `with pairs as (
+       select n.account_id, n.thread_root_id as root_id, true as has_note
+         from thread_note n where n.archived_at is null and n.flag_reason is null
+       union
+       select distinct m.author_id, coalesce(m.thread_root_id, m.id), false
+         from message m join account a on a.id = m.author_id and a.kind = 'agent'
+        where m.deleted_at is null and m.created_at > $1::timestamptz - interval '${DISTILL_LOOKBACK}'
+     ), cand as (
+       select p.account_id, p.root_id, s.updated_at, bool_or(p.has_note) as has_note
+         from pairs p
+         join account a on a.id = p.account_id and a.kind = 'agent' and a.deleted_at is null
+         join agent_config ac on ac.account_id = a.id and ac.harness = $3
+         join thread_status s on s.root_id = p.root_id
+         join message rm on rm.id = p.root_id and rm.deleted_at is null and rm.thread_root_id is null
+         join channel c on c.id = rm.channel_id
+        where s.status = 'done' and s.updated_at < $1
+          and ${channelVisibleSql('c', 'p.account_id')}
+          and not exists (
+            select 1 from bg_job j
+             where j.account_id = p.account_id and j.kind = 'distill' and j.status = 'done'
+               and j.finished_at > s.updated_at and j.input->'threadIds' ? p.root_id::text)
+        group by p.account_id, p.root_id, s.updated_at
+     )
+     select account_id, (array_agg(root_id order by updated_at, root_id))[1:$2] as threads
+       from cand
+      where has_note
+         or exists (select 1 from message h join account ha on ha.id = h.author_id and ha.kind = 'human'
+                     where (h.id = cand.root_id or h.thread_root_id = cand.root_id) and h.deleted_at is null and h.kind = 'user')
+         or exists (select 1 from message f
+                     where (f.id = cand.root_id or f.thread_root_id = cand.root_id) and f.deleted_at is null
+                       and f.author_id = cand.account_id and f.meta->>'kind' = 'failure')
+      group by account_id`,
+    [new Date(now.getTime() - DISTILL_DONE_AGE_MS), DISTILL_MAX_THREADS, BG_HARNESS],
   );
   for (const row of r.rows) {
-    const res = await enqueueBgJob(pool, { accountId: row.account_id, kind: 'distill', input: { threadIds: row.threads }, now }, env);
+    const digests: Record<string, string> = {};
+    for (const t of row.threads) digests[t] = await buildDistillDigest(pool, row.account_id, t);
+    const res = await enqueueBgJob(pool, { accountId: row.account_id, kind: 'distill', input: { threadIds: row.threads, digests }, now }, env);
     if ('job' in res) out.queued += 1;
     else out.refused[res.refused] = (out.refused[res.refused] ?? 0) + 1;
   }

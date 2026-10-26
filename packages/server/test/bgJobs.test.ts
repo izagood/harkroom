@@ -9,7 +9,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, registerOperator } from './helpers/fixtures.js';
 import {
-  BG_MAX_WRITES, claimBgJob, completeBgJob, createBgJobSweeper, CLEANUP_WEEKLY_MIN_ITEMS, DISTILL_MAX_THREADS, enqueueBgJob, inBgWindow, kstDay, produceCleanupJobs, produceDistillJobs,
+  BG_MAX_WRITES, claimBgJob, completeBgJob, createBgJobSweeper, CLEANUP_WEEKLY_MIN_ITEMS, DISTILL_DIGEST_MAX_CHARS, DISTILL_MAX_THREADS, buildDistillDigest, enqueueBgJob, inBgWindow, kstDay, produceCleanupJobs, produceDistillJobs,
 } from '../src/services/bgJobs.js';
 import { getThreadNote, setThreadNote } from '../src/services/threadNote.js';
 
@@ -191,6 +191,78 @@ describe('bg_job (BG1)', () => {
       const rs = await Promise.all(xs.map((x) => enqueueBgJob(pool, { accountId: x.accountId, kind: 'cleanup', input: {}, now: day }, env)));
       expect(rs.filter((r) => 'job' in r)).toHaveLength(1);
       expect(rs.filter((r) => 'refused' in r && r.refused === 'daily_cap')).toHaveLength(2);
+    });
+  });
+
+  describe('증류 입력 넓히기(P1)', () => {
+    /** 메모 없는 스레드: 루트(작성자 지정) + done 상태 + 덧붙일 글들. 모두 SQL 로(감시기 재판정을 피한다). */
+    const bare = async (ch: string, rootAuthor: string, statusAgent: string, posts: { author: string; body: string; failure?: boolean }[] = [], doneAgoMs = 30 * 3600_000) => {
+      const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'root', 'user') returning id`, [ch, rootAuthor])).rows[0].id as string;
+      for (const p of posts) {
+        await pool.query(
+          `insert into message (channel_id, author_id, body, kind, thread_root_id, meta) values ($1, $2, $3, 'user', $4, $5::jsonb)`,
+          [ch, p.author, p.body, root, JSON.stringify(p.failure ? { kind: 'failure' } : {})],
+        );
+      }
+      await pool.query(
+        `insert into thread_status (root_id, status, emoji, account_id, updated_at) values ($1, 'done', '✅', $2, $3)`,
+        [root, statusAgent, new Date(IN_WINDOW.getTime() - doneAgoMs)],
+      );
+      return root;
+    };
+    /** 에이전트를 SQL 로 바로 만든다 — 이 묶음은 이미 에이전트를 많이 만들어 생성 라우트의 속도 제한에 닿는다. */
+    const rawAgent = async (handle: string, harness = 'claude-code') => {
+      const id = (await pool.query(`insert into account (handle, display_name, kind) values ($1, $1, 'agent') returning id`, [handle])).rows[0].id as string;
+      await pool.query(`insert into agent_config (account_id, harness, bg_enabled) values ($1, $2, true)`, [id, harness]);
+      return { accountId: id };
+    };
+    const inputOf = async (accountId: string) => (await pool.query(
+      `select input from bg_job where account_id = $1 and kind = 'distill' and day = '2026-10-21'`, [accountId],
+    )).rows[0]?.input as { threadIds: string[]; digests: Record<string, string> } | undefined;
+
+    it('메모가 없어도 내가 발화했고 사람 글이나 내 실패가 있으면 고르고, 요약(사람 글·실패·마지막 보고)을 싣는다 — 내 말뿐·codex·이미 다룬 스레드는 뺀다', async () => {
+      const a = await rawAgent('bg-wide-one');
+      const ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'bg-p1' } })).json().id as string;
+      const corrected = await bare(ch, admin.accountId, a.accountId, [
+        { author: a.accountId, body: '첫 시도 보고' },
+        { author: admin.accountId, body: '그게 아니라 rebase 먼저 해' },
+        { author: a.accountId, body: '최종 보고: rebase 뒤 통과' },
+      ]);
+      const failed = await bare(ch, a.accountId, a.accountId, [{ author: a.accountId, body: 'CI 를 못 돌렸다', failure: true }]);
+      const selfOnly = await bare(ch, a.accountId, a.accountId, [{ author: a.accountId, body: '혼잣말 보고' }]);
+      const notMine = await bare(ch, admin.accountId, a.accountId, [{ author: admin.accountId, body: '사람만 말함' }]);
+      const already = await bare(ch, admin.accountId, a.accountId, [{ author: a.accountId, body: '보고' }, { author: admin.accountId, body: '정정' }]);
+      // 이미 다룬 스레드: 그 스레드의 done 뒤에 끝난 done 증류 회차가 있다.
+      await pool.query(
+        `insert into bg_job (account_id, kind, day, status, input, finished_at) values ($1, 'distill', '2026-10-01', 'done', $2::jsonb, now())`,
+        [a.accountId, JSON.stringify({ threadIds: [already] })],
+      );
+      // codex 에이전트의 같은 꼴 스레드는 빠진다(실행기가 안 집는다).
+      const cx = await rawAgent('bg-wide-codex', 'codex');
+      await bare(ch, admin.accountId, cx.accountId, [{ author: cx.accountId, body: '보고' }, { author: admin.accountId, body: '정정' }]);
+
+      await produceDistillJobs(pool, IN_WINDOW, ON);
+      const input = await inputOf(a.accountId);
+      expect(input?.threadIds.sort()).toEqual([corrected, failed].sort());
+      for (const x of [selfOnly, notMine, already]) expect(input?.threadIds).not.toContain(x);
+      expect(input?.digests[corrected]).toContain('[사람 글] 그게 아니라 rebase 먼저 해');
+      expect(input?.digests[corrected]).toContain('[마지막 보고] 최종 보고: rebase 뒤 통과');
+      expect(input?.digests[corrected]).not.toContain('첫 시도 보고'); // 마지막 보고 하나만
+      expect(input?.digests[failed]).toContain('[실패] CI 를 못 돌렸다');
+      expect(await inputOf(cx.accountId)).toBeUndefined();
+    });
+
+    it('요약은 스레드당 3,000자를 넘지 않고, 지운 글은 싣지 않는다', async () => {
+      const a = await rawAgent('bg-wide-cap');
+      const ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'bg-p1-cap' } })).json().id as string;
+      const posts = Array.from({ length: 12 }, (_, i) => ({ author: admin.accountId, body: `사람${i} ${'가'.repeat(900)}` }));
+      const root = await bare(ch, admin.accountId, a.accountId, [{ author: a.accountId, body: `보고 ${'나'.repeat(2000)}` }, ...posts]);
+      await pool.query(`update message set deleted_at = now() where thread_root_id = $1 and body like '사람11%'`, [root]);
+      const d = await buildDistillDigest(pool, a.accountId, root);
+      expect(d.length).toBeLessThanOrEqual(DISTILL_DIGEST_MAX_CHARS);
+      expect(d.startsWith('[마지막 보고]')).toBe(true);
+      expect(d).not.toContain('사람11');
+      expect(d).toContain('사람10'); // 최근 사람 글부터
     });
   });
 
