@@ -151,6 +151,18 @@ describe('bgExecutor (BG2)', () => {
     expect((long.match(/x+/) ?? [''])[0].length).toBeLessThanOrEqual(3000);
   });
 
+  it('organize 프롬프트(P2): 분야 접두·mem/map 목차·모순 해소(supersedes + archive)를 시키고, 지우기·core 는 막는다', () => {
+    const p = bgPrompt({ ...JOB, kind: 'organize', input: {} });
+    expect(p).toContain('구조 정리');
+    expect(p).toContain('mem/<분야>/<이름>');
+    expect(p).toContain('`mem/map`');
+    expect(p).toContain('supersedes: mem/<옛 이름>');
+    expect(p).toContain('core 나 다른 기억이 가리키는 slug');
+    expect(p).toContain('**한 줄 답 안에** `옛 → 새`'); // 러너는 첫 줄만 요약으로 남긴다
+    expect(p).toContain('core 는 쓰지 못하고, 기억을 지우지 않는다');
+    expect(p).not.toContain('할 일 — 정리'); // cleanup 본문과 섞이지 않는다
+  });
+
   it('창은 03~07 KST', () => {
     expect(inBgWindow(IN_WINDOW)).toBe(true);
     expect(inBgWindow(NOON)).toBe(false);

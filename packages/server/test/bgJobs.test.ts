@@ -9,7 +9,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, registerOperator } from './helpers/fixtures.js';
 import {
-  BG_MAX_WRITES, claimBgJob, completeBgJob, createBgJobSweeper, CLEANUP_WEEKLY_MIN_ITEMS, DISTILL_DIGEST_MAX_CHARS, DISTILL_MAX_THREADS, bgClaimPayload, buildDistillDigest, enqueueBgJob, getBgJob, inBgWindow, kstDay, produceCleanupJobs, produceDistillJobs,
+  BG_MAX_WRITES, claimBgJob, completeBgJob, createBgJobSweeper, CLEANUP_WEEKLY_MIN_ITEMS, DISTILL_DIGEST_MAX_CHARS, DISTILL_MAX_THREADS, bgClaimPayload, buildDistillDigest, enqueueBgJob, getBgJob, inBgWindow, kstDay, ORGANIZE_MIN_CHANGES, produceCleanupJobs, produceDistillJobs, produceOrganizeJobs,
 } from '../src/services/bgJobs.js';
 import { getThreadNote, setThreadNote } from '../src/services/threadNote.js';
 
@@ -388,6 +388,79 @@ describe('bg_job (BG1)', () => {
         process.env.HARKROOM_BACKGROUND_ENABLED = '1';
         await c.close();
       }
+    });
+  });
+
+  describe('organize 생산자(P2)', () => {
+    const DAY = 24 * 3600_000;
+    const ago = (ms: number) => new Date(IN_WINDOW.getTime() - ms);
+    /** 에이전트를 SQL 로 바로 만든다 — 이 묶음은 이미 에이전트를 많이 만들어 생성 라우트의 속도 제한에 닿는다. */
+    const rawAgent = async (handle: string, harness = 'claude-code') => {
+      const id = (await pool.query(`insert into account (handle, display_name, kind) values ($1, $1, 'agent') returning id`, [handle])).rows[0].id as string;
+      await pool.query(`insert into agent_config (account_id, harness, bg_enabled) values ($1, $2, true)`, [id, harness]);
+      return id;
+    };
+    /** 지난 organize 회차(그 결말과 무관하게 created_at 이 기준). */
+    const pastOrganize = async (id: string, agoMs: number) => (await pool.query(
+      `insert into bg_job (account_id, kind, day, status, input, created_at, finished_at) values ($1, 'organize', $2, 'done', '{}'::jsonb, $3, $3) returning id`,
+      [id, kstDay(ago(agoMs)), ago(agoMs)],
+    )).rows[0].id as string;
+    const memories = async (id: string, n: number, createdAgoMs = DAY) => {
+      for (let i = 0; i < n; i++) {
+        await pool.query(`insert into agent_memory (account_id, slug, value, kind, created_at, updated_at) values ($1, $2, 'v', 'topic', $3, $3)`, [id, `mem/m${i}`, ago(createdAgoMs)]);
+      }
+    };
+    const revisions = async (id: string, n: number, runId: string | null) => {
+      for (let i = 0; i < n; i++) {
+        await pool.query(
+          `insert into agent_memory_revision (account_id, slug, value, updated_at, replaced_at, run_id) values ($1, 'mem/old', 'v', $2, $2, $3)`,
+          [id, ago(DAY), runId],
+        );
+      }
+    };
+    const queued = async (id: string) => (await pool.query(
+      `select count(*)::int as n from bg_job where account_id = $1 and kind = 'organize' and day = '2026-10-21'`, [id],
+    )).rows[0].n as number;
+
+    it('변경 ≥15 또는 14일+변경 ≥1 이면 넣고, 7일 안·변경 0·자기 쓰기뿐·codex 는 넣지 않는다', async () => {
+      const first = await rawAgent('org-first'); await memories(first, 2, 30 * DAY); // 첫 organize: 14일이 지난 것으로 본다
+      const many = await rawAgent('org-many'); await pastOrganize(many, 10 * DAY); await memories(many, ORGANIZE_MIN_CHANGES - 5); await revisions(many, 5, null);
+      const few = await rawAgent('org-few'); await pastOrganize(few, 10 * DAY); await memories(few, 5, 30 * DAY); await revisions(few, 4, null); // 기억 5 는 지난 organize 전 것
+      const recent = await rawAgent('org-recent'); await pastOrganize(recent, 3 * DAY); await revisions(recent, 30, null);
+      const stale = await rawAgent('org-stale'); await memories(stale, 1, 30 * DAY); await pastOrganize(stale, 20 * DAY); await revisions(stale, 1, null);
+      const idle = await rawAgent('org-idle'); await memories(idle, 3, 30 * DAY); await pastOrganize(idle, 20 * DAY);
+      const self = await rawAgent('org-self'); await memories(self, 1, 30 * DAY);
+      const run = await pastOrganize(self, 10 * DAY); await revisions(self, 20, run);
+      // 옛 organize(30일 전)가 만진 slug 를 지난 organize(10일 전) 뒤 일반 턴이 새로 만들면 센다(security n3).
+      const later = await rawAgent('org-later');
+      const oldRun = await pastOrganize(later, 30 * DAY);
+      await pastOrganize(later, 10 * DAY);
+      for (let i = 0; i < ORGANIZE_MIN_CHANGES; i++) {
+        await pool.query(`insert into bg_job_change (run_id, slug, op, created_at) values ($1, $2, 'merge', $3)`, [oldRun, `mem/m${i}`, ago(30 * DAY)]);
+      }
+      await memories(later, ORGANIZE_MIN_CHANGES);
+      const cx = await rawAgent('org-codex', 'codex'); await memories(cx, 20);
+
+      await produceOrganizeJobs(pool, IN_WINDOW, ON);
+      expect(await queued(first)).toBe(1);
+      expect(await queued(many)).toBe(1); // 10일·새 기억 10 + 밀려난 판 5 = 15
+      expect(await queued(few)).toBe(0); // 10일·변경 4
+      expect(await queued(recent)).toBe(0); // 7일 안
+      expect(await queued(stale)).toBe(1); // 20일·변경 1
+      expect(await queued(idle)).toBe(0); // 20일·변경 0
+      expect(await queued(self)).toBe(0); // organize 자기 쓰기 20 은 안 센다
+      expect(await queued(later)).toBe(1); // 옛 organize 가 만졌어도 그 뒤 일반 쓰기는 센다
+      expect(await queued(cx)).toBe(0);
+      // 하루 1회 — 다시 돌아도 늘지 않는다.
+      await produceOrganizeJobs(pool, IN_WINDOW, ON);
+      expect(await queued(first)).toBe(1);
+    });
+
+    it('스위치가 꺼져 있거나 창이 끝났으면 넣지 않는다', async () => {
+      const id = await rawAgent('org-off'); await memories(id, 20);
+      expect((await produceOrganizeJobs(pool, IN_WINDOW, {} as NodeJS.ProcessEnv)).queued).toBe(0);
+      expect((await produceOrganizeJobs(pool, new Date('2026-10-20T23:00:00Z'), ON)).queued).toBe(0); // 08시 KST
+      expect(await queued(id)).toBe(0);
     });
   });
 

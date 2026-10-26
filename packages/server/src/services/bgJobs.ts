@@ -16,7 +16,7 @@ import {
 
 import { channelVisibleSql } from './channels.js';
 
-export const BG_KINDS = ['distill', 'cleanup'] as const;
+export const BG_KINDS = ['distill', 'cleanup', 'organize'] as const;
 export type BgKind = typeof BG_KINDS[number];
 export type BgStatus = 'queued' | 'running' | 'done' | 'failed' | 'skipped';
 
@@ -394,6 +394,57 @@ export async function produceCleanupJobs(pool: Pool, now: Date = new Date(), env
   return out;
 }
 
+/** organize(P2) 트리거: 마지막 organize 뒤 기억 변경이 이만큼이면, 또는 이 기간이 지났고 변경이 하나라도 있으면. 최소 간격 7일. */
+export const ORGANIZE_MIN_CHANGES = 15;
+export const ORGANIZE_MAX_GAP_MS = 14 * 24 * 60 * 60 * 1000;
+export const ORGANIZE_MIN_GAP_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * organize 생산자(P2, 설계 dfad81b8 4절) — 주간 구조 정리: 분야 접두(`mem/<area>/…`)·목차(`mem/map`)·모순 해소.
+ * 시간이 아니라 **작업량** 기준이다 — 마지막 organize(어떤 결말이든) 뒤의 기억 변경(새 기억 + 밀려난 이전 판)을 센다.
+ * - 7일 안에 organize 가 있었으면 넣지 않는다.
+ * - 변경 ≥15건이면 넣고, 아니면 마지막 organize 뒤 14일이 지났고 변경이 1건 이상일 때 넣는다(변경 0이면 건너뜀).
+ * - 실행기가 집는 하네스(BG_HARNESS)만, 기억이 있는 살아 있는 에이전트만. 토글·3연속 실패·하루 상한은 enqueue 가 본다.
+ * 창(03~07 KST)이 끝난 뒤엔 넣지 않는다.
+ */
+export async function produceOrganizeJobs(pool: Pool, now: Date = new Date(), env: NodeJS.ProcessEnv = process.env): Promise<{ queued: number; refused: Record<string, number> }> {
+  const out = { queued: 0, refused: {} as Record<string, number> };
+  if (!backgroundEnabled(env)) return out;
+  if (new Date(now.getTime() + KST_OFFSET_MS).getUTCHours() >= BG_WINDOW_KST[1]) return out;
+  const r = await pool.query<{ account_id: string; last_at: Date | null; changes: number }>(
+    `with last as (
+       select a.id as account_id,
+              (select max(j.created_at) from bg_job j where j.account_id = a.id and j.kind = 'organize') as last_at
+         from account a
+        where a.kind = 'agent' and a.deleted_at is null
+          and exists (select 1 from agent_config ac where ac.account_id = a.id and ac.harness = $2)
+          and exists (select 1 from agent_memory m where m.account_id = a.id and m.slug <> 'core')
+     )
+     select l.account_id, l.last_at,
+            -- organize 회차 자신의 쓰기는 세지 않는다 — 세면 정리한 만큼 다음 정리가 앞당겨진다. 마지막 organize 뒤의 그 쓰기만
+            -- 뺀다(security n3): 옮겨진 slug 를 나중에 일반 턴이 고친 판은 run_id 가 없어 그대로 센다.
+            ((select count(*) from agent_memory m where m.account_id = l.account_id and m.slug <> 'core'
+                and m.created_at > coalesce(l.last_at, '-infinity'::timestamptz)
+                and not exists (select 1 from bg_job_change c join bg_job oj on oj.id = c.run_id and oj.kind = 'organize'
+                                 where oj.account_id = l.account_id and c.slug = m.slug
+                                   and c.created_at > coalesce(l.last_at, '-infinity'::timestamptz)))
+           + (select count(*) from agent_memory_revision r where r.account_id = l.account_id and r.slug <> 'core'
+                and r.replaced_at > coalesce(l.last_at, '-infinity'::timestamptz)
+                and (r.run_id is null or not exists (select 1 from bg_job oj where oj.id = r.run_id and oj.kind = 'organize'))))::int as changes
+       from last l
+      where l.last_at is null or l.last_at < $1::timestamptz - interval '7 days'`,
+    [now, BG_HARNESS],
+  );
+  for (const row of r.rows) {
+    const gapOver = row.last_at === null || now.getTime() - row.last_at.getTime() >= ORGANIZE_MAX_GAP_MS;
+    if (row.changes < ORGANIZE_MIN_CHANGES && !(gapOver && row.changes > 0)) continue;
+    const res = await enqueueBgJob(pool, { accountId: row.account_id, kind: 'organize', input: { changes: row.changes }, now }, env);
+    if ('job' in res) out.queued += 1;
+    else out.refused[res.refused] = (out.refused[res.refused] ?? 0) + 1;
+  }
+  return out;
+}
+
 export interface SweepHost {
   addHook(hook: 'onClose', fn: () => void | Promise<void>): void;
 }
@@ -419,6 +470,8 @@ export function createBgJobSweeper(pool: Pool, env: NodeJS.ProcessEnv = process.
         if (p.queued || Object.keys(p.refused).length) console.log(`bg: distill queued=${p.queued} refused=${JSON.stringify(p.refused)}`);
         const c = await produceCleanupJobs(pool, now, env);
         if (c.queued || Object.keys(c.refused).length) console.log(`bg: cleanup queued=${c.queued} refused=${JSON.stringify(c.refused)}`);
+        const o = await produceOrganizeJobs(pool, now, env);
+        if (o.queued || Object.keys(o.refused).length) console.log(`bg: organize queued=${o.queued} refused=${JSON.stringify(o.refused)}`);
       }
       await pool.query(
         `update bg_job set status = 'failed', error = 'timeout', finished_at = now()
