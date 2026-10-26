@@ -31,6 +31,17 @@ beforeAll(async () => {
        ($1, 'mem/ci-glued', 'v', '#5 CI초록', 'topic', 0)`,
     [agent],
   );
+  // 백그라운드 회차(P5): done 넷(쓰기 있음 셋 — 그중 하나는 되돌림, 쓰기 없음 하나) · failed 하나. 토큰은 하나만 null.
+  await pool.query(
+    `insert into bg_job (account_id, kind, day, status, writes, tokens, duration_ms, reverted_at) values
+       ($1, 'distill', current_date - 1, 'done', 3, 1000, 60000, now()),
+       ($1, 'distill', current_date - 2, 'done', 1, 2000, 30000, null),
+       ($1, 'distill', current_date - 3, 'done', 2, null, 30000, null),
+       ($1, 'distill', current_date - 4, 'done', 0, 500, 10000, null),
+       ($1, 'distill', current_date - 5, 'failed', 0, 300, 600000, null),
+       ($1, 'cleanup', current_date - 1, 'done', 5, 4000, 90000, null)`,
+    [agent],
+  );
 });
 afterAll(async () => { await stop(); });
 
@@ -38,6 +49,7 @@ describe('memory-metrics.sql', () => {
   it('has the named statements', () => {
     expect(statements.map((s) => s.name)).toEqual([
       'memory_by_agent', 'core_size_by_agent', 'recall_use_by_agent', 'distill_batch_size', 'distill_batch_summary',
+      'memory_targets_summary', 'bg_runs_by_agent', 'bg_tokens_weekly',
     ]);
   });
 
@@ -52,5 +64,37 @@ describe('memory-metrics.sql', () => {
     expect(r).toMatchObject({ mem_total: '6', topic: '4', procedure: '1', journal: '1', state_like: '3' });
     expect(Number(r.procedure_pct)).toBeCloseTo(20, 1);
     expect(Number(r.state_like_pct)).toBeCloseTo(60, 1);
+  });
+
+  it('recall_use_by_agent 는 상태 기록 비율을 준다(recall_count 합 기준)', async () => {
+    const r = (await pool.query(statements.find((s) => s.name === 'recall_use_by_agent')!.text)).rows
+      .find((x: { handle: string }) => x.handle === 'metrics-agent');
+    // recall 6(3+1+2) 중 상태 기록 4(delegation-x 3 + deploy 1).
+    expect(r).toMatchObject({ recalls: '6', state_like_recalls: '4' });
+    expect(Number(r.state_like_recall_pct)).toBeCloseTo(66.7, 1);
+  });
+
+  it('memory_targets_summary 는 전체 procedure 비율·recall 중 상태 기록 비율을 한 줄로', async () => {
+    const [r] = (await pool.query(statements.find((s) => s.name === 'memory_targets_summary')!.text)).rows;
+    expect(Number(r.procedure_pct)).toBeCloseTo(20, 1); // 지식 5개 중 procedure 1
+    expect(Number(r.state_like_recall_pct)).toBeCloseTo(66.7, 1);
+  });
+
+  it('bg_runs_by_agent 는 증류 수율·되돌리기 비율·토큰을 종류별로', async () => {
+    const rows = (await pool.query(statements.find((s) => s.name === 'bg_runs_by_agent')!.text)).rows
+      .filter((x: { handle: string }) => x.handle === 'metrics-agent');
+    const d = rows.find((x: { kind: string }) => x.kind === 'distill');
+    expect(d).toMatchObject({ runs: '5', done: '4', failed: '1', skipped: '0', reverted: '1', tokens: '3800' });
+    expect(Number(d.yield_pct)).toBeCloseTo(75, 1); // done 4 중 쓰기 있음 3
+    expect(Number(d.revert_pct)).toBeCloseTo(33.3, 1); // 쓰기 있던 done 3 중 되돌림 1
+    expect(Number(d.avg_writes)).toBeCloseTo(1.5, 1);
+    expect(rows.find((x: { kind: string }) => x.kind === 'cleanup')).toMatchObject({ runs: '1', done: '1', tokens: '4000' });
+  });
+
+  it('bg_tokens_weekly 는 주별 토큰 합', async () => {
+    const rows = (await pool.query(statements.find((s) => s.name === 'bg_tokens_weekly')!.text)).rows
+      .filter((x: { handle: string }) => x.handle === 'metrics-agent');
+    expect(rows.reduce((n: number, x: { tokens: string }) => n + Number(x.tokens), 0)).toBe(7800);
+    expect(rows.reduce((n: number, x: { runs: string }) => n + Number(x.runs), 0)).toBe(6);
   });
 });

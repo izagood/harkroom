@@ -1,4 +1,5 @@
 -- 메모리 재설계 A안 S0 — 3절 지표의 기준선 쿼리(설계 harkroom://message/fa2b0042-ce2a-48bb-ac12-c49f442cd571).
+-- P5(메모리 체계화 O2, 설계 harkroom://message/dfad81b8 5절) — 8주 목표 지표: 전체 요약·백그라운드 회차의 증류 수율·되돌리기 비율·토큰.
 --
 -- 읽기 전용이다. 운영 DB 에 psql 로 그대로 돌린다: `psql "$DATABASE_URL" -f packages/server/scripts/memory-metrics.sql`.
 -- 결과(실데이터)는 공개 저장소에 두지 않는다 — 비공개 harkroom-internal 에 남긴다.
@@ -55,7 +56,11 @@ select a.handle, a.id as account_id,
   sum(am.recall_count) filter (where am.slug ~ '^mem/(.*/)?(delegation|review)-'
     or (coalesce(am.description, '') ~ '#[0-9]+'
         and (coalesce(am.description, '') ~ '(^|[^A-Za-z])CI([^A-Za-z]|$)'
-             or coalesce(am.description, '') ~* '(머지|대기|초록|검토|rebase|head)'))) as state_like_recalls
+             or coalesce(am.description, '') ~* '(머지|대기|초록|검토|rebase|head)'))) as state_like_recalls,
+  round(100.0 * sum(am.recall_count) filter (where am.slug ~ '^mem/(.*/)?(delegation|review)-'
+    or (coalesce(am.description, '') ~ '#[0-9]+'
+        and (coalesce(am.description, '') ~ '(^|[^A-Za-z])CI([^A-Za-z]|$)'
+             or coalesce(am.description, '') ~* '(머지|대기|초록|검토|rebase|head)'))) / nullif(sum(am.recall_count), 0), 1) as state_like_recall_pct
 from agent_memory am
 join account a on a.id = am.account_id and a.kind = 'agent'
 where am.slug <> 'core'
@@ -95,3 +100,57 @@ from (
 ) d
 group by handle, account_id
 order by avg_threads_per_day desc;
+
+-- name: memory_targets_summary
+-- 8주 목표(설계 dfad81b8 5절)를 한 줄로 — 에이전트 전체 합: procedure 비율(`mem/*`, journal 빼고) · recall 중 상태 기록 비율.
+-- 반복 지적률·S-real P@2 는 qa 표본 측정이라 여기 없다.
+with m as (
+  select am.kind, am.recall_count,
+    (am.slug ~ '^mem/(.*/)?(delegation|review)-'
+      or (coalesce(am.description, '') ~ '#[0-9]+'
+          and (coalesce(am.description, '') ~ '(^|[^A-Za-z])CI([^A-Za-z]|$)'
+               or coalesce(am.description, '') ~* '(머지|대기|초록|검토|rebase|head)'))) as state_like
+  from agent_memory am
+  join account a on a.id = am.account_id and a.kind = 'agent' and a.deleted_at is null
+  where am.slug <> 'core' and am.archived_at is null and am.flagged_at is null
+)
+select
+  count(*) filter (where kind <> 'journal') as knowledge_total,
+  round(100.0 * count(*) filter (where kind = 'procedure') / nullif(count(*) filter (where kind <> 'journal'), 0), 1) as procedure_pct,
+  sum(recall_count) as recalls,
+  round(100.0 * sum(recall_count) filter (where state_like) / nullif(sum(recall_count), 0), 1) as state_like_recall_pct
+from m;
+
+-- name: bg_runs_by_agent
+-- 백그라운드 회차(bg_job, BG1~) 에이전트·종류별, 최근 28일: 회차 수·상태별 · 증류 수율(끝난 회차 중 기억 쓰기 ≥1 인 비율,
+-- 목표 30~60%) · 되돌리기 비율(쓰기가 있던 끝난 회차 중 사람이 [이 회차 되돌리기]를 누른 비율, 목표 <5%) · 토큰 합·주 평균.
+-- 회차 행 하나가 히스토리 한 줄이다. 토큰은 러너가 보고한 값(없으면 null — 합에서 빠진다).
+select a.handle, j.account_id, j.kind,
+  count(*) as runs,
+  count(*) filter (where j.status = 'done') as done,
+  count(*) filter (where j.status = 'failed') as failed,
+  count(*) filter (where j.status = 'skipped') as skipped,
+  round(100.0 * count(*) filter (where j.status = 'done' and j.writes > 0) / nullif(count(*) filter (where j.status = 'done'), 0), 1) as yield_pct,
+  round(avg(j.writes) filter (where j.status = 'done'), 1) as avg_writes,
+  count(*) filter (where j.reverted_at is not null) as reverted,
+  round(100.0 * count(*) filter (where j.reverted_at is not null) / nullif(count(*) filter (where j.status = 'done' and j.writes > 0), 0), 1) as revert_pct,
+  coalesce(sum(j.tokens), 0) as tokens,
+  round(coalesce(sum(j.tokens), 0) / 4.0) as tokens_per_week
+from bg_job j
+join account a on a.id = j.account_id
+where j.created_at >= now() - interval '28 days'
+group by a.handle, j.account_id, j.kind
+order by a.handle, j.kind;
+
+-- name: bg_tokens_weekly
+-- 백그라운드 회차 토큰을 에이전트·주(KST 월요일 시작)별로 — 첫 주 실측 뒤 상한을 정하는 재료(설계 5절).
+select a.handle, j.account_id,
+  date_trunc('week', j.created_at at time zone 'Asia/Seoul')::date as week_kst,
+  count(*) as runs,
+  coalesce(sum(j.tokens), 0) as tokens,
+  coalesce(sum(j.duration_ms), 0) / 1000 as seconds
+from bg_job j
+join account a on a.id = j.account_id
+where j.created_at >= now() - interval '8 weeks'
+group by a.handle, j.account_id, week_kst
+order by a.handle, week_kst;
