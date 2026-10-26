@@ -50,11 +50,17 @@ export async function bgState(pool: Pool, accountId: string): Promise<BgState> {
   const on = await pool.query<{ bg_enabled: boolean }>(`select bg_enabled from agent_config where account_id = $1`, [accountId]);
   const paused: BgKind[] = [];
   for (const k of BG_KINDS) if (await bgPaused(pool, accountId, k)) paused.push(k);
-  return { enabled: on.rows[0]?.bg_enabled ?? true, paused };
+  // 행이 없으면 끔(144 기본값과 같은 쪽).
+  return { enabled: on.rows[0]?.bg_enabled ?? false, paused };
 }
 
 export async function setBgEnabled(pool: Pool, accountId: string, enabled: boolean): Promise<void> {
-  await pool.query(`update agent_config set bg_enabled = $2 where account_id = $1`, [accountId, enabled]);
+  // 행이 없어도 실제로 저장한다(security n1) — update 만 하면 0행이 바뀌고도 REST 는 ok 를 돌려줬다.
+  await pool.query(
+    `insert into agent_config (account_id, bg_enabled) values ($1, $2)
+     on conflict (account_id) do update set bg_enabled = excluded.bg_enabled`,
+    [accountId, enabled],
+  );
 }
 
 interface MemSnap { value: string; description: string | null; kind: string | null }

@@ -97,7 +97,8 @@ export async function enqueueBgJob(
   if (await bgPaused(pool, input.accountId, input.kind)) return { refused: 'paused' };
   // 소유자의 「백그라운드 정리」 토글(132). 꺼진 에이전트에는 넣지 않는다.
   const on = await pool.query<{ bg_enabled: boolean }>(`select bg_enabled from agent_config where account_id = $1`, [input.accountId]);
-  if (on.rows[0] && !on.rows[0].bg_enabled) return { refused: 'agent_off' };
+  // 행이 없으면 끔으로 본다(144 기본 끔과 같은 쪽, security n1) — 켜진 것이 확인된 에이전트에만 넣는다.
+  if (!on.rows[0]?.bg_enabled) return { refused: 'agent_off' };
   // 하루 상한은 날짜별 advisory 잠금으로 직렬화한다(security n4) — 두 생산자가 동시에 세면 상한을 넘긴다.
   const client = await pool.connect();
   let r: { rows: { id: string }[] };

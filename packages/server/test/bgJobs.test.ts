@@ -88,6 +88,19 @@ describe('bg_job (BG1)', () => {
     expect('job' in await enqueueBgJob(pool, { accountId: fresh.accountId, kind: 'distill', input: {}, now: IN_WINDOW }, ON)).toBe(true);
   });
 
+  it('P0-b n1: agent_config 행이 없는 에이전트는 끔으로 본다 — enqueue agent_off·화면 끔, 켜기는 행을 만들어 실제로 저장한다', async () => {
+    const id = (await pool.query(
+      `insert into account (handle, display_name, kind) values ('bg-no-config', 'no config', 'agent') returning id`,
+    )).rows[0].id as string;
+    expect((await pool.query(`select 1 from agent_config where account_id = $1`, [id])).rowCount).toBe(0);
+    expect(await enqueueBgJob(pool, { accountId: id, kind: 'cleanup', input: {}, now: IN_WINDOW }, ON)).toEqual({ refused: 'agent_off' });
+    expect((await app.inject({ method: 'GET', url: `/accounts/agents/${id}/background`, headers: auth(admin.token) })).json().enabled).toBe(false);
+    expect((await app.inject({ method: 'PUT', url: `/accounts/agents/${id}/background`, headers: auth(admin.token), payload: { enabled: true } })).json())
+      .toEqual({ ok: true, enabled: true });
+    expect((await pool.query(`select bg_enabled from agent_config where account_id = $1`, [id])).rows[0].bg_enabled).toBe(true);
+    expect('job' in await enqueueBgJob(pool, { accountId: id, kind: 'cleanup', input: {}, now: IN_WINDOW }, ON)).toBe(true);
+  });
+
   it('enqueue: 스위치 꺼짐이면 거절, (에이전트, 종류, 날짜) 하루 1회, 서버 하루 상한', async () => {
     const a = await agent('bg-q1');
     const b = await agent('bg-q2');
