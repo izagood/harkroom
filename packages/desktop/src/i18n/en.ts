@@ -1069,7 +1069,7 @@ export const en = {
   // - **`auto` · `readonly`** — `MentionPermission` 의 **저장·전송용 값**이다. 옵션 라벨이
   //   `auto — …` 로 값을 앞에 세우는 것은 그 값이 API·설정 파일에도 그대로 나오기 때문이다
   //   (`sidebar.notify` 가 `all`/`mentions`/`none` 을 안 옮긴 것과 같은 규율)
-  // - **경로 예시(`/Users/me/some-repo`) · `team-name` · `fizz` · `runner`** — 자리표시다.
+  // - **경로 예시(`/Users/me/some-repo`) · `team-name` · `architect` · `runner`** — 자리표시다.
   //   번역하면 사람이 그것을 **입력해야 하는 값**으로 읽는다
   // - **종료 코드 `78`·`401`** — 숫자다. 러너 로그에서 보는 그 숫자여야 한다
   // ---------------------------------------------------------------------------
