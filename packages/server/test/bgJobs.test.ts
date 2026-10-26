@@ -431,6 +431,14 @@ describe('bg_job (BG1)', () => {
       const idle = await rawAgent('org-idle'); await memories(idle, 3, 30 * DAY); await pastOrganize(idle, 20 * DAY);
       const self = await rawAgent('org-self'); await memories(self, 1, 30 * DAY);
       const run = await pastOrganize(self, 10 * DAY); await revisions(self, 20, run);
+      // 옛 organize(30일 전)가 만진 slug 를 지난 organize(10일 전) 뒤 일반 턴이 새로 만들면 센다(security n3).
+      const later = await rawAgent('org-later');
+      const oldRun = await pastOrganize(later, 30 * DAY);
+      await pastOrganize(later, 10 * DAY);
+      for (let i = 0; i < ORGANIZE_MIN_CHANGES; i++) {
+        await pool.query(`insert into bg_job_change (run_id, slug, op, created_at) values ($1, $2, 'merge', $3)`, [oldRun, `mem/m${i}`, ago(30 * DAY)]);
+      }
+      await memories(later, ORGANIZE_MIN_CHANGES);
       const cx = await rawAgent('org-codex', 'codex'); await memories(cx, 20);
 
       await produceOrganizeJobs(pool, IN_WINDOW, ON);
@@ -441,6 +449,7 @@ describe('bg_job (BG1)', () => {
       expect(await queued(stale)).toBe(1); // 20일·변경 1
       expect(await queued(idle)).toBe(0); // 20일·변경 0
       expect(await queued(self)).toBe(0); // organize 자기 쓰기 20 은 안 센다
+      expect(await queued(later)).toBe(1); // 옛 organize 가 만졌어도 그 뒤 일반 쓰기는 센다
       expect(await queued(cx)).toBe(0);
       // 하루 1회 — 다시 돌아도 늘지 않는다.
       await produceOrganizeJobs(pool, IN_WINDOW, ON);

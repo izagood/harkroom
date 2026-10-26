@@ -157,6 +157,8 @@ describe('bgExecutor (BG2)', () => {
     expect(p).toContain('mem/<분야>/<이름>');
     expect(p).toContain('`mem/map`');
     expect(p).toContain('supersedes: mem/<옛 이름>');
+    expect(p).toContain('core 나 다른 기억이 가리키는 slug');
+    expect(p).toContain('`옛 → 새`');
     expect(p).toContain('core 는 쓰지 못하고, 기억을 지우지 않는다');
     expect(p).not.toContain('할 일 — 정리'); // cleanup 본문과 섞이지 않는다
   });

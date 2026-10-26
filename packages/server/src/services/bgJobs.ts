@@ -421,11 +421,13 @@ export async function produceOrganizeJobs(pool: Pool, now: Date = new Date(), en
           and exists (select 1 from agent_memory m where m.account_id = a.id and m.slug <> 'core')
      )
      select l.account_id, l.last_at,
-            -- organize 회차 자신의 쓰기는 세지 않는다 — 세면 정리한 만큼 다음 정리가 앞당겨진다.
+            -- organize 회차 자신의 쓰기는 세지 않는다 — 세면 정리한 만큼 다음 정리가 앞당겨진다. 마지막 organize 뒤의 그 쓰기만
+            -- 뺀다(security n3): 옮겨진 slug 를 나중에 일반 턴이 고친 판은 run_id 가 없어 그대로 센다.
             ((select count(*) from agent_memory m where m.account_id = l.account_id and m.slug <> 'core'
                 and m.created_at > coalesce(l.last_at, '-infinity'::timestamptz)
                 and not exists (select 1 from bg_job_change c join bg_job oj on oj.id = c.run_id and oj.kind = 'organize'
-                                 where oj.account_id = l.account_id and c.slug = m.slug))
+                                 where oj.account_id = l.account_id and c.slug = m.slug
+                                   and c.created_at > coalesce(l.last_at, '-infinity'::timestamptz)))
            + (select count(*) from agent_memory_revision r where r.account_id = l.account_id and r.slug <> 'core'
                 and r.replaced_at > coalesce(l.last_at, '-infinity'::timestamptz)
                 and (r.run_id is null or not exists (select 1 from bg_job oj where oj.id = r.run_id and oj.kind = 'organize'))))::int as changes
