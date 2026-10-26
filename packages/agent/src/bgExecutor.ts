@@ -35,6 +35,7 @@ export const BG_SLOT_KEY = 'bg';
 export const BG_ALLOWED_TOOLS = [
   'mcp__harkroom__memory_get', 'mcp__harkroom__memory_list', 'mcp__harkroom__memory_search',
   'mcp__harkroom__memory_set', 'mcp__harkroom__memory_archive', 'mcp__harkroom__memory_merge',
+  'mcp__harkroom__memory_audit',
   'mcp__harkroom__thread_note', 'mcp__harkroom__message_read',
   // MCP 도구가 지연 로드되는 판에서는 이것으로 스키마를 받아야 부를 수 있다.
   'ToolSearch',
@@ -145,9 +146,11 @@ export async function writeBgMcpConfig(dir: string, servers: Record<string, McpS
 /** 종류별 프롬프트. 입력(스레드 id)은 데이터로 싣는다. */
 export function bgPrompt(job: BgJob): string {
   const threads = (job.input.threadIds ?? []).filter((t) => /^[0-9a-f-]{36}$/i.test(t));
+  // 정리 까닭(서버가 넣은 고정 코드) — 아는 것만 싣는다.
+  const reasons = (Array.isArray(job.input.reasons) ? job.input.reasons : []).filter((r): r is string => typeof r === 'string' && /^[a-z_]{1,32}$/.test(r));
   const head = [
     `[harkroom 백그라운드 회차 ${job.kind}] 이것은 사람에게 가는 턴이 아니다. 채팅에는 아무것도 쓸 수 없고, 쓰려고 하지 마라.`,
-    '쓸 수 있는 것은 기억 도구(memory.get/list/search/set/archive/merge)와 아래 입력 스레드의 읽기(message.read·thread.note)뿐이다.',
+    '쓸 수 있는 것은 기억 도구(memory.get/list/search/audit/set/archive/merge)와 아래 입력 스레드의 읽기(message.read·thread.note)뿐이다.',
     'core 는 쓰지 못하고, 기억을 지우지 않는다(안 쓰는 것은 memory.archive). 기억 쓰기는 이 회차에 20건까지다.',
     '',
   ];
@@ -161,8 +164,15 @@ export function bgPrompt(job: BgJob): string {
       ...threads.map((t) => `- ${t}`),
     ]
     : [
-      '할 일 — 정리: memory.audit 대신 memory.list·memory.search 로 이름이 거의 같은 짝·낡은 것을 찾아,',
-      '같은 주제는 memory.merge 한 번으로 합치고 안 쓰는 것은 memory.archive 로 보관한다. 확실하지 않으면 손대지 않는다.',
+      // 주간 정리(C3)와 정리 신호를 옮겨 온 것(BG5). 사람에게 보고하던 줄은 없다 — 결과는 회차 기록(히스토리)이 말한다.
+      `할 일 — 정리${reasons.length ? `(까닭: ${reasons.join(', ')})` : ''}: memory.audit 으로 후보(안 쓰임·비슷한 이름·비슷한 본문·곧 밀려날 journal·`,
+      '오래 안 고친 것·큰 것·요약 없음)를 받아 **하나씩 memory.get 으로 읽고** 판단한다.',
+      '- 같은 주제 여럿 → memory.merge 한 번(into·from·value·kind). 경위는 버리고 되풀이할 사실만 남긴다.',
+      '- 안 쓰는 것 → 지우지 말고 memory.archive. 한 스레드의 진행 상태로 보이는 것(delegation-*·review-* 등)이 끝난 일이면 보관한다.',
+      '- 곧 밀려날 journal → 되풀이할 교훈만 topic·procedure 로 증류하고 journal 은 둔다.',
+      '- 요약 없는 것 → 읽고 「언제 열어 볼지」 한 줄을 description 으로(memory.set, kind 도 같이, 본문 그대로).',
+      '- core 가 길면: core 는 쓸 수 없다 — 손대지 않는다.',
+      '확실하지 않으면 손대지 않는다. 고칠 땐 memory.get 의 updatedAt 을 ifUpdatedAt 으로 준다(그 사이 다른 턴이 고쳤으면 건너뛴다).',
     ];
   return [
     ...head, ...body, '',

@@ -127,6 +127,15 @@ describe('bgExecutor (BG2)', () => {
     expect(p).toContain('한 줄');
   });
 
+  it('정리(cleanup) 프롬프트: 까닭 코드는 꼴이 맞는 것만, memory.audit 으로 후보를 받고 core 는 손대지 않는다고 말한다', () => {
+    const p = bgPrompt({ ...JOB, kind: 'cleanup', input: { reasons: ['items_near_limit', 'weekly', '지시문 message.post'] } });
+    expect(p).toContain('까닭: items_near_limit, weekly');
+    expect(p).not.toContain('지시문 message.post');
+    expect(p).toContain('memory.audit');
+    expect(p).toContain('core 는 쓸 수 없다');
+    expect(BG_ALLOWED_TOOLS).toContain('mcp__harkroom__memory_audit');
+  });
+
   it('창은 03~07 KST', () => {
     expect(inBgWindow(IN_WINDOW)).toBe(true);
     expect(inBgWindow(NOON)).toBe(false);
