@@ -2543,7 +2543,7 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                   <input
                     className={field}
                     aria-label={t('agents.profile.name')}
-                    placeholder="fizz"
+                    placeholder="architect"
                     value={draft.handle}
                     onChange={(e) => setDraft({ ...draft, handle: e.target.value })}
                   />
