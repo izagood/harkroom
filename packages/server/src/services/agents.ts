@@ -5,6 +5,7 @@ import {
 } from '@harkroom/shared';
 import type { AgentDefinition } from '@harkroom/shared/operatorProtocol';
 import { getAgentDefaults } from './agentDefaults.js';
+import { freeDeletedHandle } from './deletedHandle.js';
 import { getHandleGroupByHandle } from './handleGroups.js';
 import { suspendSecretGrants } from './secretAccess.js';
 
@@ -519,6 +520,7 @@ export async function revokeAllPats(db: Pool | PoolClient, accountId: string): P
  * 그 에이전트가 자기 것으로 쓴 기억. 전부 "이 에이전트가 지금 무엇을 한다"를 뜻하는
  * 행이라, 남겨 두면 삭제된 에이전트가 팀 상세에 서고 wake 시각에 인박스 항목이 생긴다.
  * **남긴다** — 메시지와 감사 기록. 남의 눈에 이미 보인 사실이다.
+ * **바꾼다** — handle 을 묘비 이름으로(`freeDeletedHandle`). 옛 이름은 새 에이전트가 쓸 수 있다.
  *
  * PAT 폐기가 러너를 세운다(비활성화와 같은 길 — 401 을 `isCredentialFailure` 가 자격증명
  * 실패로 읽는다). `disabled_at` 도 함께 찍는다: `deleted_at` 을 아직 안 보는 조회가 남아
@@ -540,11 +542,15 @@ export async function deleteAgentAccount(
     // 비운 id 는 돌려주어 라우트가 커밋 뒤에 파일을 치운다(`releaseAvatarFiles`).
     const pics = await client.query<{ a: string | null; s: string | null }>(
       `select avatar_attachment_id as a, avatar_source_attachment_id as s from account where id = $1 for update`, [id]);
+    // 이름은 묘비 이름(`deleted-<id 앞 8자>`)으로 바꿔 옛 handle 을 풀어 준다 — 사람 삭제와 같은 규칙이다.
+    // 본문은 `<@id>` 로 저장돼 지난 글은 깨지지 않고 묘비 이름으로 보인다(새로 만든 같은 이름과 섞이지 않는다).
+    // 감사·응답에는 옛 handle(`before.handle`)을 남긴다 — 누구를 지웠는지가 그 기록의 뜻이다.
+    const tombstone = await freeDeletedHandle(client, id);
     await client.query(
-      `update account set deleted_at = now(), disabled_at = coalesce(disabled_at, now()),
+      `update account set deleted_at = now(), disabled_at = coalesce(disabled_at, now()), handle = $2,
               avatar_attachment_id = null, avatar_source_attachment_id = null, avatar_crop = null
         where id = $1`,
-      [id],
+      [id, tombstone],
     );
     const revokedPats = await revokeAllPats(client, id);
     await client.query(`delete from agent_team_member where agent_account_id = $1`, [id]);
