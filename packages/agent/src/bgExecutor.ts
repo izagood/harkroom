@@ -181,6 +181,18 @@ export function bgPrompt(job: BgJob): string {
         return d ? [`- ${t}`, '<thread-digest>', escapeForPrompt(d), '</thread-digest>'] : [`- ${t}`];
       }),
     ]
+    : job.kind === 'organize'
+    ? [
+      // O2 P2(설계 dfad81b8 4절 L3): 위생(cleanup)이 아니라 체계 — 분야 접두·목차·모순 해소.
+      '할 일 — 구조 정리: memory.list 로 네 기억 전체를 보고 아래 셋을 한다. 확실하지 않은 것은 손대지 않는다.',
+      '1. **분야 접두**: 접두 없는 `mem/<이름>` 을 `mem/<분야>/<이름>` 으로 옮긴다 — 새 이름으로 memory.merge(into: 새 slug,',
+      '   from: [옛 slug], value: 본문, kind). 분야는 5~12개로, 이미 쓰는 분야를 먼저 쓴다. 한 번에 다 옮기지 않아도 된다(쓰기 20건).',
+      '2. **목차 `mem/map`**(kind: topic): 분야마다 한 줄 — `<분야>: <무엇을 담나> · 대표 mem/<분야>/… 2~3개`. 있으면 고친다(ifUpdatedAt).',
+      '   2,000자 안. 목차에는 사실을 적지 않고 어디 있는지만 적는다.',
+      '3. **모순 해소**: 같은 것에 대해 서로 다른 말을 하는 기억 쌍을 찾으면, 최근에 고친 쪽(updatedAt)과 근거가 뚜렷한 쪽을 남긴다 —',
+      '   남는 쪽 본문에 `supersedes: mem/<옛 이름>` 한 줄을 붙이고 옛 것은 memory.archive. 어느 쪽이 맞는지 모르겠으면 둘 다 둔다.',
+      '고칠 땐 memory.get 의 updatedAt 을 ifUpdatedAt 으로 준다(그 사이 다른 턴이 고쳤으면 건너뛴다). core 는 손대지 않는다.',
+    ]
     : [
       // 주간 정리(C3)와 정리 신호를 옮겨 온 것(BG5). 사람에게 보고하던 줄은 없다 — 결과는 회차 기록(히스토리)이 말한다.
       `할 일 — 정리${reasons.length ? `(까닭: ${reasons.join(', ')})` : ''}: memory.audit 으로 후보(안 쓰임·비슷한 이름·비슷한 본문·곧 밀려날 journal·`,
