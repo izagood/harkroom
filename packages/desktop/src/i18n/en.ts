@@ -1158,7 +1158,13 @@ export const en = {
   /** 만들기 성공 팝업. 만들기 화면은 만든 뒤에도 그대로 서 있어서, 이것이 없으면 성공이 보이지 않는다. */
   'agents.create.created': 'Agent @{handle} created',
   'agents.create.createdDismiss': 'Dismiss',
-  'agents.create.failed': 'The agent was not created — that name may already be taken',
+  /**
+   * 서버가 이름 겹침(409 `handle_taken`)이 아닌 이유로 거절했거나 닿지 못했을 때. 이름 겹침은 아래
+   * `agents.create.handleTaken` 이 따로 말한다 — 예전 문장은 「이름일 수 있다」로 짐작만 했다.
+   */
+  'agents.create.failed': 'The agent was not created — try again',
+  /** 이름 겹침(409 `handle_taken`). 무엇을 고칠지(이름)를 바로 말한다. */
+  'agents.create.handleTaken': 'The name @{handle} is already taken — pick another name',
   /**
    * 이름 규칙. **`Invalid name` 이 아니라 무엇이 되는지를 적는다**(`sidebar.channel
    * .createInvalidName` 과 같은 규율). 뒤의 괄호는 **규칙이 아니라 이유**다 — 이 이름이

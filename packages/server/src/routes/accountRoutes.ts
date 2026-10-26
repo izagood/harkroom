@@ -292,9 +292,10 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       }, req);
       return reply.code(201).send(created);
     } catch (err) {
+      // 409 — 이름 바꾸기 라우트와 같은 코드·상태다. 메시지는 서비스가 정한다(계정과 겹쳤는지, 집합과 겹쳤는지).
       if ((err as { code?: string }).code === 'handle_taken') {
-        return reply.code(400).send({
-          error: { code: 'handle_taken', message: 'a group with this handle already exists' },
+        return reply.code(409).send({
+          error: { code: 'handle_taken', message: (err as Error).message },
         });
       }
       throw err;

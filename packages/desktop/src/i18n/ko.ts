@@ -734,7 +734,8 @@ export const ko = {
   'agents.create.created': '에이전트 @{handle} 을(를) 만들었다',
   'agents.create.createdDismiss': '닫기',
   'agents.create.attachFailed': '에이전트는 만들어졌지만 이 기기에 배정하지 못했다: {reason}. 상세 화면에서 배정해라.',
-  'agents.create.failed': '만들지 못했다 (이미 있는 이름일 수 있다)',
+  'agents.create.failed': '만들지 못했다 — 다시 시도해라',
+  'agents.create.handleTaken': '@{handle} 은(는) 이미 쓰는 이름이다 — 다른 이름을 골라라',
   'agents.create.invalidName': '이름은 소문자·숫자·-·_ 2~32자여야 한다 (채널에서 @이름 으로 부른다)',
   'agents.create.poolFailed': '에이전트는 만들어졌지만 계정 풀을 배정하지 못했다: {reason}',
 
