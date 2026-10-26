@@ -313,6 +313,11 @@ pub const CLAUDE_LOGIN_EVENT: &str = "harkroom://claude-login";
 /// codex 로그인 진행 통지. `CLAUDE_LOGIN_EVENT` 와 같은 길이다.
 pub const CODEX_LOGIN_EVENT: &str = "harkroom://codex-login";
 
+/// 같은 머신 터미널 직결(R1 PR-4)의 PTY 바이트(`{sessionId, data(base64), replay?}`)와 세션 끝(`{sessionId, reason?}`).
+/// 데몬 소켓의 `terminalOutput`·`terminalEnded` 를 그대로 옮긴다.
+pub const TERMINAL_OUTPUT_EVENT: &str = "harkroom://terminal-output";
+pub const TERMINAL_ENDED_EVENT: &str = "harkroom://terminal-ended";
+
 /// 자식에게 넘길 `PATH` 를 웹뷰에 **알려 준다** — 만들어 주는 것이 아니다(`#513`).
 ///
 /// ## 왜 이 커맨드가 생겼나 — 출처를 하나로 합치려고
@@ -749,6 +754,72 @@ async fn workspace_cleanup_act(
     .await
 }
 
+// ── 같은 머신 터미널 직결(R1 PR-4, 스레드 8d233406) ─────────────────────────────
+//
+// 웹뷰가 넘기는 것은 세션 id·**서버가 그 창에 내린 키**·base64 바이트·크기뿐이다. 판정은 오퍼레이터가 한다:
+// 열람 키가 맞아야 구독, writer 키가 맞아야 입력(`operator/src/localTerminal.ts`, 상수 시간 대조). 웹뷰가 키 없이
+// 부르면 오퍼레이터가 거절하고, 화면은 서버 경유로 되돌아간다.
+
+#[tauri::command]
+async fn terminal_is_local(app: tauri::AppHandle, session_id: String) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.terminal_is_local(&session_id)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn terminal_subscribe(
+    app: tauri::AppHandle,
+    session_id: String,
+    view_key: String,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.terminal_subscribe(&session_id, &view_key)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn terminal_unsubscribe(app: tauri::AppHandle, session_id: String) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.terminal_unsubscribe(&session_id)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn terminal_input(
+    app: tauri::AppHandle,
+    session_id: String,
+    writer_key: String,
+    data: String,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.terminal_input(&session_id, &writer_key, &data)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn terminal_resize(
+    app: tauri::AppHandle,
+    session_id: String,
+    writer_key: String,
+    cols: u32,
+    rows: u32,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        conn.terminal_resize(&session_id, &writer_key, cols, rows)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn workspace_cleanup_sweep(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
@@ -1089,6 +1160,11 @@ fn main() {
             workspace_cleanup_settings_set,
             workspace_cleanup_act,
             workspace_cleanup_sweep,
+            terminal_is_local,
+            terminal_subscribe,
+            terminal_unsubscribe,
+            terminal_input,
+            terminal_resize,
             operator_mcp_auth,
             operator_agent_remove,
         ])
