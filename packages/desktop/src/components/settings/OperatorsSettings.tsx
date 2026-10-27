@@ -6,7 +6,8 @@ import { useAgo, useLocale, useT } from '../../i18n/useT';
 import { dateTimeText } from '../../lib/localeText';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { hasCapability } from '../../lib/capabilities';
-import { hasOperatorLocalSurface } from '../../lib/operatorLocal';
+import { hasOperatorLocalSurface, operatorCliPath } from '../../lib/operatorLocal';
+import { operatorRegisterCommand } from '../../lib/operatorRegisterCommand';
 import { SettingsColumns, SettingsGrid, SettingsGroup, SettingsPage } from './primitives';
 import { OPERATOR_LABEL_MAX, operatorDisplayName, operatorFullName } from '../../lib/operatorName';
 import { normalizeOperatorLabel } from '@harkroom/shared';
@@ -37,6 +38,8 @@ export function OperatorsSettings({ onOpenSection }: {
   /** 오퍼레이터별 능력(스펙 §3). 붙어 있는 것만 읽는다 — 서버가 저장하지 않으므로 끊긴 것은 "모른다". */
   const [caps, setCaps] = useState<Record<string, OperatorCapabilities>>({});
   const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
+  /** 이 앱의 오퍼레이터 실행 파일 경로 — 등록 명령의 머리. 모르면 null(기본 설치 경로로 물러선다). */
+  const [cliPath, setCliPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   /** 이 머신에 오퍼레이터가 있는 빌드(Tauri)인가 — 있으면 코드를 사람이 옮길 필요가 없다. */
@@ -54,6 +57,13 @@ export function OperatorsSettings({ onOpenSection }: {
     }).catch(() => setOperators('error'));
   }, []);
   useEffect(() => { reload(); }, [reload]);
+  // 실행 파일 경로는 앱 번들에서 온다(Tauri). 웹·시험에는 없고, 그때는 기본 설치 경로를 보인다.
+  useEffect(() => {
+    if (!localAvailable) return;
+    let live = true;
+    operatorCliPath().then((p) => { if (live) setCliPath(p); }).catch(() => {});
+    return () => { live = false; };
+  }, [localAvailable]);
 
   const issue = async () => {
     setError(null);
@@ -296,11 +306,12 @@ export function OperatorsSettings({ onOpenSection }: {
                 <code className="mt-1 block break-all rounded-row bg-surface-raised p-2 text-meta">{code.code}</code>
                 {/* 다음에 할 일이 화면에 있어야 한다 — 코드만 주고 어디에 넣는지 말하지 않으면
                     사람은 문서를 찾으러 간다. 명령은 셸에 그대로 들어가는 값이라 번역하지 않는다. */}
+                {/* 앞이 가로 스크롤에 가려지지 않게 줄을 바꾼다 — 명령 머리(실행 파일 경로)가 가장 중요하다. */}
                 <pre
                   data-testid="operator-register-command"
-                  className="mt-2 overflow-x-auto rounded-row bg-surface-raised p-2 font-mono text-meta text-fg"
+                  className="mt-2 whitespace-pre-wrap break-all rounded-row bg-surface-raised p-2 font-mono text-meta text-fg"
                 >
-                  {`harkroom-operator register ${getController().api?.baseUrl ?? '<server>'} ${code.code}`}
+                  {operatorRegisterCommand(cliPath, getController().api?.baseUrl ?? '<server>', code.code)}
                 </pre>
                 <div className="mt-2 text-meta text-warning">{t('operators.codeNextStep')}</div>
               </div>

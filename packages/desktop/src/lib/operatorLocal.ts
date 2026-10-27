@@ -31,6 +31,12 @@ export function registerLocalOperator(baseUrl: string, code: string, name?: stri
   return call('operator_register', { baseUrl, code, name: name ?? null }) as Promise<OperatorRegisterResult>;
 }
 
+/** 이 앱 번들 안 `harkroom-operator` 의 전체 경로. 붙여 넣어도 쓸모없는 임시 경로면 null(`main.rs::operator_cli_path`). */
+export async function operatorCliPath(): Promise<string | null> {
+  const out = await call('operator_cli_path');
+  return typeof out === 'string' && out ? out : null;
+}
+
 export function listLocalAgents(): Promise<OperatorAgentsListResult> {
   return call('operator_agents_list') as Promise<OperatorAgentsListResult>;
 }

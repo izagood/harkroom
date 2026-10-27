@@ -3490,7 +3490,7 @@ export const ko = {
   'agents.local.heading': '이 머신',
   'agents.local.loading': '오퍼레이터 로컬 설정을 읽는 중…',
   'agents.local.listFailed': '오퍼레이터 로컬 설정을 읽지 못했다',
-  'agents.local.unregistered': '이 머신의 오퍼레이터가 아직 이 커뮤니티에 등록되지 않았다 — 먼저 `harkroom-operator register` 를 돌려라. 아래 항목은 남아 있다가 등록되면 능력이 된다.',
+  'agents.local.unregistered': '이 머신의 오퍼레이터가 아직 이 커뮤니티에 등록되지 않았다 — 설정 › 이 머신의 오퍼레이터에서 [이 머신을 등록] 을 눌러라. 아래 항목은 남아 있다가 등록되면 능력이 된다.',
   'agents.local.enable': '이 머신의 오퍼레이터가 이 에이전트를 돌릴 수 있게',
   'agents.local.workingDir': '이 머신에서의 작업 디렉터리',
   'agents.local.workingDirPlaceholder': '~/dev/project (비우면 에이전트 기본값)',
