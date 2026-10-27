@@ -306,7 +306,12 @@ export async function registerAuthRoutes(app: FastifyInstance, pool: Pool, opts:
     try {
       await client.query('begin');
       const inv = await client.query(
-        `select token_hash from invite where token_hash = $1 and used_by is null for update`,
+        // 쓰인 것·취소된 것·만료된 것(148)은 모두 같은 `invalid_invite` 다 — 어느 쪽인지 알려 주면
+        // 남의 토큰을 주운 쪽에게 그 토큰의 처지를 알려 주는 셈이다.
+        `select token_hash from invite
+          where token_hash = $1 and used_by is null and revoked_at is null
+            and (expires_at is null or expires_at > now())
+          for update`,
         [hashToken(body.inviteToken)],
       );
       if (!inv.rowCount) {

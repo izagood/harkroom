@@ -31,7 +31,7 @@ const ROUTES: [string, string][] = [
   ['POST', '/teams'], ['PATCH', `/teams/${NIL}`], ['DELETE', `/teams/${NIL}`],
   ['PUT', `/teams/${NIL}/lead`], ['PUT', `/teams/${NIL}/members/${NIL}`], ['DELETE', `/teams/${NIL}/members/${NIL}`],
   ['POST', '/accounts/agents'], ['POST', `/accounts/agents/${NIL}/stop`], ['POST', `/accounts/agents/${NIL}/stop/undo`],
-  ['PATCH', `/accounts/${NIL}/handle`], ['POST', '/invites'],
+  ['PATCH', `/accounts/${NIL}/handle`], ['POST', '/invites'], ['GET', '/invites'], ['DELETE', `/invites/${NIL}`],
   ['GET', '/handle-groups'], ['POST', '/handle-groups'], ['GET', `/handle-groups/${NIL}`],
   ['PATCH', `/handle-groups/${NIL}`], ['DELETE', `/handle-groups/${NIL}`],
   ['POST', `/handle-groups/${NIL}/members`], ['DELETE', `/handle-groups/${NIL}/members`],

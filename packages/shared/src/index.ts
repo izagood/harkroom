@@ -310,6 +310,27 @@ export interface PatView {
   lastUsedAt?: string | null;
 }
 
+/** 초대 토큰 수명(서버 148). 발급 때 이만큼 뒤로 `expiresAt` 을 채운다. */
+export const INVITE_TTL_DAYS = 7;
+
+/** 초대 한 줄의 상태 — 서버가 행의 칸에서 계산한다(가입함 > 취소 > 만료 > 대기). */
+export type InviteStatus = 'pending' | 'used' | 'revoked' | 'expired';
+
+/**
+ * `GET /invites` 한 줄(서버 148). 토큰·해시는 싣지 않는다 — 원문은 발급 응답에만 한 번 있고,
+ * 해시도 토큰의 대역이라 바깥에 내보내지 않는다.
+ */
+export interface InviteView {
+  id: string;
+  status: InviteStatus;
+  createdAt: string;
+  createdBy: { id: string; handle: string };
+  /** null 이면 무기한(148 전에 쓰인 옛 행). */
+  expiresAt: string | null;
+  revokedAt: string | null;
+  usedBy: { id: string; handle: string } | null;
+}
+
 /**
  * handle 문법. 계정 생성과 멘션 인식이 같은 것을 봐야 한다.
  */
