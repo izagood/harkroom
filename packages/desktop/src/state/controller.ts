@@ -438,7 +438,7 @@ export class Controller {
         wasAutoRegistered: (baseUrl) => operatorAutoRegisteredStorage.has(baseUrl),
         markAutoRegistered: (baseUrl) => operatorAutoRegisteredStorage.mark(baseUrl),
         mintCode: () => this.api.operatorRegisterCode(),
-        register: (baseUrl, code) => registerLocalOperator(baseUrl, code),
+        register: (baseUrl, code, name) => registerLocalOperator(baseUrl, code, name),
       });
     }));
 

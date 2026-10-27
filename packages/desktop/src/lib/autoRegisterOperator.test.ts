@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { autoRegisterFirstOperator, type AutoRegisterDeps } from './autoRegisterOperator';
+import { AUTO_REGISTER_NAME, autoRegisterFirstOperator, type AutoRegisterDeps } from './autoRegisterOperator';
 
 const BASE = 'https://example.test';
 
@@ -28,7 +28,7 @@ describe('autoRegisterFirstOperator — 이 기계가 이 커뮤니티에 없으
     const d = deps();
     expect(await autoRegisterFirstOperator(d)).toBe('registered');
     expect(d.mintCode).toHaveBeenCalledTimes(1);
-    expect(d.register).toHaveBeenCalledWith(BASE, 'hkreg_test');
+    expect(d.register).toHaveBeenCalledWith(BASE, 'hkreg_test', AUTO_REGISTER_NAME);
     expect(d.markAutoRegistered).toHaveBeenCalledWith(BASE);
   });
 
@@ -93,5 +93,13 @@ describe('autoRegisterFirstOperator — 이 기계가 이 커뮤니티에 없으
 
   it('서버 주소가 없으면 하지 않는다', async () => {
     expect(await autoRegisterFirstOperator(deps({ baseUrl: null }))).toBe('no-server');
+  });
+
+  it('자동 등록은 hostname 이 아니라 중립 이름을 넘긴다(security #1651 F1)', async () => {
+    const d = deps();
+    await autoRegisterFirstOperator(d);
+    const name = (d.register as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[2];
+    expect(name).toBe('Harkroom desktop');
+    expect(typeof name === 'string' && /mac|book|'s|의/i.test(name)).toBe(false);
   });
 });

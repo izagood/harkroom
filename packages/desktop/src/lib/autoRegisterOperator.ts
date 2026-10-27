@@ -32,9 +32,16 @@ export interface AutoRegisterDeps {
   markAutoRegistered: (baseUrl: string) => void;
   /** 등록 코드 발급(`POST /operators/register-code`). */
   mintCode: () => Promise<{ code: string }>;
-  /** 코드를 이 기계의 오퍼레이터에 넘긴다(`operator_register`). */
-  register: (baseUrl: string, code: string) => Promise<unknown>;
+  /** 코드를 이 기계의 오퍼레이터에 넘긴다(`operator_register`). 이름은 `AUTO_REGISTER_NAME`. */
+  register: (baseUrl: string, code: string, name: string) => Promise<unknown>;
 }
+
+/**
+ * 자동 등록 때 쓰는 기기 이름. **hostname 을 쓰지 않는다**(security #1651 F1) — 맥 기본 hostname 에는 실명이 들기 쉽고(「○○의
+ * MacBook Pro」), 자동 등록은 사람이 고르지 않은 순간에 다른 관리자들의 목록에 이 이름을 올린다. 사람이 버튼으로 등록하는 길은
+ * 지금처럼 hostname 을 쓴다. 이름은 Operators 에서 언제든 바꿀 수 있다.
+ */
+export const AUTO_REGISTER_NAME = 'Harkroom desktop';
 
 export type AutoRegisterOutcome =
   | 'registered'
@@ -64,7 +71,7 @@ export async function autoRegisterFirstOperator(deps: AutoRegisterDeps): Promise
     return 'already-local';
   }
   const { code } = await deps.mintCode();
-  await deps.register(baseUrl, code);
+  await deps.register(baseUrl, code, AUTO_REGISTER_NAME);
   deps.markAutoRegistered(baseUrl);
   return 'registered';
 }
