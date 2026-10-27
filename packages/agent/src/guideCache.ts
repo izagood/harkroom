@@ -20,8 +20,17 @@ export const GUIDE_TTL_MS = 10 * 60_000;
  */
 export const GUIDE_HEAD = '# harkroom workspace 가이드';
 
-export function isGuideText(g: string): boolean {
-  return g.startsWith(GUIDE_HEAD);
+/**
+ * 글자이면서 가이드 머리로 시작하는가. `harkroom.guide()` 는 응답의 `guide` 를 그대로 넘기므로 숫자·null 이 올 수 있다 —
+ * 그때 `startsWith` 가 성공 처리기 안에서 던지면 처리되지 않은 거부로 러너가 죽는다(#1616 security m1).
+ */
+export function isGuideText(g: unknown): g is string {
+  return typeof g === 'string' && g.startsWith(GUIDE_HEAD);
+}
+
+/** 모양이 다른 응답을 로그에 남길 때의 머리 — 글자가 아니면 그 형만 적는다. */
+export function guideHeadForLog(g: unknown): string {
+  return typeof g === 'string' ? JSON.stringify(g.slice(0, 40)) : `(${g === null ? 'null' : typeof g})`;
 }
 
 export function createGuideCache(opts: {
@@ -44,7 +53,7 @@ export function createGuideCache(opts: {
           (g) => {
             fetchedAt = now();
             if (isGuideText(g)) value = g;
-            else opts.onError?.(new Error(`가이드 응답 모양이 다르다(머리 ${JSON.stringify(g.slice(0, 40))}) — 가진 판을 쓴다`));
+            else opts.onError?.(new Error(`가이드 응답 모양이 다르다(머리 ${guideHeadForLog(g)}) — 가진 판을 쓴다`));
           },
           // 실패해도 시각을 당긴다 — 서버가 내려간 동안 턴마다 다시 부르지 않는다.
           (err) => { fetchedAt = now(); opts.onError?.(err); },
