@@ -226,56 +226,198 @@ fn write_index_doc(app_data_root: &Path, doc: &serde_json::Value) -> Result<(), 
     Ok(())
 }
 
-/// **옮기기 1단계(D5, 이동 0)** — 커뮤니티마다 모드를 처음 켤 때, 옛 단일 오퍼레이터 자리(`<앱 데이터>/operator/operator.json`)의
-/// 커뮤니티 하나를 그 자리 그대로 쓰는 칸(`legacy: true`, 뿌리 = 앱 데이터 뿌리)으로 색인에 적는다. 파일·폴더는 옮기지 않는다.
-///
-/// `legacy: true` 를 쓰는 곳은 **이 함수 하나**이고, **색인 파일이 아직 없을 때만** 쓴다(이미 있으면 손대지 않는다 —
-/// 사람이 고친 색인이나 앞 기동의 결과를 덮지 않는다). 칸이 여럿이면 에이전트가 가장 많은 칸을 고른다(같으면 키 사전순 앞).
-/// 옛 설정이 없거나 비었으면 아무것도 쓰지 않는다. 깨졌으면 쓰지 않고 오류를 돌려준다(모르는 채로 legacy 를 고르지 않는다).
-/// 돌려주는 값은 legacy 로 적은 커뮤니티 키(적지 않았으면 None).
-pub fn adopt_legacy(app_data_root: &Path) -> Result<Option<String>, String> {
-    if app_data_root.join(ROOTS_INDEX_FILE).exists() {
-        return Ok(None);
-    }
-    let cfg_path = app_data_root.join("operator").join("operator.json");
-    let text = match std::fs::read_to_string(&cfg_path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("옛 오퍼레이터 설정을 읽지 못했다: `{}`: {e}", cfg_path.display())),
-    };
-    let v: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("옛 오퍼레이터 설정이 깨졌다: `{}`: {e}", cfg_path.display()))?;
-    let Some(communities) = v.get("communities").and_then(|c| c.as_object()) else {
-        return Ok(None);
-    };
-    let agents_of = |e: &serde_json::Value| e.get("agents").and_then(|a| a.as_object()).map(|a| a.len()).unwrap_or(0);
-    let Some(key) = communities
-        .iter()
-        .map(|(k, e)| (community_key(k), agents_of(e)))
-        .filter(|(k, _)| !k.is_empty())
-        .max_by(|(ka, na), (kb, nb)| na.cmp(nb).then_with(|| kb.cmp(ka)))
-        .map(|(k, _)| k)
-    else {
-        return Ok(None);
-    };
-    let root = normalize(app_data_root);
-    let doc = serde_json::json!({
-        "version": 1,
-        "communities": { key.clone(): { "root": root.to_string_lossy(), "legacy": true } },
-    });
-    write_index_doc(app_data_root, &doc)?;
-    Ok(Some(key))
+/// 옛 단일 설정의 자리. 커뮤니티마다 모드에서도 legacy 커뮤니티는 이 파일을 그대로 쓴다.
+fn legacy_config_path(app_data_root: &Path) -> PathBuf {
+    app_data_root.join("operator").join("operator.json")
 }
 
-/// **되돌리기** — 색인을 지운다. 스위치를 끄고 앱을 띄우면 부른다: 꺼진 앱은 색인을 읽지 않고 옛 단일 오퍼레이터로 돌며,
-/// 다시 켜면 `adopt_legacy` 가 옛 자리를 다시 적는다. 새 커뮤니티 뿌리(`c/<해시>`)는 지우지 않는다 — 다시 켜면 같은 해시로
-/// 같은 자리를 찾는다. 지웠으면 true.
-pub fn revert_index(app_data_root: &Path) -> Result<bool, String> {
-    match std::fs::remove_file(app_data_root.join(ROOTS_INDEX_FILE)) {
-        Ok(()) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(format!("오퍼레이터 색인을 지우지 못했다: {e}")),
+/// 오퍼레이터 토큰 파일 이름 — `operator/src/secrets.ts::fileFor` 와 같은 규칙(sha256(끝 슬래시 뗀 baseUrl) 앞 16자).
+fn token_file_name(key: &str) -> String {
+    format!("operator-token.{}", hash_prefix(&community_key(key), 16))
+}
+
+fn read_json(path: &Path) -> Result<Option<serde_json::Value>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(t) => serde_json::from_str(&t).map(Some).map_err(|e| format!("설정이 깨졌다: `{}`: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("설정을 읽지 못했다: `{}`: {e}", path.display())),
     }
+}
+
+/// 0600 임시 파일 → rename 으로 JSON 을 쓴다(부모는 0700 으로 만든다).
+fn write_json_atomic(path: &Path, v: &serde_json::Value) -> Result<(), String> {
+    let dir = path.parent().ok_or_else(|| format!("부모가 없다: `{}`", path.display()))?;
+    make_private_dir(dir)?;
+    let tmp = dir.join(format!(".{}.{}.tmp", path.file_name().and_then(|n| n.to_str()).unwrap_or("x"), std::process::id()));
+    let text = format!("{}\n", serde_json::to_string_pretty(v).map_err(|e| e.to_string())?);
+    write_private(&tmp, text.as_bytes())?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("`{}` 를 바꿔 끼우지 못했다: {e}", path.display()))
+}
+
+fn make_private_dir(dir: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    let res = {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)
+    };
+    #[cfg(not(unix))]
+    let res = std::fs::create_dir_all(dir);
+    res.map_err(|e| format!("디렉터리를 만들지 못했다: `{}`: {e}", dir.display()))
+}
+
+fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let mut f = opts.open(path).map_err(|e| format!("`{}` 를 쓰지 못했다: {e}", path.display()))?;
+    f.write_all(bytes).map_err(|e| format!("`{}` 를 쓰지 못했다: {e}", path.display()))
+}
+
+/// `src` 가 있고 `dst` 가 아직 없을 때만 0600 으로 복사한다(있는 것을 덮지 않는다).
+fn copy_if_absent(src: &Path, dst: &Path) -> Result<(), String> {
+    if !src.is_file() || dst.exists() {
+        return Ok(());
+    }
+    let bytes = std::fs::read(src).map_err(|e| format!("`{}` 를 읽지 못했다: {e}", src.display()))?;
+    if let Some(dir) = dst.parent() {
+        make_private_dir(dir)?;
+    }
+    write_private(dst, &bytes)
+}
+
+/// 기계에 하나인 계정 **선택** 파일(D2) — 켜짐이면 뿌리마다 `claude-pools.json`·`codex-active.json` 을 읽는다(P2b).
+fn account_choice_sources(home: &Path) -> [(PathBuf, &'static str); 2] {
+    let claude = std::env::var_os("HARKROOM_CLAUDE_ACCOUNTS_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".harkroom-agent").join("claude-accounts"));
+    let codex = std::env::var_os("HARKROOM_CODEX_ACCOUNTS_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".harkroom-agent").join("codex-accounts"));
+    [(claude.join("pools.json"), "claude-pools.json"), (codex.join("active.json"), "codex-active.json")]
+}
+
+/// 한 커뮤니티를 그 뿌리로 옮긴다(복사): 설정 칸(그 커뮤니티 하나 + 커뮤니티 밖 설정)·오퍼레이터 토큰·MCP 정의·MCP 토큰·
+/// 계정 선택. 뿌리 확인(`ensure_root_dir`)을 먼저 한다. 설정 칸은 옛 설정이 정본이라 덮어쓴다(꺼져 있던 동안 바뀌었을 수 있다).
+fn copy_community_into(app_data_root: &Path, home: &Path, legacy_cfg: &serde_json::Value, key: &str, section: &serde_json::Value, target: &CommunityTarget) -> Result<(), String> {
+    ensure_root_dir(target)?;
+    let mut cfg = legacy_cfg.clone();
+    if let Some(obj) = cfg.as_object_mut() {
+        obj.insert("communities".to_string(), serde_json::json!({ key: section }));
+    }
+    write_json_atomic(&target.root.join("operator").join("operator.json"), &cfg)?;
+    let from = app_data_root.join("operator");
+    let to = target.root.join("operator");
+    let token = token_file_name(key);
+    copy_if_absent(&from.join("secrets").join(&token), &to.join("secrets").join(&token))?;
+    copy_if_absent(&from.join("mcp-servers.json"), &to.join("mcp-servers.json"))?;
+    copy_if_absent(&from.join("secrets").join("mcp-oauth.json"), &to.join("secrets").join("mcp-oauth.json"))?;
+    for (src, name) in account_choice_sources(home) {
+        copy_if_absent(&src, &target.root.join(name))?;
+    }
+    Ok(())
+}
+
+/// **옮기기(D5)** — 커뮤니티마다 모드를 켜고 뜰 때 부른다.
+///
+/// 1단계: 색인이 없으면 옛 단일 설정(`<앱 데이터>/operator/operator.json`)에서 에이전트가 가장 많은 칸을 그 자리 그대로 쓰는
+/// legacy 칸으로 적는다(이동 0). 앞서 끄며 남긴 `operators.json.off` 가 있으면 새로 고르지 않고 그것을 되살린다(security #1649 n1 —
+/// 16자 비킴 기록이 사라지지 않게).
+/// 2단계: legacy 가 아닌 칸은 각자 뿌리로 **복사한 뒤에** 옛 설정에서 지운다(security #1649 M1). 하나라도 실패하면 옛 설정을 고치지
+/// 않는다 — 그 칸은 옛 설정에 남고, 커뮤니티마다 모드의 legacy 프로세스는 #1650 의 거르기로 그 칸을 띄우지 않는다.
+///
+/// `legacy: true` 를 쓰는 곳은 이 함수 하나이고 색인이 없을 때만 쓴다. 옛 설정이 깨졌으면 아무것도 쓰지 않고 오류다.
+/// 돌려주는 값은 legacy 커뮤니티 키(옛 설정이 없거나 비었으면 None).
+pub fn adopt_legacy(app_data_root: &Path, home: &Path) -> Result<Option<String>, String> {
+    let index_path = app_data_root.join(ROOTS_INDEX_FILE);
+    let off_path = app_data_root.join(format!("{ROOTS_INDEX_FILE}.off"));
+    if !index_path.exists() && off_path.exists() {
+        std::fs::rename(&off_path, &index_path).map_err(|e| format!("꺼 둔 색인을 되살리지 못했다: {e}"))?;
+    }
+    let cfg_path = legacy_config_path(app_data_root);
+    let Some(mut cfg) = read_json(&cfg_path)? else { return Ok(None) };
+    let communities: Vec<(String, serde_json::Value)> = cfg
+        .get("communities")
+        .and_then(|c| c.as_object())
+        .map(|c| c.iter().map(|(k, v)| (community_key(k), v.clone())).filter(|(k, _)| !k.is_empty()).collect())
+        .unwrap_or_default();
+    let mut index = read_index(app_data_root)?;
+    let legacy_key = match index.communities.iter().find(|(_, e)| e.legacy == Some(true)).map(|(k, _)| k.clone()) {
+        Some(k) => k,
+        None => {
+            if !index.communities.is_empty() {
+                return Ok(None); // legacy 없는 색인 — 손대지 않는다
+            }
+            let agents_of = |e: &serde_json::Value| e.get("agents").and_then(|a| a.as_object()).map(|a| a.len()).unwrap_or(0);
+            let Some(key) = communities
+                .iter()
+                .map(|(k, e)| (k.clone(), agents_of(e)))
+                .max_by(|(ka, na), (kb, nb)| na.cmp(nb).then_with(|| kb.cmp(ka)))
+                .map(|(k, _)| k)
+            else {
+                return Ok(None);
+            };
+            let doc = serde_json::json!({
+                "version": 1,
+                "communities": { key.clone(): { "root": normalize(app_data_root).to_string_lossy(), "legacy": true } },
+            });
+            write_index_doc(app_data_root, &doc)?;
+            index = read_index(app_data_root)?;
+            key
+        }
+    };
+    // legacy 커뮤니티도 켜짐에서는 뿌리의 계정 선택 파일을 읽는다(P2b) — 옛 자리 그대로 쓰게 복사해 둔다.
+    for (src, name) in account_choice_sources(home) {
+        copy_if_absent(&src, &app_data_root.join(name))?;
+    }
+    let mut moved: Vec<String> = Vec::new();
+    for (key, section) in communities.iter().filter(|(k, _)| *k != legacy_key) {
+        let target = resolve(app_data_root, home, key)?;
+        copy_community_into(app_data_root, home, &cfg, key, section, &target)?;
+        if !index.communities.contains_key(key) {
+            record_root(app_data_root, &target)?;
+        }
+        moved.push(key.clone());
+    }
+    if !moved.is_empty() {
+        if let Some(obj) = cfg.get_mut("communities").and_then(|c| c.as_object_mut()) {
+            obj.retain(|k, _| !moved.contains(&community_key(k)));
+        }
+        write_json_atomic(&cfg_path, &cfg)?;
+    }
+    Ok(Some(legacy_key))
+}
+
+/// **되돌리기** — 스위치를 끄고 뜰 때 부른다. 각 뿌리로 옮겼던 칸(설정 칸·토큰)을 옛 단일 설정에 **도로 합친 뒤** 색인을
+/// `operators.json.off` 로 옮긴다(지우지 않는다 — 다시 켜면 그대로 되살린다, security #1649 n1). 꺼진 앱은 색인을 읽지 않고 옛 단일
+/// 오퍼레이터로 모든 커뮤니티를 든다. 뿌리(`c/<해시>`)는 지우지 않는다. 옮겼으면 true.
+pub fn revert_index(app_data_root: &Path) -> Result<bool, String> {
+    let index_path = app_data_root.join(ROOTS_INDEX_FILE);
+    if !index_path.exists() {
+        return Ok(false);
+    }
+    let index = read_index(app_data_root)?;
+    let cfg_path = legacy_config_path(app_data_root);
+    let mut cfg = read_json(&cfg_path)?.unwrap_or_else(|| serde_json::json!({ "communities": {} }));
+    let mut changed = false;
+    for (key, e) in index.communities.iter().filter(|(_, e)| e.legacy != Some(true)) {
+        let root = Path::new(&e.root);
+        let Some(rc) = read_json(&root.join("operator").join("operator.json"))? else { continue };
+        let Some(section) = rc.get("communities").and_then(|c| c.as_object()).and_then(|c| c.iter().find(|(k, _)| community_key(k) == *key).map(|(_, v)| v.clone())) else { continue };
+        if let Some(obj) = cfg.as_object_mut() {
+            let comms = obj.entry("communities").or_insert_with(|| serde_json::json!({}));
+            if let Some(c) = comms.as_object_mut() {
+                c.insert(key.clone(), section);
+                changed = true;
+            }
+        }
+        let token = token_file_name(key);
+        copy_if_absent(&root.join("operator").join("secrets").join(&token), &app_data_root.join("operator").join("secrets").join(&token))?;
+    }
+    if changed {
+        write_json_atomic(&cfg_path, &cfg)?;
+    }
+    std::fs::rename(&index_path, app_data_root.join(format!("{ROOTS_INDEX_FILE}.off"))).map_err(|e| format!("오퍼레이터 색인을 꺼 두지 못했다: {e}"))?;
+    Ok(true)
 }
 
 /// 뿌리 디렉터리를 쓸 수 있게 한다 — 토큰·소켓을 쓰기 **전에** 부른다(security P1-n2, P2a 지적).
@@ -465,42 +607,65 @@ mod tests {
     }
 
     #[test]
-    fn adopt_legacy_picks_the_community_with_most_agents_and_writes_once() {
+    fn adopt_legacy_splits_others_into_their_roots_and_revert_merges_back() {
         let d = tmp_root("adopt");
+        let home = d.join("home");
+        let a = "https://a.example.com";
+        let b = "https://b.example.com";
         std::fs::write(
             d.join("operator").join("operator.json"),
-            r#"{"communities":{"https://a.example.com/":{"agents":{"x":{}}},"https://b.example.com":{"agents":{"x":{},"y":{}}}}}"#,
+            format!(r#"{{"merge":{{"ghUser":"g"}},"communities":{{"{a}/":{{"agents":{{"x":{{}}}}}},"{b}":{{"agents":{{"x":{{}},"y":{{}}}}}}}}}}"#),
         )
         .unwrap();
-        assert_eq!(adopt_legacy(&d).unwrap().as_deref(), Some("https://b.example.com"));
+        std::fs::create_dir_all(d.join("operator").join("secrets")).unwrap();
+        std::fs::write(d.join("operator").join("secrets").join(token_file_name(a)), "tok-a").unwrap();
+        // 1·2단계: B(에이전트 더 많음)가 legacy, A 는 제 뿌리로 옮겨지고 옛 설정에서 빠진다.
+        assert_eq!(adopt_legacy(&d, &home).unwrap().as_deref(), Some(b));
         let idx = read_index(&d).unwrap();
-        assert_eq!(idx.communities.len(), 1);
-        let e = &idx.communities["https://b.example.com"];
-        assert_eq!(e.legacy, Some(true));
-        assert_eq!(Path::new(&e.root), normalize(&d));
-        // 색인이 있으면 다시 쓰지 않는다.
-        assert_eq!(adopt_legacy(&d).unwrap(), None);
+        assert_eq!(idx.communities[b].legacy, Some(true));
+        let a_root = PathBuf::from(&idx.communities[a].root);
+        assert!(a_root.starts_with(home.join(".harkroom-agent").join("c")));
+        let a_cfg = read_json(&a_root.join("operator").join("operator.json")).unwrap().unwrap();
+        assert_eq!(a_cfg["communities"].as_object().unwrap().keys().collect::<Vec<_>>(), vec![a]);
+        assert_eq!(a_cfg["merge"]["ghUser"], "g");
+        assert_eq!(std::fs::read_to_string(a_root.join("operator").join("secrets").join(token_file_name(a))).unwrap(), "tok-a");
+        let legacy_cfg = read_json(&d.join("operator").join("operator.json")).unwrap().unwrap();
+        assert_eq!(legacy_cfg["communities"].as_object().unwrap().keys().collect::<Vec<_>>(), vec![b]);
+        // 다시 띄워도 그대로(legacy 는 색인에서 찾고 옛 설정에는 B 만).
+        assert_eq!(adopt_legacy(&d, &home).unwrap().as_deref(), Some(b));
+        // 되돌리기: A 칸을 옛 설정에 도로 합치고 색인은 .off 로.
+        assert!(revert_index(&d).unwrap());
+        assert!(!d.join(ROOTS_INDEX_FILE).exists());
+        assert!(d.join(format!("{ROOTS_INDEX_FILE}.off")).exists());
+        let back = read_json(&d.join("operator").join("operator.json")).unwrap().unwrap();
+        let mut keys: Vec<_> = back["communities"].as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, vec![a.to_string(), b.to_string()]);
+        assert!(!revert_index(&d).unwrap());
+        // 다시 켜기: .off 를 되살리고(같은 A 뿌리) 다시 나눈다.
+        assert_eq!(adopt_legacy(&d, &home).unwrap().as_deref(), Some(b));
+        assert_eq!(PathBuf::from(&read_index(&d).unwrap().communities[a].root), a_root);
+        let again = read_json(&d.join("operator").join("operator.json")).unwrap().unwrap();
+        assert_eq!(again["communities"].as_object().unwrap().keys().collect::<Vec<_>>(), vec![b]);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(d.join(ROOTS_INDEX_FILE)).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(std::fs::metadata(a_root.join("operator").join("operator.json")).unwrap().permissions().mode() & 0o777, 0o600);
         }
-        // 되돌리기는 색인을 지운다 — 다시 켜면 다시 적는다.
-        assert!(revert_index(&d).unwrap());
-        assert!(!revert_index(&d).unwrap());
-        assert_eq!(adopt_legacy(&d).unwrap().as_deref(), Some("https://b.example.com"));
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
     fn adopt_legacy_writes_nothing_without_old_config_and_refuses_broken_one() {
         let d = tmp_root("none");
-        assert_eq!(adopt_legacy(&d).unwrap(), None);
+        let home = d.join("home");
+        assert_eq!(adopt_legacy(&d, &home).unwrap(), None);
         assert!(!d.join(ROOTS_INDEX_FILE).exists());
         std::fs::write(d.join("operator").join("operator.json"), r#"{"communities":{}}"#).unwrap();
-        assert_eq!(adopt_legacy(&d).unwrap(), None);
+        assert_eq!(adopt_legacy(&d, &home).unwrap(), None);
         std::fs::write(d.join("operator").join("operator.json"), "{").unwrap();
-        assert!(adopt_legacy(&d).is_err());
+        assert!(adopt_legacy(&d, &home).is_err());
         assert!(!d.join(ROOTS_INDEX_FILE).exists());
         let _ = std::fs::remove_dir_all(&d);
     }
