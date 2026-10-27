@@ -88,6 +88,18 @@ describe('워크스페이스 가이드의 두 판본 (2026-09-08 앵커 이탈 �
     }
   });
 
+  it('두 판본 다 avcs 와 무관하게 발화 종류(post·report·ask·askBundle·fail)의 「언제」를 말한다 (2026-10-27 f2)', () => {
+    for (const mode of ['resident', 'turn'] as const) {
+      for (const avcs of [true, false]) {
+        const g = guideFor(mode, { avcs });
+        expect(g, `${mode}/${avcs}`).toMatch(/## 발화 종류를 고른다/);
+        for (const t of ['message.post', 'message.report', 'message.ask', 'message.askBundle', 'message.fail']) {
+          expect(g, `${mode}/${avcs} ${t}`).toContain(`\`${t}\``);
+        }
+      }
+    }
+  });
+
   it('가이드 예시의 채널은 중립 이름이다 — 모든 워크스페이스의 에이전트가 읽는다', () => {
     expect(guideFor('turn')).toContain('(예: #ops 에 "13:20 에 확인한다")');
   });
