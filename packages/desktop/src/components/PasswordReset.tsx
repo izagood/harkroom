@@ -235,8 +235,10 @@ export function ForgotPasswordGuide({ onHaveCode, onBack }: { onHaveCode: () => 
  * ③ 로그인 ID·코드·새 비밀번호 — 한 화면에서 끝낸다. 성공하면 곧바로 로그인(`onSignedIn`). 다른 기기가 끊겼다는
  * 말은 로그인 뒤 알림 띠가 한다(그 코드가 「사용됨」으로 실려 온다).
  */
-export function ResetWithCodeForm({ baseUrl, initialLoginId, onSignedIn, onBack }: {
+export function ResetWithCodeForm({ baseUrl, initialLoginId, fixedLoginId = false, onSignedIn, onBack }: {
   baseUrl: string; initialLoginId: string;
+  /** 로그인 ID 를 고칠 수 없는 글자로 둔다 — 만료 패널처럼 어느 계정인지 이미 정해진 자리(designer r2). */
+  fixedLoginId?: boolean;
   onSignedIn: (api: ApiClient, token: string) => Promise<void>;
   onBack: () => void;
 }) {
@@ -280,10 +282,17 @@ export function ResetWithCodeForm({ baseUrl, initialLoginId, onSignedIn, onBack 
   return (
     <form className="space-y-3" data-testid="pwreset-form" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!blocked) void submit(); }}>
       <h2 className="text-body font-semibold">{t('pwreset.form.title')}</h2>
-      <label className="block text-meta font-medium">
-        {t('connect.field.loginId')}
-        <input className={field} value={loginId} autoComplete="username" autoFocus={!initialLoginId} onChange={(e) => setLoginId(e.target.value)} data-testid="pwreset-login-id" />
-      </label>
+      {fixedLoginId && initialLoginId ? (
+        <div className="text-meta font-medium">
+          {t('connect.field.loginId')}
+          <div className="truncate py-2 font-normal text-fg-muted" data-testid="pwreset-login-id-fixed">{loginId}</div>
+        </div>
+      ) : (
+        <label className="block text-meta font-medium">
+          {t('connect.field.loginId')}
+          <input className={field} value={loginId} autoComplete="username" autoFocus={!initialLoginId} onChange={(e) => setLoginId(e.target.value)} data-testid="pwreset-login-id" />
+        </label>
+      )}
       <label className="block text-meta font-medium">
         {t('pwreset.form.code')}
         <input className={`${field} font-mono tracking-wider`} value={code} autoComplete="one-time-code" spellCheck={false} autoFocus={!!initialLoginId}

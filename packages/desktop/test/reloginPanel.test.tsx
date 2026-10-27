@@ -80,7 +80,11 @@ async function community(baseUrl: string, accountId: string, active: boolean, lo
 const entryOf = (id: string) => useCommunityRegistry.getState().entries.find((e) => e.id === id)!;
 
 /** 서버 두 대를 흉내내는 `fetch`. 비밀번호가 'bad' 면 로그인을 401 로 거절한다. */
-function serverFetch(opts: { who?: Record<string, { id: string; handle: string }>; holdLogin?: Promise<void>; seen?: string[] } = {}) {
+function serverFetch(opts: {
+  who?: Record<string, { id: string; handle: string }>; holdLogin?: Promise<void>; seen?: string[];
+  /** 요청마다 주소와 Authorization 을 적는다 — 어느 토큰으로 무엇을 불렀는지 재는 시험이 쓴다. */
+  calls?: { url: string; auth: string | null }[];
+} = {}) {
   const who: Record<string, { id: string; handle: string }> = opts.who ?? {
     'https://a.example': { id: 'acct-a', handle: 'me-a' },
     'https://b.example': { id: 'acct-b', handle: 'me-b' },
@@ -88,6 +92,7 @@ function serverFetch(opts: { who?: Record<string, { id: string; handle: string }
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     opts.seen?.push(url);
+    opts.calls?.push({ url, auth: new Headers(init?.headers).get('authorization') });
     const host = Object.keys(who).find((h) => url.startsWith(h)) ?? 'https://a.example';
     const me = who[host]!;
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
@@ -97,6 +102,7 @@ function serverFetch(opts: { who?: Record<string, { id: string; handle: string }
       avatarAttachmentId: null,
     };
     if (url.endsWith('/auth/password-reset')) return json({ token: `tok-${me.id}` });
+    if (url.endsWith('/auth/logout')) return new Response(null, { status: 204 });
     if (url.endsWith('/auth/login')) {
       if (opts.holdLogin) await opts.holdLogin;
       const body = JSON.parse(String(init?.body ?? '{}')) as { password?: string };
@@ -308,7 +314,10 @@ describe('패널의 보탬(designer 1·n1·n3·n5, security n1)', () => {
     // 레일은 그대로다 — 되찾기도 그 자리 일이다.
     expect(screen.getByTestId('rail-community-mark')).toBeTruthy();
     fireEvent.click(screen.getByTestId('pwreset-have-code'));
-    expect((screen.getByTestId('pwreset-login-id') as HTMLInputElement).value).toBe('login-a');
+    // r1: 어느 커뮤니티의 재설정인지 맨 위에 한 줄 · r2: ID 는 고칠 수 없는 글자다.
+    expect(screen.getByTestId('relogin-recover-community').textContent).toBe('Aa.example') // 이름이 곧 주소면 주소를 되풀이하지 않는다;
+    expect(screen.getByTestId('pwreset-login-id-fixed').textContent).toBe('login-a');
+    expect(screen.queryByTestId('pwreset-login-id')).toBeNull();
     fireEvent.change(screen.getByTestId('pwreset-code'), { target: { value: 'K7QF-9MXD-2PQR' } });
     fireEvent.change(screen.getByTestId('pwreset-new'), { target: { value: 'new-password-1' } });
     fireEvent.change(screen.getByTestId('pwreset-confirm'), { target: { value: 'new-password-1' } });
@@ -332,6 +341,42 @@ describe('패널의 보탬(designer 1·n1·n3·n5, security n1)', () => {
     fireEvent.click(screen.getByTestId('relogin-submit'));
     expect((await screen.findByTestId('relogin-error')).textContent).toContain('다른 계정이다');
     expect(onRelogin).not.toHaveBeenCalled();
+  });
+
+  it('security r1: 재설정 뒤 다른 계정이면 그 토큰으로 로그아웃을 보내고, 패널로 돌아가 안내한다', async () => {
+    await activeSignedOut(null);
+    const calls: { url: string; auth: string | null }[] = [];
+    vi.stubGlobal('fetch', serverFetch({ calls, who: { 'https://a.example': { id: 'acct-x', handle: 'someone' } } }));
+    const onRelogin = vi.fn(async () => {});
+    render(<Workspace onLogout={() => {}} onOpenSettings={() => {}} onRelogin={onRelogin} />);
+
+    // 옛 보관본이라 ID 를 모른다 — 패널 칸에 적은 값이 재설정 칸으로 넘어가고, 그 칸은 열려 있다(r2 는 고정된 ID 만).
+    fireEvent.change(screen.getByTestId('relogin-login-id-input'), { target: { value: 'someone' } });
+    fireEvent.click(screen.getByTestId('relogin-forgot'));
+    fireEvent.click(screen.getByTestId('pwreset-have-code'));
+    expect((screen.getByTestId('pwreset-login-id') as HTMLInputElement).value).toBe('someone');
+    fireEvent.change(screen.getByTestId('pwreset-code'), { target: { value: 'K7QF-9MXD-2PQR' } });
+    fireEvent.change(screen.getByTestId('pwreset-new'), { target: { value: 'new-password-1' } });
+    fireEvent.change(screen.getByTestId('pwreset-confirm'), { target: { value: 'new-password-1' } });
+    fireEvent.click(screen.getByTestId('pwreset-submit'));
+
+    expect((await screen.findByTestId('relogin-error')).textContent).toContain('다른 계정이다');
+    expect(screen.queryByTestId('relogin-recover')).toBeNull();
+    expect(onRelogin).not.toHaveBeenCalled();
+    const logout = calls.filter((c) => c.url.endsWith('/auth/logout'));
+    expect(logout).toEqual([{ url: 'https://a.example/auth/logout', auth: 'Bearer tok-acct-x' }]);
+  });
+
+  it('security r1: 같은 계정이면 로그아웃을 보내지 않는다', async () => {
+    await activeSignedOut();
+    const calls: { url: string; auth: string | null }[] = [];
+    vi.stubGlobal('fetch', serverFetch({ calls }));
+    const onRelogin = vi.fn(async () => {});
+    render(<Workspace onLogout={() => {}} onOpenSettings={() => {}} onRelogin={onRelogin} />);
+    fireEvent.change(screen.getByTestId('relogin-password'), { target: { value: 'good' } });
+    fireEvent.click(screen.getByTestId('relogin-submit'));
+    await waitFor(() => expect(onRelogin).toHaveBeenCalled());
+    expect(calls.some((c) => c.url.endsWith('/auth/logout'))).toBe(false);
   });
 
   it('designer n5: 패널이 떠 있는 동안 레일의 어느 칸도 선택된 것으로 그리지 않는다', async () => {
