@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { autoRegisterFirstOperator, type AutoRegisterDeps } from './autoRegisterOperator';
+import { AUTO_REGISTER_NAME, autoRegisterFirstOperator, type AutoRegisterDeps } from './autoRegisterOperator';
 
 const BASE = 'https://example.test';
 
@@ -29,14 +29,14 @@ describe('autoRegisterFirstOperator — 이 기계가 이 커뮤니티에 없으
     const d = deps();
     expect(await autoRegisterFirstOperator(d)).toBe('registered');
     expect(d.mintCode).toHaveBeenCalledTimes(1);
-    expect(d.register).toHaveBeenCalledWith(BASE, 'hkreg_test');
+    expect(d.register).toHaveBeenCalledWith(BASE, 'hkreg_test', AUTO_REGISTER_NAME);
     expect(d.markAutoRegistered).toHaveBeenCalledWith(BASE);
   });
 
   it('다른 기기가 이미 선 커뮤니티여도 이 기계가 없으면 등록한다', async () => {
     const d = deps({ listOperators: async () => [{ id: 'op-other' }] });
     expect(await autoRegisterFirstOperator(d)).toBe('registered');
-    expect(d.register).toHaveBeenCalledWith(BASE, 'hkreg_test');
+    expect(d.register).toHaveBeenCalledWith(BASE, 'hkreg_test', AUTO_REGISTER_NAME);
   });
 
   it('로컬 설정에 다른 커뮤니티만 있으면 이 커뮤니티는 아직 아니다 — 등록한다', async () => {
@@ -72,7 +72,7 @@ describe('autoRegisterFirstOperator — 이 기계가 이 커뮤니티에 없으
       wasAutoRegistered: () => true,
     });
     expect(await autoRegisterFirstOperator(d)).toBe('registered');
-    expect(d.register).toHaveBeenCalledWith(BASE, 'hkreg_test');
+    expect(d.register).toHaveBeenCalledWith(BASE, 'hkreg_test', AUTO_REGISTER_NAME);
   });
 
   it('로컬 기록이 낡았고 남의 오퍼레이터가 있으면 사람이 정한다 — 이 기계를 뺐을 수 있다', async () => {
@@ -128,5 +128,13 @@ describe('autoRegisterFirstOperator — 이 기계가 이 커뮤니티에 없으
 
   it('서버 주소가 없으면 하지 않는다', async () => {
     expect(await autoRegisterFirstOperator(deps({ baseUrl: null }))).toBe('no-server');
+  });
+
+  it('자동 등록은 hostname 이 아니라 중립 이름을 넘긴다(security #1651 F1)', async () => {
+    const d = deps();
+    await autoRegisterFirstOperator(d);
+    const name = (d.register as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[2];
+    expect(name).toBe('Harkroom desktop');
+    expect(typeof name === 'string' && /mac|book|'s|의/i.test(name)).toBe(false);
   });
 });
