@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { useT } from '../../i18n/useT';
 import { DirectoryRow } from '../Directory';
 import { hasCapability } from '../../lib/capabilities';
 import { SettingsColumns, SettingsGrid, SettingsGroup, SettingsPage } from './primitives';
+import { MemberAccessPanel } from './MemberAccessPanel';
 import { errorText } from '../../lib/errorText';
 import { canIssueResetCode, loginIdsSupported, ResetCodeButton, resetSupported } from '../PasswordReset';
 
@@ -20,6 +21,9 @@ import { canIssueResetCode, loginIdsSupported, ResetCodeButton, resetSupported }
  * - 초대 토큰 발급은 **admin 만** 한다. 전에는 admin 이 아니면 페이지 전체가 닫혔는데, 이제는
  *   초대 묶음만 그 사실을 말하고 목록은 그대로 보인다(워크스페이스 묶음의 "읽기 전용", ⑥b-1).
  * - 에이전트는 여기 안 그린다 — 에이전트 › 목록이 그 자리다.
+ * - **줄을 누르면 곁 칸이 그 사람의 역할·권한 칸이 된다**(designer 시안 B, 스레드 d5e5c5d4). 줄마다 역할 칩이 선다.
+ *   좁은 폭(설정 본문 900 미만)에서는 곁 칸이 목록 아래로 내려가 멀리 떨어지므로, 그때는 **누른 줄 바로 아래**에
+ *   펼친다. 두 자리를 다 그리고 container query 로 하나만 보인다 — 폭을 JS 로 재면 그 경계가 `SettingsColumns` 와 갈린다.
  *
  * `SectionId` 는 `'invite'` 그대로 둔다. 바깥 배선(`onOpenSettings('invite')`)과 저장된 위치가 그 값을
  * 들고 있고, 사람이 읽는 것은 id 가 아니라 `settings.nav.invite` 의 이름이다.
@@ -44,6 +48,7 @@ export function InviteSettings() {
   // Directory 와 같은 세 갈래 — 둘이면 "아직 안 왔다" 가 "아무도 없다" 로 보인다.
   const [load, setLoad] = useState<{ kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string }>({ kind: 'loading' });
   const [attempt, setAttempt] = useState(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -69,6 +74,12 @@ export function InviteSettings() {
     getController().loginIds().then((m) => { if (alive) setLoginIds(m); }, () => { if (alive) setLoginIds({}); });
     return () => { alive = false; };
   }, [loginIdsOn, attempt, me?.id, peopleKey]);
+
+  // 고른 사람이 목록에서 사라지면(지워짐·다른 커뮤니티로 바뀜) 칸도 접는다.
+  const selected = selectedId ? people.find((a) => a.id === selectedId) ?? null : null;
+  const panel = (where: 'side' | 'inline') => selected && (
+    <MemberAccessPanel key={`${where}-${selected.id}`} person={selected} me={me} onBack={() => setSelectedId(null)} testId={`member-access-${where}`} />
+  );
 
   const createInvite = async () => {
     setError(null);
@@ -111,7 +122,10 @@ export function InviteSettings() {
                 )}
                 {people.length === 0
                   ? <p className="px-2 py-1 text-fg-subtle">{load.kind === 'loading' ? t('directory.loading') : t('members.list.empty')}</p>
-                  : <SettingsGrid as="ul" className="gap-y-0">{people.map((a) => <DirectoryRow key={a.id} account={a} showKind={false}
+                  : <SettingsGrid as="ul" className="gap-y-0">{people.map((a) => <Fragment key={a.id}><DirectoryRow account={a} showKind={false}
+                    roleChip
+                    selected={a.id === selectedId}
+                    onSelect={() => setSelectedId((cur) => (cur === a.id ? null : a.id))}
                     // 로그인 ID 는 「누구인가」라 @handle 바로 뒤에 둔다 — 둘이 다른 것을 한눈에 견준다(designer #1490 n1).
                     // 최대 64자라 좁은 칸에서는 잘리고 title 로 전체를 보인다(s1). 오른쪽 끝에는 버튼만.
                     detail={loginIds[a.id] ? (
@@ -121,13 +135,22 @@ export function InviteSettings() {
                         <code className="min-w-0 max-w-[10rem] truncate font-mono" title={loginIds[a.id]} data-testid={`member-login-id-value-${a.id}`}>{loginIds[a.id]}</code>
                       </span>
                     ) : null}
-                    actions={resetOn && canIssueResetCode(me, a) ? <ResetCodeButton account={a} /> : null} />)}</SettingsGrid>}
+                    actions={resetOn && canIssueResetCode(me, a) ? <ResetCodeButton account={a} /> : null} />
+                    {a.id === selectedId && (
+                      <li className="my-1 rounded-compose border border-border bg-surface-raised @min-[900px]/settings:hidden">{panel('inline')}</li>
+                    )}</Fragment>)}</SettingsGrid>}
               </div>
             </SettingsGroup>
           </>
         )}
         side={(
           <>
+            {selected && (
+              <div className="hidden @min-[900px]/settings:block">
+                <SettingsGroup>{panel('side')}</SettingsGroup>
+              </div>
+            )}
+            <div className={selected ? '@min-[900px]/settings:hidden' : ''}>
             <SettingsGroup title={t('members.invite.title')}>
               <div className="px-4 py-3" data-testid="members-invite">
                 {/* 서버 `POST /invites` 는 `requireCap('member.invite')` 다 — admin 이 아니어도 그 능력을 받았으면 발급한다(UX ⑦b-2). */}
@@ -135,6 +158,7 @@ export function InviteSettings() {
                   <p className="text-fg-subtle">{t('invite.notAdmin')}</p>
                 ) : (
                   <>
+                    <p className="mb-1 text-fg-subtle">{t('members.panel.pickHint')}</p>
                     <p className="mb-3 text-fg-subtle">{t('invite.note')}</p>
 
                     {token && (
@@ -172,6 +196,7 @@ export function InviteSettings() {
                 )}
               </div>
             </SettingsGroup>
+            </div>
           </>
         )}
       />
