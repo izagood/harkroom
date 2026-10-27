@@ -81,13 +81,32 @@ export function MemberAccessPanel({ person, me, onBack, testId }: {
   const changeRole = async (role: Exclude<Role, 'owner'>) => {
     setBusy('role');
     setError(null);
+    // **guest 로 내리면 켜 둔 권한을 같이 거둔다**(designer #1615 검토 1). 서버 `PUT /role` 은 역할만 바꾸고
+    // grant 는 남기며 `can()` 은 guest 의 grant 도 인정한다 — 안 거두면 「guest 는 권한을 받지 않는다」는 칸의 말이
+    // 거짓이 되고, 내린 사람이 계속 에이전트를 만든다. 순서는 **거두기 먼저**다: 역할부터 바꾸면 그 사이 권한을
+    // 든 guest 가 생긴다. 어디서든 실패하면 거둔 것을 되돌려 주고 역할은 그대로 둔다(실패 = 아무것도 안 바뀜).
+    const revoked: Capability[] = [];
     try {
+      if (role === 'guest' && person.role !== 'guest') {
+        const rows = await getController().listGrants(person.id);
+        const held = new Set(rows.filter((r) => r.scope === '').map((r) => r.capability));
+        for (const { cap } of MEMBER_CAPS) {
+          if (!held.has(cap)) continue;
+          await getController().deleteGrant(person.id, cap, '');
+          revoked.push(cap);
+        }
+      }
       await getController().setRole(person.id, role);
       // 디렉터리의 `role` 은 `grant.changed` 로도 다시 읽히지만, 소켓을 기다리지 않고 바로 맞춘다.
       await getController().refreshAccounts({ force: true }).catch(() => undefined);
       setConfirmAdmin(false);
     } catch (e) {
-      setError(t('members.save.failed', { reason: errorText(e, t) }));
+      const restored = await Promise.all(revoked.map((cap) =>
+        getController().putGrant(person.id, { capability: cap, scope: '', expiresAt: null }).then(() => true, () => false)));
+      setError(restored.every(Boolean)
+        ? t('members.save.failed', { reason: errorText(e, t) })
+        : t('members.save.failedPartial', { reason: errorText(e, t) }));
+      void reload();
     } finally { setBusy(null); }
   };
 
