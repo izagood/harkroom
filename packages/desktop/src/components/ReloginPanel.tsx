@@ -80,7 +80,7 @@ export function ReloginPanel({ entry, onDone }: { entry: CommunityEntry; onDone:
   const fixed = 'w-full truncate py-2 text-fg-muted';
   if (recover) {
     return (
-      <div data-testid="relogin-panel" className="flex min-w-0 flex-1 justify-center overflow-y-auto bg-surface px-4 pb-4 pt-12">
+      <div data-testid="relogin-panel" className="flex min-w-0 flex-1 items-start justify-center overflow-y-auto bg-surface px-4 pb-4 pt-12">
         <div data-testid="relogin-recover" className="w-full max-w-sm rounded-card border border-border bg-surface-raised p-4">
           {recover === 'guide'
             ? <ForgotPasswordGuide onHaveCode={() => setRecover('code')} onBack={() => setRecover(null)} />
