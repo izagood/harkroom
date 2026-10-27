@@ -19,7 +19,8 @@
     "./claudeGates": "./src/claudeGates.ts",
     "./workspaceCleanup": "./src/workspaceCleanup.ts",
     "./providerLane": "./src/providerLane.ts",
-    "./featureCatalog": "./src/featureCatalog.ts"
+    "./featureCatalog": "./src/featureCatalog.ts",
+    "./builtinSkills": "./src/builtinSkills.ts"
   },
   "scripts": { "test": "vitest run", "typecheck": "tsc -p ." },
   "devDependencies": {

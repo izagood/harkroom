@@ -7,6 +7,7 @@
 // 여기 있는 것은 조립뿐이다: Task 3~8 이 만든 부품(sessions, workspace, prompt, turn, pty,
 // codexSessions) 을 순서대로 부르고, 그 결과로 무엇을 저장·발화·실패 처리할지 판단한다.
 // 하네스 출력은 파싱하지 않는다 — 에이전트가 스스로 harkroom MCP 로 답을 올린다(spec §4).
+import { BUILTIN_SKILLS, isBuiltinSkillSlug } from '@harkroom/shared/builtinSkills';
 import { runnerSkillsDir } from './stateDir.js';
 import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
@@ -19,7 +20,7 @@ import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mer
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
-import { screenGateFor, screenIdleFactsFor } from './adapters/index.js';
+import { screenGateFor, screenIdleFactsFor, readsBuiltinSkills } from './adapters/index.js';
 import { SCREEN_IDLE_END_MS, ScreenIdleWatch, screenAnswerLines } from './screenIdle.js';
 import { commandRulesOf, fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, turnKeyDeliveryOf, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
 import { RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
@@ -881,7 +882,14 @@ export async function syncSkills(
    * API 키 연결 턴(security, 2026-10-23): `laneSafeSkill` 을 지나는 스킬만 깐다. frontmatter 의 `allowed-tools` 는 `dontAsk`
    * 턴에서도 셸을 열어(실측 claude 2.1.309) 소유자 카드 없이 도구가 열리는 길이 된다. 이미 깔린 것은 「사라진 스킬」과 같이 걷힌다.
    */
-  opts: { dropToolGrants?: boolean } = {},
+  opts: {
+    dropToolGrants?: boolean;
+    /**
+     * 내장 스킬(S P3). 승인 목록과 **함께 늘 다 깐다** — 턴별로 고르지 않는다(같은 작업 폴더의 동시 턴끼리 링크가 뒤집힌다).
+     * 같은 이름의 워크스페이스 스킬은 깔지 않는다 — 내장이 이긴다(설계 원칙 3). 서버도 그 접두의 제안을 거절한다.
+     */
+    builtins?: readonly { slug: string; body: string }[];
+  } = {},
 ): Promise<void> {
   const skillsDir = runnerSkillsDir(stateDir);
   // 하네스별 스킬 디렉터리. claude 는 `.claude/skills/<slug>/SKILL.md` 를 읽는다.
@@ -893,7 +901,14 @@ export async function syncSkills(
   const legacyCodexDir = join(workspaceDir, '.codex', 'skills');
 
   try {
-    const listed = await listSkills();
+    const approved = await listSkills();
+    const builtins = opts.builtins ?? BUILTIN_SKILLS;
+    // 내장 접두를 쓴 워크스페이스 스킬(서버 예약 이전에 승인된 것 등)은 깔지 않는다 — 내장 이름은 내장 것이다.
+    const shadowing = approved.filter((s) => isBuiltinSkillSlug(s.slug));
+    if (shadowing.length) {
+      console.warn(`[mentionTurn] 내장 스킬 이름(harkroom-*)을 쓴 워크스페이스 스킬 ${shadowing.length}개를 깔지 않았다: ${shadowing.map((s) => s.slug).join(', ')}`);
+    }
+    const listed = [...builtins, ...approved.filter((s) => !isBuiltinSkillSlug(s.slug))];
     const skills = opts.dropToolGrants ? listed.filter((s) => laneSafeSkill(s.body)) : listed;
     if (skills.length < listed.length) {
       console.warn(`[mentionTurn] API 키 연결 턴 — 허용 목록 밖 frontmatter 를 가진 스킬 ${listed.length - skills.length}개를 깔지 않았다`);
@@ -1314,6 +1329,8 @@ export async function runMentionTurn(
     laneModel: deps.providerEnv ? providerLaneModelId(turnModel.model) : null,
     secretCreate,
     readOnly: def.mentionPermission === 'readonly',
+    // 내장 스킬을 읽을 수 있는 턴(S P3). 지금은 옮긴 절차가 없어 프롬프트가 바뀌지 않는다 — P4~P6 이 이 값으로 갈린다.
+    skillsReadable: readsBuiltinSkills(def.harness, { readOnly: def.mentionPermission === 'readonly' }),
     merge: { operatorBin: deps.operatorBin, repos: grantedRepos, approved: approvedHere.map((a) => ({ repo: a.repo, number: a.number })) },
     // hook 이 실제로 붙는 턴(turn.ts permissionRules 가 --settings 를 낼 때)에만 kind command 를 권한다.
     permissions: {

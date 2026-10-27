@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
+import { BUILTIN_SKILLS } from '@harkroom/shared/builtinSkills';
 import { AccountGateRequeueError, mentionAnchor, runMentionTurn, laneSafeSkill, syncSkills, withLaneSkillHeader, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
 import { createAttentionLedger } from '../src/attentionLedger.js';
 import { BODY_LIMIT } from '../src/prompt.js';
@@ -1752,7 +1753,7 @@ describe('runMentionTurn', () => {
     let seenAtRead: string[] | null = null;
     const { deps, runTurn } = await makeDeps(fake, {
       readTurnMcp: async () => {
-        seenAtRead = await readdir(join(deps.stateDir, 'skills')).catch(() => []);
+        seenAtRead = (await readdir(join(deps.stateDir, 'skills')).catch(() => [] as string[])).filter((n) => !n.startsWith('harkroom-'));
         return {};
       },
     });
@@ -2893,11 +2894,37 @@ describe('syncSkills 단독(#140)', () => {
     const plain = { slug: 'plain', body: '---\nname: plain\ndescription: x\n---\n본문' };
     await syncSkills(stateDir, workspaceDir, async () => [grant, plain]);
     const harness = join(workspaceDir, '.claude', 'skills');
-    expect((await readdir(harness)).sort()).toEqual(['opens-shell', 'plain']);
+    const mine = (names: string[]) => names.filter((n) => !n.startsWith('harkroom-')).sort();
+    expect(mine(await readdir(harness))).toEqual(['opens-shell', 'plain']);
 
     await syncSkills(stateDir, workspaceDir, async () => [grant, plain], { dropToolGrants: true });
-    expect(await readdir(harness)).toEqual(['plain']);
-    expect(await readdir(join(stateDir, 'skills'))).toEqual(['plain']);
+    expect(mine(await readdir(harness))).toEqual(['plain']);
+    expect(mine(await readdir(join(stateDir, 'skills')))).toEqual(['plain']);
+  });
+
+  // S P3: 내장 스킬은 승인 목록과 함께 늘 다 깔리고, 같은 이름의 워크스페이스 스킬은 내장을 덮지 못한다(설계 원칙 3).
+  it('내장 스킬은 늘 깔리고(API 키 연결 턴 포함), 같은 이름의 워크스페이스 스킬은 깔리지 않는다 — 내장 본문이 이긴다', async () => {
+    const { stateDir, workspaceDir } = await dirs();
+    const builtin = { slug: 'harkroom-demo', body: '---\nname: harkroom-demo\ndescription: "d"\n---\n내장 본문' };
+    const shadow = { slug: 'harkroom-demo', body: '# 덮으려는 워크스페이스 본문' };
+    const plain = { slug: 'plain', body: '# p' };
+    for (const dropToolGrants of [false, true]) {
+      await syncSkills(stateDir, workspaceDir, async () => [shadow, plain], { builtins: [builtin], dropToolGrants });
+      for (const rel of ['.claude/skills', '.agents/skills']) {
+        expect((await readdir(join(workspaceDir, rel))).sort(), `${rel}/${dropToolGrants}`).toEqual(['harkroom-demo', 'plain']);
+        expect(await readFile(join(workspaceDir, rel, 'harkroom-demo', 'SKILL.md'), 'utf8')).toBe(builtin.body);
+      }
+    }
+    // 승인 목록이 비어도 내장은 남는다.
+    await syncSkills(stateDir, workspaceDir, async () => [], { builtins: [builtin] });
+    expect(await readdir(join(workspaceDir, '.claude', 'skills'))).toEqual(['harkroom-demo']);
+  });
+
+  it('기본 내장 목록(BUILTIN_SKILLS)이 실제로 깔린다', async () => {
+    const { stateDir, workspaceDir } = await dirs();
+    await syncSkills(stateDir, workspaceDir, async () => []);
+    const names = await readdir(join(workspaceDir, '.claude', 'skills'));
+    expect(names.sort()).toEqual(BUILTIN_SKILLS.map((b) => b.slug).sort());
   });
 
   // security L2 n1: opencode 는 frontmatter `name` 이 없으면 스킬로 싣지 않는다 — lane 에 깔 때 slug 를 이름으로 붙인다.

@@ -854,6 +854,15 @@ function skillSection(memory: MemoryContext): string[] {
 }
 
 /**
+ * 내장 스킬로 옮긴 절차를 싣는 자리(S P3). 이 턴이 스킬을 읽을 수 있으면 「언제」 포인터 한 줄을, 못 읽으면(읽기 전용·
+ * `skillDirs` 가 빈 하네스·상주·백그라운드) 옮기기 전과 같은 절차를 그대로 싣는다 — 못 읽는 턴이 잃는 것이 없게 한다.
+ * **금지·안전선은 이 함수로 넘기지 않는다**: 그것은 늘 프롬프트에 남는다(설계: 금지는 프롬프트, 일이 생겨야 쓰는 절차만 스킬).
+ */
+export function skillOrInline(skillsReadable: boolean, slug: string, pointer: string, inline: readonly string[]): string[] {
+  return skillsReadable ? [`${pointer} — 자세한 절차는 스킬 \`${slug}\` 를 연다.`] : [...inline];
+}
+
+/**
  * 「쓸 수 있는 기능」 절(2026-10-27 c1). 도구별 「언제」를 기능 카탈로그에서 **이 턴에 열린 것만** 골라 싣는다 —
  * 읽기 전용 턴은 허용 목록(`turn.ts` READONLY_ALLOW) 밖 도구가 안 보이고, 비밀 만들기는 소유자가 켠 에이전트만 쓴다.
  * 전에는 이 문단들이 무조건 실려 막힌 도구(`askBundle`·`secret.generate`)를 권했다(a1·n5).
@@ -922,6 +931,11 @@ export function buildSystemPrompt(opts: {
    * 미리보기·기억 쓰기·스킬·자동화 제안을 권하면 에이전트는 없는 도구를 찾아 헤맨다. 참이면 그 안내를 싣지 않는다.
    */
   readOnly?: boolean;
+  /**
+   * 이 턴이 내장 스킬(`harkroom-*`)을 읽을 수 있는가(S P3, `adapters` readsBuiltinSkills). 옮긴 절차를 포인터로 줄일지 그대로
+   * 실을지를 가른다(`skillOrInline`). 모르면(옛 호출부) 거짓 — 그대로 싣는다.
+   */
+  skillsReadable?: boolean;
 }): string {
   const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api, secretCreate, permissions, laneModel, readOnly = false } = opts;
   const budgetMinutes = turnBudgetMs === undefined ? null : Math.floor(turnBudgetMs / 60_000);
