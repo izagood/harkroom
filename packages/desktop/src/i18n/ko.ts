@@ -2082,6 +2082,7 @@ export const ko = {
   'artifact.zoom.fit390': '폰 390px 폭에 맞춤',
   'artifact.zoom.fitted': '{width}px 폭에 맞춤',
   'artifact.zoom.viewWidth': '보는 폭 {width}px',
+  'artifact.zoom.pinchHint': '미리보기 배율 — 트랙패드 핀치로도 조절',
   'message.attachment.goToMessage': '글로 가기',
   'message.attachment.galleryAnnounce': '{total}장 중 {index}번째, 보낸 사람 {sender}',
   'message.attachment.loadFailedLong': '그림을 불러오지 못했다',

@@ -1487,6 +1487,7 @@ dependencies = [
 name = "harkroom-desktop"
 version = "0.4.299"
 dependencies = [
+ "block2",
  "keyring",
  "libc",
  "mac-notification-sys",
