@@ -2,7 +2,7 @@ import type {
   AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView,
-  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
+  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, type AvatarCrop, type AvatarSourceMeta, type GrantRow, type Capability, type Role, type ApiConnectorView, type ApiGrantLimits, type ApiMethod } from '@harkroom/shared';
 import type { MemoryAudit, MemoryBatchResult, MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
@@ -937,6 +937,26 @@ export class ApiClient {
   /** 초대 토큰을 발급한다 — admin 전용. 토큰은 생성 직후 한 번만 볼 수 있다. */
   createInvite(): Promise<string> {
     return (this.req<{ token: string }>('POST', '/invites')).then((r) => r.token);
+  }
+  /** 초대 메일을 보낸다(서버 0.4.278~). 메일이 나가면 응답에 토큰이 없다. 메일이 꺼진 서버는 409 `mail_disabled`. */
+  sendInvite(email: string, locale: 'ko' | 'en'): Promise<InviteCreated> {
+    return this.req<InviteCreated>('POST', '/invites', { email, locale });
+  }
+  /** 새 토큰으로 같은 주소에 다시 보낸다(앞 초대는 서버가 취소한다). */
+  resendInvite(id: string, locale: 'ko' | 'en'): Promise<InviteCreated> {
+    return this.req<InviteCreated>('POST', `/invites/${encodeURIComponent(id)}/resend`, { locale });
+  }
+  /** 낸 초대 목록(서버 0.4.276~). 토큰·해시는 오지 않는다. */
+  async invites(): Promise<InviteView[]> {
+    return (await this.req<{ invites: InviteView[] }>('GET', '/invites')).invites;
+  }
+  revokeInvite(id: string): Promise<void> {
+    return this.req('DELETE', `/invites/${encodeURIComponent(id)}`);
+  }
+  /** 서버가 초대 메일을 보낼 수 있는가(`/healthz` 의 `mail`). 이 칸이 없는 옛 서버는 `off` 다. */
+  async inviteMailStatus(): Promise<'on' | 'off'> {
+    const health = await this.req<Partial<ServerHealth>>('GET', '/healthz');
+    return health.mail === 'on' ? 'on' : 'off';
   }
 
   // --- 오퍼레이터·배정(스펙 2026-09-20 §3) ---------------------------------------------

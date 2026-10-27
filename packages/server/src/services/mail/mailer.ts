@@ -48,7 +48,7 @@ export function loadMailConfig(env: NodeJS.ProcessEnv = process.env): MailConfig
   const set = (n: string) => (env[n] ?? '').trim() !== '';
   if (!MAIL_INTENT.some(set)) return null;
   const missing = REQUIRED.filter((n) => !set(n));
-  if (missing.length) throw new Error(`mail: ${missing.join(', ')} is missing (set ${REQUIRED.join(', ')} to send invite mail, or none of HARKROOM_SMTP_*/HARKROOM_MAIL_FROM/HARKROOM_PUBLIC_URL)`);
+  if (missing.length) throw new Error(`mail: ${missing.join(', ')} is missing (set ${REQUIRED.join(', ')} to send invite mail, or none of HARKROOM_SMTP_*/HARKROOM_MAIL_FROM)`);
   if (set('HARKROOM_SMTP_USER') !== set('HARKROOM_SMTP_PASSWORD')) {
     throw new Error('mail: set both HARKROOM_SMTP_USER and HARKROOM_SMTP_PASSWORD, or neither');
   }

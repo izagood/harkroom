@@ -1,16 +1,19 @@
 {
   "DELETE /accounts/:p/password-reset-code": "0.4.122",
   "DELETE /channel-sections/:p": "0.4.140",
+  "DELETE /invites/:p": "0.4.276",
   "DELETE /mandates/:p/lines/:p": "0.4.200",
   "GET /accounts/login-ids": "0.4.184",
   "GET /agents/:p/merge-accounts": "0.4.170",
   "GET /auth/password-reset-notices": "0.4.122",
+  "GET /invites": "0.4.276",
   "PATCH /channel-sections/:p": "0.4.140",
   "POST /accounts/:p/password-reset-code": "0.4.122",
   "POST /agents/:p/permission-requests/:p/approve-once": "0.4.30",
   "POST /auth/password-reset": "0.4.122",
   "POST /auth/password-reset-notices/ack": "0.4.122",
   "POST /channel-sections": "0.4.140",
+  "POST /invites/:p/resend": "0.4.278",
   "POST /secrets/:p/grants/:p/reapprove": "0.4.202",
   "PUT /channel-sections/order": "0.4.140"
 }
