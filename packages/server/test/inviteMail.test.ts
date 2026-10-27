@@ -5,7 +5,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin } from './helpers/fixtures.js';
 import type { MailMessage } from '../src/services/mail/mailer.js';
-import { loadMailConfig } from '../src/services/mail/mailer.js';
+import { loadMailConfig, mailErrorSummary } from '../src/services/mail/mailer.js';
 
 // 149: 초대 메일. 진짜 SMTP 대신 보낸 것을 모아 두는 가짜 전송부를 꽂는다.
 const sent: MailMessage[] = [];
@@ -131,6 +131,62 @@ describe('초대 메일', () => {
     expect(JSON.stringify(rows.rows)).not.toContain('secretname');
   });
 
+  it('취소됐거나 다른 초대로 바뀐 초대는 다시 보낼 수 없다(409 invite_revoked)', async () => {
+    const a = (await invite({ email: 'replaced@example.com' })).json();
+    await pool.query(`update invite set last_sent_at = now() - interval '2 minutes' where id = $1`, [a.id]);
+    const b = await app.inject({ method: 'POST', url: `/invites/${a.id}/resend`, headers: auth(adminToken), payload: {} });
+    expect(b.statusCode).toBe(201);
+    const again = await app.inject({ method: 'POST', url: `/invites/${a.id}/resend`, headers: auth(adminToken), payload: {} });
+    expect(again.statusCode).toBe(409);
+    expect(again.json().error.code).toBe('invite_revoked');
+    const live = await pool.query(
+      `select count(*)::int as n from invite where email = 'replaced@example.com' and revoked_at is null and used_by is null`,
+    );
+    expect(live.rows[0].n).toBe(1);
+
+    const c = (await invite({ email: 'pulled@example.com' })).json();
+    await app.inject({ method: 'DELETE', url: `/invites/${c.id}`, headers: auth(adminToken) });
+    await pool.query(`update invite set last_sent_at = now() - interval '2 minutes' where id = $1`, [c.id]);
+    const pulled = await app.inject({ method: 'POST', url: `/invites/${c.id}/resend`, headers: auth(adminToken), payload: {} });
+    expect(pulled.statusCode).toBe(409);
+    expect(pulled.json().error.code).toBe('invite_revoked');
+  });
+
+  it('만료된 초대는 다시 보낼 수 있다', async () => {
+    const a = (await invite({ email: 'late@example.com' })).json();
+    await pool.query(
+      `update invite set expires_at = now() - interval '1 second', last_sent_at = now() - interval '2 minutes' where id = $1`, [a.id],
+    );
+    const res = await app.inject({ method: 'POST', url: `/invites/${a.id}/resend`, headers: auth(adminToken), payload: {} });
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('두 번 빠르게 눌러도 다시 보내기는 한 번만 된다', async () => {
+    const a = (await invite({ email: 'double@example.com' })).json();
+    await pool.query(`update invite set last_sent_at = now() - interval '2 minutes' where id = $1`, [a.id]);
+    sent.length = 0;
+    const hit = () => app.inject({ method: 'POST', url: `/invites/${a.id}/resend`, headers: auth(adminToken), payload: {} });
+    const codes = (await Promise.all([hit(), hit(), hit()])).map((r) => r.statusCode).sort();
+    expect(codes).toEqual([201, 409, 409]);
+    expect(sent).toHaveLength(1);
+    const live = await pool.query(
+      `select count(*)::int as n from invite where email = 'double@example.com' and revoked_at is null and used_by is null`,
+    );
+    expect(live.rows[0].n).toBe(1);
+  });
+
+  it('시간당 상한은 동시 요청으로도 넘지 않는다', async () => {
+    await pool.query(
+      `insert into invite (token_hash, created_by, email, mail_status, last_sent_at)
+       select 'race-' || g, (select id from account where handle = 'admin'), 'race@example.com', 'sent', now()
+         from generate_series(1, 30 - (select count(*)::int from invite
+           where created_by = (select id from account where handle = 'admin') and last_sent_at > now() - interval '1 hour') - 1) g`,
+    );
+    const codes = (await Promise.all([1, 2, 3, 4].map((i) => invite({ email: `r${i}@example.com` })))).map((r) => r.statusCode).sort();
+    expect(codes).toEqual([201, 429, 429, 429]);
+    await pool.query(`delete from invite where token_hash like 'race-%' or email like 'r_@example.com'`);
+  });
+
   it('한 시간 상한을 넘으면 429', async () => {
     await pool.query(
       `insert into invite (token_hash, created_by, email, mail_status, last_sent_at)
@@ -173,8 +229,26 @@ describe('loadMailConfig', () => {
   it('사용자·비밀번호는 둘 다 또는 둘 다 없이', () => {
     expect(() => loadMailConfig({ ...full, HARKROOM_SMTP_PASSWORD: '' })).toThrow(/both/);
   });
+  it('공개 주소는 https 여야 한다(localhost 만 http 허락)', () => {
+    expect(() => loadMailConfig({ ...full, HARKROOM_PUBLIC_URL: 'http://ws.example.com' })).toThrow(/https/);
+    expect(loadMailConfig({ ...full, HARKROOM_PUBLIC_URL: 'http://localhost:3400' })?.publicUrl).toBe('http://localhost:3400');
+    expect(loadMailConfig({ ...full, HARKROOM_PUBLIC_URL: 'http://127.0.0.1:3400' })).not.toBeNull();
+  });
   it('잘못된 포트·주소는 멈춘다', () => {
     expect(() => loadMailConfig({ ...full, HARKROOM_SMTP_PORT: 'abc' })).toThrow(/port/);
     expect(() => loadMailConfig({ ...full, HARKROOM_PUBLIC_URL: 'ftp://x.example.com' })).toThrow(/http/);
+  });
+});
+
+describe('mailErrorSummary', () => {
+  it('SMTP 응답 글(받는 주소가 섞인)은 버리고 코드만 남긴다', () => {
+    const err = Object.assign(new Error('550 <someone@example.com> mailbox unavailable'), {
+      code: 'EENVELOPE', responseCode: 550, command: 'RCPT TO', response: '550 <someone@example.com> mailbox unavailable',
+    });
+    const out = mailErrorSummary(err);
+    expect(out).toEqual({ code: 'EENVELOPE', responseCode: 550, command: 'RCPT TO' });
+    expect(JSON.stringify(out)).not.toContain('example.com');
+    expect(mailErrorSummary(new Error('x'))).toEqual({ code: null, responseCode: null, command: null });
+    expect(mailErrorSummary(undefined)).toEqual({ code: null, responseCode: null, command: null });
   });
 });

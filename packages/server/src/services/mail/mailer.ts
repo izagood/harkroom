@@ -29,6 +29,8 @@ export interface Mailer {
   publicUrl: string;
 }
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 const REQUIRED = ['HARKROOM_SMTP_HOST', 'HARKROOM_MAIL_FROM', 'HARKROOM_PUBLIC_URL'] as const;
 const ALL = [...REQUIRED, 'HARKROOM_SMTP_PORT', 'HARKROOM_SMTP_USER', 'HARKROOM_SMTP_PASSWORD'] as const;
 
@@ -51,6 +53,10 @@ export function loadMailConfig(env: NodeJS.ProcessEnv = process.env): MailConfig
   let parsed: URL;
   try { parsed = new URL(publicUrl); } catch { throw new Error('mail: HARKROOM_PUBLIC_URL is not a URL'); }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error('mail: HARKROOM_PUBLIC_URL must be http(s)');
+  // 토큰이 든 안내 링크가 평문 주소가 되지 않게 한다(security n4). 제 기계에서 시험할 때만 http 를 허락한다.
+  if (parsed.protocol === 'http:' && !LOOPBACK_HOSTS.has(parsed.hostname)) {
+    throw new Error('mail: HARKROOM_PUBLIC_URL must be https (http is allowed only for localhost)');
+  }
   if (parsed.search || parsed.hash) throw new Error('mail: HARKROOM_PUBLIC_URL must not have a query or fragment');
   return {
     host: env.HARKROOM_SMTP_HOST!.trim(),
@@ -82,5 +88,18 @@ export function createSmtpTransport(cfg: MailConfig, opts: { timeoutMs?: number 
     async send(msg) {
       await t.sendMail({ from: cfg.from, to: msg.to, subject: msg.subject, text: msg.text });
     },
+  };
+}
+
+/**
+ * 발송 실패를 로그에 남길 꼴. **오류 코드만** 고른다 — nodemailer 의 `message`·`response` 에는 SMTP 서버가 돌려준
+ * 글이 그대로 들어가고, 그 글에는 받는 사람 주소가 섞여 있곤 하다(`550 <someone@…> mailbox unavailable`).
+ */
+export function mailErrorSummary(err: unknown): { code: string | null; responseCode: number | null; command: string | null } {
+  const e = (err ?? {}) as { code?: unknown; responseCode?: unknown; command?: unknown };
+  return {
+    code: typeof e.code === 'string' ? e.code : null,
+    responseCode: typeof e.responseCode === 'number' ? e.responseCode : null,
+    command: typeof e.command === 'string' && /^[A-Z ]{1,16}$/.test(e.command) ? e.command : null,
   };
 }
