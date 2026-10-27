@@ -868,6 +868,10 @@ describe('buildSystemPrompt', () => {
   it('기다릴 것이 있으면 turn.wake 로 예약하라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] }, turnBudgetMs: 30 * 60_000 });
     expect(s).toContain('turn.wake');
+    // f4: 서버 가이드 턴 판본에서 예약 절을 뺐으므로 거기에만 있던 한도·접힘이 여기 있어야 한다.
+    expect(s).toContain('하한 60초');
+    expect(s).toContain('연속 20회');
+    expect(s).toContain('예약은 접힌다');
   });
 
   /**
