@@ -34,7 +34,7 @@ export const ACTIONS = [
 /** 시험이 도는 곳. `browser` 는 데스크톱 웹뷰를 브라우저로 띄운 **대체 결과**다 — 실물(Tauri 앱)이 아니다. */
 export const RUNNERS = ['api', 'browser', 'mobile', 'harness', 'manual'] as const;
 /** 지금 있는 시험의 종류(출처를 적는 칸). */
-export const EXISTING_KINDS = ['server-vitest', 'desktop-vitest', 'mobile-integration', 'testbed-harness'] as const;
+export const EXISTING_KINDS = ['server-vitest', 'desktop-vitest', 'browser-playwright', 'mobile-integration', 'testbed-harness'] as const;
 
 export type Role = typeof ROLES[number];
 export type Device = typeof DEVICES[number];

@@ -65,6 +65,49 @@ jobs:
 
       - run: pnpm test
 
+  # 브라우저 화면 러너(packages/e2e/web) — 결과는 「대체(브라우저)」다. Tauri 앱 실물이 아니다.
+  # 매 회 새 서버를 **이 커밋으로 구워** 띄운다(ghcr latest 가 아니다 — 고친 서버를 같은 PR 에서 본다).
+  # 시드 비밀번호는 seed.ts 가 회차마다 만드는 난수라 secrets 가 필요 없다. 끝나면 서버·볼륨을 지운다.
+  e2e-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 시험 서버를 이 커밋으로 굽고 띄운다
+        run: docker compose -p e2e up -d --build --wait
+        env:
+          HARKROOM_COMMIT: ${{ github.sha }}
+
+      - run: pnpm --filter @harkroom/desktop exec vite build
+
+      - run: pnpm --filter @harkroom/e2e exec playwright install --with-deps chromium
+
+      - run: pnpm --filter @harkroom/e2e e2e:web
+        env:
+          E2E_SERVER: http://127.0.0.1:3400
+
+      - name: 실패하면 서버 로그
+        if: failure()
+        run: docker compose -p e2e logs --no-color server | tail -200
+
+      - name: 시험 서버를 지운다
+        if: always()
+        run: docker compose -p e2e down -v
+
 
   macos-build:
     # ## 왜 이 잡이 있는가 — `cargo check` 도 `pnpm test` 도 못 잡는 것이 있다

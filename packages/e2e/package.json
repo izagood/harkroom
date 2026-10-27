@@ -3,12 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/stories.ts" },
-  "scripts": { "test": "vitest run", "typecheck": "tsc -p ." },
+  "exports": {
+    ".": "./src/stories.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p .",
+    "e2e:web": "playwright test -c web/playwright.config.ts"
+  },
   "dependencies": {
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
