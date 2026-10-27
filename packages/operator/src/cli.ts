@@ -17,6 +17,7 @@ import { readFile } from 'node:fs/promises';
 import { hostname as osHostname, homedir } from 'node:os';
 import { join } from 'node:path';
 import { daemonEndpointPaths } from '@harkroom/shared/daemonEndpoint';
+import { SOCKET_PATH_LIMIT_BYTES } from '@harkroom/shared/operatorRoots';
 import type { OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 import type { DaemonArgs } from './args.js';
 import { communityKey, readConfig, writeConfig } from './config.js';
@@ -97,7 +98,7 @@ export function defaultDataDir(platform: NodeJS.Platform, env: NodeJS.ProcessEnv
  * 그 뒤의 `link` 가 `ENOENT` 로 죽는데, 그 두 이름만으로는 원인을 알 수 없다(실측 2026-09-21:
  * 긴 임시 디렉터리를 `HARKROOM_DATA_DIR` 로 줬다가 `ENOENT … link` 만 보았다). 여기서 먼저 말한다.
  */
-export const MAX_SOCKET_PATH_BYTES = 100;
+export const MAX_SOCKET_PATH_BYTES = SOCKET_PATH_LIMIT_BYTES;
 
 /** `run` 의 daemon 인자. `launchNonce` 는 없다 — 그것은 "내가 방금 띄운 것인가"를 앱이 가리는 값이다. */
 export function runArgs(dataDir: string, entryPath: string, appVersion?: string): DaemonArgs {

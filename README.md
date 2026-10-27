@@ -270,6 +270,7 @@ The operator normally gets its paths from the desktop app. Run headless, it read
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
 | `HARKROOM_DATA_DIR` | Data directory shared with the desktop app (socket, `operator/operator.json`, tokens, per-agent MCP config) | `~/Library/Application Support/app.harkroom.desktop` (macOS), `$XDG_DATA_HOME/app.harkroom.desktop` (Linux), `%APPDATA%\app.harkroom.desktop` (Windows) | No |
+| `HARKROOM_OPERATOR_PER_COMMUNITY` | `1` turns on one operator per community (isolation plan C): each community gets its own root `~/.harkroom-agent/c/<8-char hash of the server URL>/` listed in `operators.json` under the data directory. Anything else keeps today's single operator | unset (off) | No |
 | `HARKROOM_OPERATOR_VERSION` | Version stamped into the pid record and passed to runners as `AGENT_VERSION` when started headless | - | No |
 | `HARKROOM_MAX_TURNS` | Maximum number of turns running at once across **all** runners of this operator. When full, new mentions stay unread in the inbox and start once a turn finishes. `0` or unset means no limit. Background agent turns (`HARKROOM_BACKGROUND_ENABLED`) always leave one slot free for mention turns, so with `1` they never run. Read by the operator at startup | - (no limit) | No |
 | `XDG_DATA_HOME` / `APPDATA` | Read only to compute the default data directory | platform default | No |
