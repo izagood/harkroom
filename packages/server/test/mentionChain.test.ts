@@ -377,6 +377,63 @@ describe('턴의 원인(x-harkroom-cause)', () => {
     expect((await metaOf((out.message as { id: string }).id)).mentionChainCapped).toEqual(['eve']);
   });
 
+  /**
+   * **카드 답은 사람의 손길이다**(2026-10-27, #rcms). 카드 답의 깨움은 inbox 를 에이전트가 쓴 물음에 건다 — 작성자만 보면
+   * 에이전트 글이라, 사람이 카드로 승인해도 깊이가 저장값 + 1 로 이어져 상한이 풀리지 않았다.
+   */
+  async function askIn(pat: string, root: string, to?: string): Promise<string> {
+    const client = new Client({ name: 'test', version: '0.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl), { requestInit: { headers: auth(pat) } }));
+    try {
+      const res = await client.callTool({
+        name: 'message.ask',
+        arguments: {
+          channelId, threadRootId: root, body: '어느 쪽으로 갈까', ...(to ? { to } : {}),
+          options: [{ id: 'go', label: '진행' }, { id: 'stop', label: '멈춤' }],
+        },
+      });
+      return (JSON.parse((res.content as { type: string; text: string }[])[0]!.text) as { message: { id: string } }).message.id;
+    } finally {
+      await client.close();
+    }
+  }
+
+  async function answer(token: string, askId: string, path: 'ask-answer' | 'ask-close' = 'ask-answer'): Promise<void> {
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages/${askId}/${path}`, headers: auth(token),
+      ...(path === 'ask-answer' ? { payload: { optionId: 'go' } } : {}),
+    });
+    expect(res.statusCode).toBe(200);
+  }
+
+  it('사람이 카드에 답해 깨운 턴은 깊이 1 로 시작한다 — 글을 따로 쓰지 않아도 사슬이 풀린다', async () => {
+    const root = await deepThread('카드 답');
+    const ask = await askIn(agents.ada!.pat, root);
+    await answer(adminToken, ask);
+    expect(await inboxFor(agents.ada!.pat, ask)).toContain('ask_answered');
+    const out = await postVia(agents.ada!.pat, ask, { channelId, threadRootId: root, body: '@bob 승인 받았다, 이어서' });
+    expect(out).not.toHaveProperty('warnings');
+    expect(await inboxFor(agents.bob!.pat, (out.message as { id: string }).id)).toEqual(['mention']);
+  });
+
+  it('사람이 카드를 닫아 깨운 턴도 깊이 1 이다', async () => {
+    const root = await deepThread('카드 닫힘');
+    const ask = await askIn(agents.ada!.pat, root);
+    await answer(adminToken, ask, 'ask-close');
+    expect(await inboxFor(agents.ada!.pat, ask)).toContain('ask_closed');
+    const out = await postVia(agents.ada!.pat, ask, { channelId, threadRootId: root, body: '@bob 접고 다른 길로' });
+    expect(out).not.toHaveProperty('warnings');
+  });
+
+  it('에이전트가 답한 카드는 사람의 손길이 아니다 — 카드로 사슬을 되돌리는 우회로가 아니다', async () => {
+    const root = await deepThread('에이전트 답');
+    const ask = await askIn(agents.ada!.pat, root, '@eve');
+    await answer(agents.eve!.pat, ask);
+    expect(await inboxFor(agents.ada!.pat, ask)).toContain('ask_answered');
+    const out = await postVia(agents.ada!.pat, ask, { channelId, threadRootId: root, body: '@bob 다시 부탁' });
+    expect(out.warnings).toBeDefined();
+  });
+
   it('형식이 틀린 원인은 무시하고 옛 셈으로 간다', async () => {
     const root = await post(adminToken, '@ada 형식');
     const out = await postVia(agents.ada!.pat, 'not-a-uuid', { channelId, threadRootId: root, body: '@bob 확인' });
