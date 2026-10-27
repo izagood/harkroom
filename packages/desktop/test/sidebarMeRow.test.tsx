@@ -90,7 +90,7 @@ beforeEach(() => {
   resetCommunityRegistry();
   useAppStore.getState().reset();
   useAppStore.getState().set({
-    me: { ...acc('u1', 'alice'), isAdmin: true },
+    me: acc('u1', 'alice', 'human', true),
     accounts: { u1: acc('u1', 'alice'), u2: acc('u2', 'nari') },
     channels: [chan('c1', 'general')],
     dms: [],
@@ -161,7 +161,7 @@ describe('A1 · 내 자리가 얼굴을 갖고 눌린다', () => {
     // 정상에서 사라졌다고 해서 비정상에서도 사라지면 상태를 아예 말하지 못하게 된다.
     fakeController();
     useAppStore.getState().set({
-      me: { ...acc('u1', 'alice'), isAdmin: true, status: 'away', statusText: '점심' },
+      me: { ...acc('u1', 'alice', 'human', true), status: 'away', statusText: '점심' },
     });
     mount();
 
