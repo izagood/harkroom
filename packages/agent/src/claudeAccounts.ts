@@ -34,6 +34,7 @@ import {
 
 import { isCredentialFailure, isExecutableNotFound, isQuotaExhausted } from './policy.js';
 import { PromptNotDeliveredError } from './pty.js';
+import { claudePoolsFilePath } from '@harkroom/shared/operatorRoots';
 
 /**
  * 계정 이름 문법. `config.ts::INSTANCE_PATTERN` 과 **같은 값**이고 같은 이유다 — 이 이름이
@@ -277,7 +278,8 @@ export async function withAccountFailover<T>(
  * 풀 디렉터리와 이름이 겹칠 수 없다.
  */
 function poolsConfigPath(root: string): string {
-  return join(root, 'pools.json');
+  // 커뮤니티마다 오퍼레이터 모드면 커뮤니티 뿌리 아래다 — 오퍼레이터와 같은 함수(`@harkroom/shared/operatorRoots`).
+  return claudePoolsFilePath(root, process.env);
 }
 
 /**

@@ -52,6 +52,7 @@ import type { ProviderAccountUsage, ProviderUsageRequest, ProviderUsageSnapshot 
 import { claudeCliUsage, type RunCommand } from './cliUsage.js';
 import { fetchClaudeProviderUsage, type ClaudeOAuthToken, type FetchLike } from './providerUsage.js';
 import { cliThenApi, createUsageCache } from './usageChain.js';
+import { claudePoolsFilePath } from '@harkroom/shared/operatorRoots';
 
 /**
  * `claude auth status --json` 이 주는 것 중 **UI 가 쓰는 것만**. 비밀값은 이 출력에 없다
@@ -215,8 +216,9 @@ function under(root: string, ...names: string[]): string {
   return target;
 }
 
+/** 선택(`pools.json`)의 자리 — 커뮤니티마다 프로세스 모드면 커뮤니티 뿌리 아래(`@harkroom/shared/operatorRoots`). */
 function poolsConfigPath(root: string): string {
-  return join(root, 'pools.json');
+  return claudePoolsFilePath(root, process.env);
 }
 
 /** 하위 디렉터리 이름(사전순). 심볼릭 링크를 따라간다 — 러너의 판정과 같은 규율. */
