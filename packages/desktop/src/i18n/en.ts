@@ -5709,7 +5709,6 @@ export const en = {
   'members.cap.adminOnly': 'Only admins can see other people’s permissions',
   'members.cap.loadFailed': 'Couldn’t load permissions',
   'members.save.failed': 'Couldn’t change it — {reason}. Restored the previous value.',
-  'members.save.failedPartial': 'Couldn’t change it — {reason}. Some revoked permissions couldn’t be restored; check the permissions below.',
   'members.promote.title': 'Make @{handle} an admin?',
   'members.promote.body': 'An admin can do almost everything in this community — create and manage agents, channels and teams, invite members, issue password reset codes, and grant permissions to other members.',
   'members.promote.memberInstead': 'To let them create agents only, keep the member role and turn on “Create agents”.',

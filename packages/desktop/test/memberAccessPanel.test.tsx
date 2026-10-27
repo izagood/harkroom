@@ -24,7 +24,7 @@ function fakeController(grants: { capability: string; scope: string }[] = []) {
     loginIds: vi.fn(async () => ({})),
     listGrants: vi.fn(async () => grants),
     putGrant: vi.fn(async () => []),
-    deleteGrant: vi.fn(async (_id: string, _cap: string, _scope: string): Promise<void> => undefined),
+    deleteGrant: vi.fn(async () => undefined),
     setRole: vi.fn(async (_id: string, role: string) => ({ role })),
   };
   setController(c as unknown as Controller);
@@ -119,43 +119,6 @@ describe('멤버와 초대 › 역할·권한 칸', () => {
     fireEvent.click(await screen.findByTestId('member-access-side-role-guest'));
     await waitFor(() => expect(c.setRole).toHaveBeenCalledWith('m1', 'guest'));
     expect(screen.queryByRole('dialog')).toBeNull();
-  });
-
-  it('guest 로 내리면 켜 둔 권한을 먼저 거두고 역할을 바꾼다 — 서버는 guest 의 grant 도 인정한다', async () => {
-    const c = fakeController([{ capability: 'agent.create', scope: '' }, { capability: 'team.create', scope: '' }, { capability: 'channel.manage', scope: 'channel:x' }]);
-    const order: string[] = [];
-    c.deleteGrant.mockImplementation(async (_id: string, cap: string) => { order.push(`del:${cap}`); });
-    c.setRole.mockImplementation(async (_id: string, role: string) => { order.push(`role:${role}`); return { role }; });
-    seed(owner);
-    render(<InviteSettings />);
-    fireEvent.click(screen.getByTestId('directory-row-m1'));
-    fireEvent.click(await screen.findByTestId('member-access-side-role-guest'));
-    await waitFor(() => expect(order).toEqual(['del:agent.create', 'del:team.create', 'role:guest']));
-    expect(c.putGrant).not.toHaveBeenCalled();
-  });
-
-  it('거두다 실패하면 거둔 것을 되돌리고 역할은 그대로 둔다', async () => {
-    const c = fakeController([{ capability: 'agent.create', scope: '' }, { capability: 'team.create', scope: '' }]);
-    c.deleteGrant.mockImplementation(async (_id: string, cap: string) => { if (cap === 'team.create') throw new Error('boom'); });
-    seed(owner);
-    render(<InviteSettings />);
-    fireEvent.click(screen.getByTestId('directory-row-m1'));
-    fireEvent.click(await screen.findByTestId('member-access-side-role-guest'));
-    await waitFor(() => expect(c.putGrant).toHaveBeenCalledWith('m1', { capability: 'agent.create', scope: '', expiresAt: null }));
-    expect(c.putGrant).toHaveBeenCalledTimes(1);
-    expect(c.setRole).not.toHaveBeenCalled();
-    expect(within(screen.getByTestId('member-access-side')).getByRole('alert').textContent).toContain('Couldn’t change it');
-  });
-
-  it('역할 바꾸기가 실패해도 거둔 권한을 되돌린다', async () => {
-    const c = fakeController([{ capability: 'agent.create', scope: '' }]);
-    c.setRole.mockRejectedValueOnce(new Error('boom'));
-    seed(owner);
-    render(<InviteSettings />);
-    fireEvent.click(screen.getByTestId('directory-row-m1'));
-    fireEvent.click(await screen.findByTestId('member-access-side-role-guest'));
-    await waitFor(() => expect(c.putGrant).toHaveBeenCalledWith('m1', { capability: 'agent.create', scope: '', expiresAt: null }));
-    expect(c.deleteGrant).toHaveBeenCalledWith('m1', 'agent.create', '');
   });
 
   it('admin 에게 admin 으로 올리는 칸은 잠기고, 그 까닭을 말한다', async () => {

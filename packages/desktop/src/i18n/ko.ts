@@ -3553,7 +3553,6 @@ export const ko = {
   'members.cap.adminOnly': '다른 사람의 권한은 admin 만 본다',
   'members.cap.loadFailed': '권한을 읽지 못했다',
   'members.save.failed': '바꾸지 못했다 — {reason}. 원래 값으로 돌렸다.',
-  'members.save.failedPartial': '바꾸지 못했다 — {reason}. 거둔 권한 일부를 되돌리지 못했다. 권한 칸을 확인한다.',
   'members.promote.title': '@{handle} 을(를) admin 으로 올릴까?',
   'members.promote.body': 'admin 은 이 커뮤니티의 거의 모든 일을 한다 — 에이전트·채널·팀 만들기와 관리, 멤버 초대, 비밀번호 재설정 코드 발급, 다른 member 에게 권한 주기.',
   'members.promote.memberInstead': '에이전트만 만들게 하려면 역할은 member 로 두고 「에이전트 만들기」만 켠다.',
