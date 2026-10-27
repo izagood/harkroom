@@ -43,6 +43,9 @@ failSigns:
   - "모바일에 옛 상태가 남음"
 existing:
   - kind: server-vitest
+    file: "packages/server/test/storyJourneys.test.ts"
+    note: "API 여정 러너가 이 여정을 그대로 돈다(화면 단계는 /auth/me capabilities 로 옮겨 보거나 건너뜀)"
+  - kind: server-vitest
     file: "packages/server/test/grantRoutes.test.ts"
     note: "grant 주기·거두기와 grant.changed 신호"
   - kind: desktop-vitest

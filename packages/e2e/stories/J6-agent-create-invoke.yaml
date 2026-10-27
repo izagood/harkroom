@@ -30,6 +30,6 @@ existing:
   - kind: testbed-harness
     ref: "#testbed qa-* 하네스 회차 E1~E13"
     note: "owner 시점의 멘션→러너→발화"
-runners: [api, harness, manual]
+runners: [harness, manual]
 gaps:
   - "러너·오퍼레이터는 Tauri 앱 안이라 브라우저 러너로는 못 본다(손 시험)"

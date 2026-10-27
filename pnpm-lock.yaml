@@ -225,6 +225,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@harkroom/e2e':
+        specifier: workspace:*
+        version: link:../e2e
       '@izagood/avcs':
         specifier: ^0.51.0
         version: 0.51.0(zod@3.25.76)
