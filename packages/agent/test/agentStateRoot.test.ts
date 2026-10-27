@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { agentStateBaseDir } from '@harkroom/shared/agentStateRoot';
+import { agentStateBaseDir, RESERVED_STATE_DIR_NAMES } from '@harkroom/shared/agentStateRoot';
+import { NAME_LINK_DIR, resolveAgentStateDir } from '../src/stateDir.js';
 import { loadConfig } from '../src/config.js';
 
 const DEF = '/Users/alice/.harkroom-agent';
@@ -34,5 +35,20 @@ describe('작업 폴더 뿌리(격리 C P4)', () => {
     const on = { ...base, HARKROOM_OPERATOR_PER_COMMUNITY: '1', HARKROOM_OPERATOR_ROOT: ROOT };
     expect(loadConfig(on as NodeJS.ProcessEnv).stateDir).toBe(join(ROOT, 'agents'));
     expect(loadConfig({ ...on, AGENT_STATE_DIR: '/tmp/x' } as NodeJS.ProcessEnv).stateDir).toBe('/tmp/x');
+  });
+});
+
+describe('상태 뿌리의 예약 이름(security #1641 n1)', () => {
+  it('커뮤니티 뿌리 c/ 와 이름 링크 by-name/ 이 예약돼 있다', () => {
+    expect(RESERVED_STATE_DIR_NAMES).toEqual(expect.arrayContaining(['c', NAME_LINK_DIR]));
+    expect(agentStateBaseDir(DEF, { HARKROOM_OPERATOR_PER_COMMUNITY: '1', HARKROOM_OPERATOR_ROOT: ROOT }).startsWith(join(DEF, 'c'))).toBe(true);
+  });
+
+  it('에이전트 디렉터리를 고를 때 예약 이름은 건너뛴다', () => {
+    // `by-name` 은 `-name` 으로 끝난다 — 예약 이름을 건너뛰지 않으면 id 가 `name` 인 에이전트가 링크 디렉터리를 집는다.
+    const p = resolveAgentStateDir(DEF, 'alice', 'name', undefined, ['c', 'by-name']);
+    expect(p.agentStateDir).toBe(join(DEF, 'name'));
+    const q = resolveAgentStateDir(DEF, 'alice', 'agent-1', undefined, ['c', 'by-name', 'agent-1']);
+    expect(q.agentStateDir).toBe(join(DEF, 'agent-1'));
   });
 });

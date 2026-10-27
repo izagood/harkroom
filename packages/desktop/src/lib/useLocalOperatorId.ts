@@ -28,7 +28,7 @@ export function useLocalOperatorId(): string | null | 'unknown' {
       // 레지스트리에 주소가 아직 없을 때(기동 직후 엔트리)만 컨트롤러 값으로 물러선다.
       const baseUrl = activeKey.slice(activeKey.indexOf('|') + 1) || getController().api?.baseUrl || null;
       if (!baseUrl) { setId(null); return; }
-      void listLocalAgents().then((r) => {
+      void listLocalAgents(baseUrl).then((r) => {
         if (!live) return;
         const c = r.communities.find((x) => x.baseUrl === baseUrl);
         setId(c?.registered && c.operatorId ? c.operatorId : null);

@@ -1,5 +1,6 @@
 import { lstat, mkdir, readdir, readlink, rm, symlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { RESERVED_STATE_DIR_NAMES } from '@harkroom/shared/agentStateRoot';
 
 /**
  * 러너 상태 디렉터리를 정한다(#167).
@@ -96,7 +97,8 @@ export function resolveAgentStateDir(
   // 같은 id 를 가리키는 이름이 여럿일 수는 없다 — id 가 UUID 라 한 에이전트당 한 자리다.
   // 그래도 `find` 로 첫 것을 쓰는 편이 안전하다(수동으로 만든 디렉터리까지 막지 않는다).
   // `n === id` 가 지금 모양이고 `-${id}` 로 끝나는 쪽이 옛 `<handle>-<id>` 다.
-  const adopted = existingNames?.find((n) => n === id || n.endsWith(`-${id}`));
+  // 예약 이름(`c/`·`by-name/`)은 에이전트 디렉터리가 아니다 — 고르지 않는다(`@harkroom/shared/agentStateRoot`).
+  const adopted = existingNames?.find((n) => !RESERVED_STATE_DIR_NAMES.includes(n) && (n === id || n.endsWith(`-${id}`)));
   const handleId = adopted ?? id;
   const agentStateDir = instance
     ? join(baseDir, handleId, instance)

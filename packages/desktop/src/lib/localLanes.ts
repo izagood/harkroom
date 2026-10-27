@@ -46,7 +46,7 @@ function refresh() {
   const base = currentBase();
   if (!base) { if (snapshot !== EMPTY) publish(EMPTY, null); return; }
   const gen = ++generation;
-  void listLocalAgents().then((r) => {
+  void listLocalAgents(base).then((r) => {
     if (gen !== generation) return;
     const agents = r.communities.find((c) => c.baseUrl === base)?.agents ?? {};
     const next = new Map<string, LocalLane>();
@@ -76,7 +76,12 @@ function subscribe(cb: () => void): () => void {
 
 function getSnapshot(): Snapshot {
   // 커뮤니티를 바꾸면 다음 읽기 전까지 옛 커뮤니티의 사실을 보이지 않는다.
-  return snapshotBase !== null && snapshotBase !== currentBase() ? EMPTY : snapshot;
+  if (snapshotBase !== null && snapshotBase !== currentBase()) {
+    // 전환 뒤 첫 읽기 — 새 커뮤니티 값을 곧바로 다시 읽는다(30초 주기를 기다리지 않게, security #1640 n2).
+    queueMicrotask(refresh);
+    return EMPTY;
+  }
+  return snapshot;
 }
 
 /** 이 맥에서 API 키로 도는 에이전트 표(id → 마지막 키 받기 결과). Tauri 표면이 없으면 늘 비어 있다. */

@@ -98,16 +98,17 @@ export async function removeLocalMcpServer(name: string): Promise<void> {
  * 원격 MCP 의 OAuth(2026-09-30). 토큰은 오퍼레이터가 들고 러너를 띄울 때 헤더로 굽는다 — 계정 풀의
  * 어느 계정으로 돌든 같은 토큰이다. 앱은 인가 url 을 받아 브라우저로 열고 상태를 물을 뿐, 토큰은 보지 않는다.
  */
-export function startLocalMcpAuth(name: string): Promise<OperatorMcpAuthStartResult> {
-  return call('operator_mcp_auth', { action: 'start', name }) as Promise<OperatorMcpAuthStartResult>;
+/** `community` 를 주면 그 커뮤니티의 오퍼레이터에 묻는다 — 흐름을 시작한 커뮤니티로 끝까지 묻게(security #1640 n1). */
+export function startLocalMcpAuth(name: string, community?: string | null): Promise<OperatorMcpAuthStartResult> {
+  return call('operator_mcp_auth', { action: 'start', name, ...(community ? { community } : {}) }) as Promise<OperatorMcpAuthStartResult>;
 }
 
-export function localMcpAuthStatus(name: string): Promise<OperatorMcpAuthState> {
-  return call('operator_mcp_auth', { action: 'status', name }) as Promise<OperatorMcpAuthState>;
+export function localMcpAuthStatus(name: string, community?: string | null): Promise<OperatorMcpAuthState> {
+  return call('operator_mcp_auth', { action: 'status', name, ...(community ? { community } : {}) }) as Promise<OperatorMcpAuthState>;
 }
 
-export async function forgetLocalMcpAuth(name: string): Promise<void> {
-  await call('operator_mcp_auth', { action: 'forget', name });
+export async function forgetLocalMcpAuth(name: string, community?: string | null): Promise<void> {
+  await call('operator_mcp_auth', { action: 'forget', name, ...(community ? { community } : {}) });
 }
 
 /**
