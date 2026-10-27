@@ -805,7 +805,7 @@ describe('buildSystemPrompt', () => {
   it('지난 대화를 찾을 때는 message.read 로 넘겨 읽지 말고 message.search 를 범위·거르기와 함께 쓰라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
     expect(s).toContain('`message.search`: 지난 대화에서 무엇이 어디 있었는지 찾을 때');
-    for (const arg of ['`channelId`', '`threadRootId`', '`authorIds`', '`after`', '`before`', '`hasAttachment`', '`offset`']) {
+    for (const arg of ['`channelId`', '`threadRootId`', '`authorIds`(계정 id, `account.list`)', '`after`', '`before`', '`hasAttachment`', '`offset`']) {
       expect(s).toContain(arg);
     }
   });

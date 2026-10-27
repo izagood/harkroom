@@ -45,6 +45,18 @@ describe('기능 카탈로그 (2026-10-27 c1)', () => {
     }
   });
 
+  // security F1: 옛 만들기 절의 금지(MCP 인자·파일 포함)가 옮긴 뒤에도 받기만 한 에이전트에게 간다.
+  it('비밀 쓰기 안내는 값을 MCP 인자·메시지·기억·파일·커밋에 쓰지 말라고 한다 — 만들기 권한과 무관하다', () => {
+    expect(buildSystemPrompt(base)).toContain('값을 출력·복사하거나 MCP 인자·메시지·기억·파일·커밋에 쓰지 않는다');
+  });
+
+  // security n1: 무엇을 보드에 걸지는 앱이 말하지 않는다(설계 원칙 2, #1606 문구).
+  it('workitem 항목은 걸 대상의 예시를 들지 않는다', () => {
+    const w = FEATURE_CATALOG.find((e) => e.id === 'workitem')!.lines.join('\n');
+    expect(w).toContain('밖의 시스템 항목');
+    expect(w).not.toMatch(/PR|이슈|intent/);
+  });
+
   it('비밀 만들기 안내는 권한이 있는 일반 턴에만 실린다', () => {
     expect(buildSystemPrompt({ ...base, secretCreate: true })).toContain('`secret.generate`');
     expect(buildSystemPrompt(base)).not.toContain('secret.generate');

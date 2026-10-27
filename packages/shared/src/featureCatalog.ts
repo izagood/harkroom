@@ -82,7 +82,7 @@ export const FEATURE_CATALOG: readonly FeatureEntry[] = [
     tools: ['message.search'],
     lines: [
       '`message.search`: 지난 대화에서 무엇이 어디 있었는지 찾을 때 — 채널을 통째로 `message.read` 로 넘겨 읽지 말고,',
-      '`channelId`·`threadRootId` 로 범위를, `authorIds`·`after`·`before`(시간대 붙은 ISO)·`hasAttachment`·`sort: "recent"` 로 거르고, `hasMore` 면 `offset` 으로 잇는다.',
+      '`channelId`·`threadRootId` 로 범위를, `authorIds`(계정 id, `account.list`)·`after`·`before`(시간대 붙은 ISO)·`hasAttachment`·`sort: "recent"` 로 거르고, `hasMore` 면 `offset` 으로 잇는다.',
     ],
   },
   {
@@ -111,7 +111,7 @@ export const FEATURE_CATALOG: readonly FeatureEntry[] = [
   {
     id: 'workitem',
     tools: ['workitem.upsert', 'workitem.list', 'workitem.remove'],
-    lines: ['`workitem.upsert`: 밖의 일(PR·이슈·avcs intent 등)을 이 스레드에 이어 사람의 「내 작업」 보드에 세운다. 무엇을 걸지는 지시문·기억을 따른다.'],
+    lines: ['`workitem.upsert`: 밖의 시스템 항목 하나를 이 스레드에 이어 사람의 「내 작업」 보드에 세운다. 무엇을 걸지는 지시문·기억을 따른다.'],
   },
   {
     id: 'automation',
@@ -129,7 +129,7 @@ export const FEATURE_CATALOG: readonly FeatureEntry[] = [
     tools: ['secret.list', 'secret.mount'],
     lines: [
       '`secret.list`·`secret.mount`: 비밀(비밀번호·토큰·키)이 필요할 때 — 받은 이름을 보고 이 턴 전용 파일 경로를 받아 쓴다.',
-      '파일 내용을 출력·복사하거나 메시지·기억·커밋에 쓰지 않는다. 목록에 없으면 사람에게 설정 › 비밀과 API 에서 달라고 말한다.',
+      '값을 출력·복사하거나 MCP 인자·메시지·기억·파일·커밋에 쓰지 않는다. 목록에 없으면 사람에게 설정 › 비밀과 API 에서 달라고 말한다.',
       '**이미 화면·문맥에 보인 값은 유출된 것이다** — 계속 쓰지 말고 사람에게 회전을 부탁한다.',
     ],
   },
