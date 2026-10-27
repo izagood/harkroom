@@ -20,6 +20,16 @@ owner 한 명으로 쓸 때는 안 보이던 경우(권한 차이·처음 쓰는
 | `harness` | #testbed 의 시험 에이전트 회차 | 실물(러너·운영 서버) |
 | `manual` | 손 시험 | 실물 |
 
+### 브라우저 러너 돌리기(로컬)
+
+```sh
+docker compose -p e2e up -d --build          # 새 서버(이 체크아웃으로 굽는다)
+pnpm --filter @harkroom/desktop exec vite build
+pnpm --filter @harkroom/e2e exec playwright install chromium
+E2E_SERVER=http://127.0.0.1:3400 pnpm --filter @harkroom/e2e e2e:web
+docker compose -p e2e down -v                # 치운다 — 시드는 /bootstrap 부터라 새 서버가 필요하다
+```
+
 러너가 여정을 실제로 돌리게 되면 그 러너의 PR 에서 여정의 `existing`·`gaps` 칸도 고친다.
 
 ## 규칙

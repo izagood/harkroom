@@ -34,4 +34,7 @@ existing:
   - kind: desktop-vitest
     file: "packages/desktop/test/agentCreateGate.test.tsx"
     note: "컴포넌트 단위 게이트(#1613)"
+  - kind: browser-playwright
+    file: "packages/e2e/web/permissions.pw.ts"
+    note: "대체(브라우저): admin·member·guest 가 각자 로그인해 [+ 채널] 차이를 본다"
 runners: [api, browser]
