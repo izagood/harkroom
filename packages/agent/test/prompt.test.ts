@@ -798,13 +798,13 @@ describe('buildSystemPrompt', () => {
     const s = buildSystemPrompt({ handle: 'designer', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
     expect(s).toContain('`attachment.upload`');
     expect(s).toContain('`attachmentIds`');
-    expect(s).toContain('워크스페이스 밖 파일은 거절되니');
+    expect(s).toContain('워크스페이스 밖 파일은 거절된다');
   });
 
   // 찾기 S2: message.search 가 범위·거르기를 받게 됐다. 도구를 넓히고 안 적으면 안 쓰인다(#762→#809).
   it('지난 대화를 찾을 때는 message.read 로 넘겨 읽지 말고 message.search 를 범위·거르기와 함께 쓰라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
-    expect(s).toContain('`message.search` 를 쓴다');
+    expect(s).toContain('`message.search`: 지난 대화에서 무엇이 어디 있었는지 찾을 때');
     for (const arg of ['`channelId`', '`threadRootId`', '`authorIds`', '`after`', '`before`', '`hasAttachment`', '`offset`']) {
       expect(s).toContain(arg);
     }
@@ -819,7 +819,7 @@ describe('buildSystemPrompt', () => {
   it('사람이 볼 HTML 은 claude.ai 링크 대신 artifact.publish 로 올리라고 지시한다', () => {
     const s = buildSystemPrompt({ handle: 'designer', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } });
     expect(s).toContain('`artifact.publish`');
-    expect(s).toContain('claude.ai 아티팩트 링크로 주지 말고');
+    expect(s).toContain('claude.ai 아티팩트 링크로 주지 않는다');
     expect(s).toContain('`artifactId`');
   });
 
@@ -849,7 +849,7 @@ describe('buildSystemPrompt', () => {
 
   it('message.fail 의 code 는 러너 몫이라 에이전트는 싣지 말라고 한다 (결정 10, 2026-10-01)', () => {
     const s = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] }, turnBudgetMs: 30 * 60_000 });
-    expect(s).toContain('`message.fail` 의 `code` 는 러너가 붙이는 표지다');
+    expect(s).toContain('`code` 는 러너가 붙이는 표지다 — 너는 싣지 마라');
   });
 
   it('다른 에이전트를 부를 때 agentModels 로 모델을 고르는 법을 알려 준다 (스레드별 모델 지정 후속, 2026-10-01)', () => {
@@ -991,7 +991,7 @@ describe('메모리 주입 (#139)', () => {
   // f3(g8): 비밀을 받기만 한 에이전트에게도 쓰는 법이 간다 — 만들기 권한과 무관하다.
   it('비밀 쓰기(secret.list·mount) 안내는 만들기 권한 없이도 실리고, 만들기 절은 권한이 있을 때만이다', () => {
     const s = build({ core: null, slugs: [] });
-    expect(s).toContain('`secret.list` 로 이 에이전트가 받은 이름');
+    expect(s).toContain('`secret.list`·`secret.mount`: 비밀(비밀번호·토큰·키)이 필요할 때');
     expect(s).toContain('`secret.mount`');
     expect(s).not.toContain('secret.generate');
     // security n3: 받기만 한 에이전트에게도 「보인 값은 유출」 규칙이 간다.

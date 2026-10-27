@@ -92,8 +92,9 @@ describe('워크스페이스 가이드의 두 판본 (2026-09-08 앵커 이탈 �
     }
   });
 
-  it('두 판본 다 avcs 와 무관하게 발화 종류(post·report·ask·askBundle·fail)의 「언제」를 말한다 (2026-10-27 f2)', () => {
-    for (const mode of ['resident', 'turn'] as const) {
+  it('상주 판본은 avcs 와 무관하게 발화 종류의 「언제」를 말한다 · 턴 판본은 러너가 카탈로그로 만든다 (f2 → c1)', () => {
+    expect(guideFor('turn')).not.toMatch(/## 발화 종류를 고른다/);
+    for (const mode of ['resident'] as const) {
       for (const avcs of [true, false]) {
         const g = guideFor(mode, { avcs });
         expect(g, `${mode}/${avcs}`).toMatch(/## 발화 종류를 고른다/);

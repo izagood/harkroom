@@ -7,9 +7,11 @@
 // 러너가 모델 응답을 파싱해 대신 올렸지만, 이제 에이전트가 harkroom MCP `message.post` 로
 // 스스로 올린다 — 그래서 시스템 프롬프트가 "어디에 쓸지"까지 알려줘야 한다.
 import { providerLaneRecallable } from '@harkroom/shared/providerLane';
+import { featureLines, openFeatures } from '@harkroom/shared/featureCatalog';
 import { messagePermalink, type MessageRow, type InboxTeamCall, type InboxDelegationOutcome, type InboxDelegatedBy, type InboxCanceledWake, type WakeReportTo } from '@harkroom/shared';
 
 import type { AccountFailure } from './claudeAccounts.js';
+import { READONLY_ALLOW } from './turn.js';
 
 /** 서버의 메시지 본문 상한(`POST /channels/:id/messages` 의 zod `max(8000)`). 넘기면 발화가 실패한다. */
 export const BODY_LIMIT = 8000;
@@ -734,19 +736,6 @@ function threadNoteSection(memory: MemoryContext): string[] {
   ];
 }
 
-/**
- * 비밀 쓰기 절(스레드 d1e8f866 f3, g8). 전에는 `secret.mount` 가 만들기 절(`secretCreateSection`) 안에만 있어서, 비밀을
- * **받기만** 한 에이전트는 안내가 0이었다. 받은 비밀이 있는지는 러너가 모른다(서버가 `secret.list` 로 답한다) — 그래서
- * 조건 없이 싣고, 목록이 비면 받은 것이 없다는 사실을 함께 말한다. 어떤 비밀을 줄지는 사람 몫이라 적지 않는다.
- */
-export const SECRET_USE_LINES: readonly string[] = [
-  '비밀(비밀번호·토큰·키)이 필요하면 harkroom MCP 의 `secret.list` 로 이 에이전트가 받은 이름을 보고, `secret.mount` 로',
-  '이 턴 전용 파일 경로를 받아 쓴다. 파일 내용을 출력·복사하거나 메시지·기억·커밋에 쓰지 않는다. 목록에 없으면 받은 비밀이',
-  '없는 것이다 — 사람에게 설정 › 비밀과 API 에서 그 비밀을 이 에이전트에게 달라고 말한다.',
-  '**이미 화면·문맥에 보인 값은 유출된 것이다** — 계속 쓰지 말고 사람에게 회전을 부탁한다.',
-  '',
-];
-
 /** 메모리 절을 만든다. 세 상태가 각각 다른 것을 낸다 — 아래 주석이 이유다. */
 function memorySection(memory: MemoryContext, readOnly = false): string[] {
   // 조회 자체가 실패했다. **아무것도 주입하지 않는다** — 온보딩 안내조차 넣으면
@@ -865,6 +854,20 @@ function skillSection(memory: MemoryContext): string[] {
 }
 
 /**
+ * 「쓸 수 있는 기능」 절(2026-10-27 c1). 도구별 「언제」를 기능 카탈로그에서 **이 턴에 열린 것만** 골라 싣는다 —
+ * 읽기 전용 턴은 허용 목록(`turn.ts` READONLY_ALLOW) 밖 도구가 안 보이고, 비밀 만들기는 소유자가 켠 에이전트만 쓴다.
+ * 전에는 이 문단들이 무조건 실려 막힌 도구(`askBundle`·`secret.generate`)를 권했다(a1·n5).
+ * API 키 연결 턴은 `mcp__harkroom` 전체가 열려 있어(`LANE_BASE_ALLOW`) 일반 턴과 같다.
+ */
+export function featureSection(opts: { readOnly?: boolean; secretCreate?: boolean }): string[] {
+  const isOpen = opts.readOnly
+    ? (tool: string) => READONLY_ALLOW.includes(`mcp__harkroom__${tool.replace(/\./g, '_')}`)
+    : () => true;
+  const lines = featureLines(openFeatures(isOpen, { secretCreate: opts.secretCreate }));
+  return lines.length ? ['## 쓸 수 있는 기능 (이 턴에 열린 harkroom 도구만)', ...lines, ''] : [];
+}
+
+/**
  * 읽기 전용 턴에 스킬 절 자리에 싣는 한 단락. 빼기만 하면 에이전트는 옛 세션에서 본 도구를 찾을 수 있다 —
  * 무엇이 닫혀 있고 대신 무엇을 하는지를 말한다.
  */
@@ -968,9 +971,6 @@ export function buildSystemPrompt(opts: {
     ...(merge ? mergeSection(merge) : []),
     ...(permissions ? permissionSection(permissions) : []),
     ...(api ? apiSection(api) : []),
-    // 읽기 전용 턴은 `secret_mount` 가 허용 목록 밖이다 — 쓸 수 없는 도구를 권하지 않는다.
-    ...(readOnly ? [] : SECRET_USE_LINES),
-    ...(secretCreate ? secretCreateSection() : []),
     '저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:',
     '',
     `🤖 Opened by \`@${handle}\`, an agent in [Harkroom](${HARKROOM_REPO_URL}) — a chat workspace where people and AI agents share channels.`,
@@ -1059,41 +1059,13 @@ export function buildSystemPrompt(opts: {
     // 그래서 이 문장이 유일한 예방이고, 위반은 턴 후 개수를 세어 러너 로그에 남긴다.
     '한 턴에 한 번만 발화한다 — 답이 길어도 나눠 올리지 않고 한 번에 정리해서 올린다.',
     '',
-    // 2026-10-02(미리보기 PR ②, 스레드 31121b84): 디자인 안을 claude.ai 아티팩트 링크로 주면 그 브라우저에
-    // 회사 계정으로 로그인한 사람만 연다 — 소유자가 폰 스레드에서 링크를 눌렀다가 막혔다. 새 도구를 만들고
-    // 프롬프트에 안 적으면 아무도 안 쓴다(message.delegate #762 → #809 의 교훈). 그래서 같은 PR 에서 적는다.
-    ...(readOnly ? [] : [
-      '사람이 **눈으로 볼 HTML**(디자인 안·시안·보고서 페이지)은 claude.ai 아티팩트 링크로 주지 말고',
-      'harkroom MCP 의 `artifact.publish`(channelId·threadRootId·title·body·html)로 올린다 — 그 글이 이',
-      '턴의 발화다. 사람은 앱 안 카드를 눌러 바로 본다(폰 포함). 한 파일에 다 담아라: 페이지는 외부로',
-      'fetch 할 수 없고, 스크립트·스타일·폰트는 cdnjs·jsdelivr·Google Fonts 에서만 불러온다. 같은 안을',
-      '고칠 때는 앞서 받은 `artifactId` 를 함께 줘서 다음 버전으로 올린다. 그 도구가 없으면 지금처럼 글로 쓴다.',
-      '',
-    ]),
-    // #144: 긴 작업 시작 시 진행 설명 — message.progress MCP 도구로 올린다.
-    // 이것은 결과 발화로 세지 않으며, 사용자가 읽을 수 있어야 뜻이 있다.
-    // 진행 설명 예시: "avcs intent 를 만들고 merge3 결함 재현 테스트부터 붙인다 — 서너 턴 걸린다"
-    '긴 작업을 시작할 때는 먼저 `message.progress` MCP 도구로 짧게 무슨 작업인지 설명하고 들어간다. ',
-    '이 진행 설명은 결과 발화로 세지 않으며, 사용자가 기다릴지 끊을지 판단할 근거를 준다.',
-    '',
+    // 기능 카탈로그(c1): 도구별 「언제」의 원본은 `@harkroom/shared/featureCatalog` 하나다. 이 턴에 열린 도구만 싣는다.
+    ...featureSection({ readOnly, secretCreate }),
     // 2026-09-07 15:08: PR #533 을 올린 턴이 CI 대기 루프를 **백그라운드로** 띄우고
     // "결과 나오면 머지하겠다"며 끝났다. 그 계획은 실행되지 않았다 — 프로세스가 죽었고
     // 루프도 함께 죽었으며, 4분 뒤 초록이 된 CI 를 아무도 보지 않았다. 위의 지시는 "어디에
     // 쓸지"만 말하고 **언제까지 살아있는지**를 말하지 않았고, 그 공백이 실행 불가능한
     // 계획을 낳았다. 이 세 문장이 그 공백을 메운다.
-    // 2026-10-02(미리보기 PR ③): 에이전트는 글에 파일을 붙일 길이 없었다(message.post 에 첨부 인자가 없었다).
-    // 바이너리를 base64 로 쓰게 하지 않고 경로로 올린다 — 오퍼레이터가 읽는다. 새 도구는 적어야 쓰인다(#762→#809).
-    // 2026-10-02(찾기 S2, 스레드 20323649): `message.search` 가 REST 와 같은 범위·거르기를 받게 됐다. 전에는
-    // 검색어 하나만 받아서, 에이전트는 "지난번에 그 말이 어디 있었나"를 채널을 통째로 `message.read` 로
-    // 넘겨 읽어 찾았다. 새 인자는 적어야 쓰인다(#762→#809).
-    '지난 대화에서 **무엇이 어디 있었는지 찾을 때**는 채널을 통째로 `message.read` 로 넘겨 읽지 말고',
-    '`message.search` 를 쓴다 — `channelId`·`threadRootId` 로 범위를, `authorIds`(계정 id, `account.list`)·',
-    '`after`·`before`(시간대 붙은 ISO)·`hasAttachment`·`sort: "recent"` 로 거르고, `hasMore` 면 `offset` 으로 잇는다.',
-    '',
-    '그림·PDF·HTML 같은 **파일을 글에 붙이려면** 파일을 턴 워크스페이스(지금 작업 디렉터리) 안에 두고',
-    'harkroom MCP 의 `attachment.upload`(path)로 올려 첨부 id 를 받은 뒤, `message.post` 의 `attachmentIds` 로',
-    '붙인다. 워크스페이스 밖 파일은 거절되니 먼저 복사한다. 로컬 경로만 적어 두면 사람은 그 파일을 못 본다.',
-    '',
     '네가 말을 멈추면 이 프로세스는 그 자리에서 죽는다. "나중에", "결과가 나오면"은 실행되지',
     '않는다 — 백그라운드로 띄운 명령도 프로세스와 함께 죽는다.',
     // 2026-10-16(#rcms): rcms·designer 가 하위 에이전트를 백그라운드로 띄우고 "결과를 기다린다"며 차례를 끝냈다.
@@ -1129,8 +1101,6 @@ export function buildSystemPrompt(opts: {
     // 2026-10-01(결정 10, 설계 검토 스레드 b64632ac): 에이전트가 턴 모델이 기대와 다르다는 실패에
     // 스스로 `code: thread_model_rejected` 를 붙였다. 그 표지는 앱 실패 카드에 [기본으로 되돌리고 다시
     // 부르기]를 띄워, 사람이 막 정한 지정을 지우게 만든다. 표지는 러너가 하네스 거절을 볼 때만 단다.
-    '`message.fail` 의 `code` 는 러너가 붙이는 표지다 — 너는 싣지 마라.',
-    '',
     `답변은 ${BODY_LIMIT}자를 넘길 수 없다(서버가 거절한다). 채팅이므로 짧고 구체적으로 쓴다.`,
     '모르는 것은 모른다고 말한다. 확인하지 않은 것을 확인한 것처럼 쓰지 않는다.',
   ].join('\n');
@@ -1201,27 +1171,6 @@ function apiSection(api: { operatorBin: string; connectors: readonly string[]; d
       '범위는 내 범위 안, 만료는 30일 안, 받는 쪽은 같은 사람의 에이전트만이다. 사람 글이 아닌 턴에서 주면 사람이 허락해야 쓰인다. 거둘 때는 `grant.revoke`.',
     ] : []),
     never,
-    '',
-  ];
-}
-
-/**
- * 비밀 만들기 절(스레드 1a08d0cf, security n1). 새 도구 셋(`secret.generate`·`import`·`rotate`)을 쓰라고 같은 PR 에서 적는다
- * (mem/new-vocabulary-needs-a-prompt). **"소유자가 요청할 때만"** 은 서버가 못 보는 것이다 — 서버는 턴을 띄운 글이 소유자
- * 글인지만 본다(F2). 그래서 여기서 말로 묶는다.
- */
-export function secretCreateSection(): string[] {
-  return [
-    '**비밀을 만들 수 있다 — 소유자가 그 비밀을 만들어 달라고 요청할 때만 만든다.** 필요해 보인다고 스스로 만들지 않는다.',
-    '만든 비밀의 주인은 소유자이고, 부여는 나에게 이 채널로만 걸린다. 만들면 서버가 이 스레드에 알림 줄을 남기고 소유자를 부른다.',
-    '- 새 값: harkroom MCP 의 `secret.generate`(type: password·token_hex·token_base64url·ssh_ed25519). 값은 나에게 오지 않는다.',
-    '  ssh 는 공개키만 돌려준다. 바로 써야 하면 `mount:true` 로 파일 경로를 받는다.',
-    '- 받은 값 등록: 값을 화면에 찍지 말고 `cmd > file` 로 턴 워크스페이스에 받은 뒤 `secret.import { name, path }`. 원본은 지워진다.',
-    '  **이미 화면·문맥에 보인 값은 유출된 것이다** — 등록하지 말고 사람에게 회전을 부탁한다. `already_granted` 는 이미 가진 비밀이다 —',
-    '  그 이름으로 `secret.mount` 해서 쓴다.',
-    '- 값 바꾸기: 내가 만든 비밀만 `secret.rotate { name, generate | path }`. `adopted_by_owner` 면 소유자가 맡은 비밀이니 사람에게 넘긴다.',
-    '- 값을 MCP 인자·메시지·기억·파일·커밋에 쓰지 않는다. 거절 코드(`not_granted`·`cause_not_owner`·`value_is_mounted`·`too_many` 등)는',
-    '  그대로 사람에게 적고 멈춘다.',
     '',
   ];
 }

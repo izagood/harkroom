@@ -43,6 +43,8 @@
 // 두 벌 받았고 고칠 곳이 둘이라 어긋날 수 있었다. 턴 쪽 정본은 러너다: 턴 예산·세션 이어짐처럼 러너만 아는 사실이 같은
 // 문단에 붙고, 러너가 바뀌는 판과 함께 간다. 그래서 러너 턴 판본에서는 뺀다. 상주 에이전트는 러너 프롬프트가 없으니 그대로 받는다.
 
+import { FEATURE_CATALOG, UTTERANCE_FEATURE_IDS, featureLines } from '@harkroom/shared/featureCatalog';
+
 const HEADER = `# harkroom workspace 가이드 (에이전트용)`;
 
 /** avcs 를 쓸 수 있는 에이전트에게만 나가는 부분. */
@@ -80,15 +82,12 @@ const COMMON = `## 이름이 아니라 id 로 가리킨다
  * 일반 안내를 못 받았다. report·fail 은 도구 설명에 「무엇」만 있고 post 와 언제 갈라 쓰는지가 없었다.
  * 앱이 정한 기본값만 말한다 — 사람·워크스페이스의 보고 형식 같은 정책은 메모리 층 몫이다.
  */
-const UTTERANCE = `## 발화 종류를 고른다
-- \`message.post\`: 보통의 답·중간 소식.
-- \`message.report\`: 맡은 일을 끝냈을 때의 완료 보고 — 확인한 것(checks)·바뀐 것·남은 것을 갖춘다.
-  확인한 것이 없는 답이면 post 로 쓴다.
-- \`message.ask\`: 상대가 골라야 다음으로 갈 수 있는 갈림길 — 선택지를 정할 수 있을 때 카드로 세운다.
-  선택지를 정할 수 없는 열린 질문은 글로 묻는다.
-- \`message.askBundle\`: 여러 에이전트가 같은 사람에게 세운 카드를 한 장에 모아 한 번에 고르게 할 때.
-- \`message.fail\`: 스스로 끝내지 못했을 때(막힘·권한·인증·한도 소진) — 답 없이 끝내지 말고 무엇이 막혔는지와
-  다시 부를 수 있는지(retryable)를 밝힌다.`;
+/**
+ * 발화 종류 절 — **상주 판본에만**(2026-10-27 c1). 원본은 기능 카탈로그(`@harkroom/shared/featureCatalog`)다.
+ * 러너 턴은 이 절을 받지 않는다: 러너가 같은 표에서 **이 턴에 열린 도구만** 골라 「쓸 수 있는 기능」 절을 만든다
+ * (서버는 턴 권한을 모른다 — 읽기 전용 턴에 막힌 `askBundle` 을 권하던 a1 이 그 틈이었다).
+ */
+const UTTERANCE = ['## 발화 종류를 고른다', ...featureLines(FEATURE_CATALOG.filter((e) => UTTERANCE_FEATURE_IDS.includes(e.id)))].join('\n');
 
 /**
  * 상주 에이전트에게만 나가는 부분 — 자기가 인박스를 물고 사는 프로세스의 계약이다.
@@ -165,10 +164,10 @@ export interface GuideOptions {
 }
 
 export function guideFor(mode: GuideMode, { avcs = true }: GuideOptions = {}): string {
-  const head = avcs ? [HEADER, AVCS, COMMON, UTTERANCE] : [HEADER, COMMON, UTTERANCE];
+  const head = avcs ? [HEADER, AVCS, COMMON] : [HEADER, COMMON];
   const sections = mode === 'turn'
     ? [...head, TURN_ONLY]
-    : [...head, RESIDENT_ONLY, WAKE, MCP_AUTH, POLL_CONTRACT];
+    : [...head, UTTERANCE, RESIDENT_ONLY, WAKE, MCP_AUTH, POLL_CONTRACT];
   return `${sections.join('\n\n')}\n`;
 }
 
