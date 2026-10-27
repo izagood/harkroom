@@ -8,7 +8,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { postMessage } from '../src/services/messages.js';
-import { MAX_ITEMS_PER_OWNER } from '../src/services/workItems.js';
+import { MAX_ITEMS_PER_OWNER, WORK_ITEM_SOURCES } from '../src/services/workItems.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -159,6 +159,16 @@ describe('REST /work-items', () => {
 });
 
 describe('MCP workitem.*', () => {
+  // 설명은 받는 것(source 목록·state 조건)만 말하고, 무엇을 걸지 고르는 말(PR·티켓 등)은 넣지 않는다.
+  it('workitem.upsert 설명은 source 목록과 state 조건만 말한다', async () => {
+    const client = await mcp(botPat);
+    const desc = (await client.listTools()).tools.find((t) => t.name === 'workitem.upsert')?.description ?? '';
+    await client.close();
+    for (const s of WORK_ITEM_SOURCES) expect(desc).toContain(s);
+    expect(desc).toContain('avcs 가 아니면 state 필수');
+    expect(desc).not.toMatch(/PR|티켓/);
+  });
+
   it('에이전트는 주인의 보드에 쓴다 — 주인을 고를 인자가 없다', async () => {
     const r = await root('에이전트가 맡은 일');
     const out = await tool(botPat, 'workitem.upsert', { source: 'avcs', externalKey: `harkroom/${'b'.repeat(64)}`, title: 'intent 하나', threadRootId: r });
