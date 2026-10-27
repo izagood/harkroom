@@ -12,6 +12,8 @@ export type AuditAction =
   | 'login.succeeded' | 'login.failed' | 'logout'
   | 'message.reported' | 'message.report.resolved'
   | 'account.created' | 'account.handle.changed' | 'account.deleted' | 'agent.created' | 'agent.updated' | 'agent.disabled' | 'agent.enabled' | 'invite.created'
+  // 초대 취소(148). detail 은 {inviteId} 뿐 — 토큰·해시는 남기지 않는다.
+  | 'invite.revoked'
   // #139: 메모리 삭제. detail 에는 slug 만 남긴다 — 본문을 복사하면 삭제가 삭제가 아니다.
   | 'agent.memory.deleted'
   | 'agent.memory.edited'

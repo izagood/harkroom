@@ -5,7 +5,8 @@ import { notReservedHandle } from '../services/reservedHandles.js';
 import type { ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import { newToken } from '../auth/tokens.js';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
-import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
+import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVITE_TTL_DAYS, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
+import type { InviteView } from '@harkroom/shared';
 import {
   ackAgentStop, assignmentOf, createAgentAccount, definitionFor, deleteAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
   revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, setChromeEnabled, setRequiresMacos, setTrustSiblings, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
@@ -182,13 +183,83 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     return { handle: body.handle };
   });
 
+  /**
+   * 초대 발급. 토큰 원문은 이 응답에만 한 번 있다(서버는 해시만 둔다). 148 부터 `INVITE_TTL_DAYS` 뒤 만료하고,
+   * 목록·취소가 가리킬 `id` 를 같이 준다 — 옛 앱은 `token` 만 읽으므로 칸을 더해도 깨지지 않는다.
+   */
   app.post('/invites', { preHandler: app.requireCap('member.invite') }, async (req, reply) => {
     const { token, hash } = newToken('hrki');
-    await pool.query(`insert into invite (token_hash, created_by) values ($1, $2)`, [hash, req.account!.id]);
+    const row = await pool.query<{ id: string; expires_at: Date }>(
+      `insert into invite (token_hash, created_by, expires_at)
+       values ($1, $2, now() + make_interval(days => $3))
+       returning id, expires_at`,
+      [hash, req.account!.id, INVITE_TTL_DAYS],
+    );
+    const inv = row.rows[0]!;
     await recordAudit(pool, {
       action: 'invite.created', actorId: req.account!.id, actorHandle: req.account!.handle,
+      detail: { inviteId: inv.id },
     }, req);
-    return reply.code(201).send({ token });
+    return reply.code(201).send({ token, id: inv.id, expiresAt: inv.expires_at.toISOString() });
+  });
+
+  /**
+   * 초대 목록(148). 발급 능력이 있는 사람은 누가 낸 것이든 본다 — 취소도 같은 능력이라, 남이 건넨 토큰이 샜을 때
+   * 거둘 수 있어야 한다. 최근 200줄만 준다.
+   */
+  app.get('/invites', { preHandler: app.requireCap('member.invite') }, async () => {
+    const rows = await pool.query<{
+      id: string; created_at: Date; expires_at: Date | null; revoked_at: Date | null;
+      created_by: string; creator_handle: string; used_by: string | null; user_handle: string | null; expired: boolean;
+    }>(
+      `select i.id, i.created_at, i.expires_at, i.revoked_at,
+              i.created_by, c.handle as creator_handle, i.used_by, u.handle as user_handle,
+              (i.expires_at is not null and i.expires_at <= now()) as expired
+         from invite i
+         join account c on c.id = i.created_by
+         left join account u on u.id = i.used_by
+        order by i.created_at desc
+        limit 200`,
+    );
+    const invites: InviteView[] = rows.rows.map((r) => ({
+      id: r.id,
+      status: r.used_by ? 'used' : r.revoked_at ? 'revoked' : r.expired ? 'expired' : 'pending',
+      createdAt: r.created_at.toISOString(),
+      createdBy: { id: r.created_by, handle: r.creator_handle },
+      expiresAt: r.expires_at?.toISOString() ?? null,
+      revokedAt: r.revoked_at?.toISOString() ?? null,
+      usedBy: r.used_by ? { id: r.used_by, handle: r.user_handle! } : null,
+    }));
+    return { invites };
+  });
+
+  /**
+   * 초대 취소(148). 안 쓴 초대만 거둔다 — 이미 가입에 쓰인 것은 409(취소해도 계정은 남으므로 거짓 성공을 주지 않는다).
+   * 이미 취소된 것은 그대로 204(두 번 눌러도 같은 결과).
+   */
+  app.delete('/invites/:id', { preHandler: app.requireCap('member.invite') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const cur = await pool.query<{ used_by: string | null; revoked_at: Date | null }>(
+      `select used_by, revoked_at from invite where id = $1`, [id],
+    );
+    const found = cur.rows[0];
+    if (!found) return reply.code(404).send({ error: { code: 'not_found', message: 'invite not found' } });
+    if (found.used_by) {
+      return reply.code(409).send({ error: { code: 'invite_used', message: 'invite already used' } });
+    }
+    if (found.revoked_at) return reply.code(204).send();
+    const upd = await pool.query(
+      `update invite set revoked_at = now(), revoked_by = $2
+        where id = $1 and used_by is null and revoked_at is null`,
+      [id, req.account!.id],
+    );
+    // 사이에 가입이 끝났으면 0줄이다 — 쓰인 초대를 취소했다고 답하지 않는다.
+    if (!upd.rowCount) return reply.code(409).send({ error: { code: 'invite_used', message: 'invite already used' } });
+    await recordAudit(pool, {
+      action: 'invite.revoked', actorId: req.account!.id, actorHandle: req.account!.handle,
+      detail: { inviteId: id },
+    }, req);
+    return reply.code(204).send();
   });
 
   // UI 로 등록·수정하는 '에이전트 정의'. 설정은 서버에 살아야 UI 수정이 러너에 반영된다.
