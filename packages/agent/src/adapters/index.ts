@@ -261,6 +261,17 @@ export function usesXdgHome(harness: AgentHarness): boolean {
   return account?.configDirEnv.includes('XDG_CONFIG_HOME') === true;
 }
 
+/**
+ * 이 턴이 내장 스킬을 읽을 수 있는가(S P3). 어댑터 표의 `skillDirs` 가 비면(opencode·pi·omp — 미측정) 못 읽는 것으로 친다.
+ * 읽기 전용 턴도 못 읽는 것으로 친다 — claude 는 그 턴에 `Skill` 도구가 없고(`READONLY_TOOLS`), 다른 하네스는 미측정이다.
+ * 못 읽는 턴은 옮긴 절차를 프롬프트에 그대로 싣는다(`prompt.ts` skillOrInline) — 퇴보가 없다. 실측(P7)으로 하나씩 연다.
+ */
+export function readsBuiltinSkills(harness: AgentHarness, opts: { readOnly?: boolean } = {}): boolean {
+  const adapter = ADAPTERS[harness];
+  if (adapter === 'unsupported' || opts.readOnly) return false;
+  return adapter.skillDirs.length > 0;
+}
+
 /** 읽기 전용을 허용 도구 목록으로 거는 하네스의 재료(`readonlyTools`). 아니면 `null`. */
 export function readonlyToolsFor(harness: AgentHarness): ReadonlyTools | null {
   const adapter = ADAPTERS[harness];
