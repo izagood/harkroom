@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, nextStallDepth, STALL_HOP_LIMIT, STALL_LOOKBACK, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
@@ -818,14 +818,14 @@ async function mentionDepthFor(
     channelId: string; threadRootId: string | null; authorId: string; authorIsAgent: boolean;
     causeMessageId?: string | null;
   },
-): Promise<number> {
-  if (!input.authorIsAgent) return 0;
+): Promise<ChainLink> {
+  if (!input.authorIsAgent) return { depth: 0, prevStall: 0 };
   if (input.causeMessageId) {
     const fromCause = await causeDepth(client, input.authorId, input.causeMessageId);
     if (fromCause !== null) return fromCause;
   }
   const rows = (await client.query(
-    `select m.body, m.mention_depth as depth, (a.kind = 'agent') as author_is_agent,
+    `select m.body, m.mention_depth as depth, m.stall_depth as stall, (a.kind = 'agent') as author_is_agent,
             -- **실제로 나를 깨운 부름만 고리다**(2026-09-29). 본문만 다시 파싱하면 상한에
             -- 막혔거나(capped) 호출 범위에 거절된(denied) 부름도 "나를 부른 메시지"로 보여,
             -- 깨운 적 없는 부름이 깊이를 쌓았다. 그 부름으로 inbox 가 생겼는지를 함께 본다.
@@ -852,7 +852,7 @@ async function mentionDepthFor(
       order by m.seq desc
       limit ${DEPTH_SCAN_LIMIT}`,
     [input.channelId, input.threadRootId, input.authorId],
-  )).rows as { body: string; depth: number; author_is_agent: boolean; woke: boolean }[];
+  )).rows as { body: string; depth: number; stall: number; author_is_agent: boolean; woke: boolean }[];
   for (const row of rows) {
     if (!row.woke) continue;
     // 나를 부른 **가장 최근** 메시지 하나가 내 앞 고리다 — 그것을 찾으면 멈춘다.
@@ -861,10 +861,40 @@ async function mentionDepthFor(
       authorIsAgent: row.author_is_agent,
       isAgent: (id) => id === input.authorId,
     });
-    if (call.includes(input.authorId)) return row.depth + 1;
+    if (call.includes(input.authorId)) return { depth: row.depth + 1, prevStall: row.author_is_agent ? row.stall : 0 };
   }
   // 나를 부른 것이 없는 발화(스스로 올린 보고·깨움 뒤의 이어 말하기)는 연쇄가 아니다.
-  return 0;
+  return { depth: 0, prevStall: 0 };
+}
+
+/** 정체 한도가 막았을 부름 — 부른 계정 가운데 에이전트만(사람은 한도와 무관하게 불린다, 043 과 같다). */
+async function stallShadowFor(client: PoolClient, calledIds: readonly string[]): Promise<string[]> {
+  if (!calledIds.length) return [];
+  return ((await client.query(
+    `select id from account where id = any($1::uuid[]) and kind = 'agent' and deleted_at is null`, [calledIds],
+  )).rows as { id: string }[]).map((r) => r.id).filter((id) => calledIds.includes(id))
+    .sort((a, b) => calledIds.indexOf(a) - calledIds.indexOf(b));
+}
+
+/** 이 발화의 앞 고리 — 깊이(043)와 그 고리의 정체 홉(146). 사람 고리의 정체는 언제나 0 이다. */
+interface ChainLink { depth: number; prevStall: number }
+
+/**
+ * 같은 대화의 최근 본문들 — 정체 판정(`nextStallDepth`)이 「앞 줄에 없던 결과물인가」를 이것과 견준다.
+ * 경계는 `mentionDepthFor` 의 스캔과 같다(스레드면 그 스레드, 최상위면 최상위끼리).
+ */
+async function recentBodiesFor(client: PoolClient, channelId: string, threadRootId: string | null): Promise<string[]> {
+  return ((await client.query(
+    `select m.body from message m
+      where m.channel_id = $1
+        and (case when $2::uuid is null
+                  then m.thread_root_id is null
+                  else m.thread_root_id = $2 or m.id = $2 end)
+        and m.deleted_at is null
+      order by m.seq desc
+      limit ${STALL_LOOKBACK}`,
+    [channelId, threadRootId],
+  )).rows as { body: string }[]).map((r) => r.body);
 }
 
 /**
@@ -901,7 +931,7 @@ export async function verifiedCauseLink(
   return row?.id ?? null;
 }
 
-async function causeDepth(client: PoolClient, authorId: string, causeMessageId: string): Promise<number | null> {
+async function causeDepth(client: PoolClient, authorId: string, causeMessageId: string): Promise<ChainLink | null> {
   /*
     **사람이 누른 카드도 사람의 손길이다**(2026-10-27). 카드 답·닫힘의 깨움(`wakeAsker`)은 inbox 를 **에이전트가 쓴
     물음**에 건다 — 작성자만 보면 원인은 에이전트 글이라 깊이가 저장값 + 1 로 이어지고, 사람이 카드로 승인해도 사슬은
@@ -918,7 +948,7 @@ async function causeDepth(client: PoolClient, authorId: string, causeMessageId: 
                          and i.reason in ('ask_answered', 'ask_closed') and h.kind = 'human') as by_human
          from message m where m.id = $1
      )
-     select m.mention_depth as depth, (a.kind = 'agent') as author_is_agent,
+     select m.mention_depth as depth, m.stall_depth as stall, (a.kind = 'agent') as author_is_agent,
             (m.meta ? 'automation') as from_automation, card.by_human as human_card
        from message m join account a on a.id = m.author_id cross join card
       where m.id = $1 and m.deleted_at is null
@@ -928,12 +958,14 @@ async function causeDepth(client: PoolClient, authorId: string, causeMessageId: 
                            and (i.reason in ('mention', 'dm', 'team_mention', 'team_delegated')
                                 or (a.kind = 'human' and i.reason in ('thread_reply', 'ask_answered')))))`,
     [causeMessageId, authorId],
-  )).rows[0] as { depth: number; author_is_agent: boolean; from_automation: boolean; human_card: boolean } | undefined;
+  )).rows[0] as { depth: number; stall: number; author_is_agent: boolean; from_automation: boolean; human_card: boolean } | undefined;
   if (!row) return null;
-  if (row.human_card) return 1;
+  if (row.human_card) return { depth: 1, prevStall: 0 };
   // 사람은 언제나 0 이다(`mentionDepthFor`) — 저장된 값을 믿지 않고 규칙으로 센다. 예외는 에이전트가
   // 돌린 자동화 글(082)이다: 사람 이름이지만 사슬의 고리라 저장된 깊이를 잇는다(시계·버튼 회차는 0 이다).
-  return row.author_is_agent || row.from_automation ? row.depth + 1 : 1;
+  return row.author_is_agent || row.from_automation
+    ? { depth: row.depth + 1, prevStall: row.stall }
+    : { depth: 1, prevStall: 0 };
 }
 
 /**
@@ -1464,7 +1496,7 @@ export async function postMessage(
     if (authorIsAgent && input.threadRootId && isResult) {
       await lockReplyGrantsFor(client, input.authorId, input.threadRootId);
     }
-    const scannedDepth = await mentionDepthFor(client, {
+    const link = await mentionDepthFor(client, {
       channelId: input.channelId,
       threadRootId: input.threadRootId ?? null,
       authorId: input.authorId,
@@ -1473,7 +1505,19 @@ export async function postMessage(
     });
     // 자동화 회차가 물려준 깊이(082)가 있으면 그것이 이 글의 자리다 — 사람 이름 글이라도 사슬의 고리다.
     const chainBound = input.chainDepth != null;
-    const mentionDepth = chainBound ? Math.max(scannedDepth, input.chainDepth!) : scannedDepth;
+    const mentionDepth = chainBound ? Math.max(link.depth, input.chainDepth!) : link.depth;
+    /*
+      정체 홉(146, 연쇄 한도 재설계 ②). 에이전트 사슬 안의 발화만 센다 — 앞 줄들에 없던 결과물을 내면 0 으로 돌아간다.
+      **지금은 그림자다**: 막지 않고, 막혔을 부름만 `meta.mentionStallShadow` 에 남긴다(아래). 1주 기록에서 정상 스레드
+      오탐이 0 인지 본 뒤 차단으로 바꾼다.
+    */
+    const stallDepth = authorIsAgent && link.depth > 0
+      ? nextStallDepth({
+          mentionDepth: link.depth, prevStall: link.prevStall, body: input.body,
+          recentBodies: await recentBodiesFor(client, input.channelId, input.threadRootId ?? null),
+          hasAttachment: (input.attachmentIds?.length ?? 0) > 0,
+        })
+      : 0;
     const calls = await resolveMentionCalls(client, {
       body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth, chainBound,
       replyGrantThreadId: isResult ? input.threadRootId ?? null : null,
@@ -1541,12 +1585,15 @@ export async function postMessage(
       }
     }
 
+    const stallShadow = stallDepth >= STALL_HOP_LIMIT
+      ? await stallShadowFor(client, calls.calledIds.filter((id) => id !== input.authorId && !calls.cappedIds.has(id)))
+      : [];
     const causeLink = authorIsAgent && input.chainCause
       ? await verifiedCauseLink(client, input.authorId, input.chainCause)
       : null;
     const inserted = await client.query(
-      `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth, cause_message_id)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
+      `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth, cause_message_id, stall_depth)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
       [input.channelId, input.threadRootId ?? null, input.authorId, calls.normalizedBody,
        input.kind ?? 'user',
        // 막힌 호출은 **그 메시지에 남는다** — 조용히 사라지면 사람은 "왜 아무도 안 왔나"를
@@ -1557,8 +1604,10 @@ export async function postMessage(
          ...calls.callMeta,
          // 에이전트 글에만 — 사람 글에 턴은 없다. 부르는 쪽 meta 의 같은 키를 덮어쓴다(값은 헤더에서만 온다).
          ...(authorIsAgent && input.turnId ? { turnId: input.turnId } : {}),
+         // 정체 한도(146)가 막았을 부름 — 그림자 단계의 기록이다. 실제 부름은 그대로 나갔다.
+         ...(stallShadow.length ? { mentionStallShadow: { wouldCap: stallShadow, stallDepth, limit: STALL_HOP_LIMIT } } : {}),
        }),
-       alsoInChannel, mentionDepth, causeLink],
+       alsoInChannel, mentionDepth, causeLink, stallDepth],
     );
     const messageId = inserted.rows[0].id as string;
 
