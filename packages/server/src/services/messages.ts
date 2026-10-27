@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, nextStallDepth, STALL_HOP_LIMIT, CHAIN_BACKSTOP_MS, CHAIN_BACKSTOP_CONTINUE, STALL_LOOKBACK, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, messageLinkIds, stallStep, STALL_HOP_LIMIT, CHAIN_BACKSTOP_MS, CHAIN_BACKSTOP_CONTINUE, STALL_LOOKBACK, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
@@ -873,6 +873,25 @@ async function mentionDepthFor(
   return { depth: 0, prevStall: 0, startedAt: null };
 }
 
+/**
+ * 본문의 메시지 링크 가운데 **같은 대화**(스레드면 그 스레드, 최상위면 같은 채널 최상위)의 글 id(⑤, security M2). 그 링크는
+ * 결과물로 치지 않는다 — 루프가 서로의 앞 글 링크만 달아도 정체가 풀리던 틈이다. 경계는 `recentBodiesFor` 와 같다.
+ */
+async function ownThreadLinkIds(
+  client: PoolClient, channelId: string, threadRootId: string | null, body: string,
+): Promise<Set<string>> {
+  const ids = messageLinkIds(body);
+  if (!ids.length) return new Set();
+  return new Set(((await client.query(
+    `select m.id::text as id from message m
+      where m.id = any($1::uuid[]) and m.channel_id = $2
+        and (case when $3::uuid is null
+                  then m.thread_root_id is null
+                  else m.thread_root_id = $3 or m.id = $3 end)`,
+    [ids, channelId, threadRootId],
+  )).rows as { id: string }[]).map((r) => r.id));
+}
+
 /** 정체 한도가 막았을 부름 — 부른 계정 가운데 에이전트만(사람은 한도와 무관하게 불린다, 043 과 같다). */
 async function stallShadowFor(client: PoolClient, calledIds: readonly string[]): Promise<string[]> {
   if (!calledIds.length) return [];
@@ -889,7 +908,7 @@ async function stallShadowFor(client: PoolClient, calledIds: readonly string[]):
 interface ChainLink { depth: number; prevStall: number; startedAt: Date | null }
 
 /**
- * 같은 대화의 최근 본문들 — 정체 판정(`nextStallDepth`)이 「앞 줄에 없던 결과물인가」를 이것과 견준다.
+ * 같은 대화의 최근 본문들 — 정체 판정(`stallStep`)이 「앞 줄에 없던 결과물인가」를 이것과 견준다.
  * 경계는 `mentionDepthFor` 의 스캔과 같다(스레드면 그 스레드, 최상위면 최상위끼리).
  */
 async function recentBodiesFor(client: PoolClient, channelId: string, threadRootId: string | null): Promise<string[]> {
@@ -1539,13 +1558,15 @@ export async function postMessage(
       **지금은 그림자다**: 막지 않고, 막혔을 부름만 `meta.mentionStallShadow` 에 남긴다(아래). 1주 기록에서 정상 스레드
       오탐이 0 인지 본 뒤 차단으로 바꾼다.
     */
-    const stallDepth = authorIsAgent && link.depth > 0
-      ? nextStallDepth({
+    const stall = authorIsAgent && link.depth > 0
+      ? stallStep({
           mentionDepth: link.depth, prevStall: link.prevStall, body: input.body,
           recentBodies: await recentBodiesFor(client, input.channelId, input.threadRootId ?? null),
           hasAttachment: (input.attachmentIds?.length ?? 0) > 0,
+          ownThreadIds: await ownThreadLinkIds(client, input.channelId, input.threadRootId ?? null, input.body),
         })
-      : 0;
+      : { stallDepth: 0, linkOnlyReset: false };
+    const stallDepth = stall.stallDepth;
     // 사슬의 시작 시각(147). 사슬 안의 에이전트 글만 갖는다 — 앞 고리가 시작이면(사람이 답한 카드) 지금이다.
     const chainStartedAt = authorIsAgent && link.depth > 0 ? link.startedAt ?? new Date() : null;
     const calls = await resolveMentionCalls(client, {
@@ -1636,6 +1657,8 @@ export async function postMessage(
          ...(authorIsAgent && input.turnId ? { turnId: input.turnId } : {}),
          // 정체 한도(146)가 막았을 부름 — 그림자 단계의 기록이다. 실제 부름은 그대로 나갔다.
          ...(stallShadow.length ? { mentionStallShadow: { wouldCap: stallShadow, stallDepth, limit: STALL_HOP_LIMIT } } : {}),
+         // 다른 스레드 글 링크만으로 정체가 풀린 홉(⑤ 그림자 표지) — 좁힌 판정에 남은 틈을 잰다. 판정에는 쓰지 않는다.
+         ...(stall.linkOnlyReset ? { mentionStallLinkReset: true } : {}),
        }),
        alsoInChannel, mentionDepth, causeLink, stallDepth, chainStartedAt],
     );
