@@ -7,7 +7,8 @@ import { Controller, setController } from '../src/state/controller';
 import { ArtifactPanel } from '../src/components/ArtifactPreview';
 import { acc } from './helpers/fakeApi';
 import {
-  PREVIEW_ZOOM_DEFAULT, PREVIEW_ZOOM_REMEMBERED, effectiveScale, normalizePreviewZoom, previewZoomStorage, stepPreviewZoom,
+  PREVIEW_ZOOM_DEFAULT, PREVIEW_ZOOM_REMEMBERED, effectiveScale, normalizePreviewZoom, pinchPreviewStep, previewZoomStorage,
+  stepPreviewZoom,
   viewportWidth,
 } from '../src/lib/previewZoom';
 
@@ -48,6 +49,30 @@ describe('preview zoom math', () => {
     expect(normalizePreviewZoom({ kind: 'fit', width: 1000 })).toBeNull();
     expect(normalizePreviewZoom('x')).toBeNull();
     expect(normalizePreviewZoom({ kind: 'fit', width: 768 })).toEqual({ kind: 'fit', width: 768 });
+  });
+});
+
+describe('pinch steps (designer #1642 s1)', () => {
+  const fit1440 = { kind: 'fit' as const, width: 1440 };
+  const fit1280 = { kind: 'fit' as const, width: 1280 };
+  it('keeps a fit while pinching in, below the table', () => {
+    // 520 상자에 1440 맞춤 = 36%. 오므려도 표 아래라 맞춤 그대로.
+    expect(pinchPreviewStep(fit1440, 520, 36 * 0.9)).toBeNull();
+    expect(pinchPreviewStep(fit1440, 520, 10)).toBeNull();
+  });
+  it('keeps a fit until the hand crosses the next step in its direction', () => {
+    // 1000 상자에 1280 맞춤 = 78%. 살짝 오므리거나 벌려도 그대로.
+    expect(pinchPreviewStep(fit1280, 1000, 78 * 0.99)).toBeNull();
+    expect(pinchPreviewStep(fit1280, 1000, 79)).toBeNull();
+    expect(pinchPreviewStep(fit1280, 1000, 74)).toBe(75);
+    expect(pinchPreviewStep(fit1280, 1000, 82)).toBe(80);
+    // 36% 에서 벌리기는 50 을 넘어야 50.
+    expect(pinchPreviewStep(fit1440, 520, 45)).toBeNull();
+    expect(pinchPreviewStep(fit1440, 520, 51)).toBe(50);
+  });
+  it('snaps to the nearest step from a scale', () => {
+    expect(pinchPreviewStep({ kind: 'scale', pct: 100 }, 520, 103)).toBeNull();
+    expect(pinchPreviewStep({ kind: 'scale', pct: 100 }, 520, 108)).toBe(110);
   });
 });
 
@@ -269,6 +294,28 @@ describe('the zoom control in the preview panel', () => {
       magnify(1);
       for (let i = 0; i < 20; i++) magnify(4, 0.2);
       expect(screen.getByTestId('artifact-zoom-menu').textContent).toContain('200%');
+    });
+
+    // designer #1642 s1: 맞춤 36% 에서 오므리면 50% 로 커지지 않는다.
+    it('keeps a fitted width while pinching in', async () => {
+      vi.stubGlobal('ResizeObserver', class {
+        constructor(private cb: () => void) {}
+        observe() { this.cb(); }
+        disconnect() {}
+      });
+      render(<ArtifactPanel />);
+      open(page('p1', 'art-1'));
+      await screen.findByTestId('artifact-frame');
+      fireEvent.click(screen.getByTestId('artifact-zoom-menu'));
+      fireEvent.click(screen.getByRole('menuitem', { name: '데스크톱 1440px 폭에 맞춤' }));
+      expect(screen.getByTestId('artifact-zoom-menu').textContent).toContain('36%');
+      magnify(1);
+      magnify(4, -0.1);
+      expect(screen.getByTestId('artifact-zoom-menu').textContent).toContain('36%');
+      expect(screen.getByTestId('artifact-zoom-note').textContent).toBe('1440px 폭에 맞춤');
+      // 벌려서 50 을 넘으면 그때 배율로 간다.
+      magnify(4, 0.6);
+      expect(screen.getByTestId('artifact-zoom-menu').textContent).toContain('50%');
     });
 
     it('leaves pinches that start outside the preview alone', async () => {

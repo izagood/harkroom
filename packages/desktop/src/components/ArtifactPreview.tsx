@@ -12,7 +12,7 @@ import { PaneResizer } from './PaneResizer';
 import { openWindow } from '../lib/windowActions';
 import { Menu, type MenuItem } from './Menu';
 import {
-  PREVIEW_FIT_WIDTHS, PREVIEW_ZOOM_DEFAULT, canZoomIn, canZoomOut, effectiveScale, isDefaultZoom, nearestPreviewStep,
+  PREVIEW_FIT_WIDTHS, PREVIEW_ZOOM_DEFAULT, canZoomIn, canZoomOut, effectiveScale, isDefaultZoom, pinchPreviewStep,
   previewZoomStorage, stepPreviewZoom, viewportWidth, type PreviewZoom,
 } from '../lib/previewZoom';
 import {
@@ -273,8 +273,8 @@ export function ArtifactPanel({ fill = false, windowed }: {
       if (!p) return;
       if (d.phase & MAGNIFY_CHANGED && Number.isFinite(d.m)) {
         p.acc *= 1 + d.m;
-        const next = nearestPreviewStep(p.base * p.acc);
-        if (zoom.kind === 'fit' || next !== Math.round(effectiveScale(zoom, boxWidth) * 100)) setZoom({ kind: 'scale', pct: next });
+        const next = pinchPreviewStep(zoom, boxWidth, p.base * p.acc);
+        if (next !== null) setZoom({ kind: 'scale', pct: next });
       }
       if (d.phase & (MAGNIFY_ENDED | MAGNIFY_CANCELLED)) pinch.current = null;
     };

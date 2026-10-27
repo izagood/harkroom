@@ -60,6 +60,26 @@ export function nearestPreviewStep(pct: number): number {
   return best;
 }
 
+/**
+ * 핀치가 가리키는 배율(`target`, %)로 갈 단계. 바뀌지 않으면 `null`.
+ * - 배율 상태: 가장 가까운 칸.
+ * - **맞춤 상태**(36% 처럼 표에 없는 값): 손 방향으로 **다음 칸을 넘었을 때만** 맞춤을 떠난다 — 단추·⌘키
+ *   (`stepPreviewZoom`)와 같은 규칙이다. 가장 가까운 칸으로 붙이면 1440 맞춤 36% 에서 오므리기 첫 이벤트가
+ *   50% 로 **커진다**(designer #1642 s1).
+ */
+export function pinchPreviewStep(z: PreviewZoom, boxWidth: number, target: number): number | null {
+  const now = Math.round(effectiveScale(z, boxWidth) * 100);
+  if (z.kind === 'scale') {
+    const next = nearestPreviewStep(target);
+    return next === now ? null : next;
+  }
+  const up = PREVIEW_ZOOM_STEPS.find((s) => s > now);
+  const down = [...PREVIEW_ZOOM_STEPS].reverse().find((s) => s < now);
+  if (up !== undefined && target >= up) return [...PREVIEW_ZOOM_STEPS].reverse().find((s) => s <= target) ?? up;
+  if (down !== undefined && target <= down) return PREVIEW_ZOOM_STEPS.find((s) => s >= target) ?? down;
+  return null;
+}
+
 export const canZoomIn = (z: PreviewZoom, boxWidth: number): boolean =>
   Math.round(effectiveScale(z, boxWidth) * 100) < PREVIEW_ZOOM_MAX;
 export const canZoomOut = (z: PreviewZoom, boxWidth: number): boolean =>
