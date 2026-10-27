@@ -4,7 +4,7 @@ import { SYSTEM_I18N_ARGS, UNKNOWN_ACCOUNT_LABEL, type MessageRow } from '@harkr
 import { en } from '../src/i18n/en';
 import { ko } from '../src/i18n/ko';
 import { translator } from '../src/i18n';
-import { systemText } from '../src/lib/systemText';
+import { systemText, chainBackstopText } from '../src/lib/systemText';
 import { displayBody } from '../src/lib/mention';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { useActiveStore } from '../src/state/communities';
@@ -126,5 +126,20 @@ describe('글 답 안내 줄 문구(P5 후속)', () => {
     expect(ko['system.chatApproval.askIrreversible']).toMatch(/^⚠️ 답 안 됨: .*링크.*다시 쓴다\.$/);
     expect(ko['system.chatApproval.askIrreversible']).toContain('선택지 이름 그대로');
     expect(en['system.chatApproval.askIrreversible']).toMatch(/^⚠️ Not answered: .*card link.*exact option name|^⚠️ Not answered: .*exact option name.*card link/);
+  });
+});
+
+describe('chainBackstopText(백스톱 카드 147)', () => {
+  const card = (chainBackstop: unknown) => ({ kind: 'user', meta: { chainBackstop } }) as Pick<MessageRow, 'kind' | 'meta'>;
+  it('막힌 에이전트를 지금 이름으로, 사유를 홉·시간으로 앱 언어에 적는다', () => {
+    expect(chainBackstopText(card({ agentId: 'a1', limit: 100, reason: 'hops' }), accounts, tKo))
+      .toBe('사람 없이 이어진 연쇄가 백스톱(100홉)에 닿아 mira 의 부름을 멈췄다.');
+    expect(chainBackstopText(card({ agentId: 'a1', limit: 100, reason: 'age' }), accounts, tEn))
+      .toBe('The chain that ran without a person reached the backstop (24 hours), so mira stopped calling other agents.');
+    expect(chainBackstopText(card({ agentId: 'zz', limit: 4, reason: 'hops' }), accounts, tEn)).toContain(UNKNOWN_ACCOUNT_LABEL);
+  });
+  it('모양이 틀리거나 표지가 없으면 null — 본문으로 물러난다', () => {
+    expect(chainBackstopText(card({ agentId: 1, limit: 100 }), accounts, tEn)).toBeNull();
+    expect(chainBackstopText({ kind: 'user', meta: {} } as Pick<MessageRow, 'kind' | 'meta'>, accounts, tEn)).toBeNull();
   });
 });

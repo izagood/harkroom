@@ -32,6 +32,7 @@ let mcpUrl: string;
  * 고리를 쓰면 무엇을 지키는지가 흐려진다 — 상한을 설정으로 낮추는 것 자체가 설정 표면의
  * 회귀선이기도 하다.
  */
+let pool: import('pg').Pool;
 const TEST_LIMIT = 4;
 const agents: Record<string, { id: string; pat: string }> = {};
 
@@ -64,6 +65,7 @@ async function metaOf(messageId: string): Promise<Record<string, unknown>> {
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
+  pool = db.pool;
   app = await buildServer({ pool: db.pool });
   ({ token: adminToken } = await bootstrapAdmin(app));
   await app.listen({ port: 0, host: '127.0.0.1' });
@@ -273,7 +275,7 @@ describe('상한 설정 표면(/settings/mention-policy)', () => {
   });
 
   it('범위 밖의 값은 거절한다 — 0 이면 아무도 못 부르고, 너무 크면 상한이 아니다', async () => {
-    for (const chainLimit of [0, 51, 2.5]) {
+    for (const chainLimit of [0, 201, 2.5]) {
       const res = await app.inject({
         method: 'PUT', url: '/settings/mention-policy', headers: auth(adminToken), payload: { chainLimit },
       });
@@ -432,6 +434,80 @@ describe('턴의 원인(x-harkroom-cause)', () => {
     expect(await inboxFor(agents.ada!.pat, ask)).toContain('ask_answered');
     const out = await postVia(agents.ada!.pat, ask, { channelId, threadRootId: root, body: '@bob 다시 부탁' });
     expect(out.warnings).toBeDefined();
+  });
+
+  /**
+   * **백스톱 카드**(147, 연쇄 한도 재설계 ③). 상한에 막힌 결과 발화 뒤 서버가 소유자 앞으로 [계속 — 예산 리셋]/[멈춤] 카드를 세운다.
+   * 「계속」을 사람이 원본에서 직접 고른 답만 사슬을 새로 시작한다(security n3) — 「멈춤」·닫힘은 그대로 막힌다.
+   */
+  async function backstopCard(root: string): Promise<{ id: string; meta: Record<string, unknown> }> {
+    const res = await app.inject({ method: 'GET', url: `/channels/${channelId}/messages?threadRootId=${root}`, headers: auth(adminToken) });
+    const rows = (res.json().messages ?? res.json()) as { id: string; threadRootId: string | null; meta: Record<string, unknown> }[];
+    const cards = rows.filter((m) => m.threadRootId === root && m.meta?.chainBackstop !== undefined);
+    expect(cards).toHaveLength(1);
+    return cards[0]!;
+  }
+
+  async function cappedThread(label: string): Promise<{ root: string; capped: string }> {
+    const root = await deepThread(label);
+    const capped = await post(agents.ada!.pat, '@bob 다시 부탁', root); // 4 — 상한
+    expect(await inboxFor(agents.bob!.pat, capped)).toEqual([]);
+    return { root, capped };
+  }
+
+  async function pick(askId: string, optionId: string): Promise<void> {
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages/${askId}/ask-answer`, headers: auth(adminToken), payload: { optionId },
+    });
+    expect(res.statusCode).toBe(200);
+  }
+
+  it('상한에 막히면 서버가 소유자 앞으로 백스톱 카드를 하나 세운다 — 다시 막혀도 한 장이다', async () => {
+    const { root, capped } = await cappedThread('백스톱 카드');
+    const card = await backstopCard(root);
+    const ask = card.meta.ask as { to: { kind: string; accountId?: string }; options: { id: string }[] };
+    expect(ask.options.map((o) => o.id)).toEqual(['continue', 'stop']);
+    expect(ask.to.kind).toBe('account');
+    expect(card.meta.chainBackstop).toMatchObject({ agentId: agents.ada!.id, sourceMessageId: capped, cappedIds: [agents.bob!.id], limit: TEST_LIMIT, reason: 'hops' });
+    await post(agents.ada!.pat, '@cid 한 번 더', root);
+    await backstopCard(root);
+  });
+
+  it('「계속」을 고르면 깨어난 턴이 사슬을 새로 시작한다 — 글을 쓰지 않아도 버튼 하나로 풀린다', async () => {
+    const { root } = await cappedThread('백스톱 계속');
+    const card = await backstopCard(root);
+    await pick(card.id, 'continue');
+    expect(await inboxFor(agents.ada!.pat, card.id)).toContain('ask_answered');
+    const out = await postVia(agents.ada!.pat, card.id, { channelId, threadRootId: root, body: '@bob 계속 받았다' });
+    expect(out).not.toHaveProperty('warnings');
+    expect(await inboxFor(agents.bob!.pat, (out.message as { id: string }).id)).toEqual(['mention']);
+  });
+
+  it('「멈춤」을 고르면 깨어나도 부름은 그대로 막힌다', async () => {
+    const { root } = await cappedThread('백스톱 멈춤');
+    const card = await backstopCard(root);
+    await pick(card.id, 'stop');
+    expect(await inboxFor(agents.ada!.pat, card.id)).toContain('ask_answered');
+    const out = await postVia(agents.ada!.pat, card.id, { channelId, threadRootId: root, body: '@bob 멈추라는데 한 번만' });
+    expect(out.warnings).toBeDefined();
+  });
+
+  it('카드를 닫아도(답하지 않기) 예산은 리셋되지 않는다', async () => {
+    const { root } = await cappedThread('백스톱 닫힘');
+    const card = await backstopCard(root);
+    await answer(adminToken, card.id, 'ask-close');
+    const out = await postVia(agents.ada!.pat, card.id, { channelId, threadRootId: root, body: '@bob 닫혔지만' });
+    expect(out.warnings).toBeDefined();
+  });
+
+  it('사람 손길 뒤 24시간이 지난 사슬은 홉이 남아도 막히고, 카드의 사유는 시간이다', async () => {
+    const root = await post(adminToken, '@ada 오래된 일');
+    const first = await post(agents.ada!.pat, '@bob 이어서', root); // 1
+    await pool.query(`update message set chain_started_at = now() - interval '25 hours' where id = $1`, [first]);
+    const aged = await post(agents.bob!.pat, '@cid 이어서', root);  // 2 — 홉은 남았지만 24시간
+    expect(await inboxFor(agents.cid!.pat, aged)).toEqual([]);
+    expect((await metaOf(aged)).mentionChainReason).toBe('age');
+    expect((await backstopCard(root)).meta.chainBackstop).toMatchObject({ reason: 'age', agentId: agents.bob!.id });
   });
 
   it('형식이 틀린 원인은 무시하고 옛 셈으로 간다', async () => {

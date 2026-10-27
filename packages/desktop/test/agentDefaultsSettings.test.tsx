@@ -151,7 +151,7 @@ describe('AgentDefaultsSettings — 멘션 연쇄 상한', () => {
     render(<AgentDefaultsSettings />);
     const input = await screen.findByLabelText(LABEL) as HTMLInputElement;
     await waitFor(() => expect(input.value).toBe('8'));
-    for (const bad of ['0', '51', '2.5', 'abc', '']) {
+    for (const bad of ['0', '201', '2.5', 'abc', '']) {
       fireEvent.change(input, { target: { value: bad } });
       fireEvent.blur(input);
       expect(c.updateMentionPolicy).not.toHaveBeenCalled();

@@ -158,8 +158,13 @@ function postedResult(message: MessageRow, notified: string[], extra: Record<str
   const warnings: string[] = [];
   if (capped.length) {
     warnings.push(
-      `${capped.map((h) => `@${h}`).join(', ')} 를 부르지 못했다: 멘션 연쇄 상한 ${String(meta.mentionChainLimit)} 에 닿았다`
-      + ' (사람 없이 에이전트끼리 이어진 부름이 너무 길다). 사람에게 message.ask 로 넘겨라.',
+      `${capped.map((h) => `@${h}`).join(', ')} 를 부르지 못했다: `
+      + (meta.mentionChainReason === 'age'
+        ? '사람 손길 뒤 24시간이 지났다'
+        : `멘션 연쇄 상한 ${String(meta.mentionChainLimit)} 홉에 닿았다`)
+      // 백스톱 카드(147)는 서버가 세운다 — 같은 물음을 따로 세우면 사람 앞에 카드가 둘이 된다.
+      + ' (사람 없이 에이전트끼리 이어진 부름이 너무 길다). 서버가 네 소유자에게 [계속 — 예산 리셋]/[멈춤] 카드를 세웠다 —'
+      + ' 따로 message.ask 를 세우지 말고 지금 아는 것을 정리한 뒤 턴을 끝내라. 「계속」이면 다시 깨어난다.',
     );
   }
   if (denied.length) {

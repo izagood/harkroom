@@ -45,6 +45,23 @@ export function systemText(
 }
 
 /**
+ * 백스톱 카드(147)의 본문을 앱 언어로 적는다. 서버가 세운 카드(`meta.chainBackstop`)만 — 막힌 에이전트는 지금 이름으로 찾는다.
+ * 모양이 틀리면 `null`(본문으로 물러난다). 결과는 시스템 줄과 같이 글로만 그린다.
+ */
+export function chainBackstopText(
+  message: Pick<MessageRow, 'kind' | 'meta'>,
+  accounts: Record<string, { handle: string }>,
+  t: Translate,
+): string | null {
+  const b = (message.meta as Record<string, unknown> | undefined)?.chainBackstop as
+    { agentId?: unknown; limit?: unknown; reason?: unknown } | undefined;
+  if (!b || typeof b.agentId !== 'string' || typeof b.limit !== 'number') return null;
+  const handle = Object.hasOwn(accounts, b.agentId) ? accounts[b.agentId]?.handle : undefined;
+  const why = b.reason === 'age' ? t('ask.chainBackstop.age') : t('ask.chainBackstop.hops', { limit: b.limit });
+  return t('ask.chainBackstop.body', { why, handle: clean(handle ?? UNKNOWN_ACCOUNT_LABEL) });
+}
+
+/**
  * 제어 문자(C0·C1)·방향 바꿈 문자·줄/문단 구분·BOM 을 지운다 — 인자로 줄을 꾸미거나 순서를 뒤집지 못하게(C4). 줄바꿈은 공백으로.
  * 입력창 링크의 마우스 올림 주소(`ComposerEditor`)도 이것을 지난다 — 주소 안의 RLO 같은 글자가 보이는 주소를 뒤집지 못하게.
  */

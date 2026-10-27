@@ -37,7 +37,7 @@ import { accountOpen } from '../lib/accountOpen';
 import { stampLabel } from '../lib/day';
 import type { SectionId } from './settings/sections';
 import { useT, useLocale } from '../i18n/useT';
-import { systemText } from '../lib/systemText';
+import { systemText, chainBackstopText } from '../lib/systemText';
 import { systemLineShape, systemLineTarget, systemRecordIcon } from '../lib/systemLine';
 
 /**
@@ -196,7 +196,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
    * 번역 표지가 있는 시스템 줄(i18n P5 ②)은 **글로만** 그린다 — 마크다운·링크·멘션 렌더(`MessageBody`)를
    * 지나지 않는다(security C4). 인자에는 경로·저장소 이름처럼 바깥에서 온 글자가 들어간다.
    */
-  const systemLine = systemText(message, accounts, t);
+  const systemLine = systemText(message, accounts, t) ?? chainBackstopText(message, accounts, t);
 
   /**
    * 이 답이 딸린 스레드의 **뿌리 메시지**(#624 요구 2). 뿌리는 같은 채널의 최상위
@@ -866,7 +866,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                  사람이 **해야 하는 일**이 아니다. 다시 부르고 싶으면 사람이 직접 한 줄
                  쓰면 되고, 그러면 깊이가 0 에서 다시 세어진다. */
               <p data-testid="mention-chain-capped" className="mt-1 text-meta text-fg-muted">
-                {t('message.chainCapped', {
+                {t(message.meta.mentionChainReason === 'age' ? 'message.chainCappedAge' : 'message.chainCapped', {
                   handles: chainCapped.map((h) => `@${h}`).join(' '),
                   limit: chainLimit ?? '',
                 })}
