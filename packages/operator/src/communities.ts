@@ -10,6 +10,7 @@ import { createAssignmentReconciler, type AssignmentDeps } from './assignments.j
 import { createCommunity, type CommunityDeps, type CommunityInstance } from './community.js';
 import { operatorVersion } from './version.js';
 import { communityKey, readConfig, rememberOperatorId } from './config.js';
+import { ownsCommunity } from './communityRoots.js';
 import { createForwarder } from './forward.js';
 import { detectHarnesses, HARNESS_BINARIES } from './harnesses.js';
 import { listHarnessModels } from './harnessModels.js';
@@ -27,6 +28,8 @@ import { join } from 'node:path';
 
 export interface StartCommunitiesDeps {
   appDataDir: string;
+  /** 커뮤니티마다 모드 판정에 쓸 env. 테스트가 바꿔 끼운다. 기본 `process.env`. */
+  env?: NodeJS.ProcessEnv;
   registry: RunnerRegistry;
   host: RunnerHost;
   appVersion: string | null;
@@ -85,6 +88,7 @@ export function announceOf(registry: Pick<RunnerRegistry, 'listRunners' | 'retir
 }
 
 export async function startCommunities(deps: StartCommunitiesDeps): Promise<CommunityRuntime> {
+  const env = deps.env ?? process.env;
   const configPath = join(deps.appDataDir, 'operator', 'operator.json');
   const config = await readConfig(configPath);
   const secrets = deps.secrets ?? fileSecrets(join(deps.appDataDir, 'operator', 'secrets'));
@@ -174,6 +178,11 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
   const tokens = new WeakMap<CommunityInstance, string>();
   const startOne = async (rawUrl: string, section?: { agents: Record<string, import('./config.js').LocalAgentConfig> }): Promise<CommunityInstance | null> => {
     const baseUrl = communityKey(rawUrl);
+    // 커뮤니티마다 모드면 자기 커뮤니티 칸만 띄운다 — 남은 다른 칸의 토큰으로 남의 서버에 붙지 않는다(security #1649 M1).
+    if (!ownsCommunity(baseUrl, env)) {
+      deps.log(`커뮤니티 건너뜀(이 오퍼레이터가 맡은 커뮤니티가 아니다): ${baseUrl}`);
+      return null;
+    }
     const token = await secrets.getToken(baseUrl);
     const existingAt = started.findIndex((c) => c.baseUrl === baseUrl);
     if (existingAt >= 0) {

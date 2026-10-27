@@ -137,3 +137,14 @@ export function assertSingleCommunity(communities: Record<string, unknown>, env:
     throw new Error(`이 뿌리는 ${communityRootKey(mine)} 의 것이다 — 다른 커뮤니티(${key})를 넣을 수 없다`);
   }
 }
+
+/**
+ * 이 오퍼레이터 프로세스가 그 커뮤니티를 띄워도 되는가(security #1649 M1). 커뮤니티마다 모드에서 프로세스 하나는 **자기 커뮤니티
+ * 하나만** 든다 — `operator.json` 에 다른 칸(옛 단일 설정에서 넘어온 B 칸 등)이 남아 있어도 그 토큰으로 그 서버에 붙지 않는다.
+ * 꺼져 있으면 지금처럼 모든 칸을 띄운다. 켜져 있는데 맡은 커뮤니티를 모르면 아무것도 띄우지 않는다(fail-closed).
+ */
+export function ownsCommunity(baseUrl: string, env: NodeJS.ProcessEnv): boolean {
+  if (!perCommunityEnabled(env)) return true;
+  const mine = env[OPERATOR_COMMUNITY_ENV];
+  return Boolean(mine) && communityRootKey(mine as string) === communityRootKey(baseUrl);
+}
