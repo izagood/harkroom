@@ -25,10 +25,13 @@ describe('스토리보드 형식', () => {
     bad.personas[0]!.handle = 'alice';
     bad.journeys[0]!.steps[0]!.act = 'nope' as never;
     bad.journeys[0]!.existing = [{ kind: 'server-vitest', file: 'packages/server/test/nope.test.ts', note: '' }];
+    const denied = bad.journeys.find((j) => j.steps.some((st) => st.act === 'api.denied'))!;
+    for (const st of denied.steps) if (st.act === 'api.denied') delete st.with;
     const errors = validate(bad, (p) => existsSync(join(repoRoot, p)));
     expect(errors.some((e) => e.includes('e2e-*'))).toBe(true);
     expect(errors.some((e) => e.includes('모르는 동작 nope'))).toBe(true);
     expect(errors.some((e) => e.includes('없는 시험 파일'))).toBe(true);
+    expect(errors.some((e) => e.includes('api.denied 는 with.code'))).toBe(true);
   });
 
   it('모바일 persona_test 의 역할 표가 personas.yaml 과 같다', () => {

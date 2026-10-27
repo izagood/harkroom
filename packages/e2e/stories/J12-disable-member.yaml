@@ -14,8 +14,9 @@ steps:
   - as: P4
     act: api.denied
     on: api
-    target: "POST /messages"
-    expect: "바로 401"
+    target: "GET /auth/me"
+    with: { status: [401], code: unauthorized }
+    expect: "꺼진 계정의 열린 세션도 바로 401"
   - as: P4
     act: ui.see
     on: desktop

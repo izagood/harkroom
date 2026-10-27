@@ -12,6 +12,7 @@ steps:
     act: api.denied
     on: api
     target: "POST /channels"
+    with: { code: forbidden }
     expect: "게스트의 실효 권한에서 전역 grant 는 빠진다"
   - as: P6
     act: ui.notSee

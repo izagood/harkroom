@@ -16,8 +16,8 @@ steps:
     act: api.denied
     on: api
     target: "GET /channels/:channel/messages"
-    with: { status: [403, 404] }
-    expect: "403 또는 404"
+    with: { code: forbidden }
+    expect: "멤버십 문에서 403 forbidden"
   - as: P2
     act: channel.invite
     on: desktop

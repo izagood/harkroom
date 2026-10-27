@@ -30,6 +30,7 @@ steps:
     act: api.denied
     on: api
     target: "POST /invites"
+    with: { code: forbidden }
     expect: "강등 직후 서버도 거절한다"
 expect: "승격·강등이 열린 데스크톱·모바일과 서버 판정에 함께 반영된다"
 failSigns:

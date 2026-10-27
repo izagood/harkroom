@@ -25,6 +25,7 @@ steps:
     act: api.denied
     on: api
     target: "POST /accounts/agents"
+    with: { code: forbidden }
     expect: "403"
 expect: "할 수 없는 버튼은 안 보이고, 보이는 버튼은 누르면 된다"
 failSigns:
