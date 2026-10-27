@@ -21,6 +21,8 @@ use sha2::{Digest, Sha256};
 pub const PER_COMMUNITY_ENV: &str = "HARKROOM_OPERATOR_PER_COMMUNITY";
 pub const OPERATOR_ROOT_ENV: &str = "HARKROOM_OPERATOR_ROOT";
 pub const OPERATOR_COMMUNITY_ENV: &str = "HARKROOM_OPERATOR_COMMUNITY";
+/// 옛 단일 오퍼레이터 자리를 그 커뮤니티 뿌리로 쓰는 경우(D5). 러너가 작업 폴더를 옮기지 않는다(`agentStateRoot.ts`).
+pub const OPERATOR_LEGACY_ENV: &str = "HARKROOM_OPERATOR_LEGACY";
 pub const ROOTS_INDEX_FILE: &str = "operators.json";
 const HASH_LEN: usize = 8;
 const HASH_FALLBACK_LEN: usize = 16;
@@ -138,6 +140,26 @@ pub fn resolve(app_data_root: &Path, home: &Path, base_url: &str) -> Result<Comm
         root = longer;
     }
     Ok(CommunityTarget { key, root, legacy: false })
+}
+
+/// 오퍼레이터 프로세스에 줄 커뮤니티 env. `Some(값)` 은 주고 `None` 은 지운다(앱이 물려받은 값이 새지 않게).
+/// - 커뮤니티 모드: 스위치·뿌리·커뮤니티를 주고, **색인 칸이 `legacy` 일 때만** `LEGACY=1`, 아니면 지운다.
+/// - 꺼짐: 넷 다 지운다.
+pub fn community_env(target: Option<&CommunityTarget>) -> Vec<(&'static str, Option<String>)> {
+    match target {
+        Some(t) => vec![
+            (PER_COMMUNITY_ENV, Some("1".to_string())),
+            (OPERATOR_ROOT_ENV, Some(t.root.to_string_lossy().into_owned())),
+            (OPERATOR_COMMUNITY_ENV, Some(t.key.clone())),
+            (OPERATOR_LEGACY_ENV, if t.legacy { Some("1".to_string()) } else { None }),
+        ],
+        None => vec![
+            (PER_COMMUNITY_ENV, None),
+            (OPERATOR_ROOT_ENV, None),
+            (OPERATOR_COMMUNITY_ENV, None),
+            (OPERATOR_LEGACY_ENV, None),
+        ],
+    }
 }
 
 /// 커뮤니티를 고치는 명령(인자에 `baseUrl`)이 **다른 커뮤니티의 오퍼레이터**로 가지 않게 한다(security P6-F1 이중 확인).
@@ -357,5 +379,23 @@ mod tests {
         assert!(check_same_community("https://a.example.com", None).is_ok());
         std::env::remove_var(PER_COMMUNITY_ENV);
         assert!(check_same_community("https://a.example.com", Some("https://b.example.com")).is_ok());
+    }
+
+    #[test]
+    fn community_env_gives_legacy_only_for_legacy_entries() {
+        let get = |env: &[(&str, Option<String>)], k: &str| env.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone()).unwrap();
+        let legacy = CommunityTarget { key: "https://a.example.com".into(), root: PathBuf::from("/old/app-data"), legacy: true };
+        let fresh = CommunityTarget { key: "https://b.example.com".into(), root: PathBuf::from("/h/.harkroom-agent/c/abcd1234"), legacy: false };
+        let e = community_env(Some(&legacy));
+        assert_eq!(get(&e, OPERATOR_LEGACY_ENV), Some("1".to_string()));
+        assert_eq!(get(&e, OPERATOR_ROOT_ENV), Some("/old/app-data".to_string()));
+        assert_eq!(get(&e, OPERATOR_COMMUNITY_ENV), Some("https://a.example.com".to_string()));
+        let e = community_env(Some(&fresh));
+        assert_eq!(get(&e, OPERATOR_LEGACY_ENV), None, "새 커뮤니티는 LEGACY 를 지운다");
+        assert_eq!(get(&e, PER_COMMUNITY_ENV), Some("1".to_string()));
+        let e = community_env(None);
+        for k in [PER_COMMUNITY_ENV, OPERATOR_ROOT_ENV, OPERATOR_COMMUNITY_ENV, OPERATOR_LEGACY_ENV] {
+            assert_eq!(get(&e, k), None, "꺼짐이면 {k} 를 지운다");
+        }
     }
 }
