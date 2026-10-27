@@ -1157,6 +1157,9 @@ export const en = {
     'The agent was created, but it could not be assigned to this machine: {reason}. Assign it from the agent\u2019s detail screen.',
   /** 만들기 성공 팝업. 만들기 화면은 만든 뒤에도 그대로 서 있어서, 이것이 없으면 성공이 보이지 않는다. */
   'agents.create.created': 'Agent @{handle} created',
+  'agents.create.noPermission': 'You can’t create agents',
+  'agents.create.noPermissionAsk': 'Ask @{handle} to turn on “Create agents” for you',
+  'agents.create.noPermissionAskAny': 'Ask an owner or admin to turn on “Create agents” for you',
   'agents.create.createdDismiss': 'Dismiss',
   /**
    * 서버가 이름 겹침(409 `handle_taken`)이 아닌 이유로 거절했거나 닿지 못했을 때. 이름 겹침은 아래
