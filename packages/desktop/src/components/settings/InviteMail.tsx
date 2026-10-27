@@ -249,6 +249,8 @@ export function InviteMailPanel({ lead }: { lead?: ReactNode } = {}) {
   const subFor = (i: InviteView, kind: RowKind): string => {
     if (kind === 'used') return t('invite.sub.joined', { handle: i.usedBy?.handle ?? '' });
     if (kind === 'expired') return i.expiresAt ? t('invite.sub.expiredAt', { date: date(i.expiresAt) }) : '';
+    // 보내지 못한 줄에 「보냄 · N일 남음」을 쓰면 상태 칩과 어긋난다(designer s1) — 실패 시각만 쓴다.
+    if (kind === 'failed') return t('invite.sub.failedAt', { date: date(i.lastSentAt ?? i.createdAt) });
     const when = i.lastSentAt ? t('invite.sub.sentAt', { date: date(i.lastSentAt) }) : t('invite.sub.createdAt', { date: date(i.createdAt) });
     if (!i.expiresAt) return when;
     const days = Math.floor((Date.parse(i.expiresAt) - now) / 86_400_000);

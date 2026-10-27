@@ -131,6 +131,9 @@ describe('초대 메일 칸', () => {
     const ids = Array.from(document.querySelectorAll('[data-testid^="invite-row-"]')).map((e) => e.getAttribute('data-testid'));
     expect(ids).toEqual(['invite-row-fail', 'invite-row-exp', 'invite-row-sent', 'invite-row-tok', 'invite-row-used']);
     expect(screen.getByTestId('invite-status-fail').textContent).toBe('보내지 못함');
+    // 실패 줄 아랫줄은 실패 시각만 — 「보냄」·「남음」을 쓰지 않는다(designer s1).
+    expect(screen.getByTestId('invite-row-fail').textContent).toContain('보내지 못함');
+    expect(screen.getByTestId('invite-row-fail').textContent).not.toMatch(/보냄|남음/);
     expect(screen.getByTestId('invite-status-used').textContent).toBe('가입함');
     expect(screen.getByTestId('invite-row-used').textContent).toContain('@newbie');
     expect(screen.getByTestId('invite-resend-exp').textContent).toBe('새로 보내기');

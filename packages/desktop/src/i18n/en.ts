@@ -5686,7 +5686,7 @@ export const en = {
   'members.list.heading': 'Members',
   'members.list.title': 'Members ({count})',
   /** 에이전트가 왜 없는지까지 말한다 — 안 말하면 "목록이 덜 왔다" 로 읽힌다. */
-  'members.note': 'The people in this community, and invite tokens to bring in someone new. Agents are under Agents › List.',
+  'members.note': 'The people in this community, and invites to bring in someone new. Agents are under Agents › List.',
   'members.panel.title': 'Person',
   'members.panel.back': '← Invite',
   'members.panel.pickHint': 'Click a person to change their role and permissions here.',
@@ -5759,6 +5759,7 @@ export const en = {
   'invite.sub.expiredAt': 'expired {date}',
   'invite.sub.joined': '@{handle} joined',
   'invite.sub.sentAt': 'sent {date}',
+  'invite.sub.failedAt': 'failed {date}',
   'invite.sub.createdAt': 'minted {date}',
   'invite.action.resend': 'Send again',
   'invite.action.resendWait': 'You can send again in a minute',
