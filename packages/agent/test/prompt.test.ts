@@ -600,6 +600,26 @@ describe('buildTurnPrompt — 넘겨받은 일(3-2)', () => {
 });
 
 describe('buildSystemPrompt', () => {
+  // f1(스레드 d1e8f866, g5·g6): 읽기 전용 턴은 허용 목록 밖 도구가 안 보인다 — 막힌 도구를 권하지 않는다.
+  it('읽기 전용 턴은 미리보기·기억 쓰기·스킬·자동화 제안을 권하지 않고, 닫혀 있다고 말한다', () => {
+    const base = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: 'C', slugs: ['mem/a'] } as MemoryContext };
+    const full = buildSystemPrompt(base);
+    for (const t of ['`artifact.publish`(channelId', '`skill.propose`(slug', '`automation.propose`(name', 'slug 는 둘 중 하나다']) {
+      expect(full).toContain(t);
+    }
+    const ro = buildSystemPrompt({ ...base, readOnly: true });
+    for (const t of ['`artifact.publish`(channelId', '`skill.propose`(slug', '`automation.propose`(name', 'slug 는 둘 중 하나다', 'memory.lease']) {
+      expect(ro).not.toContain(t);
+    }
+    expect(ro).toContain('이 턴은 **읽기 전용**이다');
+    // 읽기 도구(목록·memory.get)와 발화 규칙은 그대로다.
+    expect(ro).toContain('`memory.get` 으로 가져온다');
+    expect(ro).toContain('`message.post` 도구를 불러');
+    // 빈 기억의 온보딩도 `memory.set` 을 권하므로 읽기 전용이면 싣지 않는다.
+    const empty = buildSystemPrompt({ ...base, memory: { core: null, slugs: [] }, readOnly: true });
+    expect(empty).not.toContain('memory.set');
+  });
+
   it('발화 model 안내의 예시에 특정 모델 이름이 없고, API 키 연결 턴에는 그 턴의 모델 ID 를 적는다(10-25 qa)', () => {
     const base = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } };
     const plain = buildSystemPrompt(base);

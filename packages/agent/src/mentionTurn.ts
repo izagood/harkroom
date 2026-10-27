@@ -1313,6 +1313,7 @@ export async function runMentionTurn(
     // API 키 연결 턴은 하네스의 환경 설명에 실제 모델이 없다 — 발화 `model` 인자에 실을 값을 알려 준다.
     laneModel: deps.providerEnv ? providerLaneModelId(turnModel.model) : null,
     secretCreate,
+    readOnly: def.mentionPermission === 'readonly',
     merge: { operatorBin: deps.operatorBin, repos: grantedRepos, approved: approvedHere.map((a) => ({ repo: a.repo, number: a.number })) },
     // hook 이 실제로 붙는 턴(turn.ts permissionRules 가 --settings 를 낼 때)에만 kind command 를 권한다.
     permissions: {
