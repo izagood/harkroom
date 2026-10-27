@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./daemonEndpoint": "./src/daemonEndpoint.ts",
     "./operatorRoots": "./src/operatorRoots.ts",
+    "./agentStateRoot": "./src/agentStateRoot.ts",
     "./daemonProtocol": "./src/daemonProtocol.ts",
     "./operatorEndpoint": "./src/operatorEndpoint.ts",
     "./operatorProtocol": "./src/operatorProtocol.ts",

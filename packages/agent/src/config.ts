@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS } from '@harkroom/shared/runnerLink';
+import { agentStateBaseDir } from '@harkroom/shared/agentStateRoot';
 
 /**
  * 인스턴스 ID 문법(#174). 소문자·숫자·하이픈 1~32자.
@@ -127,8 +128,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
     // 10분 — 멀쩡히 도는 세션들의 기록 간격 최대치(390초)보다 넉넉히 위이고, 실측된
     // 정지(30분 내내 한 줄도 안 자랐다)와는 멀리 떨어져 있다. 0 이면 재지 않는다.
     harnessStallMs: Number(env.AGENT_HARNESS_STALL_MS ?? 10 * 60_000),
+    // 커뮤니티마다 오퍼레이터면 그 커뮤니티 뿌리 아래(`@harkroom/shared/agentStateRoot`, 격리 C P4). 꺼져 있으면 지금 그대로.
     stateDir: env.AGENT_STATE_DIR
-      ?? join(homedir(), '.harkroom-agent'),
+      ?? agentStateBaseDir(join(homedir(), '.harkroom-agent'), env),
     agentInstance: validateInstance(env.HARKROOM_AGENT_INSTANCE),
     // 60초 — 사람이 티켓을 받고 attach 하기까지, 또는 잠깐 끊긴 소켓이 재-attach 하기까지의
     // 여유다. 더 짧으면 네트워크 순단이 곧 턴 종료가 되고, 더 길면 닫은 터미널이 그만큼 산다.
