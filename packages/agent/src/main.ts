@@ -32,6 +32,7 @@ import { ReviewFork } from './reviewFork.js';
 import { createMemoryCache } from './memoryCache.js';
 import { runPtyTurn } from './pty.js';
 import { avcsGuideFlag } from './avcsGuideFlag.js';
+import { createGuideCache } from './guideCache.js';
 import { SessionStore } from './sessions.js';
 import { ensureNameLink, resolveAgentStateDir, runnerSkillsDir } from './stateDir.js';
 import { assertHarnessContract, buildTurnCommand, harnessPath, readExtraMcpServers, readMcpServers, writeSystemPromptFile, type McpServerEntry } from './turn.js';
@@ -282,14 +283,20 @@ async function noticeIfHarnessLogin(
  */
 const [me, guide] = await (async () => {
   try {
-    // avcs 를 띄울 수 있는지는 하네스가 물려받을 이 러너의 PATH 로 잰다. 가이드는 기동 때 한 번만 받는다 —
-    // avcs 를 깔거나 지우면 러너를 다시 띄워야 반영된다.
+    // avcs 를 띄울 수 있는지는 하네스가 물려받을 이 러너의 PATH 로 잰다 — avcs 를 깔거나 지우면 러너를 다시
+    // 띄워야 반영된다. 가이드 원문은 아래 guideCache 가 TTL 로 다시 받는다(서버 배포로 바뀐다).
     return [await harkroom.me(), await harkroom.guide({ avcs: avcsGuideFlag(process.env.PATH) })] as const;
   } catch (err) {
     exitIfUnrecoverable(err);
     throw err;
   }
 })();
+
+const guideCache = createGuideCache({
+  initial: guide,
+  fetch: () => harkroom.guide({ avcs: avcsGuideFlag(process.env.PATH) }),
+  onError: (err) => console.error('가이드 다시 받기 실패(가진 판을 계속 쓴다):', err instanceof Error ? err.message : err),
+});
 
 // spec §3 은 *"상태는 handle 로 스코프한다"* 고 적었는데, **이제 키는 계정 id 다**(#167 ·
 // #846). handle 은 바뀌므로(#843) 키가 될 수 없고, 이름 안의 handle 은 사람이 디렉터리를
@@ -743,7 +750,7 @@ const scheduler = createMentionScheduler({
       providerEnvDone: (env: Record<string, string>) => providerLane.release(env),
       providerNotice: (cause: string) => providerLane.takeNotice(cause),
     } : {}),
-    harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide,
+    harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide: guideCache.current(),
     channelName: ctx.channelName(mention.channelId),
     handles: ctx.handles, agentIds: ctx.agentIds, workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp,
     // 지시문 파일이 여기 쓰인다(#92) — 에이전트 워크스페이스가 아니라 러너의 상태

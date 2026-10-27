@@ -249,7 +249,7 @@ export interface MentionTurnDeps {
   exec: Exec;
   runTurn: RunTurn;
   me: Me;
-  /** 기동 시 한 번 받아 두는 워크스페이스 규칙 원문(harkroom.guide()). */
+  /** 워크스페이스 규칙 원문(harkroom.guide()). 러너가 TTL 로 다시 받아 턴마다 지금 판을 넣는다(`guideCache.ts`). */
   guide: string;
   channelName: string;
   /** accountId → handle. 배치 단위로 한 번 채운다(main.ts, GET /accounts) — 매 턴 새로
