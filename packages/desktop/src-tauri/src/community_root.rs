@@ -289,6 +289,47 @@ fn copy_if_absent(src: &Path, dst: &Path) -> Result<(), String> {
     write_private(dst, &bytes)
 }
 
+/// 오퍼레이터가 늘 싣는 내장 MCP — 커뮤니티 사이에 옮길 정의·토큰이 없다.
+const BUILTIN_MCP: [&str; 2] = ["harkroom", "avcs"];
+
+/// 이 커뮤니티 칸의 에이전트들이 **실제로 가리키는** MCP 이름. 근거는 오퍼레이터가 러너를 띄울 때 에이전트마다 만든 설정
+/// (`<뿌리>/operator/mcp/<agentId>.json` 의 `mcpServers` 키, `mcpConfig.ts::writeAgentMcpConfig`)이다. 그 파일이 없으면(한 번도
+/// 안 뜬 에이전트) 가리키는 것이 없는 것으로 본다 — 모르는 이름의 토큰은 옮기지 않는다.
+fn mcp_names_used(root: &Path, section: &serde_json::Value) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let Some(agents) = section.get("agents").and_then(|a| a.as_object()) else { return out };
+    for agent_id in agents.keys() {
+        // 에이전트 id 는 파일 이름이 된다 — 경로 조각이 될 수 있는 글자는 받지 않는다.
+        if agent_id.is_empty() || !agent_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            continue;
+        }
+        let Ok(Some(v)) = read_json(&root.join("operator").join("mcp").join(format!("{agent_id}.json"))) else { continue };
+        if let Some(servers) = v.get("mcpServers").and_then(|m| m.as_object()) {
+            out.extend(servers.keys().filter(|k| !BUILTIN_MCP.contains(&k.as_str())).cloned());
+        }
+    }
+    out
+}
+
+/// 이름→항목 표(`mcp-servers.json`·`mcp-oauth.json`)에서 `names` 에 든 항목만 골라 `dst` 에 넣는다(있는 항목은 `src` 가 이긴다).
+/// 고를 것이 없으면 아무것도 쓰지 않는다. 0600.
+fn copy_named_entries(src: &Path, dst: &Path, names: &std::collections::BTreeSet<String>) -> Result<(), String> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let Some(from) = read_json(src)? else { return Ok(()) };
+    let Some(from) = from.as_object() else { return Ok(()) };
+    let picked: serde_json::Map<String, serde_json::Value> = from.iter().filter(|(k, _)| names.contains(*k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    if picked.is_empty() {
+        return Ok(());
+    }
+    let mut to = read_json(dst)?.and_then(|v| v.as_object().cloned()).unwrap_or_default();
+    for (k, v) in picked {
+        to.insert(k, v);
+    }
+    write_json_atomic(dst, &serde_json::Value::Object(to))
+}
+
 /// 기계에 하나인 계정 **선택** 파일(D2) — 켜짐이면 뿌리마다 `claude-pools.json`·`codex-active.json` 을 읽는다(P2b).
 fn account_choice_sources(home: &Path) -> [(PathBuf, &'static str); 2] {
     let claude = std::env::var_os("HARKROOM_CLAUDE_ACCOUNTS_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".harkroom-agent").join("claude-accounts"));
@@ -309,8 +350,13 @@ fn copy_community_into(app_data_root: &Path, home: &Path, legacy_cfg: &serde_jso
     let to = target.root.join("operator");
     let token = token_file_name(key);
     copy_if_absent(&from.join("secrets").join(&token), &to.join("secrets").join(&token))?;
-    copy_if_absent(&from.join("mcp-servers.json"), &to.join("mcp-servers.json"))?;
-    copy_if_absent(&from.join("secrets").join("mcp-oauth.json"), &to.join("secrets").join("mcp-oauth.json"))?;
+    // MCP 는 커뮤니티마다(D3) — 이 커뮤니티 에이전트가 **실제로 가리키는 이름만** 정의·토큰을 옮긴다(security #1652 M2).
+    let names = mcp_names_used(app_data_root, section);
+    copy_named_entries(&from.join("mcp-servers.json"), &to.join("mcp-servers.json"), &names)?;
+    copy_named_entries(&from.join("secrets").join("mcp-oauth.json"), &to.join("secrets").join("mcp-oauth.json"), &names)?;
+    if !names.is_empty() {
+        eprintln!("harkroom: {key} 로 MCP 를 옮겼다: {}", names.iter().cloned().collect::<Vec<_>>().join(", "));
+    }
     for (src, name) in account_choice_sources(home) {
         copy_if_absent(&src, &target.root.join(name))?;
     }
@@ -390,6 +436,13 @@ pub fn adopt_legacy(app_data_root: &Path, home: &Path) -> Result<Option<String>,
 /// **되돌리기** — 스위치를 끄고 뜰 때 부른다. 각 뿌리로 옮겼던 칸(설정 칸·토큰)을 옛 단일 설정에 **도로 합친 뒤** 색인을
 /// `operators.json.off` 로 옮긴다(지우지 않는다 — 다시 켜면 그대로 되살린다, security #1649 n1). 꺼진 앱은 색인을 읽지 않고 옛 단일
 /// 오퍼레이터로 모든 커뮤니티를 든다. 뿌리(`c/<해시>`)는 지우지 않는다. 옮겼으면 true.
+fn section_of(cfg: &serde_json::Value, key: &str) -> serde_json::Value {
+    cfg.get("communities")
+        .and_then(|c| c.as_object())
+        .and_then(|c| c.iter().find(|(k, _)| community_key(k) == key).map(|(_, v)| v.clone()))
+        .unwrap_or(serde_json::Value::Null)
+}
+
 pub fn revert_index(app_data_root: &Path) -> Result<bool, String> {
     let index_path = app_data_root.join(ROOTS_INDEX_FILE);
     if !index_path.exists() {
@@ -412,6 +465,10 @@ pub fn revert_index(app_data_root: &Path) -> Result<bool, String> {
         }
         let token = token_file_name(key);
         copy_if_absent(&root.join("operator").join("secrets").join(&token), &app_data_root.join("operator").join("secrets").join(&token))?;
+        // 켜짐 동안 그 뿌리에서 바꾼 MCP 정의·토큰도 같은 「가리키는 이름만」 규칙으로 도로 합친다(security #1652 n2).
+        let names = mcp_names_used(root, &section_of(&rc, key));
+        copy_named_entries(&root.join("operator").join("mcp-servers.json"), &app_data_root.join("operator").join("mcp-servers.json"), &names)?;
+        copy_named_entries(&root.join("operator").join("secrets").join("mcp-oauth.json"), &app_data_root.join("operator").join("secrets").join("mcp-oauth.json"), &names)?;
     }
     if changed {
         write_json_atomic(&cfg_path, &cfg)?;
@@ -667,6 +724,49 @@ mod tests {
         std::fs::write(d.join("operator").join("operator.json"), "{").unwrap();
         assert!(adopt_legacy(&d, &home).is_err());
         assert!(!d.join(ROOTS_INDEX_FILE).exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn split_moves_only_the_mcp_names_the_community_uses_and_revert_merges_them_back() {
+        let d = tmp_root("mcp");
+        let home = d.join("home");
+        let a = "https://a.example.com";
+        let b = "https://b.example.com";
+        let op = d.join("operator");
+        std::fs::write(op.join("operator.json"), format!(r#"{{"communities":{{"{a}":{{"agents":{{"agent-a":{{}}}}}},"{b}":{{"agents":{{"x":{{}},"y":{{}}}}}}}}}}"#)).unwrap();
+        std::fs::write(op.join("mcp-servers.json"), r#"{"slack":{"url":"https://slack.example.com"},"jira":{"url":"https://jira.example.com"}}"#).unwrap();
+        std::fs::create_dir_all(op.join("secrets")).unwrap();
+        std::fs::write(op.join("secrets").join("mcp-oauth.json"), r#"{"slack":{"accessToken":"S"},"jira":{"accessToken":"J"}}"#).unwrap();
+        std::fs::create_dir_all(op.join("mcp")).unwrap();
+        std::fs::write(op.join("mcp").join("agent-a.json"), r#"{"mcpServers":{"harkroom":{},"avcs":{},"jira":{}}}"#).unwrap();
+        assert_eq!(adopt_legacy(&d, &home).unwrap().as_deref(), Some(b));
+        let a_root = PathBuf::from(&read_index(&d).unwrap().communities[a].root);
+        let defs = read_json(&a_root.join("operator").join("mcp-servers.json")).unwrap().unwrap();
+        let toks = read_json(&a_root.join("operator").join("secrets").join("mcp-oauth.json")).unwrap().unwrap();
+        assert_eq!(defs.as_object().unwrap().keys().collect::<Vec<_>>(), vec!["jira"]);
+        assert_eq!(toks.as_object().unwrap().keys().collect::<Vec<_>>(), vec!["jira"], "A 뿌리에 slack 토큰이 없어야 한다");
+        // 켜짐 동안 A 뿌리에서 jira 토큰이 바뀌었다 — 되돌리면 그 값이 옛 자리로 돌아오고 slack 은 그대로다.
+        std::fs::create_dir_all(a_root.join("operator").join("mcp")).unwrap();
+        std::fs::write(a_root.join("operator").join("mcp").join("agent-a.json"), r#"{"mcpServers":{"jira":{}}}"#).unwrap();
+        std::fs::write(a_root.join("operator").join("secrets").join("mcp-oauth.json"), r#"{"jira":{"accessToken":"J2"}}"#).unwrap();
+        assert!(revert_index(&d).unwrap());
+        let back = read_json(&op.join("secrets").join("mcp-oauth.json")).unwrap().unwrap();
+        assert_eq!(back["jira"]["accessToken"], "J2");
+        assert_eq!(back["slack"]["accessToken"], "S");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn split_copies_no_mcp_when_the_community_uses_none() {
+        let d = tmp_root("nomcp");
+        let home = d.join("home");
+        let op = d.join("operator");
+        std::fs::write(op.join("operator.json"), r#"{"communities":{"https://a.example.com":{"agents":{"q":{}}},"https://b.example.com":{"agents":{"x":{},"y":{}}}}}"#).unwrap();
+        std::fs::write(op.join("mcp-servers.json"), r#"{"slack":{}}"#).unwrap();
+        assert!(adopt_legacy(&d, &home).is_ok());
+        let a_root = PathBuf::from(&read_index(&d).unwrap().communities["https://a.example.com"].root);
+        assert!(!a_root.join("operator").join("mcp-servers.json").exists());
         let _ = std::fs::remove_dir_all(&d);
     }
 }
