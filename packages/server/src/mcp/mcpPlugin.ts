@@ -2233,11 +2233,12 @@ function buildMcpServer(
    * 작업 항목(110, 협업 통합 설계 ①) — **내 주인의** 「내 작업」 보드에 밖의 일을 건다.
    *
    * 주인은 인자로 받지 않는다: `agent_config.owner_account_id` 하나다(`resolveWorkItemOwner`). 남의 보드에
-   * 꽂을 길을 열지 않으려는 것이다. avcs intent 는 source=avcs·externalKey=`<repo>/<intent oid>`·이 스레드로
+   * 꽂을 길을 열지 않으려는 것이다. 설명은 도구가 무엇을 받는지만 말한다 — 무엇을 걸지는 사람·워크스페이스가
+   * 정하는 일이라 앱 문구에 넣지 않는다(설계 원칙 2, 2026-10-27). avcs intent 는 source=avcs·externalKey=`<repo>/<intent oid>`·이 스레드로
    * 걸고 state 는 주지 않는다 — 상태는 avcs 서버가 정본이다(워크스페이스 규칙 「작업 경과 알리기」).
    */
   server.registerTool('workitem.upsert', {
-    description: '내 주인의 「내 작업」 보드에 밖의 일(PR·티켓·avcs intent)을 건다 — 같은 source·externalKey 면 고쳐 쓴다. avcs 는 externalKey=<repo>/<intent oid>, threadRootId 필수, state 생략',
+    description: '내 주인의 「내 작업」 보드에 밖의 시스템(source: github·jira·slack·other·avcs)의 항목 하나를 건다 — 같은 source·externalKey 면 고쳐 쓴다. avcs 가 아니면 state 필수. avcs 는 externalKey=<repo>/<intent oid>, threadRootId 필수, state 생략',
     inputSchema: workItemUpsertSchema,
   }, async (args) => {
     const ownerId = await resolveWorkItemOwner(pool, account);
