@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Pool } from 'pg';
 import type { AccountView } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
-import { can, hasGrant } from '../src/auth/permissions.js';
+import { can, effectiveCapabilities, hasGrant } from '../src/auth/permissions.js';
 
 let pool: Pool; let stop: () => Promise<void>;
 let ownerId: string; let memberId: string; let otherId: string; let agentId: string;
@@ -51,6 +51,20 @@ describe('can()', () => {
     await pool.query(`insert into account_grant (account_id, capability, granted_by) values ($1, 'agent.create', $2)`, [memberId, ownerId]);
     expect(await hasGrant(pool, memberId, 'agent.create', '')).toBe(true);
     expect(await can(pool, view(memberId, 'member'), 'agent.create')).toBe(true);
+  });
+  it('guest 는 전역 grant 를 들고 있어도 인정받지 않는다 — 대상 한정 grant 는 그대로', async () => {
+    // memberId 는 바로 위에서 전역 agent.create 를 받았다. 같은 줄을 guest 로 읽는다.
+    expect(await can(pool, view(memberId, 'guest'), 'agent.create')).toBe(false);
+    expect(await effectiveCapabilities(pool, view(memberId, 'guest'))).toEqual([]);
+    expect(await effectiveCapabilities(pool, view(memberId, 'member'))).toContain('agent.create');
+    const chan = '00000000-0000-0000-0000-0000000000c1';
+    await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'channel.manage', $2, $3)`,
+      [memberId, `channel:${chan}`, ownerId]);
+    expect(await can(pool, view(memberId, 'guest'), 'channel.manage', { kind: 'channel', id: chan })).toBe(true);
+    // 전역 channel.manage 만 있는 guest 는 대상을 물어도 통과하지 않는다.
+    await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'team.manage', '', $2)`, [memberId, ownerId]);
+    expect(await can(pool, view(memberId, 'guest'), 'team.manage', { kind: 'team', id: chan })).toBe(false);
+    expect(await can(pool, view(memberId, 'member'), 'team.manage', { kind: 'team', id: chan })).toBe(true);
   });
   it('만료된 grant 는 없는 것이다', async () => {
     await pool.query(`insert into account_grant (account_id, capability, scope, granted_by, expires_at)

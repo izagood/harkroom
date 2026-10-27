@@ -16,13 +16,18 @@ import type { Pool } from 'pg';
 import type { AccountView, Capability, PermissionTarget } from '@harkroom/shared';
 import { CAPABILITIES, MEMBER_DEFAULT_CAPABILITIES, orgScopeOf, repoScope } from '@harkroom/shared';
 
-export async function hasGrant(pool: Pool, accountId: string, cap: Capability, scope: string): Promise<boolean> {
+export async function hasGrant(
+  pool: Pool, accountId: string, cap: Capability, scope: string, opts: { global?: boolean } = {},
+): Promise<boolean> {
   // scope 가 주어져도 전역('') grant 는 언제나 그 대상을 덮는다 — 전역이 대상 한정보다 넓다.
+  // `global: false` 면 전역 grant 를 보지 않는다(guest — `can()` 의 그 줄). 대상 한정 grant 는 그대로 본다.
+  const global = opts.global ?? true;
+  if (!global && scope === '') return false;
   const res = await pool.query(
     `select 1 from account_grant
-      where account_id = $1 and capability = $2 and (scope = '' or scope = $3)
+      where account_id = $1 and capability = $2 and (($4 and scope = '') or scope = $3)
         and (expires_at is null or expires_at > now()) limit 1`,
-    [accountId, cap, scope],
+    [accountId, cap, scope, global],
   );
   return (res.rowCount ?? 0) > 0;
 }
@@ -98,7 +103,10 @@ export async function can(
   // guest 는 기본 capability 가 없다 — 외부인을 채널 하나에만 들이는 자리다(스펙 §6, v2).
   if (actor.role !== 'guest' && MEMBER_DEFAULT_CAPABILITIES.includes(cap)) return true;
   const scope = target ? `${target.kind}:${target.id}` : '';
-  if (await hasGrant(pool, actor.id, cap, scope)) return true;
+  // guest 는 **전역 grant 도 없다** — 기본 capability 가 없는 것과 같은 이유다(채널 하나의 손님 자리). member 일 때
+  // 받은 전역 grant 는 역할을 guest 로 바꿔도 줄로 남으므로(`PUT /accounts/:id/role` 은 역할만 바꾼다), 판정에서 뺀다.
+  // 줄을 지우지 않는 것은 다시 member 로 올렸을 때 되살아나게 하려는 것이 아니라, 판정 한 곳이 규칙을 지게 하려는 것이다.
+  if (await hasGrant(pool, actor.id, cap, scope, { global: actor.role !== 'guest' })) return true;
   return actor.role === 'owner' || actor.role === 'admin';
 }
 
@@ -111,10 +119,12 @@ export async function can(
 export async function effectiveCapabilities(pool: Pool, actor: AccountView): Promise<Capability[]> {
   // `repo.merge`·`api.call` 은 전역이 될 수 없다 — admin 이라도 화면에 그 권한을 그리지 않는다(F1, #1136 L1).
   if (actor.role === 'owner' || actor.role === 'admin') return CAPABILITIES.filter((c) => c !== 'repo.merge' && c !== 'api.call');
+  // guest 는 전역 grant 를 인정받지 않는다(`can()` 의 같은 줄) — 이 목록은 전역만 담으므로 비어 있다.
+  if (actor.role === 'guest') return [];
   const res = await pool.query<{ capability: Capability }>(
     `select distinct capability from account_grant
       where account_id = $1 and scope = '' and (expires_at is null or expires_at > now())`, [actor.id]);
-  const set = new Set<Capability>(actor.role === 'guest' ? [] : MEMBER_DEFAULT_CAPABILITIES);
+  const set = new Set<Capability>(MEMBER_DEFAULT_CAPABILITIES);
   for (const r of res.rows) set.add(r.capability);
   return [...set];
 }

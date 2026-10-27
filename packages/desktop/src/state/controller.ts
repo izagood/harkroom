@@ -570,12 +570,6 @@ export class Controller {
     this.store.getState().set({ serverVersion });
   }
 
-  /**
-   * 워크스페이스 아이콘을 받아 objectURL 로 스토어에 넣는다. 걸린 것이 없으면(404) null 로 지운다.
-   *
-   * **못 읽었을 때는 이전 값을 지우지 않는다**(`refreshServerVersion` 과 같은 이유) — 한 번
-   * 실패했다고 사진이 글자로 되돌아가면 레일이 깜박인다. 실패는 `swallow` 가 삼킨다.
-   */
   /** 내 계정(`/auth/me`)을 다시 읽는다 — 역할·`capabilities` 가 바뀐 뒤(`grant.changed`). */
   private async refreshMe(): Promise<void> {
     const me = await this.api.me();
@@ -583,6 +577,12 @@ export class Controller {
     this.store.getState().set({ me });
   }
 
+  /**
+   * 워크스페이스 아이콘을 받아 objectURL 로 스토어에 넣는다. 걸린 것이 없으면(404) null 로 지운다.
+   *
+   * **못 읽었을 때는 이전 값을 지우지 않는다**(`refreshServerVersion` 과 같은 이유) — 한 번
+   * 실패했다고 사진이 글자로 되돌아가면 레일이 깜박인다. 실패는 `swallow` 가 삼킨다.
+   */
   private async refreshWorkspaceIcon(): Promise<void> {
     const blob = await this.api.fetchWorkspaceIcon();
     if (this.stopped) return;
