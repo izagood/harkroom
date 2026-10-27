@@ -58,6 +58,7 @@ const TERMINAL_WIDTH_KEY = 'harkroom.terminalWidth';
 const PREVIEW_WIDTH_KEY = 'harkroom.previewWidth';
 const LAST_WORKSPACE_URL_KEY = 'harkroom.lastWorkspaceUrl';
 const LAST_CHANNEL_KEY = 'harkroom.lastChannel';
+const AUTO_REGISTERED_KEY = 'harkroom.operatorAutoRegistered';
 
 export const MIN_SIDEBAR_WIDTH = 200;
 export const MAX_SIDEBAR_WIDTH = 480;
@@ -421,6 +422,40 @@ export const lastChannelStorage = {
     } catch { /* noop */ }
   },
 };
+
+/**
+ * 이 기계를 **자동으로** 커뮤니티에 세운 적이 있는지 커뮤니티마다 기억한다(격리 C P8).
+ *
+ * 자동 등록은 커뮤니티마다 **한 번뿐**이다. 사람이 그 뒤에 이 기계를 뺐으면 다음 기동에 다시 세우지 않는다 —
+ * 뺀 것이 그 사람의 뜻이다. 열쇠는 커뮤니티 주소(끝 슬래시를 뗀 값)이고 담는 것은 처음 표시한 시각뿐이다.
+ * 로그아웃해도 지우지 않는다 — 계정이 아니라 이 기계의 사실이다.
+ */
+export const operatorAutoRegisteredStorage = {
+  has(baseUrl: string): boolean {
+    try {
+      const raw = localStorage.getItem(AUTO_REGISTERED_KEY);
+      if (!raw) return false;
+      const map = JSON.parse(raw) as Record<string, unknown>;
+      return typeof map[communityKeyOf(baseUrl)] === 'string';
+    } catch {
+      return false;
+    }
+  },
+  mark(baseUrl: string): void {
+    try {
+      const raw = localStorage.getItem(AUTO_REGISTERED_KEY);
+      const map = (raw ? JSON.parse(raw) : {}) as Record<string, string>;
+      const key = communityKeyOf(baseUrl);
+      if (key in map) return;
+      map[key] = new Date().toISOString();
+      localStorage.setItem(AUTO_REGISTERED_KEY, JSON.stringify(map));
+    } catch { /* 저장 불가 환경 허용 */ }
+  },
+};
+
+function communityKeyOf(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, '');
+}
 
 /** `lastChannelStorage` 의 열쇠. 계정 id 가 비면(옛 단일 세션 이관분) 기억하지 않는다. */
 export function lastChannelScope(baseUrl: string, accountId: string): string | null {
