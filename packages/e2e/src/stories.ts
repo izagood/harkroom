@@ -125,6 +125,9 @@ export function validate(sb: Storyboard, exists: (repoPath: string) => boolean):
       if (!ACTIONS.includes(s.act)) errors.push(`${at}.steps[${i}]: 모르는 동작 ${s.act}`);
       if (s.on && s.on !== 'api' && !DEVICES.includes(s.on)) errors.push(`${at}.steps[${i}]: 모르는 기기 ${s.on}`);
       if (!s.expect) errors.push(`${at}.steps[${i}]: expect 없음`);
+      // 거절 단계는 상태 코드만으로는 어느 문에서 막혔는지 모른다(step-up 창이 닫혀서 난 403 도 통과한다).
+      // 서버 오류 코드(`error.code`)까지 적게 한다.
+      if (s.act === 'api.denied' && typeof s.with?.code !== 'string') errors.push(`${at}.steps[${i}]: api.denied 는 with.code(서버 거절 사유 코드)가 있어야 함`);
     });
     if (!j.runners?.length) errors.push(`${at}: runners 없음`);
     for (const r of j.runners ?? []) if (!RUNNERS.includes(r)) errors.push(`${at}: 모르는 러너 ${r}`);

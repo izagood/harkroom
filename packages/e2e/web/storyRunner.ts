@@ -90,7 +90,11 @@ const handlers: Partial<Record<Step['act'], Handler>> = {
     const t = await token(s, step.as);
     const path = `/accounts/${targetId(step)}/grants`;
     await ok(await api('PUT', path, t, { capability: step.with?.capability }), 'grant 주기');
-    s.undo.push(() => api('DELETE', `${path}/${String(step.with?.capability)}`, t));
+    // 여정 안에서 이미 거뒀으면(J4) 서버는 404 다 — 되돌릴 것이 없다는 뜻이라 실패로 치지 않는다.
+    s.undo.push(async () => {
+      const r = await api('DELETE', `${path}/${String(step.with?.capability)}`, t);
+      if (r.status !== 404) await ok(r, '되돌리기: grant 거두기');
+    });
     return `via api: ${step.target} ← ${String(step.with?.capability)}`;
   },
   async 'grant.revoke'(s, step) {
@@ -102,7 +106,7 @@ const handlers: Partial<Record<Step['act'], Handler>> = {
     const persona = String(step.target);
     const before = readSeed().accounts[persona]?.role;
     await ok(await api('PUT', `/accounts/${targetId(step)}/role`, t, { role: step.with?.role }), '역할 바꾸기');
-    if (before) s.undo.push(() => api('PUT', `/accounts/${targetId(step)}/role`, t, { role: before }));
+    if (before) s.undo.push(async () => ok(await api('PUT', `/accounts/${targetId(step)}/role`, t, { role: before }), '되돌리기: 역할'));
     return `via api: ${step.target} → ${String(step.with?.role)}`;
   },
   async 'channel.create'(s, step) {
@@ -165,6 +169,7 @@ async function seeOrNot(s: State, step: Step, visible: boolean): Promise<string 
 export async function runWebJourney(browser: Browser, journey: Journey): Promise<WebStepResult[]> {
   const s: State = { browser, pages: new Map(), tokens: new Map(), undo: [] };
   const out: WebStepResult[] = [];
+  let failure: unknown;
   try {
     for (const [index, step] of journey.steps.entries()) {
       const base = { index, act: step.act, as: step.as };
@@ -176,9 +181,20 @@ export async function runWebJourney(browser: Browser, journey: Journey): Promise
       const detail = await handler(s, step);
       out.push({ ...base, outcome: detail === null ? 'skipped' : 'passed', detail: detail ?? '이 기기/대상은 브라우저 몫 아님' });
     }
-  } finally {
-    for (const p of s.pages.values()) await p.context().close();
-    for (const u of s.undo.reverse()) await u();
+  } catch (e) {
+    failure = e;
   }
+  // 되돌리기는 화면을 닫기 **전에** 돈다(닫힌 뒤엔 실패해도 그 화면의 trace 가 없다). 되돌리기 오류는 모아 두고,
+  // 여정이 이미 실패했으면 **원래 실패를 던진다** — 되돌리기 오류가 원래 실패를 덮으면 무엇이 깨졌는지 못 본다.
+  const undoErrors: string[] = [];
+  for (const u of s.undo.reverse()) {
+    try { await u(); } catch (e) { undoErrors.push((e as Error).message); }
+  }
+  for (const p of s.pages.values()) await p.context().close().catch(() => undefined);
+  if (failure !== undefined) {
+    if (undoErrors.length && failure instanceof Error) failure.message += `\n(되돌리기도 실패: ${undoErrors.join(' · ')})`;
+    throw failure;
+  }
+  if (undoErrors.length) throw new Error(`되돌리기 실패: ${undoErrors.join(' · ')}`);
   return out;
 }
