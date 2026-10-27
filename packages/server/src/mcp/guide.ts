@@ -36,6 +36,12 @@
 // 한다 — 러너만 자기 하네스가 avcs MCP(`avcs mcp`)를 실제로 띄울 수 있는지 안다. 서버의 투영 URL 은
 // 다른 질문(협업 화면이 avcs 로그를 읽는가)이라 이 판정에 쓰지 않는다. 러너가 `avcs: false` 를 밝힌
 // 때만 빼고, 밝히지 않으면(옛 러너·상주 에이전트) 지금까지와 같은 전문이다.
+//
+// ## 예약·MCP 인증 절은 상주 판본에만 (2026-10-27, 스레드 d1e8f866 f4)
+//
+// 두 절은 러너의 시스템 프롬프트(`packages/agent/src/prompt.ts` buildSystemPrompt)에도 같은 뜻으로 있었다 — 턴은 같은 규칙을
+// 두 벌 받았고 고칠 곳이 둘이라 어긋날 수 있었다. 턴 쪽 정본은 러너다: 턴 예산·세션 이어짐처럼 러너만 아는 사실이 같은
+// 문단에 붙고, 러너가 바뀌는 판과 함께 간다. 그래서 러너 턴 판본에서는 뺀다. 상주 에이전트는 러너 프롬프트가 없으니 그대로 받는다.
 
 const HEADER = `# harkroom workspace 가이드 (에이전트용)`;
 
@@ -144,7 +150,7 @@ export interface GuideOptions {
 export function guideFor(mode: GuideMode, { avcs = true }: GuideOptions = {}): string {
   const head = avcs ? [HEADER, AVCS, COMMON] : [HEADER, COMMON];
   const sections = mode === 'turn'
-    ? [...head, TURN_ONLY, WAKE, MCP_AUTH]
+    ? [...head, TURN_ONLY]
     : [...head, RESIDENT_ONLY, WAKE, MCP_AUTH, POLL_CONTRACT];
   return `${sections.join('\n\n')}\n`;
 }

@@ -34,13 +34,14 @@ describe('워크스페이스 가이드의 두 판본 (2026-09-08 앵커 이탈 �
     expect(resident).toMatch(/백오프/);
   });
 
-  it('두 판본 다 avcs 경계와 turn.wake 를 담는다 — 가른 것은 인박스뿐이다', () => {
+  it('두 판본 다 avcs 경계를 담는다 · 예약 절은 상주 판본에만 — 턴은 러너 프롬프트가 정본이다 (f4, 2026-10-27)', () => {
     for (const mode of ['resident', 'turn'] as const) {
       const g = guideFor(mode);
       expect(g, mode).toMatch(/## avcs 사용 경계/);
-      expect(g, mode).toMatch(/## 기다림은 예약한다/);
       expect(g, mode).toMatch(/## 작업 경과 알리기/);
     }
+    expect(guideFor('resident')).toMatch(/## 기다림은 예약한다/);
+    expect(guideFor('turn')).not.toMatch(/## 기다림은 예약한다/);
   });
 
   it('두 판본 다 intent 를 열면 workitem.upsert(source avcs)로 스레드에 이으라고 말한다 — 새 도구는 쓰라는 말이 있어야 쓰인다 (협업 ①)', () => {
@@ -52,8 +53,9 @@ describe('워크스페이스 가이드의 두 판본 (2026-09-08 앵커 이탈 �
     }
   });
 
-  it('두 판본 다 MCP 인증을 턴 안에서 열지 말고 사람에게 넘기라고 말한다 — 흐름이 프로세스와 함께 사라진다 (2026-09-30)', () => {
-    for (const mode of ['resident', 'turn'] as const) {
+  it('상주 판본은 MCP 인증을 턴 안에서 열지 말고 사람에게 넘기라고 말한다 · 턴 판본은 러너 프롬프트가 맡는다 (2026-09-30, f4)', () => {
+    expect(guideFor('turn')).not.toMatch(/## MCP 인증은 턴 안에서 하지 않는다/);
+    for (const mode of ['resident'] as const) {
       const g = guideFor(mode);
       expect(g, mode).toMatch(/## MCP 인증은 턴 안에서 하지 않는다/);
       expect(g, mode).toContain('인증 흐름을 열지 마라');
@@ -70,8 +72,10 @@ describe('워크스페이스 가이드의 두 판본 (2026-09-08 앵커 이탈 �
       expect(g, mode).toMatch(/^# harkroom workspace 가이드/);
       // 뺀 것은 avcs 두 절뿐이다.
       expect(g, mode).toMatch(/## 이름이 아니라 id 로 가리킨다/);
-      expect(g, mode).toMatch(/## 기다림은 예약한다/);
-      expect(g, mode).toMatch(/## MCP 인증은 턴 안에서 하지 않는다/);
+      if (mode === 'resident') {
+        expect(g, mode).toMatch(/## 기다림은 예약한다/);
+        expect(g, mode).toMatch(/## MCP 인증은 턴 안에서 하지 않는다/);
+      }
       // 생략·true 는 지금까지와 글자 그대로 같은 전문이다.
       expect(guideFor(mode, { avcs: true }), mode).toBe(guideFor(mode));
       expect(guideFor(mode, {}), mode).toBe(guideFor(mode));
@@ -89,7 +93,7 @@ describe('워크스페이스 가이드의 두 판본 (2026-09-08 앵커 이탈 �
   });
 
   it('가이드 예시의 채널은 중립 이름이다 — 모든 워크스페이스의 에이전트가 읽는다', () => {
-    expect(guideFor('turn')).toContain('(예: #ops 에 "13:20 에 확인한다")');
+    expect(guideFor('resident')).toContain('(예: #ops 에 "13:20 에 확인한다")');
   });
 
   it('옛 이름 GUIDE 는 상주 판본과 글자 그대로 같다 — 모드를 모르는 호출자의 계약이 바뀌면 안 된다', () => {
