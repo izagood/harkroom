@@ -245,6 +245,12 @@ The server reads these environment variables:
 | `ATTACHMENT_ROOT` | File system path for uploaded attachments | `./.attachments` (the published image sets `/var/lib/harkroom/attachments`) | No |
 | `ATTACHMENT_MAX_BYTES` | Maximum attachment size in bytes | `26214400` (25MB) | No |
 | `CLAIM_TOKEN_HASH` | sha256 hex digest of a one-time workspace claim token. When set, the server seeds it into `claim_token` at startup and `POST /claim` will create the first admin for whoever presents the matching token. Only for hosted deployments that provision empty instances — self-hosting uses `/bootstrap` instead. Pass the **digest**, never the token itself | - | No |
+| `HARKROOM_SMTP_HOST` | SMTP server that sends invite emails. Set it together with `HARKROOM_MAIL_FROM` and `HARKROOM_PUBLIC_URL` to let admins invite people by email; leave all mail variables unset to keep mail off (invites are then handed over as a token on screen, as before). Setting only some of the required ones stops the server at startup | - | No |
+| `HARKROOM_SMTP_PORT` | SMTP port. `465` uses TLS from the start; any other port must offer STARTTLS (plain-text SMTP is refused) | `587` | No |
+| `HARKROOM_SMTP_USER` | SMTP user name. Set it together with `HARKROOM_SMTP_PASSWORD`, or neither | - | No |
+| `HARKROOM_SMTP_PASSWORD` | SMTP password or API key. Mount it from a Kubernetes Secret; never commit it | - | No |
+| `HARKROOM_MAIL_FROM` | Sender of invite emails, e.g. `Harkroom <invite@your-domain.example.com>`. The domain needs SPF/DKIM records from your mail provider or mail lands in spam | - | No |
+| `HARKROOM_PUBLIC_URL` | The address people use to reach this server, e.g. `https://workspace.example.com`. Invite emails show it as the server address and link to `<this>/join` | - | No |
 | `APNS_KEY_ID` | Key ID of the Apple Push Notifications (APNs) auth key (`.p8`). Set all four `APNS_*` variables to turn on mobile push; leave all unset to keep it off. Setting only some of them stops the server at startup | - | No |
 | `APNS_TEAM_ID` | Apple Developer Team ID that owns the APNs key | - | No |
 | `APNS_KEY_P8` | Contents of the APNs auth key file (`AuthKey_<KeyID>.p8`, PEM). Mount it from a Kubernetes Secret; never commit it | - | No |

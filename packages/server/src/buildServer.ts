@@ -39,6 +39,8 @@ import { registerAgentRelayRoutes } from './routes/agentRelayRoutes.js';
 import { registerSkillRoutes } from './routes/skillRoutes.js';
 import { registerPushRoutes } from './routes/pushRoutes.js';
 import { createApnsTransport, loadApnsConfig, type PushTransport } from './services/push/apns.js';
+import { createSmtpTransport, loadMailConfig, type Mailer } from './services/mail/mailer.js';
+import { registerJoinPage } from './routes/joinPage.js';
 import { createPushSweeper, type PushHealth } from './services/push/pushJobs.js';
 import { registerAutomationRoutes } from './routes/automationRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
@@ -129,6 +131,11 @@ export interface ServerDeps {
    * 멈춘다), `null` 이면 끈다(테스트용).
    */
   push?: PushTransport | null;
+  /**
+   * 초대 메일(149). 생략하면 `HARKROOM_SMTP_*`·`HARKROOM_MAIL_FROM`·`HARKROOM_PUBLIC_URL` env 를 읽고(하나도 없으면 끈다,
+   * 필수 일부만 있으면 기동을 멈춘다), `null` 이면 끈다(테스트용). 꺼져 있으면 초대는 지금처럼 화면에서 건넨다.
+   */
+  mail?: Mailer | null;
   /**
    * 자동화 수신(065)의 비밀 봉투 키. 생략하면 `HARKROOM_SECRET_KEY` env 를 읽고, `null` 이면 끈다(테스트용).
    */
@@ -394,11 +401,18 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 인증 **앞**에 둔다(그리고 그대로 둔다) — 배포가 낡았는지는 로그인 전에도 물을 수
   // 있어야 한다. 여기 실리는 것은 릴리스 번호·커밋·기동 시각뿐이고 셋 다 공개 저장소에
   // 이미 있는 사실이다(#693).
+  const mailConfig = deps.mail === undefined ? loadMailConfig() : null;
+  const mailer: Mailer | null = deps.mail !== undefined
+    ? deps.mail
+    : mailConfig ? { transport: createSmtpTransport(mailConfig), publicUrl: mailConfig.publicUrl } : null;
+
   app.get('/healthz', async (): Promise<ServerHealth> => ({
     ok: true,
     avcs: deps.getAvcsStatus?.() ?? { connected: false },
     // 푸시는 상태 낱말 하나만 낸다(security) — 키 id·팀·APNs 사유·기기 토큰은 싣지 않는다.
     push: pushHealth(),
+    // 메일은 켜짐·꺼짐 낱말 하나만 낸다 — SMTP 호스트·발신 주소는 싣지 않는다. 앱은 이것으로 이메일 칸을 보인다.
+    mail: mailer ? 'on' : 'off',
     // 버전을 **별도 엔드포인트로 빼지 않는다.** 운영이 재배포를 확인할 때 이미 치는 것이
     // `/healthz` 이고(docs/operations.md), 표면을 둘로 두면 한쪽만 보고 낡은 판단을 한다.
     ...serverVersion(),
@@ -631,7 +645,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 읽는다. 라우트 등록은 아래(릴레이 뒤)다: 허브는 소켓이 붙기 전엔 빈 표일 뿐이라 순서가 무관하다.
   const operatorHub = createOperatorHub();
   // 첨부 저장소는 아래에서 만든다(multipart 등록 순서) — 에이전트 삭제가 사진 파일을 치울 때(요청 시점)만 꺼낸다.
-  await registerAccountRoutes(app, deps.pool, { operatorHub, storage: () => storage });
+  await registerAccountRoutes(app, deps.pool, { operatorHub, storage: () => storage, mailer });
+  registerJoinPage(app);
   // 권한 부여·회수·역할(스펙 2026-09-20 §6). 계정 라우트 바로 뒤 — 같은 `/accounts/:id/*` 표면이다.
   await registerGrantRoutes(app, deps.pool);
   await registerConnectorRoutes(app, deps.pool);

@@ -6,7 +6,9 @@ import type { ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import { newToken } from '../auth/tokens.js';
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVITE_TTL_DAYS, INVOKE_SCOPES, MENTION_PERMISSIONS, RUNNABLE_HARNESSES } from '@harkroom/shared';
-import type { InviteView } from '@harkroom/shared';
+import type { InviteCreated, InviteView } from '@harkroom/shared';
+import type { Mailer } from '../services/mail/mailer.js';
+import { inviteMail, type InviteMailLocale } from '../services/mail/inviteMail.js';
 import {
   ackAgentStop, assignmentOf, createAgentAccount, definitionFor, deleteAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
   revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, setChromeEnabled, setRequiresMacos, setTrustSiblings, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
@@ -28,6 +30,8 @@ import { releaseAvatarFiles } from '../services/avatars.js';
 import type { StorageBackend } from '../storage/local.js';
 
 export interface AccountRouteDeps {
+  /** 초대 메일(149). null·생략이면 메일을 끈다 — 이메일을 실은 발급은 409 `mail_disabled`. */
+  mailer?: Mailer | null;
   /** 첨부 저장소(요청 시점에 꺼낸다). 에이전트를 지울 때 그 사진 파일을 치운다(사진 후속 ②). 테스트는 생략할 수 있다. */
   storage?: () => StorageBackend;
   /** 오퍼레이터 허브 — 에이전트 목록에 배정 거절 사유를 붙인다(`OperatorHub.refusalOf`). 테스트는 생략한다. */
@@ -184,23 +188,153 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
   });
 
   /**
-   * 초대 발급. 토큰 원문은 이 응답에만 한 번 있다(서버는 해시만 둔다). 148 부터 `INVITE_TTL_DAYS` 뒤 만료하고,
+   * 초대 발급. 토큰 원문은 서버에 남지 않는다(해시만 둔다). 148 부터 `INVITE_TTL_DAYS` 뒤 만료하고,
    * 목록·취소가 가리킬 `id` 를 같이 준다 — 옛 앱은 `token` 만 읽으므로 칸을 더해도 깨지지 않는다.
+   *
+   * 149: `email` 을 실으면 그 주소로 토큰을 보낸다(`sendInvite`). 메일이 나가면 토큰은 응답에 없다.
    */
+  const inviteBody = z.object({
+    email: z.string().trim().toLowerCase().email().max(254).optional(),
+    locale: z.enum(['ko', 'en']).optional(),
+  }).default({});
+
+  /**
+   * 한 사람이 한 시간에 보낼 수 있는 초대 메일 수. 발신 도메인 평판을 지키는 상한이다 — 넘치면 공급자가
+   * 도메인을 묶어 모든 테넌트의 초대가 스팸함으로 간다. DB 로 세므로 서버가 여럿이어도 같은 값이다.
+   */
+  const MAIL_PER_HOUR = 30;
+  /** 같은 초대를 다시 보내는 최소 간격. 두 번 누름·성급한 재시도를 막는다. */
+  const RESEND_GAP_SEC = 60;
+
+  const mailer = routeDeps.mailer ?? null;
+
+  const mailBudgetLeft = async (accountId: string): Promise<boolean> => {
+    const n = await pool.query<{ n: number }>(
+      `select count(*)::int as n from invite where created_by = $1 and last_sent_at > now() - interval '1 hour'`,
+      [accountId],
+    );
+    return n.rows[0]!.n < MAIL_PER_HOUR;
+  };
+
+  /**
+   * 메일을 보내고 결과를 행에 남긴다. 실패해도 던지지 않는다 — 초대는 이미 만들어졌고, 화면이 토큰을 한 번
+   * 보여 주는 지금 흐름으로 물러난다. 실패 사유(SMTP 응답)는 서버 로그에만 남긴다 — 응답·DB 에 싣지 않는다.
+   */
+  const sendInvite = async (
+    req: { log: { warn: (o: object, m: string) => void }; account?: { handle: string } | null },
+    inv: { id: string; token: string; email: string; expiresAt: Date }, locale: InviteMailLocale,
+  ): Promise<'sent' | 'failed'> => {
+    let status: 'sent' | 'failed' = 'sent';
+    try {
+      await mailer!.transport.send(inviteMail({
+        to: inv.email, token: inv.token, publicUrl: mailer!.publicUrl,
+        inviterHandle: req.account!.handle, expiresAt: inv.expiresAt, locale,
+      }));
+    } catch (err) {
+      status = 'failed';
+      req.log.warn({ inviteId: inv.id, err: (err as Error).message }, 'invite mail failed');
+    }
+    await pool.query(`update invite set mail_status = $2, last_sent_at = now() where id = $1`, [inv.id, status]);
+    return status;
+  };
+
+  /** 감사 기록에는 주소를 가려 싣는다 — `a***@example.com`. 감사는 오래 남고 권한 있는 사람이 넓게 읽는다. */
+  const maskEmail = (email: string) => {
+    const at = email.lastIndexOf('@');
+    return `${email.slice(0, Math.min(1, at))}***${email.slice(at)}`;
+  };
+
   app.post('/invites', { preHandler: app.requireCap('member.invite') }, async (req, reply) => {
+    const body = inviteBody.parse(req.body ?? {});
+    if (body.email && !mailer) {
+      return reply.code(409).send({ error: { code: 'mail_disabled', message: 'invite mail is not configured on this server' } });
+    }
+    if (body.email && !(await mailBudgetLeft(req.account!.id))) {
+      return reply.code(429).send({ error: { code: 'mail_rate_limited', message: `at most ${MAIL_PER_HOUR} invite mails per hour` } });
+    }
     const { token, hash } = newToken('hrki');
     const row = await pool.query<{ id: string; expires_at: Date }>(
-      `insert into invite (token_hash, created_by, expires_at)
-       values ($1, $2, now() + make_interval(days => $3))
+      `insert into invite (token_hash, created_by, expires_at, email)
+       values ($1, $2, now() + make_interval(days => $3), $4)
        returning id, expires_at`,
-      [hash, req.account!.id, INVITE_TTL_DAYS],
+      [hash, req.account!.id, INVITE_TTL_DAYS, body.email ?? null],
     );
     const inv = row.rows[0]!;
+    const mail = body.email
+      ? await sendInvite(req, { id: inv.id, token, email: body.email, expiresAt: inv.expires_at }, body.locale ?? 'en')
+      : 'off';
     await recordAudit(pool, {
       action: 'invite.created', actorId: req.account!.id, actorHandle: req.account!.handle,
-      detail: { inviteId: inv.id },
+      detail: body.email ? { inviteId: inv.id, email: maskEmail(body.email), mail } : { inviteId: inv.id },
     }, req);
-    return reply.code(201).send({ token, id: inv.id, expiresAt: inv.expires_at.toISOString() });
+    const out: InviteCreated = { id: inv.id, expiresAt: inv.expires_at.toISOString(), mail };
+    if (mail !== 'sent') out.token = token;
+    return reply.code(201).send(out);
+  });
+
+  /**
+   * 다시 보내기(149). 토큰 원문은 서버에 없으므로 **새 토큰**으로 새 초대를 만들어 같은 주소로 보내고, 앞 초대는
+   * 취소한다(앞 메일의 토큰은 더 못 쓴다). 가입에 쓰인 초대는 409. 만료·취소된 초대도 다시 보낼 수 있다 —
+   * 「기한 지나 못 썼다」가 가장 흔한 재발송 이유다.
+   */
+  app.post('/invites/:id/resend', { preHandler: app.requireCap('member.invite') }, async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { locale } = z.object({ locale: z.enum(['ko', 'en']).optional() }).default({}).parse(req.body ?? {});
+    if (!mailer) {
+      return reply.code(409).send({ error: { code: 'mail_disabled', message: 'invite mail is not configured on this server' } });
+    }
+    const cur = await pool.query<{ email: string | null; used_by: string | null; recent: boolean }>(
+      `select email, used_by, (last_sent_at > now() - make_interval(secs => $2)) as recent from invite where id = $1`,
+      [id, RESEND_GAP_SEC],
+    );
+    const old = cur.rows[0];
+    if (!old) return reply.code(404).send({ error: { code: 'not_found', message: 'invite not found' } });
+    if (old.used_by) return reply.code(409).send({ error: { code: 'invite_used', message: 'invite already used' } });
+    if (!old.email) return reply.code(409).send({ error: { code: 'no_email', message: 'this invite has no email address' } });
+    if (old.recent) {
+      return reply.code(429).header('retry-after', String(RESEND_GAP_SEC))
+        .send({ error: { code: 'resend_too_soon', message: `wait ${RESEND_GAP_SEC}s before sending again` } });
+    }
+    if (!(await mailBudgetLeft(req.account!.id))) {
+      return reply.code(429).send({ error: { code: 'mail_rate_limited', message: `at most ${MAIL_PER_HOUR} invite mails per hour` } });
+    }
+    const { token, hash } = newToken('hrki');
+    const client = await pool.connect();
+    let inv: { id: string; expires_at: Date };
+    try {
+      await client.query('begin');
+      // 앞 초대를 잠그고 다시 본다 — 그 사이 가입이 끝났으면 새 초대를 만들지 않는다.
+      const locked = await client.query(
+        `update invite set revoked_at = coalesce(revoked_at, now()), revoked_by = coalesce(revoked_by, $2)
+          where id = $1 and used_by is null returning id`,
+        [id, req.account!.id],
+      );
+      if (!locked.rowCount) {
+        await client.query('rollback');
+        return reply.code(409).send({ error: { code: 'invite_used', message: 'invite already used' } });
+      }
+      const row = await client.query<{ id: string; expires_at: Date }>(
+        `insert into invite (token_hash, created_by, expires_at, email)
+         values ($1, $2, now() + make_interval(days => $3), $4)
+         returning id, expires_at`,
+        [hash, req.account!.id, INVITE_TTL_DAYS, old.email],
+      );
+      inv = row.rows[0]!;
+      await client.query('commit');
+    } catch (err) {
+      await client.query('rollback');
+      throw err;
+    } finally {
+      client.release();
+    }
+    const mail = await sendInvite(req, { id: inv.id, token, email: old.email, expiresAt: inv.expires_at }, locale ?? 'en');
+    await recordAudit(pool, {
+      action: 'invite.resent', actorId: req.account!.id, actorHandle: req.account!.handle,
+      detail: { inviteId: inv.id, replaces: id, email: maskEmail(old.email), mail },
+    }, req);
+    const out: InviteCreated = { id: inv.id, expiresAt: inv.expires_at.toISOString(), mail };
+    if (mail !== 'sent') out.token = token;
+    return reply.code(201).send(out);
   });
 
   /**
@@ -211,8 +345,9 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     const rows = await pool.query<{
       id: string; created_at: Date; expires_at: Date | null; revoked_at: Date | null;
       created_by: string; creator_handle: string; used_by: string | null; user_handle: string | null; expired: boolean;
+      email: string | null; mail_status: 'sent' | 'failed' | null; last_sent_at: Date | null;
     }>(
-      `select i.id, i.created_at, i.expires_at, i.revoked_at,
+      `select i.id, i.created_at, i.expires_at, i.revoked_at, i.email, i.mail_status, i.last_sent_at,
               i.created_by, c.handle as creator_handle, i.used_by, u.handle as user_handle,
               (i.expires_at is not null and i.expires_at <= now()) as expired
          from invite i
@@ -229,6 +364,9 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       expiresAt: r.expires_at?.toISOString() ?? null,
       revokedAt: r.revoked_at?.toISOString() ?? null,
       usedBy: r.used_by ? { id: r.used_by, handle: r.user_handle! } : null,
+      email: r.email,
+      mailStatus: r.mail_status,
+      lastSentAt: r.last_sent_at?.toISOString() ?? null,
     }));
     return { invites };
   });
