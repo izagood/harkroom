@@ -3,7 +3,7 @@ import type {
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
-import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, type AvatarCrop, type AvatarSourceMeta, type GrantRow, type Capability, type ApiConnectorView, type ApiGrantLimits, type ApiMethod } from '@harkroom/shared';
+import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, type AvatarCrop, type AvatarSourceMeta, type GrantRow, type Capability, type Role, type ApiConnectorView, type ApiGrantLimits, type ApiMethod } from '@harkroom/shared';
 import type { MemoryAudit, MemoryBatchResult, MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
@@ -1006,6 +1006,13 @@ export class ApiClient {
    */
   approvePermissionOnce(agentId: string, requestId: string, body: { ghUser?: string; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] }): Promise<{ status: string; approvalExpiresAt?: string; cardMessageId: string | null }> {
     return this.req('POST', `/agents/${agentId}/permission-requests/${requestId}/approve-once`, body);
+  }
+  /**
+   * 사람의 역할을 바꾼다(055). admin 이상만 — admin 임명·해제는 owner 만, owner 는 이 길로 정하지 않는다(서버 `grantRoutes.ts`).
+   * 서버가 `grant.changed` 를 보내므로 디렉터리·내 정보는 그 신호로 다시 읽힌다.
+   */
+  setRole(accountId: string, role: Exclude<Role, 'owner'>): Promise<{ role: Role }> {
+    return this.req('PUT', `/accounts/${accountId}/role`, { role });
   }
   deleteGrant(accountId: string, capability: Capability, scope: string): Promise<void> {
     return this.req('DELETE', `/accounts/${accountId}/grants/${encodeURIComponent(capability)}?scope=${encodeURIComponent(scope)}`);

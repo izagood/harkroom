@@ -145,6 +145,7 @@
   "POST /teams": "0.1.167",
   "POST /ws-ticket": "0.1.167",
   "PUT /accounts/:p/grants": "0.2.9",
+  "PUT /accounts/:p/role": "0.2.9",
   "PUT /accounts/agents/:p/assignment": "0.2.9",
   "PUT /accounts/agents/:p/avatar": "0.1.167",
   "PUT /accounts/agents/:p/delegates/:p": "0.3.42",

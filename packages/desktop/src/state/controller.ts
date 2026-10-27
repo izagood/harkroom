@@ -3416,6 +3416,9 @@ export class Controller {
   grantFromMergeDenial(agentId: string, denialId: string) {
     return this.api.grantFromMergeDenial(agentId, denialId);
   }
+  setRole(accountId: string, role: Parameters<ApiClient['setRole']>[1]): Promise<{ role: import('@harkroom/shared').Role }> {
+    return this.api.setRole(accountId, role);
+  }
   deleteGrant(accountId: string, capability: import('@harkroom/shared').Capability, scope: string): Promise<void> {
     return this.api.deleteGrant(accountId, capability, scope);
   }

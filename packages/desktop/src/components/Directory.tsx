@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { Overlay } from './Overlay';
 import type { AccountView } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
@@ -174,8 +174,15 @@ export function Directory({ open, onClose, accountId }: Props) {
  * 때문이다. 줄을 거기서 다시 짜면 비활성·낡은 presence 같은 규칙(#443)이 한쪽에서만 산다.
  * 보여 주는 것의 경계(`AccountView` 가 주는 것만)는 위 `Directory` 주석 그대로다.
  */
-export function DirectoryRow({ account: a, selected: isSelected = false, showKind = true, actions, detail }: {
+export function DirectoryRow({ account: a, selected: isSelected = false, showKind = true, actions, detail, roleChip = false, onSelect }: {
   account: AccountView; selected?: boolean;
+  /**
+   * 역할 칩(owner·admin·member·guest)을 `admin` 표지 대신 단다 — 멤버와 초대가 「이 사람은 무엇을 할 수 있나」에
+   * 목록에서 답하는 자리다(designer 시안 B). 다른 목록은 지금처럼 admin 만 표시한다.
+   */
+  roleChip?: boolean;
+  /** 줄을 누르면 부른다(멤버와 초대: 오른쪽 칸이 그 사람의 역할·권한이 된다). 없으면 줄은 눌리지 않는다. */
+  onSelect?(): void;
   /** 줄 끝에 붙는 동작(멤버와 초대의 「재설정 코드」 등). 없으면 아무것도 그리지 않는다. */
   actions?: ReactNode;
   /** `@handle` 바로 뒤에 붙는 「누구인가」 정보(멤버와 초대의 로그인 ID 등). 좁으면 이 칸이 먼저 줄어든다. */
@@ -198,7 +205,21 @@ export function DirectoryRow({ account: a, selected: isSelected = false, showKin
       // `scrollIntoView?.` 인 이유: jsdom 에는 그 함수가 없다 — 옵셔널 호출을 빼면 이
       // 화면을 띄우는 테스트가 렌더 도중 터진다(`MessageItem` 도 같은 이유로 그렇다).
       ref={isSelected ? (el: HTMLLIElement | null) => { el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }); } : undefined}
-      className={`flex items-center gap-2 rounded-row px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-accent-surface ring-2 ring-accent' : ''}`}
+      className={`flex items-center gap-2 rounded-row px-2 py-1.5 ${a.disabled ? 'opacity-60' : ''} ${isSelected ? 'bg-accent-surface ring-2 ring-accent' : ''} ${onSelect && !isSelected ? 'cursor-pointer hover:bg-surface-sunken' : onSelect ? 'cursor-pointer' : ''}`}
+      {...(onSelect ? {
+        role: 'button',
+        tabIndex: 0,
+        'aria-pressed': isSelected,
+        onClick: (e: MouseEvent) => {
+          // 줄 끝 동작(재설정 코드 등)을 누른 것은 줄을 고른 것이 아니다.
+          if ((e.target as HTMLElement).closest('button, a, input')) return;
+          onSelect();
+        },
+        onKeyDown: (e: KeyboardEvent) => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); }
+        },
+      } : {})}
     >
     {/* 여기 있던 `Identity variant="badge"`(🤖 + 소유자 @핸들)를 뺐다 — 화면은 계정이
         사람인지 에이전트인지 말하지 않는다(design doc 2, #455). 소유자는 프로필(#475)이
@@ -228,7 +249,7 @@ export function DirectoryRow({ account: a, selected: isSelected = false, showKin
         {a.kind}
       </span>
     )}
-    {a.isAdmin && (
+    {roleChip ? <RoleChip role={a.role} /> : a.isAdmin && (
       <span className="rounded-sm bg-warning-surface px-1 text-meta text-warning">{t('chat.adminBadge')}</span>
     )}
     <StatusMark account={a} />
@@ -246,5 +267,24 @@ export function DirectoryRow({ account: a, selected: isSelected = false, showKin
     )}
     {actions && <span className="ml-auto flex shrink-0 items-center gap-1">{actions}</span>}
   </li>
+  );
+}
+
+/**
+ * 역할 칩(designer 시안 B): owner 는 주황 테두리, admin 은 옅은 주황 면, member 는 회색 테두리, guest 는 점선.
+ * 낱말은 화면 어디서나 영문 그대로다(`chat.adminBadge` 와 같다). 옛 서버라 `role` 이 없으면 그리지 않는다.
+ */
+export function RoleChip({ role }: { role: AccountView['role'] | undefined }) {
+  if (!role) return null;
+  const tone = {
+    owner: 'border border-accent text-accent-text',
+    admin: 'border border-transparent bg-accent-surface text-accent-text',
+    member: 'border border-border-strong text-fg-muted',
+    guest: 'border border-dotted border-border-strong text-fg-muted',
+  }[role];
+  return (
+    <span data-testid="role-chip" data-role={role} className={`shrink-0 whitespace-nowrap rounded-full px-1.5 text-meta ${tone}`}>
+      {role}
+    </span>
   );
 }
