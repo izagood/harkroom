@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import type { AccountView, Capability, OperatorView, PermissionTarget } from '@harkroom/shared';
 import { hashToken } from './tokens.js';
 import { can } from './permissions.js';
+import { renewSession } from './sessionLifetime.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -96,7 +97,12 @@ export async function registerAuth(app: FastifyInstance, pool: Pool): Promise<vo
     const viaSession = await pool.query(
       `select ${ACCOUNT_COLS} from session s join account a on a.id = s.account_id
        where s.token_hash = $1 and s.expires_at > now() and a.deleted_at is null`, [hash]);
-    if (viaSession.rowCount) { req.account = viaSession.rows[0]; req.credentialHash = hash; req.authVia = 'session'; return; }
+    if (viaSession.rowCount) {
+      req.account = viaSession.rows[0]; req.credentialHash = hash; req.authVia = 'session';
+      // 쓰는 동안은 만료가 다가오지 않게 늘린다(상한은 처음 로그인에서 90일, sessionLifetime.ts).
+      await renewSession(pool, hash);
+      return;
+    }
     const viaPat = await pool.query(
       // 삭제된 계정은 어떤 자격증명으로도 서지 못한다(061). 삭제가 PAT 를 전부 폐기하므로
       // 이 조건은 보통 걸리지 않지만, 삭제 뒤에 발급된 PAT(소유자 라우트는 계정을 목록으로

@@ -13,8 +13,10 @@ import { createChannel } from '../services/channels.js';
 import { getHandleGroupByHandle } from '../services/handleGroups.js';
 import { endStepUp, openStepUp } from '../services/stepUp.js';
 import { OncePerWindow } from '../services/secretAccess.js';
+import { SESSION_TTL_DAYS } from '../auth/sessionLifetime.js';
 
-export const SESSION_TTL_DAYS = 14;
+// 수명 값은 인증 훅도 읽는다 — 한 곳(auth/sessionLifetime.ts)에 두고 여기서는 다시 내보낸다.
+export { SESSION_TTL_DAYS } from '../auth/sessionLifetime.js';
 
 /** 다시 확인(step-up) 시도 상한 — 계정마다. 계정 삭제의 비밀번호 재확인(`ACCOUNT_DELETE_RULE`)과 같은 값이다. */
 export const STEP_UP_RULE: RateLimitRule = { windowMs: 15 * 60_000, max: 10 };
