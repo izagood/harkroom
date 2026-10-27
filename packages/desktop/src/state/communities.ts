@@ -46,6 +46,16 @@ export interface CommunityEntry {
    * 사람이 붙이는 꼬리표이고, 서버 계약은 (A) 아래서 바뀌지 않는다.
    */
   label: string | null;
+  /**
+   * 로그인 ID(로그인 칸에 넣은 값). handle 과 다를 수 있어 따로 든다 — 세션이 끝났을 때 「다시 로그인」
+   * 패널이 이것을 고정 글자로 채운다. 옛 보관본(이 칸 이전)에서 되살린 커뮤니티는 `null` 이다.
+   */
+  loginId: string | null;
+  /**
+   * 서버가 이 커뮤니티의 세션을 끝냈다(만료·다른 곳에서 로그아웃). 사람이 다시 로그인해야 풀린다 —
+   * 기다리면 낫는 연결 끊김(`connected: false`)과 다른 상태라 따로 둔다. 레일·팝오버·카드·패널이 읽는다.
+   */
+  signedOut: boolean;
   /** 이 커뮤니티의 세계. 다른 커뮤니티의 스토어와 아무것도 공유하지 않는다. */
   store: AppStore;
   /**
@@ -64,6 +74,7 @@ export interface CommunityInput {
   baseUrl: string;
   accountId?: string;
   label?: string | null;
+  loginId?: string | null;
   controller?: Controller | null;
 }
 
@@ -93,6 +104,8 @@ export interface CommunityRegistryState {
   setActive(id: string): void;
   /** 그 커뮤니티의 컨트롤러를 꽂는다. `null` 은 떼어낸다는 뜻이다. */
   attachController(id: string, controller: Controller | null): void;
+  /** 세션이 끝났음(`true`)·다시 로그인했음(`false`)을 적는다. */
+  setSignedOut(id: string, signedOut: boolean): void;
   /** 커뮤니티를 뺀다. 마지막 하나는 뺄 수 없다 — 활성 스토어가 없는 상태를 만들지 않는다. */
   remove(id: string): void;
 }
@@ -106,6 +119,8 @@ function makeEntry(input: CommunityInput): CommunityEntry {
     baseUrl: input.baseUrl,
     accountId: input.accountId ?? '',
     label: input.label ?? null,
+    loginId: input.loginId ?? null,
+    signedOut: false,
     store: createAppStore(),
     controller: input.controller ?? null,
   };
@@ -132,6 +147,9 @@ export const useCommunityRegistry = create<CommunityRegistryState>((set, get) =>
           // 이름은 **넘어온 것이 있을 때만** 갈아 끼운다. 재로그인마다 `null` 로 덮으면
           // 사람이 붙인 꼬리표가 로그인 한 번에 조용히 사라진다.
           label: input.label === undefined ? e.label : input.label,
+          loginId: input.loginId === undefined ? e.loginId : input.loginId,
+          // 이 자리에 새 세션이 선다 — 끝난 세션의 표시는 걷는다.
+          signedOut: false,
         }
       : e));
     set({ entries: next });
@@ -155,6 +173,11 @@ export const useCommunityRegistry = create<CommunityRegistryState>((set, get) =>
     const { entries } = get();
     if (!entries.some((e) => e.id === id)) throw new Error(`모르는 커뮤니티다: ${id}`);
     set({ entries: entries.map((e) => (e.id === id ? { ...e, controller } : e)) });
+  },
+  setSignedOut: (id, signedOut) => {
+    const { entries } = get();
+    if (!entries.some((e) => e.id === id)) throw new Error(`모르는 커뮤니티다: ${id}`);
+    set({ entries: entries.map((e) => (e.id === id ? { ...e, signedOut } : e)) });
   },
   remove: (id) => {
     const { entries, activeId } = get();

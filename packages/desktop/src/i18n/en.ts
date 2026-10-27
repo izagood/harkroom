@@ -4845,6 +4845,8 @@ export const en = {
   'rail.community.label': 'Switch community',
   'rail.community.connected': 'connected',
   'rail.community.disconnected': 'disconnected',
+  'rail.community.signedOut': 'sign-in needed',
+  'rail.community.othersSignedOut': 'sign-in needed in {count} other communities',
   /** `{name}` 은 커뮤니티 이름, `{state}` 에 위 둘 중 하나가 든다. */
   'rail.community.tile': '{name} — {state}',
   /** 전환 팝오버(`CommunitySwitcher`)의 머리·아래 두 줄. */

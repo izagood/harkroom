@@ -2771,6 +2771,8 @@ export const ko = {
   'rail.community.label': '커뮤니티 전환',
   'rail.community.connected': '연결됨',
   'rail.community.disconnected': '연결 끊김',
+  'rail.community.signedOut': '로그인 필요',
+  'rail.community.othersSignedOut': '다른 커뮤니티 {count}곳에 로그인 필요',
   'rail.community.tile': '{name} — {state}',
   'rail.community.title': '커뮤니티',
   'rail.community.add': '커뮤니티 추가',
