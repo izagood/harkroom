@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import type { AutomationLastRun, AutomationRunView, AutomationSchedule, AutomationTrigger, AutomationView } from '@harkroom/shared';
 import { postMessage } from './messages.js';
-import { getMentionPolicy } from './mentionPolicy.js';
+import { effectiveChainLimit } from './mentionPolicy.js';
 import { channelPostGate } from './channels.js';
 
 /**
@@ -525,7 +525,7 @@ export async function runAutomationForAgent(
   if (!automation) return { refused: 'not_found' };
   if (!automation.approvedAt) return { refused: 'not_approved' };
 
-  const { chainLimit } = await getMentionPolicy(pool);
+  const chainLimit = await effectiveChainLimit(pool);
   if (AGENT_RUN_CHAIN_DEPTH >= chainLimit) return { refused: 'chain_capped' };
 
   const client = await pool.connect();

@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { MENTION_CHAIN_LIMIT, type MentionPolicy } from '@harkroom/shared';
+import { MENTION_CHAIN_BACKSTOP_LIMIT, MENTION_CHAIN_LIMIT, stallBlockEnabled, type MentionPolicy } from '@harkroom/shared';
 
 /**
  * 멘션 연쇄 상한(078). 단일 행 테이블(`mention_policy`)을 읽고 쓴다.
@@ -11,6 +11,16 @@ import { MENTION_CHAIN_LIMIT, type MentionPolicy } from '@harkroom/shared';
 export async function getMentionPolicy(db: Pool | PoolClient): Promise<MentionPolicy> {
   const res = await db.query(`select chain_limit from mention_policy where id = true`);
   return { chainLimit: (res.rows[0]?.chain_limit as number | undefined) ?? MENTION_CHAIN_LIMIT };
+}
+
+/**
+ * **판정에 쓰는 상한**(④, security M1). 저장값(`getMentionPolicy`, 설정 화면이 보는 값)과 갈린다: 정체 차단
+ * (`HARKROOM_STALL_BLOCK=on`)이 켜졌고 저장값이 옛 기본값 그대로면 백스톱(`MENTION_CHAIN_BACKSTOP_LIMIT`)을 쓴다.
+ * 차단이 꺼져 있으면 저장값 그대로다 — 정체가 루프를 잡지 않는 동안 상한만 느슨해지지 않게.
+ */
+export async function effectiveChainLimit(db: Pick<Pool, 'query'>, env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  const stored = (await getMentionPolicy(db as Pool)).chainLimit;
+  return stallBlockEnabled(env) && stored === MENTION_CHAIN_LIMIT ? MENTION_CHAIN_BACKSTOP_LIMIT : stored;
 }
 
 export async function setMentionPolicy(pool: Pool, patch: MentionPolicy): Promise<MentionPolicy> {

@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, messageLinkIds, stallStep, stallBlockEnabled, STALL_HOP_LIMIT, CHAIN_BACKSTOP_MS, CHAIN_BACKSTOP_CONTINUE, STALL_LOOKBACK, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
-import { getMentionPolicy } from './mentionPolicy.js';
+import { effectiveChainLimit } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
 import { auditMandateCreated, mandateForAgentPost, stampHumanMandate, type MandateCreated } from './mandates.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
@@ -1051,7 +1051,7 @@ async function resolveMentionCalls(
   const { authorIsAgent, mentionDepth } = input;
   const capsChain = authorIsAgent || input.chainBound === true;
   // 상한은 워크스페이스 설정이다(078). 에이전트 사슬의 발화일 때만 읽는다 — 사람은 막히지 않는다.
-  const chainLimit = capsChain ? (await getMentionPolicy(client)).chainLimit : MENTION_CHAIN_LIMIT;
+  const chainLimit = capsChain ? await effectiveChainLimit(client) : MENTION_CHAIN_LIMIT;
   /**
    * 멘션 정규화(#271). 저장되는 정본은 `<@id>` 다 — 그래야 handle 을 바꿔도 과거 본문을
    * 다시 쓰지 않는다.
