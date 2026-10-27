@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadStoryboard, validate } from '../src/stories.js';
@@ -29,5 +29,16 @@ describe('스토리보드 형식', () => {
     expect(errors.some((e) => e.includes('e2e-*'))).toBe(true);
     expect(errors.some((e) => e.includes('모르는 동작 nope'))).toBe(true);
     expect(errors.some((e) => e.includes('없는 시험 파일'))).toBe(true);
+  });
+
+  it('모바일 persona_test 의 역할 표가 personas.yaml 과 같다', () => {
+    // 기기에서는 YAML 을 못 읽어 dart 파일에 옮겨 두었다 — 두 곳이 갈라지면 모바일 시험이 엉뚱한 것을 기대한다.
+    const dart = readFileSync(join(repoRoot, 'apps/mobile/integration_test/persona_test.dart'), 'utf8');
+    const table = /const _personaRoles = <String, String>\{([^}]*)\}/.exec(dart)?.[1] ?? '';
+    const pairs = [...table.matchAll(/'(P\d+)': '(\w+)'/g)].map((m) => [m[1], m[2]] as const);
+    expect(pairs.length).toBeGreaterThan(0);
+    for (const [id, role] of pairs) {
+      expect(sb.personas.find((p) => p.id === id)?.role, `${id} 의 역할`).toBe(role);
+    }
   });
 });
