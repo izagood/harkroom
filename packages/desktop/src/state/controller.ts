@@ -24,7 +24,9 @@ import { beginSend, endSend, markOwnSend, type OwnSendMarks } from '../lib/ownSe
 import { RunnerLauncher, tauriDaemonObserver, tauriAppVersionReader, type AppVersionReader, type DaemonObserver } from '../lib/runnerLauncher';
 // 만들기 흐름이 러너를 띄우기 **전에** 풀 배정을 쓴다 — 근거는 `createAgent` 안에 있다.
 import { assignAgentPools } from '../lib/claudeAccounts';
-import { listLocalAgents, setLocalAgent, setLocalAgentProviderLane } from '../lib/operatorLocal';
+import { listLocalAgents, registerLocalOperator, setLocalAgent, setLocalAgentProviderLane } from '../lib/operatorLocal';
+import { autoRegisterFirstOperator } from '../lib/autoRegisterOperator';
+import { hasCapability } from '../lib/capabilities';
 import type { AppState, AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { usePrefsStore } from './prefsStore';
@@ -414,7 +416,20 @@ export class Controller {
     // fire-and-forget 인 이유: daemon 확보는 기동의 **전제가 아니다.** 실패해도 앱은 떠야
     // 하고(채팅은 daemon 없이도 된다), 그 실패는 러너를 띄우려 할 때 러너 상태에 사유로
     // 오른다(`RunnerLauncher.startAll`). 여기서 await 하면 소켓 왕복이 창 표시를 늦춘다.
-    this.swallow(this.runnerLauncher.ensureOperator());
+    //
+    // 오퍼레이터가 섰으면 **첫 설치인지** 보고 이 머신을 등록한다 — 오퍼레이터가 하나도 없는 커뮤니티일 때만
+    // (`autoRegisterOperator.ts`). 오퍼레이터를 못 세웠으면(웹·테스트·실패) 묻지 않는다.
+    this.swallow(this.runnerLauncher.ensureOperator().then((observed) => {
+      if (!observed || this.stopped) return;
+      return autoRegisterFirstOperator({
+        baseUrl: this.api.baseUrl,
+        canRegister: hasCapability(me, 'operator.register'),
+        listLocal: listLocalAgents,
+        listOperators: () => this.api.operators(),
+        mintCode: () => this.api.operatorRegisterCode(),
+        register: (baseUrl, code) => registerLocalOperator(baseUrl, code),
+      });
+    }));
 
     // 마지막 채널을 연다 — 기다리지 않는다. 첫 화면은 그 채널의 머리로 바로 서고, 메시지는
     // 위에서 미리 띄운 응답이 오는 대로 찬다. 그 사이 사람이 다른 채널을 눌렀으면 열지 않는다.
