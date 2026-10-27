@@ -130,7 +130,7 @@ describe('AgentDefaultsSettings', () => {
  * 수정할 수 있도록 해". 누구나 값을 보고 admin 만 바꾼다 · 범위 밖·같은 값이면 저장이 잠긴다.
  */
 describe('AgentDefaultsSettings — 멘션 연쇄 상한', () => {
-  const LABEL = '에이전트끼리 이어 부를 수 있는 깊이';
+  const LABEL = '에이전트끼리 이어 부를 수 있는 홉 수';
 
   it('admin 은 값을 바꿔 저장한다 — 기본값 저장과 따로다', async () => {
     const c = fakeController();
