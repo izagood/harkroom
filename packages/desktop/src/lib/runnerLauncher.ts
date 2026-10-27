@@ -73,7 +73,7 @@ export interface DaemonObserver {
    * 오퍼레이터를 확보하고 그 장부를 읽는다. 실패는 **던진다** — 삼키면 "오퍼레이터가 도는
    * 줄 알았는데 아니었다"가 되고, 그 상태가 `#431` 이 없애려는 바로 그것이다.
    */
-  observe(): Promise<DaemonObservation>;
+  observe(community?: string | null): Promise<DaemonObservation>;
 }
 
 /**
@@ -138,6 +138,8 @@ export class RunnerLauncher {
   constructor(
     private daemon: DaemonObserver = tauriDaemonObserver,
     private appVersion: AppVersionReader = tauriAppVersionReader,
+    /** 이 런처가 묶인 커뮤니티(컨트롤러의 baseUrl). 활성 커뮤니티가 아니다(security P6-F1). */
+    private community: () => string | null = () => null,
   ) {}
 
   /**
@@ -181,7 +183,7 @@ export class RunnerLauncher {
    * 채로 `stopped` 를 단정하면 다른 오퍼레이터가 돌리는 러너를 멈춘 것으로 그린다.
    */
   private async observeAndPublish(): Promise<DaemonObservation> {
-    const observation = await this.daemon.observe();
+    const observation = await this.daemon.observe(this.community());
     this.onObservation?.(observation.runners);
     this.states = new Map(observation.runners
       .filter((r) => r.alive)
@@ -223,13 +225,13 @@ function tauriInvoke(): Invoke | null {
  * 응답 형태가 계약과 다르면 그것도 실패다. 지어내지 않고 온 것을 그대로 보인다(`#368`).
  */
 export const tauriDaemonObserver: DaemonObserver = {
-  async observe() {
+  async observe(community?: string | null) {
     const invoke = tauriInvoke();
     if (!invoke) {
       // 브라우저 개발에는 unix 소켓도 자식 프로세스도 없다.
       throw new Error('이 환경에서는 오퍼레이터를 세울 수 없다 — Tauri invoke 표면이 없다');
     }
-    const result = await invoke('daemon_list_runners', withCommunity());
+    const result = await invoke('daemon_list_runners', withCommunity(community ? { community } : undefined));
     const body = result as {
       daemonPid?: unknown;
       attached?: unknown;

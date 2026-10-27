@@ -140,6 +140,22 @@ pub fn resolve(app_data_root: &Path, home: &Path, base_url: &str) -> Result<Comm
     Ok(CommunityTarget { key, root, legacy: false })
 }
 
+/// 커뮤니티를 고치는 명령(인자에 `baseUrl`)이 **다른 커뮤니티의 오퍼레이터**로 가지 않게 한다(security P6-F1 이중 확인).
+/// 스위치가 켜져 있고 `community` 가 왔는데 그 키가 `baseUrl` 의 키와 다르면 거절한다. 꺼져 있으면 아무 일도 없다.
+pub fn check_same_community(base_url: &str, community: Option<&str>) -> Result<(), String> {
+    if !per_community_enabled() {
+        return Ok(());
+    }
+    match community {
+        Some(c) if community_key(c) != community_key(base_url) => Err(format!(
+            "커뮤니티 `{}` 를 고치는 명령이 다른 커뮤니티(`{}`)의 오퍼레이터로 가려 했다",
+            community_key(base_url),
+            community_key(c)
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// 새 뿌리를 색인에 적는다 — 이미 이 커뮤니티 칸이 있으면 손대지 않는다(옛 자리·operatorId 를 보존한다).
 /// 다른 칸이 같은 뿌리를 쓰면 거절한다(security P1-n1). 임시 파일에 0600 으로 쓰고 rename 한다.
 /// 뿌리 디렉터리 확인(`ensure_root_dir`)이 끝난 **뒤에** 부른다 — 쓸 수 없는 뿌리를 색인에 남기지 않는다.
@@ -330,5 +346,16 @@ mod tests {
             assert_eq!(mode, 0o600);
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_same_community_rejects_cross_community_when_on() {
+        // 스위치 env 는 프로세스 전역이라 이 시험 안에서만 켜고 끈다.
+        std::env::set_var(PER_COMMUNITY_ENV, "1");
+        assert!(check_same_community("https://a.example.com", Some("https://a.example.com/")).is_ok());
+        assert!(check_same_community("https://a.example.com", Some("https://b.example.com")).is_err());
+        assert!(check_same_community("https://a.example.com", None).is_ok());
+        std::env::remove_var(PER_COMMUNITY_ENV);
+        assert!(check_same_community("https://a.example.com", Some("https://b.example.com")).is_ok());
     }
 }

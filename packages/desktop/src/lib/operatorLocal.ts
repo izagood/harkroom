@@ -38,8 +38,9 @@ export async function operatorCliPath(): Promise<string | null> {
   return typeof out === 'string' && out ? out : null;
 }
 
-export function listLocalAgents(): Promise<OperatorAgentsListResult> {
-  return call('operator_agents_list') as Promise<OperatorAgentsListResult>;
+/** `community` 를 주면 그 커뮤니티의 오퍼레이터에 묻는다(컨트롤러에 묶인 호출). 없으면 활성 커뮤니티. */
+export function listLocalAgents(community?: string | null): Promise<OperatorAgentsListResult> {
+  return call('operator_agents_list', community ? { community } : undefined) as Promise<OperatorAgentsListResult>;
 }
 
 export async function setLocalAgent(baseUrl: string, agentId: string, config: OperatorLocalAgent): Promise<void> {

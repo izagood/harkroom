@@ -664,6 +664,7 @@ async fn operator_register(
     community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
+        crate::community_root::check_same_community(&base_url, community.as_deref())?;
         let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_register(&base_url, &code, name.as_deref())
     })
@@ -691,6 +692,7 @@ async fn operator_agent_set(
     community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
+        crate::community_root::check_same_community(&base_url, community.as_deref())?;
         let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_agent_set(&base_url, &agent_id, config)
     })
@@ -707,6 +709,7 @@ async fn operator_agent_provider_lane_set(
     community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
+        crate::community_root::check_same_community(&base_url, community.as_deref())?;
         let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_agent_provider_lane_set(&base_url, &agent_id, lane)
     })
@@ -721,6 +724,7 @@ async fn operator_agent_remove(
     community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
+        crate::community_root::check_same_community(&base_url, community.as_deref())?;
         let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_agent_remove(&base_url, &agent_id)
     })

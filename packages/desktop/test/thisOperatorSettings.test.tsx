@@ -51,7 +51,7 @@ describe('이 머신의 오퍼레이터 (UX ⑥b-2)', () => {
     expect(screen.getByRole('heading', { name: '이 머신의 오퍼레이터' })).toBeTruthy();
     expect(await screen.findByText('아직 등록 안 됨')).toBeTruthy();
     fireEvent.click(screen.getByText('이 머신을 등록'));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_register', { baseUrl: 'https://example.com', code: 'hkreg_abc', name: null }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_register', { baseUrl: 'https://example.com', code: 'hkreg_abc', name: null, community: 'https://example.com' }));
     expect(c.operatorRegisterCode).toHaveBeenCalled();
     const done = await screen.findByTestId('operator-registered-here');
     expect(done.textContent).toContain('this-mac');

@@ -281,7 +281,7 @@ describe('AgentMcpSection — 배정된 오퍼레이터 기준(MCP 설정 시안
     await waitFor(() => expect(c.updateAgent).toHaveBeenCalledWith('agent-1', { mcpServers: ['jira'] }));
     expect(c.putMcpServer).toHaveBeenCalledWith('jira', 'personal');
     const set = calls.find((x) => x.cmd === 'operator_mcp_set');
-    expect(set?.args).toEqual({ name: 'jira', definition: { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp' } });
+    expect(set?.args).toEqual({ community: 'https://c.test', name: 'jira', definition: { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp' } });
   });
 
   it('원격 배정 에이전트의 [+ 추가] — URL·Client ID 칸 없이 그 호스트 안내, 「켜기」는 꺼진 채 시작하고 이 맥 정의는 넣지 않는다(D12)', async () => {
