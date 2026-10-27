@@ -17,7 +17,7 @@
 // 조회가 실패하면 **앞 값을 지우지 않는다** — `readAtMs` 도 그대로 둔다. 읽는 쪽은 `readAtMs` 로
 // 신선도를 재고, 10분을 넘은 값으로는 계정을 빼지 않는다(`isUsageFresh`). 실패로 값을 지우면
 // 한 번의 네트워크 끊김이 "그 계정은 모른다"가 되어 점수가 흔들린다.
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
@@ -29,6 +29,7 @@ import {
 import type { ProviderAccountUsage } from '@harkroom/shared/daemonProtocol';
 
 import { readClaudeAccountsLayout, readSignInKey } from './claudeAccounts.js';
+import { withFileLock } from './fileLock.js';
 
 export const USAGE_POLL_ACTIVE_MS = 2 * 60 * 1000;
 export const USAGE_POLL_IDLE_MS = 10 * 60 * 1000;
@@ -67,6 +68,13 @@ export function createClaudeUsagePoller(opts: {
   readSignIn?: (configDir: string) => Promise<string | null>;
   now?: () => number;
   log?: (line: string) => void;
+  /**
+   * 이 파일에 writer 가 여럿인가(격리 C안 — 커뮤니티마다 오퍼레이터 프로세스, `usage.json` 은 기계에 하나).
+   * 켜면 `usage.json.lock` 을 잡고 디스크의 값과 **합쳐** 쓴다: 같은 계정은 더 최근에 잰 값, 내가 모르는 계정은
+   * 남긴다, 내가 이번에 디스크에서 사라진 것을 본 계정만 뺀다. **기본 꺼짐** — 꺼져 있으면 지금처럼 메모리의 값으로
+   * 파일 전체를 바꿔 끼운다.
+   */
+  sharedFile?: boolean;
 }): ClaudeUsagePoller {
   const now = opts.now ?? ((): number => Date.now());
   const readSignIn = opts.readSignIn ?? readSignInKey;
@@ -104,12 +112,22 @@ export function createClaudeUsagePoller(opts: {
     states.set(dir, { entry, triedAtMs: at, active: m.error ? (prev?.active ?? false) : active });
   }
 
+  /** 이번 주기에 디스크에서 사라진 것을 본 계정(풀·이름 키). 합쳐 쓸 때 남의 값에서도 뺀다. */
+  const removedKeys = new Set<string>();
+
   async function write(at: number): Promise<void> {
-    const file: ClaudeUsageFile = {
-      version: CLAUDE_USAGE_VERSION,
-      writtenAtMs: at,
-      accounts: [...states.values()].map((s) => s.entry),
-    };
+    const mine = [...states.values()].map((s) => s.entry);
+    if (!opts.sharedFile) { await writeAll(at, mine); return; }
+    await mkdir(opts.root, { recursive: true });
+    await withFileLock(join(opts.root, `${CLAUDE_USAGE_FILE}.lock`), async () => {
+      const onDisk = await readUsageFile(join(opts.root, CLAUDE_USAGE_FILE));
+      await writeAll(at, mergeUsageEntries(onDisk, mine, removedKeys));
+    });
+    removedKeys.clear();
+  }
+
+  async function writeAll(at: number, accounts: ClaudeUsageEntry[]): Promise<void> {
+    const file: ClaudeUsageFile = { version: CLAUDE_USAGE_VERSION, writtenAtMs: at, accounts };
     await mkdir(opts.root, { recursive: true });
     const tmp = join(opts.root, `.${CLAUDE_USAGE_FILE}.${process.pid}.tmp`);
     await writeFile(tmp, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
@@ -125,7 +143,12 @@ export function createClaudeUsagePoller(opts: {
     let changed = false;
     // 디스크에서 사라진 계정은 파일에서도 뺀다 — 디스크가 멤버십의 진실이다(`claudePools.ts`).
     for (const dir of [...states.keys()]) {
-      if (!present.has(dir)) { states.delete(dir); changed = true; }
+      if (!present.has(dir)) {
+        const gone = states.get(dir);
+        if (gone) removedKeys.add(usageKey(gone.entry));
+        states.delete(dir);
+        changed = true;
+      }
     }
     const dueNow = targets.filter((t) => due(states.get(t.dir), at));
     if (dueNow.length > 0) {
@@ -187,4 +210,29 @@ function moved(a: ClaudeUsageEntry, b: ClaudeUsageEntry): boolean {
     const y = pb[i];
     return (x?.usedPercent ?? null) !== (y?.usedPercent ?? null) || minute(x?.resetsAtMs) !== minute(y?.resetsAtMs);
   });
+}
+
+const usageKey = (e: Pick<ClaudeUsageEntry, 'pool' | 'account'>): string => `${e.pool}\u0000${e.account}`;
+
+async function readUsageFile(path: string): Promise<ClaudeUsageEntry[]> {
+  try {
+    const file = JSON.parse(await readFile(path, 'utf8')) as Partial<ClaudeUsageFile>;
+    return file.version === CLAUDE_USAGE_VERSION && Array.isArray(file.accounts) ? file.accounts : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 디스크의 값과 내 값을 합친다(writer 가 여럿일 때). 같은 계정은 더 최근에 잰(`readAtMs`) 쪽, 같으면 내 쪽.
+ * 내가 모르는 계정은 남기고, 내가 사라진 것을 본 계정(`removed`)만 뺀다.
+ */
+export function mergeUsageEntries(onDisk: ClaudeUsageEntry[], mine: ClaudeUsageEntry[], removed: ReadonlySet<string>): ClaudeUsageEntry[] {
+  const out = new Map<string, ClaudeUsageEntry>();
+  for (const e of onDisk) if (!removed.has(usageKey(e))) out.set(usageKey(e), e);
+  for (const e of mine) {
+    const other = out.get(usageKey(e));
+    if (!other || (e.readAtMs ?? -1) >= (other.readAtMs ?? -1)) out.set(usageKey(e), e);
+  }
+  return [...out.values()];
 }
