@@ -4,7 +4,7 @@ import { MergeDenialPanel } from './MergeDenialPanel';
 import { PermissionOncePanel } from './PermissionOncePanel';
 import { readCardSource } from './MandateLineBody';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { UNKNOWN_ACCOUNT_LABEL, isAskOpen, messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
+import { UNKNOWN_ACCOUNT_LABEL, countsAsReply, isAskOpen, messagePermalink, readAskMeta, readModelMeta, type MessageRow } from '@harkroom/shared';
 import { readAutomationMeta } from '../lib/automation';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
@@ -866,7 +866,10 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                  사람이 **해야 하는 일**이 아니다. 다시 부르고 싶으면 사람이 직접 한 줄
                  쓰면 되고, 그러면 깊이가 0 에서 다시 세어진다. */
               <p data-testid="mention-chain-capped" className="mt-1 text-meta text-fg-muted">
-                {t(message.meta.mentionChainReason === 'age' ? 'message.chainCappedAge' : 'message.chainCapped', {
+                {/* 카드는 결과 글에만 선다(서버 `countsAsReply`) — 진행 글에는 옛 꼴로 사람 한 줄을 안내한다. */}
+                {t(message.meta.mentionChainReason === 'age'
+                  ? (countsAsReply(message.kind) ? 'message.chainCappedAge' : 'message.chainCappedAgeNoCard')
+                  : (countsAsReply(message.kind) ? 'message.chainCapped' : 'message.chainCappedNoCard'), {
                   handles: chainCapped.map((h) => `@${h}`).join(' '),
                   limit: chainLimit ?? '',
                 })}
