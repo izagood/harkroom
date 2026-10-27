@@ -70,6 +70,23 @@ describe('grant 라우트', () => {
     const demote = await app.inject({ method: 'PUT', url: `/accounts/${secondAdminId}/role`, headers: auth(secondAdminToken), payload: { role: 'member' } });
     expect(demote.statusCode).toBe(403);
   });
+  it('전역 grant 를 가진 member 를 guest 로 바꾸면 그 권한으로 더는 못 하고 /auth/me 에서도 빠진다', async () => {
+    const { token, accountId } = await createMember(app, adminToken, 'demoted');
+    const put = await app.inject({ method: 'PUT', url: `/accounts/${accountId}/grants`, headers: auth(adminToken), payload: { capability: 'channel.create' } });
+    expect(put.statusCode).toBe(200);
+    const ok = await app.inject({ method: 'POST', url: '/channels', headers: auth(token), payload: { name: 'before-guest' } });
+    expect(ok.statusCode).toBe(201);
+    const role = await app.inject({ method: 'PUT', url: `/accounts/${accountId}/role`, headers: auth(adminToken), payload: { role: 'guest' } });
+    expect(role.statusCode).toBe(200);
+    const denied = await app.inject({ method: 'POST', url: '/channels', headers: auth(token), payload: { name: 'after-guest' } });
+    expect(denied.statusCode).toBe(403);
+    const me = await app.inject({ method: 'GET', url: '/auth/me', headers: auth(token) });
+    expect(me.json().capabilities).not.toContain('channel.create');
+    // 다시 member 로 올리면 줄이 남아 있으므로 다시 통과한다(지우지 않고 판정에서만 뺐다).
+    await app.inject({ method: 'PUT', url: `/accounts/${accountId}/role`, headers: auth(adminToken), payload: { role: 'member' } });
+    const back = await app.inject({ method: 'POST', url: '/channels', headers: auth(token), payload: { name: 'member-again' } });
+    expect(back.statusCode).toBe(201);
+  });
   it('owner 를 이 라우트로 정하거나 바꿀 수 없다', async () => {
     const asOwner = await app.inject({ method: 'PUT', url: `/accounts/${memberId}/role`, headers: auth(adminToken), payload: { role: 'owner' } });
     expect(asOwner.statusCode).toBe(400);
