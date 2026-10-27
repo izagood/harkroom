@@ -1271,6 +1271,13 @@ class AppState extends ChangeNotifier {
           avatarAttachmentId: existing.avatarAttachmentId,
         );
         notifyListeners();
+      case 'grant.changed':
+        // 역할·전역 권한이 바뀌었다(서버 `grantRoutes.ts` — grant 주기·거두기·역할 변경이 모두 이 신호다).
+        // **나**면 `/auth/me` 를 다시 읽는다(데스크톱 `controller.ts` 와 같다) — 안 읽으면 admin 이 되거나
+        // 풀린 사람이 앱을 껐다 켤 때까지 옛 역할로 손잡이(남의 글 지우기 등)를 그린다.
+        final id = event['accountId'];
+        if (id is! String || id != me?.id) return;
+        unawaited(_refreshMe());
       case 'thread.agent_model.changed':
         final rootId = event['threadRootId'];
         final agentId = event['agentId'];
@@ -1285,6 +1292,25 @@ class AppState extends ChangeNotifier {
       default:
       // 모르는 이벤트. 무시한다.
     }
+  }
+
+  /// 내 계정(`/auth/me`)을 다시 읽는다 — 역할·권한이 바뀐 뒤(`grant.changed`).
+  ///
+  /// 기다리는 사이 로그아웃했거나 커뮤니티를 옮겼으면 옛 답을 새 세션에 붓지 않는다. 못 읽으면 이전 값을
+  /// 둔다 — 다음 시작 때 다시 읽힌다(한 번 실패했다고 `me` 를 지우면 화면이 로그아웃처럼 보인다).
+  Future<void> _refreshMe() async {
+    final gen = _generation;
+    final api = _api;
+    if (api == null) return;
+    final MeView who;
+    try {
+      who = await api.me();
+    } on Object {
+      return;
+    }
+    if (gen != _generation || who.id != me?.id) return;
+    me = who;
+    notifyListeners();
   }
 
   /// 루트의 스레드 상태를 갈아 끼운다. 모르는 루트는 버린다(다음에 읽을 때 서버가 함께 준다).
