@@ -3727,6 +3727,7 @@ export const en = {
   'artifact.zoom.fit390': 'Fit phone width (390px)',
   'artifact.zoom.fitted': 'Fitted to {width}px wide',
   'artifact.zoom.viewWidth': 'Viewing at {width}px wide',
+  'artifact.zoom.pinchHint': 'Preview zoom — pinch on the trackpad to adjust',
   'message.attachment.goToMessage': 'Go to message',
   'message.attachment.galleryAnnounce': 'Image {index} of {total}, sent by {sender}',
   'message.attachment.loadFailedLong': 'Could not load this image',

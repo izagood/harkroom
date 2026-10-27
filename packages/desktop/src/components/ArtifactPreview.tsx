@@ -402,6 +402,8 @@ export function ArtifactPanel({ fill = false, windowed }: {
                   disabled={!zoomReady}
                   className="inline-flex min-w-[52px] items-center justify-center gap-0.5 border-x border-border px-1 tabular-nums text-fg hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
                   aria-label={t('artifact.zoom.menu', { pct })}
+                  // 핀치는 맥 셸만 알린다(`src-tauri/src/pinch_zoom.rs`) — 되는 곳에서만 알려 준다(designer #1642 n5).
+                  title={isMacOS() ? t('artifact.zoom.pinchHint') : undefined}
                   data-testid="artifact-zoom-menu"
                 >{pct}%<span aria-hidden="true" className="text-fg-subtle">▾</span></button>
               )}

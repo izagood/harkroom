@@ -233,6 +233,20 @@ describe('the zoom control in the preview panel', () => {
     expect(screen.getByRole('menuitem', { name: '100%로' }).textContent).toContain('⌘0');
   });
 
+  // designer #1642 n5: 핀치가 되는 곳(맥)에서만 % 단추가 핀치를 알려 준다.
+  it('tells mac users the % button also follows a trackpad pinch', async () => {
+    const mac = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    render(<ArtifactPanel />);
+    open(page('p1', 'art-1'));
+    await screen.findByTestId('artifact-frame');
+    expect(screen.getByTestId('artifact-zoom-menu').getAttribute('title')).toBe('미리보기 배율 — 트랙패드 핀치로도 조절');
+    mac.mockReturnValue('Win32');
+    cleanup();
+    render(<ArtifactPanel />);
+    await screen.findByTestId('artifact-frame');
+    expect(screen.getByTestId('artifact-zoom-menu').getAttribute('title')).toBeNull();
+  });
+
   // designer n1: 위 세 줄도 ✓ 폭을 비워 아래 맞춤 줄과 글자 시작을 맞춘다.
   it('lines up every menu row on the check-mark column', async () => {
     render(<ArtifactPanel />);
