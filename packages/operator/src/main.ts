@@ -19,9 +19,13 @@
 // 닿지 않는다. 즉 이 핸들러가 아예 안 불려도(SIGKILL) 러너는 산다 — 이 핸들러가 하는
 // 일은 러너를 살리는 것이 아니라 **잔해를 남기지 않는 것**이다.
 import { resolve } from 'node:path';
+import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
 import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_MCP_READY_FILE_ENV, RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV, RUNNER_TURN_KEY_ENV } from '@harkroom/shared/runnerLink';
 import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
+import { applyCommunityEnv, assertPerCommunitySwitch, communityRunTarget, listCommunityTargets, superviseCommunities } from './cliCommunity.js';
+import { ensureCommunityRootDir, perCommunityEnabled } from './communityRoots.js';
 import { runMcpBridge, writeReadyMarker } from './mcpBridge.js';
 import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
 import { decideHook, decideLaneHook, decideTailHook, HOOK_STDIN_MAX, HOOK_TIMEOUT_MS, laneDeny, readStdinCapped, type LaneDenyDecision } from './hookCli.js';
@@ -242,7 +246,9 @@ async function main(): Promise<void> {
       await hookMain(cmd.event, cmd.laneRules, cmd.laneMode, cmd.tailReach, cmd.codex === true);
       return;
     case 'register': {
-      const dataDir = resolveDataDir(process.env.HARKROOM_DATA_DIR);
+      const appDataDir = resolveDataDir(process.env.HARKROOM_DATA_DIR);
+      // 커뮤니티마다 모드면 url 로 뿌리를 정한다 — 토큰·operator.json 이 그 뿌리에 들어가고, 도는 오퍼레이터도 그 뿌리의 것을 찾는다.
+      const dataDir = perCommunityEnabled(process.env) ? await prepareCommunityRoot(appDataDir, cmd.baseUrl) : appDataDir;
       const input = { baseUrl: cmd.baseUrl, code: cmd.code, ...(cmd.name ? { name: cmd.name } : {}) };
       // 도는 오퍼레이터가 있으면 그쪽이 claim 하고 곧바로 붙는다 — 없으면 파일에 두고 `run` 이 읽는다.
       const live = await registerViaRunningOperator(dataDir, input);
@@ -254,7 +260,12 @@ async function main(): Promise<void> {
       return;
     }
     case 'run': {
-      const dataDir = resolveDataDir(cmd.dataDir);
+      const appDataDir = resolveDataDir(cmd.dataDir);
+      if (cmd.all) {
+        await runAllCommunities(appDataDir, cmd.dataDir);
+        return;
+      }
+      const dataDir = cmd.community === undefined ? appDataDir : await prepareCommunityRoot(appDataDir, cmd.community);
       await daemonMain(runArgs(dataDir, resolve(process.argv[1] ?? 'harkroom-operator'), process.env.HARKROOM_OPERATOR_VERSION));
       return;
     }
@@ -262,6 +273,38 @@ async function main(): Promise<void> {
       await daemonMain(parseDaemonArgs(cmd.argv));
       return;
   }
+}
+
+/**
+ * 커뮤니티마다 모드에서 url 의 뿌리를 정하고 쓸 수 있게 한 뒤, 이 프로세스의 env 를 그 커뮤니티 것으로 맞춘다(앱의
+ * `community_env` 와 같은 넷) — `operator.json` 은 이 커뮤니티 칸만 받고(`assertSingleCommunity`) 러너도 같은 뿌리를 쓴다.
+ */
+async function prepareCommunityRoot(appDataDir: string, baseUrl: string): Promise<string> {
+  assertPerCommunitySwitch(process.env, 'register·run --community');
+  const target = await communityRunTarget(appDataDir, homedir(), baseUrl);
+  await ensureCommunityRootDir(target.root, { legacy: target.legacy });
+  applyCommunityEnv(process.env, target);
+  return target.root;
+}
+
+/** `run --all` — 커뮤니티마다 `run --community <url>` 자식을 하나씩 감독한다. 신호를 받으면 자식에게 넘기고 다 끝나면 나간다. */
+async function runAllCommunities(appDataDir: string, dataDirFlag: string | undefined): Promise<void> {
+  assertPerCommunitySwitch(process.env, 'run --all');
+  const { targets, skipped } = await listCommunityTargets(appDataDir, homedir());
+  for (const s of skipped) console.error(`건너뜀: ${s.root} — ${s.reason}`);
+  if (targets.length === 0) throw new Error('띄울 커뮤니티가 없다 — 먼저 harkroom-operator register <url> <코드>');
+  const entry = resolve(process.argv[1] ?? 'harkroom-operator');
+  const sup = superviseCommunities(targets, {
+    // node 플래그(`execArgv`)도 그대로 — 자식이 이 프로세스와 같은 꼴로 뜬다.
+    spawn: (t) => spawn(process.execPath, [
+      ...process.execArgv, entry, 'run', '--community', t.key, ...(dataDirFlag === undefined ? [] : ['--data-dir', dataDirFlag]),
+    ], { stdio: 'inherit', env: process.env }),
+  });
+  await new Promise<void>((done) => {
+    const onSignal = (signal: NodeJS.Signals): void => { void sup.stop(signal).then(done); };
+    process.once('SIGTERM', onSignal);
+    process.once('SIGINT', onSignal);
+  });
 }
 
 async function daemonMain(args: DaemonArgs): Promise<void> {
