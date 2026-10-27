@@ -12,6 +12,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ProviderLaneConfig } from '@harkroom/shared/providerLane';
+import { assertSingleCommunity } from './communityRoots.js';
 
 export interface LocalAgentConfig {
   /** 이 머신에서의 작업 디렉터리. 없으면 서버 정의의 `workingDirDefault`. */
@@ -81,6 +82,7 @@ export async function readConfig(path: string): Promise<OperatorConfig> {
 
 /** 임시 파일에 쓰고 rename 한다 — 도중에 죽어도 반쪽짜리 설정이 남지 않는다. */
 export async function writeConfig(path: string, cfg: OperatorConfig): Promise<void> {
+  assertSingleCommunity(cfg.communities, process.env);
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
   await writeFile(tmp, `${JSON.stringify(cfg, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
