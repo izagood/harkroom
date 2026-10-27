@@ -2,7 +2,7 @@
  * 격리 C안 P3 — 기계에 하나로 남는 `usage.json` 에 writer 가 여럿일 때(커뮤니티마다 오퍼레이터 프로세스).
  * 잠금(`fileLock.ts`)·합치기(`mergeUsageEntries`)·폴러의 `sharedFile` 스위치, 그리고 **꺼져 있으면 지금 그대로**.
  */
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { ClaudeUsageEntry } from '@harkroom/shared/claudeUsage';
 
 import { createClaudeUsagePoller, mergeUsageEntries } from '../src/claudeUsagePoller.js';
-import { withFileLock } from '../src/fileLock.js';
+import { removeIfSame, withFileLock } from '../src/fileLock.js';
 
 const T0 = Date.parse('2026-10-27T07:00:00Z');
 const dirs: string[] = [];
@@ -55,6 +55,38 @@ describe('withFileLock', () => {
     const lock = join(await tmp(), 'x.lock');
     await expect(withFileLock(lock, async () => { throw new Error('boom'); })).rejects.toThrow('boom');
     await expect(stat(lock)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('withFileLock — 남의 잠금을 지우지 않는다(security P3-n1·n2)', () => {
+  it('놓을 때 잠금이 내 것이 아니면(시한을 넘겨 남이 새로 잡았으면) 지우지 않는다', async () => {
+    const lock = join(await tmp(), 'x.lock');
+    await withFileLock(lock, async () => { await writeFile(lock, '999 1 someone-else\n'); });
+    expect(await readFile(lock, 'utf8')).toBe('999 1 someone-else\n');
+  });
+
+  it('치울 때 내용이 그새 바뀌었으면(남이 치우고 새로 잡았으면) 그 새 잠금을 되돌려 둔다', async () => {
+    const lock = join(await tmp(), 'x.lock');
+    await writeFile(lock, '777 2 newer-owner\n');
+    expect(await removeIfSame(lock, '424242 1 old-owner\n')).toBe(false);
+    expect(await readFile(lock, 'utf8')).toBe('777 2 newer-owner\n');
+    expect(await removeIfSame(lock, '777 2 newer-owner\n')).toBe(true);
+    await expect(stat(lock)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('쓰다 만 빈 잠금은 mtime 이 오래되면 치우고 잡는다', async () => {
+    const lock = join(await tmp(), 'x.lock');
+    await writeFile(lock, '');
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lock, old, old);
+    expect(await withFileLock(lock, async () => 'ok', { staleMs: 30_000 })).toBe('ok');
+  });
+
+  it('쓰다 만 빈 잠금이 아직 새것이면 치우지 않는다(쓰는 중일 수 있다)', async () => {
+    const lock = join(await tmp(), 'x.lock');
+    await writeFile(lock, '');
+    await expect(withFileLock(lock, async () => 'never', { staleMs: 30_000, timeoutMs: 60, retryMs: 10 })).rejects.toThrow(/잠금/);
+    expect(await readFile(lock, 'utf8')).toBe('');
   });
 });
 
