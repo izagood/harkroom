@@ -3094,7 +3094,8 @@ export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
  */
 export const MENTION_CHAIN_LIMIT = 8;
 export const MENTION_CHAIN_LIMIT_MIN = 1;
-export const MENTION_CHAIN_LIMIT_MAX = 50;
+/** 백스톱(연쇄 한도 재설계 ③)의 홉 값(100)이 들어갈 수 있게 50 에서 넓혔다(147). */
+export const MENTION_CHAIN_LIMIT_MAX = 200;
 
 /**
  * 러너가 다룰 줄 아는 개입 능력(#346, 스펙 §5-2 결정 2). `announce` 에 실려 서버가

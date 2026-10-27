@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, nextStallDepth, STALL_HOP_LIMIT, STALL_LOOKBACK, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, nextStallDepth, STALL_HOP_LIMIT, CHAIN_BACKSTOP_MS, CHAIN_BACKSTOP_CONTINUE, STALL_LOOKBACK, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
@@ -16,6 +16,7 @@ import { closeReplyGrants, openReplyGrants } from './replyGrants.js';
 import { enqueueInboxPushMany } from './push/pushJobs.js';
 import { displayBodySql } from './systemBody.js';
 import { guardMetaI18n } from './systemI18n.js';
+import { raiseChainBackstop } from './chainBackstop.js';
 
 /**
  * 채널 안에서 `seq` 발급을 직렬화하는 advisory lock 의 classid(#523).
@@ -819,13 +820,14 @@ async function mentionDepthFor(
     causeMessageId?: string | null;
   },
 ): Promise<ChainLink> {
-  if (!input.authorIsAgent) return { depth: 0, prevStall: 0 };
+  if (!input.authorIsAgent) return { depth: 0, prevStall: 0, startedAt: null };
   if (input.causeMessageId) {
     const fromCause = await causeDepth(client, input.authorId, input.causeMessageId);
     if (fromCause !== null) return fromCause;
   }
   const rows = (await client.query(
     `select m.body, m.mention_depth as depth, m.stall_depth as stall, (a.kind = 'agent') as author_is_agent,
+            m.created_at, m.chain_started_at,
             -- **실제로 나를 깨운 부름만 고리다**(2026-09-29). 본문만 다시 파싱하면 상한에
             -- 막혔거나(capped) 호출 범위에 거절된(denied) 부름도 "나를 부른 메시지"로 보여,
             -- 깨운 적 없는 부름이 깊이를 쌓았다. 그 부름으로 inbox 가 생겼는지를 함께 본다.
@@ -852,7 +854,7 @@ async function mentionDepthFor(
       order by m.seq desc
       limit ${DEPTH_SCAN_LIMIT}`,
     [input.channelId, input.threadRootId, input.authorId],
-  )).rows as { body: string; depth: number; stall: number; author_is_agent: boolean; woke: boolean }[];
+  )).rows as { body: string; depth: number; stall: number; author_is_agent: boolean; woke: boolean; created_at: Date; chain_started_at: Date | null }[];
   for (const row of rows) {
     if (!row.woke) continue;
     // 나를 부른 **가장 최근** 메시지 하나가 내 앞 고리다 — 그것을 찾으면 멈춘다.
@@ -861,10 +863,14 @@ async function mentionDepthFor(
       authorIsAgent: row.author_is_agent,
       isAgent: (id) => id === input.authorId,
     });
-    if (call.includes(input.authorId)) return { depth: row.depth + 1, prevStall: row.author_is_agent ? row.stall : 0 };
+    if (call.includes(input.authorId)) {
+      return row.author_is_agent
+        ? { depth: row.depth + 1, prevStall: row.stall, startedAt: row.chain_started_at ?? row.created_at }
+        : { depth: row.depth + 1, prevStall: 0, startedAt: row.created_at };
+    }
   }
   // 나를 부른 것이 없는 발화(스스로 올린 보고·깨움 뒤의 이어 말하기)는 연쇄가 아니다.
-  return { depth: 0, prevStall: 0 };
+  return { depth: 0, prevStall: 0, startedAt: null };
 }
 
 /** 정체 한도가 막았을 부름 — 부른 계정 가운데 에이전트만(사람은 한도와 무관하게 불린다, 043 과 같다). */
@@ -876,8 +882,11 @@ async function stallShadowFor(client: PoolClient, calledIds: readonly string[]):
     .sort((a, b) => calledIds.indexOf(a) - calledIds.indexOf(b));
 }
 
-/** 이 발화의 앞 고리 — 깊이(043)와 그 고리의 정체 홉(146). 사람 고리의 정체는 언제나 0 이다. */
-interface ChainLink { depth: number; prevStall: number }
+/**
+ * 이 발화의 앞 고리 — 깊이(043)와 그 고리의 정체 홉(146), 사슬이 사람 손길에서 시작한 시각(147, 백스톱의 시간 축).
+ * 사람 고리의 정체는 언제나 0 이다. `startedAt` 이 null 이면 이 발화가 사슬의 시작이다(사람이 답한 카드로 뜬 턴·사슬 밖).
+ */
+interface ChainLink { depth: number; prevStall: number; startedAt: Date | null }
 
 /**
  * 같은 대화의 최근 본문들 — 정체 판정(`nextStallDepth`)이 「앞 줄에 없던 결과물인가」를 이것과 견준다.
@@ -945,10 +954,18 @@ async function causeDepth(client: PoolClient, authorId: string, causeMessageId: 
                         on h.id::text = case i.reason when 'ask_answered' then m.meta->'ask'->>'answeredBy'
                                                       else m.meta->'ask'->>'closedBy' end
                        where i.message_id = m.id and i.account_id = $2
-                         and i.reason in ('ask_answered', 'ask_closed') and h.kind = 'human') as by_human
+                         and i.reason in ('ask_answered', 'ask_closed') and h.kind = 'human'
+                         -- 백스톱 카드(147, security n3)는 사람이 원본을 직접 눌러 「계속」을 고른 답만 사슬을 새로 시작한다.
+                         -- 「멈춤」·닫힘·거울·일괄·글로 고른 답은 리셋하지 않는다 — 깊이가 그대로라 부름은 계속 막힌다.
+                         and (not (m.meta ? 'chainBackstop')
+                              or (i.reason = 'ask_answered'
+                                  and m.meta->'ask'->>'answeredWith' = '${CHAIN_BACKSTOP_CONTINUE}'
+                                  and m.meta->'ask'->>'mirrorOf' is null
+                                  and m.meta->'ask'->>'answeredVia' is null))) as by_human
          from message m where m.id = $1
      )
      select m.mention_depth as depth, m.stall_depth as stall, (a.kind = 'agent') as author_is_agent,
+            m.created_at, m.chain_started_at,
             (m.meta ? 'automation') as from_automation, card.by_human as human_card
        from message m join account a on a.id = m.author_id cross join card
       where m.id = $1 and m.deleted_at is null
@@ -958,14 +975,17 @@ async function causeDepth(client: PoolClient, authorId: string, causeMessageId: 
                            and (i.reason in ('mention', 'dm', 'team_mention', 'team_delegated')
                                 or (a.kind = 'human' and i.reason in ('thread_reply', 'ask_answered')))))`,
     [causeMessageId, authorId],
-  )).rows[0] as { depth: number; stall: number; author_is_agent: boolean; from_automation: boolean; human_card: boolean } | undefined;
+  )).rows[0] as {
+    depth: number; stall: number; author_is_agent: boolean; from_automation: boolean; human_card: boolean;
+    created_at: Date; chain_started_at: Date | null;
+  } | undefined;
   if (!row) return null;
-  if (row.human_card) return { depth: 1, prevStall: 0 };
+  if (row.human_card) return { depth: 1, prevStall: 0, startedAt: null };
   // 사람은 언제나 0 이다(`mentionDepthFor`) — 저장된 값을 믿지 않고 규칙으로 센다. 예외는 에이전트가
   // 돌린 자동화 글(082)이다: 사람 이름이지만 사슬의 고리라 저장된 깊이를 잇는다(시계·버튼 회차는 0 이다).
   return row.author_is_agent || row.from_automation
-    ? { depth: row.depth + 1, prevStall: row.stall }
-    : { depth: 1, prevStall: 0 };
+    ? { depth: row.depth + 1, prevStall: row.stall, startedAt: row.chain_started_at ?? row.created_at }
+    : { depth: 1, prevStall: 0, startedAt: row.created_at };
 }
 
 /**
@@ -998,6 +1018,8 @@ async function resolveMentionCalls(
     body: string; channelId: string; authorId: string; authorIsAgent: boolean; mentionDepth: number;
     /** 사람 이름 글이지만 에이전트 사슬에서 나온 것(082, `PostMessageInput.chainDepth`) — 상한을 똑같이 본다. */
     chainBound?: boolean;
+    /** 이 발화가 이어 받은 사슬의 시작 시각(147) — `CHAIN_BACKSTOP_MS` 가 지났으면 홉 수와 무관하게 막는다. 수정은 넘기지 않는다. */
+    chainStartedAt?: Date | null;
     /**
      * 회신권(084)을 찾을 스레드 — **결과 발화일 때만** 넘긴다(`invokeGate.mayInvoke` 의 ctx 주석).
      * 수정은 넘기지 않는다(에이전트 글의 수정은 부르지 않는다).
@@ -1076,7 +1098,9 @@ async function resolveMentionCalls(
     부른 것으로 그린다 — 같은 메시지가 두 형식으로 존재하는 순간을 만들지 않는다는
     정규화 주석의 규율과 같다.
   */
-  const chainCapped = capsChain && mentionDepth >= chainLimit;
+  const chainAged = capsChain && input.chainStartedAt != null
+    && Date.now() - input.chainStartedAt.getTime() >= CHAIN_BACKSTOP_MS;
+  const chainCapped = capsChain && (mentionDepth >= chainLimit || chainAged);
 
   /*
     **부름과 지칭을 가른다**(2026-09-09). 규칙과 근거는 `splitMentionCalls` 에 있다:
@@ -1232,7 +1256,11 @@ async function resolveMentionCalls(
     channelCalled,
     callMeta: {
       ...(cappedHandles.length
-        ? { mentionChainCapped: cappedHandles, mentionChainLimit: chainLimit }
+        ? {
+            mentionChainCapped: cappedHandles, mentionChainLimit: chainLimit,
+            // 시간 축(147)으로만 막혔으면 화면이 「24시간」 문장을 고른다.
+            ...(mentionDepth < chainLimit ? { mentionChainReason: 'age' } : {}),
+          }
         : {}),
       ...(deniedHandles.length ? { mentionDenied: deniedHandles } : {}),
       ...(refIdsForMeta.length ? { mentionRefs: refIdsForMeta } : {}),
@@ -1518,9 +1546,11 @@ export async function postMessage(
           hasAttachment: (input.attachmentIds?.length ?? 0) > 0,
         })
       : 0;
+    // 사슬의 시작 시각(147). 사슬 안의 에이전트 글만 갖는다 — 앞 고리가 시작이면(사람이 답한 카드) 지금이다.
+    const chainStartedAt = authorIsAgent && link.depth > 0 ? link.startedAt ?? new Date() : null;
     const calls = await resolveMentionCalls(client, {
       body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth, chainBound,
-      replyGrantThreadId: isResult ? input.threadRootId ?? null : null,
+      chainStartedAt, replyGrantThreadId: isResult ? input.threadRootId ?? null : null,
     });
 
     /**
@@ -1592,8 +1622,8 @@ export async function postMessage(
       ? await verifiedCauseLink(client, input.authorId, input.chainCause)
       : null;
     const inserted = await client.query(
-      `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth, cause_message_id, stall_depth)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
+      `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth, cause_message_id, stall_depth, chain_started_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning id`,
       [input.channelId, input.threadRootId ?? null, input.authorId, calls.normalizedBody,
        input.kind ?? 'user',
        // 막힌 호출은 **그 메시지에 남는다** — 조용히 사라지면 사람은 "왜 아무도 안 왔나"를
@@ -1607,7 +1637,7 @@ export async function postMessage(
          // 정체 한도(146)가 막았을 부름 — 그림자 단계의 기록이다. 실제 부름은 그대로 나갔다.
          ...(stallShadow.length ? { mentionStallShadow: { wouldCap: stallShadow, stallDepth, limit: STALL_HOP_LIMIT } } : {}),
        }),
-       alsoInChannel, mentionDepth, causeLink, stallDepth],
+       alsoInChannel, mentionDepth, causeLink, stallDepth, chainStartedAt],
     );
     const messageId = inserted.rows[0].id as string;
 
@@ -1840,6 +1870,18 @@ export async function postMessage(
      * 커밋 밖에서 읽는 것이 맞다: 트랜잭션 안에서 만들면 롤백된 게시의 행이 나갈 수 있다.
      */
     const rootBack = deletedRoot ? await readListRow(pool, input.channelId, deletedRoot) : null;
+    /*
+      백스톱 카드(147). 에이전트의 결과 발화가 상한에 막혀 동료를 못 불렀으면 소유자에게 [계속 — 예산 리셋]/[멈춤] 카드를 세운다 —
+      예전에는 사람이 그 스레드에 글을 써야 풀렸다. 카드가 실패해도 이 글은 이미 나갔다.
+    */
+    if (authorIsAgent && isResult && calls.cappedIds.size > 0) {
+      await raiseChainBackstop(pool, {
+        agentId: input.authorId, channelId: input.channelId, threadRootId: input.threadRootId ?? message.id,
+        sourceMessageId: message.id, cappedIds: [...calls.cappedIds],
+        limit: (calls.callMeta.mentionChainLimit as number | undefined) ?? MENTION_CHAIN_LIMIT,
+        reason: calls.callMeta.mentionChainReason === 'age' ? 'age' : 'hops',
+      }).catch((err) => console.error('[chainBackstop] 카드를 세우지 못했다(글은 나갔다):', err));
+    }
     return { message, notified: [...notified], replayed: false, rootBack };
   } catch (err) {
     if (!released) await client.query('rollback');
@@ -2515,7 +2557,8 @@ export async function checkAskSupersede(
   if (row.authorId !== args.callerId) return 'supersedes_not_yours';
   // 권한 요청 카드는 에이전트가 작성자라 "내 카드" 검사를 통과한다 — 접히면 pending 요청이 소유자 눈에서 사라진다
   // (security F1). 그 카드는 소유자의 approve|deny 로만 끝난다.
-  if (row.meta.permissionRequest) return 'supersedes_permission_card';
+  // 서버가 세운 카드(권한·백스톱 147)는 에이전트가 대신하지 못한다.
+  if (row.meta.permissionRequest || row.meta.chainBackstop) return 'supersedes_permission_card';
   const oldRoot = row.threadRootId ?? args.oldId;
   if (row.channelId !== args.channelId || !args.threadRootId || oldRoot !== args.threadRootId) return 'supersedes_other_thread';
   // 「답하지 않기」로 닫힌 것·이미 대신된 것은 사람이나 앞선 새 카드가 정한 끝이다 — 덮지 않는다.

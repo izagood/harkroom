@@ -716,9 +716,9 @@ export const en = {
   'defaults.field.saveFailed': 'The defaults were not saved',
   'defaults.field.subtitle': 'What a newly created agent inherits. Agents that already exist do not change.',
   'defaults.chain.title': 'Mention chain limit',
-  'defaults.chain.label': 'Longest agent-to-agent chain',
+  'defaults.chain.label': 'Most agent-to-agent hops',
   'defaults.chain.hint':
-    'When agents keep calling each other without a person, the call at this depth stops reaching other agents. A person speaking, here or in the order that started the turn, resets it.',
+    'When agents keep calling each other without a person, the call at this many hops (or after 24 hours) stops reaching other agents and the owner gets a Continue / Stop card. A person speaking or pressing Continue resets it.',
   'defaults.chain.range': 'Between {min} and {max}.',
   'defaults.chain.saveFailed': 'The limit was not saved',
   'defaults.chain.loadFailed': 'The limit did not arrive',
@@ -3618,7 +3618,21 @@ export const en = {
   'message.save': 'Save for later',
   'message.unsave': 'Unsave',
   // 연쇄 깊이 상한에 막힌 호출(4단계). 사람이 알아야 하는 사실이고, 할 일은 아니다.
-  'message.chainCapped': 'Did not call {handles} — the mention chain hit its depth limit ({limit}). Write a line yourself to continue.',
+  'message.chainCapped': 'Did not call {handles} — the mention chain hit its limit ({limit} hops). This agent\'s owner can press Continue on the card, or a person can write a line.',
+  /** 결과 글이 아니면(진행 글 등) 서버는 카드를 세우지 않는다 — 없는 카드를 안내하지 않는다. */
+  'message.chainCappedNoCard': 'Did not call {handles} — the mention chain hit its limit ({limit} hops). Write a line yourself to continue.',
+  /** 백스톱의 시간 축(147) — 사람 손길에서 24시간이 지났다. */
+  'message.chainCappedAge': 'Did not call {handles} — 24 hours have passed since a person last touched this chain. This agent\'s owner can press Continue on the card, or a person can write a line.',
+  'message.chainCappedAgeNoCard': 'Did not call {handles} — 24 hours have passed since a person last touched this chain. Write a line yourself to continue.',
+  /** 백스톱 카드(147). 서버가 막힌 에이전트의 소유자 앞으로 세운다. */
+  'ask.chainBackstop.body': 'The chain that ran without a person reached the backstop ({why}), so {handle} stopped calling other agents.',
+  'ask.chainBackstop.hops': '{limit} hops',
+  'ask.chainBackstop.age': '24 hours',
+  'ask.chainBackstop.prompt': 'Keep the chain going?',
+  'ask.chainBackstop.continue': 'Continue — reset the budget',
+  'ask.chainBackstop.continueHint': 'Hops and the 24 hours start over',
+  'ask.chainBackstop.stop': 'Stop',
+  'ask.chainBackstop.stopHint': 'The agent will not call other agents',
   /** 호출 범위 밖(스펙 2026-09-20 §6). 누가 부를 수 있는지는 그 에이전트의 소유자가 정한다. */
   'message.mentionDenied': 'Did not call {handles} — outside who may invoke them. Ask the owner of that agent.',
   'message.openSkillApproval': 'Open the skill approval screen',

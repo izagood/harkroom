@@ -31,6 +31,10 @@ import type { SectionId } from './settings/sections';
  */
 export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOpenSettings?: (section?: SectionId, targetId?: string) => void }) {
   const t = useT();
+  // 백스톱 카드(147)는 서버가 세운다 — 머리·선택지를 서버의 한국어 고정 문구 대신 앱 언어로 그린다. 모르는 선택지는 그대로.
+  const backstop = message.meta?.chainBackstop !== undefined;
+  const backstopLabel = (o: { id: string }, part: '' | 'Hint' = ''): string | null =>
+    backstop && (o.id === 'continue' || o.id === 'stop') ? t(`ask.chainBackstop.${o.id}${part}` as const) : null;
   const myId = useActiveStore((s) => s.me?.id ?? null);
   // 이름 쪽만 구독한다 — 상태·아바타 이벤트에 행마다 다시 그려지지 않도록(`lib/accountNames`).
   const accounts = useActiveStore(selectAccountNames);
@@ -155,7 +159,7 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
         )}
         {replied && closedByName && <span className="text-meta text-fg-subtle">{closedByName}</span>}
       </div>
-      {ask.prompt && !superseded && !lineHead && <p className="px-3 pt-1 text-body text-fg-muted">{ask.prompt}</p>}
+      {ask.prompt && !superseded && !lineHead && <p className="px-3 pt-1 text-body text-fg-muted">{backstop ? t('ask.chainBackstop.prompt') : ask.prompt}</p>}
       {replied && replyBody && (
         <p
           data-testid="ask-reply-quote"
@@ -207,8 +211,8 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
               }`}
               onClick={() => { void getController().answerAsk(message.id, o.id, message.channelId); }}
             >
-              <span className={`font-medium ${canChoose || canPickLate ? 'text-fg' : 'text-fg-agent'}`}>{o.label}</span>
-              {o.hint && <span className="ml-2 text-meta text-fg-subtle">{o.hint}</span>}
+              <span className={`font-medium ${canChoose || canPickLate ? 'text-fg' : 'text-fg-agent'}`}>{backstopLabel(o) ?? o.label}</span>
+              {o.hint && <span className="ml-2 text-meta text-fg-subtle">{backstopLabel(o, 'Hint') ?? o.hint}</span>}
             </button>
           );
         })}

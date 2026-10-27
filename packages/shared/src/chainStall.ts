@@ -13,6 +13,16 @@
 /** 새 결과물 없이 이어진 에이전트 홉이 이만큼이면 에이전트 부름을 막는다(그림자 단계에서는 기록만). */
 export const STALL_HOP_LIMIT = 4;
 
+/**
+ * **백스톱의 시간 축**(연쇄 한도 재설계 ③). 사람 손길에서 시작한 사슬이 이만큼 지나면 홉 수와 무관하게 에이전트 부름을 막고
+ * 서버가 소유자에게 카드([계속 — 예산 리셋]/[멈춤])를 세운다. 홉 축은 워크스페이스 상한(`mention_policy.chain_limit`)이다.
+ */
+export const CHAIN_BACKSTOP_MS = 24 * 60 * 60_000;
+
+/** 백스톱 카드의 선택지 id — 서버가 「계속」 답만 사슬을 새로 시작한 것으로 친다(`causeDepth`). */
+export const CHAIN_BACKSTOP_CONTINUE = 'continue';
+export const CHAIN_BACKSTOP_STOP = 'stop';
+
 /** 결과물 비교에 쓰는 앞 줄 수 — 같은 스레드의 최근 메시지. */
 export const STALL_LOOKBACK = 10;
 
