@@ -1,4 +1,4 @@
-import type { AccountStatus, AvatarSourceMeta, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, HandleGroupRow, InboxEntry, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
+import type { AccountStatus, AvatarSourceMeta, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import { endSession } from '../lib/sessionEnd';
 import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchResult } from '../lib/memoryList';
 import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
@@ -3346,6 +3346,21 @@ export class Controller {
   /** 초대 토큰을 발급한다 — admin 전용. */
   createInvite(): Promise<string> {
     return this.api.createInvite();
+  }
+  sendInvite(email: string, locale: 'ko' | 'en'): Promise<InviteCreated> {
+    return this.api.sendInvite(email, locale);
+  }
+  resendInvite(id: string, locale: 'ko' | 'en'): Promise<InviteCreated> {
+    return this.api.resendInvite(id, locale);
+  }
+  invites(): Promise<InviteView[]> {
+    return this.api.invites();
+  }
+  revokeInvite(id: string): Promise<void> {
+    return this.api.revokeInvite(id);
+  }
+  inviteMailStatus(): Promise<'on' | 'off'> {
+    return this.api.inviteMailStatus();
   }
 
   // --- 오퍼레이터·배정(스펙 2026-09-20 §3). 화면은 컨트롤러를 거친다 — `ApiClient` 를 직접 잡지 않는다. ---

@@ -8,6 +8,7 @@ import { SettingsColumns, SettingsGrid, SettingsGroup, SettingsPage } from './pr
 import { MemberAccessPanel } from './MemberAccessPanel';
 import { errorText } from '../../lib/errorText';
 import { canIssueResetCode, loginIdsSupported, ResetCodeButton, resetSupported } from '../PasswordReset';
+import { InviteMailPanel, inviteMailSupported, TokenInvite } from './InviteMail';
 
 /**
  * 설정 › 워크스페이스 › **멤버와 초대**(UX ⑥b-5, designer 사양 ⑥: "Invite + Directory 의 사람 목록").
@@ -42,9 +43,8 @@ export function InviteSettings() {
    */
   const loginIdsOn = hasCapability(me, 'member.reset_password') && loginIdsSupported(serverVersion);
   const [loginIds, setLoginIds] = useState<Record<string, string>>({});
-  const [token, setToken] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  // 초대 메일·보낸 초대 목록(서버 0.4.280~). 옛 서버는 지금 흐름(토큰 한 번 보이기)만 — 하한을 올리지 않는다.
+  const mailUi = inviteMailSupported(serverVersion);
   // Directory 와 같은 세 갈래 — 둘이면 "아직 안 왔다" 가 "아무도 없다" 로 보인다.
   const [load, setLoad] = useState<{ kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string }>({ kind: 'loading' });
   const [attempt, setAttempt] = useState(0);
@@ -80,20 +80,6 @@ export function InviteSettings() {
   const panel = (where: 'side' | 'inline') => selected && (
     <MemberAccessPanel key={`${where}-${selected.id}`} person={selected} me={me} onBack={() => setSelectedId(null)} testId={`member-access-${where}`} />
   );
-
-  const createInvite = async () => {
-    setError(null);
-    setToken(null);
-    setBusy(true);
-    try {
-      const newToken = await getController().createInvite();
-      setToken(newToken);
-    } catch (e) {
-      setError(errorText(e, t, t('invite.failed')));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <SettingsPage section="invite" description={t('members.note')} layout="list">
@@ -151,51 +137,25 @@ export function InviteSettings() {
               </div>
             )}
             <div className={selected ? '@min-[900px]/settings:hidden' : ''}>
-            <SettingsGroup title={t('members.invite.title')}>
-              <div className="px-4 py-3" data-testid="members-invite">
-                {/* 서버 `POST /invites` 는 `requireCap('member.invite')` 다 — admin 이 아니어도 그 능력을 받았으면 발급한다(UX ⑦b-2). */}
-                {!hasCapability(me, 'member.invite') ? (
-                  <p className="text-fg-subtle">{t('invite.notAdmin')}</p>
-                ) : (
-                  <>
-                    <p className="mb-1 text-fg-subtle">{t('members.panel.pickHint')}</p>
-                    <p className="mb-3 text-fg-subtle">{t('invite.note')}</p>
-
-                    {token && (
-                      <div className="mb-4 rounded-row border border-warning-border bg-warning-surface p-3">
-                        {/* 크기를 안 적어 본문단 13px 을 물려받는다 — "지금 안 적으면 다시 못 본다"는
-                            **놓치면 되돌릴 수 없는** 문장이다. 아래 토큰 자체는 등폭 11px 이라 이 경고와
-                            값이 두 단으로 갈린다. */}
-                        <div className="font-semibold text-warning">
-                          {t('invite.tokenWarning')}
-                        </div>
-                        <code className="mt-1 block break-all rounded-row bg-surface-raised p-2 text-meta">{token}</code>
-                        <div className="mt-2 text-meta text-warning">
-                          {t('invite.tokenNextStep')}
-                        </div>
-                      </div>
+            {/* 서버 `POST /invites` 는 `requireCap('member.invite')` 다 — admin 이 아니어도 그 능력을 받았으면 발급한다(UX ⑦b-2).
+                능력이 없으면 「보낸 초대」 목록도 그리지 않는다 — 받는 사람 주소가 보인다(시안 c5). */}
+            {hasCapability(me, 'member.invite') && mailUi
+              ? <InviteMailPanel lead={<p className="mb-3 text-fg-subtle">{t('members.panel.pickHint')}</p>} />
+              : (
+                <SettingsGroup title={t('members.invite.title')}>
+                  <div className="px-4 py-3" data-testid="members-invite">
+                    {!hasCapability(me, 'member.invite') ? (
+                      <p className="text-fg-subtle">{t('invite.notAdmin')}</p>
+                    ) : (
+                      <>
+                        <p className="mb-1 text-fg-subtle">{t('members.panel.pickHint')}</p>
+                        <p className="mb-3 text-fg-subtle">{t('invite.note')}</p>
+                        <TokenInvite primary />
+                      </>
                     )}
-
-                    {error && (
-                      <div className="mb-4 rounded-row border border-danger-border bg-danger-surface p-3">
-                        <p className="text-meta text-danger">{error}</p>
-                      </div>
-                    )}
-
-                    <button
-                      className="rounded-row bg-accent px-4 py-2 font-medium text-fg-on-strong disabled:opacity-50"
-                      // 토큰이 하나 나왔다고 버튼을 잠그지 않는다 — 초대는 여러 사람에게 하는 일이고,
-                      // 토큰은 한 번 쓰면 소진되므로 두 번째 사람에게는 새 토큰이 필요하다. 다시 누르면
-                      // 앞 토큰은 화면에서 사라지므로(다시 볼 수 없다) 그 사실을 라벨로 알린다.
-                      disabled={busy}
-                      onClick={() => void createInvite()}
-                    >
-                      {busy ? t('invite.busy') : token ? t('invite.createAgain') : t('invite.create')}
-                    </button>
-                  </>
-                )}
-              </div>
-            </SettingsGroup>
+                  </div>
+                </SettingsGroup>
+              )}
             </div>
           </>
         )}
