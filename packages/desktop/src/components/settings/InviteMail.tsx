@@ -44,11 +44,7 @@ const KIND_CLASS: Record<RowKind, string> = {
   failed: 'bg-danger-surface text-danger',
   expired: 'bg-surface-raised text-fg-subtle',
 };
-/**
- * 「손볼 것」은 **만료만** 센다(designer, 「실패면 취소」 뒤). 메일이 실패한 초대는 곧바로 거두므로 보통은 줄이 없고,
- * 거두기까지 실패해 남은 「보내지 못함」 줄은 빨간 칩과 [취소]로 이미 눈에 띈다.
- */
-const isTodo = (k: RowKind) => k === 'expired';
+const isTodo = (k: RowKind) => k === 'failed' || k === 'expired';
 
 /**
  * 토큰을 화면에 한 번 보여 주는 지금 흐름. 메일이 꺼진 서버·옛 서버에서는 이것이 주 동작이고, 메일이 켜진 서버에서는
@@ -239,8 +235,7 @@ export function InviteMailPanel({ lead }: { lead?: ReactNode } = {}) {
           if (row.email) setChips((c) => (c.includes(row.email!) ? c : [...c, row.email!]));
           setRowMessage({ kind: 'error', text: [
             t('invite.mail.someFailed', { count: '1' }),
-            t('invite.mail.someFailedNext'),
-            ...(stuck ? [t('invite.mail.withdrawFailed', { count: '1' })] : []),
+            stuck ? t('invite.mail.withdrawFailed', { count: '1' }) : t('invite.mail.someFailedNext'),
           ].join(' ') });
         }
       } else {
@@ -354,7 +349,8 @@ export function InviteMailPanel({ lead }: { lead?: ReactNode } = {}) {
                   <ul className="mt-1">
                     {result.failed.map((f) => <li key={f.email} className="truncate" title={f.email}>{f.email} — {f.reason}</li>)}
                   </ul>
-                  <p className="mt-1">{t('invite.mail.someFailedNext')}</p>
+                  {/* 「거뒀다」는 거둔 것이 하나라도 있을 때만 — 전부 거두지 못했는데 그 말이 먼저 서면 거짓이다(designer s1). */}
+                  {result.failed.some((f) => !f.stuck) && <p className="mt-1">{t('invite.mail.someFailedNext')}</p>}
                   {result.failed.some((f) => f.stuck) && (
                     <p className="mt-1 font-semibold" data-testid="invite-mail-withdraw-failed">
                       {t('invite.mail.withdrawFailed', { count: String(result.failed.filter((f) => f.stuck).length) })}

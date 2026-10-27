@@ -103,7 +103,7 @@ describe('초대 메일 칸', () => {
     fireEvent.change(await screen.findByTestId('invite-email-input'), { target: { value: 'bad@example.com,' } });
     await act(async () => { fireEvent.click(screen.getByTestId('invite-mail-send')); });
     expect(c.revokeInvite).toHaveBeenCalledWith('x');
-    expect((await screen.findByTestId('invite-mail-failed')).textContent).toContain('초대는 만들어지지 않았다');
+    expect((await screen.findByTestId('invite-mail-failed')).textContent).toContain('거뒀다');
     // 실패한 주소는 보통 칩으로 돌아온다(빨강은 형식이 틀린 주소만).
     expect(screen.getByTestId('invite-chip-bad@example.com').className).not.toContain('danger');
     expect(document.body.textContent).not.toContain('hrki_x');
@@ -117,6 +117,8 @@ describe('초대 메일 칸', () => {
     fireEvent.change(await screen.findByTestId('invite-email-input'), { target: { value: 'bad@example.com,' } });
     await act(async () => { fireEvent.click(screen.getByTestId('invite-mail-send')); });
     expect((await screen.findByTestId('invite-mail-withdraw-failed')).textContent).toContain('[취소]');
+    // 하나도 거두지 못했으니 「거뒀다」 문장은 서지 않는다(designer s1).
+    expect(screen.getByTestId('invite-mail-failed').textContent).not.toContain('거뒀다');
     expect(document.body.textContent).not.toContain('hrki_x');
     expect(screen.getByTestId('invite-chip-bad@example.com')).toBeTruthy();
   });
@@ -193,8 +195,19 @@ describe('초대 메일 칸', () => {
     expect(screen.getByTestId('invite-revoke-tok')).toBeTruthy();
     fireEvent.click(screen.getByTestId('invite-filter-todo'));
     const todo = Array.from(document.querySelectorAll('[data-testid^="invite-row-"]')).map((e) => e.getAttribute('data-testid'));
-    // 「손볼 것」은 만료만 센다(designer).
-    expect(todo).toEqual(['invite-row-exp']);
+    expect(todo).toEqual(['invite-row-fail', 'invite-row-exp']);
+  });
+
+  it('줄의 [다시 보내기] 실패에 거두기까지 실패하면 「거두지 못했다」만 말한다', async () => {
+    const c = fake({ invites: [row({ id: 'old2', email: 'stuck@example.com', mailStatus: 'failed', lastSentAt: '2026-10-01T00:00:00Z' })] });
+    c.resendInvite.mockResolvedValueOnce({ id: 'new3', expiresAt: '', mail: 'failed' as const } as never);
+    c.revokeInvite.mockRejectedValueOnce(new ApiError(500, 'internal', 'boom'));
+    render(<InviteSettings />);
+    const b = await screen.findByTestId('invite-resend-old2');
+    await act(async () => { fireEvent.click(b); });
+    const msg = screen.getByTestId('invite-list').textContent ?? '';
+    expect(msg).toContain('거두지 못했다');
+    expect(msg).not.toContain('거뒀다');
   });
 
   it('방금 보낸 초대는 1분 동안 다시 보내기가 잠긴다', async () => {
