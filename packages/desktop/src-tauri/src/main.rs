@@ -10,6 +10,7 @@
 
 mod app_windows;
 mod attachment_save;
+mod community_root;
 mod daemon_client;
 mod external_link;
 mod login_path;
@@ -442,9 +443,10 @@ async fn on_daemon_pool<T: Send + 'static>(
 #[tauri::command]
 async fn claude_accounts_list(
     app: tauri::AppHandle,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.claude_accounts_list()
     })
     .await
@@ -454,11 +456,12 @@ async fn claude_accounts_list(
 async fn claude_accounts_configure(
     app: tauri::AppHandle,
     config: serde_json::Value,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
         // `config` 는 **경로가 아니라 이름들의 표**다(기본 풀·순서·배정). 이름 문법은 데몬이
         // 잰다 — 여기서 재면 두 곳에 같은 규칙이 생기고 한쪽만 고쳐지는 날이 온다.
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.claude_accounts_configure(config)
     })
     .await
@@ -470,9 +473,10 @@ async fn claude_account_login_start(
     pool: String,
     account: String,
     reauth: Option<bool>,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.claude_account_login_start(&pool, &account, reauth.unwrap_or(false))
     })
     .await
@@ -483,9 +487,10 @@ async fn claude_account_login_submit(
     app: tauri::AppHandle,
     login_id: String,
     code: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.claude_account_login_submit(&login_id, &code)
     })
     .await
@@ -495,9 +500,10 @@ async fn claude_account_login_submit(
 async fn claude_account_login_cancel(
     app: tauri::AppHandle,
     login_id: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.claude_account_login_cancel(&login_id)
     })
     .await
@@ -508,9 +514,10 @@ async fn claude_account_remove(
     app: tauri::AppHandle,
     pool: String,
     account: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.claude_account_remove(&pool, &account)
     })
     .await
@@ -521,9 +528,10 @@ async fn claude_account_open_terminal(
     app: tauri::AppHandle,
     pool: String,
     account: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.claude_account_open_terminal(&pool, &account)
     })
     .await
@@ -533,9 +541,10 @@ async fn claude_account_open_terminal(
 async fn claude_pool_remove(
     app: tauri::AppHandle,
     pool: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.claude_pool_remove(&pool)
     })
     .await
@@ -553,9 +562,10 @@ async fn claude_accounts_provider_usage(
     force: Option<bool>,
     pool: Option<String>,
     account: Option<String>,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.claude_accounts_provider_usage(
             force.unwrap_or(false),
             pool.as_deref(),
@@ -570,9 +580,10 @@ async fn codex_accounts_provider_usage(
     app: tauri::AppHandle,
     force: Option<bool>,
     account: Option<String>,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.codex_accounts_provider_usage(force.unwrap_or(false), account.as_deref())
     })
     .await
@@ -581,9 +592,10 @@ async fn codex_accounts_provider_usage(
 #[tauri::command]
 async fn codex_accounts_list(
     app: tauri::AppHandle,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.codex_accounts_list()
     })
     .await
@@ -593,9 +605,10 @@ async fn codex_accounts_list(
 async fn codex_account_login_start(
     app: tauri::AppHandle,
     account: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.codex_account_login_start(&account)
     })
     .await
@@ -605,9 +618,10 @@ async fn codex_account_login_start(
 async fn codex_account_login_cancel(
     app: tauri::AppHandle,
     login_id: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.codex_account_login_cancel(&login_id)
     })
     .await
@@ -617,9 +631,10 @@ async fn codex_account_login_cancel(
 async fn codex_account_remove(
     app: tauri::AppHandle,
     account: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.codex_account_remove(&account)
     })
     .await
@@ -629,9 +644,10 @@ async fn codex_account_remove(
 async fn codex_account_activate(
     app: tauri::AppHandle,
     account: Option<String>,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.codex_account_activate(account.as_deref())
     })
     .await
@@ -645,9 +661,10 @@ async fn operator_register(
     base_url: String,
     code: String,
     name: Option<String>,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_register(&base_url, &code, name.as_deref())
     })
     .await
@@ -656,9 +673,10 @@ async fn operator_register(
 #[tauri::command]
 async fn operator_agents_list(
     app: tauri::AppHandle,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_agents_list()
     })
     .await
@@ -670,9 +688,10 @@ async fn operator_agent_set(
     base_url: String,
     agent_id: String,
     config: serde_json::Value,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_agent_set(&base_url, &agent_id, config)
     })
     .await
@@ -685,9 +704,10 @@ async fn operator_agent_provider_lane_set(
     base_url: String,
     agent_id: String,
     lane: serde_json::Value,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_agent_provider_lane_set(&base_url, &agent_id, lane)
     })
     .await
@@ -698,9 +718,10 @@ async fn operator_agent_remove(
     app: tauri::AppHandle,
     base_url: String,
     agent_id: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_agent_remove(&base_url, &agent_id)
     })
     .await
@@ -709,9 +730,10 @@ async fn operator_agent_remove(
 #[tauri::command]
 async fn operator_mcp_list(
     app: tauri::AppHandle,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_mcp_list()
     })
     .await
@@ -722,9 +744,10 @@ async fn operator_mcp_set(
     app: tauri::AppHandle,
     name: String,
     definition: serde_json::Value,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_mcp_set(&name, definition)
     })
     .await
@@ -734,9 +757,10 @@ async fn operator_mcp_set(
 async fn operator_mcp_remove(
     app: tauri::AppHandle,
     name: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_mcp_remove(&name)
     })
     .await
@@ -745,18 +769,19 @@ async fn operator_mcp_remove(
 #[tauri::command]
 async fn operator_merge_get(
     app: tauri::AppHandle,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_merge_get()
     })
     .await
 }
 
 #[tauri::command]
-async fn workspace_cleanup_get(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+async fn workspace_cleanup_get(app: tauri::AppHandle, community: Option<String>) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.workspace_cleanup_get()
     })
     .await
@@ -767,9 +792,10 @@ async fn workspace_cleanup_settings_set(
     app: tauri::AppHandle,
     enabled: Option<bool>,
     grace_days: Option<u32>,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.workspace_cleanup_settings_set(enabled, grace_days)
     })
     .await
@@ -782,18 +808,19 @@ async fn workspace_cleanup_act(
     path: String,
     action: String,
     by: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.workspace_cleanup_act(&path, &action, &by)
     })
     .await
 }
 
 #[tauri::command]
-async fn workspace_cleanup_sweep(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+async fn workspace_cleanup_sweep(app: tauri::AppHandle, community: Option<String>) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.workspace_cleanup_sweep()
     })
     .await
@@ -807,9 +834,10 @@ async fn operator_merge_set(
     gh_user: Option<String>,
     scope: Option<String>,
     migrate: Option<Vec<String>>,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_merge_set(gh_user.as_deref(), scope.as_deref(), migrate.as_deref())
     })
     .await
@@ -820,9 +848,10 @@ async fn operator_merge_set(
 async fn operator_merge_check(
     app: tauri::AppHandle,
     scopes: Vec<String>,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_merge_check(&scopes)
     })
     .await
@@ -834,6 +863,7 @@ async fn operator_mcp_auth(
     app: tauri::AppHandle,
     action: String,
     name: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
         let method = match action.as_str() {
@@ -842,7 +872,7 @@ async fn operator_mcp_auth(
             "forget" => "operatorMcpAuthForget",
             _ => return Err(format!("알 수 없는 MCP 인증 동작: {action}")),
         };
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.operator_mcp_auth(method, &name)
     })
     .await
@@ -853,9 +883,10 @@ async fn claude_account_move(
     app: tauri::AppHandle,
     account: String,
     to_pool: String,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.claude_account_move(&account, &to_pool)
     })
     .await
@@ -879,12 +910,13 @@ async fn daemon_spawn_runner(
     harkroom_url: String,
     path: String,
     agent_version: Option<String>,
+    community: Option<String>,
 ) -> Result<daemon_client::SpawnRunnerResult, String> {
     on_daemon_pool(app, move |app, state| {
         // **여기서 배치를 손보지 않는다**(`#433` — 위의 큰 주석). `node-pty` 를 찾는 것은
         // 러너 자신의 일이 됐고(`nodePtyLoader.ts`), 그래서 이 커맨드는 daemon 을 확보해
         // 러너를 띄우라고 말하는 것만 한다. 번들에 쓰는 자리가 없어야 서명·공증이 성립한다.
-        let (conn, _kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
 
         let mut env = HashMap::new();
         env.insert("HARKROOM_PAT".to_string(), harkroom_pat);
@@ -918,9 +950,10 @@ async fn daemon_kill_runner(
     app: tauri::AppHandle,
     agent_id: String,
     incarnation_id: Option<String>,
+    community: Option<String>,
 ) -> Result<(), String> {
     on_daemon_pool(app, move |app, state| {
-        let (conn, _) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, _) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.kill_runner(&agent_id, incarnation_id.as_deref())
     })
     .await
@@ -942,10 +975,11 @@ async fn daemon_kill_runner(
 #[tauri::command]
 async fn daemon_list_runners(
     app: tauri::AppHandle,
+    community: Option<String>,
 ) -> Result<serde_json::Value, String> {
     on_daemon_pool(app, move |app, state| {
         let paths = daemon_client::resolve_endpoint_paths(app)?;
-        let (conn, kind) = daemon_client::ensure_daemon(app, state)?;
+        let (conn, kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         let runners = conn.list_runners()?;
         Ok(serde_json::json!({
             "daemonPid": conn.daemon_pid,

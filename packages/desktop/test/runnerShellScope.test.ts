@@ -184,24 +184,24 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
    * 되돌려 RED: 아래 어느 명령에든 `dir: String` 이나 `command: String` 을 더하면 빨개진다.
    */
   const 계정명령파라미터: Record<string, string[]> = {
-    claude_accounts_list: [],
-    claude_accounts_configure: ['config: serde_json::Value'],
-    claude_account_login_start: ['account: String', 'pool: String', 'reauth: Option<bool>'],
-    claude_account_login_submit: ['code: String', 'login_id: String'],
-    claude_account_login_cancel: ['login_id: String'],
-    claude_account_remove: ['account: String', 'pool: String'],
-    claude_account_open_terminal: ['account: String', 'pool: String'],
-    claude_pool_remove: ['pool: String'],
-    claude_account_move: ['account: String', 'to_pool: String'],
+    claude_accounts_list: ['community: Option<String>'],
+    claude_accounts_configure: ['community: Option<String>', 'config: serde_json::Value'],
+    claude_account_login_start: ['account: String', 'community: Option<String>', 'pool: String', 'reauth: Option<bool>'],
+    claude_account_login_submit: ['code: String', 'community: Option<String>', 'login_id: String'],
+    claude_account_login_cancel: ['community: Option<String>', 'login_id: String'],
+    claude_account_remove: ['account: String', 'community: Option<String>', 'pool: String'],
+    claude_account_open_terminal: ['account: String', 'community: Option<String>', 'pool: String'],
+    claude_pool_remove: ['community: Option<String>', 'pool: String'],
+    claude_account_move: ['account: String', 'community: Option<String>', 'to_pool: String'],
     // codex 계정(2026-09-28): 이름·로그인 id 뿐이다.
-    codex_accounts_list: [],
+    codex_accounts_list: ['community: Option<String>'],
     // 한도 사용률(2026-09-28): 이름과 새로고침 여부(2026-10-09)뿐이다. CLI·토큰은 데몬이 다룬다.
-    claude_accounts_provider_usage: ['account: Option<String>', 'force: Option<bool>', 'pool: Option<String>'],
-    codex_accounts_provider_usage: ['account: Option<String>', 'force: Option<bool>'],
-    codex_account_login_start: ['account: String'],
-    codex_account_login_cancel: ['login_id: String'],
-    codex_account_remove: ['account: String'],
-    codex_account_activate: ['account: Option<String>'],
+    claude_accounts_provider_usage: ['account: Option<String>', 'community: Option<String>', 'force: Option<bool>', 'pool: Option<String>'],
+    codex_accounts_provider_usage: ['account: Option<String>', 'community: Option<String>', 'force: Option<bool>'],
+    codex_account_login_start: ['account: String', 'community: Option<String>'],
+    codex_account_login_cancel: ['community: Option<String>', 'login_id: String'],
+    codex_account_remove: ['account: String', 'community: Option<String>'],
+    codex_account_activate: ['account: Option<String>', 'community: Option<String>'],
   };
 
   for (const [fn, expected] of Object.entries(계정명령파라미터)) {
@@ -240,6 +240,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     expect(params.sort()).toEqual([
       'agent_id: String',
       'agent_version: Option<String>',
+      'community: Option<String>',
       'harkroom_pat: String',
       'harkroom_url: String',
       'path: String',
@@ -269,8 +270,10 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
     // 3. **`spawn_daemon` 의 파라미터에 웹뷰가 닿는 값이 없다** — `AppHandle` 과
     //    Rust 가 만든 `EndpointPaths` 뿐이다. 문자열 경로를 받는 자리가 생기면 여기서 멈춘다.
     const sig = daemonRs.match(/fn spawn_daemon\(([\s\S]*?)\)\s*->/);
+    // `community` 는 웹뷰 문자열이 아니라 Rust 가 색인·해시로 정한 뿌리다(`community_root::resolve`, 격리 C P6).
     expect(splitParams(sig![1]!).sort()).toEqual([
       'app: &tauri::AppHandle',
+      'community: Option<&crate::community_root::CommunityTarget>',
       'paths: &EndpointPaths',
     ]);
     // 4. 커맨드를 조립하는 자리(`daemon_command`)도 마찬가지다 — 웹뷰가 닿는 값이 없다.
@@ -610,7 +613,11 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
         const params = splitParams(m[2]!)
           // `AppHandle`·`State` 는 Tauri 가 채우는 프레임워크 값이지 웹뷰의 입력이 아니다.
           .filter((p) => !/^(registry|state):\s*tauri::State/.test(p))
-          .filter((p) => !/^app:\s*tauri::AppHandle/.test(p));
+          .filter((p) => !/^app:\s*tauri::AppHandle/.test(p))
+          // 격리 C P6: 오퍼레이터 명령은 모두 어느 커뮤니티의 오퍼레이터인지(baseUrl) 받는다. 그 값은 경로가 아니라
+          // Rust 가 색인·해시로 뿌리를 정하는 키다(`community_root::resolve`). **정확히 이 모양만** 걸러 낸다 —
+          // 다른 이름·타입이면 그대로 남아 아래 목록에서 빨개진다.
+          .filter((p) => p !== 'community: Option<String>');
         return { fn: m[1]!, webviewParams: params };
       });
 
