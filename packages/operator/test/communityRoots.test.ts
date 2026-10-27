@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -11,9 +11,11 @@ import {
 } from '@harkroom/shared/operatorRoots';
 import { daemonEndpointPaths } from '@harkroom/shared/daemonEndpoint';
 import { MAX_SOCKET_PATH_BYTES } from '../src/cli.js';
-import { communityKey } from '../src/config.js';
+import { communityKey, readConfig, writeConfig } from '../src/config.js';
 import { appDataDirFromSocket } from '../src/run.js';
 import {
+  assertSingleCommunity,
+  ensureCommunityRootDir,
   operatorDataRoot,
   perCommunityEnabled,
   readRootsIndex,
@@ -55,10 +57,19 @@ describe('뿌리 규칙(shared/operatorRoots)', () => {
     expect(r).toMatchObject({ ok: true, root: legacy, fromIndex: true });
   });
 
-  it('계산한 뿌리를 다른 커뮤니티가 쓰고 있으면 거절한다 — 한 뿌리에 두 커뮤니티를 섞지 않는다', () => {
+  it('계산한 8자 뿌리를 다른 커뮤니티가 쓰고 있으면 16자 뿌리로 비킨다 — 한 뿌리에 두 커뮤니티를 섞지 않는다', () => {
     const taken = computedCommunityRoot(HOME, B);
     const r = resolveCommunityRoot(HOME, B, index({ [A]: { root: taken } }));
-    expect(r).toMatchObject({ ok: false, reason: 'root_taken', takenBy: A });
+    expect(r).toMatchObject({ ok: true, root: computedCommunityRoot(HOME, B, 16), fromIndex: false });
+    if (r.ok) expect(Buffer.byteLength(r.socketPath)).toBeLessThanOrEqual(SOCKET_PATH_LIMIT_BYTES);
+  });
+
+  it('16자 뿌리까지 다른 커뮤니티가 쓰면 거절한다', () => {
+    const r = resolveCommunityRoot(HOME, B, index({
+      [A]: { root: computedCommunityRoot(HOME, B) },
+      'https://c.example.com': { root: computedCommunityRoot(HOME, B, 16) },
+    }));
+    expect(r).toMatchObject({ ok: false, reason: 'root_taken', takenBy: 'https://c.example.com' });
   });
 
   it('소켓 경로가 상한을 넘으면 거절한다', () => {
@@ -109,6 +120,14 @@ describe('색인 파일(operators.json)', () => {
     expect((await stat(rootsIndexPath(dir))).mode & 0o777).toBe(0o600);
   });
 
+  it('같은 뿌리를 두 커뮤니티에 적으려 하면 거절하고, 그런 색인은 읽을 때도 던진다(security P1-n1)', async () => {
+    await recordCommunityRoot(dir, A, { root: '/r/shared' });
+    await expect(recordCommunityRoot(dir, B, { root: '/r/shared' })).rejects.toThrow(/다른 커뮤니티/);
+    await recordCommunityRoot(dir, A, { root: '/r/shared', operatorId: 'op-a' });
+    await writeFile(rootsIndexPath(dir), JSON.stringify({ version: 1, communities: { [A]: { root: '/r/x' }, [B]: { root: '/r/x' } } }));
+    await expect(readRootsIndex(dir)).rejects.toThrow(/한 뿌리/);
+  });
+
   it('모양이 틀리면 빈 색인으로 치지 않고 던진다 — 옛 자리를 잊고 새 뿌리를 만들지 않게', async () => {
     await writeFile(rootsIndexPath(dir), JSON.stringify({ version: 2, communities: {} }));
     await expect(readRootsIndex(dir)).rejects.toThrow();
@@ -116,5 +135,78 @@ describe('색인 파일(operators.json)', () => {
     await expect(readRootsIndex(dir)).rejects.toThrow();
     await writeFile(rootsIndexPath(dir), '{');
     await expect(readRootsIndex(dir)).rejects.toThrow();
+  });
+});
+
+describe('뿌리 디렉터리(security P1-n2)', () => {
+  let dir: string;
+  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'hk-rootdir-')); });
+  afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  it('새 뿌리는 0700 으로 만든다', async () => {
+    const root = join(dir, 'c', 'abcd1234');
+    await ensureCommunityRootDir(root);
+    expect((await stat(root)).mode & 0o777).toBe(0o700);
+  });
+
+  it('이미 있는데 넓은 권한이면 0700 으로 좁힌다', async () => {
+    const root = join(dir, 'wide');
+    await mkdir(root);
+    await chmod(root, 0o755);
+    await ensureCommunityRootDir(root);
+    expect((await stat(root)).mode & 0o777).toBe(0o700);
+  });
+
+  it('심링크면 던진다(옛 뿌리도)', async () => {
+    const real = join(dir, 'real');
+    await mkdir(real);
+    const link = join(dir, 'link');
+    await symlink(real, link);
+    await expect(ensureCommunityRootDir(link)).rejects.toThrow(/심링크/);
+    await expect(ensureCommunityRootDir(link, { legacy: true })).rejects.toThrow(/심링크/);
+  });
+
+  it('주인이 내가 아니면 던진다(옛 뿌리도)', async () => {
+    const root = join(dir, 'other');
+    await mkdir(root);
+    const notMe = (process.getuid?.() ?? 0) + 1;
+    await expect(ensureCommunityRootDir(root, { uid: notMe })).rejects.toThrow(/주인/);
+    await expect(ensureCommunityRootDir(root, { uid: notMe, legacy: true })).rejects.toThrow(/주인/);
+  });
+
+  it('옛 뿌리는 만들지도 권한을 바꾸지도 않는다', async () => {
+    const legacy = join(dir, 'legacy');
+    await expect(ensureCommunityRootDir(legacy, { legacy: true })).rejects.toThrow();
+    await mkdir(legacy);
+    await chmod(legacy, 0o755);
+    await ensureCommunityRootDir(legacy, { legacy: true });
+    expect((await stat(legacy)).mode & 0o777).toBe(0o755);
+  });
+});
+
+describe('칸 1개 모드(operator.json)', () => {
+  it('스위치가 켜져 있으면 커뮤니티가 둘 이상인 설정을 거절한다', () => {
+    const on = { HARKROOM_OPERATOR_PER_COMMUNITY: '1' };
+    expect(() => assertSingleCommunity({ [A]: {} }, on)).not.toThrow();
+    expect(() => assertSingleCommunity({ [A]: {}, [B]: {} }, on)).toThrow(/둘 이상/);
+  });
+
+  it('writeConfig 도 같은 규칙으로 막는다 — 파일이 보장한다', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'hk-cfg-'));
+    const path = join(d, 'operator.json');
+    const prev = process.env.HARKROOM_OPERATOR_PER_COMMUNITY;
+    try {
+      process.env.HARKROOM_OPERATOR_PER_COMMUNITY = '1';
+      await writeConfig(path, { communities: { [A]: { agents: {} } } });
+      await expect(writeConfig(path, { communities: { [A]: { agents: {} }, [B]: { agents: {} } } })).rejects.toThrow(/둘 이상/);
+      expect(Object.keys((await readConfig(path)).communities)).toEqual([A]);
+    } finally {
+      if (prev === undefined) delete process.env.HARKROOM_OPERATOR_PER_COMMUNITY; else process.env.HARKROOM_OPERATOR_PER_COMMUNITY = prev;
+      await rm(d, { recursive: true, force: true });
+    }
+  });
+
+  it('꺼져 있으면 지금처럼 여럿을 받는다', () => {
+    expect(() => assertSingleCommunity({ [A]: {}, [B]: {} }, {})).not.toThrow();
   });
 });

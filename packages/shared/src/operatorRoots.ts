@@ -28,6 +28,11 @@ export const SOCKET_PATH_LIMIT_BYTES = 100;
 
 /** 해시 앞 몇 자를 뿌리 이름으로 쓰나(D1). 소켓 경로를 짧게 두려는 값이다. */
 export const COMMUNITY_ROOT_HASH_LENGTH = 8;
+/**
+ * 8자 뿌리를 다른 커뮤니티가 이미 쓰고 있을 때(해시 앞 8자 충돌) 대신 쓰는 길이. 16자도 소켓 상한 안에 든다
+ * (`~/.harkroom-agent/c/<16자>/operator/operator-v1.sock` ≈ 68바이트 + 홈 경로). 16자까지 겹치면 거절한다.
+ */
+export const COMMUNITY_ROOT_HASH_FALLBACK_LENGTH = 16;
 
 export interface OperatorRootEntry {
   /** 그 커뮤니티 오퍼레이터의 뿌리(절대 경로). 그 아래 `operator/`·`agents/` 가 있다. */
@@ -51,20 +56,30 @@ export function communityRootKey(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '');
 }
 
-export function communityRootHash(baseUrl: string): string {
-  return createHash('sha256').update(communityRootKey(baseUrl)).digest('hex').slice(0, COMMUNITY_ROOT_HASH_LENGTH);
+export function communityRootHash(baseUrl: string, length: number = COMMUNITY_ROOT_HASH_LENGTH): string {
+  return createHash('sha256').update(communityRootKey(baseUrl)).digest('hex').slice(0, length);
 }
 
-/** 색인에 없을 때 쓰는 뿌리 — `<home>/.harkroom-agent/c/<해시 8자>`. */
-export function computedCommunityRoot(home: string, baseUrl: string): string {
-  return join(home, '.harkroom-agent', 'c', communityRootHash(baseUrl));
+/** 색인에 없을 때 쓰는 뿌리 — `<home>/.harkroom-agent/c/<해시 8자>`(충돌하면 16자). */
+export function computedCommunityRoot(home: string, baseUrl: string, length: number = COMMUNITY_ROOT_HASH_LENGTH): string {
+  return join(home, '.harkroom-agent', 'c', communityRootHash(baseUrl, length));
+}
+
+/** 색인에서 같은 뿌리를 쓰는 칸이 둘 이상이면 그 뿌리 하나를 돌려준다(없으면 null). */
+export function duplicateRoot(index: OperatorRootsIndex): string | null {
+  const seen = new Set<string>();
+  for (const e of Object.values(index.communities)) {
+    if (seen.has(e.root)) return e.root;
+    seen.add(e.root);
+  }
+  return null;
 }
 
 export type CommunityRootResolution =
   | { ok: true; root: string; socketPath: string; fromIndex: boolean }
   /** 소켓 경로가 상한을 넘는다 — 이 뿌리로는 오퍼레이터가 뜨지 못한다. */
   | { ok: false; reason: 'socket_path_too_long'; root: string; socketPath: string; bytes: number }
-  /** 계산한 뿌리를 색인의 **다른** 커뮤니티가 이미 쓴다(해시 앞 8자 충돌). 두 커뮤니티를 한 뿌리에 섞지 않는다. */
+  /** 계산한 뿌리(8자, 그리고 대신 쓰는 16자까지)를 색인의 **다른** 커뮤니티가 이미 쓴다. 두 커뮤니티를 한 뿌리에 섞지 않는다. */
   | { ok: false; reason: 'root_taken'; root: string; takenBy: string };
 
 /**
@@ -74,10 +89,14 @@ export type CommunityRootResolution =
 export function resolveCommunityRoot(home: string, baseUrl: string, index: OperatorRootsIndex): CommunityRootResolution {
   const key = communityRootKey(baseUrl);
   const entry = index.communities[key];
-  const root = entry?.root ?? computedCommunityRoot(home, key);
-  if (!entry) {
-    const takenBy = Object.entries(index.communities).find(([k, e]) => k !== key && e.root === root)?.[0];
-    if (takenBy) return { ok: false, reason: 'root_taken', root, takenBy };
+  const ownerOf = (r: string): string | undefined => Object.entries(index.communities).find(([k, e]) => k !== key && e.root === r)?.[0];
+  let root = entry?.root ?? computedCommunityRoot(home, key);
+  if (!entry && ownerOf(root)) {
+    // 해시 앞 8자 충돌 — 16자 뿌리로 비킨다. 그것까지 겹치면 거절한다.
+    const longer = computedCommunityRoot(home, key, COMMUNITY_ROOT_HASH_FALLBACK_LENGTH);
+    const takenBy = ownerOf(longer);
+    if (takenBy) return { ok: false, reason: 'root_taken', root: longer, takenBy };
+    root = longer;
   }
   const { socketPath } = daemonEndpointPaths(root);
   const bytes = Buffer.byteLength(socketPath);
