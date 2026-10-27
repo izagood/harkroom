@@ -383,7 +383,7 @@ mod operator_cli_path_tests {
 
     #[test]
     fn 설치된_경로는_그대로_준다() {
-        let p = "/Users/me/My Apps/Harkroom.app/Contents/MacOS/harkroom-operator";
+        let p = "/Users/alice/My Apps/Harkroom.app/Contents/MacOS/harkroom-operator";
         assert_eq!(pastable_cli_path(Path::new(p)).as_deref(), Some(p));
     }
 
