@@ -97,6 +97,39 @@ describe('초대 메일 칸', () => {
     expect(c.sendInvite.mock.calls.map((a) => a[0])).toEqual(['ok@example.com', 'bad@example.com', 'bad@example.com']);
   });
 
+  it('메일이 실패한 초대는 곧바로 거두고, 서버가 준 토큰은 화면에 남기지 않는다(jaebin 카드 8e864edd)', async () => {
+    const c = fake();
+    render(<InviteSettings />);
+    fireEvent.change(await screen.findByTestId('invite-email-input'), { target: { value: 'bad@example.com,' } });
+    await act(async () => { fireEvent.click(screen.getByTestId('invite-mail-send')); });
+    expect(c.revokeInvite).toHaveBeenCalledWith('x');
+    expect((await screen.findByTestId('invite-mail-failed')).textContent).toContain('거뒀다');
+    expect(document.body.textContent).not.toContain('hrki_x');
+    expect(screen.queryByTestId('invite-mail-withdraw-failed')).toBeNull();
+  });
+
+  it('거두기까지 실패하면 그 사실과 할 일([취소])을 말한다 — 토큰은 여전히 안 보인다', async () => {
+    const c = fake();
+    c.revokeInvite.mockRejectedValueOnce(new ApiError(500, 'internal', 'boom'));
+    render(<InviteSettings />);
+    fireEvent.change(await screen.findByTestId('invite-email-input'), { target: { value: 'bad@example.com,' } });
+    await act(async () => { fireEvent.click(screen.getByTestId('invite-mail-send')); });
+    expect((await screen.findByTestId('invite-mail-withdraw-failed')).textContent).toContain('[취소]');
+    expect(document.body.textContent).not.toContain('hrki_x');
+    expect(screen.getByTestId('invite-chip-bad@example.com')).toBeTruthy();
+  });
+
+  it('줄의 [다시 보내기]가 메일에 실패하면 새 초대를 거두고 주소를 칩으로 돌린다', async () => {
+    const c = fake({ invites: [row({ id: 'old', email: 'retry@example.com', mailStatus: 'failed', lastSentAt: '2026-10-01T00:00:00Z' })] });
+    c.resendInvite.mockResolvedValueOnce({ id: 'new1', expiresAt: '', mail: 'failed' as const, token: 'hrki_secret' } as never);
+    render(<InviteSettings />);
+    const b = await screen.findByTestId('invite-resend-old');
+    await act(async () => { fireEvent.click(b); });
+    expect(c.revokeInvite).toHaveBeenCalledWith('new1');
+    expect(screen.getByTestId('invite-chip-retry@example.com')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('hrki_secret');
+  });
+
   it('이미 초대 중인 주소는 「초대 중」 칩이고, 보내기가 다시 보내기가 된다', async () => {
     const c = fake({ invites: [row({ id: 'p1', email: 'again@example.com', mailStatus: 'sent', lastSentAt: '2026-10-01T00:00:00Z' })] });
     render(<InviteSettings />);

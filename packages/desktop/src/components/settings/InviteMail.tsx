@@ -125,7 +125,7 @@ export function InviteMailPanel({ lead }: { lead?: ReactNode } = {}) {
   const [chips, setChips] = useState<string[]>([]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState<string[]>([]);
-  const [result, setResult] = useState<{ sent: number; failed: { email: string; reason: string }[] } | null>(null);
+  const [result, setResult] = useState<{ sent: number; failed: { email: string; reason: string; stuck?: boolean }[] } | null>(null);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [rowMessage, setRowMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [filter, setFilter] = useState<'all' | 'todo' | 'used'>('all');
@@ -171,6 +171,20 @@ export function InviteMailPanel({ lead }: { lead?: ReactNode } = {}) {
     return next;
   };
 
+  /**
+   * 메일이 나가지 못한 초대는 **곧바로 거둔다**(jaebin 결정, 카드 8e864edd). 서버는 그 초대의 토큰을 응답에 싣지만
+   * 화면은 그것을 쓰지도 남기지도 않으므로, 두면 아무도 모르는 토큰이 7일 산다. 주소는 칩으로 돌려 다시 보내게 한다.
+   * 거두기까지 실패하면 `false` — 그 초대는 「보내지 못함」 줄로 목록에 남고, 사람이 그 줄의 [취소]로 거둔다.
+   */
+  const withdraw = async (id: string): Promise<boolean> => {
+    try {
+      await getController().revokeInvite(id);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const send = async () => {
     const all = draft.trim() ? take(draft) : chips;
     const good = all.filter(isEmail);
@@ -179,7 +193,7 @@ export function InviteMailPanel({ lead }: { lead?: ReactNode } = {}) {
     setRowMessage(null);
     setSending(good);
     let sent = 0;
-    const failed: { email: string; reason: string }[] = [];
+    const failed: { email: string; reason: string; stuck?: boolean }[] = [];
     // 한 사람씩 보낸다 — 서버는 보내는 사람당 시간당 상한을 직렬로 세고, 한 통이 느려도(최대 45초) 결과를 사람마다 가른다.
     for (const email of good) {
       const pending = pendingByEmail.get(email);
@@ -189,7 +203,7 @@ export function InviteMailPanel({ lead }: { lead?: ReactNode } = {}) {
           ? await getController().resendInvite(pending.id, lang)
           : await getController().sendInvite(email, lang);
         if (r.mail === 'sent') sent += 1;
-        else failed.push({ email, reason: t('invite.status.failed') });
+        else failed.push({ email, reason: t('invite.status.failed'), stuck: !(await withdraw(r.id)) });
       } catch (e) {
         if (e instanceof ApiError && e.code === 'mail_disabled') {
           // 연 뒤에 서버 설정이 꺼졌다 — 지금 흐름으로 물러난다.
@@ -213,9 +227,18 @@ export function InviteMailPanel({ lead }: { lead?: ReactNode } = {}) {
     try {
       if (kind === 'resend') {
         const r = await getController().resendInvite(row.id, lang);
-        setRowMessage(r.mail === 'sent'
-          ? { kind: 'ok', text: t('invite.mail.sentToast', { count: '1' }) }
-          : { kind: 'error', text: t('invite.mail.someFailed', { count: '1' }) });
+        if (r.mail === 'sent') {
+          setRowMessage({ kind: 'ok', text: t('invite.mail.sentToast', { count: '1' }) });
+        } else {
+          // 서버는 앞 초대를 이미 취소하고 새 초대를 만들었다 — 새 것도 거두고 주소를 칩으로 돌린다(위 `withdraw`).
+          const stuck = !(await withdraw(r.id));
+          if (row.email) setChips((c) => (c.includes(row.email!) ? c : [...c, row.email!]));
+          setRowMessage({ kind: 'error', text: [
+            t('invite.mail.someFailed', { count: '1' }),
+            t('invite.mail.someFailedNext'),
+            ...(stuck ? [t('invite.mail.withdrawFailed', { count: '1' })] : []),
+          ].join(' ') });
+        }
       } else {
         await getController().revokeInvite(row.id);
         setRowMessage({ kind: 'ok', text: t('invite.action.revoked') });
@@ -328,6 +351,11 @@ export function InviteMailPanel({ lead }: { lead?: ReactNode } = {}) {
                     {result.failed.map((f) => <li key={f.email} className="truncate" title={f.email}>{f.email} — {f.reason}</li>)}
                   </ul>
                   <p className="mt-1">{t('invite.mail.someFailedNext')}</p>
+                  {result.failed.some((f) => f.stuck) && (
+                    <p className="mt-1 font-semibold" data-testid="invite-mail-withdraw-failed">
+                      {t('invite.mail.withdrawFailed', { count: String(result.failed.filter((f) => f.stuck).length) })}
+                    </p>
+                  )}
                 </div>
               )}
 
