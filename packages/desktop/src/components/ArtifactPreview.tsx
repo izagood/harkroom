@@ -10,6 +10,11 @@ import { isMacOS, macTopBarMinHeight, macTrafficLightInset } from '../lib/platfo
 import { allowPreviewOnce } from '../lib/previewAllowance';
 import { PaneResizer } from './PaneResizer';
 import { openWindow } from '../lib/windowActions';
+import { Menu, type MenuItem } from './Menu';
+import {
+  PREVIEW_FIT_WIDTHS, PREVIEW_ZOOM_DEFAULT, canZoomIn, canZoomOut, effectiveScale, isDefaultZoom, previewZoomStorage,
+  stepPreviewZoom, viewportWidth, type PreviewZoom,
+} from '../lib/previewZoom';
 import {
   paneStorage, paneMaxWidth, MIN_PREVIEW_WIDTH, MAX_PREVIEW_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH, PREVIEW_DEFAULT_CSS,
 } from '../lib/prefs';
@@ -67,6 +72,11 @@ function reasonOf(err: unknown): 'tooLarge' | 'forbidden' | 'gone' | 'failed' {
  * 닫는다(창 전체 → 패널 → 닫힘). 머리줄·아래 줄은 **iframe 밖에서 앱이 그린다** — 페이지가 앱 화면을 흉내
  * 내도 머리줄은 진짜라는 것이 보여야 한다.
  */
+/** 「폭에 맞춤」 줄의 문구 — 키를 조각으로 짓지 않는다(안 쓰는 키 검사가 글자 그대로 찾는다). */
+const FIT_LABEL = {
+  1440: 'artifact.zoom.fit1440', 1280: 'artifact.zoom.fit1280', 768: 'artifact.zoom.fit768', 390: 'artifact.zoom.fit390',
+} as const;
+
 export function ArtifactPanel({ fill = false, windowed }: {
   /** 곁의 내용 칸이 고정 폭(스레드)일 때 남는 폭을 미리보기가 채운다(`Workspace.tsx` 수정 1). */
   fill?: boolean;
@@ -94,6 +104,31 @@ export function ArtifactPanel({ fill = false, windowed }: {
     setStoredWidth(next);
     paneStorage.savePreviewWidth(next);
   }, []);
+
+  // 배율은 시안(artifactId)마다 기억한다 — 다음 버전도 같은 artifactId 라 이어받는다(`lib/previewZoom.ts`).
+  // 키가 바뀐 첫 그림부터 저장값으로 선다(effect 로 미루면 100% 로 한 번 그렸다가 바뀐다).
+  const zoomKey = attachment ? attachment.artifact?.artifactId ?? attachment.id : null;
+  const [zoomState, setZoomState] = useState<{ key: string | null; z: PreviewZoom }>(() => ({
+    key: zoomKey, z: zoomKey ? previewZoomStorage.load(zoomKey) : PREVIEW_ZOOM_DEFAULT,
+  }));
+  const zoom = zoomState.key === zoomKey ? zoomState.z : zoomKey ? previewZoomStorage.load(zoomKey) : PREVIEW_ZOOM_DEFAULT;
+  useEffect(() => {
+    setZoomState((cur) => cur.key === zoomKey ? cur : { key: zoomKey, z: zoomKey ? previewZoomStorage.load(zoomKey) : PREVIEW_ZOOM_DEFAULT });
+  }, [zoomKey]);
+  const setZoom = useCallback((z: PreviewZoom) => {
+    setZoomState({ key: zoomKey, z });
+    if (zoomKey) previewZoomStorage.save(zoomKey, z);
+  }, [zoomKey]);
+  // 페이지 상자의 폭 — 맞춤 배율과 「보는 폭」을 잰다. 배율 모드의 iframe 크기는 % 라 이 값 없이도 선다.
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [boxWidth, setBoxWidth] = useState(0);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setBoxWidth(Math.round(el.getBoundingClientRect().width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [attachment, expanded]);
 
   const load = useCallback((target: AttachmentRow) => {
     const mine = ++attempt.current;
@@ -178,9 +213,63 @@ export function ArtifactPanel({ fill = false, windowed }: {
     return () => hostDoc.removeEventListener('keydown', onKey);
   }, [attachment, expanded]);
 
+  /*
+    ⌘+/⌘−/⌘0 은 **새 창·⤢ 창 전체에서만** 미리보기 배율이다(designer 결정 표 #5). 옆 패널에서는 지금처럼 앱 배율이다 —
+    채팅이 곁에 있는데 그 키를 가로채면 앱 배율 손잡이가 둘로 갈린다. 캡처 단계에서 받아 막는다: 메인 창은
+    `Workspace` 가 `defaultPrevented` 를 보고 물러나고, 새 창은 메인으로 넘기는 가드(`AppWindowsHost`, window
+    버블)까지 가지 않는다. 페이지 안을 눌러 포커스가 iframe 에 있으면 키가 오지 않는다 — 그때는 머리줄 단추다.
+  */
+  useEffect(() => {
+    if (!attachment || !(expanded || windowed)) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const dir = e.key === '=' || e.key === '+' ? 1 : e.key === '-' || e.key === '_' ? -1 : 0;
+      if (dir === 0 && e.key !== '0') return;
+      e.preventDefault();
+      e.stopPropagation();
+      setZoom(dir === 0 ? PREVIEW_ZOOM_DEFAULT : stepPreviewZoom(zoom, dir, boxWidth));
+    };
+    hostDoc.addEventListener('keydown', onKey, true);
+    return () => hostDoc.removeEventListener('keydown', onKey, true);
+  }, [attachment, expanded, windowed, zoom, boxWidth, setZoom]);
+
   if (!attachment) return null;
   const ref = attachment.artifact;
   const title = phase.kind === 'ready' ? phase.title : ref?.title ?? attachment.filename;
+  const scale = effectiveScale(zoom, boxWidth);
+  const pct = Math.round(scale * 100);
+  const zoomReady = phase.kind === 'ready';
+  // 단축키 표기는 그 키가 미리보기 배율일 때만 — 옆 패널에서는 ⌘키가 앱 배율 몫이다(designer 시안 v1 메뉴 절).
+  const keys = expanded || !!windowed;
+  const zoomItems: MenuItem[] = [
+    { label: t('artifact.zoom.reset'), onSelect: () => setZoom(PREVIEW_ZOOM_DEFAULT), shortcut: keys ? '⌘0' : undefined },
+    { label: t('artifact.zoom.in'), onSelect: () => setZoom(stepPreviewZoom(zoom, 1, boxWidth)), disabled: !canZoomIn(zoom, boxWidth), shortcut: keys ? '⌘+' : undefined },
+    { label: t('artifact.zoom.out'), onSelect: () => setZoom(stepPreviewZoom(zoom, -1, boxWidth)), disabled: !canZoomOut(zoom, boxWidth), shortcut: keys ? '⌘−' : undefined },
+    ...PREVIEW_FIT_WIDTHS.map((w, i): MenuItem => {
+      const on = zoom.kind === 'fit' && zoom.width === w;
+      const label = t(FIT_LABEL[w]);
+      return { label: on ? `✓ ${label}` : label, onSelect: () => setZoom({ kind: 'fit', width: w }), checkable: !on, separatorBefore: i === 0 };
+    }),
+  ];
+  // 꼬리 줄에 지금 상태를 말로 — 축소하면 배치가 바뀌는 이유를 사람이 알게 한다. 기본(100%)이면 아무 말도 없다.
+  const zoomNote = !zoomReady || isDefaultZoom(zoom) ? null
+    : zoom.kind === 'fit' ? t('artifact.zoom.fitted', { width: zoom.width })
+    : boxWidth > 0 ? t('artifact.zoom.viewWidth', { width: viewportWidth(zoom, boxWidth) }) : null;
+  const zoomBtn = 'inline-flex h-full min-w-6 items-center justify-center px-1 text-fg-muted hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40';
+  /*
+    iframe 은 줄인 만큼 넓고 높게 그린 뒤 `transform` 으로 줄인다(`lib/previewZoom.ts` 머리). 배율 모드는 % 라 상자를
+    재지 않아도 맞고, 맞춤 모드는 목표 폭을 px 로 주고 상자보다 좁으면(100% 로 멈춘 경우) 가운데 세운다.
+    기본(100%)은 지금과 똑같은 그림이다 — 속성을 하나도 더 달지 않는다.
+  */
+  const frameStyle = isDefaultZoom(zoom) ? undefined : {
+    position: 'absolute' as const,
+    top: 0,
+    left: zoom.kind === 'fit' && boxWidth > zoom.width ? Math.round((boxWidth - zoom.width) / 2) : 0,
+    width: zoom.kind === 'fit' ? `${zoom.width}px` : `${100 / scale}%`,
+    height: `${100 / scale}%`,
+    transform: `scale(${scale})`,
+    transformOrigin: '0 0',
+  };
 
   return (
     <section
@@ -234,6 +323,49 @@ export function ArtifactPanel({ fill = false, windowed }: {
         <span className="min-w-0 truncate font-medium" data-testid="artifact-panel-title">{title}</span>
         {ref && <span className="shrink-0 text-meta text-fg-subtle">{t('artifact.card.version', { version: ref.version })}</span>}
         <span className="ml-auto" />
+        {/* 배율 [− % +] — % 를 누르면 100%·폭에 맞춤 메뉴(designer 시안 v1 C안). 페이지가 없을 때(불러오는 중·오류·이동
+            막힘)는 흐리게 둔다. */}
+        <div
+          role="group"
+          aria-label={t('artifact.zoom.label')}
+          className="flex h-7 shrink-0 items-stretch overflow-visible rounded-row border border-border text-meta"
+          data-testid="artifact-zoom"
+          data-scale={pct}
+        >
+          <button
+            type="button"
+            className={`${zoomBtn} rounded-l-row`}
+            onClick={() => setZoom(stepPreviewZoom(zoom, -1, boxWidth))}
+            disabled={!zoomReady || !canZoomOut(zoom, boxWidth)}
+            aria-label={t('artifact.zoom.out')}
+            data-testid="artifact-zoom-out"
+          >−</button>
+          <div className="relative flex">
+            <Menu
+              placement="bottom"
+              className="right-0"
+              items={zoomItems}
+              renderTrigger={(props) => (
+                <button
+                  type="button"
+                  {...props}
+                  disabled={!zoomReady}
+                  className="inline-flex min-w-[52px] items-center justify-center gap-0.5 border-x border-border px-1 tabular-nums text-fg hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label={t('artifact.zoom.menu', { pct })}
+                  data-testid="artifact-zoom-menu"
+                >{pct}%<span aria-hidden="true" className="text-fg-subtle">▾</span></button>
+              )}
+            />
+          </div>
+          <button
+            type="button"
+            className={`${zoomBtn} rounded-r-row`}
+            onClick={() => setZoom(stepPreviewZoom(zoom, 1, boxWidth))}
+            disabled={!zoomReady || !canZoomIn(zoom, boxWidth)}
+            aria-label={t('artifact.zoom.in')}
+            data-testid="artifact-zoom-in"
+          >+</button>
+        </div>
         {!windowed && (
           <button
             type="button"
@@ -275,7 +407,7 @@ export function ArtifactPanel({ fill = false, windowed }: {
           >×</button>
         )}
       </header>
-      <div className="relative min-h-0 flex-1 bg-surface-sunken">
+      <div ref={boxRef} className="relative min-h-0 flex-1 overflow-hidden bg-surface-sunken">
         {phase.kind === 'ready' ? (
           <iframe
             key={phase.url}
@@ -285,7 +417,8 @@ export function ArtifactPanel({ fill = false, windowed }: {
             // 서버 CSP sandbox 와 교집합 — 새 창(allow-popups)도 여기서 막힌다. 아래 주석 머리 참고.
             sandbox="allow-scripts"
             referrerPolicy="no-referrer"
-            className="h-full w-full border-0 bg-white"
+            className={frameStyle ? 'border-0 bg-white' : 'h-full w-full border-0 bg-white'}
+            style={frameStyle}
             onLoad={() => {
               loads.current += 1;
               // 첫 load 는 우리가 띄운 문서다. 그 뒤의 load 는 페이지가 스스로 다른 곳으로 간 것이다.
@@ -326,10 +459,11 @@ export function ArtifactPanel({ fill = false, windowed }: {
       <footer className="flex shrink-0 items-center gap-2 border-t border-border px-3 py-1.5 text-meta text-fg-subtle">
         {/* 왼쪽에는 출처를 밝히는 말만 둔다 — 버튼이 붙으면 한 문장처럼 읽힌다(designer d). */}
         <span>{t('artifact.panel.madeBy')}</span>
+        {zoomNote && <span className="ml-auto truncate font-medium text-accent" data-testid="artifact-zoom-note">{zoomNote}</span>}
         {phase.kind === 'ready' && (
           <button
             type="button"
-            className="ml-auto rounded-sm px-1 hover:bg-surface-sunken"
+            className={`${zoomNote ? '' : 'ml-auto '}rounded-sm px-1 hover:bg-surface-sunken`}
             onClick={() => load(attachment)}
             data-testid="artifact-panel-reload"
           >{t('artifact.panel.reload')}</button>
