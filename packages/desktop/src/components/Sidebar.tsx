@@ -34,6 +34,7 @@ import { useCollabProposals, type CollabFilter } from '../lib/collabProposals';
 // 설정 문의 판정도 한 벌이다(`lib/agentConfigGate.ts`) — 프로필·본문 멘션이 같은 함수를
 // 쓴다. 세 곳이 같은 문을 여는데 술어가 세 벌이면 한쪽만 고친 날 문이 어긋난다.
 import { canSeeAgentConfig } from '../lib/agentConfigGate';
+import { hasCapability } from '../lib/capabilities';
 import { faceState, isFaceGreyed, type FaceState } from '../lib/faceState';
 // 인박스 줄의 배지가 **레일 홈 칸·독과 같은 함수로** 센다(`InboxRowBadge`). 여기서 다시
 // 적으면 같은 사실을 말하는 세 자리가 갈린다 — 그 규칙이 `state/unread.ts` 에 나온 이유다.
@@ -301,6 +302,9 @@ export function Sidebar({
   onToggleCollapse: () => void;
 }) {
   const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelSections, channelMembers, channelAutoMentions, messages, runnerStates, projectionStatus } = useActiveStore();
+  // 「채널 만들기」 손잡이는 역할이 아니라 서버 `POST /channels` 와 같은 `channel.create` 능력으로 그린다
+  // (#1613 의 에이전트·팀 만들기와 같다) — admin 만 보이면 그 능력을 받은 member 는 만들 길이 없다.
+  const canCreateChannel = hasCapability(me, 'channel.create');
   // 채널이 열리면(사이드바 밖에서 연 것 포함 — 재시작 뒤 복원·검색·링크) 레일의 활성 줄이 보이게 한다
   // (#1223 n2). `nearest` 라 이미 보이면 움직이지 않는다. 접힌 섹션 안이면 줄이 없어 아무 일도 없다.
   const channelRevealSeq = useActiveStore((s) => s.channelRevealSeq);
@@ -1156,7 +1160,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
           )}
         </button>
         <span className="hidden shrink-0 items-center gap-0.5 text-fg-subtle group-hover:flex group-focus-within:flex">
-          {me?.isAdmin && (
+          {canCreateChannel && (
             <button
               data-testid={`section-add-channel-${sec.id}`}
               aria-label={t('sidebar.section.addChannel', { name: sec.name })}
@@ -1878,7 +1882,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
               자리·모양이라, 채널을 어디에 만드는지가 머리마다 한 규칙으로 읽힌다. 옛 서버에서는 #488 의
               첫 줄 `+` 를 그대로 둔다.
             */}
-            {channelSections && me?.isAdmin && (
+            {channelSections && canCreateChannel && (
               <button
                 data-testid="add-channel"
                 aria-label={t('sidebar.channel.createLabel')}
@@ -1898,7 +1902,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
             스무 개면 스크롤 끝까지 내려가야 닿았고, 보관·숨김 묶음이 그 아래 또 붙어
             자리가 계속 밀렸다. 설정 › 에이전트의 `+` 카드와 같은 규칙이다.
           */}
-          {me?.isAdmin && (
+          {canCreateChannel && (
             createChannelOpen && createInSection === null ? createChannelForm()
               : !channelSections && addRow(t('sidebar.channel.create'), () => setCreateChannelOpen(true), 'add-channel')
           )}

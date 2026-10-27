@@ -402,6 +402,20 @@ describe('사이드바 섹션 표 — 끌어 옮기기 (S3)', () => {
     expect(add.getAttribute('aria-label')).toBe('채널 만들기');
   });
 
+  it('섹션 표가 있어도 「채널 만들기」 ＋ 는 역할이 아니라 channel.create 능력으로 선다', () => {
+    setController(new Controller(fakeApi()));
+    seed3();
+    useAppStore.getState().set({ me: acc('u1', 'member', 'human', false, { capabilities: ['channel.create'] }) });
+    mount();
+    expect(screen.getByTestId('channels-heading').contains(screen.getByTestId('add-channel'))).toBe(true);
+    expect(document.querySelector('[data-testid^="section-add-channel-"]')).not.toBeNull();
+    cleanup();
+    useAppStore.getState().set({ me: acc('u1', 'member', 'human', false, { capabilities: [] }) });
+    mount();
+    expect(screen.queryByTestId('add-channel')).toBeNull();
+    expect(document.querySelector('[data-testid^="section-add-channel-"]')).toBeNull();
+  });
+
   it('n6: 섹션 머리 갈매기는 SVG 이고 펼친 섹션만 90° 돈다', () => {
     setController(new Controller(fakeApi()));
     seed3();

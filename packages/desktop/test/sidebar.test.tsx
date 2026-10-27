@@ -50,9 +50,10 @@ afterEach(() => {
 });
 
 describe('Sidebar', () => {
-  // #97: 부트스트랩 직후 채널을 만들 수단이 UI 에 없었다. POST /channels 는 admin 전용이므로
-  // 일반 사용자에게 보이면 누르는 족족 403 이 된다 — 없는 것을 있다고 표시하지 않는다.
-  describe('채널 만들기 (admin 전용)', () => {
+  // #97: 부트스트랩 직후 채널을 만들 수단이 UI 에 없었다. POST /channels 는 `channel.create` 능력이
+  // 있어야 하므로 없는 사람에게 보이면 누르는 족족 403 이 된다 — 없는 것을 있다고 표시하지 않는다.
+  // 거꾸로 member 가 그 능력을 받았으면 서버는 받아 주므로 보여야 한다(역할이 아니라 능력으로 판정).
+  describe('채널 만들기 (channel.create 능력)', () => {
     const asAdmin = (): void => {
       useAppStore.getState().set({ me: acc('u1', 'admin', 'human', true) });
     };
@@ -61,6 +62,18 @@ describe('Sidebar', () => {
       fakeController();
       render(<SidebarWithSheet panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
       expect(screen.queryByTestId('add-channel')).toBeNull();
+    });
+
+    it('admin 이 아니어도 channel.create 를 받았으면 생성 수단이 보이고 만들 수 있다', async () => {
+      const c = fakeController();
+      c.createChannel.mockResolvedValue(chan('c9', 'design'));
+      useAppStore.getState().set({ me: acc('u1', 'member', 'human', false, { capabilities: ['channel.create'] }) });
+      render(<SidebarWithSheet panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
+
+      fireEvent.click(screen.getByTestId('add-channel'));
+      fireEvent.change(screen.getByLabelText('새 채널 이름'), { target: { value: 'design' } });
+      fireEvent.click(screen.getByText('만들기'));
+      await waitFor(() => expect(c.createChannel).toHaveBeenCalledWith('design', 'public'));
     });
 
     it('admin 이면 이름을 넣어 채널을 만들 수 있다', async () => {
