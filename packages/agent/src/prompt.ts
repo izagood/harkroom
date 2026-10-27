@@ -674,6 +674,11 @@ export function escapeForPrompt(text: string): string {
  * 문구 셋(자주 고쳐라 / 스냅숏이지 정답이 아니다 / 중복해서 쓰지 마라)은 Claude Code 본체의
  * 메모리 절에서 값이 확인된 것을 그대로 가져왔다(claude 2.1.266 바이너리 실측).
  */
+/**
+ * 기억을 **읽는** 쪽의 규칙 — 읽기 전용 턴에도 그대로 맞으므로 쓰기 사용법과 따로 둔다(#1603 의 security n2).
+ */
+const MEMORY_SNAPSHOT_LINE = '기억은 확정된 답이 아니라 과거의 스냅숏이니 현재 원본(파일·저장소·화면)과 대조한 뒤 쓴다. 적어 둔 경로·함수·플래그가 아직 있는지 본다.';
+
 const MEMORY_USAGE_LINES = [
   'slug 는 둘 중 하나다: **`core`** — 매 턴 본문이 통째로 실리는 층이다(길어지면 그만큼 매 턴',
   '비싸다. **3,000자까지만 받는다** — 넘기면 `core_too_long` 으로 거절되니 나머지는 아래로 내린다) — 그리고 **`mem/<이름>`**,',
@@ -692,12 +697,6 @@ const MEMORY_USAGE_LINES = [
   '`mem/map`(목차)에 있다 — 어디에 둘지 모르겠으면 먼저 그것을 읽는다. 옛 기억을 뒤집는 사실을 쓰면 새 본문에',
   '`supersedes: mem/<옛 이름>` 을 적고 옛 것은 `memory.archive` 한다.',
   '',
-  // 메모리 재설계 S1: 진행 상태의 자리(`thread.note`). 이 줄이 없으면 도구가 생겨도 아무도 안 쓴다(#762 교훈).
-  '**한 스레드의 진행 상태**(맡긴 일·검토 대기·PR 번호·head·다음 할 일)는 기억이 아니라 **스레드 메모**에 쓴다 —',
-  '`thread.note`(threadRootId·body, 4,000자 한 장, 덮어쓰기). 그 스레드의 다음 턴(예약으로 깨어난 턴 포함)에',
-  '`<thread-note>` 로 자동으로 실리고, 목록·recall·200 상한에는 안 든다. `mem/delegation-*`·`mem/review-*` 같은',
-  '스레드 하나짜리 상태 기억은 새로 만들지 마라 — 여러 스레드에서 되풀이할 교훈만 `mem/*` 로 남긴다.',
-  '',
   '**정리하는 법** — 정리하라는 요청(주간 정리 자동화 등)을 받았거나 `<memory-index>` 머리에 정리 신호가 보이면:',
   '① `memory.lease`(acquire)로 정리 임대를 잡는다 — 다른 턴이 들고 있으면 물러난다. ② `memory.audit` 으로',
   '후보(안 쓰임·비슷한 이름·비슷한 본문·곧 밀려날 journal·오래 안 고친 것·큰 것)를 받아 **하나씩 읽고** 판단한다',
@@ -706,8 +705,7 @@ const MEMORY_USAGE_LINES = [
   '보관한다 — 목록·recall·200 상한에서 빠지고 `memory.unarchive` 로 돌아온다. ⑤ 잘못 고쳤으면 `memory.revisions` →',
   '`memory.restore`. ⑥ 끝나면 임대를 놓고(release) 무엇을 바꿨는지 보고한다.',
   '',
-  '**자주 읽고 자주 고쳐라 — 그래야 정정이 남는다.** 기억은 확정된 답이 아니라 과거의 스냅숏이니',
-  '현재 원본(파일·저장소·화면)과 대조한 뒤 쓴다. 적어 둔 경로·함수·플래그가 아직 있는지 본다.',
+  '**자주 읽고 자주 고쳐라 — 그래야 정정이 남는다.** ' + MEMORY_SNAPSHOT_LINE,
   '**중복해서 쓰지 마라** — 새 slug 를 만들기 전에 고칠 기존 항목이 있는지 먼저 본다. 틀린 것은',
   '고쳐 쓰고, 쓸모를 잃은 것은 `memory.archive` 로 보관한다. `memory.set` 의 `value: null` 삭제는 틀린 것에만 쓴다 —',
   '**지워도 이전 판에 남는다**(`memory.revisions` 로 되살아난다). 비밀이 섞였으면 지우는 것으로 끝내지 말고 사람에게',
@@ -715,6 +713,38 @@ const MEMORY_USAGE_LINES = [
   '**있던 기억을 고칠 때는 먼저 `memory.get` 으로 읽고 그 `updatedAt` 을 `ifUpdatedAt` 으로 준다**(core 도 —',
   '프롬프트에 실린 core 는 세션 첫 턴 것일 수 있다). 같은 에이전트의 다른 턴이 병렬로 돈다. `conflict` 가',
   '오면 다시 읽어 네 변경을 합쳐 쓰고, 그냥 덮어쓰지 마라.',
+];
+
+/**
+ * 스레드 메모 절(메모리 재설계 S1의 그 문단을 기억 절에서 뗐다 — 스레드 d1e8f866 f3, g7). `thread.note` 는 기억 저장소가
+ * 아니라 스레드에 붙은 한 장이고, 기억 조회가 실패한 턴에도 쓸 수 있다. 기억 절 안에 있으면 조회 실패(`unavailable`) 때
+ * 같이 빠졌다 — 앱 규칙이 기억 상태에 기대지 않는다(설계 원칙 1, 소유자 결정 10-27). 「기억으로 만들지 마라」 한 줄만 기억 상태를
+ * 따른다: 조회가 실패한 턴에 `mem/*` 를 입에 올리면 `memorySection` 이 막은 사고(빈 기억으로 믿고 새로 씀)가 돌아온다.
+ */
+function threadNoteSection(memory: MemoryContext): string[] {
+  return [
+    '**한 스레드의 진행 상태**(맡긴 일·검토 대기·PR 번호·head·다음 할 일)는 **스레드 메모**에 쓴다 —',
+    '`thread.note`(threadRootId·body, 4,000자 한 장, 덮어쓰기). 그 스레드의 다음 턴(예약으로 깨어난 턴 포함)에',
+    '`<thread-note>` 로 자동으로 실린다. 고칠 때는 읽은 `updatedAt` 을 `ifUpdatedAt` 으로 준다.',
+    ...(memory === 'unavailable' ? [] : [
+      '스레드 메모는 목록·recall·200 상한에 안 든다. `mem/delegation-*`·`mem/review-*` 같은 스레드 하나짜리 상태 기억은',
+      '새로 만들지 마라 — 여러 스레드에서 되풀이할 교훈만 `mem/*` 로 남긴다.',
+    ]),
+    '',
+  ];
+}
+
+/**
+ * 비밀 쓰기 절(스레드 d1e8f866 f3, g8). 전에는 `secret.mount` 가 만들기 절(`secretCreateSection`) 안에만 있어서, 비밀을
+ * **받기만** 한 에이전트는 안내가 0이었다. 받은 비밀이 있는지는 러너가 모른다(서버가 `secret.list` 로 답한다) — 그래서
+ * 조건 없이 싣고, 목록이 비면 받은 것이 없다는 사실을 함께 말한다. 어떤 비밀을 줄지는 사람 몫이라 적지 않는다.
+ */
+export const SECRET_USE_LINES: readonly string[] = [
+  '비밀(비밀번호·토큰·키)이 필요하면 harkroom MCP 의 `secret.list` 로 이 에이전트가 받은 이름을 보고, `secret.mount` 로',
+  '이 턴 전용 파일 경로를 받아 쓴다. 파일 내용을 출력·복사하거나 메시지·기억·커밋에 쓰지 않는다. 목록에 없으면 받은 비밀이',
+  '없는 것이다 — 사람에게 설정 › 비밀과 API 에서 그 비밀을 이 에이전트에게 달라고 말한다.',
+  '**이미 화면·문맥에 보인 값은 유출된 것이다** — 계속 쓰지 말고 사람에게 회전을 부탁한다.',
+  '',
 ];
 
 /** 메모리 절을 만든다. 세 상태가 각각 다른 것을 낸다 — 아래 주석이 이유다. */
@@ -748,7 +778,7 @@ function memorySection(memory: MemoryContext, readOnly = false): string[] {
   // 사용법은 **닫는 태그 바깥**에 둔다. 안에 넣으면 기억 본문과 같은 자리에 서고, 그러면
   // 기억을 지운 사람이 지시까지 지우게 된다(`<memory>` 안은 데이터, 밖은 지시다).
   // 읽기 전용 턴은 쓰기 사용법(slug 규칙·정리법)을 싣지 않는다 — 그 도구가 이 턴에는 없다. 목록과 `memory.get` 은 열려 있다.
-  lines.push('</memory>', '', ...MEMORY_INDEX_LINES, '', ...(readOnly ? [] : [...MEMORY_USAGE_LINES, '']));
+  lines.push('</memory>', '', ...MEMORY_INDEX_LINES, '', ...(readOnly ? [MEMORY_SNAPSHOT_LINE, ''] : [...MEMORY_USAGE_LINES, '']));
   return lines;
 }
 
@@ -903,6 +933,8 @@ export function buildSystemPrompt(opts: {
     '',
     ...memorySection(memory, readOnly),
     ...(readOnly ? READONLY_TURN_LINES : skillSection(memory)),
+    // 스레드 메모는 읽기 전용 턴에도 열려 있다(`turn.ts` READONLY_ALLOW 의 `thread_note`) — 그 턴에도 싣는다.
+    ...threadNoteSection(memory),
     // 발화가 러너의 책임에서 에이전트의 자율로 넘어갔다(spec §4 발화 경로) — 어디에 쓸지를
     // 명시하지 않으면 턴이 조용히 끝나고, 러너는 그걸 프로세스 종료 후에나(hasOwnPostSince)
     // 알아챈다. 이 지시가 이 프롬프트에서 가장 중요한 한 줄이다.
@@ -936,6 +968,8 @@ export function buildSystemPrompt(opts: {
     ...(merge ? mergeSection(merge) : []),
     ...(permissions ? permissionSection(permissions) : []),
     ...(api ? apiSection(api) : []),
+    // 읽기 전용 턴은 `secret_mount` 가 허용 목록 밖이다 — 쓸 수 없는 도구를 권하지 않는다.
+    ...(readOnly ? [] : SECRET_USE_LINES),
     ...(secretCreate ? secretCreateSection() : []),
     '저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:',
     '',
