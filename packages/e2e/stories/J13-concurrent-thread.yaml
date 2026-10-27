@@ -1,0 +1,39 @@
+id: J13
+title: "여러 사람과 에이전트가 한 스레드에서 말한다"
+personas: [P2, P4, P5]
+steps:
+  - as: P2
+    act: message.send
+    on: desktop
+    target: "thread"
+    expect: "글이 선다"
+  - as: P4
+    act: message.receive
+    on: mobile
+    target: "thread"
+    with: { withinSec: 5 }
+    expect: "실시간으로 들어온다"
+  - as: P5
+    act: agent.invoke
+    on: desktop
+    target: "thread"
+    expect: "에이전트 답이 같은 스레드에 선다"
+  - as: P4
+    act: message.send
+    on: desktop
+    target: "thread"
+    expect: "순서가 서버 seq 와 같다"
+expect: "사람 여럿과 에이전트의 글이 모두에게 같은 순서로 실시간으로 보인다"
+failSigns:
+  - "남의 글이 새로고침 뒤에야 보임"
+  - "순서가 뒤바뀜"
+existing:
+  - kind: mobile-integration
+    file: "apps/mobile/integration_test/live_tour_test.dart"
+    note: "같은 계정 옆 통로로 실시간 수신(사람 한 명)"
+  - kind: testbed-harness
+    ref: "#testbed qa-* 하네스 회차"
+    note: "에이전트 답"
+runners: [browser, mobile, harness]
+gaps:
+  - "서로 다른 사람 계정 둘 이상의 실시간 시험이 없다"

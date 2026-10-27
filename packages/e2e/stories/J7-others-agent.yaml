@@ -1,0 +1,31 @@
+id: J7
+title: "남의 에이전트를 부른다"
+personas: [P5, P8]
+steps:
+  - as: P8
+    act: agent.invoke
+    on: desktop
+    target: "P5-agent"
+    expect: "부르기 허용 범위면 답이 오고, 아니면 거절 사유가 보인다"
+  - as: P8
+    act: agent.dm
+    on: desktop
+    target: "P5-agent"
+    expect: "DM 부르기도 같은 판정을 따른다"
+  - as: P8
+    act: ui.notSee
+    on: desktop
+    target: "agent-manage"
+    expect: "남의 에이전트 관리 버튼은 없다"
+expect: "invokeGate 판정대로 되고, 막히면 조용히 무시되지 않는다"
+failSigns:
+  - "멘션했는데 아무 일도 없음"
+  - "남이 에이전트 설정을 바꿈"
+existing:
+  - kind: server-vitest
+    file: "packages/server/test/invokeGate.test.ts"
+    note: "채널 부르기 판정"
+  - kind: server-vitest
+    file: "packages/server/test/dmInvokeGate.test.ts"
+    note: "DM 부르기 판정"
+runners: [api, browser, harness]

@@ -1,0 +1,29 @@
+id: J9
+title: "게스트는 전역 grant 가 있어도 막힌다"
+personas: [P2, P6]
+steps:
+  - as: P2
+    act: grant.give
+    on: api
+    target: "P6"
+    with: { capability: channel.create }
+    expect: "줄 수는 있다"
+  - as: P6
+    act: api.denied
+    on: api
+    target: "POST /channels"
+    expect: "게스트의 실효 권한에서 전역 grant 는 빠진다"
+  - as: P6
+    act: ui.notSee
+    on: desktop
+    target: "channel-create"
+    expect: "버튼도 없다"
+expect: "게스트에게 화면과 서버가 같은 답을 한다"
+failSigns:
+  - "버튼은 보이는데 403"
+  - "게스트가 채널을 만듦"
+existing:
+  - kind: server-vitest
+    file: "packages/server/test/permissions.test.ts"
+    note: "게스트 실효 권한(#1621)"
+runners: [api, browser]

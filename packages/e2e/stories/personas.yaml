@@ -1,0 +1,11 @@
+# 시험 페르소나. handle 은 시드 계정 이름이다 — 공개 저장소라 실명·메일 없이 e2e-* 만 쓴다.
+# 비밀번호는 여기 두지 않는다(러너가 비밀로 받는다).
+personas:
+  - { id: P1, handle: e2e-owner, title: 첫 owner, role: owner, devices: [desktop], community: new-tenant }
+  - { id: P2, handle: e2e-admin, title: 관리자, role: admin, devices: [desktop, mobile], community: existing }
+  - { id: P3, handle: e2e-newbie, title: 초대받은 새 사람, role: none, devices: [join-web, desktop, mobile], community: existing }
+  - { id: P4, handle: e2e-member, title: 일반 멤버(grant 없음), role: member, devices: [desktop, mobile], community: existing }
+  - { id: P5, handle: e2e-agent-owner, title: 에이전트 소유자, role: member, grants: [agent.create], devices: [desktop], community: existing }
+  - { id: P6, handle: e2e-guest, title: 게스트, role: guest, devices: [desktop, mobile], community: existing }
+  - { id: P7, handle: e2e-multi, title: 여러 커뮤니티 사용자, role: member, roles: { a: owner, b: member }, devices: [desktop], community: multi }
+  - { id: P8, handle: e2e-caller, title: 남의 에이전트를 부르는 사람, role: member, devices: [desktop, mobile], community: existing }

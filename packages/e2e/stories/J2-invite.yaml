@@ -1,0 +1,40 @@
+id: J2
+title: "초대받은 사람이 들어온다"
+personas: [P2, P3]
+steps:
+  - as: P2
+    act: invite.create
+    on: desktop
+    expect: "초대가 목록에 서고 메일이 나간다"
+  - as: P3
+    act: invite.open
+    on: join-web
+    expect: "/join 이 서버 주소와 토큰을 보여 준다(가입은 하지 않는다)"
+  - as: P3
+    act: invite.accept
+    on: desktop
+    expect: "서버·토큰·새 비밀번호로 가입된다"
+  - as: P3
+    act: channel.open
+    on: desktop
+    expect: "공개 채널 목록이 보인다"
+  - as: P2
+    act: ui.see
+    on: desktop
+    target: "members"
+    expect: "초대가 수락됨으로 바뀌고 P3 가 member 로 보인다"
+expect: "P3 가 member 로 들어와 공개 채널을 본다"
+failSigns:
+  - "토큰 칸이 비어 있음"
+  - "가입 직후 /auth/me 401 루프"
+  - "초대가 대기로 남음"
+existing:
+  - kind: server-vitest
+    file: "packages/server/test/inviteMail.test.ts"
+    note: "초대 발급·메일"
+  - kind: mobile-integration
+    file: "apps/mobile/integration_test/live_tour_test.dart"
+    note: "초대 토큰으로 계정을 만든다(E2E_SERVER 없으면 건너뜀)"
+runners: [api, browser, mobile]
+gaps:
+  - "/join → 앱 → 가입을 한 줄로 잇는 시험이 없다"

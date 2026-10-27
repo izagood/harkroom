@@ -1,0 +1,32 @@
+id: J12
+title: "접속 중인 사람을 내보낸다"
+personas: [P2, P4]
+steps:
+  - as: P4
+    act: login
+    on: desktop
+    expect: "접속해 있다"
+  - as: P2
+    act: account.disable
+    on: desktop
+    target: "P4"
+    expect: "계정이 꺼진다"
+  - as: P4
+    act: api.denied
+    on: api
+    target: "POST /messages"
+    expect: "바로 401"
+  - as: P4
+    act: ui.see
+    on: desktop
+    target: "logged-out"
+    expect: "열린 앱이 로그아웃 화면으로 간다"
+expect: "꺼진 계정은 열린 세션에서도 즉시 막힌다"
+failSigns:
+  - "계속 보내짐"
+  - "앱이 오류 루프"
+existing:
+  - kind: server-vitest
+    file: "packages/server/test/accountStatus.test.ts"
+    note: "계정 상태 판정"
+runners: [api, browser]

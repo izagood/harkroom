@@ -1,0 +1,45 @@
+id: J5
+title: "역할을 바꾸면 바로 바뀐다"
+personas: [P2, P4]
+steps:
+  - as: P2
+    act: role.set
+    on: desktop
+    target: "P4"
+    with: { role: admin }
+    expect: "멤버 화면에서 admin 으로 바뀐다"
+  - as: P4
+    act: ui.see
+    on: desktop
+    target: "channel-create"
+    with: { withinSec: 10 }
+    expect: "관리자 버튼이 재시작 없이 생긴다"
+  - as: P2
+    act: role.set
+    on: desktop
+    target: "P4"
+    with: { role: member }
+    expect: "다시 member"
+  - as: P4
+    act: ui.notSee
+    on: desktop
+    target: "channel-create"
+    with: { withinSec: 10 }
+    expect: "관리자 버튼이 사라진다"
+  - as: P4
+    act: api.denied
+    on: api
+    target: "POST /invites"
+    expect: "강등 직후 서버도 거절한다"
+expect: "승격·강등이 열린 데스크톱·모바일과 서버 판정에 함께 반영된다"
+failSigns:
+  - "재시작 전까지 옛 역할"
+  - "버튼은 보이는데 403"
+existing:
+  - kind: server-vitest
+    file: "packages/server/test/permissions.test.ts"
+    note: "역할별 판정"
+  - kind: server-vitest
+    file: "packages/server/test/authMe.test.ts"
+    note: "/auth/me 의 role·capabilities"
+runners: [api, browser, mobile]

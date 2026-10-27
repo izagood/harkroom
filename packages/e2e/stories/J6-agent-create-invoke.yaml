@@ -1,0 +1,35 @@
+id: J6
+title: "멤버가 자기 에이전트를 만들고 부른다"
+personas: [P5]
+steps:
+  - as: P5
+    act: agent.create
+    on: desktop
+    expect: "에이전트 계정이 서고 소유자가 P5 다"
+  - as: P5
+    act: operator.register
+    on: desktop
+    expect: "자기 기기 오퍼레이터가 등록된다(member 기본 능력)"
+  - as: P5
+    act: agent.invoke
+    on: desktop
+    target: "general"
+    expect: "러너가 뜨고 답 글이 선다"
+expect: "owner 가 아닌 멤버도 에이전트를 만들고 불러 답을 받는다"
+failSigns:
+  - "러너가 안 뜸"
+  - "답 없이 끝남"
+  - "소유자가 아닌 사람에게 관리 버튼"
+existing:
+  - kind: server-vitest
+    file: "packages/server/test/agentOwner.test.ts"
+    note: "소유 판정"
+  - kind: desktop-vitest
+    file: "packages/desktop/test/agentCreateLocalOperator.test.tsx"
+    note: "만들기→로컬 오퍼레이터"
+  - kind: testbed-harness
+    ref: "#testbed qa-* 하네스 회차 E1~E13"
+    note: "owner 시점의 멘션→러너→발화"
+runners: [api, harness, manual]
+gaps:
+  - "러너·오퍼레이터는 Tauri 앱 안이라 브라우저 러너로는 못 본다(손 시험)"
