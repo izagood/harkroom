@@ -250,7 +250,7 @@ The server reads these environment variables:
 | `HARKROOM_SMTP_USER` | SMTP user name. Set it together with `HARKROOM_SMTP_PASSWORD`, or neither | - | No |
 | `HARKROOM_SMTP_PASSWORD` | SMTP password or API key. Mount it from a Kubernetes Secret; never commit it | - | No |
 | `HARKROOM_MAIL_FROM` | Sender of invite emails, e.g. `Harkroom <invite@your-domain.example.com>`. The domain needs SPF/DKIM records from your mail provider or mail lands in spam | - | No |
-| `HARKROOM_PUBLIC_URL` | The address people use to reach this server, e.g. `https://workspace.example.com`. Invite emails show it as the server address and link to `<this>/join` | - | No |
+| `HARKROOM_PUBLIC_URL` | The address people use to reach this server, e.g. `https://workspace.example.com`. Invite emails show it as the server address and link to `<this>/join`. Must be `https` (`http` only for `localhost`). Read only when mail is configured — set alone, it does not turn mail on or stop startup | - | No |
 | `APNS_KEY_ID` | Key ID of the Apple Push Notifications (APNs) auth key (`.p8`). Set all four `APNS_*` variables to turn on mobile push; leave all unset to keep it off. Setting only some of them stops the server at startup | - | No |
 | `APNS_TEAM_ID` | Apple Developer Team ID that owns the APNs key | - | No |
 | `APNS_KEY_P8` | Contents of the APNs auth key file (`AuthKey_<KeyID>.p8`, PEM). Mount it from a Kubernetes Secret; never commit it | - | No |

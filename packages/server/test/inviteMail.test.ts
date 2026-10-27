@@ -219,6 +219,10 @@ describe('loadMailConfig', () => {
     HARKROOM_PUBLIC_URL: 'https://ws.example.com/', HARKROOM_SMTP_USER: 'u', HARKROOM_SMTP_PASSWORD: 'p',
   };
   it('하나도 없으면 null(끔)', () => { expect(loadMailConfig({})).toBeNull(); });
+  it('메일 칸 없이 공개 주소만 있으면(http 라도) 끈 채로 뜬다 — 메일 안 쓰는 테넌트를 판올림이 죽이지 않는다', () => {
+    expect(loadMailConfig({ HARKROOM_PUBLIC_URL: 'http://ws.example.com' })).toBeNull();
+    expect(loadMailConfig({ HARKROOM_PUBLIC_URL: 'https://ws.example.com', HARKROOM_SMTP_PASSWORD: '' })).toBeNull();
+  });
   it('다 있으면 읽고, 기본 포트 587·뒤 / 를 뗀다', () => {
     expect(loadMailConfig(full)).toMatchObject({ port: 587, publicUrl: 'https://ws.example.com', user: 'u' });
   });
