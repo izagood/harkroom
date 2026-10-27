@@ -12,8 +12,8 @@ import { PaneResizer } from './PaneResizer';
 import { openWindow } from '../lib/windowActions';
 import { Menu, type MenuItem } from './Menu';
 import {
-  PREVIEW_FIT_WIDTHS, PREVIEW_ZOOM_DEFAULT, canZoomIn, canZoomOut, effectiveScale, isDefaultZoom, previewZoomStorage,
-  stepPreviewZoom, viewportWidth, type PreviewZoom,
+  PREVIEW_FIT_WIDTHS, PREVIEW_ZOOM_DEFAULT, canZoomIn, canZoomOut, effectiveScale, isDefaultZoom, nearestPreviewStep,
+  previewZoomStorage, stepPreviewZoom, viewportWidth, type PreviewZoom,
 } from '../lib/previewZoom';
 import {
   paneStorage, paneMaxWidth, MIN_PREVIEW_WIDTH, MAX_PREVIEW_WIDTH, MIN_CHANNEL_WIDTH, MIN_THREAD_WIDTH, PREVIEW_DEFAULT_CSS,
@@ -58,6 +58,14 @@ type Phase =
   | { kind: 'navigated' }
   | { kind: 'error'; reason: 'tooLarge' | 'forbidden' | 'gone' | 'failed' };
 
+/** 셸이 보내는 핀치(`src-tauri/src/pinch_zoom.rs`). phase 는 `NSEventPhase` 비트다. */
+const MAGNIFY_EVENT = 'harkroom:magnify';
+const MAGNIFY_BEGAN = 1;
+const MAGNIFY_CHANGED = 4;
+const MAGNIFY_ENDED = 8;
+const MAGNIFY_CANCELLED = 16;
+interface MagnifyDetail { x: number; y: number; w: number; phase: number; m: number }
+
 function reasonOf(err: unknown): 'tooLarge' | 'forbidden' | 'gone' | 'failed' {
   if (err instanceof ApiError) {
     if (err.status === 413) return 'tooLarge';
@@ -67,16 +75,16 @@ function reasonOf(err: unknown): 'tooLarge' | 'forbidden' | 'gone' | 'failed' {
   return 'failed';
 }
 
-/**
- * 오른쪽 패널. 스레드 패널과 같은 자리에 형제로 선다(`Workspace.tsx`). ⤢ 로 창 전체를 덮고, Esc 는 한 단계씩
- * 닫는다(창 전체 → 패널 → 닫힘). 머리줄·아래 줄은 **iframe 밖에서 앱이 그린다** — 페이지가 앱 화면을 흉내
- * 내도 머리줄은 진짜라는 것이 보여야 한다.
- */
 /** 「폭에 맞춤」 줄의 문구 — 키를 조각으로 짓지 않는다(안 쓰는 키 검사가 글자 그대로 찾는다). */
 const FIT_LABEL = {
   1440: 'artifact.zoom.fit1440', 1280: 'artifact.zoom.fit1280', 768: 'artifact.zoom.fit768', 390: 'artifact.zoom.fit390',
 } as const;
 
+/**
+ * 오른쪽 패널. 스레드 패널과 같은 자리에 형제로 선다(`Workspace.tsx`). ⤢ 로 창 전체를 덮고, Esc 는 한 단계씩
+ * 닫는다(창 전체 → 패널 → 닫힘). 머리줄·아래 줄은 **iframe 밖에서 앱이 그린다** — 페이지가 앱 화면을 흉내
+ * 내도 머리줄은 진짜라는 것이 보여야 한다.
+ */
 export function ArtifactPanel({ fill = false, windowed }: {
   /** 곁의 내용 칸이 고정 폭(스레드)일 때 남는 폭을 미리보기가 채운다(`Workspace.tsx` 수정 1). */
   fill?: boolean;
@@ -227,11 +235,52 @@ export function ArtifactPanel({ fill = false, windowed }: {
       if (dir === 0 && e.key !== '0') return;
       e.preventDefault();
       e.stopPropagation();
+      // 페이지가 없으면(불러오는 중·오류·이동 막힘) 단추처럼 아무것도 안 한다 — 키도 앱 배율로 새지 않는다.
+      if (phase.kind !== 'ready') return;
       setZoom(dir === 0 ? PREVIEW_ZOOM_DEFAULT : stepPreviewZoom(zoom, dir, boxWidth));
     };
     hostDoc.addEventListener('keydown', onKey, true);
     return () => hostDoc.removeEventListener('keydown', onKey, true);
-  }, [attachment, expanded, windowed, zoom, boxWidth, setZoom]);
+  }, [attachment, expanded, windowed, zoom, boxWidth, setZoom, phase.kind]);
+
+  /*
+    트랙패드 핀치 — 페이지(교차 출처 iframe) 위의 핀치는 iframe 문서만 받아 앱 문서에서는 들을 수 없다. 데스크톱
+    셸이 앱 프로세스에서 핀치를 엿보고 이 창에 `harkroom:magnify` 로 알린다(`src-tauri/src/pinch_zoom.rs`).
+    핀치가 **미리보기 상자 안에서 시작했을 때만** 받는다. 단계표(`PREVIEW_ZOOM_STEPS`)의 가장 가까운 칸으로 붙여
+    단추·⌘키와 같은 상태·기억을 쓴다. 옆 패널·⤢·새 창 어디서든 된다 — 앱은 핀치를 다른 데 쓰지 않는다.
+  */
+  const pinch = useRef<{ base: number; acc: number } | null>(null);
+  useEffect(() => {
+    const view = hostDoc.defaultView;
+    if (!attachment || !view) return;
+    const onMagnify = (ev: Event) => {
+      const d = (ev as CustomEvent<MagnifyDetail>).detail;
+      if (!d || typeof d.phase !== 'number') return;
+      if (d.phase & MAGNIFY_BEGAN) {
+        pinch.current = null;
+        const box = boxRef.current;
+        if (!box || phase.kind !== 'ready' || !(d.w > 0)) return;
+        // 셸은 웹뷰 점(pt)을 준다 — 앱 배율(웹뷰 확대)을 걷어 CSS px 로 바꾼다.
+        const k = view.innerWidth / d.w;
+        const r = box.getBoundingClientRect();
+        const x = d.x * k;
+        const y = d.y * k;
+        if (x < r.left || x > r.right || y < r.top || y > r.bottom) return;
+        pinch.current = { base: effectiveScale(zoom, boxWidth) * 100, acc: 1 };
+        return;
+      }
+      const p = pinch.current;
+      if (!p) return;
+      if (d.phase & MAGNIFY_CHANGED && Number.isFinite(d.m)) {
+        p.acc *= 1 + d.m;
+        const next = nearestPreviewStep(p.base * p.acc);
+        if (zoom.kind === 'fit' || next !== Math.round(effectiveScale(zoom, boxWidth) * 100)) setZoom({ kind: 'scale', pct: next });
+      }
+      if (d.phase & (MAGNIFY_ENDED | MAGNIFY_CANCELLED)) pinch.current = null;
+    };
+    view.addEventListener(MAGNIFY_EVENT, onMagnify);
+    return () => view.removeEventListener(MAGNIFY_EVENT, onMagnify);
+  }, [attachment, hostDoc, zoom, boxWidth, setZoom, phase.kind]);
 
   if (!attachment) return null;
   const ref = attachment.artifact;
@@ -242,9 +291,10 @@ export function ArtifactPanel({ fill = false, windowed }: {
   // 단축키 표기는 그 키가 미리보기 배율일 때만 — 옆 패널에서는 ⌘키가 앱 배율 몫이다(designer 시안 v1 메뉴 절).
   const keys = expanded || !!windowed;
   const zoomItems: MenuItem[] = [
-    { label: t('artifact.zoom.reset'), onSelect: () => setZoom(PREVIEW_ZOOM_DEFAULT), shortcut: keys ? '⌘0' : undefined },
-    { label: t('artifact.zoom.in'), onSelect: () => setZoom(stepPreviewZoom(zoom, 1, boxWidth)), disabled: !canZoomIn(zoom, boxWidth), shortcut: keys ? '⌘+' : undefined },
-    { label: t('artifact.zoom.out'), onSelect: () => setZoom(stepPreviewZoom(zoom, -1, boxWidth)), disabled: !canZoomOut(zoom, boxWidth), shortcut: keys ? '⌘−' : undefined },
+    // 위 세 줄도 ✓ 폭을 비워 둔다 — 아래 맞춤 줄과 글자 시작을 맞춘다(designer n1).
+    { label: t('artifact.zoom.reset'), onSelect: () => setZoom(PREVIEW_ZOOM_DEFAULT), shortcut: keys ? '⌘0' : undefined, checkable: true },
+    { label: t('artifact.zoom.in'), onSelect: () => setZoom(stepPreviewZoom(zoom, 1, boxWidth)), disabled: !canZoomIn(zoom, boxWidth), shortcut: keys ? '⌘+' : undefined, checkable: true },
+    { label: t('artifact.zoom.out'), onSelect: () => setZoom(stepPreviewZoom(zoom, -1, boxWidth)), disabled: !canZoomOut(zoom, boxWidth), shortcut: keys ? '⌘−' : undefined, checkable: true },
     ...PREVIEW_FIT_WIDTHS.map((w, i): MenuItem => {
       const on = zoom.kind === 'fit' && zoom.width === w;
       const label = t(FIT_LABEL[w]);

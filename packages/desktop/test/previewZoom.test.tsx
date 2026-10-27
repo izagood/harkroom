@@ -207,4 +207,90 @@ describe('the zoom control in the preview panel', () => {
     fireEvent.click(screen.getByTestId('artifact-zoom-menu'));
     expect(screen.getByRole('menuitem', { name: '100%로' }).textContent).toContain('⌘0');
   });
+
+  // designer n1: 위 세 줄도 ✓ 폭을 비워 아래 맞춤 줄과 글자 시작을 맞춘다.
+  it('lines up every menu row on the check-mark column', async () => {
+    render(<ArtifactPanel />);
+    open(page('p1', 'art-1'));
+    await screen.findByTestId('artifact-frame');
+    fireEvent.click(screen.getByTestId('artifact-zoom-menu'));
+    for (const name of ['100%로', '키우기', '줄이기', '데스크톱 1440px 폭에 맞춤']) {
+      const label = screen.getByRole('menuitem', { name }).querySelector('span');
+      expect(label?.className).toContain("before:content-['✓_']");
+    }
+  });
+
+  // designer n3: 단추가 흐린 동안은 키도 아무것도 안 한다 — 앱 배율로 새지도 않는다.
+  it('ignores ⌘+/−/0 while the page is not there', async () => {
+    let release: (v: unknown) => void = () => {};
+    setController({
+      closeArtifactPreview: vi.fn(),
+      saveAttachment: vi.fn(async () => undefined),
+      issuePreview: vi.fn(() => new Promise((r) => { release = r; })),
+    } as unknown as Controller);
+    render(<ArtifactPanel />);
+    open(page('p1', 'art-1'));
+    fireEvent.click(screen.getByTestId('artifact-panel-expand'));
+    expect(fireEvent.keyDown(document.body, { key: '-', metaKey: true })).toBe(false);
+    expect(screen.getByTestId('artifact-zoom-menu').textContent).toContain('100%');
+    expect(localStorage.getItem('harkroom.previewZoom')).toBeNull();
+    release(undefined);
+  });
+
+  describe('trackpad pinch from the shell', () => {
+    const magnify = (phase: number, m = 0, x = 100, y = 100) => act(() => {
+      window.dispatchEvent(new CustomEvent('harkroom:magnify', { detail: { x, y, w: window.innerWidth, phase, m } }));
+    });
+    beforeEach(() => {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+        { left: 0, top: 0, right: 520, bottom: 600, width: 520, height: 600 } as DOMRect,
+      );
+    });
+
+    it('zooms in steps when the pinch starts inside the preview, and remembers it', async () => {
+      render(<ArtifactPanel />);
+      open(page('p1', 'art-1'));
+      await screen.findByTestId('artifact-frame');
+      magnify(1);
+      magnify(4, -0.1);
+      magnify(4, -0.1);
+      expect(screen.getByTestId('artifact-zoom-menu').textContent).toContain('80%');
+      magnify(8);
+      expect(previewZoomStorage.load('art-1')).toEqual({ kind: 'scale', pct: 80 });
+      // 끝난 뒤 온 변화는 받지 않는다.
+      magnify(4, 1);
+      expect(screen.getByTestId('artifact-zoom-menu').textContent).toContain('80%');
+    });
+
+    it('stops at the ends of the table', async () => {
+      render(<ArtifactPanel />);
+      open(page('p1', 'art-1'));
+      await screen.findByTestId('artifact-frame');
+      magnify(1);
+      for (let i = 0; i < 20; i++) magnify(4, 0.2);
+      expect(screen.getByTestId('artifact-zoom-menu').textContent).toContain('200%');
+    });
+
+    it('leaves pinches that start outside the preview alone', async () => {
+      render(<ArtifactPanel />);
+      open(page('p1', 'art-1'));
+      await screen.findByTestId('artifact-frame');
+      magnify(1, 0, 700, 100);
+      magnify(4, 0.5, 100, 100);
+      expect(screen.getByTestId('artifact-zoom-menu').textContent).toContain('100%');
+    });
+
+    it('does nothing while the page is not there', () => {
+      setController({
+        closeArtifactPreview: vi.fn(),
+        saveAttachment: vi.fn(async () => undefined),
+        issuePreview: vi.fn(() => new Promise(() => {})),
+      } as unknown as Controller);
+      render(<ArtifactPanel />);
+      open(page('p1', 'art-1'));
+      magnify(1);
+      magnify(4, 0.5);
+      expect(screen.getByTestId('artifact-zoom-menu').textContent).toContain('100%');
+    });
+  });
 });

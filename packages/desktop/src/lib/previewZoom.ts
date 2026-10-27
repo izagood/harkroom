@@ -53,6 +53,13 @@ export function stepPreviewZoom(z: PreviewZoom, direction: 1 | -1, boxWidth: num
   return prev === undefined ? z : { kind: 'scale', pct: prev };
 }
 
+/** 단계표에서 가장 가까운 칸(핀치가 쓴다). 표 밖이면 양 끝에 붙는다. */
+export function nearestPreviewStep(pct: number): number {
+  let best = PREVIEW_ZOOM_STEPS[0] ?? 100;
+  for (const s of PREVIEW_ZOOM_STEPS) if (Math.abs(s - pct) < Math.abs(best - pct)) best = s;
+  return best;
+}
+
 export const canZoomIn = (z: PreviewZoom, boxWidth: number): boolean =>
   Math.round(effectiveScale(z, boxWidth) * 100) < PREVIEW_ZOOM_MAX;
 export const canZoomOut = (z: PreviewZoom, boxWidth: number): boolean =>
