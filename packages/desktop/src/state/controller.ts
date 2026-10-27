@@ -147,6 +147,11 @@ export class Controller {
    */
   lastChannelScope: string | null = null;
   /**
+   * 이 컨트롤러가 붙은 계정 id. 세우는 쪽은 `lastChannelScope` 와 같다. 세션을 잃었을 때 `me` 가 아직
+   * 없으면(기동 묶음 전) 이 값으로 **그 커뮤니티만** 보관본에서 뺀다 — 둘 다 없으면 보관본을 건드리지 않는다.
+   */
+  accountId: string | null = null;
+  /**
    * `start()` 가 기동 묶음과 **병렬로** 미리 받은 첫 페이지(콜드 스타트 A안). 그 채널을 처음
    * 여는 `openChannel` 이 새로 묻지 않고 이것에 합류한다 — 응답 전에 눌러도 요청은 하나다.
    * 실패는 `null` 로 접어 두고, 그때는 평소대로 다시 묻는다.
@@ -400,6 +405,8 @@ export class Controller {
         this.swallow(this.refreshWorkspaceIcon());
       },
       onDown: (reason) => this.handleDown(reason),
+      // 4401 은 티켓 미스일 수도 있다 — 지우기 전에 REST 로 다시 묻는다(ws.ts `credentialStillValid`).
+      credentialStillValid: () => this.api.me().then(() => true, (err) => !isCredentialRejection(err)),
     });
 
     // **daemon 은 여기서 세운다** — 러너를 띄울지 정하기 **전에**(`#431` 2단계 A).
@@ -685,8 +692,10 @@ export class Controller {
     // 빨간 점과 영구 재연결만 본다(조용한 실패).
     // **`me` 를 먼저 읽는다.** `clearLocal()` 이 스토어를 reset 하므로 그 뒤에 읽으면
     // 항상 null 이고, accountId 가 빈 문자열이 되어 App 이 활성 커뮤니티를 못 알아본다.
-    const accountId = this.store.getState().me?.id ?? '';
-    this.clearLocal(accountId);
+    // `me` 가 아직 없으면(기동 묶음 전) 세운 쪽이 알려 준 계정 id 를 쓴다. 그것도 없으면 보관본은 그대로 둔다 —
+    // 빈 id 로 `clearLocal` 을 부르면 **모든 커뮤니티**를 지우는 갈래(`sessionStore.clear()`)로 떨어진다.
+    const accountId = this.store.getState().me?.id ?? this.accountId ?? '';
+    this.clearLocal(accountId || null);
     this.onSessionLost(this.t()(Controller.LOST_MESSAGE[reason]), accountId);
   }
 
@@ -694,13 +703,15 @@ export class Controller {
   /**
    * `accountId` 를 주면 **그 커뮤니티만** 보관소에서 뺀다(#164). 세션 하나가 죽었다고
    * 나머지 커뮤니티의 토큰까지 지우면 사용자가 그 커뮤니티들을 통째로 잃는다.
-   * 주지 않으면(명시적 로그아웃) 전부 지운다.
+   * 주지 않으면(명시적 로그아웃) 전부 지운다. `null` 이면(계정을 모르는 세션 손실) 보관본은 그대로 둔다.
    */
-  private clearLocal(accountId?: string): void {
+  private clearLocal(accountId?: string | null): void {
     this.stop();
     // 키체인 삭제는 비동기다. 로그아웃이 그것을 기다릴 이유는 없다 — 실패해도 다음 기동의
     // load()가 다시 정리를 시도하고, 로컬 상태는 아래에서 즉시 비워진다.
-    this.swallow(accountId ? sessionStore.remove(accountId) : sessionStore.clear());
+    // `null` 은 "어느 계정인지 모른다" — 보관본을 건드리지 않는다(다음 기동이 401 로 그 하나만 뺀다).
+    if (accountId) this.swallow(sessionStore.remove(accountId));
+    else if (accountId === undefined) this.swallow(sessionStore.clear());
     // 초안은 사용자가 쓴 문장 전체다. 계정이 로그아웃된 뒤에도 디스크에 남으면
     // #92(argv 노출)와 PAT 키체인 결정이 세운 기준과 어긋난다. 스토어 액션이
     // 인메모리와 보관소를 함께 비운다 — 보관소만 지우면 스토어에 남는다.
@@ -711,7 +722,7 @@ export class Controller {
     // 마지막 채널도 키체인과 같은 수명이다 — 계정이 떠난 뒤 *어디를 보고 있었나*만 남을 이유가 없다.
     // 한 계정만 떠나면 그 scope 만, 전체 로그아웃(`sessionStore.clear()`)이면 통째로 지운다.
     if (accountId) { if (this.lastChannelScope) lastChannelStorage.remove(this.lastChannelScope); }
-    else lastChannelStorage.clear();
+    else if (accountId === undefined) lastChannelStorage.clear();
     this.store.getState().reset();
   }
 
@@ -3661,6 +3672,7 @@ export async function startCommunitySession(opts: {
     entry.store,
   );
   controller.lastChannelScope = lastChannelScope(opts.baseUrl, opts.accountId);
+  controller.accountId = opts.accountId || null;
   useCommunityRegistry.getState().attachController(entry.id, controller);
   try {
     await controller.start();
@@ -3764,6 +3776,7 @@ export function restoreCommunitySession(opts: {
       entry.store,
     );
     controller.lastChannelScope = lastChannelScope(opts.baseUrl, opts.accountId);
+    controller.accountId = opts.accountId || null;
     current = controller;
     useCommunityRegistry.getState().attachController(entry.id, controller);
     try {

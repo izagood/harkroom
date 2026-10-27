@@ -11,6 +11,17 @@ export interface WsCallbacks {
   onEvent(e: WsServerEvent): void;
   onOpen(): void;
   onDown(reason: WsDownReason): void;
+  /**
+   * 소켓이 4401 로 닫혔을 때 **정말 자격증명이 죽었는지** 다시 묻는다. `false` 일 때만 `credential` 로 포기한다.
+   *
+   * 서버는 티켓이 없을 때도(30초 만료·다른 서버 프로세스가 발급·이미 씀) 같은 4401 을 보낸다 — 소켓 쪽에서는
+   * "티켓이 무효"와 "세션이 죽음"이 같은 코드다. 그것을 그대로 믿으면 멀쩡한 세션이 보관본에서 지워지고 사람이
+   * 로그인 화면으로 쫓겨난다. 판정은 REST(`/auth/me`)가 한다: 401 이면 죽은 것이고, 그 밖(200·네트워크 실패)은
+   * 죽었다는 근거가 아니므로 네트워크 끊김처럼 다시 붙는다 — 정말 죽었으면 다음 티켓 발급이 401 로 끝낸다.
+   *
+   * 주지 않으면 예전처럼 4401 을 곧바로 `credential` 로 본다.
+   */
+  credentialStillValid?(): Promise<boolean>;
 }
 
 export interface WsHandle {
@@ -26,8 +37,8 @@ export interface WsHandle {
 /** 연결 시도마다 새로 받아야 하는 단기 1회용 티켓. 재사용하면 서버가 거절한다. */
 export type TicketProvider = () => Promise<string>;
 
-/** 서버가 핸드셰이크를 거절하거나 소켓을 끊을 때 쓰는 코드. 둘 다 재시도로 낫지 않는다. */
-const CLOSE_CREDENTIAL = 4401; // 티켓 무효, 또는 소켓 수명 중 자격증명이 폐기됨
+/** 서버가 핸드셰이크를 거절하거나 소켓을 끊을 때 쓰는 코드. 4403 은 재시도로 낫지 않는다. 4401 은 다시 확인한다. */
+const CLOSE_CREDENTIAL = 4401; // 티켓 무효, 또는 소켓 수명 중 자격증명이 폐기됨 — 둘을 가르는 것은 `credentialStillValid`
 const CLOSE_ORIGIN = 4403;     // 서버의 허용 origin 목록에 없다
 
 export function connectWs(baseUrl: string, getTicket: TicketProvider, cb: WsCallbacks): WsHandle {
@@ -74,7 +85,16 @@ export function connectWs(baseUrl: string, getTicket: TicketProvider, cb: WsCall
     ws.onclose = (ev) => {
       if (closed) return;
       const code = (ev as { code?: number } | undefined)?.code;
-      if (code === CLOSE_CREDENTIAL) { giveUp('credential'); return; }
+      if (code === CLOSE_CREDENTIAL) {
+        if (!cb.credentialStillValid) { giveUp('credential'); return; }
+        void cb.credentialStillValid().then((alive) => alive, () => true).then((alive) => {
+          if (closed) return;
+          if (!alive) { giveUp('credential'); return; }
+          cb.onDown('network');
+          retry();
+        });
+        return;
+      }
       if (code === CLOSE_ORIGIN) { giveUp('origin'); return; }
       cb.onDown('network');
       retry();
