@@ -61,6 +61,7 @@ import { createTurnUploads } from './turnUploads.js';
 import { cleanupLedgerPath } from './workspaceCleanup.js';
 import { cleanupOwnersPath, createCleanupOwners } from './workspaceCleanupOwners.js';
 import { createWorkspaceCleanup, GIT_PATH, readCleanupSettings } from './workspaceCleanupService.js';
+import { perCommunityEnabled } from '@harkroom/shared/operatorRoots';
 
 /**
  * 채택한 러너의 생사를 확인하는 주기(`#431` 2-c).
@@ -595,7 +596,13 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 서버에 안 붙는 기동(테스트)에서는 돌리지 않는다: 러너가 뜰 일이 없고, 그 머신의 실제 계정으로
   // `claude` 를 띄우면 안 된다.
   const usagePoller = options.communities !== false
-    ? createClaudeUsagePoller({ root: claudeAccountsRoot(), measure: (dir) => claudeAccounts.measureUsage(dir), log })
+    ? createClaudeUsagePoller({
+      root: claudeAccountsRoot(),
+      measure: (dir) => claudeAccounts.measureUsage(dir),
+      log,
+      // 커뮤니티마다 프로세스면 usage.json(기계에 하나, D2)에 writer 가 여럿이다 — 잠그고 합쳐 쓴다(P3).
+      sharedFile: perCommunityEnabled(process.env),
+    })
     : null;
   usagePoller?.start();
 

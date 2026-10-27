@@ -14,7 +14,7 @@
  * 이 파일은 규칙만 갖는다(읽고 쓰는 것은 오퍼레이터 `communityRoots.ts`). 앱(Rust)도 같은 규칙으로 계산한다.
  */
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { daemonEndpointPaths } from './daemonEndpoint.js';
 
 /** 앱 데이터 디렉터리 아래 색인 파일 이름. */
@@ -65,14 +65,57 @@ export function computedCommunityRoot(home: string, baseUrl: string, length: num
   return join(home, '.harkroom-agent', 'c', communityRootHash(baseUrl, length));
 }
 
+/** 뿌리 비교는 정규화한 경로로 한다 — `/x/a` 와 `/x/a/` 를 다른 뿌리로 치지 않는다(security P2a-n2). */
+export function sameRoot(a: string, b: string): boolean {
+  return resolve(a) === resolve(b);
+}
+
 /** 색인에서 같은 뿌리를 쓰는 칸이 둘 이상이면 그 뿌리 하나를 돌려준다(없으면 null). */
 export function duplicateRoot(index: OperatorRootsIndex): string | null {
   const seen = new Set<string>();
   for (const e of Object.values(index.communities)) {
-    if (seen.has(e.root)) return e.root;
-    seen.add(e.root);
+    const r = resolve(e.root);
+    if (seen.has(r)) return r;
+    seen.add(r);
   }
   return null;
+}
+
+/** 스위치(`HARKROOM_OPERATOR_PER_COMMUNITY`)는 정확히 `1` 일 때만 켜진다. */
+export const PER_COMMUNITY_ENV = 'HARKROOM_OPERATOR_PER_COMMUNITY';
+/** 커뮤니티마다 프로세스 모드에서 이 오퍼레이터(와 그 러너)의 뿌리. 띄우는 쪽이 준다. */
+export const OPERATOR_ROOT_ENV = 'HARKROOM_OPERATOR_ROOT';
+/** 커뮤니티마다 프로세스 모드에서 이 오퍼레이터가 맡은 커뮤니티의 baseUrl. 띄우는 쪽이 준다. */
+export const OPERATOR_COMMUNITY_ENV = 'HARKROOM_OPERATOR_COMMUNITY';
+
+export function perCommunityEnabled(env: NodeJS.ProcessEnv): boolean {
+  return env[PER_COMMUNITY_ENV] === '1';
+}
+
+/**
+ * 스위치가 켜져 있으면 이 프로세스의 커뮤니티 뿌리(절대 경로), 꺼져 있으면 null. 켜져 있는데 뿌리를 모르면
+ * **던진다** — 기계에 하나인 자리로 물러서면 커뮤니티끼리 계정 선택이 섞인다.
+ */
+export function perCommunityRootFromEnv(env: NodeJS.ProcessEnv): string | null {
+  if (!perCommunityEnabled(env)) return null;
+  const root = env[OPERATOR_ROOT_ENV];
+  if (!root || !root.startsWith('/')) throw new Error(`${PER_COMMUNITY_ENV}=1 인데 ${OPERATOR_ROOT_ENV} 가 절대 경로가 아니다`);
+  return resolve(root);
+}
+
+/**
+ * claude 계정 **선택**(`pools.json`)의 자리. 자격(계정 디렉터리)은 기계에 하나로 두고(D2), 어느 계정을 쓸지는
+ * 커뮤니티마다 고른다 — 스위치가 켜지면 커뮤니티 뿌리 아래 `claude-pools.json`. 오퍼레이터와 러너가 같은 함수를 쓴다.
+ */
+export function claudePoolsFilePath(accountsRoot: string, env: NodeJS.ProcessEnv): string {
+  const root = perCommunityRootFromEnv(env);
+  return root ? join(root, 'claude-pools.json') : join(accountsRoot, 'pools.json');
+}
+
+/** codex 활성 계정 선택(`active.json`)의 자리 — `pools.json` 과 같은 규칙(P3-n3 결정). */
+export function codexActiveFilePath(codexRoot: string, env: NodeJS.ProcessEnv): string {
+  const root = perCommunityRootFromEnv(env);
+  return root ? join(root, 'codex-active.json') : join(codexRoot, 'active.json');
 }
 
 export type CommunityRootResolution =
@@ -89,7 +132,7 @@ export type CommunityRootResolution =
 export function resolveCommunityRoot(home: string, baseUrl: string, index: OperatorRootsIndex): CommunityRootResolution {
   const key = communityRootKey(baseUrl);
   const entry = index.communities[key];
-  const ownerOf = (r: string): string | undefined => Object.entries(index.communities).find(([k, e]) => k !== key && e.root === r)?.[0];
+  const ownerOf = (r: string): string | undefined => Object.entries(index.communities).find(([k, e]) => k !== key && sameRoot(e.root, r))?.[0];
   let root = entry?.root ?? computedCommunityRoot(home, key);
   if (!entry && ownerOf(root)) {
     // 해시 앞 8자 충돌 — 16자 뿌리로 비킨다. 그것까지 겹치면 거절한다.

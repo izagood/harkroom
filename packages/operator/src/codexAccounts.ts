@@ -18,11 +18,11 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { codexActiveFilePath } from '@harkroom/shared/operatorRoots';
 
 import {
   CODEX_ACCOUNT_NAME_PATTERN,
-  CODEX_ACTIVE_FILE,
   parseCodexActive,
 } from '@harkroom/shared/codexAccounts';
 import type {
@@ -198,14 +198,14 @@ export function createCodexAccountsPort(opts: {
 
   const readActive = async (): Promise<string | null> => {
     try {
-      return parseCodexActive(JSON.parse(await readFile(join(root, CODEX_ACTIVE_FILE), 'utf8'))).active;
+      return parseCodexActive(JSON.parse(await readFile(codexActiveFilePath(root, process.env), 'utf8'))).active;
     } catch {
       return null;
     }
   };
   const writeActive = async (active: string | null): Promise<void> => {
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    const path = join(root, CODEX_ACTIVE_FILE);
+    const path = codexActiveFilePath(root, process.env);
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const tmp = `${path}.tmp-${randomUUID()}`;
     await writeFile(tmp, `${JSON.stringify({ active }, null, 2)}\n`, { mode: 0o600 });
     await rename(tmp, path);

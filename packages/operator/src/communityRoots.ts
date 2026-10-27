@@ -12,18 +12,18 @@ import {
   OPERATOR_ROOTS_INDEX_FILE,
   communityRootKey,
   duplicateRoot,
+  OPERATOR_COMMUNITY_ENV,
+  PER_COMMUNITY_ENV,
+  perCommunityEnabled,
+  sameRoot,
   resolveCommunityRoot,
   type CommunityRootResolution,
   type OperatorRootEntry,
   type OperatorRootsIndex,
 } from '@harkroom/shared/operatorRoots';
 
-export const PER_COMMUNITY_ENV = 'HARKROOM_OPERATOR_PER_COMMUNITY';
-
-/** 스위치는 정확히 `1` 일 때만 켜진다(빈 값·`true`·`0` 은 꺼짐). */
-export function perCommunityEnabled(env: NodeJS.ProcessEnv): boolean {
-  return env[PER_COMMUNITY_ENV] === '1';
-}
+/** 스위치는 정확히 `1` 일 때만 켜진다(빈 값·`true`·`0` 은 꺼짐). 규칙은 shared 하나에 있다. */
+export { PER_COMMUNITY_ENV, perCommunityEnabled };
 
 export function rootsIndexPath(appDataDir: string): string {
   return join(appDataDir, OPERATOR_ROOTS_INDEX_FILE);
@@ -79,7 +79,7 @@ export async function writeRootsIndex(appDataDir: string, index: OperatorRootsIn
 export async function recordCommunityRoot(appDataDir: string, baseUrl: string, entry: OperatorRootEntry): Promise<OperatorRootsIndex> {
   const index = await readRootsIndex(appDataDir);
   const key = communityRootKey(baseUrl);
-  const owner = Object.entries(index.communities).find(([k, e]) => k !== key && e.root === entry.root)?.[0];
+  const owner = Object.entries(index.communities).find(([k, e]) => k !== key && sameRoot(e.root, entry.root))?.[0];
   if (owner) throw new Error(`그 뿌리는 이미 다른 커뮤니티(${owner})의 것이다: ${entry.root}`);
   const next: OperatorRootsIndex = { version: 1, communities: { ...index.communities, [key]: entry } };
   await writeRootsIndex(appDataDir, next);
@@ -129,4 +129,11 @@ export function assertSingleCommunity(communities: Record<string, unknown>, env:
   if (!perCommunityEnabled(env)) return;
   const keys = Object.keys(communities);
   if (keys.length > 1) throw new Error(`커뮤니티마다 오퍼레이터 모드에서 operator.json 에 커뮤니티가 둘 이상이다: ${keys.join(', ')}`);
+  // 칸 수만 세면, 빈 A 뿌리에 B 칸이 처음 들어올 때 통과한다(security P2a-n1). 이 프로세스가 맡은 커뮤니티와 같아야 한다.
+  const mine = env[OPERATOR_COMMUNITY_ENV];
+  if (!mine) throw new Error(`커뮤니티마다 오퍼레이터 모드인데 ${OPERATOR_COMMUNITY_ENV} 가 없다 — 어느 커뮤니티의 뿌리인지 모른다`);
+  const key = keys[0];
+  if (key !== undefined && communityRootKey(key) !== communityRootKey(mine)) {
+    throw new Error(`이 뿌리는 ${communityRootKey(mine)} 의 것이다 — 다른 커뮤니티(${key})를 넣을 수 없다`);
+  }
 }

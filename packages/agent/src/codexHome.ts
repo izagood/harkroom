@@ -2,10 +2,10 @@ import { chmod, lstat, mkdir, readFile, readlink, rename, symlink } from 'node:f
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { codexActiveFilePath } from '@harkroom/shared/operatorRoots';
 
 import {
   CODEX_ACCOUNT_NAME_PATTERN,
-  CODEX_ACTIVE_FILE,
   parseCodexActive,
 } from '@harkroom/shared/codexAccounts';
 
@@ -38,7 +38,7 @@ export async function codexAuthSource(env: NodeJS.ProcessEnv = process.env): Pro
   const system = { home: sourceCodexHome(env), account: null };
   let active: string | null = null;
   try {
-    active = parseCodexActive(JSON.parse(await readFile(join(root, CODEX_ACTIVE_FILE), 'utf8'))).active;
+    active = parseCodexActive(JSON.parse(await readFile(codexActiveFilePath(root, env), 'utf8'))).active;
   } catch {
     return system;
   }

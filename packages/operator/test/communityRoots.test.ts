@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  claudePoolsFilePath,
+  codexActiveFilePath,
   communityRootHash,
   computedCommunityRoot,
   resolveCommunityRoot,
@@ -126,6 +128,12 @@ describe('색인 파일(operators.json)', () => {
     await recordCommunityRoot(dir, A, { root: '/r/shared', operatorId: 'op-a' });
     await writeFile(rootsIndexPath(dir), JSON.stringify({ version: 1, communities: { [A]: { root: '/r/x' }, [B]: { root: '/r/x' } } }));
     await expect(readRootsIndex(dir)).rejects.toThrow(/한 뿌리/);
+    // 끝 슬래시·.. 는 같은 뿌리다(security P2a-n2).
+    await writeFile(rootsIndexPath(dir), JSON.stringify({ version: 1, communities: { [A]: { root: '/r/shared' } } }));
+    await expect(recordCommunityRoot(dir, B, { root: '/r/shared/' })).rejects.toThrow(/다른 커뮤니티/);
+    await expect(recordCommunityRoot(dir, B, { root: '/r/other/../shared' })).rejects.toThrow(/다른 커뮤니티/);
+    await writeFile(rootsIndexPath(dir), JSON.stringify({ version: 1, communities: { [A]: { root: '/r/x' }, [B]: { root: '/r/y/../x/' } } }));
+    await expect(readRootsIndex(dir)).rejects.toThrow(/한 뿌리/);
   });
 
   it('모양이 틀리면 빈 색인으로 치지 않고 던진다 — 옛 자리를 잊고 새 뿌리를 만들지 않게', async () => {
@@ -186,27 +194,60 @@ describe('뿌리 디렉터리(security P1-n2)', () => {
 
 describe('칸 1개 모드(operator.json)', () => {
   it('스위치가 켜져 있으면 커뮤니티가 둘 이상인 설정을 거절한다', () => {
-    const on = { HARKROOM_OPERATOR_PER_COMMUNITY: '1' };
+    const on = { HARKROOM_OPERATOR_PER_COMMUNITY: '1', HARKROOM_OPERATOR_COMMUNITY: A };
     expect(() => assertSingleCommunity({ [A]: {} }, on)).not.toThrow();
+    expect(() => assertSingleCommunity({ [`${A}/`]: {} }, on)).not.toThrow();
     expect(() => assertSingleCommunity({ [A]: {}, [B]: {} }, on)).toThrow(/둘 이상/);
+  });
+
+  it('하나뿐이어도 이 뿌리가 맡은 커뮤니티가 아니면 거절한다(security P2a-n1)', () => {
+    const on = { HARKROOM_OPERATOR_PER_COMMUNITY: '1', HARKROOM_OPERATOR_COMMUNITY: A };
+    expect(() => assertSingleCommunity({ [B]: {} }, on)).toThrow(/다른 커뮤니티/);
+    expect(() => assertSingleCommunity({}, on)).not.toThrow();
+  });
+
+  it('켜져 있는데 맡은 커뮤니티를 모르면 쓰지 않는다', () => {
+    expect(() => assertSingleCommunity({ [A]: {} }, { HARKROOM_OPERATOR_PER_COMMUNITY: '1' })).toThrow(/HARKROOM_OPERATOR_COMMUNITY/);
   });
 
   it('writeConfig 도 같은 규칙으로 막는다 — 파일이 보장한다', async () => {
     const d = await mkdtemp(join(tmpdir(), 'hk-cfg-'));
     const path = join(d, 'operator.json');
     const prev = process.env.HARKROOM_OPERATOR_PER_COMMUNITY;
+    const prevC = process.env.HARKROOM_OPERATOR_COMMUNITY;
     try {
       process.env.HARKROOM_OPERATOR_PER_COMMUNITY = '1';
+      process.env.HARKROOM_OPERATOR_COMMUNITY = A;
       await writeConfig(path, { communities: { [A]: { agents: {} } } });
       await expect(writeConfig(path, { communities: { [A]: { agents: {} }, [B]: { agents: {} } } })).rejects.toThrow(/둘 이상/);
       expect(Object.keys((await readConfig(path)).communities)).toEqual([A]);
     } finally {
       if (prev === undefined) delete process.env.HARKROOM_OPERATOR_PER_COMMUNITY; else process.env.HARKROOM_OPERATOR_PER_COMMUNITY = prev;
+      if (prevC === undefined) delete process.env.HARKROOM_OPERATOR_COMMUNITY; else process.env.HARKROOM_OPERATOR_COMMUNITY = prevC;
       await rm(d, { recursive: true, force: true });
     }
   });
 
   it('꺼져 있으면 지금처럼 여럿을 받는다', () => {
     expect(() => assertSingleCommunity({ [A]: {}, [B]: {} }, {})).not.toThrow();
+  });
+});
+
+describe('계정 선택 파일의 자리(D2·P3-n3) — 오퍼레이터와 러너가 같은 규칙', () => {
+  const on = { HARKROOM_OPERATOR_PER_COMMUNITY: '1', HARKROOM_OPERATOR_ROOT: '/Users/alice/.harkroom-agent/c/abcd1234' };
+
+  it('꺼져 있으면 지금 자리(계정 뿌리 아래 pools.json·active.json) 그대로', () => {
+    expect(claudePoolsFilePath('/acc/claude', {})).toBe('/acc/claude/pools.json');
+    expect(codexActiveFilePath('/acc/codex', {})).toBe('/acc/codex/active.json');
+  });
+
+  it('켜져 있으면 커뮤니티 뿌리 아래로 간다 — 자격 디렉터리는 그대로 기계 공유', () => {
+    expect(claudePoolsFilePath('/acc/claude', on)).toBe('/Users/alice/.harkroom-agent/c/abcd1234/claude-pools.json');
+    expect(codexActiveFilePath('/acc/codex', on)).toBe('/Users/alice/.harkroom-agent/c/abcd1234/codex-active.json');
+  });
+
+  it('켜져 있는데 뿌리를 모르면 기계 자리로 물러서지 않고 던진다', () => {
+    expect(() => claudePoolsFilePath('/acc/claude', { HARKROOM_OPERATOR_PER_COMMUNITY: '1' })).toThrow(/HARKROOM_OPERATOR_ROOT/);
+    expect(() => codexActiveFilePath('/acc/codex', { HARKROOM_OPERATOR_PER_COMMUNITY: '1', HARKROOM_OPERATOR_ROOT: 'relative' })).toThrow();
   });
 });
