@@ -14,6 +14,8 @@ export type AuditAction =
   | 'account.created' | 'account.handle.changed' | 'account.deleted' | 'agent.created' | 'agent.updated' | 'agent.disabled' | 'agent.enabled' | 'invite.created'
   // 초대 취소(148). detail 은 {inviteId} 뿐 — 토큰·해시는 남기지 않는다.
   | 'invite.revoked'
+  // 초대 다시 보내기(149). detail 은 {inviteId, replaces, email(가림), mail}.
+  | 'invite.resent'
   // #139: 메모리 삭제. detail 에는 slug 만 남긴다 — 본문을 복사하면 삭제가 삭제가 아니다.
   | 'agent.memory.deleted'
   | 'agent.memory.edited'

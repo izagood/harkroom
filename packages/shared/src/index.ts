@@ -329,6 +329,24 @@ export interface InviteView {
   expiresAt: string | null;
   revokedAt: string | null;
   usedBy: { id: string; handle: string } | null;
+  /** 받는 사람 주소(149). 저장만 한다 — 가입을 이 주소로 묶지 않는다. 화면에서 건넨 초대·옛 서버는 null/없음. */
+  email?: string | null;
+  /** 마지막 발송 결과(149). `sent` 는 SMTP 가 받았다는 뜻이다(도착은 모른다). 메일 없이 낸 초대는 null. */
+  mailStatus?: InviteMailStatus | null;
+  lastSentAt?: string | null;
+}
+
+export type InviteMailStatus = 'sent' | 'failed';
+
+/**
+ * `POST /invites`·`POST /invites/:id/resend` 응답(149). 메일이 나갔으면(`mail: 'sent'`) **토큰을 싣지 않는다** —
+ * 받는 사람 메일함에만 있으면 된다. 보내지 못했거나(`failed`) 메일 없이 냈으면(`off`) 지금처럼 한 번 보여 준다.
+ */
+export interface InviteCreated {
+  id: string;
+  expiresAt: string;
+  mail: 'sent' | 'failed' | 'off';
+  token?: string;
 }
 
 /**
@@ -2642,6 +2660,8 @@ export interface ServerHealth extends ServerVersion {
   avcs: { connected: boolean };
   /** 모바일 푸시(093). `off` 는 APNS_* 가 없다는 뜻, `degraded` 는 APNs 가 키를 거절했다는 뜻이다. 옛 서버엔 없다. */
   push?: 'off' | 'ok' | 'degraded';
+  /** 초대 메일(149). `off` 면 SMTP 설정이 없다 — 초대는 화면에서 건넨다. 옛 서버엔 없다. */
+  mail?: 'off' | 'on';
 }
 
 export interface ScheduledMessageView {
