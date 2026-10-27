@@ -902,18 +902,35 @@ export async function verifiedCauseLink(
 }
 
 async function causeDepth(client: PoolClient, authorId: string, causeMessageId: string): Promise<number | null> {
+  /*
+    **사람이 누른 카드도 사람의 손길이다**(2026-10-27). 카드 답·닫힘의 깨움(`wakeAsker`)은 inbox 를 **에이전트가 쓴
+    물음**에 건다 — 작성자만 보면 원인은 에이전트 글이라 깊이가 저장값 + 1 로 이어지고, 사람이 카드로 승인해도 사슬은
+    풀리지 않았다(#rcms: 사람 글 없이 카드 답만으로 이틀 동안 상한까지 쌓였다). 답한 사람(`answeredBy`)·닫은 사람(`closedBy`)이
+    **사람 계정**이면 그 깨움을 사람이 띄운 턴으로 친다. 에이전트가 답한 카드(`to` 가 에이전트)·서버가 닫은 카드(만료,
+    `closedBy` 가 빈 값)는 그대로 이어진다 — 사람이 없었으므로.
+  */
   const row = (await client.query(
-    `select m.mention_depth as depth, (a.kind = 'agent') as author_is_agent,
-            (m.meta ? 'automation') as from_automation
-       from message m join account a on a.id = m.author_id
+    `with card as (
+       select exists (select 1 from inbox i join account h
+                        on h.id::text = case i.reason when 'ask_answered' then m.meta->'ask'->>'answeredBy'
+                                                      else m.meta->'ask'->>'closedBy' end
+                       where i.message_id = m.id and i.account_id = $2
+                         and i.reason in ('ask_answered', 'ask_closed') and h.kind = 'human') as by_human
+         from message m where m.id = $1
+     )
+     select m.mention_depth as depth, (a.kind = 'agent') as author_is_agent,
+            (m.meta ? 'automation') as from_automation, card.by_human as human_card
+       from message m join account a on a.id = m.author_id cross join card
       where m.id = $1 and m.deleted_at is null
-        and exists (select 1 from inbox i
-                     where i.message_id = m.id and i.account_id = $2
-                       and (i.reason in ('mention', 'dm', 'team_mention', 'team_delegated')
-                            or (a.kind = 'human' and i.reason in ('thread_reply', 'ask_answered'))))`,
+        and (card.by_human
+             or exists (select 1 from inbox i
+                         where i.message_id = m.id and i.account_id = $2
+                           and (i.reason in ('mention', 'dm', 'team_mention', 'team_delegated')
+                                or (a.kind = 'human' and i.reason in ('thread_reply', 'ask_answered')))))`,
     [causeMessageId, authorId],
-  )).rows[0] as { depth: number; author_is_agent: boolean; from_automation: boolean } | undefined;
+  )).rows[0] as { depth: number; author_is_agent: boolean; from_automation: boolean; human_card: boolean } | undefined;
   if (!row) return null;
+  if (row.human_card) return 1;
   // 사람은 언제나 0 이다(`mentionDepthFor`) — 저장된 값을 믿지 않고 규칙으로 센다. 예외는 에이전트가
   // 돌린 자동화 글(082)이다: 사람 이름이지만 사슬의 고리라 저장된 깊이를 잇는다(시계·버튼 회차는 0 이다).
   return row.author_is_agent || row.from_automation ? row.depth + 1 : 1;
