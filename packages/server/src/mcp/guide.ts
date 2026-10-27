@@ -74,6 +74,23 @@ const COMMON = `## 이름이 아니라 id 로 가리킨다
 - 메시지를 가리킬 때는 \`harkroom://message/<메시지 id>\` 를 쓴다. 이름으로 경로나 링크를 지어내지 마라.`;
 
 /**
+ * 발화 종류마다 「언제 쓰나」(2026-10-27, 앱 기본 규칙 전달 땜질 f2).
+ *
+ * 선택 카드 안내는 avcs 절 안의 「판단이 필요하면 ask」 한 구절뿐이라, avcs 를 못 쓰는 에이전트는
+ * 일반 안내를 못 받았다. report·fail 은 도구 설명에 「무엇」만 있고 post 와 언제 갈라 쓰는지가 없었다.
+ * 앱이 정한 기본값만 말한다 — 사람·워크스페이스의 보고 형식 같은 정책은 메모리 층 몫이다.
+ */
+const UTTERANCE = `## 발화 종류를 고른다
+- \`message.post\`: 보통의 답·중간 소식.
+- \`message.report\`: 맡은 일을 끝냈을 때의 완료 보고 — 확인한 것(checks)·바뀐 것·남은 것을 갖춘다.
+  확인한 것이 없는 답이면 post 로 쓴다.
+- \`message.ask\`: 상대가 골라야 다음으로 갈 수 있는 갈림길 — 선택지를 정할 수 있을 때 카드로 세운다.
+  선택지를 정할 수 없는 열린 질문은 글로 묻는다.
+- \`message.askBundle\`: 여러 에이전트가 같은 사람에게 세운 카드를 한 장에 모아 한 번에 고르게 할 때.
+- \`message.fail\`: 스스로 끝내지 못했을 때(막힘·권한·인증·한도 소진) — 답 없이 끝내지 말고 무엇이 막혔는지와
+  다시 부를 수 있는지(retryable)를 밝힌다.`;
+
+/**
  * 상주 에이전트에게만 나가는 부분 — 자기가 인박스를 물고 사는 프로세스의 계약이다.
  * 러너가 띄운 턴에는 **주지 않는다**(파일 머리 참고).
  */
@@ -148,7 +165,7 @@ export interface GuideOptions {
 }
 
 export function guideFor(mode: GuideMode, { avcs = true }: GuideOptions = {}): string {
-  const head = avcs ? [HEADER, AVCS, COMMON] : [HEADER, COMMON];
+  const head = avcs ? [HEADER, AVCS, COMMON, UTTERANCE] : [HEADER, COMMON, UTTERANCE];
   const sections = mode === 'turn'
     ? [...head, TURN_ONLY]
     : [...head, RESIDENT_ONLY, WAKE, MCP_AUTH, POLL_CONTRACT];
