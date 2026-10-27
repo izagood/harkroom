@@ -103,7 +103,9 @@ describe('초대 메일 칸', () => {
     fireEvent.change(await screen.findByTestId('invite-email-input'), { target: { value: 'bad@example.com,' } });
     await act(async () => { fireEvent.click(screen.getByTestId('invite-mail-send')); });
     expect(c.revokeInvite).toHaveBeenCalledWith('x');
-    expect((await screen.findByTestId('invite-mail-failed')).textContent).toContain('거뒀다');
+    expect((await screen.findByTestId('invite-mail-failed')).textContent).toContain('초대는 만들어지지 않았다');
+    // 실패한 주소는 보통 칩으로 돌아온다(빨강은 형식이 틀린 주소만).
+    expect(screen.getByTestId('invite-chip-bad@example.com').className).not.toContain('danger');
     expect(document.body.textContent).not.toContain('hrki_x');
     expect(screen.queryByTestId('invite-mail-withdraw-failed')).toBeNull();
   });
@@ -117,6 +119,22 @@ describe('초대 메일 칸', () => {
     expect((await screen.findByTestId('invite-mail-withdraw-failed')).textContent).toContain('[취소]');
     expect(document.body.textContent).not.toContain('hrki_x');
     expect(screen.getByTestId('invite-chip-bad@example.com')).toBeTruthy();
+  });
+
+  it('초대 중이던 주소의 다시 보내기가 실패하면 새 초대를 거두고, 칩 꼬리 「초대 중」이 사라진다', async () => {
+    const c = fake({ invites: [row({ id: 'p1', email: 'again@example.com', mailStatus: 'sent', lastSentAt: '2026-10-01T00:00:00Z' })] });
+    c.resendInvite.mockImplementationOnce(async () => {
+      // 서버는 앞 초대(p1)를 취소하고 새 초대를 만든다 — 이 화면이 그 새 것도 거두면 살아 있는 초대는 없다.
+      c.invites.mockResolvedValue([]);
+      return { id: 'new2', expiresAt: '', mail: 'failed' as const, token: 'hrki_t2' } as never;
+    });
+    render(<InviteSettings />);
+    await screen.findByTestId('invite-row-p1');
+    fireEvent.change(screen.getByTestId('invite-email-input'), { target: { value: 'again@example.com,' } });
+    await act(async () => { fireEvent.click(screen.getByTestId('invite-mail-send')); });
+    expect(c.revokeInvite).toHaveBeenCalledWith('new2');
+    await waitFor(() => expect(screen.getByTestId('invite-chip-again@example.com').textContent).not.toContain('초대 중'));
+    expect(document.body.textContent).not.toContain('hrki_t2');
   });
 
   it('줄의 [다시 보내기]가 메일에 실패하면 새 초대를 거두고 주소를 칩으로 돌린다', async () => {
@@ -175,7 +193,8 @@ describe('초대 메일 칸', () => {
     expect(screen.getByTestId('invite-revoke-tok')).toBeTruthy();
     fireEvent.click(screen.getByTestId('invite-filter-todo'));
     const todo = Array.from(document.querySelectorAll('[data-testid^="invite-row-"]')).map((e) => e.getAttribute('data-testid'));
-    expect(todo).toEqual(['invite-row-fail', 'invite-row-exp']);
+    // 「손볼 것」은 만료만 센다(designer).
+    expect(todo).toEqual(['invite-row-exp']);
   });
 
   it('방금 보낸 초대는 1분 동안 다시 보내기가 잠긴다', async () => {

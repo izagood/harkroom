@@ -44,7 +44,11 @@ const KIND_CLASS: Record<RowKind, string> = {
   failed: 'bg-danger-surface text-danger',
   expired: 'bg-surface-raised text-fg-subtle',
 };
-const isTodo = (k: RowKind) => k === 'failed' || k === 'expired';
+/**
+ * 「손볼 것」은 **만료만** 센다(designer, 「실패면 취소」 뒤). 메일이 실패한 초대는 곧바로 거두므로 보통은 줄이 없고,
+ * 거두기까지 실패해 남은 「보내지 못함」 줄은 빨간 칩과 [취소]로 이미 눈에 띈다.
+ */
+const isTodo = (k: RowKind) => k === 'expired';
 
 /**
  * 토큰을 화면에 한 번 보여 주는 지금 흐름. 메일이 꺼진 서버·옛 서버에서는 이것이 주 동작이고, 메일이 켜진 서버에서는
