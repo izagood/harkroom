@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { notReservedHandle } from '../services/reservedHandles.js';
@@ -9,6 +9,7 @@ import { ACCOUNT_STATUSES, CREDENTIAL_SCOPES, INVITE_TTL_DAYS, INVOKE_SCOPES, ME
 import type { InviteCreated, InviteView } from '@harkroom/shared';
 import type { Mailer } from '../services/mail/mailer.js';
 import { inviteMail, type InviteMailLocale } from '../services/mail/inviteMail.js';
+import { mailErrorSummary } from '../services/mail/mailer.js';
 import {
   ackAgentStop, assignmentOf, createAgentAccount, definitionFor, deleteAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
   revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, setChromeEnabled, setRequiresMacos, setTrustSiblings, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
@@ -208,8 +209,16 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
 
   const mailer = routeDeps.mailer ?? null;
 
-  const mailBudgetLeft = async (accountId: string): Promise<boolean> => {
-    const n = await pool.query<{ n: number }>(
+  type Tx = { query: Pool['query'] };
+
+  /**
+   * 보내는 사람 단위 잠금 + 시간당 상한. **트랜잭션 안에서** 부른다 — 잠금은 커밋까지 쥐고, 그 사이 세는 값에는
+   * 이 요청이 넣을 행(`last_sent_at = now()` 로 미리 적는다)이 다음 요청에게 보인다. 세고 나서 보내는 사이에
+   * 다른 요청이 끼어 상한을 넘기던 틈(security n2)을 닫는다.
+   */
+  const lockSenderAndCheckBudget = async (tx: Tx, accountId: string): Promise<boolean> => {
+    await tx.query(`select pg_advisory_xact_lock(hashtext('invite-mail:' || $1::text))`, [accountId]);
+    const n = await tx.query<{ n: number }>(
       `select count(*)::int as n from invite where created_by = $1 and last_sent_at > now() - interval '1 hour'`,
       [accountId],
     );
@@ -218,7 +227,9 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
 
   /**
    * 메일을 보내고 결과를 행에 남긴다. 실패해도 던지지 않는다 — 초대는 이미 만들어졌고, 화면이 토큰을 한 번
-   * 보여 주는 지금 흐름으로 물러난다. 실패 사유(SMTP 응답)는 서버 로그에만 남긴다 — 응답·DB 에 싣지 않는다.
+   * 보여 주는 지금 흐름으로 물러난다. 실패 사유는 **오류 코드만** 서버 로그에 남긴다(`mailErrorSummary`) —
+   * SMTP 응답 글에는 받는 사람 주소가 섞여 있곤 하다(security n5). 응답·DB 에는 싣지 않는다.
+   * 발송 시각(`last_sent_at`)은 행을 만들 때 이미 적었다 — 여기서는 결과만 고친다.
    */
   const sendInvite = async (
     req: { log: { warn: (o: object, m: string) => void }; account?: { handle: string } | null },
@@ -232,9 +243,9 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       }));
     } catch (err) {
       status = 'failed';
-      req.log.warn({ inviteId: inv.id, err: (err as Error).message }, 'invite mail failed');
+      req.log.warn({ inviteId: inv.id, ...mailErrorSummary(err) }, 'invite mail failed');
     }
-    await pool.query(`update invite set mail_status = $2, last_sent_at = now() where id = $1`, [inv.id, status]);
+    await pool.query(`update invite set mail_status = $2 where id = $1`, [inv.id, status]);
     return status;
   };
 
@@ -244,22 +255,37 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     return `${email.slice(0, Math.min(1, at))}***${email.slice(at)}`;
   };
 
+  const tooMany = (reply: FastifyReply) =>
+    reply.code(429).send({ error: { code: 'mail_rate_limited', message: `at most ${MAIL_PER_HOUR} invite mails per hour` } });
+
   app.post('/invites', { preHandler: app.requireCap('member.invite') }, async (req, reply) => {
     const body = inviteBody.parse(req.body ?? {});
     if (body.email && !mailer) {
       return reply.code(409).send({ error: { code: 'mail_disabled', message: 'invite mail is not configured on this server' } });
     }
-    if (body.email && !(await mailBudgetLeft(req.account!.id))) {
-      return reply.code(429).send({ error: { code: 'mail_rate_limited', message: `at most ${MAIL_PER_HOUR} invite mails per hour` } });
-    }
     const { token, hash } = newToken('hrki');
-    const row = await pool.query<{ id: string; expires_at: Date }>(
-      `insert into invite (token_hash, created_by, expires_at, email)
-       values ($1, $2, now() + make_interval(days => $3), $4)
-       returning id, expires_at`,
-      [hash, req.account!.id, INVITE_TTL_DAYS, body.email ?? null],
-    );
-    const inv = row.rows[0]!;
+    const client = await pool.connect();
+    let inv: { id: string; expires_at: Date };
+    try {
+      await client.query('begin');
+      if (body.email && !(await lockSenderAndCheckBudget(client, req.account!.id))) {
+        await client.query('rollback');
+        return tooMany(reply);
+      }
+      const row = await client.query<{ id: string; expires_at: Date }>(
+        `insert into invite (token_hash, created_by, expires_at, email, last_sent_at)
+         values ($1, $2, now() + make_interval(days => $3), $4, case when $4::text is null then null else now() end)
+         returning id, expires_at`,
+        [hash, req.account!.id, INVITE_TTL_DAYS, body.email ?? null],
+      );
+      inv = row.rows[0]!;
+      await client.query('commit');
+    } catch (err) {
+      await client.query('rollback');
+      throw err;
+    } finally {
+      client.release();
+    }
     const mail = body.email
       ? await sendInvite(req, { id: inv.id, token, email: body.email, expiresAt: inv.expires_at }, body.locale ?? 'en')
       : 'off';
@@ -274,8 +300,12 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
 
   /**
    * 다시 보내기(149). 토큰 원문은 서버에 없으므로 **새 토큰**으로 새 초대를 만들어 같은 주소로 보내고, 앞 초대는
-   * 취소한다(앞 메일의 토큰은 더 못 쓴다). 가입에 쓰인 초대는 409. 만료·취소된 초대도 다시 보낼 수 있다 —
-   * 「기한 지나 못 썼다」가 가장 흔한 재발송 이유다.
+   * 취소한다(앞 메일의 토큰은 더 못 쓴다). 만료된 초대는 다시 보낼 수 있다 — 「기한 지나 못 썼다」가 가장 흔한
+   * 재발송 이유다. **취소된 초대는 409** — 이미 다른 초대로 바뀌었거나 사람이 거둔 것이라, 다시 보내면 같은 주소에
+   * 유효한 토큰이 여럿 생긴다(security n1). 화면은 목록의 최신 행에서 다시 보내면 된다.
+   *
+   * 검사는 모두 **앞 행을 `for update` 로 잠근 트랜잭션 안에서** 한다 — 두 번 빠르게 누르면 둘째는 첫째가 커밋한
+   * 뒤의 행(취소됨)을 보고 409 를 받는다.
    */
   app.post('/invites/:id/resend', { preHandler: app.requireCap('member.invite') }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
@@ -283,41 +313,40 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     if (!mailer) {
       return reply.code(409).send({ error: { code: 'mail_disabled', message: 'invite mail is not configured on this server' } });
     }
-    const cur = await pool.query<{ email: string | null; used_by: string | null; recent: boolean }>(
-      `select email, used_by, (last_sent_at > now() - make_interval(secs => $2)) as recent from invite where id = $1`,
-      [id, RESEND_GAP_SEC],
-    );
-    const old = cur.rows[0];
-    if (!old) return reply.code(404).send({ error: { code: 'not_found', message: 'invite not found' } });
-    if (old.used_by) return reply.code(409).send({ error: { code: 'invite_used', message: 'invite already used' } });
-    if (!old.email) return reply.code(409).send({ error: { code: 'no_email', message: 'this invite has no email address' } });
-    if (old.recent) {
-      return reply.code(429).header('retry-after', String(RESEND_GAP_SEC))
-        .send({ error: { code: 'resend_too_soon', message: `wait ${RESEND_GAP_SEC}s before sending again` } });
-    }
-    if (!(await mailBudgetLeft(req.account!.id))) {
-      return reply.code(429).send({ error: { code: 'mail_rate_limited', message: `at most ${MAIL_PER_HOUR} invite mails per hour` } });
-    }
     const { token, hash } = newToken('hrki');
     const client = await pool.connect();
     let inv: { id: string; expires_at: Date };
+    let email: string;
     try {
       await client.query('begin');
-      // 앞 초대를 잠그고 다시 본다 — 그 사이 가입이 끝났으면 새 초대를 만들지 않는다.
-      const locked = await client.query(
-        `update invite set revoked_at = coalesce(revoked_at, now()), revoked_by = coalesce(revoked_by, $2)
-          where id = $1 and used_by is null returning id`,
-        [id, req.account!.id],
+      // 보내는 사람 잠금을 먼저 잡는다 — 행 잠금과 순서가 늘 같아야 교착이 없다(새 발급도 이 잠금만 잡는다).
+      const budget = await lockSenderAndCheckBudget(client, req.account!.id);
+      const cur = await client.query<{ email: string | null; used_by: string | null; revoked_at: Date | null; recent: boolean }>(
+        `select email, used_by, revoked_at, coalesce(last_sent_at > now() - make_interval(secs => $2), false) as recent
+           from invite where id = $1 for update`,
+        [id, RESEND_GAP_SEC],
       );
-      if (!locked.rowCount) {
+      const old = cur.rows[0];
+      const refuse = async (code: number, error: { code: string; message: string }, retryAfter?: number) => {
         await client.query('rollback');
-        return reply.code(409).send({ error: { code: 'invite_used', message: 'invite already used' } });
+        if (retryAfter) reply.header('retry-after', String(retryAfter));
+        return reply.code(code).send({ error });
+      };
+      if (!old) return await refuse(404, { code: 'not_found', message: 'invite not found' });
+      if (old.used_by) return await refuse(409, { code: 'invite_used', message: 'invite already used' });
+      if (old.revoked_at) return await refuse(409, { code: 'invite_revoked', message: 'invite was revoked or replaced; resend the latest one' });
+      if (!old.email) return await refuse(409, { code: 'no_email', message: 'this invite has no email address' });
+      if (old.recent) {
+        return await refuse(429, { code: 'resend_too_soon', message: `wait ${RESEND_GAP_SEC}s before sending again` }, RESEND_GAP_SEC);
       }
+      if (!budget) return await refuse(429, { code: 'mail_rate_limited', message: `at most ${MAIL_PER_HOUR} invite mails per hour` });
+      email = old.email;
+      await client.query(`update invite set revoked_at = now(), revoked_by = $2 where id = $1`, [id, req.account!.id]);
       const row = await client.query<{ id: string; expires_at: Date }>(
-        `insert into invite (token_hash, created_by, expires_at, email)
-         values ($1, $2, now() + make_interval(days => $3), $4)
+        `insert into invite (token_hash, created_by, expires_at, email, last_sent_at)
+         values ($1, $2, now() + make_interval(days => $3), $4, now())
          returning id, expires_at`,
-        [hash, req.account!.id, INVITE_TTL_DAYS, old.email],
+        [hash, req.account!.id, INVITE_TTL_DAYS, email],
       );
       inv = row.rows[0]!;
       await client.query('commit');
@@ -327,10 +356,10 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     } finally {
       client.release();
     }
-    const mail = await sendInvite(req, { id: inv.id, token, email: old.email, expiresAt: inv.expires_at }, locale ?? 'en');
+    const mail = await sendInvite(req, { id: inv.id, token, email, expiresAt: inv.expires_at }, locale ?? 'en');
     await recordAudit(pool, {
       action: 'invite.resent', actorId: req.account!.id, actorHandle: req.account!.handle,
-      detail: { inviteId: inv.id, replaces: id, email: maskEmail(old.email), mail },
+      detail: { inviteId: inv.id, replaces: id, email: maskEmail(email), mail },
     }, req);
     const out: InviteCreated = { id: inv.id, expiresAt: inv.expires_at.toISOString(), mail };
     if (mail !== 'sent') out.token = token;
