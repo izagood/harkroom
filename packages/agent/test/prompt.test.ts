@@ -970,6 +970,34 @@ describe('메모리 주입 (#139)', () => {
   // **이 작업의 핵심 회귀선.** 조회 실패를 "기억 없음" 으로 읽으면 에이전트가 진짜
   // 기억을 새 프로필로 덮어쓴다. 온보딩 안내가 들어가는지까지 단정해야 그 구분이
   // 실제로 검사된다 — "아무것도 안 들어간다" 만 보면 빈 값 삼키기가 우연히 통과한다.
+  // f3(스레드 d1e8f866, g7): 스레드 메모는 기억 저장소가 아니다 — 기억 조회가 실패해도 안내가 실린다(설계 원칙 1).
+  it('스레드 메모 안내는 기억 상태와 무관하게 실리고, 조회 실패 턴에는 mem/* 를 입에 올리지 않는다', () => {
+    for (const m of ['unavailable', { core: null, slugs: [] }, { core: '본문', slugs: ['mem/a'] }] as MemoryContext[]) {
+      expect(build(m)).toContain('`thread.note`(threadRootId·body');
+    }
+    expect(build('unavailable')).not.toContain('mem/delegation-*');
+    expect(build({ core: '본문', slugs: [] })).toContain('mem/delegation-*');
+  });
+
+  // #1604 rebase(security n1·n2): 읽기 전용 턴은 허용 목록대로 — thread.note 는 남고 secret.mount 는 빠진다. 스냅숏 줄은 읽는 규칙이라 남는다.
+  it('읽기 전용 턴에도 스레드 메모·스냅숏 줄은 실리고, 비밀 쓰기 안내는 빠진다', () => {
+    const ro = buildSystemPrompt({ handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: 'C', slugs: ['mem/a'] }, readOnly: true });
+    expect(ro).toContain('`thread.note`(threadRootId·body');
+    expect(ro).toContain('과거의 스냅숏이니 현재 원본');
+    expect(ro).not.toContain('`secret.list`');
+    expect(ro).not.toContain('`secret.mount`');
+  });
+
+  // f3(g8): 비밀을 받기만 한 에이전트에게도 쓰는 법이 간다 — 만들기 권한과 무관하다.
+  it('비밀 쓰기(secret.list·mount) 안내는 만들기 권한 없이도 실리고, 만들기 절은 권한이 있을 때만이다', () => {
+    const s = build({ core: null, slugs: [] });
+    expect(s).toContain('`secret.list` 로 이 에이전트가 받은 이름');
+    expect(s).toContain('`secret.mount`');
+    expect(s).not.toContain('secret.generate');
+    // security n3: 받기만 한 에이전트에게도 「보인 값은 유출」 규칙이 간다.
+    expect(s).toContain('이미 화면·문맥에 보인 값은 유출된 것이다');
+  });
+
   it('조회가 실패하면 온보딩 안내조차 들어가지 않는다', () => {
     const s = build('unavailable');
     expect(s).not.toContain('memory.set');
