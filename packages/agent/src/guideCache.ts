@@ -13,6 +13,17 @@ export interface GuideCache {
 
 export const GUIDE_TTL_MS = 10 * 60_000;
 
+/**
+ * 서버 가이드의 머리(`server/src/mcp/guide.ts` HEADER). 다시 받은 값이 이것으로 시작할 때만 교체한다(#1609 security n1).
+ * `harkroom.guide()` 는 모양이 다른 응답을 `JSON.stringify` 로 글자로 만든다 — 기동 때는 그 판밖에 없지만, 실행 중에는
+ * 좋은 판을 그 글자가 덮어 턴에 실린다. 머리가 다르면 실패로 친다(가진 판을 그대로 쓴다).
+ */
+export const GUIDE_HEAD = '# harkroom workspace 가이드';
+
+export function isGuideText(g: string): boolean {
+  return g.startsWith(GUIDE_HEAD);
+}
+
 export function createGuideCache(opts: {
   initial: string;
   fetch: () => Promise<string>;
@@ -30,7 +41,11 @@ export function createGuideCache(opts: {
       if (!inflight && now() - fetchedAt >= ttl) {
         inflight = true;
         opts.fetch().then(
-          (g) => { if (g) value = g; fetchedAt = now(); },
+          (g) => {
+            fetchedAt = now();
+            if (isGuideText(g)) value = g;
+            else opts.onError?.(new Error(`가이드 응답 모양이 다르다(머리 ${JSON.stringify(g.slice(0, 40))}) — 가진 판을 쓴다`));
+          },
           // 실패해도 시각을 당긴다 — 서버가 내려간 동안 턴마다 다시 부르지 않는다.
           (err) => { fetchedAt = now(); opts.onError?.(err); },
         ).finally(() => { inflight = false; });
