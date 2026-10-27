@@ -5647,7 +5647,7 @@ export const en = {
   'agents.local.heading': 'This machine',
   'agents.local.loading': 'Reading the local operator config…',
   'agents.local.listFailed': 'The local operator config could not be read',
-  'agents.local.unregistered': 'The operator on this machine is not registered with this community yet — run `harkroom-operator register` first. The entry below is kept and becomes a capability once registered.',
+  'agents.local.unregistered': "The operator on this machine is not registered with this community yet — press [Register this machine] under Settings › This machine's operator. The entry below is kept and becomes a capability once registered.",
   'agents.local.enable': 'Let the operator on this machine run this agent',
   'agents.local.workingDir': 'Working directory on this machine',
   'agents.local.workingDirPlaceholder': '~/dev/project (empty = the agent default)',

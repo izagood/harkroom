@@ -67,7 +67,8 @@ describe('OperatorsSettings', () => {
       expect(screen.getAllByText(/hkreg_abc/).length).toBeGreaterThan(0);
     });
     // 코드를 어디에 넣는지 — 사람이 다음에 할 일이 화면에 있어야 한다.
-    expect(screen.getByTestId('operator-register-command').textContent).toContain('harkroom-operator register');
+    // 맨 이름이 아니라 실행 파일 전체 경로다 — 첫 설치 맥의 PATH 에는 harkroom-operator 가 없다.
+    expect(screen.getByTestId('operator-register-command').textContent).toMatch(/^\/Applications\/Harkroom\.app\/Contents\/MacOS\/harkroom-operator register /);
     expect(screen.getByTestId('operator-register-command').textContent).toContain('hkreg_abc');
     expect(screen.getByText(/지금만 보인다/)).toBeTruthy();
   });

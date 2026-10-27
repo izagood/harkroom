@@ -354,6 +354,47 @@ fn app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+/// 이 앱 번들 안의 `harkroom-operator` 전체 경로 — 설정 › Operators 의 등록 명령에 그대로 쓴다.
+///
+/// 앱은 PATH 에 아무것도 깔지 않는다. 그래서 화면이 맨 이름(`harkroom-operator register …`)을 보여 주면
+/// 첫 설치 맥에서 `command not found` 로 실패했다(10-27). 오퍼레이터를 띄울 때 쓰는 바로 그 경로
+/// (`sidecar_path`)를 준다 — 앱을 어디에 깔았든 붙여 넣으면 된다.
+///
+/// 붙여 넣어도 쓸모없는 경로면 `None` 이다: App Translocation(격리된 다운로드를 그 자리에서 열면 macOS 가
+/// 읽기 전용 임시 경로로 옮겨 띄운다)·DMG 안(`/Volumes/…`). 화면은 그때 맥 기본 설치 경로로 물러선다.
+#[tauri::command]
+fn operator_cli_path() -> Option<String> {
+    let path = sidecar_path(daemon_client::OPERATOR_SIDECAR_NAME).ok()?;
+    pastable_cli_path(&path)
+}
+
+fn pastable_cli_path(path: &std::path::Path) -> Option<String> {
+    let text = path.to_str()?;
+    if text.contains("/AppTranslocation/") || text.starts_with("/Volumes/") {
+        return None;
+    }
+    Some(text.to_string())
+}
+
+#[cfg(test)]
+mod operator_cli_path_tests {
+    use super::pastable_cli_path;
+    use std::path::Path;
+
+    #[test]
+    fn 설치된_경로는_그대로_준다() {
+        let p = "/Users/alice/My Apps/Harkroom.app/Contents/MacOS/harkroom-operator";
+        assert_eq!(pastable_cli_path(Path::new(p)).as_deref(), Some(p));
+    }
+
+    #[test]
+    fn 임시_경로는_주지_않는다() {
+        let translocated = "/private/var/folders/x/T/AppTranslocation/ABC/d/Harkroom.app/Contents/MacOS/harkroom-operator";
+        assert_eq!(pastable_cli_path(Path::new(translocated)), None);
+        assert_eq!(pastable_cli_path(Path::new("/Volumes/Harkroom/Harkroom.app/Contents/MacOS/harkroom-operator")), None);
+    }
+}
+
 // ── daemon 을 부르는 커맨드는 전부 블로킹 풀에서 돈다(2026-10-01) ──────────────────────
 //
 // 아래 커맨드들은 모두 `ensure_daemon`(상태 락 + `ping` 왕복, daemon 이 없으면 띄우고 최대 30초
@@ -1053,6 +1094,7 @@ fn main() {
             login_path,
             notification::notification_send,
             app_version,
+            operator_cli_path,
             update_channel::app_update_check,
             update_channel::app_update_install,
             concealed_clipboard::clipboard_write_concealed,
