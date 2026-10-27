@@ -67,4 +67,31 @@ describe('기능 카탈로그 (2026-10-27 c1)', () => {
     const lane = buildSystemPrompt({ ...base, laneModel: 'Org/Model' });
     expect(lane).toContain(featureSection({}).join('\n'));
   });
+
+  // S P1: 읽기 전용 턴은 셸·permission.request 가 막혀 있다 — 머지 래퍼·권한 요청·외부 API·PR 서명 절을 싣지 않는다.
+  it('읽기 전용 턴에는 머지·권한 요청·외부 API·PR 서명 절이 없고, 일반 턴에는 있다', () => {
+    const grants = {
+      merge: { operatorBin: '/opt/hr/harkroom-operator', repos: ['acme/app'] },
+      permissions: { toolAllows: [] },
+      api: { operatorBin: '/opt/hr/harkroom-operator', connectors: ['svc'] },
+    };
+    const marks = ['harkroom-operator merge', '`permission.request`', 'harkroom-operator api', 'Opened by `@forge`'];
+    const full = buildSystemPrompt({ ...base, ...grants });
+    for (const m of marks) expect(full, m).toContain(m);
+    const ro = buildSystemPrompt({ ...base, ...grants, readOnly: true });
+    for (const m of marks) expect(ro, m).not.toContain(m);
+    expect(ro).toContain('머지·PR 열기·권한 요청은 이 턴에 없으니 찾지 마라(셸이 보여도 그 일에 쓰지 않는다)');
+  });
+
+  // security F1·n2: 대부분의 턴은 API 연결이 0개다 — 그때도 일반 턴엔 키 금지 줄(apiSection)이, 읽기 전용 턴엔 비밀 줄이 남는다.
+  it('연결 0개: 일반 턴엔 「키를 찾아 쓰지 마라」가, 읽기 전용 턴엔 비밀 값 금지·회전 줄이 실린다', () => {
+    const none = { merge: { operatorBin: '/opt/hr/harkroom-operator', repos: [] }, permissions: { toolAllows: [] }, api: { operatorBin: '/opt/hr/harkroom-operator', connectors: [] } };
+    const full = buildSystemPrompt({ ...base, ...none });
+    expect(full).toContain('API 키·토큰을 채팅·옛 글·파일에서 찾아 쓰지 마라');
+    for (const ro of [buildSystemPrompt({ ...base, ...none, readOnly: true }), buildSystemPrompt({ ...base, readOnly: true })]) {
+      expect(ro).not.toContain('API 키·토큰을 채팅·옛 글·파일에서 찾아 쓰지 마라');
+      expect(ro).toContain('키·토큰·비밀 값을 파일·옛 글에서 찾아 옮기거나 글·첨부에 싣지 않는다');
+      expect(ro).toContain('이미 보인 값은 유출된 것이니 사람에게 회전을 부탁한다');
+    }
+  });
 });

@@ -882,7 +882,9 @@ export function featureSection(opts: { readOnly?: boolean; secretCreate?: boolea
  */
 export const READONLY_TURN_LINES: readonly string[] = [
   '이 턴은 **읽기 전용**이다 — 대화·기억을 읽고 이 스레드에 답하는 도구만 열려 있다. 미리보기(`artifact.publish`)·',
-  '기억 쓰기·스킬/자동화 제안은 이 턴에 없으니 찾지 마라. 그런 일이 필요하면 답에 적어 사람에게 넘긴다.',
+  '기억 쓰기·스킬/자동화 제안·머지·PR 열기·권한 요청은 이 턴에 없으니 찾지 마라(셸이 보여도 그 일에 쓰지 않는다). 그런 일이 필요하면 답에 적어 사람에게 넘긴다.',
+  // S P1 security F1: 외부 API 절을 빼면서 이 턴에 남아 있던 유일한 비밀 줄도 빠졌다 — 이 턴도 파일을 읽고 글·첨부를 올린다.
+  '키·토큰·비밀 값을 파일·옛 글에서 찾아 옮기거나 글·첨부에 싣지 않는다. 이미 보인 값은 유출된 것이니 사람에게 회전을 부탁한다.',
   '',
 ];
 
@@ -982,19 +984,23 @@ export function buildSystemPrompt(opts: {
     // 문장에 하네스 이름을 쓰지 않는 것도 같은 결정이다: 하네스는 harkroom 가 에이전트 설정에
     // 이미 갖고 있고, PR 을 나중에 읽는 사람에게 중요한 것은 **어느 에이전트가 열었는가**다.
     // 하네스를 굳이 남기려면 문장 가운데가 아니라 뒤에 따로 붙여야 갈아끼울 수 있다.
-    ...(merge ? mergeSection(merge) : []),
-    ...(permissions ? permissionSection(permissions) : []),
-    ...(api ? apiSection(api) : []),
-    '저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:',
-    '',
-    `🤖 Opened by \`@${handle}\`, an agent in [Harkroom](${HARKROOM_REPO_URL}) — a chat workspace where people and AI agents share channels.`,
-    '',
-    // 백틱은 장식이 아니다: GitHub 은 PR 본문의 맨몸 `@이름` 을 **GitHub 사용자 멘션**으로
-    // 읽어 링크를 걸고 그 이름을 가진 계정에 알림을 보낸다. harkroom 핸들과 GitHub 계정은
-    // 아무 관계가 없으므로, 백틱을 빼면 이 서명이 매번 남의 알림함을 울린다.
-    '핸들의 백틱을 빼지 마라 — GitHub 은 맨몸 `@이름` 을 GitHub 사용자 멘션으로 읽어 그 이름을',
-    '가진 **남의 계정**을 부른다. 하네스 이름은 이 줄에 적지 않는다.',
-    '',
+    // 읽기 전용 턴(S P1, 2026-10-27): 셸(Bash)이 막혀 있고 `permission.request` 도 허용 목록 밖이다 — 머지 래퍼·권한 요청·
+    // 외부 API 래퍼·PR 서명(PR 을 열 길이 없다)은 쓸 수 없는 절이라 싣지 않는다. 그 턴 글자의 약 38% 였다.
+    ...(readOnly ? [] : [
+      ...(merge ? mergeSection(merge) : []),
+      ...(permissions ? permissionSection(permissions) : []),
+      ...(api ? apiSection(api) : []),
+      '저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:',
+      '',
+      `🤖 Opened by \`@${handle}\`, an agent in [Harkroom](${HARKROOM_REPO_URL}) — a chat workspace where people and AI agents share channels.`,
+      '',
+      // 백틱은 장식이 아니다: GitHub 은 PR 본문의 맨몸 `@이름` 을 **GitHub 사용자 멘션**으로
+      // 읽어 링크를 걸고 그 이름을 가진 계정에 알림을 보낸다. harkroom 핸들과 GitHub 계정은
+      // 아무 관계가 없으므로, 백틱을 빼면 이 서명이 매번 남의 알림함을 울린다.
+      '핸들의 백틱을 빼지 마라 — GitHub 은 맨몸 `@이름` 을 GitHub 사용자 멘션으로 읽어 그 이름을',
+      '가진 **남의 계정**을 부른다. 하네스 이름은 이 줄에 적지 않는다.',
+      '',
+    ]),
     // 2026-09-08 실측: 사람이 한 스레드에서 에이전트 넷을 불러 검토를 시켰는데, 넷 다
     // 스레드에 답을 올렸는데도 사람에게는 "에이전트끼리 대화만 했다"로 보였다. 원인이 둘이고
     // 아래 두 줄이 각각의 짝이다.
