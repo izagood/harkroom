@@ -383,7 +383,8 @@ export function InviteMailPanel({ lead }: { lead?: ReactNode } = {}) {
             {shown.map(({ invite: i, kind }) => {
               const who = i.email ?? t('invite.list.tokenOnly');
               const live = kind === 'sent' || kind === 'failed' || kind === 'pending';
-              const canResend = !!i.email && kind !== 'used';
+              // 메일이 꺼진 서버에서는 다시 보내기를 내지 않는다(누를 수 없는 버튼을 세워 두지 않는다).
+              const canResend = !!i.email && kind !== 'used' && mail === 'on';
               const wait = !!i.lastSentAt && now - Date.parse(i.lastSentAt) < RESEND_GAP_MS;
               return (
                 <li key={i.id} data-testid={`invite-row-${i.id}`}
@@ -398,7 +399,7 @@ export function InviteMailPanel({ lead }: { lead?: ReactNode } = {}) {
                       <span className="ml-auto flex items-center gap-1">
                         {canResend && (
                           <button type="button" className={btn} data-testid={`invite-resend-${i.id}`}
-                            disabled={rowBusy === i.id || wait || mail !== 'on'}
+                            disabled={rowBusy === i.id || wait}
                             title={wait ? t('invite.action.resendWait') : undefined}
                             onClick={() => void act(i, 'resend')}>
                             {kind === 'expired' ? t('invite.action.sendNew') : t('invite.action.resend')}
