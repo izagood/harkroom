@@ -124,7 +124,8 @@ const RAIL_FOCUS = 'outline-none focus-visible:outline-solid focus-visible:outli
  * 스크롤에 들어가지 않고 위아래에 **고정**이고, 가운데 네 칸만 필요하면 스크롤한다.
  */
 export function Rail({ panel, onPanelChange, onOpenSettings, onManageCommunities, onLogout }: {
-  panel: RailPanel;
+  /** 지금 펼친 칸. `null` 은 「어느 칸도 보이지 않는다」 — 다시 로그인 패널이 그 자리를 덮은 동안이다(designer n5). */
+  panel: RailPanel | null;
   onPanelChange: (panel: RailPanel) => void;
   onOpenSettings: (section?: SectionId) => void;
   /** 전환 팝오버의 「커뮤니티 추가」·「커뮤니티 관리…」가 가는 곳(설정 › 커뮤니티). */

@@ -15,6 +15,7 @@ import {
 } from './state/controller';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { Workspace } from './components/Workspace';
+import type { ReloginDone } from './components/ReloginPanel';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { WindowDragStrip } from './components/WindowDragStrip';
 import { markBoot } from './lib/bootTimings';
@@ -31,13 +32,17 @@ import { nowT } from './i18n/useT';
 async function startSession(
   community: StoredCommunity,
   onSessionLost: (message: string, accountId: string) => void,
+  /** 이 칸에 세운다(다시 로그인). 주지 않으면 지금 활성 칸이다. */
+  slotId?: string,
 ): Promise<Controller> {
   const entry = await startCommunitySession({
     baseUrl: community.baseUrl,
     token: community.token,
     accountId: community.accountId,
     label: community.label,
+    loginId: community.loginId ?? null,
     active: true,
+    slotId,
     notifier: createNotifier(),
     onSessionLost: (message: string, accountId: string) => onSessionLost(message, accountId),
   });
@@ -66,6 +71,7 @@ function restoreOthers(
       token: c.token,
       accountId: c.accountId,
       label: c.label,
+      loginId: c.loginId ?? null,
       notifier: createNotifier(),
       onSessionLost,
       onCredentialRejected: (accountId) => { void sessionStore.remove(accountId); },
@@ -129,10 +135,38 @@ export default function App() {
   // 잡혀 있었고, 전환기가 활성을 바꾸면 그 낡음이 그대로 오답이 된다. 같은 사실을 두 곳에
   // 두지 않는 것이 이 저장소의 규칙이기도 하다.
   const handleSessionLost = (message: string, accountId: string) => {
-    if (accountId === getActiveEntry().accountId) {
+    // 그 커뮤니티의 「로그인 필요」 표시는 팩토리가 이미 세웠다(`signedOutThen`). 여기서 정하는 것은
+    // **전체 로그인 화면으로 갈지**뿐이다: 살아 있는 다른 커뮤니티가 있으면 가지 않는다 — 레일을 남기고
+    // 그 자리에 다시 로그인 패널을 띄운다(designer 시안 ④ B). 예전에는 활성 하나가 만료되면 레일까지
+    // 사라져 살아 있던 다른 커뮤니티로 갈 길이 없었다(2026-10-27).
+    const { entries } = useCommunityRegistry.getState();
+    const othersAlive = entries.some((e) => e.accountId && e.accountId !== accountId && !e.signedOut);
+    if (accountId === getActiveEntry().accountId && !othersAlive) {
       setConnectError(message);
       setPhase('connect');
     }
+  };
+
+  /**
+   * 다시 로그인 패널이 성공했다 — 보관본에 적고 **패널의 그 칸**(`entryId`)에 세션을 다시 세운다(`claimEntry` 가
+   * 표시를 걷는다).
+   *
+   * 「지금 활성」이 아니라 그 칸인 이유(security F1): 로그인·키체인을 기다리는 사이 사람이 다른 커뮤니티로 옮길 수
+   * 있다. 그때 활성 칸에 세우면 살아 있던 그 커뮤니티의 컨트롤러가 멈추고, 만료됐던 계정이 남의 이름표를 달고 선다.
+   * 그래서 칸·이름표는 패널이 넘긴 엔트리의 것만 쓰고, 활성이 바뀌었으면 보관본의 `active` 도 건드리지 않는다.
+   */
+  const handleRelogin: ReloginDone = async ({ entryId, baseUrl, token, accountId, handle, loginId }) => {
+    const entry = useCommunityRegistry.getState().entries.find((e) => e.id === entryId);
+    // 기다리는 사이 그 커뮤니티를 이 기기에서 뺐다 — 세울 칸이 없다. 사람이 한 일이므로 조용히 끝낸다.
+    if (!entry) return;
+    const stored = (await sessionStore.load()) ?? { active: null, communities: [] };
+    const existing = stored.communities.findIndex((c) => c.accountId === accountId);
+    const record: StoredCommunity = { accountId, baseUrl, token, handle, loginId, label: entry.label };
+    if (existing >= 0) stored.communities[existing] = { ...record, label: stored.communities[existing]!.label ?? entry.label };
+    else stored.communities.push(record);
+    if (useCommunityRegistry.getState().activeId === entryId) stored.active = accountId;
+    await sessionStore.save(stored);
+    await startSession(stored.communities.find((c) => c.accountId === accountId)!, handleSessionLost, entryId);
   };
 
   useEffect(() => {
@@ -227,18 +261,25 @@ export default function App() {
     return withDragStrip(
       <ConnectScreen
         initialError={connectError}
-        onConnected={async (baseUrl, token, accountId, handle) => {
+        onConnected={async (baseUrl, token, accountId, handle, loginId) => {
           const stored = (await sessionStore.load()) ?? { active: null, communities: [] };
           const existing = stored.communities.findIndex((c) => c.accountId === accountId);
           if (existing >= 0) {
             // 이름은 **살려 둔다**(#165). 재로그인이 사람이 붙인 꼬리표를 지우면, 이름을
             // 붙인 이유(같은 화면의 서버 둘을 구분한다)가 로그인 한 번에 사라진다.
-            stored.communities[existing] = { accountId, baseUrl, token, handle, label: stored.communities[existing]!.label };
+            stored.communities[existing] = { accountId, baseUrl, token, handle, loginId, label: stored.communities[existing]!.label };
           } else {
-            stored.communities.push({ accountId, baseUrl, token, handle, label: null });
+            stored.communities.push({ accountId, baseUrl, token, handle, loginId, label: null });
           }
           stored.active = accountId;
           await sessionStore.save(stored);
+          // 세션이 끝난 커뮤니티 줄(시안 ④ d5)에서 다시 들어왔다 — 그 엔트리가 이미 레지스트리에 있으면 그것을
+          // 활성으로 돌린 뒤 세운다. 안 그러면 `claimActive` 가 **다른** 엔트리 자리를 덮어 같은 계정이 둘 선다.
+          {
+            const reg = useCommunityRegistry.getState();
+            const hit = reg.entries.find((e) => e.accountId === accountId);
+            if (hit && hit.id !== reg.activeId) reg.setActive(hit.id);
+          }
           try {
             await startSession(stored.communities.find((c) => c.accountId === accountId)!, handleSessionLost);
             setPhase('ready');
@@ -287,6 +328,7 @@ export default function App() {
   return (
     <>
     <Workspace
+      onRelogin={handleRelogin}
       onLogout={() => { forgetSavedAppWindows(useCommunityRegistry.getState().activeId); setPhase('connect'); }}
       onOpenSettings={(section, targetId) => setSettings({ section, targetId })}
     />

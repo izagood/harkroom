@@ -3647,6 +3647,13 @@ export async function startCommunitySession(opts: {
   accountId: string;
   /** 이 기기에서 붙인 표시 이름(#165). `null` 은 "붙이지 않았다" — 호스트명으로 떨어진다. */
   label: string | null;
+  /** 로그인 칸에 넣은 ID — 세션이 끝났을 때 「다시 로그인」 패널이 채운다. 모르면 생략. */
+  loginId?: string | null;
+  /**
+   * 이 칸에 세운다(레지스트리 엔트리 id). 주면 `active` 와 무관하게 그 칸만 갱신하고 활성은 건드리지 않는다 —
+   * 다시 로그인처럼 기다림 뒤에 세우는 길이 쓴다(security F1). 실패해도 칸을 빼지 않는다(그 칸은 이미 있던 것이다).
+   */
+  slotId?: string;
   onSessionLost?: (message: string, accountId: string) => void;
   makeWs?: typeof connectWs;
   notifier?: Notifier;
@@ -3656,10 +3663,12 @@ export async function startCommunitySession(opts: {
   const registry = useCommunityRegistry.getState();
   // `active` 는 "화면이 이것을 본다" 이므로 **활성 엔트리를 그 커뮤니티로 만든다** — 새로
   // 덧붙이지 않는다. 그래야 재로그인이 목록을 늘리지 않는다.
-  const input = { baseUrl: opts.baseUrl, accountId: opts.accountId, label: opts.label };
-  const entry = opts.active
-    ? registry.claimActive(input)
-    : registry.register(input);
+  const input = { baseUrl: opts.baseUrl, accountId: opts.accountId, label: opts.label, loginId: opts.loginId ?? null };
+  const entry = opts.slotId
+    ? registry.claimEntry(opts.slotId, input)
+    : opts.active
+      ? registry.claimActive(input)
+      : registry.register(input);
   // 같은 활성 커뮤니티의 재로그인·StrictMode 재기동은 이전 세션을 대체한다. 보존된
   // 컨트롤러를 먼저 끝내야 WS와 로컬 runner가 계정당 하나라는 불변식이 유지된다.
   entry.controller?.stop();
@@ -3668,7 +3677,7 @@ export async function startCommunitySession(opts: {
     api,
     opts.makeWs ?? connectWs,
     opts.notifier ?? silentNotifier,
-    opts.onSessionLost ?? (() => {}),
+    signedOutThen(entry.id, opts.onSessionLost),
     entry.store,
   );
   controller.lastChannelScope = lastChannelScope(opts.baseUrl, opts.accountId);
@@ -3690,10 +3699,27 @@ export async function startCommunitySession(opts: {
     if (current?.controller === controller) {
       useCommunityRegistry.getState().attachController(entry.id, null);
     }
-    if (!opts.active) useCommunityRegistry.getState().remove(entry.id);
+    if (!opts.active && !opts.slotId) useCommunityRegistry.getState().remove(entry.id);
     throw err;
   }
   return { ...entry, controller };
+}
+
+/**
+ * 세션 손실 콜백 앞에 「이 커뮤니티는 로그인이 필요하다」 표시를 끼운다(designer 시안 ④ B).
+ *
+ * 표시를 화면(App)이 아니라 여기서 세우는 이유: 커뮤니티를 세우는 길이 셋(기동 활성·기동 복원·설정의 추가)이고,
+ * 설정의 추가는 손실 콜백을 넘기지 않는다. 화면에 두면 그 길로 붙은 커뮤니티는 만료돼도 아무 표시가 없다.
+ * 엔트리가 이미 빠졌으면(커뮤니티 빼기) 조용히 넘어간다.
+ */
+function signedOutThen(
+  entryId: string, next?: (message: string, accountId: string) => void,
+): (message: string, accountId: string) => void {
+  return (message, accountId) => {
+    const registry = useCommunityRegistry.getState();
+    if (registry.entries.some((e) => e.id === entryId)) registry.setSignedOut(entryId, true);
+    next?.(message, accountId);
+  };
 }
 
 /**
@@ -3738,6 +3764,7 @@ export function restoreCommunitySession(opts: {
   token: string;
   accountId: string;
   label: string | null;
+  loginId?: string | null;
   /** 서버가 이 토큰을 거절했다. 보관본에서 빼는 것은 호출부 몫이다(이 층은 키체인을 모른다). */
   onCredentialRejected: (accountId: string) => void;
   onSessionLost?: (message: string, accountId: string) => void;
@@ -3753,7 +3780,7 @@ export function restoreCommunitySession(opts: {
   if (opts.accountId && registry.entries.some((e) => e.accountId === opts.accountId)) {
     return { cancel: () => {} };
   }
-  const entry = registry.register({ baseUrl: opts.baseUrl, accountId: opts.accountId, label: opts.label });
+  const entry = registry.register({ baseUrl: opts.baseUrl, accountId: opts.accountId, label: opts.label, loginId: opts.loginId ?? null });
   const delays = opts.retryDelaysMs ?? RESTORE_RETRY_MS;
   let cancelled = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -3772,7 +3799,7 @@ export function restoreCommunitySession(opts: {
       opts.makeApi ? opts.makeApi() : new ApiClient(opts.baseUrl, opts.token),
       opts.makeWs ?? connectWs,
       opts.notifier ?? silentNotifier,
-      opts.onSessionLost ?? (() => {}),
+      signedOutThen(entry.id, opts.onSessionLost),
       entry.store,
     );
     controller.lastChannelScope = lastChannelScope(opts.baseUrl, opts.accountId);

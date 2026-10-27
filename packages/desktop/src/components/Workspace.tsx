@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useActiveStore } from '../state/communities';
+import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { dumpEnterTrace, enterTraceSnapshot, isEnterTraceDumpShortcut } from '../lib/enterTrace';
 import { copyText } from '../lib/clipboard';
 import { getController } from '../state/controller';
@@ -16,6 +16,7 @@ import { AgentTower } from './AgentTower';
 import { Notice } from './Notice';
 import { SaveToast } from './SaveToast';
 import { AttentionStack } from './AuthWarningCards';
+import { ReloginPanel, type ReloginDone } from './ReloginPanel';
 import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
 import { PasswordResetNoticeBanner } from './PasswordReset';
 import { ServerCompatBanner } from './ServerCompatBanner';
@@ -35,12 +36,20 @@ import { Inbox } from './Inbox';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
 
-export function Workspace({ onLogout, onOpenSettings }: {
+const reloginNotWired: ReloginDone = async () => { throw new Error('relogin is not wired'); };
+
+export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWired }: {
   onLogout: () => void;
+  /**
+   * 보고 있는 커뮤니티의 세션이 끝났을 때 그 자리 패널에서 다시 로그인했다(designer 시안 ④ B). App 은 늘 넘긴다.
+   * 옵셔널인 것은 세션 없이 화면만 그리는 시험 때문이고, 빠지면 조용히 넘어가지 않고 패널에 오류로 보인다.
+   */
+  onRelogin?: ReloginDone;
   /** #279: `targetId` 는 "이 에이전트가 선택된 상태로" 라는 뜻이다. */
   onOpenSettings: (section?: SectionId, targetId?: string) => void;
 }) {
   const t = useT();
+  const activeEntry = useCommunityRegistry((r) => r.entries.find((e) => e.id === r.activeId));
   const threadRootId = useActiveStore((s) => s.threadRootId);
   /** 본문을 채널에게 돌려 달라는 요구. 올라갈 때마다 아래 `useEffect` 가 자리를 비운다. */
   const channelRevealSeq = useActiveStore((s) => s.channelRevealSeq);
@@ -276,6 +285,23 @@ export function Workspace({ onLogout, onOpenSettings }: {
    * 않는다 — 그러면 `text-sm` 이 문서의 14px 과 다른 값이 되어 사람이 두 뜻을 계속
    * 구분해야 한다. 대신 4단에 **역할 이름**을 새로 줬다. 회귀선은 `test/typeScale.test.ts` 다.
    */
+  // 보고 있는 커뮤니티의 세션이 끝났다 — 레일은 남기고 사이드바+본문 자리에 다시 로그인 패널을 세운다.
+  // 레일이 남아야 다른 커뮤니티로 갈 길이 있다(2026-10-27: 전체 로그인 화면이 그 길을 지웠다).
+  if (activeEntry?.signedOut) {
+    return (
+      <div className="flex h-full text-body">
+        {/* 패널이 칸 내용을 덮고 있으니 어느 칸도 선택된 것으로 그리지 않는다(designer n5). */}
+        <Rail
+          panel={null}
+          onPanelChange={handleRailPanel}
+          onOpenSettings={onOpenSettings}
+          onManageCommunities={() => onOpenSettings('communities')}
+          onLogout={onLogout}
+        />
+        <ReloginPanel key={activeEntry.id} entry={activeEntry} onDone={onRelogin} />
+      </div>
+    );
+  }
   return (
     <div className="flex h-full text-body">
       {/*

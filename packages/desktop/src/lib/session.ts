@@ -35,6 +35,11 @@ export interface StoredCommunity {
    * 하나에 함께 실린다. **서버에 보내지 않는다.**
    */
   label: string | null;
+  /**
+   * 로그인 칸에 넣은 ID. handle 과 다를 수 있다 — 세션이 끝났을 때 「다시 로그인」 패널이 고정 글자로 채운다.
+   * 이 칸 전의 보관본에는 없다(그때 패널은 칸을 연다). 비밀이 아니지만 같은 항목에 함께 실린다.
+   */
+  loginId?: string | null;
 }
 
 export interface StoredSessions {

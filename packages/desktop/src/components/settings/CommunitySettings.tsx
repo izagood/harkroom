@@ -106,7 +106,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
    * 실패한 커뮤니티의 토큰이 키체인에 남는다.
    */
   const handleAdded = async (
-    baseUrl: string, token: string, accountId: string, handle: string,
+    baseUrl: string, token: string, accountId: string, handle: string, loginId: string,
   ): Promise<void> => {
     setAddError(null);
     // 같은 계정을 두 번 등록하면 목록에 같은 커뮤니티가 둘이 서고 WS 도 둘이 붙는다.
@@ -119,7 +119,7 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
     let entry: CommunityEntry;
     try {
       entry = await startCommunitySession({
-        baseUrl, token, accountId, label: null, active: false, notifier: createNotifier(),
+        baseUrl, token, accountId, label: null, loginId, active: false, notifier: createNotifier(),
       });
     } catch (err) {
       setAddError(message(err, t('community.manage.sessionFailed')));
@@ -131,9 +131,9 @@ export function CommunitySettings({ onCommunitiesEmpty }: {
     // 같은 계정을 둘 적는다. 사람이 붙인 이름은 살린다.
     const existing = stored.communities.findIndex((c) => c.accountId === accountId);
     if (existing >= 0) {
-      stored.communities[existing] = { accountId, baseUrl, token, handle, label: stored.communities[existing]!.label };
+      stored.communities[existing] = { accountId, baseUrl, token, handle, loginId, label: stored.communities[existing]!.label };
     } else {
-      stored.communities.push({ accountId, baseUrl, token, handle, label: null });
+      stored.communities.push({ accountId, baseUrl, token, handle, loginId, label: null });
     }
     await sessionStore.save(stored);
     // 보관한 **뒤에** 옮긴다 — `switchCommunity` 는 보관본의 `active` 를 이 계정으로 고쳐 적는데,

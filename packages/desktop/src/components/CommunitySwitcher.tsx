@@ -262,7 +262,13 @@ function useOthersBlocking(others: CommunityEntry[]): number {
 }
 
 /** 이니셜은 **코드 포인트 단위**로 자른다 — `label[0]` 은 이모지를 반쪽만 잘라 깨진 글자를 그린다. */
-function initialOf(label: string): string {
+/** 타일·행이 읽는 상태 글자. 세션이 끝난 것은 연결 끊김보다 먼저다 — 기다려도 안 풀린다. */
+function communityState(t: ReturnType<typeof useT>, signedOut: boolean, connected: boolean): string {
+  if (signedOut) return t('rail.community.signedOut');
+  return t(connected ? 'rail.community.connected' : 'rail.community.disconnected');
+}
+
+export function initialOf(label: string): string {
   return Array.from(label)[0]?.toUpperCase() ?? '?';
 }
 
@@ -289,17 +295,20 @@ function CommunityTile({ ref, entry, others, open, onClick }: {
   const connected = useStore(entry.store, (s) => s.connected);
   const iconUrl = useStore(entry.store, (s) => s.workspaceIconUrl);
   const othersBlocking = useOthersBlocking(others);
+  // 다른 커뮤니티의 세션이 끝났으면 오른쪽 위 점을 노랑으로 — 「기다리는 것」 점보다 먼저다(시안 ④ B-1).
+  const othersSignedOut = others.filter((o) => o.signedOut).length;
   const label = communityLabel(entry);
-  const base = t('rail.community.tile', {
-    name: label,
-    state: t(connected ? 'rail.community.connected' : 'rail.community.disconnected'),
-  });
+  const base = t('rail.community.tile', { name: label, state: communityState(t, entry.signedOut, connected) });
+  const tileLabel = [
+    othersBlocking > 0 ? t('rail.community.tileOthers', { tile: base, count: othersBlocking }) : base,
+    othersSignedOut > 0 ? t('rail.community.othersSignedOut', { count: othersSignedOut }) : null,
+  ].filter(Boolean).join(' · ');
   return (
     <button
       ref={ref}
       type="button"
       data-testid="rail-community-mark"
-      aria-label={othersBlocking > 0 ? t('rail.community.tileOthers', { tile: base, count: othersBlocking }) : base}
+      aria-label={tileLabel}
       aria-haspopup="menu"
       aria-expanded={open}
       onClick={onClick}
@@ -307,22 +316,35 @@ function CommunityTile({ ref, entry, others, open, onClick }: {
       // 내용 전부이고 크기가 원의 지름에서 따라 나온다(`Identity.tsx` 와 같은 근거).
       // 로고가 있으면 면을 깔지 않는다 — 배경 없는 SVG·PNG 뒤로 레일 색이 그대로 비쳐야 한다.
       // 주황 면(bg-accent)은 로고가 없을 때 머리글자를 얹는 자리다.
-      className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-compose text-sm font-semibold ${iconUrl ? '' : 'bg-accent text-fg-on-strong'} ${FOCUS_RING}
+      className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-compose text-sm font-semibold ${FOCUS_RING}
+        ${entry.signedOut ? 'border border-border-strong bg-surface-sunken text-fg-muted' : iconUrl ? '' : 'bg-accent text-fg-on-strong'}
         ${open ? 'ring-2 ring-accent ring-offset-2 ring-offset-surface-rail' : ''}
-        ${connected ? '' : 'border-2 border-danger'}`}
+        ${connected || entry.signedOut ? '' : 'border-2 border-danger'}`}
     >
       {/* 사진이 있으면 타일을 채운다. 이름은 aria-label 이 말하므로 alt 는 비운다. */}
       {iconUrl
         ? <img src={iconUrl} alt="" data-testid={`community-icon-${entry.id}`} className="h-full w-full rounded-compose object-cover" />
         : initialOf(label)}
-      {othersBlocking > 0 && (
+      {othersSignedOut > 0 ? (
+        <span
+          aria-hidden="true"
+          data-testid="rail-community-others-signed-out"
+          className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-surface-rail bg-warning"
+        />
+      ) : othersBlocking > 0 && (
         <span
           aria-hidden="true"
           data-testid="rail-community-dot"
           className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-surface-rail bg-accent"
         />
       )}
-      {!connected && (
+      {entry.signedOut ? (
+        <span
+          aria-hidden="true"
+          data-testid="rail-community-signed-out"
+          className="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-full border-2 border-surface-rail bg-warning"
+        />
+      ) : !connected && (
         <span
           aria-hidden="true"
           data-testid="rail-community-offline"
@@ -350,7 +372,7 @@ function CommunityRow({ entry, current, shortcut, onSelect }: {
   const blocking = useStore(entry.store, (s) => s.inboxMine);
   const label = communityLabel(entry);
   const host = hostOf(entry);
-  const state = t(connected ? 'rail.community.connected' : 'rail.community.disconnected');
+  const state = communityState(t, entry.signedOut, connected);
   const name = !current && blocking > 0
     ? t('rail.cell.withCount', {
       name: t('rail.community.tile', { name: label, state }),
@@ -383,7 +405,16 @@ function CommunityRow({ entry, current, shortcut, onSelect }: {
         <span className="block truncate text-body font-medium text-fg">{label}</span>
         {host && host !== label && <span className="block truncate text-meta text-fg-subtle">{host}</span>}
       </span>
-      {!connected
+      {entry.signedOut
+        ? (
+          <span
+            data-testid={`community-signed-out-${entry.id}`}
+            className="shrink-0 whitespace-nowrap rounded-card border border-warning-border bg-warning-surface px-1.5 text-meta font-semibold text-warning"
+          >
+            {state}
+          </span>
+        )
+        : !connected
         ? <span data-testid={`community-offline-${entry.id}`} className="shrink-0 whitespace-nowrap text-meta text-danger">{state}</span>
         : !current && blocking > 0 && (
           <span

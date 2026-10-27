@@ -26,7 +26,7 @@ describe('ConnectScreen', () => {
     fireEvent.change(screen.getByLabelText('Login ID'), { target: { value: 'admin' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-    await waitFor(() => expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-9', 'acct_123', 'admin'));
+    await waitFor(() => expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-9', 'acct_123', 'admin', 'admin'));
   });
 
   it('shows server error message on failure', async () => {
@@ -82,7 +82,7 @@ describe('ConnectScreen', () => {
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Admin' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
-    await waitFor(() => expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-b', 'acct_456', 'admin'));
+    await waitFor(() => expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-b', 'acct_456', 'admin', ''));
     expect(calls[0]).toContain('/bootstrap');
   });
 
@@ -188,7 +188,7 @@ describe('ConnectScreen', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() =>
-      expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-246', 'acct_246', 'admin'));
+      expect(onConnected).toHaveBeenCalledWith('http://localhost:3400', 'tok-246', 'acct_246', 'admin', 'admin'));
     expect(seen.find((s) => s.url.endsWith('/auth/me'))?.auth).toBe('Bearer tok-246');
   });
   describe('remembers the last workspace URL', () => {

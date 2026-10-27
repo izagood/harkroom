@@ -9,9 +9,12 @@ import { lastWorkspaceUrlStorage } from '../lib/prefs';
 import { PASSWORD_MAX_LENGTH } from '@harkroom/shared';
 import { ForgotPasswordGuide, ResetWithCodeForm } from '../components/PasswordReset';
 import { useT } from '../i18n/useT';
+import { communityLabel, useCommunityRegistry } from '../state/communities';
+import { initialOf } from '../components/CommunitySwitcher';
 
 /** 로그인이 성공했을 때 위로 올려 보내는 것. 두 모드가 같은 값을 다른 곳으로 보낸다. */
-type Credentials = (baseUrl: string, token: string, accountId: string, handle: string) => void | Promise<void>;
+/** `loginId` 는 사람이 로그인 칸에 넣은 값이다 — handle 과 다를 수 있어 따로 올린다(다시 로그인 패널이 쓴다). */
+type Credentials = (baseUrl: string, token: string, accountId: string, handle: string, loginId: string) => void | Promise<void>;
 
 /**
  * 이 화면이 서는 두 자리(#165).
@@ -48,9 +51,36 @@ export function ConnectScreen(props: ConnectScreenProps) {
   const adding = props.mode === 'add';
   /** 설정에서 「커뮤니티 만들기」로 연 겹창. 만들기가 이 겹창의 처음이자 끝이다. */
   const createOnly = props.mode === 'add' && props.start === 'create';
+  /**
+   * 이 기기에서 세션이 끝난 커뮤니티들(designer 시안 ④ d5). 전부 끝났을 때만 이 화면으로 온다 — 하나라도 살아 있으면
+   * 레일이 남은 다시 로그인 패널이 선다. 첫 실행 화면과 달리 「어디에 다시 들어갈지」를 줄로 먼저 보여 준다.
+   * `add` 겹창은 이미 들어와 있는 사람의 것이라 쓰지 않는다.
+   */
+  const saved = useCommunityRegistry((r) => r.entries).filter((e) => e.signedOut && e.baseUrl && !adding);
+  const [pickedId, setPickedId] = useState<string | null>(() => saved[0]?.id ?? null);
+  /** 저장된 커뮤니티가 있을 때 첫 실행 링크 셋(초대·관리자 만들기·호스티드)은 이 한 줄 뒤에 접혀 있다. */
+  const [showNew, setShowNew] = useState(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  /** 저장된 줄 하나를 고른다 — 주소·ID 를 채운다. 누른 것이면 비밀번호로 포커스를 옮긴다(방향키는 줄에 남긴다). */
+  const pickSaved = (id: string, toPassword: boolean) => {
+    const e = saved.find((x) => x.id === id);
+    if (!e) return;
+    setPickedId(id); setBaseUrl(e.baseUrl); setLoginId(e.loginId ?? ''); setError(null);
+    if (toPassword) passwordRef.current?.focus();
+  };
+  const onSavedKey = (ev: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = ev.key === 'ArrowDown' || ev.key === 'ArrowRight' ? 1 : ev.key === 'ArrowUp' || ev.key === 'ArrowLeft' ? -1 : 0;
+    if (!step || !saved.length) return;
+    ev.preventDefault();
+    const at = Math.max(0, saved.findIndex((x) => x.id === pickedId));
+    const next = saved[(at + step + saved.length) % saved.length]!;
+    pickSaved(next.id, false);
+    ev.currentTarget.querySelector<HTMLButtonElement>(`[data-saved-id="${next.id}"]`)?.focus();
+  };
   // 직전에 로그인에 성공한 주소로 채운다. 한 번도 없으면 self-host 기본값(localhost)이다.
-  const [baseUrl, setBaseUrl] = useState(() => lastWorkspaceUrlStorage.load());
-  const [loginId, setLoginId] = useState('');
+  // 세션이 끝난 커뮤니티가 있으면 그 첫 줄의 주소·로그인 ID 로 채운다.
+  const [baseUrl, setBaseUrl] = useState(() => saved[0]?.baseUrl ?? lastWorkspaceUrlStorage.load());
+  const [loginId, setLoginId] = useState(() => saved[0]?.loginId ?? '');
   const [handle, setHandle] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
@@ -203,8 +233,8 @@ export function ConnectScreen(props: ConnectScreenProps) {
       // 클레임이 끝나야 지운다 — 실패하면 토큰이 남아 있어야 다시 시도할 수 있다.
       pendingWorkspace.clear();
       lastWorkspaceUrlStorage.save(api.baseUrl);
-      if (props.mode === 'add') await props.onAdded(api.baseUrl, token, me.id, me.handle);
-      else await props.onConnected(api.baseUrl, token, me.id, me.handle);
+      if (props.mode === 'add') await props.onAdded(api.baseUrl, token, me.id, me.handle, loginId);
+      else await props.onConnected(api.baseUrl, token, me.id, me.handle, loginId);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t('connect.serverUnreachable'));
     } finally {
@@ -238,8 +268,8 @@ export function ConnectScreen(props: ConnectScreenProps) {
       lastWorkspaceUrlStorage.save(api.baseUrl);
       // 성공을 **어디로** 올려 보내는가가 두 모드의 유일한 차이다. `add` 는 `onAdded` 로
       // 가고 `onConnected`(= `phase` 를 옮기는 초기 흐름)를 부르지 않는다.
-      if (props.mode === 'add') await props.onAdded(api.baseUrl, token, me.id, me.handle);
-      else await props.onConnected(api.baseUrl, token, me.id, me.handle);
+      if (props.mode === 'add') await props.onAdded(api.baseUrl, token, me.id, me.handle, loginId);
+      else await props.onConnected(api.baseUrl, token, me.id, me.handle, loginId);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t('connect.serverUnreachable'));
     } finally {
@@ -258,8 +288,8 @@ export function ConnectScreen(props: ConnectScreenProps) {
     api.setToken(token);
     const me = await api.me();
     lastWorkspaceUrlStorage.save(api.baseUrl);
-    if (props.mode === 'add') await props.onAdded(api.baseUrl, token, me.id, me.handle);
-    else await props.onConnected(api.baseUrl, token, me.id, me.handle);
+    if (props.mode === 'add') await props.onAdded(api.baseUrl, token, me.id, me.handle, loginId);
+    else await props.onConnected(api.baseUrl, token, me.id, me.handle, loginId);
   };
   // `add` 는 겹창 안에서 그려진다 — 화면 전체를 차지하는 껍데기는 겹창이 이미 갖고 있고,
   // 여기서 창 높이(`h-full`)를 또 두면 모달 안에 빈 화면 하나가 더 생긴다.
@@ -311,8 +341,11 @@ export function ConnectScreen(props: ConnectScreenProps) {
               화면 하나가 무엇을 하는 중인지 말하는 유일한 줄이라 맨 윗단이 맞다 —
               `SettingsPage` 의 제목과 같은 단이다(그 파일에 근거를 적어 뒀다). */}
           <h1 className="text-title font-semibold">
-            {authMode === 'create' ? t('connect.title.create') : adding ? t('connect.title.add') : 'Harkroom'}
+            {authMode === 'create' ? t('connect.title.create') : adding ? t('connect.title.add') : saved.length > 0 ? t('relogin.connect.title') : 'Harkroom'}
           </h1>
+          {saved.length > 0 && authMode === 'signin' && (
+            <p className="text-center text-meta text-fg-muted">{t('relogin.connect.body')}</p>
+          )}
         </div>
         {/* 로그인 **전**에도 업데이트할 수 있어야 한다(실측 2026-09-07): 서버에 못 붙는
             버전이면 업데이트가 필요한데, 업데이트가 로그인 뒤에만 있으면 빠져나갈 길이 없다.
@@ -408,6 +441,34 @@ export function ConnectScreen(props: ConnectScreenProps) {
           )
         ) : (
         <>
+        {saved.length > 0 && authMode === 'signin' && (
+          /* 라디오 묶음 — Tab 으로는 고른 줄 하나에만 들어오고 방향키로 옮긴다(roving tabindex, designer n3).
+             고르면 주소·ID 가 채워지고 포커스는 비밀번호로 간다. 고른 줄은 테두리 색에 ✓ 를 더한다. */
+          <div className="space-y-1" role="radiogroup" aria-label={t('relogin.connect.saved')} onKeyDown={onSavedKey}>
+            {saved.map((e) => (
+              <button
+                key={e.id}
+                type="button"
+                role="radio"
+                aria-checked={pickedId === e.id}
+                tabIndex={pickedId === e.id ? 0 : -1}
+                data-testid={`connect-saved-${e.id}`}
+                data-saved-id={e.id}
+                onClick={() => pickSaved(e.id, true)}
+                className={`flex w-full items-center gap-2 rounded-row border px-2 py-1.5 text-left ${pickedId === e.id ? 'border-accent' : 'border-border'} bg-surface hover:bg-surface-hover`}
+              >
+                <span aria-hidden="true" className="flex h-5 w-5 shrink-0 items-center justify-center rounded-card bg-surface-sunken text-meta font-semibold text-fg-muted">
+                  {initialOf(communityLabel(e))}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-semibold text-fg">{communityLabel(e)}</span>
+                  <span className="block truncate text-meta text-fg-subtle">{hostOfUrl(e.baseUrl)}</span>
+                </span>
+                {pickedId === e.id && <span aria-hidden="true" data-testid="connect-saved-check" className="shrink-0 text-accent">✓</span>}
+              </button>
+            ))}
+          </div>
+        )}
         <label className="block text-meta font-medium">
           {t('connect.field.serverUrl')}
           <input className={field} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
@@ -451,7 +512,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
         <div className="relative">
           <label className="block text-meta font-medium">
             {t('connect.field.password')}
-            <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} data-testid="connect-password" />
+            <input ref={passwordRef} className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} data-testid="connect-password" />
           </label>
           {authMode === 'signin' && (
             <button type="button" data-testid="connect-forgot" className="absolute right-0 top-0 text-meta font-normal text-accent hover:underline"
@@ -468,7 +529,8 @@ export function ConnectScreen(props: ConnectScreenProps) {
           </p>
         )}
         {/* 오류는 본문단이다 — 로그인이 막힌 사람에게 이 한 줄이 유일한 단서다. */}
-        {error && <p className="break-keep text-danger">{error}</p>}
+        {/* 세션이 끝났다는 안내는 위 설명 줄이 중립으로 이미 말한다 — 같은 말을 빨강으로 겹치지 않는다(시안 ④ 1-4). */}
+        {error && !(saved.length > 0 && error === initialError) && <p className="break-keep text-danger">{error}</p>}
         {!recoveryKey && (
         <button
           type="submit"
@@ -491,7 +553,16 @@ export function ConnectScreen(props: ConnectScreenProps) {
             : authMode === 'signin' ? t('connect.submit.signIn') : authMode === 'bootstrap' ? t('connect.submit.createAccount') : t('connect.submit.join')}
         </button>
         )}
-        {authMode === 'signin' ? (
+        {authMode === 'signin' && saved.length > 0 && !showNew ? (
+          <button
+            type="button"
+            data-testid="connect-show-new"
+            className="w-full text-meta text-fg-subtle underline"
+            onClick={() => setShowNew(true)}
+          >
+            {t('relogin.connect.new')}
+          </button>
+        ) : authMode === 'signin' ? (
           <div className="space-y-1">
             <button
               type="button"
@@ -565,4 +636,8 @@ export function ConnectScreen(props: ConnectScreenProps) {
       </form>
     </div>
   );
+}
+
+function hostOfUrl(baseUrl: string): string {
+  try { return new URL(baseUrl).host || baseUrl; } catch { return baseUrl; }
 }
