@@ -32,7 +32,7 @@ import { ReviewFork } from './reviewFork.js';
 import { createMemoryCache } from './memoryCache.js';
 import { runPtyTurn } from './pty.js';
 import { avcsGuideFlag } from './avcsGuideFlag.js';
-import { createGuideCache } from './guideCache.js';
+import { createGuideCache, guideHeadForLog, isGuideText } from './guideCache.js';
 import { SessionStore } from './sessions.js';
 import { ensureNameLink, resolveAgentStateDir, runnerSkillsDir } from './stateDir.js';
 import { assertHarnessContract, buildTurnCommand, harnessPath, readExtraMcpServers, readMcpServers, writeSystemPromptFile, type McpServerEntry } from './turn.js';
@@ -291,6 +291,9 @@ const [me, guide] = await (async () => {
     throw err;
   }
 })();
+
+// 기동 때 받은 첫 판은 거부하지 않는다 — 쓸 판이 그것뿐이다. 머리가 다르면 경고만 남긴다(#1616 security m2).
+if (!isGuideText(guide)) console.error(`경고: 기동 때 받은 가이드의 머리가 다르다(${guideHeadForLog(guide)}) — 그대로 쓰고 10분 뒤 다시 받는다`);
 
 const guideCache = createGuideCache({
   initial: guide,
