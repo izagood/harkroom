@@ -69,7 +69,11 @@ export function MemberAccessPanel({ person, me, onBack, testId }: {
     if (!canRead) { setGrants({ kind: 'hidden' }); return; }
     try {
       const rows: GrantRow[] = await getController().listGrants(person.id);
-      setGrants({ kind: 'ready', caps: new Set(rows.filter((r) => r.scope === '' && !r.suspendedAt).map((r) => r.capability)) });
+      // 서버 판정(`hasGrant`)과 같은 줄만 켜진 것으로 본다 — 전역이고, 멈추지 않았고, 만료가 안 지난 것(security n2).
+      const now = Date.now();
+      setGrants({ kind: 'ready', caps: new Set(rows
+        .filter((r) => r.scope === '' && !r.suspendedAt && (r.expiresAt == null || Date.parse(r.expiresAt) > now))
+        .map((r) => r.capability)) });
     } catch { setGrants({ kind: 'error' }); }
   }, [person.id, needCaps, canRead]);
 

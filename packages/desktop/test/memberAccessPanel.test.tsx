@@ -17,7 +17,7 @@ const admin: AccountView = acc('a1', 'ops', 'human', true);
 const member: AccountView = acc('m1', 'dev', 'human', false);
 const guest: AccountView = { ...acc('g1', 'visitor', 'human', false), role: 'guest' };
 
-function fakeController(grants: { capability: string; scope: string }[] = []) {
+function fakeController(grants: { capability: string; scope: string; expiresAt?: string | null }[] = []) {
   const c = {
     createInvite: vi.fn(async () => 't'),
     refreshAccounts: vi.fn(async () => {}),
@@ -97,6 +97,19 @@ describe('멤버와 초대 › 역할·권한 칸', () => {
     await waitFor(() => expect(c.deleteGrant).toHaveBeenCalledWith('m1', 'agent.create', ''));
     await waitFor(() => expect((sw as HTMLInputElement).checked).toBe(true));
     expect(within(screen.getByTestId('member-access-side')).getByRole('alert').textContent).toContain('Couldn’t change it');
+  });
+
+  it('만료가 지난 grant 는 꺼진 것으로 보인다 — 서버 판정과 같다', async () => {
+    fakeController([
+      { capability: 'agent.create', scope: '', expiresAt: '2000-01-01T00:00:00.000Z' },
+      { capability: 'team.create', scope: '', expiresAt: '2999-01-01T00:00:00.000Z' },
+    ]);
+    seed(owner);
+    render(<InviteSettings />);
+    fireEvent.click(screen.getByTestId('directory-row-m1'));
+    const team = await screen.findByTestId('member-access-side-cap-team.create');
+    await waitFor(() => expect((team as HTMLInputElement).checked).toBe(true));
+    expect((screen.getByTestId('member-access-side-cap-agent.create') as HTMLInputElement).checked).toBe(false);
   });
 
   it('admin 승격은 확인 창을 거친다 — 확인해야 PUT /role 이 나간다', async () => {
