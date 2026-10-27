@@ -1,31 +1,38 @@
 /**
- * **첫 설치에서 이 머신의 오퍼레이터를 커뮤니티에 등록한다.**
+ * **이 기계가 아직 이 커뮤니티에 없으면 이 기계의 오퍼레이터를 등록한다**(격리 C P8, 결정 D4).
  *
  * 앱은 뜰 때 오퍼레이터 프로세스를 세우지만(`RunnerLauncher.ensureOperator`), 커뮤니티에 **등록**하는
  * 길은 설정 › 이 머신의 오퍼레이터의 [이 머신을 등록] 버튼 하나뿐이었다. 그래서 커뮤니티를 새로 만들고
  * 앱을 깐 사람은 Operators 가 비어 있는 채로 시작했다 — 에이전트를 만들어도 돌릴 곳이 없다.
  *
- * 자동으로 하는 것은 **커뮤니티 전체 목록을 볼 수 있는 사람(`operator.manage`)이 아무 오퍼레이터도 없는
- * 커뮤니티**에 들어왔을 때뿐이다 — 커뮤니티를 새로 만든 사람이다. `operator.manage` 가 없는 member 에게
- * `GET /operators` 는 **자기 것만** 돌려주므로 빈 목록이 「빈 커뮤니티」가 아니다(security F1): 거기서 자동으로
- * 붙이면 남의 커뮤니티에 이 기기 이름이 동의 없이 오른다. 그런 사람과, 이미 다른 기기가 있는 커뮤니티는
- * 사람이 정한다(버튼). 판단에 필요한 사실 중 하나라도 못 읽으면 하지 않는다 — 모르는 채로 등록하면 같은
- * 머신이 두 번 선다.
+ * 앞 판본은 「오퍼레이터가 하나도 없는 커뮤니티」에서만 했다. 그러면 다른 기기가 이미 선 커뮤니티에 새 기계로
+ * 들어온 관리자는 버튼을 찾아야 했다. 이제 조건은 **이 기계의 로컬 설정에 이 커뮤니티 등록이 없음**이다.
+ * 커뮤니티마다 프로세스 모드(스위치 켜짐)에서는 로컬 설정이 그 커뮤니티 뿌리의 것이다 — 호출부가 오퍼레이터를
+ * 세운 **뒤에** 부르므로 순서는 뿌리 생성 → 기동 → 등록이 된다.
+ *
+ * 남은 거름:
+ * - **`operator.manage` 가 있는 사람만**(커뮤니티를 관리하는 사람). member 가 들어올 때마다 그 사람의 기기 이름이
+ *   남의 커뮤니티 목록에 동의 없이 오르면 안 된다(security F1). 그 사람은 버튼으로 정한다.
+ * - **커뮤니티마다 한 번뿐**(`wasAutoRegistered`). 사람이 이 기계를 뺐으면 다음 기동에 다시 세우지 않는다 —
+ *   뺀 것이 그 사람의 뜻이다. 이미 등록돼 있던 기계도 표시해 둔다(나중에 빼도 되살리지 않게).
+ * - 판단에 필요한 사실을 못 읽으면 하지 않는다 — 모르는 채로 등록하면 같은 기계가 두 번 선다.
  */
 export interface AutoRegisterDeps {
   /** 지금 로그인한 커뮤니티 주소. 없으면 하지 않는다. */
   baseUrl: string | null;
   /** `operator.register` 능력이 있는가. */
   canRegister: boolean;
-  /** `operator.manage` 능력이 있는가 — 있어야 `GET /operators` 가 커뮤니티 전체다. */
+  /** `operator.manage` 능력이 있는가 — 커뮤니티를 관리하는 사람만 자동으로 기계를 세운다. */
   canManage: boolean;
-  /** 이 머신의 오퍼레이터 로컬 설정(`operator_agents_list`). */
+  /** 이 기계의 오퍼레이터 로컬 설정(`operator_agents_list`, 그 커뮤니티의 오퍼레이터). */
   listLocal: () => Promise<{ communities: { baseUrl: string; registered: boolean }[] }>;
-  /** 커뮤니티에 등록된 오퍼레이터 목록(`GET /operators`). `canManage` 일 때만 전체다. */
-  listOperators: () => Promise<unknown[]>;
+  /** 이 커뮤니티에 이 기계를 자동으로 세운 적이 있는가(`operatorAutoRegisteredStorage`). */
+  wasAutoRegistered: (baseUrl: string) => boolean;
+  /** 자동 등록을 끝낸 것으로 표시한다 — 다음부터는 하지 않는다. */
+  markAutoRegistered: (baseUrl: string) => void;
   /** 등록 코드 발급(`POST /operators/register-code`). */
   mintCode: () => Promise<{ code: string }>;
-  /** 코드를 이 머신의 오퍼레이터에 넘긴다(`operator_register`). */
+  /** 코드를 이 기계의 오퍼레이터에 넘긴다(`operator_register`). */
   register: (baseUrl: string, code: string) => Promise<unknown>;
 }
 
@@ -33,24 +40,31 @@ export type AutoRegisterOutcome =
   | 'registered'
   | 'no-server'
   | 'no-capability'
+  | 'done-before'
   | 'already-local'
-  | 'community-has-operators'
   | 'unknown';
+
+function sameCommunity(a: string, b: string): boolean {
+  return a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
+}
 
 export async function autoRegisterFirstOperator(deps: AutoRegisterDeps): Promise<AutoRegisterOutcome> {
   const { baseUrl } = deps;
   if (!baseUrl) return 'no-server';
   if (!deps.canRegister || !deps.canManage) return 'no-capability';
+  if (deps.wasAutoRegistered(baseUrl)) return 'done-before';
   let local: Awaited<ReturnType<AutoRegisterDeps['listLocal']>>;
-  let operators: unknown[];
   try {
-    [local, operators] = await Promise.all([deps.listLocal(), deps.listOperators()]);
+    local = await deps.listLocal();
   } catch {
     return 'unknown';
   }
-  if (local.communities.some((c) => c.baseUrl === baseUrl && c.registered)) return 'already-local';
-  if (operators.length > 0) return 'community-has-operators';
+  if (local.communities.some((c) => sameCommunity(c.baseUrl, baseUrl) && c.registered)) {
+    deps.markAutoRegistered(baseUrl);
+    return 'already-local';
+  }
   const { code } = await deps.mintCode();
   await deps.register(baseUrl, code);
+  deps.markAutoRegistered(baseUrl);
   return 'registered';
 }
