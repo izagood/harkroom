@@ -69,7 +69,8 @@ jobs:
   # 매 회 새 서버를 **이 커밋으로 구워** 띄운다(ghcr latest 가 아니다 — 고친 서버를 같은 PR 에서 본다).
   # 시드 비밀번호는 seed.ts 가 회차마다 만드는 난수라 secrets 가 필요 없다. 끝나면 서버·볼륨을 지운다.
   e2e-web:
-    runs-on: ubuntu-latest
+    # Playwright 1.56 은 ubuntu-latest(지금 26.04)용 chromium 의존성을 깔지 못한다 — 24.04 로 고정한다.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
