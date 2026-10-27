@@ -1107,6 +1107,21 @@ fn main() {
             notification::install(app.handle());
             pinch_zoom::install(app.handle());
             update_channel::spawn_probe(app.handle());
+            // 격리 C 옮기기(P7): 커뮤니티마다 모드를 켜고 처음 뜨면 옛 자리 커뮤니티를 색인에 `legacy` 로 적는다(이동 0).
+            // 끄고 뜨면 색인을 지운다(되돌리기). 실패해도 앱은 뜬다 — 그때 켜진 모드는 옛 자리를 몰라 새 뿌리를 쓴다.
+            if let Ok(dir) = tauri::Manager::path(app).app_data_dir() {
+                let root = daemon_client::app_data_root(&dir);
+                let res = if community_root::per_community_enabled() {
+                    community_root::adopt_legacy(&root).map(|k| k.map(|k| format!("옛 자리를 legacy 칸으로 적었다: {k}")))
+                } else {
+                    community_root::revert_index(&root).map(|gone| gone.then(|| "커뮤니티마다 모드를 끄고 떠서 색인을 지웠다".to_string()))
+                };
+                match res {
+                    Ok(Some(line)) => eprintln!("harkroom: {line}"),
+                    Ok(None) => {}
+                    Err(e) => eprintln!("harkroom: 오퍼레이터 색인 옮기기 실패 — {e}"),
+                }
+            }
             // 기동 확인(`scripts/launch-smoke.sh`)이 "setup 을 지났다"를 읽는 표지. 켜지 않으면 아무것도 안 한다.
             if std::env::var_os("HARKROOM_LAUNCH_SMOKE").is_some() {
                 eprintln!("harkroom-launch-smoke: setup done");
