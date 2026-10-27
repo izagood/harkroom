@@ -29,6 +29,10 @@ let snapshotBase: string | null = null;
 const listeners = new Set<() => void>();
 let stopWatching: (() => void) | null = null;
 let generation = 0;
+/** 지금 읽는 중인 커뮤니티. 같은 커뮤니티를 이미 읽는 중이면 다시 묻지 않는다(security #1648 n1). */
+let inflightBase: string | null = null;
+/** 전환 뒤 곧바로 다시 읽기를 이미 건 커뮤니티 — 한 번만 건다. 실패하면 30초 주기가 다시 묻는다. */
+let switchRequestedBase: string | null = null;
 
 function currentBase(): string | null {
   // 메시지 줄마다 불린다 — 컨트롤러가 아직 없는 순간(기동·커뮤니티 전환)에 화면을 깨뜨리지 않는다.
@@ -45,8 +49,10 @@ function publish(next: Snapshot, base: string | null) {
 function refresh() {
   const base = currentBase();
   if (!base) { if (snapshot !== EMPTY) publish(EMPTY, null); return; }
+  if (inflightBase === base) return;
+  inflightBase = base;
   const gen = ++generation;
-  void listLocalAgents().then((r) => {
+  void listLocalAgents(base).finally(() => { if (inflightBase === base) inflightBase = null; }).then((r) => {
     if (gen !== generation) return;
     const agents = r.communities.find((c) => c.baseUrl === base)?.agents ?? {};
     const next = new Map<string, LocalLane>();
@@ -76,7 +82,17 @@ function subscribe(cb: () => void): () => void {
 
 function getSnapshot(): Snapshot {
   // 커뮤니티를 바꾸면 다음 읽기 전까지 옛 커뮤니티의 사실을 보이지 않는다.
-  return snapshotBase !== null && snapshotBase !== currentBase() ? EMPTY : snapshot;
+  const base = currentBase();
+  if (snapshotBase !== null && snapshotBase !== base) {
+    // 전환 뒤 첫 읽기 — 새 커뮤니티 값을 곧바로 다시 읽는다(30초 주기를 기다리지 않게, security #1640 n2).
+    // 커뮤니티마다 한 번만 건다 — 그릴 때마다 걸면 답이 오기 전·실패한 뒤 IPC 가 그 횟수만큼 나간다(security #1648 n1).
+    if (switchRequestedBase !== base) {
+      switchRequestedBase = base;
+      queueMicrotask(refresh);
+    }
+    return EMPTY;
+  }
+  return snapshot;
 }
 
 /** 이 맥에서 API 키로 도는 에이전트 표(id → 마지막 키 받기 결과). Tauri 표면이 없으면 늘 비어 있다. */
@@ -92,6 +108,8 @@ export function useLocalLane(agentId: string | null | undefined): LocalLane | nu
 
 /** 시험용 — 모듈 스냅숏을 비운다. */
 export function resetLocalLanesForTest() {
+  inflightBase = null;
+  switchRequestedBase = null;
   generation++;
   stopWatching?.();
   stopWatching = null;

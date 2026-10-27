@@ -17,7 +17,8 @@
  * `none` 이 곧 "인증 필요"는 아니다 — 요구 여부는 서버가 안다. 정의에 `oauth` 가 적혀 있으면
  * (slack 프리셋) 요구한다고 보고, `warn`(에이전트에 켠 줄)이면 빨갛게 보인다.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { getController } from '../../state/controller';
 import { forgetLocalMcpAuth, localMcpAuthStatus, startLocalMcpAuth } from '../../lib/operatorLocal';
 import { getExternalOpener } from '../../lib/openExternal';
 import { useT } from '../../i18n/useT';
@@ -34,12 +35,14 @@ const POLL_MS = 1500;
 export function useMcpSignIn(name: string, onChanged: () => void, onError: (message: string) => void) {
   const t = useT();
   const [waiting, setWaiting] = useState(false);
+  // 흐름을 **시작한** 커뮤니티. 로그인 중에 다른 커뮤니티로 옮겨도 상태는 그 커뮤니티의 오퍼레이터에 묻는다(security #1640 n1).
+  const flowCommunity = useRef<string | null>(null);
 
   useEffect(() => {
     if (!waiting) return;
     const until = Date.now() + WAIT_MS;
     const timer = setInterval(() => {
-      void localMcpAuthStatus(name).then((st) => {
+      void localMcpAuthStatus(name, flowCommunity.current).then((st) => {
         if (st.state === 'pending' && Date.now() < until) return;
         setWaiting(false);
         onChanged();
@@ -51,7 +54,8 @@ export function useMcpSignIn(name: string, onChanged: () => void, onError: (mess
   const fail = (e: unknown) => onError(t('agents.mcp.auth.failed', { reason: errorText(e, t) }));
   const signIn = () => void (async () => {
     try {
-      const { authUrl } = await startLocalMcpAuth(name);
+      flowCommunity.current = getController().api?.baseUrl ?? null;
+      const { authUrl } = await startLocalMcpAuth(name, flowCommunity.current);
       setWaiting(true);
       await getExternalOpener().open(authUrl);
     } catch (e) {
@@ -59,6 +63,6 @@ export function useMcpSignIn(name: string, onChanged: () => void, onError: (mess
       fail(e);
     }
   })();
-  const signOut = () => void forgetLocalMcpAuth(name).then(onChanged, fail);
+  const signOut = () => void forgetLocalMcpAuth(name, getController().api?.baseUrl ?? null).then(onChanged, fail);
   return { waiting, signIn, signOut };
 }

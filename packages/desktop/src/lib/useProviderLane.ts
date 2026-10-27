@@ -70,7 +70,7 @@ export function useProviderLane(agentId: string | null): ProviderLaneState {
   useEffect(() => {
     if (!agentId || !baseUrl || !hasOperatorLocalSurface()) { setAvailable(false); return; }
     let live = true;
-    void listLocalAgents()
+    void listLocalAgents(baseUrl)
       .then((r) => {
         if (!live) return;
         const entry = r.communities.find((c) => c.baseUrl === baseUrl)?.agents[agentId];
