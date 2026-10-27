@@ -72,6 +72,7 @@ import { errorText } from '../../lib/errorText';
 import { useProviderLane } from '../../lib/useProviderLane';
 import { CreateLaneFailure, CreateModelConnectionField, createLaneFailed, createLaneSelection, LANE_HARNESSES, LANE_ONLY_HARNESSES, laneModelRaw, ModelConnectionField, ModelConnectionStatus, type CreateLaneDraft, type CreateLaneSecret } from './ModelConnectionField';
 import type { CreateLaneResult } from '../../state/controller';
+import { hasCapability } from '../../lib/capabilities';
 
 /** AGENT_HARNESSES 에조차 없는 harness. 없는 것은 사용자의 CLI 가 아니라 harkroom 의 구현이므로
  *  '설치 안 됨'이 아니라 '지원 예정'이다. AGENT_HARNESSES 에는 있지만 아직 못 돌리는 것(RUNNABLE_HARNESSES
@@ -503,6 +504,18 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
   const [busy, setBusy] = useState(false);
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
   const myId = useActiveStore((s) => s.me?.id);
+  // 만들기 문은 역할이 아니라 **능력**을 본다 — 서버(`POST /accounts/agents`·`POST /teams`)가 `requireCap` 이라
+  // member 도 grant 를 받으면 만든다. `isAdmin` 으로 막으면 grant 를 받은 member 에게 문이 끝내 안 선다.
+  const canCreateAgent = useActiveStore((s) => hasCapability(s.me, 'agent.create'));
+  const canCreateTeam = useActiveStore((s) => hasCapability(s.me, 'team.create'));
+  const isGuest = useActiveStore((s) => s.me?.role === 'guest');
+  // 권한이 없을 때 청할 사람 — owner 가 먼저, 없으면 첫 admin(가나다). 디렉터리에 `role` 이 없는 옛 서버면 이름 없이 말한다.
+  const askAdminHandle = useActiveStore((s) => {
+    const humans = Object.values(s.accounts).filter((a) => a.kind === 'human' && !a.disabled && !a.deleted);
+    const pick = humans.find((a) => a.role === 'owner')
+      ?? humans.filter((a) => a.role === 'admin').sort((a, b) => a.handle.localeCompare(b.handle))[0];
+    return pick?.handle ?? null;
+  });
   const creating = draft !== null && !selected;
   // [API key] 를 고를 때만 읽는다(API 키만 되는 하네스는 처음부터) — 계정 풀로 만드는 대부분은 비밀 목록을 부르지 않는다.
   const needsLaneSecrets = creating && (createLane.mode === 'apiKey' || LANE_ONLY_HARNESSES.includes(draft?.harness ?? ''));
@@ -1843,10 +1856,10 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
           connected={connected}
           onPick={setSelectedTeam}
           onCreate={() => { setCreatingTeam(true); setError(null); }}
-          /* 팀을 만들 수 있는 것은 admin 뿐이다(서버가 그렇게 허용한다) — 비-admin 에게
+          /* 팀을 만들 수 있는 것은 `team.create` 를 가진 사람뿐이다(서버 `requireCap`) — 없는 사람에게
              `+` 를 내주면 눌렀을 때 403 이고, 그건 "할 수 있다"는 거짓 신호다
              (`agentTeams.test.tsx` 머리 주석이 그 규율을 적어 뒀다). */
-          canCreate={isAdmin}
+          canCreate={canCreateTeam}
         />
       </div>
     );
@@ -1926,7 +1939,16 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
           connected={connected}
           onPick={(a) => pick(a)}
           onCreate={startNew}
-          canCreate={isAdmin}
+          canCreate={canCreateAgent}
+          /* guest 는 채널 하나의 손님 자리라 청할 것도 없다 — 칸을 비운다. */
+          {...(!canCreateAgent && !isGuest ? {
+            createBlocked: {
+              title: t('agents.create.noPermission'),
+              hint: askAdminHandle
+                ? t('agents.create.noPermissionAsk', { handle: askAdminHandle })
+                : t('agents.create.noPermissionAskAny'),
+            },
+          } : {})}
           /*
             **`■` 가 부르는 것**(`docs/desktop-agent-cards.pdf` 2쪽 하단). 상세의 `중지`
             버튼과 **같은 API** 다(`requestAgentStop`) — 격자에서 누르는 것과 상세에서

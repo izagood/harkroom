@@ -727,7 +727,7 @@ function VersionChip({ handle, runnerVersion, assignment, operators, restarting 
  */
 export function AgentGrid<T extends AgentCardSubject>({
   agents, selectedId, runnerStates, online, connected, onPick, onCreate, canCreate,
-  onStop, operatorVersions = null, place = 'settings', mergeCounts,
+  onStop, operatorVersions = null, place = 'settings', mergeCounts, createBlocked,
 }: {
   agents: T[];
   selectedId: string | null;
@@ -738,6 +738,11 @@ export function AgentGrid<T extends AgentCardSubject>({
   onPick(agent: T): void;
   onCreate(): void;
   canCreate: boolean;
+  /**
+   * `canCreate` 가 거짓일 때 `+` 자리에 대신 세울 안내 — **왜 없는지와 누구에게 청할지**. 없으면 그 자리는
+   * 비운다(사이드바·guest). 권한이 없는 member 에게 칸을 그냥 숨기면 「왜 안 보이지」에 화면이 답하지 못한다.
+   */
+  createBlocked?: { title: string; hint: string };
   /**
    * **`■` 가 부르는 것** — 도는 러너에게 종료를 요청한다. 없으면 `■` 를 안 그린다
    * (*"권한 없는 사람에게는 문이 없다"*). 사이드바는 이것을 넘기지 않는다.
@@ -868,6 +873,17 @@ export function AgentGrid<T extends AgentCardSubject>({
             )}
             <span className="text-meta text-fg-muted">{t('grid.search.create')}</span>
           </button>
+        )}
+
+        {!canCreate && createBlocked && (
+          /* 누를 것이 없으므로 버튼이 아니다. 만들기 칸과 같은 점선 상자(빈 자리)에 글만 둔다. */
+          <div
+            data-testid="agent-create-blocked"
+            className={`flex h-full ${s.card} ${s.createBox} flex-col justify-center gap-1 text-meta text-fg-muted`}
+          >
+            <span className="font-medium text-fg">{createBlocked.title}</span>
+            <span>{createBlocked.hint}</span>
+          </div>
         )}
 
         {shown.map((a) => {

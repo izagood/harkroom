@@ -559,6 +559,13 @@ export class Controller {
    * **못 읽었을 때는 이전 값을 지우지 않는다**(`refreshServerVersion` 과 같은 이유) — 한 번
    * 실패했다고 사진이 글자로 되돌아가면 레일이 깜박인다. 실패는 `swallow` 가 삼킨다.
    */
+  /** 내 계정(`/auth/me`)을 다시 읽는다 — 역할·`capabilities` 가 바뀐 뒤(`grant.changed`). */
+  private async refreshMe(): Promise<void> {
+    const me = await this.api.me();
+    if (this.stopped) return;
+    this.store.getState().set({ me });
+  }
+
   private async refreshWorkspaceIcon(): Promise<void> {
     const blob = await this.api.fetchWorkspaceIcon();
     if (this.stopped) return;
@@ -843,6 +850,14 @@ export class Controller {
       case 'workspace.icon.changed':
         // 바이트가 아니라 신호만 온다 — 다시 받는다.
         this.swallow(this.refreshWorkspaceIcon());
+        break;
+      case 'grant.changed':
+        // 역할·전역 권한이 바뀌었다(서버 `grantRoutes.ts` — grant 주기·거두기·역할 변경이 모두 이 신호다).
+        // **나**면 `/auth/me` 를 다시 읽는다 — 화면 게이트(`hasCapability`)가 그 `capabilities` 를 보므로,
+        // 안 읽으면 권한을 받은 사람이 앱을 껐다 켤 때까지 [+ 만들기]를 못 본다. 사람 계정이면 디렉터리의
+        // `role` 도 낡으므로 다시 읽는다. 에이전트 계정의 grant(머지·API 등)는 그 화면이 따로 읽는다.
+        if (e.accountId === store.me?.id) this.swallow(this.refreshMe());
+        if (store.accounts[e.accountId]?.kind === 'human') this.swallow(this.refreshAccounts({ force: true }));
         break;
       case 'account.handle_changed':
         store.applyHandle(e.accountId, e.newHandle);

@@ -328,8 +328,8 @@ const sidebarProps = {
 /** admin 이어야 편집·삭제·만들기가 메뉴에 선다 — 옮긴 문자열 대부분이 그 뒤에 있다. */
 function seedSidebar() {
   useActiveStore.getState().set({
-    me: { ...acc(ME, 'me'), isAdmin: true },
-    accounts: { [ME]: { ...acc(ME, 'me'), isAdmin: true }, [FORGE]: acc(FORGE, 'forge', 'agent') },
+    me: acc(ME, 'me', 'human', true),
+    accounts: { [ME]: acc(ME, 'me', 'human', true), [FORGE]: acc(FORGE, 'forge', 'agent') },
     channels: [chan('c1', 'general')],
     messages: { c1: [] },
     dms: [],
@@ -690,8 +690,8 @@ const agentView = (extra: Partial<AgentView> = {}): AgentView => ({
 function seedAgents(agents: AgentView[], pats: PatView[] = [], teams: AgentTeamRow[] | null = []) {
   useActiveStore.getState().reset();
   useActiveStore.getState().set({
-    me: { ...acc(ME, 'me'), isAdmin: true },
-    accounts: { [ME]: { ...acc(ME, 'me'), isAdmin: true } },
+    me: acc(ME, 'me', 'human', true),
+    accounts: { [ME]: acc(ME, 'me', 'human', true) },
     online: [],
     connected: true,
     teams,
@@ -1706,7 +1706,7 @@ function stubController() {
 }
 
 function seedProfile() {
-  const me = { ...acc(ME, 'me'), isAdmin: true };
+  const me = acc(ME, 'me', 'human', true);
   useActiveStore.getState().set({
     me,
     accounts: { [ME]: me, [AGENT]: acc(AGENT, 'mine', 'agent', false, { ownerAccountId: ME }) },
@@ -1758,7 +1758,7 @@ describe('프로필 — 두 언어로 뜬다', () => {
 
   /** `admin` 은 **두 언어에서 같은 글자다** — 이 제품의 고유어다(`en.ts` 머리말). */
   it('권한 값 admin 은 언어를 안 탄다', async () => {
-    const me = { ...acc(ME, 'me'), isAdmin: true };
+    const me = acc(ME, 'me', 'human', true);
     useActiveStore.getState().set({ me, accounts: { [ME]: me } });
     render(<Profile accountId={ME} onClose={() => {}} />);
     expect((await screen.findByRole('dialog')).textContent).toContain('admin');
@@ -1957,8 +1957,8 @@ describe('인박스 — 두 언어로 뜬다', () => {
 describe('설정 화면 넷 — 언어를 바꾸면 따라온다', () => {
   const asAdmin = () => {
     useActiveStore.getState().set({
-      me: { ...acc(ME, 'me'), isAdmin: true },
-      accounts: { [ME]: { ...acc(ME, 'me'), isAdmin: true } },
+      me: acc(ME, 'me', 'human', true),
+      accounts: { [ME]: acc(ME, 'me', 'human', true) },
     });
     setController({
       listSkills: vi.fn(async () => []),
@@ -2755,8 +2755,8 @@ describe('팀 상세 — 이름의 뜻을 두 언어가 다 말한다', () => {
     const team = tm('t1', 'release', 1);
     const open = () => {
       useActiveStore.getState().set({
-        me: { ...acc(ME, 'me'), isAdmin: true },
-        accounts: { [ME]: { ...acc(ME, 'me'), isAdmin: true } },
+        me: acc(ME, 'me', 'human', true),
+        accounts: { [ME]: acc(ME, 'me', 'human', true) },
       });
       setController({
         getTeam: vi.fn(async () => ({ team, members: [] })),
