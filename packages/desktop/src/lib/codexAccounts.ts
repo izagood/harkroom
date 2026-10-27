@@ -10,6 +10,7 @@ import type {
 } from '@harkroom/shared/daemonProtocol';
 
 import { hasClaudeAccountsSurface } from './claudeAccounts';
+import { withCommunity } from './operatorCommunity';
 
 export type { CodexAccountsSnapshot, CodexAuthStatus, CodexLoginEvent };
 
@@ -28,7 +29,7 @@ export const hasCodexAccountsSurface = hasClaudeAccountsSurface;
 function call(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   const invoke = internals()?.invoke;
   if (!invoke) return Promise.reject(new Error('이 빌드에는 Tauri 표면이 없다 — codex 계정을 다룰 수 없다'));
-  return invoke(cmd, args);
+  return invoke(cmd, withCommunity(args));
 }
 
 export function listCodexAccounts(): Promise<CodexAccountsSnapshot> {

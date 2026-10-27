@@ -1094,7 +1094,12 @@ pub fn ensure_daemon(
     }
 
     let paths = match &target {
-        Some(t) => community_endpoint_paths(t)?,
+        Some(t) => {
+            let paths = community_endpoint_paths(t)?;
+            // 확인을 마친 뿌리만 색인에 남긴다 — 오퍼레이터(P1 `readRootsIndex`)와 다음 기동이 같은 자리를 찾는다.
+            record_community_root(app, t)?;
+            paths
+        }
         None => resolve_endpoint_paths(app)?,
     };
     // **내 빌드의 daemon 실행 파일.** 소켓을 쥔 daemon 이 이것과 다른 것이면 안 붙는다
@@ -1125,6 +1130,18 @@ fn resolve_community_target(
         .home_dir()
         .map_err(|e| format!("홈 디렉터리를 찾지 못했다: {e}"))?;
     crate::community_root::resolve(&app_data_root(&app_data_dir), &home, base_url)
+}
+
+fn record_community_root(
+    app: &tauri::AppHandle,
+    target: &crate::community_root::CommunityTarget,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("앱 데이터 디렉터리를 찾지 못했다: {e}"))?;
+    crate::community_root::record_root(&app_data_root(&app_data_dir), target)
 }
 
 /// 커뮤니티 뿌리 아래의 엔드포인트. **뿌리 디렉터리를 먼저 확인한다** — 그 아래에 토큰·소켓이 들어가므로

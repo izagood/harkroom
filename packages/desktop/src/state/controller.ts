@@ -26,6 +26,7 @@ import { RunnerLauncher, tauriDaemonObserver, tauriAppVersionReader, type AppVer
 import { assignAgentPools } from '../lib/claudeAccounts';
 import { listLocalAgents, registerLocalOperator, setLocalAgent, setLocalAgentProviderLane } from '../lib/operatorLocal';
 import { autoRegisterFirstOperator } from '../lib/autoRegisterOperator';
+import { setOperatorCommunity } from '../lib/operatorCommunity';
 import { hasCapability } from '../lib/capabilities';
 import type { AppState, AppStore } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
@@ -427,6 +428,8 @@ export class Controller {
     // 오퍼레이터가 섰으면 **첫 설치인지** 보고 이 머신을 등록한다 — 전체 목록을 보는 사람(operator.manage)에게
     // 오퍼레이터가 하나도 없는 커뮤니티일 때만
     // (`autoRegisterOperator.ts`). 오퍼레이터를 못 세웠으면(웹·테스트·실패) 묻지 않는다.
+    // 오퍼레이터를 부르는 명령마다 이 커뮤니티를 싣는다(격리 C — 스위치가 켜지면 커뮤니티마다 오퍼레이터).
+    setOperatorCommunity(this.api.baseUrl);
     this.swallow(this.runnerLauncher.ensureOperator().then((observed) => {
       if (!observed || this.stopped) return;
       return autoRegisterFirstOperator({

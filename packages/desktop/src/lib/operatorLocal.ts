@@ -7,6 +7,7 @@
 import type { ProviderLaneConfig } from '@harkroom/shared/providerLane';
 import type { CleanupLedger, CleanupLive, CleanupSettings } from '@harkroom/shared/workspaceCleanup';
 import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorMcpAuthStartResult, OperatorMcpAuthState, OperatorMcpListResult, OperatorMcpRemoteDefinition, OperatorMergeCheckResult, OperatorMergeState, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
+import { withCommunity } from './operatorCommunity';
 
 interface TauriInternals { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
 
@@ -23,7 +24,7 @@ export function hasOperatorLocalSurface(): boolean {
 function call(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   const invoke = internals()?.invoke;
   if (!invoke) return Promise.reject(new Error('이 빌드에는 Tauri 표면이 없다 — 오퍼레이터 로컬 설정을 다룰 수 없다'));
-  return invoke(cmd, args);
+  return invoke(cmd, withCommunity(args));
 }
 
 /** 이 머신의 오퍼레이터를 이 커뮤니티에 등록한다 — 코드는 서버가 발급했고, claim 은 오퍼레이터가 한다. */

@@ -140,6 +140,48 @@ pub fn resolve(app_data_root: &Path, home: &Path, base_url: &str) -> Result<Comm
     Ok(CommunityTarget { key, root, legacy: false })
 }
 
+/// 새 뿌리를 색인에 적는다 — 이미 이 커뮤니티 칸이 있으면 손대지 않는다(옛 자리·operatorId 를 보존한다).
+/// 다른 칸이 같은 뿌리를 쓰면 거절한다(security P1-n1). 임시 파일에 0600 으로 쓰고 rename 한다.
+/// 뿌리 디렉터리 확인(`ensure_root_dir`)이 끝난 **뒤에** 부른다 — 쓸 수 없는 뿌리를 색인에 남기지 않는다.
+pub fn record_root(app_data_root: &Path, target: &CommunityTarget) -> Result<(), String> {
+    let path = app_data_root.join(ROOTS_INDEX_FILE);
+    let mut doc: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(t) => serde_json::from_str(&t).map_err(|e| format!("오퍼레이터 색인이 깨졌다: `{}`: {e}", path.display()))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({ "version": 1, "communities": {} }),
+        Err(e) => return Err(format!("오퍼레이터 색인을 읽지 못했다: `{}`: {e}", path.display())),
+    };
+    let communities = doc
+        .get_mut("communities")
+        .and_then(|c| c.as_object_mut())
+        .ok_or_else(|| format!("오퍼레이터 색인의 모양이 다르다: `{}`", path.display()))?;
+    if communities.contains_key(&target.key) {
+        return Ok(());
+    }
+    let mine = normalize(&target.root);
+    if let Some((k, _)) = communities.iter().find(|(_, e)| {
+        e.get("root").and_then(|r| r.as_str()).map(|r| normalize(Path::new(r)) == mine).unwrap_or(false)
+    }) {
+        return Err(format!("뿌리 `{}` 는 이미 다른 커뮤니티(`{k}`)의 것이다", target.root.display()));
+    }
+    communities.insert(target.key.clone(), serde_json::json!({ "root": mine.to_string_lossy() }));
+    std::fs::create_dir_all(app_data_root).map_err(|e| format!("앱 데이터 디렉터리를 만들지 못했다: {e}"))?;
+    let tmp = app_data_root.join(format!("{ROOTS_INDEX_FILE}.{}.tmp", std::process::id()));
+    let text = format!("{}\n", serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?);
+    {
+        use std::io::Write;
+        #[cfg(unix)]
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let mut f = opts.open(&tmp).map_err(|e| format!("오퍼레이터 색인을 쓰지 못했다: {e}"))?;
+        f.write_all(text.as_bytes()).map_err(|e| format!("오퍼레이터 색인을 쓰지 못했다: {e}"))?;
+    }
+    std::fs::rename(&tmp, &path).map_err(|e| format!("오퍼레이터 색인을 바꿔 끼우지 못했다: {e}"))?;
+    Ok(())
+}
+
 /// 뿌리 디렉터리를 쓸 수 있게 한다 — 토큰·소켓을 쓰기 **전에** 부른다(security P1-n2, P2a 지적).
 /// `ensureCommunityRootDir` 와 같은 기준: 새 뿌리는 0700, 이미 있으면 심링크 아님·디렉터리·내 소유, 넓으면 좁힌다.
 /// 옛 자리는 만들지도 권한을 바꾸지도 않고 확인만 한다.
@@ -266,5 +308,27 @@ mod tests {
         std::os::unix::fs::symlink(&t.root, &link).unwrap();
         let bad = CommunityTarget { key: "k".into(), root: link, legacy: false };
         assert!(ensure_root_dir(&bad).is_err());
+    }
+
+    #[test]
+    fn record_root_writes_new_entry_once_and_refuses_shared_root() {
+        let dir = std::env::temp_dir().join(format!("hk-cr-rec-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = CommunityTarget { key: "https://a.example.com".into(), root: PathBuf::from("/r/a"), legacy: false };
+        record_root(&dir, &a).unwrap();
+        record_root(&dir, &a).unwrap();
+        let idx = read_index(&dir).unwrap();
+        assert_eq!(idx.communities.len(), 1);
+        assert_eq!(idx.communities["https://a.example.com"].root, "/r/a");
+        let b = CommunityTarget { key: "https://b.example.com".into(), root: PathBuf::from("/r/a/"), legacy: false };
+        assert!(record_root(&dir, &b).is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.join(ROOTS_INDEX_FILE)).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

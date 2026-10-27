@@ -31,6 +31,7 @@
  * 오퍼레이터의 능력(`hello.capabilities.harnesses`)으로 서버에 오르고 화면은 그것을 다시
  * 보게 된다 — 갈래를 지우면 그 문구까지 사전에서 사라진다.
  */
+import { withCommunity } from './operatorCommunity';
 
 /**
  * 러너의 지금 상태.
@@ -228,7 +229,7 @@ export const tauriDaemonObserver: DaemonObserver = {
       // 브라우저 개발에는 unix 소켓도 자식 프로세스도 없다.
       throw new Error('이 환경에서는 오퍼레이터를 세울 수 없다 — Tauri invoke 표면이 없다');
     }
-    const result = await invoke('daemon_list_runners');
+    const result = await invoke('daemon_list_runners', withCommunity());
     const body = result as {
       daemonPid?: unknown;
       attached?: unknown;
