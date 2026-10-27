@@ -1,5 +1,5 @@
 /**
- * 미리보기(아티팩트) 배율 — designer 시안 v1 C안(스레드 ee707114, jaebin 「추천대로」 2026-10-27).
+ * 미리보기(아티팩트) 배율 — designer 시안 v1 C안(스레드 ee707114, 소유자 결정 2026-10-27).
  *
  * ## 왜 transform 인가
  * 미리보기는 교차 origin·sandbox iframe 이라 앱이 페이지 안에 CSS `zoom` 을 넣을 수 없다. 그래서 iframe 상자를
