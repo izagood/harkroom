@@ -202,9 +202,15 @@ pub fn record_root(app_data_root: &Path, target: &CommunityTarget) -> Result<(),
         return Err(format!("뿌리 `{}` 는 이미 다른 커뮤니티(`{k}`)의 것이다", target.root.display()));
     }
     communities.insert(target.key.clone(), serde_json::json!({ "root": mine.to_string_lossy() }));
+    write_index_doc(app_data_root, &doc)
+}
+
+/// 색인을 0600 임시 파일에 쓰고 rename 한다.
+fn write_index_doc(app_data_root: &Path, doc: &serde_json::Value) -> Result<(), String> {
+    let path = app_data_root.join(ROOTS_INDEX_FILE);
     std::fs::create_dir_all(app_data_root).map_err(|e| format!("앱 데이터 디렉터리를 만들지 못했다: {e}"))?;
     let tmp = app_data_root.join(format!("{ROOTS_INDEX_FILE}.{}.tmp", std::process::id()));
-    let text = format!("{}\n", serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?);
+    let text = format!("{}\n", serde_json::to_string_pretty(doc).map_err(|e| e.to_string())?);
     {
         use std::io::Write;
         #[cfg(unix)]
@@ -218,6 +224,58 @@ pub fn record_root(app_data_root: &Path, target: &CommunityTarget) -> Result<(),
     }
     std::fs::rename(&tmp, &path).map_err(|e| format!("오퍼레이터 색인을 바꿔 끼우지 못했다: {e}"))?;
     Ok(())
+}
+
+/// **옮기기 1단계(D5, 이동 0)** — 커뮤니티마다 모드를 처음 켤 때, 옛 단일 오퍼레이터 자리(`<앱 데이터>/operator/operator.json`)의
+/// 커뮤니티 하나를 그 자리 그대로 쓰는 칸(`legacy: true`, 뿌리 = 앱 데이터 뿌리)으로 색인에 적는다. 파일·폴더는 옮기지 않는다.
+///
+/// `legacy: true` 를 쓰는 곳은 **이 함수 하나**이고, **색인 파일이 아직 없을 때만** 쓴다(이미 있으면 손대지 않는다 —
+/// 사람이 고친 색인이나 앞 기동의 결과를 덮지 않는다). 칸이 여럿이면 에이전트가 가장 많은 칸을 고른다(같으면 키 사전순 앞).
+/// 옛 설정이 없거나 비었으면 아무것도 쓰지 않는다. 깨졌으면 쓰지 않고 오류를 돌려준다(모르는 채로 legacy 를 고르지 않는다).
+/// 돌려주는 값은 legacy 로 적은 커뮤니티 키(적지 않았으면 None).
+pub fn adopt_legacy(app_data_root: &Path) -> Result<Option<String>, String> {
+    if app_data_root.join(ROOTS_INDEX_FILE).exists() {
+        return Ok(None);
+    }
+    let cfg_path = app_data_root.join("operator").join("operator.json");
+    let text = match std::fs::read_to_string(&cfg_path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("옛 오퍼레이터 설정을 읽지 못했다: `{}`: {e}", cfg_path.display())),
+    };
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("옛 오퍼레이터 설정이 깨졌다: `{}`: {e}", cfg_path.display()))?;
+    let Some(communities) = v.get("communities").and_then(|c| c.as_object()) else {
+        return Ok(None);
+    };
+    let agents_of = |e: &serde_json::Value| e.get("agents").and_then(|a| a.as_object()).map(|a| a.len()).unwrap_or(0);
+    let Some(key) = communities
+        .iter()
+        .map(|(k, e)| (community_key(k), agents_of(e)))
+        .filter(|(k, _)| !k.is_empty())
+        .max_by(|(ka, na), (kb, nb)| na.cmp(nb).then_with(|| kb.cmp(ka)))
+        .map(|(k, _)| k)
+    else {
+        return Ok(None);
+    };
+    let root = normalize(app_data_root);
+    let doc = serde_json::json!({
+        "version": 1,
+        "communities": { key.clone(): { "root": root.to_string_lossy(), "legacy": true } },
+    });
+    write_index_doc(app_data_root, &doc)?;
+    Ok(Some(key))
+}
+
+/// **되돌리기** — 색인을 지운다. 스위치를 끄고 앱을 띄우면 부른다: 꺼진 앱은 색인을 읽지 않고 옛 단일 오퍼레이터로 돌며,
+/// 다시 켜면 `adopt_legacy` 가 옛 자리를 다시 적는다. 새 커뮤니티 뿌리(`c/<해시>`)는 지우지 않는다 — 다시 켜면 같은 해시로
+/// 같은 자리를 찾는다. 지웠으면 true.
+pub fn revert_index(app_data_root: &Path) -> Result<bool, String> {
+    match std::fs::remove_file(app_data_root.join(ROOTS_INDEX_FILE)) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("오퍼레이터 색인을 지우지 못했다: {e}")),
+    }
 }
 
 /// 뿌리 디렉터리를 쓸 수 있게 한다 — 토큰·소켓을 쓰기 **전에** 부른다(security P1-n2, P2a 지적).
@@ -397,5 +455,53 @@ mod tests {
         for k in [PER_COMMUNITY_ENV, OPERATOR_ROOT_ENV, OPERATOR_COMMUNITY_ENV, OPERATOR_LEGACY_ENV] {
             assert_eq!(get(&e, k), None, "꺼짐이면 {k} 를 지운다");
         }
+    }
+
+    fn tmp_root(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("hk-cr-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("operator")).unwrap();
+        d
+    }
+
+    #[test]
+    fn adopt_legacy_picks_the_community_with_most_agents_and_writes_once() {
+        let d = tmp_root("adopt");
+        std::fs::write(
+            d.join("operator").join("operator.json"),
+            r#"{"communities":{"https://a.example.com/":{"agents":{"x":{}}},"https://b.example.com":{"agents":{"x":{},"y":{}}}}}"#,
+        )
+        .unwrap();
+        assert_eq!(adopt_legacy(&d).unwrap().as_deref(), Some("https://b.example.com"));
+        let idx = read_index(&d).unwrap();
+        assert_eq!(idx.communities.len(), 1);
+        let e = &idx.communities["https://b.example.com"];
+        assert_eq!(e.legacy, Some(true));
+        assert_eq!(Path::new(&e.root), normalize(&d));
+        // 색인이 있으면 다시 쓰지 않는다.
+        assert_eq!(adopt_legacy(&d).unwrap(), None);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(d.join(ROOTS_INDEX_FILE)).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        // 되돌리기는 색인을 지운다 — 다시 켜면 다시 적는다.
+        assert!(revert_index(&d).unwrap());
+        assert!(!revert_index(&d).unwrap());
+        assert_eq!(adopt_legacy(&d).unwrap().as_deref(), Some("https://b.example.com"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn adopt_legacy_writes_nothing_without_old_config_and_refuses_broken_one() {
+        let d = tmp_root("none");
+        assert_eq!(adopt_legacy(&d).unwrap(), None);
+        assert!(!d.join(ROOTS_INDEX_FILE).exists());
+        std::fs::write(d.join("operator").join("operator.json"), r#"{"communities":{}}"#).unwrap();
+        assert_eq!(adopt_legacy(&d).unwrap(), None);
+        std::fs::write(d.join("operator").join("operator.json"), "{").unwrap();
+        assert!(adopt_legacy(&d).is_err());
+        assert!(!d.join(ROOTS_INDEX_FILE).exists());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
