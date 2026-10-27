@@ -1,0 +1,37 @@
+id: J8
+title: "초대받지 않은 비공개 채널"
+personas: [P2, P4, P6]
+steps:
+  - as: P2
+    act: channel.create
+    on: desktop
+    with: { visibility: private }
+    expect: "비공개 채널이 선다"
+  - as: P4
+    act: ui.notSee
+    on: desktop
+    target: "private-channel"
+    expect: "목록에 없다"
+  - as: P4
+    act: api.denied
+    on: api
+    target: "GET /channels/:id/messages"
+    expect: "403 또는 404"
+  - as: P2
+    act: channel.invite
+    on: desktop
+    target: "P4"
+    expect: "초대하면 실시간으로 목록에 생긴다"
+expect: "멤버가 아니면 보이지도 읽히지도 않고, 초대되면 바로 보인다"
+failSigns:
+  - "목록에 이름이 보임"
+  - "링크로 열면 내용이 보임"
+  - "초대 뒤 재시작해야 보임"
+existing:
+  - kind: server-vitest
+    file: "packages/server/test/membershipGate.test.ts"
+    note: "멤버십 판정"
+  - kind: server-vitest
+    file: "packages/server/test/channelOwnership.test.ts"
+    note: "채널 소유"
+runners: [api, browser]

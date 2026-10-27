@@ -1,0 +1,28 @@
+id: J14
+title: "카드는 받을 사람만 답한다"
+personas: [P4, P5]
+steps:
+  - as: P5
+    act: agent.invoke
+    on: desktop
+    expect: "P5 의 에이전트가 P5 에게 ask 카드를 세운다"
+  - as: P4
+    act: card.answer
+    on: desktop
+    expect: "남의 카드는 답할 수 없거나 버튼이 없다"
+  - as: P5
+    act: card.answer
+    on: desktop
+    expect: "답이 에이전트를 다시 깨운다"
+expect: "권한·ask 카드는 받을 사람(소유자)만 답하고, 답하면 에이전트가 이어 간다"
+failSigns:
+  - "남이 승인함"
+  - "답해도 에이전트가 안 깨어남"
+existing:
+  - kind: server-vitest
+    file: "packages/server/test/askAnswer.test.ts"
+    note: "ask 답 판정"
+  - kind: server-vitest
+    file: "packages/server/test/permissionCard.test.ts"
+    note: "권한 카드"
+runners: [api, browser, harness]

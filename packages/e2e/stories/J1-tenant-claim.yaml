@@ -1,0 +1,29 @@
+id: J1
+title: "호스팅 테넌트를 처음 연다"
+personas: [P1]
+steps:
+  - as: P1
+    act: tenant.claim
+    on: api
+    expect: "claim 토큰으로 첫 관리자 계정이 만들어진다"
+  - as: P1
+    act: login
+    on: desktop
+    expect: "주 화면이 뜬다"
+  - as: P1
+    act: channel.open
+    on: desktop
+    target: "general"
+    expect: "첫 채널이 있다"
+expect: "P1 이 owner 로 들어와 첫 채널에서 말할 수 있다"
+failSigns:
+  - "invalid_claim 404"
+  - "/bootstrap 409 또는 401"
+  - "빈 사이드바"
+existing:
+  - kind: server-vitest
+    file: "packages/server/test/auth.test.ts"
+    note: "/claim·/bootstrap 판정"
+runners: [api, manual]
+gaps:
+  - "gate(테넌트 발급·회수)는 이 저장소 밖이라 시험이 없다"

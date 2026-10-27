@@ -1,0 +1,53 @@
+id: J4
+title: "권한을 받으면 재시작 없이 보인다"
+personas: [P2, P4]
+steps:
+  - as: P4
+    act: ui.notSee
+    on: desktop
+    target: "agent-create"
+    expect: "처음엔 [+ 에이전트] 가 없다"
+  - as: P2
+    act: grant.give
+    on: desktop
+    target: "P4"
+    with: { capability: agent.create }
+    expect: "멤버 화면에 반영된다"
+  - as: P4
+    act: ui.see
+    on: desktop
+    target: "agent-create"
+    with: { withinSec: 10 }
+    expect: "앱을 껐다 켜지 않아도 버튼이 생긴다"
+  - as: P4
+    act: ui.see
+    on: mobile
+    target: "me-role"
+    with: { withinSec: 10 }
+    expect: "모바일도 재시작 없이 바뀐다"
+  - as: P2
+    act: grant.revoke
+    on: desktop
+    target: "P4"
+    with: { capability: agent.create }
+    expect: "거둔다"
+  - as: P4
+    act: ui.notSee
+    on: desktop
+    target: "agent-create"
+    with: { withinSec: 10 }
+    expect: "버튼이 사라진다"
+expect: "grant 를 주고 거두는 것이 열린 화면에 몇 초 안에 반영된다"
+failSigns:
+  - "⌘Q 재시작 뒤에야 보임"
+  - "모바일에 옛 상태가 남음"
+existing:
+  - kind: server-vitest
+    file: "packages/server/test/grantRoutes.test.ts"
+    note: "grant 주기·거두기와 grant.changed 신호"
+  - kind: desktop-vitest
+    file: "packages/desktop/test/agentCreateGate.test.tsx"
+    note: "게이트 판정"
+runners: [api, browser, mobile]
+gaps:
+  - "모바일은 grant.changed 를 처리하지 않는다(재시작 필요)"

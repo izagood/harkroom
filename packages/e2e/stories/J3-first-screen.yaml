@@ -1,0 +1,37 @@
+id: J3
+title: "처음 쓰는 멤버의 첫 화면"
+personas: [P4]
+steps:
+  - as: P4
+    act: login
+    on: desktop
+    expect: "주 화면이 뜬다"
+  - as: P4
+    act: ui.notSee
+    on: desktop
+    target: "agent-create"
+    expect: "권한 없는 [+ 에이전트] 는 보이지 않거나 사유와 함께 잠겨 있다"
+  - as: P4
+    act: ui.notSee
+    on: desktop
+    target: "channel-create"
+    expect: "권한 없는 [+ 채널] 은 보이지 않는다"
+  - as: P4
+    act: message.send
+    on: desktop
+    target: "general"
+    expect: "첫 글이 선다"
+  - as: P4
+    act: api.denied
+    on: api
+    target: "POST /accounts/agents"
+    expect: "403"
+expect: "할 수 없는 버튼은 안 보이고, 보이는 버튼은 누르면 된다"
+failSigns:
+  - "눌렀는데 403"
+  - "관리자용 빈 상태 안내가 보임"
+existing:
+  - kind: desktop-vitest
+    file: "packages/desktop/test/agentCreateGate.test.tsx"
+    note: "컴포넌트 단위 게이트(#1613)"
+runners: [api, browser]

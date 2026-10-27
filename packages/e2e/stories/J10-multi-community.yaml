@@ -1,0 +1,35 @@
+id: J10
+title: "여러 커뮤니티를 오간다"
+personas: [P7]
+steps:
+  - as: P7
+    act: community.add
+    on: desktop
+    target: "b"
+    expect: "두 번째 커뮤니티가 붙는다"
+  - as: P7
+    act: community.switch
+    on: desktop
+    target: "a"
+    expect: "A 에서는 owner 화면"
+  - as: P7
+    act: community.switch
+    on: desktop
+    target: "b"
+    expect: "B 에서는 member 화면 — 관리자 버튼 없음"
+  - as: P7
+    act: message.receive
+    on: desktop
+    target: "a"
+    expect: "B 를 보는 동안 온 A 의 글이 A 에만 쌓인다"
+expect: "역할·알림·글이 커뮤니티끼리 섞이지 않는다"
+failSigns:
+  - "B 에서 관리자 버튼"
+  - "A 의 글이 B 채널에 붙음"
+existing:
+  - kind: desktop-vitest
+    ref: "packages/desktop/src/state/communities.ts"
+    note: "커뮤니티마다 스토어 인스턴스(구조 격리), 역할 혼선 시험은 없음"
+runners: [browser, manual]
+gaps:
+  - "커뮤니티별 역할 혼선 시험이 없다"
