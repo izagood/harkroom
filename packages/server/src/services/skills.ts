@@ -9,6 +9,17 @@ export function isValidSkillSlug(slug: string): boolean {
   return SKILL_SLUG_REGEX.test(slug);
 }
 
+/**
+ * 내장 스킬의 이름 접두(2026-10-27, 내장 스킬 S의 P2). 러너가 코드와 같은 판으로 싣는 앱 기본 스킬은 이 접두로 시작하고,
+ * 워크스페이스 스킬은 이 접두를 **쓸 수 없다** — 같은 이름으로 덮으면 사용자 층이 앱 규칙을 뒤집는다(설계 원칙 3: 메모리·
+ * 사용자 층은 좁히기·덧붙이기만). 좁히거나 덧붙이려면 다른 이름의 스킬이나 기억으로 한다.
+ */
+export const BUILTIN_SKILL_PREFIX = 'harkroom-';
+
+export function isReservedSkillSlug(slug: string): boolean {
+  return slug.startsWith(BUILTIN_SKILL_PREFIX);
+}
+
 export interface WorkspaceSkill {
   slug: string;
   body: string;
@@ -45,6 +56,9 @@ export async function proposeSkill(
 ): Promise<{ ok: WorkspaceSkill } | { error: { code: string; message: string } }> {
   if (!isValidSkillSlug(input.slug)) {
     return { error: { code: 'invalid_slug', message: 'slug must be [a-z0-9-]{2,40}' } };
+  }
+  if (isReservedSkillSlug(input.slug)) {
+    return { error: { code: 'reserved_slug', message: `slugs starting with "${BUILTIN_SKILL_PREFIX}" are reserved for built-in skills — use another name` } };
   }
 
   const res = await pool.query(
@@ -212,14 +226,31 @@ export async function recordSkillUse(
 ): Promise<string[]> {
   const slugs = [...new Set(input.slugs.filter(isValidSkillSlug))].slice(0, SKILL_USE_MAX_SLUGS);
   if (slugs.length === 0) return [];
-  const res = await pool.query<{ slug: string }>(
-    `insert into workspace_skill_usage (slug, account_id)
-     select s.slug, $2 from workspace_skill s
-     where s.slug = any($1::text[]) and s.approved_at is not null and s.disabled_at is null
-     returning slug`,
-    [slugs, input.accountId],
-  );
-  return res.rows.map((r) => r.slug);
+  // 내장 스킬(`harkroom-*`)은 `workspace_skill` 행이 없다 — 따로 남긴다(150). 워크스페이스 스킬은 이 접두를 못 쓰므로
+  // 두 갈래가 섞이지 않는다. 내장 목록은 러너 판에 있어 서버가 모른다 — 접두와 slug 규칙만 본다.
+  const builtin = slugs.filter(isReservedSkillSlug);
+  const workspace = slugs.filter((s) => !isReservedSkillSlug(s));
+  const recorded: string[] = [];
+  if (workspace.length) {
+    const res = await pool.query<{ slug: string }>(
+      `insert into workspace_skill_usage (slug, account_id)
+       select s.slug, $2 from workspace_skill s
+       where s.slug = any($1::text[]) and s.approved_at is not null and s.disabled_at is null
+       returning slug`,
+      [workspace, input.accountId],
+    );
+    recorded.push(...res.rows.map((r) => r.slug));
+  }
+  if (builtin.length) {
+    const res = await pool.query<{ slug: string }>(
+      `insert into builtin_skill_usage (slug, account_id)
+       select unnest($1::text[]), $2
+       returning slug`,
+      [builtin, input.accountId],
+    );
+    recorded.push(...res.rows.map((r) => r.slug));
+  }
+  return recorded;
 }
 
 /**

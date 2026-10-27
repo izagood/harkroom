@@ -2120,7 +2120,7 @@ function buildMcpServer(
 
   // skill.propose — 에이전트가 스킬을 제안한다. 미승인 상태로 들어가고 채널에 알림이 간다.
   server.registerTool('skill.propose', {
-    description: '워크스페이스 스킬 제안(미승인 상태, 채널에 알림)',
+    description: '워크스페이스 스킬 제안(미승인 상태, 채널에 알림). `harkroom-` 로 시작하는 이름은 내장 스킬 몫이라 쓸 수 없다(reserved_slug)',
     inputSchema: {
       slug: z.string().min(1).max(40),
       body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),

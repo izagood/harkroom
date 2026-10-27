@@ -186,6 +186,17 @@ describe('workspace skill', () => {
     expect(rows.rows[0].n).toBe(0);
   });
 
+  // 내장 스킬 S P2: `harkroom-*` 는 내장 스킬 몫이다 — 같은 이름으로 덮으면 사용자 층이 앱 규칙을 뒤집는다(원칙 3).
+  it('harkroom- 로 시작하는 slug 는 reserved_slug 로 거절되고 행을 만들지 않는다', async () => {
+    for (const slug of ['harkroom-merge', 'harkroom-x1']) {
+      expect(await propose(agentPat, { slug, body: '# 덮기' }), slug).toMatchObject({ error: { code: 'reserved_slug' } });
+    }
+    // 접두가 아니면 막지 않는다.
+    expect(await propose(agentPat, { slug: 'my-harkroom-notes', body: '# 괜찮다' })).toHaveProperty('ok');
+    const rows = await pool.query(`select count(*)::int as n from workspace_skill where slug like 'harkroom-%'`);
+    expect(rows.rows[0].n).toBe(0);
+  });
+
   it('REST 도 slug 규칙을 지킨다 — 없는 slug 승인은 404', async () => {
     const res = await app.inject({
       method: 'POST', url: '/skills/no-such-skill/approve',
@@ -446,6 +457,17 @@ describe('스킬 사용 기록(D3)', () => {
   it('후보여도 꺼지지 않는다 — 여전히 state=approved 에 있다(끄는 것은 사람)', async () => {
     const res = await app.inject({ method: 'GET', url: '/skills?state=approved', headers: { authorization: `Bearer ${agentPat}` } });
     expect((res.json() as { slug: string }[]).map((s) => s.slug)).toContain('stale-old');
+  });
+
+  // 내장 스킬 S P2: 내장 스킬은 workspace_skill 행이 없다 — 따로 남기고, 워크스페이스 스킬 통계에는 섞이지 않는다.
+  it('harkroom- 내장 스킬 사용은 builtin_skill_usage 에 남는다 — 워크스페이스 통계와 섞이지 않는다', async () => {
+    const res = await usage(agentPat, ['harkroom-merge', 'harkroom-merge', 'use-live', 'harkroom-BAD']);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ recorded: ['use-live', 'harkroom-merge'] });
+    const rows = await pool.query('select slug, account_id from builtin_skill_usage');
+    expect(rows.rows).toEqual([{ slug: 'harkroom-merge', account_id: agentAccountId }]);
+    const ws = await pool.query(`select count(*)::int as n from workspace_skill_usage where slug like 'harkroom-%'`);
+    expect(ws.rows[0].n).toBe(0);
   });
 
   it('모르는 키는 400 이다', async () => {
