@@ -16,6 +16,7 @@
  */
 import type { ClaudePoolsConfig } from '@harkroom/shared/claudePools';
 import { runnerExitReason, type RunnerExitReason } from '@harkroom/shared';
+import { withCommunity } from './operatorCommunity';
 // **사용량 타입은 베끼지 않는다.** 아래 `ClaudeAccountsSnapshot` 은 데몬의 선언을 손으로
 // 베낀 것인데(이 파일이 생긴 순서 때문이다) 그 결과 필드가 늘면 두 곳을 고쳐야 한다.
 // 새 말은 프로토콜의 한 벌을 그대로 쓴다.
@@ -109,7 +110,7 @@ function call(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
     // `hasClaudeAccountsSurface` 로 **먼저** 알아야 하는 사실이고, 여기까지 왔다면 배선 결함이다.
     return Promise.reject(new Error('이 빌드에는 Tauri 표면이 없다 — 계정 풀을 다룰 수 없다'));
   }
-  return invoke(cmd, args);
+  return invoke(cmd, withCommunity(args));
 }
 
 export function listClaudeAccounts(): Promise<ClaudeAccountsSnapshot> {

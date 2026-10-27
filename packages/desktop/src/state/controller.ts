@@ -260,7 +260,8 @@ export class Controller {
     /** 이 앱 번들의 버전을 읽는 표면 — 화면의 뒤처짐 판정 기준(`AppVersionReader` 주석). */
     appVersion: AppVersionReader = tauriAppVersionReader,
   ) {
-    this.runnerLauncher = new RunnerLauncher(daemonObserver, appVersion);
+    // 러너 관측은 이 컨트롤러의 커뮤니티 오퍼레이터에 묻는다(활성 커뮤니티가 아니라 — security P6-F1).
+    this.runnerLauncher = new RunnerLauncher(daemonObserver, appVersion, () => this.api?.baseUrl ?? null);
     // 앱 버전을 **스토어로 밀어 넣는다** — 화면이 컨트롤러에게 묻지 않게(`appVersion`
     // 필드 주석). 실패해도 앱은 떠야 하므로 fire-and-forget 이고, 못 얻으면 `null` 로
     // 남아 화면이 "판정할 수 없다"고 말한다.
@@ -433,7 +434,7 @@ export class Controller {
         baseUrl: this.api.baseUrl,
         canRegister: hasCapability(me, 'operator.register'),
         canManage: hasCapability(me, 'operator.manage'),
-        listLocal: listLocalAgents,
+        listLocal: () => listLocalAgents(this.api.baseUrl),
         listOperators: () => this.api.operators(),
         mintCode: () => this.api.operatorRegisterCode(),
         register: (baseUrl, code) => registerLocalOperator(baseUrl, code),
@@ -2561,7 +2562,7 @@ export class Controller {
   async assignAgentHere(
     agentId: string, target: { baseUrl: string; operatorId: string },
   ): Promise<import('@harkroom/shared').AgentAssignmentView> {
-    const cur = (await listLocalAgents()).communities.find((c) => c.baseUrl === target.baseUrl)?.agents[agentId];
+    const cur = (await listLocalAgents(target.baseUrl)).communities.find((c) => c.baseUrl === target.baseUrl)?.agents[agentId];
     if (cur === undefined) await setLocalAgent(target.baseUrl, agentId, {});
     for (let attempt = 0; ; attempt++) {
       try {

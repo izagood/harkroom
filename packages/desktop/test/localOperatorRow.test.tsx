@@ -42,7 +42,7 @@ describe('LocalOperatorRow', () => {
     expect(screen.queryByTestId('agent-local-unregistered')).toBeNull();
     fireEvent.change(dir, { target: { value: '~/y' } });
     fireEvent.click(screen.getByText('저장'));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_agent_set', { baseUrl: BASE, agentId: 'a-1', config: { workingDir: '~/y' } }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_agent_set', { baseUrl: BASE, agentId: 'a-1', config: { workingDir: '~/y' }, community: BASE }));
     expect((await screen.findByTestId('agent-local-notice')).textContent).toContain('저장했다');
   });
 
@@ -53,7 +53,7 @@ describe('LocalOperatorRow', () => {
     expect(box.checked).toBe(false);
     expect(screen.getByTestId('agent-local-unregistered')).toBeTruthy();
     fireEvent.click(box);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_agent_set', { baseUrl: BASE, agentId: 'a-2', config: { workingDir: '' } }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('operator_agent_set', { baseUrl: BASE, agentId: 'a-2', config: { workingDir: '' }, community: BASE }));
   });
 
   it('다른 커뮤니티의 항목은 이 커뮤니티의 것이 아니다', async () => {

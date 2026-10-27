@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ProviderAccountUsage, ProviderUsageSnapshot, ProviderUsageWindow } from '@harkroom/shared/daemonProtocol';
 import { errorTextNow } from './errorText';
+import { withCommunity } from './operatorCommunity';
 
 export type { ProviderAccountUsage, ProviderUsageSnapshot, ProviderUsageWindow };
 
@@ -72,7 +73,7 @@ export function useProviderUsage(kind: ProviderKind, enabled: boolean): {
     if (!call) return;
     const seq = ++sent.current;
     try {
-      const next = (await call(COMMAND[kind])) as ProviderUsageSnapshot;
+      const next = (await call(COMMAND[kind], withCommunity())) as ProviderUsageSnapshot;
       if (seq > floor.current) setSnap(next);
     } catch {
       // 스냅샷을 지우지 않는다 — 한 번의 실패로 막대가 사라지면 사람은 한도가 풀린 줄 안다.
@@ -92,7 +93,7 @@ export function useProviderUsage(kind: ProviderKind, enabled: boolean): {
         args.account = target.account;
         if (kind === 'claude') args.pool = target.pool ?? '';
       }
-      const next = (await call(COMMAND[kind], args)) as ProviderUsageSnapshot;
+      const next = (await call(COMMAND[kind], withCommunity(args))) as ProviderUsageSnapshot;
       floor.current = sent.current;
       setSnap(next);
       setRefreshError(null);

@@ -1004,14 +1004,18 @@ pub enum EnsureKind {
 /// **`Option` 인 이유**: 연결은 **처음 필요해진 순간**에 만들어진다. `#431` 2단계 A 이후
 /// 그 순간은 앱 기동 직후(`daemon_ensure`)이지 러너를 띄우려 할 때가 아니다 — 그러나
 /// 이 타입 자체는 그 시점을 모른다. 아직 안 붙었으면 `None` 이다.
+///
+/// **커뮤니티마다 프로세스 모드(격리 C, 스위치 `HARKROOM_OPERATOR_PER_COMMUNITY=1`)에서는 연결이 여럿이다** —
+/// 커뮤니티 키(`community_root::community_key`)마다 하나. 스위치가 꺼져 있으면 키는 언제나 빈 문자열 하나라
+/// 지금과 같다.
 pub struct DaemonState {
-    pub inner: Mutex<Option<Arc<DaemonConnection>>>,
+    pub inner: Mutex<std::collections::HashMap<String, Arc<DaemonConnection>>>,
 }
 
 impl DaemonState {
     pub fn new() -> Self {
         DaemonState {
-            inner: Mutex::new(None),
+            inner: Mutex::new(std::collections::HashMap::new()),
         }
     }
 }
@@ -1053,35 +1057,108 @@ impl DaemonState {
 /// 그래서 콜백을 파라미터에서 **없앴다.** 이 함수가 `AppHandle` 로 emitter 를 직접
 /// 조립한다 — 호출자가 셋이든 열이든 붙는 콜백은 언제나 같은 하나다. "누가 먼저
 /// 부르느냐"가 동작을 바꾸지 못하게 만드는 것이 이 변경의 전부다.
+///
+/// ## `community` — 격리 C P6
+///
+/// 스위치가 꺼져 있으면 `community` 는 무시되고 지금의 오퍼레이터
+/// 하나에 붙는다. 켜져 있으면 `community`(baseUrl)가 **있어야 한다** — 없을 때 아무 커뮤니티에나 붙지 않는다.
+///
+/// 락은 맵 전체에 하나다: 한 커뮤니티의 오퍼레이터를 띄우는 동안 다른 커뮤니티 요청은 기다린다. 띄우기는
+/// 처음 한 번뿐이라 그 대기는 짧고, 커뮤니티별 락을 따로 두는 복잡함보다 낫다.
 pub fn ensure_daemon(
     app: &tauri::AppHandle,
     state: &DaemonState,
+    community: Option<&str>,
 ) -> Result<(Arc<DaemonConnection>, EnsureKind), String> {
+    let target = if crate::community_root::per_community_enabled() {
+        let base_url = community
+            .filter(|c| !c.trim().is_empty())
+            .ok_or_else(|| "커뮤니티마다 오퍼레이터 모드인데 어느 커뮤니티인지 받지 못했다".to_string())?;
+        Some(resolve_community_target(app, base_url)?)
+    } else {
+        None
+    };
+    let slot = target.as_ref().map(|t| t.key.clone()).unwrap_or_default();
     let mut guard = state
         .inner
         .lock()
         .map_err(|_| "daemon 상태 락이 깨졌다".to_string())?;
-    if let Some(conn) = guard.as_ref() {
+    if let Some(conn) = guard.get(&slot) {
         // 이미 붙어 있다. 살아 있는지는 `ping` 으로 확인한다 — 소켓이 조용히 끊겨 있으면
         // 다음 `spawnRunner` 가 실패하는데, 그 실패는 "daemon 이 죽었다"가 아니라
         // "요청이 안 갔다"로 보인다.
         if conn.request("ping", json!({})).is_ok() {
             return Ok((conn.clone(), EnsureKind::Attached));
         }
-        *guard = None;
+        guard.remove(&slot);
     }
 
-    let paths = resolve_endpoint_paths(app)?;
+    let paths = match &target {
+        Some(t) => {
+            let paths = community_endpoint_paths(t)?;
+            // 확인을 마친 뿌리만 색인에 남긴다 — 오퍼레이터(P1 `readRootsIndex`)와 다음 기동이 같은 자리를 찾는다.
+            record_community_root(app, t)?;
+            paths
+        }
+        None => resolve_endpoint_paths(app)?,
+    };
     // **내 빌드의 daemon 실행 파일.** 소켓을 쥔 daemon 이 이것과 다른 것이면 안 붙는다
     // (`same_entry_path` 주석: 소켓이 워크트리를 가로질러 공유된다).
     let my_entry = crate::sidecar_path(OPERATOR_SIDECAR_NAME)?;
     let launch_app = app.clone();
     let launch_paths = paths.clone();
+    let launch_target = target.clone();
     let (conn, kind) = ensure_at(&paths, &my_entry, runner_exit_emitter(app), move || {
-        spawn_daemon(&launch_app, &launch_paths)
+        spawn_daemon(&launch_app, &launch_paths, launch_target.as_ref())
     })?;
-    *guard = Some(conn.clone());
+    guard.insert(slot, conn.clone());
     Ok((conn, kind))
+}
+
+/// 커뮤니티 baseUrl → 뿌리. 색인은 앱 데이터 뿌리(`app_data_root`)에 있다 — 오퍼레이터의 `readRootsIndex` 와 같은 자리.
+fn resolve_community_target(
+    app: &tauri::AppHandle,
+    base_url: &str,
+) -> Result<crate::community_root::CommunityTarget, String> {
+    use tauri::Manager;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("앱 데이터 디렉터리를 찾지 못했다: {e}"))?;
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|e| format!("홈 디렉터리를 찾지 못했다: {e}"))?;
+    crate::community_root::resolve(&app_data_root(&app_data_dir), &home, base_url)
+}
+
+fn record_community_root(
+    app: &tauri::AppHandle,
+    target: &crate::community_root::CommunityTarget,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("앱 데이터 디렉터리를 찾지 못했다: {e}"))?;
+    crate::community_root::record_root(&app_data_root(&app_data_dir), target)
+}
+
+/// 커뮤니티 뿌리 아래의 엔드포인트. **뿌리 디렉터리를 먼저 확인한다** — 그 아래에 토큰·소켓이 들어가므로
+/// 심링크·남의 디렉터리면 아무것도 쓰기 전에 멈춘다(security P1-n2·P2a 지적).
+fn community_endpoint_paths(
+    target: &crate::community_root::CommunityTarget,
+) -> Result<EndpointPaths, String> {
+    crate::community_root::ensure_root_dir(target)?;
+    let paths = endpoint_paths(&target.root);
+    check_socket_path_length(&paths.socket)?;
+    std::fs::create_dir_all(&paths.dir).map_err(|e| {
+        format!(
+            "daemon 디렉터리를 만들지 못했다: `{}`: {e}",
+            paths.dir.display()
+        )
+    })?;
+    Ok(paths)
 }
 
 /// 러너 exit 을 웹뷰로 올리는 **유일한** 콜백.
@@ -1432,7 +1509,11 @@ pub fn resolve_endpoint_paths(app: &tauri::AppHandle) -> Result<EndpointPaths, S
 ///
 /// **인자는 전부 Rust 가 조립한다.** 웹뷰는 이 함수에 아무것도 못 넘긴다 —
 /// 프로그램 경로도, 소켓·토큰·pid 경로도, nonce 도 여기서 만든다.
-fn spawn_daemon(app: &tauri::AppHandle, paths: &EndpointPaths) -> Result<DaemonExitWatch, String> {
+fn spawn_daemon(
+    app: &tauri::AppHandle,
+    paths: &EndpointPaths,
+    community: Option<&crate::community_root::CommunityTarget>,
+) -> Result<DaemonExitWatch, String> {
     let program = crate::sidecar_path(OPERATOR_SIDECAR_NAME)?;
     if !program.is_file() {
         return Err(format!(
@@ -1445,6 +1526,21 @@ fn spawn_daemon(app: &tauri::AppHandle, paths: &EndpointPaths) -> Result<DaemonE
     let app_version = app.package_info().version.to_string();
 
     let mut cmd = daemon_command(&program, paths, &nonce, &app_version);
+    // 커뮤니티마다 모드: 이 오퍼레이터(와 그 러너)가 맡은 커뮤니티·뿌리를 준다. 오퍼레이터는 이 값으로 계정 선택
+    // 자리(`claudePoolsFilePath`)를 정하고, `operator.json` 에 이 커뮤니티 칸만 받는다(`assertSingleCommunity`).
+    // 꺼져 있으면 아무것도 주지 않는다 — 앱이 물려받은 스위치 값이 새지 않게 지운다.
+    match community {
+        Some(t) => {
+            cmd.env(crate::community_root::PER_COMMUNITY_ENV, "1")
+                .env(crate::community_root::OPERATOR_ROOT_ENV, &t.root)
+                .env(crate::community_root::OPERATOR_COMMUNITY_ENV, &t.key);
+        }
+        None => {
+            cmd.env_remove(crate::community_root::PER_COMMUNITY_ENV)
+                .env_remove(crate::community_root::OPERATOR_ROOT_ENV)
+                .env_remove(crate::community_root::OPERATOR_COMMUNITY_ENV);
+        }
+    }
 
     // **자식을 기다리지 않는다** — daemon 은 상주 프로세스다. 다만 핸들을 떨어뜨리면
     // 좀비가 남으므로, 종료를 거두는 스레드 하나만 붙여 둔다. 그 스레드가 하는 일은

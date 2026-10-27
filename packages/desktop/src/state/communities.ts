@@ -2,6 +2,7 @@ import { create, useStore } from 'zustand';
 import { createAppStore, type AppState, type AppStore } from './appStore';
 import type { Controller } from './controller';
 import { nowT } from '../i18n/useT';
+import { setActiveCommunityResolver } from '../lib/operatorCommunity';
 
 /**
  * 커뮤니티마다 스토어·컨트롤러 인스턴스를 두는 레지스트리(#166, #163 결정 A).
@@ -300,3 +301,12 @@ export const useActiveStore = Object.assign(useActiveStoreHook, {
 
 export { createAppStore };
 export type { AppStore, AppState };
+
+// 오퍼레이터 명령의 `community` 를 부르는 그 순간의 활성 커뮤니티로 정한다(security P6-F1, `lib/operatorCommunity.ts`).
+setActiveCommunityResolver(() => {
+  try {
+    return getActiveController().api?.baseUrl ?? null;
+  } catch {
+    return null;
+  }
+});
