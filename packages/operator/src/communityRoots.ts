@@ -148,3 +148,20 @@ export function ownsCommunity(baseUrl: string, env: NodeJS.ProcessEnv): boolean 
   const mine = env[OPERATOR_COMMUNITY_ENV];
   return Boolean(mine) && communityRootKey(mine as string) === communityRootKey(baseUrl);
 }
+
+/**
+ * 이 프로세스가 맡은 에이전트 id 들(security #1650 n1) — 고아 러너 채택을 거르는 데 쓴다. 꺼져 있으면 `null`(거르지 않는다).
+ * 켜져 있으면 `ownsCommunity` 를 통과한 칸의 에이전트만 든다 — 맡은 커뮤니티를 모르면 빈 집합(fail-closed).
+ */
+export function ownedAgentIds(
+  communities: Record<string, { agents: Record<string, unknown> }>,
+  env: NodeJS.ProcessEnv,
+): ReadonlySet<string> | null {
+  if (!perCommunityEnabled(env)) return null;
+  const ids = new Set<string>();
+  for (const [baseUrl, section] of Object.entries(communities)) {
+    if (!ownsCommunity(baseUrl, env)) continue;
+    for (const agentId of Object.keys(section.agents ?? {})) ids.add(agentId);
+  }
+  return ids;
+}

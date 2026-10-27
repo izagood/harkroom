@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ownsCommunity } from '../src/communityRoots.js';
+import { ownedAgentIds, ownsCommunity } from '../src/communityRoots.js';
 import { startCommunities } from '../src/communities.js';
 import type { OperatorSecrets } from '../src/secrets.js';
 
@@ -23,6 +23,19 @@ describe('ownsCommunity', () => {
   });
   it('켜져 있는데 맡은 커뮤니티를 모르면 아무것도 띄우지 않는다', () => {
     expect(ownsCommunity(A, { HARKROOM_OPERATOR_PER_COMMUNITY: '1' })).toBe(false);
+  });
+});
+
+describe('ownedAgentIds — 고아 러너 채택을 거르는 집합(security #1650 n1)', () => {
+  const communities = { [A]: { agents: { a1: {} } }, [B]: { agents: { b1: {} } } };
+  it('꺼져 있으면 거르지 않는다(null)', () => {
+    expect(ownedAgentIds(communities, {})).toBeNull();
+  });
+  it('켜져 있으면 맡은 커뮤니티의 에이전트만', () => {
+    expect([...(ownedAgentIds(communities, ON) ?? [])]).toEqual(['a1']);
+  });
+  it('맡은 커뮤니티를 모르면 빈 집합(아무것도 채택하지 않음)', () => {
+    expect(ownedAgentIds(communities, { HARKROOM_OPERATOR_PER_COMMUNITY: '1' })?.size).toBe(0);
   });
 });
 
