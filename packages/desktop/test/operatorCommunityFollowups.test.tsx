@@ -55,4 +55,24 @@ describe('API 키 연결 표(security #1640 n2)', () => {
     rerender();
     await waitFor(() => expect(calls.some((c) => c.cmd === 'operator_agents_list' && c.args?.community === B)).toBe(true));
   });
+
+  it('전환 뒤 여러 번 다시 그려도 새 커뮤니티에는 한 번만 묻는다(security #1648 n1)', async () => {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((r) => { release = r; });
+    const base = (globalThis as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown> } }).__TAURI_INTERNALS__;
+    const orig = base.invoke;
+    base.invoke = async (cmd, args) => {
+      if (cmd === 'operator_agents_list' && args?.community === B) { calls.push({ cmd, args }); await held; return { communities: [], laneStatus: {} }; }
+      return orig(cmd, args);
+    };
+    setController({ api: { baseUrl: A } } as unknown as Controller);
+    const { rerender } = renderHook(() => useLocalLanes());
+    await waitFor(() => expect(calls.some((c) => c.cmd === 'operator_agents_list' && c.args?.community === A)).toBe(true));
+    setController({ api: { baseUrl: B } } as unknown as Controller);
+    for (let i = 0; i < 5; i++) { rerender(); await Promise.resolve(); }
+    await waitFor(() => expect(calls.filter((c) => c.cmd === 'operator_agents_list' && c.args?.community === B).length).toBe(1));
+    for (let i = 0; i < 5; i++) { rerender(); await Promise.resolve(); }
+    expect(calls.filter((c) => c.cmd === 'operator_agents_list' && c.args?.community === B).length).toBe(1);
+    release();
+  });
 });
