@@ -3142,8 +3142,11 @@ export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
  * 부르고 회수하는 흐름에서는 작업 스레드에 사람의 글이 없다. 4면 위임→보고→재위임→보고
  * 다음 재위임이 막혔다(#harkroom seq 3336). 8이면 한 번의 지시로 3번 반 왕복한다. 그보다
  * 사람 없이 오래 도는 것은 여전히 사람이 볼 때다.
+ *
+ * **100 으로 올렸다**(2026-10-27, 연쇄 한도 재설계 ④). 루프는 이제 정체 홉(`STALL_HOP_LIMIT`, 146)이 몇 홉 안에 잡고,
+ * 이 값은 정체로 못 잡는 루프(매 홉 새 sha 를 내는 고침↔반려)를 받는 **백스톱**이다 — 걸리면 소유자 카드 한 장으로 풀린다(147).
  */
-export const MENTION_CHAIN_LIMIT = 8;
+export const MENTION_CHAIN_LIMIT = 100;
 export const MENTION_CHAIN_LIMIT_MIN = 1;
 /** 백스톱(연쇄 한도 재설계 ③)의 홉 값(100)이 들어갈 수 있게 50 에서 넓혔다(147). */
 export const MENTION_CHAIN_LIMIT_MAX = 200;

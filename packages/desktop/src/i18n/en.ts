@@ -3626,11 +3626,14 @@ export const en = {
   'message.chainCappedNoCard': 'Did not call {handles} — the mention chain hit its limit ({limit} hops). Write a line yourself to continue.',
   /** 백스톱의 시간 축(147) — 사람 손길에서 24시간이 지났다. */
   'message.chainCappedAge': 'Did not call {handles} — 24 hours have passed since a person last touched this chain. This agent\'s owner can press Continue on the card, or a person can write a line.',
+  'message.chainCappedStall': 'Did not call {handles} — {limit} hops in a row produced nothing new (no commit, PR, link or attachment). This agent\'s owner can press Continue on the card, or a person can write a line.',
+  'message.chainCappedStallNoCard': 'Did not call {handles} — {limit} hops in a row produced nothing new (no commit, PR, link or attachment). Write a line yourself to continue.',
   'message.chainCappedAgeNoCard': 'Did not call {handles} — 24 hours have passed since a person last touched this chain. Write a line yourself to continue.',
   /** 백스톱 카드(147). 서버가 막힌 에이전트의 소유자 앞으로 세운다. */
   'ask.chainBackstop.body': 'The chain that ran without a person reached the backstop ({why}), so {handle} stopped calling other agents.',
   'ask.chainBackstop.hops': '{limit} hops',
   'ask.chainBackstop.age': '24 hours',
+  'ask.chainBackstop.stall': '{limit} hops with nothing new',
   'ask.chainBackstop.prompt': 'Keep the chain going?',
   'ask.chainBackstop.continue': 'Continue — reset the budget',
   'ask.chainBackstop.continueHint': 'Hops and the 24 hours start over',

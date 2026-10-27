@@ -108,3 +108,42 @@ describe(`정체 홉 그림자(한도 ${STALL_HOP_LIMIT})`, () => {
     expect((await metaOf(plain)).mentionStallLinkReset).toBeUndefined();
   });
 });
+
+/**
+ * **정체 차단 스위치**(④, `HARKROOM_STALL_BLOCK=on`). 켜면 그림자로 적던 부름을 실제로 막고, 막힌 결과 발화 뒤 소유자 앞으로
+ * 백스톱 카드(147)가 선다 — 사유는 `stall`. 꺼져 있으면 위 그림자 시험 그대로다.
+ */
+describe('정체 차단(HARKROOM_STALL_BLOCK=on)', () => {
+  beforeAll(() => { process.env.HARKROOM_STALL_BLOCK = 'on'; });
+  afterAll(() => { delete process.env.HARKROOM_STALL_BLOCK; });
+
+  it('결과물 없는 핑퐁은 한도에서 막히고, 사유와 카드가 남는다', async () => {
+    const root = await post(adminToken, '@ada 차단 시작');
+    let last = '';
+    const turns: Array<['ada' | 'bob', 'ada' | 'bob']> = [['ada', 'bob'], ['bob', 'ada'], ['ada', 'bob'], ['bob', 'ada']];
+    for (const [i, [author, next]] of turns.entries()) {
+      last = await post(agents[author]!.pat, `@${next} 이미 봤다`, root);
+      if (i + 1 < STALL_HOP_LIMIT) expect(await woke(agents[next]!.pat, last)).toBe(true);
+    }
+    const meta = await metaOf(last);
+    expect(meta).toMatchObject({ mentionChainCapped: ['ada'], mentionChainReason: 'stall', mentionStallLimit: STALL_HOP_LIMIT });
+    // 막았으니 그림자 기록은 없다 — 같은 부름을 두 번 적지 않는다.
+    expect(meta.mentionStallShadow).toBeUndefined();
+    expect(await woke(agents.ada!.pat, last)).toBe(false);
+
+    const res = await app.inject({ method: 'GET', url: `/channels/${channelId}/messages?threadRootId=${root}`, headers: auth(adminToken) });
+    const rows = (res.json().messages ?? res.json()) as { threadRootId: string | null; meta: Record<string, unknown> | null }[];
+    const cards = rows.filter((m) => m.threadRootId === root && m.meta?.chainBackstop !== undefined);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.meta!.chainBackstop).toMatchObject({ agentId: agents.bob!.id, cappedIds: [agents.ada!.id], reason: 'stall' });
+  });
+
+  it('새 결과물을 내는 홉은 켜져 있어도 막히지 않는다', async () => {
+    const root = await post(adminToken, '@ada 차단 중 구현');
+    for (let n = 0; n < STALL_HOP_LIMIT * 2; n++) {
+      const [author, next] = n % 2 === 0 ? ['ada', 'bob'] : ['bob', 'ada'];
+      const id = await post(agents[author]!.pat, `@${next} #${3000 + n} head cd${n}ef0123 올림`, root);
+      expect(await woke(agents[next]!.pat, id)).toBe(true);
+    }
+  });
+});

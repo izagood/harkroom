@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, messageLinkIds, stallStep, STALL_HOP_LIMIT, CHAIN_BACKSTOP_MS, CHAIN_BACKSTOP_CONTINUE, STALL_LOOKBACK, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
+import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, messageLinkIds, stallStep, stallBlockEnabled, STALL_HOP_LIMIT, CHAIN_BACKSTOP_MS, CHAIN_BACKSTOP_CONTINUE, STALL_LOOKBACK, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
@@ -1039,6 +1039,8 @@ async function resolveMentionCalls(
     chainBound?: boolean;
     /** 이 발화가 이어 받은 사슬의 시작 시각(147) — `CHAIN_BACKSTOP_MS` 가 지났으면 홉 수와 무관하게 막는다. 수정은 넘기지 않는다. */
     chainStartedAt?: Date | null;
+    /** 이 발화의 정체 홉(146). `stallBlockEnabled()` 이면 `STALL_HOP_LIMIT` 에 닿은 부름을 막는다. 수정은 넘기지 않는다. */
+    stallDepth?: number;
     /**
      * 회신권(084)을 찾을 스레드 — **결과 발화일 때만** 넘긴다(`invokeGate.mayInvoke` 의 ctx 주석).
      * 수정은 넘기지 않는다(에이전트 글의 수정은 부르지 않는다).
@@ -1119,7 +1121,9 @@ async function resolveMentionCalls(
   */
   const chainAged = capsChain && input.chainStartedAt != null
     && Date.now() - input.chainStartedAt.getTime() >= CHAIN_BACKSTOP_MS;
-  const chainCapped = capsChain && (mentionDepth >= chainLimit || chainAged);
+  // 정체(④): 새 결과물 없이 이어진 홉이 한도에 닿았다. 스위치가 꺼져 있으면 막지 않는다(그림자 기록은 `postMessage` 가 남긴다).
+  const chainStalled = capsChain && (input.stallDepth ?? 0) >= STALL_HOP_LIMIT && stallBlockEnabled();
+  const chainCapped = capsChain && (mentionDepth >= chainLimit || chainAged || chainStalled);
 
   /*
     **부름과 지칭을 가른다**(2026-09-09). 규칙과 근거는 `splitMentionCalls` 에 있다:
@@ -1278,7 +1282,10 @@ async function resolveMentionCalls(
         ? {
             mentionChainCapped: cappedHandles, mentionChainLimit: chainLimit,
             // 시간 축(147)으로만 막혔으면 화면이 「24시간」 문장을 고른다.
-            ...(mentionDepth < chainLimit ? { mentionChainReason: 'age' } : {}),
+            // 정체로만 막혔으면 「새 결과물 없이 N홉」 문장이다(④). 홉 > 시간 > 정체 순으로 하나만 적는다.
+            ...(mentionDepth < chainLimit
+              ? (chainAged ? { mentionChainReason: 'age' } : { mentionChainReason: 'stall', mentionStallLimit: STALL_HOP_LIMIT })
+              : {}),
           }
         : {}),
       ...(deniedHandles.length ? { mentionDenied: deniedHandles } : {}),
@@ -1556,8 +1563,8 @@ export async function postMessage(
     const mentionDepth = chainBound ? Math.max(link.depth, input.chainDepth!) : link.depth;
     /*
       정체 홉(146, 연쇄 한도 재설계 ②). 에이전트 사슬 안의 발화만 센다 — 앞 줄들에 없던 결과물을 내면 0 으로 돌아간다.
-      **지금은 그림자다**: 막지 않고, 막혔을 부름만 `meta.mentionStallShadow` 에 남긴다(아래). 1주 기록에서 정상 스레드
-      오탐이 0 인지 본 뒤 차단으로 바꾼다.
+      `HARKROOM_STALL_BLOCK=on`(④)이면 한도에 닿은 에이전트 부름을 막는다(`resolveMentionCalls`). 꺼져 있으면 그림자다:
+      막지 않고, 막혔을 부름만 `meta.mentionStallShadow` 에 남긴다(아래).
     */
     const stall = authorIsAgent && link.depth > 0
       ? stallStep({
@@ -1572,7 +1579,7 @@ export async function postMessage(
     const chainStartedAt = authorIsAgent && link.depth > 0 ? link.startedAt ?? new Date() : null;
     const calls = await resolveMentionCalls(client, {
       body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth, chainBound,
-      chainStartedAt, replyGrantThreadId: isResult ? input.threadRootId ?? null : null,
+      chainStartedAt, stallDepth, replyGrantThreadId: isResult ? input.threadRootId ?? null : null,
     });
 
     /**
@@ -1905,7 +1912,8 @@ export async function postMessage(
         agentId: input.authorId, channelId: input.channelId, threadRootId: input.threadRootId ?? message.id,
         sourceMessageId: message.id, cappedIds: [...calls.cappedIds],
         limit: (calls.callMeta.mentionChainLimit as number | undefined) ?? MENTION_CHAIN_LIMIT,
-        reason: calls.callMeta.mentionChainReason === 'age' ? 'age' : 'hops',
+        reason: calls.callMeta.mentionChainReason === 'age' || calls.callMeta.mentionChainReason === 'stall'
+          ? calls.callMeta.mentionChainReason : 'hops',
       }).catch((err) => console.error('[chainBackstop] 카드를 세우지 못했다(글은 나갔다):', err));
     }
     return { message, notified: [...notified], replayed: false, rootBack };

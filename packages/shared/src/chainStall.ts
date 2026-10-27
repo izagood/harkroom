@@ -10,8 +10,17 @@
  * 16진수 낱말(`deadbeef`)을 sha 로 잘못 읽는 쪽은 **덜 막는** 방향이라 백스톱(③)이 받는다.
  */
 
-/** 새 결과물 없이 이어진 에이전트 홉이 이만큼이면 에이전트 부름을 막는다(그림자 단계에서는 기록만). */
+/** 새 결과물 없이 이어진 에이전트 홉이 이만큼이면 에이전트 부름을 막는다(`HARKROOM_STALL_BLOCK=on` 일 때. 꺼져 있으면 기록만). */
 export const STALL_HOP_LIMIT = 4;
+
+/**
+ * 정체 차단 스위치(연쇄 한도 재설계 ④) — `HARKROOM_STALL_BLOCK=on` 이면 정체 홉이 한도에 닿은 에이전트 부름을 막는다.
+ * 기본은 꺼짐(그림자: `meta.mentionStallShadow` 에 기록만). 그림자 1주 기록에서 정상 스레드 오탐이 0 인지 본 뒤 켠다.
+ * 부를 때마다 읽는다 — 시험이 켜고 끈다.
+ */
+export function stallBlockEnabled(env: Record<string, string | undefined> = typeof process !== 'undefined' ? process.env : {}): boolean {
+  return (env.HARKROOM_STALL_BLOCK ?? '').trim().toLowerCase() === 'on';
+}
 
 /**
  * **백스톱의 시간 축**(연쇄 한도 재설계 ③). 사람 손길에서 시작한 사슬이 이만큼 지나면 홉 수와 무관하게 에이전트 부름을 막고

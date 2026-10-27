@@ -54,4 +54,12 @@ describe('막힌 호출 표시', () => {
     render(<MessageItem message={msg({ mentionChainCapped: ['eve'] })} />);
     expect(screen.getByTestId('mention-chain-capped').textContent).toContain('@eve');
   });
+
+  it('정체로 막혔으면(④) 「새 결과물 없이 N홉」 문장이고 N 은 깊이 상한이 아니라 정체 한도다', () => {
+    render(<MessageItem message={msg({ mentionChainCapped: ['eve'], mentionChainLimit: 100, mentionChainReason: 'stall', mentionStallLimit: 4 })} />);
+    const text = screen.getByTestId('mention-chain-capped').textContent ?? '';
+    expect(text).toContain('새 결과물');
+    expect(text).toContain('4홉');
+    expect(text).not.toContain('100');
+  });
 });

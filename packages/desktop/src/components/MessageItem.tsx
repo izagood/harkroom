@@ -869,9 +869,13 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 {/* 카드는 결과 글에만 선다(서버 `countsAsReply`) — 진행 글에는 옛 꼴로 사람 한 줄을 안내한다. */}
                 {t(message.meta.mentionChainReason === 'age'
                   ? (countsAsReply(message.kind) ? 'message.chainCappedAge' : 'message.chainCappedAgeNoCard')
-                  : (countsAsReply(message.kind) ? 'message.chainCapped' : 'message.chainCappedNoCard'), {
+                  : message.meta.mentionChainReason === 'stall'
+                    ? (countsAsReply(message.kind) ? 'message.chainCappedStall' : 'message.chainCappedStallNoCard')
+                    : (countsAsReply(message.kind) ? 'message.chainCapped' : 'message.chainCappedNoCard'), {
                   handles: chainCapped.map((h) => `@${h}`).join(' '),
-                  limit: chainLimit ?? '',
+                  // 정체로 막혔으면 그 한도(④ `mentionStallLimit`)를, 아니면 깊이 상한을 쓴다.
+                  limit: message.meta.mentionChainReason === 'stall' && typeof message.meta.mentionStallLimit === 'number'
+                    ? message.meta.mentionStallLimit : chainLimit ?? '',
                 })}
               </p>
             )}
