@@ -718,7 +718,7 @@ const MEMORY_USAGE_LINES = [
 ];
 
 /** 메모리 절을 만든다. 세 상태가 각각 다른 것을 낸다 — 아래 주석이 이유다. */
-function memorySection(memory: MemoryContext): string[] {
+function memorySection(memory: MemoryContext, readOnly = false): string[] {
   // 조회 자체가 실패했다. **아무것도 주입하지 않는다** — 온보딩 안내조차 넣으면
   // 에이전트가 "나는 기억이 없다" 고 믿고 새로 쓴다. 러너 로그에는 호출부가 남긴다.
   if (memory === 'unavailable') return [];
@@ -727,6 +727,8 @@ function memorySection(memory: MemoryContext): string[] {
     // 사본으로 도는데 그 사본이 비어 있다 — "비었다"는 **그때의** 사실이지 지금의 사실이
     // 아니다. 온보딩을 넣으면 'unavailable' 에서 막은 사고(새 프로필로 덮어쓰기)가 돌아온다.
     if (memory.stale) return [];
+    // 읽기 전용 턴은 `memory.set` 이 막혀 있다 — 쓸 수 없는 도구를 권하지 않는다.
+    if (readOnly) return [];
     // 조회는 성공했고 저장소가 비어 있다. 이건 사실이므로 안내해도 안전하다.
     return [
       '기억이 아직 없다. 이 워크스페이스에서 반복해서 쓸 사실(사람들의 역할, 저장소 규칙,',
@@ -745,7 +747,8 @@ function memorySection(memory: MemoryContext): string[] {
   if (memory.core !== null) lines.push(escapeForPrompt(memory.core));
   // 사용법은 **닫는 태그 바깥**에 둔다. 안에 넣으면 기억 본문과 같은 자리에 서고, 그러면
   // 기억을 지운 사람이 지시까지 지우게 된다(`<memory>` 안은 데이터, 밖은 지시다).
-  lines.push('</memory>', '', ...MEMORY_INDEX_LINES, '', ...MEMORY_USAGE_LINES, '');
+  // 읽기 전용 턴은 쓰기 사용법(slug 규칙·정리법)을 싣지 않는다 — 그 도구가 이 턴에는 없다. 목록과 `memory.get` 은 열려 있다.
+  lines.push('</memory>', '', ...MEMORY_INDEX_LINES, '', ...(readOnly ? [] : [...MEMORY_USAGE_LINES, '']));
   return lines;
 }
 
@@ -832,6 +835,16 @@ function skillSection(memory: MemoryContext): string[] {
 }
 
 /**
+ * 읽기 전용 턴에 스킬 절 자리에 싣는 한 단락. 빼기만 하면 에이전트는 옛 세션에서 본 도구를 찾을 수 있다 —
+ * 무엇이 닫혀 있고 대신 무엇을 하는지를 말한다.
+ */
+export const READONLY_TURN_LINES: readonly string[] = [
+  '이 턴은 **읽기 전용**이다 — 대화·기억을 읽고 이 스레드에 답하는 도구만 열려 있다. 미리보기(`artifact.publish`)·',
+  '기억 쓰기·스킬/자동화 제안은 이 턴에 없으니 찾지 마라. 그런 일이 필요하면 답에 적어 사람에게 넘긴다.',
+  '',
+];
+
+/**
  * PR 본문 서명이 가리키는 곳. **인스턴스 주소가 아니라 프로젝트 저장소다** — harkroom 는
  * 셀프호스트라 인스턴스 주소는 저마다 다르고(`messagePermalink` 주석), 그래서 링크에
  * 호스트를 박지 않는 것이 이 저장소의 규율이다. 여기 박아도 되는 이유는 이 값이
@@ -871,8 +884,13 @@ export function buildSystemPrompt(opts: {
    * 없다 — 비우면 모델이 예시 문구를 자기 이름으로 베꼈다(2026-10-25 qa, MiniMax 가 다른 회사 모델 이름을 실었다). 없으면 뺀다.
    */
   laneModel?: string | null;
+  /**
+   * 읽기 전용 멘션 턴(`mentionPermission: 'readonly'`). 그 턴은 허용 목록(`turn.ts` READONLY_ALLOW) 밖의 도구가 안 보인다 —
+   * 미리보기·기억 쓰기·스킬·자동화 제안을 권하면 에이전트는 없는 도구를 찾아 헤맨다. 참이면 그 안내를 싣지 않는다.
+   */
+  readOnly?: boolean;
 }): string {
-  const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api, secretCreate, permissions, laneModel } = opts;
+  const { handle, channelName, instructions, guide, memory, turnBudgetMs, merge, api, secretCreate, permissions, laneModel, readOnly = false } = opts;
   const budgetMinutes = turnBudgetMs === undefined ? null : Math.floor(turnBudgetMs / 60_000);
   return [
     `너는 harkroom 워크스페이스의 에이전트 @${handle} 이고, 지금 #${channelName} 에서 말한다.`,
@@ -883,8 +901,8 @@ export function buildSystemPrompt(opts: {
     '워크스페이스 규칙:',
     guide,
     '',
-    ...memorySection(memory),
-    ...skillSection(memory),
+    ...memorySection(memory, readOnly),
+    ...(readOnly ? READONLY_TURN_LINES : skillSection(memory)),
     // 발화가 러너의 책임에서 에이전트의 자율로 넘어갔다(spec §4 발화 경로) — 어디에 쓸지를
     // 명시하지 않으면 턴이 조용히 끝나고, 러너는 그걸 프로세스 종료 후에나(hasOwnPostSince)
     // 알아챈다. 이 지시가 이 프롬프트에서 가장 중요한 한 줄이다.
@@ -1010,12 +1028,14 @@ export function buildSystemPrompt(opts: {
     // 2026-10-02(미리보기 PR ②, 스레드 31121b84): 디자인 안을 claude.ai 아티팩트 링크로 주면 그 브라우저에
     // 회사 계정으로 로그인한 사람만 연다 — 소유자가 폰 스레드에서 링크를 눌렀다가 막혔다. 새 도구를 만들고
     // 프롬프트에 안 적으면 아무도 안 쓴다(message.delegate #762 → #809 의 교훈). 그래서 같은 PR 에서 적는다.
-    '사람이 **눈으로 볼 HTML**(디자인 안·시안·보고서 페이지)은 claude.ai 아티팩트 링크로 주지 말고',
-    'harkroom MCP 의 `artifact.publish`(channelId·threadRootId·title·body·html)로 올린다 — 그 글이 이',
-    '턴의 발화다. 사람은 앱 안 카드를 눌러 바로 본다(폰 포함). 한 파일에 다 담아라: 페이지는 외부로',
-    'fetch 할 수 없고, 스크립트·스타일·폰트는 cdnjs·jsdelivr·Google Fonts 에서만 불러온다. 같은 안을',
-    '고칠 때는 앞서 받은 `artifactId` 를 함께 줘서 다음 버전으로 올린다. 그 도구가 없으면 지금처럼 글로 쓴다.',
-    '',
+    ...(readOnly ? [] : [
+      '사람이 **눈으로 볼 HTML**(디자인 안·시안·보고서 페이지)은 claude.ai 아티팩트 링크로 주지 말고',
+      'harkroom MCP 의 `artifact.publish`(channelId·threadRootId·title·body·html)로 올린다 — 그 글이 이',
+      '턴의 발화다. 사람은 앱 안 카드를 눌러 바로 본다(폰 포함). 한 파일에 다 담아라: 페이지는 외부로',
+      'fetch 할 수 없고, 스크립트·스타일·폰트는 cdnjs·jsdelivr·Google Fonts 에서만 불러온다. 같은 안을',
+      '고칠 때는 앞서 받은 `artifactId` 를 함께 줘서 다음 버전으로 올린다. 그 도구가 없으면 지금처럼 글로 쓴다.',
+      '',
+    ]),
     // #144: 긴 작업 시작 시 진행 설명 — message.progress MCP 도구로 올린다.
     // 이것은 결과 발화로 세지 않으며, 사용자가 읽을 수 있어야 뜻이 있다.
     // 진행 설명 예시: "avcs intent 를 만들고 merge3 결함 재현 테스트부터 붙인다 — 서너 턴 걸린다"
