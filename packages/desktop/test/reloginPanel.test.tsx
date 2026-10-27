@@ -80,13 +80,14 @@ async function community(baseUrl: string, accountId: string, active: boolean, lo
 const entryOf = (id: string) => useCommunityRegistry.getState().entries.find((e) => e.id === id)!;
 
 /** 서버 두 대를 흉내내는 `fetch`. 비밀번호가 'bad' 면 로그인을 401 로 거절한다. */
-function serverFetch() {
-  const who: Record<string, { id: string; handle: string }> = {
+function serverFetch(opts: { who?: Record<string, { id: string; handle: string }>; holdLogin?: Promise<void>; seen?: string[] } = {}) {
+  const who: Record<string, { id: string; handle: string }> = opts.who ?? {
     'https://a.example': { id: 'acct-a', handle: 'me-a' },
     'https://b.example': { id: 'acct-b', handle: 'me-b' },
   };
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    opts.seen?.push(url);
     const host = Object.keys(who).find((h) => url.startsWith(h)) ?? 'https://a.example';
     const me = who[host]!;
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
@@ -95,7 +96,9 @@ function serverFetch() {
       disabled: false, deleted: false, status: 'available', statusText: null, ownerAccountId: null,
       avatarAttachmentId: null,
     };
+    if (url.endsWith('/auth/password-reset')) return json({ token: `tok-${me.id}` });
     if (url.endsWith('/auth/login')) {
+      if (opts.holdLogin) await opts.holdLogin;
       const body = JSON.parse(String(init?.body ?? '{}')) as { password?: string };
       return body.password === 'bad'
         ? json({ error: { code: 'invalid_credentials', message: '로그인 ID 또는 비밀번호가 틀렸다' } }, 401)
@@ -209,6 +212,7 @@ describe('d1·d2 보고 있는 커뮤니티가 끝났다', () => {
     fireEvent.change(screen.getByTestId('relogin-password'), { target: { value: 'good' } });
     fireEvent.click(screen.getByTestId('relogin-submit'));
     await waitFor(() => expect(onRelogin).toHaveBeenCalledWith({
+      entryId: expect.any(String) as string,
       baseUrl: 'https://a.example', token: 'tok-acct-a', accountId: 'acct-a', handle: 'me-a', loginId: 'login-a',
     }));
   });
@@ -229,7 +233,8 @@ describe('d3 보고 있지 않은 커뮤니티가 끝났다', () => {
 
     const card = screen.getByTestId('signed-out-card');
     expect(card.textContent).toContain('b.example에서 로그아웃됐다');
-    expect(card.textContent).toContain('지금 보는 a.example은 그대로다');
+    // 조사가 이름에 붙지 않는 문구(designer n2) — 받침 없는 이름에서도 틀리지 않는다.
+    expect(card.textContent).toContain('지금 보는 커뮤니티는 그대로다');
     // 오른쪽 위 노란 점이 선다.
     expect(screen.getByTestId('rail-community-others-signed-out')).toBeTruthy();
     expect(screen.getByTestId('rail-community-mark').getAttribute('aria-label')).toContain('다른 커뮤니티 1곳에 로그인 필요');
@@ -282,6 +287,83 @@ describe('d5 전부 끝났다 — 로그인 화면', () => {
   });
 });
 
+describe('패널의 보탬(designer 1·n1·n3·n5, security n1)', () => {
+  async function activeSignedOut(loginId: string | null = 'login-a') {
+    const a = await community('https://a.example', 'acct-a', true, loginId);
+    const b = await community('https://b.example', 'acct-b', false);
+    seed(entryOf(b.entry.id), 'me-b');
+    act(() => { useCommunityRegistry.getState().setSignedOut(a.entry.id, true); });
+    return { a: a.entry, b: b.entry };
+  }
+
+  it('designer 1: 「비밀번호를 잊었나요?」가 패널 안에서 재설정을 열고, 그 커뮤니티 서버로만 보낸다', async () => {
+    await activeSignedOut();
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', serverFetch({ seen }));
+    const onRelogin = vi.fn(async () => {});
+    render(<Workspace onLogout={() => {}} onOpenSettings={() => {}} onRelogin={onRelogin} />);
+
+    fireEvent.click(screen.getByTestId('relogin-forgot'));
+    expect(screen.getByTestId('relogin-recover')).toBeTruthy();
+    // 레일은 그대로다 — 되찾기도 그 자리 일이다.
+    expect(screen.getByTestId('rail-community-mark')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('pwreset-have-code'));
+    expect((screen.getByTestId('pwreset-login-id') as HTMLInputElement).value).toBe('login-a');
+    fireEvent.change(screen.getByTestId('pwreset-code'), { target: { value: 'K7QF-9MXD-2PQR' } });
+    fireEvent.change(screen.getByTestId('pwreset-new'), { target: { value: 'new-password-1' } });
+    fireEvent.change(screen.getByTestId('pwreset-confirm'), { target: { value: 'new-password-1' } });
+    fireEvent.click(screen.getByTestId('pwreset-submit'));
+
+    await waitFor(() => expect(onRelogin).toHaveBeenCalledWith(expect.objectContaining({
+      baseUrl: 'https://a.example', accountId: 'acct-a', token: 'tok-acct-a',
+    })));
+    expect(seen.some((u) => u.endsWith('/auth/password-reset'))).toBe(true);
+    expect(seen.every((u) => u.startsWith('https://a.example'))).toBe(true);
+  });
+
+  it('security n1: 같은 서버의 다른 계정으로 들어오면 세우지 않고 커뮤니티 추가로 안내한다', async () => {
+    await activeSignedOut(null);
+    vi.stubGlobal('fetch', serverFetch({ who: { 'https://a.example': { id: 'acct-x', handle: 'someone' } } }));
+    const onRelogin = vi.fn(async () => {});
+    render(<Workspace onLogout={() => {}} onOpenSettings={() => {}} onRelogin={onRelogin} />);
+
+    fireEvent.change(screen.getByTestId('relogin-login-id-input'), { target: { value: 'someone' } });
+    fireEvent.change(screen.getByTestId('relogin-password'), { target: { value: 'good' } });
+    fireEvent.click(screen.getByTestId('relogin-submit'));
+    expect((await screen.findByTestId('relogin-error')).textContent).toContain('다른 계정이다');
+    expect(onRelogin).not.toHaveBeenCalled();
+  });
+
+  it('designer n5: 패널이 떠 있는 동안 레일의 어느 칸도 선택된 것으로 그리지 않는다', async () => {
+    await activeSignedOut();
+    render(<Workspace onLogout={() => {}} onOpenSettings={() => {}} onRelogin={vi.fn()} />);
+    expect(screen.getByTestId('rail-home').getAttribute('aria-current')).toBeNull();
+  });
+
+  it('designer n3: 저장된 줄은 방향키로 옮기고, 누르면 비밀번호로 포커스가 가며 고른 줄에 ✓ 가 선다', async () => {
+    const a = await community('https://a.example', 'acct-a', true, 'login-a');
+    const b = await community('https://b.example', 'acct-b', false, 'login-b');
+    act(() => {
+      useCommunityRegistry.getState().setSignedOut(a.entry.id, true);
+      useCommunityRegistry.getState().setSignedOut(b.entry.id, true);
+    });
+    render(<ConnectScreen onConnected={vi.fn()} />);
+    const rowA = screen.getByTestId(`connect-saved-${a.entry.id}`);
+    const rowB = screen.getByTestId(`connect-saved-${b.entry.id}`);
+    expect(rowA.tabIndex).toBe(0);
+    expect(rowB.tabIndex).toBe(-1);
+    expect(within(rowA).getByTestId('connect-saved-check')).toBeTruthy();
+
+    fireEvent.keyDown(rowA, { key: 'ArrowDown' });
+    expect(rowB.getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(rowB);
+    expect((screen.getByLabelText('로그인 ID', { exact: false }) as HTMLInputElement).value).toBe('login-b');
+
+    fireEvent.click(rowA);
+    expect(document.activeElement).toBe(screen.getByTestId('connect-password'));
+  });
+});
+
 describe('App 배선 — 활성 하나가 끝나도 로그인 전체 화면으로 가지 않는다', () => {
   const store = () => localStorage.setItem('harkroom.sessions', JSON.stringify({
     active: 'acct-a',
@@ -322,5 +404,43 @@ describe('App 배선 — 활성 하나가 끝나도 로그인 전체 화면으�
     const latestA = [...wsSpy.cbs].reverse().find((c) => c.url.startsWith('https://a.example'))!.cb;
     act(() => { latestA.onDown('credential'); });
     expect(await screen.findByRole('heading', { name: '다시 로그인' })).toBeTruthy();
+  });
+
+  it('security F1: 로그인을 기다리는 사이 다른 커뮤니티로 옮겨도 그 커뮤니티 연결은 안 끊기고, 만료된 칸만 다시 선다', async () => {
+    store();
+    let release!: () => void;
+    const hold = new Promise<void>((r) => { release = r; });
+    vi.stubGlobal('fetch', serverFetch({ holdLogin: hold }));
+    render(<App />);
+    expect(await screen.findByTestId('app-header')).toBeTruthy();
+    await waitFor(() => expect(wsSpy.cbs.length).toBe(2));
+    // 기동 복원이 끝난 뒤 로그인을 붙잡는다 — 그 전 요청은 /auth/login 을 부르지 않는다.
+    const reg = () => useCommunityRegistry.getState();
+    const entryA = reg().entries.find((e) => e.accountId === 'acct-a')!;
+    const entryB = reg().entries.find((e) => e.accountId === 'acct-b')!;
+    const controllerB = entryB.controller!;
+    const stopB = vi.spyOn(controllerB, 'stop');
+    act(() => { wsSpy.cbs.find((c) => c.url.startsWith('https://a.example'))!.cb.onDown('credential'); });
+    expect(await screen.findByTestId('relogin-panel')).toBeTruthy();
+
+    fireEvent.change(screen.getByTestId('relogin-password'), { target: { value: 'good' } });
+    fireEvent.click(screen.getByTestId('relogin-submit'));
+    // 응답을 기다리는 사이 b 로 옮긴다.
+    fireEvent.click(screen.getByTestId(`relogin-other-${entryB.id}`));
+    await waitFor(() => expect(reg().activeId).toBe(entryB.id));
+    release();
+
+    await waitFor(() => expect(reg().entries.find((e) => e.id === entryA.id)!.signedOut).toBe(false));
+    // b 는 그대로 활성이고, 그 컨트롤러는 멈추지 않았고, 그 칸의 계정도 b 다.
+    expect(reg().activeId).toBe(entryB.id);
+    expect(stopB).not.toHaveBeenCalled();
+    expect(reg().entries.find((e) => e.id === entryB.id)!.controller).toBe(controllerB);
+    expect(reg().entries.find((e) => e.id === entryB.id)!.accountId).toBe('acct-b');
+    // a 는 제 칸에 다시 섰고 같은 계정이 둘 서지 않는다.
+    expect(reg().entries.find((e) => e.id === entryA.id)!.accountId).toBe('acct-a');
+    expect(reg().entries.filter((e) => e.accountId === 'acct-a')).toHaveLength(1);
+    // 보관본의 활성도 b 그대로다.
+    const saved = JSON.parse(localStorage.getItem('harkroom.sessions')!) as { active: string };
+    expect(saved.active).toBe('acct-b');
   });
 });

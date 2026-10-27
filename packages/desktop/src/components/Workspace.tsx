@@ -290,8 +290,9 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
   if (activeEntry?.signedOut) {
     return (
       <div className="flex h-full text-body">
+        {/* 패널이 칸 내용을 덮고 있으니 어느 칸도 선택된 것으로 그리지 않는다(designer n5). */}
         <Rail
-          panel={railPanel}
+          panel={null}
           onPanelChange={handleRailPanel}
           onOpenSettings={onOpenSettings}
           onManageCommunities={() => onOpenSettings('communities')}

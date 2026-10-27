@@ -32,6 +32,8 @@ import { nowT } from './i18n/useT';
 async function startSession(
   community: StoredCommunity,
   onSessionLost: (message: string, accountId: string) => void,
+  /** 이 칸에 세운다(다시 로그인). 주지 않으면 지금 활성 칸이다. */
+  slotId?: string,
 ): Promise<Controller> {
   const entry = await startCommunitySession({
     baseUrl: community.baseUrl,
@@ -40,6 +42,7 @@ async function startSession(
     label: community.label,
     loginId: community.loginId ?? null,
     active: true,
+    slotId,
     notifier: createNotifier(),
     onSessionLost: (message: string, accountId: string) => onSessionLost(message, accountId),
   });
@@ -145,19 +148,25 @@ export default function App() {
   };
 
   /**
-   * 다시 로그인 패널이 성공했다 — 보관본에 적고 **같은 자리**에 세션을 다시 세운다(`claimActive` 가 표시를
-   * 걷는다). 다른 커뮤니티의 연결은 건드리지 않는다. 이름표는 살린다(`onConnected` 와 같은 규칙).
+   * 다시 로그인 패널이 성공했다 — 보관본에 적고 **패널의 그 칸**(`entryId`)에 세션을 다시 세운다(`claimEntry` 가
+   * 표시를 걷는다).
+   *
+   * 「지금 활성」이 아니라 그 칸인 이유(security F1): 로그인·키체인을 기다리는 사이 사람이 다른 커뮤니티로 옮길 수
+   * 있다. 그때 활성 칸에 세우면 살아 있던 그 커뮤니티의 컨트롤러가 멈추고, 만료됐던 계정이 남의 이름표를 달고 선다.
+   * 그래서 칸·이름표는 패널이 넘긴 엔트리의 것만 쓰고, 활성이 바뀌었으면 보관본의 `active` 도 건드리지 않는다.
    */
-  const handleRelogin: ReloginDone = async ({ baseUrl, token, accountId, handle, loginId }) => {
+  const handleRelogin: ReloginDone = async ({ entryId, baseUrl, token, accountId, handle, loginId }) => {
+    const entry = useCommunityRegistry.getState().entries.find((e) => e.id === entryId);
+    // 기다리는 사이 그 커뮤니티를 이 기기에서 뺐다 — 세울 칸이 없다. 사람이 한 일이므로 조용히 끝낸다.
+    if (!entry) return;
     const stored = (await sessionStore.load()) ?? { active: null, communities: [] };
-    const label = getActiveEntry().label;
     const existing = stored.communities.findIndex((c) => c.accountId === accountId);
-    const record: StoredCommunity = { accountId, baseUrl, token, handle, loginId, label };
-    if (existing >= 0) stored.communities[existing] = { ...record, label: stored.communities[existing]!.label ?? label };
+    const record: StoredCommunity = { accountId, baseUrl, token, handle, loginId, label: entry.label };
+    if (existing >= 0) stored.communities[existing] = { ...record, label: stored.communities[existing]!.label ?? entry.label };
     else stored.communities.push(record);
-    stored.active = accountId;
+    if (useCommunityRegistry.getState().activeId === entryId) stored.active = accountId;
     await sessionStore.save(stored);
-    await startSession(stored.communities.find((c) => c.accountId === accountId)!, handleSessionLost);
+    await startSession(stored.communities.find((c) => c.accountId === accountId)!, handleSessionLost, entryId);
   };
 
   useEffect(() => {

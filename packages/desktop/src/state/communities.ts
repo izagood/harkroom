@@ -92,6 +92,12 @@ export interface CommunityRegistryState {
    * 사용자 눈에 보이는 변화가 생긴다.
    */
   claimActive(input: CommunityInput): CommunityEntry;
+  /**
+   * `claimActive` 와 같되 **정해 준 칸**을 갱신한다. 기다림 뒤에 세션을 세우는 길(다시 로그인 패널)이 쓴다 —
+   * 그 사이 사람이 다른 커뮤니티로 옮겼으면 「지금 활성」은 다른 칸이고, 그것을 덮으면 살아 있던 커뮤니티의
+   * 연결이 끊긴다(security F1, #1635).
+   */
+  claimEntry(id: string, input: CommunityInput): CommunityEntry;
   /** 커뮤니티를 **덧붙인다**. 활성으로 만들지는 않는다 — 그것은 `setActive` 가 한다. */
   register(input: CommunityInput): CommunityEntry;
   /**
@@ -133,9 +139,11 @@ function bootstrap(): Pick<CommunityRegistryState, 'entries' | 'activeId'> {
 
 export const useCommunityRegistry = create<CommunityRegistryState>((set, get) => ({
   ...bootstrap(),
-  claimActive: (input) => {
-    const { entries, activeId } = get();
-    const next = entries.map((e) => (e.id === activeId
+  claimActive: (input) => get().claimEntry(get().activeId, input),
+  claimEntry: (id, input) => {
+    const { entries } = get();
+    if (!entries.some((e) => e.id === id)) throw new Error(`모르는 커뮤니티다: ${id}`);
+    const next = entries.map((e) => (e.id === id
       ? {
           ...e,
           baseUrl: input.baseUrl,
@@ -153,7 +161,7 @@ export const useCommunityRegistry = create<CommunityRegistryState>((set, get) =>
         }
       : e));
     set({ entries: next });
-    return next.find((e) => e.id === activeId)!;
+    return next.find((e) => e.id === id)!;
   },
   register: (input) => {
     const entry = makeEntry(input);

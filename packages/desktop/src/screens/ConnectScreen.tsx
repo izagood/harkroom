@@ -10,6 +10,7 @@ import { PASSWORD_MAX_LENGTH } from '@harkroom/shared';
 import { ForgotPasswordGuide, ResetWithCodeForm } from '../components/PasswordReset';
 import { useT } from '../i18n/useT';
 import { communityLabel, useCommunityRegistry } from '../state/communities';
+import { initialOf } from '../components/CommunitySwitcher';
 
 /** 로그인이 성공했을 때 위로 올려 보내는 것. 두 모드가 같은 값을 다른 곳으로 보낸다. */
 /** `loginId` 는 사람이 로그인 칸에 넣은 값이다 — handle 과 다를 수 있어 따로 올린다(다시 로그인 패널이 쓴다). */
@@ -59,6 +60,23 @@ export function ConnectScreen(props: ConnectScreenProps) {
   const [pickedId, setPickedId] = useState<string | null>(() => saved[0]?.id ?? null);
   /** 저장된 커뮤니티가 있을 때 첫 실행 링크 셋(초대·관리자 만들기·호스티드)은 이 한 줄 뒤에 접혀 있다. */
   const [showNew, setShowNew] = useState(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  /** 저장된 줄 하나를 고른다 — 주소·ID 를 채운다. 누른 것이면 비밀번호로 포커스를 옮긴다(방향키는 줄에 남긴다). */
+  const pickSaved = (id: string, toPassword: boolean) => {
+    const e = saved.find((x) => x.id === id);
+    if (!e) return;
+    setPickedId(id); setBaseUrl(e.baseUrl); setLoginId(e.loginId ?? ''); setError(null);
+    if (toPassword) passwordRef.current?.focus();
+  };
+  const onSavedKey = (ev: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = ev.key === 'ArrowDown' || ev.key === 'ArrowRight' ? 1 : ev.key === 'ArrowUp' || ev.key === 'ArrowLeft' ? -1 : 0;
+    if (!step || !saved.length) return;
+    ev.preventDefault();
+    const at = Math.max(0, saved.findIndex((x) => x.id === pickedId));
+    const next = saved[(at + step + saved.length) % saved.length]!;
+    pickSaved(next.id, false);
+    ev.currentTarget.querySelector<HTMLButtonElement>(`[data-saved-id="${next.id}"]`)?.focus();
+  };
   // 직전에 로그인에 성공한 주소로 채운다. 한 번도 없으면 self-host 기본값(localhost)이다.
   // 세션이 끝난 커뮤니티가 있으면 그 첫 줄의 주소·로그인 ID 로 채운다.
   const [baseUrl, setBaseUrl] = useState(() => saved[0]?.baseUrl ?? lastWorkspaceUrlStorage.load());
@@ -424,24 +442,29 @@ export function ConnectScreen(props: ConnectScreenProps) {
         ) : (
         <>
         {saved.length > 0 && authMode === 'signin' && (
-          <div className="space-y-1" role="radiogroup" aria-label={t('relogin.connect.saved')}>
+          /* 라디오 묶음 — Tab 으로는 고른 줄 하나에만 들어오고 방향키로 옮긴다(roving tabindex, designer n3).
+             고르면 주소·ID 가 채워지고 포커스는 비밀번호로 간다. 고른 줄은 테두리 색에 ✓ 를 더한다. */
+          <div className="space-y-1" role="radiogroup" aria-label={t('relogin.connect.saved')} onKeyDown={onSavedKey}>
             {saved.map((e) => (
               <button
                 key={e.id}
                 type="button"
                 role="radio"
                 aria-checked={pickedId === e.id}
+                tabIndex={pickedId === e.id ? 0 : -1}
                 data-testid={`connect-saved-${e.id}`}
-                onClick={() => { setPickedId(e.id); setBaseUrl(e.baseUrl); setLoginId(e.loginId ?? ''); setError(null); }}
+                data-saved-id={e.id}
+                onClick={() => pickSaved(e.id, true)}
                 className={`flex w-full items-center gap-2 rounded-row border px-2 py-1.5 text-left ${pickedId === e.id ? 'border-accent' : 'border-border'} bg-surface hover:bg-surface-hover`}
               >
                 <span aria-hidden="true" className="flex h-5 w-5 shrink-0 items-center justify-center rounded-card bg-surface-sunken text-meta font-semibold text-fg-muted">
-                  {communityLabel(e).slice(0, 1).toUpperCase()}
+                  {initialOf(communityLabel(e))}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-semibold text-fg">{communityLabel(e)}</span>
                   <span className="block truncate text-meta text-fg-subtle">{hostOfUrl(e.baseUrl)}</span>
                 </span>
+                {pickedId === e.id && <span aria-hidden="true" data-testid="connect-saved-check" className="shrink-0 text-accent">✓</span>}
               </button>
             ))}
           </div>
@@ -489,7 +512,7 @@ export function ConnectScreen(props: ConnectScreenProps) {
         <div className="relative">
           <label className="block text-meta font-medium">
             {t('connect.field.password')}
-            <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} data-testid="connect-password" />
+            <input ref={passwordRef} className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} data-testid="connect-password" />
           </label>
           {authMode === 'signin' && (
             <button type="button" data-testid="connect-forgot" className="absolute right-0 top-0 text-meta font-normal text-accent hover:underline"

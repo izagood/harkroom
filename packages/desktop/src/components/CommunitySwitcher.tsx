@@ -268,7 +268,7 @@ function communityState(t: ReturnType<typeof useT>, signedOut: boolean, connecte
   return t(connected ? 'rail.community.connected' : 'rail.community.disconnected');
 }
 
-function initialOf(label: string): string {
+export function initialOf(label: string): string {
   return Array.from(label)[0]?.toUpperCase() ?? '?';
 }
 

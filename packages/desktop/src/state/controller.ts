@@ -3649,6 +3649,11 @@ export async function startCommunitySession(opts: {
   label: string | null;
   /** 로그인 칸에 넣은 ID — 세션이 끝났을 때 「다시 로그인」 패널이 채운다. 모르면 생략. */
   loginId?: string | null;
+  /**
+   * 이 칸에 세운다(레지스트리 엔트리 id). 주면 `active` 와 무관하게 그 칸만 갱신하고 활성은 건드리지 않는다 —
+   * 다시 로그인처럼 기다림 뒤에 세우는 길이 쓴다(security F1). 실패해도 칸을 빼지 않는다(그 칸은 이미 있던 것이다).
+   */
+  slotId?: string;
   onSessionLost?: (message: string, accountId: string) => void;
   makeWs?: typeof connectWs;
   notifier?: Notifier;
@@ -3659,9 +3664,11 @@ export async function startCommunitySession(opts: {
   // `active` 는 "화면이 이것을 본다" 이므로 **활성 엔트리를 그 커뮤니티로 만든다** — 새로
   // 덧붙이지 않는다. 그래야 재로그인이 목록을 늘리지 않는다.
   const input = { baseUrl: opts.baseUrl, accountId: opts.accountId, label: opts.label, loginId: opts.loginId ?? null };
-  const entry = opts.active
-    ? registry.claimActive(input)
-    : registry.register(input);
+  const entry = opts.slotId
+    ? registry.claimEntry(opts.slotId, input)
+    : opts.active
+      ? registry.claimActive(input)
+      : registry.register(input);
   // 같은 활성 커뮤니티의 재로그인·StrictMode 재기동은 이전 세션을 대체한다. 보존된
   // 컨트롤러를 먼저 끝내야 WS와 로컬 runner가 계정당 하나라는 불변식이 유지된다.
   entry.controller?.stop();
@@ -3692,7 +3699,7 @@ export async function startCommunitySession(opts: {
     if (current?.controller === controller) {
       useCommunityRegistry.getState().attachController(entry.id, null);
     }
-    if (!opts.active) useCommunityRegistry.getState().remove(entry.id);
+    if (!opts.active && !opts.slotId) useCommunityRegistry.getState().remove(entry.id);
     throw err;
   }
   return { ...entry, controller };

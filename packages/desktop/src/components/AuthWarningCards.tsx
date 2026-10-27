@@ -102,7 +102,6 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
   // 보고 있지 않은 커뮤니티의 세션이 끝났다(designer 시안 ④ B-3). 보고 있는 것은 그 자리 패널이 말한다.
   const registryEntries = useCommunityRegistry((r) => r.entries);
   const activeId = useCommunityRegistry((r) => r.activeId);
-  const current = registryEntries.find((e) => e.id === activeId);
   const signedOutOthers = registryEntries.filter((e) => e.id !== activeId && e.signedOut);
   // [나중에]는 이 앱이 떠 있는 동안만 기억한다 — 다시 로그인했다가 또 끝나면 다시 알려야 한다.
   const [laterSignedOut, setLaterSignedOut] = useState<ReadonlySet<string>>(new Set());
@@ -193,7 +192,7 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
                 <span className="text-warning">⚠</span> {t('relogin.card.title', { name })}
               </p>
               <p className="mt-0.5 truncate text-meta text-fg-muted">
-                {t('relogin.card.line', { current: current ? communityLabel(current) : '' })}
+                {t('relogin.card.line')}
               </p>
               <div className="mt-2 flex items-center gap-1.5">
                 <button
