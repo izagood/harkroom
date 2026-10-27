@@ -11,7 +11,7 @@ import { loadStoryboard } from '../src/stories.js';
 import { SEED_FILE, type Seed } from './session.js';
 
 /** 이 PR 에서 시드하는 페르소나. 여정 러너(PR4)가 늘린다. */
-const SEEDED = ['P2', 'P4', 'P6'] as const;
+const SEEDED = ['P2', 'P4', 'P5', 'P6', 'P8'] as const;
 
 async function call<T>(server: string, method: string, path: string, body?: unknown, token?: string): Promise<T> {
   const res = await fetch(`${server}${path}`, {
@@ -62,8 +62,13 @@ export default async function seed(): Promise<void> {
     if (p.role === 'admin' || p.role === 'guest') {
       await call(server, 'PUT', `/accounts/${reg.id}/role`, { role: p.role }, ownerLogin.token);
     }
-    seedOut.accounts[id] = { id: reg.id, handle: p.handle };
+    for (const capability of p.grants ?? []) {
+      await call(server, 'PUT', `/accounts/${reg.id}/grants`, { capability }, ownerLogin.token);
+    }
+    seedOut.accounts[id] = { id: reg.id, handle: p.handle, role: p.role === 'admin' || p.role === 'guest' ? p.role : 'member' };
   }
+  const me = await call<{ id: string }>(server, 'GET', '/auth/me', undefined, ownerLogin.token);
+  seedOut.accounts.P1 = { id: me.id, handle: owner.handle, role: 'owner' };
   writeFileSync(SEED_FILE, JSON.stringify(seedOut, null, 2));
 }
 

@@ -98,7 +98,14 @@ const handlers: Partial<Record<Step['act'], Handler>> = {
     // 단계(볼 수 없는 채널 등)는 `with.status` 로 적는다.
     const allowed = (step.with?.status as number[] | undefined) ?? [401, 403];
     if (!allowed.includes(res.statusCode)) throw new Error(`${req.method} ${req.url} 가 거절되지 않았다: ${res.statusCode}`);
-    return `${req.method} ${req.url} → ${res.statusCode}`;
+    // `with.code` 가 있으면 **거절 사유**까지 본다 — 403 이 맞아도 다른 문(예: 멤버십이 아니라 역할)에서 막혔으면
+    // 그 여정이 보려던 판정이 아니다.
+    const code = step.with?.code as string | undefined;
+    if (code !== undefined) {
+      const got = (res.json() as { error?: { code?: string } } | null)?.error?.code;
+      if (got !== code) throw new Error(`${req.method} ${req.url} 거절 사유가 다르다: ${String(got)} (기대 ${code})`);
+    }
+    return `${req.method} ${req.url} → ${res.statusCode}${code ? ` ${code}` : ''}`;
   },
   async 'invite.create'(s, _step, actor) {
     const res = await s.app.inject({ method: 'POST', url: '/invites', headers: auth(actor.token) });

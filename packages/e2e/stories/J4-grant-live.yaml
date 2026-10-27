@@ -51,6 +51,9 @@ existing:
   - kind: desktop-vitest
     file: "packages/desktop/test/agentCreateGate.test.tsx"
     note: "게이트 판정"
+  - kind: browser-playwright
+    file: "packages/e2e/web/journeys.pw.ts"
+    note: "대체(브라우저): 화면 여정 러너가 이 여정의 화면 단계를 돈다(권한·역할·초대는 API 로)"
 runners: [api, browser, mobile]
 gaps:
-  - "모바일은 grant.changed 를 처리하지 않는다(재시작 필요)"
+  - "모바일 실기기 회차가 아직 없다 — grant.changed 처리(#1624)는 integration_test 로만 봤다(시험 테넌트가 생기면 실물로)"

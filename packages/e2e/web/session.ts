@@ -7,7 +7,8 @@ export const SEED_FILE = join(import.meta.dirname, '.seed.json');
 export interface Seed {
   server: string;
   password: string;
-  accounts: Record<string, { id: string; handle: string }>;
+  /** `role` 은 시드가 둔 역할 — 여정이 역할을 바꾸면 끝에서 이 값으로 되돌린다. */
+  accounts: Record<string, { id: string; handle: string; role: 'owner' | 'admin' | 'member' | 'guest' }>;
 }
 
 export function readSeed(): Seed {

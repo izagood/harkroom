@@ -76,6 +76,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-surface">
           <button
+            data-testid="settings-back"
             className="flex items-center gap-2 px-4 py-4 text-left font-medium text-fg-muted hover:text-fg"
             onClick={() => guardedLeave(onBack)}
           >
@@ -102,6 +103,7 @@ export function SettingsScreen({ initialSection = DEFAULT_SECTION, targetId, onB
                 {g.items.map((item) => (
                   <button
                     key={item.id}
+                    data-testid={`settings-nav-${item.id}`}
                     className={`flex w-full items-center rounded-card px-2 py-1.5 text-left
                       ${section === item.id ? 'bg-surface-hover font-medium text-fg' : 'text-fg-muted hover:bg-surface-sunken'}`}
                     aria-current={section === item.id ? 'page' : undefined}
