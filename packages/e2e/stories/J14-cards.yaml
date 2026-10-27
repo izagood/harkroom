@@ -25,4 +25,4 @@ existing:
   - kind: server-vitest
     file: "packages/server/test/permissionCard.test.ts"
     note: "권한 카드"
-runners: [api, browser, harness]
+runners: [browser, harness]

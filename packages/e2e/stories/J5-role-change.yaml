@@ -1,8 +1,8 @@
 id: J5
-title: "역할을 바꾸면 바로 바뀐다"
-personas: [P2, P4]
+title: "역할을 바꾸면 바로 바뀐다(admin 임명·해제는 owner 만)"
+personas: [P1, P4]
 steps:
-  - as: P2
+  - as: P1
     act: role.set
     on: desktop
     target: "P4"
@@ -14,7 +14,7 @@ steps:
     target: "channel-create"
     with: { withinSec: 10 }
     expect: "관리자 버튼이 재시작 없이 생긴다"
-  - as: P2
+  - as: P1
     act: role.set
     on: desktop
     target: "P4"
@@ -36,6 +36,9 @@ failSigns:
   - "재시작 전까지 옛 역할"
   - "버튼은 보이는데 403"
 existing:
+  - kind: server-vitest
+    file: "packages/server/test/storyJourneys.test.ts"
+    note: "API 여정 러너가 이 여정을 그대로 돈다(화면 단계는 /auth/me capabilities 로 옮겨 보거나 건너뜀)"
   - kind: server-vitest
     file: "packages/server/test/permissions.test.ts"
     note: "역할별 판정"

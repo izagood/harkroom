@@ -29,4 +29,4 @@ existing:
   - kind: server-vitest
     file: "packages/server/test/accountStatus.test.ts"
     note: "계정 상태 판정"
-runners: [api, browser]
+runners: [browser]

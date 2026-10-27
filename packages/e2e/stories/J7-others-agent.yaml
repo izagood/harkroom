@@ -28,4 +28,4 @@ existing:
   - kind: server-vitest
     file: "packages/server/test/dmInvokeGate.test.ts"
     note: "DM 부르기 판정"
-runners: [api, browser, harness]
+runners: [browser, harness]

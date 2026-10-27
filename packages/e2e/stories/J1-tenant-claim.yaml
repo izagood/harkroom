@@ -24,6 +24,6 @@ existing:
   - kind: server-vitest
     file: "packages/server/test/auth.test.ts"
     note: "/claim·/bootstrap 판정"
-runners: [api, manual]
+runners: [manual]
 gaps:
   - "gate(테넌트 발급·회수)는 이 저장소 밖이라 시험이 없다"

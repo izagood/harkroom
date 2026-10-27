@@ -15,7 +15,8 @@ steps:
   - as: P4
     act: api.denied
     on: api
-    target: "GET /channels/:id/messages"
+    target: "GET /channels/:channel/messages"
+    with: { status: [403, 404] }
     expect: "403 또는 404"
   - as: P2
     act: channel.invite
@@ -28,6 +29,9 @@ failSigns:
   - "링크로 열면 내용이 보임"
   - "초대 뒤 재시작해야 보임"
 existing:
+  - kind: server-vitest
+    file: "packages/server/test/storyJourneys.test.ts"
+    note: "API 여정 러너가 이 여정을 그대로 돈다(화면 단계는 /auth/me capabilities 로 옮겨 보거나 건너뜀)"
   - kind: server-vitest
     file: "packages/server/test/membershipGate.test.ts"
     note: "멤버십 판정"

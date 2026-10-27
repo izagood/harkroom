@@ -30,6 +30,9 @@ failSigns:
   - "초대가 대기로 남음"
 existing:
   - kind: server-vitest
+    file: "packages/server/test/storyJourneys.test.ts"
+    note: "API 여정 러너가 이 여정을 그대로 돈다(화면 단계는 /auth/me capabilities 로 옮겨 보거나 건너뜀)"
+  - kind: server-vitest
     file: "packages/server/test/inviteMail.test.ts"
     note: "초대 발급·메일"
   - kind: mobile-integration
