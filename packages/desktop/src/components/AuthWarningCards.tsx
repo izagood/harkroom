@@ -14,7 +14,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EX_CONFIG } from '@harkroom/shared';
-import { useActiveStore } from '../state/communities';
+import { communityLabel, useActiveStore, useCommunityRegistry, type CommunityEntry } from '../state/communities';
+import { switchCommunity } from '../state/controller';
 import { useLocale, useT } from '../i18n/useT';
 import { authWarningKey, authWarnings, pruneStopped, type AuthWarning } from '../lib/authWarnings';
 import {
@@ -98,6 +99,19 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
   const [dismissed, setDismissed] = useState<Set<string>>(() => readSet(DISMISSED_KEY));
   const notified = useRef<Set<string>>(readSet(NOTIFIED_KEY));
   const notifier = useMemo(() => createNotifier(), []);
+  // 보고 있지 않은 커뮤니티의 세션이 끝났다(designer 시안 ④ B-3). 보고 있는 것은 그 자리 패널이 말한다.
+  const registryEntries = useCommunityRegistry((r) => r.entries);
+  const activeId = useCommunityRegistry((r) => r.activeId);
+  const current = registryEntries.find((e) => e.id === activeId);
+  const signedOutOthers = registryEntries.filter((e) => e.id !== activeId && e.signedOut);
+  // [나중에]는 이 앱이 떠 있는 동안만 기억한다 — 다시 로그인했다가 또 끝나면 다시 알려야 한다.
+  const [laterSignedOut, setLaterSignedOut] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    setLaterSignedOut((cur) => {
+      const still = new Set([...cur].filter((id) => registryEntries.some((e) => e.id === id && e.signedOut)));
+      return still.size === cur.size ? cur : still;
+    });
+  }, [registryEntries]);
 
   // 지금 커뮤니티에 없는 에이전트는 지운다 — 이름이 없는 id 를 그리지 않고, 다른 커뮤니티를 섞지 않는다.
   // 열쇠는 **거르기 전** 경고로 짓는다 — 커뮤니티를 바꿔 거른 수가 달라져도 같은 상태면 같은 열쇠다(security n1).
@@ -138,10 +152,12 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
 
   const s2 = shown.filter(({ w }) => w.kind === 's2');
   const s1 = shown.filter(({ w }) => w.kind === 's1');
-  type Slot = { kind: 'gate' } | { kind: 'auth'; key: string; w: AuthWarning };
+  type Slot = { kind: 'gate' } | { kind: 'auth'; key: string; w: AuthWarning } | { kind: 'signedOut'; entry: CommunityEntry };
+  // 순서: S2(에이전트 멈춤) → 관문 → 다른 커뮤니티 로그아웃 → S1(designer 시안 ④ B-3). 두 장 규칙은 그대로다.
   const slots: Slot[] = [
     ...s2.map((x) => ({ kind: 'auth' as const, ...x })),
     ...(gateOpen ? [{ kind: 'gate' as const }] : []),
+    ...signedOutOthers.filter((e) => !laterSignedOut.has(e.id)).map((entry) => ({ kind: 'signedOut' as const, entry })),
     ...s1.map((x) => ({ kind: 'auth' as const, ...x })),
   ];
   const visible = slots.slice(0, 2);
@@ -164,6 +180,43 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
         const more = i === visible.length - 1 && hidden > 0 ? hidden : 0;
         // 마지막 칸이 관문 카드여도 숨은 수를 잃지 않는다(designer s2).
         if (slot.kind === 'gate') return <GateCard key="gate" extraMore={more} />;
+        if (slot.kind === 'signedOut') {
+          const name = communityLabel(slot.entry);
+          return (
+            <div
+              key={`signed-out-${slot.entry.id}`}
+              role="status"
+              data-testid="signed-out-card"
+              className="pointer-events-auto rounded-card border border-border border-l-4 border-l-warning bg-surface-raised px-3 py-2.5 shadow-float"
+            >
+              <p className="truncate text-body font-semibold text-fg">
+                <span className="text-warning">⚠</span> {t('relogin.card.title', { name })}
+              </p>
+              <p className="mt-0.5 truncate text-meta text-fg-muted">
+                {t('relogin.card.line', { current: current ? communityLabel(current) : '' })}
+              </p>
+              <div className="mt-2 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  data-testid="signed-out-card-relogin"
+                  className="rounded-row bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
+                  onClick={() => { void switchCommunity(slot.entry.id); }}
+                >
+                  {t('relogin.submit')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="signed-out-card-later"
+                  className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-hover"
+                  onClick={() => setLaterSignedOut((cur) => new Set(cur).add(slot.entry.id))}
+                >
+                  {t('relogin.card.later')}
+                </button>
+                {more > 0 && <span className="ml-auto text-meta text-fg-subtle">{t('gate.more', { count: more })}</span>}
+              </div>
+            </div>
+          );
+        }
         const { w, key } = slot;
         const names = w.kind === 's2' ? handles(w.agentIds) : [];
         const title = w.kind === 's1'

@@ -77,7 +77,7 @@ describe('ConnectScreen — 호스팅 워크스페이스 만들기', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create admin account' }));
 
-    await waitFor(() => expect(onConnected).toHaveBeenCalledWith(WS, 'tok-c', 'acct_c', 'owner'));
+    await waitFor(() => expect(onConnected).toHaveBeenCalledWith(WS, 'tok-c', 'acct_c', 'owner', 'owner'));
 
     // **토큰이 자동으로 실려 갔다.** 사용자는 그것을 보지도 입력하지도 않았다.
     const claimBody = bodies[calls.findIndex((c) => c.endsWith('/claim'))];
