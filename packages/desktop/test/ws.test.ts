@@ -148,6 +148,59 @@ describe('connectWs — 자격증명 실패는 재시도로 낫지 않는다', (
     handle.close();
   });
 
+  // 서버는 티켓 미스(만료·다른 프로세스가 발급)에도 4401 을 보낸다 — REST 가 세션이 살아 있다고 하면 다시 붙는다.
+  it('reconnects after a 4401 when the credential check says the session is alive', async () => {
+    let issued = 0;
+    const downs: string[] = [];
+    const checks: number[] = [];
+    const handle = connectWs('http://x:3400', async () => `murt_${++issued}`, {
+      onEvent: () => {}, onOpen: () => {}, onDown: (reason) => downs.push(reason),
+      credentialStillValid: async () => { checks.push(1); return true; },
+    });
+    await settleReal();
+
+    FakeWebSocket.instances[0]!.close(4401);
+    await settleReal(1200);
+
+    expect(checks).toHaveLength(1);
+    expect(downs).toEqual(['network']);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(issued).toBe(2); // 새 티켓으로
+    handle.close();
+  });
+
+  it('gives up as a credential failure when the check confirms the session is dead', async () => {
+    const downs: string[] = [];
+    const handle = connectWs('http://x:3400', async () => 'murt_a', {
+      onEvent: () => {}, onOpen: () => {}, onDown: (reason) => downs.push(reason),
+      credentialStillValid: async () => false,
+    });
+    await settleReal();
+
+    FakeWebSocket.instances[0]!.close(4401);
+    await settleReal(1200);
+
+    expect(downs).toEqual(['credential']);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    handle.close();
+  });
+
+  it('treats a failing check as "not proven dead" and reconnects', async () => {
+    const downs: string[] = [];
+    const handle = connectWs('http://x:3400', async () => 'murt_a', {
+      onEvent: () => {}, onOpen: () => {}, onDown: (reason) => downs.push(reason),
+      credentialStillValid: async () => { throw new Error('offline'); },
+    });
+    await settleReal();
+
+    FakeWebSocket.instances[0]!.close(4401);
+    await settleReal(1200);
+
+    expect(downs).toEqual(['network']);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    handle.close();
+  });
+
   it('reports an origin rejection separately and does not reconnect', async () => {
     const downs: string[] = [];
     const handle = connectWs('http://x:3400', async () => 'murt_a', {

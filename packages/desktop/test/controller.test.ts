@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller } from '../src/state/controller';
 import { acc, accountsResult, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
+import { ApiError } from '../src/lib/api';
 
 beforeEach(() => useAppStore.getState().reset());
 
@@ -444,6 +445,67 @@ describe('Controller', () => {
     expect(got).toHaveLength(1);
     expect(got[0]!.accountId).toBeTruthy();
     expect(got[0]!.accountId).toBe('u1');
+  });
+
+  // 소켓의 4401 은 티켓 미스일 수도 있다 — 컨트롤러는 /auth/me 로 판정을 넘긴다. 401 만 "죽었다"다.
+  it('4401 재확인: /auth/me 가 401 일 때만 자격증명이 죽었다고 답한다', async () => {
+    const me = vi.fn();
+    const api = fakeApi();
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    (api as unknown as { me: typeof me }).me = me;
+    const check = callbacks.current!.credentialStillValid!;
+
+    me.mockResolvedValueOnce({ id: 'u1' });
+    await expect(check()).resolves.toBe(true);
+    me.mockRejectedValueOnce(new ApiError(401, 'unauthorized', 'authentication required'));
+    await expect(check()).resolves.toBe(false);
+    me.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    await expect(check()).resolves.toBe(true);
+    me.mockRejectedValueOnce(new ApiError(503, 'unavailable', 'down'));
+    await expect(check()).resolves.toBe(true);
+  });
+
+  // `me` 가 아직 없을 때 세션을 잃으면 예전에는 빈 id 로 보관본 **전체**를 지웠다 — 다른 커뮤니티까지 잃었다.
+  describe('me 가 없을 때 세션 손실은 다른 커뮤니티를 지우지 않는다', () => {
+    const two = () => localStorage.setItem('harkroom.sessions', JSON.stringify({
+      active: 'a1',
+      communities: [
+        { accountId: 'a1', baseUrl: 'http://one', token: 't1', handle: 'h1', label: null },
+        { accountId: 'a2', baseUrl: 'http://two', token: 't2', handle: 'h2', label: null },
+      ],
+    }));
+    const stored = () => (JSON.parse(localStorage.getItem('harkroom.sessions') ?? 'null') as { communities: { accountId: string }[] } | null)
+      ?.communities.map((x) => x.accountId) ?? null;
+
+    it('세운 쪽이 준 계정 id 로 그 커뮤니티만 뺀다', async () => {
+      two();
+      const got: string[] = [];
+      const { makeWs, callbacks } = fakeWsFactory();
+      const c = new Controller(fakeApi(), makeWs, undefined, (_m, id) => got.push(id));
+      c.accountId = 'a1';
+      await c.start();
+      useAppStore.getState().set({ me: null });
+
+      callbacks.current!.onDown('credential');
+
+      await vi.waitFor(() => expect(stored()).toEqual(['a2']));
+      expect(got).toEqual(['a1']);
+    });
+
+    it('계정을 모르면 보관본을 건드리지 않는다', async () => {
+      two();
+      const { makeWs, callbacks } = fakeWsFactory();
+      const c = new Controller(fakeApi(), makeWs, undefined, () => {});
+      await c.start();
+      useAppStore.getState().set({ me: null });
+
+      callbacks.current!.onDown('credential');
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(stored()).toEqual(['a1', 'a2']);
+    });
   });
 
   it('reports an origin rejection with its own wording', async () => {
