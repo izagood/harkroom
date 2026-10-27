@@ -1529,16 +1529,16 @@ fn spawn_daemon(
     // 커뮤니티마다 모드: 이 오퍼레이터(와 그 러너)가 맡은 커뮤니티·뿌리를 준다. 오퍼레이터는 이 값으로 계정 선택
     // 자리(`claudePoolsFilePath`)를 정하고, `operator.json` 에 이 커뮤니티 칸만 받는다(`assertSingleCommunity`).
     // 꺼져 있으면 아무것도 주지 않는다 — 앱이 물려받은 스위치 값이 새지 않게 지운다.
-    match community {
-        Some(t) => {
-            cmd.env(crate::community_root::PER_COMMUNITY_ENV, "1")
-                .env(crate::community_root::OPERATOR_ROOT_ENV, &t.root)
-                .env(crate::community_root::OPERATOR_COMMUNITY_ENV, &t.key);
-        }
-        None => {
-            cmd.env_remove(crate::community_root::PER_COMMUNITY_ENV)
-                .env_remove(crate::community_root::OPERATOR_ROOT_ENV)
-                .env_remove(crate::community_root::OPERATOR_COMMUNITY_ENV);
+    // 옛 자리 커뮤니티(D5)면 `HARKROOM_OPERATOR_LEGACY=1` 도 준다 — 러너가 작업 폴더를 옛 경로 그대로 쓴다(P4
+    // `agentStateBaseDir`). 그 칸이 아니면 지운다(security #1641 n2). 무엇을 주고 지울지는 `community_env` 한 곳이 정한다.
+    for (name, value) in crate::community_root::community_env(community) {
+        match value {
+            Some(v) => {
+                cmd.env(name, v);
+            }
+            None => {
+                cmd.env_remove(name);
+            }
         }
     }
 
