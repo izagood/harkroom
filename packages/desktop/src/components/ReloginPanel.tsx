@@ -46,12 +46,17 @@ export function ReloginPanel({ entry, onDone }: { entry: CommunityEntry; onDone:
    * 토큰을 받은 뒤의 공통 길(비밀번호 로그인·코드 재설정). **같은 계정인지 먼저 본다**(security n1): 로그인 ID 칸이
    * 열려 있으면 같은 서버의 다른 계정으로도 들어갈 수 있는데, 그 계정이 이 칸과 이름표를 차지하면 안 된다.
    * 다른 계정은 커뮤니티 추가로 붙이라고 말하고 세우지 않는다.
+   *
+   * 그때 받은 토큰은 버리기만 하지 않고 그 서버에 로그아웃을 한 번 보낸다(security r1) — 안 그러면 그 계정의 세션이
+   * 아무도 쥐지 않은 채 서버에 남는다. 실패해도 안내는 그대로다(세션은 안 쓰면 14일에 끝난다).
+   * 재설정 화면에서 왔으면 패널로 돌아가 안내를 보인다 — 재설정 화면은 이 오류를 그리지 않는다.
    */
   const finish = async (api: ApiClient, token: string, usedLoginId: string) => {
     api.setToken(token);
     const me = await api.me();
     if (entry.accountId && me.id !== entry.accountId) {
-      if (mounted.current) { setError(t('relogin.otherAccount')); setBusy(false); }
+      await api.logout().catch(() => {});
+      if (mounted.current) { setRecover(null); setError(t('relogin.otherAccount')); setBusy(false); }
       return;
     }
     await onDone({ entryId: entry.id, baseUrl: api.baseUrl, token, accountId: me.id, handle: me.handle, loginId: usedLoginId });
@@ -82,12 +87,22 @@ export function ReloginPanel({ entry, onDone }: { entry: CommunityEntry; onDone:
     return (
       <div data-testid="relogin-panel" className="flex min-w-0 flex-1 items-start justify-center overflow-y-auto bg-surface px-4 pb-4 pt-12">
         <div data-testid="relogin-recover" className="w-full max-w-sm rounded-card border border-border bg-surface-raised p-4">
+          {/* 어느 커뮤니티의 비밀번호인지 맨 위에 한 줄(designer r1) — 여러 커뮤니티 중 하나에서 여는 화면이다. */}
+          <p data-testid="relogin-recover-community" className="mb-3 flex min-w-0 items-center gap-2 text-meta text-fg-muted">
+            <span aria-hidden="true" className="flex h-5 w-5 shrink-0 items-center justify-center rounded-card bg-surface-sunken font-semibold">
+              {initialOf(name)}
+            </span>
+            <span className="truncate"><span className="font-semibold text-fg">{name}</span>{host !== name && <> · {host}</>}</span>
+          </p>
           {recover === 'guide'
             ? <ForgotPasswordGuide onHaveCode={() => setRecover('code')} onBack={() => setRecover(null)} />
             : (
               <ResetWithCodeForm
                 baseUrl={entry.baseUrl}
                 initialLoginId={loginId}
+                // 패널이 ID 를 고정해 둔 커뮤니티면 여기서도 고칠 수 없는 글자로 둔다(designer r2). 옛 보관본이라
+                // 사람이 칸에 적어 넣은 경우만 열어 둔다 — 그 값도 패널 칸에서 이미 정했다.
+                fixedLoginId={!!entry.loginId}
                 onSignedIn={async (api, token) => { await finish(api, token, loginId); }}
                 onBack={() => setRecover('guide')}
               />
