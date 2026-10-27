@@ -417,13 +417,15 @@ export class Controller {
     // 하고(채팅은 daemon 없이도 된다), 그 실패는 러너를 띄우려 할 때 러너 상태에 사유로
     // 오른다(`RunnerLauncher.startAll`). 여기서 await 하면 소켓 왕복이 창 표시를 늦춘다.
     //
-    // 오퍼레이터가 섰으면 **첫 설치인지** 보고 이 머신을 등록한다 — 오퍼레이터가 하나도 없는 커뮤니티일 때만
+    // 오퍼레이터가 섰으면 **첫 설치인지** 보고 이 머신을 등록한다 — 전체 목록을 보는 사람(operator.manage)에게
+    // 오퍼레이터가 하나도 없는 커뮤니티일 때만
     // (`autoRegisterOperator.ts`). 오퍼레이터를 못 세웠으면(웹·테스트·실패) 묻지 않는다.
     this.swallow(this.runnerLauncher.ensureOperator().then((observed) => {
       if (!observed || this.stopped) return;
       return autoRegisterFirstOperator({
         baseUrl: this.api.baseUrl,
         canRegister: hasCapability(me, 'operator.register'),
+        canManage: hasCapability(me, 'operator.manage'),
         listLocal: listLocalAgents,
         listOperators: () => this.api.operators(),
         mintCode: () => this.api.operatorRegisterCode(),

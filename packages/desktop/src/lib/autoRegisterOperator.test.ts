@@ -7,6 +7,7 @@ function deps(over: Partial<AutoRegisterDeps> = {}): AutoRegisterDeps & { regist
   return {
     baseUrl: BASE,
     canRegister: true,
+    canManage: true,
     listLocal: async () => ({ communities: [] }),
     listOperators: async () => [],
     mintCode: vi.fn(async () => ({ code: 'hkreg_test' })),
@@ -44,6 +45,15 @@ describe('autoRegisterFirstOperator — 첫 설치에서 이 머신을 등록', 
     const d = deps({ canRegister: false });
     expect(await autoRegisterFirstOperator(d)).toBe('no-capability');
     expect(d.mintCode).not.toHaveBeenCalled();
+  });
+
+  it('member(operator.manage 없음)는 빈 목록이어도 하지 않는다 — 그 목록은 자기 것뿐이다', async () => {
+    const listOperators = vi.fn(async () => []);
+    const d = deps({ canManage: false, listOperators });
+    expect(await autoRegisterFirstOperator(d)).toBe('no-capability');
+    expect(listOperators).not.toHaveBeenCalled();
+    expect(d.mintCode).not.toHaveBeenCalled();
+    expect(d.register).not.toHaveBeenCalled();
   });
 
   it('목록을 못 읽으면 모르는 채로 등록하지 않는다', async () => {
