@@ -526,7 +526,7 @@ Buzz 의 "Agent runtimes 탐지 + Install" 목록은 **의도적으로 베끼지
   시계열이 생겨 스크레이프가 곧 메모리 사고가 된다. 게이지 수집 실패는 그 지표만 생략한다
   (DB가 내려간 상황에서 에러율을 못 보는 것이 최악이다). `/metrics`는 자기 스크레이프를 세지
   않는다. admin이 아니라 인증된 계정이면 되는 이유: 스크레이퍼의 실용적 자격증명은 만료 없는
-  에이전트 PAT이고 사람 세션 토큰은 14일에 만료된다.
+  에이전트 PAT이고 사람 세션 토큰은 안 쓰면 14일에 만료된다(쓰는 동안 늘어나되 처음 로그인에서 90일이 상한).
 - **토큰은 OS 키체인에 넣는다**: 데스크탑은 macOS Keychain / Windows Credential Manager /
   Linux Secret Service(`keyring` 크레이트를 `secret_get`·`secret_set`·`secret_delete` 세 명령으로
   노출 — Tauri에 공식 키체인 플러그인이 없다). 키체인이 없는 환경(브라우저 개발·테스트)에서는
