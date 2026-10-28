@@ -1112,9 +1112,9 @@ fn main() {
             if let Ok(dir) = tauri::Manager::path(app).app_data_dir() {
                 let root = daemon_client::app_data_root(&dir);
                 let res = if community_root::per_community_enabled() {
-                    community_root::adopt_legacy(&root).map(|k| k.map(|k| format!("옛 자리를 legacy 칸으로 적었다: {k}")))
+                    community_root::adopt_legacy(&root, &tauri::Manager::path(app).home_dir().unwrap_or_default()).map(|k| k.map(|k| format!("옛 자리를 legacy 칸으로 적었다: {k}")))
                 } else {
-                    community_root::revert_index(&root).map(|gone| gone.then(|| "커뮤니티마다 모드를 끄고 떠서 색인을 지웠다".to_string()))
+                    community_root::revert_index(&root).map(|gone| gone.then(|| "커뮤니티마다 모드를 끄고 떠서 칸을 옛 설정에 합치고 색인을 꺼 두었다".to_string()))
                 };
                 match res {
                     Ok(Some(line)) => eprintln!("harkroom: {line}"),

@@ -136,7 +136,13 @@ export type AdoptionVerdict =
    * 우리 것은 맞는데 **다른 세대**가 띄웠다(2026-09-07). 채택하지 않고 회수한다 —
    * `planAdoption` 주석이 이유를 적는다.
    */
-  | { kind: 'stale-generation'; theirs: string | null; mine: string };
+  | { kind: 'stale-generation'; theirs: string | null; mine: string }
+  /**
+   * 우리 것은 맞는데 **이 프로세스가 맡지 않은 커뮤니티의 에이전트**다(커뮤니티마다 모드, security #1650 n1).
+   * legacy 뿌리의 옛 장부에 남은 B 러너를 A 프로세스가 채택하면 B 의 링크 비밀을 든 러너가 A 밑에 남는다.
+   * 채택하지 않고 종료(SIGTERM — 러너가 drain 한다)한다. 회수(`retire`)와 달리 A 의 hello 에 싣지 않는다.
+   */
+  | { kind: 'other-community' };
 
 /**
  * 후보 하나를 판정한다.
@@ -205,6 +211,11 @@ export async function planAdoption(
    * 직후의 러너가 정확히 그 상태라서 이 판정이 처음부터 아무 일도 하지 않는다.
    */
   myAppVersion: string | null = null,
+  /**
+   * 이 프로세스가 맡은 에이전트인가(커뮤니티마다 모드). 없으면 거르지 않는다(꺼짐 — 지금 동작). 판정은
+   * **신원 판정 뒤**다 — 종료 신호를 보낼 근거가 서는 것은 신원이 맞은 러너뿐이다(세대 판정과 같은 이유).
+   */
+  ownsAgent?: (agentId: string) => boolean,
 ): Promise<AdoptionPlan> {
   const plan: AdoptionPlan = { adopt: [], rejected: [] };
   const 최신: Map<string, RunnerLedgerEntry> = new Map();
@@ -227,6 +238,10 @@ export async function planAdoption(
     // 세대 판정은 **신원 판정 뒤**다. 죽은 pid 나 재사용된 pid 에 세대를 묻는 것은 뜻이
     // 없고, 무엇보다 그 경우 `retire` 가 무관한 프로세스에 SIGTERM 을 보낼 수 있다 —
     // 이 모듈이 가장 피하려는 사고다.
+    if (verdict.kind === 'adopt' && ownsAgent && !ownsAgent(entry.agentId)) {
+      plan.rejected.push({ entry, verdict: { kind: 'other-community' } });
+      continue;
+    }
     if (verdict.kind === 'adopt' && myAppVersion !== null
         && (entry.spawnedByAppVersion ?? null) !== myAppVersion) {
       plan.rejected.push({
@@ -267,5 +282,7 @@ export function describeVerdict(
         `${head} — 세대가 다르다(그 러너를 띄운 앱 ${verdict.theirs ?? '(안 적혀 있음)'}, ` +
         `지금 앱 ${verdict.mine}) — 회수하고 배정이 다시 띄운다`
       );
+    case 'other-community':
+      return `${head} — 이 오퍼레이터가 맡은 커뮤니티의 에이전트가 아니다 — 종료한다`;
   }
 }
