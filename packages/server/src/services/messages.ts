@@ -4,7 +4,7 @@ import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type Men
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
-import { mandateForAgentPost, stampHumanMandate } from './mandates.js';
+import { auditMandateCreated, mandateForAgentPost, stampHumanMandate, type MandateCreated } from './mandates.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
 import { bundledRootSql, openBundleSql } from './askBundleSql.js';
@@ -1480,6 +1480,7 @@ export async function postMessage(
   // 커밋 뒤에는 커넥션을 **먼저 돌려준다** — 아래 `readListRow` 가 풀에서 하나를 더 빌리므로,
   // 쥔 채로 빌리면 풀이 찬 순간 자기 자신을 기다린다(2026-10-01 풀 포화).
   let released = false;
+  const mandatesCreated: MandateCreated[] = [];
   try {
     await client.query('begin');
 
@@ -1669,7 +1670,7 @@ export async function postMessage(
     if (authorKind === 'human' && input.authVia === 'session' && (input.kind ?? 'user') === 'user' && !(input.meta && 'automation' in input.meta)) {
       await stampHumanMandate(client, {
         messageId: message.id, authorId: input.authorId, channelId: input.channelId,
-        threadRootId: input.threadRootId ?? null, notifiedIds: [...notified],
+        threadRootId: input.threadRootId ?? null, notifiedIds: [...notified], created: mandatesCreated,
       });
     } else if (authorIsAgent && input.chainCause) {
       // 위임은 사슬 고리(`causeLink`, inbox 60분)와 따로 — 그 원인으로 받은 **살아 있는 턴 임대**가 근거다(임대 수명 동안 잇는다).
@@ -1848,6 +1849,8 @@ export async function postMessage(
     await client.query('commit');
     client.release();
     released = true;
+    // 새로 만든 위임의 감사(`mandate.created`) — 커밋 뒤라 되돌린 글의 위임은 남지 않는다.
+    if (mandatesCreated.length) await auditMandateCreated(pool, mandatesCreated);
 
     // 이벤트는 **커밋 뒤**다 — 러너는 이것을 보고 즉시 폴하므로, 앞에서 치면 아직 안 보이는
     // inbox 를 읽고 빈손으로 돌아간다(sweep 이 같은 순서를 지키는 이유와 같다).

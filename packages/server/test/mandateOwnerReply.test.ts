@@ -121,5 +121,41 @@ describe('mandate W1 — owner reply under a keyless root', () => {
     expect(rows).toHaveLength(1);
     expect(await mandateOf(a)).toBe(rows[0]!.id);
     expect(await mandateOf(b)).toBe(rows[0]!.id);
+    // 감사도 하나뿐이다 — 기다린 쪽은 먼저 온 쪽의 위임을 이었을 뿐이다.
+    expect(await createdAudits(root)).toEqual([expect.objectContaining({ via: 'owner_reply', mandateId: rows[0]!.id })]);
+  });
+
+  const createdAudits = async (rootId: string) =>
+    (await pool.query(
+      `select actor_id, target, detail from audit_log where action = 'mandate.created' and detail->>'rootMessageId' = $1 order by id`,
+      [rootId])).rows.map((r) => ({ actorId: r.actor_id as string, target: r.target as string, ...(r.detail as Record<string, unknown>) }));
+
+  it('mandate.created: new owner root → one audit via root; continuing replies add none', async () => {
+    const root = await post(alice.accountId, '@tm start');
+    const m = await mandateOf(root);
+    expect(m).toBeTruthy();
+    expect(await createdAudits(root)).toEqual([{
+      actorId: alice.accountId, target: m, mandateId: m, rootMessageId: root, channelId: ch, threadRootId: root, via: 'root',
+    }]);
+    expect(await mandateOf(await post(alice.accountId, '@tm more', { threadRootId: root }))).toBe(m);
+    expect(await mandateOf(await post(alice.accountId, 'and more', { threadRootId: root }))).toBe(m);
+    expect(await createdAudits(root)).toHaveLength(1);
+  });
+
+  it('mandate.created: owner reply under a keyless root → via owner_reply once; no audit when nothing is made', async () => {
+    const root = await post(alice.accountId, 'keyless');
+    const reply = await post(alice.accountId, '@tm now', { threadRootId: root });
+    const m = await mandateOf(reply);
+    expect(await createdAudits(root)).toEqual([{
+      actorId: alice.accountId, target: m, mandateId: m, rootMessageId: root, channelId: ch, threadRootId: root, via: 'owner_reply',
+    }]);
+    expect(await mandateOf(await post(alice.accountId, '@sec continue', { threadRootId: root }))).toBe(m);
+    expect(await createdAudits(root)).toHaveLength(1);
+
+    const plain = await post(alice.accountId, 'nobody woken');
+    expect(await createdAudits(plain)).toHaveLength(0);
+    const bobRoot = await post(bob.accountId, 'bob root');
+    await post(alice.accountId, '@tm look', { threadRootId: bobRoot });
+    expect(await createdAudits(bobRoot)).toHaveLength(0);
   });
 });

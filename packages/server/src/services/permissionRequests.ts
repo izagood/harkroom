@@ -7,7 +7,7 @@ import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
 import { validateCapScope, type Cap, type LineLimits } from './capabilities.js';
 import { addMandateLine, revokeLinesForGrant, type LineVia } from './mandateLines.js';
-import { validMandateOwner } from './mandates.js';
+import { auditMandateCreated, validMandateOwner, type MandateCreated } from './mandates.js';
 import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
 import { getMessageById, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
 
@@ -533,6 +533,7 @@ export async function decidePermissionRequest(
 ): Promise<({ ok: true; status: 'granted' | 'denied' | 'approved_once'; grantExpiresAt: string | null; approvalExpiresAt?: string; cardMessageId: string | null; grantMode?: 'once' | 'hour' }) | ({ ok: false } & DecideRefusal)> {
   const now = args.now ?? new Date();
   const client = await pool.connect();
+  const mandatesCreated: MandateCreated[] = [];
   let row: { id: string; kind: PermissionKind; target: string; channelId: string; threadRootId: string; cardMessageId: string | null; denialId: string | null; mandateId: string | null } | undefined;
   let lineOutcome: MandateLineOutcome | null = null;
   let grantExpiresAt: Date | null = null;
@@ -582,7 +583,7 @@ export async function decidePermissionRequest(
     }
     // W4-3: 위임 없는 턴의 요청 — 카드의 스레드에 정하는 사람(=에이전트 소유자, 사람 세션은 부른 쪽이 봤다) 위임을 세우고 거기에 줄을 더한다.
     if (args.decision === 'approve_new_mandate' && !r.mandateId) {
-      const made = await mandateForCardThread(client, { ownerId: args.actorId, channelId: r.channelId, threadRootId: r.threadRootId, now });
+      const made = await mandateForCardThread(client, { ownerId: args.actorId, channelId: r.channelId, threadRootId: r.threadRootId, now, created: mandatesCreated });
       if (!made) {
         await client.query('rollback');
         return { ok: false, status: 409, code: 'mandate_unavailable', message: 'a mandate cannot be started on this thread — approve from a thread you started' };
@@ -683,6 +684,8 @@ export async function decidePermissionRequest(
         : args.via ? { via: args.via.kind } : {}),
     },
   });
+  // 카드가 새로 세운 위임(W4-3) — 줄 감사보다 먼저 남겨 순서대로 읽히게 한다.
+  if (mandatesCreated.length) await auditMandateCreated(pool, mandatesCreated);
   if (lineOutcome) await auditLineOutcome(pool, { actorId: args.actorId, agentId: args.agentId, requestId: row.id, outcome: lineOutcome });
   if (grantExpiresAt && row.kind === 'command') {
     emitEvent({ type: 'grant.changed', accountId: args.agentId, audience: 'all' });
@@ -727,7 +730,7 @@ async function answerOptionId(pool: Pool, cardMessageId: string, candidates: str
  * 머리 글은 **소유자 본인이나 그 소유자의 에이전트**가 쓴 것이어야 한다(security F2) — 위임 키는 그런 글에만 있다는 W1 불변식.
  * 남의 글에 키를 찍으면 그 글로 뜬 턴이 키를 얻는다(`issueTurnLease` 는 원인 글의 `mandate_id` 를 믿는다).
  */
-async function mandateForCardThread(client: PoolClient, args: { ownerId: string; channelId: string; threadRootId: string; now: Date }): Promise<string | null> {
+async function mandateForCardThread(client: PoolClient, args: { ownerId: string; channelId: string; threadRootId: string; now: Date; created?: MandateCreated[] }): Promise<string | null> {
   const root = (await client.query<{ mandateId: string | null; ownAuthor: boolean }>(
     `select m.mandate_id as "mandateId",
             (m.author_id = $3 or exists (select 1 from agent_config c where c.account_id = m.author_id and c.owner_account_id = $3)) as "ownAuthor"
@@ -740,13 +743,16 @@ async function mandateForCardThread(client: PoolClient, args: { ownerId: string;
     await client.query(`update mandate set last_activity_at = greatest(last_activity_at, $2) where id = $1`, [root.mandateId, args.now]);
     return root.mandateId;
   }
-  const id = (await client.query<{ id: string; owner: string; ended: boolean }>(
+  const id = (await client.query<{ id: string; owner: string; ended: boolean; inserted: boolean }>(
     `insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
      values ($1, $2, $3, $2, $4, $4)
      on conflict (root_message_id) do update set last_activity_at = greatest(mandate.last_activity_at, excluded.last_activity_at)
-     returning id, owner_account_id as owner, ended_at is not null as ended`,
+     returning id, owner_account_id as owner, ended_at is not null as ended, (xmax = 0) as inserted`,
     [args.ownerId, args.threadRootId, args.channelId, args.now])).rows[0]!;
   if (id.owner !== args.ownerId || id.ended) return null;
+  if (id.inserted) {
+    args.created?.push({ mandateId: id.id, ownerId: args.ownerId, rootMessageId: args.threadRootId, channelId: args.channelId, threadRootId: args.threadRootId, via: 'card' });
+  }
   await client.query(`update message set mandate_id = $2 where id = $1 and mandate_id is null`, [args.threadRootId, id.id]);
   return id.id;
 }
