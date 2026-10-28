@@ -1540,6 +1540,13 @@ export function readWakeMeta(meta: Record<string, unknown> | null | undefined): 
   return wake;
 }
 
+/** 서버가 쓴 권한 카드 칸(`permissionRequest`·`permissionMirror`)이 있는 meta 인가. 에이전트는 이 칸을 쓸 수 없다. */
+function isPermissionCardMeta(meta: Record<string, unknown>): boolean {
+  const pr = meta.permissionRequest;
+  const mirror = meta.permissionMirror as { rootId?: unknown } | undefined;
+  return (!!pr && typeof pr === 'object') || (!!mirror && typeof mirror === 'object' && typeof mirror.rootId === 'string');
+}
+
 /**
  * `meta` 가 선택 요청인지 판정한다. **모르는 `meta` 는 평문으로 흘린다**가 이 계획 전
  * 구간의 불변식이므로, 형식을 못 알아보면 `null` 을 주고 화면은 본문만 그린다 — 빈 상자는
@@ -1555,7 +1562,10 @@ export function readAskMeta(meta: Record<string, unknown> | null | undefined): A
   if (!Array.isArray(ask.options)) return null;
   // 개수 경계를 **읽는 쪽에서도** 지킨다: 옛 서버나 손으로 쓴 meta 가 1개짜리 선택지를
   // 실어 보낼 수 있고, 그것은 선택이 아니라 통보다.
-  if (ask.options.length < ASK_MIN_OPTIONS || ask.options.length > ASK_MAX_OPTIONS) return null;
+  // 서버가 세운 권한 카드(·그 거울)는 예외다 — CI 거절 카드의 선택지는 [거절] 하나뿐이고 승인 버튼([CI 실패 무시하고 이번 한 번])은
+  // 화면이 카드 안에 따로 그린다. 여기서 버리면 그 버튼까지 사라지고 카드가 본문만 남는다(2026-10-28, 스레드 441bda28).
+  const min = isPermissionCardMeta(meta) ? 1 : ASK_MIN_OPTIONS;
+  if (ask.options.length < min || ask.options.length > ASK_MAX_OPTIONS) return null;
   if (!ask.options.every((o) => o && typeof o.id === 'string' && typeof o.label === 'string')) return null;
   // 수신자를 못 읽으면 그리지 않는다 — 이것을 '사람 아무나'로 넘겨 주면 남에게 간 물음이
   // 내 화면에서 강조를 받는다. 그 사고를 타입이 아니라 이 줄이 막는다.

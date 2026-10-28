@@ -147,7 +147,11 @@ class AskMeta {
     final rawOptions = ask['options'];
     if (rawOptions is! List) return null;
     final options = AskOption.readList(rawOptions);
-    if (options.length < askMinOptions) return null;
+    // 서버가 세운 권한 카드(·그 거울)는 선택지 하나도 받는다 — CI 거절 카드는 [거절] 하나뿐이고 승인 버튼은
+    // 카드 안에 따로 그린다. 버리면 그 버튼까지 사라진다(shared `readAskMeta` 와 같은 판정, 2026-10-28).
+    final mirror = meta['permissionMirror'];
+    final serverPermissionCard = pr is Map || (mirror is Map && mirror['rootId'] is String);
+    if (options.length < (serverPermissionCard ? 1 : askMinOptions)) return null;
 
     final to = ask['to'];
     final AskAudience audience;
