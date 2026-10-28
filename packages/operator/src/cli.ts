@@ -5,6 +5,7 @@
  * |---|---|
  * | `harkroom-operator register <baseUrl> <code> [--name n]` | 등록 코드(설정 › Operators 가 발급, 5분·1회)를 `POST /operators/claim` 으로 토큰과 바꿔 이 머신의 secrets 에 두고, `operator.json` 에 그 커뮤니티의 자리를 만든다 |
  * | `harkroom-operator run [--data-dir d]` | 앱이 넘기던 daemon 인자를 데이터 디렉터리에서 **같은 규칙**(`daemonEndpointPaths`)으로 조립해 상주한다 — 앱이 나중에 같은 머신에 떠도 같은 소켓을 보고 "이미 서비스 중"으로 물러난다 |
+ * | `harkroom-operator run --community <url>` · `run --all` | 커뮤니티마다 오퍼레이터 모드(스위치 켜짐)에서 그 커뮤니티 하나 / 이 기계의 커뮤니티 전부(`cliCommunity.ts`) |
  * | `harkroom-operator mcp-bridge` | 하네스가 띄우는 stdio MCP 브릿지(`mcpBridge.ts`) |
  * | `harkroom-operator merge <owner/name> <n> --head <sha>` | 에이전트 머지 래퍼 — 브릿지와 같은 소켓으로 오퍼레이터에 묻는다(`turnMerge.ts`) |
  * | `harkroom-operator hook pretool` | claude PreToolUse hook — 승인된 「정확한 명령」이면 allow, 아니면 무출력(`turnCommand.ts`, H③b) |
@@ -28,7 +29,8 @@ export const APP_IDENTIFIER = 'app.harkroom.desktop';
 
 export type CliCommand =
   | { command: 'register'; baseUrl: string; code: string; name?: string }
-  | { command: 'run'; dataDir: string | undefined }
+  /** `--community <url>` 은 그 커뮤니티 하나, `--all` 은 이 기계의 커뮤니티마다 자식 하나(격리 C P5, 스위치가 켜졌을 때만). */
+  | { command: 'run'; dataDir: string | undefined; community?: string; all?: true }
   | { command: 'mcp-bridge' }
   /** `merge <owner/name> <n> --head <sha>` — 인자 검증은 `turnMerge.parseMergeArgs`. */
   | { command: 'merge'; argv: string[] }
@@ -46,18 +48,30 @@ function flagValue(argv: readonly string[], flag: string): string | undefined {
   return v;
 }
 
+function parseBaseUrl(baseUrl: string): string {
+  let parsed: URL;
+  try { parsed = new URL(baseUrl); } catch { throw new Error(`baseUrl 이 URL 이 아니다: ${baseUrl}`); }
+  if (!/^https?:$/.test(parsed.protocol)) throw new Error(`baseUrl 은 http(s) 여야 한다: ${baseUrl}`);
+  return communityKey(baseUrl);
+}
+
 export function parseCliArgs(argv: readonly string[]): CliCommand {
   switch (argv[0]) {
     case 'register': {
       const [, baseUrl, code] = argv;
       if (!baseUrl || !code) throw new Error('사용법: harkroom-operator register <baseUrl> <code> [--name <이름>]');
-      let parsed: URL;
-      try { parsed = new URL(baseUrl); } catch { throw new Error(`baseUrl 이 URL 이 아니다: ${baseUrl}`); }
-      if (!/^https?:$/.test(parsed.protocol)) throw new Error(`baseUrl 은 http(s) 여야 한다: ${baseUrl}`);
-      return { command: 'register', baseUrl: communityKey(baseUrl), code, name: flagValue(argv.slice(3), '--name') };
+      return { command: 'register', baseUrl: parseBaseUrl(baseUrl), code, name: flagValue(argv.slice(3), '--name') };
     }
-    case 'run':
-      return { command: 'run', dataDir: flagValue(argv.slice(1), '--data-dir') };
+    case 'run': {
+      const rest = argv.slice(1);
+      const dataDir = flagValue(rest, '--data-dir');
+      const community = flagValue(rest, '--community');
+      const all = rest.includes('--all');
+      if (community !== undefined && all) throw new Error('run 에 --community 와 --all 을 함께 줄 수 없다');
+      if (community !== undefined) return { command: 'run', dataDir, community: parseBaseUrl(community) };
+      if (all) return { command: 'run', dataDir, all: true };
+      return { command: 'run', dataDir };
+    }
     case 'mcp-bridge':
       return { command: 'mcp-bridge' };
     case 'merge':

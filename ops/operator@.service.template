@@ -1,0 +1,37 @@
+# 커뮤니티마다 오퍼레이터 하나를 systemd(user) 감독 하에 둔다(격리 C, docs/operations.md §8-1).
+# 템플릿 유닛 하나를 커뮤니티마다 인스턴스로 쓴다 — 인스턴스 이름이 그 커뮤니티의 url 이다(systemd-escape).
+# 커뮤니티 하나가 죽거나 재시작해도 다른 커뮤니티의 오퍼레이터는 그대로다.
+#
+# 쓰는 법(커뮤니티마다 3–4 를 되풀이한다):
+#   1. sed -e 's|@BIN@|/opt/harkroom/harkroom-operator|g' ops/operator@.service.template \
+#          > ~/.config/systemd/user/harkroom-operator@.service
+#      systemctl --user daemon-reload
+#   2. loginctl enable-linger $USER          # 로그아웃해도 user 유닛이 살게
+#   3. HARKROOM_OPERATOR_PER_COMMUNITY=1 harkroom-operator register https://<host> <코드>
+#   4. systemctl --user enable --now "harkroom-operator@$(systemd-escape 'https://<host>').service"
+#
+# 확인 — 죽여서 다시 뜨는지:
+#   systemctl --user kill -s KILL 'harkroom-operator@<인스턴스>' && sleep 12 && systemctl --user status 'harkroom-operator@<인스턴스>'
+#
+# 로그: journalctl --user -u 'harkroom-operator@*' -f
+#
+# 커뮤니티 하나짜리 기계에서 옛 단일 유닛(operator.service.template)을 쓰고 있었다면 그 유닛을 끄고 이것으로 바꾼다 —
+# 둘을 함께 켜면 같은 커뮤니티를 두 프로세스가 든다.
+[Unit]
+Description=harkroom operator for %I — runs the agents of that community assigned to this machine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# 실행 파일 그 자체를 감독한다(중간 프로세스 없이). %I 는 인스턴스 이름을 푼 값, 곧 커뮤니티 url 이다.
+ExecStart=@BIN@ run --community %I
+Environment=HARKROOM_OPERATOR_PER_COMMUNITY=1
+Restart=always
+RestartSec=10
+# 로그인 셸의 PATH 가 없다 — 사이드카(셔뱅 스크립트)를 실행할 node 와, 러너가 부를 하네스가 있는 자리를 적는다.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# 러너가 유닛과 함께 죽지 않게 — 오퍼레이터만 재시작된다(러너는 장부로 다시 소유된다).
+KillMode=process
+
+[Install]
+WantedBy=default.target

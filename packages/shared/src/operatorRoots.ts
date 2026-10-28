@@ -60,9 +60,14 @@ export function communityRootHash(baseUrl: string, length: number = COMMUNITY_RO
   return createHash('sha256').update(communityRootKey(baseUrl)).digest('hex').slice(0, length);
 }
 
+/** 해시로 계산한 뿌리들이 모이는 자리 `<home>/.harkroom-agent/c`. CLI `run --all` 이 이 아래를 훑는다. */
+export function communityRootsParent(home: string): string {
+  return join(home, '.harkroom-agent', 'c');
+}
+
 /** 색인에 없을 때 쓰는 뿌리 — `<home>/.harkroom-agent/c/<해시 8자>`(충돌하면 16자). */
 export function computedCommunityRoot(home: string, baseUrl: string, length: number = COMMUNITY_ROOT_HASH_LENGTH): string {
-  return join(home, '.harkroom-agent', 'c', communityRootHash(baseUrl, length));
+  return join(communityRootsParent(home), communityRootHash(baseUrl, length));
 }
 
 /** 뿌리 비교는 정규화한 경로로 한다 — `/x/a` 와 `/x/a/` 를 다른 뿌리로 치지 않는다(security P2a-n2). */
