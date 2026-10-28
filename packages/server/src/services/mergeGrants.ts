@@ -26,6 +26,8 @@ import { noteOnceGhUserUsed } from './permissionRequests.js';
 
 const sha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex');
 
+// `no_mandate_line` 은 더는 만들지 않는다(J1: 켜도 줄이 없으면 사슬 판정으로 간다). 값은 남긴다 — 이미 쌓인 `merge_denial.reason`·
+// 감사 기록이 그 값을 갖고 있고, DB 제약도 그대로다(마이그레이션 없음).
 export type MergeDenial =
   | 'lease_invalid' | 'bad_repo' | 'not_granted' | 'cause_not_human' | 'no_mandate_line';
 
@@ -35,13 +37,14 @@ export type MergeCheck =
       viaChain?: { rootId: string };
       /** 1회 승인(`merge_approval`)으로 통과했으면 그 기록 — 래퍼는 이 계정만 쓰고, `relaxChecks` 일 때만 CI·CLEAN 판정을 GitHub 에 맡긴다. */
       approval?: { id: string; ghUser: string | null; relaxChecks: boolean; ciOverride: boolean };
-      /** 위임 판정(W3, `HARKROOM_MANDATE_ENFORCE=on`)으로 통과했으면 그 줄. `ghUser` 가 있으면 래퍼가 알려 준 계정과 같았다. */
+      /** 위임 줄(W3·J1, `HARKROOM_MANDATE_ENFORCE=on`)로 통과했으면 그 줄. `ghUser` 가 있으면 래퍼가 알려 준 계정과 같았다. */
       mandateLine?: { id: string; via: LineVia; ghUser: string | null; ciOverride: boolean } }
   /** `denialId` 는 거절 카드를 세울 수 있는 거절에만 있다(사람이 띄운 턴의 `not_granted`, 그리고 `cause_not_human` — C2·1회 승인). */
   | { ok: false; code: MergeDenial; denialId?: string };
 
 /**
- * 위임 판정 스위치(W3) — `HARKROOM_MANDATE_ENFORCE=on` 이면 머지는 위임장의 merge 줄로 판정한다(사슬·`cause_not_human` 대신).
+ * 위임 판정 스위치(W3·J1) — `HARKROOM_MANDATE_ENFORCE=on` 이면 머지 판정은 **합집합**이다: 위임장의 merge 줄이 맞으면 통과,
+ * 아니면 꺼졌을 때의 사슬 판정(grant·사슬·1회 승인·거절 카드) 그대로. 넓히기만 하고 좁히지 않는다.
  * 기본은 꺼짐(지금 판정 그대로, 그림자만). 부를 때마다 읽는다 — 시험이 켜고 끈다.
  */
 export function mandateEnforced(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -178,6 +181,7 @@ export async function causeChainRoot(
 /**
  * 판정 순서는 "무엇이 빠졌나"를 가장 구체적으로 말하는 쪽이다. F4: 그 턴을 띄운 메시지가 사람 글이
  * 아니면(에이전트의 위임·멘션) grant 에 `allow_agent_cause` 가 켜져 있어야 한다.
+ * 스위치가 켜지면(J1) 순서: 임대·저장소 → 1회 승인 → 위임 줄(맞으면 uses 소모하고 통과) → 사슬 판정(꺼졌을 때와 같음).
  */
 export async function checkMerge(
   pool: Pool,
@@ -212,16 +216,23 @@ async function shadowMandate(
   const scope = repoScope(args.repo);
   if (!scope) return;
   // 위임 판정 = 위임장의 merge 줄(W2) — 상시 줄(소유자가 준 머지 grant)도 여기서 펼쳐진다.
-  // 켜져 있으면 위임 판정은 이미 줄을 썼다(uses 소모) — 다시 찾지 않고 그 결과를 적는다. 사슬 판정은 돌리지 않는다(거절 카드를 만들므로).
+  // 켜져 있으면(J1 합집합) 판정이 이미 줄을 봤다(맞으면 uses 소모) — 다시 찾지 않고 그 결과를 적는다.
+  //   줄로 통과 → 사슬 판정은 돌지 않았다(chainVerdict null). 줄이 없었으면 사슬 판정이 나갔다(chainVerdict = 그 결과).
+  //   임대·저장소에서 막혔거나 1회 승인으로 통과했으면 줄은 보지 않았다(mandateVerdict null).
+  const allowedBy: 'line' | 'chain' | null = result.ok ? (result.mandateLine ? 'line' : 'chain') : null;
   const line = enforce
     ? (result.ok && result.mandateLine ? { id: result.mandateLine.id, via: result.mandateLine.via } : null)
     : await findLine(pool, { mandateId: lease.mandateId, agentId: args.agentId, cap: 'merge', action: { cap: 'merge', repo: args.repo, pr: args.number, head: args.headSha, ghUser: args.ghUser ?? null }, now });
-  const mandateVerdict = enforce ? (result.ok ? 'allowed' : result.code) : (line ? 'allowed' : 'denied');
+  const lineSkipped = enforce && !line
+    && ((result.ok && !!result.approval) || (!result.ok && (result.code === 'lease_invalid' || result.code === 'bad_repo')));
+  const mandateVerdict = lineSkipped ? null : (line ? 'allowed' : 'denied');
+  const chainVerdict = enforce && allowedBy === 'line' ? null : (result.ok ? 'allowed' : result.code);
   await recordAudit(pool, {
     action: 'mandate.shadow', actorId: args.agentId, target: scope,
     detail: {
-      enforced: enforce ? 'mandate' : 'chain',
-      chainVerdict: enforce ? null : (result.ok ? 'allowed' : result.code), mandateVerdict,
+      enforced: enforce ? 'union' : 'chain',
+      chainVerdict, mandateVerdict,
+      ...(enforce ? { allowedBy } : {}),
       ...(enforce && result.ok && result.approval ? { viaApproval: result.approval.id } : {}),
       mandateId: lease.mandateId, agentId: args.agentId, repo: scope, leaseId: lease.id,
       lineId: line?.id ?? null, lineVia: line?.via ?? null,
@@ -257,7 +268,8 @@ async function checkMergeByChain(
    * 카드에서 본 PR 과 승인이 쓰이는 PR 이 어긋나면 안 된다. 같은 PR 의 다른 head 기록은 낡았으니 닫는다(`obsoleteOtherHeads`).
    * ② 새로 만드는 것은 에이전트마다 24시간에 `MERGE_DENIAL_DAILY_CAP` 개까지 — 넘으면 거절은 그대로 하되 카드용 id 는 주지 않는다.
    */
-  const denyWithCard = async (code: 'not_granted' | 'cause_not_human' | 'no_mandate_line'): Promise<MergeCheck> => {
+  // 다시 쓰는 기록의 사유에 `no_mandate_line` 을 남겨 둔 것은 J1 이전에 쌓인 기록 때문이다 — 새로 그 사유를 만들지는 않는다.
+  const denyWithCard = async (code: 'not_granted' | 'cause_not_human'): Promise<MergeCheck> => {
     const denied = await deny(code);
     const reused = (await pool.query<{ id: string }>(
       `update merge_denial set lease_id = $7, reason = $9
@@ -338,18 +350,27 @@ async function checkMergeByChain(
     };
   }
 
-  if (enforce) return checkByMandate();
+  if (enforce) {
+    const viaLine = await checkByMandate();
+    if (viaLine) return viaLine;
+    // 줄이 없다(또는 방금 다른 판정이 마지막 uses 를 썼다) → 꺼졌을 때와 똑같은 사슬 판정으로 간다(J1 합집합).
+  }
 
   /*
-    위임 판정(W3) — 사슬·`cause_not_human` 대신 임대의 위임장에 이 저장소를 덮는 merge 줄이 있는지 본다. 줄을 찾는 일과 `uses` 소모는
-    `consumeLine` 의 한 SQL 문장이다. 우회(bypass) 줄은 쓰지 않는다(W5). 줄이 없으면(위임 없음·만료·남의 위임 포함) `no_mandate_line` 카드.
+    위임 줄 판정(W3·J1) — 켜져 있을 때, 1회 승인 다음·사슬 판정 앞에서 본다. 순서는 **줄 먼저**: 사슬 판정은 거절할 때 거절 카드를
+    만드므로(부수효과) 두 번 돌리거나 미리 돌려 볼 수 없다. 그래서 ① `findLine` 으로 소모 없이 맞는 줄이 있는지 보고, 있을 때만
+    ② `consumeLine`(찾기와 `uses` 소모가 한 SQL 문장)으로 쓴다. ②가 0줄이면(경합으로 방금 다 썼다) null — 사슬 판정으로 간다.
+    줄이 통과시킬 때만 uses 가 준다. 우회(bypass) 줄은 쓰지 않는다(W5). 계정이 박힌 줄(limits.ghUser)은 래퍼가 알려 준 계정과 같아야
+    맞는다(n11). ciOverride 는 결과에 실어 보낼 뿐 그 자체로 CI 를 풀지 않는다. 줄이 없으면 null(거절 카드를 만들지 않는다).
   */
-  async function checkByMandate(): Promise<MergeCheck> {
-    const line = await consumeLine(pool, {
-      mandateId: lease!.mandateId, agentId: args.agentId, cap: 'merge', now,
-      action: { cap: 'merge', repo: args.repo, pr: args.number, head: args.headSha, ghUser: args.ghUser ?? null },
-    });
-    if (!line) return denyWithCard('no_mandate_line');
+  async function checkByMandate(): Promise<MergeCheck | null> {
+    const lineArgs = {
+      mandateId: lease!.mandateId, agentId: args.agentId, cap: 'merge' as const, now,
+      action: { cap: 'merge' as const, repo: args.repo, pr: args.number, head: args.headSha, ghUser: args.ghUser ?? null },
+    };
+    if (!(await findLine(pool, lineArgs))) return null;
+    const line = await consumeLine(pool, lineArgs);
+    if (!line) return null;
     const byHuman = causeByHuman(lease!);
     const ghUser = line.limits?.ghUser ?? null;
     const ciOverride = line.limits?.ciOverride === true;
