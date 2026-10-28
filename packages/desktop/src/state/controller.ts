@@ -15,7 +15,7 @@ import { sessionStore } from '../lib/session';
 import { getFileSaver, type SaveTarget } from '../lib/fileSaver';
 import { isSaveBusy, UNKNOWN_TOTAL_STEP, type AttachmentSaveState } from '../lib/attachmentSaveProgress';
 import { markBoot } from '../lib/bootTimings';
-import { lastChannelScope, lastChannelStorage } from '../lib/prefs';
+import { lastChannelScope, lastChannelStorage, operatorAutoRegisteredStorage } from '../lib/prefs';
 import { silentNotifier, type NotificationTarget, type Notifier } from '../lib/notify';
 import { anyAppWindowFocused } from '../lib/appWindows';
 import { bodyRecipients, displayBody } from '../lib/mention';
@@ -425,9 +425,9 @@ export class Controller {
     // 하고(채팅은 daemon 없이도 된다), 그 실패는 러너를 띄우려 할 때 러너 상태에 사유로
     // 오른다(`RunnerLauncher.startAll`). 여기서 await 하면 소켓 왕복이 창 표시를 늦춘다.
     //
-    // 오퍼레이터가 섰으면 **첫 설치인지** 보고 이 머신을 등록한다 — 전체 목록을 보는 사람(operator.manage)에게
-    // 오퍼레이터가 하나도 없는 커뮤니티일 때만
-    // (`autoRegisterOperator.ts`). 오퍼레이터를 못 세웠으면(웹·테스트·실패) 묻지 않는다.
+    // 오퍼레이터가 섰으면 이 기계가 이 커뮤니티에 아직 없는지 보고 등록한다 — 커뮤니티를 관리하는 사람
+    // (operator.manage)에게, 커뮤니티마다 한 번만(`autoRegisterOperator.ts`, 격리 C P8). 오퍼레이터를 못 세웠으면
+    // (웹·테스트·실패) 묻지 않는다.
     this.swallow(this.runnerLauncher.ensureOperator().then((observed) => {
       if (!observed || this.stopped) return;
       return autoRegisterFirstOperator({
@@ -435,9 +435,10 @@ export class Controller {
         canRegister: hasCapability(me, 'operator.register'),
         canManage: hasCapability(me, 'operator.manage'),
         listLocal: () => listLocalAgents(this.api.baseUrl),
-        listOperators: () => this.api.operators(),
+        wasAutoRegistered: (baseUrl) => operatorAutoRegisteredStorage.has(baseUrl),
+        markAutoRegistered: (baseUrl) => operatorAutoRegisteredStorage.mark(baseUrl),
         mintCode: () => this.api.operatorRegisterCode(),
-        register: (baseUrl, code) => registerLocalOperator(baseUrl, code),
+        register: (baseUrl, code, name) => registerLocalOperator(baseUrl, code, name),
       });
     }));
 
