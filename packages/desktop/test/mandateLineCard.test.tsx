@@ -87,7 +87,9 @@ describe('W4 mandate line card', () => {
     const approvePermissionOnce = vi.fn(async () => ({ status: 'approved_once', approvalExpiresAt: '2099-10-11T05:14:00Z', cardMessageId: 'm1' }));
     setController({ answerAsk, closeAsk: vi.fn(), approvePermissionOnce, getMergeAccounts: vi.fn() } as unknown as Controller);
     const ciLine = { cap: 'merge', scope: 'repo:example-org/svc', limits: { approve_once: { pr: 61, head: '3c9e0a1', uses: 1, ciOverride: true } } };
-    render(<AskCard message={card({ options: ['approve_once', 'deny'], pr: { kind: 'merge', line: ciLine, once: { number: 61, headSha: '3c9e0a1ff', reason: 'ci_not_green', failedChecks: ['tflint'] } } })} />);
+    // 서버가 싣는 그대로 — CI 거절 카드의 선택지는 [거절] 하나다(`permissionCardOptions`). 2개짜리 목으로는 10-28 사고(버튼 없음)를 못 잡았다.
+    render(<AskCard message={card({ options: ['deny'], pr: { kind: 'merge', line: ciLine, once: { number: 61, headSha: '3c9e0a1ff', reason: 'ci_not_green', failedChecks: ['tflint'] } } })} />);
+    expect(screen.getByTestId('ask-card')).toBeTruthy();
     const btns = screen.getAllByRole('button').filter((b) => /이번 한 번/.test(b.textContent ?? ''));
     expect(btns).toHaveLength(1);
     const onceBtn = btns[0]!;

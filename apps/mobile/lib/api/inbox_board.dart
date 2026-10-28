@@ -293,7 +293,10 @@ _Ask? _boardAsk(Map<String, Object?> meta) {
   final ask = meta['ask'];
   if (ask is! Map) return null;
   final options = ask['options'];
-  if (options is! List || options.length < 2 || options.length > 5) return null;
+  // 서버가 세운 권한 카드(·거울)는 선택지 하나도 받는다(TS `readAskMeta` 와 같다 — CI 거절 카드는 [거절] 하나뿐).
+  final mirror = meta['permissionMirror'];
+  final min = meta['permissionRequest'] is Map || (mirror is Map && mirror['rootId'] is String) ? 1 : 2;
+  if (options is! List || options.length < min || options.length > 5) return null;
   final parsed = <({String id, String label})>[];
   for (final o in options) {
     if (o is! Map || o['id'] is! String || o['label'] is! String) return null;
