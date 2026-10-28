@@ -63,6 +63,39 @@ describe('mandate enforcement (db)', () => {
   afterEach(() => { delete process.env.HARKROOM_MANDATE_ENFORCE; });
   afterAll(async () => { await app.close(); await db.stop(); });
 
+  it('shadow records causeKind (human/agent/wake/automation/system) and key presence', async () => {
+    const kindOf = async (mutate: string | null, params: unknown[] = []) => {
+      const root = await post(alice.accountId, `@tm kind ${n}`);
+      const l = await lease(root, tm);
+      if (mutate) await pool.query(mutate, [root, ...params]);
+      await check(l, 'izagood/kinds');
+      return shadowOf(l.id);
+    };
+    expect(await kindOf(null)).toMatchObject({ causeKind: 'human', rootHasKey: true, causeHasKey: true });
+    expect(await kindOf(`update message set author_id = $2 where id = $1`, [tm])).toMatchObject({ causeKind: 'agent' });
+    expect(await kindOf(`update message set kind = 'wake', meta = '{"kind":"wake"}'::jsonb where id = $1`)).toMatchObject({ causeKind: 'wake' });
+    expect(await kindOf(`update message set meta = '{"automation":{"id":"x"}}'::jsonb where id = $1`)).toMatchObject({ causeKind: 'automation' });
+    expect(await kindOf(`update message set kind = 'system' where id = $1`)).toMatchObject({ causeKind: 'system' });
+    expect(await kindOf(`update message set mandate_id = null where id = $1`)).toMatchObject({ causeKind: 'human', rootHasKey: false, causeHasKey: false });
+  });
+
+  it('shadow rootHasKey follows the thread root, causeHasKey the cause itself', async () => {
+    const keyed = await post(alice.accountId, '@tm keyed root');
+    const r1 = await post(alice.accountId, '@tm reply under keyed', { threadRootId: keyed, authVia: 'pat' });
+    expect(await mandateOf(keyed)).not.toBeNull();
+    expect(await mandateOf(r1)).toBeNull();
+    const l1 = await lease(r1, tm);
+    await check(l1, 'izagood/roots');
+    expect(await shadowOf(l1.id)).toMatchObject({ causeKind: 'human', rootHasKey: true, causeHasKey: false });
+
+    const bare = await post(alice.accountId, 'bare root', { authVia: 'pat' });
+    const r2 = await post(alice.accountId, '@tm reply under bare', { threadRootId: bare, authVia: 'pat' });
+    expect(await mandateOf(bare)).toBeNull();
+    const l2 = await lease(r2, tm);
+    await check(l2, 'izagood/roots');
+    expect(await shadowOf(l2.id)).toMatchObject({ rootHasKey: false, causeHasKey: false });
+  });
+
   it('off: stored line does not allow (chain verdict stands); shadow says enforced=chain', async () => {
     const root = await post(alice.accountId, '@tm off');
     const m = (await mandateOf(root))!;

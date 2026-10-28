@@ -217,6 +217,8 @@ async function shadowMandate(
     ? (result.ok && result.mandateLine ? { id: result.mandateLine.id, via: result.mandateLine.via } : null)
     : await findLine(pool, { mandateId: lease.mandateId, agentId: args.agentId, cap: 'merge', action: { cap: 'merge', repo: args.repo, pr: args.number, head: args.headSha, ghUser: args.ghUser ?? null }, now });
   const mandateVerdict = enforce ? (result.ok ? 'allowed' : result.code) : (line ? 'allowed' : 'denied');
+  // 출처 조회가 실패해도 그림자 기록 자체는 남긴다.
+  const origin = await shadowOrigin(pool, lease).catch(() => ({ causeKind: 'unknown' as const, rootHasKey: false, causeHasKey: false }));
   await recordAudit(pool, {
     action: 'mandate.shadow', actorId: args.agentId, target: scope,
     detail: {
@@ -225,8 +227,37 @@ async function shadowMandate(
       ...(enforce && result.ok && result.approval ? { viaApproval: result.approval.id } : {}),
       mandateId: lease.mandateId, agentId: args.agentId, repo: scope, leaseId: lease.id,
       lineId: line?.id ?? null, lineVia: line?.via ?? null,
+      causeKind: origin.causeKind, rootHasKey: origin.rootHasKey, causeHasKey: origin.causeHasKey,
     },
   });
+}
+
+export type ShadowCauseKind = 'human' | 'agent' | 'wake' | 'automation' | 'system' | 'unknown';
+
+/**
+ * 그림자 기록용 — 이 턴이 어디서 왔는지(`causeKind`)와 위임 키가 어디에 있었는지(`rootHasKey`·`causeHasKey`).
+ * 위임 키 없는 턴을 셀 수 있게 하려는 것이다. 판정에는 쓰지 않는다. 쿼리 하나.
+ * 순서: 메시지 kind(wake·system) → 자동화 글(`meta.automation`) → 작성자 계정 kind → 없으면 unknown.
+ */
+async function shadowOrigin(
+  pool: Pool, lease: Pick<LeaseRow, 'causeMessageId' | 'threadRootId'>,
+): Promise<{ causeKind: ShadowCauseKind; rootHasKey: boolean; causeHasKey: boolean }> {
+  const row = (await pool.query<{ msgKind: string | null; automation: boolean | null; authorKind: string | null; causeHasKey: boolean | null; rootHasKey: boolean | null }>(
+    `select m.kind as "msgKind", m.meta ? 'automation' as automation, a.kind as "authorKind",
+            m.mandate_id is not null as "causeHasKey",
+            exists (select 1 from message r where r.id = coalesce($2::uuid, m.thread_root_id, m.id) and r.mandate_id is not null) as "rootHasKey"
+       from (select 1) one
+       left join message m on m.id = $1::uuid
+       left join account a on a.id = m.author_id`,
+    [lease.causeMessageId, lease.threadRootId])).rows[0];
+  const causeKind: ShadowCauseKind = !row?.msgKind ? 'unknown'
+    : row.msgKind === 'wake' ? 'wake'
+    : row.msgKind === 'system' ? 'system'
+    : row.automation ? 'automation'
+    : row.authorKind === 'human' ? 'human'
+    : row.authorKind === 'agent' ? 'agent'
+    : 'unknown';
+  return { causeKind, rootHasKey: row?.rootHasKey === true, causeHasKey: row?.causeHasKey === true };
 }
 
 async function checkMergeByChain(
