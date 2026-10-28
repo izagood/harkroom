@@ -119,6 +119,24 @@ describe('permission card decisions (W4b)', () => {
     expect(await linesOf(requestId)).toMatchObject([{ mandateId: made, cap: 'tool', scope: target }]);
   });
 
+  it('mandate.created via card — once when the card makes the mandate; a second card on that thread and a refused card add none', async () => {
+    const created = async (root: string) =>
+      (await pool.query(`select actor_id, target, detail from audit_log where action = 'mandate.created' and detail->>'rootMessageId' = $1`, [root])).rows;
+    const root = await plainRoot();
+    const first = await card({ kind: 'tool', target: rule(), root, mandateId: null });
+    expect(await decideCard(first.cardId, 'approve_new_mandate')).toMatchObject({ ok: true });
+    const made = (await pool.query(`select mandate_id from permission_request where id = $1`, [first.requestId])).rows[0].mandate_id as string;
+    expect(await created(root)).toEqual([{ actor_id: alice.accountId, target: made, detail: { mandateId: made, rootMessageId: root, channelId: ch, threadRootId: root, via: 'card' } }]);
+    const second = await card({ kind: 'tool', target: rule(), root, mandateId: null });
+    expect(await decideCard(second.cardId, 'approve_new_mandate')).toMatchObject({ ok: true });
+    expect(await created(root)).toHaveLength(1);
+    // 머리가 소유자가 세운 위임 머리면(via root 로 이미 남았다) 카드는 그 위임을 쓸 뿐이다.
+    const { root: ownRoot } = await mandateThread(alice.accountId, '@cardbot go');
+    const third = await card({ kind: 'tool', target: rule(), root: ownRoot, mandateId: null });
+    expect(await decideCard(third.cardId, 'approve_new_mandate')).toMatchObject({ ok: true });
+    expect((await created(ownRoot)).map((r) => r.detail.via)).toEqual(['root']);
+  });
+
   it('approve_new_mandate refuses mandate_unavailable when the thread mandate belongs to another owner — nothing granted', async () => {
     const { root, mandateId } = await mandateThread(bob.accountId, '@bobbot go');
     expect(mandateId).toBeTruthy();

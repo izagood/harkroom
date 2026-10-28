@@ -1,4 +1,5 @@
-import type { PoolClient } from 'pg';
+import type { Pool, PoolClient } from 'pg';
+import { recordAudit } from '../audit.js';
 
 /**
  * 위임(mandate) W1 — 키를 **서버가** 적는다(133). 에이전트는 이 값을 보지도 보내지도 않는다.
@@ -16,9 +17,26 @@ export const MANDATE_IDLE_MS = 7 * 86_400_000;
 
 type Q = Pick<PoolClient, 'query'>;
 
+/** 이번 트랜잭션이 실제로 새로 만든 위임 — 커밋 뒤 `mandate.created` 감사로 남긴다(본문·meta 는 싣지 않는다). */
+export interface MandateCreated {
+  mandateId: string; ownerId: string; rootMessageId: string; channelId: string; threadRootId: string; via: 'root' | 'owner_reply' | 'card';
+}
+
+/** 커밋 **뒤에** 부른다 — 감사는 풀로 따로 쓰므로, 되돌린 트랜잭션의 위임은 여기 오지 않게 부르는 쪽이 커밋 뒤에만 부른다. */
+export async function auditMandateCreated(pool: Pool, created: MandateCreated[]): Promise<void> {
+  for (const c of created) {
+    await recordAudit(pool, {
+      action: 'mandate.created', actorId: c.ownerId, target: c.mandateId,
+      detail: { mandateId: c.mandateId, rootMessageId: c.rootMessageId, channelId: c.channelId, threadRootId: c.threadRootId, via: c.via },
+    });
+  }
+}
+
 /** 사람 글의 위임. 새 머리면 `notifiedIds` 중 이 사람 소유 에이전트가 있을 때 만든다. 답글이면 머리의 위임(소유자 본인일 때)을 잇는다. */
 export async function stampHumanMandate(client: Q, args: {
   messageId: string; authorId: string; channelId: string; threadRootId: string | null; notifiedIds: string[]; now?: Date;
+  /** 새로 만든 위임을 여기에 담는다 — 부르는 쪽이 커밋 뒤 `auditMandateCreated` 로 남긴다. */
+  created?: MandateCreated[];
 }): Promise<string | null> {
   const now = args.now ?? new Date();
   let mandateId: string | null = null;
@@ -29,12 +47,16 @@ export async function stampHumanMandate(client: Q, args: {
         where c.account_id = any($1::uuid[]) and c.owner_account_id = $2 and a.kind = 'agent' limit 1`,
       [args.notifiedIds, args.authorId]);
     if (!own.rowCount) return null;
-    mandateId = (await client.query<{ id: string }>(
+    const row = (await client.query<{ id: string; inserted: boolean }>(
       `insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
        values ($1, $2, $3, $2, $4, $4)
        on conflict (root_message_id) do update set last_activity_at = excluded.last_activity_at
-       returning id`,
-      [args.authorId, args.messageId, args.channelId, now])).rows[0]!.id;
+       returning id, (xmax = 0) as inserted`,
+      [args.authorId, args.messageId, args.channelId, now])).rows[0]!;
+    mandateId = row.id;
+    if (row.inserted) {
+      args.created?.push({ mandateId, ownerId: args.authorId, rootMessageId: args.messageId, channelId: args.channelId, threadRootId: args.messageId, via: 'root' });
+    }
   } else {
     mandateId = (await client.query<{ id: string }>(
       `update mandate d set last_activity_at = greatest(d.last_activity_at, $3)
@@ -56,7 +78,7 @@ export async function stampHumanMandate(client: Q, args: {
  * 같은 스레드의 다음 답글은 그 값으로 위임을 잇는다(W4-3 `mandateForCardThread` 와 같다).
  */
 async function mandateForKeylessRoot(client: Q, args: {
-  authorId: string; channelId: string; threadRootId: string; notifiedIds: string[]; now: Date;
+  authorId: string; channelId: string; threadRootId: string; notifiedIds: string[]; now: Date; created?: MandateCreated[];
 }): Promise<string | null> {
   if (!args.notifiedIds.length) return null;
   const own = await client.query(
@@ -79,15 +101,19 @@ async function mandateForKeylessRoot(client: Q, args: {
         where id = $1 and owner_account_id = $2 and ended_at is null returning id`,
       [root.mandateId, args.authorId, args.now])).rows[0]?.id ?? null;
   }
-  await client.query(
+  const inserted = (await client.query<{ id: string }>(
     `insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
      values ($1, $2, $3, $2, $4, $4)
-     on conflict (root_message_id) do nothing`,
-    [args.authorId, args.threadRootId, args.channelId, args.now]);
+     on conflict (root_message_id) do nothing
+     returning id`,
+    [args.authorId, args.threadRootId, args.channelId, args.now])).rows[0];
   const made = (await client.query<{ id: string }>(
     `select id from mandate where root_message_id = $1 and owner_account_id = $2 and ended_at is null`,
     [args.threadRootId, args.authorId])).rows[0];
   if (!made) return null;
+  if (inserted?.id === made.id) {
+    args.created?.push({ mandateId: made.id, ownerId: args.authorId, rootMessageId: args.threadRootId, channelId: args.channelId, threadRootId: args.threadRootId, via: 'owner_reply' });
+  }
   await client.query(`update message set mandate_id = $2 where id = $1 and mandate_id is null`, [args.threadRootId, made.id]);
   return made.id;
 }
