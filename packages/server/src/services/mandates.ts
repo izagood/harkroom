@@ -5,6 +5,7 @@ import type { PoolClient } from 'pg';
  *
  * - 소유자(사람)가 자기 에이전트를 실제로 깨운 **새 스레드 머리** → 위임을 만들고 그 글에 적는다.
  * - 위임이 붙은 머리의 스레드에 소유자가 답하면 → 같은 위임, `last_activity_at` 을 민다.
+ * - 위임이 없는 머리(소유자·소유자 에이전트의 글)에 소유자가 자기 에이전트를 깨우는 답을 하면 → 그 머리를 뿌리로 새 위임(ⓐ). 끝난 위임은 되살리지 않는다.
  * - 에이전트 글 → 그 글의 (검증된) 원인에 대해 쥔 살아 있는 턴 임대의 위임. 에이전트의 **지금** 소유자가 위임 소유자와 같을 때만.
  *
  * W1 은 판정을 바꾸지 않는다 — 머지 판정 옆에서 그림자로만 계산한다(`mergeGrants.ts::shadowMandate`).
@@ -41,10 +42,54 @@ export async function stampHumanMandate(client: Q, args: {
         where r.id = $1 and d.id = r.mandate_id and d.owner_account_id = $2 and d.ended_at is null
         returning d.id`,
       [args.threadRootId, args.authorId, now])).rows[0]?.id ?? null;
+    if (!mandateId) mandateId = await mandateForKeylessRoot(client, { ...args, threadRootId: args.threadRootId, now });
     if (!mandateId) return null;
   }
   await client.query(`update message set mandate_id = $2 where id = $1`, [args.messageId, mandateId]);
   return mandateId;
+}
+
+/**
+ * 위임이 없는 머리 아래 소유자 답글(ⓐ) — W1 이전 스레드나 소유자의 에이전트가 키 없이 쓴 머리. 이 답글이 자기 에이전트를 실제로 깨웠고
+ * 머리 글이 **소유자 본인이나 그 소유자의 에이전트**의 글일 때만(W1 불변식) 머리를 뿌리로 위임을 만든다.
+ * 머리에 위임 행이 이미 있으면(끝났든 남의 것이든) 새로 만들지도 되살리지도 않는다(g3). 머리 글의 `mandate_id` 도 비어 있을 때 적는다 —
+ * 같은 스레드의 다음 답글은 그 값으로 위임을 잇는다(W4-3 `mandateForCardThread` 와 같다).
+ */
+async function mandateForKeylessRoot(client: Q, args: {
+  authorId: string; channelId: string; threadRootId: string; notifiedIds: string[]; now: Date;
+}): Promise<string | null> {
+  if (!args.notifiedIds.length) return null;
+  const own = await client.query(
+    `select 1 from agent_config c join account a on a.id = c.account_id
+      where c.account_id = any($1::uuid[]) and c.owner_account_id = $2 and a.kind = 'agent' limit 1`,
+    [args.notifiedIds, args.authorId]);
+  if (!own.rowCount) return null;
+  // 머리 행을 잠가 같은 머리의 동시 답글을 줄 세운다 — 기다린 쪽은 먼저 온 쪽이 적은 `mandate_id` 를 보고 그 위임을 잇는다.
+  const root = (await client.query<{ mandateId: string | null; ownAuthor: boolean }>(
+    `select m.mandate_id as "mandateId",
+            (m.author_id = $3 or exists (select 1 from agent_config c where c.account_id = m.author_id and c.owner_account_id = $3)) as "ownAuthor"
+       from message m
+      where m.id = $1 and m.channel_id = $2 and m.thread_root_id is null and m.deleted_at is null
+      for update of m`,
+    [args.threadRootId, args.channelId, args.authorId])).rows[0];
+  if (!root?.ownAuthor) return null;
+  if (root.mandateId) {
+    return (await client.query<{ id: string }>(
+      `update mandate set last_activity_at = greatest(last_activity_at, $3)
+        where id = $1 and owner_account_id = $2 and ended_at is null returning id`,
+      [root.mandateId, args.authorId, args.now])).rows[0]?.id ?? null;
+  }
+  await client.query(
+    `insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
+     values ($1, $2, $3, $2, $4, $4)
+     on conflict (root_message_id) do nothing`,
+    [args.authorId, args.threadRootId, args.channelId, args.now]);
+  const made = (await client.query<{ id: string }>(
+    `select id from mandate where root_message_id = $1 and owner_account_id = $2 and ended_at is null`,
+    [args.threadRootId, args.authorId])).rows[0];
+  if (!made) return null;
+  await client.query(`update message set mandate_id = $2 where id = $1 and mandate_id is null`, [args.threadRootId, made.id]);
+  return made.id;
 }
 
 /**
