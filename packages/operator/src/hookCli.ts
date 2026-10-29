@@ -199,6 +199,8 @@ export async function decidePostToolHook(since: number, ask: Ask): Promise<strin
   if (!Array.isArray(out.posts)) return null;
   const posts: PeekPost[] = out.posts.filter((p): p is PeekPost =>
     typeof p === 'object' && p !== null && typeof (p as PeekPost).seq === 'number'
-    && typeof (p as PeekPost).handle === 'string' && typeof (p as PeekPost).body === 'string');
+    && typeof (p as PeekPost).handle === 'string' && typeof (p as PeekPost).body === 'string')
+    // 「부른 사람」은 `true` 일 때만이다 — 칸이 없거나 모양이 틀리면 「다른 사람(멈춤만)」으로 좁게 읽는다(security F1).
+    .map((p) => ({ ...p, caller: p.caller === true }));
   return peekContext(posts);
 }
