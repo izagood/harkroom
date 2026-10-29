@@ -945,7 +945,7 @@ class StringsEn implements Strings {
   @override
   String get threadJumpLatest => 'Latest replies';
   @override
-  String get threadJumpNew => '{n} new replies';
+  String get threadJumpNew => 'New replies · {n}';
   @override
   String get threadJumpA11y => 'Jump to latest replies';
   @override

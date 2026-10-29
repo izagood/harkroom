@@ -249,6 +249,6 @@ void main() {
     expect(jumpPillLabel(ko, 3), '새 답글 3');
     expect(jumpPillLabel(ko, 100), '새 답글 99+');
     expect(jumpPillLabel(stringsFor('en'), 0), 'Latest replies');
-    expect(jumpPillLabel(stringsFor('en'), 2), '2 new replies');
+    expect(jumpPillLabel(stringsFor('en'), 2), 'New replies · 2');
   });
 }
