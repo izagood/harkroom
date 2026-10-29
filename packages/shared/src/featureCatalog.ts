@@ -51,6 +51,8 @@ export const FEATURE_CATALOG: readonly FeatureEntry[] = [
     lines: [
       '`message.ask`: 상대가 골라야 다음으로 갈 수 있는 갈림길 — 선택지를 정할 수 있을 때 카드로 세운다.',
       '선택지를 정할 수 없는 열린 질문은 글로 묻는다.',
+      '같은 스레드에 네가 세운 열린 카드가 있으면 새 카드에 그 카드를 대신하는지(`supersedes`, 합치면 여러 id)',
+      '따로 남기는지(`keepOpen`)를 밝힌다 — 안 밝히면 `open_card_in_thread` 로 거절되고 `openCardIds` 가 온다.',
     ],
   },
   {

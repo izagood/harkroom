@@ -1087,3 +1087,103 @@ describe('message.ask — mirrorOf', () => {
     }
   });
 });
+
+/**
+ * `open_card_in_thread`(2026-10-29) — 같은 스레드에 내가 연 사람 앞 카드를 두고 새 카드를 세우면, 그 카드를 대신하는지
+ * (`supersedes`, 여러 장 합치기) 따로 남기는지(`keepOpen`) 밝혀야 한다. 본문에 「합쳐서」라고만 쓰고 옛 카드를 열어 둔 채
+ * 새 카드를 세우던 것이 사람에게 같은 결정을 두 곳에 띄웠다.
+ */
+describe('message.ask — 열린 카드를 두고 새 카드', () => {
+  const opts = [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }];
+  type Res = { message?: { id: string; meta: Record<string, unknown> }; error?: { code: string; openCardIds?: string[] } };
+  const askOf = async (id: string) => readAskMeta((await pool.query(`select meta from message where id = $1`, [id])).rows[0].meta)!;
+
+  async function setup(handle: string) {
+    const { pat } = await createAgent(app, adminToken, handle);
+    const client = await mcpClient(pat);
+    const root = text(await client.callTool({ name: 'message.post', arguments: { channelId, body: '작업 스레드' } })) as { message: { id: string } };
+    const ask = async (args: Record<string, unknown> = {}) => text(await client.callTool({
+      name: 'message.ask', arguments: { channelId, threadRootId: root.message.id, body: '골라 줘', options: opts, ...args },
+    })) as Res;
+    return { client, rootId: root.message.id, ask };
+  }
+
+  it('밝히지 않으면 열린 카드 id 와 함께 거절하고, keepOpen·supersedes 배열로 밝히면 세운다', async () => {
+    const { client, ask } = await setup('opencard1');
+    try {
+      const first = (await ask()).message!.id;
+      const refused = await ask();
+      expect(refused.error?.code).toBe('open_card_in_thread');
+      expect(refused.error?.openCardIds).toEqual([first]);
+
+      // 서로 다른 결정이면 남긴다 — 둘 다 열려 있다.
+      const second = (await ask({ keepOpen: [first] })).message!.id;
+      expect((await askOf(first)).closedAt).toBeUndefined();
+
+      // 하나만 밝히면 나머지 하나 때문에 거절된다.
+      const partial = await ask({ supersedes: [first] });
+      expect(partial.error?.code).toBe('open_card_in_thread');
+      expect(partial.error?.openCardIds).toEqual([second]);
+
+      // 둘을 합친 새 카드 — 옛 카드 둘 다 superseded 로 닫히고 새 카드를 가리킨다.
+      const merged = await ask({ supersedes: [first, second] });
+      expect(merged.error).toBeUndefined();
+      for (const id of [first, second]) {
+        const old = await askOf(id);
+        expect(old.closedReason).toBe('superseded');
+        expect(old.supersededBy).toBe(merged.message!.id);
+      }
+      // 이제 열린 카드는 합친 것 하나 — 하나짜리 문자열 supersedes 도 그대로 받는다.
+      expect((await ask({ supersedes: merged.message!.id })).error).toBeUndefined();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('답이 났거나 글로 답해 접힌 카드, 남의 카드, 특정 계정 앞 카드는 세지 않는다', async () => {
+    const { client, rootId, ask } = await setup('opencard2');
+    const other = await setup('opencard3');
+    try {
+      const answered = (await ask()).message!.id;
+      expect(typeof await recordAskAnswer(pool, { messageId: answered, actorId: adminAccountId, optionId: 'a' })).not.toBe('string');
+      const replied = (await ask()).message!.id;
+      await pool.query(
+        `update message set meta = jsonb_set(jsonb_set(meta, '{ask,closedAt}', to_jsonb(now()::text)), '{ask,closedReason}', '"replied"') where id = $1`,
+        [replied],
+      );
+      await ask({ to: '@opencard3' });
+      // 같은 스레드에 다른 에이전트가 연 카드는 그 에이전트 몫이다.
+      expect((await other.client.callTool({
+        name: 'message.ask', arguments: { channelId, threadRootId: rootId, body: '남의 카드', options: opts },
+      })).isError).toBeFalsy();
+      const own = await ask();
+      expect(own.error).toBeUndefined();
+      // 방금 세운 것은 열린 사람 앞 카드다 — 다음 카드는 밝혀야 한다.
+      expect((await ask()).error?.openCardIds).toEqual([own.message!.id]);
+    } finally {
+      await client.close();
+      await other.client.close();
+    }
+  });
+
+  it('스레드 머리 글이 카드여도 센다 · supersedes 는 4장까지', async () => {
+    const { pat } = await createAgent(app, adminToken, 'opencard4');
+    const client = await mcpClient(pat);
+    try {
+      const head = text(await client.callTool({ name: 'message.ask', arguments: { channelId, body: '머리 카드', options: opts } })) as Res;
+      const headId = head.message!.id;
+      const reply = await client.callTool({
+        name: 'message.ask', arguments: { channelId, threadRootId: headId, body: '답글 카드', options: opts },
+      });
+      expect((text(reply) as Res).error?.openCardIds).toEqual([headId]);
+
+      const five = Array.from({ length: 5 }, (_, i) => `00000000-0000-4000-8000-00000000000${i}`);
+      const tooMany = text(await client.callTool({
+        name: 'message.ask', arguments: { channelId, threadRootId: headId, body: '다섯 장', options: opts, supersedes: five },
+      })) as Res;
+      expect(tooMany.error?.code).toBe('supersedes_too_many');
+    } finally {
+      await client.close();
+    }
+  });
+});
