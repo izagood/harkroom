@@ -149,6 +149,15 @@ export const FEATURE_CATALOG: readonly FeatureEntry[] = [
       '- 거절 코드(`not_granted`·`cause_not_owner`·`value_is_mounted`·`too_many` 등)는 그대로 사람에게 적고 멈춘다.',
     ],
   },
+  // ── 넘긴 일 멈추기(2026-10-29) ──
+  {
+    id: 'turnCancel',
+    tools: ['turn.cancel'],
+    lines: [
+      '`turn.cancel`: 사람이 네가 넘긴 일(message.delegate)을 멈추라고 하면 그 스레드(위임 글이 선 스레드)의 팀원 턴을 끊는다 —',
+      '말로 전하면 팀원은 돌던 턴이 끝난 뒤에야 읽는다. 네가 넘기지 않은 일은 멈출 수 없다(`not_delegator`) — 그때는 사람에게 [그만두기]를 부탁한다.',
+    ],
+  },
 ];
 
 /**

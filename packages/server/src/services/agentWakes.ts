@@ -241,6 +241,42 @@ export async function preemptWakesForThread(
   return woke;
 }
 
+/**
+ * **사람이 멈춘 턴의 예약을 접는다**(2026-10-29, 턴 중단). 중단 경로(`turnCancel.ts`)가 같은 트랜잭션으로 부른다.
+ *
+ * 왜 필요한가: 중단은 위임 의무만 닫고 예약은 그대로 뒀다. 멈춘 턴이 끊기기 직전에 건 예약은 시각이 되면 그 스레드에서
+ * **같은 일을 다시 연다** — 사람이 멈춘 일이 몇 분 뒤 되살아나는 셈이다. 사람 글이 예약을 접는 길(`preemptWakesForThread`)은
+ * 이 자리를 덮지 못한다: 멈춤 글이 예약보다 **먼저** 쓰였으면 그 글이 접을 예약이 아직 없었다.
+ *
+ * 접는 범위는 **그 에이전트의 그 스레드** 하나다 — 다른 스레드에 건 예약은 그 일의 것이라 건드리지 않는다.
+ * 접은 글이 없으므로 `canceled_by_message_id` 는 비운다(107 의 「무엇이 접었나」는 글이 접은 경우의 기록이다).
+ */
+export async function cancelWakesForTurn(
+  client: PoolClient,
+  args: {
+    threadRootId: string; accountId: string;
+    /** 접은 예약의 보고처. 신호는 커밋 뒤에 호출자가 낸다(`preemptWakesForThread` 와 같은 규약). */
+    reportTouched?: WakeReportTo[];
+  },
+): Promise<number> {
+  const res = await client.query<{ report_to: unknown }>(
+    `update agent_wake w set canceled_at = now()
+       from message m
+      where m.id = w.message_id
+        and coalesce(m.thread_root_id, m.id) = $1
+        and w.account_id = $2
+        and w.fired_at is null
+        and w.canceled_at is null
+      returning m.meta->'wake'->'reportTo' as report_to`,
+    [args.threadRootId, args.accountId],
+  );
+  for (const row of res.rows) {
+    const report = asReportTo(row.report_to);
+    if (report) args.reportTouched?.push(report);
+  }
+  return res.rowCount ?? 0;
+}
+
 function asReportTo(v: unknown): WakeReportTo | null {
   if (!v || typeof v !== 'object') return null;
   const o = v as Record<string, unknown>;
