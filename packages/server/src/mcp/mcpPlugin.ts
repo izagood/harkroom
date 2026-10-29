@@ -16,7 +16,7 @@ import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
-import { BAD_THREAD_MESSAGE, checkAskMirror, checkAskSupersede, getMessageById, gateAwaitingAccount, leaseInboxEntries, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, supersedeAsk, syncAskMirrors, type AskMirrorRefusal, type AskSupersedeRefusal } from '../services/messages.js';
+import { BAD_THREAD_MESSAGE, checkAskMirror, ASK_SUPERSEDES_MAX, checkAskSupersede, getMessageById, listOpenHumanAsks, gateAwaitingAccount, leaseInboxEntries, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, supersedeAsk, syncAskMirrors, type AskMirrorRefusal, type AskSupersedeRefusal } from '../services/messages.js';
 
 /** `message.ask` 의 `mirrorOf` 거절 사유 — 에이전트가 읽고 고칠 수 있게 무엇을 바꾸면 되는지 적는다. */
 const MIRROR_REFUSAL_MESSAGE: Record<AskMirrorRefusal, string> = {
@@ -34,6 +34,7 @@ const SUPERSEDE_REFUSAL_MESSAGE: Record<AskSupersedeRefusal, string> = {
   supersedes_other_thread: 'the new card must go in the same thread as the card it replaces',
   supersedes_resolved: 'that card is already answered, declined, or replaced',
   supersedes_permission_card: 'a permission-request card ends only by the owner approving or denying it',
+  supersedes_too_many: 'list at most 4 cards in supersedes',
 };
 import {
   createDelegation, leadTeamFor, roundsUsed,
@@ -932,7 +933,7 @@ function buildMcpServer(
    * 조용한 실패다.
    */
   server.registerTool('message.ask', {
-    description: '갈림길에서 선택지를 내놓는다(고르면 즉시 진행). to 는 사람이면 생략, 특정 대상이면 handle. mirrorOf 는 다른 스레드의 사람 앞 카드 id — 같은 선택지 id 로 다시 세우면 사람이 여기서 고른 답이 원본에도 적힌다. 사람이 글로 답해 접힌 내 카드를 다시 물을 땐 supersedes 에 그 카드 id',
+    description: '갈림길에서 선택지를 내놓는다(고르면 즉시 진행). to 는 사람이면 생략, 특정 대상이면 handle. mirrorOf 는 다른 스레드의 사람 앞 카드 id — 같은 선택지 id 로 다시 세우면 사람이 여기서 고른 답이 원본에도 적힌다. 사람이 글로 답해 접힌 내 카드를 다시 물을 땐 supersedes 에 그 카드 id. 같은 스레드에 내가 세운 열린 사람 앞 카드가 있으면 supersedes(대신·합침, 여러 id)나 keepOpen(따로 남김) 중 하나로 그 카드를 모두 밝혀야 한다 — 빠지면 open_card_in_thread 로 거절되고 openCardIds 가 온다',
     inputSchema: {
       channelId: z.string().uuid(),
       body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
@@ -960,7 +961,12 @@ function buildMcpServer(
        * 다시 물을 때 싣는다 — 옛 카드는 「새 질문으로 바뀜」으로 접혀 카드가 쌓이지 않는다.
        * 같은 스레드의 내 카드만, 답이 났거나 「답하지 않기」로 닫힌 것은 안 된다.
        */
-      supersedes: z.string().uuid().optional(),
+      supersedes: z.union([z.string().uuid(), z.array(z.string().uuid()).min(1)]).optional(),
+      /**
+       * **같은 스레드에 열어 둔 채 남길 내 카드**(2026-10-29). 열린 사람 앞 카드를 두고 새 카드를 세울 때는 그 카드를
+       * `supersedes`(대신·합침) 또는 여기(서로 다른 결정이라 따로 남김) 중 하나로 밝힌다 — `open_card_in_thread`.
+       */
+      keepOpen: z.array(z.string().uuid()).max(50).optional(),
       /**
        * 머지 래퍼가 `not_granted` 와 함께 돌려준 `denialId`(스레드 febe9ff8 P3). 실으면 서버가 그 거절 기록으로 카드의 권한
        * 칸(저장소·PR·에이전트)을 채우고, 소유자에게 [7일 주기] 버튼이 뜬다. 선택지에는 「다시 머지」 같은 다음 걸음을 둔다 —
@@ -969,7 +975,8 @@ function buildMcpServer(
       mergeDenialId: z.string().uuid().optional(),
       model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, options, to, prompt, mirrorOf, supersedes, mergeDenialId, irreversible, model }) => {
+  }, async ({ channelId, body, threadRootId, options, to, prompt, mirrorOf, supersedes: supersedesArg, keepOpen, mergeDenialId, irreversible, model }) => {
+    const supersedes = supersedesArg === undefined ? [] : [...new Set(typeof supersedesArg === 'string' ? [supersedesArg] : supersedesArg)];
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -1010,10 +1017,31 @@ function buildMcpServer(
       }
       mirrorRender = await renderPermissionMirror(pool, mirrorOf, channelId);
     }
-    if (supersedes) {
-      const refusal = await checkAskSupersede(pool, { oldId: supersedes, callerId: account.id, channelId, threadRootId: threadRootId ?? null });
+    if (supersedes.length > ASK_SUPERSEDES_MAX) {
+      return jsonResult({ error: { code: 'supersedes_too_many', message: SUPERSEDE_REFUSAL_MESSAGE.supersedes_too_many } });
+    }
+    for (const oldId of supersedes) {
+      const refusal = await checkAskSupersede(pool, { oldId, callerId: account.id, channelId, threadRootId: threadRootId ?? null });
       if (refusal) {
-        return jsonResult({ error: { code: refusal, message: SUPERSEDE_REFUSAL_MESSAGE[refusal] } });
+        return jsonResult({ error: { code: refusal, message: SUPERSEDE_REFUSAL_MESSAGE[refusal], supersedes: oldId } });
+      }
+    }
+    /*
+      열린 내 카드를 두고 새 카드를 세우면 그 카드를 어떻게 할지 밝히게 한다(2026-10-29, 소유자 결정). 본문에 「합쳐서」라고만
+      쓰면 옛 카드가 열린 채 남아 사람이 같은 결정을 두 곳에서 본다. 자동으로 닫지 않는다 — 한 스레드에 서로 다른 결정
+      카드가 함께 열리는 일이 흔해서, 서버가 짐작하면 엉뚱한 카드가 닫힌다. 사람 앞 카드만 본다: 거울·머지 거절 카드는
+      따로 갈리고, 권한·백스톱 카드는 서버가 세운 것이라 에이전트가 정할 것이 아니다.
+    */
+    if (audience.kind === 'human' && !mirrorOf && !mergeDenialId && threadRootId) {
+      const declared = new Set([...supersedes, ...(keepOpen ?? [])]);
+      const undeclared = (await listOpenHumanAsks(pool, { authorId: account.id, channelId, threadRootId }))
+        .filter((id) => !declared.has(id));
+      if (undeclared.length > 0) {
+        return jsonResult({ error: {
+          code: 'open_card_in_thread',
+          message: 'you already have open card(s) in this thread — pass each id in `supersedes` (this card replaces or merges them) or in `keepOpen` (a separate decision that stays open)',
+          openCardIds: undeclared,
+        } });
       }
     }
     // 머지 거절 카드(P3, security C1·C3). 권한 칸은 거절 기록에서만 채운다 — 에이전트가 쓴 본문·선택지와 섞지 않는다.
@@ -1060,7 +1088,7 @@ function buildMcpServer(
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
       // 검사와 발행 사이에 원본이 정해졌으면 방금 세운 거울을 곧바로 그 결과로 닫는다.
       if (mirrorOf) await syncAskMirrors(pool, mirrorOf);
-      if (supersedes) await supersedeAsk(pool, { oldId: supersedes, newId: message.id, actorId: account.id });
+      for (const oldId of supersedes) await supersedeAsk(pool, { oldId, newId: message.id, actorId: account.id });
       /*
         사람 앞 물음의 푸시(security G4). to:human 은 받는 사람이 정해져 있지 않다 — 그 턴을 띄운 멘션의
         작성자(차례 주인, `gateAwaitingAccount`)에게만 보낸다. 원인 헤더가 없거나 차례 주인이 사람이

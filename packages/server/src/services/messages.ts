@@ -2559,7 +2559,35 @@ export async function closeAsksByReply(pool: Pool, reply: MessageRow): Promise<v
   }
 }
 
-export type AskSupersedeRefusal = 'supersedes_not_found' | 'supersedes_not_yours' | 'supersedes_other_thread' | 'supersedes_resolved' | 'supersedes_permission_card';
+export type AskSupersedeRefusal = 'supersedes_not_found' | 'supersedes_not_yours' | 'supersedes_other_thread' | 'supersedes_resolved' | 'supersedes_permission_card' | 'supersedes_too_many';
+
+/** 새 카드 하나가 대신·합칠 수 있는 옛 카드 수(2026-10-29). 그보다 많으면 카드를 나눠 세울 일이다. */
+export const ASK_SUPERSEDES_MAX = 4;
+
+/**
+ * **이 작성자가 이 스레드에 열어 둔 사람 앞 카드**(2026-10-29, `open_card_in_thread`). 답도 닫힘도 없는 것만 —
+ * 글로 답해 접힌(`replied`) 카드는 차례가 이미 넘어갔으므로 세지 않는다. 스레드 머리 글이 카드인 경우도 든다.
+ * 서버가 세운 카드(권한 요청·백스톱·머지 거절)와 거울은 뺀다 — 앞의 셋은 에이전트가 대신하지 못하고(`checkAskSupersede`),
+ * 거울은 다른 스레드 원본의 사본이라 그 원본 쪽에서 정한다.
+ */
+export async function listOpenHumanAsks(
+  pool: Pool, args: { authorId: string; channelId: string; threadRootId: string },
+): Promise<string[]> {
+  const res = await pool.query(
+    `select id from message
+      where channel_id = $2 and (id = $3 or thread_root_id = $3)
+        and author_id = $1 and deleted_at is null
+        and meta->>'kind' = 'ask'
+        and meta->'ask'->>'answeredWith' is null
+        and meta->'ask'->>'closedAt' is null
+        and meta->'ask'->'to'->>'kind' = 'human'
+        and meta->'ask'->>'mirrorOf' is null
+        and not (meta ? 'permissionRequest') and not (meta ? 'chainBackstop') and not (meta ? 'mergeDenial')
+      order by seq`,
+    [args.authorId, args.channelId, args.threadRootId],
+  );
+  return (res.rows as { id: string }[]).map((r) => r.id);
+}
 
 /**
  * `message.ask` 의 `supersedes` — **물어본 쪽이 새 카드로 옛 카드를 대신한다**(2026-10-09, 선택 카드 B 의 일부).
