@@ -37,7 +37,7 @@ import { unwrapOperatorFrame, wrapServerFrame } from '@harkroom/shared/runnerLin
 import { checkOwnerOrAdmin } from '../auth/plugin.js';
 import { channelVisibleSql } from '../services/channels.js';
 import { actorOf, recordAudit } from '../audit.js';
-import { cancelDelegationsFor } from '../services/delegations.js';
+import { settleCanceledTurn } from '../services/turnCancel.js';
 import { createAttachTicketStore } from '../ws/tickets.js';
 import { emitEvent } from '../events.js';
 import { createRelayHub, type RelayHub } from '../ws/relay.js';
@@ -138,7 +138,7 @@ export interface AgentRelayDeps {
  */
 export async function registerAgentRelayRoutes(
   app: FastifyInstance, pool: Pool, deps: AgentRelayDeps,
-): Promise<{ listSessions: RelayHub['listSessions'] }> {
+): Promise<{ listSessions: RelayHub['listSessions']; cancelSession: RelayHub['cancelSession'] }> {
   /**
    * 에이전트가 사람 손을 기다린다(2026-09-08). 허브는 세션의 좌표만 주고, 소유자와
    * handle 을 붙여 이벤트로 만드는 것은 여기다 — 그 둘은 DB 에 있고, 허브는 DB 를 모른다.
@@ -343,6 +343,9 @@ export async function registerAgentRelayRoutes(
             startedAt: x.startedAt,
             ...(x.mode ? { mode: x.mode } : {}),
             owned: !owned || owned.has(x.agentAccountId),
+            // 그만두기 문(`/agent-sessions/:id/cancel`)이 받는 id 는 **내 것일 때만** 싣는다(2026-10-29) — 모바일은
+            // 이 범위 하나만 읽는다. 남의 에이전트 세션 id 는 attach·cancel 의 손잡이라 볼 수 있다고 주지 않는다.
+            ...(!owned || owned.has(x.agentAccountId) ? { sessionId: x.sessionId } : {}),
           })) satisfies AgentActivityView[],
       };
     }
@@ -495,37 +498,16 @@ export async function registerAgentRelayRoutes(
       });
     }
     /**
-     * **중단은 위임 의무도 닫는다**(051). 이것이 없으면 중단된 턴의 의무는 기한이 지나야
-     * `timeout` 으로 닫히고, 팀장은 10분 뒤에 "무응답"을 받아 **사람이 일부러 멈춘 일을
-     * 다시 하려 든다** — 사람의 중단이 10분 뒤에 되돌려지는 셈이다.
+     * **중단은 위임 의무와 그 스레드의 예약도 닫는다**(051 · 2026-10-29). 이것이 없으면 중단된 턴의 의무는
+     * 기한이 지나야 `timeout` 으로 닫히고 팀장은 10분 뒤에 "무응답"을 받아 **사람이 일부러 멈춘 일을 다시
+     * 하려 든다.** 멈춘 턴이 끊기기 직전에 건 예약도 같은 일을 한다 — 시각이 되면 그 일이 다시 열린다.
+     * 판정과 순서(커밋 뒤 이벤트, 던지지 않음)는 `turnCancel.ts::settleCanceledTurn` 이 갖는다 — 에이전트의
+     * `turn.cancel` 과 같은 한 벌이다.
      *
-     * 깨울지는 방향에 따라 갈린다(그 판정은 `cancelDelegationsFor` 가 갖는다): 팀원을
-     * 멈췄으면 팀장이 다음을 정해야 하므로 깨우고, **팀장을 멈췄으면 깨우지 않는다.**
-     *
-     * 스레드가 없으면 할 일이 없다 — 위임은 언제나 스레드에 걸린다(050).
-     *
-     * **중단 자체를 이 실패로 막지 않는다.** 러너에게는 이미 신호가 갔고(위 `cancelSession`),
-     * 사람이 원한 것은 그 턴이 멈추는 것이다. 의무를 못 닫았으면 기한이 그 자리를 메운다 —
-     * 늦은 대신 틀리지 않는다.
+     * 스레드가 없으면 할 일이 없다 — 위임·예약은 언제나 스레드에 걸린다(040·050).
      */
-    const wokeByCancel: string[] = [];
     if (session.threadRootId) {
-      const client = await pool.connect();
-      try {
-        await client.query('begin');
-        wokeByCancel.push(...await cancelDelegationsFor(client, {
-          threadRootId: session.threadRootId, accountId: session.agentAccountId,
-        }));
-        await client.query('commit');
-      } catch (err) {
-        await client.query('rollback').catch(() => {});
-        console.error('[cancel] 위임 의무를 닫지 못했다(중단은 이미 보냈다):', err);
-      } finally {
-        client.release();
-      }
-      // 이벤트는 커밋 뒤다 — 러너는 이것을 보고 즉시 폴하므로, 앞에서 치면 아직 안 보이는
-      // inbox 를 읽고 빈손으로 돌아간다(`postMessage` 가 같은 순서를 지킨다).
-      for (const accountId of wokeByCancel) emitEvent({ type: 'inbox.updated', accountId });
+      await settleCanceledTurn(pool, { threadRootId: session.threadRootId, agentAccountId: session.agentAccountId });
     }
 
     // 감사에는 사건과 세션만(파일 머리 주석). 중단은 사람이 남의 일을 멈춘 것이라
@@ -732,5 +714,5 @@ export async function registerAgentRelayRoutes(
   });
 
   // 도는 턴 목록만 내준다 — 허브 전체를 내주면 밖에서 소켓을 만질 수 있게 된다.
-  return { listSessions: hub.listSessions };
+  return { listSessions: hub.listSessions, cancelSession: hub.cancelSession };
 }
