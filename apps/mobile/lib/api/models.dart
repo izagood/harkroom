@@ -82,11 +82,19 @@ class ChannelRow {
     required this.isDm,
     required this.topic,
     this.memberIds = const [],
+    this.isArchived = false,
   });
 
   final String id;
   final String name;
+
+  /// 서버 `visibility == 'private'`. 서버는 `isPrivate` 칸을 주지 않는다 — 그 칸을 읽던 동안 비공개 채널에도
+  /// 자물쇠 대신 # 가 섰다.
   final bool isPrivate;
+
+  /// 서버 `archivedAt` 이 있으면 보관된 채널이다. 목록에서는 빼지만 [AppState.channels] 에는 남긴다 —
+  /// 옛 글 링크·검색·저장 화면이 그 채널 이름을 계속 찾아야 한다.
+  final bool isArchived;
 
   /// DM 의 참여자(나 포함). 채널이면 비어 있다 — `GET /channels` 는 명단을 주지 않는다.
   final List<String> memberIds;
@@ -98,9 +106,10 @@ class ChannelRow {
   static ChannelRow fromJson(Map<String, Object?> j) => ChannelRow(
         id: _str(j['id']),
         name: _str(j['name']),
-        isPrivate: _bool(j['isPrivate']),
+        isPrivate: _str(j['visibility']) == 'private',
         isDm: _str(j['kind']) == 'dm',
         topic: j['topic'] as String?,
+        isArchived: j['archivedAt'] is String,
       );
 
   /// `GET /dms` 의 한 줄(`id`·`memberIds`). **`GET /channels` 는 DM 을 주지 않는다**(kind standard 만) —
@@ -115,7 +124,8 @@ class ChannelRow {
       );
 
   ChannelRow withName(String n) =>
-      ChannelRow(id: id, name: n, isPrivate: isPrivate, isDm: isDm, topic: topic, memberIds: memberIds);
+      ChannelRow(
+      id: id, name: n, isPrivate: isPrivate, isDm: isDm, topic: topic, memberIds: memberIds, isArchived: isArchived);
 }
 
 /// 리액션 한 칸. 누가 눌렀는지까지 온다 — 내가 눌렀는지를 화면이 알아야 한다.
