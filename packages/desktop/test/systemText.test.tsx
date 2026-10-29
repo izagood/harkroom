@@ -138,6 +138,11 @@ describe('chainBackstopText(백스톱 카드 147)', () => {
       .toBe('The chain that ran without a person reached the backstop (24 hours), so mira stopped calling other agents.');
     expect(chainBackstopText(card({ agentId: 'zz', limit: 4, reason: 'hops' }), accounts, tEn)).toContain(UNKNOWN_ACCOUNT_LABEL);
   });
+  it('정체로 막혔으면(④) 사유는 「새 결과물 없이 N홉」이고 N 은 정체 한도다', () => {
+    expect(chainBackstopText(card({ agentId: 'a1', limit: 100, reason: 'stall' }), accounts, tKo))
+      .toBe('사람 없이 이어진 연쇄가 백스톱(새 결과물 없이 4홉)에 닿아 mira 의 부름을 멈췄다.');
+    expect(chainBackstopText(card({ agentId: 'a1', limit: 100, reason: 'stall' }), accounts, tEn)).toContain('4 hops with nothing new');
+  });
   it('모양이 틀리거나 표지가 없으면 null — 본문으로 물러난다', () => {
     expect(chainBackstopText(card({ agentId: 1, limit: 100 }), accounts, tEn)).toBeNull();
     expect(chainBackstopText({ kind: 'user', meta: {} } as Pick<MessageRow, 'kind' | 'meta'>, accounts, tEn)).toBeNull();

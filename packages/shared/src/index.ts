@@ -3144,6 +3144,16 @@ export type AgentSessionState = 'running' | 'ended' | 'runner-offline';
  * 사람 없이 오래 도는 것은 여전히 사람이 볼 때다.
  */
 export const MENTION_CHAIN_LIMIT = 8;
+
+/**
+ * **정체 차단을 켰을 때의 기본 상한**(2026-10-27, 연쇄 한도 재설계 ④). 루프는 정체 홉(`STALL_HOP_LIMIT`, 146)이 몇 홉 안에
+ * 잡고, 이 값은 정체로 못 잡는 루프(매 홉 새 sha 를 내는 고침↔반려)를 받는 **백스톱**이다 — 걸리면 소유자 카드 한 장으로 풀린다(147).
+ *
+ * **스위치(`HARKROOM_STALL_BLOCK`)와 묶는다**(security M1). 차단이 꺼진 채 상한만 100 으로 올리면 루프가 12.5배 오래 돈다.
+ * 그래서 저장값을 바꾸지 않고, 차단이 켜졌고 저장값이 옛 기본값(`MENTION_CHAIN_LIMIT`)일 때만 판정에서 이 값을 쓴다
+ * (서버 `effectiveChainLimit`). admin 이 고른 다른 값은 언제나 그대로다.
+ */
+export const MENTION_CHAIN_BACKSTOP_LIMIT = 100;
 export const MENTION_CHAIN_LIMIT_MIN = 1;
 /** 백스톱(연쇄 한도 재설계 ③)의 홉 값(100)이 들어갈 수 있게 50 에서 넓혔다(147). */
 export const MENTION_CHAIN_LIMIT_MAX = 200;

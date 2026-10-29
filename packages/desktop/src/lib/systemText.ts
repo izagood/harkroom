@@ -1,4 +1,4 @@
-import { UNKNOWN_ACCOUNT_LABEL, parseSystemI18n, type MessageRow } from '@harkroom/shared';
+import { STALL_HOP_LIMIT, UNKNOWN_ACCOUNT_LABEL, parseSystemI18n, type MessageRow } from '@harkroom/shared';
 import { en } from '../i18n/en';
 import { detectLocale, isLocale, translator, type MessageKey, type Translate } from '../i18n';
 import { usePrefsStore } from '../state/prefsStore';
@@ -57,7 +57,9 @@ export function chainBackstopText(
     { agentId?: unknown; limit?: unknown; reason?: unknown } | undefined;
   if (!b || typeof b.agentId !== 'string' || typeof b.limit !== 'number') return null;
   const handle = Object.hasOwn(accounts, b.agentId) ? accounts[b.agentId]?.handle : undefined;
-  const why = b.reason === 'age' ? t('ask.chainBackstop.age') : t('ask.chainBackstop.hops', { limit: b.limit });
+  const why = b.reason === 'age' ? t('ask.chainBackstop.age')
+    : b.reason === 'stall' ? t('ask.chainBackstop.stall', { limit: STALL_HOP_LIMIT })
+    : t('ask.chainBackstop.hops', { limit: b.limit });
   return t('ask.chainBackstop.body', { why, handle: clean(handle ?? UNKNOWN_ACCOUNT_LABEL) });
 }
 

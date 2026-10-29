@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { CHAIN_BACKSTOP_CONTINUE, CHAIN_BACKSTOP_STOP, type AskMeta } from '@harkroom/shared';
+import { CHAIN_BACKSTOP_CONTINUE, CHAIN_BACKSTOP_STOP, STALL_HOP_LIMIT, type AskMeta } from '@harkroom/shared';
 import { audienceFor } from './channels.js';
 import { emitEvent, emitPosted } from '../events.js';
 import { postMessage } from './messages.js';
@@ -23,11 +23,11 @@ export interface ChainBackstopInput {
   sourceMessageId: string;
   cappedIds: string[];
   limit: number;
-  reason: 'hops' | 'age';
+  reason: 'hops' | 'age' | 'stall';
 }
 
 export interface ChainBackstopMeta {
-  agentId: string; sourceMessageId: string; cappedIds: string[]; limit: number; reason: 'hops' | 'age';
+  agentId: string; sourceMessageId: string; cappedIds: string[]; limit: number; reason: 'hops' | 'age' | 'stall';
 }
 
 export async function raiseChainBackstop(pool: Pool, b: ChainBackstopInput): Promise<string | null> {
@@ -63,7 +63,7 @@ export async function raiseChainBackstop(pool: Pool, b: ChainBackstopInput): Pro
       agentId: b.agentId, sourceMessageId: b.sourceMessageId, cappedIds: b.cappedIds, limit: b.limit, reason: b.reason,
     },
   };
-  const why = b.reason === 'age' ? '24시간' : `${b.limit}홉`;
+  const why = b.reason === 'age' ? '24시간' : b.reason === 'stall' ? `새 결과물 없이 ${STALL_HOP_LIMIT}홉` : `${b.limit}홉`;
   // 본문에는 서버 값만 싣는다. `@` 는 무력화한다 — 이 카드가 누구를 부르면 안 된다.
   const body = `⏸ 사람 없이 이어진 연쇄가 백스톱(${why})에 닿아 ${owner.handle} 의 부름을 멈췄다. 계속하려면 [계속 — 예산 리셋]을 누른다.`
     .replace(/@/g, '＠');
