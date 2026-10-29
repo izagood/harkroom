@@ -50,6 +50,7 @@ const Map<String, List<String>> systemI18nArgs = {
   'system.secret.createdImported': ['agentId', 'name', 'ownerId'],
   'system.secret.rotatedGenerated': ['agentId', 'name', 'version', 'type', 'ownerId'],
   'system.secret.rotatedImported': ['agentId', 'name', 'version', 'ownerId'],
+  'system.permission.approvedByUser': ['actorId', 'agentId', 'kind', 'target', 'ownerId'],
   'system.skill.proposed': ['slug'],
   'system.skill.proposedFlagged': ['slug', 'reason'],
   'system.chatApproval.negated': [],

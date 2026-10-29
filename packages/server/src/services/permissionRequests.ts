@@ -9,7 +9,9 @@ import { validateCapScope, type Cap, type LineLimits } from './capabilities.js';
 import { addMandateLine, revokeLinesForGrant, type LineVia } from './mandateLines.js';
 import { auditMandateCreated, validMandateOwner, type MandateCreated } from './mandates.js';
 import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
-import { getMessageById, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
+import { getMessageById, postMessage, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
+import { systemI18n } from './systemI18n.js';
+import { mayDecideSql } from './deciders.js';
 
 /**
  * 에이전트 권한 요청 → 소유자 승인 → 적용(스레드 f61af808, 소유자 D1~D4 10-07).
@@ -522,6 +524,12 @@ export async function decidePermissionRequest(
   pool: Pool,
   args: {
     agentId: string; requestId: string; actorId: string; decision: PermissionDecision; now?: Date;
+    /**
+     * 정한 사람이 에이전트의 소유자인가(`deciders.mayDecideFor`). false 면 소유자가 아닌 사용자다(소유자 결정 2026-10-29) —
+     * 위임장은 소유자의 것이라 만들거나 줄을 더하지 않고, 살아 있는 grant 를 덮어 늘리지 않으며(security 9), 소유자에게 알린다(security 2).
+     * 빠지면 소유자로 친다(옛 부르는 쪽).
+     */
+    asOwner?: boolean;
     /** 머지 거절 카드의 `approve_once` 일 때만 — 머지에 쓸 gh 계정과 CI 완화 여부. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
     once?: { ghUser: string | null; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] };
     /**
@@ -582,7 +590,10 @@ export async function decidePermissionRequest(
       return { ok: false, status: 409, code: 'bad_decision', message: 'an exact-command request is approved once (or for an hour) — not for a mandate' };
     }
     // W4-3: 위임 없는 턴의 요청 — 카드의 스레드에 정하는 사람(=에이전트 소유자, 사람 세션은 부른 쪽이 봤다) 위임을 세우고 거기에 줄을 더한다.
-    if (args.decision === 'approve_new_mandate' && !r.mandateId) {
+    // 소유자가 아닌 사람의 승인은 위임장을 건드리지 않는다 — 위임장의 주인은 소유자다(W3 쪽 확장은 후속). grant 는 아래에서 그대로 넣는다.
+    const byUser = args.asOwner === false;
+    if (byUser) r.mandateId = null;
+    if (args.decision === 'approve_new_mandate' && !r.mandateId && !byUser) {
       const made = await mandateForCardThread(client, { ownerId: args.actorId, channelId: r.channelId, threadRootId: r.threadRootId, now, created: mandatesCreated });
       if (!made) {
         await client.query('rollback');
@@ -621,12 +632,21 @@ export async function decidePermissionRequest(
       const capability = r.kind === 'tool' ? 'tool.allow' : 'repo.merge';
       const scope = r.kind === 'tool' ? toolScope(r.channelId, r.target) : r.target;
       // 있던 grant(만료된 것 등)는 덮는다 — `allow_agent_cause` 는 끈다(카드는 좁히기만 한다).
-      await client.query(
+      // 소유자가 아닌 사람은 **살아 있는** grant 를 덮지 않는다(security 9) — 재승인으로 만료를 늘리거나 소유자의 grant 를 제 이름으로 바꾸지 않는다.
+      const kept = (await client.query<{ expiresAt: Date | null }>(
         `insert into account_grant (account_id, capability, scope, granted_by, expires_at, allow_agent_cause)
          values ($1, $2, $3, $4, $5, false)
          on conflict (account_id, capability, scope) do update
-           set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, allow_agent_cause = false`,
-        [args.agentId, capability, scope, args.actorId, grantExpiresAt]);
+           set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, allow_agent_cause = false
+           where not $6::boolean or (account_grant.expires_at is not null and account_grant.expires_at <= $7)
+         returning expires_at as "expiresAt"`,
+        [args.agentId, capability, scope, args.actorId, grantExpiresAt, byUser, now])).rowCount === 0;
+      if (kept) {
+        // 살아 있는 grant 가 그대로다 — 카드·요청 줄에는 그 grant 의 기한을 적는다.
+        grantExpiresAt = (await client.query<{ expiresAt: Date | null }>(
+          `select expires_at as "expiresAt" from account_grant where account_id = $1 and capability = $2 and scope = $3`,
+          [args.agentId, capability, scope])).rows[0]?.expiresAt ?? grantExpiresAt;
+      }
     }
     // W4: 위임이 있는 요청의 승인은 그 위임에 줄을 하나 **더** 적는다 — 위의 grant 는 그대로다. 줄이 실패해도 결정은 깨지 않는다(savepoint).
     if (approving && r.mandateId) {
@@ -654,6 +674,8 @@ export async function decidePermissionRequest(
           // 줄 빼기(g1) — 카드가 자기가 적은 줄을 가리킨다. 이 값이 있는 카드만 [줄 빼기]를 그린다(새 서버만 싣는 값).
           ...(lineOutcome?.ok ? { lineId: lineOutcome.lineId } : {}),
           ...(args.via?.kind === 'chat' || args.via?.kind === 'mirror' ? { decidedVia: args.via } : {}),
+          // 소유자가 아닌 사용자가 정했다(security 2·3) — 화면이 「승인: 이름(소유자 아님)」을 그린다. 소유자가 정하면 싣지 않는다.
+          ...(args.asOwner === false ? { decidedByOwner: false } : {}),
         })]);
     }
     await client.query('commit');
@@ -676,6 +698,7 @@ export async function decidePermissionRequest(
     action: args.decision === 'deny' ? 'permission.denied' : 'permission.approved', actorId: args.actorId, target: args.agentId,
     detail: {
       requestId: row.id, kind: row.kind, target: row.target, channelId: row.channelId,
+      ...(args.asOwner === false ? { asOwner: false } : {}),
       ...(row.kind === 'command' ? { threadRootId: row.threadRootId } : {}),
       ...(grantExpiresAt ? { grantExpiresAt: grantExpiresAt.toISOString() } : {}),
       ...(grantMode ? { grantMode, commandGrantId } : {}),
@@ -713,6 +736,9 @@ export async function decidePermissionRequest(
     });
     const card = typeof answered === 'object' ? answered : await getMessageById(pool, row.cardMessageId);
     if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
+  }
+  if (args.asOwner === false && args.decision !== 'deny') {
+    await notifyOwnerOfUserDecision(pool, { agentId: args.agentId, actorId: args.actorId, request: row, status, expiresAt: approval?.expiresAt ?? grantExpiresAt });
   }
   return { ok: true, status, grantExpiresAt: grantExpiresAt?.toISOString() ?? null, ...(approval ? { approvalExpiresAt: approval.expiresAt.toISOString() } : {}), cardMessageId: row.cardMessageId, ...(grantMode ? { grantMode } : {}) };
 }
@@ -943,7 +969,8 @@ export async function toolAllowsFor(pool: Pool, agentId: string, channelId: stri
     `select scope from account_grant
       where account_id = $1 and capability = 'tool.allow' and left(scope, length($2)) = $2
         and (expires_at is null or expires_at > $3)
-      order by scope`, [agentId, prefix, now])).rows;
+        and ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', '$4::uuid')}
+      order by scope`, [agentId, prefix, now, channelId])).rows;
   // 저장된 뒤 판정이 좁아졌을 수 있다 — 지금 판정으로 다시 걸러서 내보낸다(넓은 규칙이 옛 grant 로 살아남지 않게).
   return rows.map((r) => r.scope.slice(prefix.length)).filter((rule) => {
     const v = validateToolRule(rule);
@@ -959,7 +986,8 @@ export async function toolReachFor(pool: Pool, agentId: string, now = new Date()
   const rows = (await pool.query<{ scope: string }>(
     `select scope from account_grant
       where account_id = $1 and capability = 'tool.allow' and left(scope, 5) = 'tool:'
-        and (expires_at is null or expires_at > $2)`, [agentId, now])).rows;
+        and (expires_at is null or expires_at > $2)
+        and ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', "nullif(split_part(account_grant.scope, ':', 2), '')::uuid")}`, [agentId, now])).rows;
   const out = new Set<string>();
   for (const r of rows) {
     const rule = parseToolScope(r.scope)?.rule;
@@ -1031,6 +1059,7 @@ export async function commandGrantsFor(
     `select id, command, single_use as "singleUse", expires_at as "expiresAt" from command_grant
       where agent_id = $1 and channel_id = $2 and thread_root_id = $3 and expires_at > $4
         and (not single_use or used_at is null)
+        and ${mayDecideSql('command_grant.agent_id', 'command_grant.granted_by', 'command_grant.channel_id')}
       order by created_at`, [agentId, channelId, threadRootId, now])).rows;
   return rows.filter((r) => {
     const v = validateExactCommand(r.command);
@@ -1070,6 +1099,7 @@ export async function matchCommandGrant(
         select id from command_grant
          where agent_id = $1 and channel_id = $2 and thread_root_id = $3 and command = $4 and expires_at > $5
            and (not single_use or used_at is null)
+           and ${mayDecideSql('command_grant.agent_id', 'command_grant.granted_by', 'command_grant.channel_id')}
            and file_digests = $6::jsonb
            and (single_use or ($7::text is not null and (bound_cwd is null or bound_cwd = $7)))
          order by single_use asc, created_at
@@ -1215,5 +1245,36 @@ export async function noteOnceGhUserUsed(pool: Pool, args: { approvalId: string;
       const msg = await getMessageById(pool, id);
       if (msg) emitEvent({ type: 'message.updated', message: msg, audience: await audienceFor(pool, msg.channelId) });
     }
+  }
+}
+
+/**
+ * 소유자가 아닌 사용자가 권한 요청을 승인했다는 것을 소유자에게 알린다(security 2 — 소유자의 gh·오퍼레이터로 열리는 일을 소유자가 안다).
+ * 카드가 선 스레드에 서버가 시스템 줄을 세우고 소유자를 부른다 — 부름이라 소유자 인박스·푸시가 평범한 멘션과 같은 관문으로 간다
+ * (`secretCreate.notifyOwner` 와 같은 꼴). 본문은 서버 값뿐이다(handle·요청 종류·대상·기한). 실패해도 결정은 되돌리지 않는다.
+ */
+async function notifyOwnerOfUserDecision(
+  pool: Pool,
+  n: { agentId: string; actorId: string; request: { id: string; kind: PermissionKind; target: string; channelId: string; threadRootId: string; cardMessageId: string | null }; status: string; expiresAt: Date | null },
+): Promise<void> {
+  try {
+    const who = (await pool.query<{ agent: string; actor: string; owner: string | null; ownerId: string | null }>(
+      `select a.handle as agent, p.handle as actor, o.handle as owner, c.owner_account_id as "ownerId"
+         from account a join agent_config c on c.account_id = a.id join account p on p.id = $2
+         left join account o on o.id = c.owner_account_id
+        where a.id = $1`, [n.agentId, n.actorId])).rows[0];
+    if (!who?.ownerId || !who.owner) return;
+    const until = n.expiresAt ? ` · ${n.expiresAt.toISOString().slice(0, 16).replace('T', ' ')}Z 까지` : '';
+    const body = `🔓 ${who.actor} 가 ${who.agent} 의 권한 요청을 승인했다(소유자 아님) · ${n.request.kind} ${n.request.target}${until} · 설정 › 에이전트에서 거둘 수 있다 @${who.owner}`;
+    const posted = await postMessage(pool, {
+      channelId: n.request.channelId, threadRootId: n.request.threadRootId, authorId: n.agentId, body, kind: 'system', serverNotice: true,
+      meta: {
+        permissionUserDecision: { requestId: n.request.id, agentId: n.agentId, actorId: n.actorId, ownerAccountId: who.ownerId, kind: n.request.kind, target: n.request.target, status: n.status, ...(n.expiresAt ? { expiresAt: n.expiresAt.toISOString() } : {}) },
+        i18n: systemI18n('system.permission.approvedByUser', { actorId: n.actorId, agentId: n.agentId, kind: n.request.kind, target: n.request.target, ownerId: who.ownerId }),
+      },
+    });
+    if (posted.failure) console.error(`[permissionRequests] 소유자 알림 실패: ${posted.failure} requestId=${n.request.id}`);
+  } catch (e) {
+    console.error(`[permissionRequests] 소유자 알림 실패: requestId=${n.request.id}`, e instanceof Error ? e.message : e);
   }
 }

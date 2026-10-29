@@ -12,7 +12,7 @@ import { inviteMail, type InviteMailLocale } from '../services/mail/inviteMail.j
 import { mailErrorSummary } from '../services/mail/mailer.js';
 import {
   ackAgentStop, assignmentOf, createAgentAccount, definitionFor, deleteAgentAccount, getAgent, listAgents, recordAgentTurn, requestAgentStop,
-  revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, setChromeEnabled, setRequiresMacos, setTrustSiblings, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
+  revokeAllPats, setAgentMcpServers, setDelegate, setInvoker, setChromeEnabled, setRequiresMacos, setTrustSiblings, setUserDecide, undoAgentStopRequest, updateAgent, validateMcpServers, validateScopeChange,
 } from '../services/agents.js';
 import { isEligibleDelegate } from '../services/invokeGate.js';
 import { actorOf, recordAudit } from '../audit.js';
@@ -471,10 +471,11 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
    * - `instructions`: 에이전트가 무엇을 하도록 지시받는지. 원문은 남기지 않는다.
    * - `trustSiblings`: 같은 소유자의 owner 에이전트가 명단 없이 이 에이전트를 깨우는지(083).
    * - `chromeEnabled`: 이 에이전트가 오퍼레이터 기계의 Chrome(사람의 로그인 세션 포함)을 조작하는지(126).
+   * - `userDecide`: 소유자가 아닌 사용자도 이 에이전트의 권한·머지 카드를 정하는지(151, 비상 스위치).
    */
   const AUDITED_FIELDS = {
     mentionPermission: 'value', workingDir: 'value', ownerAccountId: 'value',
-    harness: 'value', instructions: 'changed', trustSiblings: 'value', chromeEnabled: 'value',
+    harness: 'value', instructions: 'changed', trustSiblings: 'value', chromeEnabled: 'value', userDecide: 'value',
   } as const;
 
   type AuditedField = keyof typeof AUDITED_FIELDS;
@@ -639,6 +640,9 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
       // Claude in Chrome 연동(126). 소유자·admin 이 정한다. 사람의 브라우저를 조작하게 하는 권한이라
       // 감사 대상이다(`AUDITED_FIELDS`).
       chromeEnabled: z.boolean().optional(),
+      // 사용자 결정 비상 스위치(151, 소유자 결정 2026-10-29). 끄면 이 에이전트의 권한·머지 카드는 소유자만 정한다(`deciders.ts`).
+      // 소유자·admin 이 정한다 — 형제 신뢰와 같은 규칙이다.
+      userDecide: z.boolean().optional(),
     }).parse(req.body);
 
     const account = req.account!;
@@ -721,6 +725,7 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     if (patch.trustSiblings !== undefined) await setTrustSiblings(pool, id, patch.trustSiblings);
     if (patch.requiresMacos !== undefined) await setRequiresMacos(pool, id, patch.requiresMacos);
     if (patch.chromeEnabled !== undefined) await setChromeEnabled(pool, id, patch.chromeEnabled);
+    if (patch.userDecide !== undefined) await setUserDecide(pool, id, patch.userDecide);
 
     let revokedLabels: string[] = [];
     if (patch.disabled !== undefined && patch.disabled !== before.disabled) {

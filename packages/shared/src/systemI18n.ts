@@ -68,6 +68,7 @@ export const SYSTEM_I18N_ARGS = Object.freeze({
   'system.secret.createdImported': ['agentId', 'name', 'ownerId'],
   'system.secret.rotatedGenerated': ['agentId', 'name', 'version', 'type', 'ownerId'],
   'system.secret.rotatedImported': ['agentId', 'name', 'version', 'ownerId'],
+  'system.permission.approvedByUser': ['actorId', 'agentId', 'kind', 'target', 'ownerId'],
   'system.skill.proposed': ['slug'],
   'system.skill.proposedFlagged': ['slug', 'reason'],
   'system.chatApproval.negated': [],

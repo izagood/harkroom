@@ -27,6 +27,8 @@ const COLS = `a.id, a.handle, a.display_name as "displayName", a.kind, a.is_admi
   coalesce((select json_agg(d.delegate_id order by d.delegate_id) from agent_owner_delegate d where d.agent_id = a.id), '[]'::json) as delegates,
   -- 083. agent_config 행이 없는 계정은 owner 일 수 없어 판정에 안 쓰인다 — 기본값(true)을 보여 준다.
   coalesce(c.trust_siblings, true) as "trustSiblings",
+  -- 151. 행이 없는 계정은 소유자가 없어 판정에 안 쓰인다 — 기본값(true)을 보여 준다.
+  coalesce(c.user_decide, true) as "userDecide",
   -- 106. 표시용 — 배정을 막지 않는다.
   coalesce(c.requires_macos, false) as "requiresMacos",
   -- 126. 사람 브라우저 조작 권한이라 행이 없으면 꺼짐.
@@ -212,6 +214,14 @@ export async function setTrustSiblings(db: Pool | PoolClient, agentId: string, o
   await db.query(
     `insert into agent_config (account_id, trust_siblings) values ($1, $2)
      on conflict (account_id) do update set trust_siblings = excluded.trust_siblings, updated_at = now()`,
+    [agentId, on]);
+}
+
+/** 사용자 결정 비상 스위치(151). `setTrustSiblings` 와 같은 upsert 다. */
+export async function setUserDecide(db: Pool | PoolClient, agentId: string, on: boolean): Promise<void> {
+  await db.query(
+    `insert into agent_config (account_id, user_decide) values ($1, $2)
+     on conflict (account_id) do update set user_decide = excluded.user_decide, updated_at = now()`,
     [agentId, on]);
 }
 

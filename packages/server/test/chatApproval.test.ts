@@ -170,7 +170,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     bob = await createMember(app, admin.token, 'bob');
     alicePat = await agentPat(alice.accountId, 'alice-cli');
     ({ accountId: agentId, pat: agentToken } = await createAgent(app, admin.token, 'sitebot'));
-    await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agentId, alice.accountId]);
+    await pool.query(`update agent_config set owner_account_id = $2, invoke_scope = 'owner' where account_id = $1`, [agentId, alice.accountId]);
     const op = await registerOperator(app, admin.token, 'mac');
     await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [agentId, op.operatorId, admin.accountId]);
     ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'sitebot' } })).json().id as string;
@@ -288,14 +288,14 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
   it('T3 — 남의 에이전트 요청은 대상이 아니다', async () => {
     await expireAll();
     const { requestId } = await ask(await root());
-    await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agentId, bob.accountId]);
+    await pool.query(`update agent_config set owner_account_id = $2, invoke_scope = 'owner' where account_id = $1`, [agentId, bob.accountId]);
     try {
       const elsewhere = await root(otherCh);
       await say(alice.token, '승인', elsewhere, otherCh);
       expect(await status(requestId)).toBe('pending');
       expect(await systemLines(elsewhere)).toHaveLength(0);
     } finally {
-      await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agentId, alice.accountId]);
+      await pool.query(`update agent_config set owner_account_id = $2, invoke_scope = 'owner' where account_id = $1`, [agentId, alice.accountId]);
     }
   });
 
@@ -530,7 +530,7 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     let otherBot: string;
     beforeAll(async () => {
       otherBot = (await createAgent(app, admin.token, 'otherbot')).accountId;
-      await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [otherBot, bob.accountId]);
+      await pool.query(`update agent_config set owner_account_id = $2, invoke_scope = 'owner' where account_id = $1`, [otherBot, bob.accountId]);
     });
     /** 다른 채널 스레드에 원본 카드를 가리키는 거울 하나 — 선택지는 원본과 같게. */
     const mirrorIn = async (cardId: string, authorId: string) => {

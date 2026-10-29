@@ -256,6 +256,11 @@ export interface AgentView extends AccountView, AgentConfig {
    */
   trustSiblings?: boolean;
   /**
+   * 소유자가 아닌 사용자도 권한·머지 카드를 정하나(151, 기본 true — 소유자 결정 2026-10-29). 정하는 사람은 그 채널에서 이 에이전트를
+   * 부를 수 있는 사람이다(invoke_scope 표). false 면 소유자만 정한다. 옛 서버는 이 필드를 주지 않는다.
+   */
+  userDecide?: boolean;
+  /**
    * 맥에서만 제대로 도는 에이전트(시뮬레이터·macOS 빌드·스크린샷, 마이그레이션 106). **표시용**이다 —
    * 서버는 리눅스 오퍼레이터 배정을 막지 않고, 화면이 오퍼레이터 박동의 `platform` 과 견줘 경고한다.
    * 옛 서버는 싣지 않는다(없음 = false).

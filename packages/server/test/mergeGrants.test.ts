@@ -64,7 +64,7 @@ describe('repo.merge grant', () => {
     ({ accountId: agentId, pat: agentPat } = await createAgent(app, admin.token, 'tm'));
     otherAgentId = (await createAgent(app, admin.token, 'other')).accountId;
     // alice 가 tm 의 소유자다 — F2 의 "소유자인 사람"은 admin 과 다른 사람이어야 시험이 뜻을 가진다.
-    await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agentId, alice.accountId]);
+    await pool.query(`update agent_config set owner_account_id = $2, invoke_scope = 'owner' where account_id = $1`, [agentId, alice.accountId]);
     op = await registerOperator(app, admin.token, 'mac');
     await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [agentId, op.operatorId, admin.accountId]);
     ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'dev' } })).json().id as string;

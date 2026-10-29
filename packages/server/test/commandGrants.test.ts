@@ -68,7 +68,7 @@ describe('permission.request kind=command → once/hour → command-grants', () 
     bob = await createMember(app, admin.token, 'bob');
     ({ accountId: agentId, pat: agentPat } = await createAgent(app, admin.token, 'rebelro'));
     otherAgentId = (await createAgent(app, admin.token, 'other')).accountId;
-    await pool.query(`update agent_config set owner_account_id = $2 where account_id = any($1)`, [[agentId, otherAgentId], alice.accountId]);
+    await pool.query(`update agent_config set owner_account_id = $2, invoke_scope = 'owner' where account_id = any($1)`, [[agentId, otherAgentId], alice.accountId]);
     op = await registerOperator(app, admin.token, 'mac');
     for (const id of [agentId, otherAgentId]) {
       await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [id, op.operatorId, admin.accountId]);

@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import { readAskMeta, type MessageRow } from '@harkroom/shared';
 import { getMessageById, readAskRow, recordAskAnswer } from './messages.js';
 import { assertChannelVisible } from './channels.js';
+import { mayDecideFor } from './deciders.js';
 import {
   decidePermissionRequest, PERMISSION_OPTION_APPROVE, PERMISSION_OPTION_APPROVE_HOUR, PERMISSION_OPTION_APPROVE_MANDATE, PERMISSION_OPTION_APPROVE_NEW_MANDATE,
   PERMISSION_OPTION_APPROVE_ONCE, PERMISSION_OPTION_DENY,
@@ -15,7 +16,7 @@ import {
  * - `resolveDecision` — 카드 글 id 하나 → 무엇을 정하는 카드인가. 거울(`ask.mirrorOf`)은 원본으로 따라간다.
  * - `decide` — 해석한 것 + 고른 선택지 → 기존 판정(`decidePermissionRequest` · `recordAskAnswer`)을 그대로 부른다.
  *
- * 판정 자체(소유자·만료·이미 정해짐·1회 머지 대조)는 바뀌지 않는다 — 이 모듈은 길을 모을 뿐이다.
+ * 판정 자체(누가 정하나·만료·이미 정해짐·1회 머지 대조)는 바뀌지 않는다 — 이 모듈은 길을 모을 뿐이다.
  */
 
 export type DecisionVia = 'button' | 'chat' | 'mirror';
@@ -93,7 +94,7 @@ const OPTION_DECISION: Record<string, PermissionDecision> = {
  *
  * 거울 카드(P3): 권한 카드의 거울이면 **서버가 세운 거울인지**(`isGenuinePermissionMirror`) 본 뒤 원본 요청으로 넘긴다 —
  * 답은 원본 카드에 한 번 적히고 거울은 `syncAskMirrors` 가 따라 닫는다. 진짜 거울이 아니면 전처럼 물음 길로 가서 거절된다.
- * 권한 요청은 **언제나** 요청 줄의 소유자를 DB 에서 다시 읽어 대조한다(부른 쪽이 넘긴 `ownerAccountId` 에 기대지 않는다).
+ * 권한 요청은 **언제나** 요청 줄·에이전트 범위를 DB 에서 다시 읽어 `mayDecideFor` 로 대조한다(부른 쪽이 넘긴 `ownerAccountId` 에 기대지 않는다).
  */
 export async function decide(pool: Pool, ref: DecisionRef, actorId: string, input: DecideInput): Promise<DecideOutcome> {
   if (ref.kind === 'permission' && ref.mirrorMessageId && ref.cardMessageId) {
@@ -105,12 +106,13 @@ export async function decide(pool: Pool, ref: DecisionRef, actorId: string, inpu
     if (askMessageId) return { kind: 'ask', result: await recordAskAnswer(pool, { messageId: askMessageId, actorId, optionId: input.option }) };
   }
   if (ref.kind !== 'permission') throw new Error('unreachable');
-  const forbidden = { kind: 'permission', ok: false, status: 403, code: 'forbidden', message: 'only the owner of this agent can decide its permission requests' } as const;
-  if (ref.ownerAccountId !== undefined && ref.ownerAccountId !== actorId) return forbidden;
-  // security n1: 부른 쪽이 소유자를 넘겼든 아니든 요청의 에이전트 소유자를 DB 에서 읽는다.
-  const owner = (await pool.query<{ ownerAccountId: string | null }>(
-    `select owner_account_id as "ownerAccountId" from agent_config where account_id = $1`, [ref.agentId])).rows[0]?.ownerAccountId ?? null;
-  if (owner !== actorId) return forbidden;
+  const forbidden = { kind: 'permission', ok: false, status: 403, code: 'forbidden', message: 'only someone who may invoke this agent here can decide its permission requests' } as const;
+  // 누가 정하나(소유자 결정 2026-10-29) — 요청이 선 채널에서 이 에이전트를 부를 수 있는 사람(`deciders.ts`).
+  // security n1: 부른 쪽이 넘긴 값에 기대지 않고 요청 줄·에이전트 범위를 DB 에서 지금 읽는다.
+  const channelId = (await pool.query<{ channelId: string }>(
+    `select channel_id as "channelId" from permission_request where id = $1 and agent_id = $2`, [ref.requestId, ref.agentId])).rows[0]?.channelId ?? null;
+  const verdict = await mayDecideFor(pool, { agentId: ref.agentId, actorId, channelId });
+  if (!verdict.ok) return forbidden;
   const decision = Object.hasOwn(OPTION_DECISION, input.option) ? OPTION_DECISION[input.option] : undefined;
   if (!decision) return { kind: 'permission', ok: false, status: 400, code: 'unknown_option', message: 'a permission card takes approve_mandate, approve_new_mandate, approve_once, approve, approve_hour or deny' };
   let once = input.once;
@@ -129,7 +131,7 @@ export async function decide(pool: Pool, ref: DecisionRef, actorId: string, inpu
     : ref.mirrorMessageId ? { kind: 'mirror', mirrorMessageId: ref.mirrorMessageId }
     : { kind: 'button' };
   const d = await decidePermissionRequest(pool, {
-    agentId: ref.agentId, requestId: ref.requestId, actorId, decision,
+    agentId: ref.agentId, requestId: ref.requestId, actorId, decision, asOwner: verdict.asOwner,
     ...(once ? { once } : {}),
     via,
   });
