@@ -746,6 +746,7 @@ function threadNoteSection(memory: MemoryContext): string[] {
     '**한 스레드의 진행 상태**(맡긴 일·검토 대기·PR 번호·head·다음 할 일)는 **스레드 메모**에 쓴다 —',
     '`thread.note`(threadRootId·body, 4,000자 한 장, 덮어쓰기). 그 스레드의 다음 턴(예약으로 깨어난 턴 포함)에',
     '`<thread-note>` 로 자동으로 실린다. 고칠 때는 읽은 `updatedAt` 을 `ifUpdatedAt` 으로 준다.',
+    '스레드를 넘는 대장(열린 위임·검토 대기 목록)은 따로 적지 말고 `thread.note.list` 로 내 메모 목록을 본다.',
     ...(memory === 'unavailable' ? [] : [
       '스레드 메모는 목록·recall·200 상한에 안 든다. `mem/delegation-*`·`mem/review-*` 같은 스레드 하나짜리 상태 기억은',
       '새로 만들지 마라 — 여러 스레드에서 되풀이할 교훈만 `mem/*` 로 남긴다.',

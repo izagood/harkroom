@@ -1277,7 +1277,7 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     expect(READONLY_ALLOW).toContain('ToolSearch');
     expect(READONLY_ALLOW).toContain('mcp__harkroom__message_post');
     // prefix 전체(`mcp__harkroom`)를 열지 않는다 — 열면 비밀·권한·위임 도구가 따라 열린다.
-    for (const t of READONLY_ALLOW.slice(1)) expect(t).toMatch(/^mcp__harkroom__[a-z]+_[a-zA-Z]+$/);
+    for (const t of READONLY_ALLOW.slice(1)) expect(t).toMatch(/^mcp__harkroom__[a-z]+(_[a-zA-Z]+)+$/);
     for (const bad of ['mcp__harkroom', 'mcp__avcs', 'Bash', 'WebFetch', 'WebSearch', 'Agent', 'Edit', 'Write', 'Read']) expect(READONLY_ALLOW).not.toContain(bad);
     expect(READONLY_ALLOW.filter((t) => /secret_|grant_|permission_|automation_|skill_|delegate|memory_set|memory_merge|memory_archive|workitem_/.test(t))).toEqual([]);
     // 셸·웹은 deny 로 막는다 — dontAsk 도 claude 가 읽기로 판정한 셸은 규칙 없이 돌린다(실측 2.1.310).

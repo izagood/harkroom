@@ -159,7 +159,18 @@ describe('mcp surface', () => {
     const theirs = text(await otherClient.callTool({ name: 'thread.note', arguments: { threadRootId: rootId } })) as { note: null };
     expect(theirs.note).toBeNull();
     await otherClient.close();
+    // 목록: 내 열린 메모만, 루트 첫 줄·메모 첫 줄과 함께. 남의 메모는 안 보인다.
+    const listed = text(await client.callTool({ name: 'thread.note.list', arguments: { channelId } })) as {
+      notes: { threadRootId: string; channelId: string; rootFirstLine: string; noteFirstLine: string; updatedAt: string }[];
+    };
+    expect(listed.notes.find((n) => n.threadRootId === rootId)).toMatchObject({ channelId, rootFirstLine: 'note root', noteFirstLine: 'PR #1 CI 초록' });
+    const otherClient2 = await mcpClient(other.pat);
+    const theirList = text(await otherClient2.callTool({ name: 'thread.note.list', arguments: {} })) as { notes: { threadRootId: string }[] };
+    expect(theirList.notes.some((n) => n.threadRootId === rootId)).toBe(false);
+    await otherClient2.close();
     const del = text(await client.callTool({ name: 'thread.note', arguments: { threadRootId: rootId, body: null } })) as { ok: boolean; updatedAt: null };
+    const afterDel = text(await client.callTool({ name: 'thread.note.list', arguments: { channelId } })) as { notes: { threadRootId: string }[] };
+    expect(afterDel.notes.some((n) => n.threadRootId === rootId)).toBe(false);
     expect(del).toMatchObject({ ok: true, updatedAt: null });
     await client.close();
   });
@@ -172,7 +183,7 @@ describe('mcp surface', () => {
       'account.list', 'account.me', 'agent.modelOptions', 'artifact.publish', 'attachment.fetch', 'attachment.upload', 'automation.list', 'automation.propose', 'automation.run', 'bg.claim', 'bg.complete', 'channel.doc', 'channel.list', 'grant.delegate', 'grant.list', 'grant.revoke', 'inbox.poll', 'inbox.read',
       'memory.archive', 'memory.audit', 'memory.get', 'memory.lease', 'memory.list', 'memory.merge', 'memory.recalled', 'memory.restore', 'memory.revisions', 'memory.search', 'memory.set', 'memory.unarchive',
       'message.ask', 'message.askBundle', 'message.askBundleResolve', 'message.delegate', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact', 'permission.request', 'permission.revoke',
-      'secret.generate', 'secret.import', 'secret.list', 'secret.mount', 'secret.rotate', 'skill.propose', 'thread.note', 'turn.wake', 'workitem.list', 'workitem.remove', 'workitem.upsert', 'workspace.guide',
+      'secret.generate', 'secret.import', 'secret.list', 'secret.mount', 'secret.rotate', 'skill.propose', 'thread.note', 'thread.note.list', 'turn.wake', 'workitem.list', 'workitem.remove', 'workitem.upsert', 'workspace.guide',
     ]);
 
     const posted = text(await client.callTool({
