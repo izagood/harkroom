@@ -43,7 +43,7 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
     alice = await createMember(app, admin.token, 'alice');
     bob = await createMember(app, admin.token, 'bob');
     ({ accountId: agentId, pat: agentPat } = await createAgent(app, admin.token, 'sitebot'));
-    await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agentId, alice.accountId]);
+    await pool.query(`update agent_config set owner_account_id = $2, invoke_scope = 'owner' where account_id = $1`, [agentId, alice.accountId]);
     op = await registerOperator(app, admin.token, 'mac');
     await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [agentId, op.operatorId, admin.accountId]);
     ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'sitebot' } })).json().id as string;
@@ -128,7 +128,7 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
 
     it('남의 에이전트 경로에 이 요청 id 를 꽂으면 404', async () => {
       const other = (await createAgent(app, admin.token, 'other')).accountId;
-      await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [other, alice.accountId]);
+      await pool.query(`update agent_config set owner_account_id = $2, invoke_scope = 'owner' where account_id = $1`, [other, alice.accountId]);
       expect((await decide(alice.token, requestId, 'approve', other)).statusCode).toBe(404);
     });
 

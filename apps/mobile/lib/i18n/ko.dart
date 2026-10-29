@@ -1262,6 +1262,7 @@ class StringsKo implements Strings {
         'system.secret.createdImported': '🔑 {agentId} 가 비밀을 만들었다: {name} · 값을 에이전트가 정함(import) · 이 채널로 자기에게만 부여 · 설정 › 나 › 비밀과 API · {ownerId}',
         'system.secret.rotatedGenerated': '🔑 {agentId} 가 비밀을 회전했다(판 {version}): {name} · 서버가 만든 값({type}) · 이 채널로 자기에게만 부여 · 설정 › 나 › 비밀과 API · {ownerId}',
         'system.secret.rotatedImported': '🔑 {agentId} 가 비밀을 회전했다(판 {version}): {name} · 값을 에이전트가 정함(import) · 이 채널로 자기에게만 부여 · 설정 › 나 › 비밀과 API · {ownerId}',
+        'system.permission.approvedByUser': '🔓 {actorId} 가 {agentId} 의 권한 요청을 승인했다(소유자 아님) · {kind} {target} · 설정 › 에이전트에서 거둘 수 있다 · {ownerId}',
         'system.skill.proposed': '스킬이 제안됐다: {slug} — 승인을 기다린다.',
         'system.skill.proposedFlagged': '스킬이 제안됐다: {slug} — 승인을 기다린다.\n⚠️ 쓰기 검사에 걸렸다({reason}). 승인 전에 본문을 확인해라.',
         'system.chatApproval.negated': '⚠️ 승인 안 됨: 부정·보류하는 말이 있어 아무것도 정하지 않았다.',

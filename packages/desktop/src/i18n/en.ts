@@ -4793,6 +4793,7 @@ export const en = {
   'system.secret.createdImported': '🔑 {agentId} created the secret {name} · value set by the agent (import) · granted only to itself in this channel · Settings › Me › Secrets and APIs · {ownerId}',
   'system.secret.rotatedGenerated': '🔑 {agentId} rotated the secret {name} (version {version}) · value made by the server ({type}) · granted only to itself in this channel · Settings › Me › Secrets and APIs · {ownerId}',
   'system.secret.rotatedImported': '🔑 {agentId} rotated the secret {name} (version {version}) · value set by the agent (import) · granted only to itself in this channel · Settings › Me › Secrets and APIs · {ownerId}',
+  'system.permission.approvedByUser': '🔓 {actorId} approved a permission request from {agentId} (not the owner) · {kind} {target} · revoke it in Settings › Agents · {ownerId}',
   'system.skill.proposed': 'Skill proposed: {slug} — waiting for approval.',
   'system.skill.proposedFlagged': 'Skill proposed: {slug} — waiting for approval.\n⚠️ It was flagged by the write check ({reason}). Check the body before approving.',
   'system.chatApproval.negated': '⚠️ Not approved: the message says no, wait or cancel, so nothing was decided.',

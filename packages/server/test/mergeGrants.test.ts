@@ -64,7 +64,7 @@ describe('repo.merge grant', () => {
     ({ accountId: agentId, pat: agentPat } = await createAgent(app, admin.token, 'tm'));
     otherAgentId = (await createAgent(app, admin.token, 'other')).accountId;
     // alice 가 tm 의 소유자다 — F2 의 "소유자인 사람"은 admin 과 다른 사람이어야 시험이 뜻을 가진다.
-    await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agentId, alice.accountId]);
+    await pool.query(`update agent_config set owner_account_id = $2, invoke_scope = 'owner' where account_id = $1`, [agentId, alice.accountId]);
     op = await registerOperator(app, admin.token, 'mac');
     await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [agentId, op.operatorId, admin.accountId]);
     ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'dev' } })).json().id as string;
@@ -535,6 +535,31 @@ describe('repo.merge grant', () => {
       cardOf.set(r.created.requestId, { number: p.meta.number, headSha: p.meta.headSha! });
       return r.created.requestId;
     };
+
+    it('security F1: 소유자가 아닌 사람의 [이번 한 번]은 실어 보낸 gh 계정을 버리고 오퍼레이터가 고르게 한다', async () => {
+      await pool.query(`update agent_config set invoke_scope = 'community' where account_id = $1`, [agentId]);
+      try {
+        expect((await grant(alice.token, { scope: 'repo:izagood/once-user' })).statusCode).toBe(200);
+        const cause = await mention(otherAgentId);
+        const thread = await threadOf(cause);
+        const denied = (await check(await lease(cause), 'izagood/once-user', { number: 7, headSha: SHA2 })).json();
+        expect(denied.error.code).toBe('cause_not_human');
+        const rid = await requestFor(denied.error.denialId, thread);
+        const ok = await decide(bob.token, rid, { ghUser: 'corp-account' });
+        expect(ok.statusCode).toBe(200);
+        const row = (await pool.query(`select gh_user, approved_by from merge_approval where scope = 'repo:izagood/once-user'`)).rows[0];
+        expect(row).toEqual({ gh_user: null, approved_by: bob.accountId });
+        // 소유자는 지금처럼 고른다.
+        const denied2 = (await check(await leaseInThread(thread, otherAgentId), 'izagood/once-user', { number: 8, headSha: SHA2 })).json();
+        const rid2 = await requestFor(denied2.error.denialId, thread);
+        expect((await decide(alice.token, rid2, { ghUser: 'corp-account' })).statusCode).toBe(200);
+        expect((await pool.query(`select gh_user from merge_approval where scope = 'repo:izagood/once-user' and pr_number = 8`)).rows[0].gh_user).toBe('corp-account');
+      } finally {
+        // 뒤 시험이 승인 목록을 통째로 대조한다 — 여기서 만든 승인은 지운다.
+        await pool.query(`delete from merge_approval where scope = 'repo:izagood/once-user'`);
+        await pool.query(`update agent_config set invoke_scope = 'owner' where account_id = $1`, [agentId]);
+      }
+    });
 
     it('cause_not_human 도 카드가 서고(grant 가 있어도), 1회 승인하면 다음 판정이 한 번만 통과한다', async () => {
       expect((await grant(alice.token, { scope: 'repo:izagood/once-a' })).statusCode).toBe(200);

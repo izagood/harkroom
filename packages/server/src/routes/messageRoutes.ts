@@ -366,7 +366,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     // 권한 요청 카드(111)는 답이 곧 결정이다 — 소유자 **사람 세션**이 누를 때만 grant 를 넣고 답을 적는다. 모바일·웹도 이 길이다.
     if (await isPermissionCardMessage(pool, messageId)) {
       if (req.account!.kind !== 'human' || req.authVia !== 'session') {
-        return reply.code(403).send({ error: { code: 'forbidden', message: 'only the owner signed in to the app can decide a permission request' } });
+        return reply.code(403).send({ error: { code: 'forbidden', message: 'only a person signed in to the app can decide a permission request' } });
       }
       const ref = await resolveDecision(pool, messageId);
       if (ref?.kind !== 'permission') return reply.code(404).send({ error: { code: 'not_found', message: 'no permission request behind this card' } });
@@ -382,7 +382,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     const ref = await resolveDecision(pool, messageId);
     // 권한 카드의 거울(P3)도 원본과 같이 소유자 **사람 세션**만 정한다. 서버가 세운 거울이 아니면 `decide` 가 물음 길로 돌려 거절한다.
     if (ref?.kind === 'permission' && ref.mirrorMessageId && (req.account!.kind !== 'human' || req.authVia !== 'session')) {
-      return reply.code(403).send({ error: { code: 'forbidden', message: 'only the owner signed in to the app can decide a permission request' } });
+      return reply.code(403).send({ error: { code: 'forbidden', message: 'only a person signed in to the app can decide a permission request' } });
     }
     const decided = await decide(pool, ref?.mirrorMessageId ? ref : { kind: 'ask', cardMessageId: messageId }, req.account!.id, {
       option: optionId, via: ref?.mirrorMessageId ? 'mirror' : 'button',

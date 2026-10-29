@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { readLease } from '../services/mergeGrants.js';
 import { decide } from '../services/decisions.js';
 import { commandGrantsFor, matchCommandGrant, toolAllowsFor, toolReachFor } from '../services/permissionRequests.js';
+import { mayDecideFor } from '../services/deciders.js';
 
 const params = z.object({ id: z.string().uuid(), requestId: z.string().uuid(), decision: z.enum(['approve', 'deny', 'approve-once', 'approve_once', 'approve_hour']) });
 /** [이번 한 번 머지](스레드 1b75d7a0) — 받는 것은 gh 계정·CI 완화 둘뿐. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
@@ -28,8 +29,6 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
       if (req.account!.kind !== 'human' || req.authVia !== 'session') {
         return reply.code(403).send({ error: { code: 'forbidden', message: 'only a person signed in to the app can decide a permission request' } });
       }
-      const owner = await pool.query(`select 1 from agent_config where account_id = $1 and owner_account_id = $2`, [p.data.id, req.account!.id]);
-      if (!owner.rowCount) return reply.code(403).send({ error: { code: 'forbidden', message: 'only the owner of this agent can decide its permission requests' } });
       let once: { ghUser: string | null; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] } | undefined;
       if (p.data.decision === 'approve-once') {
         const b = onceBody.safeParse(req.body ?? {});
@@ -37,7 +36,8 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
         once = { ghUser: b.data.ghUser ?? null, relaxChecks: b.data.relaxChecks ?? false, number: b.data.number, headSha: b.data.headSha, ...(b.data.failedChecks ? { failedChecks: b.data.failedChecks } : {}) };
       }
       const decision = p.data.decision === 'approve-once' ? 'approve_once' : p.data.decision;
-      // 소유자는 위에서 `:id` 로 대조했다 — ref 에 ownerAccountId 를 싣지 않는다(남의 요청 id 는 decidePermissionRequest 가 404 로 닫는다).
+      // 누가 정하나는 `decide` 가 요청 줄의 채널로 판정한다(`deciders.mayDecideFor` — 소유자 또는 그 채널에서 부를 수 있는 사람).
+      // 남의 요청 id 는 채널을 못 찾아 소유자만 지나고, 그 소유자도 decidePermissionRequest 가 404 로 닫는다.
       const d = await decide(pool, { kind: 'permission', agentId: p.data.id, requestId: p.data.requestId, cardMessageId: null }, req.account!.id, {
         option: decision, via: 'button', ...(once ? { once } : {}),
       });
@@ -46,6 +46,22 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
       const r = d.result;
       return { status: r.status, grantExpiresAt: r.grantExpiresAt, ...(r.approvalExpiresAt ? { approvalExpiresAt: r.approvalExpiresAt } : {}), cardMessageId: r.cardMessageId, ...(r.grantMode ? { grantMode: r.grantMode } : {}) };
     });
+
+  // 이 사람이 이 채널에서 이 에이전트의 권한·머지 카드를 정할 수 있나(소유자 결정 2026-10-29) — 화면이 버튼을 그릴지 정한다.
+  // 카드 글은 모두가 같은 행을 보므로 보는 사람마다 다른 값은 카드에 싣지 않고 여기서 준다 — 같은 (에이전트, 채널)의 카드는 답이 같다.
+  // `decideScope` 는 「누가 정하나」 문구용(designer 시안 v1 ②·③), 정할 수 없는 사람에게도 준다. 판정은 결정 때 `decide` 가 다시 한다.
+  app.get<{ Params: { id: string }; Querystring: { channelId?: string } }>('/agents/:id/decide-check', { preHandler: app.requireAccount }, async (req, reply) => {
+    const q = z.object({ id: z.string().uuid(), channelId: z.string().uuid() }).safeParse({ ...(req.params ?? {}), ...(req.query ?? {}) });
+    if (!q.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'agent id and channelId must be uuids' } });
+    void reply.header('cache-control', 'no-store');
+    const v = await mayDecideFor(pool, { agentId: q.data.id, actorId: req.account!.id, channelId: q.data.channelId });
+    // 버튼을 누를 수 있는 것은 사람 세션뿐이다 — PAT·에이전트는 언제나 정할 수 없다고 답한다.
+    const session = req.account!.kind === 'human' && req.authVia === 'session';
+    return {
+      viewerCanDecide: session && v.ok, asOwner: session && v.ok && v.asOwner,
+      decideScope: v.decideScope, ownerAccountId: v.ownerAccountId,
+    };
+  });
 
   app.get<{ Querystring: { channelId?: string } }>('/agent/tool-allows', { preHandler: app.requireAccount }, async (req, reply) => {
     if (req.account!.kind !== 'agent' || !req.operator) {

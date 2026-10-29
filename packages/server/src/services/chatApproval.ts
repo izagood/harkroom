@@ -5,6 +5,7 @@ import { isIrreversible } from './askBundles.js';
 import { assertChannelVisible, audienceFor } from './channels.js';
 import { postMessage, recordAskAnswer } from './messages.js';
 import { decide, isGenuinePermissionMirror, resolveDecision, type DecideInput } from './decisions.js';
+import { mayDecideFor } from './deciders.js';
 import type { PermissionKind } from './permissionRequests.js';
 import { systemI18n } from './systemI18n.js';
 
@@ -15,7 +16,8 @@ import { systemI18n } from './systemI18n.js';
  * 요청 행의 소유자 대조·만료/이미 결정됨 판정·카드에 답을 달아 에이전트를 깨우는 것까지 버튼과 같다. 다른 점은 무엇을
  * 승인했는지를 서버가 **글의 꼴**에서 정한다는 것 하나라, 그 꼴을 좁게 둔다(security 기준 1~20):
  *
- * - 글쓴이는 요청한 에이전트의 소유자 본인, 앱에 로그인한 사람 세션(REST)만 — 부르는 쪽(글 올리기 라우트)이 거른다.
+ * - 글쓴이는 앱에 로그인한 사람 세션(REST)만 — 부르는 쪽(글 올리기 라우트)이 거른다. 그 가운데 카드를 정할 수 있는 사람(소유자 또는 그 채널에서
+ *   이 에이전트를 부를 수 있는 사람, `deciders.mayDecideFor` — 소유자 결정 2026-10-29)의 글만 센다. T3 은 소유자만이다.
  *   에이전트·PAT·MCP·자동화·위임·거울 글은 이 라우트를 타지 않거나 거기서 걸러진다.
  * - 글은 문장이어도 된다(P4). 승인 낱말(G2: 승인·허락·머지해·진행해·approve 와 그 활용)만 승인으로 본다. 인용(`>`)·코드·링크·멘션은
  *   지우고 읽는다. 낱말은 글의 맨 끝 서술어여야 한다(허용 꼴, `APPROVE_FINAL`) — 뒤에 무엇이 이어지면 정하지 않는다. 부정·거부·보류(말고·하지 마·보류·취소·잠깐·기다려·아니·못·금지·불가·거부·중지·나중…)나 물음(`?`, 또는 「될까」·「되나」·「해도 돼」 같은 물음 끝)이 있으면 정하지 않고 안내만 단다. 「바이패스」는
@@ -215,6 +217,8 @@ type Candidate = {
   cardMessageId: string; requestId: string; agentId: string; agentHandle: string; kind: PermissionKind; target: string;
   channelId: string; channelName: string | null; status: string; expired: boolean; denialId: string | null;
   ownerAccountId: string | null; cardSeq: number; cardCreatedAt: Date; once: OnceMeta | null;
+  /** 글쓴이가 이 카드를 정할 수 있나(`deciders.mayDecideFor` — 소유자 또는 그 채널에서 이 에이전트를 부를 수 있는 사람). `withDeciders` 가 채운다. */
+  canDecide?: boolean;
 };
 type OnceMeta = { number?: unknown; headSha?: unknown; reason?: unknown; failedChecks?: unknown };
 
@@ -271,14 +275,14 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
       else if (ref?.kind === 'ask') askCards += 1;
     }
     const rows = resolved.length > 0 ? (await pool.query<Candidate>(`${CANDIDATE_SQL} where p.card_message_id = any($1::uuid[])`, [resolved])).rows : [];
-    targets = [...new Set(resolved)].map((id) => rows.find((r) => r.cardMessageId === id)).filter((r): r is Candidate => !!r);
+    targets = await withDeciders(pool, actorId, [...new Set(resolved)].map((id) => rows.find((r) => r.cardMessageId === id)).filter((r): r is Candidate => !!r));
     if (targets.length === 0) {
       // 선택 카드에 고르는 꼴이 아닌 결정 낱말을 쓴 글(P5 가 넘긴 것)이다. 낱말이 있을 때만 안내한다 — 링크만 있는 글은 흔하다.
       if (askCards > 0 && hasWord) return refuse(pool, message, actorId, 'askCard');
       if (hasWord && (await ownsPendingRequest(pool, actorId))) return refuse(pool, message, actorId, 'noCard');
       return;
     }
-    const mineLinked = targets.filter((c) => c.ownerAccountId === actorId);
+    const mineLinked = targets.filter((c) => c.canDecide);
     // 남의 카드만 링크했으면 아무 줄도 남기지 않는다 — 남의 에이전트 요청을 글로 들춰 보이지 않는다.
     if (mineLinked.length === 0) return;
     if (parsed.block) return refuse(pool, message, actorId, parsed.block);
@@ -318,10 +322,10 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
       }
       if (ok) genuine.push(c); else fakeMirror = true;
     }
-    const inThread = dedupe([...direct, ...genuine].sort((a, b) => a.cardCreatedAt.getTime() - b.cardCreatedAt.getTime()));
+    const inThread = await withDeciders(pool, actorId, dedupe([...direct, ...genuine].sort((a, b) => a.cardCreatedAt.getTime() - b.cardCreatedAt.getTime())));
     // 권한 카드를 가리키는 가짜 거울만 있는 스레드는 T3(소유자의 하나뿐인 요청)로 넘기지 않는다 — 그 글은 그 거울에 대한 답이다.
     if (inThread.length === 0 && fakeMirror) return;
-    const mineInThread = inThread.filter((c) => c.ownerAccountId === actorId);
+    const mineInThread = inThread.filter((c) => c.canDecide);
     const open = mineInThread.filter(isOpen);
     if (inThread.length > 0) {
       // 남의 카드만 있는 스레드에서 쓴 낱말에는 안내를 달지 않는다 — 그 사람이 정할 수 있는 카드가 아니다.
@@ -354,18 +358,26 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
         await notice(pool, message, actorId, `승인 안 됨: 기다리는 권한 요청이 ${mine.length}개라 어느 것인지 모른다. 정할 카드의 링크를 붙여 다시 쓴다:`, mine);
         return;
       }
-      targets = mine;
+      // T3 는 **소유자만** 탄다(소유자 결정 2026-10-29 계획) — 카드 없는 스레드의 맨 글로 남의 채널 요청을 집지 않게 후보가 소유자 요청뿐이다.
+      targets = mine.map((c) => ({ ...c, canDecide: true }));
       target = 'T3';
     }
   }
 
   const outcomes: Outcome[] = [];
   for (const c of targets) outcomes.push(await decideOne(pool, message, actorId, c, target, parsed));
-  const mine = outcomes.filter((o) => o.c.ownerAccountId === actorId);
+  const mine = outcomes.filter((o) => o.c.canDecide);
   if (mine.length === 0) return;
   // 하나뿐이고 정하지 못했으면 한 줄 안내(번역 표지 포함). 여럿이면 카드별 목록.
   if (mine.length === 1 && !mine[0]!.ok) return refuse(pool, message, actorId, mine[0]!.why);
   await confirm(pool, message, actorId, mine);
+}
+
+/** 후보마다 글쓴이가 정할 수 있는지 채운다 — 판정은 `decide` 가 다시 한다(여기서는 어느 카드가 「내 카드」인지 고르는 데만 쓴다). */
+async function withDeciders(pool: Pool, actorId: string, rows: Candidate[]): Promise<Candidate[]> {
+  const out: Candidate[] = [];
+  for (const c of rows) out.push({ ...c, canDecide: (await mayDecideFor(pool, { agentId: c.agentId, actorId, channelId: c.channelId })).ok });
+  return out;
 }
 
 function dedupe(rows: Candidate[]): Candidate[] {
@@ -379,7 +391,7 @@ const REFUSAL_BY_CODE: Record<string, ChatRefusal> = {
 };
 
 async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Candidate, target: ChatTarget, parsed: ChatApprovalParse): Promise<Outcome> {
-  if (c.ownerAccountId !== actorId) return { c, ok: false, why: 'noCard' };
+  if (!c.canDecide) return { c, ok: false, why: 'noCard' };
   if (!(await assertChannelVisible(pool, c.channelId, actorId))) return { c, ok: false, why: 'hidden', hidden: true };
   // 카드가 글보다 먼저 있었어야 한다 — 같은 채널이면 seq, 다른 채널이면 시각으로 본다.
   const before = c.channelId === message.channelId ? c.cardSeq < message.seq : c.cardCreatedAt.getTime() <= new Date(message.createdAt).getTime();

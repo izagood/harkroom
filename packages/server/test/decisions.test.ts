@@ -46,7 +46,7 @@ describe('resolveDecision · decide', () => {
     alice = await createMember(app, admin.token, 'alice');
     bob = await createMember(app, admin.token, 'bob');
     agentId = (await createAgent(app, admin.token, 'sitebot')).accountId;
-    await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agentId, alice.accountId]);
+    await pool.query(`update agent_config set owner_account_id = $2, invoke_scope = 'owner' where account_id = $1`, [agentId, alice.accountId]);
     ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'decide' } })).json().id as string;
   });
   afterAll(async () => { await app.close(); await db.stop(); });
