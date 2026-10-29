@@ -29,14 +29,14 @@ describe('deciders — 카드를 정할 수 있는 사람', () => {
     expect(sql).toBe(js);
     return js;
   };
-  const permissionCard = async (kind: 'tool' | 'merge', target: string) => {
-    const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, '부탁', 'user') returning id`, [ch, bob.accountId])).rows[0].id as string;
+  const permissionCard = async (kind: 'tool' | 'merge', target: string, channelId = ch) => {
+    const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, '부탁', 'user') returning id`, [channelId, bob.accountId])).rows[0].id as string;
     const requestId = (await pool.query(
       `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at)
        values ($1, $2, $3, '확인', '{}', $4, $5, now(), now() + interval '1 day') returning id`,
-      [agentId, kind, target, ch, root])).rows[0].id as string;
+      [agentId, kind, target, channelId, root])).rows[0].id as string;
     const cardId = (await pool.query(`insert into message (channel_id, author_id, thread_root_id, body, kind, meta) values ($1, $2, $3, '카드', 'user', $4) returning id`,
-      [ch, agentId, root, JSON.stringify({ kind: 'ask', ask: { options: OPTIONS, to: { kind: 'human' } }, permissionRequest: { requestId, status: 'pending' } })])).rows[0].id as string;
+      [channelId, agentId, root, JSON.stringify({ kind: 'ask', ask: { options: OPTIONS, to: { kind: 'human' } }, permissionRequest: { requestId, status: 'pending' } })])).rows[0].id as string;
     await pool.query(`update permission_request set card_message_id = $2 where id = $1`, [requestId, cardId]);
     return { requestId, cardId, root };
   };
@@ -107,6 +107,22 @@ describe('deciders — 카드를 정할 수 있는 사람', () => {
     expect(notice.meta.i18n.key).toBe('system.permission.approvedByUser');
     const audit = (await pool.query(`select detail from audit_log where action = 'permission.approved' and detail->>'requestId' = $1`, [requestId])).rows[0];
     expect(audit.detail.asOwner).toBe(false);
+  });
+
+  it('security F2: 소유자가 못 보는 비공개 채널에서 승인하면 소유자↔에이전트 DM 으로 따로 알린다(채널 이름은 싣지 않는다)', async () => {
+    const priv = (await pool.query(`insert into channel (name, kind, visibility) values ('bob-secret-room', 'standard', 'private') returning id`)).rows[0].id as string;
+    await pool.query(`insert into channel_member (channel_id, account_id) values ($1, $2), ($1, $3)`, [priv, agentId, bob.accountId]);
+    const { requestId, cardId } = await permissionCard('merge', 'repo:acme/private', priv);
+    const before = Number((await pool.query(`select count(*) from inbox where account_id = $1`, [alice.accountId])).rows[0].count);
+    const out = await decide(pool, { kind: 'permission', requestId, agentId, cardMessageId: cardId }, bob.accountId, { option: 'approve', via: 'button' });
+    expect(out).toMatchObject({ kind: 'permission', ok: true });
+    const rows = (await pool.query(
+      `select i.reason, m.body, m.meta, c.kind as "channelKind" from inbox i join message m on m.id = i.message_id join channel c on c.id = m.channel_id
+        where i.account_id = $1 order by i.created_at desc`, [alice.accountId])).rows;
+    expect(rows.length - before).toBe(1);
+    expect(rows[0].channelKind).toBe('dm');
+    expect(rows[0].meta.permissionUserDecision).toMatchObject({ requestId, actorId: bob.accountId, via: 'dm' });
+    expect(rows[0].body).not.toContain('bob-secret-room');
   });
 
   it('소유자가 아닌 사람의 재승인은 살아 있는 grant 를 덮어 늘리지 않는다(security 9)', async () => {

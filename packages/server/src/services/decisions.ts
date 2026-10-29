@@ -126,6 +126,8 @@ export async function decide(pool: Pool, ref: DecisionRef, actorId: string, inpu
     // W4b: 카드 선택지 [이번 한 번](ask-answer·글 승인) — PR·head 는 카드의 값, gh 계정은 비워 오퍼레이터가 고른다(G1).
     once = await onceFromCard(pool, ref.cardMessageId);
   }
+  // security F1: gh 계정 고르기([계정 바꾸기])는 소유자만이다 — 소유자가 아닌 사람의 [이번 한 번]은 계정을 비워 오퍼레이터가 고른다(G1 과 같다).
+  if (once && !verdict.asOwner) once = { ...once, ghUser: null };
   const via: { kind: 'chat'; messageId: string; target?: 'T1' | 'T2' | 'T3' } | { kind: 'button' } | { kind: 'mirror'; mirrorMessageId: string } =
     input.via === 'chat' && input.chat ? { kind: 'chat', ...input.chat }
     : ref.mirrorMessageId ? { kind: 'mirror', mirrorMessageId: ref.mirrorMessageId }

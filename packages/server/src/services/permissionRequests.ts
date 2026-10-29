@@ -4,7 +4,7 @@ import type { CommandFileDigest } from '@harkroom/shared/runnerLink';
 import { orderToolRuleWarnings, PERMISSION_CARD_OPTION, repoGrantScope, TOOL_RULE_WARNING_HEAD_KO, repoScope, parseToolScope, toolScope, validateExactCommand, validateToolRule, type CommandFileArg, type MessageRow, type PermissionCardLine, type PermissionCardMandate, type PermissionMirrorMeta, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
-import { audienceFor } from './channels.js';
+import { assertChannelVisible, audienceFor, getOrCreateDm } from './channels.js';
 import { validateCapScope, type Cap, type LineLimits } from './capabilities.js';
 import { addMandateLine, revokeLinesForGrant, type LineVia } from './mandateLines.js';
 import { auditMandateCreated, validMandateOwner, type MandateCreated } from './mandates.js';
@@ -1251,7 +1251,8 @@ export async function noteOnceGhUserUsed(pool: Pool, args: { approvalId: string;
 /**
  * 소유자가 아닌 사용자가 권한 요청을 승인했다는 것을 소유자에게 알린다(security 2 — 소유자의 gh·오퍼레이터로 열리는 일을 소유자가 안다).
  * 카드가 선 스레드에 서버가 시스템 줄을 세우고 소유자를 부른다 — 부름이라 소유자 인박스·푸시가 평범한 멘션과 같은 관문으로 간다
- * (`secretCreate.notifyOwner` 와 같은 꼴). 본문은 서버 값뿐이다(handle·요청 종류·대상·기한). 실패해도 결정은 되돌리지 않는다.
+ * (`secretCreate.notifyOwner` 와 같은 꼴). 소유자가 그 채널을 못 보면 소유자↔에이전트 DM 에도 세운다(security F2).
+ * 본문은 서버 값뿐이다(handle·요청 종류·대상·기한). 실패해도 결정은 되돌리지 않는다.
  */
 async function notifyOwnerOfUserDecision(
   pool: Pool,
@@ -1266,14 +1267,31 @@ async function notifyOwnerOfUserDecision(
     if (!who?.ownerId || !who.owner) return;
     const until = n.expiresAt ? ` · ${n.expiresAt.toISOString().slice(0, 16).replace('T', ' ')}Z 까지` : '';
     const body = `🔓 ${who.actor} 가 ${who.agent} 의 권한 요청을 승인했다(소유자 아님) · ${n.request.kind} ${n.request.target}${until} · 설정 › 에이전트에서 거둘 수 있다 @${who.owner}`;
+    // security F2: 소유자가 그 채널을 못 보면(남의 비공개 채널) 카드 스레드 줄은 기록으로만 남기고 소유자를 부르지 않는다 —
+    // 볼 수 없는 채널을 가리키는 인박스가 생기지 않게. 알림은 아래 소유자↔에이전트 DM 으로 간다.
+    const ownerSees = await assertChannelVisible(pool, n.request.channelId, who.ownerId);
     const posted = await postMessage(pool, {
-      channelId: n.request.channelId, threadRootId: n.request.threadRootId, authorId: n.agentId, body, kind: 'system', serverNotice: true,
+      channelId: n.request.channelId, threadRootId: n.request.threadRootId, authorId: n.agentId,
+      body: ownerSees ? body : body.slice(0, body.lastIndexOf(' @')), kind: 'system', serverNotice: true,
       meta: {
         permissionUserDecision: { requestId: n.request.id, agentId: n.agentId, actorId: n.actorId, ownerAccountId: who.ownerId, kind: n.request.kind, target: n.request.target, status: n.status, ...(n.expiresAt ? { expiresAt: n.expiresAt.toISOString() } : {}) },
         i18n: systemI18n('system.permission.approvedByUser', { actorId: n.actorId, agentId: n.agentId, kind: n.request.kind, target: n.request.target, ownerId: who.ownerId }),
       },
     });
     if (posted.failure) console.error(`[permissionRequests] 소유자 알림 실패: ${posted.failure} requestId=${n.request.id}`);
+    // security F2: 카드 스레드의 멘션은 그 채널을 볼 수 있는 사람에게만 간다 — 소유자가 못 보는 비공개 채널이면 소유자와 에이전트의
+    // DM 에 같은 줄을 따로 세운다. 본문은 위와 같다(승인자·에이전트·종류·대상·기한) — 채널 이름·글 내용은 싣지 않는다.
+    if (!ownerSees) {
+      const dm = await getOrCreateDm(pool, [n.agentId, who.ownerId]);
+      const direct = await postMessage(pool, {
+        channelId: dm.id, authorId: n.agentId, body, kind: 'system', serverNotice: true,
+        meta: {
+          permissionUserDecision: { requestId: n.request.id, agentId: n.agentId, actorId: n.actorId, ownerAccountId: who.ownerId, kind: n.request.kind, target: n.request.target, status: n.status, ...(n.expiresAt ? { expiresAt: n.expiresAt.toISOString() } : {}), via: 'dm' },
+          i18n: systemI18n('system.permission.approvedByUser', { actorId: n.actorId, agentId: n.agentId, kind: n.request.kind, target: n.request.target, ownerId: who.ownerId }),
+        },
+      });
+      if (direct.failure) console.error(`[permissionRequests] 소유자 DM 알림 실패: ${direct.failure} requestId=${n.request.id}`);
+    }
   } catch (e) {
     console.error(`[permissionRequests] 소유자 알림 실패: requestId=${n.request.id}`, e instanceof Error ? e.message : e);
   }
