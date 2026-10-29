@@ -600,6 +600,18 @@ describe('buildTurnPrompt — 넘겨받은 일(3-2)', () => {
 });
 
 describe('buildSystemPrompt', () => {
+  // 목차(mem/map)가 없으면 「먼저 읽어라」를 싣지 않는다 — 없는 것을 읽으라고 시키지 않는다. 접두 규칙은 그대로.
+  it('mem/map 이 있을 때만 「먼저 그것을 읽는다」를 싣는다', () => {
+    const base = { handle: 'forge', channelName: 'dev', instructions: '', guide: '' };
+    const without = buildSystemPrompt({ ...base, memory: { core: 'C', slugs: ['mem/a'] } });
+    expect(without).toContain('**분야 접두**');
+    expect(without).not.toContain('먼저 그것을 읽는다');
+    expect(without).toContain('목차(`mem/map`)는 아직 없다');
+    const withMap = buildSystemPrompt({ ...base, memory: { core: 'C', slugs: ['mem/a', 'mem/map'] } });
+    expect(withMap).toContain('먼저 그것을 읽는다');
+    expect(withMap).not.toContain('아직 없다');
+  });
+
   // f1(스레드 d1e8f866, g5·g6): 읽기 전용 턴은 허용 목록 밖 도구가 안 보인다 — 막힌 도구를 권하지 않는다.
   it('읽기 전용 턴은 미리보기·기억 쓰기·스킬·자동화 제안을 권하지 않고, 닫혀 있다고 말한다', () => {
     const base = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: 'C', slugs: ['mem/a'] } as MemoryContext };

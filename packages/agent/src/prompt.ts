@@ -699,41 +699,49 @@ export function escapeForPrompt(text: string): string {
  */
 const MEMORY_SNAPSHOT_LINE = '기억은 확정된 답이 아니라 과거의 스냅숏이니 현재 원본(파일·저장소·화면)과 대조한 뒤 쓴다. 적어 둔 경로·함수·플래그가 아직 있는지 본다.';
 
-const MEMORY_USAGE_LINES = [
-  'slug 는 둘 중 하나다: **`core`** — 매 턴 본문이 통째로 실리는 층이다(길어지면 그만큼 매 턴',
-  '비싸다. **3,000자까지만 받는다** — 넘기면 `core_too_long` 으로 거절되니 나머지는 아래로 내린다) — 그리고 **`mem/<이름>`**,',
-  '예를 들어 `mem/deploy` · `mem/people/alex` 처럼 **반드시 `mem/` 으로 시작한다**(소문자·숫자·',
-  '`-`·`_` 와 구분자 `/` 만 쓴다. **점(`.`)은 못 쓴다**). `deploy` 나 `agent.config` 같은 slug 는',
-  '`invalid_slug` 로 거절되는데, 이건 **`core` 하나만 쓸 수 있다는 뜻이 아니다** — 이름만 고치면',
-  '된다. 길거나 한 가지 주제인 것은 `mem/*` 로 나눠 담고 `core` 에는 포인터 한 줄만 남긴다.',
-  '`mem/*` 를 쓸 때는 `description` 에 **언제 열어 볼지 알 수 있는 한 줄 요약**을 같이 준다 — 목록에',
-  '이름 옆에 실리고, 요약이 없으면 이름만 보고 열지 말지 정해야 한다(생략하면 있던 요약이 유지된다).',
-  // S3: kind 필수·journal 폐지. 서버가 kind 없는 `mem/*` 쓰기를 `kind_required` 로 거절한다.
-  '`mem/*` 를 쓸 때는 **`kind` 를 꼭 준다** — `"topic"`(여러 스레드에서 되풀이할 사실·교훈) 또는 `"procedure"`(따라 할',
-  '절차). 고쳐 쓸 때도 준다 — 빠지면 `kind_required` 로 거절된다. journal 은 더 이상 새로 쓰지 않는다(있던 것은 `memory.search` 로 찾힌다).',
-  '목록에 없는 것은 `memory.search` 로 찾는다.',
-  // O2 P2: 분야 접두와 목차. 주간 organize 회차가 이 규칙으로 옮기고 `mem/map` 을 고친다.
-  '새 `mem/*` 는 **분야 접두**를 붙인다 — `mem/<분야>/<이름>`(예: `mem/deploy/rollback`). 분야 목록과 각 분야의 대표 기억은',
-  '`mem/map`(목차)에 있다 — 어디에 둘지 모르겠으면 먼저 그것을 읽는다. 옛 기억을 뒤집는 사실을 쓰면 새 본문에',
-  '`supersedes: mem/<옛 이름>` 을 적고 옛 것은 `memory.archive` 한다.',
-  '',
-  '**정리하는 법** — 정리하라는 요청(주간 정리 자동화 등)을 받았거나 `<memory-index>` 머리에 정리 신호가 보이면:',
-  '① `memory.lease`(acquire)로 정리 임대를 잡는다 — 다른 턴이 들고 있으면 물러난다. ② `memory.audit` 으로',
-  '후보(안 쓰임·비슷한 이름·비슷한 본문·곧 밀려날 journal·오래 안 고친 것·큰 것)를 받아 **하나씩 읽고** 판단한다',
-  '(`truncated` 면 고친 뒤 다시 audit). ③ 같은 주제 여럿은 `memory.merge`(into·from·value·kind) **한 번**으로 합친다 —',
-  'set 과 지우기를 따로 하면 그 사이 다른 턴이 고친다. ④ 안 쓰는 것 같으면 **지우지 말고 `memory.archive`** 로',
-  '보관한다 — 목록·recall·200 상한에서 빠지고 `memory.unarchive` 로 돌아온다. ⑤ 잘못 고쳤으면 `memory.revisions` →',
-  '`memory.restore`. ⑥ 끝나면 임대를 놓고(release) 무엇을 바꿨는지 보고한다.',
-  '',
-  '**자주 읽고 자주 고쳐라 — 그래야 정정이 남는다.** ' + MEMORY_SNAPSHOT_LINE,
-  '**중복해서 쓰지 마라** — 새 slug 를 만들기 전에 고칠 기존 항목이 있는지 먼저 본다. 틀린 것은',
-  '고쳐 쓰고, 쓸모를 잃은 것은 `memory.archive` 로 보관한다. `memory.set` 의 `value: null` 삭제는 틀린 것에만 쓴다 —',
-  '**지워도 이전 판에 남는다**(`memory.revisions` 로 되살아난다). 비밀이 섞였으면 지우는 것으로 끝내지 말고 사람에게',
-  '알려 판까지 지우게 하라.',
-  '**있던 기억을 고칠 때는 먼저 `memory.get` 으로 읽고 그 `updatedAt` 을 `ifUpdatedAt` 으로 준다**(core 도 —',
-  '프롬프트에 실린 core 는 세션 첫 턴 것일 수 있다). 같은 에이전트의 다른 턴이 병렬로 돈다. `conflict` 가',
-  '오면 다시 읽어 네 변경을 합쳐 쓰고, 그냥 덮어쓰지 마라.',
-];
+/** 기억 쓰는 법. `hasMap` — 목차(`mem/map`)가 있는가(분야 접두 문단이 갈린다). */
+function memoryUsageLines(hasMap: boolean): string[] {
+  return [
+    'slug 는 둘 중 하나다: **`core`** — 매 턴 본문이 통째로 실리는 층이다(길어지면 그만큼 매 턴',
+    '비싸다. **3,000자까지만 받는다** — 넘기면 `core_too_long` 으로 거절되니 나머지는 아래로 내린다) — 그리고 **`mem/<이름>`**,',
+    '예를 들어 `mem/deploy` · `mem/people/alex` 처럼 **반드시 `mem/` 으로 시작한다**(소문자·숫자·',
+    '`-`·`_` 와 구분자 `/` 만 쓴다. **점(`.`)은 못 쓴다**). `deploy` 나 `agent.config` 같은 slug 는',
+    '`invalid_slug` 로 거절되는데, 이건 **`core` 하나만 쓸 수 있다는 뜻이 아니다** — 이름만 고치면',
+    '된다. 길거나 한 가지 주제인 것은 `mem/*` 로 나눠 담고 `core` 에는 포인터 한 줄만 남긴다.',
+    '`mem/*` 를 쓸 때는 `description` 에 **언제 열어 볼지 알 수 있는 한 줄 요약**을 같이 준다 — 목록에',
+    '이름 옆에 실리고, 요약이 없으면 이름만 보고 열지 말지 정해야 한다(생략하면 있던 요약이 유지된다).',
+    // S3: kind 필수·journal 폐지. 서버가 kind 없는 `mem/*` 쓰기를 `kind_required` 로 거절한다.
+    '`mem/*` 를 쓸 때는 **`kind` 를 꼭 준다** — `"topic"`(여러 스레드에서 되풀이할 사실·교훈) 또는 `"procedure"`(따라 할',
+    '절차). 고쳐 쓸 때도 준다 — 빠지면 `kind_required` 로 거절된다. journal 은 더 이상 새로 쓰지 않는다(있던 것은 `memory.search` 로 찾힌다).',
+    '목록에 없는 것은 `memory.search` 로 찾는다.',
+    // O2 P2: 분야 접두와 목차. 주간 organize 회차가 이 규칙으로 옮기고 `mem/map` 을 고친다.
+    // 목차가 아직 없으면 「먼저 읽어라」를 싣지 않는다 — 없는 것을 읽으라는 말은 헛걸음이고 지시 전체의 신뢰를 깎는다.
+    ...(hasMap ? [
+      '새 `mem/*` 는 **분야 접두**를 붙인다 — `mem/<분야>/<이름>`(예: `mem/deploy/rollback`). 분야 목록과 각 분야의 대표 기억은',
+      '`mem/map`(목차)에 있다 — 어디에 둘지 모르겠으면 먼저 그것을 읽는다.',
+    ] : [
+      '새 `mem/*` 는 **분야 접두**를 붙인다 — `mem/<분야>/<이름>`(예: `mem/deploy/rollback`). 분야 목차(`mem/map`)는 아직 없다.',
+    ]),
+    '옛 기억을 뒤집는 사실을 쓰면 새 본문에 `supersedes: mem/<옛 이름>` 을 적고 옛 것은 `memory.archive` 한다.',
+    '',
+    '**정리하는 법** — 정리하라는 요청(주간 정리 자동화 등)을 받았거나 `<memory-index>` 머리에 정리 신호가 보이면:',
+    '① `memory.lease`(acquire)로 정리 임대를 잡는다 — 다른 턴이 들고 있으면 물러난다. ② `memory.audit` 으로',
+    '후보(안 쓰임·비슷한 이름·비슷한 본문·곧 밀려날 journal·오래 안 고친 것·큰 것)를 받아 **하나씩 읽고** 판단한다',
+    '(`truncated` 면 고친 뒤 다시 audit). ③ 같은 주제 여럿은 `memory.merge`(into·from·value·kind) **한 번**으로 합친다 —',
+    'set 과 지우기를 따로 하면 그 사이 다른 턴이 고친다. ④ 안 쓰는 것 같으면 **지우지 말고 `memory.archive`** 로',
+    '보관한다 — 목록·recall·200 상한에서 빠지고 `memory.unarchive` 로 돌아온다. ⑤ 잘못 고쳤으면 `memory.revisions` →',
+    '`memory.restore`. ⑥ 끝나면 임대를 놓고(release) 무엇을 바꿨는지 보고한다.',
+    '',
+    '**자주 읽고 자주 고쳐라 — 그래야 정정이 남는다.** ' + MEMORY_SNAPSHOT_LINE,
+    '**중복해서 쓰지 마라** — 새 slug 를 만들기 전에 고칠 기존 항목이 있는지 먼저 본다. 틀린 것은',
+    '고쳐 쓰고, 쓸모를 잃은 것은 `memory.archive` 로 보관한다. `memory.set` 의 `value: null` 삭제는 틀린 것에만 쓴다 —',
+    '**지워도 이전 판에 남는다**(`memory.revisions` 로 되살아난다). 비밀이 섞였으면 지우는 것으로 끝내지 말고 사람에게',
+    '알려 판까지 지우게 하라.',
+    '**있던 기억을 고칠 때는 먼저 `memory.get` 으로 읽고 그 `updatedAt` 을 `ifUpdatedAt` 으로 준다**(core 도 —',
+    '프롬프트에 실린 core 는 세션 첫 턴 것일 수 있다). 같은 에이전트의 다른 턴이 병렬로 돈다. `conflict` 가',
+    '오면 다시 읽어 네 변경을 합쳐 쓰고, 그냥 덮어쓰지 마라.',
+  ];
+}
 
 /**
  * 스레드 메모 절(메모리 재설계 S1의 그 문단을 기억 절에서 뗐다 — 스레드 d1e8f866 f3, g7). `thread.note` 는 기억 저장소가
@@ -772,7 +780,7 @@ function memorySection(memory: MemoryContext, readOnly = false): string[] {
       '자주 하는 작업)이 생기면 harkroom MCP 의 `memory.set` 으로 적어 둬라 — 다음 턴부터',
       '여기에 실려 온다.',
       '',
-      ...MEMORY_USAGE_LINES,
+      ...memoryUsageLines(memory.slugs.includes('mem/map')),
       '',
     ];
   }
@@ -785,7 +793,7 @@ function memorySection(memory: MemoryContext, readOnly = false): string[] {
   // 사용법은 **닫는 태그 바깥**에 둔다. 안에 넣으면 기억 본문과 같은 자리에 서고, 그러면
   // 기억을 지운 사람이 지시까지 지우게 된다(`<memory>` 안은 데이터, 밖은 지시다).
   // 읽기 전용 턴은 쓰기 사용법(slug 규칙·정리법)을 싣지 않는다 — 그 도구가 이 턴에는 없다. 목록과 `memory.get` 은 열려 있다.
-  lines.push('</memory>', '', ...MEMORY_INDEX_LINES, '', ...(readOnly ? [MEMORY_SNAPSHOT_LINE, ''] : [...MEMORY_USAGE_LINES, '']));
+  lines.push('</memory>', '', ...MEMORY_INDEX_LINES, '', ...(readOnly ? [MEMORY_SNAPSHOT_LINE, ''] : [...memoryUsageLines(memory.slugs.includes('mem/map')), '']));
   return lines;
 }
 

@@ -490,9 +490,13 @@ function buildMcpServer(
         if (toolName === 'memory.set' && args.value === null) return refused('bg_delete_forbidden', '백그라운드 회차는 기억을 지우지 않는다 — memory.archive 로 보관해라');
         const before = await pool.query<{ updated_at: Date }>(`select updated_at from agent_memory where account_id = $1 and slug = $2`, [account.id, slug]);
         // merge 는 into 하나 + 보관하는 from 수만큼 센다(security F1 — 한 건으로 세면 상한이 10배 풀린다).
-        const cost = toolName === 'memory.merge' && Array.isArray(args.from)
-          ? 1 + new Set(args.from.filter((f): f is string => typeof f === 'string' && f !== slug)).size
-          : 1;
+        // 예외 하나: organize 회차의 **이름 바꾸기**(없는 into ← from 하나)는 1건이다 — 기억 하나가 자리를 옮길 뿐이고,
+        // 2건으로 세면 회차당 10개만 옮겨 분야 접두 전환이 몇 달 걸렸다. 여럿을 합치는 merge 는 그대로 센다.
+        const fromSet = toolName === 'memory.merge' && Array.isArray(args.from)
+          ? new Set(args.from.filter((f): f is string => typeof f === 'string' && f !== slug))
+          : null;
+        const isRename = job.kind === 'organize' && fromSet !== null && fromSet.size === 1 && before.rowCount === 0;
+        const cost = fromSet && !isRename ? 1 + fromSet.size : 1;
         if (!(await reserveBgWrite(pool, bgJobId, cost))) return refused('bg_write_limit', `이 회차의 기억 쓰기 상한(${BG_MAX_WRITES})에 닿았다 — 남은 것은 다음 회차에 맡기고 bg.complete 로 끝내라`);
         // 핸들러가 던져도 예약은 돌려준다(security n1).
         let res: { content?: { type: string; text?: string }[] } | undefined;
