@@ -188,6 +188,40 @@ class ApiClient {
           .map(ChannelRow.fromJson)
           .toList(growable: false);
 
+  /// 채널 만들기(`POST /channels`, `channel.create` 능력). private 이면 만든 사람이 첫 멤버다(서버가 넣는다).
+  Future<ChannelRow> createChannel({required String name, String? topic, required bool isPrivate}) async =>
+      ChannelRow.fromJson(_obj(await _send('POST', '/channels', body: {
+        'name': name,
+        if (topic != null && topic.isNotEmpty) 'topic': topic,
+        'visibility': isPrivate ? 'private' : 'public',
+      })));
+
+  /// 채널 고치기(`PATCH /channels/:id`, `channel.manage` 능력). **바뀐 키만** 싣는다 — 이름을 늘 실으면
+  /// 서버가 매번 유니크 검사·감사 대상으로 삼는다(데스크톱 `ChannelEditForm` 과 같은 규칙).
+  /// 이름 충돌은 409 `channel_name_taken`.
+  Future<ChannelRow> updateChannel(String id, {String? name, String? topic, bool? archived}) async =>
+      ChannelRow.fromJson(_obj(await _send('PATCH', '/channels/$id', body: {
+        'name': ?name,
+        'topic': ?topic,
+        'archived': ?archived,
+      })));
+
+  Future<List<ChannelMember>> channelMembers(String channelId) async =>
+      _list(_obj(await _send('GET', '/channels/$channelId/members'))['members'])
+          .map(ChannelMember.fromJson)
+          .toList(growable: false);
+
+  /// 멤버 넣기 — 그 채널을 볼 수 있으면 누구나(private 은 멤버만). 갱신된 명단을 돌려준다.
+  Future<List<ChannelMember>> addChannelMember(String channelId, String accountId) async =>
+      _list(_obj(await _send('POST', '/channels/$channelId/members', body: {'accountId': accountId}))['members'])
+          .map(ChannelMember.fromJson)
+          .toList(growable: false);
+
+  /// 멤버 빼기 — 나 자신(나가기)은 누구나, 남은 admin 만(서버 판정).
+  Future<void> removeChannelMember(String channelId, String accountId) async {
+    await _send('DELETE', '/channels/$channelId/members/$accountId');
+  }
+
   /// 내 DM 들(최근 말 순). 데스크탑 사이드바의 DM 묶음과 같은 출처다.
   Future<List<ChannelRow>> dms() async =>
       _list(_obj(await _send('GET', '/dms'))['dms'])

@@ -23,18 +23,32 @@ List<String> _strList(Object? v) =>
 
 /// 로그인한 나. `GET /auth/me`.
 class MeView {
-  const MeView({required this.id, required this.handle, required this.displayName, required this.isAdmin});
+  const MeView({
+    required this.id,
+    required this.handle,
+    required this.displayName,
+    required this.isAdmin,
+    this.capabilities = const [],
+  });
 
   final String id;
   final String handle;
   final String displayName;
   final bool isAdmin;
 
+  /// 서버가 계산한 내 능력(`channel.create`·`channel.manage` 등). 손잡이는 역할이 아니라 이것으로 그린다 —
+  /// 서버 라우트의 `requireCap` 과 같은 이름이라, 눌러서 403 이 나는 버튼을 세우지 않는다(데스크톱 `hasCapability`).
+  /// 옛 서버가 안 실으면 빈 목록 — 능력 손잡이는 숨는다(눌러 보고 실패하는 것보다 낫다).
+  final List<String> capabilities;
+
+  bool can(String capability) => capabilities.contains(capability);
+
   static MeView fromJson(Map<String, Object?> j) => MeView(
         id: _str(j['id']),
         handle: _str(j['handle']),
         displayName: _str(j['displayName']),
         isAdmin: _bool(j['isAdmin']),
+        capabilities: _strList(j['capabilities']),
       );
 }
 
@@ -82,6 +96,7 @@ class ChannelRow {
     required this.isDm,
     required this.topic,
     this.memberIds = const [],
+    this.repo,
     this.isArchived = false,
   });
 
@@ -91,6 +106,9 @@ class ChannelRow {
   /// 서버 `visibility == 'private'`. 서버는 `isPrivate` 칸을 주지 않는다 — 그 칸을 읽던 동안 비공개 채널에도
   /// 자물쇠 대신 # 가 섰다.
   final bool isPrivate;
+
+  /// 묶인 저장소(`owner/name`). 없으면 null.
+  final String? repo;
 
   /// 서버 `archivedAt` 이 있으면 보관된 채널이다. 목록에서는 빼지만 [AppState.channels] 에는 남긴다 —
   /// 옛 글 링크·검색·저장 화면이 그 채널 이름을 계속 찾아야 한다.
@@ -109,6 +127,7 @@ class ChannelRow {
         isPrivate: _str(j['visibility']) == 'private',
         isDm: _str(j['kind']) == 'dm',
         topic: j['topic'] as String?,
+        repo: j['repo'] as String?,
         isArchived: j['archivedAt'] is String,
       );
 
@@ -123,9 +142,20 @@ class ChannelRow {
         memberIds: _strList(j['memberIds']),
       );
 
-  ChannelRow withName(String n) =>
-      ChannelRow(
-      id: id, name: n, isPrivate: isPrivate, isDm: isDm, topic: topic, memberIds: memberIds, isArchived: isArchived);
+  ChannelRow withName(String n) => ChannelRow(
+      id: id, name: n, isPrivate: isPrivate, isDm: isDm, topic: topic, memberIds: memberIds,
+      repo: repo, isArchived: isArchived);
+}
+
+/// 채널 멤버 한 명. `GET /channels/:id/members`.
+class ChannelMember {
+  const ChannelMember({required this.accountId, required this.handle});
+
+  final String accountId;
+  final String handle;
+
+  static ChannelMember fromJson(Map<String, Object?> j) =>
+      ChannelMember(accountId: _str(j['accountId']), handle: _str(j['handle']));
 }
 
 /// 리액션 한 칸. 누가 눌렀는지까지 온다 — 내가 눌렀는지를 화면이 알아야 한다.
