@@ -10,6 +10,8 @@ import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { useWindowView } from '../state/windowView';
 import { openThreadFrom, openWindow } from '../lib/windowActions';
+import { useHostView } from '../lib/hostDocument';
+import { copyText } from '../lib/clipboard';
 import { AskCard } from './AskCard';
 import { AskBundleCard } from './AskBundleCard';
 import { ThreadStateBadge } from './ThreadStateBadge';
@@ -100,6 +102,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
 }) {
   // 「스레드 열기」는 **이 창의** 자리로 간다(채널 창이면 자기 패널, W4 — `state/windowView`).
   const windowView = useWindowView();
+  // 복사는 이 행이 그려진 창의 클립보드로 한다(새 창이면 그 창 — `lib/clipboard`).
+  const hostView = useHostView();
   const t = useT();
   const locale = useLocale();
   const isMine = useActiveStore((s) => s.me?.id === message.authorId);
@@ -479,20 +483,16 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
    * 덮이고, 잘 된 일을 사람이 손으로 치워야 한다. 복사가 됐다는 것은 붙여넣으면 바로 안다.
    */
   const copyToClipboard = async (text: string, fail: string) => {
-    try {
-      // clipboard 자체가 없는 환경(비보안 컨텍스트)도 실패다 — 같은 자리에서 잡는다.
-      if (!navigator.clipboard) throw new Error('no clipboard');
-      await navigator.clipboard.writeText(text);
-    } catch {
-      useActiveStore.getState().pushNotice(fail);
-    }
+    // 이 행이 그려진 창의 클립보드로 쓴다 — 새 창에서 메인 창 것을 부르면 WebKit 이
+    // 거절한다(`lib/clipboard` 머리말). clipboard 가 없는 환경(비보안 컨텍스트)도 실패다.
+    if (await copyText(text, null, hostView) !== 'copied') useActiveStore.getState().pushNotice(fail);
   };
 
   // 링크는 화면 어디에도 안 보인다 — 그래서 실패하면 링크 문자열 자체를 알림에 실어야
   // 손으로 복사할 길이 남는다.
   const copyLink = () => {
     const link = messagePermalink(message.id);
-    return copyToClipboard(link, `Could not copy the link. Copy it by hand: ${link}`);
+    return copyToClipboard(link, t('message.copyLinkFailed', { link }));
   };
 
   /**

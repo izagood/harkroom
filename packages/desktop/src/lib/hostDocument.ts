@@ -18,6 +18,9 @@ export function useHostDocument(): Document {
  * 그 문서가 그려지는 **창**. 떠 있는 것(메뉴·카드·말풍선)을 창 안으로 자를 때 `window.innerWidth/Height` 대신
  * 이것을 쓴다 — 전역 `window` 는 늘 메인 창이라, 작은 새 창에서 메인 크기로 자르면 창 밖으로 나간다
  * (2026-10-06 F1). 창이 없는 문서(시험의 `createHTMLDocument`)면 메인 창이다.
+ *
+ * **클립보드도 이 창의 것을 쓴다**(`viewOf(doc).navigator.clipboard`, `lib/clipboard::copyText`). 전역
+ * `navigator` 는 메인 창의 것이라, 새 창을 누른 순간 포커스가 없는 메인 문서로 쓰려다 WebKit 에 거절된다(2026-10-29).
  */
 export function viewOf(doc: Document): Window {
   return doc.defaultView ?? window;
