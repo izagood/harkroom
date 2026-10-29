@@ -25,7 +25,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   JOURNAL_EXPIRING_WINDOW, MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_ITEMS_PER_ACCOUNT,
-  MEMORY_CORE_WARN_CHARS, MEMORY_ITEMS_WARN_COUNT, looksLikeThreadState,
+  isThreadStateSlug, MEMORY_CORE_WARN_CHARS, MEMORY_ITEMS_WARN_COUNT,
 } from '@harkroom/shared';
 import { escapeForPrompt, staleMemoryLines, type MemoryContext } from './prompt.js';
 
@@ -210,7 +210,7 @@ function indexLines(
     '저장된 기억(본문은 필요할 때 `memory.get` 으로 가져온다 — 이름만으로 짐작되지 않으면 열어 본다):',
     ...slugs.map((s) => entryLine(s, descriptions)),
     ...(journalCount ? [`(작업 경위 기록 journal ${journalCount}개는 목록에 싣지 않는다 — \`memory.search\` 로 찾는다.)`] : []),
-    ...(stateCount ? [`(한 스레드의 진행 상태로 보이는 기억 ${stateCount}개는 목록에 싣지 않는다 — 진행 상태는 \`thread.note\` 자리다. 필요하면 \`memory.search\` 로 찾는다.)`] : []),
+    ...(stateCount ? [`(진행 상태 꼴 이름(delegation-·review-)의 기억 ${stateCount}개는 목록에 싣지 않는다 — 진행 상태는 \`thread.note\` 자리다. 필요하면 \`memory.search\` 로 찾는다.)`] : []),
     `(기억 ${total}/${MAX_MEMORY_ITEMS_PER_ACCOUNT}개 — core·journal 포함, 보관한 것은 빼고)`,
     '</memory-index>',
   ];
@@ -251,9 +251,9 @@ export async function planMemory(opts: {
   const stale = memory.stale ? ['', ...staleMemoryLines(memory.stale.fetchedAt)] : [];
   // journal(070)은 목록에 싣지 않는다 — 한 작업의 경위라 적고 나면 거의 안 읽혔다(감사: pr-* 41%).
   const isJournal = (s: string) => memory.kinds?.[s] === 'journal';
-  // 한 스레드의 진행 상태로 보이는 기억(delegation-*·review-*·PR 번호+진행 낱말 요약)도 목록에서 뺀다 — 다른 스레드의
-  // 턴에는 잡음이고 목록 크기의 대부분을 차지했다. 판정은 서버 쓰기 경고·recall·지표와 같은 `looksLikeThreadState`.
-  const isState = (s: string) => looksLikeThreadState(s, memory.descriptions?.[s]);
+  // 진행 상태 꼴 **이름**(delegation-·review-)의 기억은 목록에서 뺀다 — 다른 스레드의 턴에는 잡음이고 목록 크기의 대부분을
+  // 차지했다. 요약 낱말 판정은 쓰지 않는다 — PR 번호가 든 교훈 기억까지 숨겼다(security n1). 판정은 서버 recall·쓰기 거절과 같은 `isThreadStateSlug`.
+  const isState = (s: string) => isThreadStateSlug(s);
   const nonJournal = memory.slugs.filter((s) => !isJournal(s));
   const visible = nonJournal.filter((s) => !isState(s));
   const journalCount = memory.slugs.length - nonJournal.length;

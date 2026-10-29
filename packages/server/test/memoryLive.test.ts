@@ -300,8 +300,14 @@ describe('memory MCP tools', () => {
       expect((await callTool(client, 'memory.merge', { into: 'mem/review-old', from: ['mem/pr-review-checklist'], value: 'v2', kind: 'topic' })).ok).toBe(true);
       expect((await callTool(client, 'memory.merge', { into: 'mem/security/merge-wrapper', from: ['mem/review-old'], value: 'v3', kind: 'topic' })).ok).toBe(true);
       expect((await callTool(client, 'memory.archive', { slug: 'mem/delegation-old' })).ok).toBe(true);
-      // 보관된 것도 행이 있으니 고쳐 쓸 수 있다(새로 만드는 것이 아니다).
-      expect((await callTool(client, 'memory.set', { slug: 'mem/delegation-old', value: 'v1', kind: 'topic' })).error?.code).not.toBe('thread_state_slug');
+      // 보관된 상태 꼴 이름은 쓰기로 되살리지 않는다(security n2) — set·merge 의 into 모두. unarchive 뒤에는 고칠 수 있다.
+      const revive = await callTool(client, 'memory.set', { slug: 'mem/delegation-old', value: 'v1', kind: 'topic' });
+      expect(revive.error.code).toBe('thread_state_slug');
+      expect(revive.error.message).toContain('memory.unarchive');
+      expect((await callTool(client, 'memory.merge', { into: 'mem/delegation-old', from: ['mem/code-reviewer-tips'], value: 'v', kind: 'topic' })).error.code).toBe('thread_state_slug');
+      expect((await pool.query(`select archived_at from agent_memory where account_id = $1 and slug = 'mem/delegation-old'`, [accountId])).rows[0].archived_at).not.toBeNull();
+      expect((await callTool(client, 'memory.unarchive', { slug: 'mem/delegation-old' })).ok).toBe(true);
+      expect((await callTool(client, 'memory.set', { slug: 'mem/delegation-old', value: 'v2', kind: 'topic' })).ok).toBe(true);
     } finally {
       await client.close();
     }
@@ -387,8 +393,9 @@ describe('memory MCP tools', () => {
       await callTool(client, 'memory.set', { kind: 'topic', slug: 'mem/body-only', value: '캐시 조사 기록' });
       await callTool(client, 'memory.set', { kind: 'topic', slug: 'mem/runner-cache', value: '캐시 캐시', description: '러너 캐시 조사' });
       await seedJournal(accountId, 'mem/cache-pr-1', '캐시 경위', '캐시 PR 경위');
-      // 진행 상태로 보이는 기억(이름 review-*, 요약 PR 번호+진행 낱말)은 이름·요약이 걸려도 recall 에서 빠진다.
-      await callTool(client, 'memory.set', { kind: 'topic', slug: 'mem/review-cache', value: '캐시 캐시 캐시', description: '캐시 조사 판정' });
+      // 진행 상태 꼴 이름(review-*)은 이름·요약이 걸려도 recall 에서 빠진다(새로 못 만드니 행을 넣는다). 요약에 PR 번호와
+      // 진행 낱말이 있어도 이름이 아니면 실린다 — 교훈 기억을 숨기지 않는다(security n1).
+      await pool.query(`insert into agent_memory (account_id, slug, value, kind, description) values ($1, 'mem/review-cache', '캐시 캐시 캐시', 'topic', '캐시 조사 판정')`, [accountId]);
       await callTool(client, 'memory.set', { kind: 'topic', slug: 'mem/cache-fix', value: '캐시 캐시 캐시', description: '캐시 조사 #12 머지 대기' });
       const query = '@recall-agent admin: 캐시를 조사해 달라 (task 지시 경유) harkroom://message/0b07fe16-2df8-45af-a047-24e1577ddfeb';
 
@@ -398,8 +405,9 @@ describe('memory MCP tools', () => {
 
       const res = await callTool(client, 'memory.search', { query, recall: true, includeValue: true });
       expect(res.terms).toEqual(['캐시', '조사']);
-      expect((res.hits as { slug: string; nameHits: number }[]).map((h) => [h.slug, h.nameHits])).toEqual([['mem/runner-cache', 2]]);
-      expect(res.hits[0].value).toBe('캐시 캐시');
+      const recalled = (res.hits as { slug: string; nameHits: number; value: string }[]);
+      expect(recalled.map((h) => h.slug).sort()).toEqual(['mem/cache-fix', 'mem/runner-cache']);
+      expect(recalled.find((h) => h.slug === 'mem/runner-cache')).toMatchObject({ nameHits: 2, value: '캐시 캐시' });
     } finally {
       await client.close();
     }
