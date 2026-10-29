@@ -62,7 +62,14 @@ class _Server {
         if (path == '/channels/c-1/members') {
           return _json({'members': [{'accountId': 'me-1', 'handle': 'me'}, {'accountId': 'o-1', 'handle': 'other'}]});
         }
-        if (path == '/accounts') return _json({'accounts': <Object?>[]});
+        if (path == '/accounts') {
+          return _json({
+            'accounts': [
+              {'id': 'me-1', 'handle': 'me', 'displayName': '나', 'kind': 'human'},
+              {'id': 'o-1', 'handle': 'other', 'displayName': '', 'kind': 'agent'},
+            ],
+          });
+        }
         if (path == '/reads') return _json({'reads': <Object?>[]});
         if (path.startsWith('/inbox')) return _json({'entries': <Object?>[]});
         if (path == '/ws-ticket') return _json({'ticket': 'tk'});
@@ -229,4 +236,26 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('새 채널: 공개·비공개 모두 설명 줄이 선다(designer n1)', (tester) async {
+    final app = await _boot(tester, _Server(const ['channel.create']));
+    await _pump(tester, app, const NewChannelScreen());
+    final t = stringsFor('ko');
+    expect(find.text(t.chPublicHint), findsOneWidget);
+    await tester.tap(find.byKey(const Key('new-channel-private')));
+    await tester.pump();
+    expect(find.text(t.chPrivateHint), findsOneWidget);
+    expect(find.text(t.chPublicHint), findsNothing);
+  });
+
+  testWidgets('채널 정보: 에이전트 계정 멤버 줄에만 smart_toy 가 뜬다(n7)', (tester) async {
+    final app = await _boot(tester, _Server(const []));
+    await _pump(tester, app, const ChannelInfoScreen(channelId: 'c-1'));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+    await tester.pump();
+    Finder bot(String id) =>
+        find.descendant(of: find.byKey(Key('channel-member-$id')), matching: find.byIcon(Icons.smart_toy_outlined));
+    expect(bot('o-1'), findsOneWidget);
+    expect(bot('me-1'), findsNothing);
+  });
 }

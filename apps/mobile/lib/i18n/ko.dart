@@ -637,6 +637,8 @@ class StringsKo implements Strings {
   @override
   String get chPrivateHint => '초대받은 멤버만 보고 찾을 수 있다.';
   @override
+  String get chPublicHint => '커뮤니티 누구나 찾아서 들어올 수 있다.';
+  @override
   String get chTopicOptional => '주제(선택)';
   @override
   String get chTopic => '주제';

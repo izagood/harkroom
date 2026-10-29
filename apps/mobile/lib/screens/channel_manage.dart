@@ -202,6 +202,11 @@ class _NewChannelScreenState extends State<NewChannelScreen> {
               SegmentedButton<bool>(
                 key: const Key('new-channel-visibility'),
                 showSelectedIcon: false,
+                // 고른 쪽을 강조색으로 — 만든 뒤 모바일에서는 공개 범위를 못 바꾸니 무엇을 골랐는지 또렷해야 한다(designer f1).
+                style: SegmentedButton.styleFrom(
+                  selectedBackgroundColor: k.accentSurface,
+                  selectedForegroundColor: k.accentText,
+                ),
                 segments: [
                   ButtonSegment(value: false, label: Text(t.chPublic, key: const Key('new-channel-public'))),
                   ButtonSegment(value: true, label: Text(t.chPrivate, key: const Key('new-channel-private'))),
@@ -209,10 +214,12 @@ class _NewChannelScreenState extends State<NewChannelScreen> {
                 selected: {_private},
                 onSelectionChanged: (s) => setState(() => _private = s.first),
               ),
-              if (_private) ...[
-                const SizedBox(height: 6),
-                Text(t.chPrivateHint, style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted)),
-              ],
+              const SizedBox(height: 6),
+              Text(
+                _private ? t.chPrivateHint : t.chPublicHint,
+                key: const Key('new-channel-visibility-hint'),
+                style: TextStyle(fontSize: HarkroomType.meta, color: k.fgMuted),
+              ),
               const SizedBox(height: 20),
               TextField(
                 key: const Key('new-channel-topic'),

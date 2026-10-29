@@ -638,6 +638,8 @@ class StringsEn implements Strings {
   @override
   String get chPrivateHint => 'Only invited members can see and find it.';
   @override
+  String get chPublicHint => 'Anyone in the community can find and join it.';
+  @override
   String get chTopicOptional => 'Topic (optional)';
   @override
   String get chTopic => 'Topic';

@@ -619,6 +619,7 @@ abstract class Strings {
   String get chPublic;
   String get chPrivate;
   String get chPrivateHint;
+  String get chPublicHint;
   String get chTopicOptional;
   String get chTopic;
   String get chInitialMembers;
@@ -1798,6 +1799,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'chPublic': s.chPublic,
       'chPrivate': s.chPrivate,
       'chPrivateHint': s.chPrivateHint,
+      'chPublicHint': s.chPublicHint,
       'chTopicOptional': s.chTopicOptional,
       'chTopic': s.chTopic,
       'chInitialMembers': s.chInitialMembers,
