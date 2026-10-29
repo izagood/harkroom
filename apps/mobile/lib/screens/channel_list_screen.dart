@@ -7,6 +7,7 @@ import '../state/app_scope.dart';
 import '../ui/states.dart';
 import '../ui/parts.dart';
 import '../ui/tokens.dart';
+import 'channel_manage.dart';
 import 'community_screens.dart';
 import 'saved_screen.dart';
 import 'me_screen.dart';
@@ -116,7 +117,7 @@ class ChannelListScreen extends StatelessWidget {
                 ? Text(t.channelsTitle)
                 : const CommunityHeader(),
         // 「나」 는 탭이 아니라 머리 오른쪽의 프로필 사진이다(개정판 3.1·3.8). DM 탭은 그 앞에 ＋(새 DM, D8).
-        actions: [if (dms) const NewDmButton(), const OpenMeButton(), const SizedBox(width: 8)],
+        actions: [if (dms) const NewDmButton() else const NewChannelButton(), const OpenMeButton(), const SizedBox(width: 8)],
       )),
       // 위는 [GlassBody] 가 맡는다 — SafeArea 가 위를 먹으면 목록이 머리 밑으로 흐르지 못한다.
       body: SafeArea(
