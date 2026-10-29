@@ -52,6 +52,7 @@ import { communityKey, readConfig } from './config.js';
 import { createLaneTurnGate, createProviderLaneMount, createProviderLaneStatusBook } from './providerLaneMount.js';
 import { createTurnMerge, defaultExec, ghEnv, GH_PATH } from './turnMerge.js';
 import { createTurnCommand, stripLinkOnlyFields } from './turnCommand.js';
+import { createTurnPeek } from './turnPeek.js';
 import { createTurnApi } from './turnApi.js';
 import { createTurnKeyLedger, isWrapperCall } from './turnKeys.js';
 import { createTurnSlots, MAX_TURNS_ENV, parseMaxTurns } from './turnSlots.js';
@@ -302,6 +303,15 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     lookupLease: (runnerId, cause) => turnSecrets.lookup(runnerId, cause),
     log,
   });
+  // 턴 도중 새 글(`turnPeek.ts`) — hook 소켓의 `thread.peek`. 임대는 「정확한 명령」과 같은 `turnSecrets` 것이다.
+  const turnPeek = createTurnPeek({
+    forward: async (agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
+    },
+    lookupLease: (runnerId, cause) => turnSecrets.lookup(runnerId, cause),
+    log,
+  });
   /** 러너 모드가 설정과 다를 때 새 턴 자리를 막는다(C1, `providerLaneMount.ts::createLaneTurnGate`). */
   const laneTurnGate = createLaneTurnGate({
     mismatch: (runnerId, agentId) => communities.find((x) => x.knowsAgent(agentId))?.laneMismatch?.(runnerId, agentId) ?? false,
@@ -373,6 +383,9 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       }
       const keyed = turnKeys.maybeHandle(runnerId, req, kind);
       if (keyed) return keyed;
+      // `thread.peek` 은 「정확한 명령」의 hook 소켓 가드보다 먼저 받는다 — 그 가드는 hook 소켓에서 command.check 말고는 다 거절한다.
+      const peeked = await turnPeek.maybeHandle(runnerId, agentId, req, kind);
+      if (peeked) return peeked;
       const commanded = await turnCommand.maybeHandle(runnerId, agentId, req, kind);
       if (commanded) return commanded;
       // API 키 연결(C1, security ⓒ): 러너 모드가 지금 설정과 다르면 새 턴 자리를 내주지 않는다 — 켰는데 옛 러너가 풀 계정으로

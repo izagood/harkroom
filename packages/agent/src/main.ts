@@ -790,7 +790,7 @@ const scheduler = createMentionScheduler({
       markAccountGate: () => { void markAccountNeedsAttention(account.configDir, Date.now()).catch(() => undefined); },
       accountGateCleared: async () => !isAttentionActive(await readAccountAttention(account.configDir), Date.now()),
     } : {}),
-    operatorBin: config.operatorBin, runnerSecret: config.operatorLink.secret, commandHook: config.commandHook, chromeHost: config.chromeHost,
+    operatorBin: config.operatorBin, runnerSecret: config.operatorLink.secret, commandHook: config.commandHook, postToolHook: config.postToolHook, chromeHost: config.chromeHost,
     // codex 승인 명령 규칙·턴 hook(`codexRules.ts`). 판은 턴마다 묻고, hook 신뢰는 codex 자신에게 묻는다.
     prepareCodexRules: (o) => prepareCodexRules({ ...o, codexHome, operatorBin: config.operatorBin }, {
       version: () => harnessVersion('codex'),

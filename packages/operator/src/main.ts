@@ -24,7 +24,7 @@ import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge, writeReadyMarker } from './mcpBridge.js';
 import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
-import { decideHook, decideLaneHook, decideTailHook, HOOK_STDIN_MAX, HOOK_TIMEOUT_MS, laneDeny, readStdinCapped, type LaneDenyDecision } from './hookCli.js';
+import { decideHook, decideLaneHook, decidePostToolHook, decideTailHook, HOOK_STDIN_MAX, postToolOutput, HOOK_TIMEOUT_MS, laneDeny, readStdinCapped, type LaneDenyDecision } from './hookCli.js';
 import { CODEX_HOOK_SPEC_ENV, decodeCodexHookSpec, decodeLaneHookRules } from '@harkroom/shared/providerLane';
 import { decideCodexHook } from './codexHook.js';
 import { API_TOOL, parseApiArgs } from './turnApi.js';
@@ -155,8 +155,9 @@ async function apiMain(argv: string[]): Promise<void> {
  * 판정한다. 그래서 allow 를 낼 때만 stdout 에 쓰고, 그 밖(Bash 아님·판정에 걸림·턴 밖·오퍼레이터 무응답·시간 초과·오류)은 아무것도
  * 쓰지 않고 0 으로 끝낸다. deny 는 내지 않는다. 판정은 오퍼레이터(`turnCommand.ts` command.check)가 hook 소켓에서만 한다.
  */
-async function hookMain(event: string, laneRules?: string, laneMode: 'lane' | 'tail' = 'lane', tailReach?: string, codex = false): Promise<void> {
+async function hookMain(event: string, laneRules?: string, laneMode: 'lane' | 'tail' = 'lane', tailReach?: string, codex = false, since?: number): Promise<void> {
   const quiet = () => process.exit(0);
+  if (event === 'posttool') return postToolHookMain(since ?? 0);
   if (event !== 'pretool') return quiet();
   // codex 턴: 판정할 것은 턴 env 로 온다. 값이 없는 codex(대화형 턴 등 — 같은 홈의 규칙 파일·hook 을 싣는다)는 그 채널 규칙이 없는
   // 것으로 본다: 규칙 파일의 명령에 닿으면 막고 그 밖은 판단하지 않는다. 값이 있는데 못 읽으면 막는다(fail-closed).
@@ -178,6 +179,24 @@ async function hookMain(event: string, laneRules?: string, laneMode: 'lane' | 't
     const raw = await readStdinCapped(process.stdin, HOOK_STDIN_MAX);
     const decision = await decideHook(raw, (name, args) => callOperatorTool(name, args, 'hook'));
     if (decision) process.stdout.write(`${JSON.stringify(decision)}\n`);
+  } catch { /* 무출력 */ }
+  clearTimeout(timer);
+  process.exit(0);
+}
+
+/**
+ * `harkroom-operator hook posttool` — 턴 도중 새 글(`turnPeek.ts`). **언제나 종료 0** 이다: 실을 글이 있으면 PostToolUse 의
+ * `additionalContext` 를 쓰고, 없거나 턴 밖·오퍼레이터 무응답·시간 초과·오류면 아무것도 쓰지 않는다. 판정을 내지 않으므로 어떤 길로
+ * 끝나도 넓어지는 것이 없다(fail-open 이 안전한 이유). stdin(도구 입력·결과)은 읽어 버리기만 한다 — 묻는 데 쓰지 않는다.
+ */
+async function postToolHookMain(since: number): Promise<void> {
+  const quiet = () => process.exit(0);
+  const timer = setTimeout(quiet, HOOK_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    await readStdinCapped(process.stdin, HOOK_STDIN_MAX).catch(() => '');
+    const text = await decidePostToolHook(since, (name, args) => callOperatorTool(name, args, 'hook'));
+    if (text) writeSync(1, `${JSON.stringify(postToolOutput(text))}\n`);
   } catch { /* 무출력 */ }
   clearTimeout(timer);
   process.exit(0);
@@ -239,7 +258,7 @@ async function main(): Promise<void> {
       await apiMain(cmd.argv);
       return;
     case 'hook':
-      await hookMain(cmd.event, cmd.laneRules, cmd.laneMode, cmd.tailReach, cmd.codex === true);
+      await hookMain(cmd.event, cmd.laneRules, cmd.laneMode, cmd.tailReach, cmd.codex === true, cmd.since);
       return;
     case 'register': {
       const dataDir = resolveDataDir(process.env.HARKROOM_DATA_DIR);

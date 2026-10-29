@@ -97,6 +97,11 @@ export interface BuildTurnCommandOptions {
   /** 「정확한 명령」 PreToolUse hook 을 인라인 `--settings` 로 단다(H③b, 기본 false). */
   commandHook?: boolean;
   /**
+   * 턴 도중 사람이 앵커 스레드에 새로 쓴 글을 도구 호출마다 싣는 PostToolUse hook(`postToolHookEntry`)을 단다 — 값은 턴이 시작할 때
+   * 본 마지막 seq(그 뒤 글만 싣는다). null·생략이면 달지 않는다. hook 을 내는 하네스(claude)만 쓰고 나머지는 무시한다.
+   */
+  postToolSinceSeq?: number | null;
+  /**
    * Claude in Chrome 을 이 턴에 붙이는가(스레드 e8c8365d). `true` 일 때만 열고, 생략·false 는 **명시적으로 닫는다**
    * (`chromeTurnFor` 가 에이전트 값·머신 값을 합친다). 하네스 표의 `chrome` 이 없는 하네스는 무시한다.
    */
@@ -246,7 +251,7 @@ interface HarnessPreset {
    * CLAUDE_PRESET 주석.
    */
   chrome?(enabled: boolean): string[];
-  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[]; apiConnectors?: readonly string[]; apiDelegatable?: readonly string[]; toolAllows?: readonly string[]; claudeConfigDir?: string | null; commandHook?: boolean; providerLane?: boolean }): string[];
+  permissionRules?(args: { mode: TurnMode; mentionPermission: MentionPermission; operatorBin: string; mergeRepos: readonly string[]; apiConnectors?: readonly string[]; apiDelegatable?: readonly string[]; toolAllows?: readonly string[]; claudeConfigDir?: string | null; commandHook?: boolean; providerLane?: boolean; postToolSinceSeq?: number | null }): string[];
 }
 
 const CLAUDE_PRESET: HarnessPreset = {
@@ -358,7 +363,7 @@ const CLAUDE_PRESET: HarnessPreset = {
    * - 래퍼 allow 는 auto 멘션 턴마다, 래퍼의 **절대 경로 + 서브커맨드** 접두로(T1c). grant 유무와 상관없다(스레드 1b75d7a0 —
    *   거절 기록을 받아야 1회 승인 카드가 선다). 저장소 범위는 규칙이 아니라 서버·래퍼가 가른다.
    */
-  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [], apiDelegatable = [], toolAllows = [], claudeConfigDir = null, commandHook = false, providerLane = false }) => {
+  permissionRules: ({ mode, mentionPermission, operatorBin, mergeRepos, apiConnectors = [], apiDelegatable = [], toolAllows = [], claudeConfigDir = null, commandHook = false, providerLane = false, postToolSinceSeq = null }) => {
     // 읽기 전용 멘션 턴(`dontAsk`)의 규칙은 고정이다 — 소유자 승인 규칙(`toolAllows`)·머지 래퍼도 싣지 않는다.
     if (mode === 'mention' && mentionPermission === 'readonly') return [...READONLY_RULES];
     if (mode !== 'mention' || mentionPermission !== 'auto') return [];
@@ -393,8 +398,11 @@ const CLAUDE_PRESET: HarnessPreset = {
       ...(allow.length ? ['--allowedTools', ...allow] : []),
       // 「정확한 명령」 hook(H③b) — **인라인 JSON** 이라 에이전트가 고칠 파일이 없다. 켜졌을 때만.
       // API 키 연결 턴은 셸·웹을 hook 으로 판정한다(D1, `laneHookSettings`) — 「정확한 명령」 판정도 그 안에서 한다.
-      ...(providerLane ? ['--settings', laneHookSettings(operatorBin, allow)]
-        : commandHook ? ['--settings', commandHookSettings(operatorBin)] : []),
+      // 턴 도중 새 글 hook 은 같은 `--settings` 한 장에 합친다(`withPostToolHook`) — 둘로 주면 어느 쪽이 이기는지 판본마다 다를 수 있다.
+      ...settingsArgs(
+        providerLane ? laneHookSettings(operatorBin, allow) : commandHook ? commandHookSettings(operatorBin) : null,
+        operatorBin, postToolSinceSeq,
+      ),
     ];
   },
 };
@@ -504,6 +512,30 @@ export function laneHookSettings(operatorBin: string, allowRules: readonly strin
   // hook 이 죽으면(0 이 아닌 종료) 차단 종료 코드 2 로 끝낸다 — 그냥 두면 하네스가 비차단 오류로 넘기고 읽기 명령은 하네스 판정으로 돈다(실측).
   const command = `${JSON.stringify(operatorBin)} hook pretool --lane ${encodeLaneHookRules(allowRules)} || exit 2`;
   return JSON.stringify({ hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command, timeout: 15 }] }] } });
+}
+
+/**
+ * 턴 도중 새 글 PostToolUse hook(스레드 f1460447, 실측 2026-10-29 claude 2.1.312 dontAsk — `-p`·TUI 모두): hook 이 stdout 에
+ * `hookSpecificOutput.additionalContext` 를 내면 그 글이 도구 결과 뒤에 모델에 실린다. 사람이 「멈춰」라고 쓰면 돌던 턴이 다음 도구
+ * 경계에서 그것을 읽는다 — 그 전에는 같은 스레드의 새 멘션이 앞 턴이 끝날 때까지 inbox 에서 기다리기만 했다(`mentionScheduler.ts` 의 blocked).
+ *
+ * **권한 판정이 아니다.** hook 은 allow·deny 를 내지 않고 글만 싣는다 — 실패·시간 초과·무출력이면 아무 일도 없다(fail-open). 읽는
+ * 범위는 오퍼레이터가 그 턴의 임대에서 정한 앵커 스레드 하나다(`turnPeek.ts`) — 이 seq 는 어디부터 실을지만 정한다.
+ */
+export function postToolHookEntry(operatorBin: string, sinceSeq: number): { matcher: string; hooks: { type: 'command'; command: string; timeout: number }[] } {
+  const since = Number.isSafeInteger(sinceSeq) && sinceSeq >= 0 ? sinceSeq : 0;
+  return { matcher: '*', hooks: [{ type: 'command', command: `${JSON.stringify(operatorBin)} hook posttool --since ${since}`, timeout: 15 }] };
+}
+
+/** PreToolUse 설정 JSON(없으면 null)에 턴 도중 새 글 hook 을 합친다. 둘 다 없으면 빈 배열. */
+export function settingsArgs(preSettings: string | null, operatorBin: string, postToolSinceSeq: number | null): string[] {
+  if (postToolSinceSeq === null || postToolSinceSeq === undefined) return preSettings ? ['--settings', preSettings] : [];
+  return ['--settings', withPostToolHook(preSettings, operatorBin, postToolSinceSeq)];
+}
+
+export function withPostToolHook(preSettings: string | null, operatorBin: string, sinceSeq: number): string {
+  const base = (preSettings ? JSON.parse(preSettings) : {}) as { hooks?: Record<string, unknown> };
+  return JSON.stringify({ ...base, hooks: { ...(base.hooks ?? {}), PostToolUse: [postToolHookEntry(operatorBin, sinceSeq)] } });
 }
 
 const CODEX_PRESET: HarnessPreset = {
@@ -838,6 +870,15 @@ export function preassignsSessionId(harness: AgentHarness): boolean {
   return !preset.allowsNullSessionOnFirstTurn;
 }
 
+/** 이 턴에 턴 도중 새 글 hook 이 실제로 붙는가 — 프롬프트가 그 글을 안내할지 정한다. 판정은 `attachesCommandHook` 처럼 프리셋에 묻는다. */
+export function attachesPostToolHook(harness: AgentHarness, mentionPermission: MentionPermission): boolean {
+  const preset = PRESETS[harness];
+  if (preset === 'unsupported') return false;
+  const args = preset.permissionRules?.({ mode: 'mention', mentionPermission, operatorBin: '/x', mergeRepos: [], postToolSinceSeq: 0 }) ?? [];
+  const i = args.indexOf('--settings');
+  return i >= 0 && (args[i + 1] ?? '').includes('PostToolUse');
+}
+
 /**
  * 이 턴에 「정확한 명령」 hook(H③b)이 실제로 붙는가 — 프롬프트가 kind command 를 권할지 정한다(security n3).
  * 하네스 이름을 비교하지 않고 그 하네스의 `permissionRules` 가 `--settings` 를 내는지를 그대로 묻는다 — 판정이 한 곳에 산다.
@@ -992,7 +1033,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
       ? (providerLane && opts.mentionPermission === 'auto' && opts.laneAgent && preset.laneAgentArgs ? preset.laneAgentArgs(opts.laneAgent) : undefined)
         ?? (providerLane ? preset.lanePermission?.[opts.mentionPermission] : undefined) ?? preset.permission[opts.mentionPermission]
       : []),
-    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [], apiDelegatable: opts.apiDelegatable ?? [], toolAllows: opts.toolAllows ?? [], claudeConfigDir: opts.claudeConfigDir ?? null, commandHook: opts.commandHook === true, providerLane }) ?? []),
+    ...(preset.permissionRules?.({ mode: opts.mode, mentionPermission: opts.mentionPermission, operatorBin: opts.operatorBin, mergeRepos: opts.mergeRepos ?? [], apiConnectors: opts.apiConnectors ?? [], apiDelegatable: opts.apiDelegatable ?? [], toolAllows: opts.toolAllows ?? [], claudeConfigDir: opts.claudeConfigDir ?? null, commandHook: opts.commandHook === true, providerLane, postToolSinceSeq: opts.postToolSinceSeq ?? null }) ?? []),
     ...(readonlyByList ? ['--tools', opts.readonlyToolList as string] : []),
     ...(preset.chrome?.(opts.chrome === true) ?? []),
     // pi 의 세션 자리는 **저장소가 정할 수 있다**(`.pi/settings.json` 의 `sessionDir`, 신뢰 판정 전) —

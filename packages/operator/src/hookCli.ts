@@ -9,6 +9,7 @@ import type { Readable } from 'node:stream';
 import { validateExactCommand } from '@harkroom/shared';
 import { LANE_HOOK_TOOLS } from '@harkroom/shared/providerLane';
 import { COMMAND_CHECK_TOOL } from './turnCommand.js';
+import { peekContext, THREAD_PEEK_TOOL, type PeekPost } from './turnPeek.js';
 
 export const HOOK_TIMEOUT_MS = 10_000;
 export const HOOK_STDIN_MAX = 256 * 1024;
@@ -178,4 +179,26 @@ export function decideTailHook(raw: string, rules: readonly string[], reach: rea
   // 이 채널 규칙도 닿음 판정에 넣는다 — 합집합을 빠뜨리고 넘겨도 이 채널 규칙의 꼬리는 막힌다.
   if (!touchesApprovedRule([...reach, ...rules], command)) return null;
   return laneDeny(typeof command === 'string' && SHELL_META.test(command.trim()) ? LANE_HOOK_SHELL_REASON : LANE_HOOK_TAIL_REASON);
+}
+
+export type PostToolOutput = { hookSpecificOutput: { hookEventName: 'PostToolUse'; additionalContext: string } };
+
+export function postToolOutput(text: string): PostToolOutput {
+  return { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: text } };
+}
+
+/**
+ * 턴 도중 새 글 hook 의 판단 부분(`turnPeek.ts`) — 실을 글이 있으면 그 글, 없거나 어떤 실패든 null(무출력). 오퍼레이터 답의 모양을
+ * 믿지 않고 글 하나하나를 다시 거른다.
+ */
+export async function decidePostToolHook(since: number, ask: Ask): Promise<string | null> {
+  const r = await ask(THREAD_PEEK_TOOL, { sinceSeq: since }).catch(() => null);
+  if (!r || !r.ok || 'notInTurn' in r) return null;
+  let out: { posts?: unknown };
+  try { out = JSON.parse(r.text) as typeof out; } catch { return null; }
+  if (!Array.isArray(out.posts)) return null;
+  const posts: PeekPost[] = out.posts.filter((p): p is PeekPost =>
+    typeof p === 'object' && p !== null && typeof (p as PeekPost).seq === 'number'
+    && typeof (p as PeekPost).handle === 'string' && typeof (p as PeekPost).body === 'string');
+  return peekContext(posts);
 }

@@ -8,6 +8,7 @@
  * | `harkroom-operator mcp-bridge` | 하네스가 띄우는 stdio MCP 브릿지(`mcpBridge.ts`) |
  * | `harkroom-operator merge <owner/name> <n> --head <sha>` | 에이전트 머지 래퍼 — 브릿지와 같은 소켓으로 오퍼레이터에 묻는다(`turnMerge.ts`) |
  * | `harkroom-operator hook pretool` | claude PreToolUse hook — 승인된 「정확한 명령」이면 allow, 아니면 무출력(`turnCommand.ts`, H③b) |
+| `harkroom-operator hook posttool --since <seq>` | claude PostToolUse hook — 턴 도중 사람이 앵커 스레드에 쓴 글을 `additionalContext` 로 싣는다, 없으면 무출력(`turnPeek.ts`) |
  * | 그 밖 | 앱이 넘기는 `--socket …` 인자 그대로(`args.ts`) |
  *
  * 등록이 CLI 인 이유: 코드는 화면에서 사람이 읽어 그 머신의 터미널에 붙여 넣는다 — 서버가
@@ -35,7 +36,7 @@ export type CliCommand =
   /** `api <연결> <METHOD> <경로> [--data …]` — 인자 검증은 `turnApi.parseApiArgs`. */
   | { command: 'api'; argv: string[] }
   /** `hook pretool` — claude 가 띄운다. stdin 의 hook 입력을 읽는다. */
-  | { command: 'hook'; event: string; laneRules?: string; laneMode?: 'lane' | 'tail'; tailReach?: string; codex?: true }
+  | { command: 'hook'; event: string; laneRules?: string; laneMode?: 'lane' | 'tail'; tailReach?: string; codex?: true; since?: number }
   | { command: 'daemon'; argv: string[] };
 
 function flagValue(argv: readonly string[], flag: string): string | undefined {
@@ -73,6 +74,11 @@ export function parseCliArgs(argv: readonly string[]): CliCommand {
       // `hook pretool --codex` — codex 턴. 판정할 것은 인자가 아니라 턴 env(`CODEX_HOOK_SPEC_ENV`)로 온다(hooks.json 명령이 고정이어야
       // 신뢰 hash 가 턴마다 바뀌지 않는다).
       if (argv[2] === '--codex') return { command: 'hook', event: argv[1] ?? '', codex: true };
+      // `hook posttool --since <seq>` — 턴 도중 새 글(`turnPeek.ts`). seq 는 러너가 싣는 턴 시작 seq 다.
+      if (argv[1] === 'posttool') {
+        const n = argv[2] === '--since' ? Number(argv[3]) : 0;
+        return { command: 'hook', event: 'posttool', since: Number.isSafeInteger(n) && n >= 0 ? n : 0 };
+      }
       if (argv[2] === '--tail') {
         return { command: 'hook', event: argv[1] ?? '', laneRules: argv[3] ?? '', laneMode: 'tail', tailReach: argv[4] ?? '' };
       }
