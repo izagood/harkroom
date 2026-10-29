@@ -59,10 +59,25 @@ export function silentTurnNotice(opts: {
    * 호출자가 싣는다. 있으면 사람이 부른 턴은 「답 없음」 통지 대신 **그 답을 대신 올린다**(`proxyAnswerBody`).
    */
   screenAnswer?: string | null;
+  /**
+   * 이 턴의 끝을 **화면**으로 알았는가(`screenIdle.ts`, 하네스 기록은 마지막 말을 말해 주지 않았다). 그런 하네스는 말없이 끝난 것이
+   * 「덧붙일 말이 없는 FYI」인지 「답을 빼먹은 것」인지 모른다(E13 회차: codex·opencode·pi × API 키 모델이 잡담 답을 화면에만 썼다).
+   */
+  screenEnded?: boolean;
 }): SilentTurnNotice {
   if (opts.offAnchor !== null) return { kind: 'post', body: opts.offAnchor };
-  // 에이전트 쪽은 글이 없으니 마지막 말을 실을 자리도 없다 — 호출자가 러너 로그에 남긴다.
-  if (opts.caller === 'agent') return { kind: 'react', emoji: SILENT_ACK_EMOJI };
+  if (opts.caller === 'agent') {
+    // **에이전트가 부른 턴**(2026-10-25 E13 회차, 스레드 db4ab174). ✅ 만 달면 부른 쪽은 답을 받은 줄 안다 — 화면으로 끝을 안 턴은
+    // 화면 답이 있으면 대신 올리고, 없으면 답이 없었다고 남긴다. 둘 다 멘션 없는 보통 글이다 — 부른 에이전트를 멘션으로
+    // 다시 부르지 않는다(화면 글 속 `@handle` 은 인용 줄 안이라 멘션이 아니다). 기록으로 끝을 아는 하네스(claude)의 FYI 는 지금처럼 ✅ 다.
+    if (!opts.screenEnded) return { kind: 'react', emoji: SILENT_ACK_EMOJI };
+    const proxied = proxyAnswerBody(opts.screenAnswer ?? null, opts.pat, opts.secrets);
+    if (proxied) return { kind: 'post', body: proxied };
+    // 「답 없음」 줄은 **보통 글**이다(jaebin 10-29, designer #1590). progress 로 두면 끝난 턴이 「막힘」·「작업 중」으로 그려지고 보드에서
+    // 「끝남」으로 안 간다. 보통 글이라 머리 주인 에이전트에게 `thread_reply` 가 한 번 가므로(진짜 답과 같다), 문장은 다시 부르기를
+    // 권하지 않고 그 결정을 사람에게 둔다 — 잡담에 늘 말없이 끝나는 조합에서 부름 사슬이 생기지 않게.
+    return { kind: 'post', body: AGENT_CALL_NO_ANSWER };
+  }
   // **대리 게시**(2026-10-25, 스레드 db4ab174). codex × API 키 연결 모델은 인사·잡담에 답을 화면에만 쓰고 끝냈다 — 사람에게 보여야 할
   // 답이 터미널에 있다. 사람이 부른 턴만 그 답을 옮겨 올린다(넘겨받은 일은 위임을 「실패」로 닫아야 하므로 아래 그대로).
   if (opts.caller === 'human') {
@@ -226,6 +241,9 @@ function maskWhole(text: string, secrets: readonly string[]): string {
   for (const n of secrets) if (n && t.includes(n)) t = t.split(n).join('(가림)');
   return t;
 }
+
+/** 에이전트가 부른 턴이 화면으로 끝났는데 옮길 답이 없을 때의 줄(`silentTurnNotice`, 보통 글). 다시 부를지는 사람에게 둔다. */
+export const AGENT_CALL_NO_ANSWER = '(답을 남기지 못하고 끝났습니다 — 화면에도 옮길 답이 없었습니다. 다시 부를지는 사람이 정합니다.)';
 
 /** 대리 게시로 옮길 화면 답의 상한(자). 화면에서 뽑는 줄은 많아야 몇 줄이라(`screenAnswerLines`) 넉넉하다. */
 export const PROXY_ANSWER_MAX_CHARS = 1_000;

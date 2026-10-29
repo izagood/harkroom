@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, PROXY_ANSWER_MAX_CHARS, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -1595,8 +1595,42 @@ describe('silentTurnNotice — 화면 답 대리 게시 (2026-10-25, 스레드 d
 
   it('넘겨받은 일·에이전트 호출·화면 답 없음은 지금 그대로다', () => {
     expect(silentTurnNotice({ ...base, caller: 'delegated', screenAnswer: '답' }).kind).toBe('fail');
+    // 에이전트 호출은 화면으로 끝을 안 턴에서만 달라진다(아래 describe) — 기록으로 끝을 아는 턴은 ✅ 그대로.
     expect(silentTurnNotice({ ...base, caller: 'agent', screenAnswer: '답' }).kind).toBe('react');
     expect(silentTurnNotice({ ...base, caller: 'human', screenAnswer: null })).toEqual(silentTurnNotice({ ...base, caller: 'human' }));
     expect(silentTurnNotice({ ...base, caller: 'human', screenAnswer: '   ' })).toEqual(silentTurnNotice({ ...base, caller: 'human' }));
+  });
+});
+
+describe('silentTurnNotice — 에이전트가 부른 말없는 턴 (2026-10-25 E13, 스레드 db4ab174)', () => {
+  const base = { lastSaid: null, offAnchor: null, pat: 'hrkp_secretpat', caller: 'agent' } as const;
+  /** 인용 줄 밖에 멘션 꼴(`@이름`)이 있나 — 있으면 부른 에이전트를 다시 깨워 핑퐁이 난다. */
+  const mentionOutsideQuote = (body: string) => body.split('\n').some((l) => !l.startsWith('>') && /@[\w-]/.test(l));
+
+  it('화면으로 끝을 알았고 화면 답이 있으면 ✅ 대신 대신 올린다 — 멘션은 인용 줄 안에만 있다', () => {
+    const n = silentTurnNotice({ ...base, screenEnded: true, screenAnswer: '@qa_manager 안녕하세요, 무엇을 도와드릴까요?' });
+    expect(n.kind).toBe('post');
+    const body = (n as { body: string }).body;
+    expect(body.startsWith('> @qa_manager 안녕하세요')).toBe(true);
+    expect(body).toContain('러너가 화면에서 옮겨 올렸습니다');
+    expect(mentionOutsideQuote(body)).toBe(false);
+  });
+
+  it('화면으로 끝을 알았는데 화면 답이 없거나 가림에 걸리면 보통 글 한 줄 — 스레드가 「끝남」으로 그려지고, 다시 부를지는 사람에게 둔다', () => {
+    for (const screenAnswer of [null, '   ']) {
+      expect(silentTurnNotice({ ...base, screenEnded: true, screenAnswer })).toEqual({ kind: 'post', body: AGENT_CALL_NO_ANSWER });
+    }
+    const secret = 'S3CRET-VALUE-0123456789';
+    const n = silentTurnNotice({ ...base, screenEnded: true, screenAnswer: `값 ${secret.slice(0, 14)}`, secrets: [secret] });
+    expect(n).toEqual({ kind: 'post', body: AGENT_CALL_NO_ANSWER });
+    // 머리 주인 에이전트가 한 번 깨어나므로 다시 부르라고 권하지 않는다 — 그 결정은 사람에게 있다고 적는다.
+    expect(AGENT_CALL_NO_ANSWER).not.toMatch(/다시 부르면/);
+    expect(AGENT_CALL_NO_ANSWER).toContain('다시 부를지는 사람이 정합니다');
+    expect(mentionOutsideQuote(AGENT_CALL_NO_ANSWER)).toBe(false);
+  });
+
+  it('기록으로 끝을 아는 턴(FYI)은 ✅ 그대로다 — 10-01 의 FYI 카드 더미로 돌아가지 않는다', () => {
+    expect(silentTurnNotice({ ...base, screenEnded: false, screenAnswer: '답' })).toEqual({ kind: 'react', emoji: '✅' });
+    expect(silentTurnNotice({ ...base })).toEqual({ kind: 'react', emoji: '✅' });
   });
 });

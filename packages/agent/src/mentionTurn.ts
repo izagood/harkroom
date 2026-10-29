@@ -1697,6 +1697,8 @@ export async function runMentionTurn(
     screenTail: string;
     /** 화면으로 끝을 읽은 턴에서 입력창 위에 남은 답 줄(`screenAnswerLines`). 기록의 마지막 말을 못 읽을 때 대신 싣는다. */
     screenSaid: string | null;
+    /** 이 턴의 끝을 화면(`idleWatch`)으로 알았다. 에이전트 호출의 침묵 통지가 ✅ 대신 글을 남길지 가른다(`silentTurnNotice`). */
+    screenEnded: boolean;
     /** 정지 직전 Enter 를 이미 한 번 쳤다 — 한 턴에 한 번만 친다(되풀이하면 정지가 영영 안 선다). */
     unsentNudged: boolean;
     /**
@@ -1754,7 +1756,7 @@ export async function runMentionTurn(
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     apiError: null, recordedApiError: null, canceledBy: null, fencedOut: false, stalled: false, awaitingHuman: false, gateNoticed: false,
-    lastLifeMs: 0, lastDataAtMs: 0, opencodeAskedAtMs: 0, screenTail: '', screenSaid: null, unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, backgroundSinceMs: null, backgroundCut: null, reclaimGraceMs: 0, tail: null,
+    lastLifeMs: 0, lastDataAtMs: 0, opencodeAskedAtMs: 0, screenTail: '', screenSaid: null, screenEnded: false, unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, backgroundSinceMs: null, backgroundCut: null, reclaimGraceMs: 0, tail: null,
     threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, macSeen: new Set(), macNotices: 0, mcpRejectedSeen: new Set(),
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
     gateHeld: null, gateRequeue: null, cancelGateWatch: null,
@@ -2348,6 +2350,7 @@ export async function runMentionTurn(
           end.finished = true;
           end.pending = 0;
           end.screenSaid = screenAnswerLines(idleWatch.text(), idleFacts!, idleWatch.busyText()).join(' ') || null;
+          end.screenEnded = true;
           console.log(`[mentionTurn] ${key}: 화면이 차례 끝을 말한다(입력창·일하는 중 표지 없음 ${SCREEN_IDLE_END_MS}ms)`);
         }
         if (end.exited) return;
@@ -2954,6 +2957,7 @@ export async function runMentionTurn(
         pat: deps.runnerSecret, secrets: await tailSecrets(),
         // 기록이 말해 주지 않을 때만 화면 답을 대신 올린다 — 기록을 읽는 하네스(claude)의 마지막 말은 지금처럼 인용만 한다.
         screenAnswer: recordSaid === null ? end.screenSaid : null,
+        screenEnded: recordSaid === null && end.screenEnded,
       });
       if (notice.kind === 'react') {
         // 에이전트가 부른 FYI — 글 없이 멘션에 ✅ 만 단다(`silentTurnNotice` 주석). 마지막 말은 로그에만.
