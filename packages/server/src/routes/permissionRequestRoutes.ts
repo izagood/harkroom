@@ -10,6 +10,7 @@ import { readLease } from '../services/mergeGrants.js';
 import { decide } from '../services/decisions.js';
 import { commandGrantsFor, matchCommandGrant, toolAllowsFor, toolReachFor } from '../services/permissionRequests.js';
 import { mayDecideFor } from '../services/deciders.js';
+import { assertChannelVisible } from '../services/channels.js';
 
 const params = z.object({ id: z.string().uuid(), requestId: z.string().uuid(), decision: z.enum(['approve', 'deny', 'approve-once', 'approve_once', 'approve_hour']) });
 /** [이번 한 번 머지](스레드 1b75d7a0) — 받는 것은 gh 계정·CI 완화 둘뿐. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
@@ -57,9 +58,11 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
     const v = await mayDecideFor(pool, { agentId: q.data.id, actorId: req.account!.id, channelId: q.data.channelId });
     // 버튼을 누를 수 있는 것은 사람 세션뿐이다 — PAT·에이전트는 언제나 정할 수 없다고 답한다.
     const session = req.account!.kind === 'human' && req.authVia === 'session';
+    // security n6: 볼 수 없는 채널을 넣으면 소유자 id·범위·스위치 상태를 주지 않는다(정할 수 없다는 답만).
+    const hidden = !v.ok && !(await assertChannelVisible(pool, q.data.channelId, req.account!.id));
     return {
       viewerCanDecide: session && v.ok, asOwner: session && v.ok && v.asOwner,
-      decideScope: v.decideScope, ownerAccountId: v.ownerAccountId,
+      decideScope: hidden ? null : v.decideScope, ownerAccountId: hidden ? null : v.ownerAccountId,
     };
   });
 

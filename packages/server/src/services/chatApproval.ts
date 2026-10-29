@@ -422,11 +422,8 @@ async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Ca
   }
   const ref = { kind: 'permission' as const, agentId: c.agentId, requestId: c.requestId, cardMessageId: c.cardMessageId };
   const input = { via: 'chat' as const, chat: { messageId: message.id, target }, ...(once ? { once } : {}) };
-  let out = await decide(pool, ref, actorId, { option, ...input });
-  // 이 스레드에 위임을 세울 수 없으면(남의 위임 등) 전처럼 7일 승인만 한다.
-  if (option === 'approve_new_mandate' && out.kind === 'permission' && !out.ok && out.code === 'mandate_unavailable') {
-    out = await decide(pool, ref, actorId, { option: 'approve', ...input });
-  }
+  // 이 스레드에 위임을 세울 수 없으면(남의 위임 등) `decide` 가 7일 승인으로 한 번 더 한다(버튼과 같은 길).
+  const out = await decide(pool, ref, actorId, { option, ...input });
   if (out.kind !== 'permission') return { c, ok: false, why: 'failed' };
   if (!out.ok) return { c, ok: false, why: REFUSAL_BY_CODE[out.code] ?? 'failed' };
   const d = out.result;
