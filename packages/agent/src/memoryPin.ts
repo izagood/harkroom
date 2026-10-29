@@ -196,6 +196,38 @@ function entryLine(slug: string, descriptions: Record<string, string> | undefine
 }
 
 /**
+ * 목록을 이름마다 싣는 상한(#4). 넘으면 분야(`mem/<분야>/…` 의 첫 마디)별 개수와 목차 포인터만 싣는다 — 이름·요약 전체는
+ * 항목 수에 비례해 자라 세션 첫 턴에 18~28k자가 됐다(일반 턴 프롬프트보다 컸다). 찾는 길은 `memory.search`·recall 이 맡는다.
+ */
+export const MEMORY_INDEX_FULL_MAX = 60;
+
+/** 분야 = `mem/` 다음 마디. 접두 없는 이름(`mem/x`)은 한 칸으로 모은다. */
+function areaOf(slug: string): string | null {
+  const parts = slug.split('/');
+  return parts.length >= 3 ? parts[1]! : null;
+}
+
+/** 분야별 개수 줄(많은 것부터, 같으면 이름순). 목차가 있으면 그것을 먼저 읽게 하고, 없으면 ③ 의 기억 사용법과 같은 말로 없다고 한다. */
+function areaLines(slugs: string[]): string[] {
+  const counts = new Map<string, number>();
+  let bare = 0;
+  for (const s of slugs) {
+    const a = areaOf(s);
+    if (a === null) bare += 1;
+    else counts.set(a, (counts.get(a) ?? 0) + 1);
+  }
+  const areas = [...counts].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]));
+  return [
+    `저장된 기억 ${slugs.length}개 — 많아서 이름 대신 분야별 개수만 싣는다. \`memory.search\`(낱말)·\`memory.list\` 로 찾고 \`memory.get\` 으로 읽는다:`,
+    ...areas.map(([a, n]) => `- ${escapeForPrompt(a)}/ ${n}개`),
+    ...(bare ? [`- (분야 접두 없음) ${bare}개`] : []),
+    slugs.includes('mem/map')
+      ? '분야 목차는 `mem/map` 이다 — 어디에 무엇이 있는지 모르겠으면 먼저 그것을 읽는다.'
+      : '분야 목차(`mem/map`)는 아직 없다.',
+  ];
+}
+
+/**
  * 목록(F3·C2). 정리 신호는 **머리**에 — 목록이 길면 끝 줄은 묻힌다. 개수 줄은 늘 끝에 둔다: 서버 상한은
  * 보관하지 않은 core·journal 까지 센 행 수다.
  */
@@ -207,8 +239,10 @@ function indexLines(
   return [
     '<memory-index>',
     ...signals, ...(signals.length ? [''] : []),
-    '저장된 기억(본문은 필요할 때 `memory.get` 으로 가져온다 — 이름만으로 짐작되지 않으면 열어 본다):',
-    ...slugs.map((s) => entryLine(s, descriptions)),
+    ...(slugs.length > MEMORY_INDEX_FULL_MAX ? areaLines(slugs) : [
+      '저장된 기억(본문은 필요할 때 `memory.get` 으로 가져온다 — 이름만으로 짐작되지 않으면 열어 본다):',
+      ...slugs.map((s) => entryLine(s, descriptions)),
+    ]),
     ...(journalCount ? [`(작업 경위 기록 journal ${journalCount}개는 목록에 싣지 않는다 — \`memory.search\` 로 찾는다.)`] : []),
     ...(stateCount ? [`(한 스레드의 진행 상태로 보이는 기억 ${stateCount}개는 목록에 싣지 않는다 — 진행 상태는 \`thread.note\` 자리다. 필요하면 \`memory.search\` 로 찾는다.)`] : []),
     `(기억 ${total}/${MAX_MEMORY_ITEMS_PER_ACCOUNT}개 — core·journal 포함, 보관한 것은 빼고)`,

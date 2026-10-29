@@ -803,7 +803,7 @@ function memorySection(memory: MemoryContext, readOnly = false): string[] {
  * 넣고 빼면 그것만으로 시스템 프롬프트가 바뀐다.
  */
 export const MEMORY_INDEX_LINES: readonly string[] = [
-  '`mem/*` 기억의 목록은 턴 프롬프트 맨 앞의 `<memory-index>` 에 실린다(세션 첫 턴에 전체,',
+  '`mem/*` 기억의 목록은 턴 프롬프트 맨 앞의 `<memory-index>` 에 실린다(세션 첫 턴에 전체 — 많으면 분야별 개수만,',
   '그 뒤로는 바뀐 것만 `<memory-update>` 로). 이 세션에서 알게 된 가장 최근 것이 지금 값이다.',
   '본문은 필요할 때 `memory.get` 으로 가져온다 — 이름만으로 짐작되지 않으면 열어 본다.',
 ];
