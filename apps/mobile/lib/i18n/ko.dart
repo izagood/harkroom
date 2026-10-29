@@ -610,6 +610,104 @@ class StringsKo implements Strings {
   String get newDmFilter => '이름으로 찾기';
   @override
   String get newDmNoMatch => '맞는 사람이 없다.';
+
+  // ── 채널 만들기·정보 ──
+  @override
+  String get chNew => '새 채널';
+  @override
+  String get chCreate => '만들기';
+  @override
+  String get chNameLabel => '이름';
+  @override
+  String get chNameRule => '영문 소문자·숫자·-·_ 만, 48자까지. 대문자·띄어쓰기는 자동으로 바꾼다.';
+  @override
+  String get chNameTaken => '이미 있는 이름이다. 보관된 채널일 수도 있다.';
+  @override
+  String get chNameBadChars => '쓸 수 없는 글자가 있다. 영문 소문자·숫자·-·_ 로 바꿔 달라.';
+  @override
+  String get chNameTooLong => '48자까지 쓸 수 있다.';
+  @override
+  String get chVisibilityDesktopOnly => '데스크톱에서 바꾼다';
+  @override
+  String get chVisibility => '공개 범위';
+  @override
+  String get chPublic => '공개';
+  @override
+  String get chPrivate => '비공개';
+  @override
+  String get chPrivateHint => '초대받은 멤버만 보고 찾을 수 있다.';
+  @override
+  String get chTopicOptional => '주제(선택)';
+  @override
+  String get chTopic => '주제';
+  @override
+  String get chInitialMembers => '처음 멤버';
+  @override
+  String get chAddMember => '멤버 추가';
+  @override
+  String chRemoveChip(String name) => '$name 빼기';
+  @override
+  String get chCreateFailed => '채널을 만들지 못했다.';
+  @override
+  String chMembersPartial(String n) => '$n명을 넣지 못했다 — 채널 정보에서 다시';
+  @override
+  String get chPickPeople => '사람';
+  @override
+  String get chPickAgents => '에이전트';
+  @override
+  String chPickDone(String n) => '완료($n)';
+  @override
+  String get chPickFilter => '이름·핸들로 찾기';
+  @override
+  String get chPickNoMatch => '맞는 계정이 없다.';
+  @override
+  String get chInfo => '채널 정보';
+  @override
+  String get chEdit => '편집';
+  @override
+  String get chSave => '저장';
+  @override
+  String get chEditTitle => '채널 편집';
+  @override
+  String get chNoTopic => '주제 없음';
+  @override
+  String get chArchived => '보관됨';
+  @override
+  String get chRepo => '저장소';
+  @override
+  String chMembersCount(String n) => '멤버 $n';
+  @override
+  String get chMembersLoadFailed => '멤버를 불러오지 못했다.';
+  @override
+  String get chRetry => '다시 시도';
+  @override
+  String get chArchive => '보관';
+  @override
+  String get chUnarchive => '보관 해제';
+  @override
+  String get chArchiveConfirm => '이 채널을 보관할까? 읽기 전용이 된다.';
+  @override
+  String get chUnarchiveConfirm => '이 채널의 보관을 풀까?';
+  @override
+  String get chLeave => '채널 나가기';
+  @override
+  String get chLeaveConfirm => '이 채널에서 나갈까?';
+  @override
+  String get chLeaveLast => '마지막 멤버다. 나가면 admin 만 이 채널을 목록에서 볼 수 있다. 채널 자체는 남는다.';
+  @override
+  String get chLeaveAnyway => '그래도 나가기';
+  @override
+  String get chCancel => '취소';
+  @override
+  String get chRemoveMember => '내보내기';
+  @override
+  String chRemoveMemberConfirm(String name) => '$name — 이 채널에서 내보낼까?';
+  @override
+  String get chActionFailed => '하지 못했다. 다시 해 달라.';
+  @override
+  String get chGone => '채널이 삭제·보관됐거나 더는 볼 수 없다.';
+  @override
+  String get chAgentBadge => '에이전트';
   @override
   String get newMessageDmFailed => 'DM 을 열지 못했다.';
   @override

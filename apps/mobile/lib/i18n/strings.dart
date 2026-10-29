@@ -606,6 +606,56 @@ abstract class Strings {
   /// 거르기에 맞는 사람이 없다.
   String get newDmNoMatch;
 
+  // ── 채널 만들기·정보(새 채널 화면·채널 정보 화면) ──
+  String get chNew;
+  String get chCreate;
+  String get chNameLabel;
+  String get chNameRule;
+  String get chNameTaken;
+  String get chNameBadChars;
+  String get chNameTooLong;
+  String get chVisibilityDesktopOnly;
+  String get chVisibility;
+  String get chPublic;
+  String get chPrivate;
+  String get chPrivateHint;
+  String get chTopicOptional;
+  String get chTopic;
+  String get chInitialMembers;
+  String get chAddMember;
+  String chRemoveChip(String name);
+  String get chCreateFailed;
+  String chMembersPartial(String n);
+  String get chPickPeople;
+  String get chPickAgents;
+  String chPickDone(String n);
+  String get chPickFilter;
+  String get chPickNoMatch;
+  String get chInfo;
+  String get chEdit;
+  String get chSave;
+  String get chEditTitle;
+  String get chNoTopic;
+  String get chArchived;
+  String get chRepo;
+  String chMembersCount(String n);
+  String get chMembersLoadFailed;
+  String get chRetry;
+  String get chArchive;
+  String get chUnarchive;
+  String get chArchiveConfirm;
+  String get chUnarchiveConfirm;
+  String get chLeave;
+  String get chLeaveConfirm;
+  String get chLeaveLast;
+  String get chLeaveAnyway;
+  String get chCancel;
+  String get chRemoveMember;
+  String chRemoveMemberConfirm(String name);
+  String get chActionFailed;
+  String get chGone;
+  String get chAgentBadge;
+
   /// DM 을 열지 못했을 때.
   String get newMessageDmFailed;
 
@@ -1736,4 +1786,52 @@ Map<String, String> stringsToMap(Strings s) => {
       'searchSortRelevanceHint': s.searchSortRelevanceHint,
       'searchSortRecent': s.searchSortRecent,
       'searchSortRecentHint': s.searchSortRecentHint,
+      'chNew': s.chNew,
+      'chCreate': s.chCreate,
+      'chNameLabel': s.chNameLabel,
+      'chNameRule': s.chNameRule,
+      'chNameTaken': s.chNameTaken,
+      'chNameBadChars': s.chNameBadChars,
+      'chNameTooLong': s.chNameTooLong,
+      'chVisibilityDesktopOnly': s.chVisibilityDesktopOnly,
+      'chVisibility': s.chVisibility,
+      'chPublic': s.chPublic,
+      'chPrivate': s.chPrivate,
+      'chPrivateHint': s.chPrivateHint,
+      'chTopicOptional': s.chTopicOptional,
+      'chTopic': s.chTopic,
+      'chInitialMembers': s.chInitialMembers,
+      'chAddMember': s.chAddMember,
+      'chRemoveChip': s.chRemoveChip('{name}'),
+      'chCreateFailed': s.chCreateFailed,
+      'chMembersPartial': s.chMembersPartial('{n}'),
+      'chPickPeople': s.chPickPeople,
+      'chPickAgents': s.chPickAgents,
+      'chPickDone': s.chPickDone('{n}'),
+      'chPickFilter': s.chPickFilter,
+      'chPickNoMatch': s.chPickNoMatch,
+      'chInfo': s.chInfo,
+      'chEdit': s.chEdit,
+      'chSave': s.chSave,
+      'chEditTitle': s.chEditTitle,
+      'chNoTopic': s.chNoTopic,
+      'chArchived': s.chArchived,
+      'chRepo': s.chRepo,
+      'chMembersCount': s.chMembersCount('{n}'),
+      'chMembersLoadFailed': s.chMembersLoadFailed,
+      'chRetry': s.chRetry,
+      'chArchive': s.chArchive,
+      'chUnarchive': s.chUnarchive,
+      'chArchiveConfirm': s.chArchiveConfirm,
+      'chUnarchiveConfirm': s.chUnarchiveConfirm,
+      'chLeave': s.chLeave,
+      'chLeaveConfirm': s.chLeaveConfirm,
+      'chLeaveLast': s.chLeaveLast,
+      'chLeaveAnyway': s.chLeaveAnyway,
+      'chCancel': s.chCancel,
+      'chRemoveMember': s.chRemoveMember,
+      'chRemoveMemberConfirm': s.chRemoveMemberConfirm('{name}'),
+      'chActionFailed': s.chActionFailed,
+      'chGone': s.chGone,
+      'chAgentBadge': s.chAgentBadge,
     };

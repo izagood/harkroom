@@ -611,6 +611,104 @@ class StringsEn implements Strings {
   String get newDmFilter => 'Search people';
   @override
   String get newDmNoMatch => 'No one matches.';
+
+  // ── 채널 만들기·정보 ──
+  @override
+  String get chNew => 'New channel';
+  @override
+  String get chCreate => 'Create';
+  @override
+  String get chNameLabel => 'Name';
+  @override
+  String get chNameRule => 'Lowercase letters, numbers, - and _ only, up to 48. Capitals and spaces are converted as you type.';
+  @override
+  String get chNameTaken => 'This name is already taken. It may be an archived channel.';
+  @override
+  String get chNameBadChars => 'Some characters cannot be used. Use lowercase letters, numbers, - or _.';
+  @override
+  String get chNameTooLong => 'Up to 48 characters.';
+  @override
+  String get chVisibilityDesktopOnly => 'Change it on desktop';
+  @override
+  String get chVisibility => 'Visibility';
+  @override
+  String get chPublic => 'Public';
+  @override
+  String get chPrivate => 'Private';
+  @override
+  String get chPrivateHint => 'Only invited members can see and find it.';
+  @override
+  String get chTopicOptional => 'Topic (optional)';
+  @override
+  String get chTopic => 'Topic';
+  @override
+  String get chInitialMembers => 'Initial members';
+  @override
+  String get chAddMember => 'Add members';
+  @override
+  String chRemoveChip(String name) => 'Remove $name';
+  @override
+  String get chCreateFailed => 'Couldn\'t create the channel.';
+  @override
+  String chMembersPartial(String n) => 'Couldn\'t add $n — try again from channel info.';
+  @override
+  String get chPickPeople => 'People';
+  @override
+  String get chPickAgents => 'Agents';
+  @override
+  String chPickDone(String n) => 'Done ($n)';
+  @override
+  String get chPickFilter => 'Search by name';
+  @override
+  String get chPickNoMatch => 'No one matches.';
+  @override
+  String get chInfo => 'Channel info';
+  @override
+  String get chEdit => 'Edit';
+  @override
+  String get chSave => 'Save';
+  @override
+  String get chEditTitle => 'Edit channel';
+  @override
+  String get chNoTopic => 'No topic';
+  @override
+  String get chArchived => 'Archived';
+  @override
+  String get chRepo => 'Repository';
+  @override
+  String chMembersCount(String n) => 'Members $n';
+  @override
+  String get chMembersLoadFailed => 'Couldn\'t load members.';
+  @override
+  String get chRetry => 'Retry';
+  @override
+  String get chArchive => 'Archive channel';
+  @override
+  String get chUnarchive => 'Unarchive channel';
+  @override
+  String get chArchiveConfirm => 'Archive this channel? It becomes read-only.';
+  @override
+  String get chUnarchiveConfirm => 'Unarchive this channel?';
+  @override
+  String get chLeave => 'Leave channel';
+  @override
+  String get chLeaveConfirm => 'Leave this channel?';
+  @override
+  String get chLeaveLast => 'You\'re the last member. If you leave, only admins will see it in the list. The channel itself stays.';
+  @override
+  String get chLeaveAnyway => 'Leave anyway';
+  @override
+  String get chCancel => 'Cancel';
+  @override
+  String get chRemoveMember => 'Remove from channel';
+  @override
+  String chRemoveMemberConfirm(String name) => 'Remove $name from this channel?';
+  @override
+  String get chActionFailed => 'That didn\'t work. Try again.';
+  @override
+  String get chGone => 'This channel was deleted, archived, or you no longer have access.';
+  @override
+  String get chAgentBadge => 'Agent';
   @override
   String get newMessageDmFailed => "Couldn't open the DM.";
   @override

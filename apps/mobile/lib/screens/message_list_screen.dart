@@ -10,6 +10,7 @@ import '../state/app_state.dart';
 import '../ui/parts.dart';
 import '../ui/states.dart';
 import '../ui/tokens.dart';
+import 'channel_manage.dart';
 import 'agent_model.dart';
 import 'agent_rows.dart';
 import 'ask_bundle_card.dart';
@@ -156,7 +157,10 @@ class _MessageListScreenState extends State<MessageListScreen> {
       extendBodyBehindAppBar: true,
       // 개정판 3.3: 왼쪽 정렬 "# task" + 부제(주제). 주제가 없으면 한 줄.
       appBar: GlassAppBar(bar: AppBar(
-        title: ScreenTitle(title: label, subtitle: channel?.topic),
+        // 채널이면 제목 옆 ⌄ — 누르면 채널 정보(designer c2). DM 은 ⌄ 도 탭도 없다.
+        title: channel != null && !channel.isDm
+            ? ChannelTitleButton(channel: channel)
+            : ScreenTitle(title: label, subtitle: channel?.topic),
         // 머리 돋보기 → **이 채널** 범위로 연다(데스크톱 채널 머리 버튼과 같은 물음).
         actions: [
           SearchButton(key: const Key('channel-search'), scope: SearchScope.channel, channelId: widget.channelId),
