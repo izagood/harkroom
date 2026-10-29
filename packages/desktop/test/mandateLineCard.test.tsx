@@ -173,7 +173,7 @@ describe('W4 mandate line card', () => {
   it('unknown owner: read-only line waits for "the owner", not a someone placeholder', () => {
     useActiveStore.getState().set({ me: acc('other', 'carol') });
     render(<AskCard message={card({ pr: { ownerAccountId: 'ghost' } })} />);
-    expect(screen.getByTestId('mandate-owner-only').textContent).toBe('소유자의 결정을 기다린다');
+    expect(screen.getByTestId('mandate-owner-only').textContent).toBe('이 에이전트를 부를 수 있는 사람이 정한다');
   });
   it.each([
     ['denied', { pr: { status: 'denied' } }],
@@ -405,5 +405,83 @@ describe('permission mirror owner + in-app links', () => {
     link.dispatchEvent(ev);
     expect(ev.defaultPrevented).toBe(true);
     expect(openMessage).toHaveBeenCalledWith(ROOT);
+  });
+});
+
+describe('P3 decide-check: people who can call the agent decide too (designer v2 ②·③)', () => {
+  const MERGE_ONCE = { number: 135, headSha: 'fcd39b6aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', reason: 'no_mandate_line', repo: 'example-org/app', denialId: 'd1' };
+  function useServer(check: Record<string, unknown> | 'fail', extra: Record<string, unknown> = {}) {
+    useActiveStore.getState().set({ me: acc('other', 'carol'), serverVersion: { version: '0.4.315' } as never });
+    const decideCheck = vi.fn(async () => { if (check === 'fail') throw new Error('boom'); return check; });
+    setController({ answerAsk, closeAsk: vi.fn(), api: { decideCheck }, ...extra } as unknown as Controller);
+    return decideCheck;
+  }
+  const newCard = () => card({ options: ['approve_new_mandate', 'deny'], pr: { mandate: undefined, line: { cap: 'tool', scope: 'x', limits: { approve_new_mandate: { untilMs: 1 } } } } });
+
+  it('viewerCanDecide → a non-owner gets the buttons and the 「네가 정할 수 있다」 tail, but no chip', async () => {
+    const decideCheck = useServer({ viewerCanDecide: true, asOwner: false, decideScope: 'community', ownerAccountId: ME });
+    render(<AskCard message={newCard()} />);
+    await screen.findByTestId('ask-option-approve_new_mandate');
+    expect(decideCheck).toHaveBeenCalledWith('agent-1', 'c1');
+    expect(screen.getByText('위임장을 만들고 줄을 더할까? · 네가 정할 수 있다')).toBeTruthy();
+    expect(screen.queryByTestId('mandate-owner-only')).toBeNull();
+    expect(screen.queryByTestId('mandate-chip')).toBeNull();
+    fireEvent.click(screen.getByTestId('ask-option-approve_new_mandate'));
+    expect(answerAsk).toHaveBeenCalledWith('m1', 'approve_new_mandate', 'c1');
+  });
+  it('cannot decide → no buttons, no tail, scope line names who decides', async () => {
+    useServer({ viewerCanDecide: false, asOwner: false, decideScope: 'list', ownerAccountId: ME });
+    render(<AskCard message={newCard()} />);
+    await waitFor(() => expect(screen.getByTestId('mandate-owner-only').textContent).toBe('@alice 또는 명단의 사람이 정한다'));
+    expect(screen.getByText('위임장을 만들고 줄을 더할까?')).toBeTruthy();
+    expect(screen.queryByTestId('ask-option-approve_new_mandate')).toBeNull();
+  });
+  it.each([
+    ['owner', '@alice 가 정한다'], ['channel', '@alice 또는 이 채널의 멤버가 정한다'],
+    ['community', '@alice 또는 이 에이전트를 부를 수 있는 사람이 정한다'], ['switchOff', '@alice 만 정한다'],
+  ])('scope %s line', async (scope, text) => {
+    useServer({ viewerCanDecide: false, asOwner: false, decideScope: scope, ownerAccountId: ME });
+    render(<AskCard message={newCard()} />);
+    await waitFor(() => expect(screen.getByTestId('mandate-owner-only').textContent).toBe(text));
+  });
+  it('check failed or server older than 0.4.315 → owner-only as before', async () => {
+    const decideCheck = useServer('fail');
+    render(<AskCard message={newCard()} />);
+    await waitFor(() => expect(decideCheck).toHaveBeenCalled());
+    expect(screen.getByTestId('mandate-owner-only').textContent).toBe('소유자 alice의 결정을 기다린다');
+    cleanup();
+    useActiveStore.getState().set({ serverVersion: { version: '0.4.314' } as never });
+    decideCheck.mockClear();
+    render(<AskCard message={newCard()} />);
+    expect(decideCheck).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('ask-option-approve_new_mandate')).toBeNull();
+  });
+  it('merge-refusal card: a decider gets [이번 한 번] but never [계정 바꾸기]', async () => {
+    const approvePermissionOnce = vi.fn(async () => ({ approvalExpiresAt: '2026-10-31T00:00:00Z' }));
+    useServer({ viewerCanDecide: true, asOwner: false, decideScope: 'community', ownerAccountId: ME }, { approvePermissionOnce, getMergeAccounts: vi.fn(async () => ({ operatorId: null, report: null })) });
+    render(<AskCard message={card({ options: ['approve_new_mandate', 'deny'], pr: { kind: 'merge', target: 'repo:example-org/app', mandate: undefined, once: MERGE_ONCE, line: { cap: 'merge', scope: 'repo:example-org/app', limits: { approve_new_mandate: { untilMs: 1 }, approve_once: { pr: 135, head: 'fcd39b6', uses: 1 } } } } })} />);
+    const once = await screen.findByTestId('ask-option-approve_once');
+    expect(screen.queryByTestId('merge-once-change-account')).toBeNull();
+    fireEvent.click(once);
+    await waitFor(() => expect(approvePermissionOnce).toHaveBeenCalled());
+    expect((approvePermissionOnce.mock.calls[0] as unknown[])[2]).not.toHaveProperty('ghUser');
+  });
+  it('a refused answer is not swallowed: mandate_unavailable shows a reason under the card', async () => {
+    useActiveStore.getState().set({ me: acc(ME, 'alice') });
+    answerAsk = vi.fn(async () => ({ status: 409, code: 'mandate_unavailable', message: 'x' }));
+    setController({ answerAsk, closeAsk: vi.fn() } as unknown as Controller);
+    render(<AskCard message={newCard()} />);
+    fireEvent.click(screen.getByTestId('ask-option-approve_new_mandate'));
+    expect((await screen.findByTestId('mandate-answer-error')).textContent).toContain('이 스레드에서는 위임장을 만들 수 없다');
+  });
+  it('a lost race (already answered) adds no error line', async () => {
+    useActiveStore.getState().set({ me: acc(ME, 'alice') });
+    answerAsk = vi.fn(async () => ({ status: 409, code: 'already_answered', message: 'x' }));
+    setController({ answerAsk, closeAsk: vi.fn() } as unknown as Controller);
+    render(<AskCard message={newCard()} />);
+    fireEvent.click(screen.getByTestId('ask-option-approve_new_mandate'));
+    await waitFor(() => expect(answerAsk).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(screen.queryByTestId('mandate-answer-error')).toBeNull();
   });
 });

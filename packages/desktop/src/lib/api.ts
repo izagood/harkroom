@@ -84,6 +84,10 @@ export interface SecretRevealView {
   value?: string; valueBase64?: string;
 }
 
+/** `GET /agents/:id/decide-check` 응답(P1 #1662). 스위치가 꺼졌으면 범위와 관계없이 `switchOff`. */
+export type DecideScope = 'owner' | 'list' | 'channel' | 'community' | 'switchOff';
+export type DecideCheck = { viewerCanDecide: boolean; asOwner: boolean; decideScope: DecideScope | null; ownerAccountId: string | null };
+
 export class ApiError extends Error {
   /**
    * 서버가 오류와 **함께 보낸 것**. 응답 본문을 그대로 들고 온다.
@@ -1017,6 +1021,13 @@ export class ApiClient {
    * 에이전트의 머지 계정 보고(D1, #1472) — 한 번 머지 카드의 [계정 바꾸기]가 다른 기기에서 도는 에이전트의 계정을 고를 때 쓴다.
    * 소유자 사람 세션만. `logins` 는 그 기기 주인에게만 온다.
    */
+  /**
+   * 이 사람이 그 채널에서 이 에이전트의 권한 카드를 정할 수 있나(P1 #1662, 서버 0.4.315~). 버튼을 그릴지는 이 값으로 정한다 —
+   * 판정은 누를 때 서버가 다시 한다. `decideScope` 는 「누가 정하나」 문구를 고르는 값이다.
+   */
+  decideCheck(agentId: string, channelId: string): Promise<DecideCheck> {
+    return this.req('GET', `/agents/${encodeURIComponent(agentId)}/decide-check?channelId=${encodeURIComponent(channelId)}`);
+  }
   getMergeAccounts(agentId: string): Promise<import('@harkroom/shared/operatorProtocol').MergeAccountsView> {
     return this.req('GET', `/agents/${encodeURIComponent(agentId)}/merge-accounts`);
   }

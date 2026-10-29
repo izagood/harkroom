@@ -4,6 +4,7 @@
   "DELETE /invites/:p": "0.4.276",
   "DELETE /mandates/:p/lines/:p": "0.4.200",
   "GET /accounts/login-ids": "0.4.184",
+  "GET /agents/:p/decide-check": "0.4.315",
   "GET /agents/:p/merge-accounts": "0.4.170",
   "GET /auth/password-reset-notices": "0.4.122",
   "GET /invites": "0.4.276",

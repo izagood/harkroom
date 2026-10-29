@@ -2081,18 +2081,23 @@ export class Controller {
    * 실패를 삼킨다: 답이 이미 있는 것은 오류가 아니라 경합의 정상 결과이고, 그 사실은
    * `message.updated` 이벤트로 곧 화면에 온다.
    */
-  async answerAsk(messageId: string, optionId: string, channelId?: string): Promise<void> {
+  async answerAsk(messageId: string, optionId: string, channelId?: string): Promise<{ status: number; code: string; message: string } | null> {
     const state = this.store.getState();
     const target = channelId
       ?? Object.values(state.messages).flat().find((m) => m.id === messageId)?.channelId
       ?? state.activeChannelId;
-    if (!target) return;
+    if (!target) return null;
     try {
       const m = await this.api.answerAsk(target, messageId, optionId);
       this.store.getState().upsertMessages(target, [m]);
+      return null;
     } catch (e) {
       // 진 경합·권한 없음 — 서버가 참이다. 이미 정해졌으면(409) 그 카드를 다시 받아 맞춘다.
       await this.resyncAfterConflict(e, messageId);
+      // 거절 이유는 삼키지 않고 돌려준다 — 카드가 열린 채 남는 409(`mandate_unavailable` 등)에 화면이 이유를 적는다.
+      // 이유를 쓰지 않는 자리(옛 선택 카드)는 이 값을 버린다.
+      if (e instanceof ApiError) return { status: e.status, code: e.code, message: e.message };
+      return { status: 0, code: 'failed', message: e instanceof Error ? e.message : String(e) };
     }
   }
 

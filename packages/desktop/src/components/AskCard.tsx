@@ -8,6 +8,7 @@ import type { Translate } from '../i18n';
 import { MandateLineBody, readCardSource } from './MandateLineBody';
 import { messageLinkFromMeta } from '../lib/link';
 import { CardMessageLink } from './CardMessageLink';
+import { useDecideCheck } from './useDecideCheck';
 import type { SectionId } from './settings/sections';
 
 /**
@@ -51,6 +52,9 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
     return (hit.threadRootId ?? hit.id) === root ? hit.body : null;
   });
   const [pickAnyway, setPickAnyway] = useState(false);
+  // P3 ②: 원본 권한 카드면 이 사람이 정할 수 있는지 묻는다(거울은 소유자만 — `MandateLineBody` 와 같다).
+  const reqMeta = message.meta?.permissionRequest as { agentId?: unknown } | undefined;
+  const decide = useDecideCheck(!message.meta?.permissionMirror && typeof reqMeta?.agentId === 'string' ? reqMeta.agentId : null, message.channelId);
   if (!ask) return null;
   // W4: 위임장 줄 카드(또는 권한 카드 거울)는 선택지 목록 대신 줄 상자와 버튼을 그린다.
   const lined = readCardSource(message.meta);
@@ -65,6 +69,13 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
   const lineHead = lined?.line && !ciOnce
     ? (() => {
       // r5(designer s1): 소유자 이름을 모르면 「· {owner} 차례」 꼬리 없이(모바일과 같다).
+      // designer 시안 v2 ②: 서버 값이 있으면 보는 사람마다 — 정할 수 있으면 「· 네가 정할 수 있다」, 없으면 꼬리 없음.
+      // 받기 전·옛 서버는 전처럼 「· {owner} 차례」(소유자면 버튼이 이미 서 있다).
+      if (decide) {
+        const mine = decide.viewerCanDecide || (!!lineHeadOwnerId && lineHeadOwnerId === myId);
+        if (lined.mandate) return mine ? t('mandateCard.headCanDecide') : t('mandateCard.headNoOwner');
+        return mine ? t('mandateCard.headNewCanDecide') : t('mandateCard.headNew');
+      }
       const owner = lineHeadOwnerId ? accounts[lineHeadOwnerId]?.handle ?? null : null;
       if (lined.mandate) return owner ? t('mandateCard.head', { owner }) : t('mandateCard.headNoOwner');
       return owner ? t('mandateCard.headNewOwner', { owner }) : t('mandateCard.headNew');
