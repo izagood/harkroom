@@ -437,8 +437,8 @@ describe('P3 decide-check: people who can call the agent decide too (designer v2
     expect(screen.queryByTestId('ask-option-approve_new_mandate')).toBeNull();
   });
   it.each([
-    ['owner', '@alice 가 정한다'], ['channel', '@alice 또는 이 채널의 멤버가 정한다'],
-    ['community', '@alice 또는 이 에이전트를 부를 수 있는 사람이 정한다'], ['switchOff', '@alice 만 정한다'],
+    ['owner', '소유자 @alice 이 정한다'], ['channel', '@alice 또는 이 채널 멤버가 정한다'],
+    ['community', '@alice 또는 이 커뮤니티 사람이 정한다'], ['switchOff', '소유자 @alice 이 정한다 · 사용자 승인이 꺼져 있다'],
   ])('scope %s line', async (scope, text) => {
     useServer({ viewerCanDecide: false, asOwner: false, decideScope: scope, ownerAccountId: ME });
     render(<AskCard message={newCard()} />);
