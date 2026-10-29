@@ -163,7 +163,7 @@ describe('mcp surface', () => {
     const listed = text(await client.callTool({ name: 'thread.note.list', arguments: { channelId } })) as {
       notes: { threadRootId: string; channelId: string; rootFirstLine: string; noteFirstLine: string; updatedAt: string }[];
     };
-    expect(listed.notes.find((n) => n.threadRootId === rootId)).toMatchObject({ channelId, rootFirstLine: 'note root', noteFirstLine: 'PR #1 CI 초록' });
+    expect(listed.notes.find((n) => n.threadRootId === rootId)).toMatchObject({ channelId, rootFirstLine: 'note root', noteFirstLine: 'PR #1 CI 초록', flagged: false });
     const otherClient2 = await mcpClient(other.pat);
     const theirList = text(await otherClient2.callTool({ name: 'thread.note.list', arguments: {} })) as { notes: { threadRootId: string }[] };
     expect(theirList.notes.some((n) => n.threadRootId === rootId)).toBe(false);
@@ -171,6 +171,11 @@ describe('mcp surface', () => {
     const del = text(await client.callTool({ name: 'thread.note', arguments: { threadRootId: rootId, body: null } })) as { ok: boolean; updatedAt: null };
     const afterDel = text(await client.callTool({ name: 'thread.note.list', arguments: { channelId } })) as { notes: { threadRootId: string }[] };
     expect(afterDel.notes.some((n) => n.threadRootId === rootId)).toBe(false);
+    // 쓰기 검사에 걸린 메모는 첫 줄을 싣지 않고 flagged 만 싣는다(러너가 싣지 않는 규칙과 같이).
+    await pool.query(`insert into thread_note (account_id, thread_root_id, body, flag_reason) select author_id, id, '숨길 첫 줄', 'test' from message where id = $1`, [rootId]);
+    const flaggedList = text(await client.callTool({ name: 'thread.note.list', arguments: { channelId } })) as { notes: { threadRootId: string; noteFirstLine: string; flagged: boolean }[] };
+    expect(flaggedList.notes.find((n) => n.threadRootId === rootId)).toMatchObject({ noteFirstLine: '', flagged: true });
+    expect(JSON.stringify(flaggedList)).not.toContain('숨길 첫 줄');
     expect(del).toMatchObject({ ok: true, updatedAt: null });
     await client.close();
   });

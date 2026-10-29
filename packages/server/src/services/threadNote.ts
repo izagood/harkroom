@@ -93,8 +93,10 @@ export interface ThreadNoteListItem {
   channelName: string | null;
   /** 스레드 루트 글 첫 줄(최대 80자) — 무슨 스레드인지 알아보는 제목. */
   rootFirstLine: string;
-  /** 메모 첫 줄(최대 120자). */
+  /** 메모 첫 줄(최대 120자). 쓰기 검사에 걸린 메모는 빈 문자열 — 러너가 싣지 않는 규칙을 목록이 옆길로 무르지 않게. */
   noteFirstLine: string;
+  /** 쓰기 검사(080)에 걸린 메모. `thread.note` 읽기의 `flagged` 와 같은 판정이다. */
+  flagged: boolean;
   updatedAt: Date;
 }
 
@@ -115,7 +117,7 @@ export async function listThreadNotes(
 ): Promise<ThreadNoteListItem[]> {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), THREAD_NOTE_LIST_MAX);
   const res = await pool.query(
-    `select n.thread_root_id, m.channel_id, c.name as channel_name, m.body as root_body, n.body, n.updated_at
+    `select n.thread_root_id, m.channel_id, c.name as channel_name, m.body as root_body, n.body, n.updated_at, n.flag_reason
        from thread_note n
        join message m on m.id = n.thread_root_id and m.deleted_at is null
        join channel c on c.id = m.channel_id
@@ -128,12 +130,14 @@ export async function listThreadNotes(
   );
   return (res.rows as {
     thread_root_id: string; channel_id: string; channel_name: string | null; root_body: string | null; body: string; updated_at: Date;
+    flag_reason: string | null;
   }[]).map((r) => ({
     threadRootId: r.thread_root_id,
     channelId: r.channel_id,
     channelName: r.channel_name,
     rootFirstLine: firstLine(r.root_body ?? '', 80),
-    noteFirstLine: firstLine(r.body, 120),
+    noteFirstLine: r.flag_reason ? '' : firstLine(r.body, 120),
+    flagged: r.flag_reason !== null,
     updatedAt: r.updated_at,
   }));
 }
