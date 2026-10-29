@@ -30,6 +30,7 @@ import { chmod, lstat, mkdir, open, readdir, readFile, readlink, rename, rm, sta
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { XdgApp } from './adapters/contract.js';
+import { LANE_REPLY_INSTRUCTIONS } from './laneReplyInstructions.js';
 
 /**
  * opencode 자신의 이름표. Kilo(포크)는 `adapters/kilo.ts` 의 `xdgApp` 을 넘긴다 — 모양은 같고
@@ -429,6 +430,9 @@ export function opencodeConfigLockPath(opencodeHome: string): string {
   return join(opencodeHome, '.config.lock');
 }
 
+/** lane 홈의 답 규칙 파일 이름(설정 `instructions` 가 가리킨다). */
+export const LANE_INSTRUCTIONS_FILE = 'harkroom-lane-instructions.md';
+
 type EnsureOpencodeHomeOpts = Parameters<typeof ensureOpencodeHomeUnlocked>[0] & { lockTimeoutMs?: number };
 
 /**
@@ -472,6 +476,11 @@ async function ensureOpencodeHomeUnlocked(opts: {
     // 홈 스위치(`PROVIDER_LANE_FIXED_ENV`)는 작업 폴더의 `.claude/skills`·`.agents/skills` 도 끈다 — 러너가 깐 스킬은 그 링크가 아니라
     // 원본 자리를 `skills.paths` 로 연다(1.18.32 실측: 스위치를 켠 채로 이 자리만 실린다).
     if (opts.providerLane.skillsDir) inherited.skills = { paths: [opts.providerLane.skillsDir] };
+    // 답은 MCP 로(`LANE_REPLY_INSTRUCTIONS`). `instructions` 는 기본 지시를 그대로 두고 system 에 덧붙인다(1.19.4 가짜 서버 실측: 8,941자 →
+    // 9,077자). 레인 에이전트의 `prompt` 칸은 기본 지시를 통째로 대체해(444자) 쓰지 않는다. 파일은 이 홈 안에만 둔다(턴 파일에는 키 경로만).
+    const instructionsFile = join(opencodeHome, LANE_INSTRUCTIONS_FILE);
+    await writeFile(instructionsFile, `${LANE_REPLY_INSTRUCTIONS}\n`, { mode: 0o600 });
+    inherited.instructions = [instructionsFile];
   } else {
     const user = await readUserConfig(app, opts.sourceConfig);
     for (const key of INHERITED_KEYS) if (user[key] !== undefined) inherited[key] = user[key];
