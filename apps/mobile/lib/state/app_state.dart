@@ -472,6 +472,85 @@ class AppState extends ChangeNotifier {
     return id;
   }
 
+  /// 채널 명단 캐시(`GET /channels/:id/members`). 멤버 이벤트가 오면 그 채널 것을 버린다.
+  final Map<String, List<ChannelMember>> channelMembers = {};
+
+  /// 채널 행을 넣거나 바꾼다. DM 은 건드리지 않는다 — DM 이름은 상대로 짓고 `channel.*` 이벤트로 오지 않는다.
+  void _upsertChannel(ChannelRow row) {
+    if (row.isDm) return;
+    final i = channels.indexWhere((c) => c.id == row.id);
+    if (i >= 0) {
+      channels[i] = row;
+    } else {
+      channels.add(row);
+    }
+    notifyListeners();
+  }
+
+  /// 채널 만들기 — 만든 뒤 [memberIds] 를 차례로 넣는다(서버에 「만들며 넣기」가 없다, 데스크톱 초대와 같은 길).
+  /// 채널은 만들어졌는데 몇 명이 실패하면 그 id 들을 돌려준다 — 채널을 되돌리지 않는다(화면이 알린다).
+  /// 기다리는 사이 커뮤니티가 바뀌었으면 옛 커뮤니티 채널을 새 목록에 붙이지 않는다(`openDmWith` 와 같은 규칙).
+  Future<({ChannelRow channel, List<String> failedMemberIds})?> createChannel({
+    required String name,
+    String? topic,
+    required bool isPrivate,
+    List<String> memberIds = const [],
+  }) async {
+    final api = _api!;
+    final gen = _generation;
+    final row = await api.createChannel(name: name, topic: topic, isPrivate: isPrivate);
+    if (gen != _generation) return null;
+    _upsertChannel(row);
+    final failed = <String>[];
+    for (final id in memberIds) {
+      if (id == me?.id) continue;
+      try {
+        channelMembers[row.id] = await api.addChannelMember(row.id, id);
+      } on Object {
+        failed.add(id);
+      }
+      if (gen != _generation) return null;
+    }
+    return (channel: row, failedMemberIds: failed);
+  }
+
+  /// 이름·주제·보관을 고친다. 바뀐 것만 넘긴다(호출부 몫). 응답 행으로 목록을 바로 고친다 — 이벤트가 늦어도.
+  Future<void> updateChannel(String id, {String? name, String? topic, bool? archived}) async {
+    final gen = _generation;
+    final row = await _api!.updateChannel(id, name: name, topic: topic, archived: archived);
+    if (gen != _generation) return;
+    _upsertChannel(row);
+  }
+
+  Future<List<ChannelMember>> loadChannelMembers(String channelId) async {
+    final gen = _generation;
+    final list = await _api!.channelMembers(channelId);
+    if (gen == _generation) {
+      channelMembers[channelId] = list;
+      notifyListeners();
+    }
+    return list;
+  }
+
+  Future<void> addChannelMember(String channelId, String accountId) async {
+    final gen = _generation;
+    final list = await _api!.addChannelMember(channelId, accountId);
+    if (gen != _generation) return;
+    channelMembers[channelId] = list;
+    notifyListeners();
+  }
+
+  /// 멤버 빼기 — 나 자신이면 나가기다. 목록에서 채널이 빠지는지는 서버가 `channel.deleted` 로 알린다
+  /// (비공개 채널만 빠진다 — 공개 채널은 멤버가 아니어도 목록에 있다).
+  Future<void> removeChannelMember(String channelId, String accountId) async {
+    final gen = _generation;
+    await _api!.removeChannelMember(channelId, accountId);
+    if (gen != _generation) return;
+    final cached = channelMembers[channelId];
+    if (cached != null) channelMembers[channelId] = cached.where((m) => m.accountId != accountId).toList();
+    notifyListeners();
+  }
+
   /// 목록에 없는 채널이 DM 인지 알아야 할 때(알림으로 막 생긴 DM 이 들어왔다) `GET /dms` 를 다시 받아
   /// 새 DM 을 목록에 붙인다. 알림에는 채널 종류가 실려 오지 않는다 — 목록을 다시 받는 것이 유일한 근거다.
   /// 이미 있는 채널이면 묻지 않는다. 못 받으면 조용히 그대로 둔다(그 채널은 홈 탭에 열린다, 전과 같다).
@@ -1278,6 +1357,27 @@ class AppState extends ChangeNotifier {
         final id = event['accountId'];
         if (id is! String || id != me?.id) return;
         unawaited(_refreshMe());
+      case 'channel.created':
+      case 'channel.updated':
+        // 남이 만들거나 고친 채널(또는 나를 넣어 목록에 새로 생긴 채널). 이것을 안 받으면 앱을 다시 켤 때까지
+        // 목록·이름·보관 상태가 옛것이다(데스크톱 `controller.ts` 와 같은 두 이벤트).
+        final raw = event['channel'];
+        if (raw is! Map) return;
+        _upsertChannel(ChannelRow.fromJson(Map<String, Object?>.from(raw)));
+      case 'channel.deleted':
+        // 지워졌거나 내가 더는 볼 수 없게 됐다(비공개화·내보내짐) — 그 사람에게는 사라진 것이다.
+        final id = event['channelId'];
+        if (id is! String) return;
+        channelMembers.remove(id);
+        final before = channels.length;
+        channels.removeWhere((c) => c.id == id && !c.isDm);
+        if (channels.length != before) notifyListeners();
+      case 'channel.member_added':
+      case 'channel.member_removed':
+        // 명단은 화면을 열 때 받는다 — 들고 있던 것은 버리고 다음에 다시 읽게 한다(낡은 명단을 그리지 않는다).
+        final id = event['channelId'];
+        if (id is! String || channelMembers.remove(id) == null) return;
+        notifyListeners();
       case 'thread.agent_model.changed':
         final rootId = event['threadRootId'];
         final agentId = event['agentId'];
@@ -2775,6 +2875,7 @@ class AppState extends ChangeNotifier {
     threadTailNew.clear();
     _ownTailSent.clear();
     channels.clear();
+    channelMembers.clear();
     accounts.clear();
     messages.clear();
     channelLoad.clear();
