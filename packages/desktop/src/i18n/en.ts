@@ -3618,6 +3618,7 @@ export const en = {
   // 툴바로 올라온 둘(2026-09-09). 메뉴에서 같은 문구를 쓰던 항목을 그대로 옮겼다 —
   // 사람이 아는 낱말이 바뀌면 옮긴 것이 아니라 새것이 생긴 것으로 읽힌다.
   'message.copyLink': 'Copy link',
+  'message.copyLinkFailed': 'Could not copy the link. Copy it by hand: {link}',
   'message.save': 'Save for later',
   'message.unsave': 'Unsave',
   // 연쇄 깊이 상한에 막힌 호출(4단계). 사람이 알아야 하는 사실이고, 할 일은 아니다.

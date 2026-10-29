@@ -156,7 +156,7 @@ describe('overflow menu permissions', () => {
 
     fireEvent.click(screen.getByTestId('toolbar-copy-link'));
 
-    await waitFor(() => expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/Could not copy the link/));
+    await waitFor(() => expect(useAppStore.getState().notices.at(-1)?.text ?? null).toMatch(/링크를 복사하지 못했다/));
     expect(useAppStore.getState().notices.at(-1)?.text ?? null).toContain('m1');
   });
 

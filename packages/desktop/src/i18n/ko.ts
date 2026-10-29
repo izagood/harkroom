@@ -1995,6 +1995,7 @@ export const ko = {
   'message.recentReplies': '최근 댓글 보기',
   'message.replyInThread': '스레드에 답글 달기',
   'message.copyLink': '링크 복사',
+  'message.copyLinkFailed': '링크를 복사하지 못했다. 직접 복사해라: {link}',
   'message.save': '나중에 보기로 담기',
   'message.unsave': '담은 것 빼기',
   // 연쇄 깊이 상한에 막힌 호출(4단계) — 근거는 `en.ts` 의 같은 자리에 있다.

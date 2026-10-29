@@ -33,21 +33,36 @@ export type CopyOutcome =
  * `text` 를 클립보드에 담는다. `target` 은 그 텍스트가 **그려진 노드**다 — 클립보드가
  * 막혔을 때 선택해 줄 대상이므로, 복사할 문자열과 다른 노드를 넘기면 사람은 엉뚱한
  * 것을 선택한 채 ⌘C 를 누른다.
+ *
+ * ## 클립보드는 버튼이 그려진 창의 것을 쓴다
+ *
+ * 채널·스레드 새 창은 메인 웹뷰가 포털로 그린다(`AppWindowsHost`). 거기서 전역 `navigator` 를
+ * 부르면 **메인 창의** 클립보드를 부르는 셈이고, WebKit 은 부르는 문서에 포커스가 없으면
+ * 쓰기를 `NotAllowedError` 로 거절한다 — 새 창을 누른 순간 포커스는 새 창에 있으므로 거의
+ * 항상 실패한다(2026-10-29 「링크 복사 실패」). 그래서 창은 `target` 의 문서에서 찾고, 노드가
+ * 없는 복사(링크)는 부르는 쪽이 `view`(`useHostView()`)를 넘긴다. 선택 대체도 같은 문서에서 한다.
  */
-export async function copyText(text: string, target?: HTMLElement | null): Promise<CopyOutcome> {
+export async function copyText(
+  text: string,
+  target?: HTMLElement | null,
+  view?: Window,
+): Promise<CopyOutcome> {
+  const win = view ?? target?.ownerDocument.defaultView ?? window;
   // 비보안 컨텍스트에서는 브라우저가 `navigator.clipboard` 를 아예 노출하지 않는다 —
   // 그래서 `isSecureContext` 를 따로 보지 않고 존재 여부만 본다.
-  if (navigator.clipboard?.writeText) {
+  const clipboard = win.navigator.clipboard;
+  if (clipboard?.writeText) {
     try {
-      await navigator.clipboard.writeText(text);
+      await clipboard.writeText(text);
       return 'copied';
     } catch {
       // 권한 거부 등 → 아래 선택 경로로 내려간다. 성공했다고 하지 않는다.
     }
   }
-  const selection = window.getSelection?.();
-  if (target && selection) {
-    const range = document.createRange();
+  const doc = target?.ownerDocument;
+  const selection = doc?.getSelection?.();
+  if (target && doc && selection) {
+    const range = doc.createRange();
     range.selectNodeContents(target);
     selection.removeAllRanges();
     selection.addRange(range);
