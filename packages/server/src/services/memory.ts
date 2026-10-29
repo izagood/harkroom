@@ -710,6 +710,25 @@ export const MEMORY_SLUG_HINT = 'slug must be "core" or "mem/<name>" '
 // 판정(메모리 재설계 S3)은 러너 목록(memoryPin)도 같이 쓰므로 shared 에 둔다.
 export { looksLikeThreadState };
 
+/**
+ * 진행 상태 기록 꼴의 **이름**(#1A). 새로 만드는 것만 거절한다 — 있던 것을 고치기·보관·그 이름으로 합치기는 막지 않는다.
+ * 마디 하나라도 `delegation`·`review`(복수 포함)로 시작하거나(`mem/review-x`·`mem/review/x`·`mem/a/delegations_x`),
+ * 그 낱말 뒤에 바로 번호가 붙으면(`mem/pr-review-1666`·`mem/review12`) 걸린다. 이름 꼴 판정이라 다른 낱말로 바꾸면
+ * 지나간다 — 그때는 저장 뒤 `threadState` 경고(요약 판정)가 남는다.
+ */
+export function isThreadStateSlug(slug: string): boolean {
+  return slug.split('/').slice(1).some((seg) =>
+    /^(delegations?|reviews?)([-_]|$)/.test(seg) || /(^|[-_])(delegations?|reviews?)[-_]?#?[0-9]/.test(seg));
+}
+
+/** #1A 거절. 대장은 thread.note.list, 기능별 판정은 분야 topic 으로 안내한다. */
+export const THREAD_STATE_SLUG_REFUSAL = {
+  code: 'thread_state_slug',
+  message: '`delegation-*`·`review-*` 꼴의 새 기억은 만들지 않는다 — 한 스레드·PR 하나의 진행 상태는 그 스레드의 '
+    + '`thread.note` 에 쓰고, 스레드를 넘는 대장(열린 위임·검토 대기)은 `thread.note.list` 로 본다. '
+    + '여러 번 쓸 판정·교훈이면 분야 topic(예: `mem/<분야>/<기능>`)에 덧붙여라. 이미 있는 기억을 고치거나 보관하는 것은 된다.',
+} as const;
+
 /** S3: `mem/*` 쓰기에 줄 수 있는 종류. journal 은 새로 쓰지 않는다 — 진행 상태는 `thread.note`. */
 export const WRITABLE_MEMORY_KINDS = ['topic', 'procedure'] as const;
 
