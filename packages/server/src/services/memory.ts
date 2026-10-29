@@ -5,7 +5,7 @@ import { writeOrigin } from './writeOrigin.js';
 // 데스크탑은 이 패키지를 import 할 수 없다. 여기서는 다시 내보내기만 한다.
 import {
   MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT,
-  MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, JOURNAL_EXPIRING_WINDOW, looksLikeThreadState, type MemoryKind,
+  MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, JOURNAL_EXPIRING_WINDOW, isThreadStateSlug, looksLikeThreadState, type MemoryKind,
 } from '@harkroom/shared';
 
 export {
@@ -572,10 +572,11 @@ export async function searchMemory(
       [accountId, patterns],
     );
     const skip = new Set(opts.exclude ?? []);
-    // 진행 상태로 보이는 기억은 recall 에서 뺀다 — 한 스레드의 상태라 다른 스레드의 턴에 실어 봐야 잡음이고,
-    // 그 스레드에는 thread.note 가 실린다. 요약이 PR 번호·기능 낱말로 꽉 차 있어 상위 자리를 늘 차지했다.
+    // 진행 상태 꼴 **이름**(delegation-·review-)의 기억은 recall 에서 뺀다 — 한 스레드의 상태라 다른 스레드의 턴에 실어 봐야
+    // 잡음이고, 그 스레드에는 thread.note 가 실린다. 요약 낱말 판정(looksLikeThreadState)은 쓰지 않는다 — PR 번호와
+    // 「검토」·「머지」가 든 교훈 기억까지 숨겼다(security n1). 요약 판정은 저장 뒤 경고에만 남는다.
     const rows = (res.rows as RecallCandidate[])
-      .filter((r) => !isExcluded(skip, r.slug, r.updatedAt) && !looksLikeThreadState(r.slug, r.description));
+      .filter((r) => !isExcluded(skip, r.slug, r.updatedAt) && !isThreadStateSlug(r.slug));
     // 게이트는 서버에서 건다 — 러너가 거르면 recordTop 이 안 실린 것까지 센다(F1).
     const hits = rankRecall(terms, rows, opts.limit, focusTerms ? { focus: new Set(focusTerms) } : {})
       .map((h) => (opts.includeValue ? h : { ...h, value: undefined }));
@@ -707,19 +708,8 @@ export const MEMORY_SLUG_HINT = 'slug must be "core" or "mem/<name>" '
   + '(segments of [a-z0-9][a-z0-9_-]* joined by "/", e.g. "mem/deploy" or "mem/people/alex"; '
   + 'no dots, no uppercase, and the "mem/" prefix is required)';
 
-// 판정(메모리 재설계 S3)은 러너 목록(memoryPin)도 같이 쓰므로 shared 에 둔다.
-export { looksLikeThreadState };
-
-/**
- * 진행 상태 기록 꼴의 **이름**(#1A). 새로 만드는 것만 거절한다 — 있던 것을 고치기·보관·그 이름으로 합치기는 막지 않는다.
- * 마디 하나라도 `delegation`·`review`(복수 포함)로 시작하거나(`mem/review-x`·`mem/review/x`·`mem/a/delegations_x`),
- * 그 낱말 뒤에 바로 번호가 붙으면(`mem/pr-review-1666`·`mem/review12`) 걸린다. 이름 꼴 판정이라 다른 낱말로 바꾸면
- * 지나간다 — 그때는 저장 뒤 `threadState` 경고(요약 판정)가 남는다.
- */
-export function isThreadStateSlug(slug: string): boolean {
-  return slug.split('/').slice(1).some((seg) =>
-    /^(delegations?|reviews?)([-_]|$)/.test(seg) || /(^|[-_])(delegations?|reviews?)[-_]?#?[0-9]/.test(seg));
-}
+// 판정(메모리 재설계 S3·#1A)은 러너 목록(memoryPin)도 같이 쓰므로 shared 에 둔다.
+export { isThreadStateSlug, looksLikeThreadState };
 
 /** #1A 거절. 대장은 thread.note.list, 기능별 판정은 분야 topic 으로 안내한다. */
 export const THREAD_STATE_SLUG_REFUSAL = {
