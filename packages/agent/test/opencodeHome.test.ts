@@ -16,8 +16,9 @@ import { describe, expect, it } from 'vitest';
 import {
   ensureOpencodeHome, opencodeConfigFile, opencodeDirs, opencodeLaneModelMissing, laneRunModel, OPENCODE_LANE_AGENT, OPENCODE_LANE_PERMISSION, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
   opencodeLaneHome, laneSkillPermission, laneOpencodeBashTable, opencodeLaneAgentName, opencodeLaneAgentMatches,
-  opencodeConfigLockPath, withConfigLock,
+  opencodeConfigLockPath, withConfigLock, LANE_INSTRUCTIONS_FILE,
 } from '../src/opencodeHome.js';
+import { LANE_REPLY_INSTRUCTIONS } from '../src/laneReplyInstructions.js';
 import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
 
 const BRIDGE = { harkroom: { type: 'stdio' as const, command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } };
@@ -233,7 +234,9 @@ describe('lane 러너의 opencode 홈', () => {
       providerLane: { model: 'harkroom-lane/example-model', skillsDir },
     });
     const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
-    for (const k of ['instructions', 'plugin', 'plugins']) expect(cfg[k]).toBeUndefined();
+    for (const k of ['plugin', 'plugins']) expect(cfg[k]).toBeUndefined();
+    // 지시 칸은 **러너가 이 홈에 쓴 답 규칙 파일 하나만** 연다(2026-10-29) — 사람 홈·작업 폴더의 지시 파일은 여전히 안 싣는다.
+    expect(cfg.instructions).toEqual([join(f.home, LANE_INSTRUCTIONS_FILE)]);
     expect(cfg.skills).toEqual({ paths: [skillsDir] });
     expect(cfg.agent[OPENCODE_LANE_AGENT].permission.skill['*']).toBe('deny');
     expect(await readdir(opencodeLaneHome(f.home))).toEqual([]);
@@ -467,5 +470,41 @@ describe('opencode lane 설정 잠금', () => {
     await writeFile(lock, `${process.pid} 0\n`);
     await utimes(lock, new Date(0), new Date(0));
     expect(await withConfigLock(lock, async () => 'ok2', { timeoutMs: 200, staleMs: 1_000 })).toBe('ok2');
+  });
+});
+
+describe('lane 턴의 답 규칙 — 설정 instructions 로 덧붙인다 (2026-10-29, 스레드 db4ab174)', () => {
+  it('lane 홈에만 규칙 파일을 쓰고 instructions 가 그것을 가리킨다 — 레인 에이전트 prompt 칸(기본 지시 대체)은 안 쓴다', async () => {
+    const f = await fixture();
+    await ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: 'harkroom-lane/example-model' },
+    });
+    const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    const file = join(f.home, LANE_INSTRUCTIONS_FILE);
+    expect(cfg.instructions).toEqual([file]);
+    expect((await readFile(file, 'utf8')).trim()).toBe(LANE_REPLY_INSTRUCTIONS);
+    expect(LANE_REPLY_INSTRUCTIONS).toMatch(/threadRootId 를 꼭 넣는다/);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    for (const agent of Object.values(cfg.agent as Record<string, Record<string, unknown>>)) expect(agent.prompt).toBeUndefined();
+  });
+
+  it('kilo lane 도 같은 칸을 쓴다(이름표만 다르다)', async () => {
+    const f = await fixture();
+    const KILO = xdgAppFor('kilo')!;
+    await ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData, app: KILO,
+      providerLane: { model: 'harkroom-lane/example-model' },
+    });
+    const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home, KILO), 'utf8'));
+    expect(cfg.instructions).toEqual([join(f.home, LANE_INSTRUCTIONS_FILE)]);
+  });
+
+  it('구독형(lane 아님) 홈에는 instructions·규칙 파일이 없다', async () => {
+    const f = await fixture();
+    await ensureOpencodeHome({ opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData });
+    const cfg = JSON.parse(await readFile(opencodeConfigFile(f.home), 'utf8'));
+    expect(cfg.instructions).toBeUndefined();
+    expect(await stat(join(f.home, LANE_INSTRUCTIONS_FILE)).then(() => true, () => false)).toBe(false);
   });
 });

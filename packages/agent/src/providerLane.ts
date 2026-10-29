@@ -8,6 +8,7 @@
  *   돌려준다. 못 받으면 **던진다** — 계정 로그인으로 떨어지지 않는다(fail-closed).
  * - 값은 이 프로세스의 env 에 두지 않는다. 받은 맵은 그 턴의 plan 에만 실린다.
  */
+import { LANE_REPLY_INSTRUCTIONS } from './laneReplyInstructions.js';
 import { RUNNER_TURN_KEY_ENV } from '@harkroom/shared/runnerLink';
 import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { relative, isAbsolute, join } from 'node:path';
@@ -79,10 +80,7 @@ export const PROVIDER_LANE_ARGV_ONLY_KEYS: Partial<Record<AgentHarness, readonly
  *
  * threadRootId 구절(2026-10-25 E13 회차): 덧붙인 뒤 모델이 post 는 했지만 threadRootId 를 빼 채널 최상위에 올린 턴이 있었다.
  */
-export const CODEX_LANE_DEVELOPER_INSTRUCTIONS =
-  '이 대화의 답은 화면(최종 메시지)에 쓰는 것으로 끝나지 않는다. 사람은 harkroom 스레드만 본다 — 인사·잡담을 포함한 모든 답을 '
-  + '반드시 harkroom MCP 의 message_post 도구로 그 스레드(프롬프트 맨 위의 channelId·threadRootId)에 올려라. '
-  + 'message_post 에는 threadRootId 를 꼭 넣는다 — 빼면 채널 최상위에 올라가 그 스레드에서 답이 안 보인다.';
+export const CODEX_LANE_DEVELOPER_INSTRUCTIONS = LANE_REPLY_INSTRUCTIONS;
 
 /** codex lane 의 provider 이름(`model_providers.<이름>`). */
 export const CODEX_LANE_PROVIDER = 'harkroom-lane';
