@@ -136,9 +136,15 @@ describe('deciders — 카드를 정할 수 있는 사람', () => {
   it('decide-check — 사람 세션이 이 채널에서 정할 수 있는지 돌려준다', async () => {
     const ask = (token: string) => app.inject({ method: 'GET', url: `/agents/${agentId}/decide-check?channelId=${ch}`, headers: auth(token) });
     await setScope('owner');
-    expect((await ask(bob.token)).json()).toEqual({ canDecide: false, asOwner: false });
+    expect((await ask(bob.token)).json()).toEqual({ viewerCanDecide: false, asOwner: false, decideScope: 'owner', ownerAccountId: alice.accountId });
+    await setScope('list');
+    expect((await ask(bob.token)).json()).toMatchObject({ viewerCanDecide: false, decideScope: 'list' });
     await setScope('community');
-    expect((await ask(bob.token)).json()).toEqual({ canDecide: true, asOwner: false });
-    expect((await ask(alice.token)).json()).toEqual({ canDecide: true, asOwner: true });
+    expect((await ask(bob.token)).json()).toEqual({ viewerCanDecide: true, asOwner: false, decideScope: 'community', ownerAccountId: alice.accountId });
+    expect((await ask(alice.token)).json()).toMatchObject({ viewerCanDecide: true, asOwner: true });
+    // 비상 스위치가 꺼지면 범위와 관계없이 switchOff — 소유자만 정한다.
+    await pool.query(`update agent_config set user_decide = false where account_id = $1`, [agentId]);
+    expect((await ask(bob.token)).json()).toMatchObject({ viewerCanDecide: false, decideScope: 'switchOff' });
+    expect((await ask(alice.token)).json()).toMatchObject({ viewerCanDecide: true, decideScope: 'switchOff' });
   });
 });

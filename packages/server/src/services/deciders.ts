@@ -20,7 +20,13 @@ import { channelVisibleSql } from './channels.js';
  * - 에이전트가 꺼졌거나 소유자가 비상 스위치(`agent_config.user_decide`)를 껐으면 소유자만 정한다.
  * - 범위는 **부를 때마다 지금 값**을 읽는다(security 4) — 명단에서 빠지거나 채널을 나가면 그 순간부터 정하지 못한다.
  */
-export type DeciderVerdict = { ok: true; asOwner: boolean; ownerAccountId: string | null } | { ok: false; ownerAccountId: string | null };
+/**
+ * 화면이 「누가 정하나」 문구를 고르는 값(designer 시안 v1 ②·③) — 판정 없이 그리게 서버가 내려 준다.
+ * 스위치가 꺼졌으면 범위와 관계없이 `switchOff`(소유자만).
+ */
+export type DecideScope = 'owner' | 'list' | 'channel' | 'community' | 'switchOff';
+type VerdictBase = { ownerAccountId: string | null; decideScope: DecideScope | null };
+export type DeciderVerdict = ({ ok: true; asOwner: boolean } & VerdictBase) | ({ ok: false } & VerdictBase);
 
 export async function mayDecideFor(
   db: Pick<Pool | PoolClient, 'query'>,
@@ -37,14 +43,15 @@ export async function mayDecideFor(
        left join account p on p.id = $2
       where c.account_id = $1`,
     [args.agentId, args.actorId])).rows[0];
-  if (!row) return { ok: false, ownerAccountId: null };
+  if (!row) return { ok: false, ownerAccountId: null, decideScope: null };
   const owner = row.ownerAccountId;
-  if (row.actorKind !== 'human' || row.actorOff !== false) return { ok: false, ownerAccountId: owner };
-  if (owner !== null && owner === args.actorId) return { ok: true, asOwner: true, ownerAccountId: owner };
-  if (!row.userDecide || row.agentOff || row.actorRole === 'guest' || !args.channelId) return { ok: false, ownerAccountId: owner };
+  const base: VerdictBase = { ownerAccountId: owner, decideScope: row.userDecide ? (row.scope as DecideScope) : 'switchOff' };
+  if (row.actorKind !== 'human' || row.actorOff !== false) return { ok: false, ...base };
+  if (owner !== null && owner === args.actorId) return { ok: true, asOwner: true, ...base };
+  if (!row.userDecide || row.agentOff || row.actorRole === 'guest' || !args.channelId) return { ok: false, ...base };
   const seen = (await db.query<{ ok: boolean }>(
     `select ${channelVisibleSql('ch', '$2')} as ok from channel ch where ch.id = $1`, [args.channelId, args.actorId])).rows[0];
-  if (!seen?.ok) return { ok: false, ownerAccountId: owner };
+  if (!seen?.ok) return { ok: false, ...base };
   let passes = false;
   switch (row.scope) {
     case 'community':
@@ -61,7 +68,7 @@ export async function mayDecideFor(
     default:
       passes = false;
   }
-  return passes ? { ok: true, asOwner: false, ownerAccountId: owner } : { ok: false, ownerAccountId: owner };
+  return passes ? { ok: true, asOwner: false, ...base } : { ok: false, ...base };
 }
 
 /**

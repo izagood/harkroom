@@ -674,8 +674,8 @@ export async function decidePermissionRequest(
           // 줄 빼기(g1) — 카드가 자기가 적은 줄을 가리킨다. 이 값이 있는 카드만 [줄 빼기]를 그린다(새 서버만 싣는 값).
           ...(lineOutcome?.ok ? { lineId: lineOutcome.lineId } : {}),
           ...(args.via?.kind === 'chat' || args.via?.kind === 'mirror' ? { decidedVia: args.via } : {}),
-          // 소유자가 아닌 사용자가 정했다(security 2·3) — 화면이 「승인: 이름(소유자 아님)」을 그린다. 소유자가 정하면 싣지 않는다.
-          ...(args.asOwner === false ? { decidedByOwner: false } : {}),
+          // 정한 사람이 소유자인가(security 2·3, designer 시안 v1 ①) — 거짓이면 화면이 「소유자 아님」 칩을 그린다. 옛 카드에는 없다(없으면 소유자로 읽는다).
+          decidedByOwner: args.asOwner !== false,
         })]);
     }
     await client.query('commit');

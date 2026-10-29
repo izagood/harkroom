@@ -48,14 +48,19 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
     });
 
   // 이 사람이 이 채널에서 이 에이전트의 권한·머지 카드를 정할 수 있나(소유자 결정 2026-10-29) — 화면이 버튼을 그릴지 정한다.
-  // 판정은 결정 때 `decide` 가 다시 한다. 사람 세션만 묻는다(버튼을 누를 수 있는 것도 사람 세션뿐이다).
+  // 카드 글은 모두가 같은 행을 보므로 보는 사람마다 다른 값은 카드에 싣지 않고 여기서 준다 — 같은 (에이전트, 채널)의 카드는 답이 같다.
+  // `decideScope` 는 「누가 정하나」 문구용(designer 시안 v1 ②·③), 정할 수 없는 사람에게도 준다. 판정은 결정 때 `decide` 가 다시 한다.
   app.get<{ Params: { id: string }; Querystring: { channelId?: string } }>('/agents/:id/decide-check', { preHandler: app.requireAccount }, async (req, reply) => {
     const q = z.object({ id: z.string().uuid(), channelId: z.string().uuid() }).safeParse({ ...(req.params ?? {}), ...(req.query ?? {}) });
     if (!q.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'agent id and channelId must be uuids' } });
     void reply.header('cache-control', 'no-store');
-    if (req.account!.kind !== 'human' || req.authVia !== 'session') return { canDecide: false, asOwner: false };
     const v = await mayDecideFor(pool, { agentId: q.data.id, actorId: req.account!.id, channelId: q.data.channelId });
-    return { canDecide: v.ok, asOwner: v.ok && v.asOwner };
+    // 버튼을 누를 수 있는 것은 사람 세션뿐이다 — PAT·에이전트는 언제나 정할 수 없다고 답한다.
+    const session = req.account!.kind === 'human' && req.authVia === 'session';
+    return {
+      viewerCanDecide: session && v.ok, asOwner: session && v.ok && v.asOwner,
+      decideScope: v.decideScope, ownerAccountId: v.ownerAccountId,
+    };
   });
 
   app.get<{ Querystring: { channelId?: string } }>('/agent/tool-allows', { preHandler: app.requireAccount }, async (req, reply) => {
