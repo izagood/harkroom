@@ -172,6 +172,7 @@ export const CATALOG_ELSEWHERE: Readonly<Record<string, string>> = {
   'inbox.poll': '가이드 상주 판본(poll 루프 계약) — 턴은 쓰지 않는다(가이드 TURN_ONLY)',
   'inbox.read': '가이드 상주 판본 — 턴은 쓰지 않는다(가이드 TURN_ONLY)',
   'thread.note': '러너 스레드 메모 절(threadNoteSection)',
+  'thread.note.list': '러너 스레드 메모 절(threadNoteSection)',
   'memory.list': '러너 기억 절(memorySection)',
   'memory.get': '러너 기억 절(memorySection)',
   'memory.search': '러너 기억 절(memorySection)',

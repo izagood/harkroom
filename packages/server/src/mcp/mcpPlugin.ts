@@ -78,7 +78,7 @@ import { downscaleImage, DOWNSCALE_READ_MAX_BYTES, tryAcquireDownscaleSlot } fro
 
 // slug 문법과 거절 문구는 services/memory.ts 에 있다 — 사람용 REST(accountRoutes)도 같은 것을 쓴다.
 import { isValidSlug, kindRefusal, looksLikeThreadState, MEMORY_SLUG_HINT, THREAD_NOTE_HINT } from '../services/memory.js';
-import { getThreadNote, MAX_THREAD_NOTE_LENGTH, setThreadNote, threadRootChannel } from '../services/threadNote.js';
+import { getThreadNote, listThreadNotes, MAX_THREAD_NOTE_LENGTH, setThreadNote, THREAD_NOTE_LIST_MAX, threadRootChannel } from '../services/threadNote.js';
 import {
   BG_MAX_WRITES, bgClaimPayload, bgCleanupOn, claimBgJob, completeBgJob, getBgJob, recordBgChange, releaseBgWrite, reserveBgWrite,
 } from '../services/bgJobs.js';
@@ -1968,6 +1968,7 @@ function buildMcpServer(
     description: `스레드 메모 — 이 스레드에서 무엇이 어디까지 왔는지(맡긴 일·검토 대기·PR 번호·head·다음 할 일)를 적는 한 장(${MAX_THREAD_NOTE_LENGTH}자, 덮어쓰기). `
       + '러너가 이 스레드의 다음 턴(예약으로 깨어난 턴 포함)에 자동으로 실어 준다 — 다른 스레드·목록·recall 에는 안 실린다. '
       + '진행 상태는 memory.set(mem/delegation-* 등) 대신 여기에 써라; 여러 스레드에서 되풀이할 교훈만 mem/* 로 남긴다. '
+      + '스레드를 넘어 열린 일 전체(위임·검토 대기 대장)를 볼 때는 thread.note.list 로 내 메모 목록을 본다. '
       + 'body 생략=읽기, 문자열=덮어쓰기, null=지우기. 고칠 땐 읽은 updatedAt 을 ifUpdatedAt 으로 준다(새로 만들 땐 null)',
     inputSchema: {
       threadRootId: z.string().uuid(),
@@ -2023,6 +2024,26 @@ function buildMcpServer(
         flagged: { reason: flag.reason, rules: flag.rules },
         notice: `저장했지만 쓰기 검사에 걸렸다(${flag.reason}) — 다음 턴에 싣지 않는다. 남의 글을 옮겼거나 비밀 값을 넣었다면 빼고 다시 써라.`,
       } : {}),
+    });
+  });
+
+  // thread.note.list — 내 열린 스레드 메모 목록. 메모는 스레드 한 장이라, 스레드를 넘는 대장(열린 위임·검토 대기)을
+  // 볼 곳이 없어 mem/* 상태 기억으로 새던 것을 이 목록이 받는다.
+  server.registerTool('thread.note.list', {
+    description: '내 열린 스레드 메모 목록(최근 고친 것부터) — 스레드 id·채널·루트 글 첫 줄·메모 첫 줄·updatedAt. '
+      + '스레드를 넘는 대장(맡긴 일·검토 대기·열린 PR 목록)은 mem/* 에 따로 적지 말고 이 목록으로 본다. '
+      + `본문은 thread.note(threadRootId)로 읽는다. channelId 로 한 채널만, limit 기본 50·최대 ${THREAD_NOTE_LIST_MAX}`,
+    inputSchema: {
+      channelId: z.string().uuid().optional(),
+      limit: z.number().int().min(1).max(THREAD_NOTE_LIST_MAX).optional(),
+    },
+  }, async ({ channelId, limit }) => {
+    if (account.kind !== 'agent') {
+      return jsonResult({ error: { code: 'agents_only', message: '스레드 메모는 에이전트만 쓴다' } });
+    }
+    const notes = await listThreadNotes(pool, account.id, { channelId, limit });
+    return jsonResult({
+      notes: notes.map((n) => ({ ...n, updatedAt: n.updatedAt.toISOString() })),
     });
   });
 

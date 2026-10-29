@@ -410,7 +410,7 @@ const CLAUDE_PRESET: HarnessPreset = {
 export const READONLY_ALLOW: readonly string[] = [
   'ToolSearch',
   ...['message_post', 'message_report', 'message_fail', 'message_ask', 'message_progress', 'message_react', 'message_unreact',
-    'message_read', 'message_search', 'thread_note', 'memory_get', 'memory_list', 'memory_search', 'turn_wake',
+    'message_read', 'message_search', 'thread_note', 'thread_note_list', 'memory_get', 'memory_list', 'memory_search', 'turn_wake',
     'attachment_fetch', 'attachment_upload', 'account_me', 'account_list', 'channel_list', 'channel_doc', 'workspace_guide',
   ].map((t) => `mcp__harkroom__${t}`),
 ];
