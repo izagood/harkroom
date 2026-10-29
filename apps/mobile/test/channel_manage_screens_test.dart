@@ -30,15 +30,18 @@ Map<String, Object?> _channel(String id, String name, {String visibility = 'publ
     };
 
 class _Server {
-  _Server(this.capabilities);
+  _Server(this.capabilities, {this.admin = false, this.removeStatus = 200});
 
   final List<String> capabilities;
+  final bool admin;
+  final int removeStatus;
+  final deletes = <String>[];
   final posts = <Map<String, Object?>>[];
 
   MockClient client() => MockClient((req) async {
         final path = req.url.path;
         if (path == '/auth/me') {
-          return _json({'id': 'me-1', 'handle': 'me', 'displayName': '나', 'isAdmin': false, 'capabilities': capabilities});
+          return _json({'id': 'me-1', 'handle': 'me', 'displayName': '나', 'isAdmin': admin, 'capabilities': capabilities});
         }
         if (path == '/channels' && req.method == 'GET') {
           return _json({'channels': [_channel('c-1', 'general', visibility: 'private')]});
@@ -51,8 +54,13 @@ class _Server {
           }
           return _json(_channel('c-new', b['name'] as String), 201);
         }
-        if (path == '/channels/c-1/members') {
+        if (path == '/channels/c-1/members/o-1' && req.method == 'DELETE') {
+          deletes.add(path);
+          if (removeStatus != 200) return _json({'error': {'code': 'forbidden', 'message': 'no'}}, removeStatus);
           return _json({'members': [{'accountId': 'me-1', 'handle': 'me'}]});
+        }
+        if (path == '/channels/c-1/members') {
+          return _json({'members': [{'accountId': 'me-1', 'handle': 'me'}, {'accountId': 'o-1', 'handle': 'other'}]});
         }
         if (path == '/accounts') return _json({'accounts': <Object?>[]});
         if (path == '/reads') return _json({'reads': <Object?>[]});
@@ -191,4 +199,34 @@ void main() {
     expect(find.text(stringsFor('ko').chVisibilityDesktopOnly), findsOneWidget);
     expect(find.byType(SegmentedButton<bool>), findsNothing);
   });
+
+  testWidgets('비공개 채널 머리는 # 대신 🔒(designer #1675 #1)', (tester) async {
+    final app = await _boot(tester, _Server(const []));
+    final channel = app.channels.firstWhere((c) => c.id == 'c-1');
+    await _pump(tester, app, Scaffold(appBar: AppBar(title: ChannelTitleButton(channel: channel))));
+    expect(find.text('🔒 general'), findsOneWidget);
+    expect(find.text('# general'), findsNothing);
+  });
+
+  for (final refused in [false, true]) {
+    testWidgets('밀어 내보내기: 서버가 ${refused ? '거절하면 줄이 남는다' : '받으면 줄이 빠진다'}(security #1675 s2)', (tester) async {
+      final server = _Server(const ['channel.manage'], admin: true, removeStatus: refused ? 403 : 200);
+      final app = await _boot(tester, server);
+      await _pump(tester, app, const ChannelInfoScreen(channelId: 'c-1'));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump();
+      expect(find.byKey(const Key('channel-member-o-1')), findsOneWidget);
+
+      await tester.drag(find.byKey(const Key('channel-member-dismiss-o-1')), const Offset(-600, 0));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('channel-confirm-ok')));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pumpAndSettle();
+      expect(server.deletes, ['/channels/c-1/members/o-1']);
+      expect(find.byKey(const Key('channel-member-o-1')), refused ? findsOneWidget : findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

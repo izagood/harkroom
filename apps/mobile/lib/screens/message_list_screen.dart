@@ -431,5 +431,7 @@ class FeedTopRow extends StatelessWidget {
 /// 채널이 목록에서 사라졌으면(다른 기기에서 나갔다) 빈 줄.
 String channelLabel(ChannelRow? channel) {
   if (channel == null) return '';
-  return channel.isDm ? channel.name : '# ${channel.name}';
+  if (channel.isDm) return channel.name;
+  // 비공개는 홈 목록과 같은 🔒 — 머리·정보 화면·찾기가 같은 표시를 쓴다(designer #1675 #1).
+  return channel.isPrivate ? '🔒 ${channel.name}' : '# ${channel.name}';
 }

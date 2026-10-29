@@ -189,7 +189,7 @@ class _NewChannelScreenState extends State<NewChannelScreen> {
                 onChanged: (_) => setState(() => _nameError = null),
                 decoration: InputDecoration(
                   labelText: t.chNameLabel,
-                  prefixText: '# ',
+                  prefixText: _private ? '🔒 ' : '# ',
                   helperText: t.chNameRule,
                   helperMaxLines: 2,
                   errorText: _nameError ?? channelNameProblem(t, _name.text.trim()),
@@ -370,7 +370,7 @@ class ChannelTitleButton extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Flexible(child: ScreenTitle(title: '# ${channel.name}', subtitle: channel.topic)),
+            Flexible(child: ScreenTitle(title: channelLabel(channel), subtitle: channel.topic)),
             Icon(Icons.expand_more, size: 20, color: k.fgMuted),
           ],
         ),
@@ -455,15 +455,18 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
     return r == true;
   }
 
-  Future<void> _run(Future<void> Function() action) async {
-    if (_busy) return;
+  /// 성공하면 true — 밀어 내보내기는 이 값으로만 줄을 없앤다(security #1675 s2).
+  Future<bool> _run(Future<void> Function() action) async {
+    if (_busy) return false;
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
     final failed = context.t.chActionFailed;
     try {
       await action();
+      return true;
     } catch (_) {
       messenger.showSnackBar(_snack(failed));
+      return false;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -518,8 +521,11 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
     final messenger = ScaffoldMessenger.of(context);
     final t = context.t;
     var failed = 0;
+    // 넣는 사이 커뮤니티를 바꾸면 멈춘다 — 남은 호출이 새 커뮤니티 서버로 옛 id 를 보내지 않게(security #1675 s1).
+    final generation = app.sessionGeneration;
     await _run(() async {
       for (final id in picked) {
+        if (app.sessionGeneration != generation) return;
         try {
           await app.addChannelMember(ch.id, id);
         } catch (_) {
@@ -530,12 +536,13 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
     if (failed > 0) messenger.showSnackBar(_snack(t.chMembersPartial('$failed')));
   }
 
-  Future<void> _removeMember(ChannelRow ch, ChannelMember m, {bool ask = true}) async {
+  /// 확인을 받고 내보낸다. 서버가 받아들였을 때만 true.
+  Future<bool> _removeMember(ChannelRow ch, ChannelMember m) async {
     final t = context.t;
     final name = '@${m.handle}';
-    if (ask && !await _confirm(t.chRemoveMemberConfirm(name), t.chRemoveMember, danger: true)) return;
-    if (!mounted) return;
-    await _run(() => context.app.removeChannelMember(ch.id, m.accountId));
+    if (!await _confirm(t.chRemoveMemberConfirm(name), t.chRemoveMember, danger: true)) return false;
+    if (!mounted) return false;
+    return _run(() => context.app.removeChannelMember(ch.id, m.accountId));
   }
 
   /// 줄 탭 → 작은 시트 [내보내기](designer c3 — 밀기만으로는 숨은 동작이다).
@@ -626,8 +633,8 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
             padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter),
             child: Text(t.chRemoveMember, style: TextStyle(color: k.danger)),
           ),
-          confirmDismiss: (_) => _confirm(t.chRemoveMemberConfirm('@${m.handle}'), t.chRemoveMember, danger: true),
-          onDismissed: (_) => _removeMember(ch, m, ask: false),
+          // 확인·호출을 여기서 끝낸다 — 서버가 거절하면 줄을 남긴다(밀어 없앤 줄이 목록에 남지 않게, security #1675 s2).
+          confirmDismiss: (_) => _removeMember(ch, m),
           child: tile,
         ),
       );
@@ -635,7 +642,7 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('# ${ch.name}', maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Text(channelLabel(ch), maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           if (canManage)
             TextButton(
@@ -660,7 +667,7 @@ class _ChannelInfoScreenState extends State<ChannelInfoScreen> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 12, HarkroomSize.gutter, 8),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('# ${ch.name}',
+                    Text(channelLabel(ch),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: HarkroomType.title, fontWeight: FontWeight.w600, color: k.fg)),
@@ -830,7 +837,7 @@ class _ChannelEditScreenState extends State<ChannelEditScreen> {
                 onChanged: (_) => setState(() => _nameError = null),
                 decoration: InputDecoration(
                   labelText: t.chNameLabel,
-                  prefixText: '# ',
+                  prefixText: widget.channel.isPrivate ? '🔒 ' : '# ',
                   helperText: t.chNameRule,
                   helperMaxLines: 2,
                   errorText: _nameError ?? channelNameProblem(t, _name.text.trim()),
