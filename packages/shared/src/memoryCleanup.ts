@@ -47,3 +47,15 @@ export function memoryCleanupBody(handle: string): string {
     '5. 임대를 release 로 놓고, 이 스레드에 `message.post` 로 한 번 보고한다: 합친 것(into ← from) · 보관한 것 · 증류한 것 · 고친 요약 수 · 정리 전후 항목 수(N/200)·journal 수.',
   ].join('\n');
 }
+
+/**
+ * 한 스레드의 진행 상태로 보이는 기억(메모리 재설계 S3). 판정은 서버 `scripts/memory-metrics.sql` 의 `state_like` 와
+ * 글자까지 같다 — 쓰는 자리의 경고와 지표가 같은 자로 잰다. 이름이 `delegation-*`·`review-*` 이거나, 요약에
+ * PR 번호와 진행 낱말이 함께 있다.
+ */
+export function looksLikeThreadState(slug: string, description: string | null | undefined): boolean {
+  if (/^mem\/(.*\/)?(delegation|review)-/.test(slug)) return true;
+  const d = description ?? '';
+  // `CI` 는 대문자 낱말 그대로만(security n1 — `/i` 면 policy·decision 의 ci 에도 걸렸다). 앞뒤가 영문자만 아니면 된다.
+  return /#[0-9]+/.test(d) && (/(^|[^A-Za-z])CI(?![A-Za-z])/.test(d) || /(머지|대기|초록|검토|rebase|head)/i.test(d));
+}

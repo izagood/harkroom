@@ -142,6 +142,24 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
     expect(next.turn).toBe('');
   });
 
+  // 진행 상태로 보이는 기억(looksLikeThreadState)은 목록에서 빼고 개수만 말한다. 세션 도중 판정이 바뀌어 숨긴 것을
+  // 「지워진 기억」으로 알리지 않는다 — 정말 없어진 것만 지워졌다.
+  it('진행 상태 기억은 목록·변경 알림에서 빠지고 개수만 말한다, 숨긴 것은 지워진 것이 아니다', async () => {
+    const descriptions = { 'mem/b': 'PR #12 CI 초록 · 머지 대기', 'mem/a': '배포 절차' };
+    const first = await turn({ core: 'C', slugs: ['mem/a', 'mem/b', 'mem/delegation-x'], descriptions }, true);
+    expect(first.turn).toContain('- mem/a');
+    expect(first.turn).not.toContain('mem/b');
+    expect(first.turn).not.toContain('mem/delegation-x');
+    expect(first.turn).toContain('진행 상태로 보이는 기억 2개');
+    const added = await turn({ core: 'C', slugs: ['mem/a', 'mem/b', 'mem/delegation-x', 'mem/review-y'], descriptions }, false);
+    expect(added.turn).toBe('');
+    // mem/a 의 요약이 진행 상태 꼴로 바뀌었다 — 목록에서 빠지지만 「지워진 기억」은 아니다.
+    const relabeled = await turn({
+      core: 'C', slugs: ['mem/a', 'mem/b', 'mem/delegation-x', 'mem/review-y'], descriptions: { ...descriptions, 'mem/a': '#7 검토 대기' },
+    }, false);
+    expect(relabeled.turn).not.toContain('지워진 기억');
+  });
+
   // PR4: 새로 온 말로 찾은 관련 기억의 본문을 싣는다. 점수가 낮은 것·이미 실은 것은 싣지 않는다.
   describe('관련 기억 자동 주입', () => {
     const hits = [
