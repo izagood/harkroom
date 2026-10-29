@@ -568,6 +568,17 @@ export function controlledNotice(handle: string, pending: number): string {
 }
 
 /**
+ * 같은 스레드에서 앞 턴이 아직 돌아 이 멘션을 미뤘다는 통지(2026-10-29). entry 당 1회(`mentionScheduler` 의 장부).
+ *
+ * 앞 턴은 도중에 새 글을 보지 못한다 — 사람이 「멈춰」를 써도 그 턴은 하던 일을 끝까지 한다. 그래서 문구가
+ * **바로 멈추는 길**을 같이 적는다. 그 길이 없으면 사람은 이 글을 보고도 기다리는 것밖에 할 수 없다.
+ */
+export function blockedByTurnNotice(): string {
+  return '(이 스레드에서 앞 턴이 아직 돌고 있습니다 — 이 글은 그 턴이 끝나면 읽습니다. '
+    + '바로 멈추려면 도는 턴 목록이나 그 턴의 터미널 창에서 「멈추기」를 누르세요)';
+}
+
+/**
  * 조종이 상한을 넘겼다 — **실패로** 남긴다(`message.fail`).
  *
  * 평문이 아닌 이유: 유예에는 상한이 없고 대기 통지는 entry 당 1회라, 조종이 풀리지 않으면
@@ -1720,10 +1731,15 @@ export function buildTurnPrompt(opts: {
    * 않았다는 뜻이다 — 이 seq 까지의 글(옛 페이지)은 그 틈보다 옛것이라 싣지 않고 생략 줄에 「이상」으로 센다.
    */
   gapAfterSeq?: number;
+  /**
+   * 이 스레드의 앞 턴을 사람이 중단했다 — 누른 사람의 handle(`SessionRecord.canceledBy`). 델타 앞에
+   * `afterCancelLines` 를 싣는다. 델타를 대신하지 않는다 — 끊긴 뒤 사람이 아무 말도 안 했으면 턴이 뜰 이유가 없다.
+   */
+  afterCancelBy?: string;
 }): { prompt: string; fedSeq: number } {
   const {
     messages, lastFedSeq, meId, handles, channelId, threadRootId, wake, team, delegation,
-    delegatedBy, editedMention, canceledWakes, unseenOwnAfterSeq, mentionId, gapAfterSeq,
+    delegatedBy, editedMention, canceledWakes, unseenOwnAfterSeq, mentionId, gapAfterSeq, afterCancelBy,
   } = opts;
   const freshWake = opts.freshWake === true && wake !== undefined;
   const isFirstTurn = lastFedSeq === 0;
@@ -1771,6 +1787,7 @@ export function buildTurnPrompt(opts: {
     '',
   ];
   const canceledLines = canceledWakes?.length ? canceledWakeLines(canceledWakes) : [];
+  const cancelLines = afterCancelBy === undefined ? [] : afterCancelLines(afterCancelBy);
   const teamLines = team === undefined ? [] : teamSection(team, meId, handles);
   const delegationLines = delegation === undefined ? [] : delegationSection(delegation);
   const handedLines = delegatedBy === undefined ? [] : handedSection(delegatedBy);
@@ -1787,9 +1804,22 @@ export function buildTurnPrompt(opts: {
   // 팀 블록은 **델타 앞**이다 — 사람의 말을 읽기 전에 "너는 이 팀의 창구다"를 알아야
   // 그 말을 팀의 일로 읽는다. `wakeLines` 뒤에 두는 이유: 그 줄은 이 턴이 왜 떴는지이고,
   // 팀 블록은 이 턴이 무엇인지다(둘이 함께 오는 경우는 예약이 걸린 팀 턴이다).
-  const prompt = [head, '', ...wakeLines, ...canceledLines, ...teamLines, ...delegationLines, ...handedLines, ...editLines, ...lines, ...howTo].join('\n');
+  const prompt = [head, '', ...wakeLines, ...cancelLines, ...canceledLines, ...teamLines, ...delegationLines, ...handedLines, ...editLines, ...lines, ...howTo].join('\n');
 
   return { prompt, fedSeq };
+}
+
+/**
+ * 앞 턴이 사람의 중단으로 끊긴 뒤 뜬 턴의 안내(2026-10-29). 끊긴 턴은 하던 일(브랜치·push·PR·예약)을 남긴 채 죽고,
+ * 같은 세션을 이어받은 다음 턴은 그 사실을 모르면 하던 일을 그대로 잇는다 — 사람이 멈춘 일이 되살아난다. 그래서
+ * 무엇이 남았는지 사람에게 보이게 하고, 다시 시키기 전에는 잇지 말라고 적는다.
+ */
+export function afterCancelLines(byHandle: string): string[] {
+  return [
+    `(이 스레드의 앞 턴은 ${byHandle} 이(가) 중단했다 — 하던 일은 도중에 끊겼다. 이미 만든 브랜치·push·PR·걸어 둔 예약(turn.wake)을`,
+    '목록으로 이 스레드에 보고하고, 사람이 다시 시키기 전에는 끊긴 일을 이어서 하지 마라. 되돌릴지는 사람이 정한다.)',
+    '',
+  ];
 }
 
 /**

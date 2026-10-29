@@ -195,6 +195,51 @@ describe('mentionScheduler 승인 관문', () => {
     await scheduler.drain();
   });
 
+  /**
+   * 앞 턴 대기 통지(2026-10-29). 앞 턴이 도는 동안 온 사람 멘션은 미읽음으로 남아 그 턴이 끝난 뒤에야 읽힌다 —
+   * 사람이 「멈춰」를 써도 흔적이 없어 자기 글이 대기 중인 줄 몰랐다. entry 당 1회, 사람 글만.
+   *
+   * 되돌려 RED: `noticeBlocked` 를 빼면 첫 단언이, 1회 장부를 빼면 둘째(두 번째 폴)가 깨진다.
+   */
+  it('같은 스레드 앞 턴 때문에 미룬 사람 멘션에 「앞 턴이 끝나면 읽는다」를 entry 당 1회 알린다', async () => {
+    const gate = deferred<MentionTurnResult>();
+    const h = harness({ runTurn: () => gate.promise });
+    const withAgents: BatchContext = { ...ctx, agentIds: new Set(['agent-x']) };
+    const batch = batchOf([
+      { entryId: 1, messageId: 'm1', threadRootId: 'root-1' },
+      { entryId: 2, messageId: 'm2', threadRootId: 'root-1', body: '멈춰' },
+    ]);
+    await h.scheduler.admit(batch, withAgents);
+    const notices = () => h.posted.filter((p) => p.body.includes('앞 턴이 아직 돌고 있습니다'));
+    expect(notices()).toEqual([{ channelId: CH, body: expect.stringContaining('끝나면 읽습니다'), anchor: 'root-1' }]);
+    // 다음 폴에 같은 entry 가 다시 와도 또 알리지 않는다.
+    await h.scheduler.admit(batch, withAgents);
+    expect(notices()).toHaveLength(1);
+
+    gate.resolve({ stopRequestedAt: null });
+    await h.scheduler.drain();
+  });
+
+  it('에이전트가 쓴 글·깨움 사유·명단 없는 배치에는 앞 턴 대기 통지를 하지 않는다', async () => {
+    const gate = deferred<MentionTurnResult>();
+    const h = harness({ runTurn: () => gate.promise });
+    const first = batchOf([{ entryId: 1, messageId: 'm1', threadRootId: 'root-1' }]);
+    await h.scheduler.admit(first, ctx);
+    const agentBatch = batchOf([{ entryId: 2, messageId: 'm2', threadRootId: 'root-1' }]);
+    // 에이전트 글
+    await h.scheduler.admit(agentBatch, { ...ctx, agentIds: new Set(['human-1']) });
+    // 깨움 사유
+    const wake = batchOf([{ entryId: 3, messageId: 'm3', threadRootId: 'root-1' }]);
+    (wake.entries[0] as { reason: string }).reason = 'wake';
+    await h.scheduler.admit(wake, { ...ctx, agentIds: new Set(['agent-x']) });
+    // 명단 없음
+    await h.scheduler.admit(batchOf([{ entryId: 4, messageId: 'm4', threadRootId: 'root-1' }]), ctx);
+    expect(h.posted.filter((p) => p.body.includes('앞 턴이 아직 돌고 있습니다'))).toEqual([]);
+
+    gate.resolve({ stopRequestedAt: null });
+    await h.scheduler.drain();
+  });
+
   it('같은 entry 가 두 폴에 걸쳐 와도 한 번만 띄운다', async () => {
     let calls = 0;
     const gate = deferred<MentionTurnResult>();
