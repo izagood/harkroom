@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { GalleryScopeContext } from './Attachments';
 import type { GalleryScope } from '../lib/imageGallery';
 import { getCommunityController, useActiveStore, useCommunityRegistry } from '../state/communities';
+import { getController } from '../state/controller';
 import { useWindowView } from '../state/windowView';
 import { openWindow } from '../lib/windowActions';
 import { MessageItem } from './MessageItem';
@@ -19,6 +20,7 @@ import { Composer } from './Composer';
 import { PaneResizer } from './PaneResizer';
 import { paneStorage, paneMaxWidth, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH, MIN_CHANNEL_WIDTH } from '../lib/prefs';
 import { TypingLine } from './TypingLine';
+import { JumpToLatestPill } from './JumpToLatestPill';
 import { distanceFromBottom, isNearBottom } from '../lib/stickyBottom';
 import { appendedFromHere } from '../lib/ownSends';
 import type { SectionId } from './settings/sections';
@@ -144,9 +146,10 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
    * 같은 증상을 고치며 더한 셋(그리기 전 이동 · 관찰자 보정 · `stickyRef`)이 이 파일에는
    * 오지 않았다. 그래서 스레드에서만 증상이 남았다(소유자 보고, 2026-09-10).
    *
-   * 다만 "아래로 내려가기" 버튼은 여전히 여기 두지 않는다: 채널에 그 버튼이 생긴 이유는
-   * 목록이 수백 줄이라 위를 읽는 중 새 줄이 오면 되돌아갈 길이 필요했던 것이고, 스레드는
-   * 답글 몇 줄짜리 상자다. 필요해지면 그때 붙인다(#691 의 결정을 그대로 잇는다).
+   * 「↓ 최신 답글」 알약(2026-10-29, 소유자 결정 C안): #691 은 「스레드는 답글 몇 줄짜리 상자」라며 버튼을
+   * 미뤘지만, 에이전트가 주고받는 스레드는 이제 채널만큼 길다. 위로 올렸거나 링크·검색으로 중간 답글에
+   * 들어온 뒤 돌아갈 길이 없었다. 뜨는 때: 바닥에서 한 화면 넘게 떨어졌을 때 · 위를 읽는 중 새 답글이
+   * 왔을 때(수를 단다) · 받아 둔 창 아래가 비었을 때(뿌리의 `lastReplyAt` 이 마지막 답글보다 늦다).
    */
   const bottomRef = useRef<HTMLDivElement>(null);
   /** 스크롤 상자 자체. 바닥에서 얼마나 떨어졌는지는 이 요소만 안다. */
@@ -162,11 +165,17 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   const stickyRef = useRef(true);
   /** 직전 스크롤 위치. 사람이 올린 것과 브라우저가 옮긴 것을 가르는 데만 쓴다. */
   const lastScrollTopRef = useRef(0);
+  /** 알약을 보일까 · 위를 읽는 동안 쌓인 남의 새 답글 수 · 최신 페이지를 받는 중인가. 그리기에 쓰이므로 상태다. */
+  const [jumpVisible, setJumpVisible] = useState(false);
+  const [newCount, setNewCount] = useState(0);
+  const [jumpLoading, setJumpLoading] = useState(false);
 
   /** `block: 'nearest'` 는 필수다 — 근거는 `ChannelPane` 의 같은 함수 위에 적혀 있다. */
   const scrollToBottom = () => {
     atBottomRef.current = true;
     stickyRef.current = true;
+    setJumpVisible(false);
+    setNewCount(0);
     bottomRef.current?.scrollIntoView?.({ block: 'nearest' });
     // 방금 **우리가** 옮긴 자리를 직전 위치로 적어 둔다. 이것이 없으면 다음 스크롤을 재는
     // 기준이 0 으로 남아, 사람이 위로 올린 것을 "내용이 자랐다"로 오해한다.
@@ -224,6 +233,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     jumpedThisCommitRef.current = true;
     atBottomRef.current = false;
     stickyRef.current = false;
+    // 점프한 자리 아래에 답글이 더 있을 수 있다 — 돌아갈 길을 먼저 세운다(채널의 `onJump` 와 같다).
+    setJumpVisible(true);
   }, [highlightedId, highlightInThread]);
 
   /** 직전 커밋의 마지막 답글 — 채널의 `lastRootIdRef` 와 같은 이유다(앞에 붙은 옛 답글은 "내 새 답글"이 아니다). */
@@ -235,7 +246,18 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     const last = thread[thread.length - 1];
     // 「내 답글」= 이 기기의 작성칸에서 보낸 것만(`lib/ownSends.ts`, 자리 열쇠는 스레드 뿌리).
     const appendedMine = appendedFromHere(last, lastReplyIdRef.current, me?.id, threadRootId ?? '', useActiveStore.getState());
-    if (atBottomRef.current || appendedMine) scrollToBottom();
+    if (atBottomRef.current || appendedMine) { scrollToBottom(); return; }
+    // 위를 읽는 중에 붙은 줄 — 화면은 그대로 두고 알약에 수를 단다. 직전 마지막 답글 **뒤에** 붙은 남의 글만 센다
+    // (앞에 붙은 옛 페이지는 새 답글이 아니다).
+    const at = thread.findIndex((m) => m.id === lastReplyIdRef.current);
+    // 진행·깨움 줄은 답글이 아니다 — 에이전트 스레드는 진행 줄이 잦아 실제 답 하나에 수가 부푼다(designer f1).
+    const added = at >= 0
+      ? thread.slice(at + 1).filter((m) => m.authorId !== me?.id && m.kind !== 'progress' && m.kind !== 'wake').length
+      : 0;
+    if (added > 0) {
+      setNewCount((c) => c + added);
+      setJumpVisible(true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread.length]);
   useEffect(() => { lastReplyIdRef.current = thread[thread.length - 1]?.id ?? null; });
@@ -309,8 +331,12 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     // 사람이 손으로 바닥까지 내려왔으면 다시 붙는다.
     if (near) {
       stickyRef.current = true;
+      setJumpVisible(false);
+      setNewCount(0);
       return;
     }
+    // 한 화면 넘게 위다 — 돌아갈 길을 보인다(시안 #1). 그보다 가까우면 손으로 굴려도 금방이다.
+    if (distanceFromBottom(el) > el.clientHeight) setJumpVisible(true);
     /**
      * 바닥에서 떨어져 있다 — **누가 떨어뜨렸는지**가 갈린다. 사람이 위로 올렸으면
      * `scrollTop` 이 **줄어든다.** 내용이 자라서 멀어진 경우에는 줄지 않는다(아래로 자라면
@@ -318,6 +344,31 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
      * 후자를 "사람이 올렸다"로 읽으면 고정이 풀려 위의 관찰자 보정이 죽는다.
      */
     if (el.scrollTop < prevTop) stickyRef.current = false;
+  };
+
+  /**
+   * 받아 둔 창 아래가 비었는가 — 링크·검색으로 옛 답글 둘레만 받아 온 경우다. 뿌리의 `lastReplyAt` 이
+   * 손에 든 마지막 답글보다 늦으면 그 사이를 모른다. 이때 알약은 바닥이 아니라 **최신 페이지**로 간다.
+   */
+  // 서버의 `lastReplyAt` 은 진행·깨움 줄을 빼고 잰다(`services/messages.ts`) — 같은 줄을 빼고 견준다.
+  const lastHeld = [...thread].reverse().find((m) => m.id !== threadRootId && m.kind !== 'progress' && m.kind !== 'wake');
+  const tailKey = `${threadRootId}|${rootRow?.lastReplyAt ?? ''}`;
+  const [fetchedTail, setFetchedTail] = useState<string | null>(null);
+  const tailMissing = !!rootRow?.lastReplyAt && !!lastHeld && fetchedTail !== tailKey
+    && replyStamp(rootRow.lastReplyAt) > replyStamp(lastHeld.createdAt) + 1;
+  const jumpToLatest = async () => {
+    if (!tailMissing || !threadRootId) { scrollToBottom(); return; }
+    setJumpLoading(true);
+    try {
+      // `aroundSeq` 없이 열면 최신 페이지를 받아 손에 든 줄에 합친다(`controller.openThread`).
+      await getController().openThread(threadRootId, { channelId: activeChannelId ?? undefined });
+    } finally {
+      setJumpLoading(false);
+    }
+    // 한 번 받았으면 같은 `lastReplyAt` 에 다시 「비었다」고 하지 않는다 — 마지막 답글이 지워져 시각이
+    // 남은 스레드에서 알약이 영영 서 있지 않게.
+    setFetchedTail(tailKey);
+    scrollToBottom();
   };
 
   // 스레드 패널에서 연 그림은 이 스레드(루트+답글)의 그림을 넘긴다(그림 넘겨 보기 사양 1).
@@ -403,6 +454,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
         <ThreadModelRow channelId={activeChannelId} rootId={threadRootId} thread={thread} expanded={modelsOpen} />
       )}
       <WaitChainLine chain={chain} />
+      {/* 알약이 목록 위에 뜨려면 목록을 감싸는 기준 상자가 필요하다 — 작성창 위 오른쪽(시안 #5). */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={listRef}
         onScroll={onListScroll}
@@ -484,6 +537,19 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
             (채널의 `channel-bottom` 과 같다). */}
         <div ref={bottomRef} data-testid="thread-bottom" />
       </div>
+      {(jumpVisible || tailMissing) && (
+        <JumpToLatestPill
+          testId="thread-jump-to-latest"
+          label={t('thread.jumpLatest')}
+          newLabel={(count) => t('thread.jumpLatest.new', { count })}
+          ariaLabel={t('thread.jumpLatest.aria')}
+          ariaNewLabel={(count) => t('thread.jumpLatest.ariaNew', { count })}
+          count={newCount}
+          loading={jumpLoading}
+          onClick={() => { void jumpToLatest(); }}
+        />
+      )}
+      </div>
       <TypingLine />
       <div className="border-t border-border p-3">
         <Composer
@@ -534,4 +600,14 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     </section>
     </GalleryScopeContext.Provider>
   );
+}
+
+/**
+ * 서버 시각 글자를 밀리초로. 요약 칸은 Postgres `::text` 꼴(`2026-10-29 12:24:07.118123+00`)로 올 수 있는데,
+ * WebKit 의 `Date.parse` 는 공백·`+00` 꼴을 못 읽어 NaN 을 준다 — ISO 로 고쳐 읽는다. 못 읽으면 0(=비었다고 보지 않는다).
+ */
+function replyStamp(at: string): number {
+  const iso = at.replace(' ', 'T').replace(/([+-]\d\d)$/, '$1:00');
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? 0 : ms;
 }
