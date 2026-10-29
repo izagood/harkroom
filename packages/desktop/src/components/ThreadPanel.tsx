@@ -250,7 +250,10 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
     // 위를 읽는 중에 붙은 줄 — 화면은 그대로 두고 알약에 수를 단다. 직전 마지막 답글 **뒤에** 붙은 남의 글만 센다
     // (앞에 붙은 옛 페이지는 새 답글이 아니다).
     const at = thread.findIndex((m) => m.id === lastReplyIdRef.current);
-    const added = at >= 0 ? thread.slice(at + 1).filter((m) => m.authorId !== me?.id).length : 0;
+    // 진행·깨움 줄은 답글이 아니다 — 에이전트 스레드는 진행 줄이 잦아 실제 답 하나에 수가 부푼다(designer f1).
+    const added = at >= 0
+      ? thread.slice(at + 1).filter((m) => m.authorId !== me?.id && m.kind !== 'progress' && m.kind !== 'wake').length
+      : 0;
     if (added > 0) {
       setNewCount((c) => c + added);
       setJumpVisible(true);

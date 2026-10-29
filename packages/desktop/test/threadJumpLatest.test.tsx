@@ -80,6 +80,16 @@ describe('스레드 「↓ 최신 답글」 알약', () => {
     expect(screen.getByTestId('thread-jump-to-latest').getAttribute('aria-label')).toBe('Jump to latest replies, 1 new');
   });
 
+  it('진행·깨움 줄은 새 답글로 세지 않는다', async () => {
+    render(<ThreadPanel />);
+    metrics(screen.getByTestId('thread-scroll'), 0);
+    useAppStore.getState().set({ messages: { c1: [
+      root(), reply('m2', 2, 'u2'),
+      { ...reply('m3', 3, 'u2'), kind: 'progress' }, { ...reply('m4', 4, 'u2'), kind: 'wake' }, reply('m5', 5, 'u2'),
+    ] } });
+    await waitFor(() => expect(screen.getByTestId('thread-jump-to-latest').textContent).toContain('New replies · 1'));
+  });
+
   it('받아 둔 창 아래가 비었으면 바닥이어도 뜨고, 누르면 최신 페이지를 받는다(Postgres 시각 꼴도 읽는다)', async () => {
     useAppStore.getState().set({ messages: { c1: [root('2026-10-29 10:05:00.123456+00'), reply('m2', 2, 'u2')] } });
     render(<ThreadPanel />);
