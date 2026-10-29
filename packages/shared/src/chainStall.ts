@@ -27,20 +27,44 @@ export const CHAIN_BACKSTOP_STOP = 'stop';
 export const STALL_LOOKBACK = 10;
 
 const SHA = /\b[0-9a-f]{7,40}\b/gi;
+const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const UUID_EXACT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ISSUE_REF = /(?:^|[\s(\[,])((?:[\w.-]+\/[\w.-]+)?#\d{1,7})\b/g;
-const MESSAGE_LINK = /harkroom:\/\/message\/[0-9a-f-]{36}/gi;
+const MESSAGE_LINK = /harkroom:\/\/message\/([0-9a-f-]{36})/gi;
 const GITHUB_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues|commit)\/[0-9a-f]+/gi;
 
-/** 본문에서 결과물 표지를 뽑는다. 비교용이라 소문자로 맞추고, sha 는 앞 7자리로 줄인다(짧은 sha·긴 sha 를 같은 것으로). */
-export function chainArtifacts(body: string): Set<string> {
+/** 본문의 `harkroom://message/<id>` 링크가 가리키는 메시지 id(소문자). 서버가 같은 스레드 글인지 가르는 데 쓴다. */
+export function messageLinkIds(body: string): string[] {
+  // uuid 꼴만 — 서버가 `::uuid[]` 로 넘기므로 하이픈 자리가 틀린 36자는 조회를 깨뜨린다.
+  return [...new Set([...body.matchAll(MESSAGE_LINK)].map((m) => m[1]!.toLowerCase()))]
+    .filter((id) => UUID_EXACT.test(id));
+}
+
+export interface ChainArtifactOptions {
+  /**
+   * **같은 스레드 글의 id**(⑤, security M2). 그 글로 가는 링크는 결과물이 아니다 — 루프를 도는 에이전트가 서로의 앞 글
+   * 링크만 달아도 매 홉 「새 결과물」로 읽혀 정체 셈이 0 으로 돌아갔다. 서버가 본문의 링크 가운데 이 스레드 것만 골라 준다.
+   */
+  ownThreadIds?: ReadonlySet<string>;
+}
+
+/**
+ * 본문에서 결과물 표지를 뽑는다. 비교용이라 소문자로 맞추고, sha 는 앞 7자리로 줄인다(짧은 sha·긴 sha 를 같은 것으로).
+ * **맨 uuid 는 결과물이 아니다**(⑤) — 턴 id·메시지 id 의 마디(`1e086e53`)가 sha 로 잡히면 아무 id 나 붙여도 정체가 풀린다.
+ */
+export function chainArtifacts(body: string, opts: ChainArtifactOptions = {}): Set<string> {
   const out = new Set<string>();
-  // 링크를 먼저 뽑고 지운다 — 남겨 두면 uuid 마디(`1e086e53`)가 sha 로 다시 잡힌다.
-  let rest = body.replace(MESSAGE_LINK, (m) => { out.add(`msg:${m.toLowerCase()}`); return ' '; });
+  // 링크를 먼저 뽑고 지운다 — 남겨 두면 uuid 마디가 sha 로 다시 잡힌다. 같은 스레드 글로 가는 링크는 버린다.
+  let rest = body.replace(MESSAGE_LINK, (m, id: string) => {
+    if (!opts.ownThreadIds?.has(id.toLowerCase())) out.add(`msg:${m.toLowerCase()}`);
+    return ' ';
+  });
   rest = rest.replace(GITHUB_URL, (m) => {
     const tail = m.toLowerCase().split('/').slice(-2);
     out.add(tail[0] === 'commit' ? `sha:${tail[1]!.slice(0, 7)}` : `ref:#${tail[1]}`);
     return ' ';
   });
+  rest = rest.replace(UUID, ' ');
   for (const m of rest.matchAll(SHA)) {
     const w = m[0].toLowerCase();
     if (/[0-9]/.test(w) && /[a-f]/.test(w)) out.add(`sha:${w.slice(0, 7)}`);
@@ -49,25 +73,50 @@ export function chainArtifacts(body: string): Set<string> {
   return out;
 }
 
-/** 이 본문이 앞 줄들에 없던 결과물을 하나라도 내놓았나. 첨부는 언제나 새 결과물이다. */
-export function bringsNewArtifact(body: string, recentBodies: readonly string[], hasAttachment = false): boolean {
-  if (hasAttachment) return true;
-  const mine = chainArtifacts(body);
-  if (mine.size === 0) return false;
+/** 이 본문이 앞 줄들에 없던 결과물 — 비었으면 새 결과물이 없다. */
+export function newArtifacts(body: string, recentBodies: readonly string[], opts: ChainArtifactOptions = {}): Set<string> {
+  const mine = chainArtifacts(body, opts);
+  if (mine.size === 0) return mine;
   const seen = new Set<string>();
-  for (const b of recentBodies) for (const a of chainArtifacts(b)) seen.add(a);
-  for (const a of mine) if (!seen.has(a)) return true;
-  return false;
+  for (const b of recentBodies) for (const a of chainArtifacts(b, opts)) seen.add(a);
+  return new Set([...mine].filter((a) => !seen.has(a)));
+}
+
+/** 이 본문이 앞 줄들에 없던 결과물을 하나라도 내놓았나. 첨부는 언제나 새 결과물이다. */
+export function bringsNewArtifact(
+  body: string, recentBodies: readonly string[], hasAttachment = false, opts: ChainArtifactOptions = {},
+): boolean {
+  return hasAttachment || newArtifacts(body, recentBodies, opts).size > 0;
+}
+
+export interface StallStep {
+  stallDepth: number;
+  /**
+   * 셈이 **다른 스레드 글 링크만으로** 0 이 됐다(⑤ 그림자 표지). 좁힌 뒤에도 남는 틈 — 루프가 바깥 글 링크를 돌려 달면
+   * 여전히 정체가 풀린다 — 이 얼마나 되는지 그림자 기간에 잰다.
+   */
+  linkOnlyReset: boolean;
 }
 
 /**
  * 이 발화의 정체 홉 수. 사슬 밖(깊이 0 — 사람 글·누구도 부르지 않은 이어 말하기)이면 0, 새 결과물이 있으면 0,
  * 아니면 앞 고리의 정체 + 1.
  */
+export function stallStep(input: {
+  mentionDepth: number; prevStall: number; body: string; recentBodies: readonly string[]; hasAttachment?: boolean;
+  ownThreadIds?: ReadonlySet<string>;
+}): StallStep {
+  if (input.mentionDepth <= 0) return { stallDepth: 0, linkOnlyReset: false };
+  if (input.hasAttachment) return { stallDepth: 0, linkOnlyReset: false };
+  const fresh = newArtifacts(input.body, input.recentBodies, { ownThreadIds: input.ownThreadIds });
+  if (fresh.size === 0) return { stallDepth: input.prevStall + 1, linkOnlyReset: false };
+  return { stallDepth: 0, linkOnlyReset: [...fresh].every((a) => a.startsWith('msg:')) };
+}
+
+/** `stallStep` 의 깊이만. */
 export function nextStallDepth(input: {
   mentionDepth: number; prevStall: number; body: string; recentBodies: readonly string[]; hasAttachment?: boolean;
+  ownThreadIds?: ReadonlySet<string>;
 }): number {
-  if (input.mentionDepth <= 0) return 0;
-  if (bringsNewArtifact(input.body, input.recentBodies, input.hasAttachment)) return 0;
-  return input.prevStall + 1;
+  return stallStep(input).stallDepth;
 }

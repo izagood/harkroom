@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { bringsNewArtifact, chainArtifacts, nextStallDepth } from '../src/chainStall.js';
+import { bringsNewArtifact, chainArtifacts, messageLinkIds, nextStallDepth, stallStep } from '../src/chainStall.js';
 
 describe('정체 홉 — 결과물 판정', () => {
   it('sha·PR 번호·메시지 링크·GitHub URL 을 결과물로 읽는다', () => {
@@ -29,5 +29,27 @@ describe('정체 홉 — 결과물 판정', () => {
     expect(nextStallDepth({ mentionDepth: 0, prevStall: 3, body: '확인', recentBodies: [] })).toBe(0);
     expect(nextStallDepth({ mentionDepth: 5, prevStall: 3, body: 'head abc1234 올림', recentBodies: [] })).toBe(0);
     expect(nextStallDepth({ mentionDepth: 5, prevStall: 3, body: '이미 봤다', recentBodies: [] })).toBe(4);
+  });
+
+  it('맨 uuid 의 마디는 sha 가 아니다(⑤) — 아무 id 나 붙여 정체를 풀 수 없다', () => {
+    expect(chainArtifacts('턴 a57049ef-b2c8-4047-be94-648f000142a0 확인')).toEqual(new Set());
+    expect(bringsNewArtifact('id 1e086e53-91c5-4745-99f4-446432722094', [])).toBe(false);
+  });
+
+  it('같은 스레드 글로 가는 링크는 결과물이 아니고, 다른 글 링크만으로 풀리면 표지가 선다(⑤)', () => {
+    const own = '1e086e53-91c5-4745-99f4-446432722094';
+    const other = 'db87a234-68fb-4a62-9c32-a7545c4c5998';
+    const ownThreadIds = new Set([own]);
+    expect(stallStep({ mentionDepth: 3, prevStall: 2, body: `앞 글 harkroom://message/${own}`, recentBodies: [], ownThreadIds }))
+      .toEqual({ stallDepth: 3, linkOnlyReset: false });
+    expect(stallStep({ mentionDepth: 3, prevStall: 2, body: `저쪽 harkroom://message/${other}`, recentBodies: [], ownThreadIds }))
+      .toEqual({ stallDepth: 0, linkOnlyReset: true });
+    expect(stallStep({ mentionDepth: 3, prevStall: 2, body: `#1700 과 harkroom://message/${other}`, recentBodies: [], ownThreadIds }))
+      .toEqual({ stallDepth: 0, linkOnlyReset: false });
+  });
+
+  it('메시지 링크 id 는 uuid 꼴만 돌려준다 — 서버 조회를 깨지 않게', () => {
+    expect(messageLinkIds('harkroom://message/1e086e53-91c5-4745-99f4-446432722094 harkroom://message/------------------------------------'))
+      .toEqual(['1e086e53-91c5-4745-99f4-446432722094']);
   });
 });

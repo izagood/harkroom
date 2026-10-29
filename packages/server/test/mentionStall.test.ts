@@ -88,4 +88,23 @@ describe(`정체 홉 그림자(한도 ${STALL_HOP_LIMIT})`, () => {
     const more = await post(agents.ada!.pat, '@bob head 4c3e7f2a 확인함', root);
     expect((await metaOf(more)).mentionStallShadow).toMatchObject({ stallDepth: STALL_HOP_LIMIT });
   });
+
+  it('서로의 앞 글 링크·맨 uuid 만 다는 핑퐁은 결과물이 아니다 — 정체로 센다(⑤)', async () => {
+    const root = await post(adminToken, '@ada 링크 핑퐁');
+    let last = root;
+    for (let n = 0; n < STALL_HOP_LIMIT; n++) {
+      const [author, next] = n % 2 === 0 ? ['ada', 'bob'] : ['bob', 'ada'];
+      last = await post(agents[author]!.pat, `@${next} 앞 글 harkroom://message/${last} · 턴 ${crypto.randomUUID()}`, root);
+    }
+    expect((await metaOf(last)).mentionStallShadow).toMatchObject({ stallDepth: STALL_HOP_LIMIT });
+  });
+
+  it('다른 스레드 글 링크만으로 풀린 홉에는 그림자 표지가 선다(⑤)', async () => {
+    const elsewhere = await post(adminToken, '다른 대화');
+    const root = await post(adminToken, '@ada 바깥 링크');
+    const id = await post(agents.ada!.pat, `@bob 저쪽 harkroom://message/${elsewhere}`, root);
+    expect((await metaOf(id)).mentionStallLinkReset).toBe(true);
+    const plain = await post(agents.bob!.pat, '@ada #4100 올림', root);
+    expect((await metaOf(plain)).mentionStallLinkReset).toBeUndefined();
+  });
 });
