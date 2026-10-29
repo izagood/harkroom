@@ -10,6 +10,7 @@ import { groupProgress } from '../lib/progressGroup';
 import { groupAgentExchanges } from '../lib/agentExchange';
 import { Composer } from './Composer';
 import { TypingLine } from './TypingLine';
+import { JumpToLatestPill } from './JumpToLatestPill';
 import { ChannelFiles } from './ChannelFiles';
 import { ChannelDocPanel } from './ChannelDocPanel';
 import { ChannelEmptyState } from './ChannelEmptyState';
@@ -189,6 +190,8 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
   const settleFrameRef = useRef<number | null>(null);
   /** "아래로 내려가기" 버튼을 세울지. 목록이 늘었지만 사람이 위를 보고 있을 때만 참이다. */
   const [jumpVisible, setJumpVisible] = useState(false);
+  /** 위를 읽는 동안 끝에 붙은 남의 새 글 수 — 알약에 단다(스레드 알약과 같은 부품, 2026-10-29). */
+  const [newCount, setNewCount] = useState(0);
   // 파일 색인(#232)은 채널 안에서 열고 닫는 패널이다 — 새 최상위 화면이 아니다. 그래서
   // 열림 상태도 채널 화면이 들고 있고, 채널이 바뀌면 `key` 로 패널이 다시 만들어진다.
   /**
@@ -354,6 +357,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     atBottomRef.current = true;
     stickyRef.current = true;
     setJumpVisible(false);
+    setNewCount(0);
     bottomRef.current?.scrollIntoView?.({ block: 'nearest' });
     // 방금 **우리가** 옮긴 자리를 직전 위치로 적어 둔다. 이 두 줄이 없으면 다음 스크롤을
     // 재는 기준이 0 으로 남아, 사람이 위로 올린 것을 "내용이 자랐다"로 오해한다 —
@@ -516,6 +520,12 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     }
     // 목록이 늘었는데 사람이 위를 보고 있다 — 화면은 그대로 두고 내려갈 길만 준다.
     else setJumpVisible(true);
+    // 위를 보는 동안 끝에 붙은 남의 글은 알약에 센다. 앞에 붙은 옛 페이지(과거 불러오기)는 새 글이 아니다.
+    if (!jumpedThisCommitRef.current && !atBottomRef.current && !appendedMine) {
+      const at = roots.findIndex((m) => m.id === lastRootIdRef.current);
+      const added = at >= 0 ? roots.slice(at + 1).filter((m) => m.authorId !== me?.id).length : 0;
+      if (added > 0) setNewCount((c) => c + added);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roots.length]);
   useEffect(() => { lastRootIdRef.current = roots[roots.length - 1]?.id ?? null; });
@@ -718,6 +728,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     if (near) {
       stickyRef.current = true;
       setJumpVisible(false);
+      setNewCount(0);
       return;
     }
     /**
@@ -965,13 +976,15 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
       {/* 작성창 **조금 위**에 선다(사용자 요청 그대로). 오른쪽에 붙이는 것은 본문 글줄을
           가리지 않기 위해서다 — 대화는 왼쪽 정렬이다. */}
       {jumpVisible && (
-        <button
-          data-testid="channel-jump-to-bottom"
-          className="absolute bottom-3 right-4 rounded-full bg-surface-raised px-3 py-1 text-meta font-medium text-fg shadow-float hover:bg-surface-sunken"
+        <JumpToLatestPill
+          testId="channel-jump-to-bottom"
+          label={t('channel.pane.jumpToBottom')}
+          newLabel={(count) => t('channel.pane.jumpNew', { count })}
+          ariaLabel={t('channel.pane.jumpAria')}
+          ariaNewLabel={(count) => t('channel.pane.jumpAriaNew', { count })}
+          count={newCount}
           onClick={scrollToBottom}
-        >
-          {t('channel.pane.jumpToBottom')}
-        </button>
+        />
       )}
       </div>
       <TypingLine />

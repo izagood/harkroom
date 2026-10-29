@@ -95,7 +95,17 @@ describe('아래로 내려가기', () => {
     await waitFor(() => expect(screen.getByTestId('channel-jump-to-bottom')).toBeTruthy());
     // **이것이 이슈의 핵심이다** — 줄이 늘었다고 화면이 움직여서는 안 된다.
     expect(scrollIntoView).not.toHaveBeenCalled();
-    expect(screen.getByText('아래로 내려가기')).toBeTruthy();
+    // 남의 새 줄은 수로 단다 — 스레드 알약과 같은 부품(2026-10-29).
+    expect(screen.getByText('새 글 1')).toBeTruthy();
+    expect(screen.getByTestId('channel-jump-to-bottom').getAttribute('aria-label')).toBe('최신 글로 이동, 새 글 1개');
+  });
+
+  it('내 이름의 글(다른 기기·자동화)은 세지 않는다 — 버튼은 기본 문구다', async () => {
+    render(<ChannelPane />);
+    lookUp(screen.getByTestId('channel-scroll'));
+    arrive('u1');
+    await waitFor(() => expect(screen.getByTestId('channel-jump-to-bottom')).toBeTruthy());
+    expect(screen.getByText('최신 글')).toBeTruthy();
   });
 
   it('버튼을 누를 때 비로소 내려가고, 버튼은 사라진다', async () => {
