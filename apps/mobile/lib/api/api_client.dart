@@ -10,6 +10,7 @@ import 'content_type.dart';
 import 'ask.dart';
 import 'inbox_board.dart';
 import 'models.dart';
+import 'permission_card.dart' show DecideCheck;
 
 /// 서버 REST 클라이언트. 데스크탑 `api.ts` 의 **같은 규약**을 따른다:
 /// `Authorization: Bearer <token>`, JSON 본문, `{ error: { code, message } }` 오류 봉투.
@@ -596,6 +597,10 @@ class ApiClient {
   ///
   /// **답은 원본을 고치지 않는다** — 고른 결과가 `meta.ask.answeredWith/By/At` 로
   /// 덧붙고 본문과 `editedAt` 은 그대로다. 사람이 글을 고친 것이 아니기 때문이다.
+  /// 이 채널에서 이 에이전트의 권한 카드를 내가 정할 수 있나(서버 0.4.315~, P1). 화면은 판정하지 않고 이 값으로 버튼을 그린다.
+  Future<DecideCheck> decideCheck(String agentId, String channelId) async =>
+      DecideCheck.fromJson(_obj(await _send('GET', '/agents/$agentId/decide-check?channelId=${Uri.encodeQueryComponent(channelId)}')));
+
   Future<MessageRow> answerAsk(String channelId, String messageId, String optionId) async {
     final res = await _send(
       'POST',

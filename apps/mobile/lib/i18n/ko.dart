@@ -352,7 +352,23 @@ class StringsKo implements Strings {
   String get permStateMandateEnded => '위임장이 끝남 · 더 정할 수 없다';
 
   @override
-  String get permReadOnly => '소유자만 정할 수 있다';
+  String get permYouCanDecide => '네가 정할 수 있다';
+  @override
+  String permDecideByOwner(String owner) => '소유자 @$owner 이 정한다';
+  @override
+  String permDecideByList(String owner) => '@$owner 또는 명단의 사람이 정한다';
+  @override
+  String permDecideByChannel(String owner) => '@$owner 또는 이 채널 멤버가 정한다';
+  @override
+  String permDecideByCommunity(String owner) => '@$owner 또는 이 커뮤니티 사람이 정한다';
+  @override
+  String permDecideBySwitchOff(String owner) => '소유자 @$owner 이 정한다 · 사용자 승인이 꺼져 있다';
+  @override
+  String get permDecideByUnknown => '이 에이전트를 부를 수 있는 사람이 정한다';
+  @override
+  String get permErrForbidden => '이 에이전트를 부를 수 있는 사람만 정할 수 있다';
+  @override
+  String get permErrMandateUnavailable => '이 스레드에는 위임장을 만들 수 없다 — [이번 한 번]으로 정한다';
 
   @override
   String get permViaChat => '글로 답함';

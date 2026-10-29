@@ -353,7 +353,23 @@ class StringsEn implements Strings {
   String get permStateMandateEnded => 'The mandate has ended · nothing more to decide';
 
   @override
-  String get permReadOnly => 'Only the owner can decide';
+  String get permYouCanDecide => 'you can decide';
+  @override
+  String permDecideByOwner(String owner) => 'Owner @$owner decides';
+  @override
+  String permDecideByList(String owner) => '@$owner or people on the list decide';
+  @override
+  String permDecideByChannel(String owner) => '@$owner or members of this channel decide';
+  @override
+  String permDecideByCommunity(String owner) => '@$owner or anyone in this community decides';
+  @override
+  String permDecideBySwitchOff(String owner) => 'Owner @$owner decides · user approval is off';
+  @override
+  String get permDecideByUnknown => 'People who can call this agent decide';
+  @override
+  String get permErrForbidden => 'Only people who can call this agent can decide.';
+  @override
+  String get permErrMandateUnavailable => "A mandate can't be started on this thread — use [Just this once].";
 
   @override
   String get permViaChat => 'answered in chat';
