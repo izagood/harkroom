@@ -22,6 +22,9 @@ http.Response _json(Object body, [int status = 200]) =>
 
 final calls = <String>[];
 
+/// `GET /agents/:id/decide-check` 가 돌려줄 값(채널 c1). null 이면 404 — 받기 전·옛 서버처럼 소유자만 꼴.
+Map<String, Object?>? decideCheck;
+
 MockClient _client() => MockClient((req) async {
       final path = req.url.path;
       if (req.method != 'GET') calls.add('${req.method} $path ${req.body}');
@@ -31,10 +34,14 @@ MockClient _client() => MockClient((req) async {
         return _json({
           'accounts': [
             {'id': 'me-1', 'handle': 'alice', 'displayName': '', 'isAgent': false, 'isDisabled': false},
+            {'id': 'owner-9', 'handle': 'bob', 'displayName': '', 'isAgent': false, 'isDisabled': false},
           ],
         });
       }
       if (path == '/reads') return _json({'reads': <Object?>[]});
+      if (path == '/agents/ag1/decide-check' && decideCheck != null && req.url.queryParameters['channelId'] == 'c1') {
+        return _json(decideCheck!);
+      }
       if (path.startsWith('/inbox')) return _json({'entries': <Object?>[]});
       return _json({'error': {'code': 'not_found', 'message': path}}, 404);
     });
@@ -244,7 +251,7 @@ void main() {
     await expectState({'mandate': {..._mandate, 'endedAt': '2026-10-22T00:00:00Z'}}, '위임장이 끝남');
     await expectState({'status': 'granted', 'decidedVia': {'kind': 'chat', 'messageId': 'x'}}, '위임장에 더함 · 글로 답함',
         ask: {'answeredWith': 'approve_mandate'});
-    await expectState({'ownerAccountId': 'someone-else'}, '소유자만 정할 수 있다');
+    await expectState({'ownerAccountId': 'someone-else'}, '이 에이전트를 부를 수 있는 사람이 정한다');
     expect(find.byKey(const Key('ask-option-m1-deny')), findsNothing);
   });
 
@@ -342,5 +349,50 @@ void main() {
     expect(
         permissionCardBody(body, permMeta(mirror: {'rootId': 'root1', 'neutral': false, 'kind': 'merge', 'line': _line, 'bodyTargetLine': tl})),
         '권한 요청 · @ag\n이유: 확인');
+  });
+
+  group('P4: 누가 정하나는 서버 decide-check 로', () {
+    tearDown(() => decideCheck = null);
+
+    Map<String, Object?> other() => permMeta(pr: {'ownerAccountId': 'owner-9', 'mandate': null});
+
+    testWidgets('소유자가 아니어도 정할 수 있으면 버튼 + 「· 네가 정할 수 있다」, 범위 줄 없음', (tester) async {
+      decideCheck = {'viewerCanDecide': true, 'asOwner': false, 'decideScope': 'community', 'ownerAccountId': 'owner-9'};
+      await tester.pumpWidget(wrap(app, card(other())));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('ask-option-m1-approve_mandate')), findsOneWidget);
+      expect(find.byKey(const Key('ask-option-m1-deny')), findsOneWidget);
+      expect(find.byKey(const Key('perm-readonly-m1')), findsNothing);
+      expect(find.text('위임장에 줄을 더할까? · 네가 정할 수 있다'), findsOneWidget);
+      expect(find.textContaining('소유자 아님'), findsNothing);
+    });
+
+    testWidgets('정할 수 없으면 버튼 없이 범위별 한 줄, 머리 꼬리 없음(ko·en)', (tester) async {
+      for (final (scope, ko, en) in [
+        ('owner', '소유자 @bob 이 정한다', 'Owner @bob decides'),
+        ('list', '@bob 또는 명단의 사람이 정한다', '@bob or people on the list decide'),
+        ('channel', '@bob 또는 이 채널 멤버가 정한다', '@bob or members of this channel decide'),
+        ('community', '@bob 또는 이 커뮤니티 사람이 정한다', '@bob or anyone in this community decides'),
+        ('switchOff', '소유자 @bob 이 정한다 · 사용자 승인이 꺼져 있다', 'Owner @bob decides · user approval is off'),
+      ]) {
+        app.decideChecks['ag1:c1'] = DecideCheck(viewerCanDecide: false, asOwner: false, decideScope: scope, ownerAccountId: 'owner-9');
+        await tester.pumpWidget(wrap(app, card(other())));
+        await tester.pump();
+        expect(tester.widget<Text>(find.byKey(const Key('perm-readonly-m1'))).data, ko, reason: scope);
+        expect(find.byKey(const Key('ask-option-m1-approve_mandate')), findsNothing);
+        expect(find.text('위임장에 줄을 더할까?'), findsOneWidget);
+        await tester.pumpWidget(wrap(app, card(other()), lang: 'en'));
+        await tester.pump();
+        expect(tester.widget<Text>(find.byKey(const Key('perm-readonly-m1'))).data, en, reason: scope);
+      }
+    });
+
+    testWidgets('소유자라도 서버가 정할 수 없다고 하면 버튼을 그리지 않는다(화면이 다시 판정하지 않는다)', (tester) async {
+      app.decideChecks['ag1:c1'] = const DecideCheck(viewerCanDecide: false, asOwner: false, decideScope: 'owner', ownerAccountId: 'me-1');
+      await tester.pumpWidget(wrap(app, card(permMeta())));
+      await tester.pump();
+      expect(find.byKey(const Key('ask-option-m1-approve_mandate')), findsNothing);
+      expect(find.byKey(const Key('perm-readonly-m1')), findsOneWidget);
+    });
   });
 }

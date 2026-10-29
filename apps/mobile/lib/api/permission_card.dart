@@ -95,6 +95,7 @@ class PermissionCardInfo {
     this.once,
     this.status,
     this.ownerId,
+    this.agentId,
     this.decidedViaChat = false,
     this.ghUserUsed,
     this.mirrorRootId,
@@ -115,6 +116,9 @@ class PermissionCardInfo {
 
   /// 정할 수 있는 사람(원본의 `ownerAccountId`, 거울은 위임장 소유자). 모르면 null — 서버가 판정한다.
   final String? ownerId;
+
+  /// 요청한 에이전트(원본만). 누가 정하나(`decide-check`)를 묻는 데 쓴다 — 거울은 null(소유자만 꼴 그대로).
+  final String? agentId;
   final bool decidedViaChat;
 
   /// 이번 한 번 머지에 실제로 쓴 gh 계정(서버가 알려 줄 때만).
@@ -149,6 +153,7 @@ class PermissionCardInfo {
         once: PermissionCardOnce.read(pr['once']),
         status: pr['status'] as String?,
         ownerId: pr['ownerAccountId'] as String?,
+        agentId: pr['agentId'] is String ? pr['agentId'] as String : null,
         decidedViaChat: via is Map && via['kind'] == 'chat',
         ghUserUsed: gh,
         supersededByMessageId: pr['supersededByMessageId'] is String ? pr['supersededByMessageId'] as String : null,
@@ -191,4 +196,23 @@ List<String> orderedPermissionWarnings(Object? raw) {
   if (raw is! List) return const [];
   final seen = raw.whereType<String>().toSet();
   return [for (final w in permissionWarningOrder) if (seen.contains(w)) w];
+}
+
+/// `GET /agents/:id/decide-check` 응답(P1) — (에이전트, 채널)마다 같다. 보는 사람마다 다르므로 카드 meta 가 아니라 따로 받는다.
+class DecideCheck {
+  const DecideCheck({required this.viewerCanDecide, required this.asOwner, this.decideScope, this.ownerAccountId});
+
+  final bool viewerCanDecide;
+  final bool asOwner;
+
+  /// `owner`·`list`·`channel`·`community`·`switchOff`. 모르면 null(화면은 소유자만 꼴로 그린다).
+  final String? decideScope;
+  final String? ownerAccountId;
+
+  static DecideCheck fromJson(Map<String, Object?> j) => DecideCheck(
+        viewerCanDecide: j['viewerCanDecide'] == true,
+        asOwner: j['asOwner'] == true,
+        decideScope: j['decideScope'] is String ? j['decideScope'] as String : null,
+        ownerAccountId: j['ownerAccountId'] is String ? j['ownerAccountId'] as String : null,
+      );
 }

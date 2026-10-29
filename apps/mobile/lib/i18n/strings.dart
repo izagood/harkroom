@@ -354,7 +354,15 @@ abstract class Strings {
   String permResultNewAdded(String who);
 
   /// 권한 카드(W4 위임장).
-  String get permReadOnly;
+  String get permYouCanDecide;
+  String permDecideByOwner(String owner);
+  String permDecideByList(String owner);
+  String permDecideByChannel(String owner);
+  String permDecideByCommunity(String owner);
+  String permDecideBySwitchOff(String owner);
+  String get permDecideByUnknown;
+  String get permErrForbidden;
+  String get permErrMandateUnavailable;
 
   /// 권한 카드(W4 위임장).
   String get permViaChat;
@@ -1457,7 +1465,10 @@ Map<String, String> stringsToMap(Strings s) => {
       'permStateSuperseded': s.permStateSuperseded,
       'permOpenNewCard': s.permOpenNewCard,
       'permStateMandateEnded': s.permStateMandateEnded,
-      'permReadOnly': s.permReadOnly,
+      'permYouCanDecide': s.permYouCanDecide,
+      'permDecideByUnknown': s.permDecideByUnknown,
+      'permErrForbidden': s.permErrForbidden,
+      'permErrMandateUnavailable': s.permErrMandateUnavailable,
       'permViaChat': s.permViaChat,
       'permMirrorNeutral': s.permMirrorNeutral,
       'permOpenOriginal': s.permOpenOriginal,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../api/api_error.dart';
 import '../api/ask.dart';
 import '../api/models.dart';
 import '../api/permission_card.dart';
@@ -59,6 +60,17 @@ class _AskCardState extends State<AskCard> {
     setState(() => _busy = true);
     try {
       await action();
+    } on ApiError catch (e) {
+      // 정할 수 없거나(403) 위임장을 세울 수 없으면(409 mandate_unavailable) 그 이유를 쓴다 — 다시 눌러도 같으니 「다시 시도」는 달지 않는다.
+      if (mounted) {
+        final t = context.t;
+        final why = e.status == 403 ? t.permErrForbidden : e.code == 'mandate_unavailable' ? t.permErrMandateUnavailable : null;
+        if (why != null) {
+          showFailureToast(context, why);
+        } else {
+          showFailureToast(context, t.askFailed, retry: () => _run(action));
+        }
+      }
     } on Object {
       // **조용히 지나가지 않는다.** 버튼이 그대로 서 있으면 사람은 눌린 줄 모르고, 그 턴은
       // 답을 못 받은 채 멈춰 있다. 같은 동작을 "다시 시도"로 단다.
@@ -227,8 +239,10 @@ class _AskCardState extends State<AskCard> {
     }
 
     final meId = app.me?.id;
-    // 소유자나 나를 모르면 **소유자가 아니라고 본다** — 버튼 없이 읽기 전용 줄만.
-    final owner = perm.ownerId != null && meId != null && perm.ownerId == meId;
+    // 누가 정하나(P1) — 원본 카드는 서버 `decide-check` 의 값으로 그린다(화면이 다시 판정하지 않는다).
+    // 받기 전·실패·거울이면 지금처럼: 소유자나 나를 모르면 **소유자가 아니라고 본다** — 버튼 없이 읽기 전용 줄만.
+    final check = perm.isMirror || perm.agentId == null ? null : app.decideCheckFor(perm.agentId!, widget.message.channelId);
+    final owner = check?.viewerCanDecide ?? (perm.ownerId != null && meId != null && perm.ownerId == meId);
     final ended = perm.mandate?.ended ?? false;
     final open = ask.isOpen && (perm.status == null || perm.status == 'pending') && !ended;
     final canPickLate = ask.isReplied && owner && _pickAnyway && !ended;
@@ -259,9 +273,27 @@ class _AskCardState extends State<AskCard> {
 
     // r3: 머리는 i18n 키뿐 — 서버의 `ask.prompt`(한국어 고정 「권한을 줄까?」)는 줄 카드에 다시 그리지 않는다(데스크톱과 같은 말).
     final newMandate = hasMandateOpt && !ids.contains(permOptApproveMandate);
-    final ownerHandle = perm.ownerId == null ? null : app.accounts[perm.ownerId!]?.handle;
+    final ownerId = perm.ownerId ?? check?.ownerAccountId;
+    final ownerHandle = ownerId == null ? null : app.accounts[ownerId]?.handle;
     // r5(designer nit): 새 위임장 머리도 소유자를 알면 「· {owner} 차례」 꼬리를 단다.
-    final turnTail = ownerHandle != null ? ' · ${t.permAskOwnerTurn(ownerHandle)}' : owner ? ' · ${t.askToYou}' : '';
+    // 시안 v2 ②: 값을 받았으면 정할 수 있는 사람에게만 「· 네가 정할 수 있다」, 아니면 꼬리 없음.
+    final turnTail = check != null
+        ? (check.viewerCanDecide ? ' · ${t.permYouCanDecide}' : '')
+        : ownerHandle != null
+            ? ' · ${t.permAskOwnerTurn(ownerHandle)}'
+            : owner
+                ? ' · ${t.askToYou}'
+                : '';
+    // 시안 v2 ③: 정할 수 없는 사람에게 범위에 맞춰 누가 정하는지 한 줄. 받기 전·실패면 소유자만 꼴.
+    final waitLine = ownerHandle == null
+        ? t.permDecideByUnknown
+        : switch (check?.decideScope) {
+            'list' => t.permDecideByList(ownerHandle),
+            'channel' => t.permDecideByChannel(ownerHandle),
+            'community' => t.permDecideByCommunity(ownerHandle),
+            'switchOff' => t.permDecideBySwitchOff(ownerHandle),
+            _ => t.permDecideByOwner(ownerHandle),
+          };
     final head = open ? '${newMandate ? t.permAskNewMandate : t.permAskAddLine}$turnTail' : null;
 
     String? endedText;
@@ -345,7 +377,7 @@ class _AskCardState extends State<AskCard> {
             ],
             const SizedBox(height: 10),
             if (open && !owner)
-              Text(t.permReadOnly, key: Key('perm-readonly-$id'), style: theme.textTheme.bodySmall?.copyWith(color: tok.fgMuted)),
+              Text(waitLine, key: Key('perm-readonly-$id'), style: theme.textTheme.bodySmall?.copyWith(color: tok.fgMuted)),
             if (ask.isReplied && owner && !_pickAnyway && !ended && (s == null || s == 'pending'))
               TextButton(
                 key: Key('ask-pick-anyway-$id'),
