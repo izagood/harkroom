@@ -942,6 +942,14 @@ class StringsEn implements Strings {
   String get threadLatestLoadFailed => "Couldn't load the latest replies";
   @override
   String get threadLatestNewReplies => '{n} new · Jump to latest ↓';
+  @override
+  String get threadJumpLatest => 'Latest replies';
+  @override
+  String get threadJumpNew => '{n} new replies';
+  @override
+  String get threadJumpA11y => 'Jump to latest replies';
+  @override
+  String get threadJumpA11yNew => 'Jump to latest replies, {n} new';
 
   @override
   String get inboxLoadFailed => 'Could not load your inbox';

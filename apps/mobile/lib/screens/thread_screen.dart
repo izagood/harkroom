@@ -79,10 +79,21 @@ class _ThreadScreenState extends State<ThreadScreen> {
   /// 목록 맨 위(reverse 라 끝)에 닿으면 옛 답글을 받는다 — 채널 화면의 `_maybeLoadOlder` 와 같다.
   final _scroll = ScrollController();
 
+  /// 「↓ 최신 답글」 알약([ThreadJumpPill])이 보는 자리. 맨 아래가 보이는가(0 근처), 한 화면 넘게 위로 갔는가.
+  /// 굴릴 때마다 빌드하지 않도록 둘이 바뀔 때만 다시 그린다.
+  bool _atBottom = true;
+  bool _far = false;
+
+  /// 맨 아래에서 마지막으로 본 답글의 seq. 위로 굴린 동안 이보다 뒤에 온 남의 답글을 알약에 「새 답글 n」으로 센다.
+  /// 길이 차로 세지 않는다 — 옛 답글을 받아도 목록이 자란다. 띠가 선 동안([AppState.threadTailMissing])은
+  /// 상태층의 수([AppState.threadTailNew])를 쓰므로 비워 둔다.
+  int? _seenSeq;
+
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_maybeLoadOlder);
+    _scroll.addListener(_trackBottom);
     // 쓰던 글(D8)을 되살리고, 칠 때마다 적어 둔다. 커뮤니티 key 는 **지금** 쥔다 — 옮긴 뒤 이 화면이
     // 닫혀도 글은 이 커뮤니티 자리에 남는다.
     final app = AppScope.read(context);
@@ -112,6 +123,21 @@ class _ThreadScreenState extends State<ThreadScreen> {
     AppScope.read(context).loadOlderThread(widget.channelId, widget.rootId);
   }
 
+  /// 맨 아래 근처 기준(px). 이 안이면 맨 아래 답글이 보인다고 본다.
+  static const double _bottomSlop = 48;
+
+  void _trackBottom() {
+    if (!_scroll.hasClients) return;
+    final pos = _scroll.position;
+    final atBottom = pos.pixels < _bottomSlop;
+    final far = pos.pixels > pos.viewportDimension;
+    if (atBottom == _atBottom && far == _far) return;
+    setState(() {
+      _atBottom = atBottom;
+      _far = far;
+    });
+  }
+
   /// **`initState` 가 아니라 여기서 읽는다.**
   ///
   /// `context.app` 은 `InheritedWidget` 을 구독하는 일이고, Flutter 는 그것을
@@ -132,6 +158,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
   @override
   void dispose() {
     _scroll.removeListener(_maybeLoadOlder);
+    _scroll.removeListener(_trackBottom);
     _scroll.dispose();
     _composer.removeListener(_keepDraft);
     _composer.dispose();
@@ -191,7 +218,45 @@ class _ThreadScreenState extends State<ThreadScreen> {
     await app.jumpToLatestReplies(widget.channelId, widget.rootId);
     if (!mounted || !_scroll.hasClients) return;
     if (app.threadTailMissing.contains(widget.rootId)) return;
-    _scroll.animateTo(0, duration: HarkroomMotion.base, curve: HarkroomMotion.ease);
+    _scrollToBottom();
+  }
+
+  /// 맨 아래(0)로 굴린다. 화면 밖 줄은 짓지 않아 높이를 어림하므로, 0 에 닿은 프레임의 배치에서 실제 높이로
+  /// 고쳐져 한 줄쯤 위에 멈출 수 있다(시험이 잡았다 — 위로 굴린 동안 새 답글이 붙은 경우). 그 프레임이 끝난 뒤
+  /// 남았으면 0 으로 붙인다.
+  void _scrollToBottom() {
+    _scroll.animateTo(0, duration: HarkroomMotion.base, curve: HarkroomMotion.ease).then((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _scroll.hasClients && _scroll.position.pixels > 0) _scroll.jumpTo(0);
+      });
+    });
+  }
+
+  /// 알약을 눌렀다. 띠가 섰으면(최신 답글이 안 실렸다) 띠와 같은 길([_jumpToLatest])로 최신 페이지를 받는다.
+  /// 아니면 맨 아래로 굴린다 — 세 화면보다 멀면 한 화면 거리로 먼저 건너뛰고 굴린다(긴 애니메이션은 지연 빌드로
+  /// 버벅이고 오래 걸린다).
+  void _onJumpPill() {
+    final app = AppScope.read(context);
+    if (app.threadTailMissing.contains(widget.rootId)) {
+      _jumpToLatest();
+      return;
+    }
+    if (!_scroll.hasClients) return;
+    final pos = _scroll.position;
+    if (pos.pixels > pos.viewportDimension * 3) _scroll.jumpTo(pos.viewportDimension);
+    _scrollToBottom();
+  }
+
+  /// 위로 굴린 동안 온 남의 답글 수. 진행 줄·깨우기는 답글로 안 센다(상태층의 [AppState.threadTailNew] 와 같은 기준).
+  int _newSince(AppState app, List<MessageRow> rows) {
+    final seen = _seenSeq;
+    if (seen == null) return 0;
+    final me = app.me?.id;
+    var n = 0;
+    for (final m in rows) {
+      if (m.seq > seen && m.authorId != me && m.kind != MessageKind.progress && m.kind != MessageKind.wake) n++;
+    }
+    return n;
   }
 
   /// 찾은 줄이면 강조로 감싼다.
@@ -306,6 +371,18 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final firstReplyAt = first is FeedMessage ? first.message.createdAt : null;
     final failed = app.failedSends[widget.rootId] ?? const <FailedSend>[];
     final load = app.threadLoad[widget.rootId];
+    // 「↓ 최신 답글」 알약. 띠가 서 있으면 상태층의 수를, 아니면 맨 아래에서 본 뒤 온 답글 수를 쓴다.
+    final tailMissing = app.threadTailMissing.contains(widget.rootId);
+    if (tailMissing) {
+      _seenSeq = null;
+    } else if (load == LoadState.loaded && (_seenSeq == null || _atBottom)) {
+      // 처음 받은 답글·맨 아래에서 보이는 답글은 새 것이 아니다. 빌드 중에 적어도 되는 값이다(그리기에만 쓴다).
+      _seenSeq = threadRows.isEmpty ? 0 : threadRows.map((m) => m.seq).reduce((a, b) => a > b ? a : b);
+    }
+    final jumpNew = tailMissing ? (app.threadTailNew[widget.rootId]?.length ?? 0) : _newSince(app, threadRows);
+    // 맨 아래가 보이면 숨긴다. 띠가 섰으면 띠가 보일 만한 자리(맨 아래에서 한 화면 안)에서도 숨긴다 — 같은 일을 하는
+    // 둘이 한 화면에 겹치지 않게.
+    final showJump = load == LoadState.loaded && !_atBottom && (tailMissing ? _far : _far || jumpNew > 0);
     // 머리 모델 줄에 세울 에이전트: 스레드 글의 작성자 중 에이전트 + 본문이 부른 에이전트.
     final threadAgents = <String>[];
     for (final m in [?root, ...?app.threads[widget.rootId]]) {
@@ -418,7 +495,10 @@ class _ThreadScreenState extends State<ThreadScreen> {
           children: [
             // `onOpenThread` 를 주지 않는다 — **이미 스레드 안이라 들어갈 곳이 없다.**
             Expanded(
-              child: GlassBody(
+              child: Stack(
+              fit: StackFit.expand,
+              children: [
+              GlassBody(
                 // 모델 바·끊김 띠는 머리 바로 밑에 겹쳐 선다 — 피드는 그 밑까지 흐르고 위 여백으로 비킨다.
                 header: Column(mainAxisSize: MainAxisSize.min, children: [
                   ThreadModelBar(channelId: widget.channelId, rootId: widget.rootId, agentIds: threadAgents),
@@ -435,6 +515,19 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   children: rows.reversed.toList(growable: false),
                 ),
               )),
+              // 작성칸 위 오른쪽에 뜬다 — 목록 위에만 겹치고 작성칸은 가리지 않는다.
+              if (showJump)
+                Positioned(
+                  right: 16,
+                  bottom: 12,
+                  child: ThreadJumpPill(
+                    newCount: jumpNew,
+                    loading: app.jumpingToLatest.contains(widget.rootId),
+                    onTap: _onJumpPill,
+                  ),
+                ),
+              ],
+              ),
             ),
             // **스레드의 작성칸은 자기 키를 쓴다** — 채널에서 고른 사진이 답글에
             // 딸려 가지 않게.
@@ -486,6 +579,76 @@ class _ThreadScreenState extends State<ThreadScreen> {
     ));
   }
 
+}
+
+/// 「↓ 최신 답글」 알약의 문구. 새 답글이 있으면 「새 답글 n」, 99 를 넘으면 「99+」.
+String jumpPillLabel(Strings t, int newCount) => newCount <= 0
+    ? t.threadJumpLatest
+    : t.threadJumpNew.replaceFirst('{n}', newCount > 99 ? '99+' : '$newCount');
+
+/// 위로 굴린 목록에 떠서 맨 아래(최신 답글)로 데려가는 알약. 높이 36 이지만 누르는 자리는 44 다.
+/// 새 답글이 있으면 강조 면(사건), 없으면 들뜬 면 + 떠 있는 그림자(작성칸·탭 막대와 같은 한 종류).
+/// 받는 중([loading])이면 화살표 대신 스피너이고 눌리지 않는다.
+class ThreadJumpPill extends StatelessWidget {
+  const ThreadJumpPill({super.key, required this.onTap, this.newCount = 0, this.loading = false});
+
+  final VoidCallback onTap;
+  final int newCount;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    final b = Theme.of(context).brightness;
+    final hot = newCount > 0;
+    final fg = hot ? k.fgOnStrong : k.fg;
+    final n = newCount > 99 ? '99+' : '$newCount';
+    return Semantics(
+      key: const Key('thread-jump-pill'),
+      button: true,
+      // 수가 바뀌면 읽기 도구가 알린다.
+      liveRegion: hot,
+      label: hot ? t.threadJumpA11yNew.replaceFirst('{n}', n) : t.threadJumpA11y,
+      excludeSemantics: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: loading ? null : onTap,
+        child: SizedBox(
+          height: HarkroomSize.row,
+          child: Center(
+            child: DecoratedBox(
+              decoration: ShapeDecoration(
+                color: hot ? k.accent : k.surfaceRaised,
+                shape: StadiumBorder(side: hot ? BorderSide.none : HarkroomShadow.floatBorder(b)),
+                shadows: HarkroomShadow.float(b),
+              ),
+              child: SizedBox(
+                height: 36,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (loading)
+                        SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: fg))
+                      else
+                        Icon(Icons.arrow_downward, size: 16, color: fg),
+                      const SizedBox(width: 6),
+                      Text(
+                        jumpPillLabel(t, newCount),
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: fg),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// 원글과 답글 사이의 구분 줄 「답글 n개」(개정판 3.5).

@@ -941,6 +941,14 @@ class StringsKo implements Strings {
   String get threadLatestLoadFailed => '최신 답글을 불러오지 못했다';
   @override
   String get threadLatestNewReplies => '새 답글 {n}개 · 최신으로 ↓';
+  @override
+  String get threadJumpLatest => '최신 답글';
+  @override
+  String get threadJumpNew => '새 답글 {n}';
+  @override
+  String get threadJumpA11y => '최신 답글로 이동';
+  @override
+  String get threadJumpA11yNew => '최신 답글로 이동, 새 답글 {n}개';
 
   @override
   String get inboxLoadFailed => '인박스를 불러오지 못했다';

@@ -232,6 +232,18 @@ abstract class Strings {
   /// 두 문구를 이어 붙이지 않는다 — 언어마다 순서가 다르다.
   String get threadLatestNewReplies;
 
+  /// 스레드를 위로 굴렸을 때 작성칸 위 오른쪽에 뜨는 「↓ 최신 답글」 알약의 대기 문구(화살표는 아이콘이 맡는다).
+  String get threadJumpLatest;
+
+  /// 위로 굴린 동안 새 답글이 왔을 때의 알약 문구. `{n}` 은 99 넘으면 「99+」.
+  String get threadJumpNew;
+
+  /// 알약의 읽기 도구 이름(새 답글 없음).
+  String get threadJumpA11y;
+
+  /// 알약의 읽기 도구 이름(새 답글 n개). `{n}` 은 [threadJumpNew] 와 같다.
+  String get threadJumpA11yNew;
+
   /// 인박스를 못 읽음.
   String get inboxLoadFailed;
 
@@ -1360,6 +1372,10 @@ Map<String, String> stringsToMap(Strings s) => {
       'threadLatestReplies': s.threadLatestReplies,
       'threadLatestLoadFailed': s.threadLatestLoadFailed,
       'threadLatestNewReplies': s.threadLatestNewReplies,
+      'threadJumpLatest': s.threadJumpLatest,
+      'threadJumpNew': s.threadJumpNew,
+      'threadJumpA11y': s.threadJumpA11y,
+      'threadJumpA11yNew': s.threadJumpA11yNew,
       'inboxLoadFailed': s.inboxLoadFailed,
       'messagesEmptyHint': s.messagesEmptyHint,
       'channelStartLine': s.channelStartLine,
