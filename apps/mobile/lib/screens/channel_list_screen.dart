@@ -25,9 +25,10 @@ class ChannelListScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.t;
     final app = context.app;
-    // 치운 채널(hiddenAt)은 세우지 않는다 — 데스크탑 사이드바와 같은 규칙.
+    // 치운 채널(hiddenAt)과 보관된 채널은 세우지 않는다 — 데스크탑 사이드바의 일반 묶음과 같은 규칙.
+    // 데스크탑의 「보관됨」 묶음은 아직 두지 않는다(보관·되살리기 조작이 모바일에 없다).
     final rows = app.channels
-        .where((c) => c.isDm == dms && app.channelPrefs[c.id]?.hidden != true)
+        .where((c) => c.isDm == dms && !c.isArchived && app.channelPrefs[c.id]?.hidden != true)
         .toList(growable: false);
     // 홈은 묶음으로(S5b): 즐겨찾기 → 사용자 섹션(이름순) → 채널. DM 탭은 한 묶음 그대로.
     final items = <Object>[];
