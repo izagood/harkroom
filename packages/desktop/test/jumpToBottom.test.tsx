@@ -100,6 +100,18 @@ describe('아래로 내려가기', () => {
     expect(screen.getByTestId('channel-jump-to-bottom').getAttribute('aria-label')).toBe('최신 글로 이동, 새 글 1개');
   });
 
+  it('진행·깨움 줄은 새 글로 세지 않는다', async () => {
+    render(<ChannelPane />);
+    lookUp(screen.getByTestId('channel-scroll'));
+    useAppStore.getState().set({ messages: { c1: [
+      msg('m1', 'c1', 1, '옛날 이야기', 'u2'),
+      msg('m2', 'c1', 2, '진행', 'u2', { kind: 'progress' }),
+      msg('m3', 'c1', 3, '깨움', 'u2', { kind: 'wake' }),
+      msg('m4', 'c1', 4, '진짜 글', 'u2'),
+    ] } });
+    await waitFor(() => expect(screen.getByText('새 글 1')).toBeTruthy());
+  });
+
   it('내 이름의 글(다른 기기·자동화)은 세지 않는다 — 버튼은 기본 문구다', async () => {
     render(<ChannelPane />);
     lookUp(screen.getByTestId('channel-scroll'));

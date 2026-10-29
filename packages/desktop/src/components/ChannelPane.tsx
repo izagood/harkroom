@@ -523,7 +523,10 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
     // 위를 보는 동안 끝에 붙은 남의 글은 알약에 센다. 앞에 붙은 옛 페이지(과거 불러오기)는 새 글이 아니다.
     if (!jumpedThisCommitRef.current && !atBottomRef.current && !appendedMine) {
       const at = roots.findIndex((m) => m.id === lastRootIdRef.current);
-      const added = at >= 0 ? roots.slice(at + 1).filter((m) => m.authorId !== me?.id).length : 0;
+      // 진행·깨움 줄은 글로 세지 않는다 — 스레드 알약과 같은 기준(designer f1).
+      const added = at >= 0
+        ? roots.slice(at + 1).filter((m) => m.authorId !== me?.id && m.kind !== 'progress' && m.kind !== 'wake').length
+        : 0;
       if (added > 0) setNewCount((c) => c + added);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
