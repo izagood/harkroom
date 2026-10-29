@@ -15,6 +15,7 @@
 import type { Pool } from 'pg';
 import type { AccountView, Capability, PermissionTarget } from '@harkroom/shared';
 import { CAPABILITIES, MEMBER_DEFAULT_CAPABILITIES, orgScopeOf, repoScope } from '@harkroom/shared';
+import { mayDecideSql } from '../services/deciders.js';
 
 export async function hasGrant(
   pool: Pool, accountId: string, cap: Capability, scope: string, opts: { global?: boolean } = {},
@@ -71,6 +72,11 @@ export async function isOwnerOf(pool: Pool, accountId: string, target: Permissio
  */
 export async function mergeGrantFor(
   pool: Pool, agentId: string, repo: string,
+  /**
+   * 머지하는 턴의 채널. 주면 grant 를 준 사람이 **지금** 이 채널에서 이 에이전트의 카드를 정할 수 있어야 그 grant 를 센다
+   * (소유자가 준 grant 는 언제나 센다 — security 4, 소유자 결정 2026-10-29). 범위가 좁아지면 사용자가 준 grant 는 그 순간 쓰이지 않는다.
+   */
+  opts: { channelId?: string } = {},
 ): Promise<{ scope: string; grantedBy: string; grantedAt: string; expiresAt: string | null; allowAgentCause: boolean } | null> {
   const scope = repoScope(repo);
   if (!scope) return null;
@@ -82,8 +88,9 @@ export async function mergeGrantFor(
        from account_grant
       where account_id = $1 and capability = 'repo.merge' and scope = any($2::text[])
         and (expires_at is null or expires_at > now())
+        and ($4::uuid is null or ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', '$4::uuid')})
       order by allow_agent_cause desc, (scope = $3) desc limit 1`,
-    [agentId, scopes, scope],
+    [agentId, scopes, scope, opts.channelId ?? null],
   );
   return (res.rows[0] as { scope: string; grantedBy: string; grantedAt: string; expiresAt: string | null; allowAgentCause: boolean } | undefined) ?? null;
 }

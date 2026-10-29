@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -8,6 +8,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { CAUSE_CHAIN_MAX_HOPS, causeChainRoot } from '../src/services/mergeGrants.js';
+import { mergeGrantFor } from '../src/auth/permissions.js';
 import { decidePermissionRequest, openPermissionRequest } from '../src/services/permissionRequests.js';
 import { grantFromDenial } from '../src/services/mergeDenials.js';
 
@@ -69,7 +70,8 @@ describe('merge cause chain (A안)', () => {
     ({ accountId: tm, pat: tmPat } = await createAgent(app, admin.token, 'tm'));
     sec = (await createAgent(app, admin.token, 'sec')).accountId;
     stranger = (await createAgent(app, admin.token, 'stranger')).accountId;
-    await pool.query(`update agent_config set owner_account_id = $2 where account_id = any($1::uuid[])`, [[tm, sec], alice.accountId]);
+    // 소유자만 정하는 범위로 둔다 — 사용자(부를 수 있는 사람) 갈래는 아래 「사용 권한이 있는 사람」에서 범위를 바꿔 본다.
+    await pool.query(`update agent_config set owner_account_id = $2, invoke_scope = 'owner' where account_id = any($1::uuid[])`, [[tm, sec], alice.accountId]);
     await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [stranger, bob.accountId]);
     op = await registerOperator(app, admin.token, 'mac');
     for (const a of [tm, sec, stranger]) {
@@ -112,6 +114,37 @@ describe('merge cause chain (A안)', () => {
       };
       expect(await causeChainRoot(pool, { agentId: tm, causeMessageId: await build(CAUSE_CHAIN_MAX_HOPS), now: new Date() })).not.toBeNull();
       expect(await causeChainRoot(pool, { agentId: tm, causeMessageId: await build(CAUSE_CHAIN_MAX_HOPS + 1), now: new Date() })).toBeNull();
+    });
+  });
+
+  describe('사용 권한이 있는 사람(소유자 결정 2026-10-29)', () => {
+    const asList = async (on: boolean) => {
+      await pool.query(`update agent_config set invoke_scope = $2 where account_id = $1`, [tm, on ? 'list' : 'owner']);
+      await pool.query(`delete from agent_invoker where agent_id = $1`, [tm]);
+      if (on) await pool.query(`insert into agent_invoker (agent_id, account_id) values ($1, $2)`, [tm, bob.accountId]);
+    };
+    afterEach(async () => { await asList(false); });
+
+    it('부를 수 있는 사람의 글도 뿌리다 — 명단에서 빠지면 그 순간 끊긴다', async () => {
+      await asList(true);
+      const root = await msg(bob.accountId);
+      const hop = await msg(sec, { cause: root, wake: tm });
+      expect((await check(await lease(hop))).statusCode).toBe(200);
+      await pool.query(`delete from agent_invoker where agent_id = $1`, [tm]);
+      const res = await check(await lease(await msg(sec, { cause: root, wake: tm })));
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('cause_not_human');
+    });
+
+    it('사용자가 준 grant 는 그 사람이 지금 그 채널에서 정할 수 있을 때만 센다(security 4)', async () => {
+      await asList(true);
+      await pool.query(`update account_grant set granted_by = $2 where account_id = $1 and capability = 'repo.merge'`, [tm, bob.accountId]);
+      expect(await mergeGrantFor(pool, tm, REPO, { channelId: ch })).toMatchObject({ grantedBy: bob.accountId });
+      await asList(false);
+      expect(await mergeGrantFor(pool, tm, REPO, { channelId: ch })).toBeNull();
+      // 소유자가 준 grant 는 범위와 관계없이 센다.
+      await setGrant(tm);
+      expect(await mergeGrantFor(pool, tm, REPO, { channelId: ch })).toMatchObject({ grantedBy: alice.accountId });
     });
   });
 

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
 import { repoScope } from '@harkroom/shared';
 import { mergeGrantFor } from '../auth/permissions.js';
+import { mayDecideSql } from './deciders.js';
 import { recordAudit } from '../audit.js';
 import { checkNamesForBody, checkNamesText, obsoleteMergeCards, sanitizeCheckNames } from './mergeDenials.js';
 import { postMessage } from './messages.js';
@@ -61,7 +62,10 @@ export interface LeaseRow {
   causeMessageId: string;
   /** 위임 키(133, W1) — 발급 때 서버가 적은 값. 판정에는 아직 쓰지 않는다(그림자 기록만). */
   mandateId: string | null;
-  /** cause 메시지가 **이 에이전트 자신의 선택 카드**(ask)이고 사람이 답한 경우 — 답한 사람의 id·kind. 아니면 null. */
+  /**
+   * cause 메시지가 **이 에이전트 자신의 선택 카드**(ask)이고 사람이 답한 경우 — 답한 사람의 id·kind. 아니면 null.
+   * `askAnswererOwnsAgent` 는 이름과 달리 이제 「답한 사람이 그 카드 채널에서 이 에이전트의 카드를 정할 수 있나」다(`deciders.mayDecideSql`).
+   */
   causeAskAuthorId: string | null; askAnsweredBy: string | null; askAnswererKind: string | null; askAnswererOwnsAgent: boolean;
 }
 
@@ -75,7 +79,8 @@ export async function readLease(pool: Pool, args: { leaseId: string; token: stri
                  then m.author_id end as "causeAskAuthorId",
             m.meta->'ask'->>'answeredBy' as "askAnsweredBy",
             ans.kind as "askAnswererKind",
-            exists (select 1 from agent_config c where c.account_id = l.agent_id and c.owner_account_id = ans.id) as "askAnswererOwnsAgent"
+            -- 답한 사람이 이 카드를 정할 수 있는 사람인가(소유자 결정 2026-10-29 — 소유자 또는 그 채널에서 이 에이전트를 부를 수 있는 사람).
+            ${mayDecideSql('l.agent_id', 'ans.id', 'm.channel_id')} as "askAnswererOwnsAgent"
        from secret_turn_lease l
        left join message m on m.id = l.cause_message_id
        left join account a on a.id = m.author_id
@@ -90,7 +95,8 @@ export async function readLease(pool: Pool, args: { leaseId: string; token: stri
  * 둘 중 하나면 사람이 띄운 것이다:
  * 1. cause 메시지의 작성자가 사람(멘션·답글).
  * 2. cause 메시지가 **이 에이전트 자신이 세운 선택 카드**(`meta.ask`, 작성자 = 이 에이전트)이고, 그 카드에
- *    **답한 사람**(`meta.ask.answeredBy`)이 사람이면서 **이 에이전트의 소유자**인 경우 — "카드로 머지를 고르면
+ *    **답한 사람**(`meta.ask.answeredBy`)이 사람이면서 **이 에이전트의 카드를 정할 수 있는 사람**(소유자 또는 그 채널에서 이 에이전트를
+ *    부를 수 있는 사람 — `deciders.ts`, 소유자 결정 2026-10-29)인 경우 — "카드로 머지를 고르면
  *    머지한다"는 흐름. 카드 작성자가 다른 에이전트이거나(남의 카드), 답한 사람이 소유자가 아니거나(채널의 아무
  *    사람), 아직 답이 없으면 아니다. 답한 사람의 신원은 서버가 `recordAskAnswer` 에서 적은 값이라 에이전트가
  *    지어낼 수 없다.
@@ -126,8 +132,9 @@ export interface CauseChain { rootId: string; path: string[] }
  *   올라가지 않는다(그 글이 뿌리이거나 사슬이 끝난다).
  * - **답이 달린 ask 에서는 올라가지 않는다**(C3) — 그 턴을 띄운 것은 답한 사람이다. 소유자가 줄 하나를 골라 답했으면(거울·일괄 답
  *   아님) 그 ask 가 뿌리이고, 다른 사람이 답했으면 사슬은 거기서 끝난다.
- * - **뿌리**: (a) 소유자 본인이 쓴 `kind='user'` 글(소유자 이름으로 나간 자동화 글 `meta.automation` 은 아니다) 또는 (b) 같은
- *   소유자의 에이전트가 세운 ask 에 소유자가 직접 답한 것. 7일 안이고 지워지지 않았어야 한다.
+ * - **뿌리**: (a) 이 에이전트의 카드를 **그 글의 채널에서** 정할 수 있는 사람(소유자 또는 부를 수 있는 사람 — `deciders.ts`,
+ *   소유자 결정 2026-10-29)이 쓴 `kind='user'` 글(자동화 글 `meta.automation` 은 아니다) 또는 (b) 같은 소유자의 에이전트가 세운 ask 에
+ *   그런 사람이 직접 답한 것. 7일 안이고 지워지지 않았어야 한다. 범위는 머지할 때 **지금** 값으로 본다(security 4·7).
  *
  * 증명하는 것은 「소유자가 시작한 흐름」뿐이다 — 글의 내용(이 PR 을 머지하라는 뜻)은 증명하지 않는다.
  */
@@ -163,11 +170,13 @@ export async function causeChainRoot(
        join account a on a.id = m.author_id
       where m.deleted_at is null and m.created_at > $3
         and (
-          (a.id = (select id from own) and a.kind = 'human' and m.kind = 'user' and not (m.meta ? 'automation'))
+          (a.kind = 'human' and m.kind = 'user' and not (m.meta ? 'automation')
+              and ${mayDecideSql('$1::uuid', 'a.id', 'm.channel_id')})
           or (m.meta ? 'ask' and a.kind = 'agent'
               and exists (select 1 from agent_config c2 where c2.account_id = a.id and c2.owner_account_id = (select id from own))
               and m.meta->'ask'->>'mirrorOf' is null and m.meta->'ask'->>'answeredVia' is null
-              and m.meta->'ask'->>'answeredBy' = (select id from own)::text)
+              and coalesce(m.meta->'ask'->>'answeredBy', '') <> ''
+              and ${mayDecideSql('$1::uuid', "nullif(m.meta->'ask'->>'answeredBy', '')::uuid", 'm.channel_id')})
         )
       order by w.hop asc
       limit 1`,
@@ -395,7 +404,7 @@ async function checkMergeByChain(
     };
   }
 
-  const grant = await mergeGrantFor(pool, args.agentId, args.repo);
+  const grant = await mergeGrantFor(pool, args.agentId, args.repo, { channelId: lease!.channelId });
   const byHuman = causeByHuman(lease!);
 
   if (!grant) {
