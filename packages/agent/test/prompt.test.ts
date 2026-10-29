@@ -1616,14 +1616,16 @@ describe('silentTurnNotice — 에이전트가 부른 말없는 턴 (2026-10-25 
     expect(mentionOutsideQuote(body)).toBe(false);
   });
 
-  it('화면으로 끝을 알았는데 화면 답이 없거나 가림에 걸리면 progress 한 줄 — 답글이 아니라 부른 에이전트를 깨우지 않고, 다시 부르라고 권하지 않는다', () => {
+  it('화면으로 끝을 알았는데 화면 답이 없거나 가림에 걸리면 보통 글 한 줄 — 스레드가 「끝남」으로 그려지고, 다시 부를지는 사람에게 둔다', () => {
     for (const screenAnswer of [null, '   ']) {
-      expect(silentTurnNotice({ ...base, screenEnded: true, screenAnswer })).toEqual({ kind: 'progress', body: AGENT_CALL_NO_ANSWER });
+      expect(silentTurnNotice({ ...base, screenEnded: true, screenAnswer })).toEqual({ kind: 'post', body: AGENT_CALL_NO_ANSWER });
     }
     const secret = 'S3CRET-VALUE-0123456789';
     const n = silentTurnNotice({ ...base, screenEnded: true, screenAnswer: `값 ${secret.slice(0, 14)}`, secrets: [secret] });
-    expect(n).toEqual({ kind: 'progress', body: AGENT_CALL_NO_ANSWER });
-    expect(AGENT_CALL_NO_ANSWER).not.toMatch(/다시 부르/);
+    expect(n).toEqual({ kind: 'post', body: AGENT_CALL_NO_ANSWER });
+    // 머리 주인 에이전트가 한 번 깨어나므로 다시 부르라고 권하지 않는다 — 그 결정은 사람에게 있다고 적는다.
+    expect(AGENT_CALL_NO_ANSWER).not.toMatch(/다시 부르면/);
+    expect(AGENT_CALL_NO_ANSWER).toContain('다시 부를지는 사람이 정합니다');
     expect(mentionOutsideQuote(AGENT_CALL_NO_ANSWER)).toBe(false);
   });
 

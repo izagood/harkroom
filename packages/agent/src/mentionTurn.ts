@@ -2965,9 +2965,6 @@ export async function runMentionTurn(
         const said = quotedLine(lastSaid, deps.runnerSecret, await tailSecrets());
         console.log(`[mentionTurn] ${key}: 에이전트 호출에 덧붙일 말 없이 끝났다 — ✅ 만 단다${said ? ` (마지막 말: ${said})` : ''}`);
         await deps.harkroom.addReaction(channelId, mentionId, notice.emoji);
-      } else if (notice.kind === 'progress') {
-        // 에이전트가 부른 턴의 「답 없음」 — 결과 발화가 아니라서 부른 에이전트(머리 주인)를 다시 깨우지 않는다(`silentTurnNotice`).
-        await deps.harkroom.progress(channelId, notice.body.slice(0, BODY_LIMIT), anchor);
       } else if (notice.kind === 'fail') {
         // 넘겨받은 일 — 실패로 남겨 위임을 「실패」로 닫는다(서버 `closeDelegationsForReply`). 다시 넘기면 이어진다.
         await deps.harkroom.fail(channelId, notice.body.slice(0, BODY_LIMIT), anchor, { retryable: true, mentionId });

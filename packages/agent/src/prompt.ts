@@ -39,7 +39,7 @@ export const BODY_LIMIT = 8000;
  * 읽을 수 없었다. 대신 하네스 기록의 **마지막 말 한 줄**(`readLastAssistantText`, `silentWakeNotice` 와
  * 같은 방식)을 싣고, 원문 꼬리는 러너 로그에만 남긴다(호출자).
  */
-export type SilentTurnNotice = { kind: 'react'; emoji: string } | { kind: 'post'; body: string } | { kind: 'fail'; body: string } | { kind: 'progress'; body: string };
+export type SilentTurnNotice = { kind: 'react'; emoji: string } | { kind: 'post'; body: string } | { kind: 'fail'; body: string };
 
 /** 에이전트가 부른 턴이 덧붙일 말 없이 끝났다는 표시 — 멘션 메시지에 단다(👀 받았음·💬 도는 중의 끝). */
 export const SILENT_ACK_EMOJI = '✅';
@@ -68,15 +68,15 @@ export function silentTurnNotice(opts: {
   if (opts.offAnchor !== null) return { kind: 'post', body: opts.offAnchor };
   if (opts.caller === 'agent') {
     // **에이전트가 부른 턴**(2026-10-25 E13 회차, 스레드 db4ab174). ✅ 만 달면 부른 쪽은 답을 받은 줄 안다 — 화면으로 끝을 안 턴은
-    // 화면 답이 있으면 대신 올리고, 없으면 답이 없었다고 남긴다. 둘 다 멘션 없는 보통 글이라 부른 에이전트를 다시 깨우지 않는다
-    // (화면 글 속 `@handle` 은 인용 줄 안이라 멘션이 아니다). 기록으로 끝을 아는 하네스(claude)의 FYI 는 지금처럼 ✅ 다.
+    // 화면 답이 있으면 대신 올리고, 없으면 답이 없었다고 남긴다. 둘 다 멘션 없는 보통 글이다 — 부른 에이전트를 멘션으로
+    // 다시 부르지 않는다(화면 글 속 `@handle` 은 인용 줄 안이라 멘션이 아니다). 기록으로 끝을 아는 하네스(claude)의 FYI 는 지금처럼 ✅ 다.
     if (!opts.screenEnded) return { kind: 'react', emoji: SILENT_ACK_EMOJI };
     const proxied = proxyAnswerBody(opts.screenAnswer ?? null, opts.pat, opts.secrets);
     if (proxied) return { kind: 'post', body: proxied };
-    // 「답 없음」 줄은 **progress** 다(security #1590 n1). 보통 글이면 머리 주인 에이전트에게 `thread_reply` 가 가고, 그 에이전트가 다시
-    // 부르면 잡담에 늘 말없이 끝나는 조합에선 사슬 상한까지 돈다. progress 는 결과 발화가 아니라 답글로 세지 않는다(`countsAsReply`).
-    // 문장도 「다시 부르면」을 빼고 사실만 남긴다.
-    return { kind: 'progress', body: AGENT_CALL_NO_ANSWER };
+    // 「답 없음」 줄은 **보통 글**이다(jaebin 10-29, designer #1590). progress 로 두면 끝난 턴이 「막힘」·「작업 중」으로 그려지고 보드에서
+    // 「끝남」으로 안 간다. 보통 글이라 머리 주인 에이전트에게 `thread_reply` 가 한 번 가므로(진짜 답과 같다), 문장은 다시 부르기를
+    // 권하지 않고 그 결정을 사람에게 둔다 — 잡담에 늘 말없이 끝나는 조합에서 부름 사슬이 생기지 않게.
+    return { kind: 'post', body: AGENT_CALL_NO_ANSWER };
   }
   // **대리 게시**(2026-10-25, 스레드 db4ab174). codex × API 키 연결 모델은 인사·잡담에 답을 화면에만 쓰고 끝냈다 — 사람에게 보여야 할
   // 답이 터미널에 있다. 사람이 부른 턴만 그 답을 옮겨 올린다(넘겨받은 일은 위임을 「실패」로 닫아야 하므로 아래 그대로).
@@ -242,8 +242,8 @@ function maskWhole(text: string, secrets: readonly string[]): string {
   return t;
 }
 
-/** 에이전트가 부른 턴이 화면으로 끝났는데 옮길 답이 없을 때의 줄(`silentTurnNotice`, progress 로 올린다). */
-export const AGENT_CALL_NO_ANSWER = '(답을 남기지 못하고 끝났습니다 — 화면에도 옮길 답이 없었습니다.)';
+/** 에이전트가 부른 턴이 화면으로 끝났는데 옮길 답이 없을 때의 줄(`silentTurnNotice`, 보통 글). 다시 부를지는 사람에게 둔다. */
+export const AGENT_CALL_NO_ANSWER = '(답을 남기지 못하고 끝났습니다 — 화면에도 옮길 답이 없었습니다. 다시 부를지는 사람이 정합니다.)';
 
 /** 대리 게시로 옮길 화면 답의 상한(자). 화면에서 뽑는 줄은 많아야 몇 줄이라(`screenAnswerLines`) 넉넉하다. */
 export const PROXY_ANSWER_MAX_CHARS = 1_000;
