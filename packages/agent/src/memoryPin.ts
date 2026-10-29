@@ -25,7 +25,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   JOURNAL_EXPIRING_WINDOW, MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_ITEMS_PER_ACCOUNT,
-  MEMORY_CORE_WARN_CHARS, MEMORY_ITEMS_WARN_COUNT,
+  MEMORY_CORE_WARN_CHARS, MEMORY_ITEMS_WARN_COUNT, looksLikeThreadState,
 } from '@harkroom/shared';
 import { escapeForPrompt, staleMemoryLines, type MemoryContext } from './prompt.js';
 
@@ -201,14 +201,16 @@ function entryLine(slug: string, descriptions: Record<string, string> | undefine
  */
 function indexLines(
   slugs: string[], descriptions: Record<string, string> | undefined, journalCount: number, total: number, signals: string[],
+  stateCount = 0,
 ): string[] {
-  if (!slugs.length && !journalCount) return [];
+  if (!slugs.length && !journalCount && !stateCount) return [];
   return [
     '<memory-index>',
     ...signals, ...(signals.length ? [''] : []),
     '저장된 기억(본문은 필요할 때 `memory.get` 으로 가져온다 — 이름만으로 짐작되지 않으면 열어 본다):',
     ...slugs.map((s) => entryLine(s, descriptions)),
     ...(journalCount ? [`(작업 경위 기록 journal ${journalCount}개는 목록에 싣지 않는다 — \`memory.search\` 로 찾는다.)`] : []),
+    ...(stateCount ? [`(한 스레드의 진행 상태로 보이는 기억 ${stateCount}개는 목록에 싣지 않는다 — 진행 상태는 \`thread.note\` 자리다. 필요하면 \`memory.search\` 로 찾는다.)`] : []),
     `(기억 ${total}/${MAX_MEMORY_ITEMS_PER_ACCOUNT}개 — core·journal 포함, 보관한 것은 빼고)`,
     '</memory-index>',
   ];
@@ -249,8 +251,13 @@ export async function planMemory(opts: {
   const stale = memory.stale ? ['', ...staleMemoryLines(memory.stale.fetchedAt)] : [];
   // journal(070)은 목록에 싣지 않는다 — 한 작업의 경위라 적고 나면 거의 안 읽혔다(감사: pr-* 41%).
   const isJournal = (s: string) => memory.kinds?.[s] === 'journal';
-  const visible = memory.slugs.filter((s) => !isJournal(s));
-  const journalCount = memory.slugs.length - visible.length;
+  // 한 스레드의 진행 상태로 보이는 기억(delegation-*·review-*·PR 번호+진행 낱말 요약)도 목록에서 뺀다 — 다른 스레드의
+  // 턴에는 잡음이고 목록 크기의 대부분을 차지했다. 판정은 서버 쓰기 경고·recall·지표와 같은 `looksLikeThreadState`.
+  const isState = (s: string) => looksLikeThreadState(s, memory.descriptions?.[s]);
+  const nonJournal = memory.slugs.filter((s) => !isJournal(s));
+  const visible = nonJournal.filter((s) => !isState(s));
+  const journalCount = memory.slugs.length - nonJournal.length;
+  const stateCount = nonJournal.length - visible.length;
   const total = memory.slugs.length + (memory.core !== null ? 1 : 0);
   // 정리를 서버가 백그라운드 회차로 맡았으면(BG5, 스위치 켜짐 + 소유자 토글 켬) 정리 신호를 싣지 않는다 — 그 신호는
   // 「이 턴 뒤에 네가 정리하라」는 권고였고, 지금 맡은 일과 겨루면 늘 졌다(설계 R4). 스위치가 꺼져 있으면 지금 그대로.
@@ -283,7 +290,7 @@ export async function planMemory(opts: {
 
   if (!pinUsable) {
     // 새 세션(또는 고정을 잃었다): 지금 값으로 고정하고 목록 전체를 싣는다. 깨움 세션은 목록 대신 한 줄(S2).
-    const index = opts.slim ? slimIndexLines(total) : indexLines(visible, memory.descriptions, journalCount, total, signals.lines);
+    const index = opts.slim ? slimIndexLines(total) : indexLines(visible, memory.descriptions, journalCount, total, signals.lines, stateCount);
     const lines = [...index, ...recall.lines, ...stale];
     return {
       system: { core: memory.core, slugs: memory.slugs },
@@ -303,7 +310,9 @@ export async function planMemory(opts: {
   const seen = new Set(pin.announcedSlugs);
   const now = new Set(visible);
   const added = visible.filter((s) => !seen.has(s));
-  const removed = pin.announcedSlugs.filter((s) => !now.has(s));
+  // 「지워진」은 정말 없어진 것만 — 목록에서 숨긴 것(진행 상태로 판정이 바뀐 것)은 지워진 게 아니다.
+  const exists = new Set(memory.slugs);
+  const removed = pin.announcedSlugs.filter((s) => !now.has(s) && !exists.has(s));
   // 세션 도중 새로 켜진 정리 신호만 알린다 — 첫 턴 목록에서 이미 본 것을 턴마다 되풀이하면 대화 기록에 쌓인다.
   // 꺼졌다 다시 켜진 것은 다시 알린다(announcedSignals 를 지금 값으로 덮으므로).
   const announcedSignals = new Set(pin.announcedSignals ?? []);

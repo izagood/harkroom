@@ -356,6 +356,9 @@ describe('memory MCP tools', () => {
       await callTool(client, 'memory.set', { kind: 'topic', slug: 'mem/body-only', value: '캐시 조사 기록' });
       await callTool(client, 'memory.set', { kind: 'topic', slug: 'mem/runner-cache', value: '캐시 캐시', description: '러너 캐시 조사' });
       await seedJournal(accountId, 'mem/cache-pr-1', '캐시 경위', '캐시 PR 경위');
+      // 진행 상태로 보이는 기억(이름 review-*, 요약 PR 번호+진행 낱말)은 이름·요약이 걸려도 recall 에서 빠진다.
+      await callTool(client, 'memory.set', { kind: 'topic', slug: 'mem/review-cache', value: '캐시 캐시 캐시', description: '캐시 조사 판정' });
+      await callTool(client, 'memory.set', { kind: 'topic', slug: 'mem/cache-fix', value: '캐시 캐시 캐시', description: '캐시 조사 #12 머지 대기' });
       const query = '@recall-agent admin: 캐시를 조사해 달라 (task 지시 경유) harkroom://message/0b07fe16-2df8-45af-a047-24e1577ddfeb';
 
       const old = await callTool(client, 'memory.search', { query });

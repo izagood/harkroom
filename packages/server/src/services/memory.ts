@@ -5,7 +5,7 @@ import { writeOrigin } from './writeOrigin.js';
 // 데스크탑은 이 패키지를 import 할 수 없다. 여기서는 다시 내보내기만 한다.
 import {
   MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH, MAX_MEMORY_ITEMS_PER_ACCOUNT,
-  MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, JOURNAL_EXPIRING_WINDOW, type MemoryKind,
+  MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, JOURNAL_EXPIRING_WINDOW, looksLikeThreadState, type MemoryKind,
 } from '@harkroom/shared';
 
 export {
@@ -572,7 +572,10 @@ export async function searchMemory(
       [accountId, patterns],
     );
     const skip = new Set(opts.exclude ?? []);
-    const rows = (res.rows as RecallCandidate[]).filter((r) => !isExcluded(skip, r.slug, r.updatedAt));
+    // 진행 상태로 보이는 기억은 recall 에서 뺀다 — 한 스레드의 상태라 다른 스레드의 턴에 실어 봐야 잡음이고,
+    // 그 스레드에는 thread.note 가 실린다. 요약이 PR 번호·기능 낱말로 꽉 차 있어 상위 자리를 늘 차지했다.
+    const rows = (res.rows as RecallCandidate[])
+      .filter((r) => !isExcluded(skip, r.slug, r.updatedAt) && !looksLikeThreadState(r.slug, r.description));
     // 게이트는 서버에서 건다 — 러너가 거르면 recordTop 이 안 실린 것까지 센다(F1).
     const hits = rankRecall(terms, rows, opts.limit, focusTerms ? { focus: new Set(focusTerms) } : {})
       .map((h) => (opts.includeValue ? h : { ...h, value: undefined }));
@@ -704,17 +707,8 @@ export const MEMORY_SLUG_HINT = 'slug must be "core" or "mem/<name>" '
   + '(segments of [a-z0-9][a-z0-9_-]* joined by "/", e.g. "mem/deploy" or "mem/people/alex"; '
   + 'no dots, no uppercase, and the "mem/" prefix is required)';
 
-/**
- * 한 스레드의 진행 상태로 보이는 기억(메모리 재설계 S3). 판정은 `scripts/memory-metrics.sql` 의 `state_like` 와
- * 글자까지 같다 — 쓰는 자리의 경고와 지표가 같은 자로 잰다. 이름이 `delegation-*`·`review-*` 이거나, 요약에
- * PR 번호와 진행 낱말이 함께 있다.
- */
-export function looksLikeThreadState(slug: string, description: string | null | undefined): boolean {
-  if (/^mem\/(.*\/)?(delegation|review)-/.test(slug)) return true;
-  const d = description ?? '';
-  // `CI` 는 대문자 낱말 그대로만(security n1 — `/i` 면 policy·decision 의 ci 에도 걸렸다). 앞뒤가 영문자만 아니면 된다.
-  return /#[0-9]+/.test(d) && (/(^|[^A-Za-z])CI(?![A-Za-z])/.test(d) || /(머지|대기|초록|검토|rebase|head)/i.test(d));
-}
+// 판정(메모리 재설계 S3)은 러너 목록(memoryPin)도 같이 쓰므로 shared 에 둔다.
+export { looksLikeThreadState };
 
 /** S3: `mem/*` 쓰기에 줄 수 있는 종류. journal 은 새로 쓰지 않는다 — 진행 상태는 `thread.note`. */
 export const WRITABLE_MEMORY_KINDS = ['topic', 'procedure'] as const;
