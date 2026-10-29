@@ -508,6 +508,19 @@ describe('bg_job (BG1)', () => {
         expect((await pool.query(`select writes from bg_job where id = $1`, [jobId])).rows[0].writes).toBe(11);
         expect((await pool.query(`select count(*)::int as n from bg_job_change where run_id = $1 and op = 'archive'`, [jobId])).rows[0].n).toBe(10);
 
+        // organize 회차의 이름 바꾸기(없는 into ← from 하나)는 1건이다. 있는 into 로 합치거나 from 이 둘 이상이면 그대로 센다.
+        // distill 회차에선 이름 바꾸기도 2건이다.
+        await pool.query(`insert into agent_memory (account_id, slug, value, kind) values ($1, 'mem/old-a', 'x', 'topic'), ($1, 'mem/old-b', 'x', 'topic'), ($1, 'mem/old-c', 'x', 'topic')`, [a.accountId]);
+        await pool.query(`update bg_job set writes = 0 where id = $1`, [jobId]);
+        expect(await call(c, 'memory.merge', { into: 'mem/area/old-a', from: ['mem/old-a'], value: 'x', kind: 'topic' })).toMatchObject({ ok: true });
+        expect((await pool.query(`select writes from bg_job where id = $1`, [jobId])).rows[0].writes).toBe(2);
+        await pool.query(`update bg_job set kind = 'organize', writes = 0 where id = $1`, [jobId]);
+        expect(await call(c, 'memory.merge', { into: 'mem/area/old-b', from: ['mem/old-b'], value: 'x', kind: 'topic' })).toMatchObject({ ok: true });
+        expect((await pool.query(`select writes from bg_job where id = $1`, [jobId])).rows[0].writes).toBe(1);
+        expect(await call(c, 'memory.merge', { into: 'mem/area/old-b', from: ['mem/old-c'], value: 'x', kind: 'topic' })).toMatchObject({ ok: true });
+        expect((await pool.query(`select writes from bg_job where id = $1`, [jobId])).rows[0].writes).toBe(3);
+        await pool.query(`update bg_job set kind = 'distill' where id = $1`, [jobId]);
+
         await pool.query(`update bg_job set writes = $2 where id = $1`, [jobId, BG_MAX_WRITES]);
         expect((await call(c, 'memory.set', { slug: 'mem/more', value: 'x', kind: 'topic' })).error.code).toBe('bg_write_limit');
 
