@@ -163,4 +163,15 @@ describe('deciders — 카드를 정할 수 있는 사람', () => {
     expect((await ask(bob.token)).json()).toMatchObject({ viewerCanDecide: false, decideScope: 'switchOff' });
     expect((await ask(alice.token)).json()).toMatchObject({ viewerCanDecide: true, decideScope: 'switchOff' });
   });
+
+  it('decide-check — 볼 수 없는 채널이면 소유자 id·범위를 주지 않는다(security n6)', async () => {
+    await setScope('community');
+    await pool.query(`update agent_config set user_decide = true where account_id = $1`, [agentId]);
+    const hidden = (await pool.query(`insert into channel (name, kind, visibility) values ('n6-hidden-room', 'standard', 'private') returning id`)).rows[0].id as string;
+    const res = await app.inject({ method: 'GET', url: `/agents/${agentId}/decide-check?channelId=${hidden}`, headers: auth(bob.token) });
+    expect(res.json()).toEqual({ viewerCanDecide: false, asOwner: false, decideScope: null, ownerAccountId: null });
+    // 소유자는 볼 수 없는 채널이어도 정할 수 있는 사람이라 그대로 받는다.
+    expect((await app.inject({ method: 'GET', url: `/agents/${agentId}/decide-check?channelId=${hidden}`, headers: auth(alice.token) })).json())
+      .toMatchObject({ viewerCanDecide: true, asOwner: true, ownerAccountId: alice.accountId });
+  });
 });

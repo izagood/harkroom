@@ -132,11 +132,13 @@ export async function decide(pool: Pool, ref: DecisionRef, actorId: string, inpu
     input.via === 'chat' && input.chat ? { kind: 'chat', ...input.chat }
     : ref.mirrorMessageId ? { kind: 'mirror', mirrorMessageId: ref.mirrorMessageId }
     : { kind: 'button' };
-  const d = await decidePermissionRequest(pool, {
-    agentId: ref.agentId, requestId: ref.requestId, actorId, decision, asOwner: verdict.asOwner,
-    ...(once ? { once } : {}),
-    via,
-  });
+  const args = { agentId: ref.agentId, requestId: ref.requestId, actorId, asOwner: verdict.asOwner, ...(once ? { once } : {}), via };
+  let d = await decidePermissionRequest(pool, { ...args, decision });
+  // [이 스레드로 위임장 만들고 더하기]인데 이 스레드에 위임장을 세울 수 없으면(머리 글이 소유자 것이 아님·남의 위임장) 7일 승인으로
+  // 한 번 더 한다 — 글 승인 길이 하던 것을 입구로 옮겼다. 버튼만 409 로 끝나 「눌러도 아무 일 없음」이 되던 갈림을 없앤다.
+  if (!d.ok && d.code === 'mandate_unavailable' && decision === 'approve_new_mandate') {
+    d = await decidePermissionRequest(pool, { ...args, decision: 'approve' });
+  }
   if (!d.ok) return { kind: 'permission', ...d };
   return { kind: 'permission', ok: true, result: d };
 }

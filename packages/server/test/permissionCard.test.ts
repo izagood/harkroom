@@ -137,29 +137,32 @@ describe('permission card decisions (W4b)', () => {
     expect((await created(ownRoot)).map((r) => r.detail.via)).toEqual(['root']);
   });
 
-  it('approve_new_mandate refuses mandate_unavailable when the thread mandate belongs to another owner — nothing granted', async () => {
+  // 위임장을 세울 수 없는 스레드면 `decide` 가 7일 승인으로 한 번 더 한다 — 버튼도 글 승인과 같은 길(409 로 끝나지 않는다).
+  it('approve_new_mandate falls back to the 7-day approval when the thread mandate belongs to another owner — no mandate, no line', async () => {
     const { root, mandateId } = await mandateThread(bob.accountId, '@bobbot go');
     expect(mandateId).toBeTruthy();
     const target = rule();
     const { requestId, cardId } = await card({ kind: 'tool', target, root, mandateId: null });
-    expect(await decideCard(cardId, 'approve_new_mandate')).toMatchObject({ ok: false, status: 409, code: 'mandate_unavailable' });
-    expect((await pool.query(`select status, mandate_id from permission_request where id = $1`, [requestId])).rows[0]).toEqual({ status: 'pending', mandate_id: null });
-    expect((await pool.query(`select 1 from account_grant where account_id = $1 and scope like $2`, [agentId, `%${target}`])).rowCount).toBe(0);
+    expect(await decideCard(cardId, 'approve_new_mandate')).toMatchObject({ ok: true, result: { status: 'granted' } });
+    expect((await pool.query(`select status, mandate_id from permission_request where id = $1`, [requestId])).rows[0]).toEqual({ status: 'granted', mandate_id: null });
+    expect((await pool.query(`select 1 from account_grant where account_id = $1 and scope like $2`, [agentId, `%${target}`])).rowCount).toBe(1);
     expect(await linesOf(requestId)).toEqual([]);
   });
 
-  it('approve_new_mandate refuses mandate_unavailable on a thread another person started — root keeps no mandate key (F2)', async () => {
+  it('approve_new_mandate on a thread another person started → 7-day approval, root keeps no mandate key (F2)', async () => {
     const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'bob root', 'user') returning id`, [ch, bob.accountId])).rows[0].id as string;
     const target = rule();
     const { requestId, cardId } = await card({ kind: 'tool', target, root, mandateId: null });
-    expect(await decideCard(cardId, 'approve_new_mandate')).toMatchObject({ ok: false, status: 409, code: 'mandate_unavailable' });
+    expect(await decideCard(cardId, 'approve_new_mandate')).toMatchObject({ ok: true, result: { status: 'granted' } });
     expect((await pool.query(`select mandate_id from message where id = $1`, [root])).rows[0].mandate_id).toBeNull();
-    expect((await pool.query(`select status, mandate_id from permission_request where id = $1`, [requestId])).rows[0]).toEqual({ status: 'pending', mandate_id: null });
-    expect((await pool.query(`select 1 from account_grant where account_id = $1 and scope like $2`, [agentId, `%${target}`])).rowCount).toBe(0);
-    // 다른 소유자의 에이전트가 쓴 머리도 같다.
+    expect((await pool.query(`select status, mandate_id from permission_request where id = $1`, [requestId])).rows[0]).toEqual({ status: 'granted', mandate_id: null });
+    expect((await pool.query(`select 1 from account_grant where account_id = $1 and scope like $2`, [agentId, `%${target}`])).rowCount).toBe(1);
+    expect(await linesOf(requestId)).toEqual([]);
+    // 다른 소유자의 에이전트가 쓴 머리도 같다 — 위임장 없이 7일 승인.
     const botRoot = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'bobbot root', 'user') returning id`, [ch, bobAgentId])).rows[0].id as string;
     const b = await card({ kind: 'tool', target: rule(), root: botRoot, mandateId: null });
-    expect(await decideCard(b.cardId, 'approve_new_mandate')).toMatchObject({ ok: false, code: 'mandate_unavailable' });
+    expect(await decideCard(b.cardId, 'approve_new_mandate')).toMatchObject({ ok: true });
+    expect((await pool.query(`select mandate_id from message where id = $1`, [botRoot])).rows[0].mandate_id).toBeNull();
   });
 
   it('approve_new_mandate on a thread the owner\'s own agent started → mandate for the owner', async () => {
