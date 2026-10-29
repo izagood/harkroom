@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { excludedNamesFrom, focusTermsOf, rankRecall, searchTerms, type RecallCandidate } from '../src/services/memory.js';
+import { excludedNamesFrom, focusTermsOf, isThreadStateSlug, rankRecall, searchTerms, type RecallCandidate } from '../src/services/memory.js';
 
 // recall P1 의 순수 부분 — pg 없이 돈다. 정답 세트(fixture) 회귀도 이 자리에 붙인다.
 describe('searchTerms', () => {
@@ -204,5 +204,21 @@ describe('recall 합성 세트 (S-syn)', () => {
       expect(top.some((s) => it.gold.includes(s)), `${it.id}: ${top.join(',')}`).toBe(true);
     }
     for (const it of fixture.items) expect(recall(it).filter((s) => s.startsWith('mem/journal/')), it.id).toEqual([]);
+  });
+});
+
+// #1A: 새로 못 만드는 진행 상태 꼴 이름. 비튼 꼴(복수·밑줄·디렉터리·번호 붙임)도 걸리고, 낱말 안에 든 것은 안 걸린다.
+describe('isThreadStateSlug', () => {
+  it('상태 꼴과 비튼 꼴은 걸린다', () => {
+    for (const s of ['mem/delegation-x', 'mem/delegations-x', 'mem/review-board-2', 'mem/review-1666', 'mem/reviews_a', 'mem/review/merge-wrapper',
+      'mem/delegation/x', 'mem/a/review-b', 'mem/pr-review-12', 'mem/sec_review-3', 'mem/review12', 'mem/delegation', 'mem/review']) {
+      expect(isThreadStateSlug(s), s).toBe(true);
+    }
+  });
+  it('낱말 안에 든 것·교훈 이름은 안 걸린다', () => {
+    for (const s of ['core', 'mem/preview-window', 'mem/code-reviewer-tips', 'mem/pr-review-checklist', 'mem/security/merge-wrapper',
+      'mem/reviewer', 'mem/redelegation-plan']) {
+      expect(isThreadStateSlug(s), s).toBe(false);
+    }
   });
 });

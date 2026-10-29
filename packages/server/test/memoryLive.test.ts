@@ -278,10 +278,41 @@ describe('memory MCP tools', () => {
     }
   });
 
-  it('S3: 진행 상태로 보이는 쓰기는 저장하되 threadState 로 thread.note 를 안내한다(지표 state_like 와 같은 판정)', async () => {
-    const { pat } = await createAgent(app, adminToken, 'state-agent');
+  // #1A: 상태 꼴 이름(delegation-·review-, 비튼 꼴 포함)은 새로 못 만든다. 고치기·보관·있는 것으로 합치기는 된다.
+  it('#1A: 진행 상태 꼴 이름의 새 기억은 thread_state_slug 로 거절, 있던 것 고치기·보관·합치기는 된다', async () => {
+    const { accountId, pat } = await createAgent(app, adminToken, 'state-slug-agent');
     const client = await mcpClient(pat);
     try {
+      for (const slug of ['mem/delegation-x', 'mem/review-1666', 'mem/review/merge-wrapper', 'mem/reviews_a', 'mem/a/delegations-b', 'mem/pr-review-12', 'mem/review12', 'mem/delegation']) {
+        const r = await callTool(client, 'memory.set', { slug, value: 'v', kind: 'topic' });
+        expect(r.error?.code, slug).toBe('thread_state_slug');
+        expect(r.error?.message).toContain('thread.note.list');
+      }
+      // 낱말 안에 든 것은 아니다 — 교훈 이름은 그대로 된다.
+      for (const slug of ['mem/security/merge-wrapper', 'mem/code-reviewer-tips', 'mem/pr-review-checklist', 'mem/preview-window']) {
+        expect(await callTool(client, 'memory.set', { slug, value: 'v', kind: 'topic' }), slug).toEqual({ ok: true });
+      }
+      // 새 이름으로 합치기(이름 바꾸기)도 새로 만드는 것이다.
+      expect((await callTool(client, 'memory.merge', { into: 'mem/review-new', from: ['mem/preview-window'], value: 'v', kind: 'topic' })).error.code).toBe('thread_state_slug');
+      // 있던 상태 꼴 기억: 고치기·보관·그것으로 합치기·그것을 다른 이름으로 합치기는 된다.
+      await pool.query(`insert into agent_memory (account_id, slug, value, kind) values ($1, 'mem/review-old', 'v0', 'topic'), ($1, 'mem/delegation-old', 'v0', 'topic')`, [accountId]);
+      expect((await callTool(client, 'memory.set', { slug: 'mem/review-old', value: 'v1', kind: 'topic' })).ok).toBe(true);
+      expect((await callTool(client, 'memory.merge', { into: 'mem/review-old', from: ['mem/pr-review-checklist'], value: 'v2', kind: 'topic' })).ok).toBe(true);
+      expect((await callTool(client, 'memory.merge', { into: 'mem/security/merge-wrapper', from: ['mem/review-old'], value: 'v3', kind: 'topic' })).ok).toBe(true);
+      expect((await callTool(client, 'memory.archive', { slug: 'mem/delegation-old' })).ok).toBe(true);
+      // 보관된 것도 행이 있으니 고쳐 쓸 수 있다(새로 만드는 것이 아니다).
+      expect((await callTool(client, 'memory.set', { slug: 'mem/delegation-old', value: 'v1', kind: 'topic' })).error?.code).not.toBe('thread_state_slug');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('S3: 진행 상태로 보이는 쓰기는 저장하되 threadState 로 thread.note 를 안내한다(지표 state_like 와 같은 판정)', async () => {
+    const { accountId, pat } = await createAgent(app, adminToken, 'state-agent');
+    const client = await mcpClient(pat);
+    try {
+      // 상태 꼴 이름은 새로 못 만든다(#1A) — 있던 것을 고치는 쓰기로 경고를 본다.
+      await pool.query(`insert into agent_memory (account_id, slug, value, kind) values ($1, 'mem/delegation-x', 'v0', 'topic')`, [accountId]);
       const byName = await callTool(client, 'memory.set', { slug: 'mem/delegation-x', value: 'v', kind: 'topic' });
       expect(byName.ok).toBe(true);
       expect(byName.threadState).toContain('thread.note');
