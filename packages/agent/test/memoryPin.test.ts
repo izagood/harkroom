@@ -356,6 +356,34 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
     });
   });
 
+  // #4: 60개까지는 이름·요약을 싣고, 넘으면 분야별 개수와 목차 포인터만 싣는다. 세션 도중 생긴 것은 그대로 이름으로 알린다.
+  describe('#4 많으면 분야별 개수', () => {
+    const named = (n: number, area: string) => Array.from({ length: n }, (_, i) => `mem/${area}/x${i}`);
+
+    it('60개는 이름 그대로, 61개부터 분야별 개수 — 많은 분야부터, 접두 없음은 한 칸, 이름·요약은 싣지 않는다', async () => {
+      const sixty = await turn({ core: 'C', slugs: named(60, 'deploy') }, true);
+      expect(sixty.turn).toContain('- mem/deploy/x0');
+      const slugs = [...named(40, 'deploy'), ...named(15, 'mobile'), 'mem/loose-a', 'mem/loose-b', ...named(4, 'pr')];
+      const t = await turn({ core: 'C', slugs, descriptions: { 'mem/deploy/x0': '요약은 안 실린다' } }, true);
+      expect(t.turn).toContain('저장된 기억 61개');
+      expect(t.turn).not.toContain('mem/deploy/x0');
+      expect(t.turn).not.toContain('요약은 안 실린다');
+      const order = ['- deploy/ 40개', '- mobile/ 15개', '- pr/ 4개', '- (분야 접두 없음) 2개'].map((l) => t.turn.indexOf(l));
+      expect(order.every((i) => i >= 0)).toBe(true);
+      expect([...order].sort((a, b) => a - b)).toEqual(order);
+      expect(t.turn).toContain('분야 목차(`mem/map`)는 아직 없다');
+      // 세션 도중 생긴 것은 이름으로 알린다(<memory-update>).
+      const next = await turn({ core: 'C', slugs: [...slugs, 'mem/deploy/new-one'] }, false);
+      expect(next.turn).toContain('- mem/deploy/new-one');
+    });
+
+    it('mem/map 이 있으면 그것을 먼저 읽게 한다', async () => {
+      const t = await turn({ core: 'C', slugs: [...named(61, 'deploy'), 'mem/map'] }, true);
+      expect(t.turn).toContain('분야 목차는 `mem/map` 이다');
+      expect(t.turn).not.toContain('아직 없다');
+    });
+  });
+
   // C2: 정리 신호를 목록 머리에 — 서버 C1 경고와 같은 문턱(shared)·같은 셋.
   describe('C2 정리 신호', () => {
     const many = (n: number) => Array.from({ length: n }, (_, i) => `mem/m${i}`);
@@ -370,7 +398,7 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
       expect(text).toContain('memory.archive');
       expect(text).toContain('memory.lease');
       // 머리에 — 목록 첫 줄보다 앞이다.
-      expect(text.indexOf('정리 신호')).toBeLessThan(text.indexOf('- mem/m0'));
+      expect(text.indexOf('정리 신호')).toBeLessThan(text.indexOf('저장된 기억'));
     });
 
     it('BG5: 서버가 정리를 백그라운드 회차로 맡았으면(bgCleanup) 정리 신호를 싣지 않는다 — 아니면 그대로', async () => {
@@ -378,7 +406,7 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
       expect(off.turn).toContain('정리 신호');
       const on = await turn({ core: 'x'.repeat(2600), slugs: many(179), bgCleanup: true }, true);
       expect(on.turn).not.toContain('정리 신호');
-      expect(on.turn).toContain('- mem/m0'); // 목록은 그대로다
+      expect(on.turn).toContain('- (분야 접두 없음) 179개'); // 목록은 그대로다(60개를 넘어 분야별 개수)
     });
 
     it('core 2,600자부터, journal 56개부터', async () => {
