@@ -114,8 +114,11 @@ export function ToolAllowList({ rows, canGrant, canRevoke, off, onRenew, onRevok
         const ch = channels.find((c) => c.id === parsed?.channelId);
         const expired = g.expiresAt !== null && Date.parse(g.expiresAt) <= now;
         const uncapped = g.expiresAt === null && toolRuleExpiryCapped(warnings);
-        // [30일로] — 30일보다 짧게 남은 줄(카드 7일 등)과, 상한 밖에 남은 위험 줄(지적 2).
-        const short = uncapped || (g.expiresAt !== null && Date.parse(g.expiresAt) < now + 30 * DAY - DAY);
+        const left = g.expiresAt !== null && !expired ? Date.parse(g.expiresAt) - now : null;
+        // 7일 안으로 남은 줄 — 남은 날을 주황으로 보이고 [30일로]를 단다.
+        const soon = left !== null && left < 7 * DAY;
+        // [30일로] — 카드로 받은 줄, 상한 밖에 남은 위험 줄(지적 2), 끝났거나 7일 안으로 남은 줄. 설정에서 30일로 준 줄에는 하루 뒤에도 달지 않는다.
+        const short = looksCardGranted(g) || uncapped || expired || soon;
         return (
           <li key={g.scope} className={`grid grid-cols-1 gap-x-3 gap-y-1 px-2 py-1 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-start ${expired ? 'text-fg-subtle' : 'text-fg'}`}
             data-testid={`agent-tool-allow-${rule}`} data-expired={expired || undefined}>
@@ -128,9 +131,15 @@ export function ToolAllowList({ rows, canGrant, canRevoke, off, onRenew, onRevok
               {t('agents.grants.by', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
             </span>
             <span className="text-fg-subtle">
+              {/* 만료 없음은 주황 — 잊힌 채 남는 줄이 눈에 걸리게(「마지막 사용」이 없는 동안 남은 표지다). */}
               {g.expiresAt === null
-                ? t('agents.grants.noExpiry')
-                : expired ? t('agents.grants.expired') : t('agents.grants.expiresOn', { when: new Date(g.expiresAt).toLocaleDateString(locale) })}
+                ? <span className="text-warning" data-testid={`tool-allow-no-expiry-${rule}`}>{t('agents.grants.noExpiry')}</span>
+                : expired ? t('agents.grants.expired') : (
+                  <span className={soon ? 'text-warning' : undefined} data-testid={soon ? `tool-allow-soon-${rule}` : undefined}>
+                    {t('agents.grants.expiresOn', { when: new Date(g.expiresAt).toLocaleDateString(locale) })}
+                    {soon && ` · ${t('toolAllow.daysLeft', { days: String(Math.max(1, Math.ceil(left! / DAY))) })}`}
+                  </span>
+                )}
               {/* 상한(#1687) 전에 만료 없이 들어간 위험 규칙 줄 — 서버는 이제 이런 줄을 새로 받지 않는다(security 지적 2). */}
               {uncapped && (
                 <span className="mt-0.5 block text-warning" data-testid={`tool-allow-uncapped-${rule}`}>{t('toolAllow.uncappedWarning')}</span>

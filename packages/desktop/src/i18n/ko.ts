@@ -3163,6 +3163,7 @@ export const ko = {
   'toolAllow.unknownChannel': '(알 수 없는 채널)',
   'toolAllow.viaCard': '카드로',
   'toolAllow.renew30d': '30일로',
+  'toolAllow.daysLeft': '{days}일 남음',
   'toolAllow.renewAgain30d': '다시 30일',
   'toolAllow.renewAria': '{rule} 을 오늘부터 30일로',
   'toolAllow.revokeAria': '{rule} 명령 허용 거두기',

@@ -128,6 +128,27 @@ describe('명령 허용 줄', () => {
     expect(screen.getByLabelText(`${RISKY_RULE} 을 오늘부터 30일로`)).toBeTruthy();
   });
 
+  it('[30일로] 는 카드 줄·7일 안으로 남은 줄에만 — 설정에서 30일로 준 줄은 하루 지나도 달지 않는다 · 만료 없음·남은 날은 주황', async () => {
+    const DAY = 86_400_000;
+    const OTHER = 'Bash(gh pr view -R izagood/harkroom:*)';
+    const SOON = 'Bash(gh pr checks -R izagood/harkroom:*)';
+    setup([
+      tool(READ_RULE),
+      tool(OTHER, { grantedAt: new Date(Date.now() - 2 * DAY).toISOString(), expiresAt: new Date(Date.now() + 28 * DAY).toISOString() }),
+      tool(SOON, { grantedAt: new Date(Date.now() - 27 * DAY).toISOString(), expiresAt: new Date(Date.now() + 3 * DAY - 60_000).toISOString() }),
+    ]);
+    render(<AgentGrantsSection agent={agent()} canGrant canRevoke />);
+    await screen.findByTestId(`agent-tool-allow-${SOON}`);
+    expect(screen.queryByLabelText(`${OTHER} 을 오늘부터 30일로`)).toBeNull();
+    expect(screen.queryByLabelText(`${READ_RULE} 을 오늘부터 30일로`)).toBeNull();
+    expect(screen.queryByTestId(`tool-allow-soon-${OTHER}`)).toBeNull();
+    expect(screen.getByLabelText(`${SOON} 을 오늘부터 30일로`)).toBeTruthy();
+    const soon = screen.getByTestId(`tool-allow-soon-${SOON}`);
+    expect(soon.className).toContain('text-warning');
+    expect(soon.textContent).toContain('3일 남음');
+    expect(screen.getByTestId(`tool-allow-no-expiry-${READ_RULE}`).className).toContain('text-warning');
+  });
+
   it('안내 띠에서 왔으면(openToolAllow) 명령 허용 폼이 연 채로 선다', async () => {
     setup();
     const opened = vi.fn();

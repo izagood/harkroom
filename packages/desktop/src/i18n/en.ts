@@ -5318,6 +5318,7 @@ export const en = {
   'toolAllow.unknownChannel': '(unknown channel)',
   'toolAllow.viaCard': 'From a card',
   'toolAllow.renew30d': 'Make it 30 days',
+  'toolAllow.daysLeft': '{days} days left',
   'toolAllow.renewAgain30d': 'Another 30 days',
   'toolAllow.renewAria': 'Allow {rule} for 30 days from today',
   'toolAllow.revokeAria': 'Revoke the allowed command {rule}',
