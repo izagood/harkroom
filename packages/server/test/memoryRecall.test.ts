@@ -210,14 +210,16 @@ describe('recall 합성 세트 (S-syn)', () => {
 // #1A: 새로 못 만드는 진행 상태 꼴 이름. 비튼 꼴(복수·밑줄·디렉터리·번호 붙임)도 걸리고, 낱말 안에 든 것은 안 걸린다.
 describe('isThreadStateSlug', () => {
   it('상태 꼴과 비튼 꼴은 걸린다', () => {
-    for (const s of ['mem/delegation-x', 'mem/delegations-x', 'mem/review-board-2', 'mem/review-1666', 'mem/reviews_a', 'mem/review/merge-wrapper',
-      'mem/delegation/x', 'mem/a/review-b', 'mem/pr-review-12', 'mem/sec_review-3', 'mem/review12', 'mem/delegation', 'mem/review']) {
+    for (const s of ['mem/delegation-x', 'mem/delegations-x', 'mem/review-board-2', 'mem/review-1666', 'mem/reviews_a',
+      'mem/a/review-b', 'mem/review/x/review-c', 'mem/review-12/x', 'mem/review/pr-review-9', 'mem/pr-review-12', 'mem/sec_review-3', 'mem/review12', 'mem/delegation', 'mem/review']) {
       expect(isThreadStateSlug(s), s).toBe(true);
     }
   });
   it('낱말 안에 든 것·교훈 이름은 안 걸린다', () => {
     for (const s of ['core', 'mem/preview-window', 'mem/code-reviewer-tips', 'mem/pr-review-checklist', 'mem/security/merge-wrapper',
-      'mem/reviewer', 'mem/redelegation-plan']) {
+      'mem/reviewer', 'mem/redelegation-plan',
+      // 분야 마디는 걸지 않는다 — 분야 이름이 review·delegation 인 교훈.
+      'mem/review/prompt-safety', 'mem/reviews/ci-not-started-claim', 'mem/delegation/handoff-rules', 'mem/a/review/b']) {
       expect(isThreadStateSlug(s), s).toBe(false);
     }
   });

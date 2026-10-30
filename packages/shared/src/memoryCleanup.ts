@@ -62,11 +62,14 @@ export function looksLikeThreadState(slug: string, description: string | null | 
 
 /**
  * 진행 상태 기록 꼴의 **이름**(#1A). 서버는 새로 만드는 것만 거절하고(보관 안 된 행이 있으면 고치기·합치기는 된다), 러너 목록·recall 은 이 이름으로만 거른다.
- * 마디 하나라도 `delegation`·`review`(복수 포함)로 시작하거나(`mem/review-x`·`mem/review/x`·`mem/a/delegations_x`),
- * 그 낱말 뒤에 바로 번호가 붙으면(`mem/pr-review-1666`·`mem/review12`) 걸린다. 이름 꼴 판정이라 다른 낱말로 바꾸면
- * 지나간다 — 그때는 저장 뒤 `threadState` 경고(요약 판정)가 남는다.
+ * **끝 마디**가 `delegation`·`review`(복수 포함)로 시작하거나(`mem/review-x`·`mem/a/delegations_x`·`mem/delegation`),
+ * 어느 마디든 그 낱말 바로 뒤에 번호가 붙으면(`mem/pr-review-1666`·`mem/review12`·`mem/review-12/x`) 걸린다.
+ * 분야 마디(`mem/review/<교훈>`)는 걸지 않는다 — 분야 이름이 review 인 교훈까지 숨기고 새로 못 만들게 했다.
+ * 이름 꼴 판정이라 다른 낱말로 바꾸면 지나간다 — 그때는 저장 뒤 `threadState` 경고(요약 판정)가 남는다.
  */
 export function isThreadStateSlug(slug: string): boolean {
-  return slug.split('/').slice(1).some((seg) =>
-    /^(delegations?|reviews?)([-_]|$)/.test(seg) || /(^|[-_])(delegations?|reviews?)[-_]?#?[0-9]/.test(seg));
+  const segs = slug.split('/').slice(1);
+  const last = segs[segs.length - 1] ?? '';
+  return /^(delegations?|reviews?)([-_]|$)/.test(last)
+    || segs.some((seg) => /(^|[-_])(delegations?|reviews?)[-_]?#?[0-9]/.test(seg));
 }

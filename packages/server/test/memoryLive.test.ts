@@ -283,13 +283,13 @@ describe('memory MCP tools', () => {
     const { accountId, pat } = await createAgent(app, adminToken, 'state-slug-agent');
     const client = await mcpClient(pat);
     try {
-      for (const slug of ['mem/delegation-x', 'mem/review-1666', 'mem/review/merge-wrapper', 'mem/reviews_a', 'mem/a/delegations-b', 'mem/pr-review-12', 'mem/review12', 'mem/delegation']) {
+      for (const slug of ['mem/delegation-x', 'mem/review-1666', 'mem/review/pr-review-3', 'mem/reviews_a', 'mem/a/delegations-b', 'mem/pr-review-12', 'mem/review12', 'mem/delegation']) {
         const r = await callTool(client, 'memory.set', { slug, value: 'v', kind: 'topic' });
         expect(r.error?.code, slug).toBe('thread_state_slug');
         expect(r.error?.message).toContain('thread.note.list');
       }
-      // 낱말 안에 든 것은 아니다 — 교훈 이름은 그대로 된다.
-      for (const slug of ['mem/security/merge-wrapper', 'mem/code-reviewer-tips', 'mem/pr-review-checklist', 'mem/preview-window']) {
+      // 낱말 안에 든 것·분야 마디(review/)는 아니다 — 교훈 이름은 그대로 된다.
+      for (const slug of ['mem/security/merge-wrapper', 'mem/code-reviewer-tips', 'mem/pr-review-checklist', 'mem/preview-window', 'mem/review/prompt-safety']) {
         expect(await callTool(client, 'memory.set', { slug, value: 'v', kind: 'topic' }), slug).toEqual({ ok: true });
       }
       // 새 이름으로 합치기(이름 바꾸기)도 새로 만드는 것이다.

@@ -146,15 +146,17 @@ describe('memoryPin — 시스템 프롬프트를 세션 동안 고정한다', (
   // 싣는다(security n1 — 교훈 기억을 숨기지 않는다). 숨긴 것을 「지워진 기억」으로 알리지 않는다.
   it('진행 상태 꼴 이름은 목록·변경 알림에서 빠지고 개수만 말한다, 요약만 상태 같은 것은 싣는다', async () => {
     const descriptions = { 'mem/b': 'PR #12 CI 초록 · 머지 대기', 'mem/a': '배포 절차' };
-    const first = await turn({ core: 'C', slugs: ['mem/a', 'mem/b', 'mem/delegation-x'], descriptions }, true);
+    const first = await turn({ core: 'C', slugs: ['mem/a', 'mem/b', 'mem/delegation-x', 'mem/review/prompt-safety'], descriptions }, true);
     expect(first.turn).toContain('- mem/a');
+    // 분야 마디가 review 인 교훈은 싣는다.
+    expect(first.turn).toContain('- mem/review/prompt-safety');
     expect(first.turn).toContain('- mem/b');
     expect(first.turn).not.toContain('mem/delegation-x');
     expect(first.turn).toContain('진행 상태 꼴 이름(delegation-·review-)의 기억 1개');
-    const added = await turn({ core: 'C', slugs: ['mem/a', 'mem/b', 'mem/delegation-x', 'mem/review-y'], descriptions }, false);
+    const added = await turn({ core: 'C', slugs: ['mem/a', 'mem/b', 'mem/delegation-x', 'mem/review/prompt-safety', 'mem/review-y'], descriptions }, false);
     expect(added.turn).toBe('');
     // 정말 없어진 것만 「지워진 기억」이다.
-    const removed = await turn({ core: 'C', slugs: ['mem/a', 'mem/delegation-x', 'mem/review-y'], descriptions }, false);
+    const removed = await turn({ core: 'C', slugs: ['mem/a', 'mem/delegation-x', 'mem/review/prompt-safety', 'mem/review-y'], descriptions }, false);
     expect(removed.turn).toContain('지워진 기억');
     expect(removed.turn).toContain('- mem/b');
     expect(removed.turn).not.toContain('delegation-x');
