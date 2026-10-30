@@ -1624,15 +1624,19 @@ describe('silentTurnNotice — 화면 답 대리 게시 (2026-10-25, 스레드 d
 
 describe('silentTurnNotice — 기록의 마지막 말이 답 꼴이면 ✅ 로 덮지 않는다 (2026-10-30 2회차 시험)', () => {
   const base = { offAnchor: null, pat: 'hrkp_secretpat' } as const;
-  // 실측 모양: 표 답을 최종 텍스트로만 쓰고 message.post 를 안 부른 턴(log-triage·ledger).
-  const TABLE = '결과를 정리해서 표로 올린다.\n\n| 에이전트 | 건수 |\n|---|---|\n| a1 | 19 |';
+  // 실측 원문(2026-10-30, 계정 id·채널·PR 번호는 가짜 값): 표 답을 최종 텍스트로만 쓰고 message.post 를 안 부른 두 턴의 마지막 말.
+  const TABLE = '결과를 정리해서 표로 올린다.\n\n---\n\n| 에이전트 | 건수 | 채널 | 마지막 말 요지 | 짐작 분류 |\n|---|---|---|---|---|\n'
+    + '| 0000aaaa | 19 | 1111bbbb(주로), 2222cccc | 「바뀐 것 없음 / 할 일 없어서 글 안 올림」 | 글 안 올림(17) · 권한 대기(1) · 기타(1) |';
+  const DRAFT = 'PR 정보를 확인했습니다. 초안을 이 스레드에 올립니다:\n\n| 날짜(KST) | 분류 | 일 | PR | 상태 |\n|---|---|---|---|---|\n'
+    + '| 2026-10-30 | 개인 | 위험 규칙 만료 상한 | #101 | 머지 |';
 
   it('표 답은 줄을 살린 인용으로 대신 올리고, 러너가 기록에서 옮겼다고 밝힌다', () => {
     const n = silentTurnNotice({ ...base, caller: 'agent', lastSaid: TABLE });
     expect(n.kind).toBe('post');
     const body = (n as { body: string }).body;
-    expect(body).toContain('> | 에이전트 | 건수 |\n> |---|---|');
+    expect(body).toContain('> | 에이전트 | 건수 | 채널 | 마지막 말 요지 | 짐작 분류 |\n> |---|---|---|---|---|');
     expect(body).toContain('하네스 기록에서 옮겨 올렸습니다');
+    expect(silentTurnNotice({ ...base, caller: 'agent', lastSaid: DRAFT }).kind).toBe('post');
   });
 
   it('부른 쪽 멘션·긴 말도 답 꼴이다 — 인용 안의 멘션은 멘션이 아니다', () => {
@@ -1644,6 +1648,7 @@ describe('silentTurnNotice — 기록의 마지막 말이 답 꼴이면 ✅ 로 
 
   it('FYI 끝말·빈 말은 지금처럼 ✅ 다', () => {
     expect(silentTurnNotice({ ...base, caller: 'agent', lastSaid: '확인했습니다. 덧붙일 말 없음.' })).toEqual({ kind: 'react', emoji: '✅' });
+    expect(silentTurnNotice({ ...base, caller: 'agent', lastSaid: '확인' })).toEqual({ kind: 'react', emoji: '✅' });
     expect(silentTurnNotice({ ...base, caller: 'agent', lastSaid: null })).toEqual({ kind: 'react', emoji: '✅' });
     expect(looksLikeAnswer('이메일 a@b 는 멘션이 아니다')).toBe(false);
   });
