@@ -601,6 +601,14 @@ describe('buildTurnPrompt — 넘겨받은 일(3-2)', () => {
 
 describe('buildSystemPrompt', () => {
   // 목차(mem/map)가 없으면 「먼저 읽어라」를 싣지 않는다 — 없는 것을 읽으라고 시키지 않는다. 접두 규칙은 그대로.
+  it('동료는 직접 부르고, 막히면 다른 에이전트로 돌아가지 말라고 알린다(호출 권한 재설계 5단계) — 읽기 전용 턴에도 남는다', () => {
+    const base = { handle: 'forge', channelName: 'dev', instructions: '', guide: '', memory: { core: null, slugs: [] } };
+    for (const p of [buildSystemPrompt(base), buildSystemPrompt({ ...base, readOnly: true })]) {
+      expect(p).toContain('그 동료를 직접 부른다');
+      expect(p).toContain('다른 에이전트를 거쳐 돌아가지 말고 요청자에게 넘긴다');
+    }
+  });
+
   it('mem/map 이 있을 때만 「먼저 그것을 읽는다」를 싣는다', () => {
     const base = { handle: 'forge', channelName: 'dev', instructions: '', guide: '' };
     const without = buildSystemPrompt({ ...base, memory: { core: 'C', slugs: ['mem/a'] } });
