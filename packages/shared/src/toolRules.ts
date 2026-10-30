@@ -42,6 +42,17 @@ export const TOOL_RULE_WARNING_HEAD_KO: Readonly<Record<ToolRuleWarning, string>
   uses_github_account: 'GitHub 계정으로 돈다',
 };
 
+/**
+ * 이 경고가 붙은 규칙은 설정 화면에서도 만료를 30일 안으로만 준다(소유자 결정 2026-10-30 — 명령 허용 줄 시안 v1 결정 1).
+ * 「무엇이든 돌릴 수 있다」·「원격 상태를 바꾼다」는 잊힌 채 남으면 가장 비싸다. 서버(`grantRoutes`)와 화면이 같은 목록을 본다.
+ */
+export const TOOL_RULE_EXPIRY_CAPPED_WARNINGS: readonly ToolRuleWarning[] = ['runs_arbitrary', 'mutates_remote'];
+/** 설정 화면 tool.allow 의 만료 상한(위 경고가 붙은 규칙). 화면이 고른 순간과 서버에 닿는 순간의 차이로 거절되지 않게 1분 여유. */
+export const TOOL_RULE_CAPPED_EXPIRY_MS = 30 * 86_400_000 + 60_000;
+export function toolRuleExpiryCapped(warnings: readonly ToolRuleWarning[]): boolean {
+  return warnings.some((w) => TOOL_RULE_EXPIRY_CAPPED_WARNINGS.includes(w));
+}
+
 /** 알려진 경고만, 그리는 순서대로 · 같은 것은 하나로. */
 export function orderToolRuleWarnings(warnings: readonly unknown[]): ToolRuleWarning[] {
   const set = new Set(warnings);

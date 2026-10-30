@@ -10,7 +10,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { CAPABILITIES, ROLES, parseToolScope, repoGrantScope, validateToolRule, type ApiGrantLimits, type GrantRow } from '@harkroom/shared';
+import { CAPABILITIES, ROLES, TOOL_RULE_CAPPED_EXPIRY_MS, parseToolScope, repoGrantScope, toolRuleExpiryCapped, validateToolRule, type ApiGrantLimits, type GrantRow } from '@harkroom/shared';
 import { hasWriteMethod, isConnectorScope, parseLimits } from '../auth/apiGrants.js';
 import { actorOf, recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
@@ -170,6 +170,13 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
       if (req.authVia !== 'session') return reply.code(403).send({ error: { code: 'forbidden', message: 'tool.allow 는 앱에 로그인한 소유자만 준다' } });
       const owner = await secretCreateOwner(pool, req, id);
       if (!owner.ok) return reply.code(owner.status).send({ error: { code: owner.code, message: owner.message.replace('secret.create', 'tool.allow') } });
+      // 「무엇이든 돌릴 수 있다」·「원격 상태를 바꾼다」 규칙은 만료가 필수이고 30일 안이다(소유자 결정 2026-10-30). 화면이 「없음」 칸을
+      // 끄는 것만으로는 막지 않는다 — 같은 PUT 을 직접 부를 수 있다.
+      if (toolRuleExpiryCapped(verdict.warnings)) {
+        if (!expiresAt) return reply.code(400).send({ error: { code: 'tool_rule_needs_expiry', message: '이 규칙은 위험 경고가 붙어 만료가 필수다(30일 안)' } });
+        if (Date.parse(expiresAt) > Date.now() + TOOL_RULE_CAPPED_EXPIRY_MS) return reply.code(400).send({ error: { code: 'tool_rule_expiry_too_long', message: '위험 경고가 붙은 규칙의 만료는 30일 안이다' } });
+      }
+      if (expiresAt && Date.parse(expiresAt) <= Date.now()) return reply.code(400).send({ error: { code: 'bad_request', message: '만료가 이미 지났다' } });
     } else if (capability === 'secret.create') {
       // 소유자만(repo.merge 와 같은 틀). 전역 하나 — 대상 한정 scope 는 뜻이 없다.
       if (scope !== '' || allowAgentCause !== undefined) {

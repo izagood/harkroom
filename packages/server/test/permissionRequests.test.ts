@@ -380,6 +380,21 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect((await put(agentPat, `tool:${ch}:Bash(kubectl --context ops describe:*)`)).statusCode).toBe(403);
     });
 
+    it('위험 경고(원격 변경)가 붙은 규칙은 만료가 필수이고 30일 안이다', async () => {
+      const rule = 'Bash(kubectl --context ops delete pod:*)';
+      expect((await put(alice.token, `tool:${ch}:${rule}`)).json().error.code).toBe('tool_rule_needs_expiry');
+      const far = new Date(Date.now() + 31 * 86_400_000).toISOString();
+      expect((await put(alice.token, `tool:${ch}:${rule}`, { expiresAt: far })).json().error.code).toBe('tool_rule_expiry_too_long');
+      const ok = new Date(Date.now() + 30 * 86_400_000).toISOString();
+      expect((await put(alice.token, `tool:${ch}:${rule}`, { expiresAt: ok })).statusCode).toBe(200);
+      expect(await toolAllowsFor(pool, agentId, ch)).toContain(rule);
+    });
+
+    it('지난 만료는 400', async () => {
+      const past = new Date(Date.now() - 60_000).toISOString();
+      expect((await put(alice.token, `tool:${ch}:Bash(kubectl --context ops get:*)`, { expiresAt: past })).statusCode).toBe(400);
+    });
+
     it('tool: scope 는 다른 capability 에 못 쓴다', async () => {
       const res = await app.inject({ method: 'PUT', url: `/accounts/${bob.accountId}/grants`, headers: auth(admin.token), payload: { capability: 'channel.create', scope: `tool:${ch}:Bash(x y)` } });
       expect(res.statusCode).toBe(400);
