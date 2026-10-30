@@ -20,7 +20,10 @@ import { ApiError } from '../src/lib/api';
 import { acc, fakeApi } from './helpers/fakeApi';
 
 const setLocalAgent = vi.fn(async () => undefined);
-vi.mock('../src/lib/operatorLocal', () => ({
+// 만든 뒤 상세가 열리며 다른 절(MCP 등)도 이 모듈을 부른다 — 나머지는 진짜를 두고 여기 것만 바꾼다.
+vi.mock('../src/lib/operatorLocal', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/lib/operatorLocal')>()),
+  listLocalMcpServers: async () => ({ servers: [] }),
   hasOperatorLocalSurface: () => true,
   listLocalAgents: async () => ({
     communities: [{ baseUrl: 'http://x', registered: true, operatorId: 'op-1', agents: {} }],
@@ -32,7 +35,8 @@ vi.mock('../src/lib/operatorLocal', () => ({
 }));
 
 const ME_ID = 'admin-1';
-const made = { id: 'agent-new' } as unknown as AgentView;
+// 만든 뒤 상세를 연다(명령 허용 안내 띠) — 상세가 그리는 이름 칸이 있어야 한다.
+const made = { id: 'agent-new', handle: 'newbie', displayName: 'newbie' } as unknown as AgentView;
 
 beforeEach(() => {
   usePrefsStore.getState().setLocale('ko');

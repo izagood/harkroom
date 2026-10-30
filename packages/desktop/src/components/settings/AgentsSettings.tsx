@@ -296,6 +296,10 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
    * 확인일 뿐이라 몇 초 뒤 스스로 걷힌다.
    */
   const [createdToast, setCreatedToast] = useState<string | null>(null);
+  /** 만든 직후 한 번만 뜨는 「명령 허용」 안내 띠의 에이전트 id(시안 v1 결정 7). 다른 에이전트를 열거나 닫으면 걷힌다. */
+  const [toolAllowBandFor, setToolAllowBandFor] = useState<string | null>(null);
+  /** 띠의 [명령 허용 주기] — 「권한」 탭의 명령 허용 폼을 연 채로 그 자리까지 내려간다. */
+  const [openToolAllowFor, setOpenToolAllowFor] = useState<string | null>(null);
   useEffect(() => {
     if (!createdToast) return;
     const timer = setTimeout(() => setCreatedToast(null), CREATED_TOAST_MS);
@@ -1346,6 +1350,7 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
     setSelected(a);
     setDetailTab(tab);
     setCreatedAgentId(null);
+    setToolAllowBandFor(null);
     setView('detail');
     setDraft(draftOf(a));
     setCustomized(a.model !== null || a.effort !== null);
@@ -1490,8 +1495,11 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
       // 응답의 정의를 먼저 끼운다 — 그래야 강조·스크롤이 빈 자리를 가리키지 않는다.
       setAgents((prev) => (prev.some((a) => a.id === agent.id) ? prev : [...prev, agent]));
       setGroup('agents');
-      setView('grid');
-      setDraft(null);
+      // 그 에이전트 상세를 열고 「명령 허용」 안내 띠를 한 번 띄운다(명령 허용 줄 시안 v1 결정 7, 소유자 승인 2026-10-30 —
+      // 위 「목록으로 간다」를 이 경우에 한해 바꾼다). 미리 허용할 명령은 채널이 정해진 뒤라야 줄 수 있어 만들기 폼 안에는 칸이 없다.
+      pick(agent);
+      setCreatedAgentId(agent.id);
+      setToolAllowBandFor(agent.id);
       // 배정 실패는 **생성 실패가 아니다.** 에이전트는 이미 만들어졌다.
       // 둘 다 실패하면 앞의 것만 보인다 — 한 줄에 둘을 이어 붙이면 사람이 무엇을 고쳐야
       // 하는지가 흐려진다. 나머지는 상세 화면의 같은 절이 다시 말한다.
@@ -2280,6 +2288,18 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
               </div>
             )}
 
+            {selected && toolAllowBandFor === selected.id && selected.ownerAccountId === myId && (
+              <div role="status" data-testid="agent-tool-allow-band"
+                className="mb-3 flex flex-wrap items-center gap-2 rounded-row border border-accent bg-accent-surface px-3 py-2 text-body text-fg">
+                <span className="min-w-0 flex-1">{t('toolAllow.band')}</span>
+                <button className="rounded-row border border-border bg-accent px-2 py-1 text-meta font-medium text-accent-fg"
+                  onClick={() => { setToolAllowBandFor(null); setOpenToolAllowFor(selected.id); setDetailTab('permissions'); }}>
+                  {t('toolAllow.bandOpen')}
+                </button>
+                <button className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-hover"
+                  aria-label={t('toolAllow.bandDismiss')} onClick={() => setToolAllowBandFor(null)}>✕</button>
+              </div>
+            )}
             <div {...detailPanel('overview')}>
               {/* 개요 — 지금 돌고 있나, 그리고 맨 끝에 되돌릴 수 없는 조작(designer A2). 사용 중지·삭제는
                   전에 기억 바로 아래, 화면 한가운데 있었다 — 위아래가 곧 세기라 끝으로 보낸다. */}
@@ -3054,6 +3074,8 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                     ? agents.filter((a) => a.ownerAccountId === myId && a.assignment?.operatorId === localOperator.operatorId).map((a) => a.id)
                     : undefined}
                   assignedOperatorName={Array.isArray(operators) ? operatorNameOf(operators.find((o) => o.id === selected.assignment?.operatorId)) ?? null : null}
+                  openToolAllow={openToolAllowFor === selected.id}
+                  onToolAllowOpened={() => setOpenToolAllowFor(null)}
                   onCountChange={(n) => setMergeCounts((prev) => (prev[selected.id]?.repos === n.repos && prev[selected.id]?.orgs === n.orgs ? prev : { ...prev, [selected.id]: n }))}
                 />
               )}
