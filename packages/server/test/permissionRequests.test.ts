@@ -390,6 +390,13 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
       expect(await toolAllowsFor(pool, agentId, ch)).toContain(rule);
     });
 
+    it('워크로드 안에서 실행하는 규칙도 만료가 필수이고 30일 안이다', async () => {
+      const rule = 'Bash(kubectl --context ops exec:*)';
+      expect((await put(alice.token, `tool:${ch}:${rule}`)).json().error.code).toBe('tool_rule_needs_expiry');
+      const far = new Date(Date.now() + 31 * 86_400_000).toISOString();
+      expect((await put(alice.token, `tool:${ch}:${rule}`, { expiresAt: far })).json().error.code).toBe('tool_rule_expiry_too_long');
+    });
+
     it('지난 만료는 400', async () => {
       const past = new Date(Date.now() - 60_000).toISOString();
       expect((await put(alice.token, `tool:${ch}:Bash(kubectl --context ops get:*)`, { expiresAt: past })).statusCode).toBe(400);

@@ -44,9 +44,10 @@ export const TOOL_RULE_WARNING_HEAD_KO: Readonly<Record<ToolRuleWarning, string>
 
 /**
  * 이 경고가 붙은 규칙은 설정 화면에서도 만료를 30일 안으로만 준다(소유자 결정 2026-10-30 — 명령 허용 줄 시안 v1 결정 1).
- * 「무엇이든 돌릴 수 있다」·「원격 상태를 바꾼다」는 잊힌 채 남으면 가장 비싸다. 서버(`grantRoutes`)와 화면이 같은 목록을 본다.
+ * 「무엇이든 돌릴 수 있다」·「원격 상태를 바꾼다」·「돌고 있는 서버 안에서 실행한다」(소유자 결정 같은 날 — 실질이 「무엇이든」에 가깝다)는
+ * 잊힌 채 남으면 가장 비싸다. 서버(`grantRoutes`)와 화면이 같은 목록을 본다.
  */
-export const TOOL_RULE_EXPIRY_CAPPED_WARNINGS: readonly ToolRuleWarning[] = ['runs_arbitrary', 'mutates_remote'];
+export const TOOL_RULE_EXPIRY_CAPPED_WARNINGS: readonly ToolRuleWarning[] = ['runs_arbitrary', 'executes_in_workload', 'mutates_remote'];
 /** 설정 화면 tool.allow 의 만료 상한(위 경고가 붙은 규칙). 화면이 고른 순간과 서버에 닿는 순간의 차이로 거절되지 않게 1분 여유. */
 export const TOOL_RULE_CAPPED_EXPIRY_MS = 30 * 86_400_000 + 60_000;
 export function toolRuleExpiryCapped(warnings: readonly ToolRuleWarning[]): boolean {
