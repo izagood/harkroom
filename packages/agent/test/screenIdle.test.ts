@@ -49,6 +49,17 @@ describe('screen.busy — 실측 화면', () => {
     expect(w.ended(1_000 + SCREEN_IDLE_END_MS * 10)).toBe(false);
   });
 
+  it('잘린 작업 폴더 조각이 든 바닥줄은 답이 아니다(2026-10-30 opencode 대리 게시 「…-<폴더 꼬리> commands」)', () => {
+    const facts = screenIdleFactsFor('opencode')!;
+    const cwd = '/home/example/.harkroom-agent/00000000-aaaa-4bbb-8ccc-000000000001/workspaces/harkroom-00000000-aaaa-4bbb-8ccc-000000000001-0f0f0f0f';
+    // 실측 모양: 모델이 화면에 새로 쓴 것은 없고(일하는 중 화면 그대로), 바닥줄만 폴더 꼬리(잘려서 `/` 가 없다)로 바뀌었다.
+    const busy = fx('opencode-tui-busy.txt');
+    const ended = busy.replace(/^.*esc interrupt.*$/m, '   aaaa-4bbb-8ccc-000000000001-0f0f0f0f       commands');
+    expect(screenAnswerLines(ended, facts, busy, cwd)).toEqual([]);
+    // 폴더를 모르면(옛 호출) 그 줄이 답으로 집힌다 — 이 줄이 고침의 이빨이다.
+    expect(screenAnswerLines(ended, facts, busy).join(' ')).toContain('0f0f0f0f');
+  });
+
   it('claude 는 화면으로 끝을 읽지 않는다(기록 end_turn 경로 그대로)', () => {
     expect(screenIdleFactsFor('claude-code')).toBeNull();
   });

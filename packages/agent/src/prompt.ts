@@ -25,7 +25,8 @@ export const BODY_LIMIT = 8000;
  * 10-01 하루에만 40건이 넘었고 대부분은 **에이전트끼리 주고받은 FYI 멘션**이었다 — 덧붙일 말이 없어
  * 답하지 않은 것이 정상인데, 사람 눈에는 오류 카드가 줄줄이 쌓였다. 그래서 부른 쪽과 정황으로 나눈다:
  *
- * - 부른 쪽이 **에이전트**이고 다른 스레드 답도 없다 → 글 없이 멘션 메시지에 ✅ 리액션만 단다. 처음 안은
+ * - 부른 쪽이 **에이전트**이고 다른 스레드 답도 없다 → 글 없이 멘션 메시지에 ✅ 리액션만 단다. 단 하네스 기록의 마지막 말이 답 꼴이면
+ *   (`looksLikeAnswer`) 그 말을 인용으로 대신 올린다(2026-10-30 — 표 답을 텍스트로만 쓰고 끝낸 턴이 ✅ 로 덮였다). 처음 안은
  *   progress 줄이었지만, 데스크톱은 마지막 줄이 에이전트의 progress 인 스레드를 그 러너가 살아 있는지로
  *   `running`/`stuck` 이라 칠하고(`desktop/src/lib/threadState.ts::decide`) progress 묶음은 같은 저자의 보통
  *   글이 와야 닫힌다(`progressGroup.ts`) — FYI 스레드가 끝나지 않는 '작업 중'으로 남는다(designer 재검토).
@@ -69,8 +70,13 @@ export function silentTurnNotice(opts: {
   if (opts.caller === 'agent') {
     // **에이전트가 부른 턴**(2026-10-25 E13 회차, 스레드 db4ab174). ✅ 만 달면 부른 쪽은 답을 받은 줄 안다 — 화면으로 끝을 안 턴은
     // 화면 답이 있으면 대신 올리고, 없으면 답이 없었다고 남긴다. 둘 다 멘션 없는 보통 글이다 — 부른 에이전트를 멘션으로
-    // 다시 부르지 않는다(화면 글 속 `@handle` 은 인용 줄 안이라 멘션이 아니다). 기록으로 끝을 아는 하네스(claude)의 FYI 는 지금처럼 ✅ 다.
-    if (!opts.screenEnded) return { kind: 'react', emoji: SILENT_ACK_EMOJI };
+    // 다시 부르지 않는다(화면 글 속 `@handle` 은 인용 줄 안이라 멘션이 아니다). 기록으로 끝을 아는 하네스(claude)는 마지막 말이 답 꼴이면 옮기고(`looksLikeAnswer`), 아니면 FYI 로 ✅ 다.
+    if (!opts.screenEnded) {
+      // **기록의 마지막 말이 답 꼴이면 ✅ 로 덮지 않는다**(2026-10-30 2회차 시험, log-triage·ledger). API 키 모델은 표 답을 최종
+      // 텍스트로만 쓰고 message.post 를 안 불렀다 — ✅ 만 남아 부른 쪽은 답을 받은 줄 알았다. 답 꼴만 옮기고 나머지 FYI 는 ✅ 그대로.
+      const proxied = looksLikeAnswer(opts.lastSaid) ? proxyRecordAnswerBody(opts.lastSaid!, opts.pat, opts.secrets) : '';
+      return proxied ? { kind: 'post', body: proxied } : { kind: 'react', emoji: SILENT_ACK_EMOJI };
+    }
     const proxied = proxyAnswerBody(opts.screenAnswer ?? null, opts.pat, opts.secrets);
     if (proxied) return { kind: 'post', body: proxied };
     // 「답 없음」 줄은 **보통 글**이다(jaebin 10-29, designer #1590). progress 로 두면 끝난 턴이 「막힘」·「작업 중」으로 그려지고 보드에서
@@ -262,6 +268,35 @@ export function proxyAnswerBody(screenAnswer: string | null, pat: string, secret
   const answer = oneLine(screenAnswer, pat, PROXY_ANSWER_MAX_CHARS, secrets);
   if (!answer) return '';
   return `> ${answer}\n\n(에이전트가 이 답을 터미널에만 쓰고 스레드에 올리지 않아, 러너가 화면에서 옮겨 올렸습니다.)`;
+}
+
+/** 답 꼴로 볼 마지막 말의 길이 하한(자). FYI 끝말(「확인했습니다, 덧붙일 말 없음」)은 이보다 짧다. */
+export const RECORD_ANSWER_MIN_CHARS = 120;
+
+/**
+ * 하네스 기록의 마지막 말이 **답 꼴**인가(`silentTurnNotice` 의 에이전트 호출 갈래). 표 줄·`@handle` 부름·길이 하한 중 하나면 답으로 본다 —
+ * FYI 에 덧붙일 말이 없어 끝낸 턴은 짧은 한두 마디라 셋 다 아니다.
+ */
+export function looksLikeAnswer(text: string | null): boolean {
+  if (!text) return false;
+  const t = text.trim();
+  return t.length >= RECORD_ANSWER_MIN_CHARS || /^\s*\|.*\|\s*$/m.test(t) || /(^|\s)@[A-Za-z0-9_-]+/.test(t);
+}
+
+/**
+ * **기록의 마지막 말을 대신 올리는 글**(`silentTurnNotice`). 화면 답(`proxyAnswerBody`)과 달리 줄을 살린다 — 표 답이 한 줄로 뭉개지면
+ * 못 읽는다. 줄마다 인용(`> `)으로 싸서 멘션이 되지 않게 하고, 가림·조각 검사는 `quotedLine` 과 같다. 상한은 서버 본문 상한에서 꼬리 몫을 뺀다.
+ */
+export function proxyRecordAnswerBody(text: string, pat: string, secrets: readonly string[] = []): string {
+  if (secrets.length > 0 && tailHasSecretFragment(maskWhole(text, secrets), secrets)) return '';
+  let t = maskWhole(text, secrets);
+  if (pat.length > 0) t = t.split(pat).join('(가림)');
+  t = t.replace(/(?:hrkp|murp)_[A-Za-z0-9_-]+/g, '(가림)').replace(/(Bearer\s+)\S+/gi, '$1(가림)').trim();
+  if (!t) return '';
+  const max = BODY_LIMIT - 200;
+  if (t.length > max) t = `${t.slice(0, max)}…`;
+  const quoted = t.split('\n').map((l) => (l.trim() ? `> ${l}` : '>')).join('\n');
+  return `${quoted}\n\n(에이전트가 이 답을 스레드에 올리지 않고 끝내, 러너가 하네스 기록에서 옮겨 올렸습니다.)`;
 }
 
 /**
