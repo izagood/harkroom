@@ -157,35 +157,47 @@ function runsArbitrary(head: string, sub: string | null, words: readonly string[
 const SHELL_SYNTAX = /[;&|`<>\n\r]|\$\(|\$\{/;
 
 /** (첫 낱말, 하위 명령) — 원격 작업 부하 안에서 임의 명령을 돌린다. */
-const EXEC_SUBCOMMANDS: Record<string, readonly string[]> = {
-  kubectl: ['exec', 'debug', 'attach', 'cp', 'port-forward', 'run'],
-  oc: ['exec', 'debug', 'rsh', 'cp', 'port-forward'],
-  docker: ['exec', 'run'],
-  podman: ['exec', 'run'],
-  nerdctl: ['exec', 'run'],
-  'docker-compose': ['exec', 'run'],
-  'podman-compose': ['exec', 'run'],
-  ssh: ['*'],
-};
-
 /** 컨테이너가 원격(`--context`)일 수 있어 상태를 바꾸는 하위 명령. */
 const CONTAINER_MUTATE = ['rm', 'rmi', 'kill', 'stop', 'restart', 'start', 'pause', 'unpause', 'update', 'create', 'push', 'prune'];
 const COMPOSE_MUTATE = ['up', 'down', 'rm', 'stop', 'restart', 'start', 'kill', 'pause', 'unpause', 'create', 'push', 'build'];
+/** swarm 관리 명령 — 클러스터의 서비스·스택을 바꾼다. */
+const SWARM_NESTED = {
+  stack: { exec: [], mutate: ['deploy', 'up', 'rm', 'remove', 'down'] },
+  service: { exec: [], mutate: ['create', 'update', 'scale', 'rollback', 'rm', 'remove'] },
+  swarm: { exec: [], mutate: ['init', 'join', 'leave', 'update', 'unlock', 'join-token', 'ca'] },
+} as const;
+
+/** 컨테이너·VM 안으로 들어가거나 그 안에 써 넣는 하위 명령. */
+const CONTAINER_EXEC = ['exec', 'run', 'cp', 'attach'];
+const COMPOSE_EXEC = ['exec', 'run', 'cp', 'attach'];
+
+const EXEC_SUBCOMMANDS: Record<string, readonly string[]> = {
+  kubectl: ['exec', 'debug', 'attach', 'cp', 'port-forward', 'proxy', 'run'],
+  oc: ['exec', 'debug', 'rsh', 'cp', 'port-forward'],
+  docker: CONTAINER_EXEC,
+  podman: CONTAINER_EXEC,
+  nerdctl: CONTAINER_EXEC,
+  'docker-compose': COMPOSE_EXEC,
+  'podman-compose': COMPOSE_EXEC,
+  ssh: ['*'],
+};
+
 
 /** 두 단계 명령(`docker compose …`) — 첫 하위 명령 뒤의 낱말을 이 표로 본다. */
 const NESTED_SUBCOMMANDS: Record<string, Record<string, { exec: readonly string[]; mutate: readonly string[] }>> = {
-  docker: { compose: { exec: ['exec', 'run'], mutate: COMPOSE_MUTATE } },
-  podman: { compose: { exec: ['exec', 'run'], mutate: COMPOSE_MUTATE } },
-  nerdctl: { compose: { exec: ['exec', 'run'], mutate: COMPOSE_MUTATE } },
+  docker: { compose: { exec: COMPOSE_EXEC, mutate: COMPOSE_MUTATE }, ...SWARM_NESTED },
+  podman: { compose: { exec: COMPOSE_EXEC, mutate: COMPOSE_MUTATE }, machine: { exec: ['ssh'], mutate: [] } },
+  nerdctl: { compose: { exec: COMPOSE_EXEC, mutate: COMPOSE_MUTATE } },
+  terraform: { state: { exec: [], mutate: ['rm', 'mv', 'push', 'replace-provider'] } },
 };
 
 /** (첫 낱말, 하위 명령) — 원격 상태를 바꾼다. */
 const MUTATE_SUBCOMMANDS: Record<string, readonly string[]> = {
   kubectl: ['delete', 'apply', 'patch', 'edit', 'replace', 'scale', 'drain', 'cordon', 'uncordon', 'rollout', 'annotate', 'label', 'create', 'set', 'taint'],
-  helm: ['install', 'upgrade', 'uninstall', 'rollback', 'delete'],
+  helm: ['install', 'upgrade', 'uninstall', 'rollback', 'delete', 'test'],
   git: ['push'],
   gh: ['api', 'workflow', 'release', 'repo', 'secret', 'variable', 'label', 'issue'],
-  terraform: ['apply', 'destroy', 'import'],
+  terraform: ['apply', 'destroy', 'import', 'taint', 'untaint', 'force-unlock'],
   docker: CONTAINER_MUTATE,
   podman: CONTAINER_MUTATE,
   nerdctl: CONTAINER_MUTATE,
@@ -218,8 +230,19 @@ const GH_READ_ACTIONS = new Set(['list', 'view', 'status', 'diff', 'checks']);
  *   같은 판정을 여기서도 한 번 더 본다(거절 표가 바뀌어도 경고가 조용히 빠지지 않게).
  * - 그 밖: **정확 규칙**이고 둘째 낱말이 읽기 동작(`GH_READ_ACTIONS`)일 때만 뺀다. 접두 규칙(`gh issue:*`)은 뒤에 무엇이든 붙으니 그대로 둔다.
  */
+/**
+ * 읽기도 흔한 gh 하위 명령(pr·run)의 쓰기 동작 — 하위 명령 전체를 `MUTATE_SUBCOMMANDS.gh` 에 넣으면 `gh pr list` 같은 읽기 접두에도
+ * 경고가 붙는다. 그래서 동작 이름으로 본다. 낱말 전부를 대조한다(값 없는 옵션 뒤에 와도 빠지지 않게, 오탐은 경고 하나 더).
+ */
+const GH_WRITE_ACTIONS: Record<string, readonly string[]> = {
+  pr: ['create', 'comment', 'close', 'edit', 'reopen', 'ready', 'review', 'lock', 'unlock', 'revert', 'update-branch'],
+  run: ['rerun', 'cancel', 'delete'],
+};
+
 function ghMutates(words: readonly string[], prefix: boolean): boolean {
   const pos = positionals(words);
+  const writes = GH_WRITE_ACTIONS[pos[0] ?? ''];
+  if (writes) return words.slice(1).some((w) => writes.includes(w));
   if (!hits(MUTATE_SUBCOMMANDS, 'gh', pos[0] ?? null)) return false;
   if (pos[0] === 'api') {
     if (prefix) return true;

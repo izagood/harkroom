@@ -54,6 +54,19 @@ describe('validateToolRule — 받는 것', () => {
     }
   });
 
+  it('gh pr·run 의 쓰기 동작에 원격 변경 경고를 단다 · 읽기 동작은 접두라도 그대로', () => {
+    for (const r of ['Bash(gh pr create -R o/r:*)', 'Bash(gh pr comment 1 -R o/r --body x)', 'Bash(gh pr close 1 -R o/r)',
+      'Bash(gh pr edit -R o/r:*)', 'Bash(gh pr reopen 1 -R o/r)', 'Bash(gh pr ready 1 -R o/r)', 'Bash(gh -R o/r pr review 1 --approve)',
+      'Bash(gh pr --repo o/r create:*)', 'Bash(gh run rerun -R o/r:*)', 'Bash(gh run cancel 1 -R o/r)', 'Bash(gh run delete 1 -R o/r)']) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings.includes('mutates_remote'), r).toBe(true);
+    }
+    for (const r of ['Bash(gh pr list -R o/r --state open:*)', 'Bash(gh pr view -R o/r:*)', 'Bash(gh pr checks -R o/r:*)',
+      'Bash(gh pr diff 1 -R o/r)', 'Bash(gh run list -R o/r:*)', 'Bash(gh run view 1 -R o/r)']) {
+      expect(validateToolRule(r), r).toMatchObject({ ok: true, warnings: ['uses_github_account'] });
+    }
+  });
+
   it('gh 읽기(정확 규칙의 list·view·status·diff·checks, GET api)에는 mutates_remote 를 달지 않는다 · 접두·쓰기는 그대로', () => {
     for (const r of ['Bash(gh issue list -R cli/cli --limit 3)', 'Bash(gh issue view 1 -R cli/cli)', 'Bash(gh release view v1 -R o/r)',
       'Bash(gh repo view o/r)', 'Bash(gh workflow list -R o/r)', 'Bash(gh api repos/o/r/pulls)', 'Bash(gh api repos/o/r/pulls --jq .)']) {
@@ -119,6 +132,29 @@ describe('validateToolRule — 받는 것', () => {
       expect(v.ok && v.warnings.includes('mutates_remote'), r).toBe(true);
     }
     expect(validateToolRule('Bash(podman exec box:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
+  });
+
+  it('컨테이너·VM 안으로 들어가거나 써 넣는 하위 명령에 실행 경고를 단다', () => {
+    for (const r of ['Bash(docker cp box:*)', 'Bash(docker attach box:*)', 'Bash(podman cp box:*)', 'Bash(docker compose cp svc:*)',
+      'Bash(docker-compose attach svc:*)', 'Bash(podman machine ssh vm:*)', 'Bash(kubectl --context ops proxy:*)']) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings.includes('executes_in_workload'), r).toBe(true);
+    }
+  });
+
+  it('클러스터·인프라 상태를 바꾸는 하위 명령에 원격 변경 경고를 단다', () => {
+    for (const r of ['Bash(docker stack deploy app:*)', 'Bash(docker service update app:*)', 'Bash(docker swarm leave:*)',
+      'Bash(helm --kube-context ops test rel:*)', 'Bash(terraform state rm res:*)', 'Bash(terraform state mv res:*)',
+      'Bash(terraform state push file:*)', 'Bash(terraform taint res:*)', 'Bash(terraform untaint res:*)', 'Bash(terraform force-unlock id:*)']) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings.includes('mutates_remote'), r).toBe(true);
+    }
+  });
+
+  it('같은 관리 명령의 읽기 꼴은 그대로 경고 없음', () => {
+    for (const r of ['Bash(docker stack ls:*)', 'Bash(docker service ls:*)', 'Bash(terraform state list:*)', 'Bash(podman machine list:*)']) {
+      expect(validateToolRule(r), r).toMatchObject({ ok: true, warnings: [] });
+    }
   });
 
   it('하위 명령을 고정한 읽기 접두와 정확 규칙은 그대로 경고 없음', () => {
