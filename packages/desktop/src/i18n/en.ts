@@ -3639,6 +3639,13 @@ export const en = {
   'ask.chainBackstop.stopHint': 'The agent will not call other agents',
   /** 호출 범위 밖(스펙 2026-09-20 §6). 누가 부를 수 있는지는 그 에이전트의 소유자가 정한다. */
   'message.mentionDenied': 'Did not call {handles} — outside who may invoke them. Ask the owner of that agent.',
+  /** 호출 권한 재설계 4단계 — 에이전트 글이 막힌 이유(`mentionDeniedPrincipal`). 상한 숫자는 서버 값이라 넣지 않는다. */
+  'message.mentionDeniedNone': 'Did not call {handles} — no person started this turn, so there is no one\'s access to borrow. A person can call them directly.',
+  'message.mentionDeniedDenied': 'Did not call {handles} — the person who started this turn can\'t call them either. Ask the owner of that agent.',
+  'message.mentionDeniedCapped': 'Did not call {handles} — calls on behalf of the person who started this turn hit the 24-hour limit. A person can call them directly.',
+  /** 요청자(이번 턴을 깨운 사람) 권한으로 연 부름(`invokedAsPrincipal`). */
+  'message.invokedAsPrincipal': 'Called {handles} on behalf of {name}',
+  'message.invokedAsPrincipalSelf': 'Called {handles} on your behalf',
   'message.openSkillApproval': 'Open the skill approval screen',
 
   /**
