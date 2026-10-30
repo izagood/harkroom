@@ -8,6 +8,8 @@ import { postMessage } from '../src/services/messages.js';
 import { mintPat } from '../src/services/pats.js';
 import { addMandateLine } from '../src/services/mandateLines.js';
 import { mandateEnforced } from '../src/services/mergeGrants.js';
+import { decide, resolveDecision } from '../src/services/decisions.js';
+import { openPermissionRequest, permissionCardOptions } from '../src/services/permissionRequests.js';
 
 // 위임(mandate) W3 — `HARKROOM_MANDATE_ENFORCE=on` 일 때 머지 판정은 위임장의 merge 줄로 한다.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -229,5 +231,50 @@ describe('mandate enforcement (db)', () => {
     const sess = await app.inject({ method: 'POST', url: `/channels/${ch}/messages`, headers: auth(alice.token), payload: { body: '@tm via session' } });
     expect(sess.statusCode).toBeLessThan(300);
     expect(await mandateOf(sess.json().message?.id ?? sess.json().id)).toBeTruthy();
+  });
+  // 카드 답은 카드 글을 원인으로 에이전트를 깨운다. 위임장 없는 턴이 세운 카드에 소유자가 [위임장 만들고 더하기]를 고르면
+  // 그 위임 키가 카드 글에도 적혀야 카드 답 턴의 임대가 방금 더한 줄을 쓴다(머리 글에만 적던 때는 no_mandate_line 이 되풀이됐다).
+  it('on: the turn woken by a card answer uses the mandate line that answer just made', async () => {
+    process.env.HARKROOM_MANDATE_ENFORCE = 'on';
+    const root = await post(alice.accountId, 'old thread without a mandate');
+    expect(await mandateOf(root)).toBeNull();
+    const opened = await openPermissionRequest(pool, { agentId: tm, kind: 'merge', repo: 'izagood/cardturn', reason: '확인', channelId: ch, threadRootId: root });
+    if (!opened.ok || !('created' in opened)) throw new Error(JSON.stringify(opened));
+    const { requestId, meta } = opened.created;
+    const ask = { options: permissionCardOptions('merge', { mandate: false }), to: { kind: 'human' } };
+    const cardId = (await pool.query(
+      `insert into message (channel_id, author_id, body, kind, meta, thread_root_id) values ($1, $2, '카드', 'user', $3, $4) returning id`,
+      [ch, tm, JSON.stringify({ kind: 'ask', ask, permissionRequest: meta }), root])).rows[0].id as string;
+    await pool.query(`update permission_request set card_message_id = $2 where id = $1`, [requestId, cardId]);
+
+    expect(await decide(pool, (await resolveDecision(pool, cardId))!, alice.accountId, { option: 'approve_new_mandate', via: 'button' }))
+      .toMatchObject({ kind: 'permission', ok: true });
+    const made = (await pool.query(`select mandate_id from permission_request where id = $1`, [requestId])).rows[0].mandate_id as string;
+    expect(made).toBeTruthy();
+    expect(await mandateOf(root)).toBe(made);
+    expect(await mandateOf(cardId)).toBe(made);
+
+    // 카드 답이 넣은 inbox(ask_answered)를 원인으로 임대를 받는다 — 그 임대의 위임 키로 줄을 찾는다.
+    const l = await lease(cardId, tm);
+    expect((await pool.query(`select mandate_id from secret_turn_lease where id = $1`, [l.id])).rows[0].mandate_id).toBe(made);
+    const res = await check(l, 'izagood/cardturn');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ allowed: true, grantedBy: alice.accountId, mandateLine: { via: 'button' } });
+  });
+
+  it('a card written by another account never takes the mandate key (W1)', async () => {
+    const root = await post(alice.accountId, 'old thread, foreign card');
+    const opened = await openPermissionRequest(pool, { agentId: tm, kind: 'merge', repo: 'izagood/foreign', reason: '확인', channelId: ch, threadRootId: root });
+    if (!opened.ok || !('created' in opened)) throw new Error(JSON.stringify(opened));
+    const { requestId, meta } = opened.created;
+    const ask = { options: permissionCardOptions('merge', { mandate: false }), to: { kind: 'human' } };
+    const cardId = (await pool.query(
+      `insert into message (channel_id, author_id, body, kind, meta, thread_root_id) values ($1, $2, '카드', 'user', $3, $4) returning id`,
+      [ch, admin.accountId, JSON.stringify({ kind: 'ask', ask, permissionRequest: meta }), root])).rows[0].id as string;
+    await pool.query(`update permission_request set card_message_id = $2 where id = $1`, [requestId, cardId]);
+    expect(await decide(pool, (await resolveDecision(pool, cardId))!, alice.accountId, { option: 'approve_new_mandate', via: 'button' }))
+      .toMatchObject({ kind: 'permission', ok: true });
+    expect(await mandateOf(root)).toBeTruthy();
+    expect(await mandateOf(cardId)).toBeNull();
   });
 });
