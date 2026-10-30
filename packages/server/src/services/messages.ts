@@ -5,7 +5,7 @@ import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
 import { auditMandateCreated, mandateForAgentPost, stampHumanMandate, type MandateCreated } from './mandates.js';
-import { principalForAgentPost } from './invokePrincipal.js';
+import { causeReasonsFor, principalForAgentPost } from './invokePrincipal.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
 import { bundledRootSql, openBundleSql } from './askBundleSql.js';
@@ -1028,7 +1028,7 @@ interface ResolvedMentionCalls {
   teamPlans: { teamId: string; recipients: string[]; viaLead: boolean }[];
   targetCall: { kind: 'group' | 'team'; id: string }[];
   channelCalled: boolean;
-  /** 이 판정이 메시지에 남기는 사실(`mentionChainCapped`·`mentionDenied`·`mentionRefs`). */
+  /** 이 판정이 메시지에 남기는 사실(`mentionChainCapped`·`mentionDenied`·`mentionRefs`·`mentionPrincipalShadow`). */
   callMeta: Record<string, unknown>;
 }
 
@@ -1045,6 +1045,12 @@ async function resolveMentionCalls(
      * 수정은 넘기지 않는다(에이전트 글의 수정은 부르지 않는다).
      */
     replyGrantThreadId?: string | null;
+    /**
+     * 그림자 판정(호출 권한 재설계 2단계) — 이 글을 쓴 턴의 principal(이번 턴을 깨운 사람). **살아 있는 임대**에서 읽은 값만
+     * 넘긴다(`principalForAgentPost`, C1). 수정은 넘기지 않는다 — 저장된 principal 로 고친 글의 부름을 재면 옛 턴의 사람
+     * 권한을 빌려 쓰게 된다(C4). `causeReasons` 는 그 원인 글로 이 에이전트에게 온 inbox 사유 — 집계에서 원인별로 가른다.
+     */
+    principal?: { id: string; causeReasons: string[] } | null;
   },
 ): Promise<ResolvedMentionCalls> {
   const { authorIsAgent, mentionDepth } = input;
@@ -1180,6 +1186,27 @@ async function resolveMentionCalls(
     }))) deniedIds.add(id);
   }
   const deniedHandles = calledAccounts.filter((a) => deniedIds.has(a.id)).map((a) => a.handle);
+  /*
+    **그림자**(재설계 2단계) — 판정은 바꾸지 않는다. 막힌 계정 멘션 가운데 principal 이 직접 불렀다면 지나갔을 것만 적는다
+    (안 A: `기존 규칙 OR mayInvoke(대상, principal)`). principal 은 사람이라 회신권 길은 없다(넘기지 않는다).
+    팀·집합·`@channel` 은 3단계에서도 지금 규칙 그대로라 재지 않는다.
+  */
+  let principalShadow: Record<string, unknown> | null = null;
+  if (authorIsAgent && input.principal && deniedIds.size) {
+    const opened: string[] = [];
+    for (const id of deniedIds) {
+      const fact = gateFacts.get(id);
+      if (fact && (await mayInvoke(client, fact, { callerId: input.principal.id, channelId: input.channelId, via: 'mention' }))) opened.push(id);
+    }
+    if (opened.length) {
+      principalShadow = {
+        principalId: input.principal.id,
+        handles: calledAccounts.filter((a) => opened.includes(a.id)).map((a) => a.handle),
+        ids: opened,
+        causeReasons: input.principal.causeReasons,
+      };
+    }
+  }
 
   /*
     **팀 부름도 insert 앞에서 판정한다**(068). 예전에는 팀 게이트가 insert 뒤의 `fanOutMention`
@@ -1283,6 +1310,7 @@ async function resolveMentionCalls(
           }
         : {}),
       ...(deniedHandles.length ? { mentionDenied: deniedHandles } : {}),
+      ...(principalShadow ? { mentionPrincipalShadow: principalShadow } : {}),
       ...(refIdsForMeta.length ? { mentionRefs: refIdsForMeta } : {}),
     },
   };
@@ -1571,9 +1599,16 @@ export async function postMessage(
     const stallDepth = stall.stallDepth;
     // 사슬의 시작 시각(147). 사슬 안의 에이전트 글만 갖는다 — 앞 고리가 시작이면(사람이 답한 카드) 지금이다.
     const chainStartedAt = authorIsAgent && link.depth > 0 ? link.startedAt ?? new Date() : null;
+    // principal(152) — 이 원인으로 받은 살아 있는 임대에서만 읽는다(C1). 그림자 판정과 아래 옮겨 적기가 같은 값을 쓴다.
+    const principalId = authorIsAgent && input.chainCause
+      ? await principalForAgentPost(client, { agentId: input.authorId, causeMessageId: input.chainCause })
+      : null;
     const calls = await resolveMentionCalls(client, {
       body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth, chainBound,
       chainStartedAt, replyGrantThreadId: isResult ? input.threadRootId ?? null : null,
+      principal: principalId && input.chainCause
+        ? { id: principalId, causeReasons: await causeReasonsFor(client, { agentId: input.authorId, causeMessageId: input.chainCause }) }
+        : null,
     });
 
     /**
@@ -1700,8 +1735,7 @@ export async function postMessage(
       // 위임은 사슬 고리(`causeLink`, inbox 60분)와 따로 — 그 원인으로 받은 **살아 있는 턴 임대**가 근거다(임대 수명 동안 잇는다).
       const mandateId = await mandateForAgentPost(client, { agentId: input.authorId, causeMessageId: input.chainCause });
       if (mandateId) await client.query(`update message set mandate_id = $2 where id = $1`, [message.id, mandateId]);
-      // principal(152) — 같은 살아 있는 임대에서 옮겨 적는다. 다음 에이전트의 임대가 이것을 이어받는다. 판정은 아직 쓰지 않는다.
-      const principalId = await principalForAgentPost(client, { agentId: input.authorId, causeMessageId: input.chainCause });
+      // principal(152) — 위에서 살아 있는 임대로 읽은 값을 옮겨 적는다. 다음 에이전트의 임대가 이것을 이어받는다. 판정은 아직 쓰지 않는다.
       if (principalId) await client.query(`update message set principal_account_id = $2 where id = $1`, [message.id, principalId]);
     }
     /*
@@ -2034,9 +2068,10 @@ export async function editMessage(
      * 고친 메시지만 옛 형식으로 남는다: 이 함수가 계정만 토큰으로 바꾸던 동안 수정으로 넣은
      * `@팀`·`@집합` 은 글자로 남았고, 삭제된 계정(061)도 걸러지지 않았다.
      */
+    // principal 은 넘기지 않는다(C4) — 저장된 `principal_account_id` 는 그 글을 쓴 옛 턴의 사람이다. 수정에는 원인 턴이 없다.
     const calls = await resolveMentionCalls(client, {
       body: args.body, channelId: args.channelId, authorId: args.actorId,
-      authorIsAgent: row.author_is_agent, mentionDepth: row.depth,
+      authorIsAgent: row.author_is_agent, mentionDepth: row.depth, principal: null,
     });
 
     const before = mentionTokens(row.body);
@@ -2051,12 +2086,16 @@ export async function editMessage(
       `mentionDenied`·`mentionChainCapped` 를 새로 적으면 시도하지도 않은 부름을 "막혔다"고 말하게
       되므로 그때는 지칭 표시(`mentionRefs`)만 새 본문 기준으로 바꾼다.
     */
-    const { mentionRefs: _refs, mentionDenied: _denied, mentionChainCapped: _capped, mentionChainLimit: _limit, ...rest } = row.meta ?? {};
+    const {
+      mentionRefs: _refs, mentionDenied: _denied, mentionChainCapped: _capped, mentionChainLimit: _limit,
+      mentionPrincipalShadow: _shadow, ...rest
+    } = row.meta ?? {};
     const meta = invoke
       ? { ...rest, ...calls.callMeta }
       : {
         ...rest,
         ...(_denied !== undefined ? { mentionDenied: _denied } : {}),
+        ...(_shadow !== undefined ? { mentionPrincipalShadow: _shadow } : {}),
         ...(_capped !== undefined ? { mentionChainCapped: _capped, mentionChainLimit: _limit } : {}),
         ...(calls.callMeta.mentionRefs ? { mentionRefs: calls.callMeta.mentionRefs } : {}),
       };

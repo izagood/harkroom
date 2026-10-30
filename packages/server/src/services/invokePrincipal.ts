@@ -55,3 +55,50 @@ export async function principalForAgentPost(
     [args.agentId, args.causeMessageId, now])).rows[0];
   return row?.id ?? null;
 }
+
+/**
+ * 그 원인 글로 이 에이전트에게 온 inbox 사유들(mention·thread_reply·wake 등) — 그림자 기록에만 싣는다(2단계).
+ * 집계에서 「자기 글로 깬 턴이 옛 principal 을 이어받는 길」이 wake 말고 있는지 사유별로 본다(보안 검토 넘김 ①).
+ */
+export async function causeReasonsFor(
+  client: Q, args: { agentId: string; causeMessageId: string },
+): Promise<string[]> {
+  return (await client.query<{ reason: string }>(
+    `select distinct reason from inbox where account_id = $1 and message_id = $2 order by reason`,
+    [args.agentId, args.causeMessageId])).rows.map((r) => r.reason);
+}
+
+/**
+ * 그림자 집계(2단계 → 3단계 스위치 결정의 근거). 최근 `$1` 시간(기본 3일 = 72) 동안의 **에이전트 글** 을 하루(KST)별로 센다.
+ *
+ * - `denied_posts`: 계정 멘션이 막힌 에이전트 글(`mentionDenied`)
+ * - `opened_posts`·`opened_calls`: 그 가운데 안 A 였다면 열렸을 글·부름 수(`mentionPrincipalShadow`)
+ * - `no_principal_posts`: 막혔고 principal 도 없던 글(wake·자동화·임대 없음 — 3단계 뒤에도 그대로 막힌다)
+ * - `by_cause`: 열렸을 부름의 원인 inbox 사유별 수(`{"mention": 3, "thread_reply": 1}`)
+ * - `principals`: 열렸을 부름을 빌려 준 사람 수
+ *
+ * 운영 DB 에서 그대로 돌린다: `psql -v hours=72 -c "<이 문장에서 $1 을 :hours 로>"`. 쓰지 않고 읽기만 한다.
+ */
+export const PRINCIPAL_SHADOW_REPORT_SQL = `
+with posts as (
+  select m.id, (m.created_at at time zone 'Asia/Seoul')::date as day, m.meta, m.principal_account_id
+    from message m join account a on a.id = m.author_id
+   where a.kind = 'agent' and m.deleted_at is null
+     and m.created_at > now() - make_interval(hours => $1::int)
+     and m.meta ? 'mentionDenied'
+), causes as (
+  select p.day, r.reason, count(*) as n
+    from posts p, jsonb_array_elements_text(p.meta->'mentionPrincipalShadow'->'causeReasons') r(reason)
+   where p.meta ? 'mentionPrincipalShadow'
+   group by p.day, r.reason
+)
+select p.day::text as day,
+       count(*)::int as denied_posts,
+       count(*) filter (where p.meta ? 'mentionPrincipalShadow')::int as opened_posts,
+       coalesce(sum(jsonb_array_length(p.meta->'mentionPrincipalShadow'->'ids')) filter (where p.meta ? 'mentionPrincipalShadow'), 0)::int as opened_calls,
+       count(*) filter (where p.principal_account_id is null)::int as no_principal_posts,
+       count(distinct p.meta->'mentionPrincipalShadow'->>'principalId')::int as principals,
+       coalesce((select jsonb_object_agg(c.reason, c.n) from causes c where c.day = p.day), '{}'::jsonb) as by_cause
+  from posts p
+ group by p.day
+ order by p.day`;
