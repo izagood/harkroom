@@ -9,6 +9,8 @@ import type { Translate } from '../i18n';
 import { messageLinkFromMeta } from '../lib/link';
 import { OnceCardRows, useOnceApproval } from './PermissionOncePanel';
 import { CardMessageLink } from './CardMessageLink';
+import { useDecideCheck } from './useDecideCheck';
+import type { DecideCheck } from '../lib/api';
 import type { SectionId } from './settings/sections';
 
 /**
@@ -185,6 +187,11 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
   const ownerHandle = useActiveStore((s) => (ownerOf ? s.accounts[ownerOf]?.handle ?? null : null));
   const onceByPanel = !!src.request && src.request.kind === 'merge' && !!src.request.once;
   const once = useOnceApproval(onceByPanel ? message : null, true);
+  // P3: 정할 수 있는 사람(그 채널에서 이 에이전트를 부를 수 있는 사람)에게도 버튼을 그린다 — 원본 카드만. 거울은 요청 에이전트·채널이
+  // 거울과 달라 지금처럼 소유자만이다. 받기 전·옛 서버·실패면 null → 소유자만 꼴.
+  const reqAgentId = src.request && typeof src.request.agentId === 'string' ? src.request.agentId : null;
+  const check = useDecideCheck(src.mirror ? null : reqAgentId, src.mirror ? null : message.channelId);
+  const [answerError, setAnswerError] = useState<string | null>(null);
 
   if (src.mirror?.neutral) {
     return (
@@ -200,13 +207,20 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
   const standing = optionIds.find((id) => STANDING.includes(id)) ?? null;
   // 소유자를 모르면 **소유자가 아니라고 본다** — 버튼 없이 읽기 전용(「소유자만」 줄)으로 그린다.
   const viewerIsOwner = !!ownerOf && !!me && me.id === ownerOf;
+  // 버튼을 그릴 사람. 위임장 칩·줄 빼기·[계정 바꾸기]는 이 값이 아니라 소유자만이다.
+  const canDecide = viewerIsOwner || check?.viewerCanDecide === true;
   const pending = answeredWith == null && closedReason == null && (status == null || status === 'pending') && !(onceByPanel && once.done);
   const ended = !pending;
   // 끝난 카드는 고른 선택지의 한도만, 열린 카드는 주 버튼(없으면 한 번)의 한도를 보인다.
   const shownLimits = ended
     ? [answeredWith ?? (status === 'approved_once' ? 'approve_once' : '')].filter(Boolean)
     : standing ? [standing] : onceAvailable ? ['approve_once'] : [];
-  const answer = (id: string) => { void getController().answerAsk(message.id, id, message.channelId); };
+  const answer = (id: string) => {
+    setAnswerError(null);
+    void getController().answerAsk(message.id, id, message.channelId).then((err) => {
+      if (err) setAnswerError(answerErrorText(err, t));
+    });
+  };
 
   // 줄 빼기(g1) — 카드가 자기 줄 id(`lineId`, 새 서버만 싣는다)를 가질 때만. 원본 카드에서 소유자에게만(거울에는 없다).
   const lineId = typeof src.request?.lineId === 'string' ? src.request.lineId : null;
@@ -302,10 +316,10 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       {viewerIsOwner && <MandateChip mandate={src.mandate} />}
       {line && <LineBox line={line} show={shownLimits} omitPr={onceByPanel && !!once.d} warnings={cardWarnings(src)} />}
       {onceByPanel && <OnceCardRows s={once} canAct={canChoose && viewerIsOwner && once.isOwner} />}
-      {pending && !viewerIsOwner && (
-        <p className="mt-1 text-meta text-fg-subtle" data-testid="mandate-owner-only">{ownerHandle ? t('mandateCard.ownerOnly', { owner: ownerHandle }) : t('mandateCard.ownerOnlyUnknown')}</p>
+      {pending && !canDecide && (
+        <p className="mt-1 text-meta text-fg-subtle" data-testid="mandate-owner-only" data-scope={check?.decideScope ?? undefined}>{waitingText(check, ownerHandle, t)}</p>
       )}
-      {pending && canChoose && viewerIsOwner && (
+      {pending && canChoose && canDecide && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {standing && (
             <button type="button" data-testid={`ask-option-${standing}`} onClick={() => answer(standing)}
@@ -319,7 +333,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
               {line?.limits.approve_once?.ciOverride ? t('mandateCard.onceCi') : t('mandateCard.once')}
             </button>
           )}
-          {onceByPanel && once.isOwner && (
+          {onceByPanel && (
             <button type="button" data-testid="ask-option-approve_once" data-once-panel disabled={once.busy} onClick={() => void once.submit()}
               className={`${standing ? SECONDARY : PRIMARY} disabled:opacity-60`}>
               {once.ci || line?.limits.approve_once?.ciOverride ? t('mandateCard.onceCi') : t('mandateCard.once')}
@@ -339,6 +353,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
           )}
         </div>
       )}
+      {pending && answerError && <p className="mt-1 text-meta text-danger" role="alert" data-testid="mandate-answer-error">{answerError}</p>}
       {endedLine && <div className="mt-1.5 text-meta">{endedLine}</div>}
       {confirmingRevoke && (
         <ConfirmDialog
@@ -372,4 +387,28 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       )}
     </div>
   );
+}
+
+/**
+ * 정할 수 없는 사람에게 보이는 「누가 정하나」 줄(designer 시안 v2 ③). 서버 값(`decideScope`)이 없으면(받기 전·옛 서버) 전처럼 소유자 줄.
+ */
+function waitingText(check: DecideCheck | null, owner: string | null, t: Translate): string {
+  const scope = check?.decideScope ?? null;
+  if (!owner) return t('mandateCard.ownerOnlyUnknown');
+  switch (scope) {
+    case 'list': return t('decideBy.list', { owner });
+    case 'channel': return t('decideBy.channel', { owner });
+    case 'community': return t('decideBy.community', { owner });
+    case 'switchOff': return t('decideBy.switchOff', { owner });
+    case 'owner': return t('decideBy.owner', { owner });
+    default: return t('mandateCard.ownerOnly', { owner });
+  }
+}
+
+/** 카드 답이 거절됐을 때 사람이 읽을 이유 — 이미 정해진 카드(409 경합)는 다시 받은 카드가 말하므로 줄을 달지 않는다. */
+function answerErrorText(err: { status: number; code: string; message: string }, t: Translate): string | null {
+  if (err.code === 'already_answered' || err.code === 'already_decided' || err.code === 'superseded') return null;
+  if (err.code === 'mandate_unavailable') return t('mandateCard.errMandateUnavailable');
+  if (err.code === 'forbidden') return t('mandateCard.errForbidden');
+  return t('mandateCard.errFailed', { reason: err.message || err.code });
 }
