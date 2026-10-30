@@ -168,6 +168,13 @@ void main() {
     expect(find.textContaining('GitHub 계정으로 돈다', findRichText: true), findsOneWidget);
   });
 
+  testWidgets('판정 모름(unclassified) 경고도 문장으로 — 원격 변경 다음', (tester) async {
+    await tester.pumpWidget(wrap(app, card(permMeta(pr: {'warnings': ['unclassified', 'mutates_remote']}))));
+    double dy(String k) => tester.getTopLeft(find.byKey(Key('perm-warning-$k'))).dy;
+    expect(dy('mutates_remote') < dy('unclassified'), isTrue);
+    expect(find.textContaining('무엇을 하는지 판정하지 못했다', findRichText: true), findsOneWidget);
+  });
+
   test('H4: 본문에서 서버 경고 줄(bodyWarningLine)도 뺀다', () {
     const tl = '명령 허용 `Bash(gh pr list)`';
     const wl = '⚠ GitHub 계정으로 돈다';

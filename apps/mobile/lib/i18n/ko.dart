@@ -254,6 +254,8 @@ class StringsKo implements Strings {
         return '돌고 있는 서버 안에서 실행한다';
       case 'mutates_remote':
         return '원격 상태를 바꾼다';
+      case 'unclassified':
+        return '무엇을 하는지 판정하지 못했다';
       case 'reads_file':
         return '파일을 읽는다';
       case 'short_prefix':
@@ -274,6 +276,8 @@ class StringsKo implements Strings {
         return '컨테이너·파드 안에서 명령이 돈다';
       case 'mutates_remote':
         return '되돌리기 어려울 수 있다';
+      case 'unclassified':
+        return '읽기 전용으로 확인된 명령이 아니다 — 무엇이든 바꿀 수 있다고 보고 승인한다';
       case 'reads_file':
         return '승인은 지금 내용에 묶이고, 파일이 바뀌면 다시 묻는다';
       case 'short_prefix':

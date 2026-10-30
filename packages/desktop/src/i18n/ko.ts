@@ -3806,6 +3806,8 @@ export const ko = {
   'mandateCard.warn.executes_in_workload.why': "컨테이너·파드 안에서 명령이 돈다",
   'mandateCard.warn.mutates_remote.head': "원격 상태를 바꾼다",
   'mandateCard.warn.mutates_remote.why': "되돌리기 어려울 수 있다",
+  'mandateCard.warn.unclassified.head': "무엇을 하는지 판정하지 못했다",
+  'mandateCard.warn.unclassified.why': "읽기 전용으로 확인된 명령이 아니다 — 무엇이든 바꿀 수 있다고 보고 승인한다",
   'mandateCard.warn.reads_file.head': "파일을 읽는다",
   'mandateCard.warn.reads_file.why': "승인은 지금 내용에 묶이고, 파일이 바뀌면 다시 묻는다",
   'mandateCard.warn.short_prefix.head': "접두가 짧다",

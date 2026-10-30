@@ -188,7 +188,7 @@ class PermissionCardInfo {
 
 /// H4(designer 시안 v1): 카드가 경고를 그리는 순서 — 위험한 것부터. shared `TOOL_RULE_WARNING_ORDER` 와 같다.
 const permissionWarningOrder = [
-  'runs_arbitrary', 'executes_in_workload', 'mutates_remote', 'reads_file', 'short_prefix', 'uses_github_account',
+  'runs_arbitrary', 'executes_in_workload', 'mutates_remote', 'unclassified', 'reads_file', 'short_prefix', 'uses_github_account',
 ];
 
 /// 알려진 경고만, 그리는 순서대로.
