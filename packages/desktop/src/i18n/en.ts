@@ -6029,6 +6029,8 @@ export const en = {
   'mandateCard.warn.executes_in_workload.why': "the command runs in a container or pod",
   'mandateCard.warn.mutates_remote.head': "Changes remote state",
   'mandateCard.warn.mutates_remote.why': "may be hard to undo",
+  'mandateCard.warn.unclassified.head': "Couldn't tell what this does",
+  'mandateCard.warn.unclassified.why': "it isn't a known read-only command. Check yourself what it can change",
   'mandateCard.warn.reads_file.head': "Reads a file",
   'mandateCard.warn.reads_file.why': "approval is tied to its current contents and asks again if it changes",
   'mandateCard.warn.short_prefix.head': "Short prefix",

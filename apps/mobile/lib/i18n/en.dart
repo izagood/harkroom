@@ -255,6 +255,8 @@ class StringsEn implements Strings {
         return 'Runs inside a live workload';
       case 'mutates_remote':
         return 'Changes remote state';
+      case 'unclassified':
+        return 'Couldn\'t tell what this does';
       case 'reads_file':
         return 'Reads a file';
       case 'short_prefix':
@@ -275,6 +277,8 @@ class StringsEn implements Strings {
         return 'the command runs in a container or pod';
       case 'mutates_remote':
         return 'may be hard to undo';
+      case 'unclassified':
+        return 'it isn\'t a known read-only command. Check yourself what it can change';
       case 'reads_file':
         return 'approval is tied to its current contents and asks again if it changes';
       case 'short_prefix':

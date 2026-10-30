@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { parseToolScope, toolScope, validateExactCommand, validateToolRule } from '../src/toolRules.js';
+import { TOOL_RULE_WARNING_HEAD_KO, orderToolRuleWarnings, parseToolScope, toolRuleExpiryCapped, toolScope, validateExactCommand, validateToolRule } from '../src/toolRules.js';
+
+describe('판정 모름(unclassified) 경고', () => {
+  it('원격 변경 바로 다음 순서로 그리고, 만료 30일 상한에 든다', () => {
+    expect(orderToolRuleWarnings(['uses_github_account', 'unclassified', 'mutates_remote'])).toEqual(['mutates_remote', 'unclassified', 'uses_github_account']);
+    expect(toolRuleExpiryCapped(['unclassified'])).toBe(true);
+    expect(TOOL_RULE_WARNING_HEAD_KO.unclassified).toBe('무엇을 하는지 판정하지 못했다');
+  });
+});
+
 
 describe('validateToolRule — 받는 것', () => {
   it('읽기 접두는 경고 없이 받는다', () => {
@@ -292,6 +301,6 @@ describe('경고 — GitHub 계정·순서·본문 머리(H4)', () => {
     expect(validateToolRule('Bash(gh pr list -R cli/cli --limit 3)')).toMatchObject({ ok: true, warnings: ['uses_github_account'] });
     expect(validateToolRule('Bash(kubectl get:*)')).toMatchObject({ ok: true, warnings: ['short_prefix'] });
     expect(orderToolRuleWarnings(['uses_github_account', 'short_prefix', 'bogus', 'runs_arbitrary', 'short_prefix'])).toEqual(['runs_arbitrary', 'short_prefix', 'uses_github_account']);
-    expect(Object.keys(TOOL_RULE_WARNING_HEAD_KO)).toHaveLength(6);
+    expect(Object.keys(TOOL_RULE_WARNING_HEAD_KO)).toHaveLength(7);
   });
 });
