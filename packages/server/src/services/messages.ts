@@ -5,7 +5,9 @@ import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
 import { auditMandateCreated, mandateForAgentPost, stampHumanMandate, type MandateCreated } from './mandates.js';
-import { causeReasonsFor, principalForAgentPost } from './invokePrincipal.js';
+import {
+  causeReasonsFor, PRINCIPAL_INVOKE_DAILY_CAP, principalForAgentPost, principalInvokeEnabled, principalInvokesToday, stripServerCallMeta,
+} from './invokePrincipal.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
 import { bundledRootSql, openBundleSql } from './askBundleSql.js';
@@ -1185,28 +1187,44 @@ async function resolveMentionCalls(
       callerId: input.authorId, channelId: input.channelId, via: 'mention', replyGrantThreadId: input.replyGrantThreadId,
     }))) deniedIds.add(id);
   }
-  const deniedHandles = calledAccounts.filter((a) => deniedIds.has(a.id)).map((a) => a.handle);
   /*
-    **그림자**(재설계 2단계) — 판정은 바꾸지 않는다. 막힌 계정 멘션 가운데 principal 이 직접 불렀다면 지나갔을 것만 적는다
-    (안 A: `기존 규칙 OR mayInvoke(대상, principal)`). principal 은 사람이라 회신권 길은 없다(넘기지 않는다).
-    팀·집합·`@channel` 은 3단계에서도 지금 규칙 그대로라 재지 않는다.
+    **principal 판정**(재설계 3단계, 안 A) — 에이전트 글의 막힌 계정 멘션은 `기존 규칙 OR mayInvoke(대상, principal)` 이다.
+    principal(이번 턴을 깨운 사람)은 **반드시 `mayInvoke` 에 그대로** 넣는다 — 그래야 그 사람의 채널 멤버·guest 제한이 같이
+    걸린다(principal 이 있다는 것만으로 통과시키는 길은 없다). principal 은 사람이라 회신권 길은 없다(넘기지 않는다).
+    팀·집합·`@channel` 은 지금 규칙 그대로라 재지 않는다. 스위치를 끈 서버는 열지 않고 그림자만 남긴다(2단계).
+    막힌 채로 남은 부름에는 이유를 남긴다(`mentionDeniedPrincipal`): 사람 없는 턴(none) · 요청자도 못 부름(denied) · 하루 상한(capped).
   */
   let principalShadow: Record<string, unknown> | null = null;
-  if (authorIsAgent && input.principal && deniedIds.size) {
-    const opened: string[] = [];
-    for (const id of deniedIds) {
-      const fact = gateFacts.get(id);
-      if (fact && (await mayInvoke(client, fact, { callerId: input.principal.id, channelId: input.channelId, via: 'mention' }))) opened.push(id);
-    }
-    if (opened.length) {
-      principalShadow = {
+  let invokedAsPrincipal: Record<string, unknown> | null = null;
+  let deniedPrincipal: 'none' | 'denied' | 'capped' | null = null;
+  if (authorIsAgent && deniedIds.size) {
+    if (!input.principal) {
+      deniedPrincipal = 'none';
+    } else {
+      const opened: string[] = [];
+      for (const id of deniedIds) {
+        const fact = gateFacts.get(id);
+        if (fact && (await mayInvoke(client, fact, { callerId: input.principal.id, channelId: input.channelId, via: 'mention' }))) opened.push(id);
+      }
+      const openedRecord = opened.length ? {
         principalId: input.principal.id,
         handles: calledAccounts.filter((a) => opened.includes(a.id)).map((a) => a.handle),
         ids: opened,
-        causeReasons: input.principal.causeReasons,
-      };
+      } : null;
+      if (openedRecord && !principalInvokeEnabled()) {
+        principalShadow = openedRecord;
+      } else if (openedRecord) {
+        if ((await principalInvokesToday(client, input.principal.id)) < PRINCIPAL_INVOKE_DAILY_CAP) {
+          for (const id of opened) deniedIds.delete(id);
+          invokedAsPrincipal = openedRecord;
+        } else {
+          deniedPrincipal = 'capped';
+        }
+      }
+      if (deniedIds.size && !deniedPrincipal) deniedPrincipal = 'denied';
     }
   }
+  const deniedHandles = calledAccounts.filter((a) => deniedIds.has(a.id)).map((a) => a.handle);
 
   /*
     **팀 부름도 insert 앞에서 판정한다**(068). 예전에는 팀 게이트가 insert 뒤의 `fanOutMention`
@@ -1311,6 +1329,8 @@ async function resolveMentionCalls(
         : {}),
       ...(deniedHandles.length ? { mentionDenied: deniedHandles } : {}),
       ...(principalShadow ? { mentionPrincipalShadow: principalShadow } : {}),
+      ...(invokedAsPrincipal ? { invokedAsPrincipal } : {}),
+      ...(deniedPrincipal && deniedIds.size ? { mentionDeniedPrincipal: deniedPrincipal } : {}),
       ...(refIdsForMeta.length ? { mentionRefs: refIdsForMeta } : {}),
     },
   };
@@ -1603,12 +1623,13 @@ export async function postMessage(
     const principalId = authorIsAgent && input.chainCause
       ? await principalForAgentPost(client, { agentId: input.authorId, causeMessageId: input.chainCause })
       : null;
+    const principalCause = principalId && input.chainCause
+      ? { id: principalId, causeReasons: await causeReasonsFor(client, { agentId: input.authorId, causeMessageId: input.chainCause }) }
+      : null;
     const calls = await resolveMentionCalls(client, {
       body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth, chainBound,
       chainStartedAt, replyGrantThreadId: isResult ? input.threadRootId ?? null : null,
-      principal: principalId && input.chainCause
-        ? { id: principalId, causeReasons: await causeReasonsFor(client, { agentId: input.authorId, causeMessageId: input.chainCause }) }
-        : null,
+      principal: principalCause,
     });
 
     /**
@@ -1688,7 +1709,8 @@ export async function postMessage(
        // 묻고, 그 답이 화면에 없다(design.md §4).
        JSON.stringify({
          // `meta.i18n`(시스템 줄 번역 표지)은 서버가 만든 시스템 줄에만 남는다 — security C1.
-         ...(guardMetaI18n(input.kind, input.meta) ?? {}),
+         // 서버가 쓰는 부름 meta 키는 입력에서 걷어 낸다(n2) — 아래 `calls.callMeta` 가 없을 때 위조 값이 남지 않게.
+         ...(stripServerCallMeta(guardMetaI18n(input.kind, input.meta)) ?? {}),
          ...calls.callMeta,
          // 에이전트 글에만 — 사람 글에 턴은 없다. 부르는 쪽 meta 의 같은 키를 덮어쓴다(값은 헤더에서만 온다).
          ...(authorIsAgent && input.turnId ? { turnId: input.turnId } : {}),
@@ -1736,7 +1758,10 @@ export async function postMessage(
       const mandateId = await mandateForAgentPost(client, { agentId: input.authorId, causeMessageId: input.chainCause });
       if (mandateId) await client.query(`update message set mandate_id = $2 where id = $1`, [message.id, mandateId]);
       // principal(152) — 위에서 살아 있는 임대로 읽은 값을 옮겨 적는다. 다음 에이전트의 임대가 이것을 이어받는다. 판정은 아직 쓰지 않는다.
-      if (principalId) await client.query(`update message set principal_account_id = $2 where id = $1`, [message.id, principalId]);
+      if (principalId) {
+        await client.query(`update message set principal_account_id = $2, principal_cause_reasons = $3 where id = $1`,
+          [message.id, principalId, principalCause?.causeReasons ?? null]);
+      }
     }
     /*
       회신권(084)을 연다 — 실제로 inbox 가 간 상대에게만(막힌·상한 걸린 부름은 열지 않는다). 최상위
@@ -2069,6 +2094,7 @@ export async function editMessage(
      * `@팀`·`@집합` 은 글자로 남았고, 삭제된 계정(061)도 걸러지지 않았다.
      */
     // principal 은 넘기지 않는다(C4) — 저장된 `principal_account_id` 는 그 글을 쓴 옛 턴의 사람이다. 수정에는 원인 턴이 없다.
+    // 에이전트 글의 수정은 아예 부르지 않으므로(`agent_author`) 수정으로 principal 권한을 빌릴 길은 없다.
     const calls = await resolveMentionCalls(client, {
       body: args.body, channelId: args.channelId, authorId: args.actorId,
       authorIsAgent: row.author_is_agent, mentionDepth: row.depth, principal: null,
@@ -2088,7 +2114,8 @@ export async function editMessage(
     */
     const {
       mentionRefs: _refs, mentionDenied: _denied, mentionChainCapped: _capped, mentionChainLimit: _limit,
-      mentionPrincipalShadow: _shadow, ...rest
+      mentionPrincipalShadow: _shadow, invokedAsPrincipal: _asPrincipal, mentionDeniedPrincipal: _deniedPrincipal,
+      mentionChainReason: _reason, ...rest
     } = row.meta ?? {};
     const meta = invoke
       ? { ...rest, ...calls.callMeta }
@@ -2096,7 +2123,9 @@ export async function editMessage(
         ...rest,
         ...(_denied !== undefined ? { mentionDenied: _denied } : {}),
         ...(_shadow !== undefined ? { mentionPrincipalShadow: _shadow } : {}),
-        ...(_capped !== undefined ? { mentionChainCapped: _capped, mentionChainLimit: _limit } : {}),
+        ...(_asPrincipal !== undefined ? { invokedAsPrincipal: _asPrincipal } : {}),
+        ...(_deniedPrincipal !== undefined ? { mentionDeniedPrincipal: _deniedPrincipal } : {}),
+        ...(_capped !== undefined ? { mentionChainCapped: _capped, mentionChainLimit: _limit, ...(_reason !== undefined ? { mentionChainReason: _reason } : {}) } : {}),
         ...(calls.callMeta.mentionRefs ? { mentionRefs: calls.callMeta.mentionRefs } : {}),
       };
 
