@@ -293,11 +293,16 @@ export function proxyRecordAnswerBody(text: string, pat: string, secrets: readon
   if (pat.length > 0) t = t.split(pat).join('(가림)');
   t = t.replace(/(?:hrkp|murp)_[A-Za-z0-9_-]+/g, '(가림)').replace(/(Bearer\s+)\S+/gi, '$1(가림)').trim();
   if (!t) return '';
-  const max = BODY_LIMIT - 200;
-  if (t.length > max) t = `${t.slice(0, max)}…`;
-  const quoted = t.split('\n').map((l) => (l.trim() ? `> ${l}` : '>')).join('\n');
-  return `${quoted}\n\n(에이전트가 이 답을 스레드에 올리지 않고 끝내, 러너가 하네스 기록에서 옮겨 올렸습니다.)`;
+  // **인용을 붙인 뒤의 길이로 자른다**(2026-10-30 security 검토). 붙이기 전에 자르면 줄이 많은 답은 `> ` 몫만큼 상한을 넘고,
+  // 호출부의 `slice(0, BODY_LIMIT)` 가 꼬리를 잘라 에이전트가 직접 쓴 글처럼 보였다. 꼬리 몫을 먼저 빼고 남은 칸에 인용을 담는다.
+  let quoted = t.split('\n').map((l) => (l.trim() ? `> ${l}` : '>')).join('\n');
+  const room = BODY_LIMIT - PROXY_RECORD_TAIL.length - 3; // `…` 하나와 꼬리 앞 빈 줄 둘
+  if (quoted.length > room) quoted = `${quoted.slice(0, room)}…`;
+  return `${quoted}${PROXY_RECORD_TAIL}`;
 }
+
+/** 기록에서 옮긴 답의 꼬리 — 러너가 옮겼다는 표시라 잘리면 안 된다(`proxyRecordAnswerBody`). */
+const PROXY_RECORD_TAIL = '\n\n(에이전트가 이 답을 스레드에 올리지 않고 끝내, 러너가 하네스 기록에서 옮겨 올렸습니다.)';
 
 /**
  * 통지에 인용할 마지막 말 — 없으면 빈 문자열. 통째로 가린 뒤에도 비밀의 12자 조각이 보이면 **인용을 통째로

@@ -1663,6 +1663,15 @@ describe('silentTurnNotice — 기록의 마지막 말이 답 꼴이면 ✅ 로 
   it(`본문 상한(${BODY_LIMIT}자)을 넘지 않는다`, () => {
     expect(proxyRecordAnswerBody('가'.repeat(BODY_LIMIT * 2), '').length).toBeLessThanOrEqual(BODY_LIMIT);
   });
+
+  it('줄이 많아 인용 몫이 붙어도 상한 안이고, 꼬리 「러너가 옮겨 올렸습니다」가 남는다(security 검토 10-30)', () => {
+    // 인용을 붙이면 줄마다 2자가 는다 — 붙이기 전 길이로 자르면 이 답이 상한을 넘어 호출부 slice 가 꼬리를 잘랐다.
+    for (const text of ['가\n'.repeat(4_000), '\n'.repeat(7_000) + '@x 끝', '| a |\n'.repeat(1_500)]) {
+      const body = proxyRecordAnswerBody(text, '');
+      expect(body.length).toBeLessThanOrEqual(BODY_LIMIT);
+      expect(body.endsWith('러너가 하네스 기록에서 옮겨 올렸습니다.)')).toBe(true);
+    }
+  });
 });
 
 describe('silentTurnNotice — 에이전트가 부른 말없는 턴 (2026-10-25 E13, 스레드 db4ab174)', () => {
