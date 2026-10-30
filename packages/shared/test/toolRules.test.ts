@@ -88,6 +88,30 @@ describe('validateToolRule — 받는 것', () => {
     expect(validateToolRule('Bash(docker-compose -f app.yml exec:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
   });
 
+  it('값 없는 옵션 뒤에 온 위험 하위 명령에도 경고를 단다', () => {
+    const has = (r: string, w: string) => { const v = validateToolRule(r); return v.ok && v.warnings.includes(w as never); };
+    expect(has('Bash(kubectl --insecure-skip-tls-verify exec mypod:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(kubectl --insecure-skip-tls-verify delete pod:*)', 'mutates_remote')).toBe(true);
+    expect(has('Bash(oc --insecure-skip-tls-verify rsh mypod:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(helm --debug upgrade rel:*)', 'mutates_remote')).toBe(true);
+    expect(has('Bash(terraform -no-color apply plan:*)', 'mutates_remote')).toBe(true);
+    expect(has('Bash(docker -D run img:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(podman --remote exec box:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(nerdctl --debug run img:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(docker compose --dry-run exec svc:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(docker-compose --verbose exec svc:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(docker --context compose compose exec:*)', 'executes_in_workload')).toBe(true);
+  });
+
+  it('컨테이너 도구의 상태를 바꾸는 하위 명령에 원격 변경 경고를 단다', () => {
+    for (const r of ['Bash(docker --context remote rm box:*)', 'Bash(docker compose -f app.yml up:*)', 'Bash(docker compose down:*)',
+      'Bash(podman stop box:*)', 'Bash(docker-compose -f app.yml rm:*)', 'Bash(podman-compose up:*)']) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings.includes('mutates_remote'), r).toBe(true);
+    }
+    expect(validateToolRule('Bash(podman exec box:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
+  });
+
   it('하위 명령을 고정한 읽기 접두와 정확 규칙은 그대로 경고 없음', () => {
     expect(validateToolRule('Bash(kubectl --context ops -n app logs:*)')).toMatchObject({ ok: true, warnings: [] });
     expect(validateToolRule('Bash(helm --kube-context ops status:*)')).toMatchObject({ ok: true, warnings: [] });

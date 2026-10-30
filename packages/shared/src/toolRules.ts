@@ -157,13 +157,22 @@ const EXEC_SUBCOMMANDS: Record<string, readonly string[]> = {
   kubectl: ['exec', 'debug', 'attach', 'cp', 'port-forward', 'run'],
   oc: ['exec', 'debug', 'rsh', 'cp', 'port-forward'],
   docker: ['exec', 'run'],
+  podman: ['exec', 'run'],
+  nerdctl: ['exec', 'run'],
   'docker-compose': ['exec', 'run'],
+  'podman-compose': ['exec', 'run'],
   ssh: ['*'],
 };
 
-/** 두 단계 명령(`docker compose …`) — 첫 하위 명령 뒤의 둘째 하위 명령을 이 표로 본다. */
-const NESTED_EXEC_SUBCOMMANDS: Record<string, Record<string, readonly string[]>> = {
-  docker: { compose: ['exec', 'run'] },
+/** 컨테이너가 원격(`--context`)일 수 있어 상태를 바꾸는 하위 명령. */
+const CONTAINER_MUTATE = ['rm', 'rmi', 'kill', 'stop', 'restart', 'start', 'pause', 'unpause', 'update', 'create', 'push', 'prune'];
+const COMPOSE_MUTATE = ['up', 'down', 'rm', 'stop', 'restart', 'start', 'kill', 'pause', 'unpause', 'create', 'push', 'build'];
+
+/** 두 단계 명령(`docker compose …`) — 첫 하위 명령 뒤의 낱말을 이 표로 본다. */
+const NESTED_SUBCOMMANDS: Record<string, Record<string, { exec: readonly string[]; mutate: readonly string[] }>> = {
+  docker: { compose: { exec: ['exec', 'run'], mutate: COMPOSE_MUTATE } },
+  podman: { compose: { exec: ['exec', 'run'], mutate: COMPOSE_MUTATE } },
+  nerdctl: { compose: { exec: ['exec', 'run'], mutate: COMPOSE_MUTATE } },
 };
 
 /** (첫 낱말, 하위 명령) — 원격 상태를 바꾼다. */
@@ -173,6 +182,11 @@ const MUTATE_SUBCOMMANDS: Record<string, readonly string[]> = {
   git: ['push'],
   gh: ['api', 'workflow', 'release', 'repo', 'secret', 'variable', 'label', 'issue'],
   terraform: ['apply', 'destroy', 'import'],
+  docker: CONTAINER_MUTATE,
+  podman: CONTAINER_MUTATE,
+  nerdctl: CONTAINER_MUTATE,
+  'docker-compose': COMPOSE_MUTATE,
+  'podman-compose': COMPOSE_MUTATE,
   rm: ['*'],
 };
 
@@ -257,14 +271,29 @@ export function validateToolRule(input: string): ToolRuleVerdict {
   }
 
   const warnings: ToolRuleWarning[] = [];
-  // 경고 판정 보강: 위험 표에 있는 명령의 **접두** 규칙인데 하위 명령이 정해지지 않으면(둘째 단계 포함) 뒤에 무엇이든 붙을 수 있다 —
-  // 막는 쪽으로 두 경고를 다 붙인다. 거절하지 않는 이유: 이미 준 줄이 조용히 사라지지 않게(`toolAllowsFor` 가 지금 판정으로 다시 거른다).
-  const nested = NESTED_EXEC_SUBCOMMANDS[head]?.[sub ?? ''];
-  const sub2 = nested ? subcommandOf(words.slice(words.indexOf(sub!))) : null;
-  const unpinned = prefix && head !== 'gh' && (head in EXEC_SUBCOMMANDS || head in MUTATE_SUBCOMMANDS)
-    && (sub === null || (nested !== undefined && sub2 === null));
-  if (unpinned || hits(EXEC_SUBCOMMANDS, head, sub) || (nested !== undefined && sub2 !== null && nested.includes(sub2))) warnings.push('executes_in_workload');
-  if (unpinned || (head === 'gh' ? ghMutates(words, prefix) : hits(MUTATE_SUBCOMMANDS, head, sub))) warnings.push('mutates_remote');
+  // 하위 명령 판정 보강: 위험 표에 있는 명령은 하위 명령 하나를 짐작하지 않는다 — 옵션이 아닌 낱말 **전부**(옵션 값으로 읽힌 것 포함)를
+  // 표에 대조해 하나라도 맞으면 경고를 단다. 값 없는 옵션 뒤의 하위 명령을 값으로 잘못 읽어도 경고가 빠지지 않게 하는 막는 쪽이다(오탐은
+  // 경고가 하나 더 붙는 것뿐). 두 단계 명령은 첫 하위 명령 자리부터 그 뒤 낱말을 둘째 표에 대조한다.
+  // 접두 규칙인데 하위 명령이 정해지지 않으면(둘째 단계 포함) 뒤에 무엇이든 붙을 수 있다 — 두 경고를 다 붙인다.
+  // 거절하지 않는 이유: 이미 준 줄이 조용히 사라지지 않게(`toolAllowsFor` 가 지금 판정으로 다시 거른다).
+  // gh 는 따로 본다(`checkGh`·`ghMutates` — 하위 명령 두 단계를 고정해야 받는다).
+  const risky = head !== 'gh' && (head in EXEC_SUBCOMMANDS || head in MUTATE_SUBCOMMANDS || head in NESTED_SUBCOMMANDS);
+  const bare = risky ? words.map((w, i) => ({ w, i })).filter((x) => x.i > 0 && !x.w.startsWith('-')) : [];
+  const anyIn = (list: readonly string[] | undefined, from = 0): boolean =>
+    !!list && (list.includes('*') || bare.some((x) => x.i >= from && list.includes(x.w)));
+  let nestedExec = false;
+  let nestedMutate = false;
+  let nestedUnpinned = false;
+  for (const [key, table] of Object.entries(risky ? NESTED_SUBCOMMANDS[head] ?? {} : {})) {
+    const at = bare.find((x) => x.w === key);
+    if (!at) continue;
+    nestedExec ||= anyIn(table.exec, at.i + 1);
+    nestedMutate ||= anyIn(table.mutate, at.i + 1);
+    if (prefix && sub === key && subcommandOf(words.slice(at.i)) === null) nestedUnpinned = true;
+  }
+  const unpinned = prefix && risky && (sub === null || nestedUnpinned);
+  if (unpinned || nestedExec || (risky ? anyIn(EXEC_SUBCOMMANDS[head]) : hits(EXEC_SUBCOMMANDS, head, sub))) warnings.push('executes_in_workload');
+  if (unpinned || nestedMutate || (head === 'gh' ? ghMutates(words, prefix) : risky ? anyIn(MUTATE_SUBCOMMANDS[head]) : hits(MUTATE_SUBCOMMANDS, head, sub))) warnings.push('mutates_remote');
   if (runsArbitrary(head, sub, words)) warnings.push('runs_arbitrary');
   if (prefix && words.length < 3) warnings.push('short_prefix');
   if (head === 'gh') warnings.push('uses_github_account');
