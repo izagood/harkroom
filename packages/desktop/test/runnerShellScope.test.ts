@@ -171,6 +171,10 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
   const loginPathRs = readFileSync(
     path.resolve(__dirname, '../src-tauri/src/login_path.rs'), 'utf8',
   );
+  /** 전체 디스크 접근 확인(`fda_probe.rs`)도 프로세스를 띄운다 — 같은 이유로 스캔 대상이다. */
+  const fdaProbeRs = readFileSync(
+    path.resolve(__dirname, '../src-tauri/src/fda_probe.rs'), 'utf8',
+  );
 
   /**
    * **계정 풀 명령의 웹뷰 파라미터(2026-09-08).** 이 스위트는 회귀선을 **확장**한다,
@@ -461,6 +465,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
      */
     const daemonStripped = stripTestModule(daemonRs);
     const loginPathStripped = stripTestModule(loginPathRs);
+    const fdaProbeStripped = stripTestModule(fdaProbeRs);
 
     /** 프로덕션 소스에서 `Command::new(...)` 이 나오는 자리와, 그 앞의 함수 이름. */
     function scanSpawns(src: string, file: string): { program: string; fn: string; file: string }[] {
@@ -475,6 +480,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       ...scanSpawns(stripped.rest, 'main.rs'),
       ...scanSpawns(daemonStripped.rest, 'daemon_client.rs'),
       ...scanSpawns(loginPathStripped.rest, 'login_path.rs'),
+      ...scanSpawns(fdaProbeStripped.rest, 'fda_probe.rs'),
     ];
 
     /**
@@ -571,12 +577,34 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
      *    `shell:allow-execute` 항목이 사라졌다 — 웹뷰가 실행할 수 있는 프로그램이
      *    `sh` 하나에서 **0개**가 됐다. 셸을 부르는 일이 Rust 로 **옮겨간** 것이지
      *    새로 생긴 것이 아니다.
+     *
+     * ## 전체 디스크 접근 확인에서 **하나가 더 늘었다** — 그 근거 (소유자 결정 2026-10-29 #8)
+     *
+     * | 자리 | 무엇을 띄우나 | 프로그램을 누가 고르나 |
+     * |---|---|---|
+     * | **`fda_probe.rs::probe_fresh_process`** | **이 앱 자신**(`current_exe`) + 인자 `PROBE_ARG` 하나 | **Rust** |
+     *
+     * **왜 늘려야 했나**: 권한을 켠 직후 이미 떠 있는 프로세스가 계속 막혀 있는지는 새 프로세스로만 갈라
+     * 볼 수 있다(「다시 시작해야 함」 띠를 필요할 때만 띄우는 조건). **경계가 넓어지지 않은 이유**: ① 프로그램은
+     * 자기 실행 파일이다 ② 인자는 상수 하나다(아래 단언) ③ 그 명령 `fda_status` 는 파라미터가 없다
+     * ④ 띄워진 쪽은 `main` 맨 앞에서 확인만 하고 끝난다(`exit_if_probe_child`).
      */
-    it('프로세스를 띄우는 자리가 정확히 둘이고, 둘 다 프로그램을 Rust 가 고른다', () => {
+    it('프로세스를 띄우는 자리가 정확히 셋이고, 셋 다 프로그램을 Rust 가 고른다', () => {
       expect(processSpawns).toEqual([
         { program: 'program', fn: 'detached_command', file: 'main.rs' },
         { program: 'shell', fn: 'run_login_shell', file: 'login_path.rs' },
+        { program: 'exe', fn: 'probe_fresh_process', file: 'fda_probe.rs' },
       ]);
+    });
+
+    it('전체 디스크 접근 확인은 자기 실행 파일에 상수 인자 하나만 붙인다', () => {
+      expect(fdaProbeRs).toContain('let Ok(exe) = std::env::current_exe() else');
+      expect(fdaProbeRs).toContain('pub const PROBE_ARG: &str = "--harkroom-fda-probe";');
+      const body = fdaProbeStripped.rest.match(/fn probe_fresh_process\(\)[\s\S]*?\n\}/)![0];
+      expect([...body.matchAll(/\.args?\(/g)].length).toBe(1);
+      expect(body).toContain('.arg(PROBE_ARG)');
+      // 띄워진 쪽은 Tauri 를 띄우기 전에 끝난다.
+      expect(mainRs).toMatch(/fn main\(\) \{\s*(?:\/\/[^\n]*\n\s*)*fda_probe::exit_if_probe_child\(\);/);
     });
 
     /**

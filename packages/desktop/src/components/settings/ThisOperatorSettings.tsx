@@ -8,6 +8,8 @@ import type { SectionId } from './sections';
 import { SettingsGroup, SettingsPage } from './primitives';
 import { operatorNameOf } from '../../lib/operatorName';
 import { errorText } from '../../lib/errorText';
+import { getFdaSurface, useFdaStatus, type FdaStatus } from '../../lib/fullDiskAccess';
+import { FullDiskAccessDialog } from '../FullDiskAccessDialog';
 
 /**
  * 설정 › 이 기기 › **이 머신의 오퍼레이터**(UX ⑥b-2).
@@ -182,6 +184,66 @@ export function ThisOperatorSettings({ onOpenSection }: {
           {error && <p role="alert" className="mt-3 text-meta text-danger">{error}</p>}
         </div>
       </SettingsGroup>
+      <FullDiskAccessGroup />
     </SettingsPage>
+  );
+}
+
+/**
+ * 「macOS 권한」 묶음 — 전체 디스크 접근 한 줄(시안 v2 ③). 권한은 이 맥에만 걸리고 영향을 받는 것이 이 맥에서 도는
+ * 에이전트라 이 페이지에 산다. 안내 창을 거절한 뒤 **다시 여는 길은 여기 하나**다(소유자 결정 #2). 창에 포커스가
+ * 돌아올 때마다 다시 확인한다. macOS 14 미만·데스크톱 밖이면 묶음째 숨긴다.
+ */
+function FullDiskAccessGroup() {
+  const t = useT();
+  const { status } = useFdaStatus();
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (status === null || status === 'unsupported') return null;
+
+  const chip: Record<Exclude<FdaStatus, 'unsupported'>, { label: string; under: string; cls: string }> = {
+    on: { label: t('fda.chip.on'), under: t('fda.row.on'), cls: 'bg-success-surface text-success' },
+    off: { label: t('fda.chip.off'), under: t('fda.row.off'), cls: 'border border-border bg-surface-sunken text-fg-muted' },
+    restart: { label: t('fda.chip.restart'), under: t('fda.row.restart'), cls: 'bg-warning-surface text-warning' },
+    unknown: { label: t('fda.chip.unknown'), under: t('fda.row.unknown'), cls: 'border border-border bg-surface-sunken text-fg-muted' },
+  };
+  const c = chip[status];
+  const act = (fn: () => Promise<void>) => {
+    setError(null);
+    fn().catch((e) => setError(t('fda.actionFailed', { reason: errorText(e, t) })));
+  };
+
+  return (
+    <SettingsGroup title={t('fda.group')}>
+      <div className="flex items-start gap-4 px-4 py-3" data-testid="fda-row" data-state={status}>
+        <div className="min-w-0">
+          <p className="font-medium text-fg">{t('fda.rowLabel')}</p>
+          <p className="mt-0.5 text-meta text-fg-muted">{c.under}</p>
+          {error && <p role="alert" className="mt-1 text-meta text-danger">{error}</p>}
+        </div>
+        <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <span data-testid="fda-chip" className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-meta font-semibold ${c.cls}`}>
+            {status === 'on' && <span aria-hidden className="h-2 w-2 rounded-full bg-success" />}
+            {c.label}
+          </span>
+          {status === 'on' && (
+            <button data-testid="fda-turn-off" className="rounded-row px-1 text-meta text-link hover:bg-surface-sunken" onClick={() => act(() => getFdaSurface().openSettings())}>
+              {t('fda.turnOffInSettings')}
+            </button>
+          )}
+          {status === 'off' && (
+            <button data-testid="fda-how-to" className="rounded-row border border-border px-3 py-1 text-fg hover:bg-surface-sunken" onClick={() => setOpen(true)}>
+              {t('fda.howTo')}
+            </button>
+          )}
+          {status === 'restart' && (
+            <button data-testid="fda-row-restart" className="rounded-row border border-border px-3 py-1 text-fg hover:bg-surface-sunken" onClick={() => act(() => getFdaSurface().relaunch())}>
+              {t('fda.restart')}
+            </button>
+          )}
+        </div>
+      </div>
+      {open && <FullDiskAccessDialog status={status} onClose={() => setOpen(false)} />}
+    </SettingsGroup>
   );
 }

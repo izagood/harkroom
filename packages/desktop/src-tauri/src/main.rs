@@ -13,6 +13,7 @@ mod attachment_save;
 mod community_root;
 mod daemon_client;
 mod external_link;
+mod fda_probe;
 mod login_path;
 mod notification;
 mod pinch_zoom;
@@ -337,6 +338,28 @@ pub const CODEX_LOGIN_EVENT: &str = "harkroom://codex-login";
 #[tauri::command]
 fn login_path() -> String {
     login_path::child_path()
+}
+
+/// 전체 디스크 접근 상태(`fda_probe.rs`). 파라미터가 없다 — 웹뷰는 무엇을 확인할지 고르지 못한다.
+#[tauri::command]
+async fn fda_status() -> String {
+    // 새 프로세스로 확인할 수 있어 IPC 스레드를 막지 않게 블로킹 풀에서 돈다.
+    tauri::async_runtime::spawn_blocking(|| fda_probe::status().as_str())
+        .await
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+/// 시스템 설정의 전체 디스크 접근 칸을 연다. 주소는 Rust 상수다.
+#[tauri::command]
+fn fda_open_settings() -> Result<(), String> {
+    fda_probe::open_settings()
+}
+
+/// Finder 에서 이 앱 번들을 보인다(설정 목록에 끌어다 놓기용).
+#[tauri::command]
+fn fda_reveal_app() -> Result<(), String> {
+    fda_probe::reveal_app()
 }
 
 /// 이 앱 번들의 버전.
@@ -1073,6 +1096,8 @@ fn reveal_saved_attachment(
 }
 
 fn main() {
+    // 전체 디스크 접근 확인용으로 띄워진 프로세스면 확인만 하고 끝난다(`fda_probe.rs`).
+    fda_probe::exit_if_probe_child();
     tauri::Builder::default()
         // 알림 표면. **발신은 `notification::notification_send` 가 한다** — 이 플러그인의
         // 데스크탑 구현은 클릭을 알려줄 수 없어서다(`src/notification.rs` 머리 주석).
@@ -1149,6 +1174,9 @@ fn main() {
             login_path,
             notification::notification_send,
             app_version,
+            fda_status,
+            fda_open_settings,
+            fda_reveal_app,
             operator_cli_path,
             update_channel::app_update_check,
             update_channel::app_update_install,
