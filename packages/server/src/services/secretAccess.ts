@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { SecretKeyring } from './secretKeyring.js';
+import { PRINCIPAL_FROM_CAUSE_SQL } from './invokePrincipal.js';
 
 /**
  * 비밀 보관소 PR 2 — 에이전트가 값을 받는 길. 계획·보안 검토는 스레드 bc98df3a.
@@ -47,8 +48,10 @@ export async function issueTurnLease(
                 where c.owner_account_id = d.owner_account_id
                   and d.id = coalesce(m.mandate_id,
                     (select w.mandate_id from agent_wake w where w.message_id = m.id and w.account_id = i.account_id
-                      order by w.created_at desc limit 1))) as "mandateId"
+                      order by w.created_at desc limit 1))) as "mandateId",
+              ${PRINCIPAL_FROM_CAUSE_SQL} as "principalId"
          from inbox i join message m on m.id = i.message_id
+         join account a on a.id = m.author_id
         where i.account_id = $1 and i.message_id = $2 and i.created_at > $3 and m.deleted_at is null
         limit 1`,
       [args.agentId, args.causeMessageId, new Date(now.getTime() - LEASE_INBOX_FRESH_MS)]);
@@ -59,11 +62,13 @@ export async function issueTurnLease(
     if (used.rowCount) { await client.query('rollback'); return { ok: false, code: 'lease_used' }; }
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(now.getTime() + LEASE_TTL_MS);
-    const { channelId, threadRootId, mandateId } = msg.rows[0] as { channelId: string; threadRootId: string; mandateId: string | null };
+    const { channelId, threadRootId, mandateId, principalId } = msg.rows[0] as {
+      channelId: string; threadRootId: string; mandateId: string | null; principalId: string | null;
+    };
     const ins = await client.query(
-      `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, created_at, expires_at, mandate_id)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
-      [sha256(token), args.agentId, args.operatorId, args.causeMessageId, channelId, threadRootId, now, expiresAt, mandateId]);
+      `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, created_at, expires_at, mandate_id, principal_account_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
+      [sha256(token), args.agentId, args.operatorId, args.causeMessageId, channelId, threadRootId, now, expiresAt, mandateId, principalId]);
     await client.query('commit');
     return { ok: true, leaseId: (ins.rows[0] as { id: string }).id, token, channelId, threadRootId, expiresAt: expiresAt.toISOString() };
   } catch (e) {
