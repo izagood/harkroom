@@ -105,16 +105,35 @@ const CHROME = /[─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║╔╗
 /** 경로·URL 처럼 보이는 조각(줄 어디에 있든) — 작업 폴더가 통지에 실리지 않게 그 줄은 버린다. */
 const PATHLIKE = /(~?\/|…\/|\.\.?\/|[a-z]+:\/\/)\S/;
 
+/** 작업 폴더 조각으로 볼 낱말의 최소 길이 — 폴더 이름의 id 꼬리(`…-cf360122`)는 이보다 길고, 보통 낱말은 짧다. */
+const CWD_FRAGMENT_MIN = 12;
+
+/**
+ * 줄에 작업 폴더 이름의 조각이 들어 있나. 하네스가 폴더를 좁은 칸에 **잘라** 그리면 `/` 가 사라져 `PATHLIKE` 를 지난다 —
+ * 2026-10-30 opencode 의 입력창 아래 바닥줄(`<폴더 꼬리>  commands`)이 그렇게 대리 게시의 답으로 올라갔다. 일하는 중 바닥줄은
+ * `esc interrupt … commands` 라 비교 기준(`before`)에도 없었다.
+ */
+function hasCwdFragment(line: string, cwd: string | null): boolean {
+  if (!cwd) return false;
+  return line.split(/\s+/).some((raw) => {
+    const w = raw.replace(/^[….]+|[….]+$/g, '');
+    return w.length >= CWD_FRAGMENT_MIN && cwd.includes(w);
+  });
+}
+
 /**
  * 끝난 화면에서 모델이 쓴 답으로 보이는 줄을 뽑는다(「답 없이 끝났다」 통지에 싣는다). 하네스마다 화면 모양이 달라 경계를
  * 모르므로 **마지막으로 본 일하는 중 화면에 없던 줄**만 집고, 입력창·일하는 중 표지·테두리·경로 줄은 뺀다(위에서 `max` 줄).
+ * `cwd`(턴의 작업 폴더)를 주면 그 이름 조각이 든 줄도 뺀다(`hasCwdFragment`).
  */
-export function screenAnswerLines(text: string, facts: Pick<ScreenFacts, 'ready'> & { busy?: RegExp }, before: string | null, max = 3): string[] {
+export function screenAnswerLines(
+  text: string, facts: Pick<ScreenFacts, 'ready'> & { busy?: RegExp }, before: string | null, cwd: string | null = null, max = 3,
+): string[] {
   const seen = new Set((before ?? '').split('\n').map((l) => l.trim()));
   const picked: string[] = [];
   for (const raw of text.split('\n')) {
     const l = raw.trim();
-    if (!l || seen.has(l) || facts.ready.test(l) || facts.busy?.test(l) || PATHLIKE.test(l)) continue;
+    if (!l || seen.has(l) || facts.ready.test(l) || facts.busy?.test(l) || PATHLIKE.test(l) || hasCwdFragment(l, cwd)) continue;
     const chrome = (l.match(CHROME) ?? []).length;
     if (chrome * 2 > l.replace(/\s/g, '').length) continue;
     picked.push(l.replace(/^[•●⏺◦▣]\s*/, ''));

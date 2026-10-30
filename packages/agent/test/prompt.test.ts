@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -1619,6 +1619,44 @@ describe('silentTurnNotice — 화면 답 대리 게시 (2026-10-25, 스레드 d
     expect(silentTurnNotice({ ...base, caller: 'agent', screenAnswer: '답' }).kind).toBe('react');
     expect(silentTurnNotice({ ...base, caller: 'human', screenAnswer: null })).toEqual(silentTurnNotice({ ...base, caller: 'human' }));
     expect(silentTurnNotice({ ...base, caller: 'human', screenAnswer: '   ' })).toEqual(silentTurnNotice({ ...base, caller: 'human' }));
+  });
+});
+
+describe('silentTurnNotice — 기록의 마지막 말이 답 꼴이면 ✅ 로 덮지 않는다 (2026-10-30 2회차 시험)', () => {
+  const base = { offAnchor: null, pat: 'hrkp_secretpat' } as const;
+  // 실측 모양: 표 답을 최종 텍스트로만 쓰고 message.post 를 안 부른 턴(log-triage·ledger).
+  const TABLE = '결과를 정리해서 표로 올린다.\n\n| 에이전트 | 건수 |\n|---|---|\n| a1 | 19 |';
+
+  it('표 답은 줄을 살린 인용으로 대신 올리고, 러너가 기록에서 옮겼다고 밝힌다', () => {
+    const n = silentTurnNotice({ ...base, caller: 'agent', lastSaid: TABLE });
+    expect(n.kind).toBe('post');
+    const body = (n as { body: string }).body;
+    expect(body).toContain('> | 에이전트 | 건수 |\n> |---|---|');
+    expect(body).toContain('하네스 기록에서 옮겨 올렸습니다');
+  });
+
+  it('부른 쪽 멘션·긴 말도 답 꼴이다 — 인용 안의 멘션은 멘션이 아니다', () => {
+    expect(looksLikeAnswer('@task_manager 끝났다')).toBe(true);
+    expect(looksLikeAnswer('가'.repeat(120))).toBe(true);
+    const body = (silentTurnNotice({ ...base, caller: 'agent', lastSaid: '@task_manager 끝났다' }) as { body: string }).body;
+    expect(body.startsWith('> @task_manager 끝났다')).toBe(true);
+  });
+
+  it('FYI 끝말·빈 말은 지금처럼 ✅ 다', () => {
+    expect(silentTurnNotice({ ...base, caller: 'agent', lastSaid: '확인했습니다. 덧붙일 말 없음.' })).toEqual({ kind: 'react', emoji: '✅' });
+    expect(silentTurnNotice({ ...base, caller: 'agent', lastSaid: null })).toEqual({ kind: 'react', emoji: '✅' });
+    expect(looksLikeAnswer('이메일 a@b 는 멘션이 아니다')).toBe(false);
+  });
+
+  it('PAT 는 가리고, 비밀 조각이 보이면 옮기지 않고 ✅ 로 돌아간다', () => {
+    expect(proxyRecordAnswerBody(`@x 키는 hrkp_secretpat 이다`, 'hrkp_secretpat')).not.toContain('hrkp_secretpat');
+    const secret = 'S3CRET-VALUE-0123456789';
+    expect(silentTurnNotice({ ...base, caller: 'agent', lastSaid: `@x 값 ${secret.slice(0, 14)}`, secrets: [secret] }))
+      .toEqual({ kind: 'react', emoji: '✅' });
+  });
+
+  it(`본문 상한(${BODY_LIMIT}자)을 넘지 않는다`, () => {
+    expect(proxyRecordAnswerBody('가'.repeat(BODY_LIMIT * 2), '').length).toBeLessThanOrEqual(BODY_LIMIT);
   });
 });
 

@@ -2349,7 +2349,7 @@ export async function runMentionTurn(
         if (idleWatch && !end.finished && !end.awaitingHuman && idleWatch.ended(deps.now?.() ?? Date.now())) {
           end.finished = true;
           end.pending = 0;
-          end.screenSaid = screenAnswerLines(idleWatch.text(), idleFacts!, idleWatch.busyText()).join(' ') || null;
+          end.screenSaid = screenAnswerLines(idleWatch.text(), idleFacts!, idleWatch.busyText(), rec?.workspaceDir ?? null).join(' ') || null;
           end.screenEnded = true;
           console.log(`[mentionTurn] ${key}: 화면이 차례 끝을 말한다(입력창·일하는 중 표지 없음 ${SCREEN_IDLE_END_MS}ms)`);
         }
