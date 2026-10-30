@@ -82,6 +82,27 @@ describe('FullDiskAccessDialog', () => {
   });
 });
 
+describe('FullDiskAccessDialog 포커스·넘침 (designer #1695)', () => {
+  it('단계가 바뀌면 물러서는 쪽 버튼에 포커스를 다시 준다', async () => {
+    setFdaSurface(fakeSurface('off'));
+    const { rerender } = render(<FullDiskAccessDialog status="off" onClose={() => {}} />);
+    fireEvent.click(screen.getByTestId('fda-open-settings'));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('fda-close')));
+    rerender(<FullDiskAccessDialog status="restart" onClose={() => {}} />);
+    expect(document.activeElement).toBe(screen.getByTestId('fda-restart-later'));
+    rerender(<FullDiskAccessDialog status="on" onClose={() => {}} />);
+    expect(document.activeElement).toBe(screen.getByTestId('fda-done'));
+  });
+
+  it('본문이 창보다 길면 안에서 스크롤된다 — 버튼 줄이 잘리지 않게', () => {
+    setFdaSurface(fakeSurface('off'));
+    render(<FullDiskAccessDialog status="off" onClose={() => {}} />);
+    const body = screen.getByTestId('fda-dialog');
+    expect(body.className).toContain('min-h-0');
+    expect(body.className).toContain('overflow-y-auto');
+  });
+});
+
 describe('FullDiskAccessHost', () => {
   it('권한이 없으면 한 번 띄우고, 다음 실행에는 띄우지 않는다', async () => {
     setFdaSurface(fakeSurface('off'));

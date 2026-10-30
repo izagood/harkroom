@@ -227,7 +227,7 @@ function FullDiskAccessGroup() {
             {c.label}
           </span>
           {status === 'on' && (
-            <button data-testid="fda-turn-off" className="rounded-row px-1 text-meta text-accent hover:bg-surface-sunken" onClick={() => act(() => getFdaSurface().openSettings())}>
+            <button data-testid="fda-turn-off" className="rounded-row px-1 text-meta text-link hover:bg-surface-sunken" onClick={() => act(() => getFdaSurface().openSettings())}>
               {t('fda.turnOffInSettings')}
             </button>
           )}

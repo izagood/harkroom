@@ -28,10 +28,12 @@ export function FullDiskAccessDialog({ status, onClose }: {
   const [opened, setOpened] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const notNowRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => { notNowRef.current?.focus(); }, []);
 
   const phase: 'intro' | 'waiting' | 'on' | 'restart' =
     status === 'on' ? 'on' : status === 'restart' ? 'restart' : opened ? 'waiting' : 'intro';
+  // 단계마다 **물러서는 쪽**에 포커스를 다시 준다 — 누른 버튼이 단계와 함께 사라지면 포커스가 body 로 떨어진다
+  // (designer #1695). intro=[지금은 안 함] · waiting=[닫기] · on=[확인] · restart=[나중에 다시 시작].
+  useEffect(() => { notNowRef.current?.focus(); }, [phase]);
 
   const run = (fn: () => Promise<void>) => {
     setError(null);
@@ -43,10 +45,10 @@ export function FullDiskAccessDialog({ status, onClose }: {
 
   return (
     <Overlay label={t('fda.title')} onClose={onClose} align="center" className="w-[28rem]">
-      <div data-testid="fda-dialog" data-phase={phase} className="flex flex-col gap-3 break-keep p-5 [overflow-wrap:anywhere]">
+      <div data-testid="fda-dialog" data-phase={phase} className="flex min-h-0 flex-col gap-3 overflow-y-auto break-keep p-5 [overflow-wrap:anywhere]">
         {phase === 'intro' && (
           <>
-            <p className="text-balance text-title font-semibold text-fg">{t('fda.title')}</p>
+            <p className="text-balance text-name font-semibold text-fg">{t('fda.title')}</p>
             <p className="text-fg-muted">{t('fda.why')}</p>
             <div data-testid="fda-risk" className="rounded-row border border-warning-border bg-warning-surface px-3 py-2.5 text-fg">
               <span className="mb-0.5 block text-meta font-semibold text-warning">{t('fda.riskHead')}</span>
@@ -68,7 +70,7 @@ export function FullDiskAccessDialog({ status, onClose }: {
         )}
         {phase === 'waiting' && (
           <>
-            <p className="text-balance text-title font-semibold text-fg">{t('fda.waitTitle')}</p>
+            <p className="text-balance text-name font-semibold text-fg">{t('fda.waitTitle')}</p>
             <p className="flex items-center gap-2 text-fg-muted">
               <span aria-hidden className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-border border-t-accent" />
               {t('fda.waiting')}
@@ -88,7 +90,7 @@ export function FullDiskAccessDialog({ status, onClose }: {
         )}
         {(phase === 'on' || phase === 'restart') && (
           <>
-            <p className="text-balance text-title font-semibold text-fg"><span aria-hidden className="mr-1 text-success">✓</span>{t('fda.onTitle')}</p>
+            <p className="text-balance text-name font-semibold text-fg"><span aria-hidden className="mr-1 text-success">✓</span>{t('fda.onTitle')}</p>
             <p className="text-fg-muted">{t('fda.onBody')}</p>
             {phase === 'restart' && (
               <p data-testid="fda-restart-note" className="border-t border-dashed border-border pt-2 text-meta text-fg-muted">{t('fda.restartNote')}</p>
@@ -96,10 +98,10 @@ export function FullDiskAccessDialog({ status, onClose }: {
             {error && <p role="alert" className="text-meta text-danger">{error}</p>}
             <div className="flex justify-end gap-2">
               {phase === 'on' ? (
-                <button data-testid="fda-done" className={plainBtn} onClick={onClose}>{t('fda.ok')}</button>
+                <button ref={notNowRef} data-testid="fda-done" className={plainBtn} onClick={onClose}>{t('fda.ok')}</button>
               ) : (
                 <>
-                  <button data-testid="fda-restart-later" className={plainBtn} onClick={onClose}>{t('fda.restartLater')}</button>
+                  <button ref={notNowRef} data-testid="fda-restart-later" className={plainBtn} onClick={onClose}>{t('fda.restartLater')}</button>
                   {/* 권한을 넓히는 버튼이 아니라 S2(같은 무게) 대상이 아니다 — 시안 v2 그대로 주 동작 색. */}
                   <button data-testid="fda-restart-now" className="rounded-row bg-accent px-3 py-1 font-medium text-fg-on-strong hover:bg-accent-hover" onClick={() => run(() => getFdaSurface().relaunch())}>{t('fda.restartNow')}</button>
                 </>
