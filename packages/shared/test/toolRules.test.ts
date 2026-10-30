@@ -45,6 +45,19 @@ describe('validateToolRule — 받는 것', () => {
     }
   });
 
+  it('gh pr·run 의 쓰기 동작에 원격 변경 경고를 단다 · 읽기 동작은 접두라도 그대로', () => {
+    for (const r of ['Bash(gh pr create -R o/r:*)', 'Bash(gh pr comment 1 -R o/r --body x)', 'Bash(gh pr close 1 -R o/r)',
+      'Bash(gh pr edit -R o/r:*)', 'Bash(gh pr reopen 1 -R o/r)', 'Bash(gh pr ready 1 -R o/r)', 'Bash(gh -R o/r pr review 1 --approve)',
+      'Bash(gh pr --repo o/r create:*)', 'Bash(gh run rerun -R o/r:*)', 'Bash(gh run cancel 1 -R o/r)', 'Bash(gh run delete 1 -R o/r)']) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings.includes('mutates_remote'), r).toBe(true);
+    }
+    for (const r of ['Bash(gh pr list -R o/r --state open:*)', 'Bash(gh pr view -R o/r:*)', 'Bash(gh pr checks -R o/r:*)',
+      'Bash(gh pr diff 1 -R o/r)', 'Bash(gh run list -R o/r:*)', 'Bash(gh run view 1 -R o/r)']) {
+      expect(validateToolRule(r), r).toMatchObject({ ok: true, warnings: ['uses_github_account'] });
+    }
+  });
+
   it('gh 읽기(정확 규칙의 list·view·status·diff·checks, GET api)에는 mutates_remote 를 달지 않는다 · 접두·쓰기는 그대로', () => {
     for (const r of ['Bash(gh issue list -R cli/cli --limit 3)', 'Bash(gh issue view 1 -R cli/cli)', 'Bash(gh release view v1 -R o/r)',
       'Bash(gh repo view o/r)', 'Bash(gh workflow list -R o/r)', 'Bash(gh api repos/o/r/pulls)', 'Bash(gh api repos/o/r/pulls --jq .)']) {

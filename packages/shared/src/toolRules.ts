@@ -227,8 +227,19 @@ const GH_READ_ACTIONS = new Set(['list', 'view', 'status', 'diff', 'checks']);
  *   같은 판정을 여기서도 한 번 더 본다(거절 표가 바뀌어도 경고가 조용히 빠지지 않게).
  * - 그 밖: **정확 규칙**이고 둘째 낱말이 읽기 동작(`GH_READ_ACTIONS`)일 때만 뺀다. 접두 규칙(`gh issue:*`)은 뒤에 무엇이든 붙으니 그대로 둔다.
  */
+/**
+ * 읽기도 흔한 gh 하위 명령(pr·run)의 쓰기 동작 — 하위 명령 전체를 `MUTATE_SUBCOMMANDS.gh` 에 넣으면 `gh pr list` 같은 읽기 접두에도
+ * 경고가 붙는다. 그래서 동작 이름으로 본다. 낱말 전부를 대조한다(값 없는 옵션 뒤에 와도 빠지지 않게, 오탐은 경고 하나 더).
+ */
+const GH_WRITE_ACTIONS: Record<string, readonly string[]> = {
+  pr: ['create', 'comment', 'close', 'edit', 'reopen', 'ready', 'review', 'lock', 'unlock', 'revert', 'update-branch'],
+  run: ['rerun', 'cancel', 'delete'],
+};
+
 function ghMutates(words: readonly string[], prefix: boolean): boolean {
   const pos = positionals(words);
+  const writes = GH_WRITE_ACTIONS[pos[0] ?? ''];
+  if (writes) return words.slice(1).some((w) => writes.includes(w));
   if (!hits(MUTATE_SUBCOMMANDS, 'gh', pos[0] ?? null)) return false;
   if (pos[0] === 'api') {
     if (prefix) return true;
