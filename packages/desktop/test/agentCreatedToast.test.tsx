@@ -2,11 +2,11 @@
  * **만들었다는 것이 보인다.** 만들기 화면은 만든 뒤에도 그대로 서 있어서, 성공해도 바뀌는
  * 것이 없었다 — 사람은 격자로 돌아가 카드를 찾아봐야 만들어졌는지 알았다.
  *
- * 그래서 만들면 **팝업이 뜨고 격자(목록)로 넘어가며, 방금 만든 카드가 팝업 동안 강조된다**
- * (스레드 fe5505ea).
+ * 그래서 만들면 **팝업이 뜬다**(스레드 fe5505ea). 처음엔 격자로 넘어갔으나, 명령 허용 줄(시안 v1 결정 7, 소유자 승인
+ * 2026-10-30)부터는 그 에이전트 상세를 열고 「명령 허용」 안내 띠를 한 번 띄운다.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, act, within } from '@testing-library/react';
 import type { AgentView } from '@harkroom/shared';
 import { AgentsSettings, CREATED_TOAST_MS } from '../src/components/settings/AgentsSettings';
 import { setController, type Controller as ControllerType } from '../src/state/controller';
@@ -84,28 +84,29 @@ describe('만들기 성공 팝업', () => {
     expect(screen.queryByTestId('agent-created-toast')).toBeNull();
   });
 
-  it('만들면 목록으로 넘어가고, 방금 만든 카드가 팝업 동안만 강조된다', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    setupUi(async () => ({ agent: { id: 'a-1', handle: 'newbie' } as AgentView, poolError: null, attachError: null }));
+  it('만들면 그 에이전트 상세로 넘어가고 「명령 허용」 안내 띠가 한 번 뜬다(시안 v1 결정 7)', async () => {
+    setupUi(async () => ({ agent: { id: 'a-1', handle: 'newbie', ownerAccountId: 'admin-1' } as AgentView, poolError: null, attachError: null }));
     await create('newbie');
     await screen.findByTestId('agent-created-toast', {}, { timeout: 5000 });
-    // 상세(만들기)가 아니라 격자다 — 돌아가는 길이 없고 「만들기」 카드가 선다.
-    expect(screen.queryByTestId('agent-back')).toBeNull();
-    expect(screen.getByTestId('agent-create')).toBeTruthy();
-    const card = await screen.findByTestId('agent-card-newbie', {}, { timeout: 5000 });
-    expect(card.getAttribute('data-selected')).toBe('true');
-    await act(async () => {});
-    act(() => { vi.advanceTimersByTime(CREATED_TOAST_MS + 100); });
-    expect(screen.queryByTestId('agent-created-toast')).toBeNull();
-    expect(screen.getByTestId('agent-card-newbie').getAttribute('data-selected')).toBe('false');
+    // 만들기 폼이 아니라 그 에이전트의 상세다 — 돌아가는 길(agent-back)이 서고 띠가 뜬다.
+    expect(screen.getByTestId('agent-back')).toBeTruthy();
+    const band = await screen.findByTestId('agent-tool-allow-band');
+    fireEvent.click(within(band).getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByTestId('agent-tool-allow-band')).toBeNull();
   });
 
-  it('풀 배정이 실패해도 목록으로 넘어가고, 그 이유는 목록 위에 남는다', async () => {
+  it('남의 에이전트(소유자가 아님)면 띠는 뜨지 않는다 — 명령 허용은 소유자만 준다', async () => {
+    setupUi(async () => ({ agent: { id: 'a-1', handle: 'newbie', ownerAccountId: 'someone' } as AgentView, poolError: null, attachError: null }));
+    await create('newbie');
+    await screen.findByTestId('agent-created-toast', {}, { timeout: 5000 });
+    expect(screen.queryByTestId('agent-tool-allow-band')).toBeNull();
+  });
+
+  it('풀 배정이 실패해도 상세로 넘어가고, 그 이유는 위에 남는다', async () => {
     setupUi(async () => ({ agent: { id: 'a-1', handle: 'newbie' } as AgentView, poolError: 'disk full', attachError: null }));
     await create('newbie');
     await screen.findByTestId('agent-created-toast', {}, { timeout: 5000 });
-    expect(screen.queryByTestId('agent-back')).toBeNull();
-    expect(screen.getByRole('alert').textContent).toContain('disk full');
+    expect(screen.getAllByRole('alert').some((el) => el.textContent?.includes('disk full'))).toBe(true);
   });
 
   it('실패하면 뜨지 않는다', async () => {

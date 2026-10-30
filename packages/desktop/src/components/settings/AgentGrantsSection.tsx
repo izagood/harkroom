@@ -1,5 +1,5 @@
 /**
- * 에이전트 상세의 **「머지·API 권한」** 절(옛 이름 「할 수 있는 일」 — 이름만 봐서는 무엇을 주는지 몰랐다, 스레드 febe9ff8 P1.
+ * 에이전트 상세의 **「머지·API·명령 권한」** 절(명령 허용 줄 — 소유자 결정 2026-10-30 8, `ToolAllowGrants`)(옛 이름 「할 수 있는 일」 — 이름만 봐서는 무엇을 주는지 몰랐다, 스레드 febe9ff8 P1.
  * #1144 가 API 호출 권한을 같은 절에 소제목으로 더해 「PR 머지」 하나로는 이름이 좁아졌다) — 에이전트 머지 권한(스레드 3deac356, designer 안 L2).
  *
  * 비밀 보관소 부여와 같은 문법이다: 에이전트 × 저장소, 준 사람·날짜, 만료, [거두기]. 판정은 전부 서버가 한다
@@ -27,6 +27,7 @@ import { Segmented } from '../Segmented';
 import { buildForest, decidableBy, descendantCount, pendingForRoot, type ForestNode } from '../../lib/delegationForest';
 import { DelegationChildren, PendingDelegations, type DelegationActions } from './DelegationTree';
 import { errorText } from '../../lib/errorText';
+import { TOOL_CAP, ToolAllowForm, ToolAllowList, renewToolAllow } from './ToolAllowGrants';
 
 const CAP = 'repo.merge' as const;
 const SECRET_CAP = 'secret.create' as const;
@@ -51,7 +52,7 @@ export function liveMergeCount(rows: readonly GrantRow[], now = Date.now()): Mer
   return { repos: live.length - orgs, orgs };
 }
 
-export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, localOperatorId, assignedOperatorName, deviceAgentIds, onCountChange }: {
+export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, localOperatorId, assignedOperatorName, deviceAgentIds, onCountChange, openToolAllow, onToolAllowOpened }: {
   agent: AgentView;
   /** 배정된 오퍼레이터(기기)의 이름 — 「다른 기기에서 돈다」 안내에 넣는다(#1140 designer n4). 모르면 null. */
   assignedOperatorName?: string | null;
@@ -72,6 +73,9 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   /** 소유자 또는 admin. */
   canRevoke: boolean;
   disabled?: boolean;
+  /** 만든 직후 안내 띠의 [명령 허용 주기](시안 v1 결정 7) — 명령 허용 폼을 연 채로 이 절까지 내려간다. 연 뒤 `onToolAllowOpened`. */
+  openToolAllow?: boolean;
+  onToolAllowOpened?: () => void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -87,7 +91,23 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   // API 호출(P4b): 같은 절에 소제목으로 나눈다(designer v3 ③). 연결 이름은 내 연결 목록에서 찾는다 — 없으면 id 앞부분.
   const [apiGrants, setApiGrants] = useState<GrantRow[]>([]);
   const [connectors, setConnectors] = useState<ApiConnectorView[]>([]);
-  const [addKind, setAddKind] = useState<'merge' | 'api' | 'secret'>('api');
+  const [addKind, setAddKind] = useState<'merge' | 'api' | 'secret' | 'tool'>('api');
+  // 명령 허용(`tool.allow`) 줄 — 카드 승인 7일 줄도 같은 목록에 선다(시안 v1 결정 6).
+  const [toolGrants, setToolGrants] = useState<GrantRow[]>([]);
+  // 안내 띠에서 왔으면 명령 허용 폼을 연다. 내려가기는 폼이 그려진 뒤라 따로 한 번(`scrollToTool`).
+  const [scrollToTool, setScrollToTool] = useState(false);
+  useEffect(() => {
+    if (!openToolAllow || !canGrant) return;
+    setAdding(true);
+    setAddKind('tool');
+    setScrollToTool(true);
+    onToolAllowOpened?.();
+  }, [openToolAllow, canGrant, onToolAllowOpened]);
+  useEffect(() => {
+    if (!scrollToTool || !adding || addKind !== 'tool') return;
+    setScrollToTool(false);
+    document.querySelector<HTMLElement>('[data-testid="agent-tool-allow-add"]')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  }, [scrollToTool, adding, addKind]);
   // 비밀 만들기(서버 102, 스레드 1a08d0cf): scope '' 하나, 소유자만 준다. 기본은 꺼짐이다.
   const [secretGrant, setSecretGrant] = useState<GrantRow | null>(null);
   // 위임 나무(P5 desktop): 나무는 에이전트를 건너가므로 **내 에이전트 전부**의 api.call 줄을 모아 엮는다(서버는 parentGrantId 만 준다).
@@ -105,6 +125,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
       const rows = all.filter((g) => g.capability === CAP);
       setGrants(rows);
       setApiGrants(all.filter((g) => g.capability === 'api.call'));
+      setToolGrants(all.filter((g) => g.capability === TOOL_CAP));
       setSecretGrant(all.find((g) => g.capability === SECRET_CAP && g.scope === '') ?? null);
       // 소유자가 볼 때만 나무를 엮는다 — 남의 에이전트 grant 목록은 서버가 admin·소유자에게만 준다.
       if (canGrant) {
@@ -132,6 +153,8 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
 
   const explain = (err: unknown): string => {
     if (err instanceof ApiError) {
+      if (err.code === 'tool_rule_needs_expiry') return t('toolAllow.errNeedsExpiry');
+      if (err.code === 'tool_rule_expiry_too_long') return t('toolAllow.errTooLong');
       if (err.code === 'bad_scope') return t('agents.grants.errScope');
       if (err.status === 403) return t('agents.grants.errForbidden');
       if (err.status === 400) return t('agents.grants.errScope');
@@ -185,7 +208,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   // 비어 있으면 한 줄로 접는다(P1) — 설명 문단·빈 문장 없이 「PR 머지 · 머지 권한 없음 · [+ 권한 주기]」. 읽는 동안도
   // 같은 모양으로 그린다(#1146 designer b) — 권한 없는 에이전트를 열 때마다 절이 펼쳤다 줄어드는 흔들림을 없앤다.
   // API 호출 권한(#1144)이 하나라도 있으면 접지 않는다 — 그 줄들이 이 절에 산다.
-  const compact = (grants === 'loading' || (Array.isArray(grants) && rows.length === 0 && apiGrants.length === 0 && !secretGrant)) && !adding;
+  const compact = (grants === 'loading' || (Array.isArray(grants) && rows.length === 0 && apiGrants.length === 0 && toolGrants.length === 0 && !secretGrant)) && !adding;
   const otherDevice = assignedOperatorName
     ? t('agents.grants.ghUser.otherDevice', { host: assignedOperatorName })
     : t('agents.grants.ghUser.otherDeviceNoName');
@@ -295,7 +318,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             })}
           </ul>
           {/* 비밀 만들기 줄이 있으면 그 블록이 「PR 머지」 소제목을 단다 — 두 번 서지 않게. */}
-          {!secretGrant && <div className="mt-2 text-meta font-medium text-fg-muted">{t('apiGrant.mergeHeading')}</div>}
+          {!secretGrant && toolGrants.length === 0 && <div className="mt-2 text-meta font-medium text-fg-muted">{t('apiGrant.mergeHeading')}</div>}
         </>
       )}
       {secretGrant && (
@@ -315,6 +338,15 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
               )}
             </li>
           </ul>
+          {toolGrants.length === 0 && <div className="mt-2 text-meta font-medium text-fg-muted">{t('apiGrant.mergeHeading')}</div>}
+        </>
+      )}
+      {toolGrants.length > 0 && (
+        <>
+          <div className="mt-2 text-meta font-medium text-fg-muted">{t('toolAllow.heading')}</div>
+          <ToolAllowList rows={toolGrants} canGrant={canGrant} canRevoke={canRevoke} off={!!off}
+            onRenew={(g) => void run(async () => { await renewToolAllow(agent.id, g); })} onRevoke={setRevoking} />
+          {/* 명령 허용 줄이 있으면 「PR 머지」 소제목은 여기서 한 번만 단다(위 두 블록은 비켜선다). */}
           <div className="mt-2 text-meta font-medium text-fg-muted">{t('apiGrant.mergeHeading')}</div>
         </>
       )}
@@ -426,7 +458,11 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             { value: 'merge' as const, label: t('apiGrant.kindMerge') },
             // 비밀 만들기는 이미 주었으면 고를 칸에서 뺀다(한 줄뿐이다).
             ...(secretGrant ? [] : [{ value: 'secret' as const, label: t('apiGrant.kindSecret') }]),
+            { value: 'tool' as const, label: t('apiGrant.kindTool') },
           ]} />
+      )}
+      {canGrant && adding && addKind === 'tool' && (
+        <ToolAllowForm agent={agent} off={!!off} run={run} onCancel={() => setAdding(false)} />
       )}
       {canGrant && adding && addKind === 'api' && (
         (() => {
@@ -538,11 +574,15 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
         <ConfirmDialog
           title={revoking.capability === SECRET_CAP
             ? t('agents.grants.secretCreateRevokeTitle', { handle: agent.handle })
+            : revoking.capability === TOOL_CAP
+            ? t('toolAllow.revokeTitle', { rule: revoking.scope.replace(/^tool:[^:]+:/, '') })
             : revoking.capability === 'api.call'
             ? t('apiGrant.revokeTitle', { name: connectors.find((c) => `connector:${c.id}` === revoking.scope)?.name ?? '' })
             : t('agents.grants.revokeTitle', { repo: repoLabel(revoking.scope) })}
           detail={revoking.capability === SECRET_CAP
             ? t('agents.grants.secretCreateRevokeDetail')
+            : revoking.capability === TOOL_CAP
+            ? t('toolAllow.revokeDetail', { handle: agent.handle })
             : revoking.capability === 'api.call'
             ? t('apiGrant.revokeDetail', { handle: agent.handle })
             : orgOf(revoking.scope)
