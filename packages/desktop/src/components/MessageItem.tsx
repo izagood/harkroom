@@ -34,7 +34,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { MessageEditBox } from './MessageEditBox';
 import { bodyAsHandles, displayBody } from '../lib/mention';
 import { bodyForLineCard } from './MandateLineBody';
-import { selectAccountNames } from '../lib/accountNames';
+import { selectAccountNames, type AccountNames } from '../lib/accountNames';
 import { accountOpen } from '../lib/accountOpen';
 import { stampLabel } from '../lib/day';
 import type { SectionId } from './settings/sections';
@@ -266,6 +266,15 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
   const mentionDenied = Array.isArray(message.meta.mentionDenied)
     ? (message.meta.mentionDenied as unknown[]).filter((h): h is string => typeof h === 'string')
     : [];
+  /**
+   * **요청자 권한으로 연 부름·막힌 이유**(호출 권한 재설계 4단계). 서버가 에이전트 글에 적는다 —
+   * `invokedAsPrincipal`(누구 권한으로 열었나, C6 감사 표시)·`mentionDeniedPrincipal`(none·denied·capped).
+   * 둘 다 서버 키라 입력 meta 에서 걷히므로(`postMessage`) 위조되지 않는다. 화면은 이 둘만 읽고
+   * 본문·스레드에서 요청자를 짐작하지 않는다. 막힌 줄에는 요청자 이름을 넣지 않는다 — 서버가 그쪽엔
+   * principalId 를 주지 않고, 다른 채널에서 온 요청자가 이 채널에 드러나는 것을 줄인다.
+   */
+  const asPrincipal = readInvokedAsPrincipal(message.meta.invokedAsPrincipal);
+  const deniedReason = message.meta.mentionDeniedPrincipal;
   /**
    * **부르지 않고 이름만 부른 계정**(`meta.mentionRefs`, 2026-09-09). 에이전트가 동료를
    * 본문 한가운데서 지칭한 자리다 — 서버는 알림을 만들지 않고, 화면은 그 이름을 칩이 아닌
@@ -875,10 +884,34 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 })}
               </p>
             )}
+            {asPrincipal && (
+              /* 통과한 부름이 막힌 줄보다 위다. 같은 톤 — 감사 표시라 숨기지 않지만 강조도 하지 않는다(규칙 03). */
+              <p data-testid="mention-as-principal" className="mt-1 flex items-start gap-1 text-meta text-fg-muted">
+                <svg aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
+                  <circle cx="6" cy="4" r="2" />
+                  <path d="M2.5 10.5c.6-2 2-3 3.5-3s2.9 1 3.5 3" />
+                </svg>
+                <span className="min-w-0 break-words">
+                  {asPrincipal.principalId === myId
+                    ? t('message.invokedAsPrincipalSelf', { handles: asPrincipal.handles.map((h) => `@${h}`).join(' ') })
+                    : t('message.invokedAsPrincipal', {
+                      handles: asPrincipal.handles.map((h) => `@${h}`).join(' '),
+                      name: principalName(accounts, asPrincipal.principalId),
+                    })}
+                </span>
+              </p>
+            )}
             {mentionDenied.length > 0 && (
-              /* 같은 톤이다 — 부른 사람이 할 수 있는 일은 그 에이전트의 소유자에게 묻는 것뿐이다. */
+              /* 같은 톤이다. 다음 할 일은 막힌 이유가 정한다 — 사람 없는 턴·하루 상한은 사람이 직접 부르고,
+                 요청자도 못 부르는 상대만 그 에이전트의 소유자에게 묻는다. 이유가 없으면(사람 글·옛 글) 옛 문구. */
               <p data-testid="mention-denied" className="mt-1 text-meta text-fg-muted">
-                {t('message.mentionDenied', { handles: mentionDenied.map((h) => `@${h}`).join(' ') })}
+                {t(deniedReason === 'none'
+                  ? 'message.mentionDeniedNone'
+                  : deniedReason === 'denied'
+                    ? 'message.mentionDeniedDenied'
+                    : deniedReason === 'capped'
+                      ? 'message.mentionDeniedCapped'
+                      : 'message.mentionDenied', { handles: mentionDenied.map((h) => `@${h}`).join(' ') })}
               </p>
             )}
             {/* API 막힘 카드(P4b) — 서버가 세운 시스템 줄의 meta.blocked. */}
@@ -1237,4 +1270,19 @@ function SystemTargetChip({ message, accounts }: { message: MessageRow; accounts
     ? <a data-testid="system-target-chip" className={`${cls} hover:bg-surface-hover`} href={target.href}
         aria-label={t('message.system.re.open', { label })}>{arrow}{label}</a>
     : <span data-testid="system-target-chip" className={cls}>{arrow}{label}</span>;
+}
+
+/** `meta.invokedAsPrincipal` 을 읽는다. 꼴이 어긋나거나 이름이 하나도 없으면 그리지 않는다. */
+function readInvokedAsPrincipal(raw: unknown): { principalId: string; handles: string[] } | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { principalId, handles } = raw as { principalId?: unknown; handles?: unknown };
+  if (typeof principalId !== 'string' || !Array.isArray(handles)) return null;
+  const names = handles.filter((h): h is string => typeof h === 'string');
+  return names.length ? { principalId, handles: names } : null;
+}
+
+/** 요청자 이름 — 표시 이름이 있으면 그것, 없으면 handle, 모르는 계정이면 공용 이름표. */
+function principalName(accounts: AccountNames, id: string): string {
+  const a = Object.hasOwn(accounts, id) ? accounts[id] : undefined;
+  return a?.displayName || a?.handle || UNKNOWN_ACCOUNT_LABEL;
 }

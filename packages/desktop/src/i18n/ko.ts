@@ -2011,7 +2011,12 @@ export const ko = {
   'ask.chainBackstop.continueHint': '홉 수와 24시간을 처음부터 다시 센다',
   'ask.chainBackstop.stop': '멈춤',
   'ask.chainBackstop.stopHint': '에이전트는 다른 에이전트를 부르지 않는다',
-  'message.mentionDenied': '{handles} 를 부르지 않았다 — 부를 수 있는 범위 밖이다. 그 에이전트의 소유자에게 물어라.',
+  'message.mentionDenied': '{handles} — 부르지 않았다. 부를 수 있는 범위 밖이다. 그 에이전트의 소유자에게 물어라.',
+  'message.mentionDeniedNone': '{handles} — 부르지 않았다. 사람이 시킨 턴이 아니어서 빌릴 권한이 없다. 필요하면 사람이 직접 부른다.',
+  'message.mentionDeniedDenied': '{handles} — 부르지 않았다. 이 턴을 시킨 사람 권한으로도 부를 수 없다. 그 에이전트의 소유자에게 물어라.',
+  'message.mentionDeniedCapped': '{handles} — 부르지 않았다. 이 턴을 시킨 사람 권한으로 부를 수 있는 24시간 몫을 다 썼다. 필요하면 사람이 직접 부른다.',
+  'message.invokedAsPrincipal': '{handles} — {name} 권한으로 불렀다',
+  'message.invokedAsPrincipalSelf': '{handles} — 내 권한으로 불렀다',
   'message.openSkillApproval': '스킬 승인 화면 열기',
 
   'message.authorLabel': '작성자 {name}',
