@@ -5,6 +5,7 @@ import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
 import { auditMandateCreated, mandateForAgentPost, stampHumanMandate, type MandateCreated } from './mandates.js';
+import { principalForAgentPost } from './invokePrincipal.js';
 import { closeDelegationsForReply, outcomesFor } from './delegations.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
 import { bundledRootSql, openBundleSql } from './askBundleSql.js';
@@ -1699,6 +1700,9 @@ export async function postMessage(
       // 위임은 사슬 고리(`causeLink`, inbox 60분)와 따로 — 그 원인으로 받은 **살아 있는 턴 임대**가 근거다(임대 수명 동안 잇는다).
       const mandateId = await mandateForAgentPost(client, { agentId: input.authorId, causeMessageId: input.chainCause });
       if (mandateId) await client.query(`update message set mandate_id = $2 where id = $1`, [message.id, mandateId]);
+      // principal(152) — 같은 살아 있는 임대에서 옮겨 적는다. 다음 에이전트의 임대가 이것을 이어받는다. 판정은 아직 쓰지 않는다.
+      const principalId = await principalForAgentPost(client, { agentId: input.authorId, causeMessageId: input.chainCause });
+      if (principalId) await client.query(`update message set principal_account_id = $2 where id = $1`, [message.id, principalId]);
     }
     /*
       회신권(084)을 연다 — 실제로 inbox 가 간 상대에게만(막힌·상한 걸린 부름은 열지 않는다). 최상위
