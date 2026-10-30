@@ -157,7 +157,13 @@ const EXEC_SUBCOMMANDS: Record<string, readonly string[]> = {
   kubectl: ['exec', 'debug', 'attach', 'cp', 'port-forward', 'run'],
   oc: ['exec', 'debug', 'rsh', 'cp', 'port-forward'],
   docker: ['exec', 'run'],
+  'docker-compose': ['exec', 'run'],
   ssh: ['*'],
+};
+
+/** 두 단계 명령(`docker compose …`) — 첫 하위 명령 뒤의 둘째 하위 명령을 이 표로 본다. */
+const NESTED_EXEC_SUBCOMMANDS: Record<string, Record<string, readonly string[]>> = {
+  docker: { compose: ['exec', 'run'] },
 };
 
 /** (첫 낱말, 하위 명령) — 원격 상태를 바꾼다. */
@@ -251,8 +257,14 @@ export function validateToolRule(input: string): ToolRuleVerdict {
   }
 
   const warnings: ToolRuleWarning[] = [];
-  if (hits(EXEC_SUBCOMMANDS, head, sub)) warnings.push('executes_in_workload');
-  if (head === 'gh' ? ghMutates(words, prefix) : hits(MUTATE_SUBCOMMANDS, head, sub)) warnings.push('mutates_remote');
+  // 경고 판정 보강: 위험 표에 있는 명령의 **접두** 규칙인데 하위 명령이 정해지지 않으면(둘째 단계 포함) 뒤에 무엇이든 붙을 수 있다 —
+  // 막는 쪽으로 두 경고를 다 붙인다. 거절하지 않는 이유: 이미 준 줄이 조용히 사라지지 않게(`toolAllowsFor` 가 지금 판정으로 다시 거른다).
+  const nested = NESTED_EXEC_SUBCOMMANDS[head]?.[sub ?? ''];
+  const sub2 = nested ? subcommandOf(words.slice(words.indexOf(sub!))) : null;
+  const unpinned = prefix && head !== 'gh' && (head in EXEC_SUBCOMMANDS || head in MUTATE_SUBCOMMANDS)
+    && (sub === null || (nested !== undefined && sub2 === null));
+  if (unpinned || hits(EXEC_SUBCOMMANDS, head, sub) || (nested !== undefined && sub2 !== null && nested.includes(sub2))) warnings.push('executes_in_workload');
+  if (unpinned || (head === 'gh' ? ghMutates(words, prefix) : hits(MUTATE_SUBCOMMANDS, head, sub))) warnings.push('mutates_remote');
   if (runsArbitrary(head, sub, words)) warnings.push('runs_arbitrary');
   if (prefix && words.length < 3) warnings.push('short_prefix');
   if (head === 'gh') warnings.push('uses_github_account');
