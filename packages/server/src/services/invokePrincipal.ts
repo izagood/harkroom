@@ -57,7 +57,7 @@ export async function principalForAgentPost(
 }
 
 /**
- * 그 원인 글로 이 에이전트에게 온 inbox 사유들(mention·thread_reply·wake 등) — 그림자 기록에만 싣는다(2단계).
+ * 그 원인 글로 이 에이전트에게 온 inbox 사유들(mention·thread_reply·wake 등) — `message.principal_cause_reasons` 에만 적는다(153, 서버 집계 전용).
  * 집계에서 「자기 글로 깬 턴이 옛 principal 을 이어받는 길」이 wake 말고 있는지 사유별로 본다(보안 검토 넘김 ①).
  */
 export async function causeReasonsFor(
@@ -74,21 +74,63 @@ export async function causeReasonsFor(
  * - `denied_posts`: 계정 멘션이 막힌 에이전트 글(`mentionDenied`)
  * - `opened_posts`·`opened_calls`: 그 가운데 안 A 였다면 열렸을 글·부름 수(`mentionPrincipalShadow`)
  * - `no_principal_posts`: 막혔고 principal 도 없던 글(wake·자동화·임대 없음 — 3단계 뒤에도 그대로 막힌다)
- * - `by_cause`: 열렸을 부름의 원인 inbox 사유별 수(`{"mention": 3, "thread_reply": 1}`)
+ * - `by_cause`: 열렸을 부름의 원인 inbox 사유별 수(`{"mention": 3, "thread_reply": 1}`, `principal_cause_reasons`)
+ * 3단계 스위치가 켜져 있으면 그림자는 생기지 않는다(대신 `invokedAsPrincipal`). 끈 서버에서만 뜻이 있다.
  * - `principals`: 열렸을 부름을 빌려 준 사람 수
  *
  * 운영 DB 에서 그대로 돌린다: `psql -v hours=72 -c "<이 문장에서 $1 을 :hours 로>"`. 쓰지 않고 읽기만 한다.
  */
+/**
+ * 3단계 스위치 — 기본 켜짐(소유자 결정 2026-10-30: 그림자 집계를 기다리지 않고 바로 전환). `HARKROOM_PRINCIPAL_INVOKE=off`
+ * (`0`·`false` 도 같다)면 판정은 2단계로 돌아간다 — 열지 않고 그림자(`mentionPrincipalShadow`)만 남긴다. 부를 때마다 읽는다.
+ */
+export function principalInvokeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = (env.HARKROOM_PRINCIPAL_INVOKE ?? '').trim().toLowerCase();
+  return !(v === 'off' || v === '0' || v === 'false');
+}
+
+/**
+ * principal 하나가 24시간 동안 빌려 줄 수 있는 에이전트 글 수(보안 검토 C6). 넘으면 그 글의 부름은 지금 규칙대로 막히고
+ * `mentionDeniedPrincipal: 'capped'` 가 남는다. 연쇄 상한(chainLimit·24시간)은 이것과 따로 그대로 걸린다.
+ */
+export const PRINCIPAL_INVOKE_DAILY_CAP = 200;
+
+/** 최근 24시간 동안 이 principal 의 권한으로 부름을 연 에이전트 글 수. */
+export async function principalInvokesToday(client: Q, principalId: string, now = new Date()): Promise<number> {
+  const r = await client.query<{ n: number }>(
+    `select count(*)::int as n from message
+      where principal_account_id = $1 and created_at > $2 and deleted_at is null and meta ? 'invokedAsPrincipal'`,
+    [principalId, new Date(now.getTime() - 24 * 60 * 60_000)]);
+  return r.rows[0]?.n ?? 0;
+}
+
+/**
+ * 서버만 쓰는 부름 meta 키(보안 검토 n2). 글을 쓰는 쪽(MCP·REST 어느 입구든 `postMessage` 를 지난다)이 넣은 같은 키는
+ * 걷어 낸다 — 남기면 그 판정이 없던 글에 「누구 권한으로」·「막힘」 표시를 위조할 수 있다.
+ */
+export const SERVER_CALL_META_KEYS = [
+  'mentionDenied', 'mentionDeniedPrincipal', 'mentionChainCapped', 'mentionChainLimit', 'mentionChainReason',
+  'mentionPrincipalShadow', 'invokedAsPrincipal',
+] as const;
+
+export function stripServerCallMeta(meta: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!meta) return meta;
+  if (!SERVER_CALL_META_KEYS.some((k) => Object.hasOwn(meta, k))) return meta;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(meta)) if (!(SERVER_CALL_META_KEYS as readonly string[]).includes(k)) out[k] = v;
+  return out;
+}
+
 export const PRINCIPAL_SHADOW_REPORT_SQL = `
 with posts as (
-  select m.id, (m.created_at at time zone 'Asia/Seoul')::date as day, m.meta, m.principal_account_id
+  select m.id, (m.created_at at time zone 'Asia/Seoul')::date as day, m.meta, m.principal_account_id, m.principal_cause_reasons
     from message m join account a on a.id = m.author_id
    where a.kind = 'agent' and m.deleted_at is null
      and m.created_at > now() - make_interval(hours => $1::int)
      and m.meta ? 'mentionDenied'
 ), causes as (
   select p.day, r.reason, count(*) as n
-    from posts p, jsonb_array_elements_text(p.meta->'mentionPrincipalShadow'->'causeReasons') r(reason)
+    from posts p, unnest(p.principal_cause_reasons) r(reason)
    where p.meta ? 'mentionPrincipalShadow'
    group by p.day, r.reason
 )

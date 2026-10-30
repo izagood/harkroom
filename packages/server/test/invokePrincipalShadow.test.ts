@@ -10,7 +10,7 @@ import { PRINCIPAL_SHADOW_REPORT_SQL } from '../src/services/invokePrincipal.js'
 // 에이전트 호출 권한 재설계 2단계 — 그림자 판정. 막힌 부름은 그대로 막히고, principal 이 부를 수 있었던 것만 meta 에 남는다.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
-describe('invoke principal shadow (2단계)', () => {
+describe('invoke principal shadow (2단계, 스위치 off)', () => {
   let db: Awaited<ReturnType<typeof startTestDb>>;
   let pool: Pool;
   let app: FastifyInstance;
@@ -38,7 +38,10 @@ describe('invoke principal shadow (2단계)', () => {
   /** tm 이 `cause` 로 깬 턴에서 `@sec @zed` 를 부른다. */
   const hop = async (cause: string, threadRootId: string) => post(tm, '@sec @zed review', { threadRootId, chainCause: cause });
 
+  // 3단계 스위치(기본 켜짐)를 끈 서버 — 2단계 그대로 그림자만 남는다.
+  const prevSwitch = process.env.HARKROOM_PRINCIPAL_INVOKE;
   beforeAll(async () => {
+    process.env.HARKROOM_PRINCIPAL_INVOKE = 'off';
     db = await startTestDb(); pool = db.pool;
     app = await buildServer({ pool });
     admin = await bootstrapAdmin(app);
@@ -61,7 +64,10 @@ describe('invoke principal shadow (2단계)', () => {
       `insert into channel_member (channel_id, account_id) select $1, unnest($2::uuid[]) on conflict do nothing`,
       [ch, [alice.accountId, bob.accountId, tm, sec, zed]]);
   });
-  afterAll(async () => { await app.close(); await db.stop(); });
+  afterAll(async () => {
+    if (prevSwitch === undefined) delete process.env.HARKROOM_PRINCIPAL_INVOKE; else process.env.HARKROOM_PRINCIPAL_INVOKE = prevSwitch;
+    await app.close(); await db.stop();
+  });
 
   it('alice 가 깨운 턴 — sec 는 그림자에 남고 zed 는 남지 않는다. 동작은 그대로(둘 다 막힘)', async () => {
     const root = await post(alice.accountId, '@tm go');
@@ -69,7 +75,9 @@ describe('invoke principal shadow (2단계)', () => {
     const m = await hop(root, root);
     const meta = await metaOf(m);
     expect(meta?.mentionDenied).toEqual(['sec', 'zed']);
-    expect(meta?.mentionPrincipalShadow).toEqual({ principalId: alice.accountId, handles: ['sec'], ids: [sec], causeReasons: ['mention'] });
+    expect(meta?.mentionPrincipalShadow).toEqual({ principalId: alice.accountId, handles: ['sec'], ids: [sec] });
+    // 원인 사유는 meta 가 아니라 서버 칸에만 남는다(n1).
+    expect((await pool.query(`select principal_cause_reasons from message where id = $1`, [m])).rows[0].principal_cause_reasons).toEqual(['mention']);
     expect(await inboxCount(sec, m)).toBe(0);
     expect(await inboxCount(zed, m)).toBe(0);
   });
