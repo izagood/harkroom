@@ -373,7 +373,7 @@ describe('H4 card warnings (designer v1)', () => {
     render(<AskCard message={card({ pr: { warnings: ['unclassified', 'mutates_remote'] } })} />);
     const items = [...screen.getByTestId('mandate-line-warnings').querySelectorAll('li')];
     expect(items.map((li) => li.getAttribute('data-warning'))).toEqual(['mutates_remote', 'unclassified']);
-    expect(items[1]!.textContent).toContain('무엇을 하는지 판정하지 못했다 — 아는 읽기 명령이 아니다');
+    expect(items[1]!.textContent).toContain('무엇을 하는지 판정하지 못했다 — 읽기 전용으로 확인된 명령이 아니다');
   });
   it('no warnings → no list; genuine mirror draws the copied warnings', () => {
     const c = render(<AskCard message={card()} />);

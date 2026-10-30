@@ -6030,7 +6030,7 @@ export const en = {
   'mandateCard.warn.mutates_remote.head': "Changes remote state",
   'mandateCard.warn.mutates_remote.why': "may be hard to undo",
   'mandateCard.warn.unclassified.head': "Couldn't tell what this does",
-  'mandateCard.warn.unclassified.why': "it isn't a known read-only command. Check yourself what it can change",
+  'mandateCard.warn.unclassified.why': "not a recognized read-only command — approve as if it could change anything",
   'mandateCard.warn.reads_file.head': "Reads a file",
   'mandateCard.warn.reads_file.why': "approval is tied to its current contents and asks again if it changes",
   'mandateCard.warn.short_prefix.head': "Short prefix",

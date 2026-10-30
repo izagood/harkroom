@@ -278,7 +278,7 @@ class StringsEn implements Strings {
       case 'mutates_remote':
         return 'may be hard to undo';
       case 'unclassified':
-        return 'it isn\'t a known read-only command. Check yourself what it can change';
+        return 'not a recognized read-only command — approve as if it could change anything';
       case 'reads_file':
         return 'approval is tied to its current contents and asks again if it changes';
       case 'short_prefix':

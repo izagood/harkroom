@@ -51,6 +51,7 @@ const WARN_KEY: Record<ToolRuleWarning, MessageKey> = {
   runs_arbitrary: 'mandateCard.warn.runs_arbitrary.head',
   executes_in_workload: 'mandateCard.warn.executes_in_workload.head',
   mutates_remote: 'mandateCard.warn.mutates_remote.head',
+  unclassified: 'mandateCard.warn.unclassified.head',
   reads_file: 'mandateCard.warn.reads_file.head',
   short_prefix: 'mandateCard.warn.short_prefix.head',
   uses_github_account: 'mandateCard.warn.uses_github_account.head',
@@ -63,7 +64,7 @@ export function looksCardGranted(g: GrantRow): boolean {
   return Math.abs(Date.parse(g.expiresAt) - Date.parse(g.grantedAt) - CARD_TTL_MS) < 10 * 60_000;
 }
 
-function WarnBadges({ warnings }: { warnings: readonly ToolRuleWarning[] }) {
+export function WarnBadges({ warnings }: { warnings: readonly ToolRuleWarning[] }) {
   const t = useT();
   return <>{orderToolRuleWarnings(warnings).map((w) => (
     <span key={w} className={`ml-2 inline-block rounded-row border px-1 ${DANGER.includes(w) ? 'border-danger-border bg-danger-surface text-danger' : 'border-warning-border bg-warning-surface text-warning'}`}

@@ -277,7 +277,7 @@ class StringsKo implements Strings {
       case 'mutates_remote':
         return '되돌리기 어려울 수 있다';
       case 'unclassified':
-        return '아는 읽기 명령이 아니다. 무엇을 바꿀 수 있는지 직접 확인하라';
+        return '읽기 전용으로 확인된 명령이 아니다 — 무엇이든 바꿀 수 있다고 보고 승인한다';
       case 'reads_file':
         return '승인은 지금 내용에 묶이고, 파일이 바뀌면 다시 묻는다';
       case 'short_prefix':

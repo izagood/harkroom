@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import type { AgentView, ChannelRow, GrantRow } from '@harkroom/shared';
 import { AgentGrantsSection } from '../src/components/settings/AgentGrantsSection';
+import { WarnBadges } from '../src/components/settings/ToolAllowGrants';
 import { setController, type Controller } from '../src/state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -147,6 +148,14 @@ describe('명령 허용 줄', () => {
     expect(soon.className).toContain('text-warning');
     expect(soon.textContent).toContain('3일 남음');
     expect(screen.getByTestId(`tool-allow-no-expiry-${READ_RULE}`).className).toContain('text-warning');
+  });
+
+  it('판정 모름(unclassified) 뱃지는 주황으로 — 아는 위험(빨강)과 갈린다', () => {
+    render(<WarnBadges warnings={['unclassified', 'mutates_remote']} />);
+    const unc = screen.getByTestId('tool-allow-warn-unclassified');
+    expect(unc.textContent).toBe('무엇을 하는지 판정하지 못했다');
+    expect(unc.className).toContain('text-warning');
+    expect(screen.getByTestId('tool-allow-warn-mutates_remote').className).toContain('text-danger');
   });
 
   it('안내 띠에서 왔으면(openToolAllow) 명령 허용 폼이 연 채로 선다', async () => {
