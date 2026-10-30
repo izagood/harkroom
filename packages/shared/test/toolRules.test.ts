@@ -70,6 +70,54 @@ describe('validateToolRule — 받는 것', () => {
     }
   });
 
+  it('위험 표에 있는 명령의 접두가 하위 명령을 고정하지 않으면 실행·원격 변경 경고를 둘 다 단다', () => {
+    for (const r of [
+      'Bash(kubectl --context ops -n app:*)', 'Bash(oc --context ops:*)', 'Bash(docker --context remote:*)',
+      'Bash(docker-compose -f app.yml:*)', 'Bash(helm --kube-context ops:*)', 'Bash(terraform -chdir=infra:*)',
+      'Bash(docker compose -f app.yml:*)',
+    ]) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings.includes('executes_in_workload') && v.warnings.includes('mutates_remote'), r).toBe(true);
+    }
+  });
+
+  it('두 단계 명령은 둘째 하위 명령으로 본다 — exec·run 은 실행 경고, 읽기는 경고 없음', () => {
+    expect(validateToolRule('Bash(docker compose -f app.yml exec:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
+    expect(validateToolRule('Bash(docker compose run:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
+    expect(validateToolRule('Bash(docker compose -f app.yml ps:*)')).toMatchObject({ ok: true, warnings: [] });
+    expect(validateToolRule('Bash(docker-compose -f app.yml exec:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
+  });
+
+  it('값 없는 옵션 뒤에 온 위험 하위 명령에도 경고를 단다', () => {
+    const has = (r: string, w: string) => { const v = validateToolRule(r); return v.ok && v.warnings.includes(w as never); };
+    expect(has('Bash(kubectl --insecure-skip-tls-verify exec mypod:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(kubectl --insecure-skip-tls-verify delete pod:*)', 'mutates_remote')).toBe(true);
+    expect(has('Bash(oc --insecure-skip-tls-verify rsh mypod:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(helm --debug upgrade rel:*)', 'mutates_remote')).toBe(true);
+    expect(has('Bash(terraform -no-color apply plan:*)', 'mutates_remote')).toBe(true);
+    expect(has('Bash(docker -D run img:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(podman --remote exec box:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(nerdctl --debug run img:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(docker compose --dry-run exec svc:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(docker-compose --verbose exec svc:*)', 'executes_in_workload')).toBe(true);
+    expect(has('Bash(docker --context compose compose exec:*)', 'executes_in_workload')).toBe(true);
+  });
+
+  it('컨테이너 도구의 상태를 바꾸는 하위 명령에 원격 변경 경고를 단다', () => {
+    for (const r of ['Bash(docker --context remote rm box:*)', 'Bash(docker compose -f app.yml up:*)', 'Bash(docker compose down:*)',
+      'Bash(podman stop box:*)', 'Bash(docker-compose -f app.yml rm:*)', 'Bash(podman-compose up:*)']) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings.includes('mutates_remote'), r).toBe(true);
+    }
+    expect(validateToolRule('Bash(podman exec box:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
+  });
+
+  it('하위 명령을 고정한 읽기 접두와 정확 규칙은 그대로 경고 없음', () => {
+    expect(validateToolRule('Bash(kubectl --context ops -n app logs:*)')).toMatchObject({ ok: true, warnings: [] });
+    expect(validateToolRule('Bash(helm --kube-context ops status:*)')).toMatchObject({ ok: true, warnings: [] });
+    expect(validateToolRule('Bash(kubectl --context ops)')).toMatchObject({ ok: true, warnings: [] });
+  });
+
   it('MCP 도구 하나는 받는다 — harkroom MCP 는 아니다', () => {
     expect(validateToolRule('mcp__slack__read_thread')).toMatchObject({ ok: true, kind: 'mcp_tool' });
     expect(validateToolRule('mcp__harkroom__grant_delegate')).toEqual({ ok: false, code: 'unsupported_tool' });
