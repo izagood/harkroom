@@ -112,6 +112,29 @@ describe('validateToolRule — 받는 것', () => {
     expect(validateToolRule('Bash(podman exec box:*)')).toMatchObject({ ok: true, warnings: ['executes_in_workload'] });
   });
 
+  it('컨테이너·VM 안으로 들어가거나 써 넣는 하위 명령에 실행 경고를 단다', () => {
+    for (const r of ['Bash(docker cp box:*)', 'Bash(docker attach box:*)', 'Bash(podman cp box:*)', 'Bash(docker compose cp svc:*)',
+      'Bash(docker-compose attach svc:*)', 'Bash(podman machine ssh vm:*)', 'Bash(kubectl --context ops proxy:*)']) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings.includes('executes_in_workload'), r).toBe(true);
+    }
+  });
+
+  it('클러스터·인프라 상태를 바꾸는 하위 명령에 원격 변경 경고를 단다', () => {
+    for (const r of ['Bash(docker stack deploy app:*)', 'Bash(docker service update app:*)', 'Bash(docker swarm leave:*)',
+      'Bash(helm --kube-context ops test rel:*)', 'Bash(terraform state rm res:*)', 'Bash(terraform state mv res:*)',
+      'Bash(terraform state push file:*)', 'Bash(terraform taint res:*)', 'Bash(terraform untaint res:*)', 'Bash(terraform force-unlock id:*)']) {
+      const v = validateToolRule(r);
+      expect(v.ok && v.warnings.includes('mutates_remote'), r).toBe(true);
+    }
+  });
+
+  it('같은 관리 명령의 읽기 꼴은 그대로 경고 없음', () => {
+    for (const r of ['Bash(docker stack ls:*)', 'Bash(docker service ls:*)', 'Bash(terraform state list:*)', 'Bash(podman machine list:*)']) {
+      expect(validateToolRule(r), r).toMatchObject({ ok: true, warnings: [] });
+    }
+  });
+
   it('하위 명령을 고정한 읽기 접두와 정확 규칙은 그대로 경고 없음', () => {
     expect(validateToolRule('Bash(kubectl --context ops -n app logs:*)')).toMatchObject({ ok: true, warnings: [] });
     expect(validateToolRule('Bash(helm --kube-context ops status:*)')).toMatchObject({ ok: true, warnings: [] });

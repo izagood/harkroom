@@ -154,35 +154,47 @@ function runsArbitrary(head: string, sub: string | null, words: readonly string[
 const SHELL_SYNTAX = /[;&|`<>\n\r]|\$\(|\$\{/;
 
 /** (첫 낱말, 하위 명령) — 원격 작업 부하 안에서 임의 명령을 돌린다. */
-const EXEC_SUBCOMMANDS: Record<string, readonly string[]> = {
-  kubectl: ['exec', 'debug', 'attach', 'cp', 'port-forward', 'run'],
-  oc: ['exec', 'debug', 'rsh', 'cp', 'port-forward'],
-  docker: ['exec', 'run'],
-  podman: ['exec', 'run'],
-  nerdctl: ['exec', 'run'],
-  'docker-compose': ['exec', 'run'],
-  'podman-compose': ['exec', 'run'],
-  ssh: ['*'],
-};
-
 /** 컨테이너가 원격(`--context`)일 수 있어 상태를 바꾸는 하위 명령. */
 const CONTAINER_MUTATE = ['rm', 'rmi', 'kill', 'stop', 'restart', 'start', 'pause', 'unpause', 'update', 'create', 'push', 'prune'];
 const COMPOSE_MUTATE = ['up', 'down', 'rm', 'stop', 'restart', 'start', 'kill', 'pause', 'unpause', 'create', 'push', 'build'];
+/** swarm 관리 명령 — 클러스터의 서비스·스택을 바꾼다. */
+const SWARM_NESTED = {
+  stack: { exec: [], mutate: ['deploy', 'up', 'rm', 'remove', 'down'] },
+  service: { exec: [], mutate: ['create', 'update', 'scale', 'rollback', 'rm', 'remove'] },
+  swarm: { exec: [], mutate: ['init', 'join', 'leave', 'update', 'unlock', 'join-token', 'ca'] },
+} as const;
+
+/** 컨테이너·VM 안으로 들어가거나 그 안에 써 넣는 하위 명령. */
+const CONTAINER_EXEC = ['exec', 'run', 'cp', 'attach'];
+const COMPOSE_EXEC = ['exec', 'run', 'cp', 'attach'];
+
+const EXEC_SUBCOMMANDS: Record<string, readonly string[]> = {
+  kubectl: ['exec', 'debug', 'attach', 'cp', 'port-forward', 'proxy', 'run'],
+  oc: ['exec', 'debug', 'rsh', 'cp', 'port-forward'],
+  docker: CONTAINER_EXEC,
+  podman: CONTAINER_EXEC,
+  nerdctl: CONTAINER_EXEC,
+  'docker-compose': COMPOSE_EXEC,
+  'podman-compose': COMPOSE_EXEC,
+  ssh: ['*'],
+};
+
 
 /** 두 단계 명령(`docker compose …`) — 첫 하위 명령 뒤의 낱말을 이 표로 본다. */
 const NESTED_SUBCOMMANDS: Record<string, Record<string, { exec: readonly string[]; mutate: readonly string[] }>> = {
-  docker: { compose: { exec: ['exec', 'run'], mutate: COMPOSE_MUTATE } },
-  podman: { compose: { exec: ['exec', 'run'], mutate: COMPOSE_MUTATE } },
-  nerdctl: { compose: { exec: ['exec', 'run'], mutate: COMPOSE_MUTATE } },
+  docker: { compose: { exec: COMPOSE_EXEC, mutate: COMPOSE_MUTATE }, ...SWARM_NESTED },
+  podman: { compose: { exec: COMPOSE_EXEC, mutate: COMPOSE_MUTATE }, machine: { exec: ['ssh'], mutate: [] } },
+  nerdctl: { compose: { exec: COMPOSE_EXEC, mutate: COMPOSE_MUTATE } },
+  terraform: { state: { exec: [], mutate: ['rm', 'mv', 'push', 'replace-provider'] } },
 };
 
 /** (첫 낱말, 하위 명령) — 원격 상태를 바꾼다. */
 const MUTATE_SUBCOMMANDS: Record<string, readonly string[]> = {
   kubectl: ['delete', 'apply', 'patch', 'edit', 'replace', 'scale', 'drain', 'cordon', 'uncordon', 'rollout', 'annotate', 'label', 'create', 'set', 'taint'],
-  helm: ['install', 'upgrade', 'uninstall', 'rollback', 'delete'],
+  helm: ['install', 'upgrade', 'uninstall', 'rollback', 'delete', 'test'],
   git: ['push'],
   gh: ['api', 'workflow', 'release', 'repo', 'secret', 'variable', 'label', 'issue'],
-  terraform: ['apply', 'destroy', 'import'],
+  terraform: ['apply', 'destroy', 'import', 'taint', 'untaint', 'force-unlock'],
   docker: CONTAINER_MUTATE,
   podman: CONTAINER_MUTATE,
   nerdctl: CONTAINER_MUTATE,
