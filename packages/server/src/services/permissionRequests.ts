@@ -601,6 +601,12 @@ export async function decidePermissionRequest(
       }
       r.mandateId = made;
       await client.query(`update permission_request set mandate_id = $2 where id = $1`, [r.id, made]);
+      // 카드 답은 카드 글을 원인으로 에이전트를 깨운다 — 그 턴의 임대는 원인 글의 위임 키를 읽는다(`issueTurnLease`).
+      // 머리 글에만 키를 적으면 카드 답 턴의 키가 null 이라 방금 더한 줄을 못 쓴다(`no_mandate_line` 되풀이). 카드 글에도 적는다.
+      // W1 불변식: 키는 소유자의 에이전트 글에만 — 카드를 쓴 것이 이 요청의 에이전트일 때만 적는다.
+      if (r.cardMessageId) {
+        await client.query(`update message set mandate_id = $2 where id = $1 and mandate_id is null and author_id = $3`, [r.cardMessageId, made, args.agentId]);
+      }
     }
     if (r.kind !== 'command' && args.decision === 'approve_hour') {
       await client.query('rollback');
