@@ -19,6 +19,7 @@ import { AttentionStack } from './AuthWarningCards';
 import { ReloginPanel, type ReloginDone } from './ReloginPanel';
 import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
 import { PasswordResetNoticeBanner } from './PasswordReset';
+import { FullDiskAccessHost } from './FullDiskAccessHost';
 import { ServerCompatBanner } from './ServerCompatBanner';
 import { ConnectionBanner } from './ConnectionBanner';
 import { UpdateToast } from './UpdateToast';
@@ -428,6 +429,8 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
         <ServerCompatBanner onOpenSettings={onOpenSettings} />
         {/* 내 계정에 재설정 코드가 발급됐다는 알림(R7) — 확인할 때까지 남는다. */}
         <PasswordResetNoticeBanner />
+        {/* 전체 디스크 접근 — 첫 안내 창과, 켜졌는데 다시 시작해야 할 때만 서는 띠(`FullDiskAccessHost`). */}
+        <FullDiskAccessHost />
         <div className="relative flex flex-1 overflow-hidden">
           {/* 관문 카드·실패 토스트는 본문 위에 **겹쳐** 그린다(2026-10-09 A안). 전에는 헤더 아래
               흐름 안의 띠라 뜰 때마다 화면 전체가 한 줄 내려갔다. 채널 안이 아니라 여기인 이유는
