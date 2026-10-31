@@ -860,6 +860,18 @@ describe('깨움 보고처·접힌 예약을 턴에 넘긴다 (2026-10-06)', () 
     expect(seen.find((t) => t.mentionId === 'm2')?.scheduledWake).toBeUndefined();
   });
 
+  it('감시 예약(meta.wake.watch: true)이면 대상에 watch 를 싣는다(2026-10-31)', async () => {
+    const seen: MentionTarget[] = [];
+    const runTurn = (async (_d: unknown, t: MentionTarget) => { seen.push(t); return { stopRequestedAt: null }; }) as never;
+    const { scheduler } = harness({ runTurn });
+    const wake = batchOf([{ entryId: 1, messageId: 'w1', threadRootId: 'root-1', body: '스레드 감시' }]);
+    (wake.entries[0] as { reason: string }).reason = 'wake';
+    (wake.messages[0] as { meta: unknown }).meta = { kind: 'wake', wake: { wakeAt: 'x', reason: '스레드 감시', watch: true } };
+    await scheduler.admit(wake, ctx);
+    await scheduler.drain();
+    expect(seen[0]?.wake).toEqual({ reason: '스레드 감시', watch: true });
+  });
+
   it('옛 서버의 깨움(meta 에 reportTo 없음)은 지금처럼 사유만 싣는다', async () => {
     const seen: MentionTarget[] = [];
     const runTurn = (async (_d: unknown, t: MentionTarget) => { seen.push(t); return { stopRequestedAt: null }; }) as never;

@@ -750,6 +750,58 @@ describe('runMentionTurn', () => {
     });
   });
 
+  /**
+   * 감시 예약(`turn.wake` watch, 2026-10-31). "5분마다 확인" 감시의 깨어난 턴이 다음 예약도 끝났다는 말도 없이 끝나
+   * 감시가 조용히 멈췄고 아무도 몰랐다 — 그 턴의 앵커에 실패 줄을 남긴다.
+   *
+   * 되돌려 RED: 감시 판정 블록을 지우면 첫 시험의 실패 줄이 없다.
+   */
+  describe('감시 예약(watch)', () => {
+    async function watchTurn(script: (fake: FakeHarkroom, meId: string) => void, watch = true) {
+      const fake = new FakeHarkroom(defOf());
+      fake.seedFrom('human-1', '@forge 이 스레드 5분마다 봐 줘');
+      const { deps, runTurn, plans, turnOpts } = await makeDeps(fake);
+      runTurn.script = async () => { script(fake, deps.me.id); return { exitCode: 0, timedOut: false, tail: '' }; };
+      await runMentionTurn(deps, {
+        channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+        wake: { reason: '스레드 감시', ...(watch ? { watch: true as const } : {}) }, scheduledWake: true,
+      });
+      return { fake, prompt: (await getPlanContent(plans, turnOpts)).at(-1)! };
+    }
+    const watchFails = (fake: FakeHarkroom) => fake.fails.filter((x) => x.body.includes('감시가 여기서 멈췄다'));
+
+    it('① 다음 예약도 끝 보고도 없이 끝나면 앵커에 실패 줄을 하나 남긴다 — 프롬프트에는 의무가 실려 있다', async () => {
+      const { fake, prompt } = await watchTurn((f, me) => { f.seedFrom(me, '아직 새 글 없다', null); });
+      expect(prompt).toContain('이 예약은 감시(watch)다');
+      const warn = watchFails(fake);
+      expect(warn).toHaveLength(1);
+      expect(warn[0]).toMatchObject({ channelId: CHANNEL, threadRootId: null, retryable: false });
+      expect(warn[0]!.body).toContain('스레드 감시');
+    });
+
+    it('② 다음 예약을 걸었으면 실패 줄이 없다', async () => {
+      const { fake } = await watchTurn((f, me) => {
+        f.seedFrom(me, '아직 새 글 없다', null);
+        f.seedFrom(me, '스레드 감시', null).kind = 'wake';
+      });
+      expect(watchFails(fake)).toEqual([]);
+    });
+
+    it('③ 끝 보고(message.report)를 남겼으면 실패 줄이 없다', async () => {
+      const { fake } = await watchTurn((f, me) => {
+        f.seedFrom(me, '감시를 마친다 — 답이 왔다', null).meta = { kind: 'report', report: { checks: ['스레드 확인'] } };
+      });
+      expect(watchFails(fake)).toEqual([]);
+    });
+
+    it('④ 감시가 아닌 깨움은 말없이 끝나도 지금과 같다 — 감시 실패 줄이 없고 프롬프트에 의무도 없다', async () => {
+      const { fake, prompt } = await watchTurn(() => {}, false);
+      expect(prompt).not.toContain('감시(watch)');
+      expect(watchFails(fake)).toEqual([]);
+      expect(fake.fails.filter((x) => x.body.includes('감시'))).toEqual([]);
+    });
+  });
+
   it('사람 글로 접힌 예약은 그 부름의 프롬프트에 실린다(서버 107)', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 그거 말고 이거 먼저 해');

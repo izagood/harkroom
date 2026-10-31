@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, wakeWatch, hasOwnReportSince, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -259,6 +259,26 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
     expect(r.prompt).toContain('예약 1개가 접혔다');
     expect(r.prompt).toContain('- 회수 (원래 2026-10-06T02:00:00.000Z · 보고처 harkroom://message/r9)');
     expect(r.prompt).toContain('alice: 이거 먼저');
+  });
+
+  it('wakeWatch 는 meta.wake.watch 가 true 일 때만 참이다(2026-10-31)', () => {
+    expect(wakeWatch({ kind: 'wake', wake: { wakeAt: 'x', reason: 'r', watch: true } })).toBe(true);
+    expect(wakeWatch({ kind: 'wake', wake: { wakeAt: 'x', reason: 'r', watch: 'true' } })).toBe(false);
+    expect(wakeWatch({ kind: 'wake', wake: { wakeAt: 'x', reason: 'r' } })).toBe(false);
+    expect(wakeWatch(null)).toBe(false);
+  });
+
+  it('hasOwnReportSince 는 이 턴의 내 끝 보고(meta.kind report)만 센다', () => {
+    const base = { channelId: 'c', threadRootId: null, attachments: [], kind: 'user' } as const;
+    const msgs = [
+      { ...base, id: 'a', seq: 5, authorId: 'me', body: '옛 보고', meta: { kind: 'report' } },
+      { ...base, id: 'b', seq: 11, authorId: 'peer', body: '남의 보고', meta: { kind: 'report' } },
+      { ...base, id: 'c', seq: 12, authorId: 'me', body: '그냥 답', meta: {} },
+    ] as unknown as Parameters<typeof hasOwnReportSince>[0];
+    expect(hasOwnReportSince(msgs, 'me', 10)).toBe(false);
+    const withReport = [...msgs, { ...base, id: 'd', seq: 13, authorId: 'me', body: '끝', meta: { kind: 'report', turnId: 't1' } }] as typeof msgs;
+    expect(hasOwnReportSince(withReport, 'me', 10, 't1')).toBe(true);
+    expect(hasOwnReportSince(withReport, 'me', 10, 't2')).toBe(false);
   });
 
   it('wakeReportTo 는 모양이 틀린 meta 를 없는 것으로 본다', () => {

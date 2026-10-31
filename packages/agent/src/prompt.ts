@@ -1187,6 +1187,8 @@ export function buildSystemPrompt(opts: {
     // 사유 한 줄에 없으면 사라졌다(task_manager 실측) — 약속한 곳을 기계가 읽는 인자로 받는다.
     '결과를 **다른 스레드에** 보고하기로 약속했으면 `turn.wake` 의 `reportTo`(그 채널·스레드 id)를 준다 —',
     '깨어난 턴은 자기 스레드만 알아서, 주지 않으면 그 약속을 모른다. 남이 건 예약을 근거로 약속하지 마라.',
+    // 2026-10-31: "5분마다 확인" 감시의 깨어난 턴이 다음 예약 없이 끝나 감시가 조용히 멈췄다 — 감시임을 예약에 적게 한다.
+    '주기적으로 지켜보는 예약이면 `watch: true` 를 준다 — 깨어난 턴은 다음 예약을 다시 걸거나, 감시를 마치면 `message.report` 로 끝을 알린다.',
     // f4(2026-10-27): 서버 가이드의 예약 절을 턴 판본에서 뺐다(`server/src/mcp/guide.ts` 머리) — 거기에만 있던 사실을 여기로 옮긴다.
     '예약은 하한 60초, 사람의 새 발화 없이 연속 20회까지다 — 소진되면 `message.fail` 로 넘긴다. 사람이 그 스레드에서',
     '너를 부르면 걸어 둔 예약은 접힌다(그 턴 프롬프트에 접힌 사유가 실린다) — 아직 필요하면 다시 건다.',
@@ -1740,7 +1742,7 @@ export function buildTurnPrompt(opts: {
    * 아래 자기-발화 필터에 전부 걸린다. 그대로 두면 `mentionTurn` 이 하네스를 돌리지
    * 않고 끝내, 걸어 둔 기다림이 조용히 사라진다.
    */
-  wake?: { reason: string; reportTo?: WakeReportTo };
+  wake?: { reason: string; reportTo?: WakeReportTo; watch?: true };
   /**
    * 이 부름이 **접은 내 예약**(서버 107, 2026-10-06). 사람이 이 스레드에서 부르면 걸어 둔 깨움이 전부 접히는데,
    * 전에는 이 턴이 그것을 몰라 "11:22 에 본다" 는 약속이 조용히 사라졌다. 델타를 대신하지 않는다 — 사람의
@@ -1867,6 +1869,7 @@ export function buildTurnPrompt(opts: {
   const wakeLines = wake === undefined ? [] : [
     `(예약된 후속 턴 — 사유: ${wake.reason})`,
     ...(wake.reportTo ? reportToLines(wake.reportTo) : []),
+    ...(wake.watch ? [WATCH_DUTY_LINE] : []),
     ...(freshWake ? freshWakeLines() : []),
     '',
   ];
@@ -2035,6 +2038,51 @@ export function wakeReportTo(meta: unknown): WakeReportTo | undefined {
   const r = wake?.reportTo as Record<string, unknown> | undefined;
   if (!r || typeof r.channelId !== 'string' || typeof r.threadRootId !== 'string') return undefined;
   return { channelId: r.channelId, threadRootId: r.threadRootId };
+}
+
+/**
+ * 깨움 메시지 meta 가 **감시의 한 고리**인가(`meta.wake.watch`, 2026-10-31). `true` 만 참이다 — 옛 서버의 깨움에는
+ * 이 키가 없고, 그때는 지금처럼 감시 의무 없이 돈다.
+ */
+export function wakeWatch(meta: unknown): boolean {
+  const wake = (meta as { wake?: { watch?: unknown } } | null | undefined)?.wake;
+  return wake?.watch === true;
+}
+
+/**
+ * 감시 예약으로 깨어난 턴에게 그 의무를 적는 한 줄(2026-10-31). 실측: "5분마다 확인" 감시의 깨어난 턴이 다음 예약도
+ * 끝났다는 말도 없이 끝나 감시가 조용히 멈췄다 — 깨어난 턴은 사유 한 줄만 받으므로 그 의무를 몰랐다.
+ */
+export const WATCH_DUTY_LINE =
+  '(이 예약은 감시(watch)다 — 끝내기 전에 다음 turn.wake(watch: true)를 걸거나, 감시를 마치면 message.report 로 끝을 알려라.'
+  + ' 둘 다 없이 끝나면 러너가 이 스레드에 "감시가 멈췄다" 를 남긴다.)';
+
+/** `message.report` 가 남기는 글의 `meta.kind`(서버 `mcpPlugin.ts` 의 `message.report`). */
+export const META_KIND_REPORT = 'report';
+
+/**
+ * 이 턴이 **끝 보고**(`message.report` — 서버가 `meta.kind: 'report'` 로 싣는다)를 남겼나(2026-10-31). 감시의 끝 표식이다.
+ * 메시지 `kind` 가 아니라 `meta.kind` 를 보는 이유: 보고는 평범한 발화(`kind: 'user'`)로 저장되고 형식은 meta 에 실린다.
+ * 턴으로 가르는 규칙은 대기 줄과 같다(`hasOwnWakeSince`).
+ */
+export function hasOwnReportSince(
+  messages: MessageRow[], meId: string, sinceSeq: number, turnId?: string | null,
+): boolean {
+  return messages.some(
+    (m) => m.authorId === meId && m.seq > sinceSeq
+      && (m.meta as { kind?: unknown } | null | undefined)?.kind === META_KIND_REPORT && ownedByTurn(m, turnId, 'count'),
+  );
+}
+
+/**
+ * 감시 예약으로 깨어난 턴이 다음 예약도 끝 보고도 없이 끝났을 때 앵커 스레드에 남기는 실패 줄(2026-10-31).
+ * 사유를 싣는다 — 같은 스레드에 이미 대기 줄로 보이던 말이라 새로 드러나는 것이 없다.
+ */
+export function watchMissedNotice(reason: string): string {
+  return [
+    '감시 예약으로 깨어난 턴이 다음 예약도 끝 보고도 없이 끝났다 — 감시가 여기서 멈췄다.',
+    `이어서 볼 거면 다시 부르거나 예약을 걸어라${reason ? ` (사유: ${reason})` : ''}.`,
+  ].join('\n');
 }
 
 /**
