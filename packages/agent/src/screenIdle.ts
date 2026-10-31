@@ -105,6 +105,14 @@ const CHROME = /[─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║╔╗
 /** 경로·URL 처럼 보이는 조각(줄 어디에 있든) — 작업 폴더가 통지에 실리지 않게 그 줄은 버린다. */
 const PATHLIKE = /(~?\/|…\/|\.\.?\/|[a-z]+:\/\/)\S/;
 
+/**
+ * 하네스 TUI 가 생각(reasoning) 단계를 접어 그린 요약 줄 — 모델의 말이 아니다(2026-10-31). opencode 는 reasoning 부분을
+ * `+ Thought: 7.4s` 처럼 그린다(fixture `opencode-tui-resumed.txt` 실물). 모델이 마지막 걸음을 생각만 하고(글 부분 없이) 끝내면
+ * 입력창 위 새 줄이 이것뿐이라 대리 게시가 `> + Thought: 1.5s` 를 답으로 올렸다. 줄 **전체**가 표지 + 시간(또는 `…`)일 때만
+ * 빼서, `Thought about it: yes` 같은 산문은 그대로 둔다. 시간 꼴은 `350ms`·`1.5s`·`1m 5s` 를 덮는다.
+ */
+const REASONING_SUMMARY = /^(?:[+\-▸▾]\s*)?(?:Thought|Thinking)(?::\s*\d+(?:\.\d+)?(?:ms|s|m|h)(?:\s+\d+(?:\.\d+)?(?:ms|s|m|h))*|\s*(?:…|\.\.\.))$/;
+
 /** 작업 폴더 조각으로 볼 낱말의 최소 길이 — 폴더 이름의 id 꼬리(`…-0f0f0f0f`)는 이보다 길고, 보통 낱말은 짧다. */
 const CWD_FRAGMENT_MIN = 12;
 
@@ -123,7 +131,8 @@ function hasCwdFragment(line: string, cwd: string | null): boolean {
 
 /**
  * 끝난 화면에서 모델이 쓴 답으로 보이는 줄을 뽑는다(「답 없이 끝났다」 통지에 싣는다). 하네스마다 화면 모양이 달라 경계를
- * 모르므로 **마지막으로 본 일하는 중 화면에 없던 줄**만 집고, 입력창·일하는 중 표지·테두리·경로 줄은 뺀다(위에서 `max` 줄).
+ * 모르므로 **마지막으로 본 일하는 중 화면에 없던 줄**만 집고, 입력창·일하는 중 표지·테두리·경로·생각 요약(`REASONING_SUMMARY`) 줄은
+ * 뺀다(위에서 `max` 줄). 남는 줄이 없으면 빈 배열 — 호출자는 「답 없음」 통지로 물러난다.
  * `cwd`(턴의 작업 폴더)를 주면 그 이름 조각이 든 줄도 뺀다(`hasCwdFragment`).
  */
 export function screenAnswerLines(
@@ -136,7 +145,9 @@ export function screenAnswerLines(
     if (!l || seen.has(l) || facts.ready.test(l) || facts.busy?.test(l) || PATHLIKE.test(l) || hasCwdFragment(l, cwd)) continue;
     const chrome = (l.match(CHROME) ?? []).length;
     if (chrome * 2 > l.replace(/\s/g, '').length) continue;
-    picked.push(l.replace(/^[•●⏺◦▣]\s*/, ''));
+    const said = l.replace(/^[•●⏺◦▣]\s*/, '');
+    if (REASONING_SUMMARY.test(said)) continue;
+    picked.push(said);
     if (picked.length >= max) break;
   }
   return picked;

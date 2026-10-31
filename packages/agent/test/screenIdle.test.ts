@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { screenIdleFactsFor } from '../src/adapters/index.js';
+import { AGENT_CALL_NO_ANSWER, silentTurnNotice } from '../src/prompt.js';
 import { classifyScreen, SCREEN_IDLE_END_MS, ScreenIdleWatch, screenAnswerLines } from '../src/screenIdle.js';
 
 const fx = (name: string): string => readFileSync(join(import.meta.dirname, 'fixtures', name), 'utf8');
@@ -58,6 +59,34 @@ describe('screen.busy — 실측 화면', () => {
     expect(screenAnswerLines(ended, facts, busy, cwd)).toEqual([]);
     // 폴더를 모르면(옛 호출) 그 줄이 답으로 집힌다 — 이 줄이 고침의 이빨이다.
     expect(screenAnswerLines(ended, facts, busy).join(' ')).toContain('0f0f0f0f');
+  });
+
+  describe('생각 요약 줄은 답이 아니다(2026-10-31 opencode 대리 게시 「> + Thought: 1.5s」)', () => {
+    const facts = screenIdleFactsFor('opencode')!;
+    const busy = fx('opencode-tui-busy.txt');
+    /** 끝난 화면 = 일하는 중 화면의 일하는 중 바닥줄 자리에 `lines` 를 그린 것(입력창 위 새 줄만 바뀐 실측 모양). */
+    const endedWith = (...lines: string[]): string => busy.replace(/^.*esc interrupt.*$/m, lines.map((l) => `     ${l}`).join('\n'));
+
+    it('새 줄이 opencode 의 생각 요약뿐이면 답 줄이 없다 → 「답 없음」 통지로 물러난다', () => {
+      for (const line of ['+ Thought: 1.5s', 'Thought: 12s', '+ Thought: 1m 5s', '+ Thought: 350ms', '+ Thinking...', 'Thinking…']) {
+        expect(screenAnswerLines(endedWith(line), facts, busy), line).toEqual([]);
+      }
+      // 호출자(mentionTurn)가 하는 그대로 이어 붙인다 — 빈 답은 null 이고, 에이전트가 부른 턴은 「답 없음」 글이 된다.
+      const screenAnswer = screenAnswerLines(endedWith('+ Thought: 1.5s'), facts, busy).join(' ') || null;
+      expect(screenAnswer).toBeNull();
+      expect(silentTurnNotice({ caller: 'agent', lastSaid: null, offAnchor: null, pat: 'hk_test', screenEnded: true, screenAnswer }))
+        .toEqual({ kind: 'post', body: AGENT_CALL_NO_ANSWER });
+    });
+
+    it('진짜 답 줄과 생각 요약 줄이 같이 있으면 답 줄만 남는다', () => {
+      expect(screenAnswerLines(endedWith('+ Thought: 7.4s', '준비됐습니다.', '+ Thought: 1.9s'), facts, busy)).toEqual(['준비됐습니다.']);
+    });
+
+    it('「Thought」 로 시작하는 산문은 지우지 않는다', () => {
+      for (const line of ['Thought about it: yes', 'Thinking about the retry path first.', 'Thought: the cache key is stale']) {
+        expect(screenAnswerLines(endedWith(line), facts, busy), line).toEqual([line]);
+      }
+    });
   });
 
   it('claude 는 화면으로 끝을 읽지 않는다(기록 end_turn 경로 그대로)', () => {
