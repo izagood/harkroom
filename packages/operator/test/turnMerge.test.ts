@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
-import { createTurnMerge, ghEnv, isAlreadyQueuedError, notGreenChecks, parseMergeArgs, parseQueueInfo, parseRequiredChecks, unstableVerdict, prCiVerdict, pushedAtOf, ENQUEUE_MUTATION, NO_PR_CI_PR_QUERY, NO_PR_CI_REPO_QUERY, QUEUE_QUERY, REQUIRED_QUERY, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
+import { createPrGate, createTurnMerge, ghEnv, isAlreadyQueuedError, notGreenChecks, parseMergeArgs, parseQueueInfo, parseRequiredChecks, unstableVerdict, prCiVerdict, pushedAtOf, ENQUEUE_MUTATION, NO_PR_CI_PR_QUERY, NO_PR_CI_REPO_QUERY, QUEUE_QUERY, REQUIRED_QUERY, type ExecResult, type TurnMerge } from '../src/turnMerge.js';
 import { pickMergeGhUser } from '../src/localMerge.js';
 
 // 에이전트 머지 래퍼(PR 2/3) — 오퍼레이터 쪽 판정·gh 호출. 설계·security F3 는 스레드 3deac356.
@@ -992,5 +992,87 @@ describe('turnMerge', () => {
     expect(parseQueueInfo(JSON.stringify({ data: { repository: { pullRequest: null } } }))).toBeNull();
     expect(parseQueueInfo(JSON.stringify({ data: { repository: { pullRequest: { id: 'X', isMergeQueueEnabled: true, isInMergeQueue: false, mergeQueueEntry: { position: 1, state: 'QUEUED' } } } } })))
       .toEqual({ id: 'X', enabled: true, inQueue: true, entry: { position: 1, state: 'QUEUED' } });
+  });
+});
+
+// 관문 판정만 따로(2026-10-31) — 읽기 전용 `pr.status` 가 같은 판정을 쓴다. 부작용이 없고 gh 는 읽기만 부른다.
+describe('createPrGate().inspect', () => {
+  const HEAD = 'e'.repeat(40);
+  const BASE = 'c'.repeat(40);
+  const ENV = ghEnv('/home/x', 'tok');
+  let calls: string[][];
+  let view: Record<string, unknown>;
+  let requiredNodes: Record<string, unknown>[] | null;
+  let clock: number;
+  let firstSeen: Map<string, number>;
+  const fakeGh = async (args: string[]): Promise<ExecResult> => {
+      calls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view') return { code: 0, stdout: JSON.stringify(view), stderr: '' };
+      if (args[3] === `query=${QUEUE_QUERY}`) return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { id: 'PR_1', isMergeQueueEnabled: false, isInMergeQueue: false, mergeQueueEntry: null } } } }), stderr: '' };
+      if (args[3] === `query=${REQUIRED_QUERY}`) {
+        if (!requiredNodes) return { code: 1, stdout: '', stderr: 'HTTP 502' };
+        return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { commits: { nodes: [{ commit: { oid: view.headRefOid, statusCheckRollup: { contexts: { pageInfo: { hasNextPage: false }, nodes: requiredNodes } } } }] } } } } }), stderr: '' };
+      }
+      if (args[3] === `query=${NO_PR_CI_PR_QUERY}`) return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { baseRefOid: BASE, headRefOid: view.headRefOid, headRefName: 'feat/x', isCrossRepository: true } } } }), stderr: '' };
+      if (args[3] === `query=${NO_PR_CI_REPO_QUERY}`) return { code: 0, stdout: JSON.stringify({ data: { repository: { base: null, head: null, commit: { checkSuites: { totalCount: 0, nodes: [] }, status: null } } } }), stderr: '' };
+      return { code: 1, stdout: '', stderr: 'unexpected' };
+  };
+  // 관문에는 보고(forward)·머지 dep 가 아예 없다 — gh 하나만 받는다. 그 gh 도 읽기만 받았는지 onlyReads 로 본다.
+  const gate = () => createPrGate({ now: () => clock, firstSeen, gh: fakeGh });
+  /** 읽기만 했나 — `pr merge`·뮤테이션·activity 밖의 쓰기가 하나도 없다. */
+  const onlyReads = () => {
+    for (const a of calls) {
+      expect(a[0] === 'pr' ? a[1] : 'api', a.join(' ')).not.toBe('merge');
+      expect(a.join(' ')).not.toMatch(/mutation|enqueuePullRequest|-X (?:POST|PUT|PATCH|DELETE)/);
+    }
+  };
+
+  beforeEach(() => {
+    calls = []; requiredNodes = null; clock = Date.parse('2026-10-31T12:00:00Z'); firstSeen = new Map();
+    view = { state: 'OPEN', isDraft: false, headRefOid: HEAD, baseRefName: 'main', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS', name: 'Test' }] };
+  });
+
+  it('초록 PR — verdict 통과, 큐 정보도 싣고 읽기만 한다', async () => {
+    const r = await gate().inspect('o/r', 7, ENV, HEAD);
+    expect(r).toMatchObject({ ok: true, queue: { enabled: false, inQueue: false }, verdict: { why: null, ignored: [], failing: [] }, noPrChecks: false });
+    expect(calls.map((a) => a.slice(0, 2))).toEqual([['pr', 'view'], ['api', 'graphql']]);
+    onlyReads();
+  });
+
+  it('headSha 를 주지 않으면 PR 의 headRefOid 로 잰다 — 주면 그것과 대조한다', async () => {
+    expect(await gate().inspect('o/r', 7, ENV)).toMatchObject({ ok: true, verdict: { why: null } });
+    expect(await gate().inspect('o/r', 7, ENV, 'f'.repeat(40))).toMatchObject({ ok: true, verdict: { why: { code: 'head_moved' } } });
+  });
+
+  it('UNSTABLE 이고 필수가 아닌 체크만 빨가면 통과하고 그 이름을 ignored 로 싣는다', async () => {
+    view = { ...view, mergeStateStatus: 'UNSTABLE', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS', name: 'Test' }, { status: 'COMPLETED', conclusion: 'FAILURE', name: 'Lint' }] };
+    requiredNodes = [
+      { __typename: 'CheckRun', name: 'Test', status: 'COMPLETED', conclusion: 'SUCCESS', isRequired: true },
+      { __typename: 'CheckRun', name: 'Lint', status: 'COMPLETED', conclusion: 'FAILURE', isRequired: false },
+    ];
+    const r = await gate().inspect('o/r', 7, ENV);
+    expect(r).toMatchObject({ ok: true, verdict: { why: null, ignored: ['Lint'], failing: [] } });
+    onlyReads();
+  });
+
+  it('체크 0개 — 유예 안이면 ci_pending, 같은 firstSeen 을 받은 다른 관문도 그 시각으로 재고 2분 뒤에는 noPrChecks 로 통과', async () => {
+    view = { ...view, statusCheckRollup: [] };
+    const start = clock;
+    expect(await gate().inspect('o/r', 7, ENV)).toMatchObject({ ok: true, verdict: { why: { code: 'ci_pending' } }, noPrChecks: false });
+    expect(firstSeen.get(`o/r#7@${HEAD}`)).toBe(start);
+    clock += 60_000;
+    const other = gate(); // 상태 읽기 쪽 관문 — 같은 Map 이라 유예가 다시 시작되지 않는다.
+    const mid = await other.inspect('o/r', 7, ENV);
+    expect(mid).toMatchObject({ verdict: { why: { code: 'ci_pending', message: expect.stringContaining('waiting 60s') } } });
+    expect(firstSeen.get(`o/r#7@${HEAD}`)).toBe(start);
+    clock += 61_000;
+    expect(await other.inspect('o/r', 7, ENV)).toMatchObject({ ok: true, verdict: { why: null }, noPrChecks: true });
+    onlyReads();
+  });
+
+  it('gh pr view 가 실패하면 viewError 만 돌려주고 다른 것은 부르지 않는다', async () => {
+    const g = createPrGate({ gh: async (a) => { calls.push(a); return { code: 1, stdout: '', stderr: 'HTTP 404' }; }, now: () => clock, firstSeen });
+    expect(await g.inspect('o/r', 7, ENV)).toEqual({ ok: false, viewError: { stderr: 'HTTP 404' } });
+    expect(calls).toHaveLength(1);
   });
 });
