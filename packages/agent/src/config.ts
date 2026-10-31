@@ -51,6 +51,8 @@ export interface RunnerConfig {
   operatorBin: string;
   /** 「정확한 명령」 PreToolUse hook 을 claude 멘션 턴에 다는가(H③b, 기본 false). */
   commandHook: boolean;
+  /** 턴 도중 새 글 PostToolUse hook(`turn.ts::postToolHookEntry`)을 claude 멘션 턴에 다는가 — 기본 켜짐, 오퍼레이터가 '0' 으로 끈다. */
+  postToolHook: boolean;
   /**
    * 이 머신에서 Claude in Chrome 을 열 수 있는가(스레드 e8c8365d) — 오퍼레이터가 **앱이 띄운 로컬
    * 오퍼레이터이고** 확장 native host 가 깔려 있을 때만 `HARKROOM_CHROME_HOST=1` 을 준다. 이것이 거짓이면
@@ -117,6 +119,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
     operatorBin: required(env, 'HARKROOM_OPERATOR_BIN'),
     // 「정확한 명령」 hook(H③b) — 오퍼레이터가 `operator.json` 의 commandHook 로 켤 때만 '1'. 기본 꺼짐.
     commandHook: env.HARKROOM_COMMAND_HOOK === '1',
+    // 턴 도중 새 글 hook — 권한을 넓히지 않는 알림이라 켠 쪽이 기본이다. `operator.json` 의 `postToolHook: false` 가 '0' 을 준다.
+    postToolHook: env.HARKROOM_POST_TOOL_HOOK !== '0',
     // Claude in Chrome — 오퍼레이터가 '1' 을 줄 때만. 없으면 꺼짐(사람 브라우저를 조작하는 권한이라 닫힌 쪽이 기본).
     chromeHost: env.HARKROOM_CHROME_HOST === '1',
     mcpConfigPath: required(env, 'HARKROOM_MCP_CONFIG'),

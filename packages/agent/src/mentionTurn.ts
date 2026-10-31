@@ -19,7 +19,7 @@ import type { FailOpts, Me } from './harkroom.js';
 import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
-import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
+import { attachesCommandHook, attachesPostToolHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { screenGateFor, screenIdleFactsFor, readsBuiltinSkills } from './adapters/index.js';
 import { SCREEN_IDLE_END_MS, ScreenIdleWatch, screenAnswerLines } from './screenIdle.js';
 import { commandRulesOf, fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, turnKeyDeliveryOf, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
@@ -321,6 +321,8 @@ export interface MentionTurnDeps {
   operatorBin: string;
   /** 「정확한 명령」 hook(H③b). 오퍼레이터 설정이 켰을 때만 true. */
   commandHook?: boolean;
+  /** 턴 도중 새 글 hook(`turn.ts::postToolHookEntry`). false 일 때만 끈다. */
+  postToolHook?: boolean;
   /**
    * codex 승인 명령 규칙·턴 hook 을 갖춘다(`codexRules.ts::prepareCodexRules`). 돌려주는 env 를 그 턴에 얹는다. 없으면 규칙 파일을
    * 쓰지 않는다(승인 명령도 샌드박스 안).
@@ -1337,6 +1339,7 @@ export async function runMentionTurn(
       toolAllows, commandHook: attachesCommandHook(def.harness, def.mentionPermission, deps.commandHook === true),
       // opencode API 키 연결 턴은 명령 전체 규칙만 셸이 열린다(`laneOpencodeBashTable`).
       exactShellOnly: Boolean(deps.providerEnv) && usesXdgHome(def.harness),
+      newPostsHook: deps.postToolHook !== false && attachesPostToolHook(def.harness, def.mentionPermission),
     },
     api: { operatorBin: deps.operatorBin, connectors: apiConnectors, delegatable: apiInfo.delegatable },
     channelName: deps.channelName,
@@ -1556,6 +1559,7 @@ export async function runMentionTurn(
     mergeRepos,
     toolAllows,
     commandHook: deps.commandHook === true,
+    postToolSinceSeq: deps.postToolHook === false ? null : turnStartSeq,
     chrome: chromeTurnFor(def, deps.chromeHost),
     apiConnectors,
     apiDelegatable: apiInfo.delegatable,
