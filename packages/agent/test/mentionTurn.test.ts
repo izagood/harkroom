@@ -1578,8 +1578,10 @@ describe('runMentionTurn', () => {
 
     // 다음 폴에서 새 메시지가 자기 발화(예: 다른 프로세스가 같은 계정으로 후속 메모를
     // 남김)뿐이면 프롬프트가 비어 턴을 건너뛴다 — runTurn 이 아예 불리지 않아야 한다.
-    fake.seedFrom(ME.id, '자기 후속 메모');
-    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    // 부른 글은 그 메모 자신이다 — 커서가 넘은 **남의** 부른 글이면 델타가 비어도 턴을 돌린다(2026-10-31, 아래 「커서가 넘은
+    // 멘션」), 읽은 범위에 없는 부른 글(`MENTION`)도 그렇다. 자기 글이 부른 턴만 여전히 건너뛴다.
+    const memo = fake.seedFrom(ME.id, '자기 후속 메모');
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: memo.id });
     expect(plans).toHaveLength(1); // 두 번째 호출은 runTurn 을 안 불렀다
 
     const afterSkip = deps.store.get(key)!;
@@ -1592,6 +1594,31 @@ describe('runMentionTurn', () => {
     expect(plans).toHaveLength(2);
     expect(plans[1]!.args).toContain('-r');
     expect(plans[1]!.args).toContain(afterFirst.sessionId);
+  });
+
+  /**
+   * 2026-10-31 재현: 같은 스레드의 멘션 X 는 앞 턴이 끝나길 기다린다(`mentionScheduler` 의 `blocked`). 그 사이 다른 멘션의 턴이
+   * X 를 맥락으로 보고 커서를 넘겼다. X 의 턴은 델타가 비어 하네스를 돌리지 않고 끝났고 👀 만 남았다.
+   */
+  it('커서가 넘은 멘션: 새 글이 없어도 하네스를 돌리고 그 글을 「← 너를 부른 글」로 싣는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    const x = fake.seedFrom('human-1', '@forge 기다리던 요청');
+    const y = fake.seedFrom('human-1', '@forge 먼저 돈 요청');
+    const { deps, plans, runTurn, turnOpts } = await makeDeps(fake, { handles: { [ME.id]: ME.handle, 'human-1': 'alice' } });
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '먼저 돈 요청에 답했다', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: y.id });
+    expect(deps.store.get(SessionStore.threadKey(CHANNEL, null))!.lastFedSeq).toBeGreaterThan(x.seq);
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: x.id });
+    expect(plans).toHaveLength(2);
+    const planContent = await getPlanContent(plans, turnOpts);
+    expect(planContent[1]).toContain('alice (← 너를 부른 글): @forge 기다리던 요청');
+    expect(planContent[1]).toContain('아직 어느 턴도 처리하지 않았다');
+    expect(planContent[1]).not.toContain('먼저 돈 요청');
   });
 
   // task-9 브리프 수정 항목 — handles 맵이 배치 단위로 채워져야 동료 발화가 handle 로 렌더된다.

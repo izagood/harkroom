@@ -1810,7 +1810,18 @@ export function buildTurnPrompt(opts: {
   const unseenOwn = (m: MessageRow): boolean => unseenOwnAfterSeq !== undefined
     && m.seq > unseenOwnAfterSeq && !NON_UTTERANCE_KINDS.has(m.kind);
   const toShow = newMessages.filter((m) => (isFirstTurn && !freshWake) || m.authorId !== meId || unseenOwn(m));
-  if (!toShow.length && wake === undefined && delegation === undefined && editedMention === undefined) {
+  // **델타에 없는 부른 글**(2026-10-31). 같은 스레드의 멘션 턴은 하나씩 돈다(`mentionScheduler` 의 `blocked`) — 이 멘션이 기다리는
+  // 동안 앞 턴이 델타를 읽으며 이 글을 **맥락으로** 보고 커서를 그 너머로 옮긴다. 그 턴은 "다른 요청은 제 턴이 있다"는 지시대로
+  // 이 글을 건드리지 않는다. 그러면 이 턴의 델타는 비고 아래 빈-프롬프트 가드에 걸려 👀 만 달린 채 아무도 답하지 않았다.
+  // 그래서 멘션 턴(`mentionId` — 깨움·위임 결말 턴은 넘기지 않는다)의 부른 글이 `toShow` 에 없으면 델타를 대신할 수 있다.
+  // 내 글이면(그럴 일은 없다) 빼고, 수정으로 불린 글은 `editedMention` 이 따로 싣는다. 이미 답한 멘션을 다시 띄우지 않는 것은
+  // 스케줄러(`doneUnread`·`recentlyDone`)의 몫이다. `mentionId` 없는 호출의 "자기 발화뿐 → 돌리지 않는다" 는 그대로다.
+  const mentionRow = mentionId === undefined ? undefined : messages.find((m) => m.id === mentionId);
+  // 읽은 페이지에 없는 부른 글은 델타가 비었을 때만 센다 — 델타가 있으면 그 글은 대개 커서 뒤에 한 페이지 넘게 밀린 것이고,
+  // 그 자리는 아래 「범위 밖」 줄이 이미 알린다.
+  const staleMention = mentionId !== undefined && editedMention?.id !== mentionId
+    && (mentionRow ? mentionRow.seq <= lastFedSeq && mentionRow.authorId !== meId : !toShow.length);
+  if (!toShow.length && !staleMention && wake === undefined && delegation === undefined && editedMention === undefined) {
     // 새 메시지가 있었지만 전부 자기 발화라 걸러진 경우도 여기로 온다. 그래도 prompt 를
     // 비우고 fedSeq 는 이미 위에서 전진시킨 값을 그대로 쓴다 — 걸러냈다고 다음 턴에 같은
     // 메시지를 또 "새 것"으로 들이밀면 세션이 매번 자기 말을 다시 보고, 반대로 fedSeq 를
@@ -1832,8 +1843,15 @@ export function buildTurnPrompt(opts: {
   if (mentionId !== undefined && editedMention?.id !== mentionId && !messages.some((m) => m.id === mentionId)) {
     omittedLines.push(`(이 턴을 띄운 글 harkroom://message/${mentionId} 은 위 범위 밖이라 싣지 못했다 — \`message.read\` 로 먼저 읽어라)`);
   }
+  // 델타에 없는 부른 글은 델타 **앞**에 「← 너를 부른 글」로 싣는다(seq 가 커서 이하라 델타보다 옛것이다). 읽은 페이지에도 없으면
+  // 위 「범위 밖」 줄이 자리를 알린다 — 그때는 안내 줄만 단다.
+  const staleLines = !staleMention ? [] : [
+    '(너를 부른 글은 앞 턴에 맥락으로 이미 보였지만 아직 어느 턴도 처리하지 않았다 — 이 턴이 지금 처리하라)',
+    ...(mentionRow ? [renderLine(mentionRow, handles, ANCHOR_LINE_NOTE)] : []),
+    ...(shown.length ? [''] : []),
+  ];
   const noteCtx = { mentionId, threadRootId, meHandle: handles[meId] };
-  const lines = [...omittedLines, ...shown.map((m) => renderLine(m, handles, lineNote(m, noteCtx)))];
+  const lines = [...omittedLines, ...staleLines, ...shown.map((m) => renderLine(m, handles, lineNote(m, noteCtx)))];
   // 깨움 줄을 **사람의 발화처럼 렌더하지 않는다**(`renderLine` 을 쓰지 않는 이유다).
   // "forge: CI 결과 확인" 으로 보이면 에이전트가 자기 옛 말을 새 요청으로 읽는다.
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.
