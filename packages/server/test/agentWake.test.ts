@@ -431,6 +431,36 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
     });
   });
 
+  describe('감시(watch, 2026-10-31)', () => {
+    it('watch: true 면 깨움 메시지 meta 에 싣는다', async () => {
+      const threadRootId = await newThread();
+      const client = await mcpClient(botPat);
+      const res = text(await client.callTool({
+        name: 'turn.wake',
+        arguments: { channelId, threadRootId, notBeforeSec: 300, reason: '스레드 감시', watch: true },
+      }));
+      await client.close();
+      expect(res.error).toBeUndefined();
+      const msg = await pool.query(`select meta from message where id = $1`, [res.wake.messageId]);
+      expect(msg.rows[0].meta.wake.watch).toBe(true);
+    });
+
+    it('watch 가 없거나 false 면 싣지 않는다', async () => {
+      const client = await mcpClient(botPat);
+      for (const extra of [{}, { watch: false }]) {
+        const threadRootId = await newThread();
+        const res = text(await client.callTool({
+          name: 'turn.wake',
+          arguments: { channelId, threadRootId, notBeforeSec: 300, reason: '한 번만', ...extra },
+        }));
+        expect(res.error).toBeUndefined();
+        const msg = await pool.query(`select meta from message where id = $1`, [res.wake.messageId]);
+        expect(msg.rows[0].meta.wake).not.toHaveProperty('watch');
+      }
+      await client.close();
+    });
+  });
+
   // 게시가 스레드 머리를 거절하면(bad_thread) 그 사유를 그대로 돌려준다 — 상한(wake_limit)으로
   // 바꿔 말하면 에이전트가 "너무 많이 기다렸다"로 읽고 사람에게 넘긴다.
   it('다른 채널의 글을 스레드 머리로 주면 bad_thread 로 거절한다 — wake_limit 이 아니다', async () => {

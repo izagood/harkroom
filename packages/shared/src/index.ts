@@ -1529,7 +1529,11 @@ export const ASK_MAX_OPTIONS = 5;
  */
 export interface WakeMeta {
   kind: 'wake';
-  wake: { wakeAt: string; reason?: string };
+  /**
+   * `watch`: 이어지는 감시의 한 고리(2026-10-31) — 깨어난 턴이 다음 예약도 끝 보고도 없이 끝나면 러너가
+   * 실패 줄을 남긴다. true 일 때만 실린다.
+   */
+  wake: { wakeAt: string; reason?: string; reportTo?: WakeReportTo; watch?: boolean };
 }
 
 /**

@@ -20,7 +20,7 @@ import { accountFailureOf, accountTrailOf, withAccountFailover, type ClaudeAccou
 import {
   accountTrailReason, controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
   withAccountTrail,
-  providerLaneNotice, providerLaneRecallable, sessionConflictNotice, stallNotice, stallRetryable, threadModelRejectedNotice, wakeReportTo,
+  providerLaneNotice, providerLaneRecallable, sessionConflictNotice, stallNotice, stallRetryable, threadModelRejectedNotice, wakeReportTo, wakeWatch,
 } from './prompt.js';
 import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, isThreadModelRejected, MAX_ATTEMPTS, nextBackoffMs } from './policy.js';
 import type { SecretLeases } from './secretLeases.js';
@@ -284,10 +284,10 @@ function askAnsweredNote(mention: { body: string; meta?: unknown }): string {
   return `내가 낸 선택지에 답이 왔다 — 고른 것: ${label ?? picked}`;
 }
 
-/** 깨움 턴의 대상: 사유는 깨움 메시지 본문, 보고처는 그 meta(`meta.wake.reportTo`). */
-function wakeTarget(mention: InboxBatch['messages'][number]): { reason: string; reportTo?: WakeReportTo } {
+/** 깨움 턴의 대상: 사유는 깨움 메시지 본문, 보고처·감시 표식은 그 meta(`meta.wake.reportTo`·`meta.wake.watch`, 2026-10-31). */
+function wakeTarget(mention: InboxBatch['messages'][number]): { reason: string; reportTo?: WakeReportTo; watch?: true } {
   const reportTo = wakeReportTo(mention.meta);
-  return { reason: mention.body, ...(reportTo ? { reportTo } : {}) };
+  return { reason: mention.body, ...(reportTo ? { reportTo } : {}), ...(wakeWatch(mention.meta) ? { watch: true as const } : {}) };
 }
 
 /** 끝났는데 읽음 처리가 안 된 entry 를 "다시 띄우지 않는다" 로 기억하는 상한(2026-10-02). */

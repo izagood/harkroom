@@ -16,7 +16,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
 import type { FailOpts, Me } from './harkroom.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE } from './prompt.js';
+import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE, hasOwnReportSince, watchMissedNotice } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
@@ -608,7 +608,7 @@ export interface MentionTarget {
    * 옵셔널인 이유: 평범한 멘션 턴에는 깨움이 없다. 그리고 값이 있으면 프롬프트 조립이
    * 달라진다 — 깨움에는 부른 사람이 없어서 델타가 비고, 비면 하네스가 돌지 않는다.
    */
-  wake?: { reason: string; reportTo?: WakeReportTo };
+  wake?: { reason: string; reportTo?: WakeReportTo; watch?: true };
   /**
    * 이 턴이 **예약(`turn.wake`)이 시각이 되어** 깨어난 턴이다(inbox 사유 `wake`). `wake` 만으로는
    * 못 가른다 — 선택 답(`ask_answered`·`ask_closed`)도 같은 자리를 쓰는데, 그것은 사람이 방금 답한
@@ -2988,6 +2988,18 @@ export async function runMentionTurn(
     // 실측된 모양이다(task_manager 10-06). 다시 기다리기로 했으면(새 깨움) 아직 보고할 때가 아니니 경고하지 않는다.
     if (reportTo && reportBaseSeq !== null && !hasOwnWakeSince(after, deps.me.id, turnStartSeq, turnId)) {
       await reportPromiseCheck(deps, reportTo, reportBaseSeq, target.wake?.reason ?? '', anchor ?? mentionId, channelId);
+    }
+    // **감시가 이어졌나**(2026-10-31). 실측: "5분마다 확인" 감시의 깨어난 턴이 다음 예약도 끝났다는 말도 없이 끝나
+    // 감시가 조용히 멈췄고 아무도 몰랐다. 감시 예약(`watch: true`)으로 깨어난 턴은 다음 깨움을 걸거나 끝 보고
+    // (`message.report`)를 남겨야 한다 — 둘 다 없으면 앵커에 실패 줄을 남긴다. 다시 부를 일은 아니라 `retryable: false`.
+    // 일반 답글은 끝 표식이 아니다: 답하고도 다음 예약을 잊는 것이 실측된 모양이다.
+    if (target.wake?.watch && !hasOwnWakeSince(after, deps.me.id, turnStartSeq, turnId)
+      && !hasOwnReportSince(after, deps.me.id, turnStartSeq, turnId)) {
+      console.log(`[mentionTurn] ${key}: 감시 예약으로 깨어난 턴이 다음 예약도 끝 보고도 없이 끝났다 — 실패 줄을 남긴다`);
+      await deps.harkroom.fail(channelId, watchMissedNotice(target.wake.reason).slice(0, BODY_LIMIT), anchor, {
+        retryable: false,
+        what: '감시 예약으로 깨어난 턴이 다음 예약 없이 끝났다',
+      });
     }
   } catch (err) {
     console.error(

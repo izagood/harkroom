@@ -83,6 +83,11 @@ export interface ScheduleWakeInput {
    * 앵커와 같은 스레드면 뜻이 없어 싣지 않는다(호출자가 거른다).
    */
   reportTo?: { channelId: string; threadRootId: string };
+  /**
+   * 이 예약이 이어지는 감시의 한 고리인가(2026-10-31, 선택). true 면 깨움 메시지 meta 에 싣고, 러너는
+   * 깨어난 턴이 다음 예약도 끝 보고(message.report)도 없이 끝나면 실패 줄을 남긴다. true 일 때만 싣는다.
+   */
+  watch?: boolean;
   /** 이 예약을 건 턴의 원인(오퍼레이터를 거친 요청만) — 대기 줄의 `cause_message_id`(118)로 남아 머지 사슬을 잇는다. */
   chainCause?: string | null;
   /** 대기 줄을 건 턴의 id(`PostMessageInput.turnId`). */
@@ -132,6 +137,7 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
         // 보고처는 **깨움 메시지에** 싣는다 — 러너는 inbox 항목이 가리키는 이 메시지에서 사유와 함께
         // 그대로 되찾는다(앵커를 040 에 두 번 저장하지 않은 것과 같은 규칙). 새 컬럼이 필요 없다.
         ...(input.reportTo ? { reportTo: input.reportTo } : {}),
+        ...(input.watch === true ? { watch: true } : {}),
       },
     },
   });

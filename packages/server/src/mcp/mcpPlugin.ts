@@ -2368,7 +2368,7 @@ function buildMcpServer(
    * 판정해 `wake_limit` 으로 답한다 — 같은 거절이 아니다.
    */
   server.registerTool('turn.wake', {
-    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다. 결과를 다른 스레드에 보고하기로 했으면 reportTo 에 그 채널·스레드 id',
+    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다. 결과를 다른 스레드에 보고하기로 했으면 reportTo 에 그 채널·스레드 id. 주기적으로 지켜보는 예약이면 watch: true — 깨어난 턴이 다음 예약도 끝 보고(message.report)도 없이 끝나면 러너가 실패 줄을 남긴다',
     inputSchema: {
       channelId: z.string().uuid(),
       threadRootId: z.string().uuid(),
@@ -2380,8 +2380,15 @@ function buildMcpServer(
        * 이 키를 모른다 — zod 가 모르는 키를 버리므로 예약은 되고 약속만 빠진다.
        */
       reportTo: z.object({ channelId: z.string().uuid(), threadRootId: z.string().uuid() }).optional(),
+      /**
+       * 이 예약이 **이어지는 감시의 한 고리**인가(2026-10-31, 선택). 깨어난 턴은 다음 예약을 걸거나 감시를
+       * 마쳤다고 알려야(message.report) 한다 — 둘 다 없이 끝나면 러너가 앵커 스레드에 실패 줄을 남긴다.
+       * 실측: "5분마다 확인" 감시가 깨어난 턴이 아무 말 없이 끝나며 조용히 멈췄고 아무도 몰랐다. true 일
+       * 때만 싣는다. 옛 러너는 모르는 meta 키를 무시하고, 옛 서버는 zod 가 버린다(reportTo 와 같다).
+       */
+      watch: z.boolean().optional(),
     },
-  }, async ({ channelId, threadRootId, notBeforeSec, reason, reportTo }) => {
+  }, async ({ channelId, threadRootId, notBeforeSec, reason, reportTo, watch }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
@@ -2404,6 +2411,7 @@ function buildMcpServer(
     const result = await scheduleWake(pool, {
       accountId: account.id, channelId, threadRootId, notBeforeSec, reason, chainCause, turnId: storedTurnId,
       ...(report ? { reportTo: report } : {}),
+      ...(watch === true ? { watch: true } : {}),
     });
     if (result.refusal) return jsonResult({ error: result.refusal });
 
