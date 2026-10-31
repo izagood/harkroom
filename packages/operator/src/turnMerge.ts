@@ -123,6 +123,11 @@ export interface TurnMergeDeps {
   exec?: Exec;
   /** 지금 시각(ms) — 시험용. */
   now?: () => number;
+  /**
+   * PR CI 없음 유예의 「처음 본 시각」 Map(`PrGateDeps.firstSeen`). 오퍼레이터는 하나를 만들어 머지 길과 `pr.status` 에 같이 넘긴다
+   * (2026-10-31) — 없으면 이 머지 길만의 것을 만든다(시험·옛 부르는 쪽).
+   */
+  firstSeen?: Map<string, number>;
 }
 
 export interface TurnMerge {
@@ -555,33 +560,34 @@ export function createPrGate({ gh, now, firstSeen }: PrGateDeps): PrGate {
   };
 }
 
-export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
-  const exec = deps.exec ?? defaultExec;
-  const now = deps.now ?? Date.now;
-  /**
-   * PR CI 없음 판정의 유예 기준(처음 본 시각) — 메모리뿐이라 재기동하면 다시 처음부터 잰다. 늦추기만 하고 앞당기지 않는다.
-   * 이 Map 하나를 관문(`createPrGate`)에 넘긴다 — 상태 읽기도 같은 것을 받아 유예가 한 시계로 흐른다(2026-10-31).
-   */
-  const firstSeen = new Map<string, number>();
+export type GhToken = { ok: true; token: string; login: string };
+export type GhTokenFail = { ok: false; code: 'no_gh_user' | 'gh_user_not_logged_in' | 'gh_token_failed'; message: string };
 
+/**
+ * gh 토큰 고르기 — 머지와 `pr.status` 가 **같은 것**을 쓴다(2026-10-31). 계정은 `ghUserFor`(`merge.byScope`: 정확한 `owner/name` →
+ * `owner/*` → 없으면 `no_gh_user`)로만 고른다. 활성 gh 계정으로 넘어가는 길은 없다. `tokenForLogin` 은 1회 승인처럼 계정이 이미
+ * 정해진 경우의 것이다 — 읽기 전용 상태는 그 길을 쓰지 않는다.
+ */
+export function createGhTokens(deps: { exec: Exec; ghPath: string; home: string; ghUserFor: TurnMergeDeps['ghUserFor'] })
+  : { tokenFor(repo: string): Promise<GhToken | GhTokenFail>; tokenForLogin(user: string, why: string): Promise<GhToken | GhTokenFail> } {
+  const { exec, ghPath, home, ghUserFor } = deps;
   /**
    * 머지에 쓸 gh 토큰. **`merge.ghUser` 가 없으면 머지하지 않는다**(security P1, fail-closed). 활성 계정으로 넘어가면
    * 그 계정이 무엇이든 — 한 머신에 업무 계정과 개인 계정이 같이 로그인돼 있을 수 있다 — 그 신원으로 머지된다.
    * 서버는 저장소 이름을 가리지 않으므로, "이 계정이 쓸 수 없는 저장소는 래퍼로 머지할 수 없다"를 기계로 지키는
    * 자리가 바로 여기다: ghUser 를 한 계정으로 고정하면 그 계정이 쓸 수 없는 저장소는 머지가 실패한다.
    */
-  type TokenFail = { ok: false; code: 'no_gh_user' | 'gh_user_not_logged_in' | 'gh_token_failed'; message: string };
-  const tokenFor = async (repo: string): Promise<{ ok: true; token: string; login: string } | TokenFail> => {
-    const pick = await deps.ghUserFor(repo);
+  const tokenFor = async (repo: string): Promise<GhToken | GhTokenFail> => {
+    const pick = await ghUserFor(repo);
     if (!pick || !/^[A-Za-z0-9-]{1,39}$/.test(pick.login)) {
       return { ok: false, code: 'no_gh_user', message: `no GitHub account is set for ${repo} on this device — a person picks one in Settings › Agents › Permissions › PR merge (the wrapper never merges with the active gh account)` };
     }
     return tokenForLogin(pick.login, `set for ${pick.scope}`);
   };
   /** 정해진 계정 하나의 토큰. 이 기기 gh 에 없으면 다른 계정으로 넘어가지 않는다(fail-closed) — 사람이 다시 로그인하거나 줄·승인을 바꾼다. */
-  const tokenForLogin = async (user: string, why: string): Promise<{ ok: true; token: string; login: string } | TokenFail> => {
+  const tokenForLogin = async (user: string, why: string): Promise<GhToken | GhTokenFail> => {
     if (!/^[A-Za-z0-9-]{1,39}$/.test(user)) return { ok: false, code: 'no_gh_user', message: `not a GitHub login: ${user.slice(0, 40)}` };
-    const r = await exec(deps.ghPath, ['auth', 'token', '-u', user], ghEnv(deps.home, null));
+    const r = await exec(ghPath, ['auth', 'token', '-u', user], ghEnv(home, null));
     const token = r.stdout.trim();
     if (r.code !== 0 || !token) {
       if (/no (?:oauth )?token found|not logged in|no account|unknown user/i.test(r.stderr)) {
@@ -591,6 +597,19 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     }
     return { ok: true, token, login: user };
   };
+  return { tokenFor, tokenForLogin };
+}
+
+export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
+  const exec = deps.exec ?? defaultExec;
+  const now = deps.now ?? Date.now;
+  /**
+   * PR CI 없음 판정의 유예 기준(처음 본 시각) — 메모리뿐이라 재기동하면 다시 처음부터 잰다. 늦추기만 하고 앞당기지 않는다.
+   * 이 Map 하나를 관문(`createPrGate`)에 넘긴다 — 상태 읽기도 같은 것을 받아 유예가 한 시계로 흐른다(2026-10-31).
+   */
+  const firstSeen = deps.firstSeen ?? new Map<string, number>();
+
+  const { tokenFor, tokenForLogin } = createGhTokens({ exec, ghPath: deps.ghPath, home: deps.home, ghUserFor: deps.ghUserFor });
 
   const gh = async (args: string[], env: Record<string, string>): Promise<ExecResult> => exec(deps.ghPath, args, env);
   /** 관문 판정은 여기 없다 — 읽기 전용 관문에 맡기고, 보고·머지 같은 부작용만 이 안에 둔다(2026-10-31). */
