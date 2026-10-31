@@ -915,6 +915,51 @@ describe('runMentionTurn', () => {
     ]);
   });
 
+  // 2026-10-31: 기록 대리 게시는 API 키 연결 턴에만 — 구독 claude 가 일부러 침묵한 FYI 의 끝말(답 꼴)이 대리 글이 됐다.
+  const QUIET_FYI = '바뀐 게 없어 이번엔 글을 올리지 않았다. 확인한 것:\n\n'
+    + '- 예시 작업 #101 은 그대로 열려 있다 — 새 커밋도 새 리뷰도 없다\n'
+    + '- 예시 작업 #102 는 어제 머지된 상태 그대로다 — 덧붙일 사실이 없다\n'
+    + '- 대기열에 새로 들어온 일이 없다 — 다음 부름 때 다시 본다';
+
+  it('구독 claude 턴: 에이전트가 부른 턴의 끝말이 답 꼴이어도 대리 글 없이 ✅ 하나다', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'claude-code' }));
+    fake.seedFrom('agent-peer', '@forge FYI — 예시 작업 상태 공유').id = MENTION;
+    const { deps } = await makeDeps(fake, { agentIds: new Set(['agent-peer']), readLastSaid: async () => QUIET_FYI });
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.posts).toEqual([]);
+    expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([
+      { channelId: CHANNEL, messageId: MENTION, emoji: '✅', action: 'add' },
+    ]);
+  });
+
+  it('API 키 연결 claude 턴: 같은 끝말은 기록에서 옮겨 올린다(2026-10-30 사례 유지)', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'claude-code', model: 'ExampleOrg/example-model' }));
+    fake.seedFrom('agent-peer', '@forge FYI — 예시 작업 상태 공유').id = MENTION;
+    const { deps } = await makeDeps(fake, {
+      agentIds: new Set(['agent-peer']), readLastSaid: async () => QUIET_FYI, providerEnv: async () => ({}),
+    });
+    // lane 턴은 작업 폴더를 읽어 보호 이름을 잰다 — 빈 작업 폴더를 미리 둔다.
+    const workspaceDir = join(deps.workspaceBaseDir, 'claude-lane');
+    await mkdir(workspaceDir, { recursive: true });
+    await deps.store.put(SessionStore.threadKey(CHANNEL, null), {
+      workspaceDir, sessionId: '00000000-0000-4000-8000-000000000001', harness: 'claude-code', lastFedSeq: 0, turnsRun: 0,
+    });
+    // claude lane 턴은 하위 프로세스 env 를 걷어 브릿지 값을 lane 전용 MCP 설정으로 준다 — 그 바탕 파일과 값을 둔다.
+    const mcpConfigPath = join(deps.workspaceBaseDir, 'mcp.json');
+    await writeFile(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
+    vi.stubEnv('HARKROOM_RUNNER_SECRET', 'fake-runner-secret');
+    try {
+      await runMentionTurn({ ...deps, mcpConfigPath }, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(fake.posts.map((p) => p.body)).toEqual([expect.stringContaining('하네스 기록에서 옮겨 올렸습니다')]);
+    expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([]);
+  });
+
   it('넘겨받은 일(delegatedBy)이 답 없이 끝나면 ✅ 가 아니라 실패다 — 위임을 「실패」로 닫아 팀장을 깨운다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('agent-peer', '@forge 응답 점검이다').id = MENTION;
