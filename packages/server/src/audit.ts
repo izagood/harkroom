@@ -70,6 +70,8 @@ export type AuditAction =
   // 에이전트 머지 권한(090, 스레드 3deac356): 래퍼의 판정 요청·거절·보고. detail 에 저장소·PR·sha·임대만, 본문 없음.
   | 'repo.merge.checked' | 'repo.merge.denied' | 'repo.merge.merged' | 'repo.merge.queued' | 'repo.merge.failed' | 'repo.merge.approved_once' | 'repo.merge.obsoleted' | 'mandate.shadow' | 'mandate.created' | 'mandate.ended' | 'mandate.line.added' | 'mandate.line.add_failed' | 'mandate.line.revoked'
   | 'api.call.checked' | 'api.call.denied' | 'api.call.done'
+  // 읽기 전용 PR 상태(2026-10-31) 허락 판정. target 은 저장소, detail 은 PR 번호(거절이면 코드도)만.
+  | 'pr.status.checked' | 'pr.status.denied'
   | 'grant.delegated' | 'grant.delegate.pending' | 'grant.delegate.denied' | 'grant.delegate.approved' | 'grant.delegate.declined' | 'grant.delegate.revoked'
   // 본문 거절(D5) — 에이전트의 글에 grant 받은 비밀 값이 있어서 막았다. detail 은 표면·비밀 이름·id 만.
   | 'secret.leak.blocked'

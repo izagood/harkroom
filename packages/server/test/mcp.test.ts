@@ -187,9 +187,17 @@ describe('mcp surface', () => {
     expect(names).toEqual([
       'account.list', 'account.me', 'agent.modelOptions', 'artifact.publish', 'attachment.fetch', 'attachment.upload', 'automation.list', 'automation.propose', 'automation.run', 'bg.claim', 'bg.complete', 'channel.doc', 'channel.list', 'grant.delegate', 'grant.list', 'grant.revoke', 'inbox.poll', 'inbox.read',
       'memory.archive', 'memory.audit', 'memory.get', 'memory.lease', 'memory.list', 'memory.merge', 'memory.recalled', 'memory.restore', 'memory.revisions', 'memory.search', 'memory.set', 'memory.unarchive',
-      'message.ask', 'message.askBundle', 'message.askBundleResolve', 'message.delegate', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact', 'permission.request', 'permission.revoke',
+      'message.ask', 'message.askBundle', 'message.askBundleResolve', 'message.delegate', 'message.fail', 'message.post', 'message.progress', 'message.react', 'message.read', 'message.report', 'message.search', 'message.unreact', 'permission.request', 'permission.revoke', 'pr.status',
       'secret.generate', 'secret.import', 'secret.list', 'secret.mount', 'secret.rotate', 'skill.propose', 'thread.note', 'thread.note.list', 'turn.wake', 'workitem.list', 'workitem.remove', 'workitem.upsert', 'workspace.guide',
     ]);
+
+    // pr.status(2026-10-31): 스키마는 서버가, 실행은 오퍼레이터가 — 서버까지 온 호출은 operator_required 다.
+    const pr = tools.tools.find((t) => t.name === 'pr.status')!;
+    expect(pr.inputSchema.required?.sort()).toEqual(['number', 'repo']);
+    expect(Object.keys(pr.inputSchema.properties ?? {}).sort()).toEqual(['number', 'repo']);
+    expect(pr.description).toContain('머지 허락을 받은 저장소만');
+    const direct = text(await client.callTool({ name: 'pr.status', arguments: { repo: 'example-org/example-repo', number: 1 } })) as { error: { code: string } };
+    expect(direct.error.code).toBe('operator_required');
 
     const posted = text(await client.callTool({
       name: 'message.post', arguments: { channelId, body: 'hello from mcp' },
