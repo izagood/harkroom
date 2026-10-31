@@ -48,7 +48,20 @@ export const PR_STATUS_FIELD_MAX = 200;
 /** 체크 개수 상한. */
 export const PR_STATUS_CHECKS_MAX = 100;
 
-const str = (v: unknown): string => (typeof v === 'string' ? v.slice(0, PR_STATUS_FIELD_MAX) : '');
+/**
+ * 남이 정한 글(체크 이름·브랜치 이름)을 **한 줄**로 만든다(2026-10-31). 줄바꿈·탭은 공백 하나로, 제어 문자(C0·DEL·C1)·방향 제어
+ * (U+200E·U+200F·U+061C·U+202A–202E·U+2066–2069)·폭 없는 문자(U+200B–200D·U+2060·U+FEFF)는 지운다 — 모델 문맥에서 줄을 꾸며
+ * 다른 칸·지시처럼 보이게 하거나, 보이는 글과 다른 순서로 읽히게 하는 길을 막는다. 앞뒤 공백도 걷는다.
+ */
+export function oneLineText(s: string): string {
+  return s
+    .replace(/[\r\n\t\v\f\u2028\u2029\u0085]+/g, ' ')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u061c\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, '')
+    .replace(/ {2,}/g, ' ')
+    .trim();
+}
+
+const str = (v: unknown): string => (typeof v === 'string' ? oneLineText(v).slice(0, PR_STATUS_FIELD_MAX) : '');
 const ENUMISH = /^[A-Z_]{0,40}$/;
 const enumish = (v: unknown): string => {
   const s = str(v);

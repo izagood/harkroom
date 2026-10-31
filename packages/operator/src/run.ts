@@ -58,6 +58,7 @@ import { createTurnSlots, MAX_TURNS_ENV, parseMaxTurns } from './turnSlots.js';
 import { collectMcpStatus, collectStatus, readMachineDigest } from './heartbeat.js';
 import { announceOf } from './communities.js';
 import { createTurnUploads } from './turnUploads.js';
+import { createTurnPrStatus } from './turnPrStatus.js';
 import { cleanupLedgerPath } from './workspaceCleanup.js';
 import { cleanupOwnersPath, createCleanupOwners } from './workspaceCleanupOwners.js';
 import { createWorkspaceCleanup, GIT_PATH, readCleanupSettings } from './workspaceCleanupService.js';
@@ -269,6 +270,12 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     ghLogins = { at: Date.now(), logins };
     return logins;
   };
+  /**
+   * PR CI 없음 유예의 「처음 본 시각」(`PrGateDeps.firstSeen`) — 머지 래퍼와 `pr.status` 가 **이 Map 하나**를 같이 쓴다(2026-10-31).
+   * 따로 들면 상태 읽기로 본 시각을 머지 길이 몰라 유예가 다시 시작된다.
+   */
+  const prFirstSeen = new Map<string, number>();
+  const ghUserFor = async (repo: string) => pickMergeGhUser((await readConfig(join(appDataDir, 'operator', 'operator.json'))).merge, repo);
   const turnMerge = createTurnMerge({
     forward: async (agentId, req) => {
       const c = communities.find((x) => x.knowsAgent(agentId));
@@ -279,7 +286,23 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     log,
     ghPath: GH_PATH,
     home: homedir(),
-    ghUserFor: async (repo) => pickMergeGhUser((await readConfig(join(appDataDir, 'operator', 'operator.json'))).merge, repo),
+    ghUserFor,
+    firstSeen: prFirstSeen,
+  });
+  // 읽기 전용 PR 상태(`turnPrStatus.ts`, 2026-10-31). 브릿지로 온 `pr.status` 를 받아 서버 허락 → 머지와 같은 계정으로 gh 읽기.
+  // `noteGhUse` 는 붙이지 않는다 — gh 계정 보고의 저장소 기록은 「이 커뮤니티가 **머지로** 쓴 저장소」다(`ghReport.ts`). 읽기는 머지
+  // 계정을 바꾸지도 머지를 하지도 않으므로 그 기록을 늘릴 까닭이 없고, 읽기 한 번으로 계정 줄이 보고에 실리는 길을 만들지 않는다.
+  const turnPrStatus = createTurnPrStatus({
+    forward: async (agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '이 에이전트를 아는 커뮤니티가 없다' };
+    },
+    lookupLease: (runnerId, cause) => turnSecrets.lookup(runnerId, cause),
+    log,
+    ghPath: GH_PATH,
+    home: homedir(),
+    ghUserFor,
+    firstSeen: prFirstSeen,
   });
   // 외부 API 래퍼(C안 P3, 스레드 07519d86). 브릿지 소켓으로 온 `api.call` 을 여기서 받아 서버 판정 → 키를 붙여 호출 → 결과
   // 보고를 한다. 키는 이 프로세스 밖으로 나가지 않는다. 임대는 머지와 같이 `turnSecrets` 의 것을 쓴다.
@@ -387,6 +410,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       if (mounted) return mounted;
       const merged = await turnMerge.maybeHandle(runnerId, agentId, req);
       if (merged) return merged;
+      const prStatus = await turnPrStatus.maybeHandle(runnerId, agentId, req);
+      if (prStatus) return prStatus;
       const called = await turnApi.maybeHandle(runnerId, agentId, req);
       if (called) return called;
       const reported = await cleanupOwners.maybeHandle(runnerId, agentId, req, kind);
