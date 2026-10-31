@@ -155,6 +155,31 @@ describe('mentionScheduler 승인 관문', () => {
     expect(h.scheduler.holdingEntries()).toEqual([]);
   });
 
+  /**
+   * 물러나며 중단한 턴(2026-10-31). 오퍼레이터 링크 없이 물러나는 러너는 열린 턴을 `onCancel('operator')` 로
+   * 끝낸다(`retreat.ts`) — 그 턴은 실패로 끝나지만 **읽음 처리하지 않는다.** entry 가 미읽음으로 남아,
+   * 교체 러너가 이관 보류(`HARKROOM_HANDOVER_HOLD`)가 풀린 뒤 같은 멘션에 새 턴을 띄운다. 끊긴 일이 사라지지 않는다.
+   *
+   * 되돌려 RED: 일반 실패 갈래가 첫 실패에 `finish` 를 부르면 `markedRead` 에 88 이 남는다.
+   */
+  it('물러나며 중단된 턴의 entry 는 읽음 처리하지 않는다 — 교체 러너가 보류가 풀린 뒤 다시 띄운다', async () => {
+    const old = harness({ runTurn: async () => { throw new Error('@operator 가 이 턴을 중단했다'); } });
+    await old.scheduler.admit(batchOf([{ entryId: 88, messageId: 'm-88', threadRootId: 'root-88' }]), ctx);
+    await old.scheduler.drain();
+    expect(old.markedRead).toEqual([]);
+
+    // 교체 러너: 앞 러너가 놓을 때 쥐고 있던 entry 는 보류 동안 건너뛰고, 풀리면 새 턴으로 띄운다.
+    const held = new Set([88]);
+    let calls = 0;
+    const next = harness({ runTurn: async () => { calls += 1; return { stopRequestedAt: null }; }, held });
+    expect(await next.scheduler.admit(batchOf([{ entryId: 88, messageId: 'm-88', threadRootId: 'root-88' }]), ctx)).toMatchObject({ started: 0, blocked: 1 });
+    held.clear();
+    expect(await next.scheduler.admit(batchOf([{ entryId: 88, messageId: 'm-88', threadRootId: 'root-88' }]), ctx)).toMatchObject({ started: 1 });
+    await next.scheduler.drain();
+    expect(calls).toBe(1);
+    expect(next.markedRead).toEqual([88]);
+  });
+
   it('서로 다른 스레드 3건을 동시에 띄운다', async () => {
     let calls = 0;
     const gate = deferred<MentionTurnResult>();
