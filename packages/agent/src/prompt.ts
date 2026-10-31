@@ -26,7 +26,8 @@ export const BODY_LIMIT = 8000;
  * 답하지 않은 것이 정상인데, 사람 눈에는 오류 카드가 줄줄이 쌓였다. 그래서 부른 쪽과 정황으로 나눈다:
  *
  * - 부른 쪽이 **에이전트**이고 다른 스레드 답도 없다 → 글 없이 멘션 메시지에 ✅ 리액션만 단다. 단 하네스 기록의 마지막 말이 답 꼴이면
- *   (`looksLikeAnswer`) 그 말을 인용으로 대신 올린다(2026-10-30 — 표 답을 텍스트로만 쓰고 끝낸 턴이 ✅ 로 덮였다). 처음 안은
+ *   (`looksLikeAnswer`) 그 말을 인용으로 대신 올린다(2026-10-30 — 표 답을 텍스트로만 쓰고 끝낸 턴이 ✅ 로 덮였다). 그 대리 게시는
+ *   API 키 연결 턴에만 한다(`recordProxy`, 2026-10-31 — 구독 claude 의 일부러 한 침묵까지 대리 글이 됐다). 처음 안은
  *   progress 줄이었지만, 데스크톱은 마지막 줄이 에이전트의 progress 인 스레드를 그 러너가 살아 있는지로
  *   `running`/`stuck` 이라 칠하고(`desktop/src/lib/threadState.ts::decide`) progress 묶음은 같은 저자의 보통
  *   글이 와야 닫힌다(`progressGroup.ts`) — FYI 스레드가 끝나지 않는 '작업 중'으로 남는다(designer 재검토).
@@ -65,16 +66,24 @@ export function silentTurnNotice(opts: {
    * 「덧붙일 말이 없는 FYI」인지 「답을 빼먹은 것」인지 모른다(E13 회차: codex·opencode·pi × API 키 모델이 잡담 답을 화면에만 썼다).
    */
   screenEnded?: boolean;
+  /**
+   * 기록의 마지막 말이 답 꼴일 때 **대신 올려도 되는 턴인가**(2026-10-31). 호출자는 API 키 연결(lane) 턴에만 참을 준다 — 빠지면 ✅ 다.
+   * 기록 대리 게시(2026-10-30)를 부른 것은 API 키 모델이 답을 최종 텍스트로만 쓰고 끝낸 턴이었다. 구독 claude 는 답을 스스로
+   * `message.post` 로 올리고, 말없이 끝낸 에이전트 호출은 **일부러 침묵한** FYI 다 — 그 끝말(「바뀐 게 없어 이번엔 글을 올리지 않았다」
+   * + 글머리 목록)도 답 꼴이라, 하루 저녁에 원치 않는 대리 글이 아홉 건 올라갔다(소유자 결정: claude 하네스는 대리 게시를 끄고 ✅ 만).
+   */
+  recordProxy?: boolean;
 }): SilentTurnNotice {
   if (opts.offAnchor !== null) return { kind: 'post', body: opts.offAnchor };
   if (opts.caller === 'agent') {
     // **에이전트가 부른 턴**(2026-10-25 E13 회차, 스레드 db4ab174). ✅ 만 달면 부른 쪽은 답을 받은 줄 안다 — 화면으로 끝을 안 턴은
     // 화면 답이 있으면 대신 올리고, 없으면 답이 없었다고 남긴다. 둘 다 멘션 없는 보통 글이다 — 부른 에이전트를 멘션으로
-    // 다시 부르지 않는다(화면 글 속 `@handle` 은 인용 줄 안이라 멘션이 아니다). 기록으로 끝을 아는 하네스(claude)는 마지막 말이 답 꼴이면 옮기고(`looksLikeAnswer`), 아니면 FYI 로 ✅ 다.
+    // 다시 부르지 않는다(화면 글 속 `@handle` 은 인용 줄 안이라 멘션이 아니다). 기록으로 끝을 아는 하네스(claude)는 API 키 연결 턴에서만 마지막 말이 답 꼴이면 옮기고(`looksLikeAnswer`·`recordProxy`), 아니면 FYI 로 ✅ 다.
     if (!opts.screenEnded) {
       // **기록의 마지막 말이 답 꼴이면 ✅ 로 덮지 않는다**(2026-10-30 2회차 시험, log-triage·ledger). API 키 모델은 표 답을 최종
       // 텍스트로만 쓰고 message.post 를 안 불렀다 — ✅ 만 남아 부른 쪽은 답을 받은 줄 알았다. 답 꼴만 옮기고 나머지 FYI 는 ✅ 그대로.
-      const proxied = looksLikeAnswer(opts.lastSaid) ? proxyRecordAnswerBody(opts.lastSaid!, opts.pat, opts.secrets) : '';
+      // 구독 턴은 끝말이 답 꼴이어도 옮기지 않는다(`recordProxy` 주석, 2026-10-31) — 일부러 침묵한 FYI 를 대리 글로 바꾸지 않는다.
+      const proxied = opts.recordProxy === true && looksLikeAnswer(opts.lastSaid) ? proxyRecordAnswerBody(opts.lastSaid!, opts.pat, opts.secrets) : '';
       return proxied ? { kind: 'post', body: proxied } : { kind: 'react', emoji: SILENT_ACK_EMOJI };
     }
     const proxied = proxyAnswerBody(opts.screenAnswer ?? null, opts.pat, opts.secrets);

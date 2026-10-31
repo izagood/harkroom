@@ -2958,6 +2958,9 @@ export async function runMentionTurn(
         // 기록이 말해 주지 않을 때만 화면 답을 대신 올린다 — 기록을 읽는 하네스(claude)의 마지막 말은 지금처럼 인용만 한다.
         screenAnswer: recordSaid === null ? end.screenSaid : null,
         screenEnded: recordSaid === null && end.screenEnded,
+        // 기록 대리 게시는 API 키 연결 턴에만(2026-10-31, `silentTurnNotice` 의 `recordProxy`). 구독 claude 가 말없이 끝낸 에이전트 호출은
+        // 일부러 한 침묵이라 ✅ 만 단다. 하네스 이름이 아니라 턴의 연결로 가른다 — 기록을 읽는 하네스는 표가 말한다(`readsSessionTranscript`).
+        recordProxy: providerEnv !== null,
       });
       if (notice.kind === 'react') {
         // 에이전트가 부른 FYI — 글 없이 멘션에 ✅ 만 단다(`silentTurnNotice` 주석). 마지막 말은 로그에만.

@@ -1673,7 +1673,8 @@ describe('silentTurnNotice — 화면 답 대리 게시 (2026-10-25, 스레드 d
 });
 
 describe('silentTurnNotice — 기록의 마지막 말이 답 꼴이면 ✅ 로 덮지 않는다 (2026-10-30 2회차 시험)', () => {
-  const base = { offAnchor: null, pat: 'hrkp_secretpat' } as const;
+  // 이 사례는 API 키 연결 턴이었다 — 대리 게시는 그 턴에만 한다(`recordProxy`, 2026-10-31).
+  const base = { offAnchor: null, pat: 'hrkp_secretpat', recordProxy: true } as const;
   // 실측 원문(2026-10-30, 계정 id·채널·PR 번호는 가짜 값): 표 답을 최종 텍스트로만 쓰고 message.post 를 안 부른 두 턴의 마지막 말.
   const TABLE = '결과를 정리해서 표로 올린다.\n\n---\n\n| 에이전트 | 건수 | 채널 | 마지막 말 요지 | 짐작 분류 |\n|---|---|---|---|---|\n'
     + '| 0000aaaa | 19 | 1111bbbb(주로), 2222cccc | 「바뀐 것 없음 / 할 일 없어서 글 안 올림」 | 글 안 올림(17) · 권한 대기(1) · 기타(1) |';
@@ -1720,6 +1721,34 @@ describe('silentTurnNotice — 기록의 마지막 말이 답 꼴이면 ✅ 로 
       const body = proxyRecordAnswerBody(text, '');
       expect(body.length).toBeLessThanOrEqual(BODY_LIMIT);
       expect(body.endsWith('러너가 하네스 기록에서 옮겨 올렸습니다.)')).toBe(true);
+    }
+  });
+});
+
+describe('silentTurnNotice — 구독 claude 의 일부러 한 침묵은 대리 글로 바꾸지 않는다 (2026-10-31)', () => {
+  const base = { offAnchor: null, pat: 'hrkp_secretpat', caller: 'agent' } as const;
+  // 실측 꼴(내용은 가짜): 에이전트 사이 FYI 에 덧붙일 말이 없어 일부러 안 올렸다고 적고 글머리 목록을 단 끝말. 120자를 넘어 답 꼴이다.
+  const QUIET = '바뀐 게 없어 이번엔 글을 올리지 않았다. 확인한 것:\n\n'
+    + '- 예시 작업 #101 은 그대로 열려 있다 — 새 커밋도 새 리뷰도 없다\n'
+    + '- 예시 작업 #102 는 어제 머지된 상태 그대로다 — 덧붙일 사실이 없다\n'
+    + '- 대기열에 새로 들어온 일이 없다 — 다음 부름 때 다시 본다';
+
+  it('구독 턴(recordProxy 없음·거짓)은 끝말이 답 꼴이어도 ✅ 만 단다', () => {
+    expect(looksLikeAnswer(QUIET)).toBe(true);
+    expect(silentTurnNotice({ ...base, lastSaid: QUIET })).toEqual({ kind: 'react', emoji: '✅' });
+    expect(silentTurnNotice({ ...base, lastSaid: QUIET, recordProxy: false })).toEqual({ kind: 'react', emoji: '✅' });
+  });
+
+  it('API 키 연결 턴(recordProxy)은 같은 끝말을 지금처럼 기록에서 옮겨 올린다', () => {
+    const n = silentTurnNotice({ ...base, lastSaid: QUIET, recordProxy: true });
+    expect(n.kind).toBe('post');
+    expect((n as { body: string }).body).toContain('하네스 기록에서 옮겨 올렸습니다');
+  });
+
+  it('사람이 부른 턴·넘겨받은 일은 recordProxy 와 무관하다', () => {
+    for (const recordProxy of [true, false]) {
+      expect(silentTurnNotice({ ...base, caller: 'human', lastSaid: QUIET, recordProxy }).kind).toBe('post');
+      expect(silentTurnNotice({ ...base, caller: 'delegated', lastSaid: QUIET, recordProxy }).kind).toBe('fail');
     }
   });
 });
