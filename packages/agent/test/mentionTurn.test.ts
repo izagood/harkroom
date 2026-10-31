@@ -3601,6 +3601,50 @@ describe('중단 — 사람이 도는 턴을 멈춘다 (3단계)', () => {
   });
 
   /**
+   * 중단 뒤 다음 턴(2026-10-29). 끊긴 턴은 브랜치·PR·예약을 남긴 채 죽는다 — 같은 세션을 이어받은 다음 턴이
+   * 그 사실을 모르면 사람이 멈춘 일을 그대로 잇는다(실측: 「멈춰」 뒤 뜬 턴이 하던 일을 이어 갈 수 있었다).
+   *
+   * 되돌려 RED: `persist` 에 중단자를 안 넘기면 첫 단언이, 프롬프트에 안 실으면 둘째가, 답한 뒤 안 지우면 셋째가 깨진다.
+   */
+  it('사람이 중단한 턴 다음 턴은 「앞 턴이 중단됐다」를 싣고, 답한 뒤 표식을 지운다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 이 일 해 줘');
+    const h = cancelHarness();
+    const { deps, runTurn, plans, turnOpts } = await makeDeps(fake, { relay: h.relay });
+    const key = SessionStore.threadKey(CHANNEL, null);
+    runTurn.script = h.script(() => { h.cancelBy('alice'); });
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow(/중단/);
+    expect(deps.store.get(key)?.canceledBy).toBe('alice');
+
+    fake.seedFrom('human-1', '@forge 멈춰');
+    runTurn.script = async () => {
+      await fake.post(CHANNEL, '멈췄다 — 남은 것: 없음', null);
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    const prompts = await getPlanContent(plans, turnOpts);
+    expect(prompts[0]).not.toContain('앞 턴은');
+    expect(prompts[1]).toContain('이 스레드의 앞 턴은 alice 이(가) 중단했다');
+    expect(prompts[1]).toContain('사람이 다시 시키기 전에는 끊긴 일을 이어서 하지 마라');
+    expect(deps.store.get(key)?.canceledBy).toBeUndefined();
+  });
+
+  /** 고아 회수·물러나기는 `operator` 로 끊는다 — 사람이 멈춘 일이 아니라 넘기지 않는다. */
+  it('오퍼레이터가 끊은 턴은 중단 표식을 남기지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const h = cancelHarness();
+    const { deps, runTurn } = await makeDeps(fake, { relay: h.relay });
+    runTurn.script = h.script(() => { h.cancelBy('operator'); });
+    await expect(
+      runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }),
+    ).rejects.toThrow();
+    expect(deps.store.get(SessionStore.threadKey(CHANNEL, null))?.canceledBy).toBeUndefined();
+  });
+
+  /**
    * **회귀선(2026-09-09): PTY 가 뜨기 전에 누른 [중단] 도 듣는다.**
    *
    * 릴레이 세션은 PTY 보다 **먼저** 열린다 — 즉 화면의 「지금 도는 턴」에는 [중단] 이 달린

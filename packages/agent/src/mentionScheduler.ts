@@ -18,7 +18,7 @@ import type { TurnRegistry } from './turnRegistry.js';
 import type { MentionQueue } from './mentionQueue.js';
 import { accountFailureOf, accountTrailOf, withAccountFailover, type ClaudeAccount } from './claudeAccounts.js';
 import {
-  accountTrailReason, controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
+  accountTrailReason, blockedByTurnNotice, controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
   withAccountTrail,
   providerLaneNotice, providerLaneRecallable, sessionConflictNotice, stallNotice, stallRetryable, threadModelRejectedNotice, wakeReportTo,
 } from './prompt.js';
@@ -80,6 +80,16 @@ const DEFER_WARN_MS = 10 * 60_000;
  * 실측 사건에서 3건째가 마지막으로 관측된 값이라 그 자리를 경계로 둔다.
  */
 const DEFER_WARN_PENDING = 3;
+
+/**
+ * 앞 턴 대기 통지를 올리는 사유 — **사람이 부른 것**만. 깨움·선택 답·위임 결말은 사람이 방금 쓴 글이 아니라
+ * 기다리는 사람이 없고, 팀장이 넘긴 일(`team_delegated`)은 팀장이 받는다.
+ */
+const BLOCKED_NOTICE_REASONS: ReadonlySet<InboxBatch['entries'][number]['reason']> =
+  new Set(['mention', 'thread_reply', 'dm', 'team_mention']);
+
+/** 앞 턴 대기 통지 장부의 상한. 넘으면 오래된 것부터 지운다. */
+export const BLOCKED_NOTICED_MAX = 500;
 
 /** 배치 단위로 한 번만 받는 것들. 턴마다 바뀌지 않는다. */
 export interface BatchContext {
@@ -340,6 +350,35 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
    * 것은 "띄우기로 결정한 순간"부터의 진실이다 — 두 사실은 다르다.
    */
   const inFlightThreads = new Set<string>();
+  /**
+   * 같은 스레드의 앞 턴 때문에 미룬 **사람 멘션** 중 「앞 턴이 끝나면 읽는다」를 이미 알린 entry(2026-10-29).
+   *
+   * 왜 필요한가: 앞 턴이 도는 동안 온 멘션은 `blocked` 로 미읽음에 남고 아무 흔적도 없다. 사람이 그 사이 「멈춰」를
+   * 쓰면 그 글은 앞 턴이 **다 끝난 뒤에야** 읽히는데(실측: 11분 넘게), 사람은 자기 글이 대기 중인 줄 모른다.
+   * entry 당 1회만 알린다 — 폴마다 다시 오므로 표가 없으면 도배가 된다. 그 entry 가 턴으로 뜨면 지우고,
+   * `BLOCKED_NOTICED_MAX` 를 넘으면 오래된 것부터 지운다(지워진 entry 가 다시 막히면 한 번 더 알릴 뿐이다).
+   */
+  const blockedNoticed = new Set<number>();
+  const noticeBlocked = async (
+    entry: InboxBatch['entries'][number], mention: InboxBatch['messages'][number], anchor: string, ctx: BatchContext,
+  ): Promise<void> => {
+    if (!BLOCKED_NOTICE_REASONS.has(entry.reason)) return;
+    // 에이전트 명단이 없으면 사람 글인지 모른다 — 모르면 알리지 않는다(에이전트끼리의 부름에 잡음을 얹지 않는다).
+    if (!ctx.agentIds || ctx.agentIds.has(mention.authorId)) return;
+    if (blockedNoticed.has(entry.id)) return;
+    blockedNoticed.add(entry.id);
+    if (blockedNoticed.size > BLOCKED_NOTICED_MAX) {
+      const oldest = blockedNoticed.values().next().value;
+      if (oldest !== undefined) blockedNoticed.delete(oldest);
+    }
+    try {
+      await deps.harkroom.post(mention.channelId, blockedByTurnNotice(), anchor);
+    } catch (err) {
+      // 통지는 관측이고 큐는 inbox 다 — 실패해도 멘션은 그대로 기다린다.
+      console.error(`  ${entry.messageId} 앞 턴 대기 통지 발화 실패(멘션은 그대로 기다린다):`,
+        err instanceof Error ? err.message : err);
+    }
+  };
   /**
    * **턴은 끝났는데 읽음 처리가 실패한 entry**(2026-10-02) → 실패 시각. 다시 띄우지 않고 폴마다
    * 읽음 처리만 다시 시도한다.
@@ -920,7 +959,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           continue;
         }
 
-        if (inFlightThreads.has(threadKey) || deps.registry.get(threadKey)) { out.blocked += 1; continue; }
+        if (inFlightThreads.has(threadKey) || deps.registry.get(threadKey)) {
+          out.blocked += 1;
+          await noticeBlocked(entry, mention, anchor, ctx);
+          continue;
+        }
 
         // 러너들 사이의 잠금 — 다른 러너(이관 중인 옛 세대)가 이 스레드에서 턴을 돌리고 있으면 띄우지 않는다.
         // 멘션은 미읽음으로 남아 그 턴이 끝나 임대가 풀린 뒤의 폴에서 다시 온다. attempts 를 올리지 않는다.
@@ -959,6 +1002,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         // 장부 등록은 **동기적으로, 띄우기 전에**. 위 inFlightThreads 주석이 이유다.
         inFlightEntries.add(entry.id);
         inFlightThreads.add(threadKey);
+        blockedNoticed.delete(entry.id);
         // 인터랙티브 open 도 이 결정을 보게 한다(`TurnRegistry.reserveMention` 주석) — 장부는 이 파일
         // 안에만 있어서, 그 틈에 사람이 연 터미널이 먼저 등록하면 이 턴의 `register` 가 던진다.
         deps.registry.reserveMention(threadKey);
