@@ -3113,8 +3113,8 @@ export interface AgentWakeView {
  *
  * 공개 범위는 **그 채널을 볼 수 있는가** 하나다(소유자 결정 A, 2026-10-02): 메시지가 보이는 사람에게
  * 그 메시지를 쓰고 있는 턴을 감출 이유가 없고, 판정을 메시지와 같은 술어로 두면 "말은 보이는데
- * 턴은 안 보인다"는 어긋남이 없다. **`sessionId` 는 싣지 않는다** — 이 표면은 읽기 전용이고,
- * attach·그만두기는 지금처럼 소유자 문(`AgentSessionView`)으로만 간다.
+ * 턴은 안 보인다"는 어긋남이 없다. **`sessionId` 는 내 에이전트 줄(`owned`)에만 싣는다**(2026-10-29) — 그만두기를
+ * 모바일에서도 누르려면 id 가 있어야 하고, 그 문의 인가는 여전히 소유자 판정(`checkOwnerOrAdmin`)이다.
  */
 export interface AgentActivityView {
   agentAccountId: string;
@@ -3125,6 +3125,11 @@ export interface AgentActivityView {
   mode?: 'mention' | 'interactive';
   /** 내가 소유한(또는 admin 인) 에이전트인가 — 화면이 "내 에이전트" 를 가를 때 쓴다. */
   owned: boolean;
+  /**
+   * 그만두기 문(`POST /agent-sessions/:id/cancel`)이 받는 세션 id(2026-10-29). **`owned` 일 때만** 실린다 — 남의
+   * 에이전트 세션 id 는 attach·그만두기의 손잡이라 보이는 범위로 넓히지 않는다. 옛 서버는 싣지 않는다.
+   */
+  sessionId?: string;
 }
 
 /** 뷰어(데스크탑)가 보는 세션 상태. `runner-offline` 은 '끝났다'와 다르다. */

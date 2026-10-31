@@ -90,6 +90,8 @@ import { enqueueAskPush, enqueueBundlePush } from '../services/push/pushJobs.js'
 import { DENIAL_CARD_REFUSAL_MESSAGE, prepareDenialCard, type MergeDenialReason } from '../services/mergeDenials.js';
 import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant, renderPermissionMirror } from '../services/permissionRequests.js';
 import { mandateForAgentPost } from '../services/mandates.js';
+import { openDelegatesOf, settleCanceledTurn, type TurnCancelHub } from '../services/turnCancel.js';
+import { recordAudit } from '../audit.js';
 
 /**
  * 발화 도구가 공통으로 받는 `model` — 에이전트가 신고하는 **자기 모델 ID**(#600).
@@ -398,6 +400,8 @@ function buildMcpServer(
   turnId: string | null = null,
   /** 백그라운드 회차(cause `bg:<jobId>`, 오퍼레이터를 거친 요청만). 있으면 서버 허용 목록이 걸린다(BG1). */
   bgJobId: string | null = null,
+  /** 도는 턴의 허브(`turn.cancel`). 없으면(시험·릴레이 없는 서버) 그 도구는 `unavailable` 을 돌려준다. */
+  turnCancelHub: TurnCancelHub | null = null,
 ): McpServer {
   const server = new McpServer({ name: 'harkroom', version: '0.1.0' });
   /** S3 상태성 경고용 — 요약을 생략한 쓰기는 있던 요약을 유지하므로 그것으로 판정한다. 읽기 횟수는 세지 않는다. */
@@ -2417,6 +2421,61 @@ function buildMcpServer(
   });
 
   /**
+   * **넘긴 일을 멈춘다**(2026-10-29, 턴 중단). 사람이 「멈춰」라고 한 곳이 일을 넘긴 팀장의 스레드(예: 일 맡기는 채널)이면,
+   * 그 말은 담당 턴에 닿지 않는다 — 담당 턴은 다른 스레드에서 돌고, 같은 에이전트·같은 스레드 턴이 끝나기 전에는 새 멘션도
+   * 읽지 않는다. 팀장이 이 도구로 그 턴을 끊는다. 신호는 사람의 [그만두기] 와 같은 길이다(`RelayHub.cancelSession` →
+   * 러너 `session.cancel` → SIGTERM·유예·SIGKILL, 실패 카드에 멈춘 이름이 남는다).
+   *
+   * **인가는 위임 하나다**: 그 스레드에 **내가 넘긴, 아직 열린** 의무의 팀원 턴만 멈출 수 있다(`openDelegatesOf`). 남의 일을
+   * 멈추는 문이 아니다 — 소유자·admin 판정을 에이전트에게 열지 않는다. 사람 글이 근거가 되지도 않는다(그 판단은 이 턴의 것이다).
+   * 멈춘 뒤의 정리(의무·예약 닫기)는 사람의 문과 같은 한 벌(`settleCanceledTurn`)이다.
+   */
+  server.registerTool('turn.cancel', {
+    description: '내가 넘긴 일(message.delegate)을 맡은 팀원의 도는 턴을 멈춘다 — 그 스레드에 내가 넘긴 열린 의무가 있을 때만. 사람이 그 일을 멈추라고 했을 때 쓴다. sessionId 를 주면 그 턴만, 없으면 그 스레드의 해당 팀원 턴 전부',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      /** 일을 넘긴 스레드(위임 글이 선 스레드) — 팀원은 그 스레드에서 일한다. */
+      threadRootId: z.string().uuid(),
+      sessionId: z.string().uuid().optional(),
+    },
+  }, async ({ channelId, threadRootId, sessionId }) => {
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
+    }
+    if (!turnCancelHub) {
+      return jsonResult({ error: { code: 'unavailable', message: 'this server cannot signal runners' } });
+    }
+    const delegates = await openDelegatesOf(pool, { leadId: account.id, threadRootId });
+    if (!delegates.size) {
+      return jsonResult({ error: { code: 'not_delegator', message: '그 스레드에 네가 넘긴 열린 의무가 없다 — 넘기지 않은 일은 멈출 수 없다(사람에게 [그만두기]를 부탁하라)' } });
+    }
+    const targets = turnCancelHub.listSessions([...delegates])
+      .filter((x) => x.channelId === channelId && x.threadRootId === threadRootId && (!sessionId || x.sessionId === sessionId));
+    const canceled: { sessionId: string; agentAccountId: string }[] = [];
+    const failed: { sessionId: string; agentAccountId: string; code: string }[] = [];
+    for (const t of targets) {
+      const outcome = turnCancelHub.cancelSession(t.sessionId, account.handle);
+      // 누르는 사이에 스스로 끝났다 — 원한 결과와 같다(사람의 문과 같은 판단).
+      if (outcome === 'not_found') continue;
+      if (outcome !== 'ok') { failed.push({ sessionId: t.sessionId, agentAccountId: t.agentAccountId, code: outcome }); continue; }
+      canceled.push({ sessionId: t.sessionId, agentAccountId: t.agentAccountId });
+      await settleCanceledTurn(pool, { threadRootId, agentAccountId: t.agentAccountId });
+      // 감사는 사람의 문과 **같은 액션**이다 — 누가(행위자가 에이전트) 무엇을 멈췄는지는 같은 질문이다. `via` 로 문을 가른다.
+      await recordAudit(pool, {
+        action: 'agent.turn.canceled',
+        actorId: account.id,
+        actorHandle: account.handle,
+        target: t.agentAccountId,
+        detail: { sessionId: t.sessionId, channelId, via: 'delegator' },
+      });
+    }
+    return jsonResult({
+      canceled, failed,
+      ...(targets.length ? {} : { note: '그 스레드에서 도는 팀원 턴이 없다 — 이미 끝났거나 아직 시작하지 않았다' }),
+    });
+  });
+
+  /**
    * 파일을 읽어 오되 **읽기가 실패하는 두 모양을 응답으로 바꾼다**(#609 에서 한 벌로 합쳤다).
    *
    * 이미지와 텍스트가 같은 두 실패를 만난다: 파일이 DB 가 기억하는 크기보다 크거나
@@ -2719,6 +2778,7 @@ export async function registerMcp(
   storage: StorageBackend,
   leakGuard: SecretLeakGuard | null = null,
   operatorHub?: OperatorHub,
+  turnCancelHub: TurnCancelHub | null = null,
 ): Promise<void> {
   app.post('/mcp', {
     /**
@@ -2765,7 +2825,7 @@ export async function registerMcp(
     // 턴의 id(`TURN_ID_HEADER`). 모양만 본다 — 관측용 표지라 확인할 원본이 없다(`PostMessageInput.turnId`).
     const rawTurnId = req.headers[TURN_ID_HEADER];
     const turnId = typeof rawTurnId === 'string' && UUID_RE.test(rawTurnId) ? rawTurnId : null;
-    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null, operatorHub, commandFiles, turnId, bgJobId);
+    const server = buildMcpServer(pool, req.account, lifecycle, storage, agentPresence, cause, leakGuard, req.operator?.id ?? null, operatorHub, commandFiles, turnId, bgJobId, turnCancelHub);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on('close', () => {
