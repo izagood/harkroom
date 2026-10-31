@@ -2583,6 +2583,21 @@ function buildMcpServer(
     error: { code: 'operator_required', message: 'attachment.upload is handled by the harkroom operator; this runner is not connected through one that supports it' },
   }));
 
+  /**
+   * 읽기 전용 PR 상태(2026-10-31, `shared/src/prStatus.ts`). 실제 일은 오퍼레이터가 한다 — 브릿지가 넘긴 이 호출을 가로채
+   * 턴 임대로 `POST /agent/pr-status-checks` 에 허락을 묻고(머지 grant 받은 저장소만), gh 로 읽어 고정 칸만 돌려준다.
+   * 여기 등록하는 이유는 `tools/list` 에 보이게 하려는 것이다(`attachment.upload` 와 같은 모양). 서버까지 왔다는 것은
+   * 오퍼레이터를 거치지 않았거나(PAT 러너) 옛 오퍼레이터라는 뜻이다 — 서버는 gh 자격이 없으니 읽지 않는다.
+   * 이름을 글자로 적는 것은 기능 카탈로그 패리티 시험이 `registerTool('…'` 를 읽기 때문이다(값은 `PR_STATUS_TOOL` 과 같다).
+   */
+  server.registerTool('pr.status', {
+    description: '읽기 전용 PR 상태(state·draft·head·base·mergeState·체크별 이름/결론). 머지 허락을 받은 저장소만 읽는다. 셸 없이 CI 를 볼 때 쓴다',
+    inputSchema: {
+      repo: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}$/).describe('owner/name'),
+      number: z.number().int().positive(),
+    },
+  }, operatorOnly('pr.status'));
+
   server.registerTool('attachment.fetch', {
     description: '첨부 바이트 받기 — 이미지는 그림으로(3MiB 를 넘으면 줄인 사본), 텍스트는 글로 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
     inputSchema: { attachmentId: z.string().uuid() },

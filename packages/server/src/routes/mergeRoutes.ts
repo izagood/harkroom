@@ -5,7 +5,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { PR_STATUS_CHECKS_PATH } from '@harkroom/shared/prStatus';
 import { checkMerge, mergeableRepos, openMergeApprovals, peekMergeApproval, reportMerge, reportMergeClosed } from '../services/mergeGrants.js';
+import { checkPrStatus } from '../services/prStatusChecks.js';
 
 const REPO = z.string().min(3).max(201);
 const SHA = z.string().regex(/^[0-9a-f]{40}$/);
@@ -45,6 +47,22 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
       return reply.code(r.code === 'bad_repo' ? 400 : 403).send({ error: { code: r.code, message: `merge not allowed: ${r.code}`, ...(r.denialId ? { denialId: r.denialId } : {}) } });
     }
     return { allowed: true, repo: r.scope.slice('repo:'.length), grantedBy: r.grantedBy, grantedAt: r.grantedAt, causeByHuman: r.causeByHuman, channelId: r.channelId, threadRootId: r.threadRootId, ...(r.approval ? { approval: r.approval } : {}), ...(r.mandateLine ? { mandateLine: r.mandateLine } : {}) };
+  });
+
+  /**
+   * `pr.status` 읽기 허락(2026-10-31). 오퍼레이터가 gh 로 PR 상태를 읽기 전에 묻는다 — 머지 grant 받은 저장소만(`services/prStatusChecks.ts`).
+   * `merge-checks` 에 목적 칸을 붙이지 않고 따로 둔다: 그 자리는 headSha 를 받고, 1회 승인을 소모하고, 거절이면 `merge_denial`·카드를
+   * 만들고, 사람 턴·위임 줄을 본다 — 읽기에는 하나도 맞지 않고, 한 갈래만 빠뜨려도 읽기가 카드를 세우거나 승인을 쓴다.
+   */
+  app.post(PR_STATUS_CHECKS_PATH, { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    const parsed = z.object({ leaseId: base.leaseId, token: base.token, repo: base.repo, number: base.number }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId, token, repo and number are required' } });
+    const r = await checkPrStatus(pool, { ...who, ...parsed.data });
+    void reply.header('cache-control', 'no-store');
+    if (!r.ok) return reply.code(r.code === 'bad_repo' ? 400 : 403).send({ error: { code: r.code, message: `pr status not allowed: ${r.code}` } });
+    return { allowed: true, repo: r.repo };
   });
 
   /** 래퍼의 사전 확인(security F2) — 이 임대로 판정하면 소모될 승인을 소모 없이 본다. 없으면 `{ approval: null }`. */

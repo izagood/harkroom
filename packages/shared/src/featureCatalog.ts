@@ -121,6 +121,14 @@ export const FEATURE_CATALOG: readonly FeatureEntry[] = [
     lines: ['`automation.list`·`automation.run`: 사람이 이미 승인해 둔 자동화를 지금 한 번 돌려 달라고 할 때. 새로 만드는 것은 제안(`automation.propose`)뿐이다.'],
   },
   {
+    id: 'prStatus',
+    tools: ['pr.status'],
+    lines: [
+      '`pr.status`(repo·number): 셸 없이 PR 의 상태·CI 를 볼 때 — state·draft·head·base·mergeState·체크별 이름/결론만 준다(읽기 전용).',
+      '머지 권한을 받은 저장소만 읽힌다. `not_granted` 면 짐작하지 말고 사람에게 말한다.',
+    ],
+  },
+  {
     id: 'grantList',
     tools: ['grant.list'],
     lines: ['`grant.list`: 내가 받은 부여(연결·비밀 등)가 무엇인지 확인할 때 — 없는 권한을 짐작으로 쓰지 않는다.'],

@@ -20,6 +20,7 @@
     "./workspaceCleanup": "./src/workspaceCleanup.ts",
     "./providerLane": "./src/providerLane.ts",
     "./featureCatalog": "./src/featureCatalog.ts",
+    "./prStatus": "./src/prStatus.ts",
     "./builtinSkills": "./src/builtinSkills.ts"
   },
   "scripts": { "test": "vitest run", "typecheck": "tsc -p ." },
