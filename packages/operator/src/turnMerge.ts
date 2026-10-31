@@ -420,12 +420,147 @@ export function pushedAtOf(stdout: string, headSha: string): number | null {
   } catch { return null; }
 }
 
+/**
+ * 머지 관문 판정(PR gate) — 머지 길에서 떼어 낸 **읽기 전용** 부분(2026-10-31). 읽기 전용 `pr.status` 도구가 같은 판정을 다시 쓴다:
+ * 「초록」의 뜻이 머지 길과 상태 읽기에서 갈라지면, 상태가 초록이라는데 머지는 거절되는 일이 생긴다. 그래서 판정은 한 군데에만 둔다.
+ *
+ * `inspect` 는 부작용이 없다 — 서버 보고(`merge-results`·`merge-closed`)도, 머지·큐 넣기도, 글 게시도 하지 않는다. gh 는 읽기
+ * (`pr view`·GraphQL query·activity GET)만 부른다. 거절을 어떻게 보고하고 무엇을 하는지는 부르는 쪽(`createTurnMerge`)이 정한다.
+ */
+export interface PrGateDeps {
+  /** gh 읽기 — 부르는 쪽이 절대 경로·`ghEnv` 를 정한다(F3). */
+  gh(args: string[], env: Record<string, string>): Promise<ExecResult>;
+  now: () => number;
+  /**
+   * PR CI 없음 판정의 유예 기준을 GitHub 에서 못 읽을 때(포크 PR·activity 에 없음) 이 오퍼레이터가 그 (PR, head) 를 처음 본 시각.
+   * 머지 길과 상태 읽기가 **같은 Map** 을 받아야 한다(2026-10-31) — 따로 들면 상태 읽기가 본 시각을 머지 길이 모르고 유예가 다시 시작된다.
+   */
+  firstSeen: Map<string, number>;
+}
+
+/** 관문 판정. `why` 가 null 이면 통과. `ignored` 는 통과했지만 초록이 아닌 체크, `failing` 은 CI 거절의 체크 이름. */
+export type GateVerdict = { why: { code: string; message: string } | null; ignored: string[]; failing: string[] };
+
+export type PrInspection =
+  /** `gh pr view` 실패(`stderr` 원문) 또는 JSON 이 아님(`unparseable`). 문구·보고는 부르는 쪽이 정한다. */
+  | { ok: false; viewError: { stderr: string } | { unparseable: true } }
+  /**
+   * `queue` 는 PR 이 OPEN 일 때만 읽는다(못 읽으면 null). 이미 큐에 있으면 `verdict` 는 null — 큐에 든 동안의 mergeStateStatus 로
+   * 판정하지 않는다. `noPrChecks` 는 체크 0개를 「PR CI 없음」으로 읽어 통과시켰나.
+   */
+  | { ok: true; pr: PrView; queue: QueueInfo | null; verdict: GateVerdict | null; noPrChecks: boolean };
+
+export interface PrGate {
+  /**
+   * PR 을 읽고 관문을 잰다. `headSha` 가 없으면 PR 의 지금 head(`headRefOid`)로 잰다(상태 읽기). `relaxChecks` 는 1회 승인의 칸이다.
+   */
+  inspect(repo: string, number: number, env: Record<string, string>, headSha?: string, opts?: { relaxChecks?: boolean }): Promise<PrInspection>;
+  /** `gh pr view` 하나(읽기 전용). */
+  viewPr(repo: string, number: number, env: Record<string, string>): Promise<{ pr: PrView } | { error: string }>;
+  /** PR 의 merge queue 정보(읽기 전용). 읽지 못하면 null — 부르는 쪽이 정한다. */
+  queueInfo(repo: string, number: number, env: Record<string, string>): Promise<QueueInfo | null>;
+}
+
+const PR_VIEW_FIELDS = 'state,isDraft,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup';
+
+export function createPrGate({ gh, now, firstSeen }: PrGateDeps): PrGate {
+  const queueInfo = async (repo: string, number: number, env: Record<string, string>): Promise<QueueInfo | null> => {
+    const [owner, name] = repo.split('/');
+    const r = await gh(['api', 'graphql', '-f', `query=${QUEUE_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`], env);
+    if (r.code !== 0) return null;
+    return parseQueueInfo(r.stdout);
+  };
+
+  const viewRaw = async (repo: string, number: number, env: Record<string, string>): Promise<{ pr: PrView } | { stderr: string } | { unparseable: true }> => {
+    const view = await gh(['pr', 'view', String(number), '-R', repo, '--json', PR_VIEW_FIELDS], env);
+    if (view.code !== 0) return { stderr: view.stderr };
+    try { return { pr: JSON.parse(view.stdout) as PrView }; } catch { return { unparseable: true }; }
+  };
+
+  const viewPr = async (repo: string, number: number, env: Record<string, string>): Promise<{ pr: PrView } | { error: string }> => {
+    const v = await viewRaw(repo, number, env);
+    if ('stderr' in v) return { error: v.stderr.trim().slice(0, 300) };
+    if ('unparseable' in v) return { error: 'gh pr view returned no JSON' };
+    return v;
+  };
+
+  /**
+   * PR CI 없음 판정(C안). null 이면 통과. ① PR 의 base·head oid ② 두 커밋의 workflow·base 커밋의 외부 CI ③ head 가 밀린 지
+   * {@link NO_PR_CI_GRACE_MS} 이 지났나 — 지나지 않았으면 `ci_pending`(카드 없음, 잠시 뒤 같은 명령을 다시 부른다).
+   */
+  const noPrCi = async (repo: string, number: number, headSha: string, env: Record<string, string>): Promise<{ code: string; message: string } | null> => {
+    const [owner, name] = repo.split('/') as [string, string];
+    const cant = { code: 'ci_not_green', message: 'no checks reported — could not read whether this repository runs CI on pull requests' };
+    const p = await gh(['api', 'graphql', '-f', `query=${NO_PR_CI_PR_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`], env);
+    const info = p.code === 0 ? parseNoPrCiPr(p.stdout) : null;
+    if (!info) return cant;
+    if (info.headRefOid !== headSha) return { code: 'head_moved', message: `PR head is ${info.headRefOid}, not ${headSha}` };
+    const r = await gh(['api', 'graphql', '-f', `query=${NO_PR_CI_REPO_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`,
+      '-f', `baseExpr=${info.baseRefOid}:.github/workflows`, '-f', `headExpr=${headSha}:.github/workflows`, '-f', `base=${info.baseRefOid}`], env);
+    if (r.code !== 0) return cant;
+    const v = prCiVerdict(r.stdout);
+    if (v) return v;
+    let pushedAt: number | null = null;
+    if (!info.isCrossRepository) {
+      const a = await gh(['api', '-X', 'GET', `repos/${repo}/activity`, '-f', `ref=${info.headRefName}`, '-F', 'per_page=100'], env);
+      pushedAt = a.code === 0 ? pushedAtOf(a.stdout, headSha) : null;
+    }
+    const key = `${repo}#${number}@${headSha}`;
+    if (pushedAt === null) {
+      if (!firstSeen.has(key)) firstSeen.set(key, now());
+      pushedAt = firstSeen.get(key)!;
+    }
+    const wait = pushedAt + NO_PR_CI_GRACE_MS - now();
+    if (wait > 0) return { code: 'ci_pending', message: `no checks reported yet and this repository defines no CI for pull requests — waiting ${Math.ceil(wait / 1000)}s more in case checks start; call the same command again after that` };
+    return null;
+  };
+
+  /**
+   * 관문 판정. `UNSTABLE` 이면 필수 체크를 따로 읽어 다시 잰다 — 필수가 전부 초록이면 통과하고 초록 아닌 비필수 이름을
+   * `ignored` 로 싣는다. 필수 조회가 안 되면 원래 거절 그대로다(fail-closed).
+   */
+  const judge = async (repo: string, number: number, headSha: string, pr: PrView, env: Record<string, string>, relaxChecks: boolean)
+    : Promise<{ verdict: GateVerdict; noPrChecks: boolean }> => {
+    const done = (verdict: GateVerdict) => ({ verdict, noPrChecks: false });
+    const why = refusalOf(pr, headSha, relaxChecks);
+    // CLEAN 인데 체크가 하나도 없다 — 저장소가 PR CI 를 정의하지 않았다고 읽히면 통과(C안). 1회 승인의 CI 무시 길은 여기 오지 않는다.
+    if (why?.code === 'ci_not_green' && !relaxChecks && pr.mergeStateStatus === 'CLEAN' && !(pr.statusCheckRollup ?? []).length) {
+      const v = await noPrCi(repo, number, headSha, env);
+      return { verdict: { why: v, ignored: [], failing: [] }, noPrChecks: !v };
+    }
+    // CI 를 건너뛰는 승인으로 지나가면 건너뛴 체크(지금 다시 읽은 초록 아닌 이름)를 남긴다.
+    if (!why) return done({ why, ignored: relaxChecks ? notGreenChecks(pr) : [], failing: [] });
+    if (why.code !== 'not_mergeable' || pr.mergeStateStatus !== 'UNSTABLE') return done({ why, ignored: [], failing: why.code === 'ci_not_green' ? notGreenChecks(pr) : [] });
+    const [owner, name] = repo.split('/') as [string, string];
+    const r = await gh(['api', 'graphql', '-f', `query=${REQUIRED_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`], env);
+    const rc = r.code === 0 ? parseRequiredChecks(r.stdout) : null;
+    if (!rc) return done({ why: { code: why.code, message: `${why.message} — could not read which checks are required` }, ignored: [], failing: notGreenChecks(pr) });
+    const v = unstableVerdict(rc, headSha);
+    return done('code' in v ? { why: v, ignored: [], failing: notGreen(checksByName(rc.checks)) } : { why: null, ignored: v.ignored, failing: [] });
+  };
+
+  return {
+    viewPr,
+    queueInfo,
+    async inspect(repo, number, env, headSha, opts = {}) {
+      const v = await viewRaw(repo, number, env);
+      if (!('pr' in v)) return { ok: false, viewError: v };
+      const { pr } = v;
+      // 이미 큐에 있으면 판정하지 않는다 — 큐에 든 동안의 mergeStateStatus 로 판정하지 않도록 관문보다 먼저 본다.
+      const queue = pr.state === 'OPEN' ? await queueInfo(repo, number, env) : null;
+      if (queue?.inQueue) return { ok: true, pr, queue, verdict: null, noPrChecks: false };
+      const { verdict, noPrChecks } = await judge(repo, number, headSha ?? pr.headRefOid ?? '', pr, env, opts.relaxChecks === true);
+      return { ok: true, pr, queue, verdict, noPrChecks };
+    },
+  };
+}
+
 export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
   const exec = deps.exec ?? defaultExec;
   const now = deps.now ?? Date.now;
   /**
-   * PR CI 없음 판정의 유예 기준을 GitHub 에서 못 읽을 때(포크 PR·activity 에 없음) 이 오퍼레이터가 그 (PR, head) 를 처음 본 시각.
-   * 메모리뿐이라 재기동하면 다시 처음부터 잰다 — 늦추기만 하고 앞당기지 않는다.
+   * PR CI 없음 판정의 유예 기준(처음 본 시각) — 메모리뿐이라 재기동하면 다시 처음부터 잰다. 늦추기만 하고 앞당기지 않는다.
+   * 이 Map 하나를 관문(`createPrGate`)에 넘긴다 — 상태 읽기도 같은 것을 받아 유예가 한 시계로 흐른다(2026-10-31).
    */
   const firstSeen = new Map<string, number>();
 
@@ -458,14 +593,9 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
   };
 
   const gh = async (args: string[], env: Record<string, string>): Promise<ExecResult> => exec(deps.ghPath, args, env);
-
-  /** PR 의 merge queue 정보(읽기 전용). 읽지 못하면 null — 부르는 쪽이 정한다. */
-  const queueInfo = async (repo: string, number: number, env: Record<string, string>): Promise<QueueInfo | null> => {
-    const [owner, name] = repo.split('/');
-    const r = await gh(['api', 'graphql', '-f', `query=${QUEUE_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`], env);
-    if (r.code !== 0) return null;
-    return parseQueueInfo(r.stdout);
-  };
+  /** 관문 판정은 여기 없다 — 읽기 전용 관문에 맡기고, 보고·머지 같은 부작용만 이 안에 둔다(2026-10-31). */
+  const gate = createPrGate({ gh, now, firstSeen });
+  const { queueInfo, viewPr } = gate;
 
   /**
    * 이미 큐에 있다 — 오류가 아니다(요구 5). 아무것도 하지 않았고 보고도 하지 않는다. 다시 부르면 같은 답이거나 MERGED 다.
@@ -505,62 +635,9 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       if (res && res.type === 'http.response' && res.status === 200) deps.log(`merge: ${repo}#${number} 이 이미 ${state} — 기다리던 머지 카드를 닫았다 agent=${agentId}`);
     };
 
-    /**
-     * 관문 판정. `UNSTABLE` 이면 필수 체크를 따로 읽어 다시 잰다 — 필수가 전부 초록이면 통과하고 초록 아닌 비필수 이름을
-     * `ignored` 로 싣는다. 필수 조회가 안 되면 원래 거절 그대로다(fail-closed).
-     */
-    type Verdict = { why: { code: string; message: string } | null; ignored: string[]; failing: string[] };
+    type Verdict = GateVerdict;
     /** 체크 0개를 「PR CI 없음」으로 읽어 통과시켰나 — 결과 JSON·서버 보고(감사)에 남긴다. 마지막 판정의 값이다. */
     let noPrChecks = false;
-    const judge = async (pr: PrView, env: Record<string, string>, relaxChecks: boolean): Promise<Verdict> => {
-      const why = refusalOf(pr, headSha, relaxChecks);
-      noPrChecks = false;
-      // CLEAN 인데 체크가 하나도 없다 — 저장소가 PR CI 를 정의하지 않았다고 읽히면 통과(C안). 1회 승인의 CI 무시 길은 여기 오지 않는다.
-      if (why?.code === 'ci_not_green' && !relaxChecks && pr.mergeStateStatus === 'CLEAN' && !(pr.statusCheckRollup ?? []).length) {
-        const v = await noPrCi(env);
-        noPrChecks = !v;
-        return { why: v, ignored: [], failing: [] };
-      }
-      // CI 를 건너뛰는 승인으로 지나가면 건너뛴 체크(지금 다시 읽은 초록 아닌 이름)를 남긴다.
-      if (!why) return { why, ignored: relaxChecks ? notGreenChecks(pr) : [], failing: [] };
-      if (why.code !== 'not_mergeable' || pr.mergeStateStatus !== 'UNSTABLE') return { why, ignored: [], failing: why.code === 'ci_not_green' ? notGreenChecks(pr) : [] };
-      const [owner, name] = repo.split('/') as [string, string];
-      const r = await gh(['api', 'graphql', '-f', `query=${REQUIRED_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`], env);
-      const rc = r.code === 0 ? parseRequiredChecks(r.stdout) : null;
-      if (!rc) return { why: { code: why.code, message: `${why.message} — could not read which checks are required` }, ignored: [], failing: notGreenChecks(pr) };
-      const v = unstableVerdict(rc, headSha);
-      return 'code' in v ? { why: v, ignored: [], failing: notGreen(checksByName(rc.checks)) } : { why: null, ignored: v.ignored, failing: [] };
-    };
-    /**
-     * PR CI 없음 판정(C안). null 이면 통과. ① PR 의 base·head oid ② 두 커밋의 workflow·base 커밋의 외부 CI ③ head 가 밀린 지
-     * {@link NO_PR_CI_GRACE_MS} 이 지났나 — 지나지 않았으면 `ci_pending`(카드 없음, 잠시 뒤 같은 명령을 다시 부른다).
-     */
-    const noPrCi = async (env: Record<string, string>): Promise<{ code: string; message: string } | null> => {
-      const [owner, name] = repo.split('/') as [string, string];
-      const cant = { code: 'ci_not_green', message: 'no checks reported — could not read whether this repository runs CI on pull requests' };
-      const p = await gh(['api', 'graphql', '-f', `query=${NO_PR_CI_PR_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`], env);
-      const info = p.code === 0 ? parseNoPrCiPr(p.stdout) : null;
-      if (!info) return cant;
-      if (info.headRefOid !== headSha) return { code: 'head_moved', message: `PR head is ${info.headRefOid}, not ${headSha}` };
-      const r = await gh(['api', 'graphql', '-f', `query=${NO_PR_CI_REPO_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`,
-        '-f', `baseExpr=${info.baseRefOid}:.github/workflows`, '-f', `headExpr=${headSha}:.github/workflows`, '-f', `base=${info.baseRefOid}`], env);
-      if (r.code !== 0) return cant;
-      const v = prCiVerdict(r.stdout);
-      if (v) return v;
-      let pushedAt: number | null = null;
-      if (!info.isCrossRepository) {
-        const a = await gh(['api', '-X', 'GET', `repos/${repo}/activity`, '-f', `ref=${info.headRefName}`, '-F', 'per_page=100'], env);
-        pushedAt = a.code === 0 ? pushedAtOf(a.stdout, headSha) : null;
-      }
-      const key = `${repo}#${number}@${headSha}`;
-      if (pushedAt === null) {
-        if (!firstSeen.has(key)) firstSeen.set(key, now());
-        pushedAt = firstSeen.get(key)!;
-      }
-      const wait = pushedAt + NO_PR_CI_GRACE_MS - now();
-      if (wait > 0) return { code: 'ci_pending', message: `no checks reported yet and this repository defines no CI for pull requests — waiting ${Math.ceil(wait / 1000)}s more in case checks start; call the same command again after that` };
-      return null;
-    };
     /** CI 때문에 막혔나(스레드 1fccc9a5 D1) — 서버가 이 거절로 「CI 실패 무시하고 이번 한 번 머지」 카드를 세운다. BLOCKED 는 아니다. */
     const ciRefusalOf = (v: Verdict, pr: PrView) => (v.why && (v.why.code === 'ci_not_green' || (v.why.code === 'not_mergeable' && pr.mergeStateStatus === 'UNSTABLE'))
       ? { code: v.why.code, mergeState: pr.mergeStateStatus ?? null, checks: v.failing.slice(0, 20).map((n) => n.slice(0, 80)) }
@@ -573,16 +650,15 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       // 승인에 계정이 없으면(G1) 이 오퍼레이터가 그 저장소용 계정을 고른다 — 7일 grant 와 같은 길, 없으면 머지하지 않는다(no_gh_user).
       const tok = pending.ghUser ? await tokenForLogin(pending.ghUser, 'chosen in the one-time approval') : await tokenFor(repo);
       if (!tok.ok) return fail(tok.code, `${tok.message} — the one-time approval was not used`);
-      const pre = await viewPr(repo, number, ghEnv(deps.home, tok.token));
-      if ('error' in pre) {
-        if (isRepoAccessError(pre.error)) return fail('no_repo_access', `${noRepoAccess(tok.login)} — the one-time approval was not used`);
-        return fail('pr_not_found', `gh pr view failed: ${pre.error} — the one-time approval was not used`);
+      const pre = await gate.inspect(repo, number, ghEnv(deps.home, tok.token), headSha, { relaxChecks: pending.relaxChecks });
+      if (!pre.ok) {
+        const error = 'stderr' in pre.viewError ? pre.viewError.stderr.trim().slice(0, 300) : 'gh pr view returned no JSON';
+        if (isRepoAccessError(error)) return fail('no_repo_access', `${noRepoAccess(tok.login)} — the one-time approval was not used`);
+        return fail('pr_not_found', `gh pr view failed: ${error} — the one-time approval was not used`);
       }
-      if (pre.pr.state === 'OPEN') {
-        const q = await queueInfo(repo, number, ghEnv(deps.home, tok.token));
-        if (q?.inQueue) return alreadyQueued(repo, number, headSha, q.entry, pre.pr.headRefOid, ' (the one-time approval was not used)');
-      }
-      const { why, ignored } = await judge(pre.pr, ghEnv(deps.home, tok.token), pending.relaxChecks);
+      if (!pre.verdict) return alreadyQueued(repo, number, headSha, pre.queue?.entry ?? null, pre.pr.headRefOid, ' (the one-time approval was not used)');
+      noPrChecks = pre.noPrChecks;
+      const { why, ignored } = pre.verdict;
       // 사전 확인 거절은 판정 전이라 보고하지 않는다 — 승인은 남고, 서버에 CI 거절 기록도 생기지 않는다.
       if (why?.code === 'not_open') await reportClosed(pre.pr.state);
       if (why) return fail(why.code, `${why.message} — the one-time approval was not used`, { pr: { state: pre.pr.state, headRefOid: pre.pr.headRefOid, mergeStateStatus: pre.pr.mergeStateStatus } });
@@ -702,14 +778,15 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     const tok = intended ? await tokenForLogin(intended.login, intended.why) : await tokenFor(repo);
     if (!tok.ok) { await report('failed', null, `${tok.code}: ${tok.message}`); return fail(tok.code, tok.message); }
     const env = ghEnv(deps.home, tok.token);
-    const view = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'state,isDraft,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup'], env);
-    if (view.code !== 0) {
-      await report('failed', null, `gh pr view (as ${tok.login}): ${view.stderr.trim().slice(0, 300)}`);
-      if (isRepoAccessError(view.stderr)) return fail('no_repo_access', noRepoAccess(tok.login));
-      return fail('pr_not_found', `gh pr view failed: ${view.stderr.trim().slice(0, 300)}`);
+    const seen = await gate.inspect(repo, number, env, headSha);
+    if (!seen.ok) {
+      if ('unparseable' in seen.viewError) { await report('failed', null, 'gh pr view: unparseable'); return fail('pr_not_found', 'gh pr view returned no JSON'); }
+      const { stderr } = seen.viewError;
+      await report('failed', null, `gh pr view (as ${tok.login}): ${stderr.trim().slice(0, 300)}`);
+      if (isRepoAccessError(stderr)) return fail('no_repo_access', noRepoAccess(tok.login));
+      return fail('pr_not_found', `gh pr view failed: ${stderr.trim().slice(0, 300)}`);
     }
-    let pr: PrView = {};
-    try { pr = JSON.parse(view.stdout) as PrView; } catch { await report('failed', null, 'gh pr view: unparseable'); return fail('pr_not_found', 'gh pr view returned no JSON'); }
+    const { pr, queue } = seen;
     const refuse = async (v: Verdict & { why: { code: string; message: string } }) => {
       // 유예 중(`ci_pending`)은 실패가 아니라 기다림이다 — 「머지 실패」 줄을 남기지 않는다(security n3). 에이전트는 같은 명령을 다시 부른다.
       if (v.why.code === 'ci_pending') return fail(v.why.code, v.why.message, { pr: { state: pr.state, headRefOid: pr.headRefOid, mergeStateStatus: pr.mergeStateStatus } });
@@ -725,9 +802,9 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
     };
     // 이미 큐에 있으면 다시 넣지 않는다(요구 5). 큐에 든 동안의 mergeStateStatus 로 판정하지 않도록 관문보다 먼저 본다 —
     // 이 길은 아무것도 하지 않으므로 관문을 돌아가는 길이 아니다.
-    const queue = pr.state === 'OPEN' ? await queueInfo(repo, number, env) : null;
-    if (queue?.inQueue) return alreadyQueued(repo, number, headSha, queue.entry, pr.headRefOid);
-    const verdict = await judge(pr, env, false);
+    if (!seen.verdict) return alreadyQueued(repo, number, headSha, queue?.entry ?? null, pr.headRefOid);
+    noPrChecks = seen.noPrChecks;
+    const { verdict } = seen;
     const { why, ignored } = verdict;
     // 이미 MERGED·CLOSED 면 「머지 실패」 줄을 쓰지 않는다 — merge queue 의 확인 길(같은 명령 재호출)이 큐가 머지한 PR 에
     // 「⛔ 머지 실패」를 남기게 된다(10-16 mq-sandbox 실측). 기다리던 카드만 닫고 not_open 으로 끝낸다.
@@ -820,12 +897,6 @@ export function createTurnMerge(deps: TurnMergeDeps): TurnMerge {
       if (typeof a.id === 'string' && (typeof a.ghUser === 'string' || a.ghUser === null)) return { id: a.id, ghUser: a.ghUser, relaxChecks: a.relaxChecks === true };
     } catch { /* 모양이 틀리면 아래 */ }
     return 'unavailable';
-  };
-
-  const viewPr = async (repo: string, number: number, env: Record<string, string>): Promise<{ pr: PrView } | { error: string }> => {
-    const view = await gh(['pr', 'view', String(number), '-R', repo, '--json', 'state,isDraft,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup'], env);
-    if (view.code !== 0) return { error: view.stderr.trim().slice(0, 300) };
-    try { return { pr: JSON.parse(view.stdout) as PrView }; } catch { return { error: 'gh pr view returned no JSON' }; }
   };
 
   return {
