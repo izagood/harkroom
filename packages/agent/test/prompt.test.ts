@@ -1521,6 +1521,56 @@ describe('델타를 멘션·최신 우선으로 싣는다 (2026-10-12, 스레드
     expect(prompt).not.toContain('범위 밖');
   });
 
+  /**
+   * 2026-10-31 재현: 같은 스레드의 멘션 X 가 앞 턴을 기다리는 동안 앞 턴이 X 를 맥락으로 보고 커서를 넘겼다. X 의 턴은 델타가
+   * 비어 빈 프롬프트로 끝났고 👀 만 남았다.
+   */
+  it('buildTurnPrompt: 커서가 멘션을 넘었고 새 글이 없어도 멘션 턴이면 부른 글을 싣는다', () => {
+    const { prompt, fedSeq } = buildTurnPrompt({
+      messages: [msg(5, 'u1', '@forge 이것 좀 봐 줘', { id: 'X' }), msg(6, 'u1', '@forge 저것도'), msg(7, 'a1', '저것 했다')],
+      lastFedSeq: 7, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'X',
+    });
+    expect(prompt).toContain('alice (← 너를 부른 글): @forge 이것 좀 봐 줘');
+    expect(prompt).toContain('(너를 부른 글은 앞 턴에 맥락으로 이미 보였지만 아직 어느 턴도 처리하지 않았다 — 이 턴이 지금 처리하라)');
+    expect(prompt).not.toContain('저것도');
+    expect(fedSeq).toBe(7);
+  });
+
+  it('buildTurnPrompt: 같은 경우 mentionId 가 없으면 여전히 빈 프롬프트다', () => {
+    const { prompt, fedSeq } = buildTurnPrompt({
+      messages: [msg(5, 'u1', '@forge 이것 좀 봐 줘', { id: 'X' }), msg(8, 'a1', '내 말')],
+      lastFedSeq: 7, meId: 'a1', handles, channelId: 'c', threadRootId: null,
+    });
+    expect(prompt).toBe('');
+    expect(fedSeq).toBe(8);
+  });
+
+  it('buildTurnPrompt: 커서가 넘은 부른 글이 내 글이면 싣지 않는다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: [msg(5, 'a1', '내 옛 말', { id: 'X' })],
+      lastFedSeq: 7, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'X',
+    });
+    expect(prompt).toBe('');
+  });
+
+  it('buildTurnPrompt: 커서가 넘은 부른 글이 읽은 범위에도 없으면 「범위 밖」 줄과 안내를 단다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: [msg(8, 'a1', '내 말')],
+      lastFedSeq: 7, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'GONE',
+    });
+    expect(prompt).toContain('(이 턴을 띄운 글 harkroom://message/GONE 은 위 범위 밖이라 싣지 못했다');
+    expect(prompt).toContain('아직 어느 턴도 처리하지 않았다');
+  });
+
+  it('buildTurnPrompt: 새 글이 있어도 커서가 넘은 부른 글은 델타 앞에 싣는다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: [msg(5, 'u1', '옛 멘션', { id: 'OLD' }), ...many(11, 12)], lastFedSeq: 10, meId: 'a1', handles,
+      channelId: 'c', threadRootId: null, mentionId: 'OLD',
+    });
+    expect(prompt).toContain('alice (← 너를 부른 글): 옛 멘션');
+    expect(prompt.indexOf('옛 멘션')).toBeLessThan(prompt.indexOf('peer: 글11'));
+  });
+
   it('buildTurnPrompt: 예산 안이면 생략 줄이 없다', () => {
     const { prompt } = buildTurnPrompt({
       messages: many(11, 15), lastFedSeq: 10, meId: 'a1', handles, channelId: 'c', threadRootId: null,
