@@ -22,6 +22,11 @@ export const CAPABILITIES = [
   // 에이전트가 PR 을 머지한다(설계 스레드 3deac356). scope 는 `repo:<owner>/<name>` 만 — 전역('')은
   // 이 capability 에 한해 아무것도 열지 않는다(security F1). 판정은 서버 `canMergeRepo` 하나다.
   'repo.merge',
+  // 에이전트가 저장소를 **읽는다**(읽기 전용 `pr.status`, 2026-11-02 소유자 결정 「읽기 권한을 머지 권한에서 떼어 낸다」).
+  // 지켜보기만 하는 에이전트에게 머지까지 주지 않고 PR 상태를 읽게 하려는 것이다. scope·판정 규칙은 `repo.merge` 와 같다 —
+  // `repo:<owner>/<name>` 또는 조직 `repo:<owner>/*` 만, 전역('')은 아무것도 열지 않는다. 판정은 서버 `readGrantFor` 다.
+  // 읽기 grant 는 **머지를 열지 않는다**(`mergeGrantFor` 는 `repo.merge` 줄만 센다). 거꾸로 머지 grant 는 읽기를 연다.
+  'repo.read',
   // 에이전트가 사람이 정한 API 연결로 외부 API 를 부른다(외부 API 권한 C안, 스레드 07519d86). scope 는
   // `connector:<uuid>` 만 — 전역('')은 아무것도 열지 않는다. 판정은 서버 `apiGrants.ts` 가 사슬로 한다.
   'api.call',
@@ -44,7 +49,7 @@ export const MEMBER_DEFAULT_CAPABILITIES: readonly Capability[] = ['operator.reg
 export interface GrantRow {
   accountId: string;
   capability: Capability;
-  /** '' = 커뮤니티 전역. 'channel:<uuid>' | 'team:<uuid>' | 'agent:<uuid>' — `repo.merge` 는 'repo:<owner>/<name>' 만. */
+  /** '' = 커뮤니티 전역. 'channel:<uuid>' | 'team:<uuid>' | 'agent:<uuid>' — `repo.merge`·`repo.read` 는 'repo:<owner>/<name>' 만. */
   scope: string;
   grantedBy: string;
   grantedAt: string;

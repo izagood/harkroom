@@ -1233,17 +1233,18 @@ function buildMcpServer(
    * 채팅(모바일 포함)으로 "그 권한 거둬"라고 하면 에이전트가 이것으로 거둔다. 넓히는 길은 `permission.request` 하나뿐이다.
    */
   server.registerTool('permission.revoke', {
-    description: '내가 받은 명령 허용(kind=tool, 그 채널의 규칙)이나 머지 권한(kind=merge, owner/name 또는 조직 전체 owner/*) 하나를 내려놓는다. 다음 턴부터 빠진다',
+    description: '내가 받은 명령 허용(kind=tool, 그 채널의 규칙)·머지 권한(kind=merge)·읽기 권한(kind=read — pr.status 용, merge 와 따로 준 것) 하나를 내려놓는다. merge·read 의 repo 는 owner/name 또는 조직 전체 owner/*. 다음 턴부터 빠진다',
     inputSchema: {
-      kind: z.enum(['tool', 'merge']),
+      // `read`(2026-11-02): `repo.read` 내려놓기. 좁히기만 하므로 요청 길(`permission.request`)보다 먼저 연다.
+      kind: z.enum(['tool', 'merge', 'read']),
       rule: z.string().min(1).max(300).optional(),
       repo: z.string().min(3).max(201).optional(),
       channelId: z.string().uuid(),
     },
   }, async ({ kind, rule, repo, channelId }) => {
     if (account.kind !== 'agent') return jsonResult({ error: { code: 'not_agent', message: 'only an agent can release its own permission' } });
-    if ((kind === 'tool') !== (rule !== undefined) || (kind === 'merge') !== (repo !== undefined)) {
-      return jsonResult({ error: { code: 'bad_request', message: 'kind "tool" takes `rule`, kind "merge" takes `repo` — exactly one' } });
+    if ((kind === 'tool') !== (rule !== undefined) || (kind !== 'tool') !== (repo !== undefined)) {
+      return jsonResult({ error: { code: 'bad_request', message: 'kind "tool" takes `rule`, kinds "merge" and "read" take `repo` — exactly one' } });
     }
     const r = await releaseGrant(pool, { agentId: account.id, kind, rule, repo, channelId });
     if (!r.ok) return jsonResult({ error: { code: r.code, message: r.message } });

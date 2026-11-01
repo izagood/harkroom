@@ -1005,13 +1005,19 @@ export async function toolReachFor(pool: Pool, agentId: string, now = new Date()
 }
 
 /**
+ * `permission.revoke` 가 받는 갈래. `read` 는 `repo.read` 를 내려놓는다(2026-11-02) — 요청(`permission.request`)에는 아직 없다
+ * (그 길은 주는 화면의 설계가 정해진 뒤다). 내려놓기는 좁히기라 요청 길과 따로 먼저 연다.
+ */
+export type ReleaseKind = 'tool' | 'merge' | 'read';
+
+/**
  * 에이전트가 **자기** grant 를 내려놓는다(`permission.revoke`). 좁히기만 하므로 어느 턴에서나 된다 — 설정 화면이 없는 동안
  * 소유자가 채팅으로 "그 권한 거둬"라고 하면 에이전트가 이것으로 거둔다(모바일 거두기). 옛 넓은 규칙도 원문 그대로 지울 수 있다.
  */
 export async function releaseGrant(
-  pool: Pool, args: { agentId: string; kind: PermissionKind; rule?: string; repo?: string; channelId: string },
+  pool: Pool, args: { agentId: string; kind: ReleaseKind; rule?: string; repo?: string; channelId: string },
 ): Promise<{ ok: true; capability: string; scope: string } | { ok: false; code: 'bad_repo' | 'not_found'; message: string }> {
-  let capability: 'tool.allow' | 'repo.merge';
+  let capability: 'tool.allow' | 'repo.merge' | 'repo.read';
   let scopes: string[];
   if (args.kind === 'tool') {
     const raw = (args.rule ?? '').trim();
@@ -1022,7 +1028,8 @@ export async function releaseGrant(
     // 내려놓기는 조직 전체(`owner/*`)도 받는다 — 좁히는 쪽이다.
     const scope = repoGrantScope(args.repo ?? '');
     if (!scope) return { ok: false, code: 'bad_repo', message: 'repo must be one <owner>/<name> or <owner>/*' };
-    capability = 'repo.merge';
+    // kind=read(2026-11-02)는 `repo.read` 줄만 지운다 — 같은 저장소의 머지 grant 는 그대로 둔다(따로 준 것이다).
+    capability = args.kind === 'read' ? 'repo.read' : 'repo.merge';
     scopes = [scope];
   }
   // W4: grant 를 지우는 일과 그 grant 와 함께 적힌 위임 줄을 닫는 일은 한 트랜잭션 — 거둔 뒤에도 줄이 남아 머지·도구를

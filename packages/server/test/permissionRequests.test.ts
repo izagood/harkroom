@@ -6,7 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
-import { can, mergeGrantFor } from '../src/auth/permissions.js';
+import { can, mergeGrantFor, readGrantFor } from '../src/auth/permissions.js';
 import { PERMISSION_GRANT_TTL_MS, createPermissionExpirySweeper, toolAllowsFor } from '../src/services/permissionRequests.js';
 
 // 에이전트 권한 요청(111, 스레드 f61af808) — 요청은 아무것도 열지 않고, 소유자 사람 세션의 승인만 grant 를 만든다.
@@ -220,6 +220,22 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
     expect(await mergeGrantFor(pool, agentId, 'acme-org/infrak8s')).toBeNull();
     expect((await revoke({ kind: 'merge', repo: 'acme-org/infrak8s' })).error.code).toBe('not_found');
     expect((await revoke({ kind: 'tool', repo: 'a/b' })).error.code).toBe('bad_request');
+  });
+
+  // 2026-11-02: kind=read 는 `repo.read` 줄만 내려놓는다 — 같은 저장소의 머지 grant 는 남는다.
+  it('permission.revoke kind=read: 자기 읽기 grant 를 내려놓고, 머지 grant 는 건드리지 않는다', async () => {
+    await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'repo.read', 'repo:example-org/example-repo', $2)`, [agentId, alice.accountId]);
+    await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'repo.merge', 'repo:example-org/example-repo', $2)`, [agentId, alice.accountId]);
+    const revoke = (args: Record<string, unknown>) => client.callTool({ name: 'permission.revoke', arguments: { channelId: ch, ...args } }).then(text);
+    expect(await revoke({ kind: 'read', repo: 'Example-Org/Example-Repo' })).toMatchObject({ revoked: true, capability: 'repo.read', scope: 'repo:example-org/example-repo' });
+    expect(await readGrantFor(pool, agentId, 'example-org/example-repo')).toBeNull();
+    expect(await mergeGrantFor(pool, agentId, 'example-org/example-repo')).toMatchObject({ scope: 'repo:example-org/example-repo' });
+    expect((await revoke({ kind: 'read', repo: 'example-org/example-repo' })).error.code).toBe('not_found');
+    expect((await revoke({ kind: 'read', rule: 'Bash(ls)' })).error.code).toBe('bad_request');
+    expect((await revoke({ kind: 'read', repo: 'nope' })).error.code).toBe('bad_repo');
+    const audit = (await pool.query(`select detail from audit_log where action = 'grant.revoked' and target = $1 order by id desc limit 1`, [agentId])).rows[0];
+    expect(audit.detail).toMatchObject({ capability: 'repo.read', via: 'permission.revoke' });
+    await pool.query(`delete from account_grant where account_id = $1 and capability = 'repo.merge' and scope = 'repo:example-org/example-repo'`, [agentId]);
   });
 
   it('거절하면 grant 없이 카드가 닫히고 에이전트가 깨어난다', async () => {

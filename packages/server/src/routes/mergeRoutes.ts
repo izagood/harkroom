@@ -50,7 +50,7 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
   });
 
   /**
-   * `pr.status` 읽기 허락(2026-10-31). 오퍼레이터가 gh 로 PR 상태를 읽기 전에 묻는다 — 머지 grant 받은 저장소만(`services/prStatusChecks.ts`).
+   * `pr.status` 읽기 허락(2026-10-31). 오퍼레이터가 gh 로 PR 상태를 읽기 전에 묻는다 — 읽기(`repo.read`)나 머지(`repo.merge`) grant 받은 저장소만(2026-11-02, `services/prStatusChecks.ts`).
    * `merge-checks` 에 목적 칸을 붙이지 않고 따로 둔다: 그 자리는 headSha 를 받고, 1회 승인을 소모하고, 거절이면 `merge_denial`·카드를
    * 만들고, 사람 턴·위임 줄을 본다 — 읽기에는 하나도 맞지 않고, 한 갈래만 빠뜨려도 읽기가 카드를 세우거나 승인을 쓴다.
    */
