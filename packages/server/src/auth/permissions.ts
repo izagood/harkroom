@@ -77,7 +77,33 @@ export async function mergeGrantFor(
    * (소유자가 준 grant 는 언제나 센다 — security 4, 소유자 결정 2026-10-29). 범위가 좁아지면 사용자가 준 grant 는 그 순간 쓰이지 않는다.
    */
   opts: { channelId?: string } = {},
-): Promise<{ scope: string; grantedBy: string; grantedAt: string; expiresAt: string | null; allowAgentCause: boolean } | null> {
+): Promise<RepoGrantFact | null> {
+  // `repo.merge` 줄만 센다 — `repo.read` 줄은 머지를 열지 않는다(2026-11-02).
+  return repoGrantFor(pool, 'repo.merge', agentId, repo, opts);
+}
+
+/**
+ * `repo.read` 판정(2026-11-02, 소유자 결정 「읽기 권한을 머지 권한에서 떼어 낸다」). 맞춤은 `mergeGrantFor` 와 **같다** —
+ * 정확 `repo:<owner>/<name>` 또는 조직 `repo:<owner>/*`, 만료 제외, 채널을 주면 준 사람이 지금 그 채널에서 정할 수 있어야 센다.
+ * 이 함수는 `repo.read` 줄만 본다. 「머지 grant 도 읽기를 연다」는 규칙은 호출부(`prStatusChecks.ts`)가 진다 — 여기서 둘을 섞으면
+ * 이 함수를 머지 쪽에서 잘못 불렀을 때 읽기 줄이 머지를 여는 구멍이 된다.
+ */
+export async function readGrantFor(
+  pool: Pool, agentId: string, repo: string, opts: { channelId?: string } = {},
+): Promise<RepoGrantFact | null> {
+  return repoGrantFor(pool, 'repo.read', agentId, repo, opts);
+}
+
+/** `repo.merge`·`repo.read` 판정이 돌려주는 grant 의 사실. `allowAgentCause` 는 머지에만 뜻이 있다(읽기 줄은 언제나 false). */
+export interface RepoGrantFact { scope: string; grantedBy: string; grantedAt: string; expiresAt: string | null; allowAgentCause: boolean }
+
+/**
+ * 저장소 grant 맞춤 한 곳(2026-11-02). `mergeGrantFor`·`readGrantFor` 가 같은 맞춤을 두 벌 갖지 않게 capability 만 받는다 —
+ * 맞춤이 어긋나면 머지가 읽을 수 있는 저장소와 `pr.status` 가 읽을 수 있는 저장소가 갈린다. 이 파일 밖에서 부르지 않는다.
+ */
+async function repoGrantFor(
+  pool: Pool, capability: 'repo.merge' | 'repo.read', agentId: string, repo: string, opts: { channelId?: string },
+): Promise<RepoGrantFact | null> {
   const scope = repoScope(repo);
   if (!scope) return null;
   const org = orgScopeOf(scope);
@@ -86,13 +112,13 @@ export async function mergeGrantFor(
     `select scope, granted_by as "grantedBy", granted_at as "grantedAt", expires_at as "expiresAt",
             allow_agent_cause as "allowAgentCause"
        from account_grant
-      where account_id = $1 and capability = 'repo.merge' and scope = any($2::text[])
+      where account_id = $1 and capability = $5 and scope = any($2::text[])
         and (expires_at is null or expires_at > now())
         and ($4::uuid is null or ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', '$4::uuid')})
       order by allow_agent_cause desc, (scope = $3) desc limit 1`,
-    [agentId, scopes, scope, opts.channelId ?? null],
+    [agentId, scopes, scope, opts.channelId ?? null, capability],
   );
-  return (res.rows[0] as { scope: string; grantedBy: string; grantedAt: string; expiresAt: string | null; allowAgentCause: boolean } | undefined) ?? null;
+  return (res.rows[0] as RepoGrantFact | undefined) ?? null;
 }
 
 export async function can(
@@ -100,6 +126,8 @@ export async function can(
 ): Promise<boolean> {
   // `repo.merge` 는 여기서 언제나 거짓이다 — 정확 일치 grant 만 보는 `mergeGrantFor` 가 판정한다(F1).
   if (cap === 'repo.merge') return false;
+  // `repo.read` 도 같다(2026-11-02) — 정확·조직 일치만 보는 `readGrantFor` 가 판정한다. 전역·소유·admin 어느 것도 읽기를 열지 않는다.
+  if (cap === 'repo.read') return false;
   // `api.call` 도 같다 — 사슬과 limits 를 보는 `apiGrants.ts::apiGrantFor` 가 판정한다.
   if (cap === 'api.call') return false;
   // `tool.allow` 도 같다 — 채널·규칙 정확 일치만 보는 `permissionRequests.ts::toolAllowsFor` 가 판정한다(스레드 f61af808).
@@ -117,6 +145,9 @@ export async function can(
   return actor.role === 'owner' || actor.role === 'admin';
 }
 
+/** 전역 grant 로 뜻이 없는 capability — `effectiveCapabilities` 가 그리지 않는다. */
+const NEVER_GLOBAL: ReadonlySet<Capability> = new Set<Capability>(['repo.merge', 'repo.read', 'api.call']);
+
 /**
  * 이 계정이 **전역으로** 할 수 있는 것 전부. `/auth/me` 가 화면 게이트의 근거로 준다.
  *
@@ -124,14 +155,16 @@ export async function can(
  * 화면이 없는 권한을 그린다. 그쪽은 대상이 있을 때 `can()` 으로 묻는다.
  */
 export async function effectiveCapabilities(pool: Pool, actor: AccountView): Promise<Capability[]> {
-  // `repo.merge`·`api.call` 은 전역이 될 수 없다 — admin 이라도 화면에 그 권한을 그리지 않는다(F1, #1136 L1).
-  if (actor.role === 'owner' || actor.role === 'admin') return CAPABILITIES.filter((c) => c !== 'repo.merge' && c !== 'api.call');
+  // `repo.merge`·`repo.read`·`api.call` 은 전역이 될 수 없다 — admin 이라도 화면에 그 권한을 그리지 않는다(F1, #1136 L1;
+  // `repo.read` 는 2026-11-02).
+  if (actor.role === 'owner' || actor.role === 'admin') return CAPABILITIES.filter((c) => !NEVER_GLOBAL.has(c));
   // guest 는 전역 grant 를 인정받지 않는다(`can()` 의 같은 줄) — 이 목록은 전역만 담으므로 비어 있다.
   if (actor.role === 'guest') return [];
   const res = await pool.query<{ capability: Capability }>(
     `select distinct capability from account_grant
       where account_id = $1 and scope = '' and (expires_at is null or expires_at > now())`, [actor.id]);
   const set = new Set<Capability>(MEMBER_DEFAULT_CAPABILITIES);
-  for (const r of res.rows) set.add(r.capability);
+  // 줄이 잘못 들어가 있어도(전역 `repo.read` 등) 전역 목록에 그리지 않는다 — `can()` 이 거짓인 것을 화면이 참으로 그리지 않게.
+  for (const r of res.rows) if (!NEVER_GLOBAL.has(r.capability)) set.add(r.capability);
   return [...set];
 }

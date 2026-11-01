@@ -19,7 +19,7 @@ import { revokeLinesForGrant } from '../services/mandateLines.js';
 
 const grantBody = z.object({
   capability: z.enum(CAPABILITIES),
-  // '' = 전역. 대상 한정은 첫 판에 channel·team·agent 만(스펙 §6 (2)). `repo:` 는 `repo.merge` 전용 — 아래서
+  // '' = 전역. 대상 한정은 첫 판에 channel·team·agent 만(스펙 §6 (2)). `repo:` 는 `repo.merge`·`repo.read` 전용 — 아래서
   // capability 와 짝을 맞춘다. `tool:` 은 `tool.allow` 전용(스레드 f61af808).
   scope: z.string().regex(/^(|channel:[0-9a-f-]{36}|team:[0-9a-f-]{36}|agent:[0-9a-f-]{36}|repo:[^\s]{3,201}|connector:[0-9a-f-]{36}|tool:[0-9a-f-]{36}:[^\n]{1,300})$/).default(''),
   expiresAt: z.string().datetime().nullable().optional(),
@@ -75,20 +75,22 @@ async function checkApiGrant(
  */
 async function checkMergeGrant(
   pool: Pool, req: { account?: { id: string; kind: string } | null }, targetId: string, scope: string,
+  /** `repo.read`(2026-11-02)도 같은 검사를 탄다 — 메시지에 적을 이름만 다르다. */
+  cap: 'repo.merge' | 'repo.read' = 'repo.merge',
 ): Promise<{ ok: true; scope: string } | { ok: false; status: 400 | 403 | 404; code: string; message: string }> {
   const normalized = repoGrantScope(scope.replace(/^repo:/i, ''));
   if (!scope || !normalized) {
-    return { ok: false, status: 400, code: 'bad_scope', message: 'repo.merge 의 scope 는 repo:<owner>/<name> 또는 조직 전체 repo:<owner>/* 하나다 — 전역(빈 scope)·부분 패턴은 없다' };
+    return { ok: false, status: 400, code: 'bad_scope', message: `${cap} 의 scope 는 repo:<owner>/<name> 또는 조직 전체 repo:<owner>/* 하나다 — 전역(빈 scope)·부분 패턴은 없다` };
   }
   if (!req.account || req.account.kind !== 'human') {
-    return { ok: false, status: 403, code: 'forbidden', message: 'repo.merge 는 사람만 줄 수 있다' };
+    return { ok: false, status: 403, code: 'forbidden', message: `${cap} 는 사람만 줄 수 있다` };
   }
   const agent = await pool.query<{ ownerAccountId: string | null }>(
     `select c.owner_account_id as "ownerAccountId" from agent_config c join account a on a.id = c.account_id
       where c.account_id = $1 and a.kind = 'agent'`, [targetId]);
-  if (!agent.rowCount) return { ok: false, status: 404, code: 'not_found', message: 'repo.merge 는 에이전트에게만 준다' };
+  if (!agent.rowCount) return { ok: false, status: 404, code: 'not_found', message: `${cap} 는 에이전트에게만 준다` };
   if (agent.rows[0]!.ownerAccountId !== req.account.id) {
-    return { ok: false, status: 403, code: 'forbidden', message: 'repo.merge 는 그 에이전트의 소유자만 준다' };
+    return { ok: false, status: 403, code: 'forbidden', message: `${cap} 는 그 에이전트의 소유자만 준다` };
   }
   return { ok: true, scope: normalized };
 }
@@ -154,8 +156,13 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
       const check = await checkApiGrant(pool, req, id, scope, parsed.data);
       if (!check.ok) return reply.code(check.status).send({ error: { code: check.code, message: check.message } });
       limits = check.limits;
-    } else if (capability === 'repo.merge') {
-      const check = await checkMergeGrant(pool, req, id, scope);
+    } else if (capability === 'repo.merge' || capability === 'repo.read') {
+      // `repo.read`(2026-11-02)는 `repo.merge` 와 같은 scope 검사·같은 「그 에이전트의 소유자인 사람만」이다. 다른 점 하나:
+      // `allowAgentCause` 는 머지 전용이라 읽기에 실으면 400 — 읽기는 사람 턴을 요구하지 않으므로 그 칸이 뜻이 없다.
+      if (capability === 'repo.read' && allowAgentCause !== undefined) {
+        return reply.code(400).send({ error: { code: 'bad_request', message: 'allowAgentCause 는 repo.merge 전용이다' } });
+      }
+      const check = await checkMergeGrant(pool, req, id, scope, capability);
       if (!check.ok) return reply.code(check.status).send({ error: { code: check.code, message: check.message } });
       scope = check.scope;
     } else if (capability === 'tool.allow') {
@@ -187,7 +194,7 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
     } else {
       if (!req.account!.isAdmin) return reply.code(403).send({ error: { code: 'forbidden', message: 'grant 는 admin 만 준다' } });
       if (scope.startsWith('repo:') || scope.startsWith('connector:') || scope.startsWith('tool:') || allowAgentCause !== undefined) {
-        return reply.code(400).send({ error: { code: 'bad_request', message: 'repo: scope 와 allowAgentCause 는 repo.merge 전용이다' } });
+        return reply.code(400).send({ error: { code: 'bad_request', message: 'repo: scope 는 repo.merge·repo.read 전용, allowAgentCause 는 repo.merge 전용이다' } });
       }
     }
     const target = await pool.query(`select 1 from account where id = $1`, [id]);
@@ -221,9 +228,11 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
     '/accounts/:id/grants/:capability', { preHandler: app.requireAccount }, async (req, reply) => {
       const { id } = idParam.parse(req.params);
       let scope = req.query.scope ?? '';
-      // 거두기: admin, 그리고 `repo.merge`·`api.call`·`tool.allow` 는 그 에이전트의 소유자도(F2 — 준 사람이 거둘 수 있어야 한다).
-      if (req.params.capability === 'repo.merge' || req.params.capability === 'api.call' || req.params.capability === 'tool.allow') {
-        if (req.params.capability === 'repo.merge') scope = repoGrantScope(scope.replace(/^repo:/i, '')) ?? scope;
+      // 거두기: admin, 그리고 `repo.merge`·`repo.read`·`api.call`·`tool.allow` 는 그 에이전트의 소유자도(F2 — 준 사람이 거둘 수 있어야
+      // 한다). `repo.read` 는 2026-11-02 — 주는 길과 같은 정규화로 scope 를 맞춘다.
+      const cap = req.params.capability;
+      if (cap === 'repo.merge' || cap === 'repo.read' || cap === 'api.call' || cap === 'tool.allow') {
+        if (cap === 'repo.merge' || cap === 'repo.read') scope = repoGrantScope(scope.replace(/^repo:/i, '')) ?? scope;
         const owner = await pool.query(`select 1 from agent_config where account_id = $1 and owner_account_id = $2`, [id, req.account!.id]);
         if (!owner.rowCount && !req.account!.isAdmin) return reply.code(403).send({ error: { code: 'forbidden', message: '소유자나 admin 만 거둔다' } });
       } else if (!req.account!.isAdmin) {

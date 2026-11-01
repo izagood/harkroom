@@ -85,3 +85,25 @@ describe('can()', () => {
     expect(await can(pool, view(memberId, 'member'), 'operator.manage', { kind: 'operator', id: agentId })).toBe(false);
   });
 });
+
+// 2026-11-02: `repo.read` 는 `repo.merge` 처럼 전역이 될 수 없다 — owner·admin 역할도, 전역 줄도 열지 않는다.
+describe('repo.read 는 can() 을 타지 않는다', () => {
+  it('owner·admin 도 거짓이고 effectiveCapabilities 에 없다', async () => {
+    for (const role of ['owner', 'admin'] as const) {
+      expect(await can(pool, view(ownerId, role), 'repo.read')).toBe(false);
+      const caps = await effectiveCapabilities(pool, view(ownerId, role));
+      expect(caps).not.toContain('repo.read');
+      expect(caps).not.toContain('repo.merge');
+      expect(caps).toContain('agent.create');
+    }
+  });
+  it('전역 줄(scope \'\')이 잘못 들어가 있어도 can() 은 거짓, 전역 목록에도 없다', async () => {
+    await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'repo.read', '', $2)`, [memberId, ownerId]);
+    try {
+      expect(await can(pool, view(memberId, 'member'), 'repo.read')).toBe(false);
+      expect(await effectiveCapabilities(pool, view(memberId, 'member'))).not.toContain('repo.read');
+    } finally {
+      await pool.query(`delete from account_grant where account_id = $1 and capability = 'repo.read'`, [memberId]);
+    }
+  });
+});

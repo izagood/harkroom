@@ -4,10 +4,11 @@ import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
-import { mergeGrantFor } from '../src/auth/permissions.js';
+import { mergeGrantFor, readGrantFor } from '../src/auth/permissions.js';
 import { PR_STATUS_CHECKS_PATH } from '@harkroom/shared/prStatus';
 
 // `pr.status` 읽기 허락(2026-10-31) — 머지 grant 받은 저장소만, channel.repo 는 근거가 아니다, 거절은 카드·거절 기록을 만들지 않는다.
+// 2026-11-02: 읽기 grant(`repo.read`)도 연다 — 읽기를 머지에서 떼어 냈다. 읽기 grant 는 머지(`merge-checks`)를 열지 않는다.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
 describe('POST /agent/pr-status-checks', () => {
@@ -28,9 +29,10 @@ describe('POST /agent/pr-status-checks', () => {
   };
   const check = (l: { id: string; token: string }, repo = 'example-org/example-repo', number = 7, headers: Record<string, string> = asAgent()) =>
     app.inject({ method: 'POST', url: PR_STATUS_CHECKS_PATH, headers, payload: { leaseId: l.id, token: l.token, repo, number } });
-  const giveGrant = (scope: string, expiresAt: string | null = null) =>
-    pool.query(`insert into account_grant (account_id, capability, scope, granted_by, expires_at) values ($1, 'repo.merge', $2, $3, $4)`,
-      [agentId, scope, alice.accountId, expiresAt]);
+  const giveGrant = (scope: string, expiresAt: string | null = null, capability: 'repo.merge' | 'repo.read' = 'repo.merge') =>
+    pool.query(`insert into account_grant (account_id, capability, scope, granted_by, expires_at) values ($1, $5, $2, $3, $4)`,
+      [agentId, scope, alice.accountId, expiresAt, capability]);
+  const giveRead = (scope: string, expiresAt: string | null = null) => giveGrant(scope, expiresAt, 'repo.read');
   const denials = async () => (await pool.query(`select count(*)::int as n from merge_denial where agent_id = $1`, [agentId])).rows[0].n as number;
   const cards = async () => (await pool.query(`select count(*)::int as n from message where meta ? 'ask' or meta ? 'permission'`)).rows[0].n as number;
 
@@ -46,7 +48,7 @@ describe('POST /agent/pr-status-checks', () => {
     ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'dev' } })).json().id as string;
   });
   afterAll(async () => { await app.close(); await db.stop(); });
-  beforeEach(async () => { await pool.query(`delete from account_grant where account_id = $1 and capability = 'repo.merge'`, [agentId]); });
+  beforeEach(async () => { await pool.query(`delete from account_grant where account_id = $1 and capability in ('repo.merge', 'repo.read')`, [agentId]); });
 
   it('정확 grant 면 허락하고, 감사에는 저장소와 번호만 남는다', async () => {
     await giveGrant('repo:example-org/example-repo');
@@ -54,7 +56,7 @@ describe('POST /agent/pr-status-checks', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ allowed: true, repo: 'example-org/example-repo' });
     const a = (await pool.query(`select target, detail from audit_log where action = 'pr.status.checked' order by id desc limit 1`)).rows[0];
-    expect(a).toEqual({ target: 'repo:example-org/example-repo', detail: { number: 12 } });
+    expect(a).toEqual({ target: 'repo:example-org/example-repo', detail: { number: 12, via: 'merge' } });
     // 다른 저장소는 안 열린다.
     expect((await check(await lease(), 'example-org/other-repo')).json().error.code).toBe('not_granted');
   });
@@ -134,5 +136,99 @@ describe('POST /agent/pr-status-checks', () => {
     expect((await pool.query(`select count(*)::int as n from permission_request`)).rows[0].n).toBe(0);
     const a = (await pool.query(`select target, detail from audit_log where action = 'pr.status.denied' order by id desc limit 1`)).rows[0];
     expect(a).toEqual({ target: 'repo:example-org/not-granted', detail: { number: 7, code: 'not_granted' } });
+  });
+
+  describe('읽기 grant(repo.read, 2026-11-02)', () => {
+    const mergeCheck = (l: { id: string; token: string }, repo = 'example-org/example-repo') =>
+      app.inject({ method: 'POST', url: '/agent/merge-checks', headers: asAgent(), payload: { leaseId: l.id, token: l.token, repo, number: 7, headSha: 'a'.repeat(40) } });
+    const put = (payload: Record<string, unknown>, token = alice.token) =>
+      app.inject({ method: 'PUT', url: `/accounts/${agentId}/grants`, headers: auth(token), payload: { capability: 'repo.read', ...payload } });
+
+    it('읽기 grant 만 있어도 pr-status-checks 는 허락하고, 감사에 via=read 가 남는다 — 응답에는 싣지 않는다', async () => {
+      await giveRead('repo:example-org/example-repo');
+      const res = await check(await lease(), 'example-org/example-repo', 3);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ allowed: true, repo: 'example-org/example-repo' });
+      const a = (await pool.query(`select target, detail from audit_log where action = 'pr.status.checked' order by id desc limit 1`)).rows[0];
+      expect(a).toEqual({ target: 'repo:example-org/example-repo', detail: { number: 3, via: 'read' } });
+    });
+
+    it('읽기는 머지가 아니다 — 읽기 grant 만으로는 mergeGrantFor 가 null 이고 merge-checks 는 not_granted', async () => {
+      await giveRead('repo:example-org/example-repo');
+      await giveRead('repo:example-org/*');
+      expect(await readGrantFor(pool, agentId, 'example-org/example-repo')).toMatchObject({ scope: 'repo:example-org/example-repo' });
+      expect(await mergeGrantFor(pool, agentId, 'example-org/example-repo')).toBeNull();
+      const res = await mergeCheck(await lease());
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('not_granted');
+    });
+
+    it('둘 다 없으면 거절한다', async () => {
+      const res = await check(await lease());
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('not_granted');
+    });
+
+    it('만료된 읽기 grant 는 안 연다', async () => {
+      await giveRead('repo:example-org/example-repo', new Date(Date.now() - 60_000).toISOString());
+      await giveRead('repo:example-org/*', new Date(Date.now() - 60_000).toISOString());
+      expect(await readGrantFor(pool, agentId, 'example-org/example-repo')).toBeNull();
+      const res = await check(await lease());
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('not_granted');
+    });
+
+    it('조직 읽기 grant(owner/*)는 그 owner 의 저장소만 연다', async () => {
+      await giveRead('repo:example-org/*');
+      const l = await lease();
+      expect((await check(l, 'Example-Org/app')).json()).toEqual({ allowed: true, repo: 'example-org/app' });
+      expect((await check(l, 'other-org/app')).json().error.code).toBe('not_granted');
+      expect((await check(l, 'example-org-evil/app')).json().error.code).toBe('not_granted');
+    });
+
+    it('머지 grant 만 있어도 그대로 읽힌다(이전 동작 유지)', async () => {
+      await giveGrant('repo:example-org/example-repo');
+      expect(await readGrantFor(pool, agentId, 'example-org/example-repo')).toBeNull();
+      expect((await check(await lease())).json()).toEqual({ allowed: true, repo: 'example-org/example-repo' });
+    });
+
+    it('읽기 grant 도 준 사람이 그 채널에서 정할 수 없게 되면 세지 않는다 — 머지와 같은 맞춤', async () => {
+      // 소유자가 아닌 사람(admin 계정)이 준 줄. 에이전트가 owner 만 부를 수 있으니(invoke_scope=owner) admin 은 정할 수 없다.
+      await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'repo.read', 'repo:example-org/example-repo', $2)`,
+        [agentId, admin.accountId]);
+      const viaChannel = await readGrantFor(pool, agentId, 'example-org/example-repo', { channelId: ch });
+      // 같은 줄을 repo.merge 로 넣었을 때의 mergeGrantFor 판정과 같아야 한다.
+      await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'repo.merge', 'repo:example-org/example-repo', $2)`,
+        [agentId, admin.accountId]);
+      const mergeViaChannel = await mergeGrantFor(pool, agentId, 'example-org/example-repo', { channelId: ch });
+      expect(viaChannel).toBeNull();
+      expect(mergeViaChannel).toBeNull();
+      // 채널을 안 주면(판정 문맥 없음) 줄 자체는 보인다 — 거른 것은 「정할 수 있나」다.
+      expect(await readGrantFor(pool, agentId, 'example-org/example-repo')).toMatchObject({ grantedBy: admin.accountId });
+      expect((await check(await lease())).json().error.code).toBe('not_granted');
+    });
+
+    it('PUT /accounts/:id/grants 는 repo.read 를 repo.merge 와 같은 scope 규칙으로 받는다', async () => {
+      const ok = await put({ scope: 'repo:Example-Org/Example-Repo' });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.json().grants).toEqual(expect.arrayContaining([expect.objectContaining({ capability: 'repo.read', scope: 'repo:example-org/example-repo', allowAgentCause: false })]));
+      expect((await put({ scope: 'repo:example-org/*' })).statusCode).toBe(200);
+      for (const scope of ['', 'repo:*', 'repo:*/*', 'repo:*/app', 'repo:example-org/ab*', `channel:${ch}`]) {
+        const res = await put({ scope });
+        expect(res.statusCode, scope).toBe(400);
+        expect(['bad_scope', 'bad_request'], scope).toContain(res.json().error.code);
+      }
+      // allowAgentCause 는 머지 전용이다.
+      expect((await put({ scope: 'repo:example-org/x', allowAgentCause: true })).statusCode).toBe(400);
+      // 소유자가 아니면 못 준다 — admin 역할도 마찬가지(repo.merge 와 같은 F2).
+      expect((await put({ scope: 'repo:example-org/x' }, admin.token)).statusCode).toBe(403);
+      expect((await check(await lease())).json()).toEqual({ allowed: true, repo: 'example-org/example-repo' });
+      // 준 줄은 머지를 열지 않는다.
+      expect(await mergeGrantFor(pool, agentId, 'example-org/example-repo')).toBeNull();
+      // 거두기도 같은 정규화로 맞춘다.
+      const del = await app.inject({ method: 'DELETE', url: `/accounts/${agentId}/grants/repo.read?scope=${encodeURIComponent('repo:Example-Org/Example-Repo')}`, headers: auth(alice.token) });
+      expect(del.statusCode).toBe(204);
+      expect(await readGrantFor(pool, agentId, 'example-org/example-repo')).toMatchObject({ scope: 'repo:example-org/*' });
+    });
   });
 });
