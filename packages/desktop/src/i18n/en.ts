@@ -4817,6 +4817,7 @@ export const en = {
   'system.chatApproval.bypass': '⚠️ Not approved: "bypass" does not approve anything from chat. Decide on the card.',
   'system.chatApproval.conflict': '⚠️ Not approved: it has both an approve and a deny word, so nothing was decided.',
   'system.chatApproval.denyNeedsLink': '⚠️ Not denied: to deny from chat, include the card link.',
+  'system.chatApproval.needsExplicit': '⚠️ Not approved: without a card link, only a message ending in "approve" (승인·허락) approves. Write "approve" again or include the card link.',
   'system.chatApproval.noWord': '⚠️ Not approved: there is a card link but no approval word (approve, 승인, 허락, 머지해, 진행해).',
   'system.chatApproval.notFinal': '⚠️ Not approved: other words follow the approval word, so nothing was decided. To approve, end the message with it, like "approve".',
   'system.chatApproval.denyNotFinal': '⚠️ Not denied: other words follow the deny word, so nothing was decided. End the message with it, like "deny".',

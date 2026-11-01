@@ -19,7 +19,7 @@ import { systemI18n } from './systemI18n.js';
  * - 글쓴이는 앱에 로그인한 사람 세션(REST)만 — 부르는 쪽(글 올리기 라우트)이 거른다. 그 가운데 카드를 정할 수 있는 사람(소유자 또는 그 채널에서
  *   이 에이전트를 부를 수 있는 사람, `deciders.mayDecideFor` — 소유자 결정 2026-10-29)의 글만 센다. T3 은 소유자만이다.
  *   에이전트·PAT·MCP·자동화·위임·거울 글은 이 라우트를 타지 않거나 거기서 걸러진다.
- * - 글은 문장이어도 된다(P4). 승인 낱말(G2: 승인·허락·머지해·진행해·approve 와 그 활용)만 승인으로 본다. 인용(`>`)·코드·링크·멘션은
+ * - 글은 문장이어도 된다(P4). 승인 낱말(G2: 승인·허락·머지해·진행해·approve 와 그 활용)만 승인으로 본다 — 카드 링크가 없으면 승인·허락·approve 만(n15). 인용(`>`)·코드·링크·멘션은
  *   지우고 읽는다. 낱말은 글의 맨 끝 서술어여야 한다(허용 꼴, `APPROVE_FINAL`) — 뒤에 무엇이 이어지면 정하지 않는다. 부정·거부·보류(말고·하지 마·보류·취소·잠깐·기다려·아니·못·금지·불가·거부·중지·나중…)나 물음(`?`, 또는 「될까」·「되나」·「해도 돼」 같은 물음 끝)이 있으면 정하지 않고 안내만 단다. 「바이패스」는
  *   승인하지 않는다. 거절(거절·deny)은 카드 링크가 있을 때만(G3).
  * - 어느 요청인지는 **구조로만** 정한다: 본문의 `harkroom://message/<카드 id>` 링크(1~5개, 어느 채널이든, 거울은 원본으로 —
@@ -68,6 +68,11 @@ const QUESTION_KO = /(?:까|나|니|냐|는지)(?=\s*(?:$|[.,;:!~…\n]|ㅋ|ㅎ|
 const TAIL = /[\s.!~…ㅎㅋ👍]+$/u;
 const KO_END = String.raw`\s*(?:해|했어|했음|했다|했습니다|할게|합니다|한다|함|하자|하세요|해\s*(?:줘|주세요|줄게)|시켜(?:\s*줘)?|부탁(?:해|합니다|드립니다|드려)?)(?:요)?`;
 const APPROVE_FINAL = new RegExp(String.raw`(?:(?<![미무불])(?:승인|허락)(?:${KO_END})?|(?:머지|진행)${KO_END}|\bapproved?(?:\s+(?:it|this|that|them))?)$`);
+/**
+ * 링크 없는 글(T2·T3)은 「승인」·「허락」(과 en `approve`)이 맨 끝 서술어일 때만 승인으로 본다(n15, 11-02 jaebin 결정).
+ * 「머지해」·「진행하자」는 보통 대화에서도 흔해(「여기서 진행하자」가 카드 스레드의 권한 요청을 승인했다) 카드 링크가 있을 때(T1)만 센다.
+ */
+const APPROVE_EXPLICIT_FINAL = new RegExp(String.raw`(?:(?<![미무불])(?:승인|허락)(?:${KO_END})?|\bapproved?(?:\s+(?:it|this|that|them))?)$`);
 const DENY_FINAL = new RegExp(String.raw`(?:거절(?:${KO_END})?|\b(?:deny|denied)(?:\s+(?:it|this|that|them))?)$`);
 const CI_WORD = /ci\s*무시|ignore\s*(?:the\s*)?ci\b/;
 
@@ -104,6 +109,12 @@ function readChatBody(body: string): { ids: string[]; rest: string } | null {
     .replace(/\bhttps?:\/\/\S+/gi, ' ')
     .toLowerCase();
   return { ids, rest };
+}
+
+/** 링크 없이도 승인으로 셀 꼴인가(n15) — 「승인」·「허락」·approve 가 맨 끝 서술어. 부정·물음 거르기는 `parseChatApproval` 이 한다. */
+export function isExplicitApproval(body: string): boolean {
+  const read = readChatBody(body);
+  return !!read && APPROVE_EXPLICIT_FINAL.test(read.rest.replace(TAIL, ''));
 }
 
 /**
@@ -189,6 +200,7 @@ const REASON_KO = {
   notFinal: '승인 낱말 뒤에 말이 더 있어 정하지 않았다. 「승인해」처럼 끝맺어 다시 쓴다.',
   denyNotFinal: '거절 낱말 뒤에 말이 더 있어 정하지 않았다. 「거절」로 끝맺어 다시 쓴다.',
   denyNeedsLink: '글로 거절하려면 카드 링크를 붙인다.',
+  needsExplicit: '카드 링크 없이 쓴 글은 「승인」·「허락」으로 끝맺을 때만 승인한다. 「승인」으로 다시 쓰거나 카드 링크를 붙인다.',
   noWord: '카드 링크는 있지만 승인 낱말(승인·허락·머지해·진행해·approve)이 없다.',
   tooMany: '한 글로는 카드를 5장까지만 정한다. 나눠서 다시 쓴다.',
   noCard: '링크한 글 중에 정할 수 있는 카드가 없다.',
@@ -336,6 +348,8 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
         return;
       }
       if (open.length === 0) return refuse(pool, message, actorId, 'settled');
+      // n15 — 링크 없는 글은 「승인」·「허락」만. 「머지해」·「진행하자」는 정하지 않고 안내한다.
+      if (!isExplicitApproval(message.body)) return refuse(pool, message, actorId, 'needsExplicit');
       targets = open;
       target = 'T2';
     } else {
@@ -345,6 +359,8 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
       // 「진행해야해」·「승인 하라고 한 것도 없는데」 같은 보통 글에 소유자의 다른 채널 요청을 근거로 경고가 붙었다(A안).
       // 안내는 카드 링크(T1)·카드 스레드(T2)에서만 한다.
       if (parsed.block) return;
+      // n15 — 카드 없는 스레드의 「진행하자」·「머지해」는 보통 대화로 보고 조용히 넘긴다(A안과 같은 까닭).
+      if (!isExplicitApproval(message.body)) return;
       const mine = (await pool.query<Candidate>(
         `${CANDIDATE_SQL}
           where c.owner_account_id = $1 and p.status = 'pending' and p.expires_at > now() and m.created_at < $2

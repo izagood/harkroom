@@ -2760,6 +2760,7 @@ export const ko = {
   'system.chatApproval.bypass': '⚠️ 승인 안 됨: 「바이패스」는 글로 승인하지 않는다. 카드에서 정한다.',
   'system.chatApproval.conflict': '⚠️ 승인 안 됨: 승인과 거절 낱말이 함께 있어 정하지 않았다.',
   'system.chatApproval.denyNeedsLink': '⚠️ 거절 안 됨: 글로 거절하려면 카드 링크를 붙인다.',
+  'system.chatApproval.needsExplicit': '⚠️ 승인 안 됨: 카드 링크 없이 쓴 글은 「승인」·「허락」으로 끝맺을 때만 승인한다. 「승인」으로 다시 쓰거나 카드 링크를 붙인다.',
   'system.chatApproval.noWord': '⚠️ 승인 안 됨: 카드 링크는 있지만 승인 낱말(승인·허락·머지해·진행해·approve)이 없다.',
   'system.chatApproval.notFinal': '⚠️ 승인 안 됨: 승인 낱말 뒤에 말이 더 있어 정하지 않았다. 「승인해」처럼 끝맺어 다시 쓴다.',
   'system.chatApproval.denyNotFinal': '⚠️ 거절 안 됨: 거절 낱말 뒤에 말이 더 있어 정하지 않았다. 「거절」로 끝맺어 다시 쓴다.',

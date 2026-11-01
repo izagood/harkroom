@@ -434,11 +434,44 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect(ap).toEqual({ head_sha: 'a'.repeat(40), gh_user: null, relax_checks: false });
   });
 
-  it('머지 거절 카드 — 카드 스레드의 맨 「머지해」도 그 카드 하나면 정한다', async () => {
+  it('머지 거절 카드 — 카드 스레드의 맨 「머지해」는 정하지 않고(n15) 「승인」이면 그 카드 하나를 정한다', async () => {
     const thread = await root();
     const m = await mergeCard(thread);
     await say(alice.token, '응 머지해', thread);
+    expect(await status(m.requestId)).toBe('pending');
+    expect((await systemLines(thread))[0]!.meta.i18n.key).toBe('system.chatApproval.needsExplicit');
+    await say(alice.token, '응 승인', thread);
     expect(await status(m.requestId)).toBe('approved_once');
+  });
+
+  it('n15 — 링크 없는 「여기서 진행하자」는 카드 스레드(T2)에서 승인하지 않고 안내한다', async () => {
+    const thread = await root();
+    const { requestId } = await ask(thread);
+    await say(alice.token, '여기서 진행하자', thread);
+    expect(await status(requestId)).toBe('pending');
+    const lines = await systemLines(thread);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.meta.i18n.key).toBe('system.chatApproval.needsExplicit');
+    await say(alice.token, '허락해', thread);
+    expect(await status(requestId)).toBe('granted');
+  });
+
+  it('n15 — 카드 없는 스레드(T3)의 「진행하자」·「머지해」는 아무것도 정하지 않고 아무 줄도 달지 않는다', async () => {
+    await expireAll();
+    const thread = await root();
+    const { requestId } = await ask(thread);
+    const elsewhere = await root(otherCh);
+    await say(alice.token, '여기서 진행하자', elsewhere, otherCh);
+    await say(alice.token, '그럼 머지해', elsewhere, otherCh);
+    expect(await status(requestId)).toBe('pending');
+    expect(await systemLines(elsewhere)).toHaveLength(0);
+  });
+
+  it('n15 — 카드 링크가 있으면(T1) 「진행해」도 지금처럼 승인한다', async () => {
+    const thread = await root();
+    const { cardId, requestId } = await ask(thread);
+    await say(alice.token, `${link(cardId)} 진행해`, thread);
+    expect(await status(requestId)).toBe('granted');
   });
 
   it('머지 거절 카드 — head 가 카드와 다르면 승인하지 않고 안내한다', async () => {
@@ -542,22 +575,22 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
       return { thread, mirrorId };
     };
 
-    it('남의 에이전트가 세운 거울 스레드의 「진행해」·그 거울 링크는 원본을 정하지 않는다', async () => {
+    it('남의 에이전트가 세운 거울 스레드의 「승인」·그 거울 링크는 원본을 정하지 않는다', async () => {
       await expireAll();
       const { requestId, cardId } = await ask(await root());
       const fake = await mirrorIn(cardId, otherBot);
-      expect((await say(alice.token, '진행해', fake.thread, otherCh)).statusCode).toBe(201);
+      expect((await say(alice.token, '승인', fake.thread, otherCh)).statusCode).toBe(201);
       expect(await status(requestId)).toBe('pending');
       expect((await say(alice.token, `${link(fake.mirrorId)} 승인해`, fake.thread, otherCh)).statusCode).toBe(201);
       expect(await status(requestId)).toBe('pending');
       expect((await card(cardId)).ask.answeredWith).toBeUndefined();
     });
 
-    it('소유자 에이전트가 세운 진짜 거울은 스레드의 「진행해」로 원본을 정한다', async () => {
+    it('소유자 에이전트가 세운 진짜 거울은 스레드의 「승인」으로 원본을 정한다', async () => {
       await expireAll();
       const { requestId, cardId } = await ask(await root());
       const real = await mirrorIn(cardId, agentId);
-      expect((await say(alice.token, '진행해', real.thread, otherCh)).statusCode).toBe(201);
+      expect((await say(alice.token, '승인', real.thread, otherCh)).statusCode).toBe(201);
       expect(await status(requestId)).toBe('granted');
       expect((await card(cardId)).permissionRequest.decidedVia).toMatchObject({ kind: 'chat', target: 'T2' });
     });

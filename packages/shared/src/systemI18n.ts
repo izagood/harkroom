@@ -76,6 +76,7 @@ export const SYSTEM_I18N_ARGS = Object.freeze({
   'system.chatApproval.bypass': [],
   'system.chatApproval.conflict': [],
   'system.chatApproval.denyNeedsLink': [],
+  'system.chatApproval.needsExplicit': [],
   'system.chatApproval.noWord': [],
   'system.chatApproval.notFinal': [],
   'system.chatApproval.denyNotFinal': [],
