@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createSecretLeases } from '../src/secretLeases.js';
+import { createSecretLeases, LEASE_HEARTBEAT_MS } from '../src/secretLeases.js';
+import { TURN_LEASE_HEARTBEAT_MS } from '@harkroom/shared/runnerLink';
 
 // 비밀 보관소 PR 3 — 러너의 턴 임대(R1)와 놓기 전 기록 가리기(D7). 스레드 bc98df3a.
 const VALUE = `ghp_${'e'.repeat(36)}`;
@@ -26,6 +27,10 @@ function harness(issueResult: { id: string; token: string; expiresAt: string } |
 }
 
 describe('secretLeases', () => {
+  it('박동 주기는 서버가 「박동이 끊긴 임대」 문턱을 만드는 공용 상수와 같다(157)', () => {
+    expect(LEASE_HEARTBEAT_MS).toBe(TURN_LEASE_HEARTBEAT_MS);
+  });
+
   const L = { id: 'l1', token: 't1', expiresAt: '2026-10-01T00:35:00Z' };
 
   it('멘션마다 한 번만 받는다 — 계정 전환·재시도는 받은 임대를 다시 쓴다(R1)', async () => {

@@ -438,3 +438,9 @@ export function unwrapServerFrame(frame: ServerToOperatorFrame): RelayServerFram
       return null;
   }
 }
+
+/**
+ * 러너가 도는 턴의 임대를 늘려 달라고 박동하는 주기(`agent/src/secretLeases.ts` 의 `LEASE_HEARTBEAT_MS` 와 같아야 한다 — 시험이 묶는다).
+ * 서버는 이 값으로 「박동이 끊긴 임대」 문턱을 만든다(`LEASE_REISSUE_STALE_MS`).
+ */
+export const TURN_LEASE_HEARTBEAT_MS = 4 * 60_000;

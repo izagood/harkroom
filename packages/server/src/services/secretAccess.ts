@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { TURN_LEASE_HEARTBEAT_MS } from '@harkroom/shared/runnerLink';
 import type { Pool, PoolClient } from 'pg';
 import type { SecretKeyring } from './secretKeyring.js';
 import { auditAutomationMandateCreated, automationMandateForCause, type AutomationLeaseMandate } from './automationMandates.js';
@@ -41,13 +42,23 @@ export const LEASE_RENEW_MS = 10 * 60_000;
  * 러너가 409 를 받고 감사 줄이 남는다.
  */
 export const LEASE_INBOX_MAX_AGE_MS = 6 * 60 * 60_000;
+/**
+ * 다시 주기(157). 같은 부름의 옛 임대가 살아 있어도(`ended_at` 없음) **박동이 이만큼 끊겼으면** 그 러너는 죽었다고 보고 옛 임대를
+ * 끝내고 새로 준다. 러너 박동 주기(`TURN_LEASE_HEARTBEAT_MS`, 4분)의 1.5배 — 박동 하나를 늦게 받아도 살아 있는 턴의 임대는 뺏지
+ * 않는다(시험이 이 관계를 묶는다). 박동이 이만큼 끊긴 살아 있는 턴(링크 끊김)은 임대를 잃고 다음 도구 호출에서 멈춘다(fail-closed).
+ */
+export const LEASE_REISSUE_STALE_MS = Math.ceil(TURN_LEASE_HEARTBEAT_MS * 1.5);
+/** 부름당 다시 주기 최대 횟수 — 처음 발급까지 합쳐 임대 행은 최대 3개다. */
+export const LEASE_MAX_REISSUES = 2;
 
 const sha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex');
 
 export type LeaseIssue =
   | { ok: true; leaseId: string; token: string; channelId: string; threadRootId: string; expiresAt: string;
       /** 부름이 인박스에 들어온 뒤 발급까지 기다린 초(감사용 — 줄이 밀려 늦게 받은 것을 로그 한 줄로 가른다). */
-      waitedSec: number }
+      waitedSec: number;
+      /** 다시 주기(157)면 대신한 옛 임대와 그 임대의 마지막 박동 뒤 지난 초. */
+      reissue?: { oldLeaseId: string; sinceLastBeatSec: number } }
   | { ok: false; code: 'not_invoked' | 'lease_used' };
 
 /**
@@ -84,7 +95,24 @@ export async function issueTurnLease(
     const used = await client.query(
       `select 1 from secret_turn_lease where agent_id = $1 and cause_message_id = $2`,
       [args.agentId, args.causeMessageId]);
-    if (used.rowCount) { await client.query('rollback'); return { ok: false, code: 'lease_used' }; }
+    // 부름당 한 번이 원칙이다. 예외는 하나(157): **같은 오퍼레이터**가 다시 물었고, 옛 임대가 끝나지 않은 채 **박동이 끊겼고**
+    // (러너가 다시 떴다), 다시 주기가 남았을 때 — 옛 임대를 끝내고 새로 준다. 판정(읽지 않은 부름·6시간·지운 글)은 위에서 처음과
+    // 똑같이 다시 탔고, 위임장·principal 도 아래에서 새로 계산한다(옛 임대에서 베끼지 않는다).
+    let reissue: { oldLeaseId: string; sinceLastBeatSec: number } | null = null;
+    if (used.rowCount) {
+      const prior = (await client.query<{ id: string; operatorId: string; ended: boolean; lastBeat: Date; total: number }>(
+        `select id, operator_id as "operatorId", ended_at is not null as ended, coalesce(last_renewed_at, created_at) as "lastBeat",
+                count(*) over ()::int as total
+           from secret_turn_lease where agent_id = $1 and cause_message_id = $2
+          order by created_at desc limit 1`,
+        [args.agentId, args.causeMessageId])).rows[0];
+      const stale = !!prior && now.getTime() - new Date(prior.lastBeat).getTime() >= LEASE_REISSUE_STALE_MS;
+      if (!prior || prior.ended || prior.operatorId !== args.operatorId || !stale || prior.total > LEASE_MAX_REISSUES) {
+        await client.query('rollback'); return { ok: false, code: 'lease_used' };
+      }
+      await client.query(`update secret_turn_lease set ended_at = $2 where id = $1 and ended_at is null`, [prior.id, now]);
+      reissue = { oldLeaseId: prior.id, sinceLastBeatSec: Math.round((now.getTime() - new Date(prior.lastBeat).getTime()) / 1000) };
+    }
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(now.getTime() + LEASE_TTL_MS);
     const row0 = msg.rows[0] as {
@@ -99,13 +127,13 @@ export async function issueTurnLease(
       mandateId = automationMandate?.mandateId ?? null;
     }
     const ins = await client.query(
-      `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, created_at, expires_at, mandate_id, principal_account_id)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
-      [sha256(token), args.agentId, args.operatorId, args.causeMessageId, channelId, threadRootId, now, expiresAt, mandateId, principalId]);
+      `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, created_at, expires_at, mandate_id, principal_account_id, last_renewed_at, reissue_of)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $7, $11) returning id`,
+      [sha256(token), args.agentId, args.operatorId, args.causeMessageId, channelId, threadRootId, now, expiresAt, mandateId, principalId, reissue?.oldLeaseId ?? null]);
     await client.query('commit');
     if (automationMandate) await auditAutomationMandateCreated(pool, automationMandate).catch(() => {});
     const waitedSec = Math.max(0, Math.round((now.getTime() - new Date(row0.inboxAt).getTime()) / 1000));
-    return { ok: true, leaseId: (ins.rows[0] as { id: string }).id, token, channelId, threadRootId, expiresAt: expiresAt.toISOString(), waitedSec };
+    return { ok: true, leaseId: (ins.rows[0] as { id: string }).id, token, channelId, threadRootId, expiresAt: expiresAt.toISOString(), waitedSec, ...(reissue ? { reissue } : {}) };
   } catch (e) {
     await client.query('rollback').catch(() => {});
     throw e;
@@ -133,7 +161,8 @@ export async function renewTurnLease(
   const now = args.now ?? new Date();
   const r = await pool.query(
     `update secret_turn_lease
-        set expires_at = greatest(expires_at, least($4::timestamptz + make_interval(secs => $5), created_at + make_interval(secs => $6)))
+        set expires_at = greatest(expires_at, least($4::timestamptz + make_interval(secs => $5), created_at + make_interval(secs => $6))),
+            last_renewed_at = $4
       where id = $1 and token_hash = $2 and agent_id = $3 and operator_id = $7 and ended_at is null and expires_at > $4
       returning expires_at as "expiresAt"`,
     [args.leaseId, sha256(args.token), args.agentId, now, LEASE_RENEW_MS / 1000, LEASE_MAX_MS / 1000, args.operatorId]);
