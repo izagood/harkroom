@@ -274,6 +274,8 @@ export interface RelayClient {
    */
   notifySecretLease(cause: string, lease: { id: string; token: string; expiresAt: string }): void;
   notifySecretLeaseEnded(cause: string): void;
+  /** 그 멘션의 턴이 아직 돈다(C-1) — 오퍼레이터가 임대를 늘린다. 링크가 없으면 버린다(임대는 발급 수명대로 끝난다). */
+  notifySecretLeaseHeartbeat(cause: string): void;
   /** API 키 연결의 그 턴 키 받기 결과(2a) — 실행 탭 「마지막 시도」 줄의 출처. 링크가 없으면 버린다(표시일 뿐이다). */
   notifyProviderLaneResult(ok: boolean, code?: ProviderLaneFailureCode): void;
   /** API 키 연결 턴이 끝까지 돌았나(true) 하네스 API 오류로 끝났나(false) — 실행 탭이 초록으로 그리지 않게(n16). */
@@ -654,6 +656,11 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
       if (!transport) return;
       try { transport.send(JSON.stringify({ type: 'secret.leaseEnded', cause })); }
       catch { /* 끊겼다 — 오퍼레이터의 만료 쓸기가 치운다 */ }
+    },
+    notifySecretLeaseHeartbeat(cause) {
+      if (!transport) return;
+      try { transport.send(JSON.stringify({ type: 'secret.leaseHeartbeat', cause })); }
+      catch { /* 끊겼다 — 다음 박동이 다시 보낸다. 끝내 못 가면 임대는 발급 수명대로 끝난다 */ }
     },
 
     stop() {

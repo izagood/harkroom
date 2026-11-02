@@ -19,6 +19,8 @@
  *   경로를 짓지 않는다(M5).
  * - 끝나면 지운다: 러너가 `secret.leaseEnded` 를 보내면 임대를 끝내고 디렉터리를 지운다. 러너가 죽거나
  *   통지를 못 보낸 경우는 만료 쓸기(1분 주기, 임대 TTL 35분)가, 오퍼레이터가 바뀐 경우는 기동 쓸기가 치운다.
+ * - 턴이 길면 늘린다(C-1): 러너가 턴 동안 `secret.leaseHeartbeat` 를 보내면 쥔 토큰으로 서버에서 임대를 늘리고(상한 발급 + 70분)
+ *   서버가 돌려준 만료 시각을 그대로 적는다 — 이 프로세스가 시각을 지어내지 않는다. 러너가 죽으면 박동이 끊겨 35분에 끝난다.
  *   relay 소켓이 끊길 때 지우지 않는 이유: 러너는 다시 붙는다 — 그 사이 도는 턴의 파일을 빼앗지 않는다.
  *
  * 에이전트가 비밀을 만든다(서버 102, 스레드 1a08d0cf): `secret.generate`·`secret.import`·`secret.rotate` 도 여기서 받아 같은 임대로
@@ -70,6 +72,8 @@ export interface TurnSecretsDeps {
 export interface TurnSecrets {
   noteLease(runnerId: string, agentId: string, notice: SecretLeaseNotice): void;
   leaseEnded(runnerId: string, cause: string): Promise<void>;
+  /** 러너의 박동(C-1) — 그 턴의 임대를 서버에서 늘린다. 임대가 없거나 서버가 거절하면 그대로 둔다(만료 쓸기가 치운다). */
+  leaseHeartbeat(runnerId: string, cause: string): Promise<void>;
   /** `secret.mount`·`generate`·`import`·`rotate` 호출이면 답하고, 아니면 null(그대로 서버로 넘긴다). */
   maybeHandle(runnerId: string, agentId: string, req: RunnerLinkRequest): Promise<RunnerLinkResponse | null>;
   /**
@@ -338,6 +342,26 @@ export function createTurnSecrets(deps: TurnSecretsDeps): TurnSecrets {
     async leaseEnded(runnerId, cause) {
       const lease = leases.get(keyOf(runnerId, cause));
       if (lease) await drop(lease, true);
+    },
+
+    async leaseHeartbeat(runnerId, cause) {
+      const lease = leases.get(keyOf(runnerId, cause));
+      if (!lease || lease.expiresAtMs <= now()) return;
+      const res = await deps.forward(lease.agentId, {
+        type: 'http.forward', id: randomUUID(), method: 'POST',
+        path: `/agent/turn-leases/${encodeURIComponent(lease.leaseId)}/renew`,
+        body: JSON.stringify({ token: lease.token }), contentType: 'application/json',
+      }).catch(() => null);
+      if (!res || res.type !== 'http.response') return;
+      // 404 = 옛 서버(라우트 없음)거나 끝났거나 만료됐다 — 늘리지 않는다. 서버가 판정의 정본이다.
+      if (res.status !== 200 || !res.body) {
+        if (res.status !== 404) deps.log(`turn-secrets: 임대 ${lease.leaseId} 늘리기 응답 ${res.status}`);
+        return;
+      }
+      let expiresAtMs = Number.NaN;
+      try { expiresAtMs = Date.parse((JSON.parse(res.body) as { expiresAt?: string }).expiresAt ?? ''); } catch { /* 아래에서 버린다 */ }
+      // 끝 통지가 그 사이 왔으면(drop) 다시 넣지 않는다 — 같은 객체가 아직 장부에 있을 때만 고친다.
+      if (Number.isFinite(expiresAtMs) && leases.get(keyOf(runnerId, cause)) === lease) lease.expiresAtMs = expiresAtMs;
     },
 
     async maybeHandle(runnerId, agentId, req) {

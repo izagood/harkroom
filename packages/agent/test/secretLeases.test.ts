@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -123,5 +123,57 @@ describe('secretLeases', () => {
     expect(ended).toEqual(['m1']);
     await p;
     await slow.drain(10);              // 진행 중인 것이 없으면 곧바로 돌아온다
+  });
+});
+
+describe('secretLeases 박동(C-1)', () => {
+  it('받은 뒤 놓을 때까지만 박동한다 — 놓으면 멈추고, 받지 못했으면 박동하지 않는다', async () => {
+    vi.useFakeTimers();
+    try {
+      const beats: string[] = [];
+      const mk = (result: { id: string; token: string; expiresAt: string } | null) => createSecretLeases({
+        issue: async () => result,
+        notifyLease: () => {}, notifyEnded: () => {},
+        notifyHeartbeat: (cause) => beats.push(cause),
+        heartbeatMs: 1000, log: () => {},
+      });
+      const leases = mk({ id: 'l1', token: 't1', expiresAt: '2026-10-01T00:35:00Z' });
+      await leases.acquire('m1');
+      await vi.advanceTimersByTimeAsync(3500);
+      expect(beats).toEqual(['m1', 'm1', 'm1']);
+      await leases.release('m1');
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(beats).toHaveLength(3);
+
+      const denied = mk(null);
+      await denied.acquire('m2');
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(beats).toHaveLength(3);
+      await denied.release('m2');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('받는 사이에 놓였으면 박동을 걸지 않는다(멈출 사람이 없다)', async () => {
+    vi.useFakeTimers();
+    try {
+      const beats: string[] = [];
+      let resolve!: (v: { id: string; token: string; expiresAt: string }) => void;
+      const leases = createSecretLeases({
+        issue: () => new Promise((r) => { resolve = r; }),
+        notifyLease: () => {}, notifyEnded: () => {},
+        notifyHeartbeat: (cause) => beats.push(cause),
+        heartbeatMs: 1000, log: () => {},
+      });
+      const pending = leases.acquire('m1');
+      await leases.release('m1');
+      resolve({ id: 'l1', token: 't1', expiresAt: '2026-10-01T00:35:00Z' });
+      await pending;
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(beats).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

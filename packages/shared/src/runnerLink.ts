@@ -217,6 +217,7 @@ export type RunnerLinkNotice =
   | McpAuthRejectedNotice
   | SecretLeaseNotice
   | SecretLeaseEndedNotice
+  | SecretLeaseHeartbeatNotice
   | ProviderLaneResultNotice
   | ProviderLaneModeNotice
   | ProviderLaneTurnNotice;
@@ -242,6 +243,12 @@ export type ProviderLaneResultNotice = { type: 'providerLane.result'; ok: boolea
 export type SecretLeaseNotice = { type: 'secret.lease'; cause: string; leaseId: string; token: string; expiresAt: string };
 /** 그 멘션의 일이 끝났다 — 오퍼레이터는 임대를 끝내고 턴 디렉터리를 지운다. */
 export type SecretLeaseEndedNotice = { type: 'secret.leaseEnded'; cause: string };
+/**
+ * 그 멘션의 턴이 **아직 돈다**(C-1) — 오퍼레이터는 쥔 토큰으로 임대를 늘린다(`POST /agent/turn-leases/:id/renew`, 상한 발급 + 70분).
+ * 러너가 턴 동안만 주기적으로 보낸다. 러너가 죽으면 끊기고 임대는 발급 수명(35분)대로 끝난다. 이 말을 모르는 옛 오퍼레이터는
+ * `isRunnerLinkNotice` 에서 버린다 — 지금처럼 35분에 끝날 뿐이다.
+ */
+export type SecretLeaseHeartbeatNotice = { type: 'secret.leaseHeartbeat'; cause: string };
 
 /**
  * `mcp.authRejected`(2026-10-01): 하네스가 **오퍼레이터가 구워 준 `Authorization` 헤더를 MCP
@@ -302,6 +309,7 @@ export function isRunnerLinkNotice(value: unknown): value is RunnerLinkNotice {
   const str = (v: unknown, max = 200) => typeof v === 'string' && v.length > 0 && v.length <= max;
   if (m.type === 'secret.lease') return str(m.cause) && str(m.leaseId) && str(m.token) && str(m.expiresAt);
   if (m.type === 'secret.leaseEnded') return str(m.cause);
+  if (m.type === 'secret.leaseHeartbeat') return str(m.cause);
   if (m.type === 'providerLane.mode') return typeof m.on === 'boolean';
   if (m.type === 'providerLane.turn') return typeof m.ok === 'boolean';
   if (m.type === 'providerLane.result') {

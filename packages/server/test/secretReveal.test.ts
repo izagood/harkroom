@@ -107,6 +107,54 @@ describe('턴 임대·reveal (086)', () => {
     expect((await reveal(first)).json().error.code).toBe('lease_invalid');
   });
 
+  it('C-1: 임대 갱신 — 토큰이 맞고 살아 있을 때만, 지금+10분까지, 발급+70분을 넘지 않는다. 끝난·만료된 임대는 되살리지 않는다', async () => {
+    const renew = (l: { id: string; token: string }, o = op) =>
+      app.inject({ method: 'POST', url: `/agent/turn-leases/${l.id}/renew`, headers: asAgent(o), payload: { token: l.token } });
+    const expiresOf = async (id: string) =>
+      new Date((await pool.query(`select expires_at from secret_turn_lease where id = $1`, [id])).rows[0].expires_at).getTime();
+    const minutesFromNow = (ms: number) => (ms - Date.now()) / 60_000;
+
+    // 30분 돈 턴(남은 5분) → 지금 + 10분.
+    const m = await mention(privCh);
+    const l = (await lease(m)).json().lease;
+    await pool.query(`update secret_turn_lease set created_at = now() - interval '30 minutes', expires_at = now() + interval '5 minutes' where id = $1`, [l.id]);
+    const r = await renew(l);
+    expect(r.statusCode).toBe(200);
+    expect(minutesFromNow(Date.parse(r.json().expiresAt))).toBeGreaterThan(9.5);
+    expect(minutesFromNow(Date.parse(r.json().expiresAt))).toBeLessThan(10.5);
+    expect(Math.abs(await expiresOf(l.id) - Date.parse(r.json().expiresAt))).toBeLessThan(1000);
+    // 늘린 임대로 reveal 이 된다(같은 판정이 expires_at 하나만 본다).
+    expect((await reveal(l)).statusCode).toBe(200);
+
+    // 이미 더 길면 줄이지 않는다(발급 직후 35분 > 지금+10분).
+    const m2 = await mention(privCh);
+    const l2 = (await lease(m2)).json().lease;
+    const before = await expiresOf(l2.id);
+    expect((await renew(l2)).statusCode).toBe(200);
+    expect(await expiresOf(l2.id)).toBe(before);
+
+    // 상한: 65분 돈 턴은 발급 + 70분(= 지금 + 5분)까지만.
+    await pool.query(`update secret_turn_lease set created_at = now() - interval '65 minutes', expires_at = now() + interval '1 minute' where id = $1`, [l.id]);
+    const capped = await renew(l);
+    expect(capped.statusCode).toBe(200);
+    expect(minutesFromNow(Date.parse(capped.json().expiresAt))).toBeLessThan(5.5);
+    expect(minutesFromNow(Date.parse(capped.json().expiresAt))).toBeGreaterThan(4.5);
+
+    // 토큰이 틀리면 404, 만료 시각은 그대로.
+    const held = await expiresOf(l.id);
+    expect((await renew({ id: l.id, token: 'x' })).statusCode).toBe(404);
+    expect(await expiresOf(l.id)).toBe(held);
+
+    // 만료된 임대는 되살리지 않는다.
+    await pool.query(`update secret_turn_lease set expires_at = now() - interval '1 second' where id = $1`, [l.id]);
+    expect((await renew(l)).statusCode).toBe(404);
+    expect(await expiresOf(l.id)).toBeLessThan(Date.now());
+
+    // 끝난(ended_at) 임대도 되살리지 않는다.
+    expect((await app.inject({ method: 'POST', url: `/agent/turn-leases/${l2.id}/end`, headers: asAgent(op), payload: { token: l2.token } })).statusCode).toBe(204);
+    expect((await renew(l2)).statusCode).toBe(404);
+  });
+
   it('사람·PAT 에이전트는 임대도 reveal 도 못 한다', async () => {
     const m = await mention(privCh);
     expect((await app.inject({ method: 'POST', url: '/agent/turn-leases', headers: auth(alice.token), payload: { causeMessageId: m } })).statusCode).toBe(403);

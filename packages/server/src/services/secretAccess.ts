@@ -13,8 +13,21 @@ import { PRINCIPAL_FROM_CAUSE_SQL } from './invokePrincipal.js';
  * 채널은 임대 행에서, 오퍼레이터는 인증에서 온다.
  */
 
-/** 턴 예산 30분 + 여유. 이 뒤에는 임대가 살아 있어도 reveal 이 거절된다. */
+/**
+ * 턴 예산 30분 + 여유. 발급 때의 수명이다 — 러너가 갱신하지 않으면(옛 러너·죽은 러너) 이 뒤에는 reveal·머지·위임 키가
+ * 전부 거절된다.
+ */
 export const LEASE_TTL_MS = 35 * 60_000;
+/**
+ * 임대 갱신(C-1, 아키텍트 재검토 #6). 러너는 **턴이 살아 있는 동안만** 하트비트를 보내고(`secretLeases.ts`), 오퍼레이터가
+ * 그 토큰으로 `renewTurnLease` 를 부른다. 한 번 갱신하면 「지금 + LEASE_RENEW_MS」까지 늘고(이미 더 길면 그대로),
+ * 발급 시각 + LEASE_MAX_MS 를 넘지 못한다. 끝난(`ended_at`)·만료된 임대는 되살리지 않는다.
+ *
+ * 70분 고정 발급 대신 이렇게 하는 이유: 짧게 끝난 턴은 `ended_at` 으로 바로 닫히고, 죽은 러너의 임대는 하트비트가 끊겨
+ * 35분에 그대로 끝난다 — 노출 창이 「실제로 도는 턴」에만 길어진다.
+ */
+export const LEASE_MAX_MS = 70 * 60_000;
+export const LEASE_RENEW_MS = 10 * 60_000;
 /**
  * 이보다 오래된 인박스 항목에는 임대를 주지 않는다(S1). 러너는 멘션을 집는 즉시 받으므로 짧아도 된다 —
  * 길수록 "아직 집지 않은 멘션을 셸이 먼저 받는" 창(H2)이 넓어진다.
@@ -86,6 +99,24 @@ export async function endTurnLease(pool: Pool, args: { leaseId: string; token: s
       where id = $1 and token_hash = $2 and agent_id = $3 and ended_at is null`,
     [args.leaseId, sha256(args.token), args.agentId]);
   return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * 턴이 아직 돈다 — 임대를 늘린다(C-1). 토큰이 맞고 그 임대를 받은 오퍼레이터여야 하고(남의 임대를 늘려 오래 살리는 길을 막는다), 끝나지 않았고,
+ * 아직 만료되지 않았어야 한다. 늘린 뒤의 만료 시각을 돌려준다. 못 늘리면 null.
+ */
+export async function renewTurnLease(
+  pool: Pool, args: { leaseId: string; token: string; agentId: string; operatorId: string; now?: Date },
+): Promise<{ expiresAt: string } | null> {
+  const now = args.now ?? new Date();
+  const r = await pool.query(
+    `update secret_turn_lease
+        set expires_at = greatest(expires_at, least($4::timestamptz + make_interval(secs => $5), created_at + make_interval(secs => $6)))
+      where id = $1 and token_hash = $2 and agent_id = $3 and operator_id = $7 and ended_at is null and expires_at > $4
+      returning expires_at as "expiresAt"`,
+    [args.leaseId, sha256(args.token), args.agentId, now, LEASE_RENEW_MS / 1000, LEASE_MAX_MS / 1000, args.operatorId]);
+  const row = r.rows[0] as { expiresAt: Date } | undefined;
+  return row ? { expiresAt: new Date(row.expiresAt).toISOString() } : null;
 }
 
 export type RevealDenial =
