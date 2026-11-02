@@ -114,14 +114,16 @@ describe('AgentGrantsSection — 위임 나무', () => {
     expect(c.deleteGrant.mock.calls.every((x) => x[1] === 'api.call' && x[2] === `connector:${CONN}`)).toBe(true);
   });
 
-  it('API 행 [바꾸기]: 같은 폼을 지금 grant 로 연다 — 거두지 않고 PUT 한 번', async () => {
+  it('API 행 [고치기]: 같은 폼을 지금 grant 로 열고(바뀐 칸만 보임) — 거두지 않고 PUT 한 번', async () => {
     const c = setup();
     (c as unknown as { putGrant: unknown }).putGrant = vi.fn(async () => []);
     render(<AgentGrantsSection agent={agent('agent-a')} canGrant canRevoke />);
     fireEvent.click(await screen.findByTestId('api-grant-change-lab-api'));
     const form = await screen.findByTestId('api-grant-form');
-    expect(form.textContent).toContain('지금:');
-    fireEvent.click(within(form).getByRole('button', { name: '바꾸기' }));
+    expect(within(form).getByTestId('api-grant-changes').textContent).toContain('바뀐 것이 없다');
+    fireEvent.click(within(form).getByRole('radio', { name: '30일' }));
+    expect(within(form).getByTestId('api-grant-change-expiry')).toBeTruthy();
+    fireEvent.click(within(form).getByRole('button', { name: '저장' }));
     await waitFor(() => expect((c as unknown as { putGrant: ReturnType<typeof vi.fn> }).putGrant).toHaveBeenCalledTimes(1));
     expect(c.deleteGrant).not.toHaveBeenCalled();
   });

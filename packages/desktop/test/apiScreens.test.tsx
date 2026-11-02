@@ -279,6 +279,9 @@ describe('ApiGrantForm 고치기(editMode)', () => {
     expect(screen.queryByTestId('api-grant-children-warning')).toBeNull();
     fireEvent.change(screen.getByLabelText('경로 (이것으로 시작하는 경로만)'), { target: { value: '/api/catalog/x/' } });
     expect(screen.getByTestId('api-grant-children-warning')).toBeTruthy();
+    // 마디 경계가 아닌 글자 접두는 덮지 않는다(서버 pathCovered 와 같은 규칙).
+    fireEvent.change(screen.getByLabelText('경로 (이것으로 시작하는 경로만)'), { target: { value: '/ap' } });
+    expect(screen.getByTestId('api-grant-children-warning')).toBeTruthy();
   });
 
   it('멈춘 부여는 「저장하면 다시 켜진다」를 보이고 칸을 안 바꿔도 저장할 수 있다', () => {

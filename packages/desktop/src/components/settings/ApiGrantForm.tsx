@@ -146,10 +146,12 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
     ...(scope === 'write' && humanOnly !== null && (exScope !== 'write' || (humanOnly === 'yes') !== exHuman)
       ? [{ key: 'human', label: t('apiGrant.humanOnly'), from: exScope === 'write' ? t(exHuman ? 'apiGrant.humanOnlyYes' : 'apiGrant.humanOnlyNo') : '—', to: t(humanOnly === 'yes' ? 'apiGrant.humanOnlyYes' : 'apiGrant.humanOnlyNo') }] : []),
   ];
-  // 좁힘 = 메서드가 빠지거나 새 경로가 옛 경로 안으로 들어가지 않을 때(옛 경로 → 그 접두로 넓히기만 하면 아니다).
+  // 좁힘 = 메서드가 빠지거나 새 경로가 옛 경로를 덮지 않을 때. 「덮는다」는 서버 `pathCovered` 와 같은 마디 경계 규칙이다
+  // (끝이 `/` 면 글자 접두, 아니면 같거나 `새/…`) — `/api/catalog/` → `/ap` 는 덮지 않는다.
   const oldPrefix = existing?.limits?.pathPrefix ?? '';
+  const covers = (prefix: string, path: string): boolean => (prefix.endsWith('/') ? path.startsWith(prefix) : path === prefix || path.startsWith(`${prefix}/`));
   const narrowing = editMode && !!existing && (
-    (existing.limits?.methods ?? []).some((m) => !methods.includes(m as ApiMethod)) || (oldPrefix !== pathPrefix && !oldPrefix.startsWith(pathPrefix)));
+    (existing.limits?.methods ?? []).some((m) => !methods.includes(m as ApiMethod)) || (oldPrefix !== pathPrefix && !covers(pathPrefix, oldPrefix)));
   return (
     <div className="mt-2 space-y-2 rounded border border-border bg-surface-sunken p-2 text-meta text-fg" data-testid="api-grant-form">
       {editMode && existing && (
