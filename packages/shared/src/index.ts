@@ -1532,8 +1532,13 @@ export interface WakeMeta {
   /**
    * `watch`: 이어지는 감시의 한 고리(2026-10-31) — 깨어난 턴이 다음 예약도 끝 보고도 없이 끝나면 러너가
    * 실패 줄을 남긴다. true 일 때만 실린다.
+   *
+   * `origin`: 감시 사슬을 **시작한 지시**의 메시지 id(2026-11-02, `watch` 가 참일 때만). 깨어난 턴은 새 세션이라
+   * 사유 한 줄만 받는다 — 실측: 3회차 턴이 "3회 하고 3회차에 끝을 알려라" 는 첫 지시를 몰라 아무것도 하지 않고
+   * 멈췄다. 서버가 같은 채널·같은 스레드의 지운 적 없는 사람/에이전트 글만 싣고(본문은 싣지 않는다), 다음 고리는
+   * 앞 고리의 값을 물려받아 언제나 첫 지시를 가리킨다. 러너가 그 글을 읽어 「← 맡긴 글」로 싣는다.
    */
-  wake: { wakeAt: string; reason?: string; reportTo?: WakeReportTo; watch?: boolean };
+  wake: { wakeAt: string; reason?: string; reportTo?: WakeReportTo; watch?: boolean; origin?: string };
 }
 
 /**

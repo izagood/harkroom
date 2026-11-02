@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, wakeWatch, hasOwnReportSince, type MemoryContext } from '../src/prompt.js';
+import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, wakeWatch, wakeOrigin, hasOwnReportSince, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -290,6 +290,17 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
     expect(wakeWatch({ kind: 'wake', wake: { wakeAt: 'x', reason: 'r', watch: 'true' } })).toBe(false);
     expect(wakeWatch({ kind: 'wake', wake: { wakeAt: 'x', reason: 'r' } })).toBe(false);
     expect(wakeWatch(null)).toBe(false);
+  });
+
+  it('wakeOrigin 은 감시 깨움의 uuid 꼴 origin 만 받는다(2026-11-02)', () => {
+    const id = '00000000-0000-4000-8000-0000000000bb';
+    expect(wakeOrigin({ kind: 'wake', wake: { wakeAt: 'x', reason: 'r', watch: true, origin: id } })).toBe(id);
+    // 감시가 아니면 보지 않는다.
+    expect(wakeOrigin({ kind: 'wake', wake: { wakeAt: 'x', reason: 'r', origin: id } })).toBeUndefined();
+    expect(wakeOrigin({ kind: 'wake', wake: { wakeAt: 'x', reason: 'r', watch: true, origin: 'm1' } })).toBeUndefined();
+    expect(wakeOrigin({ kind: 'wake', wake: { wakeAt: 'x', reason: 'r', watch: true, origin: 7 } })).toBeUndefined();
+    expect(wakeOrigin({ kind: 'wake', wake: { wakeAt: 'x', reason: 'r', watch: true } })).toBeUndefined();
+    expect(wakeOrigin(null)).toBeUndefined();
   });
 
   it('hasOwnReportSince 는 이 턴의 내 끝 보고(meta.kind report)만 센다', () => {

@@ -610,7 +610,7 @@ export interface MentionTarget {
    * 옵셔널인 이유: 평범한 멘션 턴에는 깨움이 없다. 그리고 값이 있으면 프롬프트 조립이
    * 달라진다 — 깨움에는 부른 사람이 없어서 델타가 비고, 비면 하네스가 돌지 않는다.
    */
-  wake?: { reason: string; reportTo?: WakeReportTo; watch?: true };
+  wake?: { reason: string; reportTo?: WakeReportTo; watch?: true; origin?: string };
   /**
    * 이 턴이 **예약(`turn.wake`)이 시각이 되어** 깨어난 턴이다(inbox 사유 `wake`). `wake` 만으로는
    * 못 가른다 — 선택 답(`ask_answered`·`ask_closed`)도 같은 자리를 쓰는데, 그것은 사람이 방금 답한
@@ -1177,6 +1177,11 @@ export async function runMentionTurn(
     await deps.store.put(key, out);
   };
 
+  // 감시 사슬을 시작한 지시(`meta.wake.origin`, 2026-11-02) — 못 읽거나 어긋나면 지금처럼 사유만 싣는다(`watchOriginRow`).
+  const watchOrigin = target.wake?.watch && target.wake.origin
+    ? await watchOriginRow(deps, key, channelId, anchor, target.wake.origin, thread)
+    : undefined;
+
   const { prompt, fedSeq } = buildTurnPrompt({
     messages: thread,
     lastFedSeq: rec.lastFedSeq,
@@ -1185,6 +1190,7 @@ export async function runMentionTurn(
     channelId,
     threadRootId: anchor,
     ...(target.wake ? { wake: target.wake } : {}),
+    ...(watchOrigin ? { watchOrigin } : {}),
     ...(target.canceledWakes?.length ? { canceledWakes: target.canceledWakes } : {}),
     ...(target.startedIn ? { startedIn: target.startedIn } : {}),
     ...(target.team ? { team: target.team } : {}),
@@ -3038,6 +3044,38 @@ export async function runMentionTurn(
  * 정지 순간 화면의 갈래(`prompt.ts::StallScreen`). 그린 화면(`ScreenIdleWatch`)이 있으면 그것으로, 없으면 원 꼬리에서 물음만 본다 —
  * 일하는 중 표지가 없는 하네스(claude)는 입력창이 일하는 중에도 떠 있어 「답 없이 끝났다」를 화면으로 말할 수 없다.
  */
+/** 감시 사슬의 첫 지시를 찾는 창 — 서버 `message.read` 의 상한이다(스레드 머리는 창과 상관없이 언제나 실린다). */
+const WATCH_ORIGIN_PAGE = 500;
+
+/**
+ * 감시 깨움이 가리키는 **맡긴 글**(`meta.wake.origin`, 2026-11-02)을 앵커 스레드에서 읽는다. 러너 자기 권한의 `message.read`
+ * (`readThread`)를 쓴다 — 한 글만 읽는 길이 따로 없고, 이미 읽은 페이지에 있으면 다시 읽지 않는다. 서버가 같은 스레드의 글만
+ * 싣지만 여기서도 **같은 채널·같은 스레드(머리 또는 답)·지운 적 없음·대기 줄/시스템 줄 아님**을 다시 본다 — 하나라도 어긋나거나
+ * 읽기가 실패하면 조용히 건너뛴다(로그만). 이 줄은 단서일 뿐이라 없다고 턴을 실패시키지 않는다.
+ */
+async function watchOriginRow(
+  deps: MentionTurnDeps, key: string, channelId: string, anchor: string | null, originId: string, thread: MessageRow[],
+): Promise<MessageRow | undefined> {
+  if (!anchor) return undefined;
+  try {
+    const row = thread.find((m) => m.id === originId)
+      ?? (await deps.harkroom.readThread(channelId, anchor, undefined, WATCH_ORIGIN_PAGE)).find((m) => m.id === originId);
+    if (!row) {
+      console.error(`[mentionTurn] ${key}: 감시의 맡긴 글(${originId})을 스레드에서 못 찾았다 — 사유만 싣는다`);
+      return undefined;
+    }
+    if (row.channelId !== channelId || (row.id !== anchor && row.threadRootId !== anchor) || row.deletedAt
+      || row.kind === 'wake' || row.kind === 'system' || row.kind === 'progress') {
+      console.error(`[mentionTurn] ${key}: 감시의 맡긴 글(${originId})이 이 스레드의 살아 있는 글이 아니다 — 사유만 싣는다`);
+      return undefined;
+    }
+    return row;
+  } catch (err) {
+    console.error(`[mentionTurn] ${key}: 감시의 맡긴 글(${originId}) 읽기 실패 — 사유만 싣는다: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+}
+
 function stallScreenOf(watch: ScreenIdleWatch | null, rawTail: string, harness: Parameters<typeof screenGateFor>[0]): 'gate' | 'idle' | 'stuck' {
   if (watch) {
     const now = watch.current();

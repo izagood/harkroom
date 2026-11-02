@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import type { MessageRow, ReportWakeView, WakeReportTo } from '@harkroom/shared';
-import { BAD_THREAD_MESSAGE, postMessage } from './messages.js';
+import { BAD_THREAD_MESSAGE, postMessage, verifiedCauseLink } from './messages.js';
 import { audienceFor, channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
 
@@ -94,6 +94,48 @@ export interface ScheduleWakeInput {
   turnId?: string | null;
 }
 
+const ORIGIN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * 감시 사슬을 **시작한 지시**(`meta.wake.origin`, 2026-11-02). 감시 예약(`watch: true`)일 때만 부른다.
+ *
+ * 왜 필요한가: 깨어난 턴은 새 세션이라(러너 `freshWake`) 사유 한 줄과 그 사이 남의 새 말만 받는다. 실측: "3회 확인하고
+ * 3회차에 「감시 끝」을 쓰고 다시 걸지 마라" 는 감시의 3회차 턴이 그 지시를 몰랐고, 자기가 쓴 사유도 애매해서 아무것도
+ * 하지 않고 멈췄다. 그래서 첫 지시의 **id 만** 깨움 meta 에 싣고(본문은 싣지 않는다 — 러너가 자기 권한으로 읽는다),
+ * 다음 고리는 앞 고리의 값을 물려받아 2·3회차도 언제나 **첫** 지시를 가리킨다.
+ *
+ * 규칙:
+ * - 원인은 이 예약을 건 턴의 `chainCause`(오퍼레이터를 거친 요청의 `CAUSE_HEADER`)다 — 러너 턴은 그 턴을 띄운 inbox 글
+ *   (멘션·깨움 메시지)을 싣는다. PAT 로 붙은 클라이언트는 null 이라 싣지 않는다. 그 글이 **실제로 이 계정을 깨웠어야**
+ *   한다(`verifiedCauseLink`, 머지 사슬과 같은 판정) — 헤더에 아무 글 id 나 넣어 가리키게 두지 않는다.
+ * - 원인이 감시 깨움(`watch: true` + `origin`)이면 그 origin 을 물려받고, 아니면 원인 글 자신이 origin 이다.
+ * - 최종 후보는 **이 깨움과 같은 채널·같은 스레드**(머리 또는 답)이고 지워지지 않았고 대기 줄·시스템 줄·진행 설명이
+ *   아니어야 한다. 하나라도 어긋나면 싣지 않는다(null) — 다른 스레드의 글을 이 스레드의 감시에 끌어오지 않는다.
+ */
+export async function watchOriginFor(
+  pool: Pick<Pool, 'query'>,
+  input: { accountId: string; channelId: string; threadRootId: string; chainCause?: string | null },
+): Promise<string | null> {
+  if (!input.chainCause) return null;
+  const cause = await verifiedCauseLink(pool, input.accountId, input.chainCause);
+  if (!cause) return null;
+  const row = (await pool.query(
+    `select kind, meta->'wake'->>'watch' = 'true' as watch, meta->'wake'->>'origin' as origin from message where id = $1`,
+    [cause],
+  )).rows[0] as { kind: string; watch: boolean | null; origin: string | null } | undefined;
+  if (!row) return null;
+  const inherited = row.kind === 'wake' && row.watch === true && typeof row.origin === 'string' && ORIGIN_ID_RE.test(row.origin)
+    ? row.origin : null;
+  const candidate = inherited ?? cause;
+  const ok = await pool.query(
+    `select 1 from message
+      where id = $1 and channel_id = $2 and (id = $3 or thread_root_id = $3)
+        and deleted_at is null and kind not in ('wake', 'system', 'progress')`,
+    [candidate, input.channelId, input.threadRootId],
+  );
+  return ok.rowCount ? candidate : null;
+}
+
 export type ScheduleWakeResult =
   | { wake: { id: string; wakeAt: string; messageId: string }; message: MessageRow; refusal?: undefined }
   | { refusal: WakeRefusal; wake?: undefined; message?: undefined };
@@ -120,6 +162,8 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
   }
 
   const wakeAt = new Date(Date.now() + input.notBeforeSec * 1_000);
+  // 감시면 사슬을 시작한 지시의 id(`watchOriginFor`, 2026-11-02). 감시가 아니면 보지도 않는다.
+  const origin = input.watch === true ? await watchOriginFor(pool, input) : null;
   const posted = await postMessage(pool, {
     channelId: input.channelId,
     authorId: input.accountId,
@@ -138,6 +182,7 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
         // 그대로 되찾는다(앵커를 040 에 두 번 저장하지 않은 것과 같은 규칙). 새 컬럼이 필요 없다.
         ...(input.reportTo ? { reportTo: input.reportTo } : {}),
         ...(input.watch === true ? { watch: true } : {}),
+        ...(origin ? { origin } : {}),
       },
     },
   });

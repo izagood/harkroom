@@ -1228,6 +1228,8 @@ export function buildSystemPrompt(opts: {
     '깨어난 턴은 자기 스레드만 알아서, 주지 않으면 그 약속을 모른다. 남이 건 예약을 근거로 약속하지 마라.',
     // 2026-10-31: "5분마다 확인" 감시의 깨어난 턴이 다음 예약 없이 끝나 감시가 조용히 멈췄다 — 감시임을 예약에 적게 한다.
     '주기적으로 지켜보는 예약이면 `watch: true` 를 준다 — 깨어난 턴은 다음 예약을 다시 걸거나, 감시를 마치면 `message.report` 로 끝을 알린다.',
+    // 2026-11-02: 3회차 깨움 턴이 자기가 쓴 애매한 사유만 받고 끝 조건을 몰라 멈췄다 — 사유가 다음 턴의 유일한 단서다.
+    '감시(watch)면 사유에 다음 회차와 끝 조건을 적어라(예: 「다음 3/3 — 3/3에서 감시 끝」).',
     // f4(2026-10-27): 서버 가이드의 예약 절을 턴 판본에서 뺐다(`server/src/mcp/guide.ts` 머리) — 거기에만 있던 사실을 여기로 옮긴다.
     '예약은 하한 60초, 사람의 새 발화 없이 연속 20회까지다 — 소진되면 `message.fail` 로 넘긴다. 사람이 그 스레드에서',
     '너를 부르면 걸어 둔 예약은 접힌다(그 턴 프롬프트에 접힌 사유가 실린다) — 아직 필요하면 다시 건다.',
@@ -1624,6 +1626,9 @@ function renderLine(m: MessageRow, handles: Record<string, string>, note?: strin
 /** 이 턴을 띄운 글에 붙는 표시(`lineNote`). */
 export const ANCHOR_LINE_NOTE = '← 너를 부른 글';
 
+/** 감시 사슬을 시작한 지시에 붙는 표시(`buildTurnPrompt` 의 `watchOrigin`, 2026-11-02). */
+export const WATCH_ORIGIN_LINE_NOTE = '← 맡긴 글';
+
 /** 글 머리에 이어 붙은 `@handle` 들(본문 맨 앞의 부름). 없으면 빈 목록. */
 function leadingHandles(body: string): string[] {
   const head = /^(?:\s*@[A-Za-z0-9][\w.-]*)+/.exec(body);
@@ -1787,7 +1792,13 @@ export function buildTurnPrompt(opts: {
    * 아래 자기-발화 필터에 전부 걸린다. 그대로 두면 `mentionTurn` 이 하네스를 돌리지
    * 않고 끝내, 걸어 둔 기다림이 조용히 사라진다.
    */
-  wake?: { reason: string; reportTo?: WakeReportTo; watch?: true };
+  wake?: { reason: string; reportTo?: WakeReportTo; watch?: true; origin?: string };
+  /**
+   * 감시 사슬을 **시작한 지시**(`meta.wake.origin` 이 가리키는 글, 2026-11-02). `wake.watch` 일 때만 뜻이 있고, 러너가
+   * 앵커 스레드에서 읽어 같은 채널·같은 스레드·지운 적 없음을 확인한 것만 넘긴다. 사유 아래 「← 맡긴 글」로 싣는다 —
+   * 새 세션의 깨움 턴은 사유 한 줄만 받아, 3회차 턴이 "3회차에 끝을 알려라" 는 첫 지시를 몰라 멈췄다.
+   */
+  watchOrigin?: MessageRow;
   /**
    * 이 부름이 **접은 내 예약**(서버 107, 2026-10-06). 사람이 이 스레드에서 부르면 걸어 둔 깨움이 전부 접히는데,
    * 전에는 이 턴이 그것을 몰라 "11:22 에 본다" 는 약속이 조용히 사라졌다. 델타를 대신하지 않는다 — 사람의
@@ -1862,7 +1873,7 @@ export function buildTurnPrompt(opts: {
 }): { prompt: string; fedSeq: number } {
   const {
     messages, lastFedSeq, meId, handles, channelId, threadRootId, wake, team, delegation,
-    delegatedBy, editedMention, canceledWakes, unseenOwnAfterSeq, mentionId, gapAfterSeq, afterCancelBy, startedIn,
+    delegatedBy, editedMention, canceledWakes, unseenOwnAfterSeq, mentionId, gapAfterSeq, afterCancelBy, startedIn, watchOrigin,
   } = opts;
   const freshWake = opts.freshWake === true && wake !== undefined;
   const isFirstTurn = lastFedSeq === 0;
@@ -1925,6 +1936,8 @@ export function buildTurnPrompt(opts: {
     `(예약된 후속 턴 — 사유: ${wake.reason})`,
     ...(wake.reportTo ? reportToLines(wake.reportTo) : []),
     ...(wake.watch ? [WATCH_DUTY_LINE] : []),
+    // 맡긴 지시는 감시일 때만 — 감시가 아닌 깨움에 실리면 지난 요청을 새 요청으로 읽는다.
+    ...(wake.watch && watchOrigin ? [renderLine(watchOrigin, handles, WATCH_ORIGIN_LINE_NOTE)] : []),
     ...(freshWake ? freshWakeLines() : []),
     '',
   ];
@@ -2119,6 +2132,18 @@ export function wakeReportTo(meta: unknown): WakeReportTo | undefined {
 export function wakeWatch(meta: unknown): boolean {
   const wake = (meta as { wake?: { watch?: unknown } } | null | undefined)?.wake;
   return wake?.watch === true;
+}
+
+const WAKE_ORIGIN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * 감시 사슬을 시작한 지시의 id(`meta.wake.origin`, 2026-11-02). **감시(`watch: true`)일 때만**, uuid 꼴 문자열만 받는다 —
+ * 감시가 아닌 깨움에 이 키가 있어도(그럴 일은 없다) 보지 않는다. 옛 서버의 깨움에는 없고, 그때는 지금처럼 사유만 싣는다.
+ */
+export function wakeOrigin(meta: unknown): string | undefined {
+  if (!wakeWatch(meta)) return undefined;
+  const origin = (meta as { wake: { origin?: unknown } }).wake.origin;
+  return typeof origin === 'string' && WAKE_ORIGIN_RE.test(origin) ? origin : undefined;
 }
 
 /**
