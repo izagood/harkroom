@@ -254,11 +254,14 @@ class _AskCardState extends State<AskCard> {
     final order = <String>[
       if (ids.contains(permOptApproveMandate)) permOptApproveMandate,
       if (ids.contains(permOptApproveNewMandate)) permOptApproveNewMandate,
+      // t1(designer A안): 서버가 실을 때만 보조 버튼 [이번 턴만].
+      if (ids.contains(permOptApproveTurn)) permOptApproveTurn,
       if (ids.contains(permOptApproveOnce) || perm.once != null) permOptApproveOnce,
     ];
     String label(String o) => switch (o) {
           permOptApproveMandate => t.permApproveMandate,
           permOptApproveNewMandate => t.permApproveNewMandate,
+          permOptApproveTurn => t.permApproveTurn,
           permOptApproveOnce => perm.once == null
               ? t.permApproveOnce
               : '${perm.once!.ci ? t.mergeOnceCiButton : t.permApproveOnce} (PR #${perm.once!.number})',
@@ -311,6 +314,8 @@ class _AskCardState extends State<AskCard> {
       endedText = t.permStateMandateEnded;
     } else if (s == 'denied' || chose == permOptDeny) {
       endedText = t.permStateDenied;
+    } else if (chose == permOptApproveTurn) {
+      endedText = t.permStateTurn;
     } else if (s == 'approved_once' || chose == permOptApproveOnce || (s == 'granted' && perm.kind == 'command')) {
       endedText = perm.ghUserUsed != null ? t.permStateOnceGh(perm.ghUserUsed!) : t.permStateOnce;
     } else if (s == 'granted' || chose != null) {
@@ -329,7 +334,8 @@ class _AskCardState extends State<AskCard> {
     if (who != null && !(ended && (s == null || s == 'pending'))) {
       final result = switch (chose) {
         permOptDeny => t.permResultDenied(who),
-        permOptApproveNewMandate || permOptApproveMandate || 'approve' when perm.grantedWithoutLine => t.permResultStanding(who),
+        permOptApproveTurn => t.permResultTurn(who),
+        permOptApproveNewMandate || permOptApproveMandate || 'approve' when perm.grantedWithoutLine => _standingResult(t, who, perm.grantExpiresAt),
         permOptApproveNewMandate => t.permResultNewAdded(who),
         permOptApproveMandate || 'approve' => t.permResultAdded(who),
         permOptApproveOnce || 'approve_hour' => t.permResultOnce(who),
@@ -478,4 +484,12 @@ class _AskCardState extends State<AskCard> {
     }
     return null;
   }
+}
+
+/// #1713 designer nit 1: 「7일」을 박지 않고 기한을 쓴다 — 살아 있으면 「{MM/DD}까지 허락함」, 지났으면 「7일 허락 끝남」. 데스크톱과 같은 꼴.
+String _standingResult(Strings t, String who, String? expiresAt) {
+  final d = expiresAt == null ? null : DateTime.tryParse(expiresAt)?.toLocal();
+  if (d == null || !d.isAfter(DateTime.now())) return t.permResultStandingEnded(who);
+  final date = '${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';
+  return t.permResultStandingUntil(who, date);
 }

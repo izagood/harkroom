@@ -129,10 +129,15 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
   // r5: 끝난 줄 카드의 머리는 「정해졌다 · X 골랐다」(선택지가 접혀 빈말) 대신 결과를 쓴다.
   // S2: 카드 답은 카드 선택지로만 적힌다 — 위임장을 못 세워 7일로 다시 한 카드도 「위임장 만들고 더하기」로 적힌다.
   // 원본 meta 에 줄(lineId)이 없고 7일 기한만 있으면 「7일 허락함」으로 그린다.
+  // #1713 designer nit 1: 「7일」을 박지 않고 기한(`grantExpiresAt`)을 쓴다 — 지났으면 「7일 허락 끝남」.
+  const standingUntil = lined?.line && answered && grantedWithoutLine(lined.request) && isStandingAnswer(ask.answeredWith ?? null)
+    ? String(lined.request!.grantExpiresAt) : null;
+  const standingLive = standingUntil != null && new Date(standingUntil).getTime() > Date.now();
   const resultKey = lined?.line && answered
-    ? (grantedWithoutLine(lined.request) && isStandingAnswer(ask.answeredWith ?? null) ? 'mandateCard.result.standing' : lineResultKey(ask.answeredWith ?? null))
+    ? (standingUntil != null ? (standingLive ? 'mandateCard.result.standingUntil' : 'mandateCard.result.standingEnded') : lineResultKey(ask.answeredWith ?? null))
     : null;
-  const resultHead = resultKey ? t(resultKey, { who: answeredByName ?? t('common.someone') }) : null;
+  const standingDate = standingUntil ? mmdd(new Date(standingUntil)) : '';
+  const resultHead = resultKey ? t(resultKey, { who: answeredByName ?? t('common.someone'), date: standingDate }) : null;
 
   /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
      있고, 여기 `max-w-prose`(65ch)를 남기면 열을 넓혀도 이 카드만 옛 폭에 남아 한 화면에
@@ -257,6 +262,11 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
   );
 }
 
+/** 「11/09」 — 두 앱이 같은 꼴(designer nit 1). 내 시간대 기준. */
+function mmdd(d: Date): string {
+  return Number.isNaN(d.getTime()) ? '' : `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+}
+
 /** S2: 승인됐지만 위임장 줄 없이 7일 허락만 남은 원본 카드인가(거울은 원본 meta 가 없어 거짓). */
 export function grantedWithoutLine(request: Record<string, unknown> | null | undefined): boolean {
   if (!request) return false;
@@ -268,8 +278,9 @@ function isStandingAnswer(id: string | null): boolean {
 }
 
 /** r5: 줄 카드에서 고른 선택지 → 결과 머리 키. 모르는 선택지면 null(옛 머리). */
-export function lineResultKey(id: string | null): 'mandateCard.result.denied' | 'mandateCard.result.added' | 'mandateCard.result.once' | 'mandateCard.result.newAdded' | null {
+export function lineResultKey(id: string | null): 'mandateCard.result.denied' | 'mandateCard.result.added' | 'mandateCard.result.once' | 'mandateCard.result.newAdded' | 'mandateCard.result.turn' | null {
   if (id === 'deny') return 'mandateCard.result.denied';
+  if (id === 'approve_turn') return 'mandateCard.result.turn';
   if (id === 'approve_new_mandate') return 'mandateCard.result.newAdded';
   if (id === 'approve_mandate' || id === 'approve') return 'mandateCard.result.added';
   if (id === 'approve_once' || id === 'approve_hour') return 'mandateCard.result.once';

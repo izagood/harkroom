@@ -205,6 +205,23 @@ void main() {
     expect(tester.getTopLeft(deny).dy, greaterThan(tester.getTopLeft(once).dy));
   });
 
+  testWidgets('t1: 서버가 실으면 [이번 턴만]이 보조 버튼으로 — 주 버튼 다음, 44pt', (tester) async {
+    await tester.pumpWidget(wrap(app, card(permMeta(pr: {'once': null}, options: [
+      {'id': 'approve_mandate', 'label': '이 위임장 동안'},
+      {'id': 'approve_turn', 'label': '이번 턴만'},
+      {'id': 'deny', 'label': '거절'},
+    ]))));
+    final primary = find.byKey(const Key('ask-option-m1-approve_mandate'));
+    final turn = find.byKey(const Key('ask-option-m1-approve_turn'));
+    expect(tester.widget(primary), isA<FilledButton>());
+    expect(tester.widget(turn), isA<OutlinedButton>());
+    expect(find.text('이번 턴만'), findsOneWidget);
+    expect(tester.getSize(turn).height, greaterThanOrEqualTo(44));
+    expect(tester.getTopLeft(turn).dy, greaterThan(tester.getTopLeft(primary).dy));
+    // 열린 카드의 줄 상자는 주 버튼 한도만 — 「이 턴 끝까지」가 섞이지 않는다.
+    expect(find.text('이 턴 끝까지'), findsNothing);
+  });
+
   testWidgets('이번 한 번은 gh 계정 없이 approve_once 를 보낸다', (tester) async {
     await tester.pumpWidget(wrap(app, card(permMeta())));
     await tester.tap(find.byKey(const Key('ask-option-m1-approve_once')));
@@ -279,8 +296,13 @@ void main() {
     await head({'status': 'approved_once'}, 'approve_once', 'alice allowed it once', lang: 'en');
     await head({'status': 'granted'}, 'approve_new_mandate', 'alice started a mandate and added this', lang: 'en');
     // S2: 위임장을 못 세워 7일로 다시 한 카드 — 줄(lineId)이 없고 7일 기한만 있으면 「7일 허락함」.
-    await head({'status': 'granted', 'grantExpiresAt': '2026-11-09T00:00:00.000Z'}, 'approve_new_mandate', '7일 허락함 · alice');
-    await head({'status': 'granted', 'grantExpiresAt': '2026-11-09T00:00:00.000Z'}, 'approve_new_mandate', 'alice allowed this for 7 days', lang: 'en');
+    // #1713 nit 1: 기한을 쓴다 — 살아 있으면 「MM/DD까지 허락함」, 지났으면 「7일 허락 끝남」.
+    await head({'status': 'granted', 'grantExpiresAt': '2999-11-09T12:00:00.000Z'}, 'approve_new_mandate', '11/09까지 허락함 · alice');
+    await head({'status': 'granted', 'grantExpiresAt': '2999-11-09T12:00:00.000Z'}, 'approve_new_mandate', 'alice allowed this until 11/09', lang: 'en');
+    await head({'status': 'granted', 'grantExpiresAt': '2020-11-09T12:00:00.000Z'}, 'approve_new_mandate', '7일 허락 끝남 · alice');
+    // t1: 「이번 턴만」 결과 머리.
+    await head({'status': 'granted', 'lineId': 'l-t1'}, 'approve_turn', '이번 턴만 허락함 · alice');
+    await head({'status': 'granted', 'lineId': 'l-t1'}, 'approve_turn', 'alice allowed it for this turn', lang: 'en');
     await head({'status': 'granted', 'grantExpiresAt': '2026-11-09T00:00:00.000Z', 'lineId': 'l1'}, 'approve_new_mandate', '위임장을 만들고 더함 · alice');
     expect(stringsFor('ko').permResultDenied('재빈'), '거절함 · 재빈');
     expect(stringsFor('ko').permResultDenied('나비'), '거절함 · 나비');

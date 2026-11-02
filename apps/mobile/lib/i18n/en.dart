@@ -338,7 +338,17 @@ class StringsEn implements Strings {
   @override
   String permResultAdded(String who) => '$who added this to the mandate';
   @override
-  String permResultStanding(String who) => '$who allowed this for 7 days';
+  String permResultStandingUntil(String who, String date) => '$who allowed this until $date';
+  @override
+  String permResultStandingEnded(String who) => "$who's 7-day allowance ended";
+  @override
+  String permResultTurn(String who) => '$who allowed it for this turn';
+  @override
+  String get permApproveTurn => 'This turn only';
+  @override
+  String get permLimitTurn => 'Until this turn ends';
+  @override
+  String get permStateTurn => 'Allowed for this turn';
 
   @override
   String permResultOnce(String who) => '$who allowed it once';

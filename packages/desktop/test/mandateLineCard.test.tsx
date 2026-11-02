@@ -157,7 +157,11 @@ describe('W4 mandate line card', () => {
     ['이번 한 번 허락함 · alice', { options: ['approve_once', 'deny'], pr: { status: 'approved_once', kind: 'command', line: { cap: 'command', scope: 'x', limits: { approve_once: { uses: 1 } } } }, ask: { answeredWith: 'approve_once', answeredBy: ME } }],
     ['거절함 · alice', { pr: { status: 'denied' }, ask: { answeredWith: 'deny', answeredBy: ME } }],
     // S2: 위임장을 못 세워 7일로 다시 한 카드 — 답은 「위임장 만들고 더하기」로 적혔지만 줄(lineId)이 없고 7일 기한만 있다.
-    ['7일 허락함 · alice', { options: ['approve_new_mandate', 'deny'], pr: { status: 'granted', mandate: undefined, grantExpiresAt: '2026-11-09T00:00:00.000Z' }, ask: { answeredWith: 'approve_new_mandate', answeredBy: ME } }],
+    // #1713 nit 1: 기한을 쓴다 — 살아 있으면 「{date}까지 허락함」, 지났으면 「7일 허락 끝남」.
+    ['까지 허락함 · alice', { options: ['approve_new_mandate', 'deny'], pr: { status: 'granted', mandate: undefined, grantExpiresAt: '2999-11-09T00:00:00.000Z' }, ask: { answeredWith: 'approve_new_mandate', answeredBy: ME } }],
+    ['7일 허락 끝남 · alice', { options: ['approve_new_mandate', 'deny'], pr: { status: 'granted', mandate: undefined, grantExpiresAt: '2020-11-09T00:00:00.000Z' }, ask: { answeredWith: 'approve_new_mandate', answeredBy: ME } }],
+    // t1: 「이번 턴만」 결과 머리.
+    ['이번 턴만 허락함 · alice', { options: ['approve_mandate', 'approve_turn', 'deny'], pr: { status: 'granted', lineId: 'l-t1' }, ask: { answeredWith: 'approve_turn', answeredBy: ME } }],
     ['위임장을 만들고 더함 · alice', { options: ['approve_new_mandate', 'deny'], pr: { status: 'granted', mandate: undefined, grantExpiresAt: '2026-11-09T00:00:00.000Z', lineId: 'line-1' }, ask: { answeredWith: 'approve_new_mandate', answeredBy: ME } }],
   ])('answered line card head says the result: %s', (head, opts) => {
     render(<AskCard message={card(opts as Parameters<typeof card>[0])} />);
@@ -166,6 +170,23 @@ describe('W4 mandate line card', () => {
     expect(screen.getByTestId('ask-card').textContent).not.toContain('골랐다');
     expect(screen.queryByTestId('mandate-ended')).toBeNull();
     expect(screen.getByTestId('mandate-line')).toBeTruthy();
+  });
+  it('t1: [이번 턴만] only when the server offers it, as the secondary button with its tooltip; answered turn card has no [줄 빼기]', () => {
+    const line = { cap: 'tool', scope: 'x', limits: { approve_mandate: { untilMs: 7 * 86_400_000 }, approve_turn: { turn: true } } };
+    render(<AskCard message={card({ options: ['approve_mandate', 'approve_turn', 'deny'], pr: { line } })} />);
+    const btn = screen.getByTestId('ask-option-approve_turn');
+    expect(btn.textContent).toBe('이번 턴만');
+    expect(btn.getAttribute('title')).toBe('이 턴이 끝나면 다시 묻는다(최대 1시간)');
+    expect(btn.className).toContain('border');
+    // 열린 카드는 주 버튼(standing)의 칩만 — 「이 턴 끝까지」는 섞이지 않는다.
+    expect(screen.getByTestId('mandate-line').textContent).not.toContain('이 턴 끝까지');
+    cleanup();
+    render(<AskCard message={card({ options: ['approve_mandate', 'deny'], pr: { line } })} />);
+    expect(screen.queryByTestId('ask-option-approve_turn')).toBeNull();
+    cleanup();
+    render(<AskCard message={card({ options: ['approve_mandate', 'approve_turn', 'deny'], pr: { line, status: 'granted', lineId: 'l-t1' }, ask: { answeredWith: 'approve_turn', answeredBy: ME } })} />);
+    expect(screen.getByTestId('mandate-line').textContent).toContain('이 턴 끝까지');
+    expect(screen.queryByTestId('mandate-line-revoke')).toBeNull();
   });
   it('result head in English, chat marker kept after it', () => {
     usePrefsStore.getState().setLocale('en');
