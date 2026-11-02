@@ -9,6 +9,8 @@ import WebSocket from 'ws';
 import type { AgentSessionView, AttachServerFrame } from '@harkroom/shared';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { bootstrapAdmin, createAgent, registerOperator } from './helpers/fixtures.js';
 import { operatorRunnerFactory, type OperatorRunner } from './helpers/operatorRunner.js';
 
@@ -578,6 +580,8 @@ describe('S7 ?scope=visible — 그 채널을 볼 수 있는 사람이면 본다
     const mineRows = mine.json().sessions as Record<string, unknown>[];
     expect(mineRows.map((r) => r.channelId)).toEqual([pub]);
     expect(mineRows[0]!.owned).toBe(true);
+    // 내 에이전트 줄에는 그만두기 문이 받는 id 가 실린다(2026-10-29) — 모바일이 이 범위 하나로 [그만두기]를 누른다.
+    expect(mineRows[0]!.sessionId).toBe('vis-1');
 
     // admin 은 전부(uuid 아닌 줄까지) 본다.
     const all = await app.inject({ method: 'GET', url: '/agent-sessions?scope=visible', headers: auth(adminToken) });
@@ -611,5 +615,114 @@ describe('S7 ?scope=visible — 그 채널을 볼 수 있는 사람이면 본다
 
     const plain = await app.inject({ method: 'GET', url: '/agent-wakes', headers: auth(strangerToken) });
     expect(plain.json().wakes).toEqual([]);
+  });
+});
+
+/**
+ * **턴 중단 뒤의 정리와 넘긴 일 멈추기**(2026-10-29). 사람이 「멈춰」라고 해도 같은 스레드의 새 멘션은 돌던 턴이 끝나야
+ * 읽힌다 — 그래서 끊는 문이 둘이 됐다(사람의 [그만두기]·팀장의 `turn.cancel`). 둘 다 같은 정리를 탄다:
+ * ① 그 에이전트·그 스레드의 예약을 접는다 — 안 접으면 멈춘 일이 예약 시각에 다시 열린다(다른 스레드 것은 그대로).
+ * ② `turn.cancel` 은 **그 스레드에 내가 넘긴 열린 의무**의 팀원 턴만 멈춘다 — 넘기지 않은 일은 `not_delegator`.
+ */
+describe('턴 중단 — 예약 접기 · turn.cancel (2026-10-29)', () => {
+  let ch: string;
+  const mkRoot = async (body: string): Promise<string> => (await pool.query<{ id: string }>(
+    `insert into message (channel_id, author_id, body, kind) values ($1, $2, $3, 'user') returning id`, [ch, ownerId, body],
+  )).rows[0]!.id;
+  const insertWake = async (rootId: string): Promise<string> => {
+    const m = await pool.query<{ id: string }>(
+      `insert into message (channel_id, author_id, body, kind, thread_root_id) values ($1, $2, 'wait for CI', 'wake', $3) returning id`,
+      [ch, agentId, rootId],
+    );
+    return (await pool.query<{ id: string }>(
+      `insert into agent_wake (account_id, channel_id, message_id, wake_at) values ($1, $2, $3, now() + interval '1 hour') returning id`,
+      [agentId, ch, m.rows[0]!.id],
+    )).rows[0]!.id;
+  };
+  const canceledAt = async (wakeId: string): Promise<unknown> =>
+    (await pool.query(`select canceled_at from agent_wake where id = $1`, [wakeId])).rows[0]!.canceled_at;
+
+  beforeAll(async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken),
+      payload: { name: 'cancel-wakes', repo: 'cancel-wakes-repo', visibility: 'public' },
+    });
+    ch = res.json().id as string;
+  });
+
+  it('사람의 [그만두기]는 그 스레드의 그 에이전트 예약을 접는다 — 다른 스레드 예약은 그대로다', async () => {
+    const root = await mkRoot('busy thread');
+    const other = await mkRoot('other thread');
+    const here = await insertWake(root);
+    const there = await insertWake(other);
+    const runner = await connectRunner(agentId);
+    runner.send({ type: 'announce', sessions: [session({ sessionId: 'cw-1', channelId: ch, threadRootId: root })], caps: ['cancel'] });
+    await waitForSession(ownerToken, 'cw-1');
+
+    const res = await app.inject({ method: 'POST', url: '/agent-sessions/cw-1/cancel', headers: auth(ownerToken) });
+    expect(res.statusCode).toBe(202);
+    expect(await canceledAt(here)).not.toBeNull();
+    expect(await canceledAt(there)).toBeNull();
+    await runner.close();
+  });
+
+  it('turn.cancel — 넘긴 일이 없으면 not_delegator, 넘긴 의무가 열려 있으면 그 스레드의 팀원 턴만 멈춘다', async () => {
+    const { accountId: leadId, pat: leadPat } = await createAgent(app, adminToken, 'lead-cancel');
+    const root = await mkRoot('delegated work');
+    const elsewhere = await mkRoot('unrelated work');
+    const wake = await insertWake(root);
+    const runner = await connectRunner(agentId);
+    runner.send({
+      type: 'announce',
+      sessions: [
+        session({ sessionId: 'tc-1', channelId: ch, threadRootId: root }),
+        session({ sessionId: 'tc-2', channelId: ch, threadRootId: elsewhere }),
+      ],
+      caps: ['cancel'],
+    });
+    await waitForSession(ownerToken, 'tc-2');
+
+    const client = new Client({ name: 'test', version: '0.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://${baseUrl}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${leadPat}` } },
+    }));
+    const call = async (): Promise<Record<string, unknown>> => {
+      const r = await client.callTool({ name: 'turn.cancel', arguments: { channelId: ch, threadRootId: root } });
+      return JSON.parse((r.content as { text: string }[])[0]!.text) as Record<string, unknown>;
+    };
+
+    // 넘기지 않은 일 — 신호가 가지 않는다.
+    expect(await call()).toMatchObject({ error: { code: 'not_delegator' } });
+    expect(runner.received.some((f) => f.type === 'session.cancel')).toBe(false);
+
+    const team = (await pool.query<{ id: string }>(
+      `insert into agent_team (name, created_by) values ('cancel-team', $1) returning id`, [ownerId],
+    )).rows[0]!.id;
+    const d = (await pool.query<{ id: string }>(
+      `insert into team_delegation (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at)
+       values ($1, $2, $3, $4, $1, now() + interval '1 hour') returning id`, [root, team, leadId, ch],
+    )).rows[0]!.id;
+    await pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`, [d, agentId]);
+
+    const out = await call();
+    expect(out.canceled).toEqual([{ sessionId: 'tc-1', agentAccountId: agentId }]);
+    await waitFor(() => runner.received.some((f) => f.type === 'session.cancel'));
+    const frames = runner.received.filter((f) => f.type === 'session.cancel');
+    // 다른 스레드의 턴(tc-2)은 넘긴 일이 아니다 — 멈추지 않는다. 누가 멈췄는지는 팀장 이름으로 간다.
+    expect(frames).toEqual([expect.objectContaining({ sessionId: 'tc-1', byHandle: 'lead-cancel' })]);
+    // 정리는 사람의 문과 같은 한 벌이다 — 의무는 canceled, 그 스레드 예약은 접힌다.
+    const item = (await pool.query(`select outcome from team_delegation_item where delegation_id = $1`, [d])).rows[0];
+    expect(item.outcome).toBe('canceled');
+    expect(await canceledAt(wake)).not.toBeNull();
+    const audit = (await pool.query(
+      `select actor_id, detail from audit_log where action = 'agent.turn.canceled' and actor_id = $1`, [leadId],
+    )).rows;
+    expect(audit).toHaveLength(1);
+    expect(audit[0].detail).toMatchObject({ sessionId: 'tc-1', via: 'delegator' });
+
+    // 의무가 닫힌 뒤에는 더 멈출 수 없다 — 그 팀원이 그 스레드에서 다시 도는 턴은 넘긴 일의 것이 아니다.
+    expect(await call()).toMatchObject({ error: { code: 'not_delegator' } });
+    await client.close();
+    await runner.close();
   });
 });
