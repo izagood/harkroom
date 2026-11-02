@@ -265,7 +265,7 @@ describe('머지 gh 계정 — 줄마다', () => {
     expect(screen.queryByTestId('merge-account-izagood_harkroom')).toBeNull();
     unmount();
     const r1 = render(<AgentGrantsSection agent={agent('op-elsewhere')} canGrant canRevoke localOperatorId={HERE} />);
-    expect((await screen.findByTestId('merge-gh-user-other')).textContent).toBe('이 에이전트는 다른 기기에서 돈다. 머지에 쓸 GitHub 계정은 그 기기에서 정한다.');
+    expect((await screen.findByTestId('merge-gh-user-other')).textContent).toBe('이 에이전트는 다른 기기에서 돈다. 읽기·머지에 쓸 GitHub 계정은 그 기기에서 정한다.');
     r1.unmount();
     const r2 = render(<AgentGrantsSection agent={agent(HERE)} canGrant={false} canRevoke localOperatorId={HERE} />);
     r2.unmount();

@@ -30,6 +30,9 @@ import { errorText } from '../../lib/errorText';
 import { TOOL_CAP, ToolAllowForm, ToolAllowList, renewToolAllow } from './ToolAllowGrants';
 
 const CAP = 'repo.merge' as const;
+/** 읽기 전용 저장소 grant(`pr.status`) — scope 규칙은 머지와 같다. 머지 grant 는 읽기를 품는다(서버 판정 read OR merge). */
+const READ_CAP = 'repo.read' as const;
+type RepoKind = 'read' | 'merge';
 const SECRET_CAP = 'secret.create' as const;
 type Expiry = 'none' | '7d' | '30d';
 
@@ -47,9 +50,21 @@ export function liveMergeGrantCount(rows: readonly GrantRow[], now = Date.now())
 /** 목록 카드 「머지」 칸의 셈 — 정확한 저장소 grant 와 조직 전체 grant(`owner/*`)를 따로 센다(#1255 designer n3: 「저장소 1개」로 읽히지 않게). */
 export interface MergeCount { repos: number; orgs: number }
 export function liveMergeCount(rows: readonly GrantRow[], now = Date.now()): MergeCount {
+  // 카드의 숫자는 쓰기 권한 경고다 — `repo.read` 는 세지 않는다(시안 v1 ① 6).
   const live = rows.filter((g) => g.capability === CAP && (g.expiresAt === null || Date.parse(g.expiresAt) > now));
   const orgs = live.filter((g) => isOrgRepoScope(g.scope)).length;
   return { repos: live.length - orgs, orgs };
+}
+
+const isLive = (g: GrantRow, now = Date.now()): boolean => g.expiresAt === null || Date.parse(g.expiresAt) > now;
+/**
+ * 그 저장소(`repo:<owner>/<name>` 또는 `repo:<owner>/*`)를 덮는 살아 있는 머지 grant — 같은 scope 이거나 조직 전체 `owner/*`.
+ * 판정이 「read 또는 merge」라 덮인 읽기 줄은 지워도 읽기가 그대로다(시안 v1 ① 4).
+ */
+export function coveringMerge(scope: string, merges: readonly GrantRow[], now = Date.now()): GrantRow | undefined {
+  const repo = repoOf(scope);
+  return merges.find((m) => m.capability === CAP && isLive(m, now)
+    && (m.scope === scope || (orgOf(m.scope) !== null && repo.startsWith(`${orgOf(m.scope)}/`))));
 }
 
 export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, localOperatorId, assignedOperatorName, deviceAgentIds, onCountChange, openToolAllow, onToolAllowOpened }: {
@@ -87,11 +102,17 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   const [adding, setAdding] = useState(false);
   const [reposText, setReposText] = useState('');
   const [expiry, setExpiry] = useState<Expiry>('none');
+  // 저장소 칸의 종류(시안 v1 d1) — 폼을 열 때마다 읽기로 돌아온다(최소 권한).
+  const [repoKind, setRepoKind] = useState<RepoKind>('read');
   const [revoking, setRevoking] = useState<GrantRow | null>(null);
+  // 읽기 → 머지로 올리기(시안 v1 d4) 확인창. 만료 기본값은 그 읽기 줄의 만료 그대로('keep').
+  const [upgrading, setUpgrading] = useState<GrantRow | null>(null);
+  const [upgradeExpiry, setUpgradeExpiry] = useState<Expiry | 'keep'>('keep');
   // API 호출(P4b): 같은 절에 소제목으로 나눈다(designer v3 ③). 연결 이름은 내 연결 목록에서 찾는다 — 없으면 id 앞부분.
   const [apiGrants, setApiGrants] = useState<GrantRow[]>([]);
   const [connectors, setConnectors] = useState<ApiConnectorView[]>([]);
   const [addKind, setAddKind] = useState<'merge' | 'api' | 'secret' | 'tool'>('api');
+  useEffect(() => { if (adding && addKind === 'merge') setRepoKind('read'); }, [adding, addKind]);
   // 명령 허용(`tool.allow`) 줄 — 카드 승인 7일 줄도 같은 목록에 선다(시안 v1 결정 6).
   const [toolGrants, setToolGrants] = useState<GrantRow[]>([]);
   // 안내 띠에서 왔으면 명령 허용 폼을 연다. 내려가기는 폼이 그려진 뒤라 따로 한 번(`scrollToTool`).
@@ -122,8 +143,9 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   const load = useCallback(async () => {
     try {
       const all = await getController().listGrants(agent.id);
-      const rows = all.filter((g) => g.capability === CAP);
-      setGrants(rows);
+      // 표 하나에 두 종류를 섞되 머지(쓰기) 줄을 위로 — 같은 종류 안에서는 서버 순서 그대로(시안 v1 ① 1).
+      const mergeRows = all.filter((g) => g.capability === CAP);
+      setGrants([...mergeRows, ...all.filter((g) => g.capability === READ_CAP)]);
       setApiGrants(all.filter((g) => g.capability === 'api.call'));
       setToolGrants(all.filter((g) => g.capability === TOOL_CAP));
       setSecretGrant(all.find((g) => g.capability === SECRET_CAP && g.scope === '') ?? null);
@@ -137,13 +159,13 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
         setForest(buildForest([...all, ...others.flat()]));
         const onDevice = new Set(deviceKey ? deviceKey.split(',') : []);
         setDeviceScopes([...new Set(mine.flatMap((id, i) => (onDevice.has(id) ? others[i]! : [])
-          .filter((g) => g.capability === CAP).map((g) => repoOf(g.scope).toLowerCase())))]);
+          .filter((g) => g.capability === CAP || g.capability === READ_CAP).map((g) => repoOf(g.scope).toLowerCase())))]);
       } else {
         setForest(buildForest(all));
         setDeviceScopes([]);
       }
       // 소유자가 볼 때만 알린다(#1146 security n2) — admin 이 남의 에이전트를 열어도 목록 카드에 그 숫자가 끼지 않게.
-      if (canGrant) onCountChange?.(liveMergeCount(rows));
+      if (canGrant) onCountChange?.(liveMergeCount(mergeRows));
     } catch { setGrants('error'); }
     try { setConnectors(await getController().listConnectors()); } catch { setConnectors([]); }
     // `onCountChange` 는 부모가 매 렌더 새로 만든다 — 의존에 넣으면 렌더마다 다시 읽는다.
@@ -181,18 +203,43 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
     const days = expiry === '7d' ? 7 : 30;
     return new Date(Date.now() + days * 86_400_000).toISOString();
   };
+  const allRepoRows = Array.isArray(grants) ? grants : [];
+  const mergeRows = allRepoRows.filter((g) => g.capability === CAP);
+  // 이미 머지가 있는 저장소에 읽기를 넣으면 건너뛴다(시안 v1 ② 4) — 쓸데없는 겹친 줄을 만들지 않는다.
+  const coveredRepos = repoKind === 'read'
+    ? repos.filter((r) => { const sc = repoGrantScope(r); return !!sc && !!coveringMerge(sc, mergeRows); })
+    : [];
+  const toSend = repos.filter((r) => !coveredRepos.includes(r));
   const submit = () => run(async () => {
     const at = expiresAt();
-    for (const r of repos) await getController().putGrant(agent.id, { capability: CAP, scope: repoGrantScope(r) as string, expiresAt: at });
+    for (const r of toSend) {
+      const scope = repoGrantScope(r) as string;
+      // 읽기에는 `allowAgentCause` 를 싣지 않는다 — 서버도 400 이다(security).
+      await getController().putGrant(agent.id, repoKind === 'read'
+        ? { capability: READ_CAP, scope, expiresAt: at }
+        : { capability: CAP, scope, expiresAt: at });
+    }
     setReposText(''); setExpiry('none'); setAdding(false);
   });
 
-  /** 만료된 줄을 그 저장소 그대로 7일 다시 준다(P1). 서버 판정은 [권한 주기] 와 같다(F1·F2) — 같은 PUT 이다. */
+  /** 만료된 줄을 그 저장소 그대로 7일 다시 준다(P1). 서버 판정은 [권한 주기] 와 같다(F1·F2) — 같은 PUT 이다. 종류는 그 줄 그대로. */
   const renew = (g: GrantRow) => run(async () => {
-    await getController().putGrant(agent.id, {
-      capability: CAP, scope: g.scope, expiresAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
-      ...(g.allowAgentCause ? { allowAgentCause: true } : {}),
-    });
+    const at = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    await getController().putGrant(agent.id, g.capability === READ_CAP
+      ? { capability: READ_CAP, scope: g.scope, expiresAt: at }
+      : { capability: CAP, scope: g.scope, expiresAt: at, ...(g.allowAgentCause ? { allowAgentCause: true } : {}) });
+  });
+
+  /**
+   * 읽기 → 머지(시안 v1 d4): **머지 PUT 먼저, 읽기 DELETE 다음**. 거꾸로 하면 중간 실패 때 읽기마저 잃는다. 둘째가 실패하면
+   * 겹친 읽기 줄만 남는다(「머지 권한에 들어 있다」 줄로 보인다) — 목록을 다시 읽고 실패를 말한다.
+   */
+  const upgrade = (g: GrantRow, choice: Expiry | 'keep') => run(async () => {
+    const at = choice === 'keep' ? g.expiresAt
+      : choice === 'none' ? null
+      : new Date(Date.now() + (choice === '7d' ? 7 : 30) * 86_400_000).toISOString();
+    await getController().putGrant(agent.id, { capability: CAP, scope: g.scope, expiresAt: at });
+    try { await getController().deleteGrant(agent.id, READ_CAP, g.scope); } catch (e) { await load(); throw e; }
   });
 
   const off = busy || disabled;
@@ -204,7 +251,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
     decide: (node, approve) => void run(() => approve ? getController().approveDelegation(node.grant.id) : getController().declineDelegation(node.grant.id)),
   };
   const pending = canGrant && myId ? pendingForRoot(forest, myId) : [];
-  const rows = Array.isArray(grants) ? grants : [];
+  const rows = allRepoRows;
   // 비어 있으면 한 줄로 접는다(P1) — 설명 문단·빈 문장 없이 「PR 머지 · 머지 권한 없음 · [+ 권한 주기]」. 읽는 동안도
   // 같은 모양으로 그린다(#1146 designer b) — 권한 없는 에이전트를 열 때마다 절이 펼쳤다 줄어드는 흔들림을 없앤다.
   // API 호출 권한(#1144)이 하나라도 있으면 접지 않는다 — 그 줄들이 이 절에 산다.
@@ -217,7 +264,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
   const assigned = canGrant && hasOperatorLocalSurface() && !!agent.assignment?.operatorId;
   const onThisDevice = assigned && !!localOperatorId && agent.assignment!.operatorId === localOperatorId;
   const { state: localMerge, reach: mergeReach, setScope } = useLocalMerge(
-    onThisDevice && rows.length > 0 && deviceScopes !== null ? rows.map((g) => repoOf(g.scope).toLowerCase()) : null,
+    onThisDevice && rows.length > 0 && deviceScopes !== null ? [...new Set(rows.map((g) => repoOf(g.scope).toLowerCase()))] : null,
     deviceScopes ?? [],
   );
   const ghRow = assigned ? (
@@ -375,30 +422,37 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
           <tbody className="divide-y divide-border">
           {rows.map((g) => {
             const repo = repoOf(g.scope);
+            const read = g.capability === READ_CAP;
             const expired = g.expiresAt !== null && Date.parse(g.expiresAt) <= Date.now();
+            // 읽기 줄이 살아 있는 머지(같은 저장소·조직 전체)에 덮이면 그 사실을 적는다(시안 v1 ① 4).
+            const covered = read ? coveringMerge(g.scope, mergeRows) : undefined;
             // #1255 security n2: 서버는 정확한 이름과 조직 grant 가 겹치면 **넓게 허락하는 쪽**(allow_agent_cause)을 쓴다. 이 줄은 꺼져
             // 있어도 살아 있는 조직 grant 가 켜져 있으면 실제로는 에이전트가 띄운 턴에서도 머지된다 — 그 사실을 이 줄에 적는다.
-            const coveringOrg = !g.allowAgentCause && !orgOf(g.scope)
-              ? rows.find((o) => orgOf(o.scope) !== null && o.allowAgentCause && repo.startsWith(`${orgOf(o.scope)}/`)
+            const coveringOrg = !read && !g.allowAgentCause && !orgOf(g.scope)
+              ? mergeRows.find((o) => orgOf(o.scope) !== null && o.allowAgentCause && repo.startsWith(`${orgOf(o.scope)}/`)
                 && (o.expiresAt === null || Date.parse(o.expiresAt) > Date.now()))
               : undefined;
             return (
               // 만료된 줄은 통째로 한 단 낮춘다(지난 nit n4) — 살아 있는 줄과 같은 무게로 보이지 않게. [거두기]는 정리용으로 둔다.
-              <tr key={g.scope} className={`align-top ${expired ? 'text-fg-subtle' : 'text-fg'}`} data-testid={`agent-grant-${repo}`} data-expired={expired || undefined}>
+              <tr key={`${g.capability} ${g.scope}`} className={`align-top ${expired ? 'text-fg-subtle' : 'text-fg'}`} data-testid={read ? `agent-grant-read-${repo}` : `agent-grant-${repo}`} data-kind={read ? 'read' : 'merge'} data-expired={expired || undefined}>
                 <td className="px-2 py-1">
-                  {/* 부여 종류 이름은 두되 한 단 낮춘다(지난 nit n3) — 지금 주인공은 저장소다. */}
-                  <span className="mr-2 text-fg-muted">{t('agents.grants.merge')}</span>
+                  {/* 종류 칩(시안 v1 d3) — 머지는 쓰기 권한이라 경고색 칩, 읽기는 테두리만 있는 회색 칩. 만료 줄의 칩은 한 단 흐리게. */}
+                  {read
+                    ? <span className={`mr-2 inline-flex whitespace-nowrap rounded-row border border-border px-1 text-fg-muted ${expired ? 'opacity-70' : ''}`} data-testid={`agent-grant-chip-read-${repo}`}>{t('agents.grants.read')}</span>
+                    : <span className={`mr-2 inline-flex whitespace-nowrap rounded-row border border-warning-border bg-warning-surface px-1 font-semibold text-warning ${expired ? 'opacity-70' : ''}`} data-testid={`agent-grant-chip-merge-${repo}`}>{t('agents.grants.merge')}</span>}
                   <span className="font-mono">{repo}</span>
                   {orgOf(g.scope) && (
                     <span className="ml-2 rounded-row border border-warning-border bg-warning-surface px-1 text-warning" data-testid={`agent-grant-org-${orgOf(g.scope)}`}>
                       {t('agents.grants.orgWideBadge')}
                     </span>
                   )}
-                  {localMerge !== null && typeof localMerge === 'object' && (
+                  {/* 계정 칸은 읽기 줄에도 — 읽기도 그 기기의 같은 계정 줄을 쓴다(시안 v1 ① 5). 덮인 읽기 줄은 머지 줄의 칸을 따른다. */}
+                  {localMerge !== null && typeof localMerge === 'object' && !covered && (
                     <span className="ml-2 inline-flex flex-wrap items-center gap-x-2">
                       <MergeAccountCell scope={repo.toLowerCase()} repoLabel={repoLabel(g.scope)} state={localMerge} reach={mergeReach[repo.toLowerCase()]} setScope={setScope} disabled={off} />
                     </span>
                   )}
+                  {covered && <div className="text-fg-subtle" data-testid={`agent-grant-read-covered-${repo}`}>{t('agents.grants.readCoveredByMerge')}</div>}
                 </td>
                 <td className="px-2 py-1 text-fg-subtle">
                   {t('agents.grants.by', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
@@ -407,7 +461,8 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   {g.expiresAt === null
                     ? t('agents.grants.noExpiry')
                     : expired ? t('agents.grants.expired') : t('agents.grants.expiresOn', { when: new Date(g.expiresAt).toLocaleDateString(locale) })}
-                  {g.allowAgentCause ? ` · ${t('agents.grants.agentCause')}` : ''}
+                  {/* 「에이전트가 띄운 턴에서도」는 머지 조건이다 — 읽기 줄에는 절대 그리지 않는다(시안 v1 ① 2). */}
+                  {!read && g.allowAgentCause ? ` · ${t('agents.grants.agentCause')}` : ''}
                   {coveringOrg && <span data-testid={`agent-grant-cause-via-org-${repo}`}>{` · ${t('agents.grants.agentCauseViaOrg', { owner: orgOf(coveringOrg.scope)! })}`}</span>}
                 </td>
                 <td className="px-2 py-1">
@@ -416,17 +471,29 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   <button
                     className="rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50"
                     disabled={off}
-                    aria-label={t('agents.grants.renewAria', { repo: repoLabel(g.scope) })}
+                    aria-label={read ? t('agents.grants.renewReadAria', { repo: repoLabel(g.scope) }) : t('agents.grants.renewAria', { repo: repoLabel(g.scope) })}
                     onClick={() => void renew(g)}
                   >
                     {t('agents.grants.renew7d')}
+                  </button>
+                )}
+                {/* [머지로 올리기]는 살아 있고 머지에 덮이지 않은 읽기 줄에만 — 만료 줄에서 곧장 권한을 키우는 길을 두지 않는다(시안 v1 ③ 4). */}
+                {read && !expired && !covered && canGrant && (
+                  <button
+                    className="whitespace-nowrap rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50"
+                    disabled={off}
+                    aria-label={t('agents.grants.upgradeAria', { repo: repoLabel(g.scope) })}
+                    data-testid={`agent-grant-upgrade-${repo}`}
+                    onClick={() => { setUpgradeExpiry(g.expiresAt === null ? 'none' : 'keep'); setUpgrading(g); }}
+                  >
+                    {t('agents.grants.upgrade')}
                   </button>
                 )}
                 {canRevoke && (
                   <button
                     className="rounded-row border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50"
                     disabled={off}
-                    aria-label={t('agents.grants.revokeAria', { repo: repoLabel(g.scope) })}
+                    aria-label={read ? t('agents.grants.revokeReadAria', { repo: repoLabel(g.scope) }) : t('agents.grants.revokeAria', { repo: repoLabel(g.scope) })}
                     onClick={() => setRevoking(g)}
                   >
                     {t('agents.grants.revoke')}
@@ -497,8 +564,30 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
         </div>
       )}
       {canGrant && adding && addKind === 'merge' && (
-        <div className="mt-2 rounded-row border border-border bg-surface-sunken p-2" data-testid="agent-grants-add">
-          <label className="flex flex-col gap-1 text-meta text-fg">
+        <div className="mt-2 rounded-row border border-border bg-surface-sunken p-2" data-testid="agent-grants-add" data-repo-kind={repoKind}>
+          {/* 무엇을 허락할까(시안 v1 d1) — 기본 읽기. 머지를 고르면 쓰기 권한이라는 한 줄을 경고색으로. */}
+          <fieldset className="text-meta text-fg" disabled={off}>
+            <legend className="font-medium text-fg-muted">{t('agents.grants.kind.label')}</legend>
+            {(['read', 'merge'] as const).map((k) => {
+              const on = repoKind === k;
+              const box = on
+                ? (k === 'merge' ? 'border-warning-border bg-warning-surface' : 'border-accent bg-surface')
+                : 'border-border bg-surface';
+              return (
+                <label key={k} className={`mt-1.5 flex items-start gap-2 rounded-row border px-2 py-1.5 ${box}`} data-testid={`agent-grants-kind-${k}`}>
+                  <input type="radio" name={`repo-kind-${agent.id}`} className={`mt-0.5 ${k === 'merge' ? 'accent-warning' : 'accent-accent'}`}
+                    checked={on} onChange={() => setRepoKind(k)} aria-label={k === 'read' ? t('agents.grants.kind.read') : t('agents.grants.kind.merge')} />
+                  <span>
+                    <span className="font-semibold">{k === 'read' ? t('agents.grants.kind.read') : t('agents.grants.kind.merge')}</span>
+                    {' '}<span className="text-fg-subtle">{k === 'read' ? t('agents.grants.kind.readDesc') : t('agents.grants.kind.mergeDesc')}</span>
+                    {k === 'read' && <span className="block text-fg-subtle">{t('agents.grants.kind.readNot')}</span>}
+                    {k === 'merge' && on && <span className="block text-warning" data-testid="agent-grants-kind-merge-warn">{t('agents.grants.kind.mergeWarn')}</span>}
+                  </span>
+                </label>
+              );
+            })}
+          </fieldset>
+          <label className="mt-2 flex flex-col gap-1 text-meta text-fg">
             {t('agents.grants.repos')}
             <textarea
               aria-label={t('agents.grants.repos')}
@@ -512,9 +601,16 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
           {badRepos.length > 0 && <p className="mt-1 text-meta text-danger">{t('agents.grants.errScope')}: {badRepos.join(', ')}</p>}
           {orgRepos.length > 0 && (
             <p className="mt-1 text-meta text-warning" data-testid="agent-grants-org-warning">
-              {t('agents.grants.orgWideWarning', { owners: orgRepos.join(', ') })}
+              {repoKind === 'read'
+                ? t('agents.grants.orgWideWarningRead', { owners: orgRepos.join(', ') })
+                : t('agents.grants.orgWideWarning', { owners: orgRepos.join(', ') })}
             </p>
           )}
+          {coveredRepos.map((r) => (
+            <p key={r} className="mt-1 text-meta text-fg-subtle" data-testid="agent-grants-read-covered">
+              {t('agents.grants.readAlreadyMerge', { repo: repoOf(repoGrantScope(r) as string) })}
+            </p>
+          ))}
           <label className="mt-2 flex items-center gap-2 text-meta text-fg">
             {t('agents.grants.expiry')}
             <select
@@ -532,10 +628,10 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
           <div className="mt-2 flex gap-2">
             <button
               className="rounded-row border border-border bg-accent px-2 py-1 text-meta font-medium text-accent-fg disabled:opacity-50"
-              disabled={off || repos.length === 0 || badRepos.length > 0}
+              disabled={off || toSend.length === 0 || badRepos.length > 0}
               onClick={() => void submit()}
             >
-              {t('agents.grants.confirmAdd')}
+              {repoKind === 'read' ? t('agents.grants.confirmAddRead') : t('agents.grants.confirmAddMerge')}
             </button>
             <button
               className="rounded-row border border-border px-2 py-1 text-meta text-fg hover:bg-surface disabled:opacity-50"
@@ -580,6 +676,8 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             ? t('toolAllow.revokeTitle', { rule: revoking.scope.replace(/^tool:[^:]+:/, '') })
             : revoking.capability === 'api.call'
             ? t('apiGrant.revokeTitle', { name: connectors.find((c) => `connector:${c.id}` === revoking.scope)?.name ?? '' })
+            : revoking.capability === READ_CAP
+            ? t('agents.grants.revokeReadTitle', { repo: repoLabel(revoking.scope) })
             : t('agents.grants.revokeTitle', { repo: repoLabel(revoking.scope) })}
           detail={revoking.capability === SECRET_CAP
             ? t('agents.grants.secretCreateRevokeDetail')
@@ -587,10 +685,13 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             ? t('toolAllow.revokeDetail', { handle: agent.handle })
             : revoking.capability === 'api.call'
             ? t('apiGrant.revokeDetail', { handle: agent.handle })
-            : orgOf(revoking.scope)
-            // #1255 designer n1: 조직 grant 를 거둬도 같은 조직에 정확한 이름으로 따로 준 권한은 남는다 — 「조직 전체 머지가 막힌다」고 하지 않는다.
-            ? t('agents.grants.revokeDetailOrg', { handle: agent.handle, owner: orgOf(revoking.scope)! })
-            : t('agents.grants.revokeDetail', { handle: agent.handle, repo: repoLabel(revoking.scope) })}
+            : revoking.capability === READ_CAP
+            ? t('agents.grants.revokeReadDetail', { handle: agent.handle })
+            // 머지에 읽기가 딸려 있었다 — 감시까지 끊긴다는 것을 모르고 거두지 않게 꼬리를 단다(시안 v1 ③ 3).
+            : `${orgOf(revoking.scope)
+              // #1255 designer n1: 조직 grant 를 거둬도 같은 조직에 정확한 이름으로 따로 준 권한은 남는다 — 「조직 전체 머지가 막힌다」고 하지 않는다.
+              ? t('agents.grants.revokeDetailOrg', { handle: agent.handle, owner: orgOf(revoking.scope)! })
+              : t('agents.grants.revokeDetail', { handle: agent.handle, repo: repoLabel(revoking.scope) })} ${t('agents.grants.revokeMergeReadTail')}`}
           confirmLabel={t('agents.grants.revoke')}
           cancelLabel={t('agents.grants.cancel')}
           danger
@@ -600,6 +701,44 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
             const g = revoking;
             setRevoking(null);
             void run(() => getController().deleteGrant(agent.id, g.capability, g.scope));
+          }}
+        />
+      )}
+      {upgrading && (
+        <ConfirmDialog
+          title={t('agents.grants.upgradeTitle', { repo: repoLabel(upgrading.scope) })}
+          detailKind="note"
+          detail={(
+            <span className="flex flex-col gap-2">
+              <span>{t('agents.grants.upgradeDetail', { handle: agent.handle })}</span>
+              <label className="flex items-center gap-2 text-fg">
+                {t('agents.grants.expiry')}
+                <select
+                  aria-label={t('agents.grants.expiry')}
+                  data-testid="agent-grant-upgrade-expiry"
+                  className="rounded-row border border-border bg-surface px-2 py-1 text-meta text-fg"
+                  value={upgradeExpiry}
+                  onChange={(e) => setUpgradeExpiry(e.target.value as Expiry | 'keep')}
+                >
+                  {/* 읽기 7일을 올렸는데 머지가 무기한이 되면 안 된다 — 기본은 그 읽기 줄의 만료 그대로(시안 v1 ③ 2). */}
+                  {upgrading.expiresAt !== null && (
+                    <option value="keep">{t('agents.grants.upgradeKeepExpiry', { when: new Date(upgrading.expiresAt).toLocaleDateString(locale) })}</option>
+                  )}
+                  <option value="none">{t('agents.grants.expiryNone')}</option>
+                  <option value="7d">{t('agents.grants.expiry7d')}</option>
+                  <option value="30d">{t('agents.grants.expiry30d')}</option>
+                </select>
+              </label>
+            </span>
+          )}
+          confirmLabel={t('agents.grants.confirmAddMerge')}
+          cancelLabel={t('agents.grants.cancel')}
+          busy={busy}
+          onCancel={() => setUpgrading(null)}
+          onConfirm={() => {
+            const g = upgrading;
+            setUpgrading(null);
+            void upgrade(g, upgradeExpiry);
           }}
         />
       )}
