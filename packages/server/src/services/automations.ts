@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { AutomationLastRun, AutomationRunView, AutomationSchedule, AutomationTrigger, AutomationView } from '@harkroom/shared';
 import { postMessage } from './messages.js';
 import { getMentionPolicy } from './mentionPolicy.js';
+import { endAutomationMandates, endAutomationMandatesTx } from './automationMandates.js';
 import { channelPostGate } from './channels.js';
 
 /**
@@ -226,13 +227,15 @@ function initialNextAt(trigger: AutomationTrigger, now: Date): Date | null {
 export async function createAutomation(pool: Pool, input: {
   ownerId: string; channelId: string; name: string; body: string;
   trigger: AutomationTrigger; debounceSec?: number | null; now?: Date;
+  /** ⑤b(security n5): 사람 세션으로 만들었나 — 참일 때만 회차가 위임장을 받는다. 기본 거짓. */
+  bySession?: boolean;
 }): Promise<AutomationView> {
   const nextAt = initialNextAt(input.trigger, input.now ?? new Date());
   const res = await pool.query(
-    `insert into automation (owner_id, channel_id, name, body, trigger, next_at, debounce_sec)
-     values ($1, $2, $3, $4, $5, $6, $7) returning ${COLS}`,
+    `insert into automation (owner_id, channel_id, name, body, trigger, next_at, debounce_sec, mandate_session_at)
+     values ($1, $2, $3, $4, $5, $6, $7, case when $8 then now() else null end) returning ${COLS}`,
     [input.ownerId, input.channelId, input.name, input.body, JSON.stringify(input.trigger), nextAt?.toISOString() ?? null,
-      input.debounceSec ?? null],
+      input.debounceSec ?? null, input.bySession === true],
   );
   return { ...res.rows[0], lastRun: null };
 }
@@ -255,14 +258,15 @@ export async function proposeAutomation(pool: Pool, input: {
 }
 
 /** 제안 승인. 켜고 다음 회차를 잡는다. 이미 승인된 것은 false. */
-export async function approveAutomation(pool: Pool, id: string, ownerId: string, now = new Date()): Promise<AutomationView | null> {
+export async function approveAutomation(pool: Pool, id: string, ownerId: string, now = new Date(), opts: { bySession?: boolean } = {}): Promise<AutomationView | null> {
   const cur = await getAutomation(pool, id, ownerId);
   if (!cur || cur.approvedAt) return null;
   const nextAt = initialNextAt(cur.trigger, now);
   return writeReturningView(pool,
-    `update automation set approved_at = now(), enabled = true, next_at = $3, updated_at = now()
+    `update automation set approved_at = now(), enabled = true, next_at = $3, updated_at = now(),
+       mandate_session_at = case when $4 then now() else null end
      where id = $1 and owner_id = $2 and approved_at is null and deleted_at is null`,
-    [id, ownerId, nextAt?.toISOString() ?? null],
+    [id, ownerId, nextAt?.toISOString() ?? null, opts.bySession === true],
   );
 }
 
@@ -294,9 +298,28 @@ export async function updateAutomation(pool: Pool, id: string, ownerId: string, 
   /** `null` 은 끈다. `undefined` 는 그대로 둔다. */
   debounceSec?: number | null;
   now?: Date;
+  /** ⑤b(security n5): 이 고침이 사람 세션인가. 본문·트리거·채널을 세션이 아닌 길로 고치면 위임장을 받지 않게 된다. */
+  bySession?: boolean;
 }): Promise<AutomationView | null> {
   const cur = await getAutomation(pool, id, ownerId);
   if (!cur) return null;
+  const view = await updateAutomationRow(pool, id, ownerId, cur, patch);
+  if (view) {
+    // ⑤b(security 3): 본문·트리거·채널을 고치면 그 자동화의 위임장을 끝낸다 — 줄은 그 본문이 하는 일을 보고 준 허락이다.
+    // 끄면 끝낸다. 다음 회차가 새 위임장을 만든다(옛 줄은 따라오지 않는다).
+    const changed = (patch.body !== undefined && patch.body !== cur.body)
+      || (patch.channelId !== undefined && patch.channelId !== cur.channelId)
+      || (patch.trigger !== undefined && JSON.stringify(patch.trigger) !== JSON.stringify(cur.trigger));
+    if (changed) {
+      await pool.query(`update automation set mandate_session_at = case when $2 then now() else null end where id = $1`, [id, patch.bySession === true]);
+      await endAutomationMandates(pool, id, 'automation_changed');
+    }
+    else if (patch.enabled === false && cur.enabled) await endAutomationMandates(pool, id, 'automation_off');
+  }
+  return view;
+}
+
+async function updateAutomationRow(pool: Pool, id: string, ownerId: string, cur: AutomationView, patch: Parameters<typeof updateAutomation>[3]): Promise<AutomationView | null> {
   const trigger = patch.trigger ?? cur.trigger;
   const enabled = patch.enabled ?? cur.enabled;
   const reschedule = patch.trigger !== undefined || (patch.enabled === true && !cur.enabled);
@@ -328,7 +351,10 @@ export async function deleteAutomation(pool: Pool, id: string, ownerId: string):
      where id = $1 and owner_id = $2 and deleted_at is null returning id`,
     [id, ownerId],
   );
-  return (res.rowCount ?? 0) > 0;
+  const gone = (res.rowCount ?? 0) > 0;
+  // ⑤b(security 3·5): 지우면 위임장을 끝내고 줄을 닫는다(행은 soft 삭제라 감사·줄 흔적이 남는다).
+  if (gone) await endAutomationMandates(pool, id, 'automation_off');
+  return gone;
 }
 
 export async function listRuns(pool: Pool, automationId: string, limit = 50): Promise<AutomationRunView[]> {
@@ -387,6 +413,7 @@ export async function enqueueRun(db: Pool | PoolClient, input: {
        where id = $1`,
       [input.automationId],
     );
+    await endAutomationMandatesTx(db, input.automationId, 'automation_off');
     return { status: 'rate_limited' };
   }
 
@@ -828,6 +855,7 @@ async function pauseForRefusal(client: PoolClient, automationId: string, code: s
      where id = $1`,
     [automationId, `post_refused:${code}`],
   );
+  await endAutomationMandatesTx(client, automationId, 'automation_off');
 }
 
 /** 지금 보내면 안 되는 이유(`scheduledMessages.ts::refuseReason` 과 같은 술어 + 작성자 상태). */

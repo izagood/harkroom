@@ -824,7 +824,8 @@ async function mandateForCardThread(client: PoolClient, args: { ownerId: string;
   const root = (await client.query<{ mandateId: string | null; ownAuthor: boolean }>(
     `select m.mandate_id as "mandateId",
             (m.author_id = $4 or ($5::boolean and exists (select 1 from agent_config c where c.account_id = m.author_id and c.owner_account_id = $3))) as "ownAuthor"
-       from message m where m.id = $1 and m.channel_id = $2 and m.deleted_at is null for update of m`,
+       from message m where m.id = $1 and m.channel_id = $2 and m.deleted_at is null
+        and not (coalesce(m.meta, '{}'::jsonb) ? 'automation') for update of m`,
     [args.threadRootId, args.channelId, args.ownerId, delegator, byOwner])).rows[0];
   if (!root || !root.ownAuthor) return null;
   if (root.mandateId) {

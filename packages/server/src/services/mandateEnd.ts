@@ -15,7 +15,7 @@ import { getMessageById } from './messages.js';
  * `permissionRequest.mandate.endedAt` 을 적는다. 끝난 위임은 되살리지 않는다 — 그 스레드의 소유자 답글은 위임을 잇지 않고
  * (`stampHumanMandate` 는 `ended_at is null` 만 민다), 새 위임은 새 스레드 머리에서만 생긴다.
  */
-export type MandateEndReason = 'owner' | 'idle' | 'work_done';
+export type MandateEndReason = 'owner' | 'idle' | 'work_done' | 'automation_off' | 'automation_changed';
 
 type Q = Pick<PoolClient, 'query'>;
 
@@ -85,7 +85,7 @@ export async function endIdleMandates(pool: Pool, opts: { now?: Date; limit?: nu
     await client.query('begin');
     ids = (await client.query<{ id: string }>(
       `update mandate set ended_at = $1, end_reason = 'idle'
-        where id in (select id from mandate where ended_at is null and last_activity_at <= $2
+        where id in (select id from mandate where ended_at is null and automation_id is null and last_activity_at <= $2
                       order by last_activity_at limit $3 for update skip locked)
         returning id`,
       [now, new Date(now.getTime() - MANDATE_IDLE_MS), opts.limit ?? MANDATE_IDLE_BATCH])).rows.map((r) => r.id);

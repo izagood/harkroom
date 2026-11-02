@@ -125,6 +125,8 @@ async function mandateForKeylessRoot(client: Q, args: {
             (m.author_id = $3 or exists (select 1 from agent_config c where c.account_id = m.author_id and c.owner_account_id = $3)) as "ownAuthor"
        from message m
       where m.id = $1 and m.channel_id = $2 and m.thread_root_id is null and m.deleted_at is null
+        -- ⑤b(security 4): 자동화 회차 글은 뿌리가 되지 않는다 — 회차 글에는 키를 적지 않는다.
+        and not (coalesce(m.meta, '{}'::jsonb) ? 'automation')
       for update of m`,
     [args.threadRootId, args.channelId, args.authorId])).rows[0];
   if (!root?.ownAuthor) return null;
@@ -175,8 +177,13 @@ export async function mandateForAgentPost(client: Q, args: { agentId: string; ca
 /** 위임이 지금 유효한가 — 끝나지 않았고 마지막 활동이 7일 안. 유효하면 소유자 id. */
 export async function validMandateOwner(client: Q, mandateId: string | null, now = new Date()): Promise<string | null> {
   if (!mandateId) return null;
+  // 자동화 위임장(⑤b)은 7일 쉼 대신 자동화 상태(승인·켜짐·안 지움)에 묶인다.
   const row = (await client.query<{ owner: string }>(
-    `select owner_account_id as owner from mandate where id = $1 and ended_at is null and last_activity_at > $2`,
+    `select d.owner_account_id as owner from mandate d
+      where d.id = $1 and d.ended_at is null
+        and ((d.automation_id is null and d.last_activity_at > $2)
+          or (d.automation_id is not null and exists (
+                select 1 from automation a where a.id = d.automation_id and a.deleted_at is null and a.enabled and a.approved_at is not null)))`,
     [mandateId, new Date(now.getTime() - MANDATE_IDLE_MS)])).rows[0];
   return row?.owner ?? null;
 }
