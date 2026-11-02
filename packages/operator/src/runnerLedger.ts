@@ -134,6 +134,18 @@ export interface RunnerLedgerEntry {
    * "그 이전 세대"라는 뜻이고, 판정은 그것을 낡은 것으로 본다(`planAdoption` 주석).
    */
   spawnedByAppVersion?: string;
+  /**
+   * 이 러너는 **회수(SIGTERM)를 받아 남은 턴을 끝내는 중**이다(2026-11-02). 다음 오퍼레이터는 이
+   * 줄을 채택하지 않고 다시 회수하며, 링크만 받아 그 턴이 끝나게 한다(`adopt.ts::planAdoption`).
+   *
+   * `holding`·`done` 은 그 러너가 「인박스를 놓았다」고 알릴 때 실어 온 entry 들이다 — 그 러너는
+   * 같은 알림을 두 번 보내지 않으므로, 다음 오퍼레이터가 교체 러너에 이관 보류를 심으려면 여기서
+   * 되살려야 한다. 아직 알리지 않았으면 둘 다 빈 배열이다.
+   *
+   * 판이 짧은 간격으로 두 번 바뀐 날, 첫 교체 때 회수된 러너가 장부에서 빠져 두 번째 오퍼레이터에게
+   * 「모르는 러너」로 거절되고 열린 턴을 중단했다. 이 필드가 그 자리를 막는다.
+   */
+  retiring?: { holding: number[]; done: number[] };
 }
 
 interface LedgerFile {
@@ -194,8 +206,16 @@ function isEntry(value: unknown): value is RunnerLedgerEntry {
     typeof e.incarnationId === 'string' &&
     typeof e.startedAtMs === 'number' &&
     (e.bootTimeSec === null || typeof e.bootTimeSec === 'number') &&
-    (e.linkSecret === undefined || typeof e.linkSecret === 'string')
+    (e.linkSecret === undefined || typeof e.linkSecret === 'string') &&
+    (e.retiring === undefined || isRetiringFacts(e.retiring))
   );
+}
+
+function isRetiringFacts(value: unknown): value is { holding: number[]; done: number[] } {
+  if (typeof value !== 'object' || value === null) return false;
+  const r = value as { holding?: unknown; done?: unknown };
+  const ints = (v: unknown) => Array.isArray(v) && v.every((n) => Number.isInteger(n));
+  return ints(r.holding) && ints(r.done);
 }
 
 /**

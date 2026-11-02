@@ -136,7 +136,12 @@ export type AdoptionVerdict =
    * 우리 것은 맞는데 **다른 세대**가 띄웠다(2026-09-07). 채택하지 않고 회수한다 —
    * `planAdoption` 주석이 이유를 적는다.
    */
-  | { kind: 'stale-generation'; theirs: string | null; mine: string };
+  | { kind: 'stale-generation'; theirs: string | null; mine: string }
+  /**
+   * 우리 것은 맞는데 **앞 오퍼레이터가 이미 회수하던 러너**다(장부의 `retiring`, 2026-11-02).
+   * 채택하지 않고 다시 회수하며 링크를 받아 남은 턴을 끝내게 한다.
+   */
+  | { kind: 'retiring' };
 
 /**
  * 후보 하나를 판정한다.
@@ -209,10 +214,19 @@ export async function planAdoption(
   const plan: AdoptionPlan = { adopt: [], rejected: [] };
   const 최신: Map<string, RunnerLedgerEntry> = new Map();
   for (const entry of entries) {
+    // 회수 중인 줄은 「에이전트당 최신 하나」 다툼에 끼지 않는다 — 지금 러너와 **함께** 있는 것이
+    // 정상이고, 끼면 그 러너나 지금 러너 중 하나가 잊힌다.
+    if (entry.retiring) continue;
     const seen = 최신.get(entry.agentId);
     if (!seen || entry.startedAtMs > seen.startedAtMs) 최신.set(entry.agentId, entry);
   }
   for (const entry of entries) {
+    if (entry.retiring) {
+      // 신원(생사·pid 재사용)은 똑같이 묻는다 — 그래야 `retire` 가 무관한 프로세스에 SIGTERM 을 안 보낸다.
+      const verdict = await judgeCandidate(entry, probe);
+      plan.rejected.push({ entry, verdict: verdict.kind === 'adopt' ? { kind: 'retiring' } : verdict });
+      continue;
+    }
     if (최신.get(entry.agentId) !== entry) {
       plan.rejected.push({
         entry,
@@ -267,5 +281,7 @@ export function describeVerdict(
         `${head} — 세대가 다르다(그 러너를 띄운 앱 ${verdict.theirs ?? '(안 적혀 있음)'}, ` +
         `지금 앱 ${verdict.mine}) — 회수하고 배정이 다시 띄운다`
       );
+    case 'retiring':
+      return `${head} — 앞 오퍼레이터가 회수하던 러너다 — 다시 회수하고 링크를 받아 남은 턴을 끝내게 한다`;
   }
 }
