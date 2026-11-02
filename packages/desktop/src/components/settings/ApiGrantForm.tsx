@@ -1,6 +1,7 @@
 import { Segmented } from '../Segmented';
 import { useState } from 'react';
-import { connectorScope, type ApiConnectorView, type ApiMethod, type GrantRow } from '@harkroom/shared';
+import { compareRelease, connectorScope, type ApiConnectorView, type ApiMethod, type GrantRow } from '@harkroom/shared';
+import { useActiveStore } from '../../state/communities';
 import { useLocale } from '../../i18n/useT';
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
@@ -34,7 +35,12 @@ type Expiry = '7d' | '30d' | 'none' | 'keep';
  * - `initial` 이 없고 `existing` 이 있으면 지금 값으로 연다(카드의 [설정 바꾸기…], designer D2). 만료는 「지금 만료 유지」가 기본.
  * - `initial.pathPrefix` 가 빈 글자면 막힌 경로를 모르는 것이다(security L1) — 칸을 비워 두고 사람이 적기 전엔 [주기]가 꺼진다.
  */
-export function ApiGrantForm({ agentId, connectors, initial, existing = null, allowWriteNoExpiry = false, editMode = false, delegatedCount = 0, onDone, onCancel }: {
+/** 서버가 읽기+쓰기의 「만료 없음」(`expiresAt: null`)을 받는 첫 판. 그 전 서버는 `write_needs_expiry` 로 거절한다. */
+export const WRITE_NO_EXPIRY_SINCE = '0.4.361';
+export const writeNoExpirySupported = (version: string | null | undefined): boolean =>
+  !!version && (compareRelease(version, WRITE_NO_EXPIRY_SINCE) ?? -1) >= 0;
+
+export function ApiGrantForm({ agentId, connectors, initial, existing = null, allowWriteNoExpiry: allowWriteNoExpiryProp = false, editMode = false, delegatedCount = 0, onDone, onCancel }: {
   agentId: string;
   /**
    * 설정 화면의 [고치기] — 지금 부여를 그 자리에서 고친다(같은 부여 id, 서버가 전→후를 감사한다). 범위·경로도 바꿀 수 있고,
@@ -54,6 +60,10 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
 }) {
   const t = useT();
   const locale = useLocale();
+  // 서버 판이 모르면 쓰기 「만료 없음」을 띄우지 않는다(옛 서버는 거절한다 — 고를 수 없는 것을 보이지 않는다).
+  const serverVersion = useActiveStore((s) => s.serverVersion?.version ?? null);
+  const serverKnowsNoExpiry = writeNoExpirySupported(serverVersion);
+  const allowWriteNoExpiry = allowWriteNoExpiryProp && serverKnowsNoExpiry;
   const exWrite = (existing?.limits?.methods ?? []).some((m) => m !== 'GET');
   const fromExisting = !initial && !!existing;
   const [connectorId, setConnectorId] = useState(initial?.connectorId ?? existing?.scope.replace(/^connector:/, '') ?? connectors[0]?.id ?? '');
@@ -117,7 +127,9 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
     } catch (e) {
       if (e instanceof ApiError) {
         const known: Record<string, string> = {
-          write_needs_expiry: t('apiGrant.errExpiry'), write_expiry_too_long: t('apiGrant.errExpiry'),
+          // 「만료 없음」을 보냈는데 write_needs_expiry 면 서버가 그 판 이전이다 — 날짜 오류가 아니라 서버 업데이트가 답이다.
+          write_needs_expiry: effectiveExpiry === 'none' || (effectiveExpiry === 'keep' && existing?.expiresAt === null) ? t('apiGrant.errNoExpiryOldServer') : t('apiGrant.errExpiry'),
+          write_expiry_too_long: t('apiGrant.errExpiry'),
           bad_limits: t('apiGrant.errLimits'), no_connector: t('apiGrant.errConnector'),
         };
         setError(known[e.code] ?? (e.status === 403 ? t('apiGrant.errForbidden') : t('apiGrant.errFailed', { reason: e.message })));
@@ -196,7 +208,7 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
         options={([...(keepOk ? ['keep'] as const : []), '7d', '30d', ...(scope === 'read' || allowWriteNoExpiry ? ['none'] as const : [])] as Expiry[]).map((x) => ({
           value: x, label: x === 'keep' ? t('apiGrant.expiryKeep') : t(x === '7d' ? 'apiGrant.expiry7d' : x === '30d' ? 'apiGrant.expiry30d' : 'apiGrant.expiryNone'),
         }))}>
-        {scope === 'write' && !allowWriteNoExpiry && <span className="text-fg-subtle">{t('apiGrant.writeExpiryHint')}</span>}
+        {scope === 'write' && !allowWriteNoExpiry && <span className="text-fg-subtle">{t(allowWriteNoExpiryProp ? 'apiGrant.writeExpiryNeedsServer' : 'apiGrant.writeExpiryHint')}</span>}
       </Segmented>
       {scope === 'write' && (
         <Segmented label={t('apiGrant.humanOnly')} value={humanOnly} disabled={busy} onChange={setHumanOnly} testId="api-grant-human-only"

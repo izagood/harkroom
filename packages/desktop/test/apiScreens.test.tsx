@@ -12,7 +12,7 @@ import { BlockedCard, firstSegment } from '../src/components/BlockedCard';
 import { setController, type Controller } from '../src/state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
-import type { SecretView } from '../src/lib/api';
+import { ApiError, type SecretView } from '../src/lib/api';
 import { acc } from './helpers/fakeApi';
 
 const ME = 'owner-1';
@@ -46,6 +46,8 @@ beforeEach(() => {
   useActiveStore.getState().set({
     me: acc(ME, 'owner'),
     accounts: { [ME]: acc(ME, 'owner'), 'agent-1': acc('agent-1', 'alpha', 'agent', false, { ownerAccountId: ME }), other: acc('other', 'carol') },
+    // 쓰기 「만료 없음」을 받는 서버 판(WRITE_NO_EXPIRY_SINCE 이상) — 옛 서버 시험은 따로 낮춘다.
+    serverVersion: { version: '0.4.361' } as never,
   });
 });
 afterEach(() => { usePrefsStore.getState().setLocale('system'); cleanup(); });
@@ -308,6 +310,31 @@ describe('ApiGrantForm 고치기(editMode)', () => {
     fireEvent.click(screen.getByRole('radio', { name: '사람이 시킨 턴에서만' }));
     fireEvent.click(screen.getByRole('radio', { name: '없음' }));
     expect((within(screen.getByTestId('api-grant-no-expiry-warning')).getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
+  });
+});
+
+describe('ApiGrantForm 옛 서버(쓰기 「만료 없음」 이전)', () => {
+  it('서버 판이 0.4.361 보다 낮으면 설정 화면이어도 쓰기 「없음」을 띄우지 않고, 서버 업데이트가 필요하다고 적는다', () => {
+    setup();
+    useActiveStore.getState().set({ serverVersion: { version: '0.4.360' } as never });
+    render(<ApiGrantForm allowWriteNoExpiry agentId="agent-1" connectors={[conn()]} onDone={() => {}} onCancel={() => {}} />);
+    fireEvent.click(screen.getByRole('radio', { name: '읽기+쓰기 (GET·POST)' }));
+    expect(screen.queryByRole('radio', { name: '없음' })).toBeNull();
+    expect(screen.getByText(/서버를 업데이트하면/)).toBeTruthy();
+    // 읽기만은 옛 서버도 「없음」을 받는다.
+    fireEvent.click(screen.getByRole('radio', { name: '읽기만 (GET)' }));
+    expect(screen.getByRole('radio', { name: '없음' })).toBeTruthy();
+  });
+
+  it('「없음」을 보냈는데 서버가 write_needs_expiry 면 날짜 오류가 아니라 서버 업데이트 문구', async () => {
+    setup({ putGrant: vi.fn(async () => { throw new ApiError(400, 'write_needs_expiry', 'x'); }) });
+    render(<ApiGrantForm allowWriteNoExpiry agentId="agent-1" connectors={[conn()]} onDone={() => {}} onCancel={() => {}} />);
+    fireEvent.click(screen.getByRole('radio', { name: '읽기+쓰기 (GET·POST)' }));
+    fireEvent.click(screen.getByRole('radio', { name: '사람이 시킨 턴에서만' }));
+    fireEvent.click(screen.getByRole('radio', { name: '없음' }));
+    fireEvent.click(within(screen.getByTestId('api-grant-no-expiry-warning')).getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: '주기' }));
+    expect((await screen.findByTestId('api-grant-error')).textContent).toContain('서버를 업데이트해야 한다');
   });
 });
 
