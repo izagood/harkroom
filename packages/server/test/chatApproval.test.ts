@@ -331,6 +331,20 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect([await status(a.requestId), await status(b.requestId)]).toEqual(['pending', 'granted']);
   });
 
+  it('L: 카드가 아닌 글 링크 + 서술 속 「승인한」은 승인 시도가 아니다 — 안내 줄 없음, 끝맺은 「승인」이면 지금처럼 안내', async () => {
+    const thread = await root();
+    const { requestId } = await ask(thread);
+    const plain = await root();
+    const where = await root();
+    await say(alice.token, `${link(plain)}\n\n내가 명시적으로 승인한 걸 해당 스레드에 가야만 풀리도록 된다고 하고 있어 이것도 수정되어야해`, where);
+    expect(await systemLines(where)).toEqual([]);
+    expect(await status(requestId)).toBe('pending');
+    // 끝맺은 승인이면 「카드가 없다」 안내는 그대로다.
+    await say(alice.token, `승인 ${link(plain)}`, where);
+    expect((await systemLines(where)).map((l) => l.body).join('\n')).toContain('정할 수 있는 카드가 없다');
+    expect(await status(requestId)).toBe('pending');
+  });
+
   it('다른 채널에서 카드 링크를 붙인 「승인」은 그 카드를 승인한다', async () => {
     const thread = await root();
     const { cardId, requestId } = await ask(thread);
