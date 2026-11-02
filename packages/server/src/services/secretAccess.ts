@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { SecretKeyring } from './secretKeyring.js';
+import { auditAutomationMandateCreated, automationMandateForCause, type AutomationLeaseMandate } from './automationMandates.js';
 import { PRINCIPAL_FROM_CAUSE_SQL } from './invokePrincipal.js';
 
 /**
@@ -75,14 +76,23 @@ export async function issueTurnLease(
     if (used.rowCount) { await client.query('rollback'); return { ok: false, code: 'lease_used' }; }
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(now.getTime() + LEASE_TTL_MS);
-    const { channelId, threadRootId, mandateId, principalId } = msg.rows[0] as {
+    const row0 = msg.rows[0] as {
       channelId: string; threadRootId: string; mandateId: string | null; principalId: string | null;
     };
+    const { channelId, threadRootId, principalId } = row0;
+    let mandateId = row0.mandateId;
+    // ⑤b: 원인 글·깨움 행에 키가 없으면 — 그 글이 키를 줄 수 있는 자동화 회차 글일 때 그 자동화의 위임장(서버가 회차 행에서만 읽는다).
+    let automationMandate: AutomationLeaseMandate | null = null;
+    if (!mandateId) {
+      automationMandate = await automationMandateForCause(client, { agentId: args.agentId, causeMessageId: args.causeMessageId, channelId, now });
+      mandateId = automationMandate?.mandateId ?? null;
+    }
     const ins = await client.query(
       `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, created_at, expires_at, mandate_id, principal_account_id)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
       [sha256(token), args.agentId, args.operatorId, args.causeMessageId, channelId, threadRootId, now, expiresAt, mandateId, principalId]);
     await client.query('commit');
+    if (automationMandate) await auditAutomationMandateCreated(pool, automationMandate).catch(() => {});
     return { ok: true, leaseId: (ins.rows[0] as { id: string }).id, token, channelId, threadRootId, expiresAt: expiresAt.toISOString() };
   } catch (e) {
     await client.query('rollback').catch(() => {});

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { AutomationLastRun, AutomationRunView, AutomationSchedule, AutomationTrigger, AutomationView } from '@harkroom/shared';
 import { postMessage } from './messages.js';
 import { getMentionPolicy } from './mentionPolicy.js';
+import { endAutomationMandates, endAutomationMandatesTx } from './automationMandates.js';
 import { channelPostGate } from './channels.js';
 
 /**
@@ -297,6 +298,20 @@ export async function updateAutomation(pool: Pool, id: string, ownerId: string, 
 }): Promise<AutomationView | null> {
   const cur = await getAutomation(pool, id, ownerId);
   if (!cur) return null;
+  const view = await updateAutomationRow(pool, id, ownerId, cur, patch);
+  if (view) {
+    // ⑤b(security 3): 본문·트리거·채널을 고치면 그 자동화의 위임장을 끝낸다 — 줄은 그 본문이 하는 일을 보고 준 허락이다.
+    // 끄면 끝낸다. 다음 회차가 새 위임장을 만든다(옛 줄은 따라오지 않는다).
+    const changed = (patch.body !== undefined && patch.body !== cur.body)
+      || (patch.channelId !== undefined && patch.channelId !== cur.channelId)
+      || (patch.trigger !== undefined && JSON.stringify(patch.trigger) !== JSON.stringify(cur.trigger));
+    if (changed) await endAutomationMandates(pool, id, 'automation_changed');
+    else if (patch.enabled === false && cur.enabled) await endAutomationMandates(pool, id, 'automation_off');
+  }
+  return view;
+}
+
+async function updateAutomationRow(pool: Pool, id: string, ownerId: string, cur: AutomationView, patch: Parameters<typeof updateAutomation>[3]): Promise<AutomationView | null> {
   const trigger = patch.trigger ?? cur.trigger;
   const enabled = patch.enabled ?? cur.enabled;
   const reschedule = patch.trigger !== undefined || (patch.enabled === true && !cur.enabled);
@@ -328,7 +343,10 @@ export async function deleteAutomation(pool: Pool, id: string, ownerId: string):
      where id = $1 and owner_id = $2 and deleted_at is null returning id`,
     [id, ownerId],
   );
-  return (res.rowCount ?? 0) > 0;
+  const gone = (res.rowCount ?? 0) > 0;
+  // ⑤b(security 3·5): 지우면 위임장을 끝내고 줄을 닫는다(행은 soft 삭제라 감사·줄 흔적이 남는다).
+  if (gone) await endAutomationMandates(pool, id, 'automation_off');
+  return gone;
 }
 
 export async function listRuns(pool: Pool, automationId: string, limit = 50): Promise<AutomationRunView[]> {
@@ -387,6 +405,7 @@ export async function enqueueRun(db: Pool | PoolClient, input: {
        where id = $1`,
       [input.automationId],
     );
+    await endAutomationMandatesTx(db, input.automationId, 'automation_off');
     return { status: 'rate_limited' };
   }
 
@@ -828,6 +847,7 @@ async function pauseForRefusal(client: PoolClient, automationId: string, code: s
      where id = $1`,
     [automationId, `post_refused:${code}`],
   );
+  await endAutomationMandatesTx(client, automationId, 'automation_off');
 }
 
 /** 지금 보내면 안 되는 이유(`scheduledMessages.ts::refuseReason` 과 같은 술어 + 작성자 상태). */
