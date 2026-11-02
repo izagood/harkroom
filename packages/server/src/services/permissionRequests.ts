@@ -6,7 +6,7 @@ import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, getOrCreateDm } from './channels.js';
 import { validateCapScope, type Cap, type LineLimits } from './capabilities.js';
-import { addMandateLine, revokeLinesForGrant, type LineVia } from './mandateLines.js';
+import { addMandateLine, listMandateLines, revokeLinesForGrant, type LineVia } from './mandateLines.js';
 import { auditMandateCreated, validMandateOwner, type MandateCreated } from './mandates.js';
 import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
 import { getMessageById, postMessage, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
@@ -1017,6 +1017,44 @@ export async function toolAllowsFor(pool: Pool, agentId: string, channelId: stri
     const v = validateToolRule(rule);
     return v.ok && v.rule === rule;
   });
+}
+
+/**
+ * ②b(소유자 결정 2026-11-02): 이 턴의 위임장에 적힌 tool 줄 — 러너가 턴을 띄울 때 원인 글(`cause`)을 같이 보내면 그 글에 대해
+ * **이 오퍼레이터가 쥔 살아 있는 임대**의 위임장을 읽는다(위임 키는 서버가 임대에 적은 값뿐 — 러너가 위임장을 고르지 못한다).
+ * - 위임장이 유효하고(끝나지 않음·7일 안) 에이전트의 지금 소유자가 위임 주인이며, 그 위임장의 채널이 이 턴의 채널일 때만.
+ * - 저장된 줄만(상시 줄은 grant 라 `toolAllowsFor` 가 이미 준다) · 이 에이전트에 걸리고(H3) · 회수·until 이 살아 있는 것.
+ *   `uses` 가 있는 줄은 argv 에 싣지 않는다 — 턴 동안 몇 번이고 쓰이므로 「n번」을 지킬 수 없다.
+ * - 줄을 빼거나 위임장이 끝나면 다음 읽기부터 빠진다. 이미 도는 턴의 argv 에는 남는다(grant 를 거둘 때와 같다).
+ */
+export async function mandateToolRulesFor(pool: Pool, args: {
+  agentId: string; operatorId: string; channelId: string; causeMessageId: string; now?: Date;
+}): Promise<string[]> {
+  const now = args.now ?? new Date();
+  const lease = (await pool.query<{ mandateId: string | null }>(
+    `select mandate_id as "mandateId" from secret_turn_lease
+      where agent_id = $1 and cause_message_id = $2 and operator_id = $3 and channel_id = $4
+        and ended_at is null and expires_at > $5`,
+    [args.agentId, args.causeMessageId, args.operatorId, args.channelId, now])).rows[0];
+  if (!lease?.mandateId) return [];
+  const owner = await validMandateOwner(pool, lease.mandateId, now);
+  if (!owner) return [];
+  const ok = (await pool.query(
+    `select 1 from mandate m join agent_config c on c.account_id = $2
+      where m.id = $1 and m.channel_id = $3 and c.owner_account_id = m.owner_account_id`,
+    [lease.mandateId, args.agentId, args.channelId])).rowCount;
+  if (!ok) return [];
+  const out = new Set<string>();
+  for (const l of await listMandateLines(pool, lease.mandateId, now)) {
+    if (l.cap !== 'tool' || l.readOnly || l.revokedAt) continue;
+    if (l.agentIds !== null && !l.agentIds.includes(args.agentId)) continue;
+    const limits = (l.limits ?? {}) as { until?: string; uses?: number };
+    if (limits.uses !== undefined) continue;
+    if (limits.until !== undefined && !(Date.parse(limits.until) > now.getTime())) continue;
+    const v = validateToolRule(l.scope);
+    if (v.ok && v.rule === l.scope) out.add(l.scope);
+  }
+  return [...out].sort();
 }
 
 /**

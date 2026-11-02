@@ -8,7 +8,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { readLease } from '../services/mergeGrants.js';
 import { decide } from '../services/decisions.js';
-import { commandGrantsFor, matchCommandGrant, toolAllowsFor, toolReachFor } from '../services/permissionRequests.js';
+import { commandGrantsFor, mandateToolRulesFor, matchCommandGrant, toolAllowsFor, toolReachFor } from '../services/permissionRequests.js';
 import { mayDecideFor } from '../services/deciders.js';
 import { assertChannelVisible } from '../services/channels.js';
 
@@ -66,15 +66,22 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
     };
   });
 
-  app.get<{ Querystring: { channelId?: string } }>('/agent/tool-allows', { preHandler: app.requireAccount }, async (req, reply) => {
+  app.get<{ Querystring: { channelId?: string; cause?: string } }>('/agent/tool-allows', { preHandler: app.requireAccount }, async (req, reply) => {
     if (req.account!.kind !== 'agent' || !req.operator) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'only an agent through its operator can do this' } });
     }
-    const q = z.object({ channelId: z.string().uuid() }).safeParse(req.query ?? {});
+    const q = z.object({ channelId: z.string().uuid(), cause: z.string().uuid().optional() }).safeParse(req.query ?? {});
     if (!q.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'channelId (uuid) is required' } });
     void reply.header('cache-control', 'no-store');
     // `reach` 는 모든 채널의 합 — codex 턴의 명령 규칙 파일이 채널을 가리지 않아서다(`toolReachFor`).
-    return { rules: await toolAllowsFor(pool, req.account!.id, q.data.channelId), reach: await toolReachFor(pool, req.account!.id) };
+    // ②b: `cause`(이 턴의 원인 글)를 주면 그 글의 임대가 가리키는 위임장의 tool 줄을 더한다(`mandateToolRulesFor`). 옛 러너는 안 준다.
+    const granted = await toolAllowsFor(pool, req.account!.id, q.data.channelId);
+    const lines = q.data.cause
+      ? await mandateToolRulesFor(pool, { agentId: req.account!.id, operatorId: req.operator.id, channelId: q.data.channelId, causeMessageId: q.data.cause })
+      : [];
+    const rules = [...new Set([...granted, ...lines])].sort();
+    const reach = [...new Set([...(await toolReachFor(pool, req.account!.id)), ...lines])].sort();
+    return { rules, reach };
   });
 
   // 정확한 명령 grant(H②, 112). 오퍼레이터를 거친 에이전트만, 자기 것만. 목록은 읽기만, match 는 맞으면 그 grant 하나를 쓴다.

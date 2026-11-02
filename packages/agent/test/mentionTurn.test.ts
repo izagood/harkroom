@@ -354,6 +354,23 @@ describe('runMentionTurn', () => {
     expect(plans[0]!.args.join(' ')).toContain('--effort xhigh');
   });
 
+  it('②b: 셸 허락을 읽을 때 이 턴의 원인 글(멘션 id)을 같이 보낸다 — 서버가 그 임대의 위임장 tool 줄을 더한다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 셸');
+    const asked: [string, string | undefined][] = [];
+    Object.assign(fake, {
+      toolRuleSets: async (channelId: string, cause?: string) => {
+        asked.push([channelId, cause]);
+        return { rules: ['Bash(kubectl --context ops get nodes:*)'], reach: null };
+      },
+    });
+    const { deps, plans, runTurn } = await makeDeps(fake);
+    runTurn.script = async () => { await fake.post(CHANNEL, '네', null); return { exitCode: 0, timedOut: false, tail: '' }; };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    expect(asked).toEqual([[CHANNEL, MENTION]]);
+    expect(plans[0]!.args.join(' ')).toContain('Bash(kubectl --context ops get nodes:*)');
+  });
+
   it('스레드 지정을 못 읽으면(옛 서버) 에이전트 설정으로 돈다', async () => {
     const fake = new FakeHarkroom(defOf({ model: 'sonnet', effort: null }));
     fake.seedFrom('human-1', '@forge 안녕');

@@ -7,7 +7,7 @@ import { bootstrapAdmin, createAgent, createMember, registerOperator } from './h
 import { postMessage } from '../src/services/messages.js';
 import { mintPat } from '../src/services/pats.js';
 import { CAPABILITIES, CAPS, CAP_CARD_TEXT, lineMatches, type LineFacts } from '../src/services/capabilities.js';
-import { addMandateLine, findLine, listMandateLines } from '../src/services/mandateLines.js';
+import { addMandateLine, findLine, listMandateLines, revokeMandateLine } from '../src/services/mandateLines.js';
 
 // 위임(mandate) W2 — 능력 등록부·위임장 줄·상시 줄·그림자 판정·n4(임대 수명)·읽기 라우트.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -235,6 +235,45 @@ describe('mandate lines (db)', () => {
     // 임대가 끝나면 위임도 잇지 않는다.
     await pool.query(`update secret_turn_lease set ended_at = now() where id = $1`, [l.id]);
     expect(await mandateOf(await post(tm, 'after end', { threadRootId: root, chainCause: root }))).toBeNull();
+  });
+
+  it('②b GET /agent/tool-allows?cause= adds the turn lease mandate tool lines; [줄 빼기]·mandate end drop them at once', async () => {
+    const root = await post(alice.accountId, '@tm shell please');
+    const m = (await mandateOf(root))!;
+    const rule = 'Bash(kubectl --context ops get nodes:*)';
+    const added = await addMandateLine(pool, { mandateId: m, cap: 'tool', scope: rule, limits: { until: new Date(Date.now() + 86_400_000).toISOString() }, grantedBy: alice.accountId, via: 'button' });
+    expect(added).toMatchObject({ ok: true });
+    const lineId = (added as { line: { id: string } }).line.id;
+    // uses 가 있는 줄은 argv 에 싣지 않는다.
+    await addMandateLine(pool, { mandateId: m, cap: 'tool', scope: 'Bash(kubectl --context ops get once:*)', limits: { uses: 1 }, grantedBy: alice.accountId, via: 'button' });
+    const get = async (agent: string, cause?: string) => (await app.inject({
+      method: 'GET', url: `/agent/tool-allows?channelId=${ch}${cause ? `&cause=${cause}` : ''}`, headers: asAgent(agent),
+    })).json() as { rules: string[]; reach: string[] };
+    // 임대가 없으면 줄도 없다(러너가 cause 만 보내서 위임장을 고를 수 없다).
+    expect((await get(tm, root)).rules).not.toContain(rule);
+    const l = await lease(root, tm);
+    expect(l.id).toBeTruthy();
+    expect((await get(tm, root)).rules).toContain(rule);
+    expect((await get(tm, root)).reach).toContain(rule);
+    expect((await get(tm, root)).rules).not.toContain('Bash(kubectl --context ops get once:*)');
+    // cause 를 안 보내는 옛 러너는 지금 그대로 — grant 만.
+    expect((await get(tm)).rules).not.toContain(rule);
+    // 같은 소유자의 다른 에이전트는 그 임대가 없다.
+    expect((await get(sec, root)).rules).not.toContain(rule);
+    // [줄 빼기] → 다음 읽기에서 곧바로 빠진다.
+    expect(await revokeMandateLine(pool, { mandateId: m, lineId })).toMatchObject({ ok: true });
+    expect((await get(tm, root)).rules).not.toContain(rule);
+    // 위임장이 끝나도 곧바로 빠진다.
+    const again = await addMandateLine(pool, { mandateId: m, cap: 'tool', scope: rule, grantedBy: alice.accountId, via: 'button' });
+    expect(again).toMatchObject({ ok: true });
+    expect((await get(tm, root)).rules).toContain(rule);
+    await pool.query(`update mandate set ended_at = now() where id = $1`, [m]);
+    expect((await get(tm, root)).rules).not.toContain(rule);
+    // 임대가 끝나도 빠진다.
+    await pool.query(`update mandate set ended_at = null where id = $1`, [m]);
+    expect((await get(tm, root)).rules).toContain(rule);
+    await pool.query(`update secret_turn_lease set ended_at = now() where id = $1`, [l.id]);
+    expect((await get(tm, root)).rules).not.toContain(rule);
   });
 
   it('GET /mandates/:id/lines: owner human session only, 404 otherwise', async () => {

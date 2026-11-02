@@ -95,7 +95,7 @@ export interface MentionTurnHarkroom {
   /** 이 채널의 allow 규칙(권한 요청 스레드 f61af808). 옵셔널 — 없는 표면은 빈 목록과 같다. */
   toolAllows?(channelId: string): Promise<string[]>;
   /** 이 채널의 규칙 + 모든 채널의 합(`reach`, 옛 서버는 null). 있으면 `toolAllows` 대신 쓴다. */
-  toolRuleSets?(channelId: string): Promise<{ rules: string[]; reach: string[] | null }>;
+  toolRuleSets?(channelId: string, causeMessageId?: string): Promise<{ rules: string[]; reach: string[] | null }>;
   secretCreateGranted?(): Promise<boolean>;
   apiGrants?(): Promise<string[]>;
   apiGrantInfo?(): Promise<{ connectors: string[]; delegatable: string[] }>;
@@ -1317,7 +1317,7 @@ export async function runMentionTurn(
   // 권한 요청(스레드 f61af808): 소유자가 이 채널에 승인한 allow 규칙. 서버가 판정해 주지만 러너도 모양을 한 번 더 거른다.
   // `reach` 는 이 에이전트의 모든 채널 규칙의 합 — codex 명령 규칙 파일에 쓴다(`codexRules.ts`). 옛 서버는 null 이다.
   const ruleSets = deps.harkroom.toolRuleSets
-    ? await deps.harkroom.toolRuleSets(channelId).catch(() => ({ rules: [] as string[], reach: null }))
+    ? await deps.harkroom.toolRuleSets(channelId, mentionId).catch(() => ({ rules: [] as string[], reach: null }))
     : { rules: (await deps.harkroom.toolAllows?.(channelId).catch(() => [] as string[])) ?? [], reach: null };
   const toolAllows = safeToolAllows(ruleSets.rules);
   // **턴마다** 읽는다 — 사람이 스레드 칩을 바꾸면 다음 턴부터 먹는다(결정 11). 도는 턴의 argv 는
