@@ -193,4 +193,15 @@ describe('위임', () => {
     expect(del.statusCode).toBe(204);
     expect(await grantOf(b)).toBeUndefined();
   });
+
+  it('부모가 무기한 쓰기여도 자식은 늘 30일 안의 만료가 있어야 한다(security 조건 2)', async () => {
+    expect((await give(a, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: null, delegateDepth: 1, writeNeedsHumanCause: true })).statusCode).toBe(200);
+    const human = await msgBy(alice.accountId, { forAgent: a });
+    expect(await delegateApiGrant(pool, base({ to: c, methods: ['GET', 'POST'], expiresAt: days(31), causeMessageId: human }))).toMatchObject({ ok: false, code: 'bad_expiry' });
+    expect(await delegateApiGrant(pool, base({ to: c, methods: ['GET', 'POST'], expiresAt: '', causeMessageId: human }))).toMatchObject({ ok: false, code: 'bad_expiry' });
+    const ok = await delegateApiGrant(pool, base({ to: c, methods: ['GET', 'POST'], expiresAt: days(3), causeMessageId: human }));
+    expect(ok).toMatchObject({ ok: true });
+    const child = (await pool.query(`select expires_at from account_grant where account_id = $1 and capability = 'api.call'`, [c])).rows[0];
+    expect(child.expires_at).not.toBeNull();
+  });
 });

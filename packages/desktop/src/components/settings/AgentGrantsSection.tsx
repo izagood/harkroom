@@ -284,11 +284,15 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   <span>{write ? t('apiGrant.rowWrite') : t('apiGrant.rowRead')}</span>
                   {g.limits?.pathPrefix && <span className="font-mono text-fg-subtle">{g.limits.pathPrefix}</span>}
                   {write && g.writeNeedsHumanCause && <span className="text-fg-subtle">{t('apiGrant.rowHumanOnly')}</span>}
+                  {/* 무기한 쓰기 — 소유자가 거둘 대상을 한눈에 찾게(security 조건 5). */}
+
                   <span className="text-fg-subtle">
                     {t('agents.grants.by', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
-                    {' · '}
-                    {g.expiresAt === null ? t('agents.grants.noExpiry') : expired ? t('agents.grants.expired') : t('agents.grants.expiresOn', { when: new Date(g.expiresAt).toLocaleDateString(locale) })}
+                    {!(write && g.expiresAt === null) && ' · '}
+                    {g.expiresAt === null ? (write ? '' : t('agents.grants.noExpiry')) : expired ? t('agents.grants.expired') : t('agents.grants.expiresOn', { when: new Date(g.expiresAt).toLocaleDateString(locale) })}
                   </span>
+                  {/* 무기한 쓰기 — 끝의 회색 「만료 없음」 자리를 경고 면 배지로 바꾼다(소유자가 거둘 대상을 한눈에, designer n1). */}
+                  {write && g.expiresAt === null && <span className="rounded bg-warning-surface px-1 text-warning" data-testid="api-grant-write-no-expiry">{t('agents.grants.noExpiry')}</span>}
                   {g.suspendedAt && <span className="rounded bg-warning-surface px-1 text-warning">{t('apiGrant.rowSuspended')}</span>}
                   {noKey && <span className="rounded bg-danger-surface px-1 text-danger">{t('apiGrant.rowNoKey')}</span>}
                   {canGrant && c && c.ownerAccountId === myId && (
@@ -310,7 +314,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   )}
                 </div>
                 {changing === g.scope && c && (
-                  <ApiGrantForm agentId={agent.id} connectors={[c]} existing={g} onCancel={() => setChanging(null)} onDone={async () => { setChanging(null); await load(); }} />
+                  <ApiGrantForm allowWriteNoExpiry agentId={agent.id} connectors={[c]} existing={g} onCancel={() => setChanging(null)} onDone={async () => { setChanging(null); await load(); }} />
                 )}
                 {node && <DelegationChildren node={node} accounts={accounts} a={delegation} />}
                 </li>
@@ -471,7 +475,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
           // 내 연결이 모두 이미 권한을 가졌으면 「연결이 없다」가 아니라 그 사실을 말한다(designer a).
           return mine.length > 0 && free.length === 0
             ? <p className="mt-2 text-meta text-fg-subtle" data-testid="api-grant-all-granted">{t('apiGrant.allGranted')}</p>
-            : <ApiGrantForm agentId={agent.id} connectors={free} onCancel={() => setAdding(false)} onDone={async () => { setAdding(false); await load(); }} />;
+            : <ApiGrantForm allowWriteNoExpiry agentId={agent.id} connectors={free} onCancel={() => setAdding(false)} onDone={async () => { setAdding(false); await load(); }} />;
         })()
       )}
       {canGrant && adding && addKind === 'secret' && !secretGrant && (

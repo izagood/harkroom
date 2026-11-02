@@ -12,7 +12,10 @@ import { errorText } from '../../lib/errorText';
  * [권한 주기…] 대화상자가 **같은 폼**을 쓴다 — 두 벌이면 한쪽만 고쳐져 카드에서 주는 권한이 더 넓어지는 날이 온다.
  *
  * - 범위: 읽기만(GET) / 읽기+쓰기(연결이 허용한 메서드 전부). 경로는 이것으로 시작하는 것만.
- * - 만료: 7일(기본)·30일. 「만료 없음」은 **읽기만**일 때만 생긴다(D3 — 서버도 쓰기의 무기한·30일 초과를 거절한다).
+ * - 만료: 7일(기본)·30일·만료 없음. 읽기+쓰기의 「만료 없음」은 **설정 화면에서만**(`allowWriteNoExpiry`) 생기고, 경고와 확인 체크를
+ *   지나야 [주기]가 켜진다(소유자 결정 · security 설계 판정, 2026-11-02). 경고 내용이 바뀌면(범위·만료·「사람 글 턴만」) 체크는
+ *   다시 빈 칸이 된다 — 사람은 지금 보이는 경고를 확인해야 한다. 막힘 카드에서는 띄우지 않는다 — 막힌 순간 버튼 하나로 무기한 쓰기가 생기지 않게.
+ *   서버는 날짜로 주는 쓰기 만료의 30일 상한(F3)을 그대로 지킨다.
  * - **「쓰기는 사람 글 턴만」은 기본값이 없다**(소유자 지시) — 쓰기를 고르면 예/아니오를 사람이 골라야 [주기]가 켜진다.
  * - 판정은 서버다(소유자만, 내 연결만, limits ⊆ 연결). 화면은 거절을 사람 말로 옮긴다.
  */
@@ -31,8 +34,10 @@ type Expiry = '7d' | '30d' | 'none' | 'keep';
  * - `initial` 이 없고 `existing` 이 있으면 지금 값으로 연다(카드의 [설정 바꾸기…], designer D2). 만료는 「지금 만료 유지」가 기본.
  * - `initial.pathPrefix` 가 빈 글자면 막힌 경로를 모르는 것이다(security L1) — 칸을 비워 두고 사람이 적기 전엔 [주기]가 꺼진다.
  */
-export function ApiGrantForm({ agentId, connectors, initial, existing = null, onDone, onCancel }: {
+export function ApiGrantForm({ agentId, connectors, initial, existing = null, allowWriteNoExpiry = false, onDone, onCancel }: {
   agentId: string;
+  /** 읽기+쓰기에 「만료 없음」을 띄운다 — 설정 › 에이전트 › 권한 화면만 true(막힘 카드는 false). */
+  allowWriteNoExpiry?: boolean;
   existing?: GrantRow | null;
   /** 고를 수 있는 연결 — 내 것만(서버 규칙과 같다). */
   connectors: ApiConnectorView[];
@@ -50,6 +55,11 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, on
   const [expiry, setExpiry] = useState<Expiry>(fromExisting ? 'keep' : '7d');
   const [humanOnly, setHumanOnly] = useState<'yes' | 'no' | null>(fromExisting && exWrite ? (existing?.writeNeedsHumanCause ? 'yes' : 'no') : null);
   const [busy, setBusy] = useState(false);
+  const [noExpiryConfirmed, setNoExpiryConfirmed] = useState(false);
+  // 경고가 넓어지거나 사라졌다 다시 뜨면 확인을 다시 받는다(designer 고칠 것 1) — 이전 확인은 다른 내용에 대한 것이다.
+  const confirmKey = `${scope}|${expiry}|${humanOnly ?? ''}`;
+  const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
+  if (noExpiryConfirmed && confirmedFor !== confirmKey) { setNoExpiryConfirmed(false); setConfirmedFor(null); }
   const [error, setError] = useState<string | null>(null);
 
   const c = connectors.find((x) => x.id === connectorId);
@@ -60,12 +70,14 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, on
   const methods: ApiMethod[] = fromExisting
     ? [...((existing?.limits?.methods ?? []) as ApiMethod[])]
     : scope === 'read' ? ['GET'] : [...(c?.methods ?? [])];
-  // 「지금 만료 유지」는 지금 grant 가 있고, 쓰기라면 그 만료가 있을 때만(무기한 쓰기는 서버가 거절한다).
-  const keepOk = !!existing && (scope === 'read' || existing.expiresAt !== null) && (existing.expiresAt === null || Date.parse(existing.expiresAt) > Date.now());
-  const effectiveExpiry: Expiry = (expiry === 'keep' && !keepOk) || (scope === 'write' && expiry === 'none') ? '7d' : expiry;
+  // 「지금 만료 유지」는 지금 grant 가 있고, 쓰기라면 그 만료가 있거나 이 화면이 무기한 쓰기를 고를 수 있을 때만.
+  const keepOk = !!existing && (scope === 'read' || existing.expiresAt !== null || allowWriteNoExpiry) && (existing.expiresAt === null || Date.parse(existing.expiresAt) > Date.now());
+  const effectiveExpiry: Expiry = (expiry === 'keep' && !keepOk) || (scope === 'write' && expiry === 'none' && !allowWriteNoExpiry) ? '7d' : expiry;
+  // 무기한 쓰기 — 새로 무기한으로 주거나 무기한을 그대로 둘 때 경고를 보이고 확인을 받는다.
+  const writeNoExpiry = scope === 'write' && (effectiveExpiry === 'none' || (effectiveExpiry === 'keep' && existing?.expiresAt === null));
   const pathOk = /^\/[^\s#\\]*$/.test(pathPrefix) && !pathPrefix.includes('..') && !pathPrefix.includes('?');
   const readOk = !c || c.methods.includes('GET') || scope === 'write';
-  const ready = !!c && pathOk && readOk && methods.length > 0 && (scope === 'read' || humanOnly !== null);
+  const ready = !!c && pathOk && readOk && methods.length > 0 && (scope === 'read' || humanOnly !== null) && (!writeNoExpiry || noExpiryConfirmed);
 
   const submit = async () => {
     if (!c) return;
@@ -119,7 +131,7 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, on
         </select>
       </label>
       <Segmented label={t('apiGrant.scope')} value={scope} disabled={busy || fromExisting}
-        onChange={(v) => { setScope(v); if (v === 'write' && expiry === 'none') setExpiry('7d'); }}
+        onChange={(v) => { setScope(v); if (v === 'write' && expiry === 'none' && !allowWriteNoExpiry) setExpiry('7d'); }}
         options={[
           { value: 'read' as const, label: t('apiGrant.read') },
           ...(canWrite ? [{ value: 'write' as const, label: t('apiGrant.write', { methods: (fromExisting && scope === 'write' ? methods : c?.methods ?? []).join('·') }) }] : []),
@@ -131,16 +143,26 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, on
           : !pathOk && <span className="text-warning">{t('apiGrant.pathBad')}</span>}
       </label>
       <Segmented label={t('apiGrant.expiry')} value={effectiveExpiry} disabled={busy} onChange={setExpiry}
-        options={([...(keepOk ? ['keep'] as const : []), '7d', '30d', ...(scope === 'read' ? ['none'] as const : [])] as Expiry[]).map((x) => ({
+        options={([...(keepOk ? ['keep'] as const : []), '7d', '30d', ...(scope === 'read' || allowWriteNoExpiry ? ['none'] as const : [])] as Expiry[]).map((x) => ({
           value: x, label: x === 'keep' ? t('apiGrant.expiryKeep') : t(x === '7d' ? 'apiGrant.expiry7d' : x === '30d' ? 'apiGrant.expiry30d' : 'apiGrant.expiryNone'),
         }))}>
-        {scope === 'write' && <span className="text-fg-subtle">{t('apiGrant.writeExpiryHint')}</span>}
+        {scope === 'write' && !allowWriteNoExpiry && <span className="text-fg-subtle">{t('apiGrant.writeExpiryHint')}</span>}
       </Segmented>
       {scope === 'write' && (
         <Segmented label={t('apiGrant.humanOnly')} value={humanOnly} disabled={busy} onChange={setHumanOnly} testId="api-grant-human-only"
           options={[{ value: 'yes' as const, label: t('apiGrant.humanOnlyYes') }, { value: 'no' as const, label: t('apiGrant.humanOnlyNo') }]}>
           <span className="w-full text-fg-subtle">{humanOnly === null ? t('apiGrant.humanOnlyPick') : t('apiGrant.humanOnlyHint')}</span>
         </Segmented>
+      )}
+      {writeNoExpiry && (
+        <div className="rounded-row bg-warning-surface px-2 py-1.5 text-warning" data-testid="api-grant-no-expiry-warning">
+          <p>⚠ {t('apiGrant.noExpiryWarn', { methods: methods.filter((m) => m !== 'GET').join('·') })}{humanOnly === 'no' ? ` ${t('apiGrant.noExpiryWarnAgentTurns')}` : ''}</p>
+          <label className="mt-1 flex items-center gap-1.5 text-fg">
+            <input type="checkbox" checked={noExpiryConfirmed} disabled={busy}
+              onChange={(e) => { setNoExpiryConfirmed(e.target.checked); setConfirmedFor(e.target.checked ? confirmKey : null); }} />
+            {t('apiGrant.noExpiryConfirm')}
+          </label>
+        </div>
       )}
       <p className="text-fg-subtle">{t('apiGrant.keyNote')}</p>
       <div className="flex gap-2">
