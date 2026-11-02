@@ -3281,6 +3281,8 @@ export const ko = {
   'connectors.formPreview': '보내는 값',
   'connectors.errTokenForm': '보내는 값을 확인한다 — 칸 이름과 값의 꼴이 맞지 않는다.',
   'connectors.keyToken': '· 키 {name} (토큰 교환 → {host})',
+  'connectors.keyTokenNoHost': '· 키 {name} (토큰 교환)',
+  'connectors.clientIdRequired': 'client_id 를 넣는다(필수).',
   'connectors.authNone': '없음',
   'connectors.headerName': '헤더 이름',
   'connectors.headerHint': '영문·숫자·- 만',

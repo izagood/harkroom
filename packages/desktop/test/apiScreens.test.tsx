@@ -96,7 +96,11 @@ describe('ConnectorsSection', () => {
     const tok = within(form).getByTestId('connector-token');
     // 키 고르기는 토큰 묶음 안으로 옮겨진다.
     fireEvent.change(within(tok).getByLabelText('키'), { target: { value: 's1' } });
+    // client_id 가 비어 있으면 토큰 주소를 맞게 적은 뒤 왜 [만들기]가 꺼졌는지 보인다(designer 고칠 것 1).
+    fireEvent.change(within(tok).getByLabelText('토큰 주소'), { target: { value: 'https://auth.example.com/t' } });
+    expect(within(tok).getByText(/client_id 를 넣는다/)).toBeTruthy();
     fireEvent.change(within(tok).getByLabelText('client_id'), { target: { value: 'lab-cli' } });
+    expect(within(tok).queryByText(/client_id 를 넣는다/)).toBeNull();
     fireEvent.change(within(tok).getByLabelText('토큰 주소'), { target: { value: 'https://auth.example.com/oauth/token?x=1' } });
     expect(within(tok).getByText(/https 주소만 쓴다/)).toBeTruthy();
     expect(within(tok).queryByTestId('connector-token-dest')).toBeNull();

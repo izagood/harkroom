@@ -171,7 +171,9 @@ export function ConnectorsSection({ secrets, enabled, onChanged }: {
                 <span className="font-mono text-fg-subtle">{c.baseUrl}</span>
                 {c.authKind !== 'none' && keyName && (
                   <span className="text-fg-subtle">{c.authKind === 'token_exchange'
-                    ? t('connectors.keyToken', { name: keyName, host: hostOf(tokenUrlOrigin(c.tokenUrl ?? '') ?? '') })
+                    ? (tokenUrlOrigin(c.tokenUrl ?? '')
+                      ? t('connectors.keyToken', { name: keyName, host: hostOf(tokenUrlOrigin(c.tokenUrl ?? '')!) })
+                      : t('connectors.keyTokenNoHost', { name: keyName }))
                     : t(c.authKind === 'bearer' ? 'connectors.keyBearer' : 'connectors.keyHeader', { name: keyName, header: c.authHeader ?? '' })}</span>
                 )}
                 {noKey && <span className="rounded bg-danger-surface px-1 text-danger">{t('connectors.noKey')}</span>}
@@ -239,6 +241,8 @@ function ConnectorForm({ draft, creating = false, busy, keyOptions, onChange, on
   const tokenOrigin = tokenUrlOrigin(draft.tokenUrl);
   const grantOk = FORM_VALUE_RE.test(draft.grantType.trim());
   const clientOk = FORM_VALUE_RE.test(draft.clientId.trim());
+  // 비어 있으면 [만들기]가 꺼지는 까닭을 보인다 — 토큰 주소를 맞게 적은 뒤부터 경고한다(처음부터 빨갛지 않게, designer 고칠 것 1).
+  const clientWarn = draft.clientId.trim() === '' ? tokenOrigin !== null : !clientOk;
   const fieldOk = FORM_FIELD_RE.test(draft.keyField.trim()) && !RESERVED_FIELDS.has(draft.keyField.trim().toLowerCase());
   const tokenOk = !tx || (tokenOrigin !== null && grantOk && clientOk && fieldOk);
   const ready = nameOk && urlOk && headerOk && keyOk && tokenOk && draft.methods.length > 0;
@@ -250,7 +254,7 @@ function ConnectorForm({ draft, creating = false, busy, keyOptions, onChange, on
     return `${p.toString()}&${encodeURIComponent(draft.keyField.trim())}=••••`;
   })();
   // 미리보기 머리 — HTTP 메서드와 호스트·경로(번역할 글자가 아니다).
-  const previewHead = tokenOrigin ? `${'POST'} ${hostOf(tokenOrigin)}${new URL(draft.tokenUrl.trim()).pathname.replace(/^\/$/, '')}` : null;
+  const previewHead = tokenOrigin ? 'POST ' + `${hostOf(tokenOrigin)}${new URL(draft.tokenUrl.trim()).pathname.replace(/^\/$/, '')}` : null;
   const keySelect = (
     <label className="block text-meta text-fg">
       {t('connectors.key')}
@@ -313,7 +317,7 @@ function ConnectorForm({ draft, creating = false, busy, keyOptions, onChange, on
             </label>
             <label className="block min-w-[9rem] flex-1 text-meta text-fg">
               client_id
-              <input aria-label="client_id" className={`${monoInput} ${draft.clientId === '' || clientOk ? 'border-border' : 'border-warning'}`}
+              <input aria-label="client_id" className={`${monoInput} ${clientWarn ? 'border-warning' : 'border-border'}`} placeholder="my-client"
                 value={draft.clientId} disabled={busy} onChange={(e) => set({ clientId: e.target.value })} />
             </label>
             <label className="block min-w-[9rem] flex-1 text-meta text-fg">
@@ -323,7 +327,8 @@ function ConnectorForm({ draft, creating = false, busy, keyOptions, onChange, on
             </label>
           </div>
           {!fieldOk && <span className="block text-meta text-warning">{t('connectors.keyFieldBad')}</span>}
-          {((!grantOk) || (draft.clientId !== '' && !clientOk)) && <span className="block text-meta text-warning">{t('connectors.formValueBad')}</span>}
+          {draft.clientId.trim() === '' && clientWarn && <span className="block text-meta text-warning">{t('connectors.clientIdRequired')}</span>}
+          {((!grantOk) || (draft.clientId.trim() !== '' && !clientOk)) && <span className="block text-meta text-warning">{t('connectors.formValueBad')}</span>}
           {keySelect}
           <div>
             <span className="text-meta text-fg">{t('connectors.formPreview')}</span>
