@@ -387,6 +387,8 @@ export const MAC_PERMISSION_NOTICE_MAX_PER_TURN = 3;
 
 /** MAX_ATTEMPTS 를 소진했을 때 채널에 남기는 통지문구(#82). */
 export const FAILURE_NOTICE = '(답변에 실패했습니다 — 운영자 확인이 필요합니다)';
+/** 앞 러너가 이 부름의 턴 임대를 받아 가서(앱 갱신·재기동) 이 턴을 시작하지 않았다 — 다시 부르면 새 임대로 돈다. */
+export const LEASE_LOST_NOTICE = '(러너가 다시 떠서 이 부름의 턴 임대를 잃었습니다 — 비밀·API·머지를 쓸 수 없어 시작하지 않았습니다. 다시 불러 주세요)';
 
 /**
  * 하네스 로그인이 풀렸을 때 **스레드에** 남기는 통지(2026-09-07).

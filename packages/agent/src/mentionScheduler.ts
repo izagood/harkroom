@@ -18,7 +18,7 @@ import type { TurnRegistry } from './turnRegistry.js';
 import type { MentionQueue } from './mentionQueue.js';
 import { accountFailureOf, accountTrailOf, withAccountFailover, type ClaudeAccount } from './claudeAccounts.js';
 import {
-  accountTrailReason, blockedByTurnNotice, controlHeldNotice, controlledNotice, FAILURE_NOTICE, quotaNotice, retryNotice, retryReason,
+  accountTrailReason, blockedByTurnNotice, controlHeldNotice, controlledNotice, FAILURE_NOTICE, LEASE_LOST_NOTICE, quotaNotice, retryNotice, retryReason,
   withAccountTrail,
   providerLaneNotice, providerLaneRecallable, sessionConflictNotice, stallNotice, stallRetryable, threadModelRejectedNotice, wakeReportTo, wakeWatch,
 } from './prompt.js';
@@ -541,7 +541,23 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         ? await deps.laneFor(threadKey, anchor)
         : typeof deps.accountLane === 'function' ? await deps.accountLane() : deps.accountLane;
       // 비밀이 없어도 턴은 돈다 — 임대 실패는 여기서 삼킨다(acquire 가 던지지 않는다).
-      await deps.secretLeases?.acquire(mention.id);
+      // **단 409 `lease_used` 는 다르다**: 이 멘션의 임대를 앞 러너(앱 갱신·재기동 전)가 이미 받아 갔다. 그대로 돌면 그 턴의
+      // 비밀·API·머지가 전부 `no_lease` 로 막힌 채 반쯤 일하고 끝난다 — 돌리지 않고 「임대를 잃었다, 다시 불러 달라」로 알린다.
+      // 사람이 다시 부르면 새 멘션이라 새 임대를 받는다.
+      if (await deps.secretLeases?.acquire(mention.id) === 'lease_used') {
+        console.error(`  ${mention.id} 턴 임대를 앞 러너가 이미 받았다(409 lease_used) — 돌리지 않고 실패로 알린다`);
+        await deps.harkroom.fail(mention.channelId, LEASE_LOST_NOTICE, anchor, {
+          retryable: true,
+          what: '이 부름의 턴 임대를 잃었다(러너가 다시 떠서 앞 러너가 받아 간 임대를 다시 받을 수 없다)',
+          reason: '비밀·API 연결·머지를 쓸 수 없는 턴이라 시작하지 않았다 — 다시 부르면 새 임대로 돈다',
+        }).catch((e: unknown) => {
+          console.error(`  ${mention.id} 임대 잃음 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);
+        });
+        await finish(entryId);
+        attempts.delete(entryId);
+        void deps.secretLeases?.release(mention.id);
+        return;
+      }
       const turn = await withAccountFailover(
         lane,
         (account, isLastAccount) => {
