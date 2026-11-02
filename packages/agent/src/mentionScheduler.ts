@@ -460,6 +460,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     fence?: AbortSignal,
     /** 이 부름이 접은 내 예약(서버 107). */
     canceledWakes?: InboxBatch['entries'][number]['canceledWakes'],
+    /** 이 일이 시작된 스레드(위임장, 서버가 inbox 항목에 싣는다 — `InboxEntry.startedIn`). */
+    startedIn?: InboxBatch['entries'][number]['startedIn'],
   ): Promise<void> {
     /**
      * 임대를 잃어 접힌 턴의 표지(security L1). 사람이 스레드에서 "왜 말하다 멈췄나"를 알 수 있게 한 줄 남긴다.
@@ -488,6 +490,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       // 사람이 방금 답한 것이라 앞 대화가 필요하다.
       ...(reason === 'wake' ? { wake: wakeTarget(mention), scheduledWake: true } : {}),
       ...(canceledWakes?.length ? { canceledWakes } : {}),
+      ...(startedIn ? { startedIn } : {}),
       /**
        * **선택에 답이 왔다**(2026-09-09). 깨움과 같은 자리를 쓰는 이유는 같은 문제이기
        * 때문이다: 사람은 카드의 버튼만 눌렀지 새 메시지를 쓰지 않았으므로 델타가 비고,
@@ -1033,7 +1036,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         attempts.set(entry.id, { tried, notBefore: 0, noticed: prior?.noticed });
 
         void deps.turnWatch?.started(threadKey, mention.id).catch(() => {});
-        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation, entry.delegatedBy, entry.viaEdit === true, claim?.lost, entry.canceledWakes)
+        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation, entry.delegatedBy, entry.viaEdit === true, claim?.lost, entry.canceledWakes, entry.startedIn)
           .catch((err: unknown) => {
             console.error(`  ${entry.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
           })

@@ -3414,6 +3414,51 @@ export async function listInbox(
     }
   }
 
+  /**
+   * **이 일이 시작된 스레드**를 붙인다(위임장 133, 2026-11-02). 동료 에이전트의 보고로 깬 턴은 자기 앵커(그 동료의
+   * 스레드)만 알아서, 사람에게 갈 최종 보고를 어디에 둘지 몰랐다 — #cmdb 보고로 깬 턴이 #task 채널 최상위에 보고·카드를
+   * 올렸고, 같은 일의 다른 턴은 원래 스레드에 올려 카드가 2장이 됐다.
+   *
+   * 키는 턴 임대와 같은 것이다(`secretAccess.ts::issueTurnLease`): 부른 글의 `mandate_id`, 없으면 그 글이 연 깨움 행의
+   * 위임장, 그리고 **이 에이전트의 지금 소유자 = 위임장 주인**일 때만. 그 위에 다섯 조건을 더 건다 —
+   * ① 부른 글이 **에이전트 글**이다(사람이 앵커에서 직접 불렀으면 앵커가 보고처다) · 선택 답은 사람이 답한 것이라 뺀다.
+   * ② 위임장이 **글 뿌리**를 갖는다(자동화 위임장 155 는 시작 스레드가 없다) · 끝나지 않았다 · 뿌리 글이 남아 있다.
+   * ③ 시작 스레드 ≠ 이 부름의 스레드(같으면 뜻이 없다).
+   * ④ 그 스레드에서 **사람이 나를 부른 적이 있다** — 위임장은 사슬 전체(같은 소유자의 중간 에이전트까지)에 이어지므로,
+   *    이 조건이 없으면 일을 넘겨받은 동료도 "최종 보고는 #task 로" 를 받는다. 보고처는 사람이 부른 창구에게만이다.
+   * ⑤ 이 에이전트가 **지금 그 채널을 볼 수 있다** — 비공개 채널의 스레드 id 를 멤버 아닌 에이전트에게 주지 않는다.
+   * 싣는 것은 id 둘뿐이다(본문·제목 없음).
+   */
+  const startIds = [...new Set(rows.filter((r) => r.reason !== 'ask_answered' && r.reason !== 'ask_closed').map((r) => r.messageId))];
+  if (startIds.length) {
+    const started = await pool.query<{ messageId: string; channelId: string; threadRootId: string }>(
+      `select m.id as "messageId", d.channel_id as "channelId", d.thread_root_id as "threadRootId"
+         from message m
+         join account a on a.id = m.author_id and a.kind = 'agent'
+         join mandate d on d.id = coalesce(m.mandate_id,
+                (select w.mandate_id from agent_wake w where w.message_id = m.id and w.account_id = $1
+                  order by w.created_at desc limit 1))
+         join agent_config me on me.account_id = $1 and me.owner_account_id = d.owner_account_id
+         join message r on r.id = d.root_message_id and r.deleted_at is null
+         join channel sc on sc.id = d.channel_id
+        where m.id = any($2::uuid[])
+          and d.thread_root_id is not null and d.ended_at is null
+          and d.thread_root_id <> coalesce(m.thread_root_id, m.id)
+          and exists (select 1 from inbox hi
+                        join message h on h.id = hi.message_id
+                        join account ha on ha.id = h.author_id and ha.kind = 'human'
+                       where hi.account_id = $1 and h.deleted_at is null
+                         and h.channel_id = d.channel_id and coalesce(h.thread_root_id, h.id) = d.thread_root_id)
+          and ${channelVisibleSql('sc', '$1')}`,
+      [accountId, startIds],
+    );
+    const byMessage = new Map(started.rows.map((r) => [r.messageId, { channelId: r.channelId, threadRootId: r.threadRootId }]));
+    for (const row of rows) {
+      const found = row.reason !== 'ask_answered' && row.reason !== 'ask_closed' ? byMessage.get(row.messageId) : undefined;
+      if (found) row.startedIn = found;
+    }
+  }
+
   // `teamId` 는 계약이 아니다(`InboxEntry` 에 없다) — 명단으로 옮긴 뒤 지운다. 남겨 두면
   // 화면·러너가 그 값을 읽기 시작하고, 그러면 명단과 id 라는 두 출처가 생긴다.
   for (const row of rows) delete row.teamId;

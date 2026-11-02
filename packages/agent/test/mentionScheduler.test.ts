@@ -908,6 +908,18 @@ describe('깨움 보고처·접힌 예약을 턴에 넘긴다 (2026-10-06)', () 
     expect(seen.find((t) => t.mentionId === 'm2')?.scheduledWake).toBeUndefined();
   });
 
+  it('부름 항목의 startedIn(위임장 시작 스레드)을 대상에 싣는다(2026-11-02)', async () => {
+    const seen: MentionTarget[] = [];
+    const runTurn = (async (_d: unknown, t: MentionTarget) => { seen.push(t); return { stopRequestedAt: null }; }) as never;
+    const { scheduler } = harness({ runTurn });
+    const call = batchOf([{ entryId: 1, messageId: 'm1', threadRootId: 'root-1' }, { entryId: 2, messageId: 'm2', threadRootId: 'root-2' }]);
+    (call.entries[0] as { startedIn?: unknown }).startedIn = { channelId: 'ch-task', threadRootId: 'task-root' };
+    await scheduler.admit(call, ctx);
+    await scheduler.drain();
+    expect(seen.find((t) => t.mentionId === 'm1')?.startedIn).toEqual({ channelId: 'ch-task', threadRootId: 'task-root' });
+    expect(seen.find((t) => t.mentionId === 'm2')?.startedIn).toBeUndefined();
+  });
+
   it('감시 예약(meta.wake.watch: true)이면 대상에 watch 를 싣는다(2026-10-31)', async () => {
     const seen: MentionTarget[] = [];
     const runTurn = (async (_d: unknown, t: MentionTarget) => { seen.push(t); return { stopRequestedAt: null }; }) as never;

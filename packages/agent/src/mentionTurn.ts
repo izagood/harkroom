@@ -620,6 +620,8 @@ export interface MentionTarget {
   scheduledWake?: boolean;
   /** 이 부름이 접은 내 예약(서버 107). 서버가 inbox 항목에 실어 준다(`InboxEntry.canceledWakes`). */
   canceledWakes?: InboxCanceledWake[];
+  /** 이 일이 시작된 스레드(위임장). 서버가 inbox 항목에 실어 준다(`InboxEntry.startedIn`). */
+  startedIn?: WakeReportTo;
   /**
    * 이 스레드의 임대를 **잃었다**는 신호(서버 095, `threadClaims.ts` 펜싱). 울리면 이 턴을 접는다 — 다른
    * 러너가 이미 이 스레드를 넘겨받았으므로 계속 돌면 같은 스레드에 턴이 둘이다. 없으면(옛 서버·시험) 안 울린다.
@@ -1184,6 +1186,7 @@ export async function runMentionTurn(
     threadRootId: anchor,
     ...(target.wake ? { wake: target.wake } : {}),
     ...(target.canceledWakes?.length ? { canceledWakes: target.canceledWakes } : {}),
+    ...(target.startedIn ? { startedIn: target.startedIn } : {}),
     ...(target.team ? { team: target.team } : {}),
     ...(target.delegation ? { delegation: target.delegation } : {}),
     ...(target.delegatedBy ? { delegatedBy: target.delegatedBy } : {}),

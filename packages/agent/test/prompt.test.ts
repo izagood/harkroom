@@ -261,6 +261,30 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
     expect(r.prompt).toContain('alice: 이거 먼저');
   });
 
+  it('시작 스레드(위임장)는 사람의 발화 위에 덧붙고 최종 보고처로 그 id 를 준다(2026-11-02)', () => {
+    const base = { lastFedSeq: 9, meId: 'a1', handles, channelId: 'c-cmdb', threadRootId: 't-cmdb' };
+    const startedIn = { channelId: 'c-task', threadRootId: 'r-task' };
+    // 델타를 대신하지 않는다 — 새 글이 없으면 턴이 뜰 이유가 없다.
+    expect(buildTurnPrompt({ ...base, messages: [], startedIn }).prompt).toBe('');
+    const r = buildTurnPrompt({ ...base, messages: [msg(10, 'u1', '보고 올림')], startedIn });
+    expect(r.prompt).toContain('사람이 너를 부른 스레드: channelId: c-task · threadRootId: r-task');
+    expect(r.prompt).toContain('채널 최상위(threadRootId 없음)에는 올리지 않는다');
+    // 머리(앵커)는 그대로다 — 시작 스레드는 보고처일 뿐 이 턴의 앵커를 바꾸지 않는다.
+    expect(r.prompt.startsWith('channelId: c-cmdb\nthreadRootId: t-cmdb')).toBe(true);
+    // 없으면 줄도 없다(옛 서버·사람이 앵커에서 직접 부른 턴).
+    expect(buildTurnPrompt({ ...base, messages: [msg(10, 'u1', '보고 올림')] }).prompt).not.toContain('다른 스레드에서 시작됐다');
+  });
+
+  it('깨움 보고처가 같은 스레드를 이미 말하면 시작 스레드 줄을 다시 싣지 않는다', () => {
+    const r = buildTurnPrompt({
+      messages: [], lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      wake: { reason: 'CI 결과 확인', reportTo: { channelId: 'c9', threadRootId: 'r9' } },
+      startedIn: { channelId: 'c9', threadRootId: 'r9' },
+    });
+    expect(r.prompt).toContain('channelId: c9 · threadRootId: r9');
+    expect(r.prompt).not.toContain('다른 스레드에서 시작됐다');
+  });
+
   it('wakeWatch 는 meta.wake.watch 가 true 일 때만 참이다(2026-10-31)', () => {
     expect(wakeWatch({ kind: 'wake', wake: { wakeAt: 'x', reason: 'r', watch: true } })).toBe(true);
     expect(wakeWatch({ kind: 'wake', wake: { wakeAt: 'x', reason: 'r', watch: 'true' } })).toBe(false);
