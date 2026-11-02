@@ -224,13 +224,64 @@ describe('비밀 소유자 보기 (114)', () => {
     expect(asAdmin.every((r) => r.ip === null)).toBe(true);
   });
 
+  it('잠금을 푼 세션은 한 자리에서 비밀 여러 개를 30번 넘게 보고 복사해도 막히지 않는다 — 한 번마다 기록은 남는다', async () => {
+    // 비밀 열 개를 차례로 [보기]→[복사] 하고 다시 [보기] — 30번 보기 + 30번 복사(예전 상한 20/10분이면 21번째에 429).
+    const frank = await createMember(app, admin.token, 'frank');
+    const ids: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      ids.push((await app.inject({
+        method: 'POST', url: '/secrets', headers: auth(frank.token), payload: { name: `frank-key-${i}`, kind: 'text', value: `frank-value-${i}` },
+      })).json().secret.id as string);
+    }
+    expect((await stepUp(frank.token)).statusCode).toBe(200);
+    const codes: number[] = [];
+    for (let round = 0; round < 3; round++) {
+      for (const id of ids) {
+        codes.push((await reveal(frank.token, id, { action: 'view' })).statusCode);
+        codes.push((await reveal(frank.token, id, { action: 'copy' })).statusCode);
+      }
+    }
+    expect(codes).toHaveLength(60);
+    expect(codes.every((c) => c === 200)).toBe(true);
+    const granted = await pool.query(
+      `select count(*)::int as n from secret_access_log where actor_account_id = $1 and result = 'granted'`, [frank.accountId]);
+    expect(granted.rows[0].n).toBe(60);
+    const audited = await pool.query(`select count(*)::int as n from audit_log where action = 'secret.revealed' and actor_id = $1`, [frank.accountId]);
+    expect(audited.rows[0].n).toBe(60);
+  });
+
+  it('풀린 세션에도 폭주 방지 상한은 있다 — 넘으면 429·기록 한 줄', async () => {
+    const tight = await buildServer({ pool, secretKeyring: ring, secretOwnerUnlockedRevealLimiter: new RevealLimiter(3, 60_000) });
+    try {
+      const grace = await createMember(tight, admin.token, 'grace');
+      const id = (await tight.inject({
+        method: 'POST', url: '/secrets', headers: auth(grace.token), payload: { name: 'grace-key', kind: 'text', value: 'grace-value-0001' },
+      })).json().secret.id as string;
+      expect((await tight.inject({ method: 'POST', url: '/auth/step-up', headers: auth(grace.token), payload: { password: 'pw123456' } })).statusCode).toBe(200);
+      const codes: number[] = [];
+      for (let i = 0; i < 5; i++) codes.push((await reveal(grace.token, id, { action: 'view' }, tight)).statusCode);
+      expect(codes).toEqual([200, 200, 200, 429, 429]);
+      expect((await accessRows(id)).filter((r) => r.reason === 'rate_limited')).toHaveLength(1);
+    } finally { await tight.close(); }
+  });
+
+  it('맞는 비밀번호는 시도 상한에 쌓이지 않는다 — 성공한 재확인을 상한보다 많이 해도 통과', async () => {
+    const heidi = await createMember(app, admin.token, 'heidi');
+    for (let i = 0; i < STEP_UP_RULE.max + 5; i++) expect((await stepUp(heidi.token)).statusCode).toBe(200);
+  });
+
   it('429 는 남은 초를 본문(retryAfterSec)과 헤더로 준다 — 웹뷰가 헤더를 읽도록 CORS 에도 노출한다', async () => {
-    let last = await reveal(alice.token, textId);
-    for (let i = 0; i < 40 && last.statusCode !== 429; i++) last = await reveal(alice.token, textId);
+    // 잠긴 채 두드리는 계정이 상한에 닿는다(풀린 세션은 위처럼 넉넉하다).
+    const erin = await createMember(app, admin.token, 'erin');
+    const erinId = (await app.inject({
+      method: 'POST', url: '/secrets', headers: auth(erin.token), payload: { name: 'erin-key', kind: 'text', value: 'erin-value-0001' },
+    })).json().secret.id as string;
+    let last = await reveal(erin.token, erinId);
+    for (let i = 0; i < 40 && last.statusCode !== 429; i++) last = await reveal(erin.token, erinId);
     expect(last.statusCode).toBe(429);
     expect(last.json().error.retryAfterSec).toBeGreaterThan(0);
     expect(Number(last.headers['retry-after'])).toBe(last.json().error.retryAfterSec);
-    expect((await accessRows(textId)).at(-1)).toMatchObject({ result: 'denied', reason: 'rate_limited' });
+    expect((await accessRows(erinId)).at(-1)).toMatchObject({ result: 'denied', reason: 'rate_limited' });
     const cors = await app.inject({ method: 'GET', url: '/healthz', headers: { origin: 'https://app.example.com' } });
     expect(String(cors.headers['access-control-expose-headers']).toLowerCase()).toContain('retry-after');
   });
