@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { parseToolScope } from '@harkroom/shared';
+import { mayDecideFor } from './deciders.js';
 import { CAPABILITIES, isCap, lineMatches, type Cap, type CapAction, type LineFacts, type LineLimits } from './capabilities.js';
 import { validMandateOwner } from './mandates.js';
 
@@ -38,13 +39,15 @@ export async function addMandateLine(client: Q, args: {
 }): Promise<AddLineResult> {
   if (!isCap(args.cap)) return { ok: false, code: 'bad_cap' };
   if (args.via === 'standing') return { ok: false, code: 'bad_via' };
-  const m = (await client.query<{ owner: string; ended: boolean }>(
-    `select owner_account_id as owner, ended_at is not null as ended from mandate where id = $1`, [args.mandateId])).rows[0];
+  const m = (await client.query<{ owner: string; delegator: string; ended: boolean }>(
+    `select owner_account_id as owner, coalesce(delegator_account_id, owner_account_id) as delegator, ended_at is not null as ended
+       from mandate where id = $1`, [args.mandateId])).rows[0];
   if (!m) return { ok: false, code: 'no_mandate' };
   // 끝난 위임(3판)에는 줄을 더하지 않는다 — 끝낼 때 줄을 회수했는데 뒤늦은 승인이 다시 열면 끝이 끝이 아니다.
   if (m.ended) return { ok: false, code: 'mandate_ended' };
   const owner = m.owner;
-  if (args.grantedBy !== owner) return { ok: false, code: 'not_owner' };
+  // 주는 사람은 위임 주인(소유자) 또는 그 위임장을 맡긴 사람(delegator, C-3). 그 밖의 사람은 적을 수 없다.
+  if (args.grantedBy !== owner && args.grantedBy !== m.delegator) return { ok: false, code: 'not_owner' };
   const v = CAPABILITIES[args.cap].validateScope(args.scope);
   if (!v.ok) return { ok: false, code: 'bad_scope', detail: v.code };
   const agentIds = args.agentIds ?? null;
@@ -74,7 +77,9 @@ export async function listMandateLines(client: Q, mandateId: string, now = new D
   const stored = (await client.query<MandateLine>(
     `select ${LINE_COLS} from mandate_line where mandate_id = $1 and revoked_at is null order by created_at, id`, [mandateId])).rows
     .map((r) => ({ ...r, readOnly: false }));
-  const grants = (await client.query<{ id: string; agentId: string; capability: string; scope: string; grantedBy: string; grantedAt: Date; expiresAt: Date | null }>(
+  // 상시 줄은 소유자가 맡긴 위임장에서만 — 다른 사람(delegator)이 맡긴 위임장에는 펼치지 않는다(C-3, security: 그 사람의 7일 grant 가
+  // 그 사람이 맡긴 위임장 전부로 퍼지는 꼴을 막는다. 소유자 7일 grant 도 그 위임장에는 퍼지지 않는다 — D3). 그 위임장의 허락은 저장된 줄뿐이다.
+  const grants = m.delegator !== m.owner ? [] : (await client.query<{ id: string; agentId: string; capability: string; scope: string; grantedBy: string; grantedAt: Date; expiresAt: Date | null }>(
     `select g.id, g.account_id as "agentId", g.capability, g.scope, g.granted_by as "grantedBy", g.granted_at as "grantedAt", g.expires_at as "expiresAt"
        from account_grant g join agent_config c on c.account_id = g.account_id
       where c.owner_account_id = $1 and g.granted_by = $3 and g.capability in ('repo.merge', 'tool.allow')
@@ -126,8 +131,19 @@ async function candidateLines(pool: Pool | Q, args: {
   const agentOwner = (await pool.query<{ owner: string | null }>(
     `select owner_account_id as owner from agent_config where account_id = $1`, [args.agentId])).rows[0]?.owner ?? null;
   if (agentOwner !== owner) return [];
-  const lines = await listMandateLines(pool, args.mandateId!, now);
-  return lines.filter((l) => l.cap !== 'bypass' && (l.agentIds === null || l.agentIds.includes(args.agentId)) && lineMatches(l, args.action, now));
+  const lines = (await listMandateLines(pool, args.mandateId!, now))
+    .filter((l) => l.cap !== 'bypass' && (l.agentIds === null || l.agentIds.includes(args.agentId)) && lineMatches(l, args.action, now));
+  // C-3(security): 소유자가 아닌 사람이 준 줄은 그 사람이 **지금도** 이 위임장 채널에서 이 에이전트의 카드를 정할 수 있을 때만 쓴다 —
+  // 범위가 좁아지거나 계정이 꺼지면 그 사람의 줄은 곧바로 빠진다(grant 의 `mayDecideSql` 재판정과 같은 기준).
+  const others = [...new Set(lines.filter((l) => !l.readOnly && l.grantedBy !== owner).map((l) => l.grantedBy))];
+  if (!others.length) return lines;
+  const channelId = (await pool.query<{ channelId: string }>(`select channel_id as "channelId" from mandate where id = $1`, [args.mandateId])).rows[0]?.channelId ?? null;
+  const still = new Set<string>();
+  for (const who of others) {
+    const v = await mayDecideFor(pool, { agentId: args.agentId, actorId: who, channelId });
+    if (v.ok) still.add(who);
+  }
+  return lines.filter((l) => l.readOnly || l.grantedBy === owner || still.has(l.grantedBy));
 }
 
 /**

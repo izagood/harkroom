@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { recordAudit } from '../audit.js';
+import { mayDecideFor } from './deciders.js';
 
 /**
  * 위임(mandate) W1 — 키를 **서버가** 적는다(133). 에이전트는 이 값을 보지도 보내지도 않는다.
@@ -28,14 +29,16 @@ type Q = Pick<PoolClient, 'query'>;
 /** 이번 트랜잭션이 실제로 새로 만든 위임 — 커밋 뒤 `mandate.created` 감사로 남긴다(본문·meta 는 싣지 않는다). */
 export interface MandateCreated {
   mandateId: string; ownerId: string; rootMessageId: string; channelId: string; threadRootId: string; via: 'root' | 'owner_reply' | 'card';
+  /** C-3: 소유자가 아닌 사람이 맡긴 위임장이면 그 사람. */
+  delegatorId?: string;
 }
 
 /** 커밋 **뒤에** 부른다 — 감사는 풀로 따로 쓰므로, 되돌린 트랜잭션의 위임은 여기 오지 않게 부르는 쪽이 커밋 뒤에만 부른다. */
 export async function auditMandateCreated(pool: Pool, created: MandateCreated[]): Promise<void> {
   for (const c of created) {
     await recordAudit(pool, {
-      action: 'mandate.created', actorId: c.ownerId, target: c.mandateId,
-      detail: { mandateId: c.mandateId, rootMessageId: c.rootMessageId, channelId: c.channelId, threadRootId: c.threadRootId, via: c.via },
+      action: 'mandate.created', actorId: c.delegatorId ?? c.ownerId, target: c.mandateId,
+      detail: { mandateId: c.mandateId, rootMessageId: c.rootMessageId, channelId: c.channelId, threadRootId: c.threadRootId, via: c.via, ...(c.delegatorId ? { ownerId: c.ownerId, delegatorId: c.delegatorId } : {}) },
     });
   }
 }
@@ -54,22 +57,27 @@ export async function stampHumanMandate(client: Q, args: {
       `select 1 from agent_config c join account a on a.id = c.account_id
         where c.account_id = any($1::uuid[]) and c.owner_account_id = $2 and a.kind = 'agent' limit 1`,
       [args.notifiedIds, args.authorId]);
-    if (!own.rowCount) return null;
+    // 소유자가 자기 에이전트를 불렀으면 소유자가 맡긴 위임장. 아니면 C-3(D2): 이 채널에서 그 에이전트의 카드를 **정할 수 있는**
+    // 사람(사용 권한자)이 부른 새 머리 — 주인은 그 에이전트의 소유자, delegator 는 부른 사람. 부른 에이전트가 여럿이면 처음 맞는 것.
+    let ownerId: string | null = own.rowCount ? args.authorId : null;
+    if (!ownerId) ownerId = await delegatedOwner(client, { authorId: args.authorId, channelId: args.channelId, notifiedIds: args.notifiedIds });
+    if (!ownerId) return null;
     const row = (await client.query<{ id: string; inserted: boolean }>(
       `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
-       values ($1, $1, $2, $3, $2, $4, $4)
+       values ($1, $5, $2, $3, $2, $4, $4)
        on conflict (root_message_id) do update set last_activity_at = excluded.last_activity_at
        returning id, (xmax = 0) as inserted`,
-      [args.authorId, args.messageId, args.channelId, now])).rows[0]!;
+      [ownerId, args.messageId, args.channelId, now, args.authorId])).rows[0]!;
     mandateId = row.id;
     if (row.inserted) {
-      args.created?.push({ mandateId, ownerId: args.authorId, rootMessageId: args.messageId, channelId: args.channelId, threadRootId: args.messageId, via: 'root' });
+      args.created?.push({ mandateId, ownerId, rootMessageId: args.messageId, channelId: args.channelId, threadRootId: args.messageId, via: 'root', ...(ownerId !== args.authorId ? { delegatorId: args.authorId } : {}) });
     }
   } else {
     mandateId = (await client.query<{ id: string }>(
       `update mandate d set last_activity_at = greatest(d.last_activity_at, $3)
          from message r
-        where r.id = $1 and d.id = r.mandate_id and d.owner_account_id = $2 and d.ended_at is null
+        where r.id = $1 and d.id = r.mandate_id and d.ended_at is null
+          and (d.owner_account_id = $2 or coalesce(d.delegator_account_id, d.owner_account_id) = $2)
         returning d.id`,
       [args.threadRootId, args.authorId, now])).rows[0]?.id ?? null;
     if (!mandateId) mandateId = await mandateForKeylessRoot(client, { ...args, threadRootId: args.threadRootId, now });
@@ -77,6 +85,23 @@ export async function stampHumanMandate(client: Q, args: {
   }
   await client.query(`update message set mandate_id = $2 where id = $1`, [args.messageId, mandateId]);
   return mandateId;
+}
+
+/**
+ * C-3(D2): 사용 권한자가 부른 새 머리의 위임장 주인 — 부른 에이전트 중 이 사람이 이 채널에서 카드를 정할 수 있는(`mayDecideFor`, 소유자 아님)
+ * 첫 에이전트의 소유자. 사람 세션 글에서만 불린다(부르는 쪽이 거른다). 소유자가 없거나 정할 수 없으면 null.
+ */
+async function delegatedOwner(client: Q, args: { authorId: string; channelId: string; notifiedIds: string[] }): Promise<string | null> {
+  const agents = (await client.query<{ id: string }>(
+    `select c.account_id as id from agent_config c join account a on a.id = c.account_id
+      where c.account_id = any($1::uuid[]) and a.kind = 'agent' and c.owner_account_id is not null
+      order by array_position($1::uuid[], c.account_id)`,
+    [args.notifiedIds])).rows;
+  for (const a of agents) {
+    const v = await mayDecideFor(client, { agentId: a.id, actorId: args.authorId, channelId: args.channelId });
+    if (v.ok && !v.asOwner && v.ownerAccountId) return v.ownerAccountId;
+  }
+  return null;
 }
 
 /**
