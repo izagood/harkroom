@@ -9,6 +9,8 @@ import type { PoolClient } from 'pg';
  *
  * 값은 서버가 가진 사실로만 정한다(C1). 러너가 보내는 원인 헤더는 어느 임대를 고를지에만 쓰이고, principal 자체는
  * 발급 때 원인 글에서 해석해 임대 행에 적어 둔 값이다.
+ *
+ * 위임장의 `delegator`(맡긴 사람, `mandates.ts`)와 다르다 — principal 을 위임장 줄·머지 판정에 쓰지 않는다.
  */
 type Q = Pick<PoolClient, 'query'>;
 

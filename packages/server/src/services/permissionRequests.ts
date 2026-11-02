@@ -776,8 +776,8 @@ async function mandateForCardThread(client: PoolClient, args: { ownerId: string;
     return root.mandateId;
   }
   const id = (await client.query<{ id: string; owner: string; ended: boolean; inserted: boolean }>(
-    `insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
-     values ($1, $2, $3, $2, $4, $4)
+    `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
+     values ($1, $1, $2, $3, $2, $4, $4)
      on conflict (root_message_id) do update set last_activity_at = greatest(mandate.last_activity_at, excluded.last_activity_at)
      returning id, owner_account_id as owner, ended_at is not null as ended, (xmax = 0) as inserted`,
     [args.ownerId, args.threadRootId, args.channelId, args.now])).rows[0]!;
