@@ -278,6 +278,10 @@ void main() {
     await head({'status': 'granted'}, 'approve_mandate', 'alice added this to the mandate', lang: 'en');
     await head({'status': 'approved_once'}, 'approve_once', 'alice allowed it once', lang: 'en');
     await head({'status': 'granted'}, 'approve_new_mandate', 'alice started a mandate and added this', lang: 'en');
+    // S2: 위임장을 못 세워 7일로 다시 한 카드 — 줄(lineId)이 없고 7일 기한만 있으면 「7일 허락함」.
+    await head({'status': 'granted', 'grantExpiresAt': '2026-11-09T00:00:00.000Z'}, 'approve_new_mandate', '7일 허락함 · alice');
+    await head({'status': 'granted', 'grantExpiresAt': '2026-11-09T00:00:00.000Z'}, 'approve_new_mandate', 'alice allowed this for 7 days', lang: 'en');
+    await head({'status': 'granted', 'grantExpiresAt': '2026-11-09T00:00:00.000Z', 'lineId': 'l1'}, 'approve_new_mandate', '위임장을 만들고 더함 · alice');
     expect(stringsFor('ko').permResultDenied('재빈'), '거절함 · 재빈');
     expect(stringsFor('ko').permResultDenied('나비'), '거절함 · 나비');
   });
@@ -392,6 +396,36 @@ void main() {
         await tester.pump();
         expect(tester.widget<Text>(find.byKey(const Key('perm-readonly-m1'))).data, en, reason: scope);
       }
+    });
+
+    testWidgets('n1: 소유자 이름을 모르면 범위를 아는 만큼만 한 줄(ko·en)', (tester) async {
+      Map<String, Object?> ghost() => permMeta(pr: {'ownerAccountId': 'ghost', 'mandate': null});
+      for (final (scope, ko, en) in [
+        ('owner', '소유자가 정한다', 'The owner decides'),
+        ('switchOff', '소유자가 정한다 · 사용자 승인이 꺼져 있다', 'The owner decides · user approval is off'),
+        ('list', '소유자 또는 명단의 사람이 정한다', 'The owner or people on the list decide'),
+        ('channel', '소유자 또는 이 채널 멤버가 정한다', 'The owner or members of this channel decide'),
+        ('community', '소유자 또는 이 커뮤니티 사람이 정한다', 'The owner or anyone in this community decides'),
+      ]) {
+        app.decideChecks['ag1:c1'] = DecideCheck(viewerCanDecide: false, asOwner: false, decideScope: scope, ownerAccountId: 'ghost');
+        await tester.pumpWidget(wrap(app, card(ghost())));
+        await tester.pump();
+        expect(tester.widget<Text>(find.byKey(const Key('perm-readonly-m1'))).data, ko, reason: scope);
+        await tester.pumpWidget(wrap(app, card(ghost()), lang: 'en'));
+        await tester.pump();
+        expect(tester.widget<Text>(find.byKey(const Key('perm-readonly-m1'))).data, en, reason: scope);
+      }
+    });
+
+    testWidgets('n2: decide-check 가 실패하면 그 키를 지워 다음 그릴 때 다시 묻는다', (tester) async {
+      decideCheck = null; // 404 — 실패
+      app.decideChecks.remove('ag1:c1');
+      expect(app.decideCheckFor('ag1', 'c1'), isNull);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      decideCheck = {'viewerCanDecide': true, 'asOwner': false, 'decideScope': 'community', 'ownerAccountId': 'owner-9'};
+      expect(app.decideCheckFor('ag1', 'c1'), isNull);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      expect(app.decideCheckFor('ag1', 'c1')?.viewerCanDecide, isTrue);
     });
 
     testWidgets('소유자라도 서버가 정할 수 없다고 하면 버튼을 그리지 않는다(화면이 다시 판정하지 않는다)', (tester) async {

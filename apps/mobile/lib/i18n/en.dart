@@ -337,6 +337,8 @@ class StringsEn implements Strings {
 
   @override
   String permResultAdded(String who) => '$who added this to the mandate';
+  @override
+  String permResultStanding(String who) => '$who allowed this for 7 days';
 
   @override
   String permResultOnce(String who) => '$who allowed it once';
@@ -370,6 +372,16 @@ class StringsEn implements Strings {
   String permDecideBySwitchOff(String owner) => 'Owner @$owner decides · user approval is off';
   @override
   String get permDecideByUnknown => 'People who can call this agent decide';
+  @override
+  String get permDecideByOwnerUnnamed => 'The owner decides';
+  @override
+  String get permDecideBySwitchOffUnnamed => 'The owner decides · user approval is off';
+  @override
+  String get permDecideByListUnnamed => 'The owner or people on the list decide';
+  @override
+  String get permDecideByChannelUnnamed => 'The owner or members of this channel decide';
+  @override
+  String get permDecideByCommunityUnnamed => 'The owner or anyone in this community decides';
   @override
   String get permErrForbidden => 'Only people who can call this agent can decide.';
   @override

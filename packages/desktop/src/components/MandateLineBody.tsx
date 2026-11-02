@@ -394,7 +394,17 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
  */
 function waitingText(check: DecideCheck | null, owner: string | null, t: Translate): string {
   const scope = check?.decideScope ?? null;
-  if (!owner) return t('mandateCard.ownerOnlyUnknown');
+  // n1(designer): 소유자 이름을 모르면 범위를 아는 만큼만 말한다 — 「부를 수 있는 사람」은 owner·switchOff 범위면 사실이 아니다.
+  if (!owner) {
+    switch (scope) {
+      case 'owner': return t('decideBy.unnamed.owner');
+      case 'switchOff': return t('decideBy.unnamed.switchOff');
+      case 'list': return t('decideBy.unnamed.list');
+      case 'channel': return t('decideBy.unnamed.channel');
+      case 'community': return t('decideBy.unnamed.community');
+      default: return t('mandateCard.ownerOnlyUnknown');
+    }
+  }
   switch (scope) {
     case 'list': return t('decideBy.list', { owner });
     case 'channel': return t('decideBy.channel', { owner });

@@ -104,6 +104,7 @@ class PermissionCardInfo {
     this.bodyTargetLine,
     this.warnings = const [],
     this.bodyWarningLine,
+    this.grantedWithoutLine = false,
   });
 
   final String? kind;
@@ -136,6 +137,10 @@ class PermissionCardInfo {
   /// H4: 본문 속 서버가 쓴 경고 줄(`⚠ …`). 경고를 줄 상자에 그리는 화면은 본문에서 이 줄 하나만 뺀다.
   final String? bodyWarningLine;
 
+  /// S2: 승인됐지만 위임장 줄 없이 7일 허락만 남은 카드(위임장을 못 세워 7일로 다시 한 경우 등). 서버는 카드 선택지로만 답을 적어
+  /// `answeredWith` 가 「위임장 만들고 더하기」여도, 이 값이 참이면 결과 머리를 「7일 허락함」으로 그린다. 원본만 안다(거울은 거짓).
+  final bool grantedWithoutLine;
+
   bool get isMirror => mirrorRootId != null;
 
   static PermissionCardInfo? read(Map<String, Object?> meta) {
@@ -160,6 +165,7 @@ class PermissionCardInfo {
         bodyTargetLine: pr['bodyTargetLine'] is String ? pr['bodyTargetLine'] as String : null,
         warnings: orderedPermissionWarnings(pr['warnings']),
         bodyWarningLine: pr['bodyWarningLine'] is String ? pr['bodyWarningLine'] as String : null,
+        grantedWithoutLine: pr['status'] == 'granted' && pr['kind'] != 'command' && pr['lineId'] == null && pr['grantExpiresAt'] is String,
       );
     }
     final mi = meta['permissionMirror'];

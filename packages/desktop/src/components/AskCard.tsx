@@ -127,7 +127,11 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
     : null;
 
   // r5: 끝난 줄 카드의 머리는 「정해졌다 · X 골랐다」(선택지가 접혀 빈말) 대신 결과를 쓴다.
-  const resultKey = lined?.line && answered ? lineResultKey(ask.answeredWith ?? null) : null;
+  // S2: 카드 답은 카드 선택지로만 적힌다 — 위임장을 못 세워 7일로 다시 한 카드도 「위임장 만들고 더하기」로 적힌다.
+  // 원본 meta 에 줄(lineId)이 없고 7일 기한만 있으면 「7일 허락함」으로 그린다.
+  const resultKey = lined?.line && answered
+    ? (grantedWithoutLine(lined.request) && isStandingAnswer(ask.answeredWith ?? null) ? 'mandateCard.result.standing' : lineResultKey(ask.answeredWith ?? null))
+    : null;
   const resultHead = resultKey ? t(resultKey, { who: answeredByName ?? t('common.someone') }) : null;
 
   /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
@@ -251,6 +255,16 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
       )}
     </div>
   );
+}
+
+/** S2: 승인됐지만 위임장 줄 없이 7일 허락만 남은 원본 카드인가(거울은 원본 meta 가 없어 거짓). */
+export function grantedWithoutLine(request: Record<string, unknown> | null | undefined): boolean {
+  if (!request) return false;
+  return request.status === 'granted' && request.kind !== 'command' && request.lineId == null && typeof request.grantExpiresAt === 'string';
+}
+
+function isStandingAnswer(id: string | null): boolean {
+  return id === 'approve_new_mandate' || id === 'approve_mandate' || id === 'approve';
 }
 
 /** r5: 줄 카드에서 고른 선택지 → 결과 머리 키. 모르는 선택지면 null(옛 머리). */

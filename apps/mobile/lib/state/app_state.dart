@@ -2659,7 +2659,7 @@ class AppState extends ChangeNotifier {
   /// 선택지를 고른다. 돌아온 메시지로 **그 자리를 덮어쓴다** — 버튼이 사라지고 고른
   /// 것이 남는다. 누른 뒤에도 버튼이 있으면 사람은 자기가 누른 것을 의심한다.
   /// 권한 카드를 누가 정하나(P1 `decide-check`) — (에이전트, 채널)마다 한 번 받아 둔다. 같은 쌍의 카드는 답이 같다.
-  /// 받기 전·실패면 null — 카드는 지금처럼 소유자만 꼴로 그린다(실패는 이 접속에서 다시 묻지 않는다).
+  /// 받기 전·실패면 null — 카드는 지금처럼 소유자만 꼴로 그린다. 실패하면 그 키를 지워 다음에 그릴 때 다시 묻는다(n2, 데스크톱과 같다).
   final Map<String, DecideCheck> decideChecks = {};
   final Set<String> _decideCheckAsked = {};
 
@@ -2672,7 +2672,9 @@ class AppState extends ChangeNotifier {
       unawaited(api.decideCheck(agentId, channelId).then((v) {
         decideChecks[key] = v;
         notifyListeners();
-      }).catchError((Object _) {}));
+      }).catchError((Object _) {
+        _decideCheckAsked.remove(key);
+      }));
     }
     return null;
   }
