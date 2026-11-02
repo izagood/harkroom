@@ -5493,7 +5493,7 @@ export const en = {
   'apiGrant.expiry7d': '7 days',
   'apiGrant.expiry30d': '30 days',
   'apiGrant.expiryNone': 'None',
-  'apiGrant.writeExpiryHint': 'Read + write with no expiry can only be chosen in Settings › Agents › Permissions.',
+  'apiGrant.writeExpiryHint': '“None” for read + write can only be chosen in Settings › Agents › Permissions.',
   'apiGrant.noExpiryWarn': 'This agent keeps sending {methods} through this connection until you revoke it.',
   'apiGrant.noExpiryWarnAgentTurns': 'Also in turns started by other agents and scheduled turns.',
   'apiGrant.noExpiryConfirm': 'Give write access with no expiry',
