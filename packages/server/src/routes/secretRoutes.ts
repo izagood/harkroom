@@ -58,8 +58,21 @@ const revealBody = z.object({
   // 기기가 스스로 밝힌 이름(앱 판·OS). 기록에만 쓰고 판정에는 안 쓴다 — 검증된 기기 신원이 아니다.
   client: z.string().max(500).optional(),
 });
-/** 소유자 보기 속도 제한 — 계정마다 10분에 20회. 화면 하나가 보기·복사를 섞어 써도 넉넉하고, 긁어 가기엔 좁다. */
+/**
+ * 소유자 보기 속도 제한은 **잠긴 채 두드리는 요청만** 센다 — 계정마다 10분에 20회. 넘으면 429 이고 막힌 동안의
+ * access log 는 창마다 한 줄이다(security #1253 n1: 세션 토큰만 가진 쪽이 거절 행을 끝없이 쌓지 못하게).
+ *
+ * 잠금이 풀린 세션의 보기는 여기서 세지 않는다. 처음엔 풀린 보기도 이 20회에 넣었는데, 보기·복사가 각각 한 번이라
+ * 비밀 열 개를 보고 복사하면 막혔다(소유자 결정 2026-11-02: 많이 보는 것은 정상 사용이다). 값을 지키는 것은
+ * 비밀번호 재확인(`/auth/step-up`, 시도 상한 `STEP_UP_RULE` — 맞으면 비운다)과 세션 창(15분·최대 1시간)이다.
+ * 보기마다 access log·감사 기록은 그대로 한 줄씩 남는다.
+ */
 export const ownerRevealLimiter = (): RevealLimiter => new RevealLimiter(20, 10 * 60_000);
+/**
+ * 풀린 세션의 폭주 방지 상한 — 계정마다 10분에 600회(평균 1초에 1회). 사람이 한 자리에서 비밀 수십 개를 보고
+ * 복사해도 닿지 않고, 고장 난 클라이언트·스크립트가 기록 행을 끝없이 쌓는 것만 막는다.
+ */
+export const ownerUnlockedRevealLimiter = (): RevealLimiter => new RevealLimiter(600, 10 * 60_000);
 /**
  * 기록할 client 문자열 — 제어문자는 칸으로 바꾸고, 보이는 순서를 속이는 bidi·zero-width 글자
  * (U+200B–200F, 202A–202E, 2066–2069)는 지운 뒤 120자로 자른다(감사 화면 「어디서」에 그대로 찍힌다).
@@ -131,7 +144,7 @@ export async function registerSecretRoutes(
   app: FastifyInstance, pool: Pool,
   opts: {
     keyring: SecretKeyring | null; keyMismatch?: boolean; limiter?: RevealLimiter; createLimiter?: RevealLimiter;
-    ownerRevealLimiter?: RevealLimiter;
+    ownerRevealLimiter?: RevealLimiter; ownerUnlockedRevealLimiter?: RevealLimiter;
   },
 ): Promise<void> {
   const { keyring } = opts;
@@ -139,6 +152,7 @@ export async function registerSecretRoutes(
   const limiter = opts.limiter ?? new RevealLimiter();
   const makeLimiter = opts.createLimiter ?? createLimiter();
   const ownerLimiter = opts.ownerRevealLimiter ?? ownerRevealLimiter();
+  const ownerUnlockedLimiter = opts.ownerUnlockedRevealLimiter ?? ownerUnlockedRevealLimiter();
   /** 소유자 보기가 막힌 동안의 access log 는 창마다 한 줄(security #1253 n1). */
   const ownerLimitedLog = new OncePerWindow();
 
@@ -503,7 +517,7 @@ export async function registerSecretRoutes(
   /**
    * 소유자 보기(114, 스레드 464aff1c). 판정은 전부 서버가 가진 사실로 한다:
    * 사람 · **세션**(PAT·오퍼레이터 403) · **소유자 본인**(admin 도 남의 것은 404) · 보관소 잠금이 풀린 창 안
-   * (`stepUp.ts`) · 계정당 속도 제한. 통과하면 지금 판을 열어 본문으로만 돌려주고(`no-store`), 창을 15분 민다
+   * (`stepUp.ts`). 속도 제한은 잠긴 요청에만 좁고(20/10분), 풀린 세션엔 폭주 방지 상한(600/10분)뿐이다. 통과하면 지금 판을 열어 본문으로만 돌려주고(`no-store`), 창을 15분 민다
    * (처음 푼 때 + 1시간까지). 응답의 `steppedUpUntil` 이 밀린 뒤의 끝 시각이다.
    *
    * 보기·복사·내려받기를 **각각 서버에서** 받는다 — 화면이 이미 받은 값을 복사하면 "복사함"은 클라이언트의
@@ -532,19 +546,19 @@ export async function registerSecretRoutes(
       return reply.code(status).send({ error: { code, message } });
     };
 
-    // 속도 제한을 잠금 판정보다 **먼저** 본다(n1) — 잠긴 채 두드리는 요청도 상한 안에서만 기록된다.
+    // 잠금 여부에 따라 다른 상한을 센다(위 `ownerRevealLimiter` 설명). 잠긴 요청은 상한 안에서만 기록되고(n1),
     // 막힌 동안의 기록은 창마다 한 줄이다. 남은 시간은 헤더와 본문 둘 다(F1).
     const nowMs = Date.now();
-    if (!ownerLimiter.take(me.id, nowMs)) {
-      const waitMs = ownerLimiter.retryAfterMs(me.id, nowMs);
+    const unlocked = await currentStepUp(pool, req.credentialHash);
+    const gate = unlocked ? ownerUnlockedLimiter : ownerLimiter;
+    if (!gate.take(me.id, nowMs)) {
+      const waitMs = gate.retryAfterMs(me.id, nowMs);
       const retryAfterSec = Math.max(1, Math.ceil(waitMs / 1000));
       if (ownerLimitedLog.first(me.id, nowMs, waitMs)) await log('denied', 'rate_limited', null);
       return reply.code(429).header('retry-after', String(retryAfterSec))
         .send({ error: { code: 'rate_limited', message: 'too many secret views, try again later', retryAfterSec } });
     }
-    if (!(await currentStepUp(pool, req.credentialHash))) {
-      return deny(403, 'step_up_required', 'unlock with your password to view secret values');
-    }
+    if (!unlocked) return deny(403, 'step_up_required', 'unlock with your password to view secret values');
     const v = (await pool.query(
       `select version, sealed from secret_version
         where secret_id = $1 and revoked_at is null and sealed is not null order by version desc limit 1`,
