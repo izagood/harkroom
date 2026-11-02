@@ -346,6 +346,7 @@ abstract class Strings {
 
   /// 권한 카드(W4 위임장).
   String permResultAdded(String who);
+  String permResultStanding(String who);
 
   /// 권한 카드(W4 위임장).
   String permResultOnce(String who);
@@ -361,6 +362,11 @@ abstract class Strings {
   String permDecideByCommunity(String owner);
   String permDecideBySwitchOff(String owner);
   String get permDecideByUnknown;
+  String get permDecideByOwnerUnnamed;
+  String get permDecideBySwitchOffUnnamed;
+  String get permDecideByListUnnamed;
+  String get permDecideByChannelUnnamed;
+  String get permDecideByCommunityUnnamed;
   String get permErrForbidden;
   String get permErrMandateUnavailable;
 
@@ -1467,6 +1473,11 @@ Map<String, String> stringsToMap(Strings s) => {
       'permStateMandateEnded': s.permStateMandateEnded,
       'permYouCanDecide': s.permYouCanDecide,
       'permDecideByUnknown': s.permDecideByUnknown,
+      'permDecideByOwnerUnnamed': s.permDecideByOwnerUnnamed,
+      'permDecideBySwitchOffUnnamed': s.permDecideBySwitchOffUnnamed,
+      'permDecideByListUnnamed': s.permDecideByListUnnamed,
+      'permDecideByChannelUnnamed': s.permDecideByChannelUnnamed,
+      'permDecideByCommunityUnnamed': s.permDecideByCommunityUnnamed,
       'permErrForbidden': s.permErrForbidden,
       'permErrMandateUnavailable': s.permErrMandateUnavailable,
       'permViaChat': s.permViaChat,

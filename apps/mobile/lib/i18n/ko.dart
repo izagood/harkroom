@@ -336,6 +336,8 @@ class StringsKo implements Strings {
 
   @override
   String permResultAdded(String who) => '이 위임장에 더함 · $who';
+  @override
+  String permResultStanding(String who) => '7일 허락함 · $who';
 
   @override
   String permResultOnce(String who) => '이번 한 번 허락함 · $who';
@@ -369,6 +371,16 @@ class StringsKo implements Strings {
   String permDecideBySwitchOff(String owner) => '소유자 @$owner 이 정한다 · 사용자 승인이 꺼져 있다';
   @override
   String get permDecideByUnknown => '이 에이전트를 부를 수 있는 사람이 정한다';
+  @override
+  String get permDecideByOwnerUnnamed => '소유자가 정한다';
+  @override
+  String get permDecideBySwitchOffUnnamed => '소유자가 정한다 · 사용자 승인이 꺼져 있다';
+  @override
+  String get permDecideByListUnnamed => '소유자 또는 명단의 사람이 정한다';
+  @override
+  String get permDecideByChannelUnnamed => '소유자 또는 이 채널 멤버가 정한다';
+  @override
+  String get permDecideByCommunityUnnamed => '소유자 또는 이 커뮤니티 사람이 정한다';
   @override
   String get permErrForbidden => '이 에이전트를 부를 수 있는 사람만 정할 수 있다';
   @override

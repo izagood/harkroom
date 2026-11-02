@@ -156,6 +156,9 @@ describe('W4 mandate line card', () => {
     ['위임장을 만들고 더함 · alice', { options: ['approve_new_mandate', 'deny'], pr: { status: 'granted', mandate: undefined }, ask: { answeredWith: 'approve_new_mandate', answeredBy: ME } }],
     ['이번 한 번 허락함 · alice', { options: ['approve_once', 'deny'], pr: { status: 'approved_once', kind: 'command', line: { cap: 'command', scope: 'x', limits: { approve_once: { uses: 1 } } } }, ask: { answeredWith: 'approve_once', answeredBy: ME } }],
     ['거절함 · alice', { pr: { status: 'denied' }, ask: { answeredWith: 'deny', answeredBy: ME } }],
+    // S2: 위임장을 못 세워 7일로 다시 한 카드 — 답은 「위임장 만들고 더하기」로 적혔지만 줄(lineId)이 없고 7일 기한만 있다.
+    ['7일 허락함 · alice', { options: ['approve_new_mandate', 'deny'], pr: { status: 'granted', mandate: undefined, grantExpiresAt: '2026-11-09T00:00:00.000Z' }, ask: { answeredWith: 'approve_new_mandate', answeredBy: ME } }],
+    ['위임장을 만들고 더함 · alice', { options: ['approve_new_mandate', 'deny'], pr: { status: 'granted', mandate: undefined, grantExpiresAt: '2026-11-09T00:00:00.000Z', lineId: 'line-1' }, ask: { answeredWith: 'approve_new_mandate', answeredBy: ME } }],
   ])('answered line card head says the result: %s', (head, opts) => {
     render(<AskCard message={card(opts as Parameters<typeof card>[0])} />);
     expect(screen.getByTestId('ask-card').textContent).toContain(head);
@@ -448,6 +451,16 @@ describe('P3 decide-check: people who can call the agent decide too (designer v2
   ])('scope %s line', async (scope, text) => {
     useServer({ viewerCanDecide: false, asOwner: false, decideScope: scope, ownerAccountId: ME });
     render(<AskCard message={newCard()} />);
+    await waitFor(() => expect(screen.getByTestId('mandate-owner-only').textContent).toBe(text));
+  });
+  // n1: 소유자 이름을 모르면 범위를 아는 만큼만 — owner·switchOff 범위에 「부를 수 있는 사람」이라고 쓰지 않는다.
+  it.each([
+    ['owner', '소유자가 정한다'], ['switchOff', '소유자가 정한다 · 사용자 승인이 꺼져 있다'],
+    ['list', '소유자 또는 명단의 사람이 정한다'], ['channel', '소유자 또는 이 채널 멤버가 정한다'],
+    ['community', '소유자 또는 이 커뮤니티 사람이 정한다'],
+  ])('unknown owner name, scope %s line', async (scope, text) => {
+    useServer({ viewerCanDecide: false, asOwner: false, decideScope: scope, ownerAccountId: 'ghost' });
+    render(<AskCard message={card({ options: ['approve_new_mandate', 'deny'], pr: { ownerAccountId: 'ghost', mandate: undefined, line: { cap: 'tool', scope: 'x', limits: { approve_new_mandate: { untilMs: 1 } } } } })} />);
     await waitFor(() => expect(screen.getByTestId('mandate-owner-only').textContent).toBe(text));
   });
   it('check failed or server older than 0.4.315 → owner-only as before', async () => {

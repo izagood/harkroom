@@ -285,8 +285,16 @@ class _AskCardState extends State<AskCard> {
                 ? ' · ${t.askToYou}'
                 : '';
     // 시안 v2 ③: 정할 수 없는 사람에게 범위에 맞춰 누가 정하는지 한 줄. 받기 전·실패면 소유자만 꼴.
+    // n1(designer): 소유자 이름을 모르면 범위를 아는 만큼만 말한다 — 「부를 수 있는 사람」은 owner·switchOff 범위면 사실이 아니다.
     final waitLine = ownerHandle == null
-        ? t.permDecideByUnknown
+        ? switch (check?.decideScope) {
+            'owner' => t.permDecideByOwnerUnnamed,
+            'switchOff' => t.permDecideBySwitchOffUnnamed,
+            'list' => t.permDecideByListUnnamed,
+            'channel' => t.permDecideByChannelUnnamed,
+            'community' => t.permDecideByCommunityUnnamed,
+            _ => t.permDecideByUnknown,
+          }
         : switch (check?.decideScope) {
             'list' => t.permDecideByList(ownerHandle),
             'channel' => t.permDecideByChannel(ownerHandle),
@@ -321,6 +329,7 @@ class _AskCardState extends State<AskCard> {
     if (who != null && !(ended && (s == null || s == 'pending'))) {
       final result = switch (chose) {
         permOptDeny => t.permResultDenied(who),
+        permOptApproveNewMandate || permOptApproveMandate || 'approve' when perm.grantedWithoutLine => t.permResultStanding(who),
         permOptApproveNewMandate => t.permResultNewAdded(who),
         permOptApproveMandate || 'approve' => t.permResultAdded(who),
         permOptApproveOnce || 'approve_hour' => t.permResultOnce(who),
