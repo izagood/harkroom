@@ -96,9 +96,9 @@ describe('message.notice (러너 알림 줄)', () => {
     // 자유 본문은 스키마가 받지 않는다(모르는 칸은 버려진다) — 본문은 언제나 서버 문장이다.
     const extra = await call(runner, 'message.notice', { channelId, threadRootId: root, key: 'fenced', body: '머지됨' });
     expect(extra.message.body).toBe(runnerNotice('fenced', member.accountId).body);
-    // handle 모양이 어긋나면 「소유자」로 물러난다(멘션·마크다운을 싣지 않는다).
+    // handle 모양이 어긋나면 handle 없는 키로 물러난다(멘션·마크다운을 싣지 않고, 인자에 한 언어의 낱말을 넣지 않는다).
     const odd = await call(runner, 'message.notice', { channelId, threadRootId: root, key: 'controlled', handle: '@all <b>', pending: 1 });
-    expect(odd.message.meta.i18n.args.handle).toBe('소유자');
+    expect(odd.message.meta.i18n).toEqual({ key: 'system.runner.controlledByOwner', args: { agentId: member.accountId, pending: 1 } });
     // 목록 밖 키는 스키마가 막는다(MCP 입력 오류).
     const bad = await runner.callTool({ name: 'message.notice', arguments: { channelId, threadRootId: root, key: 'nope' } });
     expect(bad.isError).toBe(true);

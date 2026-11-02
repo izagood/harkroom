@@ -17,7 +17,7 @@ import { systemI18n } from './systemI18n.js';
 export const RUNNER_NOTICE_KEYS = ['blocked_by_turn', 'fenced', 'controlled'] as const;
 export type RunnerNoticeKey = (typeof RUNNER_NOTICE_KEYS)[number];
 
-/** 조종 중인 사람의 handle. 러너가 주는 값이라 모양을 좁힌다 — 어긋나면 「소유자」로 물러난다. */
+/** 조종 중인 사람의 handle. 러너가 주는 값이라 모양을 좁힌다 — 어긋나면 `controlledByOwner` 키로 물러난다. */
 const HANDLE_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 /** 대기 건수 상한. 넘으면 상한으로 자른다(문장만 바뀐다). */
 export const RUNNER_NOTICE_MAX_PENDING = 9999;
@@ -50,12 +50,15 @@ export function runnerNotice(
         i18n: systemI18n('system.runner.fenced', { agentId }),
       };
     case 'controlled': {
-      const handle = args.handle && HANDLE_RE.test(args.handle) ? args.handle : '소유자';
+      const handle = args.handle && HANDLE_RE.test(args.handle) ? args.handle : null;
       const pending = Math.min(Math.max(1, Math.trunc(args.pending ?? 1)), RUNNER_NOTICE_MAX_PENDING);
       return {
-        body: `(지금 ${handle} 이(가) 직접 조종 중입니다 — 이 멘션은 대기 ${pending}건째입니다. `
+        body: `(지금 ${handle ?? '소유자'} 이(가) 직접 조종 중입니다 — 이 멘션은 대기 ${pending}건째입니다. `
           + '조종이 끝나면 처리합니다: 터미널에서 하네스를 종료하거나, Agents 탭에서 「조종 끝내기」)',
-        i18n: systemI18n('system.runner.controlled', { agentId, handle, pending }),
+        // handle 을 모르면 따로 키를 둔다 — 「소유자/the owner」는 사전이 고른다(인자에 한 언어의 낱말을 넣지 않는다).
+        i18n: handle
+          ? systemI18n('system.runner.controlled', { agentId, handle, pending })
+          : systemI18n('system.runner.controlledByOwner', { agentId, pending }),
       };
     }
   }

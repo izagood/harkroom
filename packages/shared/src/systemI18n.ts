@@ -106,6 +106,8 @@ export const SYSTEM_I18N_ARGS = Object.freeze({
   'system.runner.blockedByTurn': ['agentId'],
   'system.runner.fenced': ['agentId'],
   'system.runner.controlled': ['agentId', 'handle', 'pending'],
+  // handle 을 모를 때 — 「소유자/the owner」는 사전이 고른다(인자에 한 언어의 낱말을 넣지 않는다).
+  'system.runner.controlledByOwner': ['agentId', 'pending'],
 } as const satisfies Record<string, readonly string[]>);
 
 export type SystemI18nKey = keyof typeof SYSTEM_I18N_ARGS;

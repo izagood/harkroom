@@ -86,6 +86,7 @@ const Map<String, List<String>> systemI18nArgs = {
   'system.runner.blockedByTurn': ['agentId'],
   'system.runner.fenced': ['agentId'],
   'system.runner.controlled': ['agentId', 'handle', 'pending'],
+  'system.runner.controlledByOwner': ['agentId', 'pending'],
 };
 
 const int _maxArgLength = 200;

@@ -1446,9 +1446,10 @@ class StringsEn implements Strings {
         'system.chatApproval.onceOnCard': '⚠️ Not approved: decide this merge card in its thread or with its link.',
         'system.chatApproval.mergeNoMandate': '⚠️ Not approved: no mandate can be started on this thread, so a merge is not approved for 7 days. Use "once" on the merge refusal card, or approve with the card link from a thread you started.',
         'system.chatApproval.failed': '⚠️ Not approved: it could not be decided. Try again on the card.',
-        'system.runner.blockedByTurn': '⏳ {agentId}\'s previous turn is still running in this thread — this message will be read when that turn ends. To stop it now, press Stop in the running-turn list or in that turn\'s terminal window.',
+        'system.runner.blockedByTurn': '{agentId}\'s previous turn is still running in this thread — {agentId} will read the message above when that turn ends. To stop it now, press Stop in the running-turn list or in that turn\'s terminal window.',
         'system.runner.fenced': 'Another runner of {agentId} took over this thread and folded this turn — the thread lease expired while this runner was disconnected from the server. The runner that took over continues the rest.',
-        'system.runner.controlled': '⏳ {handle} is controlling {agentId} directly right now — this mention is waiting at #{pending}. It will be handled when control ends: exit the harness in the terminal, or press End control in the Agents tab.',
+        'system.runner.controlled': '{handle} is controlling {agentId} directly right now — this mention is waiting at #{pending}. It will be handled when control ends: exit the harness in the terminal, or press End control in the Agents tab.',
+        'system.runner.controlledByOwner': 'The owner is controlling {agentId} directly right now — this mention is waiting at #{pending}. It will be handled when control ends: exit the harness in the terminal, or press End control in the Agents tab.',
       };
 
   @override
