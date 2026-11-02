@@ -284,8 +284,6 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   <span>{write ? t('apiGrant.rowWrite') : t('apiGrant.rowRead')}</span>
                   {g.limits?.pathPrefix && <span className="font-mono text-fg-subtle">{g.limits.pathPrefix}</span>}
                   {write && g.writeNeedsHumanCause && <span className="text-fg-subtle">{t('apiGrant.rowHumanOnly')}</span>}
-                  {/* 무기한 쓰기 — 소유자가 거둘 대상을 한눈에 찾게(security 조건 5). */}
-
                   <span className="text-fg-subtle">
                     {t('agents.grants.by', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
                     {!(write && g.expiresAt === null) && ' · '}
@@ -298,7 +296,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   {canGrant && c && c.ownerAccountId === myId && (
                     <button className="ml-auto rounded border border-border px-2 py-0.5 text-meta text-fg hover:bg-surface-sunken disabled:opacity-50" disabled={off}
                       data-testid={`api-grant-change-${c.name}`} aria-expanded={changing === g.scope}
-                      onClick={() => setChanging(changing === g.scope ? null : g.scope)}>{t('apiGrant.replace')}</button>
+                      onClick={() => setChanging(changing === g.scope ? null : g.scope)}>{t('apiGrant.edit')}</button>
                   )}
                   {canRevoke && (
                     <button className={`${canGrant && c && c.ownerAccountId === myId ? '' : 'ml-auto '}rounded border border-border px-2 py-0.5 text-meta text-fg hover:text-danger disabled:opacity-50`} disabled={off}
@@ -314,7 +312,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   )}
                 </div>
                 {changing === g.scope && c && (
-                  <ApiGrantForm allowWriteNoExpiry agentId={agent.id} connectors={[c]} existing={g} onCancel={() => setChanging(null)} onDone={async () => { setChanging(null); await load(); }} />
+                  <ApiGrantForm allowWriteNoExpiry editMode delegatedCount={below} agentId={agent.id} connectors={[c]} existing={g} onCancel={() => setChanging(null)} onDone={async () => { setChanging(null); await load(); }} />
                 )}
                 {node && <DelegationChildren node={node} accounts={accounts} a={delegation} />}
                 </li>

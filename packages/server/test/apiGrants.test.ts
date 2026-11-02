@@ -171,7 +171,7 @@ describe('API 연결 · api.call grant', () => {
     const forever = await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: null, writeNeedsHumanCause: false });
     expect(forever.statusCode).toBe(200);
     expect(forever.json().grants).toContainEqual(expect.objectContaining({ scope: `connector:${c}`, expiresAt: null }));
-    const audit = (await pool.query(`select detail from audit_log where action = 'grant.given' and detail->>'scope' = $1 order by id desc limit 1`, [`connector:${c}`])).rows[0];
+    const audit = (await pool.query(`select detail from audit_log where action in ('grant.given', 'grant.updated') and detail->>'scope' = $1 order by id desc limit 1`, [`connector:${c}`])).rows[0];
     expect(audit.detail.writeNoExpiry).toBe(true);
     const ok = await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: inWeek(), delegateDepth: 1 });
     expect(ok.statusCode).toBe(200);
@@ -276,5 +276,30 @@ describe('API 연결 · api.call grant', () => {
     expect(await apiGrantFor(pool, { agentId, connectorId: c, method: 'POST', path: '/api/x' })).toEqual({ ok: false, code: 'suspended' });
     expect((await app.inject({ method: 'DELETE', url: `/connectors/${c}`, headers: auth(alice.token) })).statusCode).toBe(204);
     expect((await pool.query(`select 1 from account_grant where scope = $1`, [`connector:${c}`])).rowCount).toBe(0);
+  });
+
+  it('고치기: 같은 부여 id 가 남고, 감사는 grant.updated 에 바뀐 칸만 [전, 후] · 멈춘 부여를 고치면 다시 켜짐도 남는다', async () => {
+    const c = (await mkConnector('c-edit')).json().connector.id as string;
+    const first = await give(c, { limits: { methods: ['GET'], pathPrefix: '/api/' }, expiresAt: inWeek() });
+    const id0 = first.json().grants.find((g: { scope: string }) => g.scope === `connector:${c}`).id as string;
+    const given = (await pool.query(`select action from audit_log where target = $1 and detail->>'scope' = $2 order by id desc limit 1`, [agentId, `connector:${c}`])).rows[0];
+    expect(given.action).toBe('grant.given');
+    // 경로를 좁히고 쓰기로 넓힌다(소유자 사람 세션 — 같은 판정을 탄다).
+    const exp = inWeek();
+    const edited = await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/catalog/' }, expiresAt: exp, writeNeedsHumanCause: true });
+    expect(edited.statusCode).toBe(200);
+    const row = edited.json().grants.find((g: { scope: string }) => g.scope === `connector:${c}`);
+    expect(row.id).toBe(id0);
+    const upd = (await pool.query(`select detail from audit_log where action = 'grant.updated' and detail->>'scope' = $1 order by id desc limit 1`, [`connector:${c}`])).rows[0];
+    expect(upd.detail.changed.limits).toEqual([{ methods: ['GET'], pathPrefix: '/api/' }, { methods: ['GET', 'POST'], pathPrefix: '/api/catalog/' }]);
+    expect(upd.detail.changed.writeNeedsHumanCause).toEqual([false, true]);
+    expect(Object.keys(upd.detail.changed)).not.toContain('delegateDepth');
+    // 넓히는 고치기도 소유자만 — 남은 403.
+    expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/' }, expiresAt: exp, writeNeedsHumanCause: true }, bob.token)).statusCode).toBe(403);
+    // 연결이 바뀌어 멈춘 부여를 고치면 다시 켜진다 — 감사에 남는다.
+    await app.inject({ method: 'PATCH', url: `/connectors/${c}`, headers: auth(alice.token), payload: { baseUrl: 'https://moved.example.com' } });
+    await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/catalog/' }, expiresAt: exp, writeNeedsHumanCause: true });
+    const resumed = (await pool.query(`select detail from audit_log where action = 'grant.updated' and detail->>'scope' = $1 order by id desc limit 1`, [`connector:${c}`])).rows[0];
+    expect(resumed.detail.changed.suspended).toEqual([true, false]);
   });
 });

@@ -202,6 +202,11 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
     }
     const target = await pool.query(`select 1 from account where id = $1`, [id]);
     if (!target.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: '그런 계정이 없다' } });
+    // 고치기(같은 행이 있었으면)는 감사를 전→후로 남긴다 — 고치기 전 값을 먼저 읽는다.
+    const before = (await pool.query<{ expiresAt: Date | null; limits: unknown; writeNeedsHumanCause: boolean; delegateDepth: number; allowAgentCause: boolean; suspended: boolean }>(
+      `select expires_at as "expiresAt", limits, write_needs_human_cause as "writeNeedsHumanCause", delegate_depth as "delegateDepth",
+              allow_agent_cause as "allowAgentCause", suspended_at is not null as suspended
+         from account_grant where account_id = $1 and capability = $2 and scope = $3`, [id, capability, scope])).rows[0] ?? null;
     // 같은 (계정, capability, scope) 에 다시 주면 갱신이다 — 준 사람과 만료가 새 값으로 바뀐다. 사람이 다시 주면
     // 그 줄은 루트가 되고(parent 비움) 정지도 풀린다 — 사람이 바뀐 연결을 보고 다시 믿기로 한 것이다.
     await pool.query(
@@ -215,9 +220,24 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
              suspended_at = null, suspend_reason = null`,
       [id, capability, scope, req.account!.id, expiresAt ?? null, allowAgentCause ?? false, limits ? JSON.stringify(limits) : null, delegateDepth,
         capability === 'api.call' ? parsed.data.writeNeedsHumanCause ?? false : false]);
+    const afterWnh = capability === 'api.call' ? parsed.data.writeNeedsHumanCause ?? false : false;
+    // 고치기: 바뀐 칸만 [전, 후](값은 limits·만료·칸뿐 — 비밀 없음). 같은 부여 id 가 그대로다(upsert).
+    const changed: Record<string, [unknown, unknown]> = {};
+    if (before) {
+      const beforeExp = before.expiresAt ? new Date(before.expiresAt).toISOString() : null;
+      const afterExp = expiresAt ? new Date(expiresAt).toISOString() : null;
+      if (beforeExp !== afterExp) changed.expiresAt = [beforeExp, afterExp];
+      if (JSON.stringify(before.limits ?? null) !== JSON.stringify(limits ?? null)) changed.limits = [before.limits ?? null, limits ?? null];
+      if (before.writeNeedsHumanCause !== afterWnh) changed.writeNeedsHumanCause = [before.writeNeedsHumanCause, afterWnh];
+      if (before.delegateDepth !== delegateDepth) changed.delegateDepth = [before.delegateDepth, delegateDepth];
+      if (before.allowAgentCause !== (allowAgentCause ?? false)) changed.allowAgentCause = [before.allowAgentCause, allowAgentCause ?? false];
+      // 멈춘 부여는 고치면 다시 켜진다 — 그 사실도 남긴다.
+      if (before.suspended) changed.suspended = [true, false];
+    }
     await recordAudit(pool, {
-      action: 'grant.given', ...actorOf(req), target: id,
+      action: before ? 'grant.updated' : 'grant.given', ...actorOf(req), target: id,
       detail: {
+        ...(before ? { changed } : {}),
         capability, scope, expiresAt: expiresAt ?? null,
         ...(capability === 'repo.merge' ? { allowAgentCause: allowAgentCause ?? false } : {}),
         ...(capability === 'api.call' ? {
