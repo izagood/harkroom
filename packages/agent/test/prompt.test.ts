@@ -134,6 +134,19 @@ describe('buildTurnPrompt', () => {
     expect(r.prompt).not.toContain('/attachments/');
   });
 
+  // PDF 가 실린다는 말이 없으면 에이전트는 받을 수 있는 PDF 를 두고 「사진으로 보내 달라」로
+  // 돌아간다(2026-11 실제로 그랬다). 하네스가 파일로 저장한 경우 그것을 열라는 말까지 있어야 한다.
+  it('첨부 안내가 PDF 도 실린다고 말하고, 저장된 파일을 열라고 한다', () => {
+    const r = buildTurnPrompt({
+      messages: [msg(1, 'u1', '도안이야', {
+        attachments: [{ id: 'att2', filename: 'pattern.pdf', contentType: 'application/pdf', sizeBytes: 100 }],
+      })],
+      lastFedSeq: 0, meId: 'a1', handles, channelId: 'c', threadRootId: null,
+    });
+    expect(r.prompt).toContain('PDF 는 문서 자료로');
+    expect(r.prompt).toContain('그 파일을 열어 읽는다');
+  });
+
   // 대부분의 턴에는 첨부가 없다. 그때도 안내가 붙으면 매 턴 순전한 낭비이고, "첨부가 있다"는
   // 잘못된 신호까지 준다.
   it('첨부가 없는 턴에는 첨부 안내를 붙이지 않는다', () => {
