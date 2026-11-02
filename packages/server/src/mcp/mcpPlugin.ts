@@ -257,6 +257,28 @@ const TEXT_MAX_BYTES = 256 * 1024;
 const TEXT_READ_MAX_BYTES = 4 * 1024 * 1024;
 
 /**
+ * PDF 를 **문서 자료(embedded resource)** 로 실어 줄 상한. 사람이 도안·명세 PDF 를 붙였는데
+ * 에이전트가 "바이트가 안 실린다"는 메타데이터만 받아 「사진으로 다시 보내 달라」로 돌아간
+ * 일이 있었다(2026-11). 셸이 없는 하네스에는 이 도구가 유일한 통로라 그 답이 맞는 행동이었다.
+ *
+ * 8MiB 인 이유: base64 로 4/3 부풀어 약 10.7MiB 가 되고, 러너 링크 한 줄 상한
+ * (`RUNNER_LINK_MAX_LINE_BYTES` 16MiB) 안에 JSON 껍데기까지 들어간다. 넘으면 링크가 답을
+ * 거절로 바꾸므로(operator `runnerLink.ts::writeAnswer`) 여기서 먼저 메타데이터로 떨어뜨려
+ * **이유를 말한다.**
+ */
+const PDF_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * PDF 로 실을지 — 타입 **과 바이트 머리**를 함께 본다. `contentType` 은 올린 쪽이 정한 값이라
+ * (`IMAGE_TYPES` 주석) 타입만 보면 아무 바이트나 `.pdf` 로 저장돼 하네스가 열다 깨진다.
+ * 머리(`%PDF-`)가 맞지 않으면 메타데이터로 떨어진다.
+ */
+function isPdfType(contentType: string): boolean {
+  return contentType.split(';', 1)[0]!.trim().toLowerCase() === 'application/pdf';
+}
+const PDF_MAGIC = Buffer.from('%PDF-');
+
+/**
  * 스트림을 메모리로 모은다. 도구 응답은 base64 **문자열** 하나라 스트리밍할 수가 없다 —
  * REST 는 스트림을 그대로 흘려보내지만 여기서는 전부 손에 들어야 한다.
  *
@@ -2699,7 +2721,7 @@ function buildMcpServer(
   }, operatorOnly('pr.status'));
 
   server.registerTool('attachment.fetch', {
-    description: '첨부 바이트 받기 — 이미지는 그림으로(3MiB 를 넘으면 줄인 사본), 텍스트는 글로 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
+    description: '첨부 바이트 받기 — 이미지는 그림으로(3MiB 를 넘으면 줄인 사본), 텍스트는 글로, PDF 는 문서 자료로(8MiB 까지 — 파일로 저장되면 그 파일을 연다) 실린다. id 는 프롬프트의 [첨부: …] 에 있다',
     inputSchema: { attachmentId: z.string().uuid() },
   }, async ({ attachmentId }) => {
     const resolved = await resolveAttachmentFor(pool, attachmentId, account.id);
@@ -2755,6 +2777,50 @@ function buildMcpServer(
      * 에서 막힌다. 원본은 그대로 두고 이 응답만 줄인다. 줄였다는 사실과 원본 크기·해상도를
      * 텍스트 줄에 적는다 — 에이전트가 "작은 글씨가 안 보인다"를 원본 탓으로 오해하지 않게.
      */
+    /**
+     * PDF 경로. MCP `resource`(blob) 로 싣는다 — `image` 는 그림 형식만 받고, `text` 로 바꾸려면
+     * 서버가 PDF 를 해석해야 한다(파서는 공격면이다). blob 을 받은 하네스가 할 일은 하네스 몫이다:
+     * Claude Code 는 파일로 저장해 그 경로를 주고 에이전트가 Read 로 연다(2026-11-02 실측).
+     * 앞의 텍스트 줄에 그 사실을 적는다 — 경로만 받은 에이전트가 무엇인지 모르고 지나치지 않게.
+     */
+    if (isPdfType(contentType)) {
+      if (sizeBytes > PDF_MAX_BYTES) {
+        return jsonResult({
+          attachment: meta,
+          note: `PDF too large to carry in this response (${sizeBytes}B > ${PDF_MAX_BYTES}B); ask the human for the pages you need, or download`,
+          download: `GET /attachments/${id} (Authorization: Bearer $HARKROOM_PAT) — needs shell/HTTP access; if you have neither, say so and ask the human instead of guessing`,
+        });
+      }
+      const pdf = await readAttachment(meta, PDF_MAX_BYTES, resolved.attachment.storageKey);
+      if ('error' in pdf) return pdf.error;
+      if (!pdf.body.subarray(0, PDF_MAGIC.length).equals(PDF_MAGIC)) {
+        return jsonResult({
+          attachment: meta,
+          note: 'labelled application/pdf but the bytes are not a PDF; bytes are not carried in this response',
+          download: `GET /attachments/${id} (Authorization: Bearer $HARKROOM_PAT)`,
+        });
+      }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              attachment: meta,
+              note: 'PDF carried as an embedded resource below; if your client saved it to a file, open that file to read it',
+            }),
+          },
+          {
+            type: 'resource' as const,
+            resource: {
+              uri: `harkroom://attachment/${id}`,
+              mimeType: 'application/pdf',
+              blob: pdf.body.toString('base64'),
+            },
+          },
+        ],
+      };
+    }
+
     if (IMAGE_TYPES.includes(contentType) && sizeBytes > IMAGE_MAX_BYTES && sizeBytes <= DOWNSCALE_READ_MAX_BYTES) {
       const notInlined = (reason: string) => jsonResult({
         attachment: meta,

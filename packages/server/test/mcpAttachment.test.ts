@@ -42,7 +42,11 @@ beforeAll(async () => {
   stop = db.stop;
   pool = db.pool;
   storageRoot = await mkdtemp(join(tmpdir(), 'harkroom-mcp-att-'));
-  app = await buildServer({ pool: db.pool, storage: { root: storageRoot, maxBytes: 16 * 1024 * 1024 } });
+  // 이 파일은 첨부 종류마다 하나씩 올린다 — 기본 업로드 리밋에 걸리지 않게 넉넉히 준다.
+  app = await buildServer({
+    pool: db.pool, storage: { root: storageRoot, maxBytes: 16 * 1024 * 1024 },
+    rateLimits: { upload: { max: 1000, windowMs: 60_000 } },
+  });
   ({ token: adminToken } = await bootstrapAdmin(app));
   ({ pat: botPat, accountId: botAccountId } = await createAgent(app, adminToken, 'attbot'));
   ({ pat: otherPat } = await createAgent(app, adminToken, 'nosybot'));
@@ -158,6 +162,63 @@ describe('mcp attachment.fetch', () => {
     expect(json.text).toBeUndefined();
     expect(json.note).toContain('not an inlineable image');
     expect(json.download).toContain(`/attachments/${id}`);
+  });
+
+  describe('PDF 첨부', () => {
+    /** 진짜 PDF 머리를 단 바이트다. 머리 검사가 있으므로 아무 바이트로는 이 길을 못 잰다. */
+    const PDF = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n');
+
+    // 사람이 도안 PDF 를 붙였는데 에이전트가 메타데이터만 받아 「사진으로 보내 달라」로 돌아갔다.
+    // 바이트가 **올린 그대로** 문서 자료로 실리는지 원본과 대조한다.
+    it('PDF 를 문서 자료(resource blob)로 올린 그대로 싣는다', async () => {
+      const id = await attach('pattern.pdf', PDF, 'application/pdf');
+      const client = await mcpClient(botPat);
+
+      const res = await fetchTool(client, id);
+      const p = res.content as { type: string; resource?: { uri: string; mimeType?: string; blob?: string } }[];
+      const doc = p.find((c) => c.type === 'resource');
+      expect(doc).toBeDefined();
+      expect(doc!.resource!.mimeType).toBe('application/pdf');
+      expect(doc!.resource!.uri).toBe(`harkroom://attachment/${id}`);
+      expect(Buffer.from(doc!.resource!.blob!, 'base64').equals(PDF)).toBe(true);
+      expect(firstJson(res).attachment).toMatchObject({ id, filename: 'pattern.pdf', contentType: 'application/pdf' });
+      expect(firstJson(res).note).toContain('open that file');
+    });
+
+    // 타입은 올린 쪽이 적는다 — `%PDF-` 머리가 없으면 PDF 로 싣지 않고 이유를 말한다.
+    it('application/pdf 라고 적었어도 PDF 가 아니면 싣지 않는다', async () => {
+      const id = await attach('fake.pdf', Buffer.from('<script>alert(1)</script>'), 'application/pdf');
+      const client = await mcpClient(botPat);
+
+      const res = await fetchTool(client, id);
+      expect(parts(res).some((c) => c.type === 'resource')).toBe(false);
+      expect(firstJson(res).note).toContain('not a PDF');
+    });
+
+    // 러너 링크 한 줄 상한(16MiB)을 넘기기 전에 여기서 이유를 말하고 떨어진다.
+    it('상한(8MiB)을 넘는 PDF 는 바이트 없이 이유를 말한다', async () => {
+      const big = Buffer.concat([PDF, Buffer.alloc(8 * 1024 * 1024)]);
+      const id = await attach('big.pdf', big, 'application/pdf');
+      const client = await mcpClient(botPat);
+
+      const res = await fetchTool(client, id);
+      expect(parts(res).some((c) => c.type === 'resource')).toBe(false);
+      expect(firstJson(res).note).toContain('PDF too large');
+      expect(firstJson(res).download).toContain(`/attachments/${id}`);
+    });
+
+    // 사람이 올린 PDF 를 사람이 내려받을 수 있어야 한다 — 화면의 파일 칩이 이 길로 저장한다.
+    // inline 으로 열리지 않고 내려받기로 나가는 것(모든 첨부 공통 규칙)도 함께 본다.
+    it('REST 로 올린 그대로 내려받고, 내려받기로 내준다', async () => {
+      const id = await attach('dl.pdf', PDF, 'application/pdf');
+      const res = await app.inject({
+        method: 'GET', url: `/attachments/${id}`, headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('application/pdf');
+      expect(String(res.headers['content-disposition'])).toMatch(/^attachment;/);
+      expect(res.rawPayload.equals(PDF)).toBe(true);
+    });
   });
 
   // SVG 는 이름만 이미지다 — 마크업이고 `<script>` 를 담는다. 허용 목록이 없으면 여기가
