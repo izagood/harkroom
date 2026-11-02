@@ -42,9 +42,9 @@ const MD_MESSAGE_LINK = new RegExp(`\\[[^\\]\\n]{0,200}\\]\\(\\s*harkroom://mess
 
 /**
  * 승인 낱말(G2 — 명시적인 것만, 활용형 포함). 「승인」·「허락」은 뒤에 명사가 붙어 다른 뜻이 되는 꼴(승인 요청·승인 대기·승인받다·
- * 승인을…)과 앞에 「미」·「무」가 붙은 꼴은 뺀다. 「머지」·「진행」은 동사 활용(해·했·하자·합…)일 때만.
+ * 승인을…)과 앞에 「미」·「무」·「불」·「비」가 붙은 꼴(미승인·비승인 등)은 뺀다. 「머지」·「진행」은 동사 활용(해·했·하자·합…)일 때만.
  */
-const APPROVE_KO = /(?<![미무불])(?:승인|허락)(?!\s*(?:요청|대기|받|을|된|되|필요|버튼|기다|여부|권한|카드|건|전에|후에))|(?:머지|진행)\s*(?:해|했|하자|합|할게|하세요|시켜)/;
+const APPROVE_KO = /(?<![미무불비])(?:승인|허락)(?!\s*(?:요청|대기|받|을|된|되|필요|버튼|기다|여부|권한|카드|건|전에|후에))|(?:머지|진행)\s*(?:해|했|하자|합|할게|하세요|시켜)/;
 const APPROVE_EN = /\b(?:approve|approved|approves)\b/;
 const DENY = /거절|\b(?:deny|denied|denies)\b/;
 const BYPASS = /바이패스|\bbypass/;
@@ -67,12 +67,12 @@ const QUESTION_KO = /(?:까|나|니|냐|는지)(?=\s*(?:$|[.,;:!~…\n]|ㅋ|ㅎ|
  */
 const TAIL = /[\s.!~…ㅎㅋ👍]+$/u;
 const KO_END = String.raw`\s*(?:해|했어|했음|했다|했습니다|할게|합니다|한다|함|하자|하세요|해\s*(?:줘|주세요|줄게)|시켜(?:\s*줘)?|부탁(?:해|합니다|드립니다|드려)?)(?:요)?`;
-const APPROVE_FINAL = new RegExp(String.raw`(?:(?<![미무불])(?:승인|허락)(?:${KO_END})?|(?:머지|진행)${KO_END}|\bapproved?(?:\s+(?:it|this|that|them))?)$`);
+const APPROVE_FINAL = new RegExp(String.raw`(?:(?<![미무불비])(?:승인|허락)(?:${KO_END})?|(?:머지|진행)${KO_END}|\bapproved?(?:\s+(?:it|this|that|them))?)$`);
 /**
  * 링크 없는 글(T2·T3)은 「승인」·「허락」(과 en `approve`)이 맨 끝 서술어일 때만 승인으로 본다(n15, 11-02 jaebin 결정).
  * 「머지해」·「진행하자」는 보통 대화에서도 흔해(「여기서 진행하자」가 카드 스레드의 권한 요청을 승인했다) 카드 링크가 있을 때(T1)만 센다.
  */
-const APPROVE_EXPLICIT_FINAL = new RegExp(String.raw`(?:(?<![미무불])(?:승인|허락)(?:${KO_END})?|\bapproved?(?:\s+(?:it|this|that|them))?)$`);
+const APPROVE_EXPLICIT_FINAL = new RegExp(String.raw`(?:(?<![미무불비])(?:승인|허락)(?:${KO_END})?|\bapproved?(?:\s+(?:it|this|that|them))?)$`);
 const DENY_FINAL = new RegExp(String.raw`(?:거절(?:${KO_END})?|\b(?:deny|denied)(?:\s+(?:it|this|that|them))?)$`);
 const CI_WORD = /ci\s*무시|ignore\s*(?:the\s*)?ci\b/;
 

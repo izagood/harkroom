@@ -174,4 +174,14 @@ describe('deciders — 카드를 정할 수 있는 사람', () => {
     expect((await app.inject({ method: 'GET', url: `/agents/${agentId}/decide-check?channelId=${hidden}`, headers: auth(alice.token) })).json())
       .toMatchObject({ viewerCanDecide: true, asOwner: true, ownerAccountId: alice.accountId });
   });
+
+  it('decide-check — 없는 채널 id 면 누구에게도 정할 수 있다·범위·소유자를 주지 않는다(S1)', async () => {
+    await setScope('community');
+    await pool.query(`update agent_config set user_decide = true where account_id = $1`, [agentId]);
+    const nowhere = '00000000-0000-4000-8000-00000000d1e5';
+    const none = { viewerCanDecide: false, asOwner: false, decideScope: null, ownerAccountId: null };
+    for (const token of [bob.token, alice.token]) {
+      expect((await app.inject({ method: 'GET', url: `/agents/${agentId}/decide-check?channelId=${nowhere}`, headers: auth(token) })).json()).toEqual(none);
+    }
+  });
 });

@@ -107,6 +107,8 @@ describe('parseChatApproval — 문장 속 명시적 승인 낱말(G2)·부정·
     ['승인 대기 중', null],
     ['승인받았어', null],
     ['미승인 상태', null],
+    ['비승인', null],
+    ['불허락', null],
     ['머지 충돌 났다', null],
     ['진행 상황 공유', null],
     ['approval flow docs', null],

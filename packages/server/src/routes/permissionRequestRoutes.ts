@@ -55,6 +55,10 @@ export async function registerPermissionRequestRoutes(app: FastifyInstance, pool
     const q = z.object({ id: z.string().uuid(), channelId: z.string().uuid() }).safeParse({ ...(req.params ?? {}), ...(req.query ?? {}) });
     if (!q.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'agent id and channelId must be uuids' } });
     void reply.header('cache-control', 'no-store');
+    // S1(security): 없는 채널이면 누구에게도 정할 수 있다·범위·소유자를 주지 않는다 — 범위(community 등)는 채널을 안 봐도
+    // 통과할 수 있어서, 없는 채널 id 로도 「정할 수 있다」와 소유자 id 를 받아 갈 수 있었다. 카드는 언제나 있는 채널에 선다.
+    const exists = (await pool.query(`select 1 from channel where id = $1`, [q.data.channelId])).rowCount;
+    if (!exists) return { viewerCanDecide: false, asOwner: false, decideScope: null, ownerAccountId: null };
     const v = await mayDecideFor(pool, { agentId: q.data.id, actorId: req.account!.id, channelId: q.data.channelId });
     // 버튼을 누를 수 있는 것은 사람 세션뿐이다 — PAT·에이전트는 언제나 정할 수 없다고 답한다.
     const session = req.account!.kind === 'human' && req.authVia === 'session';
