@@ -10,6 +10,14 @@ import { recordAudit } from '../audit.js';
  * - 에이전트 글 → 그 글의 (검증된) 원인에 대해 쥔 살아 있는 턴 임대의 위임. 에이전트의 **지금** 소유자가 위임 소유자와 같을 때만.
  *
  * W1 은 판정을 바꾸지 않는다 — 머지 판정 옆에서 그림자로만 계산한다(`mergeGrants.ts::shadowMandate`).
+ *
+ * 위임장의 두 사람(C-2, 마이그 154):
+ * - `owner_account_id`(주인) — 에이전트 소유자. 줄 판정·임대 발급·에이전트 글의 키는 「에이전트의 지금 소유자 = 주인」일 때만 산다.
+ * - `delegator_account_id`(맡긴 사람) — 이 위임장으로 일을 맡긴 사람. **사람 세션만** 될 수 있다(에이전트·PAT·자동화는 스스로
+ *   delegator 가 되지 않는다). 지금은 늘 주인과 같다. 상시 줄은 delegator 가 준 grant 만 친다(`listMandateLines`).
+ *   옛 파드가 넣은 행은 null — `coalesce(delegator_account_id, owner_account_id)` 로 읽는다.
+ * - 임대의 principal(`invokePrincipal.ts`, 이번 턴을 **깨운** 사람)과 섞지 않는다: principal 은 턴마다 정하고 wake 턴이면 null 이며
+ *   mention 호출 판정에만 쓴다. delegator 는 위임장마다 한 번 정하고 wake 턴도 위임 키로 물려받으며 줄 판정의 출처다.
  */
 
 /** 위임의 유효 기간 — 마지막 활동에서 7일(카드로 주는 grant 기한과 같다). */
@@ -48,8 +56,8 @@ export async function stampHumanMandate(client: Q, args: {
       [args.notifiedIds, args.authorId]);
     if (!own.rowCount) return null;
     const row = (await client.query<{ id: string; inserted: boolean }>(
-      `insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
-       values ($1, $2, $3, $2, $4, $4)
+      `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
+       values ($1, $1, $2, $3, $2, $4, $4)
        on conflict (root_message_id) do update set last_activity_at = excluded.last_activity_at
        returning id, (xmax = 0) as inserted`,
       [args.authorId, args.messageId, args.channelId, now])).rows[0]!;
@@ -102,8 +110,8 @@ async function mandateForKeylessRoot(client: Q, args: {
       [root.mandateId, args.authorId, args.now])).rows[0]?.id ?? null;
   }
   const inserted = (await client.query<{ id: string }>(
-    `insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
-     values ($1, $2, $3, $2, $4, $4)
+    `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
+     values ($1, $1, $2, $3, $2, $4, $4)
      on conflict (root_message_id) do nothing
      returning id`,
     [args.authorId, args.threadRootId, args.channelId, args.now])).rows[0];

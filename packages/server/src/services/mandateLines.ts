@@ -62,10 +62,14 @@ export async function addMandateLine(client: Q, args: {
   return { ok: true, line: { ...row, readOnly: false } };
 }
 
-/** 위임의 줄 — 저장된 줄(회수된 것 제외) + 상시 줄. 위임이 없으면 빈 목록. */
+/**
+ * 위임의 줄 — 저장된 줄(회수된 것 제외) + 상시 줄. 위임이 없으면 빈 목록.
+ * 상시 줄은 그 위임장의 **delegator**(맡긴 사람)가 준 grant 만 친다(C-2) — 소유자의 7일 grant 는 다른 사람이 맡긴 위임장으로 퍼지지 않는다.
+ */
 export async function listMandateLines(client: Q, mandateId: string, now = new Date()): Promise<MandateLine[]> {
-  const m = (await client.query<{ owner: string; channelId: string }>(
-    `select owner_account_id as owner, channel_id as "channelId" from mandate where id = $1`, [mandateId])).rows[0];
+  const m = (await client.query<{ owner: string; delegator: string; channelId: string }>(
+    `select owner_account_id as owner, coalesce(delegator_account_id, owner_account_id) as delegator, channel_id as "channelId"
+       from mandate where id = $1`, [mandateId])).rows[0];
   if (!m) return [];
   const stored = (await client.query<MandateLine>(
     `select ${LINE_COLS} from mandate_line where mandate_id = $1 and revoked_at is null order by created_at, id`, [mandateId])).rows
@@ -73,9 +77,9 @@ export async function listMandateLines(client: Q, mandateId: string, now = new D
   const grants = (await client.query<{ id: string; agentId: string; capability: string; scope: string; grantedBy: string; grantedAt: Date; expiresAt: Date | null }>(
     `select g.id, g.account_id as "agentId", g.capability, g.scope, g.granted_by as "grantedBy", g.granted_at as "grantedAt", g.expires_at as "expiresAt"
        from account_grant g join agent_config c on c.account_id = g.account_id
-      where c.owner_account_id = $1 and g.granted_by = $1 and g.capability in ('repo.merge', 'tool.allow')
+      where c.owner_account_id = $1 and g.granted_by = $3 and g.capability in ('repo.merge', 'tool.allow')
         and (g.expires_at is null or g.expires_at > $2)
-      order by g.granted_at, g.id`, [m.owner, now])).rows;
+      order by g.granted_at, g.id`, [m.owner, now, m.delegator])).rows;
   const standing: MandateLine[] = [];
   for (const g of grants) {
     let cap: Cap; let scope: string;
