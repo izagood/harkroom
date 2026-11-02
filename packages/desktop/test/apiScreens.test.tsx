@@ -185,6 +185,35 @@ describe('ApiGrantForm', () => {
     expect(body).toMatchObject({ limits: { methods: ['GET', 'POST'] }, writeNeedsHumanCause: true });
     expect(body.expiresAt).not.toBeNull();
   });
+
+  it('설정 화면(allowWriteNoExpiry): 읽기+쓰기에도 「없음」이 생기고, 경고·확인 체크를 지나야 [주기]가 켜지며 expiresAt null 을 보낸다', async () => {
+    const c = setup();
+    render(<ApiGrantForm allowWriteNoExpiry agentId="agent-1" connectors={[conn()]} onDone={() => {}} onCancel={() => {}} />);
+    fireEvent.click(screen.getByRole('radio', { name: '읽기+쓰기 (GET·POST)' }));
+    fireEvent.click(screen.getByRole('radio', { name: '에이전트가 시킨 턴에서도' }));
+    fireEvent.click(screen.getByRole('radio', { name: '없음' }));
+    const warn = screen.getByTestId('api-grant-no-expiry-warning');
+    expect(warn.textContent).toContain('거둘 때까지 POST');
+    // 「쓰기는 사람 글 턴만」이 꺼져 있으면 다른 에이전트·예약 턴도 적는다(security 조건 3).
+    expect(warn.textContent).toContain('예약 턴');
+    expect((screen.getByRole('button', { name: '주기' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(warn).getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: '주기' }));
+    await waitFor(() => expect(c.putGrant).toHaveBeenCalled());
+    const body = (c.putGrant.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
+    expect(body).toMatchObject({ limits: { methods: ['GET', 'POST'] }, writeNeedsHumanCause: false, expiresAt: null });
+  });
+
+  it('「사람 글 턴만」을 켜면 경고에 다른 턴 문구가 빠진다 · 7일로 돌리면 경고가 사라진다', () => {
+    setup();
+    render(<ApiGrantForm allowWriteNoExpiry agentId="agent-1" connectors={[conn()]} onDone={() => {}} onCancel={() => {}} />);
+    fireEvent.click(screen.getByRole('radio', { name: '읽기+쓰기 (GET·POST)' }));
+    fireEvent.click(screen.getByRole('radio', { name: '사람이 시킨 턴에서만' }));
+    fireEvent.click(screen.getByRole('radio', { name: '없음' }));
+    expect(screen.getByTestId('api-grant-no-expiry-warning').textContent).not.toContain('예약 턴');
+    fireEvent.click(screen.getByRole('radio', { name: '7일' }));
+    expect(screen.queryByTestId('api-grant-no-expiry-warning')).toBeNull();
+  });
 });
 
 describe('BlockedCard', () => {

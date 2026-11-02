@@ -1,5 +1,6 @@
 // 외부 API 권한(098, C안 P2) — 설계 스레드 07519d86. API 연결 REST · `api.call` grant 의 모양·권한 · 쓰는 순간의
-// 사슬 판정(`apiGrantFor`)의 회귀선. alice D3(쓰기는 무기한 금지)·E1(루트 사람의 에이전트만)을 시험으로 고정한다.
+// 사슬 판정(`apiGrantFor`)의 회귀선. 쓰기 만료(날짜는 30일 안, 무기한은 null 을 명시 — 11-02 jaebin·security)·E1(루트 사람의 에이전트만)을
+// 시험으로 고정한다.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
@@ -154,14 +155,22 @@ describe('API 연결 · api.call grant', () => {
     expect(b.json().connector).toMatchObject({ authKind: 'bearer', tokenUrl: null, tokenForm: null });
   });
 
-  it('grant: 소유자만, 내 연결만, 쓰기는 만료 필수(D3), 남의 에이전트는 403(E1)', async () => {
+  it('grant: 소유자만, 내 연결만, 쓰기 무기한은 null 명시로만, 남의 에이전트는 403(E1)', async () => {
     const c = (await mkConnector('c-two')).json().connector.id as string;
     expect((await give(c, { limits: { methods: ['GET'], pathPrefix: '/api/' } }, bob.token)).statusCode).toBe(403);
     expect((await give(c, { limits: { methods: ['GET'], pathPrefix: '/api/' } }, alice.token, bobAgentId)).statusCode).toBe(403);
     expect((await give(c, { limits: { methods: ['GET'], pathPrefix: '/api/' } }, admin.token)).statusCode).toBe(403);
     expect((await give(c, {})).json().error.code).toBe('bad_limits');
     expect((await give(c, { limits: { methods: ['DELETE'], pathPrefix: '/' } })).json().error.code).toBe('bad_limits');
-    expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' } })).json().error.code).toBe('write_needs_expiry');
+    // 무기한 쓰기는 사람 세션 + 그 에이전트 소유자만(security 조건 1) — 에이전트 PAT·남·admin 은 거절.
+    expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: null }, agentPat)).statusCode).toBe(403);
+    expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: null }, bob.token)).statusCode).toBe(403);
+    expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: null }, admin.token)).statusCode).toBe(403);
+    const forever = await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: null, writeNeedsHumanCause: false });
+    expect(forever.statusCode).toBe(200);
+    expect(forever.json().grants).toContainEqual(expect.objectContaining({ scope: `connector:${c}`, expiresAt: null }));
+    const audit = (await pool.query(`select detail from audit_log where action = 'grant.given' and detail->>'scope' = $1 order by id desc limit 1`, [`connector:${c}`])).rows[0];
+    expect(audit.detail.writeNoExpiry).toBe(true);
     const ok = await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: inWeek(), delegateDepth: 1 });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().grants).toContainEqual(expect.objectContaining({
@@ -173,7 +182,7 @@ describe('API 연결 · api.call grant', () => {
     expect(global.statusCode).toBe(400);
     const anyAccount = { id: agentId, role: 'member' } as unknown as Parameters<typeof can>[1];
     expect(await can(pool, anyAccount, 'api.call')).toBe(false);
-    // 쓰기 grant 의 만료 상한 30일(F3). 읽기만은 무기한도 된다(D3).
+    // 쓰기 grant 의 날짜 만료 상한 30일(F3) — 먼 날짜로 무기한을 흉내 내지 못한다. 무기한은 위처럼 null 로만.
     const far = new Date(Date.now() + 31 * 86_400_000).toISOString();
     expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: far })).json().error.code).toBe('write_expiry_too_long');
     expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: '9999-12-31T00:00:00Z' })).json().error.code).toBe('write_expiry_too_long');
@@ -252,6 +261,17 @@ describe('API 연결 · api.call grant', () => {
     const c = (await mkConnector('c-six')).json().connector.id as string;
     await give(c, { limits: { methods: ['GET'], pathPrefix: '/' } });
     expect((await app.inject({ method: 'DELETE', url: `/connectors/${c}`, headers: auth(bob.token) })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'DELETE', url: `/connectors/${c}`, headers: auth(alice.token) })).statusCode).toBe(204);
+    expect((await pool.query(`select 1 from account_grant where scope = $1`, [`connector:${c}`])).rowCount).toBe(0);
+  });
+
+  it('무기한 쓰기에도 안전장치는 그대로 — 연결의 토큰 설정·주소가 바뀌면 멈추고, 연결을 지우면 사라진다(security 조건 6)', async () => {
+    const c = (await mkConnector('c-forever')).json().connector.id as string;
+    expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: null })).statusCode).toBe(200);
+    expect((await apiGrantFor(pool, { agentId, connectorId: c, method: 'POST', path: '/api/x' })).ok).toBe(true);
+    const p = await app.inject({ method: 'PATCH', url: `/connectors/${c}`, headers: auth(alice.token), payload: { baseUrl: 'https://other.example.com' } });
+    expect(p.json().suspendedGrants).toBe(1);
+    expect(await apiGrantFor(pool, { agentId, connectorId: c, method: 'POST', path: '/api/x' })).toEqual({ ok: false, code: 'suspended' });
     expect((await app.inject({ method: 'DELETE', url: `/connectors/${c}`, headers: auth(alice.token) })).statusCode).toBe(204);
     expect((await pool.query(`select 1 from account_grant where scope = $1`, [`connector:${c}`])).rowCount).toBe(0);
   });

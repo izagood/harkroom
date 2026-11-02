@@ -284,6 +284,8 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   <span>{write ? t('apiGrant.rowWrite') : t('apiGrant.rowRead')}</span>
                   {g.limits?.pathPrefix && <span className="font-mono text-fg-subtle">{g.limits.pathPrefix}</span>}
                   {write && g.writeNeedsHumanCause && <span className="text-fg-subtle">{t('apiGrant.rowHumanOnly')}</span>}
+                  {/* 무기한 쓰기 — 소유자가 거둘 대상을 한눈에 찾게(security 조건 5). */}
+                  {write && g.expiresAt === null && <span className="rounded bg-warning-surface px-1 text-warning" data-testid="api-grant-write-no-expiry">{t('apiGrant.rowWriteNoExpiry')}</span>}
                   <span className="text-fg-subtle">
                     {t('agents.grants.by', { handle: accounts[g.grantedBy]?.handle ?? g.grantedBy, when: new Date(g.grantedAt).toLocaleDateString(locale) })}
                     {' · '}
@@ -310,7 +312,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
                   )}
                 </div>
                 {changing === g.scope && c && (
-                  <ApiGrantForm agentId={agent.id} connectors={[c]} existing={g} onCancel={() => setChanging(null)} onDone={async () => { setChanging(null); await load(); }} />
+                  <ApiGrantForm allowWriteNoExpiry agentId={agent.id} connectors={[c]} existing={g} onCancel={() => setChanging(null)} onDone={async () => { setChanging(null); await load(); }} />
                 )}
                 {node && <DelegationChildren node={node} accounts={accounts} a={delegation} />}
                 </li>
@@ -471,7 +473,7 @@ export function AgentGrantsSection({ agent, canGrant, canRevoke, disabled, local
           // 내 연결이 모두 이미 권한을 가졌으면 「연결이 없다」가 아니라 그 사실을 말한다(designer a).
           return mine.length > 0 && free.length === 0
             ? <p className="mt-2 text-meta text-fg-subtle" data-testid="api-grant-all-granted">{t('apiGrant.allGranted')}</p>
-            : <ApiGrantForm agentId={agent.id} connectors={free} onCancel={() => setAdding(false)} onDone={async () => { setAdding(false); await load(); }} />;
+            : <ApiGrantForm allowWriteNoExpiry agentId={agent.id} connectors={free} onCancel={() => setAdding(false)} onDone={async () => { setAdding(false); await load(); }} />;
         })()
       )}
       {canGrant && adding && addKind === 'secret' && !secretGrant && (

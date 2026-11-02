@@ -37,7 +37,9 @@ const grantBody = z.object({
  * `api.call` grant 의 모양·권한(C안 P2, 소유자 D3·E1). `repo.merge` 와 같은 틀이고 다른 점은:
  * - scope 는 `connector:<uuid>` 하나뿐이다. 연결은 **주는 사람의 것**이어야 한다(키는 그 사람의 비밀이다).
  * - limits 가 필수다: 메서드는 연결이 허용한 것의 부분집합, 경로 접두.
- * - **쓰기 메서드가 하나라도 있으면 만료가 필수다**(D3 — 읽기+쓰기의 무기한 금지). 과거 시각도 받지 않는다.
+ * - 쓰기 메서드가 있으면 **날짜를 줄 때 30일 안**이어야 한다(security F3 — 먼 날짜로 무기한을 우회하지 못하게). **무기한은 `expiresAt: null`
+ *   을 명시해서만** 된다(소유자가 설정 화면에서 고른다, jaebin 11-02 · security 설계 OK). 과거 시각은 받지 않는다. 이 길은 사람 세션 + 그 에이전트
+ *   소유자만 탄다(아래 판정) — 위임(`grant.delegate`)의 자식은 늘 30일 안의 만료가 필요하다(`apiDelegation.ts`).
  */
 async function checkApiGrant(
   pool: Pool, req: { account?: { id: string; kind: string } | null }, targetId: string, scope: string,
@@ -57,9 +59,8 @@ async function checkApiGrant(
   if (conn.rows[0]!.ownerAccountId !== req.account.id) return { ok: false, status: 403, code: 'forbidden', message: '내 API 연결만 줄 수 있다' };
   const limits = parseLimits(body.limits, conn.rows[0]!.methods);
   if ('error' in limits) return { ok: false, status: 400, code: 'bad_limits', message: limits.error };
-  if (hasWriteMethod(limits.methods)) {
-    if (!body.expiresAt) return { ok: false, status: 400, code: 'write_needs_expiry', message: '쓰기 메서드가 있는 api.call 은 만료가 필수다' };
-    // 상한 30일(security F3) — 만료가 있기만 하면 받으면 `9999-12-31` 로 D3 가 뚫린다. 시안의 7일·30일과 맞춘다.
+  if (hasWriteMethod(limits.methods) && body.expiresAt) {
+    // 상한 30일(security F3) — 날짜로 주면 `9999-12-31` 같은 먼 날짜가 무기한을 흉내 낸다. 무기한은 null 로만.
     if (Date.parse(body.expiresAt) > Date.now() + WRITE_MAX_MS) return { ok: false, status: 400, code: 'write_expiry_too_long', message: '쓰기 메서드가 있는 api.call 의 만료는 30일 안이다' };
   }
   if (body.expiresAt && Date.parse(body.expiresAt) <= Date.now()) return { ok: false, status: 400, code: 'bad_request', message: '만료가 이미 지났다' };
@@ -217,7 +218,11 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
       detail: {
         capability, scope, expiresAt: expiresAt ?? null,
         ...(capability === 'repo.merge' ? { allowAgentCause: allowAgentCause ?? false } : {}),
-        ...(capability === 'api.call' ? { limits, delegateDepth, writeNeedsHumanCause: parsed.data.writeNeedsHumanCause ?? false } : {}),
+        ...(capability === 'api.call' ? {
+          limits, delegateDepth, writeNeedsHumanCause: parsed.data.writeNeedsHumanCause ?? false,
+          // 무기한 쓰기를 감사 한 줄로 셀 수 있게(security 설계 5).
+          ...(limits && limits.methods.some((m) => m !== 'GET') && !expiresAt ? { writeNoExpiry: true } : {}),
+        } : {}),
       },
     }, req);
     emitEvent({ type: 'grant.changed', accountId: id, audience: 'all' });
