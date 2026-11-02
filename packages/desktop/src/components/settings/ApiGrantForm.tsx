@@ -34,8 +34,15 @@ type Expiry = '7d' | '30d' | 'none' | 'keep';
  * - `initial` 이 없고 `existing` 이 있으면 지금 값으로 연다(카드의 [설정 바꾸기…], designer D2). 만료는 「지금 만료 유지」가 기본.
  * - `initial.pathPrefix` 가 빈 글자면 막힌 경로를 모르는 것이다(security L1) — 칸을 비워 두고 사람이 적기 전엔 [주기]가 꺼진다.
  */
-export function ApiGrantForm({ agentId, connectors, initial, existing = null, allowWriteNoExpiry = false, onDone, onCancel }: {
+export function ApiGrantForm({ agentId, connectors, initial, existing = null, allowWriteNoExpiry = false, editMode = false, delegatedCount = 0, onDone, onCancel }: {
   agentId: string;
+  /**
+   * 설정 화면의 [고치기] — 지금 부여를 그 자리에서 고친다(같은 부여 id, 서버가 전→후를 감사한다). 범위·경로도 바꿀 수 있고,
+   * 바뀐 칸만 보인다. 막힘 카드의 [설정 바꾸기…]는 false 다(그쪽은 범위·경로를 잠근다, security F1).
+   */
+  editMode?: boolean;
+  /** 이 부여에서 다른 에이전트에게 넘긴 하위 부여 수 — 좁히면 끊길 수 있음을 알린다. */
+  delegatedCount?: number;
   /** 읽기+쓰기에 「만료 없음」을 띄운다 — 설정 › 에이전트 › 권한 화면만 true(막힘 카드는 false). */
   allowWriteNoExpiry?: boolean;
   existing?: GrantRow | null;
@@ -57,7 +64,7 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
   const [busy, setBusy] = useState(false);
   const [noExpiryConfirmed, setNoExpiryConfirmed] = useState(false);
   // 경고가 넓어지거나 사라졌다 다시 뜨면 확인을 다시 받는다(designer 고칠 것 1) — 이전 확인은 다른 내용에 대한 것이다.
-  const confirmKey = `${scope}|${expiry}|${humanOnly ?? ''}`;
+  const confirmKey = `${connectorId}|${scope}|${expiry}|${humanOnly ?? ''}`;
   const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
   if (noExpiryConfirmed && confirmedFor !== confirmKey) { setNoExpiryConfirmed(false); setConfirmedFor(null); }
   const [error, setError] = useState<string | null>(null);
@@ -66,10 +73,22 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
   const writeMethods = (c?.methods ?? []).filter((m) => m !== 'GET');
   const canWrite = writeMethods.length > 0;
   // [설정 바꾸기…](fromExisting)는 기존 메서드를 **그대로** 보낸다 — 연결이 더 넓게 허용해도 넓히지 않는다(security F1).
-  // 범위·경로 칸도 잠근다: 이 모드에서 바꾸는 것은 「쓰기는 사람 글 턴만」과 만료뿐이다(designer D2).
-  const methods: ApiMethod[] = fromExisting
+  // 막힘 카드에서는 범위·경로 칸도 잠근다(designer D2). [고치기](editMode)는 범위를 바꿀 수 있다 — 범위를 그대로 두면 지금
+  // 메서드 그대로, 바꾸면 읽기만은 GET·읽기+쓰기는 연결이 허용한 전부(새로 줄 때와 같다).
+  const exScope: 'read' | 'write' = exWrite ? 'write' : 'read';
+  const methods: ApiMethod[] = fromExisting && (!editMode || scope === exScope)
     ? [...((existing?.limits?.methods ?? []) as ApiMethod[])]
     : scope === 'read' ? ['GET'] : [...(c?.methods ?? [])];
+  const lockShape = fromExisting && !editMode;
+  function describeScope(ms: readonly string[]): string {
+    return `${ms.some((m) => m !== 'GET') ? t('apiGrant.rowWrite') : t('apiGrant.rowRead')} (${ms.join('·')})`;
+  }
+  function hasEditChange(): boolean {
+    if (!existing) return true;
+    const stale = !!existing.suspendedAt || (existing.expiresAt !== null && Date.parse(existing.expiresAt) <= Date.now());
+    return stale || (existing.limits?.methods ?? []).join('·') !== methods.join('·') || (existing.limits?.pathPrefix ?? '') !== pathPrefix
+      || effectiveExpiry !== 'keep' || (scope === 'write' && humanOnly !== null && (humanOnly === 'yes') !== !!existing.writeNeedsHumanCause);
+  }
   // 「지금 만료 유지」는 지금 grant 가 있고, 쓰기라면 그 만료가 있거나 이 화면이 무기한 쓰기를 고를 수 있을 때만.
   const keepOk = !!existing && (scope === 'read' || existing.expiresAt !== null || allowWriteNoExpiry) && (existing.expiresAt === null || Date.parse(existing.expiresAt) > Date.now());
   const effectiveExpiry: Expiry = (expiry === 'keep' && !keepOk) || (scope === 'write' && expiry === 'none' && !allowWriteNoExpiry) ? '7d' : expiry;
@@ -77,7 +96,9 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
   const writeNoExpiry = scope === 'write' && (effectiveExpiry === 'none' || (effectiveExpiry === 'keep' && existing?.expiresAt === null));
   const pathOk = /^\/[^\s#\\]*$/.test(pathPrefix) && !pathPrefix.includes('..') && !pathPrefix.includes('?');
   const readOk = !c || c.methods.includes('GET') || scope === 'write';
-  const ready = !!c && pathOk && readOk && methods.length > 0 && (scope === 'read' || humanOnly !== null) && (!writeNoExpiry || noExpiryConfirmed);
+  const ready = !!c && pathOk && readOk && methods.length > 0 && (scope === 'read' || humanOnly !== null) && (!writeNoExpiry || noExpiryConfirmed)
+    // [고치기]는 바뀐 것이 있을 때만 저장한다(멈춘·만료된 부여는 그대로 다시 켜는 것도 바뀜이다).
+    && (!editMode || !existing || hasEditChange());
 
   const submit = async () => {
     if (!c) return;
@@ -113,9 +134,38 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
   // 「바꿀 값」의 만료(designer n5): 유지면 지금 날짜, 아니면 고른 칸.
   const nextUntil = effectiveExpiry === 'keep' ? untilText(existing?.expiresAt ?? null)
     : effectiveExpiry === 'none' ? t('agents.grants.noExpiry') : t(effectiveExpiry === '7d' ? 'apiGrant.expiry7d' : 'apiGrant.expiry30d');
+  // [고치기]: 바뀐 칸만 「전 → 후」로 보인다. 서버도 같은 칸을 감사에 전→후로 남긴다.
+  const exHuman = !!existing?.writeNeedsHumanCause;
+  const changes: { key: string; label: string; from: string; to: string; mono?: boolean }[] = !(editMode && existing) ? [] : [
+    // 멈춘 부여를 저장하면 다시 켜진다 — 그것도 바뀜이다(「바뀐 것이 없다」와 어긋나지 않게, designer 고칠 것 1).
+    ...(existing.suspendedAt ? [{ key: 'state', label: t('apiGrant.stateLabel'), from: t('apiGrant.stateStopped'), to: t('apiGrant.stateOn') }] : []),
+    ...((existing.limits?.methods ?? []).join('·') !== methods.join('·')
+      ? [{ key: 'scope', label: t('apiGrant.scope'), from: describeScope(existing.limits?.methods ?? []), to: describeScope(methods) }] : []),
+    ...((existing.limits?.pathPrefix ?? '') !== pathPrefix ? [{ key: 'path', label: t('apiGrant.pathShort'), from: existing.limits?.pathPrefix ?? '—', to: pathPrefix || '—', mono: true }] : []),
+    ...(effectiveExpiry !== 'keep' ? [{ key: 'expiry', label: t('apiGrant.expiry'), from: untilText(existing.expiresAt), to: nextUntil }] : []),
+    ...(scope === 'write' && humanOnly !== null && (exScope !== 'write' || (humanOnly === 'yes') !== exHuman)
+      ? [{ key: 'human', label: t('apiGrant.humanOnly'), from: exScope === 'write' ? t(exHuman ? 'apiGrant.humanOnlyYes' : 'apiGrant.humanOnlyNo') : '—', to: t(humanOnly === 'yes' ? 'apiGrant.humanOnlyYes' : 'apiGrant.humanOnlyNo') }] : []),
+  ];
+  // 좁힘 = 메서드가 빠지거나 새 경로가 옛 경로를 덮지 않을 때. 「덮는다」는 서버 `pathCovered` 와 같은 마디 경계 규칙이다
+  // (끝이 `/` 면 글자 접두, 아니면 같거나 `새/…`) — `/api/catalog/` → `/ap` 는 덮지 않는다.
+  const oldPrefix = existing?.limits?.pathPrefix ?? '';
+  const covers = (prefix: string, path: string): boolean => (prefix.endsWith('/') ? path.startsWith(prefix) : path === prefix || path.startsWith(`${prefix}/`));
+  const narrowing = editMode && !!existing && (
+    (existing.limits?.methods ?? []).some((m) => !methods.includes(m as ApiMethod)) || (oldPrefix !== pathPrefix && !covers(pathPrefix, oldPrefix)));
   return (
     <div className="mt-2 space-y-2 rounded border border-border bg-surface-sunken p-2 text-meta text-fg" data-testid="api-grant-form">
-      {existing && (
+      {editMode && existing && (
+        <div className="space-y-0.5 rounded border border-border bg-surface px-2 py-1" data-testid="api-grant-changes">
+          {changes.length === 0
+            ? <div className="text-fg-subtle">{t('apiGrant.noChanges')}</div>
+            : changes.map((x) => <div key={x.key} data-testid={`api-grant-change-${x.key}`}>{x.label}: <span className={x.mono ? 'font-mono' : ''}>{x.from}</span> → <span className={x.mono ? 'font-mono' : ''}>{x.to}</span></div>)}
+          {/* 멈춘 부여를 고치면 다시 켜진다(서버 upsert 가 정지를 푼다) — 만료만 만지다 되살리지 않게 눈에 띄게(security 조건 3). */}
+          {existing.suspendedAt && <div className="text-warning" data-testid="api-grant-resume-warning">⚠ {t('apiGrant.resumeWarn')}</div>}
+          {narrowing && delegatedCount > 0 && <div className="text-warning" data-testid="api-grant-children-warning">⚠ {t('apiGrant.childrenWarn', { n: String(delegatedCount) })}</div>}
+          {existing.expiresAt !== null && Date.parse(existing.expiresAt) <= Date.now() && <div data-testid="api-grant-expired">{t('apiGrant.expiredRenew')}</div>}
+        </div>
+      )}
+      {existing && !editMode && (
         <div className="rounded border border-warning-border bg-warning-surface px-2 py-1 text-warning" data-testid="api-grant-replace">
           <div>{t('apiGrant.now', { what: describe(existing.limits?.methods ?? [], existing.limits?.pathPrefix ?? '', untilText(existing.expiresAt)) })}</div>
           <div>{t('apiGrant.next', { what: describe(methods, pathPrefix, nextUntil) })}</div>
@@ -130,15 +180,15 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
           {connectors.map((x) => <option key={x.id} value={x.id}>{x.name} — {x.baseUrl}</option>)}
         </select>
       </label>
-      <Segmented label={t('apiGrant.scope')} value={scope} disabled={busy || fromExisting}
+      <Segmented label={t('apiGrant.scope')} value={scope} disabled={busy || lockShape}
         onChange={(v) => { setScope(v); if (v === 'write' && expiry === 'none' && !allowWriteNoExpiry) setExpiry('7d'); }}
         options={[
           { value: 'read' as const, label: t('apiGrant.read') },
-          ...(canWrite ? [{ value: 'write' as const, label: t('apiGrant.write', { methods: (fromExisting && scope === 'write' ? methods : c?.methods ?? []).join('·') }) }] : []),
+          ...(canWrite ? [{ value: 'write' as const, label: t('apiGrant.write', { methods: (fromExisting && exScope === 'write' && (!editMode || scope === 'write') ? (existing?.limits?.methods ?? []) : c?.methods ?? []).join('·') }) }] : []),
         ]} />
       <label className="flex flex-col gap-1">
         {t('apiGrant.path')}
-        <input aria-label={t('apiGrant.path')} className="rounded border border-border bg-surface px-2 py-1 font-mono" value={pathPrefix} disabled={busy || fromExisting} onChange={(e) => setPathPrefix(e.target.value)} />
+        <input aria-label={t('apiGrant.path')} className="rounded border border-border bg-surface px-2 py-1 font-mono" value={pathPrefix} disabled={busy || lockShape} onChange={(e) => setPathPrefix(e.target.value)} />
         {pathPrefix === '' ? <span className="text-warning" data-testid="api-grant-path-unknown">{t('apiGrant.pathUnknown')}</span>
           : !pathOk && <span className="text-warning">{t('apiGrant.pathBad')}</span>}
       </label>
@@ -166,7 +216,7 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
       )}
       <p className="text-fg-subtle">{t('apiGrant.keyNote')}</p>
       <div className="flex gap-2">
-        <button type="button" className="rounded bg-accent px-2 py-1 font-medium text-fg-on-strong disabled:opacity-50" disabled={busy || !ready} onClick={() => void submit()}>{existing ? t('apiGrant.replace') : t('apiGrant.give')}</button>
+        <button type="button" className="rounded bg-accent px-2 py-1 font-medium text-fg-on-strong disabled:opacity-50" disabled={busy || !ready} onClick={() => void submit()}>{editMode && existing ? t('apiGrant.save') : existing ? t('apiGrant.replace') : t('apiGrant.give')}</button>
         <button type="button" className="rounded border border-border px-2 py-1 hover:bg-surface disabled:opacity-50" disabled={busy} onClick={onCancel}>{t('secrets.cancel')}</button>
       </div>
       {error && <p role="alert" className="text-danger" data-testid="api-grant-error">{error}</p>}

@@ -237,6 +237,80 @@ describe('ApiGrantForm', () => {
   });
 });
 
+describe('ApiGrantForm 고치기(editMode)', () => {
+  const ex = (over: Record<string, unknown> = {}) => ({
+    id: 'g1', accountId: 'agent-1', capability: 'api.call', scope: `connector:${conn().id}`, grantedBy: ME, grantedAt: '2026-11-01T00:00:00Z',
+    expiresAt: new Date(Date.now() + 5 * 86_400_000).toISOString(), limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' },
+    writeNeedsHumanCause: true, suspendedAt: null, delegateDepth: 0, ...over,
+  }) as never;
+
+  it('경로·범위를 그 자리에서 바꾸고 바뀐 칸만 보인다 · 바뀐 것이 없으면 [저장]이 꺼진다', async () => {
+    const c = setup();
+    render(<ApiGrantForm editMode allowWriteNoExpiry agentId="agent-1" connectors={[conn()]} existing={ex()} onDone={() => {}} onCancel={() => {}} />);
+    const save = () => screen.getByRole('button', { name: '저장' }) as HTMLButtonElement;
+    expect(screen.getByTestId('api-grant-changes').textContent).toContain('바뀐 것이 없다');
+    expect(save().disabled).toBe(true);
+    const path = screen.getByLabelText('경로 (이것으로 시작하는 경로만)') as HTMLInputElement;
+    expect(path.disabled).toBe(false);
+    fireEvent.change(path, { target: { value: '/api/catalog/' } });
+    expect(screen.getByTestId('api-grant-change-path').textContent).toContain('/api/ → /api/catalog/');
+    expect(screen.queryByTestId('api-grant-change-scope')).toBeNull();
+    fireEvent.click(save());
+    await waitFor(() => expect(c.putGrant).toHaveBeenCalled());
+    const body = (c.putGrant.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
+    expect(body).toMatchObject({ limits: { methods: ['GET', 'POST'], pathPrefix: '/api/catalog/' }, writeNeedsHumanCause: true });
+  });
+
+  it('읽기만으로 좁히면 범위 줄이 서고 GET 만 보낸다 · 넘긴 하위 권한이 있으면 끊길 수 있다고 알린다', async () => {
+    const c = setup();
+    render(<ApiGrantForm editMode allowWriteNoExpiry delegatedCount={2} agentId="agent-1" connectors={[conn()]} existing={ex()} onDone={() => {}} onCancel={() => {}} />);
+    fireEvent.click(screen.getByRole('radio', { name: '읽기만 (GET)' }));
+    expect(screen.getByTestId('api-grant-change-scope').textContent).toContain('→');
+    expect(screen.getByTestId('api-grant-children-warning').textContent).toContain('2');
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+    await waitFor(() => expect(c.putGrant).toHaveBeenCalled());
+    expect((c.putGrant.mock.calls[0] as unknown as [string, Record<string, unknown>])[1]).toMatchObject({ limits: { methods: ['GET'] } });
+  });
+
+  it('경로를 넓히기만 하면(새 경로가 옛 경로의 접두) 하위 권한 경고를 띄우지 않는다', () => {
+    setup();
+    render(<ApiGrantForm editMode allowWriteNoExpiry delegatedCount={2} agentId="agent-1" connectors={[conn()]} existing={ex({ limits: { methods: ['GET', 'POST'], pathPrefix: '/api/catalog/' } })} onDone={() => {}} onCancel={() => {}} />);
+    fireEvent.change(screen.getByLabelText('경로 (이것으로 시작하는 경로만)'), { target: { value: '/api/' } });
+    expect(screen.queryByTestId('api-grant-children-warning')).toBeNull();
+    fireEvent.change(screen.getByLabelText('경로 (이것으로 시작하는 경로만)'), { target: { value: '/api/catalog/x/' } });
+    expect(screen.getByTestId('api-grant-children-warning')).toBeTruthy();
+    // 마디 경계가 아닌 글자 접두는 덮지 않는다(서버 pathCovered 와 같은 규칙).
+    fireEvent.change(screen.getByLabelText('경로 (이것으로 시작하는 경로만)'), { target: { value: '/ap' } });
+    expect(screen.getByTestId('api-grant-children-warning')).toBeTruthy();
+  });
+
+  it('멈춘 부여는 「저장하면 다시 켜진다」를 보이고 칸을 안 바꿔도 저장할 수 있다', () => {
+    setup();
+    render(<ApiGrantForm editMode allowWriteNoExpiry agentId="agent-1" connectors={[conn()]} existing={ex({ suspendedAt: '2026-11-02T00:00:00Z' })} onDone={() => {}} onCancel={() => {}} />);
+    expect(screen.getByTestId('api-grant-resume-warning').textContent).toContain('다시 켜진다');
+    // 「바뀐 것이 없다」 대신 「상태: 멈춤 → 켜짐」 줄(designer 고칠 것 1).
+    expect(screen.getByTestId('api-grant-changes').textContent).not.toContain('바뀐 것이 없다');
+    expect(screen.getByTestId('api-grant-change-state').textContent).toContain('멈춤 → 켜짐');
+    expect((screen.getByRole('button', { name: '저장' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('무기한 확인 체크는 연결을 바꿔도 빈 칸으로 돌아간다(확인 키에 연결)', () => {
+    setup();
+    const other = conn({ id: '22222222-2222-4222-8222-222222222222', name: 'other-api' });
+    render(<ApiGrantForm allowWriteNoExpiry agentId="agent-1" connectors={[conn(), other]} onDone={() => {}} onCancel={() => {}} />);
+    fireEvent.click(screen.getByRole('radio', { name: '읽기+쓰기 (GET·POST)' }));
+    fireEvent.click(screen.getByRole('radio', { name: '사람이 시킨 턴에서만' }));
+    fireEvent.click(screen.getByRole('radio', { name: '없음' }));
+    fireEvent.click(within(screen.getByTestId('api-grant-no-expiry-warning')).getByRole('checkbox'));
+    fireEvent.change(screen.getByLabelText('API 연결'), { target: { value: other.id } });
+    // 연결을 바꾸면 범위가 읽기로 돌아가 경고가 사라진다 — 다시 쓰기·없음을 골라도 체크는 비어 있다.
+    fireEvent.click(screen.getByRole('radio', { name: '읽기+쓰기 (GET·POST)' }));
+    fireEvent.click(screen.getByRole('radio', { name: '사람이 시킨 턴에서만' }));
+    fireEvent.click(screen.getByRole('radio', { name: '없음' }));
+    expect((within(screen.getByTestId('api-grant-no-expiry-warning')).getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
+  });
+});
+
 describe('BlockedCard', () => {
   const msg = (blocked: Record<string, unknown>): MessageRow => ({
     id: 'm1', channelId: 'c1', threadRootId: 't1', authorId: 'agent-1', body: '🔒', kind: 'system',

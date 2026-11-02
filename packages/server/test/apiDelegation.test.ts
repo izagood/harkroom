@@ -204,4 +204,13 @@ describe('위임', () => {
     const child = (await pool.query(`select expires_at from account_grant where account_id = $1 and capability = 'api.call'`, [c])).rows[0];
     expect(child.expires_at).not.toBeNull();
   });
+
+  it('소유자가 위임받은 줄을 고치면 감사에 준 사람·부모가 [전, 후]로 남는다', async () => {
+    const child = (await pool.query(`select id, parent_grant_id, granted_by from account_grant where account_id = $1 and capability = 'api.call'`, [c])).rows[0];
+    expect(child.parent_grant_id).not.toBeNull();
+    expect((await give(c, { limits: { methods: ['GET'], pathPrefix: '/api/clusters' }, expiresAt: days(3) })).statusCode).toBe(200);
+    const upd = (await pool.query(`select detail from audit_log where action = 'grant.updated' and target = $1 order by id desc limit 1`, [c])).rows[0];
+    expect(upd.detail.changed.parentGrantId).toEqual([child.parent_grant_id, null]);
+    expect(upd.detail.changed.grantedBy).toEqual([child.granted_by, alice.accountId]);
+  });
 });
