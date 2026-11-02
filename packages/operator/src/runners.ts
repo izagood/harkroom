@@ -59,6 +59,39 @@ interface RetiringEntry {
   pid: number;
   incarnationId: IncarnationId | null;
   pollStopped?: { holding: number[]; done: number[] };
+  /**
+   * 장부에 다시 적을 사실 — **다음 오퍼레이터도 이 러너를 알아야 한다**(2026-11-02).
+   *
+   * 판이 짧은 간격으로 두 번 바뀌면, 첫 교체 때 회수(SIGTERM)를 받아 턴을 끝내던 러너는 두 번째
+   * 오퍼레이터가 떴을 때도 살아 있다. 장부가 표(`byAgent`)만 적으면 두 번째 오퍼레이터는 그 러너를
+   * 몰라 링크를 거절하고, 러너는 다시 붙지 못한 채 열린 턴을 중단한다. 그래서 회수 중인 러너도
+   * 장부에 남긴다. 옛 장부·회귀선에서 온 회수에는 없을 수 있다 — 없으면 장부에 적지 않는다.
+   */
+  ledger?: RetiringLedgerFacts;
+}
+
+/** 회수 중인 러너를 장부에 다시 적는 데 필요한 사실(`RetiringEntry.ledger`). */
+export interface RetiringLedgerFacts {
+  startedAtMs: number;
+  bootTimeSec: number | null;
+  linkSecret?: string;
+  spawnedByAppVersion?: string;
+}
+
+/**
+ * 장부에 흘려 보내는 한 줄. 표의 러너(`RunnerRecord`)이거나 **회수 중인 러너**다.
+ * `retiring` 이 있으면 다음 오퍼레이터는 그 줄을 채택하지 않고 다시 회수하며 링크만 받는다
+ * (`adopt.ts::planAdoption`).
+ */
+export interface LedgerRow {
+  agentId: string;
+  pid: number;
+  incarnationId: IncarnationId;
+  startedAtMs: number;
+  bootTimeSec: number | null;
+  linkSecret?: string;
+  spawnedByAppVersion?: string;
+  retiring?: { holding: number[]; done: number[] };
 }
 
 export interface RunnerRecord {
@@ -257,8 +290,10 @@ export interface RunnerLaunchSpec {
  * "어디에 쓰는가"까지 정하게 되어 D5 의 writer 경계가 두 곳으로 흩어진다.
  */
 export interface LedgerSink {
-  /** 표가 바뀔 때마다 불린다. 지금 표 전체가 실려 온다 — 증분이 아니라 스냅샷이다. */
-  save(records: readonly RunnerRecord[]): void;
+  /**
+   * 표가 바뀔 때마다 불린다. 지금 표 전체와 **회수 중인 러너**가 실려 온다 — 증분이 아니라 스냅샷이다.
+   */
+  save(records: readonly LedgerRow[]): void;
 }
 
 /**
@@ -350,7 +385,7 @@ export class RunnerRegistry {
    * 표(`byAgent`)와 **다른 자리**인 이유는 `retire` 주석에 있다. 프로세스가 사라지면
    * `retiringAlive` 가 지운다 — 그때부터 교체가 허용된다.
    */
-  private readonly retiring = new Map<string, RetiringEntry>();
+  private readonly retiring = new Map<string, RetiringEntry[]>();
 
   /** 지금 표 전체. 장부에 쓰기 위해서만 쓰인다. */
   /**
@@ -360,10 +395,11 @@ export class RunnerRegistry {
    * 게이트는 **예전 그대로** 프로세스가 죽을 때까지 기다린다. 즉 이 기능은 순수한 덧셈이다.
    */
   notePollStopped(agentId: string, incarnationId: IncarnationId, holding: readonly number[], done: readonly number[] = []): void {
-    const entry = this.retiring.get(agentId);
-    // id 를 대조한다 — 그 사이 또 다른 세대가 회수 자리에 들어왔을 수 있다.
-    if (entry === undefined || entry.incarnationId !== incarnationId) return;
+    // id 로 찾는다 — 한 에이전트에 회수 중인 러너가 둘 이상일 수 있다(판이 연달아 바뀐 경우).
+    const entry = this.retiring.get(agentId)?.find((e) => e.incarnationId === incarnationId);
+    if (entry === undefined) return;
     entry.pollStopped = { holding: [...holding], done: [...done] };
+    this.saveLedger();
   }
 
   /**
@@ -381,7 +417,17 @@ export class RunnerRegistry {
    * `SIGTERM` 이고 `SIGKILL` 이 아니다: 러너는 이 시그널을 받아 진행 중인 턴을 마무리할
    * 기회를 갖는다. 회수는 업데이트 직후 한 번뿐이므로 여기서 굳이 서두를 이유가 없다.
    */
-  retire(agentId: string, pid: number, incarnationId?: IncarnationId): boolean {
+  retire(
+    agentId: string,
+    pid: number,
+    incarnationId?: IncarnationId,
+    /**
+     * 장부에 다시 적을 사실과, 앞 오퍼레이터가 이미 받아 둔 「인박스를 놓았다」 알림(장부의 `retiring`).
+     * 앞 오퍼레이터가 회수하던 러너를 이어 받을 때 그 알림을 되살려야 교체 러너가 그 턴들을 다시
+     * 집지 않는다 — 그 러너는 같은 알림을 두 번 보내지 않는다.
+     */
+    carry?: { ledger?: RetiringLedgerFacts; pollStopped?: { holding: number[]; done: number[] } },
+  ): boolean {
     // **표가 아니라 별도 자리에 적는다.** `byAgent` 에 넣으면 조정기에게 "이 에이전트는
     // 러너가 있다"로 보여 교체가 아예 안 일어난다. 여기 적는 것은 **순서를 지키기 위한
     // 사실**이고, 그 사실을 `spawnRunner` 가 읽는다.
@@ -389,16 +435,30 @@ export class RunnerRegistry {
     // `incarnationId` 는 장부가 아는 옛 러너의 id 다(#838). 있으면 그 러너를 **우리 러너로
     // announce 하고** 링크를 받아, 진행 중이던 턴이 이 오퍼레이터를 통해 끝나게 한다.
     // 죽으면 그 id 로 exit 통지가 나가 서버가 그 러너를 지운다. 옛 장부(id 없음)는 순서만 지킨다.
-    this.retiring.set(agentId, { pid, incarnationId: incarnationId ?? null });
-    return this.host.kill(pid, 'SIGTERM');
+    //
+    // 한 에이전트에 **여럿**을 둔다(2026-11-02): 판이 연달아 바뀌면 앞 오퍼레이터가 회수하던
+    // 러너와 앞 오퍼레이터의 지금 러너가 함께 넘어온다. 하나만 두면 먼저 적힌 쪽을 잊는다.
+    const list = (this.retiring.get(agentId) ?? []).filter((e) => e.pid !== pid);
+    list.push({
+      pid,
+      incarnationId: incarnationId ?? null,
+      ...(carry?.pollStopped ? { pollStopped: { holding: [...carry.pollStopped.holding], done: [...carry.pollStopped.done] } } : {}),
+      ...(carry?.ledger ? { ledger: carry.ledger } : {}),
+    });
+    this.retiring.set(agentId, list);
+    const sent = this.host.kill(pid, 'SIGTERM');
+    this.saveLedger();
+    return sent;
   }
 
   /** 회수(SIGTERM)를 보냈고 **아직 살아 있는**, id 를 아는 앞 세대 러너들 — hello 의 announce 에 실린다. */
   retiringRunners(): { agentId: string; pid: number; incarnationId: IncarnationId }[] {
     const out: { agentId: string; pid: number; incarnationId: IncarnationId }[] = [];
-    for (const [agentId, entry] of this.retiring) {
-      if (entry.incarnationId === null) continue;
-      if (this.host.kill(entry.pid, 0)) out.push({ agentId, pid: entry.pid, incarnationId: entry.incarnationId });
+    for (const [agentId, list] of this.retiring) {
+      for (const entry of list) {
+        if (entry.incarnationId === null) continue;
+        if (this.host.kill(entry.pid, 0)) out.push({ agentId, pid: entry.pid, incarnationId: entry.incarnationId });
+      }
     }
     return out;
   }
@@ -416,12 +476,13 @@ export class RunnerRegistry {
    * 영구 거절이 되는 순간 에이전트는 돌아오지 않는다.
    */
   private retiringHoldsInbox(agentId: string): number | null {
-    const entry = this.retiring.get(agentId);
-    if (entry === undefined) return null;
-    if (!this.host.kill(entry.pid, 0)) { this.reapRetiring(agentId, entry); return null; }
-    // 살아 있어도 **폴을 놓았으면 인박스는 비어 있다.** 남은 턴은 저쪽이 마저 끝낸다.
-    if (entry.pollStopped) return null;
-    return entry.pid;
+    for (const entry of [...(this.retiring.get(agentId) ?? [])]) {
+      if (!this.host.kill(entry.pid, 0)) { this.reapRetiring(agentId, entry); continue; }
+      // 살아 있어도 **폴을 놓았으면 인박스는 비어 있다.** 남은 턴은 저쪽이 마저 끝낸다.
+      if (entry.pollStopped) continue;
+      return entry.pid;
+    }
+    return null;
   }
 
   /**
@@ -429,12 +490,17 @@ export class RunnerRegistry {
    * 어느 쪽이 먼저 발견하든 **한 번**이다(지우는 것과 알리는 것이 같은 자리다).
    */
   private reapRetiring(agentId: string, entry: RetiringEntry): void {
-    if (this.retiring.get(agentId) !== entry) return;
-    this.retiring.delete(agentId);
+    const list = this.retiring.get(agentId);
+    if (list === undefined || !list.includes(entry)) return;
+    const rest = list.filter((e) => e !== entry);
+    if (rest.length > 0) this.retiring.set(agentId, rest);
+    else this.retiring.delete(agentId);
+    this.saveLedger();
     // 앞 러너가 완전히 물러났다 — 그가 들고 있던 entry 를 더 건너뛸 이유가 없다.
     // **여기가 보류를 푸는 유일한 정상 경로다.** 러너 쪽 시한은 오퍼레이터가 죽은 경우의
     // 백스톱일 뿐이고, 그 시한에 기대면 앞 러너가 금방 끝나도 몇 분씩 멍하니 건너뛴다.
-    if (entry.pollStopped) {
+    // 회수 중인 러너가 **아직 남았으면 풀지 않는다** — 보류는 그 러너들의 턴도 담고 있다.
+    if (rest.length === 0 && (entry.pollStopped || list.some((e) => e.pollStopped))) {
       const 지금 = this.byAgent.get(agentId);
       if (지금 && !지금.exited) this.releaseHandover(agentId, 지금.incarnationId);
     }
@@ -443,8 +509,27 @@ export class RunnerRegistry {
     this.onExit({ agentId, incarnationId: entry.incarnationId, code: null, signal: null, tailLines: [] });
   }
 
-  private records(): RunnerRecord[] {
-    return [...this.byAgent.values()];
+  private records(): LedgerRow[] {
+    const rows: LedgerRow[] = [...this.byAgent.values()];
+    // 회수 중인 러너도 적는다 — 다음 오퍼레이터가 그 러너의 링크를 받아 남은 턴을 끝내게 한다
+    // (`RetiringEntry.ledger` 주석). id 를 모르는 줄(옛 장부)은 받아 줄 수 없으니 적지 않는다.
+    const 표pid = new Set(rows.map((r) => r.pid));
+    for (const [agentId, list] of this.retiring) {
+      for (const e of list) {
+        if (e.incarnationId === null || e.ledger === undefined || 표pid.has(e.pid)) continue;
+        rows.push({
+          agentId,
+          pid: e.pid,
+          incarnationId: e.incarnationId,
+          startedAtMs: e.ledger.startedAtMs,
+          bootTimeSec: e.ledger.bootTimeSec,
+          ...(e.ledger.linkSecret ? { linkSecret: e.ledger.linkSecret } : {}),
+          ...(e.ledger.spawnedByAppVersion ? { spawnedByAppVersion: e.ledger.spawnedByAppVersion } : {}),
+          retiring: { holding: [...(e.pollStopped?.holding ?? [])], done: [...(e.pollStopped?.done ?? [])] },
+        });
+      }
+    }
+    return rows;
   }
 
   private saveLedger(): void {
@@ -520,9 +605,10 @@ export class RunnerRegistry {
     // 그 목록만 건네 잠시 건너뛰게 한다 — 받는 쪽 유예는 `agent/src/main.ts` 가 갖는다.
     // 앞 러너가 **끝냈는데 읽음 처리만 못 한** entry(L2)는 따로 심는다 — 받는 쪽은 이것을 기다리지 않고
     // 읽음 처리만 한다. `holding` 에 섞으면 보류 시한 뒤 끝난 일에 두 번째 턴이 선다.
-    const 앞 = this.retiring.get(agentId)?.pollStopped;
-    const 보류 = 앞?.holding ?? [];
-    const 끝남 = 앞?.done ?? [];
+    // 회수 중인 러너가 여럿이면(판이 연달아 바뀐 경우) 모두의 보류를 합친다.
+    const 앞들 = (this.retiring.get(agentId) ?? []).map((e) => e.pollStopped).filter((p) => p !== undefined);
+    const 보류 = [...new Set(앞들.flatMap((p) => p.holding))];
+    const 끝남 = [...new Set(앞들.flatMap((p) => p.done))].filter((n) => !보류.includes(n));
     const env2 = {
       ...env,
       ...(보류.length ? { HARKROOM_HANDOVER_HOLD: 보류.join(',') } : {}),
@@ -682,8 +768,10 @@ export class RunnerRegistry {
    */
   pollAdopted(): void {
     // 회수 중인 옛 세대 러너도 같은 방식으로 관측한다 — 그 역시 내 자식이 아니다(#838).
-    for (const [agentId, entry] of [...this.retiring]) {
-      if (!this.host.kill(entry.pid, 0)) this.reapRetiring(agentId, entry);
+    for (const [agentId, list] of [...this.retiring]) {
+      for (const entry of [...list]) {
+        if (!this.host.kill(entry.pid, 0)) this.reapRetiring(agentId, entry);
+      }
     }
     let changed = false;
     for (const record of [...this.byAgent.values()]) {

@@ -29,7 +29,7 @@ import {
   type RunnerLedgerEntry,
 } from './runnerLedger.js';
 import { openRunnerLog, readRunnerLogTail, runnerLogPath } from './runnerLog.js';
-import { RunnerRegistry, nodeRunnerHost, type RunnerHost, type RunnerLogSink } from './runners.js';
+import { RunnerRegistry, nodeRunnerHost, type LedgerRow, type RunnerHost, type RunnerLogSink } from './runners.js';
 import { DaemonServer } from './server.js';
 import { claudeAccountsRoot, createClaudeAccountsPort } from './claudeAccounts.js';
 import { createClaudeUsagePoller } from './claudeUsagePoller.js';
@@ -499,7 +499,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 아무도 정하지 않아서, 낡은 스냅샷이 새 것을 덮는 일이 실제로 났다(그 창구의 주석).
   const ledgerWriter = createRunnerLedgerWriter(appDataDir, log);
   const ledgerSink = {
-    save: (records: readonly { agentId: string; pid: number; incarnationId: string; startedAtMs: number; bootTimeSec: number | null; linkSecret?: string }[]) => {
+    save: (records: readonly LedgerRow[]) => {
       const entries: RunnerLedgerEntry[] = records.map((r) => ({
         agentId: r.agentId,
         pid: r.pid,
@@ -511,7 +511,11 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
         spawnedByNonce: identity.launchNonce,
         // 세대를 함께 적는다 — 다음 daemon 이 "내 세대의 러너인가"를 이 값으로 판정한다
         // (`adopt.ts::planAdoption`). 없으면 그 판정 자체가 성립하지 않는다.
-        ...(args.appVersion === undefined ? {} : { spawnedByAppVersion: args.appVersion }),
+        // 회수 중인 러너는 **그 러너를 띄운 세대**를 그대로 잇는다 — 출처 표시일 뿐 판정엔 `retiring` 이 쓰인다.
+        ...(r.spawnedByAppVersion !== undefined
+          ? { spawnedByAppVersion: r.spawnedByAppVersion }
+          : args.appVersion === undefined ? {} : { spawnedByAppVersion: args.appVersion }),
+        ...(r.retiring ? { retiring: { holding: [...r.retiring.holding], done: [...r.retiring.done] } } : {}),
       }));
       // **기다리지 않는다.** 장부 쓰기가 `spawnRunner` 응답을 늦추면 앱이 그만큼 멈춘다.
       // 실패해도 던지지 않고 로그로 올린다(`writeRunnerLedger` 주석).
@@ -580,8 +584,22 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // 장부가 우리 계보의 spawn 만 담고(`adopt.ts` 모듈 주석) pid·커널 시작 시각 검사까지
     // 통과한 러너다. 그래서 SIGTERM 을 보낼 근거가 선다.
     for (const { entry, verdict } of plan.rejected) {
-      if (verdict.kind !== 'stale-generation') continue;
-      registry.retire(entry.agentId, entry.pid, entry.incarnationId);
+      // `retiring`: 앞 오퍼레이터가 회수하던 러너(판이 연달아 바뀐 경우, 2026-11-02). 똑같이 회수하고
+      // 링크를 받는다 — 안 받으면 「모르는 러너」로 거절돼 그 러너는 열린 턴을 중단한다.
+      if (verdict.kind !== 'stale-generation' && verdict.kind !== 'retiring') continue;
+      registry.retire(entry.agentId, entry.pid, entry.incarnationId, {
+        // 장부에 다시 적을 사실 — 판이 **또** 바뀌어도 다음 오퍼레이터가 이 러너를 안다.
+        ledger: {
+          startedAtMs: entry.startedAtMs,
+          bootTimeSec: entry.bootTimeSec,
+          ...(entry.linkSecret ? { linkSecret: entry.linkSecret } : {}),
+          ...(entry.spawnedByAppVersion ? { spawnedByAppVersion: entry.spawnedByAppVersion } : {}),
+        },
+        // 앞 오퍼레이터가 받아 둔 「인박스를 놓았다」 — 그 러너는 다시 알리지 않는다.
+        ...(entry.retiring && (entry.retiring.holding.length || entry.retiring.done.length)
+          ? { pollStopped: entry.retiring }
+          : {}),
+      });
       // 회수 러너의 링크도 받는다(#838). 그 러너의 링크는 죽은 옛 오퍼레이터를 향해 있었다 —
       // 여기서 secret 을 적어 두지 않으면 재접속이 영영 거절돼 진행 중이던 턴을 끝낼 길이 없다.
       if (entry.linkSecret) runnerLink.expect(entry.incarnationId, entry.agentId, entry.linkSecret);
