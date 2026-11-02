@@ -33,6 +33,8 @@ export async function automationMandateForCause(client: Q, args: {
        join agent_config c on c.account_id = $2
       where r.message_id = $1
         and a.deleted_at is null and a.enabled and a.approved_at is not null
+        -- security n5: 마지막 만들기·승인·고침이 사람 세션이었던 자동화만(PAT 로 만든·고친 자동화는 키 없음).
+        and a.mandate_session_at is not null
         and ((r.trigger_kind = 'schedule' and r.initiated_by is null)
           or (r.trigger_kind = 'manual' and r.initiated_by = a.owner_id))
       limit 1`,

@@ -8,5 +8,8 @@ alter table mandate alter column root_message_id drop not null;
 alter table mandate alter column thread_root_id drop not null;
 alter table mandate add constraint mandate_root_or_automation
   check ((root_message_id is null) <> (automation_id is null) and (thread_root_id is null) = (root_message_id is null));
+-- security n5(위임 키는 사람 세션만 만든다): 자동화의 마지막 만들기·승인·(본문·트리거·채널) 고침이 **사람 세션**이었던 시각.
+-- 세션이 아닌 길(PAT 등)로 만들거나 고치면 null 이고, null 이면 그 자동화의 회차는 위임장을 받지 않는다(`automationMandateForCause`).
+alter table automation add column if not exists mandate_session_at timestamptz null;
 create unique index if not exists mandate_automation_owner_live
   on mandate (automation_id, owner_account_id) where automation_id is not null and ended_at is null;

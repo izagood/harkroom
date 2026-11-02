@@ -6,6 +6,7 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { postMessage } from '../src/services/messages.js';
 import { deleteAutomation, updateAutomation } from '../src/services/automations.js';
+import { mintPat } from '../src/services/pats.js';
 import { addMandateLine, findLine } from '../src/services/mandateLines.js';
 import { validMandateOwner } from '../src/services/mandates.js';
 import { endIdleMandates } from '../src/services/mandateEnd.js';
@@ -30,9 +31,11 @@ describe('automation mandate (⑤b)', () => {
     (await app.inject({ method: 'POST', url: '/agent/turn-leases', headers: asAgent(agent), payload: { causeMessageId: cause } })).json().lease as { id: string } | undefined;
   const leaseMandate = async (id: string) =>
     (await pool.query(`select mandate_id from secret_turn_lease where id = $1`, [id])).rows[0].mandate_id as string | null;
-  const automation = async (ownerId: string, o: { trigger?: object; approved?: boolean } = {}) => (await pool.query(
-    `insert into automation (owner_id, channel_id, name, body, trigger, approved_at, enabled) values ($1, $2, 'a', '@tm 주간 점검', $3, $4, true) returning id`,
-    [ownerId, ch, JSON.stringify(o.trigger ?? { kind: 'schedule', freq: 'weekly', weekdays: [1], time: '09:00', tz: 'Asia/Seoul' }), o.approved === false ? null : new Date()])).rows[0].id as string;
+  /** 사람 세션으로 만든(=`mandate_session_at` 있음) 승인된 자동화. `session: false` 면 PAT 등으로 만든 꼴. */
+  const automation = async (ownerId: string, o: { trigger?: object; approved?: boolean; session?: boolean } = {}) => (await pool.query(
+    `insert into automation (owner_id, channel_id, name, body, trigger, approved_at, enabled, mandate_session_at) values ($1, $2, 'a', '@tm 주간 점검', $3, $4, true, $5) returning id`,
+    [ownerId, ch, JSON.stringify(o.trigger ?? { kind: 'schedule', freq: 'weekly', weekdays: [1], time: '09:00', tz: 'Asia/Seoul' }), o.approved === false ? null : new Date(),
+      o.session === false ? null : new Date()])).rows[0].id as string;
   /** 회차 하나 — 자동화 소유자 이름의 글(meta.automation) + 회차 행. 회차 글은 사람 세션 글이 아니다. */
   const run = async (automationId: string, ownerId: string, o: { triggerKind?: string; initiatedBy?: string | null } = {}) => {
     n += 1;
@@ -128,7 +131,7 @@ describe('automation mandate (⑤b)', () => {
     const md = (await leaseMandate((await lease(await run(a, alice.accountId)))!.id))!;
     await updateAutomation(pool, a, alice.accountId, { name: 'renamed' });
     expect((await mandateRow(md)).endedAt).toBeNull();
-    await updateAutomation(pool, a, alice.accountId, { body: '@tm 다른 일' });
+    await updateAutomation(pool, a, alice.accountId, { body: '@tm 다른 일', bySession: true });
     expect(await mandateRow(md)).toMatchObject({ reason: 'automation_changed' });
     const md2 = (await leaseMandate((await lease(await run(a, alice.accountId)))!.id))!;
     expect(md2).not.toBe(md);
@@ -144,6 +147,39 @@ describe('automation mandate (⑤b)', () => {
     expect((await pool.query(`select mandate_id from message where id = $1`, [m1])).rows[0].mandate_id).toBeNull();
     expect((await pool.query(`select mandate_id from message where id = $1`, [r.message.id])).rows[0].mandate_id).toBeNull();
     expect((await pool.query(`select count(*)::int as n from mandate where root_message_id = $1`, [m1])).rows[0].n).toBe(0);
+  });
+
+  it('security n5: only automations last created/approved/edited by a human session give keys', async () => {
+    // PAT 로 만든 꼴 → 키 없음.
+    const viaPat = await automation(alice.accountId, { session: false });
+    expect(await leaseMandate((await lease(await run(viaPat, alice.accountId)))!.id)).toBeNull();
+    // 세션으로 만든 것 → 키. 그 뒤 세션이 아닌 길로 본문을 고치면 끝나고 다음 회차는 키 없음.
+    const a = await automation(alice.accountId);
+    const md = (await leaseMandate((await lease(await run(a, alice.accountId)))!.id))!;
+    await updateAutomation(pool, a, alice.accountId, { body: '@tm PAT 로 고침', bySession: false });
+    expect(await mandateRow(md)).toMatchObject({ reason: 'automation_changed' });
+    expect(await leaseMandate((await lease(await run(a, alice.accountId)))!.id)).toBeNull();
+    // 세션으로 다시 고치면 다시 키.
+    await updateAutomation(pool, a, alice.accountId, { body: '@tm 세션으로 고침', bySession: true });
+    expect(await leaseMandate((await lease(await run(a, alice.accountId)))!.id)).toBeTruthy();
+  });
+
+  it('security n5 routes: POST /automations with a session marks it; a human PAT does not (401 today, or unmarked)', async () => {
+    const body = { name: 'r', channelId: ch, body: '@tm 점검', trigger: { kind: 'schedule', freq: 'daily', time: '09:00', tz: 'Asia/Seoul' } };
+    const viaSession = (await app.inject({ method: 'POST', url: '/automations', headers: auth(alice.token), payload: body })).json().automation.id as string;
+    const marked = async (id: string) => (await pool.query(`select mandate_session_at is not null as m from automation where id = $1`, [id])).rows[0].m;
+    expect(await marked(viaSession)).toBe(true);
+    const pat = await mintPat(pool, alice.accountId, 'auto-pat', { actorId: null, actorHandle: null });
+    if (!pat.ok) throw new Error('pat');
+    // 사람 PAT 는 지금 인증 단계에서 401 이다. 그 길이 열려도 표시는 남지 않아야 한다.
+    const res = await app.inject({ method: 'POST', url: '/automations', headers: auth(pat.token), payload: body });
+    if (res.statusCode === 201) expect(await marked(res.json().automation.id)).toBe(false);
+    else expect(res.statusCode).toBe(401);
+    // 세션으로 이름만 고치면 표시는 그대로, 세션이 아닌 길(서비스 직접)로 본문을 고치면 지워진다.
+    await updateAutomation(pool, viaSession, alice.accountId, { name: 'r2' });
+    expect(await marked(viaSession)).toBe(true);
+    await updateAutomation(pool, viaSession, alice.accountId, { body: '@tm 바뀜' });
+    expect(await marked(viaSession)).toBe(false);
   });
 
   it('migration 155: a mandate has exactly one of root message or automation', async () => {

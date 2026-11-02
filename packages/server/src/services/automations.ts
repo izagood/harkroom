@@ -227,13 +227,15 @@ function initialNextAt(trigger: AutomationTrigger, now: Date): Date | null {
 export async function createAutomation(pool: Pool, input: {
   ownerId: string; channelId: string; name: string; body: string;
   trigger: AutomationTrigger; debounceSec?: number | null; now?: Date;
+  /** ⑤b(security n5): 사람 세션으로 만들었나 — 참일 때만 회차가 위임장을 받는다. 기본 거짓. */
+  bySession?: boolean;
 }): Promise<AutomationView> {
   const nextAt = initialNextAt(input.trigger, input.now ?? new Date());
   const res = await pool.query(
-    `insert into automation (owner_id, channel_id, name, body, trigger, next_at, debounce_sec)
-     values ($1, $2, $3, $4, $5, $6, $7) returning ${COLS}`,
+    `insert into automation (owner_id, channel_id, name, body, trigger, next_at, debounce_sec, mandate_session_at)
+     values ($1, $2, $3, $4, $5, $6, $7, case when $8 then now() else null end) returning ${COLS}`,
     [input.ownerId, input.channelId, input.name, input.body, JSON.stringify(input.trigger), nextAt?.toISOString() ?? null,
-      input.debounceSec ?? null],
+      input.debounceSec ?? null, input.bySession === true],
   );
   return { ...res.rows[0], lastRun: null };
 }
@@ -256,14 +258,15 @@ export async function proposeAutomation(pool: Pool, input: {
 }
 
 /** 제안 승인. 켜고 다음 회차를 잡는다. 이미 승인된 것은 false. */
-export async function approveAutomation(pool: Pool, id: string, ownerId: string, now = new Date()): Promise<AutomationView | null> {
+export async function approveAutomation(pool: Pool, id: string, ownerId: string, now = new Date(), opts: { bySession?: boolean } = {}): Promise<AutomationView | null> {
   const cur = await getAutomation(pool, id, ownerId);
   if (!cur || cur.approvedAt) return null;
   const nextAt = initialNextAt(cur.trigger, now);
   return writeReturningView(pool,
-    `update automation set approved_at = now(), enabled = true, next_at = $3, updated_at = now()
+    `update automation set approved_at = now(), enabled = true, next_at = $3, updated_at = now(),
+       mandate_session_at = case when $4 then now() else null end
      where id = $1 and owner_id = $2 and approved_at is null and deleted_at is null`,
-    [id, ownerId, nextAt?.toISOString() ?? null],
+    [id, ownerId, nextAt?.toISOString() ?? null, opts.bySession === true],
   );
 }
 
@@ -295,6 +298,8 @@ export async function updateAutomation(pool: Pool, id: string, ownerId: string, 
   /** `null` 은 끈다. `undefined` 는 그대로 둔다. */
   debounceSec?: number | null;
   now?: Date;
+  /** ⑤b(security n5): 이 고침이 사람 세션인가. 본문·트리거·채널을 세션이 아닌 길로 고치면 위임장을 받지 않게 된다. */
+  bySession?: boolean;
 }): Promise<AutomationView | null> {
   const cur = await getAutomation(pool, id, ownerId);
   if (!cur) return null;
@@ -305,7 +310,10 @@ export async function updateAutomation(pool: Pool, id: string, ownerId: string, 
     const changed = (patch.body !== undefined && patch.body !== cur.body)
       || (patch.channelId !== undefined && patch.channelId !== cur.channelId)
       || (patch.trigger !== undefined && JSON.stringify(patch.trigger) !== JSON.stringify(cur.trigger));
-    if (changed) await endAutomationMandates(pool, id, 'automation_changed');
+    if (changed) {
+      await pool.query(`update automation set mandate_session_at = case when $2 then now() else null end where id = $1`, [id, patch.bySession === true]);
+      await endAutomationMandates(pool, id, 'automation_changed');
+    }
     else if (patch.enabled === false && cur.enabled) await endAutomationMandates(pool, id, 'automation_off');
   }
   return view;

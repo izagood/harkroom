@@ -52,7 +52,7 @@ export async function registerAutomationRoutes(
     }).parse(req.body);
     const refused = await gateFor(input.channelId, req.account!.id);
     if (refused) return reply.code(refused.code).send(refused.body);
-    const automation = await createAutomation(pool, { ...input, ownerId: req.account!.id });
+    const automation = await createAutomation(pool, { ...input, ownerId: req.account!.id, bySession: req.account!.kind === 'human' && req.authVia === 'session' });
     return reply.code(201).send({ automation });
   });
 
@@ -84,7 +84,7 @@ export async function registerAutomationRoutes(
         return reply.code(409).send({ error: { code: 'not_approved', message: 'approve the proposal first' } });
       }
     }
-    const automation = await updateAutomation(pool, id, req.account!.id, patch);
+    const automation = await updateAutomation(pool, id, req.account!.id, { ...patch, bySession: req.account!.kind === 'human' && req.authVia === 'session' });
     if (!automation) return reply.code(404).send(notFound);
     return { automation };
   });
@@ -96,7 +96,7 @@ export async function registerAutomationRoutes(
   app.post('/automations/:id/approve', { preHandler: app.requireAccount }, async (req, reply) => {
     if (req.account!.kind === 'agent') return reply.code(403).send(agentRefused);
     const { id } = idParam.parse(req.params);
-    const approved = await approveAutomation(pool, id, req.account!.id);
+    const approved = await approveAutomation(pool, id, req.account!.id, new Date(), { bySession: req.account!.kind === 'human' && req.authVia === 'session' });
     if (!approved) return reply.code(404).send({ error: { code: 'not_found', message: 'no pending proposal with this id' } });
     return { automation: approved };
   });
