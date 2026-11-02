@@ -328,6 +328,10 @@ export function createTurnSecrets(deps: TurnSecretsDeps): TurnSecrets {
     noteLease(runnerId, agentId, notice) {
       const expiresAtMs = Date.parse(notice.expiresAt);
       if (!Number.isFinite(expiresAtMs)) return;
+      // 같은 부름의 옛 임대(앞 러너가 받았고 서버가 다시 주며 끝낸 것)가 남아 있으면 버린다 — 그 마운트 폴더도 지운다(157).
+      for (const old of [...leases.values()]) {
+        if (old.agentId === agentId && old.cause === notice.cause && old.leaseId !== notice.leaseId) void drop(old, false);
+      }
       leases.set(keyOf(runnerId, notice.cause), {
         runnerId, agentId, cause: notice.cause, leaseId: notice.leaseId, token: notice.token, expiresAtMs,
       });

@@ -49,6 +49,24 @@ describe('turnSecrets', () => {
   const lease = (runnerId = 'r1', agentId = 'a1', cause = 'cause-1') =>
     ts.noteLease(runnerId, agentId, { type: 'secret.lease', cause, leaseId: 'lease-1', token: 'tok-1', expiresAt: new Date(clock + 35 * 60_000).toISOString() });
 
+  it('같은 부름에 새 임대가 오면(다시 주기, 157) 앞 러너의 옛 임대와 마운트 폴더를 버린다', async () => {
+    lease('r-old');
+    const r = resultOf(await ts.maybeHandle('r-old', 'a1', mountCall('gh')));
+    expect(existsSync(join(root, 'lease-1'))).toBe(true);
+    expect(r.isError).toBe(false);
+    ts.noteLease('r-new', 'a1', { type: 'secret.lease', cause: 'cause-1', leaseId: 'lease-2', token: 'tok-2', expiresAt: new Date(clock + 35 * 60_000).toISOString() });
+    await new Promise((res) => setTimeout(res, 20));
+    expect(existsSync(join(root, 'lease-1'))).toBe(false);
+    expect(ts.lookup('r-old', 'cause-1')).toBeNull();
+    expect(ts.lookup('r-new', 'cause-1')).toMatchObject({ leaseId: 'lease-2' });
+    // 다른 에이전트·다른 부름의 임대는 건드리지 않는다.
+    lease('r-x', 'a2', 'cause-1');
+    lease('r-y', 'a1', 'cause-2');
+    ts.noteLease('r-z', 'a1', { type: 'secret.lease', cause: 'cause-1', leaseId: 'lease-3', token: 'tok-3', expiresAt: new Date(clock + 35 * 60_000).toISOString() });
+    expect(ts.lookup('r-x', 'cause-1')).not.toBeNull();
+    expect(ts.lookup('r-y', 'cause-2')).not.toBeNull();
+  });
+
   it('secret.mount 가 아닌 요청은 건드리지 않는다', async () => {
     expect(await ts.maybeHandle('r1', 'a1', { type: 'mcp.request', id: 'x', payload: { method: 'tools/call', params: { name: 'message.post' } } })).toBeNull();
     expect(await ts.maybeHandle('r1', 'a1', { type: 'http.forward', id: 'x', method: 'GET', path: '/agent/config' })).toBeNull();

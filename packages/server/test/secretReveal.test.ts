@@ -6,7 +6,8 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { createSecretKeyring } from '../src/services/secretKeyring.js';
-import { RevealLimiter } from '../src/services/secretAccess.js';
+import { issueTurnLease, LEASE_MAX_REISSUES, LEASE_REISSUE_STALE_MS, RevealLimiter } from '../src/services/secretAccess.js';
+import { TURN_LEASE_HEARTBEAT_MS } from '@harkroom/shared/runnerLink';
 
 // 비밀 보관소 PR 2 — 턴 임대(H1)와 reveal 의 판정(L2·L3). 스레드 bc98df3a.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -82,6 +83,68 @@ describe('턴 임대·reveal (086)', () => {
     // 남의 멘션·오래된 멘션에는 안 준다.
     expect((await lease(await mention(privCh, otherAgentId))).statusCode).toBe(403);
     expect((await lease(await mention(privCh, agentId, 6 * 60 * 60_000 + 60_000))).json().error.code).toBe('not_invoked');
+  });
+
+  // 다시 주기(157) — 러너가 다시 떠서 같은 부름을 다시 집으면, 옛 임대의 박동이 끊겼을 때만 새로 준다.
+  describe('임대 다시 주기', () => {
+    const stale = (leaseId: string) => pool.query(
+      `update secret_turn_lease set last_renewed_at = now() - make_interval(secs => $2) where id = $1`, [leaseId, LEASE_REISSUE_STALE_MS / 1000 + 60]);
+    it('문턱은 러너 박동 주기의 1.5배 이상이다', () => {
+      expect(LEASE_REISSUE_STALE_MS).toBeGreaterThanOrEqual(TURN_LEASE_HEARTBEAT_MS * 1.5);
+    });
+    it('박동이 살아 있으면 409 그대로 · 끊겼으면 옛 임대를 끝내고 새로 주며 옛 토큰은 거절된다 · 감사 reissued', async () => {
+      const m = await mention(privCh);
+      const first = (await lease(m)).json().lease as { id: string; token: string };
+      expect((await lease(m)).json().error.code).toBe('lease_used');
+      await stale(first.id);
+      const again = await lease(m);
+      expect(again.statusCode).toBe(200);
+      const second = again.json().lease as { id: string; token: string };
+      expect(second.id).not.toBe(first.id);
+      const old = await reveal(first);
+      expect(old.statusCode).not.toBe(200);
+      expect(old.json().error.code).toBe('lease_invalid');
+      expect((await reveal(second)).statusCode).toBe(200);
+      const a = (await pool.query(`select detail from audit_log where action = 'secret.lease.reissued' and detail->>'newLeaseId' = $1`, [second.id])).rows[0];
+      expect(a.detail).toMatchObject({ causeMessageId: m, oldLeaseId: first.id, operatorId: op.operatorId });
+      expect(a.detail.sinceLastBeatSec).toBeGreaterThanOrEqual(LEASE_REISSUE_STALE_MS / 1000);
+      expect(JSON.stringify(a.detail)).not.toContain(second.token);
+    });
+    it('부름당 다시 주기는 두 번까지 — 세 번째는 409', async () => {
+      const m = await mention(privCh);
+      let cur = (await lease(m)).json().lease as { id: string };
+      for (let i = 0; i < LEASE_MAX_REISSUES; i++) {
+        await stale(cur.id);
+        const r = await lease(m);
+        expect(r.statusCode).toBe(200);
+        cur = r.json().lease;
+      }
+      await stale(cur.id);
+      expect((await lease(m)).json().error.code).toBe('lease_used');
+    });
+    it('다른 오퍼레이터 · 끝난 옛 임대 · 읽음 처리된 부름이면 다시 주지 않는다', async () => {
+      const m = await mention(privCh);
+      const first = (await lease(m)).json().lease as { id: string; token: string };
+      await stale(first.id);
+      expect(await issueTurnLease(pool, { agentId, operatorId: op2.operatorId, causeMessageId: m })).toEqual({ ok: false, code: 'lease_used' });
+      // 끝난(턴이 마친) 옛 임대는 다시 주지 않는다.
+      const m2 = await mention(privCh);
+      const l2 = (await lease(m2)).json().lease as { id: string; token: string };
+      await app.inject({ method: 'POST', url: `/agent/turn-leases/${l2.id}/end`, headers: asAgent(op), payload: { token: l2.token } });
+      await stale(l2.id);
+      expect((await lease(m2)).json().error.code).toBe('lease_used');
+      // 읽음 처리된 부름은 처음 판정에서 거절(403).
+      await pool.query(`update inbox set read_at = now() where account_id = $1 and message_id = $2`, [agentId, m]);
+      expect((await lease(m)).json().error.code).toBe('not_invoked');
+    });
+    it('박동(갱신)은 마지막 박동 시각을 남긴다', async () => {
+      const m = await mention(privCh);
+      const l = (await lease(m)).json().lease as { id: string; token: string };
+      await stale(l.id);
+      const r = await app.inject({ method: 'POST', url: `/agent/turn-leases/${l.id}/renew`, headers: asAgent(op), payload: { token: l.token } });
+      expect(r.statusCode).toBe(200);
+      expect((await lease(m)).json().error.code).toBe('lease_used');
+    });
   });
 
   // 「처리 안 한 부름 + 6시간 상한」— 긴 앞 턴 뒤에 쌓인 부름이 10분을 넘겨도 임대를 받는다.

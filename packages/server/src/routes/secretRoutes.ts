@@ -617,10 +617,16 @@ export async function registerSecretRoutes(
       });
     }
     // 발급 줄(토큰 없음). 기다린 초를 남겨 「줄이 밀려 늦게 받은 부름」을 다음에 로그 한 줄로 가른다.
-    await recordAudit(pool, {
-      action: 'secret.lease.issued', ...actorOf(req), target: who.agentId,
-      detail: { causeMessageId: parsed.data.causeMessageId, operatorId: who.operatorId, leaseId: issued.leaseId, waitedSec: issued.waitedSec },
-    }, req);
+    await recordAudit(pool, issued.reissue
+      // 다시 주기(157) — 앞 러너의 옛 임대를 끝내고 새로 줬다(토큰 없음).
+      ? {
+        action: 'secret.lease.reissued', ...actorOf(req), target: who.agentId,
+        detail: { causeMessageId: parsed.data.causeMessageId, operatorId: who.operatorId, oldLeaseId: issued.reissue.oldLeaseId, newLeaseId: issued.leaseId, waitedSec: issued.waitedSec, sinceLastBeatSec: issued.reissue.sinceLastBeatSec },
+      }
+      : {
+        action: 'secret.lease.issued', ...actorOf(req), target: who.agentId,
+        detail: { causeMessageId: parsed.data.causeMessageId, operatorId: who.operatorId, leaseId: issued.leaseId, waitedSec: issued.waitedSec },
+      }, req);
     void reply.header('cache-control', 'no-store');
     return { lease: { id: issued.leaseId, token: issued.token, channelId: issued.channelId, threadRootId: issued.threadRootId, expiresAt: issued.expiresAt } };
   });
