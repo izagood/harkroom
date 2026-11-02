@@ -153,6 +153,47 @@ describe('permission card decisions (W4b)', () => {
     await ageRequest(requestId);
   });
 
+  describe('C-3(D2): a user who may decide approves into the mandate they delegated', () => {
+    it('user thread mandate → the user\'s approve_mandate adds a line granted by them, no grant', async () => {
+      const repo = 'acme-org/c3-user-line';
+      const { root, mandateId } = await mandateThread(bob.accountId, '@cardbot user work');
+      expect((await pool.query(`select owner_account_id, delegator_account_id from mandate where id = $1`, [mandateId])).rows[0])
+        .toEqual({ owner_account_id: alice.accountId, delegator_account_id: bob.accountId });
+      const { requestId, cardId } = await card({ kind: 'merge', target: repo, root, mandateId });
+      expect(await decideCard(cardId, 'approve_mandate', bob.accountId)).toMatchObject({ ok: true, result: { status: 'granted' } });
+      expect((await pool.query(`select granted_by from mandate_line where request_id = $1`, [requestId])).rows).toEqual([{ granted_by: bob.accountId }]);
+      expect((await pool.query(`select 1 from account_grant where account_id = $1 and scope like $2`, [agentId, `%${repo}`])).rowCount).toBe(0);
+      expect(await findLine(pool, { mandateId, agentId, cap: 'merge', action: { cap: 'merge', repo } })).not.toBeNull();
+      await ageRequest(requestId);
+    });
+
+    it('the user cannot add to the owner\'s mandate: merge is refused (no 7-day grant in their name)', async () => {
+      const repo = 'acme-org/c3-not-theirs';
+      const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot owner work');
+      const { requestId, cardId } = await card({ kind: 'merge', target: repo, root, mandateId });
+      expect(await decideCard(cardId, 'approve_mandate', bob.accountId)).toMatchObject({ ok: false, code: 'mandate_unavailable' });
+      expect((await pool.query(`select 1 from account_grant where account_id = $1 and scope like $2`, [agentId, `%${repo}`])).rowCount).toBe(0);
+      expect(await linesOf(requestId)).toEqual([]);
+      await ageRequest(requestId);
+    });
+
+    it('approve_new_mandate by the user on their own keyless root → mandate delegated by them, then a line', async () => {
+      const repo = 'acme-org/c3-new';
+      const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'bob plain', 'user') returning id`, [ch, bob.accountId])).rows[0].id as string;
+      const { requestId, cardId } = await card({ kind: 'merge', target: repo, root, mandateId: null });
+      expect(await decideCard(cardId, 'approve_new_mandate', bob.accountId)).toMatchObject({ ok: true, result: { status: 'granted' } });
+      const made = (await pool.query(`select mandate_id from permission_request where id = $1`, [requestId])).rows[0].mandate_id as string;
+      expect((await pool.query(`select owner_account_id, delegator_account_id from mandate where id = $1`, [made])).rows[0])
+        .toEqual({ owner_account_id: alice.accountId, delegator_account_id: bob.accountId });
+      expect((await pool.query(`select granted_by from mandate_line where request_id = $1`, [requestId])).rows).toEqual([{ granted_by: bob.accountId }]);
+      // 남(alice)의 글이 머리면 bob 은 위임장을 세울 수 없다.
+      const aliceRoot = await plainRoot();
+      const other = await card({ kind: 'merge', target: 'acme-org/c3-other', root: aliceRoot, mandateId: null });
+      expect(await decideCard(other.cardId, 'approve_new_mandate', bob.accountId)).toMatchObject({ ok: false, code: 'mandate_unavailable' });
+      await ageRequest(requestId); await ageRequest(other.requestId);
+    });
+  });
+
   it('approve_new_mandate on a no-mandate turn → mandate on the card thread for the owner, then a line', async () => {
     const root = await plainRoot();
     const target = rule();
