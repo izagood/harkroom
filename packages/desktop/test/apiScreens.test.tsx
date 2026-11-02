@@ -272,10 +272,22 @@ describe('ApiGrantForm 고치기(editMode)', () => {
     expect((c.putGrant.mock.calls[0] as unknown as [string, Record<string, unknown>])[1]).toMatchObject({ limits: { methods: ['GET'] } });
   });
 
+  it('경로를 넓히기만 하면(새 경로가 옛 경로의 접두) 하위 권한 경고를 띄우지 않는다', () => {
+    setup();
+    render(<ApiGrantForm editMode allowWriteNoExpiry delegatedCount={2} agentId="agent-1" connectors={[conn()]} existing={ex({ limits: { methods: ['GET', 'POST'], pathPrefix: '/api/catalog/' } })} onDone={() => {}} onCancel={() => {}} />);
+    fireEvent.change(screen.getByLabelText('경로 (이것으로 시작하는 경로만)'), { target: { value: '/api/' } });
+    expect(screen.queryByTestId('api-grant-children-warning')).toBeNull();
+    fireEvent.change(screen.getByLabelText('경로 (이것으로 시작하는 경로만)'), { target: { value: '/api/catalog/x/' } });
+    expect(screen.getByTestId('api-grant-children-warning')).toBeTruthy();
+  });
+
   it('멈춘 부여는 「저장하면 다시 켜진다」를 보이고 칸을 안 바꿔도 저장할 수 있다', () => {
     setup();
     render(<ApiGrantForm editMode allowWriteNoExpiry agentId="agent-1" connectors={[conn()]} existing={ex({ suspendedAt: '2026-11-02T00:00:00Z' })} onDone={() => {}} onCancel={() => {}} />);
     expect(screen.getByTestId('api-grant-resume-warning').textContent).toContain('다시 켜진다');
+    // 「바뀐 것이 없다」 대신 「상태: 멈춤 → 켜짐」 줄(designer 고칠 것 1).
+    expect(screen.getByTestId('api-grant-changes').textContent).not.toContain('바뀐 것이 없다');
+    expect(screen.getByTestId('api-grant-change-state').textContent).toContain('멈춤 → 켜짐');
     expect((screen.getByRole('button', { name: '저장' }) as HTMLButtonElement).disabled).toBe(false);
   });
 

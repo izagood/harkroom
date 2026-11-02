@@ -136,23 +136,27 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
     : effectiveExpiry === 'none' ? t('agents.grants.noExpiry') : t(effectiveExpiry === '7d' ? 'apiGrant.expiry7d' : 'apiGrant.expiry30d');
   // [고치기]: 바뀐 칸만 「전 → 후」로 보인다. 서버도 같은 칸을 감사에 전→후로 남긴다.
   const exHuman = !!existing?.writeNeedsHumanCause;
-  const changes: { key: string; label: string; from: string; to: string }[] = !(editMode && existing) ? [] : [
+  const changes: { key: string; label: string; from: string; to: string; mono?: boolean }[] = !(editMode && existing) ? [] : [
+    // 멈춘 부여를 저장하면 다시 켜진다 — 그것도 바뀜이다(「바뀐 것이 없다」와 어긋나지 않게, designer 고칠 것 1).
+    ...(existing.suspendedAt ? [{ key: 'state', label: t('apiGrant.stateLabel'), from: t('apiGrant.stateStopped'), to: t('apiGrant.stateOn') }] : []),
     ...((existing.limits?.methods ?? []).join('·') !== methods.join('·')
       ? [{ key: 'scope', label: t('apiGrant.scope'), from: describeScope(existing.limits?.methods ?? []), to: describeScope(methods) }] : []),
-    ...((existing.limits?.pathPrefix ?? '') !== pathPrefix ? [{ key: 'path', label: t('apiGrant.pathShort'), from: existing.limits?.pathPrefix ?? '—', to: pathPrefix || '—' }] : []),
+    ...((existing.limits?.pathPrefix ?? '') !== pathPrefix ? [{ key: 'path', label: t('apiGrant.pathShort'), from: existing.limits?.pathPrefix ?? '—', to: pathPrefix || '—', mono: true }] : []),
     ...(effectiveExpiry !== 'keep' ? [{ key: 'expiry', label: t('apiGrant.expiry'), from: untilText(existing.expiresAt), to: nextUntil }] : []),
     ...(scope === 'write' && humanOnly !== null && (exScope !== 'write' || (humanOnly === 'yes') !== exHuman)
       ? [{ key: 'human', label: t('apiGrant.humanOnly'), from: exScope === 'write' ? t(exHuman ? 'apiGrant.humanOnlyYes' : 'apiGrant.humanOnlyNo') : '—', to: t(humanOnly === 'yes' ? 'apiGrant.humanOnlyYes' : 'apiGrant.humanOnlyNo') }] : []),
   ];
+  // 좁힘 = 메서드가 빠지거나 새 경로가 옛 경로 안으로 들어가지 않을 때(옛 경로 → 그 접두로 넓히기만 하면 아니다).
+  const oldPrefix = existing?.limits?.pathPrefix ?? '';
   const narrowing = editMode && !!existing && (
-    (existing.limits?.methods ?? []).some((m) => !methods.includes(m as ApiMethod)) || (existing.limits?.pathPrefix ?? '') !== pathPrefix);
+    (existing.limits?.methods ?? []).some((m) => !methods.includes(m as ApiMethod)) || (oldPrefix !== pathPrefix && !oldPrefix.startsWith(pathPrefix)));
   return (
     <div className="mt-2 space-y-2 rounded border border-border bg-surface-sunken p-2 text-meta text-fg" data-testid="api-grant-form">
       {editMode && existing && (
         <div className="space-y-0.5 rounded border border-border bg-surface px-2 py-1" data-testid="api-grant-changes">
           {changes.length === 0
             ? <div className="text-fg-subtle">{t('apiGrant.noChanges')}</div>
-            : changes.map((x) => <div key={x.key} data-testid={`api-grant-change-${x.key}`}>{x.label}: <span className="font-mono">{x.from}</span> → <span className="font-mono">{x.to}</span></div>)}
+            : changes.map((x) => <div key={x.key} data-testid={`api-grant-change-${x.key}`}>{x.label}: <span className={x.mono ? 'font-mono' : ''}>{x.from}</span> → <span className={x.mono ? 'font-mono' : ''}>{x.to}</span></div>)}
           {/* 멈춘 부여를 고치면 다시 켜진다(서버 upsert 가 정지를 푼다) — 만료만 만지다 되살리지 않게 눈에 띄게(security 조건 3). */}
           {existing.suspendedAt && <div className="text-warning" data-testid="api-grant-resume-warning">⚠ {t('apiGrant.resumeWarn')}</div>}
           {narrowing && delegatedCount > 0 && <div className="text-warning" data-testid="api-grant-children-warning">⚠ {t('apiGrant.childrenWarn', { n: String(delegatedCount) })}</div>}

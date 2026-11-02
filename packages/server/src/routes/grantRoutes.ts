@@ -203,9 +203,10 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
     const target = await pool.query(`select 1 from account where id = $1`, [id]);
     if (!target.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: '그런 계정이 없다' } });
     // 고치기(같은 행이 있었으면)는 감사를 전→후로 남긴다 — 고치기 전 값을 먼저 읽는다.
-    const before = (await pool.query<{ expiresAt: Date | null; limits: unknown; writeNeedsHumanCause: boolean; delegateDepth: number; allowAgentCause: boolean; suspended: boolean }>(
+    const before = (await pool.query<{ expiresAt: Date | null; limits: unknown; writeNeedsHumanCause: boolean; delegateDepth: number; allowAgentCause: boolean; suspended: boolean; grantedBy: string; parentGrantId: string | null }>(
       `select expires_at as "expiresAt", limits, write_needs_human_cause as "writeNeedsHumanCause", delegate_depth as "delegateDepth",
-              allow_agent_cause as "allowAgentCause", suspended_at is not null as suspended
+              allow_agent_cause as "allowAgentCause", suspended_at is not null as suspended,
+              granted_by as "grantedBy", parent_grant_id as "parentGrantId"
          from account_grant where account_id = $1 and capability = $2 and scope = $3`, [id, capability, scope])).rows[0] ?? null;
     // 같은 (계정, capability, scope) 에 다시 주면 갱신이다 — 준 사람과 만료가 새 값으로 바뀐다. 사람이 다시 주면
     // 그 줄은 루트가 되고(parent 비움) 정지도 풀린다 — 사람이 바뀐 연결을 보고 다시 믿기로 한 것이다.
@@ -233,6 +234,9 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
       if (before.allowAgentCause !== (allowAgentCause ?? false)) changed.allowAgentCause = [before.allowAgentCause, allowAgentCause ?? false];
       // 멈춘 부여는 고치면 다시 켜진다 — 그 사실도 남긴다.
       if (before.suspended) changed.suspended = [true, false];
+      // 위임받은 줄을 소유자가 고치면 그 줄은 소유자가 준 루트가 된다 — 누가 준 줄이었는지 남긴다(security n1).
+      if (before.grantedBy !== req.account!.id) changed.grantedBy = [before.grantedBy, req.account!.id];
+      if (before.parentGrantId !== null) changed.parentGrantId = [before.parentGrantId, null];
     }
     await recordAudit(pool, {
       action: before ? 'grant.updated' : 'grant.given', ...actorOf(req), target: id,
