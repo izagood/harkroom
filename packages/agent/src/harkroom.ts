@@ -216,12 +216,22 @@ export class HarkroomAgentClient {
    * 턴 임대(비밀 보관소 086). 이 멘션에 대해 **한 번만** 받을 수 있다 — 거절(403 not_invoked·409 lease_used)
    * 이든 서버가 보관소를 안 켰든(404·409) 비밀 없이 돌면 되므로 null 이다. 토큰은 어디에도 찍지 않는다.
    */
-  async issueTurnLease(causeMessageId: string): Promise<{ id: string; token: string; expiresAt: string } | null> {
+  async issueTurnLease(causeMessageId: string, log: (line: string) => void = (line) => console.error(line)): Promise<{ id: string; token: string; expiresAt: string } | null> {
     const res = await this.link.request({
       type: 'http.forward', method: 'POST', path: '/agent/turn-leases',
       body: JSON.stringify({ causeMessageId }), contentType: 'application/json',
     });
-    if (res.status !== 200 || !res.body) return null;
+    if (res.status !== 200 || !res.body) {
+      // S0: 거절 사유를 한 줄 남긴다 — 이 턴에 비밀·머지·API 가 왜 없는지(`no_lease`)를 나중에 가를 수 있게.
+      // 원인 글 id·상태·서버 코드만 싣는다(토큰·비밀 이름 없음). 코드는 짧은 낱말만 받는다.
+      let code = 'unknown';
+      try {
+        const c = (JSON.parse(res.body ?? '') as { error?: { code?: unknown } }).error?.code;
+        if (typeof c === 'string' && /^[a-z_]{1,40}$/.test(c)) code = c;
+      } catch { /* 본문 없음·JSON 아님 */ }
+      log(`[secretLeases] 임대 발급 거절 cause=${causeMessageId} status=${res.status} code=${code}`);
+      return null;
+    }
     try {
       const lease = (JSON.parse(res.body) as { lease?: { id?: unknown; token?: unknown; expiresAt?: unknown } }).lease;
       return lease && typeof lease.id === 'string' && typeof lease.token === 'string' && typeof lease.expiresAt === 'string'
