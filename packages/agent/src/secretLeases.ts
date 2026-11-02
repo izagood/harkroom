@@ -24,7 +24,8 @@ export interface TurnLease { id: string; token: string; expiresAt: string }
 
 export interface SecretLeaseDeps {
   /** `POST /agent/turn-leases`. 거절·실패면 null — 이유는 로그 한 줄로 충분하다(토큰은 찍지 않는다). */
-  issue(causeMessageId: string): Promise<TurnLease | null>;
+  /** `'lease_used'` = 앞 러너가 이 멘션의 임대를 이미 받아 갔다(409). */
+  issue(causeMessageId: string): Promise<TurnLease | 'lease_used' | null>;
   notifyLease(cause: string, lease: TurnLease): void;
   notifyEnded(cause: string): void;
   /** 턴이 아직 돈다(C-1). 없으면(옛 배선) 늘리지 않는다 — 임대는 발급 수명대로 끝난다. */
@@ -37,7 +38,11 @@ export interface SecretLeaseDeps {
 }
 
 export interface SecretLeases {
-  acquire(causeMessageId: string): Promise<void>;
+  /**
+   * 임대를 받는다. `'lease_used'` 면 이 멘션의 임대는 앞 러너가 이미 받아 갔다 — 호출부는 임대 없이 돌리지 말고 실패로
+   * 알린다(비밀·API·머지가 그 턴에서 `no_lease` 로 줄줄이 막히는 대신, 사람이 다시 부르면 새 멘션으로 새 임대를 받는다).
+   */
+  acquire(causeMessageId: string): Promise<'held' | 'none' | 'lease_used'>;
   /** 그 멘션의 하네스 기록(파일 또는 디렉터리 — 디렉터리면 그 아래 일반 파일 전부). 같은 멘션의 재시도가 여럿 남길 수 있다. */
   noteTranscript(causeMessageId: string, path: string): void;
   /** 가리고 놓는다. 던지지 않는다 — 가리기가 실패해도 임대는 놓는다(값을 오래 붙들지 않는다). */
@@ -51,7 +56,7 @@ export interface SecretLeases {
   drain(ms: number): Promise<void>;
 }
 
-interface Held { leaseId: string | null; transcripts: Set<string>; beat?: ReturnType<typeof setInterval> }
+interface Held { leaseId: string | null; used?: boolean; transcripts: Set<string>; beat?: ReturnType<typeof setInterval> }
 
 /** 서버 갱신 폭(LEASE_RENEW_MS 10분)의 절반 — 박동 하나를 놓쳐도 다음 박동이 만료 전에 닿는다. */
 export const LEASE_HEARTBEAT_MS = 4 * 60_000;
@@ -92,11 +97,14 @@ export function createSecretLeases(deps: SecretLeaseDeps): SecretLeases {
 
   return {
     async acquire(cause) {
-      if (held.has(cause)) return;
+      // 재시도·계정 전환은 처음 받은 결과를 그대로 쓴다(멘션당 한 번만 묻는다).
+      const prior = held.get(cause);
+      if (prior) return prior.leaseId ? 'held' : prior.used ? 'lease_used' : 'none';
       const h: Held = { leaseId: null, transcripts: new Set() };
       held.set(cause, h);
       const lease = await deps.issue(cause).catch(() => null);
-      if (!lease) return;
+      if (lease === 'lease_used') { h.used = true; return 'lease_used'; }
+      if (!lease) return 'none';
       h.leaseId = lease.id;
       deps.notifyLease(cause, lease);
       const beat = deps.notifyHeartbeat;
@@ -105,6 +113,7 @@ export function createSecretLeases(deps: SecretLeaseDeps): SecretLeases {
         h.beat = setInterval(() => { try { beat(cause); } catch { /* 링크 쪽 실패 — 다음 박동 */ } }, deps.heartbeatMs ?? LEASE_HEARTBEAT_MS);
         h.beat.unref?.();
       }
+      return 'held';
     },
     noteTranscript(cause, path) {
       held.get(cause)?.transcripts.add(path);

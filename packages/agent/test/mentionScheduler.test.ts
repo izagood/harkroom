@@ -58,6 +58,8 @@ function harness(opts: {
   markReadFails?: () => boolean;
   /** 앞 세대가 끝냈는데 읽음 처리만 못 한 entry(`HARKROOM_HANDOVER_DONE`, L2). */
   handoverDone?: Set<number>;
+  /** 턴 임대(비밀 보관소) — 시험이 acquire 결과를 정한다. */
+  secretLeases?: { acquire(cause: string): Promise<'held' | 'none' | 'lease_used'>; release(cause: string): Promise<void> };
 }) {
   const markedRead: number[] = [];
   /** `markRead` 가 불린 **호출** 단위 — 묶음 호출(L1) 회귀선이 본다. */
@@ -95,6 +97,7 @@ function harness(opts: {
     ...(opts.held ? { heldEntryIds: () => opts.held! } : {}),
     ...(opts.handoverDone ? { handoverDone: opts.handoverDone } : {}),
     ...(opts.now ? { now: opts.now } : {}),
+    ...(opts.secretLeases ? { secretLeases: opts.secretLeases as never } : {}),
   });
   return { scheduler, registry, markedRead, markReadCalls, posted, failed };
 }
@@ -1469,4 +1472,40 @@ describe('멘션 턴 예약 — 인터랙티브 open 이 보는 「시작되는 
     await h.scheduler.drain();
     expect(h.registry.mentionStarting(key)).toBe(false);
   });
+
+describe('턴 임대를 앞 러너가 받아 갔으면(409 lease_used)', () => {
+  /**
+   * 앱 갱신·재기동으로 러너가 바뀐 뒤 같은 멘션을 다시 집으면 서버는 그 멘션의 임대를 다시 주지 않는다(한 번만 발급).
+   * 그대로 돌면 비밀·API·머지가 전부 `no_lease` 로 막힌 채 반쯤 일하고 끝난다 → 돌리지 않고 「다시 불러 달라」로 알린다.
+   *
+   * 되돌려 RED: 스케줄러가 acquire 결과를 안 보면 runTurn 이 불려 started 가 1, failed 가 비게 된다.
+   */
+  it('턴을 시작하지 않고 retryable 실패로 알리고 읽음 처리한다', async () => {
+    let ran = 0;
+    const released: string[] = [];
+    const h = harness({
+      runTurn: async () => { ran++; return { ok: true } as never; },
+      secretLeases: { acquire: async () => 'lease_used', release: async (c) => { released.push(c); } },
+    });
+    await h.scheduler.admit(batchOf([{ entryId: 7, messageId: 'm-7' }]), ctx);
+    await h.scheduler.drain();
+    expect(ran).toBe(0);
+    expect(h.failed).toEqual([expect.objectContaining({ retryable: true })]);
+    expect(h.failed[0]!.body).toContain('턴 임대를 잃었습니다');
+    expect(h.markedRead).toContain(7);
+    expect(released).toEqual(['m-7']);
+  });
+
+  it('임대가 없을 뿐이면(403·보관소 꺼짐) 지금처럼 비밀 없이 돈다', async () => {
+    let ran = 0;
+    const h = harness({
+      runTurn: async () => { ran++; return { ok: true } as never; },
+      secretLeases: { acquire: async () => 'none', release: async () => {} },
+    });
+    await h.scheduler.admit(batchOf([{ entryId: 8, messageId: 'm-8' }]), ctx);
+    await h.scheduler.drain();
+    expect(ran).toBe(1);
+    expect(h.failed).toEqual([]);
+  });
+});
 });

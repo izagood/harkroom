@@ -8,13 +8,13 @@ describe('issueTurnLease refusal log', () => {
   const CAUSE = '0f8fad5b-d9cb-469f-a165-70867728950e';
 
   it.each([
-    [409, JSON.stringify({ error: { code: 'lease_used', message: 'this mention has already had a lease' } }), 'status=409 code=lease_used'],
-    [403, JSON.stringify({ error: { code: 'not_invoked', message: 'x' } }), 'status=403 code=not_invoked'],
-    [502, '', 'status=502 code=unknown'],
-    [403, JSON.stringify({ error: { code: 'Weird Code; rm -rf' } }), 'status=403 code=unknown'],
-  ])('%s → logs the code and returns null', async (status, body, tail) => {
+    [409, JSON.stringify({ error: { code: 'lease_used', message: 'this mention has already had a lease' } }), 'status=409 code=lease_used', 'lease_used'],
+    [403, JSON.stringify({ error: { code: 'not_invoked', message: 'x' } }), 'status=403 code=not_invoked', null],
+    [502, '', 'status=502 code=unknown', null],
+    [403, JSON.stringify({ error: { code: 'Weird Code; rm -rf' } }), 'status=403 code=unknown', null],
+  ])('%s → logs the code; only 409 lease_used is told apart', async (status, body, tail, expected) => {
     const lines: string[] = [];
-    expect(await client(status, body).issueTurnLease(CAUSE, (l) => lines.push(l))).toBeNull();
+    expect(await client(status, body).issueTurnLease(CAUSE, (l) => lines.push(l))).toBe(expected);
     expect(lines).toEqual([`[secretLeases] 임대 발급 거절 cause=${CAUSE} ${tail}`]);
   });
 

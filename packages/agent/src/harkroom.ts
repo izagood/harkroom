@@ -213,10 +213,11 @@ export class HarkroomAgentClient {
    * 로그로 남긴다(`readMemory` 가 같은 이유로 던진다).
    */
   /**
-   * 턴 임대(비밀 보관소 086). 이 멘션에 대해 **한 번만** 받을 수 있다 — 거절(403 not_invoked·409 lease_used)
-   * 이든 서버가 보관소를 안 켰든(404·409) 비밀 없이 돌면 되므로 null 이다. 토큰은 어디에도 찍지 않는다.
+   * 턴 임대(비밀 보관소 086). 이 멘션에 대해 **한 번만** 받을 수 있다 — 거절(403 not_invoked)이든 서버가 보관소를 안
+   * 켰든(404) 비밀 없이 돌면 되므로 null 이다. **409 `lease_used` 만 따로 `'lease_used'`** 를 돌려준다 — 이 멘션의 임대를
+   * 앞 러너(앱 갱신·재기동 전)가 이미 받아 갔다는 뜻이라, 호출부가 「임대를 잃었다」로 실패 처리한다. 토큰은 어디에도 찍지 않는다.
    */
-  async issueTurnLease(causeMessageId: string, log: (line: string) => void = (line) => console.error(line)): Promise<{ id: string; token: string; expiresAt: string } | null> {
+  async issueTurnLease(causeMessageId: string, log: (line: string) => void = (line) => console.error(line)): Promise<{ id: string; token: string; expiresAt: string } | 'lease_used' | null> {
     const res = await this.link.request({
       type: 'http.forward', method: 'POST', path: '/agent/turn-leases',
       body: JSON.stringify({ causeMessageId }), contentType: 'application/json',
@@ -230,7 +231,7 @@ export class HarkroomAgentClient {
         if (typeof c === 'string' && /^[a-z_]{1,40}$/.test(c)) code = c;
       } catch { /* 본문 없음·JSON 아님 */ }
       log(`[secretLeases] 임대 발급 거절 cause=${causeMessageId} status=${res.status} code=${code}`);
-      return null;
+      return res.status === 409 && code === 'lease_used' ? 'lease_used' : null;
     }
     try {
       const lease = (JSON.parse(res.body) as { lease?: { id?: unknown; token?: unknown; expiresAt?: unknown } }).lease;
