@@ -9,7 +9,10 @@ export const PERMISSION_CARD_OPTION = {
   approveMandate: 'approve_mandate',
   /** [이번 한 번] — merge: 거절된 이 PR·이 head 1회 / command: 그 명령 1회. */
   approveOnce: 'approve_once',
-  /** [이 턴만] — tool. 지금은 서버가 턴 단위로 셀 수 없어 카드에 싣지 않는다(예약 id). */
+  /**
+   * [이번 턴만] — tool, 위임장이 있을 때(t1). 위임장에 줄을 적되 그 줄은 **이 카드 답이 깨우는 턴** 하나에서만 셸 허락에 실린다
+   * (줄 limits `turnCause` = 카드 글, 서버가 채운다). 7일 grant 를 쓰지 않는다.
+   */
   approveTurn: 'approve_turn',
   /** [이 스레드로 위임장 만들고 더하기] — 위임 없는 턴의 요청. */
   approveNewMandate: 'approve_new_mandate',
@@ -40,6 +43,8 @@ export interface PermissionCardLineLimits {
   pr?: number;
   head?: string;
   ciOverride?: boolean;
+  /** t1: 이 카드 답이 깨우는 턴 하나에서만(「이 턴 끝까지」). */
+  turn?: boolean;
 }
 
 /** 카드가 더할 줄. `limits` 는 선택지 id 마다. */

@@ -4,7 +4,7 @@ import { getMessageById, readAskRow, recordAskAnswer } from './messages.js';
 import { assertChannelVisible } from './channels.js';
 import { mayDecideFor } from './deciders.js';
 import {
-  decidePermissionRequest, PERMISSION_OPTION_APPROVE, PERMISSION_OPTION_APPROVE_HOUR, PERMISSION_OPTION_APPROVE_MANDATE, PERMISSION_OPTION_APPROVE_NEW_MANDATE,
+  decidePermissionRequest, PERMISSION_OPTION_APPROVE, PERMISSION_OPTION_APPROVE_HOUR, PERMISSION_OPTION_APPROVE_MANDATE, PERMISSION_OPTION_APPROVE_TURN, PERMISSION_OPTION_APPROVE_NEW_MANDATE,
   PERMISSION_OPTION_APPROVE_ONCE, PERMISSION_OPTION_DENY,
   type DecideRefusal, type PermissionDecision,
 } from './permissionRequests.js';
@@ -81,8 +81,9 @@ async function resolveCard(pool: Pool, messageId: string, meta: Record<string, u
 
 const OPTION_DECISION: Record<string, PermissionDecision> = {
   [PERMISSION_OPTION_APPROVE]: 'approve',
-  // W4b. `approve_turn`(tool 이 턴만)은 서버가 턴 단위로 셀 수 없어 받지 않는다(unknown_option).
   [PERMISSION_OPTION_APPROVE_MANDATE]: 'approve_mandate',
+  // t1: tool 카드의 [이번 턴만](위임장이 있을 때) — 그 카드 답이 깨우는 턴 하나.
+  [PERMISSION_OPTION_APPROVE_TURN]: 'approve_turn',
   [PERMISSION_OPTION_APPROVE_NEW_MANDATE]: 'approve_new_mandate',
   [PERMISSION_OPTION_APPROVE_ONCE]: 'approve_once',
   [PERMISSION_OPTION_APPROVE_HOUR]: 'approve_hour',
@@ -114,7 +115,7 @@ export async function decide(pool: Pool, ref: DecisionRef, actorId: string, inpu
   const verdict = await mayDecideFor(pool, { agentId: ref.agentId, actorId, channelId });
   if (!verdict.ok) return forbidden;
   const decision = Object.hasOwn(OPTION_DECISION, input.option) ? OPTION_DECISION[input.option] : undefined;
-  if (!decision) return { kind: 'permission', ok: false, status: 400, code: 'unknown_option', message: 'a permission card takes approve_mandate, approve_new_mandate, approve_once, approve, approve_hour or deny' };
+  if (!decision) return { kind: 'permission', ok: false, status: 400, code: 'unknown_option', message: 'a permission card takes approve_mandate, approve_new_mandate, approve_once, approve_turn, approve, approve_hour or deny' };
   let once = input.once;
   if (ref.mirrorMessageId && ref.cardMessageId) {
     // 거울로 정하는 사람도 원본 채널을 볼 수 있어야 한다 — 그 이름으로 원본에 적는다.

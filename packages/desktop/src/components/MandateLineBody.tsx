@@ -109,6 +109,7 @@ export function limitChips(l: PermissionCardLineLimits | undefined, t: Translate
   if (l.ciOverride) out.push(t('mandateCard.limit.ci'));
   if (l.uses != null) out.push(t('mandateCard.limit.uses', { n: String(l.uses) }));
   if (l.untilMs != null) out.push(untilText(l.untilMs, t));
+  if (l.turn) out.push(t('mandateCard.limit.turn'));
   return out;
 }
 
@@ -204,6 +205,8 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
   const line = src.line;
   const status = typeof src.request?.status === 'string' ? src.request.status : null;
   const onceAvailable = !!line?.limits.approve_once;
+  // t1(designer A안): 서버가 선택지를 실을 때만 [이번 턴만]을 그린다 — 흐린 버튼은 두지 않는다.
+  const turnAvailable = optionIds.includes('approve_turn');
   const standing = optionIds.find((id) => STANDING.includes(id)) ?? null;
   // 소유자를 모르면 **소유자가 아니라고 본다** — 버튼 없이 읽기 전용(「소유자만」 줄)으로 그린다.
   const viewerIsOwner = !!ownerOf && !!me && me.id === ownerOf;
@@ -277,6 +280,8 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       return <p className="text-fg" data-testid="mandate-ended" data-state="once">✓ {t('mandateCard.ended.once')}{used ? ` · gh ${used}` : ''}</p>;
     }
     if (status === 'obsolete') return null; // PermissionOncePanel 이 머지·닫힘 줄을 그린다.
+    // t1: 「이번 턴만」은 그 턴이 끝나면 저절로 빠진다 — [줄 빼기]를 두지 않는다.
+    if (answeredWith === 'approve_turn') return headSaysResult ? null : <p className="text-fg" data-testid="mandate-ended" data-state="turn">✓ {t('mandateCard.ended.turn')}</p>;
     if (status === 'granted' || (answeredWith && STANDING.includes(answeredWith))) {
       const mandateEnded = typeof (src.mandate as { endedAt?: unknown } | null)?.endedAt === 'string';
       return mandateEnded
@@ -325,6 +330,13 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
             <button type="button" data-testid={`ask-option-${standing}`} onClick={() => answer(standing)}
               className="rounded bg-accent px-2.5 py-1 text-body font-medium text-fg-on-strong">
               {t(standing === 'approve_new_mandate' ? 'mandateCard.approveNew' : 'mandateCard.approveMandate')}
+            </button>
+          )}
+          {turnAvailable && (
+            <button type="button" data-testid="ask-option-approve_turn" onClick={() => answer('approve_turn')}
+              title={t('mandateCard.turnTitle')} aria-label={`${t('mandateCard.turn')} — ${t('mandateCard.turnTitle')}`}
+              className={standing ? SECONDARY : PRIMARY}>
+              {t('mandateCard.turn')}
             </button>
           )}
           {onceAvailable && !onceByPanel && (

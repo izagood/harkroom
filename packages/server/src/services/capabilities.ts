@@ -13,6 +13,8 @@ export const isCap = (s: string): s is Cap => (CAPS as readonly string[]).includ
 /** 줄의 한도 — 모두 선택. `uses` 는 `used_count` 와, `until` 은 지금과 비교한다. merge 만 `pr`·`head`·`ghUser`·`ciOverride` 를 본다. */
 export interface LineLimits {
   uses?: number; pr?: number; head?: string; ghUser?: string | null; ciOverride?: boolean; until?: string;
+  /** t1 「이번 턴만」: 이 글(카드)을 원인으로 뜬 턴의 셸 허락에만 실린다(`mandateToolRulesFor`). 서버만 채운다. */
+  turnCause?: string;
 }
 
 /** 대조에 필요한 줄의 모양 — 저장된 줄과 상시 줄(standing) 둘 다. */
@@ -139,5 +141,7 @@ export function validateCapScope(cap: Cap, scope: string): ScopeVerdict {
 /** 줄이 살아 있고 이 행동을 덮는가. cap 이 다르면 거짓. */
 export function lineMatches(line: LineFacts, action: CapAction, now = new Date()): boolean {
   if (line.cap !== action.cap || !lineLive(line, now)) return false;
+  // t1: 턴 하나짜리 줄은 그 턴을 아는 자리(셸 허락)에서만 쓴다 — 턴을 모르는 판정(머지 등)에는 맞지 않는다.
+  if (line.limits.turnCause) return false;
   return (CAPABILITIES[action.cap] as CapEntry).matches(line, action);
 }

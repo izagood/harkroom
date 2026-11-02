@@ -352,6 +352,22 @@ describe('mandate lines (db)', () => {
     expect((await get(tm, root)).rules).not.toContain(rule);
   });
 
+  it('t1 turn-only tool line reaches only the turn whose cause is that card, not other turns of the mandate', async () => {
+    const root = await post(alice.accountId, '@tm turn only');
+    const m = (await mandateOf(root))!;
+    const reply = await post(alice.accountId, '@tm here is the card answer turn', { threadRootId: root });
+    const rule = 'Bash(kubectl --context ops get t1only:*)';
+    expect(await addMandateLine(pool, { mandateId: m, cap: 'tool', scope: rule, limits: { turnCause: reply, until: new Date(Date.now() + 3_600_000).toISOString() }, grantedBy: alice.accountId, via: 'button' })).toMatchObject({ ok: true });
+    const get = async (cause: string) => (await app.inject({ method: 'GET', url: `/agent/tool-allows?channelId=${ch}&cause=${cause}`, headers: asAgent(tm) })).json() as { rules: string[] };
+    await lease(root, tm);
+    const lr = await lease(reply, tm);
+    expect((await get(root)).rules).not.toContain(rule);
+    expect((await get(reply)).rules).toContain(rule);
+    // 그 턴의 임대가 끝나면 빠진다.
+    await pool.query(`update secret_turn_lease set ended_at = now() where id = $1`, [lr.id]);
+    expect((await get(reply)).rules).not.toContain(rule);
+  });
+
   it('GET /mandates/:id/lines: owner human session only, 404 otherwise', async () => {
     const root = await post(alice.accountId, '@tm route');
     const m = (await mandateOf(root))!;

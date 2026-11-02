@@ -337,7 +337,17 @@ class StringsKo implements Strings {
   @override
   String permResultAdded(String who) => '이 위임장에 더함 · $who';
   @override
-  String permResultStanding(String who) => '7일 허락함 · $who';
+  String permResultStandingUntil(String who, String date) => '$date까지 허락함 · $who';
+  @override
+  String permResultStandingEnded(String who) => '7일 허락 끝남 · $who';
+  @override
+  String permResultTurn(String who) => '이번 턴만 허락함 · $who';
+  @override
+  String get permApproveTurn => '이번 턴만';
+  @override
+  String get permLimitTurn => '이 턴 끝까지';
+  @override
+  String get permStateTurn => '이번 턴만 허락함';
 
   @override
   String permResultOnce(String who) => '이번 한 번 허락함 · $who';

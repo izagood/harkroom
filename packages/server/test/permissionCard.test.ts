@@ -15,7 +15,8 @@ const ids = (o: { id: string }[]) => o.map((x) => x.id);
 
 describe('permission card options (W4b)', () => {
   it('tool / merge / merge refusal / CI refusal / command, with and without a mandate', () => {
-    expect(ids(permissionCardOptions('tool', { mandate: true }))).toEqual(['approve_mandate', 'deny']);
+    // t1: tool 은 위임장이 있으면 보조 버튼 [이번 턴만].
+    expect(ids(permissionCardOptions('tool', { mandate: true }))).toEqual(['approve_mandate', 'approve_turn', 'deny']);
     expect(ids(permissionCardOptions('tool', { mandate: false }))).toEqual(['approve_new_mandate', 'deny']);
     expect(ids(permissionCardOptions('merge', { mandate: true }))).toEqual(['approve_mandate', 'deny']);
     expect(ids(permissionCardOptions('merge', { mandate: false }))).toEqual(['approve_new_mandate', 'deny']);
@@ -313,7 +314,30 @@ describe('permission card decisions (W4b)', () => {
     const d = await card({ kind: 'tool', target: rule(), root, mandateId });
     expect(await decideCard(d.cardId, 'deny')).toMatchObject({ ok: true, result: { status: 'denied' } });
     expect(await linesOf(d.requestId)).toEqual([]);
-    expect(await decideCard((await card({ kind: 'tool', target: rule(), root, mandateId })).cardId, 'approve_turn')).toMatchObject({ ok: false, code: 'unknown_option' });
+    expect(await decideCard((await card({ kind: 'tool', target: rule(), root, mandateId })).cardId, 'approve_forever')).toMatchObject({ ok: false, code: 'unknown_option' });
+  });
+
+  it('t1 approve_turn (tool on a mandate) → a line for the turn the answer wakes only, no grant; refused elsewhere', async () => {
+    const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot one turn');
+    const target = rule();
+    const { requestId, cardId, meta } = await card({ kind: 'tool', target, root, mandateId });
+    expect(meta).toMatchObject({ line: { limits: { approve_turn: { turn: true } } } });
+    expect(await decideCard(cardId, 'approve_turn')).toMatchObject({ ok: true, result: { status: 'granted', grantExpiresAt: null } });
+    expect((await pool.query(`select 1 from account_grant where account_id = $1 and scope like $2`, [agentId, `%${target}`])).rowCount).toBe(0);
+    const [line] = await linesOf(requestId);
+    expect(line).toMatchObject({ mandateId, cap: 'tool', scope: target, limits: { turnCause: cardId } });
+    expect(Date.parse(line.limits.until) - Date.now()).toBeLessThanOrEqual(3_600_000);
+    expect((await pool.query(`select meta from message where id = $1`, [cardId])).rows[0].meta.ask.answeredWith).toBe('approve_turn');
+    // 턴을 모르는 판정(findLine — 머지 등)에는 맞지 않는다.
+    expect(await findLine(pool, { mandateId, agentId, cap: 'tool', action: { cap: 'tool', rule: target } })).toBeNull();
+    await ageRequest(requestId);
+    // 위임장 없는 tool 카드·merge 카드는 [이번 턴만]을 받지 않는다.
+    const noMandate = await card({ kind: 'tool', target: rule(), root: await plainRoot(), mandateId: null });
+    expect(await decideCard(noMandate.cardId, 'approve_turn')).toMatchObject({ ok: false, code: 'bad_decision' });
+    const m2 = await mandateThread(alice.accountId, '@cardbot merge turn');
+    const mergeCard = await card({ kind: 'merge', target: 'acme-org/t1-merge', root: m2.root, mandateId: m2.mandateId });
+    expect(await decideCard(mergeCard.cardId, 'approve_turn')).toMatchObject({ ok: false, code: 'bad_decision' });
+    await ageRequest(noMandate.requestId); await ageRequest(mergeCard.requestId);
   });
 
   it('command requests are not approved for a mandate', async () => {
@@ -338,7 +362,7 @@ describe('permission card decisions (W4b)', () => {
     expect(other).toBeTruthy();
     const g = await renderPermissionMirror(pool, genuine.cardId, other);
     expect(g?.mirror).toEqual({ rootId: genuine.cardId, neutral: false, kind: 'tool', line: genuine.meta.line, bodyTargetLine: `명령 허용 \`${genuine.meta.target}\``, mandate: genuine.meta.mandate, ownerAccountId: alice.accountId });
-    expect(ids(g!.options)).toEqual(['approve_mandate', 'deny']);
+    expect(ids(g!.options)).toEqual(['approve_mandate', 'approve_turn', 'deny']);
     // r2: 거울 본문도 줄 카드 꼴(머리 + 이유) — 「이 채널의 모든 대화에서 · 7일」을 다시 말하지 않는다.
     // r5: 대상 줄(서버가 쓴 것)이 머리와 이유 사이에 선다.
     expect(g!.body.split('\n')).toEqual([expect.stringMatching(/^권한 요청 · /), `명령 허용 \`${genuine.meta.target}\``, expect.stringMatching(/^이유: /)]);

@@ -346,7 +346,12 @@ abstract class Strings {
 
   /// 권한 카드(W4 위임장).
   String permResultAdded(String who);
-  String permResultStanding(String who);
+  String permResultStandingUntil(String who, String date);
+  String permResultStandingEnded(String who);
+  String permResultTurn(String who);
+  String get permApproveTurn;
+  String get permLimitTurn;
+  String get permStateTurn;
 
   /// 권한 카드(W4 위임장).
   String permResultOnce(String who);
@@ -1462,6 +1467,9 @@ Map<String, String> stringsToMap(Strings s) => {
       'permApproveMandate': s.permApproveMandate,
       'permApproveNewMandate': s.permApproveNewMandate,
       'permApproveOnce': s.permApproveOnce,
+      'permApproveTurn': s.permApproveTurn,
+      'permLimitTurn': s.permLimitTurn,
+      'permStateTurn': s.permStateTurn,
       'permDeny': s.permDeny,
       'permOnceOperatorPicks': s.permOnceOperatorPicks,
       'permStateAdded': s.permStateAdded,

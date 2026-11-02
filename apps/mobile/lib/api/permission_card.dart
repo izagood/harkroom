@@ -6,6 +6,8 @@ library;
 const String permOptApproveMandate = 'approve_mandate';
 const String permOptApproveNewMandate = 'approve_new_mandate';
 const String permOptApproveOnce = 'approve_once';
+/// t1: tool 카드의 [이번 턴만](위임장이 있을 때만 서버가 싣는다).
+const String permOptApproveTurn = 'approve_turn';
 const String permOptDeny = 'deny';
 
 class PermissionCardMandate {
@@ -31,8 +33,10 @@ class PermissionCardMandate {
 }
 
 class PermissionCardLimits {
-  const PermissionCardLimits({this.untilMs, this.uses, this.pr, this.head, this.ciOverride = false});
+  const PermissionCardLimits({this.untilMs, this.uses, this.pr, this.head, this.ciOverride = false, this.turn = false});
   final int? untilMs;
+  /// t1: 이 카드 답이 깨우는 턴 하나에서만(「이 턴 끝까지」).
+  final bool turn;
   final int? uses;
   final int? pr;
   final String? head;
@@ -47,6 +51,7 @@ class PermissionCardLimits {
       pr: n(raw['pr']),
       head: raw['head'] as String?,
       ciOverride: raw['ciOverride'] == true,
+      turn: raw['turn'] == true,
     );
   }
 }
@@ -105,6 +110,7 @@ class PermissionCardInfo {
     this.warnings = const [],
     this.bodyWarningLine,
     this.grantedWithoutLine = false,
+    this.grantExpiresAt,
   });
 
   final String? kind;
@@ -141,6 +147,9 @@ class PermissionCardInfo {
   /// `answeredWith` 가 「위임장 만들고 더하기」여도, 이 값이 참이면 결과 머리를 「7일 허락함」으로 그린다. 원본만 안다(거울은 거짓).
   final bool grantedWithoutLine;
 
+  /// 서버가 적은 7일 기한(원본만) — 「{date}까지 허락함」에 쓴다(#1713 designer nit 1).
+  final String? grantExpiresAt;
+
   bool get isMirror => mirrorRootId != null;
 
   static PermissionCardInfo? read(Map<String, Object?> meta) {
@@ -166,6 +175,7 @@ class PermissionCardInfo {
         warnings: orderedPermissionWarnings(pr['warnings']),
         bodyWarningLine: pr['bodyWarningLine'] is String ? pr['bodyWarningLine'] as String : null,
         grantedWithoutLine: pr['status'] == 'granted' && pr['kind'] != 'command' && pr['lineId'] == null && pr['grantExpiresAt'] is String,
+        grantExpiresAt: pr['grantExpiresAt'] is String ? pr['grantExpiresAt'] as String : null,
       );
     }
     final mi = meta['permissionMirror'];

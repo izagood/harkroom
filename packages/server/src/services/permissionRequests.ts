@@ -49,7 +49,9 @@ export const PERMISSION_OPTION_APPROVE_NEW_MANDATE = PERMISSION_CARD_OPTION.appr
 /** merge 카드에서 위임장을 세울 수 없을 때(D1) — 7일 승인으로 넘어가지 않는다. */
 export const MERGE_NO_MANDATE_MESSAGE = 'a merge cannot be approved for 7 days without a mandate on this thread — approve the merge once from the refusal card, or approve from a thread you started';
 
-export type PermissionDecision = 'approve' | 'approve_mandate' | 'approve_new_mandate' | 'approve_once' | 'approve_hour' | 'deny';
+export type PermissionDecision = 'approve' | 'approve_mandate' | 'approve_new_mandate' | 'approve_once' | 'approve_hour' | 'approve_turn' | 'deny';
+/** t1: tool 카드의 [이번 턴만] — 위임장이 있을 때만 싣는다. */
+export const PERMISSION_OPTION_APPROVE_TURN = PERMISSION_CARD_OPTION.approveTurn;
 
 /** 7일 승인 갈래 — 옛 `approve` 와 W4b 의 두 갈래. 줄의 기한(7일)·요청 상태 'granted' 를 정한다. */
 function isStandingApprove(d: PermissionDecision): boolean {
@@ -405,6 +407,8 @@ export function permissionCardOptions(
   const standing = opts.mandate
     ? { id: PERMISSION_OPTION_APPROVE_MANDATE, label: '이 위임장 동안', recommended: true }
     : { id: PERMISSION_OPTION_APPROVE_NEW_MANDATE, label: '이 스레드로 위임장 만들고 더하기', recommended: true };
+  // t1(designer A안): tool 은 위임장이 있으면 보조 버튼 [이번 턴만] — 그 줄은 이 카드 답이 깨우는 턴에서만 쓰인다.
+  if (kind === 'tool' && opts.mandate) return [standing, { id: PERMISSION_OPTION_APPROVE_TURN, label: '이번 턴만' }, deny];
   return [standing, deny];
 }
 
@@ -420,6 +424,7 @@ export function cardLine(kind: PermissionKind, target: string, once: PermissionR
     if (!(kind === 'merge' && once?.reason === 'ci_not_green')) {
       limits[hasMandate ? 'approve_mandate' : 'approve_new_mandate'] = { untilMs: PERMISSION_GRANT_TTL_MS };
     }
+    if (kind === 'tool' && hasMandate) limits.approve_turn = { turn: true };
     if (kind === 'merge' && once) {
       limits.approve_once = { pr: once.number, head: once.headSha, uses: 1, ...(once.reason === 'ci_not_green' ? { ciOverride: true } : {}) };
     }
@@ -643,6 +648,11 @@ export async function decidePermissionRequest(
       await client.query('rollback');
       return { ok: false, status: 409, code: 'mandate_unavailable', message: MERGE_NO_MANDATE_MESSAGE };
     }
+    // t1: [이번 턴만]은 위임장이 있는 tool 카드에서만 — 줄 하나가 승인의 전부다(grant 없음). 카드 글이 있어야 그 답이 깨우는 턴을 가리킬 수 있다.
+    if (args.decision === 'approve_turn' && (r.kind !== 'tool' || !r.mandateId || !r.cardMessageId)) {
+      await client.query('rollback');
+      return { ok: false, status: 409, code: 'bad_decision', message: 'only a tool request on a mandate thread can be approved for one turn' };
+    }
     if (r.kind !== 'command' && args.decision === 'approve_hour') {
       await client.query('rollback');
       return { ok: false, status: 409, code: 'bad_decision', message: 'once/hour is only for an exact-command request' };
@@ -703,13 +713,13 @@ export async function decidePermissionRequest(
         ...(isStandingApprove(args.decision) && r.kind !== 'command' && grantExpiresAt ? { until: grantExpiresAt } : {}),
         ...(approval && args.once ? { once: { number: approval.number, headSha: approval.headSha, ghUser: args.once.ghUser, ciOverride: approval.reason === 'ci_not_green' } } : {}),
       });
-      if (isStandingApprove(args.decision) && r.kind !== 'command' && !grantWritten && !lineOutcome?.ok) {
+      if (((isStandingApprove(args.decision) && r.kind !== 'command' && !grantWritten) || args.decision === 'approve_turn') && !lineOutcome?.ok) {
         await client.query('rollback');
         const code = lineOutcome && !lineOutcome.ok ? lineOutcome.code : 'no_line';
         return { ok: false, status: 409, code: 'mandate_line_failed', message: `the line could not be added to the mandate (${code}) — nothing was approved; the agent has to ask again` };
       }
     }
-    const status = args.decision === 'deny' ? 'denied' : r.kind === 'command' || isStandingApprove(args.decision) ? 'granted' : 'approved_once';
+    const status = args.decision === 'deny' ? 'denied' : r.kind === 'command' || isStandingApprove(args.decision) || args.decision === 'approve_turn' ? 'granted' : 'approved_once';
     await client.query(
       `update permission_request set status = $2, decided_at = $3, decided_by = $4, grant_expires_at = $5, grant_mode = $6 where id = $1`,
       [r.id, status, now, args.actorId, grantExpiresAt, grantMode ?? null]);
@@ -738,7 +748,7 @@ export async function decidePermissionRequest(
     client.release();
   }
 
-  const status = args.decision === 'deny' ? 'denied' : row.kind === 'command' || isStandingApprove(args.decision) ? 'granted' : 'approved_once';
+  const status = args.decision === 'deny' ? 'denied' : row.kind === 'command' || isStandingApprove(args.decision) || args.decision === 'approve_turn' ? 'granted' : 'approved_once';
   if (approval && args.once) {
     await recordAudit(pool, {
       action: 'repo.merge.approved_once', actorId: args.actorId, target: approval.scope,
@@ -861,8 +871,8 @@ const CAP_FOR_KIND: Record<PermissionKind, Cap> = { tool: 'tool', command: 'comm
 export async function addLineFromRequest(
   client: PoolClient,
   args: {
-    request: { id: string; kind: PermissionKind; target: string; mandateId: string | null };
-    /** 요청한 에이전트 — 소유자가 아닌 사람(delegator)이 주는 줄은 이 에이전트 하나로 좁힌다(C-3 security). */
+    request: { id: string; kind: PermissionKind; target: string; mandateId: string | null; cardMessageId?: string | null };
+    /** 요청한 에이전트 — 소유자가 아닌 사람(delegator)이 주는 줄과 [이번 턴만] 줄은 이 에이전트 하나로 좁힌다(C-3·t1 security). */
     agentId?: string;
     decision: PermissionDecision; actorId: string; via: LineVia; now: Date;
     /** 7일 승인(tool·merge) — 같은 결정에서 쓴 account_grant 의 `expires_at`. 줄의 `limits.until` 이 된다. */
@@ -881,6 +891,11 @@ export async function addLineFromRequest(
   if (args.request.kind === 'merge' && args.decision === 'approve_once') {
     if (!args.once) return { ok: false, mandateId, cap, code: 'no_once' };
     Object.assign(limits, { pr: args.once.number, head: args.once.headSha, uses: 1, ghUser: args.once.ghUser, ciOverride: args.once.ciOverride });
+  } else if (args.decision === 'approve_turn') {
+    // t1: 이 카드 답이 깨우는 턴(원인 = 카드 글) 하나에서만. 그 턴의 임대가 끝나면 다시 쓰이지 않는다. 기한은 카드 기한과 같게 1시간.
+    if (args.request.kind !== 'tool' || !args.request.cardMessageId) return { ok: false, mandateId, cap, code: 'no_turn' };
+    limits.turnCause = args.request.cardMessageId;
+    limits.until = new Date(args.now.getTime() + COMMAND_GRANT_TTL_MS).toISOString();
   } else if (args.request.kind === 'command') {
     // 명령 grant 와 같은 기한(1시간). 「이번 한 번」은 한 번만.
     limits.until = new Date(args.now.getTime() + COMMAND_GRANT_TTL_MS).toISOString();
@@ -895,7 +910,8 @@ export async function addLineFromRequest(
     // C-3(security): 소유자가 아닌 사람이 주는 줄은 요청한 에이전트 하나에만 건다 — null(소유자의 모든 에이전트)이면 그 사람이 정할 수
     // 없는 소유자의 다른 에이전트에게도 열린다. 소유자 줄은 지금처럼 null.
     const mOwner = (await client.query<{ owner: string }>(`select owner_account_id as owner from mandate where id = $1`, [mandateId])).rows[0]?.owner;
-    const narrow = args.agentId && mOwner && args.actorId !== mOwner ? [args.agentId] : null;
+    // t1: [이번 턴만] 줄은 소유자 것도 요청한 에이전트 하나로 — 카드 글을 원인으로 뜬 다른 에이전트 턴에 실리지 않게(security).
+    const narrow = args.agentId && ((mOwner && args.actorId !== mOwner) || args.decision === 'approve_turn') ? [args.agentId] : null;
     const added = await addMandateLine(client, {
       mandateId, cap, scope: v.scope, limits, grantedBy: args.actorId, via: args.via, requestId: args.request.id, now: args.now,
       ...(narrow ? { agentIds: narrow } : {}),
@@ -1080,8 +1096,10 @@ export async function mandateToolRulesFor(pool: Pool, args: {
     if (l.cap !== 'tool' || l.readOnly || l.revokedAt) continue;
     if (l.agentIds !== null && !l.agentIds.includes(args.agentId)) continue;
     if (!(await mayStill(l.grantedBy))) continue;
-    const limits = (l.limits ?? {}) as { until?: string; uses?: number };
+    const limits = (l.limits ?? {}) as { until?: string; uses?: number; turnCause?: string };
     if (limits.uses !== undefined) continue;
+    // t1 「이번 턴만」: 그 카드 답이 깨운 턴(원인 = 카드 글)에서만.
+    if (limits.turnCause !== undefined && limits.turnCause !== args.causeMessageId) continue;
     if (limits.until !== undefined && !(Date.parse(limits.until) > now.getTime())) continue;
     const v = validateToolRule(l.scope);
     if (v.ok && v.rule === l.scope) out.add(l.scope);
