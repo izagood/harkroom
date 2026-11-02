@@ -48,9 +48,22 @@ export const PERMISSION_OPTION_APPROVE_NEW_MANDATE = PERMISSION_CARD_OPTION.appr
 
 export type PermissionDecision = 'approve' | 'approve_mandate' | 'approve_new_mandate' | 'approve_once' | 'approve_hour' | 'deny';
 
-/** 7일 grant 를 쓰는 결정 — 옛 `approve` 와 W4b 의 두 갈래. */
+/** 7일 승인 갈래 — 옛 `approve` 와 W4b 의 두 갈래. 줄의 기한(7일)·요청 상태 'granted' 를 정한다. */
 function isStandingApprove(d: PermissionDecision): boolean {
   return d === 'approve' || d === 'approve_mandate' || d === 'approve_new_mandate';
+}
+
+/**
+ * 7일 승인이 account_grant 도 쓰는가(D1, 소유자 결정 2026-11-02) — **merge** 카드에서 위임장에 줄을 적는 W4b 두 갈래는 grant 를 쓰지 않는다.
+ * merge grant 는 채널을 가리지 않고 소유자의 모든 위임장에 상시 줄로 펼쳐지므로(`listMandateLines`), 쓰면 그 위임장 경계를 넘고
+ * [줄 빼기]로도 거둘 수 없다. 머지 판정(`mergeGrants.ts` checkByMandate)은 위임장 줄만 보므로 줄 하나로 충분하다.
+ * - 옛 `approve`(7일 버튼)와 줄을 적을 위임장이 없는 승인(소유자 아닌 사람·위임장을 못 세운 스레드)은 grant 를 쓴다.
+ * - **tool** 카드는 그대로 grant 를 쓴다 — 러너의 셸 허락(`toolAllowsFor`)은 아직 account_grant 만 읽고 위임장 줄을 보지 않는다.
+ *   tool 까지 줄만 쓰려면 `/agent/tool-allows` 가 그 턴 임대의 위임장 줄을 읽어야 한다(후속).
+ */
+function writesStandingGrant(d: PermissionDecision, kind: PermissionKind, mandateId: string | null): boolean {
+  if (!isStandingApprove(d)) return false;
+  return d === 'approve' || kind !== 'merge' || !mandateId;
 }
 
 export type PermissionKind = 'tool' | 'merge' | 'command';
@@ -545,6 +558,8 @@ export async function decidePermissionRequest(
   let row: { id: string; kind: PermissionKind; target: string; channelId: string; threadRootId: string; cardMessageId: string | null; denialId: string | null; mandateId: string | null } | undefined;
   let lineOutcome: MandateLineOutcome | null = null;
   let grantExpiresAt: Date | null = null;
+  /** 이 결정이 account_grant 를 썼는가(D1) — 감사 `grant.given`·grant.changed 는 이때만. */
+  let grantWritten = false;
   let grantMode: 'once' | 'hour' | undefined;
   let commandGrantId: string | undefined;
   const approving = args.decision !== 'deny';
@@ -634,7 +649,11 @@ export async function decidePermissionRequest(
           return { ok: false, status: 400, code: 'ci_card_once_only', message: CI_CARD_ONCE_ONLY_MESSAGE };
         }
       }
+      // 줄의 기한이기도 하다 — grant 를 쓰지 않는 갈래(D1)도 줄·카드에 이 기한을 적는다.
       grantExpiresAt = new Date(now.getTime() + PERMISSION_GRANT_TTL_MS);
+    }
+    if (writesStandingGrant(args.decision, r.kind, r.mandateId)) {
+      grantWritten = true;
       const capability = r.kind === 'tool' ? 'tool.allow' : 'repo.merge';
       const scope = r.kind === 'tool' ? toolScope(r.channelId, r.target) : r.target;
       // 있던 grant(만료된 것 등)는 덮는다 — `allow_agent_cause` 는 끈다(카드는 좁히기만 한다).
@@ -654,7 +673,8 @@ export async function decidePermissionRequest(
           [args.agentId, capability, scope])).rows[0]?.expiresAt ?? grantExpiresAt;
       }
     }
-    // W4: 위임이 있는 요청의 승인은 그 위임에 줄을 하나 **더** 적는다 — 위의 grant 는 그대로다. 줄이 실패해도 결정은 깨지 않는다(savepoint).
+    // W4: 위임이 있는 요청의 승인은 그 위임에 줄을 하나 적는다(옛 `approve` 는 grant 와 함께). 줄이 실패해도 결정은 깨지 않는다(savepoint)
+    // — 단, grant 를 쓰지 않는 갈래(D1, merge)는 줄이 승인의 전부라 줄이 실패하면 결정을 되돌린다(빈 승인을 「됨」으로 닫지 않는다).
     if (approving && r.mandateId) {
       lineOutcome = await addLineFromRequest(client, {
         request: r, decision: args.decision, actorId: args.actorId, now,
@@ -663,6 +683,11 @@ export async function decidePermissionRequest(
         ...(isStandingApprove(args.decision) && r.kind !== 'command' && grantExpiresAt ? { until: grantExpiresAt } : {}),
         ...(approval && args.once ? { once: { number: approval.number, headSha: approval.headSha, ghUser: args.once.ghUser, ciOverride: approval.reason === 'ci_not_green' } } : {}),
       });
+      if (isStandingApprove(args.decision) && r.kind !== 'command' && !grantWritten && !lineOutcome?.ok) {
+        await client.query('rollback');
+        const code = lineOutcome && !lineOutcome.ok ? lineOutcome.code : 'no_line';
+        return { ok: false, status: 409, code: 'mandate_line_failed', message: `the line could not be added to the mandate (${code}) — nothing was approved; the agent has to ask again` };
+      }
     }
     const status = args.decision === 'deny' ? 'denied' : r.kind === 'command' || isStandingApprove(args.decision) ? 'granted' : 'approved_once';
     await client.query(
@@ -718,7 +743,7 @@ export async function decidePermissionRequest(
   if (lineOutcome) await auditLineOutcome(pool, { actorId: args.actorId, agentId: args.agentId, requestId: row.id, outcome: lineOutcome });
   if (grantExpiresAt && row.kind === 'command') {
     emitEvent({ type: 'grant.changed', accountId: args.agentId, audience: 'all' });
-  } else if (grantExpiresAt) {
+  } else if (grantWritten && grantExpiresAt) {
     await recordAudit(pool, {
       action: 'grant.given', actorId: args.actorId, target: args.agentId,
       detail: {
