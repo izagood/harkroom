@@ -438,6 +438,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       // 턴 임대를 맡긴다·놓는다(비밀 보관소). relay 소켓에서만 온다 — 브릿지의 통지는 링크가 버린다.
       if (notice.type === 'secret.lease') { turnSecrets.noteLease(runnerId, agentId, notice); return; }
       if (notice.type === 'secret.leaseEnded') { void turnSecrets.leaseEnded(runnerId, notice.cause); return; }
+      if (notice.type === 'secret.leaseHeartbeat') { void turnSecrets.leaseHeartbeat(runnerId, notice.cause); return; }
       // API 키 연결의 그 턴 결과 — 실행 탭 「마지막 시도」 줄의 출처(2a). 코드는 링크가 허용 목록으로 이미 걸렀다.
       if (notice.type === 'providerLane.mode') { for (const c of communities) if (c.knowsAgent(agentId)) c.noteRunnerLane?.(runnerId, notice.on); return; }
       if (notice.type === 'providerLane.turn') { providerLaneStatus.noteTurn(agentId, notice.ok); return; }

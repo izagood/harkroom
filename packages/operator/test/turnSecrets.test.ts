@@ -140,3 +140,50 @@ describe('turnSecrets', () => {
     expect(isRunnerLinkNotice({ type: 'secret.leaseEnded', cause: 'c' })).toBe(true);
   });
 });
+
+describe('turnSecrets 임대 늘리기(C-1)', () => {
+  it('박동을 받으면 쥔 토큰으로 서버에 늘리기를 묻고, 서버가 준 만료 시각을 적는다. 거절·임대 없음·끝난 뒤엔 그대로', async () => {
+    let clock = Date.parse('2026-10-01T00:00:00Z');
+    const calls: { path: string; body: string }[] = [];
+    let renew: { status: number; body: string } = { status: 200, body: JSON.stringify({ expiresAt: '2026-10-01T00:45:00.000Z' }) };
+    const ts = createTurnSecrets({
+      root: join(mkdtempSync(join(tmpdir(), 'hk-ts-')), 'turn-secrets'), log: () => {}, now: () => clock,
+      forward: async (_a, req) => {
+        if (req.type !== 'http.forward') throw new Error('unexpected');
+        calls.push({ path: req.path, body: req.body ?? '' });
+        if (req.path.endsWith('/renew')) return { type: 'http.response', id: req.id, status: renew.status, body: renew.body };
+        return { type: 'http.response', id: req.id, status: 204, body: '' };
+      },
+    });
+    // 임대가 없으면 서버에 묻지 않는다.
+    await ts.leaseHeartbeat('r1', 'cause-1');
+    expect(calls).toHaveLength(0);
+
+    ts.noteLease('r1', 'a1', { type: 'secret.lease', cause: 'cause-1', leaseId: 'lease-1', token: 'tok-1', expiresAt: '2026-10-01T00:35:00.000Z' });
+    // 다른 러너의 박동은 이 임대를 늘리지 못한다.
+    await ts.leaseHeartbeat('r2', 'cause-1');
+    expect(calls).toHaveLength(0);
+
+    await ts.leaseHeartbeat('r1', 'cause-1');
+    expect(calls).toEqual([{ path: '/agent/turn-leases/lease-1/renew', body: JSON.stringify({ token: 'tok-1' }) }]);
+    // 35분을 넘겨도 서버가 늘려 준 45분까지는 살아 있다.
+    clock = Date.parse('2026-10-01T00:40:00Z');
+    expect(ts.lookup('r1', 'cause-1')).toMatchObject({ leaseId: 'lease-1' });
+
+    // 서버가 거절(끝남·만료·옛 서버 404)하면 고치지 않는다 — 45분에 끝난다.
+    renew = { status: 404, body: '' };
+    await ts.leaseHeartbeat('r1', 'cause-1');
+    clock = Date.parse('2026-10-01T00:45:00Z');
+    expect(ts.lookup('r1', 'cause-1')).toBeNull();
+    // 만료된 임대는 서버에 묻지도 않는다.
+    const n = calls.length;
+    await ts.leaseHeartbeat('r1', 'cause-1');
+    expect(calls).toHaveLength(n);
+  });
+
+  it('박동 통지는 relay 통지로 읽힌다(cause 가 있어야 한다)', () => {
+    expect(isRunnerLinkNotice({ type: 'secret.leaseHeartbeat', cause: 'c1' })).toBe(true);
+    expect(isRunnerLinkNotice({ type: 'secret.leaseHeartbeat' })).toBe(false);
+    expect(isRunnerLinkNotice({ type: 'secret.leaseHeartbeat', cause: '' })).toBe(false);
+  });
+});

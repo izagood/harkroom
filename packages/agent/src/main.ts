@@ -626,6 +626,7 @@ const secretLeases = createSecretLeases({
   issue: (cause) => harkroom.issueTurnLease(cause),
   notifyLease: (cause, lease) => relay.notifySecretLease(cause, lease),
   notifyEnded: (cause) => relay.notifySecretLeaseEnded(cause),
+  notifyHeartbeat: (cause) => relay.notifySecretLeaseHeartbeat(cause),
   // 오퍼레이터가 spawn 때 준다. 없으면(옛 오퍼레이터) 기록을 가리지 않는다 — 마운트도 그 오퍼레이터에는 없다.
   turnSecretsDir: process.env.HARKROOM_TURN_SECRETS_DIR ?? null,
 });

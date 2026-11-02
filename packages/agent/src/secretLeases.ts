@@ -12,6 +12,9 @@
  * - **놓기 전에 가린다**(D7). 그 멘션의 턴들이 남긴 하네스 기록(`noteTranscript`)에서 마운트한 값을 `***` 로
  *   바꾼다. 값은 오퍼레이터가 쓴 턴 디렉터리(`<turnSecretsDir>/<leaseId>/`)에서 읽는다 — 값이 새 통로로
  *   흐르지 않는다. 가린 **뒤에** 끝 통지를 보낸다(오퍼레이터가 그 디렉터리를 지운다).
+ * - **턴이 도는 동안만 늘린다**(C-1). 받은 뒤 놓을 때까지 `heartbeatMs` 마다 박동 통지를 보내고, 오퍼레이터가 그 토큰으로
+ *   서버에서 임대를 늘린다(상한 발급 + 70분). 놓으면 멈춘다 — 이 프로세스가 죽어도 멈춘다. 그래서 오래 사는 임대는 실제로
+ *   도는 턴의 것뿐이다.
  */
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -24,6 +27,10 @@ export interface SecretLeaseDeps {
   issue(causeMessageId: string): Promise<TurnLease | null>;
   notifyLease(cause: string, lease: TurnLease): void;
   notifyEnded(cause: string): void;
+  /** 턴이 아직 돈다(C-1). 없으면(옛 배선) 늘리지 않는다 — 임대는 발급 수명대로 끝난다. */
+  notifyHeartbeat?(cause: string): void;
+  /** 박동 간격. 서버의 갱신 폭(10분)보다 넉넉히 짧아야 한다 — 박동 하나를 잃어도 끊기지 않게. */
+  heartbeatMs?: number;
   /** 오퍼레이터의 턴 비밀 루트(`HARKROOM_TURN_SECRETS_DIR`). 없으면 가리지 않는다(옛 오퍼레이터). */
   turnSecretsDir?: string | null;
   log?(line: string): void;
@@ -44,7 +51,10 @@ export interface SecretLeases {
   drain(ms: number): Promise<void>;
 }
 
-interface Held { leaseId: string | null; transcripts: Set<string> }
+interface Held { leaseId: string | null; transcripts: Set<string>; beat?: ReturnType<typeof setInterval> }
+
+/** 서버 갱신 폭(LEASE_RENEW_MS 10분)의 절반 — 박동 하나를 놓쳐도 다음 박동이 만료 전에 닿는다. */
+export const LEASE_HEARTBEAT_MS = 4 * 60_000;
 
 export function createSecretLeases(deps: SecretLeaseDeps): SecretLeases {
   /** 멘션 id → 받은 임대(id 만). 거절된 것도 적는다(leaseId null) — 재시도마다 다시 묻지 않는다(어차피 409 다). */
@@ -89,6 +99,12 @@ export function createSecretLeases(deps: SecretLeaseDeps): SecretLeases {
       if (!lease) return;
       h.leaseId = lease.id;
       deps.notifyLease(cause, lease);
+      const beat = deps.notifyHeartbeat;
+      // 받는 사이에 놓였으면(release 가 먼저 왔다) 박동을 걸지 않는다 — 걸면 아무도 멈추지 않는다.
+      if (beat && held.get(cause) === h) {
+        h.beat = setInterval(() => { try { beat(cause); } catch { /* 링크 쪽 실패 — 다음 박동 */ } }, deps.heartbeatMs ?? LEASE_HEARTBEAT_MS);
+        h.beat.unref?.();
+      }
     },
     noteTranscript(cause, path) {
       held.get(cause)?.transcripts.add(path);
@@ -96,6 +112,7 @@ export function createSecretLeases(deps: SecretLeaseDeps): SecretLeases {
     async release(cause) {
       const h = held.get(cause);
       held.delete(cause);
+      if (h?.beat) clearInterval(h.beat);
       if (!h?.leaseId) return;
       const work = (async () => {
         await scrub(h).catch(() => {});

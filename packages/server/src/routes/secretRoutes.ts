@@ -17,7 +17,7 @@ import { actorOf, recordAudit } from '../audit.js';
 import { scanWrite } from '../services/contentScan.js';
 import type { SecretKeyring } from '../services/secretKeyring.js';
 import { needlesFor } from '../services/secretLeakGuard.js';
-import { endTurnLease, issueTurnLease, OncePerWindow, revealSecret, RevealLimiter } from '../services/secretAccess.js';
+import { endTurnLease, issueTurnLease, OncePerWindow, renewTurnLease, revealSecret, RevealLimiter } from '../services/secretAccess.js';
 import { currentStepUp, extendStepUp } from '../services/stepUp.js';
 import { createAgentSecret, createLimiter, GENERATE_TYPES, hasCreateGrant, rotateAgentSecret, type CreateDenial, type CreateSource } from '../services/secretCreate.js';
 
@@ -614,6 +614,18 @@ export async function registerSecretRoutes(
     if (!id.success || !body.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId and token are required' } });
     const ended = await endTurnLease(pool, { leaseId: id.data, token: body.data.token, agentId: who.agentId });
     return ended ? reply.code(204).send() : reply.code(404).send({ error: { code: 'not_found', message: 'no such live lease' } });
+  });
+
+  // 턴이 아직 돈다(C-1) — 오퍼레이터가 러너의 하트비트를 받아 부른다. 끝났거나 만료됐으면 404 — 되살리지 않는다.
+  app.post<{ Params: { id: string } }>('/agent/turn-leases/:id/renew', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    const id = z.string().uuid().safeParse(req.params.id);
+    const body = z.object({ token: z.string().min(1).max(200) }).safeParse(req.body ?? {});
+    if (!id.success || !body.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId and token are required' } });
+    const renewed = await renewTurnLease(pool, { leaseId: id.data, token: body.data.token, ...who });
+    void reply.header('cache-control', 'no-store');
+    return renewed ? { expiresAt: renewed.expiresAt } : reply.code(404).send({ error: { code: 'not_found', message: 'no such live lease' } });
   });
 
   /**
