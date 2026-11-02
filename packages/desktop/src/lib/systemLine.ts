@@ -15,7 +15,8 @@ import { messageLinkFromMeta } from './link';
  */
 export type SystemLineShape = 'record' | 'response';
 
-const RECORD_KEY = /^system\.(member|threadModel)\./;
+// runner: 러너 알림 줄(앞 턴 대기·임대 잃음·조종 대기, 2026-11-02) — 누구의 요청에 대한 응답이 아니라 사람 멘션의 상태다.
+const RECORD_KEY = /^system\.(member|threadModel|runner)\./;
 
 export function systemLineShape(message: Pick<MessageRow, 'kind' | 'meta'>): SystemLineShape | null {
   if (message.kind !== 'system') return null;
@@ -27,12 +28,14 @@ export function systemLineShape(message: Pick<MessageRow, 'kind' | 'meta'>): Sys
   return RECORD_KEY.test(parsed.key) ? 'record' : 'response';
 }
 
-/** 기록 줄의 아이콘(시안 C) — 들어옴 ＋ · 나감/내보냄 − · 모델 ⚙ · 그 밖(옛 줄) •. */
+/** 기록 줄의 아이콘(시안 C) — 들어옴 ＋ · 나감/내보냄 − · 모델 ⚙ · 대기(앞 턴·조종) ⏳ · 넘겨받음 ↪ · 그 밖(옛 줄) •. */
 export function systemRecordIcon(message: Pick<MessageRow, 'meta'>): string {
   const key = parseSystemI18n((message.meta as Record<string, unknown> | undefined)?.i18n)?.key ?? '';
   if (key.startsWith('system.member.added')) return '＋';
   if (key.startsWith('system.member.')) return '−';
   if (key.startsWith('system.threadModel.')) return '⚙';
+  if (key === 'system.runner.fenced') return '↪';
+  if (key.startsWith('system.runner.')) return '⏳';
   return '•';
 }
 

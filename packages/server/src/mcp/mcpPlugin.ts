@@ -13,6 +13,7 @@ import {
 } from '@harkroom/shared';
 import { CAUSE_HEADER, COMMAND_FILES_HEADER, TURN_ID_HEADER, type CommandFileDigest } from '@harkroom/shared/runnerLink';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
+import { RUNNER_NOTICE_KEYS, RUNNER_NOTICE_MAX_PENDING, runnerNotice } from '../services/runnerNotices.js';
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
@@ -781,6 +782,43 @@ function buildMcpServer(
       channelId, authorId: account.id, body, threadRootId: threadRootId ?? null, kind: 'progress',
       meta: await reportedModelMeta(pool, account.id, model, threadRootId ?? null),
     });
+    if (posted.failure) return postFailureResult(posted.failure);
+    const { message, notified, replayed } = posted;
+    if (!replayed) {
+      const audience = await audienceFor(pool, channelId);
+      emitPosted(posted, audience);
+      for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+    }
+    return postedResult(message, notified);
+  });
+
+  /**
+   * 러너 알림 줄(2026-11-02, `services/runnerNotices.ts`). **러너만** 부른다 — 오퍼레이터를 거쳤고 턴 표지(원인·턴 id)가
+   * 없는 요청이다(`bg.claim` 과 같은 판정). 키만 받고 본문은 서버가 짓는다: 자유 본문을 받으면 에이전트가 아무 글이나
+   * 시스템 줄로 세운다. `serverNotice` 라 회신권·위임 의무를 닫지 않고, 시스템 줄이라 「마지막 말」·참여자에서 빠진다.
+   */
+  server.registerTool('message.notice', {
+    description: '러너 전용 — 정해진 알림 줄(앞 턴 대기·임대 잃음·조종 대기)을 시스템 줄로 남긴다. 턴 안에서는 거절된다',
+    inputSchema: {
+      channelId: z.string().uuid(),
+      threadRootId: z.string().uuid().optional(),
+      key: z.enum(RUNNER_NOTICE_KEYS),
+      handle: z.string().max(64).optional(),
+      pending: z.number().int().min(1).max(RUNNER_NOTICE_MAX_PENDING).optional(),
+    },
+  }, async ({ channelId, threadRootId, key, handle, pending }) => {
+    if (account.kind !== 'agent' || !operatorId || cause || turnId || bgJobId) {
+      return jsonResult({ error: { code: 'runner_only', message: 'message.notice 는 러너만 부른다' } });
+    }
+    if (!(await assertChannelVisible(pool, channelId, account.id))) {
+      return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    const notice = runnerNotice(key, account.id, { handle, pending });
+    const posted = await postMessage(pool, {
+      channelId, authorId: account.id, body: notice.body, threadRootId: threadRootId ?? null,
+      kind: 'system', serverNotice: true, meta: { i18n: notice.i18n },
+    });
+    if (posted.failure === 'rejected') return jsonResult({ error: { code: posted.rejection.code, message: posted.rejection.message } });
     if (posted.failure) return postFailureResult(posted.failure);
     const { message, notified, replayed } = posted;
     if (!replayed) {

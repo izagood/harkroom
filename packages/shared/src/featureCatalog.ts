@@ -205,6 +205,7 @@ export const CATALOG_ELSEWHERE: Readonly<Record<string, string>> = {
   'skill.propose': '러너 스킬 절(skillSection, 읽기 전용 턴엔 없음)',
   'automation.propose': '러너 스킬 절(skillSection, 읽기 전용 턴엔 없음)',
   'bg.claim': '백그라운드 회차 전용(bgExecutor) — 멘션 턴은 쓰지 않는다',
+  'message.notice': '러너 전용 알림 줄(mentionScheduler 의 대기·임대 잃음·조종 대기) — 턴 안에서는 runner_only 로 거절된다',
   'bg.complete': '백그라운드 회차 전용(bgExecutor) — 멘션 턴은 쓰지 않는다',
 };
 

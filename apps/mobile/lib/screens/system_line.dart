@@ -8,7 +8,8 @@ import '../i18n/system_text.dart';
 /// 는 「Harkroom · 시스템」 + 「↳ 누구의 무엇에 대해」 칩. 저장 모양은 그대로라 옛 데이터도 같이 고쳐진다.
 enum SystemLineShape { record, response }
 
-final RegExp _recordKey = RegExp(r'^system\.(member|threadModel)\.');
+// runner: 러너 알림 줄(2026-11-02) — 누구의 요청에 대한 응답이 아니라 사람 멘션의 상태다.
+final RegExp _recordKey = RegExp(r'^system\.(member|threadModel|runner)\.');
 
 String? _i18nKey(MessageRow m) {
   final tag = m.meta['i18n'];
@@ -28,12 +29,14 @@ SystemLineShape? systemLineShape(MessageRow m) {
   return _recordKey.hasMatch(key) ? SystemLineShape.record : SystemLineShape.response;
 }
 
-/// 기록 줄 아이콘 — 들어옴 ＋ · 나감/내보냄 − · 모델 ⚙ · 그 밖 •.
+/// 기록 줄 아이콘 — 들어옴 ＋ · 나감/내보냄 − · 모델 ⚙ · 대기(앞 턴·조종) ⏳ · 넘겨받음 ↪ · 그 밖 •.
 String systemRecordIcon(MessageRow m) {
   final key = _i18nKey(m) ?? '';
   if (key.startsWith('system.member.added')) return '＋';
   if (key.startsWith('system.member.')) return '−';
   if (key.startsWith('system.threadModel.')) return '⚙';
+  if (key == 'system.runner.fenced') return '↪';
+  if (key.startsWith('system.runner.')) return '⏳';
   return '•';
 }
 

@@ -85,4 +85,23 @@ describe('시스템 줄 두 겹', () => {
     expect(systemRecordIcon({ meta: { i18n: { key: 'system.member.left', args: { accountId: 'a1' } } } })).toBe('−');
     expect(systemRecordIcon({ meta: {} })).toBe('•');
   });
+
+  // 러너 알림 줄(2026-11-02, designer 1·2) — 사람 멘션의 상태라 기록 줄이다. 응답 줄이면 「↳ 에이전트의 요청에 대해」 칩이 틀린 말을 한다.
+  it('러너 알림 줄은 기록 줄 — 대기는 ⏳, 넘겨받음은 ↪, 문장에는 기호가 없다', () => {
+    const runner = (key: string, args: Record<string, unknown>) => ({ kind: 'system' as const, meta: { i18n: { key, args } } });
+    expect(systemLineShape(runner('system.runner.blockedByTurn', { agentId: 'a1' }))).toBe('record');
+    expect(systemLineShape(runner('system.runner.fenced', { agentId: 'a1' }))).toBe('record');
+    expect(systemLineShape(runner('system.runner.controlled', { agentId: 'a1', handle: 'h', pending: 1 }))).toBe('record');
+    expect(systemLineShape(runner('system.runner.controlledByOwner', { agentId: 'a1', pending: 1 }))).toBe('record');
+    expect(systemRecordIcon(runner('system.runner.blockedByTurn', { agentId: 'a1' }))).toBe('⏳');
+    expect(systemRecordIcon(runner('system.runner.controlledByOwner', { agentId: 'a1', pending: 1 }))).toBe('⏳');
+    expect(systemRecordIcon(runner('system.runner.fenced', { agentId: 'a1' }))).toBe('↪');
+
+    render(<MessageItem message={msg('s9', 'c1', 1, 'x', 'a1', runner('system.runner.blockedByTurn', { agentId: 'a1' }))} />);
+    expect(screen.queryByTestId('author-name')).toBeNull();
+    expect(screen.queryByTestId('system-target-chip')).toBeNull();
+    const line = screen.getByTestId('system-record-line');
+    expect(line.textContent).toContain('forge');
+    expect(line.textContent).not.toContain('⏳⏳');
+  });
 });
