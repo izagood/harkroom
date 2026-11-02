@@ -58,6 +58,7 @@ const Map<String, List<String>> systemI18nArgs = {
   'system.chatApproval.bypass': [],
   'system.chatApproval.conflict': [],
   'system.chatApproval.denyNeedsLink': [],
+  'system.chatApproval.needsExplicit': [],
   'system.chatApproval.noWord': [],
   'system.chatApproval.notFinal': [],
   'system.chatApproval.denyNotFinal': [],
