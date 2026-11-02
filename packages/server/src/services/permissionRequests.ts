@@ -11,7 +11,7 @@ import { auditMandateCreated, validMandateOwner, type MandateCreated } from './m
 import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
 import { getMessageById, postMessage, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
 import { systemI18n } from './systemI18n.js';
-import { mayDecideSql } from './deciders.js';
+import { mayDecideFor, mayDecideSql } from './deciders.js';
 
 /**
  * 에이전트 권한 요청 → 소유자 승인 → 적용(스레드 f61af808, 소유자 D1~D4 10-07).
@@ -697,7 +697,7 @@ export async function decidePermissionRequest(
     // — 단, grant 를 쓰지 않는 갈래(D1, merge)는 줄이 승인의 전부라 줄이 실패하면 결정을 되돌린다(빈 승인을 「됨」으로 닫지 않는다).
     if (approving && r.mandateId) {
       lineOutcome = await addLineFromRequest(client, {
-        request: r, decision: args.decision, actorId: args.actorId, now,
+        request: r, decision: args.decision, actorId: args.actorId, agentId: args.agentId, now,
         via: args.via?.kind ?? 'button',
         // 7일 승인으로 적힌 줄은 같은 결정에서 쓴 account_grant 의 기한에서 끝난다.
         ...(isStandingApprove(args.decision) && r.kind !== 'command' && grantExpiresAt ? { until: grantExpiresAt } : {}),
@@ -862,6 +862,8 @@ export async function addLineFromRequest(
   client: PoolClient,
   args: {
     request: { id: string; kind: PermissionKind; target: string; mandateId: string | null };
+    /** 요청한 에이전트 — 소유자가 아닌 사람(delegator)이 주는 줄은 이 에이전트 하나로 좁힌다(C-3 security). */
+    agentId?: string;
     decision: PermissionDecision; actorId: string; via: LineVia; now: Date;
     /** 7일 승인(tool·merge) — 같은 결정에서 쓴 account_grant 의 `expires_at`. 줄의 `limits.until` 이 된다. */
     until?: Date;
@@ -890,8 +892,13 @@ export async function addLineFromRequest(
   }
   await client.query('savepoint mandate_line_from_request');
   try {
+    // C-3(security): 소유자가 아닌 사람이 주는 줄은 요청한 에이전트 하나에만 건다 — null(소유자의 모든 에이전트)이면 그 사람이 정할 수
+    // 없는 소유자의 다른 에이전트에게도 열린다. 소유자 줄은 지금처럼 null.
+    const mOwner = (await client.query<{ owner: string }>(`select owner_account_id as owner from mandate where id = $1`, [mandateId])).rows[0]?.owner;
+    const narrow = args.agentId && mOwner && args.actorId !== mOwner ? [args.agentId] : null;
     const added = await addMandateLine(client, {
       mandateId, cap, scope: v.scope, limits, grantedBy: args.actorId, via: args.via, requestId: args.request.id, now: args.now,
+      ...(narrow ? { agentIds: narrow } : {}),
     });
     if (!added.ok) {
       await client.query('rollback to savepoint mandate_line_from_request');
@@ -1061,9 +1068,18 @@ export async function mandateToolRulesFor(pool: Pool, args: {
     [lease.mandateId, args.agentId, args.channelId])).rowCount;
   if (!ok) return [];
   const out = new Set<string>();
+  // C-3(security): 소유자가 아닌 사람이 준 줄은 그 사람이 **지금도** 이 위임장 채널에서 이 에이전트의 카드를 정할 수 있을 때만 — merge 의
+  // `findLine` 과 같은 기준. 범위가 좁아지거나 스위치가 꺼지면 다음 읽기에서 곧바로 빠진다.
+  const stillDecides = new Map<string, boolean>();
+  const mayStill = async (who: string): Promise<boolean> => {
+    if (who === owner) return true;
+    if (!stillDecides.has(who)) stillDecides.set(who, (await mayDecideFor(pool, { agentId: args.agentId, actorId: who, channelId: args.channelId })).ok);
+    return stillDecides.get(who)!;
+  };
   for (const l of await listMandateLines(pool, lease.mandateId, now)) {
     if (l.cap !== 'tool' || l.readOnly || l.revokedAt) continue;
     if (l.agentIds !== null && !l.agentIds.includes(args.agentId)) continue;
+    if (!(await mayStill(l.grantedBy))) continue;
     const limits = (l.limits ?? {}) as { until?: string; uses?: number };
     if (limits.uses !== undefined) continue;
     if (limits.until !== undefined && !(Date.parse(limits.until) > now.getTime())) continue;

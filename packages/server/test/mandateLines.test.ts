@@ -247,6 +247,29 @@ describe('mandate lines (db)', () => {
       expect(await addMandateLine(pool, { mandateId: m, cap: 'merge', scope: 'repo:izagood/c3-line', grantedBy: admin.accountId, via: 'button' })).toMatchObject({ ok: false, code: 'not_owner' });
     });
 
+    it('shell rules: a tool line the user gave reaches only while they may still decide (security, #1711 path)', async () => {
+      const root = await post(bob.accountId, '@tm @sec user shell');
+      const m = (await mandateOf(root))!;
+      const rule = 'Bash(kubectl --context ops get c3user:*)';
+      const own = 'Bash(kubectl --context ops get c3owner:*)';
+      await addMandateLine(pool, { mandateId: m, cap: 'tool', scope: rule, grantedBy: bob.accountId, via: 'button', agentIds: [tm] });
+      await addMandateLine(pool, { mandateId: m, cap: 'tool', scope: own, grantedBy: alice.accountId, via: 'button' });
+      const lt = await lease(root, tm);
+      const ls = await lease(root, sec);
+      expect(lt.id && ls.id).toBeTruthy();
+      const get = async (agent: string) => (await app.inject({ method: 'GET', url: `/agent/tool-allows?channelId=${ch}&cause=${root}`, headers: asAgent(agent) })).json() as { rules: string[] };
+      expect((await get(tm)).rules).toEqual(expect.arrayContaining([rule, own]));
+      // 사용 권한자 줄은 요청한 에이전트(tm)에만 — 같은 스레드의 소유자 다른 에이전트(sec)에는 없다.
+      expect((await get(sec)).rules).not.toContain(rule);
+      expect((await get(sec)).rules).toContain(own);
+      // 범위를 좁히면 그 사람의 줄은 곧바로 빠지고 소유자 줄은 남는다.
+      await pool.query(`update agent_config set invoke_scope = 'list' where account_id = $1`, [tm]);
+      expect((await get(tm)).rules).not.toContain(rule);
+      expect((await get(tm)).rules).toContain(own);
+      await pool.query(`update agent_config set invoke_scope = 'community' where account_id = $1`, [tm]);
+      expect((await get(tm)).rules).toContain(rule);
+    });
+
     it('a line the user gave stops counting the moment they may no longer decide (security)', async () => {
       const root = await post(bob.accountId, '@tm revocable');
       const m = (await mandateOf(root))!;

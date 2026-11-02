@@ -161,7 +161,8 @@ describe('permission card decisions (W4b)', () => {
         .toEqual({ owner_account_id: alice.accountId, delegator_account_id: bob.accountId });
       const { requestId, cardId } = await card({ kind: 'merge', target: repo, root, mandateId });
       expect(await decideCard(cardId, 'approve_mandate', bob.accountId)).toMatchObject({ ok: true, result: { status: 'granted' } });
-      expect((await pool.query(`select granted_by from mandate_line where request_id = $1`, [requestId])).rows).toEqual([{ granted_by: bob.accountId }]);
+      // 사용 권한자의 줄은 요청한 에이전트 하나에만 걸린다(security).
+      expect((await pool.query(`select granted_by, agent_ids from mandate_line where request_id = $1`, [requestId])).rows).toEqual([{ granted_by: bob.accountId, agent_ids: [agentId] }]);
       expect((await pool.query(`select 1 from account_grant where account_id = $1 and scope like $2`, [agentId, `%${repo}`])).rowCount).toBe(0);
       expect(await findLine(pool, { mandateId, agentId, cap: 'merge', action: { cap: 'merge', repo } })).not.toBeNull();
       await ageRequest(requestId);
