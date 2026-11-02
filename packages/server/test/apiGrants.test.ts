@@ -1,5 +1,5 @@
 // 외부 API 권한(098, C안 P2) — 설계 스레드 07519d86. API 연결 REST · `api.call` grant 의 모양·권한 · 쓰는 순간의
-// 사슬 판정(`apiGrantFor`)의 회귀선. 쓰기 만료(날짜는 30일 안, 무기한은 null 을 명시 — 11-02 jaebin·security)·E1(루트 사람의 에이전트만)을
+// 사슬 판정(`apiGrantFor`)의 회귀선. 쓰기 만료(날짜는 30일 안, 무기한은 null 을 명시 — 소유자 결정·security 설계 판정, 2026-11-02)·E1(루트 사람의 에이전트만)을
 // 시험으로 고정한다.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
@@ -166,6 +166,8 @@ describe('API 연결 · api.call grant', () => {
     expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: null }, agentPat)).statusCode).toBe(403);
     expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: null }, bob.token)).statusCode).toBe(403);
     expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: null }, admin.token)).statusCode).toBe(403);
+    // 만료 칸을 빠뜨리면 무기한이 아니라 거절이다(security 막음 1).
+    expect((await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' } })).json().error.code).toBe('write_needs_expiry');
     const forever = await give(c, { limits: { methods: ['GET', 'POST'], pathPrefix: '/api/' }, expiresAt: null, writeNeedsHumanCause: false });
     expect(forever.statusCode).toBe(200);
     expect(forever.json().grants).toContainEqual(expect.objectContaining({ scope: `connector:${c}`, expiresAt: null }));

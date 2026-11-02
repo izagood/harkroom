@@ -13,7 +13,8 @@ import { errorText } from '../../lib/errorText';
  *
  * - 범위: 읽기만(GET) / 읽기+쓰기(연결이 허용한 메서드 전부). 경로는 이것으로 시작하는 것만.
  * - 만료: 7일(기본)·30일·만료 없음. 읽기+쓰기의 「만료 없음」은 **설정 화면에서만**(`allowWriteNoExpiry`) 생기고, 경고와 확인 체크를
- *   지나야 [주기]가 켜진다(jaebin 11-02 · security 설계 OK). 막힘 카드에서는 띄우지 않는다 — 막힌 순간 버튼 하나로 무기한 쓰기가 생기지 않게.
+ *   지나야 [주기]가 켜진다(소유자 결정 · security 설계 판정, 2026-11-02). 경고 내용이 바뀌면(범위·만료·「사람 글 턴만」) 체크는
+ *   다시 빈 칸이 된다 — 사람은 지금 보이는 경고를 확인해야 한다. 막힘 카드에서는 띄우지 않는다 — 막힌 순간 버튼 하나로 무기한 쓰기가 생기지 않게.
  *   서버는 날짜로 주는 쓰기 만료의 30일 상한(F3)을 그대로 지킨다.
  * - **「쓰기는 사람 글 턴만」은 기본값이 없다**(소유자 지시) — 쓰기를 고르면 예/아니오를 사람이 골라야 [주기]가 켜진다.
  * - 판정은 서버다(소유자만, 내 연결만, limits ⊆ 연결). 화면은 거절을 사람 말로 옮긴다.
@@ -55,6 +56,10 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
   const [humanOnly, setHumanOnly] = useState<'yes' | 'no' | null>(fromExisting && exWrite ? (existing?.writeNeedsHumanCause ? 'yes' : 'no') : null);
   const [busy, setBusy] = useState(false);
   const [noExpiryConfirmed, setNoExpiryConfirmed] = useState(false);
+  // 경고가 넓어지거나 사라졌다 다시 뜨면 확인을 다시 받는다(designer 고칠 것 1) — 이전 확인은 다른 내용에 대한 것이다.
+  const confirmKey = `${scope}|${expiry}|${humanOnly ?? ''}`;
+  const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
+  if (noExpiryConfirmed && confirmedFor !== confirmKey) { setNoExpiryConfirmed(false); setConfirmedFor(null); }
   const [error, setError] = useState<string | null>(null);
 
   const c = connectors.find((x) => x.id === connectorId);
@@ -153,7 +158,8 @@ export function ApiGrantForm({ agentId, connectors, initial, existing = null, al
         <div className="rounded-row bg-warning-surface px-2 py-1.5 text-warning" data-testid="api-grant-no-expiry-warning">
           <p>⚠ {t('apiGrant.noExpiryWarn', { methods: methods.filter((m) => m !== 'GET').join('·') })}{humanOnly === 'no' ? ` ${t('apiGrant.noExpiryWarnAgentTurns')}` : ''}</p>
           <label className="mt-1 flex items-center gap-1.5 text-fg">
-            <input type="checkbox" checked={noExpiryConfirmed} disabled={busy} onChange={(e) => setNoExpiryConfirmed(e.target.checked)} />
+            <input type="checkbox" checked={noExpiryConfirmed} disabled={busy}
+              onChange={(e) => { setNoExpiryConfirmed(e.target.checked); setConfirmedFor(e.target.checked ? confirmKey : null); }} />
             {t('apiGrant.noExpiryConfirm')}
           </label>
         </div>

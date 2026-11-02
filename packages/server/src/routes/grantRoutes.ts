@@ -38,7 +38,7 @@ const grantBody = z.object({
  * - scope 는 `connector:<uuid>` 하나뿐이다. 연결은 **주는 사람의 것**이어야 한다(키는 그 사람의 비밀이다).
  * - limits 가 필수다: 메서드는 연결이 허용한 것의 부분집합, 경로 접두.
  * - 쓰기 메서드가 있으면 **날짜를 줄 때 30일 안**이어야 한다(security F3 — 먼 날짜로 무기한을 우회하지 못하게). **무기한은 `expiresAt: null`
- *   을 명시해서만** 된다(소유자가 설정 화면에서 고른다, jaebin 11-02 · security 설계 OK). 과거 시각은 받지 않는다. 이 길은 사람 세션 + 그 에이전트
+ *   을 명시해서만** 된다(소유자가 설정 화면에서 고른다 — 소유자 결정 · security 설계 판정, 2026-11-02). 칸을 **빠뜨리면** 예전처럼 400 이다. 과거 시각은 받지 않는다. 이 길은 사람 세션 + 그 에이전트
  *   소유자만 탄다(아래 판정) — 위임(`grant.delegate`)의 자식은 늘 30일 안의 만료가 필요하다(`apiDelegation.ts`).
  */
 async function checkApiGrant(
@@ -59,6 +59,8 @@ async function checkApiGrant(
   if (conn.rows[0]!.ownerAccountId !== req.account.id) return { ok: false, status: 403, code: 'forbidden', message: '내 API 연결만 줄 수 있다' };
   const limits = parseLimits(body.limits, conn.rows[0]!.methods);
   if ('error' in limits) return { ok: false, status: 400, code: 'bad_limits', message: limits.error };
+  // 쓰기인데 만료 칸 자체가 없으면 거절한다 — 칸을 빠뜨린 클라이언트·스크립트가 모르는 사이에 무기한 쓰기를 만들지 않게.
+  if (hasWriteMethod(limits.methods) && body.expiresAt === undefined) return { ok: false, status: 400, code: 'write_needs_expiry', message: '쓰기 메서드가 있는 api.call 은 만료(날짜 또는 무기한 null)를 명시한다' };
   if (hasWriteMethod(limits.methods) && body.expiresAt) {
     // 상한 30일(security F3) — 날짜로 주면 `9999-12-31` 같은 먼 날짜가 무기한을 흉내 낸다. 무기한은 null 로만.
     if (Date.parse(body.expiresAt) > Date.now() + WRITE_MAX_MS) return { ok: false, status: 400, code: 'write_expiry_too_long', message: '쓰기 메서드가 있는 api.call 의 만료는 30일 안이다' };
@@ -221,7 +223,7 @@ export async function registerGrantRoutes(app: FastifyInstance, pool: Pool): Pro
         ...(capability === 'api.call' ? {
           limits, delegateDepth, writeNeedsHumanCause: parsed.data.writeNeedsHumanCause ?? false,
           // 무기한 쓰기를 감사 한 줄로 셀 수 있게(security 설계 5).
-          ...(limits && limits.methods.some((m) => m !== 'GET') && !expiresAt ? { writeNoExpiry: true } : {}),
+          ...(limits && limits.methods.some((m) => m !== 'GET') && expiresAt === null ? { writeNoExpiry: true } : {}),
         } : {}),
       },
     }, req);

@@ -204,6 +204,27 @@ describe('ApiGrantForm', () => {
     expect(body).toMatchObject({ limits: { methods: ['GET', 'POST'] }, writeNeedsHumanCause: false, expiresAt: null });
   });
 
+  it('경고가 넓어지거나 다시 뜨면 확인 체크가 빈 칸으로 돌아간다(designer 고칠 것 1)', () => {
+    setup();
+    render(<ApiGrantForm allowWriteNoExpiry agentId="agent-1" connectors={[conn()]} onDone={() => {}} onCancel={() => {}} />);
+    fireEvent.click(screen.getByRole('radio', { name: '읽기+쓰기 (GET·POST)' }));
+    fireEvent.click(screen.getByRole('radio', { name: '사람이 시킨 턴에서만' }));
+    fireEvent.click(screen.getByRole('radio', { name: '없음' }));
+    const give = () => screen.getByRole('button', { name: '주기' }) as HTMLButtonElement;
+    fireEvent.click(within(screen.getByTestId('api-grant-no-expiry-warning')).getByRole('checkbox'));
+    expect(give().disabled).toBe(false);
+    // 「사람 글 턴만」 yes → no: 「예약 턴에서도」가 붙는다 → 다시 확인해야 한다.
+    fireEvent.click(screen.getByRole('radio', { name: '에이전트가 시킨 턴에서도' }));
+    expect((within(screen.getByTestId('api-grant-no-expiry-warning')).getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
+    expect(give().disabled).toBe(true);
+    // 만료 없음 → 7일 → 없음: 경고가 다시 뜨면 빈 체크로 시작한다.
+    fireEvent.click(within(screen.getByTestId('api-grant-no-expiry-warning')).getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('radio', { name: '7일' }));
+    fireEvent.click(screen.getByRole('radio', { name: '없음' }));
+    expect((within(screen.getByTestId('api-grant-no-expiry-warning')).getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
+    expect(give().disabled).toBe(true);
+  });
+
   it('「사람 글 턴만」을 켜면 경고에 다른 턴 문구가 빠진다 · 7일로 돌리면 경고가 사라진다', () => {
     setup();
     render(<ApiGrantForm allowWriteNoExpiry agentId="agent-1" connectors={[conn()]} onDone={() => {}} onCancel={() => {}} />);
