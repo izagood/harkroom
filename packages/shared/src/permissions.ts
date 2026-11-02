@@ -80,10 +80,22 @@ export interface ApiGrantLimits { methods: ApiMethod[]; pathPrefix: string }
 export const CONNECTOR_SCOPE_RE = /^connector:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const connectorScope = (connectorId: string): string => `connector:${connectorId}`;
 
+/**
+ * 연결의 인증 꼴(098·156). `token_exchange` = 키를 토큰 주소에 form 으로 보내 받은 `access_token` 을 Bearer 로 붙인다
+ * (교환·캐시는 오퍼레이터가 한다).
+ */
+export const API_AUTH_KINDS = ['bearer', 'header', 'none', 'token_exchange'] as const;
+export type ApiAuthKind = (typeof API_AUTH_KINDS)[number];
+
+/** 토큰 교환 form 의 칸 틀(156) — 보내는 form 은 `grant_type=<grantType>&client_id=<clientId>&<keyField>=<키>`. */
+export interface ApiTokenForm { grantType: string; clientId: string; keyField: string }
+
 /** API 연결(098) — 사람용 REST 의 응답 모양. 키 값은 없다(비밀 id 만). */
 export interface ApiConnectorView {
   id: string; name: string; ownerAccountId: string; baseUrl: string;
-  authKind: 'bearer' | 'header' | 'none'; authHeader: string | null; secretId: string | null;
+  authKind: ApiAuthKind; authHeader: string | null; secretId: string | null;
+  /** 토큰 교환 주소·form 칸 틀(156). `token_exchange` 가 아니면 null. */
+  tokenUrl: string | null; tokenForm: ApiTokenForm | null;
   methods: ApiMethod[]; createdAt: string; updatedAt: string;
   /** 이 연결로 받은 grant 수(정지 포함). */
   grantCount: number;

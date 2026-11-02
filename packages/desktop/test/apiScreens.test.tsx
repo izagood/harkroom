@@ -18,7 +18,7 @@ import { acc } from './helpers/fakeApi';
 const ME = 'owner-1';
 const conn = (over: Partial<ApiConnectorView> = {}): ApiConnectorView => ({
   id: '11111111-1111-4111-8111-111111111111', name: 'lab-api', ownerAccountId: ME, baseUrl: 'https://api.example.internal',
-  authKind: 'bearer', authHeader: null, secretId: 's1', methods: ['GET', 'POST'], createdAt: '', updatedAt: '', grantCount: 0, ...over,
+  authKind: 'bearer', authHeader: null, secretId: 's1', tokenUrl: null, tokenForm: null, methods: ['GET', 'POST'], createdAt: '', updatedAt: '', grantCount: 0, ...over,
 });
 const secret: SecretView = {
   id: 's1', name: 'api-token', kind: 'text', filename: null, description: '', ownerAccountId: ME,

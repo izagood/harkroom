@@ -11,36 +11,51 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { API_METHODS, connectorScope, type ApiConnectorView } from '@harkroom/shared';
+import { API_AUTH_KINDS, API_METHODS, connectorScope, type ApiAuthKind, type ApiConnectorView, type ApiTokenForm } from '@harkroom/shared';
 import { actorOf, recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
-import { normalizeBaseUrl } from '../auth/apiGrants.js';
+import { normalizeBaseUrl, normalizeTokenUrl } from '../auth/apiGrants.js';
 
 const NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const HEADER = /^[A-Za-z0-9-]{1,64}$/;
 // 인증 헤더로 쓰면 안 되는 이름 — 요청의 대상·길이를 바꾸는 것들이다.
 const RESERVED_HEADERS = new Set(['host', 'content-length', 'transfer-encoding', 'connection', 'cookie']);
 
+// 토큰 교환 form(156, security 조건 2). 값은 출력 가능한 ASCII 만(제어문자 거절), 키 칸 이름은 표준 칸과 겹치면 안 된다.
+const FORM_VALUE = /^[\x20-\x7e]{1,200}$/;
+const FORM_FIELD = /^[A-Za-z0-9_.-]{1,64}$/;
+const RESERVED_FORM_FIELDS = new Set(['grant_type', 'client_id']);
+const tokenFormSchema = z.object({
+  grantType: z.string().regex(FORM_VALUE),
+  clientId: z.string().regex(FORM_VALUE),
+  keyField: z.string().regex(FORM_FIELD),
+}).strict();
+
 const methodsSchema = z.array(z.enum(API_METHODS)).min(1).max(API_METHODS.length);
 const createBody = z.object({
   name: z.string().regex(NAME),
   baseUrl: z.string().max(300),
-  authKind: z.enum(['bearer', 'header', 'none']),
+  authKind: z.enum(API_AUTH_KINDS),
   authHeader: z.string().regex(HEADER).nullable().optional(),
   secretId: z.string().uuid().nullable().optional(),
+  tokenUrl: z.string().max(500).nullable().optional(),
+  tokenForm: tokenFormSchema.nullable().optional(),
   methods: methodsSchema,
 });
 const patchBody = z.object({
   baseUrl: z.string().max(300).optional(),
-  authKind: z.enum(['bearer', 'header', 'none']).optional(),
+  authKind: z.enum(API_AUTH_KINDS).optional(),
   authHeader: z.string().regex(HEADER).nullable().optional(),
   secretId: z.string().uuid().nullable().optional(),
+  tokenUrl: z.string().max(500).nullable().optional(),
+  tokenForm: tokenFormSchema.nullable().optional(),
   methods: methodsSchema.optional(),
 });
 const idParam = z.object({ id: z.string().uuid() });
 
 const COLS = `c.id, c.name, c.owner_account_id as "ownerAccountId", c.base_url as "baseUrl", c.auth_kind as "authKind",
-  c.auth_header as "authHeader", c.secret_id as "secretId", c.methods, c.created_at as "createdAt", c.updated_at as "updatedAt",
+  c.auth_header as "authHeader", c.secret_id as "secretId", c.methods,
+  c.token_url as "tokenUrl", c.token_form as "tokenForm", c.created_at as "createdAt", c.updated_at as "updatedAt",
   (select count(*)::int from account_grant g where g.capability = 'api.call' and g.scope = 'connector:' || c.id::text) as "grantCount"`;
 
 async function getConnector(pool: Pool | PoolClient, id: string): Promise<ApiConnectorView | null> {
@@ -49,10 +64,20 @@ async function getConnector(pool: Pool | PoolClient, id: string): Promise<ApiCon
 
 type Bad = { status: 400 | 403 | 404; code: string; message: string };
 
-/** 인증 칸 셋의 짝을 맞춘다. 키는 **요청한 사람의 비밀**이어야 한다. */
-async function checkAuth(
-  pool: Pool, me: string, a: { authKind: 'bearer' | 'header' | 'none'; authHeader: string | null; secretId: string | null },
-): Promise<Bad | null> {
+interface AuthFields { authKind: ApiAuthKind; authHeader: string | null; secretId: string | null; tokenUrl: string | null; tokenForm: ApiTokenForm | null }
+
+/**
+ * 인증 칸의 짝을 맞춘다. 키는 **요청한 사람의 비밀**이어야 한다 — `token_exchange` 도 bearer 와 같은 비밀 소유 검사를
+ * 탄다(security 조건 1). 토큰 주소는 정규화된 값이어야 한다(라우트가 넣기 전에 `normalizeTokenUrl` 로 바꾼다).
+ */
+async function checkAuth(pool: Pool, me: string, a: AuthFields): Promise<Bad | null> {
+  if (a.authKind === 'token_exchange') {
+    if (!a.tokenUrl) return { status: 400, code: 'bad_token_url', message: 'tokenUrl 은 질의·사용자 정보 없는 https 주소다' };
+    if (!a.tokenForm) return { status: 400, code: 'bad_request', message: 'authKind token_exchange 에는 tokenForm 이 필요하다' };
+    if (RESERVED_FORM_FIELDS.has(a.tokenForm.keyField.toLowerCase())) return { status: 400, code: 'bad_token_form', message: 'keyField 는 grant_type·client_id 와 겹칠 수 없다' };
+  } else if (a.tokenUrl || a.tokenForm) {
+    return { status: 400, code: 'bad_request', message: 'tokenUrl·tokenForm 은 authKind token_exchange 에서만 쓴다' };
+  }
   if (a.authKind === 'header') {
     if (!a.authHeader) return { status: 400, code: 'bad_request', message: 'authKind header 에는 authHeader 가 필요하다' };
     if (RESERVED_HEADERS.has(a.authHeader.toLowerCase())) return { status: 400, code: 'bad_header', message: '그 헤더 이름은 인증에 쓸 수 없다' };
@@ -105,20 +130,22 @@ export async function registerConnectorRoutes(app: FastifyInstance, pool: Pool):
     const b = parsed.data;
     const baseUrl = normalizeBaseUrl(b.baseUrl);
     if (!baseUrl) return reply.code(400).send({ error: { code: 'bad_base_url', message: 'baseUrl 은 경로·질의 없는 https 주소다' } });
-    const auth = { authKind: b.authKind, authHeader: b.authHeader ?? null, secretId: b.secretId ?? null };
+    const tokenUrl = b.tokenUrl ? normalizeTokenUrl(b.tokenUrl) : null;
+    if (b.tokenUrl && !tokenUrl) return reply.code(400).send({ error: { code: 'bad_token_url', message: 'tokenUrl 은 질의·사용자 정보 없는 https 주소다' } });
+    const auth: AuthFields = { authKind: b.authKind, authHeader: b.authHeader ?? null, secretId: b.secretId ?? null, tokenUrl, tokenForm: b.tokenForm ?? null };
     const bad = await checkAuth(pool, req.account!.id, auth);
     if (bad) return reply.code(bad.status).send({ error: { code: bad.code, message: bad.message } });
     let id: string;
     try {
       id = ((await pool.query(
-        `insert into api_connector (name, owner_account_id, base_url, auth_kind, auth_header, secret_id, methods)
-         values ($1, $2, $3, $4, $5, $6, $7) returning id`,
-        [b.name, req.account!.id, baseUrl, auth.authKind, auth.authHeader, auth.secretId, [...new Set(b.methods)]])).rows[0] as { id: string }).id;
+        `insert into api_connector (name, owner_account_id, base_url, auth_kind, auth_header, secret_id, methods, token_url, token_form)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
+        [b.name, req.account!.id, baseUrl, auth.authKind, auth.authHeader, auth.secretId, [...new Set(b.methods)], auth.tokenUrl, auth.tokenForm ? JSON.stringify(auth.tokenForm) : null])).rows[0] as { id: string }).id;
     } catch (e) {
       if ((e as { code?: string }).code === '23505') return reply.code(409).send({ error: { code: 'name_taken', message: 'a connector with that name already exists' } });
       throw e;
     }
-    await recordAudit(pool, { action: 'connector.created', ...actorOf(req), target: id, detail: { name: b.name, baseUrl, authKind: auth.authKind, secretId: auth.secretId, methods: b.methods } }, req);
+    await recordAudit(pool, { action: 'connector.created', ...actorOf(req), target: id, detail: { name: b.name, baseUrl, authKind: auth.authKind, secretId: auth.secretId, methods: b.methods, ...(auth.tokenUrl ? { tokenUrl: auth.tokenUrl } : {}) } }, req);
     return reply.code(201).send({ connector: await getConnector(pool, id) });
   });
 
@@ -131,16 +158,23 @@ export async function registerConnectorRoutes(app: FastifyInstance, pool: Pool):
     const p = parsed.data;
     const baseUrl = p.baseUrl !== undefined ? normalizeBaseUrl(p.baseUrl) : cur.baseUrl;
     if (!baseUrl) return reply.code(400).send({ error: { code: 'bad_base_url', message: 'baseUrl 은 경로·질의 없는 https 주소다' } });
-    const next = {
+    const tokenUrlIn = p.tokenUrl ? normalizeTokenUrl(p.tokenUrl) : null;
+    if (p.tokenUrl && !tokenUrlIn) return reply.code(400).send({ error: { code: 'bad_token_url', message: 'tokenUrl 은 질의·사용자 정보 없는 https 주소다' } });
+    const leavesExchange = p.authKind !== undefined && p.authKind !== 'token_exchange';
+    const next: AuthFields = {
       authKind: p.authKind ?? cur.authKind,
       authHeader: p.authHeader !== undefined ? p.authHeader : (p.authKind && p.authKind !== 'header' ? null : cur.authHeader),
       secretId: p.secretId !== undefined ? p.secretId : (p.authKind === 'none' ? null : cur.secretId),
+      tokenUrl: p.tokenUrl !== undefined ? tokenUrlIn : (leavesExchange ? null : cur.tokenUrl),
+      tokenForm: p.tokenForm !== undefined ? p.tokenForm : (leavesExchange ? null : cur.tokenForm),
     };
     const bad = await checkAuth(pool, req.account!.id, next);
     if (bad) return reply.code(bad.status).send({ error: { code: bad.code, message: bad.message } });
     const methods = p.methods ? [...new Set(p.methods)] : cur.methods;
 
-    const target = baseUrl !== cur.baseUrl || next.authKind !== cur.authKind || next.authHeader !== cur.authHeader || next.secretId !== cur.secretId;
+    // 토큰 주소·form 도 키가 어디로 어떻게 가는지를 정하므로 바뀌면 grant 를 멈춘다(security S1).
+    const target = baseUrl !== cur.baseUrl || next.authKind !== cur.authKind || next.authHeader !== cur.authHeader || next.secretId !== cur.secretId
+      || next.tokenUrl !== cur.tokenUrl || JSON.stringify(next.tokenForm) !== JSON.stringify(cur.tokenForm);
     const dropped = cur.methods.filter((m) => !methods.includes(m));
     const scope = connectorScope(cur.id);
     const client = await pool.connect();
@@ -148,8 +182,9 @@ export async function registerConnectorRoutes(app: FastifyInstance, pool: Pool):
     try {
       await client.query('begin');
       await client.query(
-        `update api_connector set base_url = $2, auth_kind = $3, auth_header = $4, secret_id = $5, methods = $6, updated_at = now() where id = $1`,
-        [cur.id, baseUrl, next.authKind, next.authHeader, next.secretId, methods]);
+        `update api_connector set base_url = $2, auth_kind = $3, auth_header = $4, secret_id = $5, methods = $6,
+                token_url = $7, token_form = $8, updated_at = now() where id = $1`,
+        [cur.id, baseUrl, next.authKind, next.authHeader, next.secretId, methods, next.tokenUrl, next.tokenForm ? JSON.stringify(next.tokenForm) : null]);
       if (target) {
         suspended = (await client.query(
           `update account_grant set suspended_at = now(), suspend_reason = 'connector_changed'
@@ -170,7 +205,7 @@ export async function registerConnectorRoutes(app: FastifyInstance, pool: Pool):
     }
     await recordAudit(pool, {
       action: 'connector.updated', ...actorOf(req), target: cur.id,
-      detail: { name: cur.name, fields: Object.keys(p), suspendedGrants: suspended.length, reason: target ? 'connector_changed' : dropped.length ? 'methods_narrowed' : null },
+      detail: { name: cur.name, fields: Object.keys(p), ...(next.tokenUrl !== cur.tokenUrl ? { tokenUrl: next.tokenUrl } : {}), suspendedGrants: suspended.length, reason: target ? 'connector_changed' : dropped.length ? 'methods_narrowed' : null },
     }, req);
     for (const accountId of new Set(suspended)) emitEvent({ type: 'grant.changed', accountId, audience: 'all' });
     return { connector: await getConnector(pool, cur.id), suspendedGrants: suspended.length };

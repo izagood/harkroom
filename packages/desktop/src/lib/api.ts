@@ -3,7 +3,7 @@ import type {
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
-import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, type AvatarCrop, type AvatarSourceMeta, type GrantRow, type Capability, type Role, type ApiConnectorView, type ApiGrantLimits, type ApiMethod } from '@harkroom/shared';
+import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, type AvatarCrop, type AvatarSourceMeta, type GrantRow, type Capability, type Role, type ApiAuthKind, type ApiConnectorView, type ApiGrantLimits, type ApiTokenForm, type ApiMethod } from '@harkroom/shared';
 import type { MemoryAudit, MemoryBatchResult, MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
@@ -1060,10 +1060,10 @@ export class ApiClient {
   listConnectors(): Promise<ApiConnectorView[]> {
     return this.req<{ connectors: ApiConnectorView[] }>('GET', '/connectors').then((r) => r.connectors);
   }
-  createConnector(body: { name: string; baseUrl: string; authKind: 'bearer' | 'header' | 'none'; authHeader?: string | null; secretId?: string | null; methods: ApiMethod[] }): Promise<ApiConnectorView> {
+  createConnector(body: { name: string; baseUrl: string; authKind: ApiAuthKind; authHeader?: string | null; secretId?: string | null; tokenUrl?: string | null; tokenForm?: ApiTokenForm | null; methods: ApiMethod[] }): Promise<ApiConnectorView> {
     return this.req<{ connector: ApiConnectorView }>('POST', '/connectors', body).then((r) => r.connector);
   }
-  patchConnector(id: string, body: { baseUrl?: string; authKind?: 'bearer' | 'header' | 'none'; authHeader?: string | null; secretId?: string | null; methods?: ApiMethod[] }): Promise<{ connector: ApiConnectorView; suspendedGrants: number }> {
+  patchConnector(id: string, body: { baseUrl?: string; authKind?: ApiAuthKind; authHeader?: string | null; secretId?: string | null; tokenUrl?: string | null; tokenForm?: ApiTokenForm | null; methods?: ApiMethod[] }): Promise<{ connector: ApiConnectorView; suspendedGrants: number }> {
     return this.req('PATCH', `/connectors/${id}`, body);
   }
   deleteConnector(id: string): Promise<void> {

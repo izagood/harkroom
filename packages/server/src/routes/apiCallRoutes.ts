@@ -39,7 +39,7 @@ export async function registerApiCallRoutes(
   app.post('/agent/api-checks', { preHandler: app.requireAccount }, async (req, reply) => {
     const who = viaOperator(req, reply);
     if (!who) return reply;
-    const parsed = z.object(base).safeParse(req.body ?? {});
+    const parsed = z.object({ ...base, caps: z.array(z.string().max(40)).max(10).optional() }).safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'leaseId, token, connector, method and path are required' } });
     const r = await checkApiCall(pool, opts.keyring, { ...who, ...parsed.data });
     void reply.header('cache-control', 'no-store');
@@ -48,10 +48,13 @@ export async function registerApiCallRoutes(
     if (!r.ok && r.code === 'no_secret' && !opts.keyring && opts.keyMismatch) {
       return reply.code(409).send({ error: { code: 'secret_key_mismatch', message: 'the secret store is off: its key does not match the stored key check value' } });
     }
-    if (!r.ok) return reply.code(r.code === 'bad_path' ? 400 : r.code === 'no_connector' ? 404 : 403).send({ error: { code: r.code, message: `api call not allowed: ${r.code}` } });
+    if (!r.ok) return reply.code(r.code === 'bad_path' ? 400 : r.code === 'no_connector' ? 404 : r.code === 'operator_update_required' ? 409 : 403).send({ error: { code: r.code, message: `api call not allowed: ${r.code}` } });
     return {
       allowed: true, connector: r.connectorName, baseUrl: r.baseUrl, authKind: r.authKind, authHeader: r.authHeader,
       valueBase64: r.value ? r.value.toString('base64') : null, causeByHuman: r.causeByHuman,
+      // 토큰 교환(156)과 실제로 보낼 경로(security 조건 7). 옛 오퍼레이터는 모르는 칸을 무시한다.
+      ...(r.tokenUrl && r.tokenForm ? { tokenUrl: r.tokenUrl, tokenForm: r.tokenForm } : {}),
+      path: r.path,
     };
   });
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
-import { createTurnApi, parseApiArgs, scrubValue, type TurnApi } from '../src/turnApi.js';
+import { createTurnApi, exchangeToken, parseApiArgs, scrubValue, tokenTtlSeconds, type TurnApi } from '../src/turnApi.js';
 
 // 외부 API 래퍼(C안 P3, 스레드 07519d86) — 오퍼레이터 쪽. 지키는 것: 키는 결과에 안 나간다 · 리다이렉트는 안 따라간다 ·
 // origin 을 다시 잰다 · 서버에 닿지 않으면 부르지 않는다 · 호출마다 보고한다.
@@ -144,5 +144,102 @@ describe('turnApi', () => {
 
   it('api.call 이 아닌 요청은 건드리지 않는다', async () => {
     expect(await ta.maybeHandle('r1', 'a1', { type: 'mcp.request', id: 'x', payload: { method: 'tools/call', params: { name: 'message.post' } } })).toBeNull();
+  });
+
+  describe('토큰 교환(156)', () => {
+    const JWT = `eyJ${'b'.repeat(40)}.x.y`;
+    const TOKEN_URL = 'https://auth.example.com/token';
+    let tokenReplies: (() => Response)[];
+    beforeEach(() => {
+      checkBody = { ...checkBody, authKind: 'token_exchange', tokenUrl: TOKEN_URL, tokenForm: { grantType: 'password', clientId: 'cli', keyField: 'api_key' }, path: '/api/m/org%2Fname' };
+      tokenReplies = [];
+      const fallback = () => new Response(JSON.stringify({ access_token: JWT, token_type: 'Bearer', expires_in: 900, refresh_token: 'r'.repeat(20) }), { status: 200 });
+      ta = createTurnApi({
+        forward: async (_agentId, req) => {
+          if (req.type !== 'http.forward') throw new Error('unexpected');
+          const body = JSON.parse(req.body ?? '{}') as Record<string, unknown>;
+          forwards.push({ path: req.path, body });
+          if (req.path === '/agent/api-checks') return { type: 'http.response', id: req.id, status: 200, body: JSON.stringify(checkBody) };
+          return { type: 'http.response', id: req.id, status: 201, body: '{}' };
+        },
+        lookupLease: () => lease,
+        log: () => {},
+        fetch: (async (url: URL | string, init: RequestInit) => {
+          fetches.push({ url: String(url), init });
+          if (String(url) === TOKEN_URL) return (tokenReplies.shift() ?? fallback)();
+          return respond();
+        }) as unknown as typeof fetch,
+      });
+    });
+    const run = async () => resultOf(await ta.maybeHandle('r1', 'a1', call({ connector: 'lab', method: 'GET', path: '/api/m/org%2Fname' })));
+
+    it('caps 를 싣고, 키를 form 으로 바꿔 받은 토큰을 Bearer 로 붙이고, 서버가 준 경로로 보낸다 · 결과에 키·토큰이 없다', async () => {
+      respond = () => new Response(JSON.stringify({ echo: JWT, k: KEY }), { status: 200 });
+      const r = await run();
+      expect(forwards[0]!.body.caps).toEqual(['token_exchange']);
+      const ex = fetches[0]!;
+      expect(ex.url).toBe(TOKEN_URL);
+      expect(ex.init.redirect).toBe('manual');
+      expect(new URLSearchParams(String(ex.init.body)).get('api_key')).toBe(KEY);
+      expect(new URLSearchParams(String(ex.init.body)).get('grant_type')).toBe('password');
+      expect(fetches[1]!.url).toBe(`${BASE}/api/m/org%2Fname`);
+      expect((fetches[1]!.init.headers as Record<string, string>).authorization).toBe(`Bearer ${JWT}`);
+      expect(r.text).not.toContain(KEY);
+      expect(r.text).not.toContain(JWT);
+      expect(JSON.stringify(forwards)).not.toContain(JWT);
+    });
+
+    it('두 번째 호출은 캐시를 쓰되 서버 판정은 매번 거친다 · 캐시 토큰이 401 이면 한 번만 다시 교환한다', async () => {
+      await run();
+      await run();
+      expect(fetches.filter((f) => f.url === TOKEN_URL)).toHaveLength(1);
+      expect(forwards.filter((f) => f.path === '/agent/api-checks')).toHaveLength(2);
+      let n = 0;
+      respond = () => new Response('{}', { status: n++ === 0 ? 401 : 200 });
+      const r = await run();
+      expect(r.body.status).toBe(200);
+      expect(fetches.filter((f) => f.url === TOKEN_URL)).toHaveLength(2);
+      // 새로 받은 토큰이 401 이면 다시 교환하지 않는다(한 요청에 한 번).
+      respond = () => new Response('{}', { status: 401 });
+      tokenReplies = [];
+      const before = fetches.filter((f) => f.url === TOKEN_URL).length;
+      await run();
+      expect(fetches.filter((f) => f.url === TOKEN_URL).length - before).toBeLessThanOrEqual(1);
+    });
+
+    it('교환 실패는 token_exchange_failed 와 상태만 — 키를 되비치는 오류 본문·리다이렉트·bearer 아닌 토큰은 싣지 않는다', async () => {
+      for (const reply of [
+        () => new Response(`bad key ${KEY}`, { status: 400 }),
+        () => new Response('', { status: 302, headers: { location: `https://evil.example.com/?k=${KEY}` } }),
+        () => new Response(JSON.stringify({ access_token: JWT, token_type: 'mac' }), { status: 200 }),
+        () => new Response(JSON.stringify({ access_token: 'has space' }), { status: 200 }),
+        () => { throw new Error(`connect failed ${KEY}`); },
+      ]) {
+        tokenReplies = [reply];
+        fetches = []; forwards = [];
+        const r = await run();
+        expect(r.isError).toBe(true);
+        expect(r.body.error.code).toBe('token_exchange_failed');
+        expect(r.text).not.toContain(KEY);
+        expect(JSON.stringify(forwards)).not.toContain(KEY);
+        expect(fetches.filter((f) => f.url !== TOKEN_URL)).toHaveLength(0);
+      }
+    });
+  });
+});
+
+describe('토큰 교환 순수 함수', () => {
+  it('수명: 만료 60초 전, 짧으면 max(절반, 10초), 없으면 5분, 상한 1시간', () => {
+    expect(tokenTtlSeconds(900)).toBe(840);
+    expect(tokenTtlSeconds(60)).toBe(30);
+    expect(tokenTtlSeconds(8)).toBe(10);
+    expect(tokenTtlSeconds(undefined)).toBe(300);
+    expect(tokenTtlSeconds(86_400)).toBe(3600);
+  });
+  it('https 가 아닌 토큰 주소로는 키를 보내지 않는다', async () => {
+    let called = false;
+    const f = (async () => { called = true; return new Response('{}'); }) as unknown as typeof fetch;
+    expect(await exchangeToken(f, 'http://auth.example.com/t', { grantType: 'g', clientId: 'c', keyField: 'k' }, KEY)).toEqual({ ok: false, status: 0 });
+    expect(called).toBe(false);
   });
 });

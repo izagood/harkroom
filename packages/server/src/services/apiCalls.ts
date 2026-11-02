@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { connectorScope } from '@harkroom/shared';
+import { connectorScope, type ApiAuthKind, type ApiTokenForm } from '@harkroom/shared';
 import { apiGrantFor, type ApiDenial } from '../auth/apiGrants.js';
 import { recordAudit } from '../audit.js';
 import type { SecretKeyring } from './secretKeyring.js';
@@ -19,12 +19,16 @@ import { API_CARD_CODES, recordBlocked } from './blockedCards.js';
  * (`secret_access_log`)을 남긴다 — 사람이 「접근 기록」에서 본다.
  */
 
-export type ApiCheckDenial = ApiDenial | 'lease_invalid' | 'secret_expired' | 'owner_inactive' | 'no_value' | 'unreadable' | 'cause_not_human';
+export type ApiCheckDenial = ApiDenial | 'operator_update_required' | 'lease_invalid' | 'secret_expired' | 'owner_inactive' | 'no_value' | 'unreadable' | 'cause_not_human';
 
 export type ApiCheck =
   | {
     ok: true; leaseId: string; connectorId: string; connectorName: string; baseUrl: string;
-    authKind: 'bearer' | 'header' | 'none'; authHeader: string | null; value: Buffer | null; causeByHuman: boolean;
+    authKind: ApiAuthKind; authHeader: string | null; value: Buffer | null; causeByHuman: boolean;
+    /** 토큰 교환(156) — `token_exchange` 일 때만. */
+    tokenUrl: string | null; tokenForm: ApiTokenForm | null;
+    /** 실제로 보낼 경로(security 조건 7) — 오퍼레이터는 이 값을 그대로 보낸다. */
+    path: string;
   }
   | { ok: false; code: ApiCheckDenial };
 
@@ -36,7 +40,11 @@ async function connectorIdByName(pool: Pool, name: string): Promise<string | nul
 
 export async function checkApiCall(
   pool: Pool, keyring: SecretKeyring | null,
-  args: { agentId: string; operatorId: string; leaseId: string; token: string; connector: string; method: string; path: string; now?: Date },
+  args: {
+    agentId: string; operatorId: string; leaseId: string; token: string; connector: string; method: string; path: string; now?: Date;
+    /** 오퍼레이터가 할 줄 아는 것(156). `token_exchange` 가 없는 옛 오퍼레이터는 그 꼴의 연결을 못 쓴다 — 헤더 없이 보내지 않게. */
+    caps?: readonly string[];
+  },
 ): Promise<ApiCheck> {
   const now = args.now ?? new Date();
   const lease = await readLease(pool, { leaseId: args.leaseId, token: args.token, now });
@@ -65,6 +73,7 @@ export async function checkApiCall(
   const g = await apiGrantFor(pool, { agentId: args.agentId, connectorId, method: args.method, path: args.path });
   if (!g.ok) return deny(g.code);
   const hit = g.hit;
+  if (hit.authKind === 'token_exchange' && !(args.caps ?? []).includes('token_exchange')) return deny('operator_update_required');
   const byHuman = causeByHuman(lease!);
   // 「쓰기는 사람 글 턴만」(P4, grant 마다 사람이 고른 칸). 키를 건네기 전에 본다.
   if (!['GET'].includes(args.method)) {
@@ -104,6 +113,7 @@ export async function checkApiCall(
   return {
     ok: true, leaseId: lease!.id, connectorId: hit.connectorId, connectorName: hit.connectorName, baseUrl: hit.baseUrl,
     authKind: hit.authKind, authHeader: hit.authHeader, value, causeByHuman: byHuman,
+    tokenUrl: hit.tokenUrl, tokenForm: hit.tokenForm, path: hit.path,
   };
 }
 
