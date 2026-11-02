@@ -46,6 +46,9 @@ export const COMMAND_GRANT_TTL_MS = 3_600_000;
 export const PERMISSION_OPTION_APPROVE_MANDATE = PERMISSION_CARD_OPTION.approveMandate;
 export const PERMISSION_OPTION_APPROVE_NEW_MANDATE = PERMISSION_CARD_OPTION.approveNewMandate;
 
+/** merge 카드에서 위임장을 세울 수 없을 때(D1) — 7일 승인으로 넘어가지 않는다. */
+export const MERGE_NO_MANDATE_MESSAGE = 'a merge cannot be approved for 7 days without a mandate on this thread — approve the merge once from the refusal card, or approve from a thread you started';
+
 export type PermissionDecision = 'approve' | 'approve_mandate' | 'approve_new_mandate' | 'approve_once' | 'approve_hour' | 'deny';
 
 /** 7일 승인 갈래 — 옛 `approve` 와 W4b 의 두 갈래. 줄의 기한(7일)·요청 상태 'granted' 를 정한다. */
@@ -622,6 +625,13 @@ export async function decidePermissionRequest(
       if (r.cardMessageId) {
         await client.query(`update message set mandate_id = $2 where id = $1 and mandate_id is null and author_id = $3`, [r.cardMessageId, made, args.agentId]);
       }
+    }
+    // D1(security 2026-11-02): merge 는 위임장 없이 7일 승인으로 넘어가지 않는다 — 소유자의 merge grant 는 모든 위임장에 상시 줄로
+    // 펼쳐지므로, 위임장을 **못 세운** 승인이 오히려 가장 넓게 열린다. 소유자 아닌 사람(byUser)의 grant 는 그 사람 이름이라 소유자
+    // 위임장에 펼쳐지지 않으므로 그대로 둔다(사용 권한자 발급은 C-3). tool 은 grant 가 채널 범위라 지금처럼 둔다.
+    if (r.kind === 'merge' && !byUser && !r.mandateId && (args.decision === 'approve_mandate' || args.decision === 'approve_new_mandate')) {
+      await client.query('rollback');
+      return { ok: false, status: 409, code: 'mandate_unavailable', message: MERGE_NO_MANDATE_MESSAGE };
     }
     if (r.kind !== 'command' && args.decision === 'approve_hour') {
       await client.query('rollback');

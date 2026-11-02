@@ -78,6 +78,7 @@ const Map<String, List<String>> systemI18nArgs = {
   'system.chatApproval.decided': [],
   'system.chatApproval.expired': [],
   'system.chatApproval.onceOnCard': [],
+  'system.chatApproval.mergeNoMandate': [],
   'system.chatApproval.failed': [],
 };
 

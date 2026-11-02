@@ -4837,6 +4837,7 @@ export const en = {
   'system.chatApproval.decided': '⚠️ Not approved: that card is already decided.',
   'system.chatApproval.expired': '⚠️ Not approved: that card has expired.',
   'system.chatApproval.onceOnCard': '⚠️ Not approved: decide this merge card in its thread or with its link.',
+  'system.chatApproval.mergeNoMandate': '⚠️ Not approved: no mandate can be started on this thread, so a merge is not approved for 7 days. Use "once" on the merge refusal card, or approve with the card link from a thread you started.',
   'system.chatApproval.failed': '⚠️ Not approved: it could not be decided. Try again on the card.',
   'community.version.value': 'Server v{version}',
   'community.version.unknown': 'Checking server version',

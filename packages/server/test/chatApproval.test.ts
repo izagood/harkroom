@@ -227,6 +227,24 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
     expect((await pool.query(`select count(*)::int as n from mandate_line where request_id = $1`, [b.requestId])).rows[0].n).toBe(0);
   });
 
+  it('merge 요청은 위임장을 세울 수 없는 스레드에서 글 「승인」으로 7일 승인하지 않는다 — grant 없음, 안내 줄(D1)', async () => {
+    const foreign = await root();
+    const bobMandate = (await pool.query(
+      `insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at) values ($1, $2, $3, $2, now(), now()) returning id`,
+      [bob.accountId, foreign, ch])).rows[0].id as string;
+    await pool.query(`update message set mandate_id = $2 where id = $1`, [foreign, bobMandate]);
+    n += 1;
+    const repo = `acme-org/d1-chat${n}`;
+    const r = text(await client.callTool({ name: 'permission.request', arguments: { channelId: ch, threadRootId: foreign, reason: '확인', kind: 'merge', repo } }));
+    const requestId = (r.requestId ?? r.created?.requestId) as string;
+    expect(requestId).toBeTruthy();
+    expect((await say(alice.token, '승인', foreign)).statusCode).toBe(201);
+    expect(await status(requestId)).toBe('pending');
+    expect((await pool.query(`select 1 from account_grant where account_id = $1 and capability = 'repo.merge' and scope like $2`, [agentId, `%${repo}`])).rowCount).toBe(0);
+    const line = (await systemLines(foreign)).at(-1)!;
+    expect(line.body).toContain('위임장을 세울 수 없어');
+  });
+
   it('소유자가 아닌 사람·소유자의 PAT·에이전트 글은 승인하지 않는다', async () => {
     const thread = await root();
     const { requestId } = await ask(thread);

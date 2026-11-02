@@ -136,11 +136,16 @@ export async function decide(pool: Pool, ref: DecisionRef, actorId: string, inpu
   let d = await decidePermissionRequest(pool, { ...args, decision });
   // [이 스레드로 위임장 만들고 더하기]인데 이 스레드에 위임장을 세울 수 없으면(머리 글이 소유자 것이 아님·남의 위임장) 7일 승인으로
   // 한 번 더 한다 — 글 승인 길이 하던 것을 입구로 옮겼다. 버튼만 409 로 끝나 「눌러도 아무 일 없음」이 되던 갈림을 없앤다.
-  if (!d.ok && d.code === 'mandate_unavailable' && decision === 'approve_new_mandate') {
+  // merge 는 넘어가지 않는다(D1) — 소유자의 7일 merge grant 는 모든 위임장에 상시 줄로 펼쳐진다. 409 가 그대로 간다.
+  if (!d.ok && d.code === 'mandate_unavailable' && decision === 'approve_new_mandate' && !(await isMergeRequest(pool, ref.requestId))) {
     d = await decidePermissionRequest(pool, { ...args, decision: 'approve' });
   }
   if (!d.ok) return { kind: 'permission', ...d };
   return { kind: 'permission', ok: true, result: d };
+}
+
+async function isMergeRequest(pool: Pool, requestId: string): Promise<boolean> {
+  return (await pool.query<{ kind: string }>(`select kind from permission_request where id = $1`, [requestId])).rows[0]?.kind === 'merge';
 }
 
 /** 원본 권한 카드의 `permissionRequest.once`(서버가 거절 기록으로 채운 값)로 1회 머지 입력을 만든다. */

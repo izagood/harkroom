@@ -197,6 +197,20 @@ describe('permission card decisions (W4b)', () => {
     expect(await linesOf(requestId)).toEqual([]);
   });
 
+  it('merge: approve_new_mandate where no mandate can be started → 409 mandate_unavailable, no grant, nothing spreads (D1)', async () => {
+    const repo = 'acme-org/d1-nomandate';
+    const other = await mandateThread(alice.accountId, '@cardbot elsewhere');
+    const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'bob root', 'user') returning id`, [ch, bob.accountId])).rows[0].id as string;
+    const { requestId, cardId } = await card({ kind: 'merge', target: repo, root, mandateId: null });
+    expect(await decideCard(cardId, 'approve_new_mandate')).toMatchObject({ ok: false, code: 'mandate_unavailable' });
+    expect(await decideCard(cardId, 'approve_mandate')).toMatchObject({ ok: false, code: 'mandate_unavailable' });
+    expect((await pool.query(`select status from permission_request where id = $1`, [requestId])).rows[0].status).toBe('pending');
+    expect((await pool.query(`select 1 from account_grant where account_id = $1 and capability = 'repo.merge'`, [agentId])).rowCount).toBe(0);
+    expect(await findLine(pool, { mandateId: other.mandateId, agentId, cap: 'merge', action: { cap: 'merge', repo } })).toBeNull();
+    expect(await decideCard(cardId, 'deny')).toMatchObject({ ok: true });
+    await ageRequest(requestId);
+  });
+
   it('approve_new_mandate on a thread another person started → 7-day approval, root keeps no mandate key (F2)', async () => {
     const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'bob root', 'user') returning id`, [ch, bob.accountId])).rows[0].id as string;
     const target = rule();
