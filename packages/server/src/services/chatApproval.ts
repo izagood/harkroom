@@ -270,7 +270,9 @@ const isOpen = (c: Candidate) => c.status === 'pending' && !c.expired;
 
 async function approveFromMessage(pool: Pool, message: MessageRow, actorId: string, parsed: ChatApprovalParse): Promise<void> {
   const threadRootId = message.threadRootId ?? message.id;
-  const hasWord = parsed.action !== null || parsed.block !== null;
+  // L(소유자 결정 2026-11-02): 링크한 글이 카드가 아닐 때 안내를 다는 것은 **끝맺은 결정**(막힘 없는 승인·거절)일 때만이다.
+  // 「…승인한 걸 … 수정되어야해 + 링크」처럼 낱말이 서술로 든 글은 승인 시도가 아니다 — 링크만 있는 글처럼 조용히 넘긴다.
+  const decisive = parsed.action !== null && parsed.block === null;
   let targets: Candidate[];
   let target: ChatTarget = 'T1';
   if (parsed.cardIds.length > 0) {
@@ -291,8 +293,8 @@ async function approveFromMessage(pool: Pool, message: MessageRow, actorId: stri
     targets = await withDeciders(pool, actorId, [...new Set(resolved)].map((id) => rows.find((r) => r.cardMessageId === id)).filter((r): r is Candidate => !!r));
     if (targets.length === 0) {
       // 선택 카드에 고르는 꼴이 아닌 결정 낱말을 쓴 글(P5 가 넘긴 것)이다. 낱말이 있을 때만 안내한다 — 링크만 있는 글은 흔하다.
-      if (askCards > 0 && hasWord) return refuse(pool, message, actorId, 'askCard');
-      if (hasWord && (await ownsPendingRequest(pool, actorId))) return refuse(pool, message, actorId, 'noCard');
+      if (askCards > 0 && decisive) return refuse(pool, message, actorId, 'askCard');
+      if (decisive && (await ownsPendingRequest(pool, actorId))) return refuse(pool, message, actorId, 'noCard');
       return;
     }
     const mineLinked = targets.filter((c) => c.canDecide);
