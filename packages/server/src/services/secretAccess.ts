@@ -30,15 +30,24 @@ export const LEASE_TTL_MS = 35 * 60_000;
 export const LEASE_MAX_MS = 70 * 60_000;
 export const LEASE_RENEW_MS = 10 * 60_000;
 /**
- * 이보다 오래된 인박스 항목에는 임대를 주지 않는다(S1). 러너는 멘션을 집는 즉시 받으므로 짧아도 된다 —
- * 길수록 "아직 집지 않은 멘션을 셸이 먼저 받는" 창(H2)이 넓어진다.
+ * 임대는 **아직 처리하지 않은**(읽음 처리 전) 인박스 항목에만 주고, 그것도 이만큼 지난 것까지만 준다(S1).
+ *
+ * 러너는 멘션을 집는 즉시가 아니라 **그 멘션의 턴을 시작하기 직전**에 임대를 받는다(`mentionScheduler.ts`). 한 스레드의
+ * 부름은 차례로 돌므로, 긴 앞 턴 뒤에 쌓인 부름은 줄에서 수십 분을 기다린다 — 예전의 「들어온 지 10분 안」 규칙은 그런
+ * 부름을 전부 임대 없이 돌렸다. 「처리 안 함」은 `read_at is null` 로 본다: 러너는 턴이 끝난 **뒤에** 읽음 처리하므로 줄에서
+ * 기다리는 동안과 턴이 도는 동안은 비어 있고, 읽음 처리는 창을 좁히기만 한다(`read_at` 을 다시 비우는 길은 없다).
+ * 상한을 넘긴 묵은 부름(오퍼레이터가 오래 꺼져 있던 경우 등)은 지금처럼 비밀 없이 돈다. 창이 넓어진 만큼 "아직 집지 않은
+ * 멘션을 같은 자격의 셸이 먼저 받는" 창(H2)도 넓어지지만, 발급은 오퍼레이터를 거친 에이전트만·멘션당 한 번이라 뺏기면
+ * 러너가 409 를 받고 감사 줄이 남는다.
  */
-export const LEASE_INBOX_FRESH_MS = 10 * 60_000;
+export const LEASE_INBOX_MAX_AGE_MS = 6 * 60 * 60_000;
 
 const sha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex');
 
 export type LeaseIssue =
-  | { ok: true; leaseId: string; token: string; channelId: string; threadRootId: string; expiresAt: string }
+  | { ok: true; leaseId: string; token: string; channelId: string; threadRootId: string; expiresAt: string;
+      /** 부름이 인박스에 들어온 뒤 발급까지 기다린 초(감사용 — 줄이 밀려 늦게 받은 것을 로그 한 줄로 가른다). */
+      waitedSec: number }
   | { ok: false; code: 'not_invoked' | 'lease_used' };
 
 /**
@@ -63,12 +72,14 @@ export async function issueTurnLease(
                   and d.id = coalesce(m.mandate_id,
                     (select w.mandate_id from agent_wake w where w.message_id = m.id and w.account_id = i.account_id
                       order by w.created_at desc limit 1))) as "mandateId",
-              ${PRINCIPAL_FROM_CAUSE_SQL} as "principalId"
+              ${PRINCIPAL_FROM_CAUSE_SQL} as "principalId",
+              i.created_at as "inboxAt"
          from inbox i join message m on m.id = i.message_id
          join account a on a.id = m.author_id
-        where i.account_id = $1 and i.message_id = $2 and i.created_at > $3 and m.deleted_at is null
+        where i.account_id = $1 and i.message_id = $2 and i.read_at is null and i.created_at > $3 and m.deleted_at is null
+        order by i.created_at
         limit 1`,
-      [args.agentId, args.causeMessageId, new Date(now.getTime() - LEASE_INBOX_FRESH_MS)]);
+      [args.agentId, args.causeMessageId, new Date(now.getTime() - LEASE_INBOX_MAX_AGE_MS)]);
     if (!msg.rowCount) { await client.query('rollback'); return { ok: false, code: 'not_invoked' }; }
     const used = await client.query(
       `select 1 from secret_turn_lease where agent_id = $1 and cause_message_id = $2`,
@@ -77,7 +88,7 @@ export async function issueTurnLease(
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(now.getTime() + LEASE_TTL_MS);
     const row0 = msg.rows[0] as {
-      channelId: string; threadRootId: string; mandateId: string | null; principalId: string | null;
+      channelId: string; threadRootId: string; mandateId: string | null; principalId: string | null; inboxAt: Date;
     };
     const { channelId, threadRootId, principalId } = row0;
     let mandateId = row0.mandateId;
@@ -93,7 +104,8 @@ export async function issueTurnLease(
       [sha256(token), args.agentId, args.operatorId, args.causeMessageId, channelId, threadRootId, now, expiresAt, mandateId, principalId]);
     await client.query('commit');
     if (automationMandate) await auditAutomationMandateCreated(pool, automationMandate).catch(() => {});
-    return { ok: true, leaseId: (ins.rows[0] as { id: string }).id, token, channelId, threadRootId, expiresAt: expiresAt.toISOString() };
+    const waitedSec = Math.max(0, Math.round((now.getTime() - new Date(row0.inboxAt).getTime()) / 1000));
+    return { ok: true, leaseId: (ins.rows[0] as { id: string }).id, token, channelId, threadRootId, expiresAt: expiresAt.toISOString(), waitedSec };
   } catch (e) {
     await client.query('rollback').catch(() => {});
     throw e;
