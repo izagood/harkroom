@@ -140,6 +140,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     ...(deps.turnSecretsDir ? { turnSecretsDir: deps.turnSecretsDir } : {}),
     operatorBin: deps.operatorBin,
     commandHook: async () => (await readConfig(configPath)).commandHook === true,
+    postToolHook: async () => (await readConfig(configPath)).postToolHook !== false,
     chromeHost: () => chromeHostAvailable({
       appLaunched: deps.appLaunched === true, platform: process.platform, home: homedir(),
       exists: (p) => access(p).then(() => true, () => false),

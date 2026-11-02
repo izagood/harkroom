@@ -39,6 +39,8 @@ export interface AssignmentDeps {
   operatorBin: string;
   /** `operator.json` 의 `commandHook === true` 인가(H③b). spawn 마다 다시 읽는다 — 없으면 꺼짐. */
   commandHook?: () => Promise<boolean>;
+  /** `operator.json` 의 `postToolHook !== false` 인가(턴 도중 새 글 hook). spawn 마다 다시 읽는다 — 못 읽으면 켜짐(기본값). */
+  postToolHook?: () => Promise<boolean>;
   /**
    * 이 머신이 Claude in Chrome 을 열 수 있는가(`chromeHost.ts`). spawn 마다 다시 잰다 — 사람이 확장을 깔거나 지운 것을
    * 오퍼레이터 재시작 없이 따라간다. 없거나 던지면 닫힘. 에이전트별 켜짐은 러너가 정의의 `chromeEnabled` 로 합친다.
@@ -194,6 +196,8 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         ...(local?.claudePool ? { HARKROOM_CLAUDE_POOL: local.claudePool } : {}),
         // 「정확한 명령」 hook(H③b) — 켜졌을 때만. 못 읽으면 꺼짐.
         ...((await deps.commandHook?.().catch(() => false)) ? { HARKROOM_COMMAND_HOOK: '1' } : {}),
+        // 턴 도중 새 글 hook — **늘 '0'/'1' 로 명시한다**(아래 Chrome 과 같은 이유: 띄운 셸의 값이 새지 않게).
+        HARKROOM_POST_TOOL_HOOK: (await deps.postToolHook?.().catch(() => true)) === false ? '0' : '1',
         // Claude in Chrome — 머신이 열 수 있을 때만 '1'(앱이 띄운 로컬 + native host). 못 재면 닫힘.
         // **늘 '0'/'1' 로 명시한다**(security F1): 러너 env 는 오퍼레이터의 process.env 위에 얹히므로(`runners.ts::withUserEnv`)
         // 거짓일 때 키를 빼면 `run` 오퍼레이터를 띄운 셸에 있던 `HARKROOM_CHROME_HOST=1` 이 그대로 새어 열린다.

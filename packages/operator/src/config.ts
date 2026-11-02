@@ -56,6 +56,11 @@ export interface OperatorConfig {
    * 턴에 인라인 `--settings` 로 `harkroom-operator hook pretool` 을 단다. 켜도 소유자가 승인한 정확한 명령만 열린다.
    */
   commandHook?: boolean;
+  /**
+   * 턴 도중 새 글 PostToolUse hook(스레드 f1460447). **기본 켜짐** — `false` 일 때만 러너가 claude 멘션 턴에 `hook posttool` 을 달지 않는다.
+   * 권한을 넓히지 않는 알림이라(`turnPeek.ts`) 켠 쪽이 기본이다.
+   */
+  postToolHook?: boolean;
 }
 
 const EMPTY: OperatorConfig = { communities: {} };
