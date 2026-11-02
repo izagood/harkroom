@@ -83,6 +83,9 @@ const Map<String, List<String>> systemI18nArgs = {
   'system.chatApproval.onceOnCard': [],
   'system.chatApproval.mergeNoMandate': [],
   'system.chatApproval.failed': [],
+  'system.runner.blockedByTurn': ['agentId'],
+  'system.runner.fenced': ['agentId'],
+  'system.runner.controlled': ['agentId', 'handle', 'pending'],
 };
 
 const int _maxArgLength = 200;

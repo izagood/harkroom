@@ -101,6 +101,11 @@ export const SYSTEM_I18N_ARGS = Object.freeze({
   'system.chatApproval.onceOnCard': [],
   'system.chatApproval.mergeNoMandate': [],
   'system.chatApproval.failed': [],
+  // 러너 알림 줄(2026-11-02, `server/src/services/runnerNotices.ts`). agentId 는 그 줄을 남긴 에이전트 — 시스템 줄은
+  // author 를 그리지 않으므로 문장에 싣는다. handle 은 조종을 연 사람의 handle(계정 id 가 아니다).
+  'system.runner.blockedByTurn': ['agentId'],
+  'system.runner.fenced': ['agentId'],
+  'system.runner.controlled': ['agentId', 'handle', 'pending'],
 } as const satisfies Record<string, readonly string[]>);
 
 export type SystemI18nKey = keyof typeof SYSTEM_I18N_ARGS;
