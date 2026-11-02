@@ -637,14 +637,36 @@ export function controlledNotice(handle: string, pending: number): string {
 }
 
 /**
- * 같은 스레드에서 앞 턴이 아직 돌아 이 멘션을 미뤘다는 통지(2026-10-29). entry 당 1회(`mentionScheduler` 의 장부).
+ * 러너 알림 줄(2026-11-02). 셋 다 **서버가 시스템 줄로 쓴다**(`message.notice`, 서버 `services/runnerNotices.ts`) —
+ * 러너는 키만 고른다. 일반 글(`message.post`)로 올리면 에이전트가 직접 한 말로 보이고, 서버가 그 줄을 에이전트의
+ * **결과**로 세어 회신권·열린 위임을 닫았다.
  *
- * 앞 턴은 도중에 새 글을 보지 못한다 — 사람이 「멈춰」를 써도 그 턴은 하던 일을 끝까지 한다. 그래서 문구가
- * **바로 멈추는 길**을 같이 적는다. 그 길이 없으면 사람은 이 글을 보고도 기다리는 것밖에 할 수 없다.
+ * - `blocked_by_turn`: 같은 스레드에서 앞 턴이 아직 돌아 이 사람 멘션을 미뤘다(2026-10-29). entry 당 1회(`mentionScheduler` 의
+ *   장부). 앞 턴은 도중에 새 글을 보지 못하므로 문장이 **바로 멈추는 길**을 같이 적는다.
+ * - `fenced`: 스레드 임대를 잃어 턴을 접었다. 이어 가는 것은 같은 에이전트의 다른 러너다.
+ * - `controlled`: 사람이 그 하네스를 직접 조종 중이라 멘션을 미뤘다. 조건이 아니라 **끝나는 방법**을 적는다
+ *   (`controlledNotice` 주석).
  */
-export function blockedByTurnNotice(): string {
-  return '(이 스레드에서 앞 턴이 아직 돌고 있습니다 — 이 글은 그 턴이 끝나면 읽습니다. '
-    + '바로 멈추려면 도는 턴 목록이나 그 턴의 터미널 창에서 「멈추기」를 누르세요)';
+export type RunnerNotice =
+  | { key: 'blocked_by_turn' }
+  | { key: 'fenced' }
+  | { key: 'controlled'; handle: string; pending: number };
+
+/**
+ * `message.notice` 를 모르는 **옛 서버**에서만 쓰는 본문(서버 문장과 같은 말). 옛 서버에서는 지금까지처럼 일반 글로
+ * 나간다 — 알림이 사라지는 것보다 낫다. 서버가 판올림되면 이 길은 타지 않는다.
+ */
+export function runnerNoticeFallbackBody(n: RunnerNotice): string {
+  switch (n.key) {
+    case 'blocked_by_turn':
+      return '(이 스레드에서 앞 턴이 아직 돌고 있습니다 — 이 글은 그 턴이 끝나면 읽습니다. '
+        + '바로 멈추려면 도는 턴 목록이나 그 턴의 터미널 창에서 「멈추기」를 누르세요)';
+    case 'fenced':
+      return '(다른 러너가 이 스레드를 넘겨받아 이 턴을 접었다 — 이 러너가 서버와 끊긴 사이 스레드 임대가 만료됐다.'
+        + ' 남은 일은 넘겨받은 쪽이 잇는다)';
+    case 'controlled':
+      return controlledNotice(n.handle, n.pending);
+  }
 }
 
 /**

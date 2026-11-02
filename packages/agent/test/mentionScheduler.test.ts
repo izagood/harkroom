@@ -14,6 +14,7 @@ import { SessionStore } from '../src/sessions.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
 import { MentionQueue } from '../src/mentionQueue.js';
 import type { InboxBatch } from '../src/harkroom.js';
+import type { RunnerNotice } from '../src/prompt.js';
 import type { MentionTarget, MentionTurnResult } from '../src/mentionTurn.js';
 import { PromptNotDeliveredError } from '../src/pty.js';
 
@@ -66,6 +67,7 @@ function harness(opts: {
   const markReadCalls: number[][] = [];
   const posted: { channelId: string; body: string; anchor: string | null }[] = [];
   const failed: { body: string; retryable: boolean }[] = [];
+  const notices: { channelId: string; anchor: string | null; notice: RunnerNotice }[] = [];
   const registry = new TurnRegistry();
   const scheduler = createMentionScheduler({
     harkroom: {
@@ -75,6 +77,8 @@ function harness(opts: {
         markedRead.push(...ids); return ids.length;
       },
       post: async (channelId, body, anchor) => { posted.push({ channelId, body, anchor }); return 1; },
+      // 러너 알림 줄은 시스템 줄(`message.notice`)이다 — 일반 글(`posted`)에 섞이면 안 된다. 따로 담는다.
+      notice: async (channelId, anchor, n) => { notices.push({ channelId, anchor, notice: n }); return 1; },
       // 실패 발화도 `posted` 에 담는다 — 회귀선이 보는 것은 "그 스레드에 무슨 말이
       // 나갔나" 이고, 실패도 그 스레드에 나간 말이다. 종류는 `failed` 가 따로 담는다.
       fail: async (channelId, body, anchor, o) => {
@@ -99,7 +103,7 @@ function harness(opts: {
     ...(opts.now ? { now: opts.now } : {}),
     ...(opts.secretLeases ? { secretLeases: opts.secretLeases as never } : {}),
   });
-  return { scheduler, registry, markedRead, markReadCalls, posted, failed };
+  return { scheduler, registry, markedRead, markReadCalls, posted, failed, notices };
 }
 
 describe('mentionScheduler 승인 관문', () => {
@@ -238,8 +242,10 @@ describe('mentionScheduler 승인 관문', () => {
       { entryId: 2, messageId: 'm2', threadRootId: 'root-1', body: '멈춰' },
     ]);
     await h.scheduler.admit(batch, withAgents);
-    const notices = () => h.posted.filter((p) => p.body.includes('앞 턴이 아직 돌고 있습니다'));
-    expect(notices()).toEqual([{ channelId: CH, body: expect.stringContaining('끝나면 읽습니다'), anchor: 'root-1' }]);
+    const notices = () => h.notices.filter((n) => n.notice.key === 'blocked_by_turn');
+    // 시스템 줄(`message.notice`)로 나간다 — 일반 글로 나가면 에이전트의 결과로 세어진다(2026-11-02).
+    expect(notices()).toEqual([{ channelId: CH, anchor: 'root-1', notice: { key: 'blocked_by_turn' } }]);
+    expect(h.posted.filter((p) => p.body.includes('앞 턴이 아직 돌고 있습니다'))).toEqual([]);
     // 다음 폴에 같은 entry 가 다시 와도 또 알리지 않는다.
     await h.scheduler.admit(batch, withAgents);
     expect(notices()).toHaveLength(1);
@@ -262,7 +268,7 @@ describe('mentionScheduler 승인 관문', () => {
     await h.scheduler.admit(wake, { ...ctx, agentIds: new Set(['agent-x']) });
     // 명단 없음
     await h.scheduler.admit(batchOf([{ entryId: 4, messageId: 'm4', threadRootId: 'root-1' }]), ctx);
-    expect(h.posted.filter((p) => p.body.includes('앞 턴이 아직 돌고 있습니다'))).toEqual([]);
+    expect(h.notices.filter((n) => n.notice.key === 'blocked_by_turn')).toEqual([]);
 
     gate.resolve({ stopRequestedAt: null });
     await h.scheduler.drain();
@@ -399,7 +405,7 @@ describe('mentionScheduler 승인 관문', () => {
   });
   it('사람이 조종 중인 스레드의 멘션은 유예하고 통지는 entry 당 1회다', async () => {
     let calls = 0;
-    const { scheduler, registry, posted, markedRead } = harness({
+    const { scheduler, registry, posted, notices, markedRead } = harness({
       runTurn: async () => { calls += 1; return { stopRequestedAt: null }; },
     });
     // 사람이 이 스레드를 조종 중이다.
@@ -418,8 +424,9 @@ describe('mentionScheduler 승인 관문', () => {
     // 유예는 markRead 하지 않는다 — inbox 의 at-least-once 가 그대로 큐다.
     expect(markedRead).toEqual([]);
     // 재폴링마다 올리면 조종이 길수록 스레드가 도배된다.
-    expect(posted).toHaveLength(1);
-    expect(posted[0]!.body).toContain('alice');
+    // 통지는 시스템 줄(`message.notice`)이다 — 일반 글로는 나가지 않는다.
+    expect(posted).toEqual([]);
+    expect(notices).toEqual([{ channelId: CH, anchor: 'root-1', notice: { key: 'controlled', handle: 'alice', pending: 1 } }]);
   });
 
   /**
@@ -431,7 +438,7 @@ describe('mentionScheduler 승인 관문', () => {
   it('조종이 상한을 넘기면 스레드에 막힘으로 한 번 세운다 — 유예는 유지한다', async () => {
     let clock = 1_000;
     let calls = 0;
-    const { scheduler, registry, posted, failed, markedRead } = harness({
+    const { scheduler, registry, posted, failed, notices, markedRead } = harness({
       runTurn: async () => { calls += 1; return { stopRequestedAt: null }; },
       now: () => clock,
     });
@@ -457,7 +464,8 @@ describe('mentionScheduler 승인 관문', () => {
     // 유예는 그대로다: 턴은 안 돌고, markRead 도 안 한다(멘션이 사라지면 안 된다).
     expect(calls).toBe(0);
     expect(markedRead).toEqual([]);
-    expect(posted).toHaveLength(2); // 대기 통지 1 + 막힘 1
+    expect(notices.map((n) => n.notice.key)).toEqual(['controlled']); // 대기 통지 1(시스템 줄)
+    expect(posted).toHaveLength(1); // 막힘 1
   });
 
   it('대기가 셋이 되면 시간과 무관하게 막힘으로 세운다 — 답을 못 받는 사람이 셋이다', async () => {
