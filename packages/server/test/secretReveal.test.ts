@@ -81,7 +81,53 @@ describe('턴 임대·reveal (086)', () => {
     expect(res.headers['cache-control']).toBe('no-store');
     // 남의 멘션·오래된 멘션에는 안 준다.
     expect((await lease(await mention(privCh, otherAgentId))).statusCode).toBe(403);
-    expect((await lease(await mention(privCh, agentId, 11 * 60_000))).json().error.code).toBe('not_invoked');
+    expect((await lease(await mention(privCh, agentId, 6 * 60 * 60_000 + 60_000))).json().error.code).toBe('not_invoked');
+  });
+
+  // 「처리 안 한 부름 + 6시간 상한」— 긴 앞 턴 뒤에 쌓인 부름이 10분을 넘겨도 임대를 받는다.
+  describe('임대 창: 읽지 않은 부름 + 6시간', () => {
+    const H6 = 6 * 60 * 60_000;
+    it('① 줄에서 25분 기다린 읽지 않은 부름도 받고, 기다린 초가 감사에 남는다', async () => {
+      const m = await mention(privCh, agentId, 25 * 60_000);
+      const r = await lease(m);
+      expect(r.statusCode).toBe(200);
+      const row = (await pool.query(`select detail from audit_log where action = 'secret.lease.issued' and detail->>'causeMessageId' = $1`, [m])).rows[0];
+      expect(row.detail.leaseId).toBe(r.json().lease.id);
+      expect(row.detail.waitedSec).toBeGreaterThanOrEqual(25 * 60 - 5);
+      expect(JSON.stringify(row.detail)).not.toContain(r.json().lease.token);
+    });
+    it('② 6시간을 넘긴 부름은 403 not_invoked', async () => {
+      expect((await lease(await mention(privCh, agentId, H6 + 60_000))).json().error.code).toBe('not_invoked');
+    });
+    it('③ 읽음 처리된 부름은 10분 안이라도 403', async () => {
+      const m = await mention(privCh);
+      await pool.query(`update inbox set read_at = now() where account_id = $1 and message_id = $2`, [agentId, m]);
+      expect((await lease(m)).json().error.code).toBe('not_invoked');
+    });
+    it('④ 받은 뒤 같은 글로 다시 받으면 409 lease_used(그대로)', async () => {
+      const m = await mention(privCh, agentId, 30 * 60_000);
+      expect((await lease(m)).statusCode).toBe(200);
+      expect((await lease(m)).json().error.code).toBe('lease_used');
+    });
+    it('⑤ 같은 글에 행이 둘(하나 읽음·하나 안 읽음)이면 받는다', async () => {
+      const m = await mention(privCh, agentId, 40 * 60_000);
+      await pool.query(`update inbox set read_at = now() where account_id = $1 and message_id = $2`, [agentId, m]);
+      await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'wake')`, [agentId, m]);
+      expect((await lease(m)).statusCode).toBe(200);
+    });
+    it('⑥ 부른 뒤 지운 글은 403', async () => {
+      const m = await mention(privCh, agentId, 20 * 60_000);
+      await pool.query(`update message set deleted_at = now() where id = $1`, [m]);
+      expect((await lease(m)).json().error.code).toBe('not_invoked');
+    });
+    it('⑦ 다른 에이전트의 읽지 않은 행만 있으면 403', async () => {
+      const m = await mention(privCh, otherAgentId, 20 * 60_000);
+      expect((await lease(m)).json().error.code).toBe('not_invoked');
+    });
+    it('⑧ 상한 경계: 6시간 − 1분은 받고 6시간 + 1분은 거절', async () => {
+      expect((await lease(await mention(privCh, agentId, H6 - 60_000))).statusCode).toBe(200);
+      expect((await lease(await mention(privCh, agentId, H6 + 60_000))).json().error.code).toBe('not_invoked');
+    });
   });
 
   it('S1: 멘션 하나에 임대는 평생 하나 — 살아 있든 끝났든 두 번째는 409 lease_used 이고 감사에 남는다', async () => {
