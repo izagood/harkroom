@@ -18,14 +18,41 @@ import { errorText } from '../../lib/errorText';
  * 주소가 바뀌면 키가 다른 곳으로 가기 때문이다. 키의 **값**만 바꾸는 것은 비밀 절의 [값 바꾸기]이고 권한을 멈추지 않는다.
  */
 
-// 토큰 교환(156) 칸은 화면 PR 에서 그린다 — 그 전까지 이 양식은 그 꼴의 연결을 고쳐도 꼴·토큰 칸을 그대로 둔다(서버가 빠진 칸을 지킨다).
 type AuthKind = ApiAuthKind;
-interface Draft { name: string; baseUrl: string; authKind: AuthKind; authHeader: string; secretId: string; methods: ApiMethod[] }
+/**
+ * 토큰 교환(156) 칸은 꼴을 바꿔도 지우지 않는다 — Bearer 로 잠깐 바꿨다 돌아와도 입력이 남는다(designer 대조 항목). 보낼 때만
+ * `token_exchange` 일 때 싣는다.
+ */
+interface Draft {
+  name: string; baseUrl: string; authKind: AuthKind; authHeader: string; secretId: string; methods: ApiMethod[];
+  tokenUrl: string; grantType: string; clientId: string; keyField: string;
+}
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-const emptyDraft = (): Draft => ({ name: '', baseUrl: 'https://', authKind: 'bearer', authHeader: '', secretId: '', methods: ['GET'] });
+// 서버 규칙과 같다(connectorRoutes.ts) — 여기는 [만들기]를 끄고 바로 경고하는 편의다.
+const FORM_VALUE_RE = /^[\x20-\x7e]{1,200}$/;
+const FORM_FIELD_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+const RESERVED_FIELDS = new Set(['grant_type', 'client_id']);
+const TOKEN_DEFAULTS = { tokenUrl: 'https://', grantType: 'client_credentials', clientId: '', keyField: 'client_secret' };
+const emptyDraft = (): Draft => ({ name: '', baseUrl: 'https://', authKind: 'bearer', authHeader: '', secretId: '', methods: ['GET'], ...TOKEN_DEFAULTS });
 const fromConnector = (c: ApiConnectorView): Draft => ({
   name: c.name, baseUrl: c.baseUrl, authKind: c.authKind, authHeader: c.authHeader ?? '', secretId: c.secretId ?? '', methods: [...c.methods],
+  tokenUrl: c.tokenUrl ?? TOKEN_DEFAULTS.tokenUrl, grantType: c.tokenForm?.grantType ?? TOKEN_DEFAULTS.grantType,
+  clientId: c.tokenForm?.clientId ?? TOKEN_DEFAULTS.clientId, keyField: c.tokenForm?.keyField ?? TOKEN_DEFAULTS.keyField,
 });
+/**
+ * 토큰 주소 — https, 질의·조각·사용자 정보·인코딩된 점/슬래시 없음(경로는 된다). 맞으면 키가 갈 origin, 아니면 null.
+ * 서버도 같은 규칙으로 다시 잰다(`normalizeTokenUrl`).
+ */
+export const tokenUrlOrigin = (u: string): string | null => {
+  const s = u.trim();
+  if (/%2e|%2f|%5c|%25/i.test(s) || /\/\.\.?(\/|$)/.test(s)) return null;
+  try {
+    const x = new URL(s);
+    if (x.protocol !== 'https:' || x.search || x.hash || x.username || x.password || !x.hostname || s.includes('?') || s.includes('#')) return null;
+    return x.origin;
+  } catch { return null; }
+};
+const hostOf = (origin: string): string => origin.replace(/^https:\/\//, '');
 /** https origin 만 — 경로·질의 없음. 서버도 같은 규칙으로 다시 잰다(여기는 [만들기]를 끄는 편의). */
 const looksHttpsOrigin = (u: string): boolean => {
   try { const x = new URL(u); return x.protocol === 'https:' && (x.pathname === '/' || x.pathname === '') && !x.search && !x.hash && !x.username; } catch { return false; }
@@ -60,6 +87,8 @@ export function ConnectorsSection({ secrets, enabled, onChanged }: {
         case 'bad_header': return t('connectors.errHeader');
         case 'no_secret': return t('connectors.errSecret');
         case 'bad_secret': return t('connectors.errSecretKind');
+        case 'bad_token_url': return t('connectors.tokenUrlBad');
+        case 'bad_token_form': return t('connectors.errTokenForm');
         default: break;
       }
       if (err.status === 403) return t('connectors.errForbidden');
@@ -79,6 +108,10 @@ export function ConnectorsSection({ secrets, enabled, onChanged }: {
     authHeader: d.authKind === 'header' ? d.authHeader.trim() : null,
     secretId: d.authKind === 'none' ? null : d.secretId || null,
     methods: d.methods,
+    ...(d.authKind === 'token_exchange'
+      ? { tokenUrl: d.tokenUrl.trim(), tokenForm: { grantType: d.grantType.trim(), clientId: d.clientId.trim(), keyField: d.keyField.trim() } }
+      // 다른 꼴로 바꾸면 서버가 토큰 칸을 비운다 — 여기서는 싣지 않는다.
+      : {}),
   });
   const save = async (id: string | null, d: Draft) => {
     if (id === null) {
@@ -90,12 +123,13 @@ export function ConnectorsSection({ secrets, enabled, onChanged }: {
       if (r.suspendedGrants > 0) setNotice(t('connectors.suspendedNotice', { n: String(r.suspendedGrants) }));
     })) setEditing(null);
   };
-  /** 주소·인증·키가 바뀌면 그 연결의 권한이 멈춘다 — 권한이 있는 연결이면 확인창을 먼저 띄운다. */
+  /** 주소·인증·키·토큰 주소·보내는 값이 바뀌면 그 연결의 권한이 멈춘다(서버와 같은 판정) — 권한이 있는 연결이면 확인창을 먼저 띄운다. */
   const submit = (id: string | null, d: Draft) => {
     const cur = id && Array.isArray(rows) ? rows.find((c) => c.id === id) : undefined;
     if (cur && cur.grantCount > 0) {
       const b = body(d);
-      const target = b.baseUrl !== cur.baseUrl || b.authKind !== cur.authKind || (b.authHeader ?? null) !== cur.authHeader || (b.secretId ?? null) !== cur.secretId;
+      const target = b.baseUrl !== cur.baseUrl || b.authKind !== cur.authKind || (b.authHeader ?? null) !== cur.authHeader || (b.secretId ?? null) !== cur.secretId
+        || ('tokenUrl' in b && (b.tokenUrl !== cur.tokenUrl || JSON.stringify(b.tokenForm) !== JSON.stringify(cur.tokenForm)));
       if (target) { setConfirming({ id: cur.id, draft: d, grants: cur.grantCount }); return; }
     }
     void save(id, d);
@@ -136,7 +170,11 @@ export function ConnectorsSection({ secrets, enabled, onChanged }: {
                 <span className="font-mono font-medium">{c.name}</span>
                 <span className="font-mono text-fg-subtle">{c.baseUrl}</span>
                 {c.authKind !== 'none' && keyName && (
-                  <span className="text-fg-subtle">{t(c.authKind === 'bearer' ? 'connectors.keyBearer' : 'connectors.keyHeader', { name: keyName, header: c.authHeader ?? '' })}</span>
+                  <span className="text-fg-subtle">{c.authKind === 'token_exchange'
+                    ? (tokenUrlOrigin(c.tokenUrl ?? '')
+                      ? t('connectors.keyToken', { name: keyName, host: hostOf(tokenUrlOrigin(c.tokenUrl ?? '')!) })
+                      : t('connectors.keyTokenNoHost', { name: keyName }))
+                    : t(c.authKind === 'bearer' ? 'connectors.keyBearer' : 'connectors.keyHeader', { name: keyName, header: c.authHeader ?? '' })}</span>
                 )}
                 {noKey && <span className="rounded bg-danger-surface px-1 text-danger">{t('connectors.noKey')}</span>}
                 {c.methods.map((m) => <span key={m} className="rounded border border-border px-1 text-fg-muted">{m}</span>)}
@@ -199,7 +237,36 @@ function ConnectorForm({ draft, creating = false, busy, keyOptions, onChange, on
   const urlOk = looksHttpsOrigin(draft.baseUrl.trim());
   const headerOk = draft.authKind !== 'header' || /^[A-Za-z0-9-]{1,64}$/.test(draft.authHeader.trim());
   const keyOk = draft.authKind === 'none' || draft.secretId !== '';
-  const ready = nameOk && urlOk && headerOk && keyOk && draft.methods.length > 0;
+  const tx = draft.authKind === 'token_exchange';
+  const tokenOrigin = tokenUrlOrigin(draft.tokenUrl);
+  const grantOk = FORM_VALUE_RE.test(draft.grantType.trim());
+  const clientOk = FORM_VALUE_RE.test(draft.clientId.trim());
+  // 비어 있으면 [만들기]가 꺼지는 까닭을 보인다 — 토큰 주소를 맞게 적은 뒤부터 경고한다(처음부터 빨갛지 않게, designer 고칠 것 1).
+  const clientWarn = draft.clientId.trim() === '' ? tokenOrigin !== null : !clientOk;
+  const fieldOk = FORM_FIELD_RE.test(draft.keyField.trim()) && !RESERVED_FIELDS.has(draft.keyField.trim().toLowerCase());
+  const tokenOk = !tx || (tokenOrigin !== null && grantOk && clientOk && fieldOk);
+  const ready = nameOk && urlOk && headerOk && keyOk && tokenOk && draft.methods.length > 0;
+  const baseOrigin = urlOk ? new URL(draft.baseUrl.trim()).origin : null;
+  // 보내는 값 미리보기 — 실제와 같은 인코딩(URLSearchParams), 키 자리는 가린다.
+  const preview = (() => {
+    const p = new URLSearchParams();
+    p.set('grant_type', draft.grantType.trim()); p.set('client_id', draft.clientId.trim());
+    return `${p.toString()}&${encodeURIComponent(draft.keyField.trim())}=••••`;
+  })();
+  // 미리보기 머리 — HTTP 메서드와 호스트·경로(번역할 글자가 아니다).
+  const previewHead = tokenOrigin ? 'POST ' + `${hostOf(tokenOrigin)}${new URL(draft.tokenUrl.trim()).pathname.replace(/^\/$/, '')}` : null;
+  const keySelect = (
+    <label className="block text-meta text-fg">
+      {t('connectors.key')}
+      <select aria-label={t('connectors.key')} className="mt-1 block w-full rounded border border-border bg-field px-2 py-1 text-meta text-fg"
+        value={draft.secretId} disabled={busy} onChange={(e) => set({ secretId: e.target.value })}>
+        <option value="">{t('connectors.keyPick')}</option>
+        {keyOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+      </select>
+      <span className="mt-1 block text-fg-subtle">{t('connectors.keyHint')}</span>
+    </label>
+  );
+  const monoInput = 'mt-1 block w-full rounded border bg-field px-2 py-1 font-mono text-meta text-fg';
   return (
     <div className="mt-2 space-y-3 rounded border border-border bg-surface-sunken p-3" data-testid="connector-form">
       {creating && (
@@ -212,25 +279,65 @@ function ConnectorForm({ draft, creating = false, busy, keyOptions, onChange, on
       </Field>
       <div>
         <span className="text-meta text-fg">{t('connectors.auth')}</span>
-        <Segmented label={t('connectors.auth')} value={draft.authKind} onChange={(v) => set({ authKind: v as AuthKind })} options={[
-          { value: 'bearer', label: t('connectors.authBearer') }, { value: 'header', label: t('connectors.authHeader') }, { value: 'none', label: t('connectors.authNone') },
+        <Segmented wrap label={t('connectors.auth')} value={draft.authKind} onChange={(v) => set({ authKind: v as AuthKind })} options={[
+          { value: 'bearer', label: t('connectors.authBearer') }, { value: 'header', label: t('connectors.authHeader') },
+          { value: 'token_exchange', label: t('connectors.authToken') }, { value: 'none', label: t('connectors.authNone') },
         ]} />
+        {tx && <span className="mt-1 block text-meta text-fg-subtle">{t('connectors.authTokenHint')}</span>}
       </div>
       {draft.authKind === 'header' && (
         <Field label={t('connectors.headerName')} hint={t('connectors.headerHint')}>
           <TextInput value={draft.authHeader} onChange={(v) => set({ authHeader: v })} placeholder="X-Api-Key" disabled={busy} />
         </Field>
       )}
-      {draft.authKind !== 'none' && (
-        <label className="block text-meta text-fg">
-          {t('connectors.key')}
-          <select aria-label={t('connectors.key')} className="mt-1 block w-full rounded border border-border bg-field px-2 py-1 text-meta text-fg"
-            value={draft.secretId} disabled={busy} onChange={(e) => set({ secretId: e.target.value })}>
-            <option value="">{t('connectors.keyPick')}</option>
-            {keyOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-          <span className="mt-1 block text-fg-subtle">{t('connectors.keyHint')}</span>
-        </label>
+      {(draft.authKind === 'bearer' || draft.authKind === 'header') && keySelect}
+      {tx && (
+        // 토큰 교환 묶음 — 키가 form 의 한 칸이라는 관계가 보이게 키 고르기도 이 안에 둔다(designer 시안 v1 #5).
+        <div className="space-y-2.5 border-l-2 border-border pl-2.5" data-testid="connector-token">
+          <label className="block text-meta text-fg">
+            {t('connectors.tokenUrl')}
+            <input aria-label={t('connectors.tokenUrl')} className={`${monoInput} ${draft.tokenUrl !== 'https://' && !tokenOrigin ? 'border-warning' : 'border-border'}`}
+              value={draft.tokenUrl} disabled={busy} placeholder="https://auth.example.com/oauth/token" onChange={(e) => set({ tokenUrl: e.target.value })} />
+            {draft.tokenUrl !== 'https://' && !tokenOrigin && <span className="mt-1 block text-warning">{t('connectors.tokenUrlBad')}</span>}
+            {tokenOrigin && (tokenOrigin !== baseOrigin
+              // 키가 기본 주소와 다른 호스트로 간다 — 눈에 띄게(security S1, designer #2).
+              ? <span className="mt-1.5 block rounded-row bg-warning-surface px-2 py-1 text-warning" data-testid="connector-token-dest">
+                  ⚠ {t('connectors.tokenDest', { origin: tokenOrigin })} {t('connectors.tokenDestOther')}
+                </span>
+              : <span className="mt-1 block text-fg-muted" data-testid="connector-token-dest">
+                  🔑 {t('connectors.tokenDest', { origin: tokenOrigin })} {t('connectors.tokenDestSame')}
+                </span>)}
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <label className="block min-w-[9rem] flex-1 text-meta text-fg">
+              grant_type
+              <input aria-label="grant_type" list="connector-grant-types" className={`${monoInput} ${grantOk ? 'border-border' : 'border-warning'}`}
+                value={draft.grantType} disabled={busy} onChange={(e) => set({ grantType: e.target.value })} />
+              <datalist id="connector-grant-types"><option value="client_credentials" /><option value="password" /></datalist>
+            </label>
+            <label className="block min-w-[9rem] flex-1 text-meta text-fg">
+              client_id
+              <input aria-label="client_id" className={`${monoInput} ${clientWarn ? 'border-warning' : 'border-border'}`} placeholder="my-client"
+                value={draft.clientId} disabled={busy} onChange={(e) => set({ clientId: e.target.value })} />
+            </label>
+            <label className="block min-w-[9rem] flex-1 text-meta text-fg">
+              {t('connectors.keyField')}
+              <input aria-label={t('connectors.keyField')} className={`${monoInput} ${fieldOk ? 'border-border' : 'border-warning'}`}
+                value={draft.keyField} disabled={busy} onChange={(e) => set({ keyField: e.target.value })} />
+            </label>
+          </div>
+          {!fieldOk && <span className="block text-meta text-warning">{t('connectors.keyFieldBad')}</span>}
+          {draft.clientId.trim() === '' && clientWarn && <span className="block text-meta text-warning">{t('connectors.clientIdRequired')}</span>}
+          {((!grantOk) || (draft.clientId.trim() !== '' && !clientOk)) && <span className="block text-meta text-warning">{t('connectors.formValueBad')}</span>}
+          {keySelect}
+          <div>
+            <span className="text-meta text-fg">{t('connectors.formPreview')}</span>
+            <div className="mt-1 break-all rounded border border-dashed border-border bg-field px-2 py-1 font-mono text-meta text-fg-muted" data-testid="connector-token-preview">
+              {previewHead && <>{previewHead}<br /></>}
+              {preview}
+            </div>
+          </div>
+        </div>
       )}
       <fieldset>
         <legend className="text-meta text-fg">{t('connectors.methods')}</legend>

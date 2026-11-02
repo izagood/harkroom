@@ -199,12 +199,13 @@ describe('turnApi', () => {
       const r = await run();
       expect(r.body.status).toBe(200);
       expect(fetches.filter((f) => f.url === TOKEN_URL)).toHaveLength(2);
-      // 새로 받은 토큰이 401 이면 다시 교환하지 않는다(한 요청에 한 번).
+      // 새로 받은 토큰이 401 이면 다시 교환하지 않는다(한 요청에 한 번) — form 을 바꿔 캐시를 비켜 새로 받게 하고, 교환은 정확히 한 번.
       respond = () => new Response('{}', { status: 401 });
-      tokenReplies = [];
+      checkBody = { ...checkBody, tokenForm: { grantType: 'password', clientId: 'cli-new', keyField: 'api_key' } };
       const before = fetches.filter((f) => f.url === TOKEN_URL).length;
-      await run();
-      expect(fetches.filter((f) => f.url === TOKEN_URL).length - before).toBeLessThanOrEqual(1);
+      const again = await run();
+      expect(again.body.status).toBe(401);
+      expect(fetches.filter((f) => f.url === TOKEN_URL).length - before).toBe(1);
     });
 
     it('교환 실패는 token_exchange_failed 와 상태만 — 키를 되비치는 오류 본문·리다이렉트·bearer 아닌 토큰은 싣지 않는다', async () => {

@@ -1404,6 +1404,8 @@ class StringsKo implements Strings {
         'system.apiCall.doneGranted': '🔌 {connector} {method} {path} · {status} · 권한: {granterId} (래퍼 보고)',
         'system.apiCall.unreachable': '🔌 {connector} {method} {path} · 닿지 않음 (래퍼 보고)',
         'system.apiCall.unreachableGranted': '🔌 {connector} {method} {path} · 닿지 않음 · 권한: {granterId} (래퍼 보고)',
+        'system.apiCall.tokenFailed': '🔌 {connector} {method} {path} · 토큰을 받지 못함 (래퍼 보고)',
+        'system.apiCall.tokenFailedGranted': '🔌 {connector} {method} {path} · 토큰을 받지 못함 · 권한: {granterId} (래퍼 보고)',
         'system.apiBlocked': '🔒 {agentId} 의 API 호출이 막혔다 · {connector} {request} · {code}',
         'system.apiBlocked.noConnector': '🔒 {agentId} 의 API 호출이 막혔다 · (연결 없음) {request} · {code}',
         'system.delegation.pending': '🔑 {fromId} 가 {toId} 에게 {scope} 권한을 다시 주려 한다 · {rootId} 의 허락을 기다린다',
@@ -1456,5 +1458,6 @@ class StringsKo implements Strings {
         'method_not_allowed': '메서드가 범위 밖',
         'path_not_allowed': '경로가 범위 밖',
         'cause_not_human': '이 권한은 사람이 시킨 턴에서만 쓸 수 있다',
+        'operator_update_required': '앱을 새 판으로 올려야 이 연결(토큰 교환)을 쓴다',
       };
 }

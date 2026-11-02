@@ -235,4 +235,23 @@ describe('api-checks · api-results', () => {
     const bad = await app.inject({ method: 'POST', url: '/agent/api-checks', headers: asAgent(), payload: { leaseId: l.id, token: l.token, connector: 'idp', method: 'GET', path: '/api/m/a%2F..%2F..%2Fx', caps: ['token_exchange'] } });
     expect(bad.json().error.code).toBe('bad_path');
   });
+
+  it('토큰 교환 실패 보고는 「닿지 않음」이 아니라 「토큰을 받지 못함」 줄 · 옛 오퍼레이터 거절은 막힘 카드(앱을 올려야 함)', async () => {
+    const l = await lease();
+    const ok = await app.inject({ method: 'POST', url: '/agent/api-checks', headers: asAgent(), payload: { leaseId: l.id, token: l.token, connector: 'idp', method: 'GET', path: '/api/m/x', caps: ['token_exchange'] } });
+    expect(ok.statusCode).toBe(200);
+    const rep = await app.inject({ method: 'POST', url: '/agent/api-results', headers: asAgent(), payload: { leaseId: l.id, token: l.token, connector: 'idp', method: 'GET', path: '/api/m/x', status: 0, durationMs: 3, bytes: 0, error: 'token_exchange_failed' } });
+    expect(rep.statusCode).toBe(201);
+    const line = (await pool.query(`select body, meta from message where id = $1`, [rep.json().messageId])).rows[0];
+    expect(line.body).toContain('토큰을 받지 못함');
+    expect(line.body).not.toContain('닿지 않음');
+    expect(line.meta.i18n.key).toMatch(/^system\.apiCall\.tokenFailed/);
+    expect(JSON.stringify(line)).not.toContain(KEY);
+    // 옛 오퍼레이터(caps 없음) — 사람이 볼 막힘 카드가 선다.
+    const l2 = await lease();
+    expect((await check(l2, 'GET', '/api/m/x', 'idp')).json().error.code).toBe('operator_update_required');
+    const card = (await pool.query(`select body from message where kind = 'system' and body like '%앱을 올려야 함%' order by created_at desc limit 1`)).rows[0];
+    expect(card?.body).toContain('idp');
+    expect(card?.body).not.toContain(KEY);
+  });
 });
