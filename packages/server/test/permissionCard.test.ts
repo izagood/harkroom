@@ -6,6 +6,7 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { postMessage } from '../src/services/messages.js';
 import { decide, resolveDecision } from '../src/services/decisions.js';
+import { findLine, listMandateLines, revokeMandateLine } from '../src/services/mandateLines.js';
 import { mandateChipName, openPermissionRequest, permissionCardOptions, renderPermissionMirror } from '../src/services/permissionRequests.js';
 
 // 권한 카드 계약(W4b) — 선택지·위임장 줄·새 위임장·거울 칸·칩 이름.
@@ -71,6 +72,9 @@ describe('permission card decisions (W4b)', () => {
   };
   const linesOf = async (requestId: string) =>
     (await pool.query(`select mandate_id as "mandateId", cap, scope, limits from mandate_line where request_id = $1`, [requestId])).rows;
+  /** 하루 요청 한도(20)를 넘지 않게 — 정한 요청을 하루 전으로 민다(D1 시험이 카드를 더 쓴다). */
+  const ageRequest = async (requestId: string) =>
+    pool.query(`update permission_request set created_at = created_at - interval '2 days' where id = $1`, [requestId]);
   const decideCard = async (cardId: string, option: string, actor = alice.accountId) =>
     decide(pool, (await resolveDecision(pool, cardId))!, actor, { option, via: 'button' });
 
@@ -93,7 +97,7 @@ describe('permission card decisions (W4b)', () => {
   });
   afterAll(async () => { await app.close(); await db.stop(); });
 
-  it('approve_mandate → 7-day grant and a line on the mandate ending at the grant expiry', async () => {
+  it('approve_mandate (tool) → 7-day grant and a line on the mandate ending at the grant expiry — the runner reads tool grants only', async () => {
     const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot go');
     expect(mandateId).toBeTruthy();
     const target = rule();
@@ -103,6 +107,50 @@ describe('permission card decisions (W4b)', () => {
     const until = (await pool.query(`select expires_at from account_grant where account_id = $1 and capability = 'tool.allow' and scope like $2`, [agentId, `%${target}`])).rows[0].expires_at as Date;
     expect(await linesOf(requestId)).toEqual([{ mandateId, cap: 'tool', scope: target, limits: { until: until.toISOString() } }]);
     expect((await pool.query(`select meta from message where id = $1`, [cardId])).rows[0].meta.ask.answeredWith).toBe('approve_mandate');
+  });
+
+  it('approve_mandate (merge) → a 7-day line on the mandate only — no account_grant (D1)', async () => {
+    const repo = 'acme-org/d1-only-line';
+    const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot merge go');
+    const { requestId, cardId } = await card({ kind: 'merge', target: repo, root, mandateId });
+    const r = await decideCard(cardId, 'approve_mandate');
+    expect(r).toMatchObject({ ok: true, result: { status: 'granted' } });
+    expect((await pool.query(`select 1 from account_grant where account_id = $1 and capability = 'repo.merge'`, [agentId])).rowCount).toBe(0);
+    const until = (r as unknown as { result: { grantExpiresAt: string } }).result.grantExpiresAt;
+    expect(Date.parse(until) - Date.now()).toBeGreaterThan(7 * 86_400_000 - 60_000);
+    expect(await linesOf(requestId)).toMatchObject([{ mandateId, cap: 'merge', limits: { until } }]);
+    expect((await pool.query(`select 1 from audit_log where action = 'grant.given' and detail->>'requestId' = $1`, [requestId])).rowCount).toBe(0);
+    await ageRequest(requestId);
+  });
+
+  it('approve_mandate merge line stays on its mandate and [줄 빼기] blocks at once (D1)', async () => {
+    const repo = 'acme-org/d1-merge';
+    const a = await mandateThread(alice.accountId, '@cardbot merge it');
+    const other = await mandateThread(alice.accountId, '@cardbot something else');
+    expect(a.mandateId && other.mandateId && a.mandateId !== other.mandateId).toBeTruthy();
+    const { requestId, cardId } = await card({ kind: 'merge', target: repo, root: a.root, mandateId: a.mandateId });
+    expect(await decideCard(cardId, 'approve_mandate')).toMatchObject({ ok: true, result: { status: 'granted' } });
+    const action = { cap: 'merge' as const, repo };
+    expect(await findLine(pool, { mandateId: a.mandateId, agentId, cap: 'merge', action })).not.toBeNull();
+    // 7일 grant 를 쓰지 않으므로 상시 줄로 다른 위임장에 퍼지지 않는다.
+    expect(await findLine(pool, { mandateId: other.mandateId, agentId, cap: 'merge', action })).toBeNull();
+    expect((await listMandateLines(pool, other.mandateId!)).filter((l) => l.cap === 'merge' && l.scope.endsWith(repo))).toEqual([]);
+    const lineId = (await pool.query(`select id from mandate_line where request_id = $1`, [requestId])).rows[0].id as string;
+    expect(await revokeMandateLine(pool, { mandateId: a.mandateId!, lineId })).toMatchObject({ ok: true });
+    expect(await findLine(pool, { mandateId: a.mandateId, agentId, cap: 'merge', action })).toBeNull();
+    await ageRequest(requestId);
+  });
+
+  it('approve_mandate (merge) whose line cannot be added → refused, nothing approved (D1)', async () => {
+    const repo = 'acme-org/d1-doomed';
+    const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot doomed');
+    const { requestId, cardId } = await card({ kind: 'merge', target: repo, root, mandateId });
+    await pool.query(`update mandate set ended_at = now() where id = $1`, [mandateId]);
+    expect(await decideCard(cardId, 'approve_mandate')).toMatchObject({ ok: false, code: 'mandate_line_failed' });
+    expect((await pool.query(`select status from permission_request where id = $1`, [requestId])).rows[0].status).toBe('pending');
+    expect((await pool.query(`select 1 from account_grant where account_id = $1 and scope like $2`, [agentId, `%${repo}`])).rowCount).toBe(0);
+    expect(await linesOf(requestId)).toEqual([]);
+    await ageRequest(requestId);
   });
 
   it('approve_new_mandate on a no-mandate turn → mandate on the card thread for the owner, then a line', async () => {
@@ -147,6 +195,20 @@ describe('permission card decisions (W4b)', () => {
     expect((await pool.query(`select status, mandate_id from permission_request where id = $1`, [requestId])).rows[0]).toEqual({ status: 'granted', mandate_id: null });
     expect((await pool.query(`select 1 from account_grant where account_id = $1 and scope like $2`, [agentId, `%${target}`])).rowCount).toBe(1);
     expect(await linesOf(requestId)).toEqual([]);
+  });
+
+  it('merge: approve_new_mandate where no mandate can be started → 409 mandate_unavailable, no grant, nothing spreads (D1)', async () => {
+    const repo = 'acme-org/d1-nomandate';
+    const other = await mandateThread(alice.accountId, '@cardbot elsewhere');
+    const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'bob root', 'user') returning id`, [ch, bob.accountId])).rows[0].id as string;
+    const { requestId, cardId } = await card({ kind: 'merge', target: repo, root, mandateId: null });
+    expect(await decideCard(cardId, 'approve_new_mandate')).toMatchObject({ ok: false, code: 'mandate_unavailable' });
+    expect(await decideCard(cardId, 'approve_mandate')).toMatchObject({ ok: false, code: 'mandate_unavailable' });
+    expect((await pool.query(`select status from permission_request where id = $1`, [requestId])).rows[0].status).toBe('pending');
+    expect((await pool.query(`select 1 from account_grant where account_id = $1 and capability = 'repo.merge'`, [agentId])).rowCount).toBe(0);
+    expect(await findLine(pool, { mandateId: other.mandateId, agentId, cap: 'merge', action: { cap: 'merge', repo } })).toBeNull();
+    expect(await decideCard(cardId, 'deny')).toMatchObject({ ok: true });
+    await ageRequest(requestId);
   });
 
   it('approve_new_mandate on a thread another person started → 7-day approval, root keeps no mandate key (F2)', async () => {

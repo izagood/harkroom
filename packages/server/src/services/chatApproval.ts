@@ -219,6 +219,7 @@ const REASON_KO = {
   decided: '이미 정해진 카드다.',
   expired: '만료된 카드다.',
   onceOnCard: '이 머지 카드는 카드 스레드에서 쓰거나 링크를 붙여 정한다.',
+  mergeNoMandate: '이 스레드에는 위임장을 세울 수 없어 머지를 7일로 승인하지 않는다. 머지 거절 카드에서 「이번 한 번」으로 정하거나, 내가 연 스레드에서 카드 링크를 붙여 승인한다.',
   failed: '결정하지 못했다. 카드에서 다시 시도한다.',
 } as const;
 export type ChatRefusal = keyof typeof REASON_KO;
@@ -404,6 +405,7 @@ function dedupe(rows: Candidate[]): Candidate[] {
 const REFUSAL_BY_CODE: Record<string, ChatRefusal> = {
   card_stale: 'headChanged', already_decided: 'decided', superseded: 'decided', request_expired: 'expired', denial_expired: 'expired',
   denial_used: 'decided', pr_closed: 'decided', head_moved: 'headChanged', relax_required: 'ciWord',
+  mandate_unavailable: 'mergeNoMandate',
 };
 
 async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Candidate, target: ChatTarget, parsed: ChatApprovalParse): Promise<Outcome> {
@@ -438,7 +440,7 @@ async function decideOne(pool: Pool, message: MessageRow, actorId: string, c: Ca
   }
   const ref = { kind: 'permission' as const, agentId: c.agentId, requestId: c.requestId, cardMessageId: c.cardMessageId };
   const input = { via: 'chat' as const, chat: { messageId: message.id, target }, ...(once ? { once } : {}) };
-  // 이 스레드에 위임을 세울 수 없으면(남의 위임 등) `decide` 가 7일 승인으로 한 번 더 한다(버튼과 같은 길).
+  // 이 스레드에 위임을 세울 수 없으면(남의 위임 등) `decide` 가 7일 승인으로 한 번 더 한다(버튼과 같은 길). merge 는 넘어가지 않고 거절한다(D1).
   const out = await decide(pool, ref, actorId, { option, ...input });
   if (out.kind !== 'permission') return { c, ok: false, why: 'failed' };
   if (!out.ok) return { c, ok: false, why: REFUSAL_BY_CODE[out.code] ?? 'failed' };

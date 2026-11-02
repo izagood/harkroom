@@ -1419,6 +1419,7 @@ class StringsKo implements Strings {
         'system.chatApproval.decided': '⚠️ 승인 안 됨: 이미 정해진 카드다.',
         'system.chatApproval.expired': '⚠️ 승인 안 됨: 만료된 카드다.',
         'system.chatApproval.onceOnCard': '⚠️ 승인 안 됨: 이 머지 카드는 카드 스레드에서 쓰거나 링크를 붙여 정한다.',
+        'system.chatApproval.mergeNoMandate': '⚠️ 승인 안 됨: 이 스레드에는 위임장을 세울 수 없어 머지를 7일로 승인하지 않는다. 머지 거절 카드에서 「이번 한 번」으로 정하거나, 내가 연 스레드에서 카드 링크를 붙여 승인한다.',
         'system.chatApproval.failed': '⚠️ 승인 안 됨: 결정하지 못했다. 카드에서 다시 시도한다.',
       };
 

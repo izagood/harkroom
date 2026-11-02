@@ -97,6 +97,7 @@ export const SYSTEM_I18N_ARGS = Object.freeze({
   'system.chatApproval.decided': [],
   'system.chatApproval.expired': [],
   'system.chatApproval.onceOnCard': [],
+  'system.chatApproval.mergeNoMandate': [],
   'system.chatApproval.failed': [],
 } as const satisfies Record<string, readonly string[]>);
 
