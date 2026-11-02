@@ -270,10 +270,12 @@ export class HarkroomAgentClient {
    * 이 채널의 규칙과 이 에이전트의 **모든 채널** 규칙의 합(`reach`, codex 명령 규칙 파일에 쓴다). 합을 안 주는 옛 서버·끊김은
    * `reach: null` — 부르는 쪽은 그때 규칙 파일을 쓰지 않는다.
    */
-  async toolRuleSets(channelId: string): Promise<{ rules: string[]; reach: string[] | null }> {
+  async toolRuleSets(channelId: string, causeMessageId?: string): Promise<{ rules: string[]; reach: string[] | null }> {
     const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : null);
     try {
-      const r = await this.rest<{ rules?: unknown; reach?: unknown }>('GET', `/agent/tool-allows?channelId=${encodeURIComponent(channelId)}`, 'tool-allows');
+      // `cause` — 이 턴의 원인 글. 서버가 그 글의 임대가 가리키는 위임장의 tool 줄을 더한다(②b). 옛 서버는 무시한다.
+      const cause = causeMessageId ? `&cause=${encodeURIComponent(causeMessageId)}` : '';
+      const r = await this.rest<{ rules?: unknown; reach?: unknown }>('GET', `/agent/tool-allows?channelId=${encodeURIComponent(channelId)}${cause}`, 'tool-allows');
       return { rules: strings(r?.rules) ?? [], reach: strings(r?.reach) };
     } catch {
       return { rules: [], reach: null };
