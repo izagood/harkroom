@@ -1072,6 +1072,10 @@ export function buildSystemPrompt(opts: {
     'MCP 의 `message.post` 도구를 불러 이 스레드에 남겨라. channelId 와 threadRootId 는',
     '대화 프롬프트 맨 위에 준다 — 그대로 넣어 호출한다(threadRootId 가 "채널 최상위(없음)"으로',
     '적혀 있으면 그 인자는 생략하고 channelId 만 넘긴다).',
+    // 2026-11-02(A): codex·opencode 레인 지시에만 있던 구절(#1589·#1665)을 모든 레인의 고정 절로 올린다 — 동료의 보고로 깬
+    // claude 턴이 threadRootId 를 빼 다른 채널의 최상위에 보고·카드를 올렸다. 서버는 threadRootId 를 선택값으로 받으므로 막지 않는다.
+    '`message.post`·`ask`·`report` 에는 threadRootId 를 꼭 넣는다 — 빼면 채널 최상위에 올라가 그 스레드에서 답이 안 보인다.',
+    '앵커 밖 채널의 최상위에는 쓰지 않는다. 다른 스레드에 보고해야 하면 그 스레드의 threadRootId 를 넣는다.',
     '',
     // 2026-09-08 실측: 서로 다른 앵커를 받은 턴 셋 중 둘이 **자기 앵커 대신** 채널의 더
     // 새로운 요청을 구현했다. 같은 기능 PR 이 셋 나오고(#638·#639·#640) 정작 그 둘의
@@ -1791,6 +1795,11 @@ export function buildTurnPrompt(opts: {
    */
   canceledWakes?: InboxCanceledWake[];
   /**
+   * 이 일이 **시작된 스레드**(위임장, 서버가 inbox 항목에 싣는다 — `InboxEntry.startedIn`, 2026-11-02). 동료의 보고로
+   * 깬 턴은 앵커만 알아서 사람에게 갈 보고를 앵커 밖 채널 최상위에 올린 일이 있었다. 델타를 대신하지 않는다 — 덧붙는 맥락이다.
+   */
+  startedIn?: WakeReportTo;
+  /**
    * 이 턴이 **팀장으로서 불린 턴**이면 그 팀과 명단(마이그레이션 047).
    *
    * `wake` 와 나란히 두지만 뜻이 다르다: `wake` 는 사람의 새 발화가 **없을 때** 델타를
@@ -1853,7 +1862,7 @@ export function buildTurnPrompt(opts: {
 }): { prompt: string; fedSeq: number } {
   const {
     messages, lastFedSeq, meId, handles, channelId, threadRootId, wake, team, delegation,
-    delegatedBy, editedMention, canceledWakes, unseenOwnAfterSeq, mentionId, gapAfterSeq, afterCancelBy,
+    delegatedBy, editedMention, canceledWakes, unseenOwnAfterSeq, mentionId, gapAfterSeq, afterCancelBy, startedIn,
   } = opts;
   const freshWake = opts.freshWake === true && wake !== undefined;
   const isFirstTurn = lastFedSeq === 0;
@@ -1920,6 +1929,9 @@ export function buildTurnPrompt(opts: {
     '',
   ];
   const canceledLines = canceledWakes?.length ? canceledWakeLines(canceledWakes) : [];
+  // 깨움 보고처(reportTo)가 같은 스레드를 이미 말했으면 두 번 싣지 않는다.
+  const startedLines = startedIn === undefined || (wake?.reportTo?.threadRootId === startedIn.threadRootId)
+    ? [] : startedInLines(startedIn);
   const cancelLines = afterCancelBy === undefined ? [] : afterCancelLines(afterCancelBy);
   const teamLines = team === undefined ? [] : teamSection(team, meId, handles);
   const delegationLines = delegation === undefined ? [] : delegationSection(delegation);
@@ -1937,7 +1949,7 @@ export function buildTurnPrompt(opts: {
   // 팀 블록은 **델타 앞**이다 — 사람의 말을 읽기 전에 "너는 이 팀의 창구다"를 알아야
   // 그 말을 팀의 일로 읽는다. `wakeLines` 뒤에 두는 이유: 그 줄은 이 턴이 왜 떴는지이고,
   // 팀 블록은 이 턴이 무엇인지다(둘이 함께 오는 경우는 예약이 걸린 팀 턴이다).
-  const prompt = [head, '', ...wakeLines, ...cancelLines, ...canceledLines, ...teamLines, ...delegationLines, ...handedLines, ...editLines, ...lines, ...howTo].join('\n');
+  const prompt = [head, '', ...wakeLines, ...startedLines, ...cancelLines, ...canceledLines, ...teamLines, ...delegationLines, ...handedLines, ...editLines, ...lines, ...howTo].join('\n');
 
   return { prompt, fedSeq };
 }
@@ -2149,6 +2161,15 @@ export function watchMissedNotice(reason: string): string {
  * 깨어난 턴에게 **다른 스레드에 한 약속**을 적는다(2026-10-06). 스레드마다 세션이 따로라 깨어난 턴은 자기
  * 앵커만 안다 — 사유 한 줄에 약속이 없으면 결과는 앵커에만 남고 약속한 쪽(#task 등)에서는 "안 봤다" 로 보였다.
  */
+export function startedInLines(r: WakeReportTo): string[] {
+  return [
+    `(이 일은 다른 스레드에서 시작됐다 — 사람이 너를 부른 스레드: channelId: ${r.channelId} · threadRootId: ${r.threadRootId}`,
+    ' 이 턴은 동료 에이전트의 글이 깨웠다. 사람에게 가는 **최종 보고·선택 카드**는 그 스레드에 그 threadRootId 를 넣어 올려라.',
+    ' 이 스레드에는 동료에게 할 말만 남긴다. 채널 최상위(threadRootId 없음)에는 올리지 않는다.)',
+    '',
+  ];
+}
+
 export function reportToLines(r: WakeReportTo): string[] {
   return [
     `(이 예약은 결과를 **다른 스레드에 보고하기로 약속했다** — channelId: ${r.channelId} · threadRootId: ${r.threadRootId}`,
