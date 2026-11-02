@@ -425,14 +425,16 @@ export function Select({ value, onChange, options, disabled, ariaLabel }: {
  * 서로 배타적인 몇 개 중 하나. **`radiogroup` 이다** — 보이는 것이 버튼 무리라도 스크린리더에
  * 게는 "여럿 중 하나"로 읽혀야 하고, 그래야 화살표 키가 자연스럽다.
  */
-export function Segmented({ value, onChange, options, label }: {
+export function Segmented({ value, onChange, options, label, wrap = false }: {
   value: string;
   onChange(next: string): void;
   options: { value: string; label: string }[];
   label: string;
+  /** 칸이 많아 좁은 폭에서 글자가 쪼개질 때 — 글자는 한 줄로 두고 칸째로 다음 줄로 넘긴다. */
+  wrap?: boolean;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="flex gap-1 rounded-card bg-surface-sunken p-1">
+    <div role="radiogroup" aria-label={label} className={`flex gap-1 rounded-card bg-surface-sunken p-1${wrap ? ' flex-wrap' : ''}`}>
       {options.map((o) => {
         const on = o.value === value;
         return (
@@ -441,7 +443,7 @@ export function Segmented({ value, onChange, options, label }: {
             type="button"
             role="radio"
             aria-checked={on}
-            className={`flex-1 rounded-row px-3 py-1.5 text-body font-medium ${
+            className={`${wrap ? 'flex-auto whitespace-nowrap' : 'flex-1'} rounded-row px-3 py-1.5 text-body font-medium ${
               on ? 'bg-accent text-fg-on-strong' : 'text-fg-muted hover:bg-surface-hover'
             }`}
             onClick={() => onChange(o.value)}

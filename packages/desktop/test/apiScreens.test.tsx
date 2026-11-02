@@ -84,6 +84,62 @@ describe('ConnectorsSection', () => {
     expect((await screen.findByTestId('connectors-notice')).textContent).toContain('1');
   });
 
+  it('토큰 교환: 키가 가는 곳(다른 호스트면 경고)·보내는 값 미리보기·몸체에 토큰 칸', async () => {
+    const c = setup({}, []);
+    render(<ConnectorsSection secrets={[secret]} enabled onChanged={async () => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: '+ API 연결 만들기' }));
+    const form = screen.getByTestId('connector-form');
+    const [name, url] = within(form).getAllByRole('textbox');
+    fireEvent.change(name!, { target: { value: 'lab-api' } });
+    fireEvent.change(url!, { target: { value: 'https://api.example.com' } });
+    fireEvent.click(within(form).getByRole('radio', { name: '토큰 교환' }));
+    const tok = within(form).getByTestId('connector-token');
+    // 키 고르기는 토큰 묶음 안으로 옮겨진다.
+    fireEvent.change(within(tok).getByLabelText('키'), { target: { value: 's1' } });
+    fireEvent.change(within(tok).getByLabelText('client_id'), { target: { value: 'lab-cli' } });
+    fireEvent.change(within(tok).getByLabelText('토큰 주소'), { target: { value: 'https://auth.example.com/oauth/token?x=1' } });
+    expect(within(tok).getByText(/https 주소만 쓴다/)).toBeTruthy();
+    expect(within(tok).queryByTestId('connector-token-dest')).toBeNull();
+    expect((within(form).getByRole('button', { name: '만들기' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(tok).getByLabelText('토큰 주소'), { target: { value: 'https://auth.example.com/oauth/token' } });
+    const dest = within(tok).getByTestId('connector-token-dest');
+    expect(dest.textContent).toContain('https://auth.example.com');
+    expect(dest.textContent).toContain('다른 호스트');
+    expect(within(tok).getByTestId('connector-token-preview').textContent).toContain('grant_type=client_credentials&client_id=lab-cli&client_secret=••••');
+    // 예약된 칸 이름은 바로 경고하고 [만들기]를 끈다.
+    fireEvent.change(within(tok).getByLabelText('키를 담을 칸'), { target: { value: 'client_id' } });
+    expect(within(tok).getByText(/grant_type·client_id 가 아닌/)).toBeTruthy();
+    expect((within(form).getByRole('button', { name: '만들기' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(tok).getByLabelText('키를 담을 칸'), { target: { value: 'api_key' } });
+    fireEvent.click(within(form).getByRole('button', { name: '만들기' }));
+    await waitFor(() => expect(c.createConnector).toHaveBeenCalledWith({
+      name: 'lab-api', baseUrl: 'https://api.example.com', authKind: 'token_exchange', authHeader: null, secretId: 's1', methods: ['GET'],
+      tokenUrl: 'https://auth.example.com/oauth/token', tokenForm: { grantType: 'client_credentials', clientId: 'lab-cli', keyField: 'api_key' },
+    }));
+  });
+
+  it('토큰 교환 고치기: 칸이 채워지고, Bearer 로 바꿨다 돌아와도 입력이 남고, 보내는 값을 바꾸면 확인창을 거친다', async () => {
+    const tx = conn({ baseUrl: 'https://api.example.com', authKind: 'token_exchange', grantCount: 1, tokenUrl: 'https://api.example.com/auth/token', tokenForm: { grantType: 'password', clientId: 'cli', keyField: 'api_key' } });
+    const c = setup({}, [tx]);
+    render(<ConnectorsSection secrets={[secret]} enabled onChanged={async () => {}} />);
+    expect((await screen.findByTestId('connector-lab-api')).textContent).toContain('토큰 교환 → api.example.com');
+    fireEvent.click(screen.getByRole('button', { name: '고치기' }));
+    const form = screen.getByTestId('connector-form');
+    const tok = within(form).getByTestId('connector-token');
+    expect((within(tok).getByLabelText('client_id') as HTMLInputElement).value).toBe('cli');
+    expect(within(tok).getByTestId('connector-token-dest').textContent).toContain('기본 주소와 같다');
+    fireEvent.click(within(form).getByRole('radio', { name: 'Bearer' }));
+    expect(within(form).queryByTestId('connector-token')).toBeNull();
+    fireEvent.click(within(form).getByRole('radio', { name: '토큰 교환' }));
+    expect((within(form).getByLabelText('client_id') as HTMLInputElement).value).toBe('cli');
+    fireEvent.change(within(form).getByLabelText('client_id'), { target: { value: 'cli2' } });
+    fireEvent.click(within(form).getByRole('button', { name: '저장' }));
+    const dlg = screen.getByRole('dialog');
+    expect(dlg.textContent).toContain('보내는 값');
+    fireEvent.click(within(dlg).getByRole('button', { name: '바꾸고 멈추기' }));
+    await waitFor(() => expect(c.patchConnector).toHaveBeenCalledWith(tx.id, expect.objectContaining({ tokenForm: { grantType: 'password', clientId: 'cli2', keyField: 'api_key' } })));
+  });
+
   it('메서드만 바꾸면 확인창 없이 저장한다', async () => {
     const c = setup({}, [conn({ grantCount: 2 })]);
     render(<ConnectorsSection secrets={[secret]} enabled onChanged={async () => {}} />);

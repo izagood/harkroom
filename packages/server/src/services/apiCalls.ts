@@ -155,11 +155,18 @@ export async function reportApiCall(pool: Pool, r: ApiReport): Promise<{ ok: tru
     [r.agentId, scope])).rows[0] ?? null;
   // 본문은 고정 문구와 서버가 아는 값뿐이다. 래퍼가 준 `error` 는 meta 에만 — 본문의 `@…` 는 실제 부름이 된다(머지 N2).
   const name = (await pool.query<{ name: string }>(`select name from api_connector where id = $1`, [connectorId])).rows[0]?.name ?? r.connector;
-  const status = r.status > 0 ? String(r.status) : '닿지 않음';
+  // 토큰 교환 실패(156)는 「닿지 않음」이 아니다 — 대상 API 에 가기 전에 토큰을 못 받았다. 래퍼가 주는 `error` 는 고정 코드일 때만
+  // 갈래를 고르는 데 쓰고 본문에는 싣지 않는다(meta 에만, 머지 N2 와 같다).
+  const tokenFailed = r.status === 0 && r.error === 'token_exchange_failed';
+  const status = r.status > 0 ? String(r.status) : tokenFailed ? '토큰을 받지 못함' : '닿지 않음';
   const body = `🔌 ${name} ${r.method} ${path.replace(/@/g, '＠')} · ${status}` + (root ? ` · 권한: ${root.handle}` : '') + ' (래퍼 보고)';
   // 번역 표지(i18n P5) — 본문과 같은 갈래(닿았나·권한 준 사람이 있나), 같은 값.
   const shown = path.replace(/@/g, '＠');
-  const i18n = r.status > 0
+  const i18n = tokenFailed
+    ? (root
+      ? systemI18n('system.apiCall.tokenFailedGranted', { connector: name, method: r.method, path: shown, granterId: root.id })
+      : systemI18n('system.apiCall.tokenFailed', { connector: name, method: r.method, path: shown }))
+    : r.status > 0
     ? (root
       ? systemI18n('system.apiCall.doneGranted', { connector: name, method: r.method, path: shown, status: r.status, granterId: root.id })
       : systemI18n('system.apiCall.done', { connector: name, method: r.method, path: shown, status: r.status }))

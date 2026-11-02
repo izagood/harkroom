@@ -1405,6 +1405,8 @@ class StringsEn implements Strings {
         'system.apiCall.doneGranted': '🔌 {connector} {method} {path} · {status} · permission: {granterId} (wrapper report)',
         'system.apiCall.unreachable': '🔌 {connector} {method} {path} · unreachable (wrapper report)',
         'system.apiCall.unreachableGranted': '🔌 {connector} {method} {path} · unreachable · permission: {granterId} (wrapper report)',
+        'system.apiCall.tokenFailed': '🔌 {connector} {method} {path} · could not get a token (wrapper report)',
+        'system.apiCall.tokenFailedGranted': '🔌 {connector} {method} {path} · could not get a token · permission: {granterId} (wrapper report)',
         'system.apiBlocked': '🔒 {agentId}\'s API call was blocked · {connector} {request} · {code}',
         'system.apiBlocked.noConnector': '🔒 {agentId}\'s API call was blocked · (no connection) {request} · {code}',
         'system.delegation.pending': '🔑 {fromId} is trying to re-grant {toId} the permission {scope} · waiting for {rootId} to allow it',
@@ -1457,5 +1459,6 @@ class StringsEn implements Strings {
         'method_not_allowed': 'method outside the permission',
         'path_not_allowed': 'path outside the permission',
         'cause_not_human': 'This permission can only be used in turns a person started',
+        'operator_update_required': 'Update the app to use this connector (token exchange)',
       };
 }

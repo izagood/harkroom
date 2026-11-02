@@ -29,6 +29,8 @@ import { safePath } from '../auth/apiGrants.js';
 export const API_CARD_CODES = new Set([
   'not_granted', 'no_connector', 'no_secret', 'secret_expired', 'expired', 'suspended',
   'method_not_allowed', 'path_not_allowed', 'cause_not_human',
+  // 옛 앱의 오퍼레이터가 토큰 교환 연결을 못 쓴다(156) — 사람이 앱을 올려야 풀린다. 카드가 없으면 에이전트만 안다.
+  'operator_update_required',
 ]);
 
 export interface BlockedInput {
@@ -51,6 +53,7 @@ const reasonText: Record<string, string> = {
   not_granted: '권한 없음', no_connector: '연결 없음', no_secret: '키 없음', secret_expired: '키 만료',
   expired: '권한 만료', suspended: '권한 멈춤', method_not_allowed: '메서드 밖', path_not_allowed: '경로 밖',
   cause_not_human: '사람 글 턴 아님',
+  operator_update_required: '앱을 올려야 함',
 };
 
 /** 카드에 실을 경로 — 안전한 모양이면 질의를 뗀 경로, 아니면 null. */

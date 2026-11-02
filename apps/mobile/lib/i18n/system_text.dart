@@ -42,6 +42,8 @@ const Map<String, List<String>> systemI18nArgs = {
   'system.apiCall.doneGranted': ['connector', 'method', 'path', 'status', 'granterId'],
   'system.apiCall.unreachable': ['connector', 'method', 'path'],
   'system.apiCall.unreachableGranted': ['connector', 'method', 'path', 'granterId'],
+  'system.apiCall.tokenFailed': ['connector', 'method', 'path'],
+  'system.apiCall.tokenFailedGranted': ['connector', 'method', 'path', 'granterId'],
   'system.apiBlocked': ['agentId', 'connector', 'request', 'code'],
   'system.apiBlocked.noConnector': ['agentId', 'request', 'code'],
   'system.delegation.pending': ['fromId', 'toId', 'scope', 'rootId'],
