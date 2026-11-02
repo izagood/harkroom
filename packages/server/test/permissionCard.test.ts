@@ -340,6 +340,30 @@ describe('permission card decisions (W4b)', () => {
     await ageRequest(noMandate.requestId); await ageRequest(mergeCard.requestId);
   });
 
+  it('t1 via a genuine mirror: turnCause is the original card (the message the answer wakes the agent on), line narrowed to the agent', async () => {
+    const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot mirror turn');
+    const target = rule();
+    const { requestId, cardId } = await card({ kind: 'tool', target, root, mandateId });
+    const options = permissionCardOptions('tool', { mandate: true });
+    const mirror = (await pool.query(
+      `insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, '거울', 'user', $3) returning id`,
+      [ch, agentId, JSON.stringify({ kind: 'ask', ask: { options, to: { kind: 'human' }, mirrorOf: cardId } })])).rows[0].id as string;
+    const ref = (await resolveDecision(pool, mirror))!;
+    expect(ref).toMatchObject({ kind: 'permission', cardMessageId: cardId, mirrorMessageId: mirror });
+    expect(await decide(pool, ref, alice.accountId, { option: 'approve_turn', via: 'mirror' })).toMatchObject({ ok: true, result: { status: 'granted' } });
+    const lines = (await pool.query(`select limits, agent_ids from mandate_line where request_id = $1`, [requestId])).rows;
+    expect(lines).toHaveLength(1);
+    expect(lines[0].limits.turnCause).toBe(cardId);
+    expect(lines[0].agent_ids).toEqual([agentId]);
+    // 답은 원본 카드에 적히고, 에이전트는 원본 카드 글을 원인으로 깨어난다 — 그 턴의 원인과 turnCause 가 같다.
+    expect((await pool.query(`select meta from message where id = $1`, [cardId])).rows[0].meta.ask.answeredWith).toBe('approve_turn');
+    expect((await pool.query(`select 1 from inbox where account_id = $1 and message_id = $2`, [agentId, cardId])).rowCount).toBeGreaterThan(0);
+    // 거울 작성자(같은 에이전트)도 거울 글로 ask_answered 를 받는다 — 그 턴(원인 = 거울)에는 「이번 턴만」 줄이 실리지 않는다.
+    // 「이번 턴만」은 원본 카드 스레드에서 깨는 턴 하나다(거울이 다른 채널이면 위임장 채널 조건으로 원래 빠진다).
+    expect((await pool.query(`select reason from inbox where account_id = $1 and message_id = $2`, [agentId, mirror])).rows.map((r) => r.reason)).toEqual(['ask_answered']);
+    await ageRequest(requestId);
+  });
+
   it('command requests are not approved for a mandate', async () => {
     const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot cmd');
     const requestId = (await pool.query(

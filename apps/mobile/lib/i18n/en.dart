@@ -340,7 +340,7 @@ class StringsEn implements Strings {
   @override
   String permResultStandingUntil(String who, String date) => '$who allowed this until $date';
   @override
-  String permResultStandingEnded(String who) => '7-day allowance ended · $who';
+  String permResultStandingEnded(String who) => "$who's 7-day allowance ended";
   @override
   String permResultTurn(String who) => '$who allowed it for this turn';
   @override

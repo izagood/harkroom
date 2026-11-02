@@ -3862,7 +3862,7 @@ export const ko = {
   'mandateCard.result.denied': "거절함 · {who}",
   'mandateCard.result.added': "이 위임장에 더함 · {who}",
   'mandateCard.turn': "이번 턴만",
-  'mandateCard.turnTitle': "이 턴이 끝나면 다시 묻는다",
+  'mandateCard.turnTitle': "이 턴이 끝나면 다시 묻는다(최대 1시간)",
   'mandateCard.limit.turn': "이 턴 끝까지",
   'mandateCard.result.turn': "이번 턴만 허락함 · {who}",
   'mandateCard.ended.turn': "이번 턴만 허락함",

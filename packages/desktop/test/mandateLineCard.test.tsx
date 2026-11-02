@@ -176,7 +176,7 @@ describe('W4 mandate line card', () => {
     render(<AskCard message={card({ options: ['approve_mandate', 'approve_turn', 'deny'], pr: { line } })} />);
     const btn = screen.getByTestId('ask-option-approve_turn');
     expect(btn.textContent).toBe('이번 턴만');
-    expect(btn.getAttribute('title')).toBe('이 턴이 끝나면 다시 묻는다');
+    expect(btn.getAttribute('title')).toBe('이 턴이 끝나면 다시 묻는다(최대 1시간)');
     expect(btn.className).toContain('border');
     // 열린 카드는 주 버튼(standing)의 칩만 — 「이 턴 끝까지」는 섞이지 않는다.
     expect(screen.getByTestId('mandate-line').textContent).not.toContain('이 턴 끝까지');
