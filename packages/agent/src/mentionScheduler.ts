@@ -18,7 +18,7 @@ import type { TurnRegistry } from './turnRegistry.js';
 import type { MentionQueue } from './mentionQueue.js';
 import { accountFailureOf, accountTrailOf, withAccountFailover, type ClaudeAccount } from './claudeAccounts.js';
 import {
-  accountTrailReason, blockedByTurnNotice, controlHeldNotice, controlledNotice, FAILURE_NOTICE, LEASE_LOST_NOTICE, quotaNotice, retryNotice, retryReason,
+  runnerNoticeFallbackBody, type RunnerNotice, accountTrailReason, controlHeldNotice, FAILURE_NOTICE, LEASE_LOST_NOTICE, quotaNotice, retryNotice, retryReason,
   withAccountTrail,
   providerLaneNotice, providerLaneRecallable, sessionConflictNotice, stallNotice, stallRetryable, threadModelRejectedNotice, wakeReportTo, wakeWatch,
 } from './prompt.js';
@@ -26,6 +26,15 @@ import { exhausted, isHarnessStall, isQuotaExhausted, isSessionIdConflict, isThr
 import type { SecretLeases } from './secretLeases.js';
 import type { ThreadClaim, ThreadClaims } from './threadClaims.js';
 import { looksLikeGate, PromptNotDeliveredError } from './pty.js';
+
+/** 러너 알림 줄을 남긴다. `notice` 가 없는 목은 옛 본문을 일반 글로 — 실제 클라이언트는 늘 `notice` 를 가진다. */
+export function sendNotice(
+  harkroom: SchedulerHarkroom, channelId: string, anchor: string | null, notice: RunnerNotice,
+): Promise<number> {
+  return harkroom.notice
+    ? harkroom.notice(channelId, anchor, notice)
+    : harkroom.post(channelId, runnerNoticeFallbackBody(notice), anchor);
+}
 
 /**
  * 서버가 도구 입력을 검증에서 거절했나(MCP `-32602` Invalid params). 옛 서버가 모르는 실패 표지를 받으면 이 모양이다 —
@@ -117,6 +126,11 @@ export interface AdmitOutcome {
 export interface SchedulerHarkroom {
   markRead(ids: number[]): Promise<number>;
   post(channelId: string, body: string, threadRootId: string | null): Promise<number>;
+  /**
+   * 러너 알림 줄(`message.notice`, `prompt.ts::RunnerNotice`). 서버가 시스템 줄로 쓴다 — 일반 글로 쓰면 에이전트의 결과로
+   * 세어진다. 없으면(시험 목) `post` 로 옛 본문을 올린다(`sendNotice`).
+   */
+  notice?(channelId: string, threadRootId: string | null, notice: RunnerNotice): Promise<number>;
   /**
    * 실패로 남긴다(`message.fail`). 평문(`post`)과 갈라 쓰는 자리가 있다 — 사람이 손을 대야
    * 풀리는 것은 스레드 상태에 `막힘`으로 남아야 하고, 그것을 정하는 것은 본문이 아니라
@@ -267,10 +281,9 @@ export interface MentionScheduler {
  * 때문이다: 고른 길로 가는 것이 아니라 **접는 것**이다. 고른 것이 없으므로 옵션을 풀어
  * 싣지 않는다 — 대신 사람이 무엇을 물음에 답하지 않았는지가 본문에 있다.
  */
-/** 스레드 임대를 잃어 접힌 턴의 표지. 누가 이어 가는지는 같은 에이전트의 다른 러너다(이관·재접속). */
+/** 스레드 임대를 잃어 접힌 턴의 표지 — 옛 서버 물러남 본문(`runnerNoticeFallbackBody`). 이어 가는 것은 같은 에이전트의 다른 러너다. */
 export function fencedNotice(): string {
-  return '(다른 러너가 이 스레드를 넘겨받아 이 턴을 접었다 — 이 러너가 서버와 끊긴 사이 스레드 임대가 만료됐다.'
-    + ' 남은 일은 넘겨받은 쪽이 잇는다)';
+  return runnerNoticeFallbackBody({ key: 'fenced' });
 }
 
 function askClosedNote(mention?: { meta?: unknown }): string {
@@ -372,7 +385,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       if (oldest !== undefined) blockedNoticed.delete(oldest);
     }
     try {
-      await deps.harkroom.post(mention.channelId, blockedByTurnNotice(), anchor);
+      await sendNotice(deps.harkroom, mention.channelId, anchor, { key: 'blocked_by_turn' });
     } catch (err) {
       // 통지는 관측이고 큐는 inbox 다 — 실패해도 멘션은 그대로 기다린다.
       console.error(`  ${entry.messageId} 앞 턴 대기 통지 발화 실패(멘션은 그대로 기다린다):`,
@@ -466,7 +479,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
      * 실패 카드가 아니다 — 고장이 아니라 다른 러너가 이어 가는 것이고, 사람이 할 일이 없다.
      */
     const noticeFenced = async (): Promise<void> => {
-      await deps.harkroom.post(mention.channelId, fencedNotice(), anchor).catch((e: unknown) => {
+      await sendNotice(deps.harkroom, mention.channelId, anchor, { key: 'fenced' }).catch((e: unknown) => {
         console.error(`  ${mention.id} 임대 잃음 표지 발화 실패:`, e instanceof Error ? e.message : e);
       });
     };
@@ -938,7 +951,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           if (shouldNotify) {
             // 통지는 entry 당 1회 — 재폴링마다 올리면 조종이 길수록 스레드가 도배된다.
             try {
-              await deps.harkroom.post(mention.channelId, controlledNotice(handle, pending), anchor);
+              await sendNotice(deps.harkroom, mention.channelId, anchor, { key: 'controlled', handle, pending });
             } catch (err) {
               // 통지는 관측이고 큐는 inbox 다 — 실패해도 유예는 유지된다.
               console.error(`  ${entry.messageId} 대기 통지 발화 실패(유예는 유지된다):`,

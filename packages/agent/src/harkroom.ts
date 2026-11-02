@@ -18,6 +18,7 @@ import type { AccountView, AgentView, FailureCode, InboxEntry, MessageRow } from
 import type { RelayClient } from './relay.js';
 import { HARKROOM_ERROR_SOURCE } from './policy.js';
 import { VERSION } from './version.js';
+import { runnerNoticeFallbackBody, type RunnerNotice } from './prompt.js';
 import { CLEANUP_REPORT_PATH, type CleanupReport, type CleanupReportReply } from '@harkroom/shared/workspaceCleanup';
 
 /** 이 클라이언트가 링크에서 쓰는 표면. `RelayClient` 가 그대로 맞는다 — 테스트는 가짜를 준다. */
@@ -117,6 +118,16 @@ export interface FailOpts {
   laneCode?: ProviderLaneFailureCode;
   mentionId?: string;
   account?: string;
+}
+
+/**
+ * 서버가 그 도구를 모른다(옛 서버). MCP SDK 는 `Tool <name> not found` 를 `-32602` 로 던지고, 그 글은 `call` 이
+ * `<name>: MCP error -32602: Tool <name> not found` 로 감싼다. **도구 이름까지** 맞춰 본다 — 입력 검증 실패(-32602)를
+ * 옛 서버로 오인하면 새 서버에서도 일반 글로 물러난다.
+ */
+export function isUnknownTool(err: unknown, name: string): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes(`Tool ${name} not found`);
 }
 
 export class HarkroomAgentClient {
@@ -605,6 +616,23 @@ export class HarkroomAgentClient {
   async post(channelId: string, body: string, threadRootId: string | null): Promise<number> {
     const res = await this.call<{ message: { seq: number } }>('message.post', threadRootId ? { channelId, body, threadRootId } : { channelId, body });
     return res.message.seq;
+  }
+
+  /**
+   * 러너 알림 줄(`message.notice`, 2026-11-02) — 서버가 키로 문장을 짓고 시스템 줄(`serverNotice`)로 쓴다.
+   * 그 도구가 없는 **옛 서버**(`Tool message.notice not found`)면 지금까지처럼 일반 글로 옛 본문을 올린다 — 서버 판올림 전에
+   * 앱이 먼저 나가도 알림이 사라지지 않는다. 그 밖의 실패는 그대로 던진다(부르는 쪽이 통지 실패로 적는다).
+   */
+  async notice(channelId: string, threadRootId: string | null, notice: RunnerNotice): Promise<number> {
+    try {
+      const res = await this.call<{ message: { seq: number } }>('message.notice', {
+        channelId, ...(threadRootId ? { threadRootId } : {}), ...notice,
+      });
+      return res.message.seq;
+    } catch (err) {
+      if (!isUnknownTool(err, 'message.notice')) throw err;
+      return this.post(channelId, runnerNoticeFallbackBody(notice), threadRootId);
+    }
   }
 
   // #144: 진행 설명 메시지 — 결과 발화로 세지 않고, 사용자가 읽을 수 있어야 뜻이 있다.
