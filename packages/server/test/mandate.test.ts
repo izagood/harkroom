@@ -73,7 +73,14 @@ describe('mandate W1', () => {
   it('no mandate: other human reply, owner mentioning someone else\'s agent, owner thread with no agent', async () => {
     const root = await post(alice.accountId, '@tm go');
     expect(await mandateOf(await post(bob.accountId, 'me too', { threadRootId: root }))).toBeNull();
-    expect(await mandateOf(await post(alice.accountId, '@stranger go'))).toBeNull();
+    // C-3(D2): 남의 에이전트를 부른 글 — 그 에이전트의 카드를 정할 수 있으면(기본 community 범위) 그 에이전트 소유자가 주인이고
+    // 부른 사람이 delegator 인 위임장이 생긴다. 사용자 승인이 꺼져 있으면 생기지 않는다.
+    const am = await mandateOf(await post(alice.accountId, '@stranger go'));
+    expect((await pool.query(`select owner_account_id, delegator_account_id from mandate where id = $1`, [am])).rows[0])
+      .toEqual({ owner_account_id: bob.accountId, delegator_account_id: alice.accountId });
+    await pool.query(`update agent_config set user_decide = false where account_id = $1`, [stranger]);
+    expect(await mandateOf(await post(alice.accountId, '@stranger again'))).toBeNull();
+    await pool.query(`update agent_config set user_decide = true where account_id = $1`, [stranger]);
     expect(await mandateOf(await post(alice.accountId, 'just talking'))).toBeNull();
     // bob 이 자기 에이전트를 불러도 alice 의 위임은 아니다 — bob 의 위임이다.
     const bobRoot = await post(bob.accountId, '@stranger go');

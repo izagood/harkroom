@@ -186,7 +186,7 @@ describe('mandate lines (db)', () => {
     expect(await findLine(pool, { mandateId: m, agentId: tm, cap: 'merge', action: act })).toBeNull();
   });
 
-  it('C-2 delegator: new mandates record the owner as delegator; standing lines follow the delegator, not the owner', async () => {
+  it('C-2 delegator: new mandates record the owner as delegator; a mandate someone else delegated has no standing lines', async () => {
     const root = await post(alice.accountId, '@tm delegator');
     const m = (await mandateOf(root))!;
     expect((await pool.query(`select owner_account_id, delegator_account_id from mandate where id = $1`, [m])).rows[0])
@@ -203,11 +203,87 @@ describe('mandate lines (db)', () => {
     // 옛 파드가 넣은 행(delegator null)은 주인으로 읽는다.
     await pool.query(`update mandate set delegator_account_id = null where id = $1`, [m]);
     expect(await scopes()).toEqual(['repo:izagood/deleg-owner']);
-    // 다른 사람이 맡긴 위임장 — 소유자의 7일 grant 는 퍼지지 않고 그 사람이 준 grant 만 상시 줄이다(D3).
+    // 다른 사람이 맡긴 위임장 — 상시 줄이 없다: 소유자 7일 grant 는 퍼지지 않고(D3), 그 사람의 grant 도 펼치지 않는다(C-3 security).
     await pool.query(`update mandate set delegator_account_id = $2 where id = $1`, [m, bob.accountId]);
-    expect(await scopes()).toEqual(['repo:izagood/deleg-bob']);
+    expect(await scopes()).toEqual([]);
     expect(await findLine(pool, { mandateId: m, agentId: tm, cap: 'merge', action: { cap: 'merge', repo: 'izagood/deleg-owner' } })).toBeNull();
     await pool.query(`delete from account_grant where account_id = $1 and scope like 'repo:izagood/deleg-%'`, [tm]);
+  });
+
+  describe('C-3 user-delegated mandates (D2·D3)', () => {
+    it('a user who may decide gets a mandate on their new root: owner = agent owner, delegator = user; replies continue it', async () => {
+      await pool.query(`update agent_config set invoke_scope = 'community', user_decide = true where account_id = $1`, [tm]);
+      const root = await post(bob.accountId, '@tm user thread');
+      const m = (await mandateOf(root))!;
+      expect(m).toBeTruthy();
+      expect((await pool.query(`select owner_account_id, delegator_account_id from mandate where id = $1`, [m])).rows[0])
+        .toEqual({ owner_account_id: alice.accountId, delegator_account_id: bob.accountId });
+      const reply = await post(bob.accountId, '@tm more', { threadRootId: root });
+      expect(await mandateOf(reply)).toBe(m);
+      // 소유자의 답글도 같은 위임장을 잇는다(주인은 소유자).
+      expect(await mandateOf(await post(alice.accountId, '@tm owner here', { threadRootId: root }))).toBe(m);
+    });
+
+    it('no mandate when the user may not decide (switch off · list scope without them)', async () => {
+      await pool.query(`update agent_config set user_decide = false where account_id = $1`, [tm]);
+      expect(await mandateOf(await post(bob.accountId, '@tm switch off'))).toBeNull();
+      await pool.query(`update agent_config set user_decide = true, invoke_scope = 'list' where account_id = $1`, [tm]);
+      expect(await mandateOf(await post(bob.accountId, '@tm not listed'))).toBeNull();
+      await pool.query(`update agent_config set invoke_scope = 'community' where account_id = $1`, [tm]);
+    });
+
+    it('user mandate: no standing lines (owner nor user grants spread); delegator may add lines; others may not', async () => {
+      const root = await post(bob.accountId, '@tm lines please');
+      const m = (await mandateOf(root))!;
+      const until = new Date(Date.now() + 7 * 86_400_000);
+      await pool.query(
+        `insert into account_grant (account_id, capability, scope, granted_by, expires_at) values ($1, 'repo.merge', 'repo:izagood/c3-owner', $2, $3), ($1, 'repo.merge', 'repo:izagood/c3-bob', $4, $3)`,
+        [tm, alice.accountId, until, bob.accountId]);
+      expect((await listMandateLines(pool, m)).filter((l) => l.via === 'standing')).toEqual([]);
+      expect(await findLine(pool, { mandateId: m, agentId: tm, cap: 'merge', action: { cap: 'merge', repo: 'izagood/c3-owner' } })).toBeNull();
+      expect(await findLine(pool, { mandateId: m, agentId: tm, cap: 'merge', action: { cap: 'merge', repo: 'izagood/c3-bob' } })).toBeNull();
+      await pool.query(`delete from account_grant where account_id = $1 and scope like 'repo:izagood/c3-%'`, [tm]);
+      expect(await addMandateLine(pool, { mandateId: m, cap: 'merge', scope: 'repo:izagood/c3-line', grantedBy: bob.accountId, via: 'button' })).toMatchObject({ ok: true });
+      expect(await addMandateLine(pool, { mandateId: m, cap: 'merge', scope: 'repo:izagood/c3-line', grantedBy: admin.accountId, via: 'button' })).toMatchObject({ ok: false, code: 'not_owner' });
+    });
+
+    it('shell rules: a tool line the user gave reaches only while they may still decide (security, #1711 path)', async () => {
+      const root = await post(bob.accountId, '@tm @sec user shell');
+      const m = (await mandateOf(root))!;
+      const rule = 'Bash(kubectl --context ops get c3user:*)';
+      const own = 'Bash(kubectl --context ops get c3owner:*)';
+      await addMandateLine(pool, { mandateId: m, cap: 'tool', scope: rule, grantedBy: bob.accountId, via: 'button', agentIds: [tm] });
+      await addMandateLine(pool, { mandateId: m, cap: 'tool', scope: own, grantedBy: alice.accountId, via: 'button' });
+      const lt = await lease(root, tm);
+      const ls = await lease(root, sec);
+      expect(lt.id && ls.id).toBeTruthy();
+      const get = async (agent: string) => (await app.inject({ method: 'GET', url: `/agent/tool-allows?channelId=${ch}&cause=${root}`, headers: asAgent(agent) })).json() as { rules: string[] };
+      expect((await get(tm)).rules).toEqual(expect.arrayContaining([rule, own]));
+      // 사용 권한자 줄은 요청한 에이전트(tm)에만 — 같은 스레드의 소유자 다른 에이전트(sec)에는 없다.
+      expect((await get(sec)).rules).not.toContain(rule);
+      expect((await get(sec)).rules).toContain(own);
+      // 범위를 좁히면 그 사람의 줄은 곧바로 빠지고 소유자 줄은 남는다.
+      await pool.query(`update agent_config set invoke_scope = 'list' where account_id = $1`, [tm]);
+      expect((await get(tm)).rules).not.toContain(rule);
+      expect((await get(tm)).rules).toContain(own);
+      await pool.query(`update agent_config set invoke_scope = 'community' where account_id = $1`, [tm]);
+      expect((await get(tm)).rules).toContain(rule);
+    });
+
+    it('a line the user gave stops counting the moment they may no longer decide (security)', async () => {
+      const root = await post(bob.accountId, '@tm revocable');
+      const m = (await mandateOf(root))!;
+      await addMandateLine(pool, { mandateId: m, cap: 'merge', scope: 'repo:izagood/c3-rev', grantedBy: bob.accountId, via: 'button' });
+      await addMandateLine(pool, { mandateId: m, cap: 'merge', scope: 'repo:izagood/c3-own', grantedBy: alice.accountId, via: 'button' });
+      const act = (repo: string) => ({ cap: 'merge' as const, repo });
+      expect(await findLine(pool, { mandateId: m, agentId: tm, cap: 'merge', action: act('izagood/c3-rev') })).not.toBeNull();
+      await pool.query(`update agent_config set invoke_scope = 'list' where account_id = $1`, [tm]);
+      expect(await findLine(pool, { mandateId: m, agentId: tm, cap: 'merge', action: act('izagood/c3-rev') })).toBeNull();
+      // 소유자가 준 줄은 그대로.
+      expect(await findLine(pool, { mandateId: m, agentId: tm, cap: 'merge', action: act('izagood/c3-own') })).not.toBeNull();
+      await pool.query(`update agent_config set invoke_scope = 'community' where account_id = $1`, [tm]);
+      expect(await findLine(pool, { mandateId: m, agentId: tm, cap: 'merge', action: act('izagood/c3-rev') })).not.toBeNull();
+    });
   });
 
   it('shadow verdict uses findLine (stored chat line) and the real verdict is unchanged', async () => {
