@@ -21,7 +21,7 @@
  *   여기서 한다).
  * - 사설 IP·내부 호스트를 기본 주소로 쓰는 것은 연결 주인의 선택이다(문서에 적는다) — 여기서 막지 않는다.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import { API_METHODS } from '@harkroom/shared';
 import type { MergeLease } from './turnMerge.js';
@@ -35,6 +35,71 @@ export const API_MAX_BODY = 1024 * 1024;
 const RESPONSE_READ_MAX = 2 * 1024 * 1024;
 const RESPONSE_RETURN_MAX = 256 * 1024;
 const TIMEOUT_MS = 60_000;
+/** 토큰 교환(156) — 시한·응답 상한·토큰 모양. */
+const EXCHANGE_TIMEOUT_MS = 15_000;
+const EXCHANGE_READ_MAX = 64 * 1024;
+const TOKEN_MAX = 8192;
+/** 헤더에 그대로 실어도 되는 글자만(보이는 ASCII, 공백·제어문자 없음 — security 조건 3). */
+const TOKEN_RE = /^[\x21-\x7e]+$/;
+const TOKEN_TTL_DEFAULT_S = 300;
+const TOKEN_TTL_MAX_S = 3600;
+
+export interface TokenForm { grantType: string; clientId: string; keyField: string }
+
+/**
+ * 받은 토큰을 얼마나 쓸까(초). 만료 60초 전까지 — 단 `expires_in` 이 짧으면 max(절반, 10초)(security 조건 6). 없으면 5분,
+ * 상한 1시간.
+ */
+export function tokenTtlSeconds(expiresIn: unknown): number {
+  if (typeof expiresIn !== 'number' || !Number.isFinite(expiresIn) || expiresIn <= 0) return TOKEN_TTL_DEFAULT_S;
+  const ttl = expiresIn > 120 ? expiresIn - 60 : Math.max(expiresIn / 2, 10);
+  return Math.min(ttl, TOKEN_TTL_MAX_S);
+}
+
+/**
+ * 토큰 교환 한 번. 키는 form 의 `keyField` 자리에만 들어간다(`URLSearchParams` 로만 짓는다 — 조건 2). 실패하면 HTTP
+ * 상태만 돌려준다 — 오류 본문·예외 문구는 키가 되비칠 수 있어 어디에도 싣지 않는다(조건 5). `access_token` 말고는 바로
+ * 버린다(조건 4).
+ */
+export async function exchangeToken(
+  doFetch: Fetcher, tokenUrl: string, form: TokenForm, key: string,
+): Promise<{ ok: true; token: string; ttlS: number } | { ok: false; status: number }> {
+  let url: URL;
+  try { url = new URL(tokenUrl); } catch { return { ok: false, status: 0 }; }
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return { ok: false, status: 0 };
+  const body = new URLSearchParams();
+  body.set('grant_type', form.grantType);
+  body.set('client_id', form.clientId);
+  body.set(form.keyField, key);
+  let res: Response;
+  try {
+    res = await doFetch(url, {
+      method: 'POST', body: body.toString(), redirect: 'manual', signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'user-agent': 'harkroom-operator-api' },
+    });
+  } catch {
+    return { ok: false, status: 0 };
+  }
+  // 3xx 는 실패다 — Location 을 따라가지 않는다(조건 3).
+  if (res.status < 200 || res.status >= 300) { await res.body?.cancel().catch(() => {}); return { ok: false, status: res.status }; }
+  const chunks: Buffer[] = []; let read = 0;
+  if (res.body) {
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value: chunk } = await reader.read().catch(() => ({ done: true, value: undefined }));
+      if (done || !chunk) break;
+      read += chunk.byteLength;
+      if (read > EXCHANGE_READ_MAX) { await reader.cancel().catch(() => {}); return { ok: false, status: res.status }; }
+      chunks.push(Buffer.from(chunk));
+    }
+  }
+  let json: { access_token?: unknown; token_type?: unknown; expires_in?: unknown };
+  try { json = JSON.parse(Buffer.concat(chunks).toString('utf8')) as typeof json; } catch { return { ok: false, status: res.status }; }
+  const token = json.access_token;
+  if (json.token_type !== undefined && (typeof json.token_type !== 'string' || json.token_type.toLowerCase() !== 'bearer')) return { ok: false, status: res.status };
+  if (typeof token !== 'string' || !token.length || token.length > TOKEN_MAX || !TOKEN_RE.test(token)) return { ok: false, status: res.status };
+  return { ok: true, token, ttlS: tokenTtlSeconds(json.expires_in) };
+}
 
 export interface ApiArgs { connector: string; method: string; path: string; body: string | null; contentType: string | null }
 
@@ -134,6 +199,14 @@ function argsOf(call: JsonRpcCall): ApiArgs | { error: string } {
 export function createTurnApi(deps: TurnApiDeps): TurnApi {
   const doFetch = deps.fetch ?? fetch;
   const now = deps.now ?? Date.now;
+  /**
+   * 받은 토큰 캐시(156) — 메모리에만. 키는 (에이전트, 연결 주소, 토큰 주소, form, 키 값) 지문이다: 에이전트 계정은 한
+   * 커뮤니티(서버)에만 있으므로 여러 커뮤니티를 붙든 오퍼레이터에서도 섞이지 않고(조건 6), 키를 돌리거나 주소·form 을
+   * 바꾸면 저절로 새로 받는다. 캐시가 있어도 **매 호출 서버 판정(api-checks)을 먼저** 거친다 — 부여 회수·연결 삭제가 바로 듣는다.
+   */
+  const tokens = new Map<string, { token: string; until: number }>();
+  const tokenKey = (agentId: string, baseUrl: string, tokenUrl: string, form: TokenForm, key: string): string =>
+    createHash('sha256').update(JSON.stringify([agentId, baseUrl, tokenUrl, form.grantType, form.clientId, form.keyField, key])).digest('hex');
 
   const run = async (runnerId: string, agentId: string, req: RunnerLinkRequest & { type: 'mcp.request' }, call: JsonRpcCall)
     : Promise<{ ok: boolean; value: unknown }> => {
@@ -148,7 +221,7 @@ export function createTurnApi(deps: TurnApiDeps): TurnApi {
     // ③ 서버 판정. 닿지 않으면 부르지 않는다(fail-closed).
     const check = await deps.forward(agentId, {
       type: 'http.forward', id: randomUUID(), method: 'POST', path: '/agent/api-checks',
-      body: JSON.stringify({ leaseId: lease.leaseId, token: lease.token, connector, method, path }), contentType: 'application/json',
+      body: JSON.stringify({ leaseId: lease.leaseId, token: lease.token, connector, method, path, caps: ['token_exchange'] }), contentType: 'application/json',
     }).catch(() => null);
     if (!check || check.type !== 'http.response' || check.status === 0) return fail('unavailable', 'the server could not be reached — call refused (fail-closed)');
     if (check.status !== 200) {
@@ -156,7 +229,7 @@ export function createTurnApi(deps: TurnApiDeps): TurnApi {
       try { code = (JSON.parse(check.body) as { error?: { code?: string } }).error?.code ?? code; } catch { /* 그대로 */ }
       return fail(code, `api call not allowed: ${code}`, { blocked: true });
     }
-    let g: { baseUrl?: string; authKind?: string; authHeader?: string | null; valueBase64?: string | null };
+    let g: { baseUrl?: string; authKind?: string; authHeader?: string | null; valueBase64?: string | null; tokenUrl?: string; tokenForm?: TokenForm; path?: string };
     try { g = JSON.parse(check.body) as typeof g; } catch { return fail('bad_reply', 'unparseable api-checks reply'); }
     const value = g.valueBase64 ? Buffer.from(g.valueBase64, 'base64').toString('utf8') : '';
     g.valueBase64 = null;
@@ -169,23 +242,58 @@ export function createTurnApi(deps: TurnApiDeps): TurnApi {
       if (!res || res.type !== 'http.response' || res.status !== 201) deps.log(`api: ${connector} ${method} 보고가 서버에 닿지 않았다(${res && res.type === 'http.response' ? res.status : 'no response'})`);
     };
 
-    // ④ URL 짓기 + origin 재확인.
+    // ④ URL 짓기 + origin 재확인. 서버가 판정한 경로(실제로 보낼 꼴, security 조건 7)가 있으면 그것을 그대로 쓴다.
+    const sendPath = typeof g.path === 'string' && g.path.startsWith('/') ? g.path : path;
     let url: URL;
-    try { url = new URL(path, g.baseUrl); } catch { await report(0, 0, 0, 'bad_url'); return fail('bad_url', 'could not build the URL'); }
+    try { url = new URL(sendPath, g.baseUrl); } catch { await report(0, 0, 0, 'bad_url'); return fail('bad_url', 'could not build the URL'); }
     if (!g.baseUrl || url.origin !== g.baseUrl || url.protocol !== 'https:') { await report(0, 0, 0, 'origin_mismatch'); return fail('origin_mismatch', 'the path would leave the connector origin'); }
 
     const headers: Record<string, string> = { accept: 'application/json, */*;q=0.5', 'user-agent': 'harkroom-operator-api' };
-    if (g.authKind === 'bearer') headers.authorization = `Bearer ${value}`;
+    // 토큰 교환(156). 받은 토큰도 키와 똑같이 가린다(조건 4) — `scrub` 이 둘 다 본다.
+    let accessToken = '';
+    let fromCache = false;
+    const scrub = (text: string): string => scrubValue(scrubValue(text, value), accessToken);
+    const tk = g.authKind === 'token_exchange' && g.tokenUrl && g.tokenForm ? tokenKey(agentId, g.baseUrl, g.tokenUrl, g.tokenForm, value) : null;
+    const getToken = async (): Promise<boolean> => {
+      const hit = tk ? tokens.get(tk) : undefined;
+      if (hit && hit.until > now()) { accessToken = hit.token; fromCache = true; return true; }
+      fromCache = false;
+      const ex = await exchangeToken(doFetch, g.tokenUrl!, g.tokenForm!, value);
+      if (!ex.ok) return false;
+      accessToken = ex.token;
+      tokens.set(tk!, { token: ex.token, until: now() + ex.ttlS * 1000 });
+      return true;
+    };
+    if (g.authKind === 'token_exchange') {
+      if (!tk) { await report(0, 0, 0, 'token_exchange_failed'); return fail('token_exchange_failed', 'token exchange is not configured for this connector'); }
+      if (!(await getToken())) {
+        await report(0, 0, 0, 'token_exchange_failed');
+        return fail('token_exchange_failed', 'token exchange failed');
+      }
+      headers.authorization = `Bearer ${accessToken}`;
+    } else if (g.authKind === 'bearer') headers.authorization = `Bearer ${value}`;
     else if (g.authKind === 'header' && g.authHeader) headers[g.authHeader.toLowerCase()] = value;
     if (parsed.body !== null) headers['content-type'] = parsed.contentType ?? 'application/json';
 
     // ⑤ 호출. 리다이렉트는 따라가지 않는다.
     const started = now();
     let res: Response;
+    const send = () => doFetch(url, { method, headers, body: parsed.body ?? undefined, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS) });
     try {
-      res = await doFetch(url, { method, headers, body: parsed.body ?? undefined, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS) });
+      res = await send();
+      // 캐시에서 꺼낸 토큰이 401 이면 버리고 **한 번만** 다시 교환해 다시 보낸다(조건 6). 401 은 처리되지 않은 요청이다.
+      if (res.status === 401 && fromCache && tk) {
+        tokens.delete(tk);
+        await res.body?.cancel().catch(() => {});
+        if (!(await getToken())) {
+          await report(0, now() - started, 0, 'token_exchange_failed');
+          return fail('token_exchange_failed', 'token exchange failed');
+        }
+        headers.authorization = `Bearer ${accessToken}`;
+        res = await send();
+      }
     } catch (e) {
-      const msg = scrubValue(e instanceof Error ? e.message : String(e), value).slice(0, 300);
+      const msg = scrub(e instanceof Error ? e.message : String(e)).slice(0, 300);
       await report(0, now() - started, 0, msg);
       return fail('unreachable', `request failed: ${msg}`);
     }
@@ -203,7 +311,7 @@ export function createTurnApi(deps: TurnApiDeps): TurnApi {
     }
     const durationMs = now() - started;
     const raw = Buffer.concat(chunks).toString('utf8');
-    const text = scrubValue(raw, value);
+    const text = scrub(raw);
     const returned = text.length > RESPONSE_RETURN_MAX ? text.slice(0, RESPONSE_RETURN_MAX) : text;
     await report(res.status, durationMs, read, null);
     deps.log(`api: ${connector} ${method} ${path.split('?')[0]} → ${res.status} (${durationMs}ms, ${read}B) agent=${agentId}`);
@@ -213,7 +321,7 @@ export function createTurnApi(deps: TurnApiDeps): TurnApi {
       value: {
         status: res.status,
         contentType: res.headers.get('content-type'),
-        ...(location ? { location: scrubValue(location, value), note: 'redirects are not followed' } : {}),
+        ...(location ? { location: scrub(location), note: 'redirects are not followed' } : {}),
         body: returned,
         ...(truncated || returned.length < text.length ? { truncated: true } : {}),
       },

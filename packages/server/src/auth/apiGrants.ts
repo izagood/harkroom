@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { API_METHODS, CONNECTOR_SCOPE_RE, connectorScope, type ApiGrantLimits, type ApiMethod } from '@harkroom/shared';
+import { API_METHODS, CONNECTOR_SCOPE_RE, connectorScope, type ApiAuthKind, type ApiGrantLimits, type ApiMethod, type ApiTokenForm } from '@harkroom/shared';
 
 /**
  * 외부 API 권한(`api.call`) 판정 — 설계 스레드 07519d86(채널 a42006a1), C안 P2.
@@ -21,8 +21,12 @@ export type ApiDenial =
 
 export interface ApiGrantHit {
   grantId: string; rootGrantedBy: string; connectorId: string; connectorName: string;
-  baseUrl: string; authKind: 'bearer' | 'header' | 'none'; authHeader: string | null; secretId: string | null;
+  baseUrl: string; authKind: ApiAuthKind; authHeader: string | null; secretId: string | null;
   limits: ApiGrantLimits;
+  /** 토큰 교환(156) — `token_exchange` 일 때만. */
+  tokenUrl: string | null; tokenForm: ApiTokenForm | null;
+  /** 실제로 보낼 경로(`wirePath`, security 조건 7). 판정은 이 값으로 했다. */
+  path: string;
 }
 
 const WRITE: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -33,25 +37,79 @@ export const hasWriteMethod = (methods: readonly string[]): boolean => methods.s
  * 경로 범위는 grant 의 `pathPrefix` 하나가 정한다 — 두 곳에서 정하면 어느 쪽이 이기는지 사람이 헷갈린다.
  */
 export function normalizeBaseUrl(input: string): string | null {
+  const u = parseHttpsUrl(input);
+  if (!u) return null;
+  if (u.pathname !== '/' && u.pathname !== '') return null;
+  return u.origin;
+}
+
+/**
+ * 연결 주소·토큰 교환 주소가 공통으로 지키는 모양(security 조건 1): https 만, 사용자 정보·질의·조각 없음, 호스트 있음.
+ * 두 주소 모두 키를 받는 곳이라 같은 함수로 잰다.
+ */
+function parseHttpsUrl(input: string): URL | null {
   let u: URL;
   try { u = new URL(input.trim()); } catch { return null; }
   if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) return null;
-  if (u.pathname !== '/' && u.pathname !== '') return null;
   if (!u.hostname) return null;
-  return u.origin;
+  return u;
+}
+
+/**
+ * 토큰 교환 주소(156). 기본 주소와 같은 검사에 **경로를 허용**한다(토큰 엔드포인트는 보통 경로가 있다). 경로도 안전한
+ * 모양이어야 한다. 출처는 연결 주인이 정한다(security S1 — base_url 과 같은 신뢰 수준).
+ */
+export function normalizeTokenUrl(input: string): string | null {
+  // URL 짓기가 `%2e%2e`·`..` 를 풀어 다른 경로로 바꾸기 전에 원문에서 거른다 — 사람이 본 주소와 키가 가는 주소가 같아야 한다.
+  if (/%2e|%2f|%5c|%25/i.test(input) || /\/\.\.?(\/|$)/.test(input)) return null;
+  const u = parseHttpsUrl(input);
+  if (!u) return null;
+  const path = u.pathname || '/';
+  if (!safePath(path) || /%2f/i.test(path)) return null;
+  const out = `${u.origin}${path === '/' ? '' : path}`;
+  return out.length <= 500 ? out : null;
+}
+
+/** `%2F` 를 `/` 로 푼 경로(질의 앞만). 대상 서버·프록시가 이렇게 풀 수 있으므로 판정은 이 꼴로도 한 번 더 한다. */
+export const decodeSlashes = (path: string): string => {
+  const i = path.indexOf('?');
+  const p = i < 0 ? path : path.slice(0, i);
+  return p.replace(/%2f/gi, '/') + (i < 0 ? '' : path.slice(i));
+};
+
+/**
+ * 실제로 보낼 경로(security 조건 7) — `new URL(path, baseUrl)` 뒤의 pathname + 질의. 판정은 입력 글자가 아니라 이 값에
+ * 대해 하고, 오퍼레이터는 이 값을 그대로 보낸다(두 쪽의 인코딩 차이를 없앤다). origin 이 바뀌면 null.
+ */
+export function wirePath(baseUrl: string, path: string): string | null {
+  let u: URL;
+  try { u = new URL(path, baseUrl); } catch { return null; }
+  if (u.origin !== new URL(baseUrl).origin || u.hash) return null;
+  return `${u.pathname}${u.search}`;
 }
 
 /**
  * 요청 경로가 안전한 모양인가. `..`·인코딩된 점·역슬래시·`//` 로 시작하는 것은 접두 검사를 속일 수 있으므로
  * 처음부터 받지 않는다(`/api/../admin` 이 `/api/` 접두를 지나는 것을 막는다).
+ *
+ * `%2F`(인코딩된 `/`)는 받는다(156 — 모델 이름처럼 `/` 가 든 값을 한 마디로 보내는 API 가 있다). 대신 **두 번 잰다**
+ * (security S3): 원문 마디와, `%2F` 를 `/` 로 푼 마디 둘 다 `.`·`..` 가 없어야 하고, 푼 쪽에 빈 마디(`//`)가 생기면
+ * 거절한다(조건 8 — 서버·프록시마다 `//` 를 다르게 정규화한다). 접두는 `pathCovered` 가 두 꼴 모두에 대해 본다.
  */
 export function safePath(path: string): boolean {
   if (!path.startsWith('/') || path.startsWith('//')) return false;
   if (/[\\\s#]/.test(path)) return false;
   const p = path.split('?')[0] ?? '';
   // `;` — `/api/..;/admin` 을 Tomcat·Spring 계열이 상위로 푼다. `%25` — 이중 인코딩(`%252e%252e`)이 뒤에서 풀린다.
-  if (/%2e|%2f|%5c|%25/i.test(p) || p.includes(';')) return false;
-  return !p.split('/').some((seg) => seg === '..' || seg === '.');
+  if (/%2e|%5c|%25/i.test(p) || p.includes(';')) return false;
+  const dotSeg = (seg: string): boolean => seg === '..' || seg === '.';
+  if (p.split('/').some(dotSeg)) return false;
+  if (!/%2f/i.test(p)) return true;
+  const decoded = decodeSlashes(p);
+  const segs = decoded.split('/').slice(1);
+  // 끝의 빈 마디는 원문도 `/` 로 끝날 때만 받는다(`/x%2F` 처럼 인코딩이 만든 빈 마디는 거절).
+  const last = segs.length - 1;
+  return !segs.some((seg, i) => dotSeg(seg) || (seg === '' && !(i === last && p.endsWith('/'))));
 }
 
 /**
@@ -59,6 +117,8 @@ export function safePath(path: string): boolean {
  * `/api-admin`·`/apikeys` 는 받지 않는다(security F2①). 질의는 떼고 잰다.
  */
 export function pathCovered(path: string, prefix: string): boolean {
+  // `%2F` 가 든 경로는 원문과 푼 꼴 **둘 다** 접두 안이어야 한다(security S3) — `/api%2Fx` 는 `/api/` 를 지나지 못한다.
+  if (/%2f/i.test(path.split('?')[0] ?? '') && !pathCovered(decodeSlashes(path), prefix)) return false;
   const p = path.split('?')[0] ?? '';
   if (prefix.endsWith('/')) return p.startsWith(prefix);
   return p === prefix || p.startsWith(`${prefix}/`);
@@ -73,7 +133,7 @@ export function parseLimits(raw: unknown, connectorMethods: readonly string[]): 
   const ms = [...new Set(methods.map(String))];
   if (!ms.every((m) => (API_METHODS as readonly string[]).includes(m))) return { error: 'limits.methods 에 모르는 메서드가 있다' };
   if (!ms.every((m) => connectorMethods.includes(m))) return { error: '연결이 허용하지 않은 메서드다' };
-  if (typeof pathPrefix !== 'string' || !safePath(pathPrefix) || pathPrefix.includes('?')) return { error: 'limits.pathPrefix 는 / 로 시작하는 안전한 경로다' };
+  if (typeof pathPrefix !== 'string' || !safePath(pathPrefix) || pathPrefix.includes('?') || pathPrefix.includes('%')) return { error: 'limits.pathPrefix 는 / 로 시작하는 안전한 경로다' };
   return { methods: ms as ApiMethod[], pathPrefix };
 }
 
@@ -93,10 +153,14 @@ export async function apiGrantFor(
   if (!safePath(args.path)) return { ok: false, code: 'bad_path' };
   const c = (await pool.query(
     `select id, name, owner_account_id as "ownerAccountId", base_url as "baseUrl", auth_kind as "authKind",
-            auth_header as "authHeader", secret_id as "secretId", methods
+            auth_header as "authHeader", secret_id as "secretId", methods,
+            token_url as "tokenUrl", token_form as "tokenForm"
        from api_connector where id = $1`, [args.connectorId])).rows[0] as
-    { id: string; name: string; ownerAccountId: string; baseUrl: string; authKind: 'bearer' | 'header' | 'none'; authHeader: string | null; secretId: string | null; methods: string[] } | undefined;
+    { id: string; name: string; ownerAccountId: string; baseUrl: string; authKind: ApiAuthKind; authHeader: string | null; secretId: string | null; methods: string[]; tokenUrl: string | null; tokenForm: ApiTokenForm | null } | undefined;
   if (!c) return { ok: false, code: 'no_connector' };
+  // 판정은 실제로 보낼 경로로 한다(security 조건 7). URL 짓기가 바꾼 꼴도 다시 안전해야 한다.
+  const wire = wirePath(c.baseUrl, args.path);
+  if (!wire || !safePath(wire)) return { ok: false, code: 'bad_path' };
   const scope = connectorScope(c.id);
 
   const leaf = (await pool.query(
@@ -151,7 +215,7 @@ export async function apiGrantFor(
   const limits = leaf.limits;
   if (!limits) return { ok: false, code: 'chain_broken' };
   if (!limits.methods.includes(args.method as ApiMethod) || !c.methods.includes(args.method)) return { ok: false, code: 'method_not_allowed' };
-  if (!pathCovered(args.path, limits.pathPrefix)) return { ok: false, code: 'path_not_allowed' };
+  if (!pathCovered(args.path, limits.pathPrefix) || !pathCovered(wire, limits.pathPrefix)) return { ok: false, code: 'path_not_allowed' };
   if (c.authKind !== 'none' && !c.secretId) return { ok: false, code: 'no_secret' };
 
   return {
@@ -159,6 +223,7 @@ export async function apiGrantFor(
     hit: {
       grantId: leaf.id, rootGrantedBy: root.grantedBy, connectorId: c.id, connectorName: c.name,
       baseUrl: c.baseUrl, authKind: c.authKind, authHeader: c.authHeader, secretId: c.secretId, limits,
+      tokenUrl: c.authKind === 'token_exchange' ? c.tokenUrl : null, tokenForm: c.authKind === 'token_exchange' ? c.tokenForm : null, path: wire,
     },
   };
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { API_METHODS, type ApiConnectorView, type ApiMethod } from '@harkroom/shared';
+import { API_METHODS, type ApiAuthKind, type ApiConnectorView, type ApiMethod } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { ApiError, type SecretView } from '../../lib/api';
@@ -18,7 +18,8 @@ import { errorText } from '../../lib/errorText';
  * 주소가 바뀌면 키가 다른 곳으로 가기 때문이다. 키의 **값**만 바꾸는 것은 비밀 절의 [값 바꾸기]이고 권한을 멈추지 않는다.
  */
 
-type AuthKind = 'bearer' | 'header' | 'none';
+// 토큰 교환(156) 칸은 화면 PR 에서 그린다 — 그 전까지 이 양식은 그 꼴의 연결을 고쳐도 꼴·토큰 칸을 그대로 둔다(서버가 빠진 칸을 지킨다).
+type AuthKind = ApiAuthKind;
 interface Draft { name: string; baseUrl: string; authKind: AuthKind; authHeader: string; secretId: string; methods: ApiMethod[] }
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const emptyDraft = (): Draft => ({ name: '', baseUrl: 'https://', authKind: 'bearer', authHeader: '', secretId: '', methods: ['GET'] });

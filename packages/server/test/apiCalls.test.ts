@@ -215,4 +215,24 @@ describe('api-checks · api-results', () => {
     expect((await check(l)).json().error.code).toBe('secret_expired');
     await pool.query(`update secret set expires_at = null where name = 'lab-token'`);
   });
+
+  it('토큰 교환 연결(156): 옛 오퍼레이터(caps 없음)는 operator_update_required · 새 오퍼레이터는 토큰 주소·form·보낼 경로를 받는다', async () => {
+    const sid = (await pool.query(`select id from secret where name = 'lab-token'`)).rows[0].id as string;
+    const c = await app.inject({ method: 'POST', url: '/connectors', headers: auth(alice.token), payload: {
+      name: 'idp', baseUrl: 'https://api.example.com', authKind: 'token_exchange', secretId: sid, methods: ['GET'],
+      tokenUrl: 'https://auth.example.com/token', tokenForm: { grantType: 'password', clientId: 'cli', keyField: 'api_key' } } });
+    expect(c.statusCode).toBe(201);
+    const g = await app.inject({ method: 'PUT', url: `/accounts/${agentId}/grants`, headers: auth(alice.token), payload: { capability: 'api.call', scope: `connector:${c.json().connector.id}`, limits: { methods: ['GET'], pathPrefix: '/api/m/' } } });
+    expect(g.statusCode).toBe(200);
+    const l = await lease();
+    const old = await check(l, 'GET', '/api/m/org%2Fname', 'idp');
+    expect(old.statusCode).toBe(409);
+    expect(old.json().error.code).toBe('operator_update_required');
+    expect(old.body).not.toContain(KEY);
+    const r = await app.inject({ method: 'POST', url: '/agent/api-checks', headers: asAgent(), payload: { leaseId: l.id, token: l.token, connector: 'idp', method: 'GET', path: '/api/m/org%2Fname', caps: ['token_exchange'] } });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ authKind: 'token_exchange', tokenUrl: 'https://auth.example.com/token', tokenForm: { keyField: 'api_key' }, path: '/api/m/org%2Fname' });
+    const bad = await app.inject({ method: 'POST', url: '/agent/api-checks', headers: asAgent(), payload: { leaseId: l.id, token: l.token, connector: 'idp', method: 'GET', path: '/api/m/a%2F..%2F..%2Fx', caps: ['token_exchange'] } });
+    expect(bad.json().error.code).toBe('bad_path');
+  });
 });

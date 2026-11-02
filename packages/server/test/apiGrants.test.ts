@@ -6,7 +6,7 @@ import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
-import { apiGrantFor, normalizeBaseUrl, parseLimits, pathCovered, safePath } from '../src/auth/apiGrants.js';
+import { apiGrantFor, decodeSlashes, normalizeBaseUrl, normalizeTokenUrl, parseLimits, pathCovered, safePath, wirePath } from '../src/auth/apiGrants.js';
 import { can, effectiveCapabilities } from '../src/auth/permissions.js';
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -39,7 +39,35 @@ describe('apiGrants 순수 함수', () => {
     expect(pathCovered('/apix', '/api/')).toBe(false);
     expect(pathCovered('/anything', '/')).toBe(true);
   });
+  it('토큰 주소: base_url 과 같은 검사 + 경로 허용(156, security 조건 1)', () => {
+    expect(normalizeTokenUrl('https://auth.example.com/realms/x/token')).toBe('https://auth.example.com/realms/x/token');
+    expect(normalizeTokenUrl('https://auth.example.com')).toBe('https://auth.example.com');
+    for (const bad of ['http://auth.example.com/t', 'https://u:p@auth.example.com/t', 'https://auth.example.com/t?x=1', 'https://auth.example.com/t#f',
+      'https://auth.example.com/a/%2e%2e/t', 'https://auth.example.com/a%2Fb', 'nope']) expect(normalizeTokenUrl(bad), bad).toBeNull();
+  });
+  it('%2F 는 받고 두 번 잰다(156, security S3·조건 8·9)', () => {
+    expect(safePath('/api/catalog/models/org%2Fname/versions')).toBe(true);
+    expect(safePath('/api/catalog/models/org%2fname')).toBe(true);
+    expect(safePath('/api/x/')).toBe(true);
+    for (const p of ['/api/a/..%2F..%2Fadmin', '/api/a%2F..', '/api/a%2F%2E%2E/x', '/api/a%252F..', '/api/a%2F%2Fb', '/api/.%2Fx',
+      '/api/x%2F', '/api/%2F', '/api/a%2F.%2Fb']) {
+      expect(safePath(p), p).toBe(false);
+    }
+    expect(decodeSlashes('/a%2Fb?q=%2F')).toBe('/a/b?q=%2F');
+    // 접두 경계 — 원문과 푼 꼴 둘 다 접두 안이어야 한다.
+    expect(pathCovered('/api%2Fx', '/api/')).toBe(false);
+    expect(pathCovered('/api%2Fx', '/api')).toBe(false);
+    expect(pathCovered('/api/m/org%2Fname', '/api/m/')).toBe(true);
+    expect(pathCovered('/api/m/org%2Fname', '/api/m')).toBe(true);
+    expect(pathCovered('/api/morg%2Fname', '/api/m')).toBe(false);
+  });
+  it('보낼 경로는 URL 짓기 뒤의 꼴이다(security 조건 7)', () => {
+    expect(wirePath('https://api.example.com', '/api/m/org%2Fname?x=1')).toBe('/api/m/org%2Fname?x=1');
+    expect(wirePath('https://api.example.com', '/api/é')).toBe('/api/%C3%A9');
+    expect(wirePath('https://api.example.com', '//evil.example.com/x')).toBeNull();
+  });
   it('limits 는 연결이 허용한 메서드의 부분집합', () => {
+    expect(parseLimits({ methods: ['GET'], pathPrefix: '/api%2F' }, ['GET'])).toHaveProperty('error');
     expect(parseLimits({ methods: ['GET'], pathPrefix: '/api/' }, ['GET', 'POST'])).toEqual({ methods: ['GET'], pathPrefix: '/api/' });
     expect(parseLimits({ methods: ['DELETE'], pathPrefix: '/api/' }, ['GET'])).toHaveProperty('error');
     expect(parseLimits({ methods: [], pathPrefix: '/' }, ['GET'])).toHaveProperty('error');
@@ -95,6 +123,35 @@ describe('API 연결 · api.call grant', () => {
     expect((await mkConnector('c-one')).statusCode).toBe(409);
     const list = await app.inject({ method: 'GET', url: '/connectors', headers: auth(bob.token) });
     expect(list.json().connectors.map((c: { name: string }) => c.name)).not.toContain('c-one');
+  });
+
+  it('토큰 교환 연결(156): 같은 비밀 소유 검사 · form 칸 검사 · 주소·form 을 바꾸면 grant 가 멈춘다', async () => {
+    const tx = { authKind: 'token_exchange', tokenUrl: 'https://auth.example.com/token', tokenForm: { grantType: 'password', clientId: 'cli', keyField: 'api_key' } };
+    expect((await mkConnector('t-bob', { ...tx, secretId: bobSecretId })).statusCode).toBe(404);
+    expect((await mkConnector('t-nourl', { ...tx, tokenUrl: null })).json().error.code).toBe('bad_token_url');
+    expect((await mkConnector('t-http', { ...tx, tokenUrl: 'http://auth.example.com/token' })).json().error.code).toBe('bad_token_url');
+    expect((await mkConnector('t-q', { ...tx, tokenUrl: 'https://auth.example.com/token?x=1' })).json().error.code).toBe('bad_token_url');
+    expect((await mkConnector('t-dup', { ...tx, tokenForm: { ...tx.tokenForm, keyField: 'client_id' } })).json().error.code).toBe('bad_token_form');
+    expect((await mkConnector('t-ctl', { ...tx, tokenForm: { ...tx.tokenForm, clientId: 'a\nb' } })).statusCode).toBe(400);
+    expect((await mkConnector('t-long', { ...tx, tokenForm: { ...tx.tokenForm, grantType: 'x'.repeat(201) } })).statusCode).toBe(400);
+    expect((await mkConnector('t-extra', { ...tx, tokenForm: { ...tx.tokenForm, scope: 'all' } })).statusCode).toBe(400);
+    expect((await mkConnector('t-bearer', { tokenUrl: 'https://auth.example.com/token' })).statusCode).toBe(400);
+    const ok = await mkConnector('t-one', tx);
+    expect(ok.statusCode).toBe(201);
+    expect(ok.json().connector).toMatchObject({ authKind: 'token_exchange', tokenUrl: 'https://auth.example.com/token', tokenForm: tx.tokenForm });
+    const id = ok.json().connector.id as string;
+    expect((await give(id, { limits: { methods: ['GET'], pathPrefix: '/api/' } })).statusCode).toBe(200);
+    const hit = await apiGrantFor(pool, { agentId, connectorId: id, method: 'GET', path: '/api/m/org%2Fname' });
+    expect(hit).toMatchObject({ ok: true, hit: { authKind: 'token_exchange', tokenUrl: 'https://auth.example.com/token', path: '/api/m/org%2Fname' } });
+    expect(await apiGrantFor(pool, { agentId, connectorId: id, method: 'GET', path: '/api/a/..%2F..%2Fadmin' })).toEqual({ ok: false, code: 'bad_path' });
+    const p = await app.inject({ method: 'PATCH', url: `/connectors/${id}`, headers: auth(alice.token), payload: { tokenUrl: 'https://auth2.example.com/token' } });
+    expect(p.json().suspendedGrants).toBe(1);
+    await give(id, { limits: { methods: ['GET'], pathPrefix: '/api/' } });
+    const f = await app.inject({ method: 'PATCH', url: `/connectors/${id}`, headers: auth(alice.token), payload: { tokenForm: { ...tx.tokenForm, clientId: 'other' } } });
+    expect(f.json().suspendedGrants).toBe(1);
+    // 다른 꼴로 바꾸면 토큰 칸이 비워진다.
+    const b = await app.inject({ method: 'PATCH', url: `/connectors/${id}`, headers: auth(alice.token), payload: { authKind: 'bearer' } });
+    expect(b.json().connector).toMatchObject({ authKind: 'bearer', tokenUrl: null, tokenForm: null });
   });
 
   it('grant: 소유자만, 내 연결만, 쓰기는 만료 필수(D3), 남의 에이전트는 403(E1)', async () => {
