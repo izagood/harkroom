@@ -1005,6 +1005,14 @@ export class AccountGateRequeueError extends Error {
 }
 
 /**
+ * 다음 턴에 「앞 턴이 중단됐다」로 넘길 중단자(`SessionRecord.canceledBy`). 고아 회수·물러나기(`relay.ts::cancelSessions`)는
+ * `operator` 로 끊는다 — 사람이 멈춘 일이 아니라 러너가 바뀐 것이라 넘기지 않는다(다음 러너가 같은 멘션을 이어 처리한다).
+ */
+export function humanCancelOf(canceledBy: string | null): string | undefined {
+  return canceledBy && canceledBy !== 'operator' ? canceledBy : undefined;
+}
+
+/**
  * 관문 통지에 붙는 기계용 칸(2026-10-02, 관문 대응 안 2). **턴 시작 관문(`'startup'`)에만** 붙인다 —
  * 그때만 "그 계정의 설정 확인 화면이 사람을 기다린다"(서버가 🙋·차례 주인으로 읽는다)가 참이다.
  * 턴 **도중** 권한 확인(`'gate'`)은 명령 하나에 대한 물음이라 계정 관문이 아니다 — 붙이면 명령마다 🙋 가 선다.
@@ -1145,18 +1153,24 @@ export async function runMentionTurn(
    * 이 턴의 레코드를 저장한다. 깨움 세션(`freshWake`)이면 옛 레코드를 지키고 경계만 적는다(위 주석).
    * 평범한 턴은 커서가 전진했으면(`advanced`) 경계를 지운다 — 그 턴의 델타가 이미 보여 줬다.
    */
-  const persist = async (next: SessionRecord, advanced: boolean, baseline: number): Promise<void> => {
+  const persist = async (next: SessionRecord, advanced: boolean, baseline: number, canceledBy?: string): Promise<void> => {
     if (freshWake) {
       const unseen = Math.min(stored.unseenOwnAfterSeq ?? baseline, baseline);
-      await deps.store.put(key, { ...stored, unseenOwnAfterSeq: unseen });
+      await deps.store.put(key, { ...stored, unseenOwnAfterSeq: unseen, ...(canceledBy ? { canceledBy } : {}) });
       return;
     }
-    if (advanced && next.unseenOwnAfterSeq !== undefined) {
-      const { unseenOwnAfterSeq: _cleared, ...rest } = next;
-      await deps.store.put(key, rest);
-      return;
+    // 중단 표식(`SessionRecord.canceledBy`): 이 턴이 끊겼으면 적고, 답을 냈으면(커서 전진) 지운다 — 앞 중단을 이미 보여 줬다.
+    let out: SessionRecord = next;
+    if (advanced && out.unseenOwnAfterSeq !== undefined) {
+      const { unseenOwnAfterSeq: _cleared, ...rest } = out;
+      out = rest;
     }
-    await deps.store.put(key, next);
+    if (canceledBy) out = { ...out, canceledBy };
+    else if (advanced && out.canceledBy !== undefined) {
+      const { canceledBy: _shown, ...rest } = out;
+      out = rest;
+    }
+    await deps.store.put(key, out);
   };
 
   const { prompt, fedSeq } = buildTurnPrompt({
@@ -1174,6 +1188,7 @@ export async function runMentionTurn(
     ...(target.editedMention ? { editedMention: target.editedMention } : {}),
     ...(freshWake ? { freshWake: true } : {}),
     ...(rec.unseenOwnAfterSeq !== undefined ? { unseenOwnAfterSeq: rec.unseenOwnAfterSeq } : {}),
+    ...(rec.canceledBy !== undefined ? { afterCancelBy: rec.canceledBy } : {}),
     ...(target.wake || target.delegation ? {} : { mentionId }),
     ...(gapAfterSeq !== undefined ? { gapAfterSeq } : {}),
   });
@@ -2748,7 +2763,7 @@ export async function runMentionTurn(
       ...rec,
       ...(answered ? { lastFedSeq: fedSeq } : {}),
       turnsRun: materializedTurnsRun,
-    }, answered, turnStartSeq);
+    }, answered, turnStartSeq, humanCancelOf(end.canceledBy));
     // tail 을 반드시 포함한다 — PTY 안에서는 stdout/stderr 가 한 스트림으로 섞여 나오므로
     // policy.ts::isCredentialFailure 가 자격증명 실패를 판단할 근거가 이것뿐이다.
     // tail 을 반드시 포함한다 — PTY 안에서는 stdout 과 stderr 가 한 스트림으로 섞여 나오므로

@@ -67,6 +67,16 @@ export interface SessionRecord {
    * 옵셔널인 이유는 `claudeAccount` 와 같다 — 옛 레코드에는 없고, 없으면 "다 이 세션이 썼다"이다.
    */
   unseenOwnAfterSeq?: number;
+  /**
+   * **앞 턴이 사람의 중단으로 끊겼다** — 누른 사람의 handle(2026-10-29). 다음 턴의 프롬프트가 그 사실과 할 일
+   * (이미 만든 것을 보고하고 다시 시키기 전엔 잇지 않는다)을 싣고, 그 턴이 답하면(커서가 전진하면) 지운다.
+   *
+   * 왜 세션에 적는가: 끊긴 턴은 브랜치·push·PR·예약을 남긴 채 죽는다. 다음 턴은 같은 세션을 이어받아도 「내가 끊겼다」를
+   * 모른다 — 세션 기록에는 도구 호출이 중간에 멈춘 흔적뿐이라, 하던 일을 그대로 이어 가기 쉽다.
+   *
+   * 옵셔널인 이유는 `claudeAccount` 와 같다.
+   */
+  canceledBy?: string;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -78,7 +88,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 // 단서가 하나도 안 남는다. 저장 전에 모양을 확인해서 여기서 걸러낸다.
 function isSessionRecord(value: unknown): value is SessionRecord {
   if (!isPlainObject(value)) return false;
-  const { workspaceDir, sessionId, harness, lastFedSeq, turnsRun, claudeAccount, claudePool, unseenOwnAfterSeq } = value;
+  const { workspaceDir, sessionId, harness, lastFedSeq, turnsRun, claudeAccount, claudePool, unseenOwnAfterSeq, canceledBy } = value;
   return (
     typeof workspaceDir === 'string' &&
     (sessionId === null || typeof sessionId === 'string') &&
@@ -91,7 +101,8 @@ function isSessionRecord(value: unknown): value is SessionRecord {
     // 경로를 전부 태운다).
     (claudeAccount === undefined || claudeAccount === null || typeof claudeAccount === 'string') &&
     (claudePool === undefined || claudePool === null || typeof claudePool === 'string') &&
-    (unseenOwnAfterSeq === undefined || typeof unseenOwnAfterSeq === 'number')
+    (unseenOwnAfterSeq === undefined || typeof unseenOwnAfterSeq === 'number') &&
+    (canceledBy === undefined || typeof canceledBy === 'string')
   );
 }
 
