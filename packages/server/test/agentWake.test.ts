@@ -8,7 +8,7 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { onEvent, type WorkspaceEvent } from '../src/events.js';
 import { refreshThreadStatus } from '../src/services/threadStatus.js';
-import { createAgentWakeSweeper } from '../src/services/agentWakes.js';
+import { createAgentWakeSweeper, scheduleWake } from '../src/services/agentWakes.js';
 import { postMessage } from '../src/services/messages.js';
 
 /**
@@ -458,6 +458,110 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
         expect(msg.rows[0].meta.wake).not.toHaveProperty('watch');
       }
       await client.close();
+    });
+
+    /**
+     * 감시 사슬을 시작한 지시(`meta.wake.origin`, 2026-11-02). 깨어난 턴은 새 세션이라 사유 한 줄만 받는다 — 3회차 턴이
+     * "3회차에 끝을 알려라" 는 첫 지시를 몰라 멈췄다. 원인은 오퍼레이터를 거친 요청의 `chainCause` 뿐이라(PAT 는 null)
+     * 서비스(`scheduleWake`)를 직접 불러 잰다. 원인 글은 이 에이전트를 실제로 깨웠어야 한다(inbox).
+     */
+    describe('맡긴 글(origin, 2026-11-02)', () => {
+      const wakeMetaOf = async (id: string) =>
+        (await pool.query(`select meta from message where id = $1`, [id])).rows[0].meta.wake as Record<string, unknown>;
+      const watchWake = async (threadRootId: string, chainCause: string | null, extra: { watch?: boolean; channel?: string } = {}) => {
+        const r = await scheduleWake(pool, {
+          accountId: botAccountId, channelId: extra.channel ?? channelId, threadRootId, notBeforeSec: 300,
+          reason: '다음 2/3 — 3/3에서 감시 끝', chainCause, ...(extra.watch === false ? {} : { watch: true }),
+        });
+        expect(r.refusal).toBeUndefined();
+        return r.wake!.messageId;
+      };
+      /** 스레드 안의 사람 부름 — 멘션 inbox 가 생긴다(이 에이전트를 깨운 글). */
+      const replyMention = async (threadRootId: string, body = '@wakebot 3회 확인해 줘 — 3회차에 「감시 끝」을 쓰고 다시 걸지 마') =>
+        (await app.inject({
+          method: 'POST', url: `/channels/${channelId}/messages`, headers: { authorization: `Bearer ${adminToken}` },
+          payload: { body, threadRootId },
+        })).json().id as string;
+      /** 깨움이 울린 것처럼 inbox 를 만든다 — sweep 이 하는 일이다(그 대기 줄이 이 에이전트를 깨웠다). */
+      const rang = (messageId: string) =>
+        pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'wake')`, [botAccountId, messageId]);
+
+      it('같은 스레드의 사람 부름으로 뜬 턴의 감시 → origin 은 그 부름, 다음 고리는 물려받아 첫 지시를 가리킨다', async () => {
+        const threadRootId = await newThread();
+        const ask = await replyMention(threadRootId);
+        const first = await watchWake(threadRootId, ask);
+        expect((await wakeMetaOf(first)).origin).toBe(ask);
+        // 2회차: 이 턴의 원인은 방금 울린 대기 줄이다 — 그 대기 줄이 아니라 그것이 가리킨 첫 지시를 물려받는다.
+        await rang(first);
+        const second = await watchWake(threadRootId, first);
+        expect((await wakeMetaOf(second)).origin).toBe(ask);
+        await rang(second);
+        const third = await watchWake(threadRootId, second);
+        expect((await wakeMetaOf(third)).origin).toBe(ask);
+      });
+
+      it('스레드 머리의 부름도 origin 이 된다', async () => {
+        const threadRootId = await newThread();
+        const w = await watchWake(threadRootId, threadRootId);
+        expect((await wakeMetaOf(w)).origin).toBe(threadRootId);
+      });
+
+      it('원인이 다른 스레드의 글이면 싣지 않는다', async () => {
+        const here = await newThread();
+        const there = await newThread();
+        const ask = await replyMention(there);
+        expect(await wakeMetaOf(await watchWake(here, ask))).not.toHaveProperty('origin');
+        expect(await wakeMetaOf(await watchWake(here, there))).not.toHaveProperty('origin');
+      });
+
+      it('원인이 다른 채널의 글이면 싣지 않는다 — 그 글이 이 에이전트를 깨웠어도', async () => {
+        const other = (await app.inject({
+          method: 'POST', url: '/channels', headers: { authorization: `Bearer ${adminToken}` },
+          payload: { name: `wake-origin-${Date.now()}`, repo: 'wake-repo' },
+        })).json().id as string;
+        const foreign = (await pool.query(
+          `insert into message (channel_id, author_id, body, kind) values ($1, $2, '@wakebot 저쪽 일', 'user') returning id`, [other, adminId],
+        )).rows[0].id as string;
+        await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [botAccountId, foreign]);
+        const threadRootId = await newThread();
+        expect(await wakeMetaOf(await watchWake(threadRootId, foreign))).not.toHaveProperty('origin');
+      });
+
+      it('물려받을 첫 지시가 지워졌으면 싣지 않는다', async () => {
+        const threadRootId = await newThread();
+        const ask = await replyMention(threadRootId);
+        const first = await watchWake(threadRootId, ask);
+        await rang(first);
+        await pool.query(`update message set deleted_at = now() where id = $1`, [ask]);
+        expect(await wakeMetaOf(await watchWake(threadRootId, first))).not.toHaveProperty('origin');
+      });
+
+      it('감시가 아닌 예약에는 싣지 않는다', async () => {
+        const threadRootId = await newThread();
+        const ask = await replyMention(threadRootId);
+        expect(await wakeMetaOf(await watchWake(threadRootId, ask, { watch: false }))).not.toHaveProperty('origin');
+      });
+
+      it('원인을 모르거나(PAT·헤더 없음) 그 글이 이 에이전트를 깨우지 않았으면 싣지 않는다', async () => {
+        const threadRootId = await newThread();
+        expect(await wakeMetaOf(await watchWake(threadRootId, null))).not.toHaveProperty('origin');
+        const quiet = await replyMention(threadRootId, '부름 없는 말');
+        expect(await wakeMetaOf(await watchWake(threadRootId, quiet))).not.toHaveProperty('origin');
+        // MCP 를 PAT 로 부르면 chainCause 가 없다 — 감시여도 싣지 않는다.
+        const client = await mcpClient(botPat);
+        const res = text(await client.callTool({
+          name: 'turn.wake', arguments: { channelId, threadRootId, notBeforeSec: 300, reason: '감시', watch: true },
+        }));
+        await client.close();
+        expect(await wakeMetaOf(res.wake.messageId)).not.toHaveProperty('origin');
+      });
+
+      it('원인 대기 줄이 감시가 아니면(옛 고리) 물려받지 않는다 — 대기 줄 자신도 origin 이 되지 않는다', async () => {
+        const threadRootId = await newThread();
+        const plain = await watchWake(threadRootId, null, { watch: false });
+        await rang(plain);
+        expect(await wakeMetaOf(await watchWake(threadRootId, plain))).not.toHaveProperty('origin');
+      });
     });
   });
 

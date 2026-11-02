@@ -15,7 +15,7 @@ import type { AgentHarness, AgentView, MessageRow } from '@harkroom/shared';
 import { BUILTIN_SKILLS } from '@harkroom/shared/builtinSkills';
 import { AccountGateRequeueError, mentionAnchor, runMentionTurn, laneSafeSkill, syncSkills, withLaneSkillHeader, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
 import { createAttentionLedger } from '../src/attentionLedger.js';
-import { BODY_LIMIT } from '../src/prompt.js';
+import { BODY_LIMIT, WATCH_ORIGIN_LINE_NOTE } from '../src/prompt.js';
 
 /** 사람이 부른 턴이 마지막 말도 못 읽고 답 없이 끝났을 때의 통지(`silentTurnNotice`). */
 const NO_REPLY_NOTICE = '답을 남기지 못하고 끝났습니다 — 다시 부르면 이어서 합니다.';
@@ -110,7 +110,7 @@ class FakeHarkroom implements MentionTurnHarkroom {
    * - `since > 0`  → `seq > since` 중 **가장 오래된** limit 개 (델타 경로, 오름차순)
    * - `since` 없음/0 → **가장 최신** limit 개를 오름차순으로 (첫 턴 맥락 경로)
    */
-  readThread(channelId: string, threadRootId: string | null, since?: number): Promise<MessageRow[]> {
+  readThread(channelId: string, threadRootId: string | null, since?: number, _limit?: number): Promise<MessageRow[]> {
     this.readThreadCalls.push({ channelId, threadRootId, since });
     const all = this.messages.filter((m) => m.channelId === channelId && m.threadRootId === threadRootId);
     if (since === undefined || since === 0) {
@@ -816,6 +816,112 @@ describe('runMentionTurn', () => {
       expect(prompt).not.toContain('감시(watch)');
       expect(watchFails(fake)).toEqual([]);
       expect(fake.fails.filter((x) => x.body.includes('감시'))).toEqual([]);
+    });
+
+    // 2026-11-02: 깨어난 턴은 새 세션이라 사유 한 줄만 받는다 — 3회차 턴이 "3회차에 끝을 알려라" 는 첫 지시를 몰라 멈췄다.
+    // 서버가 `meta.wake.origin` 에 그 지시의 id 를 싣고, 러너가 앵커 스레드에서 읽어 「← 맡긴 글」로 싣는다.
+    describe('맡긴 글(meta.wake.origin, 2026-11-02)', () => {
+      const ROOT = '00000000-0000-4000-8000-0000000000aa';
+      const ORIGIN = '00000000-0000-4000-8000-0000000000bb';
+      const WAKE_MSG = '00000000-0000-4000-8000-0000000000cc';
+      /** 앵커 스레드: 머리 → 맡긴 지시(답) → 대기 줄(지난 고리) → 사람의 다른 말. */
+      function seedThread(fake: FakeHarkroom, meId: string) {
+        fake.seedFrom('human-1', '@forge 배포 상태 감시 스레드').id = ROOT;
+        const origin = fake.seedFrom('human-1', '@forge 3회 확인해 줘 — 3회차에 「감시 끝」을 쓰고 다시 걸지 마', ROOT);
+        origin.id = ORIGIN;
+        const w = fake.seedFrom(meId, '다음 2/3', ROOT);
+        w.id = WAKE_MSG; w.kind = 'wake';
+        fake.seedFrom('human-1', '참고로 오늘은 배포가 늦다', ROOT);
+        return origin;
+      }
+      async function originTurn(
+        o: { watch?: boolean; origin?: string; mutate?: (fake: FakeHarkroom, origin: MessageRow) => void; harkroom?: (fake: FakeHarkroom) => void } = {},
+      ) {
+        const fake = new FakeHarkroom(defOf());
+        const { deps, runTurn, plans, turnOpts } = await makeDeps(fake, { handles: { [ME.id]: ME.handle, 'human-1': 'alice' } });
+        const origin = seedThread(fake, deps.me.id);
+        o.mutate?.(fake, origin);
+        o.harkroom?.(fake);
+        // 다음 고리를 건다 — 이 묶음은 맡긴 글만 보고, 감시 실패 줄과 섞이지 않게 한다.
+        runTurn.script = async () => { fake.seedFrom(deps.me.id, '다음 3/3 — 3/3에서 감시 끝', ROOT).kind = 'wake'; return { exitCode: 0, timedOut: false, tail: '' }; };
+        await runMentionTurn(deps, {
+          channelId: CHANNEL, threadRootId: ROOT, mentionId: WAKE_MSG, scheduledWake: true,
+          wake: { reason: '다음 2/3', ...(o.watch === false ? {} : { watch: true as const }), ...(o.origin === undefined ? { origin: ORIGIN } : o.origin ? { origin: o.origin } : {}) },
+        });
+        return { fake, prompt: (await getPlanContent(plans, turnOpts)).at(-1)! };
+      }
+      const originLine = (prompt: string) => prompt.split('\n').filter((l) => l.includes(WATCH_ORIGIN_LINE_NOTE));
+
+      it('① 감시 깨움에 origin 이 있으면 그 글을 「← 맡긴 글」로 싣는다', async () => {
+        const { prompt, fake } = await originTurn();
+        expect(originLine(prompt)).toEqual(['alice (← 맡긴 글): @forge 3회 확인해 줘 — 3회차에 「감시 끝」을 쓰고 다시 걸지 마']);
+        // 사유와 감시 의무 바로 아래에 선다 — 델타보다 앞이다.
+        expect(prompt.indexOf('← 맡긴 글')).toBeGreaterThan(prompt.indexOf('이 예약은 감시(watch)다'));
+        expect(fake.fails).toEqual([]);
+      });
+
+      it('② 이 턴을 띄운 글(대기 줄)이 아니라 meta 의 origin 을 쓴다 — 첫 지시가 앞쪽 페이지 밖이면 스레드를 넓게 다시 읽는다', async () => {
+        const reads: (number | undefined)[] = [];
+        const { prompt } = await originTurn({
+          harkroom: (fake) => {
+            const base = fake.readThread.bind(fake);
+            // 첫 읽기(커서 페이지)에는 맡긴 글이 없는 창을 흉내 낸다 — 넓게 다시 읽을 때만 보인다.
+            fake.readThread = async (ch, root, since, limit) => {
+              reads.push(limit);
+              const rows = await base(ch, root, since);
+              return limit === undefined ? rows.filter((m) => m.id !== ORIGIN) : rows;
+            };
+          },
+        });
+        expect(originLine(prompt)).toEqual(['alice (← 맡긴 글): @forge 3회 확인해 줘 — 3회차에 「감시 끝」을 쓰고 다시 걸지 마']);
+        expect(reads).toContain(500);
+        expect(prompt).not.toContain('(← 너를 부른 글)');
+      });
+
+      it('③ 감시가 아닌 깨움은 meta 에 origin 이 있어도 싣지 않는다 — 프롬프트는 지금과 같다', async () => {
+        const { prompt } = await originTurn({ watch: false });
+        expect(originLine(prompt)).toEqual([]);
+        expect(prompt).not.toContain('감시(watch)');
+      });
+
+      it('④-a 맡긴 글이 지워졌으면 건너뛴다 — 던지지 않고 실패 줄도 없다', async () => {
+        const { prompt, fake } = await originTurn({ mutate: (_f, origin) => { origin.deletedAt = new Date(2026, 10, 2).toISOString(); } });
+        expect(originLine(prompt)).toEqual([]);
+        expect(prompt).toContain('이 예약은 감시(watch)다');
+        expect(fake.fails).toEqual([]);
+      });
+
+      it('④-b 스레드 읽기가 던져도 건너뛴다 — 턴은 그대로 돈다', async () => {
+        const { prompt, fake } = await originTurn({
+          harkroom: (fake) => {
+            const base = fake.readThread.bind(fake);
+            fake.readThread = async (ch, root, since, limit) => {
+              if (limit === 500) throw new Error('서버가 잠깐 안 받는다');
+              return (await base(ch, root, since)).filter((m) => m.id !== ORIGIN);
+            };
+          },
+        });
+        expect(originLine(prompt)).toEqual([]);
+        expect(prompt).toContain('이 예약은 감시(watch)다');
+        expect(fake.fails).toEqual([]);
+      });
+
+      it('④-c 다른 스레드의 글이면 싣지 않는다 — 앵커 스레드에서만 찾는다', async () => {
+        const { prompt, fake } = await originTurn({ mutate: (_f, origin) => { origin.threadRootId = '00000000-0000-4000-8000-0000000000dd'; } });
+        expect(originLine(prompt)).toEqual([]);
+        expect(fake.fails).toEqual([]);
+      });
+
+      it('④-d 읽은 글이 다른 스레드를 가리키면(서버 표면이 섞어 줘도) 싣지 않는다', async () => {
+        const { prompt } = await originTurn({
+          harkroom: (fake) => {
+            const base = fake.readThread.bind(fake);
+            const stray = { ...fake.messages.find((m) => m.id === ORIGIN)!, threadRootId: '00000000-0000-4000-8000-0000000000dd' };
+            fake.readThread = async (ch, root, since) => (await base(ch, root, since)).map((m) => (m.id === ORIGIN ? stray : m));
+          },
+        });
+        expect(originLine(prompt)).toEqual([]);
+      });
     });
   });
 

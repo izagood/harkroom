@@ -2411,7 +2411,7 @@ function buildMcpServer(
    * 판정해 `wake_limit` 으로 답한다 — 같은 거절이 아니다.
    */
   server.registerTool('turn.wake', {
-    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다. 결과를 다른 스레드에 보고하기로 했으면 reportTo 에 그 채널·스레드 id. 주기적으로 지켜보는 예약이면 watch: true — 깨어난 턴이 다음 예약도 끝 보고(message.report)도 없이 끝나면 러너가 실패 줄을 남긴다',
+    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다. 결과를 다른 스레드에 보고하기로 했으면 reportTo 에 그 채널·스레드 id. 주기적으로 지켜보는 예약이면 watch: true — 깨어난 턴이 다음 예약도 끝 보고(message.report)도 없이 끝나면 러너가 실패 줄을 남긴다. 감시(watch)면 사유에 다음 회차와 끝 조건을 적어라(예: 「다음 3/3 — 3/3에서 감시 끝」)',
     inputSchema: {
       channelId: z.string().uuid(),
       threadRootId: z.string().uuid(),
@@ -2428,6 +2428,8 @@ function buildMcpServer(
        * 마쳤다고 알려야(message.report) 한다 — 둘 다 없이 끝나면 러너가 앵커 스레드에 실패 줄을 남긴다.
        * 실측: "5분마다 확인" 감시가 깨어난 턴이 아무 말 없이 끝나며 조용히 멈췄고 아무도 몰랐다. true 일
        * 때만 싣는다. 옛 러너는 모르는 meta 키를 무시하고, 옛 서버는 zod 가 버린다(reportTo 와 같다).
+       * 감시면 서버가 사슬을 시작한 지시의 id 도 싣는다(`meta.wake.origin`, 2026-11-02 — `watchOriginFor`): 원인은
+       * `chainCause`(러너 턴의 inbox 글)라 PAT 로 붙은 클라이언트에는 실리지 않는다. 인자로 받지 않는다 — 서버가 정한다.
        */
       watch: z.boolean().optional(),
     },

@@ -940,6 +940,21 @@ describe('깨움 보고처·접힌 예약을 턴에 넘긴다 (2026-10-06)', () 
     expect(seen[0]?.wake).toEqual({ reason: '스레드 감시', watch: true });
   });
 
+  it('감시 예약의 meta.wake.origin 을 대상에 싣는다 — 감시가 아니면 싣지 않는다(2026-11-02)', async () => {
+    const origin = '00000000-0000-4000-8000-0000000000bb';
+    for (const [watch, want] of [[true, { reason: '다음 2/3', watch: true, origin }], [false, { reason: '다음 2/3' }]] as const) {
+      const seen: MentionTarget[] = [];
+      const runTurn = (async (_d: unknown, t: MentionTarget) => { seen.push(t); return { stopRequestedAt: null }; }) as never;
+      const { scheduler } = harness({ runTurn });
+      const wake = batchOf([{ entryId: 1, messageId: 'w1', threadRootId: 'root-1', body: '다음 2/3' }]);
+      (wake.entries[0] as { reason: string }).reason = 'wake';
+      (wake.messages[0] as { meta: unknown }).meta = { kind: 'wake', wake: { wakeAt: 'x', reason: '다음 2/3', ...(watch ? { watch: true } : {}), origin } };
+      await scheduler.admit(wake, ctx);
+      await scheduler.drain();
+      expect(seen[0]?.wake).toEqual(want);
+    }
+  });
+
   it('옛 서버의 깨움(meta 에 reportTo 없음)은 지금처럼 사유만 싣는다', async () => {
     const seen: MentionTarget[] = [];
     const runTurn = (async (_d: unknown, t: MentionTarget) => { seen.push(t); return { stopRequestedAt: null }; }) as never;
