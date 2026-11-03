@@ -69,7 +69,9 @@ export type WorkspaceEvent =
   | { type: 'thread.reportWakes.changed'; channelId: string; rootId: string; audience: 'all' | string[] }
   // 스레드 계획판(P1, services/threadPlan.ts). progress 는 청중 기준 — shared WsServerEvent 주석.
   | { type: 'thread.plan.changed'; channelId: string; rootId: string; rev: number | null;
-      progress: PlanProgress | null; audience: 'all' | string[] };
+      progress: PlanProgress | null; audience: 'all' | string[];
+      /** 자식 계획 변화를 부모로 옮긴 이벤트(P6 W5). 구독기는 이것을 다시 전파하지 않는다(1단). */
+      via?: 'linked' };
 
 const bus = new EventEmitter();
 bus.setMaxListeners(1000);

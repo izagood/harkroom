@@ -338,10 +338,10 @@ export async function attachPlanProgress<T extends { id: string; channelId: stri
   const roots = rows.filter((r) => r.threadRootId === null && !r.deletedAt);
   if (!roots.length) return rows;
   const res = await db.query(
-    `select root_id, channel_id, doc, rev from thread_plan where root_id = any($1::uuid[])`,
+    `select root_id, channel_id, doc, rev, updated_at from thread_plan where root_id = any($1::uuid[])`,
     [roots.map((r) => r.id)],
   );
-  const plans = new Map((res.rows as { root_id: string; channel_id: string; doc: PlanDoc; rev: number }[]).map((r) => [r.root_id, r]));
+  const plans = new Map((res.rows as { root_id: string; channel_id: string; doc: PlanDoc; rev: number; updated_at: Date }[]).map((r) => [r.root_id, r]));
   const allChildren = [...new Set([...plans.values()].flatMap((p) => linkedRoots(p.doc)))];
   const facts = await childFacts(db, allChildren, null);
   for (const r of roots) {
@@ -356,7 +356,7 @@ export async function attachPlanProgress<T extends { id: string; channelId: stri
       const visible = !!f && f.exists && (f.publicChannel || f.channelId === p.channel_id);
       map.set(id, visible ? (f!.progress ?? ZERO) : 'hidden');
     }
-    (r as T & { planProgress?: unknown }).planProgress = { ...planProgress(p.doc, map), rev: p.rev };
+    (r as T & { planProgress?: unknown }).planProgress = { ...planProgress(p.doc, map), rev: p.rev, updatedAt: p.updated_at.toISOString() };
   }
   return rows;
 }

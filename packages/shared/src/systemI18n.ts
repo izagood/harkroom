@@ -41,6 +41,8 @@ export const SYSTEM_I18N_ARGS = Object.freeze({
   'system.merge.approvalUsed': ['repo', 'number', 'head', 'ghUser'],
   'system.merge.approvalUsedRelaxed': ['repo', 'number', 'head', 'ghUser'],
   'system.merge.merged': ['repo', 'number', 'sha'],
+  // 스레드 계획판 P6 — 자동 갱신으로 새로 시작 가능해진 단계·그룹(「s3 제목 · g2 제목」, 서버가 400자로 자른다).
+  'system.plan.ready': ['n', 'ids'],
   'system.merge.mergedGranted': ['repo', 'number', 'sha', 'granterId'],
   'system.merge.queued': ['repo', 'number', 'head'],
   'system.merge.queuedGranted': ['repo', 'number', 'head', 'granterId'],

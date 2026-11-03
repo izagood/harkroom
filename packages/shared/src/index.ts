@@ -2948,7 +2948,14 @@ export type WsServerEvent =
       progress: import('./planGraph.js').PlanProgress | null; audience: 'all' | string[] };
 
 /** 채널 목록 행에 싣는 계획 진행률 — 진행률에 판 번호를 붙여 열린 패널이 다시 읽을지 견준다. */
-export type ThreadPlanProgress = import('./planGraph.js').PlanProgress & { rev: number };
+export type ThreadPlanProgress = import('./planGraph.js').PlanProgress & {
+  rev: number;
+  /**
+   * 계획의 마지막 쓰기 시각(P6, architect 지적). 연결 자식이 바뀌면 rev 는 그대로인데 진행률은 바뀐다 — 화면이 rev 만 견주면
+   * 낡은 값을 못 알아챈다. 실시간 이벤트(`thread.plan.changed`)에는 없다(목록 행에만).
+   */
+  updatedAt?: string;
+};
 
 /** 연결 그룹 하나가 가리키는 자식 스레드. 볼 수 없거나 없는 스레드는 `hidden` 이고 채널·진행률을 싣지 않는다. */
 export interface ThreadPlanLinkedView {
