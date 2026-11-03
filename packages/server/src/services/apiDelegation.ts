@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { connectorScope, type ApiGrantLimits } from '@harkroom/shared';
+import { plainNoticeText } from './noticeText.js';
 import { apiGrantFor, parseLimits, pathCovered } from '../auth/apiGrants.js';
 import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
@@ -145,7 +146,8 @@ export async function delegateApiGrant(pool: Pool, a: {
     const names = (await pool.query<{ id: string; handle: string }>(
       `select id, handle from account where id = any($1::uuid[])`, [[a.fromAgentId, target.id, root]])).rows;
     const h = (id: string) => names.find((n) => n.id === id)?.handle ?? '?';
-    const scopeText = `${conn.name} ${limits.methods.join('·')} ${limits.pathPrefix}`;
+    // 루트를 일부러 부르는 줄이다 — 사람이 지은 연결 이름·에이전트가 고른 경로만 무력화한다(services/noticeText.ts).
+    const scopeText = plainNoticeText(`${conn.name} ${limits.methods.join('·')} ${limits.pathPrefix}`);
     // 루트 사람을 본문에서 부른다 — 위임마다 그 사람에게 알림이 간다. 에이전트 이름에는 @ 를 붙이지 않는다(부르지 않는다).
     const body = pending
       ? `🔑 ${h(a.fromAgentId)} 가 ${h(target.id)} 에게 ${scopeText} 권한을 다시 주려 한다 · @${h(root)} 의 허락을 기다린다`

@@ -610,7 +610,8 @@ async function notice(pool: Pool, message: MessageRow, actorId: string, text: st
 
 async function post(pool: Pool, message: MessageRow, actorId: string, body: string, meta: Record<string, unknown>): Promise<void> {
   const posted = await postMessage(pool, {
-    channelId: message.channelId, threadRootId: message.threadRootId ?? message.id, authorId: actorId, body, kind: 'system', serverNotice: true,
+    // 규칙 원문·채널 이름이 섞인다 — 부르지 않는다(services/noticeText.ts).
+    channelId: message.channelId, threadRootId: message.threadRootId ?? message.id, authorId: actorId, body, kind: 'system', serverNotice: true, noMentions: true,
     meta: { accountId: actorId, ...meta },
   });
   if (!posted.failure && !posted.replayed) emitPosted(posted, await audienceFor(pool, message.channelId));

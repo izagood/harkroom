@@ -1,5 +1,6 @@
 import { createHash, generateKeyPairSync, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import type { Pool } from 'pg';
+import { plainNoticeText } from './noticeText.js';
 import { recordAudit } from '../audit.js';
 import { postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
@@ -261,7 +262,8 @@ export async function notifyOwner(
     if (!who) return null;
     const how = n.via === 'generate' ? `서버가 만든 값(${n.type})` : '값을 에이전트가 정함(import)';
     const what = n.action === 'created' ? '만들었다' : `회전했다(판 ${n.version})`;
-    const body = `🔑 ${who.agent} 가 비밀 \`${n.name}\` 을 ${what} · ${how} · 이 채널로 자기에게만 부여 · 설정 › 나 › 비밀과 API @${who.owner}`;
+    // 소유자를 일부러 부르는 줄이다 — 에이전트가 지은 비밀 이름만 무력화한다(services/noticeText.ts).
+    const body = `🔑 ${who.agent} 가 비밀 \`${plainNoticeText(n.name)}\` 을 ${what} · ${how} · 이 채널로 자기에게만 부여 · 설정 › 나 › 비밀과 API @${who.owner}`;
     const posted = await postMessage(pool, {
       channelId: n.lease.channelId, threadRootId: n.lease.threadRootId, authorId: n.agentId, body, kind: 'system', serverNotice: true,
       causeMessageId: n.lease.causeMessageId,

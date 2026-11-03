@@ -85,7 +85,8 @@ export async function announceChange(
     ? systemI18n(byAgent ? 'system.threadModel.setByAgent' : 'system.threadModel.set', { accountId: actorId, agentId, value })
     : systemI18n(byAgent ? 'system.threadModel.clearedByAgent' : 'system.threadModel.cleared', { accountId: actorId, agentId });
   const posted = await postMessage(pool, {
-    channelId, authorId: actorId, body, threadRootId, kind: 'system',
+    // 모델·effort 는 사람이 적은 글이다 — 이 줄은 아무도 부르지 않는다(서버 알림 줄 원칙, services/noticeText.ts).
+    channelId, authorId: actorId, body, threadRootId, kind: 'system', noMentions: true,
     meta: { accountId: actorId, threadAgentModel: { agentId, model: row?.model ?? null, effort: row?.effort ?? null, byKind }, i18n },
   });
   if (!posted.failure && !posted.replayed) emitPosted(posted, await audienceFor(pool, channelId));

@@ -174,7 +174,8 @@ export async function reportApiCall(pool: Pool, r: ApiReport): Promise<{ ok: tru
       ? systemI18n('system.apiCall.unreachableGranted', { connector: name, method: r.method, path: shown, granterId: root.id })
       : systemI18n('system.apiCall.unreachable', { connector: name, method: r.method, path: shown }));
   const posted = await postMessage(pool, {
-    channelId: lease.channelId, threadRootId: lease.threadRootId, authorId: r.agentId, body, kind: 'system',
+    // 요청 경로·연결 이름이 섞인다 — 부르지 않는다(services/noticeText.ts).
+    channelId: lease.channelId, threadRootId: lease.threadRootId, authorId: r.agentId, body, kind: 'system', noMentions: true,
     meta: { apiCall: { connectorId, method: r.method, path, status: r.status, durationMs: r.durationMs, bytes: r.bytes, error: r.error?.slice(0, 1000) ?? null }, i18n },
   });
   if (posted.failure) return { ok: false, code: 'post_failed' };
