@@ -200,6 +200,8 @@ function findCycle(doc: PlanDoc): string[] | null {
 export interface PlanProgress {
   done: number;
   total: number;
+  /** 손댔지만 아직 안 끝난 단위(파생 active). 연결 그룹 판정이 「손만 대고 아무것도 안 끝낸」 자식을 ready 로 잘못 읽지 않게 싣는다. */
+  active: number;
   blocked: number;
   waiting: number;
 }
@@ -245,7 +247,7 @@ export function derivePlan(doc: PlanDoc, linked?: LinkedProgress): PlanDerived {
   const stepById = new Map(doc.steps.map((s) => [s.id, s]));
 
   const linkedOf = (g: PlanGroup): PlanProgress | 'hidden' =>
-    linked?.get(g.linkedRootId!) ?? { done: 0, total: 0, blocked: 0, waiting: 0 };
+    linked?.get(g.linkedRootId!) ?? { done: 0, total: 0, active: 0, blocked: 0, waiting: 0 };
 
   // 「끝났나」만 먼저 정한다 — 의존 판정은 이것만 본다. 순환이 있어도 돌지 않게 진행 중 표시를 둔다.
   const doneMemo = new Map<string, boolean>();
@@ -304,10 +306,10 @@ export function derivePlan(doc: PlanDoc, linked?: LinkedProgress): PlanDerived {
         result[g.id] = { derived: 'hidden', waitingOn, startedEarly: false };
         continue;
       }
-      // 그쪽 진행률에는 active 수가 없다 — 「끝난 것이 하나라도 있다」를 손을 댄 것으로 읽는다.
+      // 손댄 것(active)이나 끝난 것이 하나라도 있으면 진행 중이다.
       if (isDone(g.id)) derived = 'done';
       else if (p.blocked > 0) derived = 'blocked';
-      else if (p.done > 0) derived = 'active';
+      else if (p.active > 0 || p.done > 0) derived = 'active';
       else derived = waitingOn.length ? 'waiting' : 'ready';
     } else {
       const members = (stepsOf.get(g.id) ?? []).map((s) => s.state);
@@ -333,10 +335,11 @@ export function planProgress(doc: PlanDoc, linked?: LinkedProgress): PlanProgres
     ...doc.steps.map((s) => s.id),
     ...doc.groups.filter((g) => g.linkedRootId).map((g) => g.id),
   ];
-  const p: PlanProgress = { done: 0, total: units.length, blocked: 0, waiting: 0 };
+  const p: PlanProgress = { done: 0, total: units.length, active: 0, blocked: 0, waiting: 0 };
   for (const id of units) {
     const s = d[id]!.derived;
     if (s === 'done') p.done++;
+    else if (s === 'active') p.active++;
     else if (s === 'blocked') p.blocked++;
     else if (s === 'waiting') p.waiting++;
   }

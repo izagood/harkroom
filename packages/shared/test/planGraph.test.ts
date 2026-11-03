@@ -122,7 +122,7 @@ describe('validatePlan — 거절 코드', () => {
 describe('derivePlan — 파생 상태', () => {
   it('빈 계획은 빈 결과', () => {
     expect(derivePlan(plan([], []))).toEqual({});
-    expect(planProgress(plan([], []))).toEqual({ done: 0, total: 0, blocked: 0, waiting: 0 });
+    expect(planProgress(plan([], []))).toEqual({ done: 0, total: 0, active: 0, blocked: 0, waiting: 0 });
   });
 
   it('앞 단계가 덜 끝났으면 waiting(waitingOn), 끝나면 ready', () => {
@@ -194,14 +194,20 @@ describe('derivePlan — 파생 상태', () => {
     const doc = () => plan([group('g1', { linkedRootId: 'r-child' })], [step('s1', { dependsOn: ['g1'] })]);
 
     it('연결 스레드가 다 끝났으면 done, 뒤 단계는 ready', () => {
-      const d = derivePlan(doc(), new Map([['r-child', { done: 3, total: 3, blocked: 0, waiting: 0 }]]));
+      const d = derivePlan(doc(), new Map([['r-child', { done: 3, total: 3, active: 0, blocked: 0, waiting: 0 }]]));
       expect(d.g1!.derived).toBe('done');
       expect(d.s1!.derived).toBe('ready');
     });
 
     it('막힌 것이 있으면 blocked, 끝난 것이 있으면 active', () => {
-      expect(derivePlan(doc(), new Map([['r-child', { done: 1, total: 3, blocked: 1, waiting: 0 }]])).g1!.derived).toBe('blocked');
-      expect(derivePlan(doc(), new Map([['r-child', { done: 1, total: 3, blocked: 0, waiting: 1 }]])).g1!.derived).toBe('active');
+      expect(derivePlan(doc(), new Map([['r-child', { done: 1, total: 3, active: 0, blocked: 1, waiting: 0 }]])).g1!.derived).toBe('blocked');
+      expect(derivePlan(doc(), new Map([['r-child', { done: 1, total: 3, active: 0, blocked: 0, waiting: 1 }]])).g1!.derived).toBe('active');
+    });
+
+    it('자식이 손만 대고 아직 아무것도 안 끝냈어도(active>0, done 0) active — ready 로 읽지 않는다', () => {
+      const d = derivePlan(doc(), new Map([['r-child', { done: 0, total: 3, active: 1, blocked: 0, waiting: 2 }]]));
+      expect(d.g1).toEqual({ derived: 'active', waitingOn: [], startedEarly: false });
+      expect(d.s1).toMatchObject({ derived: 'waiting', waitingOn: ['g1'] });
     });
 
     it('계획이 아직 없는 스레드(맵에 없음)는 끝나지 않았다', () => {
@@ -215,7 +221,7 @@ describe('derivePlan — 파생 상태', () => {
       const d = derivePlan(doc(), linked);
       expect(d.g1).toEqual({ derived: 'hidden', waitingOn: [], startedEarly: false });
       expect(d.s1).toMatchObject({ derived: 'waiting', waitingOn: ['g1'] });
-      expect(planProgress(doc(), linked)).toEqual({ done: 0, total: 2, blocked: 0, waiting: 1 });
+      expect(planProgress(doc(), linked)).toEqual({ done: 0, total: 2, active: 0, blocked: 0, waiting: 1 });
     });
   });
 
@@ -237,9 +243,18 @@ describe('planProgress', () => {
         step('s3', { dependsOn: ['g2'] }),
       ],
     );
-    const linked = new Map([['r-child', { done: 5, total: 5, blocked: 0, waiting: 0 }]]);
-    expect(planProgress(doc, linked)).toEqual({ done: 2, total: 4, blocked: 1, waiting: 0 });
-    expect(planProgress(doc)).toEqual({ done: 1, total: 4, blocked: 1, waiting: 1 });
+    const linked = new Map([['r-child', { done: 5, total: 5, active: 0, blocked: 0, waiting: 0 }]]);
+    expect(planProgress(doc, linked)).toEqual({ done: 2, total: 4, active: 0, blocked: 1, waiting: 0 });
+    expect(planProgress(doc)).toEqual({ done: 1, total: 4, active: 0, blocked: 1, waiting: 1 });
+  });
+
+  it('손댄 단계·손댄 연결 그룹은 active 로 센다', () => {
+    const doc = plan(
+      [group('g1', { linkedRootId: 'r-child' })],
+      [step('s1', { state: 'active' }), step('s2', { state: 'done' }), step('s3')],
+    );
+    const linked = new Map([['r-child', { done: 0, total: 2, active: 1, blocked: 0, waiting: 0 }]]);
+    expect(planProgress(doc, linked)).toEqual({ done: 1, total: 4, active: 2, blocked: 0, waiting: 0 });
   });
 });
 
