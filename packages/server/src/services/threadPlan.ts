@@ -17,7 +17,8 @@ import {
   type LinkedProgress, type PlanDoc, type PlanProgress, type PlanValidationError, type ThreadPlanLinkedView, type ThreadPlanView,
 } from '@harkroom/shared';
 import { emitEvent } from '../events.js';
-import { audienceFor, channelVisibleSql } from './channels.js';
+import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
+import { threadRootChannel } from './threadNote.js';
 import { scanWrite } from './contentScan.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -158,9 +159,27 @@ export type ThreadPlanWriteError =
    */
   | { code: 'linked_thread_unavailable'; id: string };
 
+/** 스레드·권한 거절(S1). 셋 다 서비스가 rootId 에서 직접 판정한다 — 부르는 쪽이 준 채널을 믿지 않는다. */
+export type ThreadPlanAccessError =
+  | { code: 'not_found' }
+  /** 답글 id 를 줬다 — 스레드 루트 글의 id 여야 한다. */
+  | { code: 'not_root' }
+  /** 쓰는 이가 그 스레드의 채널을 못 본다. */
+  | { code: 'forbidden' };
+
 export type ThreadPlanWriteResult =
-  | { ok: true; row: ThreadPlanRow; flagged: { reason: string; rules: string[] } | null }
-  | { ok: false; error: ThreadPlanWriteError };
+  | {
+    ok: true; row: ThreadPlanRow; flagged: { reason: string; rules: string[] } | null;
+    /** 바꾸기 전 판(없던 계획이면 null). 도구가 nowReady·nowWaiting 을 세는 데 쓴다. */
+    before: PlanDoc | null;
+  }
+  | { ok: false; error: ThreadPlanWriteError | ThreadPlanAccessError };
+
+/**
+ * 누가 쓰는가(S2). 계정이 쓰면 그 계정 권한으로 스레드·새 연결을 확인한다. `system` 은 2차 자동 갱신만 쓴다 —
+ * null 하나로 두면 도구 경로에서 id 가 빠졌을 때 권한 검사가 조용히 꺼진다.
+ */
+export type PlanActor = { accountId: string } | { system: true };
 
 /** 쓰기 검사(080)에 넣을 글 — 사람이 읽고 러너가 싣는 칸 전부. */
 function planTexts(doc: PlanDoc): string[] {
@@ -171,59 +190,68 @@ function planTexts(doc: PlanDoc): string[] {
   ];
 }
 
+/** 잠근 판을 받아 새 판을 만든다. null 이면 지운다. 거절이면 그 코드. */
+export type PlanBuild<E> = (prev: { doc: PlanDoc; rev: number; updatedAt: Date } | null) =>
+  { doc: PlanDoc | null } | { error: E };
+
 /**
- * 계획 전체를 쓴다(`doc` 이 null 이면 지운다).
+ * 계획 쓰기의 **한 경로**(N5). 전체 쓰기(`setThreadPlan`)와 항목 쓰기(`thread.plan.item`)가 모두 이것을 지난다 —
+ * 새 연결만 확인하는 diff(R1)·검증·쓰기 검사·link 재작성이 두 벌이 되지 않게.
  *
- * - 저장 전에 `validatePlan` 을 **반드시** 지난다. 꼴 검사(필드 타입·state 값)는 부르는 쪽(P2 도구 스키마)이 먼저 한다.
- * - 계획이 이미 있으면 `guard`(읽은 updatedAt)가 필수다. 없던 계획은 `guard.updatedAt: null` 이거나 guard 없이 쓴다.
- * - `actorId` 는 쓰는 계정. 연결할 스레드를 그 계정이 볼 수 있어야 한다. 2차 자동 갱신은 null 로 부른다(권한 검사 없음).
+ * 순서: 스레드·권한(S1) → 잠금(for update) → `build(잠근 판)` → `validatePlan` → 연결 꼴 → 새 연결 확인 → 저장 → commit 뒤 이벤트.
  */
-export async function setThreadPlan(
-  pool: Pool,
-  input: { rootId: string; channelId: string; doc: PlanDoc | null; guard?: { updatedAt: Date | null }; actorId: string | null },
-): Promise<ThreadPlanWriteResult | { ok: true; deleted: true }> {
-  const { rootId, channelId, doc, guard, actorId } = input;
-  if (doc) {
-    const v = validatePlan(doc);
-    if (!v.ok) return { ok: false, error: v.error };
-    for (const id of linkedRoots(doc)) {
-      if (!UUID_RE.test(id)) return { ok: false, error: { code: 'invalid_linked_root', id } };
-      if (id.toLowerCase() === rootId.toLowerCase()) return { ok: false, error: { code: 'self_link', id } };
-    }
+export async function writeThreadPlan<E extends { code: string }>(
+  pool: Pool, rootId: string, actor: PlanActor, build: PlanBuild<E>,
+): Promise<ThreadPlanWriteResult | { ok: true; deleted: true; before: PlanDoc | null } | { ok: false; error: E }> {
+  const root = await threadRootChannel(pool, rootId);
+  if (root === 'not_found' || root === 'not_root') return { ok: false, error: { code: root } };
+  const channelId = root.channelId;
+  const accountId = 'accountId' in actor ? actor.accountId : null;
+  if (accountId !== null && !(await assertChannelVisible(pool, channelId, accountId))) {
+    return { ok: false, error: { code: 'forbidden' } };
   }
-  const flag = doc ? scanWrite(...planTexts(doc)) : null;
 
   const client = await pool.connect();
-  let result: ThreadPlanWriteResult | { ok: true; deleted: true };
+  let result: ThreadPlanWriteResult | { ok: true; deleted: true; before: PlanDoc | null };
+  let fail: { ok: false; error: ThreadPlanWriteError | E } | null = null;
   try {
     await client.query('begin');
     const cur = await client.query(`select updated_at, rev, doc from thread_plan where root_id = $1 for update`, [rootId]);
     const now = cur.rows[0] as { updated_at: Date; rev: number; doc: PlanDoc } | undefined;
-    if (now && !guard) {
-      await client.query('rollback');
-      return { ok: false, error: { code: 'guard_required', updatedAt: now.updated_at.toISOString(), rev: now.rev } };
-    }
-    if (guard && (guard.updatedAt?.getTime() ?? null) !== (now?.updated_at.getTime() ?? null)) {
-      await client.query('rollback');
-      return { ok: false, error: { code: 'conflict', updatedAt: now?.updated_at.toISOString() ?? null, rev: now?.rev ?? null } };
-    }
-    if (doc) {
-      // 잠근 판과 견줘 새로 더한 연결만 묻는다(R1). 2차 자동 갱신(actorId null)은 존재만 본다.
-      const before = new Set(now ? linkedRoots(now.doc).map((id) => id.toLowerCase()) : []);
-      const added = linkedRoots(doc).filter((id) => !before.has(id.toLowerCase()));
-      const facts = await childFacts(client, added, actorId);
-      for (const f of facts.values()) {
-        if (!f.exists || (actorId !== null && !f.viewerVisible)) {
-          await client.query('rollback');
-          return { ok: false, error: { code: 'linked_thread_unavailable', id: f.rootId } };
+    const built = build(now ? { doc: now.doc, rev: now.rev, updatedAt: now.updated_at } : null);
+    const doc = 'error' in built ? null : built.doc;
+    if ('error' in built) {
+      fail = { ok: false, error: built.error };
+    } else if (doc) {
+      const v = validatePlan(doc);
+      if (!v.ok) fail = { ok: false, error: v.error };
+      for (const id of fail ? [] : linkedRoots(doc)) {
+        if (!UUID_RE.test(id)) { fail = { ok: false, error: { code: 'invalid_linked_root', id } }; break; }
+        if (id.toLowerCase() === rootId.toLowerCase()) { fail = { ok: false, error: { code: 'self_link', id } }; break; }
+      }
+      if (!fail) {
+        // 잠근 판과 견줘 새로 더한 연결만 묻는다(R1). system 은 존재만 본다.
+        const beforeSet = new Set(now ? linkedRoots(now.doc).map((id) => id.toLowerCase()) : []);
+        const added = linkedRoots(doc).filter((id) => !beforeSet.has(id.toLowerCase()));
+        const facts = await childFacts(client, added, accountId);
+        for (const f of facts.values()) {
+          if (!f.exists || (accountId !== null && !f.viewerVisible)) {
+            fail = { ok: false, error: { code: 'linked_thread_unavailable', id: f.rootId } };
+            break;
+          }
         }
       }
+    }
+    if (fail) {
+      await client.query('rollback');
+      return fail as { ok: false; error: E };
     }
     if (!doc) {
       await client.query(`delete from thread_plan where root_id = $1`, [rootId]);
       await client.query('commit');
-      result = { ok: true, deleted: true };
+      result = { ok: true, deleted: true, before: now?.doc ?? null };
     } else {
+      const flag = scanWrite(...planTexts(doc));
       const res = await client.query(
         `insert into thread_plan (root_id, channel_id, doc, flag_reason, updated_by) values ($1, $2, $3::jsonb, $4, $5)
          on conflict (root_id) do update
@@ -231,7 +259,7 @@ export async function setThreadPlan(
                rev = thread_plan.rev + 1,
                updated_at = greatest(now(), thread_plan.updated_at + interval '1 millisecond')
          returning root_id, channel_id, doc, rev, flag_reason, updated_by, updated_at`,
-        [rootId, channelId, JSON.stringify(doc), flag?.reason ?? null, actorId],
+        [rootId, channelId, JSON.stringify(doc), flag?.reason ?? null, accountId],
       );
       // 역참조는 doc 에서 다시 만든다 — 정본은 doc 하나다.
       await client.query(`delete from thread_plan_link where parent_root = $1`, [rootId]);
@@ -243,7 +271,9 @@ export async function setThreadPlan(
         );
       }
       await client.query('commit');
-      result = { ok: true, row: toRow(res.rows[0]), flagged: flag ? { reason: flag.reason, rules: flag.rules } : null };
+      result = {
+        ok: true, row: toRow(res.rows[0]), flagged: flag ? { reason: flag.reason, rules: flag.rules } : null, before: now?.doc ?? null,
+      };
     }
   } catch (err) {
     await client.query('rollback').catch(() => {});
@@ -253,6 +283,26 @@ export async function setThreadPlan(
   }
   await emitPlanChanged(pool, channelId, rootId, 'row' in result ? result.row : null);
   return result;
+}
+
+/**
+ * 계획 전체를 쓴다(`doc` 이 null 이면 지운다).
+ *
+ * - 저장 전에 `validatePlan` 을 **반드시** 지난다. 꼴 검사(필드 타입·state 값)는 부르는 쪽(도구 스키마)이 먼저 한다.
+ * - 계획이 이미 있으면 `guard`(읽은 updatedAt)가 필수다. 없던 계획은 `guard.updatedAt: null` 이거나 guard 없이 쓴다.
+ */
+export async function setThreadPlan(
+  pool: Pool,
+  input: { rootId: string; doc: PlanDoc | null; guard?: { updatedAt: Date | null }; actor: PlanActor },
+) {
+  const { guard, doc } = input;
+  return writeThreadPlan<ThreadPlanWriteError>(pool, input.rootId, input.actor, (now) => {
+    if (now && !guard) return { error: { code: 'guard_required', updatedAt: now.updatedAt.toISOString(), rev: now.rev } };
+    if (guard && (guard.updatedAt?.getTime() ?? null) !== (now?.updatedAt.getTime() ?? null)) {
+      return { error: { code: 'conflict', updatedAt: now?.updatedAt.toISOString() ?? null, rev: now?.rev ?? null } };
+    }
+    return { doc };
+  });
 }
 
 /**

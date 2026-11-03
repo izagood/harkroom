@@ -190,6 +190,9 @@ export const CATALOG_ELSEWHERE: Readonly<Record<string, string>> = {
   'inbox.read': '가이드 상주 판본 — 턴은 쓰지 않는다(가이드 TURN_ONLY)',
   'thread.note': '러너 스레드 메모 절(threadNoteSection)',
   'thread.note.list': '러너 스레드 메모 절(threadNoteSection)',
+  // 계획판(P2): 「언제」는 러너 계획판 절이 맡는다(P3 에서 싣는다 — 그 전까지는 도구 설명만 있다).
+  'thread.plan': '러너 계획판 절(threadPlanSection, P3)',
+  'thread.plan.item': '러너 계획판 절(threadPlanSection, P3)',
   'memory.list': '러너 기억 절(memorySection)',
   'memory.get': '러너 기억 절(memorySection)',
   'memory.search': '러너 기억 절(memorySection)',
