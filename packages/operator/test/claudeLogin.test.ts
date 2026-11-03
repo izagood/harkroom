@@ -268,12 +268,19 @@ describe('loginCancel', () => {
   });
 });
 
+/**
+ * 종료 통지(done)가 실릴 때까지 기다린다 — 자식 exit 뒤 상태 읽기가 비동기라 고정 시간(옛 10ms)으로는
+ * CI 가 바쁠 때 통지보다 단언이 먼저 돌았다. 상한(2초)이 지나도 없으면 실패한다 — 「무음으로 끝나지 않는다」는 그대로 잰다.
+ */
+const doneEvent = (h: { events: { done?: boolean }[] }) =>
+  vi.waitFor(() => { if (!h.events.some((e) => e.done === true)) throw new Error('done 통지가 아직 없다'); }, { timeout: 2000, interval: 5 });
+
 describe('종료 통지', () => {
   it('성공하면 done 과 상태를 함께 낸다', async () => {
     const h = harness({ loggedIn: true, email: 'a@b.c' });
     const { loginId } = await h.port.loginStart('work', 'aria');
     h.children[0]!.emit('exit', 0, null);
-    await new Promise((r) => setTimeout(r, 10));
+    await doneEvent(h);
 
     const done = h.events.filter((e) => e.done === true);
     expect(done).toHaveLength(1);
@@ -286,7 +293,7 @@ describe('종료 통지', () => {
     const h = harness({ loggedIn: false });
     await h.port.loginStart('work', 'aria');
     h.children[0]!.emit('exit', 1, null);
-    await new Promise((r) => setTimeout(r, 10));
+    await doneEvent(h);
 
     const done = h.events.filter((e) => e.done === true);
     expect(done).toHaveLength(1);
@@ -298,7 +305,7 @@ describe('종료 통지', () => {
     const h = harness();
     await h.port.loginStart('work', 'aria');
     h.children[0]!.emit('exit', 0, null);
-    await new Promise((r) => setTimeout(r, 10));
+    await doneEvent(h);
     await expect(h.port.loginStart('work', 'aria')).resolves.toBeTruthy();
   });
 });
