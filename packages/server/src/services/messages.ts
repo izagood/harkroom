@@ -20,6 +20,7 @@ import { enqueueInboxPushMany } from './push/pushJobs.js';
 import { displayBodySql } from './systemBody.js';
 import { guardMetaI18n } from './systemI18n.js';
 import { raiseChainBackstop } from './chainBackstop.js';
+import { attachPlanProgress } from './threadPlan.js';
 
 /**
  * 채널 안에서 `seq` 발급을 직렬화하는 advisory lock 의 classid(#523).
@@ -2890,7 +2891,9 @@ export async function readListRow(pool: Pool, channelId: string, messageId: stri
      where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE}`,
     [channelId, messageId],
   );
-  return res.rows[0] ?? null;
+  // 목록 행과 같은 모양이어야 한다 — 루트면 계획판 진행률도 붙인다(listMessages 와 같은 판정).
+  const row = (res.rows[0] as MessageRow | undefined) ?? null;
+  return row ? (await attachPlanProgress(pool, [row]))[0]! : null;
 }
 
 /**
@@ -2953,7 +2956,15 @@ export async function getMessageById(pool: Pool, messageId: string): Promise<Mes
   return res.rows[0] ?? null;
 }
 
+/** 채널·스레드 목록 — 루트 행에 계획판 진행률(`planProgress`, 청중 기준)을 붙인다(P5). */
 export async function listMessages(
+  pool: Pool, channelId: string,
+  opts: { since?: number; before?: number; around?: number; threadRootId?: string | null; limit?: number; feed?: boolean },
+): Promise<MessageRow[]> {
+  return attachPlanProgress(pool, await listMessageRows(pool, channelId, opts));
+}
+
+async function listMessageRows(
   pool: Pool, channelId: string,
   opts: { since?: number; before?: number; around?: number; threadRootId?: string | null; limit?: number; feed?: boolean },
 ): Promise<MessageRow[]> {

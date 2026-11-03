@@ -6,7 +6,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createMember } from './helpers/fixtures.js';
 import { onEvent, type WorkspaceEvent } from '../src/events.js';
-import { linkedFor, setThreadPlan } from '../src/services/threadPlan.js';
+import { attachPlanProgress, linkedFor, setThreadPlan } from '../src/services/threadPlan.js';
 
 /**
  * 스레드 계획판 P1 — 저장·조회·연결 진행률·이벤트(158).
@@ -250,4 +250,56 @@ describe('thread plan', () => {
     expect(events[0]).toMatchObject({ rev: null, progress: null });
     expect((await getPlan(member.token, root)).json()).toEqual({ plan: null });
   });
+
+  it('P5: 채널 목록 루트 행에 planProgress(청중 기준) — 계획 없으면 null, 답글은 키 없음', async () => {
+    const withPlan = await post(admin.token, publicCh, { body: 'list plan' });
+    const child = await post(admin.token, privateCh, { body: 'list child' });
+    const done: PlanDoc = { goal: 'c', groups: [], steps: [{ id: 's1', title: 'x', state: 'done', links: [], dependsOn: [] }] };
+    await setThreadPlan(pool, { rootId: child, doc: done, actor: { accountId: admin.accountId } });
+    await setThreadPlan(pool, {
+      rootId: withPlan, actor: { accountId: admin.accountId },
+      doc: {
+        goal: 'A', groups: [{ id: 'g1', title: 'B', linkedRootId: child, dependsOn: [] }],
+        steps: [
+          { id: 's1', title: 'a', state: 'done', links: [], dependsOn: [] },
+          { id: 's2', title: 'b', state: 'pending', links: [], dependsOn: ['g1'] },
+        ],
+      },
+    });
+    const noPlan = await post(admin.token, publicCh, { body: 'list no plan' });
+    await post(admin.token, publicCh, { body: 'reply', threadRootId: withPlan });
+
+    const list = await app.inject({ method: 'GET', url: `/channels/${publicCh}/messages`, headers: auth(member.token) });
+    const rows = list.json().messages as Array<{ id: string; threadRootId: string | null; planProgress?: unknown }>;
+    // 비공개 자식은 public 채널 청중에게 hidden — 끝났어도 done 으로 세지 않는다.
+    expect(rows.find((r) => r.id === withPlan)?.planProgress).toEqual({ done: 1, total: 3, active: 0, blocked: 0, waiting: 1, rev: 1 });
+    expect(rows.find((r) => r.id === noPlan)?.planProgress).toBeNull();
+
+    const thread = await app.inject({ method: 'GET', url: `/channels/${publicCh}/messages?thread=${withPlan}`, headers: auth(member.token) });
+    const replies = (thread.json().messages as Array<{ threadRootId: string | null; planProgress?: unknown }>).filter((r) => r.threadRootId);
+    expect(replies.length).toBeGreaterThan(0);
+    for (const r of replies) expect(r).not.toHaveProperty('planProgress');
+  });
+
+  it('P5 R1: 연결 계획이 여럿이어도 쿼리는 둘(계획 한 번 + 자식 한 번)', async () => {
+    const done: PlanDoc = { goal: 'c', groups: [], steps: [{ id: 's1', title: 'x', state: 'done', links: [], dependsOn: [] }] };
+    const rows: { id: string; channelId: string; threadRootId: string | null; planProgress?: unknown }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const parent = await post(admin.token, publicCh, { body: `batch ${i}` });
+      const child = await post(admin.token, i === 0 ? publicCh : privateCh, { body: `batch child ${i}` });
+      await setThreadPlan(pool, { rootId: child, doc: done, actor: { accountId: admin.accountId } });
+      await setThreadPlan(pool, {
+        rootId: parent, actor: { accountId: admin.accountId },
+        doc: { goal: 'A', groups: [{ id: 'g1', title: 'B', linkedRootId: child, dependsOn: [] }], steps: [] },
+      });
+      rows.push({ id: parent, channelId: publicCh, threadRootId: null });
+    }
+    let queries = 0;
+    const counting = { query: (...args: Parameters<Pool['query']>) => { queries++; return (pool.query as (...a: unknown[]) => unknown)(...args); } };
+    await attachPlanProgress(counting as unknown as Pool, rows);
+    expect(queries).toBe(2);
+    // public 자식만 열린다 — 첫째는 done, 나머지(비공개 자식)는 hidden 이라 done 이 아니다.
+    expect(rows.map((r) => (r.planProgress as { done: number }).done)).toEqual([1, 0, 0]);
+  });
 });
+
