@@ -1295,28 +1295,33 @@ export async function runMentionTurn(
   // 스레드 메모(S1, `threadNotePin.ts`) — 이 스레드의 진행 상태. 새 세션(깨움 포함)에는 전문, 이어받은 세션에는
   // 바뀐 때만. 채널 최상위(앵커 없음)에는 메모가 없다. 옛 서버(도구 없음)·실패는 싣지 않고 턴은 돈다.
   const readNote = deps.harkroom.readThreadNote?.bind(deps.harkroom);
-  let note: ThreadNoteState = 'unavailable';
-  if (anchor && readNote) {
-    try {
-      note = await readNote(anchor);
-    } catch (err: unknown) {
-      console.error(`[mentionTurn] ${key}: 스레드 메모 조회 실패 — 이번 턴은 싣지 않는다: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  const plannedNote = await planThreadNote({ stateDir: deps.stateDir, key, sessionId: rec.sessionId, isFirstTurn, note });
-  // 깨움 세션은 고정을 저장하지 않는다 — 위 기억 고정과 같은 이유(버릴 세션 id 로 덮으면 이어받는 턴이 다시 싣는다).
-  const notePlan = freshWake ? { ...plannedNote, commit: async () => {} } : plannedNote;
   // 스레드 계획판(계획판 P3, `threadPlanPin.ts`) — 스레드의 공개 계획. 메모와 같은 규칙(새 세션 전문·이어받으면 바뀐 때만)이고
   // 계획 → 메모 순으로 싣는다(설계 1-B). 옛 서버(도구 없음)·실패는 싣지 않고 턴은 돈다.
   const readPlan = deps.harkroom.readThreadPlan?.bind(deps.harkroom);
-  let threadPlan: ThreadPlanState = 'unavailable';
-  if (anchor && readPlan) {
-    try {
-      threadPlan = await readPlan(anchor);
-    } catch (err: unknown) {
-      console.error(`[mentionTurn] ${key}: 계획판 조회 실패 — 이번 턴은 싣지 않는다: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+  // 둘은 서로 기대지 않는다 — 함께 부른다(architect A1). 턴마다 MCP 왕복을 하나씩 줄인다. 한쪽 실패는 그쪽만 뺀다.
+  const [note, threadPlan] = await Promise.all([
+    (async (): Promise<ThreadNoteState> => {
+      if (!anchor || !readNote) return 'unavailable';
+      try {
+        return await readNote(anchor);
+      } catch (err: unknown) {
+        console.error(`[mentionTurn] ${key}: 스레드 메모 조회 실패 — 이번 턴은 싣지 않는다: ${err instanceof Error ? err.message : String(err)}`);
+        return 'unavailable';
+      }
+    })(),
+    (async (): Promise<ThreadPlanState> => {
+      if (!anchor || !readPlan) return 'unavailable';
+      try {
+        return await readPlan(anchor);
+      } catch (err: unknown) {
+        console.error(`[mentionTurn] ${key}: 계획판 조회 실패 — 이번 턴은 싣지 않는다: ${err instanceof Error ? err.message : String(err)}`);
+        return 'unavailable';
+      }
+    })(),
+  ]);
+  const plannedNote = await planThreadNote({ stateDir: deps.stateDir, key, sessionId: rec.sessionId, isFirstTurn, note });
+  // 깨움 세션은 고정을 저장하지 않는다 — 위 기억 고정과 같은 이유(버릴 세션 id 로 덮으면 이어받는 턴이 다시 싣는다).
+  const notePlan = freshWake ? { ...plannedNote, commit: async () => {} } : plannedNote;
   const plannedPlan = await planThreadPlan({
     stateDir: deps.stateDir, key, sessionId: rec.sessionId, isFirstTurn, meId: deps.me.id, plan: threadPlan,
   });
