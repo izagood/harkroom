@@ -7,20 +7,22 @@ import { clearPlanOpenKeys, loadPlanOpen, savePlanOpen } from '../src/lib/thread
 const line = (meta: Record<string, unknown>) => ({ kind: 'system', meta } as unknown as MessageRow);
 
 describe('계획판 ready 줄', () => {
-  it('기록 줄(▶)로 그리고, 제목은 meta 의 id 순서대로 글자만 꺼낸다', () => {
+  it('기록 줄(▶)로 그리고, id 순서대로 제목(없으면 id)을 글자로만 꺼낸다', () => {
     const m = line({
-      i18n: { key: 'system.plan.ready', args: { n: 2, ids: 's2 · g1' } },
-      planReady: { ids: ['s2', 'g1', 'bad', '__proto__'], rev: 3, titles: { s2: '@someone <b>배포</b>', g1: 'x'.repeat(200), bad: 'no' } },
+      i18n: { key: 'system.plan.ready', args: { n: 3, ids: 's2 · g1 · s5' } },
+      planReady: { ids: ['s2', 'g1', 's5', 'bad', '__proto__'], rev: 3, titles: { s2: '@someone <b>배포</b>', g1: 'x'.repeat(200), bad: 'no' } },
     });
     expect(systemLineShape(m)).toBe('record');
     expect(systemRecordIcon(m)).toBe('▶');
     const titles = planReadyTitles(m);
-    expect(titles.map(([id]) => id)).toEqual(['s2', 'g1']);
-    expect(titles[0]![1]).toBe('@someone <b>배포</b>');
-    expect(titles[1]![1]).toHaveLength(120);
+    expect(titles.map((x) => x.id)).toEqual(['s2', 'g1', 's5']);
+    expect(titles[0]!.label).toBe('@someone <b>배포</b>');
+    expect(titles[1]!.label).toHaveLength(120);
+    // 제목이 없는 단계는 id 로 대신한다(designer 2).
+    expect(titles[2]!.label).toBe('s5');
   });
 
-  it('모양이 틀리면 빈 목록 — 시스템 줄이 아니거나 titles 가 없거나 문자열이 아니면', () => {
+  it('제목이 하나도 없거나 모양이 틀리면 빈 목록 — 서버 문장(id 목록)을 그대로 쓴다', () => {
     expect(planReadyTitles({ kind: 'user', meta: { planReady: { ids: ['s1'], titles: { s1: 'a' } } } } as unknown as MessageRow)).toEqual([]);
     expect(planReadyTitles(line({ planReady: { ids: ['s1'] } }))).toEqual([]);
     expect(planReadyTitles(line({ planReady: { ids: ['s1'], titles: { s1: 5 } } }))).toEqual([]);

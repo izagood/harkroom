@@ -54,19 +54,26 @@ export function systemLineTarget(message: Pick<MessageRow, 'authorId' | 'meta'>)
 }
 
 /**
- * 계획판 ready 줄의 단계 제목(P6) — `meta.planReady.titles` 를 id 순서대로. 서버가 본문에서 뺀 남의 글이라 화면은
- * 이것을 **글자로만** 그린다. 모양이 틀리면 빈 목록(id 꼴·문자열만 받고, 제목은 120자로 자른다).
+ * 계획판 ready 줄의 단계 이름(P6) — `meta.planReady.ids` 순서대로, 제목이 있으면 제목(`meta.planReady.titles`), 없으면 id.
+ * 서버가 본문에서 뺀 남의 글이라 화면은 이것을 **글자로만** 그린다. id 꼴만 받고(최대 40개), 제목은 120자로 자른다.
+ * 제목이 하나도 없으면 빈 목록 — 그때는 서버가 준 문장(id 목록)을 그대로 쓴다.
  */
-export function planReadyTitles(message: Pick<MessageRow, 'kind' | 'meta'>): [string, string][] {
+export function planReadyTitles(message: Pick<MessageRow, 'kind' | 'meta'>): { id: string; label: string }[] {
   if (message.kind !== 'system') return [];
   const ready = (message.meta as Record<string, unknown> | undefined)?.planReady as { ids?: unknown; titles?: unknown } | undefined;
-  if (!ready || !Array.isArray(ready.ids) || !ready.titles || typeof ready.titles !== 'object') return [];
-  const titles = ready.titles as Record<string, unknown>;
-  const out: [string, string][] = [];
+  if (!ready || !Array.isArray(ready.ids)) return [];
+  const titles = ready.titles && typeof ready.titles === 'object' ? ready.titles as Record<string, unknown> : {};
+  let anyTitle = false;
+  const out: { id: string; label: string }[] = [];
   for (const id of ready.ids.slice(0, 40)) {
     if (typeof id !== 'string' || !/^[sg][1-9][0-9]{0,3}$/.test(id)) continue;
-    const t = titles[id];
-    if (typeof t === 'string' && t.trim()) out.push([id, [...t].slice(0, 120).join('')]);
+    const t = Object.prototype.hasOwnProperty.call(titles, id) ? titles[id] : undefined;
+    if (typeof t === 'string' && t.trim()) {
+      anyTitle = true;
+      out.push({ id, label: [...t.trim()].slice(0, 120).join('') });
+    } else {
+      out.push({ id, label: id });
+    }
   }
-  return out;
+  return anyTitle ? out : [];
 }
