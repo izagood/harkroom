@@ -327,24 +327,35 @@ export async function emitPlanChanged(pool: Pool, channelId: string, rootId: str
  * 채널 목록 행(루트)에 `planProgress` 를 붙인다(P5). 청중 맵으로 센다 — 같은 행이 채널 청중 전원에게 같은 값으로 간다.
  * 읽을 때 세므로 자식 스레드가 바뀌어도 다음 목록 읽기에는 맞는 값이다(실시간 반영은 2차 구독기).
  * 답글·지워진 행은 손대지 않는다(키 없음 = 모른다). 계획 없는 루트는 null.
+ *
+ * 쿼리는 늘 최대 둘이다(R1): 페이지의 계획 한 번, 그 계획들이 연결한 자식 전부를 한 번. `listMessages` 는 서버에서 가장
+ * 자주 도는 경로라 연결 계획마다 왕복을 더하지 않는다. 청중 판정(public 이거나 같은 채널)은 계획별로 메모리에서 한다 —
+ * `linkedFor(doc, {audience})` 와 같은 술어다.
  */
 export async function attachPlanProgress<T extends { id: string; channelId: string; threadRootId: string | null; deletedAt?: unknown }>(
-  pool: Pool, rows: T[],
+  db: Queryable, rows: T[],
 ): Promise<T[]> {
   const roots = rows.filter((r) => r.threadRootId === null && !r.deletedAt);
   if (!roots.length) return rows;
-  const res = await pool.query(
+  const res = await db.query(
     `select root_id, channel_id, doc, rev from thread_plan where root_id = any($1::uuid[])`,
     [roots.map((r) => r.id)],
   );
   const plans = new Map((res.rows as { root_id: string; channel_id: string; doc: PlanDoc; rev: number }[]).map((r) => [r.root_id, r]));
+  const allChildren = [...new Set([...plans.values()].flatMap((p) => linkedRoots(p.doc)))];
+  const facts = await childFacts(db, allChildren, null);
   for (const r of roots) {
     const p = plans.get(r.id);
     if (!p) {
       (r as T & { planProgress?: unknown }).planProgress = null;
       continue;
     }
-    const { map } = await linkedFor(pool, p.doc, { audience: p.channel_id });
+    const map = new Map<string, PlanProgress | 'hidden'>();
+    for (const id of linkedRoots(p.doc)) {
+      const f = facts.get(id);
+      const visible = !!f && f.exists && (f.publicChannel || f.channelId === p.channel_id);
+      map.set(id, visible ? (f!.progress ?? ZERO) : 'hidden');
+    }
     (r as T & { planProgress?: unknown }).planProgress = { ...planProgress(p.doc, map), rev: p.rev };
   }
   return rows;

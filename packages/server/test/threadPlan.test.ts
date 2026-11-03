@@ -6,7 +6,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createMember } from './helpers/fixtures.js';
 import { onEvent, type WorkspaceEvent } from '../src/events.js';
-import { linkedFor, setThreadPlan } from '../src/services/threadPlan.js';
+import { attachPlanProgress, linkedFor, setThreadPlan } from '../src/services/threadPlan.js';
 
 /**
  * 스레드 계획판 P1 — 저장·조회·연결 진행률·이벤트(158).
@@ -279,6 +279,27 @@ describe('thread plan', () => {
     const replies = (thread.json().messages as Array<{ threadRootId: string | null; planProgress?: unknown }>).filter((r) => r.threadRootId);
     expect(replies.length).toBeGreaterThan(0);
     for (const r of replies) expect(r).not.toHaveProperty('planProgress');
+  });
+
+  it('P5 R1: 연결 계획이 여럿이어도 쿼리는 둘(계획 한 번 + 자식 한 번)', async () => {
+    const done: PlanDoc = { goal: 'c', groups: [], steps: [{ id: 's1', title: 'x', state: 'done', links: [], dependsOn: [] }] };
+    const rows: { id: string; channelId: string; threadRootId: string | null; planProgress?: unknown }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const parent = await post(admin.token, publicCh, { body: `batch ${i}` });
+      const child = await post(admin.token, i === 0 ? publicCh : privateCh, { body: `batch child ${i}` });
+      await setThreadPlan(pool, { rootId: child, channelId: i === 0 ? publicCh : privateCh, doc: done, actorId: admin.accountId });
+      await setThreadPlan(pool, {
+        rootId: parent, channelId: publicCh, actorId: admin.accountId,
+        doc: { goal: 'A', groups: [{ id: 'g1', title: 'B', linkedRootId: child, dependsOn: [] }], steps: [] },
+      });
+      rows.push({ id: parent, channelId: publicCh, threadRootId: null });
+    }
+    let queries = 0;
+    const counting = { query: (...args: Parameters<Pool['query']>) => { queries++; return (pool.query as (...a: unknown[]) => unknown)(...args); } };
+    await attachPlanProgress(counting as unknown as Pool, rows);
+    expect(queries).toBe(2);
+    // public 자식만 열린다 — 첫째는 done, 나머지(비공개 자식)는 hidden 이라 done 이 아니다.
+    expect(rows.map((r) => (r.planProgress as { done: number }).done)).toEqual([1, 0, 0]);
   });
 });
 
