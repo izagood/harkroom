@@ -30,6 +30,7 @@ export function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
     case 'thread.agent_model.changed':
     case 'thread.status':
     case 'thread.reportWakes.changed':
+    case 'thread.plan.changed':
     // 관문 알림은 그 에이전트의 소유자에게만 간다(audience 가 소유자 한 명). 여기 빠져 있으면
     // 아래 default 로 떨어져 모든 소켓이 받는다 — 남의 앱에 배너가 뜨고 터미널이 열린다.
     case 'agent.attention':
