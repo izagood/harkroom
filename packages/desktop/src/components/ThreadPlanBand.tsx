@@ -13,7 +13,7 @@ import { useLocale, useT } from '../i18n/useT';
  * 스레드 계획판 띠 + 펼친 패널(P4, 시안 v2 D1·D3~D7).
  *
  * - **부를 길은 루트 행의 `planProgress` 뿐이다**(serverSurfaceGated) — 옛 서버나 계획 없는 스레드에서는 띠가 없고 GET 도 없다.
- * - 판을 받는 곳은 이 띠 하나다(architect R1). 루트 행의 rev 가 들고 있는 판보다 새로우면 받는다.
+ * - 판을 받는 곳은 이 띠 하나다(architect R1). 루트 행의 rev 가 들고 있는 판과 다르면 받는다(R3).
  * - 띠 칩은 판을 받은 뒤 **개인 진행률**(GET)을 쓴다(architect R2) — 펼친 패널과 같은 값이다. 채널 목록 칩은 청중 값 그대로다.
  * - 펼침은 띠 바로 아래로 내려오고 스레드 높이의 45% 까지, 넘치면 안에서 스크롤한다(D1). 스레드별로 기억하고 처음엔 접힘(D4).
  */
@@ -27,7 +27,8 @@ export function ThreadPlanBand({ rootId, progress }: { rootId: string; progress:
   const rev = progress?.rev ?? null;
   useEffect(() => {
     if (rev === null) return;
-    if (plan !== undefined && (plan?.rev ?? 0) >= rev) return;
+    // 다르면 받는다(architect R3) — rev 는 계획을 지웠다 다시 세우면 1로 돌아가므로 「크다」로 견주면 옛 판이 남는다.
+    if (plan !== undefined && (plan?.rev ?? null) === rev) return;
     void getController().loadThreadPlan(rootId).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rev 가 바뀔 때만 다시 받는다(D-b)
   }, [rootId, rev]);
@@ -54,7 +55,9 @@ export function ThreadPlanBand({ rootId, progress }: { rootId: string; progress:
         <span className="min-w-0 flex-1 truncate text-body">{plan.doc.goal}</span>
         {summary ? (
           <span data-testid="plan-summary" className="min-w-0 shrink truncate text-meta text-fg-muted">
-            {t('plan.summary', { groups: summary.groups, active: summary.active, blocked: summary.blocked })}
+            {summary.blocked > 0
+              ? t('plan.summary', { groups: summary.groups, active: summary.active, blocked: summary.blocked })
+              : t('plan.summaryNoBlocked', { groups: summary.groups, active: summary.active })}
             {summary.firstBlocked && <span className="text-state-stuck"> ({summary.firstBlocked})</span>}
           </span>
         ) : pills.map((p, i) => (

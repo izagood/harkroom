@@ -771,6 +771,11 @@ export class Controller {
         // 계획판(P1). 칩은 이벤트 값 그대로(청중 기준). 판은 여기서 받지 않는다 — 루트 행 rev 가 바뀌면 띠(ThreadPlanBand)가 받는다(architect R1).
         const progress = e.rev === null || !e.progress ? null : { ...e.progress, rev: e.rev };
         store.applyThreadPlanProgress(e.channelId, e.rootId, progress);
+        // 지워졌으면 들고 있던 판도 버린다(R3) — 다시 세운 판(rev 1)을 옛 판이 가리지 않게.
+        if (e.rev === null && store.threadPlans[e.rootId] !== undefined) {
+          const { [e.rootId]: _gone, ...rest } = store.threadPlans;
+          store.set({ threadPlans: rest });
+        }
         break;
       }
       case 'thread.status':
@@ -2935,9 +2940,10 @@ export class Controller {
   async loadThreadPlan(rootId: string): Promise<ThreadPlanView | null> {
     const plan = await this.api.threadPlan(rootId);
     const store = this.store.getState();
-    // 엇갈려 도착한 옛 판은 버린다(architect R1) — 늦게 온 응답이 새 판을 덮지 않게.
+    // 엇갈려 도착한 옛 판은 버린다(architect R1) — 늦게 온 응답이 새 판을 덮지 않게. 기준은 rev 가 아니라 updatedAt 이다(R3):
+    // rev 는 지웠다 다시 세우면 1로 돌아가지만, 다시 세운 판의 updatedAt 은 늘 더 늦다.
     const held = store.threadPlans[rootId];
-    if (held && plan && plan.rev < held.rev) return held;
+    if (held && plan && Date.parse(plan.updatedAt) < Date.parse(held.updatedAt)) return held;
     store.set({ threadPlans: { ...store.threadPlans, [rootId]: plan } });
     return plan;
   }

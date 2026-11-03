@@ -79,6 +79,12 @@ describe('ThreadPlanBand', () => {
     expect(screen.getByTestId('plan-more-narrow').textContent).toBe('+2');
   });
 
+  it('R3: 루트 행 rev 가 들고 있는 판보다 작아도(지웠다 다시 세움) 다시 받는다', () => {
+    plans = { r1: view() };
+    render(<ThreadPlanBand rootId="r1" progress={{ ...P(0, 1), rev: 1 }} />);
+    expect(loadThreadPlan).toHaveBeenCalledTimes(1);
+  });
+
   it('R2: 띠 칩은 판을 받은 뒤 개인 진행률(GET)을 쓴다 — 루트 행 값(청중)이 달라도', () => {
     plans = { r1: view() };
     render(<ThreadPlanBand rootId="r1" progress={{ ...P(0, 4, 1), rev: 3 }} />);

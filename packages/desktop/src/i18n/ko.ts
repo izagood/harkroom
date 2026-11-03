@@ -2700,6 +2700,7 @@ export const ko = {
   'plan.pill.waiting': '{title} 대기',
   'plan.pill.count': '{title} {done}/{total}',
   'plan.summary': '그룹 {groups} · 진행 {active} · 막힘 {blocked}',
+  'plan.summaryNoBlocked': '그룹 {groups} · 진행 {active}',
   'plan.parallel': '동시에 진행',
   'plan.ready': '시작 가능',
   'plan.readyAfter': '앞 단계 끝남 · 시작 가능',
