@@ -4745,6 +4745,7 @@ export const en = {
   'plan.chip': 'Plan {done}/{total}',
   'plan.chip.blockedTitle': '{n} blocked',
   'plan.moreGroups': '+{n}',
+  'plan.openLinked': 'Open that thread →',
   'plan.stale': 'May be out of date',
   'plan.flagged': 'Flagged by a check — not loaded into agent prompts',
   'plan.next': 'Next:',

@@ -2688,6 +2688,7 @@ export const ko = {
   'plan.chip': '계획 {done}/{total}',
   'plan.chip.blockedTitle': '막힌 단계 {n}개',
   'plan.moreGroups': '+{n}',
+  'plan.openLinked': '그 스레드 열기 →',
   'plan.stale': '낡았을 수 있음',
   'plan.flagged': '검사에 걸린 판이다 — 에이전트 프롬프트에는 싣지 않는다',
   'plan.next': '다음:',

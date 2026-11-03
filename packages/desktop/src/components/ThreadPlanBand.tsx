@@ -103,6 +103,12 @@ function GroupRow({ plan, group, collapsed, onToggle, onJump }: {
           ? <span className="text-meta text-fg-subtle">{t('plan.linkedHidden')}</span>
           : <PlanChip progress={linked.progress} />)}
       </button>
+      {linked && !linked.hidden && linked.channelId && (
+        <button type="button" data-testid="plan-open-linked" className="ml-5 text-meta text-fg-muted underline decoration-dotted hover:text-fg"
+          onClick={() => { void getController().openThread(linked.rootId, { channelId: linked.channelId! }).catch(() => {}); }}>
+          {t('plan.openLinked')}
+        </button>
+      )}
       <Waiting plan={plan} ids={d?.waitingOn ?? []} onJump={onJump} indent />
       {!collapsed && steps.map((s) => <StepRow key={s.id} plan={plan} step={s} onJump={onJump} indent />)}
     </div>
