@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { PlanDoc } from '@harkroom/shared';
-import { applyPlanItem } from '../src/services/threadPlanItem.js';
+import { applyPlanItem, planSeq } from '../src/services/threadPlanItem.js';
 
 const doc = (): PlanDoc => ({
   goal: 'g',
@@ -68,4 +68,19 @@ describe('applyPlanItem — 단계·그룹 하나의 병합', () => {
     expect(applyPlanItem({ doc: doc(), rev: 1 }, { state: 'done' })).toEqual({ error: { code: 'title_required' } });
     expect(applyPlanItem({ doc: doc(), rev: 1 }, { title: 'x', after: 's9' })).toEqual({ error: { code: 'unknown_item', id: 's9' } });
   });
+
+  it('R1: 맨 끝 노드를 지운 뒤 더해도 그 id 를 다시 쓰지 않는다 — 번호표(seq)를 넘는다', () => {
+    const removed = ok(applyPlanItem({ doc: doc(), rev: 1 }, { id: 's2', remove: true }));
+    const stamped = { ...removed.doc, seq: planSeq(doc(), removed.doc) };
+    expect(stamped.seq).toEqual({ s: 2, g: 1 });
+    expect(ok(applyPlanItem({ doc: stamped, rev: 2 }, { title: '새 단계' })).id).toBe('s3');
+    const g = ok(applyPlanItem({ doc: { ...stamped, groups: [] , steps: stamped.steps.map((x) => ({ ...x, groupId: null })) }, rev: 2 }, { type: 'group', title: 'H' }));
+    expect(g.id).toBe('g2');
+  });
+
+  it('planSeq 는 줄지 않는다 — 앞 판 seq·앞 판 id·새 판 id 중 가장 큰 번호', () => {
+    expect(planSeq({ ...doc(), seq: { s: 9, g: 4 } }, { goal: 'g', groups: [], steps: [] })).toEqual({ s: 9, g: 4 });
+    expect(planSeq(null, doc())).toEqual({ s: 2, g: 1 });
+  });
 });
+

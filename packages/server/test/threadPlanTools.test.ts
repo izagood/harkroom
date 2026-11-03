@@ -181,4 +181,24 @@ describe('thread.plan tools', () => {
     await c1.close();
     await c2.close();
   });
+
+  it('R1: 맨 끝 단계를 지우고 새로 더하면 새 번호 — 입력의 seq 는 받지 않는다', async () => {
+    const c = await mcpClient(bot.pat);
+    const root = await post(admin.token, publicCh, { body: 'seq' });
+    await call(c, 'thread.plan', { threadRootId: root, plan: { ...base(), seq: { s: 0, g: 0 } }, ifUpdatedAt: null });
+    expect((await getThreadPlan(pool, root))?.doc.seq).toEqual({ s: 2, g: 0 });
+    expect(await call(c, 'thread.plan.item', { threadRootId: root, id: 's2', remove: true })).toMatchObject({ ok: true, id: 's2', removed: true });
+    const added = await call(c, 'thread.plan.item', { threadRootId: root, title: '문서' });
+    expect(added).toMatchObject({ ok: true, id: 's3', nowReady: ['s3'] });
+    const row = await getThreadPlan(pool, root);
+    expect(row?.doc.steps.map((s) => s.id)).toEqual(['s1', 's3']);
+    expect(row?.doc.seq).toEqual({ s: 3, g: 0 });
+    // 전체 쓰기로 다시 덮어도 번호표는 줄지 않는다.
+    const view = await call(c, 'thread.plan', { threadRootId: root });
+    await call(c, 'thread.plan', { threadRootId: root, plan: base(), ifUpdatedAt: view.plan.updatedAt });
+    expect((await getThreadPlan(pool, root))?.doc.seq).toEqual({ s: 3, g: 0 });
+    expect((await call(c, 'thread.plan.item', { threadRootId: root, title: '또' })).id).toBe('s4');
+    await c.close();
+  });
 });
+

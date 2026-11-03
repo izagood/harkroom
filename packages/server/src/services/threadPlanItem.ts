@@ -61,13 +61,30 @@ function linkKey(l: PlanLink): string {
   }
 }
 
-function nextId(prefix: 's' | 'g', taken: { id: string }[]): string {
+function maxNum(prefix: 's' | 'g', nodes: { id: string }[]): number {
   let max = 0;
-  for (const n of taken) {
+  for (const n of nodes) {
     const m = /^[sg]([0-9]+)$/.exec(n.id);
     if (m && n.id[0] === prefix) max = Math.max(max, Number(m[1]));
   }
-  return `${prefix}${max + 1}`;
+  return max;
+}
+
+/**
+ * 판의 번호표 — 앞 판의 seq, 앞 판·새 판에 있는 id 중 가장 큰 번호(R1). 한 번 쓴 번호는 줄지 않는다.
+ * 전체 쓰기·item 모두 저장 직전에 이것으로 doc.seq 를 다시 정한다(`writeThreadPlan`).
+ */
+export function planSeq(prev: PlanDoc | null, next: PlanDoc): { s: number; g: number } {
+  return {
+    s: Math.max(prev?.seq?.s ?? 0, maxNum('s', prev?.steps ?? []), maxNum('s', next.steps), next.seq?.s ?? 0),
+    g: Math.max(prev?.seq?.g ?? 0, maxNum('g', prev?.groups ?? []), maxNum('g', next.groups), next.seq?.g ?? 0),
+  };
+}
+
+/** 새 id — 남은 id 가 아니라 번호표 다음 번호다. 맨 끝 노드를 지운 뒤 더해도 그 id 를 다시 쓰지 않는다. */
+function nextId(prefix: 's' | 'g', doc: PlanDoc): string {
+  const used = Math.max(doc.seq?.[prefix] ?? 0, maxNum(prefix, prefix === 's' ? doc.steps : doc.groups));
+  return `${prefix}${used + 1}`;
 }
 
 function place<T extends { id: string }>(arr: T[], node: T, after: string | null | undefined, isNew: boolean): T[] | { error: PlanItemError } {
@@ -115,7 +132,7 @@ export function applyPlanItem(prev: { doc: PlanDoc; rev: number } | null, p: Pla
     const cur = p.id ? doc.groups.find((g) => g.id === p.id) : undefined;
     if (p.id && !cur) return { error: { code: 'unknown_item', id: p.id } };
     if (!cur && !p.title) return { error: { code: 'title_required' } };
-    const id = cur?.id ?? nextId('g', doc.groups);
+    const id = cur?.id ?? nextId('g', doc);
     const node: PlanGroup = {
       ...(cur ?? { id, title: '', dependsOn: [] }),
       ...(p.title !== undefined ? { title: p.title } : {}),
@@ -132,7 +149,7 @@ export function applyPlanItem(prev: { doc: PlanDoc; rev: number } | null, p: Pla
   const cur = p.id ? doc.steps.find((s) => s.id === p.id) : undefined;
   if (p.id && !cur) return { error: { code: 'unknown_item', id: p.id } };
   if (!cur && !p.title) return { error: { code: 'title_required' } };
-  const id = cur?.id ?? nextId('s', doc.steps);
+  const id = cur?.id ?? nextId('s', doc);
   let links = [...(cur?.links ?? [])];
   for (const l of p.addLinks ?? []) if (!links.some((x) => linkKey(x) === linkKey(l))) links.push(l);
   if (p.removeLinks?.length) {

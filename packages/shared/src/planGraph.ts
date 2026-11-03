@@ -52,6 +52,11 @@ export interface PlanDoc {
   steps: PlanStep[];
   next?: string | null;
   blocked?: string | null;
+  /**
+   * 지금까지 쓴 가장 큰 번호(서버만 쓰는 칸). 지운 단계의 id 를 새 단계가 다시 쓰지 않게 한다 — 지난 글·report 의
+   * 「s3 끝」이 엉뚱한 단계를 가리키지 않도록. 입력으로는 받지 않고 서버가 쓸 때마다 다시 정한다.
+   */
+  seq?: { s: number; g: number };
 }
 
 export const PLAN_LIMITS = {

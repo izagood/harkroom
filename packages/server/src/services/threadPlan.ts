@@ -20,6 +20,7 @@ import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
 import { threadRootChannel } from './threadNote.js';
 import { scanWrite } from './contentScan.js';
+import { planSeq } from './threadPlanItem.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -219,7 +220,8 @@ export async function writeThreadPlan<E extends { code: string }>(
     const cur = await client.query(`select updated_at, rev, doc from thread_plan where root_id = $1 for update`, [rootId]);
     const now = cur.rows[0] as { updated_at: Date; rev: number; doc: PlanDoc } | undefined;
     const built = build(now ? { doc: now.doc, rev: now.rev, updatedAt: now.updated_at } : null);
-    const doc = 'error' in built ? null : built.doc;
+    // 번호표(seq)는 서버가 정한다 — 입력(zod)으로는 받지 않고, 앞 판과 새 판에서 다시 센다(R1).
+    const doc = 'error' in built || !built.doc ? null : { ...built.doc, seq: planSeq(now?.doc ?? null, built.doc) };
     if ('error' in built) {
       fail = { ok: false, error: built.error };
     } else if (doc) {
