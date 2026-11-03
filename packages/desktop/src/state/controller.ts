@@ -1,4 +1,4 @@
-import type { AccountStatus, AvatarSourceMeta, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
+import type { AccountStatus, AvatarSourceMeta, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, ThreadPlanView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import { endSession } from '../lib/sessionEnd';
 import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchResult } from '../lib/memoryList';
 import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
@@ -765,6 +765,17 @@ export class Controller {
         }
         // 루트가 사라진 스레드를 계속 열어 두면 답글만 남은 빈 패널에 갇힌다.
         if (store.threadRootId === e.messageId) store.set({ threadRootId: null });
+        break;
+      }
+      case 'thread.plan.changed': {
+        // 계획판(P1). 칩은 이벤트 값 그대로(청중 기준). 판은 여기서 받지 않는다 — 루트 행 rev 가 바뀌면 띠(ThreadPlanBand)가 받는다(architect R1).
+        const progress = e.rev === null || !e.progress ? null : { ...e.progress, rev: e.rev };
+        store.applyThreadPlanProgress(e.channelId, e.rootId, progress);
+        // 지워졌으면 들고 있던 판도 버린다(R3) — 다시 세운 판(rev 1)을 옛 판이 가리지 않게.
+        if (e.rev === null && store.threadPlans[e.rootId] !== undefined) {
+          const { [e.rootId]: _gone, ...rest } = store.threadPlans;
+          store.set({ threadPlans: rest });
+        }
         break;
       }
       case 'thread.status':
@@ -2923,6 +2934,18 @@ export class Controller {
   }
   setAgentPickableModels(agentId: string, models: AgentPickableModel[], clearOutside = false): Promise<AgentPickableSaved> {
     return this.api.setAgentPickableModels(agentId, models, clearOutside);
+  }
+
+  /** 스레드 계획판을 받아 둔다(P4). 실패는 던진다 — 삼킬지는 부르는 쪽이 정한다. */
+  async loadThreadPlan(rootId: string): Promise<ThreadPlanView | null> {
+    const plan = await this.api.threadPlan(rootId);
+    const store = this.store.getState();
+    // 엇갈려 도착한 옛 판은 버린다(architect R1) — 늦게 온 응답이 새 판을 덮지 않게. 기준은 rev 가 아니라 updatedAt 이다(R3):
+    // rev 는 지웠다 다시 세우면 1로 돌아가지만, 다시 세운 판의 updatedAt 은 늘 더 늦다.
+    const held = store.threadPlans[rootId];
+    if (held && plan && Date.parse(plan.updatedAt) < Date.parse(held.updatedAt)) return held;
+    store.set({ threadPlans: { ...store.threadPlans, [rootId]: plan } });
+    return plan;
   }
 
   /** 스레드 × 에이전트 모델 지정(079)을 받아 둔다. 실패는 던진다 — 삼킬지는 부르는 쪽이 정한다. */

@@ -1,7 +1,7 @@
 import type {
   AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
-  AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView,
+  AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView, ThreadPlanView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, type AvatarCrop, type AvatarSourceMeta, type GrantRow, type Capability, type Role, type ApiAuthKind, type ApiConnectorView, type ApiGrantLimits, type ApiTokenForm, type ApiMethod } from '@harkroom/shared';
 import type { MemoryAudit, MemoryBatchResult, MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
@@ -1323,6 +1323,10 @@ export class ApiClient {
    * 채널이 자동으로 멘션하는 에이전트들(#173). 핀과 같은 채널 전역 사실이라 채널을 볼 수
    * 있는 사람 누구나 받는다 — 작성창이 칩을 그려야 하기 때문이다.
    */
+  /** 스레드 계획판(P1) — 보는 사람 권한으로 거른 판. 계획이 없으면 `null`. 루트 행에 `planProgress` 가 있을 때만 부른다(옛 서버 앞에서는 부를 길이 없다). */
+  async threadPlan(rootId: string): Promise<ThreadPlanView | null> {
+    return (await this.req<{ plan: ThreadPlanView | null }>('GET', `/threads/${rootId}/plan`)).plan;
+  }
   /** 스레드 × 에이전트 모델 지정(079). 채널을 볼 수 있으면 누구나 읽는다. */
   async threadAgentModels(channelId: string, rootId: string): Promise<ThreadAgentModelView[]> {
     return (await this.req<{ agentModels: ThreadAgentModelView[] }>('GET', `/channels/${channelId}/threads/${rootId}/agent-models`)).agentModels;

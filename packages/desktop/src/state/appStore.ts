@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { AttachmentSaveState } from '../lib/attachmentSaveProgress';
 import { draftsStorage, stickyMentionsStorage } from '../lib/prefs';
-import type { AccountStatus, AccountView, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, SavedMessageRow, ServerVersion, ThreadStatusReaction } from '@harkroom/shared';
+import type { AccountStatus, AccountView, AgentTeamRow, AttachmentRow, ChannelAutoMentionRow, ThreadAgentModelView, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, DmView, HandleGroupRow, InboxEntry, LeaseRow, MessageRow, PinRow, ProjectionStatus, SavedMessageRow, ServerVersion, ThreadStatusReaction, ThreadPlanProgress, ThreadPlanView } from '@harkroom/shared';
 import type { ObservedRunner, RunnerState } from '../lib/runnerLauncher';
 import type { NotifiedSummary } from '../lib/notified';
 
@@ -291,6 +291,8 @@ export interface AppState {
    * 못 받았다, 빈 배열이면 지정이 없다(머리 줄이 `모두 기본` 으로 접힌다).
    */
   threadAgentModels: Record<string, ThreadAgentModelView[]>;
+  /** 스레드 계획판(P4) — 루트 id → 열어 본 패널이 받은 판. `null` 은 받아 봤는데 계획이 없다. */
+  threadPlans: Record<string, ThreadPlanView | null>;
   /**
    * 스코프별 초안. 키는 scopeKey (channelId 또는 thread:<rootId>).
    * 설정과 달리 사용자가 쓴 문장 전체이므로 로그아웃 시 반드시 삭제한다.
@@ -513,6 +515,8 @@ export interface AppState {
   applyReaction(channelId: string, messageId: string, emoji: string, accountId: string, on: boolean): void;
   /** 스레드 상태 리액션(D안, `thread.status` 이벤트)을 루트에 갈아 끼운다. `null` 이면 뗀다. */
   applyThreadStatus(channelId: string, rootId: string, statusReaction: ThreadStatusReaction | null): void;
+  /** `thread.plan.changed`(P1) — 루트 행의 칩 값만 바꾼다(architect D-b). 패널 판은 rev 를 보고 따로 다시 받는다. */
+  applyThreadPlanProgress(channelId: string, rootId: string, planProgress: ThreadPlanProgress | null): void;
   removeMessage(channelId: string, messageId: string): void;
   /**
    * 사람이 고른 상태를 반영한다(#186). `online` 은 **건드리지 않는다** — 연결 여부는
@@ -560,7 +564,7 @@ const initial = {
   messages: {}, typing: {}, hasMore: {}, firstPageLoading: {}, backfilling: {}, unread: [], inboxRevision: 0, inboxMine: 0, inboxBoardRevision: 0, reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, link: 'online' as AppState['link'], offlineSince: null, threadFetch: null as AppState['threadFetch'], serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
-  channelPrefs: {}, channelSections: null, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, drafts: {}, stickyMentions: {}, uploads: {},
+  channelPrefs: {}, channelSections: null, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, threadPlans: {}, drafts: {}, stickyMentions: {}, uploads: {},
   history: [], historyIndex: -1, notices: [], attachmentSaving: {}, saveToast: null, gates: [], notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
   ownSendIds: {}, sendsInFlight: {},
   highlightedMessageId: null, channelRevealSeq: 0,
@@ -593,6 +597,10 @@ export function keepThreadFacts(prev: MessageRow | undefined, next: MessageRow):
   }
   if (next.statusReaction === undefined && prev.statusReaction !== undefined) {
     out = { ...out, statusReaction: prev.statusReaction };
+  }
+  // 계획판 진행률(P5, architect D-a): 키가 없는 갱신(단건 행·옛 서버)은 「모른다」라 앞 값을 지킨다. `null` 은 「계획 없음」이라 지운다.
+  if (next.planProgress === undefined && prev.planProgress !== undefined) {
+    out = { ...out, planProgress: prev.planProgress };
   }
   return out;
 }
@@ -677,6 +685,13 @@ export function createAppStore() {
      * 리액션 델타를 적용한다. 같은 사람이 두 번 들어오지 않게 하는 것이 핵심이다 — 내가 누른
      * 것은 로컬 갱신과 소켓 이벤트로 두 번 도착하고, 두 번 세면 1 이 2 로 보인다.
      */
+    applyThreadPlanProgress: (channelId, rootId, planProgress) => {
+      const rows = get().messages[channelId];
+      if (!rows || !rows.some((m) => m.id === rootId)) return;
+      touch(rootId);
+      const next = rows.map((m) => (m.id === rootId ? { ...m, planProgress } : m));
+      set({ messages: { ...get().messages, [channelId]: next } });
+    },
     applyThreadStatus: (channelId, rootId, statusReaction) => {
       const rows = get().messages[channelId];
       if (!rows || !rows.some((m) => m.id === rootId)) return;
