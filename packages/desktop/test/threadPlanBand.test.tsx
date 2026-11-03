@@ -7,8 +7,9 @@ const loadThreadPlan = vi.fn(async () => {});
 const openThread = vi.fn(async () => {});
 vi.mock('../src/state/controller', () => ({ getController: () => ({ loadThreadPlan, openThread }) }));
 let plans: Record<string, ThreadPlanView | null> = {};
+let accounts: Record<string, { id: string; handle: string }> = {};
 vi.mock('../src/state/communities', () => ({
-  useActiveStore: (sel: (s: { threadPlans: typeof plans }) => unknown) => sel({ threadPlans: plans }),
+  useActiveStore: (sel: (s: { threadPlans: typeof plans; accounts: typeof accounts }) => unknown) => sel({ threadPlans: plans, accounts }),
 }));
 
 import { ThreadPlanBand } from '../src/components/ThreadPlanBand';
@@ -42,7 +43,7 @@ const view = (updatedAt = new Date().toISOString()): ThreadPlanView => ({
 });
 
 beforeEach(() => { localStorage.clear(); loadThreadPlan.mockClear(); openThread.mockClear(); });
-afterEach(() => { cleanup(); plans = {}; });
+afterEach(() => { cleanup(); plans = {}; accounts = {}; });
 
 describe('ThreadPlanBand', () => {
   it('진행률이 없으면 그리지도 받지도 않는다', () => {
@@ -132,4 +133,33 @@ describe('ThreadPlanBand', () => {
     render(<ThreadPlanBand rootId="r1" progress={{ ...P(1, 4, 1), rev: 3 }} />);
     expect(screen.getByTestId('plan-stale')).toBeTruthy();
   });
+
+  it('P6: 목록 행 updatedAt 이 들고 있는 판보다 늦으면 rev 가 같아도 다시 받는다', () => {
+    plans = { r1: view('2026-11-03T00:00:00.000Z') };
+    render(<ThreadPlanBand rootId="r1" progress={{ ...P(1, 4, 1), rev: 3, updatedAt: '2026-11-03T00:00:00.000Z' }} />);
+    expect(loadThreadPlan).not.toHaveBeenCalled();
+    cleanup();
+    render(<ThreadPlanBand rootId="r1" progress={{ ...P(1, 4, 1), rev: 3, updatedAt: '2026-11-03T05:00:00.000Z' }} />);
+    expect(loadThreadPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it('P6: 담당은 이 커뮤니티에 있는 계정일 때만 이름을 그린다', () => {
+    const v = view();
+    v.doc = { ...v.doc, steps: v.doc.steps.map((st) => (st.id === 's2' ? { ...st, assigneeId: 'a1' } : st.id === 's4' ? { ...st, assigneeId: 'gone' } : st)) };
+    plans = { r1: v };
+    accounts = { a1: { id: 'a1', handle: 'builder' } };
+    render(<ThreadPlanBand rootId="r1" progress={{ ...P(1, 4, 1), rev: 3 }} />);
+    fireEvent.click(screen.getByTestId('plan-band-toggle'));
+    expect(screen.getAllByTestId('plan-assignee').map((e) => e.textContent)).toEqual(['@builder']);
+  });
+
+  it('P6(designer n2): 앞을 기다리는 그룹도 자식이 움직였으면 대기 알약에 진행 수를 붙인다', () => {
+    const v = view();
+    v.doc = { ...v.doc, groups: v.doc.groups.filter((g) => g.id !== 'g1' && g.id !== 'g3') };
+    v.derived = { ...v.derived, g4: { derived: 'waiting', waitingOn: ['g2'] } } as unknown as ThreadPlanView['derived'];
+    plans = { r1: v };
+    render(<ThreadPlanBand rootId="r1" progress={{ ...P(1, 4, 1), rev: 3 }} />);
+    expect(screen.getAllByTestId('plan-pill').map((p) => p.textContent)).toContain('하위 작업 waiting 1/2');
+  });
 });
+

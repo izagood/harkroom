@@ -123,3 +123,15 @@ export function savePlanOpen(rootId: string, open: boolean): void {
     else localStorage.removeItem(OPEN_KEY + rootId);
   } catch { /* 저장 못 해도 이번 화면은 연다 */ }
 }
+
+/** 로그아웃 때 펼침 기억을 지운다(security 낮음) — 내용은 없지만 연 스레드 id 가 기기에 남지 않게. */
+export function clearPlanOpenKeys(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(OPEN_KEY)) keys.push(k);
+    }
+    for (const k of keys) localStorage.removeItem(k);
+  } catch { /* 저장소가 막혀도 로그아웃은 계속한다 */ }
+}

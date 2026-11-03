@@ -4755,6 +4755,7 @@ export const en = {
   'plan.pill.done': '{title}✓',
   'plan.pill.blocked': '{title} blocked {done}/{total}',
   'plan.pill.waiting': '{title} waiting',
+  'plan.pill.waitingCount': '{title} waiting {done}/{total}',
   'plan.pill.count': '{title} {done}/{total}',
   'plan.summary': '{groups} groups · {active} in progress · {blocked} blocked',
   'plan.summaryNoBlocked': '{groups} groups · {active} in progress',

@@ -41,7 +41,7 @@ import { stampLabel } from '../lib/day';
 import type { SectionId } from './settings/sections';
 import { useT, useLocale } from '../i18n/useT';
 import { systemText, chainBackstopText } from '../lib/systemText';
-import { systemLineShape, systemLineTarget, systemRecordIcon } from '../lib/systemLine';
+import { planReadyTitles, systemLineShape, systemLineTarget, systemRecordIcon } from '../lib/systemLine';
 
 /**
  * 얼굴 슬롯의 칸 수. **폭이 고정되는 것이 이 숫자의 일**이다 — 참여자가 늘어도 요약 줄이
@@ -853,6 +853,10 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                   <span className="sr-only">{t('message.system.srLabel')}: </span>
                   {avcsType && <span className="mr-1.5 rounded-sm bg-warning-surface-strong px-1 text-warning">{avcsType}</span>}
                   {systemLine ?? shownBody}
+                  {/* 계획판 ready 줄(P6) — 단계 제목은 남이 쓴 글이라 meta 에만 온다. React 텍스트로만 그린다(멘션·링크·마크다운으로 풀지 않음). */}
+                  {planReadyTitles(message).map(([id, title]) => (
+                    <span key={id} data-testid="plan-ready-title" className="ml-1.5 text-fg-subtle">· {id} {title}</span>
+                  ))}
                   <span className="ml-1.5 text-fg-subtle">{time}</span>
                 </p>
               : systemLine !== null

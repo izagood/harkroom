@@ -2698,6 +2698,7 @@ export const ko = {
   'plan.pill.done': '{title}✓',
   'plan.pill.blocked': '{title} 막힘 {done}/{total}',
   'plan.pill.waiting': '{title} 대기',
+  'plan.pill.waitingCount': '{title} 대기 {done}/{total}',
   'plan.pill.count': '{title} {done}/{total}',
   'plan.summary': '그룹 {groups} · 진행 {active} · 막힘 {blocked}',
   'plan.summaryNoBlocked': '그룹 {groups} · 진행 {active}',

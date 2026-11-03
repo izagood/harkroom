@@ -16,7 +16,8 @@ import { messageLinkFromMeta } from './link';
 export type SystemLineShape = 'record' | 'response';
 
 // runner: 러너 알림 줄(앞 턴 대기·임대 잃음·조종 대기, 2026-11-02) — 누구의 요청에 대한 응답이 아니라 사람 멘션의 상태다.
-const RECORD_KEY = /^system\.(member|threadModel|runner)\./;
+// plan: 계획판 「이제 시작 가능」 줄(P6) — 누구의 요청에 대한 응답이 아니라 계획 상태의 기록이다.
+const RECORD_KEY = /^system\.(member|threadModel|runner|plan)\./;
 
 export function systemLineShape(message: Pick<MessageRow, 'kind' | 'meta'>): SystemLineShape | null {
   if (message.kind !== 'system') return null;
@@ -35,6 +36,7 @@ export function systemRecordIcon(message: Pick<MessageRow, 'meta'>): string {
   if (key.startsWith('system.member.')) return '−';
   if (key.startsWith('system.threadModel.')) return '⚙';
   if (key === 'system.runner.fenced') return '↪';
+  if (key.startsWith('system.plan.')) return '▶';
   if (key.startsWith('system.runner.')) return '⏳';
   return '•';
 }
@@ -49,4 +51,22 @@ export function systemLineTarget(message: Pick<MessageRow, 'authorId' | 'meta'>)
   const chat = (message.meta as Record<string, unknown> | undefined)?.chatApproval as { messageId?: unknown } | undefined;
   if (chat) return { accountId: message.authorId, what: 'post', href: messageLinkFromMeta(chat.messageId) };
   return { accountId: message.authorId, what: 'request', href: null };
+}
+
+/**
+ * 계획판 ready 줄의 단계 제목(P6) — `meta.planReady.titles` 를 id 순서대로. 서버가 본문에서 뺀 남의 글이라 화면은
+ * 이것을 **글자로만** 그린다. 모양이 틀리면 빈 목록(id 꼴·문자열만 받고, 제목은 120자로 자른다).
+ */
+export function planReadyTitles(message: Pick<MessageRow, 'kind' | 'meta'>): [string, string][] {
+  if (message.kind !== 'system') return [];
+  const ready = (message.meta as Record<string, unknown> | undefined)?.planReady as { ids?: unknown; titles?: unknown } | undefined;
+  if (!ready || !Array.isArray(ready.ids) || !ready.titles || typeof ready.titles !== 'object') return [];
+  const titles = ready.titles as Record<string, unknown>;
+  const out: [string, string][] = [];
+  for (const id of ready.ids.slice(0, 40)) {
+    if (typeof id !== 'string' || !/^[sg][1-9][0-9]{0,3}$/.test(id)) continue;
+    const t = titles[id];
+    if (typeof t === 'string' && t.trim()) out.push([id, [...t].slice(0, 120).join('')]);
+  }
+  return out;
 }
