@@ -13,6 +13,7 @@ import type { TurnModel } from './threadModel.js';
 import { endTurnKeys, registerTurnKeys, type TurnKeys } from './turnKeys.js';
 import type { RecallHit, RecallResult } from './memoryPin.js';
 import type { BgJob } from './bgExecutor.js';
+import type { ThreadPlanSnapshot } from './threadPlanPin.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { AccountView, AgentView, FailureCode, InboxEntry, MessageRow } from '@harkroom/shared';
 import type { RelayClient } from './relay.js';
@@ -523,6 +524,26 @@ export class HarkroomAgentClient {
     return {
       body: n.body, updatedAt: n.updatedAt,
       ...(n.flagged ? { flagged: { reason: typeof n.flagged.reason === 'string' ? n.flagged.reason : 'flagged' } } : {}),
+    };
+  }
+
+  /**
+   * 스레드 계획판 읽기(`thread.plan`, plan 생략). 서버가 부른 계정 기준으로 센 파생 상태·진행률을 준다.
+   * 계획이 없으면 null. 모양이 어긋나면(옛·다른 서버) 던진다 — 부르는 쪽이 이번 턴은 싣지 않는다.
+   */
+  async readThreadPlan(threadRootId: string): Promise<ThreadPlanSnapshot | null> {
+    const res = await this.call<{ plan?: Partial<ThreadPlanSnapshot> | null; error?: { code?: string } }>('thread.plan', { threadRootId });
+    if (res.error) throw new Error(`thread.plan: ${res.error.code ?? 'error'}`);
+    const p = res.plan;
+    if (!p) return null;
+    if (!p.doc || typeof p.updatedAt !== 'string' || typeof p.rev !== 'number' || !p.derived || !p.progress
+      || !Array.isArray(p.doc.groups) || !Array.isArray(p.doc.steps)) {
+      throw new Error('thread.plan: unexpected shape');
+    }
+    return {
+      doc: p.doc, rev: p.rev, updatedAt: p.updatedAt, derived: p.derived, progress: p.progress,
+      flagged: p.flagged ? { reason: typeof p.flagged.reason === 'string' ? p.flagged.reason : 'flagged' } : null,
+      linked: Array.isArray(p.linked) ? p.linked : [],
     };
   }
 

@@ -46,6 +46,7 @@ import type { TurnRegistry } from './turnRegistry.js';
 import type { MemoryCache } from './memoryCache.js';
 import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { planThreadNote, type ThreadNoteState } from './threadNotePin.js';
+import { planThreadPlan, type ThreadPlanState } from './threadPlanPin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
 import { issueTurnKeys, turnKeyValues, type TurnKeys } from './turnKeys.js';
 import { scrubNeedles, scrubPath, scrubText } from './secretScrub.js';
@@ -128,6 +129,8 @@ export interface MentionTurnHarkroom {
   recordRecall?(keys: string[]): Promise<void>;
   /** 스레드 메모(`thread.note`, S1). 없으면(테스트·옛 조립) 싣지 않는다. */
   readThreadNote?(threadRootId: string): Promise<Exclude<ThreadNoteState, 'unavailable'>>;
+  /** 스레드 계획판(계획판 P3, `threadPlanPin.ts`). 옛 클라이언트·시험 대역은 없을 수 있다. */
+  readThreadPlan?(threadRootId: string): Promise<Exclude<ThreadPlanState, 'unavailable'>>;
   /**
    * #140: 승인된 스킬 목록. **실패는 던진다** — 러너가 stderr 에 한 줄 남길 수 있어야 한다.
    * 여기서 빈 배열로 삼키면 "스킬이 없다"와 "서버를 못 읽었다"가 같은 값이 되고, 그러면
@@ -1303,6 +1306,22 @@ export async function runMentionTurn(
   const plannedNote = await planThreadNote({ stateDir: deps.stateDir, key, sessionId: rec.sessionId, isFirstTurn, note });
   // 깨움 세션은 고정을 저장하지 않는다 — 위 기억 고정과 같은 이유(버릴 세션 id 로 덮으면 이어받는 턴이 다시 싣는다).
   const notePlan = freshWake ? { ...plannedNote, commit: async () => {} } : plannedNote;
+  // 스레드 계획판(계획판 P3, `threadPlanPin.ts`) — 스레드의 공개 계획. 메모와 같은 규칙(새 세션 전문·이어받으면 바뀐 때만)이고
+  // 계획 → 메모 순으로 싣는다(설계 1-B). 옛 서버(도구 없음)·실패는 싣지 않고 턴은 돈다.
+  const readPlan = deps.harkroom.readThreadPlan?.bind(deps.harkroom);
+  let threadPlan: ThreadPlanState = 'unavailable';
+  if (anchor && readPlan) {
+    try {
+      threadPlan = await readPlan(anchor);
+    } catch (err: unknown) {
+      console.error(`[mentionTurn] ${key}: 계획판 조회 실패 — 이번 턴은 싣지 않는다: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const plannedPlan = await planThreadPlan({
+    stateDir: deps.stateDir, key, sessionId: rec.sessionId, isFirstTurn, meId: deps.me.id, plan: threadPlan,
+  });
+  // 깨움 세션은 고정을 저장하지 않는다 — 메모와 같은 이유.
+  const planPin = freshWake ? { ...plannedPlan, commit: async () => {} } : plannedPlan;
   // 하네스 파일 메모리 수확 알림(U5, `harnessMemory.ts`). 어댑터가 그 자리를 아는 하네스만
   // (지금은 claude). 읽기 실패는 빈 목록이라 턴을 막지 않는다.
   const fileMemoryRoot = fileMemoryDirUnderConfig(def.harness);
@@ -1315,13 +1334,14 @@ export async function runMentionTurn(
     : null;
   const headLines = [
     ...memoryPlan.turnLines,
+    ...(planPin.lines.length ? ['', ...planPin.lines] : []),
     ...(notePlan.lines.length ? ['', ...notePlan.lines] : []),
     ...(harnessNotice?.lines.length ? ['', ...harnessNotice.lines] : []),
   ];
   // 주입 크기를 턴마다 한 줄(S2 지표 — 설계 3절 「깨움 턴 주입 ≤4k」·「첫 턴 index ≤6k」). 본문은 남기지 않는다.
   console.log(`[memoryPin] inject ${key}: ${freshWake ? 'wake' : isFirstTurn ? 'first' : 'resume'}`
     + ` head=${headLines.join('\n').length} core=${memoryPlan.system === 'unavailable' ? '?' : memoryPlan.system.core?.length ?? 0}`
-    + ` note=${notePlan.lines.join('\n').length}`);
+    + ` plan=${planPin.lines.join('\n').length} note=${notePlan.lines.join('\n').length}`);
   const turnPrompt = headLines.length
     ? `${headLines.join('\n').replace(/^\n+/, '')}\n\n${prompt}`
     : prompt;
@@ -2886,6 +2906,7 @@ export async function runMentionTurn(
   // 이 턴에 알린 기억을 저장한다 — 성공한 턴만(`memoryPin.ts` 머리). 세션 id 는 **지금** 값을
   // 넘긴다: codex 는 첫 턴이 끝나야 id 가 생긴다.
   await memoryPlan.commit(rec.sessionId);
+  await planPin.commit(rec.sessionId);
   await notePlan.commit(rec.sessionId);
   // 깨움 세션은 버리므로 하네스 메모리 알림도 "알렸다"로 적지 않는다 — 다음 이어받는 턴이 알아야 한다.
   if (!freshWake) await harnessNotice?.commit();

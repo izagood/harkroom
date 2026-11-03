@@ -112,7 +112,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** 백그라운드 회차가 쓸 수 있는 도구(설계 5절). 이 밖은 서버가 거절한다. */
 const BG_ALLOWED_TOOLS = new Set([
   'memory.get', 'memory.list', 'memory.search', 'memory.audit', 'memory.set', 'memory.archive', 'memory.merge',
-  'thread.note', 'message.read', 'bg.complete',
+  'thread.note', 'thread.plan', 'message.read', 'bg.complete',
 ]);
 /** 그중 기억을 바꾸는 것 — 회차당 상한(20)을 센다. */
 const BG_WRITE_TOOLS = new Set(['memory.set', 'memory.archive', 'memory.merge']);
@@ -498,7 +498,7 @@ function buildMcpServer(
    * **러너가 뚫려도 서버에서 막는** 2차 장치다 — 사람이 보지 않는 턴이라 둘 다 둔다. 모든 도구를 등록 자리에서 감싼다
    * (leakGuard 와 같은 이유: 새 도구가 생겨도 빠지지 않는다).
    * - 허용 목록 밖 도구는 거절한다. 회차가 running·같은 계정인지 매 호출 본다(닫힌 회차의 세션으로는 아무것도 못 한다).
-   * - message.read·thread.note 는 그 회차 입력 스레드로만, thread.note 는 읽기만.
+   * - message.read·thread.note·thread.plan 은 그 회차 입력 스레드로만, thread.note·thread.plan 은 읽기만.
    * - 기억 쓰기: core 금지·지우기 금지(보관을 쓴다)·회차당 20건(원자 예약). 바뀐 것은 bg_job_change 에 남긴다.
    * 모든 요청에서: 쓰기의 출처(회차·턴)를 이전 판 기록에 싣는다(`writeOrigin.ts`).
    */
@@ -517,11 +517,12 @@ function buildMcpServer(
         }
         const args = (a[0] ?? {}) as Record<string, unknown>;
         const threads = new Set(job.input.threadIds ?? []);
-        if (toolName === 'message.read' || toolName === 'thread.note') {
+        if (toolName === 'message.read' || toolName === 'thread.note' || toolName === 'thread.plan') {
           if (typeof args.threadRootId !== 'string' || !threads.has(args.threadRootId)) {
             return refused('bg_thread_not_in_input', '이 회차의 입력 스레드만 읽을 수 있다');
           }
           if (toolName === 'thread.note' && args.body !== undefined) return refused('bg_note_read_only', '백그라운드 회차에서 스레드 메모는 읽기만 한다');
+          if (toolName === 'thread.plan' && args.plan !== undefined) return refused('bg_plan_read_only', '백그라운드 회차에서 계획판은 읽기만 한다');
           return run(...a);
         }
         if (toolName === 'bg.complete') return run(...a);
@@ -2155,7 +2156,7 @@ function buildMcpServer(
     linked_group_has_steps: '다른 스레드에 연결한 그룹은 자기 단계를 가질 수 없다(그 스레드의 계획이 정본이다)',
     limit_exceeded: '상한을 넘었다',
     duplicate_id: '같은 id 가 둘이다',
-    invalid_id: 'id 꼴이 틀렸다(그룹 g<n>, 단계 s<n>)',
+    invalid_id: 'id 꼴이 틀렸다(그룹 g1~g9999, 단계 s1~s9999). 번호가 9999 에 닿아 더 더할 수 없으면 thread.plan 으로 읽은 뒤 지우고(plan: null) 새 번호로 다시 세우면 풀린다',
   };
   const planError = (error: { code: string }) =>
     jsonResult({ error: { ...error, message: PLAN_ERROR_MESSAGES[error.code] ?? error.code } });
