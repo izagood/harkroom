@@ -3975,6 +3975,8 @@ export * from './permissions.js';
 export * from './passwordRule.js';
 export * from './toolRules.js';
 export * from './threadStatus.js';
+// 스레드 계획판 그래프(검증·순환·파생 상태·진행률) — 서버·앱·러너가 같은 판정을 쓴다.
+export * from './planGraph.js';
 export * from './chainStall.js';
 // 시스템 줄의 번역 표지(meta.i18n) 키 표·검사 — 서버가 쓰고 앱이 그린다(i18n P5).
 export * from './systemI18n.js';
