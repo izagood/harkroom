@@ -3,12 +3,13 @@
  *
  * 판정(검증·파생 상태·진행률)은 shared `planGraph.ts` 하나가 한다. 여기는 그것을 DB 와 권한에 잇는다.
  *
- * 연결 맵을 두 가지로 만든다(설계 N1):
- * - **보는 사람 기준**(`linkedFor(..., viewerId)`): 화면 응답(GET)만 쓴다. 자식 채널을 못 보거나 자식 글이 없으면
- *   둘 다 `'hidden'` — 없는 스레드와 볼 수 없는 스레드가 똑같이 보여야 있다는 사실이 새지 않는다.
- * - **서버 기준**(`linkedFor(..., null)`): 서버가 판정할 때(2차의 nowReady·알림) 쓴다. 권한으로 거르지 않는다.
- *   쓰는 이가 자식 스레드를 볼 수 있는지는 쓸 때 막는다(`linked_thread_unavailable`) — 그래서 도구 응답에
- *   서버 기준 판정이 실려도 쓴 이가 못 보는 스레드의 진척은 섞이지 않는다.
+ * 연결 맵은 **받는 쪽 기준**으로만 만든다(설계 R2) — 판정 결과는 결국 누군가에게 전달되므로, 거르지 않은 맵으로 센
+ * 「이제 시작 가능」은 못 보는 자식 스레드가 끝났다는 사실을 거꾸로 알려 준다.
+ * - **개인 맵**(`{ viewer }`): GET·도구 응답·프롬프트. 자식 글이 없거나 그 채널을 못 보면 `'hidden'` — 없는 스레드와
+ *   못 보는 스레드가 똑같이 보인다.
+ * - **청중 맵**(`{ audience: 부모 채널 }`): 이벤트·2차 시스템 줄·목록 칩처럼 부모 채널 청중 전원에게 한 값으로 가는 자리.
+ *   자식이 public standard 채널이거나 부모와 같은 채널일 때만 보이고, 그 밖은 `'hidden'`.
+ * 거르지 않은 사실은 쓸 때의 존재 확인에만 쓰고 밖으로 내지 않는다.
  */
 import type { Pool, PoolClient } from 'pg';
 import {
@@ -62,51 +63,55 @@ interface ChildFacts {
   /** 자식 루트 글이 (지워지지 않고) 있다. */
   exists: boolean;
   channelId: string | null;
-  /** viewerId 가 있을 때만 뜻이 있다. */
-  visible: boolean;
+  /** 자식 채널이 public standard 다(누구나 본다). */
+  publicChannel: boolean;
+  /** viewerId 를 줬을 때 그 사람이 자식 채널을 보는가. 주지 않았으면 false. */
+  viewerVisible: boolean;
   /** 자식 계획의 진행률(1단 합침 — 자식의 연결 그룹은 다시 풀지 않는다). 계획이 없으면 null. */
   progress: PlanProgress | null;
 }
 
-async function childFacts(pool: Queryable, roots: string[], viewerId: string | null): Promise<Map<string, ChildFacts>> {
+async function childFacts(db: Queryable, roots: string[], viewerId: string | null): Promise<Map<string, ChildFacts>> {
   const out = new Map<string, ChildFacts>();
   if (!roots.length) return out;
-  const res = await pool.query(
+  const res = await db.query(
     `select m.id, m.channel_id, p.doc,
-            ${viewerId ? channelVisibleSql('c', '$2') : 'true'} as visible
+            (c.kind = 'standard' and c.visibility = 'public') as public_channel,
+            ${viewerId ? channelVisibleSql('c', '$2') : 'false'} as viewer_visible
        from message m
        join channel c on c.id = m.channel_id
        left join thread_plan p on p.root_id = m.id
       where m.id = any($1::uuid[]) and m.deleted_at is null and m.thread_root_id is null`,
     viewerId ? [roots, viewerId] : [roots],
   );
-  for (const r of res.rows as { id: string; channel_id: string; doc: PlanDoc | null; visible: boolean }[]) {
+  for (const r of res.rows as { id: string; channel_id: string; doc: PlanDoc | null; public_channel: boolean; viewer_visible: boolean }[]) {
     out.set(r.id, {
-      rootId: r.id, exists: true, channelId: r.channel_id, visible: Boolean(r.visible),
-      // 재귀하지 않는다(K5): 자식의 연결 그룹은 자식이 받은 맵 없이 센다 — 「아직 계획 없음」으로 읽힌다.
+      rootId: r.id, exists: true, channelId: r.channel_id,
+      publicChannel: Boolean(r.public_channel), viewerVisible: Boolean(r.viewer_visible),
+      // 재귀하지 않는다(K5): 자식의 연결 그룹은 맵 없이 센다 — 「아직 계획 없음」으로 읽힌다.
       progress: r.doc ? planProgress(r.doc) : null,
     });
   }
   for (const id of roots) {
-    if (!out.has(id)) out.set(id, { rootId: id, exists: false, channelId: null, visible: false, progress: null });
+    if (!out.has(id)) out.set(id, { rootId: id, exists: false, channelId: null, publicChannel: false, viewerVisible: false, progress: null });
   }
   return out;
 }
 
 const ZERO: PlanProgress = { done: 0, total: 0, active: 0, blocked: 0, waiting: 0 };
 
-/**
- * 연결 맵. `viewerId` 가 있으면 보는 사람 기준(없거나 못 보면 'hidden'), null 이면 서버 기준(거르지 않음 —
- * 없는 자식은 「아직 계획 없음」).
- */
-export async function linkedFor(pool: Queryable, doc: PlanDoc, viewerId: string | null): Promise<{
+/** 누구에게 갈 결과인가. 개인(그 사람 권한) 또는 부모 채널 청중(전원에게 한 값). */
+export type LinkedAudience = { viewer: string } | { audience: string };
+
+/** 연결 맵 — 받는 쪽 기준(파일 머리 주석). 못 보거나 없는 자식은 `'hidden'`. */
+export async function linkedFor(db: Queryable, doc: PlanDoc, to: LinkedAudience): Promise<{
   map: LinkedProgress; views: ThreadPlanLinkedView[];
 }> {
-  const facts = await childFacts(pool, linkedRoots(doc), viewerId);
+  const facts = await childFacts(db, linkedRoots(doc), 'viewer' in to ? to.viewer : null);
   const map = new Map<string, PlanProgress | 'hidden'>();
   for (const f of facts.values()) {
-    const hidden = viewerId !== null && (!f.exists || !f.visible);
-    map.set(f.rootId, hidden ? 'hidden' : (f.progress ?? ZERO));
+    const visible = f.exists && ('viewer' in to ? f.viewerVisible : (f.publicChannel || f.channelId === to.audience));
+    map.set(f.rootId, visible ? (f.progress ?? ZERO) : 'hidden');
   }
   const views: ThreadPlanLinkedView[] = [];
   for (const g of doc.groups) {
@@ -122,7 +127,7 @@ export async function linkedFor(pool: Queryable, doc: PlanDoc, viewerId: string 
 
 /** 화면 응답. 파생 상태·진행률은 보는 사람 기준 맵으로 센다. */
 export async function threadPlanView(pool: Pool, row: ThreadPlanRow, viewerId: string): Promise<ThreadPlanView> {
-  const { map, views } = await linkedFor(pool, row.doc, viewerId);
+  const { map, views } = await linkedFor(pool, row.doc, { viewer: viewerId });
   return {
     rootId: row.rootId,
     channelId: row.channelId,
@@ -147,7 +152,10 @@ export type ThreadPlanWriteError =
   | { code: 'invalid_linked_root'; id: string }
   /** 자기 스레드를 가리켰다(A→A). */
   | { code: 'self_link'; id: string }
-  /** 연결할 스레드가 없거나 쓰는 이가 볼 수 없다 — 둘을 가르지 않는다(있다는 사실을 새지 않는다). 답글 id 도 이것이다. */
+  /**
+   * **새로 더한** 연결 스레드가 없거나 쓰는 이가 볼 수 없다 — 둘을 가르지 않는다(있다는 사실을 새지 않는다). 답글 id 도
+   * 이것이다. 이미 있던 연결은 다시 묻지 않는다(R1) — 남이 건 연결 때문에 다른 단계를 못 고치면 안 된다.
+   */
   | { code: 'linked_thread_unavailable'; id: string };
 
 export type ThreadPlanWriteResult =
@@ -182,10 +190,6 @@ export async function setThreadPlan(
       if (!UUID_RE.test(id)) return { ok: false, error: { code: 'invalid_linked_root', id } };
       if (id.toLowerCase() === rootId.toLowerCase()) return { ok: false, error: { code: 'self_link', id } };
     }
-    const facts = await childFacts(pool, linkedRoots(doc), actorId);
-    for (const f of facts.values()) {
-      if (!f.exists || (actorId !== null && !f.visible)) return { ok: false, error: { code: 'linked_thread_unavailable', id: f.rootId } };
-    }
   }
   const flag = doc ? scanWrite(...planTexts(doc)) : null;
 
@@ -193,8 +197,8 @@ export async function setThreadPlan(
   let result: ThreadPlanWriteResult | { ok: true; deleted: true };
   try {
     await client.query('begin');
-    const cur = await client.query(`select updated_at, rev from thread_plan where root_id = $1 for update`, [rootId]);
-    const now = cur.rows[0] as { updated_at: Date; rev: number } | undefined;
+    const cur = await client.query(`select updated_at, rev, doc from thread_plan where root_id = $1 for update`, [rootId]);
+    const now = cur.rows[0] as { updated_at: Date; rev: number; doc: PlanDoc } | undefined;
     if (now && !guard) {
       await client.query('rollback');
       return { ok: false, error: { code: 'guard_required', updatedAt: now.updated_at.toISOString(), rev: now.rev } };
@@ -202,6 +206,18 @@ export async function setThreadPlan(
     if (guard && (guard.updatedAt?.getTime() ?? null) !== (now?.updated_at.getTime() ?? null)) {
       await client.query('rollback');
       return { ok: false, error: { code: 'conflict', updatedAt: now?.updated_at.toISOString() ?? null, rev: now?.rev ?? null } };
+    }
+    if (doc) {
+      // 잠근 판과 견줘 새로 더한 연결만 묻는다(R1). 2차 자동 갱신(actorId null)은 존재만 본다.
+      const before = new Set(now ? linkedRoots(now.doc).map((id) => id.toLowerCase()) : []);
+      const added = linkedRoots(doc).filter((id) => !before.has(id.toLowerCase()));
+      const facts = await childFacts(client, added, actorId);
+      for (const f of facts.values()) {
+        if (!f.exists || (actorId !== null && !f.viewerVisible)) {
+          await client.query('rollback');
+          return { ok: false, error: { code: 'linked_thread_unavailable', id: f.rootId } };
+        }
+      }
     }
     if (!doc) {
       await client.query(`delete from thread_plan where root_id = $1`, [rootId]);
@@ -240,11 +256,15 @@ export async function setThreadPlan(
 }
 
 /**
- * `thread.plan.changed` 를 낸다. progress 는 연결 그룹이 없는 계획에만 싣는다 — 연결 진행률은 보는 사람마다 다르므로
- * 채널 청중 전원에게 한 값을 보내면 비공개 자식의 진척이 샌다(security P1 조건 3). 그때는 null 이고 화면이 GET 으로 다시 읽는다.
+ * `thread.plan.changed` 를 낸다. progress 는 **청중 맵**으로 센다(R2) — 부모 채널 청중 전원에게 한 값으로 가므로, 그 청중이
+ * 다 볼 수 있는 자식(public standard 이거나 같은 채널)만 열고 나머지는 hidden 으로 센다. 계획이 지워졌으면 rev·progress 가 null.
  */
 export async function emitPlanChanged(pool: Pool, channelId: string, rootId: string, row: ThreadPlanRow | null): Promise<void> {
-  const progress = row && linkedRoots(row.doc).length === 0 ? planProgress(row.doc) : null;
+  let progress: PlanProgress | null = null;
+  if (row) {
+    const { map } = await linkedFor(pool, row.doc, { audience: channelId });
+    progress = planProgress(row.doc, map);
+  }
   emitEvent({
     type: 'thread.plan.changed', channelId, rootId, rev: row?.rev ?? null, progress,
     audience: await audienceFor(pool, channelId),

@@ -13,8 +13,8 @@ import { linkedFor, setThreadPlan } from '../src/services/threadPlan.js';
  *
  * 1. 계획이 없으면 null. 답글·없는 글·못 보는 채널은 모두 404(가르지 않는다).
  * 2. 저장 전 validatePlan — 순환은 거절. 이미 있으면 guard 필수, 낡은 guard 는 conflict, 맞으면 rev+1.
- * 3. 연결: uuid 꼴·자기 연결·없는/못 보는 스레드(같은 코드) 거절. GET 은 보는 사람 기준으로 hidden, 서버 기준 맵은 거르지 않음.
- * 4. 이벤트 progress 는 연결 그룹이 없을 때만 싣는다.
+ * 3. 연결: uuid 꼴·자기 연결·없는/못 보는 스레드(같은 코드) 거절 — 새로 더한 연결만 묻는다(R1).
+ * 4. 연결 맵은 받는 쪽 기준(R2): GET 은 개인 맵, 이벤트 progress 는 청중 맵(public·같은 채널만 열림).
  * 5. 쓰기 검사에 걸려도 저장하되 flagged.
  */
 let app: FastifyInstance;
@@ -133,7 +133,7 @@ describe('thread plan', () => {
     expect(invisible).toMatchObject({ ok: false, error: { code: 'linked_thread_unavailable' } });
   });
 
-  it('연결 진행률: GET 은 보는 사람 기준(못 보면 hidden), 서버 기준 맵은 거르지 않는다 · 이벤트 progress 는 null', async () => {
+  it('연결 진행률: GET 은 개인 맵(못 보면 hidden), 이벤트는 청중 맵 — 비공개 자식은 청중에게 hidden', async () => {
     const parent = await post(admin.token, publicCh, { body: 'parent2' });
     const child = await post(admin.token, privateCh, { body: 'child2' });
     await setThreadPlan(pool, { rootId: child, channelId: privateCh, doc: simple(), actorId: admin.accountId });
@@ -151,7 +151,8 @@ describe('thread plan', () => {
       off();
     }
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ rev: 1, progress: null });
+    // 부모는 public, 자식은 private — 청중 전원이 볼 수 없으니 연결 그룹은 끝나지 않은 한 단위로만 센다.
+    expect(events[0]).toMatchObject({ rev: 1, progress: { done: 0, total: 2, active: 0, blocked: 0, waiting: 1 } });
 
     const links = await pool.query(`select child_root from thread_plan_link where parent_root = $1`, [parent]);
     expect(links.rows).toEqual([{ child_root: child }]);
@@ -168,10 +169,59 @@ describe('thread plan', () => {
     }]);
     expect(asAdmin.derived.g1.derived).toBe('active');
 
-    const server = await linkedFor(pool, doc, null);
-    expect(server.map.get(child)).toEqual({ done: 1, total: 2, active: 0, blocked: 0, waiting: 0 });
-    const viewer = await linkedFor(pool, doc, member.accountId);
-    expect(viewer.map.get(child)).toBe('hidden');
+    expect((await linkedFor(pool, doc, { audience: publicCh })).map.get(child)).toBe('hidden');
+    expect((await linkedFor(pool, doc, { viewer: member.accountId })).map.get(child)).toBe('hidden');
+    expect((await linkedFor(pool, doc, { viewer: admin.accountId })).map.get(child)).toEqual({ done: 1, total: 2, active: 0, blocked: 0, waiting: 0 });
+  });
+
+  it('청중 맵: 같은 채널·public 채널의 자식은 열리고, 이벤트 progress 에 그 진척이 실린다', async () => {
+    const parent = await post(admin.token, privateCh, { body: 'parent3' });
+    const sameCh = await post(admin.token, privateCh, { body: 'child-same' });
+    const pubChild = await post(admin.token, publicCh, { body: 'child-pub' });
+    const done = simple({ steps: [{ id: 's1', title: 'x', state: 'done', links: [], dependsOn: [] }] });
+    await setThreadPlan(pool, { rootId: sameCh, channelId: privateCh, doc: done, actorId: admin.accountId });
+    await setThreadPlan(pool, { rootId: pubChild, channelId: publicCh, doc: done, actorId: admin.accountId });
+    const doc: PlanDoc = {
+      goal: 'A', groups: [
+        { id: 'g1', title: 'same', linkedRootId: sameCh, dependsOn: [] },
+        { id: 'g2', title: 'pub', linkedRootId: pubChild, dependsOn: [] },
+      ],
+      steps: [{ id: 's1', title: 'A', state: 'pending', links: [], dependsOn: ['g1', 'g2'] }],
+    };
+    const events: WorkspaceEvent[] = [];
+    const off = onEvent((e) => { if (e.type === 'thread.plan.changed' && e.rootId === parent) events.push(e); });
+    try {
+      expect((await setThreadPlan(pool, { rootId: parent, channelId: privateCh, doc, actorId: admin.accountId })).ok).toBe(true);
+    } finally {
+      off();
+    }
+    expect(events[0]).toMatchObject({ progress: { done: 2, total: 3, active: 0, blocked: 0, waiting: 0 } });
+    const aud = await linkedFor(pool, doc, { audience: privateCh });
+    expect(aud.views.map((v) => v.hidden)).toEqual([false, false]);
+  });
+
+  it('못 보는 연결이 이미 있는 계획에서 다른 단계를 고치면 통과하고, 못 보는 연결을 새로 더하면 막힌다(R1)', async () => {
+    const parent = await post(admin.token, publicCh, { body: 'parent4' });
+    const child = await post(admin.token, privateCh, { body: 'child4' });
+    const other = await post(admin.token, privateCh, { body: 'child5' });
+    const doc = (title: string, extra = false): PlanDoc => ({
+      goal: 'A', groups: [
+        { id: 'g1', title: 'B', linkedRootId: child, dependsOn: [] },
+        ...(extra ? [{ id: 'g2', title: 'C', linkedRootId: other, dependsOn: [] }] : []),
+      ],
+      steps: [{ id: 's1', title, state: 'pending', links: [], dependsOn: ['g1'] }],
+    });
+    const first = await setThreadPlan(pool, { rootId: parent, channelId: publicCh, doc: doc('A'), actorId: admin.accountId });
+    if (!first.ok || !('row' in first)) throw new Error('write failed');
+    const edit = await setThreadPlan(pool, {
+      rootId: parent, channelId: publicCh, doc: doc('A 고침'), actorId: member.accountId, guard: { updatedAt: first.row.updatedAt },
+    });
+    expect(edit).toMatchObject({ ok: true, row: { rev: 2 } });
+    if (!edit.ok || !('row' in edit)) throw new Error('edit failed');
+    const add = await setThreadPlan(pool, {
+      rootId: parent, channelId: publicCh, doc: doc('A 고침', true), actorId: member.accountId, guard: { updatedAt: edit.row.updatedAt },
+    });
+    expect(add).toEqual({ ok: false, error: { code: 'linked_thread_unavailable', id: other } });
   });
 
   it('쓰기 검사에 걸려도 저장하고 flagged 를 단다', async () => {

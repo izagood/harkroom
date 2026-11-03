@@ -67,7 +67,7 @@ export type WorkspaceEvent =
       row: ThreadAgentModelView | null; audience: 'all' | string[] }
   // 보고처 깨움이 걸렸다·떴다·접혔다(2026-10-06). 신호뿐 — 값은 GET 이 보는 사람 권한으로 거른다.
   | { type: 'thread.reportWakes.changed'; channelId: string; rootId: string; audience: 'all' | string[] }
-  // 스레드 계획판(P1, services/threadPlan.ts). progress 는 연결 그룹이 없을 때만 — shared WsServerEvent 주석.
+  // 스레드 계획판(P1, services/threadPlan.ts). progress 는 청중 기준 — shared WsServerEvent 주석.
   | { type: 'thread.plan.changed'; channelId: string; rootId: string; rev: number | null;
       progress: PlanProgress | null; audience: 'all' | string[] };
 

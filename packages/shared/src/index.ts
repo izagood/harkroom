@@ -2933,9 +2933,9 @@ export type WsServerEvent =
    */
   | { type: 'thread.reportWakes.changed'; channelId: string; rootId: string; audience: 'all' | string[] }
   /**
-   * 스레드 계획판이 바뀌었다(P1). `progress` 는 **연결 그룹이 없는 계획일 때만** 싣는다 — 연결 그룹의 진행률은
-   * 자식 스레드를 볼 수 있는지에 따라 사람마다 달라서, 채널 청중 전원에게 한 값을 보내면 비공개 자식의 진척이 샌다.
-   * `null` 이면 화면이 `GET /threads/:rootId/plan` 을 다시 불러 자기 권한으로 센 값을 받는다. 계획이 지워졌으면 `rev` 가 null.
+   * 스레드 계획판이 바뀌었다(P1). `progress` 는 **청중 기준**으로 센다 — 연결 그룹은 부모 채널 청중이 다 볼 수 있는
+   * 자식(public standard 채널이거나 같은 채널)만 열고 나머지는 볼 수 없음으로 센다. 그래서 사람마다 다를 수 없고
+   * 목록 칩에 그대로 쓴다. 패널은 `GET /threads/:rootId/plan` 으로 자기 권한 값을 받는다. 계획이 지워졌으면 `rev`·`progress` 가 null.
    */
   | { type: 'thread.plan.changed'; channelId: string; rootId: string; rev: number | null;
       progress: import('./planGraph.js').PlanProgress | null; audience: 'all' | string[] };
