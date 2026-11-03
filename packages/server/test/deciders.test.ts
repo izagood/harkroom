@@ -19,6 +19,7 @@ describe('deciders — 카드를 정할 수 있는 사람', () => {
   let app: FastifyInstance;
   let alice: { token: string; accountId: string };
   let bob: { token: string; accountId: string };
+  let carol: { token: string; accountId: string };
   let agentId: string;
   let ch: string;
 
@@ -47,6 +48,7 @@ describe('deciders — 카드를 정할 수 있는 사람', () => {
     const admin = await bootstrapAdmin(app);
     alice = await createMember(app, admin.token, 'alice');
     bob = await createMember(app, admin.token, 'bob');
+    carol = await createMember(app, admin.token, 'carol');
     agentId = (await createAgent(app, admin.token, 'sitebot')).accountId;
     await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [agentId, alice.accountId]);
     ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'deciders' } })).json().id as string;
@@ -107,6 +109,18 @@ describe('deciders — 카드를 정할 수 있는 사람', () => {
     expect(notice.meta.i18n.key).toBe('system.permission.approvedByUser');
     const audit = (await pool.query(`select detail from audit_log where action = 'permission.approved' and detail->>'requestId' = $1`, [requestId])).rows[0];
     expect(audit.detail.asOwner).toBe(false);
+  });
+
+  it('서버 알림 줄 원칙: 대상(에이전트가 쓴 글) 속 멘션은 아무도 부르지 않고, 소유자는 부른다', async () => {
+    const { requestId, cardId, root } = await permissionCard('tool', `Bash(echo @carol <@${carol.accountId}>:*)`);
+    await pool.query(`insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing`, [ch, carol.accountId]);
+    const out = await decide(pool, { kind: 'permission', requestId, agentId, cardMessageId: cardId }, bob.accountId, { option: 'approve', via: 'button' });
+    expect(out).toMatchObject({ kind: 'permission', ok: true });
+    const inbox = async (accountId: string) => (await pool.query(
+      `select i.reason from inbox i join message m on m.id = i.message_id where i.account_id = $1 and m.thread_root_id = $2 and m.meta ? 'permissionUserDecision'`,
+      [accountId, root])).rows;
+    expect(await inbox(carol.accountId)).toEqual([]);
+    expect((await inbox(alice.accountId)).length).toBeGreaterThan(0);
   });
 
   it('security F2: 소유자가 못 보는 비공개 채널에서 승인하면 소유자↔에이전트 DM 으로 따로 알린다(채널 이름은 싣지 않는다)', async () => {
