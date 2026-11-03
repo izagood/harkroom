@@ -104,7 +104,8 @@ export async function recordBlocked(pool: Pool, b: BlockedInput): Promise<string
   const name = meta.connectorName ?? '(연결 없음)';
   const body = `🔒 ${handle} 의 API 호출이 막혔다 · ${name} \`${request}\` · ${reasonText[b.code] ?? b.code}`.replace(/@/g, '＠');
   const posted = await postMessage(pool, {
-    channelId: b.channelId, threadRootId: b.threadRootId, authorId: b.agentId, body, kind: 'system', serverNotice: true,
+    // 요청 경로는 에이전트가 쓴 글이다 — 부르지 않는다(services/noticeText.ts).
+    channelId: b.channelId, threadRootId: b.threadRootId, authorId: b.agentId, body, kind: 'system', serverNotice: true, noMentions: true,
     meta: {
       blocked: meta,
       // 번역 표지(i18n P5). 사유는 code 로 싣고 앱이 사전(`blocked.why.*`)으로 옮긴다. 이 카드는 같은 막힘이

@@ -187,6 +187,21 @@ describe('글 승인 → decidePermissionRequest(카드 버튼과 같은 효과)
   });
   afterAll(async () => { await client.close(); await app.close(); await db.stop(); });
 
+  it('서버 알림 줄 원칙: 규칙 원문 속 @bob 은 확인 줄로 아무도 부르지 않는다(앞 단 plain() + noMentions 두 겹)', async () => {
+    const thread = await root();
+    const { requestId } = await ask(thread, ch, { rule: `Bash(kubectl --context ops -n sitebot get @bob${n + 1}:*)` });
+    await pool.query(`insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing`, [ch, bob.accountId]);
+    const res = await say(alice.token, '승인', thread);
+    expect(res.statusCode).toBe(201);
+    expect(await status(requestId)).toBe('granted');
+    const lines = await systemLines(thread);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.body).toContain('＠bob');
+    expect((await pool.query(
+      `select 1 from inbox i join message m on m.id = i.message_id where i.account_id = $1 and m.thread_root_id = $2 and m.kind = 'system'`,
+      [bob.accountId, thread])).rowCount).toBe(0);
+  });
+
   it('카드 스레드에 소유자가 「승인」 → grant·카드 답·에이전트 깨움·확인 줄', async () => {
     const thread = await root();
     const { cardId, requestId } = await ask(thread);

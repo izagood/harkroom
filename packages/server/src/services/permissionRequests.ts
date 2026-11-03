@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { createHash } from 'node:crypto';
+import { plainNoticeText } from './noticeText.js';
 import type { CommandFileDigest } from '@harkroom/shared/runnerLink';
 import { orderToolRuleWarnings, PERMISSION_CARD_OPTION, repoGrantScope, TOOL_RULE_WARNING_HEAD_KO, repoScope, parseToolScope, toolScope, validateExactCommand, validateToolRule, type CommandFileArg, type MessageRow, type PermissionCardLine, type PermissionCardMandate, type PermissionMirrorMeta, type ToolRuleRefusal, type ToolRuleWarning } from '@harkroom/shared';
 import { recordAudit } from '../audit.js';
@@ -1403,7 +1404,8 @@ async function notifyOwnerOfUserDecision(
         where a.id = $1`, [n.agentId, n.actorId])).rows[0];
     if (!who?.ownerId || !who.owner) return;
     const until = n.expiresAt ? ` · ${n.expiresAt.toISOString().slice(0, 16).replace('T', ' ')}Z 까지` : '';
-    const body = `🔓 ${who.actor} 가 ${who.agent} 의 권한 요청을 승인했다(소유자 아님) · ${n.request.kind} ${n.request.target}${until} · 설정 › 에이전트에서 거둘 수 있다 @${who.owner}`;
+    // 소유자를 일부러 부르는 줄이라 noMentions 를 켤 수 없다 — 에이전트가 쓴 대상(target)만 무력화한다(services/noticeText.ts).
+    const body = `🔓 ${who.actor} 가 ${who.agent} 의 권한 요청을 승인했다(소유자 아님) · ${n.request.kind} ${plainNoticeText(n.request.target)}${until} · 설정 › 에이전트에서 거둘 수 있다 @${who.owner}`;
     // security F2: 소유자가 그 채널을 못 보면(남의 비공개 채널) 카드 스레드 줄은 기록으로만 남기고 소유자를 부르지 않는다 —
     // 볼 수 없는 채널을 가리키는 인박스가 생기지 않게. 알림은 아래 소유자↔에이전트 DM 으로 간다.
     const ownerSees = await assertChannelVisible(pool, n.request.channelId, who.ownerId);

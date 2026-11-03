@@ -19,7 +19,7 @@ describe('위임', () => {
   let app: FastifyInstance;
   let alice: { token: string; accountId: string };
   let bob: { token: string; accountId: string };
-  let a: string; let b: string; let c: string; let d: string; let e: string; let f: string; let bobs: string;
+  let a: string; let b: string; let c: string; let d: string; let e: string; let f: string; let g: string; let bobs: string;
   let connectorId: string; let ch: string; let other: string;
 
   /** 원인 메시지 — 기본은 위임하는 에이전트(a)를 깨운 글(inbox 있음). `woke: false` 면 깨우지 않은 글. */
@@ -53,7 +53,8 @@ describe('위임', () => {
     d = (await createAgent(app, admin.token, 'helper2')).accountId;
     e = (await createAgent(app, admin.token, 'helper3')).accountId;
     f = (await createAgent(app, admin.token, 'helper4')).accountId;
-    for (const x of [a, b, c, d, e, f]) await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [x, alice.accountId]);
+    g = (await createAgent(app, admin.token, 'helper5')).accountId;
+    for (const x of [a, b, c, d, e, f, g]) await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [x, alice.accountId]);
     await pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [bobs, bob.accountId]);
     const secretId = (await pool.query(`insert into secret (name, kind, owner_account_id) values ('lab-token', 'text', $1) returning id`, [alice.accountId])).rows[0].id;
     connectorId = (await app.inject({ method: 'POST', url: '/connectors', headers: auth(alice.token),
@@ -94,6 +95,17 @@ describe('위임', () => {
     expect(sys.body).toContain(`<@${alice.accountId}>`);
     expect(sys.meta.delegation).toMatchObject({ pending: false, rootAccountId: alice.accountId, toAgentId: b });
     expect((await listDelegations(pool, a)).given).toEqual([expect.objectContaining({ to: 'worker', connector: 'lab-api' })]);
+  });
+
+  it('서버 알림 줄 원칙: 경로 속 @bob 은 위임 줄에서 아무도 가리키지 않고, 루트 사람만 부른다', async () => {
+    const human = await msgBy(alice.accountId);
+    const r = await delegateApiGrant(pool, base({ to: g, pathPrefix: '/api/@bob', causeMessageId: human }));
+    expect(r).toMatchObject({ ok: true, pending: false });
+    const sys = (await pool.query(`select body, meta from message where meta->'delegation'->>'grantId' = $1`, [r.ok ? r.grantId : ''])).rows[0];
+    expect(sys.body).toContain(`<@${alice.accountId}>`);
+    expect(sys.body).not.toContain(`<@${bob.accountId}>`);
+    expect(sys.body).toContain('＠bob');
+    expect(JSON.stringify(sys.meta.mentionRefs ?? [])).not.toContain(bob.accountId);
   });
 
   it('사슬 판정: 부모가 칸을 켰는데 자식이 끄면 chain_broken(parent.w ⇒ child.w)', async () => {
