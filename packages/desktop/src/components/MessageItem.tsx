@@ -15,6 +15,7 @@ import { copyText } from '../lib/clipboard';
 import { AskCard } from './AskCard';
 import { AskBundleCard } from './AskBundleCard';
 import { ThreadStateBadge } from './ThreadStateBadge';
+import { PlanChip } from './PlanChip';
 import { threadStateFromFacts, isBlocking, threadStateLabel } from '../lib/threadState';
 import { waitChainFromLinks, chainEnds } from '../lib/waitChain';
 import { FailureCard } from './FailureCard';
@@ -1049,6 +1050,8 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                       })}
                   </span>
                 ) : summaryState && <ThreadStateBadge state={summaryState} />}
+                {/* 계획 진행 칩(P5·D2) — 서버가 루트 행에 실은 청중 기준 값. 계획 없는 스레드·옛 서버는 그리지 않는다. */}
+                <PlanChip progress={message.planProgress} />
                 {/*
                   **답장 수는 강조색을 받지 않는다**(#488 B2). 문서: *"N replies 는
                   '현재 상태'이지 '급한 것'이 아니다."* 강조색은 나를 막는 말에만 쓴다 —

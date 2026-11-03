@@ -1,4 +1,4 @@
-import type { AccountStatus, AvatarSourceMeta, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
+import type { AccountStatus, AvatarSourceMeta, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, ThreadPlanView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import { endSession } from '../lib/sessionEnd';
 import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchResult } from '../lib/memoryList';
 import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
@@ -765,6 +765,14 @@ export class Controller {
         }
         // 루트가 사라진 스레드를 계속 열어 두면 답글만 남은 빈 패널에 갇힌다.
         if (store.threadRootId === e.messageId) store.set({ threadRootId: null });
+        break;
+      }
+      case 'thread.plan.changed': {
+        // 계획판(P1). 칩은 이벤트 값 그대로(청중 기준), 패널 판은 rev 가 바뀌었을 때만 다시 받는다(architect D-b).
+        const progress = e.rev === null || !e.progress ? null : { ...e.progress, rev: e.rev };
+        store.applyThreadPlanProgress(e.channelId, e.rootId, progress);
+        const held = store.threadPlans[e.rootId];
+        if (held !== undefined && (held?.rev ?? null) !== e.rev) void this.loadThreadPlan(e.rootId).catch(() => {});
         break;
       }
       case 'thread.status':
@@ -2923,6 +2931,14 @@ export class Controller {
   }
   setAgentPickableModels(agentId: string, models: AgentPickableModel[], clearOutside = false): Promise<AgentPickableSaved> {
     return this.api.setAgentPickableModels(agentId, models, clearOutside);
+  }
+
+  /** 스레드 계획판을 받아 둔다(P4). 실패는 던진다 — 삼킬지는 부르는 쪽이 정한다. */
+  async loadThreadPlan(rootId: string): Promise<ThreadPlanView | null> {
+    const plan = await this.api.threadPlan(rootId);
+    const store = this.store.getState();
+    store.set({ threadPlans: { ...store.threadPlans, [rootId]: plan } });
+    return plan;
   }
 
   /** 스레드 × 에이전트 모델 지정(079)을 받아 둔다. 실패는 던진다 — 삼킬지는 부르는 쪽이 정한다. */

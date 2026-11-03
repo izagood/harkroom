@@ -11,6 +11,7 @@ import { groupProgress } from '../lib/progressGroup';
 import { AgentExchange } from './AgentExchange';
 import { groupAgentExchanges, exchangeRows } from '../lib/agentExchange';
 import { ThreadStateBadge, UnknownThreadStateBadge } from './ThreadStateBadge';
+import { ThreadPlanBand } from './ThreadPlanBand';
 import { threadState } from '../lib/threadState';
 import { WaitChainLine } from './WaitChain';
 import { waitChain } from '../lib/waitChain';
@@ -448,6 +449,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
           ×
         </button>
       </header>
+      {/* 계획판 띠(P4). 루트 행에 `planProgress` 가 있을 때만 선다 — 옛 서버·계획 없는 스레드는 아무것도 그리지 않는다. */}
+      <ThreadPlanBand rootId={threadRootId} progress={thread.find((m) => m.id === threadRootId)?.planProgress} />
       {/* 사슬은 헤더 **바로 아래**다 — "무엇을 기다리는가"는 대화를 읽기 전에 알아야 한다. */}
       {/* 모델 줄은 사슬보다 **위**다 — 이 스레드가 어떤 비용으로 도는지가 기다림보다 먼저 정해진다. */}
       {activeChannelId && (

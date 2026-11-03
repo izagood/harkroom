@@ -8,6 +8,7 @@
   "GET /agents/:p/merge-accounts": "0.4.170",
   "GET /auth/password-reset-notices": "0.4.122",
   "GET /invites": "0.4.276",
+  "GET /threads/:p/plan": "0.4.373",
   "PATCH /channel-sections/:p": "0.4.140",
   "POST /accounts/:p/password-reset-code": "0.4.122",
   "POST /agents/:p/permission-requests/:p/approve-once": "0.4.30",
