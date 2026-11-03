@@ -272,7 +272,7 @@ describe('thread plan', () => {
     const list = await app.inject({ method: 'GET', url: `/channels/${publicCh}/messages`, headers: auth(member.token) });
     const rows = list.json().messages as Array<{ id: string; threadRootId: string | null; planProgress?: unknown }>;
     // 비공개 자식은 public 채널 청중에게 hidden — 끝났어도 done 으로 세지 않는다.
-    expect(rows.find((r) => r.id === withPlan)?.planProgress).toEqual({ done: 1, total: 3, active: 0, blocked: 0, waiting: 1, rev: 1 });
+    expect(rows.find((r) => r.id === withPlan)?.planProgress).toEqual({ done: 1, total: 3, active: 0, blocked: 0, waiting: 1, rev: 1, updatedAt: expect.any(String) });
     expect(rows.find((r) => r.id === noPlan)?.planProgress).toBeNull();
 
     const thread = await app.inject({ method: 'GET', url: `/channels/${publicCh}/messages?thread=${withPlan}`, headers: auth(member.token) });
