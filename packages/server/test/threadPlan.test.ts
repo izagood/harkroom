@@ -255,9 +255,9 @@ describe('thread plan', () => {
     const withPlan = await post(admin.token, publicCh, { body: 'list plan' });
     const child = await post(admin.token, privateCh, { body: 'list child' });
     const done: PlanDoc = { goal: 'c', groups: [], steps: [{ id: 's1', title: 'x', state: 'done', links: [], dependsOn: [] }] };
-    await setThreadPlan(pool, { rootId: child, channelId: privateCh, doc: done, actorId: admin.accountId });
+    await setThreadPlan(pool, { rootId: child, doc: done, actor: { accountId: admin.accountId } });
     await setThreadPlan(pool, {
-      rootId: withPlan, channelId: publicCh, actorId: admin.accountId,
+      rootId: withPlan, actor: { accountId: admin.accountId },
       doc: {
         goal: 'A', groups: [{ id: 'g1', title: 'B', linkedRootId: child, dependsOn: [] }],
         steps: [
@@ -287,9 +287,9 @@ describe('thread plan', () => {
     for (let i = 0; i < 3; i++) {
       const parent = await post(admin.token, publicCh, { body: `batch ${i}` });
       const child = await post(admin.token, i === 0 ? publicCh : privateCh, { body: `batch child ${i}` });
-      await setThreadPlan(pool, { rootId: child, channelId: i === 0 ? publicCh : privateCh, doc: done, actorId: admin.accountId });
+      await setThreadPlan(pool, { rootId: child, doc: done, actor: { accountId: admin.accountId } });
       await setThreadPlan(pool, {
-        rootId: parent, channelId: publicCh, actorId: admin.accountId,
+        rootId: parent, actor: { accountId: admin.accountId },
         doc: { goal: 'A', groups: [{ id: 'g1', title: 'B', linkedRootId: child, dependsOn: [] }], steps: [] },
       });
       rows.push({ id: parent, channelId: publicCh, threadRootId: null });
