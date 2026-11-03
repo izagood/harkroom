@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageRow, ThreadPlanView } from '@harkroom/shared';
-import { isPlanStale, planFlow, planPills, planTone, PLAN_STALE_MS } from '../src/lib/threadPlan';
+import { crossGroupTitle, isPlanStale, planFlow, planPills, planTone, PLAN_STALE_MS } from '../src/lib/threadPlan';
 import { keepThreadFacts } from '../src/state/appStore';
 
 const P = (done: number, total: number, blocked = 0) => ({ done, total, active: 0, blocked, waiting: 0 });
@@ -32,10 +32,11 @@ describe('계획판 화면 판정', () => {
         g4: { derived: 'waiting', waitingOn: ['g2'], startedEarly: false },
       },
     } as unknown as ThreadPlanView;
-    const { shown, more } = planPills(plan);
-    expect(shown.map((p) => p.id)).toEqual(['g3', 'g2', 'g4']);
-    expect(more).toBe(1);
-    expect(planFlow(plan.doc)).toBe('g1 → g2 → g3 → g4');
+    const { pills, summary } = planPills(plan);
+    expect(pills.map((p) => p.id)).toEqual(['g3', 'g2', 'g4', 'g1']);
+    // 넷 이상이면 알약 대신 개수 요약(D7).
+    expect(summary).toEqual({ groups: 4, active: 1, blocked: 1, firstBlocked: 'g3' });
+    expect(planPills({ ...plan, doc: { ...plan.doc, groups: plan.doc.groups.slice(0, 3) } }).summary).toBeNull();
   });
 });
 
@@ -51,3 +52,24 @@ describe('planProgress 키 없는 갱신(architect D-a)', () => {
     expect(next.planProgress).toBeNull();
   });
 });
+
+describe('planFlow — 의존 층(D5·designer 3)', () => {
+  it('서로 기다리지 않는 그룹은 한 층(동시에 진행), 기다리면 다음 층 — 단계 의존도 그룹 사이 간선이다', () => {
+    const doc = {
+      goal: 'x',
+      groups: [
+        { id: 'g1', title: 'A', dependsOn: [] }, { id: 'g2', title: 'B', dependsOn: [] },
+        { id: 'g3', title: 'C', dependsOn: ['g1'] },
+      ],
+      steps: [
+        { id: 's1', title: 'b1', state: 'pending', groupId: 'g2', links: [], dependsOn: [] },
+        { id: 's2', title: 'c1', state: 'pending', groupId: 'g3', links: [], dependsOn: ['s1'] },
+      ],
+    } as unknown as ThreadPlanView['doc'];
+    expect(planFlow(doc)).toEqual([['g1', 'g2'], ['g3']]);
+    expect(crossGroupTitle(doc, 's1', 'g3')).toBe('B');
+    expect(crossGroupTitle(doc, 's1', 'g2')).toBeNull();
+    expect(crossGroupTitle(doc, 'g1', 'g3')).toBeNull();
+  });
+});
+

@@ -768,11 +768,9 @@ export class Controller {
         break;
       }
       case 'thread.plan.changed': {
-        // 계획판(P1). 칩은 이벤트 값 그대로(청중 기준), 패널 판은 rev 가 바뀌었을 때만 다시 받는다(architect D-b).
+        // 계획판(P1). 칩은 이벤트 값 그대로(청중 기준). 판은 여기서 받지 않는다 — 루트 행 rev 가 바뀌면 띠(ThreadPlanBand)가 받는다(architect R1).
         const progress = e.rev === null || !e.progress ? null : { ...e.progress, rev: e.rev };
         store.applyThreadPlanProgress(e.channelId, e.rootId, progress);
-        const held = store.threadPlans[e.rootId];
-        if (held !== undefined && (held?.rev ?? null) !== e.rev) void this.loadThreadPlan(e.rootId).catch(() => {});
         break;
       }
       case 'thread.status':
@@ -2937,6 +2935,9 @@ export class Controller {
   async loadThreadPlan(rootId: string): Promise<ThreadPlanView | null> {
     const plan = await this.api.threadPlan(rootId);
     const store = this.store.getState();
+    // 엇갈려 도착한 옛 판은 버린다(architect R1) — 늦게 온 응답이 새 판을 덮지 않게.
+    const held = store.threadPlans[rootId];
+    if (held && plan && plan.rev < held.rev) return held;
     store.set({ threadPlans: { ...store.threadPlans, [rootId]: plan } });
     return plan;
   }
