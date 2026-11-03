@@ -19,7 +19,7 @@
 import type { Pool } from 'pg';
 import { derivePlan, planProgress, type PlanDoc, type PlanDerived } from '@harkroom/shared';
 import { emitEvent, emitPosted, onEvent, type WorkspaceEvent } from '../events.js';
-import { audienceFor } from './channels.js';
+import { assertChannelVisible, audienceFor } from './channels.js';
 import { getThreadPlan, linkedFor, writeThreadPlan, type ThreadPlanRow } from './threadPlan.js';
 import { postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
@@ -124,6 +124,18 @@ export function startThreadPlanWatcher(
     inflight.add(p);
   };
 
+  /**
+   * 이미 반영한 카드 답(architect R2) — 답한 카드 글은 그 뒤에도 다른 이유로 `message.updated` 가 난다. 처음 답이 실린
+   * 갱신에서만 단계를 active 로 바꾼다. 그러지 않으면 에이전트가 새 이유로 다시 막아 둔 단계가 다음 갱신에 뒤집힌다.
+   */
+  const answeredCards = new Set<string>();
+  const markAnswered = (cardId: string): boolean => {
+    if (answeredCards.has(cardId)) return false;
+    answeredCards.add(cardId);
+    if (answeredCards.size > 5000) answeredCards.delete(answeredCards.values().next().value!);
+    return true;
+  };
+
   /** 부모 전파는 debounce 한다 — 자식 에이전트가 단계를 몇 번 연달아 고쳐도 부모 이벤트는 한 번. */
   const pending = new Map<string, ReturnType<typeof setTimeout>>();
   const schedule = (rootId: string, job: () => Promise<void>) => {
@@ -137,15 +149,29 @@ export function startThreadPlanWatcher(
     schedule(rootId, async () => { scheduled.delete(rootId); await job(); });
   };
 
-  /** ready 줄. 원인 계정(authorId)이 없으면 내지 않는다 — 시스템 줄도 그 줄을 일으킨 계정이 있어야 한다. */
-  const postReady = async (row: ThreadPlanRow, before: PlanDerived, after: PlanDerived, authorId: string | null) => {
+  /**
+   * ready 줄. 저자는 후보 중 **그 채널을 볼 수 있는** 첫 계정이다(architect R3) — 부모 전파면 자식을 쓴 계정이 부모 채널
+   * 멤버가 아닐 수 있다. 아무도 없으면 내지 않는다.
+   *
+   * 본문·i18n 인자에는 고정 문구와 노드 id 만 싣는다(architect R1) — 단계 제목은 남이 쓴 글이라 본문에 넣으면 `postMessage` 가
+   * 그 안의 `@handle` 을 멘션으로 푼다(K6 「멘션 없음」). 제목은 meta.planReady.titles 에만 둔다.
+   */
+  const postReady = async (row: ThreadPlanRow, before: PlanDerived, after: PlanDerived, authors: (string | null)[]) => {
     const ids = dropHiddenCaused(readyDiff(before, after), row.doc, before);
-    if (!ids.length || !authorId) return;
-    const items = ids.map((id) => `${id} ${titleOf(row.doc, id)}`).join(' · ').slice(0, 400);
+    if (!ids.length) return;
+    let authorId: string | null = null;
+    for (const a of authors) {
+      if (a && await assertChannelVisible(pool, row.channelId, a)) { authorId = a; break; }
+    }
+    if (!authorId) return;
+    const list = ids.join(' · ');
     const posted = await postMessage(pool, {
       channelId: row.channelId, threadRootId: row.rootId, authorId, kind: 'system', serverNotice: true,
-      body: `▶ 이제 시작할 수 있다: ${items}`,
-      meta: { planReady: { ids, rev: row.rev }, i18n: systemI18n('system.plan.ready', { items }) },
+      body: `▶ 이제 시작할 수 있는 단계 ${ids.length}개: ${list}`,
+      meta: {
+        planReady: { ids, rev: row.rev, titles: Object.fromEntries(ids.map((id) => [id, titleOf(row.doc, id)])) },
+        i18n: systemI18n('system.plan.ready', { n: ids.length, ids: list }),
+      },
     } as Parameters<typeof postMessage>[1]);
     if (!posted.failure) emitPosted(posted, await audienceFor(pool, row.channelId));
   };
@@ -161,7 +187,7 @@ export function startThreadPlanWatcher(
     const after = await audienceDerived(pool, res.row);
     const { map } = await linkedFor(pool, res.before, { audience: res.row.channelId });
     remember(rootId, after);
-    await postReady(res.row, derivePlan(res.before, map), after, authorId);
+    await postReady(res.row, derivePlan(res.before, map), after, [authorId]);
   };
 
   /** 자식 계획이 바뀌었다 → 부모마다 청중 맵으로 이벤트, 새로 ready 가 된 것이 있으면 줄. */
@@ -179,7 +205,8 @@ export function startThreadPlanWatcher(
           type: 'thread.plan.changed', channelId: row.channelId, rootId: parentRoot, rev: row.rev,
           progress: planProgress(row.doc, map), audience: await audienceFor(pool, row.channelId), via: 'linked',
         });
-        if (before) await postReady(row, before, after, authorId);
+        // 저자: 자식을 쓴 계정이 부모 채널을 보면 그 계정, 아니면 부모 계획을 마지막으로 쓴 계정(R3).
+        if (before) await postReady(row, before, after, [authorId, row.updatedBy]);
       });
     }
   };
@@ -213,6 +240,7 @@ export function startThreadPlanWatcher(
     const ask = meta.ask as { answeredWith?: unknown } | undefined;
     if (e.type === 'message.updated' && meta.kind === 'ask' && ask?.answeredWith != null) {
       const cardId = m.id;
+      if (!markAnswered(cardId.toLowerCase())) return;
       enqueue(rootId, () => autoUpdate(rootId, m.authorId, (doc) => applyAnsweredCard(doc, cardId)));
     }
   });

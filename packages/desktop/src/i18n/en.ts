@@ -4807,7 +4807,7 @@ export const en = {
   'system.threadModel.clearedByAgent': '{accountId} cleared {agentId}\'s model in this thread (set by an agent). It runs on its default from the next turn.',
   'system.merge.approvalUsed': '🔓 {repo}#{number} merge attempted with a one-time approval · head {head} · gh {ghUser}',
   'system.merge.approvalUsedRelaxed': '🔓 {repo}#{number} merge attempted with a one-time approval · head {head} · gh {ghUser} · CI check left to GitHub',
-  'system.plan.ready': '▶ Ready to start: {items}',
+  'system.plan.ready': '▶ {n} step(s) ready to start: {ids}',
   'system.merge.merged': '🔀 {repo}#{number} merged · {sha} (wrapper report)',
   'system.merge.mergedGranted': '🔀 {repo}#{number} merged · {sha} · permission: {granterId} (wrapper report)',
   'system.merge.queued': '📥 {repo}#{number} added to the merge queue · head {head} (wrapper report)',

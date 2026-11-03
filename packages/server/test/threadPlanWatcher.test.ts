@@ -40,8 +40,8 @@ const until = async <T>(fn: () => Promise<T | null | undefined | false>, ms = 30
 const settle = () => new Promise((r) => setTimeout(r, 800));
 const stepState = async (rootId: string, id: string) => (await getThreadPlan(pool, rootId))!.doc.steps.find((s) => s.id === id)!.state;
 const readyLines = async (rootId: string) => (await pool.query(
-  `select body, meta from message where thread_root_id = $1 and kind = 'system' and meta ? 'planReady' order by seq`, [rootId],
-)).rows as { body: string; meta: { planReady: { ids: string[] } } }[];
+  `select body, meta, author_id from message where thread_root_id = $1 and kind = 'system' and meta ? 'planReady' order by seq`, [rootId],
+)).rows as { body: string; author_id: string; meta: { planReady: { ids: string[]; titles: Record<string, string> }; i18n: { args: Record<string, unknown> } } }[];
 const mergeLine = async (rootId: string, result: 'merged' | 'queued', number = 7, kind: 'system' | 'user' = 'system') => emitPosted(await postMessage(pool, {
   channelId: ch, threadRootId: rootId, authorId: botId, body: `🔀 o/r#${number}`, kind,
   meta: { merge: { repo: 'O/R', number, headSha: 'a'.repeat(40), mergeSha: null, result, grantedBy: null, viaApproval: false, error: null } },
@@ -128,6 +128,65 @@ describe('자동 갱신', () => {
       audience: 'all',
     } as unknown as WorkspaceEvent);
     await until(async () => (await stepState(r, 's1')) === 'active');
+  });
+});
+
+describe('architect R1~R3', () => {
+  it('R1: 단계 제목은 본문·i18n 인자에 싣지 않는다 — 제목의 @handle 이 멘션으로 풀리지 않는다(meta.planReady.titles 에만)', async () => {
+    const r = await root();
+    const d = doc();
+    d.steps[1] = { ...d.steps[1]!, title: '@planbot @channel 배포' };
+    await setThreadPlan(pool, { rootId: r, doc: d, actor: { accountId: admin.accountId } });
+    await mergeLine(r, 'merged');
+    const [line] = await until(async () => { const l = await readyLines(r); return l.length ? l : null; });
+    expect(line!.body).toBe('▶ 이제 시작할 수 있는 단계 1개: s2');
+    expect(JSON.stringify(line!.meta.i18n)).not.toContain('@');
+    expect(line!.meta.planReady.titles).toEqual({ s2: '@planbot @channel 배포' });
+    const refs = await pool.query(`select meta from message where thread_root_id = $1 and kind = 'system' and meta ? 'planReady'`, [r]);
+    expect(JSON.stringify(refs.rows[0].meta.mentionRefs ?? [])).toBe('[]');
+  });
+
+  it('R2: 같은 카드 글의 갱신이 또 와도 두 번째는 단계를 바꾸지 않는다', async () => {
+    const r = await root();
+    const card = '00000000-0000-4000-8000-0000000000bb';
+    const d = doc();
+    d.steps[0] = { ...d.steps[0]!, state: 'blocked', blockedReason: '고르기 대기', links: [{ kind: 'card', messageId: card }] };
+    await setThreadPlan(pool, { rootId: r, doc: d, actor: { accountId: admin.accountId } });
+    const answered = () => emitEvent({
+      type: 'message.updated', channelId: ch,
+      message: { id: card, threadRootId: r, channelId: ch, authorId: botId, kind: 'user', meta: { kind: 'ask', ask: { answeredWith: 'a' } } },
+      audience: 'all',
+    } as unknown as WorkspaceEvent);
+    answered();
+    await until(async () => (await stepState(r, 's1')) === 'active');
+    // 에이전트가 새 이유로 다시 막는다 → 같은 카드 글에 갱신이 또 와도 뒤집히지 않는다.
+    const cur = (await getThreadPlan(pool, r))!;
+    await setThreadPlan(pool, {
+      rootId: r, guard: { updatedAt: cur.updatedAt }, actor: { accountId: admin.accountId },
+      doc: { ...cur.doc, steps: [{ ...cur.doc.steps[0]!, state: 'blocked', blockedReason: '다른 이유' }, cur.doc.steps[1]!] },
+    });
+    answered();
+    await settle();
+    expect(await stepState(r, 's1')).toBe('blocked');
+  });
+
+  it('R3: 부모 줄의 저자는 부모 채널을 보는 계정 — 자식을 쓴 에이전트가 못 보면 부모 계획을 쓴 계정', async () => {
+    const priv = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'plan-watch-priv', visibility: 'private' } })).json().id as string;
+    const parent = (await app.inject({ method: 'POST', url: `/channels/${priv}/messages`, headers: auth(admin.token), payload: { body: '비공개 부모' } })).json().id as string;
+    const child = await root('공개 자식');
+    await setThreadPlan(pool, { rootId: child, doc: { goal: '자식', groups: [], steps: [{ id: 's1', title: '일', state: 'active', links: [], dependsOn: [] }] }, actor: { accountId: botId } });
+    await setThreadPlan(pool, {
+      rootId: parent, actor: { accountId: admin.accountId },
+      doc: { goal: '부모', groups: [{ id: 'g1', title: '자식 일', linkedRootId: child, dependsOn: [] }], steps: [{ id: 's1', title: '마무리', state: 'pending', links: [], dependsOn: ['g1'] }] },
+    });
+    await settle();
+    const cur = (await getThreadPlan(pool, child))!;
+    await setThreadPlan(pool, {
+      rootId: child, guard: { updatedAt: cur.updatedAt }, actor: { accountId: botId },
+      doc: { ...cur.doc, steps: [{ ...cur.doc.steps[0]!, state: 'done' }] },
+    });
+    const [line] = await until(async () => { const l = await readyLines(parent); return l.length ? l : null; });
+    expect(line!.author_id).toBe(admin.accountId);
   });
 });
 
