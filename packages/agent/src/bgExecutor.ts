@@ -39,6 +39,8 @@ export const BG_ALLOWED_TOOLS = [
   'mcp__harkroom__memory_set', 'mcp__harkroom__memory_archive', 'mcp__harkroom__memory_merge',
   'mcp__harkroom__memory_audit',
   'mcp__harkroom__thread_note', 'mcp__harkroom__message_read',
+  // 계획판은 읽기만(설계 3-6) — 쓰기는 서버가 `bg_plan_read_only` 로 막고, 하나짜리 쓰기 도구는 아래 금지 목록에 둔다.
+  'mcp__harkroom__thread_plan',
   // MCP 도구가 지연 로드되는 판에서는 이것으로 스키마를 받아야 부를 수 있다.
   'ToolSearch',
 ] as const;
@@ -56,6 +58,7 @@ export const BG_DISALLOWED_TOOLS = [
   'mcp__harkroom__secret_mount', 'mcp__harkroom__secret_generate', 'mcp__harkroom__secret_import', 'mcp__harkroom__secret_rotate',
   'mcp__harkroom__grant_delegate', 'mcp__harkroom__artifact_publish', 'mcp__harkroom__attachment_upload',
   'mcp__harkroom__workitem_upsert', 'mcp__harkroom__workitem_remove', 'mcp__harkroom__bg_claim',
+  'mcp__harkroom__thread_plan_item',
 ] as const;
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;

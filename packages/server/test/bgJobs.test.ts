@@ -481,6 +481,12 @@ describe('bg_job (BG1)', () => {
         expect((await call(c, 'message.read', { channelId: ch, threadRootId: root })).messages.length).toBeGreaterThan(0);
         expect((await call(c, 'thread.note', { threadRootId: root, body: '덮기' })).error.code).toBe('bg_note_read_only');
         expect((await call(c, 'thread.note', { threadRootId: root })).note).toBeNull();
+        // 계획판(P3): 읽기만, 입력 스레드로만. 하나짜리 쓰기 도구는 허용 목록 밖.
+        expect((await call(c, 'thread.plan', { threadRootId: root, plan: { goal: 'g', groups: [], steps: [] }, ifUpdatedAt: null })).error.code).toBe('bg_plan_read_only');
+        expect((await call(c, 'thread.plan', { threadRootId: root, plan: null })).error.code).toBe('bg_plan_read_only');
+        expect((await call(c, 'thread.plan', { threadRootId: other })).error.code).toBe('bg_thread_not_in_input');
+        expect((await call(c, 'thread.plan', { threadRootId: root })).plan).toBeNull();
+        expect((await call(c, 'thread.plan.item', { threadRootId: root, title: 'x' })).error.code).toBe('bg_tool_not_allowed');
         expect((await call(c, 'memory.set', { slug: 'core', value: 'x' })).error.code).toBe('bg_core_forbidden');
         // 정리 회차(BG5)가 후보를 받는 memory.audit 은 허용(읽기 전용).
         expect((await call(c, 'memory.audit', {})).error).toBeUndefined();

@@ -939,6 +939,35 @@ describe('runMentionTurn', () => {
     expect(prompt).toContain('그거 말고 이거 먼저 해');
   });
 
+  // 계획판 P3: 스레드 앵커가 있으면 계획판을 읽어 <thread-plan> 으로 싣고, 메모보다 앞에 둔다. 읽기 실패는 턴을 막지 않는다.
+  it('계획판(thread.plan)을 <thread-plan> 으로 메모 앞에 싣고, 읽기 실패면 빼고 턴은 돈다', async () => {
+    const ROOT = '00000000-0000-4000-8000-0000000000d1';
+    const doc = { goal: '출시', groups: [], steps: [{ id: 's1', title: '러너 싣기', state: 'active' as const, links: [], dependsOn: [] }] };
+    const run = async (readThreadPlan: () => Promise<unknown>) => {
+      const fake = new FakeHarkroom(defOf());
+      fake.seedFrom('human-1', '@forge 계획판 스레드').id = ROOT;
+      const mention = fake.seedFrom('human-1', '@forge 이어서', ROOT);
+      Object.assign(fake, {
+        readThreadPlan,
+        readThreadNote: async () => ({ body: '메모 본문', updatedAt: '2026-11-03T00:00:00.000Z' }),
+      });
+      const { deps, plans, turnOpts } = await makeDeps(fake);
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: ROOT, mentionId: mention.id });
+      return (await getPlanContent(plans, turnOpts)).at(-1)!;
+    };
+    const prompt = await run(async () => ({
+      doc, rev: 3, updatedAt: '2026-11-03T00:00:00.000Z', flagged: null,
+      derived: { s1: { derived: 'active', waitingOn: [], startedEarly: false } },
+      progress: { done: 0, total: 1, active: 1, blocked: 0, waiting: 0 }, linked: [],
+    }));
+    expect(prompt).toContain('<thread-plan>');
+    expect(prompt).toContain('▶ s1 러너 싣기');
+    expect(prompt.indexOf('<thread-plan>')).toBeLessThan(prompt.indexOf('<thread-note>'));
+    const failed = await run(async () => { throw new Error('boom'); });
+    expect(failed).not.toContain('<thread-plan>');
+    expect(failed).toContain('<thread-note>');
+  });
+
   // recall P1: 예약으로 깨어난 턴은 관련 기억을 찾지 않는다 — 앞 턴 요청의 되풀이라 같은 것·엉뚱한 것을 고른다.
   it('깨어난 턴은 memory.search(recall)를 부르지 않는다 — 평범한 멘션 턴은 부른다', async () => {
     const fake = new FakeHarkroom(defOf());

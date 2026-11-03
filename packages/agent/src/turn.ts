@@ -409,7 +409,7 @@ const CLAUDE_PRESET: HarnessPreset = {
 
 /**
  * 읽기 전용(`dontAsk`) 멘션 턴에 여는 도구(security 판단, 2026-10-25). 지연 MCP 도구를 불러오는 `ToolSearch` 와 **이름으로 고른**
- * harkroom 도구 — 발화·읽기·기억 읽기·예약·첨부뿐이다. 비밀·권한 위임·권한 요청·자동화·스킬 제안·위임은 열지 않는다(상태를
+ * harkroom 도구 — 발화·읽기·기억 읽기·예약·첨부·스레드 메모·계획판뿐이다(계획판: 검토 턴도 단계 상태를 고친다 — 설계 3-6). 비밀·권한 위임·권한 요청·자동화·스킬 제안·위임은 열지 않는다(상태를
  * 바꾸는 도구다). avcs 는 넣지 않는다.
  *
  * 읽기 내장 도구(`Read`·`Grep`·`Glob`)는 넣지 않는다 — `dontAsk` 는 규칙 없이도 작업 폴더 안 읽기를 열고, 맨 이름을 넣으면
@@ -418,7 +418,7 @@ const CLAUDE_PRESET: HarnessPreset = {
 export const READONLY_ALLOW: readonly string[] = [
   'ToolSearch',
   ...['message_post', 'message_report', 'message_fail', 'message_ask', 'message_progress', 'message_react', 'message_unreact',
-    'message_read', 'message_search', 'thread_note', 'thread_note_list', 'memory_get', 'memory_list', 'memory_search', 'turn_wake',
+    'message_read', 'message_search', 'thread_note', 'thread_note_list', 'thread_plan', 'thread_plan_item', 'memory_get', 'memory_list', 'memory_search', 'turn_wake',
     'attachment_fetch', 'attachment_upload', 'account_me', 'account_list', 'channel_list', 'channel_doc', 'workspace_guide',
   ].map((t) => `mcp__harkroom__${t}`),
 ];
