@@ -17,6 +17,7 @@ import { machineIdKey, registerOperatorRoutes } from './routes/operatorRoutes.js
 import { createOperatorHub } from './ws/operatorHub.js';
 import { registerAssignmentRoutes } from './routes/assignmentRoutes.js';
 import { registerThreadAgentModelRoutes } from './routes/threadAgentModelRoutes.js';
+import { registerThreadPlanRoutes } from './routes/threadPlanRoutes.js';
 import { registerMcpServerRoutes } from './routes/mcpServerRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerTeamRoutes } from './routes/teamRoutes.js';
@@ -720,6 +721,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 배정(§3). 허브 뒤 — hello 에 배정을 다시 미는 구독이 허브에 걸린다.
   await registerAssignmentRoutes(app, deps.pool, operatorHub);
   await registerThreadAgentModelRoutes(app, deps.pool, { operatorHub });
+  await registerThreadPlanRoutes(app, deps.pool);
   // MCP 레지스트리(§6) — 이름만. 에이전트 PATCH 의 mcpServers 가 이것을 참조한다.
   await registerMcpServerRoutes(app, deps.pool);
 

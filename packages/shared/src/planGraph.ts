@@ -283,7 +283,8 @@ export function derivePlan(doc: PlanDoc, linked?: LinkedProgress): PlanDerived {
     return out;
   };
 
-  const result: PlanDerived = {};
+  // 키가 사용자 입력(id)이라 프로토타입 없는 객체에 담는다 — 검증을 건너뛴 `__proto__` 같은 id 가 원형을 건드리지 않게.
+  const result: PlanDerived = Object.create(null) as PlanDerived;
   const stepNodes = new Map<string, PlanDerivedNode>();
   for (const s of doc.steps) {
     const parent = s.groupId ? groups.get(s.groupId) : undefined;

@@ -2931,7 +2931,39 @@ export type WsServerEvent =
    * 싣지 않는다(채널 청중 전원에게 가므로). 화면은 `GET /threads/:rootId/report-wakes` 를 다시 불러 자기 권한으로
    * 거른 값을 받는다.
    */
-  | { type: 'thread.reportWakes.changed'; channelId: string; rootId: string; audience: 'all' | string[] };
+  | { type: 'thread.reportWakes.changed'; channelId: string; rootId: string; audience: 'all' | string[] }
+  /**
+   * 스레드 계획판이 바뀌었다(P1). `progress` 는 **청중 기준**으로 센다 — 연결 그룹은 부모 채널 청중이 다 볼 수 있는
+   * 자식(public standard 채널이거나 같은 채널)만 열고 나머지는 볼 수 없음으로 센다. 그래서 사람마다 다를 수 없고
+   * 목록 칩에 그대로 쓴다. 패널은 `GET /threads/:rootId/plan` 으로 자기 권한 값을 받는다. 계획이 지워졌으면 `rev`·`progress` 가 null.
+   */
+  | { type: 'thread.plan.changed'; channelId: string; rootId: string; rev: number | null;
+      progress: import('./planGraph.js').PlanProgress | null; audience: 'all' | string[] };
+
+/** 연결 그룹 하나가 가리키는 자식 스레드. 볼 수 없거나 없는 스레드는 `hidden` 이고 채널·진행률을 싣지 않는다. */
+export interface ThreadPlanLinkedView {
+  groupId: string;
+  rootId: string;
+  hidden: boolean;
+  channelId: string | null;
+  progress: import('./planGraph.js').PlanProgress | null;
+}
+
+/** `GET /threads/:rootId/plan` 의 계획. 파생 상태·진행률은 **보는 사람 권한으로 거른** 연결 맵으로 센다. */
+export interface ThreadPlanView {
+  rootId: string;
+  channelId: string;
+  doc: import('./planGraph.js').PlanDoc;
+  rev: number;
+  updatedAt: string;
+  /** 마지막으로 쓴 계정 id. 자동 갱신(2차)이나 지워진 계정이면 null. */
+  updatedBy: string | null;
+  /** 쓰기 검사(080)에 걸린 판 — 화면에는 보이되 러너는 싣지 않는다. */
+  flagged: { reason: string } | null;
+  derived: import('./planGraph.js').PlanDerived;
+  progress: import('./planGraph.js').PlanProgress;
+  linked: ThreadPlanLinkedView[];
+}
 
 /**
  * 워크스페이스 스킬 하나의 뷰(#140·#311).
