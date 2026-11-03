@@ -10,16 +10,19 @@ import { plainNoticeText } from '../src/services/noticeText.js';
  * - `noMentions`: 남이 쓴 글이 섞인다 → `noMentions: true` 가 그 줄에 있어야 한다.
  * - `muted`: 일부러 한 사람을 부르는 줄 → 남이 쓴 조각만 `plainNoticeText` 로 감싼다.
  * - `serverOnly`: 본문이 서버 값(고정 문구·handle·정규식을 지난 id·sha)뿐이다.
+ *
+ * 한계: `kind: 'system'`·`serverNotice: true` 가 **같은 줄에 글자로** 있을 때만 찾는다 — 변수·helper 로 넘기면 놓친다.
+ * 그런 꼴로 새 줄을 쓰면 이 표에 손으로 올린다.
  */
 const TABLE: Record<string, { sites: number; noMentions: number; muted?: number; why: string }> = {
   'src/mcp/mcpPlugin.ts': { sites: 1, noMentions: 0, why: 'serverOnly — 러너 알림(runnerNotice): 고정 문구 + HANDLE_RE 를 지난 handle' },
   'src/routes/channelRoutes.ts': { sites: 1, noMentions: 0, why: 'serverOnly — 멤버 들고남 줄: handle 만' },
-  'src/routes/threadAgentModelRoutes.ts': { sites: 1, noMentions: 1, why: 'noMentions — 사람이 적은 model·effort' },
+  'src/routes/threadAgentModelRoutes.ts': { sites: 1, noMentions: 1, why: 'noMentions(덧댄 한 겹) — model·effort, 앞 단 AXIS_PATTERN 이 @ 를 막는다' },
   'src/services/apiCalls.ts': { sites: 1, noMentions: 1, why: 'noMentions — 요청 경로·연결 이름' },
   'src/services/apiDelegation.ts': { sites: 1, noMentions: 0, muted: 1, why: 'muted — 루트를 일부러 부름, 연결 이름·경로만 무력화' },
-  'src/services/blockedCards.ts': { sites: 1, noMentions: 1, why: 'noMentions — 요청 경로' },
+  'src/services/blockedCards.ts': { sites: 1, noMentions: 1, why: 'noMentions(덧댄 한 겹) — 경로는 cardPath(백틱 거절)·코드 구간, 이름은 정규식' },
   'src/services/chainBackstop.ts': { sites: 1, noMentions: 0, why: 'serverOnly — 백스톱 수·handle(＠ 무력화)' },
-  'src/services/chatApproval.ts': { sites: 1, noMentions: 1, why: 'noMentions — 규칙 원문·채널 이름' },
+  'src/services/chatApproval.ts': { sites: 1, noMentions: 1, why: 'noMentions(덧댄 한 겹) — 규칙 원문·채널 이름, 앞 단 plain()(@→＠)·코드 구간' },
   'src/services/mergeGrants.ts': { sites: 2, noMentions: 0, why: 'serverOnly — repo·번호·sha·handle, 래퍼 오류 문구는 meta 에만(N2)' },
   'src/services/permissionRequests.ts': { sites: 2, noMentions: 0, muted: 1, why: 'muted — 소유자를 일부러 부름, 대상(target)만 무력화(채널 줄과 DM 이 같은 본문)' },
   'src/services/secretCreate.ts': { sites: 1, noMentions: 0, muted: 1, why: 'muted — 소유자를 일부러 부름, 비밀 이름만 무력화' },
