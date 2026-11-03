@@ -41,7 +41,7 @@ import { stampLabel } from '../lib/day';
 import type { SectionId } from './settings/sections';
 import { useT, useLocale } from '../i18n/useT';
 import { systemText, chainBackstopText } from '../lib/systemText';
-import { systemLineShape, systemLineTarget, systemRecordIcon } from '../lib/systemLine';
+import { planReadyTitles, systemLineShape, systemLineTarget, systemRecordIcon } from '../lib/systemLine';
 
 /**
  * 얼굴 슬롯의 칸 수. **폭이 고정되는 것이 이 숫자의 일**이다 — 참여자가 늘어도 요약 줄이
@@ -202,6 +202,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
    * 지나지 않는다(security C4). 인자에는 경로·저장소 이름처럼 바깥에서 온 글자가 들어간다.
    */
   const systemLine = systemText(message, accounts, t) ?? chainBackstopText(message, accounts, t);
+  const planReady = planReadyTitles(message);
 
   /**
    * 이 답이 딸린 스레드의 **뿌리 메시지**(#624 요구 2). 뿌리는 같은 채널의 최상위
@@ -852,7 +853,16 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
               ? <p className="whitespace-pre-wrap break-words text-meta text-fg-muted" data-testid="system-record-line">
                   <span className="sr-only">{t('message.system.srLabel')}: </span>
                   {avcsType && <span className="mr-1.5 rounded-sm bg-warning-surface-strong px-1 text-warning">{avcsType}</span>}
-                  {systemLine ?? shownBody}
+                  {planReady.length
+                    /* 계획판 ready 줄(P6) — 제목이 있으면 「단계 n개:」 머리 + 제목만(id 는 제목이 없을 때만 대신, designer 2).
+                       제목은 남이 쓴 글이라 meta 에만 온다. React 텍스트로만 그린다(멘션·링크·마크다운으로 풀지 않음). */
+                    ? <>
+                        {t('plan.readyHead', { n: planReady.length })}{' '}
+                        {planReady.map(({ id, label }, i) => (
+                          <span key={id} data-testid="plan-ready-title">{i > 0 && ' · '}{label}</span>
+                        ))}
+                      </>
+                    : systemLine ?? shownBody}
                   <span className="ml-1.5 text-fg-subtle">{time}</span>
                 </p>
               : systemLine !== null

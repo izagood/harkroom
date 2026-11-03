@@ -1,5 +1,6 @@
 import type { AccountStatus, AvatarSourceMeta, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, ThreadPlanView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import { endSession } from '../lib/sessionEnd';
+import { clearPlanOpenKeys } from '../lib/threadPlan';
 import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchResult } from '../lib/memoryList';
 import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
 import { buildBoard, mineCount } from '../lib/inboxBoard';
@@ -720,6 +721,8 @@ export class Controller {
     // 고정은 문장이 아니지만 *누구와 이야기하던 자리인가*는 남는다. 초안과 같은 매체에
     // 같은 수명으로 두기로 했으므로 지우는 자리도 여기다(#706).
     this.store.getState().clearStickyMentions();
+    // 계획판 펼침 기억도 같은 수명이다(P6) — 연 스레드 id 만 남을 이유가 없다.
+    clearPlanOpenKeys();
     // 마지막 채널도 키체인과 같은 수명이다 — 계정이 떠난 뒤 *어디를 보고 있었나*만 남을 이유가 없다.
     // 한 계정만 떠나면 그 scope 만, 전체 로그아웃(`sessionStore.clear()`)이면 통째로 지운다.
     if (accountId) { if (this.lastChannelScope) lastChannelStorage.remove(this.lastChannelScope); }

@@ -25,13 +25,18 @@ export function ThreadPlanBand({ rootId, progress }: { rootId: string; progress:
   useEffect(() => { setOpen(loadPlanOpen(rootId)); }, [rootId]);
 
   const rev = progress?.rev ?? null;
+  // 목록 행의 updatedAt(P6) — 앱이 꺼진 사이 지웠다 다시 세워 rev 가 우연히 같아도 시각은 다르다(#1739 낮음).
+  // 실시간 이벤트에는 없으므로(목록 행에만) 없을 때는 rev 만 견준다.
+  const rowUpdatedAt = progress?.updatedAt ?? null;
   useEffect(() => {
     if (rev === null) return;
     // 다르면 받는다(architect R3) — rev 는 계획을 지웠다 다시 세우면 1로 돌아가므로 「크다」로 견주면 옛 판이 남는다.
-    if (plan !== undefined && (plan?.rev ?? null) === rev) return;
+    const same = plan !== undefined && (plan?.rev ?? null) === rev
+      && (rowUpdatedAt === null || !plan || Date.parse(plan.updatedAt) >= Date.parse(rowUpdatedAt));
+    if (same) return;
     void getController().loadThreadPlan(rootId).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- rev 가 바뀔 때만 다시 받는다(D-b)
-  }, [rootId, rev]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rev·시각이 바뀔 때만 다시 받는다(D-b)
+  }, [rootId, rev, rowUpdatedAt]);
 
   if (!progress || !plan) return null;
   const toggle = () => { const next = !open; setOpen(next); savePlanOpen(rootId, next); };
@@ -84,7 +89,8 @@ function PillChip({ pill, className = '' }: { pill: PlanPill; className?: string
   const c = pill.count;
   const label = pill.state === 'done' ? t('plan.pill.done', { title: pill.title })
     : pill.state === 'blocked' && c ? t('plan.pill.blocked', { title: pill.title, done: c.done, total: c.total })
-      : pill.state === 'waiting' ? t('plan.pill.waiting', { title: pill.title })
+      : pill.state === 'waiting' && c && c.total > 0 && c.done > 0 ? t('plan.pill.waitingCount', { title: pill.title, done: c.done, total: c.total })
+        : pill.state === 'waiting' ? t('plan.pill.waiting', { title: pill.title })
         : c && c.total > 0 && pill.state !== 'hidden' ? t('plan.pill.count', { title: pill.title, done: c.done, total: c.total })
           : pill.title;
   return (
@@ -193,6 +199,7 @@ function StepRow({ plan, step, onJump, indent = false }: { plan: ThreadPlanView;
         <Dot state={state} />
         {/* 끝난 단계는 취소선 대신 ✓ 와 흐린 색(designer nit). */}
         <span className={state === 'done' ? 'text-fg-subtle' : ''}>{state === 'done' && <span aria-hidden="true">✓ </span>}{step.title}</span>
+        <Assignee id={step.assigneeId ?? parent?.assigneeId ?? null} />
       </div>
       {state === 'blocked' && step.blockedReason && <div className="pl-3 text-meta text-state-stuck">{step.blockedReason}</div>}
       {state === 'ready' && (
@@ -225,6 +232,16 @@ function Waiting({ plan, ids, fromGroupId, onJump, indent = false }: {
       })}
     </div>
   );
+}
+
+/**
+ * 담당(P6, security 낮음) — 계정 id 로만 오므로 화면이 이름을 푼다. **이 커뮤니티에 있는 계정일 때만** 그린다:
+ * 없는 계정·지워진 계정이면 아무것도 그리지 않는다(지어낸 이름을 보이지 않는다).
+ */
+function Assignee({ id }: { id: string | null }) {
+  const account = useActiveStore((s) => (id ? s.accounts[id] : undefined));
+  if (!account) return null;
+  return <span data-testid="plan-assignee" className="truncate text-meta text-fg-agent">@{account.handle}</span>;
 }
 
 /** 상태 점 — 색만으로 가르지 않게 글자(title·sr-only)를 함께 단다(designer 5). */

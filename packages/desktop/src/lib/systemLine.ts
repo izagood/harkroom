@@ -16,7 +16,8 @@ import { messageLinkFromMeta } from './link';
 export type SystemLineShape = 'record' | 'response';
 
 // runner: 러너 알림 줄(앞 턴 대기·임대 잃음·조종 대기, 2026-11-02) — 누구의 요청에 대한 응답이 아니라 사람 멘션의 상태다.
-const RECORD_KEY = /^system\.(member|threadModel|runner)\./;
+// plan: 계획판 「이제 시작 가능」 줄(P6) — 누구의 요청에 대한 응답이 아니라 계획 상태의 기록이다.
+const RECORD_KEY = /^system\.(member|threadModel|runner|plan)\./;
 
 export function systemLineShape(message: Pick<MessageRow, 'kind' | 'meta'>): SystemLineShape | null {
   if (message.kind !== 'system') return null;
@@ -35,6 +36,7 @@ export function systemRecordIcon(message: Pick<MessageRow, 'meta'>): string {
   if (key.startsWith('system.member.')) return '−';
   if (key.startsWith('system.threadModel.')) return '⚙';
   if (key === 'system.runner.fenced') return '↪';
+  if (key.startsWith('system.plan.')) return '▶';
   if (key.startsWith('system.runner.')) return '⏳';
   return '•';
 }
@@ -49,4 +51,29 @@ export function systemLineTarget(message: Pick<MessageRow, 'authorId' | 'meta'>)
   const chat = (message.meta as Record<string, unknown> | undefined)?.chatApproval as { messageId?: unknown } | undefined;
   if (chat) return { accountId: message.authorId, what: 'post', href: messageLinkFromMeta(chat.messageId) };
   return { accountId: message.authorId, what: 'request', href: null };
+}
+
+/**
+ * 계획판 ready 줄의 단계 이름(P6) — `meta.planReady.ids` 순서대로, 제목이 있으면 제목(`meta.planReady.titles`), 없으면 id.
+ * 서버가 본문에서 뺀 남의 글이라 화면은 이것을 **글자로만** 그린다. id 꼴만 받고(최대 40개), 제목은 120자로 자른다.
+ * 제목이 하나도 없으면 빈 목록 — 그때는 서버가 준 문장(id 목록)을 그대로 쓴다.
+ */
+export function planReadyTitles(message: Pick<MessageRow, 'kind' | 'meta'>): { id: string; label: string }[] {
+  if (message.kind !== 'system') return [];
+  const ready = (message.meta as Record<string, unknown> | undefined)?.planReady as { ids?: unknown; titles?: unknown } | undefined;
+  if (!ready || !Array.isArray(ready.ids)) return [];
+  const titles = ready.titles && typeof ready.titles === 'object' ? ready.titles as Record<string, unknown> : {};
+  let anyTitle = false;
+  const out: { id: string; label: string }[] = [];
+  for (const id of ready.ids.slice(0, 40)) {
+    if (typeof id !== 'string' || !/^[sg][1-9][0-9]{0,3}$/.test(id)) continue;
+    const t = Object.prototype.hasOwnProperty.call(titles, id) ? titles[id] : undefined;
+    if (typeof t === 'string' && t.trim()) {
+      anyTitle = true;
+      out.push({ id, label: [...t.trim()].slice(0, 120).join('') });
+    } else {
+      out.push({ id, label: id });
+    }
+  }
+  return anyTitle ? out : [];
 }
