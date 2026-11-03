@@ -1269,6 +1269,13 @@ export interface MessageRow {
    * 답글 행·옛 서버는 키가 없거나 `null` 이다.
    */
   statusReaction?: import('./threadStatus.js').ThreadStatusReaction | null;
+  /**
+   * 스레드 계획판 진행률(P5). **청중 기준**으로 센다 — 연결 그룹은 이 채널 청중이 다 볼 수 있는 자식만 열고 나머지는 볼 수
+   * 없음으로 센다(`thread.plan.changed` 의 progress 와 같은 값). 그래서 보는 사람마다 다르지 않고 채널 목록 칩에 그대로 쓴다.
+   * 계획이 없는 루트는 `null`. **키가 없으면 모른다** — 답글 행, 한 줄만 답하는 경로(POST·PATCH·실시간 갱신), 옛 서버.
+   * 화면은 키가 없는 갱신이 오면 앞서 받은 값을 지킨다.
+   */
+  planProgress?: ThreadPlanProgress | null;
   /** 스레드 답을 채널에도 함께 올린다(#231). threadRootId 가 없으면 이 값은 항상 false 다. */
   alsoInChannel: boolean;
   /**
@@ -2939,6 +2946,9 @@ export type WsServerEvent =
    */
   | { type: 'thread.plan.changed'; channelId: string; rootId: string; rev: number | null;
       progress: import('./planGraph.js').PlanProgress | null; audience: 'all' | string[] };
+
+/** 채널 목록 행에 싣는 계획 진행률 — 진행률에 판 번호를 붙여 열린 패널이 다시 읽을지 견준다. */
+export type ThreadPlanProgress = import('./planGraph.js').PlanProgress & { rev: number };
 
 /** 연결 그룹 하나가 가리키는 자식 스레드. 볼 수 없거나 없는 스레드는 `hidden` 이고 채널·진행률을 싣지 않는다. */
 export interface ThreadPlanLinkedView {

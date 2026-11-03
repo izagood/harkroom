@@ -250,4 +250,35 @@ describe('thread plan', () => {
     expect(events[0]).toMatchObject({ rev: null, progress: null });
     expect((await getPlan(member.token, root)).json()).toEqual({ plan: null });
   });
+
+  it('P5: 채널 목록 루트 행에 planProgress(청중 기준) — 계획 없으면 null, 답글은 키 없음', async () => {
+    const withPlan = await post(admin.token, publicCh, { body: 'list plan' });
+    const child = await post(admin.token, privateCh, { body: 'list child' });
+    const done: PlanDoc = { goal: 'c', groups: [], steps: [{ id: 's1', title: 'x', state: 'done', links: [], dependsOn: [] }] };
+    await setThreadPlan(pool, { rootId: child, channelId: privateCh, doc: done, actorId: admin.accountId });
+    await setThreadPlan(pool, {
+      rootId: withPlan, channelId: publicCh, actorId: admin.accountId,
+      doc: {
+        goal: 'A', groups: [{ id: 'g1', title: 'B', linkedRootId: child, dependsOn: [] }],
+        steps: [
+          { id: 's1', title: 'a', state: 'done', links: [], dependsOn: [] },
+          { id: 's2', title: 'b', state: 'pending', links: [], dependsOn: ['g1'] },
+        ],
+      },
+    });
+    const noPlan = await post(admin.token, publicCh, { body: 'list no plan' });
+    await post(admin.token, publicCh, { body: 'reply', threadRootId: withPlan });
+
+    const list = await app.inject({ method: 'GET', url: `/channels/${publicCh}/messages`, headers: auth(member.token) });
+    const rows = list.json().messages as Array<{ id: string; threadRootId: string | null; planProgress?: unknown }>;
+    // 비공개 자식은 public 채널 청중에게 hidden — 끝났어도 done 으로 세지 않는다.
+    expect(rows.find((r) => r.id === withPlan)?.planProgress).toEqual({ done: 1, total: 3, active: 0, blocked: 0, waiting: 1, rev: 1 });
+    expect(rows.find((r) => r.id === noPlan)?.planProgress).toBeNull();
+
+    const thread = await app.inject({ method: 'GET', url: `/channels/${publicCh}/messages?thread=${withPlan}`, headers: auth(member.token) });
+    const replies = (thread.json().messages as Array<{ threadRootId: string | null; planProgress?: unknown }>).filter((r) => r.threadRootId);
+    expect(replies.length).toBeGreaterThan(0);
+    for (const r of replies) expect(r).not.toHaveProperty('planProgress');
+  });
 });
+
