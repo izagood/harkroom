@@ -83,6 +83,7 @@ import { getThreadNote, listThreadNotes, MAX_THREAD_NOTE_LENGTH, setThreadNote, 
 import { derivePlan, diffDerived, type PlanDoc } from '@harkroom/shared/planGraph';
 import { getThreadPlan, linkedFor, setThreadPlan, threadPlanView, writeThreadPlan, type ThreadPlanWriteResult } from '../services/threadPlan.js';
 import { applyPlanItem, type PlanItemPatch } from '../services/threadPlanItem.js';
+import { completePlanStep, linkPlanGroup, type PlanHookResult } from '../services/threadPlanHooks.js';
 import { planDocSchema, planItemShape } from '../services/threadPlanSchema.js';
 import {
   BG_MAX_WRITES, bgClaimPayload, bgCleanupOn, claimBgJob, completeBgJob, getBgJob, recordBgChange, releaseBgWrite, reserveBgWrite,
@@ -1424,7 +1425,7 @@ function buildMcpServer(
    * 최상위에 걸면 그 둘이 성립하지 않는다.
    */
   server.registerTool('message.delegate', {
-    description: '팀원에게 일을 넘긴다(팀장만). 전부 끝나거나 기한이 지나면 다시 깨어난다',
+    description: '팀원에게 일을 넘긴다(팀장만). 전부 끝나거나 기한이 지나면 다시 깨어난다. planRootId·planGroupId 를 함께 주면 그 스레드 계획의 그룹을 이 위임 스레드에 잇는다(결과는 plan 칸)',
     inputSchema: {
       channelId: z.string().uuid(),
       threadRootId: z.string().uuid(),
@@ -1434,10 +1435,19 @@ function buildMcpServer(
         .min(DELEGATION_DEADLINE_MIN_SEC).max(DELEGATION_DEADLINE_MAX_SEC).optional(),
       model: MODEL_ARG,
       agentModels: AGENT_MODELS_ARG,
+      // 계획판(P6): 부모 계획(planRootId)의 그룹(planGroupId)을 이 위임 스레드에 잇는다. 둘은 함께 준다.
+      planRootId: z.string().uuid().optional(),
+      planGroupId: z.string().regex(/^g[1-9][0-9]{0,3}$/).optional(),
     },
-  }, async ({ channelId, threadRootId, body, to, deadlineSec, model, agentModels }) => {
+  }, async ({ channelId, threadRootId, body, to, deadlineSec, model, agentModels, planRootId, planGroupId }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if ((planRootId === undefined) !== (planGroupId === undefined)) {
+      return jsonResult({ error: { code: 'bad_request', message: 'planRootId 와 planGroupId 는 함께 준다(부모 계획의 스레드와 그 그룹)' } });
+    }
+    if (planRootId && planRootId.toLowerCase() === threadRootId.toLowerCase()) {
+      return jsonResult({ error: { code: 'self_link', message: PLAN_ERROR_MESSAGES.self_link } });
     }
     if (to.some((h) => h.toLowerCase() === account.handle.toLowerCase())) {
       return jsonResult({ error: { code: 'self_delegation', message: 'you cannot delegate to yourself' } });
@@ -1568,12 +1578,18 @@ function buildMcpServer(
     // 그들의 러너가 즉시 폴하도록 여기서 따로 친다(치지 않으면 다음 롱폴까지 최대 25초 늦다).
     for (const d of delegates) emitEvent({ type: 'inbox.updated', accountId: d.accountId });
 
+    // 위임은 이미 섰다 — 계획 연결이 막혀도 위임을 되돌리지 않고 그 결과만 따로 싣는다.
+    const plan = planRootId && planGroupId
+      ? planHookOut(await linkPlanGroup(pool, planRootId, account.id, planGroupId, threadRootId))
+      : undefined;
+
     return jsonResult({
       message: posted.message,
       delegated: delegates.map((d) => d.handle),
       unreachable,
       deadlineAt: deadlineAt.toISOString(),
       roundsLeft: Math.max(0, TEAM_ROUND_LIMIT - used - 1),
+      ...(plan ? { plan } : {}),
     });
   });
 
@@ -1585,7 +1601,7 @@ function buildMcpServer(
    * 없는 보고는 보고가 아니다.
    */
   server.registerTool('message.report', {
-    description: '완료 보고(확인한 것 · 바뀐 파일 · 남은 것 · 다음 제안). checks 는 필수',
+    description: '완료 보고(확인한 것 · 바뀐 파일 · 남은 것 · 다음 제안). checks 는 필수. planStepId 를 주면 이 스레드 계획의 그 단계를 done 으로 바꾼다(결과는 plan 칸)',
     inputSchema: {
       channelId: z.string().uuid(),
       body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
@@ -1599,10 +1615,15 @@ function buildMcpServer(
         label: z.string().min(1).max(200),
       })).max(REPORT_MAX_NEXT).optional(),
       model: MODEL_ARG,
+      // 계획판(P6): 이 보고로 끝난 이 스레드 계획의 단계 — 그 단계만 done 으로 바꾼다. 추측해서 바꾸지 않는다.
+      planStepId: z.string().regex(/^s[1-9][0-9]{0,3}$/).optional(),
     },
-  }, async ({ channelId, body, threadRootId, checks, files, remaining, durationMs, next, model }) => {
+  }, async ({ channelId, body, threadRootId, checks, files, remaining, durationMs, next, model, planStepId }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if (planStepId && !threadRootId) {
+      return jsonResult({ error: { code: 'bad_request', message: 'planStepId 는 threadRootId 와 함께 준다(그 스레드의 계획 단계)' } });
     }
     const meta: ReportMeta & Partial<ModelMeta> = {
       ...(await reportedModelMeta(pool, account.id, model, threadRootId ?? null)),
@@ -1626,6 +1647,11 @@ function buildMcpServer(
       const channelAudience = await audienceFor(pool, channelId);
       emitPosted(posted, channelAudience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
+    }
+    // 보고는 이미 섰다 — 단계 갱신이 막혀도 보고를 되돌리지 않는다. 재시도(replayed)면 이미 한 번 반영했다.
+    if (planStepId && threadRootId && !replayed) {
+      const plan = planHookOut(await completePlanStep(pool, threadRootId, account.id, planStepId));
+      return postedResult(message, notified, { plan });
     }
     return postedResult(message, notified);
   });
@@ -2156,8 +2182,14 @@ function buildMcpServer(
     linked_group_has_steps: '다른 스레드에 연결한 그룹은 자기 단계를 가질 수 없다(그 스레드의 계획이 정본이다)',
     limit_exceeded: '상한을 넘었다',
     duplicate_id: '같은 id 가 둘이다',
+    group_already_linked: '그 그룹은 이미 다른 스레드에 이어져 있다 — 바꾸려면 thread.plan.item 으로 linkedRootId 를 고쳐라',
     invalid_id: 'id 꼴이 틀렸다(그룹 g1~g9999, 단계 s1~s9999). 번호가 9999 에 닿아 더 더할 수 없으면 thread.plan 으로 읽은 뒤 지우고(plan: null) 새 번호로 다시 세우면 풀린다',
   };
+  /** report·delegate 응답의 `plan` 칸 — 실패여도 본 도구는 성공이라 error 객체로만 싣는다. */
+  function planHookOut(r: PlanHookResult): Record<string, unknown> {
+    if (r.ok) return r.unchanged ? { ok: true, unchanged: true } : { ok: true, rev: r.rev };
+    return { ok: false, error: { ...r.error, message: PLAN_ERROR_MESSAGES[r.error.code] ?? r.error.code } };
+  }
   const planError = (error: { code: string }) =>
     jsonResult({ error: { ...error, message: PLAN_ERROR_MESSAGES[error.code] ?? error.code } });
   const planWritten = async (res: Extract<ThreadPlanWriteResult, { ok: true }>, extra: Record<string, unknown> = {}) => {
