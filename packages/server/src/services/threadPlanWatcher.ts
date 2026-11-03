@@ -166,7 +166,7 @@ export function startThreadPlanWatcher(
     if (!authorId) return;
     const list = ids.join(' · ');
     const posted = await postMessage(pool, {
-      channelId: row.channelId, threadRootId: row.rootId, authorId, kind: 'system', serverNotice: true,
+      channelId: row.channelId, threadRootId: row.rootId, authorId, kind: 'system', serverNotice: true, noMentions: true,
       body: `▶ 이제 시작할 수 있는 단계 ${ids.length}개: ${list}`,
       meta: {
         planReady: { ids, rev: row.rev, titles: Object.fromEntries(ids.map((id) => [id, titleOf(row.doc, id)])) },

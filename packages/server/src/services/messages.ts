@@ -150,6 +150,12 @@ export interface PostMessageInput {
    * 비밀을 만들면 결과 전에 팀장이 "답 왔음"으로 깼다). 머리 주인 `thread_reply`·DM 알림은 그대로다 — 사람이 볼 줄이다.
    */
   serverNotice?: boolean;
+  /**
+   * 서버 전용 — 이 줄은 **아무도 부르지 않는다**(S1). 본문의 `@…`·`<@…>` 를 풀지 않고 그대로 두며 inbox·턴을 만들지 않는다.
+   * 서버가 남의 글을 재료로 세우는 알림 줄(계획판 ready 등)에 쓴다 — 줄을 일으킨 계정의 호출 권한으로 남이 쓴 부름이 나가지 않게.
+   * 라우트·MCP 입력에서는 받지 않는다(서버 코드만 넘긴다).
+   */
+  noMentions?: boolean;
 }
 
 // 리액션을 COLS 에 넣는 이유: 메시지를 내주는 경로가 네 갈래(목록·POST·PATCH·idempotency
@@ -1035,6 +1041,14 @@ interface ResolvedMentionCalls {
   callMeta: Record<string, unknown>;
 }
 
+/** 부르지 않는 줄(`PostMessageInput.noMentions`)의 판정 — 본문은 그대로, 부름·meta 는 없다. */
+function noMentionCalls(body: string): ResolvedMentionCalls {
+  return {
+    normalizedBody: body, accountHandles: new Set(), calledIds: [], cappedIds: new Set(), deniedIds: new Set(),
+    teamPlans: [], targetCall: [], channelCalled: false, callMeta: {},
+  };
+}
+
 async function resolveMentionCalls(
   client: PoolClient,
   input: {
@@ -1627,11 +1641,13 @@ export async function postMessage(
     const principalCause = principalId && input.chainCause
       ? { id: principalId, causeReasons: await causeReasonsFor(client, { agentId: input.authorId, causeMessageId: input.chainCause }) }
       : null;
-    const calls = await resolveMentionCalls(client, {
-      body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth, chainBound,
-      chainStartedAt, replyGrantThreadId: isResult ? input.threadRootId ?? null : null,
-      principal: principalCause,
-    });
+    const calls: ResolvedMentionCalls = input.noMentions
+      ? noMentionCalls(input.body)
+      : await resolveMentionCalls(client, {
+        body: input.body, channelId: input.channelId, authorId: input.authorId, authorIsAgent, mentionDepth, chainBound,
+        chainStartedAt, replyGrantThreadId: isResult ? input.threadRootId ?? null : null,
+        principal: principalCause,
+      });
 
     /**
      * `seq` 발급을 채널 단위로 직렬화한다(#523).

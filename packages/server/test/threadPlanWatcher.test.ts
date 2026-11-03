@@ -190,6 +190,48 @@ describe('architect R1~R3', () => {
   });
 });
 
+describe('S1 — 시스템 알림 줄은 부르지 않는다', () => {
+  /**
+   * 그 스레드의 system 줄이 만든 **부름** inbox. 머리 주인에게 가는 `thread_reply` 는 부름이 아니라 답글 알림이라 세지 않는다
+   * (봇 이름 줄이 사람 머리 아래 서면 원래 간다 — `serverNotice` 주석의 「머리 주인 thread_reply 는 그대로」).
+   */
+  const calls = (rootId: string, onlyReady = false) => pool.query(
+    `select i.reason from inbox i join message m on m.id = i.message_id
+      where m.thread_root_id = $1 and m.kind = 'system' and i.reason <> 'thread_reply' and ($2::boolean is false or m.meta ? 'planReady')`, [rootId, onlyReady],
+  ).then((r) => r.rowCount);
+  const callBody = () => `@channel @planbot <@${botId}> <@${admin.accountId}> <@team:00000000-0000-4000-8000-000000000000>`;
+
+  it('noMentions 줄은 본문의 부름 토큰을 풀지 않고 inbox 를 만들지 않는다(빼면 부른다 — 대조군)', async () => {
+    const quiet = await root();
+    emitPosted(await postMessage(pool, {
+      channelId: ch, threadRootId: quiet, authorId: admin.accountId, body: callBody(), kind: 'system', serverNotice: true, noMentions: true,
+    } as Parameters<typeof postMessage>[1]), 'all');
+    await settle();
+    expect(await calls(quiet)).toBe(0);
+
+    const loud = await root();
+    emitPosted(await postMessage(pool, {
+      channelId: ch, threadRootId: loud, authorId: admin.accountId, body: callBody(), kind: 'system', serverNotice: true,
+    } as Parameters<typeof postMessage>[1]), 'all');
+    await settle();
+    expect(await calls(loud)).toBeGreaterThan(0);
+  });
+
+  it('ready 줄: 단계 제목이 @channel·@handle·<@uuid>·<@team:uuid> 여도 inbox 0', async () => {
+    const r = await root();
+    const d = doc();
+    // 제목 상한(120자) 안에 들게 두 단계로 나눈다 — 둘 다 s1 뒤라 함께 ready 가 된다.
+    d.steps[1] = { ...d.steps[1]!, title: `@channel @planbot <@${botId}>` };
+    d.steps.push({ id: 's3', title: `<@${admin.accountId}> <@team:00000000-0000-4000-8000-000000000000>`, state: 'pending', links: [], dependsOn: ['s1'] });
+    await setThreadPlan(pool, { rootId: r, doc: d, actor: { accountId: admin.accountId } });
+    await mergeLine(r, 'merged');
+    const [line] = await until(async () => { const l = await readyLines(r); return l.length ? l : null; });
+    expect(line!.meta.planReady.ids).toEqual(['s2', 's3']);
+    await settle();
+    expect(await calls(r, true)).toBe(0);
+  });
+});
+
 describe('부모 전파', () => {
   it('자식 계획이 끝나면 부모에 via linked 이벤트, 부모 뒤 단계 ready 줄 — 조부모로는 가지 않는다', async () => {
     const grand = await root('조부모');
