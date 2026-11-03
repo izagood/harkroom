@@ -21,6 +21,7 @@
     "./providerLane": "./src/providerLane.ts",
     "./featureCatalog": "./src/featureCatalog.ts",
     "./prStatus": "./src/prStatus.ts",
+    "./planGraph": "./src/planGraph.ts",
     "./builtinSkills": "./src/builtinSkills.ts"
   },
   "scripts": { "test": "vitest run", "typecheck": "tsc -p ." },
