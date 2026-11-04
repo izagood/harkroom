@@ -66,6 +66,12 @@ export class ScreenIdleWatch {
     this.term.resize(cols, rows);
   }
 
+  /** 다음 차례를 넣었다 — 일하는 중을 다시 본 뒤에야 끝을 말한다(`ended`). 앞 차례의 idle 을 새 차례의 끝으로 읽지 않는다. */
+  rearm(): void {
+    this.sawBusy = false;
+    this.idleSinceMs = null;
+  }
+
   /** 보이는 화면 글(줄 끝 공백 걷음). */
   text(): string {
     const b = this.term.buffer.active;

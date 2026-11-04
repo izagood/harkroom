@@ -1858,6 +1858,41 @@ describe('silentTurnNotice — 기록의 마지막 말이 답 꼴이면 ✅ 로 
   });
 });
 
+describe('대리 글 머리(부른 사람 멘션) — 꼬리가 잘리지 않는다', () => {
+  const base = { offAnchor: null, pat: 'hrkp_secretpat', recordProxy: true, proxyHead: '@some-long-handle\n\n' } as const;
+  const long = Array.from({ length: 300 }, () => '가'.repeat(100)).join('\n');
+
+  for (const caller of ['human', 'agent'] as const) {
+    it(`${caller}: 긴 답이어도 머리와 꼬리가 다 남고 서버 상한을 넘지 않는다`, () => {
+      const body = (silentTurnNotice({ ...base, caller, lastSaid: long }) as { body: string }).body;
+      expect(body.startsWith('@some-long-handle\n\n> ')).toBe(true);
+      expect(body.endsWith('러너가 하네스 기록에서 옮겨 올렸습니다.)')).toBe(true);
+      expect(body.length).toBeLessThanOrEqual(BODY_LIMIT);
+    });
+  }
+
+  for (const caller of ['human', 'agent'] as const) {
+    it(`${caller}: 화면 답이 길어도 머리와 꼬리가 다 남고 서버 상한을 넘지 않는다`, () => {
+      const body = (silentTurnNotice({ ...base, recordProxy: false, caller, lastSaid: long, screenEnded: true, screenAnswer: long }) as { body: string }).body;
+      expect(body.startsWith('@some-long-handle\n\n> ')).toBe(true);
+      expect(body).toContain('러너가 화면에서 옮겨 올렸습니다');
+      expect(body.endsWith(')')).toBe(true);
+      expect(body.length).toBeLessThanOrEqual(BODY_LIMIT);
+    });
+  }
+
+  it('화면 답도 머리를 달고 꼬리를 남긴다', () => {
+    const body = (silentTurnNotice({ ...base, caller: 'human', lastSaid: null, screenAnswer: '답' }) as { body: string }).body;
+    expect(body.startsWith('@some-long-handle\n\n> 답')).toBe(true);
+    expect(body).toContain('러너가 화면에서 옮겨 올렸습니다');
+  });
+
+  it('대리 글이 아닌 통지에는 머리를 달지 않는다', () => {
+    const body = (silentTurnNotice({ ...base, caller: 'human', lastSaid: null }) as { body: string }).body;
+    expect(body.startsWith('@')).toBe(false);
+  });
+});
+
 describe('silentTurnNotice — 구독 claude 의 일부러 한 침묵은 대리 글로 바꾸지 않는다 (2026-10-31)', () => {
   const base = { offAnchor: null, pat: 'hrkp_secretpat', caller: 'agent' } as const;
   // 실측 꼴(내용은 가짜): 에이전트 사이 FYI 에 덧붙일 말이 없어 일부러 안 올렸다고 적고 글머리 목록을 단 끝말. 120자를 넘어 답 꼴이다.
@@ -1889,6 +1924,7 @@ describe('silentTurnNotice — 구독 claude 의 일부러 한 침묵은 대리 
     const n = silentTurnNotice({ ...base, caller: 'human', lastSaid: '안녕하세요!\n잘 돌아갑니다.', recordProxy: true });
     expect(n).toEqual({
       kind: 'post',
+      proxied: true,
       body: '> 안녕하세요!\n> 잘 돌아갑니다.\n\n(에이전트가 이 답을 스레드에 올리지 않고 끝내, 러너가 하네스 기록에서 옮겨 올렸습니다.)',
     });
   });

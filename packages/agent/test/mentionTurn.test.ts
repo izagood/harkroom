@@ -4390,6 +4390,112 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
  * 프롬프트가 입력줄에 붙여넣기 칩으로 남은 채 10분이 지나 접히던 턴의 마지막 그물이다.
  * 되돌려 RED: `probeStall` 의 그 갈래를 지우면 첫 시험의 `\r` 가 0번이 된다.
  */
+describe('말없이 끝난 API 키 연결 턴 — 재촉 1회와 부른 쪽 알림 (2026-11-04)', () => {
+  const ANSWER = '| PR | 제목 |\n|---|---|\n| #1 | 가 |';
+
+  /** 첫 끝을 본 뒤로는 재촉 시각 기준(`sinceMs`)으로 묻는다 — 그때부터의 상태를 `after` 로 준다. */
+  async function setUp(opts: {
+    lane: boolean; caller?: string; agentIds?: string[]; said?: string; after?: () => 'working' | 'ended'; onNudge?: (fake: FakeHarkroom) => void; handles?: Record<string, string>;
+    recordless?: boolean; readHarnessLastSaid?: () => Promise<string | null>;
+  }) {
+    const fake = new FakeHarkroom(defOf({ harness: 'claude-code', ...(opts.lane ? { model: 'ExampleOrg/example-model' } : {}) }));
+    fake.seedFrom(opts.caller ?? 'human-1', '@forge 표 줘').id = MENTION;
+    const writes: string[] = [];
+    let killed = false;
+    let firstSince: number | null = null;
+    const saids: string[] = [];
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5,
+      laneNudgeWaitMs: 60,
+      laneNudgeSubmitMs: 1,
+      readPendingBackground: async () => 0,
+      agentIds: new Set(opts.agentIds ?? []),
+      handles: opts.handles ?? { 'human-1': 'someone' },
+      readLastSaid: async () => { if (opts.recordless) return null; const v = saids.length === 0 ? (opts.said ?? ANSWER) : '보냈어요'; saids.push(v); return v; },
+      ...(opts.readHarnessLastSaid ? { readHarnessLastSaid: opts.readHarnessLastSaid } : {}),
+      readTurnState: async (_h: unknown, _s: unknown, o: { sinceMs?: number }) => {
+        firstSince ??= o.sinceMs ?? 0;
+        return (o.sinceMs ?? 0) > firstSince ? (opts.after?.() ?? 'working') : 'ended';
+      },
+      ...(opts.lane ? { providerEnv: async () => ({}) } : {}),
+    } as never);
+    runTurn.script = (async (_plan: TurnPlan, o: { onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void }) => {
+      o.onSpawn?.({
+        write: (b) => { const t = b.toString('utf8'); writes.push(t); if (t === '\r') opts.onNudge?.(fake); },
+        resize: () => {}, kill: () => { killed = true; },
+      });
+      for (let i = 0; i < 400 && !killed; i += 1) await new Promise((r) => setTimeout(r, 5));
+      return { exitCode: 143, timedOut: false, tail: '' };
+    }) as never;
+    const workspaceDir = join(deps.workspaceBaseDir, 'claude-lane');
+    await mkdir(workspaceDir, { recursive: true });
+    await deps.store.put(SessionStore.threadKey(CHANNEL, null), {
+      workspaceDir, sessionId: '00000000-0000-4000-8000-000000000001', harness: 'claude-code', lastFedSeq: 0, turnsRun: 0,
+    });
+    const mcpConfigPath = join(deps.workspaceBaseDir, 'mcp.json');
+    await writeFile(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
+    vi.stubEnv('HARKROOM_RUNNER_SECRET', 'fake-runner-secret');
+    try {
+      await runMentionTurn({ ...deps, mcpConfigPath }, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    return { fake, writes, nudges: writes.filter((w) => w.includes('(러너 알림)')) };
+  }
+
+  it('사람이 부른 턴: 한 번 재촉하고, 모델이 직접 올리면 대리 게시하지 않는다', async () => {
+    let posted = false;
+    const { fake, nudges, writes } = await setUp({
+      lane: true,
+      after: () => (posted ? 'ended' : 'working'),
+      onNudge: (f) => { posted = true; void f.postFromTurn(CHANNEL, '직접 올린 답', null, undefined); },
+    });
+    expect(nudges).toHaveLength(1);
+    expect(nudges[0]).toContain('message_post');
+    expect(writes.filter((w) => w === '\r')).toHaveLength(1);
+    expect(fake.posts.some((p) => p.body.includes('옮겨 올렸습니다'))).toBe(false);
+  }, 15_000);
+
+  it('재촉해도 답이 없으면 재촉 전의 끝말을 옮기고, 부른 사람 한 명만 머리에서 부른다', async () => {
+    const { fake, nudges } = await setUp({ lane: true });
+    expect(nudges).toHaveLength(1);
+    const proxied = fake.posts.at(-1)!.body;
+    expect(proxied.startsWith('@someone\n\n> | PR | 제목 |\n')).toBe(true);
+    expect(proxied).not.toContain('보냈어요');
+  }, 15_000);
+
+  it('인용 속 멘션은 부름이 아니다 — 머리에 부른 사람만 온다', async () => {
+    const { fake } = await setUp({ lane: true, said: '@other 에게 넘긴다\n| 표 |' });
+    const proxied = fake.posts.at(-1)!.body;
+    expect(proxied.startsWith('@someone\n\n> @other 에게 넘긴다')).toBe(true);
+  }, 15_000);
+
+  it('에이전트가 부른 FYI(답 꼴이 아님)는 재촉하지 않고, 답 꼴이면 재촉한다', async () => {
+    const fyi = await setUp({ lane: true, caller: 'agent-peer', agentIds: ['agent-peer'], said: '확인했습니다' });
+    expect(fyi.nudges).toHaveLength(0);
+    const answer = await setUp({ lane: true, caller: 'agent-peer', agentIds: ['agent-peer'], handles: { 'agent-peer': 'peer' } });
+    expect(answer.nudges).toHaveLength(1);
+    expect(answer.fake.posts.at(-1)!.body.startsWith('@peer\n\n> ')).toBe(true);
+  }, 15_000);
+
+  it('재촉 전에 읽은 하네스 기록 끝말을 옮기고, 재촉 뒤에 다시 읽지 않는다', async () => {
+    const reads: string[] = [];
+    const { fake, nudges } = await setUp({
+      lane: true, recordless: true,
+      readHarnessLastSaid: async () => { reads.push('h'); return ANSWER; },
+    });
+    expect(nudges).toHaveLength(1);
+    expect(reads).toHaveLength(1);
+    expect(fake.posts.at(-1)!.body.startsWith('@someone\n\n> | PR | 제목 |\n')).toBe(true);
+  }, 15_000);
+
+  it('구독 턴은 재촉하지 않고 머리 멘션도 붙이지 않는다', async () => {
+    const { fake, nudges } = await setUp({ lane: false });
+    expect(nudges).toHaveLength(0);
+    expect(fake.posts.some((p) => p.body.startsWith('@someone'))).toBe(false);
+  }, 15_000);
+});
+
 describe('정지 직전 제출 대기 화면이면 Enter 를 한 번 친다 (2026-10-07)', () => {
   function stuckScript(screen: string, holdMs: number) {
     const writes: string[] = [];
