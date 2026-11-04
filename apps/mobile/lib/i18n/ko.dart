@@ -420,7 +420,7 @@ class StringsKo implements Strings {
   String get permViaChat => '글로 답함';
 
   @override
-  String get permMirrorNeutral => '권한 요청 · 원래 카드가 있는 채널에서 확인하고 정한다';
+  String get permMirrorNeutral => '다른 채널의 결정 카드다';
 
   @override
   String get permOpenOriginal => '원본 카드 열기';
@@ -483,10 +483,24 @@ class StringsKo implements Strings {
   String get bundleRecommended => '추천';
 
   @override
-  String get bundleReplyInThread => '원 스레드에서 글로 답하기 →';
+  String get bundleReplyInThread => '글로 답하기 →';
 
   @override
   String get bundleDecideInThread => '원 스레드에서 정하기 →';
+  @override
+  String get bundleOriginalThread => '원 스레드 ↗';
+  @override
+  String get bundleExpandToDecide => '펼쳐 정하기';
+  @override
+  String get permApproveMandateElsewhere => '원 스레드 위임장 동안';
+  @override
+  String get permApproveNewMandateElsewhere => '원 스레드로 위임장 만들고 더하기';
+  @override
+  String get permStateAddedElsewhere => '원 스레드 위임장에 줄을 더했다';
+  @override
+  String permResultAddedElsewhere(String who) => '원 스레드 위임장에 더함 · $who';
+  @override
+  String permResultNewAddedElsewhere(String who) => '원 스레드에 위임장을 만들고 더함 · $who';
 
   @override
   String get bundleLoading => '원본을 읽는 중…';
@@ -510,7 +524,7 @@ class StringsKo implements Strings {
   String get bundleSkipNoRecommendation => '추천이 없어 일괄에서 뺐다';
 
   @override
-  String get bundleSkipLink => '원 스레드에서 정하는 카드라 뺐다';
+  String get bundleSkipLink => '직접 정하는 카드라 일괄에서 뺐다 — 이 줄에서 골라 줘';
 
   @override
   String get bundleSkipFailed => '고르지 못했다 — 다시 시도해 줘';

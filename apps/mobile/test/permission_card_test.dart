@@ -308,7 +308,7 @@ void main() {
     expect(stringsFor('ko').permResultDenied('나비'), '거절함 · 나비');
   });
 
-  testWidgets('진짜 거울은 같은 카드, 중립 거울은 중립 한 줄 + 원본 링크', (tester) async {
+  testWidgets('진짜 거울은 같은 카드, 원본을 못 보면 중립 거울은 중립 한 줄만', (tester) async {
     await tester.pumpWidget(wrap(
         app,
         card(permMeta(mirror: {
@@ -326,7 +326,8 @@ void main() {
 
     await tester.pumpWidget(wrap(app, card(permMeta(mirror: {'rootId': 'root1', 'neutral': true}))));
     expect(find.byKey(const Key('perm-neutral-m1')), findsOneWidget);
-    expect(find.byKey(const Key('perm-open-original-m1')), findsOneWidget);
+    // 원본을 못 보는 사람에게는 눌러도 열리지 않는 막다른 길을 두지 않는다.
+    expect(find.byKey(const Key('perm-open-original-m1')), findsNothing);
     expect(find.byKey(const Key('perm-mandate-chip')), findsNothing);
     expect(find.byKey(const Key('ask-option-m1-approve_mandate')), findsNothing);
   });
@@ -374,7 +375,7 @@ void main() {
     // 옛 카드(칸 없음)·줄 없음·중립 거울·밀려난 카드(줄 상자 안 그림)·ask 없음은 그대로.
     expect(permissionCardBody(body, permMeta()), body);
     expect(permissionCardBody(body, permMeta(pr: {'bodyTargetLine': tl, 'line': null})), body);
-    expect(permissionCardBody(body, permMeta(mirror: {'rootId': 'root1', 'neutral': true, 'bodyTargetLine': tl})), body);
+    expect(permissionCardBody(body, permMeta(mirror: {'rootId': 'root1', 'neutral': true, 'bodyTargetLine': tl})), '');
     expect(permissionCardBody(body, permMeta(pr: {'bodyTargetLine': tl, 'status': 'superseded'})), body);
     final noAsk = Map<String, Object?>.of(permMeta(pr: {'bodyTargetLine': tl}))..remove('ask');
     expect(permissionCardBody(body, noAsk), body);

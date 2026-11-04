@@ -2806,6 +2806,24 @@ class AppState extends ChangeNotifier {
   /// 묶음 카드의 줄 하나를 원본에서 새로 읽는다 — 캐시를 쓰지 않는다(원본이 다른 채널이면 이 기기에 새 판이 안 온다).
   Future<MessageRow> fetchMessage(String messageId) => _api!.message(messageId);
 
+  /// `ask-bundle/answer` 가 권한 줄을 받기 시작한 서버 릴리스. 그 앞 서버에는 권한 줄을 지금처럼 링크로 그린다.
+  static const bundleDecideSince = '0.4.386';
+  bool? _bundleDecide;
+
+  /// 이 서버가 묶음 줄의 권한 결정을 받는가. 버전을 못 읽으면 거짓이고 다음에 다시 묻는다.
+  Future<bool> bundleDecideSupported() async {
+    final known = _bundleDecide;
+    if (known != null) return known;
+    final version = await _api?.serverVersion().catchError((Object _) => null);
+    if (version == null) return false;
+    return _bundleDecide = versionAtLeast(version, bundleDecideSince);
+  }
+
+  /// 묶음 줄의 「답하지 않기」 — 원 카드의 그 버튼과 같은 문. 원본 채널 목록에 낱개 행을 넣지 않는다(묶음은 이벤트로 다시 읽는다).
+  Future<void> closeBundleRoot(String rootChannelId, String rootId) async {
+    await _api!.closeAsk(rootChannelId, rootId);
+  }
+
   /// 묶음 카드의 한 줄에 답한다. 돌아온 묶음 행으로 덮으면 카드가 원본을 다시 읽는다.
   Future<void> answerBundleItem(String channelId, String bundleId, String rootId, String optionId) async {
     _upsertMessage(await _api!.answerBundleItem(channelId, bundleId, rootId, optionId));
@@ -2999,6 +3017,8 @@ class AppState extends ChangeNotifier {
     messages.clear();
     decideChecks.clear();
     _decideCheckAsked.clear();
+    // 커뮤니티마다 서버 판이 다르다 — 옛 서버로 옮겨 가서 버튼을 세우지 않게 다시 묻는다.
+    _bundleDecide = null;
     channelLoad.clear();
     channelHasMore.clear();
     loadingOlder.clear();

@@ -272,10 +272,16 @@ class BundleRowOpen extends BundleRowState {
   final AskMeta ask;
 }
 
+/// 권한·머지 카드 — 원본을 펼쳐 그 자리에서 정한다.
+class BundleRowDecide extends BundleRowState {
+  const BundleRowDecide();
+}
+
 class BundleRowAnswered extends BundleRowState {
-  const BundleRowAnswered({this.label, this.by});
+  const BundleRowAnswered({this.label, this.by, this.chose});
   final String? label;
   final String? by;
+  final String? chose;
 }
 
 class BundleRowReplied extends BundleRowState {
@@ -298,9 +304,11 @@ class BundleRowDeclined extends BundleRowState {
 }
 
 /// [root] 는 원본 `meta`(아직 못 읽었으면 `null`, 못 보면 [unavailable]).
-BundleRowState bundleRowState(AskBundleItem item, Map<String, Object?>? root, {bool unavailable = false}) {
+///
+/// [decideHere] 는 서버가 권한 줄 결정을 받는가 — 아니면 그 줄은 전처럼 원 스레드 링크다. 줄 없는 옛 카드도 링크다.
+BundleRowState bundleRowState(AskBundleItem item, Map<String, Object?>? root, {bool unavailable = false, bool decideHere = false}) {
   if (root == null) {
-    if (item.link) return const BundleRowLink();
+    if (item.link && !decideHere) return const BundleRowLink();
     return unavailable ? const BundleRowUnavailable() : const BundleRowLoading();
   }
   final ask = AskMeta.read(root);
@@ -314,9 +322,17 @@ BundleRowState bundleRowState(AskBundleItem item, Map<String, Object?>? root, {b
       final line = ask.answeredText!.split('\n').first.trim();
       label = line.length > 80 ? '${line.substring(0, 79)}…' : line;
     }
-    return BundleRowAnswered(label: label, by: ask.answeredBy);
+    return BundleRowAnswered(label: label, by: ask.answeredBy, chose: ask.answeredWith);
   }
-  if (item.link && ask.isOpen) return const BundleRowLink();
+  final pr = root['permissionRequest'];
+  if ((item.link || pr is Map || root['mergeDenial'] != null) && ask.isOpen) {
+    // 시한이 지난 요청은 서버가 닫기 전이라도 버튼을 그리지 않는다 — 누르면 409 뿐이다.
+    if (pr is Map && (pr['status'] ?? 'pending') == 'pending') {
+      final at = pr['expiresAt'] is String ? DateTime.tryParse(pr['expiresAt'] as String) : null;
+      if (at != null && !at.isAfter(DateTime.now())) return const BundleRowExpired();
+    }
+    return decideHere && pr is Map && pr['line'] is Map ? const BundleRowDecide() : const BundleRowLink();
+  }
   if (ask.closedReason == 'replied') return BundleRowReplied(by: ask.closedBy, note: ask.replyNote, noteBy: ask.replyNoteBy);
   if (ask.closedReason == 'superseded') return const BundleRowSuperseded();
   if (ask.isExpired) return const BundleRowExpired();

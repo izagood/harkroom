@@ -2,10 +2,13 @@
 // 서버가 언제나 빼는 줄(되돌릴 수 없음·링크)은 n 에서 빠지고, 다 빠지면 버튼이 숨는다.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harkroom/api/api_error.dart';
 import 'package:harkroom/api/ask.dart';
 import 'package:harkroom/api/models.dart';
+import 'package:harkroom/api/permission_card.dart';
 import 'package:harkroom/i18n/i18n.dart';
 import 'package:harkroom/screens/ask_bundle_card.dart';
+import 'package:harkroom/screens/ask_card.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_scope.dart';
 import 'package:harkroom/state/app_state.dart';
@@ -23,11 +26,44 @@ MessageRow _row(String id, String channel, String author, Map<String, Object?> m
 MessageRow _root(String id, [Map<String, Object?> ask = const {}]) =>
     _row(id, 'cw', 'sec', {'kind': 'ask', 'ask': {'options': _opts, 'to': {'kind': 'human'}, ...ask}});
 
+const _line = {'cap': 'tool', 'scope': 'Bash(kubectl logs:*)', 'limits': {'approve_new_mandate': {'untilMs': 604800000}}};
+MessageRow _perm(String id, {String owner = 'me', Map<String, Object?> ask = const {}, Map<String, Object?> pr = const {}}) => MessageRow.fromJson({
+      'id': id, 'seq': 1, 'channelId': 'cw', 'threadRootId': null, 'authorId': 'sec', 'kind': 'user', 'createdAt': _t0.toIso8601String(),
+      'body': '권한 요청 · @sec\n명령 허용 `Bash(kubectl logs:*)`\n이유: 로그를 봐야 한다',
+      'meta': {
+        'kind': 'ask',
+        'ask': {'options': [{'id': 'approve_new_mandate', 'label': 'x'}, {'id': 'deny', 'label': 'y'}], 'to': {'kind': 'human'}, ...ask},
+        'permissionRequest': {'kind': 'tool', 'agentId': 'sec', 'channelId': 'cw', 'ownerAccountId': owner, 'status': 'pending', 'line': _line, 'bodyTargetLine': '명령 허용 `Bash(kubectl logs:*)`', ...pr},
+      },
+    });
+
+const _canDecide = DecideCheck(viewerCanDecide: true, asOwner: true, decideScope: 'owner', ownerAccountId: 'me');
+
 class _FakeApp extends AppState {
-  _FakeApp(this.roots, this.results) : super(sessions: SessionStore.inMemory());
+  _FakeApp(this.roots, this.results, {this.decide = false, this.check}) : super(sessions: SessionStore.inMemory());
   final Map<String, MessageRow> roots;
   final List<BundleAcceptResult> results;
+  final bool decide;
+  final DecideCheck? check;
   int acceptCalls = 0;
+  final List<String> answered = [];
+  final List<String> closed = [];
+  final List<String> checkedChannels = [];
+  Object? answerError;
+  @override
+  Future<bool> bundleDecideSupported() async => decide;
+  @override
+  DecideCheck? decideCheckFor(String agentId, String channelId) {
+    checkedChannels.add(channelId);
+    return check;
+  }
+  @override
+  Future<void> answerBundleItem(String channelId, String bundleId, String rootId, String optionId) async {
+    if (answerError != null) throw answerError!;
+    answered.add('$channelId/$bundleId/$rootId/$optionId');
+  }
+  @override
+  Future<void> closeBundleRoot(String rootChannelId, String rootId) async => closed.add('$rootChannelId/$rootId');
   @override
   Future<MessageRow> fetchMessage(String messageId) async => roots[messageId]!;
   @override
@@ -46,7 +82,7 @@ void main() {
       'askBundle': {
         'items': [
           for (final id in ids)
-            {'rootId': id, 'askerId': 'sec', 'channelId': 'cw', 'threadRootId': null, 'prompt': '$id 물음', 'options': _opts},
+            {'rootId': id, 'askerId': 'sec', 'channelId': 'cw', 'threadRootId': null, 'prompt': '$id 물음', 'options': _opts, 'link': app.roots[id]?.meta['permissionRequest'] != null},
         ],
       },
     });
@@ -65,6 +101,118 @@ void main() {
     await tester.pump();
     await tester.pump();
   }
+
+  testWidgets('권한 줄: 대상·이유·버튼을 펼쳐 그 자리에서 묶음 길로 정한다. 결정권은 요청 채널로 묻고 일괄에는 안 든다', (tester) async {
+    app = _FakeApp({'r1': _perm('r1')}, const [], decide: true, check: _canDecide);
+    await pump(tester, ['r1']);
+    await tester.pump();
+    expect(find.text('Bash(kubectl logs:*)', findRichText: true), findsWidgets);
+    expect(find.text('이유: 로그를 봐야 한다'), findsOneWidget);
+    expect(find.text('원 스레드로 위임장 만들고 더하기'), findsOneWidget);
+    expect(find.byKey(const Key('ask-bundle-accept-m-bundle')), findsNothing);
+    expect(app.checkedChannels.toSet(), {'cw'});
+    await tester.tap(find.byKey(const Key('ask-option-r1-approve_new_mandate')));
+    await tester.pump();
+    expect(app.answered, ['ct/m-bundle/r1/approve_new_mandate']);
+    expect(find.byKey(const Key('ask-bundle-original-r1')), findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('권한 줄: 결정권이 없으면 버튼 없이 기다리는 줄만 선다', (tester) async {
+    app = _FakeApp({'r1': _perm('r1', owner: 'other')}, const [], decide: true,
+        check: const DecideCheck(viewerCanDecide: false, asOwner: false, decideScope: 'owner', ownerAccountId: 'other'));
+    await pump(tester, ['r1']);
+    await tester.pump();
+    expect(find.byKey(const Key('perm-readonly-r1')), findsOneWidget);
+    expect(find.byKey(const Key('ask-option-r1-approve_new_mandate')), findsNothing);
+    expect(find.byKey(const Key('ask-bundle-original-r1')), findsNothing);
+  });
+
+  testWidgets('권한 줄: 실패하면 그 줄 안에 이유가 선다', (tester) async {
+    app = _FakeApp({'r1': _perm('r1')}, const [], decide: true, check: _canDecide)..answerError = ApiError(403, 'forbidden', 'no');
+    await pump(tester, ['r1']);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ask-option-r1-approve_new_mandate')));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const Key('ask-inline-error-r1')), findsOneWidget);
+  });
+
+  testWidgets('접힌 줄: 위임장 줄 없이 7일 허락으로 끝났으면 기한을 쓴다', (tester) async {
+    app = _FakeApp({
+      'r1': _perm('r1', ask: {'answeredWith': 'approve_new_mandate', 'answeredBy': 'me'}, pr: {'status': 'granted', 'grantExpiresAt': '2099-11-09T00:00:00.000Z'}),
+    }, const [], decide: true);
+    await pump(tester, ['r1']);
+    await tester.pump();
+    expect(find.textContaining('까지 허락함'), findsOneWidget);
+    expect(find.textContaining('위임장을 만들고 더함'), findsNothing);
+  });
+
+  testWidgets('권한 줄은 위에서 1개만 펼치고, 나머지는 버튼 없이 대상 한 줄로 서며 눌러야 펼쳐지고, 앞 줄이 끝나면 다음 줄이 펼쳐진다', (tester) async {
+    final bigApp = {'r1': _perm('r1'), 'r2': _perm('r2'), 'r3': _perm('r3'), 'r4': _perm('r4')};
+    app = _FakeApp(bigApp, const [], decide: true, check: _canDecide);
+    await pump(tester, ['r1', 'r2', 'r3', 'r4']);
+    await tester.pump();
+    expect(find.byKey(const Key('ask-option-r1-approve_new_mandate')), findsOneWidget);
+    expect(find.byKey(const Key('ask-option-r2-approve_new_mandate')), findsNothing);
+    expect(find.byKey(const Key('ask-bundle-target-r2')), findsOneWidget);
+    final expand = find.byKey(const Key('ask-bundle-expand-r2'));
+    await tester.ensureVisible(expand);
+    await tester.pump();
+    await tester.tap(expand);
+    await tester.pump();
+    expect(find.byKey(const Key('ask-option-r2-approve_new_mandate')), findsOneWidget);
+    // r1 이 끝나면 r3 이 아니라 남은 첫 줄(r2)이 펼쳐진 자리를 받는다 — 묶음 행이 바뀌면 카드가 원본을 다시 읽는다.
+    bigApp['r1'] = _perm('r1', ask: {'answeredWith': 'deny', 'answeredBy': 'me'}, pr: {'status': 'denied'});
+    await pump(tester, ['r1', 'r2', 'r3', 'r4']);
+    await tester.pump();
+    expect(find.byKey(const Key('ask-option-r1-approve_new_mandate')), findsNothing);
+  });
+
+  testWidgets('거울: 원본을 읽으면 중립 거울에 내용이 서고, 소유자 아닌 결정권자도 버튼을 보며, 결정권은 요청 채널로 묻는다', (tester) async {
+    app = _FakeApp({'r1': _perm('r1', owner: 'other')}, const [], check: const DecideCheck(viewerCanDecide: true, asOwner: false, decideScope: 'community', ownerAccountId: 'other'));
+    final mirror = _row('m1', 'ct', 'pm', {
+      'kind': 'ask',
+      'ask': {'options': [{'id': 'approve_new_mandate', 'label': 'x'}, {'id': 'deny', 'label': 'y'}], 'to': {'kind': 'human'}},
+      'permissionMirror': {'rootId': 'r1', 'neutral': true},
+    });
+    await tester.pumpWidget(MaterialApp(
+      theme: harkroomTheme(Brightness.light),
+      home: I18n(strings: stringsFor('ko'), child: AppScope(state: app, child: Scaffold(body: SingleChildScrollView(child: AskCard(message: mirror, ask: AskMeta.read(mirror.meta)!))))),
+    ));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const Key('perm-neutral-m1')), findsNothing);
+    expect(find.text('이유: 로그를 봐야 한다'), findsOneWidget);
+    expect(find.text('원 스레드로 위임장 만들고 더하기'), findsOneWidget);
+    expect(app.checkedChannels.toSet(), {'cw'});
+  });
+
+  testWidgets('옛 서버면 권한 줄은 링크다', (tester) async {
+    app = _FakeApp({'r1': _perm('r1')}, const []);
+    await pump(tester, ['r1']);
+    await tester.pump();
+    expect(find.byKey(const Key('ask-bundle-link-r1')), findsOneWidget);
+    expect(find.byKey(const Key('ask-option-r1-approve_new_mandate')), findsNothing);
+  });
+
+  testWidgets('끝난 권한 줄은 한 줄로 접히고 어느 스레드의 위임장인지와 대상을 남긴다', (tester) async {
+    app = _FakeApp({'r1': _perm('r1', ask: {'answeredWith': 'approve_new_mandate', 'answeredBy': 'me'}, pr: {'status': 'granted', 'lineId': 'l1'})}, const [], decide: true);
+    await pump(tester, ['r1']);
+    await tester.pump();
+    expect(find.textContaining('✓ 원 스레드에 위임장을 만들고 더함 · alice'), findsOneWidget);
+    expect(find.textContaining('tool Bash(kubectl logs:*)'), findsOneWidget);
+    expect(find.byKey(const Key('ask-option-r1-approve_new_mandate')), findsNothing);
+  });
+
+  testWidgets('보통 줄의 「답하지 않기」는 원본 채널의 그 카드를 닫는다', (tester) async {
+    app = _FakeApp({'r1': _root('r1')}, const []);
+    await pump(tester, ['r1']);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ask-bundle-decline-r1')));
+    await tester.pump();
+    expect(app.closed, ['cw/r1']);
+  });
 
   testWidgets('「추천대로」는 5초 뒤에 한 번 보내고, 그 안에 취소하면 보내지 않는다(s2)', (tester) async {
     app = _FakeApp({'r1': _root('r1'), 'r2': _root('r2')}, const []);
