@@ -875,6 +875,20 @@ class StringsKo implements Strings {
   @override
   String get planStartBodyLabel => '이 스레드에 올라갈 글';
   @override
+  String planStartBodyLabelTo(String handle) => '@$handle을 부르는 글 — 이 스레드에 올라간다';
+  @override
+  String planStartRowTo(String handle) => '→ @$handle';
+  @override
+  String get planStartRefreshing => '고른 대로 미리보기를 받는 중…';
+  @override
+  String planStartPartial(int n, int m) => '$n개 시작 · $m개 못 함';
+  @override
+  String get planStartPostFailed => '글을 올리지 못해 시작하지 않았다. 다시 눌러 달라';
+  @override
+  String planStartNotNotified(String handles) => '시작했지만 알리지 못했다 $handles';
+  @override
+  String get planStartClose => '닫기';
+  @override
   String planStartViaManager(String handle) => '관리 에이전트 @$handle에게 맡긴다';
   @override
   String planStartToAssignee(String handle) => '@$handle에게 맡긴다';

@@ -71,7 +71,7 @@ void main() {
         (e['start'] as Map<String, dynamic>).forEach((id, st) {
           expect(names[stepStartState(plan, step(id), me, humans.contains)], st, reason: id);
         });
-        expect(planReadyStepIds(plan), e['readyIds']);
+        expect(planReadyStepIds(plan, me), e['readyIds']);
       });
 
       test('막힌 까닭', () {

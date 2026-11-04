@@ -346,10 +346,10 @@ PlanStartState stepStartState(ThreadPlanView plan, PlanStep step, String? me, bo
   return a != null && a != me && isHuman(a) ? PlanStartState.otherHuman : PlanStartState.enabled;
 }
 
-/// 「모두 시작」의 후보 — 시작 가능한 단계 전부(문서 순서). 고를 수 없는 줄은 서버 미리보기가 사유를 준다.
-List<String> planReadyStepIds(ThreadPlanView plan) => [
+/// 「모두 시작」의 후보 — 「시작 가능」 칩과 같은 단계(문서 순서). 내 차례는 뺀다. 고를 수 없는 줄은 서버 미리보기가 사유를 준다.
+List<String> planReadyStepIds(ThreadPlanView plan, String? me) => [
       for (final s in planStepOrder(plan))
-        if (plan.stateOf(s.id) == PlanState.ready) s.id,
+        if (stepKind(plan, s, me) == PlanRowKind.ready) s.id,
     ];
 
 class PlanStartPost {
@@ -388,14 +388,23 @@ class PlanStartPreview {
 
 /// 실제 시작 응답.
 class PlanStartDone {
-  const PlanStartDone({required this.started, required this.plan});
+  const PlanStartDone({required this.started, required this.plan, this.skipped = const [], this.failed = const [], this.notNotified = const []});
 
   final List<({String id, String? messageId})> started;
   final ThreadPlanView? plan;
+  final List<({String id, String code})> skipped;
+  final List<String> failed;
+  final List<String> notNotified;
+
+  /// 알릴 것이 없는가 — 있으면 확인 시트를 닫지 않고 보인다(글 실패·그 사이 남이 시작·못 알림).
+  bool get clean => skipped.isEmpty && failed.isEmpty && notNotified.isEmpty;
 
   static PlanStartDone fromJson(Object? j) => PlanStartDone(
         started: _maps(_at(j, 'started')).map((s) => (id: _s(s['id']) ?? '', messageId: _s(s['messageId']))).toList(growable: false),
         plan: ThreadPlanView.fromJson(_at(j, 'plan')),
+        skipped: _maps(_at(j, 'skipped')).map((s) => (id: _s(s['id']) ?? '', code: _s(s['code']) ?? '')).toList(growable: false),
+        failed: _maps(_at(j, 'failed')).map((f) => _s(f['id']) ?? '').toList(growable: false),
+        notNotified: _strs(_at(j, 'notNotified')),
       );
 }
 

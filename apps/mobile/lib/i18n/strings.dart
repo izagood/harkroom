@@ -737,6 +737,13 @@ abstract class Strings {
   String get planStartStarting;
   String get planStartCancel;
   String get planStartBodyLabel;
+  String planStartBodyLabelTo(String handle);
+  String planStartRowTo(String handle);
+  String get planStartRefreshing;
+  String planStartPartial(int n, int m);
+  String get planStartPostFailed;
+  String planStartNotNotified(String handles);
+  String get planStartClose;
   String planStartViaManager(String handle);
   String planStartToAssignee(String handle);
   String get planStartSelf;
@@ -1474,6 +1481,7 @@ const Set<String> i18nAllowSameAsEnglish = {
   'planSumCycle',
   'planRowPr',
   'planRowMore',
+  'planStartRowTo',
   'planWhyPr',
   // 계획판 기호 표기 — 글자 없이 기호·숫자·제목만이라 두 언어가 같다(데스크톱 `plan.moreGroups`·`plan.pill.done`·`plan.pill.count`).
   'planPillDone',
@@ -2053,6 +2061,13 @@ Map<String, String> stringsToMap(Strings s) => {
       'planStartStarting': s.planStartStarting,
       'planStartCancel': s.planStartCancel,
       'planStartBodyLabel': s.planStartBodyLabel,
+      'planStartBodyLabelTo': s.planStartBodyLabelTo('{handle}'),
+      'planStartRowTo': s.planStartRowTo('{handle}'),
+      'planStartRefreshing': s.planStartRefreshing,
+      'planStartPartial': s.planStartPartial(2, 1),
+      'planStartPostFailed': s.planStartPostFailed,
+      'planStartNotNotified': s.planStartNotNotified('{handles}'),
+      'planStartClose': s.planStartClose,
       'planStartViaManager': s.planStartViaManager('{handle}'),
       'planStartToAssignee': s.planStartToAssignee('{handle}'),
       'planStartSelf': s.planStartSelf,

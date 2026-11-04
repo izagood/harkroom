@@ -871,6 +871,20 @@ class StringsEn implements Strings {
   @override
   String get planStartBodyLabel => 'Message that will be posted in this thread';
   @override
+  String planStartBodyLabelTo(String handle) => 'Message calling @$handle, posted in this thread';
+  @override
+  String planStartRowTo(String handle) => '→ @$handle';
+  @override
+  String get planStartRefreshing => 'Updating the preview for your selection…';
+  @override
+  String planStartPartial(int n, int m) => '$n started · $m not started';
+  @override
+  String get planStartPostFailed => 'Couldn’t post the message, so this didn’t start. Press again';
+  @override
+  String planStartNotNotified(String handles) => 'Started, but couldn’t notify $handles';
+  @override
+  String get planStartClose => 'Close';
+  @override
   String planStartViaManager(String handle) => 'Hand off to manager agent @$handle';
   @override
   String planStartToAssignee(String handle) => 'Hand this to @$handle';
