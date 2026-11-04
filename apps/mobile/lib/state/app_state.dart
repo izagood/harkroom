@@ -2713,6 +2713,30 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 계획판 「시작」 미리보기. 실패는 던진다 — 확인 시트가 사유를 보인다.
+  Future<PlanStartPreview> previewPlanStart(String rootId, List<Map<String, String>> steps, String locale) =>
+      _api!.planStartPreview(rootId, steps, locale);
+
+  /// 계획판 「시작」. 받은 판을 바로 싣는다 — 이벤트를 기다리면 줄이 늦게 바뀐다. 실패는 던진다.
+  Future<PlanStartDone> startPlan(String rootId, List<Map<String, String>> steps, int ifRev, String locale) async {
+    final res = await _api!.planStart(rootId, steps, ifRev, locale);
+    final plan = res.plan;
+    if (plan != null) {
+      threadPlans[rootId] = plan;
+      notifyListeners();
+    }
+    return res;
+  }
+
+  /// 관리 에이전트를 바꾸거나 비운다. 실패는 던진다.
+  Future<void> setPlanManager(String rootId, String? managerId) async {
+    final plan = await _api!.setPlanManager(rootId, managerId);
+    if (plan != null) {
+      threadPlans[rootId] = plan;
+      notifyListeners();
+    }
+  }
+
   /// 스레드의 모델 지정을 읽는다. 실패는 삼킨다 — 칩이 안 설 뿐 스레드는 열린다.
   Future<void> loadThreadAgentModels(String channelId, String rootId) async {
     try {

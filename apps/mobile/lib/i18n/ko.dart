@@ -849,7 +849,87 @@ class StringsKo implements Strings {
   @override
   String planRowPr(int number) => 'PR #$number ↗';
   @override
-  String get planRowMessage => '› 글';
+  String planRowMore(int n) => '+$n';
+  @override
+  String get planRowNoLink => '연결 없음';
+  @override
+  String get planManagerLabel => '관리';
+  @override
+  String get planManagerNone => '없음';
+  @override
+  String get planManagerEdit => '관리 에이전트 바꾸기';
+  @override
+  String get planManagerFailed => '바꾸지 못했다';
+  @override
+  String get planStartButton => '▷ 시작';
+  @override
+  String get planStartAll => '▷ 모두 시작…';
+  @override
+  String get planStartGo => '▶ 시작';
+  @override
+  String planStartGoN(int n) => '▶ $n개 시작';
+  @override
+  String get planStartStarting => '시작하는 중…';
+  @override
+  String get planStartCancel => '취소';
+  @override
+  String get planStartBodyLabel => '이 스레드에 올라갈 글';
+  @override
+  String planStartBodyLabelTo(String handle) => '@$handle을 부르는 글 — 이 스레드에 올라간다';
+  @override
+  String planStartRowTo(String handle) => '→ @$handle';
+  @override
+  String get planStartRefreshing => '고른 대로 미리보기를 받는 중…';
+  @override
+  String planStartPartial(int n, int m) => '$n개 시작 · $m개 못 함';
+  @override
+  String get planStartPostFailed => '글을 올리지 못해 시작하지 않았다. 다시 눌러 달라';
+  @override
+  String planStartNotNotified(String handles) => '시작했지만 알리지 못했다 $handles';
+  @override
+  String get planStartClose => '닫기';
+  @override
+  String planStartViaManager(String handle) => '관리 에이전트 @$handle에게 맡긴다';
+  @override
+  String planStartToAssignee(String handle) => '@$handle에게 맡긴다';
+  @override
+  String get planStartSelf => '아무도 부르지 않고 진행 중으로 표시한다';
+  @override
+  String get planStartPickTitle => '맡길 에이전트를 고른다';
+  @override
+  String get planStartPick => '맡길 에이전트';
+  @override
+  String get planStartLoading => '불러오는 중…';
+  @override
+  String planStartBulkTitle(int n) => '시작 가능 $n개를 한꺼번에 시작';
+  @override
+  String planStartBulkTurns(int n) => '에이전트 턴 $n개가 동시에 돈다';
+  @override
+  String get planStartChanged => '그 사이 계획이 바뀌었다. 바뀐 내용을 보고 다시 눌러 달라';
+  @override
+  String get planStartFailed => '시작하지 못했다';
+  @override
+  String get planStartOtherHuman => '담당이 시작한다';
+  @override
+  String planStartJustStarted(String who) => '방금 $who 시작';
+  @override
+  String get planStartPostLink => '시작 글 ›';
+  @override
+  String planStartSkip(String code) => switch (code) {
+        'unknown_item' || 'plan_changed' => '이 단계가 없어졌다',
+        'already_started' => '이미 시작됐다',
+        'not_ready' => '아직 시작할 수 없다',
+        'no_assignee' => '담당 없음',
+        'invalid_assignee' || 'not_invokable' => '그 에이전트를 부를 권한이 없다',
+        'other_human_assignee' => '담당이 시작한다',
+        _ => '시작하지 못했다',
+      };
+  @override
+  String planStartManagerSkip(String code) => switch (code) {
+        'manager_off' => '관리 에이전트가 꺼져 있어 담당을 직접 부른다',
+        'manager_no_access' => '관리 에이전트가 이 채널을 볼 수 없어 담당을 직접 부른다',
+        _ => '관리 에이전트를 부를 권한이 없어 담당을 직접 부른다',
+      };
   @override
   String get planWhyToggle => '까닭 보기 ›';
   @override

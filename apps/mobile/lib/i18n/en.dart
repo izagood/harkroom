@@ -845,7 +845,87 @@ class StringsEn implements Strings {
   @override
   String planRowPr(int number) => 'PR #$number ↗';
   @override
-  String get planRowMessage => '› Message';
+  String planRowMore(int n) => '+$n';
+  @override
+  String get planRowNoLink => 'Nothing linked';
+  @override
+  String get planManagerLabel => 'Manager';
+  @override
+  String get planManagerNone => 'None';
+  @override
+  String get planManagerEdit => 'Change manager agent';
+  @override
+  String get planManagerFailed => 'Couldn’t change it';
+  @override
+  String get planStartButton => '▷ Start';
+  @override
+  String get planStartAll => '▷ Start all…';
+  @override
+  String get planStartGo => '▶ Start';
+  @override
+  String planStartGoN(int n) => '▶ Start $n';
+  @override
+  String get planStartStarting => 'Starting…';
+  @override
+  String get planStartCancel => 'Cancel';
+  @override
+  String get planStartBodyLabel => 'Message that will be posted in this thread';
+  @override
+  String planStartBodyLabelTo(String handle) => 'Message calling @$handle, posted in this thread';
+  @override
+  String planStartRowTo(String handle) => '→ @$handle';
+  @override
+  String get planStartRefreshing => 'Updating the preview for your selection…';
+  @override
+  String planStartPartial(int n, int m) => '$n started · $m not started';
+  @override
+  String get planStartPostFailed => 'Couldn’t post the message, so this didn’t start. Press again';
+  @override
+  String planStartNotNotified(String handles) => 'Started, but couldn’t notify $handles';
+  @override
+  String get planStartClose => 'Close';
+  @override
+  String planStartViaManager(String handle) => 'Hand off to manager agent @$handle';
+  @override
+  String planStartToAssignee(String handle) => 'Hand this to @$handle';
+  @override
+  String get planStartSelf => 'Marks it in progress without calling anyone';
+  @override
+  String get planStartPickTitle => 'Choose an agent for this step';
+  @override
+  String get planStartPick => 'Agent';
+  @override
+  String get planStartLoading => 'Loading…';
+  @override
+  String planStartBulkTitle(int n) => 'Start $n ready steps at once';
+  @override
+  String planStartBulkTurns(int n) => '$n agent turn(s) will run at the same time';
+  @override
+  String get planStartChanged => 'The plan changed. Check the new version and press again';
+  @override
+  String get planStartFailed => 'Couldn’t start';
+  @override
+  String get planStartOtherHuman => 'The assignee starts this';
+  @override
+  String planStartJustStarted(String who) => '$who just started this';
+  @override
+  String get planStartPostLink => 'Start message ›';
+  @override
+  String planStartSkip(String code) => switch (code) {
+        'unknown_item' || 'plan_changed' => 'This step no longer exists',
+        'already_started' => 'Already started',
+        'not_ready' => 'Can’t start yet',
+        'no_assignee' => 'No assignee',
+        'invalid_assignee' || 'not_invokable' => 'You can’t call that agent',
+        'other_human_assignee' => 'The assignee starts this',
+        _ => 'Couldn’t start',
+      };
+  @override
+  String planStartManagerSkip(String code) => switch (code) {
+        'manager_off' => 'The manager agent is off, so this calls the assignee directly',
+        'manager_no_access' => 'The manager agent can’t see this channel, so this calls the assignee directly',
+        _ => 'You can’t call the manager agent, so this calls the assignee directly',
+      };
   @override
   String get planWhyToggle => 'Why blocked ›';
   @override

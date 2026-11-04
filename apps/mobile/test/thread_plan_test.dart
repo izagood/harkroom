@@ -110,8 +110,25 @@ class _Server {
   http.Response Function() fallback = () => _json({'plan': _planJson()});
   Map<String, Object?> Function() root = _rootRow;
 
+  /// 「시작」 요청 기록과 답.
+  final startCalls = <Map<String, dynamic>>[];
+  http.Response Function(Map<String, dynamic> body) startAnswer = (b) => b['dryRun'] == true
+      ? _json({'rev': 3, 'posts': [{'to': _agent, 'via': 'assignee', 'stepIds': ['s4'], 'body': '@builder 단계 「보안 검토」를 시작해 달라'}], 'selfStepIds': <Object?>[], 'skipped': <Object?>[], 'managerSkipped': null})
+      : _json({'rev': 4, 'started': [{'id': 's4', 'via': 'assignee', 'to': _agent, 'messageId': 'm-9'}], 'skipped': <Object?>[], 'failed': <Object?>[], 'notNotified': <Object?>[], 'managerSkipped': null, 'plan': _planJson(rev: 4)});
+  Future<http.Response> Function(Map<String, dynamic> body)? startAnswerAsync;
+  final managerCalls = <Object?>[];
+
   MockClient client() => MockClient((req) async {
         final path = req.url.path;
+        if (path.endsWith('/plan/start')) {
+          final body = jsonDecode(req.body) as Map<String, dynamic>;
+          startCalls.add(body);
+          return startAnswerAsync != null ? await startAnswerAsync!(body) : startAnswer(body);
+        }
+        if (path.endsWith('/plan/manager')) {
+          managerCalls.add((jsonDecode(req.body) as Map<String, dynamic>)['managerId']);
+          return _json({'plan': _planJson(rev: 5)});
+        }
         if (path.endsWith('/plan')) {
           planGets++;
           if (answers.isNotEmpty) return answers.removeAt(0)();
@@ -693,6 +710,284 @@ void main() {
       await tester.runAsync(() => app.loadThreadPlan(_root));
       await tester.pump();
       expect(tester.widget<Text>(find.byKey(const Key('plan-sheet-goal'))).data, '바뀐 목표');
+    });
+  });
+
+  group('▷ 시작', () {
+    Future<AppState> openSheet(WidgetTester tester, _Server s) async {
+      final (app, _) = await tester.runAsync(() => _boot(s)) as (AppState, _Sock);
+      await _button(tester, app);
+      await tester.tap(find.byKey(const Key('plan-button-open')));
+      await tester.pumpAndSettle();
+      return app;
+    }
+
+    Future<void> press(WidgetTester tester, Key key) async {
+      await tester.ensureVisible(find.byKey(key));
+      await tester.pump();
+      await tester.tap(find.byKey(key));
+      await _settle(tester);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('시작 가능 줄에만 버튼이 있고, 미리보기에 부를 상대와 글을 보인다. 아직 시작하지 않는다', (tester) async {
+      final s = _Server();
+      await openSheet(tester, s);
+      expect(find.byKey(const Key('plan-start-s2')), findsNothing, reason: '대기 줄에는 없다');
+      await press(tester, const Key('plan-start-s4'));
+      expect(s.startCalls.single['dryRun'], true);
+      expect(tester.widget<Text>(find.byKey(const Key('plan-start-title'))).data, '@builder에게 맡긴다');
+      expect(find.byKey(const Key('plan-start-body-$_agent')), findsOneWidget);
+    });
+
+    testWidgets('시작하면 미리보기 rev 를 싣고, 확인 시트만 닫히며 줄에 시작 글이 남는다', (tester) async {
+      final s = _Server();
+      final app = await openSheet(tester, s);
+      await press(tester, const Key('plan-start-s4'));
+      await press(tester, const Key('plan-start-go'));
+      expect(s.startCalls.last['ifRev'], 3);
+      expect(s.startCalls.last.containsKey('dryRun'), isFalse);
+      expect(s.startCalls.last['locale'], 'ko');
+      expect(find.byKey(const Key('plan-start-sheet')), findsNothing);
+      expect(find.byKey(const Key('plan-sheet')), findsOneWidget);
+      expect(app.threadPlans[_root]!.rev, 4);
+      expect(find.byKey(const Key('plan-started-link-s4')), findsOneWidget);
+    });
+
+    for (final code in ['plan_changed', 'if_rev_required']) {
+      testWidgets('$code 면 시작하지 않고 미리보기를 다시 받아 새 판으로만 시작한다', (tester) async {
+        final s = _Server();
+        var rev = 3;
+        var refuse = true;
+        s.startAnswer = (b) {
+          if (b['dryRun'] == true) {
+            return _json({'rev': rev, 'posts': [{'to': _agent, 'via': 'manager', 'stepIds': ['s4'], 'body': '판 $rev 글'}], 'selfStepIds': <Object?>[], 'skipped': <Object?>[], 'managerSkipped': null});
+          }
+          if (refuse) {
+            refuse = false;
+            rev = 7;
+            return _json({'error': {'code': code, 'message': 'x'}}, code == 'plan_changed' ? 409 : 400);
+          }
+          return _json({'rev': 8, 'started': <Object?>[], 'skipped': <Object?>[], 'failed': <Object?>[], 'notNotified': <Object?>[], 'managerSkipped': null, 'plan': _planJson(rev: 8)});
+        };
+        await openSheet(tester, s);
+        await press(tester, const Key('plan-start-s4'));
+        await press(tester, const Key('plan-start-go'));
+        expect(find.byKey(const Key('plan-start-sheet')), findsOneWidget, reason: '시트가 그대로 있어 새 내용을 보여 준다');
+        expect(find.byKey(const Key('plan-start-changed')), findsOneWidget);
+        expect(tester.widget<Text>(find.byKey(const Key('plan-start-body-$_agent'))).data, '판 7 글');
+        expect(tester.widget<Text>(find.byKey(const Key('plan-start-title'))).data, '관리 에이전트 @builder에게 맡긴다');
+        await press(tester, const Key('plan-start-go'));
+        expect(s.startCalls.last['ifRev'], 7);
+      });
+    }
+
+    testWidgets('관리 에이전트를 못 거치면 사유를 한 줄로 보이고, 담당이 없으면 고를 때까지 시작이 꺼진다', (tester) async {
+      final s = _Server();
+      s.startAnswer = (b) {
+        final picked = ((b['steps'] as List).first as Map)['assigneeId'];
+        return _json({
+          'rev': 3,
+          'posts': picked == null ? <Object?>[] : [{'to': _agent, 'via': 'assignee', 'stepIds': ['s4'], 'body': '글'}],
+          'selfStepIds': <Object?>[],
+          'skipped': picked == null ? [{'id': 's4', 'code': 'no_assignee'}] : <Object?>[],
+          'managerSkipped': 'manager_not_invokable',
+        });
+      };
+      await openSheet(tester, s);
+      await press(tester, const Key('plan-start-s4'));
+      expect(find.byKey(const Key('plan-start-manager-skipped')), findsOneWidget);
+      expect(tester.widget<FilledButton>(find.byKey(const Key('plan-start-go'))).onPressed, isNull);
+      await tester.tap(find.byKey(const Key('plan-start-pick')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('@builder').last);
+      await _settle(tester);
+      await tester.pumpAndSettle();
+      expect(((s.startCalls.last['steps'] as List).first as Map)['assigneeId'], _agent);
+      expect(tester.widget<FilledButton>(find.byKey(const Key('plan-start-go'))).onPressed, isNotNull);
+    });
+
+    testWidgets('고른 것을 바꾸면 새 미리보기가 올 때까지 시작하지 못한다', (tester) async {
+      final s = _Server();
+      final gate = Completer<void>();
+      var waited = false;
+      s.startAnswerAsync = (b) async {
+        final picked = ((b['steps'] as List).first as Map)['assigneeId'];
+        if (picked != null && !waited) {
+          waited = true;
+          await gate.future;
+        }
+        return _json({'rev': 3, 'posts': [{'to': _agent, 'via': 'assignee', 'stepIds': ['s4'], 'body': '글'}], 'selfStepIds': <Object?>[], 'skipped': [{'id': 's4', 'code': 'no_assignee'}], 'managerSkipped': null});
+      };
+      await openSheet(tester, s);
+      await press(tester, const Key('plan-start-s4'));
+      expect(tester.widget<FilledButton>(find.byKey(const Key('plan-start-go'))).onPressed, isNotNull);
+      await tester.tap(find.byKey(const Key('plan-start-pick')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('@builder').last);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const Key('plan-start-refreshing')), findsOneWidget);
+      expect(tester.widget<FilledButton>(find.byKey(const Key('plan-start-go'))).onPressed, isNull);
+      gate.complete();
+      await _settle(tester);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('plan-start-refreshing')), findsNothing);
+      expect(tester.widget<FilledButton>(find.byKey(const Key('plan-start-go'))).onPressed, isNotNull);
+    });
+
+    testWidgets('글 올리기가 실패하면 시트를 닫지 않고 사유를 보이며, 새 판으로 다시 시작한다', (tester) async {
+      final s = _Server();
+      var rev = 3;
+      var first = true;
+      s.startAnswer = (b) {
+        if (b['dryRun'] == true) return _json({'rev': rev, 'posts': [{'to': _agent, 'via': 'assignee', 'stepIds': ['s4'], 'body': '글'}], 'selfStepIds': <Object?>[], 'skipped': <Object?>[], 'managerSkipped': null});
+        if (first) {
+          first = false;
+          rev = 5;
+          return _json({'rev': 5, 'started': <Object?>[], 'skipped': <Object?>[], 'failed': [{'id': 's4', 'code': 'post_failed'}], 'notNotified': <Object?>[], 'managerSkipped': null, 'plan': _planJson(rev: 5)});
+        }
+        return _json({'rev': 6, 'started': <Object?>[], 'skipped': <Object?>[], 'failed': <Object?>[], 'notNotified': <Object?>[], 'managerSkipped': null, 'plan': _planJson(rev: 6)});
+      };
+      await openSheet(tester, s);
+      await press(tester, const Key('plan-start-s4'));
+      await press(tester, const Key('plan-start-go'));
+      expect(find.byKey(const Key('plan-start-sheet')), findsOneWidget);
+      expect(find.byKey(const Key('plan-start-result')), findsOneWidget);
+      expect(find.text('닫기'), findsOneWidget);
+      await press(tester, const Key('plan-start-go'));
+      expect(s.startCalls.last['ifRev'], 5);
+      expect(find.byKey(const Key('plan-start-sheet')), findsNothing);
+    });
+
+    testWidgets('일부만 되면 몇 개인지 보이고, 못 알린 상대를 한 줄로 적는다', (tester) async {
+      final s = _Server();
+      s.startAnswer = (b) => b['dryRun'] == true
+          ? _json({'rev': 3, 'posts': [{'to': _agent, 'via': 'assignee', 'stepIds': ['s4'], 'body': '글'}], 'selfStepIds': <Object?>[], 'skipped': <Object?>[], 'managerSkipped': null})
+          : _json({'rev': 4, 'started': [{'id': 's4', 'via': 'assignee', 'to': _agent, 'messageId': 'm-9'}], 'skipped': [{'id': 's5', 'code': 'already_started'}], 'failed': <Object?>[], 'notNotified': [_agent], 'managerSkipped': null, 'plan': _planJson(rev: 4)});
+      await openSheet(tester, s);
+      await press(tester, const Key('plan-start-s4'));
+      await press(tester, const Key('plan-start-go'));
+      expect(find.text('1개 시작 · 1개 못 함'), findsOneWidget);
+      expect(find.byKey(const Key('plan-start-not-notified')), findsOneWidget);
+      expect(find.textContaining('@builder', findRichText: true), findsWidgets);
+    });
+
+    testWidgets('담당이 다른 사람이면 버튼이 꺼지고 까닭을 쓴다', (tester) async {
+      final s = _Server()..fallback = () {
+        final j = _planJson();
+        final steps = ((j['doc']! as Map)['steps']! as List).cast<Map<String, Object?>>();
+        steps.firstWhere((x) => x['id'] == 's4')['assigneeId'] = 'pat';
+        return _json({'plan': j});
+      };
+      await openSheet(tester, s);
+      await tester.ensureVisible(find.byKey(const Key('plan-start-s4')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('plan-start-s4')));
+      await tester.pump();
+      expect(s.startCalls, isEmpty);
+      expect(find.byKey(const Key('plan-other-human-s4')), findsOneWidget);
+    });
+
+    testWidgets('모두 시작은 둘 이상일 때만 있고, 고를 수 없는 줄은 꺼진다', (tester) async {
+      final one = _Server();
+      await openSheet(tester, one);
+      expect(find.byKey(const Key('plan-start-all')), findsNothing);
+    });
+
+    testWidgets('모두 시작: 체크 목록과 도는 턴 수를 보이고, 빼면 다시 미리 본다', (tester) async {
+      final s = _Server()..fallback = () {
+        final j = _planJson();
+        (j['derived']! as Map<String, Object?>)['s5'] = {'derived': 'ready', 'waitingOn': <Object?>[]};
+        return _json({'plan': j});
+      };
+      s.startAnswer = (b) {
+        final ids = (b['steps'] as List).map((x) => (x as Map)['id']).toList();
+        return _json({
+          'rev': 3,
+          'posts': ids.contains('s4') ? [{'to': _agent, 'via': 'assignee', 'stepIds': ['s4'], 'body': '글'}] : <Object?>[],
+          'selfStepIds': <Object?>[],
+          'skipped': [{'id': 's5', 'code': 'no_assignee'}],
+          'managerSkipped': null,
+        });
+      };
+      await openSheet(tester, s);
+      await press(tester, const Key('plan-start-all'));
+      expect(find.text('에이전트 턴 1개가 동시에 돈다'), findsOneWidget);
+      expect(find.text('시작 가능 2개를 한꺼번에 시작'), findsOneWidget);
+      expect(tester.widget<Text>(find.byKey(const Key('plan-start-to-s4'))).data, '→ @builder');
+      expect(tester.widget<CheckboxListTile>(find.byKey(const Key('plan-start-check-s5'))).onChanged, isNull);
+      await tester.tap(find.byKey(const Key('plan-start-check-s4')));
+      await _settle(tester);
+      await tester.pumpAndSettle();
+      expect(tester.widget<FilledButton>(find.byKey(const Key('plan-start-go'))).onPressed, isNull);
+    });
+  });
+
+  group('줄 누르기·관리 에이전트', () {
+    Future<_Server> openWith(WidgetTester tester, Map<String, List<Map<String, Object?>>> links) async {
+      final s = _Server()..fallback = () {
+        final j = _planJson();
+        final steps = ((j['doc']! as Map)['steps']! as List).cast<Map<String, Object?>>();
+        links.forEach((id, l) => steps.firstWhere((x) => x['id'] == id)['links'] = l);
+        return _json({'plan': j});
+      };
+      final (app, _) = await tester.runAsync(() => _boot(s)) as (AppState, _Sock);
+      await _button(tester, app);
+      await tester.tap(find.byKey(const Key('plan-button-open')));
+      await tester.pumpAndSettle();
+      return s;
+    }
+
+    testWidgets('연결이 있는 줄만 줄 전체가 눌린다. 카드가 먼저고, 나머지는 작은 링크로 남는다', (tester) async {
+      await openWith(tester, {'s6': [{'kind': 'pr', 'repo': 'acme/app', 'number': 7}, {'kind': 'message', 'id': 'm-1'}, {'kind': 'card', 'messageId': 'c-1'}]});
+      await tester.ensureVisible(find.byKey(const Key('plan-step-s6')));
+      expect(find.byKey(const Key('plan-row-s6')), findsOneWidget);
+      expect(find.byKey(const Key('plan-row-s2')), findsNothing, reason: '연결이 없는 줄은 누르는 모양이 없다');
+      expect(find.byKey(const Key('plan-row-go-card-s6')), findsOneWidget);
+      expect(find.text('글 +1'), findsOneWidget);
+    });
+
+    testWidgets('막힌 줄은 누르면 까닭을 편다', (tester) async {
+      await openWith(tester, const {});
+      await tester.tap(find.byKey(const Key('plan-row-s1')), warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('plan-why-s1')), findsOneWidget);
+    });
+
+    testWidgets('내 차례인데 연결이 없으면 「연결 없음」을 쓴다', (tester) async {
+      await openWith(tester, const {});
+      await tester.ensureVisible(find.byKey(const Key('plan-step-s3')));
+      expect(find.byKey(const Key('plan-row-nolink-s3')), findsOneWidget);
+    });
+
+    testWidgets('관리 조각은 메타 줄 끝에 붙고 누르는 자리는 44다. 320폭에서 넘치지 않는다', (tester) async {
+      tester.view.physicalSize = const Size(320 * 3, 812 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      await openWith(tester, const {});
+      final meta = tester.getRect(find.byKey(const Key('plan-sheet-meta')));
+      final edit = tester.getRect(find.byKey(const Key('plan-manager-edit')));
+      expect(edit.left, greaterThanOrEqualTo(meta.right));
+      expect((edit.center.dy - meta.center.dy).abs(), lessThan(1), reason: '같은 줄이다');
+      expect(edit.height, greaterThanOrEqualTo(44));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('관리 에이전트를 바꾸거나 비운다', (tester) async {
+      final s = await openWith(tester, const {});
+      await tester.tap(find.byKey(const Key('plan-manager-edit')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('plan-manager-pick-$_agent')));
+      await _settle(tester);
+      await tester.pumpAndSettle();
+      expect(s.managerCalls.last, _agent);
+      await tester.tap(find.byKey(const Key('plan-manager-edit')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('plan-manager-none')));
+      await _settle(tester);
+      await tester.pumpAndSettle();
+      expect(s.managerCalls.last, isNull);
     });
   });
 

@@ -136,7 +136,7 @@ class ThreadPlanView {
   const ThreadPlanView({
     required this.rootId, required this.rev, required this.updatedAt, required this.goal,
     required this.groups, required this.steps, required this.derived, required this.progress, required this.linked,
-    this.next, this.blocked, this.flagged = false, this.updatedBy,
+    this.next, this.blocked, this.flagged = false, this.updatedBy, this.managerId,
   });
 
   final String rootId;
@@ -154,6 +154,9 @@ class ThreadPlanView {
 
   /// 마지막으로 쓴 계정 id. 자동 갱신·지워진 계정이면 null.
   final String? updatedBy;
+
+  /// 관리 에이전트(계정 id). 있으면 「시작」은 담당 대신 이 에이전트를 부른다. 없으면 담당을 직접 부른다.
+  final String? managerId;
 
   /// 서버 파생 상태. 맵에 없으면 단계는 선언 상태로, 그룹은 대기로 본다(데스크톱과 같다).
   PlanState stateOf(String id) {
@@ -194,6 +197,7 @@ class ThreadPlanView {
       blocked: _s(_at(doc, 'blocked')),
       flagged: j['flagged'] != null,
       updatedBy: _s(j['updatedBy']),
+      managerId: _s(_at(doc, 'managerId')),
       groups: _maps(_at(doc, 'groups'))
           .map((g) => PlanGroup(
                 id: _s(g['id']) ?? '', title: _s(g['title']) ?? '', assigneeId: _s(g['assigneeId']),
@@ -317,6 +321,92 @@ bool _validPr(PlanLink l) => l.kind == 'pr' && l.repo != null && _prRepo.hasMatc
 }
 
 String prUrl(({String repo, int number}) pr) => 'https://github.com/${pr.repo}/pull/${pr.number}';
+
+/// 줄을 누르면 갈 곳(시안 v4 R14) — 카드 → 메시지 → PR 순서. 앱 안에서 가는 것이 먼저고 PR 은 밖이라 마지막이다.
+/// 작업 항목은 id 만으로 갈 화면이 없어 넣지 않는다. 비면 누를 수 없는 줄이다.
+typedef PlanGoTarget = ({String kind, String? id, String? repo, int? number});
+
+List<PlanGoTarget> stepGoTargets(PlanStep step) => [
+      for (final l in step.links)
+        if (l.kind == 'card' && l.id != null) (kind: 'card', id: l.id, repo: null, number: null),
+      for (final l in step.links)
+        if (l.kind == 'message' && l.id != null) (kind: 'message', id: l.id, repo: null, number: null),
+      for (final l in step.links)
+        if (_validPr(l)) (kind: 'pr', id: null, repo: l.repo, number: l.number),
+    ];
+
+/// 「▷ 시작」(R13·A안) — 시작 가능한 단계에만 있다. 관리 에이전트가 있으면 담당과 상관없이 그쪽으로 간다.
+/// 없을 때 담당이 나 아닌 사람이면 꺼 둔다(그 사람이 시작한다). 담당이 없거나 에이전트면 켠다(담당 없음은 확인 시트에서 고른다).
+enum PlanStartState { none, enabled, otherHuman }
+
+PlanStartState stepStartState(ThreadPlanView plan, PlanStep step, String? me, bool Function(String id) isHuman) {
+  if (plan.stateOf(step.id) != PlanState.ready) return PlanStartState.none;
+  if (plan.managerId != null) return PlanStartState.enabled;
+  final a = stepAssignee(plan, step);
+  return a != null && a != me && isHuman(a) ? PlanStartState.otherHuman : PlanStartState.enabled;
+}
+
+/// 「모두 시작」의 후보 — 「시작 가능」 칩과 같은 단계(문서 순서). 내 차례는 뺀다. 고를 수 없는 줄은 서버 미리보기가 사유를 준다.
+List<String> planReadyStepIds(ThreadPlanView plan, String? me) => [
+      for (final s in planStepOrder(plan))
+        if (stepKind(plan, s, me) == PlanRowKind.ready) s.id,
+    ];
+
+class PlanStartPost {
+  const PlanStartPost({required this.to, required this.via, required this.stepIds, required this.body});
+
+  final String to;
+
+  /// `manager`·`assignee`.
+  final String via;
+  final List<String> stepIds;
+  final String body;
+}
+
+/// `POST /threads/:root/plan/start` 의 `dryRun` 응답. 서버가 지은 글을 그대로 보인다.
+class PlanStartPreview {
+  const PlanStartPreview({required this.rev, required this.posts, required this.selfStepIds, required this.skipped, this.managerSkipped});
+
+  final int rev;
+  final List<PlanStartPost> posts;
+  final List<String> selfStepIds;
+  final List<({String id, String code})> skipped;
+  final String? managerSkipped;
+
+  int get startable => posts.fold<int>(0, (n, p) => n + p.stepIds.length) + selfStepIds.length;
+
+  static PlanStartPreview fromJson(Object? j) => PlanStartPreview(
+        rev: _n(_at(j, 'rev')),
+        posts: _maps(_at(j, 'posts'))
+            .map((p) => PlanStartPost(to: _s(p['to']) ?? '', via: _s(p['via']) ?? 'assignee', stepIds: _strs(p['stepIds']), body: _s(p['body']) ?? ''))
+            .toList(growable: false),
+        selfStepIds: _strs(_at(j, 'selfStepIds')),
+        skipped: _maps(_at(j, 'skipped')).map((s) => (id: _s(s['id']) ?? '', code: _s(s['code']) ?? '')).toList(growable: false),
+        managerSkipped: _s(_at(j, 'managerSkipped')),
+      );
+}
+
+/// 실제 시작 응답.
+class PlanStartDone {
+  const PlanStartDone({required this.started, required this.plan, this.skipped = const [], this.failed = const [], this.notNotified = const []});
+
+  final List<({String id, String? messageId})> started;
+  final ThreadPlanView? plan;
+  final List<({String id, String code})> skipped;
+  final List<String> failed;
+  final List<String> notNotified;
+
+  /// 알릴 것이 없는가 — 있으면 확인 시트를 닫지 않고 보인다(글 실패·그 사이 남이 시작·못 알림).
+  bool get clean => skipped.isEmpty && failed.isEmpty && notNotified.isEmpty;
+
+  static PlanStartDone fromJson(Object? j) => PlanStartDone(
+        started: _maps(_at(j, 'started')).map((s) => (id: _s(s['id']) ?? '', messageId: _s(s['messageId']))).toList(growable: false),
+        plan: ThreadPlanView.fromJson(_at(j, 'plan')),
+        skipped: _maps(_at(j, 'skipped')).map((s) => (id: _s(s['id']) ?? '', code: _s(s['code']) ?? '')).toList(growable: false),
+        failed: _maps(_at(j, 'failed')).map((f) => _s(f['id']) ?? '').toList(growable: false),
+        notNotified: _strs(_at(j, 'notNotified')),
+      );
+}
 
 /// 그룹 머리의 표지·수. 막힘이 먼저고, 내 단계가 있으면 내 차례, 그 밖은 서버 파생 상태다.
 ({PlanRowKind kind, int done, int total, int active, int mine}) groupFacts(ThreadPlanView plan, PlanGroup g, String? me) {

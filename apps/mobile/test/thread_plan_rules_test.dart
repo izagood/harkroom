@@ -59,6 +59,21 @@ void main() {
         expect(planButtonKind(plan.progress).name, e['buttonKind']);
       });
 
+      test('줄을 누르면 갈 곳·시작 버튼', () {
+        final humans = (c['humans'] as List).cast<String>().toSet();
+        (e['go'] as Map<String, dynamic>).forEach((id, go) {
+          expect([
+            for (final t in stepGoTargets(step(id)))
+              if (t.kind == 'pr') {'kind': 'pr', 'repo': t.repo, 'number': t.number} else {'kind': t.kind, 'id': t.id},
+          ], go, reason: id);
+        });
+        const names = {PlanStartState.none: 'none', PlanStartState.enabled: 'enabled', PlanStartState.otherHuman: 'other_human'};
+        (e['start'] as Map<String, dynamic>).forEach((id, st) {
+          expect(names[stepStartState(plan, step(id), me, humans.contains)], st, reason: id);
+        });
+        expect(planReadyStepIds(plan, me), e['readyIds']);
+      });
+
       test('막힌 까닭', () {
         (e['why'] as Map<String, dynamic>).forEach((id, why) {
           final w = stepWhy(plan, step(id), me);
