@@ -2096,13 +2096,24 @@ export class Controller {
    * `message.updated` 이벤트로 곧 화면에 온다.
    */
   async answerAsk(messageId: string, optionId: string, channelId?: string): Promise<{ status: number; code: string; message: string } | null> {
+    return this.sendAskAnswer(messageId, channelId, (target) => this.api.answerAsk(target, messageId, optionId));
+  }
+
+  /** 선택지 대신 직접 쓴 답을 보낸다. 고르기와 같은 길이다 — 거절 이유도 같이 돌려준다. */
+  async answerAskText(messageId: string, text: string, channelId?: string): Promise<{ status: number; code: string; message: string } | null> {
+    return this.sendAskAnswer(messageId, channelId, (target) => this.api.answerAskText(target, messageId, text));
+  }
+
+  private async sendAskAnswer(
+    messageId: string, channelId: string | undefined, send: (target: string) => Promise<MessageRow>,
+  ): Promise<{ status: number; code: string; message: string } | null> {
     const state = this.store.getState();
     const target = channelId
       ?? Object.values(state.messages).flat().find((m) => m.id === messageId)?.channelId
       ?? state.activeChannelId;
     if (!target) return null;
     try {
-      const m = await this.api.answerAsk(target, messageId, optionId);
+      const m = await send(target);
       this.store.getState().upsertMessages(target, [m]);
       return null;
     } catch (e) {

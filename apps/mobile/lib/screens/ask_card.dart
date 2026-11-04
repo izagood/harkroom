@@ -55,6 +55,15 @@ class _AskCardState extends State<AskCard> {
   /// 글로 답한 카드의 「그래도 고르기」를 펼쳤나.
   bool _pickAnyway = false;
 
+  /// 직접 입력 칸. 보내지 못해도 글은 남는다.
+  final TextEditingController _write = TextEditingController();
+
+  @override
+  void dispose() {
+    _write.dispose();
+    super.dispose();
+  }
+
   Future<void> _run(Future<void> Function() action) async {
     if (_busy) return;
     setState(() => _busy = true);
@@ -101,6 +110,8 @@ class _AskCardState extends State<AskCard> {
     final closedByName = closedBy == null
         ? null
         : (closedBy.displayName.isNotEmpty ? closedBy.displayName : closedBy.handle);
+    final answeredByName = ask.answeredBy == null ? null : app.accounts[ask.answeredBy!]?.handle;
+    final canWrite = ((ask.isOpen && mine) || canPickLate) && askTakesText(widget.message.meta);
     final quote = ask.isReplied ? _replyQuote(app, widget.message, ask.replyMessageId) : null;
 
     return Card(
@@ -115,6 +126,7 @@ class _AskCardState extends State<AskCard> {
           children: [
             Text(
               switch ((ask.isOpen, ask.to)) {
+                (false, _) when ask.answeredText != null && answeredByName != null => t.askWrittenBy(answeredByName),
                 (false, _) when ask.answeredWith != null => t.askAnswered,
                 (false, _) when ask.isReplied =>
                   closedByName == null ? t.askReplied : '${t.askReplied} · $closedByName',
@@ -181,6 +193,13 @@ class _AskCardState extends State<AskCard> {
                   ),
                 ),
               )
+            else if (ask.answeredText != null)
+              // 쓴 글 그대로 남긴다 — 고른 선택지처럼 굵게 칠하지 않는다, 읽을 글이다.
+              SelectableText(
+                ask.answeredText!,
+                key: Key('ask-written-${widget.message.id}'),
+                style: theme.textTheme.bodyMedium,
+              )
             else if (ask.answeredWith != null || !(ask.isReplied || ask.isSuperseded || ask.isExpired))
               // **고른 것을 남긴다.** 버튼이 사라지고 결과가 그 자리에 선다 — 누른 뒤에도
               // 버튼이 있으면 사람은 자기가 누른 것을 의심한다.
@@ -189,6 +208,7 @@ class _AskCardState extends State<AskCard> {
                 key: Key('ask-chosen-${widget.message.id}'),
                 style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
               ),
+            if (canWrite) _writeBox(context, app),
             if (ask.isOpen && mine)
               Align(
                 alignment: Alignment.centerRight,
@@ -204,6 +224,52 @@ class _AskCardState extends State<AskCard> {
           ],
         ),
       ),
+    );
+  }
+
+  /// **선택지에 없는 답을 이 카드에 직접 쓴다.** 스레드 글과 달리 이 카드 하나의 답이라 같은 스레드의 다른 카드를 닫지 않는다.
+  Widget _writeBox(BuildContext context, AppState app) {
+    final t = context.t;
+    final id = widget.message.id;
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: _write,
+      builder: (context, value, _) {
+        final text = value.text.trim();
+        final over = text.length > askTextMaxChars;
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: TextField(
+                key: Key('ask-write-$id'),
+                controller: _write,
+                minLines: 1,
+                maxLines: 5,
+                textInputAction: TextInputAction.newline,
+                decoration: InputDecoration(
+                  hintText: t.askWritePlaceholder,
+                  isDense: true,
+                  filled: true,
+                  fillColor: context.tokens.surface,
+                  border: const OutlineInputBorder(),
+                  counterText: text.length > askTextMaxChars - 200 ? '${text.length} / $askTextMaxChars' : null,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              height: 44,
+              child: FilledButton(
+                key: Key('ask-write-send-$id'),
+                onPressed: _busy || text.isEmpty || over
+                    ? null
+                    : () => _run(() => app.answerAskText(widget.message.channelId, id, text)),
+                child: Text(t.askWriteSend),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 

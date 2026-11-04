@@ -243,6 +243,15 @@ class StringsKo implements Strings {
   String get askClosed => '답 없이 닫혔다';
 
   @override
+  String get askWritePlaceholder => '직접 입력…';
+
+  @override
+  String get askWriteSend => '보내기';
+
+  @override
+  String askWrittenBy(String name) => '$name 직접 답함';
+
+  @override
   String get askReplied => '글로 답했다';
 
   @override

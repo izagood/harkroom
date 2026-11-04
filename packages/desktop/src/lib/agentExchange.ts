@@ -1,4 +1,4 @@
-import {
+import { ASK_TEXT_OPTION_ID,
   isAskOpen, mentionedIds, mentionScanText, readAskMeta, readDelegationMeta, readFailureMeta, readReportMeta,
   type MessageRow,
 } from '@harkroom/shared';
@@ -345,6 +345,8 @@ export function exchangeConclusion(messages: MessageRow[]): ExchangeConclusion |
 
     const ask = readAskMeta(m.meta);
     if (ask?.answeredWith != null) {
+      // 직접 쓴 답은 그 글이 결론이다.
+      if (ask.answeredWith === ASK_TEXT_OPTION_ID && ask.answeredText) return { source: 'ask', text: clamp(ask.answeredText) };
       const chosen = ask.options.find((o) => o.id === ask.answeredWith);
       // 고른 `id` 가 옵션에 없으면 무엇으로 정해졌는지 말할 수 없다 — 옛 서버나 손으로 쓴
       // meta 가 그럴 수 있고, 그때는 결론이 없는 것으로 친다(모르는 것을 지어내지 않는다).

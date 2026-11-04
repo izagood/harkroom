@@ -7,7 +7,7 @@
 // 대신 `data-for-me` 로 **판정**을 고정하고, 누를 수 있는지(`disabled`)로 대접을 고정한다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
-import type { AskMeta, MessageRow } from '@harkroom/shared';
+import { ASK_TEXT_MAX_CHARS, ASK_TEXT_OPTION_ID, type AskMeta, type MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
@@ -295,5 +295,59 @@ describe('AskCard — 권한 요청 만료', () => {
       permissionRequest: { status: 'pending', expiresAt: new Date(Date.now() + 60_000).toISOString() },
     })} />);
     expect(screen.getByTestId('ask-card').dataset.closed).toBe('false');
+  });
+});
+
+describe('AskCard — 직접 쓴 답', () => {
+  it('열린 내 카드에서 쓰고 Enter 로 보내면 그 카드의 답으로 간다(앞뒤 공백은 뺀다)', async () => {
+    const answerAskText = vi.fn().mockResolvedValue(null);
+    setController({ answerAsk, closeAsk, answerAskText } as unknown as Controller);
+    render(<MessageItem message={askMessage(askMeta())} />);
+    const input = screen.getByTestId('ask-write-input');
+    expect((screen.getByTestId('ask-write-send') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(input, { target: { value: '  다른 길로 가자 ' } });
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    expect(answerAskText).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    expect(answerAskText).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(answerAskText).toHaveBeenCalledWith('m-ask', '다른 길로 가자', 'c1');
+    expect(answerAsk).not.toHaveBeenCalled();
+    await screen.findByTestId('ask-write-send');
+  });
+
+  it('보내지 못하면 글을 지우지 않고 그렇게 말한다', async () => {
+    const answerAskText = vi.fn().mockResolvedValue({ status: 500, code: 'failed', message: 'x' });
+    setController({ answerAsk, closeAsk, answerAskText } as unknown as Controller);
+    render(<MessageItem message={askMessage(askMeta())} />);
+    const input = screen.getByTestId('ask-write-input') as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: '답' } });
+    fireEvent.click(screen.getByTestId('ask-write-send'));
+    await screen.findByTestId('ask-write-failed');
+    expect(input.value).toBe('답');
+  });
+
+  it('상한을 넘으면 못 보내고 글자 수를 보여 준다', () => {
+    render(<MessageItem message={askMessage(askMeta())} />);
+    fireEvent.change(screen.getByTestId('ask-write-input'), { target: { value: 'x'.repeat(ASK_TEXT_MAX_CHARS + 1) } });
+    expect((screen.getByTestId('ask-write-send') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('ask-write-count').textContent).toContain(String(ASK_TEXT_MAX_CHARS + 1));
+  });
+
+  it('남에게 간 카드·서버가 세운 백스톱 카드에는 입력칸이 없다', () => {
+    const { unmount } = render(<MessageItem message={askMessage(askMeta({ to: { kind: 'account', accountId: FORGE } }))} />);
+    expect(screen.queryByTestId('ask-write-input')).toBeNull();
+    unmount();
+    render(<MessageItem message={askMessage({ ...askMeta(), chainBackstop: {} })} />);
+    expect(screen.getByTestId('ask-card')).toBeTruthy();
+    expect(screen.queryByTestId('ask-write-input')).toBeNull();
+  });
+
+  it('직접 쓴 답은 글 그대로 남고, 입력칸·선택지는 접힌다', () => {
+    render(<MessageItem message={askMessage(askMeta({ answeredWith: ASK_TEXT_OPTION_ID, answeredBy: ME, answeredText: '<b>다른 길</b>\n이유' }))} />);
+    expect(screen.getByTestId('ask-written-answer').textContent).toBe('<b>다른 길</b>\n이유');
+    expect(screen.getByText(/alice.* 직접 답했다/)).toBeTruthy();
+    expect(screen.queryByTestId('ask-write-input')).toBeNull();
+    expect(screen.queryByTestId('ask-option-new')).toBeNull();
   });
 });

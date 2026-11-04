@@ -631,6 +631,8 @@ void main() {
     addTearDown(state.dispose);
     await tester.tap(find.byKey(const Key('channel-c1')));
     await _settle(tester);
+    await tester.ensureVisible(find.byKey(const Key('thread-open-m1')));
+    await _settle(tester);
     await tester.tap(find.byKey(const Key('thread-open-m1')));
     await _settle(tester);
 
@@ -646,6 +648,8 @@ void main() {
     expect(find.byType(ThreadScreen), findsNothing);
     // 스레드의 고정은 채널 작성칸으로 새지 않는다.
     expect(find.byKey(const Key('sticky-mentions')), findsNothing);
+    await tester.ensureVisible(find.byKey(const Key('thread-open-m1')));
+    await _settle(tester);
     await tester.tap(find.byKey(const Key('thread-open-m1')));
     await _settle(tester);
     expect(find.byKey(const Key('sticky-mention-forge')), findsOneWidget);
@@ -770,6 +774,8 @@ void main() {
     await tester.pumpAndSettle();
     addTearDown(state.dispose);
     await tester.tap(find.byKey(const Key('channel-c2')));
+    await _settle(tester);
+    await tester.ensureVisible(find.byKey(const Key('thread-open-m1')));
     await _settle(tester);
     await tester.tap(find.byKey(const Key('thread-open-m1')));
     await _settle(tester);

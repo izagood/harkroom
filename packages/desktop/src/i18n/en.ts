@@ -3957,6 +3957,10 @@ export const en = {
    * 답한 사람. 이름을 모르면 `common.someone` 이 들어온다 — **그 자리가 이름 자리**라
    * 보통명사가 와도 문장이 서야 하고, 그것이 `common` 에 그 낱말이 있는 이유다.
    */
+  'speech.ask.writePlaceholder': 'Write your own answer…',
+  'speech.ask.writeSend': 'Send',
+  'speech.ask.writeFailed': "Couldn't send. Your text is still here",
+  'speech.ask.writtenBy': 'Written by {name}',
   'speech.ask.answeredBy': '{name} picked',
   /** 이름을 모르는 에이전트. `message.audience.unknownAgent` 와 같은 값이지만 **뜻이 다르다** — 여기는 고를 쪽, 저기는 받을 쪽이다. */
   'speech.ask.unknownAgent': 'another agent',

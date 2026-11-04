@@ -457,6 +457,10 @@ export class ApiClient {
   answerAsk(channelId: string, messageId: string, optionId: string): Promise<MessageRow> {
     return this.req('POST', `/channels/${channelId}/messages/${messageId}/ask-answer`, { optionId });
   }
+  /** 선택지 대신 직접 쓴 답 — 그 카드 하나의 답이다. 같은 문이고 `optionId` 대신 `text` 를 싣는다. */
+  answerAskText(channelId: string, messageId: string, text: string): Promise<MessageRow> {
+    return this.req('POST', `/channels/${channelId}/messages/${messageId}/ask-answer`, { text });
+  }
   /** 답하지 않기로 한다 — 고른 것 없이 그 물음을 닫는다(2026-09-09). */
   closeAsk(channelId: string, messageId: string): Promise<MessageRow> {
     return this.req('POST', `/channels/${channelId}/messages/${messageId}/ask-close`, {});

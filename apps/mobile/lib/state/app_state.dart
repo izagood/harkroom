@@ -2772,6 +2772,15 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 선택지 대신 직접 쓴 답을 보낸다. 고르기와 같은 길이다.
+  Future<void> answerAskText(String channelId, String messageId, String text) async {
+    try {
+      _upsertMessage(await _api!.answerAskText(channelId, messageId, text));
+    } on ApiError catch (e) {
+      if (!await _settleAsk(e, messageId)) rethrow;
+    }
+  }
+
   /// 답하지 않기로 한다.
   Future<void> closeAsk(String channelId, String messageId) async {
     try {

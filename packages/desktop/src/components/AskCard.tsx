@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { readAskMeta, type AskAudience, type MessageRow } from '@harkroom/shared';
+import { useRef, useState } from 'react';
+import { ASK_TEXT_MAX_CHARS, ASK_TEXT_OPTION_ID, askTakesText, readAskMeta, type AskAudience, type MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { selectAccountNames } from '../lib/accountNames';
 import { getController } from '../state/controller';
@@ -117,6 +117,8 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
   const canPickLate = replied && forMe && pickAnyway;
 
   const chosen = answered ? ask.options.find((o) => o.id === ask.answeredWith) : undefined;
+  // 선택지 대신 이 카드에 직접 쓴 답. 평문이다 — 마크다운·멘션으로 해석하지 않는다.
+  const writtenText = answered && ask.answeredWith === ASK_TEXT_OPTION_ID && typeof ask.answeredText === 'string' ? ask.answeredText : null;
   // 이름을 모르면 **이름 자리에 보통명사가 온다** — 그 낱말이 `common.someone` 에 있는
   // 이유이고, 조사는 번역기가 그것을 보고 고른다(`{name:이가}`).
   const answeredByName = ask.answeredBy
@@ -162,7 +164,7 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
           {resultHead ?? (lineHead && !answered && !closed ? lineHead : headline(ask.to, myId, accounts, answered, closed, t, closedReason))}
         </span>
         {answered && answeredByName && !resultHead && (
-          <span className="text-meta text-fg-subtle">{t('speech.ask.answeredBy', { name: answeredByName })}</span>
+          <span className="text-meta text-fg-subtle">{t(writtenText != null ? 'speech.ask.writtenBy' : 'speech.ask.answeredBy', { name: answeredByName })}</span>
         )}
         {/* designer n3 — 글로 정한 카드는 답한 사람 뒤에 「· 글로 답함」(그 글로 가는 링크). */}
         {answered && chatVia && (
@@ -208,6 +210,11 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
         </div>
       )}
       {!lined && <div className={`flex flex-col gap-1 ${closed && !canPickLate ? 'px-2 pb-1' : 'p-2'}`}>
+        {writtenText != null && (
+          <p data-testid="ask-written-answer" className="whitespace-pre-wrap break-words rounded-row border border-border-agent px-2.5 py-1.5 text-body text-fg-agent">
+            {writtenText}
+          </p>
+        )}
         {ask.options.map((o) => {
           const isChosen = chosen?.id === o.id;
           // 답이 끝나면 고른 것만 남긴다 — 안 고른 선택지를 계속 보여 주면 무엇으로
@@ -236,6 +243,7 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
             </button>
           );
         })}
+        {(canChoose || canPickLate) && askTakesText(message.meta) && <AskWriteAnswer messageId={message.id} channelId={message.channelId} />}
       </div>}
       {/*
         **답하지 않는 길**(2026-09-09). 이것이 없으면 그 작업을 그만두기로 한 사람에게 남는
@@ -258,6 +266,73 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * **선택지에 없는 답을 이 카드에 직접 쓴다.** 스레드 글과 달리 이 카드 하나의 답이라 같은 스레드의 다른 카드를 닫지 않는다.
+ * 보내지 못하면 쓴 글을 지우지 않는다 — 다시 쳐야 하는 것이 답을 포기하게 만든다.
+ */
+function AskWriteAnswer({ messageId, channelId }: { messageId: string; channelId: string }) {
+  const t = useT();
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const area = useRef<HTMLTextAreaElement>(null);
+  const trimmed = text.trim();
+  const over = trimmed.length > ASK_TEXT_MAX_CHARS;
+  const canSend = trimmed !== '' && !over && !busy;
+  const send = async () => {
+    if (!canSend) return;
+    setBusy(true);
+    setFailed(false);
+    const err = await getController().answerAskText(messageId, trimmed, channelId);
+    setBusy(false);
+    // 이미 답한 카드(409)는 컨트롤러가 다시 받아 맞춘다 — 카드가 답한 모습으로 바뀌니 실패로 말하지 않는다.
+    if (err && err.status !== 409) setFailed(true);
+  };
+  return (
+    <div className="mt-0.5">
+      <div className="flex items-end gap-1">
+        <textarea
+          ref={area}
+          rows={1}
+          value={text}
+          data-testid="ask-write-input"
+          aria-label={t('speech.ask.writePlaceholder')}
+          placeholder={t('speech.ask.writePlaceholder')}
+          className="max-h-40 min-w-0 flex-1 resize-none rounded-row border border-border bg-surface-raised px-2.5 py-1.5 text-body text-fg
+                     placeholder:text-fg-subtle focus:border-state-turn focus:outline-none"
+          onChange={(e) => {
+            setText(e.target.value);
+            setFailed(false);
+            e.target.style.height = 'auto';
+            e.target.style.height = `${e.target.scrollHeight + 2}px`;
+          }}
+          onKeyDown={(e) => {
+            // 한글 조합을 끝내는 Enter 는 보내기가 아니다(keyCode 229 는 조합 중 WebKit 이 주는 값).
+            if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || e.keyCode === 229) return;
+            e.preventDefault();
+            void send();
+          }}
+        />
+        <button
+          type="button"
+          data-testid="ask-write-send"
+          disabled={!canSend}
+          className={`shrink-0 rounded-row border px-2.5 py-1.5 text-body font-medium ${
+            canSend ? 'border-border bg-surface-raised text-fg hover:border-state-turn hover:bg-surface-hover' : 'border-border-agent bg-transparent text-fg-subtle'
+          }`}
+          onClick={() => { void send(); }}
+        >
+          {t('speech.ask.writeSend')}
+        </button>
+      </div>
+      {trimmed.length > ASK_TEXT_MAX_CHARS - 200 && (
+        <p data-testid="ask-write-count" className={`mt-0.5 text-meta ${over ? 'text-danger' : 'text-fg-subtle'}`}>{trimmed.length} / {ASK_TEXT_MAX_CHARS}</p>
+      )}
+      {failed && <p data-testid="ask-write-failed" role="alert" className="mt-0.5 text-meta text-danger">{t('speech.ask.writeFailed')}</p>}
     </div>
   );
 }
@@ -325,7 +400,7 @@ function headline(
  * 인용 한 줄 — 카드를 닫은 글의 첫 줄을 80자까지(designer 시안 6절). 멘션 토큰(`<@id>`)은
  * 화면이 이름으로 바꾸지 못하는 자리라 지운다 — 날 id 가 보이는 것보다 빠지는 편이 덜 틀리다.
  */
-function quoteLine(body: string): string {
+export function quoteLine(body: string): string {
   const first = body.replace(/<@[0-9a-f-]{36}>\s*/g, '').split('\n').find((l) => l.trim() !== '') ?? '';
   const line = first.trim();
   return line.length > 80 ? `${line.slice(0, 79)}…` : line;
