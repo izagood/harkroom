@@ -30,6 +30,12 @@ const DOC: PlanDoc = {
 };
 
 describe('renderPlanBody', () => {
+  it('관리자를 적는다 — 나면 「나」, 아니면 계정 id', () => {
+    expect(renderPlanBody(snap({ ...DOC, managerId: ME }), ME)).toContain('관리자: 나');
+    expect(renderPlanBody(snap({ ...DOC, managerId: OTHER }), ME)).toContain(`관리자: ${OTHER}`);
+    expect(renderPlanBody(snap(DOC), ME).join('\n')).not.toContain('관리자:');
+  });
+
   it('그룹 아래 단계를 들여 쓰고, 끝난 그룹은 접고, 글은 한 줄로 이스케이프한다', () => {
     const text = renderPlanBody(snap(DOC), ME).join('\n');
     expect(text).toContain('목표: 계획판 &lt;b>출시&lt;/b>');

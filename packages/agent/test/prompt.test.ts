@@ -1076,6 +1076,15 @@ describe('메모리 주입 (#139)', () => {
     expect(text).toContain('막은 것(앞 단계는 `dependsOn`, 기다리는 카드·메시지·PR은 `links`)');
   });
 
+  it('계획판 안내: 그룹은 병렬, 사람 단계에는 연결, 세운 에이전트는 관리자다', () => {
+    const text = build({ core: null, slugs: [] });
+    expect(text).toContain('그룹끼리는 따로 `dependsOn` 이 없으면 병렬');
+    expect(text).toContain('카드나 메시지를 반드시 `links` 로 단다');
+    expect(text).toContain('`message.ask` 의 `planStepId`');
+    expect(text).toContain('너는 그 계획의 관리자(`managerId`)다');
+    expect(text).toContain('`type: "plan"` 으로 `managerId` 를 바꾼다');
+  });
+
   // f3(스레드 d1e8f866, g7): 스레드 메모는 기억 저장소가 아니다 — 기억 조회가 실패해도 안내가 실린다(설계 원칙 1).
   it('스레드 메모 안내는 기억 상태와 무관하게 실리고, 조회 실패 턴에는 mem/* 를 입에 올리지 않는다', () => {
     for (const m of ['unavailable', { core: null, slugs: [] }, { core: '본문', slugs: ['mem/a'] }] as MemoryContext[]) {

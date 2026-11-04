@@ -158,7 +158,9 @@ export type ThreadPlanWriteError =
    * **새로 더한** 연결 스레드가 없거나 쓰는 이가 볼 수 없다 — 둘을 가르지 않는다(있다는 사실을 새지 않는다). 답글 id 도
    * 이것이다. 이미 있던 연결은 다시 묻지 않는다(R1) — 남이 건 연결 때문에 다른 단계를 못 고치면 안 된다.
    */
-  | { code: 'linked_thread_unavailable'; id: string };
+  | { code: 'linked_thread_unavailable'; id: string }
+  /** 관리 에이전트로 적은 계정이 에이전트가 아니거나 그 채널을 볼 수 없다. */
+  | { code: 'invalid_manager'; id: string };
 
 /** 스레드·권한 거절(S1). 셋 다 서비스가 rootId 에서 직접 판정한다 — 부르는 쪽이 준 채널을 믿지 않는다. */
 export type ThreadPlanAccessError =
@@ -221,10 +223,30 @@ export async function writeThreadPlan<E extends { code: string }>(
     const now = cur.rows[0] as { updated_at: Date; rev: number; doc: PlanDoc } | undefined;
     const built = build(now ? { doc: now.doc, rev: now.rev, updatedAt: now.updated_at } : null);
     // 번호표(seq)는 서버가 정한다 — 입력(zod)으로는 받지 않고, 앞 판과 새 판에서 다시 센다(R1).
-    const doc = 'error' in built || !built.doc ? null : { ...built.doc, seq: planSeq(now?.doc ?? null, built.doc) };
+    let doc: PlanDoc | null = 'error' in built || !built.doc ? null : { ...built.doc, seq: planSeq(now?.doc ?? null, built.doc) };
+    if (doc) {
+      const before = now?.doc.managerId ?? null;
+      // 칸을 모르는 쓰기(undefined)가 관리 에이전트를 지우지 않는다. 비우는 것은 null 을 적었을 때뿐이다.
+      let manager = doc.managerId === undefined ? before : doc.managerId;
+      // 처음 세운 에이전트가 기본 관리자다. 사람이 세우면 비운다.
+      if (!now && !manager && accountId !== null) {
+        const kind = await client.query<{ kind: string }>(`select kind from account where id = $1`, [accountId]);
+        if (kind.rows[0]?.kind === 'agent') manager = accountId;
+      }
+      const { managerId: _drop, ...rest } = doc;
+      doc = manager ? { ...rest, managerId: manager } : rest;
+      if (manager && manager !== before) {
+        const eligible = await client.query(
+          `select 1 from account a join channel c on c.id = $2
+            where a.id = $1 and a.kind = 'agent' and a.deleted_at is null and ${channelVisibleSql('c', '$1')}`,
+          [manager, channelId],
+        );
+        if (!eligible.rowCount) fail = { ok: false, error: { code: 'invalid_manager', id: manager } };
+      }
+    }
     if ('error' in built) {
       fail = { ok: false, error: built.error };
-    } else if (doc) {
+    } else if (doc && !fail) {
       const v = validatePlan(doc);
       if (!v.ok) fail = { ok: false, error: v.error };
       for (const id of fail ? [] : linkedRoots(doc)) {

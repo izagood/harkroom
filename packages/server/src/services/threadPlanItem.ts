@@ -7,7 +7,8 @@
 import type { PlanDoc, PlanGroup, PlanLink, PlanStep, PlanStepState } from '@harkroom/shared';
 
 export interface PlanItemPatch {
-  type?: 'step' | 'group';
+  /** `plan` 은 계획 칸(`managerId`)을 고친다 — 다른 칸은 함께 줄 수 없다. */
+  type?: 'step' | 'group' | 'plan';
   /** 없으면 새로 더한다(서버가 `s<n>`·`g<n>` 을 고른다). */
   id?: string;
   /** 이 노드를 지운다. 다른 노드의 dependsOn 에서도 뺀다. 그룹을 지우면 그 단계는 그룹 밖으로 나온다. */
@@ -31,6 +32,8 @@ export interface PlanItemPatch {
   removeLinks?: PlanLink[];
   /** 단계만. */
   blockedReason?: string | null;
+  /** `type: 'plan'` 만. 관리 에이전트를 바꾼다. null 이면 비운다. */
+  managerId?: string | null;
   /** 낙관적 동시성(선택). 주면 지금 판의 rev 와 같아야 한다. */
   ifRev?: number;
 }
@@ -39,8 +42,9 @@ export type PlanItemError =
   | { code: 'no_plan' }
   | { code: 'unknown_item'; id: string }
   /** 그 종류에 없는 칸을 줬다(예: 그룹에 state). */
-  | { code: 'field_not_for_type'; field: string; type: 'step' | 'group' }
+  | { code: 'field_not_for_type'; field: string; type: 'step' | 'group' | 'plan' }
   | { code: 'title_required' }
+  | { code: 'manager_required' }
   | { code: 'rev_conflict'; rev: number };
 
 export interface PlanItemResult {
@@ -112,6 +116,14 @@ export function applyPlanItem(prev: { doc: PlanDoc; rev: number } | null, p: Pla
   if (p.ifRev !== undefined && p.ifRev !== prev.rev) return { error: { code: 'rev_conflict', rev: prev.rev } };
   const doc: PlanDoc = { ...prev.doc, groups: [...prev.doc.groups], steps: [...prev.doc.steps] };
   const type = p.type ?? (p.id?.startsWith('g') ? 'group' : 'step');
+  if (type === 'plan') {
+    for (const [field, value] of Object.entries(p)) {
+      if (value !== undefined && !['type', 'managerId', 'ifRev'].includes(field)) return { error: { code: 'field_not_for_type', field, type } };
+    }
+    if (p.managerId === undefined) return { error: { code: 'manager_required' } };
+    return { doc: { ...doc, managerId: p.managerId }, id: 'plan' };
+  }
+  if (p.managerId !== undefined) return { error: { code: 'field_not_for_type', field: 'managerId', type } };
   for (const f of type === 'group' ? STEP_ONLY : GROUP_ONLY) {
     if (p[f] !== undefined) return { error: { code: 'field_not_for_type', field: f, type } };
   }

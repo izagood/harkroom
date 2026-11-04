@@ -32,6 +32,19 @@ export async function completePlanStep(
   return toHookResult(res);
 }
 
+/** 카드를 세운 단계에 그 카드를 잇는다(`message.ask` 의 `planStepId`). 사람이 그 줄을 누르면 카드로 간다. */
+export async function linkPlanCard(
+  pool: Pool, rootId: string, accountId: string, stepId: string, messageId: string,
+): Promise<PlanHookResult> {
+  const res = await writeThreadPlan(pool, rootId, { accountId }, (prev) => {
+    if (!prev) return { error: { code: 'no_plan' } };
+    if (!prev.doc.steps.some((s) => s.id === stepId)) return { error: { code: 'unknown_item', id: stepId } };
+    const r = applyPlanItem(prev, { type: 'step', id: stepId, addLinks: [{ kind: 'card', messageId }] });
+    return 'error' in r ? r : { doc: r.doc };
+  });
+  return toHookResult(res);
+}
+
 /**
  * 부모 계획(`parentRootId`)의 그룹을 위임 스레드(`childRootId`)에 잇는다. 이미 **다른** 스레드에 이어진 그룹이면
  * `group_already_linked` — 남이 건 연결을 조용히 갈아 끼우지 않는다. 단계를 가진 그룹이면 `linked_group_has_steps`.
