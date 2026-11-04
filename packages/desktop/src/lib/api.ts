@@ -88,6 +88,28 @@ export interface SecretRevealView {
 export type DecideScope = 'owner' | 'list' | 'channel' | 'community' | 'switchOff';
 export type DecideCheck = { viewerCanDecide: boolean; asOwner: boolean; decideScope: DecideScope | null; ownerAccountId: string | null };
 
+/** 계획판 「시작」에 싣는 단계. 담당이 없는 단계만 `assigneeId` 로 맡길 에이전트를 준다. */
+export interface PlanStartStep { id: string; assigneeId?: string }
+export interface PlanStartPost { to: string; via: 'manager' | 'assignee'; stepIds: string[]; body: string }
+export type PlanStartSkipCode = 'unknown_item' | 'already_started' | 'not_ready' | 'plan_changed' | 'no_assignee' | 'invalid_assignee' | 'other_human_assignee' | 'not_invokable';
+export type PlanManagerSkipCode = 'manager_off' | 'manager_no_access' | 'manager_not_invokable';
+export interface PlanStartPreview {
+  rev: number;
+  posts: PlanStartPost[];
+  selfStepIds: string[];
+  skipped: { id: string; code: PlanStartSkipCode }[];
+  managerSkipped: PlanManagerSkipCode | null;
+}
+export interface PlanStartDone {
+  rev: number;
+  started: { id: string; via: 'manager' | 'assignee' | 'self'; to: string | null; messageId: string | null }[];
+  skipped: { id: string; code: PlanStartSkipCode }[];
+  failed: { id: string; code: 'post_failed' }[];
+  notNotified: string[];
+  managerSkipped: PlanManagerSkipCode | null;
+  plan: ThreadPlanView;
+}
+
 export class ApiError extends Error {
   /**
    * 서버가 오류와 **함께 보낸 것**. 응답 본문을 그대로 들고 온다.
@@ -1333,6 +1355,19 @@ export class ApiClient {
   /** 스레드 계획판(P1) — 보는 사람 권한으로 거른 판. 계획이 없으면 `null`. 루트 행에 `planProgress` 가 있을 때만 부른다(옛 서버 앞에서는 부를 길이 없다). */
   async threadPlan(rootId: string): Promise<ThreadPlanView | null> {
     return (await this.req<{ plan: ThreadPlanView | null }>('GET', `/threads/${rootId}/plan`)).plan;
+  }
+  /**
+   * 계획판 「시작」(사람 세션만). `dryRun` 은 아무것도 바꾸지 않고 누구에게 어떤 글이 갈지 돌려준다. 실제 시작에는 미리보기의
+   * `rev` 를 `ifRev` 로 **반드시** 싣는다 — 그 사이 판이 바뀌면 409 `plan_changed` 다.
+   */
+  async planStart(rootId: string, body: { steps: PlanStartStep[]; dryRun: true; locale: 'ko' | 'en' }): Promise<PlanStartPreview>;
+  async planStart(rootId: string, body: { steps: PlanStartStep[]; ifRev: number; locale: 'ko' | 'en' }): Promise<PlanStartDone>;
+  async planStart(rootId: string, body: Record<string, unknown>): Promise<PlanStartPreview | PlanStartDone> {
+    return this.req('POST', `/threads/${rootId}/plan/start`, body);
+  }
+  /** 관리 에이전트를 바꾸거나 비운다(사람 세션만). */
+  async setPlanManager(rootId: string, managerId: string | null): Promise<ThreadPlanView> {
+    return (await this.req<{ plan: ThreadPlanView }>('PUT', `/threads/${rootId}/plan/manager`, { managerId })).plan;
   }
   /** 스레드 × 에이전트 모델 지정(079). 채널을 볼 수 있으면 누구나 읽는다. */
   async threadAgentModels(channelId: string, rootId: string): Promise<ThreadAgentModelView[]> {

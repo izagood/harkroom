@@ -4,7 +4,8 @@ import type { ThreadPlanView } from '@harkroom/shared';
 import { derivePlan, planProgress } from '@harkroom/shared/planGraph';
 import rules from './fixtures/planRules.json';
 import {
-  groupFacts, nextCycleIndex, planButtonKind, planFlow, planFlowVisible, planLists, planPills, planStepOrder, stepFirstLinks, stepKind, stepWaiters, stepWhy,
+  groupFacts, nextCycleIndex, planButtonKind, planFlow, planFlowVisible, planLists, planPills, planReadyStepIds, planStepOrder, stepFirstLinks, stepGoTargets, stepKind, stepStartState, stepWaiters, stepWhy,
+  clampPlanSize, widePlanSize,
 } from '../src/lib/threadPlan';
 
 describe.each(rules.cases)('$name', (c) => {
@@ -53,6 +54,13 @@ describe.each(rules.cases)('$name', (c) => {
     expect(planButtonKind(plan.progress)).toBe(e.buttonKind);
   });
 
+  it('줄을 누르면 갈 곳·시작 버튼', () => {
+    const humans = new Set(c.humans);
+    for (const [id, go] of Object.entries(e.go)) expect(stepGoTargets(step(id))).toEqual(go);
+    for (const [id, st] of Object.entries(e.start)) expect(stepStartState(plan, step(id), c.me, (x) => humans.has(x))).toBe(st);
+    expect(planReadyStepIds(plan)).toEqual(e.readyIds);
+  });
+
   it('막힌 까닭', () => {
     for (const [id, why] of Object.entries(e.why)) expect(stepWhy(plan, step(id), c.me)).toEqual(why);
   });
@@ -64,5 +72,20 @@ describe('칩 차례', () => {
     expect(nextCycleIndex(3, 0)).toBe(1);
     expect(nextCycleIndex(3, 2)).toBe(0);
     expect(nextCycleIndex(0, null)).toBe(-1);
+  });
+});
+
+describe('패널 크기', () => {
+  const box = { w: 1000, h: 800 };
+  it('최소·최대 안으로 줄인다', () => {
+    expect(clampPlanSize({ w: 100, h: 100 }, box)).toEqual({ w: 360, h: 320 });
+    expect(clampPlanSize({ w: 5000, h: 5000 }, box)).toEqual({ w: 968, h: 728 });
+    expect(clampPlanSize({ w: 500, h: 500 }, box)).toEqual({ w: 500, h: 500 });
+  });
+  it('좁은 칸에서도 최소는 지킨다', () => {
+    expect(clampPlanSize({ w: 500, h: 500 }, { w: 300, h: 300 })).toEqual({ w: 360, h: 320 });
+  });
+  it('넓게 = 칸 폭 60% × 최대 높이', () => {
+    expect(widePlanSize(box)).toEqual({ w: 600, h: 728 });
   });
 });

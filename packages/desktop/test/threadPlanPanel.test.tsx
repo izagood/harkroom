@@ -1,21 +1,26 @@
 /** 계획판 버튼·패널(개선 시안 v3 W1~W9·V1~V4) — 끝난 일 펼침·머리 고정·칩 차례·막힌 까닭·닫기. */
 import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
+import { act, render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import type { ThreadPlanView } from '@harkroom/shared';
 
 const loadThreadPlan = vi.fn(async () => {});
 const openThread = vi.fn(async () => {});
 const openMessage = vi.fn(async () => {});
 const openExternal = vi.fn(async () => {});
-vi.mock('../src/state/controller', () => ({ getController: () => ({ loadThreadPlan, openThread, openMessage }) }));
+const previewPlanStart = vi.fn();
+const startPlan = vi.fn();
+const setPlanManager = vi.fn(async () => {});
+vi.mock('../src/state/controller', () => ({ getController: () => ({ loadThreadPlan, openThread, openMessage, previewPlanStart, startPlan, setPlanManager }) }));
 vi.mock('../src/lib/openExternal', () => ({ getExternalOpener: () => ({ open: openExternal }) }));
 let plans: Record<string, ThreadPlanView | null> = {};
+let meKind = 'human';
 let accounts: Record<string, { id: string; handle: string; kind: string }> = {};
 vi.mock('../src/state/communities', () => ({
-  useActiveStore: (sel: (s: unknown) => unknown) => sel({ threadPlans: plans, accounts, me: { id: 'me' } }),
+  useActiveStore: (sel: (s: unknown) => unknown) => sel({ threadPlans: plans, accounts, channelMembers: {}, me: { id: 'me', kind: meKind, handle: 'owner' } }),
 }));
 
 import { ThreadPlanButton } from '../src/components/ThreadPlanButton';
+import { ApiError } from '../src/lib/api';
 import { JumpToLatestPill } from '../src/components/JumpToLatestPill';
 import rules from './fixtures/planRules.json';
 
@@ -28,6 +33,8 @@ const button = () => screen.getByTestId('plan-button');
 const openPanel = () => { fireEvent.click(button()); return screen.getByTestId('plan-panel'); };
 
 beforeEach(() => {
+  meKind = 'human';
+  previewPlanStart.mockReset(); startPlan.mockReset(); setPlanManager.mockClear();
   localStorage.clear(); loadThreadPlan.mockClear(); openThread.mockClear(); openMessage.mockClear(); openExternal.mockClear();
   accounts = { bot: { id: 'bot', handle: 'builder', kind: 'agent' }, other: { id: 'other', handle: 'pat', kind: 'human' }, me: { id: 'me', handle: 'me', kind: 'human' } };
   plans = { r1: view() };
@@ -100,9 +107,9 @@ describe('패널', () => {
   it('구분점은 조각 사이에만 있다 — 줄 맨 앞이나 링크 글자에 들지 않는다', () => {
     openPanel_();
     for (const sub of screen.getAllByTestId('plan-row-sub')) expect(sub.textContent!.startsWith('·')).toBe(false);
-    expect(screen.getByTestId('plan-row-pr').textContent).toBe('PR #7 ↗');
+    expect(screen.getAllByTestId('plan-row-go-pr')[0]!.textContent).toBe('PR #7 ↗');
     expect(screen.getByTestId('plan-waiters').textContent!.startsWith('·')).toBe(false);
-    expect(document.querySelector('[data-node="s1"] [data-testid="plan-row-sub"]')!.textContent).toBe('Done·@builder·PR #7 ↗');
+    expect(document.querySelector('[data-node="s1"] [data-testid="plan-row-sub"]')!.textContent).toBe('Done·@builder·PR #7 ↗·PR #8 ↗');
   });
 
   it('막힌 줄: 「막힘 · 사유」 는 한 줄로 줄이고 담당·까닭 토글은 그 아래 줄이다. 펴면 글자가 바뀐다', () => {
@@ -124,7 +131,7 @@ describe('패널', () => {
     expect(within(screen.getByTestId('plan-head')).getByTestId('plan-chips')).toBeTruthy();
     expect(screen.getByTestId('plan-list').className).toContain('overflow-y-auto');
     expect(within(screen.getByTestId('plan-list')).queryByTestId('plan-chips')).toBeNull();
-    expect(panel.className).toContain('w-[440px]');
+    expect(panel.style.width).toBe('440px');
   });
 
   it('진행은 글자로도 말한다, 내 차례·사람 꼬리표', () => {
@@ -191,7 +198,7 @@ describe('패널', () => {
 
   it('PR 은 꼴이 맞을 때만 밖으로 연다', () => {
     openPanel_();
-    fireEvent.click(screen.getByTestId('plan-row-pr'));
+    fireEvent.click(screen.getAllByTestId('plan-row-go-pr')[0]!);
     expect(openExternal).toHaveBeenCalledWith('https://github.com/acme/app/pull/7');
     fireEvent.click(screen.getAllByTestId('plan-why-toggle')[0]!);
     expect(screen.queryByTestId('plan-why-pr')).toBeNull();
@@ -221,6 +228,241 @@ describe('패널', () => {
     accounts = { me: accounts.me! };
     openPanel_();
     expect(screen.queryByText('@builder')).toBeNull();
+  });
+});
+
+const manyReady = () => {
+  const doc = { goal: 'g', groups: [], steps: [
+    { id: 's1', title: '하나', state: 'pending', assigneeId: 'bot', links: [], dependsOn: [] },
+    { id: 's2', title: '둘', state: 'pending', links: [], dependsOn: [] },
+    { id: 's3', title: '남의 일', state: 'pending', assigneeId: 'other', links: [], dependsOn: [] },
+  ] };
+  const derived = { s1: { derived: 'ready', waitingOn: [] }, s2: { derived: 'ready', waitingOn: [] }, s3: { derived: 'ready', waitingOn: [] } };
+  plans = { r1: view({ doc, derived, progress: { done: 0, total: 3, active: 0, blocked: 0, waiting: 0 }, linked: [] }) };
+};
+const P_OK = { rev: 3, posts: [{ to: 'bot', via: 'assignee', stepIds: ['s1'], body: '@builder 계획판 단계 「하나」를 시작해 달라' }], selfStepIds: [], skipped: [], managerSkipped: null };
+const flush = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); };
+const s1Row = () => document.querySelector('[data-node="s1"]') as HTMLElement;
+
+describe('▷ 시작', () => {
+  it('시작 가능 줄에만 있고, 담당이 다른 사람이면 꺼진다. 사람 글은 미리보기로 보인다', async () => {
+    manyReady();
+    previewPlanStart.mockResolvedValue(P_OK);
+    openPanel_();
+    const other = within(document.querySelector('[data-node="s3"]') as HTMLElement).getByTestId('plan-start') as HTMLButtonElement;
+    expect(other.disabled).toBe(true);
+    expect(other.title).toBe('The assignee starts this');
+    fireEvent.click(within(s1Row()).getByTestId('plan-start'));
+    await flush();
+    expect(previewPlanStart).toHaveBeenCalledWith('r1', [{ id: 's1' }]);
+    expect(screen.getByTestId('plan-start-title').textContent).toBe('Hand this step to @builder');
+    expect(screen.getByTestId('plan-start-body').textContent).toContain('「하나」');
+    expect(startPlan).not.toHaveBeenCalled();
+  });
+
+  it('시작하면 미리보기의 rev 를 싣고, 줄에 시작 글 링크가 남는다', async () => {
+    manyReady();
+    previewPlanStart.mockResolvedValue(P_OK);
+    startPlan.mockResolvedValue({ rev: 4, started: [{ id: 's1', via: 'assignee', to: 'bot', messageId: 'm-9' }], skipped: [], failed: [], notNotified: [], managerSkipped: null, plan: plans.r1 });
+    openPanel_();
+    fireEvent.click(within(s1Row()).getByTestId('plan-start'));
+    await flush();
+    fireEvent.click(screen.getByTestId('plan-start-go'));
+    await flush();
+    expect(startPlan).toHaveBeenCalledWith('r1', [{ id: 's1' }], 3);
+    expect(screen.queryByTestId('plan-start-box')).toBeNull();
+    expect(screen.getByTestId('plan-started-note').textContent).toContain('owner just started this');
+    fireEvent.click(screen.getByTestId('plan-started-link'));
+    expect(openMessage).toHaveBeenCalledWith('m-9');
+  });
+
+  it.each(['plan_changed', 'if_rev_required'])('%s 면 시작하지 않고 미리보기를 다시 받아 새 내용을 보인다', async (code) => {
+    manyReady();
+    previewPlanStart.mockResolvedValueOnce(P_OK);
+    previewPlanStart.mockResolvedValueOnce({ ...P_OK, rev: 5, posts: [{ to: 'lead', via: 'manager', stepIds: ['s1'], body: '@lead 새 글' }] });
+    startPlan.mockRejectedValueOnce(new ApiError(409, code, code));
+    accounts.lead = { id: 'lead', handle: 'lead', kind: 'agent' };
+    openPanel_();
+    fireEvent.click(within(s1Row()).getByTestId('plan-start'));
+    await flush();
+    fireEvent.click(screen.getByTestId('plan-start-go'));
+    await flush();
+    expect(startPlan).toHaveBeenCalledTimes(1);
+    expect(previewPlanStart).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('plan-start-changed')).toBeTruthy();
+    expect(screen.getByTestId('plan-start-title').textContent).toBe('Hand off to manager agent @lead');
+    expect(screen.getByTestId('plan-start-body').textContent).toBe('@lead 새 글');
+    startPlan.mockResolvedValue({ rev: 6, started: [], skipped: [], failed: [], notNotified: [], managerSkipped: null, plan: plans.r1 });
+    fireEvent.click(screen.getByTestId('plan-start-go'));
+    await flush();
+    expect(startPlan).toHaveBeenLastCalledWith('r1', [{ id: 's1' }], 5);
+  });
+
+  it('다른 실패는 사유를 한 줄로 보이고 다시 누를 수 있다', async () => {
+    manyReady();
+    previewPlanStart.mockResolvedValue(P_OK);
+    startPlan.mockRejectedValueOnce(new ApiError(409, 'not_invokable', 'x'));
+    openPanel_();
+    fireEvent.click(within(s1Row()).getByTestId('plan-start'));
+    await flush();
+    fireEvent.click(screen.getByTestId('plan-start-go'));
+    await flush();
+    expect(screen.getByTestId('plan-start-error').textContent).toBe('You can’t call that agent');
+    expect((screen.getByTestId('plan-start-go') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('관리 에이전트를 못 거치면 사유를 한 줄로 보인다', async () => {
+    manyReady();
+    previewPlanStart.mockResolvedValue({ ...P_OK, managerSkipped: 'manager_not_invokable' });
+    openPanel_();
+    fireEvent.click(within(s1Row()).getByTestId('plan-start'));
+    await flush();
+    expect(screen.getByTestId('plan-start-manager-skipped').textContent).toContain('manager agent');
+  });
+
+  it('담당이 없으면 고를 때까지 시작이 꺼지고, 고르면 그 에이전트로 다시 미리 본다', async () => {
+    manyReady();
+    previewPlanStart.mockImplementation(async (_r: string, steps: { id: string; assigneeId?: string }[]) => (steps[0]!.assigneeId
+      ? { ...P_OK, posts: [{ to: 'bot', via: 'assignee', stepIds: ['s2'], body: '글' }] }
+      : { rev: 3, posts: [], selfStepIds: [], skipped: [{ id: 's2', code: 'no_assignee' }], managerSkipped: null }));
+    openPanel_();
+    fireEvent.click(within(document.querySelector('[data-node="s2"]') as HTMLElement).getByTestId('plan-start'));
+    await flush();
+    expect((screen.getByTestId('plan-start-go') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByTestId('plan-start-pick'), { target: { value: 'bot' } });
+    await flush();
+    expect(previewPlanStart).toHaveBeenLastCalledWith('r1', [{ id: 's2', assigneeId: 'bot' }]);
+    expect((screen.getByTestId('plan-start-go') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('누른 사람이 담당이면 아무도 부르지 않는다고 말한다', async () => {
+    manyReady();
+    previewPlanStart.mockResolvedValue({ rev: 3, posts: [], selfStepIds: ['s1'], skipped: [], managerSkipped: null });
+    openPanel_();
+    fireEvent.click(within(s1Row()).getByTestId('plan-start'));
+    await flush();
+    expect(screen.getByTestId('plan-start-title').textContent).toContain('without calling anyone');
+    expect((screen.getByTestId('plan-start-go') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('모두 시작: 둘 이상일 때만 있고, 고를 수 없는 줄은 꺼지며, 빼면 다시 미리 본다', async () => {
+    manyReady();
+    previewPlanStart.mockImplementation(async (_r: string, steps: { id: string }[]) => ({
+      rev: 3, selfStepIds: [], managerSkipped: null,
+      posts: steps.some((x) => x.id === 's1') ? [{ to: 'bot', via: 'assignee', stepIds: ['s1'], body: '글' }] : [],
+      skipped: [{ id: 's2', code: 'no_assignee' }, { id: 's3', code: 'other_human_assignee' }],
+    }));
+    openPanel_();
+    fireEvent.click(screen.getByTestId('plan-start-all'));
+    await flush();
+    expect(previewPlanStart).toHaveBeenCalledWith('r1', [{ id: 's1' }, { id: 's2' }, { id: 's3' }]);
+    expect((screen.getByTestId('plan-start-check-s2') as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByTestId('plan-start-turns').textContent).toContain('1 agent turn');
+    expect(screen.getByTestId('plan-start-go').textContent).toBe('▶ Start 1');
+    fireEvent.click(screen.getByTestId('plan-start-check-s1'));
+    await flush();
+    expect((screen.getByTestId('plan-start-go') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('에이전트가 보는 화면에는 시작이 없다', () => {
+    manyReady();
+    meKind = 'agent';
+    openPanel_();
+    expect(screen.queryByTestId('plan-start')).toBeNull();
+    expect(screen.queryByTestId('plan-start-all')).toBeNull();
+    expect(screen.queryByTestId('plan-manager-edit')).toBeNull();
+  });
+});
+
+describe('줄 누르기', () => {
+  it('연결이 있는 줄은 줄 전체가 그리로 간다. 줄 안 버튼은 따로 돈다', () => {
+    openPanel_();
+    const r = within(document.querySelector('[data-node="s2"]') as HTMLElement).getByTestId('plan-row');
+    expect(r.getAttribute('role')).toBe('button');
+    const done = within(document.querySelector('[data-node="s1"]') as HTMLElement);
+    fireEvent.click(done.getAllByTestId('plan-row-go-pr')[0]!);
+    expect(openExternal).toHaveBeenCalledTimes(1);
+    expect(openMessage).not.toHaveBeenCalled();
+    fireEvent.click(r);
+    expect(openMessage).toHaveBeenCalledWith('m-1');
+    expect(screen.queryByTestId('plan-panel')).toBeNull();
+  });
+
+  it('Enter 로도 간다', () => {
+    openPanel_();
+    const r = within(document.querySelector('[data-node="s2"]') as HTMLElement).getByTestId('plan-row');
+    fireEvent.keyDown(r, { key: 'Enter' });
+    expect(openMessage).toHaveBeenCalledWith('m-1');
+  });
+
+  it('막힌 줄은 까닭을 편다', () => {
+    openPanel_();
+    fireEvent.click(within(document.querySelector('[data-node="s3"]') as HTMLElement).getByTestId('plan-row'));
+    expect(screen.getByTestId('plan-why-reason').textContent).toBe('승인 대기');
+  });
+
+  it('연결이 없는 줄은 누르는 모양이 없고, 내 차례면 「연결 없음」을 쓴다', () => {
+    openPanel_();
+    const mine = within(document.querySelector('[data-node="s4"]') as HTMLElement);
+    expect(mine.getByTestId('plan-row').getAttribute('role')).toBeNull();
+    expect(mine.getByTestId('plan-row-nolink').textContent).toBe('Nothing linked');
+    const other = within(document.querySelector('[data-node="s6"]') as HTMLElement);
+    expect(other.queryByTestId('plan-row-nolink')).toBeNull();
+  });
+});
+
+/** jsdom 의 PointerEvent 는 좌표를 싣지 않는다 — 같은 이름의 MouseEvent 로 민다. */
+const drag = (testId: string, from: [number, number], to: [number, number]) => {
+  const at = (type: string, [clientX, clientY]: [number, number]) => new MouseEvent(type, { bubbles: true, clientX, clientY });
+  act(() => {
+    screen.getByTestId(testId).dispatchEvent(at('pointerdown', from));
+    window.dispatchEvent(at('pointermove', to));
+    window.dispatchEvent(at('pointerup', to));
+  });
+};
+
+describe('크기·관리 에이전트', () => {
+  it('왼쪽 위를 끌면 커지고 기기에 하나만 기억한다. 두 번 누르면 기본', () => {
+    const panel = openPanel_();
+    expect(panel.style.width).toBe('440px');
+    drag('plan-resize-corner', [500, 500], [400, 450]);
+    expect(panel.style.width).toBe('540px');
+    expect(panel.style.height).toBe('650px');
+    expect(JSON.parse(localStorage.getItem('harkroom.threadPlan.size')!)).toEqual({ w: 540, h: 650 });
+    fireEvent.doubleClick(screen.getByTestId('plan-resize-corner'));
+    expect(panel.style.width).toBe('440px');
+    expect(localStorage.getItem('harkroom.threadPlan.size')).toBeNull();
+  });
+
+  it('왼쪽 가장자리는 폭만, 위 가장자리는 높이만', () => {
+    const panel = openPanel_();
+    drag('plan-resize-left', [500, 500], [450, 100]);
+    expect([panel.style.width, panel.style.height]).toEqual(['490px', '600px']);
+    drag('plan-resize-top', [500, 500], [100, 450]);
+    expect([panel.style.width, panel.style.height]).toEqual(['490px', '650px']);
+  });
+
+  it('넓게/기본 버튼', () => {
+    const panel = openPanel_();
+    fireEvent.click(screen.getByTestId('plan-size-toggle'));
+    expect(panel.style.width).not.toBe('440px');
+    expect(screen.getByTestId('plan-size-toggle').textContent).toBe('⤡ Default');
+    fireEvent.click(screen.getByTestId('plan-size-toggle'));
+    expect(panel.style.width).toBe('440px');
+  });
+
+  it('관리 에이전트를 보이고 바꾸거나 비운다', async () => {
+    accounts.lead = { id: 'lead', handle: 'lead', kind: 'agent' };
+    plans = { r1: view({ doc: { ...base.doc, managerId: 'lead' } }) };
+    openPanel_();
+    expect(screen.getByTestId('plan-manager').textContent).toContain('@lead');
+    fireEvent.click(screen.getByTestId('plan-manager-edit'));
+    fireEvent.change(screen.getByTestId('plan-manager-select'), { target: { value: 'bot' } });
+    expect(setPlanManager).toHaveBeenCalledWith('r1', 'bot');
+    await flush();
+    fireEvent.click(screen.getByTestId('plan-manager-edit'));
+    fireEvent.change(screen.getByTestId('plan-manager-select'), { target: { value: '' } });
+    expect(setPlanManager).toHaveBeenLastCalledWith('r1', null);
   });
 });
 

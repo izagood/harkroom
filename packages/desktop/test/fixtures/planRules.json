@@ -510,8 +510,52 @@
             "links": []
           }
         },
-        "buttonKind": "blocked"
-      }
+        "buttonKind": "blocked",
+        "go": {
+          "s1": [
+            {
+              "kind": "pr",
+              "repo": "acme/app",
+              "number": 7
+            },
+            {
+              "kind": "pr",
+              "repo": "acme/app",
+              "number": 8
+            }
+          ],
+          "s2": [
+            {
+              "kind": "message",
+              "id": "m-1"
+            }
+          ],
+          "s3": [
+            {
+              "kind": "card",
+              "id": "c-1"
+            }
+          ],
+          "s4": []
+        },
+        "start": {
+          "s1": "none",
+          "s2": "none",
+          "s3": "none",
+          "s4": "enabled",
+          "s5": "none",
+          "s6": "other_human",
+          "s8": "none"
+        },
+        "readyIds": [
+          "s4",
+          "s6"
+        ]
+      },
+      "humans": [
+        "me",
+        "other"
+      ]
     },
     {
       "name": "다 끝난 판 — 칩에 빨강이 없고 수가 0 인 목록은 비어 있다",
@@ -576,8 +620,18 @@
           "more": 0
         },
         "why": {},
-        "buttonKind": "done"
-      }
+        "buttonKind": "done",
+        "go": {
+          "s1": []
+        },
+        "start": {
+          "s1": "none"
+        },
+        "readyIds": []
+      },
+      "humans": [
+        "me"
+      ]
     },
     {
       "name": "연결 그룹이 막힌 판 — 막힘 칩이 그 그룹으로 간다. 볼 수 없는 연결은 칩에 안 들지만 전체 수에는 든다",
@@ -749,7 +803,147 @@
           "more": 0
         },
         "why": {},
-        "buttonKind": "blocked"
+        "buttonKind": "blocked",
+        "go": {
+          "s1": []
+        },
+        "start": {
+          "s1": "none"
+        },
+        "readyIds": []
+      },
+      "humans": [
+        "me"
+      ]
+    },
+    {
+      "name": "관리 에이전트가 있는 판 — 담당이 다른 사람이어도, 담당이 없어도 시작을 누를 수 있다(관리 에이전트가 받는다)",
+      "me": "me",
+      "humans": [
+        "me",
+        "other"
+      ],
+      "plan": {
+        "doc": {
+          "goal": "관리",
+          "managerId": "lead",
+          "groups": [],
+          "steps": [
+            {
+              "id": "s1",
+              "title": "남의 일",
+              "state": "pending",
+              "assigneeId": "other",
+              "links": [
+                {
+                  "kind": "message",
+                  "id": "m-2"
+                },
+                {
+                  "kind": "card",
+                  "messageId": "c-2"
+                }
+              ],
+              "dependsOn": []
+            },
+            {
+              "id": "s2",
+              "title": "담당 없음",
+              "state": "pending",
+              "links": [],
+              "dependsOn": []
+            },
+            {
+              "id": "s3",
+              "title": "끝",
+              "state": "done",
+              "links": [],
+              "dependsOn": []
+            }
+          ]
+        },
+        "derived": {
+          "s1": {
+            "derived": "ready",
+            "waitingOn": []
+          },
+          "s2": {
+            "derived": "ready",
+            "waitingOn": []
+          },
+          "s3": {
+            "derived": "done",
+            "waitingOn": []
+          }
+        },
+        "progress": {
+          "done": 1,
+          "total": 3,
+          "active": 0,
+          "blocked": 0,
+          "waiting": 0
+        },
+        "linked": []
+      },
+      "expect": {
+        "order": [
+          "s1",
+          "s2",
+          "s3"
+        ],
+        "lists": {
+          "done": [
+            "s3"
+          ],
+          "active": [],
+          "blocked": [],
+          "mine": [],
+          "ready": [
+            "s1",
+            "s2"
+          ],
+          "waiting": []
+        },
+        "rows": {
+          "s2": {
+            "kind": "ready",
+            "waiters": [],
+            "pr": null,
+            "messageId": null
+          }
+        },
+        "groups": {},
+        "pills": [],
+        "flow": [],
+        "flowVisible": {
+          "max": 5,
+          "ids": [],
+          "more": 0
+        },
+        "why": {},
+        "buttonKind": "ready",
+        "go": {
+          "s1": [
+            {
+              "kind": "card",
+              "id": "c-2"
+            },
+            {
+              "kind": "message",
+              "id": "m-2"
+            }
+          ],
+          "s2": []
+        },
+        "start": {
+          "s1": "enabled",
+          "s2": "enabled",
+          "s3": "none"
+        },
+        "readyIds": [
+          "s1",
+          "s2"
+        ]
       }
     }
   ]
