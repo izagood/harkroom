@@ -27,7 +27,7 @@ const TABLE: Record<string, { sites: number; noMentions: number; muted?: number;
   'src/services/permissionRequests.ts': { sites: 2, noMentions: 0, muted: 1, why: 'muted — 소유자를 일부러 부름, 대상(target)만 무력화(채널 줄과 DM 이 같은 본문)' },
   'src/services/secretCreate.ts': { sites: 1, noMentions: 0, muted: 1, why: 'muted — 소유자를 일부러 부름, 비밀 이름만 무력화' },
   'src/services/skills.ts': { sites: 1, noMentions: 0, why: 'serverOnly — 스킬 slug(정규식)·검사 사유 라벨' },
-  'src/services/threadPlanAuto.ts': { sites: 1, noMentions: 1, why: 'noMentions — 자동 진행 켜짐·꺼짐 줄(고정 문구·id)' },
+  'src/services/threadPlanAuto.ts': { sites: 2, noMentions: 1, muted: 1, why: 'noMentions — 켜짐·꺼짐 줄(고정 문구·id). muted — 깨우기 줄은 관리 에이전트를 일부러 부름, 제목·담당은 무력화' },
   'src/services/threadPlanWatcher.ts': { sites: 1, noMentions: 1, why: 'noMentions — 계획판(본문 고정, 두 겹)' },
 };
 

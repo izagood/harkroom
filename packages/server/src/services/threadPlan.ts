@@ -21,6 +21,7 @@ import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels
 import { threadRootChannel } from './threadNote.js';
 import { scanWrite } from './contentScan.js';
 import { planSeq } from './threadPlanItem.js';
+import { noticePlanAutoOff } from './threadPlanAuto.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -226,6 +227,8 @@ export async function writeThreadPlan<E extends { code: string }>(
   const client = await pool.connect();
   let result: ThreadPlanWriteResult | { ok: true; deleted: true; before: PlanDoc | null };
   let fail: { ok: false; error: ThreadPlanWriteError | E } | null = null;
+  let managerChanged = false;
+  let autoOff: { row: ThreadPlanRow; previousManager: string | null } | null = null;
   try {
     await client.query('begin');
     const cur = await client.query(`select updated_at, rev, doc from thread_plan where root_id = $1 for update`, [rootId]);
@@ -244,6 +247,8 @@ export async function writeThreadPlan<E extends { code: string }>(
       }
       const { managerId: _drop, ...rest } = doc;
       doc = manager ? { ...rest, managerId: manager } : rest;
+      // 관리 에이전트가 바뀌면 자동 진행을 끈다 — 남이 켠 자동 진행과 그 사람의 위임을 이어받지 못하게.
+      if (now && manager !== before) managerChanged = true;
       if (manager && manager !== before) {
         const eligible = await client.query(
           `select 1 from account a join channel c on c.id = $2
@@ -303,9 +308,18 @@ export async function writeThreadPlan<E extends { code: string }>(
           [rootId, roots],
         );
       }
+      let written = toRow(res.rows[0]);
+      if (managerChanged && written.auto) {
+        const cleared = await client.query(
+          `update thread_plan
+              set auto_until = null, auto_source = null, auto_by = null, auto_mandate = null, auto_at = null, auto_woken = '{}'::jsonb
+            where root_id = $1 returning ${THREAD_PLAN_COLUMNS}`, [rootId]);
+        written = toRow(cleared.rows[0]);
+        autoOff = { row: written, previousManager: now?.doc.managerId ?? null };
+      }
       await client.query('commit');
       result = {
-        ok: true, row: toRow(res.rows[0]), flagged: flag ? { reason: flag.reason, rules: flag.rules } : null, before: now?.doc ?? null,
+        ok: true, row: written, flagged: flag ? { reason: flag.reason, rules: flag.rules } : null, before: now?.doc ?? null,
       };
     }
   } catch (err) {
@@ -315,6 +329,10 @@ export async function writeThreadPlan<E extends { code: string }>(
     client.release();
   }
   await emitPlanChanged(pool, channelId, rootId, 'row' in result ? result.row : null);
+  if (autoOff) {
+    const off = autoOff as { row: ThreadPlanRow; previousManager: string | null };
+    await noticePlanAutoOff(pool, off.row, [accountId, off.row.doc.managerId, off.previousManager], 'manager_changed');
+  }
   return result;
 }
 

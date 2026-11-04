@@ -27,6 +27,9 @@ type Q = Pick<PoolClient, 'query'>;
  */
 export const PRINCIPAL_FROM_CAUSE_SQL = `(case
   when exists (select 1 from inbox iw where iw.account_id = i.account_id and iw.message_id = m.id and iw.reason = 'wake') then null
+  when m.kind = 'system' and m.meta ? 'planAuto' then (
+    select pa.id from account pa
+     where pa.id = m.principal_account_id and pa.kind = 'human' and pa.deleted_at is null and pa.disabled_at is null)
   when m.meta ? 'ask' and m.author_id = i.account_id then (
     select ans.id from account ans
      where ans.id = nullif(m.meta->'ask'->>'answeredBy', '')::uuid

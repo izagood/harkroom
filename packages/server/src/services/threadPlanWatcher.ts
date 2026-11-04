@@ -23,6 +23,7 @@ import { assertChannelVisible, audienceFor } from './channels.js';
 import { getThreadPlan, linkedFor, writeThreadPlan, type ThreadPlanRow } from './threadPlan.js';
 import { postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
+import { wakePlanAuto } from './threadPlanAuto.js';
 
 type Unchanged = { code: 'unchanged' };
 
@@ -191,6 +192,15 @@ export function startThreadPlanWatcher(
   };
 
   /** 자식 계획이 바뀌었다 → 부모마다 청중 맵으로 이벤트, 새로 ready 가 된 것이 있으면 줄. */
+  /** 자동 진행 한 번. 실패가 구독기를 멈추지 않는다 — 다음 판 변화에서 다시 돈다. */
+  const wakeAuto = async (rootId: string): Promise<void> => {
+    try {
+      await wakePlanAuto(pool, rootId);
+    } catch (err) {
+      console.error(`[threadPlanWatcher] 자동 진행 실패 root=${rootId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   const propagate = async (childRoot: string, authorId: string | null) => {
     const parents = await pool.query(`select parent_root from thread_plan_link where child_root = $1`, [childRoot]);
     for (const { parent_root: parentRoot } of parents.rows as { parent_root: string }[]) {
@@ -207,6 +217,7 @@ export function startThreadPlanWatcher(
         });
         // 저자: 자식을 쓴 계정이 부모 채널을 보면 그 계정, 아니면 부모 계획을 마지막으로 쓴 계정(R3).
         if (before) await postReady(row, before, after, [authorId, row.updatedBy]);
+        await wakeAuto(parentRoot);
       });
     }
   };
@@ -220,6 +231,7 @@ export function startThreadPlanWatcher(
         const row = await getThreadPlan(pool, rootId);
         if (row) remember(rootId, await audienceDerived(pool, row));
         else lastDerived.delete(rootId);
+        await wakeAuto(rootId);
         await propagate(rootId, row?.updatedBy ?? null);
       });
       return;
