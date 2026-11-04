@@ -10,3 +10,6 @@ alter table thread_plan
   add column auto_woken jsonb not null default '{}'::jsonb,
   -- 근거로 쓴 글. 같은 글로 두 번 켜지 못한다. 끈 뒤에도 남는다.
   add column auto_used_sources uuid[] not null default '{}';
+
+-- message 를 가리키는 외래키는 앞자리 색인을 갖는다(messageFkIndexes 시험).
+create index thread_plan_auto_source_idx on thread_plan (auto_source) where auto_source is not null;
