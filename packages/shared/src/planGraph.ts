@@ -371,3 +371,66 @@ export function diffDerived(before: PlanDerived, after: PlanDerived): { nowReady
   }
   return { nowReady, nowWaiting };
 }
+
+// ── 단계 링크·받는 이 ───────────────────────────────────────────────────────────────
+
+/**
+ * 글이 계획의 한 단계를 가리키는 꼴: `harkroom://plan/<스레드 뿌리>/<단계> 「그때의 제목」`.
+ * 서버는 이 꼴을 해석하지 않는다 — 가리킬 뿐 권한을 주지 않으므로 사람이 손으로 써도 해가 없다. 볼 수 있는지는 읽는 쪽의 계획 조회가 정한다.
+ * 뒤의 제목은 쓴 때의 글자다. 단계 id 는 지운 뒤 다시 쓸 수 있으니(`PLAN_STEP_ID_RE`) 그릴 때 지금 제목과 견주는 재료로 둔다.
+ */
+export interface PlanRef {
+  rootId: string;
+  stepId: string;
+  /** 링크 뒤에 적힌 그때의 제목. 없으면 `null`. */
+  title: string | null;
+}
+
+const PLAN_REF_LINK = /harkroom:\/\/plan\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\/(s[1-9][0-9]{0,3})(?![0-9A-Za-z_-])(?: 「([^」\n]*)」)?/g;
+const PLAN_REF_TITLE_MAX = 80;
+
+/** 글자 하나가 통째로 단계 링크이면 그 값. 제목을 붙인 꼴도 받는다. */
+export function parsePlanRef(raw: string): PlanRef | null {
+  const text = raw.trim();
+  const m = [...text.matchAll(PLAN_REF_LINK)][0];
+  if (!m || m.index !== 0 || m[0].length !== text.length) return null;
+  return { rootId: m[1]!.toLowerCase(), stepId: m[2]!, title: m[3] ?? null };
+}
+
+/** 본문에 든 단계 링크를 나온 순서대로. `index`·`length` 는 제목까지 포함한 자리다. */
+export function findPlanRefs(body: string): (PlanRef & { index: number; length: number })[] {
+  return [...body.matchAll(PLAN_REF_LINK)].map((m) => ({
+    rootId: m[1]!.toLowerCase(), stepId: m[2]!, title: m[3] ?? null, index: m.index, length: m[0].length,
+  }));
+}
+
+/**
+ * 글에 넣을 단계 링크를 짓는다. 제목은 남이 쓴 글이다 — 한 줄로 줄이고, `@` 를 무력화해 이 글이 그 이름을 부르지 않게 하며,
+ * 링크 끝을 깨는 `」` 를 빼고 길이를 자른다.
+ */
+export function planRefText(rootId: string, stepId: string, title: string): string {
+  const clean = title.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/」/g, '').replace(/@/g, '＠').replace(/\s+/g, ' ').trim();
+  const short = clean.length > PLAN_REF_TITLE_MAX ? `${clean.slice(0, PLAN_REF_TITLE_MAX)}…` : clean;
+  return `harkroom://plan/${rootId.toLowerCase()}/${stepId}${short ? ` 「${short}」` : ''}`;
+}
+
+/** 단계에 대해 물을 때 미리 채울 받는 이와 그 까닭. */
+export type PlanAskRecipient =
+  | { to: string; reason: 'manager' | 'assignee' }
+  | { to: null; reason: 'human_assignee' | 'no_assignee' };
+
+/**
+ * ▷ 시작과 같은 순서다: 관리 에이전트 → 담당 에이전트 → 담당이 사람이거나 없으면 아무도 부르지 않는다.
+ * 작성칸을 미리 채울 뿐이라 부를 수 있는지는 묻지 않는다 — 못 부르면 보낼 때 지금처럼 멘션 거절 줄이 난다. 단계가 없으면 `no_assignee`.
+ */
+export function planAskRecipient(
+  doc: Pick<PlanDoc, 'groups' | 'steps' | 'managerId'>,
+  stepId: string,
+  kindOf: (accountId: string) => 'human' | 'agent' | null,
+): PlanAskRecipient {
+  if (doc.managerId && kindOf(doc.managerId) === 'agent') return { to: doc.managerId, reason: 'manager' };
+  const step = doc.steps.find((s) => s.id === stepId);
+  const assignee = step ? step.assigneeId ?? doc.groups.find((g) => g.id === step.groupId)?.assigneeId ?? null : null;
+  if (!assignee) return { to: null, reason: 'no_assignee' };
+  return kindOf(assignee) === 'agent' ? { to: assignee, reason: 'assignee' } : { to: null, reason: 'human_assignee' };
+}
