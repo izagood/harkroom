@@ -54,6 +54,8 @@ export const planDocSchema = z.object({
 /** `thread.plan.item` 의 칸(threadRootId 빼고). */
 export const planItemShape = {
   type: z.enum(['step', 'group', 'plan']).optional(),
+  /** 자동 진행. `type: 'plan'` 과 함께, 다른 칸 없이 쓴다. null=끄기. 저장은 doc 이 아니라 열이다(`threadPlanAuto.ts`). */
+  auto: z.object({ until: nodeId, sourceMessageId: z.string().uuid() }).nullable().optional(),
   id: nodeId.optional(),
   remove: z.boolean().optional(),
   after: nodeId.nullable().optional(),

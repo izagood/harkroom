@@ -3003,6 +3003,18 @@ export interface ThreadPlanView {
   derived: import('./planGraph.js').PlanDerived;
   progress: import('./planGraph.js').PlanProgress;
   linked: ThreadPlanLinkedView[];
+  /** 자동 진행. 꺼져 있으면 `null`, 옛 서버면 없다. 켠 근거는 사람 글이다. */
+  auto?: ThreadPlanAuto | null;
+}
+
+export interface ThreadPlanAuto {
+  /** 끝점 단계·그룹 id. */
+  until: string;
+  /** 켠 근거가 된 사람 글. 지워지면 `null`. */
+  sourceMessageId: string | null;
+  /** 그 글을 쓴 사람. 지워진 계정이면 `null`. */
+  by: string | null;
+  at: string;
 }
 
 /**

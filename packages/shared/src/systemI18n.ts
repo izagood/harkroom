@@ -43,6 +43,10 @@ export const SYSTEM_I18N_ARGS = Object.freeze({
   'system.merge.merged': ['repo', 'number', 'sha'],
   // 스레드 계획판 P6 — 자동 갱신으로 새로 시작 가능해진 단계·그룹(「s3 제목 · g2 제목」, 서버가 400자로 자른다).
   'system.plan.ready': ['n', 'ids'],
+  // 자동 진행 켜짐·꺼짐. 켠 근거 글을 사람이 바로 보게 한다.
+  'system.plan.autoOn': ['accountId', 'until'],
+  'system.plan.autoOffHuman': ['accountId'],
+  'system.plan.autoOffManager': [],
   'system.merge.mergedGranted': ['repo', 'number', 'sha', 'granterId'],
   'system.merge.queued': ['repo', 'number', 'head'],
   'system.merge.queuedGranted': ['repo', 'number', 'head', 'granterId'],
