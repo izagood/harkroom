@@ -273,6 +273,10 @@ export interface HarnessAdapter {
 
   readonly transcript: TranscriptSource | null;
   /**
+   * 끝말을 원문으로 읽을 기록 표면(`harnessLastSaid.ts`). `transcript.parsed` 와 따로다 — 끝 판정에는 쓰지 않는다. 재 본 하네스만 적는다.
+   */
+  readonly lastSaidRecord?: 'codex-rollout' | 'opencode-export';
+  /**
    * 하네스가 **작업 디렉터리별 파일 메모리**를 `<config>/<dirUnderConfig>/<cwd 이름>/memory/` 에
    * 적는가(메모리 고도화 U5 — `harnessMemory.ts` 가 새로 생긴 것을 다음 턴에 알린다). 없으면 알리지
    * 않는다. 선택 필드인 이유: 모르는 하네스에 지어낸 경로를 주면 없는 디렉터리를 뒤지는 게 아니라

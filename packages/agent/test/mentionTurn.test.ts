@@ -1165,6 +1165,38 @@ describe('runMentionTurn', () => {
     expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([]);
   });
 
+  it('API 키 연결 codex 턴은 끝말을 기록에서 읽어 표째 옮기고, 구독 턴은 읽지 않는다', async () => {
+    const table = '| PR | 제목 |\n|---|---|\n| #1 | 가 |';
+    for (const lane of [true, false]) {
+      const fake = new FakeHarkroom(defOf({ harness: 'codex', ...(lane ? { model: 'ExampleOrg/example-model' } : {}) }));
+      fake.seedFrom('human-1', '@forge 표').id = MENTION;
+      const asked: string[] = [];
+      const { deps } = await makeDeps(fake, {
+        readHarnessLastSaid: async (harness) => { asked.push(harness); return table; },
+        ...(lane ? { providerEnv: async () => ({ HARKROOM_LANE_BASE_URL: 'https://gateway.example.com/v1' }) } : {}),
+      });
+      const workspaceDir = join(deps.workspaceBaseDir, 'codex-lane');
+      await mkdir(workspaceDir, { recursive: true });
+      await deps.store.put(SessionStore.threadKey(CHANNEL, null), {
+        workspaceDir, sessionId: '00000000-0000-4000-8000-000000000001', harness: 'codex', lastFedSeq: 0, turnsRun: 0,
+      });
+      const mcpConfigPath = join(deps.workspaceBaseDir, 'mcp.json');
+      await writeFile(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
+      vi.stubEnv('HARKROOM_RUNNER_SECRET', 'fake-runner-secret');
+      try {
+        await runMentionTurn({ ...deps, mcpConfigPath }, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+      if (lane) {
+        expect(asked).toEqual(['codex']);
+        expect(fake.posts.at(-1)?.body).toContain('> | PR | 제목 |\n> |---|---|\n> | #1 | 가 |');
+      } else {
+        expect(asked).toEqual([]);
+      }
+    }
+  });
+
   it('사람이 부른 API 키 연결 claude 턴: 도구 없이 끝낸 짧은 답을 기록에서 옮겨 올린다(2026-11-04 사례)', async () => {
     const fake = new FakeHarkroom(defOf({ harness: 'claude-code', model: 'ExampleOrg/example-model' }));
     fake.seedFrom('human-1', '@forge 안녕').id = MENTION;

@@ -83,6 +83,7 @@ export const CODEX_ADAPTER: HarnessAdapter = {
    * 신호가 생겨 아직 정상 동작하는 tail 폴백을 가린다.
    */
   transcript: { kind: 'files', dirUnderConfig: 'sessions', layout: 'by-date', fileName: 'rollout-<ts>-<id>.jsonl', parsed: false },
+  lastSaidRecord: 'codex-rollout',
 
   /**
    * 축은 있다 — `CODEX_HOME` 은 config·auth·sessions 를 한꺼번에 바꾸므로 claude 의
