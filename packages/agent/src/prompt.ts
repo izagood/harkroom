@@ -1719,18 +1719,33 @@ function leadingHandles(body: string): string[] {
   return head ? [...head[0].matchAll(/@([A-Za-z0-9][\w.-]*)/g)].map((x) => x[1]!) : [];
 }
 
+/** 위임 글이면 받는 사람 handle 들(`DelegationMeta`). 위임 글이 아니거나 모양이 다르면 `null`. */
+function delegationRecipients(m: MessageRow): string[] | null {
+  const meta = m.meta as { kind?: unknown; delegation?: { to?: unknown } } | null | undefined;
+  if (meta?.kind !== 'delegation' || !Array.isArray(meta.delegation?.to)) return null;
+  const to = meta.delegation.to.filter((h): h is string => typeof h === 'string');
+  return to.length ? to : null;
+}
+
 /**
  * 델타의 한 줄이 이 턴에서 무엇인지 — 모델이 앵커를 스스로 추론하게 두지 않는다(2026-10-25 실측: 스레드 머리가 다른 에이전트에게 준
  * 점검 지시였고, 그 에이전트가 여럿을 부른 글로 턴이 떴다 — 불린 에이전트 셋이 머리 지시를 자기 일로 읽고 부른 쪽을 흉내 냈다.
  * 프롬프트는 글자까지 같았고 이 턴을 띄운 글이 어느 것인지 표시가 없었다).
  * - 이 턴을 띄운 글: `ANCHOR_LINE_NOTE`
  * - 스레드 머리가 **다른 계정을** 머리에서 부르고 나는 부르지 않았다: 「너에게 온 글 아님」
+ * - 위임 글의 받는 사람(`meta.delegation.to`)에 내가 없다: 「너에게 온 글 아님」(2026-11-04 3회차 시험 — 다른 팀원 몫의 지시까지 자기 일로 읽어 글 9건을 올렸다)
  */
 export function lineNote(
   m: MessageRow,
   ctx: { mentionId?: string; threadRootId: string | null; meHandle?: string },
 ): string | undefined {
   if (ctx.mentionId !== undefined && m.id === ctx.mentionId) return ANCHOR_LINE_NOTE;
+  // 위임 글은 본문 머리에 멘션이 없어 받는 사람이 meta 에만 있다 — 스레드 머리가 아니어도 나에게 온 것이 아니면 밝힌다.
+  const delegatedTo = delegationRecipients(m);
+  // `to` 는 위임한 쪽이 적은 그대로 저장된다 — handle 은 대소문자를 가리지 않으므로 소문자로 견준다.
+  if (delegatedTo && ctx.meHandle && !delegatedTo.some((h) => h.toLowerCase() === ctx.meHandle!.toLowerCase())) {
+    return `너에게 온 글 아님 — ${delegatedTo.map((h) => `@${h}`).join(' ')} 에게 넘긴 일이다`;
+  }
   if (ctx.threadRootId === null || m.id !== ctx.threadRootId || !ctx.meHandle) return undefined;
   const called = leadingHandles(m.body);
   if (!called.length || called.includes(ctx.meHandle)) return undefined;
