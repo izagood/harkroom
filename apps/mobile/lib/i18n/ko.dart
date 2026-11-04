@@ -812,6 +812,8 @@ class StringsKo implements Strings {
   @override
   String planSummaryNoBlocked(int groups, int active) => '그룹 $groups · 진행 $active';
   @override
+  String planSummaryShort(int groups, int blocked) => '그룹 $groups · 막힘 $blocked';
+  @override
   String get planStateBlocked => '막힘';
   @override
   String get planStateActive => '진행 중';

@@ -138,6 +138,15 @@ class PlanChip extends StatelessWidget {
   }
 }
 
+/// 띠의 자리 나누기 — 그룹이 넷 이상일 때 목표와 요약이 함께 읽히게 한다(designer #1747).
+abstract final class PlanBandLayout {
+  /// 칩·여백·⌃ 를 뺀 자리에서 요약이 쓸 수 있는 폭. 목표 2 : 요약 1 이다.
+  static double summaryMax({required double screen, required double chip}) => math.max(0, screen - 22 - chip - 6 - 22) / 3;
+
+  /// 폰 폭에서는 진행 수를 빼고 「그룹 5 · 막힘 1 (화면)」 으로 줄인다.
+  static bool shortSummary(double screen) => screen < 430;
+}
+
 /// 스레드 머리 밑의 띠(44pt, 불투명). 칩 · 목표 · 알약 1개 · +n · ⌃. 띠 전체가 누르는 자리 하나다.
 ///
 /// **부를 길은 루트 행의 `planProgress` 뿐이다** — 옛 서버나 계획 없는 스레드에서는 띠가 없고 GET 도 없다.
@@ -184,6 +193,10 @@ class _ThreadPlanBandState extends State<ThreadPlanBand> {
     final pills = plan == null ? const <PlanPill>[] : planPills(plan);
     final summary = planSummary(pills);
     final stale = plan != null && isPlanStale(plan.updatedAt, DateTime.now().toUtc());
+    final screen = MediaQuery.sizeOf(context).width;
+    final chipMax = screen * 0.55;
+    // 요약은 칩을 뺀 자리의 1/3 까지만 쓴다 — 목표가 먼저 읽혀야 한다. 짧으면 남는 자리는 목표가 가져간다.
+    final summaryMax = PlanBandLayout.summaryMax(screen: screen, chip: math.min(PlanChip.widthOf(context, chip), chipMax));
     void open() => openThreadPlanSheet(context, widget.rootId);
 
     return Semantics(
@@ -209,7 +222,7 @@ class _ThreadPlanBandState extends State<ThreadPlanBand> {
             child: Row(children: [
               // 큰 글자에서도 목표·⌃ 자리를 남긴다.
               ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.55),
+                constraints: BoxConstraints(maxWidth: chipMax),
                 child: PlanChip(progress: chip),
               ),
               const SizedBox(width: 6),
@@ -230,17 +243,18 @@ class _ThreadPlanBandState extends State<ThreadPlanBand> {
                   child: Text(t.planStaleShort, key: const Key('plan-stale'), style: TextStyle(color: k.warning, fontSize: HarkroomType.meta)),
                 )
               else if (summary != null)
-                // 막힌 그룹 이름까지 보이도록 목표보다 자리를 더 준다.
-                Flexible(
-                  flex: 2,
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: summaryMax),
                   child: Padding(
                     padding: const EdgeInsets.only(left: 6),
                     child: Text.rich(
                       key: const Key('plan-summary'),
                       TextSpan(children: [
-                        TextSpan(text: summary.blocked > 0
-                            ? t.planSummary(summary.groups, summary.active, summary.blocked)
-                            : t.planSummaryNoBlocked(summary.groups, summary.active)),
+                        TextSpan(text: summary.blocked == 0
+                            ? t.planSummaryNoBlocked(summary.groups, summary.active)
+                            : PlanBandLayout.shortSummary(screen)
+                                ? t.planSummaryShort(summary.groups, summary.blocked)
+                                : t.planSummary(summary.groups, summary.active, summary.blocked)),
                         if (summary.firstBlocked != null)
                           TextSpan(text: ' (${summary.firstBlocked})', style: TextStyle(color: k.stateStuck)),
                       ]),

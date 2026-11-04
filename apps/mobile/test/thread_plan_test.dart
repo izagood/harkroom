@@ -445,6 +445,31 @@ void main() {
       expect(find.byKey(const Key('plan-summary')), findsOneWidget);
     });
 
+    for (final width in [320.0, 375.0]) {
+      testWidgets('그룹이 넷 이상이어도 $width pt 에서 목표 자리가 요약의 두 배 이상이다', (tester) async {
+        final (app, _) = await tester.runAsync(() => _boot(_Server())) as (AppState, _Sock);
+        await _band(tester, app, width: width);
+        final goal = tester.getSize(find.byKey(const Key('plan-band-goal'))).width;
+        final summary = tester.getSize(find.byKey(const Key('plan-summary'))).width;
+        expect(goal, greaterThanOrEqualTo(summary * 2 - 12), reason: '요약 $summary · 목표 $goal');
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('폰 폭의 요약은 진행 수를 빼고 막힌 이름을 남긴다', (tester) async {
+      final (app, _) = await tester.runAsync(() => _boot(_Server())) as (AppState, _Sock);
+      await _band(tester, app);
+      final text = tester.widget<Text>(find.byKey(const Key('plan-summary'))).textSpan!.toPlainText();
+      expect(text, '그룹 5 · 막힘 1 (화면)');
+    });
+
+    test('요약 폭은 칩을 뺀 자리의 1/3, 자리가 없으면 0', () {
+      expect(PlanBandLayout.summaryMax(screen: 375, chip: 140), closeTo(61.67, 0.01));
+      expect(PlanBandLayout.summaryMax(screen: 100, chip: 200), 0);
+      expect(PlanBandLayout.shortSummary(375), isTrue);
+      expect(PlanBandLayout.shortSummary(768), isFalse);
+    });
+
     testWidgets('rev 가 바뀌면 다시 받고, 실패해도 띠는 행 값으로 서 있다', (tester) async {
       final s = _Server();
       final (app, sock) = await tester.runAsync(() => _boot(s)) as (AppState, _Sock);

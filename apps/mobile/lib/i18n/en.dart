@@ -813,6 +813,8 @@ class StringsEn implements Strings {
   @override
   String planSummaryNoBlocked(int groups, int active) => '$groups groups · $active in progress';
   @override
+  String planSummaryShort(int groups, int blocked) => '$groups groups · $blocked blocked';
+  @override
   String get planStateBlocked => 'Blocked';
   @override
   String get planStateActive => 'In progress';
