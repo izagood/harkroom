@@ -49,6 +49,8 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     required this.stateTurn,
     required this.stateRunning,
     required this.stateWaiting,
+    required this.stateActive,
+    required this.stateActiveSurface,
     required this.stateDone,
     required this.stateStuck,
   });
@@ -124,6 +126,12 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
 
   final Color stateRunning;
   final Color stateWaiting;
+  /// 계획판 진행 — 끝(초록)·막힘(빨강)·내 차례(주황)·대기(회색) 사이의 파랑. 값은 [link] 와 같다.
+  final Color stateActive;
+
+  /// 진행 칩의 옅은 면.
+  final Color stateActiveSurface;
+
   final Color stateDone;
   /// 막힘 = 위험 색.
   final Color stateStuck;
@@ -165,6 +173,8 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     stateTurn: Color(0xFFCC4A22),
     stateRunning: Color(0xFF4E5A56),
     stateWaiting: Color(0xFFA8A39B),
+    stateActive: Color(0xFF2563C9),
+    stateActiveSurface: Color(0xFFE8EFFB),
     stateDone: Color(0xFF5E8A6E),
     stateStuck: Color(0xFFB42318),
   );
@@ -207,6 +217,8 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     stateTurn: Color(0xFFFF7A4A),
     stateRunning: Color(0xFF8FA39D),
     stateWaiting: Color(0xFF716B64),
+    stateActive: Color(0xFF7AA7F0),
+    stateActiveSurface: Color(0xFF1B2638),
     stateDone: Color(0xFF6EA882),
     stateStuck: Color(0xFFFF8A80),
   );

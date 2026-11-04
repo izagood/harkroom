@@ -792,15 +792,9 @@ class StringsEn implements Strings {
   @override
   String planBlockedSemantics(int n) => '$n blocked';
   @override
-  String planGoalSemantics(String goal) => 'Goal: $goal';
-  @override
   String get planOpenHint => 'Double-tap to open the plan';
   @override
   String get planTitle => 'Plan';
-  @override
-  String get planFlow => 'Flow';
-  @override
-  String get planParallel => 'in parallel';
   @override
   String get planNext => 'Next:';
   @override
@@ -818,15 +812,66 @@ class StringsEn implements Strings {
   @override
   String get planStale => 'May be out of date';
   @override
-  String get planStaleShort => 'Stale';
-  @override
   String get planFlagged => 'Flagged by a check — not loaded into agent prompts';
   @override
   String get planLoadFailed => 'Couldn’t load the plan.';
   @override
-  String planEditedAgo(String ago) => 'edited $ago';
+  String planMetaCounts(int groups, int steps) => '$groups groups · $steps steps';
   @override
-  String planMoreGroups(int n) => '+$n';
+  String get planFlowShow => 'Show flow ›';
+  @override
+  String get planFlowHide => 'Hide flow ⌃';
+  @override
+  String planSum(String kind, int n) => switch (kind) {
+        'done' => 'Done $n',
+        'active' => 'In progress $n',
+        'blocked' => 'Blocked $n',
+        'mine' => 'Your turn $n',
+        'ready' => 'Ready $n',
+        _ => 'Waiting $n',
+      };
+  @override
+  String planSumCycle(int i, int n) => '$i/$n';
+  @override
+  String planGroupActive(int n) => '· $n in progress';
+  @override
+  String get planRowDone => 'Done';
+  @override
+  String get planRowMine => 'Your turn';
+  @override
+  String get planRowPerson => 'Person';
+  @override
+  String planRowWaiters(int n) => '$n blocked step(s) waiting ›';
+  @override
+  String planRowPr(int number) => 'PR #$number ↗';
+  @override
+  String get planRowMessage => '› Message';
+  @override
+  String get planWhyToggle => 'Why blocked ›';
+  @override
+  String get planWhyCollapse => 'Hide why ⌃';
+  @override
+  String get planWhyTitle => 'Why this is blocked';
+  @override
+  String get planWhyDep => 'Earlier step';
+  @override
+  String get planWhyCard => 'Card';
+  @override
+  String get planWhyMessage => 'Message';
+  @override
+  String get planWhyPr => 'PR';
+  @override
+  String get planWhyWorkitem => 'Work item';
+  @override
+  String get planWhyGoto => '› Go to message';
+  @override
+  String get planWhyNone => 'Nothing linked';
+  @override
+  String planPillMine(String title, int n) => '$title your turn $n';
+  @override
+  String planPillActive(String title, int n, int done, int total) => '$title $n in progress · $done/$total';
+  @override
+  String planEditedAgo(String ago) => 'edited $ago';
   @override
   String planPillDone(String title) => '$title✓';
   @override
@@ -837,12 +882,6 @@ class StringsEn implements Strings {
   String planPillWaitingCount(String title, int done, int total) => '$title waiting $done/$total';
   @override
   String planPillCount(String title, int done, int total) => '$title $done/$total';
-  @override
-  String planSummary(int groups, int active, int blocked) => '$groups groups · $active in progress · $blocked blocked';
-  @override
-  String planSummaryNoBlocked(int groups, int active) => '$groups groups · $active in progress';
-  @override
-  String planSummaryGroups(int groups) => '$groups groups';
   @override
   String get planStateBlocked => 'Blocked';
   @override

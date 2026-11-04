@@ -796,15 +796,9 @@ class StringsKo implements Strings {
   @override
   String planBlockedSemantics(int n) => '막힘 $n개';
   @override
-  String planGoalSemantics(String goal) => '목표 $goal';
-  @override
   String get planOpenHint => '두 번 탭하면 계획을 연다';
   @override
   String get planTitle => '계획';
-  @override
-  String get planFlow => '흐름';
-  @override
-  String get planParallel => '동시에 진행';
   @override
   String get planNext => '다음:';
   @override
@@ -822,15 +816,66 @@ class StringsKo implements Strings {
   @override
   String get planStale => '낡았을 수 있음';
   @override
-  String get planStaleShort => '낡음';
-  @override
   String get planFlagged => '검사에 걸린 판이다 — 에이전트 프롬프트에는 싣지 않는다';
   @override
   String get planLoadFailed => '계획을 불러오지 못했다.';
   @override
-  String planEditedAgo(String ago) => '$ago 고침';
+  String planMetaCounts(int groups, int steps) => '그룹 $groups · 단계 $steps';
   @override
-  String planMoreGroups(int n) => '+$n';
+  String get planFlowShow => '흐름 보기 ›';
+  @override
+  String get planFlowHide => '흐름 접기 ⌃';
+  @override
+  String planSum(String kind, int n) => switch (kind) {
+        'done' => '끝 $n',
+        'active' => '진행 $n',
+        'blocked' => '막힘 $n',
+        'mine' => '내 차례 $n',
+        'ready' => '시작 가능 $n',
+        _ => '대기 $n',
+      };
+  @override
+  String planSumCycle(int i, int n) => '$i/$n';
+  @override
+  String planGroupActive(int n) => '· 진행 $n';
+  @override
+  String get planRowDone => '끝';
+  @override
+  String get planRowMine => '내 차례';
+  @override
+  String get planRowPerson => '사람';
+  @override
+  String planRowWaiters(int n) => '막힌 $n건이 기다린다 ›';
+  @override
+  String planRowPr(int number) => 'PR #$number ↗';
+  @override
+  String get planRowMessage => '› 글';
+  @override
+  String get planWhyToggle => '까닭 보기 ›';
+  @override
+  String get planWhyCollapse => '까닭 접기 ⌃';
+  @override
+  String get planWhyTitle => '막힌 까닭';
+  @override
+  String get planWhyDep => '앞 단계';
+  @override
+  String get planWhyCard => '카드';
+  @override
+  String get planWhyMessage => '글';
+  @override
+  String get planWhyPr => 'PR';
+  @override
+  String get planWhyWorkitem => '작업 항목';
+  @override
+  String get planWhyGoto => '› 글로 가기';
+  @override
+  String get planWhyNone => '연결된 것 없음';
+  @override
+  String planPillMine(String title, int n) => '$title 내 차례 $n';
+  @override
+  String planPillActive(String title, int n, int done, int total) => '$title 진행 $n · $done/$total';
+  @override
+  String planEditedAgo(String ago) => '$ago 고침';
   @override
   String planPillDone(String title) => '$title✓';
   @override
@@ -841,12 +886,6 @@ class StringsKo implements Strings {
   String planPillWaitingCount(String title, int done, int total) => '$title 대기 $done/$total';
   @override
   String planPillCount(String title, int done, int total) => '$title $done/$total';
-  @override
-  String planSummary(int groups, int active, int blocked) => '그룹 $groups · 진행 $active · 막힘 $blocked';
-  @override
-  String planSummaryNoBlocked(int groups, int active) => '그룹 $groups · 진행 $active';
-  @override
-  String planSummaryGroups(int groups) => '그룹 $groups';
   @override
   String get planStateBlocked => '막힘';
   @override

@@ -80,9 +80,28 @@ class PlanGroup {
   final List<String> dependsOn;
 }
 
+/// 단계의 연결. 꼴은 서버가 검사하지만 앱 밖으로 나가는 주소는 [stepFirstLinks]·[stepWhy] 가 다시 본다.
+class PlanLink {
+  const PlanLink({required this.kind, this.repo, this.number, this.id});
+
+  /// `pr`·`message`·`card`·`workitem`.
+  final String kind;
+  final String? repo;
+  final int? number;
+  final String? id;
+
+  static PlanLink fromJson(Map<dynamic, dynamic> j) => PlanLink(
+        kind: _s(j['kind']) ?? '',
+        repo: _s(j['repo']),
+        number: j['number'] is num ? (j['number']! as num).toInt() : null,
+        id: _s(j['id']) ?? _s(j['messageId']),
+      );
+}
+
 class PlanStep {
   const PlanStep({
-    required this.id, required this.title, required this.declared, this.groupId, this.assigneeId, this.blockedReason, this.dependsOn = const [],
+    required this.id, required this.title, required this.declared, this.groupId, this.assigneeId, this.blockedReason,
+    this.dependsOn = const [], this.links = const [],
   });
 
   final String id;
@@ -92,6 +111,7 @@ class PlanStep {
   final String? assigneeId;
   final String? blockedReason;
   final List<String> dependsOn;
+  final List<PlanLink> links;
 }
 
 class PlanNode {
@@ -184,6 +204,7 @@ class ThreadPlanView {
           .map((s) => PlanStep(
                 id: _s(s['id']) ?? '', title: _s(s['title']) ?? '', declared: _s(s['state']) ?? 'pending', groupId: _s(s['groupId']),
                 assigneeId: _s(s['assigneeId']), blockedReason: _s(s['blockedReason']), dependsOn: _strs(s['dependsOn']),
+                links: _maps(s['links']).map(PlanLink.fromJson).toList(growable: false),
               ))
           .toList(growable: false),
       derived: derived,
@@ -213,48 +234,208 @@ bool isPlanStale(DateTime? updatedAt, DateTime now) => updatedAt != null && now.
   return (done: steps.where((s) => plan.stateOf(s.id) == PlanState.done).length, total: steps.length);
 }
 
+/// 단계 한 줄의 갈래(개선 시안 R1). 서버 파생 상태에 「보는 사람」을 얹은 것이다 — 내 차례는 사람마다 달라 서버가 줄 수 없다.
+/// 진행·시작 가능인 단계의 담당이 나면 내 차례다. **막힘은 내 것이어도 막힘으로 둔다** — 「막힌 까닭」과 막힘 칩이 찾아야 한다.
+enum PlanRowKind { done, active, blocked, mine, ready, waiting, hidden }
+
+/// 맨 위 상태 칩의 차례.
+const List<PlanRowKind> planChipKinds = [
+  PlanRowKind.done, PlanRowKind.active, PlanRowKind.blocked, PlanRowKind.mine, PlanRowKind.ready, PlanRowKind.waiting,
+];
+
+PlanRowKind _kindOf(PlanState s) => switch (s) {
+      PlanState.done => PlanRowKind.done,
+      PlanState.active => PlanRowKind.active,
+      PlanState.blocked => PlanRowKind.blocked,
+      PlanState.ready => PlanRowKind.ready,
+      PlanState.waiting => PlanRowKind.waiting,
+      PlanState.hidden => PlanRowKind.hidden,
+    };
+
+/// 담당 — 단계에 없으면 그룹 담당을 물려받는다.
+String? stepAssignee(ThreadPlanView plan, PlanStep step) {
+  if (step.assigneeId != null) return step.assigneeId;
+  for (final g in plan.groups) {
+    if (g.id == step.groupId) return g.assigneeId;
+  }
+  return null;
+}
+
+PlanRowKind stepKind(ThreadPlanView plan, PlanStep step, String? me) {
+  final state = plan.stateOf(step.id);
+  if ((state == PlanState.active || state == PlanState.ready) && me != null && stepAssignee(plan, step) == me) {
+    return PlanRowKind.mine;
+  }
+  return _kindOf(state);
+}
+
+/// 화면의 줄 순서 — 그룹을 문서 순서로, 그 안의 단계를 문서 순서로, 그룹 밖 단계는 맨 뒤. 상태가 바뀌어도 줄이 자리를 옮기지 않는다(W2).
+List<PlanStep> planStepOrder(ThreadPlanView plan) {
+  final known = {for (final g in plan.groups) g.id};
+  return [
+    for (final g in plan.groups) ...plan.stepsOf(g.id),
+    ...plan.steps.where((s) => s.groupId == null || !known.contains(s.groupId)),
+  ];
+}
+
+/// 칩의 목록 — 칩이 보여 주는 수이자 누를 때 차례로 갈 단계들이다. 한 칸은 한 목록에만 든다.
+/// 서버 `planProgress` 와 같은 단위로 센다: 단계 하나씩 + **연결 그룹 하나당 한 칸**(파생 상태 그대로, 누르면 그 그룹으로 간다).
+/// 안 그러면 연결 그룹이 막혔을 때 「막힘 1」은 보이는데 막힘 칩이 꺼진다. 볼 수 없는 연결 그룹은 갈 곳이 없어 빠진다 — `progress.total` 에는 든다.
+Map<PlanRowKind, List<String>> planLists(ThreadPlanView plan, String? me) {
+  final out = {for (final k in planChipKinds) k: <String>[]};
+  final known = {for (final g in plan.groups) g.id};
+  for (final g in plan.groups) {
+    if (g.linkedRootId != null) out[_kindOf(plan.stateOf(g.id))]?.add(g.id);
+    for (final s in plan.stepsOf(g.id)) {
+      out[stepKind(plan, s, me)]?.add(s.id);
+    }
+  }
+  for (final s in plan.steps) {
+    if (s.groupId == null || !known.contains(s.groupId)) out[stepKind(plan, s, me)]?.add(s.id);
+  }
+  return out;
+}
+
+/// 이 단계를 앞 단계로 둔 막힌 단계(문서 순서) — 내 차례 줄의 「막힌 n건이 기다린다」.
+List<String> stepWaiters(ThreadPlanView plan, String stepId) => [
+      for (final s in planStepOrder(plan))
+        if (s.dependsOn.contains(stepId) && plan.stateOf(s.id) == PlanState.blocked) s.id,
+    ];
+
+final RegExp _prRepo = RegExp(r'^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$');
+bool _validPr(PlanLink l) => l.kind == 'pr' && l.repo != null && _prRepo.hasMatch(l.repo!) && (l.number ?? 0) > 0;
+
+/// 단계 줄 끝에 둘 첫 PR(꼴이 맞는 것만)과 첫 글(메시지·카드).
+({({String repo, int number})? pr, String? messageId}) stepFirstLinks(PlanStep step) {
+  ({String repo, int number})? pr;
+  String? messageId;
+  for (final l in step.links) {
+    if (pr == null && _validPr(l)) pr = (repo: l.repo!, number: l.number!);
+    if (messageId == null && (l.kind == 'message' || l.kind == 'card')) messageId = l.id;
+  }
+  return (pr: pr, messageId: messageId);
+}
+
+String prUrl(({String repo, int number}) pr) => 'https://github.com/${pr.repo}/pull/${pr.number}';
+
+/// 그룹 머리의 표지·수. 막힘이 먼저고, 내 단계가 있으면 내 차례, 그 밖은 서버 파생 상태다.
+({PlanRowKind kind, int done, int total, int active, int mine}) groupFacts(ThreadPlanView plan, PlanGroup g, String? me) {
+  final kinds = plan.stepsOf(g.id).map((s) => stepKind(plan, s, me)).toList(growable: false);
+  final c = groupCount(plan, g);
+  final mine = kinds.where((k) => k == PlanRowKind.mine).length;
+  final state = plan.stateOf(g.id);
+  return (
+    kind: state == PlanState.blocked ? PlanRowKind.blocked : (mine > 0 ? PlanRowKind.mine : _kindOf(state)),
+    done: c?.done ?? 0,
+    total: c?.total ?? 0,
+    active: kinds.where((k) => k == PlanRowKind.active).length,
+    mine: mine,
+  );
+}
+
+enum PlanPillKey { done, blocked, mine, active, waiting, waitingCount, count, plain }
+
 class PlanPill {
-  const PlanPill({required this.id, required this.title, required this.state, required this.count});
+  const PlanPill({required this.id, required this.title, required this.state, required this.key, required this.done, required this.total, required this.n});
 
   final String id;
   final String title;
   final PlanState state;
-  final ({int done, int total})? count;
+  final PlanPillKey key;
+  final int done;
+  final int total;
+  final int n;
 }
 
 const Map<PlanState, int> _pillRank = {
   PlanState.blocked: 0, PlanState.active: 1, PlanState.ready: 2, PlanState.waiting: 3, PlanState.hidden: 4, PlanState.done: 5,
 };
 
-/// 그룹 알약(D7) — 막힘 먼저, 그다음 진행·시작 가능·대기·끝남. 같은 순위는 문서 순서.
-List<PlanPill> planPills(ThreadPlanView plan) {
-  final all = [
-    for (var i = 0; i < plan.groups.length; i++)
-      (i: i, pill: PlanPill(id: plan.groups[i].id, title: plan.groups[i].title, state: plan.stateOf(plan.groups[i].id), count: groupCount(plan, plan.groups[i]))),
-  ];
+/// 그룹 알약 — 막힘 먼저, 그다음 진행·시작 가능·대기·끝남. 같은 순위는 문서 순서(D7).
+/// 글자(R3): 막힘 「{그룹} 막힘 d/t」 · 내 차례 「{그룹} 내 차례 n」 · 진행 「{그룹} 진행 n · d/t」 · 그 밖은 앞과 같다.
+List<PlanPill> planPills(ThreadPlanView plan, String? me) {
+  final all = <(int, PlanPill)>[];
+  for (var i = 0; i < plan.groups.length; i++) {
+    final g = plan.groups[i];
+    final f = groupFacts(plan, g, me);
+    final c = groupCount(plan, g);
+    final state = plan.stateOf(g.id);
+    var key = PlanPillKey.plain;
+    var n = 0;
+    if (state == PlanState.done) {
+      key = PlanPillKey.done;
+    } else if (state == PlanState.blocked && c != null) {
+      key = PlanPillKey.blocked;
+    } else if (f.mine > 0) {
+      key = PlanPillKey.mine;
+      n = f.mine;
+    } else if (f.active > 0 && c != null) {
+      key = PlanPillKey.active;
+      n = f.active;
+    } else if (state == PlanState.waiting) {
+      key = c != null && c.total > 0 && c.done > 0 ? PlanPillKey.waitingCount : PlanPillKey.waiting;
+    } else if (c != null && c.total > 0 && state != PlanState.hidden) {
+      key = PlanPillKey.count;
+    }
+    all.add((i, PlanPill(id: g.id, title: g.title, state: state, key: key, done: f.done, total: f.total, n: n)));
+  }
   all.sort((a, b) {
-    final r = _pillRank[a.pill.state]!.compareTo(_pillRank[b.pill.state]!);
-    return r != 0 ? r : a.i.compareTo(b.i);
+    final r = _pillRank[a.$2.state]!.compareTo(_pillRank[b.$2.state]!);
+    return r != 0 ? r : a.$1.compareTo(b.$1);
   });
-  return all.map((e) => e.pill).toList(growable: false);
+  return all.map((e) => e.$2).toList(growable: false);
 }
 
-/// 그룹이 넷 이상이면 알약 대신 쓰는 개수 요약.
-({int groups, int active, int blocked, String? firstBlocked})? planSummary(List<PlanPill> pills) {
-  if (pills.length < 4) return null;
-  String? first;
-  for (final p in pills) {
-    if (p.state == PlanState.blocked) {
-      first = p.title;
-      break;
+/// 머리 흐름(W4) — 앞에서 [max] 개만 두고 나머지는 「+n 그룹 ›」.
+({List<String> ids, int more}) planFlowVisible(List<List<String>> layers, int max) {
+  final ids = [for (final l in layers) ...l];
+  return (ids: ids.take(max).toList(growable: false), more: ids.length > max ? ids.length - max : 0);
+}
+
+/// 칩을 거듭 누를 때 다음 차례. 처음이거나 다른 칩에서 왔으면 첫 단계부터. 비면 -1.
+int nextCycleIndex(int length, int? current) {
+  if (length == 0) return -1;
+  return current == null ? 0 : (current + 1) % length;
+}
+
+/// 「막힌 까닭」 상자(R9) — 사유 전문 → 끝나지 않은 앞 단계(단계 자신과 그 그룹의 dependsOn) → 연결(꼴이 틀린 PR 은 뺀다).
+({String? reason, List<({String id, String? group, String title, bool mine})> deps, List<PlanLink> links}) stepWhy(
+  ThreadPlanView plan,
+  PlanStep step,
+  String? me,
+) {
+  PlanGroup? parent;
+  for (final g in plan.groups) {
+    if (g.id == step.groupId) parent = g;
+  }
+  final seen = <String>{};
+  final deps = <({String id, String? group, String title, bool mine})>[];
+  for (final id in [...step.dependsOn, ...?parent?.dependsOn]) {
+    if (!seen.add(id) || plan.stateOf(id) == PlanState.done) continue;
+    PlanStep? dep;
+    for (final s in plan.steps) {
+      if (s.id == id) dep = s;
     }
+    deps.add((
+      id: id,
+      group: crossGroupTitle(plan, id, step.groupId),
+      title: planTitleOf(plan, id),
+      mine: dep != null && stepKind(plan, dep, me) == PlanRowKind.mine,
+    ));
   }
   return (
-    groups: pills.length,
-    active: pills.where((p) => p.state == PlanState.active).length,
-    blocked: pills.where((p) => p.state == PlanState.blocked).length,
-    firstBlocked: first,
+    reason: step.blockedReason,
+    deps: deps,
+    links: [for (final l in step.links) if (l.kind != 'pr' || _validPr(l)) l],
   );
+}
+
+/// 떠 있는 버튼의 표지. 막힘이 먼저다 — 닫힌 채로도 막힘이 보여야 한다(W5).
+PlanRowKind planButtonKind(PlanCounts p) {
+  if (p.blocked > 0) return PlanRowKind.blocked;
+  if (p.total > 0 && p.done >= p.total) return PlanRowKind.done;
+  if (p.active > 0) return PlanRowKind.active;
+  return p.done > 0 ? PlanRowKind.ready : PlanRowKind.waiting;
 }
 
 /// 이 노드가 속한 그룹 id(그룹이면 자기 자신). 그룹 밖 단계는 null.
@@ -328,9 +509,6 @@ String? crossGroupTitle(ThreadPlanView plan, String depId, String? fromGroupId) 
   if (g == null || g == depId || g == fromGroupId) return null;
   return planTitleOf(plan, g);
 }
-
-/// 처음 펼쳐 둘 그룹인가 — 막힘·진행 그룹만 펼친다(시안 v3).
-bool planGroupStartsOpen(PlanState s) => s == PlanState.blocked || s == PlanState.active;
 
 /// 칩의 색. 막힘만 빨강(D2).
 enum PlanTone { blocked, done, active, empty }

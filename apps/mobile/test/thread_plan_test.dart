@@ -10,6 +10,7 @@ import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/i18n/i18n.dart';
 import 'package:harkroom/screens/message_tile.dart';
 import 'package:harkroom/screens/thread_plan_sheet.dart';
+import 'package:harkroom/screens/thread_screen.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_scope.dart';
 import 'package:harkroom/state/app_state.dart';
@@ -60,7 +61,7 @@ Map<String, Object?> _planJson({int rev = 3, String? updatedAt, String goal = '�
         'steps': [
           {'id': 's1', 'groupId': 'g1', 'title': '카드 구현', 'state': 'blocked', 'assigneeId': _agent, 'blockedReason': '[썸네일](https://evil.example) 결정', 'links': <Object?>[], 'dependsOn': <Object?>[]},
           {'id': 's2', 'groupId': 'g1', 'title': '접근성 점검', 'state': 'pending', 'assigneeId': 'nobody', 'links': <Object?>[], 'dependsOn': ['s1']},
-          {'id': 's3', 'groupId': 'g2', 'title': '생성 워커', 'state': 'active', 'links': <Object?>[], 'dependsOn': <Object?>[]},
+          {'id': 's3', 'groupId': 'g2', 'title': '생성 워커', 'state': 'active', 'assigneeId': 'me-1', 'links': <Object?>[], 'dependsOn': <Object?>[]},
           {'id': 's4', 'groupId': 'g2', 'title': '보안 검토', 'state': 'pending', 'links': <Object?>[], 'dependsOn': ['s3']},
           {'id': 's5', 'groupId': 'g3', 'title': '릴리스', 'state': 'pending', 'links': <Object?>[], 'dependsOn': ['s1']},
           {'id': 's6', 'title': '그룹 밖 단계', 'state': 'done', 'links': <Object?>[], 'dependsOn': <Object?>[]},
@@ -116,7 +117,7 @@ class _Server {
           if (answers.isNotEmpty) return answers.removeAt(0)();
           return fallback();
         }
-        if (path == '/me') {
+        if (path == '/auth/me') {
           return _json({'id': 'me-1', 'handle': 'me', 'displayName': 'Me', 'isAgent': false, 'isAdmin': false, 'mustChangePassword': false, 'avatarAttachmentId': null});
         }
         if (path == '/channels') {
@@ -130,7 +131,8 @@ class _Server {
         }
         if (path == '/accounts') {
           return _json({'accounts': [
-            {'id': _agent, 'handle': 'builder', 'displayName': 'builder', 'isAgent': true, 'isDisabled': false},
+            {'id': _agent, 'handle': 'builder', 'displayName': 'builder', 'kind': 'agent', 'isDisabled': false},
+            {'id': 'pat', 'handle': 'pat', 'displayName': 'pat', 'kind': 'human', 'isDisabled': false},
           ]});
         }
         if (path.contains('/agent-models') || path.contains('/auto-mentions')) return _json({'agentModels': <Object?>[], 'autoMentions': <Object?>[]});
@@ -170,8 +172,8 @@ Future<void> _settle(WidgetTester tester) async {
   }
 }
 
-/// 띠만 세운 화면 — 탭하면 시트가 열린다.
-Future<void> _band(WidgetTester tester, AppState app, {double width = 375}) async {
+/// 버튼만 세운 화면 — 탭하면 시트가 열린다.
+Future<void> _button(WidgetTester tester, AppState app, {double width = 375, bool keyboard = false}) async {
   tester.view.physicalSize = Size(width * 3, 812 * 3);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
@@ -182,7 +184,7 @@ Future<void> _band(WidgetTester tester, AppState app, {double width = 375}) asyn
       body: SafeArea(
         child: Builder(builder: (context) {
           final row = context.app.messages['c1']!.firstWhere((m) => m.id == _root);
-          return ThreadPlanBand(rootId: _root, progress: row.planProgress);
+          return Align(alignment: Alignment.bottomRight, child: ThreadPlanButton(rootId: _root, progress: row.planProgress, keyboardOpen: keyboard));
         }),
       ),
     ),
@@ -311,41 +313,7 @@ void main() {
     });
   });
 
-  group('판정(데스크톱과 같은 규칙)', () {
-    test('알약 정렬 — 막힘·진행·대기·볼 수 없음·끝남, 같은 순위는 문서 순서', () {
-      final ids = planPills(_view()).map((p) => p.id).toList();
-      expect(ids, ['g1', 'g2', 'g4', 'g3', 'g5']);
-    });
-
-    test('넷 이상이면 요약', () {
-      final s = planSummary(planPills(_view()))!;
-      expect((s.groups, s.active, s.blocked, s.firstBlocked), (5, 2, 1, '화면'));
-      expect(planSummary(planPills(_view()).take(3).toList()), isNull);
-    });
-
-    test('흐름 — 앞 그룹이 끝나야 하는 그룹은 다음 층', () {
-      final layers = planFlow(_view());
-      expect(layers.first, ['g1', 'g2', 'g4', 'g5']);
-      expect(layers.last, ['g3']);
-    });
-
-    test('「앞: 그룹 · X」 는 그룹을 넘을 때만', () {
-      final p = _view();
-      expect(crossGroupTitle(p, 's1', 'g3'), '화면');
-      expect(crossGroupTitle(p, 's1', 'g1'), isNull);
-      expect(crossGroupTitle(p, 'g1', 'g3'), isNull);
-    });
-
-    test('연결 그룹의 수는 자식 진행률, 볼 수 없으면 null', () {
-      final p = _view();
-      expect(groupCount(p, p.groups[3]), (done: 1, total: 4));
-      expect(groupCount(p, p.groups[4]), isNull);
-    });
-
-    test('막힘·진행 그룹만 펼쳐 시작한다', () {
-      expect(PlanState.values.where(planGroupStartsOpen).toSet(), {PlanState.blocked, PlanState.active});
-    });
-
+  group('낡음·모양', () {
     test('낡음은 24시간 넘게, 시각을 모르면 낡지 않다', () {
       final now = DateTime.utc(2026, 11, 4);
       expect(isPlanStale(now.subtract(const Duration(hours: 25)), now), isTrue);
@@ -425,76 +393,70 @@ void main() {
     });
   });
 
-  group('띠', () {
-    testWidgets('planProgress 가 없으면 띠도 GET 도 없다', (tester) async {
+  group('버튼', () {
+    testWidgets('planProgress 가 없으면 버튼도 GET 도 없다', (tester) async {
       final s = _Server()..root = () => _rootRow(plan: null);
       final (app, _) = await tester.runAsync(() => _boot(s)) as (AppState, _Sock);
-      await _band(tester, app);
-      expect(find.byKey(const Key('plan-band')), findsNothing);
+      await _button(tester, app);
+      expect(find.byKey(const Key('plan-button')), findsNothing);
       expect(s.planGets, 0);
     });
 
-    testWidgets('한 번만 받고, 판을 받으면 개인 진행률·목표·막힌 알약·+n·요약을 그린다', (tester) async {
+    testWidgets('한 번만 받고, 판을 받으면 개인 진행률을 쓰고 닫힌 채로 막힘을 말한다', (tester) async {
       final s = _Server();
       final (app, _) = await tester.runAsync(() => _boot(s)) as (AppState, _Sock);
-      await _band(tester, app);
+      await _button(tester, app);
       expect(s.planGets, 1);
-      expect(find.text('계획 2/7 · 막힘 1'), findsOneWidget, reason: '판을 받은 뒤의 띠 칩은 개인 진행률이다');
-      expect(find.text('파일 미리보기 출시'), findsOneWidget);
+      expect(find.text('계획 2/7'), findsOneWidget, reason: '판을 받은 뒤의 칩은 개인 진행률이다');
+      expect(find.byKey(const Key('plan-button-blocked')), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
-    for (final width in [320.0, 375.0]) {
-      testWidgets('$width pt 에서 칩에 막힘이 있으면 요약을 그리지 않고 목표가 자리를 가져간다', (tester) async {
-        final (app, _) = await tester.runAsync(() => _boot(_Server())) as (AppState, _Sock);
-        await _band(tester, app, width: width);
-        expect(find.byKey(const Key('plan-summary')), findsNothing);
-        expect(find.byKey(const Key('plan-more')), findsNothing, reason: '요약을 뺐다고 알약으로 돌아가지 않는다');
-        expect(tester.getSize(find.byKey(const Key('plan-band-goal'))).width, greaterThan(40));
-        expect(tester.takeException(), isNull);
-      });
-    }
-
-    ({int groups, int active, int blocked, String? firstBlocked}) sum({int blocked = 0, String? name}) =>
-        (groups: 5, active: 2, blocked: blocked, firstBlocked: name);
-    final ko = stringsFor('ko');
-    double wide(String s) => s.length * 5.0;
-    double huge(String s) => 9999;
-
-    test('막힘이 없으면 들어갈 때 전체, 잘리면 「그룹 5」 만', () {
-      expect(PlanBandLayout.summaryText(ko, summary: sum(), chipBlocked: 0, screen: 375, maxWidth: 200, measure: wide)!.text, '그룹 5 · 진행 2');
-      expect(PlanBandLayout.summaryText(ko, summary: sum(), chipBlocked: 0, screen: 375, maxWidth: 40, measure: huge)!.text, '그룹 5');
-    });
-
-    test('폰 폭 막힘은 null, 넓은 화면 막힘은 이름까지(잘려도 전체)', () {
-      expect(PlanBandLayout.summaryText(ko, summary: sum(blocked: 1, name: '화면'), chipBlocked: 1, screen: 429, maxWidth: 999, measure: wide), isNull);
-      final w = PlanBandLayout.summaryText(ko, summary: sum(blocked: 1, name: '화면'), chipBlocked: 1, screen: 768, maxWidth: 10, measure: huge)!;
-      expect((w.text, w.blockedName), ('그룹 5 · 진행 2 · 막힘 1', '화면'));
-    });
-
-    test('칩에 막힘이 없는데 그룹만 막힌 폰 폭은 요약을 남기고, 안 들어가면 「그룹 5」', () {
-      final l = PlanBandLayout.summaryText(ko, summary: sum(blocked: 1, name: '화면'), chipBlocked: 0, screen: 375, maxWidth: 10, measure: huge)!;
-      expect((l.text, l.blockedName), ('그룹 5', null));
-    });
-
-    test('요약 폭은 칩을 뺀 자리의 1/3, 자리가 없으면 0', () {
-      expect(PlanBandLayout.summaryMax(screen: 375, chip: 140), closeTo(61.67, 0.01));
-      expect(PlanBandLayout.summaryMax(screen: 100, chip: 200), 0);
-      expect(PlanBandLayout.narrow(429), isTrue);
-      expect(PlanBandLayout.narrow(430), isFalse);
-    });
-
-    testWidgets('넓은 화면은 요약을 그린다', (tester) async {
+    testWidgets('320pt 에서도 넘치지 않는다', (tester) async {
       final (app, _) = await tester.runAsync(() => _boot(_Server())) as (AppState, _Sock);
-      await _band(tester, app, width: 800);
-      expect(find.byKey(const Key('plan-summary')), findsOneWidget);
+      await _button(tester, app, width: 320);
+      expect(tester.takeException(), isNull);
     });
 
-    testWidgets('rev 가 바뀌면 다시 받고, 실패해도 띠는 행 값으로 서 있다', (tester) async {
+    testWidgets('키보드가 올라오면 숨고, 판은 그대로 받는다', (tester) async {
+      final s = _Server();
+      final (app, _) = await tester.runAsync(() => _boot(s)) as (AppState, _Sock);
+      await _button(tester, app, keyboard: true);
+      expect(find.byKey(const Key('plan-button')), findsNothing);
+      expect(s.planGets, 1);
+    });
+
+    testWidgets('스레드 화면: 머리에 띠가 없고 작성칸 위에 뜨며, 키보드가 올라오면 숨는다', (tester) async {
+      final (app, _) = await tester.runAsync(() => _boot(_Server())) as (AppState, _Sock);
+      tester.view.physicalSize = const Size(375 * 3, 812 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(MaterialApp(
+        theme: harkroomTheme(Brightness.light),
+        builder: (context, child) => I18n(strings: stringsFor('ko'), child: AppScope(state: app, child: child!)),
+        home: const ThreadScreen(channelId: 'c1', rootId: _root),
+      ));
+      await _settle(tester);
+      final button = find.byKey(const Key('plan-button'));
+      expect(button, findsOneWidget);
+      expect(tester.getBottomRight(button).dx, 375 - 16);
+      expect(tester.getTopLeft(button).dy, greaterThan(400));
+      // 맨 아래 글이 버튼 밑에 깔리지 않게 피드가 비켜 있다.
+      final feed = find.byKey(const Key('thread-feed'));
+      expect(tester.widget<ListView>(feed).padding!.resolve(TextDirection.ltr).bottom, 12 + planButtonHeight + 8);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pump();
+      expect(button, findsNothing);
+      expect(tester.widget<ListView>(feed).padding!.resolve(TextDirection.ltr).bottom, 8);
+    });
+
+    testWidgets('rev 가 바뀌면 다시 받고, 실패해도 버튼은 행 값으로 서 있다', (tester) async {
       final s = _Server();
       final (app, sock) = await tester.runAsync(() => _boot(s)) as (AppState, _Sock);
       s.fallback = () => _json({'error': 'x'}, 500);
-      await _band(tester, app);
-      expect(find.text('계획 1/5 · 막힘 1'), findsOneWidget);
+      await _button(tester, app);
+      expect(find.text('계획 1/5'), findsOneWidget);
       expect(s.planGets, 1);
       await tester.pump();
       expect(s.planGets, 1, reason: '실패했다고 매 프레임 다시 두드리지 않는다');
@@ -511,16 +473,16 @@ void main() {
       expect(app.threadPlans[_root]!.rev, 4);
     });
 
-    testWidgets('지워지면 띠가 사라지고 판도 버린다', (tester) async {
+    testWidgets('지워지면 버튼이 사라지고 판도 버린다', (tester) async {
       final s = _Server();
       final (app, sock) = await tester.runAsync(() => _boot(s)) as (AppState, _Sock);
-      await _band(tester, app);
+      await _button(tester, app);
       await tester.runAsync(() async {
         _emit(sock, {'type': 'thread.plan.changed', 'channelId': 'c1', 'rootId': _root, 'rev': null, 'progress': null, 'audience': 'all'});
         await Future<void>.delayed(const Duration(milliseconds: 5));
       });
       await _settle(tester);
-      expect(find.byKey(const Key('plan-band')), findsNothing);
+      expect(find.byKey(const Key('plan-button')), findsNothing);
       expect(app.threadPlans[_root], isNull);
     });
   });
@@ -528,8 +490,8 @@ void main() {
   group('시트', () {
     Future<AppState> open(WidgetTester tester, _Server s) async {
       final (app, _) = await tester.runAsync(() => _boot(s)) as (AppState, _Sock);
-      await _band(tester, app);
-      await tester.tap(find.byKey(const Key('plan-band-open')));
+      await _button(tester, app);
+      await tester.tap(find.byKey(const Key('plan-button-open')));
       await tester.pumpAndSettle();
       return app;
     }
@@ -548,31 +510,59 @@ void main() {
       expect(find.byKey(const Key('plan-sheet')), findsNothing);
     });
 
-    testWidgets('막힘·진행 그룹만 펼치고 대기는 접되 ⏳ 는 보인다', (tester) async {
+    testWidgets('끝난 일까지 모든 그룹을 펼쳐 문서 순서로 둔다', (tester) async {
       await open(tester, _Server());
-      expect(find.byKey(const Key('plan-step-s1')), findsOneWidget);
-      expect(find.byKey(const Key('plan-step-s3')), findsOneWidget);
-      expect(find.byKey(const Key('plan-step-s5')), findsNothing);
-      expect(find.byKey(const Key('plan-waiting-g1')), findsOneWidget);
+      for (final id in ['s1', 's3', 's5', 's6']) {
+        expect(find.byKey(Key('plan-step-$id')), findsOneWidget);
+      }
+      final y1 = tester.getTopLeft(find.byKey(const Key('plan-step-s1'))).dy;
+      final y3 = tester.getTopLeft(find.byKey(const Key('plan-step-s3'))).dy;
+      expect(y1, lessThan(y3));
     });
 
-    testWidgets('펼침은 기억하지 않는다', (tester) async {
+    testWidgets('머리는 고정이고 목록만 구른다', (tester) async {
       await open(tester, _Server());
-      await tester.tap(find.byKey(const Key('plan-group-g3')));
+      final chip = find.byKey(const Key('plan-chips'));
+      final before = tester.getTopLeft(chip).dy;
+      await tester.drag(find.byKey(const Key('plan-sheet-scroll')), const Offset(0, -2000));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('plan-step-s5')), findsOneWidget);
-      await tester.tap(find.byKey(const Key('plan-sheet-close')));
+      await tester.drag(find.byKey(const Key('plan-sheet-scroll')), const Offset(0, -2000));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('plan-band-open')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('plan-step-s5')), findsNothing);
+      expect(chip, findsOneWidget);
+      expect(tester.getTopLeft(chip).dy, lessThanOrEqualTo(before));
+      expect(find.descendant(of: find.byKey(const Key('plan-sheet-scroll')), matching: chip), findsNothing);
     });
 
-    testWidgets('「⏳ 앞:」 을 누르면 접힌 그룹을 펴지 않아도 그 자리로 가 깜빡인다', (tester) async {
+    testWidgets('펼침·접힘은 기억하지 않는다', (tester) async {
       await open(tester, _Server());
       await tester.tap(find.byKey(const Key('plan-group-g1')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('plan-step-s1')), findsNothing);
+      await tester.tap(find.byKey(const Key('plan-sheet-close')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('plan-button-open')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('plan-step-s1')), findsOneWidget);
+    });
+
+    testWidgets('막힘 칩은 접힌 그룹을 펴서 가고 까닭을 펴며, 거듭 누르면 차례가 붙는다. 0 이면 누를 수 없다', (tester) async {
+      await open(tester, _Server());
+      await tester.tap(find.byKey(const Key('plan-group-g1')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('plan-chip-blocked')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('plan-chip-blocked')));
+      await tester.pump();
+      expect(find.byKey(const Key('plan-why-s1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('plan-flash-s1-1')), findsOneWidget);
+      expect(find.text('막힘 1 · 1/1'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      // 연결 그룹 g4 도 한 칸이라 진행 칩에 든다 — 진행 수가 0 이 아니다.
+      expect(tester.widget<InkWell>(find.byKey(const Key('plan-chip-active'))).onTap, isNotNull);
+    });
+
+    testWidgets('「⏳ 앞:」 을 누르면 그 자리로 가서 깜빡인다', (tester) async {
+      await open(tester, _Server());
       await tester.ensureVisible(find.byKey(const Key('plan-waiting-g1')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('plan-waiting-g1')));
@@ -581,24 +571,14 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
     });
 
-    testWidgets('단계로 가면 접힌 그룹을 편다', (tester) async {
-      await open(tester, _Server());
-      // s5 의 앞(s1)은 다른 그룹이라 「화면 · 카드 구현」 으로 쓴다.
-      await tester.ensureVisible(find.byKey(const Key('plan-group-g3')));
-      await tester.tap(find.byKey(const Key('plan-group-g3')));
+    testWidgets('막힌 까닭: 앞 단계로 가고, 연결이 없으면 그렇게 말한다', (tester) async {
+      final s = _Server();
+      await open(tester, s);
+      await tester.ensureVisible(find.byKey(const Key('plan-why-toggle-s1')));
+      await tester.tap(find.byKey(const Key('plan-why-toggle-s1')));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.byKey(const Key('plan-step-s5')));
-      expect(find.textContaining('화면 · 카드 구현'), findsOneWidget);
-      // 앞 단계의 그룹을 접어 둔 뒤 ⏳ 로 간다.
-      await tester.ensureVisible(find.byKey(const Key('plan-group-g1')));
-      await tester.tap(find.byKey(const Key('plan-group-g1')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('plan-step-s1')), findsNothing);
-      await tester.ensureVisible(find.byKey(const Key('plan-waiting-s1')).last);
-      await tester.tap(find.byKey(const Key('plan-waiting-s1')).last);
-      await tester.pump();
-      expect(find.byKey(const Key('plan-step-s1')), findsOneWidget);
-      await tester.pump(const Duration(seconds: 3));
+      expect(find.byKey(const Key('plan-why-none-s1')), findsOneWidget);
+      expect(find.byKey(const Key('plan-why-reason-s1')), findsOneWidget);
     });
 
     testWidgets('연결은 「그 스레드 열기 →」, 볼 수 없으면 점선 줄이고 누를 수 없다', (tester) async {
@@ -614,7 +594,9 @@ void main() {
       await open(tester, _Server());
       expect(find.textContaining('@builder'), findsOneWidget);
       expect(find.textContaining('nobody'), findsNothing);
-      expect(find.text('앞 단계 끝남 · 시작 가능'), findsOneWidget);
+      expect(find.textContaining('앞 단계 끝남 · 시작 가능'), findsOneWidget);
+      expect(find.textContaining('내 차례'), findsWidgets, reason: '담당이 나인 진행 단계는 내 차례다');
+      expect(find.text('내 차례 1'), findsOneWidget);
     });
 
     testWidgets('남이 쓴 글은 그대로 글자다 — 링크·마크다운으로 해석하지 않는다', (tester) async {
@@ -632,7 +614,76 @@ void main() {
       await tester.tap(find.byKey(const Key('plan-retry')));
       await _settle(tester);
       await tester.pumpAndSettle();
+      expect(find.byKey(const Key('plan-flow-toggle')), findsOneWidget);
+    });
+
+    testWidgets('연결 그룹이 막히면 막힘 칩이 켜지고 그 그룹으로 간다', (tester) async {
+      final s = _Server()..fallback = () {
+        final j = _planJson();
+        final derived = j['derived']! as Map<String, Object?>;
+        derived['g4'] = {'derived': 'blocked', 'waitingOn': <Object?>[]};
+        derived['s1'] = {'derived': 'done', 'waitingOn': <Object?>[]};
+        return _json({'plan': j});
+      };
+      await open(tester, s);
+      await tester.ensureVisible(find.byKey(const Key('plan-chip-blocked')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('plan-chip-blocked')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('plan-flash-g4-1')), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+    });
+
+    testWidgets('수가 0 인 칩은 누를 수 없다', (tester) async {
+      final s = _Server()..fallback = () {
+        final j = _planJson();
+        (j['derived']! as Map<String, Object?>)['g4'] = {'derived': 'done', 'waitingOn': <Object?>[]};
+        return _json({'plan': j});
+      };
+      await open(tester, s);
+      expect(tester.widget<InkWell>(find.byKey(const Key('plan-chip-active'))).onTap, isNull);
+    });
+
+    testWidgets('머리: 상태 칩은 한 줄로 가로 스크롤하고, 흐름은 접혀 있다가 눌러야 편다', (tester) async {
+      await open(tester, _Server());
+      final top = tester.getTopLeft(find.byKey(const Key('plan-chip-done'))).dy;
+      expect(tester.getTopLeft(find.byKey(const Key('plan-chip-waiting'))).dy, top, reason: '칩이 두 줄로 내려가면 안 된다');
+      final scroll = tester.widget<SingleChildScrollView>(find.byKey(const Key('plan-chips')));
+      expect(scroll.scrollDirection, Axis.horizontal);
+      expect(find.byKey(const Key('plan-flow')), findsNothing);
+      await tester.tap(find.byKey(const Key('plan-flow-toggle')));
+      await tester.pumpAndSettle();
       expect(find.byKey(const Key('plan-flow')), findsOneWidget);
+      expect(find.text('흐름 접기 ⌃'), findsOneWidget);
+    });
+
+    testWidgets('막힌 줄: 「막힘 · 사유」 는 한 줄이고 그 아래 담당·까닭 토글, 펴면 글자가 바뀐다', (tester) async {
+      await open(tester, _Server());
+      final reason = tester.widget<Text>(find.byKey(const Key('plan-step-reason-s1')));
+      expect(reason.maxLines, 1);
+      expect(reason.overflow, TextOverflow.ellipsis);
+      expect(find.descendant(of: find.byKey(const Key('plan-step-sub-s1')), matching: find.byKey(const Key('plan-why-toggle-s1'))), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const Key('plan-step-sub-s1')), matching: find.textContaining('@builder')), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('plan-why-toggle-s1')));
+      await tester.tap(find.byKey(const Key('plan-why-toggle-s1')));
+      await tester.pumpAndSettle();
+      expect(find.text('까닭 접기 ⌃'), findsOneWidget);
+    });
+
+    testWidgets('구분점은 조각 사이에만 — 첫 조각 앞과 링크 글자에 없다', (tester) async {
+      final s = _Server()..fallback = () {
+        final j = _planJson();
+        final doc = j['doc']! as Map<String, Object?>;
+        final steps = (doc['steps']! as List).cast<Map<String, Object?>>();
+        steps.firstWhere((x) => x['id'] == 's6')['links'] = [{'kind': 'pr', 'repo': 'acme/app', 'number': 7}];
+        steps.firstWhere((x) => x['id'] == 's6')['assigneeId'] = _agent;
+        return _json({'plan': j});
+      };
+      await open(tester, s);
+      final sub = find.byKey(const Key('plan-step-sub-s6'));
+      await tester.ensureVisible(sub);
+      final texts = tester.widgetList<Text>(find.descendant(of: sub, matching: find.byType(Text))).map((t) => t.data).toList();
+      expect(texts, ['끝', ' · ', '@builder', ' · ', 'PR #7 ↗']);
     });
 
     testWidgets('열려 있는 동안 판이 바뀌면 그 자리에서 고친다', (tester) async {
@@ -641,7 +692,6 @@ void main() {
       s.fallback = () => _json({'plan': _planJson(rev: 4, goal: '바뀐 목표')});
       await tester.runAsync(() => app.loadThreadPlan(_root));
       await tester.pump();
-      expect(find.byKey(const Key('plan-sheet-goal')), findsOneWidget);
       expect(tester.widget<Text>(find.byKey(const Key('plan-sheet-goal'))).data, '바뀐 목표');
     });
   });
@@ -652,6 +702,8 @@ void main() {
     expect(ko.planPillDone('서버'), '서버✓');
     expect(ko.planPillWaiting('출시'), '출시 대기');
     expect(ko.planPillWaitingCount('문서', 1, 3), '문서 대기 1/3');
+    expect(ko.planPillActive('이관', 2, 0, 3), '이관 진행 2 · 0/3');
+    expect(ko.planPillMine('사람', 3), '사람 내 차례 3');
     expect(ko.planReadyAfter, '앞 단계 끝남 · 시작 가능');
     expect(ko.planOpenLinked, '그 스레드 열기 →');
     expect(stringsFor('en').planPillBlocked('UI', 1, 3), 'UI blocked 1/3');

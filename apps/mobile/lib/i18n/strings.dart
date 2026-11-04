@@ -689,14 +689,11 @@ abstract class Strings {
   /// 칩 VoiceOver 의 막힘.
   String planBlockedSemantics(int n);
 
-  /// 띠의 VoiceOver 목표 부분.
-  String planGoalSemantics(String goal);
+
 
   /// 띠의 VoiceOver 힌트.
   String get planOpenHint;
   String get planTitle;
-  String get planFlow;
-  String get planParallel;
   String get planNext;
   String get planBlocked;
   String get planWaitingOn;
@@ -706,24 +703,47 @@ abstract class Strings {
   String get planLinkedHidden;
   String get planStale;
 
-  /// 띠의 알약 자리에 들어가는 짧은 표기.
-  String get planStaleShort;
+
   String get planFlagged;
   String get planLoadFailed;
 
   /// 시트 머리 「5분 전 고침」.
   String planEditedAgo(String ago);
-  String planMoreGroups(int n);
+
+  /// 머리의 「그룹 8 · 단계 40」.
+  String planMetaCounts(int groups, int steps);
+  String get planFlowShow;
+  String get planFlowHide;
+  String planSum(String kind, int n);
+  String planSumCycle(int i, int n);
+
+  /// 그룹 머리의 「· 진행 n」.
+  String planGroupActive(int n);
+  String get planRowDone;
+  String get planRowMine;
+  String get planRowPerson;
+  String planRowWaiters(int n);
+  String planRowPr(int number);
+  String get planRowMessage;
+  String get planWhyToggle;
+  String get planWhyCollapse;
+  String get planWhyTitle;
+  String get planWhyDep;
+  String get planWhyCard;
+  String get planWhyMessage;
+  String get planWhyPr;
+  String get planWhyWorkitem;
+  String get planWhyGoto;
+  String get planWhyNone;
+  String planPillMine(String title, int n);
+  String planPillActive(String title, int n, int done, int total);
   String planPillDone(String title);
   String planPillBlocked(String title, int done, int total);
   String planPillWaiting(String title);
   String planPillWaitingCount(String title, int done, int total);
   String planPillCount(String title, int done, int total);
-  String planSummary(int groups, int active, int blocked);
-  String planSummaryNoBlocked(int groups, int active);
 
-  /// 요약이 안 들어갈 때의 짧은 꼴. 「그룹 5」.
-  String planSummaryGroups(int groups);
+
   String get planStateBlocked;
   String get planStateActive;
   String get planStateDone;
@@ -1419,8 +1439,11 @@ abstract class Strings {
 /// 무조건 빨개지고, 그 시험을 끄면 진짜로 번역이 빠진 키도 함께 통과한다. 예외를
 /// **값으로** 적어 두는 것이 시험을 끄는 것보다 낫다 — 늘어나면 눈에 보인다.
 const Set<String> i18nAllowSameAsEnglish = {
+  // 번호·기호뿐인 계획판 표기 — 두 언어가 같다(데스크톱 `plan.sum.cycle`·`plan.row.pr`·`plan.why.pr`).
+  'planSumCycle',
+  'planRowPr',
+  'planWhyPr',
   // 계획판 기호 표기 — 글자 없이 기호·숫자·제목만이라 두 언어가 같다(데스크톱 `plan.moreGroups`·`plan.pill.done`·`plan.pill.count`).
-  'planMoreGroups',
   'planPillDone',
   'planPillCount',
   // 시스템 줄의 작성자 이름 — 앱 이름이라 번역하지 않는다(appName 과 같은 고유명사).
@@ -1956,11 +1979,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'planChipBlocked': s.planChipBlocked(1),
       'planChipSemantics': s.planChipSemantics(1, 2),
       'planBlockedSemantics': s.planBlockedSemantics(1),
-      'planGoalSemantics': s.planGoalSemantics('{goal}'),
       'planOpenHint': s.planOpenHint,
       'planTitle': s.planTitle,
-      'planFlow': s.planFlow,
-      'planParallel': s.planParallel,
       'planNext': s.planNext,
       'planBlocked': s.planBlocked,
       'planWaitingOn': s.planWaitingOn,
@@ -1969,19 +1989,43 @@ Map<String, String> stringsToMap(Strings s) => {
       'planOpenLinked': s.planOpenLinked,
       'planLinkedHidden': s.planLinkedHidden,
       'planStale': s.planStale,
-      'planStaleShort': s.planStaleShort,
       'planFlagged': s.planFlagged,
       'planLoadFailed': s.planLoadFailed,
       'planEditedAgo': s.planEditedAgo('{ago}'),
-      'planMoreGroups': s.planMoreGroups(1),
+      'planMetaCounts': s.planMetaCounts(8, 40),
+      'planFlowShow': s.planFlowShow,
+      'planFlowHide': s.planFlowHide,
+      'planSumDone': s.planSum('done', 1),
+      'planSumActive': s.planSum('active', 1),
+      'planSumBlocked': s.planSum('blocked', 1),
+      'planSumMine': s.planSum('mine', 1),
+      'planSumReady': s.planSum('ready', 1),
+      'planSumWaiting': s.planSum('waiting', 1),
+      'planSumCycle': s.planSumCycle(1, 2),
+      'planGroupActive': s.planGroupActive(1),
+      'planRowDone': s.planRowDone,
+      'planRowMine': s.planRowMine,
+      'planRowPerson': s.planRowPerson,
+      'planRowWaiters': s.planRowWaiters(1),
+      'planRowPr': s.planRowPr(7),
+      'planRowMessage': s.planRowMessage,
+      'planWhyToggle': s.planWhyToggle,
+      'planWhyCollapse': s.planWhyCollapse,
+      'planWhyTitle': s.planWhyTitle,
+      'planWhyDep': s.planWhyDep,
+      'planWhyCard': s.planWhyCard,
+      'planWhyMessage': s.planWhyMessage,
+      'planWhyPr': s.planWhyPr,
+      'planWhyWorkitem': s.planWhyWorkitem,
+      'planWhyGoto': s.planWhyGoto,
+      'planWhyNone': s.planWhyNone,
+      'planPillMine': s.planPillMine('{title}', 2),
+      'planPillActive': s.planPillActive('{title}', 1, 2, 3),
       'planPillDone': s.planPillDone('{title}'),
       'planPillBlocked': s.planPillBlocked('{title}', 1, 2),
       'planPillWaiting': s.planPillWaiting('{title}'),
       'planPillWaitingCount': s.planPillWaitingCount('{title}', 1, 2),
       'planPillCount': s.planPillCount('{title}', 1, 2),
-      'planSummary': s.planSummary(5, 2, 1),
-      'planSummaryNoBlocked': s.planSummaryNoBlocked(5, 2),
-      'planSummaryGroups': s.planSummaryGroups(5),
       'planStateBlocked': s.planStateBlocked,
       'planStateActive': s.planStateActive,
       'planStateDone': s.planStateDone,
