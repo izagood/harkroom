@@ -198,6 +198,14 @@ function PlanWindow({ entry, channelId, rootId }: { entry: AppWindowEntry; chann
     await getController().openMessage(id);
   };
 
+  /** 묻는 작성칸은 그 스레드에 있다 — 스레드 창이 있으면 그 창, 아니면 메인 창에서 스레드를 연다. */
+  const toComposer = async () => {
+    const threadWindow = findAppWindow({ kind: 'thread', channelId, rootId });
+    if (threadWindow) { threadWindow.win.focus(); return; }
+    window.focus();
+    await getController().openThread(rootId, { channelId });
+  };
+
   if (state !== 'ok' || planGone || !plan) {
     const close = state === 'gone' || planGone;
     return (
@@ -219,7 +227,7 @@ function PlanWindow({ entry, channelId, rootId }: { entry: AppWindowEntry; chann
   }
   return (
     <div data-testid="plan-window" className="flex min-h-0 flex-1 flex-col bg-surface-raised text-body">
-      <PlanBody plan={plan} onOpenMessage={(id) => { void openMessage(id).catch(() => {}); }} />
+      <PlanBody plan={plan} onOpenMessage={(id) => { void openMessage(id).catch(() => {}); }} onAsked={() => { void toComposer().catch(() => {}); }} />
     </div>
   );
 }

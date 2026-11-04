@@ -6,6 +6,8 @@ import { selectAccountNames } from '../lib/accountNames';
 import { NO_TEAMS } from '../state/appStore';
 import { splitMentions } from '../lib/mention';
 import { splitLinks, type LinkTarget, type BodyPart } from '../lib/link';
+import { planRefRoots } from '../lib/planRef';
+import { PlanRefChip } from './PlanRefChip';
 import { extractPreviewUrls, mentionTargetKey, renderMentions } from '@harkroom/shared';
 import { splitCode } from '../lib/code';
 import { parseBlocks, type Align, type Block, type Emphasis, type Inline } from '../lib/markdown';
@@ -295,6 +297,7 @@ export function MessageBody({
    * 누를 수 있는 링크. 맨 URL(#214)과 `[글자](주소)`(#216)가 **같은 여기 하나**를 지난다 —
    * 이동 경로가 신뢰 경계라서(외부 셸로 나가는 자리다) 두 벌로 두면 한쪽만 고쳐진다.
    */
+  const planRoots = useMemo(() => planRefRoots(body), [body]);
   const anchor = (label: string, href: string, target: LinkTarget, key: string) => (
     <BodyLink key={key} label={label} href={href} target={target} t={t} />
   );
@@ -303,6 +306,7 @@ export function MessageBody({
   const renderPart = (p: BodyPart, key: string) => {
     if (p.kind === 'text') return <span key={key}>{p.text}</span>;
     if (p.kind === 'link') return anchor(p.text, p.text, p.target, key);
+    if (p.kind === 'planRef') return planRoots.has(p.ref.rootId) ? <PlanRefChip key={key} planRef={p.ref} /> : <span key={key}>{p.text}</span>;
     const isGroup = (p as { isGroup?: boolean }).isGroup === true;
     // 지칭은 **자기 멘션보다 먼저 본다.** 나를 지칭했을 뿐인 이름에 주의색을 칠하면 내
     // 차례가 아닌데 내 차례처럼 보인다 — 이 변경이 없애려는 바로 그 거짓말이다.

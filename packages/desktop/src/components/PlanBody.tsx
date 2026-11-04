@@ -6,7 +6,7 @@ import { getExternalOpener } from '../lib/openExternal';
 import type { PlanStartDone } from '../lib/api';
 import {
   crossGroupTitle, groupFacts, isPlanStale, nextCycleIndex, PLAN_CHIP_KINDS, planFlow, planFlowVisible, planLists,
-  planReadyStepIds, planPills, planStartClean, planTitleOf, planTone, prUrl, stepAssignee,
+  planReadyStepIds, planPills, planStartClean, planTitleOf, takePlanAskHelp, planTone, prUrl, stepAssignee,
   stepGoTargets, stepKind, stepStartState, stepWaiters, stepWhy, stepsOf,
   type PlanChipKind, type PlanPill, type PlanRowKind,
 } from '../lib/threadPlan';
@@ -41,7 +41,7 @@ export function usePlanSync(rootId: string, progress: ThreadPlanProgress | null 
  *
  * - 목표·제목·사유는 남이 쓴 글이라 **글자로만** 그린다. 앱 밖으로 나가는 주소는 꼴을 지난 PR 번호로만 짓는다(`stepGoTargets`).
  */
-export function PlanBody({ plan, headActions, onLeave, onOpenMessage }: {
+export function PlanBody({ plan, headActions, onLeave, onOpenMessage, onAsked }: {
   plan: ThreadPlanView;
   /** 머리 오른쪽 끝에 틀이 놓는 단추. */
   headActions?: ReactNode;
@@ -49,6 +49,8 @@ export function PlanBody({ plan, headActions, onLeave, onOpenMessage }: {
   onLeave?: () => void;
   /** 글로 가는 길을 틀이 정한다(계획판 창). 없으면 메인 창에서 연다. */
   onOpenMessage?: (id: string) => void;
+  /** 💬 를 누른 뒤. 작성칸이 다른 창이면 틀이 그 창을 앞으로 가져온다. */
+  onAsked?: () => void;
 }) {
   // 뒤에 깔린 메인 창의 프레임은 멈출 수 있다 — 이 본문이 그려지는 창의 것을 쓴다.
   const hostView = viewOf(useHostDocument());
@@ -118,12 +120,26 @@ export function PlanBody({ plan, headActions, onLeave, onOpenMessage }: {
     }
     goTo(p.id);
   };
+  // 글 안 칩이 이 판의 단계를 가리켰다. 막힌 단계면 까닭도 편다.
+  const planFocus = useActiveStore((s) => (s.planFocus?.rootId === plan.rootId ? s.planFocus : null));
+  useEffect(() => {
+    if (!planFocus) return;
+    const step = plan.doc.steps.find((s) => s.id === planFocus.stepId);
+    if (step) goTo(step.id, stepKind(plan, step, me) === 'blocked');
+    useActiveStore.getState().set({ planFocus: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 새 요청이 올 때만 움직인다
+  }, [planFocus?.at]);
+  const [askHelp] = useState(takePlanAskHelp);
+  const ask = (stepId: string) => {
+    getController().startPlanAsk(plan.rootId, stepId);
+    onAsked?.();
+  };
   const goToMessage = (id: string) => {
     onLeave?.();
     if (onOpenMessage) onOpenMessage(id);
     else void getController().openMessage(id).catch(() => {});
   };
-  const shared: RowActions = { plan, me, flash, whyOpen, goTo, goToMessage, human, started, startFor, setStartFor, onStarted,
+  const shared: RowActions = { plan, me, flash, whyOpen, goTo, goToMessage, ask, human, started, startFor, setStartFor, onStarted,
     toggleWhy: (id) => setWhyOpen((w) => ({ ...w, [id]: !w[id] })) };
   const loose = stepsOf(plan.doc, null);
 
@@ -141,6 +157,7 @@ export function PlanBody({ plan, headActions, onLeave, onOpenMessage }: {
           {headActions}
         </div>
         <div data-testid="plan-goal" className="mt-0.5">{plan.doc.goal}</div>
+        {askHelp && <div data-testid="plan-ask-help" className="text-meta text-fg-muted">{t('plan.ask.help')}</div>}
         <div className="text-meta text-fg-subtle">
           {[editor?.handle,
             ...(Number.isFinite(updated) ? [t('plan.meta.edited', { ago: agoLabel(updated, Date.now(), locale, t) })] : []),
@@ -220,6 +237,7 @@ interface RowActions {
   plan: ThreadPlanView;
   me: string | null;
   flash: string | null;
+  ask: (stepId: string) => void;
   whyOpen: Record<string, boolean>;
   goTo: (id: string, why?: boolean) => void;
   goToMessage: (id: string) => void;
@@ -274,7 +292,7 @@ function GroupRow({ group, collapsed, onToggle, actions }: { group: PlanGroup; c
 
 function StepRow({ step, actions, indent = false }: { step: PlanStep; actions: RowActions; indent?: boolean }) {
   const t = useT();
-  const { plan, me, flash, whyOpen, goTo, goToMessage, toggleWhy, human, started, startFor, setStartFor, onStarted } = actions;
+  const { plan, me, flash, whyOpen, goTo, goToMessage, ask, toggleWhy, human, started, startFor, setStartFor, onStarted } = actions;
   const d = plan.derived[step.id];
   const kind = stepKind(plan, step, me);
   const parent = step.groupId ? plan.doc.groups.find((g) => g.id === step.groupId) : undefined;
@@ -360,6 +378,12 @@ function StepRow({ step, actions, indent = false }: { step: PlanStep; actions: R
           </button>
         )}
         {press && kind !== 'blocked' && <span aria-hidden="true" className="invisible shrink-0 self-center text-fg-subtle group-hover:visible">›</span>}
+        {/* 40줄 판에 늘 서 있으면 시끄럽다 — 마우스를 올렸을 때와 키보드 포커스일 때만 보인다. 자리는 늘 차지해 줄이 밀리지 않는다. */}
+        <button type="button" data-testid={`plan-ask-${step.id}`} title={t('plan.ask.button')} aria-label={t('plan.ask.button')}
+          onClick={() => ask(step.id)}
+          className="flex h-6 w-7 shrink-0 items-center justify-center self-center rounded-row border border-border bg-surface-raised text-meta opacity-0 hover:bg-surface-hover focus-visible:opacity-100 group-hover:opacity-100">
+          💬
+        </button>
       </div>
       {startFor === step.id && <PlanStartBox plan={plan} stepIds={[step.id]} onClose={() => setStartFor(null)} onStarted={onStarted} />}
       {kind === 'blocked' && open && <WhyBox step={step} actions={actions} />}
@@ -531,7 +555,7 @@ function PillChip({ pill, onPress }: { pill: PlanPill; onPress: () => void }) {
 }
 
 /** 키는 글자 그대로 적는다 — 「사전에 안 쓰는 키」 시험이 글자로 찾는다. */
-const MARK_LABEL = {
+export const MARK_LABEL = {
   blocked: 'plan.state.blocked', active: 'plan.state.active', done: 'plan.state.done', waiting: 'plan.state.waiting',
   ready: 'plan.state.ready', hidden: 'plan.state.hidden', mine: 'plan.row.mine',
 } as const satisfies Record<PlanRowKind, string>;

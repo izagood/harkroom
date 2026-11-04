@@ -1,4 +1,4 @@
-import { LINK_SCHEMES, messagePermalink, parseMessagePermalink, trimTrailingPunctuation, urlCandidateRegex } from '@harkroom/shared';
+import { findPlanRefs, type PlanRef, LINK_SCHEMES, messagePermalink, parseMessagePermalink, trimTrailingPunctuation, urlCandidateRegex } from '@harkroom/shared';
 import type { MessagePart } from './mention';
 
 /**
@@ -50,7 +50,7 @@ export function classifyLink(raw: string): LinkTarget | null {
 }
 
 /** 멘션 조각에 링크 조각이 하나 더 붙은 것. 멘션 강조는 그대로 살아 있다. */
-export type BodyPart = MessagePart | { kind: 'link'; text: string; target: LinkTarget };
+export type BodyPart = MessagePart | { kind: 'link'; text: string; target: LinkTarget } | { kind: 'planRef'; text: string; ref: PlanRef };
 
 /**
  * 멘션으로 이미 나뉜 조각들의 **텍스트 부분만** 다시 링크로 나눈다. 멘션 조각은 손대지
@@ -60,6 +60,23 @@ export function splitLinks(parts: MessagePart[]): BodyPart[] {
   const out: BodyPart[] = [];
   for (const part of parts) {
     if (part.kind !== 'text') { out.push(part); continue; }
+    // 단계 링크는 제목까지 한 덩이다. 앞에서 떼고, 사이 글자만 주소로 나눈다.
+    let refCursor = 0;
+    for (const ref of findPlanRefs(part.text)) {
+      pushUrls(part.text.slice(refCursor, ref.index), out);
+      const text = part.text.slice(ref.index, ref.index + ref.length);
+      out.push({ kind: 'planRef', text, ref: { rootId: ref.rootId, stepId: ref.stepId, title: ref.title } });
+      refCursor = ref.index + ref.length;
+    }
+    pushUrls(part.text.slice(refCursor), out);
+  }
+  return out.length ? out : parts;
+}
+
+function pushUrls(text: string, out: BodyPart[]): void {
+  if (!text) return;
+  {
+    const part = { text };
     let cursor = 0;
     for (const m of part.text.matchAll(urlCandidateRegex())) {
       const token = trimTrailingPunctuation(m[0]);
@@ -72,7 +89,6 @@ export function splitLinks(parts: MessagePart[]): BodyPart[] {
     }
     if (cursor < part.text.length) out.push({ kind: 'text', text: part.text.slice(cursor) });
   }
-  return out.length ? out : parts;
 }
 
 /**

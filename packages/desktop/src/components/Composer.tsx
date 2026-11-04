@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
-import { useHostDocument } from '../lib/hostDocument';
+import { useHostDocument, viewOf } from '../lib/hostDocument';
 import { MAX_MESSAGE_BODY_CHARS, messagePermalink, parseMessagePermalink, type ScheduledMessageView } from '@harkroom/shared';
 import type { AgentModelPick, AttachmentRow } from '@harkroom/shared';
 import { getActiveStore, useActiveStore, useCommunityRegistry, type AppStore } from '../state/communities';
@@ -149,6 +149,8 @@ interface Props {
   placeholder?: string;
   rows?: number;
   autoFocus?: boolean;
+  /** 값이 바뀌면 작성칸에 포커스를 준다(계획판 💬). */
+  focusRequest?: number;
   /**
    * 고정 멘션을 담아 두는 대화의 이름. 채널을 옮기면 부르던 상대도 달라진다 —
    * 앞 채널의 에이전트를 끌고 가면 엉뚱한 곳에서 깨어난다.
@@ -220,7 +222,7 @@ interface HeldMessage {
 }
 
 export function Composer({
-  onSend, onSubmitted, placeholder, rows = 2, autoFocus, scopeKey = '', channelId, autoMentionChannelId, belowText,
+  onSend, onSubmitted, placeholder, rows = 2, autoFocus, focusRequest, scopeKey = '', channelId, autoMentionChannelId, belowText,
 }: Props) {
   // 새 창 안이면 그 창의 문서를 듣는다(`lib/hostDocument`).
   const hostDoc = useHostDocument();
@@ -277,6 +279,21 @@ export function Composer({
   const [skippedAutoByScope, setSkippedAutoByScope] = useState<Record<string, string[]>>({});
   const [picking, setPicking] = useState(false);
   const ref = useRef<ComposerTextBox>(null);
+  useEffect(() => {
+    if (focusRequest === undefined) return;
+    // 초안이 편집기에 들어간 뒤에 준다. 새 창이면 그 창의 프레임이다.
+    const view = viewOf(hostDoc);
+    const id = view.requestAnimationFrame(() => {
+      const box = ref.current;
+      if (!box) return;
+      box.focus();
+      // 채운 받는 이 뒤에서 쓰기 시작한다 — 앞에 놓이면 질문이 멘션 앞으로 들어간다.
+      const end = box.value.length;
+      box.setSelectionRange(end, end);
+    });
+    return () => view.cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 요청 번호가 바뀔 때만 준다
+  }, [focusRequest]);
   const fileRef = useRef<HTMLInputElement>(null);
   // 업로드는 파일을 고른 순간 **시작한다.** 전송 시점에 올리면 Enter 를 누르고 기다려야 하고,
   // 실패했을 때 본문까지 붙잡힌다. 다만 끝나기를 기다리지도 않는다 — 칩은 고른 순간 서고

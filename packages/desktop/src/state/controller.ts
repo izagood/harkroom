@@ -1,6 +1,8 @@
 import type { AccountStatus, AvatarSourceMeta, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, ThreadPlanView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import { endSession } from '../lib/sessionEnd';
 import { clearPlanOpenKeys } from '../lib/threadPlan';
+import { swapAskMention, type PlanAsk } from '../lib/planRef';
+import { planAskRecipient } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchResult } from '../lib/memoryList';
 import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
 import { buildBoard, mineCount } from '../lib/inboxBoard';
@@ -2976,8 +2978,70 @@ export class Controller {
     // rev 는 지웠다 다시 세우면 1로 돌아가지만, 다시 세운 판의 updatedAt 은 늘 더 늦다.
     const held = store.threadPlans[rootId];
     if (held && plan && Date.parse(plan.updatedAt) < Date.parse(held.updatedAt)) return held;
-    store.set({ threadPlans: { ...store.threadPlans, [rootId]: plan } });
+    const { [rootId]: _seen, ...denied } = store.threadPlanDenied;
+    store.set({ threadPlans: { ...store.threadPlans, [rootId]: plan }, threadPlanDenied: denied });
     return plan;
+  }
+
+  private planRefLoads = new Map<string, Promise<void>>();
+
+  /** 글 안 단계 칩이 판을 받는다. 같은 스레드는 한 번만 묻고, 볼 수 없다는 답은 적어 둔다. */
+  loadPlanForRef(rootId: string): Promise<void> {
+    const running = this.planRefLoads.get(rootId);
+    if (running) return running;
+    const job = this.loadThreadPlan(rootId).then(() => {}, (e: unknown) => {
+      if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
+        const store = this.store.getState();
+        store.set({ threadPlanDenied: { ...store.threadPlanDenied, [rootId]: true } });
+      }
+    }).finally(() => { this.planRefLoads.delete(rootId); });
+    this.planRefLoads.set(rootId, job);
+    return job;
+  }
+
+  /** 단계에 대해 묻기 시작 — 작성칸 맨 앞에 받는 이를 채운다. 띠에는 칩 하나뿐이라 다시 누르면 바꾼다. */
+  startPlanAsk(rootId: string, stepId: string): void {
+    const store = this.store.getState();
+    const plan = store.threadPlans[rootId];
+    if (!plan) return;
+    const who = planAskRecipient(plan.doc, stepId, (id) => {
+      const kind = store.accounts[id]?.kind;
+      return kind === 'agent' ? 'agent' : kind ? 'human' : null;
+    });
+    this.writePlanAsk(rootId, stepId, who.to, who.reason);
+  }
+
+  /** ▾로 받는 이를 고른다. 사람이 고른 것이라 까닭은 지운다. */
+  setPlanAskRecipient(rootId: string, accountId: string | null): void {
+    const ask = this.store.getState().planAsks[rootId];
+    if (ask) this.writePlanAsk(rootId, ask.stepId, accountId, null);
+  }
+
+  private writePlanAsk(rootId: string, stepId: string, to: string | null, reason: PlanAsk['reason']): void {
+    const store = this.store.getState();
+    const prev = store.planAsks[rootId];
+    const handle = to ? store.accounts[to]?.handle : undefined;
+    const mention = handle ? `@${handle} ` : '';
+    const scope = `thread:${rootId}`;
+    store.setDraft(scope, swapAskMention(store.drafts[scope] ?? '', prev?.mention ?? '', mention));
+    store.set({ planAsks: { ...store.planAsks, [rootId]: { stepId, to: handle ? to : null, mention, reason, focus: (prev?.focus ?? 0) + 1 } } });
+  }
+
+  /** ✕ — 채워 둔 받는 이도 거둔다. */
+  cancelPlanAsk(rootId: string): void {
+    const store = this.store.getState();
+    const ask = store.planAsks[rootId];
+    if (!ask) return;
+    const scope = `thread:${rootId}`;
+    store.setDraft(scope, swapAskMention(store.drafts[scope] ?? '', ask.mention, ''));
+    this.clearPlanAsk(rootId);
+  }
+
+  /** 보낸 뒤 — 글자는 작성칸이 이미 비웠다. */
+  clearPlanAsk(rootId: string): void {
+    const store = this.store.getState();
+    const { [rootId]: _done, ...rest } = store.planAsks;
+    store.set({ planAsks: rest });
   }
 
   /** 계획판 「시작」 미리보기. 아무것도 바꾸지 않는다. 글은 누른 사람의 앱 언어로 짓는다. */
