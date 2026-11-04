@@ -2199,16 +2199,14 @@ export async function recordAskAnswer(
   pool: Pool,
   args: {
     messageId: string; actorId: string; optionId: string; viaPermissionDecision?: boolean; answeredVia?: AskAnsweredVia; skipWakeIfInboxFor?: string;
-    /** 직접 쓴 답 — `optionId` 는 `ASK_TEXT_OPTION_ID`, `channelId` 는 부른 쪽이 권한을 확인한 채널이다. */
-    written?: { text: string; channelId: string };
+    /** 직접 쓴 답 — `optionId` 는 `ASK_TEXT_OPTION_ID` 다. */
+    written?: { text: string };
   },
 ): Promise<MessageRow | MutationRefusal | 'already_answered' | 'unknown_option'> {
   const found = await pool.query(
-    `select meta, channel_id as "channelId" from message where id = $1 and deleted_at is null`, [args.messageId],
+    `select meta from message where id = $1 and deleted_at is null`, [args.messageId],
   );
   if (!found.rowCount) return 'not_found';
-  // 직접 쓴 답은 부른 쪽이 본 채널의 카드에만 적는다 — 그 채널을 볼 수 있다는 것이 답할 자격의 근거다.
-  if (args.written && found.rows[0].channelId !== args.written.channelId) return 'not_found';
   const ask = readAskMeta(found.rows[0].meta as Record<string, unknown>);
   // 선택 요청이 아닌 메시지에 답을 달 수는 없다. 형식을 못 알아보는 것도 여기 걸린다 —
   // `readAskMeta` 가 그 판정의 유일한 자리다(shared 에 두어 화면과 같은 판정을 쓴다).
@@ -2275,6 +2273,14 @@ export async function recordAskAnswer(
   // 원본이면 거울들도 같은 답으로 닫는다. 거울이 없으면 갱신되는 행이 없을 뿐이다.
   if (!ask.mirrorOf) await syncAskMirrors(pool, args.messageId);
   return row;
+}
+
+/** 이 메시지가 이 채널의 글인가. 카드는 그 카드가 선 채널의 경로로만 답하고 닫는다. */
+export async function isMessageInChannel(pool: Pool, messageId: string, channelId: string): Promise<boolean> {
+  const res = await pool.query(
+    `select 1 from message where id = $1 and channel_id = $2 and deleted_at is null`, [messageId, channelId],
+  );
+  return (res.rowCount ?? 0) > 0;
 }
 
 /** 권한 요청 카드인가(111) — 거울을 거쳐 원본에 답을 적는 길을 막을 때. */
@@ -2445,21 +2451,20 @@ export async function syncAskMirrors(pool: Pool, rootId: string): Promise<void> 
   if (root.ask.answeredWith != null) {
     reason = 'ask_answered';
     actorId = root.ask.answeredBy ?? '';
-    // 직접 쓴 답도 그대로 옮긴다 — 거울을 낸 쪽은 자기 거울에서 답을 읽는다.
-    const copied = `jsonb_set(
+    // 직접 쓴 답의 글(`answeredText`)은 옮기지 않는다 — 거울은 원본과 다른 청중의 채널에 설 수 있고, 쓴 사람은 그 청중을
+    // 고르지 않았다. 거울에는 직접 답했다는 사실만 남고, 글은 원본에서 그 채널을 볼 수 있는 사람만 읽는다.
+    rows = (await pool.query(
+      `update message
+          set meta = jsonb_set(
                 jsonb_set(
                   jsonb_set(meta::jsonb, '{ask,answeredWith}', to_jsonb($2::text)),
                   '{ask,answeredBy}', coalesce(to_jsonb($3::text), 'null'::jsonb)),  -- 닫힘 분기와 같은 이유(security n3)
-                '{ask,answeredAt}', to_jsonb($4::text))`;
-    const hasText = typeof root.ask.answeredText === 'string';
-    rows = (await pool.query(
-      `update message
-          set meta = ${hasText ? `jsonb_set(${copied}, '{ask,answeredText}', to_jsonb($5::text))` : copied}
+                '{ask,answeredAt}', to_jsonb($4::text))
         where meta->'ask'->>'mirrorOf' = $1
           and deleted_at is null
           and meta->'ask'->>'answeredWith' is null
         returning ${COLS}`,
-      [rootId, root.ask.answeredWith, root.ask.answeredBy ?? null, root.ask.answeredAt ?? new Date().toISOString(), ...(hasText ? [root.ask.answeredText] : [])],
+      [rootId, root.ask.answeredWith, root.ask.answeredBy ?? null, root.ask.answeredAt ?? new Date().toISOString()],
     )).rows as MessageRow[];
   } else if (root.ask.closedAt != null) {
     reason = 'ask_closed';

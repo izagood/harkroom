@@ -310,7 +310,15 @@ function askWrittenAnswer(mention: { meta?: unknown }): { by?: string; text: str
  */
 export function askAnsweredWake(mention: { id: string; body: string; meta?: unknown }): { reason: string; written?: { by?: string; text: string } } {
   const written = askWrittenAnswer(mention);
-  if (!written) return { reason: askAnsweredNote(mention) };
+  if (!written) {
+    // 거울에는 글이 없다 — 글은 원본 카드에만 있고, 그 채널을 볼 수 있어야 읽힌다.
+    const ask = (mention.meta as { ask?: { answeredWith?: unknown; mirrorOf?: unknown } } | undefined)?.ask;
+    if (ask?.answeredWith === ASK_TEXT_OPTION_ID) {
+      const source = typeof ask.mirrorOf === 'string' ? ` — 그 글은 원본 카드 harkroom://message/${ask.mirrorOf} 에 있다` : '';
+      return { reason: `내가 낸 카드 harkroom://message/${mention.id} 에 사람이 선택지 대신 글로 답했다${source}` };
+    }
+    return { reason: askAnsweredNote(mention) };
+  }
   return {
     reason: `내가 낸 카드 harkroom://message/${mention.id} 에 사람이 선택지 대신 글로 답했다 — 바로 아래 줄이 그 카드의 답이다. 같은 스레드의 다른 카드는 그대로 열려 있다`,
     written,

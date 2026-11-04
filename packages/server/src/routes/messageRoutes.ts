@@ -6,7 +6,7 @@ import { ASK_TEXT_MAX_CHARS, ASK_TEXT_OPTION_ID, EFFORT_MAX, MAX_MESSAGE_BODY_CH
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { acceptRecommended, answerBundleItem } from '../services/askBundles.js';
-import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isPermissionCardMessage, getMessageById, hasOlderFeedMessages, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE, BOARD_COMPACT_BODY_CHARS } from '../services/messages.js';
+import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isMessageInChannel, isPermissionCardMessage, getMessageById, hasOlderFeedMessages, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE, BOARD_COMPACT_BODY_CHARS } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -370,6 +370,9 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
+    if (!(await isMessageInChannel(pool, messageId, id))) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
+    }
     const askReply = async (result: Awaited<ReturnType<typeof recordAskAnswer>>) => {
       if (result === 'not_found') {
         return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
@@ -390,7 +393,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     };
     if (text !== undefined) {
       return askReply(await recordAskAnswer(pool, {
-        messageId, actorId: req.account!.id, optionId: ASK_TEXT_OPTION_ID, written: { text, channelId: id },
+        messageId, actorId: req.account!.id, optionId: ASK_TEXT_OPTION_ID, written: { text },
       }));
     }
 
@@ -474,6 +477,9 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     }).parse(req.params);
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if (!(await isMessageInChannel(pool, messageId, id))) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
     }
 
     const result = await closeAsk(pool, {

@@ -412,32 +412,88 @@ describe('카드에 직접 쓴 답', () => {
     expect((await pool.query(`select meta from message where id = $1`, [id])).rows[0].meta.ask.answeredWith).toBeUndefined();
   });
 
-  it('다른 채널 경로로는 그 카드에 쓰지 못한다', async () => {
-    const id = await seedAsk({ kind: 'human' });
-    const other = (await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'asks-other' } })).json().id as string;
-    expect((await answer(id, adminToken, { text: '옆 채널에서' }, other)).statusCode).toBe(404);
+  it('거울에 쓰면 원본에만 글이 적히고, 다른 거울·이 거울에는 글이 옮겨지지 않는다', async () => {
+    const root = await seedAsk({ kind: 'human' });
+    const seedMirror = async (): Promise<string> => {
+      const meta: AskMeta = {
+        kind: 'ask', ask: { options: [{ id: 'new', label: '새 마이그레이션' }, { id: 'edit', label: '008 수정' }], to: { kind: 'human' }, mirrorOf: root },
+      };
+      return ((await postMessage(pool, {
+        channelId, authorId: agentId, body: '거울', meta: meta as unknown as Record<string, unknown>,
+      })) as { message: { id: string } }).message.id;
+    };
+    const mirror = await seedMirror();
+    const other = await seedMirror();
+    const res = await answer(mirror, memberToken, { text: '거울에서 쓴 답' });
+    expect(res.statusCode).toBe(200);
+    const read = async (id: string) => (await pool.query(`select meta from message where id = $1`, [id])).rows[0].meta.ask;
+    const rootAsk = await read(root);
+    expect(rootAsk.answeredText).toBe('거울에서 쓴 답');
+    expect(rootAsk.answeredBy).toBe(memberId);
+    for (const id of [mirror, other]) {
+      const ask = await read(id);
+      expect(ask.answeredWith).toBe(ASK_TEXT_OPTION_ID);
+      expect(ask.answeredBy).toBe(memberId);
+      expect(ask.answeredText).toBeUndefined();
+    }
+    expect(res.json().meta.ask.answeredText).toBeUndefined();
   });
 
-  it('거울에 쓰면 원본에 그 사람 이름으로 적히고 거울에도 글이 옮겨진다', async () => {
+  it('원본에 쓴 글도 거울로 건너가지 않는다', async () => {
     const root = await seedAsk({ kind: 'human' });
-    const mirrorMeta: AskMeta = {
+    const meta: AskMeta = {
       kind: 'ask', ask: { options: [{ id: 'new', label: '새 마이그레이션' }, { id: 'edit', label: '008 수정' }], to: { kind: 'human' }, mirrorOf: root },
     };
     const mirror = ((await postMessage(pool, {
-      channelId, authorId: agentId, body: '거울', meta: mirrorMeta as unknown as Record<string, unknown>,
+      channelId, authorId: agentId, body: '거울', meta: meta as unknown as Record<string, unknown>,
     })) as { message: { id: string } }).message.id;
-    const res = await answer(mirror, memberToken, { text: '거울에서 쓴 답' });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().meta.ask.answeredText).toBe('거울에서 쓴 답');
-    const rootAsk = (await pool.query(`select meta from message where id = $1`, [root])).rows[0].meta.ask;
-    expect(rootAsk.answeredText).toBe('거울에서 쓴 답');
-    expect(rootAsk.answeredBy).toBe(memberId);
+    expect((await answer(root, adminToken, { text: '비공개로 쓴 글' })).statusCode).toBe(200);
+    const ask = (await pool.query(`select meta from message where id = $1`, [mirror])).rows[0].meta.ask;
+    expect(ask.answeredWith).toBe(ASK_TEXT_OPTION_ID);
+    expect(ask.answeredText).toBeUndefined();
   });
 
   it('고른 답의 meta 에는 answeredText 가 없다', async () => {
     const id = await seedAsk({ kind: 'human' });
     const res = await answer(id, adminToken, { optionId: 'new' });
     expect(res.json().meta.ask.answeredText).toBeUndefined();
+  });
+});
+
+describe('카드는 그 카드가 선 채널의 경로로만 답하고 닫는다', () => {
+  it.each([
+    ['ask-answer', { optionId: 'new' }],
+    ['ask-answer', { text: '글' }],
+    ['ask-close', {}],
+  ] as const)('%s %j — 다른 채널 경로는 404, 카드는 그대로다', async (path, payload) => {
+    const id = await seedAsk({ kind: 'human' });
+    const other = (await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: `asks-${path}-${(Object.keys(payload)[0] ?? 'x').toLowerCase()}` },
+    })).json().id as string;
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${other}/messages/${id}/${path}`, headers: auth(adminToken), payload,
+    });
+    expect(res.statusCode).toBe(404);
+    const ask = (await pool.query(`select meta from message where id = $1`, [id])).rows[0].meta.ask;
+    expect(ask.answeredWith).toBeUndefined();
+    expect(ask.closedAt).toBeUndefined();
+    const right = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages/${id}/${path}`, headers: auth(adminToken), payload,
+    });
+    expect(right.statusCode).toBe(200);
+  });
+
+  it('권한 요청 카드도 다른 채널 경로로는 404', async () => {
+    const posted = await postMessage(pool, {
+      channelId, authorId: agentId, body: '권한 카드',
+      meta: { kind: 'ask', permissionRequest: { id: 'x' }, ask: { options: [{ id: 'approve', label: '승인' }, { id: 'deny', label: '거절' }], to: { kind: 'human' } } },
+    });
+    const id = (posted as { message: { id: string } }).message.id;
+    const other = (await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'asks-perm' } })).json().id as string;
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${other}/messages/${id}/ask-answer`, headers: auth(adminToken), payload: { optionId: 'approve' },
+    });
+    expect(res.statusCode).toBe(404);
   });
 });
 

@@ -991,6 +991,17 @@ describe('ask_answered 깨움', () => {
     expect(wake.reason).not.toContain('다른 길로 가자');
   });
 
+  it('거울에는 글이 없다 — 사유는 원본 카드 링크를 준다', () => {
+    const wake = askAnsweredWake({
+      id: 'mirror-1', body: '골라 줘',
+      meta: { kind: 'ask', ask: { options: [{ id: 'a', label: 'A' }], answeredWith: ASK_TEXT_OPTION_ID, answeredBy: 'p-1', mirrorOf: 'root-1' } },
+    });
+    expect(wake.written).toBeUndefined();
+    expect(wake.reason).toContain('harkroom://message/mirror-1');
+    expect(wake.reason).toContain('harkroom://message/root-1');
+    expect(wake.reason).not.toContain(ASK_TEXT_OPTION_ID);
+  });
+
   it('고른 답은 지금처럼 라벨을 사유에 싣는다', () => {
     const wake = askAnsweredWake({
       id: 'card-2', body: '골라 줘',
