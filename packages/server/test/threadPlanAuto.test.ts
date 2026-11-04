@@ -24,6 +24,7 @@ let member: { token: string; accountId: string };
 let manager: { accountId: string; pat: string };
 let other: { accountId: string; pat: string };
 let spare: { token: string; accountId: string };
+let spare2: { token: string; accountId: string };
 let op: { operatorId: string };
 let ch: string;
 let mcpUrl: string;
@@ -62,6 +63,7 @@ beforeAll(async () => {
   admin = await bootstrapAdmin(app);
   member = await createMember(app, admin.token, 'alice');
   spare = await createMember(app, admin.token, 'spare');
+  spare2 = await createMember(app, admin.token, 'spare2');
   manager = await createAgent(app, admin.token, 'mgr');
   other = await createAgent(app, admin.token, 'other');
   op = await registerOperator(app, admin.token, 'mac');
@@ -380,6 +382,86 @@ describe('깨우기', () => {
     await writeThreadPlan(pool, root, { accountId: manager.accountId }, (prev) => ({ doc: { ...prev!.doc, steps: prev!.doc.steps.filter((x) => x.id !== 's2') } }));
     await wakePlanAuto(pool, root);
     expect(await offReason(root)).toMatchObject({ on: false, reason: 'until_gone' });
+  });
+
+  it('범위는 켤 때 고정된다 — 끝점 그룹에 더한 단계는 깨우지 않는다', async () => {
+    const root = await plan2([{ ...step('s1'), groupId: 'g1' }], [{ id: 'g1', title: 'g', dependsOn: [] }]);
+    await on(root, 'g1');
+    await writeThreadPlan(pool, root, { accountId: other.accountId }, (prev) => ({ doc: { ...prev!.doc, steps: [...prev!.doc.steps, { ...step('s2'), groupId: 'g1' }] } }));
+    await wakePlanAuto(pool, root);
+    expect((await wakeLines(root)).flatMap((l) => l.meta.planAuto.stepIds)).not.toContain('s2');
+  });
+
+  it('범위는 켤 때 고정된다 — 끝점에 더한 앞 단계는 깨우지 않는다', async () => {
+    const root = await plan2([{ ...step('s1'), state: 'active' }, step('s9')]);
+    await on(root, 's1');
+    await writeThreadPlan(pool, root, { accountId: other.accountId }, (prev) => ({ doc: { ...prev!.doc, steps: prev!.doc.steps.map((x) => (x.id === 's1' ? { ...x, dependsOn: ['s9'] } : x)) } }));
+    await wakePlanAuto(pool, root);
+    expect((await wakeLines(root)).flatMap((l) => l.meta.planAuto.stepIds)).not.toContain('s9');
+  });
+
+  it('범위는 켤 때 고정된다 — 번호를 지웠다 다른 제목으로 다시 쓴 단계는 깨우지 않는다', async () => {
+    const root = await plan2([{ ...step('s1'), state: 'active' }, dep('s2', 's1')]);
+    await on(root, 's2');
+    await writeThreadPlan(pool, root, { accountId: other.accountId }, (prev) => ({ doc: { ...prev!.doc, steps: prev!.doc.steps.map((x) => (x.id === 's1' ? { ...x, title: '다른 일', state: 'pending' as const } : x)) } }));
+    await wakePlanAuto(pool, root);
+    expect((await wakeLines(root)).flatMap((l) => l.meta.planAuto.stepIds)).not.toContain('s1');
+  });
+
+  it('끝점 번호를 다른 제목으로 다시 쓰면 끈다', async () => {
+    const root = await plan2([step('s1')]);
+    await on(root, 's1');
+    await pool.query(`update thread_plan set doc = jsonb_set(doc, '{steps,0,title}', '"다른 일"') where root_id = $1`, [root]);
+    await wakePlanAuto(pool, root);
+    expect(await offReason(root)).toMatchObject({ on: false, reason: 'until_gone' });
+  });
+
+  it('글이 못 나가면 적은 것을 되돌려 다음 판 변화에 다시 부른다', async () => {
+    // messages 는 이 서비스와 순환으로 물려 vi.mock 이 닿지 않는다. 진짜 쓰기 실패를 만든다.
+    await pool.query(`create function test_refuse_plan_auto() returns trigger language plpgsql as $$ begin raise exception 'forced'; end $$`);
+    await pool.query(`create trigger test_refuse_plan_auto before insert on message for each row when (new.meta ? 'planAuto') execute function test_refuse_plan_auto()`);
+    let root = '';
+    try {
+      root = await plan2([step('s1')]);
+      await on(root, 's1');
+      await settle(); // 구독기가 먼저 시도해도 되돌린 뒤라 아래 시도가 다시 실패한다.
+      await expect(wakePlanAuto(pool, root)).rejects.toThrow('forced');
+    } finally {
+      await pool.query(`drop trigger test_refuse_plan_auto on message`);
+      await pool.query(`drop function test_refuse_plan_auto()`);
+    }
+    expect(await wakeLines(root)).toEqual([]);
+    const woken = (await pool.query<{ auto_woken: Record<string, string> }>(`select auto_woken from thread_plan where root_id = $1`, [root])).rows[0]!.auto_woken;
+    expect(woken).toEqual({});
+    await wakePlanAuto(pool, root);
+    expect((await wakeLines(root)).flatMap((l) => l.meta.planAuto.stepIds)).toEqual(['s1']);
+  });
+
+  it('켠 사람이 그 채널을 못 보게 되면 끈다', async () => {
+    const priv = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'closed', visibility: 'private' } })).json();
+    const privId = (priv.channel?.id ?? priv.id) as string;
+    await app.inject({ method: 'POST', url: `/channels/${privId}/members`, headers: auth(admin.token), payload: { accountId: spare2.accountId } });
+    await app.inject({ method: 'POST', url: `/channels/${privId}/members`, headers: auth(admin.token), payload: { accountId: manager.accountId } });
+    const root = await post(spare2.token, { body: 'root' }, privId);
+    expect((await setThreadPlan(pool, { rootId: root, actor: { accountId: spare2.accountId }, doc: { goal: 'g', groups: [], steps: [step('s1')], managerId: manager.accountId } })).ok).toBe(true);
+    const source = await post(spare2.token, { body: '@mgr s1까지 진행해', threadRootId: root }, privId);
+    expect((await issueTurnLease(pool, { agentId: manager.accountId, operatorId: op.operatorId, causeMessageId: source })).ok).toBe(true);
+    expect(codeOf(await auto(root, source, manager.accountId, 's1'))).toBe('ok');
+    await pool.query(`delete from channel_member where channel_id = $1 and account_id = $2`, [privId, spare2.accountId]);
+    await wakePlanAuto(pool, root);
+    expect((await getThreadPlan(pool, root))!.auto).toBeNull();
+    expect(await offReason(root)).toMatchObject({ on: false, reason: 'by_gone' });
+  });
+
+  it('그 사람이 관리자를 부를 수 없으면 끈다', async () => {
+    const root = await plan2([step('s1')]);
+    await on(root, 's1');
+    const before = (await pool.query<{ invoke_scope: string; owner_account_id: string }>(`select invoke_scope, owner_account_id from agent_config where account_id = $1`, [manager.accountId])).rows[0]!;
+    await pool.query(`update agent_config set invoke_scope = 'owner', owner_account_id = $2 where account_id = $1`, [manager.accountId, member.accountId]);
+    await wakePlanAuto(pool, root);
+    await pool.query(`update agent_config set invoke_scope = $2, owner_account_id = $3 where account_id = $1`, [manager.accountId, before.invoke_scope, before.owner_account_id]);
+    expect((await getThreadPlan(pool, root))!.auto).toBeNull();
+    expect(await offReason(root)).toMatchObject({ on: false, reason: 'unreachable' });
   });
 
   it('C3: 제목의 @ 는 아무도 부르지 않는다. 부르는 것은 맨 앞 관리자 하나다', async () => {

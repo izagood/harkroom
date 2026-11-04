@@ -6,6 +6,7 @@
  * 임대는 서버가 실제로 그 글에 불린 에이전트에게만 주므로, 에이전트가 아무 사람 글이나 근거로 고를 수 없다.
  * 사람이 다른 뜻으로 쓴 글을 관리자가 잘못 읽는 것은 여기서 막지 못한다 — 켜질 때 시스템 줄과 끄기 길로 보완한다.
  */
+import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
 import { emitPlanChanged, linkedFor, THREAD_PLAN_COLUMNS, toRow, type ThreadPlanRow } from './threadPlan.js';
 import { validMandateOwner } from './mandates.js';
@@ -72,12 +73,13 @@ export async function setPlanAuto(pool: Pool, args: {
     if (cur.auto_used_sources.includes(args.sourceMessageId)) return await refuse('source_used');
     const res = await client.query(
       `update thread_plan
-          set auto_until = $2, auto_source = $3, auto_by = $4, auto_mandate = $5, auto_at = $6, auto_woken = '{}'::jsonb,
+          set auto_until = $2, auto_source = $3, auto_by = $4, auto_mandate = $5, auto_at = $6, auto_woken = '{}'::jsonb, auto_range = $7::jsonb,
               auto_used_sources = array_append(auto_used_sources, $3::uuid),
               rev = rev + 1, updated_at = greatest(now(), updated_at + interval '1 millisecond')
         where root_id = $1
         returning ${THREAD_PLAN_COLUMNS}`,
-      [args.rootId, args.until, args.sourceMessageId, source.authorId, source.mandateId, now]);
+      // 범위는 여기서 고정한다. 사람이 허락한 것은 지금 이 단계들까지다.
+      [args.rootId, args.until, args.sourceMessageId, source.authorId, source.mandateId, now, JSON.stringify(planAutoRangeOf(cur.doc, args.until))]);
     await client.query('commit');
     row = toRow(res.rows[0]);
     by = source.authorId;
@@ -119,7 +121,7 @@ export async function clearPlanAuto(pool: Pool, args: {
     const res = changed
       ? await client.query(
         `update thread_plan
-            set auto_until = null, auto_source = null, auto_by = null, auto_mandate = null, auto_at = null, auto_woken = '{}'::jsonb,
+            set auto_until = null, auto_source = null, auto_by = null, auto_mandate = null, auto_at = null, auto_woken = '{}'::jsonb, auto_range = '{}'::jsonb,
                 rev = rev + 1, updated_at = greatest(now(), updated_at + interval '1 millisecond')
           where root_id = $1
           returning ${THREAD_PLAN_COLUMNS}`, [args.rootId])
@@ -190,6 +192,20 @@ export function planAutoRange(doc: Pick<PlanDoc, 'groups' | 'steps'>, until: str
   return steps;
 }
 
+/** 켤 때 고정하는 범위: 단계 id → 그때 제목의 해시. 번호를 다시 쓴 단계는 같은 단계가 아니다. */
+export function planAutoRangeOf(doc: Pick<PlanDoc, 'groups' | 'steps'>, until: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const id of planAutoRange(doc, until)) {
+    const step = doc.steps.find((s) => s.id === id);
+    if (step) out[id] = titleHash(step.title);
+  }
+  return out;
+}
+
+function titleHash(title: string): string {
+  return createHash('sha256').update(title).digest('hex').slice(0, 32);
+}
+
 const WAKE_LIST_MAX = 8;
 
 function wakeBody(handle: string, steps: PlanStep[], until: string, handles: Map<string, string>, assigneeOf: (s: PlanStep) => string | null): string {
@@ -215,7 +231,7 @@ function wakeBody(handle: string, steps: PlanStep[], until: string, handles: Map
 export async function wakePlanAuto(pool: Pool, rootId: string, now = new Date()): Promise<void> {
   type Cur = {
     doc: PlanDoc; channel_id: string; flag_reason: string | null; auto_until: string | null; auto_source: string | null; auto_by: string | null;
-    auto_mandate: string | null; auto_at: Date | null; auto_woken: Record<string, string>;
+    auto_mandate: string | null; auto_at: Date | null; auto_woken: Record<string, string>; auto_range: Record<string, string>;
   };
   const client = await pool.connect();
   let off: PlanAutoOffReason | null = null;
@@ -224,7 +240,7 @@ export async function wakePlanAuto(pool: Pool, rootId: string, now = new Date())
   try {
     await client.query('begin');
     const cur = (await client.query<Cur>(
-      `select doc, channel_id, flag_reason, auto_until, auto_source, auto_by, auto_mandate, auto_at, auto_woken from thread_plan where root_id = $1 for update`,
+      `select doc, channel_id, flag_reason, auto_until, auto_source, auto_by, auto_mandate, auto_at, auto_woken, auto_range from thread_plan where root_id = $1 for update`,
       [rootId])).rows[0];
     if (!cur?.auto_until || !cur.auto_at) {
       await client.query('commit');
@@ -234,10 +250,18 @@ export async function wakePlanAuto(pool: Pool, rootId: string, now = new Date())
     const map = (await linkedFor(client, doc, { audience: cur.channel_id })).map;
     const derived = derivePlan(doc, map);
     const managerId = doc.managerId ?? null;
+    /** 켤 때 고정한 범위의 그 단계인가. 번호를 다시 썼거나 나중에 더한 단계는 아니다. 끝점이 그룹이면 범위에 없으니 [orGroup] 으로 넘긴다. */
+    const sameStep = (id: string, orGroup = false): boolean => {
+      const step = doc.steps.find((s) => s.id === id);
+      if (!step) return orGroup;
+      return cur.auto_range[id] === titleHash(step.title);
+    };
+    const rangeIds = Object.keys(cur.auto_range);
+    const rangeDone = rangeIds.length > 0 && rangeIds.every((id) => sameStep(id) && derived[id]?.derived === 'done');
     if (cur.flag_reason) off = 'flagged';
     else if (!managerId) off = 'manager_changed';
-    else if (![...doc.steps, ...doc.groups].some((n) => n.id === until)) off = 'until_gone';
-    else if (derived[until]?.derived === 'done') off = 'done';
+    else if (![...doc.steps, ...doc.groups].some((n) => n.id === until) || !sameStep(until, true)) off = 'until_gone';
+    else if (derived[until]?.derived === 'done' || rangeDone) off = 'done';
     else {
       const source = cur.auto_source
         ? (await client.query(`select 1 from message where id = $1 and deleted_at is null`, [cur.auto_source])).rowCount
@@ -258,15 +282,14 @@ export async function wakePlanAuto(pool: Pool, rootId: string, now = new Date())
     if (off) {
       const res = await client.query(
         `update thread_plan
-            set auto_until = null, auto_source = null, auto_by = null, auto_mandate = null, auto_at = null, auto_woken = '{}'::jsonb,
+            set auto_until = null, auto_source = null, auto_by = null, auto_mandate = null, auto_at = null, auto_woken = '{}'::jsonb, auto_range = '{}'::jsonb,
                 rev = rev + 1, updated_at = greatest(now(), updated_at + interval '1 millisecond')
           where root_id = $1 returning ${THREAD_PLAN_COLUMNS}`, [rootId]);
       await client.query('commit');
       row = toRow(res.rows[0]);
     } else {
-      const range = planAutoRange(doc, until);
       const assigneeOf = (s: PlanStep): string | null => s.assigneeId ?? doc.groups.find((g) => g.id === s.groupId)?.assigneeId ?? null;
-      const candidates = doc.steps.filter((s) => range.has(s.id) && derived[s.id]?.derived === 'ready' && !cur.auto_woken[s.id]);
+      const candidates = doc.steps.filter((s) => sameStep(s.id) && derived[s.id]?.derived === 'ready' && !cur.auto_woken[s.id]);
       const ids = [...new Set(candidates.map(assigneeOf).filter((a): a is string => !!a))];
       const humans = ids.length
         ? new Set((await client.query<{ id: string }>(`select id from account where id = any($1::uuid[]) and kind = 'human'`, [ids])).rows.map((r) => r.id))
@@ -297,6 +320,14 @@ export async function wakePlanAuto(pool: Pool, rootId: string, now = new Date())
   const accountIds = [w.managerId, ...w.steps.map(assigneeOf).filter((a): a is string => !!a)];
   const handles = new Map((await pool.query<{ id: string; handle: string }>(`select id, handle from account where id = any($1::uuid[])`, [accountIds])).rows.map((r) => [r.id, r.handle]));
   const stepIds = w.steps.map((s) => s.id);
+  /** 글이 못 나갔다 — 그 단계를 다음 판 변화에 다시 부르도록 적은 것을 되돌린다. 그 사이 다른 깨움이 적었으면 두고, 줄은 멱등 키가 하나로 묶는다. */
+  const unmark = async (): Promise<void> => {
+    await pool.query(
+      `update thread_plan
+          set auto_woken = auto_woken - (select coalesce(array_agg(k), '{}') from unnest($2::text[]) k where auto_woken->>k = $3)
+        where root_id = $1`,
+      [rootId, stepIds, now.toISOString()]);
+  };
   const posted = await postMessage(pool, {
     channelId: w.channelId, threadRootId: rootId, authorId: w.by, kind: 'system', serverNotice: true,
     body: wakeBody(handles.get(w.managerId) ?? '', w.steps, w.until, handles, assigneeOf),
@@ -304,8 +335,14 @@ export async function wakePlanAuto(pool: Pool, rootId: string, now = new Date())
     meta: { planAuto: { stepIds, until: w.until, autoBy: w.by } },
     // 서버만 찍는다. 그 사람이 직접 부른 턴과 같은 위임 키·principal 을 잇는다.
     planAutoStamp: { mandateId: w.mandate, principalId: w.by },
-  } as Parameters<typeof postMessage>[1]);
-  if (posted.failure) throw new Error(`plan auto wake: ${posted.failure}`);
+  } as Parameters<typeof postMessage>[1]).catch(async (err: unknown) => {
+    await unmark();
+    throw err;
+  });
+  if (posted.failure) {
+    await unmark();
+    throw new Error(`plan auto wake: ${posted.failure}`);
+  }
   if (posted.replayed) return;
   emitPosted(posted, await audienceFor(pool, w.channelId));
   for (const accountId of posted.notified) emitEvent({ type: 'inbox.updated', accountId });
@@ -313,7 +350,7 @@ export async function wakePlanAuto(pool: Pool, rootId: string, now = new Date())
     // 그 사람이 지금 관리자를 부를 수 없다 — 기다려도 낫지 않으니 끈다.
     const res = await pool.query(
       `update thread_plan
-          set auto_until = null, auto_source = null, auto_by = null, auto_mandate = null, auto_at = null, auto_woken = '{}'::jsonb,
+          set auto_until = null, auto_source = null, auto_by = null, auto_mandate = null, auto_at = null, auto_woken = '{}'::jsonb, auto_range = '{}'::jsonb,
               rev = rev + 1, updated_at = greatest(now(), updated_at + interval '1 millisecond')
         where root_id = $1 and auto_until is not null returning ${THREAD_PLAN_COLUMNS}`, [rootId]);
     if (res.rows[0]) {

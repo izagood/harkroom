@@ -312,7 +312,7 @@ export async function writeThreadPlan<E extends { code: string }>(
       if (managerChanged && written.auto) {
         const cleared = await client.query(
           `update thread_plan
-              set auto_until = null, auto_source = null, auto_by = null, auto_mandate = null, auto_at = null, auto_woken = '{}'::jsonb
+              set auto_until = null, auto_source = null, auto_by = null, auto_mandate = null, auto_at = null, auto_woken = '{}'::jsonb, auto_range = '{}'::jsonb
             where root_id = $1 returning ${THREAD_PLAN_COLUMNS}`, [rootId]);
         written = toRow(cleared.rows[0]);
         autoOff = { row: written, previousManager: now?.doc.managerId ?? null };
