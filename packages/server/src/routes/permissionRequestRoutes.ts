@@ -15,7 +15,7 @@ import { assertChannelVisible } from '../services/channels.js';
 const params = z.object({ id: z.string().uuid(), requestId: z.string().uuid(), decision: z.enum(['approve', 'deny', 'approve-once', 'approve_once', 'approve_hour']) });
 /** [이번 한 번 머지](스레드 1b75d7a0) — 받는 것은 gh 계정·CI 완화 둘뿐. 저장소·PR·head 는 요청에 묶인 거절 기록이다. */
 // number·headSha 는 카드가 보여 준 값 — 대조에만 쓴다(security F1). 저장소·PR·head 의 출처는 여전히 거절 기록이다.
-const onceBody = z.object({
+export const onceBody = z.object({
   ghUser: z.string().min(1).max(39).nullable().optional(), relaxChecks: z.boolean().optional(),
   number: z.number().int().positive(), headSha: z.string().regex(/^[0-9a-f]{40}$/),
   // CI 거절 카드(스레드 1fccc9a5 n1): 사람이 본 실패 체크 목록 — 거절 기록과 다르면 card_stale. 대조에만 쓴다.

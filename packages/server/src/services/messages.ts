@@ -2809,19 +2809,19 @@ export async function askBundleItemFor(pool: Pool, rootId: string): Promise<AskB
   return {
     rootId, askerId: row.authorId, channelId: row.channelId, threadRootId: row.threadRootId, prompt,
     options: ask.options.map((o) => ({ id: o.id, label: o.label, ...(o.hint ? { hint: o.hint } : {}), ...(o.recommended ? { recommended: true } : {}) })),
-    // 권한 요청·머지 거절 카드는 링크 줄이다 — 권한 카드는 소유자가 원 스레드에서만 정하고, 머지 거절 카드는 저장소·PR·sha
-    // 맥락이 본문 첫 줄에 다 실리지 않는다(security n3, #1280).
+    // `link` 는 **옛 앱용 표지**다. 사본에는 저장소·PR·대상·이유가 다 실리지 않아(security n3, #1280) 옛 앱은 이 줄을 링크로만
+    // 그려야 한다. 새 앱은 이 값을 보지 않고 원본을 읽어 온 카드를 펼쳐 정한다(`answerBundleItem`).
     ...(row.meta.permissionRequest || row.meta.mergeDenial ? { link: true } : {}),
   };
 }
 
 /** 대신된 옛 카드를 담은 묶음마다 새 카드를 줄로 더한다(이미 있으면 그대로). 상한을 넘으면 더하지 않는다. */
-async function carryBundleItem(pool: Pool, oldId: string, newId: string): Promise<void> {
+export async function carryBundleItem(pool: Pool, oldId: string, newId: string): Promise<void> {
   try {
     const bundles = await bundlesHolding(pool, oldId);
     if (bundles.length === 0) return;
     const item = await askBundleItemFor(pool, newId);
-    if (!item || item.link) return;
+    if (!item) return;
     for (const bundle of bundles) {
       const updated = (await pool.query(
         `update message

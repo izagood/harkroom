@@ -1203,7 +1203,7 @@ function buildMcpServer(
    * 적힌다. 같은 bundleId 를 주면 그 묶음에 줄을 더하거나 사본을 새로 고친다. 규칙은 `services/askBundles.ts`.
    */
   server.registerTool('message.askBundle', {
-    description: '여러 에이전트의 사람 앞 카드를 내 스레드의 묶음 카드 한 장에 줄로 모은다(items 는 원본 카드 id). bundleId 를 주면 그 묶음에 줄을 더한다. 사람이 줄을 고르면 원본에 그 사람 이름으로 적힌다. 권한 요청 카드는 링크 줄로만 선다',
+    description: '여러 에이전트의 사람 앞 카드를 내 스레드의 묶음 카드 한 장에 줄로 모은다(items 는 원본 카드 id). bundleId 를 주면 그 묶음에 줄을 더한다. 사람이 줄을 고르면 원본에 그 사람 이름으로 적힌다. 권한 요청 카드도 담을 수 있다 — 사람이 줄에서 원 카드와 같은 판정으로 정하고, 「추천대로」 일괄과 askBundleResolve 에서는 빠진다',
     inputSchema: {
       channelId: z.string().uuid(),
       threadRootId: z.string().uuid(),

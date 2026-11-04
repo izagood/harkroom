@@ -19,7 +19,7 @@ import {
  * 판정 자체(누가 정하나·만료·이미 정해짐·1회 머지 대조)는 바뀌지 않는다 — 이 모듈은 길을 모을 뿐이다.
  */
 
-export type DecisionVia = 'button' | 'chat' | 'mirror';
+export type DecisionVia = 'button' | 'chat' | 'mirror' | 'bundle';
 
 export type DecisionRef =
   | {
@@ -39,6 +39,8 @@ export type DecideInput = {
   once?: { ghUser: string | null; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] };
   /** `via: 'chat'` 일 때 — 승인한 글과 어떻게 가리켰나(감사·카드 meta). */
   chat?: { messageId: string; target?: 'T1' | 'T2' | 'T3' };
+  /** `via: 'bundle'` 일 때 — 누른 묶음 카드(감사·카드 meta). 판정은 원 카드와 같고 어디서 눌렀는지만 남는다. */
+  bundleMessageId?: string;
 };
 
 type PermissionDecided = Extract<Awaited<ReturnType<typeof decidePermissionRequest>>, { ok: true }>;
@@ -129,8 +131,9 @@ export async function decide(pool: Pool, ref: DecisionRef, actorId: string, inpu
   }
   // security F1: gh 계정 고르기([계정 바꾸기])는 소유자만이다 — 소유자가 아닌 사람의 [이번 한 번]은 계정을 비워 오퍼레이터가 고른다(G1 과 같다).
   if (once && !verdict.asOwner) once = { ...once, ghUser: null };
-  const via: { kind: 'chat'; messageId: string; target?: 'T1' | 'T2' | 'T3' } | { kind: 'button' } | { kind: 'mirror'; mirrorMessageId: string } =
+  const via: { kind: 'chat'; messageId: string; target?: 'T1' | 'T2' | 'T3' } | { kind: 'button' } | { kind: 'mirror'; mirrorMessageId: string } | { kind: 'bundle'; bundleMessageId: string } =
     input.via === 'chat' && input.chat ? { kind: 'chat', ...input.chat }
+    : input.via === 'bundle' && input.bundleMessageId ? { kind: 'bundle', bundleMessageId: input.bundleMessageId }
     : ref.mirrorMessageId ? { kind: 'mirror', mirrorMessageId: ref.mirrorMessageId }
     : { kind: 'button' };
   const args = { agentId: ref.agentId, requestId: ref.requestId, actorId, asOwner: verdict.asOwner, ...(once ? { once } : {}), via };

@@ -9,6 +9,7 @@ import { mintPat } from '../src/services/pats.js';
 import { prepareDenialCard } from '../src/services/mergeDenials.js';
 import { MERGE_DENIAL_DAILY_CAP } from '../src/services/mergeGrants.js';
 import { linkPermissionCard, oneLineReason, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant } from '../src/services/permissionRequests.js';
+import { upsertAskBundle } from '../src/services/askBundles.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
@@ -558,6 +559,35 @@ describe('repo.merge grant', () => {
         // 뒤 시험이 승인 목록을 통째로 대조한다 — 여기서 만든 승인은 지운다.
         await pool.query(`delete from merge_approval where scope = 'repo:izagood/once-user'`);
         await pool.query(`update agent_config set invoke_scope = 'owner' where account_id = $1`, [agentId]);
+      }
+    });
+
+    it('묶음 줄의 [이번 한 번]: 소유자가 고른 계정·PR 대조값이 원 카드와 같이 쓰이고, 어긋난 대조값은 card_stale, via: bundle 로 남는다', async () => {
+      expect((await grant(alice.token, { scope: 'repo:izagood/once-row' })).statusCode).toBe(200);
+      const cause = await mention(otherAgentId);
+      const thread = await threadOf(cause);
+      const denied = (await check(await lease(cause), 'izagood/once-row', { number: 71, headSha: SHA2 })).json();
+      const rid = await requestFor(denied.error.denialId, thread);
+      const cardId = (await pool.query(
+        `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, 'card', 'user', $4) returning id`,
+        [ch, thread, agentId, JSON.stringify({ kind: 'ask', ask: { options: permissionCardOptions('merge', { once: true, mandate: false }), to: { kind: 'human' } }, permissionRequest: { requestId: rid, agentId, kind: 'merge', once: { number: 71, headSha: SHA2, reason: 'cause_not_human' } } })])).rows[0].id as string;
+      await linkPermissionCard(pool, rid, cardId);
+      const head = await mention(alice.accountId);
+      const made = await upsertAskBundle(pool, { callerId: otherAgentId, channelId: ch, threadRootId: head, body: '정할 것', rootIds: [cardId] });
+      if (!made.ok) throw new Error(JSON.stringify(made));
+      const press = (once: Record<string, unknown>) => app.inject({
+        method: 'POST', url: `/channels/${ch}/messages/${made.message.id}/ask-bundle/answer`, headers: auth(alice.token),
+        payload: { rootId: cardId, optionId: 'approve_once', once },
+      });
+      const stale = await press({ number: 72, headSha: SHA2, ghUser: 'corp-account' });
+      expect(stale.statusCode).toBe(409);
+      expect(stale.json().error.code).toBe('card_stale');
+      expect((await press({ number: 71, headSha: SHA2, ghUser: 'corp-account' })).statusCode).toBe(200);
+      try {
+        expect((await pool.query(`select gh_user, approved_by from merge_approval where scope = 'repo:izagood/once-row'`)).rows).toEqual([{ gh_user: 'corp-account', approved_by: alice.accountId }]);
+        expect((await pool.query(`select meta from message where id = $1`, [cardId])).rows[0].meta.permissionRequest).toMatchObject({ status: 'approved_once', decidedVia: { kind: 'bundle', bundleMessageId: made.message.id } });
+      } finally {
+        await pool.query(`delete from merge_approval where scope = 'repo:izagood/once-row'`);
       }
     });
 
