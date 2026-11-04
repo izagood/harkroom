@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PLAN_LIMITS } from '@harkroom/shared/planGraph';
 import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, wakeWatch, wakeOrigin, hasOwnReportSince, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
@@ -1067,6 +1068,14 @@ describe('메모리 주입 (#139)', () => {
   // **이 작업의 핵심 회귀선.** 조회 실패를 "기억 없음" 으로 읽으면 에이전트가 진짜
   // 기억을 새 프로필로 덮어쓴다. 온보딩 안내가 들어가는지까지 단정해야 그 구분이
   // 실제로 검사된다 — "아무것도 안 들어간다" 만 보면 빈 값 삼키기가 우연히 통과한다.
+  // 계획판 개선 V5: 지난 일 채우기는 화면 기능이 아니라 안내 문구다. 상한 수는 PLAN_LIMITS 와 함께 움직인다.
+  it('계획판 안내: 지난 일을 done 으로 넣고, 열린 일은 합치지 않고, 막은 것을 단다', () => {
+    const text = build({ core: null, slugs: [] });
+    expect(text).toContain('끝난 일을 `done` 단계로 넣고');
+    expect(text).toContain(`상한(그룹 ${PLAN_LIMITS.groups}·단계 ${PLAN_LIMITS.steps})을 넘으면 열린 일은 그대로 두고`);
+    expect(text).toContain('막은 것(앞 단계는 `dependsOn`, 기다리는 카드·메시지·PR은 `links`)');
+  });
+
   // f3(스레드 d1e8f866, g7): 스레드 메모는 기억 저장소가 아니다 — 기억 조회가 실패해도 안내가 실린다(설계 원칙 1).
   it('스레드 메모 안내는 기억 상태와 무관하게 실리고, 조회 실패 턴에는 mem/* 를 입에 올리지 않는다', () => {
     for (const m of ['unavailable', { core: null, slugs: [] }, { core: '본문', slugs: ['mem/a'] }] as MemoryContext[]) {
