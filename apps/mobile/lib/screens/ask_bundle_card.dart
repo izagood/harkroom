@@ -29,6 +29,10 @@ import 'message_link.dart';
 /// 「추천대로」를 누른 뒤 실제로 보내기까지 기다리는 초(시안 9절).
 const bundleAcceptDelaySeconds = 5;
 
+/// 위에서부터 펼쳐 두는 권한 줄 수. 나머지는 한 줄로 두고 눌러야 펼친다 — 그 줄에는 결정 버튼이 없다(대상·경고·이유를 보기 전에
+/// 누르지 않게). 하나를 정해 접히면 다음 줄이 펼쳐진다. 375pt 에서는 줄 하나가 약 330pt 라 하나만 펼친다(데스크톱은 3).
+const bundleOpenDecideRows = 1;
+
 class AskBundleCard extends StatefulWidget {
   const AskBundleCard({super.key, required this.message, required this.bundle});
 
@@ -47,6 +51,7 @@ class _AskBundleCardState extends State<AskBundleCard> {
   final Map<String, MessageRow> _rootRows = {};
   final Map<String, String> _rowErrors = {};
   bool _decideHere = false;
+  final Set<String> _expanded = {};
   bool _busy = false;
 
   /// 「추천대로」를 누른 뒤 보내기까지 남은 초. null 이면 기다리지 않는다(#1288 designer s2) — 답은 되돌릴 수 없어서
@@ -164,6 +169,9 @@ class _AskBundleCardState extends State<AskBundleCard> {
       for (final item in items)
         (item, bundleRowState(item, _roots[item.rootId], unavailable: _unavailable.contains(item.rootId), decideHere: _decideHere)),
     ];
+    final firstDecideRows = {
+      for (final r in rows.where((r) => r.$2 is BundleRowDecide).take(bundleOpenDecideRows)) r.$1.rootId,
+    };
     final open = rows.where((r) => r.$2 is BundleRowOpen || r.$2 is BundleRowLink || r.$2 is BundleRowDecide).length;
     // 서버가 언제나 빼는 줄(되돌릴 수 없음·링크)은 n 에서 뺀다 — 다시 눌러도 같다(#1288 designer s1).
     final skipped = {
@@ -203,6 +211,8 @@ class _AskBundleCardState extends State<AskBundleCard> {
                 busy: _busy || _countdown != null,
                 result: _results?.where((r) => r.rootId == item.rootId).firstOrNull,
                 root: _rootRows[item.rootId],
+                collapsed: state is BundleRowDecide && !firstDecideRows.contains(item.rootId) && !_expanded.contains(item.rootId),
+                onExpand: () => setState(() => _expanded.add(item.rootId)),
                 error: _rowErrors[item.rootId],
                 onPick: (optionId) => _run(item.rootId, () => app.answerBundleItem(
                     widget.message.channelId, widget.message.id, item.rootId, optionId)),
@@ -264,6 +274,8 @@ class _BundleRow extends StatelessWidget {
     required this.onPick,
     required this.onDecline,
     required this.onDecide,
+    required this.collapsed,
+    required this.onExpand,
     this.root,
     this.error,
     this.result,
@@ -278,6 +290,8 @@ class _BundleRow extends StatelessWidget {
   final void Function(String rootChannelId) onDecline;
   final Future<void> Function(String optionId) onDecide;
   final MessageRow? root;
+  final bool collapsed;
+  final VoidCallback onExpand;
   final String? error;
   final BundleAcceptResult? result;
 
@@ -287,6 +301,8 @@ class _BundleRow extends StatelessWidget {
     final line = perm?.line;
     if (perm == null || line == null) return null;
     final head = switch (s.chose) {
+      // 위임장 줄 없이 7일 허락으로 끝났으면 위임장에 더했다고 말하지 않는다(원 카드와 같은 판정).
+      permOptApproveNewMandate || permOptApproveMandate || 'approve' when perm.grantedWithoutLine => '✓ ${standingResultText(t, who, perm.grantExpiresAt)}',
       permOptDeny => t.permResultDenied(who),
       permOptApproveTurn => '✓ ${t.permResultTurn(who)}',
       permOptApproveNewMandate => '✓ ${t.permResultNewAddedElsewhere(who)}',
@@ -343,6 +359,28 @@ class _BundleRow extends StatelessWidget {
                   style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 44)),
                   onPressed: goOriginal,
                   child: Text(t.bundleReplyInThread),
+                ),
+              ],
+            ),
+          BundleRowDecide() when root != null && collapsed => Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    () {
+                      final line = PermissionCardInfo.read(root!.meta)?.line;
+                      return line == null ? '' : '${line.cap} ${line.scope}';
+                    }(),
+                    key: Key('ask-bundle-target-${item.rootId}'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(color: context.tokens.fgMuted, fontFamily: 'monospace'),
+                  ),
+                ),
+                TextButton(
+                  key: Key('ask-bundle-expand-${item.rootId}'),
+                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 44)),
+                  onPressed: onExpand,
+                  child: Text(t.bundleExpandToDecide),
                 ),
               ],
             ),

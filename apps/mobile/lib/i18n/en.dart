@@ -486,6 +486,8 @@ class StringsEn implements Strings {
   @override
   String get bundleOriginalThread => 'Original thread ↗';
   @override
+  String get bundleExpandToDecide => 'Expand to decide';
+  @override
   String get permApproveMandateElsewhere => "For the original thread's mandate";
   @override
   String get permApproveNewMandateElsewhere => 'Start a mandate on the original thread and add';

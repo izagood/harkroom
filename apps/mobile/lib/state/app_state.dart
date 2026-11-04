@@ -3017,6 +3017,8 @@ class AppState extends ChangeNotifier {
     messages.clear();
     decideChecks.clear();
     _decideCheckAsked.clear();
+    // 커뮤니티마다 서버 판이 다르다 — 옛 서버로 옮겨 가서 버튼을 세우지 않게 다시 묻는다.
+    _bundleDecide = null;
     channelLoad.clear();
     channelHasMore.clear();
     loadingOlder.clear();

@@ -480,7 +480,9 @@ class _AskCardState extends State<AskCard> {
       final result = switch (chose) {
         permOptDeny => t.permResultDenied(who),
         permOptApproveTurn => t.permResultTurn(who),
-        permOptApproveNewMandate || permOptApproveMandate || 'approve' when perm.grantedWithoutLine => _standingResult(t, who, perm.grantExpiresAt),
+        permOptApproveNewMandate || permOptApproveMandate || 'approve' when perm.grantedWithoutLine => standingResultText(t, who, perm.grantExpiresAt),
+        // 거울에는 grant 기한이 없다 — 원본을 읽었으면 원본으로 같은 판정을 한다.
+        permOptApproveNewMandate || permOptApproveMandate || 'approve' when mirrorRoot?.grantedWithoutLine ?? false => standingResultText(t, who, mirrorRoot!.grantExpiresAt),
         permOptApproveNewMandate => elsewhere ? t.permResultNewAddedElsewhere(who) : t.permResultNewAdded(who),
         permOptApproveMandate || 'approve' => elsewhere ? t.permResultAddedElsewhere(who) : t.permResultAdded(who),
         permOptApproveOnce || 'approve_hour' => t.permResultOnce(who),
@@ -572,17 +574,31 @@ class _AskCardState extends State<AskCard> {
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Text(t.permOnceOperatorPicks, style: theme.textTheme.bodySmall?.copyWith(color: tok.fgMuted)),
                 ),
-              SizedBox(
-                width: double.infinity,
-                height: 44,
-                child: TextButton(
-                  key: Key('ask-option-$id-$permOptDeny'),
-                  style: TextButton.styleFrom(foregroundColor: tok.danger),
-                  onPressed: _busy ? null : () => _run(() => _answer(app, permOptDeny)),
-                  child: Text(t.permDeny),
+              // 묶음 줄은 [거절] 왼쪽·「원 스레드 ↗」 오른쪽 끝 한 줄이다 — 링크가 혼자 44pt 줄을 차지하지 않게.
+              if (widget.embeddedTrailing != null)
+                Row(
+                  children: [
+                    TextButton(
+                      key: Key('ask-option-$id-$permOptDeny'),
+                      style: TextButton.styleFrom(foregroundColor: tok.danger, minimumSize: const Size(0, 44), padding: const EdgeInsets.symmetric(horizontal: 8)),
+                      onPressed: _busy ? null : () => _run(() => _answer(app, permOptDeny)),
+                      child: Text(t.permDeny),
+                    ),
+                    const Spacer(),
+                    widget.embeddedTrailing!,
+                  ],
+                )
+              else
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    key: Key('ask-option-$id-$permOptDeny'),
+                    style: TextButton.styleFrom(foregroundColor: tok.danger),
+                    onPressed: _busy ? null : () => _run(() => _answer(app, permOptDeny)),
+                    child: Text(t.permDeny),
+                  ),
                 ),
-              ),
-              if (widget.embeddedTrailing != null) Align(alignment: Alignment.centerRight, child: widget.embeddedTrailing),
               if (_inlineError != null)
                 Text(_inlineError!, key: Key('ask-inline-error-$id'), style: theme.textTheme.bodySmall?.copyWith(color: tok.danger)),
             ] else if (!open) ...[
@@ -642,7 +658,7 @@ class _AskCardState extends State<AskCard> {
 }
 
 /// #1713 designer nit 1: 「7일」을 박지 않고 기한을 쓴다 — 살아 있으면 「{MM/DD}까지 허락함」, 지났으면 「7일 허락 끝남」. 데스크톱과 같은 꼴.
-String _standingResult(Strings t, String who, String? expiresAt) {
+String standingResultText(Strings t, String who, String? expiresAt) {
   final d = expiresAt == null ? null : DateTime.tryParse(expiresAt)?.toLocal();
   if (d == null || !d.isAfter(DateTime.now())) return t.permResultStandingEnded(who);
   final date = '${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';

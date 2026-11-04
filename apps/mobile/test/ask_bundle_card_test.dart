@@ -8,6 +8,7 @@ import 'package:harkroom/api/models.dart';
 import 'package:harkroom/api/permission_card.dart';
 import 'package:harkroom/i18n/i18n.dart';
 import 'package:harkroom/screens/ask_bundle_card.dart';
+import 'package:harkroom/screens/ask_card.dart';
 import 'package:harkroom/session/session_store.dart';
 import 'package:harkroom/state/app_scope.dart';
 import 'package:harkroom/state/app_state.dart';
@@ -135,6 +136,56 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.byKey(const Key('ask-inline-error-r1')), findsOneWidget);
+  });
+
+  testWidgets('접힌 줄: 위임장 줄 없이 7일 허락으로 끝났으면 기한을 쓴다', (tester) async {
+    app = _FakeApp({
+      'r1': _perm('r1', ask: {'answeredWith': 'approve_new_mandate', 'answeredBy': 'me'}, pr: {'status': 'granted', 'grantExpiresAt': '2099-11-09T00:00:00.000Z'}),
+    }, const [], decide: true);
+    await pump(tester, ['r1']);
+    await tester.pump();
+    expect(find.textContaining('까지 허락함'), findsOneWidget);
+    expect(find.textContaining('위임장을 만들고 더함'), findsNothing);
+  });
+
+  testWidgets('권한 줄은 위에서 1개만 펼치고, 나머지는 버튼 없이 대상 한 줄로 서며 눌러야 펼쳐지고, 앞 줄이 끝나면 다음 줄이 펼쳐진다', (tester) async {
+    final bigApp = {'r1': _perm('r1'), 'r2': _perm('r2'), 'r3': _perm('r3'), 'r4': _perm('r4')};
+    app = _FakeApp(bigApp, const [], decide: true, check: _canDecide);
+    await pump(tester, ['r1', 'r2', 'r3', 'r4']);
+    await tester.pump();
+    expect(find.byKey(const Key('ask-option-r1-approve_new_mandate')), findsOneWidget);
+    expect(find.byKey(const Key('ask-option-r2-approve_new_mandate')), findsNothing);
+    expect(find.byKey(const Key('ask-bundle-target-r2')), findsOneWidget);
+    final expand = find.byKey(const Key('ask-bundle-expand-r2'));
+    await tester.ensureVisible(expand);
+    await tester.pump();
+    await tester.tap(expand);
+    await tester.pump();
+    expect(find.byKey(const Key('ask-option-r2-approve_new_mandate')), findsOneWidget);
+    // r1 이 끝나면 r3 이 아니라 남은 첫 줄(r2)이 펼쳐진 자리를 받는다 — 묶음 행이 바뀌면 카드가 원본을 다시 읽는다.
+    bigApp['r1'] = _perm('r1', ask: {'answeredWith': 'deny', 'answeredBy': 'me'}, pr: {'status': 'denied'});
+    await pump(tester, ['r1', 'r2', 'r3', 'r4']);
+    await tester.pump();
+    expect(find.byKey(const Key('ask-option-r1-approve_new_mandate')), findsNothing);
+  });
+
+  testWidgets('거울: 원본을 읽으면 중립 거울에 내용이 서고, 소유자 아닌 결정권자도 버튼을 보며, 결정권은 요청 채널로 묻는다', (tester) async {
+    app = _FakeApp({'r1': _perm('r1', owner: 'other')}, const [], check: const DecideCheck(viewerCanDecide: true, asOwner: false, decideScope: 'community', ownerAccountId: 'other'));
+    final mirror = _row('m1', 'ct', 'pm', {
+      'kind': 'ask',
+      'ask': {'options': [{'id': 'approve_new_mandate', 'label': 'x'}, {'id': 'deny', 'label': 'y'}], 'to': {'kind': 'human'}},
+      'permissionMirror': {'rootId': 'r1', 'neutral': true},
+    });
+    await tester.pumpWidget(MaterialApp(
+      theme: harkroomTheme(Brightness.light),
+      home: I18n(strings: stringsFor('ko'), child: AppScope(state: app, child: Scaffold(body: SingleChildScrollView(child: AskCard(message: mirror, ask: AskMeta.read(mirror.meta)!))))),
+    ));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byKey(const Key('perm-neutral-m1')), findsNothing);
+    expect(find.text('이유: 로그를 봐야 한다'), findsOneWidget);
+    expect(find.text('원 스레드로 위임장 만들고 더하기'), findsOneWidget);
+    expect(app.checkedChannels.toSet(), {'cw'});
   });
 
   testWidgets('옛 서버면 권한 줄은 링크다', (tester) async {

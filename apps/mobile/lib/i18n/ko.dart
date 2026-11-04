@@ -490,6 +490,8 @@ class StringsKo implements Strings {
   @override
   String get bundleOriginalThread => '원 스레드 ↗';
   @override
+  String get bundleExpandToDecide => '펼쳐 정하기';
+  @override
   String get permApproveMandateElsewhere => '원 스레드 위임장 동안';
   @override
   String get permApproveNewMandateElsewhere => '원 스레드로 위임장 만들고 더하기';

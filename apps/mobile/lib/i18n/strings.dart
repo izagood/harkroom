@@ -1060,6 +1060,7 @@ abstract class Strings {
   /// 권한 요청 줄 — 원 스레드에서만 정한다.
   String get bundleDecideInThread;
   String get bundleOriginalThread;
+  String get bundleExpandToDecide;
   String get permApproveMandateElsewhere;
   String get permApproveNewMandateElsewhere;
   String get permStateAddedElsewhere;
