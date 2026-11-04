@@ -8,6 +8,7 @@ import 'package:harkroom/api/models.dart';
 import 'package:harkroom/api/thread_plan.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/i18n/i18n.dart';
+import 'package:harkroom/markdown/markdown_view.dart';
 import 'package:harkroom/screens/message_tile.dart';
 import 'package:harkroom/screens/thread_plan_sheet.dart';
 import 'package:harkroom/screens/thread_screen.dart';
@@ -117,6 +118,7 @@ class _Server {
       : _json({'rev': 4, 'started': [{'id': 's4', 'via': 'assignee', 'to': _agent, 'messageId': 'm-9'}], 'skipped': <Object?>[], 'failed': <Object?>[], 'notNotified': <Object?>[], 'managerSkipped': null, 'plan': _planJson(rev: 4)});
   Future<http.Response> Function(Map<String, dynamic> body)? startAnswerAsync;
   final managerCalls = <Object?>[];
+  String? lastPostBody;
 
   MockClient client() => MockClient((req) async {
         final path = req.url.path;
@@ -141,6 +143,10 @@ class _Server {
           return _json({'channels': [{'id': 'c1', 'name': 'general', 'type': 'public'}]});
         }
         if (path == '/ws-ticket') return _json({'ticket': 'tk'});
+        if (path.endsWith('/messages') && req.method == 'POST') {
+          lastPostBody = (jsonDecode(req.body) as Map<String, dynamic>)['body'] as String?;
+          return _json({'message': {...root(), 'id': 'm-new', 'seq': 99, 'body': lastPostBody, 'threadRootId': _root}});
+        }
         if (path.endsWith('/messages')) {
           final thread = req.url.queryParameters['thread'];
           if (thread != null || req.url.queryParameters.containsKey('limit')) return _json({'messages': [root()], 'hasMore': false});
@@ -190,6 +196,12 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 /// 버튼만 세운 화면 — 탭하면 시트가 열린다.
+Widget _host(AppState app, Widget child) => MaterialApp(
+      theme: harkroomTheme(Brightness.light),
+      builder: (context, c) => I18n(strings: stringsFor('ko'), child: AppScope(state: app, child: c!)),
+      home: child,
+    );
+
 Future<void> _button(WidgetTester tester, AppState app, {double width = 375, bool keyboard = false}) async {
   tester.view.physicalSize = Size(width * 3, 812 * 3);
   tester.view.devicePixelRatio = 3;
@@ -921,6 +933,127 @@ void main() {
       await _settle(tester);
       await tester.pumpAndSettle();
       expect(tester.widget<FilledButton>(find.byKey(const Key('plan-start-go'))).onPressed, isNull);
+    });
+  });
+
+  group('💬 묻기', () {
+    Future<AppState> openSheet(WidgetTester tester, _Server s) async {
+      final (app, _) = await tester.runAsync(() => _boot(s)) as (AppState, _Sock);
+      tester.view.physicalSize = const Size(375 * 3, 812 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(_host(app, const ThreadScreen(channelId: 'c1', rootId: _root)));
+      await _settle(tester);
+      await tester.tap(find.byKey(const Key('plan-button-open')));
+      await tester.pumpAndSettle();
+      return app;
+    }
+
+    Future<void> ask(WidgetTester tester, String id) async {
+      await tester.ensureVisible(find.byKey(Key('plan-ask-$id')));
+      await tester.pump();
+      await tester.tap(find.byKey(Key('plan-ask-$id')));
+      await tester.pumpAndSettle();
+    }
+
+    String field(WidgetTester tester) => tester.widget<TextField>(find.byKey(const Key('thread-composer'))).controller!.text;
+
+    testWidgets('💬 는 단계 줄마다 늘 있고 누르는 자리는 44다. 누르면 시트가 닫히고 띠와 담당 멘션이 작성칸에 선다', (tester) async {
+      await openSheet(tester, _Server());
+      await tester.ensureVisible(find.byKey(const Key('plan-ask-s1')));
+      await tester.pump();
+      expect(tester.getSize(find.byKey(const Key('plan-ask-s1'))).height, greaterThanOrEqualTo(44));
+      await ask(tester, 's1');
+      expect(find.byKey(const Key('plan-sheet')), findsNothing);
+      expect(find.byKey(const Key('plan-ask-bar')), findsOneWidget);
+      expect(field(tester), '@builder ');
+      expect(tester.widget<Text>(find.byKey(const Key('plan-ask-reason'))).data, '이 단계의 담당이라서');
+    });
+
+    testWidgets('보내면 맨 앞 멘션 뒤에 단계 링크가 실리고 띠가 사라진다', (tester) async {
+      final s = _Server();
+      await openSheet(tester, s);
+      await ask(tester, 's4');
+      await tester.enterText(find.byKey(const Key('thread-composer')), '@builder 왜 안 되나');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('thread-send')));
+      await _settle(tester);
+      await tester.pumpAndSettle();
+      expect(s.lastPostBody, '@builder harkroom://plan/$_root/s4 「보안 검토」 왜 안 되나');
+      expect(find.byKey(const Key('plan-ask-bar')), findsNothing);
+    });
+
+    testWidgets('✕ 는 띠와 채운 멘션을 함께 걷는다. 쓴 글은 남긴다', (tester) async {
+      await openSheet(tester, _Server());
+      await ask(tester, 's1');
+      await tester.enterText(find.byKey(const Key('thread-composer')), '@builder 질문');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('plan-ask-close')));
+      await tester.pump();
+      expect(find.byKey(const Key('plan-ask-bar')), findsNothing);
+      expect(field(tester), '질문');
+    });
+
+    testWidgets('받는 이를 바꾸면 맨 앞 멘션이 바뀌고, 없음이면 비운다', (tester) async {
+      await openSheet(tester, _Server());
+      await ask(tester, 's1');
+      await tester.tap(find.byKey(const Key('plan-ask-to')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('plan-ask-to-none')));
+      await tester.pumpAndSettle();
+      expect(field(tester), '');
+      expect(find.byKey(const Key('plan-ask-reason')), findsNothing);
+    });
+
+    testWidgets('담당이 없으면 멘션을 채우지 않고 까닭을 쓴다', (tester) async {
+      await openSheet(tester, _Server());
+      await ask(tester, 's4');
+      expect(field(tester), '');
+      expect(tester.widget<Text>(find.byKey(const Key('plan-ask-reason'))).data, contains('담당이 없어'));
+    });
+
+    testWidgets('글 안 칩: 지금 상태, 제목이 다르면 표시, 지워짐, 볼 수 없음', (tester) async {
+      final s = _Server();
+      final (app, _) = await tester.runAsync(() => _boot(s)) as (AppState, _Sock);
+      await _button(tester, app);
+      Future<void> chip(PlanRef r) async {
+        await tester.pumpWidget(_host(app, Material(child: PlanRefChip(planRef: r))));
+        await tester.pump();
+      }
+      await chip(const PlanRef(rootId: _root, stepId: 's4', title: '보안 검토'));
+      expect(find.textContaining('s4 보안 검토', findRichText: true), findsOneWidget);
+      expect(find.byKey(const Key('plan-ref-changed-s4')), findsNothing);
+      await chip(const PlanRef(rootId: _root, stepId: 's4', title: '옛 제목'));
+      expect(find.byKey(const Key('plan-ref-changed-s4')), findsOneWidget);
+      await chip(const PlanRef(rootId: _root, stepId: 's99', title: '사라진 일'));
+      expect(find.byKey(const Key('plan-ref-gone-s99')), findsOneWidget);
+      app.threadPlanDenied.add('hidden-root');
+      await chip(const PlanRef(rootId: 'hidden-root', stepId: 's1', title: '비밀 제목'));
+      expect(find.byKey(const Key('plan-ref-hidden-s1')), findsOneWidget);
+      expect(find.textContaining('비밀 제목', findRichText: true), findsNothing);
+    });
+
+    testWidgets('글 안의 단계 링크는 칩으로 그린다. 그릴 길이 없으면 글자로 남는다', (tester) async {
+      final (app, _) = await tester.runAsync(() => _boot(_Server())) as (AppState, _Sock);
+      await _button(tester, app);
+      const body = '@x harkroom://plan/$_root/s4 「보안 검토」 왜?';
+      await tester.pumpWidget(_host(app, Material(child: MarkdownBody(body, planRefChip: (ref) => PlanRefChip(planRef: ref)))));
+      await tester.pump();
+      expect(find.byKey(const Key('plan-ref-chip-s4')), findsOneWidget);
+      await tester.pumpWidget(_host(app, const Material(child: MarkdownBody(body))));
+      await tester.pump();
+      expect(find.byKey(const Key('plan-ref-chip-s4')), findsNothing);
+      expect(find.textContaining('harkroom://plan/', findRichText: true), findsOneWidget);
+    });
+
+    testWidgets('칩을 누르면 시트가 열리고 그 단계로 간다', (tester) async {
+      final (app, _) = await tester.runAsync(() => _boot(_Server())) as (AppState, _Sock);
+      await _button(tester, app);
+      await tester.pumpWidget(_host(app, Material(child: PlanRefChip(planRef: const PlanRef(rootId: _root, stepId: 's4')))));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('plan-ref-chip-s4')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('plan-sheet')), findsOneWidget);
     });
   });
 

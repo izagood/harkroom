@@ -869,6 +869,34 @@ class StringsEn implements Strings {
   @override
   String get planStartCancel => 'Cancel';
   @override
+  String get planAskButton => 'Ask about this step';
+  @override
+  String get planAskBar => 'Asking about this step';
+  @override
+  String get planAskTo => 'To';
+  @override
+  String get planAskToNone => 'No one';
+  @override
+  String get planAskReasonManager => 'Called because it’s the manager agent';
+  @override
+  String get planAskReasonAssignee => 'It’s assigned this step';
+  @override
+  String get planAskReasonHuman => 'The assignee is a person, so no one is called. You can pick an agent';
+  @override
+  String get planAskReasonNone => 'No assignee, so no one is called. You can pick an agent';
+  @override
+  String get planAskClose => 'Cancel question';
+  @override
+  String get planAskHint => 'Write your question…';
+  @override
+  String get planRefDeleted => 'Deleted step';
+  @override
+  String get planRefNoPlan => 'No plan';
+  @override
+  String get planRefHidden => 'Step you can’t see';
+  @override
+  String get planRefTitleChanged => 'Title changed';
+  @override
   String get planStartBodyLabel => 'Message that will be posted in this thread';
   @override
   String planStartBodyLabelTo(String handle) => 'Message calling @$handle, posted in this thread';

@@ -2682,6 +2682,12 @@ class AppState extends ChangeNotifier {
   /// 받아 둔 계획판(루트 id → 판). 없으면 아직 안 받았거나 계획이 없다.
   final Map<String, ThreadPlanView> threadPlans = {};
 
+  /// 물어 보아 볼 수 없다고 답을 받은 스레드(단계 칩이 제목을 감춘다).
+  final Set<String> threadPlanDenied = {};
+
+  /// 물어 보아 답을 받은 스레드 — 판이 없으면 정말 계획이 없다.
+  final Set<String> threadPlanChecked = {};
+
   /// 계획판을 못 받은 스레드 — 시트가 오류와 다시 시도를 보인다. 띠는 루트 행 값으로 그대로 선다.
   final Set<String> threadPlanFailed = {};
 
@@ -2700,15 +2706,18 @@ class AppState extends ChangeNotifier {
       final plan = await api.threadPlan(rootId);
       if (gen != _generation || _threadPlanReq[rootId] != req) return;
       threadPlanFailed.remove(rootId);
+      threadPlanDenied.remove(rootId);
+      threadPlanChecked.add(rootId);
       final held = threadPlans[rootId];
       if (plan == null) {
         threadPlans.remove(rootId);
       } else if (held?.updatedAt == null || plan.updatedAt == null || !plan.updatedAt!.isBefore(held!.updatedAt!)) {
         threadPlans[rootId] = plan;
       }
-    } on Object {
+    } on Object catch (e) {
       if (gen != _generation || _threadPlanReq[rootId] != req) return;
       threadPlanFailed.add(rootId);
+      if (e is ApiError && (e.status == 403 || e.status == 404)) threadPlanDenied.add(rootId);
     }
     notifyListeners();
   }
@@ -3012,6 +3021,8 @@ class AppState extends ChangeNotifier {
     _boardPending.clear();
     _boardPendingRev++;
     threadPlans.clear();
+    threadPlanDenied.clear();
+    threadPlanChecked.clear();
     threadPlanFailed.clear();
     _threadPlanReq.clear();
     agentActivity.clear();

@@ -136,7 +136,7 @@ class ThreadPlanView {
   const ThreadPlanView({
     required this.rootId, required this.rev, required this.updatedAt, required this.goal,
     required this.groups, required this.steps, required this.derived, required this.progress, required this.linked,
-    this.next, this.blocked, this.flagged = false, this.updatedBy, this.managerId,
+    this.next, this.blocked, this.flagged = false, this.updatedBy, this.managerId, this.channelId,
   });
 
   final String rootId;
@@ -154,6 +154,9 @@ class ThreadPlanView {
 
   /// 마지막으로 쓴 계정 id. 자동 갱신·지워진 계정이면 null.
   final String? updatedBy;
+
+  /// 이 계획의 스레드가 사는 채널.
+  final String? channelId;
 
   /// 관리 에이전트(계정 id). 있으면 「시작」은 담당 대신 이 에이전트를 부른다. 없으면 담당을 직접 부른다.
   final String? managerId;
@@ -190,6 +193,7 @@ class ThreadPlanView {
     }
     return ThreadPlanView(
       rootId: _s(j['rootId']) ?? '',
+      channelId: _s(j['channelId']),
       rev: _n(j['rev']),
       updatedAt: DateTime.tryParse(_s(j['updatedAt']) ?? '')?.toUtc(),
       goal: _s(_at(doc, 'goal')) ?? '',
@@ -617,4 +621,69 @@ bool planNeedsFetch(ThreadPlanView? held, PlanProgressMark mark) {
   final rowAt = mark.updatedAt;
   final heldAt = held.updatedAt;
   return rowAt != null && heldAt != null && heldAt.isBefore(rowAt);
+}
+
+// ── 단계 링크·받는 이(shared `planGraph.ts` 와 같은 규칙, 시험 자료 `plan_ref.json`) ──────────
+
+class PlanRef {
+  const PlanRef({required this.rootId, required this.stepId, this.title, this.index = 0, this.length = 0});
+
+  final String rootId;
+  final String stepId;
+
+  /// 링크 뒤에 적힌 그때의 제목. 없으면 `null`.
+  final String? title;
+  final int index;
+  final int length;
+}
+
+final RegExp _planRefLink = RegExp(
+  r'harkroom://plan/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/(s[1-9][0-9]{0,3})(?![0-9A-Za-z_-])(?: 「([^」\n]*)」)?',
+);
+const int _planRefTitleMax = 80;
+
+PlanRef _planRefOf(RegExpMatch m) => PlanRef(
+      rootId: m.group(1)!.toLowerCase(),
+      stepId: m.group(2)!,
+      title: m.group(3),
+      index: m.start,
+      length: m.end - m.start,
+    );
+
+/// 글자 하나가 통째로 단계 링크이면 그 값. 제목을 붙인 꼴도 받는다.
+PlanRef? parsePlanRef(String raw) {
+  final text = raw.trim();
+  final m = _planRefLink.firstMatch(text);
+  if (m == null || m.start != 0 || m.end != text.length) return null;
+  return _planRefOf(m);
+}
+
+/// 본문에 든 단계 링크를 나온 순서대로.
+List<PlanRef> findPlanRefs(String body) => [for (final m in _planRefLink.allMatches(body)) _planRefOf(m)];
+
+/// 글에 넣을 단계 링크를 짓는다. 제목은 남이 쓴 글이다 — 한 줄로 줄이고 `@` 를 무력화해 이 글이 그 이름을 부르지 않게 한다.
+String planRefText(String rootId, String stepId, String title) {
+  final clean = title
+      .replaceAll(RegExp(r'[\u0000-\u001f\u007f  ]+'), ' ')
+      .replaceAll('」', '')
+      .replaceAll('@', '＠')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  final short = clean.length > _planRefTitleMax ? '${clean.substring(0, _planRefTitleMax)}…' : clean;
+  return 'harkroom://plan/${rootId.toLowerCase()}/$stepId${short.isEmpty ? '' : ' 「$short」'}';
+}
+
+/// 받는 이와 그 까닭. `reason`: `manager`·`assignee`·`human_assignee`·`no_assignee`.
+typedef PlanAskRecipient = ({String? to, String reason});
+
+/// ▷ 시작과 같은 순서다: 관리 에이전트 → 담당 에이전트 → 담당이 사람이거나 없으면 아무도 부르지 않는다.
+/// 작성칸을 미리 채울 뿐이라 부를 수 있는지는 묻지 않는다.
+PlanAskRecipient planAskRecipient({
+  required String? managerId,
+  required String? assigneeId,
+  required bool Function(String id) isAgent,
+}) {
+  if (managerId != null && isAgent(managerId)) return (to: managerId, reason: 'manager');
+  if (assigneeId == null) return (to: null, reason: 'no_assignee');
+  return isAgent(assigneeId) ? (to: assigneeId, reason: 'assignee') : (to: null, reason: 'human_assignee');
 }

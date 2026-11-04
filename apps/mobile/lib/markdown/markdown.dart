@@ -22,6 +22,8 @@
 /// 문장 두 줄을 표로 바꾸면 사람이 쓴 글이 격자 안으로 사라진다.
 library;
 
+import '../api/thread_plan.dart';
+
 /// 블록 하나.
 sealed class MdBlock {
   const MdBlock();
@@ -395,6 +397,13 @@ class MdLink extends MdInline {
   final bool labelled;
 }
 
+/// 계획 단계 칩(`harkroom://plan/<뿌리>/<단계> 「제목」`). 그릴 길이 없으면 글자로 남는다.
+class MdPlanRef extends MdInline {
+  const MdPlanRef(this.text, this.ref);
+  final String text;
+  final PlanRef ref;
+}
+
 /// 열기 전에 **실제 주소를 보여 주고 물어야 하는가**(security #980).
 ///
 /// - `[글](주소)` 는 늘 묻는다 — 보이는 글자는 아무 주소나 흉내 낼 수 있다
@@ -453,7 +462,9 @@ final _inline = RegExp(
   // 취소선. 여는 `~~` 뒤·닫는 `~~` 앞이 공백이면 짝이 아니다(데스크톱과 같다).
   r'|~~([^~\s](?:[^~\n]*[^~\s])?)~~'
   // 맨 메시지 링크. 뒤에 id 글자가 더 붙으면 링크가 아니다(36자에서 잘라 붙이지 않는다).
-  r'|(harkroom://message/[0-9a-fA-F-]{36})(?![0-9A-Za-z-])',
+  r'|(harkroom://message/[0-9a-fA-F-]{36})(?![0-9A-Za-z-])'
+  // 계획 단계 링크(shared `parsePlanRef` 와 같은 꼴). 뒤의 「제목」까지 한 칩이다.
+  r'|(harkroom://plan/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/s[1-9][0-9]{0,3}(?![0-9A-Za-z_-])(?: 「[^」\n]*」)?)',
 );
 
 /// 한 단락을 인라인 조각으로 나눈다.
@@ -480,6 +491,9 @@ List<MdInline> parseInline(String text) {
     } else if (m.group(9) != null) {
       final id = parseMessagePermalink(m.group(9)!);
       out.add(id != null ? MdLink(m.group(9)!, null, messageId: id) : MdText(m.group(9)!));
+    } else if (m.group(10) != null) {
+      final ref = parsePlanRef(m.group(10)!);
+      out.add(ref != null ? MdPlanRef(m.group(10)!, ref) : MdText(m.group(10)!));
     }
     last = m.end;
   }
