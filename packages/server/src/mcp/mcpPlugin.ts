@@ -57,7 +57,7 @@ import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scanWrite } from '../services/contentScan.js';
 import { listAutomationsForAgent, proposeAutomation, runAutomationForAgent, triggerSchema } from '../services/automations.js';
 import { channelPostGate } from '../services/channels.js';
-import { announceReportWakes, scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC } from '../services/agentWakes.js';
+import { announceReportWakes, foldWatchWakesOnReport, scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC, type ClosedWatchWake } from '../services/agentWakes.js';
 import { guideFor } from './guide.js';
 import { listWorkItems, removeWorkItem, resolveWorkItemOwner, upsertWorkItem, WORK_ITEM_REFUSAL_MESSAGE, WORK_ITEM_SOURCES } from '../services/workItems.js';
 import { workItemUpsertSchema } from '../routes/workItemRoutes.js';
@@ -162,6 +162,11 @@ function postFailureResult(failure: string) {
  * 그래서 사유와 다음 할 일을 문장으로 준다. JSON 의 맨 앞 키로 두는 것은 에이전트가 결과를
  * 끝까지 읽지 않아도 보게 하려는 것이다.
  */
+/** 닫힌 감시 예약들의 보고처 — 그 스레드의 대기 줄이 바뀌었다고 신호할 곳. */
+function reportTargetsOf(wakes: readonly ClosedWatchWake[]): { channelId: string; threadRootId: string }[] {
+  return wakes.flatMap((w) => (w.reportTo ? [w.reportTo] : []));
+}
+
 function postedResult(message: MessageRow, notified: string[], extra: Record<string, unknown> = {}) {
   const meta = (message.meta ?? {}) as Record<string, unknown>;
   const capped = Array.isArray(meta.mentionChainCapped) ? meta.mentionChainCapped as string[] : [];
@@ -1615,7 +1620,7 @@ function buildMcpServer(
    * 없는 보고는 보고가 아니다.
    */
   server.registerTool('message.report', {
-    description: '완료 보고(확인한 것 · 바뀐 파일 · 남은 것 · 다음 제안). checks 는 필수. planStepId 를 주면 이 스레드 계획의 그 단계를 done 으로 바꾼다(결과는 plan 칸)',
+    description: '완료 보고(확인한 것 · 바뀐 파일 · 남은 것 · 다음 제안). checks 는 필수. planStepId 를 주면 이 스레드 계획의 그 단계를 done 으로 바꾼다(결과는 plan 칸). 이 스레드에 앞 턴이 건 내 감시 예약(watch)은 접히고 그 사유가 foldedWatchWakes 로 온다 — 아직 지켜볼 일이면 다시 걸어라',
     inputSchema: {
       channelId: z.string().uuid(),
       body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
@@ -1662,12 +1667,22 @@ function buildMcpServer(
       emitPosted(posted, channelAudience);
       for (const accountId of notified) emitEvent({ type: 'inbox.updated', accountId });
     }
+    // 보고는 이미 섰다 — 예약 접기가 실패해도 보고를 되돌리지 않는다. 재시도(replayed)면 이미 한 번 반영했다.
+    const folded = threadRootId && !replayed
+      ? await foldWatchWakesOnReport(pool, { accountId: account.id, threadRootId, turnId: storedTurnId }).catch((err: unknown) => {
+        console.error('report: 감시 예약 접기 실패:', err);
+        return [] as ClosedWatchWake[];
+      })
+      : [];
+    const foldedTargets = reportTargetsOf(folded);
+    if (foldedTargets.length) await announceReportWakes(pool, foldedTargets).catch(() => undefined);
+    const foldedExtra = folded.length ? { foldedWatchWakes: folded } : {};
     // 보고는 이미 섰다 — 단계 갱신이 막혀도 보고를 되돌리지 않는다. 재시도(replayed)면 이미 한 번 반영했다.
     if (planStepId && threadRootId && !replayed) {
       const plan = planHookOut(await completePlanStep(pool, threadRootId, account.id, planStepId));
-      return postedResult(message, notified, { plan });
+      return postedResult(message, notified, { plan, ...foldedExtra });
     }
-    return postedResult(message, notified);
+    return postedResult(message, notified, foldedExtra);
   });
 
   server.registerTool('message.react', {
@@ -2595,7 +2610,7 @@ function buildMcpServer(
    * 판정해 `wake_limit` 으로 답한다 — 같은 거절이 아니다.
    */
   server.registerTool('turn.wake', {
-    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다. 결과를 다른 스레드에 보고하기로 했으면 reportTo 에 그 채널·스레드 id. 주기적으로 지켜보는 예약이면 watch: true — 깨어난 턴이 다음 예약도 끝 보고(message.report)도 없이 끝나면 러너가 실패 줄을 남긴다. 감시(watch)면 사유에 다음 회차와 끝 조건을 적어라(예: 「다음 3/3 — 3/3에서 감시 끝」)',
+    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다. 결과를 다른 스레드에 보고하기로 했으면 reportTo 에 그 채널·스레드 id. 주기적으로 지켜보는 예약이면 watch: true — 깨어난 턴이 다음 예약도 끝 보고(message.report)도 없이 끝나면 러너가 실패 줄을 남긴다. 감시(watch)면 사유에 다음 회차와 끝 조건을 적어라(예: 「다음 3/3 — 3/3에서 감시 끝」). 감시 예약은 한 스레드에 하나다 — 새로 걸면 앞 것을 대체하고 그 사유를 replaced 로 돌려준다. 앞 사유도 아직 필요하면 합쳐서 다시 걸어라',
     inputSchema: {
       channelId: z.string().uuid(),
       threadRootId: z.string().uuid(),
@@ -2649,8 +2664,10 @@ function buildMcpServer(
     const audience = await audienceFor(pool, channelId);
     emitEvent({ type: 'message.created', message: result.message, audience });
     // 보고처에도 "기다리는 것이 생겼다" 신호를 보낸다(신호만 — 값은 그쪽 화면이 자기 권한으로 GET).
-    if (report) await announceReportWakes(pool, [report]).catch(() => undefined);
-    return jsonResult({ wake: result.wake, message: result.message });
+    // 대체된 예약의 보고처도 대기 줄이 바뀐다 — 새 예약의 보고처와 합쳐 신호한다(같은 스레드는 한 번만 간다).
+    const touched = [...(report ? [report] : []), ...reportTargetsOf(result.replaced)];
+    if (touched.length) await announceReportWakes(pool, touched).catch(() => undefined);
+    return jsonResult({ wake: result.wake, message: result.message, ...(result.replaced.length ? { replaced: result.replaced } : {}) });
   });
 
   /**

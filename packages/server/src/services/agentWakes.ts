@@ -136,9 +136,17 @@ export async function watchOriginFor(
   return ok.rowCount ? candidate : null;
 }
 
+/** 새 감시 예약이 대체했거나 끝 보고가 접은 감시 예약 — 건 턴이 사유를 합쳐 다시 걸 수 있게 돌려준다. */
+export interface ClosedWatchWake {
+  id: string;
+  reason: string | null;
+  wakeAt: string;
+  reportTo?: WakeReportTo;
+}
+
 export type ScheduleWakeResult =
-  | { wake: { id: string; wakeAt: string; messageId: string }; message: MessageRow; refusal?: undefined }
-  | { refusal: WakeRefusal; wake?: undefined; message?: undefined };
+  | { wake: { id: string; wakeAt: string; messageId: string }; message: MessageRow; replaced: ClosedWatchWake[]; refusal?: undefined }
+  | { refusal: WakeRefusal; wake?: undefined; message?: undefined; replaced?: undefined };
 
 /**
  * 깨움을 건다. **메시지를 먼저 만들고**(그래서 즉시 보인다) 그 메시지를 가리키는 시계를 넣는다.
@@ -151,6 +159,9 @@ export type ScheduleWakeResult =
  * 이 결함의 실제 피해이므로, 조용히 성공으로 만들지 않는다.
  */
 export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promise<ScheduleWakeResult> {
+  // 대체될 감시의 보고처를 물려받는다(`replaceWatchWakes`) — 새 예약이 보고처를 말하지 않았다고 다른 스레드에 한 약속이
+  // 사라지면 안 된다. 메시지 meta 에 실어야 해서 게시 전에 읽는다. 동시에 걸린 드문 경합은 `replaced` 가 알려 준다.
+  const reportTo = input.reportTo ?? (input.watch === true ? await openWatchReportTo(pool, input) : undefined);
   const already = await consecutiveWakes(pool, input.threadRootId, input.accountId);
   if (already >= MAX_CONSECUTIVE_WAKES) {
     return {
@@ -180,7 +191,7 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
         wakeAt: wakeAt.toISOString(), reason: input.reason,
         // 보고처는 **깨움 메시지에** 싣는다 — 러너는 inbox 항목이 가리키는 이 메시지에서 사유와 함께
         // 그대로 되찾는다(앵커를 040 에 두 번 저장하지 않은 것과 같은 규칙). 새 컬럼이 필요 없다.
-        ...(input.reportTo ? { reportTo: input.reportTo } : {}),
+        ...(reportTo ? { reportTo } : {}),
         ...(input.watch === true ? { watch: true } : {}),
         ...(origin ? { origin } : {}),
       },
@@ -196,16 +207,112 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
     return { refusal: { code: 'wake_limit', message: 'wake 메시지를 게시할 수 없다' } };
   }
 
-  const res = await pool.query(
-    // 위임 키(133, W1): 깨움 글이 지금 임대에서 물려받은 위임을 깨움 행에도 둔다 — 깨어난 턴의 임대가 이것을 잇는다.
-    `insert into agent_wake (account_id, channel_id, message_id, wake_at, mandate_id)
-     values ($1, $2, $3, $4, (select mandate_id from message where id = $3)) returning id`,
-    [input.accountId, input.channelId, posted.message.id, wakeAt.toISOString()],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    // 같은 계정·같은 스레드의 감시 예약을 줄 세운다 — 둘이 동시에 걸어도 서로의 행을 보고 하나만 남는다.
+    if (input.watch === true) {
+      await client.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [`agent_wake:watch:${input.accountId}:${input.threadRootId}`]);
+    }
+    const res = await client.query(
+      // 위임 키(133, W1): 깨움 글이 지금 임대에서 물려받은 위임을 깨움 행에도 둔다 — 깨어난 턴의 임대가 이것을 잇는다.
+      `insert into agent_wake (account_id, channel_id, message_id, wake_at, mandate_id)
+       values ($1, $2, $3, $4, (select mandate_id from message where id = $3)) returning id`,
+      [input.accountId, input.channelId, posted.message.id, wakeAt.toISOString()],
+    );
+    const id = res.rows[0].id as string;
+    const replaced = input.watch === true ? await replaceWatchWakes(client, input, id) : [];
+    await client.query('commit');
+    return {
+      wake: { id, wakeAt: wakeAt.toISOString(), messageId: posted.message.id },
+      message: posted.message,
+      replaced,
+    };
+  } catch (err) {
+    await client.query('rollback').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** 열린 감시 예약을 고르는 조건. `$1` 스레드 머리, `$2` 계정. */
+const OPEN_WATCH_WAKE_SQL = `m.id = w.message_id
+        and coalesce(m.thread_root_id, m.id) = $1
+        and w.account_id = $2
+        and w.fired_at is null
+        and w.canceled_at is null
+        and m.meta->'wake'->>'watch' = 'true'`;
+const CLOSED_WATCH_COLUMNS = `w.id, w.wake_at, m.body, m.deleted_at is not null as deleted, m.meta->'wake'->'reportTo' as report_to`;
+
+interface ClosedWatchRow { id: string; wake_at: Date; body: string | null; deleted: boolean; report_to: unknown }
+
+function closedWatchView(row: ClosedWatchRow): ClosedWatchWake {
+  const report = asReportTo(row.report_to);
   return {
-    wake: { id: res.rows[0].id as string, wakeAt: wakeAt.toISOString(), messageId: posted.message.id },
-    message: posted.message,
+    id: row.id,
+    reason: row.deleted ? null : row.body,
+    wakeAt: new Date(row.wake_at).toISOString(),
+    ...(report ? { reportTo: report } : {}),
   };
+}
+
+/** 이 스레드에 열린 내 감시 예약 중 가장 늦게 걸린 것의 보고처. */
+async function openWatchReportTo(
+  pool: Pick<Pool, 'query'>, input: { accountId: string; threadRootId: string },
+): Promise<WakeReportTo | undefined> {
+  const res = await pool.query<{ report_to: unknown }>(
+    `select m.meta->'wake'->'reportTo' as report_to from agent_wake w, message m
+      where ${OPEN_WATCH_WAKE_SQL} and m.meta->'wake' ? 'reportTo'
+      order by m.seq desc limit 1`,
+    [input.threadRootId, input.accountId],
+  );
+  return asReportTo(res.rows[0]?.report_to) ?? undefined;
+}
+
+/**
+ * **감시 예약은 에이전트·스레드마다 하나다**(2026-11-05). 새로 걸면 앞 것을 접는다.
+ *
+ * 왜 필요한가: 깨어나는 턴은 새 세션이라 앞 턴이 건 예약을 모른다. 한 스레드에서 턴 다섯이 같은 일에 각자 감시를 걸었고,
+ * 끝 보고가 나간 뒤에도 남은 예약이 차례로 깨어나 같은 보고를 되풀이했다. 그중 하나는 맡긴 글을 다시 받아 같은 답을 또 올렸다.
+ *
+ * 거절이 아니라 **대체**인 이유: 새 예약이 앞 예약보다 지금 사정을 더 잘 안다 — 실측에서 뒤에 걸린 예약은 새 관심사를 얹거나
+ * 다음 단계를 가리켰다. 거절하면 그 새 관심사가 걸 자리를 잃는다. 대신 앞 사유가 사라지므로 결과(`replaced`)로 돌려준다.
+ * 감시가 아닌 예약(한 번 깨우기)은 건드리지 않는다 — 시각을 지정한 별개의 약속이다.
+ */
+async function replaceWatchWakes(
+  client: PoolClient, input: { accountId: string; threadRootId: string }, keepId: string,
+): Promise<ClosedWatchWake[]> {
+  const res = await client.query<ClosedWatchRow>(
+    `update agent_wake w set canceled_at = now()
+       from message m
+      where ${OPEN_WATCH_WAKE_SQL} and w.id <> $3
+      returning ${CLOSED_WATCH_COLUMNS}`,
+    [input.threadRootId, input.accountId, keepId],
+  );
+  return res.rows.map(closedWatchView);
+}
+
+/**
+ * **끝 보고가 남은 감시를 접는다**(2026-11-05). 그 에이전트가 그 스레드에 `message.report` 를 올리면 그 스레드의 감시 예약을 닫는다 —
+ * 끝났다고 말한 뒤에 다시 깨어나 같은 보고를 하는 것을 막는다.
+ *
+ * **같은 턴이 건 예약은 남긴다**: 한 단계를 보고하고 다음 확인을 거는 턴은 흔하고, 호출 순서가 wake → report 일 수도 있다.
+ * 접은 사유는 결과로 돌려준다 — 다른 일을 보고했을 뿐이면 그 턴이 다시 걸 수 있다.
+ */
+export async function foldWatchWakesOnReport(
+  pool: Pick<Pool, 'query'>,
+  args: { accountId: string; threadRootId: string; turnId?: string | null },
+): Promise<ClosedWatchWake[]> {
+  const res = await pool.query<ClosedWatchRow>(
+    `update agent_wake w set canceled_at = now()
+       from message m
+      where ${OPEN_WATCH_WAKE_SQL}
+        and ($3::text is null or m.meta->>'turnId' is distinct from $3::text)
+      returning ${CLOSED_WATCH_COLUMNS}`,
+    [args.threadRootId, args.accountId, args.turnId ?? null],
+  );
+  return res.rows.map(closedWatchView);
 }
 
 /**

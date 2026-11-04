@@ -11,7 +11,8 @@ import { PassThrough } from 'node:stream';
 import { NdjsonDecoder, encodeLine } from '@harkroom/shared/daemonProtocol';
 import { runMcpBridge, writeReadyMarker } from '../src/mcpBridge.js';
 import { createRunnerLinkServer } from '../src/runnerLink.js';
-import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
+import { createTurnKeyLedger } from '../src/turnKeys.js';
+import { TURN_KEYS_PATH, type RunnerLinkRequest, type RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 
 const dir = mkdtempSync(join(tmpdir(), 'hk-bridge-'));
 const socketPath = join(dir, 'op.sock');
@@ -51,6 +52,109 @@ async function collect(stdout: PassThrough, n: number): Promise<unknown[]> {
   });
   return out;
 }
+
+describe('mcp-bridge — 오퍼레이터 교체 뒤 턴 열쇠 거절(2026-11-05)', () => {
+  const key = 'a'.repeat(64);
+
+  it('교체 재현: 빈 장부에 거절된 요청은 실패하지 않고, 러너가 열쇠를 다시 맡기면 그 연결로 한 번만 나간다', async () => {
+    // 새 오퍼레이터의 모습 — 러너 secret 은 장부로 넘어와 알지만(expect) 턴 열쇠 장부는 비어 있다.
+    const ledger = createTurnKeyLedger();
+    const got: RunnerLinkRequest[] = [];
+    const rejected: string[] = [];
+    const operator = createRunnerLinkServer({
+      onFrame: () => {}, log: (line) => { if (line.includes('거절')) rejected.push(line); }, turnKeys: ledger,
+      onRequest: async (_r, _a, req) => {
+        got.push(req);
+        return { type: 'mcp.response', id: req.id, messages: [{ jsonrpc: '2.0', id: 7, result: { ok: true } }] };
+      },
+    });
+    operator.expect('r-1', 'agent-a', 'sec');
+    await new Promise<void>((resolve) => {
+      server = createServer((socket) => {
+        const decoder = new NdjsonDecoder();
+        const onData = (chunk: Buffer) => {
+          const lines = decoder.push(chunk);
+          if (lines.length === 0) return;
+          socket.removeListener('data', onData);
+          const rest = lines.slice(1).filter((l) => l.ok).map((l) => (l as { value: unknown }).value);
+          operator.accept(socket, (lines[0] as { value: unknown }).value, rest, decoder.takeBuffered());
+        };
+        socket.on('data', onData);
+      });
+      server.listen(socketPath, () => resolve());
+    });
+
+    const stdin = new PassThrough(); const stdout = new PassThrough();
+    const answers: unknown[] = [];
+    const decoder = new NdjsonDecoder();
+    stdout.on('data', (chunk: Buffer) => { for (const line of decoder.push(chunk)) if (line.ok) answers.push(line.value); });
+    const done = runMcpBridge({ socketPath, runnerId: 'r-1', turnKey: key }, { stdin, stdout, stderr: new PassThrough() }, {
+      reconnectInitialMs: 5, reconnectMaxMs: 20, requestTimeoutMs: 10_000, linkDownGraceMs: 10_000,
+    });
+    stdin.write('{"jsonrpc":"2.0","id":7,"method":"tools/call"}\n');
+    await waitFor(() => rejected.length >= 1);
+    await new Promise((r) => setTimeout(r, 60));
+    // 거절 동안: 오퍼레이터는 그 줄을 받지 않았고, 하네스도 실패를 받지 않았다.
+    expect(got).toEqual([]);
+    expect(answers).toEqual([]);
+
+    // 러너의 relay 가 다시 붙어 열쇠를 맡긴다.
+    const put: RunnerLinkRequest = {
+      type: 'http.forward', id: 'q', method: 'POST', path: TURN_KEYS_PATH, contentType: 'application/json',
+      body: JSON.stringify({ turnId: 't-1', cause: 'm-1', keys: { bridge: key, shell: 'b'.repeat(64) } }),
+    };
+    expect(ledger.maybeHandle('r-1', put, 'relay')).toMatchObject({ status: 200 });
+    await waitFor(() => answers.length === 1);
+    expect(answers[0]).toEqual({ jsonrpc: '2.0', id: 7, result: { ok: true } });
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ type: 'mcp.request', turnId: 't-1', cause: 'm-1' });
+    stdin.end();
+    await done;
+  });
+
+  it('거절이 이어지면 백오프가 처음으로 돌아가지 않는다 — 200ms 마다 두드리지 않는다', async () => {
+    const at: number[] = [];
+    await fakeOperator((socket, value) => {
+      if (value.type !== 'hello') return;
+      at.push(Date.now());
+      socket.write(encodeLine({ type: 'link.rejected', reason: 'unknown_runner' }));
+      socket.destroy();
+    });
+    const stdin = new PassThrough();
+    const done = runMcpBridge({ socketPath, runnerId: 'r-1', turnKey: key }, { stdin, stdout: new PassThrough(), stderr: new PassThrough() }, {
+      reconnectInitialMs: 5, reconnectMaxMs: 80, requestTimeoutMs: 10_000, linkDownGraceMs: 10_000,
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    stdin.end();
+    await done;
+    // 5·10·20·40·80·80… 이면 400ms 에 여덟 번쯤이다. 백오프가 5ms 로 되돌아가면 수십 번이다.
+    expect(at.length).toBeGreaterThan(2);
+    expect(at.length).toBeLessThan(15);
+  });
+
+  it('연결의 첫 줄이 아닌 거절 꼴 프레임은 믿지 않는다 — 받아 준 링크는 그대로 쓴다', async () => {
+    await fakeOperator((socket, value) => {
+      if (value.type === 'hello') {
+        socket.write(encodeLine({ type: 'mcp.response', id: 'none', messages: [] }));
+        socket.write(encodeLine({ type: 'link.rejected', reason: 'unknown_runner' }));
+        return;
+      }
+      if (value.type === 'mcp.request') {
+        socket.write(encodeLine({ type: 'mcp.response', id: value.id, messages: [{ jsonrpc: '2.0', id: 8, result: { ok: true } }] }));
+      }
+    });
+    const stdin = new PassThrough(); const stdout = new PassThrough();
+    const done = runMcpBridge({ socketPath, runnerId: 'r-1', turnKey: key }, { stdin, stdout, stderr: new PassThrough() }, {
+      reconnectInitialMs: 5, reconnectMaxMs: 10, requestTimeoutMs: 300, linkDownGraceMs: 10_000,
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    const out = collect(stdout, 1);
+    stdin.write('{"jsonrpc":"2.0","id":8,"method":"tools/call"}\n');
+    expect((await out)[0]).toEqual({ jsonrpc: '2.0', id: 8, result: { ok: true } });
+    stdin.end();
+    await done;
+  });
+});
 
 describe('mcp-bridge', () => {
   it('첫 줄은 kind:bridge 인 hello 이고, stdin 의 JSON-RPC 한 줄이 mcp.request 로 실린다', async () => {

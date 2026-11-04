@@ -50,6 +50,14 @@
  * 아직 **보내지 못한**(끊긴 동안 stdin 으로 들어와 큐에 쌓인) 줄은 다르다. 그것은 소켓에
  * 나간 적이 없으니 재접속 뒤 그대로 보내도 중복이 아니다.
  *
+ * ## 거절된 연결로 나간 줄은 나간 적이 없는 것과 같다 (2026-11-05)
+ *
+ * 앱 업데이트로 오퍼레이터가 바뀌면 새 장부에 턴 열쇠가 아직 없어 hello 가 거절된다(러너의 relay 가 다시 붙어 맡기기 전까지,
+ * `agent/src/harkroom.ts`). 오퍼레이터는 `link.rejected` 한 줄만 쓰고 끊으며 hello 뒤의 줄은 **읽지 않는다** — 그래서 위의
+ * 「처리됐는지 모른다」가 아니라 처리되지 않은 것이 확실하다. 큐로 되돌려 다음 연결에 그대로 보낸다. 이 자리에서 실패로 답하던
+ * 때는 턴의 MCP 호출이 전부 「끊겼다」로 떨어졌고 200ms 마다 다시 두드렸다(소켓이 열리면 백오프가 처음으로 돌아가므로).
+ * 거절 신호는 relay 와 같이 **연결의 첫 줄일 때만** 믿는다.
+ *
  * ## 다만 큐는 짧게만 참는다
  *
  * 교체는 보통 몇 초다. 그 몇 초를 큐로 덮으면 에이전트는 끊김을 **아예 안 겪는다** — 그것이
@@ -75,7 +83,7 @@ import { connect, type Socket } from 'node:net';
 import type { Readable, Writable } from 'node:stream';
 import { NdjsonDecoder } from '@harkroom/shared/daemonProtocol';
 import {
-  RUNNER_LINK_MAX_LINE_BYTES, RUNNER_LINK_PROTOCOL_VERSION, isRunnerLinkResponse, type RunnerHello, type RunnerLinkRequest,
+  RUNNER_LINK_MAX_LINE_BYTES, RUNNER_LINK_PROTOCOL_VERSION, isRunnerLinkRejected, isRunnerLinkResponse, type RunnerHello, type RunnerLinkRequest,
 } from '@harkroom/shared/runnerLink';
 
 /** `cause` — 이 브릿지를 띄운 턴의 원인 메시지(`RUNNER_TURN_CAUSE_ENV`). 모든 요청에 싣는다. */
@@ -174,6 +182,11 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
     /** 유예를 넘겨 링크가 없다 — 이 동안 들어오는 요청은 큐에 안 담고 바로 거절한다. */
     let linkDownHard = false;
     let graceTimer: BridgeTimer | null = null;
+    /** 이 연결로 나갔는데 아직 프레임을 하나도 못 받은 줄들 — 거절되면 큐로 되돌린다(모듈 주석). 첫 프레임에서 비운다. */
+    let sentUnconfirmed: { id: string; line: string }[] = [];
+    let framesThisLink = 0;
+    /** 이번 dial 전의 재접속 지연. `connect` 가 지연을 처음으로 되돌리므로, 거절되면 이 값에서 이어 간다. */
+    let delayBeforeConnect = reconnectInitialMs;
 
     // stdout 이 이미 닫혔을 수 있다(하네스가 먼저 갔다). 그때의 `EPIPE` 로 타이머 안에서
     // 프로세스가 죽지 않게 한다 — 여기서 할 수 있는 일은 안 쓰는 것뿐이다.
@@ -241,19 +254,34 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
         linkDownHard = false;
         graceTimer?.cancel();
         graceTimer = null;
+        delayBeforeConnect = reconnectDelayMs;
         reconnectDelayMs = reconnectInitialMs;
+        framesThisLink = 0;
         // hello 가 **첫 줄**이어야 한다. 그 뒤에 큐에 쌓인 줄을 순서대로 흘린다.
         const hello: RunnerHello = {
           type: 'hello', version: RUNNER_LINK_PROTOCOL_VERSION, role: 'runner',
           runnerId: link.runnerId, ...(link.turnKey ? { turnKey: link.turnKey } : { secret: link.secret ?? '' }), kind: link.kind ?? 'bridge',
         };
         s.write(`${JSON.stringify(hello)}\n`);
-        for (const entry of queued.splice(0)) s.write(entry.line);
+        sentUnconfirmed = queued.splice(0);
+        for (const entry of sentUnconfirmed) s.write(entry.line);
       });
       s.on('data', (chunk: Buffer) => {
         for (const line of decoder.push(chunk)) {
           // 버린 줄은 말한다 — 조용히 넘기면 그 답을 기다리던 요청이 시한까지 매달린 이유가 안 남는다.
           if (!line.ok) { note(`오퍼레이터 소켓에서 버린 줄: ${line.error.message}`); continue; }
+          const firstFrame = framesThisLink === 0;
+          framesThisLink += 1;
+          if (isRunnerLinkRejected(line.value)) {
+            if (!firstFrame) continue;
+            // 곧 끊긴다. 지금부터 들어오는 줄도 큐로 간다. 일시 끊김이 아니라 거절이니 백오프를 이어 간다.
+            queued.unshift(...sentUnconfirmed.filter((e) => pending.has(e.id)));
+            sentUnconfirmed = [];
+            connected = false;
+            reconnectDelayMs = delayBeforeConnect;
+            continue;
+          }
+          sentUnconfirmed = [];
           if (!isRunnerLinkResponse(line.value)) continue;
           const res = line.value;
           const entry = forget(res.id);
@@ -349,8 +377,12 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
           answerError(rpcId, `요청이 ${bytes} 바이트로 러너 링크 한 줄 상한(${maxLineBytes} 바이트)을 넘어 보내지 않았다`);
           continue;
         }
-        if (connected && socket !== null) socket.write(text);
-        else queued.push({ id, line: text });
+        if (connected && socket !== null) {
+          socket.write(text);
+          if (framesThisLink === 0) sentUnconfirmed.push({ id, line: text });
+        } else {
+          queued.push({ id, line: text });
+        }
       }
     });
     // **여기가 이 프로세스의 유일한 끝이다.** 하네스가 stdin 을 닫았다는 것은 이 MCP 서버를

@@ -59,6 +59,27 @@ const SESSION = { agentAccountId: 'a1', channelId: 'c1', threadRootId: 'm1', har
 /** ANSI + 잘린 UTF-8. 어디서든 문자열로 뜨면 U+FFFD 로 치환돼 되돌릴 수 없다. */
 const RAW = Buffer.concat([Buffer.from('\x1b[31mERR\x1b[0m', 'binary'), Buffer.from([0xed, 0x95])]);
 
+// 오퍼레이터가 바뀌면 그 메모리의 턴 열쇠가 사라진다 — 러너는 링크가 열릴 때마다 다시 맡긴다(`harkroom.ts`).
+describe('링크가 열릴 때의 신호', () => {
+  it('열릴 때마다(재접속 포함) onLinkOpen 을 부르고, 그 실패가 링크를 막지 않는다', () => {
+    const d = fakeDialer();
+    let opens = 0;
+    const client = createRelayClient({
+      link: LINK, unixDial: d.dial, schedule: (fn) => fn(),
+      onLinkOpen: () => { opens += 1; throw new Error('부른 쪽의 실패'); },
+    });
+    client.start();
+    expect(opens).toBe(0);
+    d.open();
+    expect(opens).toBe(1);
+    expect(client.connected()).toBe(true);
+    d.drop();
+    d.open();
+    expect(opens).toBe(2);
+    client.stop();
+  });
+});
+
 // C1: 러너는 붙을 때마다 제 API 키 연결 모드를 알린다 — 오퍼레이터가 설정과 다른 러너의 새 턴을 막는 근거다.
 describe('API 키 연결 모드 통지', () => {
   it('붙을 때마다(재접속 포함) providerLane.mode 를 보낸다 — 옵션이 없으면 안 보낸다', () => {

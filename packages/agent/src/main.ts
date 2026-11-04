@@ -120,6 +120,8 @@ if (handoverDone.size) console.log(`[main] 이관: 앞 러너가 끝냈지만 �
 
 /** 물러나는 길(`retreat.ts`). 릴레이보다 늦게 만들어지므로 릴레이의 콜백은 이 칸을 통해 부른다. */
 let retreat: Retreat | null = null;
+/** 링크가 열릴 때 열린 턴의 열쇠를 다시 맡긴다. 클라이언트가 릴레이보다 늦게 서므로 이 칸을 통해 부른다(첫 연결은 맡길 것이 없다). */
+let relinkTurnKeys: (() => void) | null = null;
 const relay = createRelayClient({
   link: config.operatorLink,
   // API 키 연결 모드를 붙을 때마다 알린다(C1) — 아래 `providerLaneOn` 과 같은 env 를 읽는다(그 줄은 relay 보다 뒤에 선다).
@@ -133,6 +135,7 @@ const relay = createRelayClient({
   // 여기서는 SIGTERM 과 같은 플래그로 폴 루프를 끝낸다. 중단된 턴이 끝나면 루프가 빠져나가 정상 종료한다.
   // 그래도 무엇이 붙잡고 있으면(죽지 않는 턴) 유예 뒤 끝낸다 — 턴의 SIGKILL 승격(5초)보다 넉넉히 둔다.
   onLinkRejectedGiveUp: () => { retreat?.onLinkRejectedGiveUp(); },
+  onLinkOpen: () => { relinkTurnKeys?.(); },
   onInteractiveOpen: (req) => {
     if (!interactive) return Promise.reject(new Error('러너가 아직 기동 중이다 — 잠시 뒤 다시 열어라'));
     return interactive.open(req);
@@ -146,6 +149,11 @@ if (!(await relay.whenConnected(10_000))) {
   console.error('오퍼레이터 링크에 아직 붙지 못했다 — 계속 시도한다');
 }
 const harkroom = new HarkroomAgentClient(relay);
+relinkTurnKeys = () => {
+  void harkroom.reRegisterTurnKeys().then(({ ok, failed }) => {
+    if (ok + failed > 0) console.error(`[main] 링크가 열려 턴 열쇠를 다시 맡겼다: 성공 ${ok}개, 실패 ${failed}개`);
+  });
+};
 
 // RUNNABLE_HARNESSES 가 실제로 PRESETS 에 구현돼 있는지 기동 시점에 검사한다.
 // 불일치가 있으면 여기서 크게 실패한다 — 멘션마다 개별적으로 실패하는 대신.

@@ -133,6 +133,8 @@ export function isUnknownTool(err: unknown, name: string): boolean {
 
 export class HarkroomAgentClient {
   private mcp: Client | null = null;
+  /** 지금 도는 턴의 열쇠 — 오퍼레이터가 바뀌면 다시 맡긴다(`reRegisterTurnKeys`). 턴이 끝나면 지운다. 디스크에 쓰지 않는다. */
+  private readonly openTurnKeys = new Map<string, { turnId: string; cause: string | null; keys: TurnKeys }>();
 
   constructor(private link: RunnerLink) {}
 
@@ -388,10 +390,36 @@ export class HarkroomAgentClient {
   /** 턴 열쇠를 오퍼레이터에 맡긴다(`turnKeys.ts`). 200 이 아니면 던진다 — 그 턴은 띄우지 않는다. */
   async registerTurnKeys(turn: { turnId: string; cause: string | null; keys: TurnKeys }): Promise<void> {
     await registerTurnKeys(this.link, turn);
+    this.openTurnKeys.set(turn.turnId, turn);
   }
 
   async endTurnKeys(turnId: string): Promise<void> {
+    this.openTurnKeys.delete(turnId);
     await endTurnKeys(this.link, turnId);
+  }
+
+  /**
+   * 열린 턴의 열쇠를 **다시 맡긴다**(2026-11-05) — 링크가 열릴 때마다 부른다.
+   *
+   * 왜 필요한가: 오퍼레이터의 열쇠 장부는 메모리뿐이고 하네스 아래의 다리는 열쇠만 들고 있다. 앱 업데이트로 오퍼레이터가 바뀌면 이
+   * 러너는 다시 붙어 드레인하는데(`retreat.ts`), 그 위의 턴은 MCP 가 거절돼 말을 못 한 채 돌다 끝났다. 같은 오퍼레이터에
+   * 다시 붙은 경우에도 해가 없다 — 같은 턴을 다시 맡기면 앞 열쇠를 버리고 같은 값을 넣는다.
+   * 실패는 세기만 한다. 다리는 계속 다시 붙으니 다음 링크 열림에서 풀린다.
+   */
+  async reRegisterTurnKeys(): Promise<{ ok: number; failed: number }> {
+    let ok = 0;
+    let failed = 0;
+    for (const turn of [...this.openTurnKeys.values()]) {
+      // 기다리는 사이 끝난 턴을 되살리지 않는다.
+      if (!this.openTurnKeys.has(turn.turnId)) continue;
+      try {
+        await registerTurnKeys(this.link, turn);
+        ok += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    return { ok, failed };
   }
 
   async releaseTurnSlot(key: string): Promise<void> {

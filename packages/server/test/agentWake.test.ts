@@ -8,7 +8,7 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { onEvent, type WorkspaceEvent } from '../src/events.js';
 import { refreshThreadStatus } from '../src/services/threadStatus.js';
-import { createAgentWakeSweeper, scheduleWake } from '../src/services/agentWakes.js';
+import { createAgentWakeSweeper, foldWatchWakesOnReport, scheduleWake } from '../src/services/agentWakes.js';
 import { postMessage } from '../src/services/messages.js';
 
 /**
@@ -465,6 +465,122 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
      * "3회차에 끝을 알려라" 는 첫 지시를 몰라 멈췄다. 원인은 오퍼레이터를 거친 요청의 `chainCause` 뿐이라(PAT 는 null)
      * 서비스(`scheduleWake`)를 직접 불러 잰다. 원인 글은 이 에이전트를 실제로 깨웠어야 한다(inbox).
      */
+    describe('한 스레드에 감시 하나(2026-11-05)', () => {
+      const open = async (rootId: string) => (await pool.query(
+        `select m.body from agent_wake w join message m on m.id = w.message_id
+          where coalesce(m.thread_root_id, m.id) = $1 and w.account_id = $2 and w.fired_at is null and w.canceled_at is null
+          order by m.seq`,
+        [rootId, botAccountId],
+      )).rows.map((r) => r.body as string);
+      const watch = (threadRootId: string, reason: string, extra: Record<string, unknown> = {}) => scheduleWake(pool, {
+        accountId: botAccountId, channelId, threadRootId, notBeforeSec: 300, reason, watch: true, ...extra,
+      });
+
+      it('겹쳐 걸면 하나만 남는다 — 새 것이 앞 것을 대체하고 앞 사유를 replaced 로 돌려준다', async () => {
+        const rootId = await newThread();
+        const first = await watch(rootId, '첫 감시');
+        expect(first.replaced).toEqual([]);
+        const second = await watch(rootId, '둘째 감시');
+        expect(second.replaced).toEqual([expect.objectContaining({ id: first.wake!.id, reason: '첫 감시' })]);
+        expect(await open(rootId)).toEqual(['둘째 감시']);
+      });
+
+      it('동시에 걸어도 하나만 남는다', async () => {
+        const rootId = await newThread();
+        await Promise.all(Array.from({ length: 16 }, (_, i) => watch(rootId, `동시 ${i}`)));
+        expect(await open(rootId)).toHaveLength(1);
+      });
+
+      it('감시 걸기는 같은 계정·스레드끼리 줄을 선다 — 앞 트랜잭션이 끝나기 전에 뒤가 행을 넣지 않는다', async () => {
+        const rootId = await newThread();
+        const holder = await pool.connect();
+        try {
+          await holder.query('begin');
+          await holder.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [`agent_wake:watch:${botAccountId}:${rootId}`]);
+          const pending = watch(rootId, '줄 선 감시');
+          await new Promise((r) => setTimeout(r, 150));
+          expect(await open(rootId)).toEqual([]);
+          await holder.query('commit');
+          await pending;
+          expect(await open(rootId)).toEqual(['줄 선 감시']);
+        } finally {
+          holder.release();
+        }
+      });
+
+      it('MCP 결과에 replaced 가 실린다', async () => {
+        const rootId = await newThread();
+        const bot = await mcpClient(botPat);
+        const call = (reason: string) => bot.callTool({ name: 'turn.wake', arguments: { channelId, threadRootId: rootId, notBeforeSec: 300, reason, watch: true } });
+        expect(text(await call('앞')).replaced).toBeUndefined();
+        expect(text(await call('뒤')).replaced).toEqual([expect.objectContaining({ reason: '앞' })]);
+        await bot.close();
+      });
+
+      it('감시가 아닌 예약은 대체하지도 대체되지도 않는다', async () => {
+        const rootId = await newThread();
+        await scheduleWake(pool, { accountId: botAccountId, channelId, threadRootId: rootId, notBeforeSec: 300, reason: '한 번 깨움' });
+        await watch(rootId, '감시 1');
+        await scheduleWake(pool, { accountId: botAccountId, channelId, threadRootId: rootId, notBeforeSec: 300, reason: '또 한 번 깨움' });
+        expect(await open(rootId)).toEqual(['한 번 깨움', '감시 1', '또 한 번 깨움']);
+      });
+
+      it('다른 스레드·다른 계정의 감시는 건드리지 않는다', async () => {
+        const [a, b] = [await newThread(), await newThread()];
+        const { accountId: otherId } = await createAgent(app, adminToken, `wakeother${Date.now()}`);
+        await app.inject({
+          method: 'POST', url: `/channels/${channelId}/members`, headers: { authorization: `Bearer ${adminToken}` },
+          payload: { accountId: otherId },
+        });
+        await watch(a, 'A 감시');
+        await watch(b, 'B 감시');
+        const other = await scheduleWake(pool, { accountId: otherId, channelId, threadRootId: a, notBeforeSec: 300, reason: '남의 감시', watch: true });
+        expect(other.replaced).toEqual([]);
+        expect(await open(a)).toEqual(['A 감시']);
+        expect(await open(b)).toEqual(['B 감시']);
+      });
+
+      it('대체할 때 새 예약에 보고처가 없으면 앞 보고처를 물려받는다 — 다른 스레드에 한 약속이 사라지지 않는다', async () => {
+        const [rootId, reportRoot] = [await newThread(), await newThread()];
+        const reportTo = { channelId, threadRootId: reportRoot };
+        await watch(rootId, '보고처 있는 감시', { reportTo });
+        const next = await watch(rootId, '보고처 말 안 한 감시');
+        expect((next.message!.meta as { wake: { reportTo?: unknown } }).wake.reportTo).toEqual(reportTo);
+      });
+
+      it('끝 보고(message.report)를 올리면 앞 턴이 건 감시가 접힌다', async () => {
+        const rootId = await newThread();
+        await watch(rootId, '남은 감시');
+        const bot = await mcpClient(botPat);
+        const res = text(await bot.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } }));
+        await bot.close();
+        expect(res.foldedWatchWakes).toEqual([expect.objectContaining({ reason: '남은 감시' })]);
+        expect(await open(rootId)).toEqual([]);
+      });
+
+      it('끝 보고는 감시가 아닌 예약과 다른 스레드의 감시를 접지 않는다', async () => {
+        const [rootId, otherRoot] = [await newThread(), await newThread()];
+        await scheduleWake(pool, { accountId: botAccountId, channelId, threadRootId: rootId, notBeforeSec: 300, reason: '한 번 깨움' });
+        await watch(otherRoot, '딴 스레드 감시');
+        const bot = await mcpClient(botPat);
+        const res = text(await bot.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } }));
+        await bot.close();
+        expect(res.foldedWatchWakes).toBeUndefined();
+        expect(await open(rootId)).toEqual(['한 번 깨움']);
+        expect(await open(otherRoot)).toEqual(['딴 스레드 감시']);
+      });
+
+      it('같은 턴이 건 감시는 그 턴의 보고가 접지 않는다 — 단계를 보고하고 다음 확인을 거는 턴이다', async () => {
+        const rootId = await newThread();
+        await watch(rootId, '이 턴의 감시', { turnId: '11111111-1111-4111-8111-111111111111' });
+        expect(await foldWatchWakesOnReport(pool, { accountId: botAccountId, threadRootId: rootId, turnId: '11111111-1111-4111-8111-111111111111' })).toEqual([]);
+        expect(await open(rootId)).toEqual(['이 턴의 감시']);
+        expect(await foldWatchWakesOnReport(pool, { accountId: botAccountId, threadRootId: rootId, turnId: '22222222-2222-4222-8222-222222222222' }))
+          .toEqual([expect.objectContaining({ reason: '이 턴의 감시' })]);
+        expect(await open(rootId)).toEqual([]);
+      });
+    });
+
     describe('맡긴 글(origin, 2026-11-02)', () => {
       const wakeMetaOf = async (id: string) =>
         (await pool.query(`select meta from message where id = $1`, [id])).rows[0].meta.wake as Record<string, unknown>;
