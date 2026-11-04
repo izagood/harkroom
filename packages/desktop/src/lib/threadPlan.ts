@@ -336,6 +336,18 @@ export function stepsOf(doc: PlanDoc, group: PlanGroup | null) {
 
 /** 펼침 기억(D4) — 스레드별, 처음엔 접힘. 저장소가 막혀도 화면은 그대로 돈다. */
 const OPEN_KEY = 'harkroom.threadPlan.open.';
+const ASK_HELP_KEY = 'harkroom.planAskHelpSeen';
+/** 💬 는 마우스를 올려야 보인다 — 처음 한 번만 머리에 알린다. 이 함수를 부른 순간 본 것으로 친다. */
+export function takePlanAskHelp(): boolean {
+  try {
+    if (localStorage.getItem(ASK_HELP_KEY) === '1') return false;
+    localStorage.setItem(ASK_HELP_KEY, '1');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function loadPlanOpen(rootId: string): boolean {
   try { return localStorage.getItem(OPEN_KEY + rootId) === '1'; } catch { return false; }
 }

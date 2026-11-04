@@ -41,6 +41,12 @@ export function ThreadPlanButton({ rootId, progress, onOpenChange }: {
   }, [popped]);
 
   const setOpen = (next: boolean) => { setOpenState(next); savePlanOpen(rootId, next); };
+  // 글 안 칩이 이 판을 가리켰다 — 패널을 연다. 단계로 가는 일은 본문이 한다.
+  const focusAt = useActiveStore((s) => (s.planFocus?.rootId === rootId ? s.planFocus.at : null));
+  useEffect(() => {
+    if (focusAt !== null && !popped) setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 새 요청이 올 때만 연다
+  }, [focusAt]);
   useEffect(() => { onOpenChange?.(shown && open && !!plan && !popped); }, [shown, open, plan, popped, onOpenChange]);
 
   if (!shown || !progress) return null;

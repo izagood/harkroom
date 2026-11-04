@@ -1,3 +1,4 @@
+import type { PlanAsk } from '../lib/planRef';
 import { create } from 'zustand';
 import type { AttachmentSaveState } from '../lib/attachmentSaveProgress';
 import { draftsStorage, stickyMentionsStorage } from '../lib/prefs';
@@ -293,6 +294,12 @@ export interface AppState {
   threadAgentModels: Record<string, ThreadAgentModelView[]>;
   /** 스레드 계획판(P4) — 루트 id → 열어 본 패널이 받은 판. `null` 은 받아 봤는데 계획이 없다. */
   threadPlans: Record<string, ThreadPlanView | null>;
+  /** 물어 보아 볼 수 없다고 답을 받은 스레드. 글 안 단계 칩이 적힌 제목까지 감춘다. */
+  threadPlanDenied: Record<string, true>;
+  /** 단계에 대해 묻는 중인 스레드 — 작성칸 위 띠가 그린다. 뿌리 id 가 키다. */
+  planAsks: Record<string, PlanAsk>;
+  /** 계획판이 그 단계로 갈 차례다. 패널·창이 받아 스크롤하고 비운다. */
+  planFocus: { rootId: string; stepId: string; at: number } | null;
   /**
    * 스코프별 초안. 키는 scopeKey (channelId 또는 thread:<rootId>).
    * 설정과 달리 사용자가 쓴 문장 전체이므로 로그아웃 시 반드시 삭제한다.
@@ -564,7 +571,7 @@ const initial = {
   messages: {}, typing: {}, hasMore: {}, firstPageLoading: {}, backfilling: {}, unread: [], inboxRevision: 0, inboxMine: 0, inboxBoardRevision: 0, reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, link: 'online' as AppState['link'], offlineSince: null, threadFetch: null as AppState['threadFetch'], serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
-  channelPrefs: {}, channelSections: null, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, threadPlans: {}, drafts: {}, stickyMentions: {}, uploads: {},
+  channelPrefs: {}, channelSections: null, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, threadPlans: {}, threadPlanDenied: {}, planAsks: {}, planFocus: null, drafts: {}, stickyMentions: {}, uploads: {},
   history: [], historyIndex: -1, notices: [], attachmentSaving: {}, saveToast: null, gates: [], notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
   ownSendIds: {}, sendsInFlight: {},
   highlightedMessageId: null, channelRevealSeq: 0,
