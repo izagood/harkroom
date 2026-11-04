@@ -1475,6 +1475,12 @@ export interface AskMeta {
      * `chat` = 사람이 카드를 누르지 않고 글로 답해 서버가 선택지를 골랐다(P5). 표지가 있는 답은 머지·비밀 래퍼의 "사람이 띄운 턴"에서 빠진다.
      */
     answeredVia?: 'bundle_bulk' | 'chat' | null;
+    /**
+     * 사람이 선택지를 고르지 않고 **이 카드에 직접 쓴 답**(소유자 결정 2026-11-04). 그때 `answeredWith` 는 `ASK_TEXT_OPTION_ID` 다 —
+     * 답이 있다는 판정(`answeredWith != null`)이 서버 SQL·화면·러너 곳곳에 있어 그 뜻을 그대로 쓴다. 스레드 글이 아니라서
+     * 같은 스레드의 다른 카드를 닫지 않는다(`closeAsksByReply` 는 글에서만 돈다). 평문이다 — 마크다운·멘션으로 해석하지 않는다.
+     */
+    answeredText?: string;
   };
 }
 
@@ -1526,6 +1532,21 @@ export function isAskOpen(ask: AskMeta['ask']): boolean {
 /** 선택지 개수의 경계. 하나면 선택이 아니고, 여섯이면 읽히지 않는다. */
 export const ASK_MIN_OPTIONS = 2;
 export const ASK_MAX_OPTIONS = 5;
+
+/** 직접 쓴 답의 `answeredWith`(`AskMeta.ask.answeredText`). 선택지 id 로는 쓸 수 없다(`message.ask` 가 거절한다). */
+export const ASK_TEXT_OPTION_ID = '__text__';
+/** 직접 쓴 답의 글자 수 상한. 이보다 긴 답은 스레드 글로 쓴다. */
+export const ASK_TEXT_MAX_CHARS = 2000;
+
+/**
+ * 이 카드가 직접 쓴 답을 받는가. **서버가 세운 카드는 받지 않는다** — 권한 요청·머지 거절·연쇄 백스톱의 선택지는 곧 서버가 할
+ * 결정이라, 고르지 않은 답이 끼면 그 결정을 말할 수 없다. 화면과 서버가 같은 판정을 쓰려고 여기 둔다.
+ */
+export function askTakesText(meta: Record<string, unknown> | null | undefined): boolean {
+  if (!meta) return false;
+  return meta.permissionRequest === undefined && meta.permissionMirror === undefined
+    && meta.mergeDenial === undefined && meta.chainBackstop === undefined;
+}
 
 /**
  * 대기 줄(wake)의 meta — 에이전트가 걸어 둔 예약의 **시각**을 싣는다(마이그레이션 040).

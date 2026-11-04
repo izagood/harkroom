@@ -8,7 +8,8 @@ import { ProviderLaneError } from '../src/providerLane.js';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createMentionScheduler, DONE_UNREAD_MAX_MS, GATE_REQUEUE_MAX, GATE_WAIT_MAX_MS, RECENTLY_DONE_MS, type BatchContext } from '../src/mentionScheduler.js';
+import { ASK_TEXT_OPTION_ID } from '@harkroom/shared';
+import { askAnsweredWake, createMentionScheduler, DONE_UNREAD_MAX_MS, GATE_REQUEUE_MAX, GATE_WAIT_MAX_MS, RECENTLY_DONE_MS, type BatchContext } from '../src/mentionScheduler.js';
 import { AccountGateRequeueError } from '../src/mentionTurn.js';
 import { SessionStore } from '../src/sessions.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
@@ -978,6 +979,24 @@ describe('ask_answered 깨움', () => {
   it('고른 옵션을 사유에 싣는다 — 스레드를 다시 읽지 않아도 무엇이 정해졌는지 안다', () => {
     // meta 에 `answeredWith` 가 있고(`inbox.poll` 이 실어 준다), 옵션 목록도 함께 온다.
     expect(source).toContain('answeredWith');
+  });
+
+  it('직접 쓴 답 — 글은 사유 밖으로 빼고, 어느 카드의 답인지 링크로 밝힌다', () => {
+    const wake = askAnsweredWake({
+      id: 'card-1', body: '골라 줘',
+      meta: { kind: 'ask', ask: { options: [{ id: 'a', label: 'A' }], answeredWith: ASK_TEXT_OPTION_ID, answeredBy: 'p-1', answeredText: '다른 길로 가자' } },
+    });
+    expect(wake.written).toEqual({ by: 'p-1', text: '다른 길로 가자' });
+    expect(wake.reason).toContain('harkroom://message/card-1');
+    expect(wake.reason).not.toContain('다른 길로 가자');
+  });
+
+  it('고른 답은 지금처럼 라벨을 사유에 싣는다', () => {
+    const wake = askAnsweredWake({
+      id: 'card-2', body: '골라 줘',
+      meta: { kind: 'ask', ask: { options: [{ id: 'a', label: '가' }], answeredWith: 'a', answeredBy: 'p-1' } },
+    });
+    expect(wake).toEqual({ reason: '내가 낸 선택지에 답이 왔다 — 고른 것: 가' });
   });
 });
 

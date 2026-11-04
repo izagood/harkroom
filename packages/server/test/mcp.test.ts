@@ -568,6 +568,15 @@ describe('message.ask — 선택 요청의 계약', () => {
         },
       })) as { error?: { code: string } };
       expect(dup.error?.code).toBe('duplicate_option');
+
+      const reserved = text(await client.callTool({
+        name: 'message.ask',
+        arguments: {
+          channelId, body: '예약 id',
+          options: [{ id: '__text__', label: 'A' }, { id: 'b', label: 'B' }],
+        },
+      })) as { error?: { code: string } };
+      expect(reserved.error?.code).toBe('reserved_option_id');
     } finally {
       await client.close();
     }

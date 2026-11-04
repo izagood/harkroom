@@ -11,7 +11,7 @@
 // 이유 자체가 사라진다.
 import { ProviderLaneError } from './providerLane.js';
 import type { FailOpts, InboxBatch } from './harkroom.js';
-import type { WakeReportTo } from '@harkroom/shared';
+import { ASK_TEXT_OPTION_ID, type WakeReportTo } from '@harkroom/shared';
 import { AccountGateRequeueError, mentionAnchor, type MentionTarget, type MentionTurnDeps, type MentionTurnResult } from './mentionTurn.js';
 import { SessionStore } from './sessions.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -297,6 +297,26 @@ function askClosedNote(mention?: { meta?: unknown }): string {
     + ' 지금 아는 것으로 접거나 다른 길을 골라라(같은 물음을 다시 내지 마라)';
 }
 
+/** 사람이 카드에 직접 쓴 답(`ASK_TEXT_OPTION_ID`). 아니면 undefined. */
+function askWrittenAnswer(mention: { meta?: unknown }): { by?: string; text: string } | undefined {
+  const ask = (mention.meta as { ask?: { answeredWith?: unknown; answeredBy?: unknown; answeredText?: unknown } } | undefined)?.ask;
+  if (ask?.answeredWith !== ASK_TEXT_OPTION_ID || typeof ask.answeredText !== 'string') return undefined;
+  return { ...(typeof ask.answeredBy === 'string' ? { by: ask.answeredBy } : {}), text: ask.answeredText };
+}
+
+/**
+ * 답이 온 깨움. 직접 쓴 답의 글은 사유에 넣지 않는다 — 사람의 말은 사유(러너의 말)가 아니라 작성자가 붙은 줄로 싣는다
+ * (`buildTurnPrompt`). 깨움 턴에는 「← 너를 부른 글」 표시가 없고 스레드에 카드가 여럿일 수 있으니 어느 카드의 답인지 링크로 밝힌다.
+ */
+export function askAnsweredWake(mention: { id: string; body: string; meta?: unknown }): { reason: string; written?: { by?: string; text: string } } {
+  const written = askWrittenAnswer(mention);
+  if (!written) return { reason: askAnsweredNote(mention) };
+  return {
+    reason: `내가 낸 카드 harkroom://message/${mention.id} 에 사람이 선택지 대신 글로 답했다 — 바로 아래 줄이 그 카드의 답이다. 같은 스레드의 다른 카드는 그대로 열려 있다`,
+    written,
+  };
+}
+
 function askAnsweredNote(mention: { body: string; meta?: unknown }): string {
   const ask = (mention.meta as { ask?: {
     options?: { id: string; label: string }[]; answeredWith?: string;
@@ -521,7 +541,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
        * 정해졌는지 안다. 라벨을 쓰는 이유: id 는 에이전트가 지은 내부 값이라 사람이 무엇을
        * 골랐는지 그 자체로는 말하지 않는다.
        */
-      ...(reason === 'ask_answered' ? { wake: { reason: askAnsweredNote(mention) } } : {}),
+      ...(reason === 'ask_answered' ? { wake: askAnsweredWake(mention) } : {}),
       /**
        * **답하지 않기로 했다**(마이그레이션 045). 같은 자리를 쓰는 이유는 같은 문제이기
        * 때문이다 — 사람은 버튼만 눌렀지 새 메시지를 쓰지 않았으므로 델타가 비고, 비면

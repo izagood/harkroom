@@ -10,6 +10,7 @@ import {
   MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT, TEAM_ROUND_LIMIT,
   ACCOUNT_GATE_LABEL_PATTERN, FAILURE_CODES, type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
   type MessageRow, type ModelMeta, type ReportMeta,
+  ASK_TEXT_OPTION_ID,
 } from '@harkroom/shared';
 import { CAUSE_HEADER, COMMAND_FILES_HEADER, TURN_ID_HEADER, type CommandFileDigest } from '@harkroom/shared/runnerLink';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
@@ -1070,6 +1071,10 @@ function buildMcpServer(
     const ids = new Set(options.map((o) => o.id));
     if (ids.size !== options.length) {
       return jsonResult({ error: { code: 'duplicate_option', message: 'option ids must be unique' } });
+    }
+    // 직접 쓴 답의 자리다 — 선택지가 이 id 를 쓰면 고른 것과 쓴 것을 가를 수 없다.
+    if (ids.has(ASK_TEXT_OPTION_ID)) {
+      return jsonResult({ error: { code: 'reserved_option_id', message: `option id ${ASK_TEXT_OPTION_ID} is reserved` } });
     }
     // 추천이 둘이면 「추천대로」가 어느 것을 고를지 정할 수 없다.
     if (options.filter((o) => o.recommended).length > 1) {

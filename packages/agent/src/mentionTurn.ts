@@ -613,7 +613,7 @@ export interface MentionTarget {
    * 옵셔널인 이유: 평범한 멘션 턴에는 깨움이 없다. 그리고 값이 있으면 프롬프트 조립이
    * 달라진다 — 깨움에는 부른 사람이 없어서 델타가 비고, 비면 하네스가 돌지 않는다.
    */
-  wake?: { reason: string; reportTo?: WakeReportTo; watch?: true; origin?: string };
+  wake?: { reason: string; reportTo?: WakeReportTo; watch?: true; origin?: string; written?: { by?: string; text: string } };
   /**
    * 이 턴이 **예약(`turn.wake`)이 시각이 되어** 깨어난 턴이다(inbox 사유 `wake`). `wake` 만으로는
    * 못 가른다 — 선택 답(`ask_answered`·`ask_closed`)도 같은 자리를 쓰는데, 그것은 사람이 방금 답한
