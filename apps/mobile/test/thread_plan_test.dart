@@ -441,10 +441,14 @@ void main() {
       expect(button, findsOneWidget);
       expect(tester.getBottomRight(button).dx, 375 - 16);
       expect(tester.getTopLeft(button).dy, greaterThan(400));
+      // 맨 아래 글이 버튼 밑에 깔리지 않게 피드가 비켜 있다.
+      final feed = find.byKey(const Key('thread-feed'));
+      expect(tester.widget<ListView>(feed).padding!.resolve(TextDirection.ltr).bottom, 12 + planButtonHeight + 8);
       tester.view.viewInsets = const FakeViewPadding(bottom: 900);
       addTearDown(tester.view.resetViewInsets);
       await tester.pump();
       expect(button, findsNothing);
+      expect(tester.widget<ListView>(feed).padding!.resolve(TextDirection.ltr).bottom, 8);
     });
 
     testWidgets('rev 가 바뀌면 다시 받고, 실패해도 버튼은 행 값으로 서 있다', (tester) async {
@@ -545,6 +549,8 @@ void main() {
       await open(tester, _Server());
       await tester.tap(find.byKey(const Key('plan-group-g1')));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('plan-chip-blocked')));
+      await tester.pump();
       await tester.tap(find.byKey(const Key('plan-chip-blocked')));
       await tester.pump();
       expect(find.byKey(const Key('plan-why-s1')), findsOneWidget);
@@ -608,7 +614,49 @@ void main() {
       await tester.tap(find.byKey(const Key('plan-retry')));
       await _settle(tester);
       await tester.pumpAndSettle();
+      expect(find.byKey(const Key('plan-flow-toggle')), findsOneWidget);
+    });
+
+    testWidgets('머리: 상태 칩은 한 줄로 가로 스크롤하고, 흐름은 접혀 있다가 눌러야 편다', (tester) async {
+      await open(tester, _Server());
+      final top = tester.getTopLeft(find.byKey(const Key('plan-chip-done'))).dy;
+      expect(tester.getTopLeft(find.byKey(const Key('plan-chip-waiting'))).dy, top, reason: '칩이 두 줄로 내려가면 안 된다');
+      final scroll = tester.widget<SingleChildScrollView>(find.byKey(const Key('plan-chips')));
+      expect(scroll.scrollDirection, Axis.horizontal);
+      expect(find.byKey(const Key('plan-flow')), findsNothing);
+      await tester.tap(find.byKey(const Key('plan-flow-toggle')));
+      await tester.pumpAndSettle();
       expect(find.byKey(const Key('plan-flow')), findsOneWidget);
+      expect(find.text('흐름 접기 ⌃'), findsOneWidget);
+    });
+
+    testWidgets('막힌 줄: 「막힘 · 사유」 는 한 줄이고 그 아래 담당·까닭 토글, 펴면 글자가 바뀐다', (tester) async {
+      await open(tester, _Server());
+      final reason = tester.widget<Text>(find.byKey(const Key('plan-step-reason-s1')));
+      expect(reason.maxLines, 1);
+      expect(reason.overflow, TextOverflow.ellipsis);
+      expect(find.descendant(of: find.byKey(const Key('plan-step-sub-s1')), matching: find.byKey(const Key('plan-why-toggle-s1'))), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const Key('plan-step-sub-s1')), matching: find.textContaining('@builder')), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('plan-why-toggle-s1')));
+      await tester.tap(find.byKey(const Key('plan-why-toggle-s1')));
+      await tester.pumpAndSettle();
+      expect(find.text('까닭 접기 ⌃'), findsOneWidget);
+    });
+
+    testWidgets('구분점은 조각 사이에만 — 첫 조각 앞과 링크 글자에 없다', (tester) async {
+      final s = _Server()..fallback = () {
+        final j = _planJson();
+        final doc = j['doc']! as Map<String, Object?>;
+        final steps = (doc['steps']! as List).cast<Map<String, Object?>>();
+        steps.firstWhere((x) => x['id'] == 's6')['links'] = [{'kind': 'pr', 'repo': 'acme/app', 'number': 7}];
+        steps.firstWhere((x) => x['id'] == 's6')['assigneeId'] = _agent;
+        return _json({'plan': j});
+      };
+      await open(tester, s);
+      final sub = find.byKey(const Key('plan-step-sub-s6'));
+      await tester.ensureVisible(sub);
+      final texts = tester.widgetList<Text>(find.descendant(of: sub, matching: find.byType(Text))).map((t) => t.data).toList();
+      expect(texts, ['끝', ' · ', '@builder', ' · ', 'PR #7 ↗']);
     });
 
     testWidgets('열려 있는 동안 판이 바뀌면 그 자리에서 고친다', (tester) async {

@@ -514,7 +514,11 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   reverse: true,
                   // 채널 화면과 같다 — 짧아도 끌려야 키보드를 내린다([FeedKeyboardDismiss]).
                   physics: const AlwaysScrollableScrollPhysics(),
-                  padding: EdgeInsets.only(top: 8 + inset, bottom: 8),
+                  // 버튼이 떠 있으면 그만큼 비운다 — 맨 아래 글이 버튼 밑에 깔리면 끝까지 읽을 수 없다.
+                  padding: EdgeInsets.only(
+                    top: 8 + inset,
+                    bottom: planButtonVisible(root?.planProgress, keyboardOpen: keyboardOpen) ? 12 + planButtonHeight + 8 : 8,
+                  ),
                   children: rows.reversed.toList(growable: false),
                 ),
               )),

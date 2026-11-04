@@ -712,7 +712,8 @@ abstract class Strings {
 
   /// 머리의 「그룹 8 · 단계 40」.
   String planMetaCounts(int groups, int steps);
-  String planMoreFlow(int n);
+  String get planFlowShow;
+  String get planFlowHide;
   String planSum(String kind, int n);
   String planSumCycle(int i, int n);
 
@@ -725,6 +726,7 @@ abstract class Strings {
   String planRowPr(int number);
   String get planRowMessage;
   String get planWhyToggle;
+  String get planWhyCollapse;
   String get planWhyTitle;
   String get planWhyDep;
   String get planWhyCard;
@@ -1991,7 +1993,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'planLoadFailed': s.planLoadFailed,
       'planEditedAgo': s.planEditedAgo('{ago}'),
       'planMetaCounts': s.planMetaCounts(8, 40),
-      'planMoreFlow': s.planMoreFlow(3),
+      'planFlowShow': s.planFlowShow,
+      'planFlowHide': s.planFlowHide,
       'planSumDone': s.planSum('done', 1),
       'planSumActive': s.planSum('active', 1),
       'planSumBlocked': s.planSum('blocked', 1),
@@ -2007,6 +2010,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'planRowPr': s.planRowPr(7),
       'planRowMessage': s.planRowMessage,
       'planWhyToggle': s.planWhyToggle,
+      'planWhyCollapse': s.planWhyCollapse,
       'planWhyTitle': s.planWhyTitle,
       'planWhyDep': s.planWhyDep,
       'planWhyCard': s.planWhyCard,

@@ -818,7 +818,9 @@ class StringsEn implements Strings {
   @override
   String planMetaCounts(int groups, int steps) => '$groups groups · $steps steps';
   @override
-  String planMoreFlow(int n) => '+$n groups ›';
+  String get planFlowShow => 'Show flow ›';
+  @override
+  String get planFlowHide => 'Hide flow ⌃';
   @override
   String planSum(String kind, int n) => switch (kind) {
         'done' => 'Done $n',
@@ -846,6 +848,8 @@ class StringsEn implements Strings {
   String get planRowMessage => '› Message';
   @override
   String get planWhyToggle => 'Why blocked ›';
+  @override
+  String get planWhyCollapse => 'Hide why ⌃';
   @override
   String get planWhyTitle => 'Why this is blocked';
   @override

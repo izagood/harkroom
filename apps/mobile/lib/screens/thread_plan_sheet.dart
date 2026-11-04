@@ -393,9 +393,6 @@ const double planSheetInitial = 0.78;
 const double planSheetMax = 0.93;
 const double planSheetMin = 0.2;
 
-/// 머리 흐름에 먼저 보일 알약 수.
-const int planFlowMax = 4;
-
 /// 계획 시트를 연다. [opener] 는 시트를 연 쪽의 context 다 — 글·연결 스레드로 갈 때 시트를 닫은 뒤 그 쌓기에 민다.
 Future<void> openThreadPlanSheet(BuildContext opener, String rootId) {
   final app = AppScope.read(opener);
@@ -439,7 +436,6 @@ class _PlanSheetState extends State<_PlanSheet> {
   String? _flashId;
   int _flashNo = 0;
   ({PlanRowKind kind, int index})? _cycle;
-  bool _flowAll = false;
 
   @override
   void dispose() {
@@ -577,10 +573,8 @@ class _PlanSheetState extends State<_PlanSheet> {
                   app: app,
                   me: me,
                   cycle: _cycle,
-                  flowAll: _flowAll,
                   onChip: (lists, kind) => _pressChip(plan!, lists, kind),
                   onPill: (p) => _pressPill(plan!, p, me),
-                  onFlowAll: () => setState(() => _flowAll = true),
                 ),
               ),
             ),
@@ -747,18 +741,16 @@ class _PlanSheetState extends State<_PlanSheet> {
 
 class _SheetHead extends StatefulWidget {
   const _SheetHead({
-    super.key, required this.plan, required this.app, required this.me, required this.cycle, required this.flowAll,
-    required this.onChip, required this.onPill, required this.onFlowAll,
+    super.key, required this.plan, required this.app, required this.me, required this.cycle,
+    required this.onChip, required this.onPill,
   });
 
   final ThreadPlanView? plan;
   final AppState app;
   final String? me;
   final ({PlanRowKind kind, int index})? cycle;
-  final bool flowAll;
   final void Function(Map<PlanRowKind, List<String>>, PlanRowKind) onChip;
   final ValueChanged<PlanPill> onPill;
-  final VoidCallback onFlowAll;
 
   @override
   State<_SheetHead> createState() => _SheetHeadState();
@@ -766,6 +758,7 @@ class _SheetHead extends StatefulWidget {
 
 class _SheetHeadState extends State<_SheetHead> {
   bool _goalOpen = false;
+  bool _flowOpen = false;
 
   @override
   Widget build(BuildContext context) {
@@ -784,7 +777,7 @@ class _SheetHeadState extends State<_SheetHead> {
     final lists = plan == null ? null : planLists(plan, widget.me);
     final pills = plan == null ? const <PlanPill>[] : planPills(plan, widget.me);
     final layers = plan == null ? const <List<String>>[] : planFlow(plan);
-    final flow = planFlowVisible(layers, widget.flowAll ? 1 << 30 : planFlowMax);
+    final flow = planFlowVisible(layers, 1 << 30);
     final pillOf = {for (final p in pills) p.id: p};
     return Container(
       width: double.infinity,
@@ -838,53 +831,70 @@ class _SheetHeadState extends State<_SheetHead> {
             style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta),
           ),
           const SizedBox(height: 6),
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Wrap(
-              key: const Key('plan-chips'),
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final kind in planChipKinds)
-                  _SummaryChip(
-                    kind: kind,
-                    n: lists![kind]!.length,
-                    visiting: widget.cycle?.kind == kind ? widget.cycle!.index + 1 : null,
-                    onTap: () => widget.onChip(lists, kind),
-                  ),
-              ],
-            ),
-          ),
-          if (flow.ids.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Wrap(
-                key: const Key('plan-flow'),
-                spacing: 4,
-                runSpacing: 4,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  for (var i = 0; i < flow.ids.length; i++) ...[
-                    if (i > 0)
-                      ExcludeSemantics(
-                        child: Text(
-                          layers.any((l) => l.contains(flow.ids[i]) && l.contains(flow.ids[i - 1])) ? '·' : '⟶',
-                          style: TextStyle(color: k.fgSubtle, fontSize: HarkroomType.meta),
-                        ),
+          // 상태 칩은 한 줄(가로 스크롤) — 40단계 판에서 목록 자리를 먹지 않게. 넘치는 쪽 끝을 흐린다.
+          SizedBox(
+            height: HarkroomSize.row,
+            child: ShaderMask(
+              blendMode: BlendMode.dstIn,
+              shaderCallback: (r) => LinearGradient(
+                colors: const [Colors.black, Colors.black, Colors.transparent],
+                stops: [0, r.width <= 24 ? 0 : (r.width - 24) / r.width, 1],
+              ).createShader(r),
+              child: SingleChildScrollView(
+                key: const Key('plan-chips'),
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.only(right: 24),
+                child: Row(children: [
+                  for (final kind in planChipKinds)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: _SummaryChip(
+                        kind: kind,
+                        n: lists![kind]!.length,
+                        visiting: widget.cycle?.kind == kind ? widget.cycle!.index + 1 : null,
+                        onTap: () => widget.onChip(lists, kind),
                       ),
-                    if (pillOf[flow.ids[i]] != null) _Pill(pill: pillOf[flow.ids[i]]!, onTap: () => widget.onPill(pillOf[flow.ids[i]]!)),
-                  ],
-                  if (flow.more > 0)
-                    InkWell(
-                      key: const Key('plan-flow-more'),
-                      onTap: widget.onFlowAll,
-                      child: Text(t.planMoreFlow(flow.more),
-                          style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta, decoration: TextDecoration.underline, decorationStyle: TextDecorationStyle.dotted)),
                     ),
-                ],
+                ]),
               ),
             ),
+          ),
+          // 흐름은 한 줄로 접어 둔다. 누르면 고정 머리 안에서 편다.
+          if (flow.ids.isNotEmpty) ...[
+            InkWell(
+              key: const Key('plan-flow-toggle'),
+              onTap: () => setState(() => _flowOpen = !_flowOpen),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: HarkroomSize.row),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(_flowOpen ? t.planFlowHide : t.planFlowShow,
+                      style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta, decoration: TextDecoration.underline, decorationStyle: TextDecorationStyle.dotted)),
+                ),
+              ),
+            ),
+            if (_flowOpen)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Wrap(
+                  key: const Key('plan-flow'),
+                  spacing: 4,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    for (var i = 0; i < flow.ids.length; i++) ...[
+                      if (i > 0)
+                        ExcludeSemantics(
+                          child: Text(
+                            layers.any((l) => l.contains(flow.ids[i]) && l.contains(flow.ids[i - 1])) ? '·' : '⟶',
+                            style: TextStyle(color: k.fgSubtle, fontSize: HarkroomType.meta),
+                          ),
+                        ),
+                      if (pillOf[flow.ids[i]] != null) _Pill(pill: pillOf[flow.ids[i]]!, onTap: () => widget.onPill(pillOf[flow.ids[i]]!)),
+                    ],
+                  ],
+                ),
+              ),
           ],
         ],
       ]),
@@ -1185,15 +1195,28 @@ class _StepRow extends StatelessWidget {
     final assignee = assigneeId == null ? null : app.accounts[assigneeId];
     final links = stepFirstLinks(step);
     final waiters = kind == PlanRowKind.mine ? stepWaiters(plan, step.id) : const <String>[];
-    final spans = <InlineSpan>[
-      if (kind == PlanRowKind.done) TextSpan(text: t.planRowDone, style: TextStyle(color: k.success, fontWeight: FontWeight.w600)),
-      if (kind == PlanRowKind.active) TextSpan(text: t.planStateActive, style: TextStyle(color: k.stateActive, fontWeight: FontWeight.w600)),
-      if (kind == PlanRowKind.mine) TextSpan(text: t.planRowMine, style: TextStyle(color: k.accentText, fontWeight: FontWeight.w600)),
-      if (kind == PlanRowKind.blocked) TextSpan(text: t.planStateBlocked, style: TextStyle(color: k.stateStuck, fontWeight: FontWeight.w600)),
-      if (kind == PlanRowKind.blocked && step.blockedReason != null) TextSpan(text: step.blockedReason, style: TextStyle(color: k.stateStuck)),
-      if (kind == PlanRowKind.ready) TextSpan(text: hasDeps ? t.planReadyAfter : t.planReady),
+    TextStyle meta(Color c, {bool bold = false}) => TextStyle(color: c, fontSize: HarkroomType.meta, height: 1.4, fontWeight: bold ? FontWeight.w600 : null);
+    // 조각들. 구분점은 **조각 사이에만** 둔다 — 줄이 구분점으로 끝나거나 시작하지 않게.
+    final parts = <Widget>[
+      if (kind == PlanRowKind.done) Text(t.planRowDone, style: meta(k.success, bold: true)),
+      if (kind == PlanRowKind.active) Text(t.planStateActive, style: meta(k.stateActive, bold: true)),
+      if (kind == PlanRowKind.mine) Text(t.planRowMine, style: meta(k.accentText, bold: true)),
+      if (kind == PlanRowKind.ready) Text(hasDeps ? t.planReadyAfter : t.planReady, style: meta(k.fgMuted)),
       if (kind != PlanRowKind.mine && assignee != null)
-        TextSpan(text: '${!assignee.isAgent && assignee.id != me ? '${t.planRowPerson} ' : ''}@${assignee.handle}', style: TextStyle(color: k.fgAgent)),
+        Text('${!assignee.isAgent && assignee.id != me ? '${t.planRowPerson} ' : ''}@${assignee.handle}', style: meta(k.fgAgent)),
+      if (waiters.isNotEmpty)
+        _RowLink(key: Key('plan-waiters-${step.id}'), text: t.planRowWaiters(waiters.length), color: k.stateStuck, onTap: () => onGo(waiters.first, true)),
+      if (links.pr != null)
+        _RowLink(
+          key: Key('plan-row-pr-${step.id}'),
+          text: t.planRowPr(links.pr!.number),
+          color: k.link,
+          onTap: () => unawaited(launchUrl(Uri.parse(prUrl(links.pr!)), mode: LaunchMode.externalApplication)),
+        ),
+      if (links.messageId != null && kind != PlanRowKind.blocked)
+        _RowLink(key: Key('plan-row-message-${step.id}'), text: t.planRowMessage, color: k.link, onTap: () => onMessage(links.messageId!)),
+      if (kind == PlanRowKind.blocked)
+        _RowLink(key: Key('plan-why-toggle-${step.id}'), text: whyOpen ? t.planWhyCollapse : t.planWhyToggle, color: k.stateStuck, onTap: onToggleWhy),
     ];
     final node = plan.derived[step.id];
     return Container(
@@ -1213,33 +1236,31 @@ class _StepRow extends StatelessWidget {
                 message: step.title,
                 child: Text(step.title, maxLines: 1, softWrap: false, overflow: TextOverflow.ellipsis, style: TextStyle(color: k.fg, fontSize: HarkroomType.body)),
               ),
-              // 둘째 줄 한 줄에 모은다(시안 v3) — 글자가 길면 링크는 다음 줄로 내려간다.
-              Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                if (spans.isNotEmpty)
-                  Text.rich(
-                    key: Key('plan-step-sub-${step.id}'),
-                    TextSpan(children: [
-                      for (var i = 0; i < spans.length; i++) ...[
-                        if (i > 0) const TextSpan(text: ' · '),
-                        spans[i],
-                      ],
-                    ]),
-                    style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta, height: 1.4),
-                  ),
-                if (waiters.isNotEmpty)
-                  _RowLink(key: Key('plan-waiters-${step.id}'), text: t.planRowWaiters(waiters.length), color: k.stateStuck, onTap: () => onGo(waiters.first, true)),
-                if (links.pr != null)
-                  _RowLink(
-                    key: Key('plan-row-pr-${step.id}'),
-                    text: t.planRowPr(links.pr!.number),
-                    color: k.link,
-                    onTap: () => unawaited(launchUrl(Uri.parse(prUrl(links.pr!)), mode: LaunchMode.externalApplication)),
-                  ),
-                if (links.messageId != null && kind != PlanRowKind.blocked)
-                  _RowLink(key: Key('plan-row-message-${step.id}'), text: t.planRowMessage, color: k.link, onTap: () => onMessage(links.messageId!)),
-                if (kind == PlanRowKind.blocked)
-                  _RowLink(key: Key('plan-why-toggle-${step.id}'), text: t.planWhyToggle, color: k.stateStuck, onTap: onToggleWhy),
-              ]),
+              // 막힌 줄: 「막힘 · 사유」 는 한 줄로 줄인다. 전문은 「막힌 까닭」 상자에 있다.
+              if (kind == PlanRowKind.blocked)
+                Text.rich(
+                  key: Key('plan-step-reason-${step.id}'),
+                  TextSpan(children: [
+                    TextSpan(text: t.planStateBlocked, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    if (step.blockedReason != null) TextSpan(text: ' · ${step.blockedReason}'),
+                  ]),
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: meta(k.stateStuck),
+                ),
+              if (parts.isNotEmpty)
+                Wrap(
+                  key: Key('plan-step-sub-${step.id}'),
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    for (var i = 0; i < parts.length; i++)
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                        if (i > 0) ExcludeSemantics(child: Text(' · ', style: meta(k.fgMuted))),
+                        parts[i],
+                      ]),
+                  ],
+                ),
               if (node != null && node.waitingOn.isNotEmpty)
                 _Waiting(plan: plan, ids: node.waitingOn, fromGroupId: step.groupId, onPress: onWaiting),
             ]),

@@ -822,7 +822,9 @@ class StringsKo implements Strings {
   @override
   String planMetaCounts(int groups, int steps) => '그룹 $groups · 단계 $steps';
   @override
-  String planMoreFlow(int n) => '+$n 그룹 ›';
+  String get planFlowShow => '흐름 보기 ›';
+  @override
+  String get planFlowHide => '흐름 접기 ⌃';
   @override
   String planSum(String kind, int n) => switch (kind) {
         'done' => '끝 $n',
@@ -850,6 +852,8 @@ class StringsKo implements Strings {
   String get planRowMessage => '› 글';
   @override
   String get planWhyToggle => '까닭 보기 ›';
+  @override
+  String get planWhyCollapse => '까닭 접기 ⌃';
   @override
   String get planWhyTitle => '막힌 까닭';
   @override
