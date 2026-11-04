@@ -1,7 +1,7 @@
 import { orderToolRuleWarnings, type MessageRow, type PermissionCardLine, type PermissionCardLineLimits, type PermissionCardMandate, type PermissionMirrorMeta, type ToolRuleWarning } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useLocale, useT } from '../i18n/useT';
 import { ApiError } from '../lib/api';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -23,6 +23,8 @@ import type { SectionId } from './settings/sections';
  *   그 버튼은 고른 계정(없으면 비움 — 오퍼레이터가 고름)으로 `approvePermissionOnce` 를 보낸다. 거울에는 계정 고르기가 없다(W4-2).
  * - 거울 — 진짜 거울은 `permissionMirror` 의 once·line·mandate 로 같은 카드를, 중립 거울은 원본 링크 한 줄만.
  * - 끝난 카드 — 줄 상자는 남기고 상태 줄 하나.
+ * - 다른 스레드에서 정하는 자리(묶음 줄 `decideHere`) — 같은 몸을 그대로 끼운다. 판정은 서버가 하고 여기는 버튼을 보일지만 정한다.
+ *   「이 위임장」이 보고 있는 스레드로 읽히지 않게 버튼 문구는 「원 스레드…」로 쓴다.
  */
 export type CardSource = {
   line: PermissionCardLine | null;
@@ -53,7 +55,9 @@ export function readCardSource(meta: Record<string, unknown> | undefined): CardS
 export function bodyForLineCard(body: string, meta: Record<string, unknown> | undefined): string {
   if (!meta || !meta.ask) return body;
   const src = readCardSource(meta);
-  if (!src?.line || src.mirror?.neutral) return body;
+  // 중립 거울의 본문은 「원래 카드에서 확인」 안내와 링크뿐이다 — 카드 몸이 말하고, 볼 수 있는 사람에게는 원본 내용이 선다.
+  if (src?.mirror?.neutral) return '';
+  if (!src?.line) return body;
   const lines = body.split('\n');
   // H4: 서버가 쓴 경고 줄(meta `bodyWarningLine`)도 하나만 뺀다 — 줄 상자 안에 문장으로 그린다.
   const hidden = src.mirror ? [src.mirror.bodyTargetLine, src.mirror.bodyWarningLine] : [src.request?.bodyTargetLine, src.request?.bodyWarningLine];
@@ -63,6 +67,25 @@ export function bodyForLineCard(body: string, meta: Record<string, unknown> | un
     if (i >= 0) lines.splice(i, 1);
   }
   return lines.join('\n');
+}
+
+/** 원본 권한 카드 본문에서 카드 몸이 말하지 않는 줄(이유·실패 체크 등) — 다른 스레드에서 원본을 펼칠 때 쓴다. 평문이다. */
+export function cardContextText(root: MessageRow): string {
+  const lines = bodyForLineCard(root.body, root.meta).split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines[0]?.startsWith('권한 요청 ·')) lines.shift();
+  return lines.join('\n');
+}
+
+/** 원본 권한 카드 → 다른 자리에서 그릴 재료. 줄이 없는 옛 카드는 null(옛 카드는 하루 안에 끝나고 원 스레드에서 정한다). */
+export function readRootSource(root: MessageRow): CardSource | null {
+  return readCardSource(root.meta);
+}
+
+/** 원본 권한 카드의 (에이전트, 채널) — 결정권은 **요청 채널**로 묻는다(거울·묶음 채널이 아니다). */
+export function requestTargetOf(root: MessageRow): { agentId: string; channelId: string } | null {
+  const pr = root.meta?.permissionRequest as { agentId?: unknown; channelId?: unknown } | undefined;
+  if (typeof pr?.agentId !== 'string') return null;
+  return { agentId: pr.agentId, channelId: typeof pr.channelId === 'string' ? pr.channelId : root.channelId };
 }
 
 /** 카드가 그릴 경고 — 원본 요청(거울이면 거울에 옮긴 값)의 코드를 그리는 순서대로. 모르는 코드는 버린다. */
@@ -165,12 +188,22 @@ const SECONDARY = 'rounded border border-border bg-surface-raised px-2.5 py-1 te
  * 줄 상자와 버튼. `canChoose` 는 `AskCard` 가 정한다(내 차례이고 열려 있음).
  * `onceByPanel` — 원본 머지 거절 카드라 [이번 한 번]은 계정을 실어 `approvePermissionOnce` 로 보낸다(선택지 답이 아니다).
  */
-export function MandateLineBody({ message, src, canChoose, optionIds, answeredWith, closedReason, supersededBy, onOpenSettings, headSaysResult = false }: {
+export function MandateLineBody({ message, src, canChoose, optionIds, answeredWith, closedReason, supersededBy, onOpenSettings, headSaysResult = false, decideHere, decideTarget, contextText }: {
   message: MessageRow; src: CardSource; canChoose: boolean; optionIds: string[];
   answeredWith: string | null; closedReason: string | null; supersededBy: string | null;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
   /** r5: 머리가 이미 결과(「거절함 · X」 등)를 말한다 — 같은 말만 하는 상태 줄은 뺀다(시각·계정·줄 끝·[줄 빼기] 같은 덧말은 남긴다). */
   headSaysResult?: boolean;
+  /** 묶음 줄 — 답·[이번 한 번]을 묶음 길로 보내고, 버튼 줄 끝에 원 스레드 링크를 둔다. */
+  decideHere?: {
+    answer: (optionId: string) => Promise<{ status: number; code: string; message: string } | null>;
+    once: (body: { ghUser?: string; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] }) => Promise<{ approvalExpiresAt?: string }>;
+    trailing?: ReactNode;
+  };
+  /** 거울 — 원본을 읽을 수 있으면 그 요청의 (에이전트, 채널). 받으면 소유자 아닌 결정권자에게도 버튼이 선다. */
+  decideTarget?: { agentId: string; channelId: string } | null;
+  /** 본문이 따로 서지 않는 자리(묶음 줄·중립 거울)에서 줄 상자 밑에 그릴 원본 본문. 평문이다. */
+  contextText?: string;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -187,18 +220,18 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
   const supersededHref = messageLinkFromMeta(supersededBy);
   const ownerHandle = useActiveStore((s) => (ownerOf ? s.accounts[ownerOf]?.handle ?? null : null));
   const onceByPanel = !!src.request && src.request.kind === 'merge' && !!src.request.once;
-  const once = useOnceApproval(onceByPanel ? message : null, true);
-  // P3: 정할 수 있는 사람(그 채널에서 이 에이전트를 부를 수 있는 사람)에게도 버튼을 그린다 — 원본 카드만. 거울은 요청 에이전트·채널이
-  // 거울과 달라 지금처럼 소유자만이다. 받기 전·옛 서버·실패면 null → 소유자만 꼴.
+  const once = useOnceApproval(onceByPanel ? message : null, true, decideHere?.once);
+  // P3: 정할 수 있는 사람(그 채널에서 이 에이전트를 부를 수 있는 사람)에게도 버튼을 그린다. 언제나 **요청 채널**로 묻는다 — 거울·묶음 채널로
+  // 물으면 범위가 channel 인 에이전트에서 버튼과 서버 판정이 어긋난다. 거울은 원본을 읽었을 때만 안다. 받기 전·옛 서버·실패면 null → 소유자만 꼴.
   const reqAgentId = src.request && typeof src.request.agentId === 'string' ? src.request.agentId : null;
-  const check = useDecideCheck(src.mirror ? null : reqAgentId, src.mirror ? null : message.channelId);
+  const reqChannelId = src.request && typeof src.request.channelId === 'string' ? src.request.channelId : message.channelId;
+  const check = useDecideCheck(src.mirror ? decideTarget?.agentId ?? null : reqAgentId, src.mirror ? decideTarget?.channelId ?? null : reqChannelId);
   const [answerError, setAnswerError] = useState<string | null>(null);
 
   if (src.mirror?.neutral) {
     return (
       <div className="px-3 pb-2 pt-1 text-meta" data-testid="mandate-mirror-neutral">
         <p className="text-fg-muted">{t('mandateCard.mirrorNeutral')}</p>
-        {mirrorHref && <CardMessageLink messageId={src.mirror?.rootId} className="text-accent underline" testId="mandate-mirror-link">{t('mandateCard.openOriginal')}</CardMessageLink>}
       </div>
     );
   }
@@ -218,9 +251,13 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
   const shownLimits = ended
     ? [answeredWith ?? (status === 'approved_once' ? 'approve_once' : '')].filter(Boolean)
     : standing ? [standing] : onceAvailable ? ['approve_once'] : [];
+  const elsewhere = !!decideHere || !!src.mirror;
+  // 계정 고르기는 소유자만이다(서버도 소유자가 아니면 계정을 비운다). 소유자 아닌 결정권자에게는 누가 고르는지만 말한다.
+  const canPickAccount = check ? check.asOwner : viewerIsOwner;
   const answer = (id: string) => {
     setAnswerError(null);
-    void getController().answerAsk(message.id, id, message.channelId).then((err) => {
+    const sent = decideHere ? decideHere.answer(id) : getController().answerAsk(message.id, id, message.channelId);
+    void sent.then((err) => {
       if (err) setAnswerError(answerErrorText(err, t));
     });
   };
@@ -292,7 +329,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
             </p>
           : (
             headSaysResult && !canRevoke ? null : <p className="text-fg" data-testid="mandate-ended" data-state="added">
-              {!headSaysResult && <>✓ {t('mandateCard.ended.added')}</>}
+              {!headSaysResult && <>✓ {t(elsewhere ? 'mandateCard.ended.addedElsewhere' : 'mandateCard.ended.added')}</>}
               {canRevoke && (
                 <>
                   {' '}
@@ -320,7 +357,9 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
       {/* 칩은 소유자에게만 보인다(시안 「남이 볼 때」 — 다른 채널의 위임장이 드러나지 않게). */}
       {viewerIsOwner && <MandateChip mandate={src.mandate} />}
       {line && <LineBox line={line} show={shownLimits} omitPr={onceByPanel && !!once.d} warnings={cardWarnings(src)} />}
-      {onceByPanel && <OnceCardRows s={once} canAct={canChoose && viewerIsOwner && once.isOwner} />}
+      {contextText && <p className="mt-1.5 whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-meta text-fg-muted" data-testid="mandate-context">{contextText}</p>}
+      {onceByPanel && <OnceCardRows s={once} canAct={canChoose && canPickAccount && once.isOwner} />}
+      {onceByPanel && pending && canChoose && canDecide && !canPickAccount && <p className="mt-1 text-meta text-fg-subtle" data-testid="merge-once-operator-picks">{t('mergeOnce.rowAccount')}: {t('mergeOnce.pick')}</p>}
       {pending && !canDecide && (
         <p className="mt-1 text-meta text-fg-subtle" data-testid="mandate-owner-only" data-scope={check?.decideScope ?? undefined}>{waitingText(check, ownerHandle, t)}</p>
       )}
@@ -329,7 +368,9 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
           {standing && (
             <button type="button" data-testid={`ask-option-${standing}`} onClick={() => answer(standing)}
               className="rounded bg-accent px-2.5 py-1 text-body font-medium text-fg-on-strong">
-              {t(standing === 'approve_new_mandate' ? 'mandateCard.approveNew' : 'mandateCard.approveMandate')}
+              {t(standing === 'approve_new_mandate'
+                ? (elsewhere ? 'mandateCard.approveNewElsewhere' : 'mandateCard.approveNew')
+                : (elsewhere ? 'mandateCard.approveMandateElsewhere' : 'mandateCard.approveMandate'))}
             </button>
           )}
           {turnAvailable && (
@@ -357,12 +398,7 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
               {t('mandateCard.deny')}
             </button>
           )}
-          {onceByPanel && once.isOwner && !once.open && (
-            <button type="button" data-testid="merge-once-change-account" onClick={() => once.setOpen(true)}
-              className="ml-auto rounded-sm px-1 py-0.5 text-meta text-fg-subtle underline decoration-dotted underline-offset-2 hover:text-fg-muted">
-              {t('mergeOnce.changeAccount')}
-            </button>
-          )}
+          {decideHere?.trailing && <span className="ml-auto">{decideHere.trailing}</span>}
         </div>
       )}
       {pending && answerError && <p className="mt-1 text-meta text-danger" role="alert" data-testid="mandate-answer-error">{answerError}</p>}
@@ -428,7 +464,7 @@ function waitingText(check: DecideCheck | null, owner: string | null, t: Transla
 }
 
 /** 카드 답이 거절됐을 때 사람이 읽을 이유 — 이미 정해진 카드(409 경합)는 다시 받은 카드가 말하므로 줄을 달지 않는다. */
-function answerErrorText(err: { status: number; code: string; message: string }, t: Translate): string | null {
+export function answerErrorText(err: { status: number; code: string; message: string }, t: Translate): string | null {
   if (err.code === 'already_answered' || err.code === 'already_decided' || err.code === 'superseded') return null;
   if (err.code === 'mandate_unavailable') return t('mandateCard.errMandateUnavailable');
   if (err.code === 'forbidden') return t('mandateCard.errForbidden');

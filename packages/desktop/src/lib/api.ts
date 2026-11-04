@@ -466,8 +466,11 @@ export class ApiClient {
     return this.req('POST', `/channels/${channelId}/messages/${messageId}/ask-close`, {});
   }
   /** 묶음 카드의 한 줄에 답한다(선택 카드 P1) — 서버가 원본에 누른 사람 이름으로 적는다. 돌아오는 것은 묶음 행이다. */
-  answerBundleItem(channelId: string, bundleId: string, rootId: string, optionId: string): Promise<MessageRow> {
-    return this.req('POST', `/channels/${channelId}/messages/${bundleId}/ask-bundle/answer`, { rootId, optionId });
+  answerBundleItem(
+    channelId: string, bundleId: string, rootId: string, optionId: string,
+    once?: { ghUser?: string; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] },
+  ): Promise<MessageRow> {
+    return this.req('POST', `/channels/${channelId}/messages/${bundleId}/ask-bundle/answer`, { rootId, optionId, ...(once ? { once } : {}) });
   }
   /** 「남은 n개 추천대로」 — 줄마다 결과(답함·뺌과 그 까닭)를 돌려준다. 되돌릴 수 없는 줄은 서버가 뺀다. */
   acceptRecommendedBundle(channelId: string, bundleId: string): Promise<{ message: MessageRow; results: BundleAcceptResult[] }> {
