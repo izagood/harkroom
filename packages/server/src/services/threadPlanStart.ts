@@ -45,6 +45,11 @@ export interface PlanStartRequest {
   actorId: string;
   steps: { id: string; assigneeId?: string }[];
   dryRun?: boolean;
+  /**
+   * 미리보기에서 받은 판 번호. 주면 잠금 안에서 그 판일 때만 시작한다 — 미리보기와 누름 사이에 관리 에이전트·담당이 바뀌면
+   * 사람이 본 적 없는 상대를 사람 이름으로 부르게 된다. 다르면 아무것도 바꾸지 않고 `plan_changed`.
+   */
+  ifRev?: number;
   locale?: PlanStartLocale;
 }
 
@@ -286,6 +291,7 @@ export async function startPlanSteps(pool: Pool, req: PlanStartRequest): Promise
   let activated = new Set<string>();
   const activate = await writeThreadPlan<{ code: string }>(pool, req.rootId, { accountId: req.actorId }, (prev) => {
     if (!prev) return { error: { code: 'no_plan' } };
+    if (req.ifRev !== undefined && prev.rev !== req.ifRev) return { error: { code: 'plan_changed' } };
     startRev = prev.rev;
     const derived = derivePlan(prev.doc, map);
     const managerMoved = (prev.doc.managerId ?? null) !== (row.doc.managerId ?? null);

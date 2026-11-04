@@ -14,6 +14,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const startBody = z.object({
   steps: z.array(z.object({ id: z.string().regex(PLAN_STEP_ID_RE), assigneeId: z.string().uuid().optional() })).min(1).max(PLAN_LIMITS.steps),
   dryRun: z.boolean().optional(),
+  ifRev: z.number().int().min(1).optional(),
   locale: z.enum(['ko', 'en']).optional(),
 });
 const managerBody = z.object({ managerId: z.string().uuid().nullable() });
@@ -52,7 +53,7 @@ export async function registerThreadPlanRoutes(app: FastifyInstance, pool: Pool)
     const body = startBody.parse(req.body);
     const seen = new Set<string>();
     const steps = body.steps.filter((s) => !seen.has(s.id) && seen.add(s.id));
-    const res = await startPlanSteps(pool, { rootId, actorId: req.account!.id, steps, dryRun: body.dryRun, locale: body.locale });
+    const res = await startPlanSteps(pool, { rootId, actorId: req.account!.id, steps, dryRun: body.dryRun, ifRev: body.ifRev, locale: body.locale });
     if (!res.ok) return reply.code(HTTP_BY_CODE[res.error.code] ?? 409).send({ error: res.error });
     if (!res.dryRun && !res.started.length && res.failed.length) return reply.code(502).send({ error: { code: 'post_failed', failed: res.failed } });
     return res;

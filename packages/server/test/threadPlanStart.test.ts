@@ -327,6 +327,27 @@ describe('시작 — 관리 에이전트 경유', () => {
     expect(json.started[0]).toMatchObject({ via: 'assignee', to: worker.accountId });
   });
 
+  it('미리보기 뒤 관리 에이전트가 바뀌면 시작하지 않는다 — 사람이 본 적 없는 상대를 부르지 않는다', async () => {
+    const root = await post(member.token, { body: 'root' });
+    await setThreadPlan(pool, { rootId: root, actor: { accountId: manager.accountId }, doc: { goal: 'g', groups: [], steps: [step('s1')] } });
+    const preview = (await start(member.token, root, { steps: [{ id: 's1' }], dryRun: true })).json();
+    const row = (await getThreadPlan(pool, root))!;
+    await setThreadPlan(pool, { rootId: root, actor: { accountId: worker.accountId }, guard: { updatedAt: row.updatedAt }, doc: { ...row.doc, managerId: worker.accountId } });
+
+    const stale = await start(member.token, root, { steps: [{ id: 's1' }], ifRev: preview.rev });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error.code).toBe('plan_changed');
+    expect((await getThreadPlan(pool, root))?.doc.steps[0]!.state).toBe('pending');
+    const posts = await pool.query(`select 1 from message where thread_root_id = $1`, [root]);
+    expect(posts.rowCount).toBe(0);
+
+    // 미리보기를 다시 받으면 새 상대가 보이고, 그 판으로는 시작된다.
+    const again = (await start(member.token, root, { steps: [{ id: 's1' }], dryRun: true })).json();
+    const ok = await start(member.token, root, { steps: [{ id: 's1' }], ifRev: again.rev });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().started[0]).toMatchObject({ via: 'manager', to: worker.accountId });
+  });
+
   it('누른 사람이 못 부르는 관리 에이전트도 사유를 싣고 내려간다', async () => {
     const owned = await createAgent(app, admin.token, 'lead-owned');
     await pool.query(`update agent_config set invoke_scope = 'owner', owner_account_id = $2 where account_id = $1`, [owned.accountId, admin.accountId]);
