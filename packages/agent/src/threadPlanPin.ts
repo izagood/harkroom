@@ -113,6 +113,7 @@ export function renderPlanBody(plan: ThreadPlanSnapshot, meId: string): string[]
   const mine = doc.steps.filter((s) => derived[s.id]?.derived === 'ready'
     && (s.assigneeId ?? (s.groupId ? groupOf.get(s.groupId)?.assigneeId : null)) === meId);
   if (mine.length) lines.push(`나에게 맡겨진 시작 가능 단계: ${mine.map((s) => `${s.id} ${one(s.title)}`).join(' · ')}`);
+  if (doc.managerId) lines.push(`관리자: ${who(doc.managerId, meId)}`);
   if (doc.next) lines.push(`다음: ${one(doc.next)}`);
   if (doc.blocked) lines.push(`막힌 것: ${one(doc.blocked)}`);
 

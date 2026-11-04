@@ -48,11 +48,12 @@ export const planDocSchema = z.object({
   steps: z.array(planStepSchema).max(PLAN_LIMITS.steps * 2).default([]),
   next: optText(PLAN_LIMITS.next),
   blocked: optText(PLAN_LIMITS.blocked),
+  managerId: z.string().uuid().nullable().optional(),
 });
 
 /** `thread.plan.item` 의 칸(threadRootId 빼고). */
 export const planItemShape = {
-  type: z.enum(['step', 'group']).optional(),
+  type: z.enum(['step', 'group', 'plan']).optional(),
   id: nodeId.optional(),
   remove: z.boolean().optional(),
   after: nodeId.nullable().optional(),
@@ -67,5 +68,6 @@ export const planItemShape = {
   addLinks: z.array(planLinkSchema).max(PLAN_LIMITS.links * 2).optional(),
   removeLinks: z.array(planLinkSchema).max(PLAN_LIMITS.links * 2).optional(),
   blockedReason: optText(PLAN_LIMITS.blockedReason),
+  managerId: z.string().uuid().nullable().optional(),
   ifRev: z.number().int().min(1).optional(),
 };
