@@ -18,7 +18,9 @@ String permissionCardBody(String body, Map<String, Object?> meta) {
   final ask = AskMeta.read(meta);
   if (ask == null) return body;
   final perm = PermissionCardInfo.read(meta);
-  if (perm == null || perm.neutral || perm.line == null) return body;
+  // 중립 거울의 본문은 「원래 카드에서 확인」 안내와 링크뿐이다 — 카드 몸이 말하고, 볼 수 있는 사람에게는 원본 내용이 선다.
+  if (perm != null && perm.neutral) return '';
+  if (perm == null || perm.line == null) return body;
   if (perm.status == 'superseded' || ask.isSuperseded) return body;
   final lines = body.split('\n');
   // H4: 서버가 쓴 경고 줄(meta `bodyWarningLine`)도 하나만 뺀다 — 줄 상자 안에 문장으로 그린다.
@@ -27,6 +29,13 @@ String permissionCardBody(String body, Map<String, Object?> meta) {
     final i = lines.indexOf(raw);
     if (i >= 0) lines.removeAt(i);
   }
+  return lines.join('\n');
+}
+
+/// 원본 권한 카드 본문에서 카드 몸이 말하지 않는 줄(이유·실패 체크 등) — 다른 자리에서 원본을 펼칠 때 쓴다. 평문이다.
+String permissionContextText(MessageRow root) {
+  final lines = permissionCardBody(root.body, root.meta).split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+  if (lines.isNotEmpty && lines.first.startsWith('권한 요청 ·')) lines.removeAt(0);
   return lines.join('\n');
 }
 
@@ -40,10 +49,16 @@ String permissionCardBody(String body, Map<String, Object?> meta) {
 /// 모든 물음에 강조를 주면 그 색은 곧 배경이 되고, 정작 내가 막고 있는 물음도 안 읽힌다.
 /// 그래서 `to` 가 나이거나 *사람 아무나*일 때만 세운다.
 class AskCard extends StatefulWidget {
-  const AskCard({super.key, required this.message, required this.ask});
+  const AskCard({super.key, required this.message, required this.ask, this.embeddedAnswer, this.embeddedTrailing});
 
   final MessageRow message;
   final AskMeta ask;
+
+  /// 묶음 줄 안에 끼울 때 — 답을 묶음 길(`ask-bundle/answer`)로 보낸다. 있으면 카드 테두리 없이 그린다.
+  final Future<void> Function(String optionId)? embeddedAnswer;
+
+  /// 묶음 줄의 버튼 끝에 둘 원 스레드 링크.
+  final Widget? embeddedTrailing;
 
   @override
   State<AskCard> createState() => _AskCardState();
@@ -58,6 +73,44 @@ class _AskCardState extends State<AskCard> {
   /// 직접 입력 칸. 보내지 못해도 글은 남는다.
   final TextEditingController _write = TextEditingController();
 
+  /// 묶음 줄 안에서 실패하면 어느 줄인지 보이게 그 줄 안에 적는다.
+  String? _inlineError;
+
+  /// 거울이면 보는 사람 권한으로 읽은 원본(못 보면 null). 결정권 판정과 중립 거울의 내용에 쓴다.
+  MessageRow? _mirrorRoot;
+  String? _mirrorKey;
+
+  void _readMirrorRoot() {
+    final perm = PermissionCardInfo.read(widget.message.meta);
+    final rootId = perm?.mirrorRootId;
+    if (rootId == null) return;
+    // 거울 행이 바뀌면(원본이 바뀌었다는 알림) 다시 읽는다.
+    final key = '$rootId:${widget.ask.answeredWith}:${widget.ask.closedAt}';
+    if (key == _mirrorKey) return;
+    _mirrorKey = key;
+    AppScope.read(context).fetchMessage(rootId).then((row) {
+      if (mounted && key == _mirrorKey) setState(() => _mirrorRoot = row);
+    }, onError: (Object _) {
+      if (mounted && key == _mirrorKey) setState(() => _mirrorRoot = null);
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _readMirrorRoot();
+  }
+
+  @override
+  void didUpdateWidget(AskCard old) {
+    super.didUpdateWidget(old);
+    _readMirrorRoot();
+  }
+
+  Future<void> _answer(AppState app, String optionId) => widget.embeddedAnswer != null
+      ? widget.embeddedAnswer!(optionId)
+      : app.answerAsk(widget.message.channelId, widget.message.id, optionId);
+
   @override
   void dispose() {
     _write.dispose();
@@ -66,10 +119,20 @@ class _AskCardState extends State<AskCard> {
 
   Future<void> _run(Future<void> Function() action) async {
     if (_busy) return;
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _inlineError = null;
+    });
     try {
       await action();
     } on ApiError catch (e) {
+      if (widget.embeddedAnswer != null) {
+        if (mounted) {
+          final t = context.t;
+          setState(() => _inlineError = e.status == 403 ? t.permErrForbidden : e.code == 'mandate_unavailable' ? t.permErrMandateUnavailable : t.askFailed);
+        }
+        return;
+      }
       // 정할 수 없거나(403) 위임장을 세울 수 없으면(409 mandate_unavailable) 그 이유를 쓴다 — 다시 눌러도 같으니 「다시 시도」는 달지 않는다.
       if (mounted) {
         final t = context.t;
@@ -95,8 +158,12 @@ class _AskCardState extends State<AskCard> {
     final app = context.app;
     final ask = widget.ask;
     final theme = Theme.of(context);
-    final perm = PermissionCardInfo.read(widget.message.meta);
-    if (perm != null) return _permission(context, app, ask, perm);
+    var perm = PermissionCardInfo.read(widget.message.meta);
+    final root = _mirrorRoot == null ? null : PermissionCardInfo.read(_mirrorRoot!.meta);
+    final contextText = perm != null && perm.neutral && root != null && root.line != null ? permissionContextText(_mirrorRoot!) : null;
+    if (perm != null && perm.neutral && root != null && root.line != null) perm = root.revealedFromRoot(perm.mirrorRootId!);
+    // 묶음 줄은 메시지 본문이 따로 서지 않는다 — 이유·실패 체크를 줄 안에 함께 보인다.
+    if (perm != null) return _permission(context, app, ask, perm, root, widget.embeddedAnswer != null ? permissionContextText(widget.message) : contextText);
 
     final mine = switch (ask.to) {
       AskAnyHuman() => true,
@@ -290,7 +357,7 @@ class _AskCardState extends State<AskCard> {
 
   /// 권한 카드(W4 위임장, 시안 §5 모바일 375pt) — 칩 · 줄 상자 · 세로로 쌓은 44pt 버튼 · 끝난 상태.
   /// 원본과 진짜 거울은 같은 카드다. 중립 거울은 중립 한 줄과 원본 링크만 그린다.
-  Widget _permission(BuildContext context, AppState app, AskMeta ask, PermissionCardInfo perm) {
+  Widget _permission(BuildContext context, AppState app, AskMeta ask, PermissionCardInfo perm, PermissionCardInfo? mirrorRoot, String? revealedContext) {
     final t = context.t;
     final tok = context.tokens;
     final theme = Theme.of(context);
@@ -306,13 +373,6 @@ class _AskCardState extends State<AskCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(t.permMirrorNeutral, key: Key('perm-neutral-$id'), style: theme.textTheme.bodyMedium),
-              const SizedBox(height: 4),
-              TextButton(
-                key: Key('perm-open-original-$id'),
-                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 44)),
-                onPressed: () => openMessageLink(context, perm.mirrorRootId!),
-                child: Text('↪ ${t.permOpenOriginal}'),
-              ),
             ],
           ),
         ),
@@ -322,8 +382,12 @@ class _AskCardState extends State<AskCard> {
     final meId = app.me?.id;
     // 누가 정하나(P1) — 원본 카드는 서버 `decide-check` 의 값으로 그린다(화면이 다시 판정하지 않는다).
     // 받기 전·실패·거울이면 지금처럼: 소유자나 나를 모르면 **소유자가 아니라고 본다** — 버튼 없이 읽기 전용 줄만.
-    final check = perm.isMirror || perm.agentId == null ? null : app.decideCheckFor(perm.agentId!, widget.message.channelId);
-    final owner = check?.viewerCanDecide ?? (perm.ownerId != null && meId != null && perm.ownerId == meId);
+    // 결정권은 언제나 **요청 채널**로 묻는다 — 거울·묶음 채널로 물으면 범위가 channel 인 에이전트에서 버튼과 서버 판정이 어긋난다. 거울은 원본을 읽었을 때만 안다.
+    final elsewhere = perm.isMirror || widget.embeddedAnswer != null;
+    final asker = perm.isMirror ? mirrorRoot : perm;
+    final check = asker?.agentId == null ? null : app.decideCheckFor(asker!.agentId!, asker.requestChannelId ?? widget.message.channelId);
+    final viewerIsOwner = perm.ownerId != null && meId != null && perm.ownerId == meId;
+    final owner = check?.viewerCanDecide ?? viewerIsOwner;
     final ended = perm.mandate?.ended ?? false;
     final open = ask.isOpen && (perm.status == null || perm.status == 'pending') && !ended;
     final canPickLate = ask.isReplied && owner && _pickAnyway && !ended;
@@ -340,8 +404,8 @@ class _AskCardState extends State<AskCard> {
       if (ids.contains(permOptApproveOnce) || perm.once != null) permOptApproveOnce,
     ];
     String label(String o) => switch (o) {
-          permOptApproveMandate => t.permApproveMandate,
-          permOptApproveNewMandate => t.permApproveNewMandate,
+          permOptApproveMandate => elsewhere ? t.permApproveMandateElsewhere : t.permApproveMandate,
+          permOptApproveNewMandate => elsewhere ? t.permApproveNewMandateElsewhere : t.permApproveNewMandate,
           permOptApproveTurn => t.permApproveTurn,
           permOptApproveOnce => perm.once == null
               ? t.permApproveOnce
@@ -400,7 +464,7 @@ class _AskCardState extends State<AskCard> {
     } else if (s == 'approved_once' || chose == permOptApproveOnce || (s == 'granted' && perm.kind == 'command')) {
       endedText = perm.ghUserUsed != null ? t.permStateOnceGh(perm.ghUserUsed!) : t.permStateOnce;
     } else if (s == 'granted' || chose != null) {
-      endedText = t.permStateAdded;
+      endedText = elsewhere ? t.permStateAddedElsewhere : t.permStateAdded;
     } else if (s == 'superseded' || ask.isSuperseded) {
       endedText = t.permStateSuperseded;
     } else if (s == 'expired' || ask.isExpired) {
@@ -417,8 +481,8 @@ class _AskCardState extends State<AskCard> {
         permOptDeny => t.permResultDenied(who),
         permOptApproveTurn => t.permResultTurn(who),
         permOptApproveNewMandate || permOptApproveMandate || 'approve' when perm.grantedWithoutLine => _standingResult(t, who, perm.grantExpiresAt),
-        permOptApproveNewMandate => t.permResultNewAdded(who),
-        permOptApproveMandate || 'approve' => t.permResultAdded(who),
+        permOptApproveNewMandate => elsewhere ? t.permResultNewAddedElsewhere(who) : t.permResultNewAdded(who),
+        permOptApproveMandate || 'approve' => elsewhere ? t.permResultAddedElsewhere(who) : t.permResultAdded(who),
         permOptApproveOnce || 'approve_hour' => t.permResultOnce(who),
         _ => null,
       };
@@ -429,12 +493,8 @@ class _AskCardState extends State<AskCard> {
     if (endedText != null && perm.decidedViaChat) endedText = '$endedText · ${t.permViaChat}';
     final ownerAcc = perm.mandate?.ownerId == null ? null : app.accounts[perm.mandate!.ownerId!];
 
-    return Card(
-      key: Key('ask-$id'),
-      margin: EdgeInsets.zero,
-      color: open && owner ? theme.colorScheme.primaryContainer : null,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+    final body = Padding(
+        padding: widget.embeddedAnswer != null ? const EdgeInsets.only(top: 4) : const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -454,7 +514,8 @@ class _AskCardState extends State<AskCard> {
               key: Key('ask-head-$id'),
               style: theme.textTheme.labelSmall?.copyWith(fontWeight: head == null ? FontWeight.w600 : null),
             ),
-            if (perm.mandate != null) ...[
+            // 칩은 원 스레드가 아닌 자리에서 소유자에게만 — 다른 채널의 위임장 이름이 드러나지 않게.
+            if (perm.mandate != null && (!elsewhere || viewerIsOwner)) ...[
               const SizedBox(height: 6),
               MandateChip(mandate: perm.mandate!, ownerHandle: ownerAcc?.handle),
             ],
@@ -467,7 +528,11 @@ class _AskCardState extends State<AskCard> {
                 warnings: perm.warnings,
               ),
             ],
-            if (ask.prompt != null && open && (perm.line == null || (perm.once?.ci ?? false))) ...[
+            if (revealedContext != null && revealedContext.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(revealedContext, key: Key('perm-context-$id'), style: theme.textTheme.bodySmall?.copyWith(color: tok.fgMuted)),
+            ],
+            if (ask.prompt != null && open && widget.embeddedAnswer == null && (perm.line == null || (perm.once?.ci ?? false))) ...[
               const SizedBox(height: 6),
               Text(ask.prompt!, style: theme.textTheme.bodyMedium),
             ],
@@ -485,20 +550,20 @@ class _AskCardState extends State<AskCard> {
               for (final o in order)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 44,
+                  // 높이를 못 박지 않는다 — 긴 문구는 두 줄로 감싼다. 말줄임으로 자르면 무엇을 허락하는지가 잘린다.
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minWidth: double.infinity, minHeight: 44),
                     child: o == primary
                         ? FilledButton(
                             key: Key('ask-option-$id-$o'),
-                            onPressed: _busy ? null : () => _run(() => app.answerAsk(widget.message.channelId, id, o)),
-                            child: Text(label(o)),
+                            onPressed: _busy ? null : () => _run(() => _answer(app, o)),
+                            child: Text(label(o), textAlign: TextAlign.center),
                           )
                         : OutlinedButton(
                             key: Key('ask-option-$id-$o'),
                             style: OutlinedButton.styleFrom(backgroundColor: tok.surface),
-                            onPressed: _busy ? null : () => _run(() => app.answerAsk(widget.message.channelId, id, o)),
-                            child: Text(label(o)),
+                            onPressed: _busy ? null : () => _run(() => _answer(app, o)),
+                            child: Text(label(o), textAlign: TextAlign.center),
                           ),
                   ),
                 ),
@@ -513,10 +578,13 @@ class _AskCardState extends State<AskCard> {
                 child: TextButton(
                   key: Key('ask-option-$id-$permOptDeny'),
                   style: TextButton.styleFrom(foregroundColor: tok.danger),
-                  onPressed: _busy ? null : () => _run(() => app.answerAsk(widget.message.channelId, id, permOptDeny)),
+                  onPressed: _busy ? null : () => _run(() => _answer(app, permOptDeny)),
                   child: Text(t.permDeny),
                 ),
               ),
+              if (widget.embeddedTrailing != null) Align(alignment: Alignment.centerRight, child: widget.embeddedTrailing),
+              if (_inlineError != null)
+                Text(_inlineError!, key: Key('ask-inline-error-$id'), style: theme.textTheme.bodySmall?.copyWith(color: tok.danger)),
             ] else if (!open) ...[
               if ((s == 'superseded' || ask.isSuperseded) && perm.supersededByMessageId != null)
                 TextButton(
@@ -528,7 +596,13 @@ class _AskCardState extends State<AskCard> {
             ],
           ],
         ),
-      ),
+      );
+    if (widget.embeddedAnswer != null) return KeyedSubtree(key: Key('ask-$id'), child: body);
+    return Card(
+      key: Key('ask-$id'),
+      margin: EdgeInsets.zero,
+      color: open && owner ? theme.colorScheme.primaryContainer : null,
+      child: body,
     );
   }
 

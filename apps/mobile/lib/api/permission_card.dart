@@ -101,6 +101,7 @@ class PermissionCardInfo {
     this.status,
     this.ownerId,
     this.agentId,
+    this.requestChannelId,
     this.decidedViaChat = false,
     this.ghUserUsed,
     this.mirrorRootId,
@@ -126,6 +127,9 @@ class PermissionCardInfo {
 
   /// 요청한 에이전트(원본만). 누가 정하나(`decide-check`)를 묻는 데 쓴다 — 거울은 null(소유자만 꼴 그대로).
   final String? agentId;
+
+  /// 요청이 선 채널(원본만). 결정권은 이 채널로 묻는다 — 거울·묶음 채널이 아니다.
+  final String? requestChannelId;
   final bool decidedViaChat;
 
   /// 이번 한 번 머지에 실제로 쓴 gh 계정(서버가 알려 줄 때만).
@@ -152,6 +156,13 @@ class PermissionCardInfo {
 
   bool get isMirror => mirrorRootId != null;
 
+  /// 거울에서 읽은 원본으로 다시 그린다 — 답·닫힘은 거울의 ask 칸에서 읽으므로 상태는 싣지 않는다.
+  /// 이 사람 화면에만 그려지므로 원본을 못 보는 사람에게 새지 않는다. 버튼은 그대로 거울 글로 답한다(`via: mirror`).
+  PermissionCardInfo revealedFromRoot(String rootId) => PermissionCardInfo(
+        kind: kind, mandate: mandate, line: line, once: once, ownerId: ownerId, agentId: agentId, requestChannelId: requestChannelId,
+        mirrorRootId: rootId, bodyTargetLine: bodyTargetLine, warnings: warnings, bodyWarningLine: bodyWarningLine,
+      );
+
   static PermissionCardInfo? read(Map<String, Object?> meta) {
     final pr = meta['permissionRequest'];
     if (pr is Map) {
@@ -168,6 +179,7 @@ class PermissionCardInfo {
         status: pr['status'] as String?,
         ownerId: pr['ownerAccountId'] as String?,
         agentId: pr['agentId'] is String ? pr['agentId'] as String : null,
+        requestChannelId: pr['channelId'] is String ? pr['channelId'] as String : null,
         decidedViaChat: via is Map && via['kind'] == 'chat',
         ghUserUsed: gh,
         supersededByMessageId: pr['supersededByMessageId'] is String ? pr['supersededByMessageId'] as String : null,

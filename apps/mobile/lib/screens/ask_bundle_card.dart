@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import '../api/api_error.dart';
 import '../api/ask.dart';
 import '../api/models.dart';
+import '../api/permission_card.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../ui/states.dart';
 import '../ui/tokens.dart';
+import 'ask_card.dart';
 import 'message_link.dart';
 
 /// **묶음 카드**(선택 카드 P1, 스레드 596146cc) — 관리 에이전트가 여러 에이전트의 사람 앞 카드를 한 장에 줄로
@@ -42,6 +44,9 @@ class _AskBundleCardState extends State<AskBundleCard> {
   final Map<String, Map<String, Object?>> _roots = {};
   final Set<String> _unavailable = {};
   List<BundleAcceptResult>? _results;
+  final Map<String, MessageRow> _rootRows = {};
+  final Map<String, String> _rowErrors = {};
+  bool _decideHere = false;
   bool _busy = false;
 
   /// 「추천대로」를 누른 뒤 보내기까지 남은 초. null 이면 기다리지 않는다(#1288 designer s2) — 답은 되돌릴 수 없어서
@@ -86,7 +91,7 @@ class _AskBundleCardState extends State<AskBundleCard> {
       }
       timer.cancel();
       setState(() => _countdown = null);
-      _run(() async {
+      _run(null, () async {
         final results = await app.acceptRecommendedBundle(widget.message.channelId, widget.message.id);
         if (mounted) setState(() => _results = results);
       });
@@ -101,36 +106,48 @@ class _AskBundleCardState extends State<AskBundleCard> {
   Future<void> _load() async {
     final gen = ++_loadGen;
     final app = AppScope.read(context);
+    final decideHere = await app.bundleDecideSupported();
     final pairs = await Future.wait(widget.bundle.items.map((item) async {
       try {
-        return (item.rootId, (await app.fetchMessage(item.rootId)).meta);
+        return (item.rootId, await app.fetchMessage(item.rootId));
       } on Object {
         return (item.rootId, null);
       }
     }));
     if (!mounted || gen != _loadGen) return;
     setState(() {
+      _decideHere = decideHere;
       _roots.clear();
+      _rootRows.clear();
       _unavailable.clear();
-      for (final (id, meta) in pairs) {
-        if (meta == null) {
+      for (final (id, row) in pairs) {
+        if (row == null) {
           _unavailable.add(id);
         } else {
-          _roots[id] = meta;
+          _roots[id] = row.meta;
+          _rootRows[id] = row;
         }
       }
     });
   }
 
-  Future<void> _run(Future<void> Function() action) async {
+  /// [rootId] 가 있으면 그 줄의 일이다. 없으면(일괄) 어느 줄이라고 할 수 없으니 전처럼 알림으로 띄운다.
+  Future<void> _run(String? rootId, Future<void> Function() action) async {
     if (_busy) return;
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      if (rootId != null) _rowErrors.remove(rootId);
+    });
     try {
       await action();
     } on Object catch (e) {
-      if (mounted) {
-        showFailureToast(context, e is ApiError && e.status == 403 ? context.t.bundleUnavailable : context.t.askFailed,
-            retry: () => _run(action));
+      // 어느 줄이 실패했는지 보이게 그 줄 안에 적는다.
+      if (!mounted) return;
+      final text = e is ApiError && e.status == 403 ? context.t.bundleUnavailable : context.t.askFailed;
+      if (rootId != null) {
+        setState(() => _rowErrors[rootId] = text);
+      } else {
+        showFailureToast(context, text, retry: () => _run(null, action));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -145,9 +162,9 @@ class _AskBundleCardState extends State<AskBundleCard> {
     final items = widget.bundle.items;
     final rows = [
       for (final item in items)
-        (item, bundleRowState(item, _roots[item.rootId], unavailable: _unavailable.contains(item.rootId))),
+        (item, bundleRowState(item, _roots[item.rootId], unavailable: _unavailable.contains(item.rootId), decideHere: _decideHere)),
     ];
-    final open = rows.where((r) => r.$2 is BundleRowOpen || r.$2 is BundleRowLink).length;
+    final open = rows.where((r) => r.$2 is BundleRowOpen || r.$2 is BundleRowLink || r.$2 is BundleRowDecide).length;
     // 서버가 언제나 빼는 줄(되돌릴 수 없음·링크)은 n 에서 뺀다 — 다시 눌러도 같다(#1288 designer s1).
     final skipped = {
       for (final r in _results ?? const <BundleAcceptResult>[])
@@ -185,8 +202,13 @@ class _AskBundleCardState extends State<AskBundleCard> {
                 t: t,
                 busy: _busy || _countdown != null,
                 result: _results?.where((r) => r.rootId == item.rootId).firstOrNull,
-                onPick: (optionId) => _run(() => app.answerBundleItem(
+                root: _rootRows[item.rootId],
+                error: _rowErrors[item.rootId],
+                onPick: (optionId) => _run(item.rootId, () => app.answerBundleItem(
                     widget.message.channelId, widget.message.id, item.rootId, optionId)),
+                onDecline: (rootChannelId) => _run(item.rootId, () => app.closeBundleRoot(rootChannelId, item.rootId)),
+                onDecide: (optionId) => app.answerBundleItem(
+                    widget.message.channelId, widget.message.id, item.rootId, optionId),
               ),
             ],
             if (_countdown != null) ...[
@@ -240,6 +262,10 @@ class _BundleRow extends StatelessWidget {
     required this.t,
     required this.busy,
     required this.onPick,
+    required this.onDecline,
+    required this.onDecide,
+    this.root,
+    this.error,
     this.result,
   });
 
@@ -249,13 +275,35 @@ class _BundleRow extends StatelessWidget {
   final Strings t;
   final bool busy;
   final void Function(String optionId) onPick;
+  final void Function(String rootChannelId) onDecline;
+  final Future<void> Function(String optionId) onDecide;
+  final MessageRow? root;
+  final String? error;
   final BundleAcceptResult? result;
+
+  /// 끝난 권한 줄 — 결과 낱말 뒤에 대상 앞부분을 남긴다. 어느 스레드의 위임장인지 쓴다. 권한 줄이 아니면 null.
+  String? _permResult(BundleRowAnswered s, String who) {
+    final perm = root == null ? null : PermissionCardInfo.read(root!.meta);
+    final line = perm?.line;
+    if (perm == null || line == null) return null;
+    final head = switch (s.chose) {
+      permOptDeny => t.permResultDenied(who),
+      permOptApproveTurn => '✓ ${t.permResultTurn(who)}',
+      permOptApproveNewMandate => '✓ ${t.permResultNewAddedElsewhere(who)}',
+      permOptApproveMandate || 'approve' => '✓ ${t.permResultAddedElsewhere(who)}',
+      permOptApproveOnce || 'approve_hour' => '✓ ${t.permResultOnce(who)}',
+      _ => null,
+    };
+    if (head == null) return null;
+    final gh = perm.ghUserUsed == null ? '' : ' · gh ${perm.ghUserUsed}';
+    return '$head$gh  ${line.cap} ${line.scope}';
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final muted = theme.textTheme.bodySmall?.copyWith(color: context.tokens.fgSubtle);
-    final settled = state is! BundleRowOpen && state is! BundleRowLink && state is! BundleRowLoading;
+    final settled = state is! BundleRowOpen && state is! BundleRowLink && state is! BundleRowLoading && state is! BundleRowDecide;
     final skip = result != null && result!.skipped ? _skipText(t, result!.outcome) : null;
     void goOriginal() => openMessageLink(context, item.rootId);
 
@@ -266,7 +314,7 @@ class _BundleRow extends StatelessWidget {
         Text(_nameOf(app, item.askerId, t), style: muted),
         Text(
           item.prompt,
-          maxLines: settled ? 1 : 3,
+          maxLines: settled ? 1 : 2,
           overflow: TextOverflow.ellipsis,
           style: theme.textTheme.bodyMedium?.copyWith(color: settled ? context.tokens.fgMuted : null),
         ),
@@ -285,13 +333,31 @@ class _BundleRow extends StatelessWidget {
                     label: Text(o.recommended ? '${o.label} · ${t.bundleRecommended}' : o.label),
                   ),
                 TextButton(
+                  key: Key('ask-bundle-decline-${item.rootId}'),
+                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 44)),
+                  onPressed: busy || root == null ? null : () => onDecline(root!.channelId),
+                  child: Text(t.askDecline),
+                ),
+                TextButton(
                   key: Key('ask-bundle-reply-${item.rootId}'),
-                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 4), minimumSize: const Size(0, 32)),
+                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 44)),
                   onPressed: goOriginal,
                   child: Text(t.bundleReplyInThread),
                 ),
               ],
             ),
+          BundleRowDecide() when root != null => AskCard(
+              message: root!,
+              ask: AskMeta.read(root!.meta)!,
+              embeddedAnswer: onDecide,
+              embeddedTrailing: TextButton(
+                key: Key('ask-bundle-original-${item.rootId}'),
+                style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 44)),
+                onPressed: goOriginal,
+                child: Text(t.bundleOriginalThread),
+              ),
+            ),
+          BundleRowDecide() => Text(t.bundleLoading, style: muted),
           BundleRowLink() => TextButton(
               key: Key('ask-bundle-link-${item.rootId}'),
               style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 32)),
@@ -300,8 +366,12 @@ class _BundleRow extends StatelessWidget {
             ),
           BundleRowLoading() => Text(t.bundleLoading, style: muted),
           BundleRowUnavailable() => Text(t.bundleUnavailable, style: muted),
-          BundleRowAnswered(:final label, :final by) =>
-            Text(t.bundleAnswered(label ?? '—', _nameOf(app, by, t)), style: muted),
+          final BundleRowAnswered s => Text(
+              _permResult(s, _nameOf(app, s.by, t)) ?? t.bundleAnswered(s.label ?? '—', _nameOf(app, s.by, t)),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: muted,
+            ),
           BundleRowReplied(:final by, :final note, :final noteBy) => Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -322,6 +392,11 @@ class _BundleRow extends StatelessWidget {
           BundleRowExpired() => Text('${t.askExpired} · ${t.askExpiredHint}', style: muted),
           BundleRowDeclined() => Text(t.askClosed, style: muted),
         },
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(error!, key: Key('ask-bundle-error-${item.rootId}'), style: theme.textTheme.bodySmall?.copyWith(color: context.tokens.danger)),
+          ),
         if (skip != null)
           Padding(
             padding: const EdgeInsets.only(top: 2),

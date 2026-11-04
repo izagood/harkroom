@@ -416,7 +416,7 @@ class StringsEn implements Strings {
   String get permViaChat => 'answered in chat';
 
   @override
-  String get permMirrorNeutral => 'Permission request · check and decide in the original card\'s channel';
+  String get permMirrorNeutral => 'A decision card from another channel';
 
   @override
   String get permOpenOriginal => 'Open the original card';
@@ -479,10 +479,22 @@ class StringsEn implements Strings {
   String get bundleRecommended => 'recommended';
 
   @override
-  String get bundleReplyInThread => 'Reply in the original thread →';
+  String get bundleReplyInThread => 'Reply in text →';
 
   @override
   String get bundleDecideInThread => 'Decide in the original thread →';
+  @override
+  String get bundleOriginalThread => 'Original thread ↗';
+  @override
+  String get permApproveMandateElsewhere => "For the original thread's mandate";
+  @override
+  String get permApproveNewMandateElsewhere => 'Start a mandate on the original thread and add';
+  @override
+  String get permStateAddedElsewhere => "Added to the original thread's mandate";
+  @override
+  String permResultAddedElsewhere(String who) => "$who added this to the original thread's mandate";
+  @override
+  String permResultNewAddedElsewhere(String who) => '$who started a mandate on the original thread and added this';
 
   @override
   String get bundleLoading => 'Loading the original…';
@@ -506,7 +518,7 @@ class StringsEn implements Strings {
   String get bundleSkipNoRecommendation => 'No recommendation, so left out';
 
   @override
-  String get bundleSkipLink => 'Decided in its own thread, so left out';
+  String get bundleSkipLink => 'Left out — decide this one here';
 
   @override
   String get bundleSkipFailed => 'Couldn’t pick — try again';
