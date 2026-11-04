@@ -961,6 +961,19 @@ void main() {
       expect(find.byKey(const Key('plan-row-nolink-s3')), findsOneWidget);
     });
 
+    testWidgets('관리 조각은 메타 줄 끝에 붙고 누르는 자리는 44다. 320폭에서 넘치지 않는다', (tester) async {
+      tester.view.physicalSize = const Size(320 * 3, 812 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      await openWith(tester, const {});
+      final meta = tester.getRect(find.byKey(const Key('plan-sheet-meta')));
+      final edit = tester.getRect(find.byKey(const Key('plan-manager-edit')));
+      expect(edit.left, greaterThanOrEqualTo(meta.right));
+      expect((edit.center.dy - meta.center.dy).abs(), lessThan(1), reason: '같은 줄이다');
+      expect(edit.height, greaterThanOrEqualTo(44));
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('관리 에이전트를 바꾸거나 비운다', (tester) async {
       final s = await openWith(tester, const {});
       await tester.tap(find.byKey(const Key('plan-manager-edit')));

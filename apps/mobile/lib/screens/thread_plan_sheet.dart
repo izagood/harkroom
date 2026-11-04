@@ -882,31 +882,54 @@ class _SheetHeadState extends State<_SheetHead> {
               ),
             ),
           ),
-          Text.rich(
-            TextSpan(children: [
-              TextSpan(text: meta.join(' · ')),
-              if (isPlanStale(plan.updatedAt, now)) TextSpan(text: ' · ${t.planStale}', style: TextStyle(color: k.warning)),
-            ]),
-            style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta),
-          ),
+          // 메타 줄 끝의 「관리」 조각 — 고정 머리에 줄을 더하지 않는다. 넘치면 앞쪽 메타가 줄고 이 조각은 남는다.
           Row(key: const Key('plan-manager'), children: [
-            Text('${t.planManagerLabel} ', style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta)),
             Flexible(
-              child: Text(
-                plan.managerId != null && widget.app.accounts[plan.managerId] != null ? '@${widget.app.accounts[plan.managerId]!.handle}' : t.planManagerNone,
+              child: Text.rich(
+                TextSpan(children: [
+                  TextSpan(text: meta.join(' · ')),
+                  if (isPlanStale(plan.updatedAt, now)) TextSpan(text: ' · ${t.planStale}', style: TextStyle(color: k.warning)),
+                  const TextSpan(text: ' · '),
+                ]),
+                key: const Key('plan-sheet-meta'),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: k.fgAgent, fontSize: HarkroomType.meta),
+                style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta),
               ),
             ),
-            IconButton(
-              key: const Key('plan-manager-edit'),
-              tooltip: t.planManagerEdit,
-              visualDensity: VisualDensity.compact,
-              icon: Icon(Icons.edit_outlined, size: 14, color: k.fgMuted),
-              onPressed: widget.onEditManager,
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.5),
+              child: Tooltip(
+                message: t.planManagerEdit,
+                child: Semantics(
+                  button: true,
+                  child: InkWell(
+                    key: const Key('plan-manager-edit'),
+                    onTap: widget.onEditManager,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: HarkroomSize.row, minWidth: HarkroomSize.row),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text('${t.planManagerLabel} ', style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta)),
+                        Flexible(
+                          child: Text(
+                            widget.managerFailed
+                                ? t.planManagerFailed
+                                : plan.managerId != null && widget.app.accounts[plan.managerId] != null
+                                    ? '@${widget.app.accounts[plan.managerId]!.handle}'
+                                    : t.planManagerNone,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: widget.managerFailed ? k.stateStuck : k.fgAgent, fontSize: HarkroomType.meta),
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(Icons.edit_outlined, size: 14, color: k.fgMuted),
+                      ]),
+                    ),
+                  ),
+                ),
+              ),
             ),
-            if (widget.managerFailed) Text(t.planManagerFailed, style: TextStyle(color: k.stateStuck, fontSize: HarkroomType.meta)),
           ]),
           // 상태 칩은 한 줄(가로 스크롤) — 40단계 판에서 목록 자리를 먹지 않게. 넘치는 쪽 끝을 흐린다.
           SizedBox(
