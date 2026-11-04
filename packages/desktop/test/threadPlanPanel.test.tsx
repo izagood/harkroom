@@ -152,6 +152,17 @@ describe('패널', () => {
     expect((screen.getByTestId('plan-chip-blocked') as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('연결 그룹이 막히면 막힘 칩이 켜지고 그 그룹으로 간다', () => {
+    const c = rules.cases[2]!.plan;
+    plans = { r1: view({ doc: c.doc, derived: c.derived, progress: c.progress, linked: c.linked }) };
+    openPanel_();
+    const chip = screen.getByTestId('plan-chip-blocked') as HTMLButtonElement;
+    expect(chip.disabled).toBe(false);
+    fireEvent.click(chip);
+    expect(document.querySelector('[data-node="g1"]')!.className).toContain('bg-accent-surface');
+    expect(screen.getByTestId('plan-chip-blocked-cycle').textContent).toContain('1/1');
+  });
+
   it('접힌 그룹도 칩이 편다', () => {
     openPanel_();
     fireEvent.click(screen.getByText('배포'));

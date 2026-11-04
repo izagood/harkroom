@@ -1,6 +1,7 @@
 /** 계획판 판정 규칙(개선 시안 P6) — 아이폰 `test/thread_plan_rules_test.dart` 와 **같은 자료**를 읽어 두 앱의 결과가 같은지 잰다. */
 import { describe, expect, it } from 'vitest';
 import type { ThreadPlanView } from '@harkroom/shared';
+import { derivePlan, planProgress } from '@harkroom/shared/planGraph';
 import rules from './fixtures/planRules.json';
 import {
   groupFacts, nextCycleIndex, planButtonKind, planFlow, planFlowVisible, planLists, planPills, planStepOrder, stepFirstLinks, stepKind, stepWaiters, stepWhy,
@@ -14,6 +15,21 @@ describe.each(rules.cases)('$name', (c) => {
   it('줄 순서·칩 목록', () => {
     expect(planStepOrder(plan.doc).map((s) => s.id)).toEqual(e.order);
     expect(planLists(plan, c.me)).toEqual(e.lists);
+  });
+
+  it('자료의 파생 상태·진행률이 서버 규칙 그대로다', () => {
+    const map = new Map(plan.linked.map((l) => [l.rootId, l.hidden ? ('hidden' as const) : l.progress!]));
+    expect(planProgress(plan.doc, map)).toEqual(plan.progress);
+    const derived = derivePlan(plan.doc, map);
+    for (const [id, node] of Object.entries(plan.derived)) expect({ derived: derived[id]!.derived, waitingOn: derived[id]!.waitingOn }).toEqual({ derived: node.derived, waitingOn: node.waitingOn });
+  });
+
+  it('칩 합 + 볼 수 없는 연결 = 전체 수, 막힘 칩 수 = 막힘 수', () => {
+    const lists = planLists(plan, c.me);
+    const sum = Object.values(lists).reduce((n, l) => n + l.length, 0);
+    const hidden = plan.linked.filter((l) => l.hidden).length;
+    expect(sum + hidden).toBe(plan.progress.total);
+    expect(lists.blocked.length).toBe(plan.progress.blocked);
   });
 
   it('단계 줄', () => {

@@ -64,16 +64,23 @@ export function planStepOrder(doc: PlanDoc): PlanStep[] {
   ];
 }
 
-/** 맨 위 상태 칩의 목록 — 칩이 보여 주는 수이자, 누를 때 차례로 갈 단계들이다. 한 단계는 한 목록에만 든다. */
+/**
+ * 맨 위 상태 칩의 목록 — 칩이 보여 주는 수이자, 누를 때 차례로 갈 단계들이다. 한 칸은 한 목록에만 든다.
+ * 서버 `planProgress` 와 같은 단위로 센다: 단계 하나씩 + **연결 그룹 하나당 한 칸**(파생 상태 그대로, 누르면 그 그룹으로 간다).
+ * 안 그러면 연결 그룹이 막혔을 때 「막힘 1」은 보이는데 막힘 칩이 꺼진다. 볼 수 없는 연결 그룹은 갈 곳이 없어 빠진다 — `progress.total` 에는 든다.
+ */
 export type PlanChipKind = 'done' | 'active' | 'blocked' | 'mine' | 'ready' | 'waiting';
 export const PLAN_CHIP_KINDS: PlanChipKind[] = ['done', 'active', 'blocked', 'mine', 'ready', 'waiting'];
 
 export function planLists(plan: ThreadPlanView, me: string | null): Record<PlanChipKind, string[]> {
   const out: Record<PlanChipKind, string[]> = { done: [], active: [], blocked: [], mine: [], ready: [], waiting: [] };
-  for (const step of planStepOrder(plan.doc)) {
-    const kind = stepKind(plan, step, me);
-    if (kind !== 'hidden') out[kind].push(step.id);
+  const put = (kind: PlanRowKind, id: string) => { if (kind !== 'hidden') out[kind].push(id); };
+  const known = new Set(plan.doc.groups.map((g) => g.id));
+  for (const g of plan.doc.groups) {
+    if (g.linkedRootId) put(plan.derived[g.id]?.derived ?? 'waiting', g.id);
+    for (const s of plan.doc.steps) if (s.groupId === g.id) put(stepKind(plan, s, me), s.id);
   }
+  for (const s of plan.doc.steps) if (!s.groupId || !known.has(s.groupId)) put(stepKind(plan, s, me), s.id);
   return out;
 }
 
