@@ -13,6 +13,32 @@ const fx = (name: string): string => readFileSync(join(import.meta.dirname, 'fix
 const paint = (text: string): string => `\x1b[2J\x1b[H${text.replace(/\n/g, '\r\n')}`;
 const HARNESSES = ['codex', 'opencode', 'kilo', 'pi', 'omp'] as const;
 
+describe('표 답을 화면에서 옮긴다(3회차 시험: 14줄 표가 첫 줄만 남았다)', () => {
+  const rows = Array.from({ length: 14 }, (_, i) => `  2026-01-01 10:${String(i).padStart(2, '0')}    #${100 + i}    제목 ${i}`);
+  const busy = fx('codex-tui-busy.txt');
+  const ended = ['총 14건이다.', '', '  머지 시각         PR      제목', '  ─────────  ───────  ──────────', ...rows, '', '  총 14건.', '', '  › Ask Codex to do anything'].join('\n');
+
+  it('표 줄을 빠짐없이 순서대로 집고, 테두리 줄은 뺀다', () => {
+    const said = screenAnswerLines(ended, screenIdleFactsFor('codex')!, busy);
+    expect(said).toEqual(['총 14건이다.', '머지 시각         PR      제목', ...rows.map((r) => r.trim()), '총 14건.']);
+  });
+
+  it('차례 끝 요약 줄(모드 · 모델 · 걸린 시간)은 답이 아니다', () => {
+    const facts = screenIdleFactsFor('opencode')!;
+    const said = screenAnswerLines(fx('opencode-tui-ended.txt'), facts, fx('opencode-tui-busy.txt'));
+    expect(said).toContain('PROBE-FINAL answer text');
+    expect(said.join('\n')).not.toContain('lane-model');
+  });
+
+  it('대리 글에도 줄이 살아 있다', () => {
+    const said = screenAnswerLines(ended, screenIdleFactsFor('codex')!, busy).join('\n');
+    const n = silentTurnNotice({ caller: 'human', lastSaid: said, offAnchor: null, pat: 'hrkp_secretpat', screenAnswer: said });
+    expect(n.kind).toBe('post');
+    const body = (n as { body: string }).body;
+    for (const r of rows) expect(body).toContain(`> ${r.trim().replace(/\s+/g, ' ')}\n`);
+  });
+});
+
 describe('screen.busy — 실측 화면', () => {
   for (const h of HARNESSES) {
     it(`${h}: 일하는 중 화면은 busy, 끝난 화면은 idle`, () => {

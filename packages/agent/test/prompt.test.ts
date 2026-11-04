@@ -1758,6 +1758,19 @@ describe('silentTurnNotice — 화면 답 대리 게시 (2026-10-25, 스레드 d
     expect(body.split('\n')[0]!.length).toBeLessThanOrEqual(PROXY_ANSWER_MAX_CHARS + 3);
   });
 
+  it('줄마다 인용으로 싸고, 전체가 길어도 서버 상한 안에서 꼬리를 남긴다', () => {
+    const two = proxyAnswerBody('@someone 첫 줄\n둘째 줄', '');
+    expect(two.startsWith('> @someone 첫 줄\n> 둘째 줄\n\n(')).toBe(true);
+    const long = proxyAnswerBody(Array.from({ length: 40 }, () => '가'.repeat(900)).join('\n'), '');
+    expect(long.length).toBeLessThanOrEqual(BODY_LIMIT);
+    expect(long).toContain('러너가 화면에서 옮겨 올렸습니다');
+  });
+
+  it('터미널 너비에서 잘린 PAT 조각이 보이면 대리 게시를 접는다', () => {
+    const pat = 'hrkp_0123456789abcdefghijklmnop';
+    expect(proxyAnswerBody(`토큰은 ${pat.slice(0, 16)}\n${pat.slice(16)} 이다`, pat)).toBe('');
+  });
+
   it('넘겨받은 일·에이전트 호출·화면 답 없음은 지금 그대로다', () => {
     expect(silentTurnNotice({ ...base, caller: 'delegated', screenAnswer: '답' }).kind).toBe('fail');
     // 에이전트 호출은 화면으로 끝을 안 턴에서만 달라진다(아래 describe) — 기록으로 끝을 아는 턴은 ✅ 그대로.
